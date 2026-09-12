@@ -1,0 +1,15 @@
+[package]
+name = "nsql-script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 스크립트 엔진 — SQL*Plus식 문장 분리 · 바인드/치환 변수 · EXEC/CONNECT · 방언별 재작성 (DB 무의존)"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true

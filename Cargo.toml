@@ -1,0 +1,45 @@
+# Nexa SQL — 크로스플랫폼 경량 SQL 클라이언트 (올 러스트 · nexa-ui 위에 그린다)
+# 아키텍처 = docs/01 · 결정 = docs/10 · 세션 변수 엔진 = docs/08.
+# 크레이트 경계는 단방향 — 드라이버·UI가 nsql-core에 의존, core는 아무것도 모른다.
+# 외부 crate: DB 드라이버는 불가피하므로 "드라이버 크레이트만 예외"(DR-3) — 그 외는 docs/10 §3 원장.
+[workspace]
+resolver = "2"
+members = [
+  "crates/nsql-core",     # 도메인 — Dialect · Value · 결과셋 · 세션 포트 (의존 0)
+  "crates/nsql-script",   # ★ SQL*Plus식 스크립트 엔진 — 문장 분리 · 바인드/치환 변수 · EXEC/CONNECT · 방언 재작성 (의존: core)
+  "crates/nsql-cli",      # (bin `nsql`) ★ CLI — 접속·스크립트 실행·export/import·bulk insert. 지금은 dry-run 플래너
+  "crates/nexa-sql",      # (bin) GUI 진입 — M1에서 nexa-ui 위에 창을 연다
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.82"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+authors = ["Sangyong Bae <kiros33@gmail.com>"]
+repository = "https://github.com/SosomLab/nexa-sql"
+homepage = "https://sosomlab.com"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
+inefficient_to_string = "warn"
+unwrap_used = "warn"
+
+[workspace.dependencies]
+nsql-core = { path = "crates/nsql-core" }
+nsql-script = { path = "crates/nsql-script" }
+# nexa-ui(공용 UI) — M1 UI 착수 시 사용. 경로 의존(DR-4 · nexa-ui DR-4).
+nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
+nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }
+nexa-conf = { path = "../nexa-ui/crates/nexa-conf" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

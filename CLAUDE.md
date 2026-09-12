@@ -1,0 +1,46 @@
+# CLAUDE.md — Nexa SQL 프로젝트 컨텍스트 (이식용 메모리)
+
+> **먼저 읽기:** [docs/00-foundation-report.md](docs/00-foundation-report.md)(보고서) → [docs/STATUS.md](docs/STATUS.md) → [docs/10-decision-record.md](docs/10-decision-record.md).
+
+## 1. 이 프로젝트는
+
+**Nexa SQL** = **크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`**(Windows · macOS · Linux). DBeaver의 커버리지 × TablePlus/Golden의 가벼움 × SQL*Plus/PL/SQL Developer의 DBA 워크플로.
+**올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
+
+- 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
+- 현 단계: **M0 완료(2026-09-12)** — 조사 5건 · `nexa-ui` 추출 · ★ 세션 변수 엔진 `nsql-script`(37 테스트) · `nsql plan` 동작. **DP-1~10 사용자 확정 대기.**
+
+### 참조 원천 (재발명 금지)
+
+| 원천 | 경로 | 무엇 |
+|---|---|---|
+| **`nexa-ui`** | `../nexa-ui` | ★ 공용 UI — `nexa-gfx`·`nexa-ctl`(컨트롤 17종·토큰)·`nexa-conf`. path 의존 |
+| `nexa-clip` | `../nexa-clip` | 앱 골격(plat·창·트레이·릴리스 파이프라인 3-OS·`check-3os.sh`·`21-manual-test` 실기표) |
+| `nexa-dir2` | `../nexa-dir2` | `nexa-gui/widgets`(dock·tabbar·menubar·columns·rows) · **`wasmi` 플러그인** |
+| `nexa-dir` | `../nexa-dir` | `docs/13`(라이선스 정책) · `docs/17`(Ed25519 활성화 설계) |
+
+## 2. 확정 결정 (요약 — 전문 [docs/10](docs/10-decision-record.md))
+
+| # | 결정 |
+|---|---|
+| DR-1 | **Rust 올 네이티브 · nexa-ui 확장**(프레임워크 도입 없음) |
+| DR-2 | PolyForm NC 1.0.0 — 영리만 유료 |
+| DR-3 | 외부 crate 0 지향의 명시 예외 = **드라이버·셰이핑**(어댑터 안에 격리 · 원장 기록) |
+| DR-4 | 공용 컨트롤은 `nexa-ui`로 먼저 분리(완료) |
+| DR-5 | **편집기 = Sublime Text 차용 · 확장 = Sublime 패키지 구조**(파일 형식 그대로 · WASM 플러그인) |
+| DR-6 | **CLI `nsql` 포함**(접속·스크립트·export/import·bulk) — GUI와 같은 코어 |
+| DR-7 | **4계층**: UI / Core / Network / 어댑터 — 허브 포트로만 연계(④→③←①, ①→②) |
+| DR-8 | **세션 변수는 클라이언트에 산다** — 리터럴 대입 로컬 · 방언 재작성(MSSQL `sp_executesql` OUTPUT · `SELECT @X=`) |
+| DP-9 | (확인 대기) **CLI 먼저 관통(M1)**, GUI는 M2 |
+
+## 3. 작업 규약
+
+- **문서·커밋/푸시 규약 SSOT = [docs/16](docs/16-doc-git-conventions.md)**. 한 작업 = 한 트랜잭션 갱신(journal → DEVLOG → STATUS → MILESTONES/TODO).
+- **push는 사용자 명시 요청 시에만.** `git add <파일>`만(`-A`·`.` 금지). push 전 `scripts/check-3os.sh`.
+- 크레이트 경계: `nsql-core`는 의존 0 · 드라이버 크레이트는 `nsql-driver-*` 안에만 · UI는 `Box<dyn Session>`만 안다.
+- 스크립트 엔진을 고치면 `examples/golden-session-vars.sql`로 `nsql plan` 양 방언을 다시 본다.
+- `.claude/settings.json`은 덮어쓰기 금지, 병합만.
+
+## 4. 새 세션 오리엔테이션
+
+1. 이 파일 + [docs/00](docs/00-foundation-report.md) → 2. [STATUS](docs/STATUS.md) → 3. [TODO](docs/TODO.md) T-1(DP 확정)부터.

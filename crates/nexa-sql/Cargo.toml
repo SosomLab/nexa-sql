@@ -1,0 +1,16 @@
+[package]
+name = "nexa-sql"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL — GUI 진입점 (M1에서 nexa-ui 위에 창을 연다)"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "nsql-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "nsql — Nexa SQL 명령줄 도구 (스크립트 실행 · export/import · bulk insert). 지금은 dry-run 플래너"
+
+[[bin]]
+name = "nsql"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
