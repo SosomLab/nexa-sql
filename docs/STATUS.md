@@ -6,7 +6,7 @@
 
 **요청**(사용자): *"내용 정리 후 진행사항 최신화 수행하고 commit 및 main 병합한 뒤 push"*. 브랜치는 main 하나(병합 대상 없음).
 **정리**: 열린 질문 4건을 D-14~D-17로 등재([10 §3](10-decision-record.md)) — 실서버 검증 방식 · 다음 우선순위 · 실기 OS · 캐시 위치. 사용자 답이 오면 DR로 승격하고 그 순서로 착수.
-**push**: `SosomLab/nexa-sql`(기존 공개 저장소 · 첫 push) · `SosomLab/nexa-ui`(신규 생성 후 push). 결과는 journal.
+**push**: `SosomLab/nexa-sql`(첫 push) · `SosomLab/nexa-ui`(신규 생성) — CI 첫 실행 빨강 2건 수정 후 **양쪽 3-OS green**.
 **다음 후보(답 전 기본안)**: D-15 권장 순서 = nexa-edit E1(로프 버퍼·Transaction·History) → 세션 hot exit → 비교 뷰. D-14 권장 = Docker 로컬 서버.
 → [journal/2026-09-12](journal/2026-09-12.md)
 
