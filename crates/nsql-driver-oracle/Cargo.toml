@@ -1,0 +1,18 @@
+[package]
+name = "nsql-driver-oracle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 어댑터 — Oracle(kubo `oracle` · ODPI-C · Instant Client 런타임 로드). 이름 바인드 IN/InOut · REF CURSOR · DBMS_OUTPUT"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+# DR-12. ODPI-C를 vendoring해 빌드 시 Oracle 헤더 불필요 · 실행 시 libclntsh를 dlopen.
+oracle = "0.6"

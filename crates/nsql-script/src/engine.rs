@@ -43,6 +43,11 @@ pub enum Action {
     NeedInput {
         name: String,
     },
+    /// 세션에 전달할 옵션(`SET SERVEROUTPUT ON` → `("serveroutput","on")` · `SET ARRAYSIZE` → `("fetch_size","n")`).
+    SetOption {
+        name: String,
+        value: String,
+    },
     /// 아무것도 안 함(REM · SET 처리 완료 · VARIABLE 선언 등). 메시지는 상태줄용.
     Nothing(String),
     Error(String),
@@ -203,7 +208,23 @@ impl Engine {
             Command::Disconnect => vec![Action::Disconnect],
             Command::Set(opt) => {
                 self.apply_set(opt);
-                vec![Action::Nothing(format!("{opt:?}"))]
+                match opt {
+                    SetOption::ServerOutput { on } => {
+                        vec![Action::SetOption {
+                            name: "serveroutput".into(),
+                            value: if *on { "on" } else { "off" }.into(),
+                        }]
+                    }
+                    SetOption::FetchSize(n) => vec![Action::SetOption {
+                        name: "fetch_size".into(),
+                        value: n.to_string(),
+                    }],
+                    SetOption::AutoCommit(b) => vec![Action::SetOption {
+                        name: "autocommit".into(),
+                        value: b.to_string(),
+                    }],
+                    _ => vec![Action::Nothing(format!("{opt:?}"))],
+                }
             }
             Command::Define { name: None, .. } => {
                 let list = self

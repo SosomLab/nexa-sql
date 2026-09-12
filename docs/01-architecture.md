@@ -59,13 +59,19 @@ UI 스레드는 기다리지 않는다(clip DR-41). 취소는 `nsql-net`의 취�
 | 위험 | 방언 정의가 커지면 "최소공배수" 함정 → **1급 방언(Oracle·MSSQL)은 전용 기능을 패키지로 깊게**(Golden·PL/SQL Developer 수준), 2·3급은 공통 기능만 | 유지보수 N배 |
 | 결론 | ★ **단일 앱** — 단, 배포는 필요시 "Oracle 에디션"처럼 **패키지 묶음만 다르게** 낼 수 있다(코드는 하나) | — |
 
-## 5. 크레이트 현황 (2026-09-12)
+## 5. 크레이트 현황 (2026-09-12 2차)
 
 | 크레이트 | 계층 | 상태 | 테스트 |
 |---|---|---|---|
-| `nsql-core` | ③ 허브 | ✅ Dialect·Value·VarType·포트 | 4 |
-| `nsql-script` | ③ 엔진 | ✅ 분리·명령·바인드·방언·엔진·CONNECT | 33 |
-| `nsql-cli`(`nsql`) | ④ | ✅ `plan` dry-run | — |
-| `nexa-sql` | ④ | 자리표시 | — |
-| `nexa-ui/*` | ④ 공용 | ✅ 추출(189 테스트) | — |
-| `nsql-net` · `nsql-io` · `nsql-driver-*` · `nexa-edit` · `nexa-grid` | ②①③④ | ☐ M1~ | — |
+| `nsql-core` | ③ 허브 | ✅ Dialect·Value·VarType·`Session`(set_option·describe) | 4 |
+| `nsql-script` | ③ 엔진 | ✅ 오프셋 기반 분리·명령·바인드·방언·엔진·CONNECT | 34 |
+| `nsql-io` | ③ | ✅ export 6형식 · CSV 파서 · CJK 폭 | 5 |
+| `nsql-run` | ③ 오케스트레이션 | ✅ Action 실행 · OUT 흡수 · 이벤트 · 프롬프트 | 3 |
+| `nsql-driver-sqlite` | ① | ✅ 실DB | 2 |
+| `nsql-driver-oracle` | ① | 🚧 구현·컴파일 · 실서버 미검증 | — |
+| `nsql-driver-mssql` | ① | 🚧 구현·컴파일 · 렌더 테스트 · 실서버 미검증 | 2 |
+| `nsql-drivers` | ①→④ 경계 | ✅ 레지스트리(feature) | 1 |
+| `nsql-cli`(`nsql`) | ④ | ✅ plan/run/shell/export | — |
+| `nexa-sql` | ④ | ✅ 최소 창(TextBox·자체 그리드·워커) · ⏳ 실기 | — |
+| `nexa-ui/*` | ④ 공용 | ✅ gfx·ctl·conf·**font** | 194 |
+| `nsql-net` · `nexa-edit` · `nexa-grid` · `nsql-catalog` · 세션/캐시 | ②④③ | ☐ [17](17-editor-incremental-plan.md) [18](18-session-and-projects.md) [19](19-compare-git-and-object-history.md) | — |

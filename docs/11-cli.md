@@ -6,10 +6,10 @@
 ## 1. 명령 체계 (제안)
 
 ```text
-nsql plan     [--dialect d] <script|-> [args]      # ✅ 지금 동작 — 엔진 dry-run(실행 없이 계획 출력)
-nsql run      -c <연결> <script|-> [args]          # 스크립트 실행(SQL*Plus/sqlcmd 호환 · &1..&n · SET SQLFORMAT)
-nsql shell    -c <연결>                             # 대화형(줄 편집·자동완성·히스토리 · PRINT/VARIABLE/CONNECT)
-nsql export   -c <연결> --query|--table … --format csv|tsv|json|jsonl|insert|parquet|xlsx -o file
+nsql plan     [-d d] <script|-> [args]              # ✅ 엔진 dry-run(실행 없이 계획 출력)
+nsql run      -c <연결> [-f fmt] <script|-> [args]  # ✅ 스크립트 실행(&1..&n · WHENEVER · 프롬프트)
+nsql shell    -c <연결>                             # ✅ 최소 대화형(줄 누적 · `;`/`/`/명령으로 실행) · ☐ 줄 편집·히스토리
+nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T] [-o file]   # ✅ · ☐ parquet/xlsx
 nsql import   -c <연결> --table t --from file [--format …] [--mode insert|upsert|replace] [--batch 5000]
 nsql bulk     -c <연결> --table t --from file       # ★ 방언별 네이티브 대량 적재(§3)
 nsql desc     -c <연결> <object>                    # DESCRIBE

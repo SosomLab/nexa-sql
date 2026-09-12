@@ -7,6 +7,12 @@ resolver = "2"
 members = [
   "crates/nsql-core",     # 도메인 — Dialect · Value · 결과셋 · 세션 포트 (의존 0)
   "crates/nsql-script",   # ★ SQL*Plus식 스크립트 엔진 — 문장 분리 · 바인드/치환 변수 · EXEC/CONNECT · 방언 재작성 (의존: core)
+  "crates/nsql-io",       # export 작성기(csv/tsv/json/jsonl/insert/텍스트 표) · CSV 파서 (의존: core)
+  "crates/nsql-run",      # ★ 오케스트레이션 — 엔진 Action ↔ Session 실행 · OUT 흡수 · 이벤트 (GUI·CLI 공용)
+  "crates/nsql-driver-sqlite", # ① 어댑터 — rusqlite(bundled) · 실DB 검증용
+  "crates/nsql-driver-oracle", # ① 어댑터 — oracle(kubo · ODPI-C · Instant Client 런타임 로드)
+  "crates/nsql-driver-mssql",  # ① 어댑터 — tiberius(TDS) · DECLARE @v = @Pn 배치 + 트레일러 SELECT로 OUT 회수
+  "crates/nsql-drivers",  # 접속 문자열 → Box<dyn Session> 레지스트리(feature로 어댑터 선택)
   "crates/nsql-cli",      # (bin `nsql`) ★ CLI — 접속·스크립트 실행·export/import·bulk insert. 지금은 dry-run 플래너
   "crates/nexa-sql",      # (bin) GUI 진입 — M1에서 nexa-ui 위에 창을 연다
 ]
@@ -32,10 +38,17 @@ unwrap_used = "warn"
 [workspace.dependencies]
 nsql-core = { path = "crates/nsql-core" }
 nsql-script = { path = "crates/nsql-script" }
+nsql-io = { path = "crates/nsql-io" }
+nsql-run = { path = "crates/nsql-run" }
+nsql-driver-sqlite = { path = "crates/nsql-driver-sqlite" }
+nsql-driver-oracle = { path = "crates/nsql-driver-oracle" }
+nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
+nsql-drivers = { path = "crates/nsql-drivers" }
 # nexa-ui(공용 UI) — M1 UI 착수 시 사용. 경로 의존(DR-4 · nexa-ui DR-4).
 nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
 nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }
 nexa-conf = { path = "../nexa-ui/crates/nexa-conf" }
+nexa-font = { path = "../nexa-ui/crates/nexa-font" }
 
 [profile.release]
 opt-level = 3

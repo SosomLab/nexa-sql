@@ -290,6 +290,11 @@ pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
             }
         }
         Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => {
+            if let Some((lhs, rhs)) = body.split_once(":=") {
+                if let Some(name) = lhs.trim().strip_prefix(':') {
+                    return format!("SELECT {} AS \"{}\"", rhs.trim(), name.to_ascii_uppercase());
+                }
+            }
             if body.to_ascii_uppercase().starts_with("SELECT") {
                 body.to_string()
             } else {
@@ -434,5 +439,9 @@ mod tests {
             "SELECT now() AS \"V\""
         );
         assert_eq!(wrap_exec(Dialect::Mysql, "sp_x(1)"), "CALL sp_x(1)");
+        assert_eq!(
+            wrap_exec(Dialect::Sqlite, ":m := (SELECT 1)"),
+            "SELECT (SELECT 1) AS \"M\""
+        );
     }
 }

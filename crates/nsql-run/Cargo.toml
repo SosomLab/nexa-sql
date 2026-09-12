@@ -1,16 +1,12 @@
 [package]
-name = "nsql-cli"
+name = "nsql-run"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "nsql — Nexa SQL 명령줄 도구 (스크립트 실행 · export/import · bulk insert). 지금은 dry-run 플래너"
-
-[[bin]]
-name = "nsql"
-path = "src/main.rs"
+description = "Nexa SQL 오케스트레이션 — 엔진 Action을 Session에 실행하고 결과·변수·이벤트를 되돌린다 (GUI·CLI 공용)"
 
 [lints]
 workspace = true
@@ -19,5 +15,6 @@ workspace = true
 nsql-core.workspace = true
 nsql-script.workspace = true
 nsql-io.workspace = true
-nsql-run.workspace = true
-nsql-drivers.workspace = true
+
+[dev-dependencies]
+nsql-driver-sqlite.workspace = true

@@ -15,21 +15,21 @@
 | **DR-7** | **4계층 아키텍처** — UI(IDE) / Core / Network / DBMS 어댑터가 독립, 허브 포트(trait)로만 연계 | 사용자 요구 09-12 · [01](01-architecture.md) | ✅ 09-12 |
 | **DR-8** | **세션 변수는 클라이언트 메모리에 산다**(SQL*Plus 동일). 리터럴 대입은 DB 왕복 없이 로컬 · 방언 재작성으로 MSSQL 등에서도 다수 문장이 같은 변수를 공유 | 사용자 핵심 요구 · [08](08-session-variables.md) · 구현 33 테스트 | ✅ 09-12(구현) |
 | **DR-9** | 문서·git 규약 = 계열 [16](16-doc-git-conventions.md) 그대로(push는 명시 요청 시에만 · `git add -A` 금지 · 3-OS 검사) | 계열 표준 | ✅ 계승 |
+| **DR-10** | **단일 앱**(DBMS별 앱 아님) — 방언 데이터 + 얇은 재작성 · 1급 방언은 패키지로 깊게 · 배포만 에디션 분리 가능 | DP-1 → 사용자 *"나머진 한꺼번에 개발 진행"* 09-12 | ✅ 09-12 |
+| **DR-11** | **지원 범위** 1급 Oracle·SQL Server → 2급 PG·MySQL·SQLite → 3급 국산 DBMS(ODBC) → 플러그인. NoSQL 범위 밖 | DP-2 | ✅ 09-12 |
+| **DR-12** | Oracle 드라이버 = `oracle`(kubo · ODPI-C) 지금 → 공식 `oracledb` GA 시 어댑터 교체 | DP-3 | ✅ 09-12 |
+| **DR-13** | SQL Server 드라이버 = `tiberius` 계열 → Microsoft `mssql-tds` 성숙 시 재평가 | DP-4 | ✅ 09-12 |
+| **DR-14** | 결과셋 = 자체 모델(Arrow는 export 어댑터에서만) | DP-5 | ✅ 09-12 |
+| **DR-15** | 셰이핑 = `rustybuzz` 도입(원장 등재) — 우선은 nexa-gfx 글리프 폴백으로 한글을 그리고, 조합·합자는 셰이퍼 단계에서 | DP-6 | ✅ 09-12 |
+| **DR-16** | 플러그인 = 데이터 패키지 → WASM(`wasmi`) → Lua는 수요 시 | DP-7 | ✅ 09-12 |
+| **DR-17** | 예산 게이트 — 기동 < 1s · 유휴 RSS < 80MB · 10만 행 < 150MB · 바이너리 ≤ 30MB | DP-8 | ✅ 09-12 |
+| **DR-18** | **CLI(M1)와 최소 GUI(M2 슬라이스)를 병행** — 같은 코어(`nsql-run`)를 둘이 소비 | DP-9 정정: 사용자 *"GUI 최소 기능 구현을 병행하면서 CLI 함께"* 09-12 | ✅ 09-12 |
+| **DR-19** | ★ **한글 처리·고정폭 폰트 1급 지원** — 편집기·그리드는 고정폭(한글 고정폭 D2Coding 우선) + 한글 UI 본 폴백 · IME preedit 오버레이 | 사용자 09-12 *"한글 처리와 고정폭 폰트 등을 잘 지원"* · `nexa-font` | ✅ 09-12 |
+| **DR-20** | **코드 서명은 별도 요청 시 별도 진행** — 지금은 무서명(계열 v1과 동일) | DP-10 → 사용자 09-12 | ✅ 보류 확정 |
 
-## 2. 권장 확정 대기 (DP) — 내가 낸 결론 · 사용자 확인 필요
+## 2. 권장 확정 대기 (DP)
 
-| # | 내용 | 권장 · 근거 |
-|:--:|---|---|
-| **DP-1** | **단일 앱 vs DBMS별 앱** | ★ **단일 앱** — 차이는 방언 데이터 + 얇은 재작성으로 흡수되고([08 §4](08-session-variables.md) 실증), 1급 방언(Oracle·MSSQL)은 패키지로 깊게. 배포만 "에디션"으로 나눌 수 있다([01 §4](01-architecture.md)) |
-| **DP-2** | **지원 범위 v1** | 1급 Oracle · SQL Server(사용자 실무) → 2급 PostgreSQL · MySQL/MariaDB · SQLite → 3급 Tibero·Altibase·CUBRID(ODBC) → 확장 플러그인. NoSQL은 범위 밖 |
-| **DP-3** | **Oracle 드라이버** | 지금 `oracle`(kubo · ODPI-C · Instant Client는 사용자 지정 경로 로드) → 공식 순수 Rust `oracledb`(26.0.0-beta.3) GA 시 어댑터만 교체 |
-| **DP-4** | **SQL Server 드라이버** | `tiberius-ng`(2026-08 · TDS 8 · Entra) 우선, Microsoft `mssql-tds` 성숙 시 재평가 |
-| **DP-5** | **결과셋 모델** | 자체 컬럼형(`ResultSet` → 컬럼 벡터 + NULL 비트맵)로 시작. Arrow는 의존 트리가 커 계열 규율과 충돌 — export(Parquet)에서만 어댑터로 |
-| **DP-6** | **텍스트 셰이핑 크레이트** | `rustybuzz`(MIT · 의존 작음) + 자체 폴백/폭 계산. `cosmic-text`는 preedit 부재·의존 큼 |
-| **DP-7** | **플러그인 런타임** | 1차 데이터 패키지(런타임 0) → 2차 WASM `wasmi`(dir2 선례) → Lua는 수요 시 |
-| **DP-8** | **예산 게이트** | 기동 < 1s · 유휴 RSS < 80MB · 10만 행 그리드 < 150MB · 바이너리 ≤ 30MB(드라이버 포함) — CI 게이트(clip DR-9 방식) |
-| **DP-9** | **첫 관통은 CLI(M1)** — GUI(M2) 전에 | 드라이버·엔진을 화면 없이 실기 검증 · 사용자 배치 스크립트 교체 가치가 즉시 발생 |
-| **DP-10** | **코드 서명** | Windows = Azure Artifact Signing(월 $9.99 · **법인 필요**) · macOS = Developer ID($99/년). 계열 공통 문제(clip T-48)라 한 번에 결정 |
+> 09-12 DP-1~9 → DR-10~18로 승격(사용자 *"나머진 한꺼번에 개발 진행"*). DP-10(서명) → DR-20 보류. 현재 대기 항목 없음.
 
 ## 3. 열린 결정 (D)
 

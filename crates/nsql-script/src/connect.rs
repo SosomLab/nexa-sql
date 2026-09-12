@@ -128,6 +128,11 @@ impl ConnectSpec {
                 s.push_str(db);
             }
         }
+        if self.host.is_none() {
+            if let Some(db) = &self.database {
+                s.push_str(db);
+            }
+        }
         if let Some(r) = &self.role {
             s.push_str(" AS ");
             s.push_str(r);

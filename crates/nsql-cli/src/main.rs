@@ -1,174 +1,385 @@
-//! `nsql` — 명령줄 도구(docs/11). M0에서는 **dry-run 플래너**: 스크립트를 읽어 엔진이
-//! 무엇을 하려는지(로컬 대입 · 드라이버 요청 · 재작성된 SQL · 파라미터)를 출력한다.
-//! 드라이버가 붙으면(M1) `--connect`로 실제 실행한다. GUI(nexa-sql)와 같은 엔진을 쓴다.
+//! `nsql` — 명령줄 도구(docs/11). GUI와 같은 코어(`nsql-run`·`nsql-drivers`·`nsql-io`)를 쓴다.
 //!
 //! ```text
-//! nsql plan [--dialect oracle|mssql|postgres|mysql|sqlite|odbc] <script.sql> [args...]
-//! nsql plan --dialect mssql -            # stdin
+//! nsql plan   [-d dialect] <script|-> [args...]                 # 실행 없이 계획 출력(DB 불요)
+//! nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args...]
+//! nsql shell  -c <target> [-d dialect]                          # 대화형(줄 단위 · `;`/`/`/명령으로 실행 · exit)
+//! nsql export -c <target> (-q <sql> | -t <table>) [-f csv|tsv|json|jsonl|insert[:T]] [-o file]
+//! target: sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
-use nsql_core::Dialect;
-use nsql_script::{split_script, Action, Engine, ItemKind};
-use std::io::Read;
+mod plan;
 
-fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
-        eprintln!("사용: nsql plan [--dialect <name>] <script.sql | -> [스크립트 인자...]");
-        std::process::exit(2);
+use nsql_core::{DbError, Dialect, Session};
+use nsql_io::Format;
+use nsql_run::{Opener, RunEvent, Runner};
+use nsql_script::{split_script, ConnectSpec};
+use std::io::{self, BufRead, Read, Write};
+
+struct Opts {
+    cmd: String,
+    target: Option<String>,
+    dialect: Dialect,
+    format: Format,
+    no_prompt: bool,
+    query: Option<String>,
+    table: Option<String>,
+    out: Option<String>,
+    positional: Vec<String>,
+}
+
+fn usage() -> ! {
+    eprintln!(
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n\n  target: sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
+    );
+    std::process::exit(2);
+}
+
+fn parse_opts() -> Opts {
+    let mut args = std::env::args().skip(1);
+    let Some(cmd) = args.next() else { usage() };
+    if cmd == "-h" || cmd == "--help" {
+        usage();
     }
-    if args[0] != "plan" {
-        eprintln!(
-            "nsql: 아직 'plan'만 지원합니다(드라이버는 M1). 받은 명령: {}",
-            args[0]
-        );
-        std::process::exit(2);
+    if cmd == "--version" || cmd == "-V" {
+        println!("nsql {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
     }
-    let mut dialect = Dialect::Oracle;
-    let mut rest = args[1..].iter();
-    let mut path: Option<String> = None;
-    let mut script_args: Vec<String> = Vec::new();
-    while let Some(a) = rest.next() {
-        if a == "--dialect" || a == "-d" {
-            let Some(v) = rest.next() else {
-                eprintln!("--dialect 값이 없습니다");
-                std::process::exit(2);
-            };
-            dialect = match Dialect::from_name(v) {
-                Some(d) => d,
+    let mut o = Opts {
+        cmd,
+        target: None,
+        dialect: Dialect::Oracle,
+        format: Format::Grid,
+        no_prompt: false,
+        query: None,
+        table: None,
+        out: None,
+        positional: Vec::new(),
+    };
+    let mut it = args.peekable();
+    while let Some(a) = it.next() {
+        let mut val = |name: &str| -> String {
+            match it.next() {
+                Some(v) => v,
                 None => {
-                    eprintln!("알 수 없는 방언: {v}");
+                    eprintln!("{name} 값이 없습니다");
                     std::process::exit(2);
                 }
-            };
-        } else if path.is_none() {
-            path = Some(a.clone());
-        } else {
-            script_args.push(a.clone());
+            }
+        };
+        match a.as_str() {
+            "-c" | "--connect" => o.target = Some(val("-c")),
+            "-d" | "--dialect" => {
+                let v = val("-d");
+                o.dialect = Dialect::from_name(&v).unwrap_or_else(|| {
+                    eprintln!("알 수 없는 방언: {v}");
+                    std::process::exit(2)
+                });
+            }
+            "-f" | "--format" => {
+                let v = val("-f");
+                o.format = Format::parse(&v).unwrap_or_else(|| {
+                    eprintln!("알 수 없는 형식: {v}");
+                    std::process::exit(2)
+                });
+            }
+            "-q" | "--query" => o.query = Some(val("-q")),
+            "-t" | "--table" => o.table = Some(val("-t")),
+            "-o" | "--out" => o.out = Some(val("-o")),
+            "--no-prompt" => o.no_prompt = true,
+            _ => o.positional.push(a),
         }
     }
-    let Some(path) = path else {
-        eprintln!("스크립트 경로가 없습니다");
-        std::process::exit(2);
-    };
-    let src = if path == "-" {
+    o
+}
+
+fn read_source(path: &str) -> String {
+    if path == "-" {
         let mut s = String::new();
-        if let Err(e) = std::io::stdin().read_to_string(&mut s) {
+        if let Err(e) = io::stdin().read_to_string(&mut s) {
             eprintln!("stdin 읽기 실패: {e}");
             std::process::exit(1);
         }
         s
     } else {
-        match std::fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{path}: {e}");
-                std::process::exit(1);
-            }
-        }
-    };
-    let code = run_plan(dialect, &src, &script_args);
-    std::process::exit(code);
+        std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("{path}: {e}");
+            std::process::exit(1)
+        })
+    }
 }
 
-fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i32 {
-    let mut engine = Engine::new(dialect);
-    engine.set_args(script_args);
-    let items = split_script(src);
-    println!("# dialect={dialect} items={}", items.len());
-    let mut errors = 0;
-    for (i, item) in items.iter().enumerate() {
-        let label = match &item.kind {
-            ItemKind::Command(c) => format!("{c:?}")
-                .split(|c: char| !c.is_alphanumeric())
-                .next()
-                .unwrap_or("Command")
-                .to_string(),
-            ItemKind::Sql(k) => format!("Sql::{k:?}"),
-            ItemKind::Invalid(_) => "Invalid".into(),
-        };
-        println!("\n[{}] line {} · {label}", i + 1, item.line);
-        // 치환 변수 미정의는 여기서 프롬프트 대신 빈 값으로 채운다(비대화형).
-        let mut guard = 0;
-        loop {
-            let acts = engine.plan(item);
-            if let [Action::NeedInput { name }] = acts.as_slice() {
-                eprintln!("  ! 치환 변수 &{name} 미정의 → 빈 값으로 진행");
-                engine.define(name, "");
-                guard += 1;
-                if guard > 64 {
-                    break;
+fn opener(default_dialect: Dialect) -> Opener {
+    Box::new(
+        move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
+            nsql_drivers::open(spec, default_dialect)
+        },
+    )
+}
+
+/// 이벤트 → 터미널 출력. 반환 = 오류 수.
+struct Printer {
+    format: Format,
+    dialect: Dialect,
+    errors: usize,
+    feedback: bool,
+}
+
+impl Printer {
+    fn handle(&mut self, ev: RunEvent) {
+        let out = io::stdout();
+        let mut out = out.lock();
+        match ev {
+            RunEvent::Begin { .. } => {}
+            RunEvent::ResultSet { rs, elapsed, .. } => {
+                let _ = nsql_io::write_result_set(&mut out, &rs, &self.format, self.dialect);
+                if self.feedback && self.format == Format::Grid {
+                    let _ = writeln!(
+                        out,
+                        "\n{} rows ({:.3}s)\n",
+                        rs.rows.len(),
+                        elapsed.as_secs_f64()
+                    );
                 }
-                continue;
             }
-            for a in acts {
-                match a {
-                    Action::Execute {
-                        prepared,
-                        expect_out,
-                        kind,
-                    } => {
-                        println!(
-                            "  → EXECUTE ({kind:?} · {:?} · out={expect_out})",
-                            prepared.mode
-                        );
-                        for l in prepared.sql.lines() {
-                            println!("    | {l}");
+            RunEvent::Done {
+                rows_affected,
+                elapsed,
+                ..
+            } => {
+                if self.feedback {
+                    match rows_affected {
+                        Some(n) => {
+                            let _ =
+                                writeln!(out, "{n} rows affected ({:.3}s)", elapsed.as_secs_f64());
                         }
-                        for p in &prepared.params {
-                            println!(
-                                "    · {} {:?} {:?} = {}",
-                                p.name,
-                                p.ty,
-                                p.direction,
-                                p.value.to_sql_literal(dialect)
-                            );
+                        None => {
+                            let _ = writeln!(out, "OK ({:.3}s)", elapsed.as_secs_f64());
                         }
-                        if !prepared.implicit.is_empty() {
-                            println!("    ! 암묵 변수: {}", prepared.implicit.join(", "));
-                        }
-                    }
-                    Action::LocalAssign { name, value } => {
-                        println!("  → LOCAL  :{name} = {}", value.to_sql_literal(dialect))
-                    }
-                    Action::Print(list) => {
-                        for (n, v) in list {
-                            println!("  → PRINT  {n} = {}", v.display());
-                        }
-                    }
-                    Action::Connect(c) => println!("  → CONNECT {}", c.redacted()),
-                    Action::Disconnect => println!("  → DISCONNECT"),
-                    Action::Describe(o) => println!("  → DESCRIBE {o}"),
-                    Action::Show(w) => println!("  → SHOW {w}"),
-                    Action::Spool(t) => println!("  → SPOOL {t}"),
-                    Action::Prompt(t) => println!("  → PROMPT {t}"),
-                    Action::RunScript {
-                        path,
-                        args,
-                        relative_to_caller,
-                    } => println!("  → RUN {path} {args:?} (relative={relative_to_caller})"),
-                    Action::NeedInput { name } => println!("  → INPUT &{name}"),
-                    Action::Nothing(msg) => println!("  · {msg}"),
-                    Action::Error(e) => {
-                        errors += 1;
-                        println!("  ✗ {e}");
                     }
                 }
             }
-            break;
+            RunEvent::Print { pairs } => {
+                for (n, v) in pairs {
+                    let _ = writeln!(out, "{n} = {}", v.display());
+                }
+            }
+            RunEvent::Message(m) => {
+                let _ = writeln!(out, "{m}");
+            }
+            RunEvent::Connected {
+                description,
+                dialect,
+            } => {
+                self.dialect = dialect;
+                let _ = writeln!(out, "Connected: {description} ({dialect})");
+            }
+            RunEvent::Disconnected => {
+                let _ = writeln!(out, "Disconnected");
+            }
+            RunEvent::Error { line, error, .. } => {
+                self.errors += 1;
+                let _ = out.flush();
+                eprintln!("ERROR line {line}: {error}");
+            }
         }
     }
-    println!(
-        "\n# variables={} defines={} errors={errors}",
-        engine.vars.len(),
-        engine.defines.len()
-    );
-    for (n, v) in engine.vars.iter() {
-        println!("  :{n} {:?} = {}", v.ty, v.value.display());
+}
+
+fn connect_or_exit(runner: &mut Runner, target: &str, dialect: Dialect, printer: &mut Printer) {
+    let spec = nsql_drivers::parse_target(target, dialect).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2)
+    });
+    let ok = runner.connect(&spec, &mut |e| printer.handle(e));
+    if !ok {
+        std::process::exit(1);
+    }
+}
+
+fn prompt_stdin(name: &str) -> Option<String> {
+    eprint!("Enter value for {name}: ");
+    let _ = io::stderr().flush();
+    let mut s = String::new();
+    io::stdin().lock().read_line(&mut s).ok()?;
+    Some(s.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn cmd_run(o: &Opts) -> i32 {
+    let Some(target) = &o.target else {
+        eprintln!("-c <target>가 필요합니다");
+        return 2;
+    };
+    let Some(path) = o.positional.first() else {
+        eprintln!("스크립트 경로가 필요합니다(- = stdin)");
+        return 2;
+    };
+    let src = read_source(path);
+    let mut printer = Printer {
+        format: o.format.clone(),
+        dialect: o.dialect,
+        errors: 0,
+        feedback: true,
+    };
+    let mut runner = Runner::new(o.dialect, opener(o.dialect));
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    runner.engine.set_args(&o.positional[1..]);
+    let no_prompt = o.no_prompt || path == "-";
+    let mut prompt = |name: &str| if no_prompt { None } else { prompt_stdin(name) };
+    let errs = runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
+    if let Some(s) = runner.session.as_mut() {
+        let _ = s.commit();
+    }
+    if errs > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+fn cmd_shell(o: &Opts) -> i32 {
+    let Some(target) = &o.target else {
+        eprintln!("-c <target>가 필요합니다");
+        return 2;
+    };
+    let mut printer = Printer {
+        format: o.format.clone(),
+        dialect: o.dialect,
+        errors: 0,
+        feedback: true,
+    };
+    let mut runner = Runner::new(o.dialect, opener(o.dialect));
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지");
+    let stdin = io::stdin();
+    let mut buf = String::new();
+    loop {
+        eprint!("{}", if buf.is_empty() { "nsql> " } else { "   -> " });
+        let _ = io::stderr().flush();
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let t = line.trim_end_matches(['\r', '\n']);
+        if buf.is_empty()
+            && matches!(
+                t.trim().to_ascii_lowercase().as_str(),
+                "exit" | "quit" | "\\q"
+            )
+        {
+            break;
+        }
+        buf.push_str(t);
+        buf.push('\n');
+        let first = buf.lines().next().unwrap_or("").trim();
+        let complete = t.trim() == "/"
+            || t.trim().eq_ignore_ascii_case("GO")
+            || t.trim_end().ends_with(';')
+            || (nsql_script::command::is_command_start(first)
+                && !first.to_ascii_uppercase().starts_with("EXEC")
+                || buf.lines().count() == 1
+                    && nsql_script::command::is_command_start(first)
+                    && !t.trim_end().is_empty()
+                    && first != "EXEC");
+        if !complete {
+            continue;
+        }
+        let src = std::mem::take(&mut buf);
+        let mut prompt = prompt_stdin;
+        runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
+    }
+    if let Some(s) = runner.session.as_mut() {
+        let _ = s.commit();
+    }
+    0
+}
+
+fn cmd_export(o: &Opts) -> i32 {
+    let Some(target) = &o.target else {
+        eprintln!("-c <target>가 필요합니다");
+        return 2;
+    };
+    let sql = match (&o.query, &o.table) {
+        (Some(q), _) => q.clone(),
+        (None, Some(t)) => format!("SELECT * FROM {t}"),
+        (None, None) => {
+            eprintln!("-q <sql> 또는 -t <table>이 필요합니다");
+            return 2;
+        }
+    };
+    let format = match (&o.format, &o.table) {
+        (Format::Grid, _) => Format::Csv,
+        (Format::Insert { table }, Some(t)) if table == "T" => Format::Insert { table: t.clone() },
+        (f, _) => f.clone(),
+    };
+    let mut printer = Printer {
+        format: Format::Grid,
+        dialect: o.dialect,
+        errors: 0,
+        feedback: false,
+    };
+    let mut runner = Runner::new(o.dialect, opener(o.dialect));
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    let dialect = runner.engine.dialect;
+    let mut out: Box<dyn Write> = match &o.out {
+        Some(p) => Box::new(std::fs::File::create(p).unwrap_or_else(|e| {
+            eprintln!("{p}: {e}");
+            std::process::exit(1)
+        })),
+        None => Box::new(io::stdout()),
+    };
+    let items = split_script(&format!("{sql};"));
+    let mut errors = 0;
+    let mut rows = 0usize;
+    let mut no_prompt = |_: &str| None;
+    for (i, item) in items.iter().enumerate() {
+        runner.run_item(i, item, &mut no_prompt, &mut |e| match e {
+            RunEvent::ResultSet { rs, .. } => {
+                rows += rs.rows.len();
+                if let Err(e) = nsql_io::write_result_set(&mut out, &rs, &format, dialect) {
+                    eprintln!("쓰기 실패: {e}");
+                    errors += 1;
+                }
+            }
+            RunEvent::Error { error, .. } => {
+                eprintln!("ERROR: {error}");
+                errors += 1;
+            }
+            _ => {}
+        });
+    }
+    let _ = out.flush();
+    if o.out.is_some() {
+        eprintln!("{rows} rows → {}", o.out.as_deref().unwrap_or("-"));
     }
     if errors > 0 {
         1
     } else {
         0
     }
+}
+
+fn main() {
+    let o = parse_opts();
+    let code = match o.cmd.as_str() {
+        "plan" => {
+            let Some(path) = o.positional.first() else {
+                eprintln!("스크립트 경로가 필요합니다(- = stdin)");
+                std::process::exit(2)
+            };
+            let src = read_source(path);
+            plan::run_plan(o.dialect, &src, &o.positional[1..])
+        }
+        "run" => cmd_run(&o),
+        "shell" => cmd_shell(&o),
+        "export" => cmd_export(&o),
+        other => {
+            eprintln!("알 수 없는 명령: {other}\n");
+            usage()
+        }
+    };
+    std::process::exit(code);
 }

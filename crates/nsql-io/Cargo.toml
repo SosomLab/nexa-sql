@@ -1,0 +1,15 @@
+[package]
+name = "nsql-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL export/import 작성기·파서 — csv/tsv/json/jsonl/insert/텍스트 표 (의존 0)"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true

@@ -39,42 +39,61 @@ pub struct Item {
 }
 
 pub fn split_script(src: &str) -> Vec<Item> {
+    let classes = classify(src);
+    let b = src.as_bytes();
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            b.iter()
+                .enumerate()
+                .filter(|(_, c)| **c == b'\n')
+                .map(|(i, _)| i + 1),
+        )
+        .collect();
+    let line_of = |off: usize| -> usize { line_starts.partition_point(|&s| s <= off) };
+    let line_end = |off: usize| -> usize {
+        b[off..]
+            .iter()
+            .position(|&c| c == b'\n')
+            .map_or(b.len(), |p| off + p)
+    };
     let mut items = Vec::new();
-    let lines: Vec<(usize, &str)> = line_offsets(src);
-    let mut i = 0;
-    while i < lines.len() {
-        let (off, raw) = lines[i];
-        let line = raw.trim_end_matches('\r');
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            i += 1;
+    let mut pos = 0usize;
+    while pos < b.len() {
+        // 공백·개행 건너뛰기
+        while pos < b.len() && (b[pos] as char).is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos >= b.len() {
+            break;
+        }
+        let le = line_end(pos);
+        let rest = src[pos..le].trim_end_matches('\r').trim();
+        if rest.starts_with("--")
+            || classes[pos] == Class::BlockComment && is_comment_only_line(src, &classes, pos, le)
+        {
+            pos = le;
             continue;
         }
-        // 줄 주석만 있는 줄 — 건너뛴다(항목 아님).
-        if trimmed.starts_with("--") {
-            i += 1;
+        if rest == "/" || rest.eq_ignore_ascii_case("GO") {
+            pos = le;
             continue;
         }
-        if trimmed == "/" {
-            i += 1;
-            continue;
-        }
-        if is_command_start(trimmed) {
-            let word = trimmed
+        if is_command_start(rest) {
+            let word = rest
                 .chars()
                 .take_while(|c| c.is_ascii_alphabetic())
                 .collect::<String>()
                 .to_ascii_uppercase();
             let is_bare_exec = matches!(word.as_str(), "EXEC" | "EXECUTE")
-                && trimmed[word.len()..]
+                && rest[word.len()..]
                     .trim()
                     .trim_end_matches(';')
                     .trim()
                     .is_empty();
+            let start = pos;
             if is_bare_exec {
-                // 블록 EXEC: 다음 줄부터 본문.
-                let start_line = i + 1;
-                let (body, end_i, end_off) = collect_block_exec(src, &lines, start_line);
+                let (body, end_off, next) =
+                    collect_block_exec(src, &classes, (le + 1).min(b.len()));
                 let text = format!("EXEC {}", body.trim());
                 let kind = match parse_command(&text) {
                     Ok(Some(c)) => ItemKind::Command(c),
@@ -84,25 +103,47 @@ pub fn split_script(src: &str) -> Vec<Item> {
                 items.push(Item {
                     kind,
                     text,
-                    span: off..end_off,
-                    line: i + 1,
+                    span: start..end_off,
+                    line: line_of(start),
                 });
-                i = end_i;
+                pos = next;
                 continue;
             }
-            // 줄 연속(`-`로 끝나는 줄) — SQL*Plus 관용.
-            let mut text = trimmed.to_string();
-            let mut end_off = off + raw.len();
-            let mut j = i;
-            while text.ends_with('-') && j + 1 < lines.len() {
+            // 한 줄 명령 — 코드 영역 `;`가 있으면 거기서 끊는다(뒤 문장은 다음 항목). PROMPT·REM·@는 줄 전체.
+            let whole_line =
+                matches!(word.as_str(), "PROMPT" | "REM" | "REMARK") || rest.starts_with('@');
+            let semi = if whole_line {
+                None
+            } else {
+                (pos..le).find(|&i| b[i] == b';' && classes[i] == Class::Code)
+            };
+            if let Some(semi) = semi {
+                let text = src[pos..semi].trim().to_string();
+                let kind = match parse_command(&text) {
+                    Ok(Some(c)) => ItemKind::Command(c),
+                    Ok(None) => ItemKind::Sql(classify_sql(&text)),
+                    Err(e) => ItemKind::Invalid(e),
+                };
+                items.push(Item {
+                    kind,
+                    text,
+                    span: start..semi + 1,
+                    line: line_of(start),
+                });
+                pos = semi + 1;
+                continue;
+            }
+            let mut text = rest.to_string();
+            let mut end_off = le;
+            while text.ends_with('-') && end_off < b.len() {
                 text.pop();
-                let trimmed_len = text.trim_end().len();
-                text.truncate(trimmed_len);
-                j += 1;
-                let (o2, r2) = lines[j];
+                let t = text.trim_end().len();
+                text.truncate(t);
+                let ns = end_off + 1;
+                let ne = line_end(ns);
                 text.push(' ');
-                text.push_str(r2.trim_end_matches('\r').trim());
-                end_off = o2 + r2.len();
+                text.push_str(src[ns..ne].trim_end_matches('\r').trim());
+                end_off = ne;
             }
             let kind = match parse_command(&text) {
                 Ok(Some(c)) => ItemKind::Command(c),
@@ -112,125 +153,100 @@ pub fn split_script(src: &str) -> Vec<Item> {
             items.push(Item {
                 kind,
                 text: text.trim_end_matches(';').trim().to_string(),
-                span: off..end_off,
-                line: i + 1,
+                span: start..end_off,
+                line: line_of(start),
             });
-            i = j + 1;
+            pos = end_off;
             continue;
         }
-        // SQL 또는 PL/SQL 블록.
-        let (text, end_i, end_off) = collect_sql(src, &lines, i);
+        let (text, end_off, next) = collect_sql(src, &classes, pos, rest);
         let kind = ItemKind::Sql(classify_sql(&text));
         items.push(Item {
             kind,
             text,
-            span: off..end_off,
-            line: i + 1,
+            span: pos..end_off,
+            line: line_of(pos),
         });
-        i = end_i;
+        pos = next;
     }
     items
 }
 
-fn line_offsets(src: &str) -> Vec<(usize, &str)> {
-    let mut v = Vec::new();
-    let mut off = 0;
-    for l in src.split_inclusive('\n') {
-        let body = l.strip_suffix('\n').unwrap_or(l);
-        v.push((off, body));
-        off += l.len();
-    }
-    v
+/// 줄 전체가 블록 주석 안인가(`/* … */`만 있는 줄 건너뛰기).
+fn is_comment_only_line(src: &str, classes: &[Class], from: usize, to: usize) -> bool {
+    src[from..to]
+        .bytes()
+        .enumerate()
+        .all(|(i, c)| c.is_ascii_whitespace() || classes[from + i] == Class::BlockComment)
 }
 
-/// `EXEC`(홀로) 다음 줄부터 본문을 모은다: `;`로 끝나는 줄 · 단독 `/` · 빈 줄 · 다음 명령 시작에서 멈춘다.
-fn collect_block_exec<'a>(
-    src: &'a str,
-    lines: &[(usize, &'a str)],
-    start: usize,
-) -> (String, usize, usize) {
-    let mut j = start;
-    let mut end_off = lines
-        .get(start.saturating_sub(1))
-        .map_or(0, |(o, r)| o + r.len());
+/// `EXEC`(홀로) 다음 줄부터 본문을 모은다: 코드 영역 `;` · 단독 `/` · 빈 줄 · 다음 명령 시작에서 멈춘다.
+/// 반환 = (본문, 항목 끝 오프셋, 다음 스캔 위치).
+fn collect_block_exec(src: &str, classes: &[Class], from: usize) -> (String, usize, usize) {
+    let b = src.as_bytes();
+    let mut pos = from;
     let mut body_start: Option<usize> = None;
-    let mut body_end: Option<usize> = None;
-    while j < lines.len() {
-        let (o, r) = lines[j];
-        let t = r.trim_end_matches('\r').trim();
+    while pos < b.len() {
+        let ls = pos;
+        let le = b[ls..]
+            .iter()
+            .position(|&c| c == b'\n')
+            .map_or(b.len(), |p| ls + p);
+        let t = src[ls..le].trim_end_matches('\r').trim();
         if t.is_empty() || t == "/" || (body_start.is_some() && is_command_start(t)) {
-            if t == "/" {
-                end_off = o + r.len();
-                j += 1;
-            }
-            break;
+            let end = body_start.map_or(ls, |_| ls);
+            let next = if t == "/" { le } else { ls };
+            let body = body_start
+                .map(|s| src[s..end].trim().to_string())
+                .unwrap_or_default();
+            return (body, end, next);
         }
-        let bs = *body_start.get_or_insert(o);
-        end_off = o + r.len();
-        j += 1;
-        if let Some(semi) = terminated_by_semicolon(&src[bs..end_off]) {
-            body_end = Some(bs + semi);
-            break;
+        if body_start.is_none() {
+            body_start = Some(ls + (src[ls..le].len() - src[ls..le].trim_start().len()));
         }
+        // 이 줄 안의 코드 `;`
+        if let Some(semi) = (ls..le).find(|&i| b[i] == b';' && classes[i] == Class::Code) {
+            let body = src[body_start.unwrap_or(ls)..semi].trim().to_string();
+            return (body, semi + 1, semi + 1);
+        }
+        pos = le + 1;
     }
     let body = body_start
-        .map(|s| src[s..body_end.unwrap_or(end_off)].trim().to_string())
+        .map(|s| src[s..].trim().to_string())
         .unwrap_or_default();
-    (body, j, end_off)
+    (body, b.len(), b.len())
 }
 
-/// SQL 문 하나를 모은다. 블록이면 `/`까지, 아니면 코드 영역의 `;`까지. `GO` 줄도 종결.
-fn collect_sql<'a>(
-    src: &'a str,
-    lines: &[(usize, &'a str)],
+/// SQL 문 하나. 블록이면 단독 `/`·`GO` 줄까지, 아니면 코드 영역 `;`까지(같은 줄 뒤 문장은 다음 항목).
+/// 반환 = (텍스트, 항목 끝 오프셋, 다음 스캔 위치).
+fn collect_sql(
+    src: &str,
+    classes: &[Class],
     start: usize,
+    first_line: &str,
 ) -> (String, usize, usize) {
-    let (start_off, _) = lines[start];
-    let is_block = starts_block(lines[start].1.trim());
-    let mut j = start;
-    let mut end_off = start_off;
-    let mut text_end: Option<usize> = None;
-    while j < lines.len() {
-        let (o, r) = lines[j];
-        let t = r.trim_end_matches('\r').trim();
-        if j > start && (t == "/" || t.eq_ignore_ascii_case("GO")) {
-            j += 1;
-            break;
+    let b = src.as_bytes();
+    let is_block = starts_block(first_line);
+    let mut i = start;
+    while i < b.len() {
+        if !is_block && b[i] == b';' && classes[i] == Class::Code {
+            return (src[start..i].trim().to_string(), i + 1, i + 1);
         }
-        end_off = o + r.len();
-        j += 1;
-        if !is_block {
-            if let Some(semi) = terminated_by_semicolon(&src[start_off..end_off]) {
-                text_end = Some(start_off + semi);
-                break;
+        if b[i] == b'\n' {
+            // 다음 줄이 단독 `/` 또는 `GO`면 종결.
+            let ns = i + 1;
+            let ne = b[ns.min(b.len())..]
+                .iter()
+                .position(|&c| c == b'\n')
+                .map_or(b.len(), |p| ns + p);
+            let t = src[ns.min(b.len())..ne].trim_end_matches('\r').trim();
+            if t == "/" || t.eq_ignore_ascii_case("GO") {
+                return (src[start..i].trim().to_string(), i, ne);
             }
         }
+        i += 1;
     }
-    let text = src[start_off..text_end.unwrap_or(end_off)]
-        .trim()
-        .to_string();
-    (text, j, end_off)
-}
-
-/// 코드 영역의 마지막 비공백 문자가 `;`이면 그 위치(주석 꼬리 `… ; -- x`는 건너뛴다).
-fn terminated_by_semicolon(chunk: &str) -> Option<usize> {
-    let classes = classify(chunk);
-    let b = chunk.as_bytes();
-    let mut k = b.len();
-    while k > 0 {
-        k -= 1;
-        if classes[k] != Class::Code {
-            if classes[k] == Class::LineComment || classes[k] == Class::BlockComment {
-                continue;
-            }
-            return None;
-        }
-        if b[k].is_ascii_whitespace() {
-            continue;
-        }
-        return if b[k] == b';' { Some(k) } else { None };
-    }
-    None
+    (src[start..].trim().to_string(), b.len(), b.len())
 }
 
 fn starts_block(first_line: &str) -> bool {
@@ -354,6 +370,21 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(
             matches!(&items[0].kind, ItemKind::Command(Command::Exec { body }) if body == "pkg.run(:a, 'x')")
+        );
+    }
+
+    #[test]
+    fn multiple_statements_on_one_line() {
+        let s = "CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1); SELECT * FROM t;";
+        let items = split_script(s);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[1].text, "INSERT INTO t VALUES (1)");
+        assert_eq!(items[2].line, 1);
+        let s = "EXEC :a := 1; SELECT :a FROM dual;\n";
+        let items = split_script(s);
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert!(
+            matches!(&items[0].kind, ItemKind::Command(Command::Exec { body }) if body == ":a := 1")
         );
     }
 

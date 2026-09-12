@@ -311,6 +311,15 @@ pub trait Session {
     fn fetch_cursor(&mut self, cursor: CursorId) -> Result<ResultSet, DbError>;
     fn commit(&mut self) -> Result<(), DbError>;
     fn rollback(&mut self) -> Result<(), DbError>;
+    /// 세션 옵션(`serveroutput` = on/off · `fetch_size` = n …). 모르는 옵션은 무시한다.
+    fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
+        let _ = (name, value);
+        Ok(())
+    }
+    /// 접속 설명(상태줄).
+    fn describe(&self) -> String {
+        self.dialect().to_string()
+    }
 }
 
 #[cfg(test)]

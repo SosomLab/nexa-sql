@@ -1,0 +1,17 @@
+[package]
+name = "nsql-driver-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 어댑터 — SQLite(rusqlite bundled). 실DB로 엔진을 검증하는 1호 어댑터"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+# DR-3 예외(드라이버). bundled = SQLite를 정적 링크 — 시스템 의존 0.
+rusqlite = { version = "0.32", features = ["bundled"] }

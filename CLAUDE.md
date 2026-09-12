@@ -8,7 +8,7 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M0 완료(2026-09-12)** — 조사 5건 · `nexa-ui` 추출 · ★ 세션 변수 엔진 `nsql-script`(37 테스트) · `nsql plan` 동작. **DP-1~10 사용자 확정 대기.**
+- 현 단계: **M1·M2 병행 진행(2026-09-12 2차)** — 드라이버 3종(sqlite 실기 · oracle/mssql 구현·컴파일) · `nsql run/shell/export` · 최소 GUI 창 · DR-1~20 확정. **⏳ 사용자 실기: GUI 창 · Oracle/MSSQL 실서버.**
 
 ### 참조 원천 (재발명 금지)
 
@@ -31,7 +31,12 @@
 | DR-6 | **CLI `nsql` 포함**(접속·스크립트·export/import·bulk) — GUI와 같은 코어 |
 | DR-7 | **4계층**: UI / Core / Network / 어댑터 — 허브 포트로만 연계(④→③←①, ①→②) |
 | DR-8 | **세션 변수는 클라이언트에 산다** — 리터럴 대입 로컬 · 방언 재작성(MSSQL `sp_executesql` OUTPUT · `SELECT @X=`) |
-| DP-9 | (확인 대기) **CLI 먼저 관통(M1)**, GUI는 M2 |
+| DR-10~18 | 단일 앱 · 지원 범위 3급 · 드라이버 선택 · 자체 결과셋 · rustybuzz · WASM 플러그인 · 예산 · **CLI+최소 GUI 병행** |
+| DR-19 | **한글·고정폭 1급**(`nexa-font` · 편집기/그리드 고정폭 + 한글 폴백) |
+| DR-20 | 코드 서명은 **별도 요청 시** |
+
+### 설계 문서 지도(요구별)
+편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
 
 ## 3. 작업 규약
 

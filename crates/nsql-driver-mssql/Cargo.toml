@@ -1,0 +1,25 @@
+[package]
+name = "nsql-driver-mssql"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 어댑터 — SQL Server(tiberius · TDS). DECLARE @v = @Pn 배치 + 트레일러 SELECT로 OUT 회수"
+
+[features]
+# Windows 통합 인증(SSPI) — Windows에서만 의미. 기본 켬(Windows 타깃 빌드 시 tiberius winauth).
+winauth = ["tiberius/winauth"]
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+# DR-13. 런타임 독립 드라이버 — 어댑터 내부에 tokio 현재 스레드 런타임을 둔다(동기 Session 포트).
+tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls", "chrono"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+chrono = "0.4"
