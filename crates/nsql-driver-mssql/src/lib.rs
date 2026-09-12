@@ -54,6 +54,31 @@ fn io_err(e: std::io::Error) -> DbError {
     }
 }
 
+/// 실행 경로 — tiberius는 `query/execute`를 항상 `sp_executesql`(RPC)로 보낸다. 그 안에서 만든 `#temp`는 반환 시 사라지고
+/// `SET`·`USE`도 원복되므로, **파라미터 없는 DDL·세션 문장은 SQL 배치**(`simple_query`)로 보낸다(docs/05 §7 (a) 단점).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Route {
+    /// `sp_executesql` — 파라미터·OUT 트레일러·조회.
+    Rpc,
+    /// `sp_executesql` + rows affected — 파라미터 없는 DML.
+    Execute,
+    /// SQL 배치 — DDL · `#temp` · `SET`/`USE` · `IF`/`DECLARE`/`BEGIN` 등.
+    Batch,
+}
+
+pub fn route(sql: &str, has_params: bool, has_outs: bool) -> Route {
+    if has_params || has_outs {
+        return Route::Rpc;
+    }
+    let up = sql.trim_start().to_ascii_uppercase();
+    let first: String = up.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    match first.as_str() {
+        "SELECT" | "WITH" => Route::Rpc,
+        "INSERT" | "UPDATE" | "DELETE" | "MERGE" => Route::Execute,
+        _ => Route::Batch,
+    }
+}
+
 /// 배치 렌더링 — 순수 함수(테스트 대상). `(배치 텍스트, 위치 파라미터, 트레일러 컬럼 이름들)`.
 pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
     let mut head = String::new();
@@ -217,44 +242,56 @@ impl Session for MssqlSession {
         let (sql, values, outs) = render_batch(req);
         let boxed: Vec<Box<dyn ToSql>> = values.iter().map(to_param).collect();
         let refs: Vec<&dyn ToSql> = boxed.iter().map(|b| b.as_ref()).collect();
-        let up = req.sql.trim_start().to_ascii_uppercase();
-        let is_query = outs.is_empty()
-            && (up.starts_with("SELECT")
-                || up.starts_with("WITH")
-                || up.starts_with("EXEC")
-                || up.starts_with("DECLARE"));
         let client = &mut self.client;
         let mut result = ExecResult::default();
-        if is_query || !outs.is_empty() {
-            let sets: Vec<Vec<Row>> = self.rt.block_on(async {
-                let stream = client.query(sql.as_str(), &refs).await.map_err(err)?;
-                stream.into_results().await.map_err(err)
-            })?;
-            let mut result_sets: Vec<ResultSet> = sets
-                .iter()
-                .filter(|s| !s.is_empty())
-                .map(|s| rows_to_result_set(s))
-                .collect();
-            if !outs.is_empty() {
-                if let Some(trailer) = result_sets.pop() {
-                    if let Some(row) = trailer.rows.first() {
-                        for (c, v) in trailer.columns.iter().zip(row.iter()) {
-                            result
-                                .out_params
-                                .push((c.name.to_ascii_uppercase(), v.clone()));
+        match route(&req.sql, !values.is_empty(), !outs.is_empty()) {
+            Route::Rpc => {
+                let sets: Vec<Vec<Row>> = self.rt.block_on(async {
+                    let stream = client.query(sql.as_str(), &refs).await.map_err(err)?;
+                    stream.into_results().await.map_err(err)
+                })?;
+                let mut result_sets: Vec<ResultSet> = sets
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| rows_to_result_set(s))
+                    .collect();
+                if !outs.is_empty() {
+                    if let Some(trailer) = result_sets.pop() {
+                        if let Some(row) = trailer.rows.first() {
+                            for (c, v) in trailer.columns.iter().zip(row.iter()) {
+                                result
+                                    .out_params
+                                    .push((c.name.to_ascii_uppercase(), v.clone()));
+                            }
                         }
                     }
+                    if result_sets.is_empty() {
+                        result.rows_affected = Some(0);
+                    }
                 }
-                if result_sets.is_empty() {
-                    result.rows_affected = Some(0);
+                result.result_sets = result_sets;
+            }
+            Route::Execute => {
+                let n = self
+                    .rt
+                    .block_on(async { client.execute(sql.as_str(), &refs).await.map_err(err) })?;
+                result.rows_affected = Some(n.total());
+            }
+            Route::Batch => {
+                // SQL 배치(sp_executesql 아님) — `#temp`·SET·USE 같은 세션 상태가 남는다. 파라미터 없음.
+                let sets: Vec<Vec<Row>> = self.rt.block_on(async {
+                    let stream = client.simple_query(sql.as_str()).await.map_err(err)?;
+                    stream.into_results().await.map_err(err)
+                })?;
+                result.result_sets = sets
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| rows_to_result_set(s))
+                    .collect();
+                if result.result_sets.is_empty() {
+                    result.rows_affected = None;
                 }
             }
-            result.result_sets = result_sets;
-        } else {
-            let n = self
-                .rt
-                .block_on(async { client.execute(sql.as_str(), &refs).await.map_err(err) })?;
-            result.rows_affected = Some(n.total());
         }
         Ok(result)
     }
@@ -329,6 +366,22 @@ mod tests {
         );
         assert_eq!(params.len(), 3);
         assert_eq!(outs, vec!["V_CD", "V_SEQ"]);
+    }
+
+    #[test]
+    fn routing_rules() {
+        assert_eq!(route("SELECT 1", false, false), Route::Rpc);
+        assert_eq!(
+            route("INSERT INTO t VALUES (1)", false, false),
+            Route::Execute
+        );
+        assert_eq!(route("CREATE TABLE #t (a INT)", false, false), Route::Batch);
+        assert_eq!(
+            route("IF OBJECT_ID('x') IS NOT NULL DROP TABLE x", false, false),
+            Route::Batch
+        );
+        assert_eq!(route("SET NOCOUNT ON", false, false), Route::Batch);
+        assert_eq!(route("INSERT INTO t VALUES (@V)", true, false), Route::Rpc);
     }
 
     #[test]

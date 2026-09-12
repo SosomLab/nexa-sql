@@ -198,6 +198,8 @@ pub fn rewrite_select_into_tsql(sql: &str) -> String {
     let from = into + from_rel;
     let select_kw = sql.to_ascii_uppercase().find("SELECT").unwrap_or(0);
     let select_list = &sql[select_kw + 6..into];
+    // `TOP n` · `TOP (n)` · `DISTINCT` 접두는 대입 앞에 남긴다(T-SQL: SELECT TOP 1 @v = col …).
+    let (prefix, select_list) = split_select_prefix(select_list);
     let into_list = &sql[into + 4..from];
     let cols = split_top_level_commas(select_list);
     let targets: Vec<&str> = into_list
@@ -219,12 +221,65 @@ pub fn rewrite_select_into_tsql(sql: &str) -> String {
             )
         })
         .collect();
+    let prefix = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix} ")
+    };
     format!(
-        "{}SELECT {} {}",
+        "{}SELECT {prefix}{} {}",
         &sql[..select_kw],
         assigns.join(", "),
         sql[from..].trim_start()
     )
+}
+
+/// 선택 목록 앞의 `DISTINCT` · `TOP n` · `TOP (n) [PERCENT] [WITH TIES]`를 떼어낸다.
+fn split_select_prefix(list: &str) -> (String, &str) {
+    let mut rest = list.trim_start();
+    let mut prefix: Vec<String> = Vec::new();
+    loop {
+        let up = rest.to_ascii_uppercase();
+        if up.starts_with("DISTINCT") && rest[8..].starts_with(|c: char| c.is_whitespace()) {
+            prefix.push("DISTINCT".into());
+            rest = rest[8..].trim_start();
+            continue;
+        }
+        if up.starts_with("ALL ") {
+            prefix.push("ALL".into());
+            rest = rest[3..].trim_start();
+            continue;
+        }
+        if up.starts_with("TOP") && rest[3..].starts_with(|c: char| c.is_whitespace() || c == '(') {
+            let after = rest[3..].trim_start();
+            let n = if let Some(inner) = after.strip_prefix('(') {
+                let close = inner.find(')').map_or(inner.len(), |i| i + 1);
+                after[..close + 1].to_string()
+            } else {
+                after
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+            };
+            if n.is_empty() {
+                break;
+            }
+            let mut tail = after[n.len()..].trim_start();
+            let mut extra = String::new();
+            for kw in ["PERCENT", "WITH TIES"] {
+                if tail.to_ascii_uppercase().starts_with(kw) {
+                    extra.push(' ');
+                    extra.push_str(kw);
+                    tail = tail[kw.len()..].trim_start();
+                }
+            }
+            prefix.push(format!("TOP {n}{extra}"));
+            rest = tail;
+            continue;
+        }
+        break;
+    }
+    (prefix.join(" "), rest)
 }
 
 /// 괄호 깊이 0의 `,`로 나눈다(문자열·주석은 [`classify`]로 보호).
