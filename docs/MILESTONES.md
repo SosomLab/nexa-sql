@@ -18,10 +18,10 @@
 | 상태 | 항목 |
 |:--:|---|
 | 🚧 | `nsql-net` TCP/TLS · 취소 토큰 — 드라이버가 소켓을 소유하는 구조라 M1은 어댑터 내부 · 취소는 T-3b |
-| 🚧 | `nsql-driver-oracle`(kubo) — 이름 바인드·REF CURSOR·DBMS_OUTPUT **구현·컴파일** · ⏳ 실서버 검증 |
-| 🚧 | `nsql-driver-mssql`(tiberius) — DECLARE+트레일러 OUT 회수 **구현·컴파일** · ⏳ 실서버 검증 |
+| ✅ | `nsql-driver-oracle`(kubo) — 이름 바인드·REF CURSOR·DBMS_OUTPUT · **실서버 검증(Oracle Free 23ai)** |
+| ✅ | `nsql-driver-mssql`(tiberius) — DECLARE+트레일러 OUT 회수 · 배치 라우팅 · **실서버 검증(SQL Server 2022)** |
 | ✅ | `nsql-driver-sqlite` — 실DB 검증 어댑터 |
-| ✅ | `nsql run/shell/export`(grid/csv/tsv/json/jsonl/insert) · 세션 변수 실기(SQLite) |
+| ✅ | `nsql run/shell/export`(grid/csv/tsv/json/jsonl/insert) · 세션 변수 실기(SQLite · **Oracle · MSSQL**) |
 | ☐ | `import`/`bulk`(M4) · 연결 프로필·키체인(T-16b) |
 
 ## M2 — GUI 관통

@@ -29,9 +29,11 @@ impl ConnectSpec {
             return Err("CONNECT: 접속 문자열이 없습니다".into());
         }
         let mut spec = ConnectSpec::default();
+        let mut url_form = false;
 
         // 방언 스킴: mssql://…
         if let Some(i) = s.find("://") {
+            url_form = true;
             let scheme = s[..i].to_string();
             spec.dialect = Dialect::from_name(&scheme);
             if spec.dialect.is_none() {
@@ -74,10 +76,18 @@ impl ConnectSpec {
             Some(i) => (&logon[..i], Some(&logon[i + 1..])),
             None => (logon, None),
         };
+        // URL 형식(`scheme://`)이면 `%40` 같은 퍼센트 인코딩을 푼다(비밀번호의 `@`·`/`·`:`).
+        let decode = |v: &str| {
+            if url_form {
+                percent_decode(v)
+            } else {
+                v.to_string()
+            }
+        };
         if !user.is_empty() {
-            spec.user = Some(user.to_string());
+            spec.user = Some(decode(user));
         }
-        spec.password = pass.filter(|p| !p.is_empty()).map(str::to_string);
+        spec.password = pass.filter(|p| !p.is_empty()).map(decode);
         if let Some(t) = target {
             // host[:port][/database]
             let (hostport, db) = match t.find('/') {
@@ -141,6 +151,25 @@ impl ConnectSpec {
     }
 }
 
+/// `%XX` → 바이트(UTF-8). 잘못된 시퀀스는 그대로 둔다.
+pub fn percent_decode(v: &str) -> String {
+    let b = v.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(x) = u8::from_str_radix(&v[i + 1..i + 3], 16) {
+                out.push(x);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +203,14 @@ mod tests {
         assert_eq!(c.dialect, Some(Dialect::Mssql));
         assert_eq!(c.user.as_deref(), Some("sa"));
         assert_eq!(c.password.as_deref(), Some("p@ss"));
+        let c = ConnectSpec::parse("mssql://sa:Nexa%40Sql2026@h:1433/master").unwrap();
+        assert_eq!(c.password.as_deref(), Some("Nexa@Sql2026"));
+        let c = ConnectSpec::parse("u/p%40x@h:1521/svc").unwrap();
+        assert_eq!(
+            c.password.as_deref(),
+            Some("p%40x"),
+            "SQL*Plus 형식은 디코드하지 않는다"
+        );
         assert_eq!(c.host.as_deref(), Some("db.local"));
         let c = ConnectSpec::parse("u/p@h:5432/d?dialect=pg").unwrap();
         assert_eq!(c.dialect, Some(Dialect::Postgres));

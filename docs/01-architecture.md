@@ -68,8 +68,8 @@ UI 스레드는 기다리지 않는다(clip DR-41). 취소는 `nsql-net`의 취�
 | `nsql-io` | ③ | ✅ export 6형식 · CSV 파서 · CJK 폭 | 5 |
 | `nsql-run` | ③ 오케스트레이션 | ✅ Action 실행 · OUT 흡수 · 이벤트 · 프롬프트 | 3 |
 | `nsql-driver-sqlite` | ① | ✅ 실DB | 2 |
-| `nsql-driver-oracle` | ① | 🚧 구현·컴파일 · 실서버 미검증 | — |
-| `nsql-driver-mssql` | ① | 🚧 구현·컴파일 · 렌더 테스트 · 실서버 미검증 | 2 |
+| `nsql-driver-oracle` | ① | ✅ 실서버 검증(integration) | 2(통합) |
+| `nsql-driver-mssql` | ① | ✅ 실서버 검증(integration) · 배치 라우팅 | 3 + 2(통합) |
 | `nsql-drivers` | ①→④ 경계 | ✅ 레지스트리(feature) | 1 |
 | `nsql-cli`(`nsql`) | ④ | ✅ plan/run/shell/export | — |
 | `nexa-sql` | ④ | ✅ 최소 창(TextBox·자체 그리드·워커) · ⏳ 실기 | — |

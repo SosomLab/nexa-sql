@@ -14,7 +14,7 @@
 cargo run -p nsql-cli -- plan --dialect mssql examples/golden-session-vars.sql
 # SQLite로 세션 변수 왕복 실기
 cargo run -p nsql-cli -- run -c sqlite::memory: examples/sqlite-session-vars.sql
-# Oracle / SQL Server (드라이버 구현 완료 · 실서버 검증 대기)
+# Oracle / SQL Server (실서버 통합 테스트 통과 — docs/20)
 cargo run -p nsql-cli -- run -c "oracle://user:pass@host:1521/svc" script.sql
 cargo run -p nsql-cli -- run -c "mssql://user:pass@host:1433/db" script.sql
 cargo run -p nsql-cli -- export -c sqlite:app.db -t emp -f json -o emp.json

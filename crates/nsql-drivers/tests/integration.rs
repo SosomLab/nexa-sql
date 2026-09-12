@@ -8,31 +8,12 @@ use nsql_core::{DbError, Dialect, Session, Value};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::ConnectSpec;
 
-fn url_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 fn runner_for(env: &str, dialect: Dialect) -> Option<Runner> {
     let Ok(url) = std::env::var(env) else {
         eprintln!("[skip] {env} 없음");
         return None;
     };
-    let mut spec = nsql_drivers::parse_target(&url, dialect).expect("접속 문자열");
-    spec.password = spec.password.map(|p| url_decode(&p));
+    let spec = nsql_drivers::parse_target(&url, dialect).expect("접속 문자열");
     let opener: Opener = Box::new(
         move |s: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
             nsql_drivers::open(s, dialect)

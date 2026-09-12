@@ -2,6 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-12 (5차 · mac) — ★ Oracle · SQL Server 실서버 검증 통과 (integration 워크플로)
+
+**결과**: `integration` run 34700220848 — 통합 테스트 **5/5 green**(Oracle: 세션 변수 왕복 · REF CURSOR PRINT · DBMS_OUTPUT · PL/SQL 블록 OUT · DML / MSSQL: SELECT INTO 재작성·OUT 회수 · `#temp`·`GO` 배치·한글 NVARCHAR / SQLite). `nsql run examples/it-oracle.sql`이 실서버에서 블록 EXEC→PRINT→REFCURSOR→DBMS_OUTPUT까지 그대로 동작.
+**실서버가 잡아낸 결함 3건(수정)**: ① tiberius의 `query/execute`는 항상 `sp_executesql`이라 그 안의 `CREATE TABLE #t`가 소멸 → 파라미터 없는 DDL·세션 문장은 SQL 배치(`simple_query`)로 라우팅 ② `SELECT TOP 1 … INTO :V` 재작성이 `TOP`을 대입 뒤로 보냄 → 접두(TOP/DISTINCT) 보존 ③ CLI가 URL의 `%40`을 디코드하지 않아 sa 로그인 실패 → `scheme://` 형식만 퍼센트 디코드.
+**닫힘**: T-4·T-5(실서버 검증) · D-14. **남은 미검증**: GUI 창 실기(사용자) · Instant Client 배포 방식(D-1).
+→ [journal/2026-09-12](journal/2026-09-12.md) · [20](20-testing-codespaces.md)
+
 ## 2026-09-12 (4차 · mac) — ★ 실서버 테스트 구성: Codespaces devcontainer · DBMS별 Docker · Actions 통합 워크플로 (DR-21)
 
 **요청**(사용자): *"codespaces를 사용한 테스트 구성"* · *"각 DBMS별 docker 방식으로"* → D-14 해소.
