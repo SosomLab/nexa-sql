@@ -1062,6 +1062,7 @@ dependencies = [
  "nsql-driver-mssql",
  "nsql-driver-oracle",
  "nsql-driver-sqlite",
+ "nsql-run",
  "nsql-script",
 ]
 

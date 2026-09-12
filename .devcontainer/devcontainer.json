@@ -1,0 +1,27 @@
+{
+  "name": "nexa-sql (Rust + DBMS 컨테이너)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspaces/nexa-sql",
+  "runServices": ["dev", "oracle", "mssql"],
+  "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "64gb" },
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "tamasfe.even-better-toml", "vadimcn.vscode-lldb"],
+      "settings": { "editor.fontFamily": "D2Coding, 'Noto Sans Mono CJK KR', monospace" }
+    }
+  },
+  "containerEnv": {
+    "NSQL_ORACLE_URL": "oracle://nexa:nexa@oracle:1521/FREEPDB1",
+    "NSQL_MSSQL_URL": "mssql://sa:Nexa%40Sql2026@mssql:1433/master",
+    "NSQL_POSTGRES_URL": "postgres://nexa:nexa@postgres:5432/nexa",
+    "NSQL_MYSQL_URL": "mysql://nexa:nexa@mysql:3306/nexa",
+    "LD_LIBRARY_PATH": "/opt/oracle/instantclient",
+    "CARGO_TERM_COLOR": "always"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "vscode"
+}

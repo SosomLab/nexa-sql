@@ -1,0 +1,82 @@
+# 실서버 통합 테스트 — 각 DBMS를 서비스 컨테이너로(사용자 09-12 "각 DBMS별 docker"). main push · PR · 수동.
+# Oracle Free 23ai(gvenzl) + SQL Server 2022. PG/MySQL은 드라이버(M4) 후 추가.
+name: integration
+on:
+  push:
+    branches: [main]
+    paths: ["crates/**", "Cargo.*", ".github/workflows/integration.yml"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  NSQL_ORACLE_URL: oracle://nexa:nexa@localhost:1521/FREEPDB1
+  NSQL_MSSQL_URL: mssql://sa:Nexa%40Sql2026@localhost:1433/master
+  ORACLE_HOST: localhost
+  MSSQL_HOST: localhost
+  LD_LIBRARY_PATH: /opt/oracle/instantclient
+
+defaults:
+  run:
+    working-directory: nexa-sql
+
+jobs:
+  it:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      oracle:
+        image: gvenzl/oracle-free:23-slim-faststart
+        env:
+          ORACLE_PASSWORD: Nexa_Sql2026
+          APP_USER: nexa
+          APP_USER_PASSWORD: nexa
+        ports: ["1521:1521"]
+        options: >-
+          --health-cmd "healthcheck.sh"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 60
+          --health-start-period 60s
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Nexa@Sql2026"
+          MSSQL_PID: Developer
+        ports: ["1433:1433"]
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Nexa@Sql2026' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexa-sql
+      - name: Oracle Instant Client (basiclite · linux x64)
+        working-directory: .
+        run: |
+          sudo apt-get update && sudo apt-get install -y libaio1t64 unzip fonts-noto-cjk
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true
+          sudo mkdir -p /opt/oracle && cd /opt/oracle
+          sudo curl -fsSL -o ic.zip https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
+          sudo unzip -q ic.zip && sudo rm ic.zip && sudo mv instantclient_* instantclient
+          ls /opt/oracle/instantclient | head
+      - name: wait for DBs
+        run: bash scripts/wait-for-db.sh
+      - name: integration tests
+        run: cargo test -p nsql-drivers --test integration -- --nocapture --test-threads=1
+      - name: nsql run (Oracle · MSSQL 실기 스크립트)
+        run: |
+          cargo run -q -p nsql-cli -- run -c "$NSQL_ORACLE_URL" examples/it-oracle.sql
+          cargo run -q -p nsql-cli -- run -c "$NSQL_MSSQL_URL" examples/it-mssql.sql

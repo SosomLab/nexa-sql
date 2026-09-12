@@ -159,7 +159,8 @@ impl VarType {
             VarType::BinaryDouble => "FLOAT".into(),
             VarType::Date => "DATE".into(),
             VarType::Timestamp => "DATETIME2".into(),
-            VarType::Auto => "SQL_VARIANT".into(),
+            // Auto = 값에서 추론 전 — NVARCHAR로 받고 클라이언트가 다시 추론한다(SQL_VARIANT는 드라이버 회수가 불안정).
+            VarType::Auto => "NVARCHAR(4000)".into(),
         }
     }
 }

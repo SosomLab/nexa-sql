@@ -23,3 +23,6 @@ nsql-script.workspace = true
 nsql-driver-sqlite = { workspace = true, optional = true }
 nsql-driver-oracle = { workspace = true, optional = true }
 nsql-driver-mssql = { workspace = true, optional = true }
+
+[dev-dependencies]
+nsql-run.workspace = true

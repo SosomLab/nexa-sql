@@ -1,0 +1,83 @@
+# 각 DBMS = 별도 컨테이너(사용자 09-12 "각 DBMS별 docker 방식"). 기본 기동 = dev·oracle·mssql,
+# postgres·mysql은 프로필(`docker compose --profile pg --profile mysql up`).
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspaces/nexa-sql:cached
+      - nexa-ui:/workspaces/nexa-ui
+      - cargo-registry:/usr/local/cargo/registry
+      - target:/workspaces/nexa-sql/target
+    command: sleep infinity
+    depends_on:
+      oracle:
+        condition: service_healthy
+      mssql:
+        condition: service_healthy
+
+  oracle:
+    # Oracle Database Free 23ai(gvenzl 커뮤니티 이미지 · amd64). 서비스 FREEPDB1 · 앱 사용자 nexa/nexa.
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: Nexa_Sql2026
+      APP_USER: nexa
+      APP_USER_PASSWORD: nexa
+    ports: ["1521:1521"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+
+  mssql:
+    # SQL Server 2022 Developer. sa 비밀번호는 정책(대문자·숫자·특수문자·8자+) 충족.
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Nexa@Sql2026"
+      MSSQL_PID: Developer
+    ports: ["1433:1433"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Nexa@Sql2026' -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  postgres:
+    profiles: ["pg"]
+    image: postgres:17
+    environment:
+      POSTGRES_USER: nexa
+      POSTGRES_PASSWORD: nexa
+      POSTGRES_DB: nexa
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexa"]
+      interval: 5s
+      retries: 20
+
+  mysql:
+    profiles: ["mysql"]
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: nexa
+      MYSQL_USER: nexa
+      MYSQL_PASSWORD: nexa
+      MYSQL_DATABASE: nexa
+    ports: ["3306:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pnexa"]
+      interval: 5s
+      retries: 20
+
+volumes:
+  nexa-ui:
+  cargo-registry:
+  target:
+  oracle-data:

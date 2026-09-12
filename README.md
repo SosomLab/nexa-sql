@@ -22,7 +22,7 @@ cargo run -p nsql-cli -- shell -c sqlite::memory:
 # GUI 최소 창(접속 · 편집 · ⌘/Ctrl+Enter 실행 · 그리드)
 cargo run -p nexa-sql -- sqlite::memory:
 ```
-Oracle은 Instant Client가 런타임에 필요하다(공식 순수 Rust 드라이버 GA 시 교체 예정). 편집기는 아직 임시(`TextBox`) — 정식 편집기 계획은 [docs/17](docs/17-editor-incremental-plan.md).
+실서버 검증은 GitHub Codespaces(각 DBMS Docker 컨테이너) 또는 `integration` 워크플로로 — [docs/20](docs/20-testing-codespaces.md). Oracle은 Instant Client가 런타임에 필요하다(공식 순수 Rust 드라이버 GA 시 교체 예정). 편집기는 아직 임시(`TextBox`) — 정식 편집기 계획은 [docs/17](docs/17-editor-incremental-plan.md).
 
 설계·조사·진행 기록은 [`docs/`](docs/) — 시작은 [docs/00 기반 보고서](docs/00-foundation-report.md).
 

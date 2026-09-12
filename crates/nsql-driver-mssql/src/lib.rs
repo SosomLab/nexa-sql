@@ -325,7 +325,7 @@ mod tests {
         let (sql, params, outs) = render_batch(&req);
         assert_eq!(
             sql,
-            "DECLARE @V_CD SQL_VARIANT = @P1;\nDECLARE @V_SEQ DECIMAL(38,10) = @P2;\nDECLARE @V_IN NVARCHAR(10) = @P3;\nSELECT @V_CD = A.CD, @V_SEQ = A.SEQ FROM T A WHERE X = @V_IN;\nSELECT @V_CD AS [V_CD], @V_SEQ AS [V_SEQ];"
+            "DECLARE @V_CD NVARCHAR(4000) = @P1;\nDECLARE @V_SEQ DECIMAL(38,10) = @P2;\nDECLARE @V_IN NVARCHAR(10) = @P3;\nSELECT @V_CD = A.CD, @V_SEQ = A.SEQ FROM T A WHERE X = @V_IN;\nSELECT @V_CD AS [V_CD], @V_SEQ AS [V_SEQ];"
         );
         assert_eq!(params.len(), 3);
         assert_eq!(outs, vec!["V_CD", "V_SEQ"]);

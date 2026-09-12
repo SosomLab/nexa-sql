@@ -2,6 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-12 (4차 · mac) — ★ 실서버 테스트 구성: Codespaces devcontainer · DBMS별 Docker · Actions 통합 워크플로 (DR-21)
+
+**요청**(사용자): *"codespaces를 사용한 테스트 구성"* · *"각 DBMS별 docker 방식으로"* → D-14 해소.
+**산출**: `.devcontainer/`(compose: oracle · mssql · postgres · mysql 각 컨테이너 · Rust+Instant Client+한글 폰트 이미지 · nexa-ui 자동 clone) · `scripts/it.sh`·`wait-for-db.sh` · **통합 테스트 5건**(`nsql-drivers/tests/integration.rs` · 환경변수 게이트 · REFCURSOR·DBMS_OUTPUT·PL/SQL OUT·MSSQL SELECT INTO·GO 배치) · `examples/it-oracle.sql`·`it-mssql.sql` · `.github/workflows/integration.yml`(서비스 컨테이너 + Instant Client 설치 + `nsql run` 실기). `VarType::Auto`의 T-SQL 선언을 `NVARCHAR(4000)`로(SQL_VARIANT 회수 불안정).
+**실측(로컬)**: 워크스페이스 56 테스트 green · 통합 테스트는 환경변수 없어 [skip]. **원격 검증**: push 후 `integration` 워크플로 결과를 journal에 기록(첫 실행은 이미지 pull·Oracle 기동으로 10분 내외 예상).
+→ [journal/2026-09-12](journal/2026-09-12.md) · [20](20-testing-codespaces.md)
+
 ## 2026-09-12 (3차 · mac) — 정리 · 진행사항 최신화 · main push
 
 **요청**(사용자): *"내용 정리 후 진행사항 최신화 수행하고 commit 및 main 병합한 뒤 push"*. 브랜치는 main 하나(병합 대상 없음).

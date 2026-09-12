@@ -26,6 +26,7 @@
 | **DR-18** | **CLI(M1)와 최소 GUI(M2 슬라이스)를 병행** — 같은 코어(`nsql-run`)를 둘이 소비 | DP-9 정정: 사용자 *"GUI 최소 기능 구현을 병행하면서 CLI 함께"* 09-12 | ✅ 09-12 |
 | **DR-19** | ★ **한글 처리·고정폭 폰트 1급 지원** — 편집기·그리드는 고정폭(한글 고정폭 D2Coding 우선) + 한글 UI 본 폴백 · IME preedit 오버레이 | 사용자 09-12 *"한글 처리와 고정폭 폰트 등을 잘 지원"* · `nexa-font` | ✅ 09-12 |
 | **DR-20** | **코드 서명은 별도 요청 시 별도 진행** — 지금은 무서명(계열 v1과 동일) | DP-10 → 사용자 09-12 | ✅ 보류 확정 |
+| **DR-21** | **실서버 검증 = GitHub Codespaces devcontainer + 각 DBMS별 Docker 컨테이너 + Actions 통합 워크플로** — 로컬 Docker Desktop 의존 없음 | D-14 → 사용자 09-12 *"codespaces … 각 DBMS별 docker"* · [20](20-testing-codespaces.md) | ✅ 09-12 |
 
 ## 2. 권장 확정 대기 (DP)
 
@@ -43,7 +44,7 @@
 | D-6 | 라이선스 키 집행 시점(v1.0 전/후) · 오프라인 Ed25519 토큰(nexa-dir 17 설계 재사용) |
 | D-8 | `similar`(비교·3-way 병합) 원장 등재 |
 | D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
-| **D-14** | ★ Oracle·MSSQL **실서버 검증 방식** — 이 Mac에 Docker(Oracle Free 23ai · SQL Server 2022) vs 사용자 테스트 서버 접속 정보 vs 보류 (사용자 답 대기 · 권장 = Docker) |
+| ~~D-14~~ | → **DR-21**(Codespaces + DBMS별 Docker + Actions) |
 | **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) |
 | **D-16** | ★ **실기 OS 순서** — macOS 먼저 vs Windows 먼저(IME 구현 순서에 영향) (사용자 답 대기) |
 | **D-17** | 오브젝트 시점 캐시·로컬 히스토리 기본 위치 — 앱 데이터 폴더(권장) vs 프로젝트 `.nexa/` (사용자 답 대기) |
