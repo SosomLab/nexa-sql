@@ -41,6 +41,12 @@
 | D-4 | 한글 IME preedit 오버레이의 3-OS 구현 순서(Windows 먼저 — 사용자 실무 OS 확인 필요) |
 | D-5 | MSSQL REFCURSOR 대체 표현(결과 집합 탭) · `SESSION_CONTEXT` 옵션 노출 여부 |
 | D-6 | 라이선스 키 집행 시점(v1.0 전/후) · 오프라인 Ed25519 토큰(nexa-dir 17 설계 재사용) |
+| D-8 | `similar`(비교·3-way 병합) 원장 등재 |
+| D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
+| **D-14** | ★ Oracle·MSSQL **실서버 검증 방식** — 이 Mac에 Docker(Oracle Free 23ai · SQL Server 2022) vs 사용자 테스트 서버 접속 정보 vs 보류 (사용자 답 대기 · 권장 = Docker) |
+| **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) |
+| **D-16** | ★ **실기 OS 순서** — macOS 먼저 vs Windows 먼저(IME 구현 순서에 영향) (사용자 답 대기) |
+| **D-17** | 오브젝트 시점 캐시·로컬 히스토리 기본 위치 — 앱 데이터 폴더(권장) vs 프로젝트 `.nexa/` (사용자 답 대기) |
 
 ## 4. 외부 crate 원장 (추가 시 건별 기록)
 
