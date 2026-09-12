@@ -1,5 +1,5 @@
-# CI — "main은 항상 green"(docs/16 §3)을 검증하는 수단.
-# 3타깃 × fmt/clippy/test.
+# CI — "main은 항상 green"(docs/16 §3). 3타깃 × fmt/clippy/test.
+# ★ nexa-sql은 형제 저장소 ../nexa-ui를 path 의존한다(DR-4) → 두 저장소를 나란히 체크아웃한다.
 name: ci
 on:
   push:
@@ -8,6 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: nexa-sql
 
 jobs:
   check:
@@ -18,10 +22,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexa-sql
+      # Linux 러너: 한글 폰트(nexa-font 실측) — 빌드 자체는 시스템 라이브러리 불요(Wayland/X11 dlopen).
+      - name: fonts (linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-dejavu-core
+        working-directory: .
 
       - name: fmt
         run: cargo fmt --all --check
@@ -29,3 +46,5 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - name: smoke (fonts · drivers)
+        run: cargo run -q -p nexa-sql -- --smoke
