@@ -203,6 +203,7 @@ mod tests {
         assert_eq!(c.dialect, Some(Dialect::Mssql));
         assert_eq!(c.user.as_deref(), Some("sa"));
         assert_eq!(c.password.as_deref(), Some("p@ss"));
+        assert_eq!(c.host.as_deref(), Some("db.local"));
         let c = ConnectSpec::parse("mssql://sa:Nexa%40Sql2026@h:1433/master").unwrap();
         assert_eq!(c.password.as_deref(), Some("Nexa@Sql2026"));
         let c = ConnectSpec::parse("u/p%40x@h:1521/svc").unwrap();
@@ -211,7 +212,6 @@ mod tests {
             Some("p%40x"),
             "SQL*Plus 형식은 디코드하지 않는다"
         );
-        assert_eq!(c.host.as_deref(), Some("db.local"));
         let c = ConnectSpec::parse("u/p@h:5432/d?dialect=pg").unwrap();
         assert_eq!(c.dialect, Some(Dialect::Postgres));
         assert!(ConnectSpec::parse("foo://u@h").is_err());
