@@ -17,7 +17,7 @@
 | **DR-9** | 문서·git 규약 = 계열 [16](16-doc-git-conventions.md) 그대로(push는 명시 요청 시에만 · `git add -A` 금지 · 3-OS 검사) | 계열 표준 | ✅ 계승 |
 | **DR-10** | **단일 앱**(DBMS별 앱 아님) — 방언 데이터 + 얇은 재작성 · 1급 방언은 패키지로 깊게 · 배포만 에디션 분리 가능 | DP-1 → 사용자 *"나머진 한꺼번에 개발 진행"* 09-12 | ✅ 09-12 |
 | **DR-11** | **지원 범위** 1급 Oracle·SQL Server → 2급 PG·MySQL·SQLite → 3급 국산 DBMS(ODBC) → 플러그인. NoSQL 범위 밖 | DP-2 | ✅ 09-12 |
-| **DR-12** | Oracle 드라이버 = `oracle`(kubo · ODPI-C) 지금 → 공식 `oracledb` GA 시 어댑터 교체 | DP-3 | ✅ 09-12 |
+| **DR-12** | Oracle 드라이버 = `oracle`(kubo · ODPI-C) 지금 → 공식 `oracledb` GA 시 어댑터 교체. **09-13 정정**: 교체 조건 = GA **+ OUT/IN OUT 바인드·REF CURSOR·DBMS_OUTPUT 회수 지원**(beta.3 스파이크: 19c 접속 157ms ✓ · OUT API 부재 ✗ — D-22) | DP-3 · 실기 09-13 | ✅ 09-12 · 정정 09-13 |
 | **DR-13** | SQL Server 드라이버 = `tiberius` 계열 → Microsoft `mssql-tds` 성숙 시 재평가 | DP-4 | ✅ 09-12 |
 | **DR-14** | 결과셋 = 자체 모델(Arrow는 export 어댑터에서만) | DP-5 | ✅ 09-12 |
 | **DR-15** | 셰이핑 = `rustybuzz` 도입(원장 등재) — 우선은 nexa-gfx 글리프 폴백으로 한글을 그리고, 조합·합자는 셰이퍼 단계에서 | DP-6 | ✅ 09-12 |
@@ -54,6 +54,7 @@
 | **D-19** | 드라이버 확장 저장소 구성 — 단일 `SosomLab/nexa-sql-drivers`(태그 접두) vs 확장별 저장소(권장 = 단일 + 서드파티 별도) · [22 §8](22-driver-extensions.md) |
 | **D-20** | Oracle OCI 확장의 Instant Client 동봉(OTN 조건 · D-1 통합) vs 사용자 다운로드 안내 |
 | **D-21** | 드라이버 갱신 확인 기본값(켬 권장 · 폐쇄망은 설정으로 끔) |
+| **D-22** | 순수 Rust thin `oracledb` 채택 시점 — OUT 바인드·REF CURSOR가 공개 API에 들어오는 판(GitHub Discussions 문의 후보). 들어오면 Oracle 내장 드라이버 = thin, OCI(kubo)는 레거시 확장([22 §4-1](22-driver-extensions.md))으로 |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
 
 ## 4. 외부 crate 원장 (추가 시 건별 기록)

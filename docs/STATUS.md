@@ -2,6 +2,12 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (5차 · win) — ★ 사용자 Oracle 19c 실서버 실기 통과 · 결함 1건 수정 · thin 스파이크
+
+**요청**(사용자): 19c 접속 정보 제공 · *"개발 가능한 부분은 먼저 정리해서 진행"* · Rust 클라이언트 질문 · 다른 DBMS 확인.
+**결과**: 프로필 저장 → `conn test` OK 1.24s · `it-oracle.sql` 전부 통과. 결함 `EXEC :V := (SELECT …)`(PLS-00103) 수정(41acc2a). **thin `oracledb` 스파이크: Instant Client 없이 157ms 접속 ✓ — 그러나 OUT 바인드·REF CURSOR API 부재 → 주 드라이버 불가(D-22 교체 조건).** 다른 DBMS는 이 기기에 서버 없음 → MSSQL·PG 접속 정보 대기(PG는 드라이버 M4).
+**다음**: T-27 RPC 프로토콜(로컬로 진행 가능) → T-28 → T-29(D-19) → T-31. → [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (4차 · win) — 설계: 드라이버 확장(GitHub 최신 다운로드 · SxS · 관리자) · DBeaver식 접속 대화상자 (DR-23·24)
 
 **요청**(사용자): DBeaver 형태 접속 설정(Golden = 로그인 리스트) · 드라이버는 GitHub에서 최신 다운로드해 확장으로 · DBMS 버전별 하위 호환 확인 → SxS 다중 버전 · 목록·삭제.
