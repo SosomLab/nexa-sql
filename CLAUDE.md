@@ -8,7 +8,7 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M1·M2 병행 진행(2026-09-13 3차)** — 드라이버 3종(Oracle·MSSQL 실서버 검증 ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 · 연결 프로필(DR-22) · DR-1~24 확정. **⏳ 사용자 실기: GUI 창(프로필 Save·이름 접속).** 다음 설계 = [22](docs/22-driver-extensions.md)(DBeaver식 접속 대화상자 · GitHub 최신 드라이버 · SxS).
+- 현 단계: **M1·M2 병행 진행(2026-09-13 9차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **다음 = T-27 RPC 드라이버 프로토콜**([22 §7](docs/22-driver-extensions.md)) · ⏳ 사용자: 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
 - ★ 형제 저장소 clone은 `git@kiros33.github.com:SosomLab/<repo>.git`(SSH 별칭 · 사용자 지정 09-13).
 
 ### 참조 원천 (재발명 금지)

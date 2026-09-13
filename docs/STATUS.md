@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (9차 · win) — 정리 · 진행사항 최신화 · push
+
+**요청**(사용자): *"내용 정리 후 진행사항 최신화 수행하고 commit 및 main 병합한 뒤 push"*. 브랜치는 main 하나(병합 대상 없음 — 원격 병합은 직전 차수). CLAUDE.md 현 단계 갱신. push 8커밋(5차~9차 + 병합) → CI 결과는 후속 기록. **다음**: T-27 RPC 드라이버 프로토콜 착수. → [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (병합 · win) — origin/main(mac 3·4차) 병합 · win 기록 5~8차 재번호 · 병합본 검증 ✓
 
 원격 mac 3커밋(`NSQL_ORACLE_CLIENT_DIR` · macOS Instant Client 설치) + 로컬 win 5커밋 병합(70709df). 병합본: 71 테스트 · clippy 0 · 19c 실접속 OK · `NSQL_ORACLE_CLIENT_DIR` Windows 동작 확인(잘못된 폴더 → DPI-1047). **미push 7커밋** — push는 사용자 요청 시. → [journal](journal/2026-09-13.md)
