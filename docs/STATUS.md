@@ -2,6 +2,14 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (4차 · mac) — Oracle Instant Client macOS 설치 실기 · 설치 스크립트 · 정리·push
+
+**요청**(사용자): mac 설치 방법 → 전 패키지 한 폴더(CLI 포함) → 폴더 위치·이름 추천 → 정리·push.
+**산출**: `scripts/install-instantclient-mac.sh`(아키텍처 감지 · Intel DMG/ARM64 ZIP · 6패키지 · 격리 해제 · `~/lib`·버전 링크 · `--rc`) · [20 §5](20-testing-codespaces.md) 전면 개편(폴더 추천 · URL 표 · PATH/TNS_ADMIN/NLS_LANG · 연결 3형식 · 한글) · 어댑터 `NSQL_ORACLE_CLIENT_DIR`·DPI-1047 안내.
+**실측**: 이 Mac에 실제 설치 — 255MB · sqlplus 19.16 · `nsql run`이 ORA-12541까지 도달(클라이언트 로드 ✓). **폴더 규칙 확정**: `~/Oracle/instantclient_<major>_<minor>` + 버전 없는 링크 `~/Oracle/instantclient`.
+**⏳ 남음**: 사내 Oracle 실접속(사용자 네트워크) · GUI 창 실기 · D-15~D-17 답.
+→ [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (3차 · mac) — Instant Client macOS 안내(docs/20 §5) · `NSQL_ORACLE_CLIENT_DIR` · DPI-1047 힌트
 
 **요청**(사용자): Instant Client mac 설치·설정 방법. Intel Mac → 19.16 · `~/lib` 심볼릭 링크 권장 · 어댑터에 lib dir 환경변수 + 로드 실패 안내 추가. → [journal](journal/2026-09-13.md)
