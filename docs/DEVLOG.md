@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-13** — Codespaces 최소 사양(2코어·8GB · DB mem_limit · 빌드 병렬 1).
 - **2026-09-12 (5차)** — ★ Oracle·MSSQL 실서버 통합 테스트 5/5 green · 실서버 결함 3건 수정(#temp 배치 라우팅 · TOP 재작성 · URL 디코드).
 - **2026-09-12 (4차)** — Codespaces devcontainer · DBMS별 Docker compose · 통합 테스트 5건 · integration.yml(DR-21).
 - **2026-09-12 (3차)** — 정리 · D-14~17 등재 · main push(nexa-sql 첫 push · nexa-ui 저장소 생성).

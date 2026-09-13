@@ -1,5 +1,7 @@
 # 각 DBMS = 별도 컨테이너(사용자 09-12 "각 DBMS별 docker 방식"). 기본 기동 = dev·oracle·mssql,
 # postgres·mysql은 프로필(`docker compose --profile pg --profile mysql up`).
+# ★ 최소 사양 Codespaces(2코어·8GB · 사용자 09-13 "느려도 괜찮다"): DB 메모리 상한 oracle 2g · mssql 1.5g,
+#   Rust 빌드 병렬 1(CARGO_BUILD_JOBS). 메모리가 모자라면 `docker compose stop mssql`처럼 안 쓰는 DB를 내리면 된다.
 services:
   dev:
     build:
@@ -11,11 +13,8 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - target:/workspaces/nexa-sql/target
     command: sleep infinity
-    depends_on:
-      oracle:
-        condition: service_healthy
-      mssql:
-        condition: service_healthy
+    # DB healthy를 기다리지 않는다 — 개발 컨테이너는 먼저 뜨고, DB는 scripts/wait-for-db.sh로 확인.
+    depends_on: [oracle, mssql]
 
   oracle:
     # Oracle Database Free 23ai(gvenzl 커뮤니티 이미지 · amd64). 서비스 FREEPDB1 · 앱 사용자 nexa/nexa.
@@ -25,6 +24,7 @@ services:
       APP_USER: nexa
       APP_USER_PASSWORD: nexa
     ports: ["1521:1521"]
+    mem_limit: 2g
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 10s
@@ -41,7 +41,10 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Nexa@Sql2026"
       MSSQL_PID: Developer
+      # 엔진 메모리 상한(MB) — 컨테이너 1.5g 안에서 동작.
+      MSSQL_MEMORY_LIMIT_MB: "1024"
     ports: ["1433:1433"]
+    mem_limit: 1536m
     healthcheck:
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Nexa@Sql2026' -Q 'SELECT 1' || exit 1"]
       interval: 10s
@@ -57,6 +60,7 @@ services:
       POSTGRES_PASSWORD: nexa
       POSTGRES_DB: nexa
     ports: ["5432:5432"]
+    mem_limit: 512m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexa"]
       interval: 5s
@@ -71,6 +75,7 @@ services:
       MYSQL_PASSWORD: nexa
       MYSQL_DATABASE: nexa
     ports: ["3306:3306"]
+    mem_limit: 768m
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pnexa"]
       interval: 5s

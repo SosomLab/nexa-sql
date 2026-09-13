@@ -4,9 +4,10 @@
   "service": "dev",
   "workspaceFolder": "/workspaces/nexa-sql",
   "runServices": ["dev", "oracle", "mssql"],
-  "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "64gb" },
+  "hostRequirements": { "cpus": 2, "memory": "8gb", "storage": "32gb" },
   "features": {
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
   "customizations": {
     "vscode": {
@@ -20,7 +21,9 @@
     "NSQL_POSTGRES_URL": "postgres://nexa:nexa@postgres:5432/nexa",
     "NSQL_MYSQL_URL": "mysql://nexa:nexa@mysql:3306/nexa",
     "LD_LIBRARY_PATH": "/opt/oracle/instantclient",
-    "CARGO_TERM_COLOR": "always"
+    "CARGO_TERM_COLOR": "always",
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_INCREMENTAL": "1"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode"
