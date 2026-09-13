@@ -69,6 +69,8 @@ struct App {
     shift: bool,
     primary: bool,
     started: Instant,
+    /// 다음 캐럿 깜빡임 시각 — about_to_wait의 재그리기 게이트.
+    next_blink: Instant,
 }
 
 fn px(v: f32, s: f32) -> i32 {
@@ -556,13 +558,18 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        // 캐럿 깜빡임 — 포커스 편집기가 있을 때만 0.5초 주기로 다시 그린다.
-        el.set_control_flow(ControlFlow::WaitUntil(
-            Instant::now() + Duration::from_millis(500),
-        ));
-        if matches!(self.focus, Focus::Editor | Focus::Connect | Focus::Name) {
-            self.redraw();
+        // 캐럿 깜빡임 — 0.5초 타이머가 **실제로 만료됐을 때만** 다시 그린다.
+        // ★ 매 호출마다 request_redraw를 하면 그리기 → about_to_wait → 그리기의 무한 루프가 되어
+        //   유휴 CPU 한 코어 100% · 키 입력이 프레임당 하나씩만 처리되는 지연(글자 14개에 3초 ·
+        //   옛 결과가 화면에 남음)이 생긴다(09-13 Windows 실기 계측).
+        let now = Instant::now();
+        if now >= self.next_blink {
+            self.next_blink = now + Duration::from_millis(500);
+            if matches!(self.focus, Focus::Editor | Focus::Connect | Focus::Name) {
+                self.redraw();
+            }
         }
+        el.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -716,6 +723,7 @@ fn main() {
         shift: false,
         primary: false,
         started: Instant::now(),
+        next_blink: Instant::now(),
     };
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("이벤트 루프 오류: {e}");

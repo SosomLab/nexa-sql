@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-13 (6차 · win)** — GUI 창 실기(자동 구동): 프로필 접속 → F5 → 그리드 ✓. `about_to_wait` 무한 재그리기 루프 수정(유휴 CPU 100%→13% · 입력 지연 해소). → [journal](journal/2026-09-13.md)
 - **2026-09-13 (5차 · win)** — ★ 사용자 Oracle 19c 실서버: 프로필 접속 OK · `it-oracle.sql` 통과 · `:V := (SELECT…)` PLS-00103 수정. thin `oracledb` 스파이크 157ms 접속 ✓ but OUT 바인드 없음(D-22). → [journal](journal/2026-09-13.md)
 - **2026-09-13 (4차 · win)** — 설계 [22](22-driver-extensions.md): 드라이버 확장(GitHub 최신 · stdio RPC 프로세스 · SxS `drivers/<id>/<ver>/` · 관리자 목록/삭제) · DBeaver식 접속 대화상자 · DR-23·24 · T-27~31. Oracle 호환 매트릭스 조사. → [journal](journal/2026-09-13.md)
 - **2026-09-13 (3차 · win)** — ★ 연결 프로필 저장소 `nsql-vault`(비밀번호 봉투 · Windows DPAPI 기기 키 · 여러 인스턴스 단일 키) · `nsql conn` · `-c <이름>`/`CONNECT <이름>` · GUI Save · DR-22 · 71 테스트. nexa-ui SSH 별칭 clone. → [journal](journal/2026-09-13.md)
