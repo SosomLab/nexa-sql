@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (병합 · win) — origin/main(mac 3·4차) 병합 · win 기록 5~8차 재번호 · 병합본 검증 ✓
+
+원격 mac 3커밋(`NSQL_ORACLE_CLIENT_DIR` · macOS Instant Client 설치) + 로컬 win 5커밋 병합(70709df). 병합본: 71 테스트 · clippy 0 · 19c 실접속 OK · `NSQL_ORACLE_CLIENT_DIR` Windows 동작 확인(잘못된 폴더 → DPI-1047). **미push 7커밋** — push는 사용자 요청 시. → [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (8차 · win) — ★ GUI 창 실기 통과(프로필 접속 → 쿼리 → 그리드) · 무한 재그리기 루프 수정
 
 **요청**(사용자): *"프로그램 실행해줘"*. 창을 띄워 PowerShell로 직접 구동·캡처: 프로필 `biscm` 접속 ✓ · 편집기 입력 ✓ · F5 → 그리드 `BISCM · 22:13:33 · 442` ✓.
