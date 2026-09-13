@@ -43,3 +43,36 @@ examples/it-oracle.sql · it-mssql.sql        nsql run 실기 스크립트(블�
 - gvenzl Oracle Free는 amd64 이미지 — Apple Silicon 로컬은 Rosetta 에뮬레이션(느림) · Codespaces(amd64)가 편하다.
 - ★ 최소 사양(2-core/8GB)에 맞춰 컨테이너 메모리 상한을 둔다: oracle 2g · mssql 1.5g(`MSSQL_MEMORY_LIMIT_MB=1024`) · pg 512m · mysql 768m, Rust 빌드 병렬 1. 첫 빌드는 10분 안팎, 메모리가 모자라면 `docker compose -f .devcontainer/docker-compose.yml stop mssql`로 안 쓰는 DB를 내린다(docker-outside-of-docker 기능 포함).
 - Instant Client는 OTN 라이선스 — 개발 컨테이너 내 사용이며 제품 배포 동봉은 D-1.
+
+## 5. macOS에 Oracle Instant Client 설치·설정 (nexa-sql / `nsql` 실행용)
+
+> 이 Mac = **Intel(i9)**, macOS 26. Intel용 Instant Client는 **19c(19.16)** 가 마지막이며 Oracle 23ai/26ai 서버에도 접속된다. Apple Silicon은 **23ai/26ai ARM64** 본을 쓴다. ODPI-C(`oracle` 크레이트)가 실행 시 `libclntsh.dylib`를 dlopen 하므로 **빌드에는 필요 없고 실행 시에만** 필요하다.
+
+### 5-1. 다운로드·설치
+| Mac | 받을 것 | 설치 |
+|---|---|---|
+| **Intel** | [Instant Client for macOS (Intel x86)](https://www.oracle.com/database/technologies/instant-client/macos-intel-x86-downloads.html) → **Basic Light** 또는 Basic **19.16** `.dmg` | dmg 마운트 → 안의 `install_ic.sh` 실행 → `~/Downloads/instantclient_19_16` 생성(원하는 곳으로 이동 가능) |
+| Apple Silicon | [Instant Client for macOS ARM64](https://www.oracle.com/database/technologies/instant-client/macos-arm64-downloads.html) → Basic Light **23ai/26ai** `.dmg` | 동일 — `~/Downloads/instantclient_23_3` 등 |
+
+zip으로 받았다면 풀고 격리 속성을 벗긴다(Gatekeeper가 dylib 로드를 막는다):
+```sh
+mkdir -p /opt/oracle && cd /opt/oracle && unzip ~/Downloads/instantclient-basiclite-macos.x64-19.16.0.0.0dbru.zip
+xattr -dr com.apple.quarantine /opt/oracle/instantclient_19_16
+```
+
+### 5-2. 위치 알려 주기 — 셋 중 하나
+1. ★ **권장(GUI·CLI 공통)**: `~/lib`에 심볼릭 링크 — ODPI-C가 macOS에서 기본으로 찾는 곳이라 환경변수가 필요 없다(Finder에서 연 GUI 앱은 셸 환경변수를 받지 못하므로 이 방법이 유일하게 GUI에도 통한다).
+   ```sh
+   mkdir -p ~/lib && ln -sf /opt/oracle/instantclient_19_16/libclntsh.dylib ~/lib/
+   ```
+2. 환경변수(셸에서 `nsql`만 쓸 때): `export NSQL_ORACLE_CLIENT_DIR=/opt/oracle/instantclient_19_16` — 이 폴더에서만 찾는다(nexa-sql 전용 · 다른 버전과 섞이지 않음).
+3. `DYLD_LIBRARY_PATH` — SIP 때문에 자식 프로세스·GUI에 전달되지 않으므로 권장하지 않는다.
+
+(선택) `tnsnames.ora`를 쓰려면 `export TNS_ADMIN=/opt/oracle/network/admin`.
+
+### 5-3. 확인
+```sh
+# 클라이언트가 없으면 DPI-1047 + 설치 안내가 나온다. 있으면 접속 오류(ORA-12541 등)로 바뀐다 = 로드 성공.
+printf 'SELECT banner FROM v$version;\n' | cargo run -q -p nsql-cli -- run -c "oracle://user:pass@host:1521/svc" -
+```
+Codespaces·Actions는 Dockerfile/워크플로가 Linux용 Instant Client를 자동 설치하므로 이 절차가 필요 없다.

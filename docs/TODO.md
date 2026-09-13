@@ -13,7 +13,7 @@
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
 |---|:--:|:--:|---|---|:--:|
 | **T-3** | P1 | 중 | `nsql-net` — 취소 토큰(OCIBreak·TDS Attention) · 타임아웃 · SSH 터널(어댑터가 소켓 소유 → 터널·자격증명만) | — | ☐ |
-| **T-4** | P0 | 대 | `nsql-driver-oracle` — ✅ 구현 · ✅ **실서버 검증**(Oracle Free 23ai · integration) · ☐ Instant Client 경로 안내 메시지 · 취소(OCIBreak) | — | ✅ 09-12 |
+| **T-4** | P0 | 대 | `nsql-driver-oracle` — ✅ 구현 · ✅ **실서버 검증**(Oracle Free 23ai · integration) · ✅ Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`)·DPI-1047 안내 · ☐ 취소(OCIBreak) | — | ✅ 09-12 |
 | **T-5** | P0 | 대 | `nsql-driver-mssql` — ✅ 구현 · ✅ **실서버 검증**(SQL Server 2022 · integration) · ☐ Entra/통합 인증 · 오류 줄 보정 | — | ✅ 09-12 |
 | **T-6** | P0 | 중 | `nsql run` — 파일/stdin · `&1..&n` · `WHENEVER` · 형식 출력 | — | ✅ 09-12 |
 | **T-7** | P1 | 중 | `nsql shell` — ✅ 최소(줄 누적 실행) · ☐ 줄 편집·히스토리·자동완성 | — | 🚧 |

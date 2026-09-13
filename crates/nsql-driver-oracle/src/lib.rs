@@ -13,8 +13,34 @@ use nsql_core::{
 };
 use nsql_script::ConnectSpec;
 use oracle::sql_type::{OracleType, RefCursor};
-use oracle::{Connection, Connector, Privilege, Row};
+use oracle::{Connection, Connector, InitParams, Privilege, Row};
 use std::collections::HashMap;
+
+/// Instant Client 위치를 지정하는 환경변수(선택). 없으면 ODPI-C 기본 탐색(`ORACLE_HOME/lib` · macOS `~/lib`·`/usr/local/lib` · Linux `LD_LIBRARY_PATH` · Windows `PATH`).
+pub const CLIENT_DIR_ENV: &str = "NSQL_ORACLE_CLIENT_DIR";
+
+/// ODPI-C 초기화 — 첫 접속 전에 1회. `NSQL_ORACLE_CLIENT_DIR`가 있으면 그 폴더에서만 `libclntsh`를 찾는다.
+fn init_client() -> Result<(), DbError> {
+    if InitParams::is_initialized() {
+        return Ok(());
+    }
+    let mut p = InitParams::new();
+    if let Some(dir) = std::env::var_os(CLIENT_DIR_ENV) {
+        p.oracle_client_lib_dir(dir).map_err(|e| err(&e))?;
+    }
+    p.init().map(|_| ()).map_err(|e| err(&e))
+}
+
+/// 클라이언트 로드 실패(DPI-1047)에 설치 안내를 덧붙인다.
+fn with_client_hint(mut e: DbError) -> DbError {
+    if e.message.contains("DPI-1047") || e.message.to_ascii_lowercase().contains("cannot locate") {
+        e.message.push_str(&format!(
+            "\n→ Oracle Instant Client가 필요합니다. 설치 후 {CLIENT_DIR_ENV}=<instantclient 폴더> 로 위치를 알려 주거나 \
+             macOS는 ~/lib 에 libclntsh.dylib 심볼릭 링크 · Linux는 LD_LIBRARY_PATH · Windows는 PATH. 자세히: docs/20 §5"
+        ));
+    }
+    e
+}
 
 #[allow(missing_debug_implementations)]
 pub struct OracleSession {
@@ -66,7 +92,8 @@ impl OracleSession {
             }
             _ => {}
         }
-        let conn = connector.connect().map_err(|e| err(&e))?;
+        init_client().map_err(with_client_hint)?;
+        let conn = connector.connect().map_err(|e| with_client_hint(err(&e)))?;
         Ok(OracleSession {
             conn,
             cursors: HashMap::new(),
