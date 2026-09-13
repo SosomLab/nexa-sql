@@ -8,12 +8,13 @@
 | **T-1** | P0 | 소 | DP-1~10 사용자 확정 → DR 승격([10 §2](10-decision-record.md)) | — | ✅ 09-12(DR-10~20) |
 | **T-2** | P0 | 소 | ★ D-15~D-17 사용자 답(다음 우선순위 · 실기 OS · 캐시 위치) → DR 승격 · D-14는 DR-21 | — | 🚧 |
 | **T-2b** | P0 | 소 | `integration` 워크플로 green → 실서버 결함 3건 수정 · T-4/T-5 닫힘 | — | ✅ 09-12 |
+| **T-2c** | P1 | 소 | 사내 Oracle(192.168.0.58/BISCM 19c) 실접속 — `nsql conn test biscm` · `it-oracle.sql` 통과 · GUI 창 접속 (win) · ☐ mac에서도 | T-4 | ✅ 09-13(win) |
 
 ## 2. M1 — CLI 관통
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
 |---|:--:|:--:|---|---|:--:|
 | **T-3** | P1 | 중 | `nsql-net` — 취소 토큰(OCIBreak·TDS Attention) · 타임아웃 · SSH 터널(어댑터가 소켓 소유 → 터널·자격증명만) | — | ☐ |
-| **T-4** | P0 | 대 | `nsql-driver-oracle` — ✅ 구현 · ✅ **실서버 검증**(Oracle Free 23ai · integration) · ☐ Instant Client 경로 안내 메시지 · 취소(OCIBreak) | — | ✅ 09-12 |
+| **T-4** | P0 | 대 | `nsql-driver-oracle` — ✅ 구현 · ✅ **실서버 검증**(Oracle Free 23ai · integration) · ✅ Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`)·DPI-1047 안내 · ☐ 취소(OCIBreak) | — | ✅ 09-12 |
 | **T-5** | P0 | 대 | `nsql-driver-mssql` — ✅ 구현 · ✅ **실서버 검증**(SQL Server 2022 · integration) · ☐ Entra/통합 인증 · 오류 줄 보정 | — | ✅ 09-12 |
 | **T-6** | P0 | 중 | `nsql run` — 파일/stdin · `&1..&n` · `WHENEVER` · 형식 출력 | — | ✅ 09-12 |
 | **T-7** | P1 | 중 | `nsql shell` — ✅ 최소(줄 누적 실행) · ☐ 줄 편집·히스토리·자동완성 | — | 🚧 |
