@@ -34,4 +34,9 @@
 | ✅ | 연결 프로필 저장·이름 접속(이름 칸 + Save · T-16b 일부 · 09-13) |
 | ☐ | `nexa-grid` · dock/tab(nexa-ui U-2) · 클립보드·컨텍스트 메뉴(T-16b) · 치환 변수 대화상자(T-16c) · DBeaver식 접속 대화상자·프로필 목록([22 §1](22-driver-extensions.md)) |
 
+## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)
+| 상태 | 항목 |
+|:--:|---|
+| 📐 | stdio JSON-RPC 드라이버 프로세스(T-27) · `drivers/<id>/<ver>/` SxS 보관·관리 CLI(T-28) · GitHub 최신 다운로드·서명 검증(T-29) · Oracle OCI 확장 Instant Client 19/23(T-30) · DBeaver식 접속 대화상자·드라이버 관리자(T-31) |
+
 ## M3~M6 — [02](02-roadmap.md)

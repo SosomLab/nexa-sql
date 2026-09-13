@@ -2,6 +2,12 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (4차 · win) — 설계: 드라이버 확장(GitHub 최신 다운로드 · SxS · 관리자) · DBeaver식 접속 대화상자 (DR-23·24)
+
+**요청**(사용자): DBeaver 형태 접속 설정(Golden = 로그인 리스트) · 드라이버는 GitHub에서 최신 다운로드해 확장으로 · DBMS 버전별 하위 호환 확인 → SxS 다중 버전 · 목록·삭제.
+**조사 결론**: Oracle은 실제로 필요(23ai ← 19c/21c/23ai · 구형 서버는 19c 클라이언트까지 · ODPI-C 프로세스당 클라이언트 1개) · ODBC 벤더 클라이언트도 필요 · MSSQL은 레거시 TLS 변종 1개 · PG/MySQL/SQLite 불요.
+**설계**: 확장 = stdio JSON-RPC 프로세스(내장 순수 Rust 드라이버는 유지) · `drivers/<id>/<ver>/` SxS · 프로필 `driver=<id>@<ver>` · 최신 non-prerelease 기본 · sha256+Ed25519 필수 · 삭제는 참조 프로필/열린 세션 보호. → [22](22-driver-extensions.md) · DR-23·24 · T-27~T-31(순서 고정). **코드 변경 없음.** **다음**: T-27 프로토콜부터(D-15 답과 함께). → [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (3차 · win) — ★ 연결 프로필 저장소 `nsql-vault` · `nsql conn` · GUI Save (DR-22)
 
 **요청**(사용자): 저장소 최신화·변경 분석 → *"사용자 폴더에 접속 정보를 암호화해서 저장 · 연결 시 재사용"* → *"몇 개의 Instance든 저장된 암호를 함께 사용"*. nexa-ui는 `git@kiros33.github.com:SosomLab/nexa-ui.git`로 clone(이 기기에 없었음 → 빌드 복구).

@@ -10,4 +10,4 @@
 | **M3** | 편집기 P0 완성 + 패키지 1차 | syntect `.sublime-syntax` · 컬러스킴 · 스니펫·완성 · Command Palette · `Default` 패키지 · 오브젝트 브라우저(`Catalog`) | ☐ |
 | **M4** | 데이터 작업 | `nsql-io` import/bulk 6방언 · 데이터 편집기(변경 SQL 미리보기 → 커밋 · TablePlus식) · PG/MySQL/SQLite 드라이버 · ODBC 폴백(Tibero) | ☐ |
 | **M5** | Oracle·MSSQL 깊이 | PL/SQL 컴파일·`SHOW ERRORS`·DBMS_OUTPUT · 실행계획 · 세션 모니터 · T-SQL 실행계획·XEvent 최소 | ☐ |
-| **M6** | 확장·배포 | WASM 플러그인 API(TextCommand/EventListener) · 드라이버 RPC 플러그인 · 3-OS 릴리스 파이프라인(clip 계승) · 서명(D-6) · 라이선스 키(13) | ☐ |
+| **M6** | 확장·배포 | WASM 플러그인 API(TextCommand/EventListener) · 드라이버 RPC 확장(GitHub 최신 다운로드 · SxS · [22](22-driver-extensions.md) — 순서상 M3 전후로 앞당길 수 있음) · 3-OS 릴리스 파이프라인(clip 계승) · 서명(D-6) · 라이선스 키(13) | ☐ |

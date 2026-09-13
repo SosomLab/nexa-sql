@@ -43,5 +43,14 @@
 | **O-1** | P1 | 대 | 오브젝트 시점 캐시(열기/컴파일 전후) · 복원 명령 | C-1 Catalog | ☐ |
 | **X-2** | P2 | 대 | 3-pane 병합 | C-1 X-1 | ☐ |
 
+## 3-2. 드라이버 확장 · 접속 대화상자([22](22-driver-extensions.md) · DR-23·24 · 사용자 09-13) — 순서 고정(프로토콜 → 보관 → 다운로드 → Oracle → GUI)
+| ID | 우선 | 규모 | 항목 | 의존 | 상태 |
+|---|:--:|:--:|---|---|:--:|
+| **T-27** | P0 | 대 | `nsql-driver-rpc` — stdio JSON-RPC v1(프레임·Session 메서드·Value 인코딩) + 프록시 Session + 참조 구현 `nsql-driver-sqlite-rpc` | — | ☐ |
+| **T-28** | P0 | 중 | `nsql-ext` — `drivers/<id>/<ver>/` 레이아웃 · `nexa-driver.json` · 최신 선택 규칙 · 참조 카운트 · 삭제/휴지통 · `nsql driver list/rm/prune/path` | T-27 | ☐ |
+| **T-29** | P0 | 대 | GitHub 다운로드 — 색인 · 최신 태그 · HTTPS(rustls) · sha256 · Ed25519 · 원자적 설치 · `install/update/search` · 갱신 배지 · `--file` 오프라인 | T-28 D-19 | ☐ |
+| **T-30** | P0 | 대 | Oracle OCI 확장 — kubo 드라이버를 RPC 프로세스로 · Instant Client 19/23 SxS · 프로필 `driver=` · ORA-28040 힌트 | T-29 D-20 | ☐ |
+| **T-31** | P0 | 대 | GUI — DBeaver식 접속 대화상자 · Golden식 로그인 리스트 · 드라이버 관리자(목록·Download·Update·Delete) | T-28 · nexa-ui U-2 | ☐ |
+
 ## 4. M3+ (요약)
 syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · PG/MySQL/SQLite/ODBC 드라이버(T-23) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26).

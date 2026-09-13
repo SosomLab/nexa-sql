@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-13 (4차 · win)** — 설계 [22](22-driver-extensions.md): 드라이버 확장(GitHub 최신 · stdio RPC 프로세스 · SxS `drivers/<id>/<ver>/` · 관리자 목록/삭제) · DBeaver식 접속 대화상자 · DR-23·24 · T-27~31. Oracle 호환 매트릭스 조사. → [journal](journal/2026-09-13.md)
 - **2026-09-13 (3차 · win)** — ★ 연결 프로필 저장소 `nsql-vault`(비밀번호 봉투 · Windows DPAPI 기기 키 · 여러 인스턴스 단일 키) · `nsql conn` · `-c <이름>`/`CONNECT <이름>` · GUI Save · DR-22 · 71 테스트. nexa-ui SSH 별칭 clone. → [journal](journal/2026-09-13.md)
 - **2026-09-13** — Codespaces 최소 사양(2코어·8GB · DB mem_limit · 빌드 병렬 1) · 정리·push. → [journal](journal/2026-09-13.md)
 - **2026-09-12 (5차)** — ★ Oracle·MSSQL 실서버 통합 테스트 5/5 green · 실서버 결함 3건 수정(#temp 배치 라우팅 · TOP 재작성 · URL 디코드).
