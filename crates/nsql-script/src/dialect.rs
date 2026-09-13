@@ -310,11 +310,52 @@ fn split_top_level_commas(s: &str) -> Vec<String> {
     parts
 }
 
+/// 식에 `(SELECT`/`(WITH` 서브쿼리가 있는가(대소문자·공백 무시).
+fn contains_subquery(expr: &str) -> bool {
+    let up = expr.to_ascii_uppercase();
+    let mut i = 0;
+    let b = up.as_bytes();
+    while let Some(off) = up[i..].find('(') {
+        let rest = up[i + off + 1..].trim_start();
+        if rest.starts_with("SELECT") || rest.starts_with("WITH") {
+            let kw_len = if rest.starts_with("SELECT") { 6 } else { 4 };
+            // 키워드 뒤가 식별자 문자가 아니어야 한다(SELECTED 같은 이름 제외).
+            if rest
+                .as_bytes()
+                .get(kw_len)
+                .is_none_or(|c| !crate::lexer::is_ident_char(*c))
+            {
+                return true;
+            }
+        }
+        i += off + 1;
+        if i >= b.len() {
+            break;
+        }
+    }
+    false
+}
+
 /// `EXEC 본문`을 방언별 실행 문장으로.
 pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
     let body = body.trim().trim_end_matches(';').trim();
     match dialect {
-        Dialect::Oracle => format!("BEGIN {body}; END;"),
+        Dialect::Oracle => {
+            // ★ `:V := (SELECT …)` — PL/SQL은 식 안의 서브쿼리를 허용하지 않는다(PLS-00103 · 19c 실서버 09-13).
+            // `SELECT (…) INTO :V FROM DUAL`로 바꾸면 스칼라 서브쿼리·SYSDATE·함수 호출이 모두 SQL 식으로 평가된다.
+            if let Some((lhs, rhs)) = body.split_once(":=") {
+                let (lhs, rhs) = (lhs.trim(), rhs.trim());
+                if let Some(name) = lhs.strip_prefix(':') {
+                    if name.bytes().all(crate::lexer::is_ident_char) && contains_subquery(rhs) {
+                        return format!(
+                            "BEGIN SELECT {rhs} INTO :{} FROM DUAL; END;",
+                            name.to_ascii_uppercase()
+                        );
+                    }
+                }
+            }
+            format!("BEGIN {body}; END;")
+        }
         Dialect::Mssql => {
             // `:V := expr` → `SET @V = expr` · 그 외는 T-SQL EXEC 그대로.
             if let Some((lhs, rhs)) = body.split_once(":=") {
@@ -476,6 +517,27 @@ mod tests {
         assert_eq!(
             wrap_exec(Dialect::Oracle, "sp_x(:a, 'b');"),
             "BEGIN sp_x(:a, 'b'); END;"
+        );
+        // 서브쿼리 대입은 SELECT … INTO … FROM DUAL(19c 실서버 PLS-00103 · 09-13).
+        assert_eq!(
+            wrap_exec(
+                Dialect::Oracle,
+                ":V_CNT := (SELECT COUNT(*) FROM user_tables)"
+            ),
+            "BEGIN SELECT (SELECT COUNT(*) FROM user_tables) INTO :V_CNT FROM DUAL; END;"
+        );
+        assert_eq!(
+            wrap_exec(Dialect::Oracle, ":v := ( with x as (select 1 n from dual) select n from x )"),
+            "BEGIN SELECT ( with x as (select 1 n from dual) select n from x ) INTO :V FROM DUAL; END;"
+        );
+        // 서브쿼리가 없는 대입·함수 호출은 PL/SQL 대입 그대로.
+        assert_eq!(
+            wrap_exec(Dialect::Oracle, ":V_USER := USER"),
+            "BEGIN :V_USER := USER; END;"
+        );
+        assert_eq!(
+            wrap_exec(Dialect::Oracle, ":V := f(SELECTED_COL)"),
+            "BEGIN :V := f(SELECTED_COL); END;"
         );
         assert_eq!(
             wrap_exec(Dialect::Mssql, ":V := UPPER('x')"),
