@@ -2,9 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (2차 · mac) — 정리 · 진행사항 최신화 · push
+
+**요청**(사용자): 정리 → commit → main 병합 → push. 브랜치는 main 하나. journal 09-13 파일 분리. 원격 `SosomLab/nexa-sql`·`nexa-ui` 모두 최신 · CI green. **다음**: D-15~D-17 답 대기 → 기본안 = nexa-edit E1(로프 버퍼) 착수([17](17-editor-incremental-plan.md)). → [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (1차 · mac) — Codespaces 최소 사양(2코어·8GB)
 
-**요청**(사용자): *"codespaces 서버는 최소 사양으로 · 느려도 괜찮다"* → `hostRequirements` 2/8GB/32GB · DB 메모리 상한(oracle 2g · mssql 1.5g) · 빌드 병렬 1 · DB 대기 비차단. [20](20-testing-codespaces.md) 갱신. → [journal](journal/2026-09-12.md)
+**요청**(사용자): *"codespaces 서버는 최소 사양으로 · 느려도 괜찮다"* → `hostRequirements` 2/8GB/32GB · DB 메모리 상한(oracle 2g · mssql 1.5g) · 빌드 병렬 1 · DB 대기 비차단. [20](20-testing-codespaces.md) 갱신. → [journal](journal/2026-09-13.md)
 
 ## 2026-09-12 (5차 · mac) — ★ Oracle · SQL Server 실서버 검증 통과 (integration 워크플로)
 
