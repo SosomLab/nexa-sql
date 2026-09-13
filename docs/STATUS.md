@@ -2,6 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-13 (3차 · win) — ★ 연결 프로필 저장소 `nsql-vault` · `nsql conn` · GUI Save (DR-22)
+
+**요청**(사용자): 저장소 최신화·변경 분석 → *"사용자 폴더에 접속 정보를 암호화해서 저장 · 연결 시 재사용"* → *"몇 개의 Instance든 저장된 암호를 함께 사용"*. nexa-ui는 `git@kiros33.github.com:SosomLab/nexa-ui.git`로 clone(이 기기에 없었음 → 빌드 복구).
+**산출**: `nsql-vault`(비밀번호만 ChaCha20-Poly1305 봉투 · 도메인 = 프로필 이름 · 기기 키 Windows DPAPI/그 외 0600 · 동시 첫 실행에도 단일 키) · `nsql conn list|add|show|rm|test|path` · `-c <이름>` · 스크립트 `CONNECT <이름>`(Runner Resolver) · GUI 이름 칸 + Save · 숨김 비밀번호 입력. **71 테스트 green**(+14) · clippy 0 · CLI 실기 ✓(저장 파일에 평문 없음).
+**결정**: **DR-22**(파일 저장소 + 봉투 · D-2 닫힘) · D-18(mac Keychain·Linux Secret Service 후속). 원장 +3(clip 동일 판).
+**⏳ 사용자 실기**: GUI Save → 이름으로 Connect · 창 둘 공유. **다음**: 사용자 후속 방향(DBeaver식 접속 대화상자 · GitHub 최신 드라이버 다운로드 · SxS 다중 버전·삭제) 설계 → [22](22-driver-extensions.md). → [journal](journal/2026-09-13.md)
+
 ## 2026-09-13 (2차 · mac) — 정리 · 진행사항 최신화 · push
 
 **요청**(사용자): 정리 → commit → main 병합 → push. 브랜치는 main 하나. journal 09-13 파일 분리. 원격 `SosomLab/nexa-sql`·`nexa-ui` 모두 최신 · CI green. **다음**: D-15~D-17 답 대기 → 기본안 = nexa-edit E1(로프 버퍼) 착수([17](17-editor-incremental-plan.md)). → [journal](journal/2026-09-13.md)

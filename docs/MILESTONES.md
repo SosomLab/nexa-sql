@@ -22,7 +22,8 @@
 | ✅ | `nsql-driver-mssql`(tiberius) — DECLARE+트레일러 OUT 회수 · 배치 라우팅 · **실서버 검증(SQL Server 2022)** |
 | ✅ | `nsql-driver-sqlite` — 실DB 검증 어댑터 |
 | ✅ | `nsql run/shell/export`(grid/csv/tsv/json/jsonl/insert) · 세션 변수 실기(SQLite · **Oracle · MSSQL**) |
-| ☐ | `import`/`bulk`(M4) · 연결 프로필·키체인(T-16b) |
+| ✅ | **연결 프로필 `nsql conn` · `-c <이름>` · `CONNECT <이름>`** — `nsql-vault` 봉투 · DPAPI 기기 키 · 여러 인스턴스 공유(DR-22 · 09-13) |
+| ☐ | `import`/`bulk`(M4) |
 
 ## M2 — GUI 관통
 | 상태 | 항목 |
@@ -30,6 +31,7 @@
 | ✅ | **최소 창** — 접속·편집기(TextBox 다중행·IME)·그리드·상태줄·워커 · 영역별 폰트(UI/고정폭) |
 | ⏳ | 창 실기(사용자) — 한글 입력 · 실행 · 그리드 스크롤 |
 | 📐 | `nexa-edit` E1~E5([17](17-editor-incremental-plan.md)) — TextBox 대체 |
-| ☐ | `nexa-grid` · dock/tab(nexa-ui U-2) · 클립보드·컨텍스트 메뉴(T-16b) · 치환 변수 대화상자(T-16c) |
+| ✅ | 연결 프로필 저장·이름 접속(이름 칸 + Save · T-16b 일부 · 09-13) |
+| ☐ | `nexa-grid` · dock/tab(nexa-ui U-2) · 클립보드·컨텍스트 메뉴(T-16b) · 치환 변수 대화상자(T-16c) · DBeaver식 접속 대화상자·프로필 목록([22 §1](22-driver-extensions.md)) |
 
 ## M3~M6 — [02](02-roadmap.md)

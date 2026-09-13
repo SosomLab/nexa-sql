@@ -16,6 +16,7 @@ nsql-core.workspace = true
 nsql-script.workspace = true
 nsql-run.workspace = true
 nsql-drivers.workspace = true
+nsql-vault.workspace = true
 nsql-io.workspace = true
 nexa-gfx.workspace = true
 nexa-ctl.workspace = true

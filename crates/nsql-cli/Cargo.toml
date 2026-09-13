@@ -21,3 +21,4 @@ nsql-script.workspace = true
 nsql-io.workspace = true
 nsql-run.workspace = true
 nsql-drivers.workspace = true
+nsql-vault.workspace = true

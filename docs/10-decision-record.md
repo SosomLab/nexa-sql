@@ -1,6 +1,6 @@
 # 10 · 결정 기록 (DR) · 권장 확정 대기 (DP) · 열린 결정 (D)
 
-> 확정은 DR, 내가 낸 결론으로 사용자 확인이 남은 것은 DP, 미정은 D. 변경 시 과거를 지우지 않고 새 항목으로 정정. **최신 갱신 2026-09-12.**
+> 확정은 DR, 내가 낸 결론으로 사용자 확인이 남은 것은 DP, 미정은 D. 변경 시 과거를 지우지 않고 새 항목으로 정정. **최신 갱신 2026-09-13.**
 
 ## 1. 확정 결정 (DR) — 사용자 발언에 근거
 
@@ -27,6 +27,7 @@
 | **DR-19** | ★ **한글 처리·고정폭 폰트 1급 지원** — 편집기·그리드는 고정폭(한글 고정폭 D2Coding 우선) + 한글 UI 본 폴백 · IME preedit 오버레이 | 사용자 09-12 *"한글 처리와 고정폭 폰트 등을 잘 지원"* · `nexa-font` | ✅ 09-12 |
 | **DR-20** | **코드 서명은 별도 요청 시 별도 진행** — 지금은 무서명(계열 v1과 동일) | DP-10 → 사용자 09-12 | ✅ 보류 확정 |
 | **DR-21** | **실서버 검증 = GitHub Codespaces devcontainer + 각 DBMS별 Docker 컨테이너 + Actions 통합 워크플로** — 로컬 Docker Desktop 의존 없음 | D-14 → 사용자 09-12 *"codespaces … 각 DBMS별 docker"* · [20](20-testing-codespaces.md) | ✅ 09-12 |
+| **DR-22** | ★ **연결 프로필 = 사용자 설정 폴더 파일 저장소(`nsql-vault`)** — 비밀번호만 ChaCha20-Poly1305 봉투(도메인 = 프로필 이름) · 기기 키는 Windows DPAPI, 그 외 0600 · **CLI·GUI·여러 인스턴스가 같은 폴더 공유**(첫 실행 경합은 `create_new`로 단일 키) · OS 키체인은 기기 키 보호 후속(D-18) | 사용자 09-13 *"사용자 폴더에 접속 정보를 암호화해서 저장 · 연결 시 재사용"* · *"몇 개의 Instance를 실행하든 저장된 암호를 함께 사용"* · [21](21-connection-profiles.md) · D-2 닫힘 | ✅ 09-13 |
 
 ## 2. 권장 확정 대기 (DP)
 
@@ -37,7 +38,7 @@
 | # | 내용 |
 |:--:|---|
 | D-1 | Instant Client를 설치본에 동봉할 것인가(OTN 재배포 조건) vs 사용자 다운로드 안내 — 공식 thin GA면 소멸 |
-| D-2 | 연결 프로필·비밀번호 저장: OS 키체인(Windows Credential Manager · macOS Keychain · Linux Secret Service) — 계열 공용 크레이트로 뽑을 것인가 |
+| ~~D-2~~ | → **DR-22**(파일 저장소 + 봉투 · Windows DPAPI). 잔여 = **D-18** macOS Keychain · Linux Secret Service로 기기 키 보호 |
 | D-3 | `nexa-edit`를 `nexa-ui`에 둘지 별도 저장소로 둘지(SDK MIT 분리 가능성 · nexa-ui D-1) |
 | D-4 | 한글 IME preedit 오버레이의 3-OS 구현 순서(Windows 먼저 — 사용자 실무 OS 확인 필요) |
 | D-5 | MSSQL REFCURSOR 대체 표현(결과 집합 탭) · `SESSION_CONTEXT` 옵션 노출 여부 |
@@ -48,6 +49,7 @@
 | **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) |
 | **D-16** | ★ **실기 OS 순서** — macOS 먼저 vs Windows 먼저(IME 구현 순서에 영향) (사용자 답 대기) |
 | **D-17** | 오브젝트 시점 캐시·로컬 히스토리 기본 위치 — 앱 데이터 폴더(권장) vs 프로젝트 `.nexa/` (사용자 답 대기) |
+| **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
 
 ## 4. 외부 crate 원장 (추가 시 건별 기록)
 
@@ -62,3 +64,4 @@
 | `syntect` | ④ nexa-edit | `.sublime-syntax` | MIT | ☐ M3 |
 | `wasmi` | ④ 패키지 | DP-7 | MIT/Apache | ☐ M6 |
 | `tokio-postgres` · `mysql_async` · `rusqlite(bundled)` · `odbc-api` | ① | DP-2 | MIT/Apache | ☐ M4 |
+| `chacha20poly1305` 0.10 · `sha2` 0.10 · `getrandom` 0.2 | Core 옆 `nsql-vault` | DR-22 비밀번호 봉투 AEAD · 키 KDF · OS 난수 — ★ **암호화 자체 구현 금지 부류**, nexa-clip `nclip-store` 원장과 동일 판(RustCrypto) | MIT/Apache-2.0 | ✅ 09-13 |

@@ -1,6 +1,7 @@
 //! Nexa SQL GUI — M2 최소 슬라이스(DR-18 · 사용자 "GUI 최소 기능을 병행").
 //!
-//! 창 하나: [접속 문자열 · Connect] / SQL 편집기(고정폭 · nexa-ctl TextBox 다중행 · IME) / 결과 그리드(자체 가상화) / 상태줄.
+//! 창 하나: [프로필 이름 · 접속 문자열(또는 프로필 이름) · Save · Connect · Run] / SQL 편집기(고정폭 · nexa-ctl TextBox 다중행 · IME) / 결과 그리드(자체 가상화) / 상태줄.
+//! 연결 프로필(T-16b): 접속 칸에 프로필 이름만 넣고 Connect · 이름 칸 + 접속 문자열 + Save로 저장(비밀번호는 `nsql-vault` 봉투 · CLI `nsql conn`과 같은 폴더).
 //! 실행은 워커 스레드의 [`nsql_run::Runner`]가 하고, 결과는 채널 + `EventLoopProxy`로 UI에 온다(UI 스레드는 기다리지 않는다).
 //! 폰트: UI = 한글 UI 본, 편집기·그리드 = 고정폭(D2Coding 우선) + 한글 폴백([docs/14](../../../docs/14-fonts-and-feature-modules.md)).
 //!
@@ -34,6 +35,7 @@ struct Wake;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Focus {
+    Name,
     Connect,
     Editor,
     Grid,
@@ -48,7 +50,9 @@ struct App {
     theme: Theme,
     scale: f32,
     // 컨트롤
+    name: TextBox,
     connect: TextBox,
+    save_btn: Button,
     connect_btn: Button,
     run_btn: Button,
     editor: TextBox,
@@ -82,22 +86,25 @@ impl App {
         let top_h = px(36.0, s);
         let status_h = px(24.0, s);
         let btn_w = px(84.0, s);
+        let name_w = px(120.0, s);
+        let field_h = top_h - px(12.0, s);
+        self.name
+            .set_bounds(Rect::new(pad, px(6.0, s), name_w, field_h), &mut inv);
         self.connect.set_bounds(
             Rect::new(
-                pad,
+                pad * 2 + name_w,
                 px(6.0, s),
-                w - pad * 3 - btn_w * 2,
-                top_h - px(12.0, s),
+                w - pad * 5 - name_w - btn_w * 3,
+                field_h,
             ),
             &mut inv,
         );
+        self.save_btn.set_bounds(
+            Rect::new(w - pad * 3 - btn_w * 3, px(6.0, s), btn_w, field_h),
+            &mut inv,
+        );
         self.connect_btn.set_bounds(
-            Rect::new(
-                w - pad * 2 - btn_w * 2,
-                px(6.0, s),
-                btn_w,
-                top_h - px(12.0, s),
-            ),
+            Rect::new(w - pad * 2 - btn_w * 2, px(6.0, s), btn_w, field_h),
             &mut inv,
         );
         self.run_btn.set_bounds(
@@ -117,20 +124,54 @@ impl App {
             w - pad * 2,
             body_h - editor_h - pad,
         ));
-        for c in [&mut self.connect, &mut self.editor] {
+        for c in [&mut self.name, &mut self.connect, &mut self.editor] {
             c.set_scale(s);
         }
+        self.save_btn.set_scale(s);
         self.connect_btn.set_scale(s);
         self.run_btn.set_scale(s);
     }
 
     fn set_focus(&mut self, f: Focus) {
         self.focus = f;
+        self.name.set_focused(f == Focus::Name);
         self.connect.set_focused(f == Focus::Connect);
         self.editor.set_focused(f == Focus::Editor);
         if let Some(w) = &self.window {
-            w.set_ime_allowed(matches!(f, Focus::Connect | Focus::Editor));
+            w.set_ime_allowed(matches!(f, Focus::Name | Focus::Connect | Focus::Editor));
         }
+    }
+
+    /// 포커스 텍스트 박스(IME·편집 컨텍스트 라우팅).
+    fn focused_textbox(&mut self) -> Option<&mut TextBox> {
+        match self.focus {
+            Focus::Name => Some(&mut self.name),
+            Focus::Connect => Some(&mut self.connect),
+            Focus::Editor => Some(&mut self.editor),
+            Focus::Grid => None,
+        }
+    }
+
+    /// 이름 칸 + 접속 칸 → 프로필 저장(워커가 파싱·봉인·기록).
+    fn do_save(&mut self) {
+        let name = self.name.text().trim().to_string();
+        let target = self.connect.text().trim().to_string();
+        if !nsql_vault::is_profile_name(&name) {
+            self.status = "프로필 이름을 입력하세요(영문·숫자·`_ - .` · 64자 이내)".into();
+            self.set_focus(Focus::Name);
+            self.redraw();
+            return;
+        }
+        if target.is_empty() || nsql_vault::is_profile_name(&target) {
+            self.status =
+                "저장할 접속 문자열을 입력하세요 (예: oracle://user:pass@host:1521/svc)".into();
+            self.set_focus(Focus::Connect);
+            self.redraw();
+            return;
+        }
+        self.status = format!("프로필 저장 중… {name}");
+        self.worker.send(worker::Cmd::Save { name, target });
+        self.redraw();
     }
 
     fn redraw(&self) {
@@ -273,7 +314,9 @@ impl App {
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
                 dc.fill_rect(Rect::new(0, 0, wi, px(36.0, s)), th.chrome_bg);
                 dc.fill_rect(Rect::new(0, px(36.0, s) - 1, wi, 1), th.border);
+                self.name.paint(&mut dc, &th);
                 self.connect.paint(&mut dc, &th);
+                self.save_btn.paint(&mut dc, &th);
                 self.connect_btn.paint(&mut dc, &th);
                 self.run_btn.paint(&mut dc, &th);
                 // 상태줄
@@ -394,7 +437,9 @@ impl App {
         // 마우스 다운은 포커스를 옮긴다.
         if let InputEvent::MouseDown { x, y, .. } = ev {
             let p = Point { x, y };
-            if self.connect.bounds().contains(p) {
+            if self.name.bounds().contains(p) {
+                self.set_focus(Focus::Name);
+            } else if self.connect.bounds().contains(p) {
                 self.set_focus(Focus::Connect);
             } else if self.editor.bounds().contains(p) {
                 self.set_focus(Focus::Editor);
@@ -409,8 +454,12 @@ impl App {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         ) {
+            self.save_btn.on_event(&ev, &mut inv);
             self.connect_btn.on_event(&ev, &mut inv);
             self.run_btn.on_event(&ev, &mut inv);
+            if self.save_btn.take_clicked() {
+                self.do_save();
+            }
             if self.connect_btn.take_clicked() {
                 self.do_connect();
             }
@@ -431,15 +480,23 @@ impl App {
             self.grid.on_event(&ev);
             inv.push(self.grid.bounds);
         } else {
+            let enter = matches!(
+                ev,
+                InputEvent::Key {
+                    key: CtlKey::Enter,
+                    ..
+                }
+            );
             match self.focus {
+                Focus::Name => {
+                    if enter {
+                        self.do_save();
+                    } else {
+                        self.name.on_event(&ev, &mut inv);
+                    }
+                }
                 Focus::Connect => {
-                    if matches!(
-                        ev,
-                        InputEvent::Key {
-                            key: CtlKey::Enter,
-                            ..
-                        }
-                    ) {
+                    if enter {
                         self.do_connect();
                     } else {
                         self.connect.on_event(&ev, &mut inv);
@@ -452,7 +509,7 @@ impl App {
                 }
             }
             // 편집 컨텍스트 요청(복사·붙여넣기 — 호스트 몫)
-            for tb in [&mut self.connect, &mut self.editor] {
+            for tb in [&mut self.name, &mut self.connect, &mut self.editor] {
                 if let Some(act) = tb.take_edit_ctx() {
                     self.status = format!("{act:?}: 클립보드 연동은 T-16b");
                 }
@@ -503,7 +560,7 @@ impl ApplicationHandler<Wake> for App {
         el.set_control_flow(ControlFlow::WaitUntil(
             Instant::now() + Duration::from_millis(500),
         ));
-        if matches!(self.focus, Focus::Editor | Focus::Connect) {
+        if matches!(self.focus, Focus::Editor | Focus::Connect | Focus::Name) {
             self.redraw();
         }
     }
@@ -540,12 +597,7 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::Ime(ime) => {
                 let mut inv = Invalidations::default();
-                let tb = match self.focus {
-                    Focus::Editor => Some(&mut self.editor),
-                    Focus::Connect => Some(&mut self.connect),
-                    Focus::Grid => None,
-                };
-                if let Some(tb) = tb {
+                if let Some(tb) = self.focused_textbox() {
                     match ime {
                         Ime::Preedit(t, _) => tb.set_preedit(t, &mut inv),
                         Ime::Commit(t) => {
@@ -627,6 +679,15 @@ fn main() {
         .first()
         .cloned()
         .unwrap_or_else(|| "sqlite::memory:".into());
+    let profiles = worker::profile_names();
+    let status = if profiles.is_empty() {
+        "Connect를 누르거나 ⌘/Ctrl+L 후 Enter · 이름 + 접속 문자열 + Save로 프로필 저장".to_string()
+    } else {
+        format!(
+            "저장된 프로필: {} — 접속 칸에 이름만 넣고 Connect",
+            profiles.join(", ")
+        )
+    };
     let mut app = App {
         window: None,
         ctx: None,
@@ -635,10 +696,12 @@ fn main() {
         mono_font: mono.font,
         theme: Theme::dark(),
         scale: 1.0,
+        name: TextBox::new("프로필 이름"),
         connect: TextBox::new(
-            "sqlite::memory: · oracle://user:pass@host:1521/svc · mssql://user:pass@host:1433/db",
+            "프로필 이름 · sqlite::memory: · oracle://user:pass@host:1521/svc · mssql://user:pass@host:1433/db",
         )
         .with_text(&initial_target),
+        save_btn: Button::new("Save"),
         connect_btn: Button::new("Connect"),
         run_btn: Button::new("Run ▶"),
         editor: TextBox::new("SELECT … ;  EXEC :V := 'x';  PRINT V").with_multiline(),
@@ -647,7 +710,7 @@ fn main() {
         worker,
         events,
         busy: false,
-        status: "Connect를 누르거나 ⌘/Ctrl+L 후 Enter".into(),
+        status,
         log: Vec::new(),
         cursor: (0, 0),
         shift: false,

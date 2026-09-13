@@ -1,0 +1,22 @@
+[package]
+name = "nsql-vault"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 연결 프로필 저장소 — 사용자 폴더에 접속 정보를 암호화 보관하고 CLI·GUI가 이름으로 재사용 (T-16b · DR-22)"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+# 설정 폴더 규칙 · key=value 직렬화 · 원자적 쓰기 — nexa 계열 공용(도메인 타입 0 · UI 비의존).
+nexa-conf.workspace = true
+# ── 암호화(nexa-clip `nclip-store` 원장과 동일 판 — ★ 암호화 자체 구현 금지 부류 · docs/10 §4 DR-22)
+chacha20poly1305 = "0.10" # 비밀번호 AEAD 봉투(ChaCha20-Poly1305 · 도메인 분리)
+sha2 = "0.10"             # 봉투 키 KDF(SHA-256)
+getrandom = "0.2"         # 기기 키·salt·nonce 난수(OS CSPRNG)

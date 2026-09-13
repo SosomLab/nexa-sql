@@ -5,15 +5,19 @@
 //! nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args...]
 //! nsql shell  -c <target> [-d dialect]                          # 대화형(줄 단위 · `;`/`/`/명령으로 실행 · exit)
 //! nsql export -c <target> (-q <sql> | -t <table>) [-f csv|tsv|json|jsonl|insert[:T]] [-o file]
-//! target: sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc(-d로 방언)
+//! nsql conn   list | add <name> <target> [-p pw] | show <name> | rm <name> | test <name> | path
+//! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
+mod conn;
 mod plan;
+mod term;
 
 use nsql_core::{DbError, Dialect, Session};
 use nsql_io::Format;
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::{split_script, ConnectSpec};
+use nsql_vault::Vault;
 use std::io::{self, BufRead, Read, Write};
 
 struct Opts {
@@ -22,6 +26,8 @@ struct Opts {
     dialect: Dialect,
     format: Format,
     no_prompt: bool,
+    /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
+    password: Option<String>,
     query: Option<String>,
     table: Option<String>,
     out: Option<String>,
@@ -30,7 +36,7 @@ struct Opts {
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n\n  target: sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> <target> [-p pw] | show <name> | rm <name> | test <name> | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -52,6 +58,7 @@ fn parse_opts() -> Opts {
         dialect: Dialect::Oracle,
         format: Format::Grid,
         no_prompt: false,
+        password: None,
         query: None,
         table: None,
         out: None,
@@ -84,6 +91,7 @@ fn parse_opts() -> Opts {
                     std::process::exit(2)
                 });
             }
+            "-p" | "--password" => o.password = Some(val("-p")),
             "-q" | "--query" => o.query = Some(val("-q")),
             "-t" | "--table" => o.table = Some(val("-t")),
             "-o" | "--out" => o.out = Some(val("-o")),
@@ -116,6 +124,25 @@ fn opener(default_dialect: Dialect) -> Opener {
             nsql_drivers::open(spec, default_dialect)
         },
     )
+}
+
+/// 스크립트 `CONNECT <프로필>` 해석기 — 저장소는 호출마다 연다(다른 인스턴스가 방금 저장한 프로필도 보인다).
+fn resolver() -> nsql_run::Resolver {
+    Box::new(|name: &str| {
+        let v = Vault::open_default().map_err(|e| e.to_string())?;
+        v.resolve(name).map_err(|e| e.to_string())
+    })
+}
+
+/// `-c <target>` — 프로필 이름이면 저장소에서, 아니면 접속 문자열 파싱.
+fn resolve_target(target: &str, dialect: Dialect) -> Result<ConnectSpec, String> {
+    if nsql_vault::is_profile_name(target) {
+        let v = Vault::open_default().map_err(|e| e.to_string())?;
+        if let Some(spec) = v.resolve(target).map_err(|e| e.to_string())? {
+            return Ok(spec);
+        }
+    }
+    nsql_drivers::parse_target(target, dialect)
 }
 
 /// 이벤트 → 터미널 출력. 반환 = 오류 수.
@@ -188,7 +215,7 @@ impl Printer {
 }
 
 fn connect_or_exit(runner: &mut Runner, target: &str, dialect: Dialect, printer: &mut Printer) {
-    let spec = nsql_drivers::parse_target(target, dialect).unwrap_or_else(|e| {
+    let spec = resolve_target(target, dialect).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(2)
     });
@@ -222,7 +249,7 @@ fn cmd_run(o: &Opts) -> i32 {
         errors: 0,
         feedback: true,
     };
-    let mut runner = Runner::new(o.dialect, opener(o.dialect));
+    let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
@@ -249,7 +276,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         errors: 0,
         feedback: true,
     };
-    let mut runner = Runner::new(o.dialect, opener(o.dialect));
+    let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
     eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지");
     let stdin = io::stdin();
@@ -321,7 +348,7 @@ fn cmd_export(o: &Opts) -> i32 {
         errors: 0,
         feedback: false,
     };
-    let mut runner = Runner::new(o.dialect, opener(o.dialect));
+    let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
     let dialect = runner.engine.dialect;
     let mut out: Box<dyn Write> = match &o.out {
@@ -376,6 +403,7 @@ fn main() {
         "run" => cmd_run(&o),
         "shell" => cmd_shell(&o),
         "export" => cmd_export(&o),
+        "conn" => conn::cmd_conn(&o),
         other => {
             eprintln!("알 수 없는 명령: {other}\n");
             usage()

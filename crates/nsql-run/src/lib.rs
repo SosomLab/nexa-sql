@@ -59,12 +59,17 @@ pub enum RunEvent {
 pub type Opener = Box<dyn FnMut(&ConnectSpec) -> Result<Box<dyn Session>, DbError>>;
 /// 치환 변수 프롬프트 — `None`이면 실행 중단.
 pub type Prompter<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
+/// 프로필 이름 → 스펙(연결 프로필 저장소 · T-16b). `Ok(None)` = 이름이 아님(접속 문자열로 취급),
+/// `Err` = 이름 꼴인데 프로필이 없거나 봉투를 열 수 없음.
+pub type Resolver = Box<dyn FnMut(&str) -> Result<Option<ConnectSpec>, String>>;
 
 #[allow(missing_debug_implementations)]
 pub struct Runner {
     pub engine: Engine,
     pub session: Option<Box<dyn Session>>,
     opener: Opener,
+    /// `CONNECT <프로필>`(사용자명만 있고 나머지가 빈 스펙)을 저장소에서 푼다. 없으면 그대로 접속.
+    pub resolver: Option<Resolver>,
     /// 마지막 접속 설명(상태줄).
     pub connection: Option<String>,
 }
@@ -75,7 +80,31 @@ impl Runner {
             engine: Engine::new(dialect),
             session: None,
             opener,
+            resolver: None,
             connection: None,
+        }
+    }
+
+    /// 프로필 해석기 장착(체이닝).
+    #[must_use]
+    pub fn with_resolver(mut self, r: Resolver) -> Self {
+        self.resolver = Some(r);
+        self
+    }
+
+    /// `CONNECT prod`처럼 **사용자명 자리에만 값이 있는** 스펙 = 프로필 이름 후보.
+    fn bare_name(spec: &ConnectSpec) -> Option<&str> {
+        match spec {
+            ConnectSpec {
+                user: Some(u),
+                password: None,
+                host: None,
+                port: None,
+                database: None,
+                role: None,
+                dialect: None,
+            } => Some(u.as_str()),
+            _ => None,
         }
     }
 
@@ -92,6 +121,30 @@ impl Runner {
     }
 
     pub fn connect(&mut self, spec: &ConnectSpec, emit: &mut dyn FnMut(RunEvent)) -> bool {
+        // 프로필 이름이면 저장소에서 완전한 스펙으로 바꾼다(비밀번호 포함).
+        let resolved;
+        let spec = match (Self::bare_name(spec), self.resolver.as_mut()) {
+            (Some(name), Some(r)) => match r(name) {
+                Ok(Some(s)) => {
+                    resolved = s;
+                    &resolved
+                }
+                Ok(None) => spec,
+                Err(message) => {
+                    emit(RunEvent::Error {
+                        index: 0,
+                        line: 0,
+                        error: DbError {
+                            code: None,
+                            message,
+                            position: None,
+                        },
+                    });
+                    return false;
+                }
+            },
+            _ => spec,
+        };
         if let Some(s) = self.session.as_mut() {
             let _ = s.commit();
         }
@@ -473,6 +526,31 @@ mod tests {
         let mut no_prompt = |_: &str| None;
         let errs = r.run_script(src, &mut no_prompt, &mut |e| ev.push(e));
         (errs, ev)
+    }
+
+    /// `CONNECT dev` — 사용자명만 있는 스펙은 프로필 해석기를 거친다(T-16b). 해석기가 없으면 그대로 접속.
+    #[test]
+    fn connect_bare_name_goes_through_resolver() {
+        let mut r = runner().with_resolver(Box::new(|name: &str| match name {
+            "dev" => Ok(Some(ConnectSpec {
+                dialect: Some(Dialect::Sqlite),
+                database: Some(":memory:".into()),
+                ..Default::default()
+            })),
+            "typo" => Err("프로필 'typo'이(가) 없습니다".into()),
+            _ => Ok(None),
+        }));
+        let (errs, ev) = collect(&mut r, "CONNECT dev\nSELECT 1 AS one;\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        assert!(ev.iter().any(|e| matches!(e, RunEvent::Connected { .. })));
+        let (errs, ev) = collect(&mut r, "CONNECT typo\n");
+        assert_eq!(errs, 1);
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Error { error, .. } if error.message.contains("typo"))));
+        // 완전한 접속 문자열은 해석기를 거치지 않는다.
+        let (errs, _) = collect(&mut r, "CONNECT x/y@localhost/:memory:\n");
+        assert_eq!(errs, 0);
     }
 
     #[test]

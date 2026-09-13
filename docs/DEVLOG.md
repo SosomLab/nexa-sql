@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-13 (3차 · win)** — ★ 연결 프로필 저장소 `nsql-vault`(비밀번호 봉투 · Windows DPAPI 기기 키 · 여러 인스턴스 단일 키) · `nsql conn` · `-c <이름>`/`CONNECT <이름>` · GUI Save · DR-22 · 71 테스트. nexa-ui SSH 별칭 clone. → [journal](journal/2026-09-13.md)
 - **2026-09-13** — Codespaces 최소 사양(2코어·8GB · DB mem_limit · 빌드 병렬 1) · 정리·push. → [journal](journal/2026-09-13.md)
 - **2026-09-12 (5차)** — ★ Oracle·MSSQL 실서버 통합 테스트 5/5 green · 실서버 결함 3건 수정(#temp 배치 라우팅 · TOP 재작성 · URL 디코드).
 - **2026-09-12 (4차)** — Codespaces devcontainer · DBMS별 Docker compose · 통합 테스트 5건 · integration.yml(DR-21).

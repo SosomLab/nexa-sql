@@ -13,10 +13,10 @@ nsql export   -c <연결> (-q sql | -t table) -f csv|tsv|json|jsonl|insert[:T] [
 nsql import   -c <연결> --table t --from file [--format …] [--mode insert|upsert|replace] [--batch 5000]
 nsql bulk     -c <연결> --table t --from file       # ★ 방언별 네이티브 대량 적재(§3)
 nsql desc     -c <연결> <object>                    # DESCRIBE
-nsql conn     list|add|rm|test                       # 연결 프로필(OS 키체인 저장 · GUI와 공유)
+nsql conn     list|add|show|rm|test|path              # ✅ 연결 프로필(사용자 폴더 암호화 저장 · GUI와 공유 · [21](21-connection-profiles.md))
 ```
 
-- `-c <연결>` = 프로필 이름 또는 접속 문자열(`oracle://u@h:1521/svc` · `mssql://…` · `u/p@tns`).
+- `-c <연결>` = ✅ 프로필 이름 또는 접속 문자열(`oracle://u@h:1521/svc` · `mssql://…` · `u/p@tns`). 스크립트 `CONNECT <이름>`도 프로필을 쓴다.
 - 종료 코드·`WHENEVER SQLERROR EXIT`·stdin 파이프·`--format json` 출력으로 **스크립트/CI 친화**.
 - sqlplus 호환 별칭 `nsql sqlplus u/p@db @file.sql` · sqlcmd 호환 `nsql sqlcmd -S -U -P -i` — 기존 배치 파일 교체 비용 0을 노린다.
 
@@ -49,4 +49,4 @@ nsql conn     list|add|rm|test                       # 연결 프로필(OS 키�
 
 1. **M1**: `nsql run/shell` + Oracle·MSSQL 드라이버 + `export csv/json` — 엔진 실기 검증.
 2. **M2**: `import/bulk` 6방언 · PG/MySQL/SQLite 드라이버 · ODBC 폴백.
-3. **M3**: 연결 프로필 키체인 공유 · sqlplus/sqlcmd 호환 별칭 · Parquet/XLSX.
+3. **M3**: ~~연결 프로필 키체인 공유~~(✅ 09-13 DR-22 · 파일 저장소) · sqlplus/sqlcmd 호환 별칭 · Parquet/XLSX.

@@ -8,7 +8,8 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M1·M2 병행 진행(2026-09-12 2차)** — 드라이버 3종(sqlite 실기 · oracle/mssql 구현·컴파일) · `nsql run/shell/export` · 최소 GUI 창 · DR-1~20 확정. **⏳ 사용자 실기: GUI 창 · Oracle/MSSQL 실서버.**
+- 현 단계: **M1·M2 병행 진행(2026-09-13 3차)** — 드라이버 3종(Oracle·MSSQL 실서버 검증 ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 · 연결 프로필(DR-22) · DR-1~22 확정. **⏳ 사용자 실기: GUI 창(프로필 Save·이름 접속).** 다음 설계 = [22](docs/22-driver-extensions.md)(DBeaver식 접속 대화상자 · GitHub 최신 드라이버 · SxS).
+- ★ 형제 저장소 clone은 `git@kiros33.github.com:SosomLab/<repo>.git`(SSH 별칭 · 사용자 지정 09-13).
 
 ### 참조 원천 (재발명 금지)
 
@@ -34,9 +35,10 @@
 | DR-10~18 | 단일 앱 · 지원 범위 3급 · 드라이버 선택 · 자체 결과셋 · rustybuzz · WASM 플러그인 · 예산 · **CLI+최소 GUI 병행** |
 | DR-19 | **한글·고정폭 1급**(`nexa-font` · 편집기/그리드 고정폭 + 한글 폴백) |
 | DR-20 | 코드 서명은 **별도 요청 시** |
+| DR-22 | **연결 프로필 = 사용자 폴더 `nsql-vault`**(비밀번호만 봉투 · Windows DPAPI 기기 키 · CLI·GUI·다중 인스턴스 공유) — [21](docs/21-connection-profiles.md) |
 
 ### 설계 문서 지도(요구별)
-편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
+연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
 
 ## 3. 작업 규약
 
