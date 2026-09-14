@@ -1,7 +1,8 @@
 //! 접속 창(별도 창 · Golden "Database Login" 차용 · DR-23 · T-31 · 사용자 09-14).
 //!
-//! 왼쪽 = 접속 폼([`ConnectPanel`] 그대로 — DB 종류·호스트/포트·DB·사용자·비밀번호·프로필 · Test/Connect/Save · 상태).
-//! 오른쪽 = **로그인 목록**(저장 프로필 · 필터 · 이름/종류/사용자/대상) + New/Delete/Close.
+//! 기본 = **로그인 목록**만(저장 프로필 · 필터 · 이름/종류/사용자/대상) + New/Edit/Delete/Close.
+//! New/Edit를 누르면 오른쪽에서 **상세 폼**([`ConnectPanel`] — DB 종류·호스트/포트·DB·사용자·비밀번호·프로필 · Test/Connect/Save · 상태)이
+//! 슬라이딩해 들어온다(≈200ms ease-out · Esc = 접기). 목록은 그만큼 좁아진다.
 //! 행 클릭 = 폼에 채움 · 더블클릭 = 바로 접속 · 접속되면 창이 닫힌다. `Ctrl/⌘+L` · 툴바 ⇄ · Run ▸ Connect로 연다.
 //! 창 골격은 로그 창과 같다(winit + softbuffer + nexa-ctl 래스터). I/O(저장소·워커)는 전부 호스트 몫 — [`ConnWinAction`]으로 요청.
 
@@ -58,13 +59,20 @@ pub(crate) struct ConnWin {
     hover: Option<usize>,
     filter: TextBox,
     btn_new: Button,
+    btn_edit: Button,
     btn_delete: Button,
     btn_close: Button,
     list: Rect,
     row_h: i32,
     focus: WFocus,
     last_click: Option<(usize, Instant)>,
+    /// 상세 폼 열림 정도 0.0(닫힘)~1.0(열림) — 슬라이딩 애니메이션 현재값.
+    detail_t: f32,
+    /// (시작 시각 · from · to) — 진행 중 애니메이션.
+    anim: Option<(Instant, f32, f32)>,
 }
+
+const SLIDE_MS: f32 = 200.0;
 
 const PANEL_W: f32 = 320.0;
 const DBLCLICK_MS: u128 = 400;
@@ -87,12 +95,15 @@ impl ConnWin {
             hover: None,
             filter: TextBox::new(t(Msg::PhFilter)),
             btn_new: Button::new(t(Msg::BtnNew)),
+            btn_edit: Button::new(t(Msg::BtnEdit)),
             btn_delete: Button::new(t(Msg::BtnDelete)),
             btn_close: Button::new(t(Msg::BtnClose)),
             list: Rect::new(0, 0, 0, 0),
             row_h: 24,
-            focus: WFocus::Panel,
+            focus: WFocus::Filter,
             last_click: None,
+            detail_t: 0.0,
+            anim: None,
         };
         w.refresh_profiles(None);
         w
@@ -127,6 +138,7 @@ impl ConnWin {
         let text = self.filter.text();
         self.filter = TextBox::new(t(Msg::PhFilter)).with_text(&text);
         self.btn_new.set_label(t(Msg::BtnNew));
+        self.btn_edit.set_label(t(Msg::BtnEdit));
         self.btn_delete.set_label(t(Msg::BtnDelete));
         self.btn_close.set_label(t(Msg::BtnClose));
         self.layout();
@@ -192,11 +204,57 @@ impl ConnWin {
         win.set_ime_allowed(true);
         self.window = Some(win);
         self.refresh_profiles(None);
-        self.focus = WFocus::Panel;
-        self.panel.set_focused(true);
-        self.panel.focus_host();
+        self.detail_t = 0.0;
+        self.anim = None;
+        self.set_focus(WFocus::Filter);
+        if self.profiles.is_empty() {
+            self.open_detail(true);
+        }
         self.layout();
         self.redraw();
+    }
+
+    /// 상세 폼 열기(슬라이드 인) · `clear` = New(폼 비움) / false = Edit(폼은 호스트가 채운다).
+    fn open_detail(&mut self, clear: bool) {
+        if clear {
+            self.panel.clear();
+            self.sel = None;
+        }
+        if self.detail_t < 1.0 {
+            self.anim = Some((Instant::now(), self.detail_t, 1.0));
+        }
+        self.set_focus(WFocus::Panel);
+        self.panel.focus_host();
+        self.redraw();
+    }
+
+    /// 상세 폼 접기(슬라이드 아웃).
+    fn close_detail(&mut self) {
+        if self.detail_t > 0.0 {
+            self.anim = Some((Instant::now(), self.detail_t, 0.0));
+        }
+        self.set_focus(WFocus::Filter);
+        self.redraw();
+    }
+
+    fn detail_open(&self) -> bool {
+        self.detail_t > 0.0 || matches!(self.anim, Some((_, _, to)) if to > 0.0)
+    }
+
+    /// 애니메이션 진행(페인트 시작에 호출) — 아직 진행 중이면 true.
+    fn advance(&mut self) -> bool {
+        let Some((t0, from, to)) = self.anim else {
+            return false;
+        };
+        let p = (t0.elapsed().as_secs_f32() * 1000.0 / SLIDE_MS).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - p) * (1.0 - p); // ease-out
+        self.detail_t = from + (to - from) * e;
+        if p >= 1.0 {
+            self.detail_t = to;
+            self.anim = None;
+            return false;
+        }
+        true
     }
 
     pub(crate) fn close(&mut self) {
@@ -223,24 +281,33 @@ impl ConnWin {
         let s = self.scale;
         let pad = self.s(10.0);
         let pw = self.s(PANEL_W);
-        self.panel.set_bounds(Rect::new(0, 0, pw, h), s);
-        let x0 = pw + pad;
-        let rw = (w - x0 - pad).max(0);
+        // 상세 폼 = 오른쪽에서 detail_t만큼 들어와 있다(닫힘 = 창 밖).
+        let open_px = (pw as f32 * self.detail_t).round() as i32;
+        self.panel.set_bounds(Rect::new(w - open_px, 0, pw, h), s);
+        let x0 = pad;
+        let rw = (w - open_px - x0 - pad).max(0);
         let row = self.s(28.0);
-        let btn_w = self.s(84.0);
+        let btn_w = self.s(72.0);
         let mut inv = Invalidations::default();
         // 제목 줄(라벨) → 필터 + 버튼 줄 → 목록
         let y1 = pad + self.s(22.0);
-        let bx = x0 + rw - btn_w * 3 - pad * 2;
+        let bx = x0 + rw - btn_w * 4 - pad * 3;
         self.filter
             .set_bounds(Rect::new(x0, y1, (bx - x0 - pad).max(0), row), &mut inv);
         self.btn_new
             .set_bounds(Rect::new(bx, y1, btn_w, row), &mut inv);
-        self.btn_delete
+        self.btn_edit
             .set_bounds(Rect::new(bx + btn_w + pad, y1, btn_w, row), &mut inv);
-        self.btn_close
+        self.btn_delete
             .set_bounds(Rect::new(bx + (btn_w + pad) * 2, y1, btn_w, row), &mut inv);
-        for c in [&mut self.btn_new, &mut self.btn_delete, &mut self.btn_close] {
+        self.btn_close
+            .set_bounds(Rect::new(bx + (btn_w + pad) * 3, y1, btn_w, row), &mut inv);
+        for c in [
+            &mut self.btn_new,
+            &mut self.btn_edit,
+            &mut self.btn_delete,
+            &mut self.btn_close,
+        ] {
             c.set_scale(s);
         }
         self.filter.set_scale(s);
@@ -337,7 +404,13 @@ impl ConnWin {
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
-                    Key::Named(NamedKey::Escape) if !self.panel.popup_open() => self.close(),
+                    Key::Named(NamedKey::Escape) if !self.panel.popup_open() => {
+                        if self.detail_open() {
+                            self.close_detail();
+                        } else {
+                            self.close();
+                        }
+                    }
                     Key::Named(NamedKey::Enter) if self.focus == WFocus::Filter => {
                         if let Some(n) = self.selected_name() {
                             out.push(ConnWinAction::Login(n));
@@ -464,7 +537,7 @@ impl ConnWin {
                 if let Some(n) = self.selected_name() {
                     if double {
                         out.push(ConnWinAction::Login(n));
-                    } else {
+                    } else if self.detail_open() {
                         out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
                     }
                 }
@@ -474,13 +547,17 @@ impl ConnWin {
         }
         if is_mouse {
             self.btn_new.on_event(&ev, &mut inv);
+            self.btn_edit.on_event(&ev, &mut inv);
             self.btn_delete.on_event(&ev, &mut inv);
             self.btn_close.on_event(&ev, &mut inv);
             if self.btn_new.take_clicked() {
-                self.panel.clear();
-                self.sel = None;
-                self.set_focus(WFocus::Panel);
-                self.panel.focus_host();
+                self.open_detail(true);
+            }
+            if self.btn_edit.take_clicked() {
+                if let Some(n) = self.selected_name() {
+                    out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
+                    self.open_detail(false);
+                }
             }
             if self.btn_delete.take_clicked() {
                 if let Some(n) = self.selected_name() {
@@ -491,8 +568,10 @@ impl ConnWin {
                 self.close();
                 return;
             }
-            if let Some(a) = self.panel.route(&ev, &mut inv) {
-                out.push(ConnWinAction::Panel(a));
+            if self.detail_t > 0.0 {
+                if let Some(a) = self.panel.route(&ev, &mut inv) {
+                    out.push(ConnWinAction::Panel(a));
+                }
             }
         } else {
             match self.focus {
@@ -513,6 +592,10 @@ impl ConnWin {
     // ── 그리기
 
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
+        let animating = self.advance();
+        if animating || self.anim.is_none() {
+            self.layout();
+        }
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -529,6 +612,8 @@ impl ConnWin {
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
         let caret_on = (self.started.elapsed().as_millis() / 500) % 2 == 0;
+        let detail_px = self.panel.bounds().x;
+        let detail_visible = self.detail_t > 0.0;
         let pad = (10.0 * s).round() as i32;
         let list = self.list;
         let row_h = self.row_h;
@@ -546,7 +631,10 @@ impl ConnWin {
                 .with_fonts(prefs)
                 .with_caret_on(caret_on);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
-            self.panel.paint(&mut dc, th);
+            if detail_visible {
+                self.panel.paint(&mut dc, th);
+                dc.fill_rect(Rect::new(detail_px, 0, 1, hi), th.border);
+            }
             dc.select_font(FontSlot::Base, false);
             let x0 = list.x;
             dc.text(
@@ -558,6 +646,7 @@ impl ConnWin {
             );
             self.filter.paint(&mut dc, th);
             self.btn_new.paint(&mut dc, th);
+            self.btn_edit.paint(&mut dc, th);
             self.btn_delete.paint(&mut dc, th);
             self.btn_close.paint(&mut dc, th);
             // 목록
@@ -637,6 +726,9 @@ impl ConnWin {
             }
         }
         let _ = buf.present();
+        if animating {
+            self.redraw();
+        }
     }
 }
 
