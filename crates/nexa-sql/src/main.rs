@@ -286,7 +286,7 @@ impl App {
 
     /// 패널 작업 결과를 기록하고, 지금 패널에 그 프로필이 떠 있을 때만 상태줄에 보인다(한 번에 상태 하나 · 사용자 09-14).
     fn set_panel_result(&mut self, name: &str, st: ConnState) {
-        if self.conn_win.panel.profile_name() == name {
+        if self.conn_win.panel.profile_name().trim() == name.trim() {
             self.conn_win.panel.set_state(st.clone());
         }
         self.panel_op = Some((name.to_string(), st));
@@ -584,10 +584,15 @@ impl App {
         match Vault::open_default().and_then(|v| v.get(name)) {
             Ok(Some(spec)) => {
                 let spec = self.conn_win.with_session_pw(name, spec);
+                // 행 Test = 행 선택 + (폼이 펼쳐져 있으면) 폼에 채움 + 폼 Test와 동일 경로(사용자 09-14 "두 행위 동일").
+                self.conn_win.select_by_name(name);
                 self.busy = true;
                 self.status = t(Msg::StTesting).into();
                 self.conn_win.set_test_mark(name, TestMark::Testing);
                 self.panel_op = Some((name.to_string(), ConnState::Testing));
+                if self.conn_win.is_detail_open() && self.conn_win.panel.profile_name() != name {
+                    self.handle_panel_action(PanelAction::LoadProfile(name.to_string()));
+                }
                 if self.conn_win.panel.profile_name() == name {
                     self.conn_win.panel.set_state(ConnState::Testing);
                 }

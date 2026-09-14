@@ -1113,6 +1113,21 @@ impl ConnWin {
             .is_some_and(|p| pw_state(p, &self.session_pw) > 0)
     }
 
+    /// 이름으로 행 선택(행 Test/Connect가 폼 Test/Connect와 같은 경로를 타도록 · 사용자 09-14).
+    pub(crate) fn select_by_name(&mut self, name: &str) {
+        self.sel = self.shown.iter().position(|&i| self.profiles[i].name == name);
+        if let Some(s) = self.sel {
+            self.ensure_visible(s);
+        }
+        self.sync_enabled();
+        self.redraw();
+    }
+
+    /// 상세 폼이 펼쳐져 있는가(호스트가 폼 채우기 여부를 판단).
+    pub(crate) fn is_detail_open(&self) -> bool {
+        self.detail_open()
+    }
+
     /// 입력된 비밀번호를 세션에 보관(빈 값은 무시 · 프로필 이름이 있을 때만).
     pub(crate) fn remember_pw(&mut self, name: &str, pw: &str) {
         if !name.is_empty() && !pw.is_empty() {
