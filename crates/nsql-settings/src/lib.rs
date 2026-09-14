@@ -180,6 +180,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "14",
     },
     Entry {
+        key: "editor.line_numbers",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorLineNumbers,
+        desc: Msg::DescEditorLineNumbers,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.row_numbers",
+        cat: Msg::CatAppearance,
+        label: Msg::LblGridRowNumbers,
+        desc: Msg::DescGridRowNumbers,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "grid.scroll",
         cat: Msg::CatAppearance,
         label: Msg::LblGridScroll,
@@ -396,6 +412,12 @@ impl Settings {
         self.get("ui.theme")
             .and_then(ThemeMode::parse)
             .unwrap_or_default()
+    }
+
+    /// on/off 설정.
+    #[must_use]
+    pub fn flag(&self, key: &str) -> bool {
+        self.get(key) == Some("on")
     }
 
     /// 정수 설정(레지스트리 기본값 보장 → 실패 없음).

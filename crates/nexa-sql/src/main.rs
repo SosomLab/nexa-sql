@@ -24,7 +24,8 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
-    Button, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
+    Button, ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, MenuBar,
+    MenuDef, MenuEntry, TextBox, ToolIcon, ToolItem, Toolbar, Widget,
 };
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
@@ -67,7 +68,12 @@ struct App {
     scale: f32,
     /// 로그 창(별도 창 · `Ctrl/⌘+⇧G`).
     log_win: LogWin,
+    /// 메뉴에서 요청한 종료·로그 창 토글(이벤트 루프 핸들이 필요해 window_event 끝에서 처리).
+    exit_requested: bool,
+    toggle_log: bool,
     // 컨트롤
+    menubar: MenuBar,
+    toolbar: Toolbar,
     panel: ConnectPanel,
     run_btn: Button,
     editor: TextBox,
@@ -103,19 +109,35 @@ impl App {
         let status_h = px(24.0, s);
         let panel_w = px(300.0, s);
         let btn_w = px(84.0, s);
+        // 메뉴바 · 툴바(창 전폭)
+        let menu_h = px(26.0, s);
+        self.menubar.set_scale(s);
+        self.toolbar.set_scale(s);
+        self.menubar
+            .set_bounds(Rect::new(0, 0, w, menu_h), &mut inv);
+        let tool_h = self.toolbar.preferred_height();
+        self.toolbar
+            .set_bounds(Rect::new(0, menu_h, w, tool_h), &mut inv);
+        let chrome_h = menu_h + tool_h;
         let top_h = px(36.0, s);
-        // 왼쪽 접속 패널(상태줄 위까지)
+        // 왼쪽 접속 패널(툴바 아래 ~ 상태줄 위)
         self.panel
-            .set_bounds(Rect::new(0, 0, panel_w, h - status_h), s);
+            .set_bounds(Rect::new(0, chrome_h, panel_w, h - status_h - chrome_h), s);
         // 오른쪽: 상단 Run 버튼 줄 · 편집기 · 그리드
         let rx = panel_w + pad;
         let rw = w - rx - pad;
         self.run_btn.set_bounds(
-            Rect::new(w - pad - btn_w, px(6.0, s), btn_w, top_h - px(12.0, s)),
+            Rect::new(
+                w - pad - btn_w,
+                chrome_h + px(6.0, s),
+                btn_w,
+                top_h - px(12.0, s),
+            ),
             &mut inv,
         );
-        let body_top = top_h;
+        let body_top = chrome_h + top_h;
         let body_h = h - body_top - status_h;
+        let _ = chrome_h;
         let editor_h = (body_h as f32 * 0.5) as i32;
         self.editor
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), &mut inv);
@@ -233,6 +255,97 @@ impl App {
         }
     }
 
+    /// 메뉴·툴바 액션(id = 메뉴 항목 값 · 툴바 항목 id — 같은 어휘).
+    fn menu_action(&mut self, id: &str) {
+        match id {
+            "file.new" => {
+                self.editor.set_text("");
+                self.set_focus(Focus::Editor);
+            }
+            "file.exit" => self.exit_requested = true,
+            "edit.cut" => self.clip_action(EditCtxAction::Cut),
+            "edit.copy" => self.clip_action(EditCtxAction::Copy),
+            "edit.paste" => self.clip_action(EditCtxAction::Paste),
+            "edit.select_all" => self.route(InputEvent::SelectAll),
+            "view.log" => self.toggle_log = true,
+            "view.theme" => self.cycle_theme(),
+            "view.lang" => self.toggle_lang(),
+            "run.statement" => self.run_sql(false),
+            "run.all" => self.run_sql(true),
+            "conn.toggle" => {
+                if let Some(a) = self.panel.connect_action() {
+                    self.handle_panel_action(a);
+                }
+            }
+            "help.about" => {
+                self.status = format!(
+                    "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
+                    env!("CARGO_PKG_VERSION")
+                );
+            }
+            _ => {}
+        }
+        self.redraw();
+    }
+
+    fn build_menus() -> Vec<MenuDef> {
+        let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
+        vec![
+            MenuDef::new(
+                t(Msg::MnFile),
+                vec![
+                    item("file.new", Msg::MnNew),
+                    MenuEntry::Separator,
+                    item("file.exit", Msg::MnExit),
+                ],
+            ),
+            MenuDef::new(
+                t(Msg::MnEdit),
+                vec![
+                    item("edit.cut", Msg::MnCut),
+                    item("edit.copy", Msg::MnCopy),
+                    item("edit.paste", Msg::MnPaste),
+                    MenuEntry::Separator,
+                    item("edit.select_all", Msg::MnSelectAll),
+                ],
+            ),
+            MenuDef::new(
+                t(Msg::MnView),
+                vec![
+                    item("view.log", Msg::MnLogWindow),
+                    MenuEntry::Separator,
+                    item("view.theme", Msg::MnTheme),
+                    item("view.lang", Msg::MnLanguage),
+                ],
+            ),
+            MenuDef::new(
+                t(Msg::MnRun),
+                vec![
+                    item("run.statement", Msg::MnRunStatement),
+                    item("run.all", Msg::MnRunAll),
+                    MenuEntry::Separator,
+                    item("conn.toggle", Msg::MnConnect),
+                ],
+            ),
+            MenuDef::new(t(Msg::MnHelp), vec![item("help.about", Msg::MnAbout)]),
+        ]
+    }
+
+    fn build_toolbar() -> Toolbar {
+        let mut tb = Toolbar::new(vec![
+            ToolItem::new("file.new", ToolIcon::Glyph("＋".into())).tip(t(Msg::TipNew)),
+            ToolItem::new("run.statement", ToolIcon::Glyph("▷".into()))
+                .tip(t(Msg::TipRunStatement)),
+            ToolItem::new("run.all", ToolIcon::Glyph("▶".into())).tip(t(Msg::TipRunAll)),
+            ToolItem::new("conn.toggle", ToolIcon::Glyph("⇄".into())).tip(t(Msg::TipConnect)),
+            ToolItem::new("view.log", ToolIcon::Glyph("≡".into()))
+                .tip(t(Msg::TipLog))
+                .align_right(),
+        ]);
+        tb.set_icon_size(18);
+        tb
+    }
+
     /// 복사·잘라내기·붙여넣기·전체 선택 — 포커스 텍스트박스 ↔ OS 클립보드([`clipboard`]). 실패는 상태줄에.
     fn clip_action(&mut self, act: EditCtxAction) {
         let mut inv = Invalidations::default();
@@ -264,6 +377,20 @@ impl App {
             self.status = t(Msg::ErrClipboard).into();
         }
         self.redraw();
+    }
+
+    fn toggle_log_window(&mut self, el: &ActiveEventLoop) {
+        if self.log_win.is_open() {
+            self.log_win.close();
+        } else {
+            let near = self.window.as_ref().and_then(|w| {
+                w.outer_position()
+                    .ok()
+                    .map(|p| (p.x, p.y, w.outer_size().width))
+            });
+            self.log_win
+                .open(el, theme::window_theme(self.settings.theme_mode()), near);
+        }
     }
 
     /// `ui.theme` + OS 판정으로 팔레트를 다시 고르고 전체를 다시 그린다.
@@ -305,6 +432,8 @@ impl App {
 
     /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
     fn relabel(&mut self) {
+        self.menubar.set_menus(App::build_menus());
+        self.toolbar = App::build_toolbar();
         self.run_btn.set_label(t(Msg::BtnRun));
         let names = worker::profile_names();
         self.panel.relabel(&names);
@@ -312,6 +441,8 @@ impl App {
         self.editor = TextBox::new(t(Msg::PhEditor))
             .with_multiline()
             .with_text(&e);
+        self.editor
+            .set_line_numbers(self.settings.flag("editor.line_numbers"));
         self.layout();
         self.set_focus(self.focus);
     }
@@ -460,16 +591,27 @@ impl App {
                     .with_caret_on(caret_on);
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
                 let pb = self.panel.bounds();
+                let chrome_top = pb.y;
                 dc.fill_rect(
-                    Rect::new(pb.right(), 0, wi - pb.right(), px(36.0, s)),
+                    Rect::new(pb.right(), chrome_top, wi - pb.right(), px(36.0, s)),
                     th.chrome_bg,
                 );
                 dc.fill_rect(
-                    Rect::new(pb.right(), px(36.0, s) - 1, wi - pb.right(), 1),
+                    Rect::new(pb.right(), chrome_top + px(36.0, s) - 1, wi - pb.right(), 1),
                     th.border,
                 );
                 self.run_btn.paint(&mut dc, &th);
                 self.panel.paint(&mut dc, &th);
+                // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
+                dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
+                self.toolbar.paint(&mut dc, &th);
+                self.toolbar.paint_tooltip(&mut dc, &th);
+                dc.fill_rect(self.menubar.bounds(), th.chrome_bg);
+                dc.fill_rect(
+                    Rect::new(0, self.toolbar.bounds().bottom() - 1, wi, 1),
+                    th.border,
+                );
+                self.menubar.paint(&mut dc, &th);
                 // 상태줄
                 let sy = hi - px(24.0, s);
                 dc.fill_rect(Rect::new(0, sy, wi, px(24.0, s)), th.chrome_bg);
@@ -599,6 +741,29 @@ impl App {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         );
+        // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다.
+        if self.menubar.is_open() {
+            self.menubar.on_event(&ev, &mut inv);
+            if let Some(id) = self.menubar.take_picked() {
+                self.menu_action(&id);
+            }
+            self.redraw();
+            return;
+        }
+        if is_mouse {
+            self.menubar.on_event(&ev, &mut inv);
+            if let Some(id) = self.menubar.take_picked() {
+                self.menu_action(&id);
+            }
+            self.toolbar.on_event(&ev, &mut inv);
+            if let Some(id) = self.toolbar.take_clicked() {
+                self.menu_action(&id);
+            }
+            if self.menubar.is_open() {
+                self.redraw();
+                return;
+            }
+        }
         // 열린 콤보(패널)는 모달 — 어디를 눌러도 패널이 먼저 받는다.
         if self.panel.popup_open() {
             if let Some(a) = self.panel.route(&ev, &mut inv) {
@@ -853,20 +1018,7 @@ impl ApplicationHandler<Wake> for App {
                         return;
                     }
                     Key::Character("g" | "G") if self.primary && self.shift => {
-                        if self.log_win.is_open() {
-                            self.log_win.close();
-                        } else {
-                            let near = self.window.as_ref().and_then(|w| {
-                                w.outer_position()
-                                    .ok()
-                                    .map(|p| (p.x, p.y, w.outer_size().width))
-                            });
-                            self.log_win.open(
-                                el,
-                                theme::window_theme(self.settings.theme_mode()),
-                                near,
-                            );
-                        }
+                        self.toggle_log_window(el);
                         return;
                     }
                     Key::Character("l" | "L") if self.primary && self.shift => {
@@ -906,6 +1058,13 @@ impl ApplicationHandler<Wake> for App {
         }
         if let Some(ev) = self.to_ctl_event(&event) {
             self.route(ev);
+        }
+        if std::mem::take(&mut self.toggle_log) {
+            self.toggle_log_window(el);
+        }
+        if self.exit_requested {
+            self.worker.send(worker::Cmd::Quit);
+            el.exit();
         }
     }
 }
@@ -991,6 +1150,10 @@ fn main() {
         settings,
         scale: 1.0,
         log_win: LogWin::new(&log_format),
+        exit_requested: false,
+        toggle_log: false,
+        menubar: MenuBar::new(App::build_menus()),
+        toolbar: App::build_toolbar(),
         panel,
         run_btn: Button::new(t(Msg::BtnRun)),
         editor: TextBox::new(t(Msg::PhEditor)).with_multiline(),
@@ -1009,6 +1172,10 @@ fn main() {
     };
     app.grid.set_row_snap(row_snap);
     app.log_win.set_row_snap(row_snap);
+    app.grid
+        .set_row_numbers(app.settings.flag("grid.row_numbers"));
+    app.editor
+        .set_line_numbers(app.settings.flag("editor.line_numbers"));
     // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
     if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {
         app.busy = true;

@@ -27,6 +27,9 @@ pub(crate) struct Grid {
     bars: ScrollBars,
     /// 설정 `grid.scroll` = row 이면 세로 스크롤을 행 경계에 맞춘다(기본 pixel · 사용자 09-14).
     row_snap: bool,
+    /// 설정 `grid.row_numbers`(기본 켬) — 왼쪽 고정 행번호 열(가로 스크롤 무관).
+    row_numbers: bool,
+    gutter_w: i32,
 }
 
 impl Default for Grid {
@@ -45,11 +48,17 @@ impl Default for Grid {
             header_h: 0,
             bars: ScrollBars::new(),
             row_snap: false,
+            row_numbers: true,
+            gutter_w: 0,
         }
     }
 }
 
 impl Grid {
+    pub(crate) fn set_row_numbers(&mut self, on: bool) {
+        self.row_numbers = on;
+    }
+
     /// 스크롤 단위 — `true` = 항목(행) 단위 · `false` = 픽셀(기본).
     pub(crate) fn set_row_snap(&mut self, on: bool) {
         self.row_snap = on;
@@ -94,7 +103,10 @@ impl Grid {
 
     fn max_scroll(&self) -> (i32, i32) {
         let (cw, ch) = self.content_size();
-        ((cw - self.bounds.w).max(0), (ch - self.bounds.h).max(0))
+        (
+            (cw - (self.bounds.w - self.gutter_w)).max(0),
+            (ch - self.bounds.h).max(0),
+        )
     }
 
     fn clamp(&mut self) {
@@ -208,6 +220,14 @@ impl Grid {
         }
         let header = Rect::new(b.x, b.y + 1, b.w, self.row_h);
         self.header_h = header.h + 1;
+        // 행번호 열 폭(자릿수 × 숫자 폭 + 여백) — 가로 스크롤과 무관한 고정 열.
+        self.gutter_w = if self.row_numbers {
+            let digits = rs.rows.len().max(1).to_string().len().max(2) as i32;
+            digits * dc.text_width("0") + pad * 2
+        } else {
+            0
+        };
+        let gx0 = b.x + self.gutter_w;
         // 크기가 정해진 뒤 범위 재확인(창 리사이즈 · 첫 페인트).
         let (mx, my) = self.max_scroll();
         self.scroll_x = self.scroll_x.clamp(0, mx);
@@ -233,10 +253,11 @@ impl Grid {
             if ri % 2 == 1 {
                 dc.fill_rect(rr, th.panel_bg_alt);
             }
-            let mut x = b.x - self.scroll_x;
+            let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
+            let mut x = gx0 - self.scroll_x;
             for (ci, v) in row.iter().enumerate() {
                 let cw = self.col_w.get(ci).copied().unwrap_or(80);
-                let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&body);
+                let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&cells);
                 if clip.w > 0 && clip.h > 0 {
                     let txt = cell_text(v);
                     let numeric = matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_));
@@ -254,17 +275,36 @@ impl Grid {
                 }
                 x += cw;
             }
+            // 행번호(고정 열 · 우측 정렬 · 흐리게)
+            if self.gutter_w > 0 {
+                let num = (ri + 1).to_string();
+                let nw = dc.text_width(&num);
+                let gclip = Rect::new(b.x, y, self.gutter_w, self.row_h).intersection(&body);
+                dc.fill_rect(gclip, th.chrome_bg);
+                dc.text(gx0 - pad - nw, y + pad / 2, gclip, &num, th.text_dim);
+            }
             y += self.row_h;
+        }
+        if self.gutter_w > 0 {
+            dc.fill_rect(Rect::new(gx0 - 1, body.y, 1, body.h), th.border);
         }
         // ── 헤더(행 위에 덮어 그린다 — 부분 스크롤된 첫 행이 헤더 아래로 들어간다)
         dc.fill_rect(header, th.chrome_bg);
-        let mut x = b.x - self.scroll_x;
+        let hcells = Rect::new(gx0, header.y, (b.right() - gx0).max(0), header.h);
+        let mut x = gx0 - self.scroll_x;
         for (i, c) in rs.columns.iter().enumerate() {
             let cw = self.col_w[i];
-            let clip = Rect::new(x, header.y, cw, header.h).intersection(&b);
+            let clip = Rect::new(x, header.y, cw, header.h).intersection(&hcells);
             dc.text(x + pad, header.y + pad / 2, clip, &c.name, th.text);
             dc.fill_rect(Rect::new(x + cw - 1, header.y, 1, header.h), th.border);
             x += cw;
+        }
+        if self.gutter_w > 0 {
+            dc.fill_rect(
+                Rect::new(b.x, header.y, self.gutter_w, header.h),
+                th.chrome_bg,
+            );
+            dc.text(b.x + pad, header.y + pad / 2, header, "#", th.text_dim);
         }
         dc.fill_rect(Rect::new(b.x, header.bottom() - 1, b.w, 1), th.border);
         // 위치 표시(우상단 헤더 줄)

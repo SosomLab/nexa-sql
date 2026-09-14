@@ -534,6 +534,11 @@ impl ConnectPanel {
         }
     }
 
+    /// 메뉴·툴바의 "접속/해제" — 버튼 클릭과 같은 경로.
+    pub(crate) fn connect_action(&mut self) -> Option<PanelAction> {
+        self.act_connect()
+    }
+
     fn act_connect(&mut self) -> Option<PanelAction> {
         if self.connected {
             return Some(PanelAction::Disconnect);
