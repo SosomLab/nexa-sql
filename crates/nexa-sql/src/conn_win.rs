@@ -719,7 +719,8 @@ impl ConnWin {
             | self.btn_edit.tick(now_ms)
             | self.btn_delete.tick(now_ms)
             | self.btn_close.tick(now_ms)
-            | self.panel.tick(now_ms);
+            | self.panel.tick(now_ms)
+            | self.filter.tick(now_ms);
         // 삭제 무장 카운트다운(자체 시계) — 만료면 해제.
         let d = match self.del_arm.as_mut() {
             Some((tb, epoch)) => {
@@ -749,6 +750,7 @@ impl ConnWin {
                 || self.btn_edit.is_animating()
                 || self.btn_delete.is_animating()
                 || self.btn_close.is_animating()
+                || self.filter.is_animating()
                 || self.panel.animating())
     }
 
@@ -1727,6 +1729,14 @@ impl ConnWin {
                 self.route_bars(&ev);
                 return;
             }
+            // 폼 위의 휠 = 포커스와 무관하게 폼으로(상태 메시지 스크롤 등).
+            match self.panel.route(&ev, &mut inv) {
+                Some(PanelAction::Edit(act)) => self.clip(act),
+                Some(a) => out.push(ConnWinAction::Panel(a)),
+                None => {}
+            }
+            self.redraw();
+            return;
         } else if is_mouse && !over_panel && self.route_bars(&ev) {
             return;
         }
@@ -1859,18 +1869,12 @@ impl ConnWin {
 
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
         let animating = self.advance();
-        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다. 삭제 무장 중엔 "삭제? (5초)"가 들어갈 폭.
+        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다. Delete 자리는 무장 라벨("삭제? (5초)")까지 **항상** 포함해
+        // 무장해도 버튼 폭·위치가 바뀌지 않는다(사용자 09-14 "버튼이 갑자기 이동").
         self.btn_text_w = [Msg::BtnNew, Msg::BtnEdit, Msg::BtnDelete, Msg::BtnClose]
             .map(|m| ui.measure(t(m), font_px).ceil() as i32);
-        if self.del_arm.is_some() {
-            let armed = format!(
-                "{} ({}{})",
-                t(Msg::BtnDeleteConfirm),
-                5,
-                t(Msg::UnitSecShort)
-            );
-            self.btn_text_w[2] = ui.measure(&armed, font_px).ceil() as i32;
-        }
+        let armed = format!("{} ({}{})", t(Msg::BtnDeleteConfirm), 5, t(Msg::UnitSecShort));
+        self.btn_text_w[2] = self.btn_text_w[2].max(ui.measure(&armed, font_px).ceil() as i32);
         self.ctx_text_w = [
             Msg::MnDuplicate,
             Msg::BtnNew,

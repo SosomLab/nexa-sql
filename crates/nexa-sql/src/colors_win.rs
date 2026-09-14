@@ -132,14 +132,16 @@ impl ColorsWin {
         let a = self.preview.tick(now_ms);
         let b = self.reset_btn.tick(now_ms);
         let c = self.close_btn.tick(now_ms);
-        a || b || c
+        let d = self.panel.tick(now_ms);
+        a || b || c || d
     }
 
     pub(crate) fn animating(&self) -> bool {
         self.window.is_some()
             && (self.preview.is_animating()
                 || self.reset_btn.is_animating()
-                || self.close_btn.is_animating())
+                || self.close_btn.is_animating()
+                || self.panel.is_animating())
     }
 
     /// 대상의 현재 hex(없으면 테마 기본 = `sel_bg` 불투명).

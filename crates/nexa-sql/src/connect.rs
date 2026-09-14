@@ -13,7 +13,7 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{
     Button, Checkbox, Combo, ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key,
-    TextBox, Widget,
+    ScrollBars, TextBox, Widget,
 };
 use nsql_core::Dialect;
 use nsql_i18n::{t, tf, Msg};
@@ -68,6 +68,11 @@ const FIELDS: [Field; 6] = [
 pub(crate) struct ConnectPanel {
     bounds: Rect,
     scale: f32,
+    /// 상태 메시지(접속 실패/성공) — 워드랩 · 넘치면 세로 스크롤(사용자 09-14).
+    status_scroll: i32,
+    status_bars: ScrollBars,
+    /// 페인트가 잰 상태 메시지 콘텐츠 높이(px) — 이벤트 경로(폰트 없음)가 스크롤 범위에 쓴다.
+    status_content_h: std::cell::Cell<i32>,
     focused: bool,
     dialect: Combo,
     host: TextBox,
@@ -99,6 +104,9 @@ impl ConnectPanel {
         let mut p = ConnectPanel {
             bounds: Rect::new(0, 0, 0, 0),
             scale: 1.0,
+            status_scroll: 0,
+            status_bars: ScrollBars::new(),
+            status_content_h: std::cell::Cell::new(0),
             focused: false,
             dialect: Combo::new(
                 Dialect::ALL
@@ -250,6 +258,7 @@ impl ConnectPanel {
     pub(crate) fn set_state(&mut self, s: ConnState) {
         self.connected = matches!(s, ConnState::Connected(_));
         self.state = s;
+        self.status_scroll = 0;
         self.update_connect_label();
     }
 
@@ -350,15 +359,41 @@ impl ConnectPanel {
     }
 
     /// 상태줄 자리(버튼 아래).
+    /// 상태 메시지 영역 — 버튼 아래부터 패널 바닥까지(워드랩 · 넘치면 스크롤).
     fn status_rect(&self) -> Rect {
         let b = self.test_btn.bounds();
         let pad = self.s(10.0);
+        let y = b.bottom() + self.s(10.0);
         Rect::new(
             self.bounds.x + pad,
-            b.bottom() + self.s(10.0),
+            y,
             self.bounds.w - pad * 2,
-            self.s(48.0),
+            (self.bounds.bottom() - pad - y).max(self.s(24.0)),
         )
+    }
+
+    /// 상태 메시지 스크롤 — 휠/썸 드래그. 소비했으면 true.
+    fn status_scroll_event(&mut self, ev: &InputEvent) -> bool {
+        let sr = self.status_rect();
+        let ch = self.status_content_h.get();
+        if ch <= sr.h {
+            return false;
+        }
+        let (_, ny, consumed) =
+            self.status_bars
+                .on_event(ev, sr, sr.w, ch, 0, self.status_scroll, self.scale);
+        let moved = ny != self.status_scroll;
+        self.status_scroll = ny.clamp(0, (ch - sr.h).max(0));
+        moved || consumed
+    }
+
+    /// 상태 메시지 스크롤바 틱 — 다시 그려야 하면 true.
+    pub(crate) fn tick_status(&mut self, now_ms: u64) -> bool {
+        self.status_bars.tick(now_ms)
+    }
+
+    pub(crate) fn status_bars_visible(&self) -> bool {
+        self.status_bars.is_visible()
     }
 
     // ── 포커스
@@ -429,7 +464,13 @@ impl ConnectPanel {
         let b = self.connect_btn.tick(now_ms);
         let c = self.save_btn.tick(now_ms);
         let d = self.dialect.tick_hover(now_ms);
-        a || b || c || d
+        // 입력란 hover 페이드(회색 · Slow).
+        let mut e = false;
+        for f in FIELDS {
+            e |= self.textbox(f).tick(now_ms);
+        }
+        let f = self.tick_status(now_ms);
+        a || b || c || d || e || f
     }
 
     pub(crate) fn animating(&self) -> bool {
@@ -437,6 +478,8 @@ impl ConnectPanel {
             || self.connect_btn.is_animating()
             || self.save_btn.is_animating()
             || self.dialect.hover_animating()
+            || FIELDS.iter().any(|&f| self.textbox_ref(f).is_animating())
+            || self.status_bars_visible()
     }
 
     /// 호스트의 IME·클립보드 라우팅 지점.
@@ -553,6 +596,18 @@ impl ConnectPanel {
         if self.dialect.is_open() {
             self.dialect.on_event(ev, inv);
             return self.after_combo();
+        }
+        // 상태 메시지 스크롤(휠 · 썸 드래그) — 넘칠 때만 소비.
+        if matches!(
+            ev,
+            InputEvent::Wheel { .. }
+                | InputEvent::MouseDown { .. }
+                | InputEvent::MouseUp { .. }
+                | InputEvent::MouseMove { .. }
+        ) && self.status_scroll_event(ev)
+        {
+            inv.push(self.bounds);
+            return None;
         }
         // 열린 편집 메뉴(입력란 우클릭)도 모달 — 그 입력란만 받는다 · 고른 행동은 호스트에.
         if let Some(f) = self
@@ -788,11 +843,69 @@ impl ConnectPanel {
             ConnState::TestOk(d) => (th.ok, d.clone()),
             ConnState::Failed(e) => (th.danger, e.clone()),
         };
+        // 워드랩 + 세로 스크롤(오버레이 막대 · 사용자 09-14).
         let dot = self.s(8.0);
-        dc.fill_ellipse(Rect::new(sr.x, sr.y + self.s(4.0), dot, dot), color);
-        dc.text(sr.x + dot + self.s(6.0), sr.y, sr, &text, th.text);
+        let tx = sr.x + dot + self.s(6.0);
+        let line_h = dc.text_height() + self.s(2.0);
+        let lines = wrap_words(dc, &text, (sr.right() - tx).max(1));
+        let content_h = line_h * lines.len() as i32;
+        self.status_content_h.set(content_h);
+        let scroll = self.status_scroll.clamp(0, (content_h - sr.h).max(0));
+        dc.fill_ellipse(
+            Rect::new(sr.x, sr.y + self.s(4.0) - scroll, dot, dot).intersection(&sr),
+            color,
+        );
+        let mut y = sr.y - scroll;
+        for line in &lines {
+            if y + line_h >= sr.y && y < sr.bottom() {
+                dc.text(tx, y, sr, line, th.text);
+            }
+            y += line_h;
+        }
+        self.status_bars
+            .paint(dc, th, sr, sr.w, content_h.max(sr.h), 0, scroll, self.scale);
         // 콤보는 팝업을 스스로 그린다 — 열린 것이 최상위가 되게 마지막에.
         self.dialect.paint(dc, th);
         // 입력란 팝업은 여기서 그리지 않는다 — 창이 맨 마지막에 `paint_popups`로(최상위).
     }
+}
+
+/// 단어 단위 워드랩 — `max_w` 안에 맞게 줄을 나눈다(한 단어가 넘치면 글자 단위로 자른다 · 줄바꿈 문자는 존중).
+fn wrap_words(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            let cand = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if dc.text_width(&cand) <= max_w {
+                line = cand;
+                continue;
+            }
+            if !line.is_empty() {
+                out.push(std::mem::take(&mut line));
+            }
+            // 한 단어가 폭을 넘으면 글자 단위로.
+            let mut piece = String::new();
+            for ch in word.chars() {
+                let mut try_p = piece.clone();
+                try_p.push(ch);
+                if dc.text_width(&try_p) <= max_w || piece.is_empty() {
+                    piece = try_p;
+                } else {
+                    out.push(std::mem::take(&mut piece));
+                    piece.push(ch);
+                }
+            }
+            line = piece;
+        }
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
