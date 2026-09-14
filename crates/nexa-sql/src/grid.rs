@@ -38,6 +38,8 @@ pub(crate) struct Grid {
     sort_keys: Vec<(usize, bool)>,
     /// 헤더 드래그(표시 위치 · 시작 x · 현재 x · 4px 이상 움직임 · Shift).
     hdr_drag: Option<(usize, i32, i32, bool, bool)>,
+    /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
+    hdr_resize: Option<(usize, i32, i32)>,
 }
 
 impl Default for Grid {
@@ -62,6 +64,7 @@ impl Default for Grid {
             row_order: Vec::new(),
             sort_keys: Vec::new(),
             hdr_drag: None,
+            hdr_resize: None,
         }
     }
 }
@@ -113,6 +116,7 @@ impl Grid {
         self.row_order = (0..rs.rows.len()).collect();
         self.sort_keys.clear();
         self.hdr_drag = None;
+        self.hdr_resize = None;
         self.rs = Some(rs);
         self.messages.clear();
         self.scroll_y = 0;
@@ -174,6 +178,20 @@ impl Grid {
                 return Some(pos);
             }
             cx += cw;
+        }
+        None
+    }
+
+    /// 헤더에서 컬럼 오른쪽 경계 ±4px 안이면 그 컬럼(원본 index) — 폭 조절 손잡이.
+    fn header_edge_at(&self, x: i32) -> Option<usize> {
+        let grip = 4;
+        let mut cx = self.bounds.x + self.gutter_w - self.scroll_x;
+        for &ci in &self.col_order {
+            let cw = self.col_w.get(ci).copied().unwrap_or(80);
+            cx += cw;
+            if (x - cx).abs() <= grip {
+                return Some(ci);
+            }
         }
         None
     }
@@ -247,9 +265,25 @@ impl Grid {
             let hdr = self.header_rect();
             match *ev {
                 InputEvent::MouseDown { x, y, shift, .. } if hdr.contains(Point { x, y }) => {
-                    if let Some(pos) = self.header_pos_at(x) {
+                    if let Some(ci) = self.header_edge_at(x) {
+                        let w0 = self.col_w.get(ci).copied().unwrap_or(80);
+                        self.hdr_resize = Some((ci, x, w0));
+                    } else if let Some(pos) = self.header_pos_at(x) {
                         self.hdr_drag = Some((pos, x, x, false, shift));
                     }
+                    return;
+                }
+                InputEvent::MouseMove { x, .. } if self.hdr_resize.is_some() => {
+                    if let Some((ci, x0, w0)) = self.hdr_resize {
+                        if let Some(w) = self.col_w.get_mut(ci) {
+                            *w = (w0 + (x - x0)).max(24);
+                        }
+                        self.clamp();
+                    }
+                    return;
+                }
+                InputEvent::MouseUp { .. } if self.hdr_resize.is_some() => {
+                    self.hdr_resize = None;
                     return;
                 }
                 InputEvent::MouseMove { x, .. } if self.hdr_drag.is_some() => {
