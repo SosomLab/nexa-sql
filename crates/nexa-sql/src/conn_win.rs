@@ -1158,6 +1158,13 @@ impl ConnWin {
         false
     }
 
+    /// 모달(콤보 팝업·우클릭 메뉴)이 닫힌 직후 — 마우스는 움직이지 않았지만 커서 아래 대상이 바뀌었으므로
+    /// 현재 커서 위치로 MouseMove를 한 번 합성해 흘린다(클릭은 통과시키지 않는다 · 호버 페이드만 즉시 시작).
+    fn rehover(&mut self, out: &mut Vec<ConnWinAction>) {
+        let (x, y) = self.cursor;
+        self.route(InputEvent::MouseMove { x, y }, out);
+    }
+
     // ── 이벤트
 
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> Vec<ConnWinAction> {
@@ -1415,6 +1422,9 @@ impl ConnWin {
                     out.push(ConnWinAction::Duplicate(n));
                 }
             }
+            if !self.menu.is_open() {
+                self.rehover(out);
+            }
             self.redraw();
             return;
         }
@@ -1448,6 +1458,10 @@ impl ConnWin {
         if self.panel.popup_open() {
             if let Some(a) = self.panel.route(&ev, &mut inv) {
                 out.push(ConnWinAction::Panel(a));
+            }
+            if !self.panel.popup_open() {
+                // 팝업이 방금 닫혔다 — 커서 아래 대상(예: Details 버튼)의 hover를 바로 다시 판정(사용자 09-14).
+                self.rehover(out);
             }
             self.redraw();
             return;
