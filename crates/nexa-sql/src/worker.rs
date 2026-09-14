@@ -31,8 +31,6 @@ pub(crate) enum Cmd {
         spec: ConnectSpec,
         reconnect_same: bool,
     },
-    /// 접속만 해 보고 끊는다 — CLI `nsql conn test`와 같은 `nsql_run::test_connection`.
-    Test(ConnectSpec),
     Disconnect,
     Run {
         src: String,
@@ -47,11 +45,6 @@ pub(crate) enum Cmd {
 pub(crate) enum ConnOutcome {
     Connected(String),
     ConnectFailed(String),
-    TestOk {
-        description: String,
-        elapsed_s: String,
-    },
-    TestFailed(String),
     Disconnected,
 }
 
@@ -131,11 +124,6 @@ pub(crate) fn spawn(
                     let v = Vault::open_default().map_err(|e| e.to_string())?;
                     v.resolve(name).map_err(|e| e.to_string())
                 }));
-            let mut test_opener: Opener = Box::new(
-                move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-                    nsql_drivers::open(spec, default_dialect)
-                },
-            );
             let mut emit = |e: RunEvent| {
                 let _ = etx.send(e);
                 wake();
@@ -178,19 +166,6 @@ pub(crate) fn spawn(
                             ConnOutcome::Connected(spec.redacted())
                         } else {
                             ConnOutcome::ConnectFailed(last_err.unwrap_or_default())
-                        });
-                        let _ = dtx.send(None);
-                        wake();
-                        true
-                    }
-                    Cmd::Test(spec) => {
-                        let r = nsql_run::test_connection(&spec, &mut test_opener);
-                        let _ = ctx_tx.send(match r {
-                            Ok(rep) => ConnOutcome::TestOk {
-                                description: format!("{} · {}", rep.description, rep.session),
-                                elapsed_s: format!("{:.3}", rep.elapsed.as_secs_f64()),
-                            },
-                            Err(e) => ConnOutcome::TestFailed(e.message),
                         });
                         let _ = dtx.send(None);
                         wake();
@@ -296,4 +271,40 @@ pub(crate) fn spawn(
         },
         erx,
     )
+}
+
+/// 접속 테스트 결과(별도 스레드 · 어느 프로필인지 이름을 함께).
+pub(crate) struct TestResult {
+    pub name: String,
+    /// Ok = (설명, 소요 초 문자열) · Err = 메시지.
+    pub outcome: Result<(String, String), String>,
+}
+
+/// ★ 접속 테스트는 요청마다 **짧은 스레드 하나**(사용자 09-14) — 순차 워커·`busy`와 무관해서 실패 서버의 긴 타임아웃이
+/// 다른 서버 테스트나 실행을 막지 않는다. 세션은 스레드 안에서 열고 바로 닫는다(DB 워커 세션과 공유 없음).
+pub(crate) fn spawn_test(
+    name: String,
+    spec: ConnectSpec,
+    default_dialect: Dialect,
+    tx: mpsc::Sender<TestResult>,
+    wake: Box<dyn Fn() + Send>,
+) {
+    let _ = std::thread::Builder::new()
+        .name(format!("nsql-test:{name}"))
+        .spawn(move || {
+            let mut opener: Opener = Box::new(
+                move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
+                    nsql_drivers::open(spec, default_dialect)
+                },
+            );
+            let outcome = match nsql_run::test_connection(&spec, &mut opener) {
+                Ok(rep) => Ok((
+                    format!("{} · {}", rep.description, rep.session),
+                    format!("{:.3}", rep.elapsed.as_secs_f64()),
+                )),
+                Err(e) => Err(e.message),
+            };
+            let _ = tx.send(TestResult { name, outcome });
+            wake();
+        });
 }

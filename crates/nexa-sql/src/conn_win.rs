@@ -382,12 +382,18 @@ impl ConnWin {
         self.redraw();
     }
 
+    /// 프로필의 마지막 테스트 표시(진행 중 여부 판단).
+    pub(crate) fn test_mark(&self, name: &str) -> Option<TestMark> {
+        self.test_marks.get(name).copied()
+    }
+
     /// 행 테스트 버튼의 결과 표시를 바꾼다(버튼 기능은 그대로).
     pub(crate) fn set_test_mark(&mut self, name: &str, mark: TestMark) {
         if name.is_empty() {
             return;
         }
         self.test_marks.insert(name.to_string(), mark);
+        self.sync_enabled();
         self.redraw();
     }
 
@@ -1187,6 +1193,14 @@ impl ConnWin {
         if !has_sel && self.del_arm.is_some() {
             self.disarm_delete();
         }
+        // 폼의 프로필이 테스트 중이면 폼 Test/Connect 잠금(다른 프로필은 무관 · 사용자 09-14).
+        let testing = self.is_testing(&self.panel.profile_name());
+        self.panel.set_testing_lock(testing);
+    }
+
+    /// 프로필이 테스트 진행 중인가(행·폼 Test/Connect 잠금 기준).
+    pub(crate) fn is_testing(&self, name: &str) -> bool {
+        self.test_marks.get(name) == Some(&TestMark::Testing)
     }
 
     /// 상단 버튼 명중(index).
@@ -1889,8 +1903,9 @@ impl ConnWin {
                 if let Some((_, b)) = self.row_btn_at(p) {
                     self.sel = Some(row);
                     self.last_click = None;
-                    // 비밀번호가 저장되지 않은 프로필은 행 버튼이 동작하지 않는다(사용자 09-14).
-                    if self.row_has_password(row) {
+                    // 비밀번호가 없는 프로필은 행 버튼이 동작하지 않는다 · 테스트 중인 프로필도 끝날 때까지 잠금(사용자 09-14).
+                    let testing = self.name_at(row).is_some_and(|n| self.is_testing(&n));
+                    if self.row_has_password(row) && !testing {
                         if let Some(n) = self.name_at(row) {
                             out.push(match b {
                                 RowBtn::Test => ConnWinAction::TestProfile(n),
@@ -2201,8 +2216,9 @@ impl ConnWin {
                     dc.fill_ellipse(dot_r, dot_color);
                 }
                 // 행 버튼 — 테스트(마지막 결과 표시) · 접속. 비밀번호 미저장 = 흐리게(비활성).
-                // 저장됐거나 세션에 입력된 비밀번호가 있으면 활성(사용자 09-14).
-                let enabled = pw_state(p, &self.session_pw) > 0;
+                // 저장됐거나 세션에 입력된 비밀번호가 있으면 활성 · 테스트 중이면 잠금(사용자 09-14).
+                let testing = self.test_marks.get(&p.name) == Some(&TestMark::Testing);
+                let enabled = pw_state(p, &self.session_pw) > 0 && !testing;
                 let hb = |b: RowBtn| enabled && self.hover_btn == Some((row, b));
                 paint_test_btn(
                     &mut dc,
@@ -2210,7 +2226,7 @@ impl ConnWin {
                     Rect::new(l.x + sw, y, sw, rh).intersection(&body),
                     self.test_marks.get(&p.name).copied(),
                     hb(RowBtn::Test),
-                    !enabled,
+                    !enabled && !testing, // 테스트 중엔 노란 고리(진행) 표시 유지
                 );
                 paint_connect_btn(
                     &mut dc,

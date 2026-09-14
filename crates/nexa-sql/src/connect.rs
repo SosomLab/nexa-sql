@@ -525,6 +525,12 @@ impl ConnectPanel {
         self.dialect.is_open()
     }
 
+    /// 이 프로필이 테스트 중이면 Test/Connect 버튼을 잠근다(끝나면 해제 · 사용자 09-14).
+    pub(crate) fn set_testing_lock(&mut self, locked: bool) {
+        self.test_btn.set_enabled(!locked);
+        self.connect_btn.set_enabled(!locked);
+    }
+
     /// 지금 입력된 비밀번호(저장 여부와 무관 · 세션 보관용).
     pub(crate) fn password_text(&self) -> String {
         self.password.text()

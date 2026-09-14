@@ -50,6 +50,7 @@ use nsql_vault::Vault;
 use palette::{Palette, PaletteAction};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use nsql_script::ConnectSpec;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use syntax::SyntaxRegistry;
@@ -111,6 +112,11 @@ struct App {
     // 워커
     worker: worker::Handle,
     events: mpsc::Receiver<RunEvent>,
+    /// 접속 테스트 결과(요청당 스레드 · 워커와 별개).
+    tests_tx: mpsc::Sender<worker::TestResult>,
+    tests_rx: mpsc::Receiver<worker::TestResult>,
+    /// 테스트 스레드가 UI를 깨우는 프록시(clone해서 스레드에 넘긴다).
+    wake_proxy: EventLoopProxy<Wake>,
     busy: bool,
     status: String,
     log: Vec<String>,
@@ -204,9 +210,15 @@ impl App {
     fn handle_panel_action(&mut self, a: PanelAction) {
         match a {
             PanelAction::Connect(spec) => {
+                let name = self.conn_win.panel.profile_name();
+                // 테스트 중인 프로필은 끝날 때까지 접속도 막는다(사용자 09-14).
+                if self.conn_win.is_testing(&name) {
+                    self.status = t(Msg::StTesting).into();
+                    self.conn_win.panel.set_state(ConnState::Testing);
+                    return;
+                }
                 self.busy = true;
                 self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
-                let name = self.conn_win.panel.profile_name();
                 if let Some(pw) = spec.password.as_deref() {
                     self.conn_win.remember_pw(&name, pw);
                 }
@@ -221,15 +233,11 @@ impl App {
                 });
             }
             PanelAction::Test(spec) => {
-                self.busy = true;
-                self.status = t(Msg::StTesting).into();
                 let name = self.conn_win.panel.profile_name();
                 if let Some(pw) = spec.password.as_deref() {
                     self.conn_win.remember_pw(&name, pw);
                 }
-                self.conn_win.set_test_mark(&name, TestMark::Testing);
-                self.panel_op = Some((name, ConnState::Testing));
-                self.worker.send(worker::Cmd::Test(spec));
+                self.start_test(&name, spec);
             }
             PanelAction::Disconnect => {
                 self.busy = true;
@@ -294,6 +302,31 @@ impl App {
 
     fn drain_conn(&mut self) -> bool {
         let mut changed = false;
+        // 접속 테스트 결과(스레드별) — 이름이 함께 오므로 여러 테스트가 섞여도 각자 자리에.
+        while let Ok(r) = self.tests_rx.try_recv() {
+            changed = true;
+            let name = r.name;
+            match r.outcome {
+                Ok((description, elapsed_s)) => {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("test ok: {description} ({elapsed_s}s)"),
+                    ));
+                    let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
+                    self.status = msg.clone();
+                    self.conn_win.set_test_mark(&name, TestMark::Ok);
+                    self.set_panel_result(&name, ConnState::TestOk(msg));
+                }
+                Err(e) => {
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, format!("test: {e}")));
+                    self.status = tf(Msg::StTestFailed, &[&e]);
+                    self.conn_win.set_test_mark(&name, TestMark::Failed);
+                    self.set_panel_result(&name, ConnState::Failed(e));
+                    self.conn_win.note_failure(&name);
+                }
+            }
+        }
         while let Ok(o) = self.worker.conn.try_recv() {
             changed = true;
             match o {
@@ -318,29 +351,6 @@ impl App {
                     self.conn_win.set_connect_mark(&name, None);
                     self.set_panel_result(&name, ConnState::Failed(e));
                     // 접속 실패 확인 → 그 서버 신호등 즉시 갱신(사용자 09-14).
-                    self.conn_win.note_failure(&name);
-                }
-                ConnOutcome::TestOk {
-                    description,
-                    elapsed_s,
-                } => {
-                    self.log_win.push(LogEntry::new(
-                        LogKind::Info,
-                        format!("test ok: {description} ({elapsed_s}s)"),
-                    ));
-                    let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
-                    self.status = msg.clone();
-                    let name = self.panel_op_name();
-                    self.conn_win.set_test_mark(&name, TestMark::Ok);
-                    self.set_panel_result(&name, ConnState::TestOk(msg));
-                }
-                ConnOutcome::TestFailed(e) => {
-                    self.log_win
-                        .push(LogEntry::new(LogKind::Error, format!("test: {e}")));
-                    self.status = tf(Msg::StTestFailed, &[&e]);
-                    let name = self.panel_op_name();
-                    self.conn_win.set_test_mark(&name, TestMark::Failed);
-                    self.set_panel_result(&name, ConnState::Failed(e));
                     self.conn_win.note_failure(&name);
                 }
                 ConnOutcome::Disconnected => {
@@ -576,27 +586,41 @@ impl App {
 
     /// 로그인 목록 더블클릭/Enter — 저장소에서 읽어 폼에 채우고 바로 접속.
     /// 행 테스트 버튼 — 폼을 건드리지 않고 저장소 스펙으로 접속만 해 본다. 결과는 행 버튼 표시로.
-    fn test_profile(&mut self, name: &str) {
-        if self.busy {
-            self.status = t(Msg::StRunning).into();
+    /// ★ 접속 테스트 시작 — 요청당 스레드(순차 워커·`busy`와 무관 · 실패 서버 타임아웃이 다른 테스트를 막지 않는다 · 사용자 09-14).
+    /// 같은 프로필이 이미 테스트 중이면 무시.
+    fn start_test(&mut self, name: &str, spec: ConnectSpec) {
+        if self.conn_win.test_mark(name) == Some(TestMark::Testing) {
             return;
         }
+        self.status = t(Msg::StTesting).into();
+        self.conn_win.set_test_mark(name, TestMark::Testing);
+        self.panel_op = Some((name.to_string(), ConnState::Testing));
+        if self.conn_win.panel.profile_name() == name {
+            self.conn_win.panel.set_state(ConnState::Testing);
+        }
+        let proxy = self.wake_proxy.clone();
+        worker::spawn_test(
+            name.to_string(),
+            spec,
+            DEFAULT_DIALECT,
+            self.tests_tx.clone(),
+            Box::new(move || {
+                let _ = proxy.send_event(Wake);
+            }),
+        );
+        self.conn_win.redraw();
+    }
+
+    fn test_profile(&mut self, name: &str) {
         match Vault::open_default().and_then(|v| v.get(name)) {
             Ok(Some(spec)) => {
                 let spec = self.conn_win.with_session_pw(name, spec);
                 // 행 Test = 행 선택 + (폼이 펼쳐져 있으면) 폼에 채움 + 폼 Test와 동일 경로(사용자 09-14 "두 행위 동일").
                 self.conn_win.select_by_name(name);
-                self.busy = true;
-                self.status = t(Msg::StTesting).into();
-                self.conn_win.set_test_mark(name, TestMark::Testing);
-                self.panel_op = Some((name.to_string(), ConnState::Testing));
                 if self.conn_win.is_detail_open() && self.conn_win.panel.profile_name() != name {
                     self.handle_panel_action(PanelAction::LoadProfile(name.to_string()));
                 }
-                if self.conn_win.panel.profile_name() == name {
-                    self.conn_win.panel.set_state(ConnState::Testing);
-                }
-                self.worker.send(worker::Cmd::Test(spec));
+                self.start_test(name, spec);
             }
             Ok(None) => self.status = tf(Msg::StTestFailed, &[name]),
             Err(e) => self.status = tf(Msg::StTestFailed, &[&e.to_string()]),
@@ -607,6 +631,10 @@ impl App {
     fn login_profile(&mut self, name: &str) {
         if self.busy {
             self.status = t(Msg::StRunning).into();
+            return;
+        }
+        if self.conn_win.is_testing(name) {
+            self.status = t(Msg::StTesting).into();
             return;
         }
         match Vault::open_default().and_then(|v| v.get(name)) {
@@ -1544,6 +1572,9 @@ fn apply_color(target: ColorTarget, hex: Option<&str>) {
     }
 }
 
+/// 접속 문자열에 방언이 없을 때의 기본(워커 · 테스트 스레드 공통).
+const DEFAULT_DIALECT: Dialect = Dialect::Oracle;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // 설정(언어 · 테마 모드 · 글꼴 크기) — 폴더를 모르면 임시 경로의 기본값(저장은 실패해도 앱은 뜬다).
@@ -1589,7 +1620,7 @@ fn main() {
     };
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
     let (worker, events) = worker::spawn(
-        Dialect::Oracle,
+        DEFAULT_DIALECT,
         Box::new(move || {
             let _ = proxy.send_event(Wake);
         }),
@@ -1598,6 +1629,8 @@ fn main() {
     let probe_hub = probe::ProbeHub::spawn(Box::new(move || {
         let _ = probe_proxy.send_event(Wake);
     }));
+    let (tests_tx, tests_rx) = mpsc::channel::<worker::TestResult>();
+    let wake_proxy: EventLoopProxy<Wake> = el.create_proxy();
     let initial_target = args.first().cloned();
     let profiles = worker::profile_names();
     let mut panel = ConnectPanel::new(nsql_drivers::available());
@@ -1660,6 +1693,9 @@ fn main() {
         focus: Focus::Editor,
         worker,
         events,
+        tests_tx,
+        tests_rx,
+        wake_proxy,
         busy: false,
         status,
         log: Vec::new(),
