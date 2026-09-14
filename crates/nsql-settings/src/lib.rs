@@ -260,6 +260,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "grid.hover_fade",
+        cat: Msg::CatAppearance,
+        label: Msg::LblGridHoverFade,
+        desc: Msg::DescGridHoverFade,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "1000",
+    },
+    Entry {
         key: "tabs.rows",
         cat: Msg::CatAppearance,
         label: Msg::LblTabsRows,

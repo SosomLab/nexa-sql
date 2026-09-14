@@ -5,6 +5,7 @@
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
+use nexa_ctl::tokens::{hover_alpha, HoverFade};
 use nexa_ctl::{InputEvent, Key, ScrollBars};
 use nsql_core::{fmt_bytes, fmt_dur, ResultSet, Value};
 
@@ -40,6 +41,8 @@ pub(crate) struct Grid {
     hdr_drag: Option<(usize, i32, i32, bool, bool)>,
     /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
     hdr_resize: Option<(usize, i32, i32)>,
+    /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — nexa-clip과 같은 `HoverFade`(진입 = `grid.hover_fade` · 사용자 09-14).
+    hover: HoverFade,
 }
 
 impl Default for Grid {
@@ -65,6 +68,7 @@ impl Default for Grid {
             sort_keys: Vec::new(),
             hdr_drag: None,
             hdr_resize: None,
+            hover: HoverFade::default(),
         }
     }
 }
@@ -259,13 +263,34 @@ impl Grid {
         }
     }
 
-    /// 페이드 타이머 — 다시 그려야 하면 true.
+    /// 페이드 타이머(스크롤바 · 호버 행) — 다시 그려야 하면 true.
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.bars.tick(now_ms)
+        let a = self.bars.tick(now_ms);
+        let b = self.hover.tick(now_ms);
+        a || b
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
         self.bars.is_visible()
+    }
+
+    /// 호버 페이드가 움직이는 중인가(호스트가 ≈30ms 프레임을 예약).
+    pub(crate) fn hover_animating(&self) -> bool {
+        self.hover.is_animating()
+    }
+
+    /// 마우스 아래 행(표시 index) — 본문 영역 안, 실제 행 범위 안일 때만.
+    fn row_at_point(&self, x: i32, y: i32) -> Option<usize> {
+        if self.row_h <= 0 || self.rs.is_none() {
+            return None;
+        }
+        let b = self.bounds;
+        let body = Rect::new(b.x, b.y + self.header_h, b.w, self.body_h());
+        if !body.contains(Point { x, y }) {
+            return None;
+        }
+        let di = ((y - body.y + self.scroll_y) / self.row_h) as usize;
+        (di < self.rows()).then_some(di)
     }
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent, scale: f32) {
@@ -320,6 +345,10 @@ impl Grid {
                 }
                 _ => {}
             }
+        }
+        // 호버 행 — 목표만 바꾼다(진행도는 `tick`이 흘린다 · 드래그/폭 조절 중엔 위에서 이미 돌아갔다).
+        if let InputEvent::MouseMove { x, y } = *ev {
+            self.hover.set(self.row_at_point(x, y));
         }
         // 스크롤바가 먼저(휠 = 픽셀 · 썸 드래그 · 호버). 소비되면 키 처리로 흘리지 않는다.
         if self.row_h > 0 && self.rs.is_some() {
@@ -451,6 +480,11 @@ impl Grid {
             let rr = Rect::new(b.x, y, b.w, self.row_h).intersection(&body);
             if di % 2 == 1 {
                 dc.fill_rect(rr, th.panel_bg_alt);
+            }
+            // 호버 강조 — 색을 새로 만들지 않고 전경색을 알파로 덮는다(진행도 × 토큰 알파 · 서서히).
+            let ha = hover_alpha(false, self.hover.value(di));
+            if ha > 0.0 {
+                dc.fill_rect_alpha(rr, th.text, ha);
             }
             let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
             let mut x = gx0 - self.scroll_x;

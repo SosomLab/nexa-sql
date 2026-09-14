@@ -8,15 +8,16 @@
 
 use crate::connect::{ConnectPanel, PanelAction};
 use crate::probe::{self, ProbeEntry, ProbeHub, ProbePolicy, ProbeReq, ProbeStatus};
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
+use nexa_ctl::tokens::{hover_alpha, HoverFade};
 use nexa_ctl::{
     Button, Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget,
 };
 use nexa_gfx::{Font, Surface};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 use nsql_vault::{Profile, Vault};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
@@ -49,6 +50,13 @@ pub(crate) enum TestMark {
     Failed,
 }
 
+/// 행 접속 버튼의 상태색(사용자 09-14): 없음 = 어두운 회색 · 접속 중 = 파랑 · 접속됨 = 초록(잠시 뒤 창 닫힘).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConnectMark {
+    Connecting,
+    Connected,
+}
+
 /// 행 안의 아이콘 버튼(신호등 다음 두 칸).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowBtn {
@@ -58,6 +66,16 @@ enum RowBtn {
 
 /// 고정 폭 아이콘 열 수 — 신호등 · 테스트 · 접속.
 const ICON_COLS: i32 = 3;
+
+/// 툴팁 대상 — 아이콘 열(0 신호등 · 1 테스트 · 2 접속) × 헤더(None) 또는 행.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TipTarget {
+    col: i32,
+    row: Option<usize>,
+}
+
+/// 아이콘 위에 이만큼 머물면 툴팁(사용자 09-14).
+const TIP_MS: u128 = 600;
 
 /// 텍스트 열(원본 index) — 이름 · 종류 · 사용자 · 대상.
 const TEXT_COLS: usize = 4;
@@ -154,6 +172,8 @@ pub(crate) struct ConnWin {
     hover: Option<usize>,
     /// 마우스가 올라간 행 아이콘 버튼.
     hover_btn: Option<(usize, RowBtn)>,
+    /// 호버 행의 서서히 진해지는 강조(nexa-clip과 같은 `HoverFade` · 진입 = `grid.hover_fade`).
+    hover_fade: HoverFade,
     /// 텍스트 열 폭(px · 원본 index) — 비어 있으면 배치 때 비율로 채운다.
     col_w: Vec<i32>,
     /// 사용자가 폭을 조절한 뒤엔 창 폭을 따라가지 않는다.
@@ -177,6 +197,12 @@ pub(crate) struct ConnWin {
     bars: ScrollBars,
     /// 프로필별 마지막 테스트 결과(행 버튼 표시).
     test_marks: HashMap<String, TestMark>,
+    /// 프로필별 접속 버튼 상태(접속 중/접속됨).
+    conn_marks: HashMap<String, ConnectMark>,
+    /// 이 시각에 창을 닫는다(접속 성공 초록을 잠시 보여 준 뒤).
+    close_at: Option<Instant>,
+    /// 툴팁 대상 + 머물기 시작 시각(아이콘 열·행 버튼 위 · 다국어 · 사용자 09-14).
+    tip: Option<(TipTarget, Instant)>,
     filter: TextBox,
     btn_new: Button,
     btn_edit: Button,
@@ -225,6 +251,7 @@ impl ConnWin {
             sel: None,
             hover: None,
             hover_btn: None,
+            hover_fade: HoverFade::default(),
             col_w: Vec::new(),
             col_w_manual: false,
             sort_keys: Vec::new(),
@@ -237,6 +264,9 @@ impl ConnWin {
             scroll_x: 0,
             bars: ScrollBars::new(),
             test_marks: HashMap::new(),
+            conn_marks: HashMap::new(),
+            close_at: None,
+            tip: None,
             filter: TextBox::new(t(Msg::PhFilter)),
             btn_new: Button::new(t(Msg::BtnNew)),
             btn_edit: Button::new(t(Msg::BtnEdit)),
@@ -276,6 +306,33 @@ impl ConnWin {
     /// 이름의 신호등 상태(대상이 아니면 None).
     pub(crate) fn status_of(&self, name: &str) -> Option<ProbeStatus> {
         self.probes.get(name).map(|e| e.status)
+    }
+
+    /// 행 접속 버튼의 상태색(None = 기본 회색).
+    pub(crate) fn set_connect_mark(&mut self, name: &str, mark: Option<ConnectMark>) {
+        if name.is_empty() {
+            return;
+        }
+        match mark {
+            Some(m) => {
+                self.conn_marks.insert(name.to_string(), m);
+            }
+            None => {
+                self.conn_marks.remove(name);
+            }
+        }
+        self.redraw();
+    }
+
+    pub(crate) fn clear_connect_marks(&mut self) {
+        self.conn_marks.clear();
+        self.redraw();
+    }
+
+    /// 잠시 뒤 창을 닫는다(호스트 `tick`이 시각을 본다).
+    pub(crate) fn close_soon(&mut self, after: std::time::Duration) {
+        self.close_at = Some(Instant::now() + after);
+        self.redraw();
     }
 
     /// 행 테스트 버튼의 결과 표시를 바꾼다(버튼 기능은 그대로).
@@ -357,6 +414,21 @@ impl ConnWin {
     /// 예약된 프로브를 보낸다(순차 스레드) · 다음 예약 시각을 돌려준다(호스트 WaitUntil).
     /// 주기 갱신(`probe.interval`)은 창이 열려 있을 때만 돈다.
     pub(crate) fn tick(&mut self, now: Instant) -> Option<Instant> {
+        // 예약된 닫기(접속 성공 초록 표시 뒤).
+        if let Some(t) = self.close_at {
+            if t <= now {
+                self.close_at = None;
+                self.close();
+                return None;
+            } else if self.window.is_some() {
+                let probe_next = self.tick_probes(now);
+                return Some(probe_next.map_or(t, |p| p.min(t)));
+            }
+        }
+        self.tick_probes(now)
+    }
+
+    fn tick_probes(&mut self, now: Instant) -> Option<Instant> {
         if self.window.is_none() || !self.policy.enabled {
             return None;
         }
@@ -600,11 +672,21 @@ impl ConnWin {
 
     /// 스크롤바 페이드 타이머(호스트 `about_to_wait`) — 다시 그려야 하면 true.
     pub(crate) fn tick_bars(&mut self, now_ms: u64) -> bool {
-        self.window.is_some() && self.bars.tick(now_ms)
+        if self.window.is_none() {
+            return false;
+        }
+        let tip_due = matches!(self.tip, Some((_, t)) if (TIP_MS..TIP_MS + 40).contains(&t.elapsed().as_millis()));
+        let a = self.bars.tick(now_ms);
+        let b = self.hover_fade.tick(now_ms);
+        a || b || tip_due
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
         self.window.is_some() && self.bars.is_visible()
+    }
+
+    pub(crate) fn hover_animating(&self) -> bool {
+        self.window.is_some() && self.hover_fade.is_animating()
     }
 
     /// 메인 창 위 가운데에 연다(`over` = 메인 창 바깥 좌표·크기). 이미 열려 있으면 앞으로.
@@ -809,6 +891,84 @@ impl ConnWin {
         }
     }
 
+    /// 커서 아래 툴팁 대상(아이콘 열 3개 × 헤더/행).
+    fn tip_target_at(&self, p: Point) -> Option<TipTarget> {
+        let sw = self.row_h.max(1);
+        let dx = p.x - self.list.x;
+        if dx < 0 || dx >= sw * ICON_COLS {
+            return None;
+        }
+        let col = dx / sw;
+        if self.header_rect().contains(p) {
+            return Some(TipTarget { col, row: None });
+        }
+        self.row_at(p).map(|row| TipTarget { col, row: Some(row) })
+    }
+
+    /// 툴팁 문구(다국어) — 헤더는 열 설명 · 행은 그 프로필의 현재 상태.
+    fn tip_text(&self, tg: TipTarget) -> String {
+        let Some(row) = tg.row else {
+            return t(match tg.col {
+                0 => Msg::TipColStatus,
+                1 => Msg::TipColTest,
+                _ => Msg::TipColConnect,
+            })
+            .to_string();
+        };
+        let Some(p) = self.shown.get(row).and_then(|&i| self.profiles.get(i)) else {
+            return String::new();
+        };
+        let name = p.name.as_str();
+        match tg.col {
+            0 => {
+                let st = t(match self.probes.get(name).map(|e| e.status) {
+                    Some(ProbeStatus::Up) => Msg::TipStUp,
+                    Some(ProbeStatus::Checking) => Msg::TipStChecking,
+                    Some(ProbeStatus::PortClosed) => Msg::TipStPortClosed,
+                    Some(ProbeStatus::Down) => Msg::TipStDown,
+                    Some(ProbeStatus::Unknown) | None => Msg::TipStUnknown,
+                });
+                tf(Msg::TipRowStatus, &[name, st])
+            }
+            1 => {
+                let mut s = tf(Msg::TipRowTest, &[name]);
+                if let Some(m) = self.test_marks.get(name) {
+                    s.push_str(" · ");
+                    s.push_str(t(match m {
+                        TestMark::Testing => Msg::TipTesting,
+                        TestMark::Ok => Msg::TipTestOk,
+                        TestMark::Failed => Msg::TipTestFailed,
+                    }));
+                }
+                if !p.has_password {
+                    s.push('\n');
+                    s.push_str(t(Msg::TipNoPassword));
+                }
+                s
+            }
+            _ => {
+                let mut s = tf(Msg::TipRowConnect, &[name]);
+                if let Some(m) = self.conn_marks.get(name) {
+                    s.push_str(" · ");
+                    s.push_str(t(match m {
+                        ConnectMark::Connecting => Msg::TipConnecting,
+                        ConnectMark::Connected => Msg::TipConnected,
+                    }));
+                }
+                if !p.has_password {
+                    s.push('\n');
+                    s.push_str(t(Msg::TipNoPassword));
+                }
+                s
+            }
+        }
+    }
+
+    /// 툴팁 대상 위에 머무는 중인가(호스트가 ≈30ms 타이머를 돌린다).
+    pub(crate) fn tooltip_pending(&self) -> bool {
+        self.window.is_some() && self.tip.is_some()
+    }
+
     /// 행의 프로필에 비밀번호 봉투가 있는가(없으면 Test/Connect 행 버튼 비활성).
     fn row_has_password(&self, row: usize) -> bool {
         self.shown
@@ -869,6 +1029,14 @@ impl ConnWin {
                     m.state().control_key()
                 };
             }
+            WindowEvent::CursorLeft { .. } => {
+                // 창 밖으로 나가면 호버·툴팁 해제(페이드 아웃).
+                self.hover = None;
+                self.hover_btn = None;
+                self.hover_fade.set(None);
+                self.tip = None;
+                self.redraw();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
                 let p = Point {
@@ -880,6 +1048,13 @@ impl ConnWin {
                 if h != self.hover || hb != self.hover_btn {
                     self.hover = h;
                     self.hover_btn = hb;
+                    self.hover_fade.set(h);
+                    self.redraw();
+                }
+                // 툴팁 대상이 바뀌면 머물기 시작 시각을 다시 잡는다(같은 대상이면 유지).
+                let tg = self.tip_target_at(p);
+                if tg != self.tip.map(|(t, _)| t) {
+                    self.tip = tg.map(|t| (t, Instant::now()));
                     self.redraw();
                 }
                 // 헤더 경계 위 = 폭 조절 커서(바뀔 때만).
@@ -1282,6 +1457,10 @@ impl ConnWin {
         let (content_w, content_h) = self.content_size();
         let dragging = self.hdr_drag.filter(|d| d.3);
         let drop_pos = dragging.map(|d| self.drop_pos_at(d.2));
+        let tip_ready = self
+            .tip
+            .filter(|(_, since)| since.elapsed().as_millis() >= TIP_MS)
+            .map(|(tg, _)| (tg, self.tip_text(tg)));
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -1361,7 +1540,7 @@ impl ConnWin {
             dc.fill_rect(Rect::new(l.x, l.y + rh - 1, l.w, 1), th.border);
             // 아이콘 열 머리 = 작은 아이콘(흐리게).
             paint_test_btn(&mut dc, th, Rect::new(l.x + sw, l.y, sw, rh), None, false, true);
-            paint_connect_btn(&mut dc, th, Rect::new(l.x + sw * 2, l.y, sw, rh), false, true);
+            paint_connect_btn(&mut dc, th, Rect::new(l.x + sw * 2, l.y, sw, rh), None, false, true);
             let col_order = self.col_order.clone();
             let mut cx = l.x + icons_w - self.scroll_x;
             let mut drop_x: Option<i32> = None;
@@ -1415,10 +1594,14 @@ impl ConnWin {
                     break;
                 }
                 let r = Rect::new(l.x + 1, y, l.w - 2, rh).intersection(&body);
-                if Some(row) == self.sel {
+                let selected = Some(row) == self.sel;
+                if selected {
                     dc.fill_rect(r, th.sel_bg);
-                } else if Some(row) == self.hover {
-                    dc.fill_rect(r, th.panel_bg_alt);
+                }
+                // 호버 = 전경색 알파 오버레이가 서서히(진행도) — 선택 행은 차이분만(두 번 칠하지 않는다).
+                let ha = hover_alpha(selected, self.hover_fade.value(row));
+                if ha > 0.0 {
+                    dc.fill_rect_alpha(r, th.text, ha);
                 }
                 let p = &self.profiles[pi];
                 // 신호등(초록 가능 · 노랑 확인 중 · 빨강 불가 · 회색 대상 아님)
@@ -1449,6 +1632,7 @@ impl ConnWin {
                     &mut dc,
                     th,
                     Rect::new(l.x + sw * 2, y, sw, rh).intersection(&body),
+                    self.conn_marks.get(&p.name).copied(),
                     hb(RowBtn::Connect),
                     !enabled,
                 );
@@ -1492,6 +1676,16 @@ impl ConnWin {
                 self.scroll_y,
                 s,
             );
+            // 툴팁(최상위) — 아이콘 셀 아래.
+            if let Some((tg, text)) = &tip_ready {
+                let sw = rh;
+                let y = match tg.row {
+                    None => l.y,
+                    Some(row) => body.y + row as i32 * rh - self.scroll_y,
+                };
+                let anchor = Rect::new(l.x + sw * tg.col, y, sw, rh);
+                draw_tooltip(&mut dc, th, anchor, wi, text, s);
+            }
         }
         let _ = buf.present();
         if animating {
@@ -1548,8 +1742,15 @@ fn paint_test_btn(
     }
 }
 
-/// 행 접속 버튼 — 오른쪽 삼각형(재생). 호버 시 바탕 + 강조색.
-fn paint_connect_btn(dc: &mut dyn DrawCtx, th: &Theme, cell: Rect, hover: bool, dim: bool) {
+/// 행 접속 버튼 — 오른쪽 삼각형(재생). 기본 어두운 회색 · 접속 중 파랑 · 접속됨 초록(사용자 09-14) · 호버 강조.
+fn paint_connect_btn(
+    dc: &mut dyn DrawCtx,
+    th: &Theme,
+    cell: Rect,
+    mark: Option<ConnectMark>,
+    hover: bool,
+    dim: bool,
+) {
     if cell.w <= 0 || cell.h <= 0 {
         return;
     }
@@ -1559,12 +1760,12 @@ fn paint_connect_btn(dc: &mut dyn DrawCtx, th: &Theme, cell: Rect, hover: bool, 
     if hover {
         dc.fill_rect(cell, th.panel_bg_alt);
     }
-    let color = if dim {
-        th.border
-    } else if hover {
-        th.accent
-    } else {
-        th.text_dim
+    let color = match mark {
+        _ if dim => th.border,
+        Some(ConnectMark::Connecting) => th.accent,
+        Some(ConnectMark::Connected) => th.ok,
+        None if hover => th.accent,
+        None => th.text_dim,
     };
     let inset = d / 6;
     dc.fill_triangle(
