@@ -1,6 +1,6 @@
 //! Nexa SQL GUI — M2 최소 슬라이스(DR-18 · 사용자 "GUI 최소 기능을 병행").
 //!
-//! 창 하나: [프로필 이름 · 접속 문자열(또는 프로필 이름) · Save · Connect · Run] / SQL 편집기(고정폭 · nexa-ctl TextBox 다중행 · IME) / 결과 그리드(자체 가상화) / 상태줄.
+//! 창 하나: 왼쪽 **접속 패널**([`connect`] — DB 종류·호스트·포트·DB·사용자·비밀번호·프로필 · Test/Connect/Save · 상태) / 오른쪽 SQL 편집기(고정폭 · nexa-ctl TextBox 다중행 · IME) + 결과 그리드(자체 가상화) / 하단 상태줄.
 //! 연결 프로필(T-16b): 접속 칸에 프로필 이름만 넣고 Connect · 이름 칸 + 접속 문자열 + Save로 저장(비밀번호는 `nsql-vault` 봉투 · CLI `nsql conn`과 같은 폴더).
 //! 실행은 워커 스레드의 [`nsql_run::Runner`]가 하고, 결과는 채널 + `EventLoopProxy`로 UI에 온다(UI 스레드는 기다리지 않는다).
 //! 폰트: UI = 한글 UI 본, 편집기·그리드 = 고정폭(D2Coding 우선) + 한글 폴백([docs/14](../../../docs/14-fonts-and-feature-modules.md)).
@@ -10,10 +10,12 @@
 //! 문자열은 전부 `nsql-i18n`(기본 영어) · 테마는 `ui.theme` + OS 판정([`theme`]) · 글꼴 크기는 `ui.font_size`/`editor.font_size`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod connect;
 mod grid;
 mod theme;
 mod worker;
 
+use connect::{ConnState, ConnectPanel, PanelAction};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -24,6 +26,7 @@ use nsql_core::Dialect;
 use nsql_i18n::{current_lang, t, tf, Msg};
 use nsql_run::RunEvent;
 use nsql_settings::{Settings, ThemeMode};
+use nsql_vault::Vault;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -33,6 +36,7 @@ use winit::event::{ElementState, Ime, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
+use worker::ConnOutcome;
 
 /// UI 스레드를 깨우는 사용자 이벤트(워커가 보냄).
 #[derive(Debug)]
@@ -40,8 +44,7 @@ struct Wake;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Focus {
-    Name,
-    Connect,
+    Panel,
     Editor,
     Grid,
 }
@@ -57,10 +60,7 @@ struct App {
     settings: Settings,
     scale: f32,
     // 컨트롤
-    name: TextBox,
-    connect: TextBox,
-    save_btn: Button,
-    connect_btn: Button,
+    panel: ConnectPanel,
     run_btn: Button,
     editor: TextBox,
     grid: grid::Grid,
@@ -92,30 +92,16 @@ impl App {
         let s = self.scale;
         let mut inv = Invalidations::default();
         let pad = px(8.0, s);
-        let top_h = px(36.0, s);
         let status_h = px(24.0, s);
+        let panel_w = px(300.0, s);
         let btn_w = px(84.0, s);
-        let name_w = px(120.0, s);
-        let field_h = top_h - px(12.0, s);
-        self.name
-            .set_bounds(Rect::new(pad, px(6.0, s), name_w, field_h), &mut inv);
-        self.connect.set_bounds(
-            Rect::new(
-                pad * 2 + name_w,
-                px(6.0, s),
-                w - pad * 5 - name_w - btn_w * 3,
-                field_h,
-            ),
-            &mut inv,
-        );
-        self.save_btn.set_bounds(
-            Rect::new(w - pad * 3 - btn_w * 3, px(6.0, s), btn_w, field_h),
-            &mut inv,
-        );
-        self.connect_btn.set_bounds(
-            Rect::new(w - pad * 2 - btn_w * 2, px(6.0, s), btn_w, field_h),
-            &mut inv,
-        );
+        let top_h = px(36.0, s);
+        // 왼쪽 접속 패널(상태줄 위까지)
+        self.panel
+            .set_bounds(Rect::new(0, 0, panel_w, h - status_h), s);
+        // 오른쪽: 상단 Run 버튼 줄 · 편집기 · 그리드
+        let rx = panel_w + pad;
+        let rw = w - rx - pad;
         self.run_btn.set_bounds(
             Rect::new(w - pad - btn_w, px(6.0, s), btn_w, top_h - px(12.0, s)),
             &mut inv,
@@ -123,63 +109,106 @@ impl App {
         let body_top = top_h;
         let body_h = h - body_top - status_h;
         let editor_h = (body_h as f32 * 0.5) as i32;
-        self.editor.set_bounds(
-            Rect::new(pad, body_top, w - pad * 2, editor_h - pad),
-            &mut inv,
-        );
+        self.editor
+            .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), &mut inv);
         self.grid.set_bounds(Rect::new(
-            pad,
+            rx,
             body_top + editor_h,
-            w - pad * 2,
+            rw,
             body_h - editor_h - pad,
         ));
-        for c in [&mut self.name, &mut self.connect, &mut self.editor] {
-            c.set_scale(s);
-        }
-        self.save_btn.set_scale(s);
-        self.connect_btn.set_scale(s);
+        self.editor.set_scale(s);
         self.run_btn.set_scale(s);
     }
 
     fn set_focus(&mut self, f: Focus) {
         self.focus = f;
-        self.name.set_focused(f == Focus::Name);
-        self.connect.set_focused(f == Focus::Connect);
+        self.panel.set_focused(f == Focus::Panel);
         self.editor.set_focused(f == Focus::Editor);
         if let Some(w) = &self.window {
-            w.set_ime_allowed(matches!(f, Focus::Name | Focus::Connect | Focus::Editor));
+            w.set_ime_allowed(matches!(f, Focus::Panel | Focus::Editor));
         }
     }
 
     /// 포커스 텍스트 박스(IME·편집 컨텍스트 라우팅).
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
-            Focus::Name => Some(&mut self.name),
-            Focus::Connect => Some(&mut self.connect),
+            Focus::Panel => self.panel.focused_textbox(),
             Focus::Editor => Some(&mut self.editor),
             Focus::Grid => None,
         }
     }
 
-    /// 이름 칸 + 접속 칸 → 프로필 저장(워커가 파싱·봉인·기록).
-    fn do_save(&mut self) {
-        let name = self.name.text().trim().to_string();
-        let target = self.connect.text().trim().to_string();
-        if !nsql_vault::is_profile_name(&name) {
-            self.status = t(Msg::ErrProfileName).into();
-            self.set_focus(Focus::Name);
-            self.redraw();
-            return;
+    /// 접속 패널의 요청 → 워커/저장소.
+    fn handle_panel_action(&mut self, a: PanelAction) {
+        match a {
+            PanelAction::Connect(spec) => {
+                self.busy = true;
+                self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                self.worker.send(worker::Cmd::ConnectSpec(spec));
+            }
+            PanelAction::Test(spec) => {
+                self.busy = true;
+                self.status = t(Msg::StTesting).into();
+                self.worker.send(worker::Cmd::Test(spec));
+            }
+            PanelAction::Disconnect => {
+                self.busy = true;
+                self.worker.send(worker::Cmd::Disconnect);
+            }
+            PanelAction::Save { name, spec } => {
+                self.status = tf(Msg::StSaving, &[&name]);
+                self.worker.send(worker::Cmd::SaveSpec { name, spec });
+            }
+            PanelAction::LoadProfile(name) => {
+                match Vault::open_default().and_then(|v| v.get(&name)) {
+                    Ok(Some(spec)) => {
+                        self.panel.fill(&name, &spec);
+                        self.panel.set_state(ConnState::Idle);
+                    }
+                    Ok(None) => {}
+                    Err(e) => self.panel.set_state(ConnState::Failed(e.to_string())),
+                }
+            }
         }
-        if target.is_empty() || nsql_vault::is_profile_name(&target) {
-            self.status = t(Msg::ErrNeedTarget).into();
-            self.set_focus(Focus::Connect);
-            self.redraw();
-            return;
-        }
-        self.status = tf(Msg::StSaving, &[&name]);
-        self.worker.send(worker::Cmd::Save { name, target });
         self.redraw();
+    }
+
+    fn drain_conn(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(o) = self.worker.conn.try_recv() {
+            changed = true;
+            match o {
+                ConnOutcome::Connected(d) => self.panel.set_state(ConnState::Connected(d)),
+                ConnOutcome::ConnectFailed(e) => {
+                    self.status = tf(Msg::StConnectFailed, &[&e]);
+                    self.panel.set_state(ConnState::Failed(e));
+                }
+                ConnOutcome::TestOk {
+                    description,
+                    elapsed_s,
+                } => {
+                    let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
+                    self.status = msg.clone();
+                    self.panel.set_state(ConnState::TestOk(msg));
+                }
+                ConnOutcome::TestFailed(e) => {
+                    self.status = tf(Msg::StTestFailed, &[&e]);
+                    self.panel.set_state(ConnState::Failed(e));
+                }
+                ConnOutcome::Disconnected => self.panel.set_state(ConnState::Idle),
+                ConnOutcome::Saved(name) => {
+                    self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
+                    let names = worker::profile_names();
+                    self.panel.set_profiles(&names, Some(&name));
+                }
+                ConnOutcome::SaveFailed(e) => {
+                    self.status = tf(Msg::WkProfileSaveFailed, &[&e]);
+                    self.panel.set_state(ConnState::Failed(e));
+                }
+            }
+        }
+        changed
     }
 
     fn redraw(&self) {
@@ -226,12 +255,10 @@ impl App {
 
     /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
     fn relabel(&mut self) {
-        self.save_btn.set_label(t(Msg::BtnSave));
-        self.connect_btn.set_label(t(Msg::BtnConnect));
         self.run_btn.set_label(t(Msg::BtnRun));
-        let (n, c, e) = (self.name.text(), self.connect.text(), self.editor.text());
-        self.name = TextBox::new(t(Msg::PhProfileName)).with_text(&n);
-        self.connect = TextBox::new(t(Msg::PhConnect)).with_text(&c);
+        let names = worker::profile_names();
+        self.panel.relabel(&names);
+        let e = self.editor.text();
         self.editor = TextBox::new(t(Msg::PhEditor))
             .with_multiline()
             .with_text(&e);
@@ -263,20 +290,8 @@ impl App {
         self.redraw();
     }
 
-    fn do_connect(&mut self) {
-        let target = self.connect.text();
-        if target.trim().is_empty() {
-            self.status = t(Msg::ErrEnterTarget).into();
-            return;
-        }
-        self.busy = true;
-        self.status = tf(Msg::StConnecting, &[&target]);
-        self.worker.send(worker::Cmd::Connect(target));
-        self.redraw();
-    }
-
     fn drain_events(&mut self) {
-        let mut changed = false;
+        let mut changed = self.drain_conn();
         while let Ok(ev) = self.events.try_recv() {
             changed = true;
             match ev {
@@ -378,13 +393,17 @@ impl App {
                     .with_fonts(prefs)
                     .with_caret_on(caret_on);
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
-                dc.fill_rect(Rect::new(0, 0, wi, px(36.0, s)), th.chrome_bg);
-                dc.fill_rect(Rect::new(0, px(36.0, s) - 1, wi, 1), th.border);
-                self.name.paint(&mut dc, &th);
-                self.connect.paint(&mut dc, &th);
-                self.save_btn.paint(&mut dc, &th);
-                self.connect_btn.paint(&mut dc, &th);
+                let pb = self.panel.bounds();
+                dc.fill_rect(
+                    Rect::new(pb.right(), 0, wi - pb.right(), px(36.0, s)),
+                    th.chrome_bg,
+                );
+                dc.fill_rect(
+                    Rect::new(pb.right(), px(36.0, s) - 1, wi - pb.right(), 1),
+                    th.border,
+                );
                 self.run_btn.paint(&mut dc, &th);
+                self.panel.paint(&mut dc, &th);
                 // 상태줄
                 let sy = hi - px(24.0, s);
                 dc.fill_rect(Rect::new(0, sy, wi, px(24.0, s)), th.chrome_bg);
@@ -501,36 +520,38 @@ impl App {
     fn route(&mut self, ev: InputEvent) {
         let mut inv = Invalidations::default();
         // 마우스 다운은 포커스를 옮긴다.
+        let is_mouse = matches!(
+            ev,
+            InputEvent::MouseDown { .. }
+                | InputEvent::MouseUp { .. }
+                | InputEvent::MouseMove { .. }
+        );
+        // 열린 콤보(패널)는 모달 — 어디를 눌러도 패널이 먼저 받는다.
+        if self.panel.popup_open() {
+            if let Some(a) = self.panel.route(&ev, &mut inv) {
+                self.handle_panel_action(a);
+            }
+            self.redraw();
+            return;
+        }
         if let InputEvent::MouseDown { x, y, .. } = ev {
             let p = Point { x, y };
-            if self.name.bounds().contains(p) {
-                self.set_focus(Focus::Name);
-            } else if self.connect.bounds().contains(p) {
-                self.set_focus(Focus::Connect);
+            if self.panel.bounds().contains(p) {
+                self.set_focus(Focus::Panel);
             } else if self.editor.bounds().contains(p) {
                 self.set_focus(Focus::Editor);
             } else if self.grid.bounds.contains(p) {
                 self.set_focus(Focus::Grid);
             }
         }
-        // 버튼은 항상 마우스 사건을 받는다.
-        if matches!(
-            ev,
-            InputEvent::MouseDown { .. }
-                | InputEvent::MouseUp { .. }
-                | InputEvent::MouseMove { .. }
-        ) {
-            self.save_btn.on_event(&ev, &mut inv);
-            self.connect_btn.on_event(&ev, &mut inv);
+        // 버튼·패널은 항상 마우스 사건을 받는다.
+        if is_mouse {
             self.run_btn.on_event(&ev, &mut inv);
-            if self.save_btn.take_clicked() {
-                self.do_save();
-            }
-            if self.connect_btn.take_clicked() {
-                self.do_connect();
-            }
             if self.run_btn.take_clicked() {
                 self.run_sql(true);
+            }
+            if let Some(a) = self.panel.route(&ev, &mut inv) {
+                self.handle_panel_action(a);
             }
         }
         let over_grid = match ev {
@@ -553,19 +574,13 @@ impl App {
                     ..
                 }
             );
+            let _ = enter;
             match self.focus {
-                Focus::Name => {
-                    if enter {
-                        self.do_save();
-                    } else {
-                        self.name.on_event(&ev, &mut inv);
-                    }
-                }
-                Focus::Connect => {
-                    if enter {
-                        self.do_connect();
-                    } else {
-                        self.connect.on_event(&ev, &mut inv);
+                Focus::Panel => {
+                    if !is_mouse {
+                        if let Some(a) = self.panel.route(&ev, &mut inv) {
+                            self.handle_panel_action(a);
+                        }
                     }
                 }
                 Focus::Editor => self.editor.on_event(&ev, &mut inv),
@@ -575,10 +590,15 @@ impl App {
                 }
             }
             // 편집 컨텍스트 요청(복사·붙여넣기 — 호스트 몫)
-            for tb in [&mut self.name, &mut self.connect, &mut self.editor] {
-                if let Some(act) = tb.take_edit_ctx() {
-                    self.status = tf(Msg::StClipboardLater, &[&format!("{act:?}")]);
-                }
+            if let Some(act) = self.editor.take_edit_ctx() {
+                self.status = tf(Msg::StClipboardLater, &[&format!("{act:?}")]);
+            }
+            if let Some(act) = self
+                .panel
+                .focused_textbox()
+                .and_then(|tb| tb.take_edit_ctx())
+            {
+                self.status = tf(Msg::StClipboardLater, &[&format!("{act:?}")]);
             }
         }
         if !inv.is_empty() {
@@ -632,7 +652,7 @@ impl ApplicationHandler<Wake> for App {
         let now = Instant::now();
         if now >= self.next_blink {
             self.next_blink = now + Duration::from_millis(500);
-            if matches!(self.focus, Focus::Editor | Focus::Connect | Focus::Name) {
+            if matches!(self.focus, Focus::Editor | Focus::Panel) {
                 self.redraw();
             }
         }
@@ -712,7 +732,8 @@ impl ApplicationHandler<Wake> for App {
                         return;
                     }
                     Key::Character("l" | "L") if self.primary => {
-                        self.set_focus(Focus::Connect);
+                        self.set_focus(Focus::Panel);
+                        self.panel.focus_host();
                         self.redraw();
                         return;
                     }
@@ -785,11 +806,18 @@ fn main() {
             let _ = proxy.send_event(Wake);
         }),
     );
-    let initial_target = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "sqlite::memory:".into());
+    let initial_target = args.first().cloned();
     let profiles = worker::profile_names();
+    let mut panel = ConnectPanel::new(nsql_drivers::available(), &profiles);
+    // 실행 인자로 프로필 이름이 오면 폼을 채운다(접속은 Connect 버튼).
+    if let Some(name) = initial_target
+        .as_deref()
+        .filter(|n| nsql_vault::is_profile_name(n))
+    {
+        if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
+            panel.fill(name, &spec);
+        }
+    }
     let status = if profiles.is_empty() {
         t(Msg::StInitial).to_string()
     } else {
@@ -806,10 +834,7 @@ fn main() {
         theme: initial_theme,
         settings,
         scale: 1.0,
-        name: TextBox::new(t(Msg::PhProfileName)),
-        connect: TextBox::new(t(Msg::PhConnect)).with_text(&initial_target),
-        save_btn: Button::new(t(Msg::BtnSave)),
-        connect_btn: Button::new(t(Msg::BtnConnect)),
+        panel,
         run_btn: Button::new(t(Msg::BtnRun)),
         editor: TextBox::new(t(Msg::PhEditor)).with_multiline(),
         grid: grid::Grid::default(),
@@ -825,6 +850,12 @@ fn main() {
         started: Instant::now(),
         next_blink: Instant::now(),
     };
+    // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
+    if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {
+        app.busy = true;
+        app.status = tf(Msg::StConnecting, &[&t]);
+        app.worker.send(worker::Cmd::Connect(t));
+    }
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("{}", tf(Msg::ErrEventLoop, &[&e.to_string()]));
         std::process::exit(1);

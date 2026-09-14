@@ -5,7 +5,7 @@
 //! nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args...]
 //! nsql shell  -c <target> [-d dialect]                          # 대화형(줄 단위 · `;`/`/`/명령으로 실행 · exit)
 //! nsql export -c <target> (-q <sql> | -t <table>) [-f csv|tsv|json|jsonl|insert[:T]] [-o file]
-//! nsql conn   list | add <name> <target> [-p pw] | show <name> | rm <name> | test <name> | path
+//! nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path
 //! nsql config list | get <key> | set <key> <value> | reset <key> | path     # 앱 설정(ui.lang · ui.theme …) — GUI와 공유
 //! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc(-d로 방언)
 //! ```
@@ -30,6 +30,11 @@ struct Opts {
     no_prompt: bool,
     /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
     password: Option<String>,
+    /// `--host` · `--port` · `--db` · `--user` — 접속 문자열 대신 필드로(GUI 접속 폼과 같은 `ConnectSpec::from_parts` 경로).
+    host: Option<String>,
+    port: Option<u16>,
+    database: Option<String>,
+    user: Option<String>,
     query: Option<String>,
     table: Option<String>,
     out: Option<String>,
@@ -38,7 +43,7 @@ struct Opts {
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> <target> [-p pw] | show <name> | rm <name> | test <name> | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -61,6 +66,10 @@ fn parse_opts() -> Opts {
         format: Format::Grid,
         no_prompt: false,
         password: None,
+        host: None,
+        port: None,
+        database: None,
+        user: None,
         query: None,
         table: None,
         out: None,
@@ -94,6 +103,16 @@ fn parse_opts() -> Opts {
                 });
             }
             "-p" | "--password" => o.password = Some(val("-p")),
+            "--host" => o.host = Some(val("--host")),
+            "--port" => {
+                let v = val("--port");
+                o.port = Some(v.parse().unwrap_or_else(|_| {
+                    eprintln!("--port: 숫자가 아닙니다: {v}");
+                    std::process::exit(2)
+                }));
+            }
+            "--db" | "--database" => o.database = Some(val("--db")),
+            "--user" | "-u" => o.user = Some(val("--user")),
             "-q" | "--query" => o.query = Some(val("-q")),
             "-t" | "--table" => o.table = Some(val("-t")),
             "-o" | "--out" => o.out = Some(val("-o")),

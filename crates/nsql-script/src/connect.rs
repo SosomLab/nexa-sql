@@ -115,6 +115,52 @@ impl ConnectSpec {
         Ok(spec)
     }
 
+    /// 폼·CLI 필드에서 조립(접속 대화상자 · `nsql conn add --host …`). GUI와 CLI가 **같은 검증**을 탄다.
+    ///
+    /// - 파일 기반 방언(SQLite·ODBC): `database` = 파일 경로/DSN(필수 · SQLite는 `:memory:` 허용) · host/port 무시.
+    /// - 그 외: `host` 필수 · `port` 비면 [`Dialect::default_port`] · `database` = 서비스명/DB명(선택).
+    /// - 빈 문자열은 `None`으로 정규화(양끝 공백 제거).
+    pub fn from_parts(
+        dialect: Dialect,
+        host: &str,
+        port: Option<u16>,
+        database: &str,
+        user: &str,
+        password: &str,
+    ) -> Result<ConnectSpec, String> {
+        let opt = |s: &str| {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_string())
+        };
+        let mut spec = ConnectSpec {
+            dialect: Some(dialect),
+            user: opt(user),
+            password: if password.is_empty() {
+                None
+            } else {
+                Some(password.to_string())
+            },
+            ..ConnectSpec::default()
+        };
+        if dialect.is_file_based() {
+            let Some(db) = opt(database) else {
+                return Err(match dialect {
+                    Dialect::Sqlite => "SQLite: 파일 경로(또는 :memory:)가 필요합니다".into(),
+                    _ => "ODBC: DSN이 필요합니다".into(),
+                });
+            };
+            spec.database = Some(db);
+        } else {
+            let Some(h) = opt(host) else {
+                return Err("호스트가 필요합니다".into());
+            };
+            spec.host = Some(h);
+            spec.port = port.or_else(|| dialect.default_port());
+            spec.database = opt(database);
+        }
+        Ok(spec)
+    }
+
     /// 표시용(비밀번호 가림).
     pub fn redacted(&self) -> String {
         let mut s = String::new();

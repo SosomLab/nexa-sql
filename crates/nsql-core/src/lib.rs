@@ -37,6 +37,44 @@ impl Dialect {
         })
     }
 
+    /// 전체(접속 폼의 DB 종류 목록 순서).
+    pub const ALL: [Dialect; 6] = [
+        Dialect::Oracle,
+        Dialect::Mssql,
+        Dialect::Postgres,
+        Dialect::Mysql,
+        Dialect::Sqlite,
+        Dialect::Odbc,
+    ];
+
+    /// 기본 포트(접속 폼·CLI에서 포트를 비우면 이 값). 파일·DSN 기반 방언은 `None`.
+    pub fn default_port(self) -> Option<u16> {
+        match self {
+            Dialect::Oracle => Some(1521),
+            Dialect::Mssql => Some(1433),
+            Dialect::Postgres => Some(5432),
+            Dialect::Mysql => Some(3306),
+            Dialect::Sqlite | Dialect::Odbc => None,
+        }
+    }
+
+    /// 표시 이름(제품명 — 번역하지 않는다).
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Dialect::Oracle => "Oracle",
+            Dialect::Mssql => "SQL Server",
+            Dialect::Postgres => "PostgreSQL",
+            Dialect::Mysql => "MySQL",
+            Dialect::Sqlite => "SQLite",
+            Dialect::Odbc => "ODBC",
+        }
+    }
+
+    /// 호스트·포트 대신 **파일 경로/DSN** 하나로 접속하는 방언인가(폼이 필드를 바꾸는 근거).
+    pub fn is_file_based(self) -> bool {
+        matches!(self, Dialect::Sqlite | Dialect::Odbc)
+    }
+
     /// 방언의 바인드 플레이스홀더 문법.
     pub fn bind_style(self) -> BindStyle {
         match self {

@@ -63,6 +63,32 @@ pub type Prompter<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
 /// `Err` = 이름 꼴인데 프로필이 없거나 봉투를 열 수 없음.
 pub type Resolver = Box<dyn FnMut(&str) -> Result<Option<ConnectSpec>, String>>;
 
+/// 접속 테스트 결과(`nsql conn test` · GUI "Test Connection" 공용).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestReport {
+    /// 비밀번호 가린 접속 설명.
+    pub description: String,
+    /// 세션이 보고한 방언.
+    pub dialect: Dialect,
+    /// 세션 자기 설명(`Session::describe` — 서버·버전 등 어댑터가 아는 만큼).
+    pub session: String,
+    /// 열기까지 걸린 시간.
+    pub elapsed: Duration,
+}
+
+/// 접속만 해 보고 끊는다 — 세션은 반환하지 않는다(호출측이 열린 세션을 원하면 [`Runner::connect`]).
+/// GUI 워커·CLI가 **같은 함수**를 부른다(핵심 기능 모듈화 · 사용자 09-14).
+pub fn test_connection(spec: &ConnectSpec, opener: &mut Opener) -> Result<TestReport, DbError> {
+    let started = Instant::now();
+    let session = opener(spec)?;
+    Ok(TestReport {
+        description: spec.redacted(),
+        dialect: session.dialect(),
+        session: session.describe(),
+        elapsed: started.elapsed(),
+    })
+}
+
 #[allow(missing_debug_implementations)]
 pub struct Runner {
     pub engine: Engine,

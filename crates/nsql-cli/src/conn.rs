@@ -3,6 +3,8 @@
 //! ```text
 //! nsql conn list                                   # 이름 · 방언 · user@host:port/db · 비밀번호 유무
 //! nsql conn add <name> <target> [-d dialect] [-p pw] [--no-prompt]   # 비밀번호 없으면 숨김 입력
+//! nsql conn add <name> -d oracle --host h --port 1521 --db svc --user u [-p pw]   # 필드로(GUI 폼과 같은 경로)
+//! nsql conn test [<name>] [-d … --host … --db … --user … -p …]       # 프로필 또는 필드로 접속해 보고 끊는다 · 경과 시간
 //! nsql conn show <name>                            # 비밀번호 가린 스펙 · 파일 경로
 //! nsql conn rm <name>
 //! nsql conn test <name>                            # 실제 접속 후 끊는다
@@ -12,14 +14,14 @@
 use std::io::{self, IsTerminal, Write};
 
 use nsql_core::Dialect;
-use nsql_run::Runner;
 use nsql_vault::Vault;
 
-use crate::{opener, term, Opts, Printer};
+use crate::{opener, term, Opts};
+use nsql_script::ConnectSpec;
 
 fn usage() -> i32 {
     eprintln!(
-        "nsql conn — 연결 프로필(사용자 폴더에 비밀번호 암호화 저장 · GUI와 공유)\n\n  nsql conn list\n  nsql conn add <name> <target> [-d dialect] [-p password] [--no-prompt]\n  nsql conn show <name>\n  nsql conn rm <name>\n  nsql conn test <name>\n  nsql conn path\n\n  이후 `-c <name>`(run/shell/export)과 스크립트의 `CONNECT <name>`이 프로필을 쓴다."
+        "nsql conn — 연결 프로필(사용자 폴더에 비밀번호 암호화 저장 · GUI와 공유)\n\n  nsql conn list\n  nsql conn add <name> [<target>] [-d dialect] [--host h] [--port n] [--db d] [--user u] [-p password] [--no-prompt]\n  nsql conn show <name>\n  nsql conn rm <name>\n  nsql conn test [<name>] [-d dialect --host h --port n --db d --user u -p password]\n  nsql conn path\n\n  이후 `-c <name>`(run/shell/export)과 스크립트의 `CONNECT <name>`이 프로필을 쓴다."
     );
     2
 }
@@ -49,11 +51,11 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
             }
         },
         "add" | "save" => {
-            let (Some(name), Some(target)) = (name, o.positional.get(2)) else {
-                eprintln!("nsql conn add <name> <target>");
+            let Some(name) = name else {
+                eprintln!("nsql conn add <name> [<target>] [--host …]");
                 return 2;
             };
-            add(o, name, target)
+            add(o, name, o.positional.get(2).map(String::as_str))
         }
         "show" => {
             let Some(name) = name else {
@@ -69,13 +71,7 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
             };
             rm(name)
         }
-        "test" => {
-            let Some(name) = name else {
-                eprintln!("nsql conn test <name>");
-                return 2;
-            };
-            test(o, name)
-        }
+        "test" => test(o, name),
         _ => usage(),
     }
 }
@@ -119,12 +115,30 @@ fn list() -> i32 {
     0
 }
 
-fn add(o: &Opts, name: &str, target: &str) -> i32 {
+/// 필드 옵션(`--host` 등)이 하나라도 있으면 `ConnectSpec::from_parts`(GUI 폼과 같은 검증), 아니면 접속 문자열.
+fn spec_from_opts(o: &Opts, target: Option<&str>) -> Result<ConnectSpec, String> {
+    let has_parts =
+        o.host.is_some() || o.database.is_some() || o.user.is_some() || o.port.is_some();
+    match (target, has_parts) {
+        (Some(t), _) => nsql_drivers::parse_target(t, o.dialect),
+        (None, true) => ConnectSpec::from_parts(
+            o.dialect,
+            o.host.as_deref().unwrap_or(""),
+            o.port,
+            o.database.as_deref().unwrap_or(""),
+            o.user.as_deref().unwrap_or(""),
+            o.password.as_deref().unwrap_or(""),
+        ),
+        (None, false) => Err("접속 문자열 또는 --host/--db 등 필드가 필요합니다".into()),
+    }
+}
+
+fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
     if !nsql_vault::is_profile_name(name) {
         eprintln!("프로필 이름 '{name}': 영문·숫자·`_ - .`만, 64자 이내");
         return 2;
     }
-    let mut spec = match nsql_drivers::parse_target(target, o.dialect) {
+    let mut spec = match spec_from_opts(o, target) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("{e}");
@@ -211,36 +225,49 @@ fn rm(name: &str) -> i32 {
     }
 }
 
-fn test(o: &Opts, name: &str) -> i32 {
-    let v = match open_vault() {
-        Ok(v) => v,
-        Err(c) => return c,
+fn test(o: &Opts, name: Option<&str>) -> i32 {
+    // 프로필 이름이면 저장소에서(비밀번호 포함), 아니면 필드(--host …)로 — GUI "Test Connection"과 같은 함수.
+    let spec = match name {
+        Some(name) => {
+            let v = match open_vault() {
+                Ok(v) => v,
+                Err(c) => return c,
+            };
+            match v.get(name) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    eprintln!("프로필 '{name}'이(가) 없습니다");
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    return 1;
+                }
+            }
+        }
+        None => match spec_from_opts(o, None) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("nsql conn test <name>  또는  nsql conn test -d … --host … — {e}");
+                return 2;
+            }
+        },
     };
-    let spec = match v.get(name) {
-        Ok(Some(s)) => s,
-        Ok(None) => {
-            eprintln!("프로필 '{name}'이(가) 없습니다");
-            return 1;
+    let mut op = opener(o.dialect);
+    match nsql_run::test_connection(&spec, &mut op) {
+        Ok(r) => {
+            println!(
+                "OK  {}  ({} · {:.3}s)  {}",
+                r.description,
+                r.dialect,
+                r.elapsed.as_secs_f64(),
+                r.session
+            );
+            0
         }
         Err(e) => {
-            eprintln!("{e}");
-            return 1;
+            eprintln!("접속 실패: {}", e.message);
+            1
         }
-    };
-    let mut printer = Printer {
-        format: nsql_io::Format::Grid,
-        dialect: o.dialect,
-        errors: 0,
-        feedback: true,
-    };
-    let started = std::time::Instant::now();
-    let mut runner = Runner::new(o.dialect, opener(o.dialect));
-    if !runner.connect(&spec, &mut |e| printer.handle(e)) {
-        return 1;
     }
-    if let Some(s) = runner.session.as_mut() {
-        let _ = s.commit();
-    }
-    println!("OK ({:.3}s)", started.elapsed().as_secs_f64());
-    0
 }
