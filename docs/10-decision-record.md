@@ -72,6 +72,7 @@
 | **D-36** | 조직 사용자 식별 — OS 로그인명(권장) / 이메일 / LDAP·AD(후속) |
 | **D-37** | 서버 가용성 — 단일 + 백업(권장) / 2노드 |
 | **D-38** | 리스 TTL 7일 · 오프라인 리스 30일 · 비활성 회수 30일 · 유예 30일(권장값) |
+| **D-40** | ★ `nexa-license` 서명 알고리즘 **포트화** — `alg=ed25519`(dalek 2.x · beep/clip/sql 기본) + `alg=p256`(dir2 · Windows CNG 인박스 · 외부 crate 0 유지) · 루트 키 2개 · 발급기 양쪽 서명([25 §10-2 #4](25-license-tiers-and-server.md)) — 대안 = dir2 제외(단일 Ed25519) |
 | **D-39** | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
 

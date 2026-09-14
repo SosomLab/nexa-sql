@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-14 2차): *"Device당 · User당(총 5대 · OS 무관) · 소규모 조직(1~5명) · 그외 조직(6명 이상)으로 구분하면 어떤가 — 경쟁 제품·최근 정책과 교차 조사·설계. 조직은 내부 인증 서버 + 간단한 데몬으로 서버에 설정된 사용자/대수 기준 사용 — 서버 개발도 설계에 포함."*
 > **선행**: [23 정품 인증](23-license-activation.md)(파일 형식 · `check(Feature)` · 기기 ID) — 이 문서는 23의 **§3 모델(D-25)·§6 D-31(Team)을 구체화**한다. 23의 판정 코드·파일 형식은 그대로 두고 **발급 단위와 배포 경로**만 늘린다.
-> **상태**: 📐 설계 · 코드 0. 결정 **D-32~D-39**(§7 · §9).
+> **상태**: 📐 설계 · 코드 0. 결정 **D-32~D-40**(§7 · §9 · §10). **§10 = 범용성 점검(beep·clip·dir2) — §9-1 계층은 §10-3 수정본이 우선.**
 
 ---
 
@@ -282,3 +282,59 @@ SosomLab/nexa-license-server     ← 비공개 · 의존: nexa-license(issuer, p
 4. T-42 클라이언트 리스 · T-44 설치 문서·부하 테스트.
 
 D-39: 라이브러리 가시성 — **공개 권장**(검증 코드는 어차피 공개 앱 바이너리에 들어가고 서명 코드는 비밀이 아니다 · CI 토큰 불요 · 계열 앱 재사용 쉬움) vs 비공개(코드 노출 최소 · CI PAT 필요).
+
+---
+
+## 10. 범용성 점검 — beep · clip · dir2에 그대로 쓸 수 있는가(사용자 09-14 3차)
+
+**결론: 골격(형식·서명·체인·기기 ID·서버)은 범용이지만, 23·25 초안에는 nexa-sql 전용 가정이 7곳 남아 있다.** 아래 표대로 고치면 세 앱 모두 `nexa-license` 한 판을 쓴다. 대조 근거 = 각 저장소 실측(09-14).
+
+### 10-1. 형제 앱 제약 실측
+
+| 앱 | 암호 crate | 설정 저장 | 설정 폴더 | 외부 crate 정책 | 라이선스 관련 기존 결정 |
+|---|---|---|---|---|---|
+| **nexa-beep** | `ed25519-dalek = "2"` · `snow 0.9.6`(curve25519-dalek 4.1.3 공유 · **2.x 핀**) · `sha2 0.10` · `getrandom 0.2` | 자체 vendored `crates/nexa-conf` | `user_config_dir("nexa-beep")` | DR-21 **외부 기술은 포트 뒤에**(포트 시그니처에 외부 타입 금지) | DR-12 PolyForm NC · 계측 정당성 = 상업 라이선스 |
+| **nexa-clip** | `snow 0.9.6` · `sha2 0.10`(nclip-sync) · dalek 없음(추가 시 beep과 같은 판이면 트리 중복 0) | 자체 vendored `crates/nexa-conf`(DR-32 계열 공용) · `nclip-store` 봉투(`sealed.rs`·`keys.rs`) | `user_config_dir("nexa-clip")` | 원장 기록 | PolyForm NC |
+| **nexa-dir2** | **없음** — B3 게이트 = **OS 인박스 DLL만 임포트**(bcrypt·crypt32 화이트리스트) · Windows 전용 | 자체 `settings.cfg`(key=value) · nexa-conf 아님 | **exe 옆 `data\`**(포터블 DR-3 · 쓰기 불가면 `%LOCALAPPDATA%\NexaDir\data`) | **외부 crate 0**(B2 exe ≤10MB) | **X-15 오프라인 라이선스 계획: ECDSA P-256 + Windows CNG(bcrypt.dll) · exe 옆 `license.key` · 발급 CLI `nexa-lic`** |
+| nexa-sql | dalek(예정) · sha2 · getrandom · rusqlite | nexa-ui `nexa-conf`(path) · `nsql-vault` 봉투 | `user_config_dir("nexa-sql")` / `NSQL_HOME` | DR-3 원장 | 23 · 25 |
+
+공통: edition 2021 · rust-version 1.82 · sha2 0.10 · getrandom 0.2 — 라이브러리 MSRV·판을 여기에 맞추면 충돌 없음.
+
+### 10-2. 초안에 남은 nexa-sql 전용 가정과 수정
+
+| # | 초안(23·25) | 문제 | 수정(라이브러리 설계에 반영) |
+|---|---|---|---|
+| 1 | 요청 코드 `NSQLREQ1`·`NSQLSRV1` · `format=nsl1` · 파일 `nexa-sql.license` · 도메인 태그 `nexa-sql/license/v1` | 이름이 제품에 박혀 있다 | **`Product` 기술자**를 호출측이 넘긴다: `Product { id: "nexa-sql" \| "nexa-beep" \| …, license_file: "<id>.license" }`. 접두는 공통 `NEXAREQ1`·`NEXASRV1` · `format=nxl1` · 서명 도메인 `nexa/license/v1`(제품 구분은 서명 본문의 `product=`가 한다 — 도메인에 넣지 않아야 한 루트 키로 전 제품 발급) |
+| 2 | 기기 ID 도메인 `nexa-sql/license/machine-v1` | 제품마다 기기 코드가 달라져 사용자가 앱마다 다른 요청 코드를 보내야 한다 | 도메인 `nexa/machine-v1`로 **계열 공통 기기 코드** — 한 PC = 한 코드. User 라이선스가 여러 제품을 묶는 번들도 가능해진다(`product=nexa-sql,nexa-clip`) |
+| 3 | `<설정 폴더>/license/` 고정 · nexa-conf `write_atomic` 재사용 | dir2는 exe 옆 `data\`(포터블) · beep/clip은 nexa-conf를 **각자 vendored**(nexa-ui path를 끌어오면 크레이트 중복) | 라이브러리는 **경로를 받는다**(`Licensing::open(dir)`) · **파서·원자적 쓰기는 자체 구현**(nexa-conf 의존 0 · 형식이 단순해 80줄) — 각 앱이 자기 폴더 규칙으로 부른다 |
+| 4 | 서명 = `ed25519-dalek` 고정 | **dir2는 외부 crate 0(B3)** — dalek을 못 들인다. X-15는 CNG P-256을 계획했고 CNG에는 Ed25519가 없다 | **서명 알고리즘을 포트로**: `trait SigVerifier { fn verify(alg, key, msg, sig) }` · 파일에 `alg=ed25519 \| p256` · 라이브러리 기본 feature `ed25519`(dalek 2.x — beep 핀과 동일) · dir2는 `alg=p256` + **CNG 어댑터**(bcrypt.dll · dir2 저장소에서 구현 · 인박스) · 루트 키는 알고리즘별 2개(`ROOT_ED25519_V1` · `ROOT_P256_V1`) · 발급기는 둘 다 서명. beep DR-21과도 맞는다 → **D-40** |
+| 5 | `Denial { reason, hint }`에 안내 문구 · 오류 메시지 문자열 | 앱마다 i18n 체계가 다르다(beep/clip `Msg` · dir2 `.lang` 파일) | 라이브러리는 **문자열을 만들지 않는다** — `Reason`·`InstallError` **열거형만** 반환 · 문구는 앱의 i18n(nsql-i18n `Msg::License*`) |
+| 6 | `NSQL_BUILD_DATE` · 설정 키 `license.server`·`license.user` | 환경변수 이름·설정 레지스트리가 앱 소유 | 빌드일은 `Product.build_date`로 주입(각 앱 `build.rs`) · 설정 키는 각 앱 레지스트리에 같은 이름으로(권장 관례일 뿐 라이브러리는 모른다) |
+| 7 | 서버 = 조직 라이선스 1개 · `product=nexa-sql` 암묵 | 한 조직이 beep·clip·sql을 함께 쓰면 데몬 3개? | **한 데몬이 제품별 조직 라이선스 N개 보유** · 리스 요청에 `product=` 필수 · 좌석 풀은 제품별 · 관리 페이지에 제품 탭 · 번들 좌석(한 사용자 = 전 제품)은 조직 라이선스 `product=*`로 |
+
+### 10-3. 라이브러리 계층(수정본 · §9-1 대체)
+
+```
+nexa-license (lib · 의존 기본 0 · features)
+  core(항상)   format(자체 key=value 파서·정규화·base32) · types(Product·License·Lease·Kind·SeatMode·Reason) · request(NEXAREQ1/NEXASRV1)
+               verify(체인 검증 — SigVerifier 포트 · 시각·기기 판정 · 순수 함수 · I/O 0)
+  ed25519      dalek 2.x 어댑터(기본 켬 · beep/clip/sql)          ← dir2는 끈다
+  machine-id   3-OS 기기 ID(std만 · Windows 레지스트리/ioreg/machine-id)
+  fs           Licensing(폴더 받아 파일·리스 관리 · 원자적 쓰기 자체 구현)   ← beep은 포트 뒤에서 호출
+  protocol     리스 메시지 + 최소 HTTP 프레이밍(클라이언트 build · 서버 parse)
+  issuer       서명·키 생성(발급기·서버만)
+  keys         SosomLab 루트 공개키(ed25519 · p256 각 1) + 테스트 픽스처
+```
+
+각 앱이 더하는 것 = `Product` 상수 1개 · `Feature` 열거형 ↔ 문자열 매핑 · 게이트 진입점 · i18n 문구 · 설정 키 2개 · (dir2만) CNG P-256 어댑터 ~150줄.
+
+### 10-4. 앱별 적용 예상
+
+| 앱 | 쓰는 feature | 앱이 추가로 쓰는 것 | 걸림돌 |
+|---|---|---|---|
+| nexa-sql | ed25519 · machine-id · fs · protocol | `nsql-license` 얇은 층(23 §4-1) | 없음 |
+| nexa-clip | ed25519 · machine-id · fs · protocol | `Product{id:"nexa-clip"}` · 상업 기능 목록(동기화 서버? 후속) · nclip-store 봉투로 리스 키 보관 불요(리스는 공개 정보) | dalek 추가 = beep과 같은 판이면 트리 +2 crate · 원장 기록 |
+| nexa-beep | ed25519 · machine-id · fs | 이미 dalek 있음(nbeep-crypto) · DR-21대로 `LicensePort` trait 뒤에 라이브러리 배치 · 계측 레저와 연계(DR-15 ④ 상업 근거) | 없음 — 단 DR-15 파이프라인(Policy 단계)에 게이트가 들어가야 한다 |
+| nexa-dir2 | machine-id(Windows만) · fs | `alg=p256` CNG 어댑터 · exe 옆 `data\license.key` · 발급기는 같은 `nexa-license-tool`(p256 서명) — **X-15의 `nexa-lic` 별도 개발이 불필요해진다** | 외부 crate 0 유지 가능(ed25519 feature 끔 · std만) · Linux/macOS 미지원은 dir2 자체가 Windows 전용이라 무관 |
+
+⚠️ dir2 X-15가 잡은 형식(exe 옆 `license.key` · 이름·이메일·에디션·HWID 옵션)은 이 라이브러리 형식으로 **대체**된다 — dir2 TODO에 정정 등재 필요(그쪽 저장소 작업).
