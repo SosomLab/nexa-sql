@@ -184,7 +184,7 @@ impl Grid {
 
     /// 헤더에서 컬럼 오른쪽 경계 ±4px 안이면 그 컬럼(원본 index) — 폭 조절 손잡이.
     fn header_edge_at(&self, x: i32) -> Option<usize> {
-        let grip = 4;
+        let grip = 6;
         let mut cx = self.bounds.x + self.gutter_w - self.scroll_x;
         for &ci in &self.col_order {
             let cw = self.col_w.get(ci).copied().unwrap_or(80);
@@ -194,6 +194,15 @@ impl Grid {
             }
         }
         None
+    }
+
+    /// 커서가 헤더의 컬럼 경계(폭 조절 손잡이) 위인가 — 호스트가 커서 모양을 바꾼다.
+    pub(crate) fn header_edge_hover(&self, x: i32, y: i32) -> bool {
+        self.hdr_resize.is_some()
+            || (self.rs.is_some()
+                && self.row_h > 0
+                && self.header_rect().contains(Point { x, y })
+                && self.header_edge_at(x).is_some())
     }
 
     fn header_rect(&self) -> Rect {
@@ -568,5 +577,91 @@ fn cell_text(v: &Value) -> String {
         Value::Null => "(null)".into(),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         other => other.display(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nsql_core::{Column, ResultSet};
+
+    fn grid_with(cols: &[i32]) -> Grid {
+        let mut g = Grid::default();
+        let rs = ResultSet {
+            columns: cols
+                .iter()
+                .enumerate()
+                .map(|(i, _)| Column {
+                    name: format!("c{i}"),
+                    type_name: String::new(),
+                })
+                .collect(),
+            rows: vec![vec![Value::Int(1); cols.len()]],
+        };
+        g.set_result(rs);
+        g.bounds = Rect::new(0, 0, 400, 300);
+        g.row_h = 20;
+        g.header_h = 21;
+        g.gutter_w = 30;
+        g.col_w = cols.to_vec();
+        g
+    }
+
+    #[test]
+    fn header_edge_drag_resizes_column() {
+        let mut g = grid_with(&[100, 80]);
+        // 첫 컬럼 오른쪽 경계 = 30 + 100 = 130
+        assert!(g.header_edge_hover(131, 5));
+        assert!(!g.header_edge_hover(80, 5));
+        let down = InputEvent::MouseDown {
+            x: 129,
+            y: 5,
+            shift: false,
+            primary: false,
+        };
+        g.on_event(&down, 1.0);
+        assert!(g.hdr_resize.is_some(), "경계에서 폭 조절 시작");
+        g.on_event(&InputEvent::MouseMove { x: 169, y: 5 }, 1.0);
+        assert_eq!(g.col_w[0], 140);
+        g.on_event(&InputEvent::MouseUp { x: 169, y: 5 }, 1.0);
+        assert!(g.hdr_resize.is_none());
+        // 최소 폭 24 (경계는 이제 30 + 140 = 170)
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: 170,
+                y: 5,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert!(g.hdr_resize.is_some());
+        g.on_event(&InputEvent::MouseMove { x: -500, y: 5 }, 1.0);
+        assert_eq!(g.col_w[0], 24);
+    }
+
+    #[test]
+    fn header_click_sorts_and_shift_adds_key() {
+        let mut g = grid_with(&[100, 80]);
+        let click = |g: &mut Grid, x: i32, shift: bool| {
+            g.on_event(
+                &InputEvent::MouseDown {
+                    x,
+                    y: 5,
+                    shift,
+                    primary: false,
+                },
+                1.0,
+            );
+            g.on_event(&InputEvent::MouseUp { x, y: 5 }, 1.0);
+        };
+        click(&mut g, 80, false);
+        assert_eq!(g.sort_keys, vec![(0, true)]);
+        click(&mut g, 80, false);
+        assert_eq!(g.sort_keys, vec![(0, false)]);
+        click(&mut g, 170, true);
+        assert_eq!(g.sort_keys, vec![(0, false), (1, true)]);
+        click(&mut g, 80, false);
+        assert_eq!(g.sort_keys, vec![(0, true)], "일반 클릭 = 단일 키로");
     }
 }
