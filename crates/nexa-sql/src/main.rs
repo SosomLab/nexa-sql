@@ -207,6 +207,9 @@ impl App {
                 self.busy = true;
                 self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
                 let name = self.conn_win.panel.profile_name();
+                if let Some(pw) = spec.password.as_deref() {
+                    self.conn_win.remember_pw(&name, pw);
+                }
                 self.conn_win
                     .set_connect_mark(&name, Some(ConnectMark::Connecting));
                 self.panel_op = Some((name, ConnState::Connecting));
@@ -221,6 +224,9 @@ impl App {
                 self.busy = true;
                 self.status = t(Msg::StTesting).into();
                 let name = self.conn_win.panel.profile_name();
+                if let Some(pw) = spec.password.as_deref() {
+                    self.conn_win.remember_pw(&name, pw);
+                }
                 self.conn_win.set_test_mark(&name, TestMark::Testing);
                 self.panel_op = Some((name, ConnState::Testing));
                 self.worker.send(worker::Cmd::Test(spec));
@@ -230,6 +236,9 @@ impl App {
                 self.worker.send(worker::Cmd::Disconnect);
             }
             PanelAction::Save { name, spec } => {
+                // 저장하지 않더라도 입력된 비밀번호는 세션에 보관(사용자 09-14).
+                let typed = self.conn_win.panel.password_text();
+                self.conn_win.remember_pw(&name, &typed);
                 // ★ 저장은 파일 쓰기뿐 — 워커(순차 · Test/Connect 뒤에 줄 섬)를 거치지 않고 즉시(사용자 09-14
                 //   "Save에서 접속 테스트를 하지 않도록": 실제로는 앞선 Test의 20초 타임아웃을 기다리던 것). 접속 검증 없음 · 포트가 틀려도 저장.
                 match Vault::open_default().and_then(|v| v.save(&name, &spec)) {
@@ -248,6 +257,7 @@ impl App {
             PanelAction::LoadProfile(name) => {
                 match Vault::open_default().and_then(|v| v.get(&name)) {
                     Ok(Some(spec)) => {
+                        let spec = self.conn_win.with_session_pw(&name, spec);
                         self.conn_win.panel.fill(&name, &spec);
                         // 상태는 한 번에 하나(사용자 09-14): 진행/결과가 이 프로필 것이면 복원, 아니면 Idle.
                         let st = match &self.panel_op {
@@ -573,6 +583,7 @@ impl App {
         }
         match Vault::open_default().and_then(|v| v.get(name)) {
             Ok(Some(spec)) => {
+                let spec = self.conn_win.with_session_pw(name, spec);
                 self.busy = true;
                 self.status = t(Msg::StTesting).into();
                 self.conn_win.set_test_mark(name, TestMark::Testing);
@@ -595,6 +606,7 @@ impl App {
         }
         match Vault::open_default().and_then(|v| v.get(name)) {
             Ok(Some(spec)) => {
+                let spec = self.conn_win.with_session_pw(name, spec);
                 self.conn_win.panel.fill(name, &spec);
                 self.conn_win.panel.set_state(ConnState::Idle);
                 if let Some(a) = self.conn_win.panel.connect_action() {

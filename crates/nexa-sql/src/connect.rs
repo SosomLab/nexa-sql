@@ -525,6 +525,11 @@ impl ConnectPanel {
         self.dialect.is_open()
     }
 
+    /// 지금 입력된 비밀번호(저장 여부와 무관 · 세션 보관용).
+    pub(crate) fn password_text(&self) -> String {
+        self.password.text()
+    }
+
     /// 종류 콤보 영역(우클릭 메뉴 판정).
     pub(crate) fn dialect_bounds(&self) -> Rect {
         self.dialect.bounds()

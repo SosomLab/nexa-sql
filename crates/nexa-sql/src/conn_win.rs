@@ -23,6 +23,7 @@ use nexa_ctl::{
 const DELETE_ARM_MS: u64 = 5000;
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
+use nsql_script::ConnectSpec;
 use nsql_vault::{Profile, Vault};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
@@ -85,13 +86,26 @@ struct TipTarget {
 const TIP_MS: u128 = 600;
 
 /// 텍스트 열(원본 index) — 이름 · 종류 · 사용자 · 대상.
-const TEXT_COLS: usize = 4;
-/// 첫 배치의 폭 비율(사용자가 폭을 조절하기 전까지 창 폭을 따라간다).
-const COL_FRACS: [f32; TEXT_COLS] = [0.22, 0.16, 0.20, 0.42];
+const TEXT_COLS: usize = 5;
+/// 첫 배치의 폭 비율(사용자가 폭을 조절하기 전까지 창 폭을 따라간다) — 이름 · 종류 · 사용자 · 비밀번호(체크) · 대상.
+const COL_FRACS: [f32; TEXT_COLS] = [0.20, 0.14, 0.18, 0.10, 0.38];
+/// 비밀번호 열(원본 index) — 체크박스로 그린다(진하게 = 저장됨 · 연하게 = 세션에만 입력됨).
+const COL_PASSWORD: usize = 3;
 const MIN_COL_W: i32 = 24;
 
-/// 행의 열 텍스트(그리기·정렬·필터 공용).
-fn cell_of(p: &Profile, col: usize) -> String {
+/// 비밀번호 상태 — 2 = 저장됨(봉투) · 1 = 이 실행 동안 입력됨(세션 보관) · 0 = 없음.
+fn pw_state(p: &Profile, session: &HashMap<String, String>) -> u8 {
+    if p.has_password {
+        2
+    } else if session.contains_key(&p.name) {
+        1
+    } else {
+        0
+    }
+}
+
+/// 행의 열 텍스트(그리기·정렬·필터 공용). 비밀번호 열은 상태 숫자(정렬용 · 그리기는 체크박스).
+fn cell_of(p: &Profile, col: usize, session: &HashMap<String, String>) -> String {
     match col {
         0 => p.name.clone(),
         1 => p
@@ -101,6 +115,7 @@ fn cell_of(p: &Profile, col: usize) -> String {
             .unwrap_or("")
             .to_string(),
         2 => p.spec.user.clone().unwrap_or_default(),
+        COL_PASSWORD => pw_state(p, session).to_string(),
         _ => target_of(p),
     }
 }
@@ -130,11 +145,16 @@ fn toggle_sort_key(keys: &mut Vec<(usize, bool)>, col: usize, additive: bool) {
 }
 
 /// 결합 정렬(안정 · 대소문자 무관 · 빈 값은 뒤) — 표시 인덱스 벡터만 재배열.
-fn sort_shown(profiles: &[Profile], shown: &mut [usize], keys: &[(usize, bool)]) {
+fn sort_shown(
+    profiles: &[Profile],
+    shown: &mut [usize],
+    keys: &[(usize, bool)],
+    session: &HashMap<String, String>,
+) {
     if keys.is_empty() {
         return;
     }
-    let key_of = |i: usize, col: usize| cell_of(&profiles[i], col).to_lowercase();
+    let key_of = |i: usize, col: usize| cell_of(&profiles[i], col, session).to_lowercase();
     shown.sort_by(|&a, &b| {
         use std::cmp::Ordering;
         for (col, asc) in keys {
@@ -208,6 +228,9 @@ pub(crate) struct ConnWin {
     test_marks: HashMap<String, TestMark>,
     /// 프로필별 접속 버튼 상태(접속 중/접속됨).
     conn_marks: HashMap<String, ConnectMark>,
+    /// ★ 세션 비밀번호(프로필 이름 → 입력값) — 저장하지 않은 비밀번호도 프로그램이 도는 동안 보관해
+    /// Test/Connect·폼 채우기에 쓴다(사용자 09-14). 디스크에 쓰지 않는다.
+    session_pw: HashMap<String, String>,
     /// 이 시각에 창을 닫는다(접속 성공 초록을 잠시 보여 준 뒤).
     close_at: Option<Instant>,
     /// 툴팁 대상 + 머물기 시작 시각(아이콘 열·행 버튼 위 · 다국어 · 사용자 09-14).
@@ -283,6 +306,7 @@ impl ConnWin {
             bars: ScrollBars::new(),
             test_marks: HashMap::new(),
             conn_marks: HashMap::new(),
+            session_pw: HashMap::new(),
             close_at: None,
             tip: None,
             filter: TextBox::new(t(Msg::PhFilter)),
@@ -596,7 +620,7 @@ impl ConnWin {
             })
             .map(|(i, _)| i)
             .collect();
-        sort_shown(&self.profiles, &mut self.shown, &self.sort_keys);
+        sort_shown(&self.profiles, &mut self.shown, &self.sort_keys, &self.session_pw);
         if self.sel.is_some_and(|s| s >= self.shown.len()) {
             self.sel = None;
         }
@@ -1081,12 +1105,30 @@ impl ConnWin {
         self.window.is_some() && self.tip.is_some()
     }
 
-    /// 행의 프로필에 비밀번호 봉투가 있는가(없으면 Test/Connect 행 버튼 비활성).
+    /// 행의 프로필에 비밀번호가 있는가(저장됨 또는 세션 입력) — 없으면 Test/Connect 행 버튼 비활성.
     fn row_has_password(&self, row: usize) -> bool {
         self.shown
             .get(row)
             .and_then(|&i| self.profiles.get(i))
-            .is_some_and(|p| p.has_password)
+            .is_some_and(|p| pw_state(p, &self.session_pw) > 0)
+    }
+
+    /// 입력된 비밀번호를 세션에 보관(빈 값은 무시 · 프로필 이름이 있을 때만).
+    pub(crate) fn remember_pw(&mut self, name: &str, pw: &str) {
+        if !name.is_empty() && !pw.is_empty() {
+            self.session_pw.insert(name.to_string(), pw.to_string());
+            self.redraw();
+        }
+    }
+
+    /// 스펙에 비밀번호가 없으면 세션 보관값을 채운다(Test/Connect/폼 채우기).
+    pub(crate) fn with_session_pw(&self, name: &str, mut spec: ConnectSpec) -> ConnectSpec {
+        if spec.password.as_deref().unwrap_or("").is_empty() {
+            if let Some(pw) = self.session_pw.get(name) {
+                spec.password = Some(pw.clone());
+            }
+        }
+        spec
     }
 
     fn name_at(&self, row: usize) -> Option<String> {
@@ -2034,6 +2076,7 @@ impl ConnWin {
                 t(Msg::ColName).to_string(),
                 t(Msg::ColType).to_string(),
                 t(Msg::ColUser).to_string(),
+                t(Msg::ColPassword).to_string(),
                 t(Msg::ColTarget).to_string(),
             ];
             let col_w = self.col_w.clone();
@@ -2166,7 +2209,19 @@ impl ConnWin {
                     let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
                     let clip = Rect::new(cx, y, (cw - pad).max(0), rh).intersection(&cells);
                     if clip.w > 0 && clip.h > 0 {
-                        dc.text(cx + pad, ty(y), clip, &cell_of(p, ci), th.text);
+                        if ci == COL_PASSWORD {
+                            // 체크박스: 저장됨 = 진한 체크 · 세션 입력 = 연한 체크 · 없음 = 빈 상자.
+                            let cs = (rh * 3 / 5).max(10);
+                            let bx = Rect::new(cx + pad, y + (rh - cs) / 2, cs, cs);
+                            dc.stroke_round_rect(bx, 3, th.border, 1.0);
+                            match pw_state(p, &self.session_pw) {
+                                2 => nexa_ctl::controls::draw_check_mark(&mut dc, bx, th.text),
+                                1 => nexa_ctl::controls::draw_check_mark(&mut dc, bx, th.text_dim),
+                                _ => {}
+                            }
+                        } else {
+                            dc.text(cx + pad, ty(y), clip, &cell_of(p, ci, &self.session_pw), th.text);
+                        }
                     }
                     cx += cw;
                 }
@@ -2389,15 +2444,16 @@ mod tests {
             prof("B", None),
         ];
         let mut shown: Vec<usize> = (0..4).collect();
-        sort_shown(&ps, &mut shown, &[(0, true)]);
+        let none = HashMap::new();
+        sort_shown(&ps, &mut shown, &[(0, true)], &none);
         assert_eq!(shown, vec![1, 0, 3, 2], "이름 대소문자 무관(A · b · B · c)");
-        sort_shown(&ps, &mut shown, &[(2, true), (0, false)]);
+        sort_shown(&ps, &mut shown, &[(2, true), (0, false)], &none);
         assert_eq!(
             shown,
             vec![2, 0, 3, 1],
             "빈 사용자는 뒤 · 2차 키 이름 내림차순"
         );
-        sort_shown(&ps, &mut shown, &[]);
+        sort_shown(&ps, &mut shown, &[], &none);
         assert_eq!(shown, vec![2, 0, 3, 1], "키 없음 = 그대로");
     }
 }
