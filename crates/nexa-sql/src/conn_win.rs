@@ -162,6 +162,10 @@ pub(crate) struct ConnWin {
     sort_keys: Vec<(usize, bool)>,
     /// 헤더 경계 드래그 = 폭 조절(열 · 시작 x · 시작 폭).
     hdr_resize: Option<(usize, i32, i32)>,
+    /// 표시 순서 → 원본 열(헤더 DnD로 이동 · 사용자 09-14).
+    col_order: Vec<usize>,
+    /// 헤더 드래그(표시 위치 · 시작 x · 현재 x · 4px 이상 움직임 · Shift) — 움직였으면 이동, 아니면 정렬(결과 그리드와 동일).
+    hdr_drag: Option<(usize, i32, i32, bool, bool)>,
     /// 지금 커서가 폭 조절 모양인가(바뀔 때만 set_cursor).
     resize_cursor: bool,
     /// 상단 버튼 4개의 라벨 실측 폭(px · 페인트 때 현재 언어로 잰다 — 폭은 라벨에 맞춘다 · 사용자 09-14).
@@ -225,6 +229,8 @@ impl ConnWin {
             col_w_manual: false,
             sort_keys: Vec::new(),
             hdr_resize: None,
+            col_order: (0..TEXT_COLS).collect(),
+            hdr_drag: None,
             resize_cursor: false,
             btn_text_w: [0; 4],
             scroll_y: 0,
@@ -522,24 +528,38 @@ impl ConnWin {
         self.bars.show();
     }
 
-    /// 헤더 x → 텍스트 열(원본 index).
-    fn header_col_at(&self, x: i32) -> Option<usize> {
+    /// 헤더 x → 표시 위치(col_order index).
+    fn header_pos_at(&self, x: i32) -> Option<usize> {
         let mut cx = self.list.x + self.icons_w() - self.scroll_x;
-        for (ci, &cw) in self.col_w.iter().enumerate() {
+        for (pos, &ci) in self.col_order.iter().enumerate() {
+            let cw = self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
             if x >= cx && x < cx + cw {
-                return Some(ci);
+                return Some(pos);
             }
             cx += cw;
         }
         None
     }
 
+    /// 드래그 목표 위치(현재 x 기준 · 열 중앙을 넘으면 그 다음) — 삽입 미리보기 선도 같은 값.
+    fn drop_pos_at(&self, x: i32) -> usize {
+        let mut cx = self.list.x + self.icons_w() - self.scroll_x;
+        for (pos, &ci) in self.col_order.iter().enumerate() {
+            let cw = self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
+            if x < cx + cw / 2 {
+                return pos;
+            }
+            cx += cw;
+        }
+        self.col_order.len()
+    }
+
     /// 헤더에서 열 오른쪽 경계 ±6px 안이면 그 열 — 폭 조절 손잡이.
     fn header_edge_at(&self, x: i32) -> Option<usize> {
         let grip = self.s(6.0);
         let mut cx = self.list.x + self.icons_w() - self.scroll_x;
-        for (ci, &cw) in self.col_w.iter().enumerate() {
-            cx += cw;
+        for &ci in &self.col_order {
+            cx += self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
             if (x - cx).abs() <= grip {
                 return Some(ci);
             }
@@ -935,6 +955,19 @@ impl ConnWin {
                         }
                         self.redraw();
                     }
+                    Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight)
+                        if matches!(self.focus, WFocus::List) =>
+                    {
+                        let step = self.row_h * 2;
+                        if matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::ArrowLeft)) {
+                            self.scroll_x -= step;
+                        } else {
+                            self.scroll_x += step;
+                        }
+                        self.clamp_scroll();
+                        self.bars.show();
+                        self.redraw();
+                    }
                     Key::Named(NamedKey::PageDown | NamedKey::PageUp | NamedKey::Home | NamedKey::End)
                         if matches!(self.focus, WFocus::List) && !self.shown.is_empty() =>
                     {
@@ -996,12 +1029,20 @@ impl ConnWin {
                 (ElementState::Pressed, MouseButton::Right) => InputEvent::RightDown { x, y },
                 _ => return None,
             },
-            WindowEvent::MouseWheel { delta, .. } => InputEvent::Wheel {
-                delta: match delta {
-                    MouseScrollDelta::LineDelta(_, dy) => (*dy * 120.0) as i32,
-                    MouseScrollDelta::PixelDelta(p) => p.y as i32,
-                },
-            },
+            // 휠: 가로 성분(틸트 휠·트랙패드)이 있으면 HWheel · Shift+세로 휠 = 가로(관례) · 아니면 세로.
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(dx, dy) => ((*dx * 120.0) as i32, (*dy * 120.0) as i32),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as i32, p.y as i32),
+                };
+                if dx != 0 {
+                    InputEvent::HWheel { delta: dx }
+                } else if self.shift {
+                    InputEvent::HWheel { delta: -dy }
+                } else {
+                    InputEvent::Wheel { delta: dy }
+                }
+            }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Enter) => key(CtlKey::Enter, self.shift, self.primary),
@@ -1060,12 +1101,41 @@ impl ConnWin {
                     }
                     self.col_w_manual = true;
                     self.clamp_scroll();
+                    // 넘치면 가로 막대가 보이도록(오버레이는 스크롤 전엔 숨어 있어 "스크롤이 없다"로 보인다).
+                    let body = self.body_rect();
+                    if self.content_size().0 > body.w {
+                        self.bars.show();
+                    }
                 }
                 self.redraw();
                 return;
             }
             InputEvent::MouseUp { .. } if self.hdr_resize.is_some() => {
                 self.hdr_resize = None;
+                self.redraw();
+                return;
+            }
+            // 헤더 열 드래그(이동) — 4px 넘게 움직이면 DnD · 삽입 위치 미리보기.
+            InputEvent::MouseMove { x, .. } if self.hdr_drag.is_some() => {
+                if let Some(d) = self.hdr_drag.as_mut() {
+                    d.2 = x;
+                    if (x - d.1).abs() > 4 {
+                        d.3 = true;
+                    }
+                }
+                self.redraw();
+                return;
+            }
+            InputEvent::MouseUp { x, .. } if self.hdr_drag.is_some() => {
+                let (pos, _, _, moved, shift) =
+                    self.hdr_drag.take().unwrap_or((0, 0, 0, false, false));
+                if moved {
+                    // 이동했으면 정렬은 하지 않는다(사용자 09-14).
+                    let to = self.drop_pos_at(x);
+                    move_col(&mut self.col_order, pos, to);
+                } else if let Some(&ci) = self.col_order.get(pos) {
+                    self.toggle_sort(ci, shift);
+                }
                 self.redraw();
                 return;
             }
@@ -1092,13 +1162,13 @@ impl ConnWin {
             } else if self.filter.bounds().contains(p) {
                 self.set_focus(WFocus::Filter);
             } else if self.header_rect().contains(p) {
-                // 헤더: 경계 = 폭 조절 · 열 = 정렬(Shift = 결합).
+                // 헤더: 경계 = 폭 조절 · 열 = 누르고 놓으면 정렬(Shift = 결합) · 끌면 이동(MouseUp에서 판정).
                 self.set_focus(WFocus::List);
                 if let Some(ci) = self.header_edge_at(x) {
                     let w0 = self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
                     self.hdr_resize = Some((ci, x, w0));
-                } else if let Some(ci) = self.header_col_at(x) {
-                    self.toggle_sort(ci, shift);
+                } else if let Some(pos) = self.header_pos_at(x) {
+                    self.hdr_drag = Some((pos, x, x, false, shift));
                 }
                 self.redraw();
                 return;
@@ -1144,7 +1214,10 @@ impl ConnWin {
                 self.open_detail(true);
             }
             if self.btn_edit.take_clicked() {
-                if let Some(n) = self.selected_name() {
+                // 이미 펼쳐져 있으면 Esc와 같이 접는다(사용자 09-14).
+                if self.detail_open() {
+                    self.close_detail();
+                } else if let Some(n) = self.selected_name() {
                     out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
                     self.open_detail(false);
                 }
@@ -1207,6 +1280,8 @@ impl ConnWin {
             .collect();
         let body = self.body_rect();
         let (content_w, content_h) = self.content_size();
+        let dragging = self.hdr_drag.filter(|d| d.3);
+        let drop_pos = dragging.map(|d| self.drop_pos_at(d.2));
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -1287,10 +1362,19 @@ impl ConnWin {
             // 아이콘 열 머리 = 작은 아이콘(흐리게).
             paint_test_btn(&mut dc, th, Rect::new(l.x + sw, l.y, sw, rh), None, false, true);
             paint_connect_btn(&mut dc, th, Rect::new(l.x + sw * 2, l.y, sw, rh), false, true);
+            let col_order = self.col_order.clone();
             let mut cx = l.x + icons_w - self.scroll_x;
-            for (ci, name) in col_names.iter().enumerate() {
+            let mut drop_x: Option<i32> = None;
+            for (pos, &ci) in col_order.iter().enumerate() {
+                let name = &col_names[ci];
                 let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
                 let clip = Rect::new(cx, l.y, cw, rh).intersection(&hcells);
+                if dragging.is_some_and(|d| d.0 == pos) {
+                    dc.fill_rect(clip, th.sel_bg);
+                }
+                if drop_pos == Some(pos) {
+                    drop_x = Some(cx);
+                }
                 // 정렬 배지: ▲/▼ + 결합 순번(키가 2개 이상일 때) — 결과 그리드와 같은 표기.
                 let badge = self.sort_keys.iter().position(|(k, _)| *k == ci).map(|i| {
                     let arrow = if self.sort_keys[i].1 { "▲" } else { "▼" };
@@ -1314,6 +1398,14 @@ impl ConnWin {
                     th.border,
                 );
                 cx += cw;
+            }
+            // 삽입 위치 미리보기 — 목표 열 왼쪽(맨 끝이면 마지막 열 오른쪽)에 강조선(헤더 + 행 영역 전체 높이).
+            if drop_pos.is_some() {
+                let dx = drop_x.unwrap_or(cx) - 1;
+                dc.fill_rect(
+                    Rect::new(dx, l.y, 2, body.bottom() - l.y).intersection(&l),
+                    th.accent,
+                );
             }
             let first = (self.scroll_y / rh.max(1)) as usize;
             let sub = self.scroll_y % rh.max(1);
@@ -1361,13 +1453,23 @@ impl ConnWin {
                     !enabled,
                 );
                 let mut cx = l.x + icons_w - self.scroll_x;
-                for ci in 0..TEXT_COLS {
+                for &ci in &col_order {
                     let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
                     let clip = Rect::new(cx, y, (cw - pad).max(0), rh).intersection(&cells);
                     if clip.w > 0 && clip.h > 0 {
                         dc.text(cx + pad, ty(y), clip, &cell_of(p, ci), th.text);
                     }
                     cx += cw;
+                }
+            }
+            // 드래그 고스트 — 끌고 있는 열 이름을 커서를 따라 반투명 칩으로.
+            if let Some((pos, _, x, _, _)) = dragging {
+                if let Some(&ci) = col_order.get(pos) {
+                    let name = &col_names[ci];
+                    let tw = dc.text_width(name);
+                    let chip = Rect::new(x - tw / 2 - pad, l.y + 2, tw + pad * 2, rh - 4);
+                    dc.fill_rect_alpha(chip, th.accent, 0.18);
+                    dc.text(chip.x + pad, ty(l.y), chip, name, th.text);
                 }
             }
             if self.shown.is_empty() {
@@ -1473,6 +1575,18 @@ fn paint_connect_btn(dc: &mut dyn DrawCtx, th: &Theme, cell: Rect, hover: bool, 
     );
 }
 
+/// 열 이동(결과 그리드와 동일): `pos`를 빼고 `to`(drop 위치 · len 허용)에 넣되, 뒤로 옮길 땐 빠진 칸만큼 당긴다.
+fn move_col(order: &mut Vec<usize>, pos: usize, mut to: usize) {
+    if pos >= order.len() {
+        return;
+    }
+    let c = order.remove(pos);
+    if to > pos {
+        to -= 1;
+    }
+    order.insert(to.min(order.len()), c);
+}
+
 /// 행 높이 안 글자 세로 위치 계산용(라스터 글꼴 높이 ≈ 행 높이 - 8px 여백).
 fn dc_text_h(row_h: i32) -> i32 {
     (row_h - 8).max(8)
@@ -1522,6 +1636,21 @@ mod tests {
         assert_eq!(k, vec![], "▼ 상태에서 일반 클릭 = 해제");
         toggle_sort_key(&mut k, 2, false);
         assert_eq!(k, vec![(2, true)], "일반 클릭 = 단일 키");
+    }
+
+    #[test]
+    fn move_col_forward_backward_end_and_noop() {
+        let mut o = vec![0, 1, 2, 3];
+        move_col(&mut o, 0, 3);
+        assert_eq!(o, vec![1, 2, 0, 3], "앞 열을 3번째 앞으로");
+        move_col(&mut o, 3, 0);
+        assert_eq!(o, vec![3, 1, 2, 0], "뒤 열을 맨 앞으로");
+        move_col(&mut o, 1, 4);
+        assert_eq!(o, vec![3, 2, 0, 1], "맨 끝(len)으로");
+        move_col(&mut o, 2, 2);
+        assert_eq!(o, vec![3, 2, 0, 1], "제자리");
+        move_col(&mut o, 2, 3);
+        assert_eq!(o, vec![3, 2, 0, 1], "바로 다음 칸 = 제자리");
     }
 
     #[test]

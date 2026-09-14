@@ -235,6 +235,7 @@ impl ConnectPanel {
         self.name.text().trim().to_string()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_connected(&self) -> bool {
         self.connected
     }
@@ -364,6 +365,39 @@ impl ConnectPanel {
             self.field_focus = Some(Field::Name);
         }
         self.sync_focus();
+        if !on {
+            // 패널이 포커스를 잃으면 버튼·콤보·체크박스 링도 전부 꺼진다(포커스 규칙 — CLAUDE.md §3).
+            self.own_focus(None);
+        }
+    }
+
+    /// ★ 포커스 규칙(사용자 09-14 · CLAUDE.md §3): 한 창엔 포커스 링이 **정확히 하나 이하**.
+    /// nexa-ctl 버튼·콤보·체크박스는 MouseDown에서 스스로 `focused = true`가 되고 스스로 끄지 않는다 —
+    /// 그래서 누를 때마다 여기서 한 번 정리한다: `hit`(방금 눌린 컨트롤)만 켜고 나머지는 끈다. 텍스트박스가 눌렸으면 전부 끈다.
+    fn own_focus(&mut self, hit: Option<usize>) {
+        fn set<C: Control>(c: &mut C, on: bool) {
+            if c.is_focused() != on {
+                c.set_focused(on);
+            }
+        }
+        set(&mut self.dialect, hit == Some(0));
+        set(&mut self.save_pw, hit == Some(1));
+        set(&mut self.test_btn, hit == Some(2));
+        set(&mut self.connect_btn, hit == Some(3));
+        set(&mut self.save_btn, hit == Some(4));
+    }
+
+    /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
+    fn ctl_hit(&self, p: Point) -> Option<usize> {
+        [
+            self.dialect.bounds(),
+            self.save_pw.bounds(),
+            self.test_btn.bounds(),
+            self.connect_btn.bounds(),
+            self.save_btn.bounds(),
+        ]
+        .iter()
+        .position(|b| b.contains(p))
     }
 
     fn textbox(&mut self, f: Field) -> &mut TextBox {
@@ -453,7 +487,7 @@ impl ConnectPanel {
                 self.field_focus = hit;
                 self.focused = true;
                 self.sync_focus();
-            } else if self.dialect.bounds().contains(p) || self.save_pw.bounds().contains(p) {
+            } else if self.ctl_hit(p).is_some() {
                 self.field_focus = None;
                 self.sync_focus();
             }
@@ -470,6 +504,11 @@ impl ConnectPanel {
             self.test_btn.on_event(ev, inv);
             self.connect_btn.on_event(ev, inv);
             self.save_btn.on_event(ev, inv);
+            // 포커스 링은 하나만 — 방금 눌린 컨트롤만 켠다(텍스트박스면 전부 끈다).
+            if let InputEvent::MouseDown { x, y, .. } = *ev {
+                let hit = self.ctl_hit(Point { x, y });
+                self.own_focus(hit);
+            }
             if let Some(a) = self.after_combo() {
                 return Some(a);
             }

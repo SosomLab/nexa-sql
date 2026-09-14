@@ -24,8 +24,13 @@ use std::time::Duration;
 pub(crate) enum Cmd {
     /// 접속 문자열 **또는 프로필 이름**(실행 인자 경로).
     Connect(String),
-    /// 접속 패널이 조립한 스펙으로 접속(세션 유지).
-    ConnectSpec(ConnectSpec),
+    /// 접속 패널이 조립한 스펙으로 접속(세션 유지). 지금 세션이 **같은 서버**(방언·호스트·포트·DB·사용자·역할)면
+    /// 그대로 두고 성공을 알린다 — `reconnect_same`이면 닫고 다시 접속(설정 `connect.reconnect_same` · 사용자 09-14).
+    /// 다른 서버면 기존 세션을 닫고 새로 접속한다.
+    ConnectSpec {
+        spec: ConnectSpec,
+        reconnect_same: bool,
+    },
     /// 접속만 해 보고 끊는다 — CLI `nsql conn test`와 같은 `nsql_run::test_connection`.
     Test(ConnectSpec),
     Disconnect,
@@ -67,6 +72,16 @@ fn err(message: String) -> RunEvent {
             position: None,
         },
     }
+}
+
+/// 같은 서버인가 — 비밀번호만 빼고 비교(같으면 세션을 다시 열 이유가 없다).
+fn same_server(a: &ConnectSpec, b: &ConnectSpec) -> bool {
+    a.dialect == b.dialect
+        && a.host == b.host
+        && a.port == b.port
+        && a.database == b.database
+        && a.user == b.user
+        && a.role == b.role
 }
 
 /// 이름이면 저장소에서, 아니면 접속 문자열 파싱.
@@ -132,14 +147,31 @@ pub(crate) fn spawn(
                 let _ = etx.send(e);
                 wake();
             };
-            // 활성 세션의 호스트:포트(빠른 판정용) · 직전 실행이 접속성 오류였는가(다음 실행은 무조건 빠른 판정).
+            // 활성 세션의 스펙(같은 서버 판정) · 호스트:포트(빠른 판정용) · 직전 실행이 접속성 오류였는가(다음 실행은 무조건 빠른 판정).
+            let mut active_spec: Option<ConnectSpec> = None;
             let mut active_ep: Option<(String, u16)> = None;
             let mut suspect = false;
             let endpoint = |spec: &ConnectSpec| spec.host.clone().zip(spec.port);
             while let Ok(cmd) = rx.recv() {
                 // 패닉 격리 — 한 명령의 패닉이 워커(=앱 전체)를 죽이지 않는다.
                 let r = catch_unwind(AssertUnwindSafe(|| match cmd {
-                    Cmd::ConnectSpec(spec) => {
+                    Cmd::ConnectSpec {
+                        spec,
+                        reconnect_same,
+                    } => {
+                        // 같은 서버에 이미 붙어 있으면 세션을 유지한다(설정으로 재접속 강제 가능).
+                        let same = runner.session.is_some()
+                            && active_spec.as_ref().is_some_and(|a| same_server(a, &spec));
+                        if same && !reconnect_same {
+                            let desc = runner
+                                .connection
+                                .clone()
+                                .unwrap_or_else(|| spec.redacted());
+                            let _ = ctx_tx.send(ConnOutcome::Connected(desc));
+                            let _ = dtx.send(None);
+                            wake();
+                            return true;
+                        }
                         let mut last_err: Option<String> = None;
                         let ok = runner.connect(&spec, &mut |e: RunEvent| {
                             if let RunEvent::Error { error, .. } = &e {
@@ -149,6 +181,7 @@ pub(crate) fn spawn(
                         });
                         if ok {
                             active_ep = endpoint(&spec);
+                            active_spec = Some(spec.clone());
                             suspect = false;
                         }
                         let _ = ctx_tx.send(if ok {
@@ -178,6 +211,7 @@ pub(crate) fn spawn(
                             let _ = s.commit();
                         }
                         active_ep = None;
+                        active_spec = None;
                         suspect = false;
                         emit(RunEvent::Disconnected);
                         let _ = ctx_tx.send(ConnOutcome::Disconnected);
@@ -202,6 +236,7 @@ pub(crate) fn spawn(
                             Ok(spec) => {
                                 if runner.connect(&spec, &mut emit) {
                                     active_ep = endpoint(&spec);
+                                    active_spec = Some(spec);
                                     suspect = false;
                                 }
                             }
@@ -263,6 +298,7 @@ pub(crate) fn spawn(
                         runner.session = None;
                         runner.connection = None;
                         active_ep = None;
+                        active_spec = None;
                         suspect = false;
                         emit(err(tf(Msg::WkPanic, &[&what])));
                         emit(RunEvent::Disconnected);

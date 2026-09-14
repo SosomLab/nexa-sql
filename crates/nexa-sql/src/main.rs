@@ -200,7 +200,12 @@ impl App {
                 self.busy = true;
                 self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
                 self.panel_op = Some((self.conn_win.panel.profile_name(), ConnState::Connecting));
-                self.worker.send(worker::Cmd::ConnectSpec(spec));
+                // 같은 서버면 기존 세션 유지 · 설정 `connect.reconnect_same`이면 닫고 다시 접속(사용자 09-14).
+                let reconnect_same = self.settings.flag("connect.reconnect_same");
+                self.worker.send(worker::Cmd::ConnectSpec {
+                    spec,
+                    reconnect_same,
+                });
             }
             PanelAction::Test(spec) => {
                 self.busy = true;
@@ -350,13 +355,8 @@ impl App {
             }
             "run.statement" => self.run_sql(false),
             "run.all" => self.run_sql(true),
-            "conn.toggle" => {
-                if self.conn_win.panel.is_connected() {
-                    self.handle_panel_action(PanelAction::Disconnect);
-                } else {
-                    self.open_conn = true;
-                }
-            }
+            // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
+            "conn.toggle" => self.open_conn = true,
             "help.about" => {
                 self.status = format!(
                     "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
@@ -940,12 +940,20 @@ impl App {
                 }
                 _ => return None,
             },
-            WindowEvent::MouseWheel { delta, .. } => InputEvent::Wheel {
-                delta: match delta {
-                    MouseScrollDelta::LineDelta(_, dy) => (*dy * 120.0) as i32,
-                    MouseScrollDelta::PixelDelta(p) => p.y as i32,
-                },
-            },
+            // 휠: 가로 성분(틸트 휠·트랙패드)이 있으면 HWheel · Shift+세로 휠 = 가로(관례) · 아니면 세로.
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(dx, dy) => ((*dx * 120.0) as i32, (*dy * 120.0) as i32),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as i32, p.y as i32),
+                };
+                if dx != 0 {
+                    InputEvent::HWheel { delta: dx }
+                } else if self.shift {
+                    InputEvent::HWheel { delta: -dy }
+                } else {
+                    InputEvent::Wheel { delta: dy }
+                }
+            }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Enter) => key(CtlKey::Enter, self.shift, self.primary),

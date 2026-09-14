@@ -364,6 +364,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "60",
     },
     Entry {
+        key: "connect.reconnect_same",
+        cat: Msg::CatConnection,
+        label: Msg::LblReconnectSame,
+        desc: Msg::DescReconnectSame,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
         key: "session.mode",
         cat: Msg::CatSession,
         label: Msg::LblSessionMode,
