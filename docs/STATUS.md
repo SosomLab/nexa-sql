@@ -2,6 +2,12 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (6차 · win) — ★ 접속 설정→연결→상태 확인 구현 · 성능 계측 골격 · CLI 규약·성능·그리드 계열 설계
+
+**요청**(사용자): 접속 흐름부터(DB 종류·정보 → 연결 → 상태) · 테스트 실행 · CLI 동일·핵심 모듈화 · CLI 인자 조사 · 성능 단계별 계측·경량 구조·호평 앱 조사 · 접속 목록 그리드(dir2 차용) · 그리드 계열 골격 공유.
+**구현**: 공용 층(`ConnectSpec::from_parts` · `test_connection` · `Dialect::default_port`) · CLI `conn add/test` 필드 옵션 · GUI 접속 패널(프로필·DB 종류·호스트/포트·DB·사용자·비밀번호·저장·Test/Connect/Save·● 상태) · 계측 `Stage/Timeline`(Oracle 3단계 분리 · `--timing` · 그리드 푸터 load/render/~bytes). clippy 0 · green · **GUI 실행 중(테스트용)**.
+**설계**: [26](26-performance-architecture.md) · [27](27-cli-conventions.md) · [nexa-ui 21](../../nexa-ui/docs/21-grid-family.md). **⏳ 사용자**: D-41(CLI 짧은 옵션 진영★) · D-42(결과 상한) · D-43(페치) · D-44(로그) · nexa-ui D-10(그리드 계열 크레이트). **다음**: T-50/U-3 nexa-grid(dir2 rows 이식 · 결과·접속 그리드) → T-31 로그인 리스트 · T-48 페치 모델. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (5차 · win) — UI 방향: 3-OS 동일 UI · 파일 관리·파일 대화상자 계층 설계(nexa-ui docs/20)
 
 **요청**(사용자): OS별 차이 없는 동일 UI · 파일 관리·파일 Dialog 대폭 개선 · nexa-ui 위에 계층 구조로 확장. **설계는 nexa-ui에**([docs/20](../../nexa-ui/docs/20-file-management-and-dialogs.md) · 75634f6): 네이티브 대화상자 0 · `nexa-fs`(dir2 std 전용 코드 추출) → 파일 컨트롤 6종 + `Overlay` → `nexa-dlg` FilePicker → 앱. nexa-sql 몫 = F-6 배선(열기/저장/프로젝트 폴더/export/DroppedFile/최근). ⚠️ beep ADR-0014(네이티브 대화상자)와 충돌 → nexa-ui **D-9**. **⏳ 사용자**: nexa-ui D-4(모달)·D-5(별도 크레이트)·D-6(아이콘)·D-7(휴지통)·D-8(grid 공유)·D-9(beep 정정) + 라이선스 D-23·24·40. → [journal](journal/2026-09-14.md)

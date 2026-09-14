@@ -51,7 +51,7 @@
 | **T-28** | P0 | 중 | `nsql-ext` — `drivers/<id>/<ver>/` 레이아웃 · `nexa-driver.json` · 최신 선택 규칙 · 참조 카운트 · 삭제/휴지통 · `nsql driver list/rm/prune/path` | T-27 | ☐ |
 | **T-29** | P0 | 대 | GitHub 다운로드 — 색인 · 최신 태그 · HTTPS(rustls) · sha256 · Ed25519 · 원자적 설치 · `install/update/search` · 갱신 배지 · `--file` 오프라인 | T-28 D-19 | ☐ |
 | **T-30** | P0 | 대 | Oracle OCI 확장 — kubo 드라이버를 RPC 프로세스로 · Instant Client 19/23 SxS · 프로필 `driver=` · ORA-28040 힌트 | T-29 D-20 | ☐ |
-| **T-31** | P0 | 대 | GUI — DBeaver식 접속 대화상자 · Golden식 로그인 리스트 · 드라이버 관리자(목록·Download·Update·Delete) | T-28 · nexa-ui U-2 | ☐ |
+| **T-31** | P0 | 대 | GUI — DBeaver식 접속 대화상자 · **Golden식 로그인 리스트 = 그리드(사용자 09-14 · nexa-grid ConnectionGrid · [nexa-ui 21](../../nexa-ui/docs/21-grid-family.md))** · 드라이버 관리자(목록·Download·Update·Delete). 기본 패널은 ✅ 09-14(`connect.rs`) | T-28 · nexa-ui U-3 | 🚧 |
 
 ## 3-3. 정품 인증 · 기능 게이트([23](23-license-activation.md) · 티어·서버·저장소 분리 [25](25-license-tiers-and-server.md) · 사용자 09-14) — 코드는 D-23·24·32·33 답 뒤 · **라이브러리 저장소(T-45)부터**
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
@@ -74,6 +74,17 @@
 | **T-37** | P0 | 중 | `nsql-i18n`(영어 기본 · 한국어) + `nsql-settings`(레지스트리 · `settings.conf`) · `nsql config` · GUI 전 문자열 · ☐ CLI 나머지(run/shell/export/conn) 문자열 카탈로그화 | — | ✅ 09-14 |
 | **T-38** | P0 | 소 | 테마 System/Light/Dark(기본 System) — OS 판정 3-OS(`theme.rs`) · `Ctrl/⌘+⇧T` 순환 · `ThemeChanged` 추종 · ☐ mac/Linux 실기 | T-37 | ✅ 09-14(win) |
 | **T-39** | P1 | 중 | 설정 화면 — VS Code식 좌 TOC + 검색 + 항목 카드 + 변경 바 + Reset([24 §2·§3](24-settings-and-vscode-analysis.md)) · **T-39b** 프로젝트 스코프 `.nexa/settings.conf` | 메뉴바 이식 · T-37 | ☐ |
+
+## 3-5. 성능 계측·경량 구조([26](26-performance-architecture.md)) · CLI 규약([27](27-cli-conventions.md)) · 사용자 09-14
+| ID | 우선 | 규모 | 항목 | 의존 | 상태 |
+|---|:--:|:--:|---|---|:--:|
+| **T-46b** | P0 | 중 | ✅ 접속 흐름(공용 `from_parts`/`test_connection` · CLI `conn add/test` 필드 · GUI 접속 패널) · ✅ 계측 골격(`Stage/Timeline` · `--timing` · 푸터) | — | ✅ 09-14 |
+| **T-47** | P1 | 소 | Send 스팬 · MSSQL/SQLite Execute·Fetch 분리 · `--timing=json` · 타이밍 로그 파일(TSV·회전) | D-44 | ☐ |
+| **T-48** | P0 | 대 | 페치 모델 — 상한(D-42)·배치 스트리밍·"더 가져오기"(Navigate · D-43) · 예산 경고 · 실행 히스토리 패널 · 메타만(EXPLAIN/COUNT) | D-42 D-43 | ☐ |
+| **T-49** | P1 | 소 | `DBMS_OUTPUT.GET_LINES` 배열 회수 · 실행 중 주기 폴링 옵션 · UNLIMITED 안내 | — | ☐ |
+| **T-50** | P0 | 대 | 컬럼 지향 결과 저장소 + 페인트 할당 0 + 폭 캐시 — **nexa-grid(U-3 · dir2 `rows.rs` 이식 · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md))** 와 함께 · 결과 그리드는 속도·메모리 최우선(사용자 09-14) | nexa-ui U-3 | ☐ |
+| **T-51** | P1 | 중 | D-41 반영 — 옵션 파서 재정리(별칭·충돌 안내) · `-e` · `-v` · `-b` · `-W`/`NSQL_PASSWORD` · `-S host,port` · 진영별 `--help` 예시 | D-41 | ☐ |
+| **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
 
 ## 4. M3+ (요약)
 syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · PG/MySQL/SQLite/ODBC 드라이버(T-23) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26 → **T-32~36** [23](23-license-activation.md)).

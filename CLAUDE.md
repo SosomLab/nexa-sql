@@ -8,7 +8,7 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M1·M2 병행 진행(2026-09-14 1차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **09-14: i18n(기본 영어 · `nsql-i18n`)·설정(`nsql-settings` · `settings.conf` · `nsql config`)·테마(System 기본 · ⇧T/⇧L 단축키) ✅ · 정품 인증 설계 [23](docs/23-license-activation.md) · VS Code 설정 분석 [24](docs/24-settings-and-vscode-analysis.md).** **다음 = T-27 RPC 드라이버 프로토콜**([22 §7](docs/22-driver-extensions.md)) · T-32 `nsql-license`(D-23~25 답 뒤) · ⏳ 사용자: **D-23·24·40 라이선스 결정**(D-32~39 = DR-26 확정)([10 §3](docs/10-decision-record.md)) · 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
+- 현 단계: **M1·M2 병행 진행(2026-09-14 1차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **09-14: i18n(기본 영어 · `nsql-i18n`)·설정(`nsql-settings` · `settings.conf` · `nsql config`)·테마(System 기본 · ⇧T/⇧L 단축키) ✅ · 정품 인증 설계 [23](docs/23-license-activation.md) · VS Code 설정 분석 [24](docs/24-settings-and-vscode-analysis.md).** **09-14 6차: 접속 패널(GUI)·`conn add/test` 필드(CLI)·성능 계측 골격(`Stage/Timeline` · `--timing`) ✅ · 설계 [26 성능](docs/26-performance-architecture.md) · [27 CLI 규약](docs/27-cli-conventions.md).** **다음 = nexa-grid(dir2 rows 이식 · 결과/접속 그리드 · [nexa-ui 21](../nexa-ui/docs/21-grid-family.md)) → T-48 페치 모델 → T-27 RPC** · T-32 `nsql-license`(D-23~25 답 뒤) · ⏳ 사용자: **D-23·24·40 라이선스 결정**(D-32~39 = DR-26 확정)([10 §3](docs/10-decision-record.md)) · 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
 - ★ 형제 저장소 clone은 `git@kiros33.github.com:SosomLab/<repo>.git`(SSH 별칭 · 사용자 지정 09-13).
 
 ### 참조 원천 (재발명 금지)
@@ -48,6 +48,7 @@
 - **문서·커밋/푸시 규약 SSOT = [docs/16](docs/16-doc-git-conventions.md)**. 한 작업 = 한 트랜잭션 갱신(journal → DEVLOG → STATUS → MILESTONES/TODO).
 - **push는 사용자 명시 요청 시에만.** `git add <파일>`만(`-A`·`.` 금지). push 전 `scripts/check-3os.sh`.
 - 크레이트 경계: `nsql-core`는 의존 0 · 드라이버 크레이트는 `nsql-driver-*` 안에만 · UI는 `Box<dyn Session>`만 안다.
+- **실행 경로의 시간은 `nsql_core::Timeline`에 단계로 덧붙인다**(docs/26 — 각 층은 자기 단계만 · 문자열 포맷은 표시 시점에만). 결과 그리드는 속도·메모리 최우선.
 - **사용자 문자열은 전부 `nsql-i18n::Msg`**(기본 영어 · 한국어 열) — 리터럴 금지. **설정 키는 `nsql-settings::REGISTRY`에만** 추가(라벨·설명 = `Msg`).
 - 스크립트 엔진을 고치면 `examples/golden-session-vars.sql`로 `nsql plan` 양 방언을 다시 본다.
 - `.claude/settings.json`은 덮어쓰기 금지, 병합만.
