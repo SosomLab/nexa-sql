@@ -728,7 +728,7 @@ impl ConnWin {
                 let changed = tb.tick(epoch.elapsed().as_millis() as u64);
                 if tb.fired_by_timeout() {
                     let _ = tb.take_fired();
-                    self.del_arm = None;
+                    self.disarm_delete();
                     true
                 } else {
                     changed
@@ -1133,14 +1133,19 @@ impl ConnWin {
         tb.set_scale(self.scale);
         tb.start(0);
         tb.set_focused(true);
-        self.btn_delete.set_focused(false);
+        // 가려지는 원래 Delete의 일시 상태(hover·눌림·포커스)를 비운다 — 타임아웃 뒤 하늘색이 남던 버그(사용자 09-14).
+        self.btn_delete.clear_transient();
         self.del_arm = Some((tb, Instant::now()));
         self.redraw();
     }
 
-    /// 삭제 무장 해제(만료 · Esc · 삭제 뒤).
+    /// 삭제 무장 해제(만료 · Esc · 삭제 뒤) — 다시 보이는 Delete는 현재 커서로 hover를 재판정한다.
     fn disarm_delete(&mut self) {
         if self.del_arm.take().is_some() {
+            let (x, y) = self.cursor;
+            let mut inv = Invalidations::default();
+            self.btn_delete
+                .on_event(&InputEvent::MouseMove { x, y }, &mut inv);
             self.redraw();
         }
     }
