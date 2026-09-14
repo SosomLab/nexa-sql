@@ -34,11 +34,6 @@ pub(crate) enum Cmd {
     /// 접속만 해 보고 끊는다 — CLI `nsql conn test`와 같은 `nsql_run::test_connection`.
     Test(ConnectSpec),
     Disconnect,
-    /// 스펙을 프로필로 저장(접속 패널 · 비밀번호 저장 여부는 스펙의 password 유무).
-    SaveSpec {
-        name: String,
-        spec: ConnectSpec,
-    },
     Run {
         src: String,
         /// `Some(timeout)` = 실행 전 호스트:포트 빠른 판정(신호등이 초록이 아닐 때 UI가 켠다).
@@ -58,8 +53,6 @@ pub(crate) enum ConnOutcome {
     },
     TestFailed(String),
     Disconnected,
-    Saved(String),
-    SaveFailed(String),
 }
 
 fn err(message: String) -> RunEvent {
@@ -212,18 +205,6 @@ pub(crate) fn spawn(
                         suspect = false;
                         emit(RunEvent::Disconnected);
                         let _ = ctx_tx.send(ConnOutcome::Disconnected);
-                        let _ = dtx.send(None);
-                        wake();
-                        true
-                    }
-                    Cmd::SaveSpec { name, spec } => {
-                        let r = Vault::open_default()
-                            .and_then(|v| v.save(&name, &spec))
-                            .map_err(|e| e.to_string());
-                        let _ = ctx_tx.send(match r {
-                            Ok(()) => ConnOutcome::Saved(name),
-                            Err(e) => ConnOutcome::SaveFailed(e),
-                        });
                         let _ = dtx.send(None);
                         wake();
                         true

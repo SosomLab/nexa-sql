@@ -230,8 +230,19 @@ impl App {
                 self.worker.send(worker::Cmd::Disconnect);
             }
             PanelAction::Save { name, spec } => {
-                self.status = tf(Msg::StSaving, &[&name]);
-                self.worker.send(worker::Cmd::SaveSpec { name, spec });
+                // ★ 저장은 파일 쓰기뿐 — 워커(순차 · Test/Connect 뒤에 줄 섬)를 거치지 않고 즉시(사용자 09-14
+                //   "Save에서 접속 테스트를 하지 않도록": 실제로는 앞선 Test의 20초 타임아웃을 기다리던 것). 접속 검증 없음 · 포트가 틀려도 저장.
+                match Vault::open_default().and_then(|v| v.save(&name, &spec)) {
+                    Ok(()) => {
+                        self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
+                        self.conn_win.refresh_profiles(Some(&name));
+                    }
+                    Err(e) => {
+                        let e = e.to_string();
+                        self.status = tf(Msg::WkProfileSaveFailed, &[&e]);
+                        self.conn_win.panel.set_state(ConnState::Failed(e));
+                    }
+                }
             }
             PanelAction::Edit(_) => {} // 접속 창이 자체 처리(클립보드)
             PanelAction::LoadProfile(name) => {
@@ -328,14 +339,6 @@ impl App {
                     self.conn_win.clear_active();
                     self.panel_op = None;
                     self.conn_win.panel.set_state(ConnState::Idle);
-                }
-                ConnOutcome::Saved(name) => {
-                    self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
-                    self.conn_win.refresh_profiles(Some(&name));
-                }
-                ConnOutcome::SaveFailed(e) => {
-                    self.status = tf(Msg::WkProfileSaveFailed, &[&e]);
-                    self.conn_win.panel.set_state(ConnState::Failed(e));
                 }
             }
         }
