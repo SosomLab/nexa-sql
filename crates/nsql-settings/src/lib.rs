@@ -360,8 +360,8 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatConnection,
         label: Msg::LblProbeRetryDelay,
         desc: Msg::DescProbeRetryDelay,
-        kind: SettingKind::Int { min: 1, max: 600 },
-        default: "2",
+        kind: SettingKind::Int { min: 5, max: 3600 },
+        default: "60",
     },
     Entry {
         key: "session.mode",

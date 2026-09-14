@@ -511,10 +511,10 @@ impl Msg {
                 "In the login list, check host:port reachability (TCP only, no login) for profiles that connected at least once — green port open · yellow checking · blue host alive but port closed · red unreachable",
                 "로그인 목록에서 한 번 이상 접속했던 프로필의 호스트:포트 도달 여부를 확인(TCP만 · 로그인 없음) — 초록 포트 열림 · 노랑 확인 중 · 파랑 IP는 응답하나 포트 닫힘 · 빨강 도달 불가",
             ],
-            Msg::LblProbeMaxRetries => ["Status light max retries", "신호등 최대 재시도 횟수"],
+            Msg::LblProbeMaxRetries => ["Status light backoff steps", "신호등 간격 증가 횟수"],
             Msg::DescProbeMaxRetries => [
-                "After a failure, retry quickly with exponential backoff (retry delay ×1, ×2, ×4… capped at the refresh interval) at most this many times; after that only the periodic refresh continues. The failure count keeps accumulating until a probe succeeds",
-                "실패 후 지수 증가 간격(재시도 대기 ×1, ×2, ×4… 상한 = 갱신 주기)으로 최대 이 횟수까지 빠르게 재시도하고, 그 뒤엔 주기 갱신만 계속. 실패 횟수는 성공할 때까지 누적",
+                "Each consecutive failure doubles the wait before the next check (retry delay ×1, ×2, ×4…) up to this many times; after that the wait stays at that maximum. The failure count keeps accumulating until a check succeeds",
+                "실패가 이어질 때마다 다음 확인까지의 대기를 2배로(재시도 대기 ×1, ×2, ×4…) 최대 이 횟수까지 늘리고, 그 뒤엔 그 최대 간격을 유지. 실패 횟수는 성공할 때까지 누적",
             ],
             Msg::LblProbeTimeout => ["Status light timeout (s)", "신호등 타임아웃(초)"],
             Msg::DescProbeTimeout => [
@@ -528,8 +528,8 @@ impl Msg {
             ],
             Msg::LblProbeRetryDelay => ["Status light retry delay (s)", "신호등 재시도 대기(초)"],
             Msg::DescProbeRetryDelay => [
-                "Wait before the first retry after a failure; doubles on each further failure",
-                "실패 후 첫 재시도까지 대기 시간. 실패가 이어지면 매번 2배",
+                "Wait before the next check after the first failure; doubles on each further failure (not a fast retry)",
+                "첫 실패 후 다음 확인까지의 대기 시간. 실패가 이어지면 매번 2배(빠른 재시도 아님)",
             ],
             Msg::ErrServerUnreachable => [
                 "Server unreachable: {0} (fast check, {1} ms) — query not sent",

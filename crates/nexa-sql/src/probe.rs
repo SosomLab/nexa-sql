@@ -3,8 +3,9 @@
 //! - **무엇을**: 프로필의 호스트·포트에 TCP 연결만 시도한다(DB 로그인 없음 · SYN 1개 · 즉시 닫음). 파일 DB·호스트 없음은 대상 아님.
 //! - **누구를**: **한 번 이상 접속에 성공한 프로필만**(사용자 09-14) — `<설정 폴더>/connected.list`(이름 한 줄씩)로 기억.
 //! - **언제**: 접속 창을 열 때 한 번, 그 뒤 창이 열려 있는 동안 `probe.interval`(기본 60초)마다 **주기 갱신**(사용자 09-14).
-//!   실패하면 그 시점부터 **횟수를 누적**하며 `probe.retry_delay`(기본 2초) → ×2 → ×4 … 지수 증가(상한 = 주기)로 빠르게 재시도하되
-//!   `probe.max_retries`(기본 5)를 넘기면 주기 갱신으로만 돌아간다(누적은 계속). 성공하면 횟수 0 · 다음은 주기. 창이 닫혀 있으면 주기 갱신은 멈춘다.
+//!   실패하면 그 시점부터 **횟수를 누적**하고, 횟수가 쌓일수록 다음 확인까지의 간격을 **지수로 늘린다**(사용자 09-14 — 빠른 재시도 아님):
+//!   1회 실패 = `probe.retry_delay`(기본 60초) · 2회 = ×2 · 3회 = ×4 … `probe.max_retries`(기본 5)번 늘어난 뒤엔 그 간격(기본 60×2⁵ = 32분)을 유지.
+//!   성공하면 횟수 0 · 다음은 주기. 창이 닫혀 있으면 주기 갱신은 멈춘다.
 //! - **즉시 갱신**: 접속 창의 Connect/Test 실패 · SQL 실행 중 **접속성 오류**(`is_connection_error`)가 확인되면 그 서버만 바로 다시 묻는다
 //!   (창이 닫혀 있어도 — 다음에 열 때 최신 상태가 보인다 · 사용자 09-14).
 //! - **실행 전 빠른 판정**: 워커는 신호등이 초록이 아니거나 직전 실행이 접속성 오류였으면 쿼리를 보내기 전에 같은 `probe_once`로
@@ -178,13 +179,13 @@ fn icmp_alive(ip: std::net::IpAddr, timeout: Duration) -> bool {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProbePolicy {
     pub enabled: bool,
-    /// 실패 뒤 빠른 재시도 최대 횟수(`probe.max_retries`).
+    /// 실패 간격이 2배씩 늘어나는 최대 횟수(`probe.max_retries`) — 그 뒤엔 `retry_delay × 2^max_retries`로 고정.
     pub max_retries: u32,
     /// 시도 1회 TCP 타임아웃(`probe.timeout`).
     pub timeout: Duration,
-    /// 첫 재시도 대기(`probe.retry_delay`) — 이후 ×2.
+    /// 첫 실패 뒤 다음 확인까지의 대기(`probe.retry_delay`) — 실패마다 ×2.
     pub retry_delay: Duration,
-    /// 주기 갱신 간격(`probe.interval`) — 재시도 대기의 상한이기도 하다.
+    /// 정상(초록)일 때의 주기 갱신 간격(`probe.interval`).
     pub interval: Duration,
 }
 
@@ -194,9 +195,19 @@ impl Default for ProbePolicy {
             enabled: true,
             max_retries: 5,
             timeout: Duration::from_secs(2),
-            retry_delay: Duration::from_secs(2),
+            retry_delay: Duration::from_secs(60),
             interval: Duration::from_secs(60),
         }
+    }
+}
+
+impl ProbePolicy {
+    /// 실패 `attempts`회째의 다음 확인 대기 — `retry_delay × 2^(attempts-1)` · `max_retries`번까지만 늘어난다.
+    pub(crate) fn failure_wait(&self, attempts: u32) -> Duration {
+        let cap = self
+            .retry_delay
+            .saturating_mul(1u32 << self.max_retries.min(16));
+        backoff(attempts, self.retry_delay, cap)
     }
 }
 
@@ -266,8 +277,8 @@ impl ProbeEntry {
         }
     }
 
-    /// 결과 반영 — Up이면 횟수 0 · 다음은 주기. 아니면(포트 닫힘·도달 불가) 횟수 누적 · `max_retries` 안에서는 지수 백오프,
-    /// 넘기면 주기 갱신으로만(누적은 계속 — 사용자 09-14 "연결이 안 되면 그때부터 횟수 누적").
+    /// 결과 반영 — Up이면 횟수 0 · 다음은 주기. 아니면(포트 닫힘·도달 불가) 횟수 누적 · 간격은 횟수만큼 지수 증가
+    /// (`ProbePolicy::failure_wait` · 사용자 09-14 "횟수가 쌓이면 시도 간격을 지수 증가 · 빠르게 시도하는 게 아님").
     pub(crate) fn apply(&mut self, outcome: Outcome, now: Instant, pol: &ProbePolicy) {
         match outcome {
             Outcome::Up => {
@@ -282,12 +293,7 @@ impl ProbeEntry {
                     ProbeStatus::PortClosed
                 };
                 self.attempts = self.attempts.saturating_add(1);
-                let wait = if self.attempts <= pol.max_retries {
-                    backoff(self.attempts, pol.retry_delay, pol.interval)
-                } else {
-                    pol.interval
-                };
-                self.next_at = Some(now + wait);
+                self.next_at = Some(now + pol.failure_wait(self.attempts));
             }
         }
     }
@@ -354,25 +360,26 @@ mod tests {
     }
 
     #[test]
-    fn entry_accumulates_then_falls_back_to_interval() {
+    fn entry_accumulates_and_interval_grows_exponentially() {
         let now = Instant::now();
         let pol = ProbePolicy {
             max_retries: 3,
-            retry_delay: S(2),
+            retry_delay: S(60),
             interval: S(60),
             ..ProbePolicy::default()
         };
         let mut e = ProbeEntry::fresh(now);
-        for (i, want) in [2u64, 4, 8].iter().enumerate() {
+        // 1회 60s · 2회 120s · 3회 240s · 4회 480s(= 60×2³ 상한) · 5회도 480s.
+        for (i, want) in [60u64, 120, 240, 480, 480].iter().enumerate() {
             e.apply(Outcome::Down, now, &pol);
             assert_eq!(e.status, ProbeStatus::Down);
             assert_eq!(e.attempts, i as u32 + 1, "실패마다 누적");
-            assert_eq!(e.next_at, Some(now + S(*want)), "지수 백오프");
+            assert_eq!(e.next_at, Some(now + S(*want)), "간격 지수 증가 · 상한 유지");
         }
         e.apply(Outcome::PortClosed, now, &pol);
         assert_eq!(e.status, ProbeStatus::PortClosed);
-        assert_eq!(e.attempts, 4, "최대 횟수를 넘겨도 누적");
-        assert_eq!(e.next_at, Some(now + S(60)), "최대 횟수 뒤엔 주기 갱신");
+        assert_eq!(e.attempts, 6, "상한 뒤에도 누적");
+        assert_eq!(e.next_at, Some(now + S(480)), "상한 간격으로 계속 확인(회복 감지)");
         e.apply(Outcome::Up, now, &pol);
         assert_eq!(e.status, ProbeStatus::Up);
         assert_eq!(e.attempts, 0);
