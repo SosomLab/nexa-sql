@@ -15,7 +15,7 @@
 
 | 원천 | 경로 | 무엇 |
 |---|---|---|
-| **`nexa-ui`** | `../nexa-ui` | ★ 공용 UI — `nexa-gfx`·`nexa-ctl`(컨트롤 17종·토큰)·`nexa-conf`. path 의존 |
+| **`nexa-ui`** | `../nexa-ui` | ★ 공용 UI — `nexa-gfx`·`nexa-ctl`(컨트롤 17종·토큰)·`nexa-conf`. path 의존 · **파일 관리·파일 대화상자 계층 설계 = nexa-ui docs/20**(3-OS 동일 · 네이티브 대화상자 0 · nexa-sql 배선 F-6) |
 | `nexa-clip` | `../nexa-clip` | 앱 골격(plat·창·트레이·릴리스 파이프라인 3-OS·`check-3os.sh`·`21-manual-test` 실기표) |
 | `nexa-dir2` | `../nexa-dir2` | `nexa-gui/widgets`(dock·tabbar·menubar·columns·rows) · **`wasmi` 플러그인** |
 | `nexa-dir` | `../nexa-dir` | `docs/13`(라이선스 정책) · `docs/17`(Ed25519 활성화 설계) — ⚠️ 이 기기에 없음(09-14) |

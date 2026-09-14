@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (5차 · win) — UI 방향: 3-OS 동일 UI · 파일 관리·파일 대화상자 계층 설계(nexa-ui docs/20)
+
+**요청**(사용자): OS별 차이 없는 동일 UI · 파일 관리·파일 Dialog 대폭 개선 · nexa-ui 위에 계층 구조로 확장. **설계는 nexa-ui에**([docs/20](../../nexa-ui/docs/20-file-management-and-dialogs.md) · 75634f6): 네이티브 대화상자 0 · `nexa-fs`(dir2 std 전용 코드 추출) → 파일 컨트롤 6종 + `Overlay` → `nexa-dlg` FilePicker → 앱. nexa-sql 몫 = F-6 배선(열기/저장/프로젝트 폴더/export/DroppedFile/최근). ⚠️ beep ADR-0014(네이티브 대화상자)와 충돌 → nexa-ui **D-9**. **⏳ 사용자**: nexa-ui D-4(모달)·D-5(별도 크레이트)·D-6(아이콘)·D-7(휴지통)·D-8(grid 공유)·D-9(beep 정정) + 라이선스 D-23·24·40. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (4차 · win) — DR-26(티어·서버 운영 확정) · `nexa-license` 공개 저장소 생성 · 골격
 
 **요청**(사용자): D-32~39 추천대로 · 라이브러리는 공개가 적합하면 공개. → **DR-26** 기록 · `SosomLab/nexa-license` **PUBLIC** 생성 · `../nexa-license` clone · 골격 커밋·push(워크스페이스 · `format`/`base32`/`Product` · 12 테스트 · 3-OS CI · PolyForm NC · **검증 전용 — 서명·키 생성은 비공개 서버 저장소에만**(사용자 우려 반영)). 질문 3건 답 = [25 §11](25-license-tiers-and-server.md): 장치 vs 사용자 인증 차이표 · 백업/복원 가능 + 시작 시 자동 복원(T-46) · Device는 기기 ID로 다른 PC 거부. **⏳ 사용자**: D-23(게이트 목록) · D-24(기기 묶음 원천) · **D-40**(서명 포트 ed25519/p256 — dir2 포함 여부). **다음**: D-40 답 → `verify`(SigVerifier 포트)·`machine-id`·`fs`·`protocol` → nexa-sql `nsql-license` 얇은 층. → [journal](journal/2026-09-14.md)
