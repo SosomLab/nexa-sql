@@ -90,19 +90,28 @@ fn digits_only(c: char) -> bool {
 }
 
 impl ConnectPanel {
-    pub(crate) fn new(dialects: Vec<Dialect>, profiles: &[String]) -> Self {
-        let first = dialects.first().copied().unwrap_or(Dialect::Sqlite);
+    /// `available` = 이 빌드에 드라이버가 있는 방언. 콤보는 **전 방언**을 보이고 없는 것은 "(no driver)"를 붙인다 —
+    /// 저장된 프로필(예: PostgreSQL · 드라이버는 M4)을 그대로 불러와 보이게(09-14).
+    pub(crate) fn new(available: Vec<Dialect>, profiles: &[String]) -> Self {
+        let first = available.first().copied().unwrap_or(Dialect::Sqlite);
         let mut p = ConnectPanel {
             bounds: Rect::new(0, 0, 0, 0),
             scale: 1.0,
             focused: false,
             profile: Combo::new(Self::profile_items(profiles), 0),
             dialect: Combo::new(
-                dialects
+                Dialect::ALL
                     .iter()
-                    .map(|d| ComboItem::new(d.to_string(), d.display_name()))
+                    .map(|d| {
+                        let label = if available.contains(d) {
+                            d.display_name().to_string()
+                        } else {
+                            format!("{} {}", d.display_name(), t(Msg::ValNoDriver))
+                        };
+                        ComboItem::new(d.to_string(), label)
+                    })
                     .collect(),
-                0,
+                Dialect::ALL.iter().position(|d| *d == first).unwrap_or(0),
             ),
             host: TextBox::new(t(Msg::PhHost)),
             port: TextBox::new(""),
