@@ -12,7 +12,7 @@
     <ellipse cx="128" cy="70" rx="84" ry="27" fill="#FF8A80"/>
     <ellipse cx="128" cy="70" rx="50" ry="13" fill="#FFFFFF" opacity="0.55"/>
   </g>
-  <g>
+  <g transform="translate(-4 -4)">
     <rect x="152" y="152" width="86" height="86" rx="22" fill="#1B2432"/>
     <path d="M174 180 L192 195 L174 210" fill="none" stroke="#F6F7F9" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
     <rect x="200" y="205" width="20" height="9" rx="4" fill="#F6F7F9"/>
