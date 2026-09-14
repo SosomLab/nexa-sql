@@ -617,6 +617,25 @@ impl App {
                 self.set_focus(Focus::Grid);
             }
         }
+        // 스크롤바 호버·드래그: 포커스와 무관하게 **커서 아래** 편집기/그리드가 마우스 사건을 받는다.
+        if is_mouse {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            if self.grid.bounds.contains(cur) && self.focus != Focus::Grid {
+                self.grid.on_event(&ev, self.scale);
+                if self.grid.bars_visible() {
+                    inv.push(self.grid.bounds);
+                }
+            }
+            if self.editor.bounds().contains(cur)
+                && self.focus != Focus::Editor
+                && matches!(ev, InputEvent::MouseMove { .. })
+            {
+                self.editor.on_event(&ev, &mut inv);
+            }
+        }
         // 버튼·패널은 항상 마우스 사건을 받는다.
         if is_mouse {
             self.run_btn.on_event(&ev, &mut inv);
@@ -634,7 +653,7 @@ impl App {
             y: self.cursor.1,
         };
         if is_wheel && self.grid.bounds.contains(cur) {
-            self.grid.on_event(&ev);
+            self.grid.on_event(&ev, self.scale);
             inv.push(self.grid.bounds);
         } else if is_wheel && self.editor.bounds().contains(cur) {
             self.editor.on_event(&ev, &mut inv);
@@ -661,7 +680,7 @@ impl App {
                 }
                 Focus::Editor => self.editor.on_event(&ev, &mut inv),
                 Focus::Grid => {
-                    self.grid.on_event(&ev);
+                    self.grid.on_event(&ev, self.scale);
                     inv.push(self.grid.bounds);
                 }
             }
@@ -737,7 +756,25 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
             }
         }
-        el.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
+        // 오버레이 스크롤바 페이드(편집기·그리드·로그 창) — 보이는 동안만 ≈30ms 타이머.
+        let now_ms = self.started.elapsed().as_millis() as u64;
+        let mut redraw = self.editor.tick(now_ms);
+        redraw |= self.grid.tick(now_ms);
+        if redraw {
+            self.redraw();
+        }
+        if self.log_win.tick(now_ms) {
+            self.log_win.redraw();
+        }
+        let bars_live = self.editor.scrollbars_visible()
+            || self.grid.bars_visible()
+            || self.log_win.bars_visible();
+        let next = if bars_live {
+            self.next_blink.min(now + Duration::from_millis(33))
+        } else {
+            self.next_blink
+        };
+        el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -943,6 +980,7 @@ fn main() {
     // 창이 없는 동안의 팔레트 — OS 조회(창이 생기면 winit 판정으로 다시 고른다).
     let initial_theme = theme::resolve(settings.theme_mode(), None);
     let log_format = settings.get("log.format").unwrap_or("raw").to_string();
+    let row_snap = settings.get("grid.scroll") == Some("row");
     let mut app = App {
         window: None,
         ctx: None,
@@ -969,6 +1007,8 @@ fn main() {
         started: Instant::now(),
         next_blink: Instant::now(),
     };
+    app.grid.set_row_snap(row_snap);
+    app.log_win.set_row_snap(row_snap);
     // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
     if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {
         app.busy = true;

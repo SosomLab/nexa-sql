@@ -139,6 +139,8 @@ const SESSION_MODE_OPTS: &[(&str, Msg)] = &[
     ("per-editor", Msg::ValSessionPerEditor),
 ];
 
+const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
+
 const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("raw", Msg::ValRaw),
     ("markdown", Msg::ValMarkdown),
@@ -176,6 +178,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescUiFontSize,
         kind: SettingKind::Int { min: 8, max: 40 },
         default: "14",
+    },
+    Entry {
+        key: "grid.scroll",
+        cat: Msg::CatAppearance,
+        label: Msg::LblGridScroll,
+        desc: Msg::DescGridScroll,
+        kind: SettingKind::Choice(SCROLL_OPTS),
+        default: "pixel",
     },
     Entry {
         key: "session.mode",
