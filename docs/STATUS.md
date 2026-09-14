@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (7차 · win) — Ctrl+Enter 한 문장 실행 ✅ · 셀 컨트롤 설계(nexa-ui 21 §3-2)
+
+`statement_at`(nsql-script · `;` 종결 · GUI/CLI 공용) → Ctrl/⌘+Enter = 선택 → 캐럿 문장 → F5 전체. 그리드 셀의 TextEditor·Button·Checkbox·Image·ImageButton은 `CellKind` + 정적 페인터 + one live editor로 설계(G-2/G-2b · 엔진 이식 G-1 뒤). GUI 실행 중(PID 10004). → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (6차 · win) — ★ 접속 설정→연결→상태 확인 구현 · 성능 계측 골격 · CLI 규약·성능·그리드 계열 설계
 
 **요청**(사용자): 접속 흐름부터(DB 종류·정보 → 연결 → 상태) · 테스트 실행 · CLI 동일·핵심 모듈화 · CLI 인자 조사 · 성능 단계별 계측·경량 구조·호평 앱 조사 · 접속 목록 그리드(dir2 차용) · 그리드 계열 골격 공유.
