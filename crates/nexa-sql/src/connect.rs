@@ -54,19 +54,18 @@ enum Field {
 }
 
 const FIELDS: [Field; 6] = [
+    Field::Name,
     Field::Host,
     Field::Port,
     Field::Database,
     Field::User,
     Field::Password,
-    Field::Name,
 ];
 
 pub(crate) struct ConnectPanel {
     bounds: Rect,
     scale: f32,
     focused: bool,
-    profile: Combo,
     dialect: Combo,
     host: TextBox,
     port: TextBox,
@@ -92,13 +91,12 @@ fn digits_only(c: char) -> bool {
 impl ConnectPanel {
     /// `available` = 이 빌드에 드라이버가 있는 방언. 콤보는 **전 방언**을 보이고 없는 것은 "(no driver)"를 붙인다 —
     /// 저장된 프로필(예: PostgreSQL · 드라이버는 M4)을 그대로 불러와 보이게(09-14).
-    pub(crate) fn new(available: Vec<Dialect>, profiles: &[String]) -> Self {
+    pub(crate) fn new(available: Vec<Dialect>) -> Self {
         let first = available.first().copied().unwrap_or(Dialect::Sqlite);
         let mut p = ConnectPanel {
             bounds: Rect::new(0, 0, 0, 0),
             scale: 1.0,
             focused: false,
-            profile: Combo::new(Self::profile_items(profiles), 0),
             dialect: Combo::new(
                 Dialect::ALL
                     .iter()
@@ -135,29 +133,8 @@ impl ConnectPanel {
         p
     }
 
-    fn profile_items(profiles: &[String]) -> Vec<ComboItem> {
-        let mut items = vec![ComboItem::new("", t(Msg::ValNewProfile))];
-        items.extend(
-            profiles
-                .iter()
-                .map(|n| ComboItem::new(n.clone(), n.clone())),
-        );
-        items
-    }
-
-    /// 저장 후 목록 갱신(선택은 그 이름으로).
-    pub(crate) fn set_profiles(&mut self, profiles: &[String], select: Option<&str>) {
-        self.profile = Combo::new(Self::profile_items(profiles), 0);
-        if let Some(n) = select {
-            self.profile.select_value(n);
-        }
-        self.layout_inner();
-    }
-
     /// 언어 전환 — 라벨·placeholder 재생성(TextBox는 본문 보존 재생성).
-    pub(crate) fn relabel(&mut self, profiles: &[String]) {
-        let sel = self.profile.selected_value();
-        self.set_profiles(profiles, Some(&sel));
+    pub(crate) fn relabel(&mut self) {
         self.save_pw = Checkbox::new(t(Msg::LblSavePassword), self.save_pw.is_checked());
         self.test_btn.set_label(t(Msg::BtnTest));
         self.save_btn.set_label(t(Msg::BtnSave));
@@ -298,7 +275,6 @@ impl ConnectPanel {
         ] {
             c.set_scale(scale);
         }
-        self.profile.set_scale(scale);
         self.dialect.set_scale(scale);
         self.save_pw.set_scale(scale);
         self.test_btn.set_scale(scale);
@@ -328,7 +304,8 @@ impl ConnectPanel {
             ctl.set_bounds(Rect::new(x, *y, w, h), inv);
             *y += h + gap;
         };
-        place(&mut self.profile, &mut inv, &mut y, field_h);
+        // 접속 명칭(프로필 이름)이 맨 위 — 필수(사용자 09-14).
+        place(&mut self.name, &mut inv, &mut y, field_h);
         place(&mut self.dialect, &mut inv, &mut y, field_h);
         let off = Rect::new(0, 0, 0, 0);
         if self.file_based() {
@@ -350,7 +327,6 @@ impl ConnectPanel {
         self.save_pw
             .set_bounds(Rect::new(x, y, w, self.s(22.0)), &mut inv);
         y += self.s(22.0) + gap;
-        place(&mut self.name, &mut inv, &mut y, field_h);
         // 버튼 3개 한 줄
         let bw = (w - gap * 2) / 3;
         let bh = self.s(28.0);
@@ -380,11 +356,7 @@ impl ConnectPanel {
     pub(crate) fn set_focused(&mut self, on: bool) {
         self.focused = on;
         if on && self.field_focus.is_none() {
-            self.field_focus = Some(if self.file_based() {
-                Field::Database
-            } else {
-                Field::Host
-            });
+            self.field_focus = Some(Field::Name);
         }
         self.sync_focus();
     }
@@ -448,7 +420,7 @@ impl ConnectPanel {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.profile.is_open() || self.dialect.is_open()
+        self.dialect.is_open()
     }
 
     // ── 이벤트
@@ -460,10 +432,6 @@ impl ConnectPanel {
         inv: &mut Invalidations,
     ) -> Option<PanelAction> {
         // 열린 콤보가 있으면 그것이 먼저(모달).
-        if self.profile.is_open() {
-            self.profile.on_event(ev, inv);
-            return self.after_combo();
-        }
         if self.dialect.is_open() {
             self.dialect.on_event(ev, inv);
             return self.after_combo();
@@ -480,10 +448,7 @@ impl ConnectPanel {
                 self.field_focus = hit;
                 self.focused = true;
                 self.sync_focus();
-            } else if self.profile.bounds().contains(p)
-                || self.dialect.bounds().contains(p)
-                || self.save_pw.bounds().contains(p)
-            {
+            } else if self.dialect.bounds().contains(p) || self.save_pw.bounds().contains(p) {
                 self.field_focus = None;
                 self.sync_focus();
             }
@@ -495,7 +460,6 @@ impl ConnectPanel {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         ) {
-            self.profile.on_event(ev, inv);
             self.dialect.on_event(ev, inv);
             self.save_pw.on_event(ev, inv);
             self.test_btn.on_event(ev, inv);
@@ -545,12 +509,6 @@ impl ConnectPanel {
             if let Some(d) = Dialect::from_name(&v) {
                 self.apply_dialect(d);
             }
-        }
-        if let Some(v) = self.profile.take_changed() {
-            if v.is_empty() {
-                return None;
-            }
-            return Some(PanelAction::LoadProfile(v));
         }
         None
     }
@@ -623,7 +581,7 @@ impl ConnectPanel {
             }
             dc.text(r.x, r.y - label_h + self.s(1.0), b, text, th.text_dim);
         };
-        label(dc, self.profile.bounds(), t(Msg::LblProfile));
+        label(dc, self.name.bounds(), t(Msg::LblProfileName));
         label(dc, self.dialect.bounds(), t(Msg::LblDbType));
         label(dc, self.host.bounds(), t(Msg::LblHost));
         label(dc, self.port.bounds(), t(Msg::LblPort));
@@ -667,13 +625,7 @@ impl ConnectPanel {
         dc.fill_ellipse(Rect::new(sr.x, sr.y + self.s(4.0), dot, dot), color);
         dc.text(sr.x + dot + self.s(6.0), sr.y, sr, &text, th.text);
         // 콤보는 팝업을 스스로 그린다 — 열린 것이 최상위가 되게 마지막에.
-        if self.dialect.is_open() {
-            self.profile.paint(dc, th);
-            self.dialect.paint(dc, th);
-        } else {
-            self.dialect.paint(dc, th);
-            self.profile.paint(dc, th);
-        }
+        self.dialect.paint(dc, th);
         for tb in [
             &self.host,
             &self.database,

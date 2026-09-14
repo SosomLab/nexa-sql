@@ -1188,6 +1188,15 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
+                // 그리드 헤더 경계 위 = 폭 조절 커서.
+                if let Some(w) = &self.window {
+                    let over_edge = self.grid.header_edge_hover(self.cursor.0, self.cursor.1);
+                    w.set_cursor(if over_edge {
+                        winit::window::CursorIcon::ColResize
+                    } else {
+                        winit::window::CursorIcon::Default
+                    });
+                }
             }
             WindowEvent::Ime(ime) => {
                 let mut inv = Invalidations::default();
@@ -1334,7 +1343,7 @@ fn main() {
     );
     let initial_target = args.first().cloned();
     let profiles = worker::profile_names();
-    let mut panel = ConnectPanel::new(nsql_drivers::available(), &profiles);
+    let mut panel = ConnectPanel::new(nsql_drivers::available());
     // 실행 인자로 프로필 이름이 오면 폼을 채운다(접속은 Connect 버튼).
     if let Some(name) = initial_target
         .as_deref()

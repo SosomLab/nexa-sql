@@ -39,6 +39,8 @@ pub(crate) enum ConnWinAction {
 enum WFocus {
     Panel,
     Filter,
+    /// 목록(행 선택 · ↑↓ · Enter 접속 · Delete).
+    List,
 }
 
 pub(crate) struct ConnWin {
@@ -75,6 +77,9 @@ pub(crate) struct ConnWin {
 const SLIDE_MS: f32 = 200.0;
 
 const PANEL_W: f32 = 320.0;
+/// 기본 창 크기(목록만 · 사용자 캡처 09-14) — New/Edit 시 오른쪽으로 PANEL_W만큼 커진다.
+const BASE_W: f32 = 640.0;
+const BASE_H: f32 = 520.0;
 const DBLCLICK_MS: u128 = 400;
 
 impl ConnWin {
@@ -122,8 +127,6 @@ impl ConnWin {
         self.profiles = Vault::open_default()
             .and_then(|v| v.list())
             .unwrap_or_default();
-        let names: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
-        self.panel.set_profiles(&names, select);
         self.refilter();
         if let Some(n) = select {
             self.sel = self.shown.iter().position(|&i| self.profiles[i].name == n);
@@ -133,8 +136,7 @@ impl ConnWin {
 
     /// 언어 전환 — 라벨 재생성.
     pub(crate) fn relabel(&mut self) {
-        let names: Vec<String> = self.profiles.iter().map(|p| p.name.clone()).collect();
-        self.panel.relabel(&names);
+        self.panel.relabel();
         let text = self.filter.text();
         self.filter = TextBox::new(t(Msg::PhFilter)).with_text(&text);
         self.btn_new.set_label(t(Msg::BtnNew));
@@ -180,7 +182,7 @@ impl ConnWin {
             w.focus_window();
             return;
         }
-        let (lw, lh) = (900.0, 520.0);
+        let (lw, lh) = (f64::from(BASE_W), f64::from(BASE_H));
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLogin)))
             .with_theme(theme)
@@ -206,7 +208,7 @@ impl ConnWin {
         self.refresh_profiles(None);
         self.detail_t = 0.0;
         self.anim = None;
-        self.set_focus(WFocus::Filter);
+        self.set_focus(WFocus::List);
         if self.profiles.is_empty() {
             self.open_detail(true);
         }
@@ -233,7 +235,7 @@ impl ConnWin {
         if self.detail_t > 0.0 {
             self.anim = Some((Instant::now(), self.detail_t, 0.0));
         }
-        self.set_focus(WFocus::Filter);
+        self.set_focus(WFocus::List);
         self.redraw();
     }
 
@@ -249,12 +251,17 @@ impl ConnWin {
         let p = (t0.elapsed().as_secs_f32() * 1000.0 / SLIDE_MS).clamp(0.0, 1.0);
         let e = 1.0 - (1.0 - p) * (1.0 - p); // ease-out
         self.detail_t = from + (to - from) * e;
-        if p >= 1.0 {
+        let done = p >= 1.0;
+        if done {
             self.detail_t = to;
             self.anim = None;
-            return false;
         }
-        true
+        // 창 자체가 오른쪽으로 커진다/줄어든다(목록 폭은 그대로 · 폼은 새 영역에 드러난다).
+        if let Some(w) = &self.window {
+            let lw = f64::from(BASE_W + PANEL_W * self.detail_t);
+            let _ = w.request_inner_size(winit::dpi::LogicalSize::new(lw, f64::from(BASE_H)));
+        }
+        !done
     }
 
     pub(crate) fn close(&mut self) {
@@ -340,6 +347,15 @@ impl ConnWin {
         self.focus = f;
         self.panel.set_focused(f == WFocus::Panel);
         self.filter.set_focused(f == WFocus::Filter);
+        // 버튼은 키보드 포커스를 갖지 않는다(클릭 뒤 링이 남던 버그 09-14).
+        for b in [
+            &mut self.btn_new,
+            &mut self.btn_edit,
+            &mut self.btn_delete,
+            &mut self.btn_close,
+        ] {
+            b.set_focused(false);
+        }
     }
 
     // ── 이벤트
@@ -384,6 +400,7 @@ impl ConnWin {
                 let tb = match self.focus {
                     WFocus::Panel => self.panel.focused_textbox(),
                     WFocus::Filter => Some(&mut self.filter),
+                    WFocus::List => None,
                 };
                 if let Some(tb) = tb {
                     match ime {
@@ -411,23 +428,31 @@ impl ConnWin {
                             self.close();
                         }
                     }
-                    Key::Named(NamedKey::Enter) if self.focus == WFocus::Filter => {
+                    Key::Named(NamedKey::Enter)
+                        if matches!(self.focus, WFocus::Filter | WFocus::List) =>
+                    {
                         if let Some(n) = self.selected_name() {
                             out.push(ConnWinAction::Login(n));
                         }
                     }
-                    Key::Named(NamedKey::ArrowDown) if self.focus == WFocus::Filter => {
+                    Key::Named(NamedKey::ArrowDown)
+                        if matches!(self.focus, WFocus::Filter | WFocus::List) =>
+                    {
                         if !self.shown.is_empty() {
                             self.sel =
                                 Some(self.sel.map_or(0, |s| (s + 1).min(self.shown.len() - 1)));
                             self.redraw();
                         }
                     }
-                    Key::Named(NamedKey::ArrowUp) if self.focus == WFocus::Filter => {
+                    Key::Named(NamedKey::ArrowUp)
+                        if matches!(self.focus, WFocus::Filter | WFocus::List) =>
+                    {
                         self.sel = self.sel.map(|s| s.saturating_sub(1));
                         self.redraw();
                     }
-                    Key::Named(NamedKey::Delete) if self.focus == WFocus::Filter => {
+                    Key::Named(NamedKey::Delete)
+                        if matches!(self.focus, WFocus::Filter | WFocus::List) =>
+                    {
                         if let Some(n) = self.selected_name() {
                             out.push(ConnWinAction::Delete(n));
                         }
@@ -529,7 +554,7 @@ impl ConnWin {
             } else if self.filter.bounds().contains(p) {
                 self.set_focus(WFocus::Filter);
             } else if let Some(row) = self.row_at(p) {
-                self.set_focus(WFocus::Filter);
+                self.set_focus(WFocus::List);
                 let now = Instant::now();
                 let double = matches!(self.last_click, Some((r, t)) if r == row && t.elapsed().as_millis() < DBLCLICK_MS);
                 self.sel = Some(row);
@@ -568,6 +593,16 @@ impl ConnWin {
                 self.close();
                 return;
             }
+            if matches!(ev, InputEvent::MouseUp { .. }) {
+                for b in [
+                    &mut self.btn_new,
+                    &mut self.btn_edit,
+                    &mut self.btn_delete,
+                    &mut self.btn_close,
+                ] {
+                    b.set_focused(false);
+                }
+            }
             if self.detail_t > 0.0 {
                 if let Some(a) = self.panel.route(&ev, &mut inv) {
                     out.push(ConnWinAction::Panel(a));
@@ -584,6 +619,7 @@ impl ConnWin {
                     self.filter.on_event(&ev, &mut inv);
                     self.refilter();
                 }
+                WFocus::List => {}
             }
         }
         self.redraw();
