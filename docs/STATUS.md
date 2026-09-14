@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (12차 · win) — 탭 ✅ · 그리드 정렬/이동 ✅ · 구문 강조·팔레트·서식 복사·상태줄 ✅ · 창 포커스 ✅ · 설계 29(인텔리전스·다중 커서)
+
+편집기 탭(TabBar · 툴팁 카드) · 그리드 컬럼 드래그/정렬(결합 · 인덱스 벡터) · `window.focus` · 연결 블록 선택 · **구문 강조**(nexa-ctl `highlight` · `.nexa-syntax` 플러그인 `Packages/` · 탭별 · 확장자 기본) · **명령 팔레트**(Ctrl+⇧P · `Set Syntax`) · 서식 있는 복사(CF_HTML) · 상태줄 세그먼트(접속·Ln/Col·rows·time·구문 클릭) · 세로 안내선(80)·공백 표시 설정. 설계 [29](29-editor-syntax-palette-statusbar.md): 상태줄 표 · 인텔리전스(끄면 비용 0 · alias→컬럼 · 방언 내장 함수) · 다중 커서/정규식. **다음**: T-31 Golden식 접속 창 · T-57. GUI 실행 중. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (10차 · win) — 스크롤바·픽셀 스크롤 ✅ · 메뉴바·툴바 ✅ · 줄번호/행번호 ✅ · 탭 이식 🚧
 
 nexa-ctl `ScrollBars`를 그리드·로그 창에(필요 시만 · 호버 두껍게 · 자동 숨김) · 픽셀 스크롤 + `grid.scroll` 설정 · MenuBar/Toolbar 배선(`ToolIcon::Glyph`) · TextBox 줄번호 거터 · 그리드 행번호 열 · 설정 4개(`editor.line_numbers` `grid.row_numbers` `tabs.rows` `tabs.tooltip`). **진행 중**: dir2 TabBar → nexa-ctl 이식(에이전트) → 편집기 탭·툴팁. GUI 실행 중. → [journal](journal/2026-09-14.md)

@@ -85,7 +85,12 @@
 | **T-49** | P1 | 소 | `DBMS_OUTPUT.GET_LINES` 배열 회수 · 실행 중 주기 폴링 옵션 · UNLIMITED 안내 | — | ☐ |
 | **T-50** | P0 | 대 | 컬럼 지향 결과 저장소 + 페인트 할당 0 + 폭 캐시 — **nexa-grid(U-3 · dir2 `rows.rs` 이식 · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md))** 와 함께 · 결과 그리드는 속도·메모리 최우선(사용자 09-14) | nexa-ui U-3 | ☐ |
 | **T-51** | P1 | 중 | D-41 반영 — 옵션 파서 재정리(별칭·충돌 안내) · `-e` · `-v` · `-b` · `-W`/`NSQL_PASSWORD` · `-S host,port` · 진영별 `--help` 예시 | D-41 | ☐ |
-| **T-55** | P0 | 중 | 편집기 탭 — TabBar(nexa-ctl 이식 U-2) 배선 · 탭별 버퍼 · `tabs.rows`(single ◀▶·드래그 / multi) · `tabs.tooltip`(TabInfo 카드) · `session.mode` per-editor 마커 | U-2 T-54 | 🚧 |
+| **T-55** | P0 | 중 | 편집기 탭 — TabBar(nexa-ctl 이식 U-2) 배선 · 탭별 버퍼 · `tabs.rows`(single ◀▶·드래그 / multi) · `tabs.tooltip`(TabInfo 카드 · 구문) · ☐ `session.mode` per-editor 마커(T-54) | U-2 T-54 | ✅ 09-14 |
+| **T-57** | P0 | 대 | **인텔리전스**([29 §6](29-editor-syntax-palette-statusbar.md)) — 끄면 훅 0 · `intel` 워커(세대 번호·디바운스 120ms·예산 30ms) · **alias→컬럼**(캐럿 문장 스캔 · Catalog 캐시) · 방언별 시스템 오브젝트/내장 함수 데이터 패키지(`Packages/Intel/*.nexa-intel`) · 시그니처 힌트 · 팝업 ≤12행 · `TokenKind::Builtin` · `nsql shell` Tab | T-56 E-2 | ☐ |
+| **T-58** | P0 | 대 | **다중 커서·정규식 찾기**([29 §7](29-editor-syntax-palette-statusbar.md)) — 리전 벡터(정렬·병합) · `Ctrl+D`/`Alt+F3`/`Ctrl+⇧L`/컬럼 선택 · 찾기 패널 정규식 → `Alt+Enter` 전부 선택 · `Ctrl+H` `$1` · 뒤→앞 적용 · 트랜잭션 1 = Undo 1 | E-2 T-59 | ☐ |
+| **T-59** | P1 | 중 | 자체 정규식 엔진(Thompson NFA · 캡처 · `\b` · 옵션 · 외부 crate 0) → 찾기 · `.sublime-syntax` 컨텍스트 호환 · 강조 **행 시작 상태 캐시**(큰 파일) | — | ☐ |
+| **T-60** | P2 | 소 | 서식 복사 — Linux 다중 형식(자체 Wayland/X11 클립보드 소유) · macOS osascript 실기 · 잘라내기 서식 옵션 | — | ☐ |
+| **T-61** | P1 | 소 | 상태줄 — `statusbar.*` 표시 설정 · 세션 모드/Read-only 배지 · 인코딩·줄끝·탭 크기 세그먼트 · 클릭 동작(Goto line · 로그 창) · 좁을 때 왼쪽부터 숨김 | T-39 T-54 | ☐ |
 | **T-56** | P0 | 대 | **오브젝트 탐색기**([28](28-object-explorer.md)) — `Catalog` 포트 · Oracle/MSSQL/SQLite `children` · `nsql-run::explorer`(메타 세션 · 스레드 풀 ≤4 · 노드 상태 · 캐시 · 취소 · catch_unwind) · `nsql cat` · 트리 그리드(nexa-grid `CatalogSource`) · 설정 4키(등재 ✅) · 자동 갱신(기본 off) | nexa-ui G-1~3 · D-46 | ☐ |
 | **T-53** | P1 | 중 | **단축키 설정 화면** — KeymapGrid(그룹·이름·설명·단축키 · [지정]/[초기화] · 충돌 배지 · 검색) + `HotkeyCapture` 캡처 대화상자(적용 → 그리드 값·키맵 파일) — [nexa-ui 21 §3-1](../../nexa-ui/docs/21-grid-family.md) · 명령 레지스트리는 E3(T-14) | nexa-ui G-6 · T-14 | ☐ |
 | **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
