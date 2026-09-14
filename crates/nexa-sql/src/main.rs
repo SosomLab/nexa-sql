@@ -207,7 +207,8 @@ impl App {
                 self.busy = true;
                 self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
                 let name = self.conn_win.panel.profile_name();
-                self.conn_win.set_connect_mark(&name, Some(ConnectMark::Connecting));
+                self.conn_win
+                    .set_connect_mark(&name, Some(ConnectMark::Connecting));
                 self.panel_op = Some((name, ConnState::Connecting));
                 // 같은 서버면 기존 세션 유지 · 설정 `connect.reconnect_same`이면 닫고 다시 접속(사용자 09-14).
                 let reconnect_same = self.settings.flag("connect.reconnect_same");
@@ -280,7 +281,8 @@ impl App {
                     self.conn_win.mark_connected(&name);
                     // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
                     self.conn_win.clear_connect_marks();
-                    self.conn_win.set_connect_mark(&name, Some(ConnectMark::Connected));
+                    self.conn_win
+                        .set_connect_mark(&name, Some(ConnectMark::Connected));
                     self.conn_win.close_soon(Duration::from_millis(450));
                     // 활성 탭에 접속 정보 적용 — 탭이 없으면 새 탭(사용자 09-14).
                     self.editors.ensure_tab();
@@ -433,8 +435,7 @@ impl App {
         let mut tb = Toolbar::new(vec![
             // 아이콘은 글꼴 글리프가 아니라 코드로 그린 마스크(`toolicons.rs` · 사용자 09-14).
             ToolItem::new("file.new", toolicons::new_script()).tip(t(Msg::TipNew)),
-            ToolItem::new("run.statement", toolicons::run_statement())
-                .tip(t(Msg::TipRunStatement)),
+            ToolItem::new("run.statement", toolicons::run_statement()).tip(t(Msg::TipRunStatement)),
             ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
             ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
             ToolItem::new("view.log", toolicons::log())
@@ -747,7 +748,8 @@ impl App {
         // 신호등이 초록이 아닌 서버(빨강·파랑·확인 중·모름)에는 실행 전 빠른 포트 판정을 건다(사용자 09-14).
         let pol = *self.conn_win.policy();
         let light = self.conn_win.status_of(self.conn_win.active_name());
-        let preflight = (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
+        let preflight =
+            (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
         self.worker.send(worker::Cmd::Run { src, preflight });
         self.redraw();
     }

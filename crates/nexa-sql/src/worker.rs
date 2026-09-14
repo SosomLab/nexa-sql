@@ -163,10 +163,7 @@ pub(crate) fn spawn(
                         let same = runner.session.is_some()
                             && active_spec.as_ref().is_some_and(|a| same_server(a, &spec));
                         if same && !reconnect_same {
-                            let desc = runner
-                                .connection
-                                .clone()
-                                .unwrap_or_else(|| spec.redacted());
+                            let desc = runner.connection.clone().unwrap_or_else(|| spec.redacted());
                             let _ = ctx_tx.send(ConnOutcome::Connected(desc));
                             let _ = dtx.send(None);
                             wake();

@@ -8,12 +8,12 @@
 
 use crate::connect::{ConnectPanel, PanelAction};
 use crate::probe::{self, ProbeEntry, ProbeHub, ProbePolicy, ProbeReq, ProbeStatus};
+use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
-use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::{
     Button, Control, EditCtxAction, FiredBy, InputEvent, Invalidations, Key as CtlKey, ScrollBars,
     TextBox, TimeoutButton, Widget,
@@ -481,9 +481,11 @@ impl ConnWin {
                             e.next_at = None;
                             changed = true;
                         } else {
-                            next = Some(next.map_or(now + Duration::from_millis(250), |n: Instant| {
-                                n.min(now + Duration::from_millis(250))
-                            }));
+                            next = Some(
+                                next.map_or(now + Duration::from_millis(250), |n: Instant| {
+                                    n.min(now + Duration::from_millis(250))
+                                }),
+                            );
                         }
                     }
                 }
@@ -903,11 +905,10 @@ impl ConnWin {
             .set_bounds(Rect::new(bx, y1, ws[0], row), &mut inv);
         self.btn_edit
             .set_bounds(Rect::new(bx + ws[0] + gap, y1, ws[1], row), &mut inv);
-        self.btn_delete
-            .set_bounds(
-                Rect::new(bx + ws[0] + ws[1] + gap * 2, y1, ws[2], row),
-                &mut inv,
-            );
+        self.btn_delete.set_bounds(
+            Rect::new(bx + ws[0] + ws[1] + gap * 2, y1, ws[2], row),
+            &mut inv,
+        );
         if let Some((tb, _)) = self.del_arm.as_mut() {
             tb.set_bounds(
                 Rect::new(bx + ws[0] + ws[1] + gap * 2, y1, ws[2], row),
@@ -915,11 +916,10 @@ impl ConnWin {
             );
             tb.set_scale(s);
         }
-        self.btn_close
-            .set_bounds(
-                Rect::new(bx + ws[0] + ws[1] + ws[2] + gap * 3, y1, ws[3], row),
-                &mut inv,
-            );
+        self.btn_close.set_bounds(
+            Rect::new(bx + ws[0] + ws[1] + ws[2] + gap * 3, y1, ws[3], row),
+            &mut inv,
+        );
         for c in [
             &mut self.btn_new,
             &mut self.btn_edit,
@@ -985,7 +985,10 @@ impl ConnWin {
         if self.header_rect().contains(p) {
             return Some(TipTarget { col, row: None });
         }
-        self.row_at(p).map(|row| TipTarget { col, row: Some(row) })
+        self.row_at(p).map(|row| TipTarget {
+            col,
+            row: Some(row),
+        })
     }
 
     /// 툴팁 문구(다국어) — 헤더는 열 설명 · 행은 그 프로필의 현재 상태.
@@ -1129,7 +1132,9 @@ impl ConnWin {
 
     /// 무장 버튼의 발화 처리 — 클릭 = 삭제 · 만료 = 해제.
     fn poll_delete_arm(&mut self, out: &mut Vec<ConnWinAction>) {
-        let Some((tb, _)) = self.del_arm.as_mut() else { return };
+        let Some((tb, _)) = self.del_arm.as_mut() else {
+            return;
+        };
         match tb.take_fired() {
             Some(FiredBy::Click) => {
                 if let Some(n) = self.selected_name() {
@@ -1156,7 +1161,10 @@ impl ConnWin {
                 self.open_detail(false);
             }
         }
-        if self.btn_delete.take_clicked() && self.selected_name().is_some() && self.del_arm.is_none() {
+        if self.btn_delete.take_clicked()
+            && self.selected_name().is_some()
+            && self.del_arm.is_none()
+        {
             self.arm_delete();
         }
         if self.btn_close.take_clicked() {
@@ -1351,9 +1359,9 @@ impl ConnWin {
                         self.bars.show();
                         self.redraw();
                     }
-                    Key::Named(NamedKey::PageDown | NamedKey::PageUp | NamedKey::Home | NamedKey::End)
-                        if matches!(self.focus, WFocus::List) && !self.shown.is_empty() =>
-                    {
+                    Key::Named(
+                        NamedKey::PageDown | NamedKey::PageUp | NamedKey::Home | NamedKey::End,
+                    ) if matches!(self.focus, WFocus::List) && !self.shown.is_empty() => {
                         let page = (self.body_rect().h / self.row_h.max(1)).max(1) as usize;
                         let last = self.shown.len() - 1;
                         let s = match kev.logical_key.as_ref() {
@@ -1371,9 +1379,15 @@ impl ConnWin {
                         self.redraw();
                     }
                     // 클립보드·전체 선택(Ctrl/⌘) — 포커스 텍스트박스(필터 · 폼 입력란).
-                    Key::Character(c) if self.primary && matches!(c, "c" | "C") => self.clip(EditCtxAction::Copy),
-                    Key::Character(c) if self.primary && matches!(c, "x" | "X") => self.clip(EditCtxAction::Cut),
-                    Key::Character(c) if self.primary && matches!(c, "v" | "V") => self.clip(EditCtxAction::Paste),
+                    Key::Character(c) if self.primary && matches!(c, "c" | "C") => {
+                        self.clip(EditCtxAction::Copy)
+                    }
+                    Key::Character(c) if self.primary && matches!(c, "x" | "X") => {
+                        self.clip(EditCtxAction::Cut)
+                    }
+                    Key::Character(c) if self.primary && matches!(c, "v" | "V") => {
+                        self.clip(EditCtxAction::Paste)
+                    }
                     Key::Character(c) if self.primary && matches!(c, "a" | "A") => {
                         let mut inv = Invalidations::default();
                         if let Some(tb) = self.focused_tb() {
@@ -1381,9 +1395,7 @@ impl ConnWin {
                         }
                         self.redraw();
                     }
-                    Key::Named(NamedKey::Delete)
-                        if matches!(self.focus, WFocus::List) =>
-                    {
+                    Key::Named(NamedKey::Delete) if matches!(self.focus, WFocus::List) => {
                         if let Some(n) = self.selected_name() {
                             out.push(ConnWinAction::Delete(n));
                         }
@@ -1467,51 +1479,70 @@ impl ConnWin {
                 tb.set_clipboard_has_text(has);
             }
         }
-        // 열린 입력란 편집 메뉴(필터 · 폼)는 모달 — 그 입력란만 받고 고른 행동을 잇는다.
+        // ★ 팝업 메뉴 UX(사용자 09-14): 열린 메뉴(입력란 편집 메뉴 · 우클릭 메뉴)는 모달이지만, **바깥 좌/우클릭은 메뉴를 닫은 뒤
+        //   그 클릭을 그대로 진행**한다(다른 컨트롤 선택·포커스 이동·새 메뉴가 한 번의 클릭으로) — 항목을 골랐거나 키(Esc)로 닫았으면 여기서 끝.
+        let outside_click = matches!(
+            ev,
+            InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+        );
         if self.filter.popup_open() {
             self.filter.on_event(&ev, &mut inv);
             if let Some(act) = self.filter.take_edit_ctx() {
                 self.clip(act);
+                self.redraw();
+                return;
             }
-            if !self.filter.popup_open() {
-                self.rehover(out);
+            if self.filter.popup_open() || !outside_click {
+                if !self.filter.popup_open() {
+                    self.rehover(out);
+                }
+                self.redraw();
+                return;
             }
-            self.redraw();
-            return;
+            // 바깥 클릭으로 닫혔다 → 아래 일반 경로로 계속.
         }
         if self.panel.edit_menu_open() {
             if let Some(PanelAction::Edit(act)) = self.panel.route(&ev, &mut inv) {
                 self.clip(act);
+                self.redraw();
+                return;
             }
-            if !self.panel.edit_menu_open() {
-                self.rehover(out);
+            if self.panel.edit_menu_open() || !outside_click {
+                if !self.panel.edit_menu_open() {
+                    self.rehover(out);
+                }
+                self.redraw();
+                return;
             }
-            self.redraw();
-            return;
         }
-        // 열린 우클릭 메뉴는 모달 — 고른 항목 id만 받아 실행.
+        // 열린 우클릭 메뉴 — 고른 항목 id만 받아 실행 · 바깥 클릭은 닫고 계속.
         if self.menu.is_open() && self.menu.on_event(&ev) {
-            match self.menu.take_picked().as_deref() {
-                Some("dup") => {
-                    if let Some(n) = self.ctx_target.take() {
-                        out.push(ConnWinAction::Duplicate(n));
+            let picked = self.menu.take_picked();
+            if picked.is_none() && !self.menu.is_open() && outside_click {
+                // 바깥 클릭으로 닫힘 → 그 클릭을 그대로 진행.
+            } else {
+                match picked.as_deref() {
+                    Some("dup") => {
+                        if let Some(n) = self.ctx_target.take() {
+                            out.push(ConnWinAction::Duplicate(n));
+                        }
                     }
+                    Some("new") => self.open_detail(true),
+                    // 콤보 우클릭: 선택 항목 / 목록(여러 줄) 복사(사용자 09-14).
+                    Some("combo_item") => {
+                        let _ = crate::clipboard::write_text(&self.panel.dialect_selected_label());
+                    }
+                    Some("combo_list") => {
+                        let _ = crate::clipboard::write_text(&self.panel.dialect_labels());
+                    }
+                    _ => {}
                 }
-                Some("new") => self.open_detail(true),
-                // 콤보 우클릭: 선택 항목 / 목록(여러 줄) 복사(사용자 09-14).
-                Some("combo_item") => {
-                    let _ = crate::clipboard::write_text(&self.panel.dialect_selected_label());
+                if !self.menu.is_open() {
+                    self.rehover(out);
                 }
-                Some("combo_list") => {
-                    let _ = crate::clipboard::write_text(&self.panel.dialect_labels());
-                }
-                _ => {}
+                self.redraw();
+                return;
             }
-            if !self.menu.is_open() {
-                self.rehover(out);
-            }
-            self.redraw();
-            return;
         }
         if let InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
@@ -1561,10 +1592,7 @@ impl ConnWin {
                     },
                     &mut inv,
                 );
-                self.panel.route(
-                    &InputEvent::MouseUp { x, y },
-                    &mut inv,
-                );
+                self.panel.route(&InputEvent::MouseUp { x, y }, &mut inv);
                 let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
                 if let Some(tb) = self.panel.focused_textbox() {
                     tb.set_clipboard_has_text(has);
@@ -1587,7 +1615,13 @@ impl ConnWin {
                     })
                     .unwrap_or(self.list);
                 self.menu.set_scale(self.scale);
-                self.menu.open_at(x, y, vec![CtxItem::item("new", t(Msg::BtnNew))], host, self.ctx_text_w);
+                self.menu.open_at(
+                    x,
+                    y,
+                    vec![CtxItem::item("new", t(Msg::BtnNew))],
+                    host,
+                    self.ctx_text_w,
+                );
                 self.redraw();
                 return;
             }
@@ -1795,8 +1829,7 @@ impl ConnWin {
                     // 포커스 버튼은 Enter/Space로 눌린다. 무장된 Delete는 Enter/Space = 확인 삭제.
                     if self.focus_btn == 2 && self.del_arm.is_some() {
                         if let InputEvent::Key {
-                            key: CtlKey::Enter,
-                            ..
+                            key: CtlKey::Enter, ..
                         } = ev
                         {
                             if let Some(n) = self.selected_name() {
@@ -1830,14 +1863,24 @@ impl ConnWin {
         self.btn_text_w = [Msg::BtnNew, Msg::BtnEdit, Msg::BtnDelete, Msg::BtnClose]
             .map(|m| ui.measure(t(m), font_px).ceil() as i32);
         if self.del_arm.is_some() {
-            let armed = format!("{} ({}{})", t(Msg::BtnDeleteConfirm), 5, t(Msg::UnitSecShort));
+            let armed = format!(
+                "{} ({}{})",
+                t(Msg::BtnDeleteConfirm),
+                5,
+                t(Msg::UnitSecShort)
+            );
             self.btn_text_w[2] = ui.measure(&armed, font_px).ceil() as i32;
         }
-        self.ctx_text_w = [Msg::MnDuplicate, Msg::BtnNew, Msg::MnCopyItem, Msg::MnCopyList]
-            .iter()
-            .map(|m| ui.measure(t(*m), font_px))
-            .fold(0.0_f32, f32::max)
-            .ceil() as i32;
+        self.ctx_text_w = [
+            Msg::MnDuplicate,
+            Msg::BtnNew,
+            Msg::MnCopyItem,
+            Msg::MnCopyList,
+        ]
+        .iter()
+        .map(|m| ui.measure(t(*m), font_px))
+        .fold(0.0_f32, f32::max)
+        .ceil() as i32;
         if animating || self.anim.is_none() {
             self.layout();
         }
@@ -1931,13 +1974,32 @@ impl ConnWin {
             let col_w = self.col_w.clone();
             let ty = |y: i32| y + (rh - dc_text_h(rh)) / 2;
             let hcells = Rect::new(l.x + icons_w, l.y, (l.w - icons_w - 1).max(0), rh);
-            let cells = Rect::new(l.x + icons_w, body.y, (body.right() - l.x - icons_w).max(0), body.h);
+            let cells = Rect::new(
+                l.x + icons_w,
+                body.y,
+                (body.right() - l.x - icons_w).max(0),
+                body.h,
+            );
             // 헤더
             dc.fill_rect(Rect::new(l.x, l.y, l.w, rh), th.chrome_bg);
             dc.fill_rect(Rect::new(l.x, l.y + rh - 1, l.w, 1), th.border);
             // 아이콘 열 머리 = 작은 아이콘(흐리게).
-            paint_test_btn(&mut dc, th, Rect::new(l.x + sw, l.y, sw, rh), None, false, true);
-            paint_connect_btn(&mut dc, th, Rect::new(l.x + sw * 2, l.y, sw, rh), None, false, true);
+            paint_test_btn(
+                &mut dc,
+                th,
+                Rect::new(l.x + sw, l.y, sw, rh),
+                None,
+                false,
+                true,
+            );
+            paint_connect_btn(
+                &mut dc,
+                th,
+                Rect::new(l.x + sw * 2, l.y, sw, rh),
+                None,
+                false,
+                true,
+            );
             let col_order = self.col_order.clone();
             let mut cx = l.x + icons_w - self.scroll_x;
             let mut drop_x: Option<i32> = None;
@@ -2265,7 +2327,11 @@ mod tests {
         sort_shown(&ps, &mut shown, &[(0, true)]);
         assert_eq!(shown, vec![1, 0, 3, 2], "이름 대소문자 무관(A · b · B · c)");
         sort_shown(&ps, &mut shown, &[(2, true), (0, false)]);
-        assert_eq!(shown, vec![2, 0, 3, 1], "빈 사용자는 뒤 · 2차 키 이름 내림차순");
+        assert_eq!(
+            shown,
+            vec![2, 0, 3, 1],
+            "빈 사용자는 뒤 · 2차 키 이름 내림차순"
+        );
         sort_shown(&ps, &mut shown, &[]);
         assert_eq!(shown, vec![2, 0, 3, 1], "키 없음 = 그대로");
     }

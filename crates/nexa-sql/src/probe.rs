@@ -241,7 +241,9 @@ impl ProbePolicy {
 /// 재시도 간격 — `base` × 2^(attempt-1) · 상한 `cap`(최소 1초).
 pub(crate) fn backoff(attempt: u32, base: Duration, cap: Duration) -> Duration {
     let mul = 1u32 << attempt.saturating_sub(1).min(16);
-    base.saturating_mul(mul).min(cap).max(Duration::from_secs(1))
+    base.saturating_mul(mul)
+        .min(cap)
+        .max(Duration::from_secs(1))
 }
 
 /// 실행/접속 오류가 **서버 도달성** 문제로 보이는가(사용자 09-14 — 이때만 신호등을 즉시 갱신).
@@ -403,12 +405,20 @@ mod tests {
             e.apply(Outcome::Down, now, &pol);
             assert_eq!(e.status, ProbeStatus::Down);
             assert_eq!(e.attempts, i as u32 + 1, "실패마다 누적");
-            assert_eq!(e.next_at, Some(now + S(*want)), "간격 지수 증가 · 상한 유지");
+            assert_eq!(
+                e.next_at,
+                Some(now + S(*want)),
+                "간격 지수 증가 · 상한 유지"
+            );
         }
         e.apply(Outcome::PortClosed, now, &pol);
         assert_eq!(e.status, ProbeStatus::PortClosed);
         assert_eq!(e.attempts, 6, "상한 뒤에도 누적");
-        assert_eq!(e.next_at, Some(now + S(480)), "상한 간격으로 계속 확인(회복 감지)");
+        assert_eq!(
+            e.next_at,
+            Some(now + S(480)),
+            "상한 간격으로 계속 확인(회복 감지)"
+        );
         e.apply(Outcome::Up, now, &pol);
         assert_eq!(e.status, ProbeStatus::Up);
         assert_eq!(e.attempts, 0);
@@ -423,12 +433,27 @@ mod tests {
 
     #[test]
     fn connection_error_classifier() {
-        assert!(is_connection_error(Some(12541), "ORA-12541: TNS:no listener"));
-        assert!(is_connection_error(Some(3113), "end-of-file on communication channel"));
-        assert!(is_connection_error(None, "An existing connection was forcibly closed (os error 10054)"));
+        assert!(is_connection_error(
+            Some(12541),
+            "ORA-12541: TNS:no listener"
+        ));
+        assert!(is_connection_error(
+            Some(3113),
+            "end-of-file on communication channel"
+        ));
+        assert!(is_connection_error(
+            None,
+            "An existing connection was forcibly closed (os error 10054)"
+        ));
         assert!(is_connection_error(None, "connection refused"));
-        assert!(!is_connection_error(Some(942), "ORA-00942: table or view does not exist"));
-        assert!(!is_connection_error(Some(1017), "invalid username/password; logon denied"));
+        assert!(!is_connection_error(
+            Some(942),
+            "ORA-00942: table or view does not exist"
+        ));
+        assert!(!is_connection_error(
+            Some(1017),
+            "invalid username/password; logon denied"
+        ));
         assert!(!is_connection_error(None, "Incorrect syntax near 'SELEC'."));
     }
 

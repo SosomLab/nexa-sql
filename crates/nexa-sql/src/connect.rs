@@ -504,8 +504,10 @@ impl ConnectPanel {
             .iter()
             .map(|it| it.label.as_str())
             .collect::<Vec<_>>()
-            .join("
-")
+            .join(
+                "
+",
+            )
     }
 
     /// 어느 입력란의 우클릭 편집 메뉴가 열려 있는가(모달).
@@ -553,7 +555,10 @@ impl ConnectPanel {
             return self.after_combo();
         }
         // 열린 편집 메뉴(입력란 우클릭)도 모달 — 그 입력란만 받는다 · 고른 행동은 호스트에.
-        if let Some(f) = self.field_focus.filter(|&f| self.textbox_ref(f).popup_open()) {
+        if let Some(f) = self
+            .field_focus
+            .filter(|&f| self.textbox_ref(f).popup_open())
+        {
             let tb = self.textbox(f);
             tb.on_event(ev, inv);
             if let Some(act) = tb.take_edit_ctx() {
@@ -641,7 +646,9 @@ impl ConnectPanel {
         }
         if matches!(
             ev,
-            InputEvent::MouseDown { .. } | InputEvent::MouseUp { .. } | InputEvent::MouseMove { .. }
+            InputEvent::MouseDown { .. }
+                | InputEvent::MouseUp { .. }
+                | InputEvent::MouseMove { .. }
         ) {
             // 마우스는 위에서 이미 입력란에 전달했다(두 번 보내면 드래그가 꼬인다).
             return None;

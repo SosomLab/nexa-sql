@@ -9,7 +9,9 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{rgba_from_hex, Button, ColorPanel, Control, InputEvent, Invalidations, Key as CtlKey, Widget};
+use nexa_ctl::{
+    rgba_from_hex, Button, ColorPanel, Control, InputEvent, Invalidations, Key as CtlKey, Widget,
+};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
 use std::num::NonZeroU32;
@@ -57,7 +59,10 @@ pub(crate) enum ColorsAction {
     None,
     Paint,
     /// 값이 바뀌었다(드래그 중에도 — 실시간 미리보기) · `hex` = `#RRGGBBAA`.
-    Changed { target: ColorTarget, hex: String },
+    Changed {
+        target: ColorTarget,
+        hex: String,
+    },
     /// 두 색 모두 테마 기본으로.
     Reset,
 }
@@ -132,7 +137,9 @@ impl ColorsWin {
 
     pub(crate) fn animating(&self) -> bool {
         self.window.is_some()
-            && (self.preview.is_animating() || self.reset_btn.is_animating() || self.close_btn.is_animating())
+            && (self.preview.is_animating()
+                || self.reset_btn.is_animating()
+                || self.close_btn.is_animating())
     }
 
     /// 대상의 현재 hex(없으면 테마 기본 = `sel_bg` 불투명).
@@ -214,11 +221,14 @@ impl ColorsWin {
         for b in [&mut self.preview, &mut self.reset_btn, &mut self.close_btn] {
             b.set_scale(s);
         }
-        self.preview.set_bounds(Rect::new(pad, by, bw, self.s(BTN_H)), &mut inv);
+        self.preview
+            .set_bounds(Rect::new(pad, by, bw, self.s(BTN_H)), &mut inv);
         self.close_btn
             .set_bounds(Rect::new(w - pad - bw, by, bw, self.s(BTN_H)), &mut inv);
-        self.reset_btn
-            .set_bounds(Rect::new(w - pad - bw * 2 - gap, by, bw, self.s(BTN_H)), &mut inv);
+        self.reset_btn.set_bounds(
+            Rect::new(w - pad - bw * 2 - gap, by, bw, self.s(BTN_H)),
+            &mut inv,
+        );
     }
 
     fn to_input(&self, ev: &WindowEvent) -> Option<InputEvent> {
@@ -417,7 +427,13 @@ impl ColorsWin {
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
             dc.select_font(FontSlot::Base, false);
             // 왼쪽 목록 제목 + 대상 행(칩 + 라벨).
-            dc.text(pad, pad, Rect::new(0, 0, wi, hi), t(Msg::LblColorTargets), th.text_dim);
+            dc.text(
+                pad,
+                pad,
+                Rect::new(0, 0, wi, hi),
+                t(Msg::LblColorTargets),
+                th.text_dim,
+            );
             let th_txt = dc.text_height();
             for (i, tg) in ColorTarget::ALL.iter().enumerate() {
                 let r = self.list_rows[i];
@@ -425,10 +441,20 @@ impl ColorsWin {
                     dc.fill_round_rect(r, (5.0 * s).round() as i32, th.sel_bg);
                 }
                 let chip = (18.0 * s).round() as i32;
-                let cr = Rect::new(r.x + (6.0 * s).round() as i32, r.y + (r.h - chip) / 2, chip, chip);
+                let cr = Rect::new(
+                    r.x + (6.0 * s).round() as i32,
+                    r.y + (r.h - chip) / 2,
+                    chip,
+                    chip,
+                );
                 if let Some(rgba) = rgba_from_hex(&hexes[i]) {
                     dc.fill_round_rect(cr, 3, th.panel_bg);
-                    dc.fill_round_rect_alpha(cr, 3, nexa_ctl::theme::Color(rgba >> 8), f32::from(rgba as u8) / 255.0);
+                    dc.fill_round_rect_alpha(
+                        cr,
+                        3,
+                        nexa_ctl::theme::Color(rgba >> 8),
+                        f32::from(rgba as u8) / 255.0,
+                    );
                 }
                 dc.stroke_round_rect(cr, 3, th.border, 1.0);
                 dc.text(
@@ -443,7 +469,13 @@ impl ColorsWin {
             let hint_y = self.list_rows[1].bottom() + (10.0 * s).round() as i32;
             let hint_clip = Rect::new(pad, hint_y, (LIST_W * s).round() as i32, hi - hint_y);
             for (i, line) in t(Msg::ColorsHint).split('\n').enumerate() {
-                dc.text(pad, hint_y + i as i32 * th_txt, hint_clip, line, th.text_dim);
+                dc.text(
+                    pad,
+                    hint_y + i as i32 * th_txt,
+                    hint_clip,
+                    line,
+                    th.text_dim,
+                );
             }
             // 색 패널 + 버튼.
             self.panel.paint(&mut dc, th);
