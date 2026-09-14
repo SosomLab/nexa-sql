@@ -1,4 +1,4 @@
-//! 앱 아이콘(사용자 선택 09-14 · "Union" — 색이 다른 디스크가 한 실린더로 융합 · 뒤쪽 디스크가 더 크다).
+//! 앱 아이콘(사용자 선택 09-14 · "Union" — 색이 다른 타원 세 장이 한 실린더로 융합 · 타원은 크고 같은 크기).
 //!
 //! 원본 SSOT = `packaging/branding/icon.svg`. 런타임 창 아이콘은 **디코더 없이**(외부 crate 0)
 //! 빌드 때 만든 raw RGBA(`nexa-sql-32.rgba` · `nexa-sql-64.rgba`)를 `include_bytes!`로 박아 쓴다.

@@ -1,20 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- Nexa SQL 앱 아이콘 — Union(사용자 선택 09-14): 색이 다른 디스크가 한 실린더로 융합 · 뒤(위)쪽 디스크가 더 크다(원근) · 우하단 프롬프트 -->
+  <!-- Nexa SQL 앱 아이콘 — Union(사용자 선택 09-14): 색이 다른 디스크 세 장이 한 실린더로 융합 · 디스크는 크고 같은 크기 · 우하단 프롬프트 -->
   <rect x="8" y="8" width="240" height="240" rx="56" fill="#F6F7F9"/>
   <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="#D5DAE1" stroke-width="4"/>
   <g>
-    <!-- 앞(아래) · 작게 -->
-    <path d="M70 164 V190 A58 19 0 0 0 186 190 V164 A58 19 0 0 1 70 164Z" fill="#2EA043"/>
+    <!-- 아래 -->
+    <path d="M44 158 V196 A84 27 0 0 0 212 196 V158 A84 27 0 0 1 44 158Z" fill="#2EA043"/>
     <!-- 가운데 -->
-    <path d="M62 120 V152 A66 21 0 0 0 194 152 V120 A66 21 0 0 1 62 120Z" fill="#3D8BFF"/>
-    <!-- 뒤(위) · 크게 -->
-    <path d="M52 72 V108 A76 24 0 0 0 204 108 V72 A76 24 0 0 1 52 72Z" fill="#E5534B"/>
-    <ellipse cx="128" cy="72" rx="76" ry="24" fill="#FF8A80"/>
-    <ellipse cx="128" cy="72" rx="46" ry="12" fill="#FFFFFF" opacity="0.55"/>
+    <path d="M44 114 V152 A84 27 0 0 0 212 152 V114 A84 27 0 0 1 44 114Z" fill="#3D8BFF"/>
+    <!-- 위 -->
+    <path d="M44 70 V108 A84 27 0 0 0 212 108 V70 A84 27 0 0 1 44 70Z" fill="#E5534B"/>
+    <ellipse cx="128" cy="70" rx="84" ry="27" fill="#FF8A80"/>
+    <ellipse cx="128" cy="70" rx="50" ry="13" fill="#FFFFFF" opacity="0.55"/>
   </g>
   <g>
-    <rect x="150" y="150" width="86" height="86" rx="22" fill="#1B2432"/>
-    <path d="M172 178 L190 193 L172 208" fill="none" stroke="#F6F7F9" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect x="198" y="203" width="20" height="9" rx="4" fill="#F6F7F9"/>
+    <rect x="152" y="152" width="86" height="86" rx="22" fill="#1B2432"/>
+    <path d="M174 180 L192 195 L174 210" fill="none" stroke="#F6F7F9" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="200" y="205" width="20" height="9" rx="4" fill="#F6F7F9"/>
   </g>
 </svg>
