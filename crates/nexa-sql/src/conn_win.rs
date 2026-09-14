@@ -1112,11 +1112,11 @@ impl ConnWin {
 
     /// 삭제 무장 — Delete 자리에 빨간 타이머 버튼(5초). 한 번 더 누르면 삭제.
     fn arm_delete(&mut self) {
-        // 두 줄("Delete" / "(5s)") · '?' 없이(사용자 09-14).
+        // 잔여 시간 숫자 없이 라벨 + 게이지(진척률)만(사용자 09-14) — 빨간 경고 톤.
         let mut tb = TimeoutButton::new(t(Msg::BtnDelete), DELETE_ARM_MS)
             .with_warn(true)
             .with_suffix(t(Msg::UnitSecShort))
-            .with_two_line(true);
+            .with_show_remaining(false);
         let mut inv = Invalidations::default();
         tb.set_bounds(self.btn_delete.bounds(), &mut inv);
         tb.set_scale(self.scale);
