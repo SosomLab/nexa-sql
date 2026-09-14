@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- B · Union — 색이 다른 디스크가 한 실린더로 융합 · 우하단 프롬프트 -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#F6F7F9"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="#D5DAE1" stroke-width="4"/>
+  <g>
+    <path d="M60 158 V190 A68 22 0 0 0 196 190 V158 A68 22 0 0 1 60 158Z" fill="#2EA043"/>
+    <path d="M60 116 V150 A68 22 0 0 0 196 150 V116 A68 22 0 0 1 60 116Z" fill="#3D8BFF"/>
+    <path d="M60 74 V108 A68 22 0 0 0 196 108 V74 A68 22 0 0 1 60 74Z" fill="#E5534B"/>
+    <ellipse cx="128" cy="74" rx="68" ry="22" fill="#FF8A80"/>
+    <ellipse cx="128" cy="74" rx="40" ry="11" fill="#FFFFFF" opacity="0.55"/>
+  </g>
+  <g>
+    <rect x="150" y="150" width="86" height="86" rx="22" fill="#1B2432"/>
+    <path d="M172 178 L190 193 L172 208" fill="none" stroke="#F6F7F9" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="198" y="203" width="20" height="9" rx="4" fill="#F6F7F9"/>
+  </g>
+</svg>

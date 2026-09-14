@@ -120,7 +120,7 @@ impl LogWin {
         if let Some((x, y, w)) = near {
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y));
         }
-        let Ok(win) = el.create_window(attrs) else {
+        let Ok(win) = el.create_window(crate::icon::with_icon(attrs)) else {
             return;
         };
         let win = Rc::new(win);

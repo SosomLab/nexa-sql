@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- A · Converge — 여러 DB의 흐름이 하나의 실린더로 모인다 -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#1B2432"/>
+  <g fill="none" stroke-width="18" stroke-linecap="round">
+    <path d="M52 62 C52 118 96 118 128 140" stroke="#E5534B"/>
+    <path d="M128 52 L128 140" stroke="#3D8BFF"/>
+    <path d="M204 62 C204 118 160 118 128 140" stroke="#2EA043"/>
+  </g>
+  <g>
+    <ellipse cx="128" cy="150" rx="52" ry="18" fill="#F6F7F9"/>
+    <path d="M76 150 V196 A52 18 0 0 0 180 196 V150" fill="#F6F7F9"/>
+    <path d="M76 150 A52 18 0 0 0 180 150" fill="#C9D0DA"/>
+    <path d="M76 172 A52 18 0 0 0 180 172" fill="none" stroke="#B0B8C4" stroke-width="6"/>
+  </g>
+</svg>
