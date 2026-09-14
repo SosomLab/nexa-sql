@@ -755,6 +755,7 @@ impl ConnWin {
         el: &ActiveEventLoop,
         theme: Option<winit::window::Theme>,
         over: Option<(i32, i32, u32, u32)>,
+        owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
             w.focus_window();
@@ -770,7 +771,9 @@ impl ConnWin {
             let cy = y + (h as i32 - lh as i32) / 2;
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(cx.max(0), cy.max(0)));
         }
-        let Ok(win) = el.create_window(crate::icon::with_icon(attrs)) else {
+        // 메인 창의 소유 창 — 작업표시줄 항목 하나 · 항상 메인 위(사용자 09-14).
+        let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
+        let Ok(win) = el.create_window(attrs) else {
             return;
         };
         let win = Rc::new(win);

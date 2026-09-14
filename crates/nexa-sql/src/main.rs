@@ -541,8 +541,13 @@ impl App {
             let sz = w.outer_size();
             Some((p.x, p.y, sz.width, sz.height))
         });
-        self.conn_win
-            .open(el, theme::window_theme(self.settings.theme_mode()), over);
+        let owner = self.window.clone();
+        self.conn_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            over,
+            owner.as_deref(),
+        );
     }
 
     /// 로그인 목록 더블클릭/Enter — 저장소에서 읽어 폼에 채우고 바로 접속.
@@ -642,8 +647,13 @@ impl App {
                     .ok()
                     .map(|p| (p.x, p.y, w.outer_size().width))
             });
-            self.log_win
-                .open(el, theme::window_theme(self.settings.theme_mode()), near);
+            let owner = self.window.clone();
+            self.log_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                near,
+                owner.as_deref(),
+            );
         }
     }
 
@@ -1206,9 +1216,14 @@ impl ApplicationHandler<Wake> for App {
         self.window = Some(win);
         self.layout();
         self.set_focus(Focus::Editor);
-        // 로그 창은 메인 창 오른쪽에 함께 연다(사용자 09-14 "별도 창").
-        self.log_win
-            .open(el, theme::window_theme(self.settings.theme_mode()), near);
+        // 로그 창은 메인 창 오른쪽에 함께 연다(사용자 09-14 "별도 창") — 메인의 소유 창.
+        let owner = self.window.clone();
+        self.log_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner.as_deref(),
+        );
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _ev: Wake) {

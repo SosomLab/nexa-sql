@@ -6,7 +6,27 @@
 //! Windows = `SetWindowPos(HWND_TOP, SWP_NOACTIVATE)`로 **포커스를 빼앗지 않고** 올린다(user32 FFI · DR-3 크레이트 0).
 //! macOS는 AppKit이 앱 활성화 시 모든 창을 함께 올리므로 기본이 group과 같고, Linux는 WM 정책이라 no-op.
 
-use winit::window::Window;
+use winit::window::{Window, WindowAttributes};
+
+/// ★ 보조 창(접속·로그)을 메인 창의 **소유(owned) 창**으로 — 작업표시줄 항목이 인스턴스당 **하나**(Golden과 동일 ·
+/// 사용자 09-14) · 항상 메인 위 · 메인과 함께 최소화. 소유 관계는 프로세스 안에서만 맺어지므로 **다중 인스턴스**는
+/// 그대로(인스턴스마다 항목 하나). Windows = `WS_EX` 없이 오너 HWND만(툴 윈도 스타일 아님 · 타이틀바 그대로).
+/// macOS는 Dock 아이콘이 앱당 하나라 이미 같고, Linux는 WM 몫(no-op).
+pub(crate) fn owned_by(attrs: WindowAttributes, owner: Option<&Window>) -> WindowAttributes {
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::WindowAttributesExtWindows as _;
+        if let Some(h) = owner.and_then(hwnd) {
+            return attrs.with_owner_window(h);
+        }
+        attrs
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = owner;
+        attrs
+    }
+}
 
 #[cfg(target_os = "windows")]
 fn hwnd(w: &Window) -> Option<isize> {

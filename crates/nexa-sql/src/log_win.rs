@@ -108,6 +108,7 @@ impl LogWin {
         el: &ActiveEventLoop,
         theme: Option<winit::window::Theme>,
         near: Option<(i32, i32, u32)>,
+        owner: Option<&Window>,
     ) {
         if let Some(w) = &self.window {
             w.focus_window();
@@ -120,7 +121,8 @@ impl LogWin {
         if let Some((x, y, w)) = near {
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y));
         }
-        let Ok(win) = el.create_window(crate::icon::with_icon(attrs)) else {
+        let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
+        let Ok(win) = el.create_window(attrs) else {
             return;
         };
         let win = Rc::new(win);
