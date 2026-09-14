@@ -232,6 +232,7 @@ impl App {
                 self.status = tf(Msg::StSaving, &[&name]);
                 self.worker.send(worker::Cmd::SaveSpec { name, spec });
             }
+            PanelAction::Edit(_) => {} // 접속 창이 자체 처리(클립보드)
             PanelAction::LoadProfile(name) => {
                 match Vault::open_default().and_then(|v| v.get(&name)) {
                     Ok(Some(spec)) => {

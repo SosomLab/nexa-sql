@@ -15,8 +15,8 @@ use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::{
-    Button, Control, FiredBy, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox,
-    TimeoutButton, Widget,
+    Button, Control, EditCtxAction, FiredBy, InputEvent, Invalidations, Key as CtlKey, ScrollBars,
+    TextBox, TimeoutButton, Widget,
 };
 
 /// 삭제 확인 대기(ms) — 첫 클릭 뒤 이 시간 안에 한 번 더 누르면 삭제(사용자 09-14).
@@ -245,8 +245,8 @@ pub(crate) struct ConnWin {
 
 const SLIDE_MS: f32 = 200.0;
 
-/// 상세 패널 폭 — 320에서 Port(29)+Host(29)만큼 줄인 262(사용자 09-14).
-const PANEL_W: f32 = 262.0;
+/// 상세 패널 폭 — 320에서 Port(14)+Host(14)만큼 줄인 292(사용자 09-14 · Port는 5자리 폭 58 유지).
+const PANEL_W: f32 = 292.0;
 /// 기본 창 크기(목록만 · 사용자 캡처 09-14) — New/Edit 시 오른쪽으로 PANEL_W만큼 커진다.
 const BASE_W: f32 = 640.0;
 const BASE_H: f32 = 520.0;
@@ -1166,6 +1166,44 @@ impl ConnWin {
         false
     }
 
+    /// 지금 포커스인 텍스트박스(필터 · 폼 입력란) — 클립보드·전체 선택의 대상.
+    fn focused_tb(&mut self) -> Option<&mut TextBox> {
+        match self.focus {
+            WFocus::Filter => Some(&mut self.filter),
+            WFocus::Panel => self.panel.focused_textbox(),
+            WFocus::List | WFocus::Button => None,
+        }
+    }
+
+    /// 클립보드 행동(Ctrl+C/X/V · 우클릭 메뉴) — 메인 창과 같은 `clipboard` 모듈(OS 3종).
+    fn clip(&mut self, act: EditCtxAction) {
+        let mut inv = Invalidations::default();
+        let was_filter = self.focus == WFocus::Filter;
+        match act {
+            EditCtxAction::Copy => {
+                if let Some(text) = self.focused_tb().and_then(|tb| tb.copy_selection()) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Cut => {
+                if let Some(text) = self.focused_tb().and_then(|tb| tb.cut_selection(&mut inv)) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Paste => {
+                if let Some(text) = crate::clipboard::read_text() {
+                    if let Some(tb) = self.focused_tb() {
+                        tb.paste(&text, &mut inv);
+                    }
+                }
+            }
+        }
+        if was_filter {
+            self.refilter();
+        }
+        self.redraw();
+    }
+
     /// 모달(콤보 팝업·우클릭 메뉴)이 닫힌 직후 — 마우스는 움직이지 않았지만 커서 아래 대상이 바뀌었으므로
     /// 현재 커서 위치로 MouseMove를 한 번 합성해 흘린다(클릭은 통과시키지 않는다 · 호버 페이드만 즉시 시작).
     fn rehover(&mut self, out: &mut Vec<ConnWinAction>) {
@@ -1332,8 +1370,19 @@ impl ConnWin {
                         self.ensure_visible(s);
                         self.redraw();
                     }
+                    // 클립보드·전체 선택(Ctrl/⌘) — 포커스 텍스트박스(필터 · 폼 입력란).
+                    Key::Character(c) if self.primary && matches!(c, "c" | "C") => self.clip(EditCtxAction::Copy),
+                    Key::Character(c) if self.primary && matches!(c, "x" | "X") => self.clip(EditCtxAction::Cut),
+                    Key::Character(c) if self.primary && matches!(c, "v" | "V") => self.clip(EditCtxAction::Paste),
+                    Key::Character(c) if self.primary && matches!(c, "a" | "A") => {
+                        let mut inv = Invalidations::default();
+                        if let Some(tb) = self.focused_tb() {
+                            tb.on_event(&InputEvent::SelectAll, &mut inv);
+                        }
+                        self.redraw();
+                    }
                     Key::Named(NamedKey::Delete)
-                        if matches!(self.focus, WFocus::Filter | WFocus::List) =>
+                        if matches!(self.focus, WFocus::List) =>
                     {
                         if let Some(n) = self.selected_name() {
                             out.push(ConnWinAction::Delete(n));
@@ -1411,6 +1460,35 @@ impl ConnWin {
 
     fn route(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
         let mut inv = Invalidations::default();
+        // 우클릭 직전 — 편집 메뉴의 "붙여넣기" 활성 여부.
+        if matches!(ev, InputEvent::RightDown { .. }) {
+            let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
+            if let Some(tb) = self.focused_tb() {
+                tb.set_clipboard_has_text(has);
+            }
+        }
+        // 열린 입력란 편집 메뉴(필터 · 폼)는 모달 — 그 입력란만 받고 고른 행동을 잇는다.
+        if self.filter.popup_open() {
+            self.filter.on_event(&ev, &mut inv);
+            if let Some(act) = self.filter.take_edit_ctx() {
+                self.clip(act);
+            }
+            if !self.filter.popup_open() {
+                self.rehover(out);
+            }
+            self.redraw();
+            return;
+        }
+        if self.panel.edit_menu_open() {
+            if let Some(PanelAction::Edit(act)) = self.panel.route(&ev, &mut inv) {
+                self.clip(act);
+            }
+            if !self.panel.edit_menu_open() {
+                self.rehover(out);
+            }
+            self.redraw();
+            return;
+        }
         // 열린 우클릭 메뉴는 모달 — 고른 항목 id만 받아 실행.
         if self.menu.is_open() && self.menu.on_event(&ev) {
             match self.menu.take_picked().as_deref() {
@@ -1420,6 +1498,13 @@ impl ConnWin {
                     }
                 }
                 Some("new") => self.open_detail(true),
+                // 콤보 우클릭: 선택 항목 / 목록(여러 줄) 복사(사용자 09-14).
+                Some("combo_item") => {
+                    let _ = crate::clipboard::write_text(&self.panel.dialect_selected_label());
+                }
+                Some("combo_list") => {
+                    let _ = crate::clipboard::write_text(&self.panel.dialect_labels());
+                }
                 _ => {}
             }
             if !self.menu.is_open() {
@@ -1430,6 +1515,66 @@ impl ConnWin {
         }
         if let InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
+            // 입력란 우클릭 = 그 입력란의 편집 메뉴(필터 · 폼).
+            if self.filter.bounds().contains(p) {
+                self.set_focus(WFocus::Filter);
+                let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
+                self.filter.set_clipboard_has_text(has);
+                self.filter.on_event(&ev, &mut inv);
+                self.redraw();
+                return;
+            }
+            // 종류 콤보 우클릭 = 선택 항목 복사 · 목록 복사.
+            if self.detail_t > 0.0 && self.panel.dialect_bounds().contains(p) {
+                self.set_focus(WFocus::Panel);
+                let host = self
+                    .window
+                    .as_ref()
+                    .map(|w| {
+                        let sz = w.inner_size();
+                        Rect::new(0, 0, sz.width as i32, sz.height as i32)
+                    })
+                    .unwrap_or(self.list);
+                self.menu.set_scale(self.scale);
+                self.menu.open_at(
+                    x,
+                    y,
+                    vec![
+                        CtxItem::item("combo_item", t(Msg::MnCopyItem)),
+                        CtxItem::item("combo_list", t(Msg::MnCopyList)),
+                    ],
+                    host,
+                    self.ctx_text_w,
+                );
+                self.redraw();
+                return;
+            }
+            if self.detail_t > 0.0 && self.panel.bounds().contains(p) {
+                self.set_focus(WFocus::Panel);
+                // 폼: 눌린 입력란으로 포커스 이동 뒤 우클릭 전달.
+                self.panel.route(
+                    &InputEvent::MouseDown {
+                        x,
+                        y,
+                        shift: false,
+                        primary: false,
+                    },
+                    &mut inv,
+                );
+                self.panel.route(
+                    &InputEvent::MouseUp { x, y },
+                    &mut inv,
+                );
+                let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
+                if let Some(tb) = self.panel.focused_textbox() {
+                    tb.set_clipboard_has_text(has);
+                }
+                if let Some(PanelAction::Edit(act)) = self.panel.route(&ev, &mut inv) {
+                    self.clip(act);
+                }
+                self.redraw();
+                return;
+            }
             // 빈 영역(마지막 컬럼 뒤 · 행 아래) 우클릭 = 전체/빈 영역 메뉴(New).
             if self.body_rect().contains(p) && self.row_at(p).is_none() {
                 self.set_focus(WFocus::List);
@@ -1606,6 +1751,13 @@ impl ConnWin {
             }
         }
         if is_mouse {
+            // 필터 입력란: 다운(캐럿) · 이동(드래그 선택) · 업 — 포커스일 때만(다른 곳 드래그가 새지 않게).
+            if self.focus == WFocus::Filter {
+                self.filter.on_event(&ev, &mut inv);
+                if let Some(act) = self.filter.take_edit_ctx() {
+                    self.clip(act);
+                }
+            }
             self.btn_new.on_event(&ev, &mut inv);
             self.btn_edit.on_event(&ev, &mut inv);
             match self.del_arm.as_mut() {
@@ -1618,19 +1770,24 @@ impl ConnWin {
                 return;
             }
             if self.detail_t > 0.0 {
-                if let Some(a) = self.panel.route(&ev, &mut inv) {
-                    out.push(ConnWinAction::Panel(a));
+                match self.panel.route(&ev, &mut inv) {
+                    Some(PanelAction::Edit(act)) => self.clip(act),
+                    Some(a) => out.push(ConnWinAction::Panel(a)),
+                    None => {}
                 }
             }
         } else {
             match self.focus {
-                WFocus::Panel => {
-                    if let Some(a) = self.panel.route(&ev, &mut inv) {
-                        out.push(ConnWinAction::Panel(a));
-                    }
-                }
+                WFocus::Panel => match self.panel.route(&ev, &mut inv) {
+                    Some(PanelAction::Edit(act)) => self.clip(act),
+                    Some(a) => out.push(ConnWinAction::Panel(a)),
+                    None => {}
+                },
                 WFocus::Filter => {
                     self.filter.on_event(&ev, &mut inv);
+                    if let Some(act) = self.filter.take_edit_ctx() {
+                        self.clip(act);
+                    }
                     self.refilter();
                 }
                 WFocus::List => {}
@@ -1676,9 +1833,10 @@ impl ConnWin {
             let armed = format!("{} ({}{})", t(Msg::BtnDeleteConfirm), 5, t(Msg::UnitSecShort));
             self.btn_text_w[2] = ui.measure(&armed, font_px).ceil() as i32;
         }
-        self.ctx_text_w = ui
-            .measure(t(Msg::MnDuplicate), font_px)
-            .max(ui.measure(t(Msg::BtnNew), font_px))
+        self.ctx_text_w = [Msg::MnDuplicate, Msg::BtnNew, Msg::MnCopyItem, Msg::MnCopyList]
+            .iter()
+            .map(|m| ui.measure(t(*m), font_px))
+            .fold(0.0_f32, f32::max)
             .ceil() as i32;
         if animating || self.anim.is_none() {
             self.layout();
@@ -1926,8 +2084,12 @@ impl ConnWin {
                 let anchor = Rect::new(l.x + sw * tg.col, y, sw, rh);
                 draw_tooltip(&mut dc, th, anchor, wi, text, s);
             }
-            // 우클릭 메뉴(최상위).
+            // 우클릭 메뉴 · 입력란 편집 메뉴(최상위 — 다른 컨트롤이 메뉴 위에 그려지지 않게 맨 마지막).
             self.menu.paint(&mut dc, th);
+            self.filter.paint_popup(&mut dc, th);
+            if detail_visible {
+                self.panel.paint_popups(&mut dc, th);
+            }
         }
         let _ = buf.present();
         if animating {

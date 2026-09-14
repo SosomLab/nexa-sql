@@ -12,7 +12,8 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{
-    Button, Checkbox, Combo, ComboItem, Control, InputEvent, Invalidations, Key, TextBox, Widget,
+    Button, Checkbox, Combo, ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key,
+    TextBox, Widget,
 };
 use nsql_core::Dialect;
 use nsql_i18n::{t, tf, Msg};
@@ -30,6 +31,8 @@ pub(crate) enum PanelAction {
     },
     /// 프로필 콤보에서 이름을 골랐다 — 호스트가 저장소에서 스펙을 읽어 [`ConnectPanel::fill`]로 채운다.
     LoadProfile(String),
+    /// 입력란 우클릭 메뉴에서 고른 클립보드 행동 — OS 클립보드는 호스트(창) 몫.
+    Edit(EditCtxAction),
 }
 
 /// 접속 상태(상태줄 색·문구의 단일 원천).
@@ -321,8 +324,8 @@ impl ConnectPanel {
         } else {
             // 호스트 + 포트 한 줄(포트 폭 고정).
             y += label_h;
-            // Port 72 → 43(60% · 사용자 09-14) · 같은 29px만큼 Host도 줄고 패널 폭(PANEL_W)이 58 줄었다.
-            let port_w = self.s(43.0);
+            // Port = 5자리("65535")가 들어가는 58(사용자 09-14 · 43은 4자리도 잘림) · Host도 같은 14px 축소 · PANEL_W 292.
+            let port_w = self.s(58.0);
             self.host
                 .set_bounds(Rect::new(x, y, w - port_w - gap, field_h), &mut inv);
             self.port
@@ -479,6 +482,63 @@ impl ConnectPanel {
         self.dialect.is_open()
     }
 
+    /// 종류 콤보 영역(우클릭 메뉴 판정).
+    pub(crate) fn dialect_bounds(&self) -> Rect {
+        self.dialect.bounds()
+    }
+
+    /// 종류 콤보의 선택 항목 라벨.
+    pub(crate) fn dialect_selected_label(&self) -> String {
+        let c = self.dialect.core();
+        c.items()
+            .get(c.selected_index())
+            .map(|it| it.label.clone())
+            .unwrap_or_default()
+    }
+
+    /// 종류 콤보의 전체 항목 라벨(줄마다 하나).
+    pub(crate) fn dialect_labels(&self) -> String {
+        self.dialect
+            .core()
+            .items()
+            .iter()
+            .map(|it| it.label.as_str())
+            .collect::<Vec<_>>()
+            .join("
+")
+    }
+
+    /// 어느 입력란의 우클릭 편집 메뉴가 열려 있는가(모달).
+    pub(crate) fn edit_menu_open(&self) -> bool {
+        self.field_focus
+            .is_some_and(|f| self.textbox_ref(f).popup_open())
+    }
+
+    fn textbox_ref(&self, f: Field) -> &TextBox {
+        match f {
+            Field::Host => &self.host,
+            Field::Port => &self.port,
+            Field::Database => &self.database,
+            Field::User => &self.user,
+            Field::Password => &self.password,
+            Field::Name => &self.name,
+        }
+    }
+
+    /// 입력란 팝업(우클릭 편집 메뉴)만 — 창이 **맨 마지막**에 부른다(다른 컨트롤이 메뉴 위에 그려지던 버그 · 사용자 09-14).
+    pub(crate) fn paint_popups(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        for tb in [
+            &self.host,
+            &self.port,
+            &self.database,
+            &self.user,
+            &self.password,
+            &self.name,
+        ] {
+            tb.paint_popup(dc, th);
+        }
+    }
+
     // ── 이벤트
 
     /// 패널 안의 이벤트. 반환 = 호스트가 할 일.
@@ -491,6 +551,15 @@ impl ConnectPanel {
         if self.dialect.is_open() {
             self.dialect.on_event(ev, inv);
             return self.after_combo();
+        }
+        // 열린 편집 메뉴(입력란 우클릭)도 모달 — 그 입력란만 받는다 · 고른 행동은 호스트에.
+        if let Some(f) = self.field_focus.filter(|&f| self.textbox_ref(f).popup_open()) {
+            let tb = self.textbox(f);
+            tb.on_event(ev, inv);
+            if let Some(act) = tb.take_edit_ctx() {
+                return Some(PanelAction::Edit(act));
+            }
+            return None;
         }
         if let InputEvent::MouseDown { x, y, .. } = *ev {
             let p = Point { x, y };
@@ -508,6 +577,25 @@ impl ConnectPanel {
                 self.field_focus = None;
                 self.sync_focus();
             }
+        }
+        // 마우스 사건은 포커스 입력란(드래그 선택 · 우클릭 메뉴)에도 — 버튼·콤보·체크박스보다 먼저.
+        if matches!(
+            ev,
+            InputEvent::MouseDown { .. }
+                | InputEvent::MouseUp { .. }
+                | InputEvent::MouseMove { .. }
+                | InputEvent::RightDown { .. }
+        ) {
+            if let Some(f) = self.field_focus {
+                let tb = self.textbox(f);
+                tb.on_event(ev, inv);
+                if let Some(act) = tb.take_edit_ctx() {
+                    return Some(PanelAction::Edit(act));
+                }
+            }
+        }
+        if matches!(ev, InputEvent::RightDown { .. }) {
+            return None;
         }
         // 마우스 사건은 버튼·콤보·체크박스 전부에.
         if matches!(
@@ -551,9 +639,19 @@ impl ConnectPanel {
             }
             _ => {}
         }
+        if matches!(
+            ev,
+            InputEvent::MouseDown { .. } | InputEvent::MouseUp { .. } | InputEvent::MouseMove { .. }
+        ) {
+            // 마우스는 위에서 이미 입력란에 전달했다(두 번 보내면 드래그가 꼬인다).
+            return None;
+        }
         if let Some(f) = self.field_focus {
             let tb = self.textbox(f);
             tb.on_event(ev, inv);
+            if let Some(act) = tb.take_edit_ctx() {
+                return Some(PanelAction::Edit(act));
+            }
             if f == Field::Port {
                 // 사용자가 포트를 직접 고치면 자동 포트 추종을 끈다.
                 let cur: Option<u16> = self.port.text().trim().parse().ok();
@@ -688,14 +786,6 @@ impl ConnectPanel {
         dc.text(sr.x + dot + self.s(6.0), sr.y, sr, &text, th.text);
         // 콤보는 팝업을 스스로 그린다 — 열린 것이 최상위가 되게 마지막에.
         self.dialect.paint(dc, th);
-        for tb in [
-            &self.host,
-            &self.database,
-            &self.user,
-            &self.password,
-            &self.name,
-        ] {
-            tb.paint_popup(dc, th);
-        }
+        // 입력란 팝업은 여기서 그리지 않는다 — 창이 맨 마지막에 `paint_popups`로(최상위).
     }
 }
