@@ -1535,6 +1535,9 @@ fn main() {
         .set_row_numbers(app.settings.flag("grid.row_numbers"));
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
     nexa_ctl::tokens::set_hover_in_ms(app.settings.int("grid.hover_fade").clamp(0, 5000) as u32);
+    nexa_ctl::tokens::set_button_hover_in_ms(
+        app.settings.int("ui.button_hover_fade").clamp(0, 5000) as u32,
+    );
     // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
     if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {
         app.busy = true;

@@ -152,6 +152,8 @@ enum WFocus {
     Filter,
     /// 목록(행 선택 · ↑↓ · Enter 접속 · Delete).
     List,
+    /// 상단 버튼 하나(`focus_btn`) — 마지막으로 누른 버튼이 테두리를 가진다(포커스 규칙 · 사용자 09-14).
+    Button,
 }
 
 pub(crate) struct ConnWin {
@@ -211,6 +213,8 @@ pub(crate) struct ConnWin {
     list: Rect,
     row_h: i32,
     focus: WFocus,
+    /// `WFocus::Button`일 때 어느 버튼(0 New · 1 Details · 2 Delete · 3 Close).
+    focus_btn: usize,
     last_click: Option<(usize, Instant)>,
     /// 상세 폼 열림 정도 0.0(닫힘)~1.0(열림) — 슬라이딩 애니메이션 현재값.
     detail_t: f32,
@@ -275,6 +279,7 @@ impl ConnWin {
             list: Rect::new(0, 0, 0, 0),
             row_h: 24,
             focus: WFocus::Filter,
+            focus_btn: 0,
             last_click: None,
             detail_t: 0.0,
             anim: None,
@@ -678,7 +683,13 @@ impl ConnWin {
         let tip_due = matches!(self.tip, Some((_, t)) if (TIP_MS..TIP_MS + 40).contains(&t.elapsed().as_millis()));
         let a = self.bars.tick(now_ms);
         let b = self.hover_fade.tick(now_ms);
-        a || b || tip_due
+        // 버튼 hover 페이드(상단 4개 + 폼 3개) — 지금까지 틱이 없어 즉시 켜졌다(사용자 09-14 500ms 요구).
+        let c = self.btn_new.tick(now_ms)
+            | self.btn_edit.tick(now_ms)
+            | self.btn_delete.tick(now_ms)
+            | self.btn_close.tick(now_ms)
+            | self.panel.tick(now_ms);
+        a || b || c || tip_due
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
@@ -686,7 +697,13 @@ impl ConnWin {
     }
 
     pub(crate) fn hover_animating(&self) -> bool {
-        self.window.is_some() && self.hover_fade.is_animating()
+        self.window.is_some()
+            && (self.hover_fade.is_animating()
+                || self.btn_new.is_animating()
+                || self.btn_edit.is_animating()
+                || self.btn_delete.is_animating()
+                || self.btn_close.is_animating()
+                || self.panel.animating())
     }
 
     /// 메인 창 위 가운데에 연다(`over` = 메인 창 바깥 좌표·크기). 이미 열려 있으면 앞으로.
@@ -990,19 +1007,62 @@ impl ConnWin {
             .map(|&i| self.profiles[i].name.clone())
     }
 
+    /// ★ 포커스 규칙(CLAUDE.md §3): 이 창의 포커스 소유자는 **하나** — 패널 / 필터 / 목록 / 상단 버튼 하나.
+    /// 마지막 클릭·입력이 있었던 곳만 링을 가지고 나머지는 전부 꺼진다(패널 안쪽은 `ConnectPanel::own_focus`가 같은 일을 한다).
     fn set_focus(&mut self, f: WFocus) {
         self.focus = f;
         self.panel.set_focused(f == WFocus::Panel);
         self.filter.set_focused(f == WFocus::Filter);
-        // 버튼은 키보드 포커스를 갖지 않는다(클릭 뒤 링이 남던 버그 09-14).
-        for b in [
+        let fb = self.focus_btn;
+        for (i, b) in [
             &mut self.btn_new,
             &mut self.btn_edit,
             &mut self.btn_delete,
             &mut self.btn_close,
-        ] {
-            b.set_focused(false);
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            b.set_focused(f == WFocus::Button && i == fb);
         }
+    }
+
+    /// 상단 버튼 명중(index).
+    fn top_btn_at(&self, p: Point) -> Option<usize> {
+        [
+            self.btn_new.bounds(),
+            self.btn_edit.bounds(),
+            self.btn_delete.bounds(),
+            self.btn_close.bounds(),
+        ]
+        .iter()
+        .position(|b| b.contains(p))
+    }
+
+    /// 상단 버튼의 클릭 결과 처리 — 창을 닫았으면 true.
+    fn handle_top_clicks(&mut self, out: &mut Vec<ConnWinAction>) -> bool {
+        if self.btn_new.take_clicked() {
+            self.open_detail(true);
+        }
+        if self.btn_edit.take_clicked() {
+            // 이미 펼쳐져 있으면 Esc와 같이 접는다(사용자 09-14).
+            if self.detail_open() {
+                self.close_detail();
+            } else if let Some(n) = self.selected_name() {
+                out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
+                self.open_detail(false);
+            }
+        }
+        if self.btn_delete.take_clicked() {
+            if let Some(n) = self.selected_name() {
+                out.push(ConnWinAction::Delete(n));
+            }
+        }
+        if self.btn_close.take_clicked() {
+            self.close();
+            return true;
+        }
+        false
     }
 
     // ── 이벤트
@@ -1076,7 +1136,7 @@ impl ConnWin {
                 let tb = match self.focus {
                     WFocus::Panel => self.panel.focused_textbox(),
                     WFocus::Filter => Some(&mut self.filter),
-                    WFocus::List => None,
+                    WFocus::List | WFocus::Button => None,
                 };
                 if let Some(tb) = tb {
                     match ime {
@@ -1334,6 +1394,10 @@ impl ConnWin {
             let p = Point { x, y };
             if self.panel.bounds().contains(p) && self.detail_t > 0.0 {
                 self.set_focus(WFocus::Panel);
+            } else if let Some(i) = self.top_btn_at(p) {
+                // 누른 버튼만 테두리(마지막으로 눌린 하나).
+                self.focus_btn = i;
+                self.set_focus(WFocus::Button);
             } else if self.filter.bounds().contains(p) {
                 self.set_focus(WFocus::Filter);
             } else if self.header_rect().contains(p) {
@@ -1385,36 +1449,8 @@ impl ConnWin {
             self.btn_edit.on_event(&ev, &mut inv);
             self.btn_delete.on_event(&ev, &mut inv);
             self.btn_close.on_event(&ev, &mut inv);
-            if self.btn_new.take_clicked() {
-                self.open_detail(true);
-            }
-            if self.btn_edit.take_clicked() {
-                // 이미 펼쳐져 있으면 Esc와 같이 접는다(사용자 09-14).
-                if self.detail_open() {
-                    self.close_detail();
-                } else if let Some(n) = self.selected_name() {
-                    out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
-                    self.open_detail(false);
-                }
-            }
-            if self.btn_delete.take_clicked() {
-                if let Some(n) = self.selected_name() {
-                    out.push(ConnWinAction::Delete(n));
-                }
-            }
-            if self.btn_close.take_clicked() {
-                self.close();
+            if self.handle_top_clicks(out) {
                 return;
-            }
-            if matches!(ev, InputEvent::MouseUp { .. }) {
-                for b in [
-                    &mut self.btn_new,
-                    &mut self.btn_edit,
-                    &mut self.btn_delete,
-                    &mut self.btn_close,
-                ] {
-                    b.set_focused(false);
-                }
             }
             if self.detail_t > 0.0 {
                 if let Some(a) = self.panel.route(&ev, &mut inv) {
@@ -1433,6 +1469,18 @@ impl ConnWin {
                     self.refilter();
                 }
                 WFocus::List => {}
+                WFocus::Button => {
+                    // 포커스 버튼은 Enter/Space로 눌린다.
+                    match self.focus_btn {
+                        0 => self.btn_new.on_event(&ev, &mut inv),
+                        1 => self.btn_edit.on_event(&ev, &mut inv),
+                        2 => self.btn_delete.on_event(&ev, &mut inv),
+                        _ => self.btn_close.on_event(&ev, &mut inv),
+                    }
+                    if self.handle_top_clicks(out) {
+                        return;
+                    }
+                }
             }
         }
         self.redraw();

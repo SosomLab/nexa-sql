@@ -419,6 +419,18 @@ impl ConnectPanel {
         }
     }
 
+    /// 버튼 hover 페이드 틱 — 밝기가 변했으면 true.
+    pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        let a = self.test_btn.tick(now_ms);
+        let b = self.connect_btn.tick(now_ms);
+        let c = self.save_btn.tick(now_ms);
+        a || b || c
+    }
+
+    pub(crate) fn animating(&self) -> bool {
+        self.test_btn.is_animating() || self.connect_btn.is_animating() || self.save_btn.is_animating()
+    }
+
     /// 호스트의 IME·클립보드 라우팅 지점.
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         if !self.focused {

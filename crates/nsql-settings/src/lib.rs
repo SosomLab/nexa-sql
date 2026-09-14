@@ -260,6 +260,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "ui.button_hover_fade",
+        cat: Msg::CatAppearance,
+        label: Msg::LblButtonHoverFade,
+        desc: Msg::DescButtonHoverFade,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "500",
+    },
+    Entry {
         key: "grid.hover_fade",
         cat: Msg::CatAppearance,
         label: Msg::LblGridHoverFade,
