@@ -2,6 +2,14 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (1차 · win) — ★ 정품 인증 설계(23) · i18n·테마 구현(T-37/38 ✅) · VS Code 설정 분석(24)
+
+**요청**(사용자 3건): 로컬 PC 인증 + 라이선스 파일 + 기능 게이트 설계 · i18n(기본 영어)·테마(System/Light/Dark · 기본 System) 구현 · VS Code 설정 방식(소스)·설정 UI(캡처 8장) 분석.
+**설계** [23](23-license-activation.md): 요청 코드(OS 기기 ID 해시) → 오프라인 발급기(Ed25519 비밀키) → `nexa-sql.license`(key=value + 서명) → `nsql license install` → 실행 시 로컬 검증 · `nsql-license::check(Feature)` 1함수 · 게이트는 UI/CLI 진입점 1곳 · Core는 모른다. **⏳ 사용자 결정 D-23(게이트 목록★)·D-24(기기 묶음★)·D-25(모델★)·D-26~31**([10 §3](10-decision-record.md)). 코드는 T-32~36.
+**구현**: `nsql-i18n`(`Lang/Msg/tr` · en 기본 · ko 폴백) · `nsql-settings`(레지스트리 단일 원천 · `settings.conf` 변경분만 · `ThemeMode`) · `nsql config list/get/set/reset/path` · GUI 전 문자열 카탈로그 · `theme.rs`(Windows 레지스트리·macOS·Linux 판정 + winit) · `Ctrl/⌘+⇧T` 테마 순환 · `Ctrl/⌘+⇧L` 언어 전환(즉시 저장·반영). 84 테스트 · clippy 0 · CLI 실기 ✓ · GUI System 모드 = OS 라이트 추종 캡처 ✓.
+**분석** [24](24-settings-and-vscode-analysis.md): 레지스트리→변경분 파일→화면 생성 원리 · TOC 글롭 · type별 렌더러 · 캡처 6원칙 → T-39 설정 화면 설계.
+**다음**: D-23~25 답 → T-32 · ☐ CLI 나머지 문자열 카탈로그화 · ☐ mac/Linux 테마 실기. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-13 (9차 · win) — 정리 · 진행사항 최신화 · push
 
 **요청**(사용자): *"내용 정리 후 진행사항 최신화 수행하고 commit 및 main 병합한 뒤 push"*. 브랜치는 main 하나(병합 대상 없음 — 원격 병합은 직전 차수). CLAUDE.md 현 단계 갱신. push 8커밋(5차~9차 + 병합 · ad7e0c9) → **CI green**: `ci` run 34760377408(windows·macos·ubuntu) · `integration` run 34760377376(Oracle 23ai · SQL Server 2022 실서버 5/5) 모두 success. **다음**: T-27 RPC 드라이버 프로토콜 착수. → [journal](journal/2026-09-13.md)

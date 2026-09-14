@@ -44,7 +44,7 @@
 | D-3 | `nexa-edit`를 `nexa-ui`에 둘지 별도 저장소로 둘지(SDK MIT 분리 가능성 · nexa-ui D-1) |
 | D-4 | 한글 IME preedit 오버레이의 3-OS 구현 순서(Windows 먼저 — 사용자 실무 OS 확인 필요) |
 | D-5 | MSSQL REFCURSOR 대체 표현(결과 집합 탭) · `SESSION_CONTEXT` 옵션 노출 여부 |
-| D-6 | 라이선스 키 집행 시점(v1.0 전/후) · 오프라인 Ed25519 토큰(nexa-dir 17 설계 재사용) |
+| ~~D-6~~ | → **D-23~D-31**로 세분([23](23-license-activation.md) · 09-14) |
 | D-8 | `similar`(비교·3-way 병합) 원장 등재 |
 | D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
 | ~~D-14~~ | → **DR-21**(Codespaces + DBMS별 Docker + Actions) |
@@ -55,6 +55,15 @@
 | **D-20** | Oracle OCI 확장의 Instant Client 동봉(OTN 조건 · D-1 통합) vs 사용자 다운로드 안내 |
 | **D-21** | 드라이버 갱신 확인 기본값(켬 권장 · 폐쇄망은 설정으로 끔) |
 | **D-22** | 순수 Rust thin `oracledb` 채택 시점 — OUT 바인드·REF CURSOR가 공개 API에 들어오는 판(GitHub Discussions 문의 후보). 들어오면 Oracle 내장 드라이버 = thin, OCI(kubo)는 레거시 확장([22 §4-1](22-driver-extensions.md))으로 |
+| **D-23** | ★ **정품 인증 — 게이트 기능 목록·무료 범위**([23 §4-3](23-license-activation.md) 권장안: xlsx/parquet export · SSH 터널 · 드라이버 확장 · 다중 접속 · 비교 = Pro / 나머지 무료). ⚠️ [13 §3](13-licensing.md) "무료 제한 없음" 권장을 **정정**하는 결정(사용자 09-14 요청) |
+| **D-24** | ★ 기기 묶음 원천 — ⓐ OS 기기 식별자 해시(권장) ⓑ `device.key` 무작위 ⓒ 결합([23 §6](23-license-activation.md)) |
+| **D-25** | ★ 라이선스 모델 — 영구+업데이트 1년(권장) vs 구독 · 기기 수(1/2) · 등급 이름 |
+| **D-26** | 라이선스 파일 형식 — 자체 key=value 봉투(권장 · JSON 의존 0) vs PASETO v4.public 엄수(13 §3 문구) |
+| **D-27** | 발급 비밀키 보관(발급 PC DPAPI 봉투 + 오프라인 백업) · 공개키 2개 내장 무중단 회전 |
+| **D-28** | 14일 체험 파일 도입 여부(권장 = 있음 · 기기당 1회) |
+| **D-29** | 온라인 2차(Cloudflare Workers 발급 자동화) 착수 시점(권장 = v1.0 이후 · 수동 이메일로 시작) |
+| **D-30** | 집행 시점(= D-6 구체화) — v1.0부터 게이트 활성(권장) · 그 전 판은 배지만 |
+| **D-31** | Team/사이트 라이선스(기기 묶음 없는 조직 키) 도입 여부(권장 = v1.0 미포함) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
 
 ## 4. 외부 crate 원장 (추가 시 건별 기록)

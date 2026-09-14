@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-14 (1차 · win)** — ★ 정품 인증 설계 [23](23-license-activation.md)(요청 코드 → 오프라인 Ed25519 라이선스 파일 → `check(Feature)` 게이트 · D-23~31 · T-32~36) · **i18n(기본 영어)·테마(System 기본) 구현**(`nsql-i18n`·`nsql-settings` 신규 · `nsql config` · GUI 단축키 ⇧T/⇧L · 84 테스트) · VS Code 설정 방식·UI 분석 [24](24-settings-and-vscode-analysis.md) · T-39 설정 화면 등재. → [journal](journal/2026-09-14.md)
 - **2026-09-13 (9차 · win)** — 정리 · CLAUDE.md 현 단계 갱신 · push(5차~9차 + 병합) · CI green(ci·integration). 다음 = T-27.
 - **2026-09-13 (병합 · win)** — origin/main(mac 3·4차) 병합 · 차수 재번호(mac 1~4 · win 5~8) · 병합본 71 테스트·실서버 ✓ · `NSQL_ORACLE_CLIENT_DIR` Windows 확인.
 - **2026-09-13 (8차 · win)** — GUI 창 실기(자동 구동): 프로필 접속 → F5 → 그리드 ✓. `about_to_wait` 무한 재그리기 루프 수정(유휴 CPU 100%→13% · 입력 지연 해소). → [journal](journal/2026-09-13.md)

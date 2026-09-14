@@ -8,7 +8,7 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M1·M2 병행 진행(2026-09-13 9차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **다음 = T-27 RPC 드라이버 프로토콜**([22 §7](docs/22-driver-extensions.md)) · ⏳ 사용자: 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
+- 현 단계: **M1·M2 병행 진행(2026-09-14 1차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **09-14: i18n(기본 영어 · `nsql-i18n`)·설정(`nsql-settings` · `settings.conf` · `nsql config`)·테마(System 기본 · ⇧T/⇧L 단축키) ✅ · 정품 인증 설계 [23](docs/23-license-activation.md) · VS Code 설정 분석 [24](docs/24-settings-and-vscode-analysis.md).** **다음 = T-27 RPC 드라이버 프로토콜**([22 §7](docs/22-driver-extensions.md)) · T-32 `nsql-license`(D-23~25 답 뒤) · ⏳ 사용자: **D-23~D-31 라이선스 결정** · 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
 - ★ 형제 저장소 clone은 `git@kiros33.github.com:SosomLab/<repo>.git`(SSH 별칭 · 사용자 지정 09-13).
 
 ### 참조 원천 (재발명 금지)
@@ -39,13 +39,14 @@
 | DR-23·24 | **접속 대화상자 = DBeaver식 + Golden 로그인 리스트** · **드라이버 확장 = GitHub Releases 최신 다운로드 · stdio JSON-RPC 프로세스 · SxS 다중 버전 · 관리자(목록·삭제)** — [22](docs/22-driver-extensions.md) · T-27~31 |
 
 ### 설계 문서 지도(요구별)
-연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
+연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 정품 인증·기능 게이트 [23](docs/23-license-activation.md) · 설정 체계·i18n·테마 [24](docs/24-settings-and-vscode-analysis.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
 
 ## 3. 작업 규약
 
 - **문서·커밋/푸시 규약 SSOT = [docs/16](docs/16-doc-git-conventions.md)**. 한 작업 = 한 트랜잭션 갱신(journal → DEVLOG → STATUS → MILESTONES/TODO).
 - **push는 사용자 명시 요청 시에만.** `git add <파일>`만(`-A`·`.` 금지). push 전 `scripts/check-3os.sh`.
 - 크레이트 경계: `nsql-core`는 의존 0 · 드라이버 크레이트는 `nsql-driver-*` 안에만 · UI는 `Box<dyn Session>`만 안다.
+- **사용자 문자열은 전부 `nsql-i18n::Msg`**(기본 영어 · 한국어 열) — 리터럴 금지. **설정 키는 `nsql-settings::REGISTRY`에만** 추가(라벨·설명 = `Msg`).
 - 스크립트 엔진을 고치면 `examples/golden-session-vars.sql`로 `nsql plan` 양 방언을 다시 본다.
 - `.claude/settings.json`은 덮어쓰기 금지, 병합만.
 

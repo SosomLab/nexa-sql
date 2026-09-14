@@ -53,5 +53,21 @@
 | **T-30** | P0 | 대 | Oracle OCI 확장 — kubo 드라이버를 RPC 프로세스로 · Instant Client 19/23 SxS · 프로필 `driver=` · ORA-28040 힌트 | T-29 D-20 | ☐ |
 | **T-31** | P0 | 대 | GUI — DBeaver식 접속 대화상자 · Golden식 로그인 리스트 · 드라이버 관리자(목록·Download·Update·Delete) | T-28 · nexa-ui U-2 | ☐ |
 
+## 3-3. 정품 인증 · 기능 게이트([23](23-license-activation.md) · 사용자 09-14) — 코드는 D-23·24·25 답 뒤
+| ID | 우선 | 규모 | 항목 | 의존 | 상태 |
+|---|:--:|:--:|---|---|:--:|
+| **T-32** | P1 | 중 | `nsql-license` — 파일 형식 파서·정규화·Ed25519 검증·`Feature`/`check` · 3-OS 기기 ID · 테스트([23 §5](23-license-activation.md)) | D-24 D-26 | ☐ |
+| **T-33** | P1 | 소 | `nsql license request/status/install/remove` · 종료 코드 4 | T-32 | ☐ |
+| **T-34** | P1 | 중 | GUI 설정 라이선스 탭 · 상태줄 배지 · Denied 대화상자(요청 코드 복사) · i18n `license.*` | T-32 T-37 | ☐ |
+| **T-35** | P1 | 중 | `nsql-license-tool`(비공개) — 키 생성·발급·대장 · 공개키 내장(`build.rs`) · 회전 | T-32 D-27 | ☐ |
+| **T-36** | P1 | 소 | 게이트 배선 — D-23 목록의 진입점 1곳씩 · 확장 manifest `requires` | T-32 D-23 | ☐ |
+
+## 3-4. 앱 설정 · i18n · 테마(사용자 09-14)
+| ID | 우선 | 규모 | 항목 | 의존 | 상태 |
+|---|:--:|:--:|---|---|:--:|
+| **T-37** | P0 | 중 | `nsql-i18n`(영어 기본 · 한국어) + `nsql-settings`(레지스트리 · `settings.conf`) · `nsql config` · GUI 전 문자열 · ☐ CLI 나머지(run/shell/export/conn) 문자열 카탈로그화 | — | ✅ 09-14 |
+| **T-38** | P0 | 소 | 테마 System/Light/Dark(기본 System) — OS 판정 3-OS(`theme.rs`) · `Ctrl/⌘+⇧T` 순환 · `ThemeChanged` 추종 · ☐ mac/Linux 실기 | T-37 | ✅ 09-14(win) |
+| **T-39** | P1 | 중 | 설정 화면 — VS Code식 좌 TOC + 검색 + 항목 카드 + 변경 바 + Reset([24 §2·§3](24-settings-and-vscode-analysis.md)) · **T-39b** 프로젝트 스코프 `.nexa/settings.conf` | 메뉴바 이식 · T-37 | ☐ |
+
 ## 4. M3+ (요약)
-syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · PG/MySQL/SQLite/ODBC 드라이버(T-23) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26).
+syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · PG/MySQL/SQLite/ODBC 드라이버(T-23) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26 → **T-32~36** [23](23-license-activation.md)).
