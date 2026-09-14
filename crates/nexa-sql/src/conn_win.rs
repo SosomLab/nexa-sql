@@ -1076,7 +1076,7 @@ impl ConnWin {
                         TestMark::Failed => Msg::TipTestFailed,
                     }));
                 }
-                if !p.has_password {
+                if pw_state(p, &self.session_pw) == 0 {
                     s.push('\n');
                     s.push_str(t(Msg::TipNoPassword));
                 }
@@ -1091,7 +1091,7 @@ impl ConnWin {
                         ConnectMark::Connected => Msg::TipConnected,
                     }));
                 }
-                if !p.has_password {
+                if pw_state(p, &self.session_pw) == 0 {
                     s.push('\n');
                     s.push_str(t(Msg::TipNoPassword));
                 }
@@ -2201,7 +2201,8 @@ impl ConnWin {
                     dc.fill_ellipse(dot_r, dot_color);
                 }
                 // 행 버튼 — 테스트(마지막 결과 표시) · 접속. 비밀번호 미저장 = 흐리게(비활성).
-                let enabled = p.has_password;
+                // 저장됐거나 세션에 입력된 비밀번호가 있으면 활성(사용자 09-14).
+                let enabled = pw_state(p, &self.session_pw) > 0;
                 let hb = |b: RowBtn| enabled && self.hover_btn == Some((row, b));
                 paint_test_btn(
                     &mut dc,
