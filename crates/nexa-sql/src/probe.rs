@@ -326,6 +326,8 @@ impl ProbeEntry {
     }
 
     /// 지금 바로 다시 묻도록 당긴다(누적 횟수는 보존). 이미 확인 중이면 그대로.
+    /// (창 재오픈 시 전부 당기던 용도는 09-14에 제거 — 지금은 테스트·수동 갱신 후보용.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn poke(&mut self, now: Instant) {
         if self.status != ProbeStatus::Checking {
             self.next_at = Some(now);
