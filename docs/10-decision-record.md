@@ -31,6 +31,7 @@
 | **DR-24** | ★ **드라이버 확장 = GitHub Releases에서 내려받는 stdio JSON-RPC 프로세스** — 기본은 **최신 non-prerelease**, 버전 지정 시 **SxS 다중 버전 보관**(`drivers/<id>/<ver>/`) · 프로필 `driver=<id>@<ver>` 고정 · 관리자(목록·설치·갱신·**삭제** · 참조 프로필 보호) · sha256 + Ed25519 검증 필수. 순수 Rust 드라이버는 내장 유지. 근거: Oracle 클라이언트 ↔ 서버 지원 매트릭스(23ai ← 19c/21c/23ai · 11.2.0.4/12.1 → 19c까지) + ODPI-C 프로세스당 클라이언트 1개 | 사용자 09-13 *"GitHub에서 다운로드해서 확장 사용"* · *"최신 버전이 다운로드"* · *"SxS처럼 여러 버전 · 목록 보고 삭제"* · [22](22-driver-extensions.md) | ✅ 09-13(설계 · 구현 T-27~T-31) |
 | **DR-22** | ★ **연결 프로필 = 사용자 설정 폴더 파일 저장소(`nsql-vault`)** — 비밀번호만 ChaCha20-Poly1305 봉투(도메인 = 프로필 이름) · 기기 키는 Windows DPAPI, 그 외 0600 · **CLI·GUI·여러 인스턴스가 같은 폴더 공유**(첫 실행 경합은 `create_new`로 단일 키) · OS 키체인은 기기 키 보호 후속(D-18) | 사용자 09-13 *"사용자 폴더에 접속 정보를 암호화해서 저장 · 연결 시 재사용"* · *"몇 개의 Instance를 실행하든 저장된 암호를 함께 사용"* · [21](21-connection-profiles.md) · D-2 닫힘 | ✅ 09-13 |
 | **DR-25** | ★ **인증 서버는 별도 비공개 저장소(`SosomLab/nexa-license-server` · kiros33 계정) · 앱·서버 공유 기능은 형제 라이브러리 `SosomLab/nexa-license`로 분리(path 의존 · nexa-ui 방식)** — 라이브러리는 형식·서명·검증·요청 코드·기기 ID·프로토콜만, `Feature`·UI·저장 정책은 앱이 주입 | 사용자 09-14 2차 *"차후 인증서버는 별도 Repository · 공유 기능은 별도 라이브러리로 분리"* · [25 §9](25-license-tiers-and-server.md) | ✅ 09-14 |
+| **DR-26** | ★ **라이선스 티어·서버 운영 확정(D-32~39 권장안 그대로)** — Team(1~5) = 사용자 파일 묶음 기본 + 서버 선택 · Org 좌석 = named 기본 + concurrent 옵션(×2) · 가격 비율 Device 1.0 / User 1.3 / Team 0.9×좌석 / Org 연 0.5×좌석 · 재발급 셀프 연 5회 · 사용자 식별 = OS 로그인명(+`license.user`) · 서버 단일+백업 · 리스 TTL 7일·오프라인 30일·비활성 회수 30일·유예 30일 · **`nexa-license` 라이브러리 = 공개 저장소**(`SosomLab/nexa-license` 생성 09-14) · 서버 저장소 비공개 | 사용자 09-14 *"추천대로 진행할께 · 공개가 적합하다면 공개 처리"* · [25](25-license-tiers-and-server.md) | ✅ 09-14 |
 
 ## 2. 권장 확정 대기 (DP)
 
@@ -65,15 +66,15 @@
 | **D-29** | 온라인 2차(Cloudflare Workers 발급 자동화) 착수 시점(권장 = v1.0 이후 · 수동 이메일로 시작) |
 | **D-30** | 집행 시점(= D-6 구체화) — v1.0부터 게이트 활성(권장) · 그 전 판은 배지만 |
 | ~~D-31~~ | → 사용자 09-14 2차: 조직 티어는 **사내 인증 서버**로 — 세부는 **D-32~D-39** |
-| **D-32** | ★ Team(1~5)의 서버 — 파일 묶음 기본·서버 선택(권장) / 서버 필수 / 서버 미제공 |
-| **D-33** | ★ Organization 좌석 모드 — named만 / named + concurrent 옵션(권장 · ×2) / concurrent만 |
-| **D-34** | ★ 가격 비율 — Device 1.0 · User 1.3 · Team 0.9×좌석 · Org 연 0.5×좌석 · floating ×2([25 §2](25-license-tiers-and-server.md)) |
-| **D-35** | User 기기 5대 재발급 셀프 서비스 횟수(연 5회 권장) |
-| **D-36** | 조직 사용자 식별 — OS 로그인명(권장) / 이메일 / LDAP·AD(후속) |
-| **D-37** | 서버 가용성 — 단일 + 백업(권장) / 2노드 |
-| **D-38** | 리스 TTL 7일 · 오프라인 리스 30일 · 비활성 회수 30일 · 유예 30일(권장값) |
+| ~~D-32~~ → DR-26 | ★ Team(1~5)의 서버 — 파일 묶음 기본·서버 선택(권장) / 서버 필수 / 서버 미제공 |
+| ~~D-33~~ → DR-26 | ★ Organization 좌석 모드 — named만 / named + concurrent 옵션(권장 · ×2) / concurrent만 |
+| ~~D-34~~ → DR-26 | ★ 가격 비율 — Device 1.0 · User 1.3 · Team 0.9×좌석 · Org 연 0.5×좌석 · floating ×2([25 §2](25-license-tiers-and-server.md)) |
+| ~~D-35~~ → DR-26 | User 기기 5대 재발급 셀프 서비스 횟수(연 5회 권장) |
+| ~~D-36~~ → DR-26 | 조직 사용자 식별 — OS 로그인명(권장) / 이메일 / LDAP·AD(후속) |
+| ~~D-37~~ → DR-26 | 서버 가용성 — 단일 + 백업(권장) / 2노드 |
+| ~~D-38~~ → DR-26 | 리스 TTL 7일 · 오프라인 리스 30일 · 비활성 회수 30일 · 유예 30일(권장값) |
 | **D-40** | ★ `nexa-license` 서명 알고리즘 **포트화** — `alg=ed25519`(dalek 2.x · beep/clip/sql 기본) + `alg=p256`(dir2 · Windows CNG 인박스 · 외부 crate 0 유지) · 루트 키 2개 · 발급기 양쪽 서명([25 §10-2 #4](25-license-tiers-and-server.md)) — 대안 = dir2 제외(단일 Ed25519) |
-| **D-39** | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
+| ~~D-39~~ → DR-26 | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
 
 ## 4. 외부 crate 원장 (추가 시 건별 기록)

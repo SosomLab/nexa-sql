@@ -61,11 +61,12 @@
 | **T-34** | P1 | 중 | GUI 설정 라이선스 탭 · 상태줄 배지 · Denied 대화상자(요청 코드 복사) · i18n `license.*` | T-32 T-37 | ☐ |
 | ~~T-35~~ | | | → **T-41**(`nexa-license-tool`은 서버 비공개 저장소의 두 번째 bin · [25 §9-1](25-license-tiers-and-server.md)) | | |
 | **T-36** | P1 | 소 | 게이트 배선 — D-23 목록의 진입점 1곳씩 · 확장 manifest `requires` | T-32 D-23 | ☐ |
-| **T-45** | P1 | 중 | ★ **`SosomLab/nexa-license` 저장소 생성**(형제 · path 의존) — format(자체 파서)·types(`Product`)·verify(**SigVerifier 포트** · ed25519 feature)·request(`NEXAREQ1`)·machine(계열 공통 기기 코드)·fs(경로 주입)·keys(ed25519·p256 루트)·테스트 픽스처 · 3-OS CI · 문자열 0(열거형만)([25 §9·§10](25-license-tiers-and-server.md)) — T-32의 검증·기기 ID·테스트는 여기로, `nsql-license`는 얇은 층 | D-24 D-26 D-39 | ☐ |
+| **T-45** | P1 | 중 | ★ **`SosomLab/nexa-license` 저장소 생성**(형제 · path 의존) — format(자체 파서)·types(`Product`)·verify(**SigVerifier 포트** · ed25519 feature)·request(`NEXAREQ1`)·machine(계열 공통 기기 코드)·fs(경로 주입)·keys(ed25519·p256 루트)·테스트 픽스처 · 3-OS CI · 문자열 0(열거형만)([25 §9·§10](25-license-tiers-and-server.md)) — T-32의 검증·기기 ID·테스트는 여기로, `nsql-license`는 얇은 층 | D-24 D-26 D-40 | 🚧 09-14(저장소 생성 · 공개 · format/base32/Product 골격 + CI · 8588bc7 push) |
 | **T-40** | P1 | 중 | `nexa-license` 확장 — `kind`·`machine.N`·org 키(`seats`·`seat_mode`·`server_key`) · 리스 2단 체인 검증 · `License.source` | T-45 D-32 D-33 | ☐ |
 | **T-41** | P1 | 대 | **`SosomLab/nexa-license-server`(비공개)** — `nexa-licensed`(init/install/service · SQLite 좌석·리스·감사 · 최소 HTTP · named/device/concurrent · 관리 CLI+정적 페이지 · 3-OS 서비스) + `nexa-license-tool`(발급기 · 재발급 대장) | T-40 D-36~38 | ☐ |
 | **T-42** | P1 | 중 | 클라이언트 리스 — `license.server`·`license.user` · 부팅 갱신·하트비트·release · 오프라인 리스 · 상태줄 배지 · `nsql license server/status/renew` | T-40 T-33 | ☐ |
 | **T-44** | P2 | 소 | 관리자 설치 문서([25 §4-6](25-license-tiers-and-server.md)) · 100 동시 부하 · 만료·유예 실기 | T-41 T-42 | ☐ |
+| **T-46** | P1 | 소 | 라이선스 백업·복원 — `nsql license export/import` · GUI 백업/복원 · **시작 시 알려진 위치 자동 복원**(사용자 폴더 → 기기 공용 → exe 옆) · Device는 기기 공용 폴더(`%ProgramData%` 등) · 라이선스 ID 복사([25 §11-3](25-license-tiers-and-server.md)) | T-32 | ☐ |
 
 ## 3-4. 앱 설정 · i18n · 테마(사용자 09-14)
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |

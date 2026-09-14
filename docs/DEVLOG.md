@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-14 (4차 · win)** — D-32~39 확정 → **DR-26** · **`SosomLab/nexa-license` 공개 저장소 생성**(형제 `../nexa-license`) · 골격(format·base32·Product · 12 테스트 · 3-OS CI · **검증 전용 — 발급 코드는 비공개 저장소로**) = T-45 착수 · push. [25 §11](25-license-tiers-and-server.md) 장치 vs 사용자 인증 차이표 · 백업/자동 복원(T-46). 남은 결정 D-23·24·40. → [journal](journal/2026-09-14.md)
 - **2026-09-14 (3차 · win)** — 라이선스 모듈 범용성 점검(beep·clip·dir2): 골격 범용 · 전용 가정 7곳 수정안(`Product` 기술자 · 공통 기기 코드 · 경로 주입+자체 파서 · **서명 포트 ed25519/p256 = D-40**(dir2 외부 crate 0) · 열거형 오류 · 다제품 서버). → [25 §10](25-license-tiers-and-server.md) · [journal](journal/2026-09-14.md)
 - **2026-09-14 (2차 · win)** — 설계 [25](25-license-tiers-and-server.md): 라이선스 4단(Device 1대 · User 5대 · Team 1~5 파일 묶음 · Org 6+ 서버) 경쟁 8제품 교차 · 사내 인증 서버 `nexa-licensed`(3단 Ed25519 체인 · 리스 TTL · named/device/concurrent) · **DR-25 저장소 분리**(`nexa-license` 공유 라이브러리 + 서버 비공개 저장소) · D-32~39 · T-40~45. 코드 0. → [journal](journal/2026-09-14.md)
 - **2026-09-14 (1차 · win)** — ★ 정품 인증 설계 [23](23-license-activation.md)(요청 코드 → 오프라인 Ed25519 라이선스 파일 → `check(Feature)` 게이트 · D-23~31 · T-32~36) · **i18n(기본 영어)·테마(System 기본) 구현**(`nsql-i18n`·`nsql-settings` 신규 · `nsql config` · GUI 단축키 ⇧T/⇧L · 84 테스트) · VS Code 설정 방식·UI 분석 [24](24-settings-and-vscode-analysis.md) · T-39 설정 화면 등재. → [journal](journal/2026-09-14.md)

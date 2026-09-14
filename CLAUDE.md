@@ -8,7 +8,7 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M1·M2 병행 진행(2026-09-14 1차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **09-14: i18n(기본 영어 · `nsql-i18n`)·설정(`nsql-settings` · `settings.conf` · `nsql config`)·테마(System 기본 · ⇧T/⇧L 단축키) ✅ · 정품 인증 설계 [23](docs/23-license-activation.md) · VS Code 설정 분석 [24](docs/24-settings-and-vscode-analysis.md).** **다음 = T-27 RPC 드라이버 프로토콜**([22 §7](docs/22-driver-extensions.md)) · T-32 `nsql-license`(D-23~25 답 뒤) · ⏳ 사용자: **D-23·24·32·33·34·39·40 라이선스 결정**([10 §3](docs/10-decision-record.md)) · 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
+- 현 단계: **M1·M2 병행 진행(2026-09-14 1차 · win)** — 드라이버 3종(Oracle 19c 사내 실서버 ✅ · MSSQL integration ✅) · `nsql run/shell/export/conn` · 최소 GUI 창 **실기 통과**(프로필 접속 → F5 → 그리드) · 연결 프로필(DR-22) · Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`) · DR-1~24 확정. **09-14: i18n(기본 영어 · `nsql-i18n`)·설정(`nsql-settings` · `settings.conf` · `nsql config`)·테마(System 기본 · ⇧T/⇧L 단축키) ✅ · 정품 인증 설계 [23](docs/23-license-activation.md) · VS Code 설정 분석 [24](docs/24-settings-and-vscode-analysis.md).** **다음 = T-27 RPC 드라이버 프로토콜**([22 §7](docs/22-driver-extensions.md)) · T-32 `nsql-license`(D-23~25 답 뒤) · ⏳ 사용자: **D-23·24·40 라이선스 결정**(D-32~39 = DR-26 확정)([10 §3](docs/10-decision-record.md)) · 한글 IME 실기 · MSSQL/PG 접속 정보 · D-15~19 답.
 - ★ 형제 저장소 clone은 `git@kiros33.github.com:SosomLab/<repo>.git`(SSH 별칭 · 사용자 지정 09-13).
 
 ### 참조 원천 (재발명 금지)
@@ -19,7 +19,7 @@
 | `nexa-clip` | `../nexa-clip` | 앱 골격(plat·창·트레이·릴리스 파이프라인 3-OS·`check-3os.sh`·`21-manual-test` 실기표) |
 | `nexa-dir2` | `../nexa-dir2` | `nexa-gui/widgets`(dock·tabbar·menubar·columns·rows) · **`wasmi` 플러그인** |
 | `nexa-dir` | `../nexa-dir` | `docs/13`(라이선스 정책) · `docs/17`(Ed25519 활성화 설계) — ⚠️ 이 기기에 없음(09-14) |
-| **`nexa-license`**(예정 · T-45) | `../nexa-license` | ★ 라이선스 **공유 라이브러리**(형식·서명·검증·기기 ID·프로토콜) — 앱 `nsql-license`와 비공개 서버 `../nexa-license-server`(`nexa-licensed`·발급기)가 함께 씀 · [25 §9](docs/25-license-tiers-and-server.md) |
+| **`nexa-license`**(✅ 09-14 생성 · 공개 · T-45 🚧) | `../nexa-license` | ★ 라이선스 **공유 라이브러리**(형식·서명·검증·기기 ID·프로토콜) — 앱 `nsql-license`와 비공개 서버 `../nexa-license-server`(`nexa-licensed`·발급기)가 함께 씀 · [25 §9](docs/25-license-tiers-and-server.md) |
 
 ## 2. 확정 결정 (요약 — 전문 [docs/10](docs/10-decision-record.md))
 
