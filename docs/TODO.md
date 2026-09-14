@@ -30,7 +30,7 @@
 | **T-13** | P0 | 대 | `nexa-edit` Layout/View/Selections(멀티커서·컬럼) · **IME preedit 오버레이** | T-11 T-12 | ☐ |
 | **T-14** | P0 | 중 | `.sublime-keymap` 파서 + context 평가기 + Command 레지스트리 | T-12 | ☐ |
 | **T-15** | P0 | 대 | `nexa-grid` 가상화(10만 행 · 컬럼 리사이즈/정렬/고정 · TSV 복사) | nexa-ui U-2 | ☐ |
-| **T-16** | P0 | 중 | 창 하나 관통 — ✅ 최소(TextBox·자체 그리드·워커) · **T-16b** ✅ 연결 프로필(`nsql-vault` · 09-13 DR-22) · ☐ 클립보드·컨텍스트 메뉴 · ☐ 프로필 목록·삭제 UI([22 §1](22-driver-extensions.md)) · **T-16c** 치환 변수 대화상자 · **T-16d** 세션 hot exit([18](18-session-and-projects.md)) | — | 🚧 |
+| **T-16** | P0 | 중 | 창 하나 관통 — ✅ 최소(TextBox·자체 그리드·워커) · **T-16b** ✅ 연결 프로필(`nsql-vault` · 09-13 DR-22) · ✅ 클립보드(09-14 · Ctrl+C/X/V · 우클릭) · ☐ 프로필 목록·삭제 UI([22 §1](22-driver-extensions.md)) · **T-16c** 치환 변수 대화상자 · **T-16d** 세션 hot exit([18](18-session-and-projects.md)) | — | 🚧 |
 
 ## 3-1. 편집기 E1~E9([17](17-editor-incremental-plan.md)) · 세션([18](18-session-and-projects.md)) · 외부 변경([15](15-external-file-changes.md)) · 비교/git/오브젝트 캐시([19](19-compare-git-and-object-history.md))
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |

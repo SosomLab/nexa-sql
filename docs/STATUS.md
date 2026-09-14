@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (8차 · win) — 편집기 기본 기능 ✅: 복사/잘라내기/붙여넣기 · 휠 스크롤 라우팅
+
+OS 클립보드 3-OS(`clipboard.rs` · 외부 crate 0) · Ctrl/⌘+C/X/V · 우클릭 메뉴 · 휠은 커서 아래 영역으로 · 멀티라인 붙여넣기 탭 보존(nexa-ui f56db89). T-16의 "☐ 클립보드" 닫힘. GUI 실행 중. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (7차 · win) — Ctrl+Enter 한 문장 실행 ✅ · 셀 컨트롤 설계(nexa-ui 21 §3-2)
 
 `statement_at`(nsql-script · `;` 종결 · GUI/CLI 공용) → Ctrl/⌘+Enter = 선택 → 캐럿 문장 → F5 전체. 그리드 셀의 TextEditor·Button·Checkbox·Image·ImageButton은 `CellKind` + 정적 페인터 + one live editor로 설계(G-2/G-2b · 엔진 이식 G-1 뒤). GUI 실행 중(PID 10004). → [journal](journal/2026-09-14.md)

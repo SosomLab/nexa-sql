@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-14 (8차 · win)** — 편집기 복사/잘라내기/붙여넣기(OS 클립보드 3-OS · crate 0 · Ctrl+C/X/V · 우클릭) · 휠 = 커서 아래 영역 · 탭 보존(nexa-ui). → [journal](journal/2026-09-14.md)
 - **2026-09-14 (7차 · win)** — Ctrl+Enter = 캐럿 위치 한 문장 실행(`nsql_script::statement_at` · `;` 종결 · ea6a506) · 그리드 셀 컨트롤 설계([nexa-ui 21 §3-2](../../nexa-ui/docs/21-grid-family.md) CellKind·정적 페인터·LiveEditor). → [journal](journal/2026-09-14.md)
 - **2026-09-14 (6차 · win)** — ★ 접속 흐름(공용 `from_parts`/`test_connection` · CLI `conn add/test` 필드 · GUI 접속 패널 · 3b69943) · 성능 계측 골격(`Stage/Timeline` · `--timing` · 푸터 · c299ff7) · 설계 [26 성능](26-performance-architecture.md) · [27 CLI 규약](27-cli-conventions.md) · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md) · D-41~44 · T-47~52. → [journal](journal/2026-09-14.md)
 - **2026-09-14 (5차 · win)** — UI 방향 설계 → [nexa-ui docs/20](../../nexa-ui/docs/20-file-management-and-dialogs.md): 3-OS 동일 UI(네이티브 대화상자 0) · `nexa-fs`/파일 컨트롤 6종/`Overlay`/`nexa-dlg` 계층 · nexa-sql 배선 F-6 · beep ADR-0014 충돌 = nexa-ui D-9. → [journal](journal/2026-09-14.md)
