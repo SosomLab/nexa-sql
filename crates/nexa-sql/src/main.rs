@@ -24,7 +24,7 @@ mod theme;
 mod winfocus;
 mod worker;
 
-use conn_win::{ConnWin, ConnWinAction};
+use conn_win::{ConnWin, ConnWinAction, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
 use log_win::{LogWin, LogWinAction};
@@ -114,6 +114,8 @@ struct App {
     started: Instant,
     /// 다음 캐럿 깜빡임 시각 — about_to_wait의 재그리기 게이트.
     next_blink: Instant,
+    /// 접속 패널 작업(진행/결과) — 한 번에 하나 · 프로필 이름에 묶임(사용자 09-14).
+    panel_op: Option<(String, ConnState)>,
 }
 
 fn px(v: f32, s: f32) -> i32 {
@@ -197,11 +199,15 @@ impl App {
             PanelAction::Connect(spec) => {
                 self.busy = true;
                 self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                self.panel_op = Some((self.conn_win.panel.profile_name(), ConnState::Connecting));
                 self.worker.send(worker::Cmd::ConnectSpec(spec));
             }
             PanelAction::Test(spec) => {
                 self.busy = true;
                 self.status = t(Msg::StTesting).into();
+                let name = self.conn_win.panel.profile_name();
+                self.conn_win.set_test_mark(&name, TestMark::Testing);
+                self.panel_op = Some((name, ConnState::Testing));
                 self.worker.send(worker::Cmd::Test(spec));
             }
             PanelAction::Disconnect => {
@@ -216,7 +222,12 @@ impl App {
                 match Vault::open_default().and_then(|v| v.get(&name)) {
                     Ok(Some(spec)) => {
                         self.conn_win.panel.fill(&name, &spec);
-                        self.conn_win.panel.set_state(ConnState::Idle);
+                        // 상태는 한 번에 하나(사용자 09-14): 진행/결과가 이 프로필 것이면 복원, 아니면 Idle.
+                        let st = match &self.panel_op {
+                            Some((n, st)) if *n == name => st.clone(),
+                            _ => ConnState::Idle,
+                        };
+                        self.conn_win.panel.set_state(st);
                     }
                     Ok(None) => {}
                     Err(e) => self
@@ -229,23 +240,43 @@ impl App {
         self.redraw();
     }
 
+    /// 진행 중/마지막 패널 작업의 프로필 이름(없으면 지금 패널의 이름).
+    fn panel_op_name(&self) -> String {
+        self.panel_op
+            .as_ref()
+            .map_or_else(|| self.conn_win.panel.profile_name(), |(n, _)| n.clone())
+    }
+
+    /// 패널 작업 결과를 기록하고, 지금 패널에 그 프로필이 떠 있을 때만 상태줄에 보인다(한 번에 상태 하나 · 사용자 09-14).
+    fn set_panel_result(&mut self, name: &str, st: ConnState) {
+        if self.conn_win.panel.profile_name() == name {
+            self.conn_win.panel.set_state(st.clone());
+        }
+        self.panel_op = Some((name.to_string(), st));
+    }
+
     fn drain_conn(&mut self) -> bool {
         let mut changed = false;
         while let Ok(o) = self.worker.conn.try_recv() {
             changed = true;
             match o {
                 ConnOutcome::Connected(d) => {
-                    let name = self.conn_win.panel.profile_name();
+                    let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
                     self.conn_win.close();
+                    // 활성 탭에 접속 정보 적용 — 탭이 없으면 새 탭(사용자 09-14).
+                    self.editors.ensure_tab();
                     self.editors.set_conn_desc(d.clone());
-                    self.conn_win.panel.set_state(ConnState::Connected(d));
+                    self.set_panel_result(&name, ConnState::Connected(d));
                 }
                 ConnOutcome::ConnectFailed(e) => {
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
                     self.status = tf(Msg::StConnectFailed, &[&e]);
-                    self.conn_win.panel.set_state(ConnState::Failed(e));
+                    let name = self.panel_op_name();
+                    self.set_panel_result(&name, ConnState::Failed(e));
+                    // 접속 실패 확인 → 그 서버 신호등 즉시 갱신(사용자 09-14).
+                    self.conn_win.note_failure(&name);
                 }
                 ConnOutcome::TestOk {
                     description,
@@ -257,16 +288,23 @@ impl App {
                     ));
                     let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
                     self.status = msg.clone();
-                    self.conn_win.panel.set_state(ConnState::TestOk(msg));
+                    let name = self.panel_op_name();
+                    self.conn_win.set_test_mark(&name, TestMark::Ok);
+                    self.set_panel_result(&name, ConnState::TestOk(msg));
                 }
                 ConnOutcome::TestFailed(e) => {
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("test: {e}")));
                     self.status = tf(Msg::StTestFailed, &[&e]);
-                    self.conn_win.panel.set_state(ConnState::Failed(e));
+                    let name = self.panel_op_name();
+                    self.conn_win.set_test_mark(&name, TestMark::Failed);
+                    self.set_panel_result(&name, ConnState::Failed(e));
+                    self.conn_win.note_failure(&name);
                 }
                 ConnOutcome::Disconnected => {
                     self.editors.set_conn_desc("");
+                    self.conn_win.clear_active();
+                    self.panel_op = None;
                     self.conn_win.panel.set_state(ConnState::Idle);
                 }
                 ConnOutcome::Saved(name) => {
@@ -499,7 +537,34 @@ impl App {
     }
 
     /// 로그인 목록 더블클릭/Enter — 저장소에서 읽어 폼에 채우고 바로 접속.
+    /// 행 테스트 버튼 — 폼을 건드리지 않고 저장소 스펙으로 접속만 해 본다. 결과는 행 버튼 표시로.
+    fn test_profile(&mut self, name: &str) {
+        if self.busy {
+            self.status = t(Msg::StRunning).into();
+            return;
+        }
+        match Vault::open_default().and_then(|v| v.get(name)) {
+            Ok(Some(spec)) => {
+                self.busy = true;
+                self.status = t(Msg::StTesting).into();
+                self.conn_win.set_test_mark(name, TestMark::Testing);
+                self.panel_op = Some((name.to_string(), ConnState::Testing));
+                if self.conn_win.panel.profile_name() == name {
+                    self.conn_win.panel.set_state(ConnState::Testing);
+                }
+                self.worker.send(worker::Cmd::Test(spec));
+            }
+            Ok(None) => self.status = tf(Msg::StTestFailed, &[name]),
+            Err(e) => self.status = tf(Msg::StTestFailed, &[&e.to_string()]),
+        }
+        self.conn_win.redraw();
+    }
+
     fn login_profile(&mut self, name: &str) {
+        if self.busy {
+            self.status = t(Msg::StRunning).into();
+            return;
+        }
         match Vault::open_default().and_then(|v| v.get(name)) {
             Ok(Some(spec)) => {
                 self.conn_win.panel.fill(name, &spec);
@@ -620,7 +685,11 @@ impl App {
         self.busy = true;
         self.status = t(Msg::StRunning).into();
         self.log.clear();
-        self.worker.send(worker::Cmd::Run(src));
+        // 신호등이 초록이 아닌 서버(빨강·파랑·확인 중·모름)에는 실행 전 빠른 포트 판정을 건다(사용자 09-14).
+        let pol = *self.conn_win.policy();
+        let light = self.conn_win.status_of(self.conn_win.active_name());
+        let preflight = (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
+        self.worker.send(worker::Cmd::Run { src, preflight });
         self.redraw();
     }
 
@@ -686,6 +755,11 @@ impl App {
                     self.log.push(self.status.clone());
                     self.grid.set_messages(self.log.clone());
                     self.busy = false;
+                    // 실행 중 접속성 오류 확인 → 활성 서버 신호등 즉시 갱신(사용자 09-14).
+                    if probe::is_connection_error(error.code, &error.message) {
+                        let name = self.conn_win.active_name().to_string();
+                        self.conn_win.note_failure(&name);
+                    }
                 }
             }
         }
@@ -1149,6 +1223,7 @@ impl ApplicationHandler<Wake> for App {
                     }
                     ConnWinAction::Panel(a) => self.handle_panel_action(a),
                     ConnWinAction::Login(name) => self.login_profile(&name),
+                    ConnWinAction::TestProfile(name) => self.test_profile(&name),
                     ConnWinAction::Delete(name) => self.delete_profile(&name),
                 }
             }
@@ -1416,15 +1491,20 @@ fn main() {
         primary: false,
         started: Instant::now(),
         next_blink: Instant::now(),
+        panel_op: None,
     };
     app.grid.set_row_snap(row_snap);
     app.editors.set_rulers(rulers);
     {
-        let enabled = app.settings.flag("probe.enabled");
-        let max_retries = app.settings.int("probe.max_retries").max(0) as u32;
-        let timeout = app.settings.int("probe.timeout").max(1) as u64;
-        app.conn_win
-            .set_probe(probe_hub, enabled, max_retries, timeout);
+        let secs = |k: &str, min: i64| Duration::from_secs(app.settings.int(k).max(min) as u64);
+        let policy = probe::ProbePolicy {
+            enabled: app.settings.flag("probe.enabled"),
+            max_retries: app.settings.int("probe.max_retries").max(0) as u32,
+            timeout: secs("probe.timeout", 1),
+            retry_delay: secs("probe.retry_delay", 1),
+            interval: secs("probe.interval", 5),
+        };
+        app.conn_win.set_probe(probe_hub, policy);
     }
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);

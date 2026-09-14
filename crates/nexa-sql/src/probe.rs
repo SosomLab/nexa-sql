@@ -2,8 +2,13 @@
 //!
 //! - **무엇을**: 프로필의 호스트·포트에 TCP 연결만 시도한다(DB 로그인 없음 · SYN 1개 · 즉시 닫음). 파일 DB·호스트 없음은 대상 아님.
 //! - **누구를**: **한 번 이상 접속에 성공한 프로필만**(사용자 09-14) — `<설정 폴더>/connected.list`(이름 한 줄씩)로 기억.
-//! - **언제**: 접속 창을 열 때 한 번. 실패하면 2초 → 4 → 8 … **지수 증가**(상한 60초)로 재시도하되 `probe.max_retries`(기본 5)를
-//!   넘기면 멈춘다(빨강 고정). 성공하면 다시 묻지 않는다(창을 다시 열 때만). 창이 닫혀 있으면 아무것도 하지 않는다.
+//! - **언제**: 접속 창을 열 때 한 번, 그 뒤 창이 열려 있는 동안 `probe.interval`(기본 60초)마다 **주기 갱신**(사용자 09-14).
+//!   실패하면 그 시점부터 **횟수를 누적**하며 `probe.retry_delay`(기본 2초) → ×2 → ×4 … 지수 증가(상한 = 주기)로 빠르게 재시도하되
+//!   `probe.max_retries`(기본 5)를 넘기면 주기 갱신으로만 돌아간다(누적은 계속). 성공하면 횟수 0 · 다음은 주기. 창이 닫혀 있으면 주기 갱신은 멈춘다.
+//! - **즉시 갱신**: 접속 창의 Connect/Test 실패 · SQL 실행 중 **접속성 오류**(`is_connection_error`)가 확인되면 그 서버만 바로 다시 묻는다
+//!   (창이 닫혀 있어도 — 다음에 열 때 최신 상태가 보인다 · 사용자 09-14).
+//! - **실행 전 빠른 판정**: 워커는 신호등이 초록이 아니거나 직전 실행이 접속성 오류였으면 쿼리를 보내기 전에 같은 `probe_once`로
+//!   포트를 먼저 본다 — 죽은 서버에 드라이버 타임아웃(수십 초)을 기다리지 않고 `probe.timeout` 안에 실패를 알린다(사용자 09-14).
 //! - **부하**: 별도 스레드 하나가 **순차**로 처리(동시 연결 0) · 타임아웃 `probe.timeout`(기본 2초) · UI 스레드는 요청/결과 전달만.
 //!
 //! 색 = 초록(포트 연결 가능) · 노랑(확인 중) · **파랑(IP는 살아 있는데 포트가 안 열림** — 연결 거부 또는 ICMP 응답) · 빨강(도달 불가) · 회색(대상 아님/모름).
@@ -88,7 +93,7 @@ impl ProbeHub {
 
 /// 이름 풀이(첫 주소) + `connect_timeout`. 성공 = Up(바로 닫음) · **연결 거부** = 호스트 살아 있음(PortClosed) ·
 /// 타임아웃/불가 = ICMP 에코 1회(Windows `IcmpSendEcho` · 관리자 권한 불필요)로 호스트 생존을 한 번 더 본다 → 응답이면 PortClosed, 아니면 Down.
-fn probe_once(host: &str, port: u16, timeout: Duration) -> Outcome {
+pub(crate) fn probe_once(host: &str, port: u16, timeout: Duration) -> Outcome {
     let Ok(mut addrs) = (host, port).to_socket_addrs() else {
         return Outcome::Down;
     };
@@ -169,10 +174,79 @@ fn icmp_alive(ip: std::net::IpAddr, timeout: Duration) -> bool {
     }
 }
 
-/// 재시도 간격 — 2초 × 2^(attempt-1) · 상한 60초.
-pub(crate) fn backoff(attempt: u32) -> Duration {
-    let secs = 2u64.saturating_mul(1u64 << attempt.saturating_sub(1).min(6));
-    Duration::from_secs(secs.min(60))
+/// 프로브 정책(설정 `probe.*` — 부팅 시 한 번 주입).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProbePolicy {
+    pub enabled: bool,
+    /// 실패 뒤 빠른 재시도 최대 횟수(`probe.max_retries`).
+    pub max_retries: u32,
+    /// 시도 1회 TCP 타임아웃(`probe.timeout`).
+    pub timeout: Duration,
+    /// 첫 재시도 대기(`probe.retry_delay`) — 이후 ×2.
+    pub retry_delay: Duration,
+    /// 주기 갱신 간격(`probe.interval`) — 재시도 대기의 상한이기도 하다.
+    pub interval: Duration,
+}
+
+impl Default for ProbePolicy {
+    fn default() -> Self {
+        ProbePolicy {
+            enabled: true,
+            max_retries: 5,
+            timeout: Duration::from_secs(2),
+            retry_delay: Duration::from_secs(2),
+            interval: Duration::from_secs(60),
+        }
+    }
+}
+
+/// 재시도 간격 — `base` × 2^(attempt-1) · 상한 `cap`(최소 1초).
+pub(crate) fn backoff(attempt: u32, base: Duration, cap: Duration) -> Duration {
+    let mul = 1u32 << attempt.saturating_sub(1).min(16);
+    base.saturating_mul(mul).min(cap).max(Duration::from_secs(1))
+}
+
+/// 실행/접속 오류가 **서버 도달성** 문제로 보이는가(사용자 09-14 — 이때만 신호등을 즉시 갱신).
+/// 문법·권한 오류에 프로브를 낭비하지 않도록 보수적으로 고른다: Oracle ORA-코드(네트워크·세션 단절) · TDS/소켓 계열 문구.
+pub(crate) fn is_connection_error(code: Option<i64>, message: &str) -> bool {
+    // Oracle: 00028/01041 세션 종료 · 03113 EOF · 03114 not connected · 03135 lost contact · 03150 통신 채널 ·
+    // 12170 timeout · 12514 service unknown(리스너는 산 상태 → 프로브 가치 있음) · 12541 no listener · 12543/12545 host · 12560 protocol adapter.
+    if let Some(c) = code {
+        if matches!(
+            c,
+            28 | 1041 | 3113 | 3114 | 3135 | 3150 | 12170 | 12514 | 12541 | 12543 | 12545 | 12560
+        ) {
+            return true;
+        }
+    }
+    let m = message.to_ascii_lowercase();
+    [
+        "connection refused",
+        "connection reset",
+        "connection closed",
+        "connection timed out",
+        "connect timeout",
+        "timed out",
+        "not connected",
+        "no listener",
+        "tns:",
+        "unreachable",
+        "broken pipe",
+        "end-of-file on communication channel",
+        "lost contact",
+        "forcibly closed",
+        "tds",
+        "socket",
+        "os error 10060",
+        "os error 10061",
+        "os error 10054",
+        "os error 111",
+        "os error 110",
+        "os error 104",
+        "failed to lookup",
+    ]
+    .iter()
+    .any(|k| m.contains(k))
 }
 
 /// 프로필별 신호등 상태 + 재시도 스케줄.
@@ -192,13 +266,14 @@ impl ProbeEntry {
         }
     }
 
-    /// 결과 반영 — Up이 아니면(포트 닫힘·도달 불가) 지수 백오프 예약(최대 `max_retries`번).
-    pub(crate) fn apply(&mut self, outcome: Outcome, now: Instant, max_retries: u32) {
+    /// 결과 반영 — Up이면 횟수 0 · 다음은 주기. 아니면(포트 닫힘·도달 불가) 횟수 누적 · `max_retries` 안에서는 지수 백오프,
+    /// 넘기면 주기 갱신으로만(누적은 계속 — 사용자 09-14 "연결이 안 되면 그때부터 횟수 누적").
+    pub(crate) fn apply(&mut self, outcome: Outcome, now: Instant, pol: &ProbePolicy) {
         match outcome {
             Outcome::Up => {
                 self.status = ProbeStatus::Up;
                 self.attempts = 0;
-                self.next_at = None;
+                self.next_at = Some(now + pol.interval);
             }
             Outcome::PortClosed | Outcome::Down => {
                 self.status = if outcome == Outcome::Down {
@@ -206,9 +281,21 @@ impl ProbeEntry {
                 } else {
                     ProbeStatus::PortClosed
                 };
-                self.attempts += 1;
-                self.next_at = (self.attempts <= max_retries).then(|| now + backoff(self.attempts));
+                self.attempts = self.attempts.saturating_add(1);
+                let wait = if self.attempts <= pol.max_retries {
+                    backoff(self.attempts, pol.retry_delay, pol.interval)
+                } else {
+                    pol.interval
+                };
+                self.next_at = Some(now + wait);
             }
+        }
+    }
+
+    /// 지금 바로 다시 묻도록 당긴다(누적 횟수는 보존). 이미 확인 중이면 그대로.
+    pub(crate) fn poke(&mut self, now: Instant) {
+        if self.status != ProbeStatus::Checking {
+            self.next_at = Some(now);
         }
     }
 }
@@ -254,29 +341,59 @@ pub(crate) fn mark_connected(name: &str) {
 mod tests {
     use super::*;
 
+    const S: fn(u64) -> Duration = Duration::from_secs;
+
     #[test]
     fn backoff_doubles_and_caps() {
-        assert_eq!(backoff(1).as_secs(), 2);
-        assert_eq!(backoff(2).as_secs(), 4);
-        assert_eq!(backoff(4).as_secs(), 16);
-        assert_eq!(backoff(20).as_secs(), 60);
+        assert_eq!(backoff(1, S(2), S(60)).as_secs(), 2);
+        assert_eq!(backoff(2, S(2), S(60)).as_secs(), 4);
+        assert_eq!(backoff(4, S(2), S(60)).as_secs(), 16);
+        assert_eq!(backoff(20, S(2), S(60)).as_secs(), 60, "상한 = 주기");
+        assert_eq!(backoff(1, S(5), S(60)).as_secs(), 5, "base 설정");
+        assert_eq!(backoff(3, S(10), S(30)).as_secs(), 30);
     }
 
     #[test]
-    fn entry_stops_after_max_retries() {
+    fn entry_accumulates_then_falls_back_to_interval() {
         let now = Instant::now();
+        let pol = ProbePolicy {
+            max_retries: 3,
+            retry_delay: S(2),
+            interval: S(60),
+            ..ProbePolicy::default()
+        };
         let mut e = ProbeEntry::fresh(now);
-        for _ in 0..3 {
-            e.apply(Outcome::Down, now, 3);
+        for (i, want) in [2u64, 4, 8].iter().enumerate() {
+            e.apply(Outcome::Down, now, &pol);
             assert_eq!(e.status, ProbeStatus::Down);
-            assert!(e.next_at.is_some());
+            assert_eq!(e.attempts, i as u32 + 1, "실패마다 누적");
+            assert_eq!(e.next_at, Some(now + S(*want)), "지수 백오프");
         }
-        e.apply(Outcome::PortClosed, now, 3);
+        e.apply(Outcome::PortClosed, now, &pol);
         assert_eq!(e.status, ProbeStatus::PortClosed);
-        assert!(e.next_at.is_none(), "최대 횟수 뒤엔 재시도 없음");
-        e.apply(Outcome::Up, now, 3);
+        assert_eq!(e.attempts, 4, "최대 횟수를 넘겨도 누적");
+        assert_eq!(e.next_at, Some(now + S(60)), "최대 횟수 뒤엔 주기 갱신");
+        e.apply(Outcome::Up, now, &pol);
         assert_eq!(e.status, ProbeStatus::Up);
         assert_eq!(e.attempts, 0);
+        assert_eq!(e.next_at, Some(now + S(60)), "성공해도 주기 갱신");
+        e.poke(now + S(5));
+        assert_eq!(e.next_at, Some(now + S(5)), "즉시 갱신 당김");
+        e.status = ProbeStatus::Checking;
+        e.next_at = None;
+        e.poke(now);
+        assert_eq!(e.next_at, None, "확인 중이면 중복 요청 없음");
+    }
+
+    #[test]
+    fn connection_error_classifier() {
+        assert!(is_connection_error(Some(12541), "ORA-12541: TNS:no listener"));
+        assert!(is_connection_error(Some(3113), "end-of-file on communication channel"));
+        assert!(is_connection_error(None, "An existing connection was forcibly closed (os error 10054)"));
+        assert!(is_connection_error(None, "connection refused"));
+        assert!(!is_connection_error(Some(942), "ORA-00942: table or view does not exist"));
+        assert!(!is_connection_error(Some(1017), "invalid username/password; logon denied"));
+        assert!(!is_connection_error(None, "Incorrect syntax near 'SELEC'."));
     }
 
     #[test]

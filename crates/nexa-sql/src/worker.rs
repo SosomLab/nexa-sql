@@ -3,13 +3,23 @@
 //!
 //! 연결 프로필(T-16b): `Connect("prod")`처럼 **이름**이 오면 `nsql-vault`에서 푼다. 저장소는 호출마다
 //! 연다 — 다른 창·CLI 인스턴스가 방금 저장한 프로필도 그대로 보인다(메모리 캐시 없음).
+//!
+//! 영향도 분리(사용자 09-14):
+//! - **패닉 격리** — 명령 하나가 드라이버 안에서 패닉해도 워커 스레드는 살아남는다(`catch_unwind`). 세션은 버리고(상태 불명)
+//!   오류 이벤트 + `Disconnected`를 내보내 UI가 `busy`에 갇히지 않는다.
+//! - **실행 전 빠른 판정**(`Cmd::Run.preflight`) — UI가 신호등이 초록이 아니라고 알리거나 직전 실행이 접속성 오류였으면,
+//!   쿼리를 드라이버에 넘기기 전에 호스트:포트 TCP 연결을 `probe.timeout` 안에 먼저 본다. 실패면 드라이버의 긴 타임아웃을
+//!   기다리지 않고 바로 오류를 낸다(쿼리는 보내지 않음).
 
+use crate::probe;
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{tf, Msg};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::ConnectSpec;
 use nsql_vault::Vault;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc;
+use std::time::Duration;
 
 pub(crate) enum Cmd {
     /// 접속 문자열 **또는 프로필 이름**(실행 인자 경로).
@@ -24,7 +34,11 @@ pub(crate) enum Cmd {
         name: String,
         spec: ConnectSpec,
     },
-    Run(String),
+    Run {
+        src: String,
+        /// `Some(timeout)` = 실행 전 호스트:포트 빠른 판정(신호등이 초록이 아닐 때 UI가 켠다).
+        preflight: Option<Duration>,
+    },
     Quit,
 }
 
@@ -118,8 +132,13 @@ pub(crate) fn spawn(
                 let _ = etx.send(e);
                 wake();
             };
+            // 활성 세션의 호스트:포트(빠른 판정용) · 직전 실행이 접속성 오류였는가(다음 실행은 무조건 빠른 판정).
+            let mut active_ep: Option<(String, u16)> = None;
+            let mut suspect = false;
+            let endpoint = |spec: &ConnectSpec| spec.host.clone().zip(spec.port);
             while let Ok(cmd) = rx.recv() {
-                match cmd {
+                // 패닉 격리 — 한 명령의 패닉이 워커(=앱 전체)를 죽이지 않는다.
+                let r = catch_unwind(AssertUnwindSafe(|| match cmd {
                     Cmd::ConnectSpec(spec) => {
                         let mut last_err: Option<String> = None;
                         let ok = runner.connect(&spec, &mut |e: RunEvent| {
@@ -128,6 +147,10 @@ pub(crate) fn spawn(
                             }
                             emit(e);
                         });
+                        if ok {
+                            active_ep = endpoint(&spec);
+                            suspect = false;
+                        }
                         let _ = ctx_tx.send(if ok {
                             ConnOutcome::Connected(spec.redacted())
                         } else {
@@ -135,6 +158,7 @@ pub(crate) fn spawn(
                         });
                         let _ = dtx.send(None);
                         wake();
+                        true
                     }
                     Cmd::Test(spec) => {
                         let r = nsql_run::test_connection(&spec, &mut test_opener);
@@ -147,15 +171,19 @@ pub(crate) fn spawn(
                         });
                         let _ = dtx.send(None);
                         wake();
+                        true
                     }
                     Cmd::Disconnect => {
                         if let Some(mut s) = runner.session.take() {
                             let _ = s.commit();
                         }
+                        active_ep = None;
+                        suspect = false;
                         emit(RunEvent::Disconnected);
                         let _ = ctx_tx.send(ConnOutcome::Disconnected);
                         let _ = dtx.send(None);
                         wake();
+                        true
                     }
                     Cmd::SaveSpec { name, spec } => {
                         let r = Vault::open_default()
@@ -167,33 +195,80 @@ pub(crate) fn spawn(
                         });
                         let _ = dtx.send(None);
                         wake();
+                        true
                     }
                     Cmd::Connect(target) => {
                         match resolve_target(&target, default_dialect) {
                             Ok(spec) => {
-                                runner.connect(&spec, &mut emit);
+                                if runner.connect(&spec, &mut emit) {
+                                    active_ep = endpoint(&spec);
+                                    suspect = false;
+                                }
                             }
                             Err(e) => emit(err(e)),
                         }
                         let _ = dtx.send(None);
                         wake();
+                        true
                     }
-                    Cmd::Run(src) => {
+                    Cmd::Run { src, preflight } => {
+                        // 실행 전 빠른 판정 — 신호등이 초록이 아니거나(UI) 직전 실행이 접속성 오류였으면(워커) 포트를 먼저 본다.
+                        let want = preflight.or_else(|| suspect.then(|| Duration::from_secs(2)));
+                        if let (Some(timeout), Some((host, port))) = (want, active_ep.as_ref()) {
+                            let t = std::time::Instant::now();
+                            if probe::probe_once(host, *port, timeout) != probe::Outcome::Up {
+                                let ep = format!("{host}:{port}");
+                                let ms = t.elapsed().as_millis().to_string();
+                                emit(err(tf(Msg::ErrServerUnreachable, &[&ep, &ms])));
+                                let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
+                                wake();
+                                return true;
+                            }
+                        }
                         // 치환 변수 프롬프트는 최소 GUI에서 빈 값(T-16c에서 대화상자).
                         let mut prompt = |_: &str| Some(String::new());
-                        let errs = runner.run_script(&src, &mut prompt, &mut emit);
+                        let mut conn_err = false;
+                        let errs = runner.run_script(&src, &mut prompt, &mut |e: RunEvent| {
+                            if let RunEvent::Error { error, .. } = &e {
+                                conn_err |= probe::is_connection_error(error.code, &error.message);
+                            }
+                            emit(e);
+                        });
+                        suspect = conn_err;
                         let _ = dtx.send(if errs > 0 {
                             Some(tf(Msg::WkErrors, &[&errs.to_string()]))
                         } else {
                             None
                         });
                         wake();
+                        true
                     }
                     Cmd::Quit => {
                         if let Some(s) = runner.session.as_mut() {
                             let _ = s.commit();
                         }
-                        break;
+                        false
+                    }
+                }));
+                match r {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(payload) => {
+                        // 드라이버/엔진 패닉 — 세션은 상태 불명이라 버린다. UI는 오류 + 끊김을 받아 busy를 푼다.
+                        let what = payload
+                            .downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_default();
+                        runner.session = None;
+                        runner.connection = None;
+                        active_ep = None;
+                        suspect = false;
+                        emit(err(tf(Msg::WkPanic, &[&what])));
+                        emit(RunEvent::Disconnected);
+                        let _ = ctx_tx.send(ConnOutcome::Disconnected);
+                        let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
+                        wake();
                     }
                 }
             }

@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (14차 · win) — 신호등 주기/즉시 갱신 ✅ · 실행 전 빠른 판정 ✅ · 워커 패닉 격리 ✅ · 행 Test/Connect 버튼 ✅
+
+`ProbePolicy`(`probe.interval` 60 · `retry_delay` 2 · `max_retries` 5 · `timeout` 2) — 창 열려 있는 동안 주기 갱신 · 실패부터 횟수 누적(초과 후 주기만) · Connect/Test 실패·실행 접속성 오류 시 그 서버 즉시 재프로브(창 닫혀 있어도) · 신호등이 초록이 아닌 서버에 쿼리 = TCP 빠른 판정 먼저(`ErrServerUnreachable`) · 워커 `catch_unwind`(세션 버림 · busy 해제) · 접속 창 행 아이콘 3열(신호등·Test 고리 결과색·Connect ▶) · 패널 상태는 작업 프로필 하나에 묶임(`panel_op`) · Connect 성공 = 활성 탭 적용(탭 0개면 새 탭) + 닫기. **다음**: T-31b · T-54(탭별 세션 = 영향도 분리 나머지) · nexa-grid(U-3) · T-48. GUI 실행 중. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (13차 · win) — Golden식 접속 창(T-31) ✅ · 앱 아이콘(Union) ✅
 
 별도 창(640×520 · 기본 목록만 · New/Edit 시 창이 오른쪽으로 커지며 폼 슬라이딩 · 접속 명칭 맨 위 · 더블클릭 접속 · 삭제) · **서버 신호등**(`probe.rs` · 한 번 이상 접속한 프로필만 · 지수 재시도 상한) · Ctrl+L/툴바/메뉴 · 부팅 시 열림 · 접속 시 닫힘 · 메인 창 본문 전폭 · 그리드 컬럼 폭 조절(커서 피드백) · 아이콘은 코드로 그림(정적 자원 0 · 풀블리드). 아이콘 = `packaging/branding/icon.svg` SSOT → PNG/ico/icns/rgba(`scripts/pack_icon.py`) → 3창 런타임 아이콘(작업표시줄 실기 ✅). **다음**: T-31b(Import/Export·Pin·정렬) → nexa-grid(U-3) → T-48 페치 모델 · T-57 인텔리전스. GUI 실행 중. → [journal](journal/2026-09-14.md)

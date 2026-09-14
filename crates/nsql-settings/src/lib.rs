@@ -348,6 +348,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "2",
     },
     Entry {
+        key: "probe.interval",
+        cat: Msg::CatConnection,
+        label: Msg::LblProbeInterval,
+        desc: Msg::DescProbeInterval,
+        kind: SettingKind::Int { min: 5, max: 3600 },
+        default: "60",
+    },
+    Entry {
+        key: "probe.retry_delay",
+        cat: Msg::CatConnection,
+        label: Msg::LblProbeRetryDelay,
+        desc: Msg::DescProbeRetryDelay,
+        kind: SettingKind::Int { min: 1, max: 600 },
+        default: "2",
+    },
+    Entry {
         key: "session.mode",
         cat: Msg::CatSession,
         label: Msg::LblSessionMode,

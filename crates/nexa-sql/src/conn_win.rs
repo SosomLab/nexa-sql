@@ -7,7 +7,7 @@
 //! 창 골격은 로그 창과 같다(winit + softbuffer + nexa-ctl 래스터). I/O(저장소·워커)는 전부 호스트 몫 — [`ConnWinAction`]으로 요청.
 
 use crate::connect::{ConnectPanel, PanelAction};
-use crate::probe::{self, ProbeEntry, ProbeHub, ProbeReq, ProbeStatus};
+use crate::probe::{self, ProbeEntry, ProbeHub, ProbePolicy, ProbeReq, ProbeStatus};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -19,7 +19,6 @@ use nsql_vault::{Profile, Vault};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::time::Duration;
 use std::time::Instant;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -32,11 +31,31 @@ pub(crate) enum ConnWinAction {
     Paint,
     /// 폼의 요청(접속·테스트·저장·프로필 로드) — 호스트 `handle_panel_action`.
     Panel(PanelAction),
-    /// 목록 더블클릭 — 저장소에서 읽어 폼에 채우고 바로 접속.
+    /// 목록 더블클릭 · 행의 접속 버튼 — 저장소에서 읽어 폼에 채우고 바로 접속(성공 시 활성 탭에 적용 · 창 닫힘).
     Login(String),
+    /// 행의 테스트 버튼 — 접속만 해 보고 끊는다(결과는 버튼 위에 표시 · 버튼은 계속 누를 수 있다 · 사용자 09-14).
+    TestProfile(String),
     /// 목록에서 프로필 삭제.
     Delete(String),
 }
+
+/// 행 테스트 버튼 위에 얹는 마지막 결과(사용자 09-14 — 형태·기능은 그대로, 표시만 바뀐다).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TestMark {
+    Testing,
+    Ok,
+    Failed,
+}
+
+/// 행 안의 아이콘 버튼(신호등 다음 두 칸).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowBtn {
+    Test,
+    Connect,
+}
+
+/// 고정 폭 아이콘 열 수 — 신호등 · 테스트 · 접속.
+const ICON_COLS: i32 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WFocus {
@@ -62,6 +81,10 @@ pub(crate) struct ConnWin {
     /// 선택(shown 기준 위치).
     sel: Option<usize>,
     hover: Option<usize>,
+    /// 마우스가 올라간 행 아이콘 버튼.
+    hover_btn: Option<(usize, RowBtn)>,
+    /// 프로필별 마지막 테스트 결과(행 버튼 표시).
+    test_marks: HashMap<String, TestMark>,
     filter: TextBox,
     btn_new: Button,
     btn_edit: Button,
@@ -80,9 +103,9 @@ pub(crate) struct ConnWin {
     hub: Option<ProbeHub>,
     /// 한 번 이상 접속 성공한 프로필(대상 집합).
     connected: HashSet<String>,
-    probe_enabled: bool,
-    probe_max_retries: u32,
-    probe_timeout: Duration,
+    policy: ProbePolicy,
+    /// 지금 세션이 붙어 있는 프로필(실행 중 접속성 오류 → 이 서버를 즉시 재프로브).
+    active: Option<String>,
 }
 
 const SLIDE_MS: f32 = 200.0;
@@ -109,6 +132,8 @@ impl ConnWin {
             shown: Vec::new(),
             sel: None,
             hover: None,
+            hover_btn: None,
+            test_marks: HashMap::new(),
             filter: TextBox::new(t(Msg::PhFilter)),
             btn_new: Button::new(t(Msg::BtnNew)),
             btn_edit: Button::new(t(Msg::BtnEdit)),
@@ -123,26 +148,40 @@ impl ConnWin {
             probes: HashMap::new(),
             hub: None,
             connected: probe::connected_names(),
-            probe_enabled: true,
-            probe_max_retries: 5,
-            probe_timeout: Duration::from_secs(2),
+            policy: ProbePolicy::default(),
+            active: None,
         };
         w.refresh_profiles(None);
         w
     }
 
-    /// 프로브 스레드·설정 주입(부팅 시 한 번).
-    pub(crate) fn set_probe(
-        &mut self,
-        hub: ProbeHub,
-        enabled: bool,
-        max_retries: u32,
-        timeout_secs: u64,
-    ) {
+    /// 프로브 스레드·정책 주입(부팅 시 한 번).
+    pub(crate) fn set_probe(&mut self, hub: ProbeHub, policy: ProbePolicy) {
         self.hub = Some(hub);
-        self.probe_enabled = enabled;
-        self.probe_max_retries = max_retries;
-        self.probe_timeout = Duration::from_secs(timeout_secs.max(1));
+        self.policy = policy;
+    }
+
+    pub(crate) fn policy(&self) -> &ProbePolicy {
+        &self.policy
+    }
+
+    /// 지금 세션이 붙은 프로필 이름(없으면 빈 문자열).
+    pub(crate) fn active_name(&self) -> &str {
+        self.active.as_deref().unwrap_or("")
+    }
+
+    /// 이름의 신호등 상태(대상이 아니면 None).
+    pub(crate) fn status_of(&self, name: &str) -> Option<ProbeStatus> {
+        self.probes.get(name).map(|e| e.status)
+    }
+
+    /// 행 테스트 버튼의 결과 표시를 바꾼다(버튼 기능은 그대로).
+    pub(crate) fn set_test_mark(&mut self, name: &str, mark: TestMark) {
+        if name.is_empty() {
+            return;
+        }
+        self.test_marks.insert(name.to_string(), mark);
+        self.redraw();
     }
 
     /// 접속 성공 — 이 프로필을 신호등 **대상**에 올린다(영속). 신호등 자체는 바꾸지 않는다 —
@@ -153,11 +192,51 @@ impl ConnWin {
         }
         probe::mark_connected(name);
         self.connected.insert(name.to_string());
+        self.active = Some(name.to_string());
     }
 
-    /// 대상 프로필(한 번 이상 접속 · 호스트/포트 있음)에 프로브를 예약 — 창을 열 때 한 번.
+    /// 세션이 끊겼다(Disconnect) — 활성 프로필 해제.
+    pub(crate) fn clear_active(&mut self) {
+        self.active = None;
+    }
+
+    /// 접속 실패가 **확인**됐다(Connect/Test 실패 · 실행 중 접속성 오류) — 그 서버만 지금 바로 다시 묻는다(사용자 09-14).
+    /// 대상 집합(한 번 이상 접속)에 없던 프로필도 이번엔 묻는다. 창이 닫혀 있어도 보낸다 — 다음에 열 때 최신 상태가 보이도록.
+    pub(crate) fn note_failure(&mut self, name: &str) {
+        if !self.policy.enabled || name.is_empty() {
+            return;
+        }
+        let Some(p) = self.profiles.iter().find(|p| p.name == name) else {
+            return;
+        };
+        let (Some(host), Some(port)) = (p.spec.host.clone(), p.spec.port) else {
+            return;
+        };
+        let now = Instant::now();
+        let e = self
+            .probes
+            .entry(name.to_string())
+            .or_insert_with(|| ProbeEntry::fresh(now));
+        if e.status == ProbeStatus::Checking {
+            return;
+        }
+        if let Some(hub) = &self.hub {
+            hub.request(ProbeReq {
+                name: name.to_string(),
+                host,
+                port,
+                timeout: self.policy.timeout,
+            });
+            e.status = ProbeStatus::Checking;
+            e.next_at = None;
+            self.redraw();
+        }
+    }
+
+    /// 대상 프로필(한 번 이상 접속 · 호스트/포트 있음)을 지금 바로 묻도록 예약 — 창을 열 때.
+    /// 기존 항목은 누적 횟수를 보존한 채 당긴다(`poke`) · 새 항목만 `fresh`.
     fn schedule_probes(&mut self) {
-        if !self.probe_enabled || self.window.is_none() {
+        if !self.policy.enabled || self.window.is_none() {
             return;
         }
         let now = Instant::now();
@@ -165,13 +244,17 @@ impl ConnWin {
             if !self.connected.contains(&p.name) || p.spec.host.is_none() || p.spec.port.is_none() {
                 continue;
             }
-            self.probes.insert(p.name.clone(), ProbeEntry::fresh(now));
+            self.probes
+                .entry(p.name.clone())
+                .or_insert_with(|| ProbeEntry::fresh(now))
+                .poke(now);
         }
     }
 
     /// 예약된 프로브를 보낸다(순차 스레드) · 다음 예약 시각을 돌려준다(호스트 WaitUntil).
+    /// 주기 갱신(`probe.interval`)은 창이 열려 있을 때만 돈다.
     pub(crate) fn tick(&mut self, now: Instant) -> Option<Instant> {
-        if self.window.is_none() || !self.probe_enabled {
+        if self.window.is_none() || !self.policy.enabled {
             return None;
         }
         let Some(hub) = &self.hub else { return None };
@@ -188,7 +271,7 @@ impl ConnWin {
                             name: p.name.clone(),
                             host: h,
                             port,
-                            timeout: self.probe_timeout,
+                            timeout: self.policy.timeout,
                         });
                         e.status = ProbeStatus::Checking;
                         e.next_at = None;
@@ -212,7 +295,7 @@ impl ConnWin {
         let mut changed = false;
         while let Some(r) = hub.try_recv() {
             if let Some(e) = self.probes.get_mut(&r.name) {
-                e.apply(r.outcome, now, self.probe_max_retries);
+                e.apply(r.outcome, now, &self.policy);
                 changed = true;
             }
         }
@@ -318,7 +401,6 @@ impl ConnWin {
         win.set_ime_allowed(true);
         self.window = Some(win);
         self.refresh_profiles(None);
-        self.probes.clear();
         self.schedule_probes();
         self.detail_t = 0.0;
         self.anim = None;
@@ -451,6 +533,27 @@ impl ConnWin {
         (i < self.shown.len()).then_some(i)
     }
 
+    /// 행 아이콘 버튼 명중 — 신호등 다음 두 칸(테스트 · 접속).
+    fn row_btn_at(&self, p: Point) -> Option<(usize, RowBtn)> {
+        let row = self.row_at(p)?;
+        let sw = self.row_h;
+        let dx = p.x - self.list.x;
+        if dx >= sw && dx < sw * 2 {
+            Some((row, RowBtn::Test))
+        } else if dx >= sw * 2 && dx < sw * 3 {
+            Some((row, RowBtn::Connect))
+        } else {
+            None
+        }
+    }
+
+    fn name_at(&self, row: usize) -> Option<String> {
+        self.shown
+            .get(row)
+            .and_then(|&i| self.profiles.get(i))
+            .map(|p| p.name.clone())
+    }
+
     fn selected_name(&self) -> Option<String> {
         self.sel
             .and_then(|s| self.shown.get(s))
@@ -503,8 +606,10 @@ impl ConnWin {
                     y: self.cursor.1,
                 };
                 let h = self.row_at(p);
-                if h != self.hover {
+                let hb = self.row_btn_at(p);
+                if h != self.hover || hb != self.hover_btn {
                     self.hover = h;
+                    self.hover_btn = hb;
                     self.redraw();
                 }
                 self.route(InputEvent::MouseMove { x: p.x, y: p.y }, &mut out);
@@ -670,6 +775,19 @@ impl ConnWin {
             } else if let Some(row) = self.row_at(p) {
                 self.set_focus(WFocus::List);
                 let now = Instant::now();
+                // 행 아이콘 버튼(테스트 · 접속) — 선택만 바꾸고 더블클릭 판정은 하지 않는다.
+                if let Some((_, b)) = self.row_btn_at(p) {
+                    self.sel = Some(row);
+                    self.last_click = None;
+                    if let Some(n) = self.name_at(row) {
+                        out.push(match b {
+                            RowBtn::Test => ConnWinAction::TestProfile(n),
+                            RowBtn::Connect => ConnWinAction::Login(n),
+                        });
+                    }
+                    self.redraw();
+                    return;
+                }
                 let double = matches!(self.last_click, Some((r, t)) if r == row && t.elapsed().as_millis() < DBLCLICK_MS);
                 self.sel = Some(row);
                 self.last_click = Some((row, now));
@@ -812,20 +930,24 @@ impl ConnWin {
             dc.fill_rect(Rect::new(l.x, l.y, 1, l.h), th.border);
             dc.fill_rect(Rect::new(l.right() - 1, l.y, 1, l.h), th.border);
             let rh = row_h;
-            // 첫 열 = 신호등(고정 폭) · 나머지는 비율.
+            // 앞 세 열 = 신호등 · 테스트 · 접속(고정 폭 · 아이콘) · 나머지는 비율.
             let sw = rh;
+            let icons_w = sw * ICON_COLS;
             let cols = [
                 (t(Msg::ColName).to_string(), 0.22),
                 (t(Msg::ColType).to_string(), 0.16),
                 (t(Msg::ColUser).to_string(), 0.20),
                 (t(Msg::ColTarget).to_string(), 0.42),
             ];
-            let lw_cols = l.w - sw;
+            let lw_cols = l.w - icons_w;
             let ty = |y: i32| y + (rh - dc_text_h(rh)) / 2;
             // 헤더
             dc.fill_rect(Rect::new(l.x, l.y, l.w, rh), th.chrome_bg);
             dc.fill_rect(Rect::new(l.x, l.y + rh - 1, l.w, 1), th.border);
-            let mut cx = l.x + sw + pad;
+            // 아이콘 열 머리 = 작은 아이콘(흐리게).
+            paint_test_btn(&mut dc, th, Rect::new(l.x + sw, l.y, sw, rh), None, false, true);
+            paint_connect_btn(&mut dc, th, Rect::new(l.x + sw * 2, l.y, sw, rh), false, true);
+            let mut cx = l.x + icons_w + pad;
             for (name, frac) in &cols {
                 let cw = (lw_cols as f32 * frac) as i32;
                 dc.text(
@@ -873,7 +995,24 @@ impl ConnWin {
                     Rect::new(l.x + (sw - dot) / 2 + 1, y + (rh - dot) / 2, dot, dot),
                     dot_color,
                 );
-                let mut cx = l.x + sw + pad;
+                // 행 버튼 — 테스트(마지막 결과 표시) · 접속.
+                let hb = |b: RowBtn| self.hover_btn == Some((row, b));
+                paint_test_btn(
+                    &mut dc,
+                    th,
+                    Rect::new(l.x + sw, y, sw, rh).intersection(&body),
+                    self.test_marks.get(&p.name).copied(),
+                    hb(RowBtn::Test),
+                    false,
+                );
+                paint_connect_btn(
+                    &mut dc,
+                    th,
+                    Rect::new(l.x + sw * 2, y, sw, rh).intersection(&body),
+                    hb(RowBtn::Connect),
+                    false,
+                );
+                let mut cx = l.x + icons_w + pad;
                 for ((_, frac), text) in cols.iter().zip(cells.iter()) {
                     let cw = (lw_cols as f32 * frac) as i32;
                     dc.text(
@@ -901,6 +1040,81 @@ impl ConnWin {
             self.redraw();
         }
     }
+}
+
+/// 행 테스트 버튼 — 고리(결과 색: 회색 없음 · 노랑 진행 · 초록 성공 · 빨강 실패) + 가운데 점. 호버 시 바탕.
+/// 결과가 와도 모양·기능은 같다(다시 누르면 재시도 · 사용자 09-14). `dim` = 헤더용 흐린 그림.
+fn paint_test_btn(
+    dc: &mut dyn DrawCtx,
+    th: &Theme,
+    cell: Rect,
+    mark: Option<TestMark>,
+    hover: bool,
+    dim: bool,
+) {
+    if cell.w <= 0 || cell.h <= 0 {
+        return;
+    }
+    let d = (cell.h * 3 / 5).max(8);
+    let x = cell.x + (cell.w - d) / 2;
+    let y = cell.y + (cell.h - d) / 2;
+    if hover {
+        dc.fill_rect(cell, th.panel_bg_alt);
+    }
+    let ring = match mark {
+        _ if dim => th.border,
+        Some(TestMark::Testing) => th.warn,
+        Some(TestMark::Ok) => th.ok,
+        Some(TestMark::Failed) => th.danger,
+        None => th.text_dim,
+    };
+    let bg = if hover { th.panel_bg_alt } else { th.panel_bg };
+    dc.fill_ellipse(Rect::new(x, y, d, d), ring);
+    let t = 2;
+    dc.fill_ellipse(Rect::new(x + t, y + t, d - 2 * t, d - 2 * t), bg);
+    // 가운데: 성공 = 채운 점 · 실패 = 가로 막대 · 진행/없음 = 작은 점.
+    let c = (x + d / 2, y + d / 2);
+    match mark {
+        Some(TestMark::Ok) if !dim => {
+            let r = (d / 4).max(2);
+            dc.fill_ellipse(Rect::new(c.0 - r, c.1 - r, 2 * r, 2 * r), th.ok);
+        }
+        Some(TestMark::Failed) if !dim => {
+            let r = (d / 4).max(2);
+            dc.fill_rect(Rect::new(c.0 - r, c.1 - 1, 2 * r, 2), th.danger);
+        }
+        _ => {
+            let r = (d / 6).max(1);
+            dc.fill_ellipse(Rect::new(c.0 - r, c.1 - r, 2 * r, 2 * r), ring);
+        }
+    }
+}
+
+/// 행 접속 버튼 — 오른쪽 삼각형(재생). 호버 시 바탕 + 강조색.
+fn paint_connect_btn(dc: &mut dyn DrawCtx, th: &Theme, cell: Rect, hover: bool, dim: bool) {
+    if cell.w <= 0 || cell.h <= 0 {
+        return;
+    }
+    let d = (cell.h * 3 / 5).max(8);
+    let x = cell.x + (cell.w - d) / 2;
+    let y = cell.y + (cell.h - d) / 2;
+    if hover {
+        dc.fill_rect(cell, th.panel_bg_alt);
+    }
+    let color = if dim {
+        th.border
+    } else if hover {
+        th.accent
+    } else {
+        th.text_dim
+    };
+    let inset = d / 6;
+    dc.fill_triangle(
+        (x + inset, y + inset),
+        (x + d - inset / 2, y + d / 2),
+        (x + inset, y + d - inset),
+        color,
+    );
 }
 
 /// 행 높이 안 글자 세로 위치 계산용(라스터 글꼴 높이 ≈ 행 높이 - 8px 여백).

@@ -158,6 +158,13 @@ impl Editors {
         self.conn_desc = d.into();
     }
 
+    /// 탭이 하나도 없으면 새 탭을 만든다(접속 성공을 활성 탭에 적용할 때 · 사용자 09-14).
+    pub(crate) fn ensure_tab(&mut self) {
+        if self.bufs.is_empty() {
+            self.new_tab(None);
+        }
+    }
+
     pub(crate) fn cur(&self) -> &TextBox {
         &self.bufs[self.active]
     }
