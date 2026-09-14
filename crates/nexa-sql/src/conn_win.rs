@@ -537,6 +537,7 @@ impl ConnWin {
         if let Some(n) = select {
             self.sel = self.shown.iter().position(|&i| self.profiles[i].name == n);
         }
+        self.sync_enabled();
         self.redraw();
     }
 
@@ -1098,6 +1099,16 @@ impl ConnWin {
         }
     }
 
+    /// Details·Delete는 선택 항목이 있을 때만(사용자 09-14) — Details는 펼쳐진 폼을 접는 용도로는 항상.
+    fn sync_enabled(&mut self) {
+        let has_sel = self.sel.is_some();
+        self.btn_edit.set_enabled(has_sel || self.detail_open());
+        self.btn_delete.set_enabled(has_sel);
+        if !has_sel && self.del_arm.is_some() {
+            self.disarm_delete();
+        }
+    }
+
     /// 상단 버튼 명중(index).
     fn top_btn_at(&self, p: Point) -> Option<usize> {
         [
@@ -1475,6 +1486,11 @@ impl ConnWin {
     }
 
     fn route(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
+        self.route_inner(ev, out);
+        self.sync_enabled();
+    }
+
+    fn route_inner(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
         let mut inv = Invalidations::default();
         // 우클릭 직전 — 편집 메뉴의 "붙여넣기" 활성 여부.
         if matches!(ev, InputEvent::RightDown { .. }) {
@@ -1746,8 +1762,16 @@ impl ConnWin {
             let p = Point { x, y };
             if self.panel.bounds().contains(p) && self.detail_t > 0.0 {
                 self.set_focus(WFocus::Panel);
-            } else if let Some(i) = self.top_btn_at(p) {
-                // 누른 버튼만 테두리(마지막으로 눌린 하나).
+            } else if let Some(i) = self.top_btn_at(p).filter(|&i| {
+                [
+                    &self.btn_new,
+                    &self.btn_edit,
+                    &self.btn_delete,
+                    &self.btn_close,
+                ][i]
+                    .is_enabled()
+            }) {
+                // 누른 버튼만 테두리(마지막으로 눌린 하나) — 비활성 버튼은 포커스도 받지 않는다.
                 self.focus_btn = i;
                 self.set_focus(WFocus::Button);
             } else if self.filter.bounds().contains(p) {
