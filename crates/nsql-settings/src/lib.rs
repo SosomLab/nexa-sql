@@ -139,6 +139,11 @@ const SESSION_MODE_OPTS: &[(&str, Msg)] = &[
     ("per-editor", Msg::ValSessionPerEditor),
 ];
 
+const TAB_ROWS_OPTS: &[(&str, Msg)] = &[
+    ("single", Msg::ValTabsSingle),
+    ("multi", Msg::ValTabsMulti),
+];
+
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
 
 const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
@@ -192,6 +197,22 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatAppearance,
         label: Msg::LblGridRowNumbers,
         desc: Msg::DescGridRowNumbers,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "tabs.rows",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTabsRows,
+        desc: Msg::DescTabsRows,
+        kind: SettingKind::Choice(TAB_ROWS_OPTS),
+        default: "single",
+    },
+    Entry {
+        key: "tabs.tooltip",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTabsTooltip,
+        desc: Msg::DescTabsTooltip,
         kind: SettingKind::Bool,
         default: "on",
     },
