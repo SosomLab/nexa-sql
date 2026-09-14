@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (10차 · win) — 스크롤바·픽셀 스크롤 ✅ · 메뉴바·툴바 ✅ · 줄번호/행번호 ✅ · 탭 이식 🚧
+
+nexa-ctl `ScrollBars`를 그리드·로그 창에(필요 시만 · 호버 두껍게 · 자동 숨김) · 픽셀 스크롤 + `grid.scroll` 설정 · MenuBar/Toolbar 배선(`ToolIcon::Glyph`) · TextBox 줄번호 거터 · 그리드 행번호 열 · 설정 4개(`editor.line_numbers` `grid.row_numbers` `tabs.rows` `tabs.tooltip`). **진행 중**: dir2 TabBar → nexa-ctl 이식(에이전트) → 편집기 탭·툴팁. GUI 실행 중. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (9차 · win) — ★ 실행 로그 창·CLI·어댑터·독립 I/O 스레드 ✅ · session.mode 설정 · CONNECT 동사 검토
 
 **구현**: `nsql-log`(LogEntry 단일 입력 · LogFormat 단일 출력 · Raw/Markdown/Grid · LogBuffer · **LogHub**(비차단·별도 스레드·싱크 패닉 격리) · StderrSink) · `nsql_run::log_entries` · GUI 로그 창(메인 창 옆 · Ctrl/⌘+⇧G · 스크롤·follow) · CLI `--log` · 설정 `log.format` / `session.mode`. 파일 싱크는 후속(같은 트레이트 · 배치 flush).
