@@ -2210,8 +2210,8 @@ impl ConnWin {
                     let clip = Rect::new(cx, y, (cw - pad).max(0), rh).intersection(&cells);
                     if clip.w > 0 && clip.h > 0 {
                         if ci == COL_PASSWORD {
-                            // 체크박스: 저장됨 = 진한 체크 · 세션 입력 = 연한 체크 · 없음 = 빈 상자.
-                            let cs = (rh * 3 / 5).max(10);
+                            // 체크박스: 저장됨 = 진한 체크 · 세션 입력 = 연한 체크 · 없음 = 빈 상자. 크기 = 행 높이의 48%(3/5의 80% · 사용자 09-14).
+                            let cs = (rh * 12 / 25).max(8);
                             let bx = Rect::new(cx + pad, y + (rh - cs) / 2, cs, cs);
                             dc.stroke_round_rect(bx, 3, th.border, 1.0);
                             match pw_state(p, &self.session_pw) {
