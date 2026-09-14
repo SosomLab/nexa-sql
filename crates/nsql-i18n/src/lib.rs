@@ -502,8 +502,8 @@ impl Msg {
             Msg::CatConnection => ["Connection", "접속"],
             Msg::LblProbeEnabled => ["Server status light", "서버 상태 신호등"],
             Msg::DescProbeEnabled => [
-                "In the login list, check host:port reachability (TCP only, no login) for profiles that connected at least once — green up · yellow checking · red down",
-                "로그인 목록에서 한 번 이상 접속했던 프로필의 호스트:포트 도달 여부를 확인(TCP만 · 로그인 없음) — 초록 가능 · 노랑 확인 중 · 빨강 불가",
+                "In the login list, check host:port reachability (TCP only, no login) for profiles that connected at least once — green port open · yellow checking · blue host alive but port closed · red unreachable",
+                "로그인 목록에서 한 번 이상 접속했던 프로필의 호스트:포트 도달 여부를 확인(TCP만 · 로그인 없음) — 초록 포트 열림 · 노랑 확인 중 · 파랑 IP는 응답하나 포트 닫힘 · 빨강 도달 불가",
             ],
             Msg::LblProbeMaxRetries => ["Status light retries", "신호등 재시도 횟수"],
             Msg::DescProbeMaxRetries => [

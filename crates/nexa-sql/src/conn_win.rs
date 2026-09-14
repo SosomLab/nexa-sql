@@ -145,17 +145,14 @@ impl ConnWin {
         self.probe_timeout = Duration::from_secs(timeout_secs.max(1));
     }
 
-    /// 접속 성공 — 이 프로필을 신호등 대상에 올리고(영속) 바로 초록으로.
+    /// 접속 성공 — 이 프로필을 신호등 **대상**에 올린다(영속). 신호등 자체는 바꾸지 않는다 —
+    /// 목적이 접속 전 확인이라 다음에 창을 열 때 실제 프로브로 판정한다(사용자 09-14).
     pub(crate) fn mark_connected(&mut self, name: &str) {
         if name.is_empty() {
             return;
         }
         probe::mark_connected(name);
         self.connected.insert(name.to_string());
-        let mut e = ProbeEntry::fresh(Instant::now());
-        e.status = ProbeStatus::Up;
-        e.next_at = None;
-        self.probes.insert(name.to_string(), e);
     }
 
     /// 대상 프로필(한 번 이상 접속 · 호스트/포트 있음)에 프로브를 예약 — 창을 열 때 한 번.
@@ -215,7 +212,7 @@ impl ConnWin {
         let mut changed = false;
         while let Some(r) = hub.try_recv() {
             if let Some(e) = self.probes.get_mut(&r.name) {
-                e.apply(r.ok, now, self.probe_max_retries);
+                e.apply(r.outcome, now, self.probe_max_retries);
                 changed = true;
             }
         }
@@ -868,6 +865,7 @@ impl ConnWin {
                 let dot_color = match statuses.get(pi).copied().flatten() {
                     Some(ProbeStatus::Up) => th.ok,
                     Some(ProbeStatus::Checking) => th.warn,
+                    Some(ProbeStatus::PortClosed) => th.accent,
                     Some(ProbeStatus::Down) => th.danger,
                     Some(ProbeStatus::Unknown) | None => th.border,
                 };
