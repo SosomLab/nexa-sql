@@ -888,10 +888,10 @@ impl ConnWin {
         let row = self.s(28.0);
         // 버튼 폭 = 라벨 폭 + 좌우 여백(라벨 미측정이면 72) · 간격 = pad/2(사용자 09-14 "간격 1/3" → "1.5배로").
         let gap = (pad / 2).max(3);
-        // 모든 버튼 동일 폭 = (현재 언어에서 가장 긴 라벨 + 여백) × 1.2(사용자 09-14 "20% 넓게" · i18n).
+        // 모든 버튼 동일 폭 = (현재 언어에서 가장 긴 라벨 + 여백) × 1.32(사용자 09-14 "20% 넓게" → "10% 더" · i18n).
         let widest = self.btn_text_w.iter().copied().max().unwrap_or(0);
         let uniform = if widest > 0 {
-            ((widest + pad * 2) as f32 * 1.2).round() as i32
+            ((widest + pad * 2) as f32 * 1.32).round() as i32
         } else {
             self.s(72.0)
         };
