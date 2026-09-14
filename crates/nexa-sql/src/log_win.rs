@@ -89,6 +89,10 @@ impl LogWin {
         self.window.is_some()
     }
 
+    pub(crate) fn window(&self) -> Option<&Window> {
+        self.window.as_deref()
+    }
+
     /// 페이드 타이머 — 다시 그려야 하면 true.
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         self.bars.tick(now_ms)

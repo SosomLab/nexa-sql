@@ -16,6 +16,7 @@ mod editors;
 mod grid;
 mod log_win;
 mod theme;
+mod winfocus;
 mod worker;
 
 use connect::{ConnState, ConnectPanel, PanelAction};
@@ -72,6 +73,8 @@ struct App {
     log_win: LogWin,
     /// 메뉴에서 요청한 종료·로그 창 토글(이벤트 루프 핸들이 필요해 window_event 끝에서 처리).
     exit_requested: bool,
+    /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
+    z_order: Vec<WindowId>,
     toggle_log: bool,
     // 컨트롤
     menubar: MenuBar,
@@ -388,6 +391,24 @@ impl App {
             self.status = t(Msg::ErrClipboard).into();
         }
         self.redraw();
+    }
+
+    /// 창이 포커스를 받았다 — z-order 갱신 · `window.focus = group`이면 나머지 창을 활성화 없이 같이 올린다.
+    fn on_window_focused(&mut self, id: WindowId) {
+        self.z_order.retain(|w| *w != id);
+        self.z_order.push(id);
+        if self.settings.get("window.focus") == Some("single") {
+            return;
+        }
+        let mut wins: Vec<&Window> = Vec::new();
+        for wid in &self.z_order {
+            if let Some(w) = self.window.as_deref().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.log_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            }
+        }
+        winfocus::raise_group(&wins);
     }
 
     fn toggle_log_window(&mut self, el: &ActiveEventLoop) {
@@ -974,6 +995,9 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if matches!(event, WindowEvent::Focused(true)) {
+            self.on_window_focused(id);
+        }
         if self.log_win.is(id) {
             if self.log_win.handle(&event) == LogWinAction::Paint {
                 let px = self.settings.int("editor.font_size") as f32;
@@ -1185,6 +1209,7 @@ fn main() {
         scale: 1.0,
         log_win: LogWin::new(&log_format),
         exit_requested: false,
+        z_order: Vec::new(),
         toggle_log: false,
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),

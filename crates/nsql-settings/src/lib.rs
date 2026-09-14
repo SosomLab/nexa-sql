@@ -144,6 +144,11 @@ const TAB_ROWS_OPTS: &[(&str, Msg)] =
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
 
+const WINDOW_FOCUS_OPTS: &[(&str, Msg)] = &[
+    ("group", Msg::ValFocusGroup),
+    ("single", Msg::ValFocusSingle),
+];
+
 const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("raw", Msg::ValRaw),
     ("markdown", Msg::ValMarkdown),
@@ -253,6 +258,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescGridScroll,
         kind: SettingKind::Choice(SCROLL_OPTS),
         default: "pixel",
+    },
+    Entry {
+        key: "window.focus",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowFocus,
+        desc: Msg::DescWindowFocus,
+        kind: SettingKind::Choice(WINDOW_FOCUS_OPTS),
+        default: "group",
     },
     Entry {
         key: "session.mode",
