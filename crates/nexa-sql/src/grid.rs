@@ -89,9 +89,9 @@ impl Grid {
         self.rs.as_ref().map_or(0, |r| r.rows.len())
     }
 
-    /// 행 영역 높이(헤더 제외).
+    /// 행 영역 높이(헤더·푸터 제외).
     fn body_h(&self) -> i32 {
-        (self.bounds.h - self.header_h).max(0)
+        (self.bounds.h - self.header_h - self.row_h).max(0)
     }
 
     /// 콘텐츠 크기(스크롤 범위) — 헤더 + 전 행 · 컬럼 폭 합.
@@ -105,7 +105,7 @@ impl Grid {
         let (cw, ch) = self.content_size();
         (
             (cw - (self.bounds.w - self.gutter_w)).max(0),
-            (ch - self.bounds.h).max(0),
+            (ch - (self.bounds.h - self.row_h)).max(0),
         )
     }
 
@@ -132,6 +132,7 @@ impl Grid {
         if self.row_h > 0 && self.rs.is_some() {
             let (cw, ch) = self.content_size();
             let b = self.bounds;
+            let b = Rect::new(b.x, b.y, b.w, b.h - self.row_h);
             let (nx, ny, consumed) = self.bars.on_event(
                 ev,
                 b,
@@ -234,11 +235,13 @@ impl Grid {
         self.scroll_y = self.scroll_y.clamp(0, my);
 
         // ── 행(픽셀 오프셋: 첫 행이 부분적으로 잘려 올라간다)
+        // 푸터(위치·계측) 한 줄은 맨 아래 — 헤더와 겹치지 않는다(09-14 사용자 지적).
+        let footer = Rect::new(b.x, b.bottom() - self.row_h, b.w, self.row_h);
         let body = Rect::new(
             b.x,
             header.bottom(),
             b.w,
-            (b.bottom() - header.bottom()).max(0),
+            (footer.y - header.bottom()).max(0),
         );
         let first = (self.scroll_y / self.row_h.max(1)) as usize;
         let sub = self.scroll_y % self.row_h.max(1);
@@ -318,15 +321,24 @@ impl Grid {
             fmt_bytes(self.approx_bytes)
         );
         let iw = dc.text_width(&info);
-        dc.text(b.x + b.w - iw - pad, b.y + pad / 2, b, &info, th.text_dim);
-        // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명)
+        dc.fill_rect(footer, th.chrome_bg);
+        dc.fill_rect(Rect::new(b.x, footer.y, b.w, 1), th.border);
+        dc.text(
+            b.x + b.w - iw - pad,
+            footer.y + pad / 2,
+            footer,
+            &info,
+            th.text_dim,
+        );
+        // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명) — 푸터 위까지.
         let (cw, ch) = self.content_size();
+        let vp = Rect::new(b.x, b.y, b.w, b.h - self.row_h);
         self.bars.paint(
             dc,
             th,
-            b,
-            cw.max(b.w),
-            ch.max(b.h),
+            vp,
+            cw.max(vp.w),
+            ch.max(vp.h),
             self.scroll_x,
             self.scroll_y,
             s,

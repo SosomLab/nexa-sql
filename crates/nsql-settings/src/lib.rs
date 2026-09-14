@@ -139,10 +139,8 @@ const SESSION_MODE_OPTS: &[(&str, Msg)] = &[
     ("per-editor", Msg::ValSessionPerEditor),
 ];
 
-const TAB_ROWS_OPTS: &[(&str, Msg)] = &[
-    ("single", Msg::ValTabsSingle),
-    ("multi", Msg::ValTabsMulti),
-];
+const TAB_ROWS_OPTS: &[(&str, Msg)] =
+    &[("single", Msg::ValTabsSingle), ("multi", Msg::ValTabsMulti)];
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
 
@@ -206,7 +204,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblTabsRows,
         desc: Msg::DescTabsRows,
         kind: SettingKind::Choice(TAB_ROWS_OPTS),
-        default: "single",
+        default: "multi",
     },
     Entry {
         key: "tabs.tooltip",

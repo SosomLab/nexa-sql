@@ -12,12 +12,14 @@
 
 mod clipboard;
 mod connect;
+mod editors;
 mod grid;
 mod log_win;
 mod theme;
 mod worker;
 
 use connect::{ConnState, ConnectPanel, PanelAction};
+use editors::Editors;
 use log_win::{LogWin, LogWinAction};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -76,7 +78,7 @@ struct App {
     toolbar: Toolbar,
     panel: ConnectPanel,
     run_btn: Button,
-    editor: TextBox,
+    editors: Editors,
     grid: grid::Grid,
     focus: Focus,
     // 워커
@@ -99,6 +101,10 @@ fn px(v: f32, s: f32) -> i32 {
 }
 
 impl App {
+    fn ed_mut(&mut self) -> &mut TextBox {
+        self.editors.cur_mut()
+    }
+
     fn layout(&mut self) {
         let Some(win) = &self.window else { return };
         let size = win.inner_size();
@@ -139,22 +145,21 @@ impl App {
         let body_h = h - body_top - status_h;
         let _ = chrome_h;
         let editor_h = (body_h as f32 * 0.5) as i32;
-        self.editor
-            .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), &mut inv);
+        self.editors
+            .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
         self.grid.set_bounds(Rect::new(
             rx,
             body_top + editor_h,
             rw,
             body_h - editor_h - pad,
         ));
-        self.editor.set_scale(s);
         self.run_btn.set_scale(s);
     }
 
     fn set_focus(&mut self, f: Focus) {
         self.focus = f;
         self.panel.set_focused(f == Focus::Panel);
-        self.editor.set_focused(f == Focus::Editor);
+        self.ed_mut().set_focused(f == Focus::Editor);
         if let Some(w) = &self.window {
             w.set_ime_allowed(matches!(f, Focus::Panel | Focus::Editor));
         }
@@ -164,7 +169,7 @@ impl App {
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
             Focus::Panel => self.panel.focused_textbox(),
-            Focus::Editor => Some(&mut self.editor),
+            Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Grid => None,
         }
     }
@@ -209,7 +214,10 @@ impl App {
         while let Ok(o) = self.worker.conn.try_recv() {
             changed = true;
             match o {
-                ConnOutcome::Connected(d) => self.panel.set_state(ConnState::Connected(d)),
+                ConnOutcome::Connected(d) => {
+                    self.editors.set_conn_desc(d.clone());
+                    self.panel.set_state(ConnState::Connected(d));
+                }
                 ConnOutcome::ConnectFailed(e) => {
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
@@ -234,7 +242,10 @@ impl App {
                     self.status = tf(Msg::StTestFailed, &[&e]);
                     self.panel.set_state(ConnState::Failed(e));
                 }
-                ConnOutcome::Disconnected => self.panel.set_state(ConnState::Idle),
+                ConnOutcome::Disconnected => {
+                    self.editors.set_conn_desc("");
+                    self.panel.set_state(ConnState::Idle);
+                }
                 ConnOutcome::Saved(name) => {
                     self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
                     let names = worker::profile_names();
@@ -259,7 +270,7 @@ impl App {
     fn menu_action(&mut self, id: &str) {
         match id {
             "file.new" => {
-                self.editor.set_text("");
+                self.editors.new_tab(None);
                 self.set_focus(Focus::Editor);
             }
             "file.exit" => self.exit_requested = true,
@@ -437,12 +448,7 @@ impl App {
         self.run_btn.set_label(t(Msg::BtnRun));
         let names = worker::profile_names();
         self.panel.relabel(&names);
-        let e = self.editor.text();
-        self.editor = TextBox::new(t(Msg::PhEditor))
-            .with_multiline()
-            .with_text(&e);
-        self.editor
-            .set_line_numbers(self.settings.flag("editor.line_numbers"));
+        self.editors.rebuild_boxes();
         self.layout();
         self.set_focus(self.focus);
     }
@@ -456,19 +462,19 @@ impl App {
         let text = if all {
             None
         } else {
-            self.editor
+            self.ed_mut()
                 .copy_selection()
                 .filter(|s| !s.trim().is_empty())
                 .or_else(|| {
-                    let full = self.editor.text();
+                    let full = self.ed_mut().text();
                     let byte_pos = full
                         .char_indices()
-                        .nth(self.editor.caret())
+                        .nth(self.ed_mut().caret())
                         .map_or(full.len(), |(b, _)| b);
                     nsql_script::statement_at(&full, byte_pos).map(|it| it.text)
                 })
         };
-        let src = text.unwrap_or_else(|| self.editor.text());
+        let src = text.unwrap_or_else(|| self.ed_mut().text());
         if src.trim().is_empty() {
             self.status = t(Msg::ErrNoSql).into();
             return;
@@ -602,6 +608,7 @@ impl App {
                 );
                 self.run_btn.paint(&mut dc, &th);
                 self.panel.paint(&mut dc, &th);
+                self.editors.paint_tabs(&mut dc, &th);
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
                 self.toolbar.paint(&mut dc, &th);
@@ -648,8 +655,21 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
                     .with_fonts(prefs)
                     .with_caret_on(caret_on);
-                self.editor.paint(&mut dc, &th);
+                self.editors.cur_mut().paint(&mut dc, &th);
                 self.grid.paint(&mut dc, &th, s);
+            }
+            // ── 최상위 카드(탭 툴팁 · UI 글꼴)
+            {
+                let prefs = FontPrefs {
+                    base: SlotFont {
+                        size: ui_px,
+                        bold: false,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.editors.paint_tooltip(&mut dc, &th, wi);
             }
         }
         let _ = buf.present();
@@ -764,6 +784,12 @@ impl App {
                 return;
             }
         }
+        // 편집기 탭 바(클릭·드래그·휠 · 툴팁 호버).
+        if self.editors.route_tabs(&ev, &mut inv) {
+            self.set_focus(Focus::Editor);
+            self.redraw();
+            return;
+        }
         // 열린 콤보(패널)는 모달 — 어디를 눌러도 패널이 먼저 받는다.
         if self.panel.popup_open() {
             if let Some(a) = self.panel.route(&ev, &mut inv) {
@@ -776,7 +802,7 @@ impl App {
             let p = Point { x, y };
             if self.panel.bounds().contains(p) {
                 self.set_focus(Focus::Panel);
-            } else if self.editor.bounds().contains(p) {
+            } else if self.editors.editor_bounds().contains(p) {
                 self.set_focus(Focus::Editor);
             } else if self.grid.bounds.contains(p) {
                 self.set_focus(Focus::Grid);
@@ -794,11 +820,11 @@ impl App {
                     inv.push(self.grid.bounds);
                 }
             }
-            if self.editor.bounds().contains(cur)
+            if self.editors.editor_bounds().contains(cur)
                 && self.focus != Focus::Editor
                 && matches!(ev, InputEvent::MouseMove { .. })
             {
-                self.editor.on_event(&ev, &mut inv);
+                self.ed_mut().on_event(&ev, &mut inv);
             }
         }
         // 버튼·패널은 항상 마우스 사건을 받는다.
@@ -820,8 +846,8 @@ impl App {
         if is_wheel && self.grid.bounds.contains(cur) {
             self.grid.on_event(&ev, self.scale);
             inv.push(self.grid.bounds);
-        } else if is_wheel && self.editor.bounds().contains(cur) {
-            self.editor.on_event(&ev, &mut inv);
+        } else if is_wheel && self.editors.editor_bounds().contains(cur) {
+            self.ed_mut().on_event(&ev, &mut inv);
         } else if is_wheel && self.panel.bounds().contains(cur) {
             if let Some(a) = self.panel.route(&ev, &mut inv) {
                 self.handle_panel_action(a);
@@ -843,14 +869,14 @@ impl App {
                         }
                     }
                 }
-                Focus::Editor => self.editor.on_event(&ev, &mut inv),
+                Focus::Editor => self.ed_mut().on_event(&ev, &mut inv),
                 Focus::Grid => {
                     self.grid.on_event(&ev, self.scale);
                     inv.push(self.grid.bounds);
                 }
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
-            let pending = self.editor.take_edit_ctx().or_else(|| {
+            let pending = self.ed_mut().take_edit_ctx().or_else(|| {
                 self.panel
                     .focused_textbox()
                     .and_then(|tb| tb.take_edit_ctx())
@@ -923,17 +949,22 @@ impl ApplicationHandler<Wake> for App {
         }
         // 오버레이 스크롤바 페이드(편집기·그리드·로그 창) — 보이는 동안만 ≈30ms 타이머.
         let now_ms = self.started.elapsed().as_millis() as u64;
-        let mut redraw = self.editor.tick(now_ms);
+        let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
+        redraw |= self.editors.tick();
+        if self.editors.relayout_if_needed() {
+            redraw = true;
+        }
         if redraw {
             self.redraw();
         }
         if self.log_win.tick(now_ms) {
             self.log_win.redraw();
         }
-        let bars_live = self.editor.scrollbars_visible()
+        let bars_live = self.ed_mut().scrollbars_visible()
             || self.grid.bars_visible()
-            || self.log_win.bars_visible();
+            || self.log_win.bars_visible()
+            || self.editors.tooltip_pending();
         let next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
         } else {
@@ -1139,6 +1170,9 @@ fn main() {
     // 창이 없는 동안의 팔레트 — OS 조회(창이 생기면 winit 판정으로 다시 고른다).
     let initial_theme = theme::resolve(settings.theme_mode(), None);
     let log_format = settings.get("log.format").unwrap_or("raw").to_string();
+    let ed_line_numbers = settings.flag("editor.line_numbers");
+    let ed_multi = settings.get("tabs.rows") != Some("single");
+    let ed_tooltip = settings.flag("tabs.tooltip");
     let row_snap = settings.get("grid.scroll") == Some("row");
     let mut app = App {
         window: None,
@@ -1156,7 +1190,7 @@ fn main() {
         toolbar: App::build_toolbar(),
         panel,
         run_btn: Button::new(t(Msg::BtnRun)),
-        editor: TextBox::new(t(Msg::PhEditor)).with_multiline(),
+        editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip),
         grid: grid::Grid::default(),
         focus: Focus::Editor,
         worker,
@@ -1174,8 +1208,6 @@ fn main() {
     app.log_win.set_row_snap(row_snap);
     app.grid
         .set_row_numbers(app.settings.flag("grid.row_numbers"));
-    app.editor
-        .set_line_numbers(app.settings.flag("editor.line_numbers"));
     // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
     if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {
         app.busy = true;
