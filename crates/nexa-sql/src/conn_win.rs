@@ -888,10 +888,10 @@ impl ConnWin {
         let row = self.s(28.0);
         // 버튼 폭 = 라벨 폭 + 좌우 여백(라벨 미측정이면 72) · 간격 = pad/2(사용자 09-14 "간격 1/3" → "1.5배로").
         let gap = (pad / 2).max(3);
-        // 모든 버튼 동일 폭 = 현재 언어에서 가장 긴 라벨 + 여백(사용자 09-14 · i18n).
+        // 모든 버튼 동일 폭 = (현재 언어에서 가장 긴 라벨 + 여백) × 1.2(사용자 09-14 "20% 넓게" · i18n).
         let widest = self.btn_text_w.iter().copied().max().unwrap_or(0);
         let uniform = if widest > 0 {
-            widest + pad * 2
+            ((widest + pad * 2) as f32 * 1.2).round() as i32
         } else {
             self.s(72.0)
         };
@@ -1112,9 +1112,11 @@ impl ConnWin {
 
     /// 삭제 무장 — Delete 자리에 빨간 타이머 버튼(5초). 한 번 더 누르면 삭제.
     fn arm_delete(&mut self) {
-        let mut tb = TimeoutButton::new(t(Msg::BtnDeleteConfirm), DELETE_ARM_MS)
+        // 두 줄("Delete" / "(5s)") · '?' 없이(사용자 09-14).
+        let mut tb = TimeoutButton::new(t(Msg::BtnDelete), DELETE_ARM_MS)
             .with_warn(true)
-            .with_suffix(t(Msg::UnitSecShort));
+            .with_suffix(t(Msg::UnitSecShort))
+            .with_two_line(true);
         let mut inv = Invalidations::default();
         tb.set_bounds(self.btn_delete.bounds(), &mut inv);
         tb.set_scale(self.scale);
@@ -1869,12 +1871,9 @@ impl ConnWin {
 
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
         let animating = self.advance();
-        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다. Delete 자리는 무장 라벨("삭제? (5초)")까지 **항상** 포함해
-        // 무장해도 버튼 폭·위치가 바뀌지 않는다(사용자 09-14 "버튼이 갑자기 이동").
+        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다. 무장 라벨은 두 줄이라 폭에 영향 없음 → 버튼이 움직이지 않는다.
         self.btn_text_w = [Msg::BtnNew, Msg::BtnEdit, Msg::BtnDelete, Msg::BtnClose]
             .map(|m| ui.measure(t(m), font_px).ceil() as i32);
-        let armed = format!("{} ({}{})", t(Msg::BtnDeleteConfirm), 5, t(Msg::UnitSecShort));
-        self.btn_text_w[2] = self.btn_text_w[2].max(ui.measure(&armed, font_px).ceil() as i32);
         self.ctx_text_w = [
             Msg::MnDuplicate,
             Msg::BtnNew,
