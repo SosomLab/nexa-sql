@@ -31,6 +31,8 @@ const RY: f32 = 27.0;
 const CX: f32 = 128.0;
 /// 배지 그룹 이동(사용자: 왼쪽 위로 6px).
 const BADGE_DX: f32 = -6.0;
+/// 내용물 확대 배율(타일 대비).
+const CONTENT_SCALE: f32 = 1.12;
 
 fn in_rounded_rect(x: f32, y: f32, x0: f32, y0: f32, w: f32, h: f32, r: f32) -> bool {
     if x < x0 || y < y0 || x > x0 + w || y > y0 + h {
@@ -70,14 +72,18 @@ fn seg_dist(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
 
 /// 256 좌표계의 한 점 색(RGB · 불투명 여부). 그리기 순서 = SVG와 동일.
 fn sample(x: f32, y: f32) -> Option<[u8; 3]> {
-    if !in_rounded_rect(x, y, 8.0, 8.0, 240.0, 240.0, 56.0) {
+    // 풀블리드 타일(계열 규칙 · 작업표시줄에서 DBeaver만큼 크게 — 사용자 09-14) + 안쪽 4px 테두리.
+    if !in_rounded_rect(x, y, 0.0, 0.0, 256.0, 256.0, 58.0) {
         return None;
     }
-    let mut c = if in_rounded_rect(x, y, 12.0, 12.0, 232.0, 232.0, 52.0) {
+    let mut c = if in_rounded_rect(x, y, 4.0, 4.0, 248.0, 248.0, 54.0) {
         BG
     } else {
         BORDER
     };
+    // 내용물은 중심 기준 1.12배 확대(여백을 줄인다).
+    let x = 128.0 + (x - 128.0) / CONTENT_SCALE;
+    let y = 128.0 + (y - 128.0) / CONTENT_SCALE;
     for (yt, yb, col) in BANDS {
         let in_rect = (CX - RX..=CX + RX).contains(&x) && (yt..=yb).contains(&y);
         let in_bottom = y >= yb && in_ellipse(x, y, CX, yb, RX, RY);
@@ -173,10 +179,10 @@ mod tests {
             [px[i], px[i + 1], px[i + 2], px[i + 3]]
         };
         assert_eq!(at(0, 0)[3], 0, "모서리 밖 = 투명");
-        assert_eq!(at(32, 28)[..3], RED, "위 밴드 = 빨강");
-        assert_eq!(at(32, 48)[..3], GREEN, "아래 밴드 = 초록");
-        assert_eq!(at(56, 50)[..3], INK, "배지 = 잉크");
-        assert_eq!(at(18, 17)[..3], CAP, "윗면 = 캡");
+        assert_eq!(at(32, 29)[..3], RED, "위 밴드 = 빨강");
+        assert_eq!(at(32, 50)[..3], GREEN, "아래 밴드 = 초록");
+        assert_eq!(at(58, 52)[..3], INK, "배지 = 잉크");
+        assert_eq!(at(16, 16)[..3], CAP, "윗면 = 캡");
         assert_eq!(px.len(), (s * s * 4) as usize);
     }
 

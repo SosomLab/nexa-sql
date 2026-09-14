@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <!-- Nexa SQL 앱 아이콘 — Union(사용자 선택 09-14): 색이 다른 디스크 세 장이 한 실린더로 융합 · 디스크는 크고 같은 크기 · 우하단 프롬프트 -->
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="#F6F7F9"/>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="#D5DAE1" stroke-width="4"/>
+  <rect x="0" y="0" width="256" height="256" rx="58" fill="#F6F7F9"/>
+  <rect x="2" y="2" width="252" height="252" rx="56" fill="none" stroke="#D5DAE1" stroke-width="4"/>
+  <g transform="translate(128 128) scale(1.12) translate(-128 -128)">
   <g>
     <!-- 아래 -->
     <path d="M44 158 V196 A84 27 0 0 0 212 196 V158 A84 27 0 0 1 44 158Z" fill="#2EA043"/>
@@ -16,5 +17,6 @@
     <rect x="152" y="152" width="86" height="86" rx="22" fill="#1B2432"/>
     <path d="M174 180 L192 195 L174 210" fill="none" stroke="#F6F7F9" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
     <rect x="200" y="205" width="20" height="9" rx="4" fill="#F6F7F9"/>
+  </g>
   </g>
 </svg>
