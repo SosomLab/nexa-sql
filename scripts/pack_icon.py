@@ -44,7 +44,5 @@ for typ, n in icns_types:
     body += typ + struct.pack('>I', 8 + len(d)) + d
 open(os.path.join(OUT, 'nexa-sql.icns'), 'wb').write(b'icns' + struct.pack('>I', 8 + len(body)) + body)
 
-# 런타임 창 아이콘(외부 crate 0 — 디코더 없이 include_bytes) : 32 · 64 raw RGBA
-for n in (32, 64):
-    open(os.path.join(OUT, f'nexa-sql-{n}.rgba'), 'wb').write(scaled(n).tobytes())
+# 런타임 창 아이콘은 코드로 그린다(crates/nexa-sql/src/icon.rs · 정적 자원 0) — 여기서는 만들지 않는다.
 print('done', {k: len(v) for k, v in pngs.items()})

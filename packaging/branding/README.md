@@ -24,10 +24,10 @@
 | `png/nexa-sql-{16…1024}.png` | Linux hicolor 세트 · 일반 배포 |
 | `nexa-sql.ico` | Windows(16·24·32·48·256 · PNG 프레임) — NSIS/실행 파일 리소스 |
 | `nexa-sql.icns` | macOS `.app` 번들 |
-| `nexa-sql-32.rgba` · `nexa-sql-64.rgba` | **런타임 창 아이콘**(`crates/nexa-sql/src/icon.rs` `include_bytes!` · 디코더 없음) |
+| (없음) | **런타임 창 아이콘은 코드로 그린다**(`crates/nexa-sql/src/icon.rs` — SVG 도형을 같은 좌표계로 4×4 슈퍼샘플링 · 정적 자원 0바이트 · 상주 메모리 0). SVG를 바꾸면 `icon.rs`의 도형 상수도 맞춘다 |
 | `drafts/*.svg` | 시안 A·B·C |
 
-## 재생성 (SVG → PNG/ICO/ICNS/RGBA)
+## 재생성 (SVG → PNG/ICO/ICNS)
 
 외부 도구 없이 이 기기에서는 **헤드리스 Edge**로 1024px PNG를 뜨고 Python(PIL)으로 나머지를 만든다:
 
@@ -35,7 +35,7 @@
 # 1) SVG → 1024 PNG (투명 배경)
 msedge --headless=new --disable-gpu --hide-scrollbars --default-background-color=00000000 \
   --window-size=1024,1024 --screenshot=icon-1024.png render.html   # render.html = <img src="icon.svg" 1024×1024>
-# 2) PNG 세트 · .ico(PNG 프레임) · .icns(PNG 페이로드) · .rgba
+# 2) PNG 세트 · .ico(PNG 프레임) · .icns(PNG 페이로드)
 python scripts/pack_icon.py icon-1024.png packaging/branding
 ```
 
