@@ -18,6 +18,7 @@ mod grid;
 mod icon;
 mod log_win;
 mod palette;
+mod probe;
 mod syntax;
 mod theme;
 mod winfocus;
@@ -234,6 +235,8 @@ impl App {
             changed = true;
             match o {
                 ConnOutcome::Connected(d) => {
+                    let name = self.conn_win.panel.profile_name();
+                    self.conn_win.mark_connected(&name);
                     self.conn_win.close();
                     self.editors.set_conn_desc(d.clone());
                     self.conn_win.panel.set_state(ConnState::Connected(d));
@@ -623,6 +626,7 @@ impl App {
 
     fn drain_events(&mut self) {
         let mut changed = self.drain_conn();
+        self.conn_win.drain_probes();
         while let Ok(ev) = self.events.try_recv() {
             changed = true;
             for e in nsql_run::log_entries(&ev) {
@@ -1120,11 +1124,15 @@ impl ApplicationHandler<Wake> for App {
             || self.grid.bars_visible()
             || self.log_win.bars_visible()
             || self.editors.tooltip_pending();
-        let next = if bars_live {
+        let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
         } else {
             self.next_blink
         };
+        // 서버 신호등 재시도 예약(접속 창이 열려 있을 때만).
+        if let Some(t) = self.conn_win.tick(now) {
+            next = next.min(t);
+        }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
@@ -1341,6 +1349,10 @@ fn main() {
             let _ = proxy.send_event(Wake);
         }),
     );
+    let probe_proxy: EventLoopProxy<Wake> = el.create_proxy();
+    let probe_hub = probe::ProbeHub::spawn(Box::new(move || {
+        let _ = probe_proxy.send_event(Wake);
+    }));
     let initial_target = args.first().cloned();
     let profiles = worker::profile_names();
     let mut panel = ConnectPanel::new(nsql_drivers::available());
@@ -1407,6 +1419,13 @@ fn main() {
     };
     app.grid.set_row_snap(row_snap);
     app.editors.set_rulers(rulers);
+    {
+        let enabled = app.settings.flag("probe.enabled");
+        let max_retries = app.settings.int("probe.max_retries").max(0) as u32;
+        let timeout = app.settings.int("probe.timeout").max(1) as u64;
+        app.conn_win
+            .set_probe(probe_hub, enabled, max_retries, timeout);
+    }
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
     app.grid

@@ -230,6 +230,11 @@ impl ConnectPanel {
         self.apply_dialect(d);
     }
 
+    /// 폼의 접속 명칭(프로필 이름) — 접속 성공 시 '한 번 이상 접속' 목록에 올린다.
+    pub(crate) fn profile_name(&self) -> String {
+        self.name.text().trim().to_string()
+    }
+
     pub(crate) fn is_connected(&self) -> bool {
         self.connected
     }

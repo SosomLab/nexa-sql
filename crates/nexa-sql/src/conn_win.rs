@@ -7,6 +7,7 @@
 //! 창 골격은 로그 창과 같다(winit + softbuffer + nexa-ctl 래스터). I/O(저장소·워커)는 전부 호스트 몫 — [`ConnWinAction`]으로 요청.
 
 use crate::connect::{ConnectPanel, PanelAction};
+use crate::probe::{self, ProbeEntry, ProbeHub, ProbeReq, ProbeStatus};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -15,8 +16,10 @@ use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBo
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
 use nsql_vault::{Profile, Vault};
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::Duration;
 use std::time::Instant;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -72,6 +75,14 @@ pub(crate) struct ConnWin {
     detail_t: f32,
     /// (시작 시각 · from · to) — 진행 중 애니메이션.
     anim: Option<(Instant, f32, f32)>,
+    /// 서버 신호등(프로필 이름 → 상태·재시도) — [`crate::probe`].
+    probes: HashMap<String, ProbeEntry>,
+    hub: Option<ProbeHub>,
+    /// 한 번 이상 접속 성공한 프로필(대상 집합).
+    connected: HashSet<String>,
+    probe_enabled: bool,
+    probe_max_retries: u32,
+    probe_timeout: Duration,
 }
 
 const SLIDE_MS: f32 = 200.0;
@@ -109,9 +120,113 @@ impl ConnWin {
             last_click: None,
             detail_t: 0.0,
             anim: None,
+            probes: HashMap::new(),
+            hub: None,
+            connected: probe::connected_names(),
+            probe_enabled: true,
+            probe_max_retries: 5,
+            probe_timeout: Duration::from_secs(2),
         };
         w.refresh_profiles(None);
         w
+    }
+
+    /// 프로브 스레드·설정 주입(부팅 시 한 번).
+    pub(crate) fn set_probe(
+        &mut self,
+        hub: ProbeHub,
+        enabled: bool,
+        max_retries: u32,
+        timeout_secs: u64,
+    ) {
+        self.hub = Some(hub);
+        self.probe_enabled = enabled;
+        self.probe_max_retries = max_retries;
+        self.probe_timeout = Duration::from_secs(timeout_secs.max(1));
+    }
+
+    /// 접속 성공 — 이 프로필을 신호등 대상에 올리고(영속) 바로 초록으로.
+    pub(crate) fn mark_connected(&mut self, name: &str) {
+        if name.is_empty() {
+            return;
+        }
+        probe::mark_connected(name);
+        self.connected.insert(name.to_string());
+        let mut e = ProbeEntry::fresh(Instant::now());
+        e.status = ProbeStatus::Up;
+        e.next_at = None;
+        self.probes.insert(name.to_string(), e);
+    }
+
+    /// 대상 프로필(한 번 이상 접속 · 호스트/포트 있음)에 프로브를 예약 — 창을 열 때 한 번.
+    fn schedule_probes(&mut self) {
+        if !self.probe_enabled || self.window.is_none() {
+            return;
+        }
+        let now = Instant::now();
+        for p in &self.profiles {
+            if !self.connected.contains(&p.name) || p.spec.host.is_none() || p.spec.port.is_none() {
+                continue;
+            }
+            self.probes.insert(p.name.clone(), ProbeEntry::fresh(now));
+        }
+    }
+
+    /// 예약된 프로브를 보낸다(순차 스레드) · 다음 예약 시각을 돌려준다(호스트 WaitUntil).
+    pub(crate) fn tick(&mut self, now: Instant) -> Option<Instant> {
+        if self.window.is_none() || !self.probe_enabled {
+            return None;
+        }
+        let Some(hub) = &self.hub else { return None };
+        let mut next: Option<Instant> = None;
+        let mut changed = false;
+        for p in &self.profiles {
+            let Some(e) = self.probes.get_mut(&p.name) else {
+                continue;
+            };
+            match e.next_at {
+                Some(t) if t <= now => {
+                    if let (Some(h), Some(port)) = (p.spec.host.clone(), p.spec.port) {
+                        hub.request(ProbeReq {
+                            name: p.name.clone(),
+                            host: h,
+                            port,
+                            timeout: self.probe_timeout,
+                        });
+                        e.status = ProbeStatus::Checking;
+                        e.next_at = None;
+                        changed = true;
+                    }
+                }
+                Some(t) => next = Some(next.map_or(t, |n: Instant| n.min(t))),
+                None => {}
+            }
+        }
+        if changed {
+            self.redraw();
+        }
+        next
+    }
+
+    /// 프로브 결과 수거(호스트가 Wake마다 부른다). 바뀐 게 있으면 true.
+    pub(crate) fn drain_probes(&mut self) -> bool {
+        let Some(hub) = &self.hub else { return false };
+        let now = Instant::now();
+        let mut changed = false;
+        while let Some(r) = hub.try_recv() {
+            if let Some(e) = self.probes.get_mut(&r.name) {
+                e.apply(r.ok, now, self.probe_max_retries);
+                changed = true;
+            }
+        }
+        if changed {
+            self.redraw();
+        }
+        changed
+    }
+
+    fn probe_status(&self, name: &str) -> Option<ProbeStatus> {
+        self.probes.get(name).map(|e| e.status)
     }
 
     pub(crate) fn is(&self, id: WindowId) -> bool {
@@ -206,6 +321,8 @@ impl ConnWin {
         win.set_ime_allowed(true);
         self.window = Some(win);
         self.refresh_profiles(None);
+        self.probes.clear();
+        self.schedule_probes();
         self.detail_t = 0.0;
         self.anim = None;
         self.set_focus(WFocus::List);
@@ -632,6 +749,11 @@ impl ConnWin {
         if animating || self.anim.is_none() {
             self.layout();
         }
+        let statuses: Vec<Option<ProbeStatus>> = self
+            .profiles
+            .iter()
+            .map(|p| self.probe_status(&p.name))
+            .collect();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -693,19 +815,22 @@ impl ConnWin {
             dc.fill_rect(Rect::new(l.x, l.y, 1, l.h), th.border);
             dc.fill_rect(Rect::new(l.right() - 1, l.y, 1, l.h), th.border);
             let rh = row_h;
+            // 첫 열 = 신호등(고정 폭) · 나머지는 비율.
+            let sw = rh;
             let cols = [
                 (t(Msg::ColName).to_string(), 0.22),
                 (t(Msg::ColType).to_string(), 0.16),
                 (t(Msg::ColUser).to_string(), 0.20),
                 (t(Msg::ColTarget).to_string(), 0.42),
             ];
+            let lw_cols = l.w - sw;
             let ty = |y: i32| y + (rh - dc_text_h(rh)) / 2;
             // 헤더
             dc.fill_rect(Rect::new(l.x, l.y, l.w, rh), th.chrome_bg);
             dc.fill_rect(Rect::new(l.x, l.y + rh - 1, l.w, 1), th.border);
-            let mut cx = l.x + pad;
+            let mut cx = l.x + sw + pad;
             for (name, frac) in &cols {
-                let cw = (l.w as f32 * frac) as i32;
+                let cw = (lw_cols as f32 * frac) as i32;
                 dc.text(
                     cx,
                     ty(l.y),
@@ -738,9 +863,21 @@ impl ConnWin {
                     p.spec.user.clone().unwrap_or_default(),
                     target_of(p),
                 ];
-                let mut cx = l.x + pad;
+                // 신호등(초록 가능 · 노랑 확인 중 · 빨강 불가 · 회색 대상 아님)
+                let dot = (rh / 2).max(6);
+                let dot_color = match statuses.get(pi).copied().flatten() {
+                    Some(ProbeStatus::Up) => th.ok,
+                    Some(ProbeStatus::Checking) => th.warn,
+                    Some(ProbeStatus::Down) => th.danger,
+                    Some(ProbeStatus::Unknown) | None => th.border,
+                };
+                dc.fill_ellipse(
+                    Rect::new(l.x + (sw - dot) / 2 + 1, y + (rh - dot) / 2, dot, dot),
+                    dot_color,
+                );
+                let mut cx = l.x + sw + pad;
                 for ((_, frac), text) in cols.iter().zip(cells.iter()) {
-                    let cw = (l.w as f32 * frac) as i32;
+                    let cw = (lw_cols as f32 * frac) as i32;
                     dc.text(
                         cx,
                         ty(y),
