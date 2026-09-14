@@ -11,9 +11,11 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod clipboard;
+mod conn_win;
 mod connect;
 mod editors;
 mod grid;
+mod icon;
 mod log_win;
 mod palette;
 mod syntax;
@@ -21,6 +23,7 @@ mod theme;
 mod winfocus;
 mod worker;
 
+use conn_win::{ConnWin, ConnWinAction};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
 use log_win::{LogWin, LogWinAction};
@@ -58,7 +61,6 @@ struct Wake;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Focus {
-    Panel,
     Editor,
     Grid,
 }
@@ -90,7 +92,10 @@ struct App {
     // 컨트롤
     menubar: MenuBar,
     toolbar: Toolbar,
-    panel: ConnectPanel,
+    /// 접속 창(별도 창 · 폼 + 로그인 목록). 폼 상태의 단일 원천 = `conn_win.panel`.
+    conn_win: ConnWin,
+    /// 메뉴/툴바에서 접속 창 열기 요청(창 생성은 이벤트 루프 핸들에서).
+    open_conn: bool,
     run_btn: Button,
     editors: Editors,
     grid: grid::Grid,
@@ -140,11 +145,9 @@ impl App {
             .set_bounds(Rect::new(0, menu_h, w, tool_h), &mut inv);
         let chrome_h = menu_h + tool_h;
         let top_h = px(36.0, s);
-        // 왼쪽 접속 패널(툴바 아래 ~ 상태줄 위)
-        self.panel
-            .set_bounds(Rect::new(0, chrome_h, panel_w, h - status_h - chrome_h), s);
-        // 오른쪽: 상단 Run 버튼 줄 · 편집기 · 그리드
-        let rx = panel_w + pad;
+        // 접속 패널은 별도 창(conn_win) — 본문은 창 전폭.
+        let _ = panel_w;
+        let rx = pad;
         let rw = w - rx - pad;
         self.run_btn.set_bounds(
             Rect::new(
@@ -173,17 +176,15 @@ impl App {
 
     fn set_focus(&mut self, f: Focus) {
         self.focus = f;
-        self.panel.set_focused(f == Focus::Panel);
         self.ed_mut().set_focused(f == Focus::Editor);
         if let Some(w) = &self.window {
-            w.set_ime_allowed(matches!(f, Focus::Panel | Focus::Editor));
+            w.set_ime_allowed(f == Focus::Editor);
         }
     }
 
     /// 포커스 텍스트 박스(IME·편집 컨텍스트 라우팅).
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
-            Focus::Panel => self.panel.focused_textbox(),
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Grid => None,
         }
@@ -213,11 +214,14 @@ impl App {
             PanelAction::LoadProfile(name) => {
                 match Vault::open_default().and_then(|v| v.get(&name)) {
                     Ok(Some(spec)) => {
-                        self.panel.fill(&name, &spec);
-                        self.panel.set_state(ConnState::Idle);
+                        self.conn_win.panel.fill(&name, &spec);
+                        self.conn_win.panel.set_state(ConnState::Idle);
                     }
                     Ok(None) => {}
-                    Err(e) => self.panel.set_state(ConnState::Failed(e.to_string())),
+                    Err(e) => self
+                        .conn_win
+                        .panel
+                        .set_state(ConnState::Failed(e.to_string())),
                 }
             }
         }
@@ -230,14 +234,15 @@ impl App {
             changed = true;
             match o {
                 ConnOutcome::Connected(d) => {
+                    self.conn_win.close();
                     self.editors.set_conn_desc(d.clone());
-                    self.panel.set_state(ConnState::Connected(d));
+                    self.conn_win.panel.set_state(ConnState::Connected(d));
                 }
                 ConnOutcome::ConnectFailed(e) => {
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
                     self.status = tf(Msg::StConnectFailed, &[&e]);
-                    self.panel.set_state(ConnState::Failed(e));
+                    self.conn_win.panel.set_state(ConnState::Failed(e));
                 }
                 ConnOutcome::TestOk {
                     description,
@@ -249,26 +254,25 @@ impl App {
                     ));
                     let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
                     self.status = msg.clone();
-                    self.panel.set_state(ConnState::TestOk(msg));
+                    self.conn_win.panel.set_state(ConnState::TestOk(msg));
                 }
                 ConnOutcome::TestFailed(e) => {
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("test: {e}")));
                     self.status = tf(Msg::StTestFailed, &[&e]);
-                    self.panel.set_state(ConnState::Failed(e));
+                    self.conn_win.panel.set_state(ConnState::Failed(e));
                 }
                 ConnOutcome::Disconnected => {
                     self.editors.set_conn_desc("");
-                    self.panel.set_state(ConnState::Idle);
+                    self.conn_win.panel.set_state(ConnState::Idle);
                 }
                 ConnOutcome::Saved(name) => {
                     self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
-                    let names = worker::profile_names();
-                    self.panel.set_profiles(&names, Some(&name));
+                    self.conn_win.refresh_profiles(Some(&name));
                 }
                 ConnOutcome::SaveFailed(e) => {
                     self.status = tf(Msg::WkProfileSaveFailed, &[&e]);
-                    self.panel.set_state(ConnState::Failed(e));
+                    self.conn_win.panel.set_state(ConnState::Failed(e));
                 }
             }
         }
@@ -306,8 +310,10 @@ impl App {
             "run.statement" => self.run_sql(false),
             "run.all" => self.run_sql(true),
             "conn.toggle" => {
-                if let Some(a) = self.panel.connect_action() {
-                    self.handle_panel_action(a);
+                if self.conn_win.panel.is_connected() {
+                    self.handle_panel_action(PanelAction::Disconnect);
+                } else {
+                    self.open_conn = true;
                 }
             }
             "help.about" => {
@@ -471,9 +477,53 @@ impl App {
                 wins.push(w);
             } else if let Some(w) = self.log_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
+            } else if let Some(w) = self.conn_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
             }
         }
         winfocus::raise_group(&wins);
+    }
+
+    /// 접속 창 열기(메인 창 위 가운데) — 이미 열려 있으면 앞으로.
+    fn open_conn_window(&mut self, el: &ActiveEventLoop) {
+        let over = self.window.as_ref().and_then(|w| {
+            let p = w.outer_position().ok()?;
+            let sz = w.outer_size();
+            Some((p.x, p.y, sz.width, sz.height))
+        });
+        self.conn_win
+            .open(el, theme::window_theme(self.settings.theme_mode()), over);
+    }
+
+    /// 로그인 목록 더블클릭/Enter — 저장소에서 읽어 폼에 채우고 바로 접속.
+    fn login_profile(&mut self, name: &str) {
+        match Vault::open_default().and_then(|v| v.get(name)) {
+            Ok(Some(spec)) => {
+                self.conn_win.panel.fill(name, &spec);
+                self.conn_win.panel.set_state(ConnState::Idle);
+                if let Some(a) = self.conn_win.panel.connect_action() {
+                    self.handle_panel_action(a);
+                }
+            }
+            Ok(None) => self
+                .conn_win
+                .panel
+                .set_state(ConnState::Failed(name.to_string())),
+            Err(e) => self
+                .conn_win
+                .panel
+                .set_state(ConnState::Failed(e.to_string())),
+        }
+        self.conn_win.redraw();
+    }
+
+    fn delete_profile(&mut self, name: &str) {
+        match Vault::open_default().and_then(|v| v.remove(name)) {
+            Ok(_) => self.status = tf(Msg::StProfileDeleted, &[name]),
+            Err(e) => self.status = e.to_string(),
+        }
+        self.conn_win.refresh_profiles(None);
+        self.redraw();
     }
 
     fn toggle_log_window(&mut self, el: &ActiveEventLoop) {
@@ -532,8 +582,7 @@ impl App {
         self.menubar.set_menus(App::build_menus());
         self.toolbar = App::build_toolbar();
         self.run_btn.set_label(t(Msg::BtnRun));
-        let names = worker::profile_names();
-        self.panel.relabel(&names);
+        self.conn_win.relabel();
         self.editors.rebuild_boxes();
         self.layout();
         self.set_focus(self.focus);
@@ -684,18 +733,10 @@ impl App {
                     .with_fonts(prefs)
                     .with_caret_on(caret_on);
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
-                let pb = self.panel.bounds();
-                let chrome_top = pb.y;
-                dc.fill_rect(
-                    Rect::new(pb.right(), chrome_top, wi - pb.right(), px(36.0, s)),
-                    th.chrome_bg,
-                );
-                dc.fill_rect(
-                    Rect::new(pb.right(), chrome_top + px(36.0, s) - 1, wi - pb.right(), 1),
-                    th.border,
-                );
+                let chrome_top = self.toolbar.bounds().bottom();
+                dc.fill_rect(Rect::new(0, chrome_top, wi, px(36.0, s)), th.chrome_bg);
+                dc.fill_rect(Rect::new(0, chrome_top + px(36.0, s) - 1, wi, 1), th.border);
                 self.run_btn.paint(&mut dc, &th);
-                self.panel.paint(&mut dc, &th);
                 self.editors.paint_tabs(&mut dc, &th);
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
@@ -723,7 +764,7 @@ impl App {
                 // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
                 let (ln, col) = self.editors.caret_line_col();
                 let mut segs: Vec<(String, bool)> = Vec::new();
-                let conn = match self.panel.state_ref() {
+                let conn = match self.conn_win.panel.state_ref() {
                     ConnState::Connected(d) => d.clone(),
                     _ => "—".to_string(),
                 };
@@ -930,19 +971,9 @@ impl App {
             self.redraw();
             return;
         }
-        // 열린 콤보(패널)는 모달 — 어디를 눌러도 패널이 먼저 받는다.
-        if self.panel.popup_open() {
-            if let Some(a) = self.panel.route(&ev, &mut inv) {
-                self.handle_panel_action(a);
-            }
-            self.redraw();
-            return;
-        }
         if let InputEvent::MouseDown { x, y, .. } = ev {
             let p = Point { x, y };
-            if self.panel.bounds().contains(p) {
-                self.set_focus(Focus::Panel);
-            } else if self.editors.editor_bounds().contains(p) {
+            if self.editors.editor_bounds().contains(p) {
                 self.set_focus(Focus::Editor);
             } else if self.grid.bounds.contains(p) {
                 self.set_focus(Focus::Grid);
@@ -973,9 +1004,6 @@ impl App {
             if self.run_btn.take_clicked() {
                 self.run_sql(true);
             }
-            if let Some(a) = self.panel.route(&ev, &mut inv) {
-                self.handle_panel_action(a);
-            }
         }
         // 휠은 포커스가 아니라 **커서 아래 영역**으로 간다(편집기·그리드·패널).
         let is_wheel = matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
@@ -988,10 +1016,6 @@ impl App {
             inv.push(self.grid.bounds);
         } else if is_wheel && self.editors.editor_bounds().contains(cur) {
             self.ed_mut().on_event(&ev, &mut inv);
-        } else if is_wheel && self.panel.bounds().contains(cur) {
-            if let Some(a) = self.panel.route(&ev, &mut inv) {
-                self.handle_panel_action(a);
-            }
         } else {
             let enter = matches!(
                 ev,
@@ -1002,13 +1026,6 @@ impl App {
             );
             let _ = enter;
             match self.focus {
-                Focus::Panel => {
-                    if !is_mouse {
-                        if let Some(a) = self.panel.route(&ev, &mut inv) {
-                            self.handle_panel_action(a);
-                        }
-                    }
-                }
                 Focus::Editor => self.ed_mut().on_event(&ev, &mut inv),
                 Focus::Grid => {
                     self.grid.on_event(&ev, self.scale);
@@ -1016,11 +1033,7 @@ impl App {
                 }
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
-            let pending = self.ed_mut().take_edit_ctx().or_else(|| {
-                self.panel
-                    .focused_textbox()
-                    .and_then(|tb| tb.take_edit_ctx())
-            });
+            let pending = self.ed_mut().take_edit_ctx();
             if let Some(act) = pending {
                 self.clip_action(act);
             }
@@ -1036,10 +1049,12 @@ impl ApplicationHandler<Wake> for App {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes()
-            .with_title("Nexa SQL")
-            .with_theme(theme::window_theme(self.settings.theme_mode()))
-            .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 720.0));
+        let attrs = icon::with_icon(
+            Window::default_attributes()
+                .with_title("Nexa SQL")
+                .with_theme(theme::window_theme(self.settings.theme_mode()))
+                .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 720.0)),
+        );
         let Ok(win) = el.create_window(attrs) else {
             eprintln!("{}", t(Msg::ErrNoWindow));
             el.exit();
@@ -1083,7 +1098,7 @@ impl ApplicationHandler<Wake> for App {
         let now = Instant::now();
         if now >= self.next_blink {
             self.next_blink = now + Duration::from_millis(500);
-            if matches!(self.focus, Focus::Editor | Focus::Panel) {
+            if self.focus == Focus::Editor {
                 self.redraw();
             }
         }
@@ -1116,6 +1131,20 @@ impl ApplicationHandler<Wake> for App {
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
+        }
+        if self.conn_win.is(id) {
+            let ui_px = self.settings.int("ui.font_size") as f32;
+            for a in self.conn_win.handle(&event) {
+                match a {
+                    ConnWinAction::Paint => {
+                        self.conn_win.paint(&self.ui_font, &self.theme, ui_px);
+                    }
+                    ConnWinAction::Panel(a) => self.handle_panel_action(a),
+                    ConnWinAction::Login(name) => self.login_profile(&name),
+                    ConnWinAction::Delete(name) => self.delete_profile(&name),
+                }
+            }
+            return;
         }
         if self.log_win.is(id) {
             if self.log_win.handle(&event) == LogWinAction::Paint {
@@ -1209,9 +1238,7 @@ impl ApplicationHandler<Wake> for App {
                         return;
                     }
                     Key::Character("l" | "L") if self.primary => {
-                        self.set_focus(Focus::Panel);
-                        self.panel.focus_host();
-                        self.redraw();
+                        self.open_conn_window(el);
                         return;
                     }
                     Key::Character("a" | "A") if self.primary => {
@@ -1244,6 +1271,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.toggle_log) {
             self.toggle_log_window(el);
+        }
+        if std::mem::take(&mut self.open_conn) {
+            self.open_conn_window(el);
         }
         if self.exit_requested {
             self.worker.send(worker::Cmd::Quit);
@@ -1349,7 +1379,8 @@ fn main() {
         toggle_log: false,
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),
-        panel,
+        conn_win: ConnWin::new(panel),
+        open_conn: true,
         run_btn: Button::new(t(Msg::BtnRun)),
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),

@@ -236,6 +236,27 @@ impl ConnectPanel {
         )
     }
 
+    /// 새 프로필 — 폼 비우기(DB 종류는 유지).
+    pub(crate) fn clear(&mut self) {
+        for tb in [
+            &mut self.host,
+            &mut self.port,
+            &mut self.database,
+            &mut self.user,
+            &mut self.password,
+            &mut self.name,
+        ] {
+            tb.set_text("");
+        }
+        self.save_pw.set_checked(false);
+        let d = self.selected_dialect();
+        self.apply_dialect(d);
+    }
+
+    pub(crate) fn is_connected(&self) -> bool {
+        self.connected
+    }
+
     pub(crate) fn state_ref(&self) -> &ConnState {
         &self.state
     }
