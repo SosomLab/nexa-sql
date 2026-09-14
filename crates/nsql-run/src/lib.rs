@@ -60,6 +60,73 @@ pub enum RunEvent {
     },
 }
 
+/// 이벤트 → 로그 엔트리(GUI 로그 창 · CLI `--log` 공용 매핑 · docs/26 §3). 타임스탬프는 엔트리 생성 시각.
+pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
+    use nsql_log::{LogEntry, LogKind};
+    match ev {
+        RunEvent::Begin { line, summary, .. } => {
+            vec![LogEntry::new(
+                LogKind::Send,
+                format!("line {line}: {summary}"),
+            )]
+        }
+        RunEvent::ResultSet { rs, elapsed, .. } => vec![LogEntry::new(LogKind::Done, "result set")
+            .rows(rs.rows.len() as u64)
+            .elapsed(*elapsed)],
+        RunEvent::Done {
+            rows_affected,
+            elapsed,
+            ..
+        } => vec![LogEntry::new(LogKind::Done, "done")
+            .rows(*rows_affected)
+            .elapsed(*elapsed)],
+        RunEvent::Print { pairs } => vec![LogEntry::new(
+            LogKind::Info,
+            format!(
+                "PRINT {}",
+                pairs
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )],
+        RunEvent::Message(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
+        RunEvent::Connected {
+            description,
+            dialect,
+        } => vec![LogEntry::new(
+            LogKind::Connect,
+            format!("{description} ({dialect})"),
+        )],
+        RunEvent::Disconnected => vec![LogEntry::new(LogKind::Disconnect, "")],
+        RunEvent::Error { line, error, .. } => vec![LogEntry::new(
+            LogKind::Error,
+            format!("line {line}: {}", error.message),
+        )],
+        RunEvent::Timing { timeline, .. } => timeline
+            .spans
+            .iter()
+            .map(|s| {
+                let (kind, msg) = match s.stage {
+                    Stage::Send => (LogKind::Send, "sent"),
+                    Stage::Execute => (LogKind::Execute, "first response"),
+                    Stage::Fetch => (LogKind::Fetch, "fetched"),
+                    Stage::OutputFlush => (LogKind::Output, "server output"),
+                    Stage::Commit => (LogKind::Commit, "commit"),
+                    other => (LogKind::Info, other.label()),
+                };
+                let mut m = msg.to_string();
+                if let Some(n) = &s.note {
+                    m.push_str(" · ");
+                    m.push_str(n);
+                }
+                LogEntry::new(kind, m).rows(s.rows).elapsed(s.dur)
+            })
+            .collect(),
+    }
+}
+
 /// 접속 열기 — 호스트가 드라이버 레지스트리로 주입한다.
 pub type Opener = Box<dyn FnMut(&ConnectSpec) -> Result<Box<dyn Session>, DbError>>;
 /// 치환 변수 프롬프트 — `None`이면 실행 중단.

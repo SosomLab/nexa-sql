@@ -30,6 +30,8 @@ struct Opts {
     no_prompt: bool,
     /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
     timing: bool,
+    /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
+    log: bool,
     /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
     password: Option<String>,
     /// `--host` · `--port` · `--db` · `--user` — 접속 문자열 대신 필드로(GUI 접속 폼과 같은 `ConnectSpec::from_parts` 경로).
@@ -45,7 +47,7 @@ struct Opts {
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -68,6 +70,7 @@ fn parse_opts() -> Opts {
         format: Format::Grid,
         no_prompt: false,
         timing: false,
+        log: false,
         password: None,
         host: None,
         port: None,
@@ -121,6 +124,7 @@ fn parse_opts() -> Opts {
             "-o" | "--out" => o.out = Some(val("-o")),
             "--no-prompt" => o.no_prompt = true,
             "--timing" => o.timing = true,
+            "--log" => o.log = true,
             _ => o.positional.push(a),
         }
     }
@@ -178,10 +182,36 @@ struct Printer {
     feedback: bool,
     /// 단계별 소요 출력(`--timing`).
     timing: bool,
+    /// 실행 로그 허브(`--log` · 별도 스레드 stderr 싱크 · 없으면 None).
+    log: Option<nsql_log::LogHub>,
+}
+
+/// `--log`면 설정 `log.format`으로 stderr 싱크를 **로그 스레드**에 띄운다(메인 경로 비차단 · docs/26 §3).
+fn log_hub(o: &Opts) -> Option<nsql_log::LogHub> {
+    if !o.log {
+        return None;
+    }
+    let name = nsql_settings::Settings::open_default()
+        .map(|s| s.get("log.format").unwrap_or("raw").to_string())
+        .unwrap_or_else(|_| "raw".into());
+    let fmt: Box<dyn nsql_log::LogFormat + Send> = match name.as_str() {
+        "markdown" => Box::new(nsql_log::MarkdownFormat),
+        "grid" => Box::new(nsql_log::GridFormat),
+        _ => Box::new(nsql_log::RawFormat),
+    };
+    Some(nsql_log::LogHub::spawn(
+        vec![Box::new(nsql_log::StderrSink::new(fmt))],
+        4096,
+    ))
 }
 
 impl Printer {
     fn handle(&mut self, ev: RunEvent) {
+        if let Some(hub) = &self.log {
+            for e in nsql_run::log_entries(&ev) {
+                hub.push(e);
+            }
+        }
         let out = io::stdout();
         let mut out = out.lock();
         match ev {
@@ -281,6 +311,7 @@ fn cmd_run(o: &Opts) -> i32 {
         errors: 0,
         feedback: true,
         timing: o.timing,
+        log: log_hub(o),
     };
     let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
@@ -309,6 +340,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         errors: 0,
         feedback: true,
         timing: o.timing,
+        log: log_hub(o),
     };
     let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
@@ -382,6 +414,7 @@ fn cmd_export(o: &Opts) -> i32 {
         errors: 0,
         feedback: false,
         timing: o.timing,
+        log: log_hub(o),
     };
     let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);

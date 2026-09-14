@@ -13,10 +13,12 @@
 mod clipboard;
 mod connect;
 mod grid;
+mod log_win;
 mod theme;
 mod worker;
 
 use connect::{ConnState, ConnectPanel, PanelAction};
+use log_win::{LogWin, LogWinAction};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -27,6 +29,7 @@ use nexa_ctl::{
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
 use nsql_i18n::{current_lang, t, tf, Msg};
+use nsql_log::{LogEntry, LogKind};
 use nsql_run::RunEvent;
 use nsql_settings::{Settings, ThemeMode};
 use nsql_vault::Vault;
@@ -62,6 +65,8 @@ struct App {
     /// 앱 설정(언어·테마 모드·글꼴 크기) — 단축키로 바꾸면 즉시 저장.
     settings: Settings,
     scale: f32,
+    /// 로그 창(별도 창 · `Ctrl/⌘+⇧G`).
+    log_win: LogWin,
     // 컨트롤
     panel: ConnectPanel,
     run_btn: Button,
@@ -184,6 +189,8 @@ impl App {
             match o {
                 ConnOutcome::Connected(d) => self.panel.set_state(ConnState::Connected(d)),
                 ConnOutcome::ConnectFailed(e) => {
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
                     self.status = tf(Msg::StConnectFailed, &[&e]);
                     self.panel.set_state(ConnState::Failed(e));
                 }
@@ -191,11 +198,17 @@ impl App {
                     description,
                     elapsed_s,
                 } => {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        format!("test ok: {description} ({elapsed_s}s)"),
+                    ));
                     let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
                     self.status = msg.clone();
                     self.panel.set_state(ConnState::TestOk(msg));
                 }
                 ConnOutcome::TestFailed(e) => {
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, format!("test: {e}")));
                     self.status = tf(Msg::StTestFailed, &[&e]);
                     self.panel.set_state(ConnState::Failed(e));
                 }
@@ -257,6 +270,7 @@ impl App {
     fn apply_theme(&mut self) {
         let wt = self.window.as_ref().and_then(|w| w.theme());
         self.theme = theme::resolve(self.settings.theme_mode(), wt);
+        self.log_win.redraw();
         if let Some(w) = &self.window {
             w.set_theme(theme::window_theme(self.settings.theme_mode()));
         }
@@ -339,6 +353,9 @@ impl App {
         let mut changed = self.drain_conn();
         while let Ok(ev) = self.events.try_recv() {
             changed = true;
+            for e in nsql_run::log_entries(&ev) {
+                self.log_win.push(e);
+            }
             match ev {
                 RunEvent::Begin { .. } => {}
                 RunEvent::ResultSet { rs, elapsed, .. } => {
@@ -692,9 +709,16 @@ impl ApplicationHandler<Wake> for App {
             }
             Err(e) => eprintln!("softbuffer context failed: {e}"),
         }
+        let near = win
+            .outer_position()
+            .ok()
+            .map(|p| (p.x, p.y, win.outer_size().width));
         self.window = Some(win);
         self.layout();
         self.set_focus(Focus::Editor);
+        // 로그 창은 메인 창 오른쪽에 함께 연다(사용자 09-14 "별도 창").
+        self.log_win
+            .open(el, theme::window_theme(self.settings.theme_mode()), near);
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _ev: Wake) {
@@ -716,7 +740,14 @@ impl ApplicationHandler<Wake> for App {
         el.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
     }
 
-    fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.log_win.is(id) {
+            if self.log_win.handle(&event) == LogWinAction::Paint {
+                let px = self.settings.int("editor.font_size") as f32;
+                self.log_win.paint(&self.mono_font, &self.theme, px);
+            }
+            return;
+        }
         match &event {
             WindowEvent::CloseRequested => {
                 self.worker.send(worker::Cmd::Quit);
@@ -782,6 +813,23 @@ impl ApplicationHandler<Wake> for App {
                     }
                     Key::Character("t" | "T") if self.primary && self.shift => {
                         self.cycle_theme();
+                        return;
+                    }
+                    Key::Character("g" | "G") if self.primary && self.shift => {
+                        if self.log_win.is_open() {
+                            self.log_win.close();
+                        } else {
+                            let near = self.window.as_ref().and_then(|w| {
+                                w.outer_position()
+                                    .ok()
+                                    .map(|p| (p.x, p.y, w.outer_size().width))
+                            });
+                            self.log_win.open(
+                                el,
+                                theme::window_theme(self.settings.theme_mode()),
+                                near,
+                            );
+                        }
                         return;
                     }
                     Key::Character("l" | "L") if self.primary && self.shift => {
@@ -894,6 +942,7 @@ fn main() {
     };
     // 창이 없는 동안의 팔레트 — OS 조회(창이 생기면 winit 판정으로 다시 고른다).
     let initial_theme = theme::resolve(settings.theme_mode(), None);
+    let log_format = settings.get("log.format").unwrap_or("raw").to_string();
     let mut app = App {
         window: None,
         ctx: None,
@@ -903,6 +952,7 @@ fn main() {
         theme: initial_theme,
         settings,
         scale: 1.0,
+        log_win: LogWin::new(&log_format),
         panel,
         run_btn: Button::new(t(Msg::BtnRun)),
         editor: TextBox::new(t(Msg::PhEditor)).with_multiline(),

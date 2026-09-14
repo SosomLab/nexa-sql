@@ -15,6 +15,7 @@ workspace = true
 nsql-core.workspace = true
 nsql-script.workspace = true
 nsql-io.workspace = true
+nsql-log.workspace = true
 
 [dev-dependencies]
 nsql-driver-sqlite.workspace = true

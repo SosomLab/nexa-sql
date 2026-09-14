@@ -1112,6 +1112,7 @@ dependencies = [
  "nsql-drivers",
  "nsql-i18n",
  "nsql-io",
+ "nsql-log",
  "nsql-run",
  "nsql-script",
  "nsql-settings",
@@ -1128,6 +1129,7 @@ dependencies = [
  "nsql-drivers",
  "nsql-i18n",
  "nsql-io",
+ "nsql-log",
  "nsql-run",
  "nsql-script",
  "nsql-settings",
@@ -1191,12 +1193,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nsql-log"
+version = "0.0.1"
+
+[[package]]
 name = "nsql-run"
 version = "0.0.1"
 dependencies = [
  "nsql-core",
  "nsql-driver-sqlite",
  "nsql-io",
+ "nsql-log",
  "nsql-script",
 ]
 

@@ -134,6 +134,17 @@ pub struct Entry {
     pub default: &'static str,
 }
 
+const SESSION_MODE_OPTS: &[(&str, Msg)] = &[
+    ("shared", Msg::ValSessionShared),
+    ("per-editor", Msg::ValSessionPerEditor),
+];
+
+const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
+    ("raw", Msg::ValRaw),
+    ("markdown", Msg::ValMarkdown),
+    ("grid", Msg::ValGrid),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -165,6 +176,22 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescUiFontSize,
         kind: SettingKind::Int { min: 8, max: 40 },
         default: "14",
+    },
+    Entry {
+        key: "session.mode",
+        cat: Msg::CatSession,
+        label: Msg::LblSessionMode,
+        desc: Msg::DescSessionMode,
+        kind: SettingKind::Choice(SESSION_MODE_OPTS),
+        default: "shared",
+    },
+    Entry {
+        key: "log.format",
+        cat: Msg::CatLog,
+        label: Msg::LblLogFormat,
+        desc: Msg::DescLogFormat,
+        kind: SettingKind::Choice(LOG_FORMAT_OPTS),
+        default: "raw",
     },
     Entry {
         key: "editor.font_size",
