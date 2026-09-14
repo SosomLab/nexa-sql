@@ -271,12 +271,21 @@ impl App {
             self.status = t(Msg::StRunning).into();
             return;
         }
+        // Ctrl/⌘+Enter = 선택 영역 → 없으면 **캐럿 위치의 한 문장**(`;` 종결 · 사용자 09-14) → F5 = 전체.
         let text = if all {
             None
         } else {
             self.editor
                 .copy_selection()
                 .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    let full = self.editor.text();
+                    let byte_pos = full
+                        .char_indices()
+                        .nth(self.editor.caret())
+                        .map_or(full.len(), |(b, _)| b);
+                    nsql_script::statement_at(&full, byte_pos).map(|it| it.text)
+                })
         };
         let src = text.unwrap_or_else(|| self.editor.text());
         if src.trim().is_empty() {

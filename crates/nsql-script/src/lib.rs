@@ -29,5 +29,6 @@ pub use command::{Command, SetOption};
 pub use connect::ConnectSpec;
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine};
+pub use split::statement_at;
 pub use split::{split_script, Item, ItemKind, SqlKind};
 pub use vars::{Var, VarStore};

@@ -38,6 +38,30 @@ pub struct Item {
     pub line: usize,
 }
 
+/// 캐럿(바이트 오프셋) 위치의 **한 문장** — 편집기 `Ctrl+Enter`(사용자 09-14 · `;`가 끝을 나타낸다는 기본 규칙 =
+/// [`split_script`]와 같은 분리기 · `/` 단독 줄 · PL/SQL 블록도 같은 규칙). GUI와 CLI 셸이 같은 함수를 쓴다.
+///
+/// 규칙: 캐럿이 문장 안이면 그 문장 · 문장 사이(공백·주석)면 **바로 앞** 문장 · 첫 문장보다 앞이면 첫 문장 ·
+/// 문장이 없으면 `None`. 캐럿이 `;` 바로 뒤(span 끝)도 그 문장으로 본다.
+pub fn statement_at(src: &str, byte_pos: usize) -> Option<Item> {
+    let items = split_script(src);
+    let pos = byte_pos.min(src.len());
+    let mut chosen: Option<usize> = None;
+    for (i, it) in items.iter().enumerate() {
+        if it.span.start <= pos && pos <= it.span.end {
+            chosen = Some(i);
+            break;
+        }
+        if it.span.end < pos {
+            chosen = Some(i);
+        } else {
+            break;
+        }
+    }
+    let i = chosen.or_else(|| (!items.is_empty()).then_some(0))?;
+    items.into_iter().nth(i)
+}
+
 pub fn split_script(src: &str) -> Vec<Item> {
     let classes = classify(src);
     let b = src.as_bytes();
@@ -395,5 +419,68 @@ mod tests {
         assert_eq!(&s[items[0].span.clone()], "SELECT 1\nFROM dual;");
         assert_eq!(&s[items[1].span.clone()], "EXEC :v := 1;");
         assert_eq!(items[1].line, 4);
+    }
+}
+
+#[cfg(test)]
+mod statement_at_tests {
+    use super::*;
+
+    const SRC: &str = "SELECT 1 FROM dual;
+
+SELECT 2
+  FROM dual;
+-- tail comment
+EXEC :V := 'x';";
+
+    fn text_at(pos: usize) -> String {
+        statement_at(SRC, pos).map(|i| i.text).unwrap_or_default()
+    }
+
+    #[test]
+    fn caret_inside_statement_picks_it() {
+        assert_eq!(text_at(3), "SELECT 1 FROM dual");
+        let second = SRC.find("SELECT 2").unwrap();
+        assert_eq!(
+            text_at(second + 10),
+            "SELECT 2
+  FROM dual"
+        );
+    }
+
+    #[test]
+    fn caret_between_statements_picks_previous() {
+        let gap = SRC
+            .find(
+                "
+
+",
+            )
+            .unwrap()
+            + 1;
+        assert_eq!(text_at(gap), "SELECT 1 FROM dual");
+        let comment = SRC.find("-- tail").unwrap() + 3;
+        assert_eq!(
+            text_at(comment),
+            "SELECT 2
+  FROM dual"
+        );
+    }
+
+    #[test]
+    fn caret_right_after_semicolon_and_at_end() {
+        let semi = SRC.find(';').unwrap();
+        assert_eq!(text_at(semi + 1), "SELECT 1 FROM dual");
+        assert_eq!(text_at(SRC.len()), "EXEC :V := 'x'");
+        assert_eq!(text_at(usize::MAX), "EXEC :V := 'x'");
+    }
+
+    #[test]
+    fn empty_source_is_none() {
+        assert!(statement_at(
+            "   
+", 1
+        )
+        .is_none());
     }
 }
