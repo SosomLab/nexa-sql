@@ -13,16 +13,21 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
+use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::{
-    Button, Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget,
+    Button, Control, FiredBy, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox,
+    TimeoutButton, Widget,
 };
+
+/// 삭제 확인 대기(ms) — 첫 클릭 뒤 이 시간 안에 한 번 더 누르면 삭제(사용자 09-14).
+const DELETE_ARM_MS: u64 = 5000;
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use nsql_vault::{Profile, Vault};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
@@ -40,6 +45,8 @@ pub(crate) enum ConnWinAction {
     TestProfile(String),
     /// 목록에서 프로필 삭제.
     Delete(String),
+    /// 우클릭 메뉴 Duplicate — `<이름>_Copied`로 복제(비밀번호 포함 · 사용자 09-14).
+    Duplicate(String),
 }
 
 /// 행 테스트 버튼 위에 얹는 마지막 결과(사용자 09-14 — 형태·기능은 그대로, 표시만 바뀐다).
@@ -215,6 +222,12 @@ pub(crate) struct ConnWin {
     focus: WFocus,
     /// `WFocus::Button`일 때 어느 버튼(0 New · 1 Details · 2 Delete · 3 Close).
     focus_btn: usize,
+    /// ★ 삭제 2단 확인 — 첫 클릭으로 무장(빨간 타이머 버튼 · 5초 카운트다운) · 그 안에 재클릭 = 삭제 · 만료/Esc = 해제.
+    del_arm: Option<(TimeoutButton, Instant)>,
+    /// 행 우클릭 메뉴(nexa-ctl 공용 · 항목 id만 돌려준다) + 대상 프로필 + 라벨 폭(페인트 때 실측).
+    menu: CtxMenu,
+    ctx_target: Option<String>,
+    ctx_text_w: i32,
     last_click: Option<(usize, Instant)>,
     /// 상세 폼 열림 정도 0.0(닫힘)~1.0(열림) — 슬라이딩 애니메이션 현재값.
     detail_t: f32,
@@ -280,6 +293,10 @@ impl ConnWin {
             row_h: 24,
             focus: WFocus::Filter,
             focus_btn: 0,
+            del_arm: None,
+            menu: CtxMenu::new(),
+            ctx_target: None,
+            ctx_text_w: 0,
             last_click: None,
             detail_t: 0.0,
             anim: None,
@@ -386,14 +403,18 @@ impl ConnWin {
             return;
         }
         if let Some(hub) = &self.hub {
-            hub.request(ProbeReq {
+            let sent = hub.request(ProbeReq {
                 name: name.to_string(),
                 host,
                 port,
                 timeout: self.policy.timeout,
             });
-            e.status = ProbeStatus::Checking;
-            e.next_at = None;
+            if sent {
+                e.status = ProbeStatus::Checking;
+                e.next_at = None;
+            } else {
+                e.next_at = Some(now);
+            }
             self.redraw();
         }
     }
@@ -409,10 +430,10 @@ impl ConnWin {
             if !self.connected.contains(&p.name) || p.spec.host.is_none() || p.spec.port.is_none() {
                 continue;
             }
+            // 새 대상만 즉시 · 이미 예약된 항목은 그 예약을 지킨다(창을 자주 열어도 확인은 `probe.interval`마다 1회 · 사용자 09-14).
             self.probes
                 .entry(p.name.clone())
-                .or_insert_with(|| ProbeEntry::fresh(now))
-                .poke(now);
+                .or_insert_with(|| ProbeEntry::fresh(now));
         }
     }
 
@@ -447,15 +468,22 @@ impl ConnWin {
             match e.next_at {
                 Some(t) if t <= now => {
                     if let (Some(h), Some(port)) = (p.spec.host.clone(), p.spec.port) {
-                        hub.request(ProbeReq {
+                        // 확인이 필요한 대상만 · 각각 별도 스레드. 상한 초과면 예약을 유지해 다음 틱에.
+                        let sent = hub.request(ProbeReq {
                             name: p.name.clone(),
                             host: h,
                             port,
                             timeout: self.policy.timeout,
                         });
-                        e.status = ProbeStatus::Checking;
-                        e.next_at = None;
-                        changed = true;
+                        if sent {
+                            e.status = ProbeStatus::Checking;
+                            e.next_at = None;
+                            changed = true;
+                        } else {
+                            next = Some(next.map_or(now + Duration::from_millis(250), |n: Instant| {
+                                n.min(now + Duration::from_millis(250))
+                            }));
+                        }
                     }
                 }
                 Some(t) => next = Some(next.map_or(t, |n: Instant| n.min(t))),
@@ -689,7 +717,21 @@ impl ConnWin {
             | self.btn_delete.tick(now_ms)
             | self.btn_close.tick(now_ms)
             | self.panel.tick(now_ms);
-        a || b || c || tip_due
+        // 삭제 무장 카운트다운(자체 시계) — 만료면 해제.
+        let d = match self.del_arm.as_mut() {
+            Some((tb, epoch)) => {
+                let changed = tb.tick(epoch.elapsed().as_millis() as u64);
+                if tb.fired_by_timeout() {
+                    let _ = tb.take_fired();
+                    self.del_arm = None;
+                    true
+                } else {
+                    changed
+                }
+            }
+            None => false,
+        };
+        a || b || c || d || tip_due
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
@@ -698,7 +740,8 @@ impl ConnWin {
 
     pub(crate) fn hover_animating(&self) -> bool {
         self.window.is_some()
-            && (self.hover_fade.is_animating()
+            && (self.del_arm.is_some()
+                || self.hover_fade.is_animating()
                 || self.btn_new.is_animating()
                 || self.btn_edit.is_animating()
                 || self.btn_delete.is_animating()
@@ -862,6 +905,13 @@ impl ConnWin {
                 Rect::new(bx + ws[0] + ws[1] + gap * 2, y1, ws[2], row),
                 &mut inv,
             );
+        if let Some((tb, _)) = self.del_arm.as_mut() {
+            tb.set_bounds(
+                Rect::new(bx + ws[0] + ws[1] + gap * 2, y1, ws[2], row),
+                &mut inv,
+            );
+            tb.set_scale(s);
+        }
         self.btn_close
             .set_bounds(
                 Rect::new(bx + ws[0] + ws[1] + ws[2] + gap * 3, y1, ws[3], row),
@@ -1044,6 +1094,43 @@ impl ConnWin {
         .position(|b| b.contains(p))
     }
 
+    /// 삭제 무장 — Delete 자리에 빨간 타이머 버튼(5초). 한 번 더 누르면 삭제.
+    fn arm_delete(&mut self) {
+        let mut tb = TimeoutButton::new(t(Msg::BtnDeleteConfirm), DELETE_ARM_MS)
+            .with_warn(true)
+            .with_suffix(t(Msg::UnitSecShort));
+        let mut inv = Invalidations::default();
+        tb.set_bounds(self.btn_delete.bounds(), &mut inv);
+        tb.set_scale(self.scale);
+        tb.start(0);
+        tb.set_focused(true);
+        self.btn_delete.set_focused(false);
+        self.del_arm = Some((tb, Instant::now()));
+        self.redraw();
+    }
+
+    /// 삭제 무장 해제(만료 · Esc · 삭제 뒤).
+    fn disarm_delete(&mut self) {
+        if self.del_arm.take().is_some() {
+            self.redraw();
+        }
+    }
+
+    /// 무장 버튼의 발화 처리 — 클릭 = 삭제 · 만료 = 해제.
+    fn poll_delete_arm(&mut self, out: &mut Vec<ConnWinAction>) {
+        let Some((tb, _)) = self.del_arm.as_mut() else { return };
+        match tb.take_fired() {
+            Some(FiredBy::Click) => {
+                if let Some(n) = self.selected_name() {
+                    out.push(ConnWinAction::Delete(n));
+                }
+                self.disarm_delete();
+            }
+            Some(FiredBy::Timeout) => self.disarm_delete(),
+            None => {}
+        }
+    }
+
     /// 상단 버튼의 클릭 결과 처리 — 창을 닫았으면 true.
     fn handle_top_clicks(&mut self, out: &mut Vec<ConnWinAction>) -> bool {
         if self.btn_new.take_clicked() {
@@ -1058,10 +1145,8 @@ impl ConnWin {
                 self.open_detail(false);
             }
         }
-        if self.btn_delete.take_clicked() {
-            if let Some(n) = self.selected_name() {
-                out.push(ConnWinAction::Delete(n));
-            }
+        if self.btn_delete.take_clicked() && self.selected_name().is_some() && self.del_arm.is_none() {
+            self.arm_delete();
         }
         if self.btn_close.take_clicked() {
             self.close();
@@ -1163,7 +1248,9 @@ impl ConnWin {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) if !self.panel.popup_open() => {
-                        if self.detail_open() {
+                        if self.del_arm.is_some() {
+                            self.disarm_delete();
+                        } else if self.detail_open() {
                             self.close_detail();
                         } else {
                             self.close();
@@ -1318,6 +1405,42 @@ impl ConnWin {
 
     fn route(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
         let mut inv = Invalidations::default();
+        // 열린 우클릭 메뉴는 모달 — 고른 항목 id만 받아 실행.
+        if self.menu.is_open() && self.menu.on_event(&ev) {
+            if self.menu.take_picked().as_deref() == Some("dup") {
+                if let Some(n) = self.ctx_target.take() {
+                    out.push(ConnWinAction::Duplicate(n));
+                }
+            }
+            self.redraw();
+            return;
+        }
+        if let InputEvent::RightDown { x, y } = ev {
+            let p = Point { x, y };
+            if let Some(row) = self.row_at(p) {
+                self.set_focus(WFocus::List);
+                self.sel = Some(row);
+                self.ctx_target = self.name_at(row);
+                let host = self
+                    .window
+                    .as_ref()
+                    .map(|w| {
+                        let sz = w.inner_size();
+                        Rect::new(0, 0, sz.width as i32, sz.height as i32)
+                    })
+                    .unwrap_or(self.list);
+                self.menu.set_scale(self.scale);
+                self.menu.open_at(
+                    x,
+                    y,
+                    vec![CtxItem::item("dup", t(Msg::MnDuplicate))],
+                    host,
+                    self.ctx_text_w,
+                );
+                self.redraw();
+                return;
+            }
+        }
         // 열린 콤보(폼)는 모달.
         if self.panel.popup_open() {
             if let Some(a) = self.panel.route(&ev, &mut inv) {
@@ -1452,8 +1575,12 @@ impl ConnWin {
         if is_mouse {
             self.btn_new.on_event(&ev, &mut inv);
             self.btn_edit.on_event(&ev, &mut inv);
-            self.btn_delete.on_event(&ev, &mut inv);
+            match self.del_arm.as_mut() {
+                Some((tb, _)) => tb.on_event(&ev, &mut inv),
+                None => self.btn_delete.on_event(&ev, &mut inv),
+            }
             self.btn_close.on_event(&ev, &mut inv);
+            self.poll_delete_arm(out);
             if self.handle_top_clicks(out) {
                 return;
             }
@@ -1475,7 +1602,21 @@ impl ConnWin {
                 }
                 WFocus::List => {}
                 WFocus::Button => {
-                    // 포커스 버튼은 Enter/Space로 눌린다.
+                    // 포커스 버튼은 Enter/Space로 눌린다. 무장된 Delete는 Enter/Space = 확인 삭제.
+                    if self.focus_btn == 2 && self.del_arm.is_some() {
+                        if let InputEvent::Key {
+                            key: CtlKey::Enter,
+                            ..
+                        } = ev
+                        {
+                            if let Some(n) = self.selected_name() {
+                                out.push(ConnWinAction::Delete(n));
+                            }
+                            self.disarm_delete();
+                        }
+                        self.redraw();
+                        return;
+                    }
                     match self.focus_btn {
                         0 => self.btn_new.on_event(&ev, &mut inv),
                         1 => self.btn_edit.on_event(&ev, &mut inv),
@@ -1495,9 +1636,14 @@ impl ConnWin {
 
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
         let animating = self.advance();
-        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다.
+        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다. 삭제 무장 중엔 "삭제? (5초)"가 들어갈 폭.
         self.btn_text_w = [Msg::BtnNew, Msg::BtnEdit, Msg::BtnDelete, Msg::BtnClose]
             .map(|m| ui.measure(t(m), font_px).ceil() as i32);
+        if self.del_arm.is_some() {
+            let armed = format!("{} ({}{})", t(Msg::BtnDeleteConfirm), 5, t(Msg::UnitSecShort));
+            self.btn_text_w[2] = ui.measure(&armed, font_px).ceil() as i32;
+        }
+        self.ctx_text_w = ui.measure(t(Msg::MnDuplicate), font_px).ceil() as i32;
         if animating || self.anim.is_none() {
             self.layout();
         }
@@ -1565,7 +1711,10 @@ impl ConnWin {
             self.filter.paint(&mut dc, th);
             self.btn_new.paint(&mut dc, th);
             self.btn_edit.paint(&mut dc, th);
-            self.btn_delete.paint(&mut dc, th);
+            match &self.del_arm {
+                Some((tb, _)) => tb.paint(&mut dc, th),
+                None => self.btn_delete.paint(&mut dc, th),
+            }
             self.btn_close.paint(&mut dc, th);
             // 목록
             let l = list;
@@ -1739,6 +1888,8 @@ impl ConnWin {
                 let anchor = Rect::new(l.x + sw * tg.col, y, sw, rh);
                 draw_tooltip(&mut dc, th, anchor, wi, text, s);
             }
+            // 우클릭 메뉴(최상위).
+            self.menu.paint(&mut dc, th);
         }
         let _ = buf.present();
         if animating {

@@ -594,6 +594,36 @@ impl App {
         self.conn_win.redraw();
     }
 
+    /// 우클릭 Duplicate — `<이름>_Copied`(있으면 `_Copied2`…)로 저장(비밀번호 봉투 포함).
+    fn duplicate_profile(&mut self, name: &str) {
+        let r = Vault::open_default().and_then(|v| {
+            let Some(spec) = v.get(name)? else {
+                return Ok(None);
+            };
+            let names: Vec<String> = v.list()?.into_iter().map(|p| p.name).collect();
+            let mut new = format!("{name}_Copied");
+            let mut n = 2;
+            while names.contains(&new) {
+                new = format!("{name}_Copied{n}");
+                n += 1;
+            }
+            if !nsql_vault::is_profile_name(&new) {
+                return Ok(None);
+            }
+            v.save(&new, &spec)?;
+            Ok(Some(new))
+        });
+        match r {
+            Ok(Some(new)) => {
+                self.status = tf(Msg::WkProfileSaved, &[&new, ""]);
+                self.conn_win.refresh_profiles(Some(&new));
+            }
+            Ok(None) => self.status = t(Msg::ErrProfileName).into(),
+            Err(e) => self.status = e.to_string(),
+        }
+        self.conn_win.redraw();
+    }
+
     fn delete_profile(&mut self, name: &str) {
         match Vault::open_default().and_then(|v| v.remove(name)) {
             Ok(_) => self.status = tf(Msg::StProfileDeleted, &[name]),
@@ -1249,6 +1279,7 @@ impl ApplicationHandler<Wake> for App {
                     ConnWinAction::Login(name) => self.login_profile(&name),
                     ConnWinAction::TestProfile(name) => self.test_profile(&name),
                     ConnWinAction::Delete(name) => self.delete_profile(&name),
+                    ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
                 }
             }
             return;

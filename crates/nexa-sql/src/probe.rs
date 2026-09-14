@@ -10,14 +10,17 @@
 //!   (창이 닫혀 있어도 — 다음에 열 때 최신 상태가 보인다 · 사용자 09-14).
 //! - **실행 전 빠른 판정**: 워커는 신호등이 초록이 아니거나 직전 실행이 접속성 오류였으면 쿼리를 보내기 전에 같은 `probe_once`로
 //!   포트를 먼저 본다 — 죽은 서버에 드라이버 타임아웃(수십 초)을 기다리지 않고 `probe.timeout` 안에 실패를 알린다(사용자 09-14).
-//! - **부하**: 별도 스레드 하나가 **순차**로 처리(동시 연결 0) · 타임아웃 `probe.timeout`(기본 2초) · UI 스레드는 요청/결과 전달만.
+//! - **부하·격리**(사용자 09-14): 틱은 **확인이 필요한 대상만**(예약 시각 지남 · 확인 중 아님) 골라 요청하고, 요청마다 **별도 스레드**가
+//!   TCP 연결 1개로 판정한다(병렬 · 동시 최대 `MAX_INFLIGHT` · 초과분은 다음 틱). DB 워커 스레드·세션은 전혀 건드리지 않는다 —
+//!   실행 중인 쿼리·기존 접속에 영향 0. 타임아웃 `probe.timeout`(기본 2초) · UI 스레드는 요청/결과 전달만.
 //!
 //! 색 = 초록(포트 연결 가능) · 노랑(확인 중) · **파랑(IP는 살아 있는데 포트가 안 열림** — 연결 거부 또는 ICMP 응답) · 빨강(도달 불가) · 회색(대상 아님/모름).
 //! 접속 성공은 신호등을 바꾸지 않는다 — 목적은 **접속 전** 확인이라 다음에 창을 열 때 실제로 다시 묻는다(사용자 09-14).
 
 use std::collections::HashSet;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,39 +55,63 @@ pub(crate) struct ProbeResult {
     pub outcome: Outcome,
 }
 
-/// 프로브 스레드 핸들 — 요청은 큐에 넣고, 결과는 `wake` 뒤 [`ProbeHub::try_recv`]로 받는다.
+/// 동시에 도는 프로브 스레드 상한(프로필 수십 개까지 여유 · 초과분은 다음 틱에).
+const MAX_INFLIGHT: usize = 16;
+
+/// 프로브 허브 — 요청마다 **짧은 스레드 하나**(병렬) · 결과는 `wake` 뒤 [`ProbeHub::try_recv`]로 받는다.
+/// DB 워커와 채널·스레드를 공유하지 않는다(실행 중 쿼리·세션에 영향 0).
 pub(crate) struct ProbeHub {
-    tx: mpsc::Sender<ProbeReq>,
+    /// 프로브 스레드 → 수집 스레드(결과 전달 + UI 깨우기 · `wake`는 Sync가 아니어도 된다).
+    tx_res: mpsc::Sender<ProbeResult>,
     rx: mpsc::Receiver<ProbeResult>,
+    inflight: Arc<AtomicUsize>,
 }
 
 impl ProbeHub {
     pub(crate) fn spawn(wake: Box<dyn Fn() + Send>) -> Self {
-        let (tx, rx_req) = mpsc::channel::<ProbeReq>();
-        let (tx_res, rx) = mpsc::channel::<ProbeResult>();
+        let (tx_res, rx_internal) = mpsc::channel::<ProbeResult>();
+        let (tx_ui, rx) = mpsc::channel::<ProbeResult>();
+        // 수집 스레드 — 결과를 UI 채널로 옮기고 깨운다(대기만 하므로 비용 0 · 잠금 없음).
         let _ = std::thread::Builder::new()
-            .name("nsql-probe".into())
+            .name("nsql-probe-collect".into())
             .spawn(move || {
-                // 순차 처리 — 한 번에 연결 하나(네트워크 부하 상한).
-                for req in rx_req {
-                    let outcome = probe_once(&req.host, req.port, req.timeout);
-                    if tx_res
-                        .send(ProbeResult {
-                            name: req.name,
-                            outcome,
-                        })
-                        .is_err()
-                    {
+                for r in rx_internal {
+                    if tx_ui.send(r).is_err() {
                         break;
                     }
                     wake();
                 }
             });
-        ProbeHub { tx, rx }
+        ProbeHub {
+            tx_res,
+            rx,
+            inflight: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
-    pub(crate) fn request(&self, req: ProbeReq) {
-        let _ = self.tx.send(req);
+    /// 요청 하나 = 스레드 하나. 상한을 넘으면 `false`(호출자가 예약을 유지해 다음 틱에 다시 보낸다).
+    pub(crate) fn request(&self, req: ProbeReq) -> bool {
+        if self.inflight.load(Ordering::Relaxed) >= MAX_INFLIGHT {
+            return false;
+        }
+        self.inflight.fetch_add(1, Ordering::Relaxed);
+        let tx = self.tx_res.clone();
+        let inflight = Arc::clone(&self.inflight);
+        let spawned = std::thread::Builder::new()
+            .name(format!("nsql-probe:{}", req.name))
+            .spawn(move || {
+                let outcome = probe_once(&req.host, req.port, req.timeout);
+                inflight.fetch_sub(1, Ordering::Relaxed);
+                let _ = tx.send(ProbeResult {
+                    name: req.name,
+                    outcome,
+                });
+            });
+        if spawned.is_err() {
+            self.inflight.fetch_sub(1, Ordering::Relaxed);
+            return false;
+        }
+        true
     }
 
     pub(crate) fn try_recv(&self) -> Option<ProbeResult> {
