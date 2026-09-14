@@ -424,11 +424,15 @@ impl ConnectPanel {
         let a = self.test_btn.tick(now_ms);
         let b = self.connect_btn.tick(now_ms);
         let c = self.save_btn.tick(now_ms);
-        a || b || c
+        let d = self.dialect.tick_hover(now_ms);
+        a || b || c || d
     }
 
     pub(crate) fn animating(&self) -> bool {
-        self.test_btn.is_animating() || self.connect_btn.is_animating() || self.save_btn.is_animating()
+        self.test_btn.is_animating()
+            || self.connect_btn.is_animating()
+            || self.save_btn.is_animating()
+            || self.dialect.hover_animating()
     }
 
     /// 호스트의 IME·클립보드 라우팅 지점.

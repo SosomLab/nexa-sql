@@ -5,7 +5,7 @@
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
-use nexa_ctl::tokens::{hover_alpha, HoverFade};
+use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key, ScrollBars};
 use nsql_core::{fmt_bytes, fmt_dur, ResultSet, Value};
 
@@ -41,8 +41,8 @@ pub(crate) struct Grid {
     hdr_drag: Option<(usize, i32, i32, bool, bool)>,
     /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
     hdr_resize: Option<(usize, i32, i32)>,
-    /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — nexa-clip과 같은 `HoverFade`(진입 = `grid.hover_fade` · 사용자 09-14).
-    hover: HoverFade,
+    /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — `IntentFade`(70ms 머문 마지막 목표만 · 진입 = `grid.hover_fade` · 사용자 09-14).
+    hover: IntentFade,
 }
 
 impl Default for Grid {
@@ -68,7 +68,7 @@ impl Default for Grid {
             sort_keys: Vec::new(),
             hdr_drag: None,
             hdr_resize: None,
-            hover: HoverFade::default(),
+            hover: IntentFade::with_speed(FadeSpeed::Slow),
         }
     }
 }

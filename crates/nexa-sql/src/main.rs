@@ -271,7 +271,8 @@ impl App {
                 ConnOutcome::Connected(d) => {
                     let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
-                    // 접속 버튼 초록 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
+                    // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
+                    self.conn_win.clear_connect_marks();
                     self.conn_win.set_connect_mark(&name, Some(ConnectMark::Connected));
                     self.conn_win.close_soon(Duration::from_millis(450));
                     // 활성 탭에 접속 정보 적용 — 탭이 없으면 새 탭(사용자 09-14).
@@ -1534,9 +1535,14 @@ fn main() {
     app.grid
         .set_row_numbers(app.settings.flag("grid.row_numbers"));
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
-    nexa_ctl::tokens::set_hover_in_ms(app.settings.int("grid.hover_fade").clamp(0, 5000) as u32);
-    nexa_ctl::tokens::set_button_hover_in_ms(
-        app.settings.int("ui.button_hover_fade").clamp(0, 5000) as u32,
+    // 페이드 속도 속성 두 단(Fast/Slow)의 실제 ms — 컨트롤은 속도 이름만 알고 여기서 값이 연계된다(사용자 09-14).
+    nexa_ctl::tokens::set_fade_ms(
+        nexa_ctl::tokens::FadeSpeed::Fast,
+        app.settings.int("ui.fade_fast").clamp(0, 5000) as u32,
+    );
+    nexa_ctl::tokens::set_fade_ms(
+        nexa_ctl::tokens::FadeSpeed::Slow,
+        app.settings.int("ui.fade_slow").clamp(0, 5000) as u32,
     );
     // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
     if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {

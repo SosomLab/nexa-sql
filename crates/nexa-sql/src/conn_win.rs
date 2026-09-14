@@ -12,7 +12,7 @@ use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::tokens::{hover_alpha, HoverFade};
+use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{
     Button, Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget,
 };
@@ -174,8 +174,8 @@ pub(crate) struct ConnWin {
     hover: Option<usize>,
     /// 마우스가 올라간 행 아이콘 버튼.
     hover_btn: Option<(usize, RowBtn)>,
-    /// 호버 행의 서서히 진해지는 강조(nexa-clip과 같은 `HoverFade` · 진입 = `grid.hover_fade`).
-    hover_fade: HoverFade,
+    /// 호버 행의 서서히 진해지는 강조 — `IntentFade`(의도 코얼레싱 · 진입 = `grid.hover_fade`).
+    hover_fade: IntentFade,
     /// 텍스트 열 폭(px · 원본 index) — 비어 있으면 배치 때 비율로 채운다.
     col_w: Vec<i32>,
     /// 사용자가 폭을 조절한 뒤엔 창 폭을 따라가지 않는다.
@@ -255,7 +255,7 @@ impl ConnWin {
             sel: None,
             hover: None,
             hover_btn: None,
-            hover_fade: HoverFade::default(),
+            hover_fade: IntentFade::with_speed(FadeSpeed::Slow),
             col_w: Vec::new(),
             col_w_manual: false,
             sort_keys: Vec::new(),
@@ -742,6 +742,11 @@ impl ConnWin {
         self.window = Some(win);
         self.refresh_profiles(None);
         self.schedule_probes();
+        // 초록 화살표 = 지금 접속된 프로필 하나만(사용자 09-14) · 나머지는 회색.
+        self.conn_marks.clear();
+        if let Some(a) = self.active.clone() {
+            self.conn_marks.insert(a, ConnectMark::Connected);
+        }
         self.detail_t = 0.0;
         self.anim = None;
         self.set_focus(WFocus::List);
@@ -830,8 +835,8 @@ impl ConnWin {
         let x0 = pad;
         let rw = (w - open_px - x0 - pad).max(0);
         let row = self.s(28.0);
-        // 버튼 폭 = 라벨 폭 + 좌우 여백(라벨 미측정이면 72) · 간격 = pad/3(사용자 09-14 "간격 1/3 · 폭 최소").
-        let gap = (pad / 3).max(2);
+        // 버튼 폭 = 라벨 폭 + 좌우 여백(라벨 미측정이면 72) · 간격 = pad/2(사용자 09-14 "간격 1/3" → "1.5배로").
+        let gap = (pad / 2).max(3);
         let bw = |i: usize| -> i32 {
             let tw = self.btn_text_w[i];
             if tw > 0 {
