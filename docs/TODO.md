@@ -95,7 +95,11 @@
 | **T-61** | P1 | 소 | 상태줄 — `statusbar.*` 표시 설정 · 세션 모드/Read-only 배지 · 인코딩·줄끝·탭 크기 세그먼트 · 클릭 동작(Goto line · 로그 창) · 좁을 때 왼쪽부터 숨김 | T-39 T-54 | ☐ |
 | **T-56** | P0 | 대 | **오브젝트 탐색기**([28](28-object-explorer.md)) — `Catalog` 포트 · Oracle/MSSQL/SQLite `children` · `nsql-run::explorer`(메타 세션 · 스레드 풀 ≤4 · 노드 상태 · 캐시 · 취소 · catch_unwind) · `nsql cat` · 트리 그리드(nexa-grid `CatalogSource`) · 설정 4키(등재 ✅) · 자동 갱신(기본 off) | nexa-ui G-1~3 · D-46 | ☐ |
 | **T-53** | P1 | 중 | **단축키 설정 화면** — KeymapGrid(그룹·이름·설명·단축키 · [지정]/[초기화] · 충돌 배지 · 검색) + `HotkeyCapture` 캡처 대화상자(적용 → 그리드 값·키맵 파일) — [nexa-ui 21 §3-1](../../nexa-ui/docs/21-grid-family.md) · 명령 레지스트리는 E3(T-14) | nexa-ui G-6 · T-14 | ☐ |
-| **T-63** | P1 | 소 | 프로브 부하 원칙(09-14 검토) — `note_failure`로 만든 대상 집합 밖 항목은 즉시 확인 뒤 **재예약 금지** · 슬롯 초과 250ms 재시도 깨우기 → 1s 또는 결과 수신 시 · 호스트명 DNS 캐시(프로필 수백 개 대비) | 14차 검토 | ☐ |
+| **T-63** | P2 | 소 | 프로브 부하 원칙(09-14 검토 · [26 §8](26-performance-architecture.md)) — ✅ 대상 집합 밖 항목 재예약 금지 · ✅ 슬롯 초과 깨우기 1s · ✅ Test/Connect 동시 상한+큐(`connect.max_concurrent`) · ☐ 호스트명 DNS 캐시(프로필 수백 개 대비) | 14차 검토 | 🚧 |
+| **T-65** | P1 | 중 | **WindowHost** 부품 — 창 3개(접속·로그·색)가 복사한 softbuffer/RasterCtx/입력 변환/틱/페인트 프레임을 한 타입으로(nexa-clip 창 골격 이식) · 창은 `layout/route/paint`만 | [30 §3-A](30-architecture-patterns.md) | ☐ |
+| **T-66** | P2 | 소 | 편집기·그리드·로그 창 상수 설정화(`EditorTuning/GridTuning` · 비노출) — 접속 창 `ConnTuning`과 같은 방식 | [30 §3-D](30-architecture-patterns.md) | ☐ |
+| **T-67** | P1 | 중 | **Command 레지스트리**(id · 라벨 Msg · 기본 단축키 · 핸들러) — 메뉴·팔레트·툴바·키맵(T-53)이 같은 표를 읽는다 | [30 §3-E](30-architecture-patterns.md) T-53 | ☐ |
+| **T-68** | P2 | 소 | 실행 계층 메시지 규약 문서화(`Cmd/ConnOutcome/RunEvent/TestResult` · 버전 · 큐/스레드 소유권 표) — RPC 드라이버 규약(T-27)과 정렬 | [30 §3-F](30-architecture-patterns.md) | ☐ |
 | **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |
 | **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
 

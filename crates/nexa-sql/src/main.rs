@@ -345,7 +345,7 @@ impl App {
                     self.conn_win.clear_connect_marks();
                     self.conn_win
                         .set_connect_mark(&name, Some(ConnectMark::Connected));
-                    self.conn_win.close_soon(Duration::from_millis(450));
+                    self.conn_win.close_after_connect();
                     // 활성 탭에 접속 정보 적용 — 탭이 없으면 새 탭(사용자 09-14).
                     self.editors.ensure_tab();
                     self.editors.set_conn_desc(d.clone());
@@ -1687,9 +1687,12 @@ fn main() {
         }),
     );
     let probe_proxy: EventLoopProxy<Wake> = el.create_proxy();
-    let probe_hub = probe::ProbeHub::spawn(Box::new(move || {
-        let _ = probe_proxy.send_event(Wake);
-    }));
+    let probe_hub = probe::ProbeHub::spawn(
+        Box::new(move || {
+            let _ = probe_proxy.send_event(Wake);
+        }),
+        settings.int("probe.max_inflight").clamp(1, 64) as usize,
+    );
     let (tests_tx, tests_rx) = mpsc::channel::<worker::TestResult>();
     let wake_proxy: EventLoopProxy<Wake> = el.create_proxy();
     let initial_target = args.first().cloned();
@@ -1791,6 +1794,25 @@ fn main() {
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
     // 스크롤 방향(맥식 자연스러운 스크롤) — 창 세 개 공통.
     input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
+    // 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로").
+    {
+        let s = &app.settings;
+        let i = |k: &str| s.int(k);
+        app.conn_win.set_tuning(conn_win::ConnTuning {
+            delete_confirm_ms: i("conn.delete_confirm_ms").max(0) as u64,
+            close_after_ms: i("conn.close_after_connect_ms").max(0) as u64,
+            tooltip_ms: i("ui.tooltip_delay_ms").max(0) as u128,
+            dblclick_ms: i("ui.dblclick_ms").max(0) as u128,
+            slide_ms: i("ui.slide_ms").max(0) as f32,
+            window_w: i("conn.window_w").max(400) as f32,
+            window_h: i("conn.window_h").max(300) as f32,
+            panel_w: i("conn.panel_w").max(200) as f32,
+            button_scale: i("conn.button_scale_pct").clamp(100, 250) as f32 / 100.0,
+            port_w: i("conn.port_w").max(40) as f32,
+        });
+        nexa_ctl::tokens::set_intent_ms(i("ui.hover_intent_ms").clamp(0, 500) as u64);
+        nexa_ctl::tokens::set_fade_out_ms(i("ui.fade_out_ms").clamp(0, 2000) as u32);
+    }
     // hover / 눌림 색(설정 · `#RRGGBBAA` · 비우면 테마 기본).
     for tg in ColorTarget::ALL {
         apply_color(tg, color_setting(&app.settings, tg.key()).as_deref());

@@ -73,6 +73,8 @@ pub(crate) struct ConnectPanel {
     status_bars: ScrollBars,
     /// 페인트가 잰 상태 메시지 콘텐츠 높이(px) — 이벤트 경로(폰트 없음)가 스크롤 범위에 쓴다.
     status_content_h: std::cell::Cell<i32>,
+    /// Port 입력란 폭(논리 px · 설정 `conn.port_w` · 기본 58).
+    port_w: f32,
     focused: bool,
     dialect: Combo,
     host: TextBox,
@@ -107,6 +109,7 @@ impl ConnectPanel {
             status_scroll: 0,
             status_bars: ScrollBars::new(),
             status_content_h: std::cell::Cell::new(0),
+            port_w: 58.0,
             focused: false,
             dialect: Combo::new(
                 Dialect::ALL
@@ -334,7 +337,7 @@ impl ConnectPanel {
             // 호스트 + 포트 한 줄(포트 폭 고정).
             y += label_h;
             // Port = 5자리("65535")가 들어가는 58(사용자 09-14 · 43은 4자리도 잘림) · Host도 같은 14px 축소 · PANEL_W 292.
-            let port_w = self.s(58.0);
+            let port_w = self.s(self.port_w);
             self.host
                 .set_bounds(Rect::new(x, y, w - port_w - gap, field_h), &mut inv);
             self.port
@@ -523,6 +526,11 @@ impl ConnectPanel {
 
     pub(crate) fn popup_open(&self) -> bool {
         self.dialect.is_open()
+    }
+
+    /// Port 입력란 폭 지정(설정 주입).
+    pub(crate) fn set_port_w(&mut self, w: f32) {
+        self.port_w = w.max(24.0);
     }
 
     /// 이 프로필이 테스트 중이면 Test/Connect 버튼을 잠근다(끝나면 해제 · 사용자 09-14).

@@ -19,8 +19,47 @@ use nexa_ctl::{
     TextBox, TimeoutButton, Widget,
 };
 
-/// 삭제 확인 대기(ms) — 첫 클릭 뒤 이 시간 안에 한 번 더 누르면 삭제(사용자 09-14).
-const DELETE_ARM_MS: u64 = 5000;
+/// ★ 접속 창 조정값(사용자 09-14 "구현 값은 설정으로 · 자주 안 바꾸는 값은 비노출") — 설정 레지스트리에서 부팅 시 주입.
+/// 기본값은 설계 상수와 같다.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ConnTuning {
+    /// 삭제 확인 대기(ms · `conn.delete_confirm_ms`).
+    pub delete_confirm_ms: u64,
+    /// 접속 성공 초록 표시 뒤 창 닫기까지(ms · `conn.close_after_connect_ms`).
+    pub close_after_ms: u64,
+    /// 툴팁 지연(ms · `ui.tooltip_delay_ms`).
+    pub tooltip_ms: u128,
+    /// 더블클릭 간격(ms · `ui.dblclick_ms`).
+    pub dblclick_ms: u128,
+    /// 상세 폼 슬라이딩(ms · `ui.slide_ms`).
+    pub slide_ms: f32,
+    /// 기본 창 크기(논리 px · `conn.window_w/h`).
+    pub window_w: f32,
+    pub window_h: f32,
+    /// 상세 폼 폭(논리 px · `conn.panel_w`).
+    pub panel_w: f32,
+    /// 상단 버튼 폭 배율(`conn.button_scale_pct` / 100).
+    pub button_scale: f32,
+    /// Port 입력란 폭(논리 px · `conn.port_w`).
+    pub port_w: f32,
+}
+
+impl Default for ConnTuning {
+    fn default() -> Self {
+        ConnTuning {
+            delete_confirm_ms: 5000,
+            close_after_ms: 450,
+            tooltip_ms: 600,
+            dblclick_ms: 400,
+            slide_ms: 200.0,
+            window_w: 640.0,
+            window_h: 520.0,
+            panel_w: 292.0,
+            button_scale: 1.32,
+            port_w: 58.0,
+        }
+    }
+}
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
@@ -81,9 +120,6 @@ struct TipTarget {
     col: i32,
     row: Option<usize>,
 }
-
-/// 아이콘 위에 이만큼 머물면 툴팁(사용자 09-14).
-const TIP_MS: u128 = 600;
 
 /// 텍스트 열(원본 index) — 이름 · 종류 · 사용자 · 대상.
 const TEXT_COLS: usize = 5;
@@ -213,6 +249,8 @@ pub(crate) struct ConnWin {
     hdr_resize: Option<(usize, i32, i32)>,
     /// 표시 순서 → 원본 열(헤더 DnD로 이동 · 사용자 09-14).
     col_order: Vec<usize>,
+    /// 조정값(설정 주입 · 기본 = 설계 상수).
+    tuning: ConnTuning,
     /// 헤더 드래그(표시 위치 · 시작 x · 현재 x · 4px 이상 움직임 · Shift) — 움직였으면 이동, 아니면 정렬(결과 그리드와 동일).
     hdr_drag: Option<(usize, i32, i32, bool, bool)>,
     /// 지금 커서가 폭 조절 모양인가(바뀔 때만 set_cursor).
@@ -266,15 +304,6 @@ pub(crate) struct ConnWin {
     active: Option<String>,
 }
 
-const SLIDE_MS: f32 = 200.0;
-
-/// 상세 패널 폭 — 320에서 Port(14)+Host(14)만큼 줄인 292(사용자 09-14 · Port는 5자리 폭 58 유지).
-const PANEL_W: f32 = 292.0;
-/// 기본 창 크기(목록만 · 사용자 캡처 09-14) — New/Edit 시 오른쪽으로 PANEL_W만큼 커진다.
-const BASE_W: f32 = 640.0;
-const BASE_H: f32 = 520.0;
-const DBLCLICK_MS: u128 = 400;
-
 impl ConnWin {
     pub(crate) fn new(panel: ConnectPanel) -> Self {
         let mut w = ConnWin {
@@ -298,6 +327,7 @@ impl ConnWin {
             sort_keys: Vec::new(),
             hdr_resize: None,
             col_order: (0..TEXT_COLS).collect(),
+            tuning: ConnTuning::default(),
             hdr_drag: None,
             resize_cursor: false,
             btn_text_w: [0; 4],
@@ -333,6 +363,17 @@ impl ConnWin {
         };
         w.refresh_profiles(None);
         w
+    }
+
+    /// 조정값 주입(부팅 시 한 번 · 설정 → 창·폼).
+    pub(crate) fn set_tuning(&mut self, t: ConnTuning) {
+        self.tuning = t;
+        self.panel.set_port_w(t.port_w);
+    }
+
+    /// 접속 성공 초록 표시를 잠시 보여 준 뒤 닫는다(`conn.close_after_connect_ms`).
+    pub(crate) fn close_after_connect(&mut self) {
+        self.close_soon(Duration::from_millis(self.tuning.close_after_ms));
     }
 
     /// 프로브 스레드·정책 주입(부팅 시 한 번).
@@ -773,7 +814,8 @@ impl ConnWin {
         if self.window.is_none() {
             return false;
         }
-        let tip_due = matches!(self.tip, Some((_, t)) if (TIP_MS..TIP_MS + 40).contains(&t.elapsed().as_millis()));
+        let tip_ms = self.tuning.tooltip_ms;
+        let tip_due = matches!(self.tip, Some((_, t)) if (tip_ms..tip_ms + 40).contains(&t.elapsed().as_millis()));
         let a = self.bars.tick(now_ms);
         let b = self.hover_fade.tick(now_ms);
         // 버튼 hover 페이드(상단 4개 + 폼 3개) — 지금까지 틱이 없어 즉시 켜졌다(사용자 09-14 500ms 요구).
@@ -828,7 +870,10 @@ impl ConnWin {
             w.focus_window();
             return;
         }
-        let (lw, lh) = (f64::from(BASE_W), f64::from(BASE_H));
+        let (lw, lh) = (
+            f64::from(self.tuning.window_w),
+            f64::from(self.tuning.window_h),
+        );
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLogin)))
             .with_theme(theme)
@@ -902,7 +947,11 @@ impl ConnWin {
         let Some((t0, from, to)) = self.anim else {
             return false;
         };
-        let p = (t0.elapsed().as_secs_f32() * 1000.0 / SLIDE_MS).clamp(0.0, 1.0);
+        let p = if self.tuning.slide_ms <= 0.0 {
+            1.0
+        } else {
+            (t0.elapsed().as_secs_f32() * 1000.0 / self.tuning.slide_ms).clamp(0.0, 1.0)
+        };
         let e = 1.0 - (1.0 - p) * (1.0 - p); // ease-out
         self.detail_t = from + (to - from) * e;
         let done = p >= 1.0;
@@ -912,8 +961,11 @@ impl ConnWin {
         }
         // 창 자체가 오른쪽으로 커진다/줄어든다(목록 폭은 그대로 · 폼은 새 영역에 드러난다).
         if let Some(w) = &self.window {
-            let lw = f64::from(BASE_W + PANEL_W * self.detail_t);
-            let _ = w.request_inner_size(winit::dpi::LogicalSize::new(lw, f64::from(BASE_H)));
+            let lw = f64::from(self.tuning.window_w + self.tuning.panel_w * self.detail_t);
+            let _ = w.request_inner_size(winit::dpi::LogicalSize::new(
+                lw,
+                f64::from(self.tuning.window_h),
+            ));
         }
         !done
     }
@@ -941,7 +993,7 @@ impl ConnWin {
         let (w, h) = (size.width as i32, size.height as i32);
         let s = self.scale;
         let pad = self.s(10.0);
-        let pw = self.s(PANEL_W);
+        let pw = self.s(self.tuning.panel_w);
         // 상세 폼 = 오른쪽에서 detail_t만큼 들어와 있다(닫힘 = 창 밖).
         let open_px = (pw as f32 * self.detail_t).round() as i32;
         self.panel.set_bounds(Rect::new(w - open_px, 0, pw, h), s);
@@ -953,7 +1005,7 @@ impl ConnWin {
         // 모든 버튼 동일 폭 = (현재 언어에서 가장 긴 라벨 + 여백) × 1.32(사용자 09-14 "20% 넓게" → "10% 더" · i18n).
         let widest = self.btn_text_w.iter().copied().max().unwrap_or(0);
         let uniform = if widest > 0 {
-            ((widest + pad * 2) as f32 * 1.32).round() as i32
+            ((widest + pad * 2) as f32 * self.tuning.button_scale).round() as i32
         } else {
             self.s(72.0)
         };
@@ -1229,7 +1281,7 @@ impl ConnWin {
     /// 삭제 무장 — Delete 자리에 빨간 타이머 버튼(5초). 한 번 더 누르면 삭제.
     fn arm_delete(&mut self) {
         // 잔여 시간 숫자 없이 라벨 + 게이지(진척률)만(사용자 09-14) — 빨간 경고 톤.
-        let mut tb = TimeoutButton::new(t(Msg::BtnDelete), DELETE_ARM_MS)
+        let mut tb = TimeoutButton::new(t(Msg::BtnDelete), self.tuning.delete_confirm_ms)
             .with_warn(true)
             .with_suffix(t(Msg::UnitSecShort))
             .with_show_remaining(false);
@@ -1927,7 +1979,7 @@ impl ConnWin {
                     self.redraw();
                     return;
                 }
-                let double = matches!(self.last_click, Some((r, t)) if r == row && t.elapsed().as_millis() < DBLCLICK_MS);
+                let double = matches!(self.last_click, Some((r, t)) if r == row && t.elapsed().as_millis() < self.tuning.dblclick_ms);
                 self.sel = Some(row);
                 self.last_click = Some((row, now));
                 if let Some(n) = self.selected_name() {
@@ -2044,7 +2096,7 @@ impl ConnWin {
         let drop_pos = dragging.map(|d| self.drop_pos_at(d.2));
         let tip_ready = self
             .tip
-            .filter(|(_, since)| since.elapsed().as_millis() >= TIP_MS)
+            .filter(|(_, since)| since.elapsed().as_millis() >= self.tuning.tooltip_ms)
             .map(|(tg, _)| (tg, self.tip_text(tg)));
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;

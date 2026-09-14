@@ -411,6 +411,126 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 5, max: 3600 },
         default: "60",
     },
+    // ── 비노출 설정(사용자 09-14 "자주 바꾸지 않을 값은 비노출 설정으로") — 구현 상수의 설정화. `nsql config list all`로만 보인다.
+    Entry {
+        key: "conn.delete_confirm_ms",
+        cat: Msg::CatConnection,
+        label: Msg::LblDeleteConfirmMs,
+        desc: Msg::DescDeleteConfirmMs,
+        kind: SettingKind::Int {
+            min: 1000,
+            max: 60000,
+        },
+        default: "5000",
+    },
+    Entry {
+        key: "conn.close_after_connect_ms",
+        cat: Msg::CatConnection,
+        label: Msg::LblCloseAfterConnectMs,
+        desc: Msg::DescCloseAfterConnectMs,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "450",
+    },
+    Entry {
+        key: "conn.window_w",
+        cat: Msg::CatConnection,
+        label: Msg::LblConnWindowW,
+        desc: Msg::DescConnWindowW,
+        kind: SettingKind::Int {
+            min: 400,
+            max: 2000,
+        },
+        default: "640",
+    },
+    Entry {
+        key: "conn.window_h",
+        cat: Msg::CatConnection,
+        label: Msg::LblConnWindowH,
+        desc: Msg::DescConnWindowH,
+        kind: SettingKind::Int {
+            min: 300,
+            max: 1600,
+        },
+        default: "520",
+    },
+    Entry {
+        key: "conn.panel_w",
+        cat: Msg::CatConnection,
+        label: Msg::LblConnPanelW,
+        desc: Msg::DescConnPanelW,
+        kind: SettingKind::Int { min: 200, max: 800 },
+        default: "292",
+    },
+    Entry {
+        key: "conn.port_w",
+        cat: Msg::CatConnection,
+        label: Msg::LblConnPortW,
+        desc: Msg::DescConnPortW,
+        kind: SettingKind::Int { min: 40, max: 160 },
+        default: "58",
+    },
+    Entry {
+        key: "conn.button_scale_pct",
+        cat: Msg::CatConnection,
+        label: Msg::LblConnButtonScale,
+        desc: Msg::DescConnButtonScale,
+        kind: SettingKind::Int { min: 100, max: 250 },
+        default: "132",
+    },
+    Entry {
+        key: "ui.tooltip_delay_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTooltipDelayMs,
+        desc: Msg::DescTooltipDelayMs,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 5000,
+        },
+        default: "600",
+    },
+    Entry {
+        key: "ui.dblclick_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblDblclickMs,
+        desc: Msg::DescDblclickMs,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 1000,
+        },
+        default: "400",
+    },
+    Entry {
+        key: "ui.slide_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblSlideMs,
+        desc: Msg::DescSlideMs,
+        kind: SettingKind::Int { min: 0, max: 1000 },
+        default: "200",
+    },
+    Entry {
+        key: "ui.hover_intent_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblHoverIntentMs,
+        desc: Msg::DescHoverIntentMs,
+        kind: SettingKind::Int { min: 0, max: 500 },
+        default: "70",
+    },
+    Entry {
+        key: "ui.fade_out_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblFadeOutMs,
+        desc: Msg::DescFadeOutMs,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "220",
+    },
+    Entry {
+        key: "probe.max_inflight",
+        cat: Msg::CatConnection,
+        label: Msg::LblProbeMaxInflight,
+        desc: Msg::DescProbeMaxInflight,
+        kind: SettingKind::Int { min: 1, max: 64 },
+        default: "16",
+    },
     Entry {
         key: "connect.max_concurrent",
         cat: Msg::CatConnection,
@@ -457,6 +577,30 @@ pub const REGISTRY: &[Entry] = &[
 #[must_use]
 pub fn entry(key: &str) -> Option<&'static Entry> {
     REGISTRY.iter().find(|e| e.key == key)
+}
+
+/// 비노출 설정(자주 바꾸지 않는 구현 값 · 사용자 09-14) — 레지스트리에는 있어 `set/get/reset`은 되지만 목록·설정 화면엔 기본 숨김.
+pub const HIDDEN: &[&str] = &[
+    "conn.delete_confirm_ms",
+    "conn.close_after_connect_ms",
+    "conn.window_w",
+    "conn.window_h",
+    "conn.panel_w",
+    "conn.port_w",
+    "conn.button_scale_pct",
+    "ui.tooltip_delay_ms",
+    "ui.dblclick_ms",
+    "ui.slide_ms",
+    "ui.hover_intent_ms",
+    "ui.fade_out_ms",
+    "probe.max_inflight",
+    "ui.color_recent",
+];
+
+/// 비노출 설정인가.
+#[must_use]
+pub fn is_hidden(key: &str) -> bool {
+    HIDDEN.contains(&key)
 }
 
 /// 허용 값 설명(오류 메시지·`config list`용).
@@ -667,6 +811,14 @@ impl Settings {
                     self.values.contains_key(e.key),
                 )
             })
+            .collect()
+    }
+
+    /// 노출 항목만(설정 화면 · `config list`) — 비노출([`is_hidden`])은 `config list all`로만.
+    pub fn list_visible(&self) -> Vec<(&'static Entry, &str, bool)> {
+        self.list()
+            .into_iter()
+            .filter(|(e, _, _)| !is_hidden(e.key))
             .collect()
     }
 }

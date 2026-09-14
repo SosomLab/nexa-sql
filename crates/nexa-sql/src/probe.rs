@@ -56,7 +56,8 @@ pub(crate) struct ProbeResult {
 }
 
 /// 동시에 도는 프로브 스레드 상한(프로필 수십 개까지 여유 · 초과분은 다음 틱에).
-const MAX_INFLIGHT: usize = 16;
+/// 기본값 — 설정 `probe.max_inflight`가 없을 때(레지스트리 기본과 같다).
+pub(crate) const MAX_INFLIGHT: usize = 16;
 
 /// 프로브 허브 — 요청마다 **짧은 스레드 하나**(병렬) · 결과는 `wake` 뒤 [`ProbeHub::try_recv`]로 받는다.
 /// DB 워커와 채널·스레드를 공유하지 않는다(실행 중 쿼리·세션에 영향 0).
@@ -65,10 +66,12 @@ pub(crate) struct ProbeHub {
     tx_res: mpsc::Sender<ProbeResult>,
     rx: mpsc::Receiver<ProbeResult>,
     inflight: Arc<AtomicUsize>,
+    /// 동시 프로브 스레드 상한(설정 `probe.max_inflight` · 기본 [`MAX_INFLIGHT`]).
+    max_inflight: usize,
 }
 
 impl ProbeHub {
-    pub(crate) fn spawn(wake: Box<dyn Fn() + Send>) -> Self {
+    pub(crate) fn spawn(wake: Box<dyn Fn() + Send>, max_inflight: usize) -> Self {
         let (tx_res, rx_internal) = mpsc::channel::<ProbeResult>();
         let (tx_ui, rx) = mpsc::channel::<ProbeResult>();
         // 수집 스레드 — 결과를 UI 채널로 옮기고 깨운다(대기만 하므로 비용 0 · 잠금 없음).
@@ -86,12 +89,17 @@ impl ProbeHub {
             tx_res,
             rx,
             inflight: Arc::new(AtomicUsize::new(0)),
+            max_inflight: if max_inflight == 0 {
+                MAX_INFLIGHT
+            } else {
+                max_inflight
+            },
         }
     }
 
     /// 요청 하나 = 스레드 하나. 상한을 넘으면 `false`(호출자가 예약을 유지해 다음 틱에 다시 보낸다).
     pub(crate) fn request(&self, req: ProbeReq) -> bool {
-        if self.inflight.load(Ordering::Relaxed) >= MAX_INFLIGHT {
+        if self.inflight.load(Ordering::Relaxed) >= self.max_inflight {
             return false;
         }
         self.inflight.fetch_add(1, Ordering::Relaxed);

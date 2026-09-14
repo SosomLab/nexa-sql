@@ -46,7 +46,10 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                 Ok(s) => s,
                 Err(c) => return c,
             };
-            for (e, v, modified) in s.list() {
+            // 비노출 설정은 `list all`에서만.
+            let show_all = key.is_some_and(|k| k == "all" || k == "--all");
+            let rows = if show_all { s.list() } else { s.list_visible() };
+            for (e, v, modified) in rows {
                 let mark = if modified { "" } else { t(Msg::CfgDefaultMark) };
                 println!(
                     "{:<18} {:<8} {}  [{}]  {}",

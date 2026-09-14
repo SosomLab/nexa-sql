@@ -41,13 +41,15 @@
 | DR-25 | **라이선스: 공유 라이브러리 `nexa-license`(형제 저장소) + 인증 서버는 비공개 저장소 `nexa-license-server`** · 티어 4단(Device·User 5대·Team·Org 서버) — [23](docs/23-license-activation.md) · [25](docs/25-license-tiers-and-server.md) · D-23~39 대기 |
 
 ### 설계 문서 지도(요구별)
-연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 정품 인증·기능 게이트 [23](docs/23-license-activation.md) · 라이선스 종류·인증 서버·저장소 분리 [25](docs/25-license-tiers-and-server.md) · 설정 체계·i18n·테마 [24](docs/24-settings-and-vscode-analysis.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
+**아키텍처 패턴·확장점·부품 원장 [30](docs/30-architecture-patterns.md)** · 연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 정품 인증·기능 게이트 [23](docs/23-license-activation.md) · 라이선스 종류·인증 서버·저장소 분리 [25](docs/25-license-tiers-and-server.md) · 설정 체계·i18n·테마 [24](docs/24-settings-and-vscode-analysis.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
 
 ## 3. 작업 규약
 
 - **문서·커밋/푸시 규약 SSOT = [docs/16](docs/16-doc-git-conventions.md)**. 한 작업 = 한 트랜잭션 갱신(journal → DEVLOG → STATUS → MILESTONES/TODO).
 - **push는 사용자 명시 요청 시에만.** `git add <파일>`만(`-A`·`.` 금지). push 전 `scripts/check-3os.sh`.
 - 크레이트 경계: `nsql-core`는 의존 0 · 드라이버 크레이트는 `nsql-driver-*` 안에만 · UI는 `Box<dyn Session>`만 안다.
+- ★ **확장점·부품 규칙(사용자 09-14~15)** = [30 아키텍처 패턴 원장](docs/30-architecture-patterns.md): 확장점은 **포트(trait) + 레지스트리 + 설정 선택** 세 조각(IoC = 생성자 주입·레지스트리 · 동적 배치 경계 = 프로세스/WASM/스레드) · 같은 문제를 두 번째 만나면 **부품으로 올려 §2 표에 등재** · 창·컨트롤 코드 복사 금지(WindowHost T-65) · **구현 상수는 설정 레지스트리로**(자주 안 바꾸면 `HIDDEN` · `nsql config list all`) · 새 기능은 30 §1-2 체크리스트를 먼저 본다.
+- ★ **네트워크 부하 규칙(사용자 09-14)**: 앱이 스스로 만드는 트래픽 경로와 상한은 [26 §8](docs/26-performance-architecture.md) 표가 원장이다. 프로브·테스트·접속·재시도 등 **네트워크를 만드는 코드를 추가·변경하면 §8 체크리스트 6항목으로 점검하고 표를 갱신**한다 — 자동 재접속 금지 · 실패는 지수 백오프 · 동시성 상한 + 큐(`connect.max_concurrent`) · 접속한 적 없는 서버에 지속 트래픽 금지.
 - **실행 경로의 시간은 `nsql_core::Timeline`에 단계로 덧붙인다**(docs/26 — 각 층은 자기 단계만 · 문자열 포맷은 표시 시점에만). 결과 그리드는 속도·메모리 최우선.
 - **사용자 문자열은 전부 `nsql-i18n::Msg`**(기본 영어 · 한국어 열) — 리터럴 금지. **설정 키는 `nsql-settings::REGISTRY`에만** 추가(라벨·설명 = `Msg`).
 - 스크립트 엔진을 고치면 `examples/golden-session-vars.sql`로 `nsql plan` 양 방언을 다시 본다.
