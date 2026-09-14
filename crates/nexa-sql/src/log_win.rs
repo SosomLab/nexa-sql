@@ -14,7 +14,7 @@ use nexa_gfx::{Font, Surface};
 use nsql_log::{LogBuffer, LogEntry, LogFormat, LogKind};
 use std::num::NonZeroU32;
 use std::rc::Rc;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -210,13 +210,12 @@ impl LogWin {
                 self.redraw();
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let px = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => (*y * 120.0) as i32,
-                    MouseScrollDelta::PixelDelta(p) => p.y as i32,
-                };
-                if !self.bars_event(&InputEvent::Wheel { delta: px }) {
-                    let y = self.scroll_y - px / 3;
-                    self.set_scroll(y);
+                // 세로만(로그는 가로 스크롤 없음) · 방향 반전 설정은 공용 변환이 처리.
+                if let InputEvent::Wheel { delta: px } = crate::input::wheel_event(delta, false) {
+                    if !self.bars_event(&InputEvent::Wheel { delta: px }) {
+                        let y = self.scroll_y - px / 3;
+                        self.set_scroll(y);
+                    }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {

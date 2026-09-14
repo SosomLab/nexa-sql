@@ -11,11 +11,13 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod clipboard;
+mod colors_win;
 mod conn_win;
 mod connect;
 mod editors;
 mod grid;
 mod icon;
+mod input;
 mod log_win;
 mod palette;
 mod probe;
@@ -25,6 +27,7 @@ mod toolicons;
 mod winfocus;
 mod worker;
 
+use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
@@ -51,7 +54,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use syntax::SyntaxRegistry;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Ime, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -91,6 +94,9 @@ struct App {
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
     z_order: Vec<WindowId>,
     toggle_log: bool,
+    /// 색 설정 창 열기 요청(메뉴/팔레트 → 다음 이벤트 루프 턴에 `el`로 연다).
+    open_colors: bool,
+    colors_win: ColorsWin,
     // 컨트롤
     menubar: MenuBar,
     toolbar: Toolbar,
@@ -352,6 +358,7 @@ impl App {
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
             "edit.select_all" => self.route(InputEvent::SelectAll),
             "view.log" => self.toggle_log = true,
+            "view.colors" => self.open_colors = true,
             "view.theme" => self.cycle_theme(),
             "view.lang" => self.toggle_lang(),
             "view.palette" => self.open_palette(""),
@@ -403,6 +410,7 @@ impl App {
                     item("view.palette", Msg::MnCommandPalette),
                     item("view.log", Msg::MnLogWindow),
                     MenuEntry::Separator,
+                    item("view.colors", Msg::MnColors),
                     item("view.theme", Msg::MnTheme),
                     item("view.lang", Msg::MnLanguage),
                 ],
@@ -497,6 +505,7 @@ impl App {
         cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
         cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
+        cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
         cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
         cmds.push(m("run.statement", Msg::MnRun, Msg::MnRunStatement));
@@ -990,19 +999,8 @@ impl App {
                 _ => return None,
             },
             // 휠: 가로 성분(틸트 휠·트랙패드)이 있으면 HWheel · Shift+세로 휠 = 가로(관례) · 아니면 세로.
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (dx, dy) = match delta {
-                    MouseScrollDelta::LineDelta(dx, dy) => ((*dx * 120.0) as i32, (*dy * 120.0) as i32),
-                    MouseScrollDelta::PixelDelta(p) => (p.x as i32, p.y as i32),
-                };
-                if dx != 0 {
-                    InputEvent::HWheel { delta: dx }
-                } else if self.shift {
-                    InputEvent::HWheel { delta: -dy }
-                } else {
-                    InputEvent::Wheel { delta: dy }
-                }
-            }
+            // 휠 변환은 한 곳(`input::wheel_event` · 방향 반전 설정 포함).
+            WindowEvent::MouseWheel { delta, .. } => crate::input::wheel_event(delta, self.shift),
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Enter) => key(CtlKey::Enter, self.shift, self.primary),
@@ -1256,6 +1254,9 @@ impl ApplicationHandler<Wake> for App {
         if self.log_win.tick(now_ms) {
             self.log_win.redraw();
         }
+        if self.colors_win.tick(now_ms) {
+            self.colors_win.redraw();
+        }
         if self.conn_win.tick_bars(now_ms) {
             self.conn_win.redraw();
         }
@@ -1266,6 +1267,7 @@ impl ApplicationHandler<Wake> for App {
             || self.conn_win.tooltip_pending()
             || self.grid.hover_animating()
             || self.conn_win.hover_animating()
+            || self.colors_win.animating()
             || self.editors.tooltip_pending();
         let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
@@ -1296,6 +1298,38 @@ impl ApplicationHandler<Wake> for App {
                     ConnWinAction::Delete(name) => self.delete_profile(&name),
                     ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
                 }
+            }
+            return;
+        }
+        if self.colors_win.is(id) {
+            let ui_px = self.settings.int("ui.font_size") as f32;
+            match self.colors_win.handle(&event, &self.theme) {
+                ColorsAction::Paint => self.colors_win.paint(&self.ui_font, &self.theme, ui_px),
+                ColorsAction::Changed { target, hex } => {
+                    apply_color(target, Some(&hex));
+                    let _ = self.settings.set(target.key(), &hex);
+                    let recent = self
+                        .colors_win
+                        .recent()
+                        .iter()
+                        .map(|c| format!("#{c:08X}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let _ = self.settings.set("ui.color_recent", &recent);
+                    let _ = self.settings.save();
+                    self.redraw();
+                    self.conn_win.redraw();
+                }
+                ColorsAction::Reset => {
+                    for tg in ColorTarget::ALL {
+                        apply_color(tg, None);
+                        let _ = self.settings.reset(tg.key());
+                    }
+                    let _ = self.settings.save();
+                    self.redraw();
+                    self.conn_win.redraw();
+                }
+                ColorsAction::None => {}
             }
             return;
         }
@@ -1434,6 +1468,20 @@ impl ApplicationHandler<Wake> for App {
         if std::mem::take(&mut self.toggle_log) {
             self.toggle_log_window(el);
         }
+        if std::mem::take(&mut self.open_colors) {
+            let over = self.window.as_ref().and_then(|w| {
+                let p = w.outer_position().ok()?;
+                let sz = w.outer_size();
+                Some((p.x, p.y, sz.width, sz.height))
+            });
+            let owner = self.window.clone();
+            self.colors_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                over,
+                owner.as_deref(),
+            );
+        }
         if std::mem::take(&mut self.open_conn) {
             self.open_conn_window(el);
         }
@@ -1441,6 +1489,32 @@ impl ApplicationHandler<Wake> for App {
             self.worker.send(worker::Cmd::Quit);
             el.exit();
         }
+    }
+}
+
+/// 설정의 색 값(`#RRGGBB[AA]` · 형식 오류/빈 값 = None).
+fn color_setting(settings: &Settings, key: &str) -> Option<String> {
+    let v = settings.get(key)?.trim().to_string();
+    (!v.is_empty() && nexa_ctl::rgba_from_hex(&v).is_some()).then_some(v)
+}
+
+/// 설정의 최근 색 목록(쉼표 구분 `#RRGGBBAA`).
+fn recent_colors(settings: &Settings) -> Vec<u32> {
+    settings
+        .get("ui.color_recent")
+        .unwrap_or("")
+        .split(',')
+        .filter_map(|s| nexa_ctl::rgba_from_hex(s.trim()))
+        .take(8)
+        .collect()
+}
+
+/// nexa-ctl 토큰에 색 적용(전 컨트롤 즉시).
+fn apply_color(target: ColorTarget, hex: Option<&str>) {
+    let rgba = hex.and_then(nexa_ctl::rgba_from_hex);
+    match target {
+        ColorTarget::Hover => nexa_ctl::tokens::set_hover_color(rgba),
+        ColorTarget::Pressed => nexa_ctl::tokens::set_pressed_color(rgba),
     }
 }
 
@@ -1525,6 +1599,11 @@ fn main() {
     let syntax_reg = Rc::new(SyntaxRegistry::load());
     let rulers = parse_rulers(settings.get("editor.rulers").unwrap_or("80"));
     let ws_style = whitespace_style(&settings);
+    let colors_win = ColorsWin::new(
+        color_setting(&settings, "ui.hover_color"),
+        color_setting(&settings, "ui.pressed_color"),
+        &recent_colors(&settings),
+    );
     let mut app = App {
         window: None,
         ctx: None,
@@ -1543,6 +1622,8 @@ fn main() {
         last_secs: None,
         status_syntax_rect: Rect::new(0, 0, 0, 0),
         toggle_log: false,
+        open_colors: false,
+        colors_win,
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),
         conn_win: ConnWin::new(panel),
@@ -1581,6 +1662,12 @@ fn main() {
     app.grid
         .set_row_numbers(app.settings.flag("grid.row_numbers"));
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
+    // 스크롤 방향(맥식 자연스러운 스크롤) — 창 세 개 공통.
+    input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
+    // hover / 눌림 색(설정 · `#RRGGBBAA` · 비우면 테마 기본).
+    for tg in ColorTarget::ALL {
+        apply_color(tg, color_setting(&app.settings, tg.key()).as_deref());
+    }
     // 페이드 속도 속성 두 단(Fast/Slow)의 실제 ms — 컨트롤은 속도 이름만 알고 여기서 값이 연계된다(사용자 09-14).
     nexa_ctl::tokens::set_fade_ms(
         nexa_ctl::tokens::FadeSpeed::Fast,

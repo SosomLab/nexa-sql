@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -245,7 +245,8 @@ pub(crate) struct ConnWin {
 
 const SLIDE_MS: f32 = 200.0;
 
-const PANEL_W: f32 = 320.0;
+/// 상세 패널 폭 — 320에서 Port(29)+Host(29)만큼 줄인 262(사용자 09-14).
+const PANEL_W: f32 = 262.0;
 /// 기본 창 크기(목록만 · 사용자 캡처 09-14) — New/Edit 시 오른쪽으로 PANEL_W만큼 커진다.
 const BASE_W: f32 = 640.0;
 const BASE_H: f32 = 520.0;
@@ -883,15 +884,14 @@ impl ConnWin {
         let row = self.s(28.0);
         // 버튼 폭 = 라벨 폭 + 좌우 여백(라벨 미측정이면 72) · 간격 = pad/2(사용자 09-14 "간격 1/3" → "1.5배로").
         let gap = (pad / 2).max(3);
-        let bw = |i: usize| -> i32 {
-            let tw = self.btn_text_w[i];
-            if tw > 0 {
-                tw + pad * 2
-            } else {
-                self.s(72.0)
-            }
+        // 모든 버튼 동일 폭 = 현재 언어에서 가장 긴 라벨 + 여백(사용자 09-14 · i18n).
+        let widest = self.btn_text_w.iter().copied().max().unwrap_or(0);
+        let uniform = if widest > 0 {
+            widest + pad * 2
+        } else {
+            self.s(72.0)
         };
-        let ws = [bw(0), bw(1), bw(2), bw(3)];
+        let ws = [uniform; 4];
         let total: i32 = ws.iter().sum::<i32>() + gap * 3;
         let mut inv = Invalidations::default();
         // 제목 줄(라벨) → 필터 + 버튼 줄 → 목록
@@ -943,8 +943,16 @@ impl ConnWin {
         self.clamp_scroll();
     }
 
-    fn row_at(&self, p: Point) -> Option<usize> {
+    /// 행의 유효 폭(아이콘 열 + 텍스트 열 · 가로 스크롤 반영) — 그 뒤는 **빈 영역**(선택·호버 배경 없음 · 항목 클릭 아님 ·
+    /// 전체/빈 영역용 메뉴 자리 · dir2 파일 그리드와 동일 · 사용자 09-14).
+    fn row_extent(&self) -> Rect {
         let body = self.body_rect();
+        let w = (self.content_size().0 - self.scroll_x).clamp(0, body.w);
+        Rect::new(body.x, body.y, w, body.h)
+    }
+
+    fn row_at(&self, p: Point) -> Option<usize> {
+        let body = self.row_extent();
         if !body.contains(p) {
             return None;
         }
@@ -1366,20 +1374,8 @@ impl ConnWin {
                 (ElementState::Pressed, MouseButton::Right) => InputEvent::RightDown { x, y },
                 _ => return None,
             },
-            // 휠: 가로 성분(틸트 휠·트랙패드)이 있으면 HWheel · Shift+세로 휠 = 가로(관례) · 아니면 세로.
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (dx, dy) = match delta {
-                    MouseScrollDelta::LineDelta(dx, dy) => ((*dx * 120.0) as i32, (*dy * 120.0) as i32),
-                    MouseScrollDelta::PixelDelta(p) => (p.x as i32, p.y as i32),
-                };
-                if dx != 0 {
-                    InputEvent::HWheel { delta: dx }
-                } else if self.shift {
-                    InputEvent::HWheel { delta: -dy }
-                } else {
-                    InputEvent::Wheel { delta: dy }
-                }
-            }
+            // 휠 변환은 한 곳(`input::wheel_event` · 방향 반전 설정 포함).
+            WindowEvent::MouseWheel { delta, .. } => crate::input::wheel_event(delta, self.shift),
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Enter) => key(CtlKey::Enter, self.shift, self.primary),
@@ -1417,10 +1413,14 @@ impl ConnWin {
         let mut inv = Invalidations::default();
         // 열린 우클릭 메뉴는 모달 — 고른 항목 id만 받아 실행.
         if self.menu.is_open() && self.menu.on_event(&ev) {
-            if self.menu.take_picked().as_deref() == Some("dup") {
-                if let Some(n) = self.ctx_target.take() {
-                    out.push(ConnWinAction::Duplicate(n));
+            match self.menu.take_picked().as_deref() {
+                Some("dup") => {
+                    if let Some(n) = self.ctx_target.take() {
+                        out.push(ConnWinAction::Duplicate(n));
+                    }
                 }
+                Some("new") => self.open_detail(true),
+                _ => {}
             }
             if !self.menu.is_open() {
                 self.rehover(out);
@@ -1430,6 +1430,22 @@ impl ConnWin {
         }
         if let InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
+            // 빈 영역(마지막 컬럼 뒤 · 행 아래) 우클릭 = 전체/빈 영역 메뉴(New).
+            if self.body_rect().contains(p) && self.row_at(p).is_none() {
+                self.set_focus(WFocus::List);
+                let host = self
+                    .window
+                    .as_ref()
+                    .map(|w| {
+                        let sz = w.inner_size();
+                        Rect::new(0, 0, sz.width as i32, sz.height as i32)
+                    })
+                    .unwrap_or(self.list);
+                self.menu.set_scale(self.scale);
+                self.menu.open_at(x, y, vec![CtxItem::item("new", t(Msg::BtnNew))], host, self.ctx_text_w);
+                self.redraw();
+                return;
+            }
             if let Some(row) = self.row_at(p) {
                 self.set_focus(WFocus::List);
                 self.sel = Some(row);
@@ -1660,7 +1676,10 @@ impl ConnWin {
             let armed = format!("{} ({}{})", t(Msg::BtnDeleteConfirm), 5, t(Msg::UnitSecShort));
             self.btn_text_w[2] = ui.measure(&armed, font_px).ceil() as i32;
         }
-        self.ctx_text_w = ui.measure(t(Msg::MnDuplicate), font_px).ceil() as i32;
+        self.ctx_text_w = ui
+            .measure(t(Msg::MnDuplicate), font_px)
+            .max(ui.measure(t(Msg::BtnNew), font_px))
+            .ceil() as i32;
         if animating || self.anim.is_none() {
             self.layout();
         }
@@ -1671,6 +1690,7 @@ impl ConnWin {
             .collect();
         let body = self.body_rect();
         let (content_w, content_h) = self.content_size();
+        let extent_w = self.row_extent().w;
         let dragging = self.hdr_drag.filter(|d| d.3);
         let drop_pos = dragging.map(|d| self.drop_pos_at(d.2));
         let tip_ready = self
@@ -1812,7 +1832,8 @@ impl ConnWin {
                 if y >= body.bottom() {
                     break;
                 }
-                let r = Rect::new(l.x + 1, y, l.w - 2, rh).intersection(&body);
+                // 선택/호버 배경은 유효 컬럼까지만(마지막 컬럼 뒤는 빈 영역 · 사용자 09-14).
+                let r = Rect::new(l.x + 1, y, extent_w, rh).intersection(&body);
                 let selected = Some(row) == self.sel;
                 if selected {
                     dc.fill_rect(r, th.sel_bg);
@@ -1931,20 +1952,17 @@ fn paint_test_btn(
     let d = (cell.h * 3 / 5).max(8);
     let x = cell.x + (cell.w - d) / 2;
     let y = cell.y + (cell.h - d) / 2;
-    if hover {
-        dc.fill_rect(cell, th.panel_bg_alt);
-    }
+    // 호버는 행 배경을 바꾸지 않는다(선택 행의 하늘색 위에 흰 칸이 뜨던 문제 · 사용자 09-14) — 아이콘만 진하게.
     let ring = match mark {
         _ if dim => th.border,
         Some(TestMark::Testing) => th.warn,
         Some(TestMark::Ok) => th.ok,
         Some(TestMark::Failed) => th.danger,
+        None if hover => th.text,
         None => th.text_dim,
     };
-    let bg = if hover { th.panel_bg_alt } else { th.panel_bg };
-    dc.fill_ellipse(Rect::new(x, y, d, d), ring);
-    let t = 2;
-    dc.fill_ellipse(Rect::new(x + t, y + t, d - 2 * t, d - 2 * t), bg);
+    // 고리 = 선(안쪽은 행 배경 그대로 — 선택 행이든 아니든 어울린다).
+    dc.stroke_ellipse(Rect::new(x + 1, y + 1, d - 2, d - 2), ring, 2.0);
     // 가운데: 성공 = 채운 점 · 실패 = 가로 막대 · 진행/없음 = 작은 점.
     let c = (x + d / 2, y + d / 2);
     match mark {
@@ -1963,7 +1981,8 @@ fn paint_test_btn(
     }
 }
 
-/// 행 접속 버튼 — 오른쪽 삼각형(재생). 기본 어두운 회색 · 접속 중 파랑 · 접속됨 초록(사용자 09-14) · 호버 강조.
+/// 행 접속 버튼 — 오른쪽 삼각형(재생). 클릭 대기 = 회색(호버 시 조금 진하게) · 접속 시도 중 = 파랑 · 접속됨 = 초록(사용자 09-14).
+/// 호버는 행 배경을 바꾸지 않는다.
 fn paint_connect_btn(
     dc: &mut dyn DrawCtx,
     th: &Theme,
@@ -1978,14 +1997,11 @@ fn paint_connect_btn(
     let d = (cell.h * 3 / 5).max(8);
     let x = cell.x + (cell.w - d) / 2;
     let y = cell.y + (cell.h - d) / 2;
-    if hover {
-        dc.fill_rect(cell, th.panel_bg_alt);
-    }
     let color = match mark {
         _ if dim => th.border,
         Some(ConnectMark::Connecting) => th.accent,
         Some(ConnectMark::Connected) => th.ok,
-        None if hover => th.accent,
+        None if hover => th.text,
         None => th.text_dim,
     };
     let inset = d / 6;

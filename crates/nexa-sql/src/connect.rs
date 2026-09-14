@@ -298,7 +298,8 @@ impl ConnectPanel {
         let mut inv = Invalidations::default();
         let b = self.bounds;
         let pad = self.s(10.0);
-        let label_h = self.s(16.0);
+        // 라벨 16 + 3 — 입력란 포커스 링(바깥 2px)이 위 라벨과 겹치던 문제(사용자 09-14).
+        let label_h = self.s(19.0);
         let field_h = self.s(26.0);
         let gap = self.s(8.0);
         let x = b.x + pad;
@@ -320,7 +321,8 @@ impl ConnectPanel {
         } else {
             // 호스트 + 포트 한 줄(포트 폭 고정).
             y += label_h;
-            let port_w = self.s(72.0);
+            // Port 72 → 43(60% · 사용자 09-14) · 같은 29px만큼 Host도 줄고 패널 폭(PANEL_W)이 58 줄었다.
+            let port_w = self.s(43.0);
             self.host
                 .set_bounds(Rect::new(x, y, w - port_w - gap, field_h), &mut inv);
             self.port
@@ -333,16 +335,15 @@ impl ConnectPanel {
         self.save_pw
             .set_bounds(Rect::new(x, y, w, self.s(22.0)), &mut inv);
         y += self.s(22.0) + gap;
-        // 버튼 3개 한 줄
+        // 버튼 3개 한 줄 — 동일 너비 · 동일 간격(나머지 px는 양끝에 나눠 중앙 정렬 · 사용자 09-14).
         let bw = (w - gap * 2) / 3;
         let bh = self.s(28.0);
-        self.test_btn.set_bounds(Rect::new(x, y, bw, bh), &mut inv);
+        let x0 = x + (w - (bw * 3 + gap * 2)) / 2;
+        self.test_btn.set_bounds(Rect::new(x0, y, bw, bh), &mut inv);
         self.connect_btn
-            .set_bounds(Rect::new(x + bw + gap, y, bw, bh), &mut inv);
-        self.save_btn.set_bounds(
-            Rect::new(x + (bw + gap) * 2, y, w - (bw + gap) * 2, bh),
-            &mut inv,
-        );
+            .set_bounds(Rect::new(x0 + bw + gap, y, bw, bh), &mut inv);
+        self.save_btn
+            .set_bounds(Rect::new(x0 + (bw + gap) * 2, y, bw, bh), &mut inv);
     }
 
     /// 상태줄 자리(버튼 아래).
@@ -634,7 +635,8 @@ impl ConnectPanel {
         dc.fill_rect(b, th.panel_bg);
         dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
         dc.select_font(FontSlot::Base, false);
-        let label_h = self.s(16.0);
+        // 라벨 16 + 3 — 입력란 포커스 링(바깥 2px)이 위 라벨과 겹치던 문제(사용자 09-14).
+        let label_h = self.s(19.0);
         let label = |dc: &mut dyn DrawCtx, r: Rect, text: &str| {
             if r.w == 0 {
                 return;
