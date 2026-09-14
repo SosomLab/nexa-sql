@@ -111,3 +111,20 @@
 RDBMS: sqlplus/sql(SQLcl) 1521 · psql 5432 · mysql/mariadb 3306 · sqlcmd/mssql-cli 1433 · db2 50000 · sqlite3 — · hdbsql 30015 · isql(ASE) 5000 · dbaccess 9088 · isql-fb 3050 · H2 Shell 9092 · ij(Derby) 1527 | 국산: tbsql 8629 · isql(Altibase) 20300 · csql(CUBRID) 33000 · gsql(GOLDILOCKS) 22581 | NoSQL: mongosh 27017 · redis-cli 6379 · cqlsh 9042 · elasticsearch-sql-cli 9200 · cypher-shell 7687 · influx 8086 · hbase shell 16000 · cbq 8091 · etcdctl 2379 · memcached 11211 · CouchDB 5984 | 분석/DW: snowsql · bq · psql/rsql(Redshift) · clickhouse-client 9000 · duckdb · bteq · vsql 5433 · psql(Greenplum) · nzsql · beeline · trino/presto-cli · impala-shell · spark-sql | NewSQL: cockroach sql · ysqlsh/ycqlsh · mysql(TiDB) · SurrealDB.
 
 → ODBC 폴백 방언(`Dialect::Odbc` · Tibero/Altibase/CUBRID)의 기본 포트 표는 [22 드라이버 확장](22-driver-extensions.md) manifest `default_port`로 확장(드라이버가 안다 · 앱은 모른다).
+
+---
+
+## 6. `CONNECT` 동사 — 우리 명령과 DBMS 네이티브의 혼동(사용자 09-14)
+
+**사실 확인**: SQL*Plus의 `CONNECT`는 **서버 명령이 아니라 클라이언트 명령**이다(sqlplus가 해석 · 서버로 보내지 않는다). psql `\c`, sqlcmd `:connect`, mysql ``/`connect`도 같다 — 모두 클라이언트 셸 어휘다. 따라서 **서버 쪽 충돌은 없다.** 혼동은 "어느 클라이언트의 문법인가"뿐이다.
+
+| 안 | 내용 | 장점 | 단점 |
+|---|---|---|---|
+| **ⓐ 래퍼 하나(권장)** | `CONNECT`는 **우리 클라이언트 명령 하나**. SQL*Plus 문법(`user/pw@host:port/svc` · `/ as sysdba`)을 **그대로 받고**, 프로필 이름·URL(`mssql://…`)을 **상위 집합**으로 더한다(이미 이렇게 구현 — docs/08·11 `Command::Connect`). 다른 셸 어휘(`\c` · `:connect` · ``)는 **별칭**(T-52) | SQL*Plus 스크립트가 수정 없이 돈다(DR-6 워크플로 1급) · 배울 명령 1개 · 방언이 바뀌어도 같은 동사 | "이건 오라클 명령인가?"라는 질문이 남는다 → **문서·도움말에 "클라이언트 명령"임을 명시** · `SHOW COMMANDS`에 출처 표기 |
+| ⓑ 네이티브/래퍼 분리 | 방언별 네이티브(`CONNECT`=Oracle · `\c`=PG …)는 그 방언에서만, 우리 것은 `\connect` 또는 `@connect` | 출처가 이름에 보인다 | SQL*Plus 스크립트의 `CONNECT`가 MSSQL 세션에선 오류 → 이식성 손실 · 사용자가 두 문법을 배운다 · 혼합 스크립트(프로필로 방언 전환)가 깨진다 |
+| ⓒ 접두 필수 | 우리 명령은 전부 `\`·`@` 접두(psql식) · 맨몸 `CONNECT`는 서버로 보냄 | 애매함 0 | Oracle 서버는 `CONNECT`를 모른다(ORA-00900) — 맨몸 CONNECT가 쓸모없어진다 · SQL*Plus 호환 포기 |
+
+**권장 = ⓐ + 명시**: ① `CONNECT`는 우리 클라이언트 명령이며 SQL*Plus 상위 호환(도움말 첫 줄에 명시) ② 로그 창에 `connect` 엔트리가 "client"로 찍힌다(서버로 안 감을 눈으로 확인) ③ 셸 별칭 `\c`·`:connect`(T-52) ④ **세션 모드와의 관계**([24] `session.mode`): `shared`면 편집기 안의 `CONNECT`가 **모든 탭의 세션을 바꾼다** → 상태줄 경고 + 로그 · `per-editor`면 그 탭만 ⑤ 서버로 보내야 하는 드문 경우(예: MySQL Shell의 `\connect`와 같은 이름의 사용자 프로시저)는 `EXEC`/`CALL`로 감싸므로 충돌 없음.
+
+→ 결정 **D-45**: ⓐ(권장) / ⓑ / ⓒ.
+

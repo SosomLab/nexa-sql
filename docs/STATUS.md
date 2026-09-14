@@ -2,6 +2,11 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-14 (9차 · win) — ★ 실행 로그 창·CLI·어댑터·독립 I/O 스레드 ✅ · session.mode 설정 · CONNECT 동사 검토
+
+**구현**: `nsql-log`(LogEntry 단일 입력 · LogFormat 단일 출력 · Raw/Markdown/Grid · LogBuffer · **LogHub**(비차단·별도 스레드·싱크 패닉 격리) · StderrSink) · `nsql_run::log_entries` · GUI 로그 창(메인 창 옆 · Ctrl/⌘+⇧G · 스크롤·follow) · CLI `--log` · 설정 `log.format` / `session.mode`. 파일 싱크는 후속(같은 트레이트 · 배치 flush).
+**검토**: CONNECT = 클라이언트 명령(SQL*Plus도) → 권장 ⓐ 우리 명령 하나 + 별칭 + 명시([27 §6](27-cli-conventions.md)) → **D-45**. **⏳ 사용자**: D-41~45 · nexa-ui D-4~D-10. → [journal](journal/2026-09-14.md)
+
 ## 2026-09-14 (8차 · win) — 편집기 기본 기능 ✅: 복사/잘라내기/붙여넣기 · 휠 스크롤 라우팅
 
 OS 클립보드 3-OS(`clipboard.rs` · 외부 crate 0) · Ctrl/⌘+C/X/V · 우클릭 메뉴 · 휠은 커서 아래 영역으로 · 멀티라인 붙여넣기 탭 보존(nexa-ui f56db89). T-16의 "☐ 클립보드" 닫힘. GUI 실행 중. → [journal](journal/2026-09-14.md)

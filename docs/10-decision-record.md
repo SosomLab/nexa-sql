@@ -77,6 +77,7 @@
 | **D-42** | 기본 결과 상한 — 1,000행 + "더 가져오기"(권장) / 500 / 무제한([26 §6](26-performance-architecture.md)) |
 | **D-43** | 추가 페치 — 서버 커서 유지 + OFFSET 폴백(권장) / 항상 재질의(DataGrip식) |
 | **D-44** | 타이밍 로그 파일 기본 — 끔(`NSQL_LOG=timing`으로 켬 · 권장) / 켬 |
+| **D-45** | `CONNECT` 동사 — ⓐ 우리 클라이언트 명령 하나(SQL*Plus 상위 호환 · 별칭 `\c`·`:connect` · 권장) / ⓑ 네이티브·래퍼 분리 / ⓒ 접두 필수([27 §6](27-cli-conventions.md)) |
 | **D-40** | ★ `nexa-license` 서명 알고리즘 **포트화** — `alg=ed25519`(dalek 2.x · beep/clip/sql 기본) + `alg=p256`(dir2 · Windows CNG 인박스 · 외부 crate 0 유지) · 루트 키 2개 · 발급기 양쪽 서명([25 §10-2 #4](25-license-tiers-and-server.md)) — 대안 = dir2 제외(단일 Ed25519) |
 | ~~D-39~~ → DR-26 | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
