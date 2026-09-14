@@ -30,6 +30,7 @@
 | **DR-23** | ★ **GUI 접속 = DBeaver식 접속 설정 대화상자**(좌측 트리 · Main/Advanced/Driver properties · Host/URL · 인증 · Save password · Test Connection · Driver Settings/Download) **+ Golden식 로그인 리스트**(프로필 목록 · Pin · 더블클릭 접속) | 사용자 09-13 스크린샷 3장 *"다양한 DB를 지원하려면 DBeaver 형태가 맞다 · 1번은 Golden"* · [22 §1](22-driver-extensions.md) | ✅ 09-13(설계) |
 | **DR-24** | ★ **드라이버 확장 = GitHub Releases에서 내려받는 stdio JSON-RPC 프로세스** — 기본은 **최신 non-prerelease**, 버전 지정 시 **SxS 다중 버전 보관**(`drivers/<id>/<ver>/`) · 프로필 `driver=<id>@<ver>` 고정 · 관리자(목록·설치·갱신·**삭제** · 참조 프로필 보호) · sha256 + Ed25519 검증 필수. 순수 Rust 드라이버는 내장 유지. 근거: Oracle 클라이언트 ↔ 서버 지원 매트릭스(23ai ← 19c/21c/23ai · 11.2.0.4/12.1 → 19c까지) + ODPI-C 프로세스당 클라이언트 1개 | 사용자 09-13 *"GitHub에서 다운로드해서 확장 사용"* · *"최신 버전이 다운로드"* · *"SxS처럼 여러 버전 · 목록 보고 삭제"* · [22](22-driver-extensions.md) | ✅ 09-13(설계 · 구현 T-27~T-31) |
 | **DR-22** | ★ **연결 프로필 = 사용자 설정 폴더 파일 저장소(`nsql-vault`)** — 비밀번호만 ChaCha20-Poly1305 봉투(도메인 = 프로필 이름) · 기기 키는 Windows DPAPI, 그 외 0600 · **CLI·GUI·여러 인스턴스가 같은 폴더 공유**(첫 실행 경합은 `create_new`로 단일 키) · OS 키체인은 기기 키 보호 후속(D-18) | 사용자 09-13 *"사용자 폴더에 접속 정보를 암호화해서 저장 · 연결 시 재사용"* · *"몇 개의 Instance를 실행하든 저장된 암호를 함께 사용"* · [21](21-connection-profiles.md) · D-2 닫힘 | ✅ 09-13 |
+| **DR-25** | ★ **인증 서버는 별도 비공개 저장소(`SosomLab/nexa-license-server` · kiros33 계정) · 앱·서버 공유 기능은 형제 라이브러리 `SosomLab/nexa-license`로 분리(path 의존 · nexa-ui 방식)** — 라이브러리는 형식·서명·검증·요청 코드·기기 ID·프로토콜만, `Feature`·UI·저장 정책은 앱이 주입 | 사용자 09-14 2차 *"차후 인증서버는 별도 Repository · 공유 기능은 별도 라이브러리로 분리"* · [25 §9](25-license-tiers-and-server.md) | ✅ 09-14 |
 
 ## 2. 권장 확정 대기 (DP)
 
@@ -57,13 +58,21 @@
 | **D-22** | 순수 Rust thin `oracledb` 채택 시점 — OUT 바인드·REF CURSOR가 공개 API에 들어오는 판(GitHub Discussions 문의 후보). 들어오면 Oracle 내장 드라이버 = thin, OCI(kubo)는 레거시 확장([22 §4-1](22-driver-extensions.md))으로 |
 | **D-23** | ★ **정품 인증 — 게이트 기능 목록·무료 범위**([23 §4-3](23-license-activation.md) 권장안: xlsx/parquet export · SSH 터널 · 드라이버 확장 · 다중 접속 · 비교 = Pro / 나머지 무료). ⚠️ [13 §3](13-licensing.md) "무료 제한 없음" 권장을 **정정**하는 결정(사용자 09-14 요청) |
 | **D-24** | ★ 기기 묶음 원천 — ⓐ OS 기기 식별자 해시(권장) ⓑ `device.key` 무작위 ⓒ 결합([23 §6](23-license-activation.md)) |
-| **D-25** | ★ 라이선스 모델 — 영구+업데이트 1년(권장) vs 구독 · 기기 수(1/2) · 등급 이름 |
+| **D-25** | ★ 라이선스 모델 — 영구+업데이트 1년(권장) vs 구독 · 기기 수 · 등급 이름 → **09-14 2차 구체화: 4단(Device 1대 · User 5대 · Team 1~5석 · Organization 6+ 서버) · 개인 영구/조직 구독 · 가격 비율 = D-34**([25 §2](25-license-tiers-and-server.md)) |
 | **D-26** | 라이선스 파일 형식 — 자체 key=value 봉투(권장 · JSON 의존 0) vs PASETO v4.public 엄수(13 §3 문구) |
 | **D-27** | 발급 비밀키 보관(발급 PC DPAPI 봉투 + 오프라인 백업) · 공개키 2개 내장 무중단 회전 |
 | **D-28** | 14일 체험 파일 도입 여부(권장 = 있음 · 기기당 1회) |
 | **D-29** | 온라인 2차(Cloudflare Workers 발급 자동화) 착수 시점(권장 = v1.0 이후 · 수동 이메일로 시작) |
 | **D-30** | 집행 시점(= D-6 구체화) — v1.0부터 게이트 활성(권장) · 그 전 판은 배지만 |
-| **D-31** | Team/사이트 라이선스(기기 묶음 없는 조직 키) 도입 여부(권장 = v1.0 미포함) |
+| ~~D-31~~ | → 사용자 09-14 2차: 조직 티어는 **사내 인증 서버**로 — 세부는 **D-32~D-39** |
+| **D-32** | ★ Team(1~5)의 서버 — 파일 묶음 기본·서버 선택(권장) / 서버 필수 / 서버 미제공 |
+| **D-33** | ★ Organization 좌석 모드 — named만 / named + concurrent 옵션(권장 · ×2) / concurrent만 |
+| **D-34** | ★ 가격 비율 — Device 1.0 · User 1.3 · Team 0.9×좌석 · Org 연 0.5×좌석 · floating ×2([25 §2](25-license-tiers-and-server.md)) |
+| **D-35** | User 기기 5대 재발급 셀프 서비스 횟수(연 5회 권장) |
+| **D-36** | 조직 사용자 식별 — OS 로그인명(권장) / 이메일 / LDAP·AD(후속) |
+| **D-37** | 서버 가용성 — 단일 + 백업(권장) / 2노드 |
+| **D-38** | 리스 TTL 7일 · 오프라인 리스 30일 · 비활성 회수 30일 · 유예 30일(권장값) |
+| **D-39** | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |
 
 ## 4. 외부 crate 원장 (추가 시 건별 기록)

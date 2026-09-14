@@ -53,14 +53,19 @@
 | **T-30** | P0 | 대 | Oracle OCI 확장 — kubo 드라이버를 RPC 프로세스로 · Instant Client 19/23 SxS · 프로필 `driver=` · ORA-28040 힌트 | T-29 D-20 | ☐ |
 | **T-31** | P0 | 대 | GUI — DBeaver식 접속 대화상자 · Golden식 로그인 리스트 · 드라이버 관리자(목록·Download·Update·Delete) | T-28 · nexa-ui U-2 | ☐ |
 
-## 3-3. 정품 인증 · 기능 게이트([23](23-license-activation.md) · 사용자 09-14) — 코드는 D-23·24·25 답 뒤
+## 3-3. 정품 인증 · 기능 게이트([23](23-license-activation.md) · 티어·서버·저장소 분리 [25](25-license-tiers-and-server.md) · 사용자 09-14) — 코드는 D-23·24·32·33 답 뒤 · **라이브러리 저장소(T-45)부터**
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
 |---|:--:|:--:|---|---|:--:|
 | **T-32** | P1 | 중 | `nsql-license` — 파일 형식 파서·정규화·Ed25519 검증·`Feature`/`check` · 3-OS 기기 ID · 테스트([23 §5](23-license-activation.md)) | D-24 D-26 | ☐ |
 | **T-33** | P1 | 소 | `nsql license request/status/install/remove` · 종료 코드 4 | T-32 | ☐ |
 | **T-34** | P1 | 중 | GUI 설정 라이선스 탭 · 상태줄 배지 · Denied 대화상자(요청 코드 복사) · i18n `license.*` | T-32 T-37 | ☐ |
-| **T-35** | P1 | 중 | `nsql-license-tool`(비공개) — 키 생성·발급·대장 · 공개키 내장(`build.rs`) · 회전 | T-32 D-27 | ☐ |
+| ~~T-35~~ | | | → **T-41**(`nexa-license-tool`은 서버 비공개 저장소의 두 번째 bin · [25 §9-1](25-license-tiers-and-server.md)) | | |
 | **T-36** | P1 | 소 | 게이트 배선 — D-23 목록의 진입점 1곳씩 · 확장 manifest `requires` | T-32 D-23 | ☐ |
+| **T-45** | P1 | 중 | ★ **`SosomLab/nexa-license` 저장소 생성**(형제 · path 의존) — format·types·verify·request·machine·sign·keys·테스트 픽스처 · 3-OS CI([25 §9](25-license-tiers-and-server.md)) — T-32의 검증·기기 ID·테스트는 여기로, `nsql-license`는 얇은 층 | D-24 D-26 D-39 | ☐ |
+| **T-40** | P1 | 중 | `nexa-license` 확장 — `kind`·`machine.N`·org 키(`seats`·`seat_mode`·`server_key`) · 리스 2단 체인 검증 · `License.source` | T-45 D-32 D-33 | ☐ |
+| **T-41** | P1 | 대 | **`SosomLab/nexa-license-server`(비공개)** — `nexa-licensed`(init/install/service · SQLite 좌석·리스·감사 · 최소 HTTP · named/device/concurrent · 관리 CLI+정적 페이지 · 3-OS 서비스) + `nexa-license-tool`(발급기 · 재발급 대장) | T-40 D-36~38 | ☐ |
+| **T-42** | P1 | 중 | 클라이언트 리스 — `license.server`·`license.user` · 부팅 갱신·하트비트·release · 오프라인 리스 · 상태줄 배지 · `nsql license server/status/renew` | T-40 T-33 | ☐ |
+| **T-44** | P2 | 소 | 관리자 설치 문서([25 §4-6](25-license-tiers-and-server.md)) · 100 동시 부하 · 만료·유예 실기 | T-41 T-42 | ☐ |
 
 ## 3-4. 앱 설정 · i18n · 테마(사용자 09-14)
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
