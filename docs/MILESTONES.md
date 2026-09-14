@@ -33,6 +33,7 @@
 | ⏳ | 창 실기(사용자) — 한글 IME 입력 · 그리드 스크롤 · 창 둘 프로필 공유 |
 | 📐 | `nexa-edit` E1~E5([17](17-editor-incremental-plan.md)) — TextBox 대체 |
 | ✅ | 연결 프로필 저장·이름 접속(이름 칸 + Save · T-16b 일부 · 09-13) |
+| ✅ | Golden식 접속 창(09-14 13·14차) — 로그인 목록(신호등·Test/Connect 행 버튼·Password 열·정렬/폭/DnD/스크롤·우클릭 메뉴·Delete 2단·삭제 뒤 인접 선택) · 상세 폼(편집 메뉴·워드랩 상태·세션 비밀번호) · 프로브 정책(주기·지수 백오프·즉시 재확인·병렬 스레드) · 테스트 스레드 분리 · 소유 창(작업표시줄 1) · 색 설정 창(`ColorPanel`) · hover/포커스/팝업 UX 규칙(CLAUDE.md §3) |
 | ☐ | `nexa-grid` · dock/tab(nexa-ui U-2) · 클립보드·컨텍스트 메뉴(T-16b) · 치환 변수 대화상자(T-16c) · DBeaver식 접속 대화상자·프로필 목록([22 §1](22-driver-extensions.md)) |
 
 ## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)

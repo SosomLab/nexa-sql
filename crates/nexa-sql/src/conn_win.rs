@@ -626,7 +626,12 @@ impl ConnWin {
             })
             .map(|(i, _)| i)
             .collect();
-        sort_shown(&self.profiles, &mut self.shown, &self.sort_keys, &self.session_pw);
+        sort_shown(
+            &self.profiles,
+            &mut self.shown,
+            &self.sort_keys,
+            &self.session_pw,
+        );
         if self.sel.is_some_and(|s| s >= self.shown.len()) {
             self.sel = None;
         }
@@ -1121,7 +1126,10 @@ impl ConnWin {
 
     /// 이름으로 행 선택(행 Test/Connect가 폼 Test/Connect와 같은 경로를 타도록 · 사용자 09-14).
     pub(crate) fn select_by_name(&mut self, name: &str) {
-        self.sel = self.shown.iter().position(|&i| self.profiles[i].name == name);
+        self.sel = self
+            .shown
+            .iter()
+            .position(|&i| self.profiles[i].name == name);
         if let Some(s) = self.sel {
             self.ensure_visible(s);
         }
@@ -2252,7 +2260,13 @@ impl ConnWin {
                                 _ => {}
                             }
                         } else {
-                            dc.text(cx + pad, ty(y), clip, &cell_of(p, ci, &self.session_pw), th.text);
+                            dc.text(
+                                cx + pad,
+                                ty(y),
+                                clip,
+                                &cell_of(p, ci, &self.session_pw),
+                                th.text,
+                            );
                         }
                     }
                     cx += cw;

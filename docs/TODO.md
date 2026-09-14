@@ -95,6 +95,8 @@
 | **T-61** | P1 | 소 | 상태줄 — `statusbar.*` 표시 설정 · 세션 모드/Read-only 배지 · 인코딩·줄끝·탭 크기 세그먼트 · 클릭 동작(Goto line · 로그 창) · 좁을 때 왼쪽부터 숨김 | T-39 T-54 | ☐ |
 | **T-56** | P0 | 대 | **오브젝트 탐색기**([28](28-object-explorer.md)) — `Catalog` 포트 · Oracle/MSSQL/SQLite `children` · `nsql-run::explorer`(메타 세션 · 스레드 풀 ≤4 · 노드 상태 · 캐시 · 취소 · catch_unwind) · `nsql cat` · 트리 그리드(nexa-grid `CatalogSource`) · 설정 4키(등재 ✅) · 자동 갱신(기본 off) | nexa-ui G-1~3 · D-46 | ☐ |
 | **T-53** | P1 | 중 | **단축키 설정 화면** — KeymapGrid(그룹·이름·설명·단축키 · [지정]/[초기화] · 충돌 배지 · 검색) + `HotkeyCapture` 캡처 대화상자(적용 → 그리드 값·키맵 파일) — [nexa-ui 21 §3-1](../../nexa-ui/docs/21-grid-family.md) · 명령 레지스트리는 E3(T-14) | nexa-ui G-6 · T-14 | ☐ |
+| **T-63** | P1 | 소 | 프로브 부하 원칙(09-14 검토) — `note_failure`로 만든 대상 집합 밖 항목은 즉시 확인 뒤 **재예약 금지** · 슬롯 초과 250ms 재시도 깨우기 → 1s 또는 결과 수신 시 · 호스트명 DNS 캐시(프로필 수백 개 대비) | 14차 검토 | ☐ |
+| **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |
 | **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
 
 ## 4. M3+ (요약)
