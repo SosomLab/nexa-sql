@@ -41,7 +41,7 @@
 | DR-25 | **라이선스: 공유 라이브러리 `nexa-license`(형제 저장소) + 인증 서버는 비공개 저장소 `nexa-license-server`** · 티어 4단(Device·User 5대·Team·Org 서버) — [23](docs/23-license-activation.md) · [25](docs/25-license-tiers-and-server.md) · D-23~39 대기 |
 
 ### 설계 문서 지도(요구별)
-**아키텍처 패턴·확장점·부품 원장 [30](docs/30-architecture-patterns.md)** · 연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 정품 인증·기능 게이트 [23](docs/23-license-activation.md) · 라이선스 종류·인증 서버·저장소 분리 [25](docs/25-license-tiers-and-server.md) · 설정 체계·i18n·테마 [24](docs/24-settings-and-vscode-analysis.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
+**아키텍처 패턴·확장점·부품 원장 [30](docs/30-architecture-patterns.md)** · 들여쓰기 설정 계층 [31](docs/31-indentation-settings.md) · 연결 프로필 [21](docs/21-connection-profiles.md) · 드라이버 확장·접속 대화상자 [22](docs/22-driver-extensions.md) · 정품 인증·기능 게이트 [23](docs/23-license-activation.md) · 라이선스 종류·인증 서버·저장소 분리 [25](docs/25-license-tiers-and-server.md) · 설정 체계·i18n·테마 [24](docs/24-settings-and-vscode-analysis.md) · 편집기 점증 순서 [17](docs/17-editor-incremental-plan.md) · 세션/hot exit/프로젝트 [18](docs/18-session-and-projects.md) · 외부 변경(git식 병합) [15](docs/15-external-file-changes.md) · 비교/git/오브젝트 시점 캐시 [19](docs/19-compare-git-and-object-history.md) · 폰트·기능 모듈 [14](docs/14-fonts-and-feature-modules.md) · 사용자 Sublime 프로필 [12](docs/12-user-sublime-profile.md).
 
 ## 3. 작업 규약
 

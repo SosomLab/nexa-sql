@@ -100,6 +100,7 @@
 | **T-66** | P2 | 소 | 편집기·그리드·로그 창 상수 설정화(`EditorTuning/GridTuning` · 비노출) — 접속 창 `ConnTuning`과 같은 방식 | [30 §3-D](30-architecture-patterns.md) | ☐ |
 | **T-67** | P1 | 중 | **Command 레지스트리**(id · 라벨 Msg · 기본 단축키 · 핸들러) — 메뉴·팔레트·툴바·키맵(T-53)이 같은 표를 읽는다 | [30 §3-E](30-architecture-patterns.md) T-53 | ☐ |
 | **T-68** | P2 | 소 | 실행 계층 메시지 규약 문서화(`Cmd/ConnOutcome/RunEvent/TestResult` · 버전 · 큐/스레드 소유권 표) — RPC 드라이버 규약(T-27)과 정렬 | [30 §3-F](30-architecture-patterns.md) | ☐ |
+| **T-69** | P1 | 중 | **들여쓰기 설정 계층**([31](31-indentation-settings.md)) — 전역 → 문법(`<Syntax>.nexa-settings`) → 프로젝트 → 현재 탭(메모리·세션) · 상태바 `Tab Size: 4`/`Spaces: 4` 세그먼트 + 팝업(공백/탭 · 폭 1~8 · 버퍼에서 감지 · 변환 · 문법/전역 기본으로 저장) · nexa-gfx 탭 폭 주입(4칸 고정 제거) · Tab/Shift+Tab 줄 들여쓰기 | 29 T-61 T-67 | 📐 |
 | **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |
 | **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
 

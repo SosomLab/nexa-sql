@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (1차 · win) — 설계 [31 들여쓰기 설정 계층](31-indentation-settings.md) 📐 · 14차 push ✅ CI green
+
+권장안 = 전역 → **문법**(`<Syntax>.nexa-settings`) → 프로젝트(예약) → 현재 탭(메모리·세션) · 상태바 `Tab Size: 4`/`Spaces: 4` + 팝업(공백/탭 · 폭 1~8 · 버퍼 감지 · 변환 · 문법/전역 기본으로 저장) · 선행 = nexa-gfx 탭 폭 4칸 고정 제거. **T-69** · ⏳ 사용자 승인 → 구현. **다음**: T-69 → T-65 WindowHost → T-67 Command 레지스트리. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-14 (14차 · win) — 접속 창 완성도(신호등 정책 · 행 버튼 · 목록 그리드 · 팝업/포커스/hover UX · 색 설정 창 · 테스트 스레드) ✅ · push
 
 **부하 검토(14차 끝)**: 트래픽 경로 5개 모두 상한 있음(주기 60s · 백오프 32분 상한 · 즉시 재확인 프로필당 1 · 테스트 클릭당 1 · 자동 재접속 없음) — 고칠 것 2건은 **T-63**으로 즉시 반영(대상 집합 밖 항목 재예약 금지 · 깨우기 1s) + Test/Connect **동시 상한 4 + FIFO 큐**(`connect.max_concurrent`) · 원칙은 [26 §8](26-performance-architecture.md) 표·체크리스트로 상시 관리(CLAUDE.md §3) · push 뒤 CI green · **구현 값 설정화**(비노출 13키 · `ConnTuning` · `nsql config list all`) · **[30 아키텍처 패턴 원장](30-architecture-patterns.md)**(확장점 = 포트+레지스트리+설정 · 부품 원장 · T-65~68) · 편집기 Tab 삽입. **다음**: T-65 WindowHost → T-67 Command 레지스트리 → T-31b 잔여(Import/Export·Pin·삭제 복구) → nexa-grid(U-3) → T-48 페치 모델 · T-57 인텔리전스 · T-39 설정 화면(T-64 색 선택기 연동). ⏳ 사용자: `biscm` 비밀번호 재입력 · 포커스 4항목·툴팁·페이드·색 설정 창 실기.
