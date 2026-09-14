@@ -4,7 +4,7 @@
 
 ## 2026-09-14 (13차 · win) — Golden식 접속 창(T-31) ✅ · 앱 아이콘(Union) ✅
 
-별도 창 = 접속 폼 + 로그인 목록(필터 · 클릭 채움 · 더블클릭 접속 · 삭제) · Ctrl+L/툴바/메뉴 · 부팅 시 열림 · 접속 시 닫힘 · 메인 창 본문 전폭. 아이콘 = `packaging/branding/icon.svg` SSOT → PNG/ico/icns/rgba(`scripts/pack_icon.py`) → 3창 런타임 아이콘(작업표시줄 실기 ✅). **다음**: T-31b(Import/Export·Pin·정렬) → nexa-grid(U-3) → T-48 페치 모델 · T-57 인텔리전스. GUI 실행 중. → [journal](journal/2026-09-14.md)
+별도 창(640×520 · 기본 목록만 · New/Edit 시 창이 오른쪽으로 커지며 폼 슬라이딩 · 접속 명칭 맨 위 · 더블클릭 접속 · 삭제) · **서버 신호등**(`probe.rs` · 한 번 이상 접속한 프로필만 · 지수 재시도 상한) · Ctrl+L/툴바/메뉴 · 부팅 시 열림 · 접속 시 닫힘 · 메인 창 본문 전폭 · 그리드 컬럼 폭 조절(커서 피드백) · 아이콘은 코드로 그림(정적 자원 0 · 풀블리드). 아이콘 = `packaging/branding/icon.svg` SSOT → PNG/ico/icns/rgba(`scripts/pack_icon.py`) → 3창 런타임 아이콘(작업표시줄 실기 ✅). **다음**: T-31b(Import/Export·Pin·정렬) → nexa-grid(U-3) → T-48 페치 모델 · T-57 인텔리전스. GUI 실행 중. → [journal](journal/2026-09-14.md)
 
 ## 2026-09-14 (12차 · win) — 탭 ✅ · 그리드 정렬/이동 ✅ · 구문 강조·팔레트·서식 복사·상태줄 ✅ · 창 포커스 ✅ · 설계 29(인텔리전스·다중 커서)
 
