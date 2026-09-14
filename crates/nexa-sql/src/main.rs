@@ -225,10 +225,6 @@ impl App {
         let mut inv = Invalidations::default();
         let mut failed = false;
         match act {
-            EditCtxAction::SelectAll => {
-                self.route(InputEvent::SelectAll);
-                return;
-            }
             EditCtxAction::Copy => {
                 if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
                     failed = !clipboard::write_text(&text);
