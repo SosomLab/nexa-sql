@@ -1,0 +1,14 @@
+[package]
+name = "nsql-i18n"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 메시지 카탈로그 — 컴파일 타임 [en, ko] 표 · 기본 영어 · 의존 0 (nexa-clip nclip-core/i18n.rs 형태 이식 · T-37)"
+
+[lints]
+workspace = true
+
+[dependencies]

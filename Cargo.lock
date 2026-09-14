@@ -1110,9 +1110,11 @@ dependencies = [
  "nexa-gfx",
  "nsql-core",
  "nsql-drivers",
+ "nsql-i18n",
  "nsql-io",
  "nsql-run",
  "nsql-script",
+ "nsql-settings",
  "nsql-vault",
  "softbuffer",
  "winit",
@@ -1124,9 +1126,11 @@ version = "0.0.1"
 dependencies = [
  "nsql-core",
  "nsql-drivers",
+ "nsql-i18n",
  "nsql-io",
  "nsql-run",
  "nsql-script",
+ "nsql-settings",
  "nsql-vault",
 ]
 
@@ -1176,6 +1180,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nsql-i18n"
+version = "0.0.1"
+
+[[package]]
 name = "nsql-io"
 version = "0.0.1"
 dependencies = [
@@ -1200,6 +1208,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nsql-settings"
+version = "0.0.1"
+dependencies = [
+ "nexa-conf",
+ "nsql-i18n",
+]
+
+[[package]]
 name = "nsql-vault"
 version = "0.0.1"
 dependencies = [
@@ -1208,6 +1224,7 @@ dependencies = [
  "nexa-conf",
  "nsql-core",
  "nsql-script",
+ "nsql-settings",
  "sha2",
 ]
 

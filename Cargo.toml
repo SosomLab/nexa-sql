@@ -9,6 +9,8 @@ members = [
   "crates/nsql-script",   # ★ SQL*Plus식 스크립트 엔진 — 문장 분리 · 바인드/치환 변수 · EXEC/CONNECT · 방언 재작성 (의존: core)
   "crates/nsql-io",       # export 작성기(csv/tsv/json/jsonl/insert/텍스트 표) · CSV 파서 (의존: core)
   "crates/nsql-run",      # ★ 오케스트레이션 — 엔진 Action ↔ Session 실행 · OUT 흡수 · 이벤트 (GUI·CLI 공용)
+  "crates/nsql-i18n",     # 메시지 카탈로그 — 컴파일 타임 [en, ko] · 기본 영어 · 의존 0 (T-37)
+  "crates/nsql-settings", # 앱 설정 — 레지스트리(단일 원천) + settings.conf(nexa-conf) · 언어·테마 모드 (T-37/38)
   "crates/nsql-vault",    # ★ 연결 프로필 저장소 — 사용자 폴더에 비밀번호 봉투(ChaCha20-Poly1305 · 기기 키 DPAPI) · CLI·GUI 공용 (DR-22)
   "crates/nsql-driver-sqlite", # ① 어댑터 — rusqlite(bundled) · 실DB 검증용
   "crates/nsql-driver-oracle", # ① 어댑터 — oracle(kubo · ODPI-C · Instant Client 런타임 로드)
@@ -46,6 +48,8 @@ nsql-driver-oracle = { path = "crates/nsql-driver-oracle" }
 nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
 nsql-drivers = { path = "crates/nsql-drivers" }
 nsql-vault = { path = "crates/nsql-vault" }
+nsql-i18n = { path = "crates/nsql-i18n" }
+nsql-settings = { path = "crates/nsql-settings" }
 # nexa-ui(공용 UI) — M1 UI 착수 시 사용. 경로 의존(DR-4 · nexa-ui DR-4).
 nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
 nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }

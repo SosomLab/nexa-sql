@@ -28,7 +28,7 @@ use nsql_core::Dialect;
 use nsql_script::ConnectSpec;
 
 /// 앱 이름 — 설정 폴더 하위 이름(`%APPDATA%\nexa-sql` · `~/.config/nexa-sql` · `~/Library/Application Support/nexa-sql`).
-pub const APP_DIR: &str = "nexa-sql";
+pub const APP_DIR: &str = nsql_settings::APP_DIR;
 const PROFILES_DIR: &str = "profiles";
 const DEVICE_KEY: &str = "device.key";
 const EXT: &str = "conf";
@@ -84,10 +84,7 @@ impl Vault {
     /// 기본 폴더 — `user_config_dir("nexa-sql")`. 환경변수 `NSQL_HOME`이 있으면 그것(테스트·포터블).
     #[must_use]
     pub fn default_dir() -> Option<PathBuf> {
-        if let Some(h) = std::env::var_os("NSQL_HOME") {
-            return Some(PathBuf::from(h));
-        }
-        nexa_conf::user_config_dir(APP_DIR)
+        nsql_settings::config_dir()
     }
 
     /// 기본 폴더로 연다.

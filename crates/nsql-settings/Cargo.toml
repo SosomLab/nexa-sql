@@ -1,0 +1,17 @@
+[package]
+name = "nsql-settings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 앱 설정 — 설정 레지스트리(단일 원천) + `settings.conf`(nexa-conf key=value · 원자적 쓰기) · 언어·테마 모드 · CLI·GUI 공용 (T-37/38)"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-i18n.workspace = true
+# 설정 폴더 규칙 · key=value 직렬화 · 원자적 쓰기 — nexa 계열 공용(nsql-vault와 같은 판).
+nexa-conf.workspace = true

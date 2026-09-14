@@ -5,6 +5,7 @@
 //! 연다 — 다른 창·CLI 인스턴스가 방금 저장한 프로필도 그대로 보인다(메모리 캐시 없음).
 
 use nsql_core::{DbError, Dialect, Session};
+use nsql_i18n::{tf, Msg};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::ConnectSpec;
 use nsql_vault::Vault;
@@ -102,17 +103,17 @@ pub(crate) fn spawn(
                         wake();
                     }
                     Cmd::Save { name, target } => {
-                        let r = nsql_drivers::parse_target(&target, default_dialect)
-                            .and_then(|spec| {
+                        let r =
+                            nsql_drivers::parse_target(&target, default_dialect).and_then(|spec| {
                                 let v = Vault::open_default().map_err(|e| e.to_string())?;
                                 v.save(&name, &spec).map_err(|e| e.to_string())?;
                                 Ok(spec.redacted())
                             });
                         match r {
-                            Ok(desc) => emit(RunEvent::Message(format!(
-                                "프로필 저장: {name} = {desc} — 이제 접속 칸에 '{name}'만 넣어도 됩니다"
-                            ))),
-                            Err(e) => emit(err(format!("프로필 저장 실패: {e}"))),
+                            Ok(desc) => {
+                                emit(RunEvent::Message(tf(Msg::WkProfileSaved, &[&name, &desc])))
+                            }
+                            Err(e) => emit(err(tf(Msg::WkProfileSaveFailed, &[&e]))),
                         }
                         let _ = dtx.send(None);
                         wake();
@@ -122,7 +123,7 @@ pub(crate) fn spawn(
                         let mut prompt = |_: &str| Some(String::new());
                         let errs = runner.run_script(&src, &mut prompt, &mut emit);
                         let _ = dtx.send(if errs > 0 {
-                            Some(format!("오류 {errs}건"))
+                            Some(tf(Msg::WkErrors, &[&errs.to_string()]))
                         } else {
                             None
                         });

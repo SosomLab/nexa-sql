@@ -5,10 +5,13 @@
 //! 실행은 워커 스레드의 [`nsql_run::Runner`]가 하고, 결과는 채널 + `EventLoopProxy`로 UI에 온다(UI 스레드는 기다리지 않는다).
 //! 폰트: UI = 한글 UI 본, 편집기·그리드 = 고정폭(D2Coding 우선) + 한글 폴백([docs/14](../../../docs/14-fonts-and-feature-modules.md)).
 //!
-//! 키: `Ctrl/⌘+Enter` = 선택 영역(없으면 전체) 실행 · `F5` = 전체 실행 · `Ctrl/⌘+L` = 접속 필드로.
+//! 키: `Ctrl/⌘+Enter` = 선택 영역(없으면 전체) 실행 · `F5` = 전체 실행 · `Ctrl/⌘+L` = 접속 필드로 ·
+//! `Ctrl/⌘+⇧T` = 테마 순환(System→Light→Dark) · `Ctrl/⌘+⇧L` = 언어 전환(en↔ko) — 둘 다 `settings.conf`에 저장(T-37/38).
+//! 문자열은 전부 `nsql-i18n`(기본 영어) · 테마는 `ui.theme` + OS 판정([`theme`]) · 글꼴 크기는 `ui.font_size`/`editor.font_size`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod grid;
+mod theme;
 mod worker;
 
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -18,7 +21,9 @@ use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
+use nsql_i18n::{current_lang, t, tf, Msg};
 use nsql_run::RunEvent;
+use nsql_settings::{Settings, ThemeMode};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -48,6 +53,8 @@ struct App {
     ui_font: Font,
     mono_font: Font,
     theme: Theme,
+    /// 앱 설정(언어·테마 모드·글꼴 크기) — 단축키로 바꾸면 즉시 저장.
+    settings: Settings,
     scale: f32,
     // 컨트롤
     name: TextBox,
@@ -159,19 +166,18 @@ impl App {
         let name = self.name.text().trim().to_string();
         let target = self.connect.text().trim().to_string();
         if !nsql_vault::is_profile_name(&name) {
-            self.status = "프로필 이름을 입력하세요(영문·숫자·`_ - .` · 64자 이내)".into();
+            self.status = t(Msg::ErrProfileName).into();
             self.set_focus(Focus::Name);
             self.redraw();
             return;
         }
         if target.is_empty() || nsql_vault::is_profile_name(&target) {
-            self.status =
-                "저장할 접속 문자열을 입력하세요 (예: oracle://user:pass@host:1521/svc)".into();
+            self.status = t(Msg::ErrNeedTarget).into();
             self.set_focus(Focus::Connect);
             self.redraw();
             return;
         }
-        self.status = format!("프로필 저장 중… {name}");
+        self.status = tf(Msg::StSaving, &[&name]);
         self.worker.send(worker::Cmd::Save { name, target });
         self.redraw();
     }
@@ -182,9 +188,60 @@ impl App {
         }
     }
 
+    /// `ui.theme` + OS 판정으로 팔레트를 다시 고르고 전체를 다시 그린다.
+    fn apply_theme(&mut self) {
+        let wt = self.window.as_ref().and_then(|w| w.theme());
+        self.theme = theme::resolve(self.settings.theme_mode(), wt);
+        if let Some(w) = &self.window {
+            w.set_theme(theme::window_theme(self.settings.theme_mode()));
+        }
+        self.redraw();
+    }
+
+    /// Ctrl/⌘+⇧T — System → Light → Dark 순환 · 저장.
+    fn cycle_theme(&mut self) {
+        let next = self.settings.theme_mode().next();
+        let _ = self.settings.set("ui.theme", next.as_str());
+        self.persist_settings();
+        self.apply_theme();
+        self.status = tf(Msg::StThemeChanged, &[t(next.label())]);
+    }
+
+    /// Ctrl/⌘+⇧L — 언어 전환 · 저장 · 라벨 다시 만들기.
+    fn toggle_lang(&mut self) {
+        let next = current_lang().next();
+        let _ = self.settings.set("ui.lang", next.code());
+        self.persist_settings();
+        nsql_i18n::set_lang(next);
+        self.relabel();
+        self.status = tf(Msg::StLangChanged, &[next.endonym()]);
+        self.redraw();
+    }
+
+    fn persist_settings(&mut self) {
+        if let Err(e) = self.settings.save() {
+            self.status = tf(Msg::CfgSaveFailed, &[&e.to_string()]);
+        }
+    }
+
+    /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
+    fn relabel(&mut self) {
+        self.save_btn.set_label(t(Msg::BtnSave));
+        self.connect_btn.set_label(t(Msg::BtnConnect));
+        self.run_btn.set_label(t(Msg::BtnRun));
+        let (n, c, e) = (self.name.text(), self.connect.text(), self.editor.text());
+        self.name = TextBox::new(t(Msg::PhProfileName)).with_text(&n);
+        self.connect = TextBox::new(t(Msg::PhConnect)).with_text(&c);
+        self.editor = TextBox::new(t(Msg::PhEditor))
+            .with_multiline()
+            .with_text(&e);
+        self.layout();
+        self.set_focus(self.focus);
+    }
+
     fn run_sql(&mut self, all: bool) {
         if self.busy {
-            self.status = "실행 중…".into();
+            self.status = t(Msg::StRunning).into();
             return;
         }
         let text = if all {
@@ -196,11 +253,11 @@ impl App {
         };
         let src = text.unwrap_or_else(|| self.editor.text());
         if src.trim().is_empty() {
-            self.status = "실행할 SQL이 없습니다".into();
+            self.status = t(Msg::ErrNoSql).into();
             return;
         }
         self.busy = true;
-        self.status = "실행 중…".into();
+        self.status = t(Msg::StRunning).into();
         self.log.clear();
         self.worker.send(worker::Cmd::Run(src));
         self.redraw();
@@ -209,13 +266,11 @@ impl App {
     fn do_connect(&mut self) {
         let target = self.connect.text();
         if target.trim().is_empty() {
-            self.status =
-                "접속 문자열을 입력하세요 (예: sqlite::memory: · oracle://user:pass@host:1521/svc)"
-                    .into();
+            self.status = t(Msg::ErrEnterTarget).into();
             return;
         }
         self.busy = true;
-        self.status = format!("접속 중… {target}");
+        self.status = tf(Msg::StConnecting, &[&target]);
         self.worker.send(worker::Cmd::Connect(target));
         self.redraw();
     }
@@ -227,7 +282,13 @@ impl App {
             match ev {
                 RunEvent::Begin { .. } => {}
                 RunEvent::ResultSet { rs, elapsed, .. } => {
-                    self.status = format!("{} rows · {:.3}s", rs.rows.len(), elapsed.as_secs_f64());
+                    self.status = tf(
+                        Msg::StRows,
+                        &[
+                            &rs.rows.len().to_string(),
+                            &format!("{:.3}", elapsed.as_secs_f64()),
+                        ],
+                    );
                     self.grid.set_result(rs);
                 }
                 RunEvent::Done {
@@ -235,9 +296,10 @@ impl App {
                     elapsed,
                     ..
                 } => {
+                    let secs = format!("{:.3}", elapsed.as_secs_f64());
                     self.status = match rows_affected {
-                        Some(n) => format!("{n} rows affected · {:.3}s", elapsed.as_secs_f64()),
-                        None => format!("OK · {:.3}s", elapsed.as_secs_f64()),
+                        Some(n) => tf(Msg::StRowsAffected, &[&n.to_string(), &secs]),
+                        None => tf(Msg::StOk, &[&secs]),
                     };
                 }
                 RunEvent::Print { pairs } => {
@@ -254,15 +316,15 @@ impl App {
                     description,
                     dialect,
                 } => {
-                    self.status = format!("접속: {description} ({dialect})");
+                    self.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     self.busy = false;
                 }
                 RunEvent::Disconnected => {
-                    self.status = "접속 해제".into();
+                    self.status = t(Msg::StDisconnected).into();
                 }
                 RunEvent::Error { line, error, .. } => {
-                    self.status = format!("ERROR line {line}: {error}");
-                    self.log.push(format!("ERROR line {line}: {error}"));
+                    self.status = tf(Msg::StErrorLine, &[&line.to_string(), &error.to_string()]);
+                    self.log.push(self.status.clone());
                     self.grid.set_messages(self.log.clone());
                     self.busy = false;
                 }
@@ -300,11 +362,13 @@ impl App {
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
             let th = self.theme;
+            let ui_px = self.settings.int("ui.font_size") as f32;
+            let mono_px = self.settings.int("editor.font_size") as f32;
             // ── UI 층(한글 UI 본)
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
-                        size: 14.0,
+                        size: ui_px,
                         bold: false,
                         italic: false,
                     },
@@ -334,7 +398,7 @@ impl App {
                     &format!("{busy}{}", self.status),
                     th.text_dim,
                 );
-                let hint = "⌘/Ctrl+Enter 실행 · F5 전체 · ⌘/Ctrl+L 접속";
+                let hint = t(Msg::StHint);
                 let hw = dc.text_width(hint);
                 dc.text(
                     wi - px(8.0, s) - hw,
@@ -348,7 +412,7 @@ impl App {
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
-                        size: 14.0,
+                        size: mono_px,
                         bold: false,
                         italic: false,
                     },
@@ -513,7 +577,7 @@ impl App {
             // 편집 컨텍스트 요청(복사·붙여넣기 — 호스트 몫)
             for tb in [&mut self.name, &mut self.connect, &mut self.editor] {
                 if let Some(act) = tb.take_edit_ctx() {
-                    self.status = format!("{act:?}: 클립보드 연동은 T-16b");
+                    self.status = tf(Msg::StClipboardLater, &[&format!("{act:?}")]);
                 }
             }
         }
@@ -530,23 +594,26 @@ impl ApplicationHandler<Wake> for App {
         }
         let attrs = Window::default_attributes()
             .with_title("Nexa SQL")
+            .with_theme(theme::window_theme(self.settings.theme_mode()))
             .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 720.0));
         let Ok(win) = el.create_window(attrs) else {
-            eprintln!("창 생성 실패");
+            eprintln!("{}", t(Msg::ErrNoWindow));
             el.exit();
             return;
         };
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
+        // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
+        self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
         match softbuffer::Context::new(win.clone()) {
             Ok(ctx) => {
                 match softbuffer::Surface::new(&ctx, win.clone()) {
                     Ok(s) => self.surface = Some(s),
-                    Err(e) => eprintln!("softbuffer surface 실패: {e}"),
+                    Err(e) => eprintln!("softbuffer surface failed: {e}"),
                 }
                 self.ctx = Some(ctx);
             }
-            Err(e) => eprintln!("softbuffer context 실패: {e}"),
+            Err(e) => eprintln!("softbuffer context failed: {e}"),
         }
         self.window = Some(win);
         self.layout();
@@ -590,6 +657,13 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
                 return;
             }
+            WindowEvent::ThemeChanged(_) => {
+                // OS 라이트/다크 전환 — System 모드일 때만 따라간다.
+                if self.settings.theme_mode() == ThemeMode::System {
+                    self.apply_theme();
+                }
+                return;
+            }
             WindowEvent::ModifiersChanged(m) => {
                 self.shift = m.state().shift_key();
                 self.primary = if cfg!(target_os = "macos") {
@@ -629,6 +703,14 @@ impl ApplicationHandler<Wake> for App {
                         self.run_sql(true);
                         return;
                     }
+                    Key::Character("t" | "T") if self.primary && self.shift => {
+                        self.cycle_theme();
+                        return;
+                    }
+                    Key::Character("l" | "L") if self.primary && self.shift => {
+                        self.toggle_lang();
+                        return;
+                    }
                     Key::Character("l" | "L") if self.primary => {
                         self.set_focus(Focus::Connect);
                         self.redraw();
@@ -655,24 +737,45 @@ impl ApplicationHandler<Wake> for App {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // 설정(언어 · 테마 모드 · 글꼴 크기) — 폴더를 모르면 임시 경로의 기본값(저장은 실패해도 앱은 뜬다).
+    let settings = Settings::open_default().unwrap_or_else(|_| {
+        Settings::open(
+            std::env::temp_dir()
+                .join("nexa-sql")
+                .join(nsql_settings::FILE_NAME),
+        )
+    });
+    nsql_i18n::set_lang(settings.lang());
+    // nexa-ctl 내장 메뉴(우클릭 편집) 라벨을 앱 i18n에 잇는다 — 미주입 기본은 영어.
+    nexa_ctl::controls::set_ctl_labels(|m| {
+        use nexa_ctl::controls::CtlMsg as C;
+        match m {
+            C::CtxSelectAll => t(Msg::CtxSelectAll),
+            C::CtxCopy => t(Msg::CtxCopy),
+            C::CtxCut => t(Msg::CtxCut),
+            C::CtxPaste => t(Msg::CtxPaste),
+        }
+    });
     let ui = nexa_font::ui_font(None);
     let mono = nexa_font::mono_font(None);
     let (Some(ui), Some(mono)) = (ui, mono) else {
-        eprintln!("시스템 폰트를 찾지 못했습니다(nexa-font 후보 목록 확인)");
+        eprintln!("{}", t(Msg::ErrNoFont));
         std::process::exit(1);
     };
     println!(
-        "UI 글꼴: {} · 고정폭: {} · 한글 커버 {}",
+        "UI font: {} · mono: {} · Hangul {} · lang {} · theme {}",
         ui.chain.join(" → "),
         mono.chain.join(" → "),
-        mono.font.covers('가')
+        mono.font.covers('가'),
+        settings.lang().code(),
+        settings.theme_mode().as_str()
     );
     if args.first().map(String::as_str) == Some("--smoke") {
         println!("smoke ok — 드라이버: {:?}", nsql_drivers::available());
         return;
     }
     let Ok(el) = EventLoop::<Wake>::with_user_event().build() else {
-        eprintln!("이벤트 루프 생성 실패");
+        eprintln!("event loop creation failed");
         std::process::exit(1);
     };
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
@@ -688,30 +791,27 @@ fn main() {
         .unwrap_or_else(|| "sqlite::memory:".into());
     let profiles = worker::profile_names();
     let status = if profiles.is_empty() {
-        "Connect를 누르거나 ⌘/Ctrl+L 후 Enter · 이름 + 접속 문자열 + Save로 프로필 저장".to_string()
+        t(Msg::StInitial).to_string()
     } else {
-        format!(
-            "저장된 프로필: {} — 접속 칸에 이름만 넣고 Connect",
-            profiles.join(", ")
-        )
+        tf(Msg::StProfiles, &[&profiles.join(", ")])
     };
+    // 창이 없는 동안의 팔레트 — OS 조회(창이 생기면 winit 판정으로 다시 고른다).
+    let initial_theme = theme::resolve(settings.theme_mode(), None);
     let mut app = App {
         window: None,
         ctx: None,
         surface: None,
         ui_font: ui.font,
         mono_font: mono.font,
-        theme: Theme::dark(),
+        theme: initial_theme,
+        settings,
         scale: 1.0,
-        name: TextBox::new("프로필 이름"),
-        connect: TextBox::new(
-            "프로필 이름 · sqlite::memory: · oracle://user:pass@host:1521/svc · mssql://user:pass@host:1433/db",
-        )
-        .with_text(&initial_target),
-        save_btn: Button::new("Save"),
-        connect_btn: Button::new("Connect"),
-        run_btn: Button::new("Run ▶"),
-        editor: TextBox::new("SELECT … ;  EXEC :V := 'x';  PRINT V").with_multiline(),
+        name: TextBox::new(t(Msg::PhProfileName)),
+        connect: TextBox::new(t(Msg::PhConnect)).with_text(&initial_target),
+        save_btn: Button::new(t(Msg::BtnSave)),
+        connect_btn: Button::new(t(Msg::BtnConnect)),
+        run_btn: Button::new(t(Msg::BtnRun)),
+        editor: TextBox::new(t(Msg::PhEditor)).with_multiline(),
         grid: grid::Grid::default(),
         focus: Focus::Editor,
         worker,
@@ -726,7 +826,7 @@ fn main() {
         next_blink: Instant::now(),
     };
     if let Err(e) = el.run_app(&mut app) {
-        eprintln!("이벤트 루프 오류: {e}");
+        eprintln!("{}", tf(Msg::ErrEventLoop, &[&e.to_string()]));
         std::process::exit(1);
     }
 }

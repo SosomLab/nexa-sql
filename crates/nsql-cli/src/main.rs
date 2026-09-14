@@ -6,9 +6,11 @@
 //! nsql shell  -c <target> [-d dialect]                          # 대화형(줄 단위 · `;`/`/`/명령으로 실행 · exit)
 //! nsql export -c <target> (-q <sql> | -t <table>) [-f csv|tsv|json|jsonl|insert[:T]] [-o file]
 //! nsql conn   list | add <name> <target> [-p pw] | show <name> | rm <name> | test <name> | path
+//! nsql config list | get <key> | set <key> <value> | reset <key> | path     # 앱 설정(ui.lang · ui.theme …) — GUI와 공유
 //! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
+mod config;
 mod conn;
 mod plan;
 mod term;
@@ -390,6 +392,10 @@ fn cmd_export(o: &Opts) -> i32 {
 }
 
 fn main() {
+    // 언어는 설정 파일(ui.lang · 기본 영어)에서 — 폴더를 모르면 기본값(T-37).
+    if let Ok(s) = nsql_settings::Settings::open_default() {
+        nsql_i18n::set_lang(s.lang());
+    }
     let o = parse_opts();
     let code = match o.cmd.as_str() {
         "plan" => {
@@ -404,6 +410,7 @@ fn main() {
         "shell" => cmd_shell(&o),
         "export" => cmd_export(&o),
         "conn" => conn::cmd_conn(&o),
+        "config" | "settings" => config::cmd_config(&o),
         other => {
             eprintln!("알 수 없는 명령: {other}\n");
             usage()

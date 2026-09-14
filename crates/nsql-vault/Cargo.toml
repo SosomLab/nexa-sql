@@ -16,6 +16,8 @@ nsql-core.workspace = true
 nsql-script.workspace = true
 # 설정 폴더 규칙 · key=value 직렬화 · 원자적 쓰기 — nexa 계열 공용(도메인 타입 0 · UI 비의존).
 nexa-conf.workspace = true
+# 설정 폴더 규칙(NSQL_HOME · user_config_dir)을 settings와 한 곳에서.
+nsql-settings.workspace = true
 # ── 암호화(nexa-clip `nclip-store` 원장과 동일 판 — ★ 암호화 자체 구현 금지 부류 · docs/10 §4 DR-22)
 chacha20poly1305 = "0.10" # 비밀번호 AEAD 봉투(ChaCha20-Poly1305 · 도메인 분리)
 sha2 = "0.10"             # 봉투 키 KDF(SHA-256)

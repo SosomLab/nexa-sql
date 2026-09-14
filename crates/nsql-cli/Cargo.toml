@@ -22,3 +22,5 @@ nsql-io.workspace = true
 nsql-run.workspace = true
 nsql-drivers.workspace = true
 nsql-vault.workspace = true
+nsql-i18n.workspace = true
+nsql-settings.workspace = true
