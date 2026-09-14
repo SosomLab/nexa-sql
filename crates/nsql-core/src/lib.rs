@@ -320,6 +320,189 @@ pub struct ExecResult {
     pub result_sets: Vec<ResultSet>,
     /// `DBMS_OUTPUT` · T-SQL `PRINT` 등 서버 메시지.
     pub messages: Vec<String>,
+    /// 단계별 소요([`Timeline`] · docs/26). 드라이버가 채운 만큼만 — 비면 러너가 전체 시간을 `Execute`로 넣는다.
+    pub timing: Timeline,
+}
+
+// ────────────────────────────────────────────── 성능 계측(docs/26 — 사용자 09-14 "어디가 느린지 단계별로")
+
+/// 한 번의 실행이 지나는 단계. **사용자 관점** 9단계 + 서버 메시지 플러시 + 커밋.
+/// 순서는 시간 순이며 어느 층이 재는지는 docs/26 §2 표가 SSOT.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Stage {
+    /// 쿼리 작성(편집기 — 키 입력부터 실행 요청까지 · GUI만).
+    Compose,
+    /// 요청 송신(파싱·바인드·네트워크 왕복 시작 전 준비).
+    Send,
+    /// 서버 실행(옵티마이저·실행 — 첫 행/완료 응답까지).
+    Execute,
+    /// 행 페치(배열 페치 왕복 · 부분/전체).
+    Fetch,
+    /// 수신 디코딩(와이어 → `Value` — 드라이버 변환).
+    Receive,
+    /// 결과 탑재(호스트 메모리 구조 · 그리드 모델).
+    Load,
+    /// 화면 렌더(그리드 첫 그리기 · 이후 프레임).
+    Render,
+    /// 탐색(스크롤 · 추가 페치 · 페이징).
+    Navigate,
+    /// 중간 산출물 정리(수신 버퍼 · 렌더 캐시 · 메모리 회수).
+    Cleanup,
+    /// 서버 메시지 플러시(`DBMS_OUTPUT.GET_LINE(S)` 폴링 · T-SQL PRINT 수집).
+    OutputFlush,
+    /// 커밋/롤백.
+    Commit,
+}
+
+impl Stage {
+    /// 짧은 표시 이름(로그·상태줄 — 번역하지 않는다).
+    pub fn label(self) -> &'static str {
+        match self {
+            Stage::Compose => "compose",
+            Stage::Send => "send",
+            Stage::Execute => "execute",
+            Stage::Fetch => "fetch",
+            Stage::Receive => "receive",
+            Stage::Load => "load",
+            Stage::Render => "render",
+            Stage::Navigate => "navigate",
+            Stage::Cleanup => "cleanup",
+            Stage::OutputFlush => "output",
+            Stage::Commit => "commit",
+        }
+    }
+}
+
+/// 한 단계의 측정값.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Span {
+    pub stage: Stage,
+    pub dur: std::time::Duration,
+    /// 행 수(페치·탑재·렌더) · 줄 수(OutputFlush).
+    pub rows: Option<u64>,
+    /// 바이트 추정(수신·탑재).
+    pub bytes: Option<u64>,
+    /// 부가 설명(예: "execute+fetch (TDS stream)").
+    pub note: Option<String>,
+}
+
+/// 단계별 소요의 순서 있는 목록 — 각 층이 자기 단계를 **덧붙이고**, 누구도 남의 단계를 고치지 않는다.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Timeline {
+    pub spans: Vec<Span>,
+}
+
+impl Timeline {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, stage: Stage, dur: std::time::Duration) -> &mut Span {
+        self.spans.push(Span {
+            stage,
+            dur,
+            rows: None,
+            bytes: None,
+            note: None,
+        });
+        self.spans.last_mut().expect("just pushed")
+    }
+
+    pub fn add(&mut self, span: Span) {
+        self.spans.push(span);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
+
+    /// 같은 단계가 여러 번이면 합산.
+    pub fn get(&self, stage: Stage) -> std::time::Duration {
+        self.spans
+            .iter()
+            .filter(|s| s.stage == stage)
+            .map(|s| s.dur)
+            .sum()
+    }
+
+    pub fn total(&self) -> std::time::Duration {
+        self.spans.iter().map(|s| s.dur).sum()
+    }
+
+    /// 한 줄 요약 — `execute 12.3ms · fetch 340.1ms (500 rows) · output 3.2ms (12 lines) · total 357ms`.
+    pub fn summary(&self) -> String {
+        let mut parts: Vec<String> = Vec::with_capacity(self.spans.len() + 1);
+        for s in &self.spans {
+            let mut p = format!("{} {}", s.stage.label(), fmt_dur(s.dur));
+            if let Some(r) = s.rows {
+                p.push_str(&format!(
+                    " ({r} {})",
+                    if s.stage == Stage::OutputFlush {
+                        "lines"
+                    } else {
+                        "rows"
+                    }
+                ));
+            }
+            if let Some(b) = s.bytes {
+                p.push_str(&format!(" {}", fmt_bytes(b)));
+            }
+            parts.push(p);
+        }
+        if self.spans.len() > 1 {
+            parts.push(format!("total {}", fmt_dur(self.total())));
+        }
+        parts.join(" · ")
+    }
+}
+
+/// `1.234s` / `12.3ms` / `456µs`.
+pub fn fmt_dur(d: std::time::Duration) -> String {
+    let us = d.as_micros();
+    if us >= 1_000_000 {
+        format!("{:.3}s", d.as_secs_f64())
+    } else if us >= 1_000 {
+        format!("{:.1}ms", us as f64 / 1000.0)
+    } else {
+        format!("{us}µs")
+    }
+}
+
+/// `1.2 MB` / `345 KB` / `12 B`.
+pub fn fmt_bytes(b: u64) -> String {
+    if b >= 1 << 20 {
+        format!("{:.1} MB", b as f64 / (1u64 << 20) as f64)
+    } else if b >= 1 << 10 {
+        format!("{} KB", b >> 10)
+    } else {
+        format!("{b} B")
+    }
+}
+
+impl Value {
+    /// 호스트 메모리 추정(바이트) — 결과 탑재 예산·클렌징 판정용(정밀 회계가 아니라 자릿수).
+    pub fn approx_bytes(&self) -> u64 {
+        let inline = std::mem::size_of::<Value>() as u64;
+        inline
+            + match self {
+                Value::Decimal(s) | Value::Str(s) => s.capacity() as u64,
+                Value::Bytes(b) => b.capacity() as u64,
+                _ => 0,
+            }
+    }
+}
+
+impl ResultSet {
+    /// 행·셀의 메모리 추정(바이트).
+    pub fn approx_bytes(&self) -> u64 {
+        let rows_overhead = (self.rows.capacity() * std::mem::size_of::<Vec<Value>>()) as u64;
+        rows_overhead
+            + self
+                .rows
+                .iter()
+                .map(|r| r.iter().map(Value::approx_bytes).sum::<u64>())
+                .sum::<u64>()
+    }
 }
 
 /// 드라이버 오류.

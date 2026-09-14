@@ -5,13 +5,17 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::Rect;
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{InputEvent, Key};
-use nsql_core::{ResultSet, Value};
+use nsql_core::{fmt_bytes, fmt_dur, ResultSet, Value};
 
 #[derive(Default)]
 pub(crate) struct Grid {
     pub bounds: Rect,
     rs: Option<ResultSet>,
     messages: Vec<String>,
+    /// 탑재(set_result)·마지막 렌더 소요 — 푸터에 표시(docs/26 Load·Render).
+    load: std::time::Duration,
+    render: std::time::Duration,
+    approx_bytes: u64,
     /// 첫 표시 행.
     top: usize,
     col_w: Vec<i32>,
@@ -25,11 +29,14 @@ impl Grid {
     }
 
     pub(crate) fn set_result(&mut self, rs: ResultSet) {
+        let t = std::time::Instant::now();
+        self.approx_bytes = rs.approx_bytes();
         self.rs = Some(rs);
         self.messages.clear();
         self.top = 0;
         self.scroll_x = 0;
         self.col_w.clear();
+        self.load = t.elapsed();
     }
 
     pub(crate) fn set_messages(&mut self, m: Vec<String>) {
@@ -73,6 +80,12 @@ impl Grid {
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
+        let t_render = std::time::Instant::now();
+        self.paint_inner(dc, th, s);
+        self.render = t_render.elapsed();
+    }
+
+    fn paint_inner(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
         let b = self.bounds;
         dc.fill_rect(b, th.panel_bg);
         dc.fill_rect(Rect::new(b.x, b.y, b.w, 1), th.border);
@@ -159,10 +172,13 @@ impl Grid {
         }
         // 위치 표시
         let info = format!(
-            "{}–{} / {}",
+            "{}–{} / {} · load {} · render {} · ~{}",
             self.top + 1,
             (self.top + self.page()).min(rs.rows.len()),
-            rs.rows.len()
+            rs.rows.len(),
+            fmt_dur(self.load),
+            fmt_dur(self.render),
+            fmt_bytes(self.approx_bytes)
         );
         let iw = dc.text_width(&info);
         dc.text(b.x + b.w - iw - pad, b.y + pad / 2, b, &info, th.text_dim);

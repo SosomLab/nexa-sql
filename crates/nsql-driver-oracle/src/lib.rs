@@ -9,7 +9,7 @@
 
 use nsql_core::{
     Column, CursorId, DbError, Dialect, Direction, ExecRequest, ExecResult, ResultSet, Session,
-    Value, VarType,
+    Stage, Value, VarType,
 };
 use nsql_script::ConnectSpec;
 use oracle::sql_type::{OracleType, RefCursor};
@@ -271,16 +271,27 @@ impl Session for OracleSession {
         }
         let mut result = ExecResult::default();
         if stmt.is_query() {
+            // Execute = 첫 응답까지(옵티마이저·실행) · Fetch = 배열 페치 + 디코딩(행 수 기록).
+            let t0 = std::time::Instant::now();
             let rs = stmt.query(&[]).map_err(|e| err(&e))?;
             let columns = Self::columns(rs.column_info());
+            result.timing.push(Stage::Execute, t0.elapsed());
+            let t1 = std::time::Instant::now();
             let mut rows = Vec::new();
             for row in rs {
                 let row = row.map_err(|e| err(&e))?;
                 rows.push(Self::row_to_values(&row)?);
             }
-            result.result_sets.push(ResultSet { columns, rows });
+            let rs_out = ResultSet { columns, rows };
+            let span = result.timing.push(Stage::Fetch, t1.elapsed());
+            span.rows = Some(rs_out.rows.len() as u64);
+            span.bytes = Some(rs_out.approx_bytes());
+            span.note = Some(format!("array {}", self.fetch_size));
+            result.result_sets.push(rs_out);
         } else {
+            let t0 = std::time::Instant::now();
             stmt.execute(&[]).map_err(|e| err(&e))?;
+            result.timing.push(Stage::Execute, t0.elapsed());
             if stmt.is_dml() {
                 result.rows_affected = stmt.row_count().ok();
             } else {
@@ -322,7 +333,14 @@ impl Session for OracleSession {
                 }
             }
         }
-        result.messages = self.poll_dbms_output();
+        // DBMS_OUTPUT 플러시 — 프로시저 로그 회수 비용은 별도 단계(사용자 09-14).
+        if self.serveroutput {
+            let t = std::time::Instant::now();
+            result.messages = self.poll_dbms_output();
+            let span = result.timing.push(Stage::OutputFlush, t.elapsed());
+            span.rows = Some(result.messages.len() as u64);
+            span.note = Some("GET_LINE per line".into());
+        }
         Ok(result)
     }
 

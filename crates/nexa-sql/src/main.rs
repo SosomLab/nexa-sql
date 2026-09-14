@@ -337,6 +337,10 @@ impl App {
                 RunEvent::Disconnected => {
                     self.status = t(Msg::StDisconnected).into();
                 }
+                RunEvent::Timing { timeline, .. } => {
+                    // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
+                    self.status = format!("{} · ⏱ {}", self.status, timeline.summary());
+                }
                 RunEvent::Error { line, error, .. } => {
                     self.status = tf(Msg::StErrorLine, &[&line.to_string(), &error.to_string()]);
                     self.log.push(self.status.clone());

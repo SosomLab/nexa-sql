@@ -28,6 +28,8 @@ struct Opts {
     dialect: Dialect,
     format: Format,
     no_prompt: bool,
+    /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
+    timing: bool,
     /// `-p` — `conn add`의 비밀번호(접속 문자열에 넣기 싫을 때).
     password: Option<String>,
     /// `--host` · `--port` · `--db` · `--user` — 접속 문자열 대신 필드로(GUI 접속 폼과 같은 `ConnectSpec::from_parts` 경로).
@@ -43,7 +45,7 @@ struct Opts {
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -65,6 +67,7 @@ fn parse_opts() -> Opts {
         dialect: Dialect::Oracle,
         format: Format::Grid,
         no_prompt: false,
+        timing: false,
         password: None,
         host: None,
         port: None,
@@ -117,6 +120,7 @@ fn parse_opts() -> Opts {
             "-t" | "--table" => o.table = Some(val("-t")),
             "-o" | "--out" => o.out = Some(val("-o")),
             "--no-prompt" => o.no_prompt = true,
+            "--timing" => o.timing = true,
             _ => o.positional.push(a),
         }
     }
@@ -172,6 +176,8 @@ struct Printer {
     dialect: Dialect,
     errors: usize,
     feedback: bool,
+    /// 단계별 소요 출력(`--timing`).
+    timing: bool,
 }
 
 impl Printer {
@@ -226,6 +232,11 @@ impl Printer {
             RunEvent::Disconnected => {
                 let _ = writeln!(out, "Disconnected");
             }
+            RunEvent::Timing { timeline, .. } => {
+                if self.timing {
+                    eprintln!("⏱ {}", timeline.summary());
+                }
+            }
             RunEvent::Error { line, error, .. } => {
                 self.errors += 1;
                 let _ = out.flush();
@@ -269,6 +280,7 @@ fn cmd_run(o: &Opts) -> i32 {
         dialect: o.dialect,
         errors: 0,
         feedback: true,
+        timing: o.timing,
     };
     let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
@@ -296,6 +308,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         dialect: o.dialect,
         errors: 0,
         feedback: true,
+        timing: o.timing,
     };
     let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
@@ -368,6 +381,7 @@ fn cmd_export(o: &Opts) -> i32 {
         dialect: o.dialect,
         errors: 0,
         feedback: false,
+        timing: o.timing,
     };
     let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);

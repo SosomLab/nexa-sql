@@ -10,7 +10,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-use nsql_core::{DbError, Dialect, ExecResult, ResultSet, Session, Value};
+use nsql_core::{DbError, Dialect, ExecResult, ResultSet, Session, Stage, Timeline, Value};
 use nsql_script::{
     split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared,
 };
@@ -52,6 +52,11 @@ pub enum RunEvent {
         index: usize,
         line: usize,
         error: DbError,
+    },
+    /// 항목 하나의 단계별 소요(docs/26) — 결과 이벤트 뒤에 온다. CLI `--timing` · GUI 상태줄.
+    Timing {
+        index: usize,
+        timeline: Timeline,
     },
 }
 
@@ -445,6 +450,14 @@ impl Runner {
         match session.execute(&prepared.into_request()) {
             Ok(mut result) => {
                 let elapsed = started.elapsed();
+                // 드라이버가 단계를 나누지 않았으면 전체를 Execute로(실행+페치 합산이라 note로 밝힌다).
+                let mut timeline = std::mem::take(&mut result.timing);
+                if timeline.is_empty() {
+                    let rows: u64 = result.result_sets.iter().map(|r| r.rows.len() as u64).sum();
+                    let span = timeline.push(Stage::Execute, elapsed);
+                    span.rows = (rows > 0).then_some(rows);
+                    span.note = Some("execute+fetch".into());
+                }
                 if expect_out && result.out_params.is_empty() {
                     absorb_from_result_set(&mut result, &names);
                 }
@@ -467,9 +480,12 @@ impl Runner {
                 }
                 if self.engine.settings.autocommit {
                     if let Some(s) = self.session.as_mut() {
+                        let t = Instant::now();
                         let _ = s.commit();
+                        timeline.push(Stage::Commit, t.elapsed());
                     }
                 }
+                emit(RunEvent::Timing { index, timeline });
                 true
             }
             Err(mut e) => {
