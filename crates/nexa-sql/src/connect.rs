@@ -236,6 +236,10 @@ impl ConnectPanel {
         )
     }
 
+    pub(crate) fn state_ref(&self) -> &ConnState {
+        &self.state
+    }
+
     pub(crate) fn set_state(&mut self, s: ConnState) {
         self.connected = matches!(s, ConnState::Connected(_));
         self.state = s;

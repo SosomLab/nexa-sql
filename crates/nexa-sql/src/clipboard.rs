@@ -21,6 +21,34 @@ pub(crate) fn write_text(text: &str) -> bool {
     imp::write(text)
 }
 
+/// 텍스트 + HTML(서식 · 구문 색) 동시 게시(사용자 09-14 — PPT/Word에 같은 모양으로 붙여넣기).
+/// Windows = `CF_UNICODETEXT` + 등록 형식 `HTML Format`(CF_HTML) · macOS = osascript(«class HTML» + 문자열) ·
+/// Linux = 텍스트만(CLI 도구가 다중 형식을 못 올린다 — 후속). 실패 = `false`.
+pub(crate) fn write_rich(text: &str, html: &str) -> bool {
+    imp::write_rich(text, html)
+}
+
+/// CF_HTML 컨테이너(헤더 오프셋은 UTF-8 바이트 · 10자리 고정).
+#[allow(dead_code)]
+pub(crate) fn cf_html(fragment: &str) -> Vec<u8> {
+    let head_len = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n".len();
+    let pre = "<html><body><!--StartFragment-->";
+    let post = "<!--EndFragment--></body></html>";
+    let start_html = head_len;
+    let start_frag = start_html + pre.len();
+    let end_frag = start_frag + fragment.len();
+    let end_html = end_frag + post.len();
+    let header = format!(
+        "Version:0.9\r\nStartHTML:{start_html:010}\r\nEndHTML:{end_html:010}\r\nStartFragment:{start_frag:010}\r\nEndFragment:{end_frag:010}\r\n"
+    );
+    let mut v = Vec::with_capacity(end_html + 1);
+    v.extend_from_slice(header.as_bytes());
+    v.extend_from_slice(pre.as_bytes());
+    v.extend_from_slice(fragment.as_bytes());
+    v.extend_from_slice(post.as_bytes());
+    v
+}
+
 #[cfg(windows)]
 mod imp {
     use std::ffi::c_void;
@@ -34,6 +62,7 @@ mod imp {
         fn GetClipboardData(format: u32) -> Handle;
         fn SetClipboardData(format: u32, mem: Handle) -> Handle;
         fn IsClipboardFormatAvailable(format: u32) -> i32;
+        fn RegisterClipboardFormatW(name: *const u16) -> u32;
     }
     #[link(name = "kernel32")]
     extern "system" {
@@ -89,6 +118,54 @@ mod imp {
             CloseClipboard();
         }
         out
+    }
+
+    /// 바이트 블록을 GMEM_MOVEABLE로 복사해 시스템에 넘긴다(성공 시 소유권 이전).
+    unsafe fn put(format: u32, bytes: &[u8]) -> bool {
+        let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
+        if h.is_null() {
+            return false;
+        }
+        let p = GlobalLock(h) as *mut u8;
+        if p.is_null() {
+            GlobalFree(h);
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+        GlobalUnlock(h);
+        if SetClipboardData(format, h).is_null() {
+            GlobalFree(h);
+            return false;
+        }
+        true
+    }
+
+    pub(super) fn write_rich(text: &str, html: &str) -> bool {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let name: Vec<u16> = "HTML Format"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut cf = super::cf_html(html);
+        cf.push(0);
+        if !open() {
+            return false;
+        }
+        // SAFETY: 위에서 열었다 · 블록은 put()이 소유권을 넘긴다.
+        let ok = unsafe {
+            let fmt = RegisterClipboardFormatW(name.as_ptr());
+            EmptyClipboard() != 0
+                && put(
+                    CF_UNICODETEXT,
+                    std::slice::from_raw_parts(wide.as_ptr().cast::<u8>(), wide.len() * 2),
+                )
+                && (fmt == 0 || put(fmt, &cf))
+        };
+        // SAFETY: 위에서 열었다.
+        unsafe {
+            CloseClipboard();
+        }
+        ok
     }
 
     pub(super) fn write(text: &str) -> bool {
@@ -156,6 +233,28 @@ mod imp {
             }
         }
         None
+    }
+
+    /// macOS: AppleScript로 HTML + 문자열을 함께 올린다 · 실패/다른 OS = 텍스트만.
+    pub(super) fn write_rich(text: &str, html: &str) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            let hex: String = html.bytes().map(|b| format!("{b:02X}")).collect();
+            let esc = text.replace('\\', "\\\\").replace('"', "\\\"");
+            let script =
+                format!("set the clipboard to {{«class HTML»:«data HTML{hex}», string:\"{esc}\"}}");
+            if Command::new("osascript")
+                .args(["-e", &script])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+            {
+                return true;
+            }
+        }
+        let _ = html;
+        write(text)
     }
 
     pub(super) fn write(text: &str) -> bool {

@@ -15,6 +15,8 @@ mod connect;
 mod editors;
 mod grid;
 mod log_win;
+mod palette;
+mod syntax;
 mod theme;
 mod winfocus;
 mod worker;
@@ -37,10 +39,12 @@ use nsql_log::{LogEntry, LogKind};
 use nsql_run::RunEvent;
 use nsql_settings::{Settings, ThemeMode};
 use nsql_vault::Vault;
+use palette::{Palette, PaletteAction};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use syntax::SyntaxRegistry;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, Ime, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
@@ -73,6 +77,13 @@ struct App {
     log_win: LogWin,
     /// 메뉴에서 요청한 종료·로그 창 토글(이벤트 루프 핸들이 필요해 window_event 끝에서 처리).
     exit_requested: bool,
+    palette: Palette,
+    syntax: Rc<SyntaxRegistry>,
+    /// 마지막 조회 결과(상태줄: 행 수 · 소요).
+    last_rows: Option<usize>,
+    last_secs: Option<f64>,
+    /// 상태줄 구문 이름 영역(클릭 → 팔레트 `Set Syntax`).
+    status_syntax_rect: Rect,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
     z_order: Vec<WindowId>,
     toggle_log: bool,
@@ -157,6 +168,7 @@ impl App {
             body_h - editor_h - pad,
         ));
         self.run_btn.set_scale(s);
+        self.palette.set_bounds(w, chrome_h, s);
     }
 
     fn set_focus(&mut self, f: Focus) {
@@ -284,6 +296,13 @@ impl App {
             "view.log" => self.toggle_log = true,
             "view.theme" => self.cycle_theme(),
             "view.lang" => self.toggle_lang(),
+            "view.palette" => self.open_palette(""),
+            id if id.starts_with("syntax.set:") => {
+                let name = &id["syntax.set:".len()..];
+                if self.editors.set_syntax(name) {
+                    self.status = tf(Msg::StSyntaxSet, &[name]);
+                }
+            }
             "run.statement" => self.run_sql(false),
             "run.all" => self.run_sql(true),
             "conn.toggle" => {
@@ -326,6 +345,7 @@ impl App {
             MenuDef::new(
                 t(Msg::MnView),
                 vec![
+                    item("view.palette", Msg::MnCommandPalette),
                     item("view.log", Msg::MnLogWindow),
                     MenuEntry::Separator,
                     item("view.theme", Msg::MnTheme),
@@ -367,7 +387,23 @@ impl App {
         match act {
             EditCtxAction::Copy => {
                 if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
-                    failed = !clipboard::write_text(&text);
+                    let rich =
+                        self.focus == Focus::Editor && self.settings.flag("editor.copy_rich");
+                    let hl = self.editors.cur().highlighter().cloned();
+                    failed = match (rich, hl) {
+                        (true, Some(h)) => {
+                            let px = self.settings.int("editor.font_size") as i32;
+                            let html = nexa_ctl::to_html(
+                                &text,
+                                h.as_ref(),
+                                &self.theme,
+                                "Consolas, 'Cascadia Mono', 'D2Coding', Menlo",
+                                px,
+                            );
+                            !clipboard::write_rich(&text, &html)
+                        }
+                        _ => !clipboard::write_text(&text),
+                    };
                 }
             }
             EditCtxAction::Cut => {
@@ -390,6 +426,35 @@ impl App {
         if failed {
             self.status = t(Msg::ErrClipboard).into();
         }
+        self.redraw();
+    }
+
+    /// 명령 팔레트 열기(prefill = 초기 질의 · 예 "Set Syntax: ").
+    fn open_palette(&mut self, prefill: &str) {
+        let mut cmds: Vec<(String, String)> = Vec::new();
+        let m =
+            |id: &str, menu: Msg, item: Msg| (id.to_string(), format!("{}: {}", t(menu), t(item)));
+        cmds.push(m("file.new", Msg::MnFile, Msg::MnNew));
+        cmds.push(m("file.exit", Msg::MnFile, Msg::MnExit));
+        cmds.push(m("edit.cut", Msg::MnEdit, Msg::MnCut));
+        cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
+        cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
+        cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
+        cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
+        cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
+        cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
+        cmds.push(m("run.statement", Msg::MnRun, Msg::MnRunStatement));
+        cmds.push(m("run.all", Msg::MnRun, Msg::MnRunAll));
+        cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
+        cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
+        for name in self.syntax.names() {
+            cmds.push((
+                format!("syntax.set:{name}"),
+                format!("{}: {name}", t(Msg::PalSetSyntax)),
+            ));
+        }
+        self.palette.set_commands(cmds);
+        self.palette.open(prefill);
         self.redraw();
     }
 
@@ -517,6 +582,8 @@ impl App {
             match ev {
                 RunEvent::Begin { .. } => {}
                 RunEvent::ResultSet { rs, elapsed, .. } => {
+                    self.last_rows = Some(rs.rows.len());
+                    self.last_secs = Some(elapsed.as_secs_f64());
                     self.status = tf(
                         Msg::StRows,
                         &[
@@ -653,15 +720,45 @@ impl App {
                     &format!("{busy}{}", self.status),
                     th.text_dim,
                 );
-                let hint = t(Msg::StHint);
-                let hw = dc.text_width(hint);
-                dc.text(
-                    wi - px(8.0, s) - hw,
-                    sy + px(5.0, s),
-                    Rect::new(0, sy, wi, px(24.0, s)),
-                    hint,
-                    th.text_dim,
-                );
+                // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
+                let (ln, col) = self.editors.caret_line_col();
+                let mut segs: Vec<(String, bool)> = Vec::new();
+                let conn = match self.panel.state_ref() {
+                    ConnState::Connected(d) => d.clone(),
+                    _ => "—".to_string(),
+                };
+                segs.push((conn, false));
+                segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
+                if let Some(n) = self.last_rows {
+                    segs.push((tf(Msg::StRowsShort, &[&n.to_string()]), false));
+                }
+                if let Some(secs) = self.last_secs {
+                    segs.push((format!("{secs:.3}s"), false));
+                }
+                segs.push((self.editors.syntax_name(), true));
+                let gap = px(12.0, s);
+                let mut xr = wi - px(8.0, s);
+                self.status_syntax_rect = Rect::new(0, 0, 0, 0);
+                for (text, is_syntax) in segs.iter().rev() {
+                    let tw = dc.text_width(text);
+                    xr -= tw;
+                    let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
+                    dc.text(
+                        xr,
+                        sy + px(5.0, s),
+                        r,
+                        text,
+                        if *is_syntax { th.text } else { th.text_dim },
+                    );
+                    if *is_syntax {
+                        self.status_syntax_rect = r;
+                    }
+                    xr -= gap;
+                    dc.fill_rect(
+                        Rect::new(xr + gap / 2, sy + px(5.0, s), 1, px(14.0, s)),
+                        th.border,
+                    );
+                }
             }
             // ── 고정폭 층(편집기·그리드)
             {
@@ -690,6 +787,7 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
         }
@@ -782,6 +880,27 @@ impl App {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         );
+        // 열린 명령 팔레트는 모달.
+        if self.palette.is_open() {
+            match self.palette.on_event(&ev, &mut inv) {
+                PaletteAction::None => {}
+                PaletteAction::Close => self.palette.close(),
+                PaletteAction::Pick(id) => {
+                    self.palette.close();
+                    self.menu_action(&id);
+                }
+            }
+            self.redraw();
+            return;
+        }
+        // 상태줄 구문 이름 클릭 → 팔레트(Set Syntax).
+        if let InputEvent::MouseDown { x, y, .. } = ev {
+            if self.status_syntax_rect.contains(Point { x, y }) {
+                let prefill = format!("{}: ", t(Msg::PalSetSyntax));
+                self.open_palette(&prefill);
+                return;
+            }
+        }
         // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다.
         if self.menubar.is_open() {
             self.menubar.on_event(&ev, &mut inv);
@@ -1072,6 +1191,15 @@ impl ApplicationHandler<Wake> for App {
                         self.cycle_theme();
                         return;
                     }
+                    Key::Character("p" | "P") if self.primary && self.shift => {
+                        if self.palette.is_open() {
+                            self.palette.close();
+                            self.redraw();
+                        } else {
+                            self.open_palette("");
+                        }
+                        return;
+                    }
                     Key::Character("g" | "G") if self.primary && self.shift => {
                         self.toggle_log_window(el);
                         return;
@@ -1198,6 +1326,9 @@ fn main() {
     let ed_multi = settings.get("tabs.rows") != Some("single");
     let ed_tooltip = settings.flag("tabs.tooltip");
     let row_snap = settings.get("grid.scroll") == Some("row");
+    let syntax_reg = Rc::new(SyntaxRegistry::load());
+    let rulers = parse_rulers(settings.get("editor.rulers").unwrap_or("80"));
+    let ws_style = whitespace_style(&settings);
     let mut app = App {
         window: None,
         ctx: None,
@@ -1210,12 +1341,17 @@ fn main() {
         log_win: LogWin::new(&log_format),
         exit_requested: false,
         z_order: Vec::new(),
+        palette: Palette::new(),
+        syntax: syntax_reg.clone(),
+        last_rows: None,
+        last_secs: None,
+        status_syntax_rect: Rect::new(0, 0, 0, 0),
         toggle_log: false,
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),
         panel,
         run_btn: Button::new(t(Msg::BtnRun)),
-        editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip),
+        editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
         focus: Focus::Editor,
         worker,
@@ -1230,6 +1366,8 @@ fn main() {
         next_blink: Instant::now(),
     };
     app.grid.set_row_snap(row_snap);
+    app.editors.set_rulers(rulers);
+    app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
     app.grid
         .set_row_numbers(app.settings.flag("grid.row_numbers"));
@@ -1242,5 +1380,45 @@ fn main() {
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("{}", tf(Msg::ErrEventLoop, &[&e.to_string()]));
         std::process::exit(1);
+    }
+}
+
+/// `editor.rulers` = "80, 120" → 열 목록(0·비정상 값 제외).
+fn parse_rulers(v: &str) -> Vec<usize> {
+    v.split(|c: char| c == ',' || c.is_whitespace())
+        .filter_map(|t| t.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .collect()
+}
+
+/// `editor.whitespace*` 4키 → [`nexa_ctl::WhitespaceStyle`].
+fn whitespace_style(settings: &Settings) -> nexa_ctl::WhitespaceStyle {
+    use nexa_ctl::{WhitespaceMode, WhitespaceStyle};
+    let mode = match settings.get("editor.whitespace") {
+        Some("none") => WhitespaceMode::None,
+        Some("all") => WhitespaceMode::All,
+        _ => WhitespaceMode::Selection,
+    };
+    let chars: Vec<char> = settings
+        .get("editor.whitespace_chars")
+        .unwrap_or("·→_")
+        .chars()
+        .collect();
+    let pick = |i: usize, d: char| match chars.get(i) {
+        Some('_') | None => d,
+        Some(c) => *c,
+    };
+    let color = settings
+        .get("editor.whitespace_color")
+        .filter(|h| h.len() == 6)
+        .and_then(|h| u32::from_str_radix(h, 16).ok())
+        .map(nexa_ctl::Color);
+    WhitespaceStyle {
+        mode,
+        space: pick(0, '\0'),
+        tab: pick(1, '\0'),
+        eol: pick(2, '\0'),
+        color,
+        alpha: (settings.int("editor.whitespace_alpha") as f32 / 100.0).clamp(0.0, 1.0),
     }
 }

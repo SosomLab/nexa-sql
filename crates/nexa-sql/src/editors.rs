@@ -4,11 +4,16 @@
 //! - 툴팁 = 설정 `tabs.tooltip`(기본 켬) — 탭 위에 1초 머물면 카드(제목 · 문장 수 · 글자 수 · 접속). 내용은 호스트가 [`Editors::set_conn_desc`]로 준다.
 //! - 세션 분리(`session.mode = per-editor`)는 T-54 — 지금은 모든 탭이 한 세션.
 
+use crate::syntax::SyntaxRegistry;
 use nexa_ctl::draw::{draw_tooltip, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
-use nexa_ctl::{Control, InputEvent, Invalidations, TabAction, TabBar, TextBox, Widget};
+use nexa_ctl::{
+    Control, InputEvent, Invalidations, SyntaxSpec, TabAction, TabBar, TextBox, WhitespaceStyle,
+    Widget,
+};
 use nsql_i18n::{t, Msg};
+use std::rc::Rc;
 use std::time::Instant;
 
 pub(crate) struct Editors {
@@ -25,12 +30,22 @@ pub(crate) struct Editors {
     hover: Option<(usize, Instant)>,
     cursor: (i32, i32),
     conn_desc: String,
+    /// 탭별 구문(기본 = 제목 확장자 · 사용자 변경 시 그 탭만).
+    syntax: Vec<Rc<SyntaxSpec>>,
+    registry: Rc<SyntaxRegistry>,
+    rulers: Vec<usize>,
+    whitespace: WhitespaceStyle,
 }
 
 const HOVER_MS: u128 = 900;
 
 impl Editors {
-    pub(crate) fn new(line_numbers: bool, multiline: bool, tooltip_on: bool) -> Self {
+    pub(crate) fn new(
+        line_numbers: bool,
+        multiline: bool,
+        tooltip_on: bool,
+        registry: Rc<SyntaxRegistry>,
+    ) -> Self {
         let mut tabs = TabBar::new();
         tabs.set_multiline(multiline);
         tabs.set_show_new(true);
@@ -47,18 +62,82 @@ impl Editors {
             hover: None,
             cursor: (0, 0),
             conn_desc: String::new(),
+            syntax: Vec::new(),
+            registry,
+            rulers: Vec::new(),
+            whitespace: WhitespaceStyle::default(),
         };
         e.new_tab(None);
         e
     }
 
-    fn make_box(&self, text: &str) -> TextBox {
+    fn make_box(&self, text: &str, syntax: &Rc<SyntaxSpec>) -> TextBox {
         let mut tb = TextBox::new(t(Msg::PhEditor))
             .with_multiline()
             .with_text(text);
         tb.set_line_numbers(self.line_numbers);
         tb.set_scale(self.scale);
+        tb.set_highlighter(Some(syntax.clone()));
+        tb.set_rulers(self.rulers.clone());
+        tb.set_whitespace(self.whitespace);
         tb
+    }
+
+    /// 세로 안내선 열 목록(설정 `editor.rulers`).
+    pub(crate) fn set_rulers(&mut self, cols: Vec<usize>) {
+        self.rulers = cols;
+        for b in &mut self.bufs {
+            b.set_rulers(self.rulers.clone());
+        }
+    }
+
+    /// 공백 표시 스타일(설정 `editor.whitespace*`).
+    pub(crate) fn set_whitespace(&mut self, ws: WhitespaceStyle) {
+        self.whitespace = ws;
+        for b in &mut self.bufs {
+            b.set_whitespace(ws);
+        }
+    }
+
+    /// 활성 탭의 구문 이름.
+    pub(crate) fn syntax_name(&self) -> String {
+        self.syntax
+            .get(self.active)
+            .map(|s| s.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// 활성 탭 구문 변경(팔레트 `Set Syntax`). 모르는 이름이면 false.
+    pub(crate) fn set_syntax(&mut self, name: &str) -> bool {
+        let Some(spec) = self.registry.get(name) else {
+            return false;
+        };
+        if let Some(slot) = self.syntax.get_mut(self.active) {
+            *slot = spec.clone();
+        }
+        self.cur_mut().set_highlighter(Some(spec));
+        true
+    }
+
+    /// 캐럿 위치(1-기준 줄 · 열).
+    pub(crate) fn caret_line_col(&self) -> (usize, usize) {
+        let tb = self.cur();
+        let text = tb.text();
+        let caret = tb.caret();
+        let mut line = 1;
+        let mut col = 1;
+        for (i, c) in text.chars().enumerate() {
+            if i >= caret {
+                break;
+            }
+            if c == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
     }
 
     /// 설정 화면(T-39)에서 바꿀 때 — 지금은 부팅 값만.
@@ -95,8 +174,10 @@ impl Editors {
     pub(crate) fn new_tab(&mut self, title: Option<String>) {
         self.counter += 1;
         let title = title.unwrap_or_else(|| format!("Script_{}", self.counter));
-        let tb = self.make_box("");
+        let syntax = self.registry.for_title(&title);
+        let tb = self.make_box("", &syntax);
         self.bufs.push(tb);
+        self.syntax.push(syntax);
         self.titles.push(title);
         self.active = self.bufs.len() - 1;
         self.sync_tabs();
@@ -112,6 +193,7 @@ impl Editors {
         }
         self.bufs.remove(i);
         self.titles.remove(i);
+        self.syntax.remove(i);
         if self.active >= self.bufs.len() {
             self.active = self.bufs.len() - 1;
         } else if i < self.active {
@@ -141,7 +223,11 @@ impl Editors {
     pub(crate) fn rebuild_boxes(&mut self) {
         let texts: Vec<String> = self.bufs.iter().map(TextBox::text).collect();
         let focused = self.cur().is_focused();
-        self.bufs = texts.iter().map(|s| self.make_box(s)).collect();
+        self.bufs = texts
+            .iter()
+            .zip(self.syntax.iter())
+            .map(|(s, syn)| self.make_box(s, syn))
+            .collect();
         self.cur_mut().set_focused(focused);
         let mut inv = Invalidations::default();
         self.layout(&mut inv);
@@ -227,8 +313,10 @@ impl Editors {
                     if from < self.bufs.len() && to < self.bufs.len() {
                         let b = self.bufs.remove(from);
                         let t = self.titles.remove(from);
+                        let sy = self.syntax.remove(from);
                         self.bufs.insert(to, b);
                         self.titles.insert(to, t);
+                        self.syntax.insert(to, sy);
                         self.active = to;
                         self.sync_tabs();
                     }
@@ -275,6 +363,11 @@ impl Editors {
             t(Msg::TipChars),
             text.chars().count()
         );
+        card.push_str(&format!(
+            "\n{}: {}",
+            t(Msg::PalSetSyntax),
+            self.syntax.get(i).map(|s| s.name.as_str()).unwrap_or("")
+        ));
         if !self.conn_desc.is_empty() {
             card.push('\n');
             card.push_str(t(Msg::TipConnection));

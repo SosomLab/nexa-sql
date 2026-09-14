@@ -116,6 +116,8 @@ pub enum SettingKind {
     Int { min: i64, max: i64 },
     /// on/off.
     Bool,
+    /// 자유 텍스트(목록·색 등 — 앱이 해석).
+    Text,
 }
 
 /// 설정 항목 — 레지스트리 한 줄. VS Code `IConfigurationNode.properties[key]` + TOC 카테고리에 해당.
@@ -143,6 +145,12 @@ const TAB_ROWS_OPTS: &[(&str, Msg)] =
     &[("single", Msg::ValTabsSingle), ("multi", Msg::ValTabsMulti)];
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
+
+const WS_OPTS: &[(&str, Msg)] = &[
+    ("none", Msg::ValWsNone),
+    ("selection", Msg::ValWsSelection),
+    ("all", Msg::ValWsAll),
+];
 
 const WINDOW_FOCUS_OPTS: &[(&str, Msg)] = &[
     ("group", Msg::ValFocusGroup),
@@ -194,6 +202,54 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescEditorLineNumbers,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "editor.copy_rich",
+        cat: Msg::CatEditor,
+        label: Msg::LblCopyRich,
+        desc: Msg::DescCopyRich,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.rulers",
+        cat: Msg::CatEditor,
+        label: Msg::LblRulers,
+        desc: Msg::DescRulers,
+        kind: SettingKind::Text,
+        default: "80",
+    },
+    Entry {
+        key: "editor.whitespace",
+        cat: Msg::CatEditor,
+        label: Msg::LblWhitespace,
+        desc: Msg::DescWhitespace,
+        kind: SettingKind::Choice(WS_OPTS),
+        default: "selection",
+    },
+    Entry {
+        key: "editor.whitespace_chars",
+        cat: Msg::CatEditor,
+        label: Msg::LblWsChars,
+        desc: Msg::DescWsChars,
+        kind: SettingKind::Text,
+        default: "·→_",
+    },
+    Entry {
+        key: "editor.whitespace_color",
+        cat: Msg::CatEditor,
+        label: Msg::LblWsColor,
+        desc: Msg::DescWsColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "editor.whitespace_alpha",
+        cat: Msg::CatEditor,
+        label: Msg::LblWsAlpha,
+        desc: Msg::DescWsAlpha,
+        kind: SettingKind::Int { min: 0, max: 100 },
+        default: "40",
     },
     Entry {
         key: "grid.row_numbers",
@@ -311,6 +367,7 @@ pub fn allowed(kind: SettingKind) -> String {
             .join(" | "),
         SettingKind::Int { min, max } => format!("{min}..{max}"),
         SettingKind::Bool => "on | off".into(),
+        SettingKind::Text => "text".into(),
     }
 }
 
@@ -335,6 +392,7 @@ pub fn normalize(kind: SettingKind, raw: &str) -> Option<String> {
             "off" | "false" | "0" | "no" => Some("off".into()),
             _ => None,
         },
+        SettingKind::Text => Some(v.to_string()),
     }
 }
 
