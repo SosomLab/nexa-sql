@@ -54,6 +54,8 @@ impl LogWin {
         }
     }
 
+    /// 설정 화면(T-39)에서 `log.format`을 바꾸면 호출 — 지금은 부팅 시 설정값만.
+    #[allow(dead_code)]
     pub(crate) fn set_format(&mut self, format: &str) {
         self.fmt = nsql_log::formatter(format);
         self.redraw();
