@@ -107,7 +107,7 @@ pub enum Msg {
     StConnected,
     StDisconnected,
     StErrorLine,
-    StClipboardLater,
+    ErrClipboard,
     StHint,
     StThemeChanged,
     StLangChanged,
@@ -213,9 +213,9 @@ impl Msg {
             Msg::StConnected => ["Connected: {0} ({1})", "접속: {0} ({1})"],
             Msg::StDisconnected => ["Disconnected", "접속 해제"],
             Msg::StErrorLine => ["ERROR line {0}: {1}", "오류 {0}행: {1}"],
-            Msg::StClipboardLater => [
-                "{0}: clipboard integration comes with T-16b",
-                "{0}: 클립보드 연동은 T-16b",
+            Msg::ErrClipboard => [
+                "Clipboard unavailable (Linux: install wl-clipboard or xclip)",
+                "클립보드를 사용할 수 없습니다(Linux: wl-clipboard 또는 xclip 설치)",
             ],
             Msg::StHint => [
                 "⌘/Ctrl+Enter run · F5 all · ⌘/Ctrl+L connection panel · ⌘/Ctrl+⇧T theme · ⌘/Ctrl+⇧L language",
@@ -346,7 +346,7 @@ impl Msg {
         Msg::StConnected,
         Msg::StDisconnected,
         Msg::StErrorLine,
-        Msg::StClipboardLater,
+        Msg::ErrClipboard,
         Msg::StHint,
         Msg::StThemeChanged,
         Msg::StLangChanged,

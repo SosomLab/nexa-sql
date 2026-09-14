@@ -10,6 +10,7 @@
 //! 문자열은 전부 `nsql-i18n`(기본 영어) · 테마는 `ui.theme` + OS 판정([`theme`]) · 글꼴 크기는 `ui.font_size`/`editor.font_size`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod clipboard;
 mod connect;
 mod grid;
 mod theme;
@@ -20,7 +21,9 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
+use nexa_ctl::{
+    Button, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
+};
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
 use nsql_i18n::{current_lang, t, tf, Msg};
@@ -215,6 +218,43 @@ impl App {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+
+    /// 복사·잘라내기·붙여넣기·전체 선택 — 포커스 텍스트박스 ↔ OS 클립보드([`clipboard`]). 실패는 상태줄에.
+    fn clip_action(&mut self, act: EditCtxAction) {
+        let mut inv = Invalidations::default();
+        let mut failed = false;
+        match act {
+            EditCtxAction::SelectAll => {
+                self.route(InputEvent::SelectAll);
+                return;
+            }
+            EditCtxAction::Copy => {
+                if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
+                    failed = !clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Cut => {
+                if let Some(text) = self
+                    .focused_textbox()
+                    .and_then(|tb| tb.cut_selection(&mut inv))
+                {
+                    failed = !clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Paste => match clipboard::read_text() {
+                Some(text) => {
+                    if let Some(tb) = self.focused_textbox() {
+                        tb.paste(&text, &mut inv);
+                    }
+                }
+                None => failed = true,
+            },
+        }
+        if failed {
+            self.status = t(Msg::ErrClipboard).into();
+        }
+        self.redraw();
     }
 
     /// `ui.theme` + OS 판정으로 팔레트를 다시 고르고 전체를 다시 그린다.
@@ -533,6 +573,13 @@ impl App {
     fn route(&mut self, ev: InputEvent) {
         let mut inv = Invalidations::default();
         // 마우스 다운은 포커스를 옮긴다.
+        // 우클릭 메뉴가 열리기 전에 "붙여넣기 가능" 여부를 넣어 준다.
+        if matches!(ev, InputEvent::RightDown { .. }) {
+            let has = clipboard::read_text().is_some_and(|s| !s.is_empty());
+            if let Some(tb) = self.focused_textbox() {
+                tb.set_clipboard_has_text(has);
+            }
+        }
         let is_mouse = matches!(
             ev,
             InputEvent::MouseDown { .. }
@@ -567,18 +614,21 @@ impl App {
                 self.handle_panel_action(a);
             }
         }
-        let over_grid = match ev {
-            InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => {
-                self.grid.bounds.contains(Point {
-                    x: self.cursor.0,
-                    y: self.cursor.1,
-                })
-            }
-            _ => false,
+        // 휠은 포커스가 아니라 **커서 아래 영역**으로 간다(편집기·그리드·패널).
+        let is_wheel = matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
+        let cur = Point {
+            x: self.cursor.0,
+            y: self.cursor.1,
         };
-        if over_grid {
+        if is_wheel && self.grid.bounds.contains(cur) {
             self.grid.on_event(&ev);
             inv.push(self.grid.bounds);
+        } else if is_wheel && self.editor.bounds().contains(cur) {
+            self.editor.on_event(&ev, &mut inv);
+        } else if is_wheel && self.panel.bounds().contains(cur) {
+            if let Some(a) = self.panel.route(&ev, &mut inv) {
+                self.handle_panel_action(a);
+            }
         } else {
             let enter = matches!(
                 ev,
@@ -602,16 +652,14 @@ impl App {
                     inv.push(self.grid.bounds);
                 }
             }
-            // 편집 컨텍스트 요청(복사·붙여넣기 — 호스트 몫)
-            if let Some(act) = self.editor.take_edit_ctx() {
-                self.status = tf(Msg::StClipboardLater, &[&format!("{act:?}")]);
-            }
-            if let Some(act) = self
-                .panel
-                .focused_textbox()
-                .and_then(|tb| tb.take_edit_ctx())
-            {
-                self.status = tf(Msg::StClipboardLater, &[&format!("{act:?}")]);
+            // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
+            let pending = self.editor.take_edit_ctx().or_else(|| {
+                self.panel
+                    .focused_textbox()
+                    .and_then(|tb| tb.take_edit_ctx())
+            });
+            if let Some(act) = pending {
+                self.clip_action(act);
             }
         }
         if !inv.is_empty() {
@@ -752,6 +800,18 @@ impl ApplicationHandler<Wake> for App {
                     }
                     Key::Character("a" | "A") if self.primary => {
                         self.route(InputEvent::SelectAll);
+                        return;
+                    }
+                    Key::Character("c" | "C") if self.primary => {
+                        self.clip_action(EditCtxAction::Copy);
+                        return;
+                    }
+                    Key::Character("x" | "X") if self.primary => {
+                        self.clip_action(EditCtxAction::Cut);
+                        return;
+                    }
+                    Key::Character("v" | "V") if self.primary => {
+                        self.clip_action(EditCtxAction::Paste);
                         return;
                     }
                     _ => {}
