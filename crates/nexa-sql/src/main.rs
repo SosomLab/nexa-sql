@@ -117,6 +117,11 @@ struct App {
     tests_rx: mpsc::Receiver<worker::TestResult>,
     /// 테스트 스레드가 UI를 깨우는 프록시(clone해서 스레드에 넘긴다).
     wake_proxy: EventLoopProxy<Wake>,
+    /// ★ Test·Connect 시도 큐(사용자 09-14) — 동시 `attempts_max`(설정 `connect.max_concurrent` · 기본 4)까지 진행,
+    /// 초과분은 FIFO로 대기했다가 앞의 시도가 끝나면 시작. 진행 중 수는 결과(테스트 결과 · 접속 성공/실패)가 올 때 줄어든다.
+    attempt_queue: std::collections::VecDeque<Attempt>,
+    attempts_inflight: usize,
+    attempts_max: usize,
     busy: bool,
     status: String,
     log: Vec<String>,
@@ -217,20 +222,21 @@ impl App {
                     self.conn_win.panel.set_state(ConnState::Testing);
                     return;
                 }
-                self.busy = true;
-                self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
                 if let Some(pw) = spec.password.as_deref() {
                     self.conn_win.remember_pw(&name, pw);
                 }
                 self.conn_win
                     .set_connect_mark(&name, Some(ConnectMark::Connecting));
-                self.panel_op = Some((name, ConnState::Connecting));
+                self.panel_op = Some((name.clone(), ConnState::Connecting));
                 // 같은 서버면 기존 세션 유지 · 설정 `connect.reconnect_same`이면 닫고 다시 접속(사용자 09-14).
                 let reconnect_same = self.settings.flag("connect.reconnect_same");
-                self.worker.send(worker::Cmd::ConnectSpec {
+                // 동시 상한·큐를 거친다(초과분은 앞의 시도가 끝나면 시작).
+                self.attempt_queue.push_back(Attempt::Connect {
+                    name,
                     spec,
                     reconnect_same,
                 });
+                self.dispatch_attempts();
             }
             PanelAction::Test(spec) => {
                 let name = self.conn_win.panel.profile_name();
@@ -305,6 +311,7 @@ impl App {
         // 접속 테스트 결과(스레드별) — 이름이 함께 오므로 여러 테스트가 섞여도 각자 자리에.
         while let Ok(r) = self.tests_rx.try_recv() {
             changed = true;
+            self.attempt_done();
             let name = r.name;
             match r.outcome {
                 Ok((description, elapsed_s)) => {
@@ -331,6 +338,7 @@ impl App {
             changed = true;
             match o {
                 ConnOutcome::Connected(d) => {
+                    self.attempt_done();
                     let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
                     // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
@@ -344,6 +352,7 @@ impl App {
                     self.set_panel_result(&name, ConnState::Connected(d));
                 }
                 ConnOutcome::ConnectFailed(e) => {
+                    self.attempt_done();
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
                     self.status = tf(Msg::StConnectFailed, &[&e]);
@@ -598,17 +607,55 @@ impl App {
         if self.conn_win.panel.profile_name() == name {
             self.conn_win.panel.set_state(ConnState::Testing);
         }
-        let proxy = self.wake_proxy.clone();
-        worker::spawn_test(
-            name.to_string(),
+        // 동시 상한·큐를 거친다(초과분은 대기 · 표시는 진행 중과 같은 노란 고리).
+        self.attempt_queue.push_back(Attempt::Test {
+            name: name.to_string(),
             spec,
-            DEFAULT_DIALECT,
-            self.tests_tx.clone(),
-            Box::new(move || {
-                let _ = proxy.send_event(Wake);
-            }),
-        );
+        });
+        self.dispatch_attempts();
         self.conn_win.redraw();
+    }
+
+    /// 큐에서 시도를 꺼내 상한까지 시작한다 — 결과가 올 때마다 다시 부른다.
+    fn dispatch_attempts(&mut self) {
+        while self.attempts_inflight < self.attempts_max {
+            let Some(a) = self.attempt_queue.pop_front() else {
+                break;
+            };
+            self.attempts_inflight += 1;
+            match a {
+                Attempt::Test { name, spec } => {
+                    let proxy = self.wake_proxy.clone();
+                    worker::spawn_test(
+                        name,
+                        spec,
+                        DEFAULT_DIALECT,
+                        self.tests_tx.clone(),
+                        Box::new(move || {
+                            let _ = proxy.send_event(Wake);
+                        }),
+                    );
+                }
+                Attempt::Connect {
+                    spec,
+                    reconnect_same,
+                    ..
+                } => {
+                    self.busy = true;
+                    self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                    self.worker.send(worker::Cmd::ConnectSpec {
+                        spec,
+                        reconnect_same,
+                    });
+                }
+            }
+        }
+    }
+
+    /// 시도 하나가 끝났다(테스트 결과 · 접속 성공/실패) — 슬롯을 비우고 큐를 이어 간다.
+    fn attempt_done(&mut self) {
+        self.attempts_inflight = self.attempts_inflight.saturating_sub(1);
+        self.dispatch_attempts();
     }
 
     fn test_profile(&mut self, name: &str) {
@@ -1572,6 +1619,20 @@ fn apply_color(target: ColorTarget, hex: Option<&str>) {
     }
 }
 
+/// 큐에 대기하는 시도(Test 또는 Connect).
+enum Attempt {
+    Test {
+        name: String,
+        spec: ConnectSpec,
+    },
+    Connect {
+        #[allow(dead_code)]
+        name: String,
+        spec: ConnectSpec,
+        reconnect_same: bool,
+    },
+}
+
 /// 접속 문자열에 방언이 없을 때의 기본(워커 · 테스트 스레드 공통).
 const DEFAULT_DIALECT: Dialect = Dialect::Oracle;
 
@@ -1658,6 +1719,7 @@ fn main() {
     let syntax_reg = Rc::new(SyntaxRegistry::load());
     let rulers = parse_rulers(settings.get("editor.rulers").unwrap_or("80"));
     let ws_style = whitespace_style(&settings);
+    let attempts_max = settings.int("connect.max_concurrent").clamp(1, 16) as usize;
     let colors_win = ColorsWin::new(
         color_setting(&settings, "ui.hover_color"),
         color_setting(&settings, "ui.pressed_color"),
@@ -1696,6 +1758,9 @@ fn main() {
         tests_tx,
         tests_rx,
         wake_proxy,
+        attempt_queue: std::collections::VecDeque::new(),
+        attempts_inflight: 0,
+        attempts_max,
         busy: false,
         status,
         log: Vec::new(),

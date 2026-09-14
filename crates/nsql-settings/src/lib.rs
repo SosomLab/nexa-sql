@@ -412,6 +412,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "60",
     },
     Entry {
+        key: "connect.max_concurrent",
+        cat: Msg::CatConnection,
+        label: Msg::LblMaxConcurrent,
+        desc: Msg::DescMaxConcurrent,
+        kind: SettingKind::Int { min: 1, max: 16 },
+        default: "4",
+    },
+    Entry {
         key: "connect.reconnect_same",
         cat: Msg::CatConnection,
         label: Msg::LblReconnectSame,

@@ -511,11 +511,10 @@ impl ConnWin {
                             e.next_at = None;
                             changed = true;
                         } else {
-                            next = Some(
-                                next.map_or(now + Duration::from_millis(250), |n: Instant| {
-                                    n.min(now + Duration::from_millis(250))
-                                }),
-                            );
+                            // 슬롯(동시 16) 초과 — 1초 뒤 다시(트래픽 0 · 깨우기만 · T-63).
+                            next = Some(next.map_or(now + Duration::from_secs(1), |n: Instant| {
+                                n.min(now + Duration::from_secs(1))
+                            }));
                         }
                     }
                 }
@@ -537,6 +536,10 @@ impl ConnWin {
         while let Some(r) = hub.try_recv() {
             if let Some(e) = self.probes.get_mut(&r.name) {
                 e.apply(r.outcome, now, &self.policy);
+                // T-63: 대상 집합(한 번 이상 접속) 밖 프로필은 즉시 확인 1회로 끝 — 재예약하지 않는다(접속한 적 없는 서버에 지속 트래픽 금지).
+                if !self.connected.contains(&r.name) {
+                    e.next_at = None;
+                }
                 changed = true;
             }
         }
