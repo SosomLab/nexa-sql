@@ -1194,9 +1194,13 @@ impl ApplicationHandler<Wake> for App {
         if self.log_win.tick(now_ms) {
             self.log_win.redraw();
         }
+        if self.conn_win.tick_bars(now_ms) {
+            self.conn_win.redraw();
+        }
         let bars_live = self.ed_mut().scrollbars_visible()
             || self.grid.bars_visible()
             || self.log_win.bars_visible()
+            || self.conn_win.bars_visible()
             || self.editors.tooltip_pending();
         let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))

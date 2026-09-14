@@ -12,7 +12,9 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
+use nexa_ctl::{
+    Button, Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget,
+};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
 use nsql_vault::{Profile, Vault};
@@ -57,6 +59,75 @@ enum RowBtn {
 /// 고정 폭 아이콘 열 수 — 신호등 · 테스트 · 접속.
 const ICON_COLS: i32 = 3;
 
+/// 텍스트 열(원본 index) — 이름 · 종류 · 사용자 · 대상.
+const TEXT_COLS: usize = 4;
+/// 첫 배치의 폭 비율(사용자가 폭을 조절하기 전까지 창 폭을 따라간다).
+const COL_FRACS: [f32; TEXT_COLS] = [0.22, 0.16, 0.20, 0.42];
+const MIN_COL_W: i32 = 24;
+
+/// 행의 열 텍스트(그리기·정렬·필터 공용).
+fn cell_of(p: &Profile, col: usize) -> String {
+    match col {
+        0 => p.name.clone(),
+        1 => p
+            .spec
+            .dialect
+            .map(|d| d.display_name())
+            .unwrap_or("")
+            .to_string(),
+        2 => p.spec.user.clone().unwrap_or_default(),
+        _ => target_of(p),
+    }
+}
+
+/// 헤더 클릭 정렬 키 갱신(결과 그리드와 같은 규칙): 일반 클릭 = 단일 키 3단(▲ → ▼ → 해제) ·
+/// Shift = 결합 키 추가/토글(dir2 방식).
+fn toggle_sort_key(keys: &mut Vec<(usize, bool)>, col: usize, additive: bool) {
+    let pos = keys.iter().position(|(c, _)| *c == col);
+    match (additive, pos) {
+        (false, Some(0)) if keys.len() == 1 => {
+            if keys[0].1 {
+                keys[0].1 = false;
+            } else {
+                keys.clear();
+            }
+        }
+        (false, _) => *keys = vec![(col, true)],
+        (true, Some(i)) => {
+            if keys[i].1 {
+                keys[i].1 = false;
+            } else {
+                keys.remove(i);
+            }
+        }
+        (true, None) => keys.push((col, true)),
+    }
+}
+
+/// 결합 정렬(안정 · 대소문자 무관 · 빈 값은 뒤) — 표시 인덱스 벡터만 재배열.
+fn sort_shown(profiles: &[Profile], shown: &mut [usize], keys: &[(usize, bool)]) {
+    if keys.is_empty() {
+        return;
+    }
+    let key_of = |i: usize, col: usize| cell_of(&profiles[i], col).to_lowercase();
+    shown.sort_by(|&a, &b| {
+        use std::cmp::Ordering;
+        for (col, asc) in keys {
+            let (ka, kb) = (key_of(a, *col), key_of(b, *col));
+            let o = match (ka.is_empty(), kb.is_empty()) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                _ => ka.cmp(&kb),
+            };
+            if o != Ordering::Equal {
+                return if *asc { o } else { o.reverse() };
+            }
+        }
+        Ordering::Equal
+    });
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WFocus {
     Panel,
@@ -83,6 +154,23 @@ pub(crate) struct ConnWin {
     hover: Option<usize>,
     /// 마우스가 올라간 행 아이콘 버튼.
     hover_btn: Option<(usize, RowBtn)>,
+    /// 텍스트 열 폭(px · 원본 index) — 비어 있으면 배치 때 비율로 채운다.
+    col_w: Vec<i32>,
+    /// 사용자가 폭을 조절한 뒤엔 창 폭을 따라가지 않는다.
+    col_w_manual: bool,
+    /// 결합 정렬 키(원본 열 · 오름차순).
+    sort_keys: Vec<(usize, bool)>,
+    /// 헤더 경계 드래그 = 폭 조절(열 · 시작 x · 시작 폭).
+    hdr_resize: Option<(usize, i32, i32)>,
+    /// 지금 커서가 폭 조절 모양인가(바뀔 때만 set_cursor).
+    resize_cursor: bool,
+    /// 상단 버튼 4개의 라벨 실측 폭(px · 페인트 때 현재 언어로 잰다 — 폭은 라벨에 맞춘다 · 사용자 09-14).
+    btn_text_w: [i32; 4],
+    /// 목록 스크롤(픽셀).
+    scroll_y: i32,
+    scroll_x: i32,
+    /// 오버레이 스크롤바(결과 그리드와 같은 nexa-ctl 공용 · 축별 표시).
+    bars: ScrollBars,
     /// 프로필별 마지막 테스트 결과(행 버튼 표시).
     test_marks: HashMap<String, TestMark>,
     filter: TextBox,
@@ -133,6 +221,15 @@ impl ConnWin {
             sel: None,
             hover: None,
             hover_btn: None,
+            col_w: Vec::new(),
+            col_w_manual: false,
+            sort_keys: Vec::new(),
+            hdr_resize: None,
+            resize_cursor: false,
+            btn_text_w: [0; 4],
+            scroll_y: 0,
+            scroll_x: 0,
+            bars: ScrollBars::new(),
             test_marks: HashMap::new(),
             filter: TextBox::new(t(Msg::PhFilter)),
             btn_new: Button::new(t(Msg::BtnNew)),
@@ -361,9 +458,133 @@ impl ConnWin {
             })
             .map(|(i, _)| i)
             .collect();
+        sort_shown(&self.profiles, &mut self.shown, &self.sort_keys);
         if self.sel.is_some_and(|s| s >= self.shown.len()) {
             self.sel = None;
         }
+        self.clamp_scroll();
+    }
+
+    /// 헤더 클릭 정렬(선택은 이름으로 따라간다).
+    fn toggle_sort(&mut self, col: usize, additive: bool) {
+        let keep = self.selected_name();
+        toggle_sort_key(&mut self.sort_keys, col, additive);
+        self.refilter();
+        if let Some(n) = keep {
+            self.sel = self.shown.iter().position(|&i| self.profiles[i].name == n);
+        }
+    }
+
+    // ── 목록 기하(스크롤 · 열)
+
+    fn icons_w(&self) -> i32 {
+        self.row_h * ICON_COLS
+    }
+
+    fn header_rect(&self) -> Rect {
+        Rect::new(self.list.x, self.list.y, self.list.w, self.row_h)
+    }
+
+    /// 행 영역(헤더 아래 · 테두리 안).
+    fn body_rect(&self) -> Rect {
+        Rect::new(
+            self.list.x + 1,
+            self.list.y + self.row_h,
+            (self.list.w - 2).max(0),
+            (self.list.h - self.row_h - 1).max(0),
+        )
+    }
+
+    /// 콘텐츠 크기 — 아이콘 열 + 텍스트 열 폭 합 · 행 수 × 행 높이.
+    fn content_size(&self) -> (i32, i32) {
+        let w = self.icons_w() + self.col_w.iter().sum::<i32>();
+        let h = self.shown.len() as i32 * self.row_h;
+        (w, h)
+    }
+
+    fn clamp_scroll(&mut self) {
+        let body = self.body_rect();
+        let (cw, ch) = self.content_size();
+        self.scroll_x = self.scroll_x.clamp(0, (cw - body.w).max(0));
+        self.scroll_y = self.scroll_y.clamp(0, (ch - body.h).max(0));
+    }
+
+    /// 선택 행이 보이도록 세로 스크롤을 맞춘다(키보드 이동).
+    fn ensure_visible(&mut self, row: usize) {
+        let body = self.body_rect();
+        let top = row as i32 * self.row_h;
+        if top < self.scroll_y {
+            self.scroll_y = top;
+        } else if top + self.row_h > self.scroll_y + body.h {
+            self.scroll_y = top + self.row_h - body.h;
+        }
+        self.clamp_scroll();
+        self.bars.show();
+    }
+
+    /// 헤더 x → 텍스트 열(원본 index).
+    fn header_col_at(&self, x: i32) -> Option<usize> {
+        let mut cx = self.list.x + self.icons_w() - self.scroll_x;
+        for (ci, &cw) in self.col_w.iter().enumerate() {
+            if x >= cx && x < cx + cw {
+                return Some(ci);
+            }
+            cx += cw;
+        }
+        None
+    }
+
+    /// 헤더에서 열 오른쪽 경계 ±6px 안이면 그 열 — 폭 조절 손잡이.
+    fn header_edge_at(&self, x: i32) -> Option<usize> {
+        let grip = self.s(6.0);
+        let mut cx = self.list.x + self.icons_w() - self.scroll_x;
+        for (ci, &cw) in self.col_w.iter().enumerate() {
+            cx += cw;
+            if (x - cx).abs() <= grip {
+                return Some(ci);
+            }
+        }
+        None
+    }
+
+    fn header_edge_hover(&self, p: Point) -> bool {
+        self.hdr_resize.is_some()
+            || (self.header_rect().contains(p) && self.header_edge_at(p.x).is_some())
+    }
+
+    /// 스크롤바·휠 처리 — 소비했으면 true(호스트는 그 이벤트를 목록에 다시 쓰지 않는다).
+    fn route_bars(&mut self, ev: &InputEvent) -> bool {
+        let body = self.body_rect();
+        if body.w <= 0 || body.h <= 0 {
+            return false;
+        }
+        let (cw, ch) = self.content_size();
+        let (nx, ny, consumed) = self.bars.on_event(
+            ev,
+            body,
+            cw.max(body.w),
+            ch.max(body.h),
+            self.scroll_x,
+            self.scroll_y,
+            self.scale,
+        );
+        let moved = nx != self.scroll_x || ny != self.scroll_y;
+        self.scroll_x = nx;
+        self.scroll_y = ny;
+        self.clamp_scroll();
+        if moved || consumed {
+            self.redraw();
+        }
+        consumed
+    }
+
+    /// 스크롤바 페이드 타이머(호스트 `about_to_wait`) — 다시 그려야 하면 true.
+    pub(crate) fn tick_bars(&mut self, now_ms: u64) -> bool {
+        self.window.is_some() && self.bars.tick(now_ms)
+    }
+
+    pub(crate) fn bars_visible(&self) -> bool {
+        self.window.is_some() && self.bars.is_visible()
     }
 
     /// 메인 창 위 가운데에 연다(`over` = 메인 창 바깥 좌표·크기). 이미 열려 있으면 앞으로.
@@ -490,21 +711,38 @@ impl ConnWin {
         let x0 = pad;
         let rw = (w - open_px - x0 - pad).max(0);
         let row = self.s(28.0);
-        let btn_w = self.s(72.0);
+        // 버튼 폭 = 라벨 폭 + 좌우 여백(라벨 미측정이면 72) · 간격 = pad/3(사용자 09-14 "간격 1/3 · 폭 최소").
+        let gap = (pad / 3).max(2);
+        let bw = |i: usize| -> i32 {
+            let tw = self.btn_text_w[i];
+            if tw > 0 {
+                tw + pad * 2
+            } else {
+                self.s(72.0)
+            }
+        };
+        let ws = [bw(0), bw(1), bw(2), bw(3)];
+        let total: i32 = ws.iter().sum::<i32>() + gap * 3;
         let mut inv = Invalidations::default();
         // 제목 줄(라벨) → 필터 + 버튼 줄 → 목록
         let y1 = pad + self.s(22.0);
-        let bx = x0 + rw - btn_w * 4 - pad * 3;
+        let bx = x0 + rw - total;
         self.filter
             .set_bounds(Rect::new(x0, y1, (bx - x0 - pad).max(0), row), &mut inv);
         self.btn_new
-            .set_bounds(Rect::new(bx, y1, btn_w, row), &mut inv);
+            .set_bounds(Rect::new(bx, y1, ws[0], row), &mut inv);
         self.btn_edit
-            .set_bounds(Rect::new(bx + btn_w + pad, y1, btn_w, row), &mut inv);
+            .set_bounds(Rect::new(bx + ws[0] + gap, y1, ws[1], row), &mut inv);
         self.btn_delete
-            .set_bounds(Rect::new(bx + (btn_w + pad) * 2, y1, btn_w, row), &mut inv);
+            .set_bounds(
+                Rect::new(bx + ws[0] + ws[1] + gap * 2, y1, ws[2], row),
+                &mut inv,
+            );
         self.btn_close
-            .set_bounds(Rect::new(bx + (btn_w + pad) * 3, y1, btn_w, row), &mut inv);
+            .set_bounds(
+                Rect::new(bx + ws[0] + ws[1] + ws[2] + gap * 3, y1, ws[3], row),
+                &mut inv,
+            );
         for c in [
             &mut self.btn_new,
             &mut self.btn_edit,
@@ -517,19 +755,23 @@ impl ConnWin {
         let ly = y1 + row + pad;
         self.list = Rect::new(x0, ly, rw, (h - ly - pad).max(0));
         self.row_h = self.s(24.0);
+        // 텍스트 열 폭 — 사용자가 조절하기 전까지는 창 폭을 비율로 따라간다.
+        if !self.col_w_manual || self.col_w.len() != TEXT_COLS {
+            let avail = (self.list.w - 2 - self.icons_w()).max(MIN_COL_W * TEXT_COLS as i32);
+            self.col_w = COL_FRACS
+                .iter()
+                .map(|f| ((avail as f32 * f) as i32).max(MIN_COL_W))
+                .collect();
+        }
+        self.clamp_scroll();
     }
 
     fn row_at(&self, p: Point) -> Option<usize> {
-        let body = Rect::new(
-            self.list.x,
-            self.list.y + self.row_h,
-            self.list.w,
-            (self.list.h - self.row_h).max(0),
-        );
+        let body = self.body_rect();
         if !body.contains(p) {
             return None;
         }
-        let i = ((p.y - body.y) / self.row_h.max(1)) as usize;
+        let i = ((p.y - body.y + self.scroll_y) / self.row_h.max(1)) as usize;
         (i < self.shown.len()).then_some(i)
     }
 
@@ -545,6 +787,14 @@ impl ConnWin {
         } else {
             None
         }
+    }
+
+    /// 행의 프로필에 비밀번호 봉투가 있는가(없으면 Test/Connect 행 버튼 비활성).
+    fn row_has_password(&self, row: usize) -> bool {
+        self.shown
+            .get(row)
+            .and_then(|&i| self.profiles.get(i))
+            .is_some_and(|p| p.has_password)
     }
 
     fn name_at(&self, row: usize) -> Option<String> {
@@ -612,6 +862,18 @@ impl ConnWin {
                     self.hover_btn = hb;
                     self.redraw();
                 }
+                // 헤더 경계 위 = 폭 조절 커서(바뀔 때만).
+                let over_edge = self.header_edge_hover(p);
+                if over_edge != self.resize_cursor {
+                    self.resize_cursor = over_edge;
+                    if let Some(w) = &self.window {
+                        w.set_cursor(if over_edge {
+                            winit::window::CursorIcon::ColResize
+                        } else {
+                            winit::window::CursorIcon::Default
+                        });
+                    }
+                }
                 self.route(InputEvent::MouseMove { x: p.x, y: p.y }, &mut out);
             }
             WindowEvent::Ime(ime) => {
@@ -658,15 +920,38 @@ impl ConnWin {
                         if matches!(self.focus, WFocus::Filter | WFocus::List) =>
                     {
                         if !self.shown.is_empty() {
-                            self.sel =
-                                Some(self.sel.map_or(0, |s| (s + 1).min(self.shown.len() - 1)));
+                            let s = self.sel.map_or(0, |s| (s + 1).min(self.shown.len() - 1));
+                            self.sel = Some(s);
+                            self.ensure_visible(s);
                             self.redraw();
                         }
                     }
                     Key::Named(NamedKey::ArrowUp)
                         if matches!(self.focus, WFocus::Filter | WFocus::List) =>
                     {
-                        self.sel = self.sel.map(|s| s.saturating_sub(1));
+                        if let Some(s) = self.sel.map(|s| s.saturating_sub(1)) {
+                            self.sel = Some(s);
+                            self.ensure_visible(s);
+                        }
+                        self.redraw();
+                    }
+                    Key::Named(NamedKey::PageDown | NamedKey::PageUp | NamedKey::Home | NamedKey::End)
+                        if matches!(self.focus, WFocus::List) && !self.shown.is_empty() =>
+                    {
+                        let page = (self.body_rect().h / self.row_h.max(1)).max(1) as usize;
+                        let last = self.shown.len() - 1;
+                        let s = match kev.logical_key.as_ref() {
+                            Key::Named(NamedKey::PageDown) => {
+                                self.sel.map_or(page.min(last), |s| (s + page).min(last))
+                            }
+                            Key::Named(NamedKey::PageUp) => {
+                                self.sel.map_or(0, |s| s.saturating_sub(page))
+                            }
+                            Key::Named(NamedKey::Home) => 0,
+                            _ => last,
+                        };
+                        self.sel = Some(s);
+                        self.ensure_visible(s);
                         self.redraw();
                     }
                     Key::Named(NamedKey::Delete)
@@ -766,12 +1051,57 @@ impl ConnWin {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         );
-        if let InputEvent::MouseDown { x, y, .. } = ev {
+        // 헤더 폭 조절 드래그(진행 중이면 다른 처리보다 먼저).
+        match ev {
+            InputEvent::MouseMove { x, .. } if self.hdr_resize.is_some() => {
+                if let Some((ci, x0, w0)) = self.hdr_resize {
+                    if let Some(w) = self.col_w.get_mut(ci) {
+                        *w = (w0 + (x - x0)).max(MIN_COL_W);
+                    }
+                    self.col_w_manual = true;
+                    self.clamp_scroll();
+                }
+                self.redraw();
+                return;
+            }
+            InputEvent::MouseUp { .. } if self.hdr_resize.is_some() => {
+                self.hdr_resize = None;
+                self.redraw();
+                return;
+            }
+            _ => {}
+        }
+        // 휠은 커서가 폼 위가 아니면 목록 스크롤 · 스크롤바 썸 드래그/호버는 목록보다 먼저.
+        let cursor = Point {
+            x: self.cursor.0,
+            y: self.cursor.1,
+        };
+        let over_panel = self.detail_t > 0.0 && self.panel.bounds().contains(cursor);
+        if matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. }) {
+            if !over_panel {
+                self.route_bars(&ev);
+                return;
+            }
+        } else if is_mouse && !over_panel && self.route_bars(&ev) {
+            return;
+        }
+        if let InputEvent::MouseDown { x, y, shift, .. } = ev {
             let p = Point { x, y };
-            if self.panel.bounds().contains(p) {
+            if self.panel.bounds().contains(p) && self.detail_t > 0.0 {
                 self.set_focus(WFocus::Panel);
             } else if self.filter.bounds().contains(p) {
                 self.set_focus(WFocus::Filter);
+            } else if self.header_rect().contains(p) {
+                // 헤더: 경계 = 폭 조절 · 열 = 정렬(Shift = 결합).
+                self.set_focus(WFocus::List);
+                if let Some(ci) = self.header_edge_at(x) {
+                    let w0 = self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
+                    self.hdr_resize = Some((ci, x, w0));
+                } else if let Some(ci) = self.header_col_at(x) {
+                    self.toggle_sort(ci, shift);
+                }
+                self.redraw();
+                return;
             } else if let Some(row) = self.row_at(p) {
                 self.set_focus(WFocus::List);
                 let now = Instant::now();
@@ -779,11 +1109,14 @@ impl ConnWin {
                 if let Some((_, b)) = self.row_btn_at(p) {
                     self.sel = Some(row);
                     self.last_click = None;
-                    if let Some(n) = self.name_at(row) {
-                        out.push(match b {
-                            RowBtn::Test => ConnWinAction::TestProfile(n),
-                            RowBtn::Connect => ConnWinAction::Login(n),
-                        });
+                    // 비밀번호가 저장되지 않은 프로필은 행 버튼이 동작하지 않는다(사용자 09-14).
+                    if self.row_has_password(row) {
+                        if let Some(n) = self.name_at(row) {
+                            out.push(match b {
+                                RowBtn::Test => ConnWinAction::TestProfile(n),
+                                RowBtn::Connect => ConnWinAction::Login(n),
+                            });
+                        }
                     }
                     self.redraw();
                     return;
@@ -861,6 +1194,9 @@ impl ConnWin {
 
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
         let animating = self.advance();
+        // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다.
+        self.btn_text_w = [Msg::BtnNew, Msg::BtnEdit, Msg::BtnDelete, Msg::BtnClose]
+            .map(|m| ui.measure(t(m), font_px).ceil() as i32);
         if animating || self.anim.is_none() {
             self.layout();
         }
@@ -869,6 +1205,8 @@ impl ConnWin {
             .iter()
             .map(|p| self.probe_status(&p.name))
             .collect();
+        let body = self.body_rect();
+        let (content_w, content_h) = self.content_size();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -930,38 +1268,57 @@ impl ConnWin {
             dc.fill_rect(Rect::new(l.x, l.y, 1, l.h), th.border);
             dc.fill_rect(Rect::new(l.right() - 1, l.y, 1, l.h), th.border);
             let rh = row_h;
-            // 앞 세 열 = 신호등 · 테스트 · 접속(고정 폭 · 아이콘) · 나머지는 비율.
+            // 앞 세 열 = 신호등 · 테스트 · 접속(고정 폭 · 아이콘 · 가로 스크롤 무관) · 텍스트 열은 `col_w`(폭 조절 · 가로 스크롤).
             let sw = rh;
             let icons_w = sw * ICON_COLS;
-            let cols = [
-                (t(Msg::ColName).to_string(), 0.22),
-                (t(Msg::ColType).to_string(), 0.16),
-                (t(Msg::ColUser).to_string(), 0.20),
-                (t(Msg::ColTarget).to_string(), 0.42),
+            let col_names = [
+                t(Msg::ColName).to_string(),
+                t(Msg::ColType).to_string(),
+                t(Msg::ColUser).to_string(),
+                t(Msg::ColTarget).to_string(),
             ];
-            let lw_cols = l.w - icons_w;
+            let col_w = self.col_w.clone();
             let ty = |y: i32| y + (rh - dc_text_h(rh)) / 2;
+            let hcells = Rect::new(l.x + icons_w, l.y, (l.w - icons_w - 1).max(0), rh);
+            let cells = Rect::new(l.x + icons_w, body.y, (body.right() - l.x - icons_w).max(0), body.h);
             // 헤더
             dc.fill_rect(Rect::new(l.x, l.y, l.w, rh), th.chrome_bg);
             dc.fill_rect(Rect::new(l.x, l.y + rh - 1, l.w, 1), th.border);
             // 아이콘 열 머리 = 작은 아이콘(흐리게).
             paint_test_btn(&mut dc, th, Rect::new(l.x + sw, l.y, sw, rh), None, false, true);
             paint_connect_btn(&mut dc, th, Rect::new(l.x + sw * 2, l.y, sw, rh), false, true);
-            let mut cx = l.x + icons_w + pad;
-            for (name, frac) in &cols {
-                let cw = (lw_cols as f32 * frac) as i32;
-                dc.text(
-                    cx,
-                    ty(l.y),
-                    Rect::new(cx, l.y, cw - pad, rh),
-                    name,
-                    th.text_dim,
+            let mut cx = l.x + icons_w - self.scroll_x;
+            for (ci, name) in col_names.iter().enumerate() {
+                let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
+                let clip = Rect::new(cx, l.y, cw, rh).intersection(&hcells);
+                // 정렬 배지: ▲/▼ + 결합 순번(키가 2개 이상일 때) — 결과 그리드와 같은 표기.
+                let badge = self.sort_keys.iter().position(|(k, _)| *k == ci).map(|i| {
+                    let arrow = if self.sort_keys[i].1 { "▲" } else { "▼" };
+                    if self.sort_keys.len() > 1 {
+                        format!("{arrow}{}", i + 1)
+                    } else {
+                        arrow.to_string()
+                    }
+                });
+                let name_clip = if let Some(bd) = &badge {
+                    let bw = dc.text_width(bd);
+                    dc.text(cx + cw - pad - bw, ty(l.y), clip, bd, th.accent);
+                    Rect::new(cx, l.y, (cw - bw - pad * 2).max(0), rh).intersection(&hcells)
+                } else {
+                    Rect::new(cx, l.y, (cw - pad).max(0), rh).intersection(&hcells)
+                };
+                dc.text(cx + pad, ty(l.y), name_clip, name, th.text_dim);
+                // 열 경계선(폭 조절 손잡이 위치).
+                dc.fill_rect(
+                    Rect::new(cx + cw - 1, l.y + 4, 1, rh - 8).intersection(&hcells),
+                    th.border,
                 );
                 cx += cw;
             }
-            let body = Rect::new(l.x, l.y + rh, l.w, (l.h - rh).max(0));
-            for (row, &pi) in self.shown.iter().enumerate() {
-                let y = body.y + row as i32 * rh;
+            let first = (self.scroll_y / rh.max(1)) as usize;
+            let sub = self.scroll_y % rh.max(1);
+            for (row, &pi) in self.shown.iter().enumerate().skip(first) {
+                let y = body.y + (row - first) as i32 * rh - sub;
                 if y >= body.bottom() {
                     break;
                 }
@@ -972,16 +1329,6 @@ impl ConnWin {
                     dc.fill_rect(r, th.panel_bg_alt);
                 }
                 let p = &self.profiles[pi];
-                let cells = [
-                    p.name.clone(),
-                    p.spec
-                        .dialect
-                        .map(|d| d.display_name())
-                        .unwrap_or("")
-                        .to_string(),
-                    p.spec.user.clone().unwrap_or_default(),
-                    target_of(p),
-                ];
                 // 신호등(초록 가능 · 노랑 확인 중 · 빨강 불가 · 회색 대상 아님)
                 let dot = (rh / 2).max(6);
                 let dot_color = match statuses.get(pi).copied().flatten() {
@@ -991,37 +1338,35 @@ impl ConnWin {
                     Some(ProbeStatus::Down) => th.danger,
                     Some(ProbeStatus::Unknown) | None => th.border,
                 };
-                dc.fill_ellipse(
-                    Rect::new(l.x + (sw - dot) / 2 + 1, y + (rh - dot) / 2, dot, dot),
-                    dot_color,
-                );
-                // 행 버튼 — 테스트(마지막 결과 표시) · 접속.
-                let hb = |b: RowBtn| self.hover_btn == Some((row, b));
+                let dot_r = Rect::new(l.x + (sw - dot) / 2 + 1, y + (rh - dot) / 2, dot, dot);
+                if dot_r.intersection(&body) == dot_r {
+                    dc.fill_ellipse(dot_r, dot_color);
+                }
+                // 행 버튼 — 테스트(마지막 결과 표시) · 접속. 비밀번호 미저장 = 흐리게(비활성).
+                let enabled = p.has_password;
+                let hb = |b: RowBtn| enabled && self.hover_btn == Some((row, b));
                 paint_test_btn(
                     &mut dc,
                     th,
                     Rect::new(l.x + sw, y, sw, rh).intersection(&body),
                     self.test_marks.get(&p.name).copied(),
                     hb(RowBtn::Test),
-                    false,
+                    !enabled,
                 );
                 paint_connect_btn(
                     &mut dc,
                     th,
                     Rect::new(l.x + sw * 2, y, sw, rh).intersection(&body),
                     hb(RowBtn::Connect),
-                    false,
+                    !enabled,
                 );
-                let mut cx = l.x + icons_w + pad;
-                for ((_, frac), text) in cols.iter().zip(cells.iter()) {
-                    let cw = (lw_cols as f32 * frac) as i32;
-                    dc.text(
-                        cx,
-                        ty(y),
-                        Rect::new(cx, y, cw - pad, rh).intersection(&body),
-                        text,
-                        th.text,
-                    );
+                let mut cx = l.x + icons_w - self.scroll_x;
+                for ci in 0..TEXT_COLS {
+                    let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
+                    let clip = Rect::new(cx, y, (cw - pad).max(0), rh).intersection(&cells);
+                    if clip.w > 0 && clip.h > 0 {
+                        dc.text(cx + pad, ty(y), clip, &cell_of(p, ci), th.text);
+                    }
                     cx += cw;
                 }
             }
@@ -1034,6 +1379,17 @@ impl ConnWin {
                     th.text_dim,
                 );
             }
+            // 오버레이 스크롤바(필요할 때만 · 축별 · 반투명) — 행 영역 위.
+            self.bars.paint(
+                &mut dc,
+                th,
+                body,
+                content_w.max(body.w),
+                content_h.max(body.h),
+                self.scroll_x,
+                self.scroll_y,
+                s,
+            );
         }
         let _ = buf.present();
         if animating {
@@ -1130,5 +1486,58 @@ fn target_of(p: &Profile) -> String {
         Some(port) if !host.is_empty() => format!("{host}:{port}/{db}"),
         _ if host.is_empty() => db.to_string(),
         _ => format!("{host}/{db}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nsql_script::ConnectSpec;
+
+    fn prof(name: &str, user: Option<&str>) -> Profile {
+        Profile {
+            name: name.into(),
+            spec: ConnectSpec {
+                user: user.map(String::from),
+                ..ConnectSpec::default()
+            },
+            has_password: true,
+        }
+    }
+
+    #[test]
+    fn sort_keys_follow_grid_rules() {
+        let mut k = Vec::new();
+        toggle_sort_key(&mut k, 0, false);
+        assert_eq!(k, vec![(0, true)]);
+        toggle_sort_key(&mut k, 0, false);
+        assert_eq!(k, vec![(0, false)]);
+        toggle_sort_key(&mut k, 1, true);
+        assert_eq!(k, vec![(0, false), (1, true)], "Shift = 키 추가");
+        toggle_sort_key(&mut k, 1, true);
+        assert_eq!(k, vec![(0, false), (1, false)], "Shift 재클릭 = 방향 전환");
+        toggle_sort_key(&mut k, 1, true);
+        assert_eq!(k, vec![(0, false)], "세 번째 = 제거");
+        toggle_sort_key(&mut k, 0, false);
+        assert_eq!(k, vec![], "▼ 상태에서 일반 클릭 = 해제");
+        toggle_sort_key(&mut k, 2, false);
+        assert_eq!(k, vec![(2, true)], "일반 클릭 = 단일 키");
+    }
+
+    #[test]
+    fn sort_shown_is_case_insensitive_stable_and_empty_last() {
+        let ps = vec![
+            prof("b", Some("x")),
+            prof("A", None),
+            prof("c", Some("x")),
+            prof("B", None),
+        ];
+        let mut shown: Vec<usize> = (0..4).collect();
+        sort_shown(&ps, &mut shown, &[(0, true)]);
+        assert_eq!(shown, vec![1, 0, 3, 2], "이름 대소문자 무관(A · b · B · c)");
+        sort_shown(&ps, &mut shown, &[(2, true), (0, false)]);
+        assert_eq!(shown, vec![2, 0, 3, 1], "빈 사용자는 뒤 · 2차 키 이름 내림차순");
+        sort_shown(&ps, &mut shown, &[]);
+        assert_eq!(shown, vec![2, 0, 3, 1], "키 없음 = 그대로");
     }
 }

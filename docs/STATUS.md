@@ -4,7 +4,7 @@
 
 ## 2026-09-14 (14차 · win) — 신호등 주기/즉시 갱신 ✅ · 실행 전 빠른 판정 ✅ · 워커 패닉 격리 ✅ · 행 Test/Connect 버튼 ✅
 
-`ProbePolicy`(`probe.interval` 60 · `retry_delay` 2 · `max_retries` 5 · `timeout` 2) — 창 열려 있는 동안 주기 갱신 · 실패부터 횟수 누적(초과 후 주기만) · Connect/Test 실패·실행 접속성 오류 시 그 서버 즉시 재프로브(창 닫혀 있어도) · 신호등이 초록이 아닌 서버에 쿼리 = TCP 빠른 판정 먼저(`ErrServerUnreachable`) · 워커 `catch_unwind`(세션 버림 · busy 해제) · 접속 창 행 아이콘 3열(신호등·Test 고리 결과색·Connect ▶) · 패널 상태는 작업 프로필 하나에 묶임(`panel_op`) · Connect 성공 = 활성 탭 적용(탭 0개면 새 탭) + 닫기. **다음**: T-31b · T-54(탭별 세션 = 영향도 분리 나머지) · nexa-grid(U-3) · T-48. GUI 실행 중. → [journal](journal/2026-09-14.md)
+`ProbePolicy`(`probe.interval` 60 · `retry_delay` 2 · `max_retries` 5 · `timeout` 2) — 창 열려 있는 동안 주기 갱신 · 실패부터 횟수 누적(초과 후 주기만) · Connect/Test 실패·실행 접속성 오류 시 그 서버 즉시 재프로브(창 닫혀 있어도) · 신호등이 초록이 아닌 서버에 쿼리 = TCP 빠른 판정 먼저(`ErrServerUnreachable`) · 워커 `catch_unwind`(세션 버림 · busy 해제) · 접속 창 행 아이콘 3열(신호등·Test 고리 결과색·Connect ▶) · 패널 상태는 작업 프로필 하나에 묶임(`panel_op`) · Connect 성공 = 활성 탭 적용(탭 0개면 새 탭) + 닫기 · 목록 헤더 폭 조절·정렬·결합 정렬(▲1/▼2)·오버레이 스크롤(nexa-ui `ScrollBars` **축별 표시** — 세로 휠엔 세로만) · 비밀번호 미저장 행 버튼 비활성 · 상단 버튼 = 라벨 실측 폭·간격 1/3 · Edit→상세 보기. **다음**: T-31b · T-54(탭별 세션 = 영향도 분리 나머지) · nexa-grid(U-3) · T-48. GUI 실행 중. → [journal](journal/2026-09-14.md)
 
 ## 2026-09-14 (13차 · win) — Golden식 접속 창(T-31) ✅ · 앱 아이콘(Union) ✅
 

@@ -587,7 +587,7 @@ impl Msg {
             Msg::WinLogin => ["Database Login", "데이터베이스 로그인"],
             Msg::LblLoginList => ["Login List", "로그인 목록"],
             Msg::BtnNew => ["New", "새로 만들기"],
-            Msg::BtnEdit => ["Edit", "편집"],
+            Msg::BtnEdit => ["Details", "상세 보기"],
             Msg::BtnDelete => ["Delete", "삭제"],
             Msg::BtnClose => ["Close", "닫기"],
             Msg::PhFilter => ["Filter…", "필터…"],

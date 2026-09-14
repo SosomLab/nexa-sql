@@ -52,7 +52,7 @@
 | **T-29** | P0 | 대 | GitHub 다운로드 — 색인 · 최신 태그 · HTTPS(rustls) · sha256 · Ed25519 · 원자적 설치 · `install/update/search` · 갱신 배지 · `--file` 오프라인 | T-28 D-19 | ☐ |
 | **T-30** | P0 | 대 | Oracle OCI 확장 — kubo 드라이버를 RPC 프로세스로 · Instant Client 19/23 SxS · 프로필 `driver=` · ORA-28040 힌트 | T-29 D-20 | ☐ |
 | **T-31** | P0 | 대 | GUI — DBeaver식 접속 대화상자 · **Golden식 로그인 리스트 = 그리드(사용자 09-14 · nexa-grid ConnectionGrid · [nexa-ui 21](../../nexa-ui/docs/21-grid-family.md))** · 드라이버 관리자(목록·Download·Update·Delete). 기본 패널은 ✅ 09-14(`connect.rs`) | T-28 · nexa-ui U-3 | 🚧 |
-| **T-31b** | P1 | 중 | 접속 창 보강 — Import/Export(프로필 파일 · 비밀번호 제외 기본) · Help/Options · Read Only · Pin 열 · 목록 정렬/스크롤 · 삭제 확인(nexa-dlg) · 접속 그리드 = nexa-grid `ConnectionGrid`(G-4) | T-31 F-2 | ☐ |
+| **T-31b** | P1 | 중 | 접속 창 보강 — Import/Export(프로필 파일 · 비밀번호 제외 기본) · Help/Options · Read Only · Pin 열 · ~~목록 정렬/스크롤~~(✅ 09-14 14차 · 폭 조절·결합 정렬 포함) · 삭제 확인(nexa-dlg) · 접속 그리드 = nexa-grid `ConnectionGrid`(G-4) | T-31 F-2 | ☐ |
 | **T-62** | P1 | 소 | 아이콘 배포 — Windows 실행 파일 리소스(.rc · 외부 crate 0 = `rc.exe`/`windres` 빌드 단계) · NSIS · macOS `.app`/`.icns` · Linux `.desktop` + hicolor PNG(clip `install_launcher` 이식) | 릴리스 파이프라인 | ☐ |
 
 ## 3-3. 정품 인증 · 기능 게이트([23](23-license-activation.md) · 티어·서버·저장소 분리 [25](25-license-tiers-and-server.md) · 사용자 09-14) — 코드는 D-23·24·32·33 답 뒤 · **라이브러리 저장소(T-45)부터**
