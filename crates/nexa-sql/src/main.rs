@@ -645,7 +645,10 @@ impl App {
             Ok(_) => self.status = tf(Msg::StProfileDeleted, &[name]),
             Err(e) => self.status = e.to_string(),
         }
-        self.conn_win.refresh_profiles(None);
+        // 인접 항목 자동 선택 · 폼이 펼쳐져 있으면 그 항목으로 갱신(비면 New 상태).
+        if let Some(next) = self.conn_win.after_delete() {
+            self.handle_panel_action(PanelAction::LoadProfile(next));
+        }
         self.redraw();
     }
 

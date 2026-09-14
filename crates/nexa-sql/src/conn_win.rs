@@ -541,6 +541,29 @@ impl ConnWin {
         self.redraw();
     }
 
+    /// 삭제 뒤 — 인접 항목(다음 · 마지막이었으면 이전)을 선택한다(사용자 09-14 권장안). 목록이 비면 선택 없음.
+    /// 반환 = 폼이 펼쳐져 있을 때 폼에 채울 프로필 이름(`None` = 폼을 비워 New 상태로).
+    pub(crate) fn after_delete(&mut self) -> Option<String> {
+        let old = self.sel;
+        self.refresh_profiles(None);
+        self.sel = old.and_then(|i| (!self.shown.is_empty()).then(|| i.min(self.shown.len() - 1)));
+        if let Some(s) = self.sel {
+            self.ensure_visible(s);
+        }
+        self.sync_enabled();
+        self.redraw();
+        if !self.detail_open() {
+            return None;
+        }
+        match self.selected_name() {
+            Some(n) => Some(n),
+            None => {
+                self.panel.clear();
+                None
+            }
+        }
+    }
+
     /// 언어 전환 — 라벨 재생성.
     pub(crate) fn relabel(&mut self) {
         self.panel.relabel();
@@ -1789,6 +1812,16 @@ impl ConnWin {
                     self.hdr_resize = Some((ci, x, w0));
                 } else if let Some(pos) = self.header_pos_at(x) {
                     self.hdr_drag = Some((pos, x, x, false, shift));
+                }
+                self.redraw();
+                return;
+            } else if self.body_rect().contains(p) && self.row_at(p).is_none() {
+                // 빈 영역 클릭 = 선택 해제(아무것도 선택되지 않은 상태 · 사용자 09-14) — 폼이 펼쳐져 있으면 New 상태로 비운다.
+                self.set_focus(WFocus::List);
+                self.sel = None;
+                self.last_click = None;
+                if self.detail_open() {
+                    self.panel.clear();
                 }
                 self.redraw();
                 return;
