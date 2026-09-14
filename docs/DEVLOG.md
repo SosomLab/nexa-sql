@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-14 (11차 · win)** — 설계 [28 오브젝트 탐색기](28-object-explorer.md): 지연 1단계 로드 · 요청별 스레드(상한) · 오류 비확산 · 메타 전용 세션 · 수동 갱신 기본 · 설정 4키 등재 · D-46·47 · T-56. → [journal](journal/2026-09-14.md)
 - **2026-09-14 (10차 · win)** — 오버레이 스크롤바(필요 시·호버 두껍게)·픽셀 스크롤(`grid.scroll`) · 메뉴바·툴바(글리프 아이콘) · 편집기 줄번호·그리드 행번호(설정 · 기본 켬) · `tabs.rows`/`tabs.tooltip` · TabBar 이식 진행. → [journal](journal/2026-09-14.md)
 - **2026-09-14 (9차 · win)** — ★ 실행 로그: `nsql-log`(ms 타임스탬프 · Raw/Markdown/Grid 어댑터 · 링 · **LogHub 독립 스레드 비차단·패닉 격리**) · GUI 로그 창(별도 창 · Ctrl+⇧G) · CLI `--log` · 설정 `log.format`·`session.mode` · CONNECT 동사 검토([27 §6](27-cli-conventions.md) · D-45). → [journal](journal/2026-09-14.md)
 - **2026-09-14 (8차 · win)** — 편집기 복사/잘라내기/붙여넣기(OS 클립보드 3-OS · crate 0 · Ctrl+C/X/V · 우클릭) · 휠 = 커서 아래 영역 · 탭 보존(nexa-ui). → [journal](journal/2026-09-14.md)
