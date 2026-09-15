@@ -373,8 +373,8 @@ fn with_session<T>(
     }
 }
 
-/// 셰브론 — 꺾임각 [`CHEVRON_DEG`](DBeaver/Eclipse 트리 화살표 캡처 기준 ≈ 100° · 사용자 09-15) · 크기 = 영역 · 획 = 영역/10.
-const CHEVRON_DEG: f32 = 100.0;
+/// 셰브론 — 꺾임각 [`CHEVRON_DEG`](DBeaver 확대 캡처 실측: 다리 dx ≈ dy → 90° · 사용자 09-15) · 크기 = 영역 · 획 = 영역/10.
+const CHEVRON_DEG: f32 = 90.0;
 
 fn chevron_90(dc: &mut dyn DrawCtx, area: Rect, color: Color, expanded: bool) {
     let cx = area.x + area.w / 2;
