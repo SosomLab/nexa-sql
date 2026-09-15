@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (10차 · mac · 마지막)** — Copy SQL 하위 메뉴 유실 방지(nexa-ui) · SQL 복사 5종 회귀 테스트 · 미구현 점검(메뉴 명령 전수 처리 확인 · T-76 1차 settings.json 내장 편집 = 탭). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (9차 · mac · 마지막 · Windows로 이관)** — **줄끝 정책 [38](38-line-endings.md)**(통합 로직 · `eol.rs` · `file.eol_new`/`file.eol_save` · 상태줄 LF/CRLF) · Windows 인수인계 메모 · push. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (8차 · mac)** — 신호등 대상 = 시도한 프로필까지(`mark_attempted`) · macOS `ping -W` 밀리초 단위 보정(단위 불일치 · 확정 원인은 대상 기준). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (7차 · mac)** — 우클릭 메뉴 항목 간격: 그리드·상태줄 Tab·탐색기 메뉴가 `set_scale` 누락(맥 2x 절반 높이) → 배율 전달 · 그리드 메뉴 = UI 글꼴 패스. → [journal](journal/2026-09-16.md)

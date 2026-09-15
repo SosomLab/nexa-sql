@@ -1543,6 +1543,38 @@ mod tests {
         g
     }
 
+    /// Advanced Copy ▸ SQL 5종이 전부 문장을 만든다(사용자 09-16 "SQL 유형 모두 복사"). 키 = 첫 컬럼 · 테이블 = 원본 SQL 추정.
+    #[test]
+    fn sql_copy_all_kinds_produce_statements() {
+        let mut g = grid_with(&[100, 80]);
+        g.set_source_sql("SELECT * FROM T1 WHERE 1 = 1");
+        g.select_all();
+        let out = |k: SqlKind| {
+            g.copy_selection(CopyKind::Sql(k))
+                .expect("복사 결과")
+                .0
+                .trim_end()
+                .to_string()
+        };
+        assert_eq!(out(SqlKind::Select), "SELECT c0, c1 FROM T1 WHERE c0 = 1;");
+        assert_eq!(
+            out(SqlKind::Insert),
+            "INSERT INTO T1 (c0, c1) VALUES (1, 1);"
+        );
+        assert_eq!(out(SqlKind::Update), "UPDATE T1 SET c1 = 1 WHERE c0 = 1;");
+        assert_eq!(out(SqlKind::Delete), "DELETE FROM T1 WHERE c0 = 1;");
+        let merge = out(SqlKind::Merge);
+        assert!(merge.starts_with("MERGE INTO T1 t USING ("), "{merge}");
+        assert!(
+            merge.contains("WHEN MATCHED THEN UPDATE SET t.c1 = s.c1"),
+            "{merge}"
+        );
+        assert!(
+            merge.contains("WHEN NOT MATCHED THEN INSERT (c0, c1) VALUES (s.c0, s.c1)"),
+            "{merge}"
+        );
+    }
+
     #[test]
     fn header_edge_drag_resizes_column() {
         let mut g = grid_with(&[100, 80]);

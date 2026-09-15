@@ -680,7 +680,7 @@ impl App {
     }
 
     /// settings.json으로 편집(사용자 09-15) — 내보내고 외부 프로그램(.json 연결)으로 연 뒤 저장을 감시한다.
-    /// `settings.json_editor = builtin`은 편집기 파일 저장(T-74)이 생기면 탭으로(T-76) · 지금은 외부로 대체.
+    /// `settings.json_editor`: external = OS 연결 프로그램 · builtin = 편집기 탭(T-76 1차 · 09-16). 둘 다 저장 감시로 반영.
     fn edit_settings_json(&mut self) {
         let path = match self.settings.export_json() {
             Ok(p) => p,
@@ -693,14 +693,16 @@ impl App {
         self.json_watch = Some((path.clone(), mtime));
         self.json_next = Instant::now() + Duration::from_millis(1000);
         let builtin = self.settings.get("settings.json_editor") == Some("builtin");
+        if builtin {
+            // T-76 1차(09-16): 편집기 탭으로 연다 — Ctrl+S 저장은 파일 쓰기(T-74) → 위의 1초 감시가 바뀐 키를 반영한다
+            // (외부 편집기와 같은 경로 · 별도 훅 없음).
+            self.open_file_enc(&path, "utf8");
+            self.status = tf(Msg::StJsonOpened, &[&path.display().to_string()]);
+            self.redraw();
+            return;
+        }
         match open_external(&path) {
-            Ok(()) => {
-                self.status = if builtin {
-                    t(Msg::StJsonBuiltinTodo).to_string()
-                } else {
-                    tf(Msg::StJsonOpened, &[&path.display().to_string()])
-                };
-            }
+            Ok(()) => self.status = tf(Msg::StJsonOpened, &[&path.display().to_string()]),
             Err(e) => self.status = tf(Msg::StJsonError, &[&e]),
         }
         self.redraw();
