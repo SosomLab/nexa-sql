@@ -9,6 +9,7 @@ use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::{Color, Theme};
+use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key as CtlKey, ScrollBars};
 use nsql_catalog::{ColumnInfo, ObjectInfo, ObjectKind};
 use nsql_core::{DbError, Dialect, Session};
@@ -240,6 +241,8 @@ pub(crate) struct Explorer {
     bars: ScrollBars,
     selected: Option<usize>,
     hover: Option<usize>,
+    /// 호버 행 = 1초에 걸쳐 서서히 진해짐(`IntentFade` Slow · 그리드·접속 목록과 같은 부품 · 사용자 09-15).
+    hover_fade: IntentFade,
     tx: mpsc::Sender<Req>,
     rx: mpsc::Receiver<Resp>,
     gen: u64,
@@ -452,6 +455,7 @@ impl Explorer {
             bars: ScrollBars::new(),
             selected: None,
             hover: None,
+            hover_fade: IntentFade::with_speed(FadeSpeed::Slow),
             tx,
             rx,
             gen: 0,
@@ -934,11 +938,13 @@ impl Explorer {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.bars.tick(now_ms)
+        let a = self.bars.tick(now_ms);
+        let b = self.hover_fade.tick(now_ms);
+        a || b
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
-        self.visible && self.bars.is_visible()
+        self.visible && (self.bars.is_visible() || self.hover_fade.is_animating())
     }
 
     /// 이벤트 — 다시 그려야 하면 true.
@@ -977,6 +983,7 @@ impl Explorer {
         match *ev {
             InputEvent::MouseMove { x, y } => {
                 let h = self.row_at(Point { x, y }).and_then(|(n, _)| n);
+                self.hover_fade.set(h);
                 if h != self.hover {
                     self.hover = h;
                     return true;
@@ -1163,6 +1170,7 @@ impl Explorer {
         dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
         dc.select_font(FontSlot::Base, false);
         let th_txt = dc.text_height();
+        let asc = dc.text_ascent();
         // 행 높이·셰브론·칩은 글꼴 높이에 비례(글꼴을 키우면 같이 커진다).
         self.row_px = th_txt + (7.0 * s).round() as i32;
         let row_h = self.row_h();
@@ -1180,6 +1188,8 @@ impl Explorer {
                 continue;
             }
             let ty = y + (row_h - th_txt) / 2;
+            // 글리프 시각 중심(대문자·한글 몸통) — 셰브론·칩을 여기에 맞춘다(사용자 09-15 "폰트 기준 세로 중앙").
+            let vcy = ty + (asc as f32 * 0.62).round() as i32;
             match node {
                 None => {
                     // 상태 행: 로딩 중 / 오류(클릭 = 재시도).
@@ -1205,25 +1215,29 @@ impl Explorer {
                                 th.sel_bg_inactive
                             },
                         );
-                    } else if self.hover == Some(*i) {
-                        dc.fill_rect_alpha(rr, th.sel_bg, 0.35);
+                    } else {
+                        // 호버 = 전경색을 알파로 덮어 서서히(진행도 × 토큰 알파).
+                        let ha = hover_alpha(false, self.hover_fade.value(*i));
+                        if ha > 0.0 {
+                            dc.fill_rect_alpha(rr, th.text, ha);
+                        }
                     }
                     let gx = b.x + ((n.depth as f32 * INDENT + 4.0) * s).round() as i32;
                     // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
                     let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
                     if n.expandable && !empty_loaded {
                         let cw = th_txt.max(10); // 사용자 09-15: 글꼴 높이의 1.0배
-                        let chev = Rect::new(gx, y + (row_h - cw) / 2, cw, cw);
+                        let chev = Rect::new(gx, vcy - cw / 2, cw, cw);
                         chevron_90(dc, chev, th.text_dim, n.expanded);
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 칩(오브젝트 종류 색).
                     if let NodeKind::Object(o) = &n.kind {
-                        let cr = Rect::new(x, y + (row_h - chip) / 2, chip, chip);
+                        let cr = Rect::new(x, vcy - chip / 2, chip, chip);
                         dc.fill_round_rect(cr, 2, kind_color(o.kind, th));
                         x += chip + (6.0 * s).round() as i32;
                     } else if let NodeKind::Column(_) = &n.kind {
-                        let cr = Rect::new(x + 2, y + (row_h - chip / 2) / 2, chip / 2, chip / 2);
+                        let cr = Rect::new(x + 2, vcy - chip / 4, chip / 2, chip / 2);
                         dc.fill_round_rect(cr, 2, th.text_dim);
                         x += chip + (6.0 * s).round() as i32;
                     }
