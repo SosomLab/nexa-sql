@@ -260,6 +260,8 @@ pub(crate) struct Explorer {
     source_pending: bool,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
     row_px: i32,
+    /// 로딩 점 애니메이션(300ms 단계) — 로딩 중인 노드가 있을 때만 다시 그린다(nexa-dir2 "Loading…" 자리 · 사용자 09-15).
+    dots_step: u64,
     /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
     live_results: Vec<LiveResult>,
     pub(crate) live_inflight: bool,
@@ -470,6 +472,7 @@ impl Explorer {
             focused: false,
             source_pending: false,
             row_px: 0,
+            dots_step: 0,
             live_results: Vec::new(),
             live_inflight: false,
         };
@@ -887,13 +890,22 @@ impl Explorer {
         }
     }
 
+    /// 상태 행(자식 자리)을 보일 노드인가 — 로딩은 펼침과 무관(접속 중 루트 포함) · 오류는 펼쳤을 때.
+    fn shows_status_row(n: &Node) -> bool {
+        match n.state {
+            LoadState::Loading => true,
+            LoadState::Error(_) => n.expanded,
+            _ => false,
+        }
+    }
+
     fn content_h(&self) -> i32 {
         let mut n = self.visible_rows().len() as i32;
         // 오류/로딩 행(자식 자리) 하나씩.
         n += self
             .nodes
             .iter()
-            .filter(|x| x.expanded && matches!(x.state, LoadState::Loading | LoadState::Error(_)))
+            .filter(|x| Self::shows_status_row(x))
             .count() as i32;
         n * self.row_h()
     }
@@ -908,8 +920,7 @@ impl Explorer {
         let mut out = Vec::new();
         for i in self.visible_rows() {
             out.push((Some(i), i));
-            let n = &self.nodes[i];
-            if n.expanded && matches!(n.state, LoadState::Loading | LoadState::Error(_)) {
+            if Self::shows_status_row(&self.nodes[i]) {
                 out.push((None, i));
             }
         }
@@ -940,11 +951,26 @@ impl Explorer {
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         let a = self.bars.tick(now_ms);
         let b = self.hover_fade.tick(now_ms);
-        a || b
+        // 로딩 점(…)은 300ms마다 한 단계 — 로딩 노드가 있을 때만.
+        let mut c = false;
+        if self.is_loading() {
+            let step = now_ms / 300;
+            if step != self.dots_step {
+                self.dots_step = step;
+                c = true;
+            }
+        }
+        a || b || c
     }
 
+    fn is_loading(&self) -> bool {
+        self.nodes.iter().any(|n| n.state == LoadState::Loading)
+    }
+
+    /// 호스트의 빠른 타이머(≈30ms)를 유지해야 하는가 — 스크롤바 · 호버 페이드 · 로딩 애니메이션.
     pub(crate) fn bars_visible(&self) -> bool {
-        self.visible && (self.bars.is_visible() || self.hover_fade.is_animating())
+        self.visible
+            && (self.bars.is_visible() || self.hover_fade.is_animating() || self.is_loading())
     }
 
     /// 이벤트 — 다시 그려야 하면 true.
@@ -1196,7 +1222,12 @@ impl Explorer {
                     let depth = self.nodes[*parent].depth + 1;
                     let x = b.x + ((depth as f32 * INDENT + 8.0) * s).round() as i32;
                     match &self.nodes[*parent].state {
-                        LoadState::Loading => dc.text(x, ty, rr, t(Msg::ExpLoading), th.text_dim),
+                        LoadState::Loading => {
+                            // "Loading" + 점 0~3개(300ms 단계) — 비동기 로드 중임이 보이게(nexa-dir2 · 사용자 09-15).
+                            let base = t(Msg::ExpLoading).trim_end_matches('…');
+                            let dots = ".".repeat((self.dots_step % 4) as usize);
+                            dc.text(x, ty, rr, &format!("{base}{dots}"), th.text_dim);
+                        }
                         LoadState::Error(e) => {
                             let msg = format!("⚠ {}", e.lines().next().unwrap_or(""));
                             dc.text(x, ty, rr, &msg, th.warn);
