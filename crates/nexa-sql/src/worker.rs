@@ -49,6 +49,8 @@ pub(crate) enum ConnOutcome {
     Connected(String),
     ConnectFailed(String),
     Disconnected,
+    /// 편집기 세션의 Oracle SID(라이브 로그 모니터가 V$SESSION을 볼 때 · T-71).
+    SessionId(String),
 }
 
 fn err(message: String) -> RunEvent {
@@ -201,6 +203,25 @@ pub(crate) fn spawn(
                         } else {
                             ConnOutcome::ConnectFailed(last_err.unwrap_or_default())
                         });
+                        // Oracle이면 세션 SID를 알려 준다(라이브 모니터 V$SESSION 조회용).
+                        if ok && runner.engine.dialect == Dialect::Oracle {
+                            if let Some(s) = runner.session.as_mut() {
+                                let req = nsql_core::ExecRequest {
+                                    sql: "SELECT SYS_CONTEXT('USERENV','SID') FROM dual".into(),
+                                    params: vec![],
+                                };
+                                if let Ok(r) = s.execute(&req) {
+                                    if let Some(v) = r
+                                        .result_sets
+                                        .first()
+                                        .and_then(|rs| rs.rows.first())
+                                        .and_then(|row| row.first())
+                                    {
+                                        let _ = ctx_tx.send(ConnOutcome::SessionId(v.display()));
+                                    }
+                                }
+                            }
+                        }
                         let _ = dtx.send(None);
                         wake_now();
                         true

@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-15): *"로그를 확인하는 기능 · SQL Server는 flush로 실행 중 로그 확인이 가능한데 Oracle도 가능하도록 구현해 줄 수 있는지 확인"* · *"프로시저 실행 · Output 변수 · 프로시저의 SELECT 결과를 DBMS별로 받아 표시"*.
 > **선행**: [26 성능](26-performance-architecture.md)(로그 허브 · 단계 계측) · [08 세션 변수](08-session-variables.md)(OUT 회수 규약) · [28 탐색기](28-object-explorer.md)(메타 세션 = 별도 접속).
-> **상태**: ✅ SQL Server·PostgreSQL 실시간(09-15 구현 · 실서버 확인) · 📐 Oracle 폴링 모니터(**T-71**) · 결정 **D-48**.
+> **상태**: ✅ SQL Server·PostgreSQL 실시간(09-15 구현 · 실서버 확인) · 🚧 Oracle 폴링 모니터 **1차 구현**(09-15 4차 · `oracle.live.*` · session/table 소스 · GUI) · 잔여 CLI `--live`·Live 세그먼트 · 결정 **D-48**(1차 기본 = session).
 
 ---
 

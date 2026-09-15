@@ -34,7 +34,7 @@ use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
-use explorer::{Explorer, ExplorerAction};
+use explorer::{Explorer, ExplorerAction, LiveReq};
 use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
 use log_win::{LogWin, LogWinAction};
@@ -127,6 +127,12 @@ struct App {
     dialect: Dialect,
     /// 수동 커밋 모드에서 커밋되지 않은 변경이 있는가(상태줄 ● · 사용자 09-15).
     tx_dirty: bool,
+    /// ★ Oracle 라이브 로그 모니터(T-71 · docs/32 §2): 편집기 세션 SID · 다음 폴링 시각 · 로그 테이블 기준 시각 · 마지막 세션 줄(중복 억제) · 실행 끝 뒤 마지막 1회.
+    live_sid: Option<String>,
+    live_next: Instant,
+    live_since: Option<String>,
+    live_last: String,
+    live_final: bool,
     focus: Focus,
     // 워커
     worker: worker::Handle,
@@ -393,7 +399,11 @@ impl App {
                     // 접속 실패 확인 → 그 서버 신호등 즉시 갱신(사용자 09-14).
                     self.conn_win.note_failure(&name);
                 }
+                ConnOutcome::SessionId(sid) => {
+                    self.live_sid = Some(sid);
+                }
                 ConnOutcome::Disconnected => {
+                    self.live_sid = None;
                     self.editors.set_conn_desc("");
                     self.conn_win.clear_connect_marks();
                     self.conn_win.clear_active();
@@ -978,7 +988,121 @@ impl App {
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
         self.worker.send(worker::Cmd::Run { src, preflight });
+        self.live_start();
         self.redraw();
+    }
+
+    /// 라이브 로그 설정(끔이면 None) — 매번 읽는다(설정 창에서 바꾸면 다음 실행부터).
+    fn live_req(&self) -> Option<LiveReq> {
+        if self.dialect != Dialect::Oracle {
+            return None;
+        }
+        let source = self.settings.get("oracle.live.source").unwrap_or("off");
+        if source == "off" {
+            return None;
+        }
+        let sid = self.live_sid.clone()?;
+        let table = self
+            .settings
+            .get("oracle.live.table")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if source == "table" && table.is_empty() {
+            return None;
+        }
+        Some(LiveReq {
+            sid,
+            source: source.to_string(),
+            table,
+            ts_col: self
+                .settings
+                .get("oracle.live.ts_col")
+                .unwrap_or("LOG_TIME")
+                .trim()
+                .to_string(),
+            text_col: self
+                .settings
+                .get("oracle.live.text_col")
+                .unwrap_or("LOG_TEXT")
+                .trim()
+                .to_string(),
+            since: self.live_since.clone(),
+        })
+    }
+
+    fn live_interval(&self) -> Duration {
+        Duration::from_millis(
+            self.settings
+                .int("oracle.live.interval_ms")
+                .clamp(250, 60_000) as u64,
+        )
+    }
+
+    /// 실행 시작 — 기준 시각 초기화 · 첫 폴링 즉시(로그 테이블은 서버 현재 시각을 기준점으로 받는다).
+    fn live_start(&mut self) {
+        self.live_since = None;
+        self.live_last.clear();
+        self.live_final = true;
+        if let Some(req) = self.live_req() {
+            self.explorer.live_poll(req);
+            self.live_next = Instant::now() + self.live_interval();
+        }
+    }
+
+    /// 주기 폴링(실행 중) · 실행이 끝나면 마지막 1회.
+    fn live_tick(&mut self, now: Instant) -> Option<Instant> {
+        if self.busy {
+            if now >= self.live_next {
+                if let Some(req) = self.live_req() {
+                    self.explorer.live_poll(req);
+                }
+                self.live_next = now + self.live_interval();
+            }
+            Some(self.live_next)
+        } else if self.live_final {
+            self.live_final = false;
+            if let Some(req) = self.live_req() {
+                self.explorer.live_poll(req);
+            }
+            None
+        } else {
+            None
+        }
+    }
+
+    /// 라이브 응답 → 로그 창(세션 소스는 바뀐 줄만).
+    fn live_drain(&mut self) -> bool {
+        let mut changed = false;
+        for r in self.explorer.take_live() {
+            match r {
+                Ok((lines, last_ts)) => {
+                    if last_ts.is_some() {
+                        self.live_since = last_ts;
+                    }
+                    for line in lines {
+                        if line == self.live_last {
+                            continue;
+                        }
+                        self.live_last = line.clone();
+                        let text = format!("[live] {line}");
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Output, text.clone()));
+                        self.log.push(text);
+                        changed = true;
+                    }
+                    if changed {
+                        self.grid.set_messages(self.log.clone());
+                    }
+                }
+                Err(e) => {
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, format!("[live] {e}")));
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     /// 실행 계획(사용자 09-15 기본 기능) — 캐럿 문장(또는 선택)을 방언별 EXPLAIN 관용으로 감싸 실행.
@@ -1011,6 +1135,7 @@ impl App {
             src,
             preflight: None,
         });
+        self.live_start();
         self.redraw();
     }
 
@@ -1113,6 +1238,9 @@ impl App {
             }
         }
         if self.explorer.drain() {
+            changed = true;
+        }
+        if self.live_drain() {
             changed = true;
         }
         for a in self.explorer.take_actions() {
@@ -1651,6 +1779,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.conn_win.tick(now) {
             next = next.min(t);
         }
+        // Oracle 라이브 로그 폴링(실행 중에만 · 끝나면 마지막 1회).
+        if let Some(t) = self.live_tick(now) {
+            next = next.min(t);
+        }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
@@ -2053,6 +2185,11 @@ fn main() {
         last_spec: None,
         dialect: DEFAULT_DIALECT,
         tx_dirty: false,
+        live_sid: None,
+        live_next: Instant::now(),
+        live_since: None,
+        live_last: String::new(),
+        live_final: false,
         focus: Focus::Editor,
         worker,
         events,

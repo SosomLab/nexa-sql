@@ -76,6 +76,114 @@ enum Req {
         name: String,
         title: String,
     },
+    /// 라이브 로그 폴링(T-71) — 메타 세션으로 V$SESSION 또는 로그 테이블을 읽는다.
+    Live {
+        gen: u64,
+        req: LiveReq,
+    },
+}
+
+/// 라이브 폴링 결과 — (줄들, 마지막 시각).
+pub(crate) type LiveResult = Result<(Vec<String>, Option<String>), String>;
+
+/// 라이브 로그 요청(설정에서 호스트가 조립).
+#[derive(Clone, Debug)]
+pub(crate) struct LiveReq {
+    pub sid: String,
+    /// `session` | `table`.
+    pub source: String,
+    pub table: String,
+    pub ts_col: String,
+    pub text_col: String,
+    /// 마지막으로 본 시각(`YYYY-MM-DD HH24:MI:SS.FF3`) — None이면 서버 현재 시각만 받아 온다(실행 시작 기준점).
+    pub since: Option<String>,
+}
+
+/// 식별자 검사(테이블·컬럼 설정값) — 영숫자·`_`·`$`·`#`·`.`·`"`만.
+fn ident_ok(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#' | '.' | '"'))
+}
+
+fn live_query(s: &mut dyn Session, req: &LiveReq) -> LiveResult {
+    let run = |s: &mut dyn Session, sql: &str| -> Result<nsql_core::ResultSet, String> {
+        s.execute(&nsql_core::ExecRequest {
+            sql: sql.to_string(),
+            params: vec![],
+        })
+        .map(|r| r.result_sets.into_iter().next().unwrap_or_default())
+        .map_err(|e| e.message)
+    };
+    let cell = |v: &nsql_core::Value| match v {
+        nsql_core::Value::Null => String::new(),
+        o => o.display(),
+    };
+    match req.source.as_str() {
+        "session" => {
+            let sid: i64 = req
+                .sid
+                .trim()
+                .parse()
+                .map_err(|_| "live: SID".to_string())?;
+            let rs = run(
+                s,
+                &format!(
+                    "SELECT NVL(client_info, ''), NVL(action, ''), NVL(module, ''), status FROM v$session WHERE sid = {sid}"
+                ),
+            )?;
+            let lines = rs
+                .rows
+                .iter()
+                .map(|r| {
+                    let parts: Vec<String> = r
+                        .iter()
+                        .take(3)
+                        .map(cell)
+                        .filter(|p| !p.is_empty())
+                        .collect();
+                    parts.join(" · ")
+                })
+                .filter(|l| !l.is_empty())
+                .collect();
+            Ok((lines, None))
+        }
+        "table" => {
+            if !ident_ok(&req.table) || !ident_ok(&req.ts_col) || !ident_ok(&req.text_col) {
+                return Err("live: table/column name".into());
+            }
+            let fmt = "YYYY-MM-DD HH24:MI:SS.FF3";
+            let Some(since) = &req.since else {
+                let rs = run(
+                    s,
+                    &format!("SELECT TO_CHAR(SYSTIMESTAMP, '{fmt}') FROM dual"),
+                )?;
+                let now = rs.rows.first().and_then(|r| r.first()).map(cell);
+                return Ok((Vec::new(), now));
+            };
+            let sql = format!(
+                "SELECT TO_CHAR({ts}, '{fmt}'), {tx} FROM {tb} WHERE {ts} > TO_TIMESTAMP('{since}', '{fmt}') ORDER BY {ts}",
+                ts = req.ts_col,
+                tx = req.text_col,
+                tb = req.table,
+                since = since.replace('\'', "")
+            );
+            let rs = run(s, &sql)?;
+            let mut last = None;
+            let lines = rs
+                .rows
+                .iter()
+                .map(|r| {
+                    let t = r.first().map(cell).unwrap_or_default();
+                    let x = r.get(1).map(cell).unwrap_or_default();
+                    last = Some(t.clone());
+                    format!("{t}  {x}")
+                })
+                .collect();
+            Ok((lines, last))
+        }
+        _ => Ok((Vec::new(), None)),
+    }
 }
 
 enum Resp {
@@ -102,6 +210,10 @@ enum Resp {
         gen: u64,
         title: String,
         r: Result<String, String>,
+    },
+    Live {
+        gen: u64,
+        r: LiveResult,
     },
 }
 
@@ -140,6 +252,9 @@ pub(crate) struct Explorer {
     focused: bool,
     /// 소스 요청 중(더블클릭 연타 방지).
     source_pending: bool,
+    /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
+    live_results: Vec<LiveResult>,
+    pub(crate) live_inflight: bool,
 }
 
 fn err_s(e: DbError) -> String {
@@ -225,6 +340,13 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 Resp::Source { gen, title, r }
             }
+            Req::Live { gen, req } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| live_query(s, &req));
+                Resp::Live { gen, r }
+            }
         };
         if tx.send(resp).is_err() {
             break;
@@ -306,6 +428,8 @@ impl Explorer {
             visible,
             focused: false,
             source_pending: false,
+            live_results: Vec::new(),
+            live_inflight: false,
         };
         e.reset_tree();
         e
@@ -377,6 +501,19 @@ impl Explorer {
 
     pub(crate) fn take_actions(&mut self) -> Vec<ExplorerAction> {
         std::mem::take(&mut self.actions)
+    }
+
+    /// 라이브 로그 폴링 요청(메타 세션 · 진행 중이면 무시).
+    pub(crate) fn live_poll(&mut self, req: LiveReq) {
+        if self.live_inflight || self.dialect != Some(Dialect::Oracle) {
+            return;
+        }
+        self.live_inflight = true;
+        let _ = self.tx.send(Req::Live { gen: self.gen, req });
+    }
+
+    pub(crate) fn take_live(&mut self) -> Vec<LiveResult> {
+        std::mem::take(&mut self.live_results)
     }
 
     /// 스레드 응답 반영 — 바뀐 게 있으면 true.
@@ -472,6 +609,13 @@ impl Explorer {
                         }
                         Err(e) => self.set_error(node, e),
                     }
+                }
+                Resp::Live { gen, r } => {
+                    self.live_inflight = false;
+                    if gen != self.gen {
+                        continue;
+                    }
+                    self.live_results.push(r);
                 }
                 Resp::Source { gen, title, r } => {
                     self.source_pending = false;

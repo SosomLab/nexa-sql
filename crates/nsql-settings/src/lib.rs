@@ -163,6 +163,13 @@ const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("grid", Msg::ValGrid),
 ];
 
+/// Oracle 실행 중 로그 소스(T-71 · docs/32 §2).
+const LIVE_SOURCE_OPTS: &[(&str, Msg)] = &[
+    ("off", Msg::ValLiveOff),
+    ("session", Msg::ValLiveSession),
+    ("table", Msg::ValLiveTable),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -751,6 +758,49 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescMaxConcurrent,
         kind: SettingKind::Int { min: 1, max: 16 },
         default: "4",
+    },
+    Entry {
+        key: "oracle.live.source",
+        cat: Msg::CatConnection,
+        label: Msg::LblLiveSource,
+        desc: Msg::DescLiveSource,
+        kind: SettingKind::Choice(LIVE_SOURCE_OPTS),
+        default: "session",
+    },
+    Entry {
+        key: "oracle.live.interval_ms",
+        cat: Msg::CatConnection,
+        label: Msg::LblLiveInterval,
+        desc: Msg::DescLiveInterval,
+        kind: SettingKind::Int {
+            min: 250,
+            max: 60_000,
+        },
+        default: "1000",
+    },
+    Entry {
+        key: "oracle.live.table",
+        cat: Msg::CatConnection,
+        label: Msg::LblLiveTable,
+        desc: Msg::DescLiveTable,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.live.ts_col",
+        cat: Msg::CatConnection,
+        label: Msg::LblLiveTsCol,
+        desc: Msg::DescLiveTsCol,
+        kind: SettingKind::Text,
+        default: "LOG_TIME",
+    },
+    Entry {
+        key: "oracle.live.text_col",
+        cat: Msg::CatConnection,
+        label: Msg::LblLiveTextCol,
+        desc: Msg::DescLiveTextCol,
+        kind: SettingKind::Text,
+        default: "LOG_TEXT",
     },
     Entry {
         key: "connect.reconnect_same",

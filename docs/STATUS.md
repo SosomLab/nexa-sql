@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (4차 · win · 야간 자율) — Oracle 라이브 로그 모니터 1차 ✅(T-71)
+
+`oracle.live.source` session(기본)/table · 실행 중에만 `oracle.live.interval_ms`마다 메타 세션 폴링 · `[live]` 로그 줄 · 실행 끝 마지막 1회 · V$SESSION mechanism biscm 확인. 잔여 = CLI `--live` · 로그 창 Live 세그먼트 · DBMS_PIPE/LONGOPS 소스. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (3차 · win · 야간 자율) — 그리드 선택·복사 ✅ · 트랜잭션 ✅ · 실행 계획 ✅ · 서버 SET 통과 ✅
 
 그리드: 셀/범위 선택 · Ctrl+C TSV · 우클릭 Copy/with headers/CSV/INSERT · Ctrl+A. 트랜잭션: `session.autocommit`(기본 on) · Run ▸ Commit/Rollback(Ctrl+Alt+C/R) · 상태줄 Auto-commit/Manual(●). 실행 계획: Run ▸ Explain(Ctrl+Shift+X) · `nsql explain -c t -q sql`(Oracle DBMS_XPLAN · MSSQL SHOWPLAN_TEXT · PG EXPLAIN · SQLite · MySQL). 결함 수정: `SET NOCOUNT ON` 등 서버 SET 문이 무시되던 것. 실서버 3종 확인. **다음**: T-71 Oracle 라이브 모니터 → 편집기 찾기/바꾸기 · 파일 열기/저장(nexa-ui 대화상자 필요) → T-72. → [journal](journal/2026-09-15.md)
