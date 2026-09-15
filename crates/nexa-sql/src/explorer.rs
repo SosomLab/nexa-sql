@@ -246,6 +246,9 @@ pub(crate) struct Explorer {
     gen: u64,
     dialect: Option<Dialect>,
     conn_desc: String,
+    /// 루트 표시 = 프로필 이름(굵게) + 호스트:포트(흐리게 · docs/28 §1 · 사용자 09-15).
+    profile_name: String,
+    endpoint: String,
     menu: CtxMenu,
     actions: Vec<ExplorerAction>,
     last_click: Option<(usize, Instant)>,
@@ -423,6 +426,8 @@ impl Explorer {
             gen: 0,
             dialect: None,
             conn_desc: String::new(),
+            profile_name: String::new(),
+            endpoint: String::new(),
             menu: CtxMenu::new(),
             actions: Vec::new(),
             last_click: None,
@@ -480,10 +485,16 @@ impl Explorer {
     }
 
     /// 접속됨 — 메타 세션을 따로 연다(편집기 세션과 분리).
-    pub(crate) fn connect(&mut self, spec: &ConnectSpec) {
+    pub(crate) fn connect(&mut self, spec: &ConnectSpec, profile_name: &str) {
         self.gen += 1;
         self.dialect = None;
         self.conn_desc = spec.redacted();
+        self.profile_name = profile_name.to_string();
+        self.endpoint = match (&spec.host, spec.port) {
+            (Some(h), Some(p)) => format!("{h}:{p}"),
+            (Some(h), None) => h.clone(),
+            _ => spec.database.clone().unwrap_or_default(),
+        };
         self.reset_tree();
         self.nodes[0].state = LoadState::Loading;
         let _ = self.tx.send(Req::Open {
@@ -496,6 +507,8 @@ impl Explorer {
         self.gen += 1;
         self.dialect = None;
         self.conn_desc.clear();
+        self.profile_name.clear();
+        self.endpoint.clear();
         self.reset_tree();
         let _ = self.tx.send(Req::Close);
     }
@@ -1066,8 +1079,10 @@ impl Explorer {
             NodeKind::Root => {
                 if self.conn_desc.is_empty() {
                     (t(Msg::ExpNotConnected).to_string(), String::new())
+                } else if self.profile_name.is_empty() {
+                    (self.endpoint.clone(), String::new())
                 } else {
-                    (self.conn_desc.clone(), String::new())
+                    (self.profile_name.clone(), self.endpoint.clone())
                 }
             }
             NodeKind::Schema(s) => (s.clone(), String::new()),

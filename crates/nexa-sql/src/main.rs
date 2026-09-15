@@ -1446,7 +1446,8 @@ impl App {
                     self.sync_disconnect_btn(true);
                     // 탐색기 메타 세션(별도) — 같은 스펙으로.
                     if let Some(spec) = self.last_spec.clone() {
-                        self.explorer.connect(&spec);
+                        let name = self.conn_win.active_name().to_string();
+                        self.explorer.connect(&spec, &name);
                     }
                 }
                 RunEvent::Disconnected => {
