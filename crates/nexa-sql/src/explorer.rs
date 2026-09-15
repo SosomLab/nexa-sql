@@ -1203,8 +1203,8 @@ impl Explorer {
                         x += chip + (6.0 * s).round() as i32;
                     }
                     let (label, sub) = self.label(*i);
-                    let bold = matches!(n.kind, NodeKind::Root | NodeKind::Schema(_));
-                    dc.select_font(FontSlot::Base, bold);
+                    // 메뉴와 같은 글꼴·크기·굵기(DBeaver 캡처 기준 · 사용자 09-15) — 굵게 없음.
+                    dc.select_font(FontSlot::Base, false);
                     dc.text(x, ty, rr, &label, th.text);
                     let lw = dc.text_width(&label);
                     dc.select_font(FontSlot::Base, false);

@@ -380,8 +380,9 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerFontSize,
         desc: Msg::DescExplorerFontSize,
-        kind: SettingKind::Int { min: 8, max: 40 },
-        default: "17",
+        // 0 = 메뉴 글꼴 크기를 그대로 따른다(DBeaver처럼 풀다운·탐색기 동일 · 사용자 09-15).
+        kind: SettingKind::Int { min: 0, max: 40 },
+        default: "0",
     },
     Entry {
         key: "explorer.visible",

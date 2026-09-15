@@ -941,7 +941,7 @@ impl Msg {
             Msg::StJsonError => ["settings.json: {0}", "settings.json: {0}"],
             Msg::StJsonBuiltinTodo => ["Built-in JSON editor is not ready yet — opened externally", "내장 JSON 편집기는 아직 준비 중 — 외부로 열었습니다"],
             Msg::LblExplorerFontSize => ["Explorer font size", "탐색기 글꼴 크기"],
-            Msg::DescExplorerFontSize => ["Font size of the object explorer tree (px) — default equals the menu font", "오브젝트 탐색기 트리 글꼴 크기(px) — 기본값은 메뉴 글꼴과 같다"],
+            Msg::DescExplorerFontSize => ["Font size of the object explorer tree (px). 0 = same as the menu font (ui.menu_font_size), like DBeaver", "오브젝트 탐색기 트리 글꼴 크기(px). 0 = 메뉴 글꼴(ui.menu_font_size)과 동일(DBeaver 방식)"],
             Msg::LblLiveInterval => ["Live log poll interval (ms)", "실행 중 로그 폴링 간격(ms)"],
             Msg::DescLiveInterval => ["Polling period while a statement runs (only then; 250–60000)", "문장 실행 중에만 폴링하는 주기(250~60000)"],
             Msg::LblLiveTable => ["Live log table", "실행 중 로그 테이블"],

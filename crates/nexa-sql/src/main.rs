@@ -1774,9 +1774,13 @@ impl App {
             }
             // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
             {
+                let exp_px = match self.settings.int("explorer.font_size") {
+                    0 => self.settings.int("ui.menu_font_size"),
+                    n => n,
+                } as f32;
                 let prefs = FontPrefs {
                     base: SlotFont {
-                        size: self.settings.int("explorer.font_size") as f32,
+                        size: exp_px,
                         bold: false,
                         italic: false,
                     },
