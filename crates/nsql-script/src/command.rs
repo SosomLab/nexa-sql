@@ -501,9 +501,17 @@ pub fn explain_script(dialect: Dialect, stmt: &str) -> String {
         Dialect::Oracle => {
             format!("EXPLAIN PLAN FOR {s};\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY());\n")
         }
-        Dialect::Mssql => {
-            format!("SET SHOWPLAN_TEXT ON;\nGO\n{s};\nGO\nSET SHOWPLAN_TEXT OFF;\nGO\n")
-        }
+        // DECLARE로 시작해야 어댑터가 sp_executesql(RPC)이 아닌 배치로 보낸다 — SHOWPLAN 결과 집합은 배치에서만 온다(09-15 실측).
+        Dialect::Mssql => format!(
+            "SET SHOWPLAN_TEXT ON;
+GO
+DECLARE @nsql_plan BIT;
+{s};
+GO
+SET SHOWPLAN_TEXT OFF;
+GO
+"
+        ),
         Dialect::Postgres => format!("EXPLAIN (VERBOSE, COSTS) {s};\n"),
         Dialect::Sqlite => format!("EXPLAIN QUERY PLAN {s};\n"),
         Dialect::Mysql | Dialect::Odbc => format!("EXPLAIN {s};\n"),
