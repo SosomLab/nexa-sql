@@ -150,9 +150,10 @@ fn pg_session_variables_procedure_out_and_notice() {
         &mut r,
         "EXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) t\nSELECT :V_NAME AS n, :V_CNT AS c;\nCREATE OR REPLACE PROCEDURE nsql_it_p(IN a INT, OUT b INT) LANGUAGE plpgsql AS $$ BEGIN b := a * 2; END $$;\nCALL nsql_it_p(21, NULL);\nSELECT 1234.5::numeric AS d, DATE '2026-07-23' AS dt, TIMESTAMP '2026-07-23 01:02:03' AS ts;\n",
     );
+    // 단순 질의 프로토콜은 셀이 텍스트로 온다(`Str("3")`) — 표시값으로 비교.
     assert_eq!(
-        r.engine.vars.get("V_CNT").unwrap().value,
-        Value::Int(3),
+        r.engine.vars.get("V_CNT").unwrap().value.display(),
+        "3",
         "{ev:#?}"
     );
     let sets: Vec<&nsql_core::ResultSet> = ev
