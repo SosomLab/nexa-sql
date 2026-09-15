@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (10차 · win)** — **설정 JSON 편집**(`nsql-settings::json` 객체 계층 · 외부 프로그램 열기 · 저장 감시 즉시 반영 · `nsql config export-json/import-json` · `settings.json_editor` · T-76 내장 편집기 예약) · 설정 창 세로 우선 분할 + 스플리터(IntentFade) · 탐색기 글꼴 `explorer.font_size` 17 + 글꼴 비례 셰브론. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (9차 · win)** — 설정 창 오른쪽 클릭 → 왼쪽 트리 선택 결함(nexa-ctl 트리 y-only 히트 + 무조건 전달) 수정 · **마우스 라우팅 규칙** CLAUDE.md §3 · 탐색기 루트 = 프로필명+host:port. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (8차 · win)** — **환경 설정 창**(`prefs_win.rs` · 검색+트리+카드 · 종류별 컨트롤 · 즉시 반영 · 고급 토글 · T-39 1차) · **접속 해제 툴바**(nexa-ui Toolbar `enabled`) · `ui.menu_font_size` 17 · 탐색기 셰브론(nexa-dir2 부품 · 빈 노드 숨김). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (7차 · win)** — 드라이버 분리 검토: 정적 링크 = 기동/메모리/속도 비용 0 실측 → 내장 유지 · 확장 전송은 in-process cdylib(C ABI · 지연 dlopen)로 **DR-29** · T-27 개정 · [22 §0](22-driver-extensions.md). → [journal](journal/2026-09-15.md)

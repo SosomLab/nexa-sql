@@ -256,6 +256,8 @@ pub(crate) struct Explorer {
     focused: bool,
     /// 소스 요청 중(더블클릭 연타 방지).
     source_pending: bool,
+    /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
+    row_px: i32,
     /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
     live_results: Vec<LiveResult>,
     pub(crate) live_inflight: bool,
@@ -434,6 +436,7 @@ impl Explorer {
             visible,
             focused: false,
             source_pending: false,
+            row_px: 0,
             live_results: Vec::new(),
             live_inflight: false,
         };
@@ -844,7 +847,11 @@ impl Explorer {
     }
 
     fn row_h(&self) -> i32 {
-        (ROW_H * self.scale).round() as i32
+        if self.row_px > 0 {
+            self.row_px
+        } else {
+            (ROW_H * self.scale).round() as i32
+        }
     }
 
     fn content_h(&self) -> i32 {
@@ -1127,9 +1134,11 @@ impl Explorer {
         dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
         dc.select_font(FontSlot::Base, false);
         let th_txt = dc.text_height();
+        // 행 높이·셰브론·칩은 글꼴 높이에 비례(글꼴을 키우면 같이 커진다).
+        self.row_px = th_txt + (7.0 * s).round() as i32;
         let row_h = self.row_h();
         let indent = (INDENT * s).round() as i32;
-        let chip = (10.0 * s).round() as i32;
+        let chip = (th_txt as f32 * 0.55).round() as i32;
         let rows = self.screen_rows();
         let first = (self.scroll / row_h).max(0) as usize;
         for (pos, (node, parent)) in rows.iter().enumerate().skip(first) {
@@ -1174,7 +1183,7 @@ impl Explorer {
                     // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
                     let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
                     if n.expandable && !empty_loaded {
-                        let cw = (12.0 * s).round() as i32;
+                        let cw = (th_txt as f32 * 0.62).round().max(8.0) as i32;
                         let chev = Rect::new(gx, y + (row_h - cw) / 2, cw, cw);
                         if n.expanded {
                             draw_chevron_down(dc, chev, th.text_dim);

@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (10차 · win) — 설정 JSON 편집 ✅ · 설정 창 스플리터/세로 분할 ✅ · 탐색기 글꼴 ✅
+
+Edit ▸ Edit settings as JSON… / 설정 창 [JSON 편집…] → `settings.json`(객체 계층) 외부 프로그램 · 저장 감시(1s) → 바뀐 키 즉시 반영. CLI `nsql config export-json/import-json`. `settings.json_editor` external(builtin = T-76). 설정 창: 왼쪽 열(검색+트리) | 스플리터(hover 페이드) | 카드. `explorer.font_size` 17. **다음**: T-74 파일 열기/저장 → T-76 내장 JSON 편집 → T-72. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (8차 · win) — 환경 설정 창 ✅(T-39 1차) · 접속 해제 툴바 ✅ · 메뉴 글꼴 설정 ✅ · 탐색기 셰브론 ✅
 
 Edit ▸ Preferences…(Ctrl+,): 검색 · 트리(`CATEGORY_TREE`) · 카드(Switch/Combo/TextBox · 색 선택… · 단축키 캡처… · 초기화 · 고급) · 바꾸는 즉시 저장·반영. 툴바 Disconnect(접속 시만 활성). `ui.menu_font_size` 17. ⏳ 사용자 실기: 설정 창 배치·콤보·검색. **다음**: T-39 잔여(프로젝트 스코프 · 키맵 카테고리 그리드) → T-74 파일 열기/저장 → T-72. → [journal](journal/2026-09-15.md)

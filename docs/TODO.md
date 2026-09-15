@@ -107,6 +107,7 @@
 | **T-73** | P1 | 중 | ✅ 09-15 1차(`findbar.rs` · Ctrl+F/H · F3 · Aa · Replace/All · 순환) · 잔여 = 정규식(T-59) · 전체 일치 하이라이트 · 단어 단위 · 편집기 **찾기/바꾸기**(Ctrl+F/H · 대소문자·정규식 T-59·전체 바꾸기 · 결과 하이라이트) — nexa-ctl TextBox 검색 API | T-58 T-59 | 🚧 |
 | **T-74** | P1 | 중 | **파일 열기/저장**(File ▸ Open/Save/Save As · 최근 파일 · 외부 변경 X-1) — nexa-ui 자체 파일 대화상자([nexa-ui 20](../../nexa-ui/docs/20-file-management-and-dialogs.md) F-6) 선행 | nexa-ui 20 | ☐ |
 | **T-75** | P2 | 소 | 그리드 복사 확장 — Copy as JSON/Markdown · 컬럼 헤더 우클릭(컬럼 복사·숨김) · 셀 편집기(nexa-ui 21 §3-2) | 09-15 3차 | ☐ |
+| **T-76** | P2 | 소 | **settings.json 내장 편집기**(`settings.json_editor = builtin`) — 편집기 탭에서 열고 저장(T-74 파일 저장) → 같은 감시 경로로 반영 · JSON 구문 강조 패키지 · 스키마 힌트(레지스트리 라벨/허용값) | T-74 T-17 | ☐ |
 | **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |
 | **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
 

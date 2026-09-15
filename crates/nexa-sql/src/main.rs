@@ -143,6 +143,9 @@ struct App {
     live_since: Option<String>,
     live_last: String,
     live_final: bool,
+    /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
+    json_watch: Option<(std::path::PathBuf, Option<std::time::SystemTime>)>,
+    json_next: Instant,
     focus: Focus,
     // 워커
     worker: worker::Handle,
@@ -554,6 +557,91 @@ impl App {
         }
     }
 
+    /// settings.json으로 편집(사용자 09-15) — 내보내고 외부 프로그램(.json 연결)으로 연 뒤 저장을 감시한다.
+    /// `settings.json_editor = builtin`은 편집기 파일 저장(T-74)이 생기면 탭으로(T-76) · 지금은 외부로 대체.
+    fn edit_settings_json(&mut self) {
+        let path = match self.settings.export_json() {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = tf(Msg::StJsonError, &[&e.to_string()]);
+                return;
+            }
+        };
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        self.json_watch = Some((path.clone(), mtime));
+        self.json_next = Instant::now() + Duration::from_millis(1000);
+        let builtin = self.settings.get("settings.json_editor") == Some("builtin");
+        match open_external(&path) {
+            Ok(()) => {
+                self.status = if builtin {
+                    t(Msg::StJsonBuiltinTodo).to_string()
+                } else {
+                    tf(Msg::StJsonOpened, &[&path.display().to_string()])
+                };
+            }
+            Err(e) => self.status = tf(Msg::StJsonError, &[&e]),
+        }
+        self.redraw();
+    }
+
+    /// settings.json 저장 감시 — 바뀌었으면 다시 읽어 바뀐 키만 반영·저장(1초 폴링 · 열어 둔 뒤에만).
+    fn json_tick(&mut self, now: Instant) -> Option<Instant> {
+        let (path, last) = self.json_watch.clone()?;
+        if now < self.json_next {
+            return Some(self.json_next);
+        }
+        self.json_next = now + Duration::from_millis(1000);
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        if mtime.is_some() && mtime != last {
+            self.json_watch = Some((path.clone(), mtime));
+            match std::fs::read_to_string(&path) {
+                Ok(text) => match self.settings.import_json(&text) {
+                    Ok(r) => {
+                        self.persist_settings();
+                        let mut restart = false;
+                        for k in &r.changed {
+                            if !self.apply_setting(k) {
+                                restart = true;
+                            }
+                        }
+                        let mut note = String::new();
+                        if !r.unknown.is_empty() {
+                            note.push_str(&format!(" · unknown {}", r.unknown.join(",")));
+                        }
+                        if !r.invalid.is_empty() {
+                            note.push_str(&format!(
+                                " · invalid {}",
+                                r.invalid
+                                    .iter()
+                                    .map(|(k, _)| k.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ));
+                        }
+                        if restart {
+                            note.push_str(" · ");
+                            note.push_str(t(Msg::StNeedsRestart));
+                        }
+                        self.status =
+                            tf(Msg::StJsonReloaded, &[&r.changed.len().to_string(), &note]);
+                        self.prefs_win.refresh(&self.settings);
+                        self.prefs_win.redraw();
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                    }
+                    Err(e) => {
+                        self.status = tf(Msg::StJsonError, &[&e]);
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                    }
+                },
+                Err(e) => self.status = tf(Msg::StJsonError, &[&e.to_string()]),
+            }
+            self.redraw();
+        }
+        Some(self.json_next)
+    }
+
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
     fn sync_disconnect_btn(&mut self, connected: bool) {
         let mut inv = Invalidations::default();
@@ -619,7 +707,7 @@ impl App {
                     .set_whitespace(whitespace_style(&self.settings));
             }
             "ui.font_size" | "ui.menu_font_size" | "editor.font_size" | "grid.font_size"
-            | "explorer.width" => {
+            | "explorer.width" | "explorer.font_size" => {
                 self.layout();
             }
             _ => return false,
@@ -740,6 +828,7 @@ impl App {
                 self.worker.send(worker::Cmd::Disconnect);
             }
             "edit.prefs" => self.open_prefs = true,
+            "edit.settings_json" => self.edit_settings_json(),
             "help.about" => {
                 self.status = format!(
                     "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
@@ -781,6 +870,7 @@ impl App {
                     item("edit.select_all", Msg::MnSelectAll),
                     MenuEntry::Separator,
                     item("edit.prefs", Msg::MnPreferences),
+                    item("edit.settings_json", Msg::MnSettingsJson),
                 ],
             ),
             MenuDef::new(
@@ -923,6 +1013,7 @@ impl App {
         cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
         cmds.push(m("conn.disconnect", Msg::MnRun, Msg::MnDisconnect));
         cmds.push(m("edit.prefs", Msg::MnEdit, Msg::MnPreferences));
+        cmds.push(m("edit.settings_json", Msg::MnEdit, Msg::MnSettingsJson));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {
             cmds.push((
@@ -1660,10 +1751,22 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.explorer.paint(&mut dc, &th);
                 self.find.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
+            }
+            // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
+            {
+                let prefs = FontPrefs {
+                    base: SlotFont {
+                        size: self.settings.int("explorer.font_size") as f32,
+                        bold: false,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.explorer.paint(&mut dc, &th);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
             {
@@ -2066,6 +2169,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.conn_win.tick(now) {
             next = next.min(t);
         }
+        // settings.json 감시(열어 둔 뒤 1초 폴링 · 저장 즉시 반영).
+        if let Some(t) = self.json_tick(now) {
+            next = next.min(t);
+        }
         // Oracle 라이브 로그 폴링(실행 중에만 · 끝나면 마지막 1회).
         if let Some(t) = self.live_tick(now) {
             next = next.min(t);
@@ -2134,6 +2241,7 @@ impl ApplicationHandler<Wake> for App {
                 }
                 PrefsAction::OpenColors => self.open_colors = true,
                 PrefsAction::OpenKeys => self.open_keys = true,
+                PrefsAction::EditJson => self.edit_settings_json(),
                 PrefsAction::None => {}
             }
             return;
@@ -2345,6 +2453,21 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
+/// OS 연결 프로그램으로 파일 열기(외부 crate 0 · 3-OS).
+fn open_external(path: &std::path::Path) -> Result<(), String> {
+    let p = path.display().to_string();
+    let r = if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &p])
+            .spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&p).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(&p).spawn()
+    };
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
 fn is_wheel_ev(ev: &InputEvent) -> bool {
     matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. })
 }
@@ -2542,6 +2665,8 @@ fn main() {
         live_since: None,
         live_last: String::new(),
         live_final: false,
+        json_watch: None,
+        json_next: Instant::now(),
         focus: Focus::Editor,
         worker,
         events,

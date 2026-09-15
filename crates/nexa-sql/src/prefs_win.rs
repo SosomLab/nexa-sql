@@ -9,6 +9,7 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
+use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{
     Button, Combo, ComboControl, ComboItem, Control, InputEvent, Invalidations, Key as CtlKey,
     LabelSide, ScrollBars, TextBox, TreeControl, TreeModel, TreeNode, TreeView, Widget,
@@ -37,10 +38,16 @@ pub(crate) enum PrefsAction {
     Reset(String),
     OpenColors,
     OpenKeys,
+    /// settings.json으로 편집(호스트가 내보내고 열고 감시한다).
+    EditJson,
 }
 
 const PAD: f32 = 12.0;
 const TREE_W: f32 = 230.0;
+/// 스플리터 손잡이 폭(논리 px) — 왼쪽(검색+트리)과 카드 사이 · 드래그로 폭 조절 · hover 시 서서히 진해짐(clip과 같은 부품 `IntentFade`).
+const SPLIT_W: f32 = 6.0;
+const LEFT_MIN: f32 = 160.0;
+const RIGHT_MIN: f32 = 320.0;
 const SEARCH_H: f32 = 30.0;
 const CTL_H: f32 = 28.0;
 const CARD_GAP: f32 = 10.0;
@@ -84,6 +91,7 @@ pub(crate) struct PrefsWin {
     search: TextBox,
     tree: TreeView,
     advanced: Switch,
+    json_btn: Button,
     close_btn: Button,
     cards: Vec<Card>,
     /// 카드 영역·스크롤.
@@ -97,6 +105,11 @@ pub(crate) struct PrefsWin {
     sel: (usize, Option<usize>),
     last_tree_row: usize,
     query: String,
+    /// 왼쪽 열 폭(논리 px) · 드래그 중(시작 x, 시작 폭) · 손잡이 hover 페이드 · 손잡이 사각형.
+    left_w: f32,
+    split_drag: Option<(i32, f32)>,
+    split_fade: IntentFade,
+    split_rect: Rect,
 }
 
 fn is_color_key(k: &str) -> bool {
@@ -128,6 +141,7 @@ impl PrefsWin {
             search: TextBox::new(t(Msg::PhSearchSettings)),
             tree: TreeView::new(model),
             advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Left),
+            json_btn: Button::new(t(Msg::BtnEditJson)),
             close_btn: Button::new(t(Msg::BtnClose)),
             cards: Vec::new(),
             list: Rect::default(),
@@ -138,6 +152,10 @@ impl PrefsWin {
             sel: (0, Some(0)),
             last_tree_row: 1,
             query: String::new(),
+            left_w: TREE_W,
+            split_drag: None,
+            split_fade: IntentFade::with_speed(FadeSpeed::Fast),
+            split_rect: Rect::default(),
         }
     }
 
@@ -292,9 +310,11 @@ impl PrefsWin {
             return false;
         }
         let mut any = self.bars.tick(now_ms)
+            | self.split_fade.tick(now_ms)
             | self.tree.tick(now_ms)
             | self.search.tick(now_ms)
-            | self.close_btn.tick(now_ms);
+            | self.close_btn.tick(now_ms)
+            | self.json_btn.tick(now_ms);
         for c in &mut self.cards {
             any |= c.reset.tick(now_ms);
             if let Some(b) = &mut c.aux {
@@ -312,8 +332,10 @@ impl PrefsWin {
     pub(crate) fn animating(&self) -> bool {
         self.window.is_some()
             && (self.bars.is_visible()
+                || self.split_fade.is_animating()
                 || self.search.is_animating()
                 || self.close_btn.is_animating()
+                || self.json_btn.is_animating()
                 || self.cards.iter().any(|c| {
                     c.reset.is_animating()
                         || c.aux.as_ref().is_some_and(|b| b.is_animating())
@@ -383,26 +405,37 @@ impl PrefsWin {
         let s = self.scale;
         let pad = self.s(PAD);
         let mut inv = Invalidations::default();
-        // 검색(위 전폭)
-        self.search.set_scale(s);
-        self.search
-            .set_bounds(Rect::new(pad, pad, w - pad * 2, self.s(SEARCH_H)), &mut inv);
-        let top = pad + self.s(SEARCH_H) + pad;
         let bottom_h = self.s(CTL_H);
         let by = h - pad - bottom_h;
-        // 트리(왼쪽)
+        // 세로 우선 분할(사용자 09-15): 왼쪽 열 = 검색(위) + 트리(아래) · 스플리터 · 오른쪽 = 카드(맨 위부터).
+        let max_left = ((w - pad * 2 - self.s(SPLIT_W)) as f32 / s - RIGHT_MIN).max(LEFT_MIN);
+        self.left_w = self.left_w.clamp(LEFT_MIN, max_left.max(LEFT_MIN));
+        let lw = self.s(self.left_w);
+        let top = pad;
+        self.search.set_scale(s);
+        self.search
+            .set_bounds(Rect::new(pad, top, lw, self.s(SEARCH_H)), &mut inv);
+        let tree_top = top + self.s(SEARCH_H) + self.s(8.0);
         self.tree.set_scale(s);
-        self.tree.set_bounds(
-            Rect::new(pad, top, self.s(TREE_W), by - pad - top),
-            &mut inv,
-        );
-        // 카드 목록(오른쪽)
-        let lx = pad + self.s(TREE_W) + pad;
+        self.tree
+            .set_bounds(Rect::new(pad, tree_top, lw, by - pad - tree_top), &mut inv);
+        self.split_rect = Rect::new(pad + lw, top, self.s(SPLIT_W), by - pad - top);
+        let lx = self.split_rect.right() + pad / 2;
         self.list = Rect::new(lx, top, w - lx - pad, by - pad - top);
         // 아래 줄: 고급 스위치 · 닫기
         self.advanced.set_scale(s);
         self.advanced
             .set_bounds(Rect::new(pad, by, self.s(160.0), bottom_h), &mut inv);
+        self.json_btn.set_scale(s);
+        self.json_btn.set_bounds(
+            Rect::new(
+                w - pad - self.s(96.0) * 2 - self.s(8.0),
+                by,
+                self.s(96.0),
+                bottom_h,
+            ),
+            &mut inv,
+        );
         self.close_btn.set_scale(s);
         self.close_btn.set_bounds(
             Rect::new(w - pad - self.s(96.0), by, self.s(96.0), bottom_h),
@@ -550,6 +583,39 @@ impl PrefsWin {
             return PrefsAction::None;
         };
         let mut inv = Invalidations::default();
+        // 스플리터: hover = 서서히 진해짐(IntentFade · 마지막 위치만) · 드래그 = 왼쪽 열 폭.
+        match ie {
+            InputEvent::MouseMove { x, y } => {
+                if let Some((x0, w0)) = self.split_drag {
+                    self.left_w = w0 + (x - x0) as f32 / self.scale;
+                    self.layout();
+                    self.redraw();
+                    return PrefsAction::None;
+                }
+                let over = self.split_rect.contains(Point { x, y }) && !self.any_combo_open();
+                self.split_fade.set(over.then_some(0));
+                if let Some(w) = &self.window {
+                    w.set_cursor(if over {
+                        winit::window::CursorIcon::ColResize
+                    } else {
+                        winit::window::CursorIcon::Default
+                    });
+                }
+            }
+            InputEvent::MouseDown { x, y, .. }
+                if self.split_rect.contains(Point { x, y }) && !self.any_combo_open() =>
+            {
+                self.split_drag = Some((x, self.left_w));
+                self.split_fade.jump(Some(0));
+                return PrefsAction::None;
+            }
+            InputEvent::MouseUp { .. } if self.split_drag.is_some() => {
+                self.split_drag = None;
+                self.redraw();
+                return PrefsAction::None;
+            }
+            _ => {}
+        }
         // 열린 콤보 = 모달(바깥 클릭은 닫고 통과 — 콤보 자체가 처리).
         if self.any_combo_open() {
             for c in &mut self.cards {
@@ -582,6 +648,8 @@ impl PrefsWin {
             self.tree.set_focused(self.tree.bounds().contains(p));
             self.close_btn
                 .set_focused(self.close_btn.bounds().contains(p));
+            self.json_btn
+                .set_focused(self.json_btn.bounds().contains(p));
             for c in &mut self.cards {
                 match &mut c.ctl {
                     CardCtl::Text(tb) => tb.set_focused(tb.bounds().contains(p)),
@@ -638,6 +706,11 @@ impl PrefsWin {
         {
             self.close_btn.on_event(&ie, &mut inv);
         }
+        if route(self.json_btn.bounds(), self.json_btn.is_focused())
+            || matches!(ie, InputEvent::MouseMove { .. })
+        {
+            self.json_btn.on_event(&ie, &mut inv);
+        }
         if let Some(q) = self.search.take_changed() {
             self.query = q;
             self.rebuild_cards();
@@ -652,6 +725,9 @@ impl PrefsWin {
         if self.close_btn.take_clicked() {
             self.close();
             return PrefsAction::None;
+        }
+        if self.json_btn.take_clicked() {
+            return PrefsAction::EditJson;
         }
         // 트리 선택 변화 → 카테고리 전환(검색 중이면 검색어를 비운다).
         let row = self.tree.selected_row();
@@ -881,6 +957,14 @@ impl PrefsWin {
             // ── 그리기: 검색 · 트리 · 카드(클립) · 하단
             self.search.paint(&mut dc, th);
             self.tree.paint(&mut dc, th);
+            // 스플리터 — 가는 선 + hover/드래그 시 진해지는 손잡이.
+            let sr = self.split_rect;
+            let cx = sr.x + sr.w / 2;
+            dc.fill_rect(Rect::new(cx, sr.y, 1, sr.h), th.border);
+            let a = hover_alpha(self.split_drag.is_some(), self.split_fade.value(0));
+            if a > 0.0 {
+                dc.fill_rect_alpha(Rect::new(cx - 1, sr.y, 3, sr.h), th.accent, a.max(0.15));
+            }
             dc.fill_rect(list, th.window_bg);
             for (c, lines) in self.cards.iter().zip(desc_lines.iter()) {
                 if c.rect.h == 0 {
@@ -969,6 +1053,7 @@ impl PrefsWin {
             // 하단
             self.advanced.paint(&mut dc, th);
             self.close_btn.paint(&mut dc, th);
+            self.json_btn.paint(&mut dc, th);
             let _ = pad;
             self.search.paint_popup(&mut dc, th);
         }

@@ -5,6 +5,7 @@
 //! nsql config get <key>
 //! nsql config set <key> <value>   # 검증 후 원자적 저장 — 예: ui.lang ko · ui.theme dark
 //! nsql config reset <key>
+//! nsql config export-json [file|-]   # 객체 계층 JSON으로(기본 settings.json 옆 파일) · import-json <file>
 //! nsql config path
 //! ```
 
@@ -71,6 +72,78 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                 );
             }
             0
+        }
+        "export-json" | "json" => {
+            let s = match open() {
+                Ok(s) => s,
+                Err(c) => return c,
+            };
+            match key {
+                Some(p) if p != "-" => match std::fs::write(p, nsql_settings::to_json(&s)) {
+                    Ok(()) => {
+                        println!("{p}");
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("{p}: {e}");
+                        1
+                    }
+                },
+                Some(_) => {
+                    print!("{}", nsql_settings::to_json(&s));
+                    0
+                }
+                None => match s.export_json() {
+                    Ok(p) => {
+                        println!("{}", p.display());
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("{e}");
+                        1
+                    }
+                },
+            }
+        }
+        "import-json" => {
+            let Some(p) = key else {
+                eprintln!("nsql config import-json <file>");
+                return 2;
+            };
+            let text = match std::fs::read_to_string(p) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("{p}: {e}");
+                    return 1;
+                }
+            };
+            let mut s = match open() {
+                Ok(s) => s,
+                Err(c) => return c,
+            };
+            match s.import_json(&text) {
+                Ok(r) => {
+                    if let Err(e) = s.save() {
+                        eprintln!("{e}");
+                        return 1;
+                    }
+                    for k in &r.changed {
+                        println!("{k} = {}", s.get(k).unwrap_or(""));
+                    }
+                    for k in &r.unknown {
+                        eprintln!("unknown key ignored: {k}");
+                    }
+                    for (k, v) in &r.invalid {
+                        eprintln!("invalid value ignored: {k} = {v}");
+                    }
+                    println!("{} changed", r.changed.len());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
         }
         "path" => match nsql_settings::config_dir() {
             Some(d) => {

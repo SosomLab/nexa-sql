@@ -113,6 +113,19 @@
 - `ui.font_size`/`editor.font_size` GUI 변경 경로(설정 화면) — 값은 이미 읽는다.
 - 방언별 오버라이드 · 프로젝트 스코프(T-39b).
 
+## 5. settings.json 편집 (사용자 09-15)
+
+VS Code의 "Open Settings (JSON)"과 같은 두 번째 편집 경로. 원천은 여전히 `settings.conf`(key=value) — JSON은 **내보내기/가져오기 뷰**다.
+
+| 항목 | 내용 |
+|---|---|
+| 형식 | 키 `a.b.c` → 객체 계층 `{"a":{"b":{"c":…}}}` · Int = 숫자 · Bool = true/false · 그 외 문자열 · 비노출(`HIDDEN`) 포함 · `_comment` 안내 · 사전순 2칸 들여쓰기 |
+| 파일 | `settings.json`(settings.conf 옆 · OS 사용자 설정 폴더) — 내보낼 때마다 현재 값으로 다시 쓴다 |
+| 열기 | `settings.json_editor` = **external**(기본 · OS의 .json 연결 프로그램 `cmd /C start` · `open` · `xdg-open`) / **builtin**(T-76 · 편집기 파일 저장 T-74 뒤 · 지금은 external 대체 안내) |
+| 반영 | 연 뒤부터 1초 폴링(mtime) — 저장되면 `import_json`: **있는 키만** 적용(없는 키 유지) · 모르는 키/틀린 값은 무시하고 보고 · 바뀐 키만 `apply_setting`(즉시 반영 목록 = 설정 창과 동일) + settings.conf 저장 + 설정 창 갱신 + 상태줄/로그 |
+| CLI | `nsql config export-json [file|-]` · `nsql config import-json <file>` — 같은 코덱(`nsql-settings::json` · 외부 crate 0) |
+| 후속 | T-76 내장 편집기(JSON 구문 강조 · 스키마 힌트) · 프로젝트 스코프 `.nexa/settings.json`(T-39b) |
+
 ## 4. 카테고리 트리 — DBeaver Preferences 차용 (사용자 09-15)
 
 DBeaver의 Preferences 트리(General / User Interface / Editors / Connections / Data Editor)를 그대로 상위 그룹으로 쓰고, 우리 카테고리를 아래에 배치한다. 단일 원천 = `nsql-settings::CATEGORY_TREE` · **설정 화면(`prefs_win.rs` · 09-15 ✅ 1차)** 사이드바와 `nsql config list` 머리글이 같은 표를 읽는다.

@@ -26,6 +26,9 @@ pub const APP_DIR: &str = "nexa-sql";
 /// 설정 파일 이름.
 pub const FILE_NAME: &str = "settings.conf";
 
+pub mod json;
+pub use json::{to_json, Import as JsonImport, Json};
+
 /// 설정 폴더 — `NSQL_HOME`이 있으면 그것(테스트·개발용 재지정), 아니면 OS 사용자 설정 폴더. `nsql-vault`도 같은 규칙을 쓴다.
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
@@ -168,6 +171,12 @@ const LIVE_SOURCE_OPTS: &[(&str, Msg)] = &[
     ("off", Msg::ValLiveOff),
     ("session", Msg::ValLiveSession),
     ("table", Msg::ValLiveTable),
+];
+
+/// `settings.json` 편집기(외부 = OS의 .json 연결 프로그램 · 내장 = 편집기 탭 · T-76).
+const JSON_EDITOR_OPTS: &[(&str, Msg)] = &[
+    ("external", Msg::ValJsonExternal),
+    ("builtin", Msg::ValJsonBuiltin),
 ];
 
 const THEME_OPTS: &[(&str, Msg)] = &[
@@ -365,6 +374,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExplorerTimeout,
         kind: SettingKind::Int { min: 1, max: 600 },
         default: "15",
+    },
+    Entry {
+        key: "explorer.font_size",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerFontSize,
+        desc: Msg::DescExplorerFontSize,
+        kind: SettingKind::Int { min: 8, max: 40 },
+        default: "17",
     },
     Entry {
         key: "explorer.visible",
@@ -881,6 +898,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescAutocommit,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "settings.json_editor",
+        cat: Msg::CatSession,
+        label: Msg::LblJsonEditor,
+        desc: Msg::DescJsonEditor,
+        kind: SettingKind::Choice(JSON_EDITOR_OPTS),
+        default: "external",
     },
     Entry {
         key: "session.mode",
