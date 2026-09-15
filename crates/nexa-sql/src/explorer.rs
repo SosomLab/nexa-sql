@@ -373,25 +373,31 @@ fn with_session<T>(
     }
 }
 
-/// 꺾임 90°(다리 45°) 셰브론 — nexa-ctl 공용(약 127°)보다 날카로운 모양(사용자 09-15) · 크기 = 영역 · 획 = 영역/9.
+/// 셰브론 — 꺾임각 [`CHEVRON_DEG`](DBeaver/Eclipse 트리 화살표 캡처 기준 ≈ 100° · 사용자 09-15) · 크기 = 영역 · 획 = 영역/10.
+const CHEVRON_DEG: f32 = 100.0;
+
 fn chevron_90(dc: &mut dyn DrawCtx, area: Rect, color: Color, expanded: bool) {
     let cx = area.x + area.w / 2;
     let cy = area.y + area.h / 2;
-    let half = (area.w * 3 / 10).max(3);
-    let w = (area.w as f32 / 9.0).max(1.5);
+    // 다리 길이(꼭짓점 → 끝)의 축 성분: 진행 방향 = a · 벌어지는 방향 = b (tan(θ/2) = b/a).
+    let len = (area.w as f32 * 0.32).max(3.0);
+    let half_t = (CHEVRON_DEG / 2.0).to_radians();
+    let a = (len * half_t.cos()).round() as i32; // 진행 방향
+    let b = (len * half_t.sin()).round() as i32; // 벌어짐(반)
+    let w = (area.w as f32 / 10.0).max(1.5);
     let pts = if expanded {
         // ∨ — 꼭짓점 아래
         [
-            (cx - half, cy - half / 2),
-            (cx, cy + half / 2),
-            (cx + half, cy - half / 2),
+            (cx - b, cy - a / 2),
+            (cx, cy + a - a / 2),
+            (cx + b, cy - a / 2),
         ]
     } else {
         // › — 꼭짓점 오른쪽
         [
-            (cx - half / 2, cy - half),
-            (cx + half / 2, cy),
-            (cx - half / 2, cy + half),
+            (cx - a / 2, cy - b),
+            (cx + a - a / 2, cy),
+            (cx - a / 2, cy + b),
         ]
     };
     dc.polyline(&pts, color, w);
