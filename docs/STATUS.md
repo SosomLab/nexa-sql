@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (7차 · win) — 드라이버 분리 검토 → DR-29(정적 유지 · 확장은 in-process cdylib)
+
+실측 기동 ≈20ms · 사설 8.5MB · 전역 초기화 0 → 분리 불필요. 확장 드라이버(다운로드·SxS)는 프로세스 대신 C ABI cdylib 지연 로드(T-27 개정). → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (5차 · win · 야간 자율) — 찾기/바꾸기 바 ✅(T-73 1차) · 자동 재접속 ✅
 
 Ctrl+F/Ctrl+H(mac ⌘F/⌥⌘F) · F3/Shift+F3 · Aa · Replace/All · 순환 · Esc. `connect.auto_reconnect`(기본 on) = 접속성 오류 뒤 다음 실행 전 재접속. **다음**: T-74 파일 열기/저장(nexa-ui 대화상자 선행) → T-72 배포 파이프라인 → T-59 정규식 → T-56/T-48 잔여. → [journal](journal/2026-09-15.md)

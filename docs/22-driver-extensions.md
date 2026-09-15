@@ -28,7 +28,19 @@
 
 **구현 위치**: `crates/nexa-sql/dialog/connect.rs`(호스트) — nexa-ctl `Combo`·`TextBox`·`Checkbox`·`Tree`·`Button`으로 그린다(컨트롤 17종 안에 다 있음 · 새 컨트롤 불요). 지금 최소 창의 [이름 칸 · 접속 칸 · Save]는 이 대화상자가 들어오면 **접속 칸 = 현재 프로필 표시 + `…` 버튼**으로 축소된다.
 
-## 2. 드라이버 = 확장 — GitHub Releases에서 내려받는 별도 프로세스
+## 0. 09-15 개정(DR-29) — 전송은 프로세스가 아니라 **in-process 동적 라이브러리**
+
+사용자 요구 *"로딩 시간·불필요한 메모리·속도 지연이 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"*. 실측(release · 09-15): `nsql` 기동 ≈ 20ms(sqlite 실행 포함 24ms) · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(MSSQL tokio 런타임·Oracle ODPI-C는 **첫 접속 때** 만들어짐). 정적으로 링크된 드라이버는 OS 요구 페이징 덕에 **쓰지 않으면 RAM에 올라오지 않는다** → 내장 4종은 정적 유지가 최적(분리 = 비용만 추가).
+
+| 방식 | 기동 | 메모리 | 호출 지연 | 격리 | 쓰임 |
+|---|---|---|---|---|---|
+| 정적 링크(현재) | 0 | 사용분만(페이징) | 0 | 없음 | 내장 Oracle·MSSQL·PG·SQLite |
+| **cdylib(C ABI · dlopen 지연 로드)** | 첫 접속 시 ~1ms | 로드한 드라이버만 | 0(직접 호출) | 없음(패닉은 `catch_unwind`) | **확장 드라이버**(다운로드 · SxS · 무재설치 갱신) — §2의 "프로세스"를 이것으로 읽는다 |
+| stdio JSON-RPC 프로세스 | 스폰 50~100ms | 별도 프로세스 | 왕복당 직렬화 | 완전 | 격리가 꼭 필요할 때만(같은 ABI를 프로세스 호스트가 감쌈 · 선택 모드) |
+
+구현 순서(T-27 개정): `nsql-abi`(버전 있는 C vtable · `Value/ExecRequest/ExecResult` 바이너리 코덱 — RPC 프로세스에도 재사용) → 드라이버 크레이트 `crate-type = ["rlib","cdylib"]` + `export_driver!` → `nsql-drivers` 지연 로더(`<exe>/drivers/` · `NSQL_DRIVER_DIR` · 외부 crate 0: `LoadLibrary`/`dlopen` 직접 선언) → 다운로드·SxS(T-28·29)는 그대로.
+
+## 2. 드라이버 = 확장 — GitHub Releases에서 내려받는 별도 프로세스(→ §0: 기본 전송은 in-process cdylib · 프로세스는 격리 선택 모드)
 
 ### 2-1. 왜 "다운로드"가 필요한가 (단일 바이너리 원칙 DR-1과의 조화)
 - 본체는 **올 러스트 단일 바이너리**(DR-1). 순수 Rust 드라이버(SQLite · MSSQL tiberius · PG · MySQL · Oracle thin GA 후)는 **내장**(feature) — 다운로드 대상이 아니다.

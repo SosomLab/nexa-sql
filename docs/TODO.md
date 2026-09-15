@@ -47,7 +47,7 @@
 ## 3-2. 드라이버 확장 · 접속 대화상자([22](22-driver-extensions.md) · DR-23·24 · 사용자 09-13) — 순서 고정(프로토콜 → 보관 → 다운로드 → Oracle → GUI)
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
 |---|:--:|:--:|---|---|:--:|
-| **T-27** | P0 | 대 | `nsql-driver-rpc` — stdio JSON-RPC v1(프레임·Session 메서드·Value 인코딩) + 프록시 Session + 참조 구현 `nsql-driver-sqlite-rpc` | — | ☐ |
+| **T-27** | P0 | 대 | **09-15 개정(DR-29)**: in-process cdylib C ABI(`nsql-abi` vtable+코덱 · 드라이버 `cdylib` 타깃 · 지연 `dlopen` 로더 · 외부 crate 0) — 프로세스 호스트는 같은 ABI 위 선택 모드 · 원안: `nsql-driver-rpc` — stdio JSON-RPC v1(프레임·Session 메서드·Value 인코딩) + 프록시 Session + 참조 구현 `nsql-driver-sqlite-rpc` | — | ☐ |
 | **T-28** | P0 | 중 | `nsql-ext` — `drivers/<id>/<ver>/` 레이아웃 · `nexa-driver.json` · 최신 선택 규칙 · 참조 카운트 · 삭제/휴지통 · `nsql driver list/rm/prune/path` | T-27 | ☐ |
 | **T-29** | P0 | 대 | GitHub 다운로드 — 색인 · 최신 태그 · HTTPS(rustls) · sha256 · Ed25519 · 원자적 설치 · `install/update/search` · 갱신 배지 · `--file` 오프라인 | T-28 D-19 | ☐ |
 | **T-30** | P0 | 대 | Oracle OCI 확장 — kubo 드라이버를 RPC 프로세스로 · Instant Client 19/23 SxS · 프로필 `driver=` · ORA-28040 힌트 | T-29 D-20 | ☐ |

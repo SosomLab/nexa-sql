@@ -38,6 +38,7 @@
 | DR-20 | 코드 서명은 **별도 요청 시** |
 | DR-22 | **연결 프로필 = 사용자 폴더 `nsql-vault`**(비밀번호만 봉투 · Windows DPAPI 기기 키 · CLI·GUI·다중 인스턴스 공유) — [21](docs/21-connection-profiles.md) |
 | DR-23·24 | **접속 대화상자 = DBeaver식 + Golden 로그인 리스트** · **드라이버 확장 = GitHub Releases 최신 다운로드 · stdio JSON-RPC 프로세스 · SxS 다중 버전 · 관리자(목록·삭제)** — [22](docs/22-driver-extensions.md) · T-27~31 |
+| DR-27~29 | **배포 = 설치본만**(포터블 없음 · 목적별 exe · [33](docs/33-distribution-and-packaging.md)) · **PostgreSQL 내장** · **내장 드라이버 정적 링크 유지 · 확장 드라이버 = in-process cdylib(C ABI · 지연 dlopen · IPC 0 · 프로세스는 격리 선택)**([22 §0](docs/22-driver-extensions.md)) |
 | DR-25 | **라이선스: 공유 라이브러리 `nexa-license`(형제 저장소) + 인증 서버는 비공개 저장소 `nexa-license-server`** · 티어 4단(Device·User 5대·Team·Org 서버) — [23](docs/23-license-activation.md) · [25](docs/25-license-tiers-and-server.md) · D-23~39 대기 |
 
 ### 설계 문서 지도(요구별)
