@@ -50,29 +50,146 @@ fn shrink(a: (f32, f32), b: (f32, f32), c: (f32, f32), k: f32) -> [(f32, f32); 3
 // ── 도형(256 좌표계)
 
 /// ＋ — 새 스크립트.
+/// Material 좌표(viewBox 960) → 이 도형 좌표(256).
+const M: f32 = 256.0 / 960.0;
+
+/// 점이 다각형 안인가(짝홀 규칙 · 오목 다각형 가능) — Material SVG의 직선 경로를 좌표 그대로 옮길 때.
+fn in_poly(x: f32, y: f32, pts: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let n = pts.len();
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = pts[i];
+        let (xj, yj) = pts[j];
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 fn shape_new(x: f32, y: f32) -> bool {
-    stroke(x, y, (128.0, 60.0), (128.0, 196.0), 26.0)
-        || stroke(x, y, (60.0, 128.0), (196.0, 128.0), 26.0)
+    // Material `note_add`계(사용자 SVG 09-16): 둥근 사각 틀(두께 80 · 오른쪽 위가 열림) + 오른쪽 위 십자.
+    let (x, y) = (x / M, y / M); // 960 좌표계에서 판정
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| x >= x0 && x <= x1 && y >= y0 && y <= y1;
+    let frame = in_rounded_rect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0)
+        && !rect(200.0, 200.0, 760.0, 760.0);
+    let notch = (x > 440.0 && y < 200.0) || (x > 760.0 && y < 600.0);
+    let plus = rect(680.0, 320.0, 760.0, 560.0) || rect(520.0, 400.0, 920.0, 480.0);
+    (frame && !notch) || plus
 }
 
 /// 📁 — 열기(폴더 외곽선 + 탭).
 fn shape_open(x: f32, y: f32) -> bool {
-    let body = in_rounded_rect(x, y, 36.0, 76.0, 184.0, 128.0, 14.0)
-        && !in_rounded_rect(x, y, 58.0, 98.0, 140.0, 84.0, 8.0);
-    let tab = in_rounded_rect(x, y, 36.0, 52.0, 84.0, 40.0, 12.0)
-        && !in_rounded_rect(x, y, 58.0, 74.0, 40.0, 30.0, 6.0);
-    body || tab
+    // Material `file_open`(사용자 SVG 09-16): 접힌 귀 문서 외곽선(왼쪽 모서리 r80) + 오른쪽 아래 ↘ 내보내기 화살표.
+    let (x, y) = (x / M, y / M);
+    let doc = in_poly(
+        x,
+        y,
+        &[
+            (160.0, 880.0),
+            (160.0, 80.0),
+            (560.0, 80.0),
+            (800.0, 320.0),
+            (800.0, 560.0),
+            (720.0, 560.0),
+            (720.0, 360.0),
+            (520.0, 360.0),
+            (520.0, 160.0),
+            (240.0, 160.0),
+            (240.0, 800.0),
+            (600.0, 800.0),
+            (600.0, 880.0),
+        ],
+    ) && in_rounded_rect(x, y, 160.0, 80.0, 640.0, 800.0, 80.0);
+    let arrow = in_poly(
+        x,
+        y,
+        &[
+            (878.0, 895.0),
+            (760.0, 777.0),
+            (760.0, 866.0),
+            (680.0, 866.0),
+            (680.0, 640.0),
+            (906.0, 640.0),
+            (906.0, 720.0),
+            (816.0, 720.0),
+            (934.0, 838.0),
+        ],
+    );
+    doc || arrow
 }
 
 /// 💾 — 저장(플로피: 외곽선 + 위 슬롯 + 아래 라벨).
 fn shape_save(x: f32, y: f32) -> bool {
-    let frame = in_rounded_rect(x, y, 40.0, 40.0, 176.0, 176.0, 16.0)
-        && !in_rounded_rect(x, y, 62.0, 62.0, 132.0, 132.0, 6.0);
-    let slot = in_rounded_rect(x, y, 84.0, 40.0, 88.0, 54.0, 4.0)
-        && !in_rounded_rect(x, y, 104.0, 40.0, 48.0, 36.0, 2.0);
-    let label = in_rounded_rect(x, y, 78.0, 140.0, 100.0, 76.0, 6.0)
-        && !in_rounded_rect(x, y, 98.0, 160.0, 60.0, 56.0, 3.0);
-    frame || slot || label
+    // Material `save`(사용자 SVG 09-16 재변경): 플로피 — 둥근 틀(오른쪽 위 모서리 사선) + 라벨 + 원판.
+    let (x, y) = (x / M, y / M);
+    let frame = in_rounded_rect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0) && x - y <= 560.0;
+    let hole = in_poly(
+        x,
+        y,
+        &[
+            (760.0, 314.0),
+            (646.0, 200.0),
+            (200.0, 200.0),
+            (200.0, 760.0),
+            (760.0, 760.0),
+        ],
+    );
+    let label = (240.0..=600.0).contains(&x) && (240.0..=400.0).contains(&y);
+    let disc = (x - 480.0) * (x - 480.0) + (y - 600.0) * (y - 600.0) <= 120.0 * 120.0;
+    (frame && !hole) || label || disc
+}
+
+fn shape_save_as(x: f32, y: f32) -> bool {
+    // Material `save_as`(사용자 SVG 09-16): 플로피(오른쪽 아래 비움) + 라벨 + 원판(사선 절단) + 연필 외곽선.
+    let (x, y) = (x / M, y / M);
+    let frame = in_poly(
+        x,
+        y,
+        &[
+            (120.0, 840.0),
+            (120.0, 120.0),
+            (680.0, 120.0),
+            (840.0, 280.0),
+            (840.0, 492.0),
+            (760.0, 482.0),
+            (760.0, 313.0),
+            (647.0, 200.0),
+            (200.0, 200.0),
+            (200.0, 760.0),
+            (440.0, 760.0),
+            (440.0, 840.0),
+        ],
+    ) && in_rounded_rect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0);
+    let label = (240.0..=600.0).contains(&x) && (240.0..=400.0).contains(&y);
+    let disc =
+        (x - 480.0) * (x - 480.0) + (y - 600.0) * (y - 600.0) <= 120.0 * 120.0 && x + y <= 1204.0;
+    let pencil = in_poly(
+        x,
+        y,
+        &[
+            (520.0, 920.0),
+            (520.0, 797.0),
+            (741.0, 577.0),
+            (803.0, 560.0),
+            (860.0, 600.0),
+            (863.0, 700.0),
+            (643.0, 920.0),
+        ],
+    ) && !in_poly(
+        x,
+        y,
+        &[
+            (580.0, 860.0),
+            (618.0, 860.0),
+            (739.0, 738.0),
+            (702.0, 701.0),
+            (580.0, 822.0),
+        ],
+    );
+    frame || label || disc || pencil
 }
 
 const TRI: [(f32, f32); 3] = [(76.0, 44.0), (212.0, 128.0), (76.0, 212.0)];
@@ -334,6 +451,10 @@ pub(crate) fn open_file() -> ToolIcon {
 }
 pub(crate) fn save_file() -> ToolIcon {
     mask(shape_save)
+}
+/// 다른 이름으로 저장(Material `save_as` · 사용자 SVG 09-16).
+pub(crate) fn save_as() -> ToolIcon {
+    mask(shape_save_as)
 }
 pub(crate) fn run_statement() -> ToolIcon {
     mask(shape_run_statement)

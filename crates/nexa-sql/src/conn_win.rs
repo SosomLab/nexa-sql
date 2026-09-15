@@ -227,6 +227,10 @@ pub(crate) struct ConnWin {
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     scale: f32,
+    /// 마지막으로 닫힐 때의 창 위치(물리 px) — 같은 모니터에서 다시 열면 그 자리(사용자 09-16).
+    last_pos: Option<(i32, i32)>,
+    /// 마지막으로 열 때 메인 창이 있던 모니터 — 메인 창이 다른 모니터로 갔으면 다시 가운데로.
+    last_monitor: Option<winit::monitor::MonitorHandle>,
     cursor: (i32, i32),
     shift: bool,
     primary: bool,
@@ -314,6 +318,8 @@ impl ConnWin {
             ctx: None,
             surface: None,
             scale: 1.0,
+            last_pos: None,
+            last_monitor: None,
             cursor: (0, 0),
             shift: false,
             primary: false,
@@ -885,11 +891,21 @@ impl ConnWin {
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLogin)))
             .with_theme(theme)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
-        if let Some((x, y, w, h)) = over {
-            let cx = x + (w as i32 - lw as i32) / 2;
-            let cy = y + (h as i32 - lh as i32) / 2;
+        // 위치 규칙(사용자 09-16): 기본 = 메인 창 가운데 · 그 뒤로는 마지막으로 닫힌 자리 · 메인 창이 **다른 모니터**로
+        // 옮겨졌으면 다시 메인 창 가운데(모니터 = 마지막으로 열 때의 메인 창 모니터와 비교).
+        let monitor = owner.and_then(Window::current_monitor);
+        let same_monitor = monitor.is_some() && monitor == self.last_monitor;
+        if let Some((x, y)) = self.last_pos.filter(|_| same_monitor) {
+            attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
+        } else if let Some((x, y, w, h)) = over {
+            // `over`는 물리 px · 창 크기는 논리 px → 메인 창 배율로 맞춘 뒤 가운데(2x에서 오른쪽 아래로 치우치던 것).
+            let s = owner.map_or(1.0, Window::scale_factor);
+            let (pw, ph) = ((lw * s) as i32, (lh * s) as i32);
+            let cx = x + (w as i32 - pw) / 2;
+            let cy = y + (h as i32 - ph) / 2;
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(cx.max(0), cy.max(0)));
         }
+        self.last_monitor = monitor;
         // 메인 창의 소유 창 — 작업표시줄 항목 하나 · 항상 메인 위(사용자 09-14).
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         let Ok(win) = el.create_window(attrs) else {
@@ -978,6 +994,10 @@ impl ConnWin {
     }
 
     pub(crate) fn close(&mut self) {
+        // 닫히는 자리를 기억(다음 열기 · 같은 모니터일 때만 재사용).
+        if let Some(p) = self.window.as_ref().and_then(|w| w.outer_position().ok()) {
+            self.last_pos = Some((p.x, p.y));
+        }
         self.surface = None;
         self.ctx = None;
         self.window = None;

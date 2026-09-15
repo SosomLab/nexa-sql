@@ -1202,6 +1202,8 @@ impl App {
             ToolItem::new("file.new", toolicons::new_script()).tip(t(Msg::TipNew)),
             ToolItem::new("file.open", toolicons::open_file()).tip(t(Msg::TipOpen)),
             ToolItem::new("file.save", toolicons::save_file()).tip(t(Msg::TipSave)),
+            // 다른 이름으로 저장 — 사용자가 Material `save_as` 아이콘을 준 09-16(툴바에 없던 항목 · 명령 id는 메뉴와 동일).
+            ToolItem::new("file.save_as", toolicons::save_as()).tip(t(Msg::TipSaveAs)),
             ToolItem::new("run.statement", toolicons::run_statement()).tip(t(Msg::TipRunStatement)),
             ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
             ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),

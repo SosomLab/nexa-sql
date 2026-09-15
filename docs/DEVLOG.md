@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (3차 · mac)** — 접속 창 위치: 기본 메인 창 가운데(배율 보정) · 같은 모니터면 마지막 위치 · 모니터 바뀌면 가운데. → [journal](journal/2026-09-16.md)
+- **2026-09-16 (2차 · mac)** — Material 아이콘 9종(사용자 SVG: 새로 고침·뒤로·앞으로·상위로·홈 = nexa-ui · New editor·열기·저장(플로피)·**Save As 툴바 버튼 신설** = `in_poly`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (1차 · mac)** — 맥 이관 첫날: 최신화(143+54 커밋) · Debug/Release 빌드 · 접속 프로필 위치(`~/Library/Application Support/nexa-sql`) · SNOP-DB 저장 · **맥↔Windows 차이 9건**(로그인 버튼 폭 HiDPI · Dock 아이콘 · 툴팁 층 · 툴바/탭 높이 · 한글 IME 단축키 · 두부 폰트 · 가로 스크롤 클립/방향 · 툴팁 다중 행) · Test OK 문구 · 기본 탭 문자 4 · **스플리터 2개**(`layout.editor_split_pct`) · 3-OS 스크립트 rustup 보정. → [journal](journal/2026-09-16.md)
 - **2026-09-15 (37차 · win · 마지막)** — 파일 대화상자 자원 회수 점검: **선형 누수 없음**(5주기 핸들·GDI 평평 · 셸 일회성 초기화만) · 워커 COM 짝 · 닫는 즉시 워커 회수 · `z_order` 정리 · `scripts/memcycle.ps1` · [37 §6-5](37-file-picker-performance.md) → [journal](journal/2026-09-15.md)
 - **2026-09-15 (36차 · win · 마지막)** — 우클릭 메뉴 아이콘/토글(OS 폴더 아이콘 · 켜짐/꺼짐 도형 · 라벨 정렬) · [37 성능](37-file-picker-performance.md) P-1~P-4 구현(평탄화 캐시 · 가시 행만 · 링크만 stat · 배치 150ms) · **맥 인수인계 메모** → [journal](journal/2026-09-15.md)
