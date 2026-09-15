@@ -35,6 +35,8 @@ pub(crate) struct Editors {
     registry: Rc<SyntaxRegistry>,
     rulers: Vec<usize>,
     whitespace: WhitespaceStyle,
+    /// (탭 폭, 공백 들여쓰기) — 새 탭에도 적용.
+    indent: (u8, bool),
 }
 
 const HOVER_MS: u128 = 900;
@@ -66,6 +68,7 @@ impl Editors {
             registry,
             rulers: Vec::new(),
             whitespace: WhitespaceStyle::default(),
+            indent: (4, true),
         };
         e.new_tab(None);
         e
@@ -80,6 +83,7 @@ impl Editors {
         tb.set_highlighter(Some(syntax.clone()));
         tb.set_rulers(self.rulers.clone());
         tb.set_whitespace(self.whitespace);
+        tb.set_indent(self.indent.0, self.indent.1);
         tb
     }
 
@@ -147,6 +151,19 @@ impl Editors {
         for b in &mut self.bufs {
             b.set_line_numbers(on);
         }
+    }
+
+    /// 들여쓰기(탭 폭 · 공백 여부) — 전 탭에(1차 = 전역 · 탭별 재정의는 T-69 후속).
+    pub(crate) fn set_indent(&mut self, tab_size: u8, spaces: bool) {
+        self.indent = (tab_size, spaces);
+        for b in &mut self.bufs {
+            b.set_indent(tab_size, spaces);
+        }
+    }
+
+    /// 활성 탭 본문의 줄머리 들여쓰기 변환.
+    pub(crate) fn convert_indent(&mut self, to_spaces: bool) {
+        self.cur_mut().convert_indent(to_spaces);
     }
 
     #[allow(dead_code)]

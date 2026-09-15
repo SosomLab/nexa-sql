@@ -237,6 +237,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "editor.tab_size",
+        cat: Msg::CatEditor,
+        label: Msg::LblTabSize,
+        desc: Msg::DescTabSize,
+        kind: SettingKind::Int { min: 1, max: 8 },
+        default: "4",
+    },
+    Entry {
+        key: "editor.indent_spaces",
+        cat: Msg::CatEditor,
+        label: Msg::LblIndentSpaces,
+        desc: Msg::DescIndentSpaces,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "editor.rulers",
         cat: Msg::CatEditor,
         label: Msg::LblRulers,
@@ -923,6 +939,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescSessionMode,
         kind: SettingKind::Choice(SESSION_MODE_OPTS),
         default: "shared",
+    },
+    Entry {
+        key: "log.open_at_start",
+        cat: Msg::CatLog,
+        label: Msg::LblLogOpenAtStart,
+        desc: Msg::DescLogOpenAtStart,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     Entry {
         key: "log.format",

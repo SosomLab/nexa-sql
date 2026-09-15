@@ -105,6 +105,9 @@ struct App {
     last_secs: Option<f64>,
     /// 상태줄 구문 이름 영역(클릭 → 팔레트 `Set Syntax`).
     status_syntax_rect: Rect,
+    /// 상태줄 들여쓰기 세그먼트(`Tab Size: 4`/`Spaces: 4` · 클릭 = 팝업 · T-69 1차).
+    status_tab_rect: Rect,
+    status_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
     z_order: Vec<WindowId>,
     toggle_log: bool,
@@ -673,6 +676,87 @@ impl App {
         }
     }
 
+    /// 들여쓰기 팝업(Sublime 상태바 클릭과 같은 항목 · docs/31 §2 1차): 공백/탭 · 탭 폭 1~8 · 변환.
+    fn open_indent_menu(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let spaces = self.settings.flag("editor.indent_spaces");
+        let ts = self.settings.int("editor.tab_size").clamp(1, 8);
+        let mark = |on: bool, s: String| {
+            if on {
+                format!("✓ {s}")
+            } else {
+                format!("   {s}")
+            }
+        };
+        let mut items = vec![
+            CtxItem::item(
+                "indent.spaces",
+                mark(spaces, t(Msg::MnIndentSpaces).to_string()),
+            ),
+            CtxItem::item(
+                "indent.tabs",
+                mark(!spaces, t(Msg::MnIndentTabs).to_string()),
+            ),
+        ];
+        for n in 1..=8 {
+            items.push(CtxItem::item(
+                format!("indent.size:{n}"),
+                mark(n == ts, tf(Msg::MnTabWidth, &[&n.to_string()])),
+            ));
+        }
+        items.push(CtxItem::item(
+            "indent.to_spaces",
+            format!("   {}", t(Msg::MnConvertToSpaces)),
+        ));
+        items.push(CtxItem::item(
+            "indent.to_tabs",
+            format!("   {}", t(Msg::MnConvertToTabs)),
+        ));
+        let r = self.status_tab_rect;
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(r);
+        // 상태줄 위로 열리도록 세그먼트 상단 기준(팝업 부품이 화면 안에 맞춘다).
+        self.status_menu
+            .open_at(r.x, r.y, items, host, px(240.0, self.scale));
+    }
+
+    fn indent_pick(&mut self, id: &str) {
+        match id {
+            "indent.spaces" | "indent.tabs" => {
+                let _ = self.settings.set(
+                    "editor.indent_spaces",
+                    if id == "indent.spaces" { "on" } else { "off" },
+                );
+            }
+            "indent.to_spaces" => self.editors.convert_indent(true),
+            "indent.to_tabs" => self.editors.convert_indent(false),
+            s if s.starts_with("indent.size:") => {
+                let _ = self
+                    .settings
+                    .set("editor.tab_size", &s["indent.size:".len()..]);
+            }
+            _ => return,
+        }
+        self.persist_settings();
+        self.apply_indent();
+        self.prefs_win.refresh(&self.settings);
+    }
+
+    /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
+    fn apply_indent(&mut self) {
+        let ts = self.settings.int("editor.tab_size").clamp(1, 8);
+        nexa_gfx::text::set_tab_cols(ts as u32);
+        self.editors
+            .set_indent(ts as u8, self.settings.flag("editor.indent_spaces"));
+        self.redraw();
+    }
+
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
     fn sync_disconnect_btn(&mut self, connected: bool) {
         let mut inv = Invalidations::default();
@@ -723,6 +807,7 @@ impl App {
                 .grid
                 .set_row_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
+            "editor.tab_size" | "editor.indent_spaces" => self.apply_indent(),
             "editor.rulers" => self
                 .editors
                 .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
@@ -1726,11 +1811,21 @@ impl App {
                 if let Some(secs) = self.last_secs {
                     segs.push((format!("{secs:.3}s"), false));
                 }
+                // 들여쓰기 세그먼트(Sublime "Tab Size: 4"/"Spaces: 4" · 구문 왼쪽 · 클릭 = 팝업 · 사용자 09-15).
+                let ts = self.settings.int("editor.tab_size").clamp(1, 8).to_string();
+                let indent_seg = if self.settings.flag("editor.indent_spaces") {
+                    tf(Msg::StSpaces, &[&ts])
+                } else {
+                    tf(Msg::StTabSize, &[&ts])
+                };
+                segs.push((indent_seg, true));
                 segs.push((self.editors.syntax_name(), true));
                 let gap = px(12.0, s);
                 let mut xr = wi - px(8.0, s);
                 self.status_syntax_rect = Rect::new(0, 0, 0, 0);
-                for (text, is_syntax) in segs.iter().rev() {
+                self.status_tab_rect = Rect::new(0, 0, 0, 0);
+                let last = segs.len() - 1;
+                for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
                     xr -= tw;
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
@@ -1741,8 +1836,10 @@ impl App {
                         text,
                         if *is_syntax { th.text } else { th.text_dim },
                     );
-                    if *is_syntax {
+                    if *is_syntax && idx == last {
                         self.status_syntax_rect = r;
+                    } else if *is_syntax {
+                        self.status_tab_rect = r;
                     }
                     xr -= gap;
                     dc.fill_rect(
@@ -1791,6 +1888,7 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
+                self.status_menu.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
@@ -1912,6 +2010,11 @@ impl App {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         );
+        // ★ MouseUp은 커서가 어디에 있든 **편집기에도** 전달한다 — 탭 바·탐색기 위에서 놓으면 편집기가 드래그 끝을
+        //   못 받아 다음 MouseMove가 선택을 바꾸던 결함(사용자 09-15). 중복 전달은 무해(dragging=false 멱등).
+        if matches!(ev, InputEvent::MouseUp { .. }) {
+            self.ed_mut().on_event(&ev, &mut inv);
+        }
         // 열린 명령 팔레트는 모달.
         if self.palette.is_open() {
             match self.palette.on_event(&ev, &mut inv) {
@@ -1925,11 +2028,29 @@ impl App {
             self.redraw();
             return;
         }
-        // 상태줄 구문 이름 클릭 → 팔레트(Set Syntax).
+        // 상태줄 들여쓰기 팝업(열려 있으면 모달 · 바깥 클릭은 닫고 통과).
+        if self.status_menu.is_open() {
+            let consumed = self.status_menu.on_event(&ev);
+            if let Some(id) = self.status_menu.take_picked() {
+                self.indent_pick(&id);
+                self.redraw();
+                return;
+            }
+            if consumed || !matches!(ev, InputEvent::MouseDown { .. }) {
+                self.redraw();
+                return;
+            }
+        }
+        // 상태줄 구문 이름 클릭 → 팔레트(Set Syntax) · 들여쓰기 세그먼트 클릭 → 팝업.
         if let InputEvent::MouseDown { x, y, .. } = ev {
             if self.status_syntax_rect.contains(Point { x, y }) {
                 let prefill = format!("{}: ", t(Msg::PalSetSyntax));
                 self.open_palette(&prefill);
+                return;
+            }
+            if self.status_tab_rect.contains(Point { x, y }) {
+                self.open_indent_menu();
+                self.redraw();
                 return;
             }
         }
@@ -2133,14 +2254,17 @@ impl ApplicationHandler<Wake> for App {
         self.window = Some(win);
         self.layout();
         self.set_focus(Focus::Editor);
-        // 로그 창은 메인 창 오른쪽에 함께 연다(사용자 09-14 "별도 창") — 메인의 소유 창.
-        let owner = self.window.clone();
-        self.log_win.open(
-            el,
-            theme::window_theme(self.settings.theme_mode()),
-            near,
-            owner.as_deref(),
-        );
+        self.apply_indent();
+        // 로그 창은 설정 `log.open_at_start`(기본 off · 사용자 09-15)일 때만 메인 옆에 함께 연다(Ctrl+`로 언제든).
+        if self.settings.flag("log.open_at_start") {
+            let owner = self.window.clone();
+            self.log_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                near,
+                owner.as_deref(),
+            );
+        }
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _ev: Wake) {
@@ -2705,6 +2829,8 @@ fn main() {
         last_rows: None,
         last_secs: None,
         status_syntax_rect: Rect::new(0, 0, 0, 0),
+        status_tab_rect: Rect::new(0, 0, 0, 0),
+        status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         toggle_log: false,
         open_colors: false,
         colors_win,

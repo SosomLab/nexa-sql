@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (18차 · win)** — 상태줄 **Tab Size/Spaces 세그먼트+팝업**(`editor.tab_size`·`indent_spaces` · nexa-gfx 탭 폭 주입 · 변환 · T-69 1차) · 로그 창 기본 꺼짐(`log.open_at_start`) · 드래그 선택 결함 2건(위로 끌면 처음까지 · MouseUp 항상 편집기에) · 상태줄 프로필명 · 아이콘 16px 비례 · 빨강 #FF0000. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (17차 · win)** — 탐색기 아이콘 16종(코드 마스크 · DBMS 방언색 · 종류별 팔레트 · `explorer.icons` 옵션). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (16차 · win)** — 탐색기 로딩 자리 행(접속 중 루트 포함 · 점 애니메이션) · 실행/탐색기 독립 확인. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (15차 · win)** — 설계 [34 트랜잭션 UX](34-transaction-ux.md)(탭별 수동 커밋 상태 3층 표시 · D-51·52 · T-77). → [journal](journal/2026-09-15.md)
