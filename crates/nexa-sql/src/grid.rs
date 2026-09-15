@@ -17,7 +17,79 @@ pub(crate) enum CopyKind {
     Tsv,
     TsvWithHeaders,
     Csv,
+    /// 고정폭 정렬 텍스트 표(머리글 포함).
+    Text,
+    /// Markdown 표.
+    Markdown,
+    /// JSON 배열(객체마다 컬럼 = 값 · 숫자/불리언/NULL은 리터럴).
+    Json,
+    /// SQL 문(종류별 · 행마다 한 문장 · 테이블 = 실행문에서 추정 · 키 = 첫 선택 컬럼).
+    Sql(SqlKind),
+}
+
+/// SQL 복사 종류(DBeaver Advanced Copy ▸ SQL · 사용자 09-15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SqlKind {
+    Select,
     Insert,
+    Update,
+    Delete,
+    Merge,
+}
+
+/// 실행한 SQL에서 대상 테이블을 추정한다 — `FROM t` · `INSERT INTO t` · `UPDATE t` · `MERGE INTO t`(서브쿼리 `FROM (`는 건너뜀).
+pub(crate) fn guess_table(sql: &str) -> Option<String> {
+    let toks: Vec<&str> = sql
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '(' || c == ')')
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut i = 0;
+    while i < toks.len() {
+        let up = toks[i].to_ascii_uppercase();
+        let next = toks.get(i + 1).copied();
+        let cand = match up.as_str() {
+            "FROM" | "UPDATE" => next,
+            "INTO"
+                if i > 0
+                    && matches!(
+                        toks[i - 1].to_ascii_uppercase().as_str(),
+                        "INSERT" | "MERGE"
+                    ) =>
+            {
+                next
+            }
+            _ => None,
+        };
+        if let Some(t) = cand {
+            let tu = t.to_ascii_uppercase();
+            let is_kw = matches!(tu.as_str(), "SELECT" | "WHERE" | "DUAL" | "VALUES");
+            let is_ident = t.chars().all(|c| {
+                c.is_alphanumeric()
+                    || c == '_'
+                    || c == '.'
+                    || c == '"'
+                    || c == '$'
+                    || c == '#'
+                    || c == '['
+                    || c == ']'
+                    || c == '`'
+            });
+            if !is_kw && is_ident && !sql.contains(&format!("FROM ({t}")) {
+                return Some(t.to_string());
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 드래그 선택 종류.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DragSel {
+    /// 셀 사각 범위.
+    Cells,
+    /// 행번호 열에서 시작 = 행 전체 범위.
+    Rows,
 }
 
 pub(crate) struct Grid {
@@ -54,16 +126,26 @@ pub(crate) struct Grid {
     hdr_resize: Option<(usize, i32, i32)>,
     /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — `IntentFade`(70ms 머문 마지막 목표만 · 진입 = `grid.hover_fade` · 사용자 09-14).
     hover: IntentFade,
-    /// 셀 선택(표시 행 · 표시 컬럼 위치) — 앵커와 현재 셀의 사각 범위 · 드래그로 확장 · Shift+클릭.
+    /// ★ 선택 구간 목록(표시 행 r0..=r1 · 표시 컬럼 c0..=c1 · 마지막 = 주 구간) — 셀·범위·행 전체·Ctrl 개별(사용자 09-15 · dir2 규약).
+    regions: Vec<(usize, usize, usize, usize)>,
+    /// 범위 확장의 기준 셀(Shift+클릭/드래그/Shift+방향키).
     sel_anchor: Option<(usize, usize)>,
+    /// 포커스 셀(테두리 · 키 이동 기준). 선택과 별개로 움직일 수 있다(Ctrl+방향키).
     sel_cur: Option<(usize, usize)>,
-    drag_sel: bool,
+    /// 드래그 중(셀 범위 / 행번호 열 = 행 범위).
+    drag_sel: Option<DragSel>,
     /// 우클릭 메뉴(복사 형식 · 전체 선택).
     menu: CtxMenu,
     /// 호스트가 가져갈 복사 텍스트(셀 수와 함께).
     pending_copy: Option<(String, usize)>,
+    /// 우클릭 메뉴가 열린 자리(2단 SQL 메뉴를 같은 자리에).
+    menu_at: (i32, i32),
+    /// 직전 MouseDown을 메뉴가 먹었다(항목 선택) — 호스트가 통과 여부를 판단하는 1회성 신호.
+    menu_click_consumed: bool,
     /// INSERT 복사용 방언(접속 시 호스트가 알려 준다).
     dialect: Dialect,
+    /// SQL 복사의 대상 테이블(실행문에서 추정 · 없으면 `T`).
+    source_table: Option<String>,
 }
 
 impl Default for Grid {
@@ -90,12 +172,16 @@ impl Default for Grid {
             hdr_drag: None,
             hdr_resize: None,
             hover: IntentFade::with_speed(FadeSpeed::Slow),
+            regions: Vec::new(),
             sel_anchor: None,
             sel_cur: None,
-            drag_sel: false,
+            drag_sel: None,
             menu: CtxMenu::new(),
             pending_copy: None,
+            menu_at: (0, 0),
+            menu_click_consumed: false,
             dialect: Dialect::Oracle,
+            source_table: None,
         }
     }
 }
@@ -153,15 +239,26 @@ impl Grid {
         self.scroll_y = 0;
         self.scroll_x = 0;
         self.col_w.clear();
+        self.regions.clear();
         self.sel_anchor = None;
         self.sel_cur = None;
-        self.drag_sel = false;
+        self.drag_sel = None;
         self.menu.close();
         self.load = t.elapsed();
     }
 
+    /// 실행 직전 호스트가 알려 주는 원본 문장 — SQL 복사의 테이블 이름 근거.
+    pub(crate) fn set_source_sql(&mut self, sql: &str) {
+        self.source_table = guess_table(sql);
+    }
+
     pub(crate) fn set_dialect(&mut self, d: Dialect) {
         self.dialect = d;
+    }
+
+    /// 직전 클릭을 메뉴가 먹었는가(1회성) — 참이면 호스트는 그 클릭을 아래로 흘리지 않는다.
+    pub(crate) fn take_menu_click(&mut self) -> bool {
+        std::mem::take(&mut self.menu_click_consumed)
     }
 
     pub(crate) fn menu_open(&self) -> bool {
@@ -173,15 +270,64 @@ impl Grid {
         self.pending_copy.take()
     }
 
-    /// 선택 범위(표시 행 r0..=r1 · 표시 컬럼 c0..=c1).
-    fn sel_range(&self) -> Option<(usize, usize, usize, usize)> {
-        let (a, c) = (self.sel_anchor?, self.sel_cur?);
-        Some((a.0.min(c.0), a.0.max(c.0), a.1.min(c.1), a.1.max(c.1)))
+    fn in_sel(&self, di: usize, pos: usize) -> bool {
+        self.regions
+            .iter()
+            .any(|&(r0, r1, c0, c1)| di >= r0 && di <= r1 && pos >= c0 && pos <= c1)
     }
 
-    fn in_sel(&self, di: usize, pos: usize) -> bool {
-        self.sel_range()
-            .is_some_and(|(r0, r1, c0, c1)| di >= r0 && di <= r1 && pos >= c0 && pos <= c1)
+    /// 행이 선택에 걸리는가(행번호 열 강조).
+    fn row_in_sel(&self, di: usize) -> bool {
+        self.regions
+            .iter()
+            .any(|&(r0, r1, _, _)| di >= r0 && di <= r1)
+    }
+
+    /// 컬럼(표시 위치)이 선택에 걸리는가(헤더 강조).
+    fn col_in_sel(&self, pos: usize) -> bool {
+        self.regions
+            .iter()
+            .any(|&(_, _, c0, c1)| pos >= c0 && pos <= c1)
+    }
+
+    fn rect_of(a: (usize, usize), b: (usize, usize)) -> (usize, usize, usize, usize) {
+        (a.0.min(b.0), a.0.max(b.0), a.1.min(b.1), a.1.max(b.1))
+    }
+
+    fn last_col(&self) -> usize {
+        self.col_order.len().saturating_sub(1)
+    }
+
+    /// 단일 셀/범위 선택(기존 해제) — 평 클릭·평 이동.
+    fn select_only(&mut self, cell: (usize, usize)) {
+        self.regions = vec![Self::rect_of(cell, cell)];
+        self.sel_anchor = Some(cell);
+        self.sel_cur = Some(cell);
+    }
+
+    /// 앵커~셀 범위로 주 구간을 바꾼다(Shift).
+    fn extend_to(&mut self, cell: (usize, usize)) {
+        let a = self.sel_anchor.unwrap_or(cell);
+        let r = Self::rect_of(a, cell);
+        match self.regions.last_mut() {
+            Some(last) => *last = r,
+            None => self.regions.push(r),
+        }
+        self.sel_cur = Some(cell);
+    }
+
+    /// 구간 토글(Ctrl) — 정확히 같은 구간이 있으면 빼고, 아니면 추가(주 구간이 된다).
+    fn toggle_region(&mut self, r: (usize, usize, usize, usize)) {
+        if let Some(i) = self.regions.iter().position(|x| *x == r) {
+            self.regions.remove(i);
+        } else {
+            self.regions.push(r);
+        }
+    }
+
+    /// 행 전체 구간.
+    fn row_region(&self, r0: usize, r1: usize) -> (usize, usize, usize, usize) {
+        (r0.min(r1), r0.max(r1), 0, self.last_col())
     }
 
     pub(crate) fn select_all(&mut self) {
@@ -189,14 +335,63 @@ impl Grid {
         if n == 0 || self.col_order.is_empty() {
             return;
         }
+        self.regions = vec![(0, n - 1, 0, self.last_col())];
         self.sel_anchor = Some((0, 0));
-        self.sel_cur = Some((n - 1, self.col_order.len() - 1));
+        self.sel_cur = Some((n - 1, self.last_col()));
+    }
+
+    /// 선택 요약(행 수 · 컬럼 수 · 셀 수) — 상태줄용. 구간이 겹치면 셀은 합집합으로 센다.
+    pub(crate) fn selection_summary(&self) -> Option<(usize, usize, usize)> {
+        if self.regions.is_empty() {
+            return None;
+        }
+        let mut rows = std::collections::BTreeSet::new();
+        let mut cols = std::collections::BTreeSet::new();
+        let mut cells = std::collections::BTreeSet::new();
+        for &(r0, r1, c0, c1) in &self.regions {
+            for r in r0..=r1 {
+                rows.insert(r);
+                for c in c0..=c1 {
+                    cols.insert(c);
+                    cells.insert((r, c));
+                }
+            }
+        }
+        Some((rows.len(), cols.len(), cells.len()))
     }
 
     /// 선택 셀을 형식대로 텍스트로(없으면 None). 표시 순서(정렬·컬럼 이동 반영).
     pub(crate) fn copy_selection(&self, kind: CopyKind) -> Option<(String, usize)> {
+        if self.regions.is_empty() {
+            return None;
+        }
+        let mut out = String::new();
+        let mut cells = 0usize;
+        // 구간은 행 순서로(Ctrl로 모은 개별 행이 원래 순서로 나온다) · 구간 사이 빈 줄.
+        let mut regions = self.regions.clone();
+        regions.sort_unstable();
+        regions.dedup();
+        for (i, r) in regions.iter().enumerate() {
+            if let Some((text, n)) = self.copy_region(kind, *r, i == 0) {
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&text);
+                cells += n;
+            }
+        }
+        (cells > 0).then_some((out, cells))
+    }
+
+    /// 구간 하나를 형식대로(첫 구간만 헤더).
+    fn copy_region(
+        &self,
+        kind: CopyKind,
+        region: (usize, usize, usize, usize),
+        first: bool,
+    ) -> Option<(String, usize)> {
         let rs = self.rs.as_ref()?;
-        let (r0, r1, c0, c1) = self.sel_range()?;
+        let (r0, r1, c0, c1) = region;
         let cols: Vec<usize> = self.col_order[c0..=c1.min(self.col_order.len() - 1)].to_vec();
         let names: Vec<String> = cols
             .iter()
@@ -215,7 +410,7 @@ impl Grid {
         };
         match kind {
             CopyKind::Tsv | CopyKind::TsvWithHeaders => {
-                if kind == CopyKind::TsvWithHeaders {
+                if kind == CopyKind::TsvWithHeaders && first {
                     out.push_str(&names.join("\t"));
                     out.push('\n');
                 }
@@ -232,14 +427,16 @@ impl Grid {
                 }
             }
             CopyKind::Csv => {
-                out.push_str(
-                    &names
-                        .iter()
-                        .map(|n| nsql_io::quote_field(n, b','))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                );
-                out.push('\n');
+                if first {
+                    out.push_str(
+                        &names
+                            .iter()
+                            .map(|n| nsql_io::quote_field(n, b','))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    );
+                    out.push('\n');
+                }
                 for di in r0..=r1.min(self.rows().saturating_sub(1)) {
                     let ri = self.row_order.get(di).copied().unwrap_or(di);
                     let Some(row) = rs.rows.get(ri) else { continue };
@@ -254,12 +451,121 @@ impl Grid {
                     out.push('\n');
                 }
             }
-            CopyKind::Insert => {
-                let col_list = names.join(", ");
+            CopyKind::Text => {
+                // 고정폭 정렬(표시 폭 기준 · 숫자 우측 정렬) — 첫 구간만 머리글.
+                let mut lines: Vec<Vec<String>> = Vec::new();
+                let mut numeric: Vec<bool> = vec![false; cols.len()];
                 for di in r0..=r1.min(self.rows().saturating_sub(1)) {
                     let ri = self.row_order.get(di).copied().unwrap_or(di);
                     let Some(row) = rs.rows.get(ri) else { continue };
-                    let vals: Vec<String> = cols
+                    let line: Vec<String> = cols
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &ci)| {
+                            if let Some(v) = row.get(ci) {
+                                if matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_))
+                                {
+                                    numeric[k] = true;
+                                }
+                            }
+                            row.get(ci).map(plain).unwrap_or_default()
+                        })
+                        .collect();
+                    cells += line.len();
+                    lines.push(line);
+                }
+                let mut widths: Vec<usize> = names.iter().map(|n| nsql_io::disp_width(n)).collect();
+                for l in &lines {
+                    for (k, c) in l.iter().enumerate() {
+                        widths[k] = widths[k].max(nsql_io::disp_width(c));
+                    }
+                }
+                let pad = |s: &str, w: usize, right: bool| -> String {
+                    let fill = w.saturating_sub(nsql_io::disp_width(s));
+                    if right {
+                        format!("{}{}", " ".repeat(fill), s)
+                    } else {
+                        format!("{}{}", s, " ".repeat(fill))
+                    }
+                };
+                if first {
+                    let h: Vec<String> = names
+                        .iter()
+                        .enumerate()
+                        .map(|(k, n)| pad(n, widths[k], false))
+                        .collect();
+                    out.push_str(h.join("  ").trim_end());
+                    out.push('\n');
+                    let u: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
+                    out.push_str(&u.join("  "));
+                    out.push('\n');
+                }
+                for l in &lines {
+                    let cells_s: Vec<String> = l
+                        .iter()
+                        .enumerate()
+                        .map(|(k, c)| pad(c, widths[k], numeric[k]))
+                        .collect();
+                    out.push_str(cells_s.join("  ").trim_end());
+                    out.push('\n');
+                }
+            }
+            CopyKind::Markdown => {
+                let esc = |s: &str| s.replace('|', "\\|").replace('\n', " ");
+                if first {
+                    out.push_str(&format!(
+                        "| {} |\n",
+                        names.iter().map(|n| esc(n)).collect::<Vec<_>>().join(" | ")
+                    ));
+                    out.push_str(&format!(
+                        "|{}|\n",
+                        names.iter().map(|_| " --- ").collect::<Vec<_>>().join("|")
+                    ));
+                }
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let ri = self.row_order.get(di).copied().unwrap_or(di);
+                    let Some(row) = rs.rows.get(ri) else { continue };
+                    let line: Vec<String> = cols
+                        .iter()
+                        .map(|&ci| esc(&row.get(ci).map(plain).unwrap_or_default()))
+                        .collect();
+                    cells += line.len();
+                    out.push_str(&format!("| {} |\n", line.join(" | ")));
+                }
+            }
+            CopyKind::Json => {
+                // 구간마다 배열 하나(여러 구간이면 배열이 여러 개 — 각각 독립 문서).
+                out.push_str("[\n");
+                let mut rows_out: Vec<String> = Vec::new();
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let ri = self.row_order.get(di).copied().unwrap_or(di);
+                    let Some(row) = rs.rows.get(ri) else { continue };
+                    let fields: Vec<String> = cols
+                        .iter()
+                        .zip(names.iter())
+                        .map(|(&ci, n)| {
+                            let v = row
+                                .get(ci)
+                                .map(nsql_io::json_value)
+                                .unwrap_or_else(|| "null".into());
+                            format!("    {}: {}", nsql_io::json_str(n), v)
+                        })
+                        .collect();
+                    cells += fields.len();
+                    rows_out.push(format!("  {{\n{}\n  }}", fields.join(",\n")));
+                }
+                out.push_str(&rows_out.join(",\n"));
+                out.push_str("\n]\n");
+            }
+            CopyKind::Sql(kind) => {
+                let table = self.source_table.clone().unwrap_or_else(|| "T".into());
+                let col_list = names.join(", ");
+                // 키 = 첫 선택 컬럼(PK 정보는 카탈로그 연동 뒤 — 지금은 DBeaver "가상 키" 대신 첫 컬럼).
+                let key_name = names.first().cloned().unwrap_or_default();
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let ri = self.row_order.get(di).copied().unwrap_or(di);
+                    let Some(row) = rs.rows.get(ri) else { continue };
+                    let lits: Vec<String> = cols
                         .iter()
                         .map(|&ci| {
                             row.get(ci)
@@ -267,11 +573,75 @@ impl Grid {
                                 .unwrap_or_else(|| "NULL".into())
                         })
                         .collect();
-                    cells += vals.len();
-                    out.push_str(&format!(
-                        "INSERT INTO T ({col_list}) VALUES ({});\n",
-                        vals.join(", ")
-                    ));
+                    cells += lits.len();
+                    let key_lit = lits.first().cloned().unwrap_or_else(|| "NULL".into());
+                    let key_pred = if key_lit == "NULL" {
+                        format!("{key_name} IS NULL")
+                    } else {
+                        format!("{key_name} = {key_lit}")
+                    };
+                    let sets: Vec<String> = names
+                        .iter()
+                        .zip(lits.iter())
+                        .skip(1)
+                        .map(|(n, l)| format!("{n} = {l}"))
+                        .collect();
+                    let stmt = match kind {
+                        SqlKind::Select => {
+                            format!("SELECT {col_list} FROM {table} WHERE {key_pred};")
+                        }
+                        SqlKind::Insert => {
+                            format!(
+                                "INSERT INTO {table} ({col_list}) VALUES ({});",
+                                lits.join(", ")
+                            )
+                        }
+                        SqlKind::Update => {
+                            if sets.is_empty() {
+                                format!(
+                                    "UPDATE {table} SET {key_name} = {key_lit} WHERE {key_pred};"
+                                )
+                            } else {
+                                format!("UPDATE {table} SET {} WHERE {key_pred};", sets.join(", "))
+                            }
+                        }
+                        SqlKind::Delete => format!("DELETE FROM {table} WHERE {key_pred};"),
+                        SqlKind::Merge => {
+                            let src: Vec<String> = names
+                                .iter()
+                                .zip(lits.iter())
+                                .map(|(n, l)| format!("{l} AS {n}"))
+                                .collect();
+                            let upd: Vec<String> = names
+                                .iter()
+                                .skip(1)
+                                .map(|n| format!("t.{n} = s.{n}"))
+                                .collect();
+                            let ins_vals: Vec<String> =
+                                names.iter().map(|n| format!("s.{n}")).collect();
+                            let src_sel = match self.dialect {
+                                Dialect::Oracle => format!("SELECT {} FROM DUAL", src.join(", ")),
+                                _ => format!("SELECT {}", src.join(", ")),
+                            };
+                            let upd_clause = if upd.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" WHEN MATCHED THEN UPDATE SET {}", upd.join(", "))
+                            };
+                            match self.dialect {
+                                Dialect::Mssql => format!(
+                                    "MERGE {table} AS t USING ({src_sel}) AS s ON t.{key_name} = s.{key_name}{upd_clause} WHEN NOT MATCHED THEN INSERT ({col_list}) VALUES ({});",
+                                    ins_vals.join(", ")
+                                ),
+                                _ => format!(
+                                    "MERGE INTO {table} t USING ({src_sel}) s ON (t.{key_name} = s.{key_name}){upd_clause} WHEN NOT MATCHED THEN INSERT ({col_list}) VALUES ({});",
+                                    ins_vals.join(", ")
+                                ),
+                            }
+                        }
+                    };
+                    out.push_str(&stmt);
+                    out.push('\n');
                 }
             }
         }
@@ -324,7 +694,22 @@ impl Grid {
         self.clamp();
     }
 
-    fn move_sel(&mut self, dr: i32, dc: i32, extend: bool) {
+    /// 포커스 셀을 `(nr, nc)`로 — `shift` = 앵커~셀 범위 · `ctrl` = 포커스만(선택 유지) · 평 = 단일 선택.
+    fn go_to(&mut self, nr: usize, nc: usize, shift: bool, ctrl: bool) {
+        if shift {
+            if self.sel_anchor.is_none() {
+                self.sel_anchor = self.sel_cur.or(Some((nr, nc)));
+            }
+            self.extend_to((nr, nc));
+        } else if ctrl {
+            self.sel_cur = Some((nr, nc));
+        } else {
+            self.select_only((nr, nc));
+        }
+        self.ensure_cell_visible(nr, nc);
+    }
+
+    fn move_sel(&mut self, dr: i32, dc: i32, shift: bool, ctrl: bool) {
         let n = self.rows();
         let m = self.col_order.len();
         if n == 0 || m == 0 {
@@ -333,22 +718,46 @@ impl Grid {
         let (r, c) = self.sel_cur.unwrap_or((0, 0));
         let nr = (r as i32 + dr).clamp(0, n as i32 - 1) as usize;
         let nc = (c as i32 + dc).clamp(0, m as i32 - 1) as usize;
-        self.sel_cur = Some((nr, nc));
-        if !extend || self.sel_anchor.is_none() {
-            self.sel_anchor = Some((nr, nc));
-        }
-        self.ensure_cell_visible(nr, nc);
+        self.go_to(nr, nc, shift, ctrl);
     }
 
+    /// 행번호 열(고정) 위인가.
+    fn in_gutter(&self, x: i32) -> bool {
+        self.gutter_w > 0 && x >= self.bounds.x && x < self.bounds.x + self.gutter_w
+    }
+
+    /// 우클릭 메뉴(DBeaver Advanced Copy 구조 · 사용자 09-15): 복사 · 머리글 포함 · CSV/텍스트/Markdown/JSON 즉시 ·
+    /// SQL ▸ = 2단 메뉴(SELECT/INSERT/UPDATE/DELETE/MERGE) · 전체 선택.
     fn open_menu(&mut self, x: i32, y: i32) {
+        let has = !self.regions.is_empty();
         let items = vec![
-            CtxItem::item("copy", t(Msg::MnCopy)),
-            CtxItem::item("copy_h", t(Msg::MnCopyWithHeaders)),
-            CtxItem::item("copy_csv", t(Msg::MnCopyCsv)),
-            CtxItem::item("copy_ins", t(Msg::MnCopyInsert)),
+            CtxItem::maybe("copy", t(Msg::MnCopy), has),
+            CtxItem::maybe("copy_h", t(Msg::MnCopyWithHeaders), has),
+            CtxItem::Separator,
+            CtxItem::maybe("copy_csv", t(Msg::MnCopyCsv), has),
+            CtxItem::maybe("copy_txt", t(Msg::MnCopyText), has),
+            CtxItem::maybe("copy_md", t(Msg::MnCopyMarkdown), has),
+            CtxItem::maybe("copy_json", t(Msg::MnCopyJson), has),
+            CtxItem::maybe("copy_sql", t(Msg::MnCopySql), has),
+            CtxItem::Separator,
             CtxItem::item("all", t(Msg::MnSelectAll)),
         ];
-        let text_w = (self.row_h * 9).max(150);
+        let text_w = (self.row_h * 10).max(180);
+        self.menu_at = (x, y);
+        self.menu.open_at(x, y, items, self.bounds, text_w);
+    }
+
+    /// SQL 2단 메뉴(같은 자리에 다시 연다 — 컨텍스트 메뉴 부품은 아직 하위 메뉴가 없다).
+    fn open_sql_menu(&mut self) {
+        let items = vec![
+            CtxItem::item("sql_select", t(Msg::MnCopySqlSelect)),
+            CtxItem::item("sql_insert", t(Msg::MnCopySqlInsert)),
+            CtxItem::item("sql_update", t(Msg::MnCopySqlUpdate)),
+            CtxItem::item("sql_delete", t(Msg::MnCopySqlDelete)),
+            CtxItem::item("sql_merge", t(Msg::MnCopySqlMerge)),
+        ];
+        let (x, y) = self.menu_at;
+        let text_w = (self.row_h * 6).max(120);
         self.menu.open_at(x, y, items, self.bounds, text_w);
     }
 
@@ -357,7 +766,18 @@ impl Grid {
             "copy" => CopyKind::Tsv,
             "copy_h" => CopyKind::TsvWithHeaders,
             "copy_csv" => CopyKind::Csv,
-            "copy_ins" => CopyKind::Insert,
+            "copy_txt" => CopyKind::Text,
+            "copy_md" => CopyKind::Markdown,
+            "copy_json" => CopyKind::Json,
+            "copy_sql" => {
+                self.open_sql_menu();
+                return;
+            }
+            "sql_select" => CopyKind::Sql(SqlKind::Select),
+            "sql_insert" => CopyKind::Sql(SqlKind::Insert),
+            "sql_update" => CopyKind::Sql(SqlKind::Update),
+            "sql_delete" => CopyKind::Sql(SqlKind::Delete),
+            "sql_merge" => CopyKind::Sql(SqlKind::Merge),
             "all" => {
                 self.select_all();
                 return;
@@ -536,42 +956,114 @@ impl Grid {
         if self.menu.is_open() {
             let consumed = self.menu.on_event(ev);
             if let Some(id) = self.menu.take_picked() {
+                // ★ 항목 선택 = 그 클릭은 메뉴가 먹었다 — 호스트가 아래(셀 선택)로 흘리지 않게 표시(사용자 09-15).
+                self.menu_click_consumed = true;
                 self.menu_pick(&id);
                 return;
             }
             if consumed {
+                // 메뉴 안(비활성 행·여백) 클릭도 전파하지 않는다 · 바깥 클릭은 닫고 통과.
+                if self.menu.is_open() {
+                    self.menu_click_consumed = true;
+                }
                 return;
             }
         }
-        // 셀 선택: 클릭 = 셀 · Shift+클릭/드래그 = 범위 · 우클릭 = 메뉴 · Ctrl+A/화살표는 아래 키 처리.
+        // ★ 선택(사용자 09-15 · dir2 탐색기 규약): 클릭 = 셀 · 드래그 = 사각 범위 · Shift+클릭 = 앵커~셀 ·
+        //   Ctrl+클릭 = 구간 추가/제거 · 행번호 클릭 = 행 전체(Shift 연속 · Ctrl 개별 · 드래그 = 행 범위) ·
+        //   좌상단 모서리 = 전체 · 방향키 = 이동 · Shift+방향키 = 범위 · Ctrl+방향키 = 포커스만 · Esc = 해제.
         if self.row_h > 0 && self.rs.is_some() {
+            let hdr = self.header_rect();
             match *ev {
-                InputEvent::MouseDown { x, y, shift, .. }
-                    if !self.header_rect().contains(Point { x, y }) =>
+                // 좌상단 모서리(행번호 열 × 헤더) = 전체 선택.
+                InputEvent::MouseDown { x, y, .. }
+                    if hdr.contains(Point { x, y }) && self.in_gutter(x) =>
                 {
-                    if let Some(cell) = self.cell_at_point(x, y) {
-                        if shift && self.sel_anchor.is_some() {
-                            self.sel_cur = Some(cell);
+                    self.select_all();
+                    return;
+                }
+                // 행번호 열 = 행 전체.
+                InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift,
+                    primary,
+                } if !hdr.contains(Point { x, y }) && self.in_gutter(x) => {
+                    if let Some(row) = self.row_at_point(x, y) {
+                        let last = self.last_col();
+                        if shift {
+                            let a = self.sel_anchor.map_or(row, |a| a.0);
+                            let r = self.row_region(a, row);
+                            match self.regions.last_mut() {
+                                Some(l) => *l = r,
+                                None => self.regions.push(r),
+                            }
+                            self.sel_cur = Some((row, 0));
+                        } else if primary {
+                            let r = self.row_region(row, row);
+                            self.toggle_region(r);
+                            self.sel_anchor = Some((row, 0));
+                            self.sel_cur = Some((row, 0));
                         } else {
+                            self.regions = vec![self.row_region(row, row)];
+                            self.sel_anchor = Some((row, 0));
+                            self.sel_cur = Some((row, last));
+                        }
+                        self.drag_sel = Some(DragSel::Rows);
+                    }
+                    return;
+                }
+                InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift,
+                    primary,
+                } if !hdr.contains(Point { x, y }) => {
+                    if let Some(cell) = self.cell_at_point(x, y) {
+                        if shift {
+                            if self.sel_anchor.is_none() {
+                                self.sel_anchor = Some(cell);
+                            }
+                            self.extend_to(cell);
+                        } else if primary {
+                            self.toggle_region(Self::rect_of(cell, cell));
                             self.sel_anchor = Some(cell);
                             self.sel_cur = Some(cell);
+                        } else {
+                            self.select_only(cell);
                         }
-                        self.drag_sel = true;
+                        self.drag_sel = Some(DragSel::Cells);
                     }
                 }
-                InputEvent::MouseMove { x, y } if self.drag_sel => {
-                    if let Some(cell) = self.cell_at_point(x, y) {
-                        self.sel_cur = Some(cell);
+                InputEvent::MouseMove { x, y } if self.drag_sel.is_some() => {
+                    let kind = self.drag_sel.unwrap_or(DragSel::Cells);
+                    // 영역 밖으로 끌어도 가장 가까운 셀로(자동 확장).
+                    let b = self.bounds;
+                    let cx = x.clamp(b.x + self.gutter_w, b.right() - 1);
+                    let cy = y.clamp(b.y + self.header_h, b.y + self.header_h + self.body_h() - 1);
+                    if let Some(cell) = self.cell_at_point(cx, cy) {
+                        match kind {
+                            DragSel::Cells => self.extend_to(cell),
+                            DragSel::Rows => {
+                                let a = self.sel_anchor.map_or(cell.0, |a| a.0);
+                                let r = self.row_region(a, cell.0);
+                                match self.regions.last_mut() {
+                                    Some(l) => *l = r,
+                                    None => self.regions.push(r),
+                                }
+                                self.sel_cur = Some((cell.0, self.sel_cur.map_or(0, |c| c.1)));
+                            }
+                        }
+                        self.ensure_cell_visible(cell.0, cell.1);
                     }
                 }
-                InputEvent::MouseUp { .. } if self.drag_sel => {
-                    self.drag_sel = false;
+                InputEvent::MouseUp { .. } if self.drag_sel.is_some() => {
+                    self.drag_sel = None;
                 }
                 InputEvent::RightDown { x, y } => {
                     if let Some(cell) = self.cell_at_point(x, y) {
                         if !self.in_sel(cell.0, cell.1) {
-                            self.sel_anchor = Some(cell);
-                            self.sel_cur = Some(cell);
+                            self.select_only(cell);
                         }
                         self.open_menu(x, y);
                         return;
@@ -580,13 +1072,17 @@ impl Grid {
                 InputEvent::Key {
                     key: Key::Escape, ..
                 } => {
+                    self.regions.clear();
                     self.sel_anchor = None;
                     self.sel_cur = None;
                     return;
                 }
-                InputEvent::Key { key, shift, .. }
-                    if self.sel_cur.is_some()
-                        && matches!(key, Key::Up | Key::Down | Key::Left | Key::Right) =>
+                InputEvent::Key {
+                    key,
+                    shift,
+                    primary,
+                } if self.sel_cur.is_some()
+                    && matches!(key, Key::Up | Key::Down | Key::Left | Key::Right) =>
                 {
                     let (dr, dc) = match key {
                         Key::Up => (-1, 0),
@@ -594,7 +1090,67 @@ impl Grid {
                         Key::Left => (0, -1),
                         _ => (0, 1),
                     };
-                    self.move_sel(dr, dc, shift);
+                    self.move_sel(dr, dc, shift, primary);
+                    return;
+                }
+                // Home/End = 행의 처음/끝 컬럼(Ctrl = 첫/마지막 행) · PageUp/Down = 한 화면.
+                InputEvent::Key {
+                    key: Key::Home,
+                    shift,
+                    primary,
+                } if self.sel_cur.is_some() => {
+                    let (r, _) = self.sel_cur.unwrap_or((0, 0));
+                    let nr = if primary { 0 } else { r };
+                    self.go_to(nr, 0, shift, false);
+                    return;
+                }
+                InputEvent::Key {
+                    key: Key::End,
+                    shift,
+                    primary,
+                } if self.sel_cur.is_some() => {
+                    let (r, _) = self.sel_cur.unwrap_or((0, 0));
+                    let nr = if primary {
+                        self.rows().saturating_sub(1)
+                    } else {
+                        r
+                    };
+                    let nc = self.last_col();
+                    self.go_to(nr, nc, shift, false);
+                    return;
+                }
+                InputEvent::Key {
+                    key: Key::PageDown,
+                    shift,
+                    primary,
+                } if self.sel_cur.is_some() => {
+                    let page = (self.body_h() / self.row_h.max(1)).max(1);
+                    self.move_sel(page, 0, shift, primary);
+                    return;
+                }
+                InputEvent::Key {
+                    key: Key::PageUp,
+                    shift,
+                    primary,
+                } if self.sel_cur.is_some() => {
+                    let page = (self.body_h() / self.row_h.max(1)).max(1);
+                    self.move_sel(-page, 0, shift, primary);
+                    return;
+                }
+                // Space: Shift = 포커스 행 선택 · Ctrl = 포커스 행 토글(dir2 탐색기의 Ctrl+Space).
+                InputEvent::Key {
+                    key: Key::Space,
+                    shift,
+                    primary,
+                } if self.sel_cur.is_some() && (shift || primary) => {
+                    let (r, _) = self.sel_cur.unwrap_or((0, 0));
+                    let reg = self.row_region(r, r);
+                    if primary {
+                        self.toggle_region(reg);
+                    } else {
+                        self.regions = vec![reg];
+                    }
+                    self.sel_anchor = Some((r, 0));
                     return;
                 }
                 _ => {}
@@ -794,18 +1350,15 @@ impl Grid {
             }
             let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
             let mut x = gx0 - self.scroll_x;
-            let sel = self.sel_range();
             for (pos, &ci) in self.col_order.iter().enumerate() {
                 let Some(v) = row.get(ci) else { continue };
                 let cw = self.col_w.get(ci).copied().unwrap_or(80);
                 let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&cells);
-                if let Some((r0, r1, c0, c1)) = sel {
-                    if di >= r0 && di <= r1 && pos >= c0 && pos <= c1 && clip.w > 0 {
-                        dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
-                        if self.sel_cur == Some((di, pos)) {
-                            dc.stroke_round_rect(clip, 0, th.accent, 1.0);
-                        }
-                    }
+                if clip.w > 0 && self.in_sel(di, pos) {
+                    dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
+                }
+                if clip.w > 0 && self.sel_cur == Some((di, pos)) {
+                    dc.stroke_round_rect(clip, 0, th.accent, 1.0);
                 }
                 if clip.w > 0 && clip.h > 0 {
                     let txt = cell_text(v);
@@ -824,13 +1377,23 @@ impl Grid {
                 }
                 x += cw;
             }
-            // 행번호(고정 열 · 우측 정렬 · 흐리게)
+            // 행번호(고정 열 · 우측 정렬 · 흐리게 · 선택 행은 선택색으로 표시).
             if self.gutter_w > 0 {
                 let num = (di + 1).to_string();
                 let nw = dc.text_width(&num);
                 let gclip = Rect::new(b.x, y, self.gutter_w, self.row_h).intersection(&body);
                 dc.fill_rect(gclip, th.chrome_bg);
-                dc.text(gx0 - pad - nw, y + pad / 2, gclip, &num, th.text_dim);
+                let selected_row = self.row_in_sel(di);
+                if selected_row {
+                    dc.fill_rect_alpha(gclip, th.sel_bg, 0.85);
+                }
+                dc.text(
+                    gx0 - pad - nw,
+                    y + pad / 2,
+                    gclip,
+                    &num,
+                    if selected_row { th.text } else { th.text_dim },
+                );
             }
             y += self.row_h;
         }
@@ -851,6 +1414,9 @@ impl Grid {
             let clip = Rect::new(x, header.y, cw, header.h).intersection(&hcells);
             if dragging.is_some_and(|d| d.0 == pos) {
                 dc.fill_rect(clip, th.sel_bg);
+            } else if self.col_in_sel(pos) {
+                // 선택에 걸린 컬럼 헤더는 옅게 표시(행번호 강조와 짝).
+                dc.fill_rect_alpha(clip, th.sel_bg, 0.35);
             }
             // 정렬 배지: ▲/▼ + 결합 순번(키가 2개 이상일 때)
             let badge = self.sort_keys.iter().position(|(k, _)| *k == ci).map(|i| {

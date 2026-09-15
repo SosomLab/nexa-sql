@@ -234,7 +234,8 @@ pub(crate) enum ExplorerAction {
 }
 
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
-type IconCache = HashMap<(IconKind, (u8, u8, u8)), Rc<IconImage>>;
+/// (종류 · 색 · **표시 크기 px**) → 미리 스케일한 아이콘(09-15 사전 스케일 캐시 — 매 프레임 bilinear 샘플링 제거).
+type IconCache = HashMap<(IconKind, (u8, u8, u8), i32), Rc<IconImage>>;
 
 /// 아이콘 기본 크기 16×16(논리 px · 기본 글꼴 17px 기준) — 글꼴 크기에 비례해 스케일(사용자 09-15).
 const ICON_BASE_PX: f32 = 16.0;
@@ -270,6 +271,8 @@ pub(crate) struct Explorer {
     /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
     icons_on: bool,
     icon_cache: IconCache,
+    /// 마지막 페인트의 화면 행(노드 index · 부모) — `row_at`(MouseMove마다)이 다시 펼치지 않게(09-15 C).
+    rows_cache: Vec<(Option<usize>, usize)>,
     /// 호스트가 알려 주는 현재 트리 글꼴 크기(논리 px) — 아이콘 스케일 기준.
     font_px: f32,
     /// 소스 요청 중(더블클릭 연타 방지).
@@ -488,6 +491,7 @@ impl Explorer {
             focused: false,
             icons_on: true,
             icon_cache: HashMap::new(),
+            rows_cache: Vec::new(),
             font_px: ICON_REF_FONT_PX,
             source_pending: false,
             row_px: 0,
@@ -559,10 +563,14 @@ impl Explorer {
         })
     }
 
-    fn icon_image(&mut self, kind: IconKind, rgb: (u8, u8, u8)) -> Rc<IconImage> {
+    /// 표시 크기로 미리 스케일한 아이콘(캐시) — 페인트는 스케일 없이 그대로 찍는다.
+    fn icon_image(&mut self, kind: IconKind, rgb: (u8, u8, u8), size: i32) -> Rc<IconImage> {
         self.icon_cache
-            .entry((kind, rgb))
-            .or_insert_with(|| Rc::new(exp_icons::image(kind, rgb)))
+            .entry((kind, rgb, size))
+            .or_insert_with(|| {
+                let base = exp_icons::image(kind, rgb);
+                Rc::new(base.resized(size.max(1) as u32, size.max(1) as u32))
+            })
             .clone()
     }
 
@@ -995,12 +1003,16 @@ impl Explorer {
         out
     }
 
+    /// 마우스 아래 행 — **마지막 페인트의 행 캐시**로 판정(구조가 바뀌면 곧 다시 그려져 캐시가 따라온다).
     fn row_at(&self, p: Point) -> Option<(Option<usize>, usize)> {
         if !self.bounds.contains(p) {
             return None;
         }
         let idx = (p.y - self.bounds.y + self.scroll) / self.row_h();
-        self.screen_rows().get(idx as usize).copied()
+        if idx < 0 {
+            return None;
+        }
+        self.rows_cache.get(idx as usize).copied()
     }
 
     fn ensure_visible(&mut self, i: usize) {
@@ -1270,7 +1282,8 @@ impl Explorer {
         let row_h = self.row_h();
         let indent = (INDENT * s).round() as i32;
         let chip = (th_txt as f32 * 0.55).round() as i32;
-        let rows = self.screen_rows();
+        self.rows_cache = self.screen_rows();
+        let rows = std::mem::take(&mut self.rows_cache);
         let first = (self.scroll / row_h).max(0) as usize;
         for (pos, (node, parent)) in rows.iter().enumerate().skip(first) {
             let y = b.y + pos as i32 * row_h - self.scroll;
@@ -1342,7 +1355,7 @@ impl Explorer {
                             let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
                                 .round()
                                 .max(8.0) as i32;
-                            let img = self.icon_image(k, rgb);
+                            let img = self.icon_image(k, rgb, sz);
                             let dst = Rect::new(x, vcy - sz / 2, sz, sz);
                             dc.image_scaled(dst, &img, rr);
                             x += sz + (6.0 * s).round() as i32;
@@ -1377,5 +1390,6 @@ impl Explorer {
         self.bars
             .paint(dc, th, b, b.w, self.content_h().max(b.h), 0, self.scroll, s);
         self.menu.paint(dc, th);
+        self.rows_cache = rows;
     }
 }

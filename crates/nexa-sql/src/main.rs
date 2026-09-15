@@ -49,8 +49,8 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
-    Button, ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, MenuBar,
-    MenuDef, MenuEntry, TextBox, ToolItem, Toolbar, Widget,
+    ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, MenuBar, MenuDef,
+    MenuEntry, TextBox, ToolItem, Toolbar, Widget,
 };
 use nexa_dlg::PickerMode;
 use nexa_gfx::{Font, Surface};
@@ -135,7 +135,6 @@ struct App {
     conn_win: ConnWin,
     /// 메뉴/툴바에서 접속 창 열기 요청(창 생성은 이벤트 루프 핸들에서).
     open_conn: bool,
-    run_btn: Button,
     /// 찾기/바꾸기 바(편집기 위 · T-73).
     find: FindBar,
     editors: Editors,
@@ -218,21 +217,11 @@ impl App {
         self.toolbar
             .set_bounds(Rect::new(0, menu_h, w, tool_h), &mut inv);
         let chrome_h = menu_h + tool_h;
-        let top_h = px(36.0, s);
-        // 접속 패널은 별도 창(conn_win) — 본문은 창 전폭.
-        let _ = panel_w;
+        // Run 버튼 줄은 제거(사용자 09-15 — 툴바·단축키로 충분) · 접속 패널은 별도 창(conn_win) — 본문은 창 전폭.
+        let _ = (panel_w, btn_w);
         let rx = pad;
         let rw = w - rx - pad;
-        self.run_btn.set_bounds(
-            Rect::new(
-                w - pad - btn_w,
-                chrome_h + px(6.0, s),
-                btn_w,
-                top_h - px(12.0, s),
-            ),
-            &mut inv,
-        );
-        let body_top = chrome_h + top_h;
+        let body_top = chrome_h + px(4.0, s);
         let body_h = h - body_top - status_h;
         let _ = chrome_h;
         // 왼쪽 오브젝트 탐색기(보이면 본문을 그만큼 오른쪽으로).
@@ -256,7 +245,6 @@ impl App {
             rw,
             body_h - editor_h - pad,
         ));
-        self.run_btn.set_scale(s);
         self.palette.set_bounds(w, chrome_h, s);
     }
 
@@ -1642,7 +1630,6 @@ impl App {
         self.menubar
             .set_menus(App::build_menus_with(&self.recent_files()));
         self.toolbar = App::build_toolbar();
-        self.run_btn.set_label(t(Msg::BtnRun));
         self.conn_win.relabel();
         self.editors.rebuild_boxes();
         self.layout();
@@ -1671,6 +1658,7 @@ impl App {
                 })
         };
         let src = text.unwrap_or_else(|| self.ed_mut().text());
+        self.grid.set_source_sql(&src);
         if src.trim().is_empty() {
             self.status = t(Msg::ErrNoSql).into();
             return;
@@ -2000,10 +1988,6 @@ impl App {
                     .with_fonts(prefs)
                     .with_caret_on(caret_on);
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
-                let chrome_top = self.toolbar.bounds().bottom();
-                dc.fill_rect(Rect::new(0, chrome_top, wi, px(36.0, s)), th.chrome_bg);
-                dc.fill_rect(Rect::new(0, chrome_top + px(36.0, s) - 1, wi, 1), th.border);
-                self.run_btn.paint(&mut dc, &th);
                 self.editors.paint_tabs(&mut dc, &th);
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
@@ -2054,7 +2038,15 @@ impl App {
                 };
                 segs.push((conn, false));
                 let nsel = self.editors.selection_count();
-                if nsel > 1 {
+                if self.focus == Focus::Grid
+                    && self
+                        .grid
+                        .selection_summary()
+                        .is_some_and(|(r, c, _)| r * c > 1)
+                {
+                    let (r, c, _) = self.grid.selection_summary().unwrap_or((0, 0, 0));
+                    segs.push((tf(Msg::StGridSel, &[&r.to_string(), &c.to_string()]), false));
+                } else if nsel > 1 {
                     segs.push((tf(Msg::StSelections, &[&nsel.to_string()]), false));
                 } else {
                     segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
@@ -2358,7 +2350,11 @@ impl App {
         if self.grid.menu_open() {
             self.grid.on_event(&ev, self.scale);
             self.after_grid_event();
-            if self.grid.menu_open() || !matches!(ev, InputEvent::MouseDown { .. }) {
+            // 항목을 골랐거나 메뉴 안을 눌렀으면 그 클릭은 끝(아래 셀 선택으로 전파 금지 · 사용자 09-15) · 바깥 클릭만 통과.
+            if self.grid.menu_open()
+                || self.grid.take_menu_click()
+                || !matches!(ev, InputEvent::MouseDown { .. })
+            {
                 self.redraw();
                 return;
             }
@@ -2422,13 +2418,6 @@ impl App {
                 && matches!(ev, InputEvent::MouseMove { .. })
             {
                 self.ed_mut().on_event(&ev, &mut inv);
-            }
-        }
-        // 버튼·패널은 항상 마우스 사건을 받는다.
-        if is_mouse {
-            self.run_btn.on_event(&ev, &mut inv);
-            if self.run_btn.take_clicked() {
-                self.run_sql(true);
             }
         }
         // 휠은 포커스가 아니라 **커서 아래 영역**으로 간다(편집기·그리드·패널).
@@ -3149,7 +3138,6 @@ fn main() {
         toolbar: App::build_toolbar(),
         conn_win: ConnWin::new(panel),
         open_conn: true,
-        run_btn: Button::new(t(Msg::BtnRun)),
         find: FindBar::new(),
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
