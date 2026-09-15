@@ -34,7 +34,7 @@
 | 📐 | `nexa-edit` E1~E5([17](17-editor-incremental-plan.md)) — TextBox 대체 |
 | ✅ | 연결 프로필 저장·이름 접속(이름 칸 + Save · T-16b 일부 · 09-13) |
 | ✅ | Golden식 접속 창(09-14 13·14차) — 로그인 목록(신호등·Test/Connect 행 버튼·Password 열·정렬/폭/DnD/스크롤·우클릭 메뉴·Delete 2단·삭제 뒤 인접 선택) · 상세 폼(편집 메뉴·워드랩 상태·세션 비밀번호) · 프로브 정책(주기·지수 백오프·즉시 재확인·병렬 스레드) · 테스트 스레드 분리 · 소유 창(작업표시줄 1) · 색 설정 창(`ColorPanel`) · hover/포커스/팝업 UX 규칙(CLAUDE.md §3) |
-| ✅ | **09-15**: Sublime 단축키 맵(win/mac · `key.*` · 캡처 창 T-53) · **오브젝트 탐색기 1차**(T-56 · `nsql-catalog` 공용 · 소스 열기 → 재컴파일 → Oracle 오류 보고) · 페치 상한 `grid.max_rows`(T-48 1차) · 실행 중 서버 메시지 실시간(MSSQL·PG · [32](32-server-messages-and-live-log.md)) · 편집기 undo/redo · 폰트 기본값(Golden) · 설정 트리(DBeaver) · **3차**: 그리드 셀 선택·복사(TSV/CSV/INSERT) · 트랜잭션(자동/수동 커밋 · Commit/Rollback) · 실행 계획(Explain · `nsql explain`) · 서버 SET 문 통과 · **4차**: Oracle 라이브 로그 모니터(V$SESSION/로그 테이블 폴링 · T-71 1차) · **5차**: 찾기/바꾸기 바(T-73 1차) · 자동 재접속
+| ✅ | **09-15**: Sublime 단축키 맵(win/mac · `key.*` · 캡처 창 T-53) · **오브젝트 탐색기 1차**(T-56 · `nsql-catalog` 공용 · 소스 열기 → 재컴파일 → Oracle 오류 보고) · 페치 상한 `grid.max_rows`(T-48 1차) · 실행 중 서버 메시지 실시간(MSSQL·PG · [32](32-server-messages-and-live-log.md)) · 편집기 undo/redo · 폰트 기본값(Golden) · 설정 트리(DBeaver) · **3차**: 그리드 셀 선택·복사(TSV/CSV/INSERT) · 트랜잭션(자동/수동 커밋 · Commit/Rollback) · 실행 계획(Explain · `nsql explain`) · 서버 SET 문 통과 · **4차**: Oracle 라이브 로그 모니터(V$SESSION/로그 테이블 폴링 · T-71 1차) · **5차**: 찾기/바꾸기 바(T-73 1차) · 자동 재접속 · **8차**: 환경 설정 창(T-39 1차 · 검색/트리/카드) · 접속 해제 툴바 · 메뉴 글꼴 설정 · 탐색기 셰브론
 | ☐ | `nexa-grid` · dock/tab(nexa-ui U-2) · 클립보드·컨텍스트 메뉴(T-16b) · 치환 변수 대화상자(T-16c) · DBeaver식 접속 대화상자·프로필 목록([22 §1](22-driver-extensions.md)) |
 
 ## 드라이버 — 내장 4종

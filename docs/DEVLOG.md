@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (8차 · win)** — **환경 설정 창**(`prefs_win.rs` · 검색+트리+카드 · 종류별 컨트롤 · 즉시 반영 · 고급 토글 · T-39 1차) · **접속 해제 툴바**(nexa-ui Toolbar `enabled`) · `ui.menu_font_size` 17 · 탐색기 셰브론(nexa-dir2 부품 · 빈 노드 숨김). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (7차 · win)** — 드라이버 분리 검토: 정적 링크 = 기동/메모리/속도 비용 0 실측 → 내장 유지 · 확장 전송은 in-process cdylib(C ABI · 지연 dlopen)로 **DR-29** · T-27 개정 · [22 §0](22-driver-extensions.md). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (6차 · win)** — 풀다운 메뉴가 편집기·탐색기 뒤로 가려지던 오류 수정(메뉴바를 최상위 페인트 패스로). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (5차 · win · 야간 자율)** — 편집기 **찾기/바꾸기 바**(Ctrl+F/H · F3 · Aa · Replace/All · n of m · T-73 1차 · nexa-ui `select_range/replace_range`) · **자동 재접속**(`connect.auto_reconnect`). → [journal](journal/2026-09-15.md)

@@ -85,6 +85,17 @@ fn shape_connect(x: f32, y: f32) -> bool {
     cable || body || pin1 || pin2 || socket
 }
 
+/// 접속 해제 — 플러그와 소켓이 벌어진 모양(같은 부품 · 가운데 틈).
+fn shape_disconnect(x: f32, y: f32) -> bool {
+    if x < 120.0 {
+        shape_connect(x + 26.0, y) && x + 26.0 < 176.0
+    } else if x > 136.0 {
+        shape_connect(x - 26.0, y) && x - 26.0 >= 186.0
+    } else {
+        false
+    }
+}
+
 /// ≡ — 로그 창.
 fn shape_log(x: f32, y: f32) -> bool {
     [72.0, 128.0, 184.0]
@@ -137,6 +148,9 @@ pub(crate) fn connect() -> ToolIcon {
 pub(crate) fn log() -> ToolIcon {
     mask(shape_log)
 }
+pub(crate) fn disconnect() -> ToolIcon {
+    mask(shape_disconnect)
+}
 
 #[cfg(test)]
 mod tests {
@@ -157,6 +171,7 @@ mod tests {
             shape_run_all,
             shape_connect,
             shape_log,
+            shape_disconnect,
         ] {
             let (opaque, partial) = coverage(s);
             assert!(opaque > 100, "채워진 픽셀이 있어야 한다: {opaque}");

@@ -125,6 +125,18 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+shift+e",
     },
     Command {
+        id: "edit.prefs",
+        label: Msg::MnPreferences,
+        win: "ctrl+,",
+        mac: "cmd+,",
+    },
+    Command {
+        id: "conn.disconnect",
+        label: Msg::TipDisconnect,
+        win: "",
+        mac: "",
+    },
+    Command {
         id: "edit.find",
         label: Msg::MnFind,
         win: "ctrl+f",

@@ -6,6 +6,7 @@
 //! 우클릭 = 메뉴(Select rows · Open source · Refresh · Copy name) · ↑↓←→ Enter.
 
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
+use nexa_ctl::controls::{draw_chevron_down, draw_chevron_right};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::{Color, Theme};
@@ -1155,9 +1156,16 @@ impl Explorer {
                         dc.fill_rect_alpha(rr, th.sel_bg, 0.35);
                     }
                     let gx = b.x + ((n.depth as f32 * INDENT + 4.0) * s).round() as i32;
-                    if n.expandable {
-                        let g = if n.expanded { "▾" } else { "▸" };
-                        dc.text(gx, ty, rr, g, th.text_dim);
+                    // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
+                    let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
+                    if n.expandable && !empty_loaded {
+                        let cw = (12.0 * s).round() as i32;
+                        let chev = Rect::new(gx, y + (row_h - cw) / 2, cw, cw);
+                        if n.expanded {
+                            draw_chevron_down(dc, chev, th.text_dim);
+                        } else {
+                            draw_chevron_right(dc, chev, th.text_dim);
+                        }
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 칩(오브젝트 종류 색).

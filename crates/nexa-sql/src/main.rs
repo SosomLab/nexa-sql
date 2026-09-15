@@ -24,6 +24,7 @@ mod keymap;
 mod keys_win;
 mod log_win;
 mod palette;
+mod prefs_win;
 mod probe;
 mod syntax;
 mod theme;
@@ -57,6 +58,7 @@ use nsql_script::ConnectSpec;
 use nsql_settings::{Settings, ThemeMode};
 use nsql_vault::Vault;
 use palette::{Palette, PaletteAction};
+use prefs_win::{PrefsAction, PrefsWin};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -112,6 +114,9 @@ struct App {
     keymap: Keymap,
     open_keys: bool,
     keys_win: KeysWin,
+    /// 환경 설정 창(T-39 · 사용자 09-15).
+    open_prefs: bool,
+    prefs_win: PrefsWin,
     // 컨트롤
     menubar: MenuBar,
     toolbar: Toolbar,
@@ -187,7 +192,8 @@ impl App {
         let panel_w = px(300.0, s);
         let btn_w = px(84.0, s);
         // 메뉴바 · 툴바(창 전폭)
-        let menu_h = px(26.0, s);
+        let menu_px = self.settings.int("ui.menu_font_size") as f32;
+        let menu_h = px(menu_px + 11.0, s);
         self.menubar.set_scale(s);
         self.toolbar.set_scale(s);
         self.menubar
@@ -548,6 +554,82 @@ impl App {
         }
     }
 
+    /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
+    fn sync_disconnect_btn(&mut self, connected: bool) {
+        let mut inv = Invalidations::default();
+        self.toolbar
+            .set_item_enabled("conn.disconnect", connected, &mut inv);
+    }
+
+    /// 환경 설정 창에서 바뀐 값을 **즉시** 반영(가능한 것만 · 나머지는 다음 시작).
+    fn apply_setting(&mut self, key: &str) -> bool {
+        let i = |s: &Settings, k: &str| s.int(k);
+        match key {
+            "ui.theme" => self.apply_theme(),
+            "ui.lang" => {
+                nsql_i18n::set_lang(self.settings.lang());
+                self.relabel();
+            }
+            "ui.hover_color" | "ui.pressed_color" => {
+                for tg in ColorTarget::ALL {
+                    if tg.key() == key {
+                        apply_color(tg, color_setting(&self.settings, key).as_deref());
+                    }
+                }
+            }
+            "ui.fade_fast" => nexa_ctl::tokens::set_fade_ms(
+                nexa_ctl::tokens::FadeSpeed::Fast,
+                i(&self.settings, key).clamp(0, 5000) as u32,
+            ),
+            "ui.fade_slow" => nexa_ctl::tokens::set_fade_ms(
+                nexa_ctl::tokens::FadeSpeed::Slow,
+                i(&self.settings, key).clamp(0, 5000) as u32,
+            ),
+            "ui.hover_intent_ms" => {
+                nexa_ctl::tokens::set_intent_ms(i(&self.settings, key).clamp(0, 500) as u64)
+            }
+            "ui.fade_out_ms" => {
+                nexa_ctl::tokens::set_fade_out_ms(i(&self.settings, key).clamp(0, 2000) as u32)
+            }
+            "input.scroll_natural" => {
+                input::set_natural_scroll(self.settings.flag(key));
+            }
+            "explorer.visible" => {
+                self.explorer.set_visible(self.settings.flag(key));
+                self.layout();
+            }
+            "grid.row_numbers" => self.grid.set_row_numbers(self.settings.flag(key)),
+            "grid.scroll" => self
+                .grid
+                .set_row_snap(self.settings.get(key) == Some("row")),
+            "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
+            "editor.rulers" => self
+                .editors
+                .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
+            "tabs.tooltip" => self.editors.set_tooltip(self.settings.flag(key)),
+            "log.format" => self
+                .log_win
+                .set_format(self.settings.get(key).unwrap_or("raw")),
+            k if k.starts_with("key.") => {
+                self.keymap = Keymap::from_settings(&self.settings);
+                self.keys_win.refresh(&self.keymap);
+            }
+            k if k.starts_with("editor.whitespace") || k.starts_with("editor.show_") => {
+                self.editors
+                    .set_whitespace(whitespace_style(&self.settings));
+            }
+            "ui.font_size" | "ui.menu_font_size" | "editor.font_size" | "grid.font_size"
+            | "explorer.width" => {
+                self.layout();
+            }
+            _ => return false,
+        }
+        self.layout();
+        self.redraw();
+        self.conn_win.redraw();
+        true
+    }
+
     /// 그리드가 메뉴로 만든 복사 텍스트를 OS 클립보드로.
     fn after_grid_event(&mut self) {
         if let Some((text, n)) = self.grid.take_copy() {
@@ -653,6 +735,11 @@ impl App {
             "run.rollback" => self.worker.send(worker::Cmd::Rollback),
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
+            "conn.disconnect" => {
+                self.busy = true;
+                self.worker.send(worker::Cmd::Disconnect);
+            }
+            "edit.prefs" => self.open_prefs = true,
             "help.about" => {
                 self.status = format!(
                     "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
@@ -692,6 +779,8 @@ impl App {
                     item("edit.paste", Msg::MnPaste),
                     MenuEntry::Separator,
                     item("edit.select_all", Msg::MnSelectAll),
+                    MenuEntry::Separator,
+                    item("edit.prefs", Msg::MnPreferences),
                 ],
             ),
             MenuDef::new(
@@ -718,6 +807,7 @@ impl App {
                     item("run.rollback", Msg::MnRollback),
                     MenuEntry::Separator,
                     item("conn.toggle", Msg::MnConnect),
+                    item("conn.disconnect", Msg::MnDisconnect),
                 ],
             ),
             MenuDef::new(t(Msg::MnHelp), vec![item("help.about", Msg::MnAbout)]),
@@ -731,6 +821,9 @@ impl App {
             ToolItem::new("run.statement", toolicons::run_statement()).tip(t(Msg::TipRunStatement)),
             ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
             ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
+            ToolItem::new("conn.disconnect", toolicons::disconnect())
+                .tip(t(Msg::TipDisconnect))
+                .disabled(),
             ToolItem::new("view.log", toolicons::log())
                 .tip(t(Msg::TipLog))
                 .align_right(),
@@ -828,6 +921,8 @@ impl App {
         cmds.push(m("run.commit", Msg::MnRun, Msg::MnCommit));
         cmds.push(m("run.rollback", Msg::MnRun, Msg::MnRollback));
         cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
+        cmds.push(m("conn.disconnect", Msg::MnRun, Msg::MnDisconnect));
+        cmds.push(m("edit.prefs", Msg::MnEdit, Msg::MnPreferences));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {
             cmds.push((
@@ -1348,6 +1443,7 @@ impl App {
                     self.dialect = dialect;
                     self.grid.set_dialect(dialect);
                     self.tx_dirty = false;
+                    self.sync_disconnect_btn(true);
                     // 탐색기 메타 세션(별도) — 같은 스펙으로.
                     if let Some(spec) = self.last_spec.clone() {
                         self.explorer.connect(&spec);
@@ -1357,6 +1453,7 @@ impl App {
                     self.status = t(Msg::StDisconnected).into();
                     self.explorer.disconnect();
                     self.tx_dirty = false;
+                    self.sync_disconnect_btn(false);
                 }
                 RunEvent::Timing { timeline, .. } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
@@ -1564,10 +1661,21 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.explorer.paint(&mut dc, &th);
                 self.find.paint(&mut dc, &th);
-                // 메뉴바 + 열린 드롭다운 = 팝업 규칙(CLAUDE.md §3)대로 맨 마지막 층.
-                self.menubar.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
+            }
+            // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
+            {
+                let prefs = FontPrefs {
+                    base: SlotFont {
+                        size: self.settings.int("ui.menu_font_size") as f32,
+                        bold: false,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.menubar.paint(&mut dc, &th);
             }
         }
         let _ = buf.present();
@@ -1923,6 +2031,9 @@ impl ApplicationHandler<Wake> for App {
         if self.keys_win.tick(now_ms) {
             self.keys_win.redraw();
         }
+        if self.prefs_win.tick(now_ms) {
+            self.prefs_win.redraw();
+        }
         if self.explorer.tick(now_ms) {
             self.redraw();
         }
@@ -1941,6 +2052,7 @@ impl ApplicationHandler<Wake> for App {
             || self.conn_win.hover_animating()
             || self.colors_win.animating()
             || self.keys_win.animating()
+            || self.prefs_win.animating()
             || self.explorer.bars_visible()
             || self.find.animating()
             || self.editors.tooltip_pending();
@@ -1977,6 +2089,51 @@ impl ApplicationHandler<Wake> for App {
                     ConnWinAction::Delete(name) => self.delete_profile(&name),
                     ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
                 }
+            }
+            return;
+        }
+        if self.prefs_win.is(id) {
+            let ui_px = self.settings.int("ui.font_size") as f32;
+            match self.prefs_win.handle(&event) {
+                PrefsAction::Paint => self.prefs_win.paint(&self.ui_font, &self.theme, ui_px),
+                PrefsAction::Changed { key, value } => {
+                    let ok = if value.is_empty()
+                        && nsql_settings::entry(&key).is_some_and(|e| e.default.is_empty())
+                    {
+                        self.settings
+                            .reset(&key)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    } else {
+                        self.settings
+                            .set(&key, &value)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    };
+                    match ok {
+                        Ok(()) => {
+                            self.persist_settings();
+                            if !self.apply_setting(&key) {
+                                self.status = t(Msg::StNeedsRestart).into();
+                            }
+                            self.prefs_win.refresh(&self.settings);
+                        }
+                        Err(e) => self.prefs_win.set_error(&key, e),
+                    }
+                    self.prefs_win.redraw();
+                }
+                PrefsAction::Reset(key) => {
+                    let _ = self.settings.reset(&key);
+                    self.persist_settings();
+                    if !self.apply_setting(&key) {
+                        self.status = t(Msg::StNeedsRestart).into();
+                    }
+                    self.prefs_win.refresh(&self.settings);
+                    self.prefs_win.redraw();
+                }
+                PrefsAction::OpenColors => self.open_colors = true,
+                PrefsAction::OpenKeys => self.open_keys = true,
+                PrefsAction::None => {}
             }
             return;
         }
@@ -2141,6 +2298,21 @@ impl ApplicationHandler<Wake> for App {
             });
             let owner = self.window.clone();
             self.colors_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                over,
+                owner.as_deref(),
+            );
+        }
+        if std::mem::take(&mut self.open_prefs) {
+            let over = self.window.as_ref().and_then(|w| {
+                let p = w.outer_position().ok()?;
+                let sz = w.outer_size();
+                Some((p.x, p.y, sz.width, sz.height))
+            });
+            let owner = self.window.clone();
+            self.prefs_win.refresh(&self.settings);
+            self.prefs_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 over,
@@ -2350,6 +2522,8 @@ fn main() {
         keymap,
         open_keys: false,
         keys_win: KeysWin::new(),
+        open_prefs: false,
+        prefs_win: PrefsWin::new(),
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),
         conn_win: ConnWin::new(panel),

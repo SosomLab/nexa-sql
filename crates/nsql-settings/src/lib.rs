@@ -195,6 +195,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "system",
     },
     Entry {
+        key: "ui.menu_font_size",
+        cat: Msg::CatAppearance,
+        label: Msg::LblMenuFontSize,
+        desc: Msg::DescMenuFontSize,
+        kind: SettingKind::Int { min: 10, max: 32 },
+        default: "17",
+    },
+    Entry {
         key: "ui.font_size",
         // 기본 14 → 15 · 편집기 14 → 16 · 그리드 15 신설 — Golden 기준 가독성(사용자 09-15 "폰트가 너무 작다").
         cat: Msg::CatAppearance,
@@ -523,6 +531,22 @@ pub const REGISTRY: &[Entry] = &[
         key: "key.view.keys",
         cat: Msg::CatKeys,
         label: Msg::MnKeys,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.prefs",
+        cat: Msg::CatKeys,
+        label: Msg::MnPreferences,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.conn.disconnect",
+        cat: Msg::CatKeys,
+        label: Msg::TipDisconnect,
         desc: Msg::DescKey,
         kind: SettingKind::Text,
         default: "",

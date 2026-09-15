@@ -115,7 +115,7 @@
 
 ## 4. 카테고리 트리 — DBeaver Preferences 차용 (사용자 09-15)
 
-DBeaver의 Preferences 트리(General / User Interface / Editors / Connections / Data Editor)를 그대로 상위 그룹으로 쓰고, 우리 카테고리를 아래에 배치한다. 단일 원천 = `nsql-settings::CATEGORY_TREE` · 설정 화면(T-39) 사이드바와 `nsql config list` 머리글이 같은 표를 읽는다.
+DBeaver의 Preferences 트리(General / User Interface / Editors / Connections / Data Editor)를 그대로 상위 그룹으로 쓰고, 우리 카테고리를 아래에 배치한다. 단일 원천 = `nsql-settings::CATEGORY_TREE` · **설정 화면(`prefs_win.rs` · 09-15 ✅ 1차)** 사이드바와 `nsql config list` 머리글이 같은 표를 읽는다.
 
 | 그룹(DBeaver) | 카테고리 | 키(예) |
 |---|---|---|

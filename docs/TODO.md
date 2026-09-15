@@ -75,7 +75,7 @@
 |---|:--:|:--:|---|---|:--:|
 | **T-37** | P0 | 중 | `nsql-i18n`(영어 기본 · 한국어) + `nsql-settings`(레지스트리 · `settings.conf`) · `nsql config` · GUI 전 문자열 · ☐ CLI 나머지(run/shell/export/conn) 문자열 카탈로그화 | — | ✅ 09-14 |
 | **T-38** | P0 | 소 | 테마 System/Light/Dark(기본 System) — OS 판정 3-OS(`theme.rs`) · `Ctrl/⌘+⇧T` 순환 · `ThemeChanged` 추종 · ☐ mac/Linux 실기 | T-37 | ✅ 09-14(win) |
-| **T-39** | P1 | 중 | 설정 화면 — VS Code식 좌 TOC + 검색 + 항목 카드 + 변경 바 + Reset([24 §2·§3](24-settings-and-vscode-analysis.md)) · **T-39b** 프로젝트 스코프 `.nexa/settings.conf` | 메뉴바 이식 · T-37 | ☐ |
+| **T-39** | P1 | 중 | ✅ 09-15 1차(`prefs_win.rs` · 검색 · 트리 · 카드 · Switch/Combo/TextBox · 색/단축키 보조 버튼 · 초기화 · 고급 · 즉시 반영 `apply_setting`) · 잔여 = 변경 바 애니메이션 · 키맵 카테고리 그리드 · 설정 화면 — VS Code식 좌 TOC + 검색 + 항목 카드 + 변경 바 + Reset([24 §2·§3](24-settings-and-vscode-analysis.md)) · **T-39b** 프로젝트 스코프 `.nexa/settings.conf` | 메뉴바 이식 · T-37 | 🚧 |
 
 ## 3-5. 성능 계측·경량 구조([26](26-performance-architecture.md)) · CLI 규약([27](27-cli-conventions.md)) · 사용자 09-14
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |

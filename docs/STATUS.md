@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (8차 · win) — 환경 설정 창 ✅(T-39 1차) · 접속 해제 툴바 ✅ · 메뉴 글꼴 설정 ✅ · 탐색기 셰브론 ✅
+
+Edit ▸ Preferences…(Ctrl+,): 검색 · 트리(`CATEGORY_TREE`) · 카드(Switch/Combo/TextBox · 색 선택… · 단축키 캡처… · 초기화 · 고급) · 바꾸는 즉시 저장·반영. 툴바 Disconnect(접속 시만 활성). `ui.menu_font_size` 17. ⏳ 사용자 실기: 설정 창 배치·콤보·검색. **다음**: T-39 잔여(프로젝트 스코프 · 키맵 카테고리 그리드) → T-74 파일 열기/저장 → T-72. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (7차 · win) — 드라이버 분리 검토 → DR-29(정적 유지 · 확장은 in-process cdylib)
 
 실측 기동 ≈20ms · 사설 8.5MB · 전역 초기화 0 → 분리 불필요. 확장 드라이버(다운로드·SxS)는 프로세스 대신 C ABI cdylib 지연 로드(T-27 개정). → [journal](journal/2026-09-15.md)
