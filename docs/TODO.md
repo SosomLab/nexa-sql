@@ -105,7 +105,7 @@
 | **T-71** | P1 | 중 | ✅ 09-15 1차(`oracle.live.*` · V$SESSION/로그 테이블 폴링 · 로그 창 `[live]`) · 잔여 = CLI `--live` · Live 세그먼트 · DBMS_PIPE/LONGOPS · **Oracle 라이브 로그 모니터**([32 §2](32-server-messages-and-live-log.md)) — 메타 세션 폴링(로그 테이블 · V$SESSION client_info/action · DBMS_PIPE · LONGOPS) · 로그 창 Live 세그먼트 · `oracle.live.*` 설정 · CLI `--live` · 실행 중에만 1s 이상 | 28 T-56 D-48 | 🚧 |
 | **T-72** | P1 | 대 | **배포 파이프라인**([33](33-distribution-and-packaging.md) · DR-27) — `packaging/{windows,macos,linux}` 스테이징 · MSI/pkg+dmg(Universal 2 · Frameworks)/deb·rpm · `release.yml` 3-OS · sha256 · `--smoke`·제거 검증 · 서명 자리 | T-62 T-10 D-49 D-50 | ☐ |
 | **T-73** | P1 | 중 | ✅ 09-15 1차(`findbar.rs` · Ctrl+F/H · F3 · Aa · Replace/All · 순환) · 잔여 = 정규식(T-59) · 전체 일치 하이라이트 · 단어 단위 · 편집기 **찾기/바꾸기**(Ctrl+F/H · 대소문자·정규식 T-59·전체 바꾸기 · 결과 하이라이트) — nexa-ctl TextBox 검색 API | T-58 T-59 | 🚧 |
-| **T-74** | P1 | 중 | **파일 열기/저장**(File ▸ Open/Save/Save As · 최근 파일 · 외부 변경 X-1) — nexa-ui 자체 파일 대화상자([nexa-ui 20](../../nexa-ui/docs/20-file-management-and-dialogs.md) F-6) 선행 | nexa-ui 20 | ☐ |
+| **T-74** | P1 | 중 | ✅ 09-15 20차 1차(Open/Save/Save As · 최근 파일 · 끌어놓기 · `*` 더러움 · 닫기 2단 · CRLF) — 잔여 = 외부 변경 X-1(docs/15) · 프로젝트 폴더 · export 경로 · **파일 열기/저장**(File ▸ Open/Save/Save As · 최근 파일 · 외부 변경 X-1) — nexa-ui 자체 파일 대화상자([nexa-ui 20](../../nexa-ui/docs/20-file-management-and-dialogs.md) F-6) 선행 | nexa-ui 20 | 🚧 |
 | **T-75** | P2 | 소 | 그리드 복사 확장 — Copy as JSON/Markdown · 컬럼 헤더 우클릭(컬럼 복사·숨김) · 셀 편집기(nexa-ui 21 §3-2) | 09-15 3차 | ☐ |
 | **T-76** | P2 | 소 | **settings.json 내장 편집기**(`settings.json_editor = builtin`) — 편집기 탭에서 열고 저장(T-74 파일 저장) → 같은 감시 경로로 반영 · JSON 구문 강조 패키지 · 스키마 힌트(레지스트리 라벨/허용값) | T-74 T-17 | ☐ |
 | **T-77** | P1 | 대 | **트랜잭션 UX**([34](34-transaction-ux.md) · D-51) — 탭별 `TxState` · 탭 배지 `●n`(경고→오래되면 빨강) · 상태줄 세그먼트+팝업(모드 전환·Commit·Rollback·대기 목록) · 툴바 Commit 배지/활성 · 닫기/해제/전환/종료 모달 · 방언별 암묵 커밋 · `tx.*` 설정 5키 · `nsql shell` `*n` | T-54 T-55 T-61 | 📐 |
@@ -114,3 +114,4 @@
 
 ## 4. M3+ (요약)
 syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · MySQL/ODBC 드라이버(T-23 · PG ✅ 09-15 `nsql-driver-pg` · SQLite ✅) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26 → **T-32~36** [23](23-license-activation.md)).
+| **T-78** | P1 | 중 | 구문 토큰 종류 확장(자료형·함수·바인드·구분자·명령) + 색 프리셋 `editor.color_preset`(nexa/dbeaver/golden · [35](35-editor-colors-reference.md)) · 선택 반투명 옵션(D-54) | D-53 D-54 | ☐ |

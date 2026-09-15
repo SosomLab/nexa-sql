@@ -17,6 +17,7 @@ mod connect;
 mod editors;
 mod exp_icons;
 mod explorer;
+mod file_win;
 mod findbar;
 mod grid;
 mod icon;
@@ -38,6 +39,7 @@ use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
 use explorer::{Explorer, ExplorerAction, LiveReq};
+use file_win::{FileWin, FileWinAction};
 use findbar::{FindAction, FindBar};
 use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
@@ -50,6 +52,7 @@ use nexa_ctl::{
     Button, ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, MenuBar,
     MenuDef, MenuEntry, TextBox, ToolItem, Toolbar, Widget,
 };
+use nexa_dlg::PickerMode;
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
 use nsql_i18n::{current_lang, t, tf, Msg};
@@ -61,6 +64,7 @@ use nsql_vault::Vault;
 use palette::{Palette, PaletteAction};
 use prefs_win::{PrefsAction, PrefsWin};
 use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -121,6 +125,9 @@ struct App {
     /// 환경 설정 창(T-39 · 사용자 09-15).
     open_prefs: bool,
     prefs_win: PrefsWin,
+    /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
+    file_win: FileWin,
+    open_file_dlg: Option<PickerMode>,
     // 컨트롤
     menubar: MenuBar,
     toolbar: Toolbar,
@@ -648,9 +655,9 @@ impl App {
         Some(self.json_next)
     }
 
-    /// 접속 창 열림/닫힘 전환 → 메인 창 활성 상태 동기화(모달 · 닫히면 메인으로 포커스).
-    fn sync_conn_modal(&mut self) {
-        let open = self.conn_win.is_open();
+    /// 모달 창(접속 · 파일) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
+    fn sync_modal(&mut self) {
+        let open = self.conn_win.is_open() || self.file_win.is_open();
         if open == self.conn_modal && !open {
             return;
         }
@@ -870,6 +877,19 @@ impl App {
                 self.set_focus(Focus::Editor);
             }
             "file.exit" => self.exit_requested = true,
+            // ★ 파일 열기/저장(T-74) — 자체 대화상자(nexa-dlg) · 네이티브 0.
+            "file.open" => self.open_file_dlg = Some(PickerMode::Open),
+            "file.save" => match self.editors.active_path() {
+                Some(p) => self.save_to(&p),
+                None => self.open_file_dlg = Some(PickerMode::Save),
+            },
+            "file.save_as" => self.open_file_dlg = Some(PickerMode::Save),
+            id if id.starts_with("file.recent:") => {
+                let i: usize = id["file.recent:".len()..].parse().unwrap_or(usize::MAX);
+                if let Some(p) = self.recent_files().get(i).cloned() {
+                    self.open_file(&p);
+                }
+            }
             "edit.cut" => self.clip_action(EditCtxAction::Cut),
             "edit.copy" => self.clip_action(EditCtxAction::Copy),
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
@@ -977,17 +997,38 @@ impl App {
     }
 
     fn build_menus() -> Vec<MenuDef> {
+        Self::build_menus_with(&[])
+    }
+
+    /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
+    fn build_menus_with(recent: &[PathBuf]) -> Vec<MenuDef> {
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
+        let mut file = vec![
+            item("file.new", Msg::MnNew),
+            item("file.open", Msg::MnOpen),
+            item("file.save", Msg::MnSave),
+            item("file.save_as", Msg::MnSaveAs),
+            MenuEntry::Separator,
+            item("file.close_tab", Msg::MnCloseTab),
+        ];
+        if !recent.is_empty() {
+            file.push(MenuEntry::Separator);
+            for (i, p) in recent.iter().take(8).enumerate() {
+                let name = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let label = format!("{}  {}", name, nexa_fs::path::display(p));
+                file.push(MenuEntry::Item(ComboItem::new(
+                    format!("file.recent:{i}"),
+                    label,
+                )));
+            }
+        }
+        file.push(MenuEntry::Separator);
+        file.push(item("file.exit", Msg::MnExit));
         vec![
-            MenuDef::new(
-                t(Msg::MnFile),
-                vec![
-                    item("file.new", Msg::MnNew),
-                    item("file.close_tab", Msg::MnCloseTab),
-                    MenuEntry::Separator,
-                    item("file.exit", Msg::MnExit),
-                ],
-            ),
+            MenuDef::new(t(Msg::MnFile), file),
             MenuDef::new(
                 t(Msg::MnEdit),
                 vec![
@@ -1045,6 +1086,8 @@ impl App {
         let mut tb = Toolbar::new(vec![
             // 아이콘은 글꼴 글리프가 아니라 코드로 그린 마스크(`toolicons.rs` · 사용자 09-14).
             ToolItem::new("file.new", toolicons::new_script()).tip(t(Msg::TipNew)),
+            ToolItem::new("file.open", toolicons::open_file()).tip(t(Msg::TipOpen)),
+            ToolItem::new("file.save", toolicons::save_file()).tip(t(Msg::TipSave)),
             ToolItem::new("run.statement", toolicons::run_statement()).tip(t(Msg::TipRunStatement)),
             ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
             ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
@@ -1122,6 +1165,9 @@ impl App {
         let m =
             |id: &str, menu: Msg, item: Msg| (id.to_string(), format!("{}: {}", t(menu), t(item)));
         cmds.push(m("file.new", Msg::MnFile, Msg::MnNew));
+        cmds.push(m("file.open", Msg::MnFile, Msg::MnOpen));
+        cmds.push(m("file.save", Msg::MnFile, Msg::MnSave));
+        cmds.push(m("file.save_as", Msg::MnFile, Msg::MnSaveAs));
         cmds.push(m("file.exit", Msg::MnFile, Msg::MnExit));
         cmds.push(m("edit.cut", Msg::MnEdit, Msg::MnCut));
         cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
@@ -1191,6 +1237,177 @@ impl App {
             }
         }
         winfocus::raise_group(&wins);
+    }
+
+    // ───────────────────────── 파일 열기/저장(T-74) ─────────────────────────
+
+    /// 최근 파일(설정 `file.recent` · `|` 구분 · 최신 먼저 · 존재하는 것만).
+    fn recent_files(&self) -> Vec<PathBuf> {
+        self.settings
+            .get("file.recent")
+            .unwrap_or("")
+            .split('|')
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_file())
+            .take(8)
+            .collect()
+    }
+
+    fn push_recent(&mut self, path: &Path) {
+        let mut v = self.recent_files();
+        v.retain(|p| p != path);
+        v.insert(0, path.to_path_buf());
+        v.truncate(8);
+        let joined = v
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("|");
+        let _ = self.settings.set("file.recent", &joined);
+        self.persist_settings();
+        self.menubar.set_menus(App::build_menus_with(&v));
+    }
+
+    /// 대화상자를 닫을 때 마지막 폴더·숨김 표시를 기억한다.
+    fn remember_file_dialog(&mut self, dir: Option<&Path>) {
+        let dir = dir
+            .map(Path::to_path_buf)
+            .or_else(|| self.file_win.current_dir());
+        if let Some(d) = dir {
+            let _ = self.settings.set("file.last_dir", &d.to_string_lossy());
+        }
+        if let Some(h) = self.file_win.show_hidden() {
+            let _ = self
+                .settings
+                .set("file.show_hidden", if h { "on" } else { "off" });
+        }
+        self.persist_settings();
+    }
+
+    fn open_file_window(&mut self, el: &ActiveEventLoop, mode: PickerMode) {
+        let over = self.window.as_ref().and_then(|w| {
+            let p = w.outer_position().ok()?;
+            let sz = w.outer_size();
+            Some((p.x, p.y, sz.width, sz.height))
+        });
+        let owner = self.window.clone();
+        // 시작 폴더 = 활성 탭 파일의 폴더 → 마지막 폴더 → 홈.
+        let start = self
+            .editors
+            .active_path()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .or_else(|| {
+                self.settings
+                    .get("file.last_dir")
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+            });
+        let default_name = match mode {
+            PickerMode::Save => {
+                let t = self.editors.active_title();
+                if t.contains('.') {
+                    t
+                } else {
+                    format!("{t}.sql")
+                }
+            }
+            PickerMode::Open => String::new(),
+        };
+        let recent_dirs: Vec<PathBuf> = self
+            .recent_files()
+            .iter()
+            .filter_map(|p| p.parent().map(Path::to_path_buf))
+            .fold(Vec::new(), |mut acc, d| {
+                if !acc.contains(&d) {
+                    acc.push(d);
+                }
+                acc
+            });
+        let show_hidden = self.settings.flag("file.show_hidden");
+        self.file_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            over,
+            owner.as_deref(),
+            mode,
+            start.as_deref(),
+            &default_name,
+            recent_dirs,
+            show_hidden,
+        );
+    }
+
+    /// 파일 → 탭. UTF-8(BOM 제거) · 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
+    fn open_file(&mut self, path: &Path) {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = tf(
+                    Msg::StFileReadError,
+                    &[&path.display().to_string(), &e.to_string()],
+                );
+                self.redraw();
+                return;
+            }
+        };
+        let bytes = bytes
+            .strip_prefix(&[0xEF, 0xBB, 0xBF])
+            .unwrap_or(&bytes[..]);
+        let (text, lossy) = match std::str::from_utf8(bytes) {
+            Ok(s) => (s.to_string(), false),
+            Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
+        };
+        let crlf = text.contains("\r\n");
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        self.editors.open_file(path, &text, crlf);
+        self.set_focus(Focus::Editor);
+        self.push_recent(path);
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.status = if lossy {
+            tf(Msg::StFileDecodedLossy, &[&name])
+        } else {
+            tf(Msg::StFileOpened, &[&name])
+        };
+        self.layout();
+        self.redraw();
+    }
+
+    /// 활성 탭 → 파일(UTF-8 · BOM 없음 · 원래 줄끝 유지).
+    fn save_to(&mut self, path: &Path) {
+        let mut text = self.editors.cur().text();
+        if self.editors.active_crlf() {
+            text = text.replace('\n', "\r\n");
+        }
+        let tmp = path.with_extension(format!(
+            "{}.nsql-tmp",
+            path.extension()
+                .map(|e| e.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        ));
+        let res = std::fs::write(&tmp, text.as_bytes()).and_then(|()| std::fs::rename(&tmp, path));
+        match res {
+            Ok(()) => {
+                self.editors.mark_saved(path);
+                self.push_recent(path);
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.status = tf(Msg::StFileSaved, &[&name]);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                self.status = tf(
+                    Msg::StFileWriteError,
+                    &[&path.display().to_string(), &e.to_string()],
+                );
+            }
+        }
+        self.redraw();
     }
 
     /// 접속 창 열기(메인 창 위 가운데) — 이미 열려 있으면 앞으로.
@@ -1422,7 +1639,8 @@ impl App {
 
     /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
     fn relabel(&mut self) {
-        self.menubar.set_menus(App::build_menus());
+        self.menubar
+            .set_menus(App::build_menus_with(&self.recent_files()));
         self.toolbar = App::build_toolbar();
         self.run_btn.set_label(t(Msg::BtnRun));
         self.conn_win.relabel();
@@ -2325,6 +2543,12 @@ impl ApplicationHandler<Wake> for App {
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
         redraw |= self.editors.tick();
+        // 더러움 표시(`*`) 갱신 · 닫기 2단 안내.
+        redraw |= self.editors.refresh_dirty();
+        if let Some(m) = self.editors.take_notice() {
+            self.status = t(m).into();
+            redraw = true;
+        }
         if self.editors.relayout_if_needed() {
             redraw = true;
         }
@@ -2342,6 +2566,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if self.prefs_win.tick(now_ms) {
             self.prefs_win.redraw();
+        }
+        if self.file_win.tick(now_ms) {
+            self.file_win.redraw();
         }
         if self.explorer.tick(now_ms) {
             self.redraw();
@@ -2362,6 +2589,7 @@ impl ApplicationHandler<Wake> for App {
             || self.colors_win.animating()
             || self.keys_win.animating()
             || self.prefs_win.animating()
+            || self.file_win.animating()
             || self.explorer.bars_visible()
             || self.find.animating()
             || self.editors.tooltip_pending();
@@ -2374,7 +2602,7 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.conn_win.tick(now) {
             next = next.min(t);
         }
-        self.sync_conn_modal();
+        self.sync_modal();
         // settings.json 감시(열어 둔 뒤 1초 폴링 · 저장 즉시 반영).
         if let Some(t) = self.json_tick(now) {
             next = next.min(t);
@@ -2392,8 +2620,16 @@ impl ApplicationHandler<Wake> for App {
         }
         // ★ 접속 창 = 모달: 열려 있는 동안 **메인 창과 그 일부인 로그·색·단축키·설정 창**의 입력은 버리고
         //   (OS 수준은 `winfocus::set_enabled`) 접속 창을 앞으로(사용자 09-15 "로그 창도 메인의 일부").
-        if self.conn_win.is_open()
-            && !self.conn_win.is(id)
+        if let WindowEvent::DroppedFile(p) = &event {
+            // OS에서 창으로 끌어다 놓기(3-OS 공통 winit 경로) = 열기.
+            let p = p.clone();
+            self.open_file(&p);
+            return;
+        }
+        let modal_open = self.conn_win.is_open() || self.file_win.is_open();
+        let is_modal_win = self.conn_win.is(id) || self.file_win.is(id);
+        if modal_open
+            && !is_modal_win
             && matches!(
                 event,
                 WindowEvent::KeyboardInput { .. }
@@ -2402,8 +2638,32 @@ impl ApplicationHandler<Wake> for App {
                     | WindowEvent::Ime(_)
             )
         {
-            if let Some(w) = self.conn_win.window() {
+            if let Some(w) = self.file_win.window().or_else(|| self.conn_win.window()) {
                 w.focus_window();
+            }
+            return;
+        }
+        if self.file_win.is(id) {
+            let ui_px = self.settings.int("ui.font_size") as f32;
+            match self.file_win.handle(&event) {
+                FileWinAction::Paint => self.file_win.paint(&self.ui_font, &self.theme, ui_px),
+                FileWinAction::Confirm(mode, path) => {
+                    self.remember_file_dialog(path.parent());
+                    match mode {
+                        PickerMode::Open => self.open_file(&path),
+                        PickerMode::Save => self.save_to(&path),
+                    }
+                    self.sync_modal();
+                }
+                FileWinAction::Cancel => {
+                    self.remember_file_dialog(None);
+                    self.sync_modal();
+                }
+                FileWinAction::None => {
+                    if !self.file_win.is_open() {
+                        self.sync_modal();
+                    }
+                }
             }
             return;
         }
@@ -2671,7 +2931,11 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_conn) {
             self.open_conn_window(el);
-            self.sync_conn_modal();
+            self.sync_modal();
+        }
+        if let Some(mode) = self.open_file_dlg.take() {
+            self.open_file_window(el, mode);
+            self.sync_modal();
         }
         if self.exit_requested {
             self.worker.send(worker::Cmd::Quit);
@@ -2879,6 +3143,8 @@ fn main() {
         keys_win: KeysWin::new(),
         open_prefs: false,
         prefs_win: PrefsWin::new(),
+        file_win: FileWin::new(),
+        open_file_dlg: None,
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),
         conn_win: ConnWin::new(panel),

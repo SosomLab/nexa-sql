@@ -61,6 +61,8 @@ nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
 nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }
 nexa-conf = { path = "../nexa-ui/crates/nexa-conf" }
 nexa-font = { path = "../nexa-ui/crates/nexa-font" }
+nexa-fs = { path = "../nexa-ui/crates/nexa-fs" }
+nexa-dlg = { path = "../nexa-ui/crates/nexa-dlg" }
 
 [profile.release]
 opt-level = 3

@@ -13,8 +13,9 @@ use nexa_ctl::{
     Widget,
 };
 use nsql_i18n::{t, Msg};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub(crate) struct Editors {
     tabs: TabBar,
@@ -39,7 +40,22 @@ pub(crate) struct Editors {
     indent: (u8, bool),
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
+    /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
+    paths: Vec<Option<PathBuf>>,
+    /// 마지막으로 열거나 저장한 본문(더러움 판정 근거 · 새 탭 = 빈 문자열).
+    saved: Vec<String>,
+    /// 탭별 줄끝이 CRLF였나(저장 때 원래대로 되돌린다 · 새 탭 = OS 기본).
+    crlf: Vec<bool>,
+    /// 탭 바에 마지막으로 보낸 표시 제목(더러움 `*` 포함) — 바뀔 때만 다시 보낸다.
+    shown_titles: Vec<String>,
+    /// 더러운 탭 닫기 2단(같은 탭을 3초 안에 다시 닫으면 버림).
+    pending_close: Option<(usize, Instant)>,
+    /// 호스트 상태줄에 전할 1회성 안내.
+    notice: Option<Msg>,
 }
+
+/// 더러운 탭 닫기 확인 유효 시간.
+const CLOSE_CONFIRM: Duration = Duration::from_secs(3);
 
 const HOVER_MS: u128 = 900;
 
@@ -72,6 +88,12 @@ impl Editors {
             whitespace: WhitespaceStyle::default(),
             indent: (4, true),
             indents: Vec::new(),
+            paths: Vec::new(),
+            saved: Vec::new(),
+            crlf: Vec::new(),
+            shown_titles: Vec::new(),
+            pending_close: None,
+            notice: None,
         };
         e.new_tab(None);
         e
@@ -245,23 +267,150 @@ impl Editors {
         let tb = self.make_box("", &syntax);
         self.bufs.push(tb);
         self.indents.push(None);
+        self.paths.push(None);
+        self.saved.push(String::new());
+        self.crlf.push(cfg!(windows));
         self.syntax.push(syntax);
         self.titles.push(title);
         self.active = self.bufs.len() - 1;
         self.sync_tabs();
     }
 
+    // ───────────────────────── 파일(T-74) ─────────────────────────
+
+    /// 탭 `i`가 마지막 열기/저장 뒤 바뀌었나.
+    pub(crate) fn is_dirty(&self, i: usize) -> bool {
+        match (self.bufs.get(i), self.saved.get(i)) {
+            (Some(b), Some(s)) => b.text() != *s,
+            _ => false,
+        }
+    }
+
+    /// 활성 탭의 파일 경로.
+    pub(crate) fn active_path(&self) -> Option<PathBuf> {
+        self.paths.get(self.active).cloned().flatten()
+    }
+
+    /// 활성 탭 제목(저장 대화상자 기본 이름).
+    pub(crate) fn active_title(&self) -> String {
+        self.titles.get(self.active).cloned().unwrap_or_default()
+    }
+
+    /// 활성 탭의 줄끝이 CRLF인가.
+    pub(crate) fn active_crlf(&self) -> bool {
+        self.crlf.get(self.active).copied().unwrap_or(cfg!(windows))
+    }
+
+    /// 파일을 탭에 연다 — 이미 열린 파일이면 그 탭으로 · 활성 탭이 빈 새 스크립트면 그 탭을 재사용 · 아니면 새 탭.
+    pub(crate) fn open_file(&mut self, path: &Path, text: &str, crlf: bool) {
+        if let Some(i) = self.paths.iter().position(|p| p.as_deref() == Some(path)) {
+            self.switch(i);
+            return;
+        }
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let reuse = self.paths.get(self.active).is_some_and(Option::is_none)
+            && self.cur().text().is_empty()
+            && !self.is_dirty(self.active);
+        if !reuse {
+            self.new_tab(Some(name.clone()));
+        }
+        let i = self.active;
+        let syntax = self.registry.for_title(&name);
+        let focused = self.cur().is_focused();
+        let mut tb = self.make_box(text, &syntax);
+        tb.set_focused(focused);
+        if let Some((ts, sp)) = self.indents.get(i).copied().flatten() {
+            tb.set_indent(ts, sp);
+        }
+        let mut inv = Invalidations::default();
+        tb.set_bounds(self.editor_bounds(), &mut inv);
+        self.bufs[i] = tb;
+        self.syntax[i] = syntax;
+        self.titles[i] = name;
+        self.paths[i] = Some(path.to_path_buf());
+        self.saved[i] = text.to_string();
+        self.crlf[i] = crlf;
+        self.sync_tabs();
+    }
+
+    /// 활성 탭을 `path`에 저장한 뒤 — 경로·제목·스냅샷 갱신(구문은 새 확장자 기준).
+    pub(crate) fn mark_saved(&mut self, path: &Path) {
+        let i = self.active;
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if self.titles[i] != name {
+            self.titles[i] = name.clone();
+            let syntax = self.registry.for_title(&name);
+            self.cur_mut().set_highlighter(Some(syntax.clone()));
+            self.syntax[i] = syntax;
+        }
+        self.paths[i] = Some(path.to_path_buf());
+        self.saved[i] = self.cur().text();
+        self.sync_tabs();
+    }
+
+    /// 표시 제목(더러우면 `*` 접두) — 탭 바에 바뀐 것만 보낸다. 바뀌었으면 true(호스트가 다시 그린다).
+    pub(crate) fn refresh_dirty(&mut self) -> bool {
+        let shown: Vec<String> = (0..self.titles.len())
+            .map(|i| self.shown_title(i))
+            .collect();
+        if shown == self.shown_titles {
+            return false;
+        }
+        self.sync_tabs();
+        true
+    }
+
+    fn shown_title(&self, i: usize) -> String {
+        if self.is_dirty(i) {
+            format!("*{}", self.titles[i])
+        } else {
+            self.titles[i].clone()
+        }
+    }
+
+    /// 1회성 안내(상태줄).
+    pub(crate) fn take_notice(&mut self) -> Option<Msg> {
+        self.notice.take()
+    }
+
     pub(crate) fn close_tab(&mut self, i: usize) {
-        if self.bufs.len() <= 1 || i >= self.bufs.len() {
-            // 마지막 탭은 비우기만.
+        if i >= self.bufs.len() {
+            return;
+        }
+        // ★ 저장하지 않은 변경 = 2단 닫기(같은 탭을 3초 안에 다시 닫으면 버린다 · Delete 2단과 같은 관례).
+        if self.is_dirty(i) {
+            let again = matches!(self.pending_close, Some((j, t)) if j == i && t.elapsed() <= CLOSE_CONFIRM);
+            if !again {
+                self.pending_close = Some((i, Instant::now()));
+                self.notice = Some(Msg::StUnsavedCloseAgain);
+                return;
+            }
+        }
+        self.pending_close = None;
+        if self.bufs.len() <= 1 {
+            // 마지막 탭은 비우기만(제목 없는 새 스크립트로).
             if let Some(b) = self.bufs.get_mut(i) {
                 b.set_text("");
             }
+            self.paths[i] = None;
+            self.saved[i] = String::new();
+            self.counter += 1;
+            self.titles[i] = format!("Script_{}", self.counter);
+            self.sync_tabs();
             return;
         }
         self.bufs.remove(i);
         self.titles.remove(i);
         self.syntax.remove(i);
+        self.paths.remove(i);
+        self.saved.remove(i);
+        self.crlf.remove(i);
         if i < self.indents.len() {
             self.indents.remove(i);
         }
@@ -285,8 +434,11 @@ impl Editors {
 
     fn sync_tabs(&mut self) {
         let mut inv = Invalidations::default();
-        self.tabs
-            .set_tabs(self.titles.clone(), self.active, &mut inv);
+        let shown: Vec<String> = (0..self.titles.len())
+            .map(|i| self.shown_title(i))
+            .collect();
+        self.tabs.set_tabs(shown.clone(), self.active, &mut inv);
+        self.shown_titles = shown;
         self.layout(&mut inv);
     }
 
@@ -391,10 +543,16 @@ impl Editors {
                         let t = self.titles.remove(from);
                         let sy = self.syntax.remove(from);
                         let id = self.indents.remove(from);
+                        let pa = self.paths.remove(from);
+                        let sv = self.saved.remove(from);
+                        let cr = self.crlf.remove(from);
                         self.bufs.insert(to, b);
                         self.titles.insert(to, t);
                         self.syntax.insert(to, sy);
                         self.indents.insert(to, id);
+                        self.paths.insert(to, pa);
+                        self.saved.insert(to, sv);
+                        self.crlf.insert(to, cr);
                         self.active = to;
                         self.sync_tabs();
                     }
@@ -431,9 +589,13 @@ impl Editors {
         let text = self.bufs[i].text();
         let stmts = nsql_script::split_script(&text).len();
         let lines = text.split('\n').count();
+        let head = match self.paths.get(i).and_then(|p| p.as_ref()) {
+            Some(p) => format!("{}\n{}", self.titles[i], p.display()),
+            None => self.titles[i].clone(),
+        };
         let mut card = format!(
             "{}\n{}: {} · {}: {} · {}: {}",
-            self.titles[i],
+            head,
             t(Msg::TipStatements),
             stmts,
             t(Msg::TipLines),

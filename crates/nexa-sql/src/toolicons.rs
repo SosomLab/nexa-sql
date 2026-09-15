@@ -55,6 +55,26 @@ fn shape_new(x: f32, y: f32) -> bool {
         || stroke(x, y, (60.0, 128.0), (196.0, 128.0), 26.0)
 }
 
+/// 📁 — 열기(폴더 외곽선 + 탭).
+fn shape_open(x: f32, y: f32) -> bool {
+    let body = in_rounded_rect(x, y, 36.0, 76.0, 184.0, 128.0, 14.0)
+        && !in_rounded_rect(x, y, 58.0, 98.0, 140.0, 84.0, 8.0);
+    let tab = in_rounded_rect(x, y, 36.0, 52.0, 84.0, 40.0, 12.0)
+        && !in_rounded_rect(x, y, 58.0, 74.0, 40.0, 30.0, 6.0);
+    body || tab
+}
+
+/// 💾 — 저장(플로피: 외곽선 + 위 슬롯 + 아래 라벨).
+fn shape_save(x: f32, y: f32) -> bool {
+    let frame = in_rounded_rect(x, y, 40.0, 40.0, 176.0, 176.0, 16.0)
+        && !in_rounded_rect(x, y, 62.0, 62.0, 132.0, 132.0, 6.0);
+    let slot = in_rounded_rect(x, y, 84.0, 40.0, 88.0, 54.0, 4.0)
+        && !in_rounded_rect(x, y, 104.0, 40.0, 48.0, 36.0, 2.0);
+    let label = in_rounded_rect(x, y, 78.0, 140.0, 100.0, 76.0, 6.0)
+        && !in_rounded_rect(x, y, 98.0, 160.0, 60.0, 56.0, 3.0);
+    frame || slot || label
+}
+
 const TRI: [(f32, f32); 3] = [(76.0, 44.0), (212.0, 128.0), (76.0, 212.0)];
 
 /// ▷ — 한 문장 실행(외곽선).
@@ -136,6 +156,12 @@ fn mask(shape: fn(f32, f32) -> bool) -> ToolIcon {
 pub(crate) fn new_script() -> ToolIcon {
     mask(shape_new)
 }
+pub(crate) fn open_file() -> ToolIcon {
+    mask(shape_open)
+}
+pub(crate) fn save_file() -> ToolIcon {
+    mask(shape_save)
+}
 pub(crate) fn run_statement() -> ToolIcon {
     mask(shape_run_statement)
 }
@@ -172,6 +198,8 @@ mod tests {
             shape_connect,
             shape_log,
             shape_disconnect,
+            shape_open,
+            shape_save,
         ] {
             let (opaque, partial) = coverage(s);
             assert!(opaque > 100, "채워진 픽셀이 있어야 한다: {opaque}");

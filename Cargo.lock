@@ -1218,12 +1218,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexa-dlg"
+version = "0.1.0"
+dependencies = [
+ "nexa-ctl",
+ "nexa-fs",
+]
+
+[[package]]
 name = "nexa-font"
 version = "0.1.0"
 dependencies = [
  "memmap2",
  "nexa-gfx",
 ]
+
+[[package]]
+name = "nexa-fs"
+version = "0.1.0"
 
 [[package]]
 name = "nexa-gfx"
@@ -1237,7 +1249,9 @@ name = "nexa-sql"
 version = "0.0.1"
 dependencies = [
  "nexa-ctl",
+ "nexa-dlg",
  "nexa-font",
+ "nexa-fs",
  "nexa-gfx",
  "nsql-catalog",
  "nsql-core",

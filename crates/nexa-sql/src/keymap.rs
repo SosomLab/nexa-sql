@@ -31,8 +31,26 @@ pub(crate) const COMMANDS: &[Command] = &[
     Command {
         id: "file.new",
         label: Msg::MnNew,
-        win: "ctrl+n",
-        mac: "cmd+n",
+        win: "ctrl+n|ctrl+t",
+        mac: "cmd+n|cmd+t",
+    },
+    Command {
+        id: "file.open",
+        label: Msg::MnOpen,
+        win: "ctrl+o",
+        mac: "cmd+o",
+    },
+    Command {
+        id: "file.save",
+        label: Msg::MnSave,
+        win: "ctrl+s",
+        mac: "cmd+s",
+    },
+    Command {
+        id: "file.save_as",
+        label: Msg::MnSaveAs,
+        win: "ctrl+shift+s",
+        mac: "cmd+shift+s",
     },
     Command {
         id: "file.close_tab",

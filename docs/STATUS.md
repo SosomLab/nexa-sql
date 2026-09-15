@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (20차 · win) — 파일 열기/저장/다른 이름으로 ✅(자체 대화상자) · 색 배치 조사 35 ✅
+
+File ▸ Open…(Ctrl+O)/Save(Ctrl+S)/Save As…(Ctrl+⇧S)/최근 파일 · 툴바 아이콘 · 끌어놓기. 대화상자 = nexa-ui `nexa-dlg::FilePicker`(장소 · 목록 정렬 · 필터 · 숨김 · 새 폴더 · 덮어쓰기 2단) — Windows/macOS/Linux 동일. 탭 = 파일명 + `*` · 닫기 2단 · CRLF 보존. 조사 [35](35-editor-colors-reference.md). **다음**: 결과 그리드 선택 모델 → 좌측 활동 막대(VS Code) → 플로팅 찾기/바꾸기 → D-53/54. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (19차 · win) — Ctrl+D 다중 선택 ✅ · Alt+Shift 열 선택 ✅ · 탭별 들여쓰기 ✅ · 붙여넣기 탭→공백 ✅ · 드래그 결함 ✅
 
 편집기: 다중 선택/캐럿 모델(nexa-ctl `EditState.extra`) · Ctrl+D 다음 출현 · Ctrl+⇧D 전부 · Alt+Shift 드래그 열 블록(행마다 캐럿) · 선택 행 줄번호 거터 강조 · Esc 접기 · 상태줄 `N selections`. 들여쓰기는 탭별(상태줄 팝업) · 설정은 기본값. 더블클릭 500ms 판정. **다음**: T-74 파일 열기/저장/다른 이름으로(자체 대화상자) → 35 색 배치 문서. → [journal](journal/2026-09-15.md)

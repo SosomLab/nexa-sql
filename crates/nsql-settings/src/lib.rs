@@ -577,6 +577,55 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 파일 대화상자(T-74) — 마지막 폴더·최근 파일·숨김 표시(자동 기억 · HIDDEN).
+    Entry {
+        key: "file.last_dir",
+        cat: Msg::CatFiles,
+        label: Msg::LblFileLastDir,
+        desc: Msg::DescFileLastDir,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "file.recent",
+        cat: Msg::CatFiles,
+        label: Msg::LblFileRecent,
+        desc: Msg::DescFileRecent,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "file.show_hidden",
+        cat: Msg::CatFiles,
+        label: Msg::LblFileShowHidden,
+        desc: Msg::DescFileShowHidden,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "key.file.open",
+        cat: Msg::CatKeys,
+        label: Msg::MnOpen,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.file.save",
+        cat: Msg::CatKeys,
+        label: Msg::MnSave,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.file.save_as",
+        cat: Msg::CatKeys,
+        label: Msg::MnSaveAs,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "key.edit.expand_selection",
         cat: Msg::CatKeys,
@@ -1010,7 +1059,7 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatExplorer,
         ],
     ),
-    (Msg::GrpEditors, &[Msg::CatEditor]),
+    (Msg::GrpEditors, &[Msg::CatEditor, Msg::CatFiles]),
     (Msg::GrpConnections, &[Msg::CatConnection]),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
 ];
@@ -1052,6 +1101,9 @@ pub const HIDDEN: &[&str] = &[
     "ui.fade_out_ms",
     "probe.max_inflight",
     "ui.color_recent",
+    "file.last_dir",
+    "file.recent",
+    "file.show_hidden",
 ];
 
 /// 비노출 설정인가.
