@@ -3037,18 +3037,22 @@ impl ApplicationHandler<Wake> for App {
             self.toggle_log_window(el);
         }
         if std::mem::take(&mut self.open_colors) {
-            let over = self.window.as_ref().and_then(|w| {
+            // ★ 설정 창에서 열면 **설정 창을 소유자**로(그 위에 뜬다 · 메인 소유면 설정 창 뒤로 숨어 "안 열린 것처럼" 보이던 결함 · 사용자 09-15).
+            let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
+            let over = parent.and_then(|w| {
                 let p = w.outer_position().ok()?;
                 let sz = w.outer_size();
                 Some((p.x, p.y, sz.width, sz.height))
             });
-            let owner = self.window.clone();
             self.colors_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 over,
-                owner.as_deref(),
+                parent,
             );
+            if let Some(w) = self.colors_win.window() {
+                w.focus_window();
+            }
         }
         if std::mem::take(&mut self.open_prefs) {
             let over = self.window.as_ref().and_then(|w| {
@@ -3066,19 +3070,23 @@ impl ApplicationHandler<Wake> for App {
             );
         }
         if std::mem::take(&mut self.open_keys) {
-            let over = self.window.as_ref().and_then(|w| {
+            // 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
+            let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
+            let over = parent.and_then(|w| {
                 let p = w.outer_position().ok()?;
                 let sz = w.outer_size();
                 Some((p.x, p.y, sz.width, sz.height))
             });
-            let owner = self.window.clone();
             self.keys_win.refresh(&self.keymap);
             self.keys_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 over,
-                owner.as_deref(),
+                parent,
             );
+            if let Some(w) = self.keys_win.window() {
+                w.focus_window();
+            }
         }
         if std::mem::take(&mut self.open_conn) {
             self.open_conn_window(el);

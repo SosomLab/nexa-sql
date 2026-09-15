@@ -907,8 +907,11 @@ impl PrefsWin {
                     CardCtl::Text(_) => (320.0 * s).round() as i32,
                 };
                 let visible = y + ch > list.y && y < list.bottom();
+                // ★ 컨트롤 줄은 **목록 안에 온전히 들어올 때만** 배치한다(카드 글자는 클립되지만 컨트롤은 자기 bounds를
+                //   그대로 그려 하단 줄 위로 삐져나왔다 · 사용자 09-15) — 밖이면 빈 rect(그리지도 클릭받지도 않음).
+                let ctl_visible = visible && cy >= list.y && cy + ctl_h <= list.bottom();
                 let hidden = Rect::default();
-                let r = if visible {
+                let r = if ctl_visible {
                     Rect::new(cx, cy, ctl_w, ctl_h)
                 } else {
                     hidden
@@ -932,7 +935,7 @@ impl PrefsWin {
                     b.set_scale(s);
                     let bw = (90.0 * s).round() as i32;
                     b.set_bounds(
-                        if visible {
+                        if ctl_visible {
                             Rect::new(cx, cy, bw, ctl_h)
                         } else {
                             hidden
@@ -940,11 +943,14 @@ impl PrefsWin {
                         &mut inv,
                     );
                     cx += bw + (8.0 * s).round() as i32;
+                    if is_color_key(c.entry.key) {
+                        cx += ctl_h + (8.0 * s).round() as i32; // 스와치 자리
+                    }
                 }
                 c.reset.set_scale(s);
                 let rw = (90.0 * s).round() as i32;
                 c.reset.set_bounds(
-                    if visible && c.modified {
+                    if ctl_visible && c.modified {
                         Rect::new(cx, cy, rw, ctl_h)
                     } else {
                         hidden
@@ -1030,6 +1036,27 @@ impl PrefsWin {
                 }
                 if let Some(b) = &c.aux {
                     b.paint(&mut dc, th);
+                    // ★ 색 미리보기 스와치(사용자 09-15) — 값이 비면 테마 선택색(= 실제 적용값) · 알파는 바탕 위에 섞어 보인다.
+                    if is_color_key(c.entry.key) && b.bounds().h > 0 {
+                        let bb = b.bounds();
+                        let sz = ctl_h;
+                        let sw = Rect::new(bb.right() + (8.0 * s).round() as i32, bb.y, sz, sz);
+                        let rgba = nexa_ctl::rgba_from_hex(&c.value);
+                        let (col, alpha) = match rgba {
+                            Some(v) => (
+                                nexa_ctl::Color::from_rgb(
+                                    (v >> 24) as u8,
+                                    (v >> 16) as u8,
+                                    (v >> 8) as u8,
+                                ),
+                                (v & 0xFF) as f32 / 255.0,
+                            ),
+                            None => (th.sel_bg, 1.0),
+                        };
+                        dc.fill_round_rect(sw, 4, th.window_bg);
+                        dc.fill_round_rect_alpha(sw, 4, col, alpha);
+                        dc.stroke_round_rect(sw, 4, th.border, 1.0);
+                    }
                 }
                 if c.modified {
                     c.reset.paint(&mut dc, th);
