@@ -236,6 +236,10 @@ pub(crate) enum ExplorerAction {
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
 type IconCache = HashMap<(IconKind, (u8, u8, u8)), Rc<IconImage>>;
 
+/// 아이콘 기본 크기 16×16(논리 px · 기본 글꼴 17px 기준) — 글꼴 크기에 비례해 스케일(사용자 09-15).
+const ICON_BASE_PX: f32 = 16.0;
+const ICON_REF_FONT_PX: f32 = 17.0;
+
 const ROW_H: f32 = 22.0;
 const INDENT: f32 = 14.0;
 const DBLCLICK_MS: u128 = 400;
@@ -266,6 +270,8 @@ pub(crate) struct Explorer {
     /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
     icons_on: bool,
     icon_cache: IconCache,
+    /// 호스트가 알려 주는 현재 트리 글꼴 크기(논리 px) — 아이콘 스케일 기준.
+    font_px: f32,
     /// 소스 요청 중(더블클릭 연타 방지).
     source_pending: bool,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
@@ -482,6 +488,7 @@ impl Explorer {
             focused: false,
             icons_on: true,
             icon_cache: HashMap::new(),
+            font_px: ICON_REF_FONT_PX,
             source_pending: false,
             row_px: 0,
             dots_step: 0,
@@ -508,6 +515,11 @@ impl Explorer {
 
     pub(crate) fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    /// 트리 글꼴 크기(논리 px) — 아이콘 = 16 × (글꼴/17) × 배율.
+    pub(crate) fn set_font_px(&mut self, px: f32) {
+        self.font_px = px.max(1.0);
     }
 
     pub(crate) fn set_icons(&mut self, on: bool) {
@@ -1327,7 +1339,9 @@ impl Explorer {
                     // 아이콘(설정 켬 · DBMS/스키마/폴더/종류별 · 글꼴 높이 크기) 또는 색 칩(끔).
                     if self.icons_on {
                         if let Some((k, rgb)) = self.icon_for(n) {
-                            let sz = th_txt;
+                            let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
+                                .round()
+                                .max(8.0) as i32;
                             let img = self.icon_image(k, rgb);
                             let dst = Rect::new(x, vcy - sz / 2, sz, sz);
                             dc.image_scaled(dst, &img, rr);

@@ -1802,6 +1802,7 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
