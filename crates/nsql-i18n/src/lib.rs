@@ -106,6 +106,8 @@ pub enum Msg {
     StOk,
     StConnected,
     StDisconnected,
+    /// 응답 없는 서버를 기다리지 않고 세션을 버린 해제(사용자 09-16).
+    StDisconnectedAbandon,
     StErrorLine,
     ErrClipboard,
     StHint,
@@ -626,6 +628,10 @@ impl Msg {
             Msg::StOk => ["OK · {0}s", "OK · {0}s"],
             Msg::StConnected => ["Connected: {0} ({1})", "접속: {0} ({1})"],
             Msg::StDisconnected => ["Disconnected", "접속 해제"],
+            Msg::StDisconnectedAbandon => [
+                "Disconnected — server not responding; session abandoned (closes when the network times out)",
+                "접속 해제 — 서버 응답 없음 · 세션은 버림(네트워크 타임아웃 뒤 스스로 닫힘)",
+            ],
             Msg::StErrorLine => ["ERROR line {0}: {1}", "오류 {0}행: {1}"],
             Msg::ErrClipboard => [
                 "Clipboard unavailable (Linux: install wl-clipboard or xclip)",
@@ -1300,6 +1306,7 @@ impl Msg {
         Msg::StOk,
         Msg::StConnected,
         Msg::StDisconnected,
+        Msg::StDisconnectedAbandon,
         Msg::StErrorLine,
         Msg::ErrClipboard,
         Msg::StHint,

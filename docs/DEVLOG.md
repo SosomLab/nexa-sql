@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (11차 · win)** — 저장소 최신화(Windows 빌드/테스트/CI ✓) · **즉시 접속 해제**(서버 무응답이어도 Disconnect = 워커·메타 스레드 교체 · 갇힌 세션은 버림 · `StDisconnectedAbandon`) · 워커 테스트. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (10차 · mac · 마지막)** — Copy SQL 하위 메뉴 유실 방지(nexa-ui) · SQL 복사 5종 회귀 테스트 · 미구현 점검(메뉴 명령 전수 처리 확인 · T-76 1차 settings.json 내장 편집 = 탭). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (9차 · mac · 마지막 · Windows로 이관)** — **줄끝 정책 [38](38-line-endings.md)**(통합 로직 · `eol.rs` · `file.eol_new`/`file.eol_save` · 상태줄 LF/CRLF) · Windows 인수인계 메모 · push. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (8차 · mac)** — 신호등 대상 = 시도한 프로필까지(`mark_attempted`) · macOS `ping -W` 밀리초 단위 보정(단위 불일치 · 확정 원인은 대상 기준). → [journal](journal/2026-09-16.md)

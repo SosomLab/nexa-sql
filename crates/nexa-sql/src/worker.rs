@@ -417,3 +417,25 @@ pub(crate) fn spawn_test(
             wake();
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 즉시 해제 규약(사용자 09-16): 옛 워커가 응답 없는 서버에 갇혀 있어도(여기서는 비라우팅 주소 접속 시도)
+    /// 새 워커는 독립적으로 Disconnect에 바로 답한다 — UI가 앞 명령을 기다리지 않아도 된다.
+    #[test]
+    fn replacement_worker_answers_while_old_one_is_stuck() {
+        let (old, _old_events) = spawn(Dialect::Oracle, 10, true, false, Box::new(|| {}));
+        // 비라우팅 주소(TEST-NET-1) — 드라이버가 없거나 즉시 실패해도 상관없다: 새 워커의 독립성만 본다.
+        old.send(Cmd::Connect("mssql://u:p@192.0.2.1:1433/db".into()));
+        old.send(Cmd::Disconnect);
+        let (new, _events) = spawn(Dialect::Oracle, 10, true, false, Box::new(|| {}));
+        let t = std::time::Instant::now();
+        new.send(Cmd::Disconnect);
+        let got = new.conn.recv_timeout(Duration::from_secs(5));
+        assert!(matches!(got, Ok(ConnOutcome::Disconnected)), "{got:?}");
+        assert!(t.elapsed() < Duration::from_secs(5));
+        drop(old); // 손잡이를 버리면 옛 워커는 갇힌 호출이 풀린 뒤 스스로 끝난다.
+    }
+}

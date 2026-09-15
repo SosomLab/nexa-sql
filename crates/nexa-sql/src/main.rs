@@ -392,10 +392,7 @@ impl App {
                 }
                 self.start_test(&name, spec);
             }
-            PanelAction::Disconnect => {
-                self.busy = true;
-                self.worker.send(worker::Cmd::Disconnect);
-            }
+            PanelAction::Disconnect => self.disconnect_now(),
             PanelAction::Save {
                 name,
                 spec,
@@ -530,14 +527,7 @@ impl App {
                 ConnOutcome::SessionId(sid) => {
                     self.live_sid = Some(sid);
                 }
-                ConnOutcome::Disconnected => {
-                    self.live_sid = None;
-                    self.editors.set_conn_desc("");
-                    self.conn_win.clear_connect_marks();
-                    self.conn_win.clear_active();
-                    self.panel_op = None;
-                    self.conn_win.panel.set_state(ConnState::Idle);
-                }
+                ConnOutcome::Disconnected => self.on_conn_disconnected(),
             }
         }
         changed
@@ -924,6 +914,59 @@ impl App {
         self.redraw();
     }
 
+    /// DB 워커 하나 시작(설정 현재값 · 시작 때와 같은 인자).
+    fn spawn_worker(&self) -> (worker::Handle, mpsc::Receiver<RunEvent>) {
+        let proxy = self.wake_proxy.clone();
+        worker::spawn(
+            DEFAULT_DIALECT,
+            self.settings.int("grid.max_rows").max(0) as usize,
+            self.settings.flag("session.autocommit"),
+            self.settings.flag("connect.auto_reconnect"),
+            Box::new(move || {
+                let _ = proxy.send_event(Wake);
+            }),
+        )
+    }
+
+    /// ★ 접속 해제 — **서버 상태와 무관하게 즉시**(사용자 09-16: VPN 끊긴 채 조회가 "Loading…"에 멈추면 Disconnect가
+    /// 무반응이었다). 워커는 순차라 앞 명령(실행 · 세션 commit/close)이 응답 없는 서버에서 TCP 타임아웃까지 갇힌다 →
+    /// 기다리지 않는다: 옛 워커에는 Disconnect를 남기고 손잡이를 버린다(갇힌 호출이 풀리면 세션을 닫고 스스로 끝난다 ·
+    /// 늦게 오는 이벤트는 버려진 채널로 사라진다) · 새 워커를 만들어 다음 접속을 받는다 · UI는 지금 해제 상태로.
+    /// 탐색기 메타 스레드도 같은 방식(`Explorer::disconnect`).
+    fn disconnect_now(&mut self) {
+        let stuck = self.busy;
+        self.worker.send(worker::Cmd::Disconnect);
+        let (w, ev) = self.spawn_worker();
+        self.worker = w;
+        self.events = ev;
+        self.busy = false;
+        self.status = t(if stuck {
+            Msg::StDisconnectedAbandon
+        } else {
+            Msg::StDisconnected
+        })
+        .into();
+        if stuck {
+            self.log_win
+                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+        }
+        self.explorer.disconnect();
+        self.tx_dirty = false;
+        self.sync_disconnect_btn(false);
+        self.on_conn_disconnected();
+        self.redraw();
+    }
+
+    /// 접속 계열 결과 `Disconnected`의 UI 반영(워커 이벤트 · 즉시 해제 공용).
+    fn on_conn_disconnected(&mut self) {
+        self.live_sid = None;
+        self.editors.set_conn_desc("");
+        self.conn_win.clear_connect_marks();
+        self.conn_win.clear_active();
+        self.panel_op = None;
+        self.conn_win.panel.set_state(ConnState::Idle);
+    }
+
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
     fn sync_disconnect_btn(&mut self, connected: bool) {
         let mut inv = Invalidations::default();
@@ -1160,10 +1203,7 @@ impl App {
             "run.rollback" => self.worker.send(worker::Cmd::Rollback),
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
-            "conn.disconnect" => {
-                self.busy = true;
-                self.worker.send(worker::Cmd::Disconnect);
-            }
+            "conn.disconnect" => self.disconnect_now(),
             "edit.prefs" => self.open_prefs = true,
             "edit.settings_json" => self.edit_settings_json(),
             "help.about" => {

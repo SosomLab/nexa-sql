@@ -20,7 +20,7 @@ use nsql_script::ConnectSpec;
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 /// 트리 노드 종류.
@@ -257,6 +257,8 @@ pub(crate) struct Explorer {
     hover_fade: IntentFade,
     tx: mpsc::Sender<Req>,
     rx: mpsc::Receiver<Resp>,
+    /// UI 깨우기(메타 스레드를 교체할 때 다시 쓴다).
+    wake: Arc<Mutex<Box<dyn Fn() + Send>>>,
     gen: u64,
     dialect: Option<Dialect>,
     conn_desc: String,
@@ -432,12 +434,27 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
 }
 
 impl Explorer {
-    pub(crate) fn new(wake: Box<dyn Fn() + Send>, visible: bool) -> Self {
+    /// 메타 스레드 하나 시작(요청/응답 채널 반환).
+    fn spawn_meta(
+        wake: &Arc<Mutex<Box<dyn Fn() + Send>>>,
+    ) -> (mpsc::Sender<Req>, mpsc::Receiver<Resp>) {
         let (tx, req_rx) = mpsc::channel::<Req>();
         let (resp_tx, rx) = mpsc::channel::<Resp>();
+        let w = Arc::clone(wake);
+        let wake_fn: Box<dyn Fn() + Send> = Box::new(move || {
+            if let Ok(f) = w.lock() {
+                f();
+            }
+        });
         let _ = std::thread::Builder::new()
             .name("nsql-explorer".into())
-            .spawn(move || meta_thread(req_rx, resp_tx, wake));
+            .spawn(move || meta_thread(req_rx, resp_tx, wake_fn));
+        (tx, rx)
+    }
+
+    pub(crate) fn new(wake: Box<dyn Fn() + Send>, visible: bool) -> Self {
+        let wake = Arc::new(Mutex::new(wake));
+        let (tx, rx) = Self::spawn_meta(&wake);
         let mut e = Explorer {
             nodes: Vec::new(),
             bounds: Rect::default(),
@@ -449,6 +466,7 @@ impl Explorer {
             hover_fade: IntentFade::with_speed(FadeSpeed::Slow),
             tx,
             rx,
+            wake,
             gen: 0,
             dialect: None,
             conn_desc: String::new(),
@@ -588,6 +606,9 @@ impl Explorer {
         });
     }
 
+    /// 접속 해제 — **서버 상태와 무관하게 즉시**(사용자 09-16: VPN 끊긴 채 "Loading…"이면 해제가 안 됐다).
+    /// 메타 스레드가 카탈로그 조회에 갇혀 있을 수 있으므로 기다리지 않는다: 옛 스레드에 Close를 남기고 채널을 버리면
+    /// (갇힌 호출이 타임아웃으로 풀린 뒤) 세션을 닫고 스스로 끝난다 · 다음 요청은 새 스레드가 받는다.
     pub(crate) fn disconnect(&mut self) {
         self.gen += 1;
         self.dialect = None;
@@ -596,6 +617,10 @@ impl Explorer {
         self.endpoint.clear();
         self.reset_tree();
         let _ = self.tx.send(Req::Close);
+        let (tx, rx) = Self::spawn_meta(&self.wake);
+        self.tx = tx;
+        self.rx = rx;
+        self.live_inflight = false;
     }
 
     pub(crate) fn take_actions(&mut self) -> Vec<ExplorerAction> {
