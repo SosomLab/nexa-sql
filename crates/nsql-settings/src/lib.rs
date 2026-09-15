@@ -603,6 +603,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "off",
     },
     Entry {
+        key: "file.show_dot",
+        cat: Msg::CatFiles,
+        label: Msg::LblFileShowDot,
+        desc: Msg::DescFileShowDot,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "key.file.open",
         cat: Msg::CatKeys,
         label: Msg::MnOpen,
@@ -1104,6 +1112,7 @@ pub const HIDDEN: &[&str] = &[
     "file.last_dir",
     "file.recent",
     "file.show_hidden",
+    "file.show_dot",
 ];
 
 /// 비노출 설정인가.

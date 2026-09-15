@@ -1296,6 +1296,11 @@ impl App {
                 .settings
                 .set("file.show_hidden", if h { "on" } else { "off" });
         }
+        if let Some(d) = self.file_win.show_dot() {
+            let _ = self
+                .settings
+                .set("file.show_dot", if d { "on" } else { "off" });
+        }
         self.persist_settings();
     }
 
@@ -1339,6 +1344,7 @@ impl App {
                 acc
             });
         let show_hidden = self.settings.flag("file.show_hidden");
+        let show_dot = self.settings.flag("file.show_dot");
         let encoding = match mode {
             PickerMode::Open => "auto".to_string(),
             PickerMode::Save => self.editors.active_encoding(),
@@ -1353,6 +1359,7 @@ impl App {
             &default_name,
             recent_dirs,
             show_hidden,
+            show_dot,
             &encoding,
         );
     }

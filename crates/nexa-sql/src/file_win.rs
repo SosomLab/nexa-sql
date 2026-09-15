@@ -53,6 +53,7 @@ pub(crate) fn labels() -> PickerLabels {
         new_folder: t(Msg::BtnNewFolder).into(),
         new_folder_name: t(Msg::LblNewFolderName).into(),
         show_hidden: t(Msg::LblShowHidden).into(),
+        show_dot: t(Msg::LblShowDot).into(),
         col_name: t(Msg::ColFileName).into(),
         col_modified: t(Msg::ColModified).into(),
         col_size: t(Msg::ColSize).into(),
@@ -140,6 +141,10 @@ impl FileWin {
         self.picker.as_ref().map(FilePicker::show_hidden)
     }
 
+    pub(crate) fn show_dot(&self) -> Option<bool> {
+        self.picker.as_ref().map(FilePicker::show_dot)
+    }
+
     /// 창 열기 — `start` 폴더 · 기본 파일명(저장) · 최근 폴더.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn open(
@@ -153,6 +158,7 @@ impl FileWin {
         default_name: &str,
         recent: Vec<PathBuf>,
         show_hidden: bool,
+        show_dot: bool,
         encoding: &str,
     ) {
         if let Some(w) = &self.window {
@@ -164,6 +170,7 @@ impl FileWin {
         picker.set_default_name(default_name);
         picker.set_recent(recent);
         picker.set_show_hidden(show_hidden);
+        picker.set_show_dot(show_dot);
         // 하단 인코딩 콤보(Golden/DBeaver 하단 줄 · 세 OS 동일 · 사용자 09-15) — 열기 = 자동 감지 기본 · 저장 = 탭 인코딩.
         let items: Vec<(&str, String)> = match mode {
             PickerMode::Open => vec![
