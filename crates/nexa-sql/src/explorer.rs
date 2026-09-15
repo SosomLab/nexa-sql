@@ -1183,7 +1183,7 @@ impl Explorer {
                     // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
                     let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
                     if n.expandable && !empty_loaded {
-                        let cw = (th_txt as f32 * 0.8).round().max(10.0) as i32; // 사용자 09-15: 조금 더 크게(0.62 → 0.8)
+                        let cw = th_txt.max(10); // 사용자 09-15: 글꼴 높이의 1.0배
                         let chev = Rect::new(gx, y + (row_h - cw) / 2, cw, cw);
                         if n.expanded {
                             draw_chevron_down(dc, chev, th.text_dim);
