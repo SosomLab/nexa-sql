@@ -145,6 +145,8 @@ struct App {
     live_final: bool,
     /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
     json_watch: Option<(std::path::PathBuf, Option<std::time::SystemTime>)>,
+    /// 접속 창이 열려 메인 창을 모달로 막고 있는가(사용자 09-15) — 열림/닫힘 전환 때 OS 활성 상태를 맞춘다.
+    conn_modal: bool,
     json_next: Instant,
     focus: Focus,
     // 워커
@@ -640,6 +642,21 @@ impl App {
             self.redraw();
         }
         Some(self.json_next)
+    }
+
+    /// 접속 창 열림/닫힘 전환 → 메인 창 활성 상태 동기화(모달 · 닫히면 메인으로 포커스).
+    fn sync_conn_modal(&mut self) {
+        let open = self.conn_win.is_open();
+        if open == self.conn_modal {
+            return;
+        }
+        self.conn_modal = open;
+        if let Some(w) = &self.window {
+            winfocus::set_enabled(w, !open);
+            if !open {
+                w.focus_window();
+            }
+        }
     }
 
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
@@ -2169,6 +2186,7 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.conn_win.tick(now) {
             next = next.min(t);
         }
+        self.sync_conn_modal();
         // settings.json 감시(열어 둔 뒤 1초 폴링 · 저장 즉시 반영).
         if let Some(t) = self.json_tick(now) {
             next = next.min(t);
@@ -2183,6 +2201,22 @@ impl ApplicationHandler<Wake> for App {
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
+        }
+        // ★ 접속 창 = 모달: 열려 있는 동안 메인 창 입력은 버리고(OS 수준은 `winfocus::set_enabled`) 접속 창을 앞으로.
+        if self.conn_win.is_open()
+            && self.window.as_ref().is_some_and(|w| w.id() == id)
+            && matches!(
+                event,
+                WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::Ime(_)
+            )
+        {
+            if let Some(w) = self.conn_win.window() {
+                w.focus_window();
+            }
+            return;
         }
         if self.conn_win.is(id) {
             let ui_px = self.settings.int("ui.font_size") as f32;
@@ -2445,6 +2479,7 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_conn) {
             self.open_conn_window(el);
+            self.sync_conn_modal();
         }
         if self.exit_requested {
             self.worker.send(worker::Cmd::Quit);
@@ -2666,6 +2701,7 @@ fn main() {
         live_last: String::new(),
         live_final: false,
         json_watch: None,
+        conn_modal: false,
         json_next: Instant::now(),
         focus: Focus::Editor,
         worker,

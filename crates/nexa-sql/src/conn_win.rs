@@ -594,6 +594,10 @@ impl ConnWin {
         self.probes.get(name).map(|e| e.status)
     }
 
+    pub(crate) fn is_open(&self) -> bool {
+        self.window.is_some()
+    }
+
     pub(crate) fn is(&self, id: WindowId) -> bool {
         self.window.as_ref().is_some_and(|w| w.id() == id)
     }

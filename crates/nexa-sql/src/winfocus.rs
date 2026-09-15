@@ -37,6 +37,29 @@ fn hwnd(w: &Window) -> Option<isize> {
     }
 }
 
+/// ★ 모달(사용자 09-15 "연결 창은 모달로"): 소유 창이 열려 있는 동안 **메인 창 입력을 OS 수준에서 막는다**.
+/// Windows = `EnableWindow(FALSE)`(클릭하면 모달 창이 깜빡이며 앞으로 · 표준 모달 대화상자 동작). macOS/Linux는
+/// 호스트가 이벤트를 걸러 같은 효과(`App::window_event` 모달 가드).
+pub(crate) fn set_enabled(w: &Window, on: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn EnableWindow(hwnd: isize, enable: i32) -> i32;
+        }
+        if let Some(h) = hwnd(w) {
+            // SAFETY: 유효한 HWND · 단순 상태 전환.
+            unsafe {
+                EnableWindow(h, i32::from(on));
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (w, on);
+    }
+}
+
 /// `bottom_to_top` 순서대로(맨 뒤 → 맨 앞) 활성화 없이 맨 위로 올린다 — 마지막 창이 맨 위가 된다.
 pub(crate) fn raise_group(bottom_to_top: &[&Window]) {
     #[cfg(target_os = "windows")]
