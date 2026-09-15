@@ -16,6 +16,7 @@ mod conn_win;
 mod connect;
 mod editors;
 mod explorer;
+mod findbar;
 mod grid;
 mod icon;
 mod input;
@@ -35,6 +36,7 @@ use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
 use explorer::{Explorer, ExplorerAction, LiveReq};
+use findbar::{FindAction, FindBar};
 use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
 use log_win::{LogWin, LogWinAction};
@@ -76,6 +78,7 @@ enum Focus {
     Editor,
     Grid,
     Explorer,
+    Find,
 }
 
 struct App {
@@ -117,6 +120,8 @@ struct App {
     /// 메뉴/툴바에서 접속 창 열기 요청(창 생성은 이벤트 루프 핸들에서).
     open_conn: bool,
     run_btn: Button,
+    /// 찾기/바꾸기 바(편집기 위 · T-73).
+    find: FindBar,
     editors: Editors,
     grid: grid::Grid,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
@@ -219,8 +224,10 @@ impl App {
         let rx = rx + exp_w;
         let rw = rw - exp_w;
         let editor_h = (body_h as f32 * 0.5) as i32;
+        let fb_h = self.find.height(s);
+        self.find.set_bounds(Rect::new(rx, body_top, rw, fb_h), s);
         self.editors
-            .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
+            .set_bounds(Rect::new(rx, body_top + fb_h, rw, editor_h - pad - fb_h), s);
         self.grid.set_bounds(Rect::new(
             rx,
             body_top + editor_h,
@@ -235,8 +242,9 @@ impl App {
         self.focus = f;
         self.ed_mut().set_focused(f == Focus::Editor);
         self.explorer.set_focused(f == Focus::Explorer);
+        self.find.set_focused(f == Focus::Find);
         if let Some(w) = &self.window {
-            w.set_ime_allowed(f == Focus::Editor);
+            w.set_ime_allowed(f == Focus::Editor || f == Focus::Find);
         }
     }
 
@@ -244,6 +252,7 @@ impl App {
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
             Focus::Editor => Some(self.editors.cur_mut()),
+            Focus::Find => self.find.focused_textbox(),
             Focus::Grid | Focus::Explorer => None,
         }
     }
@@ -421,6 +430,124 @@ impl App {
         }
     }
 
+    /// 편집기 본문에서 질의 일치 위치(문자 인덱스 · 대소문자 옵션) 전부.
+    fn find_matches(&mut self) -> (Vec<(usize, usize)>, Vec<char>) {
+        let text: Vec<char> = self.ed_mut().text().chars().collect();
+        let q: Vec<char> = self.find.query().chars().collect();
+        if q.is_empty() || q.len() > text.len() {
+            return (Vec::new(), text);
+        }
+        let cs = self.find.case_sensitive();
+        let eq = |a: char, b: char| {
+            if cs {
+                a == b
+            } else {
+                a.to_lowercase().eq(b.to_lowercase())
+            }
+        };
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i + q.len() <= text.len() {
+            if text[i..i + q.len()].iter().zip(&q).all(|(a, b)| eq(*a, *b)) {
+                out.push((i, i + q.len()));
+                i += q.len();
+            } else {
+                i += 1;
+            }
+        }
+        (out, text)
+    }
+
+    /// 다음/이전 일치로 이동(순환) — `advance`면 현재 선택을 지나서, 아니면 캐럿부터.
+    fn find_step(&mut self, forward: bool, advance: bool) {
+        if !self.find.is_visible() {
+            return;
+        }
+        let (matches, _) = self.find_matches();
+        if matches.is_empty() {
+            self.find.set_status(t(Msg::StFindNone));
+            self.redraw();
+            return;
+        }
+        let sel = self.ed_mut().selection();
+        let caret = self.ed_mut().caret();
+        let idx = if forward {
+            let from = match sel {
+                Some((a, b)) if advance => {
+                    if b > a {
+                        a + 1
+                    } else {
+                        caret
+                    }
+                }
+                Some((a, _)) => a,
+                None => caret,
+            };
+            matches.iter().position(|(s, _)| *s >= from).unwrap_or(0)
+        } else {
+            let from = sel.map_or(caret, |(a, _)| a);
+            matches
+                .iter()
+                .rposition(|(s, _)| *s < from)
+                .unwrap_or(matches.len() - 1)
+        };
+        let (s, e) = matches[idx];
+        let mut inv = Invalidations::default();
+        self.ed_mut().select_range(s, e, &mut inv);
+        self.find.set_status(tf(
+            Msg::StFindCount,
+            &[&(idx + 1).to_string(), &matches.len().to_string()],
+        ));
+        self.redraw();
+    }
+
+    /// 현재 선택이 일치면 바꾸고 다음으로.
+    fn find_replace_one(&mut self) {
+        let (matches, _) = self.find_matches();
+        if let Some((a, b)) = self.ed_mut().selection() {
+            if matches.contains(&(a, b)) {
+                let repl = self.find.replacement();
+                let mut inv = Invalidations::default();
+                self.ed_mut().replace_range(a, b, &repl, &mut inv);
+            }
+        }
+        self.find_step(true, false);
+    }
+
+    fn find_replace_all(&mut self) {
+        let (matches, _) = self.find_matches();
+        if matches.is_empty() {
+            self.find.set_status(t(Msg::StFindNone));
+            self.redraw();
+            return;
+        }
+        let repl = self.find.replacement();
+        let mut inv = Invalidations::default();
+        for (a, b) in matches.iter().rev() {
+            self.ed_mut().replace_range(*a, *b, &repl, &mut inv);
+        }
+        self.find
+            .set_status(tf(Msg::StReplacedN, &[&matches.len().to_string()]));
+        self.redraw();
+    }
+
+    fn find_action(&mut self, a: FindAction) {
+        match a {
+            FindAction::None => {}
+            FindAction::Next => self.find_step(true, true),
+            FindAction::Prev => self.find_step(false, true),
+            FindAction::Changed => self.find_step(true, false),
+            FindAction::Replace => self.find_replace_one(),
+            FindAction::ReplaceAll => self.find_replace_all(),
+            FindAction::Close => {
+                self.find.close();
+                self.layout();
+                self.set_focus(Focus::Editor);
+                self.redraw();
+            }
+        }
+    }
+
     /// 그리드가 메뉴로 만든 복사 텍스트를 OS 클립보드로.
     fn after_grid_event(&mut self) {
         if let Some((text, n)) = self.grid.take_copy() {
@@ -467,6 +594,15 @@ impl App {
                     self.route(InputEvent::SelectAll);
                 }
             }
+            "edit.find" | "edit.replace" => {
+                let seed = self.editors.cur().copy_selection();
+                self.find.open(id == "edit.replace", seed);
+                self.layout();
+                self.set_focus(Focus::Find);
+                self.find_step(true, false);
+            }
+            "edit.find_next" => self.find_step(true, true),
+            "edit.find_prev" => self.find_step(false, true),
             "edit.undo" => self.route(InputEvent::Undo),
             "edit.redo" => self.route(InputEvent::Redo),
             "view.log" => self.toggle_log = true,
@@ -545,6 +681,11 @@ impl App {
                 vec![
                     item("edit.undo", Msg::MnUndo),
                     item("edit.redo", Msg::MnRedo),
+                    MenuEntry::Separator,
+                    item("edit.find", Msg::MnFind),
+                    item("edit.replace", Msg::MnReplace),
+                    item("edit.find_next", Msg::MnFindNext),
+                    item("edit.find_prev", Msg::MnFindPrev),
                     MenuEntry::Separator,
                     item("edit.cut", Msg::MnCut),
                     item("edit.copy", Msg::MnCopy),
@@ -667,6 +808,10 @@ impl App {
         cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
         cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
         cmds.push(m("edit.undo", Msg::MnEdit, Msg::MnUndo));
+        cmds.push(m("edit.find", Msg::MnEdit, Msg::MnFind));
+        cmds.push(m("edit.replace", Msg::MnEdit, Msg::MnReplace));
+        cmds.push(m("edit.find_next", Msg::MnEdit, Msg::MnFindNext));
+        cmds.push(m("edit.find_prev", Msg::MnEdit, Msg::MnFindPrev));
         cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
@@ -1418,6 +1563,7 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.explorer.paint(&mut dc, &th);
+                self.find.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
@@ -1552,6 +1698,28 @@ impl App {
                 return;
             }
         }
+        // 찾기 바 — 마우스는 바 안일 때 · 키/문자는 포커스일 때.
+        if self.find.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let in_bar = self.find.bounds().contains(cur);
+            if (is_mouse && in_bar) || (self.focus == Focus::Find && !is_mouse) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
+                    self.set_focus(Focus::Find);
+                }
+                let a = self.find.on_event(&ev);
+                self.find_action(a);
+                self.redraw();
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            }
+        }
         // 결과 그리드 우클릭 메뉴가 열려 있으면 그리드가 먼저(바깥 클릭 = 닫고 통과).
         if self.grid.menu_open() {
             self.grid.on_event(&ev, self.scale);
@@ -1656,7 +1824,7 @@ impl App {
                     self.after_grid_event();
                     inv.push(self.grid.bounds);
                 }
-                Focus::Explorer => {}
+                Focus::Explorer | Focus::Find => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -1756,6 +1924,9 @@ impl ApplicationHandler<Wake> for App {
         if self.explorer.tick(now_ms) {
             self.redraw();
         }
+        if self.find.tick(now_ms) {
+            self.redraw();
+        }
         if self.conn_win.tick_bars(now_ms) {
             self.conn_win.redraw();
         }
@@ -1769,6 +1940,7 @@ impl ApplicationHandler<Wake> for App {
             || self.colors_win.animating()
             || self.keys_win.animating()
             || self.explorer.bars_visible()
+            || self.find.animating()
             || self.editors.tooltip_pending();
         let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
@@ -2091,10 +2263,12 @@ fn main() {
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
     let max_rows = settings.int("grid.max_rows").max(0) as usize;
     let autocommit = settings.flag("session.autocommit");
+    let auto_reconnect = settings.flag("connect.auto_reconnect");
     let (worker, events) = worker::spawn(
         DEFAULT_DIALECT,
         max_rows,
         autocommit,
+        auto_reconnect,
         Box::new(move || {
             let _ = proxy.send_event(Wake);
         }),
@@ -2179,6 +2353,7 @@ fn main() {
         conn_win: ConnWin::new(panel),
         open_conn: true,
         run_btn: Button::new(t(Msg::BtnRun)),
+        find: FindBar::new(),
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
         explorer,

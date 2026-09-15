@@ -104,7 +104,7 @@
 | **T-70** | P1 | 소 | PostgreSQL TLS(`sslmode=prefer/require` · rustls) · `postgres-rustls` 원장 · 접속 폼 SSL 토글 | nsql-driver-pg | ☐ |
 | **T-71** | P1 | 중 | ✅ 09-15 1차(`oracle.live.*` · V$SESSION/로그 테이블 폴링 · 로그 창 `[live]`) · 잔여 = CLI `--live` · Live 세그먼트 · DBMS_PIPE/LONGOPS · **Oracle 라이브 로그 모니터**([32 §2](32-server-messages-and-live-log.md)) — 메타 세션 폴링(로그 테이블 · V$SESSION client_info/action · DBMS_PIPE · LONGOPS) · 로그 창 Live 세그먼트 · `oracle.live.*` 설정 · CLI `--live` · 실행 중에만 1s 이상 | 28 T-56 D-48 | 🚧 |
 | **T-72** | P1 | 대 | **배포 파이프라인**([33](33-distribution-and-packaging.md) · DR-27) — `packaging/{windows,macos,linux}` 스테이징 · MSI/pkg+dmg(Universal 2 · Frameworks)/deb·rpm · `release.yml` 3-OS · sha256 · `--smoke`·제거 검증 · 서명 자리 | T-62 T-10 D-49 D-50 | ☐ |
-| **T-73** | P1 | 중 | 편집기 **찾기/바꾸기**(Ctrl+F/H · 대소문자·정규식 T-59·전체 바꾸기 · 결과 하이라이트) — nexa-ctl TextBox 검색 API | T-58 T-59 | ☐ |
+| **T-73** | P1 | 중 | ✅ 09-15 1차(`findbar.rs` · Ctrl+F/H · F3 · Aa · Replace/All · 순환) · 잔여 = 정규식(T-59) · 전체 일치 하이라이트 · 단어 단위 · 편집기 **찾기/바꾸기**(Ctrl+F/H · 대소문자·정규식 T-59·전체 바꾸기 · 결과 하이라이트) — nexa-ctl TextBox 검색 API | T-58 T-59 | 🚧 |
 | **T-74** | P1 | 중 | **파일 열기/저장**(File ▸ Open/Save/Save As · 최근 파일 · 외부 변경 X-1) — nexa-ui 자체 파일 대화상자([nexa-ui 20](../../nexa-ui/docs/20-file-management-and-dialogs.md) F-6) 선행 | nexa-ui 20 | ☐ |
 | **T-75** | P2 | 소 | 그리드 복사 확장 — Copy as JSON/Markdown · 컬럼 헤더 우클릭(컬럼 복사·숨김) · 셀 편집기(nexa-ui 21 §3-2) | 09-15 3차 | ☐ |
 | **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |

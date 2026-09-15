@@ -125,6 +125,30 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+shift+e",
     },
     Command {
+        id: "edit.find",
+        label: Msg::MnFind,
+        win: "ctrl+f",
+        mac: "cmd+f",
+    },
+    Command {
+        id: "edit.replace",
+        label: Msg::MnReplace,
+        win: "ctrl+h",
+        mac: "cmd+alt+f",
+    },
+    Command {
+        id: "edit.find_next",
+        label: Msg::MnFindNext,
+        win: "f3",
+        mac: "cmd+g",
+    },
+    Command {
+        id: "edit.find_prev",
+        label: Msg::MnFindPrev,
+        win: "shift+f3",
+        mac: "cmd+shift+g",
+    },
+    Command {
         id: "edit.undo",
         label: Msg::MnUndo,
         win: "ctrl+z",

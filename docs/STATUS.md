@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (5차 · win · 야간 자율) — 찾기/바꾸기 바 ✅(T-73 1차) · 자동 재접속 ✅
+
+Ctrl+F/Ctrl+H(mac ⌘F/⌥⌘F) · F3/Shift+F3 · Aa · Replace/All · 순환 · Esc. `connect.auto_reconnect`(기본 on) = 접속성 오류 뒤 다음 실행 전 재접속. **다음**: T-74 파일 열기/저장(nexa-ui 대화상자 선행) → T-72 배포 파이프라인 → T-59 정규식 → T-56/T-48 잔여. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (4차 · win · 야간 자율) — Oracle 라이브 로그 모니터 1차 ✅(T-71)
 
 `oracle.live.source` session(기본)/table · 실행 중에만 `oracle.live.interval_ms`마다 메타 세션 폴링 · `[live]` 로그 줄 · 실행 끝 마지막 1회 · V$SESSION mechanism biscm 확인. 잔여 = CLI `--live` · 로그 창 Live 세그먼트 · DBMS_PIPE/LONGOPS 소스. → [journal](journal/2026-09-15.md)

@@ -112,6 +112,7 @@ pub(crate) fn spawn(
     default_dialect: Dialect,
     max_rows: usize,
     autocommit: bool,
+    auto_reconnect: bool,
     wake: Box<dyn Fn() + Send>,
 ) -> (Handle, mpsc::Receiver<RunEvent>) {
     let (tx, rx) = mpsc::channel::<Cmd>();
@@ -293,6 +294,27 @@ pub(crate) fn spawn(
                                 let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
                                 wake_now();
                                 return true;
+                            }
+                        }
+                        // ★ 자동 재접속(사용자 09-15 기본 기능): 직전 실행이 접속성 오류였고 서버가 살아 있으면 같은 스펙으로 먼저 다시 붙는다.
+                        if suspect && auto_reconnect {
+                            if let Some(spec) = active_spec.clone() {
+                                emit(RunEvent::Message(tf(
+                                    Msg::StReconnecting,
+                                    &[&spec.redacted()],
+                                )));
+                                let mut failed = false;
+                                let ok = runner.connect(&spec, &mut |e: RunEvent| {
+                                    if matches!(e, RunEvent::Error { .. }) {
+                                        failed = true;
+                                    }
+                                    emit(e);
+                                });
+                                if !ok || failed {
+                                    let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
+                                    wake_now();
+                                    return true;
+                                }
                             }
                         }
                         // 치환 변수 프롬프트는 최소 GUI에서 빈 값(T-16c에서 대화상자).
