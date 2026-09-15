@@ -10,6 +10,7 @@
 //! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
+mod cat;
 mod config;
 mod conn;
 mod plan;
@@ -42,12 +43,14 @@ struct Opts {
     query: Option<String>,
     table: Option<String>,
     out: Option<String>,
+    /// `-s` — `cat`의 스키마(없으면 접속 사용자의 현재 스키마).
+    schema: Option<String>,
     positional: Vec<String>,
 }
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -79,6 +82,7 @@ fn parse_opts() -> Opts {
         query: None,
         table: None,
         out: None,
+        schema: None,
         positional: Vec::new(),
     };
     let mut it = args.peekable();
@@ -122,6 +126,7 @@ fn parse_opts() -> Opts {
             "-q" | "--query" => o.query = Some(val("-q")),
             "-t" | "--table" => o.table = Some(val("-t")),
             "-o" | "--out" => o.out = Some(val("-o")),
+            "-s" | "--schema" => o.schema = Some(val("-s")),
             "--no-prompt" => o.no_prompt = true,
             "--timing" => o.timing = true,
             "--log" => o.log = true,
@@ -476,6 +481,7 @@ fn main() {
         "shell" => cmd_shell(&o),
         "export" => cmd_export(&o),
         "conn" => conn::cmd_conn(&o),
+        "cat" | "catalog" | "obj" => cat::cmd_cat(&o),
         "config" | "settings" => config::cmd_config(&o),
         other => {
             eprintln!("알 수 없는 명령: {other}\n");

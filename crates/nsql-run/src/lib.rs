@@ -10,9 +10,9 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-use nsql_core::{DbError, Dialect, ExecResult, ResultSet, Session, Stage, Timeline, Value};
+use nsql_core::{Column, DbError, Dialect, ExecResult, ResultSet, Session, Stage, Timeline, Value};
 use nsql_script::{
-    split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared,
+    split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared, SqlKind,
 };
 use std::time::{Duration, Instant};
 
@@ -411,12 +411,7 @@ impl Runner {
                 emit(RunEvent::Disconnected);
                 true
             }
-            Action::Describe(o) => {
-                emit(RunEvent::Message(format!(
-                    "DESCRIBE {o}: 카탈로그 포트는 M3(T-20)"
-                )));
-                true
-            }
+            Action::Describe(o) => self.describe(index, item, &o, emit),
             Action::Show(w) => {
                 let w_up = w.trim().to_ascii_uppercase();
                 let text = match w_up.as_str() {
@@ -553,13 +548,176 @@ impl Runner {
                     }
                 }
                 emit(RunEvent::Timing { index, timeline });
-                true
+                // ★ 컴파일 결과(사용자 09-15 "객체 생성·수정"): Oracle은 CREATE가 성공해도 INVALID일 수 있다 —
+                // SQL*Plus의 "Warning: … created with compilation errors" + SHOW ERRORS를 한 번에.
+                self.report_compile_errors(index, item, emit)
             }
             Err(mut e) => {
                 if mode == PrepareMode::DeclarePrepend {
                     e.message
                         .push_str(&format!(" (프리펜드 {line_offset}줄 보정 필요)"));
                 }
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: e,
+                });
+                false
+            }
+        }
+    }
+}
+
+impl Runner {
+    /// `CREATE [OR REPLACE] PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE|VIEW …`가 성공한 뒤 Oracle `ALL_ERRORS`를 읽어
+    /// 오류가 있으면 `RunEvent::Error`(줄/열/메시지 목록) — 없으면 true.
+    fn report_compile_errors(
+        &mut self,
+        index: usize,
+        item: &Item,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        if self.engine.dialect != Dialect::Oracle {
+            return true;
+        }
+        if !matches!(
+            item.kind,
+            ItemKind::Sql(SqlKind::Block) | ItemKind::Sql(SqlKind::Ddl)
+        ) {
+            return true;
+        }
+        let Some((kind, schema, name)) = nsql_catalog::parse_create_header(&item.text) else {
+            return true;
+        };
+        if !kind.has_source() {
+            return true;
+        }
+        let Some(session) = self.session.as_mut() else {
+            return true;
+        };
+        let owner = match schema {
+            Some(s) => s.to_ascii_uppercase(),
+            None => nsql_catalog::current_schema(session.as_mut()).unwrap_or_default(),
+        };
+        let quoted = item.text.contains(&format!("\"{name}\""));
+        let name_up = if quoted {
+            name
+        } else {
+            name.to_ascii_uppercase()
+        };
+        match nsql_catalog::compile_errors(session.as_mut(), &owner, &name_up) {
+            Ok(errs) if !errs.is_empty() => {
+                let mut msg = format!(
+                    "Warning: {} {owner}.{name_up} created with compilation errors",
+                    kind.code().to_ascii_uppercase()
+                );
+                for e in &errs {
+                    msg.push('\n');
+                    msg.push_str(&e.to_string());
+                }
+                let first = errs.first().map(|e| e.line as usize);
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line + first.unwrap_or(1).saturating_sub(1),
+                    error: DbError {
+                        code: None,
+                        message: msg,
+                        position: None,
+                    },
+                });
+                false
+            }
+            _ => true,
+        }
+    }
+
+    /// `DESC[RIBE] [schema.]object` — 카탈로그 컬럼 목록을 결과 집합으로.
+    fn describe(
+        &mut self,
+        index: usize,
+        item: &Item,
+        object: &str,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        let Some(session) = self.session.as_mut() else {
+            emit(RunEvent::Error {
+                index,
+                line: item.line,
+                error: msg_err("접속이 없습니다 — CONNECT 먼저"),
+            });
+            return false;
+        };
+        let dialect = session.dialect();
+        let clean = |s: &str| {
+            s.trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`')
+                .to_string()
+        };
+        let (schema, name) = match object.trim().split_once('.') {
+            Some((s, n)) => (clean(s), clean(n)),
+            None => {
+                let cur = nsql_catalog::current_schema(session.as_mut()).unwrap_or_default();
+                (cur, clean(object.trim()))
+            }
+        };
+        // Oracle·MSSQL은 대소문자 무관 이름을 저장 규칙대로(Oracle 대문자 · PG 소문자).
+        let name = match dialect {
+            Dialect::Oracle => {
+                if object.contains('"') {
+                    name
+                } else {
+                    name.to_ascii_uppercase()
+                }
+            }
+            Dialect::Postgres => {
+                if object.contains('"') {
+                    name
+                } else {
+                    name.to_ascii_lowercase()
+                }
+            }
+            _ => name,
+        };
+        let started = Instant::now();
+        match nsql_catalog::columns(session.as_mut(), &schema, &name) {
+            Ok(cols) if !cols.is_empty() => {
+                let rs = ResultSet {
+                    columns: ["Name", "Type", "Nullable", "Default"]
+                        .iter()
+                        .map(|n| Column {
+                            name: (*n).to_string(),
+                            type_name: String::new(),
+                        })
+                        .collect(),
+                    rows: cols
+                        .iter()
+                        .map(|c| {
+                            vec![
+                                Value::Str(c.name.clone()),
+                                Value::Str(c.data_type.clone()),
+                                Value::Str(if c.nullable { "Y".into() } else { "N".into() }),
+                                Value::Str(c.default.clone()),
+                            ]
+                        })
+                        .collect(),
+                };
+                emit(RunEvent::ResultSet {
+                    index,
+                    rs,
+                    elapsed: started.elapsed(),
+                });
+                true
+            }
+            Ok(_) => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: msg_err(format!(
+                        "DESCRIBE {object}: object not found ({schema}.{name})"
+                    )),
+                });
+                false
+            }
+            Err(e) => {
                 emit(RunEvent::Error {
                     index,
                     line: item.line,

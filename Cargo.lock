@@ -1239,6 +1239,7 @@ dependencies = [
  "nexa-ctl",
  "nexa-font",
  "nexa-gfx",
+ "nsql-catalog",
  "nsql-core",
  "nsql-drivers",
  "nsql-i18n",
@@ -1253,9 +1254,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nsql-catalog"
+version = "0.0.1"
+dependencies = [
+ "nsql-core",
+]
+
+[[package]]
 name = "nsql-cli"
 version = "0.0.1"
 dependencies = [
+ "nsql-catalog",
  "nsql-core",
  "nsql-drivers",
  "nsql-i18n",
@@ -1341,6 +1350,7 @@ version = "0.0.1"
 name = "nsql-run"
 version = "0.0.1"
 dependencies = [
+ "nsql-catalog",
  "nsql-core",
  "nsql-driver-sqlite",
  "nsql-io",

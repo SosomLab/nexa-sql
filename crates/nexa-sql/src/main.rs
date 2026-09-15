@@ -15,6 +15,7 @@ mod colors_win;
 mod conn_win;
 mod connect;
 mod editors;
+mod explorer;
 mod grid;
 mod icon;
 mod input;
@@ -33,6 +34,7 @@ use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
+use explorer::{Explorer, ExplorerAction};
 use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
 use log_win::{LogWin, LogWinAction};
@@ -73,6 +75,7 @@ struct Wake;
 enum Focus {
     Editor,
     Grid,
+    Explorer,
 }
 
 struct App {
@@ -116,6 +119,10 @@ struct App {
     run_btn: Button,
     editors: Editors,
     grid: grid::Grid,
+    /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
+    explorer: Explorer,
+    /// 마지막으로 접속을 시도한 스펙(접속 성공 시 탐색기 메타 세션을 같은 스펙으로 연다).
+    last_spec: Option<ConnectSpec>,
     focus: Focus,
     // 워커
     worker: worker::Handle,
@@ -191,6 +198,16 @@ impl App {
         let body_top = chrome_h + top_h;
         let body_h = h - body_top - status_h;
         let _ = chrome_h;
+        // 왼쪽 오브젝트 탐색기(보이면 본문을 그만큼 오른쪽으로).
+        let exp_w = if self.explorer.is_visible() {
+            px(self.settings.int("explorer.width") as f32, s)
+        } else {
+            0
+        };
+        self.explorer
+            .set_bounds(Rect::new(0, body_top, exp_w, body_h), s);
+        let rx = rx + exp_w;
+        let rw = rw - exp_w;
         let editor_h = (body_h as f32 * 0.5) as i32;
         self.editors
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
@@ -207,6 +224,7 @@ impl App {
     fn set_focus(&mut self, f: Focus) {
         self.focus = f;
         self.ed_mut().set_focused(f == Focus::Editor);
+        self.explorer.set_focused(f == Focus::Explorer);
         if let Some(w) = &self.window {
             w.set_ime_allowed(f == Focus::Editor);
         }
@@ -216,7 +234,7 @@ impl App {
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
             Focus::Editor => Some(self.editors.cur_mut()),
-            Focus::Grid => None,
+            Focus::Grid | Focus::Explorer => None,
         }
     }
 
@@ -423,6 +441,18 @@ impl App {
             "view.log" => self.toggle_log = true,
             "view.colors" => self.open_colors = true,
             "view.keys" => self.open_keys = true,
+            "view.explorer" => {
+                let on = !self.explorer.is_visible();
+                self.explorer.set_visible(on);
+                let _ = self
+                    .settings
+                    .set("explorer.visible", if on { "on" } else { "off" });
+                let _ = self.settings.save();
+                if !on && self.focus == Focus::Explorer {
+                    self.set_focus(Focus::Editor);
+                }
+                self.layout();
+            }
             "file.close_tab" => {
                 let i = self.editors.active();
                 self.editors.close_tab(i);
@@ -493,6 +523,7 @@ impl App {
                 t(Msg::MnView),
                 vec![
                     item("view.palette", Msg::MnCommandPalette),
+                    item("view.explorer", Msg::MnExplorer),
                     item("view.log", Msg::MnLogWindow),
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
@@ -594,6 +625,7 @@ impl App {
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
+        cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
         cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
         cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
         cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));
@@ -700,6 +732,7 @@ impl App {
                 } => {
                     self.busy = true;
                     self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                    self.last_spec = Some(spec.clone());
                     self.worker.send(worker::Cmd::ConnectSpec {
                         spec,
                         reconnect_same,
@@ -958,9 +991,14 @@ impl App {
                 } => {
                     self.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     self.busy = false;
+                    // 탐색기 메타 세션(별도) — 같은 스펙으로.
+                    if let Some(spec) = self.last_spec.clone() {
+                        self.explorer.connect(&spec);
+                    }
                 }
                 RunEvent::Disconnected => {
                     self.status = t(Msg::StDisconnected).into();
+                    self.explorer.disconnect();
                 }
                 RunEvent::Timing { timeline, .. } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
@@ -984,6 +1022,25 @@ impl App {
             self.busy = false;
             if let Some(m) = done {
                 self.status = m;
+            }
+        }
+        if self.explorer.drain() {
+            changed = true;
+        }
+        for a in self.explorer.take_actions() {
+            changed = true;
+            match a {
+                ExplorerAction::OpenSql { title, text } => {
+                    self.editors.new_tab(Some(title));
+                    self.editors.cur_mut().set_text(&text);
+                    self.set_focus(Focus::Editor);
+                }
+                ExplorerAction::Status(s) => self.status = s,
+                ExplorerAction::Copy(s) => {
+                    if !clipboard::write_text(&s) {
+                        self.status = t(Msg::ErrClipboard).into();
+                    }
+                }
             }
         }
         if changed {
@@ -1135,6 +1192,7 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.explorer.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
@@ -1269,6 +1327,34 @@ impl App {
                 return;
             }
         }
+        // ★ 오브젝트 탐색기 — 열린 메뉴는 먼저 · 마우스는 커서 아래 · 키는 포커스일 때.
+        if self.explorer.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let in_exp = self.explorer.bounds().contains(cur);
+            if self.explorer.menu_open() || (is_mouse && in_exp) || (is_wheel_ev(&ev) && in_exp) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) && !self.explorer.menu_open()
+                {
+                    self.set_focus(Focus::Explorer);
+                }
+                if self.explorer.on_event(&ev) {
+                    self.redraw();
+                }
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.focus == Focus::Explorer && matches!(ev, InputEvent::Key { .. }) {
+                if self.explorer.on_event(&ev) {
+                    self.redraw();
+                }
+                return;
+            }
+        }
         // 편집기 탭 바(클릭·드래그·휠 · 툴팁 호버).
         if self.editors.route_tabs(&ev, &mut inv) {
             self.set_focus(Focus::Editor);
@@ -1335,6 +1421,7 @@ impl App {
                     self.grid.on_event(&ev, self.scale);
                     inv.push(self.grid.bounds);
                 }
+                Focus::Explorer => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -1431,6 +1518,9 @@ impl ApplicationHandler<Wake> for App {
         if self.keys_win.tick(now_ms) {
             self.keys_win.redraw();
         }
+        if self.explorer.tick(now_ms) {
+            self.redraw();
+        }
         if self.conn_win.tick_bars(now_ms) {
             self.conn_win.redraw();
         }
@@ -1443,6 +1533,7 @@ impl ApplicationHandler<Wake> for App {
             || self.conn_win.hover_animating()
             || self.colors_win.animating()
             || self.keys_win.animating()
+            || self.explorer.bars_visible()
             || self.editors.tooltip_pending();
         let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
@@ -1668,6 +1759,10 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
+fn is_wheel_ev(ev: &InputEvent) -> bool {
+    matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. })
+}
+
 /// 설정의 색 값(`#RRGGBB[AA]` · 형식 오류/빈 값 = None).
 fn color_setting(settings: &Settings, key: &str) -> Option<String> {
     let v = settings.get(key)?.trim().to_string();
@@ -1799,6 +1894,15 @@ fn main() {
     let ws_style = whitespace_style(&settings);
     let attempts_max = settings.int("connect.max_concurrent").clamp(1, 16) as usize;
     let keymap = Keymap::from_settings(&settings);
+    let explorer = {
+        let proxy = wake_proxy.clone();
+        Explorer::new(
+            Box::new(move || {
+                let _ = proxy.send_event(Wake);
+            }),
+            settings.flag("explorer.visible"),
+        )
+    };
     let colors_win = ColorsWin::new(
         color_setting(&settings, "ui.hover_color"),
         color_setting(&settings, "ui.pressed_color"),
@@ -1834,6 +1938,8 @@ fn main() {
         run_btn: Button::new(t(Msg::BtnRun)),
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
+        explorer,
+        last_spec: None,
         focus: Focus::Editor,
         worker,
         events,

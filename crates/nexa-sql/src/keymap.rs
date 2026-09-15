@@ -101,6 +101,12 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "",
     },
     Command {
+        id: "view.explorer",
+        label: Msg::MnExplorer,
+        win: "ctrl+shift+e",
+        mac: "cmd+shift+e",
+    },
+    Command {
         id: "edit.undo",
         label: Msg::MnUndo,
         win: "ctrl+z",
