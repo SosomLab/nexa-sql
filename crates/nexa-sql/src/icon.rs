@@ -9,7 +9,7 @@
 //! |---|---|
 //! | Windows | 타이틀바(小 32) + 작업표시줄(大 64 — `with_taskbar_icon`) |
 //! | Linux/X11 | 태스크바·창 전환기 · Wayland는 `.desktop` + hicolor PNG 몫 |
-//! | macOS | 무시 — Dock 아이콘은 `.app` 번들의 `.icns` 몫 |
+//! | macOS | 창 아이콘은 무시 · **Dock = [`set_dock_icon`]**(번들 없는 개발 실행도 같은 그림 · `.app`은 `.icns`와 동일) |
 
 const BG: [u8; 3] = [0xF6, 0xF7, 0xF9];
 const BORDER: [u8; 3] = [0xD5, 0xDA, 0xE1];
@@ -164,6 +164,76 @@ pub(crate) fn with_icon(attrs: winit::window::WindowAttributes) -> winit::window
         attrs.with_taskbar_icon(large)
     };
     attrs.with_window_icon(small)
+}
+
+/// Dock 아이콘(macOS) — 번들 없이 실행하면(`cargo run` · `target/*/nexa-sql`) Dock에 셸 실행 파일 아이콘(`exec`)이
+/// 뜬다(사용자 09-16). `NSApplication.setApplicationIconImage`로 같은 코드 아이콘(256px)을 넣는다 — `.app` 번들이면
+/// `.icns`와 같은 그림이라 덮어써도 무해. **메인 스레드 · 이벤트 루프 생성 뒤**(NSApp 존재). 다른 OS no-op · 실패 = 조용히.
+pub(crate) fn set_dock_icon() {
+    imp::set_dock_icon();
+}
+
+#[cfg(target_os = "macos")]
+mod imp {
+    use objc2::msg_send_id;
+    use objc2::rc::Retained;
+    use objc2::ClassType as _; // `alloc`
+    use objc2_app_kit::{NSApplication, NSBitmapImageRep, NSImage};
+    use objc2_foundation::{MainThreadMarker, NSSize, NSString};
+
+    /// Dock 타일은 128@2x까지 쓴다 — 256이면 어느 배율에서도 재샘플 없음.
+    const SIDE: u32 = 256;
+
+    pub(super) fn set_dock_icon() {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return; // AppKit 규약 — 메인 스레드가 아니면 하지 않는다(fail-soft)
+        };
+        let Some(img) = image_from_rgba(&super::icon_rgba(SIDE), SIDE) else {
+            return;
+        };
+        // SAFETY: 메인 스레드 · NSApp 생성 뒤 · 인자는 살아 있는 NSImage.
+        unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&img)) };
+    }
+
+    /// RGBA(직선 알파) → NSImage(nexa-clip `nclip-plat/src/tray.rs` 이식 · 크기만 다름).
+    fn image_from_rgba(rgba: &[u8], side: u32) -> Option<Retained<NSImage>> {
+        if side == 0 || rgba.len() != (side as usize) * (side as usize) * 4 {
+            return None;
+        }
+        // SAFETY: AppKit 생성자 호출 · rep가 소유한 버퍼는 side*side*4 바이트(bitmapData ≠ null 확인 뒤 복사).
+        unsafe {
+            let rep: Option<Retained<NSBitmapImageRep>> = msg_send_id![
+                NSBitmapImageRep::alloc(),
+                initWithBitmapDataPlanes: std::ptr::null_mut::<*mut u8>(),
+                pixelsWide: side as isize,
+                pixelsHigh: side as isize,
+                bitsPerSample: 8_isize,
+                samplesPerPixel: 4_isize,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: &*NSString::from_str("NSDeviceRGBColorSpace"),
+                bytesPerRow: (side * 4) as isize,
+                bitsPerPixel: 32_isize,
+            ];
+            let rep = rep?;
+            let data = rep.bitmapData();
+            if data.is_null() {
+                return None;
+            }
+            std::ptr::copy_nonoverlapping(rgba.as_ptr(), data, rgba.len());
+            let img = NSImage::initWithSize(
+                NSImage::alloc(),
+                NSSize::new(f64::from(side), f64::from(side)),
+            );
+            img.addRepresentation(&rep);
+            Some(img)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod imp {
+    pub(super) fn set_dock_icon() {}
 }
 
 #[cfg(test)]

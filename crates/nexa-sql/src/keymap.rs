@@ -9,7 +9,7 @@
 use nsql_i18n::{t, Msg};
 use nsql_settings::Settings;
 use std::collections::HashMap;
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
 /// 명령 하나 — 기본 코드는 Sublime Text 관례(없는 것은 `""`).
 #[derive(Clone, Copy, Debug)]
@@ -252,6 +252,63 @@ pub(crate) struct Chord {
     pub key: String,
 }
 
+/// 물리 키 → 키맵 이름(US 배열 위치 · 글자·숫자·문장부호만). IME 모드에서 논리 키가 비ASCII일 때의 폴백.
+fn physical_name(p: &PhysicalKey) -> Option<&'static str> {
+    let PhysicalKey::Code(code) = p else {
+        return None;
+    };
+    Some(match code {
+        KeyCode::KeyA => "a",
+        KeyCode::KeyB => "b",
+        KeyCode::KeyC => "c",
+        KeyCode::KeyD => "d",
+        KeyCode::KeyE => "e",
+        KeyCode::KeyF => "f",
+        KeyCode::KeyG => "g",
+        KeyCode::KeyH => "h",
+        KeyCode::KeyI => "i",
+        KeyCode::KeyJ => "j",
+        KeyCode::KeyK => "k",
+        KeyCode::KeyL => "l",
+        KeyCode::KeyM => "m",
+        KeyCode::KeyN => "n",
+        KeyCode::KeyO => "o",
+        KeyCode::KeyP => "p",
+        KeyCode::KeyQ => "q",
+        KeyCode::KeyR => "r",
+        KeyCode::KeyS => "s",
+        KeyCode::KeyT => "t",
+        KeyCode::KeyU => "u",
+        KeyCode::KeyV => "v",
+        KeyCode::KeyW => "w",
+        KeyCode::KeyX => "x",
+        KeyCode::KeyY => "y",
+        KeyCode::KeyZ => "z",
+        KeyCode::Digit0 => "0",
+        KeyCode::Digit1 => "1",
+        KeyCode::Digit2 => "2",
+        KeyCode::Digit3 => "3",
+        KeyCode::Digit4 => "4",
+        KeyCode::Digit5 => "5",
+        KeyCode::Digit6 => "6",
+        KeyCode::Digit7 => "7",
+        KeyCode::Digit8 => "8",
+        KeyCode::Digit9 => "9",
+        KeyCode::Comma => ",",
+        KeyCode::Period => ".",
+        KeyCode::Slash => "/",
+        KeyCode::Semicolon => ";",
+        KeyCode::Quote => "'",
+        KeyCode::BracketLeft => "[",
+        KeyCode::BracketRight => "]",
+        KeyCode::Backslash => "\\",
+        KeyCode::Minus => "-",
+        KeyCode::Equal => "=",
+        KeyCode::Backquote => "`",
+        _ => return None,
+    })
+}
+
 impl Chord {
     /// `ctrl+shift+p` 같은 문자열 파싱(빈 문자열·모르는 토큰 = None).
     pub(crate) fn parse(s: &str) -> Option<Chord> {
@@ -344,14 +401,29 @@ impl Chord {
     }
 
     /// winit 키 → 조합(조합키만 눌린 경우 None).
-    pub(crate) fn from_winit(key: &Key, primary: bool, shift: bool, alt: bool) -> Option<Chord> {
+    ///
+    /// ★ 논리 키가 ASCII가 아니면(한글·일본어 등 IME 모드 — 맥에서 ⌘+T가 `Character("ㅅ")`로 온다 · 사용자 09-16)
+    /// **물리 키**(US 배열 위치 · [`physical_name`])로 이름을 정한다 → Windows처럼 IME 모드와 무관하게 `cmd+t`.
+    pub(crate) fn from_winit(
+        key: &Key,
+        physical: &PhysicalKey,
+        primary: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<Chord> {
         let name = match key {
             Key::Character(t) => {
                 let c = t.chars().next()?;
                 if c.is_control() || c.is_whitespace() {
                     return None;
                 }
-                c.to_ascii_lowercase().to_string()
+                if c.is_ascii() {
+                    c.to_ascii_lowercase().to_string()
+                } else if let Some(n) = physical_name(physical) {
+                    n.to_string()
+                } else {
+                    c.to_lowercase().to_string()
+                }
             }
             Key::Named(n) => match n {
                 NamedKey::Enter => "enter".into(),
@@ -464,6 +536,26 @@ pub(crate) fn label_of(id: &str) -> String {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// 한글 IME: ⌘+T가 `Character("ㅅ")` + 물리 KeyT → `cmd+t`(사용자 09-16). ASCII면 논리 키 우선.
+    #[test]
+    fn ime_hangul_uses_physical_key() {
+        use winit::keyboard::SmolStr;
+        let ch = |k: &str, code: KeyCode| {
+            Chord::from_winit(
+                &Key::Character(SmolStr::new(k)),
+                &PhysicalKey::Code(code),
+                true,
+                false,
+                false,
+            )
+            .expect("chord")
+            .key
+        };
+        assert_eq!(ch("ㅅ", KeyCode::KeyT), "t");
+        assert_eq!(ch("T", KeyCode::KeyY), "t", "ASCII는 논리 키 우선");
+        assert_eq!(ch("、", KeyCode::Comma), ",");
+    }
 
     #[test]
     fn parse_display_and_round_trip() {

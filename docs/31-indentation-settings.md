@@ -34,7 +34,7 @@ Default(REGISTRY)  →  전역 User(settings.conf)  →  문법/확장자(Packag
 | 키 | 종류 | 기본 | 뜻 |
 |---|---|---|---|
 | `editor.tab_size` | Int 1~16 | 4 | 탭 폭(문자 수) — 표시·공백 삽입 단위 |
-| `editor.indent_spaces` | Bool | on | Tab 키 = 공백 삽입(SQL 관례 · VS Code 기본과 같음 · Sublime은 off) |
+| `editor.indent_spaces` | Bool | **off**(09-16 사용자 확정 · 이전 on) | Tab 키 = 공백 삽입 · **off = 탭 문자**(폭 = `editor.tab_size` 4 · Sublime 기본과 같음) |
 | `editor.detect_indent` | Bool | on | 파일 열 때 버퍼에서 감지해 **현재 탭 계층**에 넣는다 |
 | `editor.trim_trailing_ws` | Bool | off | 저장 시 줄 끝 공백 제거(팝업엔 없음 · 설정 화면) |
 

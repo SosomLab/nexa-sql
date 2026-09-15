@@ -402,8 +402,13 @@ pub(crate) fn spawn_test(
                 },
             );
             let outcome = match nsql_run::test_connection(&spec, &mut opener) {
+                // 세션 자기 설명이 접속 설명과 같으면(Oracle 등) 한 번만(사용자 09-16 "동일한 정보가 2개").
                 Ok(rep) => Ok((
-                    format!("{} · {}", rep.description, rep.session),
+                    if rep.session.is_empty() || rep.session == rep.description {
+                        rep.description
+                    } else {
+                        format!("{} · {}", rep.description, rep.session)
+                    },
                     format!("{:.3}", rep.elapsed.as_secs_f64()),
                 )),
                 Err(e) => Err(e.message),

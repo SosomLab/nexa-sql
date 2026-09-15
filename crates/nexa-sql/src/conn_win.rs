@@ -2090,8 +2090,11 @@ impl ConnWin {
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
         let animating = self.advance();
         // 버튼 라벨 폭(현재 언어) — 배치 전에 잰다. 무장 라벨은 두 줄이라 폭에 영향 없음 → 버튼이 움직이지 않는다.
+        // ★ 물리 px로 잰다(`layout`·메뉴 폭이 물리 px). 논리 px로 재던 동안 HiDPI에서 버튼이 좁아졌다
+        //   (맥 2x 실기 09-16: 50px vs Windows 100% 72px — 여백만 배율이 붙고 글자 폭은 안 붙어서).
+        let px = font_px * self.scale;
         self.btn_text_w = [Msg::BtnNew, Msg::BtnEdit, Msg::BtnDelete, Msg::BtnClose]
-            .map(|m| ui.measure(t(m), font_px).ceil() as i32);
+            .map(|m| ui.measure(t(m), px).ceil() as i32);
         self.ctx_text_w = [
             Msg::MnDuplicate,
             Msg::BtnNew,
@@ -2099,7 +2102,7 @@ impl ConnWin {
             Msg::MnCopyList,
         ]
         .iter()
-        .map(|m| ui.measure(t(*m), font_px))
+        .map(|m| ui.measure(t(*m), px))
         .fold(0.0_f32, f32::max)
         .ceil() as i32;
         if animating || self.anim.is_none() {

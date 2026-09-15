@@ -327,9 +327,13 @@ impl KeysWin {
                         return KeysAction::None;
                     }
                     // 조합키만 누른 경우는 None → 계속 기다린다.
-                    let Some(ch) =
-                        Chord::from_winit(&kev.logical_key, self.primary, self.shift, self.alt)
-                    else {
+                    let Some(ch) = Chord::from_winit(
+                        &kev.logical_key,
+                        &kev.physical_key,
+                        self.primary,
+                        self.shift,
+                        self.alt,
+                    ) else {
                         return KeysAction::None;
                     };
                     self.capturing = false;

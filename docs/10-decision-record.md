@@ -108,3 +108,4 @@
 | `tracing` 0.1 | ① driver-mssql | tiberius Info 토큰(PRINT) 캡처 — 이미 전이 의존 | MIT | ✅ 09-15 |
 | `mysql_async` · `rusqlite(bundled)` · `odbc-api` | ① | DP-2 | MIT/Apache | rusqlite ✅ · 나머지 ☐ M4 |
 | `chacha20poly1305` 0.10 · `sha2` 0.10 · `getrandom` 0.2 | Core 옆 `nsql-vault` | DR-22 비밀번호 봉투 AEAD · 키 KDF · OS 난수 — ★ **암호화 자체 구현 금지 부류**, nexa-clip `nclip-store` 원장과 동일 판(RustCrypto) | MIT/Apache-2.0 | ✅ 09-13 |
+| `objc2` 0.5 · `objc2-app-kit` 0.2 · `objc2-foundation` 0.2(**macOS 타깃 한정**) | ④ nexa-sql `icon.rs` | Dock 아이콘(`NSApplication.setApplicationIconImage` · 번들 없는 개발 실행) — winit과 **같은 판**(Cargo.lock 동일 항목 · 트리 중복 0) · nexa-clip `nclip-plat` 선례 | MIT | ✅ 09-16 |

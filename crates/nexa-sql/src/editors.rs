@@ -494,7 +494,10 @@ impl Editors {
 
     fn layout(&mut self, inv: &mut Invalidations) {
         let b = self.bounds;
-        let th = self.tabs.preferred_height().max(1);
+        // 논리 px(nexa-ctl 규약) → 물리 px(맥 2x 실기 09-16: 탭 줄이 Windows의 절반 높이였다).
+        let th = (self.tabs.preferred_height() as f32 * self.scale)
+            .round()
+            .max(1.0) as i32;
         self.tabs.set_bounds(Rect::new(b.x, b.y, b.w, th), inv);
         let ed = Rect::new(b.x, b.y + th, b.w, (b.h - th).max(0));
         for tb in &mut self.bufs {

@@ -27,6 +27,12 @@ pub(crate) fn wheel_event(delta: &MouseScrollDelta, shift: bool) -> InputEvent {
         MouseScrollDelta::LineDelta(dx, dy) => ((*dx * 120.0) as i32, (*dy * 120.0) as i32),
         MouseScrollDelta::PixelDelta(p) => (p.x as i32, p.y as i32),
     };
+    // ★ macOS 가로 축 부호는 Windows와 반대(사용자 09-16 "가로 스크롤이 반대로"): AppKit `scrollingDeltaX`는
+    //   **양수 = 왼쪽으로 스크롤**(세로의 "양수 = 위"와 같은 규약)인데 Windows `WM_MOUSEHWHEEL`은 양수 = 오른쪽.
+    //   winit은 부호를 손대지 않으므로 여기서 Windows 규약(`HWheel` 양수 = 오른쪽)으로 맞춘다. 세로는 두 OS가 같다.
+    if cfg!(target_os = "macos") {
+        dx = -dx;
+    }
     if natural_scroll() {
         dx = -dx;
         dy = -dy;
@@ -60,10 +66,23 @@ mod tests {
             wheel_event(&MouseScrollDelta::LineDelta(0.0, -1.0), false),
             InputEvent::Wheel { delta: 120 }
         ));
+        // 가로: Windows/Linux 양수 = 오른쪽(natural이면 반전) · macOS는 AppKit 부호가 반대라 한 번 더 뒤집힌다.
+        let expect = if cfg!(target_os = "macos") { 120 } else { -120 };
         assert!(matches!(
             wheel_event(&MouseScrollDelta::LineDelta(1.0, 0.0), false),
-            InputEvent::HWheel { delta: -120 }
+            InputEvent::HWheel { delta } if delta == expect
         ));
         set_natural_scroll(false);
+    }
+
+    /// macOS 가로 부호 보정(09-16): natural off에서 AppKit 양수(왼쪽)가 `HWheel` 음수(왼쪽)로.
+    #[test]
+    fn horizontal_sign_matches_windows_convention() {
+        set_natural_scroll(false);
+        let expect = if cfg!(target_os = "macos") { -120 } else { 120 };
+        assert!(matches!(
+            wheel_event(&MouseScrollDelta::LineDelta(1.0, 0.0), false),
+            InputEvent::HWheel { delta } if delta == expect
+        ));
     }
 }

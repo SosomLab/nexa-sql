@@ -46,6 +46,7 @@ use findbar::{FindAction, FindBar};
 use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
 use log_win::{LogWin, LogWinAction};
+use nexa_ctl::controls::{SplitAxis, SplitEvent, Splitter};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -145,6 +146,9 @@ struct App {
     grid: grid::Grid,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
     explorer: Explorer,
+    /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
+    split_v: Splitter,
+    split_h: Splitter,
     /// 마지막으로 접속을 시도한 스펙(접속 성공 시 탐색기 메타 세션을 같은 스펙으로 연다).
     last_spec: Option<ConnectSpec>,
     /// 현재 접속 방언(Explain · INSERT 복사 · 상태줄).
@@ -191,6 +195,9 @@ struct App {
     panel_op: Option<(String, ConnState)>,
 }
 
+/// 스플리터 잡히는 띠 두께(논리 px).
+const SPLIT_GRIP: f32 = 6.0;
+
 fn px(v: f32, s: f32) -> i32 {
     (v * s).round() as i32
 }
@@ -217,7 +224,9 @@ impl App {
         self.toolbar.set_scale(s);
         self.menubar
             .set_bounds(Rect::new(0, 0, w, menu_h), &mut inv);
-        let tool_h = self.toolbar.preferred_height();
+        // `preferred_height`는 논리 px(nexa-ctl 규약) → 물리 px로. 그대로 쓰면 HiDPI에서 툴바가 1/배율로 납작해진다
+        // (맥 2x 실기 09-16: Windows 100% 32px vs 맥 16px).
+        let tool_h = px(self.toolbar.preferred_height() as f32, s);
         self.toolbar
             .set_bounds(Rect::new(0, menu_h, w, tool_h), &mut inv);
         let chrome_h = menu_h + tool_h;
@@ -246,11 +255,23 @@ impl App {
             .set_bounds(Rect::new(act_w, body_top, exp_w, body_h), s);
         let rx = rx + act_w + exp_w;
         let rw = rw - act_w - exp_w;
-        let editor_h = (body_h as f32 * 0.5) as i32;
+        // 스플리터 ① 탐색기|편집기 — 잡히는 띠 = 탐색기 오른쪽 경계 ±3 논리 px(탐색기 보일 때만 · 사용자 09-16).
+        let grip = px(SPLIT_GRIP, s);
+        self.split_v.set_rect(if exp_w > 0 {
+            Rect::new(act_w + exp_w - grip / 2, body_top, grip, body_h)
+        } else {
+            Rect::new(0, 0, 0, 0)
+        });
+        // 편집기/결과 상하 비율 = `layout.editor_split_pct`(스플리터 ② 드래그가 갱신 · 자동 기억).
+        let pct = self.settings.int("layout.editor_split_pct").clamp(10, 90) as f32 / 100.0;
+        let editor_h = (body_h as f32 * pct) as i32;
         self.editors
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
         // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
         self.find.set_bounds(self.editors.editor_bounds(), s);
+        // 스플리터 ② 편집기|결과 — 띠 = 편집기 아래 여백(pad) 자리.
+        self.split_h
+            .set_rect(Rect::new(rx, body_top + editor_h - pad, rw, pad.max(grip)));
         self.grid.set_bounds(Rect::new(
             rx,
             body_top + editor_h,
@@ -258,6 +279,61 @@ impl App {
             body_h - editor_h - pad,
         ));
         self.palette.set_bounds(w, chrome_h, s);
+    }
+
+    /// 스플리터 두 개에 마우스 사건을 준다. 소비(드래그 시작·중·끝)했으면 `true` — hover만 바뀐 경우는 다시 그리되 통과.
+    fn route_splitters(&mut self, ev: &InputEvent) -> bool {
+        let s = self.scale;
+        match self.split_v.on_event(ev) {
+            SplitEvent::None => {}
+            SplitEvent::Hover => self.redraw(),
+            SplitEvent::Start => return true,
+            SplitEvent::Drag(x) => {
+                // 띠 시작 x → 탐색기 폭(논리 px · 설정 범위로 클램프) → `explorer.width`(자동 기억).
+                let grip = px(SPLIT_GRIP, s);
+                let act_w = px(activity::BAR_W, s);
+                let w = ((x + grip / 2 - act_w) as f32 / s).round() as i64;
+                let _ = self
+                    .settings
+                    .set("explorer.width", &w.clamp(160, 800).to_string());
+                self.layout();
+                self.redraw();
+                return true;
+            }
+            SplitEvent::End => {
+                self.persist_settings();
+                self.redraw();
+                return true;
+            }
+        }
+        match self.split_h.on_event(ev) {
+            SplitEvent::None => false,
+            SplitEvent::Hover => {
+                self.redraw();
+                false
+            }
+            SplitEvent::Start => true,
+            SplitEvent::Drag(y) => {
+                // 띠 시작 y = body_top + editor_h − pad → 편집기 비율(%) → `layout.editor_split_pct`.
+                let pad = px(8.0, s);
+                let body = self.act_bar.bounds();
+                if body.h > 0 {
+                    let editor_h = y + pad - body.y;
+                    let pct = (editor_h as f32 / body.h as f32 * 100.0).round() as i64;
+                    let _ = self
+                        .settings
+                        .set("layout.editor_split_pct", &pct.clamp(10, 90).to_string());
+                    self.layout();
+                    self.redraw();
+                }
+                true
+            }
+            SplitEvent::End => {
+                self.persist_settings();
+                self.redraw();
+                true
+            }
+        }
     }
 
     fn set_focus(&mut self, f: Focus) {
@@ -387,7 +463,9 @@ impl App {
                         LogKind::Info,
                         format!("test ok: {description} ({elapsed_s}s)"),
                     ));
-                    let msg = tf(Msg::StTestOk, &[&description, &elapsed_s]);
+                    // 상태줄·패널은 프로필 이름으로 간략하게(사용자 09-16) · 접속 문자열 상세는 위 로그 창에.
+                    let label = if name.is_empty() { &description } else { &name };
+                    let msg = tf(Msg::StTestOk, &[label, &elapsed_s]);
                     self.status = msg.clone();
                     self.conn_win.set_test_mark(&name, TestMark::Ok);
                     self.set_panel_result(&name, ConnState::TestOk(msg));
@@ -859,8 +937,13 @@ impl App {
                 self.editors
                     .set_whitespace(whitespace_style(&self.settings));
             }
-            "ui.font_size" | "ui.menu_font_size" | "editor.font_size" | "grid.font_size"
-            | "explorer.width" | "explorer.font_size" => {
+            "ui.font_size"
+            | "ui.menu_font_size"
+            | "editor.font_size"
+            | "grid.font_size"
+            | "explorer.width"
+            | "explorer.font_size"
+            | "layout.editor_split_pct" => {
                 self.layout();
             }
             _ => return false,
@@ -2151,7 +2234,7 @@ impl App {
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
                 self.toolbar.paint(&mut dc, &th);
-                self.toolbar.paint_tooltip(&mut dc, &th);
+                // 툴바 툴팁은 탐색기·편집기가 덮지 못하게 최상위 층(메뉴바 직전)에서 그린다(09-16 사용자 캡처: 툴바 아래 검은 띠).
                 dc.fill_rect(self.menubar.bounds(), th.chrome_bg);
                 dc.fill_rect(
                     Rect::new(0, self.toolbar.bounds().bottom() - 1, wi, 1),
@@ -2317,6 +2400,26 @@ impl App {
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
             }
+            // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
+            {
+                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s);
+                self.split_v.paint(&mut dc, &th);
+                self.split_h.paint(&mut dc, &th);
+            }
+            // ── 툴바 툴팁(UI 글꼴) — 툴바 패스에서 그리면 그 뒤에 칠하는 탐색기·편집기가 덮어 툴바 아래 2~3px 띠만
+            //    남았다(09-16 Windows 캡처). nexa-ctl `Toolbar::paint_tooltip` 규약대로 팝업 층에서.
+            {
+                let prefs = FontPrefs {
+                    base: SlotFont {
+                        size: ui_px,
+                        bold: false,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.toolbar.paint_tooltip(&mut dc, &th);
+            }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
             {
                 let prefs = FontPrefs {
@@ -2447,6 +2550,10 @@ impl App {
                 self.redraw();
                 return;
             }
+        }
+        // ★ 스플리터(탐색기|편집기 · 편집기|결과) — 마우스만 · 드래그 중이면 다른 컨트롤보다 먼저(사용자 09-16).
+        if is_mouse && self.route_splitters(&ev) {
+            return;
         }
         // 상태줄 구문 이름 클릭 → 팔레트(Set Syntax) · 들여쓰기 세그먼트 클릭 → 팝업.
         if let InputEvent::MouseDown { x, y, .. } = ev {
@@ -2646,6 +2753,9 @@ impl ApplicationHandler<Wake> for App {
         if self.window.is_some() {
             return;
         }
+        // macOS Dock 아이콘 — 이벤트 루프 생성 직후에 넣으면 winit의 applicationDidFinishLaunching(활성화 정책 Regular)이
+        // Dock 타일을 다시 만들며 덮는다(09-16 실기: 호출은 되나 `exec` 그대로) → 기동이 끝난 첫 resumed에서. 다른 OS no-op.
+        icon::set_dock_icon();
         let attrs = icon::with_icon(
             Window::default_attributes()
                 .with_title("Nexa SQL")
@@ -2713,6 +2823,8 @@ impl ApplicationHandler<Wake> for App {
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
         redraw |= self.editors.tick();
+        redraw |= self.split_v.tick(now_ms);
+        redraw |= self.split_h.tick(now_ms);
         // 더러움 표시(`*`) 갱신 · 닫기 2단 안내.
         redraw |= self.editors.refresh_dirty();
         if let Some(m) = self.editors.take_notice() {
@@ -3011,12 +3123,23 @@ impl ApplicationHandler<Wake> for App {
                 self.cursor = (position.x as i32, position.y as i32);
                 // 그리드 헤더 경계 위 = 폭 조절 커서.
                 if let Some(w) = &self.window {
+                    let cur = Point {
+                        x: self.cursor.0,
+                        y: self.cursor.1,
+                    };
                     let over_edge = self.grid.header_edge_hover(self.cursor.0, self.cursor.1);
-                    w.set_cursor(if over_edge {
-                        winit::window::CursorIcon::ColResize
-                    } else {
-                        winit::window::CursorIcon::Default
-                    });
+                    // 스플리터 위/드래그 중 = ↔ · ↕ (그리드 헤더 경계보다 우선).
+                    w.set_cursor(
+                        if self.split_v.is_dragging() || self.split_v.rect().contains(cur) {
+                            winit::window::CursorIcon::ColResize
+                        } else if self.split_h.is_dragging() || self.split_h.rect().contains(cur) {
+                            winit::window::CursorIcon::RowResize
+                        } else if over_edge {
+                            winit::window::CursorIcon::ColResize
+                        } else {
+                            winit::window::CursorIcon::Default
+                        },
+                    );
                 }
             }
             WindowEvent::Ime(ime) => {
@@ -3039,9 +3162,13 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 // ★ 단축키 = 키맵 표 조회(Sublime 기본 · `key.*` 설정 · 사용자 09-15). 조합키 없는 글자는 타이핑이므로
                 // 표에 있어도 가로채지 않는다(F-키·Enter 같은 이름 키는 예외).
-                if let Some(ch) =
-                    Chord::from_winit(&kev.logical_key, self.primary, self.shift, self.alt)
-                {
+                if let Some(ch) = Chord::from_winit(
+                    &kev.logical_key,
+                    &kev.physical_key,
+                    self.primary,
+                    self.shift,
+                    self.alt,
+                ) {
                     let plain_char = !ch.primary && !ch.alt && ch.key.chars().count() == 1;
                     if !plain_char {
                         if let Some(id) = self.keymap.lookup(&ch) {
@@ -3340,6 +3467,8 @@ fn main() {
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
         explorer,
+        split_v: Splitter::new(SplitAxis::Vertical),
+        split_h: Splitter::new(SplitAxis::Horizontal),
         last_spec: None,
         dialect: DEFAULT_DIALECT,
         tx_dirty: false,

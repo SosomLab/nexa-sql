@@ -250,7 +250,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblIndentSpaces,
         desc: Msg::DescIndentSpaces,
         kind: SettingKind::Bool,
-        default: "on",
+        // 기본 off = Tab 키가 **탭 문자**(폭 4 = `editor.tab_size`) — 사용자 확정 09-16(이전 on = 공백).
+        default: "off",
     },
     Entry {
         key: "editor.rulers",
@@ -560,6 +561,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExplorerWidth,
         kind: SettingKind::Int { min: 160, max: 800 },
         default: "260",
+    },
+    // 편집기/결과 상하 분할 비율 — 스플리터 드래그로 바뀌고 자동 기억(HIDDEN · 사용자 09-16).
+    Entry {
+        key: "layout.editor_split_pct",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorSplit,
+        desc: Msg::DescEditorSplit,
+        kind: SettingKind::Int { min: 10, max: 90 },
+        default: "50",
     },
     Entry {
         key: "key.view.explorer",
@@ -1103,6 +1113,7 @@ pub const HIDDEN: &[&str] = &[
     "conn.button_scale_pct",
     "ui.tooltip_delay_ms",
     "explorer.width",
+    "layout.editor_split_pct",
     "ui.dblclick_ms",
     "ui.slide_ms",
     "ui.hover_intent_ms",
