@@ -1337,7 +1337,9 @@ impl Explorer {
                     let gx = b.x + ((n.depth as f32 * INDENT + 4.0) * s).round() as i32;
                     // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
                     let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
-                    if n.expandable && !empty_loaded {
+                    // ★ 부분적으로 잘린 마지막 행은 셰브론·아이콘을 그리지 않는다(클립이 없는 도형이라 상태줄 위로 삐져나왔다 · 사용자 09-15).
+                    let full_row = rr.h >= row_h;
+                    if n.expandable && !empty_loaded && full_row {
                         let cw = th_txt.max(10); // 사용자 09-15: 글꼴 높이의 1.0배
                         let chev = Rect::new(gx, vcy - cw / 2, cw, cw);
                         // 색: 접힘 = 진한 회색 · 마우스 오버 또는 펼침 = 본문색(검정) (사용자 09-15).
@@ -1350,7 +1352,7 @@ impl Explorer {
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 아이콘(설정 켬 · DBMS/스키마/폴더/종류별 · 글꼴 높이 크기) 또는 색 칩(끔).
-                    if self.icons_on {
+                    if self.icons_on && full_row {
                         if let Some((k, rgb)) = self.icon_for(n) {
                             let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
                                 .round()

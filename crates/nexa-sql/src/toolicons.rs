@@ -4,7 +4,7 @@
 //! 색은 툴바가 테마 기준색(hover/pressed = accent)으로 틴트하므로 여기선 **모양만** 정의한다.
 //! 마스크는 프로세스 수명 동안 한 번만 만들어 `Box::leak`(5개 × 4KB · 툴바가 `&'static`을 요구).
 
-use nexa_ctl::ToolIcon;
+use nexa_ctl::{MenuIcon, ToolIcon};
 
 /// 마스크 한 변(px) — 툴바 슬롯(≈24~32px)에 contain 맞춤이라 64면 어떤 배율에서도 충분하다.
 const SIDE: u32 = 64;
@@ -123,6 +123,131 @@ fn shape_log(x: f32, y: f32) -> bool {
         .any(|&cy| stroke(x, y, (52.0, cy), (204.0, cy), 22.0))
 }
 
+// ── 메뉴 아이콘 도형(우클릭 메뉴 · DBeaver식 · 사용자 09-15) ──
+
+/// 복사 — 겹친 사각형 두 장(외곽선).
+fn shape_copy(x: f32, y: f32) -> bool {
+    let back = in_rounded_rect(x, y, 48.0, 40.0, 120.0, 140.0, 12.0)
+        && !in_rounded_rect(x, y, 70.0, 62.0, 76.0, 96.0, 6.0)
+        && !in_rounded_rect(x, y, 96.0, 84.0, 120.0, 140.0, 12.0);
+    let front = in_rounded_rect(x, y, 96.0, 84.0, 120.0, 140.0, 12.0)
+        && !in_rounded_rect(x, y, 118.0, 106.0, 76.0, 96.0, 6.0);
+    back || front
+}
+
+/// 잘라내기 — 가위(고리 둘 + 날 둘).
+fn shape_cut(x: f32, y: f32) -> bool {
+    let ring = |cx: f32, cy: f32| {
+        let d = ((x - cx) * (x - cx) + (y - cy) * (y - cy)).sqrt();
+        (26.0..=44.0).contains(&d)
+    };
+    ring(76.0, 188.0)
+        || ring(180.0, 188.0)
+        || stroke(x, y, (96.0, 156.0), (196.0, 44.0), 22.0)
+        || stroke(x, y, (160.0, 156.0), (60.0, 44.0), 22.0)
+}
+
+/// 붙여넣기 — 클립보드(판 + 집게).
+fn shape_paste(x: f32, y: f32) -> bool {
+    let board = in_rounded_rect(x, y, 56.0, 60.0, 144.0, 156.0, 14.0)
+        && !in_rounded_rect(x, y, 78.0, 82.0, 100.0, 112.0, 6.0);
+    let clip = in_rounded_rect(x, y, 96.0, 40.0, 64.0, 40.0, 10.0)
+        && !in_rounded_rect(x, y, 112.0, 52.0, 32.0, 16.0, 4.0);
+    board || clip
+}
+
+/// 전체 선택 — 점선 사각형(모서리 4개 + 변 중앙 점).
+fn shape_select_all(x: f32, y: f32) -> bool {
+    let corner = |cx: f32, cy: f32| in_rounded_rect(x, y, cx - 18.0, cy - 18.0, 36.0, 36.0, 4.0);
+    let dot = |cx: f32, cy: f32| in_rounded_rect(x, y, cx - 11.0, cy - 11.0, 22.0, 22.0, 4.0);
+    corner(48.0, 48.0)
+        || corner(208.0, 48.0)
+        || corner(48.0, 208.0)
+        || corner(208.0, 208.0)
+        || dot(128.0, 48.0)
+        || dot(128.0, 208.0)
+        || dot(48.0, 128.0)
+        || dot(208.0, 128.0)
+}
+
+/// 표(CSV·텍스트·Markdown) — 격자.
+fn shape_table(x: f32, y: f32) -> bool {
+    let frame = in_rounded_rect(x, y, 40.0, 48.0, 176.0, 160.0, 12.0)
+        && !in_rounded_rect(x, y, 60.0, 68.0, 136.0, 120.0, 4.0);
+    frame
+        || stroke(x, y, (40.0, 104.0), (216.0, 104.0), 18.0)
+        || stroke(x, y, (40.0, 152.0), (216.0, 152.0), 18.0)
+        || stroke(x, y, (128.0, 48.0), (128.0, 208.0), 18.0)
+}
+
+/// JSON — 중괄호 한 쌍.
+fn shape_braces(x: f32, y: f32) -> bool {
+    let left = stroke(x, y, (100.0, 44.0), (72.0, 44.0), 22.0)
+        || stroke(x, y, (72.0, 44.0), (72.0, 116.0), 22.0)
+        || stroke(x, y, (72.0, 116.0), (48.0, 128.0), 22.0)
+        || stroke(x, y, (48.0, 128.0), (72.0, 140.0), 22.0)
+        || stroke(x, y, (72.0, 140.0), (72.0, 212.0), 22.0)
+        || stroke(x, y, (72.0, 212.0), (100.0, 212.0), 22.0);
+    let right = stroke(x, y, (156.0, 44.0), (184.0, 44.0), 22.0)
+        || stroke(x, y, (184.0, 44.0), (184.0, 116.0), 22.0)
+        || stroke(x, y, (184.0, 116.0), (208.0, 128.0), 22.0)
+        || stroke(x, y, (208.0, 128.0), (184.0, 140.0), 22.0)
+        || stroke(x, y, (184.0, 140.0), (184.0, 212.0), 22.0)
+        || stroke(x, y, (184.0, 212.0), (156.0, 212.0), 22.0);
+    left || right
+}
+
+/// SQL — 데이터베이스 원통.
+fn shape_db(x: f32, y: f32) -> bool {
+    let ell = |cy: f32, rx: f32, ry: f32| {
+        let nx = (x - 128.0) / rx;
+        let ny = (y - cy) / ry;
+        nx * nx + ny * ny
+    };
+    let top = {
+        let d = ell(72.0, 88.0, 32.0);
+        (0.55..=1.0).contains(&d)
+    };
+    let mid = {
+        let d = ell(128.0, 88.0, 32.0);
+        (0.55..=1.0).contains(&d) && y >= 128.0
+    };
+    let bot = {
+        let d = ell(184.0, 88.0, 32.0);
+        (0.55..=1.0).contains(&d) && y >= 184.0
+    };
+    let sides = (x - 40.0).abs() <= 11.0 && (72.0..=184.0).contains(&y)
+        || (x - 216.0).abs() <= 11.0 && (72.0..=184.0).contains(&y);
+    top || mid || bot || sides
+}
+
+/// 메뉴 아이콘(알파 마스크 · 색은 메뉴가 상태색으로 틴트).
+fn menu_icon(shape: fn(f32, f32) -> bool) -> MenuIcon {
+    MenuIcon::from_alpha(SIDE, SIDE, rasterize(shape))
+}
+
+pub(crate) fn mi_copy() -> MenuIcon {
+    menu_icon(shape_copy)
+}
+pub(crate) fn mi_cut() -> MenuIcon {
+    menu_icon(shape_cut)
+}
+pub(crate) fn mi_paste() -> MenuIcon {
+    menu_icon(shape_paste)
+}
+pub(crate) fn mi_select_all() -> MenuIcon {
+    menu_icon(shape_select_all)
+}
+pub(crate) fn mi_table() -> MenuIcon {
+    menu_icon(shape_table)
+}
+pub(crate) fn mi_braces() -> MenuIcon {
+    menu_icon(shape_braces)
+}
+pub(crate) fn mi_db() -> MenuIcon {
+    menu_icon(shape_db)
+}
+
 /// 도형 → `SIDE`×`SIDE` 커버리지(4×4 슈퍼샘플링) — 한 번 만들어 영구 보관.
 fn rasterize(shape: fn(f32, f32) -> bool) -> &'static [u8] {
     let unit = 256.0 / SIDE as f32;
@@ -200,6 +325,13 @@ mod tests {
             shape_disconnect,
             shape_open,
             shape_save,
+            shape_copy,
+            shape_cut,
+            shape_paste,
+            shape_select_all,
+            shape_table,
+            shape_braces,
+            shape_db,
         ] {
             let (opaque, partial) = coverage(s);
             assert!(opaque > 100, "채워진 픽셀이 있어야 한다: {opaque}");

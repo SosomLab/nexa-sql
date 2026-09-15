@@ -2,6 +2,7 @@
 //! 호버 두껍게 · 자동 숨김 — nexa-ctl `ScrollBars` 공용) · 컬럼 폭은 앞 200행 실측 · 메시지 모드.
 //! `nexa-grid` 크레이트(U-3 · nexa-ui 21)가 오면 교체한다. 고정폭 층에서 그려진다.
 
+use crate::toolicons;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -138,8 +139,9 @@ pub(crate) struct Grid {
     menu: CtxMenu,
     /// 호스트가 가져갈 복사 텍스트(셀 수와 함께).
     pending_copy: Option<(String, usize)>,
-    /// 우클릭 메뉴가 열린 자리(2단 SQL 메뉴를 같은 자리에).
-    menu_at: (i32, i32),
+    /// 메뉴 단축키 문구(복사 · 전체 선택 · 호스트 주입).
+    sc_copy: String,
+    sc_all: String,
     /// 직전 MouseDown을 메뉴가 먹었다(항목 선택) — 호스트가 통과 여부를 판단하는 1회성 신호.
     menu_click_consumed: bool,
     /// INSERT 복사용 방언(접속 시 호스트가 알려 준다).
@@ -178,7 +180,8 @@ impl Default for Grid {
             drag_sel: None,
             menu: CtxMenu::new(),
             pending_copy: None,
-            menu_at: (0, 0),
+            sc_copy: String::new(),
+            sc_all: String::new(),
             menu_click_consumed: false,
             dialect: Dialect::Oracle,
             source_table: None,
@@ -726,38 +729,48 @@ impl Grid {
         self.gutter_w > 0 && x >= self.bounds.x && x < self.bounds.x + self.gutter_w
     }
 
-    /// 우클릭 메뉴(DBeaver Advanced Copy 구조 · 사용자 09-15): 복사 · 머리글 포함 · CSV/텍스트/Markdown/JSON 즉시 ·
-    /// SQL ▸ = 2단 메뉴(SELECT/INSERT/UPDATE/DELETE/MERGE) · 전체 선택.
-    fn open_menu(&mut self, x: i32, y: i32) {
-        let has = !self.regions.is_empty();
-        let items = vec![
-            CtxItem::maybe("copy", t(Msg::MnCopy), has),
-            CtxItem::maybe("copy_h", t(Msg::MnCopyWithHeaders), has),
-            CtxItem::Separator,
-            CtxItem::maybe("copy_csv", t(Msg::MnCopyCsv), has),
-            CtxItem::maybe("copy_txt", t(Msg::MnCopyText), has),
-            CtxItem::maybe("copy_md", t(Msg::MnCopyMarkdown), has),
-            CtxItem::maybe("copy_json", t(Msg::MnCopyJson), has),
-            CtxItem::maybe("copy_sql", t(Msg::MnCopySql), has),
-            CtxItem::Separator,
-            CtxItem::item("all", t(Msg::MnSelectAll)),
-        ];
-        let text_w = (self.row_h * 10).max(180);
-        self.menu_at = (x, y);
-        self.menu.open_at(x, y, items, self.bounds, text_w);
+    /// 단축키 문구(복사 · 전체 선택) — 호스트 키맵에서 주입(표시 전용).
+    pub(crate) fn set_shortcuts(&mut self, copy: String, select_all: String) {
+        self.sc_copy = copy;
+        self.sc_all = select_all;
     }
 
-    /// SQL 2단 메뉴(같은 자리에 다시 연다 — 컨텍스트 메뉴 부품은 아직 하위 메뉴가 없다).
-    fn open_sql_menu(&mut self) {
-        let items = vec![
+    /// 우클릭 메뉴(DBeaver Advanced Copy 구조 · 사용자 09-15): 복사(아이콘·단축키) · 머리글 포함 · **Advanced Copy ▸**
+    /// (CSV · 텍스트 · Markdown · JSON · **SQL ▸** SELECT/INSERT/UPDATE/DELETE/MERGE) · 전체 선택 — 진짜 하위 메뉴(nexa-ctl).
+    fn open_menu(&mut self, x: i32, y: i32) {
+        let has = !self.regions.is_empty();
+        let sql = vec![
             CtxItem::item("sql_select", t(Msg::MnCopySqlSelect)),
             CtxItem::item("sql_insert", t(Msg::MnCopySqlInsert)),
             CtxItem::item("sql_update", t(Msg::MnCopySqlUpdate)),
             CtxItem::item("sql_delete", t(Msg::MnCopySqlDelete)),
             CtxItem::item("sql_merge", t(Msg::MnCopySqlMerge)),
         ];
-        let (x, y) = self.menu_at;
-        let text_w = (self.row_h * 6).max(120);
+        let adv = vec![
+            CtxItem::item("copy_csv", t(Msg::MnCopyCsv)).with_icon(Some(toolicons::mi_table())),
+            CtxItem::item("copy_txt", t(Msg::MnCopyText)).with_icon(Some(toolicons::mi_table())),
+            CtxItem::item("copy_md", t(Msg::MnCopyMarkdown)).with_icon(Some(toolicons::mi_table())),
+            CtxItem::item("copy_json", t(Msg::MnCopyJson)).with_icon(Some(toolicons::mi_braces())),
+            CtxItem::submenu("copy_sql", t(Msg::MnCopySql), sql)
+                .with_icon(Some(toolicons::mi_db())),
+        ];
+        let mut adv_item = CtxItem::submenu("adv", t(Msg::MnAdvancedCopy), adv);
+        if let CtxItem::Item { enabled, .. } = &mut adv_item {
+            *enabled = has;
+        }
+        let items = vec![
+            CtxItem::maybe("copy", t(Msg::MnCopy), has)
+                .with_icon(Some(toolicons::mi_copy()))
+                .with_shortcut(self.sc_copy.clone()),
+            CtxItem::maybe("copy_h", t(Msg::MnCopyWithHeaders), has)
+                .with_icon(Some(toolicons::mi_copy())),
+            adv_item,
+            CtxItem::Separator,
+            CtxItem::item("all", t(Msg::MnSelectAll))
+                .with_icon(Some(toolicons::mi_select_all()))
+                .with_shortcut(self.sc_all.clone()),
+        ];
+        let text_w = (self.row_h * 10).max(180);
         self.menu.open_at(x, y, items, self.bounds, text_w);
     }
 
@@ -769,10 +782,6 @@ impl Grid {
             "copy_txt" => CopyKind::Text,
             "copy_md" => CopyKind::Markdown,
             "copy_json" => CopyKind::Json,
-            "copy_sql" => {
-                self.open_sql_menu();
-                return;
-            }
             "sql_select" => CopyKind::Sql(SqlKind::Select),
             "sql_insert" => CopyKind::Sql(SqlKind::Insert),
             "sql_update" => CopyKind::Sql(SqlKind::Update),

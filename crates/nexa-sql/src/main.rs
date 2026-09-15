@@ -811,6 +811,7 @@ impl App {
                 .set_format(self.settings.get(key).unwrap_or("raw")),
             k if k.starts_with("key.") => {
                 self.keymap = Keymap::from_settings(&self.settings);
+                self.apply_menu_decor();
                 self.keys_win.refresh(&self.keymap);
             }
             k if k.starts_with("editor.whitespace") || k.starts_with("editor.show_") => {
@@ -1399,6 +1400,28 @@ impl App {
     }
 
     /// 접속 창 열기(메인 창 위 가운데) — 이미 열려 있으면 앞으로.
+    /// 우클릭 편집 메뉴(nexa-ctl 내장)의 아이콘·단축키 + 그리드 메뉴 단축키 — 부팅·키맵 변경 때(사용자 09-15 "기본 기능에도 이미지").
+    fn apply_menu_decor(&mut self) {
+        nexa_ctl::controls::set_edit_menu_decor(nexa_ctl::controls::EditMenuDecor {
+            icons: [
+                Some(toolicons::mi_copy()),
+                Some(toolicons::mi_cut()),
+                Some(toolicons::mi_paste()),
+                Some(toolicons::mi_select_all()),
+            ],
+            shortcuts: [
+                self.keymap.display_of("edit.copy"),
+                self.keymap.display_of("edit.cut"),
+                self.keymap.display_of("edit.paste"),
+                self.keymap.display_of("edit.select_all"),
+            ],
+        });
+        self.grid.set_shortcuts(
+            self.keymap.display_of("edit.copy"),
+            self.keymap.display_of("edit.select_all"),
+        );
+    }
+
     fn open_conn_window(&mut self, el: &ActiveEventLoop) {
         let over = self.window.as_ref().and_then(|w| {
             let p = w.outer_position().ok()?;
@@ -2499,6 +2522,7 @@ impl ApplicationHandler<Wake> for App {
         self.layout();
         self.set_focus(Focus::Editor);
         self.apply_indent();
+        self.apply_menu_decor();
         // 로그 창은 설정 `log.open_at_start`(기본 off · 사용자 09-15)일 때만 메인 옆에 함께 연다(Ctrl+`로 언제든).
         if self.settings.flag("log.open_at_start") {
             let owner = self.window.clone();
@@ -2726,6 +2750,7 @@ impl ApplicationHandler<Wake> for App {
                     let _ = self.settings.set(&keymap::setting_key(&id), &code);
                     let _ = self.settings.save();
                     self.keymap = Keymap::from_settings(&self.settings);
+                    self.apply_menu_decor();
                     self.keys_win.refresh(&self.keymap);
                     self.keys_win.redraw();
                 }
@@ -2735,6 +2760,7 @@ impl ApplicationHandler<Wake> for App {
                     }
                     let _ = self.settings.save();
                     self.keymap = Keymap::from_settings(&self.settings);
+                    self.apply_menu_decor();
                     self.keys_win.refresh(&self.keymap);
                     self.keys_win.redraw();
                 }
