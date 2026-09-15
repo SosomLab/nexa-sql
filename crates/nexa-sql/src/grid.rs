@@ -737,7 +737,9 @@ impl Grid {
 
     /// 우클릭 메뉴(DBeaver Advanced Copy 구조 · 사용자 09-15): 복사(아이콘·단축키) · 머리글 포함 · **Advanced Copy ▸**
     /// (CSV · 텍스트 · Markdown · JSON · **SQL ▸** SELECT/INSERT/UPDATE/DELETE/MERGE) · 전체 선택 — 진짜 하위 메뉴(nexa-ctl).
-    fn open_menu(&mut self, x: i32, y: i32) {
+    fn open_menu(&mut self, x: i32, y: i32, scale: f32) {
+        // ★ 배율을 메뉴에 넘긴다 — 빠져 있어서 맥 2x에서 행 높이·여백이 1x 값(절반)으로 계산돼 항목이 겹쳐 보였다(09-16).
+        self.menu.set_scale(scale);
         let has = !self.regions.is_empty();
         let sql = vec![
             CtxItem::item("sql_select", t(Msg::MnCopySqlSelect)),
@@ -1074,7 +1076,7 @@ impl Grid {
                         if !self.in_sel(cell.0, cell.1) {
                             self.select_only(cell);
                         }
-                        self.open_menu(x, y);
+                        self.open_menu(x, y, scale);
                         return;
                     }
                 }
@@ -1498,6 +1500,10 @@ impl Grid {
             self.scroll_y,
             s,
         );
+    }
+
+    /// 우클릭 메뉴 — 호스트가 **UI 글꼴 최상위 패스**에서 그린다(그리드 패스의 고정폭 글꼴로 그리면 다른 메뉴와 글꼴이 달랐다 · 09-16).
+    pub(crate) fn paint_menu(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         self.menu.paint(dc, th);
     }
 }

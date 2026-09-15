@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (7차 · mac)** — 우클릭 메뉴 항목 간격: 그리드·상태줄 Tab·탐색기 메뉴가 `set_scale` 누락(맥 2x 절반 높이) → 배율 전달 · 그리드 메뉴 = UI 글꼴 패스. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (6차 · mac)** — 글자 세로 정렬 잉크 기준(접속 창 그리드·헤더 · 결과 그리드 · 탐색기 · 상태줄 · nexa-ui `text_center_y`) · 프로필 이름 변경 저장(옛 항목 제거 · 중복 생성 안 함). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (5차 · mac)** — 연결 중이면 툴바 Connect 아이콘 밝은 녹색(nexa-ui `ToolTone`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (4차 · mac)** — 툴바 connect/disconnect = Material `power`/`power_off`(사용자 SVG · `corner_ok` 모서리 깎기). → [journal](journal/2026-09-16.md)

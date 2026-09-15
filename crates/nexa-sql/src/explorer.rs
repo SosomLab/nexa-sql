@@ -1121,6 +1121,7 @@ impl Explorer {
                     _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
                 }
                 let text_w = (160.0 * self.scale).round() as i32;
+                self.menu.set_scale(self.scale);
                 self.menu.open_at(x, y, items, self.bounds, text_w);
                 true
             }

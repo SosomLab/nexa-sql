@@ -853,6 +853,8 @@ impl App {
             })
             .unwrap_or(r);
         // 상태줄 위로 열리도록 세그먼트 상단 기준(팝업 부품이 화면 안에 맞춘다).
+        // 배율 전달(빠져 있어 맥 2x에서 항목 간격이 절반이었다 · 09-16).
+        self.status_menu.set_scale(self.scale);
         self.status_menu
             .open_at(r.x, r.y, items, host, px(240.0, self.scale));
     }
@@ -2408,6 +2410,7 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
                 self.status_menu.paint(&mut dc, &th);
+                self.grid.paint_menu(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
