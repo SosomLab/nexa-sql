@@ -393,6 +393,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "explorer.icons",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerIcons,
+        desc: Msg::DescExplorerIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "explorer.tooltip",
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerTooltip,

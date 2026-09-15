@@ -15,6 +15,7 @@ mod colors_win;
 mod conn_win;
 mod connect;
 mod editors;
+mod exp_icons;
 mod explorer;
 mod findbar;
 mod grid;
@@ -716,6 +717,7 @@ impl App {
                 self.explorer.set_visible(self.settings.flag(key));
                 self.layout();
             }
+            "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
             "grid.row_numbers" => self.grid.set_row_numbers(self.settings.flag(key)),
             "grid.scroll" => self
                 .grid
@@ -2664,12 +2666,14 @@ fn main() {
     let keymap = Keymap::from_settings(&settings);
     let explorer = {
         let proxy = wake_proxy.clone();
-        Explorer::new(
+        let mut e = Explorer::new(
             Box::new(move || {
                 let _ = proxy.send_event(Wake);
             }),
             settings.flag("explorer.visible"),
-        )
+        );
+        e.set_icons(settings.flag("explorer.icons"));
+        e
     };
     let colors_win = ColorsWin::new(
         color_setting(&settings, "ui.hover_color"),

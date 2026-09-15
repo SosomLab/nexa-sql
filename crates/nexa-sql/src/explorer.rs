@@ -5,17 +5,21 @@
 //! 동작: 클릭 = 선택 · 글리프/더블클릭 = 펼침 · 더블클릭(테이블·뷰) = `SELECT *` 템플릿 새 탭 · 더블클릭(소스 있는 것) = 소스 새 탭 ·
 //! 우클릭 = 메뉴(Select rows · Open source · Refresh · Copy name) · ↑↓←→ Enter.
 
+use crate::exp_icons::{self, IconKind};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::{Color, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key as CtlKey, ScrollBars};
+use nexa_gfx::IconImage;
 use nsql_catalog::{ColumnInfo, ObjectInfo, ObjectKind};
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -229,6 +233,9 @@ pub(crate) enum ExplorerAction {
     Copy(String),
 }
 
+/// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
+type IconCache = HashMap<(IconKind, (u8, u8, u8)), Rc<IconImage>>;
+
 const ROW_H: f32 = 22.0;
 const INDENT: f32 = 14.0;
 const DBLCLICK_MS: u128 = 400;
@@ -256,6 +263,9 @@ pub(crate) struct Explorer {
     last_click: Option<(usize, Instant)>,
     visible: bool,
     focused: bool,
+    /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
+    icons_on: bool,
+    icon_cache: IconCache,
     /// 소스 요청 중(더블클릭 연타 방지).
     source_pending: bool,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
@@ -470,6 +480,8 @@ impl Explorer {
             last_click: None,
             visible,
             focused: false,
+            icons_on: true,
+            icon_cache: HashMap::new(),
             source_pending: false,
             row_px: 0,
             dots_step: 0,
@@ -496,6 +508,50 @@ impl Explorer {
 
     pub(crate) fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    pub(crate) fn set_icons(&mut self, on: bool) {
+        self.icons_on = on;
+        if !on {
+            self.icon_cache.clear();
+        }
+    }
+
+    fn icon_for(&self, n: &Node) -> Option<(IconKind, (u8, u8, u8))> {
+        Some(match &n.kind {
+            NodeKind::Root => (
+                IconKind::Dbms,
+                self.dialect
+                    .map_or(IconKind::Dbms.color(), exp_icons::dbms_color),
+            ),
+            NodeKind::Schema(_) => (IconKind::Schema, IconKind::Schema.color()),
+            NodeKind::Folder { .. } => (IconKind::Folder, IconKind::Folder.color()),
+            NodeKind::Object(o) => {
+                let k = match o.kind {
+                    ObjectKind::Table => IconKind::Table,
+                    ObjectKind::View => IconKind::View,
+                    ObjectKind::MaterializedView => IconKind::MatView,
+                    ObjectKind::Procedure => IconKind::Procedure,
+                    ObjectKind::Function => IconKind::Function,
+                    ObjectKind::Package => IconKind::Package,
+                    ObjectKind::PackageBody => IconKind::PackageBody,
+                    ObjectKind::Sequence => IconKind::Sequence,
+                    ObjectKind::Trigger => IconKind::Trigger,
+                    ObjectKind::Index => IconKind::Index,
+                    ObjectKind::Synonym => IconKind::Synonym,
+                    ObjectKind::Type => IconKind::Type,
+                };
+                (k, k.color())
+            }
+            NodeKind::Column(_) => (IconKind::Column, IconKind::Column.color()),
+        })
+    }
+
+    fn icon_image(&mut self, kind: IconKind, rgb: (u8, u8, u8)) -> Rc<IconImage> {
+        self.icon_cache
+            .entry((kind, rgb))
+            .or_insert_with(|| Rc::new(exp_icons::image(kind, rgb)))
+            .clone()
     }
 
     pub(crate) fn set_visible(&mut self, on: bool) {
@@ -1268,8 +1324,16 @@ impl Explorer {
                         chevron_90(dc, chev, color, n.expanded);
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
-                    // 칩(오브젝트 종류 색).
-                    if let NodeKind::Object(o) = &n.kind {
+                    // 아이콘(설정 켬 · DBMS/스키마/폴더/종류별 · 글꼴 높이 크기) 또는 색 칩(끔).
+                    if self.icons_on {
+                        if let Some((k, rgb)) = self.icon_for(n) {
+                            let sz = th_txt;
+                            let img = self.icon_image(k, rgb);
+                            let dst = Rect::new(x, vcy - sz / 2, sz, sz);
+                            dc.image_scaled(dst, &img, rr);
+                            x += sz + (6.0 * s).round() as i32;
+                        }
+                    } else if let NodeKind::Object(o) = &n.kind {
                         let cr = Rect::new(x, vcy - chip / 2, chip, chip);
                         dc.fill_round_rect(cr, 2, kind_color(o.kind, th));
                         x += chip + (6.0 * s).round() as i32;
