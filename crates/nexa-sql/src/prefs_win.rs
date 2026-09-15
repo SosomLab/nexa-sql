@@ -616,12 +616,28 @@ impl PrefsWin {
             }
         }
         // 검색·트리·하단
-        self.search.on_event(&ie, &mut inv);
-        if is_wheel && self.tree.bounds().contains(p) || !is_wheel {
+        // ★ 마우스 사건은 커서 아래 컨트롤에만(CLAUDE.md §3 라우팅 규칙) · 키는 포커스 컨트롤에만.
+        let route = |r: Rect, focused: bool| -> bool {
+            if is_mouse || is_wheel {
+                r.contains(p)
+            } else {
+                focused
+            }
+        };
+        if route(self.search.bounds(), self.search.is_focused()) {
+            self.search.on_event(&ie, &mut inv);
+        }
+        if route(self.tree.bounds(), self.tree.is_focused()) {
             self.tree.on_event(&ie, &mut inv);
         }
-        self.advanced.on_event(&ie, &mut inv);
-        self.close_btn.on_event(&ie, &mut inv);
+        if route(self.advanced.bounds(), false) {
+            self.advanced.on_event(&ie, &mut inv);
+        }
+        if route(self.close_btn.bounds(), self.close_btn.is_focused())
+            || matches!(ie, InputEvent::MouseMove { .. })
+        {
+            self.close_btn.on_event(&ie, &mut inv);
+        }
         if let Some(q) = self.search.take_changed() {
             self.query = q;
             self.rebuild_cards();
