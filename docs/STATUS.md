@@ -2,9 +2,9 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
-## 2026-09-16 (1차 · mac) — 맥 이관 ✅ 빌드/실행 ✅ · 맥↔Windows 차이 9건 ✅ · 스플리터 ✅
+## 2026-09-16 (1~8차 · mac) — 맥 이관 ✅ · 맥↔Windows 차이 일괄 ✅ · 아이콘/스플리터/프로브 ✅ · push 대기
 
-두 저장소 최신화 · Debug/Release 빌드 · GUI 기동. 접속 프로필은 `~/Library/Application Support/nexa-sql/`(Windows 프로필은 기기 키가 달라 재저장). HiDPI 논리/물리 px 혼용 3곳(로그인 버튼 · 툴바/탭 높이) · Dock 아이콘 · 툴팁 층 · 한글 IME 단축키 · 두부 폰트 · 가로 스크롤 클립/방향 고침. 스플리터(탐색기|편집기 · 편집기|결과 · 1초 hover · 자동 저장). Linux는 CI 매트릭스로 확인(C 의존 크로스 clippy 불가 · 정직한 한계). **다음**: push 후 CI 3-OS 확인 → F-8 mac 아이콘 → T-81a 파일 검색 → T-79 EUC-KR → D-53~57. → [journal](journal/2026-09-16.md)
+두 저장소 최신화 · Debug/Release 빌드 · GUI 기동. 접속 프로필 = `~/Library/Application Support/nexa-sql/`(Windows 프로필은 기기 키가 달라 재저장). 고친 것: HiDPI 논리/물리 px 혼용(로그인 버튼 · 툴바/탭 높이 · 메뉴 `set_scale` 누락) · Dock 아이콘 · 툴팁 층/다중 행 · 한글 IME 단축키 · 두부 폰트 · 가로 스크롤 클립/방향 · **글자 세로 정렬 = 잉크 기준**(nexa-ui `text_center_y`) · Material 아이콘 9종(사용자 SVG) · 스플리터 2개 · 접속 창 위치 규칙 · Test 문구 · 탭 문자 4 · 프로필 이름 변경 저장 · 목록 모드 결과 안내 · 신호등 대상 = 시도한 프로필 · macOS ping 단위. Linux는 CI 매트릭스로 확인(C 의존 크로스 clippy 불가). **미검증**: 세션 후반 캡처를 볼 수 없어 스플리터·아이콘·정렬은 빌드/테스트로만 확인(T-88) · **대기**: 우클릭 메뉴 아이콘 대상 메뉴(T-87). **다음**: push 후 CI 3-OS → F-8 mac 아이콘 → T-81a 파일 검색 → T-79 EUC-KR → D-53~57. → [journal](journal/2026-09-16.md)
 
 ## 2026-09-15 (37차 · win · 마지막 · 맥으로 이관) — 자원 회수 점검 ✅(누수 아님)
 

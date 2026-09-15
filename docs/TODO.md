@@ -123,4 +123,6 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-84** | P1 | 소 | `nexa-fs::entry_of` — 링크일 때만 경로 stat(53× · [37 P-3](37-file-picker-performance.md)) | — | ✅ 09-15 |
 | **T-85** | P2 | 중 | 배치 도착마다 전체 재구성 완화([37 P-4](37-file-picker-performance.md)) — ✅ 150ms 간격 · 잔여 = `refresh_grid` 사본 제거(증분 append) | T-82 | 🚧 |
 | **T-86** | P2 | 대 | `nexa-ctl/controls/file/*` 추출 — 20 §1 계층 복원([37 P-5](37-file-picker-performance.md)) = F-3 | — | ☐ |
+| **T-87** | P2 | 소 | 우클릭 메뉴 항목 앞 아이콘(사용자 09-16 요청 · **대상 메뉴 미확인** — 편집기 탭/상태줄 Tab/접속 창 목록/결과 그리드 중) · 파일 대화상자 메뉴 방식(`CtxItem::with_icon`) | — | ⏳ 사용자 |
+| **T-88** | P1 | 소 | **Windows 재검증**(09-16 맥에서 고친 것): 잉크 기준 세로 정렬(`text_center_y`) · 스플리터 · Material 아이콘 · 메뉴 배율 · 툴팁 다중 행 — 맥 세션 후반은 캡처를 못 봐 빌드/테스트로만 확인 | — | ☐ |
 
