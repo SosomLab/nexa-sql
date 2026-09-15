@@ -118,4 +118,9 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-79** | P1 | 중 | 파일 인코딩 — 열기/저장 대화상자 하단 인코딩·줄끝 콤보(Auto/UTF-8/UTF-8 BOM/UTF-16/EUC-KR·CP949 표 내장) · 탭별 인코딩 기억 · 상태줄 세그먼트 · 3-OS 동일(자체 대화상자) | T-74 | ☐ |
 | **T-80** | P2 | 소 | 그리드 SQL 복사의 키 = PK(카탈로그 `nsql-catalog` 연동 · 없으면 첫 컬럼) · 테이블 추정 개선(별칭·스키마) | T-56 | ☐ |
 | **T-81** | P1 | 대 | **파일 검색 탭 + 프로젝트**([36](36-find-in-files-and-project.md)) — a 패널(Ctrl+⇧F · Where · 결과 트리 · 열린 탭) · b `nsql-search` 엔진(병렬 열거 · 무시 규칙 · memchr · 스트리밍 · 취소 · `nsql grep`) · c 프로젝트 파일(메모리 탭 저장 · hot exit · 지정 폴더) · d 바꾸기 미리보기/적용 · e 캐시·정규식·EUC-KR | 22차 활동 막대 · T-74 · T-59 | ☐ |
+| **T-82** | P0 | 소 | 트리 `rows()` 평탄화 캐시([37 P-1](37-file-picker-performance.md)) | — | ✅ 09-15 |
+| **T-83** | P0 | 소 | 트리·탐색기 페인트를 첫 가시 행부터([37 P-2](37-file-picker-performance.md)) — 탐색기는 이미 `skip(first)`+행 캐시 · nexa-ctl TreeView/TreeGrid ✅ | — | ✅ 09-15 |
+| **T-84** | P1 | 소 | `nexa-fs::entry_of` — 링크일 때만 경로 stat(53× · [37 P-3](37-file-picker-performance.md)) | — | ✅ 09-15 |
+| **T-85** | P2 | 중 | 배치 도착마다 전체 재구성 완화([37 P-4](37-file-picker-performance.md)) — ✅ 150ms 간격 · 잔여 = `refresh_grid` 사본 제거(증분 append) | T-82 | 🚧 |
+| **T-86** | P2 | 대 | `nexa-ctl/controls/file/*` 추출 — 20 §1 계층 복원([37 P-5](37-file-picker-performance.md)) = F-3 | — | ☐ |
 
