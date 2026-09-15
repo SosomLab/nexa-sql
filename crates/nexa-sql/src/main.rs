@@ -647,13 +647,26 @@ impl App {
     /// 접속 창 열림/닫힘 전환 → 메인 창 활성 상태 동기화(모달 · 닫히면 메인으로 포커스).
     fn sync_conn_modal(&mut self) {
         let open = self.conn_win.is_open();
-        if open == self.conn_modal {
+        if open == self.conn_modal && !open {
             return;
         }
         self.conn_modal = open;
-        if let Some(w) = &self.window {
+        // 메인 창 + 그 일부로 보는 보조 창 전부(로그 · 색 · 단축키 · 설정).
+        let others: Vec<&Window> = [
+            self.window.as_deref(),
+            self.log_win.window(),
+            self.colors_win.window(),
+            self.keys_win.window(),
+            self.prefs_win.window(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for w in &others {
             winfocus::set_enabled(w, !open);
-            if !open {
+        }
+        if !open {
+            if let Some(w) = &self.window {
                 w.focus_window();
             }
         }
@@ -2206,9 +2219,10 @@ impl ApplicationHandler<Wake> for App {
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
         }
-        // ★ 접속 창 = 모달: 열려 있는 동안 메인 창 입력은 버리고(OS 수준은 `winfocus::set_enabled`) 접속 창을 앞으로.
+        // ★ 접속 창 = 모달: 열려 있는 동안 **메인 창과 그 일부인 로그·색·단축키·설정 창**의 입력은 버리고
+        //   (OS 수준은 `winfocus::set_enabled`) 접속 창을 앞으로(사용자 09-15 "로그 창도 메인의 일부").
         if self.conn_win.is_open()
-            && self.window.as_ref().is_some_and(|w| w.id() == id)
+            && !self.conn_win.is(id)
             && matches!(
                 event,
                 WindowEvent::KeyboardInput { .. }

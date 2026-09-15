@@ -295,6 +295,10 @@ impl PrefsWin {
         self.content_h = 0;
     }
 
+    pub(crate) fn window(&self) -> Option<&Window> {
+        self.window.as_deref()
+    }
+
     pub(crate) fn is(&self, id: WindowId) -> bool {
         self.window.as_ref().is_some_and(|w| w.id() == id)
     }
