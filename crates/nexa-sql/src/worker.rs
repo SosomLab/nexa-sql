@@ -105,6 +105,7 @@ impl Handle {
 
 pub(crate) fn spawn(
     default_dialect: Dialect,
+    max_rows: usize,
     wake: Box<dyn Fn() + Send>,
 ) -> (Handle, mpsc::Receiver<RunEvent>) {
     let (tx, rx) = mpsc::channel::<Cmd>();
@@ -119,14 +120,42 @@ pub(crate) fn spawn(
                     nsql_drivers::open(spec, default_dialect)
                 },
             );
-            let mut runner =
-                Runner::new(default_dialect, opener).with_resolver(Box::new(|name: &str| {
+            let wake_shared = std::sync::Arc::new(std::sync::Mutex::new(wake));
+            let wake_now = {
+                let w = wake_shared.clone();
+                move || {
+                    if let Ok(f) = w.lock() {
+                        f();
+                    }
+                }
+            };
+            // ★ 실행 중 서버 메시지(PRINT · RAISE NOTICE)를 도착 즉시 UI 로그로(사용자 09-15).
+            let sink: nsql_core::MessageSink = {
+                let etx = etx.clone();
+                let wake = wake_shared.clone();
+                std::sync::Arc::new(move |m: String| {
+                    let _ = etx.send(RunEvent::Message(m));
+                    if let Ok(w) = wake.lock() {
+                        w();
+                    }
+                })
+            };
+            let mut runner = Runner::new(default_dialect, opener)
+                .with_max_rows(max_rows)
+                .with_message_sink(sink)
+                .with_resolver(Box::new(|name: &str| {
                     let v = Vault::open_default().map_err(|e| e.to_string())?;
                     v.resolve(name).map_err(|e| e.to_string())
                 }));
-            let mut emit = |e: RunEvent| {
-                let _ = etx.send(e);
-                wake();
+            let mut emit = {
+                let etx = etx.clone();
+                let wake = wake_shared.clone();
+                move |e: RunEvent| {
+                    let _ = etx.send(e);
+                    if let Ok(w) = wake.lock() {
+                        w();
+                    }
+                }
             };
             // 활성 세션의 스펙(같은 서버 판정) · 호스트:포트(빠른 판정용) · 직전 실행이 접속성 오류였는가(다음 실행은 무조건 빠른 판정).
             let mut active_spec: Option<ConnectSpec> = None;
@@ -147,7 +176,7 @@ pub(crate) fn spawn(
                             let desc = runner.connection.clone().unwrap_or_else(|| spec.redacted());
                             let _ = ctx_tx.send(ConnOutcome::Connected(desc));
                             let _ = dtx.send(None);
-                            wake();
+                            wake_now();
                             return true;
                         }
                         let mut last_err: Option<String> = None;
@@ -168,7 +197,7 @@ pub(crate) fn spawn(
                             ConnOutcome::ConnectFailed(last_err.unwrap_or_default())
                         });
                         let _ = dtx.send(None);
-                        wake();
+                        wake_now();
                         true
                     }
                     Cmd::Disconnect => {
@@ -181,7 +210,7 @@ pub(crate) fn spawn(
                         emit(RunEvent::Disconnected);
                         let _ = ctx_tx.send(ConnOutcome::Disconnected);
                         let _ = dtx.send(None);
-                        wake();
+                        wake_now();
                         true
                     }
                     Cmd::Connect(target) => {
@@ -196,7 +225,7 @@ pub(crate) fn spawn(
                             Err(e) => emit(err(e)),
                         }
                         let _ = dtx.send(None);
-                        wake();
+                        wake_now();
                         true
                     }
                     Cmd::Run { src, preflight } => {
@@ -209,7 +238,7 @@ pub(crate) fn spawn(
                                 let ms = t.elapsed().as_millis().to_string();
                                 emit(err(tf(Msg::ErrServerUnreachable, &[&ep, &ms])));
                                 let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
-                                wake();
+                                wake_now();
                                 return true;
                             }
                         }
@@ -228,7 +257,7 @@ pub(crate) fn spawn(
                         } else {
                             None
                         });
-                        wake();
+                        wake_now();
                         true
                     }
                     Cmd::Quit => {
@@ -257,7 +286,7 @@ pub(crate) fn spawn(
                         emit(RunEvent::Disconnected);
                         let _ = ctx_tx.send(ConnOutcome::Disconnected);
                         let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
-                        wake();
+                        wake_now();
                     }
                 }
             }

@@ -8,7 +8,7 @@
 ```text
 <사용자 설정 폴더>/nexa-sql/              nexa_conf::user_config_dir("nexa-sql")
 │                                        Windows %APPDATA%\nexa-sql · macOS ~/Library/Application Support/nexa-sql · Linux ~/.config/nexa-sql
-│                                        환경변수 NSQL_HOME이 있으면 그 폴더(테스트 · 포터블)
+│                                        환경변수 NSQL_HOME이 있으면 그 폴더(테스트 · 개발용 재지정)
 ├─ device.key                            기기 키 32B — Windows: "NSDK"‖ver‖DPAPI 블롭 · 그 외: 평문 0600
 └─ profiles/<이름>.conf                  프로필 1개 = 파일 1개(nexa-conf key=value · 원자적 쓰기)
      _schema=1

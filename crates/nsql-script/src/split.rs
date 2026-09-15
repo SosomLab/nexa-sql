@@ -289,7 +289,11 @@ fn starts_block(first_line: &str) -> bool {
                 .skip(1)
                 .copied()
                 .filter(|x| {
-                    *x != "OR" && *x != "REPLACE" && *x != "EDITIONABLE" && *x != "NONEDITIONABLE"
+                    // Oracle `OR REPLACE` · T-SQL `OR ALTER`(2016 SP1+) · 편집 가능 수식어.
+                    !matches!(
+                        *x,
+                        "OR" | "REPLACE" | "ALTER" | "EDITIONABLE" | "NONEDITIONABLE"
+                    )
                 })
                 .collect();
             matches!(
@@ -330,6 +334,31 @@ mod tests {
     use crate::command::Command;
 
     const GOLDEN: &str = "EXEC\t:V_PRG_NM\t\t\t:=\t'SP_M4P_MPO_M4E_CREATE_BSY';\n\nEXEC DBMS_STATS.GATHER_TABLE_STATS(USER, 'M4E_I301080', CASCADE=>TRUE, NO_INVALIDATE=>FALSE);\n\nEXEC SP_M4P_MP_VERSION_CREATE(:PC_RET, 'SEBANG', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'sybae0057');\n\n\n--\tMP 버전에 기반한 변수 설정\nEXEC\nSELECT\n\tA.PROJECT_CD\n,\tA.MP_VRSN_ID\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_ID\nFROM\n\tM4S_O301010 A\nWHERE 1=1\nAND\tA.PROJECT_CD\t\t=\t'SEBANG'\n\nSELECT\n\t:V_PROJECT_CD\n,\t:V_PRG_NM\nFROM\n\tDUAL\n;\n";
+
+    #[test]
+    fn tsql_create_or_alter_is_a_block_until_go() {
+        let src = "CREATE OR ALTER PROCEDURE dbo.p @a INT AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT @a;
+END
+GO
+PRINT 'hello';
+PRINT V
+";
+        let items = split_script(src);
+        assert_eq!(items.len(), 3, "{items:#?}");
+        assert!(matches!(items[0].kind, ItemKind::Sql(SqlKind::Block)));
+        assert!(items[0].text.contains("SET NOCOUNT ON;"));
+        assert!(
+            matches!(items[1].kind, ItemKind::Sql(_)),
+            "T-SQL PRINT 'x'는 SQL"
+        );
+        assert!(
+            matches!(items[2].kind, ItemKind::Command(_)),
+            "PRINT V는 SQL*Plus PRINT"
+        );
+    }
 
     #[test]
     fn pg_dollar_quoted_function_ends_at_semicolon() {

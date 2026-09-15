@@ -23,3 +23,5 @@ tiberius = { version = "0.12", default-features = false, features = ["tds73", "r
 tokio = { version = "1", features = ["rt", "net", "time"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 chrono = "0.4"
+# tiberius는 PRINT/RAISERROR(Info 토큰)를 public API가 아니라 tracing INFO 이벤트로만 내보낸다 — 실행 중 스레드 기본 구독자로 캡처.
+tracing = "0.1"

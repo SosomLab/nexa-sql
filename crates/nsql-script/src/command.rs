@@ -183,12 +183,26 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
     let rest = rest.trim();
     Ok(Some(match up.as_str() {
         "VAR" | "VARIABLE" => parse_variable(rest)?,
-        "PRINT" => Command::Print {
-            names: rest
-                .split_whitespace()
-                .map(|s| s.trim_start_matches(':').to_ascii_uppercase())
-                .collect(),
-        },
+        "PRINT" => {
+            // T-SQL `PRINT 'text'` · `PRINT @v` · `PRINT (expr)`는 서버 문장이다 — 바인드 이름 목록일 때만 SQL*Plus PRINT.
+            let is_name = |s: &str| {
+                let s = s.trim_start_matches(':');
+                !s.is_empty()
+                    && s.chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                    && s.bytes().all(crate::lexer::is_ident_char)
+            };
+            if !rest.split_whitespace().all(is_name) {
+                return Ok(None);
+            }
+            Command::Print {
+                names: rest
+                    .split_whitespace()
+                    .map(|s| s.trim_start_matches(':').to_ascii_uppercase())
+                    .collect(),
+            }
+        }
         "EXEC" | "EXECUTE" => Command::Exec {
             body: rest.trim_end_matches(';').trim().to_string(),
         },

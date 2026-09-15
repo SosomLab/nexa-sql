@@ -120,9 +120,9 @@ DBeaver의 Preferences 트리(General / User Interface / Editors / Connections /
 | 그룹(DBeaver) | 카테고리 | 키(예) |
 |---|---|---|
 | **General** | Log(로그) · Session(세션) | `log.format` · `session.mode` |
-| **User Interface** | Appearance(모양 = DBeaver "Colors and Fonts"+"Appearance") · Input(입력) · Window(창) · Object explorer(= DBeaver Navigator) | `ui.lang/theme/font_size` · `ui.hover_color/pressed_color` · `ui.fade_*` · `tabs.*` · `input.scroll_natural` · `window.focus` · `explorer.*` |
+| **User Interface** | Appearance(모양 = DBeaver "Colors and Fonts"+"Appearance") · Input(입력) · Keys(단축키 · 09-15 ✅) · Window(창) · Object explorer(= DBeaver Navigator) | `ui.lang/theme/font_size` · `ui.hover_color/pressed_color` · `ui.fade_*` · `tabs.*` · `input.scroll_natural` · `window.focus` · `explorer.*` · `key.<명령>`(Sublime 기본 · 캡처 창) |
 | **Editors** | SQL Editor(편집기) · (들여쓰기 [31](31-indentation-settings.md) · T-69) | `editor.*` |
 | **Connections** | Connection(접속: 프로필·신호등·시도 상한) | `probe.*` · `connect.*` · `conn.*` |
-| **Data Editor** | Result Sets(결과 셋) | `grid.row_numbers` · `grid.scroll` · `grid.font_size` |
+| **Data Editor** | Result Sets(결과 셋) | `grid.max_rows`(= DBeaver ResultSet fetch size 200) · `grid.row_numbers` · `grid.scroll` · `grid.font_size` |
 
-DBeaver에 있으나 아직 없는 것(자리만): Keys(단축키 · T-53) · Drivers(드라이버 관리 · T-28) · Transactions(T-54) · Network profiles/SSH(계획 없음) · Confirmations(삭제 확인은 `conn.delete_confirm_ms`로 대체). 비노출 설정([`HIDDEN`])은 같은 카테고리에 속하되 목록·화면에서 기본 숨김.
+DBeaver에 있으나 아직 없는 것(자리만): Drivers(드라이버 관리 · T-28) · Transactions(T-54) · Network profiles/SSH(계획 없음) · Confirmations(삭제 확인은 `conn.delete_confirm_ms`로 대체). 비노출 설정([`HIDDEN`])은 같은 카테고리에 속하되 목록·화면에서 기본 숨김.

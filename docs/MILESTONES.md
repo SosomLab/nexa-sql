@@ -34,7 +34,19 @@
 | 📐 | `nexa-edit` E1~E5([17](17-editor-incremental-plan.md)) — TextBox 대체 |
 | ✅ | 연결 프로필 저장·이름 접속(이름 칸 + Save · T-16b 일부 · 09-13) |
 | ✅ | Golden식 접속 창(09-14 13·14차) — 로그인 목록(신호등·Test/Connect 행 버튼·Password 열·정렬/폭/DnD/스크롤·우클릭 메뉴·Delete 2단·삭제 뒤 인접 선택) · 상세 폼(편집 메뉴·워드랩 상태·세션 비밀번호) · 프로브 정책(주기·지수 백오프·즉시 재확인·병렬 스레드) · 테스트 스레드 분리 · 소유 창(작업표시줄 1) · 색 설정 창(`ColorPanel`) · hover/포커스/팝업 UX 규칙(CLAUDE.md §3) |
+| ✅ | **09-15**: Sublime 단축키 맵(win/mac · `key.*` · 캡처 창 T-53) · **오브젝트 탐색기 1차**(T-56 · `nsql-catalog` 공용 · 소스 열기 → 재컴파일 → Oracle 오류 보고) · 페치 상한 `grid.max_rows`(T-48 1차) · 실행 중 서버 메시지 실시간(MSSQL·PG · [32](32-server-messages-and-live-log.md)) · 편집기 undo/redo · 폰트 기본값(Golden) · 설정 트리(DBeaver)
 | ☐ | `nexa-grid` · dock/tab(nexa-ui U-2) · 클립보드·컨텍스트 메뉴(T-16b) · 치환 변수 대화상자(T-16c) · DBeaver식 접속 대화상자·프로필 목록([22 §1](22-driver-extensions.md)) |
+
+## 드라이버 — 내장 4종
+| 상태 | 항목 |
+|:--:|---|
+| ✅ | Oracle(ODPI-C · 19c 실서버) · SQL Server(TDS · PRINT 실시간) · **PostgreSQL(09-15 · rust-postgres · matrixdb2 실서버)** · SQLite |
+| ☐ | MySQL · ODBC(T-23) · PG TLS(T-70) |
+
+## 배포 — [33](33-distribution-and-packaging.md) (DR-27 · 09-15)
+| 상태 | 항목 |
+|:--:|---|
+| 📐 | 설치본만(MSI · pkg/dmg · deb/rpm) · 목적별 exe · 공유 lib 분리 · macOS `.app` Universal 2 · 파이프라인 T-72 · 아이콘 T-62 |
 
 ## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)
 | 상태 | 항목 |

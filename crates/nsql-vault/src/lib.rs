@@ -81,7 +81,7 @@ impl fmt::Debug for Vault {
 }
 
 impl Vault {
-    /// 기본 폴더 — `user_config_dir("nexa-sql")`. 환경변수 `NSQL_HOME`이 있으면 그것(테스트·포터블).
+    /// 기본 폴더 — `user_config_dir("nexa-sql")`. 환경변수 `NSQL_HOME`이 있으면 그것(테스트·개발용 재지정).
     #[must_use]
     pub fn default_dir() -> Option<PathBuf> {
         nsql_settings::config_dir()

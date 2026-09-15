@@ -526,7 +526,7 @@ pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<Col
             lit(table)
         ),
         Dialect::Mssql => format!(
-            "SELECT c.name, t.name, CASE WHEN t.name IN ('nchar','nvarchar') AND c.max_length > 0 THEN c.max_length / 2 ELSE c.max_length END, c.precision, c.scale, CASE WHEN c.is_nullable = 1 THEN 'Y' ELSE 'N' END, c.column_id, ISNULL(d.definition, '') FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id WHERE c.object_id = OBJECT_ID({}) ORDER BY c.column_id",
+            "SELECT c.name, t.name, CASE WHEN t.name IN ('nchar','nvarchar') AND c.max_length > 0 THEN c.max_length / 2 ELSE c.max_length END, c.precision, c.scale, CASE WHEN c.is_nullable = 1 THEN 'Y' ELSE 'N' END, c.column_id, ISNULL(d.definition, '') FROM sys.all_columns c JOIN sys.types t ON t.user_type_id = c.user_type_id LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id WHERE c.object_id = OBJECT_ID({}) ORDER BY c.column_id",
             lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)))
         ),
         Dialect::Postgres | Dialect::Mysql | Dialect::Odbc => format!(

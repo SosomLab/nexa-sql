@@ -6,7 +6,7 @@
 
 | Sublime | nexa-sql | 위치 |
 |---|---|---|
-| `Session.sublime_session`(창·탭·미저장 버퍼·선택) | **세션 파일** `session.json` + 버퍼 본문 `buffers/<id>.txt` | 앱 데이터 폴더(`nexa-conf` 경로 규칙 — 포터블 우선) |
+| `Session.sublime_session`(창·탭·미저장 버퍼·선택) | **세션 파일** `session.json` + 버퍼 본문 `buffers/<id>.txt` | 앱 데이터 폴더(`nexa-conf` 경로 규칙 — OS 사용자 데이터 폴더 · 포터블 배포 없음 DR-27) |
 | `hot_exit: always` | 기본 켬 — 종료·창 닫기 시 프롬프트 없이 저장하고 다음 실행에 복원 | 설정 `session.hot_exit` |
 | `*.sublime-project` + `*.sublime-workspace` | **프로젝트**(`.nexa-project`: 폴더·연결 프로필·설정) + **워크스페이스**(`.nexa-workspace`: 열린 탭·미저장 버퍼·레이아웃·결과 탭) | 프로젝트 폴더(또는 앱 데이터) |
 | 프로젝트 전환(`Switch Project`) | 프로젝트별 워크스페이스 복원 · 최근 프로젝트 목록 | Command Palette |

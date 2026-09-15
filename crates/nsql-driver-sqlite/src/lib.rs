@@ -13,6 +13,8 @@ use rusqlite::{params_from_iter, Connection};
 #[allow(missing_debug_implementations)]
 pub struct SqliteSession {
     conn: Connection,
+    /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`).
+    max_rows: usize,
 }
 
 impl SqliteSession {
@@ -24,7 +26,7 @@ impl SqliteSession {
             Connection::open(target)
         }
         .map_err(err)?;
-        Ok(SqliteSession { conn })
+        Ok(SqliteSession { conn, max_rows: 0 })
     }
 }
 
@@ -85,6 +87,9 @@ impl Session for SqliteSession {
             let mut rows = stmt.query(params_from_iter(params.iter())).map_err(err)?;
             let mut out_rows = Vec::new();
             while let Some(row) = rows.next().map_err(err)? {
+                if self.max_rows > 0 && out_rows.len() >= self.max_rows {
+                    break;
+                }
                 let mut cells = Vec::with_capacity(columns.len());
                 for i in 0..columns.len() {
                     cells.push(from_sql(row.get_ref(i).map_err(err)?));
@@ -108,6 +113,13 @@ impl Session for SqliteSession {
             message: "SQLite에는 REF CURSOR가 없습니다".into(),
             position: None,
         })
+    }
+
+    fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
+        if name == "max_rows" {
+            self.max_rows = value.parse().unwrap_or(0);
+        }
+        Ok(())
     }
 
     fn commit(&mut self) -> Result<(), DbError> {

@@ -26,7 +26,7 @@ pub const APP_DIR: &str = "nexa-sql";
 /// 설정 파일 이름.
 pub const FILE_NAME: &str = "settings.conf";
 
-/// 설정 폴더 — `NSQL_HOME`이 있으면 그것(테스트·포터블), 아니면 OS 사용자 설정 폴더. `nsql-vault`도 같은 규칙을 쓴다.
+/// 설정 폴더 — `NSQL_HOME`이 있으면 그것(테스트·개발용 재지정), 아니면 OS 사용자 설정 폴더. `nsql-vault`도 같은 규칙을 쓴다.
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
     if let Some(h) = std::env::var_os("NSQL_HOME") {
@@ -251,6 +251,17 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescWsAlpha,
         kind: SettingKind::Int { min: 0, max: 100 },
         default: "40",
+    },
+    Entry {
+        key: "grid.max_rows",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridMaxRows,
+        desc: Msg::DescGridMaxRows,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000_000,
+        },
+        default: "200",
     },
     Entry {
         key: "grid.row_numbers",

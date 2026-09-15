@@ -49,6 +49,8 @@ pub struct OracleSession {
     next_cursor: u64,
     serveroutput: bool,
     fetch_size: u32,
+    /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows` · 호스트가 상한+1을 넘긴다).
+    max_rows: usize,
     description: String,
 }
 
@@ -100,6 +102,7 @@ impl OracleSession {
             next_cursor: 1,
             serveroutput: false,
             fetch_size: 500,
+            max_rows: 0,
             description: spec.redacted(),
         })
     }
@@ -216,6 +219,7 @@ impl Session for OracleSession {
                 self.conn.execute(sql, &[]).map_err(|e| err(&e))?;
             }
             "fetch_size" => self.fetch_size = value.parse().unwrap_or(500),
+            "max_rows" => self.max_rows = value.parse().unwrap_or(0),
             "autocommit" => self.conn.set_autocommit(value == "true"),
             _ => {}
         }
@@ -279,6 +283,9 @@ impl Session for OracleSession {
             let t1 = std::time::Instant::now();
             let mut rows = Vec::new();
             for row in rs {
+                if self.max_rows > 0 && rows.len() >= self.max_rows {
+                    break; // 페치 상한(호스트가 초과분 1행으로 "더 있음"을 판정)
+                }
                 let row = row.map_err(|e| err(&e))?;
                 rows.push(Self::row_to_values(&row)?);
             }

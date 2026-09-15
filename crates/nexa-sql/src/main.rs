@@ -952,16 +952,19 @@ impl App {
             }
             match ev {
                 RunEvent::Begin { .. } => {}
-                RunEvent::ResultSet { rs, elapsed, .. } => {
+                RunEvent::ResultSet {
+                    rs, elapsed, more, ..
+                } => {
                     self.last_rows = Some(rs.rows.len());
                     self.last_secs = Some(elapsed.as_secs_f64());
-                    self.status = tf(
-                        Msg::StRows,
-                        &[
-                            &rs.rows.len().to_string(),
-                            &format!("{:.3}", elapsed.as_secs_f64()),
-                        ],
-                    );
+                    let n = rs.rows.len().to_string();
+                    let secs = format!("{:.3}", elapsed.as_secs_f64());
+                    // 페치 상한에서 잘렸으면 "더 있음"을 알린다(DBeaver식 · 사용자 09-15).
+                    self.status = if more {
+                        tf(Msg::StRowsMore, &[&n, &secs])
+                    } else {
+                        tf(Msg::StRows, &[&n, &secs])
+                    };
                     self.grid.set_result(rs);
                 }
                 RunEvent::Done {
@@ -1850,8 +1853,10 @@ fn main() {
         std::process::exit(1);
     };
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
+    let max_rows = settings.int("grid.max_rows").max(0) as usize;
     let (worker, events) = worker::spawn(
         DEFAULT_DIALECT,
+        max_rows,
         Box::new(move || {
             let _ = proxy.send_event(Wake);
         }),

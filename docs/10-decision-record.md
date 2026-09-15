@@ -32,6 +32,8 @@
 | **DR-22** | ★ **연결 프로필 = 사용자 설정 폴더 파일 저장소(`nsql-vault`)** — 비밀번호만 ChaCha20-Poly1305 봉투(도메인 = 프로필 이름) · 기기 키는 Windows DPAPI, 그 외 0600 · **CLI·GUI·여러 인스턴스가 같은 폴더 공유**(첫 실행 경합은 `create_new`로 단일 키) · OS 키체인은 기기 키 보호 후속(D-18) | 사용자 09-13 *"사용자 폴더에 접속 정보를 암호화해서 저장 · 연결 시 재사용"* · *"몇 개의 Instance를 실행하든 저장된 암호를 함께 사용"* · [21](21-connection-profiles.md) · D-2 닫힘 | ✅ 09-13 |
 | **DR-25** | ★ **인증 서버는 별도 비공개 저장소(`SosomLab/nexa-license-server` · kiros33 계정) · 앱·서버 공유 기능은 형제 라이브러리 `SosomLab/nexa-license`로 분리(path 의존 · nexa-ui 방식)** — 라이브러리는 형식·서명·검증·요청 코드·기기 ID·프로토콜만, `Feature`·UI·저장 정책은 앱이 주입 | 사용자 09-14 2차 *"차후 인증서버는 별도 Repository · 공유 기능은 별도 라이브러리로 분리"* · [25 §9](25-license-tiers-and-server.md) | ✅ 09-14 |
 | **DR-26** | ★ **라이선스 티어·서버 운영 확정(D-32~39 권장안 그대로)** — Team(1~5) = 사용자 파일 묶음 기본 + 서버 선택 · Org 좌석 = named 기본 + concurrent 옵션(×2) · 가격 비율 Device 1.0 / User 1.3 / Team 0.9×좌석 / Org 연 0.5×좌석 · 재발급 셀프 연 5회 · 사용자 식별 = OS 로그인명(+`license.user`) · 서버 단일+백업 · 리스 TTL 7일·오프라인 30일·비활성 회수 30일·유예 30일 · **`nexa-license` 라이브러리 = 공개 저장소**(`SosomLab/nexa-license` 생성 09-14) · 서버 저장소 비공개 | 사용자 09-14 *"추천대로 진행할께 · 공개가 적합하다면 공개 처리"* · [25](25-license-tiers-and-server.md) | ✅ 09-14 |
+| **DR-27** | ★ **배포 = 설치본만 · 포터블 없음** — 목적별 실행파일(GUI `nexa-sql` · CLI `nsql` · 드라이버 프로세스) · Rust 코어는 정적 링크 · OS 런타임/드라이버 라이브러리는 공유 lib으로 별도 위치 · macOS `.app`(Universal 2 · Frameworks/@rpath · Application Support) · Windows MSI · Linux deb/rpm · 사용자 데이터는 OS 사용자 폴더(`NSQL_HOME`은 개발용) | 사용자 09-15 *"포터블 배포는 하지 않을 것 · 목적별 실행파일 분리 · 공유/정적 라이브러리 별도 구성 · 설치본 · macOS 특징 고려"* · [33](33-distribution-and-packaging.md) | ✅ 09-15(설계 · 구현 T-72) |
+| **DR-28** | **PostgreSQL = 내장 드라이버 1급 지원**(`nsql-driver-pg` · rust-postgres 동기 · DR-3 예외 원장) — Oracle·MSSQL·SQLite와 같은 엔진 관용(세션 변수 · SELECT INTO 별칭 · CALL OUT) · 카탈로그·탐색기·CLI 동등 | 사용자 09-15 *"postgresql까지 지원 범위를 확대"* | ✅ 09-15(matrixdb2 실서버) |
 
 ## 2. 권장 확정 대기 (DP)
 
@@ -48,6 +50,9 @@
 | D-5 | MSSQL REFCURSOR 대체 표현(결과 집합 탭) · `SESSION_CONTEXT` 옵션 노출 여부 |
 | ~~D-6~~ | → **D-23~D-31**로 세분([23](23-license-activation.md) · 09-14) |
 | D-8 | `similar`(비교·3-way 병합) 원장 등재 |
+| D-48 | Oracle 라이브 로그 기본 소스 — 자율 트랜잭션 로그 테이블(현장 관행 · 권장) vs V$SESSION client_info(코드 1줄 · 권한) — 권장 = 테이블 기본 + 세션 세그먼트 병행([32 §2](32-server-messages-and-live-log.md)) |
+| D-49 | Windows 설치기 — MSI(WiX · 조용한 설치·GPO · 권장) vs NSIS(nexa-clip 보유)([33 §4](33-distribution-and-packaging.md)) |
+| D-50 | macOS CLI 노출 — pkg 설치 스크립트로 `/usr/local/bin/nsql` 링크(권장) vs Homebrew만 |
 | D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
 | ~~D-14~~ | → **DR-21**(Codespaces + DBMS별 Docker + Actions) |
 | **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) |
@@ -96,5 +101,7 @@
 | `rustybuzz` | ④ nexa-gfx | DP-6 셰이핑 | MIT | ☐ M2 |
 | `syntect` | ④ nexa-edit | `.sublime-syntax` | MIT | ☐ M3 |
 | `wasmi` | ④ 패키지 | DP-7 | MIT/Apache | ☐ M6 |
-| `tokio-postgres` · `mysql_async` · `rusqlite(bundled)` · `odbc-api` | ① | DP-2 | MIT/Apache | ☐ M4 |
+| `postgres` 0.19(동기 · tokio-postgres 위) | ① driver-pg | DR-28 · DR-3 예외 | MIT/Apache | ✅ 09-15 |
+| `tracing` 0.1 | ① driver-mssql | tiberius Info 토큰(PRINT) 캡처 — 이미 전이 의존 | MIT | ✅ 09-15 |
+| `mysql_async` · `rusqlite(bundled)` · `odbc-api` | ① | DP-2 | MIT/Apache | rusqlite ✅ · 나머지 ☐ M4 |
 | `chacha20poly1305` 0.10 · `sha2` 0.10 · `getrandom` 0.2 | Core 옆 `nsql-vault` | DR-22 비밀번호 봉투 AEAD · 키 KDF · OS 난수 — ★ **암호화 자체 구현 금지 부류**, nexa-clip `nclip-store` 원장과 동일 판(RustCrypto) | MIT/Apache-2.0 | ✅ 09-13 |

@@ -16,7 +16,7 @@ desktop.ini
 .idea/
 *.swp
 
-# 로컬 실행 데이터 (포터블 모드 영속물)
+# 로컬 실행 데이터 (개발 중 NSQL_HOME 재지정 산출물)
 /data/
 *.log
 

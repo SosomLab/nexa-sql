@@ -12,15 +12,70 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+use nsql_core::MessageSink;
 use nsql_core::{
     Column, CursorId, DbError, Dialect, Direction, ExecRequest, ExecResult, ResultSet, Session,
     Value,
 };
 use nsql_script::ConnectSpec;
+use std::sync::{Arc, Mutex};
 use tiberius::{AuthMethod, Client, ColumnData, Config, EncryptionLevel, Row, ToSql};
 use tokio::net::TcpStream;
 use tokio::runtime::Runtime;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+use tracing::field::{Field, Visit};
+use tracing::span::{Attributes, Id, Record};
+use tracing::{Event, Level, Metadata, Subscriber};
+
+/// tiberius Info 토큰(PRINT · RAISERROR … WITH NOWAIT · 서버 정보 메시지) 캡처 — 실행 중 현재 스레드의 기본 구독자.
+/// 싱크가 있으면 도착 즉시 전달(실시간 로그) · 없으면 버퍼(실행 뒤 `messages`).
+struct InfoCapture {
+    buf: Mutex<Vec<String>>,
+    sink: Option<MessageSink>,
+}
+
+struct MsgVisitor(String);
+
+impl Visit for MsgVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.0 = value.to_string();
+        }
+    }
+}
+
+impl Subscriber for InfoCapture {
+    fn enabled(&self, m: &Metadata<'_>) -> bool {
+        *m.level() == Level::INFO && m.target().starts_with("tiberius")
+    }
+    fn new_span(&self, _: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+    fn record(&self, _: &Id, _: &Record<'_>) {}
+    fn record_follows_from(&self, _: &Id, _: &Id) {}
+    fn event(&self, e: &Event<'_>) {
+        let mut v = MsgVisitor(String::new());
+        e.record(&mut v);
+        if v.0.is_empty() {
+            return;
+        }
+        match &self.sink {
+            Some(s) => s(v.0),
+            None => {
+                if let Ok(mut b) = self.buf.lock() {
+                    b.push(v.0);
+                }
+            }
+        }
+    }
+    fn enter(&self, _: &Id) {}
+    fn exit(&self, _: &Id) {}
+}
 
 type Tds = Client<Compat<TcpStream>>;
 
@@ -29,6 +84,8 @@ pub struct MssqlSession {
     rt: Runtime,
     client: Tds,
     description: String,
+    /// 서버 메시지 실시간 싱크(없으면 실행 뒤 `messages`).
+    sink: Option<MessageSink>,
 }
 
 fn err(e: tiberius::error::Error) -> DbError {
@@ -225,6 +282,7 @@ impl MssqlSession {
             rt,
             client,
             description: spec.redacted(),
+            sink: None,
         })
     }
 }
@@ -238,7 +296,59 @@ impl Session for MssqlSession {
         self.description.clone()
     }
 
+    fn set_message_sink(&mut self, sink: Option<MessageSink>) {
+        self.sink = sink;
+    }
+
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+        // PRINT/RAISERROR 캡처 — 이 스레드에서 실행되는 동안만 기본 구독자(다른 스레드·다른 크레이트 무영향).
+        let capture = Arc::new(InfoCapture {
+            buf: Mutex::new(Vec::new()),
+            sink: self.sink.clone(),
+        });
+        let _guard = tracing::subscriber::set_default(capture.clone());
+        let mut result = self.execute_inner(req)?;
+        if let Ok(mut b) = capture.buf.lock() {
+            result.messages.append(&mut b);
+        }
+        Ok(result)
+    }
+
+    fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
+        Err(DbError { code: None, message: "SQL Server: 커서 변수는 sp_executesql로 넘길 수 없습니다 — 결과 집합으로 받으세요(docs/05 §7)".into(), position: None })
+    }
+
+    fn commit(&mut self) -> Result<(), DbError> {
+        let client = &mut self.client;
+        self.rt.block_on(async {
+            client
+                .simple_query("IF @@TRANCOUNT > 0 COMMIT")
+                .await
+                .map_err(err)?
+                .into_results()
+                .await
+                .map_err(err)
+        })?;
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), DbError> {
+        let client = &mut self.client;
+        self.rt.block_on(async {
+            client
+                .simple_query("IF @@TRANCOUNT > 0 ROLLBACK")
+                .await
+                .map_err(err)?
+                .into_results()
+                .await
+                .map_err(err)
+        })?;
+        Ok(())
+    }
+}
+
+impl MssqlSession {
+    fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
         let (sql, values, outs) = render_batch(req);
         let boxed: Vec<Box<dyn ToSql>> = values.iter().map(to_param).collect();
         let refs: Vec<&dyn ToSql> = boxed.iter().map(|b| b.as_ref()).collect();
@@ -294,38 +404,6 @@ impl Session for MssqlSession {
             }
         }
         Ok(result)
-    }
-
-    fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
-        Err(DbError { code: None, message: "SQL Server: 커서 변수는 sp_executesql로 넘길 수 없습니다 — 결과 집합으로 받으세요(docs/05 §7)".into(), position: None })
-    }
-
-    fn commit(&mut self) -> Result<(), DbError> {
-        let client = &mut self.client;
-        self.rt.block_on(async {
-            client
-                .simple_query("IF @@TRANCOUNT > 0 COMMIT")
-                .await
-                .map_err(err)?
-                .into_results()
-                .await
-                .map_err(err)
-        })?;
-        Ok(())
-    }
-
-    fn rollback(&mut self) -> Result<(), DbError> {
-        let client = &mut self.client;
-        self.rt.block_on(async {
-            client
-                .simple_query("IF @@TRANCOUNT > 0 ROLLBACK")
-                .await
-                .map_err(err)?
-                .into_results()
-                .await
-                .map_err(err)
-        })?;
-        Ok(())
     }
 }
 

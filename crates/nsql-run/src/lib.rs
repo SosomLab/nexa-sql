@@ -25,11 +25,12 @@ pub enum RunEvent {
         line: usize,
         summary: String,
     },
-    /// 조회 결과.
+    /// 조회 결과. `more` = 페치 상한(`Runner::max_rows`)에서 잘렸다(서버에 행이 더 있다).
     ResultSet {
         index: usize,
         rs: ResultSet,
         elapsed: Duration,
+        more: bool,
     },
     /// DML/DDL 완료.
     Done {
@@ -170,6 +171,11 @@ pub struct Runner {
     pub resolver: Option<Resolver>,
     /// 마지막 접속 설명(상태줄).
     pub connection: Option<String>,
+    /// ★ 결과 셋 페치 상한(0 = 무제한 · DBeaver "ResultSet fetch size" 차용 · 사용자 09-15). 드라이버에는
+    /// 세션 옵션 `max_rows`로 `상한+1`을 알려 조기 중단(Oracle·SQLite)하고, 호스트는 상한 초과분을 잘라 `more`를 표시한다.
+    pub max_rows: usize,
+    /// 서버 메시지 실시간 싱크(접속마다 세션에 심는다 · GUI = 이벤트 채널 · CLI = stdout).
+    pub message_sink: Option<nsql_core::MessageSink>,
 }
 
 impl Runner {
@@ -180,7 +186,23 @@ impl Runner {
             opener,
             resolver: None,
             connection: None,
+            max_rows: 0,
+            message_sink: None,
         }
+    }
+
+    /// 실시간 메시지 싱크 장착(체이닝).
+    #[must_use]
+    pub fn with_message_sink(mut self, sink: nsql_core::MessageSink) -> Self {
+        self.message_sink = Some(sink);
+        self
+    }
+
+    /// 페치 상한 장착(체이닝 · 0 = 무제한).
+    #[must_use]
+    pub fn with_max_rows(mut self, n: usize) -> Self {
+        self.max_rows = n;
+        self
     }
 
     /// 프로필 해석기 장착(체이닝).
@@ -215,6 +237,7 @@ impl Runner {
         self.engine.dialect = session.dialect();
         self.session = Some(session);
         self.connection = Some(description.into());
+        self.push_max_rows();
         self
     }
 
@@ -255,6 +278,7 @@ impl Runner {
                 }
                 self.session = Some(session);
                 self.connection = Some(spec.redacted());
+                self.push_max_rows();
                 emit(RunEvent::Connected {
                     description: spec.redacted(),
                     dialect,
@@ -369,10 +393,12 @@ impl Runner {
                         match self.session.as_mut().map(|s| s.fetch_cursor(c)) {
                             Some(Ok(rs)) => {
                                 emit(RunEvent::Message(format!("PRINT {n} (refcursor)")));
+                                let (rs, more) = self.trim_rows(rs);
                                 emit(RunEvent::ResultSet {
                                     index,
                                     rs,
                                     elapsed: Duration::ZERO,
+                                    more,
                                 });
                                 self.engine.vars.assign(&n, Value::Null);
                             }
@@ -527,8 +553,15 @@ impl Runner {
                     emit(RunEvent::Message(m));
                 }
                 let n_sets = result.result_sets.len();
+                let max_rows = self.max_rows;
                 for rs in result.result_sets.drain(..) {
-                    emit(RunEvent::ResultSet { index, rs, elapsed });
+                    let (rs, more) = trim_rows(rs, max_rows);
+                    emit(RunEvent::ResultSet {
+                        index,
+                        rs,
+                        elapsed,
+                        more,
+                    });
                 }
                 if n_sets == 0 || result.rows_affected.is_some() {
                     emit(RunEvent::Done {
@@ -568,7 +601,32 @@ impl Runner {
     }
 }
 
+/// 페치 상한 적용 — 상한 초과분을 잘라 `(결과, 더 있음)`.
+fn trim_rows(mut rs: ResultSet, max_rows: usize) -> (ResultSet, bool) {
+    if max_rows > 0 && rs.rows.len() > max_rows {
+        rs.rows.truncate(max_rows);
+        (rs, true)
+    } else {
+        (rs, false)
+    }
+}
+
 impl Runner {
+    fn trim_rows(&self, rs: ResultSet) -> (ResultSet, bool) {
+        trim_rows(rs, self.max_rows)
+    }
+
+    /// 드라이버에 페치 상한(+1 · 초과 여부 판정용)을 알린다 — 접속 직후 · 상한 변경 시.
+    fn push_max_rows(&mut self) {
+        let n = self.max_rows;
+        let sink = self.message_sink.clone();
+        if let Some(s) = self.session.as_mut() {
+            let v = if n == 0 { 0 } else { n + 1 };
+            let _ = s.set_option("max_rows", &v.to_string());
+            s.set_message_sink(sink);
+        }
+    }
+
     /// `CREATE [OR REPLACE] PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE|VIEW …`가 성공한 뒤 Oracle `ALL_ERRORS`를 읽어
     /// 오류가 있으면 `RunEvent::Error`(줄/열/메시지 목록) — 없으면 true.
     fn report_compile_errors(
@@ -704,6 +762,7 @@ impl Runner {
                     index,
                     rs,
                     elapsed: started.elapsed(),
+                    more: false,
                 });
                 true
             }

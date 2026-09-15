@@ -17,10 +17,18 @@ use postgres::error::SqlState;
 use postgres::types::{FromSql, IsNull, ToSql, Type};
 use postgres::{Client, NoTls, SimpleQueryMessage};
 
+/// `RAISE NOTICE`/WARNING 수신부 — 접속 시 `notice_callback`에 심는다. 싱크가 있으면 즉시 전달, 없으면 버퍼(실행 뒤 `messages`).
+#[derive(Default)]
+struct Notices {
+    buf: Vec<String>,
+    sink: Option<nsql_core::MessageSink>,
+}
+
 #[allow(missing_debug_implementations)]
 pub struct PgSession {
     client: Client,
     description: String,
+    notices: std::sync::Arc<std::sync::Mutex<Notices>>,
 }
 
 fn err(e: postgres::Error) -> DbError {
@@ -78,10 +86,22 @@ impl PgSession {
         }
         cfg.application_name("nexa-sql");
         cfg.connect_timeout(std::time::Duration::from_secs(15));
+        let notices = std::sync::Arc::new(std::sync::Mutex::new(Notices::default()));
+        let n2 = notices.clone();
+        cfg.notice_callback(move |e: postgres::error::DbError| {
+            let text = format!("{}: {}", e.severity(), e.message());
+            if let Ok(mut n) = n2.lock() {
+                match &n.sink {
+                    Some(s) => s(text),
+                    None => n.buf.push(text),
+                }
+            }
+        });
         let client = cfg.connect(NoTls).map_err(err)?;
         Ok(PgSession {
             client,
             description: spec.redacted(),
+            notices,
         })
     }
 }
@@ -382,7 +402,44 @@ impl Session for PgSession {
         self.description.clone()
     }
 
+    fn set_message_sink(&mut self, sink: Option<nsql_core::MessageSink>) {
+        if let Ok(mut n) = self.notices.lock() {
+            n.sink = sink;
+        }
+    }
+
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+        let mut result = self.execute_inner(req)?;
+        if let Ok(mut n) = self.notices.lock() {
+            result.messages.append(&mut n.buf);
+        }
+        Ok(result)
+    }
+
+    fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
+        Err(DbError {
+            code: None,
+            message:
+                "PostgreSQL: refcursor는 같은 트랜잭션 안에서 FETCH ALL FROM <name>으로 읽으세요"
+                    .into(),
+            position: None,
+        })
+    }
+
+    fn commit(&mut self) -> Result<(), DbError> {
+        self.client.simple_query("COMMIT").map(|_| ()).map_err(err)
+    }
+
+    fn rollback(&mut self) -> Result<(), DbError> {
+        self.client
+            .simple_query("ROLLBACK")
+            .map(|_| ())
+            .map_err(err)
+    }
+}
+
+impl PgSession {
+    fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
         let mut result = ExecResult::default();
         if req.params.is_empty() {
             // 단순 질의 프로토콜 — 텍스트 셀 · 여러 결과 집합 · 행 수.
@@ -448,27 +505,6 @@ impl Session for PgSession {
             result.rows_affected = Some(n);
         }
         Ok(result)
-    }
-
-    fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
-        Err(DbError {
-            code: None,
-            message:
-                "PostgreSQL: refcursor는 같은 트랜잭션 안에서 FETCH ALL FROM <name>으로 읽으세요"
-                    .into(),
-            position: None,
-        })
-    }
-
-    fn commit(&mut self) -> Result<(), DbError> {
-        self.client.simple_query("COMMIT").map(|_| ()).map_err(err)
-    }
-
-    fn rollback(&mut self) -> Result<(), DbError> {
-        self.client
-            .simple_query("ROLLBACK")
-            .map(|_| ())
-            .map_err(err)
     }
 }
 

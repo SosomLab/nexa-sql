@@ -83,7 +83,7 @@
 | **T-46b** | P0 | 중 | ✅ 접속 흐름(공용 `from_parts`/`test_connection` · CLI `conn add/test` 필드 · GUI 접속 패널) · ✅ 계측 골격(`Stage/Timeline` · `--timing` · 푸터) | — | ✅ 09-14 |
 | **T-47** | P1 | 소 | Send 스팬 · MSSQL/SQLite Execute·Fetch 분리 · **파일 로그 싱크**(`LogSink` · 배치 flush · 회전 · `NSQL_LOG`) · `--timing=json` | D-44 | ☐ |
 | **T-54** | P1 | 중 | `session.mode` 실체 — 편집기 탭 다중화 시 per-editor 세션(워커 세션 맵 · CONNECT 범위 경고) · **한 탭의 접속 장애가 다른 탭에 번지지 않게(사용자 09-14 14차 · 워커 패닉 격리·빠른 판정은 ✅, 세션 분리는 여기)** · 로그 창 필터/검색/지우기 · 로그 창 Grid = nexa-grid(G-3 뒤) | E-3 D-45 | ☐ |
-| **T-48** | P0 | 대 | 페치 모델 — 상한(D-42)·배치 스트리밍·"더 가져오기"(Navigate · D-43) · 예산 경고 · 실행 히스토리 패널 · 메타만(EXPLAIN/COUNT) | D-42 D-43 | ☐ |
+| **T-48** | P0 | 대 | ✅ 09-15 1차 상한 = `grid.max_rows` 200(Oracle/SQLite 조기 중단 · `RunEvent::ResultSet.more` · `--max-rows`) · 잔여 = 페치 모델 — 상한(D-42)·배치 스트리밍·"더 가져오기"(Navigate · D-43) · 예산 경고 · 실행 히스토리 패널 · 메타만(EXPLAIN/COUNT) | D-42 D-43 | 🚧 |
 | **T-49** | P1 | 소 | `DBMS_OUTPUT.GET_LINES` 배열 회수 · 실행 중 주기 폴링 옵션 · UNLIMITED 안내 | — | ☐ |
 | **T-50** | P0 | 대 | 컬럼 지향 결과 저장소 + 페인트 할당 0 + 폭 캐시 — **nexa-grid(U-3 · dir2 `rows.rs` 이식 · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md))** 와 함께 · 결과 그리드는 속도·메모리 최우선(사용자 09-14) | nexa-ui U-3 | ☐ |
 | **T-51** | P1 | 중 | D-41 반영 — 옵션 파서 재정리(별칭·충돌 안내) · `-e` · `-v` · `-b` · `-W`/`NSQL_PASSWORD` · `-S host,port` · 진영별 `--help` 예시 | D-41 | ☐ |
@@ -93,16 +93,19 @@
 | **T-59** | P1 | 중 | 자체 정규식 엔진(Thompson NFA · 캡처 · `\b` · 옵션 · 외부 crate 0) → 찾기 · `.sublime-syntax` 컨텍스트 호환 · 강조 **행 시작 상태 캐시**(큰 파일) | — | ☐ |
 | **T-60** | P2 | 소 | 서식 복사 — Linux 다중 형식(자체 Wayland/X11 클립보드 소유) · macOS osascript 실기 · 잘라내기 서식 옵션 | — | ☐ |
 | **T-61** | P1 | 소 | 상태줄 — `statusbar.*` 표시 설정 · 세션 모드/Read-only 배지 · 인코딩·줄끝·탭 크기 세그먼트 · 클릭 동작(Goto line · 로그 창) · 좁을 때 왼쪽부터 숨김 | T-39 T-54 | ☐ |
-| **T-56** | P0 | 대 | **오브젝트 탐색기**([28](28-object-explorer.md)) — `Catalog` 포트 · Oracle/MSSQL/SQLite `children` · `nsql-run::explorer`(메타 세션 · 스레드 풀 ≤4 · 노드 상태 · 캐시 · 취소 · catch_unwind) · `nsql cat` · 트리 그리드(nexa-grid `CatalogSource`) · 설정 4키(등재 ✅) · 자동 갱신(기본 off) | nexa-ui G-1~3 · D-46 | ☐ |
-| **T-53** | P1 | 중 | **단축키 설정 화면** — KeymapGrid(그룹·이름·설명·단축키 · [지정]/[초기화] · 충돌 배지 · 검색) + `HotkeyCapture` 캡처 대화상자(적용 → 그리드 값·키맵 파일) — [nexa-ui 21 §3-1](../../nexa-ui/docs/21-grid-family.md) · 명령 레지스트리는 E3(T-14) | nexa-ui G-6 · T-14 | ☐ |
+| **T-56** | P0 | 대 | ✅ 09-15 1차(`nsql-catalog` 5방언 · `nsql cat` · DESC · `explorer.rs` 메타 세션 스레드 · 지연 1단계 · 노드별 ⚠ · 소스/SELECT 새 탭 · 우클릭) · 잔여 = 툴팁 카드 · 스레드 풀 ≤4 · 취소 · 자동 갱신 · nexa-grid `CatalogSource` · 필터 상자 · **오브젝트 탐색기**([28](28-object-explorer.md)) — `Catalog` 포트 · Oracle/MSSQL/SQLite `children` · `nsql-run::explorer`(메타 세션 · 스레드 풀 ≤4 · 노드 상태 · 캐시 · 취소 · catch_unwind) · `nsql cat` · 트리 그리드(nexa-grid `CatalogSource`) · 설정 4키(등재 ✅) · 자동 갱신(기본 off) | nexa-ui G-1~3 · D-46 | 🚧 |
+| **T-53** | P1 | 중 | ✅ 09-15 1차(`keymap.rs` Sublime win/mac 기본 · `key.*` 20키 · `keys_win.rs` 캡처 창 · 충돌 배지 · Ctrl+Shift+E) · 잔여 = 검색 · 그룹 · **단축키 설정 화면** — KeymapGrid(그룹·이름·설명·단축키 · [지정]/[초기화] · 충돌 배지 · 검색) + `HotkeyCapture` 캡처 대화상자(적용 → 그리드 값·키맵 파일) — [nexa-ui 21 §3-1](../../nexa-ui/docs/21-grid-family.md) · 명령 레지스트리는 E3(T-14) | nexa-ui G-6 · T-14 | 🚧 |
 | **T-63** | P2 | 소 | 프로브 부하 원칙(09-14 검토 · [26 §8](26-performance-architecture.md)) — ✅ 대상 집합 밖 항목 재예약 금지 · ✅ 슬롯 초과 깨우기 1s · ✅ Test/Connect 동시 상한+큐(`connect.max_concurrent`) · ☐ 호스트명 DNS 캐시(프로필 수백 개 대비) | 14차 검토 | 🚧 |
 | **T-65** | P1 | 중 | **WindowHost** 부품 — 창 3개(접속·로그·색)가 복사한 softbuffer/RasterCtx/입력 변환/틱/페인트 프레임을 한 타입으로(nexa-clip 창 골격 이식) · 창은 `layout/route/paint`만 | [30 §3-A](30-architecture-patterns.md) | ☐ |
 | **T-66** | P2 | 소 | 편집기·그리드·로그 창 상수 설정화(`EditorTuning/GridTuning` · 비노출) — 접속 창 `ConnTuning`과 같은 방식 | [30 §3-D](30-architecture-patterns.md) | ☐ |
-| **T-67** | P1 | 중 | **Command 레지스트리**(id · 라벨 Msg · 기본 단축키 · 핸들러) — 메뉴·팔레트·툴바·키맵(T-53)이 같은 표를 읽는다 | [30 §3-E](30-architecture-patterns.md) T-53 | ☐ |
+| **T-67** | P1 | 중 | 🚧 09-15 씨앗 = `keymap::COMMANDS`(id·라벨·기본 코드) · 잔여 = 메뉴·팔레트·툴바가 같은 표를 읽기 · 핸들러 · **Command 레지스트리**(id · 라벨 Msg · 기본 단축키 · 핸들러) — 메뉴·팔레트·툴바·키맵(T-53)이 같은 표를 읽는다 | [30 §3-E](30-architecture-patterns.md) T-53 | 🚧 |
 | **T-68** | P2 | 소 | 실행 계층 메시지 규약 문서화(`Cmd/ConnOutcome/RunEvent/TestResult` · 버전 · 큐/스레드 소유권 표) — RPC 드라이버 규약(T-27)과 정렬 | [30 §3-F](30-architecture-patterns.md) | ☐ |
 | **T-69** | P1 | 중 | **들여쓰기 설정 계층**([31](31-indentation-settings.md)) — 전역 → 문법(`<Syntax>.nexa-settings`) → 프로젝트 → 현재 탭(메모리·세션) · 상태바 `Tab Size: 4`/`Spaces: 4` 세그먼트 + 팝업(공백/탭 · 폭 1~8 · 버퍼에서 감지 · 변환 · 문법/전역 기본으로 저장) · nexa-gfx 탭 폭 주입(4칸 고정 제거) · Tab/Shift+Tab 줄 들여쓰기 | 29 T-61 T-67 | 📐 |
+| **T-70** | P1 | 소 | PostgreSQL TLS(`sslmode=prefer/require` · rustls) · `postgres-rustls` 원장 · 접속 폼 SSL 토글 | nsql-driver-pg | ☐ |
+| **T-71** | P1 | 중 | **Oracle 라이브 로그 모니터**([32 §2](32-server-messages-and-live-log.md)) — 메타 세션 폴링(로그 테이블 · V$SESSION client_info/action · DBMS_PIPE · LONGOPS) · 로그 창 Live 세그먼트 · `oracle.live.*` 설정 · CLI `--live` · 실행 중에만 1s 이상 | 28 T-56 D-48 | 📐 |
+| **T-72** | P1 | 대 | **배포 파이프라인**([33](33-distribution-and-packaging.md) · DR-27) — `packaging/{windows,macos,linux}` 스테이징 · MSI/pkg+dmg(Universal 2 · Frameworks)/deb·rpm · `release.yml` 3-OS · sha256 · `--smoke`·제거 검증 · 서명 자리 | T-62 T-10 D-49 D-50 | ☐ |
 | **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |
 | **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
 
 ## 4. M3+ (요약)
-syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · PG/MySQL/SQLite/ODBC 드라이버(T-23) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26 → **T-32~36** [23](23-license-activation.md)).
+syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · MySQL/ODBC 드라이버(T-23 · PG ✅ 09-15 `nsql-driver-pg` · SQLite ✅) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26 → **T-32~36** [23](23-license-activation.md)).

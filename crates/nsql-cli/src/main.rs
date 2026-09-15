@@ -45,12 +45,14 @@ struct Opts {
     out: Option<String>,
     /// `-s` — `cat`의 스키마(없으면 접속 사용자의 현재 스키마).
     schema: Option<String>,
+    /// `--max-rows N` — 결과 셋 페치 상한(기본 0 = 무제한 · GUI는 설정 `grid.max_rows`).
+    max_rows: usize,
     positional: Vec<String>,
 }
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] [--max-rows N] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -83,6 +85,7 @@ fn parse_opts() -> Opts {
         table: None,
         out: None,
         schema: None,
+        max_rows: 0,
         positional: Vec::new(),
     };
     let mut it = args.peekable();
@@ -127,6 +130,13 @@ fn parse_opts() -> Opts {
             "-t" | "--table" => o.table = Some(val("-t")),
             "-o" | "--out" => o.out = Some(val("-o")),
             "-s" | "--schema" => o.schema = Some(val("-s")),
+            "--max-rows" => {
+                let v = val("--max-rows");
+                o.max_rows = v.parse().unwrap_or_else(|_| {
+                    eprintln!("--max-rows: 숫자가 아닙니다: {v}");
+                    std::process::exit(2)
+                });
+            }
             "--no-prompt" => o.no_prompt = true,
             "--timing" => o.timing = true,
             "--log" => o.log = true,
@@ -221,12 +231,19 @@ impl Printer {
         let mut out = out.lock();
         match ev {
             RunEvent::Begin { .. } => {}
-            RunEvent::ResultSet { rs, elapsed, .. } => {
+            RunEvent::ResultSet {
+                rs, elapsed, more, ..
+            } => {
                 let _ = nsql_io::write_result_set(&mut out, &rs, &self.format, self.dialect);
                 if self.feedback && self.format == Format::Grid {
+                    let note = if more {
+                        format!(" {}", nsql_i18n::t(nsql_i18n::Msg::CliRowsMore))
+                    } else {
+                        String::new()
+                    };
                     let _ = writeln!(
                         out,
-                        "\n{} rows ({:.3}s)\n",
+                        "\n{} rows ({:.3}s){note}\n",
                         rs.rows.len(),
                         elapsed.as_secs_f64()
                     );
@@ -281,6 +298,16 @@ impl Printer {
     }
 }
 
+/// 실행 중 서버 메시지(PRINT · RAISE NOTICE)를 도착 즉시 stdout에(사용자 09-15 "실행 중 로그").
+fn stdout_sink() -> nsql_core::MessageSink {
+    std::sync::Arc::new(|m: String| {
+        let out = io::stdout();
+        let mut out = out.lock();
+        let _ = writeln!(out, "{m}");
+        let _ = out.flush();
+    })
+}
+
 fn connect_or_exit(runner: &mut Runner, target: &str, dialect: Dialect, printer: &mut Printer) {
     let spec = resolve_target(target, dialect).unwrap_or_else(|e| {
         eprintln!("{e}");
@@ -318,7 +345,10 @@ fn cmd_run(o: &Opts) -> i32 {
         timing: o.timing,
         log: log_hub(o),
     };
-    let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
+    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_max_rows(o.max_rows)
+        .with_message_sink(stdout_sink())
+        .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
@@ -347,7 +377,10 @@ fn cmd_shell(o: &Opts) -> i32 {
         timing: o.timing,
         log: log_hub(o),
     };
-    let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
+    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_max_rows(o.max_rows)
+        .with_message_sink(stdout_sink())
+        .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
     eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지");
     let stdin = io::stdin();
@@ -421,7 +454,10 @@ fn cmd_export(o: &Opts) -> i32 {
         timing: o.timing,
         log: log_hub(o),
     };
-    let mut runner = Runner::new(o.dialect, opener(o.dialect)).with_resolver(resolver());
+    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_max_rows(o.max_rows)
+        .with_message_sink(stdout_sink())
+        .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer);
     let dialect = runner.engine.dialect;
     let mut out: Box<dyn Write> = match &o.out {

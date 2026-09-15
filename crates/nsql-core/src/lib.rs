@@ -526,6 +526,9 @@ impl fmt::Display for DbError {
 impl std::error::Error for DbError {}
 
 /// 세션 포트 — 드라이버 크레이트가 구현한다. 엔진은 이 트레이트만 안다.
+/// 서버 메시지 실시간 싱크(드라이버 스레드에서 불린다 — 호스트는 채널로 넘겨 UI/stdout에).
+pub type MessageSink = std::sync::Arc<dyn Fn(String) + Send + Sync>;
+
 pub trait Session {
     fn dialect(&self) -> Dialect;
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError>;
@@ -537,6 +540,12 @@ pub trait Session {
     fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
         let _ = (name, value);
         Ok(())
+    }
+    /// ★ 서버 메시지 실시간 싱크(사용자 09-15 "실행 중 로그") — 설정되면 드라이버는 `PRINT`/`RAISERROR … WITH NOWAIT`(SQL Server) ·
+    /// `RAISE NOTICE`(PostgreSQL)를 **도착 즉시** 싱크로 보내고 `ExecResult::messages`에는 넣지 않는다. 없으면 실행 끝에 messages로.
+    /// Oracle `DBMS_OUTPUT`은 호출이 끝나야 읽히므로(서버 제약) 항상 실행 뒤 messages — 실시간은 로그 테이블/V$SESSION 폴링(docs/32).
+    fn set_message_sink(&mut self, sink: Option<MessageSink>) {
+        let _ = sink;
     }
     /// 접속 설명(상태줄).
     fn describe(&self) -> String {
