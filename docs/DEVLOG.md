@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (12차 · win)** — 탐색기 글꼴 = 메뉴 글꼴(`explorer.font_size` 0 = 따름 · 굵게 없음). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (11차 · win)** — 접속 창 **모달**(Windows `EnableWindow` + 호스트 입력 가드 · 닫히면 메인 재활성). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (10차 · win)** — **설정 JSON 편집**(`nsql-settings::json` 객체 계층 · 외부 프로그램 열기 · 저장 감시 즉시 반영 · `nsql config export-json/import-json` · `settings.json_editor` · T-76 내장 편집기 예약) · 설정 창 세로 우선 분할 + 스플리터(IntentFade) · 탐색기 글꼴 `explorer.font_size` 17 + 글꼴 비례 셰브론. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (9차 · win)** — 설정 창 오른쪽 클릭 → 왼쪽 트리 선택 결함(nexa-ctl 트리 y-only 히트 + 무조건 전달) 수정 · **마우스 라우팅 규칙** CLAUDE.md §3 · 탐색기 루트 = 프로필명+host:port. → [journal](journal/2026-09-15.md)
