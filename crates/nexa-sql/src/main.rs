@@ -53,7 +53,7 @@ use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
     ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, MenuBar, MenuDef,
-    MenuEntry, TextBox, ToolItem, Toolbar, Widget,
+    MenuEntry, TextBox, ToolItem, ToolTone, Toolbar, Widget,
 };
 use nexa_dlg::PickerMode;
 use nexa_gfx::{Font, Surface};
@@ -875,6 +875,16 @@ impl App {
         let mut inv = Invalidations::default();
         self.toolbar
             .set_item_enabled("conn.disconnect", connected, &mut inv);
+        // 연결이 하나라도 있으면 Connect 아이콘 = 밝은 녹색(사용자 09-16).
+        self.toolbar.set_item_tone(
+            "conn.toggle",
+            if connected {
+                ToolTone::Ok
+            } else {
+                ToolTone::Default
+            },
+            &mut inv,
+        );
     }
 
     /// 환경 설정 창에서 바뀐 값을 **즉시** 반영(가능한 것만 · 나머지는 다음 시작).
