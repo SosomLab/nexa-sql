@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (6차 · win)** — 풀다운 메뉴가 편집기·탐색기 뒤로 가려지던 오류 수정(메뉴바를 최상위 페인트 패스로). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (5차 · win · 야간 자율)** — 편집기 **찾기/바꾸기 바**(Ctrl+F/H · F3 · Aa · Replace/All · n of m · T-73 1차 · nexa-ui `select_range/replace_range`) · **자동 재접속**(`connect.auto_reconnect`). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (4차 · win · 야간 자율)** — **Oracle 라이브 로그 모니터 1차**(T-71 · `oracle.live.*` · 실행 중 메타 세션이 V$SESSION client_info/action 또는 로그 테이블 폴링 → 로그 창 `[live]` · biscm 실서버 mechanism 확인). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (3차 · win · 야간 자율)** — 결과 그리드 **셀 선택·복사**(Ctrl+C TSV · 머리글/CSV/INSERT 메뉴 · Ctrl+A) · **트랜잭션**(`session.autocommit` on · Run ▸ Commit/Rollback · 상태줄 Auto/Manual ●) · **실행 계획**(Run ▸ Explain · `nsql explain` · 5방언 관용) · T-SQL/PG/Oracle 서버 `SET` 문 통과 수정. → [journal](journal/2026-09-15.md)

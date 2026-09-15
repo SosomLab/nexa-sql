@@ -1460,7 +1460,7 @@ impl App {
                     Rect::new(0, self.toolbar.bounds().bottom() - 1, wi, 1),
                     th.border,
                 );
-                self.menubar.paint(&mut dc, &th);
+                // 메뉴바(드롭다운 포함)는 편집기·그리드·탐색기 뒤인 최상위 패스에서 그린다(09-15 사용자 캡처: 풀다운이 뒤로 가림).
                 // 상태줄
                 let sy = hi - px(24.0, s);
                 dc.fill_rect(Rect::new(0, sy, wi, px(24.0, s)), th.chrome_bg);
@@ -1564,6 +1564,8 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.explorer.paint(&mut dc, &th);
                 self.find.paint(&mut dc, &th);
+                // 메뉴바 + 열린 드롭다운 = 팝업 규칙(CLAUDE.md §3)대로 맨 마지막 층.
+                self.menubar.paint(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
