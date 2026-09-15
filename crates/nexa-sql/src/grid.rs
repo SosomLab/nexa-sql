@@ -1379,9 +1379,11 @@ impl Grid {
                     };
                     if numeric {
                         let tw = dc.text_width(&txt);
-                        dc.text(x + cw - pad - tw, y + pad / 2, clip, &txt, color);
+                        let ty = dc.text_center_y(y, self.row_h);
+                        dc.text(x + cw - pad - tw, ty, clip, &txt, color);
                     } else {
-                        dc.text(x + pad, y + pad / 2, clip, &txt, color);
+                        let ty = dc.text_center_y(y, self.row_h);
+                        dc.text(x + pad, ty, clip, &txt, color);
                     }
                 }
                 x += cw;
@@ -1438,12 +1440,14 @@ impl Grid {
             });
             let name_clip = if let Some(bd) = &badge {
                 let bw = dc.text_width(bd);
-                dc.text(x + cw - pad - bw, header.y + pad / 2, clip, bd, th.accent);
+                let hy = dc.text_center_y(header.y, header.h);
+                dc.text(x + cw - pad - bw, hy, clip, bd, th.accent);
                 Rect::new(x, header.y, (cw - bw - pad * 2).max(0), header.h).intersection(&hcells)
             } else {
                 clip
             };
-            dc.text(x + pad, header.y + pad / 2, name_clip, &c.name, th.text);
+            let hy = dc.text_center_y(header.y, header.h);
+            dc.text(x + pad, hy, name_clip, &c.name, th.text);
             dc.fill_rect(Rect::new(x + cw - 1, header.y, 1, header.h), th.border);
             if let Some(dp) = drop_pos {
                 if dp == pos {
@@ -1457,7 +1461,8 @@ impl Grid {
                 Rect::new(b.x, header.y, self.gutter_w, header.h),
                 th.chrome_bg,
             );
-            dc.text(b.x + pad, header.y + pad / 2, header, "#", th.text_dim);
+            let hy = dc.text_center_y(header.y, header.h);
+            dc.text(b.x + pad, hy, header, "#", th.text_dim);
         }
         dc.fill_rect(Rect::new(b.x, header.bottom() - 1, b.w, 1), th.border);
         // 위치 표시(우상단 헤더 줄)

@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (6차 · mac)** — 글자 세로 정렬 잉크 기준(접속 창 그리드·헤더 · 결과 그리드 · 탐색기 · 상태줄 · nexa-ui `text_center_y`) · 프로필 이름 변경 저장(옛 항목 제거 · 중복 생성 안 함). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (5차 · mac)** — 연결 중이면 툴바 Connect 아이콘 밝은 녹색(nexa-ui `ToolTone`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (4차 · mac)** — 툴바 connect/disconnect = Material `power`/`power_off`(사용자 SVG · `corner_ok` 모서리 깎기). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (3차 · mac)** — 접속 창 위치: 기본 메인 창 가운데(배율 보정) · 같은 모니터면 마지막 위치 · 모니터 바뀌면 가운데. → [journal](journal/2026-09-16.md)

@@ -1264,7 +1264,7 @@ impl Explorer {
             if rr.h <= 0 {
                 continue;
             }
-            let ty = y + (row_h - th_txt) / 2;
+            let ty = dc.text_center_y(y, row_h);
             // 글리프 시각 중심(대문자·한글 몸통) — 셰브론·칩을 여기에 맞춘다(사용자 09-15 "폰트 기준 세로 중앙").
             let vcy = ty + (asc as f32 * 0.62).round() as i32;
             match node {

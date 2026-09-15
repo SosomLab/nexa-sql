@@ -6,7 +6,7 @@
 //! 행 클릭 = 폼에 채움 · 더블클릭 = 바로 접속 · 접속되면 창이 닫힌다. `Ctrl/⌘+L` · 툴바 ⇄ · Run ▸ Connect로 연다.
 //! 창 골격은 로그 창과 같다(winit + softbuffer + nexa-ctl 래스터). I/O(저장소·워커)는 전부 호스트 몫 — [`ConnWinAction`]으로 요청.
 
-use crate::connect::{ConnectPanel, PanelAction};
+use crate::connect::{ConnState, ConnectPanel, PanelAction};
 use crate::probe::{self, ProbeEntry, ProbeHub, ProbePolicy, ProbeReq, ProbeStatus};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
@@ -280,6 +280,8 @@ pub(crate) struct ConnWin {
     close_at: Option<Instant>,
     /// 툴팁 대상 + 머물기 시작 시각(아이콘 열·행 버튼 위 · 다국어 · 사용자 09-14).
     tip: Option<(TipTarget, Instant)>,
+    /// 목록 모드 결과 안내(상세 패널이 닫혀 있을 때 목록 오른쪽 아래 · 사용자 09-16) — (프로필 이름, 상태).
+    note: Option<(String, ConnState)>,
     filter: TextBox,
     btn_new: Button,
     btn_edit: Button,
@@ -348,6 +350,7 @@ impl ConnWin {
             session_pw: HashMap::new(),
             close_at: None,
             tip: None,
+            note: None,
             filter: TextBox::new(t(Msg::PhFilter)),
             btn_new: Button::new(t(Msg::BtnNew)),
             btn_edit: Button::new(t(Msg::BtnEdit)),
@@ -991,6 +994,12 @@ impl ConnWin {
             ));
         }
         !done
+    }
+
+    /// 목록 모드 결과 안내 갱신(행 Test/접속 결과) — 상세 패널이 닫혀 있어도 오른쪽 아래에 보인다(사용자 09-16).
+    pub(crate) fn set_note(&mut self, name: &str, st: ConnState) {
+        self.note = Some((name.to_string(), st));
+        self.redraw();
     }
 
     pub(crate) fn close(&mut self) {
@@ -2217,7 +2226,9 @@ impl ConnWin {
                 t(Msg::ColTarget).to_string(),
             ];
             let col_w = self.col_w.clone();
-            let ty = |y: i32| y + (rh - dc_text_h(rh)) / 2;
+            // 잉크 기준 세로 가운데(09-16 mac: 고정 −8px 상수는 Windows 1x 맑은 고딕에서만 가운데였다).
+            let toff = dc.text_center_y(0, rh);
+            let ty = move |y: i32| y + toff;
             let hcells = Rect::new(l.x + icons_w, l.y, (l.w - icons_w - 1).max(0), rh);
             let cells = Rect::new(
                 l.x + icons_w,
@@ -2402,6 +2413,41 @@ impl ConnWin {
                 s,
             );
             // 툴팁(최상위) — 아이콘 셀 아래.
+            // 목록 모드 결과 안내 — 상세 패널이 닫혀 있을 때 목록 오른쪽 아래(● + "이름 · 문구" 한 줄 · 왼쪽으로 잘림).
+            if !detail_visible {
+                if let Some((name, st)) = &self.note {
+                    let (color, text) = match st {
+                        ConnState::Idle => (th.text_dim, String::new()),
+                        ConnState::Connecting => (th.warn, t(Msg::StConnectingShort).to_string()),
+                        ConnState::Testing => (th.warn, t(Msg::StTesting).to_string()),
+                        ConnState::Connected(d) => (th.ok, tf(Msg::StConnectedShort, &[d])),
+                        ConnState::TestOk(d) => (th.ok, d.clone()),
+                        ConnState::Failed(e) => (th.danger, e.clone()),
+                    };
+                    if !text.is_empty() {
+                        dc.select_font(FontSlot::Status, false);
+                        let line = format!("{name} · {text}");
+                        let nh = dc.text_height() + pad;
+                        let nr = Rect::new(list.x + 1, list.bottom() - 1 - nh, list.w - 2, nh);
+                        dc.fill_rect(nr, th.panel_bg);
+                        dc.fill_rect(Rect::new(nr.x, nr.y, nr.w, 1), th.border);
+                        let dot = (8.0 * s).round() as i32;
+                        let tw = dc.text_width(&line).min(nr.w - dot - pad * 3);
+                        let tx = nr.right() - pad - tw;
+                        let ty = dc.text_center_y(nr.y, nr.h);
+                        dc.fill_ellipse(
+                            Rect::new(
+                                tx - dot - (6.0 * s).round() as i32,
+                                nr.y + (nr.h - dot) / 2,
+                                dot,
+                                dot,
+                            ),
+                            color,
+                        );
+                        dc.text(tx, ty, Rect::new(tx, nr.y, tw, nr.h), &line, th.text);
+                    }
+                }
+            }
             if let Some((tg, text)) = &tip_ready {
                 let sw = rh;
                 let y = match tg.row {
@@ -2512,11 +2558,6 @@ fn move_col(order: &mut Vec<usize>, pos: usize, mut to: usize) {
         to -= 1;
     }
     order.insert(to.min(order.len()), c);
-}
-
-/// 행 높이 안 글자 세로 위치 계산용(라스터 글꼴 높이 ≈ 행 높이 - 8px 여백).
-fn dc_text_h(row_h: i32) -> i32 {
-    (row_h - 8).max(8)
 }
 
 /// `host:port/database` (파일 DB는 경로).

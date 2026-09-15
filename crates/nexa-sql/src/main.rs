@@ -393,15 +393,29 @@ impl App {
                 self.busy = true;
                 self.worker.send(worker::Cmd::Disconnect);
             }
-            PanelAction::Save { name, spec } => {
+            PanelAction::Save {
+                name,
+                spec,
+                rename_from,
+            } => {
                 // 저장하지 않더라도 입력된 비밀번호는 세션에 보관(사용자 09-14).
                 let typed = self.conn_win.panel.password_text();
                 self.conn_win.remember_pw(&name, &typed);
                 // ★ 저장은 파일 쓰기뿐 — 워커(순차 · Test/Connect 뒤에 줄 섬)를 거치지 않고 즉시(사용자 09-14
                 //   "Save에서 접속 테스트를 하지 않도록": 실제로는 앞선 Test의 20초 타임아웃을 기다리던 것). 접속 검증 없음 · 포트가 틀려도 저장.
-                match Vault::open_default().and_then(|v| v.save(&name, &spec)) {
+                // 이름 변경(사용자 09-16): 새 이름으로 저장이 성공한 뒤에만 옛 항목을 지운다(실패 시 옛 프로필 보존).
+                let res = Vault::open_default().and_then(|v| {
+                    v.save(&name, &spec)?;
+                    if let Some(old) = &rename_from {
+                        v.remove(old)?;
+                    }
+                    Ok(())
+                });
+                match res {
                     Ok(()) => {
                         self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
+                        // 폼은 이제 새 이름의 프로필을 "불러온" 상태 — 또 바꿔 저장하면 다시 이름 변경.
+                        self.conn_win.panel.fill(&name, &spec);
                         self.conn_win.refresh_profiles(Some(&name));
                     }
                     Err(e) => {
@@ -447,6 +461,8 @@ impl App {
         if self.conn_win.panel.profile_name().trim() == name.trim() {
             self.conn_win.panel.set_state(st.clone());
         }
+        // 상세 패널이 닫혀 있어도 목록 오른쪽 아래에 같은 안내(사용자 09-16).
+        self.conn_win.set_note(name, st.clone());
         self.panel_op = Some((name.to_string(), st));
     }
 
@@ -2259,9 +2275,10 @@ impl App {
                 dc.fill_rect(Rect::new(0, sy, wi, 1), th.border);
                 dc.select_font(FontSlot::Base, false);
                 let busy = if self.busy { "⏳ " } else { "" };
+                let ty = dc.text_center_y(sy, px(24.0, s));
                 dc.text(
                     px(8.0, s),
-                    sy + px(5.0, s),
+                    ty,
                     Rect::new(0, sy, wi, px(24.0, s)),
                     &format!("{busy}{}", self.status),
                     th.text_dim,
@@ -2330,9 +2347,10 @@ impl App {
                     let tw = dc.text_width(text);
                     xr -= tw;
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
+                    let ty = dc.text_center_y(sy, px(24.0, s));
                     dc.text(
                         xr,
-                        sy + px(5.0, s),
+                        ty,
                         r,
                         text,
                         if *is_syntax { th.text } else { th.text_dim },

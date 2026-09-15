@@ -28,6 +28,9 @@ pub(crate) enum PanelAction {
     Save {
         name: String,
         spec: ConnectSpec,
+        /// 목록에서 불러온 프로필의 이름을 바꿔 저장한 경우 = 옛 이름(호스트가 옛 항목을 지운다 · 사용자 09-16
+        /// "New가 아니면 새 프로필이 아니라 이름 변경"). New(빈 폼)면 None.
+        rename_from: Option<String>,
     },
     /// 프로필 콤보에서 이름을 골랐다 — 호스트가 저장소에서 스펙을 읽어 [`ConnectPanel::fill`]로 채운다.
     LoadProfile(String),
@@ -83,6 +86,8 @@ pub(crate) struct ConnectPanel {
     user: TextBox,
     password: TextBox,
     name: TextBox,
+    /// 목록에서 불러온 프로필 이름(New/clear면 None) — 저장 시 이름 변경 판정용(09-16).
+    loaded_name: Option<String>,
     save_pw: Checkbox,
     test_btn: Button,
     connect_btn: Button,
@@ -131,6 +136,7 @@ impl ConnectPanel {
             user: TextBox::new(t(Msg::PhUser)),
             password: TextBox::new(t(Msg::PhPassword)),
             name: TextBox::new(t(Msg::PhProfileName)),
+            loaded_name: None,
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
@@ -196,6 +202,7 @@ impl ConnectPanel {
 
     /// 저장소에서 읽은 스펙으로 폼을 채운다.
     pub(crate) fn fill(&mut self, name: &str, spec: &ConnectSpec) {
+        self.loaded_name = Some(name.to_string());
         if let Some(d) = spec.dialect {
             self.dialect.select_value(&d.to_string());
             self.auto_port = d.default_port();
@@ -229,6 +236,7 @@ impl ConnectPanel {
 
     /// 새 프로필 — 폼 비우기(DB 종류는 유지).
     pub(crate) fn clear(&mut self) {
+        self.loaded_name = None;
         for tb in [
             &mut self.host,
             &mut self.port,
@@ -798,7 +806,13 @@ impl ConnectPanel {
                 if !self.save_pw.is_checked() {
                     spec.password = None;
                 }
-                Some(PanelAction::Save { name, spec })
+                // 불러온 프로필의 이름을 바꿨으면 "이름 변경"(옛 항목 제거) — 새로 만들지 않는다.
+                let rename_from = self.loaded_name.clone().filter(|old| old != &name);
+                Some(PanelAction::Save {
+                    name,
+                    spec,
+                    rename_from,
+                })
             }
             Err(e) => {
                 self.set_state(ConnState::Failed(e));
