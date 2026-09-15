@@ -6,7 +6,6 @@
 //! 우클릭 = 메뉴(Select rows · Open source · Refresh · Copy name) · ↑↓←→ Enter.
 
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
-use nexa_ctl::controls::{draw_chevron_down, draw_chevron_right};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::{Color, Theme};
@@ -372,6 +371,30 @@ fn with_session<T>(
         Ok(r) => r,
         Err(_) => Err("internal: catalog panicked".into()),
     }
+}
+
+/// 꺾임 90°(다리 45°) 셰브론 — nexa-ctl 공용(약 127°)보다 날카로운 모양(사용자 09-15) · 크기 = 영역 · 획 = 영역/9.
+fn chevron_90(dc: &mut dyn DrawCtx, area: Rect, color: Color, expanded: bool) {
+    let cx = area.x + area.w / 2;
+    let cy = area.y + area.h / 2;
+    let half = (area.w * 3 / 10).max(3);
+    let w = (area.w as f32 / 9.0).max(1.5);
+    let pts = if expanded {
+        // ∨ — 꼭짓점 아래
+        [
+            (cx - half, cy - half / 2),
+            (cx, cy + half / 2),
+            (cx + half, cy - half / 2),
+        ]
+    } else {
+        // › — 꼭짓점 오른쪽
+        [
+            (cx - half / 2, cy - half),
+            (cx + half / 2, cy),
+            (cx - half / 2, cy + half),
+        ]
+    };
+    dc.polyline(&pts, color, w);
 }
 
 /// 종류 폴더 라벨(i18n).
@@ -1185,11 +1208,7 @@ impl Explorer {
                     if n.expandable && !empty_loaded {
                         let cw = th_txt.max(10); // 사용자 09-15: 글꼴 높이의 1.0배
                         let chev = Rect::new(gx, y + (row_h - cw) / 2, cw, cw);
-                        if n.expanded {
-                            draw_chevron_down(dc, chev, th.text_dim);
-                        } else {
-                            draw_chevron_right(dc, chev, th.text_dim);
-                        }
+                        chevron_90(dc, chev, th.text_dim, n.expanded);
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 칩(오브젝트 종류 색).
