@@ -1565,6 +1565,20 @@ impl ConnWin {
                     Key::Character(c) if self.primary && matches!(c, "v" | "V") => {
                         self.clip(EditCtxAction::Paste)
                     }
+                    Key::Character(c) if self.primary && !self.shift && matches!(c, "z" | "Z") => {
+                        let mut inv = Invalidations::default();
+                        if let Some(tb) = self.focused_tb() {
+                            tb.on_event(&InputEvent::Undo, &mut inv);
+                        }
+                        self.redraw();
+                    }
+                    Key::Character(c) if self.primary && matches!(c, "z" | "Z" | "y" | "Y") => {
+                        let mut inv = Invalidations::default();
+                        if let Some(tb) = self.focused_tb() {
+                            tb.on_event(&InputEvent::Redo, &mut inv);
+                        }
+                        self.redraw();
+                    }
                     Key::Character(c) if self.primary && matches!(c, "a" | "A") => {
                         let mut inv = Invalidations::default();
                         if let Some(tb) = self.focused_tb() {

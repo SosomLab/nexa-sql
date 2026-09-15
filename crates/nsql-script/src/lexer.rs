@@ -50,6 +50,15 @@ pub fn classify(text: &str) -> Vec<Class> {
                 out[i..end].fill(Class::Str);
                 i = end;
             }
+            // PostgreSQL 달러 인용(`$$ … $$` · `$body$ … $body$`) — 함수/프로시저 본문(사용자 09-15 PG 지원).
+            b'$' if !prev_is_ident(b, i) => {
+                if let Some(end) = scan_dollar_quoted(b, i) {
+                    out[i..end].fill(Class::Str);
+                    i = end;
+                } else {
+                    i += 1;
+                }
+            }
             b'"' => {
                 let mut j = i + 1;
                 while j < n && b[j] != b'"' {
@@ -121,6 +130,27 @@ fn scan_q_quoted(b: &[u8], start: usize) -> usize {
         j += 1;
     }
     n
+}
+
+/// PostgreSQL 달러 인용 — 여는 태그 `$[ident]$`를 읽고 같은 태그가 닫을 때까지. 태그가 아니면 None.
+fn scan_dollar_quoted(b: &[u8], start: usize) -> Option<usize> {
+    let n = b.len();
+    let mut j = start + 1;
+    while j < n && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+        j += 1;
+    }
+    if j >= n || b[j] != b'$' {
+        return None;
+    }
+    let tag = &b[start..=j];
+    let mut k = j + 1;
+    while k + tag.len() <= n {
+        if &b[k..k + tag.len()] == tag {
+            return Some(k + tag.len());
+        }
+        k += 1;
+    }
+    Some(n)
 }
 
 /// 식별자 문자(바인드 이름 · 키워드) — Oracle은 `$` `#`도 허용.

@@ -12,10 +12,11 @@ description = "Nexa SQL 드라이버 레지스트리 — 접속 문자열/Connec
 workspace = true
 
 [features]
-default = ["sqlite", "oracle", "mssql"]
+default = ["sqlite", "oracle", "mssql", "pg"]
 sqlite = ["dep:nsql-driver-sqlite"]
 oracle = ["dep:nsql-driver-oracle"]
 mssql = ["dep:nsql-driver-mssql"]
+pg = ["dep:nsql-driver-pg"]
 
 [dependencies]
 nsql-core.workspace = true
@@ -23,6 +24,7 @@ nsql-script.workspace = true
 nsql-driver-sqlite = { workspace = true, optional = true }
 nsql-driver-oracle = { workspace = true, optional = true }
 nsql-driver-mssql = { workspace = true, optional = true }
+nsql-driver-pg = { workspace = true, optional = true }
 
 [dev-dependencies]
 nsql-run.workspace = true

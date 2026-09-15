@@ -7,7 +7,7 @@
 //! nsql export -c <target> (-q <sql> | -t <table>) [-f csv|tsv|json|jsonl|insert[:T]] [-o file]
 //! nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path
 //! nsql config list | get <key> | set <key> <value> | reset <key> | path     # 앱 설정(ui.lang · ui.theme …) — GUI와 공유
-//! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc(-d로 방언)
+//! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
 mod config;
@@ -47,7 +47,7 @@ struct Opts {
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);

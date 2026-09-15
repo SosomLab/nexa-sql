@@ -180,6 +180,54 @@ pub fn needs_declare_prepend(tsql: &str) -> bool {
     }
 }
 
+/// OUT 바인드가 없는 방언(PG · MySQL · SQLite · ODBC): `SELECT a, b INTO :X, :Y FROM …` → `SELECT a AS "X", b AS "Y" FROM …`.
+/// 호스트가 1행 결과의 컬럼 이름을 변수로 흡수한다(`EXEC :V := expr`와 같은 규약). INTO가 없거나 개수가 어긋나면 원문.
+pub fn rewrite_select_into_alias(sql: &str) -> String {
+    let classes = classify(sql);
+    if !sql.trim_start().to_ascii_uppercase().starts_with("SELECT") {
+        return sql.to_string();
+    }
+    let Some(into) = find_word_ci(sql, &classes, "INTO") else {
+        return sql.to_string();
+    };
+    let Some(from_rel) = find_word_ci(&sql[into..], &classify(&sql[into..]), "FROM") else {
+        return sql.to_string();
+    };
+    let from = into + from_rel;
+    let select_kw = sql.to_ascii_uppercase().find("SELECT").unwrap_or(0);
+    let (prefix, select_list) = split_select_prefix(&sql[select_kw + 6..into]);
+    let cols = split_top_level_commas(select_list);
+    let targets: Vec<&str> = sql[into + 4..from]
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if cols.len() != targets.len() || targets.iter().any(|t| !t.starts_with(':')) {
+        return sql.to_string();
+    }
+    let aliased: Vec<String> = cols
+        .iter()
+        .zip(targets.iter())
+        .map(|(c, t)| {
+            format!(
+                "{} AS \"{}\"",
+                c.trim(),
+                t.trim_start_matches(':').to_ascii_uppercase()
+            )
+        })
+        .collect();
+    let prefix = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix} ")
+    };
+    format!(
+        "SELECT {prefix}{} {}",
+        aliased.join(", "),
+        sql[from..].trim()
+    )
+}
+
 /// Oracle `SELECT a, b INTO :X, :Y FROM …` → T-SQL 대입 조회 `SELECT :X = a, :Y = b FROM …`.
 /// 바인드 표기(`:X`)는 남겨 둔다 — [`prepare`]가 `@X`로 바꾸며 파라미터를 붙인다(순서 중요).
 /// INTO가 없거나(일반 조회) 목록 개수가 어긋나면 원문 그대로.
@@ -380,7 +428,7 @@ pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
                 }
             }
             if body.to_ascii_uppercase().starts_with("SELECT") {
-                body.to_string()
+                rewrite_select_into_alias(body)
             } else {
                 format!("CALL {body}")
             }
@@ -392,7 +440,7 @@ pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
                 }
             }
             if body.to_ascii_uppercase().starts_with("SELECT") {
-                body.to_string()
+                rewrite_select_into_alias(body)
             } else {
                 format!("CALL {body}")
             }
@@ -487,6 +535,29 @@ mod tests {
         assert_eq!(
             rewrite_select_into_tsql("INSERT INTO t SELECT 1"),
             "INSERT INTO t SELECT 1"
+        );
+    }
+
+    #[test]
+    fn select_into_alias_for_out_less_dialects() {
+        assert_eq!(
+            rewrite_select_into_alias("SELECT a, COUNT(*) INTO :X, :Y FROM t WHERE k = 1"),
+            "SELECT a AS \"X\", COUNT(*) AS \"Y\" FROM t WHERE k = 1"
+        );
+        assert_eq!(
+            rewrite_select_into_alias("SELECT 1 FROM t"),
+            "SELECT 1 FROM t"
+        );
+        assert_eq!(
+            wrap_exec(
+                Dialect::Postgres,
+                "SELECT COUNT(*) INTO :V_CNT FROM (SELECT 1) t"
+            ),
+            "SELECT COUNT(*) AS \"V_CNT\" FROM (SELECT 1) t"
+        );
+        assert_eq!(
+            wrap_exec(Dialect::Postgres, "my_proc(1, NULL)"),
+            "CALL my_proc(1, NULL)"
         );
     }
 

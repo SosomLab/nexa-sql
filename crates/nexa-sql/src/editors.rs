@@ -178,6 +178,14 @@ impl Editors {
     }
 
     /// 새 탭(제목 없으면 `Script_N`). 활성으로.
+    pub(crate) fn active(&self) -> usize {
+        self.active
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.bufs.len()
+    }
+
     pub(crate) fn new_tab(&mut self, title: Option<String>) {
         self.counter += 1;
         let title = title.unwrap_or_else(|| format!("Script_{}", self.counter));

@@ -1,0 +1,18 @@
+[package]
+name = "nsql-driver-pg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 어댑터 — PostgreSQL(rust-postgres · 동기 클라이언트). $n 바인드 · 텍스트 프로토콜 폴백 · RAISE NOTICE 메시지"
+
+[lints]
+workspace = true
+
+[dependencies]
+nsql-core.workspace = true
+nsql-script.workspace = true
+# DR-3 예외(드라이버). 동기 래퍼(`postgres`)가 내부에 tokio 현재 스레드 런타임을 둔다 — 동기 Session 포트 그대로.
+postgres = "0.19"

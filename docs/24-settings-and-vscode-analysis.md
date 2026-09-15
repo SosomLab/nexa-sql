@@ -112,3 +112,17 @@
 - CLI의 나머지 한국어 문자열(`run/shell/export/conn` 사용법·오류)을 `Msg`로 — 지금은 `config`·GUI만 카탈로그.
 - `ui.font_size`/`editor.font_size` GUI 변경 경로(설정 화면) — 값은 이미 읽는다.
 - 방언별 오버라이드 · 프로젝트 스코프(T-39b).
+
+## 4. 카테고리 트리 — DBeaver Preferences 차용 (사용자 09-15)
+
+DBeaver의 Preferences 트리(General / User Interface / Editors / Connections / Data Editor)를 그대로 상위 그룹으로 쓰고, 우리 카테고리를 아래에 배치한다. 단일 원천 = `nsql-settings::CATEGORY_TREE` · 설정 화면(T-39) 사이드바와 `nsql config list` 머리글이 같은 표를 읽는다.
+
+| 그룹(DBeaver) | 카테고리 | 키(예) |
+|---|---|---|
+| **General** | Log(로그) · Session(세션) | `log.format` · `session.mode` |
+| **User Interface** | Appearance(모양 = DBeaver "Colors and Fonts"+"Appearance") · Input(입력) · Window(창) · Object explorer(= DBeaver Navigator) | `ui.lang/theme/font_size` · `ui.hover_color/pressed_color` · `ui.fade_*` · `tabs.*` · `input.scroll_natural` · `window.focus` · `explorer.*` |
+| **Editors** | SQL Editor(편집기) · (들여쓰기 [31](31-indentation-settings.md) · T-69) | `editor.*` |
+| **Connections** | Connection(접속: 프로필·신호등·시도 상한) | `probe.*` · `connect.*` · `conn.*` |
+| **Data Editor** | Result Sets(결과 셋) | `grid.row_numbers` · `grid.scroll` · `grid.font_size` |
+
+DBeaver에 있으나 아직 없는 것(자리만): Keys(단축키 · T-53) · Drivers(드라이버 관리 · T-28) · Transactions(T-54) · Network profiles/SSH(계획 없음) · Confirmations(삭제 확인은 `conn.delete_confirm_ms`로 대체). 비노출 설정([`HIDDEN`])은 같은 카테고리에 속하되 목록·화면에서 기본 숨김.

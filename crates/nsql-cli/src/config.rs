@@ -48,8 +48,18 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
             };
             // 비노출 설정은 `list all`에서만.
             let show_all = key.is_some_and(|k| k == "all" || k == "--all");
-            let rows = if show_all { s.list() } else { s.list_visible() };
+            let mut rows = if show_all { s.list() } else { s.list_visible() };
+            // DBeaver식 트리 순서(그룹 ▸ 카테고리)로 묶어 보여 준다.
+            rows.sort_by_key(|(e, _, _)| nsql_settings::tree_order(e.cat));
+            let mut last_cat: Option<Msg> = None;
             for (e, v, modified) in rows {
+                if last_cat != Some(e.cat) {
+                    last_cat = Some(e.cat);
+                    match nsql_settings::group_of(e.cat) {
+                        Some(g) => println!("\n[{} ▸ {}]", t(g), t(e.cat)),
+                        None => println!("\n[{}]", t(e.cat)),
+                    }
+                }
                 let mark = if modified { "" } else { t(Msg::CfgDefaultMark) };
                 println!(
                     "{:<18} {:<8} {}  [{}]  {}",

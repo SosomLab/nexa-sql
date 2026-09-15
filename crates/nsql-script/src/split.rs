@@ -251,9 +251,14 @@ fn collect_sql(
 ) -> (String, usize, usize) {
     let b = src.as_bytes();
     let is_block = starts_block(first_line);
+    // PG 함수/프로시저 본문은 `$$ … $$`(문자열로 분류) — 본문이 닫힌 뒤의 코드 `;`가 문장 끝(`/` 줄 불필요).
+    let mut saw_dollar = false;
     let mut i = start;
     while i < b.len() {
-        if !is_block && b[i] == b';' && classes[i] == Class::Code {
+        if b[i] == b'$' && classes[i] == Class::Str {
+            saw_dollar = true;
+        }
+        if (!is_block || saw_dollar) && b[i] == b';' && classes[i] == Class::Code {
             return (src[start..i].trim().to_string(), i + 1, i + 1);
         }
         if b[i] == b'\n' {
@@ -325,6 +330,19 @@ mod tests {
     use crate::command::Command;
 
     const GOLDEN: &str = "EXEC\t:V_PRG_NM\t\t\t:=\t'SP_M4P_MPO_M4E_CREATE_BSY';\n\nEXEC DBMS_STATS.GATHER_TABLE_STATS(USER, 'M4E_I301080', CASCADE=>TRUE, NO_INVALIDATE=>FALSE);\n\nEXEC SP_M4P_MP_VERSION_CREATE(:PC_RET, 'SEBANG', 'DP_202604_W16_V01', 'W', '20260415', '20260705', '', 'sybae0057');\n\n\n--\tMP 버전에 기반한 변수 설정\nEXEC\nSELECT\n\tA.PROJECT_CD\n,\tA.MP_VRSN_ID\nINTO\n\t:V_PROJECT_CD\n,\t:V_MP_VRSN_ID\nFROM\n\tM4S_O301010 A\nWHERE 1=1\nAND\tA.PROJECT_CD\t\t=\t'SEBANG'\n\nSELECT\n\t:V_PROJECT_CD\n,\t:V_PRG_NM\nFROM\n\tDUAL\n;\n";
+
+    #[test]
+    fn pg_dollar_quoted_function_ends_at_semicolon() {
+        let src = "CREATE OR REPLACE PROCEDURE p(IN a INT, OUT b INT) LANGUAGE plpgsql AS $$ BEGIN b := a * 2; END $$;
+CALL p(21, NULL);
+SELECT 1;
+";
+        let items = split_script(src);
+        assert_eq!(items.len(), 3, "{items:#?}");
+        assert!(items[0].text.ends_with("END $$"));
+        assert!(matches!(items[0].kind, ItemKind::Sql(SqlKind::Block)));
+        assert_eq!(items[1].text, "CALL p(21, NULL)");
+    }
 
     #[test]
     fn golden_script_splits_into_five_items() {

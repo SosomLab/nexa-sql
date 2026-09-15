@@ -189,11 +189,12 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "ui.font_size",
+        // 기본 14 → 15 · 편집기 14 → 16 · 그리드 15 신설 — Golden 기준 가독성(사용자 09-15 "폰트가 너무 작다").
         cat: Msg::CatAppearance,
         label: Msg::LblUiFontSize,
         desc: Msg::DescUiFontSize,
         kind: SettingKind::Int { min: 8, max: 40 },
-        default: "14",
+        default: "15",
     },
     Entry {
         key: "editor.line_numbers",
@@ -253,7 +254,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "grid.row_numbers",
-        cat: Msg::CatAppearance,
+        cat: Msg::CatGrid,
         label: Msg::LblGridRowNumbers,
         desc: Msg::DescGridRowNumbers,
         kind: SettingKind::Bool,
@@ -349,11 +350,164 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "grid.scroll",
-        cat: Msg::CatAppearance,
+        cat: Msg::CatGrid,
         label: Msg::LblGridScroll,
         desc: Msg::DescGridScroll,
         kind: SettingKind::Choice(SCROLL_OPTS),
         default: "pixel",
+    },
+    // ★ 단축키(사용자 09-15) — 값 문법은 `nexa-sql::keymap`(Sublime Text 기본 · 비우면 플랫폼 기본).
+    Entry {
+        key: "key.view.palette",
+        cat: Msg::CatKeys,
+        label: Msg::MnCommandPalette,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.file.new",
+        cat: Msg::CatKeys,
+        label: Msg::MnNew,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.file.close_tab",
+        cat: Msg::CatKeys,
+        label: Msg::MnCloseTab,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.tab.next",
+        cat: Msg::CatKeys,
+        label: Msg::MnNextTab,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.tab.prev",
+        cat: Msg::CatKeys,
+        label: Msg::MnPrevTab,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.run.statement",
+        cat: Msg::CatKeys,
+        label: Msg::MnRunStatement,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.run.all",
+        cat: Msg::CatKeys,
+        label: Msg::MnRunAll,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.conn.toggle",
+        cat: Msg::CatKeys,
+        label: Msg::MnConnect,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.view.log",
+        cat: Msg::CatKeys,
+        label: Msg::MnLogWindow,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.view.theme",
+        cat: Msg::CatKeys,
+        label: Msg::MnTheme,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.view.lang",
+        cat: Msg::CatKeys,
+        label: Msg::MnLanguage,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.view.colors",
+        cat: Msg::CatKeys,
+        label: Msg::MnColors,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.view.keys",
+        cat: Msg::CatKeys,
+        label: Msg::MnKeys,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.undo",
+        cat: Msg::CatKeys,
+        label: Msg::MnUndo,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.redo",
+        cat: Msg::CatKeys,
+        label: Msg::MnRedo,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.cut",
+        cat: Msg::CatKeys,
+        label: Msg::MnCut,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.copy",
+        cat: Msg::CatKeys,
+        label: Msg::MnCopy,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.paste",
+        cat: Msg::CatKeys,
+        label: Msg::MnPaste,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.select_all",
+        cat: Msg::CatKeys,
+        label: Msg::MnSelectAll,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
     },
     Entry {
         key: "input.scroll_natural",
@@ -569,7 +723,15 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblEditorFontSize,
         desc: Msg::DescEditorFontSize,
         kind: SettingKind::Int { min: 8, max: 40 },
-        default: "14",
+        default: "16",
+    },
+    Entry {
+        key: "grid.font_size",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFontSize,
+        desc: Msg::DescGridFontSize,
+        kind: SettingKind::Int { min: 8, max: 40 },
+        default: "15",
     },
 ];
 
@@ -577,6 +739,45 @@ pub const REGISTRY: &[Entry] = &[
 #[must_use]
 pub fn entry(key: &str) -> Option<&'static Entry> {
     REGISTRY.iter().find(|e| e.key == key)
+}
+
+/// ★ 설정 트리(DBeaver Preferences 차용 · 사용자 09-15) — 그룹 → 카테고리 순서. 설정 화면(T-39) 사이드바·`config list` 머리글의 단일 원천.
+/// DBeaver: General / User Interface(Appearance·Navigator·Keys) / Editors(SQL Editor) / Connections / Data Editor(Result Sets).
+pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
+    (Msg::GrpGeneral, &[Msg::CatLog, Msg::CatSession]),
+    (
+        Msg::GrpUserInterface,
+        &[
+            Msg::CatAppearance,
+            Msg::CatInput,
+            Msg::CatKeys,
+            Msg::CatWindow,
+            Msg::CatExplorer,
+        ],
+    ),
+    (Msg::GrpEditors, &[Msg::CatEditor]),
+    (Msg::GrpConnections, &[Msg::CatConnection]),
+    (Msg::GrpDataEditor, &[Msg::CatGrid]),
+];
+
+/// 카테고리의 트리 순서(그룹 index, 카테고리 index) — 없으면 맨 뒤.
+#[must_use]
+pub fn tree_order(cat: Msg) -> (usize, usize) {
+    for (gi, (_, cats)) in CATEGORY_TREE.iter().enumerate() {
+        if let Some(ci) = cats.iter().position(|c| *c == cat) {
+            return (gi, ci);
+        }
+    }
+    (usize::MAX, usize::MAX)
+}
+
+/// 카테고리가 속한 그룹(없으면 None).
+#[must_use]
+pub fn group_of(cat: Msg) -> Option<Msg> {
+    CATEGORY_TREE
+        .iter()
+        .find(|(_, cats)| cats.contains(&cat))
+        .map(|(g, _)| *g)
 }
 
 /// 비노출 설정(자주 바꾸지 않는 구현 값 · 사용자 09-14) — 레지스트리에는 있어 `set/get/reset`은 되지만 목록·설정 화면엔 기본 숨김.
@@ -839,7 +1040,7 @@ mod tests {
         let s = Settings::open(tmp("defaults"));
         assert_eq!(s.lang(), Lang::En);
         assert_eq!(s.theme_mode(), ThemeMode::System);
-        assert_eq!(s.int("ui.font_size"), 14);
+        assert_eq!(s.int("ui.font_size"), 15);
         assert!(!s.is_modified("ui.lang"));
         assert_eq!(s.get("nope"), None);
     }
@@ -879,7 +1080,7 @@ mod tests {
             "_schema=1\nui.theme=purple\nui.font_size=abc\nfuture.key=42\n",
         );
         assert_eq!(s.theme_mode(), ThemeMode::System);
-        assert_eq!(s.int("ui.font_size"), 14);
+        assert_eq!(s.int("ui.font_size"), 15);
         s.save().unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(text.contains("future.key=42"), "{text}");

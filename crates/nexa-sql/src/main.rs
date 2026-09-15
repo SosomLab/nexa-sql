@@ -18,6 +18,8 @@ mod editors;
 mod grid;
 mod icon;
 mod input;
+mod keymap;
+mod keys_win;
 mod log_win;
 mod palette;
 mod probe;
@@ -31,6 +33,8 @@ use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
+use keymap::{Chord, Keymap};
+use keys_win::{KeysAction, KeysWin};
 use log_win::{LogWin, LogWinAction};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -98,6 +102,10 @@ struct App {
     /// 색 설정 창 열기 요청(메뉴/팔레트 → 다음 이벤트 루프 턴에 `el`로 연다).
     open_colors: bool,
     colors_win: ColorsWin,
+    /// ★ 단축키 표(사용자 09-15 · Sublime 기본 + `key.*` 설정) · 캡처 창.
+    keymap: Keymap,
+    open_keys: bool,
+    keys_win: KeysWin,
     // 컨트롤
     menubar: MenuBar,
     toolbar: Toolbar,
@@ -129,6 +137,7 @@ struct App {
     cursor: (i32, i32),
     shift: bool,
     primary: bool,
+    alt: bool,
     started: Instant,
     /// 다음 캐럿 깜빡임 시각 — about_to_wait의 재그리기 게이트.
     next_blink: Instant,
@@ -380,6 +389,23 @@ impl App {
         }
     }
 
+    /// 단축키로 온 명령 — 팔레트 토글·로그 창·접속 창처럼 이벤트 루프 핸들이 필요한 것만 여기서, 나머지는 [`Self::menu_action`].
+    fn key_command(&mut self, id: &str, el: &ActiveEventLoop) {
+        match id {
+            "view.palette" => {
+                if self.palette.is_open() {
+                    self.palette.close();
+                    self.redraw();
+                } else {
+                    self.open_palette("");
+                }
+            }
+            "view.log" => self.toggle_log_window(el),
+            "conn.toggle" => self.open_conn_window(el),
+            _ => self.menu_action(id),
+        }
+    }
+
     /// 메뉴·툴바 액션(id = 메뉴 항목 값 · 툴바 항목 id — 같은 어휘).
     fn menu_action(&mut self, id: &str) {
         match id {
@@ -392,8 +418,28 @@ impl App {
             "edit.copy" => self.clip_action(EditCtxAction::Copy),
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
             "edit.select_all" => self.route(InputEvent::SelectAll),
+            "edit.undo" => self.route(InputEvent::Undo),
+            "edit.redo" => self.route(InputEvent::Redo),
             "view.log" => self.toggle_log = true,
             "view.colors" => self.open_colors = true,
+            "view.keys" => self.open_keys = true,
+            "file.close_tab" => {
+                let i = self.editors.active();
+                self.editors.close_tab(i);
+                self.set_focus(Focus::Editor);
+            }
+            "tab.next" | "tab.prev" => {
+                let n = self.editors.len();
+                if n > 1 {
+                    let i = self.editors.active();
+                    let j = if id == "tab.next" {
+                        (i + 1) % n
+                    } else {
+                        (i + n - 1) % n
+                    };
+                    self.editors.switch(j);
+                }
+            }
             "view.theme" => self.cycle_theme(),
             "view.lang" => self.toggle_lang(),
             "view.palette" => self.open_palette(""),
@@ -425,6 +471,7 @@ impl App {
                 t(Msg::MnFile),
                 vec![
                     item("file.new", Msg::MnNew),
+                    item("file.close_tab", Msg::MnCloseTab),
                     MenuEntry::Separator,
                     item("file.exit", Msg::MnExit),
                 ],
@@ -432,6 +479,9 @@ impl App {
             MenuDef::new(
                 t(Msg::MnEdit),
                 vec![
+                    item("edit.undo", Msg::MnUndo),
+                    item("edit.redo", Msg::MnRedo),
+                    MenuEntry::Separator,
                     item("edit.cut", Msg::MnCut),
                     item("edit.copy", Msg::MnCopy),
                     item("edit.paste", Msg::MnPaste),
@@ -446,6 +496,7 @@ impl App {
                     item("view.log", Msg::MnLogWindow),
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
+                    item("view.keys", Msg::MnKeys),
                     item("view.theme", Msg::MnTheme),
                     item("view.lang", Msg::MnLanguage),
                 ],
@@ -538,8 +589,14 @@ impl App {
         cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
         cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
         cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
+        cmds.push(m("edit.undo", Msg::MnEdit, Msg::MnUndo));
+        cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
+        cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
+        cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
+        cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
+        cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));
         cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
         cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
         cmds.push(m("run.statement", Msg::MnRun, Msg::MnRunStatement));
@@ -956,6 +1013,7 @@ impl App {
             let th = self.theme;
             let ui_px = self.settings.int("ui.font_size") as f32;
             let mono_px = self.settings.int("editor.font_size") as f32;
+            let grid_px = self.settings.int("grid.font_size") as f32;
             // ── UI 층(한글 UI 본)
             {
                 let prefs = FontPrefs {
@@ -1052,6 +1110,18 @@ impl App {
                     .with_fonts(prefs)
                     .with_caret_on(caret_on);
                 self.editors.cur_mut().paint(&mut dc, &th);
+            }
+            // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
+            {
+                let prefs = FontPrefs {
+                    base: SlotFont {
+                        size: grid_px,
+                        bold: false,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s).with_fonts(prefs);
                 self.grid.paint(&mut dc, &th, s);
             }
             // ── 최상위 카드(탭 툴팁 · UI 글꼴)
@@ -1358,6 +1428,9 @@ impl ApplicationHandler<Wake> for App {
         if self.colors_win.tick(now_ms) {
             self.colors_win.redraw();
         }
+        if self.keys_win.tick(now_ms) {
+            self.keys_win.redraw();
+        }
         if self.conn_win.tick_bars(now_ms) {
             self.conn_win.redraw();
         }
@@ -1369,6 +1442,7 @@ impl ApplicationHandler<Wake> for App {
             || self.grid.hover_animating()
             || self.conn_win.hover_animating()
             || self.colors_win.animating()
+            || self.keys_win.animating()
             || self.editors.tooltip_pending();
         let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
@@ -1399,6 +1473,30 @@ impl ApplicationHandler<Wake> for App {
                     ConnWinAction::Delete(name) => self.delete_profile(&name),
                     ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
                 }
+            }
+            return;
+        }
+        if self.keys_win.is(id) {
+            let ui_px = self.settings.int("ui.font_size") as f32;
+            match self.keys_win.handle(&event) {
+                KeysAction::Paint => self.keys_win.paint(&self.ui_font, &self.theme, ui_px),
+                KeysAction::Changed { id, code } => {
+                    let _ = self.settings.set(&keymap::setting_key(&id), &code);
+                    let _ = self.settings.save();
+                    self.keymap = Keymap::from_settings(&self.settings);
+                    self.keys_win.refresh(&self.keymap);
+                    self.keys_win.redraw();
+                }
+                KeysAction::ResetAll => {
+                    for c in keymap::COMMANDS {
+                        let _ = self.settings.reset(&keymap::setting_key(c.id));
+                    }
+                    let _ = self.settings.save();
+                    self.keymap = Keymap::from_settings(&self.settings);
+                    self.keys_win.refresh(&self.keymap);
+                    self.keys_win.redraw();
+                }
+                KeysAction::None => {}
             }
             return;
         }
@@ -1472,6 +1570,7 @@ impl ApplicationHandler<Wake> for App {
                 } else {
                     m.state().control_key()
                 };
+                self.alt = m.state().alt_key();
                 return;
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -1504,57 +1603,18 @@ impl ApplicationHandler<Wake> for App {
                 return;
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
-                match kev.logical_key.as_ref() {
-                    Key::Named(NamedKey::Enter) if self.primary => {
-                        self.run_sql(false);
-                        return;
-                    }
-                    Key::Named(NamedKey::F5) => {
-                        self.run_sql(true);
-                        return;
-                    }
-                    Key::Character("t" | "T") if self.primary && self.shift => {
-                        self.cycle_theme();
-                        return;
-                    }
-                    Key::Character("p" | "P") if self.primary && self.shift => {
-                        if self.palette.is_open() {
-                            self.palette.close();
-                            self.redraw();
-                        } else {
-                            self.open_palette("");
+                // ★ 단축키 = 키맵 표 조회(Sublime 기본 · `key.*` 설정 · 사용자 09-15). 조합키 없는 글자는 타이핑이므로
+                // 표에 있어도 가로채지 않는다(F-키·Enter 같은 이름 키는 예외).
+                if let Some(ch) =
+                    Chord::from_winit(&kev.logical_key, self.primary, self.shift, self.alt)
+                {
+                    let plain_char = !ch.primary && !ch.alt && ch.key.chars().count() == 1;
+                    if !plain_char {
+                        if let Some(id) = self.keymap.lookup(&ch) {
+                            self.key_command(id, el);
+                            return;
                         }
-                        return;
                     }
-                    Key::Character("g" | "G") if self.primary && self.shift => {
-                        self.toggle_log_window(el);
-                        return;
-                    }
-                    Key::Character("l" | "L") if self.primary && self.shift => {
-                        self.toggle_lang();
-                        return;
-                    }
-                    Key::Character("l" | "L") if self.primary => {
-                        self.open_conn_window(el);
-                        return;
-                    }
-                    Key::Character("a" | "A") if self.primary => {
-                        self.route(InputEvent::SelectAll);
-                        return;
-                    }
-                    Key::Character("c" | "C") if self.primary => {
-                        self.clip_action(EditCtxAction::Copy);
-                        return;
-                    }
-                    Key::Character("x" | "X") if self.primary => {
-                        self.clip_action(EditCtxAction::Cut);
-                        return;
-                    }
-                    Key::Character("v" | "V") if self.primary => {
-                        self.clip_action(EditCtxAction::Paste);
-                        return;
-                    }
-                    _ => {}
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -1577,6 +1637,21 @@ impl ApplicationHandler<Wake> for App {
             });
             let owner = self.window.clone();
             self.colors_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                over,
+                owner.as_deref(),
+            );
+        }
+        if std::mem::take(&mut self.open_keys) {
+            let over = self.window.as_ref().and_then(|w| {
+                let p = w.outer_position().ok()?;
+                let sz = w.outer_size();
+                Some((p.x, p.y, sz.width, sz.height))
+            });
+            let owner = self.window.clone();
+            self.keys_win.refresh(&self.keymap);
+            self.keys_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 over,
@@ -1723,6 +1798,7 @@ fn main() {
     let rulers = parse_rulers(settings.get("editor.rulers").unwrap_or("80"));
     let ws_style = whitespace_style(&settings);
     let attempts_max = settings.int("connect.max_concurrent").clamp(1, 16) as usize;
+    let keymap = Keymap::from_settings(&settings);
     let colors_win = ColorsWin::new(
         color_setting(&settings, "ui.hover_color"),
         color_setting(&settings, "ui.pressed_color"),
@@ -1748,6 +1824,9 @@ fn main() {
         toggle_log: false,
         open_colors: false,
         colors_win,
+        keymap,
+        open_keys: false,
+        keys_win: KeysWin::new(),
         menubar: MenuBar::new(App::build_menus()),
         toolbar: App::build_toolbar(),
         conn_win: ConnWin::new(panel),
@@ -1770,6 +1849,7 @@ fn main() {
         cursor: (0, 0),
         shift: false,
         primary: false,
+        alt: false,
         started: Instant::now(),
         next_blink: Instant::now(),
         panel_op: None,

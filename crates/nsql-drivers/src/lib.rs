@@ -4,6 +4,7 @@
 //! - `sqlite::memory:` · `sqlite:path/to.db` · `sqlite:///abs/path.db`
 //! - `oracle://user:pass@host:1521/service` · `user/pass@host:1521/svc`(방언 = 기본값 또는 `?dialect=`)
 //! - `mssql://user:pass@host:1433/db`
+//! - `postgres://user:pass@host:5432/db`(`postgresql://` · `pg://`)
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
@@ -43,6 +44,8 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
         Dialect::Oracle => Ok(Box::new(nsql_driver_oracle::OracleSession::connect(spec)?)),
         #[cfg(feature = "mssql")]
         Dialect::Mssql => Ok(Box::new(nsql_driver_mssql::MssqlSession::connect(spec)?)),
+        #[cfg(feature = "pg")]
+        Dialect::Postgres => Ok(Box::new(nsql_driver_pg::PgSession::connect(spec)?)),
         other => Err(DbError {
             code: None,
             message: format!("{other} 드라이버는 이 빌드에 없습니다(M4)"),
@@ -62,6 +65,9 @@ pub fn available() -> Vec<Dialect> {
     }
     if cfg!(feature = "mssql") {
         v.push(Dialect::Mssql);
+    }
+    if cfg!(feature = "pg") {
+        v.push(Dialect::Postgres);
     }
     v
 }

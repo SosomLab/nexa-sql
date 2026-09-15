@@ -1,6 +1,7 @@
 //! 실서버 통합 테스트 — 환경변수가 있을 때만 실행(없으면 통과·건너뜀 메시지).
 //!   NSQL_ORACLE_URL=oracle://nexa:nexa@oracle:1521/FREEPDB1
 //!   NSQL_MSSQL_URL=mssql://sa:Nexa%40Sql2026@mssql:1433/master   (비밀번호의 @는 %40)
+//!   NSQL_PG_URL=postgres://nexa:nexa@postgres:5432/nexa
 //! Codespaces devcontainer(.devcontainer) · GitHub Actions(integration.yml)에서 각 DBMS 컨테이너를 띄워 돌린다.
 #![allow(clippy::unwrap_used)]
 
@@ -138,6 +139,33 @@ fn mssql_dml_batches_and_go() {
         )),
         "{ev:#?}"
     );
+}
+
+#[test]
+fn pg_session_variables_procedure_out_and_notice() {
+    let Some(mut r) = runner_for("NSQL_PG_URL", Dialect::Postgres) else {
+        return;
+    };
+    let ev = run(
+        &mut r,
+        "EXEC :V_NAME := 'nexa'\nEXEC SELECT COUNT(*) INTO :V_CNT FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) t\nSELECT :V_NAME AS n, :V_CNT AS c;\nCREATE OR REPLACE PROCEDURE nsql_it_p(IN a INT, OUT b INT) LANGUAGE plpgsql AS $$ BEGIN b := a * 2; END $$;\nCALL nsql_it_p(21, NULL);\nSELECT 1234.5::numeric AS d, DATE '2026-07-23' AS dt, TIMESTAMP '2026-07-23 01:02:03' AS ts;\n",
+    );
+    assert_eq!(
+        r.engine.vars.get("V_CNT").unwrap().value,
+        Value::Int(3),
+        "{ev:#?}"
+    );
+    let sets: Vec<&nsql_core::ResultSet> = ev
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::ResultSet { rs, .. } => Some(rs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sets[0].rows[0][0], Value::Str("nexa".into()));
+    // CALL의 OUT은 1행 결과로 온다.
+    assert_eq!(sets[1].rows[0][0], Value::Str("42".into()), "{ev:#?}");
+    assert_eq!(sets[2].rows[0][0], Value::Str("1234.5".into()));
 }
 
 #[test]

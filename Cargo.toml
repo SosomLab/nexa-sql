@@ -16,6 +16,7 @@ members = [
   "crates/nsql-driver-sqlite", # ① 어댑터 — rusqlite(bundled) · 실DB 검증용
   "crates/nsql-driver-oracle", # ① 어댑터 — oracle(kubo · ODPI-C · Instant Client 런타임 로드)
   "crates/nsql-driver-mssql",  # ① 어댑터 — tiberius(TDS) · DECLARE @v = @Pn 배치 + 트레일러 SELECT로 OUT 회수
+  "crates/nsql-driver-pg",     # ① 어댑터 — rust-postgres(동기) · $n 바인드 · 단순 질의 텍스트 폴백 (사용자 09-15)
   "crates/nsql-drivers",  # 접속 문자열 → Box<dyn Session> 레지스트리(feature로 어댑터 선택)
   "crates/nsql-cli",      # (bin `nsql`) ★ CLI — 접속·스크립트 실행·export/import·bulk insert. 지금은 dry-run 플래너
   "crates/nexa-sql",      # (bin) GUI 진입 — M1에서 nexa-ui 위에 창을 연다
@@ -47,6 +48,7 @@ nsql-run = { path = "crates/nsql-run" }
 nsql-driver-sqlite = { path = "crates/nsql-driver-sqlite" }
 nsql-driver-oracle = { path = "crates/nsql-driver-oracle" }
 nsql-driver-mssql = { path = "crates/nsql-driver-mssql" }
+nsql-driver-pg = { path = "crates/nsql-driver-pg" }
 nsql-drivers = { path = "crates/nsql-drivers" }
 nsql-vault = { path = "crates/nsql-vault" }
 nsql-i18n = { path = "crates/nsql-i18n" }
