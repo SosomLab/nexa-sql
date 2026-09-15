@@ -47,7 +47,7 @@ const CARD_GAP: f32 = 10.0;
 
 enum CardCtl {
     Bool(Switch),
-    Choice(Combo),
+    Choice(Box<Combo>),
     Text(Box<TextBox>),
 }
 
@@ -236,7 +236,7 @@ impl PrefsWin {
                             .map(|(v, m)| ComboItem::new(*v, t(*m)))
                             .collect();
                         let idx = opts.iter().position(|(v, _)| *v == sn.value).unwrap_or(0);
-                        CardCtl::Choice(Combo::new(items, idx))
+                        CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
                     SettingKind::Lang => {
                         let items: Vec<ComboItem> = Lang::ALL
@@ -247,7 +247,7 @@ impl PrefsWin {
                             .iter()
                             .position(|l| l.code() == sn.value)
                             .unwrap_or(0);
-                        CardCtl::Choice(Combo::new(items, idx))
+                        CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
                     SettingKind::Int { .. } | SettingKind::Text => {
                         CardCtl::Text(Box::new(TextBox::new("").with_text(&sn.value)))
