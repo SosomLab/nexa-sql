@@ -12,7 +12,10 @@ use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{Color, FontPrefs, SlotFont, Theme};
+
+/// 신호등 '불가'(빨강) — 테마 `danger`(어두운 빨강)가 아니라 밝은 순빨강 `#FF0000`(사용자 09-15).
+const LIGHT_RED: Color = Color(0x00FF_0000);
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{
     Button, Control, EditCtxAction, FiredBy, InputEvent, Invalidations, Key as CtlKey, ScrollBars,
@@ -2289,7 +2292,7 @@ impl ConnWin {
                     Some(ProbeStatus::Up) => th.ok,
                     Some(ProbeStatus::Checking) => th.warn,
                     Some(ProbeStatus::PortClosed) => th.accent,
-                    Some(ProbeStatus::Down) => th.danger,
+                    Some(ProbeStatus::Down) => LIGHT_RED,
                     Some(ProbeStatus::Unknown) | None => th.border,
                 };
                 let dot_r = Rect::new(l.x + (sw - dot) / 2 + 1, y + (rh - dot) / 2, dot, dot);
@@ -2420,7 +2423,7 @@ fn paint_test_btn(
         _ if dim => th.border,
         Some(TestMark::Testing) => th.warn,
         Some(TestMark::Ok) => th.ok,
-        Some(TestMark::Failed) => th.danger,
+        Some(TestMark::Failed) => LIGHT_RED,
         None if hover => th.text,
         None => th.text_dim,
     };
