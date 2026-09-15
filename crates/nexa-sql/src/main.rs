@@ -2808,6 +2808,9 @@ impl ApplicationHandler<Wake> for App {
                     self.remember_file_dialog(None);
                     self.sync_modal();
                 }
+                FileWinAction::CopyText(text) => {
+                    let _ = clipboard::write_text(&text);
+                }
                 FileWinAction::None => {
                     if !self.file_win.is_open() {
                         self.sync_modal();

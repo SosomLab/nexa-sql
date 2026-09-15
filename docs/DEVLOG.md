@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (30차 · win)** — dir2 셰브론 공용화(nexa-ctl) · 파일 대화상자 목록 = 트리(인라인 펼침) + 우클릭 메뉴 · 가상 최상위 "내 PC"(3-OS). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (29차 · win)** — 파일 대화상자 경로 바(dir2 이식: ⌂←→↑ · 브레드크럼 · 우클릭 편집 · `shell:`/`$env:`/`%V%` 별칭) · 장소 = 폴더 트리(지연 로딩). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (28차 · win)** — 파일 대화상자 컬럼 폭 조절(헤더 경계 드래그 · ↔ 커서 · `TreeGrid::set_column_width`). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (27차 · win)** — 파일 대화상자 정렬 배지 = 결과 그리드와 동일(nexa-ctl `GridColumn.badge`). → [journal](journal/2026-09-15.md)

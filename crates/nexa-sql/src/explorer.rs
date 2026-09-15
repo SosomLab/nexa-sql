@@ -397,36 +397,6 @@ fn with_session<T>(
     }
 }
 
-/// 셰브론 — 꺾임각 [`CHEVRON_DEG`](DBeaver 확대 캡처 실측: 다리 dx ≈ dy → 90° · 사용자 09-15) · 크기 = 영역 · 획 = 영역/10.
-const CHEVRON_DEG: f32 = 90.0;
-
-fn chevron_90(dc: &mut dyn DrawCtx, area: Rect, color: Color, expanded: bool) {
-    let cx = area.x + area.w / 2;
-    let cy = area.y + area.h / 2;
-    // 다리 길이(꼭짓점 → 끝)의 축 성분: 진행 방향 = a · 벌어지는 방향 = b (tan(θ/2) = b/a).
-    let len = (area.w as f32 * 0.32).max(3.0);
-    let half_t = (CHEVRON_DEG / 2.0).to_radians();
-    let a = (len * half_t.cos()).round() as i32; // 진행 방향
-    let b = (len * half_t.sin()).round() as i32; // 벌어짐(반)
-    let w = (area.w as f32 / 10.0).max(1.5);
-    let pts = if expanded {
-        // ∨ — 꼭짓점 아래
-        [
-            (cx - b, cy - a / 2),
-            (cx, cy + a - a / 2),
-            (cx + b, cy - a / 2),
-        ]
-    } else {
-        // › — 꼭짓점 오른쪽
-        [
-            (cx - a / 2, cy - b),
-            (cx + a - a / 2, cy),
-            (cx - a / 2, cy + b),
-        ]
-    };
-    dc.polyline(&pts, color, w);
-}
-
 /// 종류 폴더 라벨(i18n).
 fn folder_msg(kind: ObjectKind) -> Msg {
     match kind {
@@ -1348,7 +1318,7 @@ impl Explorer {
                         } else {
                             th.text_dim
                         };
-                        chevron_90(dc, chev, color, n.expanded);
+                        nexa_ctl::controls::draw_chevron_90(dc, chev, color, n.expanded);
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 아이콘(설정 켬 · DBMS/스키마/폴더/종류별 · 글꼴 높이 크기) 또는 색 칩(끔).

@@ -27,6 +27,8 @@ pub(crate) enum FileWinAction {
     Confirm(PickerMode, PathBuf, String),
     /// 취소/닫힘.
     Cancel,
+    /// 클립보드에 쓸 텍스트(경로/이름 복사).
+    CopyText(String),
 }
 
 pub(crate) struct FileWin {
@@ -62,6 +64,7 @@ pub(crate) fn labels() -> PickerLabels {
         place_documents: t(Msg::PlaceDocuments).into(),
         place_downloads: t(Msg::PlaceDownloads).into(),
         place_drives: t(Msg::PlaceDrives).into(),
+        kind_drive: t(Msg::KindDrive).into(),
         place_recent: t(Msg::PlaceRecent).into(),
         path_hint: t(Msg::PhPath).into(),
         err_not_found: t(Msg::ErrFileNotFound).into(),
@@ -69,6 +72,10 @@ pub(crate) fn labels() -> PickerLabels {
         err_bad_name: t(Msg::ErrBadFileName).into(),
         err_list: t(Msg::ErrListDir).into(),
         err_mkdir: t(Msg::ErrMkdir).into(),
+        menu_open: t(Msg::MnOpenItem).into(),
+        menu_copy_path: t(Msg::MnCopyPath).into(),
+        menu_copy_name: t(Msg::ExpCopyName).into(),
+        menu_refresh: t(Msg::ExpRefresh).into(),
     }
 }
 
@@ -375,6 +382,7 @@ impl FileWin {
                 self.close();
                 FileWinAction::Cancel
             }
+            PickerAction::CopyText(t) => FileWinAction::CopyText(t),
             PickerAction::None => FileWinAction::None,
         }
     }
