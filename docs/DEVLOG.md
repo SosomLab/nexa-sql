@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (37차 · win · 마지막)** — 파일 대화상자 자원 회수 점검: **선형 누수 없음**(5주기 핸들·GDI 평평 · 셸 일회성 초기화만) · 워커 COM 짝 · 닫는 즉시 워커 회수 · `z_order` 정리 · `scripts/memcycle.ps1` · [37 §6-5](37-file-picker-performance.md) → [journal](journal/2026-09-15.md)
 - **2026-09-15 (36차 · win · 마지막)** — 우클릭 메뉴 아이콘/토글(OS 폴더 아이콘 · 켜짐/꺼짐 도형 · 라벨 정렬) · [37 성능](37-file-picker-performance.md) P-1~P-4 구현(평탄화 캐시 · 가시 행만 · 링크만 stat · 배치 150ms) · **맥 인수인계 메모** → [journal](journal/2026-09-15.md)
 - **2026-09-15 (35차 · win)** — 브레드크럼 편집 = 우클릭 전용. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (34차 · win)** — 파일 대화상자 열거 = 백그라운드(배치 스트리밍 · Drop 취소 · 아이콘 워커 유휴 종료 · nexa-ui docs/20 §2-2). → [journal](journal/2026-09-15.md)

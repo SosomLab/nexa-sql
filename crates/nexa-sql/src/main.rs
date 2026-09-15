@@ -674,6 +674,23 @@ impl App {
             return;
         }
         self.conn_modal = open;
+        if !open {
+            // 닫힌 모달 창의 WindowId는 z-order 목록에서 걷어낸다(열 때마다 새 id → 남겨 두면 한 칸씩 자란다 · 09-15 누수 점검).
+            let live: Vec<WindowId> = [
+                self.window.as_deref(),
+                self.log_win.window(),
+                self.colors_win.window(),
+                self.keys_win.window(),
+                self.prefs_win.window(),
+                self.conn_win.window(),
+                self.file_win.window(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(Window::id)
+            .collect();
+            self.z_order.retain(|id| live.contains(id));
+        }
         // 메인 창 + 그 일부로 보는 보조 창 전부(로그 · 색 · 단축키 · 설정).
         let others: Vec<&Window> = [
             self.window.as_deref(),
