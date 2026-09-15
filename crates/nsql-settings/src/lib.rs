@@ -139,6 +139,19 @@ pub struct Entry {
     pub default: &'static str,
 }
 
+/// 줄끝(docs/38 · DBeaver/Eclipse "New text file line delimiter" 대응 · 09-16).
+const EOL_NEW_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValEolAuto),
+    ("lf", Msg::ValEolLf),
+    ("crlf", Msg::ValEolCrlf),
+];
+const EOL_SAVE_OPTS: &[(&str, Msg)] = &[
+    ("keep", Msg::ValEolKeep),
+    ("lf", Msg::ValEolLf),
+    ("crlf", Msg::ValEolCrlf),
+    ("os", Msg::ValEolAuto),
+];
+
 const SESSION_MODE_OPTS: &[(&str, Msg)] = &[
     ("shared", Msg::ValSessionShared),
     ("per-editor", Msg::ValSessionPerEditor),
@@ -619,6 +632,23 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFileShowDot,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // 줄끝(docs/38 · 사용자 09-16 · DBeaver ▸ General ▸ Workspace "New text file line delimiter" 분류 = Files).
+    Entry {
+        key: "file.eol_new",
+        cat: Msg::CatFiles,
+        label: Msg::LblEolNew,
+        desc: Msg::DescEolNew,
+        kind: SettingKind::Choice(EOL_NEW_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "file.eol_save",
+        cat: Msg::CatFiles,
+        label: Msg::LblEolSave,
+        desc: Msg::DescEolSave,
+        kind: SettingKind::Choice(EOL_SAVE_OPTS),
+        default: "keep",
     },
     Entry {
         key: "key.file.open",

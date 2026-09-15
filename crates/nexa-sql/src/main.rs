@@ -16,6 +16,7 @@ mod colors_win;
 mod conn_win;
 mod connect;
 mod editors;
+mod eol;
 mod exp_icons;
 mod explorer;
 mod file_win;
@@ -114,6 +115,8 @@ struct App {
     status_syntax_rect: Rect,
     /// 상태줄 들여쓰기 세그먼트(`Tab Size: 4`/`Spaces: 4` · 클릭 = 팝업 · T-69 1차).
     status_tab_rect: Rect,
+    /// 상태줄 줄끝 세그먼트(`LF`/`CRLF` · 클릭 = 팝업 · docs/38).
+    status_eol_rect: Rect,
     status_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
     z_order: Vec<WindowId>,
@@ -859,9 +862,40 @@ impl App {
             .open_at(r.x, r.y, items, host, px(240.0, self.scale));
     }
 
+    /// 상태줄 줄끝 팝업(LF/CRLF · 현재 = ✓) — 고르면 활성 탭 줄끝 변경(저장 때 반영 · docs/38).
+    fn open_eol_menu(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let crlf = self.editors.active_crlf();
+        let mark = |on: bool, s: &str| {
+            if on {
+                format!("✓ {s}")
+            } else {
+                format!("   {s}")
+            }
+        };
+        let items = vec![
+            CtxItem::item("eol.lf", mark(!crlf, "LF")),
+            CtxItem::item("eol.crlf", mark(crlf, "CRLF")),
+        ];
+        let r = self.status_eol_rect;
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(r);
+        self.status_menu.set_scale(self.scale);
+        self.status_menu
+            .open_at(r.x, r.y, items, host, px(120.0, self.scale));
+    }
+
     fn indent_pick(&mut self, id: &str) {
         let (ts, spaces) = self.editors.indent();
         match id {
+            "eol.lf" => self.editors.set_active_crlf(false),
+            "eol.crlf" => self.editors.set_active_crlf(true),
             "indent.spaces" | "indent.tabs" => {
                 self.editors.set_tab_indent(ts, id == "indent.spaces");
             }
@@ -949,6 +983,9 @@ impl App {
                 .set_row_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             "editor.tab_size" | "editor.indent_spaces" => self.apply_indent(),
+            "file.eol_new" => self
+                .editors
+                .set_default_crlf(eol::default_crlf(self.settings.get(key).unwrap_or("auto"))),
             "editor.rulers" => self
                 .editors
                 .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
@@ -1593,8 +1630,8 @@ impl App {
             }
         };
         let (text, lossy, used) = Self::decode_bytes(&bytes, enc);
-        let crlf = text.contains("\r\n");
-        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        // 줄끝 다수결 판정 + `\n` 정규화(docs/38).
+        let (crlf, text) = eol::detect(&text);
         self.editors.open_file(path, &text, crlf);
         self.editors.set_active_encoding(used);
         self.set_focus(Focus::Editor);
@@ -1614,10 +1651,12 @@ impl App {
 
     /// 활성 탭 → 파일(UTF-8 · BOM 없음 · 원래 줄끝 유지).
     fn save_to(&mut self, path: &Path) {
-        let mut text = self.editors.cur().text();
-        if self.editors.active_crlf() {
-            text = text.replace('\n', "\r\n");
-        }
+        // 저장 줄끝 = 설정 `file.eol_save`(keep = 탭 줄끝) · docs/38.
+        let crlf = eol::save_crlf(
+            self.settings.get("file.eol_save").unwrap_or("keep"),
+            self.editors.active_crlf(),
+        );
+        let text = eol::apply(&self.editors.cur().text(), crlf);
         let enc = self.editors.active_encoding();
         let text = Self::encode_text(&text, &enc);
         let tmp = path.with_extension(format!(
@@ -2344,12 +2383,23 @@ impl App {
                 } else {
                     tf(Msg::StTabSize, &[&ts])
                 };
+                // 줄끝 세그먼트(VS Code/Sublime식 · 클릭 = LF/CRLF 팝업 · docs/38 · 사용자 09-16).
+                segs.push((
+                    if self.editors.active_crlf() {
+                        "CRLF"
+                    } else {
+                        "LF"
+                    }
+                    .to_string(),
+                    true,
+                ));
                 segs.push((indent_seg, true));
                 segs.push((self.editors.syntax_name(), true));
                 let gap = px(12.0, s);
                 let mut xr = wi - px(8.0, s);
                 self.status_syntax_rect = Rect::new(0, 0, 0, 0);
                 self.status_tab_rect = Rect::new(0, 0, 0, 0);
+                self.status_eol_rect = Rect::new(0, 0, 0, 0);
                 let last = segs.len() - 1;
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
@@ -2365,8 +2415,10 @@ impl App {
                     );
                     if *is_syntax && idx == last {
                         self.status_syntax_rect = r;
-                    } else if *is_syntax {
+                    } else if *is_syntax && idx + 1 == last {
                         self.status_tab_rect = r;
+                    } else if *is_syntax {
+                        self.status_eol_rect = r;
                     }
                     xr -= gap;
                     dc.fill_rect(
@@ -2606,6 +2658,11 @@ impl App {
                 self.redraw();
                 return;
             }
+            if self.status_eol_rect.contains(Point { x, y }) {
+                self.open_eol_menu();
+                self.redraw();
+                return;
+            }
         }
         // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다.
         if self.menubar.is_open() {
@@ -2828,6 +2885,9 @@ impl ApplicationHandler<Wake> for App {
         self.layout();
         self.set_focus(Focus::Editor);
         self.apply_indent();
+        self.editors.set_default_crlf(eol::default_crlf(
+            self.settings.get("file.eol_new").unwrap_or("auto"),
+        ));
         self.apply_menu_decor();
         // 로그 창은 설정 `log.open_at_start`(기본 off · 사용자 09-15)일 때만 메인 옆에 함께 연다(Ctrl+`로 언제든).
         if self.settings.flag("log.open_at_start") {
@@ -3485,6 +3545,7 @@ fn main() {
         last_rows: None,
         last_secs: None,
         status_syntax_rect: Rect::new(0, 0, 0, 0),
+        status_eol_rect: Rect::new(0, 0, 0, 0),
         status_tab_rect: Rect::new(0, 0, 0, 0),
         status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         toggle_log: false,

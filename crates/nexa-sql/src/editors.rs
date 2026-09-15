@@ -46,6 +46,10 @@ pub(crate) struct Editors {
     saved: Vec<String>,
     /// 탭별 줄끝이 CRLF였나(저장 때 원래대로 되돌린다 · 새 탭 = OS 기본).
     crlf: Vec<bool>,
+    /// 마지막 열기/저장 시점의 줄끝(줄끝만 바꿔도 더러움 표시 · 09-16).
+    saved_crlf: Vec<bool>,
+    /// 새 탭의 줄끝 기본(설정 `file.eol_new` · docs/38).
+    default_crlf: bool,
     /// 탭별 인코딩(`utf8|utf8bom|utf16le|utf16be` · 열 때 감지/선택 · 저장 기본값).
     encs: Vec<String>,
     /// 탭 바에 마지막으로 보낸 표시 제목(더러움 `*` 포함) — 바뀔 때만 다시 보낸다.
@@ -93,6 +97,8 @@ impl Editors {
             paths: Vec::new(),
             saved: Vec::new(),
             crlf: Vec::new(),
+            saved_crlf: Vec::new(),
+            default_crlf: cfg!(windows),
             encs: Vec::new(),
             shown_titles: Vec::new(),
             pending_close: None,
@@ -272,7 +278,8 @@ impl Editors {
         self.indents.push(None);
         self.paths.push(None);
         self.saved.push(String::new());
-        self.crlf.push(cfg!(windows));
+        self.crlf.push(self.default_crlf);
+        self.saved_crlf.push(self.default_crlf);
         self.encs.push("utf8".into());
         self.syntax.push(syntax);
         self.titles.push(title);
@@ -285,7 +292,7 @@ impl Editors {
     /// 탭 `i`가 마지막 열기/저장 뒤 바뀌었나.
     pub(crate) fn is_dirty(&self, i: usize) -> bool {
         match (self.bufs.get(i), self.saved.get(i)) {
-            (Some(b), Some(s)) => b.text() != *s,
+            (Some(b), Some(s)) => b.text() != *s || self.crlf.get(i) != self.saved_crlf.get(i),
             _ => false,
         }
     }
@@ -312,6 +319,18 @@ impl Editors {
     pub(crate) fn set_active_encoding(&mut self, enc: &str) {
         if let Some(e) = self.encs.get_mut(self.active) {
             *e = enc.to_string();
+        }
+    }
+
+    /// 새 탭의 줄끝 기본(설정 `file.eol_new`).
+    pub(crate) fn set_default_crlf(&mut self, crlf: bool) {
+        self.default_crlf = crlf;
+    }
+
+    /// 활성 탭의 줄끝 변경(상태줄 세그먼트 · 저장 때 반영 · 저장 시점과 다르면 더러움).
+    pub(crate) fn set_active_crlf(&mut self, crlf: bool) {
+        if let Some(c) = self.crlf.get_mut(self.active) {
+            *c = crlf;
         }
     }
 
@@ -352,6 +371,7 @@ impl Editors {
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = text.to_string();
         self.crlf[i] = crlf;
+        self.saved_crlf[i] = crlf;
         self.sync_tabs();
     }
 
@@ -370,6 +390,7 @@ impl Editors {
         }
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = self.cur().text();
+        self.saved_crlf[i] = self.crlf[i];
         self.sync_tabs();
     }
 
@@ -419,6 +440,8 @@ impl Editors {
             }
             self.paths[i] = None;
             self.saved[i] = String::new();
+            self.crlf[i] = self.default_crlf;
+            self.saved_crlf[i] = self.default_crlf;
             self.counter += 1;
             self.titles[i] = format!("Script_{}", self.counter);
             self.sync_tabs();
@@ -430,6 +453,7 @@ impl Editors {
         self.paths.remove(i);
         self.saved.remove(i);
         self.crlf.remove(i);
+        self.saved_crlf.remove(i);
         self.encs.remove(i);
         if i < self.indents.len() {
             self.indents.remove(i);
@@ -569,6 +593,7 @@ impl Editors {
                         let pa = self.paths.remove(from);
                         let sv = self.saved.remove(from);
                         let cr = self.crlf.remove(from);
+                        let scr = self.saved_crlf.remove(from);
                         let en = self.encs.remove(from);
                         self.bufs.insert(to, b);
                         self.titles.insert(to, t);
@@ -577,6 +602,7 @@ impl Editors {
                         self.paths.insert(to, pa);
                         self.saved.insert(to, sv);
                         self.crlf.insert(to, cr);
+                        self.saved_crlf.insert(to, scr);
                         self.encs.insert(to, en);
                         self.active = to;
                         self.sync_tabs();
