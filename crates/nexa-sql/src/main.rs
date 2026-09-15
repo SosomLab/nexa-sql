@@ -10,6 +10,7 @@
 //! 문자열은 전부 `nsql-i18n`(기본 영어) · 테마는 `ui.theme` + OS 판정([`theme`]) · 글꼴 크기는 `ui.font_size`/`editor.font_size`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod activity;
 mod clipboard;
 mod colors_win;
 mod conn_win;
@@ -34,6 +35,7 @@ mod toolicons;
 mod winfocus;
 mod worker;
 
+use activity::ActivityBar;
 use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
@@ -125,6 +127,8 @@ struct App {
     /// 환경 설정 창(T-39 · 사용자 09-15).
     open_prefs: bool,
     prefs_win: PrefsWin,
+    /// 좌측 활동 막대(VS Code식 · 사용자 09-15) — 패널 토글 + 동작 버튼.
+    act_bar: ActivityBar,
     /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
     file_win: FileWin,
     open_file_dlg: Option<PickerMode>,
@@ -224,21 +228,29 @@ impl App {
         let body_top = chrome_h + px(4.0, s);
         let body_h = h - body_top - status_h;
         let _ = chrome_h;
-        // 왼쪽 오브젝트 탐색기(보이면 본문을 그만큼 오른쪽으로).
+        // 좌측 활동 막대(VS Code 48px) → 그 오른쪽에 패널(오브젝트 탐색기 · 보이면 본문을 그만큼 오른쪽으로).
+        let act_w = px(activity::BAR_W, s);
+        self.act_bar
+            .set_bounds(Rect::new(0, body_top, act_w, body_h), s);
+        self.act_bar.set_active(if self.explorer.is_visible() {
+            Some("view.explorer")
+        } else {
+            None
+        });
         let exp_w = if self.explorer.is_visible() {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
             0
         };
         self.explorer
-            .set_bounds(Rect::new(0, body_top, exp_w, body_h), s);
-        let rx = rx + exp_w;
-        let rw = rw - exp_w;
+            .set_bounds(Rect::new(act_w, body_top, exp_w, body_h), s);
+        let rx = rx + act_w + exp_w;
+        let rw = rw - act_w - exp_w;
         let editor_h = (body_h as f32 * 0.5) as i32;
-        let fb_h = self.find.height(s);
-        self.find.set_bounds(Rect::new(rx, body_top, rw, fb_h), s);
         self.editors
-            .set_bounds(Rect::new(rx, body_top + fb_h, rw, editor_h - pad - fb_h), s);
+            .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
+        // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
+        self.find.set_bounds(self.editors.editor_bounds(), s);
         self.grid.set_bounds(Rect::new(
             rx,
             body_top + editor_h,
@@ -448,6 +460,7 @@ impl App {
             return (Vec::new(), text);
         }
         let cs = self.find.case_sensitive();
+        let ww = self.find.whole_word();
         let eq = |a: char, b: char| {
             if cs {
                 a == b
@@ -455,15 +468,22 @@ impl App {
                 a.to_lowercase().eq(b.to_lowercase())
             }
         };
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
         let mut out = Vec::new();
         let mut i = 0;
         while i + q.len() <= text.len() {
             if text[i..i + q.len()].iter().zip(&q).all(|(a, b)| eq(*a, *b)) {
-                out.push((i, i + q.len()));
-                i += q.len();
-            } else {
-                i += 1;
+                // 단어 단위(ab 토글): 앞뒤가 단어 문자면 일치가 아니다.
+                let boundary_ok = !ww
+                    || ((i == 0 || !is_word(text[i - 1]))
+                        && (i + q.len() >= text.len() || !is_word(text[i + q.len()])));
+                if boundary_ok {
+                    out.push((i, i + q.len()));
+                    i += q.len();
+                    continue;
+                }
             }
+            i += 1;
         }
         (out, text)
     }
@@ -546,7 +566,11 @@ impl App {
             FindAction::None => {}
             FindAction::Next => self.find_step(true, true),
             FindAction::Prev => self.find_step(false, true),
-            FindAction::Changed => self.find_step(true, false),
+            FindAction::Changed => {
+                // 펼침 토글은 패널 높이가 바뀐다 — 다시 배치.
+                self.layout();
+                self.find_step(true, false);
+            }
             FindAction::Replace => self.find_replace_one(),
             FindAction::ReplaceAll => self.find_replace_all(),
             FindAction::Close => {
@@ -892,6 +916,7 @@ impl App {
             "edit.find" | "edit.replace" => {
                 let seed = self.editors.cur().copy_selection();
                 self.find.open(id == "edit.replace", seed);
+                let _ = self.find.with_replace();
                 self.layout();
                 self.set_focus(Focus::Find);
                 self.find_step(true, false);
@@ -1314,6 +1339,10 @@ impl App {
                 acc
             });
         let show_hidden = self.settings.flag("file.show_hidden");
+        let encoding = match mode {
+            PickerMode::Open => "auto".to_string(),
+            PickerMode::Save => self.editors.active_encoding(),
+        };
         self.file_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),
@@ -1324,11 +1353,97 @@ impl App {
             &default_name,
             recent_dirs,
             show_hidden,
+            &encoding,
         );
     }
 
-    /// 파일 → 탭. UTF-8(BOM 제거) · 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
+    /// 파일 → 탭(자동 감지: BOM으로 UTF-8/UTF-16 판별 · 없으면 UTF-8).
     fn open_file(&mut self, path: &Path) {
+        self.open_file_enc(path, "auto");
+    }
+
+    /// 바이트 → 문자열(인코딩 지정 · `auto` = BOM 감지). 돌려주는 값 = (본문, 대체 문자 발생, 실제 인코딩).
+    fn decode_bytes(bytes: &[u8], enc: &str) -> (String, bool, &'static str) {
+        let enc = if enc == "auto" {
+            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                "utf8bom"
+            } else if bytes.starts_with(&[0xFF, 0xFE]) {
+                "utf16le"
+            } else if bytes.starts_with(&[0xFE, 0xFF]) {
+                "utf16be"
+            } else {
+                "utf8"
+            }
+        } else {
+            enc
+        };
+        match enc {
+            "utf16le" | "utf16be" => {
+                let le = enc == "utf16le";
+                let body = if (le && bytes.starts_with(&[0xFF, 0xFE]))
+                    || (!le && bytes.starts_with(&[0xFE, 0xFF]))
+                {
+                    &bytes[2..]
+                } else {
+                    bytes
+                };
+                let units: Vec<u16> = body
+                    .chunks(2)
+                    .map(|c| {
+                        let (a, b) = (c[0], c.get(1).copied().unwrap_or(0));
+                        if le {
+                            u16::from_le_bytes([a, b])
+                        } else {
+                            u16::from_be_bytes([a, b])
+                        }
+                    })
+                    .collect();
+                let text = String::from_utf16_lossy(&units);
+                let lossy = text.contains('\u{FFFD}');
+                (text, lossy, if le { "utf16le" } else { "utf16be" })
+            }
+            "utf8bom" => {
+                let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+                match std::str::from_utf8(body) {
+                    Ok(s) => (s.to_string(), false, "utf8bom"),
+                    Err(_) => (String::from_utf8_lossy(body).into_owned(), true, "utf8bom"),
+                }
+            }
+            _ => match std::str::from_utf8(bytes) {
+                Ok(s) => (s.to_string(), false, "utf8"),
+                Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true, "utf8"),
+            },
+        }
+    }
+
+    /// 문자열 → 바이트(탭 인코딩).
+    fn encode_text(text: &str, enc: &str) -> Vec<u8> {
+        match enc {
+            "utf8bom" => {
+                let mut v = vec![0xEF, 0xBB, 0xBF];
+                v.extend_from_slice(text.as_bytes());
+                v
+            }
+            "utf16le" => {
+                let mut v = vec![0xFF, 0xFE];
+                for u in text.encode_utf16() {
+                    v.extend_from_slice(&u.to_le_bytes());
+                }
+                v
+            }
+            "utf16be" => {
+                let mut v = vec![0xFE, 0xFF];
+                for u in text.encode_utf16() {
+                    v.extend_from_slice(&u.to_be_bytes());
+                }
+                v
+            }
+            _ => text.as_bytes().to_vec(),
+        }
+    }
+
+    /// 파일 → 탭(인코딩 지정). 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
+    fn open_file_enc(&mut self, path: &Path, enc: &str) {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) => {
@@ -1340,16 +1455,11 @@ impl App {
                 return;
             }
         };
-        let bytes = bytes
-            .strip_prefix(&[0xEF, 0xBB, 0xBF])
-            .unwrap_or(&bytes[..]);
-        let (text, lossy) = match std::str::from_utf8(bytes) {
-            Ok(s) => (s.to_string(), false),
-            Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
-        };
+        let (text, lossy, used) = Self::decode_bytes(&bytes, enc);
         let crlf = text.contains("\r\n");
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         self.editors.open_file(path, &text, crlf);
+        self.editors.set_active_encoding(used);
         self.set_focus(Focus::Editor);
         self.push_recent(path);
         let name = path
@@ -1371,13 +1481,15 @@ impl App {
         if self.editors.active_crlf() {
             text = text.replace('\n', "\r\n");
         }
+        let enc = self.editors.active_encoding();
+        let text = Self::encode_text(&text, &enc);
         let tmp = path.with_extension(format!(
             "{}.nsql-tmp",
             path.extension()
                 .map(|e| e.to_string_lossy().into_owned())
                 .unwrap_or_default()
         ));
-        let res = std::fs::write(&tmp, text.as_bytes()).and_then(|()| std::fs::rename(&tmp, path));
+        let res = std::fs::write(&tmp, &text).and_then(|()| std::fs::rename(&tmp, path));
         match res {
             Ok(()) => {
                 self.editors.mark_saved(path);
@@ -2177,6 +2289,7 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
+                self.act_bar.paint(&mut dc, &th);
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
             }
@@ -2380,6 +2493,26 @@ impl App {
             {
                 self.redraw();
                 return;
+            }
+        }
+        // 활동 막대 — 마우스는 커서 아래일 때만(클릭 = 패널 토글/동작).
+        if is_mouse {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            if self.act_bar.bounds().contains(cur) {
+                if self.act_bar.on_event(&ev) {
+                    self.redraw();
+                }
+                if let Some(id) = self.act_bar.take_picked() {
+                    self.menu_action(id);
+                }
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.act_bar.clear_hover() {
+                self.redraw();
             }
         }
         // ★ 오브젝트 탐색기 — 열린 메뉴는 먼저 · 마우스는 커서 아래 · 키는 포커스일 때.
@@ -2660,11 +2793,14 @@ impl ApplicationHandler<Wake> for App {
             let ui_px = self.settings.int("ui.font_size") as f32;
             match self.file_win.handle(&event) {
                 FileWinAction::Paint => self.file_win.paint(&self.ui_font, &self.theme, ui_px),
-                FileWinAction::Confirm(mode, path) => {
+                FileWinAction::Confirm(mode, path, enc) => {
                     self.remember_file_dialog(path.parent());
                     match mode {
-                        PickerMode::Open => self.open_file(&path),
-                        PickerMode::Save => self.save_to(&path),
+                        PickerMode::Open => self.open_file_enc(&path, &enc),
+                        PickerMode::Save => {
+                            self.editors.set_active_encoding(&enc);
+                            self.save_to(&path);
+                        }
                     }
                     self.sync_modal();
                 }
@@ -3158,6 +3294,7 @@ fn main() {
         keys_win: KeysWin::new(),
         open_prefs: false,
         prefs_win: PrefsWin::new(),
+        act_bar: ActivityBar::new(),
         file_win: FileWin::new(),
         open_file_dlg: None,
         menubar: MenuBar::new(App::build_menus()),

@@ -221,6 +221,54 @@ fn shape_db(x: f32, y: f32) -> bool {
     top || mid || bot || sides
 }
 
+/// 활동 막대 — 탐색기(겹친 문서 두 장 · VS Code Explorer 느낌).
+fn shape_files(x: f32, y: f32) -> bool {
+    let back = in_rounded_rect(x, y, 44.0, 36.0, 120.0, 150.0, 10.0)
+        && !in_rounded_rect(x, y, 62.0, 54.0, 84.0, 114.0, 6.0)
+        && !in_rounded_rect(x, y, 92.0, 76.0, 124.0, 150.0, 10.0);
+    let front = in_rounded_rect(x, y, 92.0, 76.0, 124.0, 150.0, 10.0)
+        && !in_rounded_rect(x, y, 110.0, 94.0, 88.0, 114.0, 6.0);
+    let lines = stroke(x, y, (128.0, 130.0), (188.0, 130.0), 12.0)
+        || stroke(x, y, (128.0, 160.0), (188.0, 160.0), 12.0)
+        || stroke(x, y, (128.0, 190.0), (170.0, 190.0), 12.0);
+    back || front || lines
+}
+
+/// 활동 막대 — 접속(플러그 = 툴바 접속 아이콘 재사용).
+fn shape_plug(x: f32, y: f32) -> bool {
+    shape_connect(x, y)
+}
+
+/// 활동 막대 — 환경 설정(톱니: 고리 + 이 8개).
+fn shape_gear(x: f32, y: f32) -> bool {
+    let (cx, cy) = (128.0, 128.0);
+    let d = ((x - cx) * (x - cx) + (y - cy) * (y - cy)).sqrt();
+    let ring = (46.0..=84.0).contains(&d);
+    let mut tooth = false;
+    for k in 0..8 {
+        let a = k as f32 * std::f32::consts::PI / 4.0;
+        let (tx, ty) = (cx + a.cos() * 88.0, cy + a.sin() * 88.0);
+        tooth |= stroke(
+            x,
+            y,
+            (cx + a.cos() * 70.0, cy + a.sin() * 70.0),
+            (tx, ty),
+            30.0,
+        );
+    }
+    ring || tooth
+}
+
+pub(crate) fn mi_files() -> MenuIcon {
+    menu_icon(shape_files)
+}
+pub(crate) fn mi_plug() -> MenuIcon {
+    menu_icon(shape_plug)
+}
+pub(crate) fn mi_gear() -> MenuIcon {
+    menu_icon(shape_gear)
+}
+
 /// 메뉴 아이콘(알파 마스크 · 색은 메뉴가 상태색으로 틴트).
 fn menu_icon(shape: fn(f32, f32) -> bool) -> MenuIcon {
     MenuIcon::from_alpha(SIDE, SIDE, rasterize(shape))
@@ -332,6 +380,9 @@ mod tests {
             shape_table,
             shape_braces,
             shape_db,
+            shape_files,
+            shape_plug,
+            shape_gear,
         ] {
             let (opaque, partial) = coverage(s);
             assert!(opaque > 100, "채워진 픽셀이 있어야 한다: {opaque}");

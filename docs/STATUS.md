@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (22차 · win) — 메뉴 아이콘/하위 메뉴 ✅ · 플로팅 찾기 ✅ · 활동 막대 ✅ · 인코딩 줄 ✅ · 파일 검색 설계 36 📐
+
+좌측 = 활동 막대(탐색기 토글 · 접속 · 설정) + 패널. 우클릭 메뉴 = 아이콘·단축키·하위 메뉴(그리드 Advanced Copy ▸ SQL ▸). 찾기/바꾸기 = 편집기 위 플로팅(Aa · ab · n of m). 파일 열기/저장 하단 인코딩(자동/UTF-8/BOM/UTF-16). **다음**: T-81a 파일 검색 패널 → T-79 EUC-KR → D-53~57. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (21차 · win) — 글리프 캐시 ✅ · 그리드 선택 모델 ✅ · Advanced Copy ✅ · Run 줄 제거 ✅
 
 텍스트 그리기 = 캐시 비트맵 블렌드(nexa-gfx) · 탐색기 아이콘 사전 스케일 · 행 캐시. 결과 그리드: 셀/범위/행 전체/Ctrl 개별/Shift 연속/키보드(dir2 규약) · 복사 = CSV·텍스트·Markdown·JSON·SQL(SELECT/INSERT/UPDATE/DELETE/MERGE). **다음**: 좌측 활동 막대(VS Code) → 플로팅 찾기/바꾸기 → 파일 대화상자 인코딩 줄 → D-53/54. → [journal](journal/2026-09-15.md)

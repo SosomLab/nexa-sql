@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (22차 · win)** — **우클릭 메뉴 아이콘·단축키·하위 메뉴**(DBeaver식 · 편집 메뉴 포함) · 선택 = 텍스트 범위(Golden식) · 툴바 밑줄 제거 · 탐색기 마지막 행 결함 · **플로팅 찾기/바꾸기**(VS Code · 단어 단위) · **좌측 활동 막대**(VS Code 48px) · 파일 대화상자 **인코딩 줄**(UTF-8/BOM/UTF-16 · 탭별 기억) · [36 파일 검색·프로젝트 설계](36-find-in-files-and-project.md)(T-81). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (21차 · win)** — **글리프 캐시**(nexa-gfx · 외곽선/래스터 1회 · `blend_mask`) · 탐색기 행/아이콘 캐시 · Run 줄 제거 · **그리드 선택 모델**(셀·범위·행번호=행·Shift/Ctrl·키보드 · dir2 규약) · **Advanced Copy**(CSV/텍스트/Markdown/JSON/SQL ▸ 5종) · 우클릭 메뉴 클릭 전파 차단. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (20차 · win)** — **파일 열기/저장/다른 이름으로**(T-74 · nexa-ui `nexa-fs`+`nexa-dlg::FilePicker` 자체 대화상자 · 모달 창 · 최근 파일 · 끌어놓기 · 탭 `*` 더러움 · 닫기 2단 · CRLF 보존) · [35 색·선택 조사](35-editor-colors-reference.md)(DBeaver·Golden 설치본 값 · D-53/54 · T-78) · 로그인 열 Pass/계정·암호 · Ctrl+T 새 편집기. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (19차 · win)** — 드래그 미시작 결함(더블클릭 **시간** 판정 `DOUBLE_CLICK_MS`) · 붙여넣기 탭→공백(탭별 `indent_spaces`) · **탭별 들여쓰기**(상태줄 팝업 = 활성 탭만 · 탭 폭 렌더도 탭마다) · **Ctrl+D 다중 선택**(`EditState.extra` · 전 구간 편집 · Ctrl+⇧D 전부) · **Alt+Shift 열 선택**(다중 커서 · 선택 행 줄번호 표시) · DBeaver 색 배치 조사. → [journal](journal/2026-09-15.md)

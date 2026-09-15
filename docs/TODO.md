@@ -117,4 +117,5 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-78** | P1 | 중 | 구문 토큰 종류 확장(자료형·함수·바인드·구분자·명령) + 색 프리셋 `editor.color_preset`(nexa/dbeaver/golden · [35](35-editor-colors-reference.md)) · 선택 반투명 옵션(D-54) | D-53 D-54 | ☐ |
 | **T-79** | P1 | 중 | 파일 인코딩 — 열기/저장 대화상자 하단 인코딩·줄끝 콤보(Auto/UTF-8/UTF-8 BOM/UTF-16/EUC-KR·CP949 표 내장) · 탭별 인코딩 기억 · 상태줄 세그먼트 · 3-OS 동일(자체 대화상자) | T-74 | ☐ |
 | **T-80** | P2 | 소 | 그리드 SQL 복사의 키 = PK(카탈로그 `nsql-catalog` 연동 · 없으면 첫 컬럼) · 테이블 추정 개선(별칭·스키마) | T-56 | ☐ |
+| **T-81** | P1 | 대 | **파일 검색 탭 + 프로젝트**([36](36-find-in-files-and-project.md)) — a 패널(Ctrl+⇧F · Where · 결과 트리 · 열린 탭) · b `nsql-search` 엔진(병렬 열거 · 무시 규칙 · memchr · 스트리밍 · 취소 · `nsql grep`) · c 프로젝트 파일(메모리 탭 저장 · hot exit · 지정 폴더) · d 바꾸기 미리보기/적용 · e 캐시·정규식·EUC-KR | 22차 활동 막대 · T-74 · T-59 | ☐ |
 

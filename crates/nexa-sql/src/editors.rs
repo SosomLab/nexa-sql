@@ -46,6 +46,8 @@ pub(crate) struct Editors {
     saved: Vec<String>,
     /// 탭별 줄끝이 CRLF였나(저장 때 원래대로 되돌린다 · 새 탭 = OS 기본).
     crlf: Vec<bool>,
+    /// 탭별 인코딩(`utf8|utf8bom|utf16le|utf16be` · 열 때 감지/선택 · 저장 기본값).
+    encs: Vec<String>,
     /// 탭 바에 마지막으로 보낸 표시 제목(더러움 `*` 포함) — 바뀔 때만 다시 보낸다.
     shown_titles: Vec<String>,
     /// 더러운 탭 닫기 2단(같은 탭을 3초 안에 다시 닫으면 버림).
@@ -91,6 +93,7 @@ impl Editors {
             paths: Vec::new(),
             saved: Vec::new(),
             crlf: Vec::new(),
+            encs: Vec::new(),
             shown_titles: Vec::new(),
             pending_close: None,
             notice: None,
@@ -270,6 +273,7 @@ impl Editors {
         self.paths.push(None);
         self.saved.push(String::new());
         self.crlf.push(cfg!(windows));
+        self.encs.push("utf8".into());
         self.syntax.push(syntax);
         self.titles.push(title);
         self.active = self.bufs.len() - 1;
@@ -294,6 +298,21 @@ impl Editors {
     /// 활성 탭 제목(저장 대화상자 기본 이름).
     pub(crate) fn active_title(&self) -> String {
         self.titles.get(self.active).cloned().unwrap_or_default()
+    }
+
+    /// 활성 탭의 인코딩.
+    pub(crate) fn active_encoding(&self) -> String {
+        self.encs
+            .get(self.active)
+            .cloned()
+            .unwrap_or_else(|| "utf8".into())
+    }
+
+    /// 활성 탭 인코딩 지정(열기 감지 · 저장 선택).
+    pub(crate) fn set_active_encoding(&mut self, enc: &str) {
+        if let Some(e) = self.encs.get_mut(self.active) {
+            *e = enc.to_string();
+        }
     }
 
     /// 활성 탭의 줄끝이 CRLF인가.
@@ -411,6 +430,7 @@ impl Editors {
         self.paths.remove(i);
         self.saved.remove(i);
         self.crlf.remove(i);
+        self.encs.remove(i);
         if i < self.indents.len() {
             self.indents.remove(i);
         }
@@ -546,6 +566,7 @@ impl Editors {
                         let pa = self.paths.remove(from);
                         let sv = self.saved.remove(from);
                         let cr = self.crlf.remove(from);
+                        let en = self.encs.remove(from);
                         self.bufs.insert(to, b);
                         self.titles.insert(to, t);
                         self.syntax.insert(to, sy);
@@ -553,6 +574,7 @@ impl Editors {
                         self.paths.insert(to, pa);
                         self.saved.insert(to, sv);
                         self.crlf.insert(to, cr);
+                        self.encs.insert(to, en);
                         self.active = to;
                         self.sync_tabs();
                     }
