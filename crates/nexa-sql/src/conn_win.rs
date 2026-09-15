@@ -461,6 +461,17 @@ impl ConnWin {
         self.active = Some(name.to_string());
     }
 
+    /// 접속을 **시도**했다(Test/Connect 시작) — 결과와 무관하게 신호등 대상에 올린다(영속 · 사용자 09-16: 서버는 살아 있는데
+    /// 포트가 안 열리는 대상도 실행 시 점검되어야 한다). 활성 프로필은 건드리지 않는다.
+    pub(crate) fn mark_attempted(&mut self, name: &str) {
+        if name.is_empty() || self.connected.contains(name) {
+            return;
+        }
+        probe::mark_connected(name);
+        self.connected.insert(name.to_string());
+        self.schedule_probes();
+    }
+
     /// 세션이 끊겼다(Disconnect) — 활성 프로필 해제.
     pub(crate) fn clear_active(&mut self) {
         self.active = None;
@@ -589,7 +600,7 @@ impl ConnWin {
         while let Some(r) = hub.try_recv() {
             if let Some(e) = self.probes.get_mut(&r.name) {
                 e.apply(r.outcome, now, &self.policy);
-                // T-63: 대상 집합(한 번 이상 접속) 밖 프로필은 즉시 확인 1회로 끝 — 재예약하지 않는다(접속한 적 없는 서버에 지속 트래픽 금지).
+                // T-63: 대상 집합(한 번 이상 시도) 밖 프로필은 즉시 확인 1회로 끝 — 재예약하지 않는다(시도한 적 없는 서버에 지속 트래픽 금지).
                 if !self.connected.contains(&r.name) {
                     e.next_at = None;
                 }

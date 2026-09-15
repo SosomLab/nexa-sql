@@ -1716,6 +1716,12 @@ impl App {
                 break;
             };
             self.attempts_inflight += 1;
+            // 시도 자체를 신호등 대상으로 기록(성공 여부 무관 · 사용자 09-16).
+            match &a {
+                Attempt::Test { name, .. } | Attempt::Connect { name, .. } => {
+                    self.conn_win.mark_attempted(name);
+                }
+            }
             match a {
                 Attempt::Test { name, spec } => {
                     let proxy = self.wake_proxy.clone();

@@ -1,7 +1,8 @@
 //! 서버 도달성 신호등(사용자 09-14) — 접속 창 로그인 목록의 첫 컬럼.
 //!
 //! - **무엇을**: 프로필의 호스트·포트에 TCP 연결만 시도한다(DB 로그인 없음 · SYN 1개 · 즉시 닫음). 파일 DB·호스트 없음은 대상 아님.
-//! - **누구를**: **한 번 이상 접속에 성공한 프로필만**(사용자 09-14) — `<설정 폴더>/connected.list`(이름 한 줄씩)로 기억.
+//! - **누구를**: **한 번 이상 접속을 시도(Test/Connect)한 프로필**(사용자 09-14 "접속한 적 있는 것만" → 09-16 "시도한 적 있으면" —
+//!   서버는 살아 있는데 포트가 안 열리는 대상도 점검) — `<설정 폴더>/connected.list`(이름 한 줄씩)로 기억.
 //! - **언제**: 접속 창을 열 때 한 번, 그 뒤 창이 열려 있는 동안 `probe.interval`(기본 60초)마다 **주기 갱신**(사용자 09-14).
 //!   실패하면 그 시점부터 **횟수를 누적**하고, 횟수가 쌓일수록 다음 확인까지의 간격을 **지수로 늘린다**(사용자 09-14 — 빠른 재시도 아님):
 //!   1회 실패 = `probe.retry_delay`(기본 60초) · 2회 = ×2 · 3회 = ×4 … `probe.max_retries`(기본 5)번 늘어난 뒤엔 그 간격(기본 60×2⁵ = 32분)을 유지.
@@ -200,13 +201,28 @@ fn icmp_alive(ip: std::net::IpAddr, timeout: Duration) -> bool {
     }
     #[cfg(not(windows))]
     {
-        let secs = timeout.as_secs().max(1).to_string();
+        let mut args = ping_args(timeout);
+        args.push(v4.to_string());
         std::process::Command::new("ping")
-            .args(["-c", "1", "-W", &secs, &v4.to_string()])
+            .args(&args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success())
+    }
+}
+
+/// unix `ping` 인자 — ★ OS마다 `-W`의 단위가 다르다(09-16 mac 실기: 파란색이 안 나오던 원인).
+/// macOS/BSD: `-W waittime` = **밀리초** · `-t timeout` = 초(전체 상한). Linux(iputils): `-W timeout` = **초**.
+/// 리눅스 값(초)을 맥에 그대로 주면 2ms 대기 → 항상 실패 → "서버 살아 있음" 판정이 불가능했다.
+#[cfg(not(windows))]
+fn ping_args(timeout: Duration) -> Vec<String> {
+    let secs = timeout.as_secs().max(1).to_string();
+    if cfg!(target_os = "macos") {
+        let ms = timeout.as_millis().clamp(100, 60_000).to_string();
+        vec!["-c".into(), "1".into(), "-W".into(), ms, "-t".into(), secs]
+    } else {
+        vec!["-c".into(), "1".into(), "-W".into(), secs]
     }
 }
 
@@ -345,7 +361,7 @@ impl ProbeEntry {
     }
 }
 
-// ── 한 번 이상 접속 성공한 프로필 기억(`connected.list`)
+// ── 한 번 이상 접속을 **시도**한 프로필 기억(`connected.list` · 이름은 09-14 그대로 · 의미는 09-16 확장)
 
 fn list_path() -> Option<std::path::PathBuf> {
     nsql_settings::config_dir().map(|d| d.join("connected.list"))
@@ -385,6 +401,18 @@ pub(crate) fn mark_connected(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// macOS는 `-W`가 밀리초(+ `-t` 초) · Linux는 `-W` 초 — 단위를 섞으면 맥에서 ICMP 판정이 항상 실패한다(09-16).
+    #[cfg(not(windows))]
+    #[test]
+    fn ping_args_use_os_units() {
+        let a = ping_args(Duration::from_secs(2));
+        if cfg!(target_os = "macos") {
+            assert_eq!(a, ["-c", "1", "-W", "2000", "-t", "2"]);
+        } else {
+            assert_eq!(a, ["-c", "1", "-W", "2"]);
+        }
+    }
 
     const S: fn(u64) -> Duration = Duration::from_secs;
 
