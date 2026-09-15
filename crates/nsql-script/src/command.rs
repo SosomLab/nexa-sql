@@ -5,7 +5,7 @@
 //! `REM[ARK]` · `GO [n]` · `:setvar` `:connect` `:r`(sqlcmd) · `WHENEVER SQLERROR`.
 
 use crate::connect::ConnectSpec;
-use nsql_core::{Value, VarType};
+use nsql_core::{Dialect, Value, VarType};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Command {
@@ -208,7 +208,10 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
         },
         "CONN" | "CONNECT" => Command::Connect(ConnectSpec::parse(rest)?),
         "DISC" | "DISCONNECT" => Command::Disconnect,
-        "SET" => parse_set(rest)?,
+        "SET" => match parse_set(rest)? {
+            Some(c) => c,
+            None => return Ok(None), // 서버 SET 문(T-SQL NOCOUNT/XACT_ABORT/SHOWPLAN · Oracle TRANSACTION/ROLE · PG search_path …)
+        },
         "DEF" | "DEFINE" => {
             if rest.is_empty() {
                 Command::Define {
@@ -354,11 +357,109 @@ pub fn parse_literal(s: &str) -> Result<Value, String> {
     Err("리터럴이 아님".into())
 }
 
-fn parse_set(rest: &str) -> Result<Command, String> {
+/// SQL*Plus 표시·세션 옵션 이름(우리가 먹는 것) — 그 밖의 `SET …`은 서버 문장으로 통과한다(09-15 · T-SQL `SET NOCOUNT ON` 등이
+/// 조용히 무시되던 결함 수정).
+const SQLPLUS_SET_NAMES: &[&str] = &[
+    "PAGES",
+    "PAGESIZE",
+    "LIN",
+    "LINESIZE",
+    "HEA",
+    "HEADING",
+    "TERM",
+    "TERMOUT",
+    "TRIMS",
+    "TRIMSPOOL",
+    "TRIM",
+    "TRIMOUT",
+    "NULL",
+    "COLSEP",
+    "SQLBL",
+    "SQLBLANKLINES",
+    "WRAP",
+    "LONG",
+    "LONGC",
+    "LONGCHUNKSIZE",
+    "NUMF",
+    "NUMFORMAT",
+    "NUM",
+    "NUMWIDTH",
+    "TAB",
+    "SPACE",
+    "PAUSE",
+    "ESC",
+    "ESCAPE",
+    "SCAN",
+    "CONCAT",
+    "SUFFIX",
+    "SQLPROMPT",
+    "SQLP",
+    "TIME",
+    "EXITC",
+    "EXITCOMMIT",
+    "ERRORL",
+    "ERRORLOGGING",
+    "APPI",
+    "APPINFO",
+    "ROWPREFETCH",
+    "LOBPREFETCH",
+    "STATEMENTCACHE",
+    "MARK",
+    "MARKUP",
+    "SHOW",
+    "SHOWMODE",
+    "UND",
+    "UNDERLINE",
+    "RECSEP",
+    "RECSEPCHAR",
+    "NEWP",
+    "NEWPAGE",
+    "EMB",
+    "EMBEDDED",
+    "FLU",
+    "FLUSH",
+    "BLO",
+    "BLOCKTERMINATOR",
+    "CMDS",
+    "CMDSEP",
+    "COPYC",
+    "COPYCOMMIT",
+    "COPYTYPECHECK",
+    "DESCRIBE",
+    "EDITF",
+    "EDITFILE",
+    "FLAGGER",
+    "INSTANCE",
+    "LOBOF",
+    "LOBOFFSET",
+    "LOGSOURCE",
+    "SECUREDCOL",
+    "SHIFT",
+    "SHIFTINOUT",
+    "SQLC",
+    "SQLCASE",
+    "SQLCO",
+    "SQLCONTINUE",
+    "SQLN",
+    "SQLNUMBER",
+    "SQLPLUSCOMPAT",
+    "SQLPLUSCOMPATIBILITY",
+    "SQLPRE",
+    "SQLPREFIX",
+    "SQLT",
+    "SQLTERMINATOR",
+    "XQUERY",
+    "ENCODING",
+    "DDL",
+    "HISTORY",
+    "HIST",
+];
+
+fn parse_set(rest: &str) -> Result<Option<Command>, String> {
     let (name, value) = split_first_word(rest);
     let name_up = name.to_ascii_uppercase();
     let value = value.trim();
-    Ok(Command::Set(match name_up.as_str() {
+    Ok(Some(Command::Set(match name_up.as_str() {
         "SERVEROUT" | "SERVEROUTPUT" => SetOption::ServerOutput {
             on: on_off(value.split_whitespace().next().unwrap_or("")),
         },
@@ -384,16 +485,56 @@ fn parse_set(rest: &str) -> Result<Command, String> {
                 .map_err(|_| format!("SET {name}: 숫자가 필요합니다"))?,
         ),
         "SQLFORMAT" => SetOption::SqlFormat(value.to_ascii_lowercase()),
-        _ => SetOption::Other {
+        n if SQLPLUS_SET_NAMES.contains(&n) => SetOption::Other {
             name: name_up,
             value: value.to_string(),
         },
-    }))
+        _ => return Ok(None),
+    })))
+}
+
+/// 실행 계획 스크립트(GUI Explain · CLI `nsql explain`) — 방언별 관용. `stmt`는 한 문장(끝 `;` 없어도 됨).
+#[must_use]
+pub fn explain_script(dialect: Dialect, stmt: &str) -> String {
+    let s = stmt.trim().trim_end_matches(';').trim();
+    match dialect {
+        Dialect::Oracle => {
+            format!("EXPLAIN PLAN FOR {s};\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY());\n")
+        }
+        Dialect::Mssql => {
+            format!("SET SHOWPLAN_TEXT ON;\nGO\n{s};\nGO\nSET SHOWPLAN_TEXT OFF;\nGO\n")
+        }
+        Dialect::Postgres => format!("EXPLAIN (VERBOSE, COSTS) {s};\n"),
+        Dialect::Sqlite => format!("EXPLAIN QUERY PLAN {s};\n"),
+        Dialect::Mysql | Dialect::Odbc => format!("EXPLAIN {s};\n"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_set_statements_pass_through_and_sqlplus_set_is_command() {
+        assert!(parse_command("SET NOCOUNT ON").unwrap().is_none());
+        assert!(
+            parse_command("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                .unwrap()
+                .is_none()
+        );
+        assert!(parse_command("SET search_path = public").unwrap().is_none());
+        assert!(matches!(
+            parse_command("SET SERVEROUTPUT ON").unwrap(),
+            Some(Command::Set(SetOption::ServerOutput { on: true }))
+        ));
+        assert!(matches!(
+            parse_command("SET PAGESIZE 0").unwrap(),
+            Some(Command::Set(SetOption::Other { .. }))
+        ));
+        assert!(explain_script(Dialect::Oracle, "SELECT 1 FROM dual;")
+            .starts_with("EXPLAIN PLAN FOR SELECT 1 FROM dual;"));
+        assert!(explain_script(Dialect::Mssql, "SELECT 1").contains("SHOWPLAN_TEXT ON"));
+    }
 
     #[test]
     fn variable_forms() {

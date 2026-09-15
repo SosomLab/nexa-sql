@@ -2,12 +2,23 @@
 //! 호버 두껍게 · 자동 숨김 — nexa-ctl `ScrollBars` 공용) · 컬럼 폭은 앞 200행 실측 · 메시지 모드.
 //! `nexa-grid` 크레이트(U-3 · nexa-ui 21)가 오면 교체한다. 고정폭 층에서 그려진다.
 
+use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key, ScrollBars};
-use nsql_core::{fmt_bytes, fmt_dur, ResultSet, Value};
+use nsql_core::{fmt_bytes, fmt_dur, Dialect, ResultSet, Value};
+use nsql_i18n::{t, Msg};
+
+/// 복사 형식(사용자 09-15 기본 기능) — Ctrl+C = TSV(머리글 없음) · 메뉴로 나머지.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CopyKind {
+    Tsv,
+    TsvWithHeaders,
+    Csv,
+    Insert,
+}
 
 pub(crate) struct Grid {
     pub bounds: Rect,
@@ -43,6 +54,16 @@ pub(crate) struct Grid {
     hdr_resize: Option<(usize, i32, i32)>,
     /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — `IntentFade`(70ms 머문 마지막 목표만 · 진입 = `grid.hover_fade` · 사용자 09-14).
     hover: IntentFade,
+    /// 셀 선택(표시 행 · 표시 컬럼 위치) — 앵커와 현재 셀의 사각 범위 · 드래그로 확장 · Shift+클릭.
+    sel_anchor: Option<(usize, usize)>,
+    sel_cur: Option<(usize, usize)>,
+    drag_sel: bool,
+    /// 우클릭 메뉴(복사 형식 · 전체 선택).
+    menu: CtxMenu,
+    /// 호스트가 가져갈 복사 텍스트(셀 수와 함께).
+    pending_copy: Option<(String, usize)>,
+    /// INSERT 복사용 방언(접속 시 호스트가 알려 준다).
+    dialect: Dialect,
 }
 
 impl Default for Grid {
@@ -69,6 +90,12 @@ impl Default for Grid {
             hdr_drag: None,
             hdr_resize: None,
             hover: IntentFade::with_speed(FadeSpeed::Slow),
+            sel_anchor: None,
+            sel_cur: None,
+            drag_sel: false,
+            menu: CtxMenu::new(),
+            pending_copy: None,
+            dialect: Dialect::Oracle,
         }
     }
 }
@@ -126,7 +153,218 @@ impl Grid {
         self.scroll_y = 0;
         self.scroll_x = 0;
         self.col_w.clear();
+        self.sel_anchor = None;
+        self.sel_cur = None;
+        self.drag_sel = false;
+        self.menu.close();
         self.load = t.elapsed();
+    }
+
+    pub(crate) fn set_dialect(&mut self, d: Dialect) {
+        self.dialect = d;
+    }
+
+    pub(crate) fn menu_open(&self) -> bool {
+        self.menu.is_open()
+    }
+
+    /// 호스트가 클립보드에 쓸 텍스트(셀 수).
+    pub(crate) fn take_copy(&mut self) -> Option<(String, usize)> {
+        self.pending_copy.take()
+    }
+
+    /// 선택 범위(표시 행 r0..=r1 · 표시 컬럼 c0..=c1).
+    fn sel_range(&self) -> Option<(usize, usize, usize, usize)> {
+        let (a, c) = (self.sel_anchor?, self.sel_cur?);
+        Some((a.0.min(c.0), a.0.max(c.0), a.1.min(c.1), a.1.max(c.1)))
+    }
+
+    fn in_sel(&self, di: usize, pos: usize) -> bool {
+        self.sel_range()
+            .is_some_and(|(r0, r1, c0, c1)| di >= r0 && di <= r1 && pos >= c0 && pos <= c1)
+    }
+
+    pub(crate) fn select_all(&mut self) {
+        let n = self.rows();
+        if n == 0 || self.col_order.is_empty() {
+            return;
+        }
+        self.sel_anchor = Some((0, 0));
+        self.sel_cur = Some((n - 1, self.col_order.len() - 1));
+    }
+
+    /// 선택 셀을 형식대로 텍스트로(없으면 None). 표시 순서(정렬·컬럼 이동 반영).
+    pub(crate) fn copy_selection(&self, kind: CopyKind) -> Option<(String, usize)> {
+        let rs = self.rs.as_ref()?;
+        let (r0, r1, c0, c1) = self.sel_range()?;
+        let cols: Vec<usize> = self.col_order[c0..=c1.min(self.col_order.len() - 1)].to_vec();
+        let names: Vec<String> = cols
+            .iter()
+            .map(|&ci| {
+                rs.columns
+                    .get(ci)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let mut out = String::new();
+        let mut cells = 0usize;
+        let plain = |v: &Value| match v {
+            Value::Null => String::new(),
+            other => other.display(),
+        };
+        match kind {
+            CopyKind::Tsv | CopyKind::TsvWithHeaders => {
+                if kind == CopyKind::TsvWithHeaders {
+                    out.push_str(&names.join("\t"));
+                    out.push('\n');
+                }
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let ri = self.row_order.get(di).copied().unwrap_or(di);
+                    let Some(row) = rs.rows.get(ri) else { continue };
+                    let line: Vec<String> = cols
+                        .iter()
+                        .map(|&ci| row.get(ci).map(plain).unwrap_or_default())
+                        .collect();
+                    cells += line.len();
+                    out.push_str(&line.join("\t"));
+                    out.push('\n');
+                }
+            }
+            CopyKind::Csv => {
+                out.push_str(
+                    &names
+                        .iter()
+                        .map(|n| nsql_io::quote_field(n, b','))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                );
+                out.push('\n');
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let ri = self.row_order.get(di).copied().unwrap_or(di);
+                    let Some(row) = rs.rows.get(ri) else { continue };
+                    let line: Vec<String> = cols
+                        .iter()
+                        .map(|&ci| {
+                            nsql_io::quote_field(&row.get(ci).map(plain).unwrap_or_default(), b',')
+                        })
+                        .collect();
+                    cells += line.len();
+                    out.push_str(&line.join(","));
+                    out.push('\n');
+                }
+            }
+            CopyKind::Insert => {
+                let col_list = names.join(", ");
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let ri = self.row_order.get(di).copied().unwrap_or(di);
+                    let Some(row) = rs.rows.get(ri) else { continue };
+                    let vals: Vec<String> = cols
+                        .iter()
+                        .map(|&ci| {
+                            row.get(ci)
+                                .map(|v| v.to_sql_literal(self.dialect))
+                                .unwrap_or_else(|| "NULL".into())
+                        })
+                        .collect();
+                    cells += vals.len();
+                    out.push_str(&format!(
+                        "INSERT INTO T ({col_list}) VALUES ({});\n",
+                        vals.join(", ")
+                    ));
+                }
+            }
+        }
+        (cells > 0).then_some((out, cells))
+    }
+
+    /// 마우스 아래 셀(표시 행 · 표시 컬럼 위치). 행번호 열 위면 컬럼 0.
+    fn cell_at_point(&self, x: i32, y: i32) -> Option<(usize, usize)> {
+        let di = self.row_at_point(x, y)?;
+        let mut cx = self.bounds.x + self.gutter_w - self.scroll_x;
+        if x < self.bounds.x + self.gutter_w {
+            return Some((di, 0));
+        }
+        for (pos, &ci) in self.col_order.iter().enumerate() {
+            let cw = self.col_w.get(ci).copied().unwrap_or(80);
+            if x >= cx && x < cx + cw {
+                return Some((di, pos));
+            }
+            cx += cw;
+        }
+        Some((di, self.col_order.len().saturating_sub(1)))
+    }
+
+    /// 현재 셀이 보이도록 스크롤.
+    fn ensure_cell_visible(&mut self, di: usize, pos: usize) {
+        if self.row_h <= 0 {
+            return;
+        }
+        let top = di as i32 * self.row_h;
+        let vis_h = self.body_h();
+        if top < self.scroll_y {
+            self.scroll_y = top;
+        } else if top + self.row_h > self.scroll_y + vis_h {
+            self.scroll_y = top + self.row_h - vis_h;
+        }
+        let mut cx = 0;
+        for (p, &ci) in self.col_order.iter().enumerate() {
+            let cw = self.col_w.get(ci).copied().unwrap_or(80);
+            if p == pos {
+                let vis_w = self.bounds.w - self.gutter_w;
+                if cx < self.scroll_x {
+                    self.scroll_x = cx;
+                } else if cx + cw > self.scroll_x + vis_w {
+                    self.scroll_x = cx + cw - vis_w;
+                }
+                break;
+            }
+            cx += cw;
+        }
+        self.clamp();
+    }
+
+    fn move_sel(&mut self, dr: i32, dc: i32, extend: bool) {
+        let n = self.rows();
+        let m = self.col_order.len();
+        if n == 0 || m == 0 {
+            return;
+        }
+        let (r, c) = self.sel_cur.unwrap_or((0, 0));
+        let nr = (r as i32 + dr).clamp(0, n as i32 - 1) as usize;
+        let nc = (c as i32 + dc).clamp(0, m as i32 - 1) as usize;
+        self.sel_cur = Some((nr, nc));
+        if !extend || self.sel_anchor.is_none() {
+            self.sel_anchor = Some((nr, nc));
+        }
+        self.ensure_cell_visible(nr, nc);
+    }
+
+    fn open_menu(&mut self, x: i32, y: i32) {
+        let items = vec![
+            CtxItem::item("copy", t(Msg::MnCopy)),
+            CtxItem::item("copy_h", t(Msg::MnCopyWithHeaders)),
+            CtxItem::item("copy_csv", t(Msg::MnCopyCsv)),
+            CtxItem::item("copy_ins", t(Msg::MnCopyInsert)),
+            CtxItem::item("all", t(Msg::MnSelectAll)),
+        ];
+        let text_w = (self.row_h * 9).max(150);
+        self.menu.open_at(x, y, items, self.bounds, text_w);
+    }
+
+    fn menu_pick(&mut self, id: &str) {
+        let kind = match id {
+            "copy" => CopyKind::Tsv,
+            "copy_h" => CopyKind::TsvWithHeaders,
+            "copy_csv" => CopyKind::Csv,
+            "copy_ins" => CopyKind::Insert,
+            "all" => {
+                self.select_all();
+                return;
+            }
+            _ => return,
+        };
+        self.pending_copy = self.copy_selection(kind);
     }
 
     /// 결합 정렬 적용(인덱스 벡터만 재배열 · 안정 정렬이라 같은 값은 원본 순서).
@@ -294,6 +532,74 @@ impl Grid {
     }
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent, scale: f32) {
+        // 열린 우클릭 메뉴가 먼저(바깥 클릭 = 닫고 통과).
+        if self.menu.is_open() {
+            let consumed = self.menu.on_event(ev);
+            if let Some(id) = self.menu.take_picked() {
+                self.menu_pick(&id);
+                return;
+            }
+            if consumed {
+                return;
+            }
+        }
+        // 셀 선택: 클릭 = 셀 · Shift+클릭/드래그 = 범위 · 우클릭 = 메뉴 · Ctrl+A/화살표는 아래 키 처리.
+        if self.row_h > 0 && self.rs.is_some() {
+            match *ev {
+                InputEvent::MouseDown { x, y, shift, .. }
+                    if !self.header_rect().contains(Point { x, y }) =>
+                {
+                    if let Some(cell) = self.cell_at_point(x, y) {
+                        if shift && self.sel_anchor.is_some() {
+                            self.sel_cur = Some(cell);
+                        } else {
+                            self.sel_anchor = Some(cell);
+                            self.sel_cur = Some(cell);
+                        }
+                        self.drag_sel = true;
+                    }
+                }
+                InputEvent::MouseMove { x, y } if self.drag_sel => {
+                    if let Some(cell) = self.cell_at_point(x, y) {
+                        self.sel_cur = Some(cell);
+                    }
+                }
+                InputEvent::MouseUp { .. } if self.drag_sel => {
+                    self.drag_sel = false;
+                }
+                InputEvent::RightDown { x, y } => {
+                    if let Some(cell) = self.cell_at_point(x, y) {
+                        if !self.in_sel(cell.0, cell.1) {
+                            self.sel_anchor = Some(cell);
+                            self.sel_cur = Some(cell);
+                        }
+                        self.open_menu(x, y);
+                        return;
+                    }
+                }
+                InputEvent::Key {
+                    key: Key::Escape, ..
+                } => {
+                    self.sel_anchor = None;
+                    self.sel_cur = None;
+                    return;
+                }
+                InputEvent::Key { key, shift, .. }
+                    if self.sel_cur.is_some()
+                        && matches!(key, Key::Up | Key::Down | Key::Left | Key::Right) =>
+                {
+                    let (dr, dc) = match key {
+                        Key::Up => (-1, 0),
+                        Key::Down => (1, 0),
+                        Key::Left => (0, -1),
+                        _ => (0, 1),
+                    };
+                    self.move_sel(dr, dc, shift);
+                    return;
+                }
+                _ => {}
+            }
+        }
         // 헤더: 클릭 = 정렬(Shift = 결합) · 드래그 = 컬럼 이동.
         if self.row_h > 0 && self.rs.is_some() && !self.col_order.is_empty() {
             let hdr = self.header_rect();
@@ -488,10 +794,19 @@ impl Grid {
             }
             let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
             let mut x = gx0 - self.scroll_x;
-            for &ci in &self.col_order {
+            let sel = self.sel_range();
+            for (pos, &ci) in self.col_order.iter().enumerate() {
                 let Some(v) = row.get(ci) else { continue };
                 let cw = self.col_w.get(ci).copied().unwrap_or(80);
                 let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&cells);
+                if let Some((r0, r1, c0, c1)) = sel {
+                    if di >= r0 && di <= r1 && pos >= c0 && pos <= c1 && clip.w > 0 {
+                        dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
+                        if self.sel_cur == Some((di, pos)) {
+                            dc.stroke_round_rect(clip, 0, th.accent, 1.0);
+                        }
+                    }
+                }
                 if clip.w > 0 && clip.h > 0 {
                     let txt = cell_text(v);
                     let numeric = matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_));
@@ -603,6 +918,7 @@ impl Grid {
             self.scroll_y,
             s,
         );
+        self.menu.paint(dc, th);
     }
 }
 

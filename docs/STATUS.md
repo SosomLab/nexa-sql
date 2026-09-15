@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (3차 · win · 야간 자율) — 그리드 선택·복사 ✅ · 트랜잭션 ✅ · 실행 계획 ✅ · 서버 SET 통과 ✅
+
+그리드: 셀/범위 선택 · Ctrl+C TSV · 우클릭 Copy/with headers/CSV/INSERT · Ctrl+A. 트랜잭션: `session.autocommit`(기본 on) · Run ▸ Commit/Rollback(Ctrl+Alt+C/R) · 상태줄 Auto-commit/Manual(●). 실행 계획: Run ▸ Explain(Ctrl+Shift+X) · `nsql explain -c t -q sql`(Oracle DBMS_XPLAN · MSSQL SHOWPLAN_TEXT · PG EXPLAIN · SQLite · MySQL). 결함 수정: `SET NOCOUNT ON` 등 서버 SET 문이 무시되던 것. 실서버 3종 확인. **다음**: T-71 Oracle 라이브 모니터 → 편집기 찾기/바꾸기 · 파일 열기/저장(nexa-ui 대화상자 필요) → T-72. → [journal](journal/2026-09-15.md)
+
 ## 2026-09-15 (2차 · win · 야간 자율) — 단축키 맵+캡처 창 ✅ · PostgreSQL ✅ · 카탈로그·`nsql cat`·DESC·컴파일 오류 ✅ · 탐색기 1차 ✅ · 페치 상한 ✅ · 실시간 서버 메시지 ✅ · 배포 설계 33 📐
 
 드라이버 **4종**(Oracle·MSSQL·PostgreSQL·SQLite) · 키맵 = Sublime 기본(win/mac) + `key.*` 설정 + 캡처 창(View ▸ Keyboard Shortcuts… · Ctrl+Shift+E 탐색기) · `nsql cat`/탐색기 = 같은 `nsql-catalog`(스키마 → 종류 → 오브젝트 → 컬럼 · 소스 = `CREATE OR REPLACE`/`CREATE OR ALTER` 새 탭 → F5 재컴파일 → Oracle `ALL_ERRORS` 자동 보고) · `grid.max_rows` 200(더 있으면 상태줄) · PRINT/RAISERROR WITH NOWAIT·RAISE NOTICE **도착 즉시** 로그(Oracle DBMS_OUTPUT은 서버 제약 → T-71 폴링 모니터 설계 [32](32-server-messages-and-live-log.md)) · 배포 = 설치본만·목적별 exe·macOS `.app` Universal([33](33-distribution-and-packaging.md) · DR-27 · T-72). 실서버 자동 테스트 3서버 green · 워크스페이스 테스트·clippy green · Debug 실행 중 + Release 빌드(`target/release`). **다음**: T-71 Oracle 라이브 모니터 → T-72 배포 파이프라인(T-62 아이콘) → T-56 잔여(툴팁 카드 · 스레드 풀 · 자동 갱신 · nexa-grid 이식) → T-48 잔여("더 가져오기" 커서) → T-70 PG TLS → T-67 Command 레지스트리 통합 → T-69. ⏳ 사용자: 탐색기·단축키 창 실기 · docs/31 승인 · D-48~50. → [journal](journal/2026-09-15.md)

@@ -198,6 +198,13 @@ impl Runner {
         self
     }
 
+    /// 기본 자동 커밋(설정 `session.autocommit` · 스크립트 `SET AUTOCOMMIT`이 우선).
+    #[must_use]
+    pub fn with_autocommit(mut self, on: bool) -> Self {
+        self.engine.settings.autocommit = on;
+        self
+    }
+
     /// 페치 상한 장착(체이닝 · 0 = 무제한).
     #[must_use]
     pub fn with_max_rows(mut self, n: usize) -> Self {

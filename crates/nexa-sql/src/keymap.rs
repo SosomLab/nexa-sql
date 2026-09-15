@@ -65,6 +65,24 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "f5",
     },
     Command {
+        id: "run.explain",
+        label: Msg::MnExplain,
+        win: "ctrl+shift+x",
+        mac: "cmd+shift+x",
+    },
+    Command {
+        id: "run.commit",
+        label: Msg::MnCommit,
+        win: "ctrl+alt+c",
+        mac: "cmd+alt+c",
+    },
+    Command {
+        id: "run.rollback",
+        label: Msg::MnRollback,
+        win: "ctrl+alt+r",
+        mac: "cmd+alt+r",
+    },
+    Command {
         id: "conn.toggle",
         label: Msg::MnConnect,
         win: "ctrl+shift+c",

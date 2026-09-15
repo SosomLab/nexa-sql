@@ -52,7 +52,7 @@ struct Opts {
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] [--max-rows N] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] [--max-rows N] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql explain -c <target> (-q <sql> | <file>)          실행 계획(방언별 EXPLAIN 관용)\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -428,6 +428,43 @@ fn cmd_shell(o: &Opts) -> i32 {
     0
 }
 
+/// `nsql explain -c <target> -q <sql>` — 방언별 실행 계획(GUI Explain과 같은 `explain_script`).
+fn cmd_explain(o: &Opts) -> i32 {
+    let Some(target) = &o.target else {
+        eprintln!("-c <target>가 필요합니다");
+        return 2;
+    };
+    let sql = match (&o.query, o.positional.first()) {
+        (Some(q), _) => q.clone(),
+        (None, Some(p)) => read_source(p),
+        (None, None) => {
+            eprintln!("-q <sql> 또는 <file>이 필요합니다");
+            return 2;
+        }
+    };
+    let mut printer = Printer {
+        format: o.format.clone(),
+        dialect: o.dialect,
+        errors: 0,
+        feedback: false,
+        timing: o.timing,
+        log: log_hub(o),
+    };
+    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_max_rows(o.max_rows)
+        .with_message_sink(stdout_sink())
+        .with_resolver(resolver());
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    let src = nsql_script::explain_script(runner.engine.dialect, &sql);
+    let mut prompt = |_: &str| Some(String::new());
+    let errs = runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
+    if errs > 0 {
+        1
+    } else {
+        0
+    }
+}
+
 fn cmd_export(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
         eprintln!("-c <target>가 필요합니다");
@@ -516,6 +553,7 @@ fn main() {
         "run" => cmd_run(&o),
         "shell" => cmd_shell(&o),
         "export" => cmd_export(&o),
+        "explain" => cmd_explain(&o),
         "conn" => conn::cmd_conn(&o),
         "cat" | "catalog" | "obj" => cat::cmd_cat(&o),
         "config" | "settings" => config::cmd_config(&o),

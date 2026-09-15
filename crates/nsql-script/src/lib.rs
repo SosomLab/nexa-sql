@@ -25,7 +25,7 @@ pub mod split;
 pub mod vars;
 
 pub use bind::{extract_binds, BindRef};
-pub use command::{Command, SetOption};
+pub use command::{explain_script, Command, SetOption};
 pub use connect::ConnectSpec;
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine};

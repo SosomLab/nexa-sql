@@ -123,6 +123,10 @@ struct App {
     explorer: Explorer,
     /// 마지막으로 접속을 시도한 스펙(접속 성공 시 탐색기 메타 세션을 같은 스펙으로 연다).
     last_spec: Option<ConnectSpec>,
+    /// 현재 접속 방언(Explain · INSERT 복사 · 상태줄).
+    dialect: Dialect,
+    /// 수동 커밋 모드에서 커밋되지 않은 변경이 있는가(상태줄 ● · 사용자 09-15).
+    tx_dirty: bool,
     focus: Focus,
     // 워커
     worker: worker::Handle,
@@ -407,6 +411,17 @@ impl App {
         }
     }
 
+    /// 그리드가 메뉴로 만든 복사 텍스트를 OS 클립보드로.
+    fn after_grid_event(&mut self) {
+        if let Some((text, n)) = self.grid.take_copy() {
+            if clipboard::write_text(&text) {
+                self.status = tf(Msg::StCopied, &[&n.to_string()]);
+            } else {
+                self.status = t(Msg::ErrClipboard).into();
+            }
+        }
+    }
+
     /// 단축키로 온 명령 — 팔레트 토글·로그 창·접속 창처럼 이벤트 루프 핸들이 필요한 것만 여기서, 나머지는 [`Self::menu_action`].
     fn key_command(&mut self, id: &str, el: &ActiveEventLoop) {
         match id {
@@ -435,7 +450,13 @@ impl App {
             "edit.cut" => self.clip_action(EditCtxAction::Cut),
             "edit.copy" => self.clip_action(EditCtxAction::Copy),
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
-            "edit.select_all" => self.route(InputEvent::SelectAll),
+            "edit.select_all" => {
+                if self.focus == Focus::Grid {
+                    self.grid.select_all();
+                } else {
+                    self.route(InputEvent::SelectAll);
+                }
+            }
             "edit.undo" => self.route(InputEvent::Undo),
             "edit.redo" => self.route(InputEvent::Redo),
             "view.log" => self.toggle_log = true,
@@ -481,6 +502,9 @@ impl App {
             }
             "run.statement" => self.run_sql(false),
             "run.all" => self.run_sql(true),
+            "run.explain" => self.run_explain(),
+            "run.commit" => self.worker.send(worker::Cmd::Commit),
+            "run.rollback" => self.worker.send(worker::Cmd::Rollback),
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
             "help.about" => {
@@ -537,6 +561,10 @@ impl App {
                 vec![
                     item("run.statement", Msg::MnRunStatement),
                     item("run.all", Msg::MnRunAll),
+                    item("run.explain", Msg::MnExplain),
+                    MenuEntry::Separator,
+                    item("run.commit", Msg::MnCommit),
+                    item("run.rollback", Msg::MnRollback),
                     MenuEntry::Separator,
                     item("conn.toggle", Msg::MnConnect),
                 ],
@@ -565,6 +593,14 @@ impl App {
         let mut inv = Invalidations::default();
         let mut failed = false;
         match act {
+            EditCtxAction::Copy if self.focus == Focus::Grid => {
+                if let Some((text, n)) = self.grid.copy_selection(grid::CopyKind::Tsv) {
+                    failed = !clipboard::write_text(&text);
+                    if !failed {
+                        self.status = tf(Msg::StCopied, &[&n.to_string()]);
+                    }
+                }
+            }
             EditCtxAction::Copy => {
                 if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
                     let rich =
@@ -633,6 +669,9 @@ impl App {
         cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
         cmds.push(m("run.statement", Msg::MnRun, Msg::MnRunStatement));
         cmds.push(m("run.all", Msg::MnRun, Msg::MnRunAll));
+        cmds.push(m("run.explain", Msg::MnRun, Msg::MnExplain));
+        cmds.push(m("run.commit", Msg::MnRun, Msg::MnCommit));
+        cmds.push(m("run.rollback", Msg::MnRun, Msg::MnRollback));
         cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {
@@ -942,6 +981,39 @@ impl App {
         self.redraw();
     }
 
+    /// 실행 계획(사용자 09-15 기본 기능) — 캐럿 문장(또는 선택)을 방언별 EXPLAIN 관용으로 감싸 실행.
+    fn run_explain(&mut self) {
+        if self.busy {
+            self.status = t(Msg::StRunning).into();
+            return;
+        }
+        let text = self
+            .ed_mut()
+            .copy_selection()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                let full = self.ed_mut().text();
+                let byte_pos = full
+                    .char_indices()
+                    .nth(self.ed_mut().caret())
+                    .map_or(full.len(), |(b, _)| b);
+                nsql_script::statement_at(&full, byte_pos).map(|it| it.text)
+            });
+        let Some(stmt) = text.filter(|s| !s.trim().is_empty()) else {
+            self.status = t(Msg::ErrNoSql).into();
+            return;
+        };
+        let src = nsql_script::explain_script(self.dialect, &stmt);
+        self.busy = true;
+        self.status = t(Msg::StRunning).into();
+        self.log.clear();
+        self.worker.send(worker::Cmd::Run {
+            src,
+            preflight: None,
+        });
+        self.redraw();
+    }
+
     fn drain_events(&mut self) {
         let mut changed = self.drain_conn();
         self.conn_win.drain_probes();
@@ -977,6 +1049,11 @@ impl App {
                         Some(n) => tf(Msg::StRowsAffected, &[&n.to_string(), &secs]),
                         None => tf(Msg::StOk, &[&secs]),
                     };
+                    if rows_affected.is_some_and(|n| n > 0)
+                        && !self.settings.flag("session.autocommit")
+                    {
+                        self.tx_dirty = true;
+                    }
                 }
                 RunEvent::Print { pairs } => {
                     for (n, v) in pairs {
@@ -985,6 +1062,10 @@ impl App {
                     self.grid.set_messages(self.log.clone());
                 }
                 RunEvent::Message(m) => {
+                    if m == t(Msg::StCommitted) || m == t(Msg::StRolledBack) {
+                        self.tx_dirty = false;
+                        self.status = m.clone();
+                    }
                     self.log.push(m);
                     self.grid.set_messages(self.log.clone());
                 }
@@ -994,6 +1075,9 @@ impl App {
                 } => {
                     self.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     self.busy = false;
+                    self.dialect = dialect;
+                    self.grid.set_dialect(dialect);
+                    self.tx_dirty = false;
                     // 탐색기 메타 세션(별도) — 같은 스펙으로.
                     if let Some(spec) = self.last_spec.clone() {
                         self.explorer.connect(&spec);
@@ -1002,6 +1086,7 @@ impl App {
                 RunEvent::Disconnected => {
                     self.status = t(Msg::StDisconnected).into();
                     self.explorer.disconnect();
+                    self.tx_dirty = false;
                 }
                 RunEvent::Timing { timeline, .. } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
@@ -1119,6 +1204,15 @@ impl App {
                 // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
                 let (ln, col) = self.editors.caret_line_col();
                 let mut segs: Vec<(String, bool)> = Vec::new();
+                // 트랜잭션 모드(자동/수동 · 수동에 미커밋 변경이 있으면 ●).
+                let tx = if self.settings.flag("session.autocommit") {
+                    t(Msg::StTxAuto).to_string()
+                } else if self.tx_dirty {
+                    format!("● {}", t(Msg::StTxManual))
+                } else {
+                    t(Msg::StTxManual).to_string()
+                };
+                segs.push((tx, false));
                 let conn = match self.conn_win.panel.state_ref() {
                     ConnState::Connected(d) => d.clone(),
                     _ => "—".to_string(),
@@ -1330,6 +1424,15 @@ impl App {
                 return;
             }
         }
+        // 결과 그리드 우클릭 메뉴가 열려 있으면 그리드가 먼저(바깥 클릭 = 닫고 통과).
+        if self.grid.menu_open() {
+            self.grid.on_event(&ev, self.scale);
+            self.after_grid_event();
+            if self.grid.menu_open() || !matches!(ev, InputEvent::MouseDown { .. }) {
+                self.redraw();
+                return;
+            }
+        }
         // ★ 오브젝트 탐색기 — 열린 메뉴는 먼저 · 마우스는 커서 아래 · 키는 포커스일 때.
         if self.explorer.is_visible() {
             let cur = Point {
@@ -1422,6 +1525,7 @@ impl App {
                 Focus::Editor => self.ed_mut().on_event(&ev, &mut inv),
                 Focus::Grid => {
                     self.grid.on_event(&ev, self.scale);
+                    self.after_grid_event();
                     inv.push(self.grid.bounds);
                 }
                 Focus::Explorer => {}
@@ -1854,9 +1958,11 @@ fn main() {
     };
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
     let max_rows = settings.int("grid.max_rows").max(0) as usize;
+    let autocommit = settings.flag("session.autocommit");
     let (worker, events) = worker::spawn(
         DEFAULT_DIALECT,
         max_rows,
+        autocommit,
         Box::new(move || {
             let _ = proxy.send_event(Wake);
         }),
@@ -1945,6 +2051,8 @@ fn main() {
         grid: grid::Grid::default(),
         explorer,
         last_spec: None,
+        dialect: DEFAULT_DIALECT,
+        tx_dirty: false,
         focus: Focus::Editor,
         worker,
         events,

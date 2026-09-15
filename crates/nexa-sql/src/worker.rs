@@ -13,7 +13,7 @@
 
 use crate::probe;
 use nsql_core::{DbError, Dialect, Session};
-use nsql_i18n::{tf, Msg};
+use nsql_i18n::{t, tf, Msg};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::ConnectSpec;
 use nsql_vault::Vault;
@@ -32,6 +32,9 @@ pub(crate) enum Cmd {
         reconnect_same: bool,
     },
     Disconnect,
+    /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
+    Commit,
+    Rollback,
     Run {
         src: String,
         /// `Some(timeout)` = 실행 전 호스트:포트 빠른 판정(신호등이 초록이 아닐 때 UI가 켠다).
@@ -106,6 +109,7 @@ impl Handle {
 pub(crate) fn spawn(
     default_dialect: Dialect,
     max_rows: usize,
+    autocommit: bool,
     wake: Box<dyn Fn() + Send>,
 ) -> (Handle, mpsc::Receiver<RunEvent>) {
     let (tx, rx) = mpsc::channel::<Cmd>();
@@ -143,6 +147,7 @@ pub(crate) fn spawn(
             let mut runner = Runner::new(default_dialect, opener)
                 .with_max_rows(max_rows)
                 .with_message_sink(sink)
+                .with_autocommit(autocommit)
                 .with_resolver(Box::new(|name: &str| {
                     let v = Vault::open_default().map_err(|e| e.to_string())?;
                     v.resolve(name).map_err(|e| e.to_string())
@@ -196,6 +201,33 @@ pub(crate) fn spawn(
                         } else {
                             ConnOutcome::ConnectFailed(last_err.unwrap_or_default())
                         });
+                        let _ = dtx.send(None);
+                        wake_now();
+                        true
+                    }
+                    c @ (Cmd::Commit | Cmd::Rollback) => {
+                        let commit = matches!(c, Cmd::Commit);
+                        let r = match runner.session.as_mut() {
+                            Some(s) => {
+                                if commit {
+                                    s.commit()
+                                } else {
+                                    s.rollback()
+                                }
+                            }
+                            None => Ok(()),
+                        };
+                        match r {
+                            Ok(()) => emit(RunEvent::Message(
+                                t(if commit {
+                                    Msg::StCommitted
+                                } else {
+                                    Msg::StRolledBack
+                                })
+                                .to_string(),
+                            )),
+                            Err(e) => emit(err(e.message)),
+                        }
                         let _ = dtx.send(None);
                         wake_now();
                         true
