@@ -341,6 +341,18 @@ impl FileWin {
         }
         if let WindowEvent::CursorMoved { position, .. } = ev {
             self.cursor = (position.x as i32, position.y as i32);
+            // 헤더 경계 위 = ↔ 커서(컬럼 폭 조절).
+            let over = self
+                .picker
+                .as_ref()
+                .is_some_and(|p| p.header_edge_hover(self.cursor.0, self.cursor.1));
+            if let Some(w) = &self.window {
+                w.set_cursor(if over {
+                    winit::window::CursorIcon::ColResize
+                } else {
+                    winit::window::CursorIcon::Default
+                });
+            }
         }
         let Some(ie) = self.to_input(ev) else {
             return FileWinAction::None;
