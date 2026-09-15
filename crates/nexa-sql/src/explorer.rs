@@ -1228,7 +1228,13 @@ impl Explorer {
                     if n.expandable && !empty_loaded {
                         let cw = th_txt.max(10); // 사용자 09-15: 글꼴 높이의 1.0배
                         let chev = Rect::new(gx, vcy - cw / 2, cw, cw);
-                        chevron_90(dc, chev, th.text_dim, n.expanded);
+                        // 색: 접힘 = 진한 회색 · 마우스 오버 또는 펼침 = 본문색(검정) (사용자 09-15).
+                        let color = if n.expanded || self.hover == Some(*i) {
+                            th.text
+                        } else {
+                            th.text_dim
+                        };
+                        chevron_90(dc, chev, color, n.expanded);
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 칩(오브젝트 종류 색).
