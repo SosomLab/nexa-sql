@@ -207,30 +207,105 @@ fn shape_run_all(x: f32, y: f32) -> bool {
     in_triangle(x, y, a, b, c)
 }
 
-/// 플러그 — 접속 창. 왼쪽 케이블 · 둥근 몸통 · 오른쪽 핀 2개 · 핀이 꽂히는 소켓 테두리.
-fn shape_connect(x: f32, y: f32) -> bool {
-    // 케이블(둥근 끝 획) → 몸통
-    let cable = stroke(x, y, (16.0, 128.0), (58.0, 128.0), 22.0);
-    let body = in_rounded_rect(x, y, 52.0, 84.0, 80.0, 88.0, 20.0);
-    // 핀 2개
-    let pin1 = in_rounded_rect(x, y, 128.0, 100.0, 46.0, 16.0, 7.0);
-    let pin2 = in_rounded_rect(x, y, 128.0, 140.0, 46.0, 16.0, 7.0);
-    // 소켓 — 오른쪽에 열린 ㄷ자 테두리(획 14)
-    let sock_outer = in_rounded_rect(x, y, 186.0, 70.0, 56.0, 116.0, 18.0);
-    let sock_inner = in_rounded_rect(x, y, 200.0, 84.0, 60.0, 88.0, 10.0);
-    let socket = sock_outer && !sock_inner;
-    cable || body || pin1 || pin2 || socket
+/// 둥근 모서리 깎기 — 모서리 사각 영역 안이면서 원 밖이면 제외(Material q 곡선 근사 · r80).
+fn corner_ok(x: f32, y: f32, cx: f32, cy: f32, quad_x: bool, quad_y: bool) -> bool {
+    let qx = if quad_x { x > cx } else { x < cx };
+    let qy = if quad_y { y > cy } else { y < cy };
+    let in_quad = qx && qy;
+    !in_quad || (x - cx) * (x - cx) + (y - cy) * (y - cy) <= 80.0 * 80.0
 }
 
-/// 접속 해제 — 플러그와 소켓이 벌어진 모양(같은 부품 · 가운데 틈).
+fn shape_connect(x: f32, y: f32) -> bool {
+    // Material `power`(사용자 SVG 09-16): 플러그 몸통 외곽선(위 모서리 r80) + 핀 2개 − 안쪽 구멍.
+    let (x, y) = (x / M, y / M);
+    let body = in_poly(
+        x,
+        y,
+        &[
+            (380.0, 840.0),
+            (380.0, 720.0),
+            (240.0, 580.0),
+            (240.0, 280.0),
+            (720.0, 280.0),
+            (720.0, 580.0),
+            (580.0, 720.0),
+            (580.0, 840.0),
+        ],
+    ) && corner_ok(x, y, 320.0, 360.0, false, false)
+        && corner_ok(x, y, 640.0, 360.0, true, false);
+    let pins = ((320.0..=400.0).contains(&x) || (560.0..=640.0).contains(&x))
+        && (120.0..=280.0).contains(&y);
+    let hole = in_poly(
+        x,
+        y,
+        &[
+            (460.0, 760.0),
+            (500.0, 760.0),
+            (500.0, 686.0),
+            (640.0, 546.0),
+            (640.0, 360.0),
+            (320.0, 360.0),
+            (320.0, 546.0),
+            (460.0, 686.0),
+        ],
+    );
+    (body || pins) && !hole
+}
+
+/// 접속 해제 — Material `power_off`(사용자 SVG 09-16): 플러그를 사선이 가르고 아래·위 조각으로 나뉜 모양.
 fn shape_disconnect(x: f32, y: f32) -> bool {
-    if x < 120.0 {
-        shape_connect(x + 26.0, y) && x + 26.0 < 176.0
-    } else if x > 136.0 {
-        shape_connect(x - 26.0, y) && x - 26.0 >= 186.0
-    } else {
-        false
-    }
+    let (x, y) = (x / M, y / M);
+    // 아래 조각 + 사선(한 다각형 · SVG 꼭짓점 그대로 · 왼쪽 위 모서리 곡선은 (283,283) 꼭짓점으로 근사).
+    let lower = in_poly(
+        x,
+        y,
+        &[
+            (380.0, 840.0),
+            (380.0, 720.0),
+            (240.0, 580.0),
+            (240.0, 360.0),
+            (283.0, 283.0),
+            (360.0, 360.0),
+            (320.0, 360.0),
+            (320.0, 546.0),
+            (460.0, 686.0),
+            (460.0, 760.0),
+            (500.0, 760.0),
+            (500.0, 686.0),
+            (537.0, 649.0),
+            (56.0, 168.0),
+            (112.0, 112.0),
+            (848.0, 848.0),
+            (792.0, 904.0),
+            (594.0, 706.0),
+            (580.0, 720.0),
+            (580.0, 840.0),
+        ],
+    );
+    // 위 조각(핀 둘 + 오른쪽 위 몸통 · 오른쪽 위 모서리 r80).
+    let upper = in_poly(
+        x,
+        y,
+        &[
+            (686.0, 572.0),
+            (640.0, 526.0),
+            (640.0, 360.0),
+            (474.0, 360.0),
+            (320.0, 206.0),
+            (320.0, 120.0),
+            (400.0, 120.0),
+            (400.0, 280.0),
+            (560.0, 280.0),
+            (560.0, 120.0),
+            (640.0, 120.0),
+            (640.0, 320.0),
+            (600.0, 280.0),
+            (640.0, 280.0),
+            (720.0, 280.0),
+            (720.0, 538.0),
+        ],
+    ) && corner_ok(x, y, 640.0, 360.0, true, false);
+    lower || upper
 }
 
 /// ≡ — 로그 창.
@@ -512,13 +587,22 @@ mod tests {
         }
     }
 
+    /// Material `power`(09-16): 핀 둘 · 몸통 외곽선 · 안쪽 구멍 · 핀 사이는 빔. 좌표는 SVG(960)를 M으로 줄인 것.
     #[test]
-    fn connect_has_gap_between_pins_and_socket_is_open() {
-        // 핀 사이(y=128)는 비어 있고, 소켓 안쪽(x=230, y=128)도 비어 있다(꽂히는 자리).
-        assert!(!shape_connect(150.0, 128.0));
-        assert!(!shape_connect(230.0, 128.0));
-        assert!(shape_connect(150.0, 108.0), "위 핀");
-        assert!(shape_connect(90.0, 128.0), "몸통");
-        assert!(shape_connect(192.0, 128.0), "소켓 왼쪽 벽");
+    fn connect_plug_pins_outline_and_hole() {
+        let at = |x: f32, y: f32| shape_connect(x * M, y * M);
+        assert!(at(360.0, 200.0), "왼쪽 핀");
+        assert!(at(600.0, 200.0), "오른쪽 핀");
+        assert!(!at(480.0, 200.0), "핀 사이는 빔");
+        assert!(at(280.0, 480.0), "몸통 왼쪽 벽");
+        assert!(!at(480.0, 480.0), "안쪽 구멍");
+        assert!(at(480.0, 800.0), "아래 목");
+        assert!(!at(250.0, 290.0), "둥근 모서리 밖");
+        // 해제: 사선이 지나가고 핀·아래 목은 남는다.
+        let off = |x: f32, y: f32| shape_disconnect(x * M, y * M);
+        assert!(off(480.0, 536.0), "사선 띠 가운데(y = x + 56)");
+        assert!(off(360.0, 200.0), "핀");
+        assert!(off(480.0, 800.0), "아래 목");
+        assert!(!off(480.0, 420.0), "사선 위쪽 · 구멍 자리는 빔");
     }
 }

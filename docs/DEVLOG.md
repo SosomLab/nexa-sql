@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (4차 · mac)** — 툴바 connect/disconnect = Material `power`/`power_off`(사용자 SVG · `corner_ok` 모서리 깎기). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (3차 · mac)** — 접속 창 위치: 기본 메인 창 가운데(배율 보정) · 같은 모니터면 마지막 위치 · 모니터 바뀌면 가운데. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (2차 · mac)** — Material 아이콘 9종(사용자 SVG: 새로 고침·뒤로·앞으로·상위로·홈 = nexa-ui · New editor·열기·저장(플로피)·**Save As 툴바 버튼 신설** = `in_poly`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (1차 · mac)** — 맥 이관 첫날: 최신화(143+54 커밋) · Debug/Release 빌드 · 접속 프로필 위치(`~/Library/Application Support/nexa-sql`) · SNOP-DB 저장 · **맥↔Windows 차이 9건**(로그인 버튼 폭 HiDPI · Dock 아이콘 · 툴팁 층 · 툴바/탭 높이 · 한글 IME 단축키 · 두부 폰트 · 가로 스크롤 클립/방향 · 툴팁 다중 행) · Test OK 문구 · 기본 탭 문자 4 · **스플리터 2개**(`layout.editor_split_pct`) · 3-OS 스크립트 rustup 보정. → [journal](journal/2026-09-16.md)
