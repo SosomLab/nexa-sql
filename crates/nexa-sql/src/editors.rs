@@ -35,8 +35,10 @@ pub(crate) struct Editors {
     registry: Rc<SyntaxRegistry>,
     rulers: Vec<usize>,
     whitespace: WhitespaceStyle,
-    /// (탭 폭, 공백 들여쓰기) — 새 탭에도 적용.
+    /// (탭 폭, 공백 들여쓰기) **기본값**(설정 `editor.tab_size`/`editor.indent_spaces`) — 새 탭의 시작값.
     indent: (u8, bool),
+    /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
+    indents: Vec<Option<(u8, bool)>>,
 }
 
 const HOVER_MS: u128 = 900;
@@ -69,6 +71,7 @@ impl Editors {
             rulers: Vec::new(),
             whitespace: WhitespaceStyle::default(),
             indent: (4, true),
+            indents: Vec::new(),
         };
         e.new_tab(None);
         e
@@ -153,12 +156,44 @@ impl Editors {
         }
     }
 
-    /// 들여쓰기(탭 폭 · 공백 여부) — 전 탭에(1차 = 전역 · 탭별 재정의는 T-69 후속).
+    /// 들여쓰기 **기본값**(설정) — 재정의가 없는 탭에 적용하고 새 탭의 시작값이 된다.
     pub(crate) fn set_indent(&mut self, tab_size: u8, spaces: bool) {
         self.indent = (tab_size, spaces);
-        for b in &mut self.bufs {
-            b.set_indent(tab_size, spaces);
+        for (i, b) in self.bufs.iter_mut().enumerate() {
+            if self.indents.get(i).copied().flatten().is_none() {
+                b.set_indent(tab_size, spaces);
+            }
         }
+    }
+
+    /// 활성 탭만 들여쓰기 재정의(상태줄 팝업) — 붙여넣기의 탭→공백 변환도 탭마다 따로 간다.
+    pub(crate) fn set_tab_indent(&mut self, tab_size: u8, spaces: bool) {
+        let i = self.active;
+        if let Some(slot) = self.indents.get_mut(i) {
+            *slot = Some((tab_size, spaces));
+        }
+        self.cur_mut().set_indent(tab_size, spaces);
+    }
+
+    /// 열(블록) 선택 모드 — 수식키 상태를 전 탭에 전달(활성 탭이 바뀌어도 일관).
+    pub(crate) fn set_column_mode(&mut self, on: bool) {
+        for b in &mut self.bufs {
+            b.set_column_mode(on);
+        }
+    }
+
+    /// 활성 탭의 선택 구간 수(다중 선택 표시).
+    pub(crate) fn selection_count(&self) -> usize {
+        self.cur().selection_count()
+    }
+
+    /// 활성 탭의 실제 들여쓰기(탭 폭 · 공백 여부) — 상태줄 세그먼트·팝업 표시 근거.
+    pub(crate) fn indent(&self) -> (u8, bool) {
+        self.indents
+            .get(self.active)
+            .copied()
+            .flatten()
+            .unwrap_or(self.indent)
     }
 
     /// 활성 탭 본문의 줄머리 들여쓰기 변환.
@@ -209,6 +244,7 @@ impl Editors {
         let syntax = self.registry.for_title(&title);
         let tb = self.make_box("", &syntax);
         self.bufs.push(tb);
+        self.indents.push(None);
         self.syntax.push(syntax);
         self.titles.push(title);
         self.active = self.bufs.len() - 1;
@@ -226,6 +262,9 @@ impl Editors {
         self.bufs.remove(i);
         self.titles.remove(i);
         self.syntax.remove(i);
+        if i < self.indents.len() {
+            self.indents.remove(i);
+        }
         if self.active >= self.bufs.len() {
             self.active = self.bufs.len() - 1;
         } else if i < self.active {
@@ -260,6 +299,11 @@ impl Editors {
             .zip(self.syntax.iter())
             .map(|(s, syn)| self.make_box(s, syn))
             .collect();
+        for (i, b) in self.bufs.iter_mut().enumerate() {
+            if let Some((ts, sp)) = self.indents.get(i).copied().flatten() {
+                b.set_indent(ts, sp);
+            }
+        }
         self.cur_mut().set_focused(focused);
         let mut inv = Invalidations::default();
         self.layout(&mut inv);
@@ -346,9 +390,11 @@ impl Editors {
                         let b = self.bufs.remove(from);
                         let t = self.titles.remove(from);
                         let sy = self.syntax.remove(from);
+                        let id = self.indents.remove(from);
                         self.bufs.insert(to, b);
                         self.titles.insert(to, t);
                         self.syntax.insert(to, sy);
+                        self.indents.insert(to, id);
                         self.active = to;
                         self.sync_tabs();
                     }

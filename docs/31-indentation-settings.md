@@ -1,5 +1,6 @@
 # 31. 들여쓰기(탭 크기·공백) 설정 계층 — Sublime · VS Code · IntelliJ 비교와 권장 설계 (2026-09-15)
 
+> **진행**: 09-15 19차 — 탭별 계층(`Editors.indents` · 상태줄 팝업 = 활성 탭만 · 붙여넣기 탭→공백 변환 · `TextBox::paint`가 자기 탭 폭을 주입) ✅ · 문법/프로젝트 계층·감지는 미구현.
 > **진행**: 09-15 18차 1차 구현 — 전역 계층(`editor.tab_size` · `editor.indent_spaces`) · nexa-gfx `set_tab_cols`(4칸 고정 제거) · TextBox Tab=공백/변환 · 상태줄 `Spaces: 4`/`Tab Size: 4` + 팝업. 문법·프로젝트·탭별 계층은 미구현.
 > **상태**: 📐 설계 권장안(사용자 요청 09-15 · 캡처 2장 = Sublime 상태바 "Tab Size: 4" · 클릭 팝업). 구현 = **T-69**. 상위 = [09 편집기·패키지](09-editor-and-packages.md)(`.sublime-settings` 계층 → `nexa-conf`) · [29 상태줄](29-editor-syntax-palette-statusbar.md) · [18 세션](18-session-and-projects.md) · [30 확장점 원장](30-architecture-patterns.md).
 

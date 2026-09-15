@@ -677,10 +677,11 @@ impl App {
     }
 
     /// 들여쓰기 팝업(Sublime 상태바 클릭과 같은 항목 · docs/31 §2 1차): 공백/탭 · 탭 폭 1~8 · 변환.
+    /// ★ 고른 값은 **활성 탭에만** 적용한다(탭마다 다를 수 있다 · 설정은 새 탭의 기본값 · 사용자 09-15).
     fn open_indent_menu(&mut self) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
-        let spaces = self.settings.flag("editor.indent_spaces");
-        let ts = self.settings.int("editor.tab_size").clamp(1, 8);
+        let (tsz, spaces) = self.editors.indent();
+        let ts = i64::from(tsz);
         let mark = |on: bool, s: String| {
             if on {
                 format!("✓ {s}")
@@ -727,25 +728,23 @@ impl App {
     }
 
     fn indent_pick(&mut self, id: &str) {
+        let (ts, spaces) = self.editors.indent();
         match id {
             "indent.spaces" | "indent.tabs" => {
-                let _ = self.settings.set(
-                    "editor.indent_spaces",
-                    if id == "indent.spaces" { "on" } else { "off" },
-                );
+                self.editors.set_tab_indent(ts, id == "indent.spaces");
             }
             "indent.to_spaces" => self.editors.convert_indent(true),
             "indent.to_tabs" => self.editors.convert_indent(false),
             s if s.starts_with("indent.size:") => {
-                let _ = self
-                    .settings
-                    .set("editor.tab_size", &s["indent.size:".len()..]);
+                let n = s["indent.size:".len()..]
+                    .parse::<u8>()
+                    .unwrap_or(4)
+                    .clamp(1, 8);
+                self.editors.set_tab_indent(n, spaces);
             }
             _ => return,
         }
-        self.persist_settings();
-        self.apply_indent();
-        self.prefs_win.refresh(&self.settings);
+        self.redraw();
     }
 
     /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
@@ -888,6 +887,26 @@ impl App {
                 self.set_focus(Focus::Find);
                 self.find_step(true, false);
             }
+            // ★ Sublime Ctrl+D — 캐럿 밑 단어 → 다음 출현을 추가 선택(다중 커서 · 09-15).
+            "edit.expand_selection" => {
+                if self.editors.cur_mut().select_next_occurrence() {
+                    let n = self.editors.selection_count();
+                    if n > 1 {
+                        self.status = tf(Msg::StSelections, &[&n.to_string()]);
+                    }
+                }
+                self.set_focus(Focus::Editor);
+            }
+            // 같은 문자열 전부 선택(Sublime Ctrl+⇧D 계열 · 상한 = 더 못 찾을 때까지).
+            "edit.select_all_occurrences" => {
+                let ed = self.editors.cur_mut();
+                if ed.select_next_occurrence() {
+                    while ed.select_next_occurrence() {}
+                }
+                let n = self.editors.selection_count();
+                self.status = tf(Msg::StSelections, &[&n.to_string()]);
+                self.set_focus(Focus::Editor);
+            }
             "edit.find_next" => self.find_step(true, true),
             "edit.find_prev" => self.find_step(false, true),
             "edit.undo" => self.route(InputEvent::Undo),
@@ -985,6 +1004,8 @@ impl App {
                     item("edit.paste", Msg::MnPaste),
                     MenuEntry::Separator,
                     item("edit.select_all", Msg::MnSelectAll),
+                    item("edit.expand_selection", Msg::MnExpandSelection),
+                    item("edit.select_all_occurrences", Msg::MnSelectAllOccurrences),
                     MenuEntry::Separator,
                     item("edit.prefs", Msg::MnPreferences),
                 ],
@@ -1106,6 +1127,16 @@ impl App {
         cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
         cmds.push(m("edit.paste", Msg::MnEdit, Msg::MnPaste));
         cmds.push(m("edit.select_all", Msg::MnEdit, Msg::MnSelectAll));
+        cmds.push(m(
+            "edit.expand_selection",
+            Msg::MnEdit,
+            Msg::MnExpandSelection,
+        ));
+        cmds.push(m(
+            "edit.select_all_occurrences",
+            Msg::MnEdit,
+            Msg::MnSelectAllOccurrences,
+        ));
         cmds.push(m("edit.undo", Msg::MnEdit, Msg::MnUndo));
         cmds.push(m("edit.find", Msg::MnEdit, Msg::MnFind));
         cmds.push(m("edit.replace", Msg::MnEdit, Msg::MnReplace));
@@ -1804,7 +1835,12 @@ impl App {
                     _ => "—".to_string(),
                 };
                 segs.push((conn, false));
-                segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
+                let nsel = self.editors.selection_count();
+                if nsel > 1 {
+                    segs.push((tf(Msg::StSelections, &[&nsel.to_string()]), false));
+                } else {
+                    segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
+                }
                 if let Some(n) = self.last_rows {
                     segs.push((tf(Msg::StRowsShort, &[&n.to_string()]), false));
                 }
@@ -1812,8 +1848,9 @@ impl App {
                     segs.push((format!("{secs:.3}s"), false));
                 }
                 // 들여쓰기 세그먼트(Sublime "Tab Size: 4"/"Spaces: 4" · 구문 왼쪽 · 클릭 = 팝업 · 사용자 09-15).
-                let ts = self.settings.int("editor.tab_size").clamp(1, 8).to_string();
-                let indent_seg = if self.settings.flag("editor.indent_spaces") {
+                let (tsz, ispaces) = self.editors.indent();
+                let ts = tsz.to_string();
+                let indent_seg = if ispaces {
                     tf(Msg::StSpaces, &[&ts])
                 } else {
                     tf(Msg::StTabSize, &[&ts])
@@ -2527,6 +2564,9 @@ impl ApplicationHandler<Wake> for App {
                     m.state().control_key()
                 };
                 self.alt = m.state().alt_key();
+                // ★ Alt+Shift = 열(블록) 선택 모드(Sublime · 사용자 09-15) — 드래그 시작 판정에 쓴다.
+                let col = self.alt && self.shift;
+                self.editors.set_column_mode(col);
                 return;
             }
             WindowEvent::CursorMoved { position, .. } => {

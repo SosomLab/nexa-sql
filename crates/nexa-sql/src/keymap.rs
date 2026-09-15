@@ -125,6 +125,18 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+shift+e",
     },
     Command {
+        id: "edit.expand_selection",
+        label: Msg::MnExpandSelection,
+        win: "ctrl+d",
+        mac: "cmd+d",
+    },
+    Command {
+        id: "edit.select_all_occurrences",
+        label: Msg::MnSelectAllOccurrences,
+        win: "ctrl+shift+d",
+        mac: "cmd+shift+d",
+    },
+    Command {
         id: "edit.prefs",
         label: Msg::MnPreferences,
         win: "ctrl+,",

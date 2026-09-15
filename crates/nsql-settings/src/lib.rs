@@ -578,6 +578,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
+        key: "key.edit.expand_selection",
+        cat: Msg::CatKeys,
+        label: Msg::MnExpandSelection,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "key.edit.select_all_occurrences",
+        cat: Msg::CatKeys,
+        label: Msg::MnSelectAllOccurrences,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
         key: "key.edit.prefs",
         cat: Msg::CatKeys,
         label: Msg::MnPreferences,

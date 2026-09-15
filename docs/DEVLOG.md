@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-15 (19차 · win)** — 드래그 미시작 결함(더블클릭 **시간** 판정 `DOUBLE_CLICK_MS`) · 붙여넣기 탭→공백(탭별 `indent_spaces`) · **탭별 들여쓰기**(상태줄 팝업 = 활성 탭만 · 탭 폭 렌더도 탭마다) · **Ctrl+D 다중 선택**(`EditState.extra` · 전 구간 편집 · Ctrl+⇧D 전부) · **Alt+Shift 열 선택**(다중 커서 · 선택 행 줄번호 표시) · DBeaver 색 배치 조사. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (18차 · win)** — 상태줄 **Tab Size/Spaces 세그먼트+팝업**(`editor.tab_size`·`indent_spaces` · nexa-gfx 탭 폭 주입 · 변환 · T-69 1차) · 로그 창 기본 꺼짐(`log.open_at_start`) · 드래그 선택 결함 2건(위로 끌면 처음까지 · MouseUp 항상 편집기에) · 상태줄 프로필명 · 아이콘 16px 비례 · 빨강 #FF0000. → [journal](journal/2026-09-15.md)
 - **2026-09-15 (17차 · win)** — 탐색기 아이콘 16종(코드 마스크 · DBMS 방언색 · 종류별 팔레트 · `explorer.icons` 옵션). → [journal](journal/2026-09-15.md)
 - **2026-09-15 (16차 · win)** — 탐색기 로딩 자리 행(접속 중 루트 포함 · 점 애니메이션) · 실행/탐색기 독립 확인. → [journal](journal/2026-09-15.md)
