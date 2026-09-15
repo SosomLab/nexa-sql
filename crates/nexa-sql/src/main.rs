@@ -902,7 +902,6 @@ impl App {
                     item("edit.select_all", Msg::MnSelectAll),
                     MenuEntry::Separator,
                     item("edit.prefs", Msg::MnPreferences),
-                    item("edit.settings_json", Msg::MnSettingsJson),
                 ],
             ),
             MenuDef::new(
