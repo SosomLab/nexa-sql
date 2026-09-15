@@ -54,6 +54,8 @@
 | D-48 | Oracle 라이브 로그 기본 소스 — 자율 트랜잭션 로그 테이블(현장 관행 · 권장) vs V$SESSION client_info(코드 1줄 · 권한) — 권장 = 테이블 기본 + 세션 세그먼트 병행([32 §2](32-server-messages-and-live-log.md)) |
 | D-49 | Windows 설치기 — MSI(WiX · 조용한 설치·GPO · 권장) vs NSIS(nexa-clip 보유)([33 §4](33-distribution-and-packaging.md)) |
 | D-50 | macOS CLI 노출 — pkg 설치 스크립트로 `/usr/local/bin/nsql` 링크(권장) vs Homebrew만 |
+| D-51 | 트랜잭션 UX([34](34-transaction-ux.md)) — 수동 커밋 단위 = 탭 세션 · 모드 계층 전역→프로필→탭 · 표시 3층(탭 배지 ●n · 상태줄 세그먼트+팝업 · 툴바 Commit 배지) · 잃는 순간만 모달 · 오래된 미커밋 빨강 — 권장안 확정 요청 |
+| D-52 | `tx.smart_commit`(자동 모드라도 DML 실행 시 그 탭을 수동으로 · DBeaver 기본) — 권장 기본 off(자동 커밋 기본 유지) |
 | D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
 | ~~D-14~~ | → **DR-21**(Codespaces + DBMS별 Docker + Actions) |
 | **D-15** | ★ **다음 우선순위** — nexa-edit E1~E5 / 세션 hot exit / 비교·git·오브젝트 캐시 / CLI 완성(import·bulk·PG/MySQL) 중 순서 (사용자 답 대기 · 권장 = E1~E5 → hot exit) |

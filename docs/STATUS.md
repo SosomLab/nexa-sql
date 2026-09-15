@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-15 (15차 · win) — 설계 [34 트랜잭션 UX](34-transaction-ux.md) 📐
+
+자동 커밋 기본 · 수동이면 탭 배지 `●n` + 상태줄 세그먼트(팝업) + 툴바 Commit 배지 · 잃는 순간만 모달 · T-77(T-54 탭별 세션 선행). ⏳ 사용자: D-51·52 승인.
+
 ## 2026-09-15 (10차 · win) — 설정 JSON 편집 ✅ · 설정 창 스플리터/세로 분할 ✅ · 탐색기 글꼴 ✅
 
 Edit ▸ Edit settings as JSON… / 설정 창 [JSON 편집…] → `settings.json`(객체 계층) 외부 프로그램 · 저장 감시(1s) → 바뀐 키 즉시 반영. CLI `nsql config export-json/import-json`. `settings.json_editor` external(builtin = T-76). 설정 창: 왼쪽 열(검색+트리) | 스플리터(hover 페이드) | 카드. `explorer.font_size` 17. **다음**: T-74 파일 열기/저장 → T-76 내장 JSON 편집 → T-72. → [journal](journal/2026-09-15.md)
