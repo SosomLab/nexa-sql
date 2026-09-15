@@ -1706,8 +1706,16 @@ impl App {
                     t(Msg::StTxManual).to_string()
                 };
                 segs.push((tx, false));
+                // 접속 세그먼트 = 프로필 이름만(URL은 툴팁 카드·접속 창에 · 사용자 09-15).
                 let conn = match self.conn_win.panel.state_ref() {
-                    ConnState::Connected(d) => d.clone(),
+                    ConnState::Connected(d) => {
+                        let name = self.conn_win.active_name();
+                        if name.is_empty() {
+                            d.clone()
+                        } else {
+                            name.to_string()
+                        }
+                    }
                     _ => "—".to_string(),
                 };
                 segs.push((conn, false));
