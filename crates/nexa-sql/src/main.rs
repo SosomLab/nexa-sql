@@ -3093,13 +3093,7 @@ impl App {
                 dc.select_font(FontSlot::Base, false);
                 let busy = if self.busy { "⏳ " } else { "" };
                 let ty = dc.text_center_y(sy, px(24.0, s));
-                dc.text(
-                    px(8.0, s),
-                    ty,
-                    Rect::new(0, sy, wi, px(24.0, s)),
-                    &format!("{busy}{}", self.status),
-                    th.text_dim,
-                );
+                let left_text = format!("{busy}{}", self.status);
                 // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
                 let (ln, col) = self.editors.caret_line_col();
                 let mut segs: Vec<(String, bool)> = Vec::new();
@@ -3213,6 +3207,16 @@ impl App {
                         th.border,
                     );
                 }
+                // 왼쪽 상태 문구는 세그먼트 앞에서 잘라 겹치지 않게(09-16 캡처: 긴 타이밍 문구가 세그먼트 위로 지나갔다).
+                dc.select_font(FontSlot::Base, false);
+                let left_w = (xr - px(8.0, s) - px(4.0, s)).max(0);
+                dc.text(
+                    px(8.0, s),
+                    ty,
+                    Rect::new(0, sy, px(8.0, s) + left_w, px(24.0, s)),
+                    &left_text,
+                    th.text_dim,
+                );
             }
             mark(&mut t_sec, &mut marks); // 0 = 크롬(탭·툴바·상태줄)
                                           // ── 고정폭 층(편집기·그리드)
