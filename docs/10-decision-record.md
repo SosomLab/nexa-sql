@@ -105,6 +105,7 @@
 | crate | 계층·크레이트 | 사유 | 라이선스 | 상태 |
 |---|---|---|---|---|
 | `ab_glyph` | ④ nexa-gfx | 계승 | Apache-2.0 | ✅ |
+| `fancy-regex` 0.14(+ `regex` 1) | ① nexa-sql `rx.rs`(찾기/바꾸기 · 파일 찾기 · 패턴 기능 공용) | **D-76** — 선형 시간 코어 + lookaround/역참조만 백트래킹 · 순수 Rust(DR-3 예외) · 자체 NFA(T-59) 대체 | MIT | ✅ 09-16 |
 | `encoding_rs` 0.8 | ① nexa-sql(파일 인코딩 · EUC-KR·Shift_JIS·EUC-JP·GB18030·Big5·CP1252) | DR-3 예외 — 순수 Rust · Firefox 코덱 · 표를 직접 만들 이유 없음(09-16) | Apache-2.0/MIT | ✅ 09-16 |
 | `oracle` 0.6 | ① driver-oracle | DP-3 | UPL/Apache | ☐ M1 |
 | `tiberius-ng` | ① driver-mssql | DP-4 | MIT/Apache | ☐ M1 |

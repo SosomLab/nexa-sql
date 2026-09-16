@@ -42,6 +42,8 @@ pub(crate) struct FindBar {
     toggle_btn: Button,
     case_btn: Button,
     word_btn: Button,
+    /// 정규식 토글(D-76 · `.*`).
+    regex_btn: Button,
     prev_btn: Button,
     next_btn: Button,
     repl_btn: Button,
@@ -49,6 +51,7 @@ pub(crate) struct FindBar {
     close_btn: Button,
     case_sensitive: bool,
     whole_word: bool,
+    regex: bool,
     status: String,
     shift: bool,
 }
@@ -65,6 +68,7 @@ impl FindBar {
             toggle_btn: Button::new("›"),
             case_btn: Button::new(t(Msg::BtnMatchCase)),
             word_btn: Button::new(t(Msg::BtnWholeWord)),
+            regex_btn: Button::new(t(Msg::BtnRegex)),
             prev_btn: Button::new("↑"),
             next_btn: Button::new("↓"),
             repl_btn: Button::new(t(Msg::BtnReplace)),
@@ -72,6 +76,7 @@ impl FindBar {
             close_btn: Button::new("×"),
             case_sensitive: false,
             whole_word: false,
+            regex: false,
             status: String::new(),
             shift: false,
         }
@@ -103,6 +108,11 @@ impl FindBar {
 
     pub(crate) fn whole_word(&self) -> bool {
         self.whole_word
+    }
+
+    /// 정규식 모드(D-76).
+    pub(crate) fn regex(&self) -> bool {
+        self.regex
     }
 
     pub(crate) fn set_status(&mut self, s: impl Into<String>) {
@@ -168,11 +178,12 @@ impl FindBar {
         }
     }
 
-    fn buttons(&mut self) -> [&mut Button; 8] {
+    fn buttons(&mut self) -> [&mut Button; 9] {
         [
             &mut self.toggle_btn,
             &mut self.case_btn,
             &mut self.word_btn,
+            &mut self.regex_btn,
             &mut self.prev_btn,
             &mut self.next_btn,
             &mut self.repl_btn,
@@ -208,12 +219,12 @@ impl FindBar {
         let next_x = close_x - px(2.0) - small;
         let prev_x = next_x - px(2.0) - small;
         let status_w = px(84.0);
-        let toggles_w = small * 2 + px(4.0);
+        let toggles_w = small * 3 + px(6.0);
         let qw = (prev_x - px(6.0) - status_w - toggles_w - px(4.0) - x0).max(px(80.0));
         self.query.set_scale(s);
         self.query.set_bounds(Rect::new(x0, y1, qw, row), &mut inv);
         let mut tx = x0 + qw + px(4.0);
-        for btn in [&mut self.case_btn, &mut self.word_btn] {
+        for btn in [&mut self.case_btn, &mut self.word_btn, &mut self.regex_btn] {
             btn.set_scale(s);
             btn.set_bounds(Rect::new(tx, y1, small, row), &mut inv);
             tx += small + px(2.0);
@@ -267,6 +278,7 @@ impl FindBar {
                 || self.toggle_btn.is_animating()
                 || self.case_btn.is_animating()
                 || self.word_btn.is_animating()
+                || self.regex_btn.is_animating()
                 || self.prev_btn.is_animating()
                 || self.next_btn.is_animating()
                 || self.repl_btn.is_animating()
@@ -347,6 +359,10 @@ impl FindBar {
             self.whole_word = !self.whole_word;
             return FindAction::Changed;
         }
+        if self.regex_btn.take_clicked() {
+            self.regex = !self.regex;
+            return FindAction::Changed;
+        }
         if self.prev_btn.take_clicked() {
             return FindAction::Prev;
         }
@@ -383,10 +399,14 @@ impl FindBar {
         if self.whole_word {
             dc.fill_round_rect(self.word_btn.bounds(), 4, th.sel_bg);
         }
+        if self.regex {
+            dc.fill_round_rect(self.regex_btn.bounds(), 4, th.sel_bg);
+        }
         self.toggle_btn.paint(dc, th);
         self.query.paint(dc, th);
         self.case_btn.paint(dc, th);
         self.word_btn.paint(dc, th);
+        self.regex_btn.paint(dc, th);
         self.prev_btn.paint(dc, th);
         self.next_btn.paint(dc, th);
         if self.with_replace {

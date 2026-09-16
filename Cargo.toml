@@ -58,6 +58,8 @@ nsql-settings = { path = "crates/nsql-settings" }
 nsql-log = { path = "crates/nsql-log" }
 # 파일 인코딩(EUC-KR·Shift_JIS·GB18030·Big5·CP1252) — WHATWG 코덱 · 순수 Rust · DR-3 예외(docs/10 원장 · 09-16).
 encoding_rs = "0.8"
+# 정규식(D-76 · 09-16): regex(선형 시간) 위 fancy-regex(lookaround·역참조만 백트래킹) — 순수 Rust.
+fancy-regex = "0.14"
 # nexa-ui(공용 UI) — M1 UI 착수 시 사용. 경로 의존(DR-4 · nexa-ui DR-4).
 nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
 nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }

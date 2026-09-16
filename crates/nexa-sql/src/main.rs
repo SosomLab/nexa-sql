@@ -32,6 +32,7 @@ mod log_win;
 mod palette;
 mod prefs_win;
 mod probe;
+mod rx;
 mod syntax;
 mod theme;
 mod toast;
@@ -638,8 +639,36 @@ impl App {
     }
 
     /// 편집기 본문에서 질의 일치 위치(문자 인덱스 · 대소문자 옵션) 전부.
+    /// 찾기 조건 → 정규식(D-76): 정규식 모드가 아니어도 같은 엔진(글자 그대로 이스케이프)을 쓴다 — 단어 단위·대소문자 규칙 한 곳.
+    fn find_rx(&mut self) -> Option<fancy_regex::Regex> {
+        let q = self.find.query();
+        if q.is_empty() {
+            return None;
+        }
+        match rx::compile(
+            &q,
+            self.find.regex(),
+            self.find.case_sensitive(),
+            self.find.whole_word(),
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                self.find.set_status(tf(Msg::StFindBadRegex, &[&e]));
+                None
+            }
+        }
+    }
+
     fn find_matches(&mut self) -> (Vec<(usize, usize)>, Vec<char>) {
-        let text: Vec<char> = self.ed_mut().text().chars().collect();
+        let full = self.ed_mut().text();
+        let text: Vec<char> = full.chars().collect();
+        // ★ 정규식 모드 = fancy-regex(문자 인덱스로 변환) · 아니면 종전 문자 비교(빠른 경로 유지).
+        if self.find.regex() {
+            let Some(r) = self.find_rx() else {
+                return (Vec::new(), text);
+            };
+            return (rx::find_all(&r, &full), text);
+        }
         let q: Vec<char> = self.find.query().chars().collect();
         if q.is_empty() || q.len() > text.len() {
             return (Vec::new(), text);
@@ -717,11 +746,24 @@ impl App {
     }
 
     /// 현재 선택이 일치면 바꾸고 다음으로.
+    /// 일치 `(a, b)`에 넣을 치환문 — 정규식 모드면 `$1`/`${name}` 확장 · 아니면 글자 그대로.
+    fn find_expansion(&mut self, a: usize) -> String {
+        let repl = self.find.replacement();
+        if !self.find.regex() {
+            return repl;
+        }
+        let Some(r) = self.find_rx() else {
+            return repl;
+        };
+        let full = self.ed_mut().text();
+        rx::expand_at(&r, &full, a, &repl)
+    }
+
     fn find_replace_one(&mut self) {
         let (matches, _) = self.find_matches();
         if let Some((a, b)) = self.ed_mut().selection() {
             if matches.contains(&(a, b)) {
-                let repl = self.find.replacement();
+                let repl = self.find_expansion(a);
                 let mut inv = Invalidations::default();
                 self.ed_mut().replace_range(a, b, &repl, &mut inv);
             }
@@ -736,10 +778,14 @@ impl App {
             self.redraw();
             return;
         }
-        let repl = self.find.replacement();
+        // 뒤에서 앞으로(앞 인덱스가 안 밀리게) · 확장은 원본 본문 기준으로 먼저 계산.
+        let repls: Vec<String> = matches
+            .iter()
+            .map(|(a, _)| self.find_expansion(*a))
+            .collect();
         let mut inv = Invalidations::default();
-        for (a, b) in matches.iter().rev() {
-            self.ed_mut().replace_range(*a, *b, &repl, &mut inv);
+        for ((a, b), repl) in matches.iter().zip(repls.iter()).rev() {
+            self.ed_mut().replace_range(*a, *b, repl, &mut inv);
         }
         self.find
             .set_status(tf(Msg::StReplacedN, &[&matches.len().to_string()]));
