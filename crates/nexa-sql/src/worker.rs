@@ -46,6 +46,21 @@ pub(crate) enum Cmd {
         src: String,
         /// `Some(timeout)` = 실행 전 호스트:포트 빠른 판정(신호등이 초록이 아닐 때 UI가 켠다).
         preflight: Option<Duration>,
+        /// 이번 실행의 페치 상한(결과 탭의 세그먼트 크기 · 0 = 전체 · docs/43).
+        max_rows: usize,
+    },
+    /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
+    FetchPage {
+        /// 결과 탭 키(편집기 탭 id).
+        key: u64,
+        sql: String,
+        offset: usize,
+        limit: usize,
+    },
+    /// `SELECT COUNT(*) FROM (질의) x`.
+    Count {
+        key: u64,
+        sql: String,
     },
     Quit,
 }
@@ -60,6 +75,17 @@ pub(crate) enum ConnOutcome {
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
     Keys(String, Option<nsql_core::KeyInfo>),
+    /// `Cmd::FetchPage` 결과 — `offset` 0 = 전체 조회(교체) · 그 외 = 이어 붙임.
+    Page {
+        key: u64,
+        offset: usize,
+        result: Result<(nsql_core::ResultSet, bool, Duration), String>,
+    },
+    /// `Cmd::Count` 결과.
+    Count {
+        key: u64,
+        result: Result<u64, String>,
+    },
 }
 
 fn err(message: String) -> RunEvent {
@@ -236,6 +262,50 @@ pub(crate) fn spawn(
                         wake_now();
                         true
                     }
+                    Cmd::FetchPage {
+                        key,
+                        sql,
+                        offset,
+                        limit,
+                    } => {
+                        let result = match runner.dialect() {
+                            None => Err(t(Msg::ExpNotConnected).to_string()),
+                            Some(d) => {
+                                let (q, max) = if limit == 0 {
+                                    (sql, 0)
+                                } else {
+                                    (nsql_io::paging::page_sql(d, &sql, offset, limit), limit)
+                                };
+                                runner.query_once(&q, max).map_err(|e| e.message)
+                            }
+                        };
+                        let _ = ctx_tx.send(ConnOutcome::Page {
+                            key,
+                            offset,
+                            result,
+                        });
+                        wake_now();
+                        true
+                    }
+                    Cmd::Count { key, sql } => {
+                        let result = match runner.dialect() {
+                            None => Err(t(Msg::ExpNotConnected).to_string()),
+                            Some(d) => runner
+                                .query_once(&nsql_io::paging::count_sql(d, &sql), 0)
+                                .map_err(|e| e.message)
+                                .and_then(|(rs, _, _)| {
+                                    rs.rows
+                                        .first()
+                                        .and_then(|r| r.first())
+                                        .and_then(|v| v.display().trim().parse::<f64>().ok())
+                                        .map(|n| n.max(0.0) as u64)
+                                        .ok_or_else(|| t(Msg::ErrCountParse).to_string())
+                                }),
+                        };
+                        let _ = ctx_tx.send(ConnOutcome::Count { key, result });
+                        wake_now();
+                        true
+                    }
                     Cmd::Keys { key, schema, table } => {
                         let info = runner.session.as_mut().and_then(|s| {
                             let schema =
@@ -301,7 +371,12 @@ pub(crate) fn spawn(
                         wake_now();
                         true
                     }
-                    Cmd::Run { src, preflight } => {
+                    Cmd::Run {
+                        src,
+                        preflight,
+                        max_rows,
+                    } => {
+                        runner.set_max_rows(max_rows);
                         // 실행 전 빠른 판정 — 신호등이 초록이 아니거나(UI) 직전 실행이 접속성 오류였으면(워커) 포트를 먼저 본다.
                         let want = preflight.or_else(|| suspect.then(|| Duration::from_secs(2)));
                         if let (Some(timeout), Some((host, port))) = (want, active_ep.as_ref()) {

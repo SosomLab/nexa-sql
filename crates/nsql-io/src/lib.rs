@@ -4,6 +4,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod paging;
 pub mod sqlgen;
 pub use sqlgen::{
     choose_key, generate, guess_table, split_table, KeyMode, KeySource, KeySpec, SqlKind,

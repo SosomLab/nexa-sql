@@ -252,6 +252,11 @@ impl Editors {
     }
 
     #[allow(dead_code)]
+    /// 설정 `tabs.rows`(single/multi) 즉시 반영(사용자 09-16: 바꿔도 반영이 안 됐다 — 시작 때만 읽었다).
+    pub(crate) fn set_multiline_tabs(&mut self, on: bool) {
+        self.tabs.set_multiline(on);
+    }
+
     pub(crate) fn set_tooltip(&mut self, on: bool) {
         self.tooltip_on = on;
     }

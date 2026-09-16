@@ -394,6 +394,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "40",
     },
     Entry {
+        key: "grid.auto_fetch",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridAutoFetch,
+        desc: Msg::DescGridAutoFetch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.offset_warn",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridOffsetWarn,
+        desc: Msg::DescGridOffsetWarn,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "grid.max_rows",
         cat: Msg::CatGrid,
         label: Msg::LblGridMaxRows,
@@ -1345,6 +1361,64 @@ pub fn group_of(cat: Msg) -> Option<Msg> {
 }
 
 /// 비노출 설정(자주 바꾸지 않는 구현 값 · 사용자 09-14) — 레지스트리에는 있어 `set/get/reset`은 되지만 목록·설정 화면엔 기본 숨김.
+/// 종속 조건(설정 화면 잠금용 · 사용자 09-16 "종속 메뉴는 수정이 불가능하도록").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dep {
+    /// 부모가 `on`.
+    On,
+    /// 부모가 비어 있지 않음.
+    NotEmpty,
+    /// 부모가 이 값.
+    Eq(&'static str),
+}
+
+impl Dep {
+    /// 부모 값이 조건을 만족하는가.
+    #[must_use]
+    pub fn satisfied(self, parent_value: &str) -> bool {
+        match self {
+            Dep::On => parent_value == "on",
+            Dep::NotEmpty => !parent_value.trim().is_empty(),
+            Dep::Eq(v) => parent_value == v,
+        }
+    }
+}
+
+/// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
+pub const DEPENDS: &[(&str, &str, Dep)] = &[
+    ("explorer.refresh_secs", "explorer.auto_refresh", Dep::On),
+    ("probe.max_retries", "probe.enabled", Dep::On),
+    ("probe.timeout", "probe.enabled", Dep::On),
+    ("probe.interval", "probe.enabled", Dep::On),
+    ("probe.retry_delay", "probe.enabled", Dep::On),
+    ("probe.max_inflight", "probe.enabled", Dep::On),
+    ("log.file_format", "log.file", Dep::NotEmpty),
+    ("log.file_max_kb", "log.file", Dep::NotEmpty),
+    ("log.template", "log.format", Dep::Eq("template")),
+    (
+        "oracle.live.interval_ms",
+        "oracle.live.source",
+        Dep::Eq("table"),
+    ),
+    ("oracle.live.table", "oracle.live.source", Dep::Eq("table")),
+    ("oracle.live.ts_col", "oracle.live.source", Dep::Eq("table")),
+    (
+        "oracle.live.text_col",
+        "oracle.live.source",
+        Dep::Eq("table"),
+    ),
+    ("ui.toast_alpha", "ui.toast_secs", Dep::NotEmpty),
+];
+
+/// 자식 키의 (부모, 조건).
+#[must_use]
+pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
+    DEPENDS
+        .iter()
+        .find(|(c, _, _)| *c == child)
+        .map(|(_, p, d)| (*p, *d))
+}
+
 pub const HIDDEN: &[&str] = &[
     "log.kinds",
     "log.switch_scale",

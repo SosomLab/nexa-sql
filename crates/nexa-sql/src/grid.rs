@@ -8,9 +8,32 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
-use nexa_ctl::{InputEvent, Key, ScrollBars};
-use nsql_core::{fmt_bytes, fmt_dur, Dialect, ResultSet, Value};
+use nexa_ctl::{
+    Control, InputEvent, Invalidations, Key, ScrollBars, TextBox, ToolIcon, ToolItem, Toolbar,
+    Widget,
+};
+use nsql_core::{fmt_bytes, Dialect, ResultSet, Value};
 use nsql_i18n::{t, Msg};
+
+/// 결과 보기 모드(사용자 09-16 · DBeaver 결과 패널 그룹 1): 그리드 · 텍스트 표 · Markdown · JSON · TSV · CSV · SQL 5종.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResultView {
+    Grid,
+    Text,
+    Markdown,
+    Json,
+    Tsv,
+    Csv,
+    Sql(SqlKind),
+}
+
+/// 그리드가 호스트에 부탁하는 페치(docs/43): 다음 세그먼트 · 전체 · 건수.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FetchReq {
+    Next { offset: usize, limit: usize },
+    All,
+    Count,
+}
 
 /// 복사 형식(사용자 09-15 기본 기능) — Ctrl+C = TSV(머리글 없음) · 메뉴로 나머지.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,7 +51,7 @@ pub(crate) enum CopyKind {
 
 /// SQL 문 종류·테이블 추정은 nsql-io(CLI와 공용 · docs/41).
 pub(crate) use nsql_io::SqlKind;
-use nsql_io::{generate, guess_table, KeySpec};
+use nsql_io::{generate, guess_table, Format, GridOpts, KeySpec};
 
 /// 드래그 선택 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +121,42 @@ pub(crate) struct Grid {
     dialect: Dialect,
     /// SQL 복사의 대상 테이블(실행문에서 추정 · 없으면 `T`).
     source_table: Option<String>,
+    /// 실행문 원문(새로고침 · 추가 페치 · COUNT의 근거).
+    source_sql: String,
+    // ── 결과 도구줄(사용자 09-16 · docs/43 §4-2): 보기 모드 · 새로고침 · 편집(예정) · 세그먼트 상자 · 전체/건수 · 상태
+    tb_view: Toolbar,
+    tb_refresh: Toolbar,
+    tb_edit: Toolbar,
+    tb_fetch: Toolbar,
+    /// 세그먼트 크기 입력(숫자만 · Enter 적용 · 0 = 전체).
+    page_box: TextBox,
+    /// 이 결과 탭의 세그먼트 크기(전역 `grid.max_rows`로 시작 · 탭 생명주기 동안 유지).
+    page_rows: usize,
+    /// 전역 기본(`grid.max_rows`) — 새 탭의 시작값.
+    default_page_rows: usize,
+    /// 설정 `grid.auto_fetch` — 스크롤 끝에서 다음 세그먼트 자동 요청.
+    auto_fetch: bool,
+    /// 푸터(도구줄) 높이 — 페인트가 잰다.
+    footer_h: i32,
+    /// 서버에 행이 더 있다(마지막 페치가 상한에서 잘림).
+    more: bool,
+    /// COUNT(*) 결과.
+    total: Option<u64>,
+    /// 추가 페치/전체/건수 요청이 워커에 나가 있다(중복 요청 금지).
+    fetching: bool,
+    fetch_req: Option<FetchReq>,
+    want_refresh: bool,
+    /// 마지막 실행 시각(`YYYY-MM-DD HH:MM:SS.mmm`).
+    last_run_at: Option<String>,
+    view: ResultView,
+    /// SQL 보기는 호스트가 키를 받아 완성한다(`finish_view_sql`).
+    pending_view: Option<SqlKind>,
+    /// 텍스트 보기 본문(줄) · 가장 넓은 줄 폭(0 = 아직 안 잼) · 스크롤.
+    text_lines: Vec<String>,
+    text_w: i32,
+    text_scroll: (i32, i32),
+    /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
+    perf_report: bool,
 }
 
 impl Default for Grid {
@@ -137,6 +196,51 @@ impl Default for Grid {
             menu_click_consumed: false,
             dialect: Dialect::Oracle,
             source_table: None,
+            source_sql: String::new(),
+            tb_view: Self::bar(vec![
+                ToolItem::new("view", ToolIcon::Glyph("▦".into())).tip(t(Msg::TipViewMode))
+            ]),
+            tb_refresh: Self::bar(vec![
+                ToolItem::new("refresh", ToolIcon::Glyph("↻".into())).tip(t(Msg::TipRefresh))
+            ]),
+            tb_edit: Self::bar(vec![
+                ToolItem::new("row.add", ToolIcon::Glyph("+".into()))
+                    .tip(t(Msg::TipRowAdd))
+                    .disabled(),
+                ToolItem::new("row.del", ToolIcon::Glyph("−".into()))
+                    .tip(t(Msg::TipRowDel))
+                    .disabled(),
+                ToolItem::new("row.dup", ToolIcon::Glyph("⧉".into()))
+                    .tip(t(Msg::TipRowDup))
+                    .disabled(),
+                ToolItem::new("row.save", ToolIcon::Glyph("✓".into()))
+                    .tip(t(Msg::TipRowSave))
+                    .disabled(),
+                ToolItem::new("row.cancel", ToolIcon::Glyph("✕".into()))
+                    .tip(t(Msg::TipRowCancel))
+                    .disabled(),
+            ]),
+            tb_fetch: Self::bar(vec![
+                ToolItem::new("fetch.all", ToolIcon::Glyph("⇊".into())).tip(t(Msg::TipFetchAll)),
+                ToolItem::new("count", ToolIcon::Glyph("Σ".into())).tip(t(Msg::TipCount)),
+            ]),
+            page_box: Self::page_box(200),
+            page_rows: 200,
+            default_page_rows: 200,
+            auto_fetch: true,
+            footer_h: 0,
+            more: false,
+            total: None,
+            fetching: false,
+            fetch_req: None,
+            want_refresh: false,
+            last_run_at: None,
+            view: ResultView::Grid,
+            pending_view: None,
+            text_lines: Vec::new(),
+            text_w: 0,
+            text_scroll: (0, 0),
+            perf_report: false,
         }
     }
 }
@@ -175,8 +279,408 @@ impl Grid {
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
             dialect: self.dialect,
+            page_box: Self::page_box(self.default_page_rows),
+            page_rows: self.default_page_rows,
+            default_page_rows: self.default_page_rows,
+            auto_fetch: self.auto_fetch,
             ..Grid::default()
         }
+    }
+
+    fn bar(items: Vec<ToolItem>) -> Toolbar {
+        let mut tb = Toolbar::new(items);
+        tb.set_icon_size(16);
+        tb
+    }
+
+    fn page_box(n: usize) -> TextBox {
+        let mut tb = TextBox::new("200").with_text(&n.to_string());
+        tb.set_char_filter(Some(|c: char| c.is_ascii_digit()));
+        tb.set_max_chars(7);
+        tb.set_focus_ring(true);
+        tb
+    }
+
+    // ── 도구줄·페치 상태(호스트 연동)
+
+    /// 이 결과 탭의 세그먼트 크기(0 = 전체).
+    pub(crate) fn page_rows(&self) -> usize {
+        self.page_rows
+    }
+
+    /// 전역 기본(`grid.max_rows`) 변경 — 모든 결과 탭에 적용(탭에서 바꾼 값은 다음 변경 전까지 유지되지 않는다).
+    pub(crate) fn set_default_page_rows(&mut self, n: usize) {
+        self.default_page_rows = n;
+        self.page_rows = n;
+        self.page_box.set_text(&n.to_string());
+    }
+
+    /// 설정 `grid.auto_fetch`.
+    pub(crate) fn set_auto_fetch(&mut self, on: bool) {
+        self.auto_fetch = on;
+    }
+
+    /// 지금 가진 행 수.
+    pub(crate) fn row_count(&self) -> usize {
+        self.rows()
+    }
+
+    /// 실행문 원문.
+    pub(crate) fn source_sql(&self) -> &str {
+        &self.source_sql
+    }
+
+    /// 마지막 페치가 상한에서 잘렸다(서버에 더 있음).
+    pub(crate) fn set_more(&mut self, more: bool) {
+        self.more = more;
+    }
+
+    /// COUNT(*) 결과.
+    pub(crate) fn set_total(&mut self, n: u64) {
+        self.total = Some(n);
+        self.fetching = false;
+    }
+
+    /// 추가 페치 실패 — 요청 상태만 푼다.
+    pub(crate) fn fetch_failed(&mut self) {
+        self.fetching = false;
+    }
+
+    /// 다음 세그먼트 이어 붙이기(정렬 중이면 다시 정렬 · 스크롤 유지).
+    pub(crate) fn append_page(&mut self, page: ResultSet, more: bool) {
+        self.fetching = false;
+        self.more = more;
+        self.approx_bytes += page.approx_bytes();
+        let Some(rs) = self.rs.as_mut() else {
+            return;
+        };
+        let start = rs.rows.len();
+        rs.rows.extend(page.rows);
+        self.row_order.extend(start..self.rows());
+        if !self.sort_keys.is_empty() {
+            self.apply_sort();
+        }
+        self.perf_report = true;
+        if self.view != ResultView::Grid {
+            self.refresh_text_view();
+        }
+    }
+
+    /// 호스트가 가져가는 페치 요청(1회성) — 가져가는 순간 진행 중으로 표시.
+    pub(crate) fn take_fetch_request(&mut self) -> Option<FetchReq> {
+        let r = self.fetch_req.take();
+        if r.is_some() {
+            self.fetching = true;
+        }
+        r
+    }
+
+    /// 새로고침 버튼(1회성).
+    pub(crate) fn take_refresh(&mut self) -> bool {
+        std::mem::take(&mut self.want_refresh)
+    }
+
+    /// SQL 보기 요청(1회성) — 호스트가 키를 받아 [`Self::finish_view_sql`].
+    pub(crate) fn take_pending_view(&mut self) -> Option<SqlKind> {
+        self.pending_view.take()
+    }
+
+    /// 다음 페인트 뒤 1회: 렌더·탑재 소요와 메모리(호스트가 로그로).
+    pub(crate) fn take_perf_report(
+        &mut self,
+    ) -> Option<(std::time::Duration, std::time::Duration, u64)> {
+        std::mem::take(&mut self.perf_report).then_some((self.render, self.load, self.approx_bytes))
+    }
+
+    /// 보기 모드 전환 — SQL은 키가 필요해 호스트에 미룬다.
+    pub(crate) fn set_view(&mut self, view: ResultView) {
+        self.view = view;
+        self.text_scroll = (0, 0);
+        match view {
+            ResultView::Sql(k) => self.pending_view = Some(k),
+            _ => self.refresh_text_view(),
+        }
+    }
+
+    /// SQL 보기 완성(호스트가 키 규칙을 적용해 준다 · docs/41).
+    pub(crate) fn finish_view_sql(&mut self, kind: SqlKind, key: &KeySpec) {
+        if self.view != ResultView::Sql(kind) {
+            return;
+        }
+        let text = self.render_sql_text(kind, key);
+        self.set_text_lines(text);
+    }
+
+    fn set_text_lines(&mut self, text: String) {
+        self.text_lines = text.lines().map(str::to_string).collect();
+        self.text_w = 0;
+    }
+
+    /// 텍스트 계열 보기 본문 다시 만들기(결과가 바뀌었을 때).
+    fn refresh_text_view(&mut self) {
+        let text = match (self.view, self.rs.as_ref()) {
+            (ResultView::Grid, _) | (_, None) => String::new(),
+            (ResultView::Sql(k), Some(_)) => {
+                self.pending_view = Some(k);
+                return;
+            }
+            (v, Some(rs)) => {
+                let fmt = match v {
+                    ResultView::Text | ResultView::Grid | ResultView::Sql(_) => Format::Grid,
+                    ResultView::Markdown => Format::Markdown,
+                    ResultView::Json => Format::Json,
+                    ResultView::Tsv => Format::Tsv,
+                    ResultView::Csv => Format::Csv,
+                };
+                let ordered = self.ordered_rs(rs);
+                nsql_io::render_result_set(&ordered, &fmt, self.dialect, &GridOpts::default())
+            }
+        };
+        self.set_text_lines(text);
+    }
+
+    /// 표시 순서(정렬·컬럼 이동)대로 복제한 결과 — 텍스트 보기·SQL 보기의 원천.
+    fn ordered_rs(&self, rs: &ResultSet) -> ResultSet {
+        let cols: Vec<usize> = self.col_order.clone();
+        ResultSet {
+            columns: cols
+                .iter()
+                .filter_map(|&ci| rs.columns.get(ci).cloned())
+                .collect(),
+            rows: self
+                .row_order
+                .iter()
+                .filter_map(|&ri| rs.rows.get(ri))
+                .map(|row| {
+                    cols.iter()
+                        .map(|&ci| row.get(ci).cloned().unwrap_or(Value::Null))
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+
+    fn render_sql_text(&self, kind: SqlKind, key: &KeySpec) -> String {
+        let Some(rs) = self.rs.as_ref() else {
+            return String::new();
+        };
+        let ordered = self.ordered_rs(rs);
+        let names: Vec<String> = ordered.columns.iter().map(|c| c.name.clone()).collect();
+        let table = self.source_table.clone().unwrap_or_else(|| "T".into());
+        generate(self.dialect, &table, &names, &ordered.rows, kind, key)
+    }
+
+    /// 전 컬럼 이름(SQL 보기의 키 선택 근거).
+    pub(crate) fn all_col_names(&self) -> Vec<String> {
+        let Some(rs) = self.rs.as_ref() else {
+            return Vec::new();
+        };
+        self.col_order
+            .iter()
+            .filter_map(|&ci| rs.columns.get(ci).map(|c| c.name.clone()))
+            .collect()
+    }
+
+    /// 도구줄 툴팁·우클릭 메뉴 — 호스트가 최상위 패스(UI 글꼴)에서 그린다.
+    pub(crate) fn paint_overlays(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        for tb in [
+            &self.tb_view,
+            &self.tb_refresh,
+            &self.tb_edit,
+            &self.tb_fetch,
+        ] {
+            tb.paint_tooltip(dc, th);
+        }
+        self.menu.paint(dc, th);
+    }
+
+    fn footer_rect(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(b.x, b.bottom() - self.footer_h, b.w, self.footer_h)
+    }
+
+    /// 도구줄 4묶음·세그먼트 상자에 마우스/키를 배선한다(마우스 라우팅 규칙: 커서 아래 컨트롤에만). 소비되면 true.
+    fn footer_event(&mut self, ev: &InputEvent, scale: f32) -> bool {
+        if self.footer_h <= 0 {
+            return false;
+        }
+        let footer = self.footer_rect();
+        let mut inv = Invalidations::default();
+        let at = |x: i32, y: i32| Point { x, y };
+        match *ev {
+            InputEvent::MouseMove { x, y } => {
+                for tb in [
+                    &mut self.tb_view,
+                    &mut self.tb_refresh,
+                    &mut self.tb_edit,
+                    &mut self.tb_fetch,
+                ] {
+                    tb.on_event(ev, &mut inv);
+                }
+                if self.page_box.is_focused() || self.page_box.bounds().contains(at(x, y)) {
+                    self.page_box.on_event(ev, &mut inv);
+                }
+                return false;
+            }
+            InputEvent::MouseDown { x, y, .. } | InputEvent::MouseUp { x, y } => {
+                let p = at(x, y);
+                let down = matches!(ev, InputEvent::MouseDown { .. });
+                if down && !self.page_box.bounds().contains(p) {
+                    self.page_box.set_focused(false);
+                }
+                if !footer.contains(p) {
+                    return false;
+                }
+                let mut clicked: Option<&'static str> = None;
+                for (tb, ids) in [
+                    (&mut self.tb_view, &["view"][..]),
+                    (&mut self.tb_refresh, &["refresh"][..]),
+                    (&mut self.tb_edit, &[][..]),
+                    (&mut self.tb_fetch, &["fetch.all", "count"][..]),
+                ] {
+                    if tb.bounds().contains(p) || !down {
+                        tb.on_event(ev, &mut inv);
+                        if let Some(id) = tb.take_clicked() {
+                            clicked = ids.iter().copied().find(|s| *s == id);
+                        }
+                    }
+                }
+                if self.page_box.bounds().contains(p) || (!down && self.page_box.is_focused()) {
+                    self.page_box.on_event(ev, &mut inv);
+                }
+                match clicked {
+                    Some("view") => {
+                        let r = self.tb_view.bounds();
+                        self.open_view_menu(r.x, r.y, scale);
+                    }
+                    Some("refresh") => self.want_refresh = true,
+                    Some("fetch.all") if !self.fetching && self.rs.is_some() => {
+                        self.fetch_req = Some(FetchReq::All);
+                    }
+                    Some("count") if !self.fetching && !self.source_sql.trim().is_empty() => {
+                        self.fetch_req = Some(FetchReq::Count);
+                    }
+                    _ => {}
+                }
+                return true;
+            }
+            _ => {}
+        }
+        // 키·문자 = 세그먼트 상자에 포커스가 있을 때만.
+        if self.page_box.is_focused() {
+            self.page_box.on_event(ev, &mut inv);
+            if let Some(text) = self.page_box.take_committed() {
+                self.page_rows = text.trim().parse().unwrap_or(self.page_rows);
+                self.page_box.set_text(&self.page_rows.to_string());
+                self.page_box.set_focused(false);
+            } else if let Some(text) = self.page_box.take_changed() {
+                if let Ok(n) = text.trim().parse::<usize>() {
+                    self.page_rows = n;
+                }
+            }
+            return true;
+        }
+        false
+    }
+
+    /// 보기 모드 메뉴(도구줄 그룹 1 · ▦ 버튼 아래).
+    fn open_view_menu(&mut self, x: i32, y: i32, scale: f32) {
+        self.menu.set_scale(scale);
+        let cur = self.view;
+        let it = |id: &str, m: Msg, v: ResultView| CtxItem::item(id, t(m)).with_checked(cur == v);
+        let sql = vec![
+            it(
+                "view:sql_select",
+                Msg::MnCopySqlSelect,
+                ResultView::Sql(SqlKind::Select),
+            ),
+            it(
+                "view:sql_insert",
+                Msg::MnCopySqlInsert,
+                ResultView::Sql(SqlKind::Insert),
+            ),
+            it(
+                "view:sql_update",
+                Msg::MnCopySqlUpdate,
+                ResultView::Sql(SqlKind::Update),
+            ),
+            it(
+                "view:sql_delete",
+                Msg::MnCopySqlDelete,
+                ResultView::Sql(SqlKind::Delete),
+            ),
+            it(
+                "view:sql_merge",
+                Msg::MnCopySqlMerge,
+                ResultView::Sql(SqlKind::Merge),
+            ),
+        ];
+        let items = vec![
+            it("view:grid", Msg::MnViewGrid, ResultView::Grid),
+            it("view:text", Msg::MnViewText, ResultView::Text),
+            it("view:markdown", Msg::MnViewMarkdown, ResultView::Markdown),
+            it("view:json", Msg::MnViewJson, ResultView::Json),
+            it("view:tsv", Msg::MnViewTsv, ResultView::Tsv),
+            it("view:csv", Msg::MnViewCsv, ResultView::Csv),
+            CtxItem::submenu("view:sql", t(Msg::MnViewSql), sql),
+        ];
+        let text_w = (self.row_h * 8).max(140);
+        self.menu.open_at(x, y, items, self.bounds, text_w);
+    }
+
+    /// 텍스트 계열 보기의 스크롤·키(그리드 대신).
+    fn text_view_event(&mut self, ev: &InputEvent, scale: f32) {
+        if self.row_h <= 0 {
+            return;
+        }
+        let body = self.text_body_rect();
+        let (cw, ch) = self.text_content_size();
+        let (nx, ny, consumed) = self.bars.on_event(
+            ev,
+            body,
+            cw.max(body.w),
+            ch.max(body.h),
+            self.text_scroll.0,
+            self.text_scroll.1,
+            scale,
+        );
+        self.text_scroll = (nx, ny);
+        if consumed {
+            return;
+        }
+        let page = body.h.max(self.row_h);
+        match ev {
+            InputEvent::Key {
+                key: Key::PageDown, ..
+            } => self.text_scroll.1 += page,
+            InputEvent::Key {
+                key: Key::PageUp, ..
+            } => self.text_scroll.1 -= page,
+            InputEvent::Key { key: Key::Home, .. } => self.text_scroll.1 = 0,
+            InputEvent::Key { key: Key::End, .. } => self.text_scroll.1 = i32::MAX / 2,
+            InputEvent::Key { key: Key::Down, .. } => self.text_scroll.1 += self.row_h,
+            InputEvent::Key { key: Key::Up, .. } => self.text_scroll.1 -= self.row_h,
+            InputEvent::Key { key: Key::Left, .. } => self.text_scroll.0 -= self.row_h * 2,
+            InputEvent::Key {
+                key: Key::Right, ..
+            } => self.text_scroll.0 += self.row_h * 2,
+            _ => {}
+        }
+        let mx = (cw - body.w).max(0);
+        let my = (ch - body.h).max(0);
+        self.text_scroll = (
+            self.text_scroll.0.clamp(0, mx),
+            self.text_scroll.1.clamp(0, my),
+        );
+    }
+
+    fn text_body_rect(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(b.x, b.y + 1, b.w, (b.h - 1 - self.footer_h).max(0))
+    }
+
+    fn text_content_size(&self) -> (i32, i32) {
+        (self.text_w, self.row_h * self.text_lines.len() as i32)
     }
 
     pub(crate) fn set_row_numbers(&mut self, on: bool) {
@@ -218,12 +722,23 @@ impl Grid {
         self.sel_cur = None;
         self.drag_sel = None;
         self.menu.close();
+        self.more = false;
+        self.total = None;
+        self.fetching = false;
+        self.fetch_req = None;
+        self.last_run_at = Some(nsql_log::now_local().stamp());
+        self.perf_report = true;
+        self.text_scroll = (0, 0);
         self.load = t.elapsed();
+        if self.view != ResultView::Grid {
+            self.refresh_text_view();
+        }
     }
 
     /// 실행 직전 호스트가 알려 주는 원본 문장 — SQL 복사의 테이블 이름 근거.
     pub(crate) fn set_source_sql(&mut self, sql: &str) {
         self.source_table = guess_table(sql);
+        self.source_sql = sql.to_string();
     }
 
     pub(crate) fn set_dialect(&mut self, d: Dialect) {
@@ -405,6 +920,10 @@ impl Grid {
 
     /// 선택 셀을 형식대로 텍스트로(없으면 None). 표시 순서(정렬·컬럼 이동 반영).
     pub(crate) fn copy_selection(&self, kind: CopyKind) -> Option<(String, usize)> {
+        if self.view != ResultView::Grid {
+            let text = self.text_lines.join("\n");
+            return (!text.is_empty()).then_some((text, self.text_lines.len()));
+        }
         if self.regions.is_empty() {
             return None;
         }
@@ -732,6 +1251,22 @@ impl Grid {
     }
 
     fn menu_pick(&mut self, id: &str) {
+        if let Some(v) = id.strip_prefix("view:") {
+            let view = match v {
+                "grid" => ResultView::Grid,
+                "text" => ResultView::Text,
+                "markdown" => ResultView::Markdown,
+                "json" => ResultView::Json,
+                "tsv" => ResultView::Tsv,
+                "csv" => ResultView::Csv,
+                other => match other.strip_prefix("sql_").and_then(SqlKind::parse) {
+                    Some(k) => ResultView::Sql(k),
+                    None => return,
+                },
+            };
+            self.set_view(view);
+            return;
+        }
         // SQL 종류는 호스트가 키(PK/유니크)를 받아 완성한다(docs/41).
         if let Some(k) = id.strip_prefix("sql_").and_then(SqlKind::parse) {
             self.pending_sql = Some(k);
@@ -860,7 +1395,7 @@ impl Grid {
 
     /// 행 영역 높이(헤더·푸터 제외).
     fn body_h(&self) -> i32 {
-        (self.bounds.h - self.header_h - self.row_h).max(0)
+        (self.bounds.h - self.header_h - self.footer_h).max(0)
     }
 
     /// 콘텐츠 크기(스크롤 범위) — 헤더 + 전 행 · 컬럼 폭 합.
@@ -874,7 +1409,7 @@ impl Grid {
         let (cw, ch) = self.content_size();
         (
             (cw - (self.bounds.w - self.gutter_w)).max(0),
-            (ch - (self.bounds.h - self.row_h)).max(0),
+            (ch - (self.bounds.h - self.footer_h)).max(0),
         )
     }
 
@@ -884,6 +1419,20 @@ impl Grid {
         self.scroll_y = self.scroll_y.clamp(0, my);
         if self.row_snap && self.row_h > 0 && self.scroll_y < my {
             self.scroll_y -= self.scroll_y % self.row_h;
+        }
+        // ★ 스크롤이 끝에 닿았고 서버에 더 있으면 다음 세그먼트 1회(진행 중이면 무시 · docs/43 §3-5 자동 페치).
+        if self.auto_fetch
+            && self.more
+            && !self.fetching
+            && self.fetch_req.is_none()
+            && self.page_rows > 0
+            && my > 0
+            && self.scroll_y >= my - self.row_h.max(1)
+        {
+            self.fetch_req = Some(FetchReq::Next {
+                offset: self.rows(),
+                limit: self.page_rows,
+            });
         }
     }
 
@@ -935,6 +1484,14 @@ impl Grid {
                 return;
             }
         }
+        // 결과 도구줄(푸터)이 먼저 — 커서 아래 컨트롤에만(마우스 라우팅 규칙).
+        if self.footer_event(ev, scale) {
+            return;
+        }
+        if self.view != ResultView::Grid && self.rs.is_some() {
+            self.text_view_event(ev, scale);
+            return;
+        }
         // ★ 스크롤바가 **선택보다 먼저**(휠 = 픽셀 · 썸/트랙 클릭 · 드래그 · 호버). 소비되면 셀 선택·키 처리로 흘리지 않는다
         //   (09-16: 가로 바 트랙을 눌렀는데 뒤의 셀이 선택됐다 — 선택 판정이 먼저 return했다).
         if self.row_h > 0 && self.rs.is_some() {
@@ -946,7 +1503,7 @@ impl Grid {
                 b.x + self.gutter_w,
                 b.y + self.header_h,
                 b.w - self.gutter_w,
-                b.h - self.header_h - self.row_h,
+                b.h - self.header_h - self.footer_h,
             );
             let ch = ch - self.header_h;
             let (nx, ny, consumed) = self.bars.on_event(
@@ -1255,8 +1812,14 @@ impl Grid {
         dc.select_font(FontSlot::Base, false);
         let pad = (6.0 * s).round() as i32;
         self.row_h = dc.text_height() + pad;
-        // 메시지 모드(결과 없음 · 오류 · PRINT)
-        let Some(rs) = self.rs.as_ref() else {
+        // 푸터(결과 도구줄) 높이 = 아이콘 16 + 여백 — 보기 모드·결과 유무와 무관하게 늘 보인다(사용자 09-16).
+        self.tb_view.set_scale(s);
+        self.footer_h =
+            ((self.tb_view.preferred_height() as f32 * s).round() as i32).max(self.row_h);
+        let footer = self.footer_rect();
+        let above = Rect::new(b.x, b.y, b.w, (b.h - self.footer_h).max(0));
+        // 메시지 모드(오류 · PRINT) — 결과가 없고 메시지가 있을 때.
+        if self.rs.is_none() && !self.messages.is_empty() {
             let mut y = b.y + pad;
             for m in self
                 .messages
@@ -1267,12 +1830,42 @@ impl Grid {
                 .iter()
                 .rev()
             {
-                if y > b.y + b.h {
+                if y > above.bottom() {
                     break;
                 }
-                dc.text(b.x + pad, y, b, m, th.text);
+                dc.text(b.x + pad, y, above, m, th.text);
                 y += self.row_h;
             }
+            self.paint_footer(dc, th, s, footer, 0, 0, 0);
+            return;
+        }
+        // No Records(결과 없음 · 0행) — 헤더 한 줄 + 1행(DBeaver 모양 · 사용자 09-16).
+        let empty = self.rs.as_ref().is_none_or(|r| r.rows.is_empty());
+        if empty && self.view == ResultView::Grid {
+            let header = Rect::new(b.x, b.y + 1, b.w, self.row_h);
+            self.header_h = header.h + 1;
+            dc.fill_rect(header, th.chrome_bg);
+            dc.fill_rect(Rect::new(b.x, header.bottom() - 1, b.w, 1), th.border);
+            let gw = dc.text_width("0") * 2 + pad * 2;
+            let ry = header.bottom();
+            let row = Rect::new(b.x, ry, b.w, self.row_h);
+            dc.fill_rect(Rect::new(b.x, ry, gw, self.row_h), th.chrome_bg);
+            let cy = dc.text_center_y(ry, self.row_h);
+            dc.text(b.x + pad, cy, row, "1", th.text_dim);
+            dc.text(b.x + gw + pad, cy, row, t(Msg::GridNoRecords), th.text_dim);
+            dc.fill_rect(Rect::new(b.x, row.bottom() - 1, b.w, 1), th.border);
+            self.paint_footer(dc, th, s, footer, 0, 0, 0);
+            return;
+        }
+        // 텍스트 계열 보기(그리드 대신 본문을 줄 단위로 · 스크롤바 공용).
+        if self.view != ResultView::Grid {
+            self.paint_text_view(dc, th, s, pad);
+            let n = self.rows();
+            self.paint_footer(dc, th, s, footer, 0, 0, n);
+            return;
+        }
+        let Some(rs) = self.rs.as_ref() else {
+            self.paint_footer(dc, th, s, footer, 0, 0, 0);
             return;
         };
         if self.col_w.is_empty() {
@@ -1308,7 +1901,6 @@ impl Grid {
 
         // ── 행(픽셀 오프셋: 첫 행이 부분적으로 잘려 올라간다)
         // 푸터(위치·계측) 한 줄은 맨 아래 — 헤더와 겹치지 않는다(09-14 사용자 지적).
-        let footer = Rect::new(b.x, b.bottom() - self.row_h, b.w, self.row_h);
         let body = Rect::new(
             b.x,
             header.bottom(),
@@ -1449,24 +2041,6 @@ impl Grid {
             dc.text(b.x + pad, hy, header, "#", th.text_dim);
         }
         dc.fill_rect(Rect::new(b.x, header.bottom() - 1, b.w, 1), th.border);
-        // 위치 표시(우상단 헤더 줄)
-        let info = format!(
-            "{}–{} / {} · load {} · render {} · ~{}",
-            if rs.rows.is_empty() { 0 } else { first + 1 },
-            last,
-            rs.rows.len(),
-            fmt_dur(self.load),
-            fmt_dur(self.render),
-            fmt_bytes(self.approx_bytes)
-        );
-        // 푸터 글자 = 상태줄 크기(사용자 09-16) · 세로 가운데.
-        dc.select_font(FontSlot::Status, false);
-        let iw = dc.text_width(&info);
-        dc.fill_rect(footer, th.chrome_bg);
-        dc.fill_rect(Rect::new(b.x, footer.y, b.w, 1), th.border);
-        let iy = dc.text_center_y(footer.y, footer.h);
-        dc.text(b.x + b.w - iw - pad, iy, footer, &info, th.text_dim);
-        dc.select_font(FontSlot::Base, false);
         // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명) — 헤더 아래부터 푸터 위까지(데이터 영역만).
         let (cw, ch) = self.content_size();
         let ch = ch - self.header_h;
@@ -1474,7 +2048,7 @@ impl Grid {
             b.x + self.gutter_w,
             b.y + self.header_h,
             b.w - self.gutter_w,
-            b.h - self.header_h - self.row_h,
+            b.h - self.header_h - self.footer_h,
         );
         self.bars.paint(
             dc,
@@ -1486,11 +2060,146 @@ impl Grid {
             self.scroll_y,
             s,
         );
+        let n = rs.rows.len();
+        self.paint_footer(dc, th, s, footer, first, last, n);
     }
 
-    /// 우클릭 메뉴 — 호스트가 **UI 글꼴 최상위 패스**에서 그린다(그리드 패스의 고정폭 글꼴로 그리면 다른 메뉴와 글꼴이 달랐다 · 09-16).
-    pub(crate) fn paint_menu(&self, dc: &mut dyn DrawCtx, th: &Theme) {
-        self.menu.paint(dc, th);
+    /// 결과 도구줄(사용자 09-16 · docs/43 §4-2) — [보기 ▦] | [↻] | [+ − ⧉ ✓ ✕] | [200] [⇊] [Σ] … 상태(위치 · 메모리 · 실행 시각).
+    #[allow(clippy::too_many_arguments)]
+    fn paint_footer(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        s: f32,
+        footer: Rect,
+        first: usize,
+        last: usize,
+        n: usize,
+    ) {
+        let pad = (6.0 * s).round() as i32;
+        dc.fill_rect(footer, th.chrome_bg);
+        dc.fill_rect(Rect::new(footer.x, footer.y, footer.w, 1), th.border);
+        let mut inv = Invalidations::default();
+        let bar_y = footer.y + 1;
+        let bar_h = footer.h - 1;
+        let gap = pad;
+        let mut x = footer.x;
+        // 묶음 사이 구분선.
+        let sep = |dc: &mut dyn DrawCtx, x: i32| {
+            dc.fill_rect(Rect::new(x, bar_y + pad / 2, 1, bar_h - pad), th.border);
+        };
+        for (i, tb) in [&mut self.tb_view, &mut self.tb_refresh, &mut self.tb_edit]
+            .into_iter()
+            .enumerate()
+        {
+            if i > 0 {
+                sep(dc, x);
+                x += gap;
+            }
+            tb.set_scale(s);
+            tb.set_bounds(Rect::new(x, bar_y, footer.w, bar_h), &mut inv);
+            let end = tb.left_items_end();
+            tb.set_bounds(Rect::new(x, bar_y, end - x, bar_h), &mut inv);
+            tb.paint(dc, th);
+            x = end + gap;
+        }
+        // 그룹 4: 세그먼트 상자 + 전체 조회 + 건수.
+        sep(dc, x);
+        x += gap;
+        self.page_box.set_scale(s);
+        let pb_h = (self.row_h + 2).min(bar_h - 2);
+        let pb_w = (64.0 * s).round() as i32;
+        self.page_box.set_bounds(
+            Rect::new(x, bar_y + (bar_h - pb_h) / 2, pb_w, pb_h),
+            &mut inv,
+        );
+        dc.select_font(FontSlot::Status, false);
+        self.page_box.paint(dc, th);
+        x += pb_w + gap / 2;
+        self.tb_fetch.set_scale(s);
+        self.tb_fetch
+            .set_bounds(Rect::new(x, bar_y, footer.w, bar_h), &mut inv);
+        let end = self.tb_fetch.left_items_end();
+        self.tb_fetch
+            .set_bounds(Rect::new(x, bar_y, end - x, bar_h), &mut inv);
+        self.tb_fetch.paint(dc, th);
+        x = end + gap;
+        // 그룹 5: 상태 — `192–200 / 200+ · 총 12,345 · ~291 KB · 2026-09-16 16:20:07.123`.
+        let mut info = format!(
+            "{}–{} / {}{}",
+            if n == 0 { 0 } else { first + 1 },
+            last,
+            n,
+            if self.more { "+" } else { "" }
+        );
+        if let Some(total) = self.total {
+            info.push_str(&format!(
+                " · {}",
+                nsql_i18n::tf(Msg::StGridTotal, &[&total.to_string()])
+            ));
+        }
+        if self.fetching {
+            info.push_str(&format!(" · {}", t(Msg::StFetching)));
+        }
+        info.push_str(&format!(" · ~{}", fmt_bytes(self.approx_bytes)));
+        if let Some(at) = &self.last_run_at {
+            info.push_str(&format!(" · {at}"));
+        }
+        dc.select_font(FontSlot::Status, false);
+        let iw = dc.text_width(&info);
+        let iy = dc.text_center_y(footer.y, footer.h);
+        let ix = (footer.right() - iw - pad).max(x);
+        dc.text(
+            ix,
+            iy,
+            Rect::new(x, footer.y, footer.right() - x, footer.h),
+            &info,
+            th.text_dim,
+        );
+        dc.select_font(FontSlot::Base, false);
+    }
+
+    /// 텍스트 계열 보기 — 줄 단위 · 고정폭 · 가로/세로 스크롤.
+    fn paint_text_view(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32, pad: i32) {
+        let body = self.text_body_rect();
+        if self.text_w == 0 {
+            self.text_w = self
+                .text_lines
+                .iter()
+                .map(|l| dc.text_width(l))
+                .max()
+                .unwrap_or(0)
+                + pad * 2;
+        }
+        let (cw, ch) = self.text_content_size();
+        let mx = (cw - body.w).max(0);
+        let my = (ch - body.h).max(0);
+        self.text_scroll = (
+            self.text_scroll.0.clamp(0, mx),
+            self.text_scroll.1.clamp(0, my),
+        );
+        let rh = self.row_h.max(1);
+        let first = (self.text_scroll.1 / rh) as usize;
+        let sub = self.text_scroll.1 % rh;
+        let mut y = body.y - sub;
+        let x = body.x + pad - self.text_scroll.0;
+        for line in self.text_lines.iter().skip(first) {
+            if y >= body.bottom() {
+                break;
+            }
+            dc.text(x, y, body, line, th.text);
+            y += rh;
+        }
+        self.bars.paint(
+            dc,
+            th,
+            body,
+            cw.max(body.w),
+            ch.max(body.h),
+            self.text_scroll.0,
+            self.text_scroll.1,
+            s,
+        );
     }
 }
 

@@ -164,6 +164,8 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 
 ## 7. 작업 순서(T-48 갱신 · [TODO](TODO.md))
 
+> **진행(09-16 25차)**: T-48a의 OFFSET 폴백 경로(`paging.rs` · `query_once` · 워커 `FetchPage/Count`)와 T-48b 도구줄(세그먼트 상자 · 전체/건수 · 상태 · 보기 모드 · 자동 페치)이 1차로 들어갔다. 서버 커서 유지(Oracle/SQLite/PG Portal)·예산·결과 탭(T-93)·데이터 편집기(T-94)는 잔여.
+
 | 단계 | 내용 | 산출 |
 |---|---|---|
 | **T-48a** 포트 | `Session::fetch_next/close_cursor/cursor_supported` · `ExecResult.pending` · 러너 `fetch_next/fetch_all/count` · `RunEvent::ResultSet.cursor` · Navigate 스팬 · Oracle·SQLite 커서 유지 · PG Portal · MSSQL 폴백 · OFFSET 래퍼(4방언 · 테스트) | core/run/driver |

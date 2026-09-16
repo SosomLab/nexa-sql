@@ -166,6 +166,10 @@ struct App {
     key_cache: HashMap<String, Option<nsql_core::KeyInfo>>,
     /// 키 조회를 기다리는 SQL 복사 종류.
     sql_wait: Option<nsql_io::SqlKind>,
+    /// SQL 보기 모드가 키를 기다린다(결과 도구줄 ▸ 보기 ▸ SQL).
+    view_wait: Option<nsql_io::SqlKind>,
+    /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
+    offset_warned: std::collections::HashSet<u64>,
     /// `grid`가 속한 탭 id.
     grid_tab: u64,
     /// 마지막 실행을 시작한 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
@@ -552,6 +556,62 @@ impl App {
                     if let Some(kind) = self.sql_wait.take() {
                         self.finish_sql_copy(kind, info.as_ref());
                     }
+                    if let Some(kind) = self.view_wait.take() {
+                        self.finish_view_sql(kind, info.as_ref());
+                    }
+                }
+                ConnOutcome::Page {
+                    key,
+                    offset,
+                    result,
+                } => {
+                    match result {
+                        Ok((rs, more, elapsed)) => {
+                            let n = rs.rows.len().to_string();
+                            let secs = format!("{:.3}", elapsed.as_secs_f64());
+                            let total = match self.grid_for(key) {
+                                Some(g) => {
+                                    if offset == 0 {
+                                        g.set_result(rs);
+                                        g.set_more(more);
+                                    } else {
+                                        g.append_page(rs, more);
+                                    }
+                                    g.row_count()
+                                }
+                                None => 0,
+                            };
+                            self.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
+                        }
+                        Err(e) => {
+                            if let Some(g) = self.grid_for(key) {
+                                g.fetch_failed();
+                            }
+                            self.status = tf(Msg::StFetchFailed, &[&e]);
+                            self.log_win
+                                .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                        }
+                    }
+                    self.redraw();
+                }
+                ConnOutcome::Count { key, result } => {
+                    match result {
+                        Ok(n) => {
+                            if let Some(g) = self.grid_for(key) {
+                                g.set_total(n);
+                            }
+                            self.status = tf(Msg::StCountResult, &[&n.to_string()]);
+                            self.log_win
+                                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                        }
+                        Err(e) => {
+                            if let Some(g) = self.grid_for(key) {
+                                g.fetch_failed();
+                            }
+                            self.status = tf(Msg::StFetchFailed, &[&e]);
+                        }
+                    }
+                    self.redraw();
                 }
                 ConnOutcome::Disconnected => self.on_conn_disconnected(),
             }
@@ -1133,6 +1193,25 @@ impl App {
             "log.kinds" => self.log_win.set_kinds(self.settings.get(key).unwrap_or("")),
             "log.file" | "log.file_format" | "log.file_max_kb" => self.rebuild_log_hub(),
             "log.switch_scale" => self.log_win.set_switch_scale(self.settings.int(key)),
+            "grid.max_rows" => {
+                let n = self.settings.int(key).max(0) as usize;
+                self.grid.set_default_page_rows(n);
+                for g in self.grid_stash.values_mut() {
+                    g.set_default_page_rows(n);
+                }
+            }
+            "grid.auto_fetch" => {
+                let on = self.settings.flag(key);
+                self.grid.set_auto_fetch(on);
+                for g in self.grid_stash.values_mut() {
+                    g.set_auto_fetch(on);
+                }
+            }
+            "tabs.rows" => {
+                let multi = self.settings.get(key) != Some("single");
+                self.editors.set_multiline_tabs(multi);
+                self.layout();
+            }
             "log.wrap" => self.log_win.set_wrap(self.settings.flag(key)),
             "log.newest_first" => self.log_win.set_newest_first(self.settings.flag(key)),
             "log.autoscroll" => self.log_win.set_autoscroll(self.settings.flag(key)),
@@ -1177,6 +1256,128 @@ impl App {
         if let Some(kind) = self.grid.take_pending_sql() {
             self.begin_sql_copy(kind);
         }
+        // 결과 도구줄(docs/43 §4-2): 추가/전체/건수 · 새로고침 · SQL 보기.
+        if let Some(req) = self.grid.take_fetch_request() {
+            self.send_fetch(req);
+        }
+        if self.grid.take_refresh() {
+            self.refresh_result();
+        }
+        if let Some(kind) = self.grid.take_pending_view() {
+            self.begin_view_sql(kind);
+        }
+    }
+
+    /// 결과 탭 키(편집기 탭 id)로 그리드 찾기 — 활성이면 `grid` · 아니면 잠든 것.
+    fn grid_for(&mut self, key: u64) -> Option<&mut grid::Grid> {
+        if key == self.grid_tab {
+            Some(&mut self.grid)
+        } else {
+            self.grid_stash.get_mut(&key)
+        }
+    }
+
+    /// 추가 페치·전체 조회·건수를 워커에(같은 세션 · docs/43 §3-4 OFFSET 폴백).
+    fn send_fetch(&mut self, req: grid::FetchReq) {
+        let sql = self.grid.source_sql().to_string();
+        if sql.trim().is_empty() {
+            self.grid.fetch_failed();
+            return;
+        }
+        let key = self.grid_tab;
+        match req {
+            grid::FetchReq::Next { offset, limit } => {
+                if self.settings.flag("grid.offset_warn")
+                    && !nsql_io::paging::has_order_by(&sql)
+                    && self.offset_warned.insert(key)
+                {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        t(Msg::StOffsetWarn).to_string(),
+                    ));
+                }
+                self.worker.send(worker::Cmd::FetchPage {
+                    key,
+                    sql,
+                    offset,
+                    limit,
+                });
+            }
+            grid::FetchReq::All => self.worker.send(worker::Cmd::FetchPage {
+                key,
+                sql,
+                offset: 0,
+                limit: 0,
+            }),
+            grid::FetchReq::Count => self.worker.send(worker::Cmd::Count { key, sql }),
+        }
+        self.status = t(Msg::StFetching).into();
+        self.redraw();
+    }
+
+    /// 새로고침 — 같은 문장을 이 탭의 세그먼트 크기로 다시 실행.
+    fn refresh_result(&mut self) {
+        let src = self.grid.source_sql().to_string();
+        if src.trim().is_empty() || self.busy {
+            return;
+        }
+        self.run_tab = self.grid_tab;
+        self.busy = true;
+        self.status = t(Msg::StRunning).into();
+        self.log.clear();
+        self.last_run_items = split_items(&src);
+        let max_rows = self.grid.page_rows();
+        self.worker.send(worker::Cmd::Run {
+            src,
+            preflight: None,
+            max_rows,
+        });
+        self.live_start();
+        self.redraw();
+    }
+
+    /// SQL 보기(결과 도구줄) — 키 규칙은 Copy SQL과 같다(docs/41 · 캐시 → 워커 1회).
+    fn begin_view_sql(&mut self, kind: nsql_io::SqlKind) {
+        if self.key_mode() == nsql_io::KeyMode::All {
+            self.finish_view_sql(kind, None);
+            return;
+        }
+        let Some(guess) = self.grid.source_table() else {
+            self.finish_view_sql(kind, None);
+            return;
+        };
+        if let Some(info) = self.key_cache.get(&guess) {
+            let info = info.clone();
+            self.finish_view_sql(kind, info.as_ref());
+            return;
+        }
+        let (schema, table) = nsql_io::split_table(self.dialect, &guess);
+        self.view_wait = Some(kind);
+        self.worker.send(worker::Cmd::Keys {
+            key: guess,
+            schema,
+            table,
+        });
+    }
+
+    fn finish_view_sql(&mut self, kind: nsql_io::SqlKind, info: Option<&nsql_core::KeyInfo>) {
+        let names = self.grid.all_col_names();
+        let key = nsql_io::choose_key(self.key_mode(), info, &names);
+        if key.needs_warning() && kind != nsql_io::SqlKind::Insert {
+            let table = self.grid.source_table();
+            let w = tf(
+                Msg::SqlKeyWarnFirstN,
+                &[
+                    table.as_deref().unwrap_or("T"),
+                    &key.cols.len().to_string(),
+                    &key.cols.join(", "),
+                ],
+            );
+            self.status = w.clone();
+            self.log_win.push(LogEntry::new(LogKind::Error, w));
+        }
+        self.grid.finish_view_sql(kind, &key);
+        self.redraw();
     }
 
     /// 설정 `sql.key_mode`.
@@ -2226,7 +2427,12 @@ impl App {
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
         self.last_run_items = split_items(&src);
-        self.worker.send(worker::Cmd::Run { src, preflight });
+        let max_rows = self.grid.page_rows();
+        self.worker.send(worker::Cmd::Run {
+            src,
+            preflight,
+            max_rows,
+        });
         self.live_start();
         self.redraw();
     }
@@ -2374,6 +2580,7 @@ impl App {
         self.worker.send(worker::Cmd::Run {
             src,
             preflight: None,
+            max_rows: self.grid.page_rows(),
         });
         self.live_start();
         self.redraw();
@@ -2408,6 +2615,7 @@ impl App {
                     // 결과는 실행을 시작한 탭의 그리드로(탭이 이미 닫혔으면 버림).
                     if let Some(g) = self.run_grid() {
                         g.set_result(rs);
+                        g.set_more(more);
                     }
                 }
                 RunEvent::Done {
@@ -2763,7 +2971,20 @@ impl App {
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
-                                          // ── 최상위 카드(탭 툴팁 · UI 글꼴)
+            if let Some((render, load, bytes)) = self.grid.take_perf_report() {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    tf(
+                        Msg::LogRenderPerf,
+                        &[
+                            &nsql_core::fmt_dur(render),
+                            &nsql_core::fmt_dur(load),
+                            &nsql_core::fmt_bytes(bytes),
+                        ],
+                    ),
+                ));
+            }
+            // ── 최상위 카드(탭 툴팁 · UI 글꼴)
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
@@ -2776,7 +2997,7 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
                 self.status_menu.paint(&mut dc, &th);
-                self.grid.paint_menu(&mut dc, &th);
+                self.grid.paint_overlays(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
@@ -2819,9 +3040,14 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.toolbar.paint_tooltip(&mut dc, &th);
-                // 토스트(우측 하단 · 상태줄 위 · 반투명 · docs/42).
-                let status_y = hi - px(24.0, s);
-                self.toasts.paint(&mut dc, &th, wi, status_y, s);
+                // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
+                let eb = self.editors.editor_bounds();
+                let (tx, ty) = if eb.w > 0 && eb.h > 0 {
+                    (eb.right(), eb.bottom())
+                } else {
+                    (wi, hi - px(24.0, s))
+                };
+                self.toasts.paint(&mut dc, &th, tx, ty, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
             {
@@ -3946,6 +4172,8 @@ fn main() {
         grid_stash: HashMap::new(),
         key_cache: HashMap::new(),
         sql_wait: None,
+        view_wait: None,
+        offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
         grid_tab: 0,
         run_tab: 0,
@@ -4005,6 +4233,9 @@ fn main() {
         app.settings.int("ui.toast_secs"),
         app.settings.int("ui.toast_alpha"),
     );
+    app.grid.set_default_page_rows(max_rows);
+    app.grid
+        .set_auto_fetch(app.settings.flag("grid.auto_fetch"));
     app.log_win.set_wrap(app.settings.flag("log.wrap"));
     app.log_win
         .set_switch_scale(app.settings.int("log.switch_scale"));

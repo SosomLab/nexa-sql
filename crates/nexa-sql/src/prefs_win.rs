@@ -67,6 +67,8 @@ struct Card {
     /// 색·단축키 보조 버튼(선택…/캡처…).
     aux: Option<Button>,
     /// 마지막 페인트에서 정해진 카드 사각형(히트 테스트).
+    /// 종속 조건 불충족으로 잠김(부모 설정을 먼저 바꿔야 한다 · `DEPENDS`).
+    locked: bool,
     rect: Rect,
     /// 검색 모드에서 카테고리 표시.
     show_cat: bool,
@@ -288,11 +290,28 @@ impl PrefsWin {
                     rect: Rect::default(),
                     show_cat,
                     error: None,
+                    locked: false,
                 }
             })
             .collect();
         self.scroll = 0;
         self.content_h = 0;
+        self.apply_deps();
+    }
+
+    /// 종속 잠금 계산 — 부모 값은 스냅샷(현재 설정)에서.
+    fn apply_deps(&mut self) {
+        let snap = self.snap.clone();
+        let parent_val = |key: &str| -> String {
+            snap.iter()
+                .find(|s| s.entry.key == key)
+                .map(|s| s.value.clone())
+                .unwrap_or_default()
+        };
+        for c in &mut self.cards {
+            c.locked = nsql_settings::dependency(c.entry.key)
+                .is_some_and(|(parent, dep)| !dep.satisfied(&parent_val(parent)));
+        }
     }
 
     pub(crate) fn window(&self) -> Option<&Window> {
@@ -620,18 +639,23 @@ impl PrefsWin {
             }
             _ => {}
         }
-        // 열린 콤보 = 모달(바깥 클릭은 닫고 통과 — 콤보 자체가 처리).
+        // 열린 콤보 = 모달(바깥 클릭은 닫고 통과 — 콤보 자체가 처리). ★ 콤보 **머리**(확장 버튼) 재클릭은 접기만 —
+        //   통과시키면 같은 클릭이 다시 열었다(사용자 09-16).
         if self.any_combo_open() {
+            let mut on_head = false;
             for c in &mut self.cards {
                 if let CardCtl::Choice(cb) = &mut c.ctl {
                     if cb.is_open() {
+                        if let InputEvent::MouseDown { x, y, .. } = ie {
+                            on_head |= cb.bounds().contains(Point { x, y });
+                        }
                         cb.on_event(&ie, &mut inv);
                     }
                 }
             }
             let a = self.collect_changes();
             self.redraw();
-            if !matches!(ie, InputEvent::MouseDown { .. }) || self.any_combo_open() {
+            if !matches!(ie, InputEvent::MouseDown { .. }) || self.any_combo_open() || on_head {
                 return a;
             }
         }
@@ -757,10 +781,13 @@ impl PrefsWin {
                 if c.rect.h == 0 {
                     continue;
                 }
-                match &mut c.ctl {
-                    CardCtl::Bool(sw) => sw.on_event(&ie, &mut inv),
-                    CardCtl::Choice(cb) => cb.on_event(&ie, &mut inv),
-                    CardCtl::Text(tb) => tb.on_event(&ie, &mut inv),
+                // 종속 잠금(부모 조건 불충족) — 컨트롤은 입력을 받지 않는다(초기화 버튼은 허용).
+                if !c.locked {
+                    match &mut c.ctl {
+                        CardCtl::Bool(sw) => sw.on_event(&ie, &mut inv),
+                        CardCtl::Choice(cb) => cb.on_event(&ie, &mut inv),
+                        CardCtl::Text(tb) => tb.on_event(&ie, &mut inv),
+                    }
                 }
                 c.reset.on_event(&ie, &mut inv);
                 if let Some(b) = &mut c.aux {
@@ -1033,6 +1060,15 @@ impl PrefsWin {
                     CardCtl::Bool(sw) => sw.paint(&mut dc, th),
                     CardCtl::Choice(_) => {}
                     CardCtl::Text(tb) => tb.paint(&mut dc, th),
+                }
+                if c.locked {
+                    // 잠긴 종속 항목은 흐리게(콤보는 팝업 층에서 따로 흐림 처리 없이 잠금만).
+                    let cr = match &c.ctl {
+                        CardCtl::Bool(sw) => sw.bounds(),
+                        CardCtl::Choice(cb) => cb.bounds(),
+                        CardCtl::Text(tb) => tb.bounds(),
+                    };
+                    dc.fill_rect_alpha(cr, th.panel_bg, 0.6);
                 }
                 if let Some(b) = &c.aux {
                     b.paint(&mut dc, th);

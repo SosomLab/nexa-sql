@@ -10,7 +10,9 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-use nsql_core::{Column, DbError, Dialect, ExecResult, ResultSet, Session, Stage, Timeline, Value};
+use nsql_core::{
+    Column, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session, Stage, Timeline, Value,
+};
 use nsql_script::{
     split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared, SqlKind,
 };
@@ -210,6 +212,52 @@ impl Runner {
     pub fn with_max_rows(mut self, n: usize) -> Self {
         self.max_rows = n;
         self
+    }
+
+    /// 페치 상한 변경(실행마다 · 결과 탭의 세그먼트 크기 · docs/43) — 세션에도 즉시 알린다.
+    pub fn set_max_rows(&mut self, n: usize) {
+        if self.max_rows != n {
+            self.max_rows = n;
+            self.push_max_rows();
+        }
+    }
+
+    /// 접속된 세션의 방언(없으면 None).
+    #[must_use]
+    pub fn dialect(&self) -> Option<Dialect> {
+        self.session.as_ref().map(|s| s.dialect())
+    }
+
+    /// 단문 1회 — 이벤트 없이 결과만(추가 페치 · 전체 조회 · COUNT · docs/43 §3). `max_rows`(0 = 무제한)는 이 호출에만.
+    /// 세션이 없으면 `Err`(호출자가 먼저 확인한다). 반환 = (첫 결과 집합 · 더 있음 · 소요).
+    pub fn query_once(
+        &mut self,
+        sql: &str,
+        max_rows: usize,
+    ) -> Result<(ResultSet, bool, Duration), DbError> {
+        let prev = self.max_rows;
+        self.set_max_rows(max_rows);
+        let r = match self.session.as_mut() {
+            Some(s) => {
+                let t = Instant::now();
+                s.execute(&ExecRequest {
+                    sql: sql.to_string(),
+                    params: Vec::new(),
+                })
+                .map(|res| {
+                    let rs = res.result_sets.into_iter().next().unwrap_or_default();
+                    let (rs, more) = trim_rows(rs, max_rows);
+                    (rs, more, t.elapsed())
+                })
+            }
+            None => Err(DbError {
+                code: None,
+                message: String::new(),
+                position: None,
+            }),
+        };
+        self.set_max_rows(prev);
+        r
     }
 
     /// 프로필 해석기 장착(체이닝).
