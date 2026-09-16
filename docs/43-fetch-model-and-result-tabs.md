@@ -11,7 +11,7 @@
 | **D-69** | 기본 상한 **200행**(DBeaver `resultset.fetch.size` 동일) — D-42의 1,000 대신. 전역 `grid.max_rows`(GUI) · `cli.max_rows`(shell) · 결과 탭마다 **개별 값**(탭 생명주기 · 저장 안 함) | 사용자 ③⑤ · 200은 첫 화면 한 장 + 왕복 1회 |
 | **D-70** | 추가 페치 = **서버 커서 유지 + OFFSET 재질의 폴백**(D-43 확정). 세션당 열린 커서 **1개** — 새 실행·커밋·롤백·다른 탭 실행이 앞 커서를 닫고, 닫힌 탭의 "더"는 OFFSET 재질의(정렬 없는 질의는 경고) | 왕복·서버 부담 최소 · 트랜잭션 규칙과 충돌 0([34](34-transaction-ux.md)) |
 | **D-71** | 결과 탭 = **편집기 탭 ↔ 결과 패널(탭 여러 개)**. Ctrl+Enter = 활성 결과 탭 **교체** · Ctrl+\\ = **새 결과 탭**(자기 상한·커서·상태). 탭마다 rows는 자기 것 · 그리기는 활성 탭만 · 닫으면 즉시 해제 | 사용자 ⑥ · 메모리 = 탭 수 × 행 수 · `grid_stash`(09-16 3차) 확장 |
-| **D-72** | 메모리 예산 = **행 바이트 합계 상한** `grid.memory_budget_mb`(기본 256) — 탭 전체 합. "전체 페치"·자동 페치가 예산에 닿으면 멈추고 상태줄 안내(계속하려면 예산 상향 · Export 권유). 결과·탭·커서는 **쓴 뒤 해제**: 탭 닫기 · 재실행 · 접속 해제 = `Vec` drop + 커서 close | 사용자 ④ "쓴 뒤 해제되면 허용" · [39 S-1·S-2](39-resource-governance.md) |
+| **D-72** | 메모리 예산 = **행 바이트 상한** `grid.memory_budget_mb`(기본 1024 · **탭마다 독립** — 09-17 사용자 "탭은 서로 영향 없음" · 합계 검사 폐기). "전체 페치"·자동 페치가 예산에 닿으면 멈추고 상태줄 안내(계속하려면 예산 상향 · Export 권유). 결과·탭·커서는 **쓴 뒤 해제**: 탭 닫기 · 재실행 · 접속 해제 = `Vec` drop + 커서 close | 사용자 ④ "쓴 뒤 해제되면 허용" · [39 S-1·S-2](39-resource-governance.md) |
 
 ## 1. 조사 — 다른 CLI의 조회 상한
 
@@ -60,7 +60,7 @@ Count(문장)               → 메타 세션에서 SELECT COUNT(*) FROM (문장
 Close(handle)             → 새 실행 · 커밋/롤백 · 탭 닫기 · 접속 해제 · 세션당 1개(새로 열면 앞 것 닫힘)
 ```
 
-- **상한 두 축**: `max_rows`(표시 세그먼트 · D-69) vs `fetch_size`(왕복당 행수 · 세션 옵션 `fetch_size` · Oracle ARRAYSIZE 격 · 기본 200 · 전체 페치 때 2000으로 자동 상향 — SQL\*Plus 스윗스팟).
+- **상한 두 축**: `max_rows`(표시 세그먼트 · D-69) vs `fetch_size`(왕복당 행수 · 세션 옵션 `fetch_size` · Oracle ARRAYSIZE 격 · 기본 200 · 전체 페치 때 `db.fetch_all_size` 기본 **5000**으로 상향 — 실측 09-17 WAN 155k행: 200 = 34.3s · 5000 = 4.6s).
 - **Timeline**: FetchNext/FetchAll은 `Stage::Navigate` 스팬으로 덧붙인다([26 §2](26-performance-architecture.md) 표 "Navigate" ☐ → 여기서 채움).
 
 ### 3-2. 포트(nsql-core) — 확장점 세 조각([30 §1-2](30-architecture-patterns.md))
