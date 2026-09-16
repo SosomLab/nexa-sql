@@ -96,6 +96,13 @@ pub(crate) struct Grid {
     hdr_drag: Option<(usize, i32, i32, bool, bool)>,
     /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
     hdr_resize: Option<(usize, i32, i32)>,
+    /// 헤더 경계 직전 클릭(컬럼 · 시각) — 400ms 안에 같은 경계면 더블클릭 = 자동 맞춤(사용자 09-16).
+    edge_click: Option<(usize, std::time::Instant)>,
+    /// 다음 페인트에서 자동 맞춤할 컬럼(글꼴 측정은 페인트에서).
+    autofit: Option<usize>,
+    /// 자동 너비 한계(논리 px · 설정 `grid.col_min_width`/`grid.col_max_width`).
+    col_min: i32,
+    col_max: i32,
     /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — `IntentFade`(70ms 머문 마지막 목표만 · 진입 = `grid.hover_fade` · 사용자 09-14).
     hover: IntentFade,
     /// ★ 선택 구간 목록(표시 행 r0..=r1 · 표시 컬럼 c0..=c1 · 마지막 = 주 구간) — 셀·범위·행 전체·Ctrl 개별(사용자 09-15 · dir2 규약).
@@ -183,6 +190,10 @@ impl Default for Grid {
             sort_keys: Vec::new(),
             hdr_drag: None,
             hdr_resize: None,
+            edge_click: None,
+            autofit: None,
+            col_min: 40,
+            col_max: 420,
             hover: IntentFade::with_speed(FadeSpeed::Slow),
             regions: Vec::new(),
             sel_anchor: None,
@@ -279,6 +290,8 @@ impl Grid {
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
             dialect: self.dialect,
+            col_min: self.col_min,
+            col_max: self.col_max,
             page_box: Self::page_box(self.default_page_rows),
             page_rows: self.default_page_rows,
             default_page_rows: self.default_page_rows,
@@ -290,6 +303,7 @@ impl Grid {
     fn bar(items: Vec<ToolItem>) -> Toolbar {
         let mut tb = Toolbar::new(items);
         tb.set_icon_size(16);
+        tb.set_tooltip_above(true);
         tb
     }
 
@@ -681,6 +695,12 @@ impl Grid {
 
     fn text_content_size(&self) -> (i32, i32) {
         (self.text_w, self.row_h * self.text_lines.len() as i32)
+    }
+
+    /// 자동 컬럼 너비 한계(설정 `grid.col_min_width`/`grid.col_max_width` · 논리 px).
+    pub(crate) fn set_col_limits(&mut self, min: i32, max: i32) {
+        self.col_min = min.max(1);
+        self.col_max = max.max(self.col_min);
     }
 
     pub(crate) fn set_row_numbers(&mut self, on: bool) {
@@ -1715,6 +1735,18 @@ impl Grid {
             match *ev {
                 InputEvent::MouseDown { x, y, shift, .. } if hdr.contains(Point { x, y }) => {
                     if let Some(ci) = self.header_edge_at(x) {
+                        // 같은 경계를 400ms 안에 다시 누르면 자동 맞춤(내용 폭 · 한계 안에서).
+                        let now = std::time::Instant::now();
+                        let dbl = self.edge_click.is_some_and(|(c, t)| {
+                            c == ci && now.duration_since(t).as_millis() < 400
+                        });
+                        if dbl {
+                            self.autofit = Some(ci);
+                            self.edge_click = None;
+                            self.hdr_resize = None;
+                            return;
+                        }
+                        self.edge_click = Some((ci, now));
                         let w0 = self.col_w.get(ci).copied().unwrap_or(80);
                         self.hdr_resize = Some((ci, x, w0));
                     } else if let Some(pos) = self.header_pos_at(x) {
@@ -1724,6 +1756,10 @@ impl Grid {
                 }
                 InputEvent::MouseMove { x, .. } if self.hdr_resize.is_some() => {
                     if let Some((ci, x0, w0)) = self.hdr_resize {
+                        // 끌었으면 더블클릭 후보에서 뺀다(끌기 → 바로 재클릭은 새 조절).
+                        if (x - x0).abs() > 3 {
+                            self.edge_click = None;
+                        }
                         if let Some(w) = self.col_w.get_mut(ci) {
                             *w = (w0 + (x - x0)).max(24);
                         }
@@ -1842,18 +1878,27 @@ impl Grid {
         // No Records(결과 없음 · 0행) — 헤더 한 줄 + 1행(DBeaver 모양 · 사용자 09-16).
         let empty = self.rs.as_ref().is_none_or(|r| r.rows.is_empty());
         if empty && self.view == ResultView::Grid {
-            let header = Rect::new(b.x, b.y + 1, b.w, self.row_h);
+            // Golden 방식(사용자 09-16 2번 이미지): 행번호 칸 + `No Records` 폭만큼의 작은 셀 하나 — 나머지는 빈 바탕.
+            let label = t(Msg::GridNoRecords);
+            let gw = dc.text_width("0") * 2 + pad * 2;
+            let cw = dc.text_width(label) + pad * 2;
+            let header = Rect::new(b.x, b.y + 1, gw + cw, self.row_h);
             self.header_h = header.h + 1;
             dc.fill_rect(header, th.chrome_bg);
-            dc.fill_rect(Rect::new(b.x, header.bottom() - 1, b.w, 1), th.border);
-            let gw = dc.text_width("0") * 2 + pad * 2;
+            dc.fill_rect(Rect::new(b.x, header.bottom() - 1, header.w, 1), th.border);
+            dc.fill_rect(
+                Rect::new(header.right() - 1, header.y, 1, header.h),
+                th.border,
+            );
             let ry = header.bottom();
-            let row = Rect::new(b.x, ry, b.w, self.row_h);
+            let row = Rect::new(b.x, ry, gw + cw, self.row_h);
             dc.fill_rect(Rect::new(b.x, ry, gw, self.row_h), th.chrome_bg);
             let cy = dc.text_center_y(ry, self.row_h);
             dc.text(b.x + pad, cy, row, "1", th.text_dim);
-            dc.text(b.x + gw + pad, cy, row, t(Msg::GridNoRecords), th.text_dim);
-            dc.fill_rect(Rect::new(b.x, row.bottom() - 1, b.w, 1), th.border);
+            dc.text(b.x + gw + pad, cy, row, label, th.text_dim);
+            dc.fill_rect(Rect::new(b.x + gw, ry, 1, self.row_h), th.border);
+            dc.fill_rect(Rect::new(row.right() - 1, ry, 1, self.row_h), th.border);
+            dc.fill_rect(Rect::new(b.x, row.bottom() - 1, row.w, 1), th.border);
             self.paint_footer(dc, th, s, footer, 0, 0, 0);
             return;
         }
@@ -1880,9 +1925,28 @@ impl Grid {
                             w = w.max(dc.text_width(&cell_text(v)));
                         }
                     }
-                    w.min((420.0 * s) as i32) + pad * 2
+                    (w + pad * 2).clamp(
+                        (self.col_min as f32 * s).round() as i32,
+                        (self.col_max as f32 * s).round() as i32,
+                    )
                 })
                 .collect();
+        }
+        if let Some(ci) = self.autofit.take() {
+            // 헤더 이름 + 전 행(최대 5,000행) 중 가장 넓은 값 → [최소, 최대].
+            let mut w = rs.columns.get(ci).map_or(0, |c| dc.text_width(&c.name));
+            for row in rs.rows.iter().take(5000) {
+                if let Some(v) = row.get(ci) {
+                    w = w.max(dc.text_width(&cell_text(v)));
+                }
+            }
+            let w = (w + pad * 2).clamp(
+                (self.col_min as f32 * s).round() as i32,
+                (self.col_max as f32 * s).round() as i32,
+            );
+            if let Some(cw) = self.col_w.get_mut(ci) {
+                *cw = w;
+            }
         }
         let header = Rect::new(b.x, b.y + 1, b.w, self.row_h);
         self.header_h = header.h + 1;

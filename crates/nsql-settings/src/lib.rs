@@ -192,6 +192,11 @@ const WINDOW_FOCUS_OPTS: &[(&str, Msg)] = &[
     ("single", Msg::ValFocusSingle),
 ];
 
+const RUN_AFTER_OPTS: &[(&str, Msg)] = &[
+    ("stay", Msg::ValRunStay),
+    ("next_ok", Msg::ValRunNextOk),
+    ("next_always", Msg::ValRunNextAlways),
+];
 const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("raw", Msg::ValRaw),
     ("markdown", Msg::ValMarkdown),
@@ -427,6 +432,30 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescCopyNull,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "grid.font_face",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFontFace,
+        desc: Msg::DescGridFontFace,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "grid.col_min_width",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridColMin,
+        desc: Msg::DescGridColMin,
+        kind: SettingKind::Int { min: 16, max: 2000 },
+        default: "40",
+    },
+    Entry {
+        key: "grid.col_max_width",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridColMax,
+        desc: Msg::DescGridColMax,
+        kind: SettingKind::Int { min: 40, max: 4000 },
+        default: "420",
     },
     Entry {
         key: "grid.row_numbers",
@@ -1165,6 +1194,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "off",
     },
     Entry {
+        key: "run.after_statement",
+        cat: Msg::CatSession,
+        label: Msg::LblRunAfter,
+        desc: Msg::DescRunAfter,
+        kind: SettingKind::Choice(RUN_AFTER_OPTS),
+        default: "stay",
+    },
+    Entry {
         key: "session.autocommit",
         cat: Msg::CatSession,
         label: Msg::LblAutocommit,
@@ -1311,7 +1348,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblGridFontSize,
         desc: Msg::DescGridFontSize,
         kind: SettingKind::Int { min: 8, max: 40 },
-        default: "15",
+        default: "13",
     },
 ];
 

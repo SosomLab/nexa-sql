@@ -511,6 +511,22 @@ impl Editors {
         self.sync_tabs();
     }
 
+    /// 탭 메뉴용 목록 — (id · 제목 · 활성) 탭 순서대로.
+    pub(crate) fn tab_list(&self) -> Vec<(u64, String, bool)> {
+        self.titles
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (self.tab_id(i), t.clone(), i == self.active))
+            .collect()
+    }
+
+    /// 안정 id로 탭 전환(탭 메뉴 · 없으면 무시).
+    pub(crate) fn switch_to_id(&mut self, id: u64) {
+        if let Some(i) = self.ids.iter().position(|x| *x == id) {
+            self.switch(i);
+        }
+    }
+
     pub(crate) fn switch(&mut self, i: usize) {
         if i < self.bufs.len() {
             let focused = self.cur().is_focused();

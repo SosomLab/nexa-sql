@@ -100,6 +100,8 @@ struct App {
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     ui_font: Font,
     mono_font: Font,
+    /// 결과 그리드·텍스트 보기 글꼴(설정 `grid.font_face` · None = UI 글꼴 · 사용자 09-16 Golden 참고).
+    grid_font: Option<Font>,
     theme: Theme,
     /// 앱 설정(언어·테마 모드·글꼴 크기) — 단축키로 바꾸면 즉시 저장.
     settings: Settings,
@@ -148,6 +150,8 @@ struct App {
     open_file_dlg: Option<PickerMode>,
     // 컨트롤
     menubar: MenuBar,
+    /// 탭 메뉴를 마지막으로 만든 근거(id·제목·활성) — 바뀌면 메뉴를 다시 만든다.
+    tabs_menu_sig: String,
     toolbar: Toolbar,
     /// 접속 창(별도 창 · 폼 + 로그인 목록). 폼 상태의 단일 원천 = `conn_win.panel`.
     conn_win: ConnWin,
@@ -166,6 +170,8 @@ struct App {
     key_cache: HashMap<String, Option<nsql_core::KeyInfo>>,
     /// 키 조회를 기다리는 SQL 복사 종류.
     sql_wait: Option<nsql_io::SqlKind>,
+    /// 직전 실행이 Ctrl+Enter 한 문장(끝나면 설정 `run.after_statement`대로 캐럿 이동).
+    single_run: bool,
     /// SQL 보기 모드가 키를 기다린다(결과 도구줄 ▸ 보기 ▸ SQL).
     view_wait: Option<nsql_io::SqlKind>,
     /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
@@ -1162,6 +1168,16 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "grid.font_face" => {
+                self.grid_font = load_grid_font(self.settings.get(key).unwrap_or(""));
+            }
+            "grid.col_min_width" | "grid.col_max_width" => {
+                let (lo, hi) = (
+                    self.settings.int("grid.col_min_width") as i32,
+                    self.settings.int("grid.col_max_width") as i32,
+                );
+                self.all_grids().for_each(|g| g.set_col_limits(lo, hi));
+            }
             "grid.row_numbers" => {
                 let on = self.settings.flag(key);
                 self.all_grids().for_each(|g| g.set_row_numbers(on));
@@ -1266,6 +1282,38 @@ impl App {
         if let Some(kind) = self.grid.take_pending_view() {
             self.begin_view_sql(kind);
         }
+    }
+
+    /// 캐럿을 다음/이전 문장(`;` 분리 · [`nsql_script::split_script`]) 시작으로(Alt+↓/↑ · 실행 뒤 자동 이동).
+    fn goto_statement(&mut self, forward: bool) {
+        let full = self.ed_mut().text();
+        let caret = self.ed_mut().caret();
+        let byte = full
+            .char_indices()
+            .nth(caret)
+            .map_or(full.len(), |(b, _)| b);
+        let items = nsql_script::split_script(&full);
+        let cur = items
+            .iter()
+            .position(|it| it.span.start <= byte && byte <= it.span.end);
+        let idx = if forward {
+            match cur {
+                Some(c) => Some(c + 1),
+                None => items.iter().position(|it| it.span.start > byte),
+            }
+        } else {
+            match cur {
+                Some(c) => c.checked_sub(1),
+                None => items.iter().rposition(|it| it.span.end < byte),
+            }
+        };
+        let Some(it) = idx.and_then(|i| items.get(i)) else {
+            return;
+        };
+        let ci = full[..it.span.start.min(full.len())].chars().count();
+        let mut inv = Invalidations::default();
+        self.ed_mut().select_range(ci, ci, &mut inv);
+        self.redraw();
     }
 
     /// 결과 탭 키(편집기 탭 id)로 그리드 찾기 — 활성이면 `grid` · 아니면 잠든 것.
@@ -1489,6 +1537,13 @@ impl App {
                 None => self.open_file_dlg = Some(PickerMode::Save),
             },
             "file.save_as" => self.open_file_dlg = Some(PickerMode::Save),
+            id if id.starts_with("tab:") => {
+                if let Ok(tid) = id["tab:".len()..].parse::<u64>() {
+                    self.editors.switch_to_id(tid);
+                    self.set_focus(Focus::Editor);
+                    self.layout();
+                }
+            }
             id if id.starts_with("file.recent:") => {
                 let i: usize = id["file.recent:".len()..].parse().unwrap_or(usize::MAX);
                 if let Some(p) = self.recent_files().get(i).cloned() {
@@ -1535,6 +1590,8 @@ impl App {
             }
             "edit.find_next" => self.find_step(true, true),
             "edit.find_prev" => self.find_step(false, true),
+            "edit.next_statement" => self.goto_statement(true),
+            "edit.prev_statement" => self.goto_statement(false),
             "edit.undo" => self.route(InputEvent::Undo),
             "edit.redo" => self.route(InputEvent::Redo),
             "view.log" => self.toggle_log = true,
@@ -1600,11 +1657,11 @@ impl App {
     }
 
     fn build_menus() -> Vec<MenuDef> {
-        Self::build_menus_with(&[])
+        Self::build_menus_with(&[], &[])
     }
 
     /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
-    fn build_menus_with(recent: &[PathBuf]) -> Vec<MenuDef> {
+    fn build_menus_with(recent: &[PathBuf], tabs: &[(u64, String, bool)]) -> Vec<MenuDef> {
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
         let mut file = vec![
             item("file.new", Msg::MnNew),
@@ -1682,8 +1739,40 @@ impl App {
                     item("conn.disconnect", Msg::MnDisconnect),
                 ],
             ),
+            // ★ 탭 메뉴(Golden Tabs · 사용자 09-16): 열린 탭 순서대로 · 활성 탭은 ✓ · 고르면 전환.
+            MenuDef::new(
+                t(Msg::MnTabs),
+                tabs.iter()
+                    .map(|(id, title, active)| {
+                        let mut ci = ComboItem::new(format!("tab:{id}"), title.clone());
+                        if *active {
+                            ci.icon = Some("✓".into());
+                        }
+                        MenuEntry::Item(ci)
+                    })
+                    .collect(),
+            ),
             MenuDef::new(t(Msg::MnHelp), vec![item("help.about", Msg::MnAbout)]),
         ]
+    }
+
+    /// 탭 목록이 바뀌었으면(열기·닫기·이름·활성) 메뉴를 다시 만든다 — 드롭다운이 열려 있는 동안은 미룬다.
+    fn sync_tabs_menu(&mut self) {
+        if self.menubar.is_open() {
+            return;
+        }
+        let tabs = self.editors.tab_list();
+        let sig = tabs
+            .iter()
+            .map(|(id, t, a)| format!("{id}:{t}:{a}"))
+            .collect::<Vec<_>>()
+            .join("|");
+        if sig != self.tabs_menu_sig {
+            self.tabs_menu_sig = sig;
+            let recent = self.recent_files();
+            self.menubar
+                .set_menus(App::build_menus_with(&recent, &tabs));
+        }
     }
 
     fn build_toolbar() -> Toolbar {
@@ -1872,7 +1961,8 @@ impl App {
             .join("|");
         let _ = self.settings.set("file.recent", &joined);
         self.persist_settings();
-        self.menubar.set_menus(App::build_menus_with(&v));
+        let tabs = self.editors.tab_list();
+        self.menubar.set_menus(App::build_menus_with(&v, &tabs));
     }
 
     /// 대화상자를 닫을 때 마지막 폴더·숨김 표시를 기억한다.
@@ -2381,8 +2471,9 @@ impl App {
 
     /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
     fn relabel(&mut self) {
+        let tabs = self.editors.tab_list();
         self.menubar
-            .set_menus(App::build_menus_with(&self.recent_files()));
+            .set_menus(App::build_menus_with(&self.recent_files(), &tabs));
         self.toolbar = App::build_toolbar();
         self.conn_win.relabel();
         self.editors.rebuild_boxes();
@@ -2428,6 +2519,7 @@ impl App {
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
         self.last_run_items = split_items(&src);
         let max_rows = self.grid.page_rows();
+        self.single_run = !all;
         self.worker.send(worker::Cmd::Run {
             src,
             preflight,
@@ -2705,8 +2797,16 @@ impl App {
         while let Ok(done) = self.worker.done.try_recv() {
             changed = true;
             self.busy = false;
+            let failed = done.is_some();
             if let Some(m) = done {
                 self.status = m;
+            }
+            // 현재 문장 실행 뒤 캐럿(설정 `run.after_statement` · 사용자 09-16): stay / next_ok / next_always.
+            if std::mem::take(&mut self.single_run) {
+                let mode = self.settings.get("run.after_statement").unwrap_or("stay");
+                if mode == "next_always" || (mode == "next_ok" && !failed) {
+                    self.goto_statement(true);
+                }
             }
         }
         if self.explorer.drain() {
@@ -2753,6 +2853,7 @@ impl App {
     /// ★ 편집기 탭 ↔ 결과 그리드 쌍 동기화(사용자 09-16): 활성 탭이 바뀌었으면 그 탭의 그리드를 꺼내 오고(없으면 설정만
     /// 물려받은 빈 그리드) 지금 것은 잠재운다 · 닫힌 탭의 그리드는 버린다. 페인트 직전과 이벤트 뒤에 부른다.
     fn sync_grid_tab(&mut self) {
+        self.sync_tabs_menu();
         let cur = self.editors.active_id();
         if cur != self.grid_tab {
             let b = self.grid.bounds;
@@ -2967,7 +3068,8 @@ impl App {
                     },
                     ..FontPrefs::default()
                 };
-                let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s).with_fonts(prefs);
+                let gf: &Font = self.grid_font.as_ref().unwrap_or(&self.ui_font);
+                let mut dc = RasterCtx::new(&mut gfx, gf, s).with_fonts(prefs);
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
@@ -4133,6 +4235,7 @@ fn main() {
         surface: None,
         ui_font: ui.font,
         mono_font: mono.font,
+        grid_font: load_grid_font(settings.get("grid.font_face").unwrap_or("")),
         theme: initial_theme,
         settings,
         scale: 1.0,
@@ -4163,6 +4266,7 @@ fn main() {
         file_win: FileWin::new(),
         open_file_dlg: None,
         menubar: MenuBar::new(App::build_menus()),
+        tabs_menu_sig: String::new(),
         toolbar: App::build_toolbar(),
         conn_win: ConnWin::new(panel),
         open_conn: true,
@@ -4172,6 +4276,7 @@ fn main() {
         grid_stash: HashMap::new(),
         key_cache: HashMap::new(),
         sql_wait: None,
+        single_run: false,
         view_wait: None,
         offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
@@ -4234,6 +4339,10 @@ fn main() {
         app.settings.int("ui.toast_alpha"),
     );
     app.grid.set_default_page_rows(max_rows);
+    app.grid.set_col_limits(
+        app.settings.int("grid.col_min_width") as i32,
+        app.settings.int("grid.col_max_width") as i32,
+    );
     app.grid
         .set_auto_fetch(app.settings.flag("grid.auto_fetch"));
     app.log_win.set_wrap(app.settings.flag("log.wrap"));
@@ -4345,6 +4454,18 @@ impl FrameTrace {
             };
         }
     }
+}
+
+/// 결과 글꼴(설정 `grid.font_face`): 비면 None(= UI 글꼴) · `mono` = 편집기 고정폭 · 그 외 = 글꼴 이름(못 찾으면 시스템 UI 본이 첫 폴백).
+fn load_grid_font(face: &str) -> Option<Font> {
+    let face = face.trim();
+    if face.is_empty() {
+        return None;
+    }
+    if face.eq_ignore_ascii_case("mono") {
+        return nexa_font::mono_font(None).map(|l| l.font);
+    }
+    nexa_font::ui_font(Some(face)).map(|l| l.font)
 }
 
 /// 파일 대화상자의 용도 — 같은 대화상자를 편집기 열기/저장과 로그 내보내기가 나눠 쓴다.

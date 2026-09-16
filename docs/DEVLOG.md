@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (26차 · win)** — 실행 뒤 캐럿 옵션 `run.after_statement`(stay/next_ok/next_always) + **Alt+↓/↑ 다음·이전 문장** · 결과 글꼴 `grid.font_face`(기본 시스템 UI · 13px) · 헤더 경계 더블클릭 자동 너비(`grid.col_min/max_width`) · No Records Golden 방식 · **탭 메뉴** · 결과 도구줄 툴팁 위쪽 · 탭 검색 추천안(T-96). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (25차 · win)** — **결과 도구줄 5그룹**(보기 모드 7종 · 새로고침 · 편집 버튼(예정) · 조회 건수 상자 · 전체/건수 · 상태+실행 시각) · **스크롤 끝 자동 페치**(`nsql_io::paging` OFFSET 폴백 · `Runner::query_once` · `Cmd::FetchPage/Count`) · No Records · 렌더/메모리 로그 · 설정 창 종속 잠금(`DEPENDS`)·콤보 접기·`tabs.rows` 즉시 반영 · 토스트 = 편집기 우하단 · 그리드 스크롤바 클릭 결함. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (24차 · win)** — 로그 창 마감: 시스템 UI 글꼴(본문 = 편집기 크기 · 푸터 = 상태줄 크기 · 스위치 배율) · 기본 592×320 · **텍스트 드래그 선택 + 가장자리 자동 스크롤 · Ctrl+C/A** · F10 · 컬럼 선택 설계(T-95) · 그리드/로그 스크롤바 = 데이터 영역만(헤더 제외) · 그리드 푸터 글자 = 상태줄 크기. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (23차 · win)** — **페치 모델·결과 탭 조사·설계 [43](43-fetch-model-and-result-tabs.md)**(CLI 9종 상한 조사 · DBeaver 결과 패널 · D-68~72: 대화형만 상한 · 200 · 커서 유지+OFFSET 폴백 · 결과 탭 Ctrl+\ · 메모리 예산) · T-48a~d · T-93 · T-94. → [journal](journal/2026-09-16.md)

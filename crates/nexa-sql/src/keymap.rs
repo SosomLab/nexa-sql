@@ -142,6 +142,20 @@ pub(crate) const COMMANDS: &[Command] = &[
         win: "ctrl+shift+e",
         mac: "cmd+shift+e",
     },
+    // ★ 다음/이전 문장(`;` 기준 · 사용자 09-16) — Alt+↓/↑: Sublime 기본 맵에서 비어 있고(Ctrl+Shift+↑/↓ = 줄 교체 ·
+    //   Ctrl+Alt+↑/↓ = 커서 추가) 방향키라 "이동"으로 읽힌다.
+    Command {
+        id: "edit.next_statement",
+        label: Msg::MnNextStatement,
+        win: "alt+down",
+        mac: "alt+down",
+    },
+    Command {
+        id: "edit.prev_statement",
+        label: Msg::MnPrevStatement,
+        win: "alt+up",
+        mac: "alt+up",
+    },
     Command {
         id: "edit.expand_selection",
         label: Msg::MnExpandSelection,
