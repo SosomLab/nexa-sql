@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (37차 · win)** — 결과 도구줄 높이 22px(Golden 하단 바 · 아이콘 16 유지 · 여백 최소 · nexa-ui 18차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (36차 · win)** — **단축키 프리셋** `key.preset`(auto/windows/macos/linux · Sublime OS별 keymap 구조) · Sublime 정렬(alt+f3 · ctrl+cmd+g · 맥 Control 조합) · 텍스트/Markdown 보기 스크롤 끝 자동 페치(같은 ResultSet 파생 · 스크롤 유지) · T-98 후보 목록. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (35차 · win)** — 보기 모드 버튼 = 사용자 SVG 표 아이콘 + ▾ 드롭다운(nexa-ui 17차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (34차 · win)** — **정규식 엔진 도입**(D-76 · `fancy-regex` · `rx.rs` 공용 · 찾기 바 `.*` · `$1` 치환 · T-59 폐기) · 편집기 첫 글자 여백 `editor.text_pad_left`. → [journal](journal/2026-09-16.md)

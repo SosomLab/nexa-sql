@@ -337,7 +337,9 @@ impl Grid {
 
     fn bar(items: Vec<ToolItem>) -> Toolbar {
         let mut tb = Toolbar::new(items);
+        // Golden 하단 바(≈22px) 기준: 아이콘 16 + 슬롯 2 + 바 1 → 22(사용자 09-16 "이미지는 최대한 크게 · 여백 최소").
         tb.set_icon_size(16);
+        tb.set_padding(2, 1);
         tb.set_tooltip_above(true);
         tb
     }
