@@ -56,7 +56,7 @@ use log_win::{LogWin, LogWinAction};
 use nexa_ctl::controls::{SplitAxis, SplitEvent, Splitter};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
-use nexa_ctl::raster::RasterCtx;
+use nexa_ctl::raster::{FontSet, RasterCtx};
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
     ComboItem, Control, EditCommand, EditCtxAction, InputEvent, Invalidations, Key as CtlKey,
@@ -4437,7 +4437,12 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let gf: &Font = self.grid_font.as_ref().unwrap_or(&self.ui_font);
-                let mut dc = RasterCtx::new(&mut gfx, gf, s).with_fonts(prefs);
+                // 행번호는 고정폭 슬롯(편집기 고정폭 얼굴 · 사용자 09-17) — 자릿수 폭이 흔들리지 않게.
+                let fonts = FontSet {
+                    mono: Some(&self.mono_font),
+                    ..FontSet::single(gf)
+                };
+                let mut dc = RasterCtx::with_font_set(&mut gfx, fonts, s).with_fonts(prefs);
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드

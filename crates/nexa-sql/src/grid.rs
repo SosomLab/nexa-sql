@@ -2331,7 +2331,9 @@ impl Grid {
         if empty && self.view == ResultView::Grid {
             // Golden 방식(사용자 09-16 2번 이미지): 행번호 칸 + `No Records` 폭만큼의 작은 셀 하나 — 나머지는 빈 바탕.
             let label = t(Msg::GridNoRecords);
+            dc.select_font(FontSlot::Mono, false);
             let gw = dc.text_width("0") * 2 + pad * 2;
+            dc.select_font(FontSlot::Base, false);
             let cw = dc.text_width(label) + pad * 2;
             let header = Rect::new(b.x, b.y + 1, gw + cw, self.row_h + 2);
             self.header_h = header.h + 1;
@@ -2345,7 +2347,9 @@ impl Grid {
             let row = Rect::new(b.x, ry, gw + cw, self.row_h);
             dc.fill_rect(Rect::new(b.x, ry, gw, self.row_h), th.chrome_bg);
             let cy = dc.text_center_y(ry, self.row_h);
+            dc.select_font(FontSlot::Mono, false);
             dc.text(b.x + pad, cy, row, "1", th.text_dim);
+            dc.select_font(FontSlot::Base, false);
             dc.text(b.x + gw + pad, cy, row, label, th.text_dim);
             dc.fill_rect(Rect::new(b.x + gw, ry, 1, self.row_h), th.border);
             dc.fill_rect(Rect::new(row.right() - 1, ry, 1, self.row_h), th.border);
@@ -2404,7 +2408,10 @@ impl Grid {
         // 행번호 열 폭(자릿수 × 숫자 폭 + 여백) — 가로 스크롤과 무관한 고정 열.
         self.gutter_w = if self.row_numbers {
             let digits = rs.rows.len().max(1).to_string().len().max(2) as i32;
-            digits * dc.text_width("0") + pad * 2
+            dc.select_font(FontSlot::Mono, false);
+            let w = digits * dc.text_width("0") + pad * 2;
+            dc.select_font(FontSlot::Base, false);
+            w
         } else {
             0
         };
@@ -2478,6 +2485,7 @@ impl Grid {
             // 행번호(고정 열 · 우측 정렬 · 흐리게 · 선택 행은 선택색으로 표시).
             if self.gutter_w > 0 {
                 let num = (di + 1).to_string();
+                dc.select_font(FontSlot::Mono, false);
                 let nw = dc.text_width(&num);
                 let gclip = Rect::new(b.x, y, self.gutter_w, self.row_h).intersection(&body);
                 dc.fill_rect(gclip, th.chrome_bg);
@@ -2487,11 +2495,12 @@ impl Grid {
                 }
                 dc.text(
                     gx0 - pad - nw,
-                    y + pad / 2,
+                    dc.text_center_y(y, self.row_h),
                     gclip,
                     &num,
                     if selected_row { th.text } else { th.text_dim },
                 );
+                dc.select_font(FontSlot::Base, false);
             }
             y += self.row_h;
         }
@@ -2690,7 +2699,10 @@ impl Grid {
         // 행번호 거터(그리드와 같은 설정 · 자릿수 × 숫자 폭 + 여백 · 가로 스크롤 무관).
         self.text_gutter_w = if self.row_numbers {
             let digits = self.text_lines.len().max(1).to_string().len().max(2) as i32;
-            digits * dc.text_width("0") + pad * 2
+            dc.select_font(FontSlot::Mono, false);
+            let w = digits * dc.text_width("0") + pad * 2;
+            dc.select_font(FontSlot::Base, false);
+            w
         } else {
             0
         };
@@ -2770,8 +2782,10 @@ impl Grid {
             }
             if gw > 0 {
                 let num = (i + 1).to_string();
+                dc.select_font(FontSlot::Mono, false);
                 let nw = dc.text_width(&num);
                 dc.text(gutter.right() - pad - nw, y, gutter, &num, th.text_dim);
+                dc.select_font(FontSlot::Base, false);
             }
             y += rh;
         }
