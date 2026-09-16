@@ -66,12 +66,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+shift+p",
         linux: "ctrl+shift+p",
     },
+    // 새 편집기 = Sublime `ctrl+n` + 브라우저식 `ctrl+t`(사용자 09-15 요청 · 36차 프리셋 정렬 때 `ctrl+t`가 빠졌던 것을 09-16 복구).
     Command {
         id: "file.new",
         label: Msg::MnNew,
-        win: "ctrl+n",
-        mac: "cmd+n",
-        linux: "ctrl+n",
+        win: "ctrl+n|ctrl+t",
+        mac: "cmd+n|cmd+t",
+        linux: "ctrl+n|ctrl+t",
     },
     Command {
         id: "file.open",
@@ -835,6 +836,19 @@ mod tests {
             Chord::parse("ctrl+g").unwrap(),
             "Windows ctrl = 주 조합키와 다르다"
         );
+    }
+
+    /// ⌘T/Ctrl+T = 새 편집기(사용자 09-15 · 36차에 유실 · 09-16 회귀 테스트).
+    #[test]
+    fn ctrl_t_opens_new_editor_on_every_preset() {
+        let s = Settings::open(std::path::PathBuf::from("__keymap_test_nonexistent3__.conf"));
+        let km = Keymap::from_settings(&s);
+        let code = if cfg!(target_os = "macos") { "cmd+t" } else { "ctrl+t" };
+        assert_eq!(km.lookup(&Chord::parse(code).unwrap()), Some("file.new"));
+        for p in [Preset::Windows, Preset::Macos, Preset::Linux] {
+            let c = COMMANDS.iter().find(|c| c.id == "file.new").unwrap();
+            assert!(preset_default(c, p).ends_with("+t"), "{p:?}");
+        }
     }
 
     #[test]
