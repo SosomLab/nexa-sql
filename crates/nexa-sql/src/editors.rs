@@ -171,6 +171,19 @@ impl Editors {
     }
 
     /// 캐럿 위치(1-기준 줄 · 열).
+    /// 일반 선택(구간 1개)의 요약 — (걸친 줄 수, 문자 수). 없거나 비었으면 None(상태줄 Sublime식 · 사용자 09-16).
+    pub(crate) fn selection_summary(&self) -> Option<(usize, usize)> {
+        let tb = self.cur();
+        let (a, b) = tb.selection()?;
+        if a == b {
+            return None;
+        }
+        let text = tb.text();
+        let sel: String = text.chars().skip(a).take(b - a).collect();
+        let lines = sel.split('\n').count();
+        Some((lines, sel.chars().count()))
+    }
+
     pub(crate) fn caret_line_col(&self) -> (usize, usize) {
         let tb = self.cur();
         let text = tb.text();

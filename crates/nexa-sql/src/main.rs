@@ -2979,7 +2979,14 @@ impl App {
                     let (r, c, _) = self.grid.selection_summary().unwrap_or((0, 0, 0));
                     segs.push((tf(Msg::StGridSel, &[&r.to_string(), &c.to_string()]), false));
                 } else if nsel > 1 {
+                    // 열 모드·다중 커서 = 선택 영역 수(Sublime "5 selection regions").
                     segs.push((tf(Msg::StSelections, &[&nsel.to_string()]), false));
+                } else if let Some((l, c)) = self.editors.selection_summary() {
+                    // 일반 선택 = 줄 수·문자 수(Sublime "6 lines, 90 characters selected").
+                    segs.push((
+                        tf(Msg::StSelected, &[&l.to_string(), &c.to_string()]),
+                        false,
+                    ));
                 } else {
                     segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
                 }

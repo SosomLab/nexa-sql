@@ -271,10 +271,12 @@ pub(crate) fn spawn(
                         let result = match runner.dialect() {
                             None => Err(t(Msg::ExpNotConnected).to_string()),
                             Some(d) => {
+                                // ★ 래핑은 limit+1행을 달라고 하고 상한은 limit — 한 행이 더 오면 `more`(09-16: 두 번째
+                                //   페이지부터 more가 늘 false라 400행에서 멈췄다).
                                 let (q, max) = if limit == 0 {
                                     (sql, 0)
                                 } else {
-                                    (nsql_io::paging::page_sql(d, &sql, offset, limit), limit)
+                                    (nsql_io::paging::page_sql(d, &sql, offset, limit + 1), limit)
                                 };
                                 runner.query_once(&q, max).map_err(|e| e.message)
                             }
