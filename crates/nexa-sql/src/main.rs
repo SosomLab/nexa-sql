@@ -32,6 +32,7 @@ mod prefs_win;
 mod probe;
 mod syntax;
 mod theme;
+mod toast;
 mod toolicons;
 mod winfocus;
 mod worker;
@@ -105,6 +106,10 @@ struct App {
     scale: f32,
     /// 로그 창(별도 창 · `Ctrl/⌘+⇧G`).
     log_win: LogWin,
+    /// 우측 하단 토스트(오류 분류 · docs/42).
+    toasts: toast::Toasts,
+    /// 마지막 실행의 문장 목록(오류 index → 문장 · 테이블 추정).
+    last_run_items: Vec<String>,
     /// 메뉴에서 요청한 종료·로그 창 토글(이벤트 루프 핸들이 필요해 window_event 끝에서 처리).
     exit_requested: bool,
     palette: Palette,
@@ -989,6 +994,17 @@ impl App {
         self.conn_win.panel.set_state(ConnState::Idle);
     }
 
+    /// 메인 창 항상 위(설정 `window.always_on_top`). 로그 창은 메인 창의 소유 창이라 둘 다 켜도 로그가 위(Windows/mac 소유 규칙 · 사용자 09-16).
+    fn apply_on_top(&self) {
+        if let Some(w) = &self.window {
+            w.set_window_level(if self.settings.flag("window.always_on_top") {
+                winit::window::WindowLevel::AlwaysOnTop
+            } else {
+                winit::window::WindowLevel::Normal
+            });
+        }
+    }
+
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
     fn sync_disconnect_btn(&mut self, connected: bool) {
         let mut inv = Invalidations::default();
@@ -1030,6 +1046,10 @@ impl App {
                 nexa_ctl::tokens::FadeSpeed::Slow,
                 i(&self.settings, key).clamp(0, 5000) as u32,
             ),
+            "ui.toast_secs" | "ui.toast_alpha" => self.toasts.configure(
+                self.settings.int("ui.toast_secs"),
+                self.settings.int("ui.toast_alpha"),
+            ),
             "ui.hover_intent_ms" => {
                 nexa_ctl::tokens::set_intent_ms(i(&self.settings, key).clamp(0, 500) as u64)
             }
@@ -1048,6 +1068,12 @@ impl App {
                 let on = self.settings.flag(key);
                 self.all_grids().for_each(|g| g.set_row_numbers(on));
             }
+            "grid.copy_null" => {
+                let on = self.settings.flag(key);
+                self.all_grids().for_each(|g| g.set_copy_null(on));
+            }
+            "window.always_on_top" => self.apply_on_top(),
+            "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "grid.scroll" => self
                 .grid
                 .set_row_snap(self.settings.get(key) == Some("row")),
@@ -1060,6 +1086,9 @@ impl App {
                 .editors
                 .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
             "tabs.tooltip" => self.editors.set_tooltip(self.settings.flag(key)),
+            "log.wrap" => self.log_win.set_wrap(self.settings.flag(key)),
+            "log.newest_first" => self.log_win.set_newest_first(self.settings.flag(key)),
+            "log.autoscroll" => self.log_win.set_autoscroll(self.settings.flag(key)),
             "log.format" => self
                 .log_win
                 .set_format(self.settings.get(key).unwrap_or("raw")),
@@ -1182,6 +1211,16 @@ impl App {
                 }
             }
             "view.log" => self.toggle_log_window(el),
+            "view.on_top" => {
+                let on = !self.settings.flag("window.always_on_top");
+                let _ = self
+                    .settings
+                    .set("window.always_on_top", if on { "on" } else { "off" });
+                let _ = self.settings.save();
+                self.apply_on_top();
+                self.status = tf(Msg::StOnTop, &[if on { "on" } else { "off" }]);
+                self.redraw();
+            }
             "conn.toggle" => self.open_conn_window(el),
             _ => self.menu_action(id),
         }
@@ -1373,6 +1412,7 @@ impl App {
                     item("view.palette", Msg::MnCommandPalette),
                     item("view.explorer", Msg::MnExplorer),
                     item("view.log", Msg::MnLogWindow),
+                    item("view.on_top", Msg::MnAlwaysOnTop),
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
                     item("view.keys", Msg::MnKeys),
@@ -2128,6 +2168,7 @@ impl App {
         let light = self.conn_win.status_of(self.conn_win.active_name());
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
+        self.last_run_items = split_items(&src);
         self.worker.send(worker::Cmd::Run { src, preflight });
         self.live_start();
         self.redraw();
@@ -2272,6 +2313,7 @@ impl App {
         self.busy = true;
         self.status = t(Msg::StRunning).into();
         self.log.clear();
+        self.last_run_items = split_items(&src);
         self.worker.send(worker::Cmd::Run {
             src,
             preflight: None,
@@ -2364,9 +2406,24 @@ impl App {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
                     self.status = format!("{} · ⏱ {}", self.status, timeline.summary());
                 }
-                RunEvent::Error { line, error, .. } => {
-                    self.status = tf(Msg::StErrorLine, &[&line.to_string(), &error.to_string()]);
+                RunEvent::Error { index, line, error } => {
+                    // 공통 분류 + 코드 부각(docs/42): 상태줄 · 결과 메시지 · 로그 창 · 토스트(분류된 오류만).
+                    let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
+                    let (cls, summary) =
+                        toast::summarize(self.dialect, error.code, &error.message, &stmt);
+                    self.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
                     self.log.push(self.status.clone());
+                    if let Some(label) = toast::class_label(cls.class) {
+                        let title = match &cls.code {
+                            Some(c) => format!("{c} · {label}"),
+                            None => label.to_string(),
+                        };
+                        let body = cls.object.clone().unwrap_or_else(|| {
+                            error.message.lines().next().unwrap_or("").to_string()
+                        });
+                        self.toasts.push(toast::ToastKind::Error, title, body);
+                        self.redraw();
+                    }
                     self.grid.set_messages(self.log.clone());
                     self.busy = false;
                     // 실행 중 접속성 오류 확인 → 활성 서버 신호등 즉시 갱신(사용자 09-14).
@@ -2702,6 +2759,9 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.toolbar.paint_tooltip(&mut dc, &th);
+                // 토스트(우측 하단 · 상태줄 위 · 반투명 · docs/42).
+                let status_y = hi - px(24.0, s);
+                self.toasts.paint(&mut dc, &th, wi, status_y, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
             {
@@ -2794,6 +2854,12 @@ impl App {
 
     fn route(&mut self, ev: InputEvent) {
         let mut inv = Invalidations::default();
+        if let InputEvent::MouseDown { x, y, .. } = ev {
+            if self.toasts.click(Point { x, y }) {
+                self.redraw();
+                return;
+            }
+        }
         // 마우스 다운은 포커스를 옮긴다.
         // 우클릭 메뉴가 열리기 전에 "붙여넣기 가능" 여부를 넣어 준다.
         if matches!(ev, InputEvent::RightDown { .. }) {
@@ -3081,6 +3147,7 @@ impl ApplicationHandler<Wake> for App {
             .ok()
             .map(|p| (p.x, p.y, win.outer_size().width));
         self.window = Some(win);
+        self.apply_on_top();
         self.layout();
         self.set_focus(Focus::Editor);
         self.apply_indent();
@@ -3135,6 +3202,9 @@ impl ApplicationHandler<Wake> for App {
         if redraw {
             self.redraw();
         }
+        if self.toasts.tick(Instant::now()) {
+            self.redraw();
+        }
         if self.log_win.tick(now_ms) {
             self.log_win.redraw();
         }
@@ -3172,7 +3242,8 @@ impl ApplicationHandler<Wake> for App {
             || self.file_win.animating()
             || self.explorer.bars_visible()
             || self.find.animating()
-            || self.editors.tooltip_pending();
+            || self.editors.tooltip_pending()
+            || self.toasts.animating();
         let mut next = if bars_live {
             self.next_blink.min(now + Duration::from_millis(33))
         } else {
@@ -3374,9 +3445,17 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.log_win.is(id) {
-            if self.log_win.handle(&event) == LogWinAction::Paint {
-                let px = self.settings.int("editor.font_size") as f32;
-                self.log_win.paint(&self.mono_font, &self.theme, px);
+            match self.log_win.handle(&event) {
+                LogWinAction::Paint => {
+                    let px = self.settings.int("editor.font_size") as f32;
+                    self.log_win.paint(&self.mono_font, &self.theme, px);
+                }
+                LogWinAction::Toggled(key, on) => {
+                    // 스위치 = 설정과 같은 값(자동 기억 · 설정 창에도 반영).
+                    let _ = self.settings.set(key, if on { "on" } else { "off" });
+                    let _ = self.settings.save();
+                }
+                LogWinAction::None => {}
             }
             return;
         }
@@ -3737,6 +3816,8 @@ fn main() {
         settings,
         scale: 1.0,
         log_win: LogWin::new(&log_format),
+        toasts: toast::Toasts::new(),
+        last_run_items: Vec::new(),
         exit_requested: false,
         z_order: Vec::new(),
         palette: Palette::new(),
@@ -3806,6 +3887,9 @@ fn main() {
         panel_op: None,
     };
     app.grid.set_row_snap(row_snap);
+    app.grid.set_copy_null(app.settings.flag("grid.copy_null"));
+    app.log_win
+        .set_on_top(app.settings.flag("log.always_on_top"));
     app.editors.set_rulers(rulers);
     {
         let secs = |k: &str, min: i64| Duration::from_secs(app.settings.int(k).max(min) as u64);
@@ -3820,6 +3904,15 @@ fn main() {
     }
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
+    app.toasts.configure(
+        app.settings.int("ui.toast_secs"),
+        app.settings.int("ui.toast_alpha"),
+    );
+    app.log_win.set_wrap(app.settings.flag("log.wrap"));
+    app.log_win
+        .set_newest_first(app.settings.flag("log.newest_first"));
+    app.log_win
+        .set_autoscroll(app.settings.flag("log.autoscroll"));
     app.grid
         .set_row_numbers(app.settings.flag("grid.row_numbers"));
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
@@ -3915,6 +4008,14 @@ impl FrameTrace {
             };
         }
     }
+}
+
+/// 실행 스크립트의 문장 본문 목록(오류 이벤트의 index로 찾는다).
+fn split_items(src: &str) -> Vec<String> {
+    nsql_script::split_script(src)
+        .into_iter()
+        .map(|i| i.text)
+        .collect()
 }
 
 /// `editor.rulers` = "80, 120" → 열 목록(0·비정상 값 제외).

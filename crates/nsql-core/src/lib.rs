@@ -560,6 +560,9 @@ pub trait Session {
     }
 }
 
+pub mod dberr;
+pub use dberr::{classify, native_code, Classified, ErrorClass};
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (21차 · win)** — 로그 창 스크롤 전부 + 스위치 4종(줄바꿈·최신 먼저·자동 스크롤·항상 위) · **토스트 + DBMS 오류 정규화 [42](42-db-error-normalization.md)**(코드 부각) · Save As 덮어쓰기 카드 · 메인 창 항상 위 · NULL 표시/복사 설정 · 그리드 스크롤바 트랙/끝/컬럼 확장 · 헤더 경계선. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (20차 · win)** — `nsql export -f sql:*` 키 조회 · 실서버(Oracle·SQL Server·PostgreSQL) 키 규칙 검증 · push. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (19차 · win)** — **결과 → SQL 5종 CLI/GUI 공용**(`nsql_io::sqlgen` · 복합 키) · 키 규칙 PK → 유니크 → 앞 3컬럼 + 경고 1회 · `nsql_catalog::keys` 4방언 · 설정 `sql.key_mode` · [41 설계·결정](41-sql-copy-key-rules.md) D-62~67. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (18차 · win)** — CLI 표 기본 `none` · 줄 끝 공백 제거 · **markdown 형식** · `cli.format` · 셸 `set format`/`copy [fmt]`(Win32 클립보드) · **GUI 3단 메뉴(Copy SQL ▸ MERGE) 클릭 유실 + 우클릭 포커스** 수정(nexa-ui 9차). → [journal](journal/2026-09-16.md)

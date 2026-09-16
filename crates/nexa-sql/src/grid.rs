@@ -60,6 +60,8 @@ pub(crate) struct Grid {
     row_snap: bool,
     /// 설정 `grid.row_numbers`(기본 켬) — 왼쪽 고정 행번호 열(가로 스크롤 무관).
     row_numbers: bool,
+    /// 설정 `grid.copy_null` — 복사 시 null을 `NULL`로(기본 끔 = 빈 칸).
+    copy_null: bool,
     gutter_w: i32,
     /// 표시 순서 → 원본 컬럼 index(드래그 이동 · 재조회 시 초기화 — 사용자 09-14).
     col_order: Vec<usize>,
@@ -115,6 +117,7 @@ impl Default for Grid {
             bars: ScrollBars::new(),
             row_snap: false,
             row_numbers: true,
+            copy_null: false,
             gutter_w: 0,
             col_order: Vec::new(),
             row_order: Vec::new(),
@@ -168,6 +171,7 @@ impl Grid {
             bounds: self.bounds,
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
+            copy_null: self.copy_null,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
             dialect: self.dialect,
@@ -177,6 +181,11 @@ impl Grid {
 
     pub(crate) fn set_row_numbers(&mut self, on: bool) {
         self.row_numbers = on;
+    }
+
+    /// 복사할 때 null을 `NULL` 글자로(설정 `grid.copy_null` · 기본 끔 = 빈 칸 · 사용자 09-16).
+    pub(crate) fn set_copy_null(&mut self, on: bool) {
+        self.copy_null = on;
     }
 
     /// 스크롤 단위 — `true` = 항목(행) 단위 · `false` = 픽셀(기본).
@@ -438,7 +447,9 @@ impl Grid {
             .collect();
         let mut out = String::new();
         let mut cells = 0usize;
+        let copy_null = self.copy_null;
         let plain = |v: &Value| match v {
+            Value::Null if copy_null => "NULL".into(),
             Value::Null => String::new(),
             other => other.display(),
         };
@@ -1129,6 +1140,19 @@ impl Grid {
                         if let Some(w) = self.col_w.get_mut(ci) {
                             *w = (w0 + (x - x0)).max(24);
                         }
+                        // ★ 오른쪽 경계가 뷰포트 밖으로 나가면 그만큼 가로 스크롤 — 마지막 컬럼을 창 밖으로 키워도 경계가 보인다
+                        //   (사용자 09-16 · 줄일 때와 같은 방식).
+                        if let Some(pos) = self.col_order.iter().position(|&c| c == ci) {
+                            let left: i32 = self.col_order[..pos]
+                                .iter()
+                                .map(|&c| self.col_w.get(c).copied().unwrap_or(80))
+                                .sum();
+                            let edge = left + self.col_w.get(ci).copied().unwrap_or(80);
+                            let vp_w = (self.bounds.w - self.gutter_w).max(1);
+                            if edge - self.scroll_x > vp_w {
+                                self.scroll_x = edge - vp_w;
+                            }
+                        }
                         self.clamp();
                     }
                     return;
@@ -1171,7 +1195,13 @@ impl Grid {
         if self.row_h > 0 && self.rs.is_some() {
             let (cw, ch) = self.content_size();
             let b = self.bounds;
-            let b = Rect::new(b.x, b.y, b.w, b.h - self.row_h);
+            // ★ 뷰포트 = 행번호 열(고정) 제외 — 가로 바의 끝이 키보드 `max_scroll`과 같은 자리(09-16: 바로는 끝까지 못 갔다).
+            let b = Rect::new(
+                b.x + self.gutter_w,
+                b.y,
+                b.w - self.gutter_w,
+                b.h - self.row_h,
+            );
             let (nx, ny, consumed) = self.bars.on_event(
                 ev,
                 b,
@@ -1394,7 +1424,12 @@ impl Grid {
             };
             let hy = dc.text_center_y(header.y, header.h);
             dc.text(x + pad, hy, name_clip, &c.name, th.text);
-            dc.fill_rect(Rect::new(x + cw - 1, header.y, 1, header.h), th.border);
+            // 헤더 세로 경계선 강조(사용자 09-16 · 원복 요청 가능 = `th.border` 1px로 되돌리면 된다).
+            dc.fill_rect_alpha(
+                Rect::new(x + cw - 1, header.y, 1, header.h),
+                th.text_dim,
+                0.55,
+            );
             if let Some(dp) = drop_pos {
                 if dp == pos {
                     dc.fill_rect(Rect::new(x, header.y, 2, header.h), th.accent);
@@ -1433,7 +1468,12 @@ impl Grid {
         );
         // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명) — 푸터 위까지.
         let (cw, ch) = self.content_size();
-        let vp = Rect::new(b.x, b.y, b.w, b.h - self.row_h);
+        let vp = Rect::new(
+            b.x + self.gutter_w,
+            b.y,
+            b.w - self.gutter_w,
+            b.h - self.row_h,
+        );
         self.bars.paint(
             dc,
             th,
@@ -1454,7 +1494,7 @@ impl Grid {
 
 fn cell_text(v: &Value) -> String {
     match v {
-        Value::Null => "(null)".into(),
+        Value::Null => "NULL".into(),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         other => other.display(),
     }

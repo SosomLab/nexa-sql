@@ -70,6 +70,8 @@ pub(crate) fn labels() -> PickerLabels {
         path_hint: t(Msg::PhPath).into(),
         err_not_found: t(Msg::ErrFileNotFound).into(),
         err_exists: t(Msg::ErrFileExists).into(),
+        overwrite_ask: t(Msg::AskOverwrite).into(),
+        overwrite_yes: t(Msg::BtnOverwrite).into(),
         err_bad_name: t(Msg::ErrBadFileName).into(),
         err_list: t(Msg::ErrListDir).into(),
         err_mkdir: t(Msg::ErrMkdir).into(),

@@ -223,6 +223,42 @@ fn resolver() -> nsql_run::Resolver {
     })
 }
 
+/// 오류 머리 — `코드 · 분류: 대상`(분류 라벨 i18n · 분류 안 되면 코드만 · 둘 다 없으면 빈 문자열).
+fn err_head(c: &nsql_core::Classified) -> String {
+    use nsql_core::ErrorClass as C;
+    use nsql_i18n::Msg as M;
+    let label = match c.class {
+        C::NoTable => Some(M::ErrClsNoTable),
+        C::NoColumn => Some(M::ErrClsNoColumn),
+        C::NoObject => Some(M::ErrClsNoObject),
+        C::Syntax => Some(M::ErrClsSyntax),
+        C::Permission => Some(M::ErrClsPermission),
+        C::Login => Some(M::ErrClsLogin),
+        C::Connection => Some(M::ErrClsConnection),
+        C::Unique => Some(M::ErrClsUnique),
+        C::ForeignKey => Some(M::ErrClsForeignKey),
+        C::NotNull => Some(M::ErrClsNotNull),
+        C::Check => Some(M::ErrClsCheck),
+        C::Lock => Some(M::ErrClsLock),
+        C::Deadlock => Some(M::ErrClsDeadlock),
+        C::DataType => Some(M::ErrClsDataType),
+        C::Resource => Some(M::ErrClsResource),
+        C::Unknown => None,
+    };
+    let mut head = c.code.clone().unwrap_or_default();
+    if let Some(l) = label {
+        if !head.is_empty() {
+            head.push_str(" · ");
+        }
+        head.push_str(nsql_i18n::t(l));
+        if let Some(o) = &c.object {
+            head.push_str(": ");
+            head.push_str(o);
+        }
+    }
+    head
+}
+
 /// 설정 `sql.key_mode`(pk 기본 · all).
 fn key_mode_setting() -> KeyMode {
     nsql_settings::Settings::open_default()
@@ -642,10 +678,18 @@ impl Printer {
                     eprintln!("⏱ {}", timeline.summary());
                 }
             }
-            RunEvent::Error { line, error, .. } => {
+            RunEvent::Error { index, line, error } => {
                 self.errors += 1;
                 let _ = out.flush();
-                eprintln!("ERROR line {line}: {error}");
+                // 공통 분류 + 코드 부각(docs/42) — `ERROR line n: [ORA-00942 · Table not found: X] 원문`.
+                let stmt = self.stmts.get(index).map(String::as_str).unwrap_or("");
+                let c = nsql_core::classify(self.dialect, error.code, &error.message, stmt);
+                let head = err_head(&c);
+                if head.is_empty() {
+                    eprintln!("ERROR line {line}: {error}");
+                } else {
+                    eprintln!("ERROR line {line}: [{head}] {}", error.message);
+                }
             }
         }
     }
