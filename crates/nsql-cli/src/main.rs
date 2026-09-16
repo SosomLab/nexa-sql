@@ -259,13 +259,34 @@ fn shell_set(line: &str, g: &mut GridOpts) -> bool {
         show(g);
         return true;
     }
-    if low == "show" || low == "set" || low == "\\pset" {
+    if low == "show" || low == "set" || low == "get" || low == "\\pset" || low == "help set" {
         show(g);
+        eprintln!("set width <n|auto> · set colwidth <n> · set overflow wrap|truncate|expanded|none · get <키> · \\x · 영구: nsql config set cli.width <n>");
+        return true;
+    }
+    // get/show <키> — 값 하나만.
+    if let Some(k) = low
+        .strip_prefix("get ")
+        .or_else(|| low.strip_prefix("show "))
+    {
+        let k = k.trim().trim_end_matches(';');
+        let v = match k {
+            "width" | "linesize" | "line_width" => g.line_width.to_string(),
+            "colwidth" | "max_col_width" | "col" => g.max_col.to_string(),
+            "overflow" | "wrap" => g.overflow.name().to_string(),
+            "all" | "" => {
+                show(g);
+                return true;
+            }
+            _ => return false,
+        };
+        eprintln!("{k} = {v}");
         return true;
     }
     let Some(rest) = low.strip_prefix("set ") else {
         return false;
     };
+    let rest = rest.trim_end_matches(';');
     let mut it = rest.split_whitespace();
     let (Some(k), Some(v)) = (it.next(), it.next()) else {
         show(g);
