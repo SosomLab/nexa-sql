@@ -105,7 +105,9 @@ const BTN: f32 = 22.0;
 const BTN_GAP: f32 = 3.0;
 const COUNT_W: f32 = 69.0;
 const COUNT_GAP: f32 = 3.0;
-const MARGIN_RIGHT: f32 = 20.0;
+/// 편집기 우상단 기준 여백(사용자 09-17: 오른쪽·위 각각 10px 동일).
+const MARGIN_RIGHT: f32 = 10.0;
+const MARGIN_TOP: f32 = 10.0;
 
 /// 아이콘 버튼/토글 하나 — 상태 3종이 구별된다(On · hover 페이드 · 포커스). 파일 검색 패널도 같은 부품을 쓴다.
 pub(crate) struct FindBtn {
@@ -180,12 +182,12 @@ impl FindBtn {
         match *ev {
             InputEvent::MouseMove { x, y } => {
                 let inside = self.rect.contains(Point { x, y });
-                self.set_hover(inside);
+                self.set_hover(inside && self.enabled);
             }
             InputEvent::MouseDown { x, y, .. } => {
                 let inside = self.rect.contains(Point { x, y });
                 self.pressed = inside && self.enabled;
-                self.focused = inside;
+                self.focused = inside && self.enabled;
             }
             InputEvent::MouseUp { x, y } => {
                 if self.pressed && self.rect.contains(Point { x, y }) {
@@ -194,6 +196,22 @@ impl FindBtn {
                 self.pressed = false;
             }
             _ => {}
+        }
+    }
+
+    /// 사용 가능 상태 — 끄면 hover·눌림·포커스를 비우고 흐리게 그린다(사용자 09-17: 쓸 수 없으면 Disable).
+    pub(crate) fn set_enabled(&mut self, on: bool) {
+        if self.enabled == on {
+            return;
+        }
+        self.enabled = on;
+        if !on {
+            self.pressed = false;
+            self.focused = false;
+            self.clicked = false;
+            self.hover_since = None;
+            self.set_hover(false);
+            self.hover.jump(false);
         }
     }
 
@@ -368,6 +386,25 @@ impl FindBar {
         self.btn_mut(BtnKind::Selection).checked = on;
     }
 
+    /// 일치가 1건 이상일 때만 이전/다음·바꾸기·전부 바꾸기를 쓸 수 있다(사용자 09-17).
+    pub(crate) fn set_has_matches(&mut self, on: bool) {
+        for k in [
+            BtnKind::Prev,
+            BtnKind::Next,
+            BtnKind::Replace,
+            BtnKind::ReplaceAll,
+        ] {
+            self.btn_mut(k).set_enabled(on);
+        }
+    }
+
+    /// In selection 토글 = 편집기에 선택이 있을 때(또는 이미 켜져 있어 끌 수 있을 때)만.
+    pub(crate) fn set_selection_available(&mut self, on: bool) {
+        let b = self.btn_mut(BtnKind::Selection);
+        let usable = on || b.checked;
+        b.set_enabled(usable);
+    }
+
     pub(crate) fn set_status(&mut self, s: impl Into<String>) {
         self.status = s.into();
     }
@@ -462,7 +499,7 @@ impl FindBar {
         let w = px(WIDGET_W).min((editor.w - px(MARGIN_RIGHT)).max(px(260.0)));
         let h = px(if self.with_replace { ROW2_H } else { ROW1_H });
         let x = (editor.right() - px(MARGIN_RIGHT) - w).max(editor.x);
-        self.bounds = Rect::new(x, editor.y, w, h);
+        self.bounds = Rect::new(x, editor.y + px(MARGIN_TOP), w, h);
         let b = self.bounds;
         let mut inv = Invalidations::default();
         // 왼쪽 접기 토글: x 3 · 폭 18 · 전체 높이.

@@ -380,6 +380,12 @@ impl Runner {
         self
     }
 
+    /// 왕복당 행수 변경(전체 조회는 큰 배열 · docs/43) — 세션에 즉시 알린다(0 = 드라이버 기본).
+    pub fn set_fetch_size(&mut self, n: usize) {
+        self.fetch_size = n;
+        self.push_max_rows();
+    }
+
     /// 페치 상한 변경(실행마다 · 결과 탭의 세그먼트 크기 · docs/43) — 세션에도 즉시 알린다.
     pub fn set_max_rows(&mut self, n: usize) {
         if self.max_rows != n {

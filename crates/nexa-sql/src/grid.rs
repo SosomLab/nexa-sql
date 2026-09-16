@@ -225,8 +225,9 @@ pub(crate) struct Grid {
     /// 거터 Ctrl+클릭으로 모은 개별 줄(그리드 행번호 열과 같은 규약).
     text_lines_sel: Vec<usize>,
     text_drag: Option<TextDrag>,
-    /// 페인트가 풀 히트 요청(x, y, 종류).
-    text_hit: Option<(i32, i32, TextHit)>,
+    /// 페인트가 풀 히트 요청(x, y, 종류) — **큐**: macOS는 클릭 직후 CursorMoved를 보내므로 슬롯 하나면 앵커 요청이
+    /// 헤드로 덮여 옛 앵커가 남는다(사용자 09-17 "Shift 누른 것처럼 확장"). 순서대로 전부 푼다.
+    text_hit: Vec<(i32, i32, TextHit)>,
     /// 거터 드래그의 기준 줄.
     text_gutter_anchor: Option<usize>,
     /// 도구줄 상태 글자와 그 영역 — UI 글꼴 패스(상태줄과 같은 얼굴·크기)에서 호스트가 그린다(사용자 09-16).
@@ -329,7 +330,7 @@ impl Default for Grid {
             text_sel: None,
             text_lines_sel: Vec::new(),
             text_drag: None,
-            text_hit: None,
+            text_hit: Vec::new(),
             text_gutter_anchor: None,
             footer_info: None,
         }
@@ -531,7 +532,7 @@ impl Grid {
         self.text_sel = None;
         self.text_lines_sel.clear();
         self.text_drag = None;
-        self.text_hit = None;
+        self.text_hit.clear();
         match self.view {
             ResultView::Grid => self.cancel_text_job(),
             ResultView::Sql(k) => {
@@ -917,7 +918,7 @@ impl Grid {
             } => {
                 let p = Point { x, y };
                 if gutter.w > 0 && gutter.contains(p) {
-                    self.text_hit = Some((
+                    self.text_hit.push((
                         x,
                         y,
                         TextHit::GutterDown {
@@ -927,15 +928,24 @@ impl Grid {
                     ));
                     self.text_drag = Some(TextDrag::Gutter);
                 } else if body.contains(p) {
-                    self.text_hit = Some((x, y, TextHit::Anchor { shift }));
+                    self.text_hit.push((x, y, TextHit::Anchor { shift }));
                     self.text_drag = Some(TextDrag::Body);
                 }
             }
-            InputEvent::MouseMove { x, y } => match self.text_drag {
-                Some(TextDrag::Body) => self.text_hit = Some((x, y, TextHit::Head)),
-                Some(TextDrag::Gutter) => self.text_hit = Some((x, y, TextHit::GutterHead)),
-                None => {}
-            },
+            InputEvent::MouseMove { x, y } => {
+                let head = match self.text_drag {
+                    Some(TextDrag::Body) => TextHit::Head,
+                    Some(TextDrag::Gutter) => TextHit::GutterHead,
+                    None => return,
+                };
+                // 연속 이동은 마지막 헤드만 남긴다(다운 요청은 덮지 않음).
+                match self.text_hit.last_mut() {
+                    Some(l) if matches!(l.2, TextHit::Head | TextHit::GutterHead) => {
+                        *l = (x, y, head)
+                    }
+                    _ => self.text_hit.push((x, y, head)),
+                }
+            }
             InputEvent::MouseUp { .. } => self.text_drag = None,
             InputEvent::SelectAll => self.select_all(),
             InputEvent::Key {
@@ -1003,7 +1013,6 @@ impl Grid {
         }
         let line = (((hy - body.y + self.text_scroll.1).max(0)) / self.row_h) as usize;
         let line = line.min(n - 1);
-        let len = self.text_lines[line].chars().count();
         let col_at = |dc: &mut dyn DrawCtx, s: &str| -> usize {
             let mut w = Vec::new();
             dc.text_prefix_widths(s, &mut w);
@@ -1019,58 +1028,87 @@ impl Grid {
             }
             best
         };
+        let col = match kind {
+            TextHit::Anchor { .. } | TextHit::Head => col_at(dc, &self.text_lines[line]),
+            _ => 0,
+        };
+        self.apply_text_hit(line, col, kind);
+    }
+
+    /// 텍스트 보기 선택 규약(그리드 행번호 열과 동일 · 사용자 09-17):
+    /// 본문 클릭 = 문자 앵커(평 = 새로 · Shift = 확장) · 거터 평 클릭/드래그 = 줄 범위(기존 해제) ·
+    /// 거터 Ctrl+클릭 = 줄 토글(기존 유지) · 거터 Ctrl+드래그 = 범위 **추가** · 거터 Shift+클릭 = 앵커~줄(기존 집합 유지).
+    /// `text_lines_sel` = 확정된 줄 집합 · `text_sel` = 현재 구간 — 그리기·복사는 둘의 합집합.
+    fn apply_text_hit(&mut self, line: usize, col: usize, kind: TextHit) {
+        let n = self.text_lines.len();
+        if n == 0 {
+            return;
+        }
+        let line = line.min(n - 1);
+        let len_of = |s: &Self, l: usize| s.text_lines[l].chars().count();
         match kind {
-            TextHit::Anchor { shift } => {
-                let col = col_at(dc, &self.text_lines[line]);
-                self.text_lines_sel.clear();
-                match (shift, self.text_sel) {
-                    (true, Some((a, _))) => self.text_sel = Some((a, (line, col))),
-                    _ => self.text_sel = Some(((line, col), (line, col))),
+            TextHit::Anchor { shift } => match (shift, self.text_sel) {
+                (true, Some((a, _))) => self.text_sel = Some((a, (line, col))),
+                _ => {
+                    self.text_lines_sel.clear();
+                    self.text_sel = Some(((line, col), (line, col)));
                 }
-            }
+            },
             TextHit::Head => {
-                let col = col_at(dc, &self.text_lines[line]);
                 if let Some((a, _)) = self.text_sel {
                     self.text_sel = Some((a, (line, col)));
                 }
             }
             TextHit::GutterDown { shift, ctrl } => {
                 if ctrl {
-                    // Ctrl+클릭 = 개별 줄 토글(그리드 행번호 규약).
+                    // 현재 구간을 집합으로 확정한 뒤 이 줄을 토글 — 그리드 `toggle_region`과 같은 결과.
+                    self.commit_text_range();
                     if let Some(i) = self.text_lines_sel.iter().position(|&l| l == line) {
                         self.text_lines_sel.remove(i);
+                        self.text_sel = None;
                     } else {
-                        self.text_lines_sel.push(line);
-                        self.text_lines_sel.sort_unstable();
+                        self.text_sel = Some(((line, 0), (line, len_of(self, line))));
                     }
-                    self.text_sel = None;
                     self.text_gutter_anchor = Some(line);
                 } else if shift {
                     let a = self.text_gutter_anchor.unwrap_or(line);
                     let (lo, hi) = (a.min(line), a.max(line));
-                    let hlen = self.text_lines[hi].chars().count();
-                    self.text_sel = Some(((lo, 0), (hi, hlen)));
-                    self.text_lines_sel.clear();
+                    self.text_sel = Some(((lo, 0), (hi, len_of(self, hi))));
                 } else {
-                    self.text_sel = Some(((line, 0), (line, len)));
                     self.text_lines_sel.clear();
+                    self.text_sel = Some(((line, 0), (line, len_of(self, line))));
                     self.text_gutter_anchor = Some(line);
                 }
             }
             TextHit::GutterHead => {
                 let a = self.text_gutter_anchor.unwrap_or(line);
                 let (lo, hi) = (a.min(line), a.max(line));
-                let hlen = self.text_lines[hi].chars().count();
-                self.text_sel = Some(((lo, 0), (hi, hlen)));
+                self.text_sel = Some(((lo, 0), (hi, len_of(self, hi))));
             }
         }
     }
 
-    /// 텍스트 보기 복사 — 개별 줄 집합 > 범위 > 전체(선택 없음). 반환 = (텍스트, 줄 수).
+    /// 현재 구간(`text_sel`)의 줄들을 확정 집합(`text_lines_sel`)에 합친다(Ctrl 누적).
+    fn commit_text_range(&mut self) {
+        if let Some((a, b)) = self.text_sel.take() {
+            let (l0, l1) = (a.0.min(b.0), a.0.max(b.0));
+            self.text_lines_sel
+                .extend(l0..=l1.min(self.text_lines.len().saturating_sub(1)));
+            self.text_lines_sel.sort_unstable();
+            self.text_lines_sel.dedup();
+        }
+    }
+
+    /// 텍스트 보기 복사 — 줄 집합 ∪ 현재 구간(집합이 있으면 구간은 줄 단위) > 문자 범위 > 전체(선택 없음). 반환 = (텍스트, 줄 수).
     fn copy_text_selection(&self) -> Option<(String, usize)> {
         if !self.text_lines_sel.is_empty() {
-            let lines: Vec<&str> = self
-                .text_lines_sel
+            let mut set = self.text_lines_sel.clone();
+            if let Some((a, b)) = self.text_sel {
+                set.extend(a.0.min(b.0)..=a.0.max(b.0));
+                set.sort_unstable();
+                set.dedup();
+            }
+            let lines: Vec<&str> = set
                 .iter()
                 .filter_map(|&i| self.text_lines.get(i).map(String::as_str))
                 .collect();
@@ -2735,7 +2773,7 @@ impl Grid {
             dc.fill_rect(Rect::new(gutter.right() - 1, body.y, 1, body.h), th.border);
         }
         // 히트 요청(마우스) → (줄, 문자): 글꼴 실측이 있는 여기서 한 번.
-        if let Some((hx, hy, kind)) = self.text_hit.take() {
+        for (hx, hy, kind) in std::mem::take(&mut self.text_hit) {
             self.resolve_text_hit(dc, hx, hy, kind, body, x);
         }
         let sel = self
@@ -2869,6 +2907,92 @@ mod tests {
         g.gutter_w = 30;
         g.col_w = cols.to_vec();
         g
+    }
+
+    fn text_grid() -> Grid {
+        let mut g = grid_with(&[100]);
+        g.text_lines = (0..10).map(|i| format!("line{i:02}")).collect();
+        g.text_gutter_w = 30;
+        g.footer_h = 0;
+        g
+    }
+
+    /// 다운 요청 뒤 이동은 큐에 **덧붙여** 앵커를 덮지 않는다(사용자 09-17: macOS 클릭 직후 CursorMoved).
+    #[test]
+    fn text_hit_queue_keeps_anchor_before_head() {
+        let mut g = text_grid();
+        g.view = ResultView::Text;
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: 100,
+                y: 50,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        g.on_event(&InputEvent::MouseMove { x: 120, y: 50 }, 1.0);
+        g.on_event(&InputEvent::MouseMove { x: 130, y: 60 }, 1.0);
+        let kinds: Vec<TextHit> = g.text_hit.iter().map(|h| h.2).collect();
+        assert_eq!(kinds, vec![TextHit::Anchor { shift: false }, TextHit::Head]);
+        assert_eq!(g.text_hit[1].0, 130);
+        g.on_event(&InputEvent::MouseUp { x: 130, y: 60 }, 1.0);
+        g.on_event(&InputEvent::MouseMove { x: 10, y: 10 }, 1.0);
+        assert_eq!(
+            g.text_hit.len(),
+            2,
+            "드래그가 끝나면 이동은 요청을 만들지 않는다"
+        );
+    }
+
+    /// 드래그 뒤 평 클릭 = 새 앵커(옛 앵커 유지 = 보고된 결함).
+    #[test]
+    fn text_plain_click_after_drag_starts_fresh() {
+        let mut g = text_grid();
+        g.apply_text_hit(2, 1, TextHit::Anchor { shift: false });
+        g.apply_text_hit(5, 3, TextHit::Head);
+        assert_eq!(g.text_sel, Some(((2, 1), (5, 3))));
+        g.apply_text_hit(7, 0, TextHit::Anchor { shift: false });
+        g.apply_text_hit(7, 2, TextHit::Head);
+        assert_eq!(g.text_sel, Some(((7, 0), (7, 2))));
+        g.apply_text_hit(1, 0, TextHit::Anchor { shift: true });
+        assert_eq!(g.text_sel, Some(((7, 0), (1, 0))), "Shift 클릭만 확장");
+    }
+
+    /// 거터 = 그리드 행번호 열 규약: 평 드래그 범위 · Ctrl 클릭 토글 · Ctrl 드래그 추가 · Shift 범위(집합 유지).
+    #[test]
+    fn text_gutter_matches_grid_row_header() {
+        let mut g = text_grid();
+        let down = |s: bool, c: bool| TextHit::GutterDown { shift: s, ctrl: c };
+        g.apply_text_hit(1, 0, down(false, false));
+        g.apply_text_hit(3, 0, TextHit::GutterHead);
+        assert_eq!(g.text_sel, Some(((1, 0), (3, 6))));
+        assert_eq!(g.copy_text_selection().map(|c| c.1), Some(3));
+        // Ctrl+클릭 = 기존(1~3) 유지 + 5 추가.
+        g.apply_text_hit(5, 0, down(false, true));
+        assert_eq!(g.text_lines_sel, vec![1, 2, 3]);
+        assert_eq!(g.text_sel, Some(((5, 0), (5, 6))));
+        assert_eq!(g.copy_text_selection().map(|c| c.1), Some(4));
+        // Ctrl+드래그 7→8 = 범위 추가(집합 1,2,3,5 유지).
+        g.apply_text_hit(7, 0, down(false, true));
+        g.apply_text_hit(8, 0, TextHit::GutterHead);
+        assert_eq!(g.text_lines_sel, vec![1, 2, 3, 5]);
+        assert_eq!(g.text_sel, Some(((7, 0), (8, 6))));
+        let (txt, n) = g.copy_text_selection().unwrap_or_default();
+        assert_eq!(n, 6);
+        assert_eq!(txt, "line01\nline02\nline03\nline05\nline07\nline08");
+        // Ctrl+클릭으로 선택된 줄 = 제거.
+        g.apply_text_hit(2, 0, down(false, true));
+        assert_eq!(g.text_lines_sel, vec![1, 3, 5, 7, 8]);
+        assert_eq!(g.text_sel, None);
+        // Shift+클릭 = 앵커(2)~4 구간 · 집합 유지.
+        g.apply_text_hit(4, 0, down(true, false));
+        assert_eq!(g.text_sel, Some(((2, 0), (4, 6))));
+        assert_eq!(g.text_lines_sel, vec![1, 3, 5, 7, 8]);
+        // 평 클릭 = 전부 해제 후 한 줄.
+        g.apply_text_hit(9, 0, down(false, false));
+        assert!(g.text_lines_sel.is_empty());
+        assert_eq!(g.text_sel, Some(((9, 0), (9, 6))));
     }
 
     /// 느린 트랙패드 휠(사건당 -3 = 1px)이 누적된다 — 픽셀 모드는 1px씩, 행 모드는 저장값은 누적되되 표시는 행 경계(사용자 09-16).

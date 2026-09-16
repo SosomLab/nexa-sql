@@ -888,6 +888,7 @@ impl App {
             Ok(r) => Some(r),
             Err(e) => {
                 self.find.set_status(tf(Msg::StFindBadRegex, &[&e]));
+                self.find.set_has_matches(false);
                 None
             }
         }
@@ -951,6 +952,7 @@ impl App {
             return;
         }
         let (matches, _) = self.find_matches();
+        self.find.set_has_matches(!matches.is_empty());
         if matches.is_empty() {
             self.find.set_status(t(Msg::StFindNone));
             self.ed_mut().set_find_marks(Vec::new());
@@ -1480,6 +1482,15 @@ impl App {
     }
 
     /// 설정 → 편집기 안내선(표시 · 색 · 투명도) + 동일 출현 외곽선(사용자 09-16).
+    /// 파일 탭 강조색(`editor.tab_accent` · 비면 테마 accent = 결과 탭과 같음).
+    fn apply_tab_accent(&mut self) {
+        let c = self
+            .settings
+            .get("editor.tab_accent")
+            .and_then(nexa_ctl::theme::color_from_hex);
+        self.editors.set_tab_accent(c);
+    }
+
     fn apply_ruler_style(&mut self) {
         let show = self.settings.flag("editor.rulers_show");
         let color = self
@@ -1793,6 +1804,7 @@ impl App {
             | "editor.ruler_color"
             | "editor.ruler_alpha"
             | "editor.highlight_selection" => self.apply_ruler_style(),
+            "editor.tab_accent" => self.apply_tab_accent(),
             "editor.text_pad_left" => self
                 .editors
                 .set_text_inset(self.settings.int(key).clamp(0, 32) as i32),
@@ -1964,16 +1976,6 @@ impl App {
     }
 
     /// 결과 탭 전체의 행 바이트 합이 예산(`grid.memory_budget_mb`)을 넘는가(D-72).
-    fn over_budget(&self) -> bool {
-        let budget = (self.settings.int("grid.memory_budget_mb").max(1) as u64) * 1024 * 1024;
-        let used: u64 = self.grid.approx_bytes()
-            + self
-                .sleeping_grids()
-                .map(grid::Grid::approx_bytes)
-                .sum::<u64>();
-        used > budget
-    }
-
     /// 활성 패널의 결과 탭 `i`를 활성으로(그리드 맞바꾸기 · D-71 "그리기는 활성 탭만").
     fn activate_result(&mut self, i: usize) {
         if i >= self.panel.tabs.len() || i == self.panel.active {
@@ -2154,8 +2156,10 @@ impl App {
             return;
         }
         let key = self.grid_tab;
-        // 메모리 예산(D-72): 결과 탭 합계가 예산을 넘으면 추가/전체 페치를 거부하고 안내.
-        if !matches!(req, grid::FetchReq::Count) && self.over_budget() {
+        // 메모리 예산(D-72 · 09-17 탭별 독립): **이 탭**의 행이 예산을 넘으면 추가 페치만 거부(전체 조회는 교체라 허용).
+        //   다른 탭의 크기는 보지 않는다 — 사용자 09-17 "탭은 서로 영향을 미치지 않아야".
+        let budget = (self.settings.int("grid.memory_budget_mb").max(1) as u64) * 1024 * 1024;
+        if matches!(req, grid::FetchReq::Next { .. }) && self.grid.approx_bytes() > budget {
             self.grid.fetch_failed();
             self.status = tf(
                 Msg::StBudgetExceeded,
@@ -2186,17 +2190,13 @@ impl App {
                 });
             }
             grid::FetchReq::All => {
-                // 이 탭의 예산 = 전체 예산 − 다른 탭 사용량(이 탭 rows는 교체된다).
-                let budget =
-                    (self.settings.int("grid.memory_budget_mb").max(1) as u64) * 1024 * 1024;
-                let others: u64 = self.sleeping_grids().map(grid::Grid::approx_bytes).sum();
-                let budget_bytes = budget.saturating_sub(others).max(1024 * 1024);
+                // 이 탭의 예산 = 설정값 그대로(탭별 독립 · 다른 탭을 빼지 않는다).
                 self.worker.send(worker::Cmd::FetchPage {
                     key,
                     sql,
                     offset: 0,
                     limit: 0,
-                    budget_bytes,
+                    budget_bytes: budget,
                 });
             }
             grid::FetchReq::Count => self.worker.send(worker::Cmd::Count { key, sql }),
@@ -4485,6 +4485,10 @@ impl App {
                     },
                     ..FontPrefs::default()
                 };
+                // In selection 토글 = 편집기에 선택이 있거나 이미 범위가 잡혀 있을 때만(사용자 09-17).
+                let sel_ok =
+                    self.find_scope.is_some() || self.editors.selection_summary().is_some();
+                self.find.set_selection_available(sel_ok);
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
                 // 결과 도구줄 상태 글자 = 상태줄과 같은 UI 글꼴·크기(사용자 09-16).
@@ -5952,6 +5956,7 @@ fn main() {
     app.git
         .set_interval(app.settings.int("statusbar.git_secs").max(2) as u64);
     app.apply_ruler_style();
+    app.apply_tab_accent();
     app.editors
         .set_text_inset(app.settings.int("editor.text_pad_left").clamp(0, 32) as i32);
     app.grid.set_default_page_rows(max_rows);

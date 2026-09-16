@@ -176,6 +176,11 @@ impl Editors {
     }
 
     /// 안내선 표시·색·투명도 · 동일 출현 외곽선(설정 4종 · 전 탭).
+    /// 파일 탭 상단 강조 줄 색(None = 테마 accent).
+    pub(crate) fn set_tab_accent(&mut self, c: Option<nexa_ctl::theme::Color>) {
+        self.tabs.set_accent(c);
+    }
+
     pub(crate) fn set_ruler_style(
         &mut self,
         show: bool,

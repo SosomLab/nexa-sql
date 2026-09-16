@@ -464,6 +464,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
+        key: "editor.tab_accent",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabAccent,
+        desc: Msg::DescEditorTabAccent,
+        kind: SettingKind::Text,
+        default: "#E8962E",
+    },
+    Entry {
         key: "editor.ruler_alpha",
         cat: Msg::CatEditor,
         label: Msg::LblRulerAlpha,
@@ -588,7 +596,7 @@ pub const REGISTRY: &[Entry] = &[
             min: 16,
             max: 65536,
         },
-        default: "256",
+        default: "1024",
     },
     Entry {
         key: "grid.row_height_pct",
@@ -1827,6 +1835,17 @@ pub const REGISTRY: &[Entry] = &[
             max: 100_000,
         },
         default: "200",
+    },
+    Entry {
+        key: "db.fetch_all_size",
+        cat: Msg::CatSession,
+        label: Msg::LblFetchAllSize,
+        desc: Msg::DescFetchAllSize,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 100_000,
+        },
+        default: "5000",
     },
     Entry {
         key: "grid.fetch_mode",

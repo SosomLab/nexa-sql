@@ -292,22 +292,28 @@ pub(crate) fn spawn(
                                 if limit == 0 {
                                     // 전체 조회 = 그리드 **교체**(처음부터) — 열린 커서는 위치가 무의미하므로 닫고 원문을 다시 실행(상한 0).
                                     // 예산(D-72): 받은 행이 예산을 넘으면 예산까지만 남기고 `more`로 알린다(호스트가 안내).
+                                    // ★ 왕복당 행수는 `db.fetch_all_size`(기본 5000)로 키운다 — 실측(사용자 09-17 · Oracle WAN
+                                    //   155k행): 200이면 34.3s · 5000이면 4.6s. 끝나면 페이징 값으로 되돌린다.
                                     runner.close_cursor();
-                                    runner
-                                        .query_once(&sql, 0)
-                                        .map(|(mut rs, more, d)| {
-                                            if budget_bytes > 0 && rs.approx_bytes() > budget_bytes
-                                            {
-                                                let n = rs.rows.len().max(1);
-                                                let per = (rs.approx_bytes() / n as u64).max(1);
-                                                let keep = (budget_bytes / per) as usize;
-                                                rs.rows.truncate(keep.max(1));
-                                                (rs, true, d)
-                                            } else {
-                                                (rs, more, d)
-                                            }
-                                        })
-                                        .map_err(|e| e.message)
+                                    let page_fs = runner.fetch_size;
+                                    let all_fs = nsql_settings::Settings::open_default()
+                                        .map(|s| s.int("db.fetch_all_size").max(1) as usize)
+                                        .unwrap_or(5000);
+                                    runner.set_fetch_size(page_fs.max(all_fs));
+                                    let r = runner.query_once(&sql, 0);
+                                    runner.set_fetch_size(page_fs);
+                                    r.map(|(mut rs, more, d)| {
+                                        if budget_bytes > 0 && rs.approx_bytes() > budget_bytes {
+                                            let n = rs.rows.len().max(1);
+                                            let per = (rs.approx_bytes() / n as u64).max(1);
+                                            let keep = (budget_bytes / per) as usize;
+                                            rs.rows.truncate(keep.max(1));
+                                            (rs, true, d)
+                                        } else {
+                                            (rs, more, d)
+                                        }
+                                    })
+                                    .map_err(|e| e.message)
                                 } else {
                                     // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
                                     runner

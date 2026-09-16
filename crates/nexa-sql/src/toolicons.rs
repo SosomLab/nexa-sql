@@ -684,6 +684,39 @@ mod tests {
         assert!(off(480.0, 800.0), "아래 목");
         assert!(!off(480.0, 420.0), "사선 위쪽 · 구멍 자리는 빔");
     }
+
+    /// `.5-.526`처럼 점으로 시작하는 수(codicon)가 토큰으로 나뉜다 — 예전엔 무한 루프.
+    #[test]
+    fn svg_tokens_dot_leading_numbers() {
+        let v: Vec<f32> = svg_tokens("a.523.523 0 0 1 .5-.526")
+            .iter()
+            .filter(|t| t.0 == '#')
+            .map(|t| t.1)
+            .collect();
+        assert_eq!(v, vec![0.523, 0.523, 0.0, 0.0, 1.0, 0.5, -0.526]);
+    }
+
+    /// codicon `replace`(16 viewBox · 호 `a` · evenodd): 상자 테두리는 채워지고 상자 속(구멍)은 빈다.
+    #[test]
+    fn codicon_replace_arc_and_evenodd() {
+        let d = "M4 7L3 8v6l1 1h7l1-1V8l-1-1H4zm0 1h7v6H4V8zM5 2.489A1.482 1.482 0 0 1 6.48 1H8v.965H6.48a.523.523 0 0 0-.5.526V4.1H5z";
+        let polys = svg_polys_vb(d, VB_CODICON);
+        let k = 960.0 / 16.0;
+        assert!(
+            in_polys_evenodd(3.5 * k, 11.0 * k, &polys),
+            "왼쪽 테두리(x 3~4)"
+        );
+        assert!(
+            !in_polys_evenodd(7.5 * k, 11.0 * k, &polys),
+            "상자 속은 구멍"
+        );
+        assert!(
+            in_polys_evenodd(5.4 * k, 3.5 * k, &polys),
+            "호로 이어진 세로획(x 5~6)"
+        );
+        let icon = svg_glyph_vb(d, VB_CODICON, true);
+        assert_eq!(icon.w, SIDE);
+    }
 }
 
 // ───────────────────────── Material Symbols SVG 경로 → 마스크(사용자 09-16 "구글 머티리얼 아이콘 SVG 그대로") ─────────────────────────
@@ -704,7 +737,8 @@ fn svg_tokens(d: &str) -> Vec<(char, f32)> {
             i += 1;
         } else if c == '-' || c == '.' || c.is_ascii_digit() {
             let start = i;
-            if c == '-' {
+            // 앞글자('-' 또는 '.')를 먼저 소비한다 — '.'로 시작하는 수(".5" · codicon)에서 인덱스가 멈춰 무한 루프였다(09-17).
+            if c == '-' || c == '.' {
                 i += 1;
             }
             let mut dot = c == '.';
@@ -729,8 +763,86 @@ fn svg_tokens(d: &str) -> Vec<(char, f32)> {
     out
 }
 
-/// 경로 → 닫힌 다각형들(960 좌표 · y는 +960 보정).
+/// Material Symbols viewBox(`0 -960 960 960`).
+const VB_MATERIAL: [f32; 4] = [0.0, -960.0, 960.0, 960.0];
+/// VS Code codicon viewBox(`0 0 16 16`).
+const VB_CODICON: [f32; 4] = [0.0, 0.0, 16.0, 16.0];
+
+/// 경로 → 닫힌 다각형들(960 좌표 · Material viewBox).
 fn svg_polys(d: &str) -> Vec<Vec<(f32, f32)>> {
+    svg_polys_vb(d, VB_MATERIAL)
+}
+
+/// 타원호(SVG F.6.5 끝점 → 중심 변환) → 선분 근사.
+#[allow(clippy::too_many_arguments)]
+fn flatten_arc(
+    cur: &mut Vec<(f32, f32)>,
+    p0: (f32, f32),
+    rx: f32,
+    ry: f32,
+    phi_deg: f32,
+    large: bool,
+    sweep: bool,
+    p1: (f32, f32),
+) {
+    if p0 == p1 {
+        return;
+    }
+    let (mut rx, mut ry) = (rx.abs(), ry.abs());
+    if rx == 0.0 || ry == 0.0 {
+        cur.push(p1);
+        return;
+    }
+    let phi = phi_deg.to_radians();
+    let (cp, sp) = (phi.cos(), phi.sin());
+    let dx2 = (p0.0 - p1.0) / 2.0;
+    let dy2 = (p0.1 - p1.1) / 2.0;
+    let x1p = cp * dx2 + sp * dy2;
+    let y1p = -sp * dx2 + cp * dy2;
+    let lambda = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry);
+    if lambda > 1.0 {
+        rx *= lambda.sqrt();
+        ry *= lambda.sqrt();
+    }
+    let num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+    let den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+    let coef = (num / den).max(0.0).sqrt() * if large == sweep { -1.0 } else { 1.0 };
+    let cxp = coef * rx * y1p / ry;
+    let cyp = -coef * ry * x1p / rx;
+    let cx = cp * cxp - sp * cyp + (p0.0 + p1.0) / 2.0;
+    let cy = sp * cxp + cp * cyp + (p0.1 + p1.1) / 2.0;
+    let ang = |u: (f32, f32), v: (f32, f32)| -> f32 {
+        let dot = u.0 * v.0 + u.1 * v.1;
+        let len = (u.0 * u.0 + u.1 * u.1).sqrt() * (v.0 * v.0 + v.1 * v.1).sqrt();
+        let a = (dot / len).clamp(-1.0, 1.0).acos();
+        if u.0 * v.1 - u.1 * v.0 < 0.0 {
+            -a
+        } else {
+            a
+        }
+    };
+    let u = ((x1p - cxp) / rx, (y1p - cyp) / ry);
+    let v = ((-x1p - cxp) / rx, (-y1p - cyp) / ry);
+    let theta1 = ang((1.0, 0.0), u);
+    let mut dtheta = ang(u, v);
+    if !sweep && dtheta > 0.0 {
+        dtheta -= std::f32::consts::TAU;
+    } else if sweep && dtheta < 0.0 {
+        dtheta += std::f32::consts::TAU;
+    }
+    const N: usize = 16;
+    for k in 1..=N {
+        let t = theta1 + dtheta * k as f32 / N as f32;
+        let (ct, st) = (t.cos(), t.sin());
+        cur.push((
+            cx + rx * ct * cp - ry * st * sp,
+            cy + rx * ct * sp + ry * st * cp,
+        ));
+    }
+}
+
+/// 경로 → 닫힌 다각형들(960 좌표) — `vb` = viewBox(min-x · min-y · w · h)를 960 정사각으로 맞춘다.
+fn svg_polys_vb(d: &str, vb: [f32; 4]) -> Vec<Vec<(f32, f32)>> {
     let toks = svg_tokens(d);
     let mut polys: Vec<Vec<(f32, f32)>> = Vec::new();
     let mut cur: Vec<(f32, f32)> = Vec::new();
@@ -882,6 +994,23 @@ fn svg_polys(d: &str) -> Vec<Vec<(f32, f32)>> {
                 last_ctrl = Some(c2);
                 (x, y) = p1;
             }
+            'A' => {
+                let (Some(rx), Some(ry), Some(rot), Some(la), Some(sw), Some(e), Some(f)) = (
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                ) else {
+                    break;
+                };
+                let p1 = if rel { (x + e, y + f) } else { (e, f) };
+                flatten_arc(&mut cur, (x, y), rx, ry, rot, la != 0.0, sw != 0.0, p1);
+                last_ctrl = None;
+                (x, y) = p1;
+            }
             'Z' => {
                 if cur.len() > 1 {
                     polys.push(std::mem::take(&mut cur));
@@ -900,12 +1029,33 @@ fn svg_polys(d: &str) -> Vec<Vec<(f32, f32)>> {
     if cur.len() > 2 {
         polys.push(cur);
     }
+    let [vx, vy, vw, vh] = vb;
     for p in &mut polys {
         for v in p.iter_mut() {
-            v.1 += 960.0;
+            v.0 = (v.0 - vx) * 960.0 / vw;
+            v.1 = (v.1 - vy) * 960.0 / vh;
         }
     }
     polys
+}
+
+/// 짝홀(even-odd) — `fill-rule="evenodd"` 경로(codicon)용.
+fn in_polys_evenodd(x: f32, y: f32, polys: &[Vec<(f32, f32)>]) -> bool {
+    let mut inside = false;
+    for p in polys {
+        let n = p.len();
+        if n < 3 {
+            continue;
+        }
+        for i in 0..n {
+            let (x0, y0) = p[i];
+            let (x1, y1) = p[(i + 1) % n];
+            if (y0 > y) != (y1 > y) && x < x0 + (y - y0) * (x1 - x0) / (y1 - y0) {
+                inside = !inside;
+            }
+        }
+    }
+    inside
 }
 
 /// 비영 winding — 점이 다각형 집합 안인가.
@@ -960,6 +1110,34 @@ pub(crate) fn svg_glyph(d: &str) -> MenuIcon {
     MenuIcon::from_alpha(SIDE, SIDE, &alpha)
 }
 
+/// 임의 viewBox SVG `d` → 아이콘 마스크(`evenodd` = 짝홀 채움 · VS Code codicon).
+pub(crate) fn svg_glyph_vb(d: &str, vb: [f32; 4], evenodd: bool) -> MenuIcon {
+    let polys = svg_polys_vb(d, vb);
+    let alpha = if evenodd {
+        rasterize_dyn(&|x, y| in_polys_evenodd(x / M, y / M, &polys))
+    } else {
+        rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+    };
+    MenuIcon::from_alpha(SIDE, SIDE, &alpha)
+}
+
+/// VS Code codicon(16×16 · evenodd · MIT) — 사용자가 준 SVG 그대로(09-17).
+macro_rules! codicon {
+    ($(#[$m:meta])* $name:ident, $d:expr) => {
+        $(#[$m])*
+        pub(crate) fn $name() -> MenuIcon {
+            thread_local! {
+                static CELL: std::cell::RefCell<Option<MenuIcon>> = const { std::cell::RefCell::new(None) };
+            }
+            CELL.with(|c| {
+                c.borrow_mut()
+                    .get_or_insert_with(|| svg_glyph_vb($d, VB_CODICON, true))
+                    .clone()
+            })
+        }
+    };
+}
+
 macro_rules! material {
     ($(#[$m:meta])* $name:ident, $d:expr) => {
         $(#[$m])*
@@ -989,10 +1167,10 @@ material!(/// `chevron_right` — 바꾸기 줄 접힘.
     mi_chevron_right, "M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z");
 material!(/// `expand_more` — 바꾸기 줄 펼침.
     mi_chevron_down, "M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z");
-material!(/// `find_replace` — 바꾸기.
-    mi_find_replace, "M164-560q14-103 91.5-171.5T440-800q59 0 110.5 22.5T640-716v-84h80v240H480v-80h120q-29-36-69.5-58T440-720q-72 0-127 45.5T244-560h-80Zm620 440L608-296q-36 27-78.5 41.5T440-240q-59 0-110.5-22.5T240-324v84h-80v-240h240v80H280q29 36 69.5 58t90.5 22q72 0 127-45.5T636-480h80q-5 36-18 67.5T664-352l176 176-56 56Z");
-material!(/// `published_with_changes` — 모두 바꾸기.
-    mi_replace_all, "M440-82q-76-8-141.5-41.5t-114-87Q136-264 108-333T80-480q0-91 36.5-168T216-780h-96v-80h240v240h-80v-109q-55 44-87.5 108.5T160-480q0 123 80.5 212.5T440-163v81Zm-17-214L254-466l56-56 113 113 227-227 56 57-283 283Zm177 196v-240h80v109q55-45 87.5-109T800-480q0-123-80.5-212.5T520-797v-81q152 15 256 128t104 270q0 91-36.5 168T744-180h96v80H600Z");
+codicon!(/// codicon `replace` — 바꾸기(사용자 제공 SVG 09-17).
+    mi_find_replace, "M3.221 3.739l2.261 2.269L7.7 3.784l-.7-.7-1.012 1.007-.008-1.6a.523.523 0 0 1 .5-.526H8V1H6.48A1.482 1.482 0 0 0 5 2.489V4.1L3.927 3.033l-.706.706zm6.67 1.794h.01c.183.311.451.467.806.467.393 0 .706-.168.94-.503.236-.335.353-.78.353-1.333 0-.511-.1-.913-.301-1.207-.201-.295-.488-.442-.86-.442-.405 0-.718.194-.938.581h-.01V1H9v4.919h.89v-.386zm-.015-1.061v-.34c0-.248.058-.448.175-.601a.54.54 0 0 1 .445-.23.49.49 0 0 1 .436.233c.104.154.155.368.155.643 0 .33-.056.587-.169.768a.524.524 0 0 1-.47.27.495.495 0 0 1-.411-.211.853.853 0 0 1-.16-.532zM9 12.769c-.256.154-.625.231-1.108.231-.563 0-1.02-.178-1.369-.533-.349-.355-.523-.813-.523-1.374 0-.648.186-1.158.56-1.53.374-.376.875-.563 1.5-.563.433 0 .746.06.94.179v.998a1.26 1.26 0 0 0-.792-.276c-.325 0-.583.1-.774.298-.19.196-.283.468-.283.816 0 .338.09.603.272.797.182.191.431.287.749.287.282 0 .558-.092.828-.276v.946zM4 7L3 8v6l1 1h7l1-1V8l-1-1H4zm0 1h7v6H4V8z");
+codicon!(/// codicon `replace-all` — 모두 바꾸기(사용자 제공 SVG 09-17).
+    mi_replace_all, "M11.6 2.677c.147-.31.356-.465.626-.465.248 0 .44.118.573.353.134.236.201.557.201.966 0 .443-.078.798-.235 1.067-.156.268-.365.402-.627.402-.237 0-.416-.125-.537-.374h-.008v.31H11V1h.593v1.677h.008zm-.016 1.1a.78.78 0 0 0 .107.426c.071.113.163.169.274.169.136 0 .24-.072.314-.216.075-.145.113-.35.113-.615 0-.22-.035-.39-.104-.514-.067-.124-.164-.187-.29-.187-.12 0-.219.062-.297.185a.886.886 0 0 0-.117.48v.272zM4.12 7.695L2 5.568l.662-.662 1.006 1v-1.51A1.39 1.39 0 0 1 5.055 3H7.4v.905H5.055a.49.49 0 0 0-.468.493l.007 1.5.949-.944.656.656-2.08 2.085zM9.356 4.93H10V3.22C10 2.408 9.685 2 9.056 2c-.135 0-.285.024-.45.073a1.444 1.444 0 0 0-.388.167v.665c.237-.203.487-.304.75-.304.261 0 .392.156.392.469l-.6.103c-.506.086-.76.406-.76.961 0 .263.061.473.183.631A.61.61 0 0 0 8.69 5c.29 0 .509-.16.657-.48h.009v.41zm.004-1.355v.193a.75.75 0 0 1-.12.436.368.368 0 0 1-.313.17.276.276 0 0 1-.22-.095.38.38 0 0 1-.08-.248c0-.222.11-.351.332-.389l.4-.067zM7 12.93h-.644v-.41h-.009c-.148.32-.367.48-.657.48a.61.61 0 0 1-.507-.235c-.122-.158-.183-.368-.183-.63 0-.556.254-.876.76-.962l.6-.103c0-.313-.13-.47-.392-.47-.263 0-.513.102-.75.305v-.665c.095-.063.224-.119.388-.167.165-.049.315-.073.45-.073.63 0 .944.407.944 1.22v1.71zm-.64-1.162v-.193l-.4.068c-.222.037-.333.166-.333.388 0 .1.027.183.08.248a.276.276 0 0 0 .22.095.368.368 0 0 0 .312-.17c.08-.116.12-.26.12-.436zM9.262 13c.321 0 .568-.058.738-.173v-.71a.9.9 0 0 1-.552.207.619.619 0 0 1-.5-.215c-.12-.145-.181-.345-.181-.598 0-.26.063-.464.189-.612a.644.644 0 0 1 .516-.223c.194 0 .37.069.528.207v-.749c-.129-.09-.338-.134-.626-.134-.417 0-.751.14-1.001.422-.249.28-.373.662-.373 1.148 0 .42.116.764.349 1.03.232.267.537.4.913.4zM2 9l1-1h9l1 1v5l-1 1H3l-1-1V9zm1 0v5h9V9H3zm3-2l1-1h7l1 1v5l-1 1V7H6z");
 material!(/// `abc` — 대소문자 보존(AB).
     mi_preserve_case, "M680-360q-17 0-28.5-11.5T640-400v-160q0-17 11.5-28.5T680-600h120q17 0 28.5 11.5T840-560v40h-60v-20h-80v120h80v-20h60v40q0 17-11.5 28.5T800-360H680Zm-300 0v-240h160q17 0 28.5 11.5T580-560v40q0 17-11.5 28.5T540-480q17 0 28.5 11.5T580-440v40q0 17-11.5 28.5T540-360H380Zm60-150h80v-30h-80v30Zm0 90h80v-30h-80v30Zm-320 60v-200q0-17 11.5-28.5T160-600h120q17 0 28.5 11.5T320-560v200h-60v-60h-80v60h-60Zm60-120h80v-60h-80v60Z");
 material!(/// `search` — 파일 검색 패널(활동 막대).
