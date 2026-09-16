@@ -308,11 +308,19 @@ fn stdout_sink() -> nsql_core::MessageSink {
     })
 }
 
-fn connect_or_exit(runner: &mut Runner, target: &str, dialect: Dialect, printer: &mut Printer) {
-    let spec = resolve_target(target, dialect).unwrap_or_else(|e| {
+fn connect_or_exit(
+    runner: &mut Runner,
+    target: &str,
+    dialect: Dialect,
+    printer: &mut Printer,
+    no_prompt: bool,
+) {
+    let mut spec = resolve_target(target, dialect).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(2)
     });
+    // 비밀번호 없는 접속 문자열/프로필 = env/프롬프트(sqlplus/psql 관례 · 사용자 09-16).
+    term::ensure_password(&mut spec, no_prompt, target);
     let ok = runner.connect(&spec, &mut |e| printer.handle(e));
     if !ok {
         std::process::exit(1);
@@ -349,7 +357,7 @@ fn cmd_run(o: &Opts) -> i32 {
         .with_max_rows(o.max_rows)
         .with_message_sink(stdout_sink())
         .with_resolver(resolver());
-    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
     let mut prompt = |name: &str| if no_prompt { None } else { prompt_stdin(name) };
@@ -381,7 +389,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_max_rows(o.max_rows)
         .with_message_sink(stdout_sink())
         .with_resolver(resolver());
-    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지");
     let stdin = io::stdin();
     let mut buf = String::new();
@@ -454,7 +462,7 @@ fn cmd_explain(o: &Opts) -> i32 {
         .with_max_rows(o.max_rows)
         .with_message_sink(stdout_sink())
         .with_resolver(resolver());
-    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let src = nsql_script::explain_script(runner.engine.dialect, &sql);
     let mut prompt = |_: &str| Some(String::new());
     let errs = runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
@@ -495,7 +503,7 @@ fn cmd_export(o: &Opts) -> i32 {
         .with_max_rows(o.max_rows)
         .with_message_sink(stdout_sink())
         .with_resolver(resolver());
-    connect_or_exit(&mut runner, target, o.dialect, &mut printer);
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let dialect = runner.engine.dialect;
     let mut out: Box<dyn Write> = match &o.out {
         Some(p) => Box::new(std::fs::File::create(p).unwrap_or_else(|e| {

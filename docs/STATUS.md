@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (15차 · win) — CLI 비밀번호 프롬프트 ✅ · 편집기 드래그 지연 해소 ✅(프레임 6ms → 1.3ms) · `NSQL_TRACE_FRAMES`
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (14차 · win) — 탭 정지점 ✅ · `editor.tab_stops` ✅
 
 → [journal](journal/2026-09-16.md)

@@ -151,6 +151,8 @@ struct App {
     grid: grid::Grid,
     /// 비활성 탭의 결과 그리드(탭 id → 그리드 · 탭이 닫히면 버림).
     grid_stash: HashMap<u64, grid::Grid>,
+    /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
+    frame_trace: Option<FrameTrace>,
     /// `grid`가 속한 탭 id.
     grid_tab: u64,
     /// 마지막 실행을 시작한 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
@@ -2360,6 +2362,17 @@ impl App {
     }
 
     fn paint(&mut self) {
+        let t_frame = Instant::now();
+        let mut marks: [u32; 6] = [0; 6];
+        let mut mark_i = 0usize;
+        let mut mark = |t: &mut Instant, marks: &mut [u32; 6]| {
+            if mark_i < marks.len() {
+                marks[mark_i] = t.elapsed().as_micros() as u32;
+                mark_i += 1;
+            }
+            *t = Instant::now();
+        };
+        let mut t_sec = Instant::now();
         self.sync_grid_tab();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
@@ -2519,7 +2532,8 @@ impl App {
                     );
                 }
             }
-            // ── 고정폭 층(편집기·그리드)
+            mark(&mut t_sec, &mut marks); // 0 = 크롬(탭·툴바·상태줄)
+                                          // ── 고정폭 층(편집기·그리드)
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
@@ -2534,7 +2548,8 @@ impl App {
                     .with_caret_on(caret_on);
                 self.editors.cur_mut().paint(&mut dc, &th);
             }
-            // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
+            mark(&mut t_sec, &mut marks); // 1 = 편집기
+                                          // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
@@ -2547,7 +2562,8 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s).with_fonts(prefs);
                 self.grid.paint(&mut dc, &th, s);
             }
-            // ── 최상위 카드(탭 툴팁 · UI 글꼴)
+            mark(&mut t_sec, &mut marks); // 2 = 그리드
+                                          // ── 최상위 카드(탭 툴팁 · UI 글꼴)
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
@@ -2583,7 +2599,8 @@ impl App {
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
             }
-            // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
+            mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
+                                          // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
             {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s);
                 self.split_v.paint(&mut dc, &th);
@@ -2617,7 +2634,12 @@ impl App {
                 self.menubar.paint(&mut dc, &th);
             }
         }
+        mark(&mut t_sec, &mut marks); // 4 = 스플리터·툴팁·메뉴바
         let _ = buf.present();
+        mark(&mut t_sec, &mut marks); // 5 = present
+        if let Some(tr) = &mut self.frame_trace {
+            tr.add(t_frame.elapsed().as_micros() as u32, &marks);
+        }
     }
 
     fn to_ctl_event(&self, event: &WindowEvent) -> Option<InputEvent> {
@@ -3659,6 +3681,7 @@ fn main() {
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
         grid_stash: HashMap::new(),
+        frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
         grid_tab: 0,
         run_tab: 0,
         explorer,
@@ -3756,6 +3779,54 @@ fn main() {
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("{}", tf(Msg::ErrEventLoop, &[&e.to_string()]));
         std::process::exit(1);
+    }
+}
+
+/// 프레임 계측 누적(`NSQL_TRACE_FRAMES=1`) — 60프레임마다 한 줄: 평균/최대 총 ms · 구간별 평균 ms.
+#[derive(Default)]
+struct FrameTrace {
+    announced: bool,
+    n: u32,
+    total_us: u64,
+    max_us: u32,
+    secs_us: [u64; 6],
+}
+
+impl FrameTrace {
+    fn add(&mut self, total: u32, secs: &[u32; 6]) {
+        self.n += 1;
+        if !self.announced {
+            self.announced = true;
+            eprintln!(
+                "[frames] tracing on · first paint {:.2}ms",
+                f64::from(total) / 1000.0
+            );
+        }
+        self.total_us += u64::from(total);
+        self.max_us = self.max_us.max(total);
+        for (acc, v) in self.secs_us.iter_mut().zip(secs) {
+            *acc += u64::from(*v);
+        }
+        if self.n >= 60 {
+            let n = f64::from(self.n);
+            let ms = |us: u64| us as f64 / n / 1000.0;
+            eprintln!(
+                "[frames] n={} avg {:.2}ms max {:.2}ms · chrome {:.2} editor {:.2} grid {:.2} explorer {:.2} top {:.2} present {:.2}",
+                self.n,
+                ms(self.total_us),
+                f64::from(self.max_us) / 1000.0,
+                ms(self.secs_us[0]),
+                ms(self.secs_us[1]),
+                ms(self.secs_us[2]),
+                ms(self.secs_us[3]),
+                ms(self.secs_us[4]),
+                ms(self.secs_us[5]),
+            );
+            *self = Self {
+                announced: true,
+                ..Self::default()
+            };
+        }
     }
 }
 

@@ -2,6 +2,31 @@
 
 use std::io::{self, BufRead, IsTerminal, Write};
 
+/// ★ 비밀번호가 비어 있으면 채운다(사용자 09-16 "CLI에서 암호를 물어보지 않고 접속 테스트 오류") — 우선순위:
+/// ① 스펙에 이미 있음 ② 환경변수 `NSQL_PASSWORD`(docs/27 · 배치) ③ 터미널이면 숨김 프롬프트(sqlplus/psql 관례).
+/// `no_prompt`이거나 터미널이 아니면 묻지 않는다(배치는 빈 비밀번호로 시도해 서버 오류를 그대로 보여 준다). SQLite는 비밀번호가 없다.
+pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bool, label: &str) {
+    if spec.password.as_deref().is_some_and(|p| !p.is_empty())
+        || spec.dialect == Some(nsql_core::Dialect::Sqlite)
+    {
+        return;
+    }
+    if let Ok(p) = std::env::var("NSQL_PASSWORD") {
+        if !p.is_empty() {
+            spec.password = Some(p);
+            return;
+        }
+    }
+    if no_prompt || !io::stdin().is_terminal() {
+        return;
+    }
+    if let Some(p) = read_password(&format!("Password for {label}: ")) {
+        if !p.is_empty() {
+            spec.password = Some(p);
+        }
+    }
+}
+
 /// stderr에 프롬프트를 찍고 stdin 한 줄을 **에코 없이** 읽는다. 터미널이 아니면 그냥 읽는다.
 pub(crate) fn read_password(prompt: &str) -> Option<String> {
     eprint!("{prompt}");

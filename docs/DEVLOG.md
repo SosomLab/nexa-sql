@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (15차 · win)** — CLI 비밀번호 프롬프트(`NSQL_PASSWORD` → 숨김 입력 · `conn test`·`-c` 공통) · **편집기 드래그 지연** = 배경 라운드 사각형 전면 SDF(nexa-ui 8차 · 4.6→0.35ms) · 프레임 계측 `NSQL_TRACE_FRAMES`. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (14차 · win)** — **탭 정지점**(Golden 방식 · 렌더러 원점 기준) + 설정 `editor.tab_stops`(stop/fixed · 즉시 반영). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (13차 · win)** — 활동 막대 플러그 제거 · **편집기 탭 ↔ 결과 그리드 쌍**(탭 id · `grid_stash` · 실행 탭으로 결과 · 닫힘 회수) · 편집기 포커스 링 끔(nexa-ui `set_focus_ring`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (12차 · win)** — **자원 거버넌스 설계 [39](39-resource-governance.md)**(기준 S-1~14 · 부하원 원장 · `perf.mode` 거버너 · 4층 게이트 · T-90 · D-58~61). → [journal](journal/2026-09-16.md)

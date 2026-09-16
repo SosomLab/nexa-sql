@@ -227,7 +227,7 @@ fn rm(name: &str) -> i32 {
 
 fn test(o: &Opts, name: Option<&str>) -> i32 {
     // 프로필 이름이면 저장소에서(비밀번호 포함), 아니면 필드(--host …)로 — GUI "Test Connection"과 같은 함수.
-    let spec = match name {
+    let mut spec = match name {
         Some(name) => {
             let v = match open_vault() {
                 Ok(v) => v,
@@ -253,6 +253,9 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
             }
         },
     };
+    // 비밀번호가 없으면 env/프롬프트로(빈 비밀번호로 서버에 가서 ORA-01005를 받던 것 · 사용자 09-16).
+    let label = name.map_or_else(|| spec.redacted(), str::to_string);
+    term::ensure_password(&mut spec, o.no_prompt, &label);
     let mut op = opener(o.dialect);
     match nsql_run::test_connection(&spec, &mut op) {
         Ok(r) => {
