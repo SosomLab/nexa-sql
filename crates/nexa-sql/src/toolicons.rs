@@ -328,6 +328,63 @@ fn shape_view_mode(x: f32, y: f32) -> bool {
     true
 }
 
+/// 새로고침(Material `refresh` 느낌): 원호(270° · 굵기 22) + 화살촉(오른쪽 위 끝).
+fn shape_refresh(x: f32, y: f32) -> bool {
+    let (cx, cy) = (128.0, 132.0);
+    let (dx, dy) = (x - cx, y - cy);
+    let r = (dx * dx + dy * dy).sqrt();
+    let ring = (r - 76.0).abs() <= 11.0;
+    // 각도(위 = -90°) · 오른쪽 위 90°를 비운다(-90°..0°).
+    let ang = dy.atan2(dx).to_degrees();
+    let gap = (-90.0..0.0).contains(&ang);
+    let arc = ring && !gap;
+    // 화살촉: 원호 끝(0° 지점 · 오른쪽)에서 위쪽으로.
+    let tip = in_triangle(
+        x,
+        y,
+        (cx + 76.0, cy - 40.0),
+        (cx + 44.0, cy + 2.0),
+        (cx + 108.0, cy + 2.0),
+    );
+    arc || tip
+}
+
+/// 전체 조회(사용자 SVG · Material `select_all`): 점선 테두리(모서리 둥근 4각 + 변마다 3칸) + 안쪽 고리 사각.
+fn shape_fetch_all(x: f32, y: f32) -> bool {
+    let (sx, sy) = (x / M, y / M);
+    // 안쪽 사각 고리: 280..680 에서 360..600 을 뺀다.
+    let inner = (280.0..=680.0).contains(&sx)
+        && (280.0..=680.0).contains(&sy)
+        && !((360.0..=600.0).contains(&sx) && (360.0..=600.0).contains(&sy));
+    if inner {
+        return true;
+    }
+    let in_rect = |x0: f32, y0: f32, x1: f32, y1: f32| sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
+    // 네 모서리(바깥쪽 둥글게).
+    let corner = |x0: f32, y0: f32, x1: f32, y1: f32, cx: f32, cy: f32| {
+        in_rect(x0, y0, x1, y1) && ((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) <= 80.0 * 80.0)
+    };
+    if corner(120.0, 120.0, 200.0, 200.0, 200.0, 200.0)
+        || corner(760.0, 120.0, 840.0, 200.0, 760.0, 200.0)
+        || corner(120.0, 760.0, 200.0, 840.0, 200.0, 760.0)
+        || corner(760.0, 760.0, 840.0, 840.0, 760.0, 760.0)
+    {
+        return true;
+    }
+    // 변마다 3칸.
+    let dash = [(280.0, 360.0), (440.0, 520.0), (600.0, 680.0)];
+    for (a, b) in dash {
+        if in_rect(a, 120.0, b, 200.0)
+            || in_rect(a, 760.0, b, 840.0)
+            || in_rect(120.0, a, 200.0, b)
+            || in_rect(760.0, a, 840.0, b)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn shape_log(x: f32, y: f32) -> bool {
     [72.0, 128.0, 184.0]
         .iter()
@@ -557,6 +614,14 @@ pub(crate) fn log() -> ToolIcon {
 /// 결과 도구줄 보기 모드 버튼(▾는 툴바가 붙인다).
 pub(crate) fn view_mode() -> ToolIcon {
     mask(shape_view_mode)
+}
+/// 결과 도구줄 새로고침.
+pub(crate) fn refresh() -> ToolIcon {
+    mask(shape_refresh)
+}
+/// 결과 도구줄 전체 조회(사용자 SVG 09-16).
+pub(crate) fn fetch_all() -> ToolIcon {
+    mask(shape_fetch_all)
 }
 pub(crate) fn disconnect() -> ToolIcon {
     mask(shape_disconnect)

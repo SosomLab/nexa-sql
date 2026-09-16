@@ -194,6 +194,8 @@ pub(crate) struct Grid {
     text_job: Option<TextJob>,
     /// 다음 텍스트 변환 시작 때 스크롤을 유지(추가 페치 뒤 · 처음부터 다시 그리지 않게).
     text_keep_scroll: bool,
+    /// 텍스트 보기 행번호 거터 폭(페인트가 잰다 · 설정 `grid.row_numbers` · 사용자 09-16 "다른 보기에서도 행번호").
+    text_gutter_w: i32,
     /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
     perf_report: bool,
 }
@@ -244,7 +246,7 @@ impl Default for Grid {
                 .with_dropdown()
                 .tip(t(Msg::TipViewMode))]),
             tb_refresh: Self::bar(vec![
-                ToolItem::new("refresh", ToolIcon::Glyph("↻".into())).tip(t(Msg::TipRefresh))
+                ToolItem::new("refresh", toolicons::refresh()).tip(t(Msg::TipRefresh))
             ]),
             tb_edit: Self::bar(vec![
                 ToolItem::new("row.add", ToolIcon::Glyph("+".into()))
@@ -264,7 +266,7 @@ impl Default for Grid {
                     .disabled(),
             ]),
             tb_fetch: Self::bar(vec![
-                ToolItem::new("fetch.all", ToolIcon::Glyph("⇊".into())).tip(t(Msg::TipFetchAll)),
+                ToolItem::new("fetch.all", toolicons::fetch_all()).tip(t(Msg::TipFetchAll)),
                 ToolItem::new("count", ToolIcon::Glyph("Σ".into())).tip(t(Msg::TipCount)),
             ]),
             page_box: Self::page_box(200),
@@ -286,6 +288,7 @@ impl Default for Grid {
             text_longest: None,
             text_job: None,
             text_keep_scroll: false,
+            text_gutter_w: 0,
             perf_report: false,
         }
     }
@@ -867,9 +870,15 @@ impl Grid {
         }
     }
 
+    /// 텍스트 보기 본문(행번호 거터 제외 · 스크롤바 뷰포트).
     fn text_body_rect(&self) -> Rect {
         let b = self.bounds;
-        Rect::new(b.x, b.y + 1, b.w, (b.h - 1 - self.footer_h).max(0))
+        Rect::new(
+            b.x + self.text_gutter_w,
+            b.y + 1,
+            (b.w - self.text_gutter_w).max(0),
+            (b.h - 1 - self.footer_h).max(0),
+        )
     }
 
     fn text_content_size(&self) -> (i32, i32) {
@@ -2405,6 +2414,13 @@ impl Grid {
 
     /// 텍스트 계열 보기 — 줄 단위 · 고정폭 · 가로/세로 스크롤.
     fn paint_text_view(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32, pad: i32) {
+        // 행번호 거터(그리드와 같은 설정 · 자릿수 × 숫자 폭 + 여백 · 가로 스크롤 무관).
+        self.text_gutter_w = if self.row_numbers {
+            let digits = self.text_lines.len().max(1).to_string().len().max(2) as i32;
+            digits * dc.text_width("0") + pad * 2
+        } else {
+            0
+        };
         let body = self.text_body_rect();
         if self.text_w == 0 {
             // 가장 긴 줄(문자 수) 하나만 잰다 — 전 줄 측정은 수천 줄에서 수백 ms였다(09-16).
@@ -2426,11 +2442,22 @@ impl Grid {
         let sub = self.text_scroll.1 % rh;
         let mut y = body.y - sub;
         let x = body.x + pad - self.text_scroll.0;
-        for line in self.text_lines.iter().skip(first) {
+        let gw = self.text_gutter_w;
+        let gutter = Rect::new(self.bounds.x, body.y, gw, body.h);
+        if gw > 0 {
+            dc.fill_rect(gutter, th.chrome_bg);
+            dc.fill_rect(Rect::new(gutter.right() - 1, body.y, 1, body.h), th.border);
+        }
+        for (i, line) in self.text_lines.iter().enumerate().skip(first) {
             if y >= body.bottom() {
                 break;
             }
             dc.text(x, y, body, line, th.text);
+            if gw > 0 {
+                let num = (i + 1).to_string();
+                let nw = dc.text_width(&num);
+                dc.text(gutter.right() - pad - nw, y, gutter, &num, th.text_dim);
+            }
             y += rh;
         }
         self.bars.paint(
