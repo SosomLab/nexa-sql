@@ -41,13 +41,25 @@ pub(crate) fn natural_scroll() -> bool {
 /// 휠 사건 → 컨트롤 입력. 가로 성분(틸트 휠·트랙패드)이 있으면 `HWheel` · Shift+세로 = 가로(관례) · 아니면 세로.
 /// `natural_scroll`이면 두 축 모두 부호를 뒤집는다(내용이 손가락을 따라간다).
 pub(crate) fn wheel_event(delta: &MouseScrollDelta, shift: bool) -> InputEvent {
+    // ★ 픽셀 delta(macOS 트랙패드 · Linux libinput)는 **1:1**로(사용자 09-16 "DBeaver처럼 부드럽게 · 점진 가속"):
+    //   소비자가 전부 `delta/3` px로 쓰므로 ×3 해 둔다. OS가 이미 가속·관성(손을 뗀 뒤 감쇠하는 사건)을 넣어 주므로
+    //   손실 없이 그대로 흘리면 DBeaver와 같은 느낌이 된다. 휠 노치(LineDelta)는 종전대로 노치당 40px.
     let (fx, fy) = match delta {
         MouseScrollDelta::LineDelta(dx, dy) => (*dx * 120.0, *dy * 120.0),
-        MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+        MouseScrollDelta::PixelDelta(p) => (p.x as f32 * 3.0, p.y as f32 * 3.0),
     };
+    // ★ 축 잠금(사용자 09-16 "위로 올릴 때 흔들리거나 안 움직임"): 두 손가락 스와이프에는 미세한 가로 성분이 섞이는데,
+    //   누적기 때문에 그 가로 잔여가 3px에 이를 때마다 세로 delta를 버리고 `HWheel`로 나가 세로 스크롤이 끊겼다.
+    //   사건마다 **큰 축만** 쓰고 작은 축의 잔여는 버린다(트랙패드 관례 · 사선 드리프트 무시).
     let (mut dx, mut dy) = {
         let mut rem = WHEEL_REM.lock().unwrap_or_else(|e| e.into_inner());
-        (quantize3(fx, &mut rem.0), quantize3(fy, &mut rem.1))
+        if fx.abs() > fy.abs() {
+            rem.1 = 0.0;
+            (quantize3(fx, &mut rem.0), 0)
+        } else {
+            rem.0 = 0.0;
+            (0, quantize3(fy, &mut rem.1))
+        }
     };
     // ★ macOS 가로 축 부호는 Windows와 반대(사용자 09-16 "가로 스크롤이 반대로"): AppKit `scrollingDeltaX`는
     //   **양수 = 왼쪽으로 스크롤**(세로의 "양수 = 위"와 같은 규약)인데 Windows `WM_MOUSEHWHEEL`은 양수 = 오른쪽.
@@ -106,12 +118,49 @@ mod tests {
         assert_eq!(quantize3(1.0, &mut rem), 3, "1+1+1 = 3 → 한 번에 나간다");
         assert_eq!(quantize3(4.5, &mut rem), 3);
         assert_eq!(quantize3(1.5, &mut rem), 3, "잔여 1.5 + 1.5");
-        assert_eq!(quantize3(-2.0, &mut rem), 0, "방향 반전 = 잔여 초기화 후 -2");
+        assert_eq!(
+            quantize3(-2.0, &mut rem),
+            0,
+            "방향 반전 = 잔여 초기화 후 -2"
+        );
         assert_eq!(quantize3(-1.0, &mut rem), -3);
         // 마우스 휠 한 노치(120)는 그대로.
         let mut rem = 0.0f32;
         assert_eq!(quantize3(120.0, &mut rem), 120);
         assert_eq!(rem, 0.0);
+    }
+
+    /// 픽셀 delta는 1:1(소비자의 /3에 맞춰 ×3) — 트랙패드 2.5px → 7.5 → 6 나가고 1.5 이월(09-16).
+    #[test]
+    fn pixel_delta_maps_one_to_one() {
+        set_natural_scroll(false);
+        {
+            let mut rem = WHEEL_REM.lock().unwrap_or_else(|e| e.into_inner());
+            *rem = (0.0, 0.0);
+        }
+        let p = winit::dpi::PhysicalPosition::new(0.0, -10.0);
+        assert!(matches!(
+            wheel_event(&MouseScrollDelta::PixelDelta(p), false),
+            InputEvent::Wheel { delta: -30 }
+        ));
+        // 사선 드리프트(가로 0.4px)는 세로 사건을 빼앗지 않는다(축 잠금) · 여러 번 와도 가로로 새지 않는다.
+        for _ in 0..10 {
+            let p = winit::dpi::PhysicalPosition::new(0.4, -1.0);
+            assert!(matches!(
+                wheel_event(&MouseScrollDelta::PixelDelta(p), false),
+                InputEvent::Wheel { .. }
+            ));
+        }
+        // 가로가 큰 사건은 가로로.
+        let p = winit::dpi::PhysicalPosition::new(5.0, 0.5);
+        assert!(matches!(
+            wheel_event(&MouseScrollDelta::PixelDelta(p), false),
+            InputEvent::HWheel { .. }
+        ));
+        {
+            let mut rem = WHEEL_REM.lock().unwrap_or_else(|e| e.into_inner());
+            *rem = (0.0, 0.0);
+        }
     }
 
     /// macOS 가로 부호 보정(09-16): natural off에서 AppKit 양수(왼쪽)가 `HWheel` 음수(왼쪽)로.
