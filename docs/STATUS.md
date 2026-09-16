@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-17 (50차 · mac) — T-81a 파일 검색 패널 ✅ · 텍스트 보기 선택/복사 ✅ · 텍스트 보기 스크롤 3건 ✅ · 전체 조회 일관성+예산 절단 ✅
+
+⌘⇧F 패널(열린 탭 즉시 + 폴더 스트리밍 · Where · 결과 클릭 이동) · JSON/CSV 등 텍스트 보기 드래그/행번호 Ctrl 선택 복사 · 가로 최대 폭 실측(커지는 쪽만) · 추가 페치 뒤 위치 유지 · 자동 페치 중 전체 조회 수락 + 늦은 세그먼트 버림 · 전체 조회 예산 절단 안내. clippy 0 · green. **⏳ 실기 = journal 50차 4항목**. → [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (49차 · mac · 일괄 배치 2 · 병렬 에이전트 5) — DR-30~32 ✅ · T-93 결과 다중 탭 ✅ · 찾기 위젯 VS Code 치수+Material ✅ · T-77 트랜잭션 UX 1차 ✅ · T-48a/d 서버 커서+CLI ✅ · T-90a/d 거버너+nexa-sys ✅ · T-97 미니맵 ✅ · T-81b 검색 엔진+nsql grep ✅ · T-72/T-62 배포 파이프라인 ✅ · 그리드 행 높이 ✅
 
 사용자 질의 4개 답으로 범위 확정 → 병렬 5 + 직접. 결정 3건 DR 승격. GUI: 결과 탭(`results.rs` · Ctrl+\\ · 예산) · 찾기 위젯(419px · SVG 마스크 래스터 · 3상태 토글 · In selection · Preserve case · Alt+Enter) · 트랜잭션(배지 ●n · 팝업 · 툴바 · 잃는 순간 팝업 · 공유 세션 1차) · 미니맵/거버너 배선 · 행 높이 150%. 코어: 서버 커서(SQLite 세션 스레드 · Oracle · PG DECLARE · MSSQL 폴백 · Oracle e2e) · `perf.mode` 원장 24키 · `nexa-sys` · `nsql-search`(21k파일 0.3~0.6s) · 배포(맥 pkg/dmg 실기 · MSI/deb/rpm CI). 워크스페이스 테스트·clippy 전부 green · 커밋 nexa-ui 2 · nexa-sql 4(문서 포함 5) · **push 대기(사용자 요청 시)**. **⏳ 실기 대상 = journal 49차 6항목 + 48차 9항목**. **다음**: T-81a 검색 패널 · T-48b/c · T-90b/c · 서명 키 · PG 실서버 · T-54 탭별 세션. → [journal](journal/2026-09-16.md)

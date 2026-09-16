@@ -83,7 +83,7 @@
 | **T-46b** | P0 | 중 | ✅ 접속 흐름(공용 `from_parts`/`test_connection` · CLI `conn add/test` 필드 · GUI 접속 패널) · ✅ 계측 골격(`Stage/Timeline` · `--timing` · 푸터) | — | ✅ 09-14 |
 | **T-47** | P1 | 소 | Send 스팬 · MSSQL/SQLite Execute·Fetch 분리 · **파일 로그 싱크**(`LogSink` · 배치 flush · 회전 · `NSQL_LOG`) · `--timing=json` | D-44 | ☐ |
 | **T-54** | P1 | 중 | `session.mode` 실체 — 편집기 탭 다중화 시 per-editor 세션(워커 세션 맵 · CONNECT 범위 경고) · **한 탭의 접속 장애가 다른 탭에 번지지 않게(사용자 09-14 14차 · 워커 패닉 격리·빠른 판정은 ✅, 세션 분리는 여기)** · 로그 창 필터/지우기 ✅ 09-16 22차(종류·컬럼 · 우클릭 메뉴) · 검색 ☐ · 로그 창 Grid = nexa-grid(G-3 뒤) | E-3 D-45 | ☐ |
-| **T-48** | P0 | 대 | ✅ 09-15 1차 상한 · ✅ 09-16 25차 OFFSET 폴백·도구줄·자동 페치 · **✅ 09-16 49차 a 서버 커서 유지**(`CursorHandle` · SQLite 세션 스레드 · Oracle 소유 ResultSet · PG DECLARE CURSOR(실서버 미검증) · MSSQL 폴백 · 러너 fetch_next/all/count · Navigate 스팬 · 자동 커밋 유예) · **✅ d CLI**(`cli.max_rows` · `\more/\all/\count/\pager` · `cli.auto_more`) · 잔여 = **b** Fetch all 진행·취소 UI · 예산을 워커 전체 조회에 연결 · **c** MSSQL 스트림 · `db.cursor_idle_secs` 실체 · PG 실서버 | 43 D-68~72 | 🚧 |
+| **T-48** | P0 | 대 | ✅ 09-15 1차 상한 · ✅ 09-16 25차 OFFSET 폴백·도구줄·자동 페치 · **✅ 09-16 49차 a 서버 커서 유지**(`CursorHandle` · SQLite 세션 스레드 · Oracle 소유 ResultSet · PG DECLARE CURSOR(실서버 미검증) · MSSQL 폴백 · 러너 fetch_next/all/count · Navigate 스팬 · 자동 커밋 유예) · **✅ d CLI**(`cli.max_rows` · `\more/\all/\count/\pager` · `cli.auto_more`) · 잔여 = **b** Fetch all 진행·취소 UI · ✅ 09-17 예산 절단(수신 뒤 · 커서 기반 스트리밍은 잔여) · **c** MSSQL 스트림 · `db.cursor_idle_secs` 실체 · PG 실서버 | 43 D-68~72 | 🚧 |
 | **T-49** | P1 | 소 | `DBMS_OUTPUT.GET_LINES` 배열 회수 · 실행 중 주기 폴링 옵션 · UNLIMITED 안내 | — | ☐ |
 | **T-50** | P0 | 대 | 컬럼 지향 결과 저장소 + 페인트 할당 0 + 폭 캐시 — **nexa-grid(U-3 · dir2 `rows.rs` 이식 · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md))** 와 함께 · 결과 그리드는 속도·메모리 최우선(사용자 09-14) | nexa-ui U-3 | ☐ |
 | **T-51** | P1 | 중 | D-41 반영 — 옵션 파서 재정리(별칭·충돌 안내) · `-e` · `-v` · `-b` · `-W`/`NSQL_PASSWORD` · `-S host,port` · 진영별 `--help` 예시 | D-41 | ☐ |
@@ -117,7 +117,7 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-78** | P1 | 중 | 구문 토큰 종류 확장(자료형·함수·바인드·구분자·명령) + 색 프리셋 `editor.color_preset`(nexa/dbeaver/golden · [35](35-editor-colors-reference.md)) · 선택 반투명 옵션(D-54) | D-53 D-54 | ☐ |
 | **T-79** | P1 | 중 | 파일 인코딩 — 열기/저장 대화상자 하단 인코딩·줄끝 콤보(Auto/UTF-8/UTF-8 BOM/UTF-16/EUC-KR·CP949 표 내장) · 탭별 인코딩 기억 · 상태줄 세그먼트 · 3-OS 동일(자체 대화상자) | T-74 | ☐ |
 | **T-80** | P2 | 소 | 그리드 SQL 복사의 키 = PK(카탈로그 `nsql-catalog` 연동 · 없으면 첫 컬럼) · 테이블 추정 개선(별칭·스키마) | T-56 | ☐ |
-| **T-81** | P1 | 대 | **파일 검색 탭 + 프로젝트**([36](36-find-in-files-and-project.md)) — **✅ 09-16 49차 b `nsql-search` 엔진 + `nsql grep`**(병렬 열거 · 무시 규칙 · SWAR · 스트리밍 · 취소 · search_text · 28 테스트 · 21k파일 0.3~0.6s) · 잔여 = a 패널(Ctrl+⇧F · Where · 결과 트리 · 열린 탭 · 설정 키 4) · c 프로젝트 파일 · d 바꾸기 미리보기/적용 · e 캐시·EUC-KR | 22차 활동 막대 · T-74 · T-59 | 🚧 |
+| **T-81** | P1 | 대 | **파일 검색 탭 + 프로젝트**([36](36-find-in-files-and-project.md)) — **✅ 09-16 49차 b `nsql-search` 엔진 + `nsql grep`**(병렬 열거 · 무시 규칙 · SWAR · 스트리밍 · 취소 · search_text · 28 테스트 · 21k파일 0.3~0.6s) · **✅ 09-17 50차 a 패널**(`search_panel.rs` · Ctrl+⇧F · Where · 열린 탭+폴더 스트리밍 · 결과 트리 · 클릭 이동 · 설정 4키) · 잔여 = c 프로젝트 파일 · d 바꾸기 미리보기/적용 · e 캐시·EUC-KR | 22차 활동 막대 · T-74 · T-59 | 🚧 |
 | **T-82** | P0 | 소 | 트리 `rows()` 평탄화 캐시([37 P-1](37-file-picker-performance.md)) | — | ✅ 09-15 |
 | **T-83** | P0 | 소 | 트리·탐색기 페인트를 첫 가시 행부터([37 P-2](37-file-picker-performance.md)) — 탐색기는 이미 `skip(first)`+행 캐시 · nexa-ctl TreeView/TreeGrid ✅ | — | ✅ 09-15 |
 | **T-84** | P1 | 소 | `nexa-fs::entry_of` — 링크일 때만 경로 stat(53× · [37 P-3](37-file-picker-performance.md)) | — | ✅ 09-15 |
