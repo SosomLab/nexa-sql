@@ -3270,9 +3270,6 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
-                self.status_menu.paint(&mut dc, &th);
-                self.grid.paint_overlays(&mut dc, &th);
-                self.palette.paint(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
             // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
@@ -3314,6 +3311,11 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.toolbar.paint_tooltip(&mut dc, &th);
+                // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
+                //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
+                self.status_menu.paint(&mut dc, &th);
+                self.grid.paint_overlays(&mut dc, &th);
+                self.palette.paint(&mut dc, &th);
                 // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
                 let (tx, ty) = if eb.w > 0 && eb.h > 0 {
