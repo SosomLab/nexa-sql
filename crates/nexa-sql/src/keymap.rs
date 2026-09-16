@@ -109,8 +109,8 @@ pub(crate) const COMMANDS: &[Command] = &[
     Command {
         id: "view.log",
         label: Msg::MnLogWindow,
-        win: "ctrl+`",
-        mac: "ctrl+`",
+        win: "f10",
+        mac: "f10",
     },
     Command {
         id: "view.theme",

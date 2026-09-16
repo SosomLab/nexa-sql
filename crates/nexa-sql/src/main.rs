@@ -1132,6 +1132,7 @@ impl App {
                 .set_columns(self.settings.get(key).unwrap_or("")),
             "log.kinds" => self.log_win.set_kinds(self.settings.get(key).unwrap_or("")),
             "log.file" | "log.file_format" | "log.file_max_kb" => self.rebuild_log_hub(),
+            "log.switch_scale" => self.log_win.set_switch_scale(self.settings.int(key)),
             "log.wrap" => self.log_win.set_wrap(self.settings.flag(key)),
             "log.newest_first" => self.log_win.set_newest_first(self.settings.flag(key)),
             "log.autoscroll" => self.log_win.set_autoscroll(self.settings.flag(key)),
@@ -3214,7 +3215,7 @@ impl ApplicationHandler<Wake> for App {
             self.settings.get("file.eol_new").unwrap_or("auto"),
         ));
         self.apply_menu_decor();
-        // 로그 창은 설정 `log.open_at_start`(기본 off · 사용자 09-15)일 때만 메인 옆에 함께 연다(Ctrl+`로 언제든).
+        // 로그 창은 설정 `log.open_at_start`(기본 off · 사용자 09-15)일 때만 메인 옆에 함께 연다(F10으로 언제든).
         if self.settings.flag("log.open_at_start") {
             let owner = self.window.clone();
             self.log_win.open(
@@ -3292,6 +3293,7 @@ impl ApplicationHandler<Wake> for App {
             || self.grid.bars_visible()
             || self.log_win.bars_visible()
             || self.log_win.tooltip_pending()
+            || self.log_win.drag_active()
             || self.conn_win.bars_visible()
             || self.conn_win.tooltip_pending()
             || self.grid.hover_animating()
@@ -3525,8 +3527,11 @@ impl ApplicationHandler<Wake> for App {
         if self.log_win.is(id) {
             match self.log_win.handle(&event) {
                 LogWinAction::Paint => {
-                    let px = self.settings.int("editor.font_size") as f32;
-                    self.log_win.paint(&self.mono_font, &self.theme, px);
+                    // 시스템 UI 글꼴 · 본문 = 편집기 기본 크기 · 푸터 = 메인 상태줄 크기(사용자 09-16).
+                    let body_px = self.settings.int("editor.font_size") as f32;
+                    let footer_px = nexa_ctl::theme::FontPrefs::default().status.size;
+                    self.log_win
+                        .paint(&self.ui_font, &self.theme, body_px, footer_px);
                 }
                 LogWinAction::Toggled(key, on) => {
                     // 스위치 = 설정과 같은 값(자동 기억 · 설정 창에도 반영).
@@ -4001,6 +4006,8 @@ fn main() {
         app.settings.int("ui.toast_alpha"),
     );
     app.log_win.set_wrap(app.settings.flag("log.wrap"));
+    app.log_win
+        .set_switch_scale(app.settings.int("log.switch_scale"));
     app.log_win
         .set_template(app.settings.get("log.template").unwrap_or(""));
     app.log_win

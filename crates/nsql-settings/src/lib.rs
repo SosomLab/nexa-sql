@@ -1258,6 +1258,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "off",
     },
     Entry {
+        key: "log.switch_scale",
+        cat: Msg::CatLog,
+        label: Msg::LblLogSwitchScale,
+        desc: Msg::DescLogSwitchScale,
+        kind: SettingKind::Int { min: 50, max: 150 },
+        default: "80",
+    },
+    Entry {
         key: "log.always_on_top",
         cat: Msg::CatLog,
         label: Msg::LblLogOnTop,
@@ -1339,6 +1347,7 @@ pub fn group_of(cat: Msg) -> Option<Msg> {
 /// 비노출 설정(자주 바꾸지 않는 구현 값 · 사용자 09-14) — 레지스트리에는 있어 `set/get/reset`은 되지만 목록·설정 화면엔 기본 숨김.
 pub const HIDDEN: &[&str] = &[
     "log.kinds",
+    "log.switch_scale",
     "log.columns",
     "conn.delete_confirm_ms",
     "conn.close_after_connect_ms",

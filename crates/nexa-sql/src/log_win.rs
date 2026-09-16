@@ -72,6 +72,8 @@ pub(crate) struct LogWin {
     sw_hover: Option<(usize, Instant)>,
     /// 툴팁을 이미 그렸다(다음 tick에 다시 깨우지 않게).
     tip_shown: bool,
+    /// 푸터 스위치 트랙 배율(설정 `log.switch_scale` %).
+    switch_mult: f32,
     /// 항목마다 배치(버퍼와 같은 순서 · `None` = 아직 계산 전).
     meta: VecDeque<Option<LineMeta>>,
     /// 줄바꿈 켬일 때 항목별 누적 행 시작(len+1) — 스크롤 위치 ↔ 항목 변환.
@@ -92,6 +94,15 @@ pub(crate) struct LogWin {
     content_w: i32,
     cursor: (i32, i32),
     shift: bool,
+    /// 주 조합키(Ctrl · macOS Cmd) — Ctrl+C/A.
+    primary: bool,
+    /// 텍스트 선택(표시 순서 index · 문자 index) — anchor는 누른 곳 · head는 끌린 곳. 필터·순서가 바뀌면 비운다.
+    sel_anchor: Option<(usize, usize)>,
+    sel_head: Option<(usize, usize)>,
+    /// 왼쪽 버튼으로 본문을 끌고 있는 중.
+    dragging: bool,
+    /// 페인트에서 풀 히트 테스트 요청(창 좌표 · anchor도 새로 잡을지).
+    drag_hit: Option<(i32, i32, bool)>,
     /// 설정 `grid.scroll` = row 이면 줄 경계에 맞춘다(기본 pixel).
     row_snap: bool,
     /// 줄바꿈(설정 `log.wrap` · 푸터 스위치).
@@ -126,6 +137,7 @@ impl LogWin {
             menu: ContextMenu::new(),
             sw_hover: None,
             tip_shown: false,
+            switch_mult: 0.8,
             meta: VecDeque::new(),
             row_start: Vec::new(),
             layout_key: (0, false, 0),
@@ -140,6 +152,11 @@ impl LogWin {
             content_w: 0,
             cursor: (0, 0),
             shift: false,
+            primary: false,
+            sel_anchor: None,
+            sel_head: None,
+            dragging: false,
+            drag_hit: None,
             row_snap: false,
             wrap: false,
             wrap_switch: Switch::new(t(Msg::LblLogSwWrap), false).with_label_side(LabelSide::Right),
@@ -200,6 +217,7 @@ impl LogWin {
     }
 
     fn rebuild_vis(&mut self) {
+        self.clear_selection();
         self.vis = (0..self.buf.len())
             .filter(|&i| self.buf.get(i).is_some_and(|e| self.shown(e.kind)))
             .collect();
@@ -298,6 +316,7 @@ impl LogWin {
             "save" => LogWinAction::SaveAs,
             "copy" => LogWinAction::CopyText(self.export_text()),
             "clear" => {
+                self.clear_selection();
                 self.buf.clear();
                 self.meta.clear();
                 self.vis.clear();
@@ -311,6 +330,20 @@ impl LogWin {
         }
     }
 
+    /// 푸터 스위치 크기(설정 `log.switch_scale` % · 글자에 비례해 작게).
+    pub(crate) fn set_switch_scale(&mut self, pct: i64) {
+        self.switch_mult = (pct.clamp(50, 150) as f32) / 100.0;
+        for sw in [
+            &mut self.wrap_switch,
+            &mut self.newest_switch,
+            &mut self.auto_switch,
+            &mut self.top_switch,
+        ] {
+            sw.set_track_scale(self.switch_mult);
+        }
+        self.redraw();
+    }
+
     /// 줄바꿈 켬/끔(설정 `log.wrap` · 스위치).
     pub(crate) fn set_wrap(&mut self, on: bool) {
         self.wrap = on;
@@ -322,6 +355,7 @@ impl LogWin {
 
     /// 최신 먼저 켬/끔(설정 `log.newest_first` · 스위치) — 누적 행만 다시(배치는 그대로).
     pub(crate) fn set_newest_first(&mut self, on: bool) {
+        self.clear_selection();
         self.newest_first = on;
         self.newest_switch.set_on(on);
         self.row_start.clear();
@@ -386,7 +420,170 @@ impl LogWin {
 
     /// 스크롤바 페이드 틱 — 다시 그릴 것이 있으면 true.
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.bars.tick(now_ms) || self.tooltip_due()
+        let bars = self.bars.tick(now_ms);
+        bars || self.tooltip_due() || self.drag_edge_scroll()
+    }
+
+    /// 끌기 중 커서가 본문 밖이면 그쪽으로 한 행/한 걸음 스크롤하고 head를 다시 잡는다(사용자 09-16).
+    fn drag_edge_scroll(&mut self) -> bool {
+        if !self.dragging || self.row_h <= 0 {
+            return false;
+        }
+        let (x, y) = self.cursor;
+        let mut moved = false;
+        if y < self.header_h {
+            self.scroll_y = (self.scroll_y - self.row_h).max(0);
+            moved = true;
+        } else if y >= self.view_h {
+            self.scroll_y = (self.scroll_y + self.row_h).min(self.max_scroll());
+            moved = true;
+        }
+        if x < 0 {
+            self.scroll_x = (self.scroll_x - self.row_h * 2).max(0);
+            moved = true;
+        } else if x >= self.view_w {
+            self.scroll_x = (self.scroll_x + self.row_h * 2).min(self.max_scroll_x());
+            moved = true;
+        }
+        if moved {
+            self.drag_hit = Some((x, y, false));
+        }
+        moved
+    }
+
+    /// 호스트의 타이머 유지 조건 — 끌기 중(가장자리 자동 스크롤).
+    pub(crate) fn drag_active(&self) -> bool {
+        self.dragging
+    }
+
+    fn clear_selection(&mut self) {
+        self.sel_anchor = None;
+        self.sel_head = None;
+        self.dragging = false;
+        self.drag_hit = None;
+    }
+
+    /// 정규화한 선택 구간(앞 ≤ 뒤) — 비었으면 None.
+    fn selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        let (a, h) = (self.sel_anchor?, self.sel_head?);
+        if a == h {
+            return None;
+        }
+        Some(if a <= h { (a, h) } else { (h, a) })
+    }
+
+    /// 표시 줄 `di`의 형식 문자열(배치가 아직 없으면 형식기로 바로).
+    fn line_text(&self, di: usize) -> Option<String> {
+        let bi = self.disp(di);
+        if let Some(m) = self.meta.get(bi).and_then(|m| m.as_ref()) {
+            return Some(m.text.clone());
+        }
+        self.buf.get(bi).map(|e| self.fmt.line(e))
+    }
+
+    /// 선택된 텍스트(줄 사이 `\n`).
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        let ((a_di, a_ch), (b_di, b_ch)) = self.selection()?;
+        let mut out = String::new();
+        for di in a_di..=b_di.min(self.vis.len().saturating_sub(1)) {
+            let Some(text) = self.line_text(di) else {
+                break;
+            };
+            let chars: Vec<char> = text.chars().collect();
+            let lo = if di == a_di { a_ch.min(chars.len()) } else { 0 };
+            let hi = if di == b_di {
+                b_ch.min(chars.len())
+            } else {
+                chars.len()
+            };
+            if di > a_di {
+                out.push('\n');
+            }
+            out.extend(chars[lo..hi].iter());
+        }
+        Some(out)
+    }
+
+    fn select_all(&mut self) {
+        if self.vis.is_empty() {
+            return;
+        }
+        let last = self.vis.len() - 1;
+        let len = self.line_text(last).map_or(0, |t| t.chars().count());
+        self.sel_anchor = Some((0, 0));
+        self.sel_head = Some((last, len));
+        self.redraw();
+    }
+
+    /// 창 좌표 → (표시 줄, 문자 index) — 페인트 안(글꼴이 선택된 뒤)에서만.
+    #[allow(clippy::too_many_arguments)]
+    fn hit_text(
+        &self,
+        dc: &mut dyn DrawCtx,
+        x: i32,
+        y: i32,
+        row_h: i32,
+        pad: i32,
+        indent: i32,
+        widths: &mut Vec<i32>,
+    ) -> Option<(usize, usize)> {
+        if self.vis.is_empty() || row_h <= 0 {
+            return None;
+        }
+        let row_abs = ((y - self.header_h + self.scroll_y).max(0) / row_h) as usize;
+        let (di, r) = if self.wrap {
+            let i = match self.row_start.binary_search(&(row_abs as u32)) {
+                Ok(i) => i,
+                Err(i) => i.saturating_sub(1),
+            };
+            let i = i.min(self.vis.len() - 1);
+            (
+                i,
+                row_abs.saturating_sub(self.row_start.get(i).copied().unwrap_or(0) as usize),
+            )
+        } else {
+            (row_abs.min(self.vis.len() - 1), 0)
+        };
+        let text = self.line_text(di)?;
+        let chars: Vec<char> = text.chars().collect();
+        let bi = self.disp(di);
+        let breaks: &[usize] = self
+            .meta
+            .get(bi)
+            .and_then(|m| m.as_ref())
+            .map_or(&[], |m| m.breaks.as_slice());
+        let mut starts = vec![0usize];
+        starts.extend(breaks.iter().copied());
+        let r = r.min(starts.len() - 1);
+        let st = starts[r];
+        let en = starts.get(r + 1).copied().unwrap_or(chars.len());
+        let seg: String = chars[st..en].iter().collect();
+        let x_base = if self.wrap {
+            if r == 0 {
+                pad
+            } else {
+                pad + indent
+            }
+        } else {
+            pad - self.scroll_x
+        };
+        dc.text_prefix_widths(&seg, widths);
+        let rel = x - x_base;
+        // 가장 가까운 문자 경계.
+        let mut k = 0usize;
+        for (i, w) in widths.iter().enumerate() {
+            if *w <= rel {
+                k = i;
+            } else {
+                // 경계 사이 중간을 넘었으면 다음 경계.
+                let prev = widths[i.saturating_sub(1)];
+                if rel - prev > (w - prev) / 2 {
+                    k = i;
+                }
+                break;
+            }
+        }
+        Some((di, st + k.min(en - st)))
     }
 
     /// 스위치 위에 머문 지 600ms가 됐고 아직 안 그렸다.
@@ -432,7 +629,7 @@ impl LogWin {
         let mut attrs = Window::default_attributes()
             .with_title("Nexa SQL — Log")
             .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(760.0, 320.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(592.0, 320.0));
         if let Some((x, y, w)) = near {
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y));
         }
@@ -569,7 +766,14 @@ impl LogWin {
                 self.scale = *scale_factor as f32;
                 self.redraw();
             }
-            WindowEvent::ModifiersChanged(m) => self.shift = m.state().shift_key(),
+            WindowEvent::ModifiersChanged(m) => {
+                self.shift = m.state().shift_key();
+                self.primary = if cfg!(target_os = "macos") {
+                    m.state().super_key()
+                } else {
+                    m.state().control_key()
+                };
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 // 세로 휠 · Shift+휠/가로 휠 = 가로(방향 반전·macOS 부호는 공용 변환이 처리).
                 let ev = crate::input::wheel_event(delta, self.shift);
@@ -590,7 +794,10 @@ impl LogWin {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
                 let (x, y) = self.cursor;
-                if self.menu.is_open() {
+                if self.dragging {
+                    self.drag_hit = Some((x, y, false));
+                    self.redraw();
+                } else if self.menu.is_open() {
                     if self.menu.on_event(&InputEvent::MouseMove { x, y }) {
                         self.redraw();
                     }
@@ -668,6 +875,14 @@ impl LogWin {
                     // 스위치는 커서 아래일 때만(마우스 라우팅 규칙) · 놓기는 늘 전달(눌림 해제).
                     let p = Point { x, y };
                     let up = matches!(ev, InputEvent::MouseUp { .. });
+                    // 본문 누르기 = 텍스트 선택 시작(Shift = anchor 유지) · 놓기 = 끌기 끝.
+                    if up {
+                        self.dragging = false;
+                    } else if y >= self.header_h && y < self.view_h {
+                        self.dragging = true;
+                        self.drag_hit = Some((x, y, !self.shift || self.sel_anchor.is_none()));
+                        self.redraw();
+                    }
                     let mut inv = Invalidations::default();
                     if up || self.wrap_switch.bounds().contains(p) {
                         self.wrap_switch.on_event(&ev, &mut inv);
@@ -711,6 +926,18 @@ impl LogWin {
                     return LogWinAction::None;
                 }
                 match kev.logical_key.as_ref() {
+                    Key::Character(c) if self.primary && matches!(c, "c" | "C") => {
+                        if let Some(text) = self.selected_text() {
+                            return LogWinAction::CopyText(text);
+                        }
+                    }
+                    Key::Character(c) if self.primary && matches!(c, "a" | "A") => {
+                        self.select_all();
+                    }
+                    Key::Named(NamedKey::Escape) if self.selection().is_some() => {
+                        self.clear_selection();
+                        self.redraw();
+                    }
                     Key::Named(NamedKey::Escape) => self.close(),
                     Key::Named(NamedKey::End) => self.set_scroll(i32::MAX / 2),
                     Key::Named(NamedKey::Home) => self.set_scroll(0),
@@ -818,7 +1045,8 @@ impl LogWin {
     }
 
     /// 그리기 — 헤더(포맷이 주면) + 픽셀 오프셋의 보이는 줄(줄바꿈이면 접힌 행). 고정폭 폰트 · 종류별 색.
-    pub(crate) fn paint(&mut self, mono: &Font, th: &Theme, font_px: f32) {
+    /// `font_px` = 본문 글자 크기(편집기 기본 크기) · `footer_px` = 푸터(메인 상태줄 크기) — 사용자 09-16.
+    pub(crate) fn paint(&mut self, font: &Font, th: &Theme, font_px: f32, footer_px: f32) {
         // 표면을 잠시 꺼내 둔다 — 그리는 동안 배치 계산(`&mut self`)을 해야 한다.
         let Some(win) = self.window.clone() else {
             return;
@@ -843,15 +1071,23 @@ impl LogWin {
         let (wi, hi) = (size.width as i32, size.height as i32);
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+            // 글꼴 = 시스템 UI 글꼴(폴백 포함 · 사용자 09-16) · 본문 = 편집기 크기 · 푸터 = 상태줄 크기.
+            let slot = |size: f32| SlotFont {
+                size,
+                bold: false,
+                italic: false,
+            };
             let prefs = FontPrefs {
-                base: SlotFont {
-                    size: font_px,
-                    bold: false,
-                    italic: false,
-                },
+                base: slot(font_px),
+                status: slot(footer_px),
                 ..FontPrefs::default()
             };
-            let mut dc = RasterCtx::new(&mut gfx, mono, s).with_fonts(prefs);
+            let footer_prefs = FontPrefs {
+                base: slot(footer_px),
+                status: slot(footer_px),
+                ..FontPrefs::default()
+            };
+            let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);
             let pad = (6.0 * s).round() as i32;
@@ -870,8 +1106,12 @@ impl LogWin {
                 y += 2;
             }
             self.header_h = y;
-            // 푸터(스위치 · 위치 표시) 한 줄은 본문에서 뺀다.
-            self.view_h = hi - row_h - pad;
+            // 푸터(스위치 · 위치 표시) 한 줄은 본문에서 뺀다 — 높이는 푸터 글꼴 기준.
+            dc.set_fonts(footer_prefs);
+            let footer_row_h = dc.text_height() + (4.0 * s).round() as i32;
+            dc.set_fonts(prefs);
+            dc.select_font(FontSlot::Base, false);
+            self.view_h = hi - footer_row_h - pad;
             let avail_w = wi - pad * 2;
             self.ensure_layout(&mut dc, font_px, avail_w);
             // 가로 폭에 여백을 더해 마지막 글자가 잘리지 않게.
@@ -902,6 +1142,41 @@ impl LogWin {
             } else {
                 (first_row, 0usize)
             };
+            // 끌기 히트 테스트(글꼴이 선택된 지금) → anchor/head.
+            let mut widths: Vec<i32> = Vec::new();
+            if let Some((hx, hy, new_anchor)) = self.drag_hit.take() {
+                if let Some(p) = self.hit_text(&mut dc, hx, hy, row_h, pad, indent, &mut widths) {
+                    if new_anchor {
+                        self.sel_anchor = Some(p);
+                    }
+                    self.sel_head = Some(p);
+                }
+            }
+            let sel = self.selection();
+            // 한 행 조각의 선택 배경 — 조각 [st, en) 과 선택 [lo, hi) 의 겹침만.
+            let sel_bg = |dc: &mut dyn DrawCtx,
+                          widths: &mut Vec<i32>,
+                          di: usize,
+                          st: usize,
+                          seg: &str,
+                          seg_len: usize,
+                          x: i32,
+                          yy: i32| {
+                let Some(((a_di, a_ch), (b_di, b_ch))) = sel else {
+                    return;
+                };
+                if di < a_di || di > b_di {
+                    return;
+                }
+                let lo = if di == a_di { a_ch } else { 0 }.max(st);
+                let hi = if di == b_di { b_ch } else { usize::MAX }.min(st + seg_len);
+                if lo >= hi {
+                    return;
+                }
+                dc.text_prefix_widths(seg, widths);
+                let (wl, wh) = (widths[lo - st], widths[hi - st]);
+                dc.fill_rect(Rect::new(x + wl, yy, wh - wl, row_h), th.sel_bg);
+            };
             let mut yy = body.y - sub;
             let mut last = first;
             let x0 = pad - self.scroll_x;
@@ -925,6 +1200,16 @@ impl LogWin {
                 };
                 if m.breaks.is_empty() {
                     if row_in == 0 {
+                        sel_bg(
+                            &mut dc,
+                            &mut widths,
+                            i,
+                            0,
+                            &m.text,
+                            m.text.chars().count(),
+                            x0,
+                            yy,
+                        );
                         dc.text(x0, yy, body, &m.text, color);
                         yy += row_h;
                     }
@@ -944,18 +1229,22 @@ impl LogWin {
                     let en = starts.get(r + 1).copied().unwrap_or(chars.len());
                     let seg: String = chars[st..en].iter().collect();
                     let x = if r == 0 { pad } else { pad + indent };
+                    sel_bg(&mut dc, &mut widths, i, st, &seg, en - st, x, yy);
                     dc.text(x, yy, body, &seg, color);
                     yy += row_h;
                 }
                 row_in = 0;
             }
-            // 푸터: [줄바꿈 스위치]                "120–160 / 4,321 · raw"
+            // 푸터: [줄바꿈 스위치]                "120–160 / 4,321 · raw" — 푸터 글꼴 크기로 교체(스위치 라벨 = Base).
+            dc.set_fonts(footer_prefs);
+            dc.select_font(FontSlot::Base, false);
             let fy = self.view_h;
             dc.fill_rect(Rect::new(0, fy, wi, hi - fy), th.panel_bg);
             dc.fill_rect(Rect::new(0, fy, wi, 1), th.border);
             let mut inv = Invalidations::default();
-            let mut x = pad;
-            let sep_gap = pad * 2;
+            let mut x = pad / 2;
+            let sep_gap = pad;
+            let track_w = (20.0 * self.switch_mult * s).round() as i32;
             for (i, (sw, msg)) in [
                 (&mut self.wrap_switch, Msg::LblLogSwWrap),
                 (&mut self.newest_switch, Msg::LblLogSwSort),
@@ -973,10 +1262,12 @@ impl LogWin {
                     );
                     x += sep_gap;
                 }
+                // 스위치 앞 3px 여백(사용자 09-16).
+                x += (3.0 * s).round() as i32;
                 sw.set_scale(s);
-                // 트랙(44) + 라벨 폭 + 여백 — Switch는 폭을 스스로 재지 않는다.
-                let w = dc.text_width(t(msg)) + (56.0 * s).round() as i32;
-                sw.set_bounds(Rect::new(x, fy + 2, w, row_h + pad - 2), &mut inv);
+                // 트랙(배율) + 간격 + 라벨 폭 + 여백 — Switch는 폭을 스스로 재지 않는다.
+                let w = track_w + dc.text_width(t(msg)) + (14.0 * s).round() as i32;
+                sw.set_bounds(Rect::new(x, fy + 2, w, footer_row_h + pad - 2), &mut inv);
                 sw.paint(&mut dc, th);
                 x += w;
             }

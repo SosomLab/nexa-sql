@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (24차 · win) — 로그 창 글꼴/크기/푸터 ✅ · 텍스트 선택 + 자동 스크롤 ✅ · F10 ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (23차 · win) — 페치 모델·결과 탭 설계 [43](43-fetch-model-and-result-tabs.md) ✅(D-68~72 · T-48a~d · T-93 · T-94)
 
 → [journal](journal/2026-09-16.md)

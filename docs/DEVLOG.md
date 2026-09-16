@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (24차 · win)** — 로그 창 마감: 시스템 UI 글꼴(본문 = 편집기 크기 · 푸터 = 상태줄 크기 · 스위치 배율) · 기본 592×320 · **텍스트 드래그 선택 + 가장자리 자동 스크롤 · Ctrl+C/A** · F10 · 컬럼 선택 설계(T-95). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (23차 · win)** — **페치 모델·결과 탭 조사·설계 [43](43-fetch-model-and-result-tabs.md)**(CLI 9종 상한 조사 · DBeaver 결과 패널 · D-68~72: 대화형만 상한 · 200 · 커서 유지+OFFSET 폴백 · 결과 탭 Ctrl+\ · 메모리 예산) · T-48a~d · T-93 · T-94. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (22차 · win)** — **로그 형식 어댑터 확장 4종**(형식 8종 compact/jsonl/csv/tsv/template · 템플릿 `log.template` · 파일 싱크 `log.file`(회전) · 종류/컬럼 필터 + 로그 창 우클릭 메뉴(종류·컬럼·파일 저장·복사·지우기)) · 푸터 스위치 재구성(Wrap/Sort/Scroll/Top · 구분선 · 툴팁 · Sort+Scroll = 1번 줄) · 푸터 글자 세로 가운데 · **CLI 도움말 기본값을 설정에서 읽음**(`--overflow` 문구 오류 수정 · `Opt.setting`/`Cmd.notes`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (21차 · win)** — 로그 창 스크롤 전부 + 스위치 4종(줄바꿈·최신 먼저·자동 스크롤·항상 위) · **토스트 + DBMS 오류 정규화 [42](42-db-error-normalization.md)**(코드 부각) · Save As 덮어쓰기 카드 · 메인 창 항상 위 · NULL 표시/복사 설정 · 그리드 스크롤바 트랙/끝/컬럼 확장 · 헤더 경계선. → [journal](journal/2026-09-16.md)
