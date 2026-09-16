@@ -4763,17 +4763,25 @@ impl App {
                 y: self.cursor.1,
             };
             let in_bar = self.find.bounds().contains(cur);
-            if (is_mouse && in_bar) || (self.focus == Focus::Find && !is_mouse) {
+            let is_ptr = is_mouse || matches!(ev, InputEvent::RightDown { .. });
+            // ★ 상자의 우클릭 메뉴가 열려 있으면 바 밖(메뉴가 펼쳐진 곳)의 마우스·키도 찾기 바로(사용자 09-17).
+            let popup = self.find.popup_open();
+            if popup || (is_ptr && in_bar) || (self.focus == Focus::Find && !is_ptr) {
                 if matches!(
                     ev,
                     InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
-                ) {
+                ) && in_bar
+                {
                     self.set_focus(Focus::Find);
                 }
                 let a = self.find.on_event(&ev);
                 self.find_action(a);
+                // 편집 메뉴의 Copy/Cut/Paste는 호스트가 OS 클립보드로 잇는다(편집기와 같은 경로).
+                if let Some(act) = self.find.take_edit_ctx() {
+                    self.clip_action(act);
+                }
                 self.redraw();
-                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                if popup || !matches!(ev, InputEvent::MouseMove { .. }) {
                     return;
                 }
             }

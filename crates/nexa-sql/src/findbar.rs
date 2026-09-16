@@ -631,6 +631,18 @@ impl FindBar {
     }
 
     /// 이벤트 → 호스트 동작. 마우스는 커서가 패널 안일 때 · 키는 패널에 포커스일 때 호스트가 넘긴다.
+    /// 찾기/바꾸기 상자의 우클릭 편집 메뉴가 열려 있는가 — 호스트가 마우스를 바 밖까지 보내고 Esc를 메뉴에 준다.
+    pub(crate) fn popup_open(&self) -> bool {
+        self.query.popup_open() || (self.with_replace && self.repl.popup_open())
+    }
+
+    /// 편집 메뉴에서 고른 클립보드 행동(Copy/Cut/Paste) — 호스트가 실행.
+    pub(crate) fn take_edit_ctx(&mut self) -> Option<nexa_ctl::EditCtxAction> {
+        self.query
+            .take_edit_ctx()
+            .or_else(|| self.repl.take_edit_ctx())
+    }
+
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> FindAction {
         if !self.visible {
             return FindAction::None;
@@ -638,6 +650,15 @@ impl FindBar {
         let mut inv = Invalidations::default();
         if let InputEvent::Key { shift, .. } = ev {
             self.shift = *shift;
+        }
+        // 우클릭 편집 메뉴가 열려 있으면 그 메뉴가 먼저(항목 클릭 · Esc = 메뉴만 닫기 · 사용자 09-17).
+        if self.popup_open() {
+            if self.query.popup_open() {
+                self.query.on_event(ev, &mut inv);
+            } else {
+                self.repl.on_event(ev, &mut inv);
+            }
+            return FindAction::None;
         }
         // Enter = 다음(Shift = 이전) · Esc = 닫기(Sublime 규약 · 바꾸기 상자에서도 Enter = 다음 · 바꾸기는 Ctrl+Shift+H).
         if let InputEvent::Key { key, shift, .. } = ev {
