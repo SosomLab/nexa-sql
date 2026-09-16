@@ -188,7 +188,8 @@ impl FindBtn {
             InputEvent::MouseDown { x, y, .. } => {
                 let inside = self.rect.contains(Point { x, y });
                 self.pressed = inside && self.enabled;
-                self.focused = inside && self.enabled;
+                // 접기 셰브론은 포커스를 갖지 않는다(클릭만 · 사용자 09-17).
+                self.focused = inside && self.enabled && self.kind != BtnKind::Fold;
             }
             InputEvent::MouseUp { x, y } => {
                 if self.pressed && self.rect.contains(Point { x, y }) {
@@ -505,13 +506,19 @@ impl FindBar {
         self.bounds = Rect::new(x, editor.y + px(MARGIN_TOP), w, h);
         let b = self.bounds;
         let mut inv = Invalidations::default();
-        // 왼쪽 접기 토글: x 3 · 폭 18 · 전체 높이.
-        self.btn_mut(BtnKind::Fold).rect = Rect::new(b.x + px(FOLD_X), b.y, px(FOLD_W), h);
         // 오른쪽 동작 버튼: 닫기부터 왼쪽으로 22 + 3.
         let bw = px(BTN);
         let pitch = bw + px(BTN_GAP);
         let y1 = b.y + px(INPUT_TOP);
         let row_h = px(INPUT_H);
+        // 왼쪽 접기 셰브론: x 3 · 폭 18 · 높이 = 접힘이면 옆 입력 상자와 같은 top/높이 · 펼침이면 찾기 상자 top부터
+        //   바꾸기 상자 bottom까지(두 상자 + 사이 여백 · 사용자 09-17).
+        let fold_h = if self.with_replace {
+            px(ROW_PITCH) + row_h
+        } else {
+            row_h
+        };
+        self.btn_mut(BtnKind::Fold).rect = Rect::new(b.x + px(FOLD_X), y1, px(FOLD_W), fold_h);
         let by = |row_y: i32| row_y + (row_h - bw) / 2;
         let close_x = b.right() - px(PAD_R) - bw;
         let sel_x = close_x - pitch;
