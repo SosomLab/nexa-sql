@@ -105,7 +105,7 @@ FROM MTXRPTY2.MTX_AGENT_LOG A, MTXRPTY2.MTX_DBMS C, MTXRPTY2.MTX_REPORT D, MTXRP
 - 설정: `intel.enabled` · `intel.auto_popup` · `intel.delay_ms`(120) · `intel.budget_ms`(30) · `intel.max_items`(500) · `intel.system_objects`(on).
 - CLI: `nsql shell`의 Tab 완성이 같은 엔진(스레드 대신 동기 · 예산 동일).
 
-## 7. 다중 커서 · 선택 편집 ☐ 설계(E5 · Sublime 키 그대로)
+## 7. 다중 커서 · 선택 편집 🚧 (E5 · Sublime 키 그대로) — ✅ 09-16 48차 T-98: 줄 편집 명령 14종 + `Ctrl+K` 2단 코드 + 캐럿 추가 ↑/↓ + 찾기 일치 전부 표시 · 잔여 = `Ctrl+K, Ctrl+D` 건너뛰기 · `Ctrl+U` 소프트 되돌리기 · `Alt+Enter` 전부 선택
 
 | 기능 | 키(Win/Linux · mac) | 동작 |
 |---|---|---|

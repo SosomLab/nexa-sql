@@ -17,9 +17,9 @@
 | **T-4** | P0 | 대 | `nsql-driver-oracle` — ✅ 구현 · ✅ **실서버 검증**(Oracle Free 23ai · integration) · ✅ Instant Client 경로(`NSQL_ORACLE_CLIENT_DIR`)·DPI-1047 안내 · ☐ 취소(OCIBreak) | — | ✅ 09-12 |
 | **T-5** | P0 | 대 | `nsql-driver-mssql` — ✅ 구현 · ✅ **실서버 검증**(SQL Server 2022 · integration) · ☐ Entra/통합 인증 · 오류 줄 보정 | — | ✅ 09-12 |
 | **T-6** | P0 | 중 | `nsql run` — 파일/stdin · `&1..&n` · `WHENEVER` · 형식 출력 | — | ✅ 09-12 |
-| **T-7** | P1 | 중 | `nsql shell` — ✅ 최소(줄 누적 실행) · ☐ 줄 편집·히스토리·자동완성 | — | 🚧 |
+| **T-7** | P1 | 중 | `nsql shell` — ✅ 최소(줄 누적 실행) · ✅ 09-16 별칭(T-52)·SPOOL·`@@` · ☐ 줄 편집·히스토리·자동완성 | — | 🚧 |
 | **T-8** | P1 | 중 | `nsql-io` export — ✅ 6형식 · ☐ 스트리밍(행 단위 fetch) · xlsx/parquet | — | 🚧 |
-| **T-9** | P1 | 소 | 엔진 보강 — `SET SERVEROUTPUT` 폴링 Action · `SPOOL` · `@`/`@@` 로드(호스트) · 엄격 모드(암묵 변수 금지) | — | ☐ |
+| **T-9** | P1 | 소 | ✅ 09-16 48차 — `SPOOL` 포트(`nsql_run::Spool` · CLI tee · APPEND/CREATE/OFF · GUI는 미지원 안내) · `@`/`@@` 상대 경로·인자·복원·`.sql` 보완·깊이 32 · 엄격 모드 `script.strict`(HIDDEN) · `SHOW <kind>` · SERVEROUTPUT 폴링은 드라이버에 이미 있음(확인) | — | ✅ |
 | **T-10** | P1 | 소 | `cargo-deny` 라이선스 게이트 · `THIRD-PARTY-NOTICES` | T-4 | ☐ |
 
 ## 3. M2 — GUI 관통
@@ -104,13 +104,13 @@
 | **T-70** | P1 | 소 | PostgreSQL TLS(`sslmode=prefer/require` · rustls) · `postgres-rustls` 원장 · 접속 폼 SSL 토글 | nsql-driver-pg | ☐ |
 | **T-71** | P1 | 중 | ✅ 09-15 1차(`oracle.live.*` · V$SESSION/로그 테이블 폴링 · 로그 창 `[live]`) · 잔여 = CLI `--live` · Live 세그먼트 · DBMS_PIPE/LONGOPS · **Oracle 라이브 로그 모니터**([32 §2](32-server-messages-and-live-log.md)) — 메타 세션 폴링(로그 테이블 · V$SESSION client_info/action · DBMS_PIPE · LONGOPS) · 로그 창 Live 세그먼트 · `oracle.live.*` 설정 · CLI `--live` · 실행 중에만 1s 이상 | 28 T-56 D-48 | 🚧 |
 | **T-72** | P1 | 대 | **배포 파이프라인**([33](33-distribution-and-packaging.md) · DR-27) — `packaging/{windows,macos,linux}` 스테이징 · MSI/pkg+dmg(Universal 2 · Frameworks)/deb·rpm · `release.yml` 3-OS · sha256 · `--smoke`·제거 검증 · 서명 자리 | T-62 T-10 D-49 D-50 | ☐ |
-| **T-73** | P1 | 중 | ✅ 09-15 1차(`findbar.rs` · Ctrl+F/H · F3 · Aa · Replace/All · 순환) · 잔여 = 정규식(T-59) · 전체 일치 하이라이트 · 단어 단위 · 편집기 **찾기/바꾸기**(Ctrl+F/H · 대소문자·정규식 T-59·전체 바꾸기 · 결과 하이라이트) — nexa-ctl TextBox 검색 API | T-58 T-59 | 🚧 |
+| **T-73** | P1 | 중 | ✅ 09-15 1차(`findbar.rs` · Ctrl+F/H · F3 · Aa · Replace/All · 순환) · ✅ 정규식(D-76 34차) · ✅ 단어 단위 · ✅ 09-16 48차 **일치 전부 표시**(`set_find_marks` 반투명 · 열린 동안 갱신) — 편집기 **찾기/바꾸기** 완료 | T-58 T-59 | ✅ |
 | **T-74** | P1 | 중 | ✅ 09-15 20차 1차(Open/Save/Save As · 최근 파일 · 끌어놓기 · `*` 더러움 · 닫기 2단 · CRLF) — 잔여 = 외부 변경 X-1(docs/15) · 프로젝트 폴더 · export 경로 · **파일 열기/저장**(File ▸ Open/Save/Save As · 최근 파일 · 외부 변경 X-1) — nexa-ui 자체 파일 대화상자([nexa-ui 20](../../nexa-ui/docs/20-file-management-and-dialogs.md) F-6) 선행 | nexa-ui 20 | 🚧 |
 | **T-75** | P2 | 소 | 그리드 복사 확장 — Copy as JSON/Markdown · 컬럼 헤더 우클릭(컬럼 복사·숨김) · 셀 편집기(nexa-ui 21 §3-2) | 09-15 3차 | ☐ |
 | **T-76** | P2 | 소 | 🚧 09-16 1차(builtin = 편집기 탭 + 저장 감시 반영) · 잔여 = **settings.json 내장 편집기**(`settings.json_editor = builtin`) — 편집기 탭에서 열고 저장(T-74 파일 저장) → 같은 감시 경로로 반영 · JSON 구문 강조 패키지 · 스키마 힌트(레지스트리 라벨/허용값) | T-74 T-17 | ☐ |
 | **T-77** | P1 | 대 | **트랜잭션 UX**([34](34-transaction-ux.md) · D-51) — 탭별 `TxState` · 탭 배지 `●n`(경고→오래되면 빨강) · 상태줄 세그먼트+팝업(모드 전환·Commit·Rollback·대기 목록) · 툴바 Commit 배지/활성 · 닫기/해제/전환/종료 모달 · 방언별 암묵 커밋 · `tx.*` 설정 5키 · `nsql shell` `*n` | T-54 T-55 T-61 | 📐 |
 | **T-64** | P2 | 중 | 설정 화면(T-39)에 색 선택기 연동 — `ColorPanel`을 hover/눌림 외 테마 주요 색에도 · `ui.fade_fast/slow` · `probe.*` · `input.scroll_natural` 노출 | T-39 | ☐ |
-| **T-52** | P2 | 소 | 셸 명령 대응표(`\d` · `:r` · `.tables` → `DESC` · `@` · `SHOW TABLES`) | T-7 | ☐ |
+| **T-52** | P2 | 소 | ✅ 09-16 48차 — 셸 별칭 `\d \dt .tables \dv \d <n> .schema \i .read \c \?`(→ SHOW/DESC/@/CONNECT · `\?` 표 · `shell --help`) · [40 Step 11](40-cli-usage.md) | T-7 | ✅ |
 
 ## 4. M3+ (요약)
 syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Default` 패키지(T-19) · `Catalog` 포트 + 오브젝트 브라우저(T-20) · import/bulk 6방언(T-21) · 데이터 편집기 변경 SQL 미리보기(T-22) · MySQL/ODBC 드라이버(T-23 · PG ✅ 09-15 `nsql-driver-pg` · SQLite ✅) · WASM 플러그인 API(T-24) · 릴리스 파이프라인·서명(T-25) · 라이선스 키(T-26 → **T-32~36** [23](23-license-activation.md)).
@@ -125,16 +125,16 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-86** | P2 | 대 | `nexa-ctl/controls/file/*` 추출 — 20 §1 계층 복원([37 P-5](37-file-picker-performance.md)) = F-3 | — | ☐ |
 | **T-87** | P2 | 소 | 우클릭 메뉴 항목 앞 아이콘(사용자 09-16 요청 · **대상 메뉴 미확인** — 편집기 탭/상태줄 Tab/접속 창 목록/결과 그리드 중) · 파일 대화상자 메뉴 방식(`CtxItem::with_icon`) | — | ⏳ 사용자 |
 | **T-88** | P1 | 소 | **Windows 재검증**(09-16 맥에서 고친 것): 잉크 기준 세로 정렬(`text_center_y`) · 스플리터 · Material 아이콘 · 메뉴 배율 · 툴팁 다중 행 — 맥 세션 후반은 캡처를 못 봐 빌드/테스트로만 확인 | — | ☐ |
-| **T-89** | P1 | 소 | ✅ 09-16 **줄끝 정책**([38](38-line-endings.md)) — `eol.rs`(다수결 판정·정규화·정책) · `file.eol_new`/`file.eol_save` · 상태줄 LF/CRLF 세그먼트+팝업 · 줄끝 변경 = 더러움. 잔여 = Edit ▸ Convert Line Delimiters 메뉴 · 다른 이름으로 저장 콤보(T-79) | — | ✅ |
+| **T-89** | P1 | 소 | ✅ 09-16 **줄끝 정책**([38](38-line-endings.md)) — `eol.rs`(다수결 판정·정규화·정책) · `file.eol_new`/`file.eol_save` · 상태줄 LF/CRLF 세그먼트+팝업 · 줄끝 변경 = 더러움. ✅ 09-16 48차 Edit ▸ 줄끝 3종 메뉴 · 잔여 = 다른 이름으로 저장 콤보(T-79) | — | ✅ |
 | **T-90** | P1 | 대 | **자원 거버넌스**([39](39-resource-governance.md)) — a 레지스트리 `Entry.perf`·`perf.mode`·`Settings::effective`·`nsql config list perf`·상태줄 ⚡·설정 카드 → b DB(`db.statement_timeout` 드라이버 cancel 포트 · `db.fetch_size` · 탐색기 숨김 = 세션 없음) → c CPU/GFX(`editor.highlight_max_kb` · `editor.max_occurrences` · `ui.max_fps` · `ui.animations` OS 동작 줄이기 · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons`) → d MEM 상한(`log.max_lines` · `editor.undo_max` · 캐시 세터) → e 진단·게이트(`--trace-net/--trace-frames` · `memcycle.ps1` 시나리오 L-2~L-8 · `perf.yml`) → f 후보(더티 영역 · DNS 캐시 · auto 전환) | D-58~61 | ☐ |
 | **T-91** | P2 | 소 | 편집기 페인트의 O(본문) 항목 — `content_w` 전 줄 측정 · `logical_lines` 사본 · 강조 상태를 첫 가시 행까지 매 프레임 전달 → 변경 시에만 재계산(캐시) · [39 §3-3](39-resource-governance.md) 등재 | — | ☐ |
 | **T-93** | P1 | 중 | **결과 탭**([43 §4](43-fetch-model-and-result-tabs.md) D-71 · **비용 검토 ✅ 09-16 §4-3a D-73~75: 무겁지 않음 → 도입 · 끄기 설정 `grid.result_tabs` · 탭 바 auto(2개↑) · 단일 행 고정 + ◀ ▶ + 우클릭 맨 앞/뒤**) — `ResultPanel{tabs}`(편집기 탭 쌍 유지) · Ctrl+Enter 교체 · **Ctrl+\\ 새 결과 탭**(자기 상한·커서·상태) · TabBar 재사용 · 우클릭(닫기/다른 탭 닫기/고정/이름/Export) · 상한 `grid.result_tabs_max` 8 + pin · 닫으면 rows·커서 즉시 해제 · 활성 탭만 그림 | T-48a T-48b | ☐ |
 | **T-99** | P2 | 중 | ✅ 09-16 42차 **글리프 오토힌트 근사**(nexa-gfx `set_text_hint` · `ui.text_hint`) · ✅ 44차 잔여(곡선/대각선 피팅) = **Windows GDI 글리프 경로**(`ui.text_gdi` · D-77)로 해소 | 31차 | ✅ |
 | **T-100** | P3 | 중 | **macOS/Linux OS 래스터 경로**(CoreText `CTFontDrawGlyphs`/FreeType 힌팅) — D-77의 Windows GDI와 같은 포트(`Font::set_face_family` + `set_text_gdi`류 전역) · 내장 오토힌트로 충분하면 보류 | 44차 | ☐ |
-| **T-101** | P2 | 소 | `nsql <명령> --help`의 `--overflow` 기본값 오기 — *"Default: cli.overflow = wrap"* → 실제 `none`(`help.rs` 문구 · [40 §4-4](40-cli-usage.md)) | — | ☐ |
-| **T-98** | P1 | 중 | **Sublime 편집 명령 보강**(단축키 프리셋은 ✅ 36차 · 동작이 없어 키를 못 붙인 것들): 줄 복제/삭제/교체/합치기 · 주석 토글 · 들여쓰기 ±(선택 블록) · 줄 선택·줄로 나누기 · 커서 추가 ↑/↓ · 줄 이동(Ctrl+G) · 대소문자 변환(2단 코드 `ctrl+k,ctrl+u` 지원 포함) — nexa-ctl TextBox 편집 API + keymap 등록 | T-58 [29](29-editor-syntax-palette-statusbar.md) | ☐ |
+| **T-101** | P2 | 소 | ✅ 09-16 48차 확인 — `--overflow` 기본값은 설정에서 읽어 `none`으로 찍힘(이미 수정돼 있었음 · `help.rs` 8행) | — | ✅ |
+| **T-98** | P1 | 중 | ✅ 09-16 48차 — nexa-ui `EditCommand` 14종(줄 복제/삭제/합치기/이동 · 주석 토글 · 들여쓰기 ±·여러 줄 Tab · 줄 선택/나누기 · 캐럿 추가 ↑/↓ · 대소문자) + 키맵 2단 코드(`ctrl+k,ctrl+u`) + macOS `control+…` + `Ctrl+G` · 메뉴/팔레트 등재. 잔여 = `Ctrl+K,Ctrl+D` 건너뛰기 · `Ctrl+U` 소프트 되돌리기 · 캡처 창의 2단 코드 입력 | T-58 [29](29-editor-syntax-palette-statusbar.md) | ✅ |
 | **T-97** | P2 | 중 | **미니맵**(Sublime · 사용자 09-16) — 문서 축소 렌더(줄당 1~2px · 강조 토큰 색) + 뷰포트 상자 + 선택어 동일 출현 표시 · 축소 비트맵 캐시(변경 줄만 갱신) · 끄기 설정 `editor.minimap` · 폭 설정 | 32차 | ☐ |
-| **T-96** | P2 | 소 | **탭 이름 검색**(사용자 09-16 · [journal 26차](journal/2026-09-16.md) 추천안 A) — Ctrl+P Goto Anything: 명령 팔레트 부품 재사용 · 항목 = 열린 탭(제목·경로·수정·접속) + 최근 파일 · 퍼지 · Enter 전환/열기 · 탭 메뉴 하단 "탭 찾기…" 연결 · (C) 탭바 ▾ 드롭다운은 넘침 표시와 함께 | 팔레트 | ☐ |
+| **T-96** | P2 | 소 | ✅ 09-16 48차 — `Ctrl+P`/⌘P Goto Anything(팔레트 재사용 · 열린 탭 ✓/`*`/경로 + 최근 파일 · 퍼지 · `:숫자` 줄 이동 · Tabs ▸ 탭 찾기…). 잔여 = 접속 표시 · (C) 탭바 ▾ 넘침 드롭다운 | 팔레트 | ✅ |
 | **T-95** | P2 | 중 | 로그 창 본문 = **읽기 전용 편집기 뷰**(nexa-ctl 편집기 부품 공유) → Sublime **컬럼(블록) 선택**·다중 커서·찾기를 편집기와 같은 부품으로 · 지금의 자체 선택 코드 제거(사용자 09-16 24차) | T-57 [29](29-editor-syntax-palette-statusbar.md) | ☐ |
 | **T-94** | P2 | 대 | **데이터 편집기**(DBeaver 결과 하단 행 추가/삭제/복제 · 셀 편집 · Save/Cancel) — 문장 생성 = [41](41-sql-copy-key-rules.md) 키 규칙 · 트랜잭션 [34](34-transaction-ux.md) · 별도 설계 문서 먼저 | T-93 41 34 | ☐ |
 | **T-92** | P2 | 중 | DBeaver식 **가상 키**(테이블별 사용자 지정 키 · 프로필 저장 · [41 D-67](41-sql-copy-key-rules.md)) — 앞 3컬럼 경고가 잦으면 | — | ☐ |

@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (48차 · mac · 자율 배치)** — 접속 창 프로필별 결과 보존 · **트랙패드 스크롤 4단**(입력 잔여 누적 → 편집기 픽셀 스크롤 → row 모드 표시 스냅+`editor.scroll` → 픽셀 1:1+축 잠금) · **T-98** Sublime 편집 명령 14종(nexa-ui `EditCommand` · 2단 코드 · macOS `control+`) · **T-96** Goto Anything(⌘P · `:줄`) · T-89 줄끝 메뉴 · T-73 일치 전부 표시 · **T-9/T-52**(SPOOL 포트 · `@@` · strict · 셸 별칭 · 보조 에이전트) · T-101 확인. 실기 9항목 대기. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (47차 · win · 보조)** — **CLI 사용 문서 [40](40-cli-usage.md) 신설**(978줄 · 전량 실측) — 순서대로 12단계(서버 없이 SQLite) · **출력 형식 상세**(markdown·json·jsonl·SQL 5종·표 4모드·stdout/stderr·종료 코드) · 접속 문자열 직접 지정(퍼센트 인코딩·`NSQL_PASSWORD`·`@` 생략 불가) · `--overflow` 도움말 기본값 오기 발견(T-101). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (46차 · win)** — ★ 설정 창 "닫기 깨짐" → GDI 경로 = **ClearType + 진짜 볼드**(nexa-ui 23차) · 테스트 자동화(줄기 가시성 단위 테스트 · `scripts/win-capture.ps1`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (45차 · win)** — nexa-ui CI windows 빨강(영문 로케일 GDI 이름) → name 테이블 이름 후보(nexa-ui 22차). → [journal](journal/2026-09-16.md)
