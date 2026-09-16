@@ -105,7 +105,8 @@ const BTN: f32 = 22.0;
 const BTN_GAP: f32 = 3.0;
 const COUNT_W: f32 = 69.0;
 const COUNT_GAP: f32 = 3.0;
-/// 편집기 우상단 기준 여백(사용자 09-17: 오른쪽·위 각각 10px 동일).
+/// 우상단 여백(사용자 09-17: 오른쪽·위 각각 10px 동일) — 위 = 편집기(탭 바 아래) 기준 · 오른쪽 = **창 가장자리** 기준.
+/// 편집기는 창 양옆에 8px 안쪽 여백이 있어 편집기 기준 10px은 눈에 18px로 보였다(캡처 09-17).
 const MARGIN_RIGHT: f32 = 10.0;
 const MARGIN_TOP: f32 = 10.0;
 
@@ -492,13 +493,15 @@ impl FindBar {
     }
 
     /// 편집기 사각형 기준 **오른쪽 위**에 붙는다(VS Code · 본문을 밀지 않는다).
-    pub(crate) fn set_bounds(&mut self, editor: Rect, scale: f32) {
+    /// `outer_right` = 오른쪽 여백을 잴 창 가장자리(물리 px).
+    pub(crate) fn set_bounds(&mut self, editor: Rect, outer_right: i32, scale: f32) {
         self.scale = scale;
         let s = scale;
         let px = |v: f32| (v * s).round() as i32;
-        let w = px(WIDGET_W).min((editor.w - px(MARGIN_RIGHT)).max(px(260.0)));
+        let right = outer_right.max(editor.right());
+        let w = px(WIDGET_W).min((right - editor.x - px(MARGIN_RIGHT)).max(px(260.0)));
         let h = px(if self.with_replace { ROW2_H } else { ROW1_H });
-        let x = (editor.right() - px(MARGIN_RIGHT) - w).max(editor.x);
+        let x = (right - px(MARGIN_RIGHT) - w).max(editor.x);
         self.bounds = Rect::new(x, editor.y + px(MARGIN_TOP), w, h);
         let b = self.bounds;
         let mut inv = Invalidations::default();
