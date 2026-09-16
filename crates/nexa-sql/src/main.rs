@@ -3445,6 +3445,8 @@ impl App {
             };
             if self.grid.bounds.contains(cur) && self.focus != Focus::Grid {
                 self.grid.on_event(&ev, self.scale);
+                // 포커스가 없어도 스크롤바 드래그가 끝에 닿으면 자동 페치 요청이 생긴다(09-16).
+                self.after_grid_event();
                 if self.grid.bars_visible() {
                     inv.push(self.grid.bounds);
                 }
@@ -3464,6 +3466,8 @@ impl App {
         };
         if is_wheel && self.grid.bounds.contains(cur) {
             self.grid.on_event(&ev, self.scale);
+            // ★ 휠은 포커스와 무관하게 오므로 여기서도 요청(스크롤 끝 자동 페치 · 09-16: 휠로는 안 됐다).
+            self.after_grid_event();
             inv.push(self.grid.bounds);
         } else if is_wheel && self.editors.editor_bounds().contains(cur) {
             self.ed_mut().on_event(&ev, &mut inv);

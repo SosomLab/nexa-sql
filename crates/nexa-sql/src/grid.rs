@@ -601,42 +601,63 @@ impl Grid {
     fn open_view_menu(&mut self, x: i32, y: i32, scale: f32) {
         self.menu.set_scale(scale);
         let cur = self.view;
-        let it = |id: &str, m: Msg, v: ResultView| CtxItem::item(id, t(m)).with_checked(cur == v);
-        let sql = vec![
-            it(
-                "view:sql_select",
-                Msg::MnCopySqlSelect,
-                ResultView::Sql(SqlKind::Select),
-            ),
-            it(
-                "view:sql_insert",
-                Msg::MnCopySqlInsert,
-                ResultView::Sql(SqlKind::Insert),
-            ),
-            it(
-                "view:sql_update",
-                Msg::MnCopySqlUpdate,
-                ResultView::Sql(SqlKind::Update),
-            ),
-            it(
-                "view:sql_delete",
-                Msg::MnCopySqlDelete,
-                ResultView::Sql(SqlKind::Delete),
-            ),
-            it(
-                "view:sql_merge",
-                Msg::MnCopySqlMerge,
-                ResultView::Sql(SqlKind::Merge),
-            ),
+        // 이미지 아이콘 + 현재 모드 = 강조색(사용자 09-16 · 토글 도형 대신).
+        let it = |id: &str, m: Msg, v: ResultView, ic: nexa_ctl::MenuIcon| {
+            CtxItem::item(id, t(m))
+                .with_icon(Some(ic))
+                .with_active(cur == v)
+        };
+        let sql_kinds = [
+            ("view:sql_select", Msg::MnCopySqlSelect, SqlKind::Select),
+            ("view:sql_insert", Msg::MnCopySqlInsert, SqlKind::Insert),
+            ("view:sql_update", Msg::MnCopySqlUpdate, SqlKind::Update),
+            ("view:sql_delete", Msg::MnCopySqlDelete, SqlKind::Delete),
+            ("view:sql_merge", Msg::MnCopySqlMerge, SqlKind::Merge),
         ];
+        let sql: Vec<CtxItem> = sql_kinds
+            .iter()
+            .map(|(id, m, k)| it(id, *m, ResultView::Sql(*k), toolicons::mi_db()))
+            .collect();
         let items = vec![
-            it("view:grid", Msg::MnViewGrid, ResultView::Grid),
-            it("view:text", Msg::MnViewText, ResultView::Text),
-            it("view:markdown", Msg::MnViewMarkdown, ResultView::Markdown),
-            it("view:json", Msg::MnViewJson, ResultView::Json),
-            it("view:tsv", Msg::MnViewTsv, ResultView::Tsv),
-            it("view:csv", Msg::MnViewCsv, ResultView::Csv),
-            CtxItem::submenu("view:sql", t(Msg::MnViewSql), sql),
+            it(
+                "view:grid",
+                Msg::MnViewGrid,
+                ResultView::Grid,
+                toolicons::mi_table(),
+            ),
+            it(
+                "view:text",
+                Msg::MnViewText,
+                ResultView::Text,
+                toolicons::mi_files(),
+            ),
+            it(
+                "view:markdown",
+                Msg::MnViewMarkdown,
+                ResultView::Markdown,
+                toolicons::mi_files(),
+            ),
+            it(
+                "view:json",
+                Msg::MnViewJson,
+                ResultView::Json,
+                toolicons::mi_braces(),
+            ),
+            it(
+                "view:tsv",
+                Msg::MnViewTsv,
+                ResultView::Tsv,
+                toolicons::mi_table(),
+            ),
+            it(
+                "view:csv",
+                Msg::MnViewCsv,
+                ResultView::Csv,
+                toolicons::mi_table(),
+            ),
+            CtxItem::submenu("view:sql", t(Msg::MnViewSql), sql)
+                .with_icon(Some(toolicons::mi_db()))
+                .with_active(matches!(cur, ResultView::Sql(_))),
         ];
         let text_w = (self.row_h * 8).max(140);
         self.menu.open_at(x, y, items, self.bounds, text_w);

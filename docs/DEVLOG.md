@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (28차 · win)** — 자동 페치 휠/비포커스 경로 결함 · 결과 글꼴 기본 14 · 편집기 거터 표시 띠(4px) + 2px 여백 · 보기 모드 메뉴 이미지 아이콘 + 강조색. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (27차 · win)** — 결과 다중 탭 비용 검토 → 도입 · 끄기 설정·탭 바 auto·단일 행 고정([43 §4-3a](43-fetch-model-and-result-tabs.md) D-73~75). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (26차 · win)** — 실행 뒤 캐럿 옵션 `run.after_statement`(stay/next_ok/next_always) + **Alt+↓/↑ 다음·이전 문장** · 결과 글꼴 `grid.font_face`(기본 시스템 UI · 13px) · 헤더 경계 더블클릭 자동 너비(`grid.col_min/max_width`) · No Records Golden 방식 · **탭 메뉴** · 결과 도구줄 툴팁 위쪽 · 탭 검색 추천안(T-96). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (25차 · win)** — **결과 도구줄 5그룹**(보기 모드 7종 · 새로고침 · 편집 버튼(예정) · 조회 건수 상자 · 전체/건수 · 상태+실행 시각) · **스크롤 끝 자동 페치**(`nsql_io::paging` OFFSET 폴백 · `Runner::query_once` · `Cmd::FetchPage/Count`) · No Records · 렌더/메모리 로그 · 설정 창 종속 잠금(`DEPENDS`)·콤보 접기·`tabs.rows` 즉시 반영 · 토스트 = 편집기 우하단 · 그리드 스크롤바 클릭 결함. → [journal](journal/2026-09-16.md)

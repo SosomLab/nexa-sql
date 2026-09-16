@@ -121,6 +121,8 @@ impl Editors {
             .with_multiline()
             .with_text(text);
         tb.set_line_numbers(self.line_numbers);
+        // Golden식 표시 띠(줄번호 오른쪽 4px · 색 막대 자리) + 첫 글자 앞 2px(사용자 09-16).
+        tb.set_gutter_marks(true);
         tb.set_scale(self.scale);
         tb.set_highlighter(Some(syntax.clone()));
         tb.set_rulers(self.rulers.clone());
