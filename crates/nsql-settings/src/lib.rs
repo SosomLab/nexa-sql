@@ -28,6 +28,8 @@ pub const FILE_NAME: &str = "settings.conf";
 
 pub mod json;
 pub use json::{to_json, Import as JsonImport, Json};
+pub mod perf;
+pub use perf::{binding as perf_binding, Domain, PerfBinding, PerfMode, PerfRow, PerfSource, PERF};
 
 /// 설정 폴더 — `NSQL_HOME`이 있으면 그것(테스트·개발용 재지정), 아니면 OS 사용자 설정 폴더. `nsql-vault`도 같은 규칙을 쓴다.
 #[must_use]
@@ -182,6 +184,23 @@ const TAB_ROWS_OPTS: &[(&str, Msg)] =
     &[("single", Msg::ValTabsSingle), ("multi", Msg::ValTabsMulti)];
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
+/// 미커밋 탭 닫기(DR-30).
+const TX_CLOSE_OPTS: &[(&str, Msg)] = &[
+    ("ask", Msg::ValTxAsk),
+    ("commit", Msg::ValTxCommit),
+    ("rollback", Msg::ValTxRollback),
+];
+/// 탭 배지 모양(DR-30).
+const TX_BADGE_OPTS: &[(&str, Msg)] = &[
+    ("count", Msg::ValBadgeCount),
+    ("dot", Msg::ValBadgeDot),
+    ("off", Msg::ValBadgeOff),
+];
+/// 결과 탭 바 표시(D-74).
+const TABBAR_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValTabbarAuto),
+    ("always", Msg::ValTabbarAlways),
+];
 
 const WS_OPTS: &[(&str, Msg)] = &[
     ("none", Msg::ValWsNone),
@@ -240,10 +259,24 @@ const JSON_EDITOR_OPTS: &[(&str, Msg)] = &[
     ("builtin", Msg::ValJsonBuiltin),
 ];
 
+/// `ui.animations`(docs/39 §3-4) — auto = OS "동작 줄이기"를 따른다.
+const ANIM_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValAnimAuto),
+    ("on", Msg::ValAnimOn),
+    ("off", Msg::ValAnimOff),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
     ("dark", Msg::ValDark),
+];
+
+/// 추가 페치 방식(docs/43 D-70 · T-48a).
+const FETCH_MODE_OPTS: &[(&str, Msg)] = &[
+    ("cursor", Msg::ValFetchCursor),
+    ("offset", Msg::ValFetchOffset),
+    ("off", Msg::ValFetchOff),
 ];
 
 /// ★ 설정 레지스트리 — 단일 원천. 새 설정 = 여기 한 줄 + `Msg` 라벨/설명 2줄.
@@ -513,6 +546,58 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "200",
     },
+    // ── 결과 탭(T-93 · docs/43 §4-3a · D-71~75)
+    Entry {
+        key: "grid.result_tabs",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridResultTabs,
+        desc: Msg::DescGridResultTabs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.result_tabbar",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridResultTabbar,
+        desc: Msg::DescGridResultTabbar,
+        kind: SettingKind::Choice(TABBAR_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "grid.result_tabs_max",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridResultTabsMax,
+        desc: Msg::DescGridResultTabsMax,
+        kind: SettingKind::Int { min: 1, max: 64 },
+        default: "8",
+    },
+    Entry {
+        key: "grid.result_tab_evict",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridResultTabEvict,
+        desc: Msg::DescGridResultTabEvict,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.memory_budget_mb",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridMemoryBudget,
+        desc: Msg::DescGridMemoryBudget,
+        kind: SettingKind::Int {
+            min: 16,
+            max: 65536,
+        },
+        default: "256",
+    },
+    Entry {
+        key: "grid.row_height_pct",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridRowHeight,
+        desc: Msg::DescGridRowHeight,
+        kind: SettingKind::Int { min: 110, max: 300 },
+        default: "150",
+    },
     Entry {
         key: "grid.copy_null",
         cat: Msg::CatGrid,
@@ -673,6 +758,23 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescGridScroll,
         kind: SettingKind::Choice(SCROLL_OPTS),
         default: "pixel",
+    },
+    // 미니맵(Sublime · T-97 · 09-16).
+    Entry {
+        key: "editor.minimap",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimap,
+        desc: Msg::DescEditorMinimap,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "editor.minimap_width",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorMinimapWidth,
+        desc: Msg::DescEditorMinimapWidth,
+        kind: SettingKind::Int { min: 20, max: 400 },
+        default: "80",
     },
     // 편집기 휠 단위(사용자 09-16 · 픽셀 스크롤 도입과 함께 그리드와 같은 선택지).
     Entry {
@@ -1330,6 +1432,39 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ── 트랜잭션 UX(DR-30 · T-77 · docs/34 §2-5)
+    Entry {
+        key: "tx.stale_min",
+        cat: Msg::CatSession,
+        label: Msg::LblTxStaleMin,
+        desc: Msg::DescTxStaleMin,
+        kind: SettingKind::Int { min: 1, max: 1440 },
+        default: "10",
+    },
+    Entry {
+        key: "tx.close_action",
+        cat: Msg::CatSession,
+        label: Msg::LblTxCloseAction,
+        desc: Msg::DescTxCloseAction,
+        kind: SettingKind::Choice(TX_CLOSE_OPTS),
+        default: "ask",
+    },
+    Entry {
+        key: "tx.badge",
+        cat: Msg::CatSession,
+        label: Msg::LblTxBadge,
+        desc: Msg::DescTxBadge,
+        kind: SettingKind::Choice(TX_BADGE_OPTS),
+        default: "count",
+    },
+    Entry {
+        key: "tx.smart_commit",
+        cat: Msg::CatSession,
+        label: Msg::LblTxSmartCommit,
+        desc: Msg::DescTxSmartCommit,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     // ── 스크립트 엔진 엄격 모드(T-9 · 09-16) — 배치에서 미정의 &var·암묵 :bind를 오류로. 자주 안 바꾸므로 HIDDEN(`nsql config list all`).
     Entry {
         key: "script.strict",
@@ -1488,6 +1623,203 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Size { min: 8, max: 40 },
         default: "13",
     },
+    // ── ★ 성능 거버너(docs/39 T-90a/T-90d · 09-16) — 마스터 `perf.mode` + 신설 부하원 키(모드별 값은 `perf::PERF`).
+    Entry {
+        key: "perf.mode",
+        cat: Msg::CatPerformance,
+        label: Msg::LblPerfMode,
+        desc: Msg::DescPerfMode,
+        kind: SettingKind::Choice(perf::PERF_MODE_OPTS),
+        // 기본 full = 지금 동작 그대로(D-58) · 배터리/원격이면 상태줄 안내만.
+        default: "full",
+    },
+    Entry {
+        key: "db.statement_timeout",
+        cat: Msg::CatSession,
+        label: Msg::LblStatementTimeout,
+        desc: Msg::DescStatementTimeout,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        // 0 = 없음(DBeaver 동일 · D-61).
+        default: "0",
+    },
+    Entry {
+        key: "log.max_lines",
+        cat: Msg::CatLog,
+        label: Msg::LblLogMaxLines,
+        desc: Msg::DescLogMaxLines,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 1_000_000,
+        },
+        default: "10000",
+    },
+    Entry {
+        key: "editor.undo_max",
+        cat: Msg::CatEditor,
+        label: Msg::LblUndoMax,
+        desc: Msg::DescUndoMax,
+        kind: SettingKind::Int {
+            min: 10,
+            max: 100_000,
+        },
+        default: "1000",
+    },
+    Entry {
+        key: "ui.glyph_cache",
+        cat: Msg::CatAppearance,
+        label: Msg::LblGlyphCache,
+        desc: Msg::DescGlyphCache,
+        kind: SettingKind::Int {
+            min: 256,
+            max: 1_000_000,
+        },
+        default: "8192",
+    },
+    Entry {
+        key: "file.icon_cache",
+        cat: Msg::CatFiles,
+        label: Msg::LblIconCache,
+        desc: Msg::DescIconCache,
+        kind: SettingKind::Int {
+            min: 16,
+            max: 100_000,
+        },
+        default: "512",
+    },
+    Entry {
+        key: "editor.highlight_max_kb",
+        cat: Msg::CatEditor,
+        label: Msg::LblHighlightMaxKb,
+        desc: Msg::DescHighlightMaxKb,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 1_000_000,
+        },
+        default: "1024",
+    },
+    Entry {
+        key: "editor.max_occurrences",
+        cat: Msg::CatEditor,
+        label: Msg::LblMaxOccurrences,
+        desc: Msg::DescMaxOccurrences,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 10_000_000,
+        },
+        default: "10000",
+    },
+    Entry {
+        key: "ui.max_fps",
+        cat: Msg::CatAppearance,
+        label: Msg::LblMaxFps,
+        desc: Msg::DescMaxFps,
+        kind: SettingKind::Int { min: 5, max: 240 },
+        default: "60",
+    },
+    Entry {
+        key: "ui.animations",
+        cat: Msg::CatAppearance,
+        label: Msg::LblAnimations,
+        desc: Msg::DescAnimations,
+        kind: SettingKind::Choice(ANIM_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "editor.caret_blink",
+        cat: Msg::CatEditor,
+        label: Msg::LblCaretBlink,
+        desc: Msg::DescCaretBlink,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "file.os_icons",
+        cat: Msg::CatFiles,
+        label: Msg::LblOsIcons,
+        desc: Msg::DescOsIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "file.probe_chevrons",
+        cat: Msg::CatFiles,
+        label: Msg::LblProbeChevrons,
+        desc: Msg::DescProbeChevrons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "probe.dns_cache_secs",
+        cat: Msg::CatConnection,
+        label: Msg::LblDnsCacheSecs,
+        desc: Msg::DescDnsCacheSecs,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "0",
+    },
+    Entry {
+        key: "probe.icmp",
+        cat: Msg::CatConnection,
+        label: Msg::LblProbeIcmp,
+        desc: Msg::DescProbeIcmp,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ── T-48a/T-48d 페치 모델(docs/43 §3·§5 · 09-17): 왕복당 행수 · 추가 페치 방식 · 커서 유휴 상한 · 셸 상한/자동 이어 보기.
+    Entry {
+        key: "db.fetch_size",
+        cat: Msg::CatSession,
+        label: Msg::LblFetchSize,
+        desc: Msg::DescFetchSize,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 100_000,
+        },
+        default: "200",
+    },
+    Entry {
+        key: "grid.fetch_mode",
+        cat: Msg::CatGrid,
+        label: Msg::LblFetchMode,
+        desc: Msg::DescFetchMode,
+        kind: SettingKind::Choice(FETCH_MODE_OPTS),
+        default: "cursor",
+    },
+    Entry {
+        key: "db.cursor_idle_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblCursorIdle,
+        desc: Msg::DescCursorIdle,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "0",
+    },
+    Entry {
+        key: "cli.max_rows",
+        cat: Msg::CatCli,
+        label: Msg::LblCliMaxRows,
+        desc: Msg::DescCliMaxRows,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000_000,
+        },
+        default: "200",
+    },
+    Entry {
+        key: "cli.auto_more",
+        cat: Msg::CatCli,
+        label: Msg::LblCliAutoMore,
+        desc: Msg::DescCliAutoMore,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
 ];
 
 /// 키로 항목 찾기.
@@ -1499,7 +1831,10 @@ pub fn entry(key: &str) -> Option<&'static Entry> {
 /// ★ 설정 트리(DBeaver Preferences 차용 · 사용자 09-15) — 그룹 → 카테고리 순서. 설정 화면(T-39) 사이드바·`config list` 머리글의 단일 원천.
 /// DBeaver: General / User Interface(Appearance·Navigator·Keys) / Editors(SQL Editor) / Connections / Data Editor(Result Sets).
 pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
-    (Msg::GrpGeneral, &[Msg::CatLog, Msg::CatSession]),
+    (
+        Msg::GrpGeneral,
+        &[Msg::CatLog, Msg::CatSession, Msg::CatPerformance],
+    ),
     (
         Msg::GrpUserInterface,
         &[
@@ -1624,6 +1959,15 @@ pub const HIDDEN: &[&str] = &[
     "file.show_hidden",
     "file.show_dot",
     "script.strict",
+    // ── 성능 거버너 비노출(docs/39 §3 "HIDDEN") — `nsql config list perf`에는 나온다.
+    "editor.undo_max",
+    "ui.glyph_cache",
+    "file.icon_cache",
+    "editor.max_occurrences",
+    "probe.dns_cache_secs",
+    "probe.icmp",
+    "db.fetch_size",
+    "db.cursor_idle_secs",
 ];
 
 /// 비노출 설정인가.
@@ -1853,10 +2197,11 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// on/off 설정.
+    /// on/off 설정 — **실효 값**([`Settings::effective`] · 부하원 키는 `perf.mode` 프리셋을 따른다 · 09-16 T-90a).
+    /// 파일 값(사용자/기본)만 보려면 [`Settings::get`].
     #[must_use]
     pub fn flag(&self, key: &str) -> bool {
-        self.get(key) == Some("on")
+        self.effective_flag(key)
     }
 
     /// 글꼴 크기(px) — `Size` 항목(`13` · `13px` · `10pt`) · 틀리면 레지스트리 기본.
@@ -1868,13 +2213,10 @@ impl Settings {
             .unwrap_or(0.0)
     }
 
-    /// 정수 설정(레지스트리 기본값 보장 → 실패 없음).
+    /// 정수 설정(레지스트리 기본값 보장 → 실패 없음) — **실효 값**([`Settings::effective`] · 부하원 키는 `perf.mode` 프리셋을 따른다).
     #[must_use]
     pub fn int(&self, key: &str) -> i64 {
-        self.get(key)
-            .and_then(|v| v.parse().ok())
-            .or_else(|| entry(key).and_then(|e| e.default.parse().ok()))
-            .unwrap_or(0)
+        self.effective_int(key)
     }
 
     /// 전 항목 (키, 현재 값, 변경 여부) — `config list`·설정 화면.
@@ -1999,5 +2341,123 @@ mod tests {
             );
             assert_eq!(REGISTRY.iter().filter(|x| x.key == e.key).count(), 1);
         }
+    }
+
+    /// T-90a(docs/39 §4): 실효 값 우선순위 — 개별 > 모드 프리셋 > 기본 · full = 기본과 동일 · reset하면 다시 모드.
+    #[test]
+    fn perf_effective_priority() {
+        let mut s = Settings::open(tmp("perf-eff"));
+        assert_eq!(s.perf_mode(), PerfMode::Full);
+        assert_eq!(s.effective("grid.max_rows"), Some("200"));
+        assert_eq!(s.perf_source("grid.max_rows"), Some(PerfSource::Default));
+        s.set("perf.mode", "low").unwrap();
+        assert_eq!(s.effective("grid.max_rows"), Some("100"));
+        assert_eq!(s.int("grid.max_rows"), 100, "int()는 실효 값");
+        assert!(!s.flag("probe.enabled"), "flag()는 실효 값");
+        assert_eq!(
+            s.perf_source("grid.max_rows"),
+            Some(PerfSource::Mode(PerfMode::Low))
+        );
+        // 개별 값이 모드보다 우선.
+        s.set("grid.max_rows", "150").unwrap();
+        assert_eq!(s.effective("grid.max_rows"), Some("150"));
+        assert_eq!(s.perf_source("grid.max_rows"), Some(PerfSource::User));
+        s.reset("grid.max_rows").unwrap();
+        assert_eq!(
+            s.effective("grid.max_rows"),
+            Some("100"),
+            "지우면 다시 모드"
+        );
+        // custom = 프리셋 없음.
+        s.set("perf.mode", "custom").unwrap();
+        assert_eq!(s.effective("grid.max_rows"), Some("200"));
+        // 부하원이 아닌 키는 get과 같다.
+        assert_eq!(s.effective("ui.font_size"), s.get("ui.font_size"));
+        assert_eq!(s.effective("nope"), None);
+    }
+
+    /// D-59: 부하원 키를 직접 바꾸면 표시 모드 = custom(설정된 모드는 그대로 남는다).
+    #[test]
+    fn perf_mode_display_is_custom_when_overridden() {
+        let mut s = Settings::open(tmp("perf-custom"));
+        s.set("perf.mode", "balanced").unwrap();
+        assert_eq!(s.perf_mode_display(), PerfMode::Balanced);
+        s.set("probe.interval", "30").unwrap();
+        assert_eq!(s.perf_mode_display(), PerfMode::Custom);
+        assert_eq!(s.perf_mode(), PerfMode::Balanced, "설정 값은 유지");
+        assert_eq!(
+            s.effective("grid.max_rows"),
+            Some("200"),
+            "다른 키는 여전히 모드"
+        );
+        s.set("ui.font_size", "16").unwrap();
+        s.reset("probe.interval").unwrap();
+        assert_eq!(
+            s.perf_mode_display(),
+            PerfMode::Balanced,
+            "부하원 아닌 키는 custom을 만들지 않는다"
+        );
+    }
+
+    /// auto = OS 신호(배터리·원격 → balanced · 그 외 full) · 안내(D-58)는 full일 때만.
+    #[test]
+    fn perf_auto_follows_signals() {
+        let mut s = Settings::open(tmp("perf-auto"));
+        s.set("perf.mode", "auto").unwrap();
+        let mut sig = nexa_sys::Signals::default();
+        perf::set_signals_override(Some(sig));
+        assert_eq!(s.perf_mode_resolved(), PerfMode::Full);
+        sig.on_battery = Some(true);
+        perf::set_signals_override(Some(sig));
+        assert_eq!(s.perf_mode_resolved(), PerfMode::Balanced);
+        assert_eq!(s.effective("probe.interval"), Some("120"));
+        assert_eq!(s.perf_hint(), None, "auto면 안내 없음");
+        s.set("perf.mode", "full").unwrap();
+        assert_eq!(s.perf_hint(), Some(Msg::StPerfBatteryHint));
+        sig.on_battery = Some(false);
+        sig.remote_session = Some(true);
+        perf::set_signals_override(Some(sig));
+        assert_eq!(s.perf_hint(), Some(Msg::StPerfRemoteHint));
+        // 동작 줄이기 → ui.animations=auto만 꺼진다(모드는 그대로).
+        sig.remote_session = None;
+        sig.reduce_motion = Some(true);
+        perf::set_signals_override(Some(sig));
+        assert!(!s.animations_enabled());
+        s.set("ui.animations", "on").unwrap();
+        assert!(s.animations_enabled());
+        perf::set_signals_override(None);
+    }
+
+    /// 원장 무결성: PERF의 키는 전부 레지스트리에 있고 · full 열 = 기본값(기본 모드 = 지금 동작) · 세 값 모두 자기 검증 통과.
+    #[test]
+    fn perf_ledger_matches_registry() {
+        for (k, b) in PERF {
+            let e = entry(k).unwrap_or_else(|| panic!("{k}: 레지스트리에 없다"));
+            assert_eq!(b.full, e.default, "{k}: full 열은 기본값과 같아야 한다");
+            for v in [b.full, b.balanced, b.low] {
+                assert_eq!(
+                    normalize(e.kind, v).as_deref(),
+                    Some(v),
+                    "{k}: 프리셋 값 {v}가 검증을 통과해야 한다"
+                );
+            }
+            assert_eq!(PERF.iter().filter(|(x, _)| x == k).count(), 1, "{k} 중복");
+            assert_eq!(e.perf().map(|x| x.domain), Some(b.domain));
+        }
+        let s = Settings::open(tmp("perf-rows"));
+        let rows = s.perf_rows();
+        assert_eq!(rows.len(), PERF.len());
+        assert!(
+            rows.windows(2)
+                .all(|w| w[0].binding.domain <= w[1].binding.domain),
+            "도메인 순"
+        );
+        assert!(perf_binding("ui.font_size").is_none());
+        assert_eq!(PerfMode::parse("LOW"), Some(PerfMode::Low));
+        assert_eq!(
+            tree_order(Msg::CatPerformance).0,
+            0,
+            "Performance는 General 그룹"
+        );
     }
 }

@@ -773,10 +773,23 @@ impl LogBuffer {
         }
     }
     pub fn push(&mut self, e: LogEntry) {
-        if self.entries.len() == self.cap {
+        if self.entries.len() >= self.cap {
             self.entries.pop_front();
         }
         self.entries.push_back(e);
+    }
+    /// 상한(줄 수).
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+    /// 상한을 바꾼다(0은 1로 · 설정 `log.max_lines` · docs/39 T-90d) — 넘치는 만큼 **앞(오래된 것)에서 즉시 버리고** 버린 수를 돌려준다.
+    pub fn set_cap(&mut self, cap: usize) -> usize {
+        self.cap = cap.max(1);
+        let drop_n = self.entries.len().saturating_sub(self.cap);
+        for _ in 0..drop_n {
+            self.entries.pop_front();
+        }
+        drop_n
     }
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -1088,6 +1101,27 @@ mod tests {
         }
         assert_eq!(b.len(), 3);
         assert_eq!(b.get(0).unwrap().message, "2");
+    }
+
+    /// T-90d(docs/39 §3-6 `log.max_lines`): 상한을 줄이면 앞(오래된 것)에서 즉시 버린다 · 늘리면 그대로 · 0은 1로.
+    #[test]
+    fn ring_buffer_set_cap_trims_front() {
+        let mut b = LogBuffer::new(10);
+        for i in 0..8 {
+            b.push(LogEntry::new(LogKind::Info, i.to_string()));
+        }
+        assert_eq!(b.set_cap(3), 5, "5줄을 버렸다");
+        assert_eq!(b.len(), 3);
+        assert_eq!(b.get(0).unwrap().message, "5");
+        assert_eq!(b.cap(), 3);
+        b.push(LogEntry::new(LogKind::Info, "x"));
+        assert_eq!(b.len(), 3);
+        assert_eq!(b.get(2).unwrap().message, "x");
+        assert_eq!(b.set_cap(100), 0);
+        assert_eq!(b.len(), 3);
+        assert_eq!(b.set_cap(0), 2);
+        assert_eq!(b.cap(), 1);
+        assert_eq!(b.len(), 1);
     }
 
     #[test]

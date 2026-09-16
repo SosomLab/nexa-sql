@@ -1,0 +1,438 @@
+//! 성능 거버너(docs/39 §4 · T-90a) — `perf.mode` 마스터 1개 ▸ 도메인 프리셋([`PerfBinding`]) ▸ 개별 키.
+//!
+//! ```text
+//! perf.mode  (auto | full | balanced | low | custom)      ← 마스터 · 상태줄 ⚡ · `nsql config set perf.mode low`
+//!    └ 도메인 프리셋(§3 표의 full/balanced/low 열)          ← [`PERF`] 표(= 원장 · `Entry::perf()`)
+//!         └ 개별 키                                       ← 사용자가 직접 바꾸면 그 키만 우선 · 모드 표시 = custom(D-59)
+//! ```
+//!
+//! - **우선순위**([`Settings::effective`]): 사용자가 명시한 개별 값 > 모드 프리셋 > 레지스트리 기본. 개별 값을 지우면(`reset`) 다시 모드를 따른다.
+//! - **auto**: OS 신호([`nexa_sys::Signals`] · 60초 캐시)로 고른다 — 배터리 전원·원격 세션 → balanced · 그 외 full.
+//!   OS "동작 줄이기"는 모드가 아니라 `ui.animations = auto`가 따른다([`Settings::animations_enabled`]).
+//! - **기본 = full**(D-58 · 지금 동작 그대로) + 배터리 전원이면 상태줄 1회 안내([`Settings::perf_hint`]).
+//! - `PERF`에 있는 키가 곧 부하원 원장이다 — `nsql config list perf`는 이 표만 찍는다(docs/39 §3 표는 "왜"만).
+//!   `Entry`에 필드를 두지 않고 별도 표로 둔 이유: 레지스트리에 항목을 append하는 다른 작업과 컴파일 충돌이 없다(09-16 병행 작업).
+
+use crate::{entry, Entry, Settings, REGISTRY};
+use nsql_i18n::Msg;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// 부하 도메인(docs/39 §2 · 여섯).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Domain {
+    Db,
+    Net,
+    Cpu,
+    Gfx,
+    Ui,
+    Mem,
+}
+
+impl Domain {
+    /// 표시 순서.
+    pub const ALL: [Domain; 6] = [
+        Domain::Db,
+        Domain::Net,
+        Domain::Cpu,
+        Domain::Gfx,
+        Domain::Ui,
+        Domain::Mem,
+    ];
+
+    /// 짧은 식별자(`list perf` 인자·로그).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Domain::Db => "db",
+            Domain::Net => "net",
+            Domain::Cpu => "cpu",
+            Domain::Gfx => "gfx",
+            Domain::Ui => "ui",
+            Domain::Mem => "mem",
+        }
+    }
+
+    /// 표시 라벨.
+    #[must_use]
+    pub const fn label(self) -> Msg {
+        match self {
+            Domain::Db => Msg::CfgPerfDomDb,
+            Domain::Net => Msg::CfgPerfDomNet,
+            Domain::Cpu => Msg::CfgPerfDomCpu,
+            Domain::Gfx => Msg::CfgPerfDomGfx,
+            Domain::Ui => Msg::CfgPerfDomUi,
+            Domain::Mem => Msg::CfgPerfDomMem,
+        }
+    }
+}
+
+/// 부하원 등재 — 이 키가 모드별로 갖는 값(docs/39 §3 표의 full/balanced/low 열).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PerfBinding {
+    pub domain: Domain,
+    pub full: &'static str,
+    pub balanced: &'static str,
+    pub low: &'static str,
+}
+
+impl PerfBinding {
+    /// 프리셋 모드의 값(auto·custom은 프리셋이 아니므로 `None`).
+    #[must_use]
+    pub const fn value(&self, mode: PerfMode) -> Option<&'static str> {
+        match mode {
+            PerfMode::Full => Some(self.full),
+            PerfMode::Balanced => Some(self.balanced),
+            PerfMode::Low => Some(self.low),
+            PerfMode::Auto | PerfMode::Custom => None,
+        }
+    }
+}
+
+/// `perf.mode` 값.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PerfMode {
+    /// OS 신호로 고른다(배터리·원격 세션 → balanced · 그 외 full).
+    Auto,
+    /// 제한 없음 = 지금 동작 그대로(기본 · D-58).
+    #[default]
+    Full,
+    Balanced,
+    Low,
+    /// 프리셋을 적용하지 않는다(개별 키만) — 개별 키를 바꾼 상태의 표시값이기도 하다(D-59).
+    Custom,
+}
+
+impl PerfMode {
+    pub const ALL: [PerfMode; 5] = [
+        PerfMode::Auto,
+        PerfMode::Full,
+        PerfMode::Balanced,
+        PerfMode::Low,
+        PerfMode::Custom,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PerfMode::Auto => "auto",
+            PerfMode::Full => "full",
+            PerfMode::Balanced => "balanced",
+            PerfMode::Low => "low",
+            PerfMode::Custom => "custom",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<PerfMode> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(PerfMode::Auto),
+            "full" => Some(PerfMode::Full),
+            "balanced" => Some(PerfMode::Balanced),
+            "low" => Some(PerfMode::Low),
+            "custom" => Some(PerfMode::Custom),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> Msg {
+        match self {
+            PerfMode::Auto => Msg::ValPerfAuto,
+            PerfMode::Full => Msg::ValPerfFull,
+            PerfMode::Balanced => Msg::ValPerfBalanced,
+            PerfMode::Low => Msg::ValPerfLow,
+            PerfMode::Custom => Msg::ValPerfCustom,
+        }
+    }
+
+    /// full/balanced/low(프리셋 값이 있는 모드)인가.
+    #[must_use]
+    pub const fn is_preset(self) -> bool {
+        matches!(self, PerfMode::Full | PerfMode::Balanced | PerfMode::Low)
+    }
+}
+
+/// `perf.mode` 후보(레지스트리 `Choice`).
+pub(crate) const PERF_MODE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValPerfAuto),
+    ("full", Msg::ValPerfFull),
+    ("balanced", Msg::ValPerfBalanced),
+    ("low", Msg::ValPerfLow),
+    ("custom", Msg::ValPerfCustom),
+];
+
+const fn b(
+    domain: Domain,
+    full: &'static str,
+    balanced: &'static str,
+    low: &'static str,
+) -> PerfBinding {
+    PerfBinding {
+        domain,
+        full,
+        balanced,
+        low,
+    }
+}
+
+/// ★ 부하원 원장(docs/39 §3 · 등재 = 설정 키 = 모드별 값). 새 부하원 = [`REGISTRY`] 한 줄 + 여기 한 줄.
+/// `full` 열은 레지스트리 기본값과 같아야 한다(기본 모드 full = 지금 동작 그대로 · 테스트가 강제).
+pub const PERF: &[(&str, PerfBinding)] = &[
+    // ── DB(§3-1)
+    ("grid.max_rows", b(Domain::Db, "200", "200", "100")),
+    ("db.statement_timeout", b(Domain::Db, "0", "0", "60")),
+    (
+        "oracle.live.source",
+        b(Domain::Db, "session", "session", "off"),
+    ),
+    (
+        "oracle.live.interval_ms",
+        b(Domain::Db, "1000", "2000", "5000"),
+    ),
+    ("explorer.visible", b(Domain::Db, "on", "on", "off")),
+    ("explorer.auto_refresh", b(Domain::Db, "off", "off", "off")),
+    ("connect.auto_reconnect", b(Domain::Db, "on", "on", "off")),
+    // ── NET(§3-2 · 26 §8 흡수)
+    ("probe.enabled", b(Domain::Net, "on", "on", "off")),
+    ("probe.interval", b(Domain::Net, "60", "120", "300")),
+    ("probe.max_inflight", b(Domain::Net, "16", "8", "2")),
+    ("probe.icmp", b(Domain::Net, "on", "on", "off")),
+    ("connect.max_concurrent", b(Domain::Net, "4", "2", "1")),
+    ("probe.dns_cache_secs", b(Domain::Net, "0", "300", "3600")),
+    // ── CPU(§3-3)
+    (
+        "editor.highlight_max_kb",
+        b(Domain::Cpu, "1024", "512", "128"),
+    ),
+    (
+        "editor.max_occurrences",
+        b(Domain::Cpu, "10000", "5000", "1000"),
+    ),
+    ("file.probe_chevrons", b(Domain::Cpu, "on", "on", "off")),
+    ("file.os_icons", b(Domain::Cpu, "on", "on", "off")),
+    // ── GFX(§3-4)
+    ("ui.max_fps", b(Domain::Gfx, "60", "30", "15")),
+    ("ui.animations", b(Domain::Gfx, "auto", "auto", "off")),
+    ("editor.caret_blink", b(Domain::Gfx, "on", "on", "off")),
+    // ── MEM(§3-6)
+    ("log.max_lines", b(Domain::Mem, "10000", "5000", "1000")),
+    ("editor.undo_max", b(Domain::Mem, "1000", "500", "100")),
+    ("ui.glyph_cache", b(Domain::Mem, "8192", "4096", "2048")),
+    ("file.icon_cache", b(Domain::Mem, "512", "512", "128")),
+];
+
+/// 키의 부하원 등재(없으면 부하원이 아니다).
+#[must_use]
+pub fn binding(key: &str) -> Option<&'static PerfBinding> {
+    PERF.iter().find(|(k, _)| *k == key).map(|(_, b)| b)
+}
+
+impl Entry {
+    /// 이 키가 부하원이면 모드별 값(docs/39 §4-2 `Entry.perf`).
+    #[must_use]
+    pub fn perf(&self) -> Option<&'static PerfBinding> {
+        binding(self.key)
+    }
+}
+
+/// `auto`가 OS 신호로 고르는 모드 — 배터리 전원·원격 세션 → balanced · 그 외(모름 포함) full.
+#[must_use]
+pub const fn resolve_auto(sig: &nexa_sys::Signals) -> PerfMode {
+    match (sig.on_battery, sig.remote_session) {
+        (Some(true), _) | (_, Some(true)) => PerfMode::Balanced,
+        _ => PerfMode::Full,
+    }
+}
+
+// ────────────────────────────────────────────── OS 신호 캐시(기동 1회 + 60초 · docs/39 §4-4 · 부하원: 60초마다 syscall 몇 개)
+
+/// 신호 재조회 간격.
+pub const SIGNAL_TTL: Duration = Duration::from_secs(60);
+
+static SIGNALS: Mutex<Option<(Instant, nexa_sys::Signals)>> = Mutex::new(None);
+static OVERRIDE: Mutex<Option<nexa_sys::Signals>> = Mutex::new(None);
+
+/// 현재 OS 신호(60초 캐시 · 재지정이 있으면 그것).
+#[must_use]
+pub fn signals() -> nexa_sys::Signals {
+    if let Some(o) = OVERRIDE.lock().ok().and_then(|g| *g) {
+        return o;
+    }
+    let mut g = match SIGNALS.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    match *g {
+        Some((t, s)) if t.elapsed() < SIGNAL_TTL => s,
+        _ => {
+            let s = nexa_sys::Signals::read();
+            *g = Some((Instant::now(), s));
+            s
+        }
+    }
+}
+
+/// 신호 재지정(테스트 · `nsql --perf` 류 진단) — `None`이면 다시 OS를 읽는다.
+pub fn set_signals_override(sig: Option<nexa_sys::Signals>) {
+    if let Ok(mut g) = OVERRIDE.lock() {
+        *g = sig;
+    }
+}
+
+/// 값의 출처(`nsql config list perf` 세 번째 열).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PerfSource {
+    /// 사용자가 개별 키를 직접 바꿨다.
+    User,
+    /// 모드 프리셋(full/balanced/low · auto는 풀린 모드).
+    Mode(PerfMode),
+    /// 레지스트리 기본(custom 모드 · 또는 프리셋 값 = 기본값).
+    Default,
+}
+
+impl PerfSource {
+    #[must_use]
+    pub const fn label(self) -> Msg {
+        match self {
+            PerfSource::User => Msg::CfgSrcUser,
+            PerfSource::Mode(_) => Msg::CfgSrcMode,
+            PerfSource::Default => Msg::CfgSrcDefault,
+        }
+    }
+}
+
+/// `list perf` 한 줄.
+#[derive(Clone, Debug)]
+pub struct PerfRow {
+    pub entry: &'static Entry,
+    pub binding: &'static PerfBinding,
+    /// 실효 값([`Settings::effective`]).
+    pub value: String,
+    pub source: PerfSource,
+}
+
+impl Settings {
+    /// 설정된 `perf.mode`(파일 값 · auto는 풀지 않는다).
+    #[must_use]
+    pub fn perf_mode(&self) -> PerfMode {
+        self.get("perf.mode")
+            .and_then(PerfMode::parse)
+            .unwrap_or_default()
+    }
+
+    /// 프리셋이 실제로 적용되는 모드 — auto는 OS 신호로 푼다 · custom은 그대로(프리셋 없음).
+    #[must_use]
+    pub fn perf_mode_resolved(&self) -> PerfMode {
+        match self.perf_mode() {
+            PerfMode::Auto => resolve_auto(&signals()),
+            m => m,
+        }
+    }
+
+    /// 상태줄·설정 창에 보일 모드(D-59) — 부하원 키 하나라도 개별 값이 있으면 `custom`, 아니면 설정된 모드.
+    #[must_use]
+    pub fn perf_mode_display(&self) -> PerfMode {
+        if self.perf_has_overrides() {
+            PerfMode::Custom
+        } else {
+            self.perf_mode()
+        }
+    }
+
+    /// 부하원 키 중 사용자가 직접 바꾼 것이 있는가.
+    #[must_use]
+    pub fn perf_has_overrides(&self) -> bool {
+        PERF.iter().any(|(k, _)| self.is_modified(k))
+    }
+
+    /// 실효 값 — 개별 값 > 모드 프리셋 > 기본. 모르는 키는 `None`. 부하원이 아닌 키는 [`Settings::get`]과 같다.
+    #[must_use]
+    pub fn effective(&self, key: &str) -> Option<&str> {
+        let e = entry(key)?;
+        if self.is_modified(key) {
+            return self.get(key);
+        }
+        if let Some(b) = e.perf() {
+            if let Some(v) = b.value(self.perf_mode_resolved()) {
+                return Some(v);
+            }
+        }
+        Some(e.default)
+    }
+
+    /// 실효 값의 출처(부하원이 아닌 키는 `None`).
+    #[must_use]
+    pub fn perf_source(&self, key: &str) -> Option<PerfSource> {
+        let e = entry(key)?;
+        let b = e.perf()?;
+        if self.is_modified(key) {
+            return Some(PerfSource::User);
+        }
+        let m = self.perf_mode_resolved();
+        match b.value(m) {
+            Some(v) if v != e.default => Some(PerfSource::Mode(m)),
+            _ => Some(PerfSource::Default),
+        }
+    }
+
+    /// 실효 정수(레지스트리 기본값 보장).
+    #[must_use]
+    pub fn effective_int(&self, key: &str) -> i64 {
+        self.effective(key)
+            .and_then(|v| v.parse().ok())
+            .or_else(|| entry(key).and_then(|e| e.default.parse().ok()))
+            .unwrap_or(0)
+    }
+
+    /// 실효 on/off.
+    #[must_use]
+    pub fn effective_flag(&self, key: &str) -> bool {
+        self.effective(key) == Some("on")
+    }
+
+    /// `ui.animations` 실효 — auto는 OS "동작 줄이기"의 반대.
+    #[must_use]
+    pub fn animations_enabled(&self) -> bool {
+        match self.effective("ui.animations") {
+            Some("on") => true,
+            Some("off") => false,
+            _ => !signals().reduce_motion.unwrap_or(false),
+        }
+    }
+
+    /// 부하원 전부(도메인 → 원장 순서) — `nsql config list perf` · 설정 창 Performance 카드.
+    #[must_use]
+    pub fn perf_rows(&self) -> Vec<PerfRow> {
+        let mut rows: Vec<PerfRow> = PERF
+            .iter()
+            .filter_map(|(k, b)| {
+                let e = REGISTRY.iter().find(|e| e.key == *k)?;
+                Some(PerfRow {
+                    entry: e,
+                    binding: b,
+                    value: self.effective(k).unwrap_or(e.default).to_string(),
+                    source: self.perf_source(k)?,
+                })
+            })
+            .collect();
+        rows.sort_by_key(|r| r.binding.domain);
+        rows
+    }
+
+    /// 배터리·원격 세션인데 모드가 full이면 안내 메시지(D-58 · 상태줄 1회 · 호스트가 표시·기억).
+    #[must_use]
+    pub fn perf_hint(&self) -> Option<Msg> {
+        if self.perf_mode() != PerfMode::Full {
+            return None;
+        }
+        let s = signals();
+        if s.on_battery == Some(true) {
+            Some(Msg::StPerfBatteryHint)
+        } else if s.remote_session == Some(true) {
+            Some(Msg::StPerfRemoteHint)
+        } else {
+            None
+        }
+    }
+}

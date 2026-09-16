@@ -15,3 +15,5 @@ workspace = true
 nsql-i18n.workspace = true
 # 설정 폴더 규칙 · key=value 직렬화 · 원자적 쓰기 — nexa 계열 공용(nsql-vault와 같은 판).
 nexa-conf.workspace = true
+# OS 신호(배터리·원격 세션·동작 줄이기) — `perf.mode = auto`·안내(docs/39 §4-4 · D-60 nexa-sys).
+nexa-sys.workspace = true
