@@ -949,7 +949,8 @@ impl App {
     /// 상태줄 줄끝 팝업(LF/CRLF · 현재 = ✓) — 고르면 활성 탭 줄끝 변경(저장 때 반영 · docs/38).
     fn open_eol_menu(&mut self) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
-        let crlf = self.editors.active_crlf();
+        // Sublime식 3종(사용자 09-16 캡처): Windows CRLF · Unix LF · Mac OS 9 CR · 현재 = ✓ + 강조색.
+        let cur = self.editors.active_eol();
         let mark = |on: bool, s: &str| {
             if on {
                 format!("✓ {s}")
@@ -957,9 +958,13 @@ impl App {
                 format!("   {s}")
             }
         };
+        let it = |id: &str, m: Msg, e: eol::Eol| {
+            CtxItem::item(id, mark(cur == e, t(m))).with_active(cur == e)
+        };
         let items = vec![
-            CtxItem::item("eol.lf", mark(!crlf, "LF")),
-            CtxItem::item("eol.crlf", mark(crlf, "CRLF")),
+            it("eol.crlf", Msg::MnEolCrlf, eol::Eol::Crlf),
+            it("eol.lf", Msg::MnEolLf, eol::Eol::Lf),
+            it("eol.cr", Msg::MnEolCr, eol::Eol::Cr),
         ];
         let r = self.status_eol_rect;
         let host = self
@@ -972,14 +977,15 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         self.status_menu
-            .open_at(r.x, r.y, items, host, px(120.0, self.scale));
+            .open_at(r.x, r.y, items, host, px(260.0, self.scale));
     }
 
     fn indent_pick(&mut self, id: &str) {
         let (ts, spaces) = self.editors.indent();
         match id {
-            "eol.lf" => self.editors.set_active_crlf(false),
-            "eol.crlf" => self.editors.set_active_crlf(true),
+            "eol.lf" => self.editors.set_active_eol(eol::Eol::Lf),
+            "eol.crlf" => self.editors.set_active_eol(eol::Eol::Crlf),
+            "eol.cr" => self.editors.set_active_eol(eol::Eol::Cr),
             "indent.spaces" | "indent.tabs" => {
                 self.editors.set_tab_indent(ts, id == "indent.spaces");
             }
@@ -1218,7 +1224,7 @@ impl App {
             "editor.tab_size" | "editor.indent_spaces" | "editor.tab_stops" => self.apply_indent(),
             "file.eol_new" => self
                 .editors
-                .set_default_crlf(eol::default_crlf(self.settings.get(key).unwrap_or("auto"))),
+                .set_default_eol(eol::default_eol(self.settings.get(key).unwrap_or("auto"))),
             "editor.rulers" => self
                 .editors
                 .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
@@ -2183,8 +2189,8 @@ impl App {
         };
         let (text, lossy, used) = Self::decode_bytes(&bytes, enc);
         // 줄끝 다수결 판정 + `\n` 정규화(docs/38).
-        let (crlf, text) = eol::detect(&text);
-        self.editors.open_file(path, &text, crlf);
+        let (eol, text) = eol::detect(&text);
+        self.editors.open_file(path, &text, eol);
         self.editors.set_active_encoding(used);
         self.set_focus(Focus::Editor);
         self.push_recent(path);
@@ -2204,11 +2210,11 @@ impl App {
     /// 활성 탭 → 파일(UTF-8 · BOM 없음 · 원래 줄끝 유지).
     fn save_to(&mut self, path: &Path) {
         // 저장 줄끝 = 설정 `file.eol_save`(keep = 탭 줄끝) · docs/38.
-        let crlf = eol::save_crlf(
+        let eol = eol::save_eol(
             self.settings.get("file.eol_save").unwrap_or("keep"),
-            self.editors.active_crlf(),
+            self.editors.active_eol(),
         );
-        let text = eol::apply(&self.editors.cur().text(), crlf);
+        let text = eol::apply(&self.editors.cur().text(), eol);
         let enc = self.editors.active_encoding();
         let text = Self::encode_text(&text, &enc);
         let tmp = path.with_extension(format!(
@@ -3032,15 +3038,7 @@ impl App {
                     tf(Msg::StTabSize, &[&ts])
                 };
                 // 줄끝 세그먼트(VS Code/Sublime식 · 클릭 = LF/CRLF 팝업 · docs/38 · 사용자 09-16).
-                segs.push((
-                    if self.editors.active_crlf() {
-                        "CRLF"
-                    } else {
-                        "LF"
-                    }
-                    .to_string(),
-                    true,
-                ));
+                segs.push((self.editors.active_eol().label().to_string(), true));
                 segs.push((indent_seg, true));
                 segs.push((self.editors.syntax_name(), true));
                 let gap = px(12.0, s);
@@ -3577,7 +3575,7 @@ impl ApplicationHandler<Wake> for App {
         self.layout();
         self.set_focus(Focus::Editor);
         self.apply_indent();
-        self.editors.set_default_crlf(eol::default_crlf(
+        self.editors.set_default_eol(eol::default_eol(
             self.settings.get("file.eol_new").unwrap_or("auto"),
         ));
         self.apply_menu_decor();

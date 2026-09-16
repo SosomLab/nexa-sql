@@ -4,6 +4,7 @@
 //! - 툴팁 = 설정 `tabs.tooltip`(기본 켬) — 탭 위에 1초 머물면 카드(제목 · 문장 수 · 글자 수 · 접속). 내용은 호스트가 [`Editors::set_conn_desc`]로 준다.
 //! - 세션 분리(`session.mode = per-editor`)는 T-54 — 지금은 모든 탭이 한 세션.
 
+use crate::eol::Eol;
 use crate::syntax::SyntaxRegistry;
 use nexa_ctl::draw::{draw_tooltip, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
@@ -55,11 +56,11 @@ pub(crate) struct Editors {
     /// 마지막으로 열거나 저장한 본문(더러움 판정 근거 · 새 탭 = 빈 문자열).
     saved: Vec<String>,
     /// 탭별 줄끝이 CRLF였나(저장 때 원래대로 되돌린다 · 새 탭 = OS 기본).
-    crlf: Vec<bool>,
+    eol: Vec<Eol>,
     /// 마지막 열기/저장 시점의 줄끝(줄끝만 바꿔도 더러움 표시 · 09-16).
-    saved_crlf: Vec<bool>,
+    saved_eol: Vec<Eol>,
     /// 새 탭의 줄끝 기본(설정 `file.eol_new` · docs/38).
-    default_crlf: bool,
+    default_eol: Eol,
     /// 탭별 인코딩(`utf8|utf8bom|utf16le|utf16be` · 열 때 감지/선택 · 저장 기본값).
     encs: Vec<String>,
     /// 탭 바에 마지막으로 보낸 표시 제목(더러움 `*` 포함) — 바뀔 때만 다시 보낸다.
@@ -110,9 +111,9 @@ impl Editors {
             indents: Vec::new(),
             paths: Vec::new(),
             saved: Vec::new(),
-            crlf: Vec::new(),
-            saved_crlf: Vec::new(),
-            default_crlf: cfg!(windows),
+            eol: Vec::new(),
+            saved_eol: Vec::new(),
+            default_eol: Eol::os(),
             ids: Vec::new(),
             next_id: 1,
             tab_stops: true,
@@ -348,8 +349,8 @@ impl Editors {
         self.indents.push(None);
         self.paths.push(None);
         self.saved.push(String::new());
-        self.crlf.push(self.default_crlf);
-        self.saved_crlf.push(self.default_crlf);
+        self.eol.push(self.default_eol);
+        self.saved_eol.push(self.default_eol);
         self.encs.push("utf8".into());
         self.syntax.push(syntax);
         self.titles.push(title);
@@ -379,7 +380,7 @@ impl Editors {
     /// 탭 `i`가 마지막 열기/저장 뒤 바뀌었나.
     pub(crate) fn is_dirty(&self, i: usize) -> bool {
         match (self.bufs.get(i), self.saved.get(i)) {
-            (Some(b), Some(s)) => b.text() != *s || self.crlf.get(i) != self.saved_crlf.get(i),
+            (Some(b), Some(s)) => b.text() != *s || self.eol.get(i) != self.saved_eol.get(i),
             _ => false,
         }
     }
@@ -410,24 +411,24 @@ impl Editors {
     }
 
     /// 새 탭의 줄끝 기본(설정 `file.eol_new`).
-    pub(crate) fn set_default_crlf(&mut self, crlf: bool) {
-        self.default_crlf = crlf;
+    pub(crate) fn set_default_eol(&mut self, eol: Eol) {
+        self.default_eol = eol;
     }
 
     /// 활성 탭의 줄끝 변경(상태줄 세그먼트 · 저장 때 반영 · 저장 시점과 다르면 더러움).
-    pub(crate) fn set_active_crlf(&mut self, crlf: bool) {
-        if let Some(c) = self.crlf.get_mut(self.active) {
-            *c = crlf;
+    pub(crate) fn set_active_eol(&mut self, eol: Eol) {
+        if let Some(c) = self.eol.get_mut(self.active) {
+            *c = eol;
         }
     }
 
-    /// 활성 탭의 줄끝이 CRLF인가.
-    pub(crate) fn active_crlf(&self) -> bool {
-        self.crlf.get(self.active).copied().unwrap_or(cfg!(windows))
+    /// 활성 탭의 줄끝.
+    pub(crate) fn active_eol(&self) -> Eol {
+        self.eol.get(self.active).copied().unwrap_or(Eol::os())
     }
 
     /// 파일을 탭에 연다 — 이미 열린 파일이면 그 탭으로 · 활성 탭이 빈 새 스크립트면 그 탭을 재사용 · 아니면 새 탭.
-    pub(crate) fn open_file(&mut self, path: &Path, text: &str, crlf: bool) {
+    pub(crate) fn open_file(&mut self, path: &Path, text: &str, eol: Eol) {
         if let Some(i) = self.paths.iter().position(|p| p.as_deref() == Some(path)) {
             self.switch(i);
             return;
@@ -457,8 +458,8 @@ impl Editors {
         self.titles[i] = name;
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = text.to_string();
-        self.crlf[i] = crlf;
-        self.saved_crlf[i] = crlf;
+        self.eol[i] = eol;
+        self.saved_eol[i] = eol;
         self.sync_tabs();
     }
 
@@ -477,7 +478,7 @@ impl Editors {
         }
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = self.cur().text();
-        self.saved_crlf[i] = self.crlf[i];
+        self.saved_eol[i] = self.eol[i];
         self.sync_tabs();
     }
 
@@ -527,8 +528,8 @@ impl Editors {
             }
             self.paths[i] = None;
             self.saved[i] = String::new();
-            self.crlf[i] = self.default_crlf;
-            self.saved_crlf[i] = self.default_crlf;
+            self.eol[i] = self.default_eol;
+            self.saved_eol[i] = self.default_eol;
             self.counter += 1;
             self.titles[i] = format!("Script_{}", self.counter);
             // 새 스크립트가 됐으니 id도 새로(짝 결과 그리드 비움).
@@ -542,8 +543,8 @@ impl Editors {
         self.syntax.remove(i);
         self.paths.remove(i);
         self.saved.remove(i);
-        self.crlf.remove(i);
-        self.saved_crlf.remove(i);
+        self.eol.remove(i);
+        self.saved_eol.remove(i);
         self.encs.remove(i);
         self.ids.remove(i);
         if i < self.indents.len() {
@@ -699,8 +700,8 @@ impl Editors {
                         let id = self.indents.remove(from);
                         let pa = self.paths.remove(from);
                         let sv = self.saved.remove(from);
-                        let cr = self.crlf.remove(from);
-                        let scr = self.saved_crlf.remove(from);
+                        let cr = self.eol.remove(from);
+                        let scr = self.saved_eol.remove(from);
                         let en = self.encs.remove(from);
                         self.bufs.insert(to, b);
                         self.titles.insert(to, t);
@@ -708,8 +709,8 @@ impl Editors {
                         self.indents.insert(to, id);
                         self.paths.insert(to, pa);
                         self.saved.insert(to, sv);
-                        self.crlf.insert(to, cr);
-                        self.saved_crlf.insert(to, scr);
+                        self.eol.insert(to, cr);
+                        self.saved_eol.insert(to, scr);
                         self.encs.insert(to, en);
                         self.active = to;
                         self.sync_tabs();
