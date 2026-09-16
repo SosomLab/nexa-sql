@@ -138,10 +138,33 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 | Export… | 기존 Export(파일 · [40](40-cli-usage.md) CLI와 같은 형식) — **탭 rows가 아니라 재질의로 무제한**(D-68) | ✅(기존) |
 | 상태 문구 | `200행 · 더 있음 · 0.052s(fetch 0.047s) · 15:20:52` · Count 뒤 `200 / 총 12,345` · 예산 근접 시 색 | ✅ |
 
+### 4-3a. 결과 탭 비용 검토 · 켜기/끄기(사용자 09-16 · D-73~75)
+
+**질문**: 다중 탭이 성능·메모리를 무겁게 하지 않는가 · 끄는 설정이 필요한가 · 탭이 1개면 탭 바를 숨길 수 있는가 · 탭 이동 수단.
+
+| 비용 축 | 실제 | 판정 |
+|---|---|---|
+| 메모리 | 잠든 탭 = `rows: Vec<Vec<Value>>` + 폭 캐시 + 구조체 ~1 KB. 기본 세그먼트 200행 × 20컬럼 ≈ 300 KB/탭 → 8탭 ≈ 2.4 MB. 커지는 경우는 **전체 조회·큰 세그먼트**뿐이고 이는 예산 D-72(`grid.memory_budget_mb` · 탭 합계)가 막는다 | 가볍다(예산이 상한) |
+| CPU/그리기 | **활성 탭만** 페인트 · 잠든 탭은 0 · 탭 바 한 줄 ≈ 0.1 ms(단일 행 · 넘칠 때만 ◀ ▶) | 무시 가능 |
+| 서버 | OFFSET 폴백은 커서를 열어 두지 않는다 · 커서 유지(T-48a) 뒤에도 세션당 1개 규칙 | 0 |
+| 코드 | `grid_stash`(편집기 탭 ↔ 그리드)를 `ResultPanel{tabs}`로 한 단계 넓힘 · TabBar 부품 재사용(단일 행 · ◀ ▶ · 휠 · 드래그 · 우클릭 · 핀이 이미 있음) | 중(부품은 있음) |
+
+**결론: 설계 자체가 무거운 요소는 없다 → 도입한다.** 다만 사용자의 두 이유(메모리 상한을 강제로 낮추기 · 탭 바 한 줄의 공간)는 정당하므로 **끄기 설정을 둔다** — 끄면 데이터 구조·그리기 경로가 지금(탭 1개)과 완전히 같아 비용 0.
+
+| # | 결정 | 내용 |
+|---|---|---|
+| **D-73** | `grid.result_tabs` 켬(기본) / 끔 | 끔 = Ctrl+\가 Ctrl+Enter처럼 동작 · 탭 바 없음 · 켬→끔 전환 시 **활성 탭 외 전부 즉시 해제**(rows drop · 커서 close) — "강제로 메모리 줄이기" |
+| **D-74** | 탭 바 표시 `grid.result_tabbar` = auto(기본) / always | auto = **탭이 2개 이상일 때만** 한 줄 표시(1개면 그리드가 그 높이를 쓴다) · always = 항상(고정 레이아웃 선호자) |
+| **D-75** | 결과 탭 바 = **단일 행 고정**(`set_multiline(false)`) | 넘치면 오른쪽 끝 ◀ ▶(TabBar 내장) · 휠/가로 휠 · 드래그 재정렬 · **우클릭 메뉴**: 닫기 · 다른 탭 닫기 · 오른쪽 탭 닫기 · 고정/해제 · 이름 바꾸기 · **맨 앞으로/맨 뒤로 이동** · **첫/마지막 탭 활성**(한 번에 이동) · 활성 탭이 바뀌면 보이도록 자동 스크롤(내장) |
+
+**속도 여지(켜기/끄기 목록)**: `grid.result_tabs`(구조 자체) · `grid.result_tabbar`(그리기 한 줄) · `grid.result_tabs_max`(8 · 넘치면 가장 오래된 비고정 탭 자동 닫기 `grid.result_tab_evict` 켬) · `grid.memory_budget_mb`(합계) · `grid.auto_fetch` · 탭 전환 시 폭 캐시 유지(재측정 0) · 탭 제목 측정은 제목이 바뀔 때만.
+
+**구현 규칙(성능)**: ① 이벤트·페인트는 활성 `ResultTab`만 만진다 ② 워커 결과는 `(편집기 탭 id, 결과 탭 id)` 키로 잠든 탭에도 배달(그리기는 안 함) ③ 탭 닫기 = `Vec` drop + 커서 close(즉시) ④ 예산 초과 시 새 탭 생성 대신 "가장 오래된 비고정 탭 닫기 or 예산 상향" 안내 ⑤ 탭 바는 `grid.result_tabbar=auto`에서 탭 수가 1↔2를 넘을 때만 레이아웃 재계산.
+
 ### 4-3. 키·설정·i18n
 
 - 키맵(`keymap.rs`): `run.statement_new_tab` = `ctrl+\\` / `cmd+\\` · `result.fetch_next` = `ctrl+alt+pagedown` · `result.fetch_all` = `ctrl+alt+shift+pagedown` · `result.tab.close` = `ctrl+shift+w` · `result.tab.next/prev` = `ctrl+alt+right/left`(Sublime·DBeaver 충돌 없음 · [24](24-settings-and-vscode-analysis.md) 캡처 창에서 바꿀 수 있음).
-- 설정(REGISTRY · 라벨 = Msg): `grid.max_rows`(있음 · 200) · `grid.fetch_mode`(cursor|offset|off) · `grid.auto_fetch`(on) · `grid.fetch_all_max`(0) · `grid.memory_budget_mb`(256) · `grid.result_tabs_max`(8) · `grid.offset_warn`(on) · `grid.script_results_tabs`(off) · `db.fetch_size`(200 · HIDDEN) · `cli.max_rows`(200) · `cli.auto_more`(off).
+- 설정(REGISTRY · 라벨 = Msg): `grid.result_tabs`(on) · `grid.result_tabbar`(auto|always) · `grid.result_tab_evict`(on) · `grid.max_rows`(있음 · 200) · `grid.fetch_mode`(cursor|offset|off) · `grid.auto_fetch`(on) · `grid.fetch_all_max`(0) · `grid.memory_budget_mb`(256) · `grid.result_tabs_max`(8) · `grid.offset_warn`(on) · `grid.script_results_tabs`(off) · `db.fetch_size`(200 · HIDDEN) · `cli.max_rows`(200) · `cli.auto_more`(off).
 - 문구: 상태 `StRowsMore` 갱신(`처음 {0}행 · 더 있음 · {1}s`) · 예산 안내 · 정렬 없는 재질의 경고 · 탭 이름 등 — 전부 `Msg`.
 
 ## 5. 설계 — CLI(`nsql shell`)
