@@ -150,6 +150,7 @@ impl Editors {
         tb.set_indent(self.indent.0, self.indent.1);
         tb.set_tab_stops(self.tab_stops);
         tb.set_scroll_snap(self.scroll_snap);
+        tb.set_line_comment(syntax.line_comments.first().cloned());
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
         tb.set_focus_ring(false);
         tb
@@ -214,8 +215,25 @@ impl Editors {
         if let Some(slot) = self.syntax.get_mut(self.active) {
             *slot = spec.clone();
         }
+        let comment = spec.line_comments.first().cloned();
         self.cur_mut().set_highlighter(Some(spec));
+        self.cur_mut().set_line_comment(comment);
         true
+    }
+
+    /// Goto Anything 항목(id · 제목 · 경로 · 더러움 · 활성) — 탭 순서대로(T-96).
+    pub(crate) fn tab_entries(&self) -> Vec<(u64, String, Option<PathBuf>, bool, bool)> {
+        (0..self.titles.len())
+            .map(|i| {
+                (
+                    self.tab_id(i),
+                    self.titles[i].clone(),
+                    self.paths.get(i).cloned().flatten(),
+                    self.is_dirty(i),
+                    i == self.active,
+                )
+            })
+            .collect()
     }
 
     /// 일반 선택(구간 1개)의 요약 — (걸친 줄 수, 문자 수). 없거나 비었으면 None(상태줄 Sublime식 · 사용자 09-16).

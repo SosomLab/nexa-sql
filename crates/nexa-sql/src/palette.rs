@@ -7,7 +7,7 @@ use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{Control, InputEvent, Invalidations, Key, TextBox, Widget};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 
 pub(crate) enum PaletteAction {
     None,
@@ -27,6 +27,8 @@ pub(crate) struct Palette {
     row_h: i32,
     scale: f32,
     last_query: String,
+    /// `:` 로 시작하는 질의 = 줄 이동 모드(Goto Anything · T-96) — 숫자가 있으면 그 줄.
+    goto: Option<Option<usize>>,
 }
 
 const MAX_ROWS: usize = 12;
@@ -43,6 +45,7 @@ impl Palette {
             row_h: 26,
             scale: 1.0,
             last_query: String::new(),
+            goto: None,
         }
     }
 
@@ -105,6 +108,14 @@ impl Palette {
             return;
         }
         self.last_query = q.clone();
+        // `:123` = 줄 이동(항목 필터 대신 안내 한 줄).
+        if let Some(rest) = q.trim().strip_prefix(':') {
+            self.goto = Some(rest.trim().parse::<usize>().ok().filter(|n| *n > 0));
+            self.matches.clear();
+            self.sel = 0;
+            return;
+        }
+        self.goto = None;
         let mut scored: Vec<(i32, usize)> = self
             .cmds
             .iter()
@@ -130,6 +141,12 @@ impl Palette {
             InputEvent::Key {
                 key: Key::Enter, ..
             } => {
+                if let Some(g) = self.goto {
+                    return match g {
+                        Some(n) => PaletteAction::Pick(format!("goto.line:{n}")),
+                        None => PaletteAction::None,
+                    };
+                }
                 return match self.matches.get(self.sel) {
                     Some(&i) => PaletteAction::Pick(self.cmds[i].0.clone()),
                     None => PaletteAction::Close,
@@ -178,6 +195,18 @@ impl Palette {
         let rr = self.rows_rect();
         let pad = (8.0 * self.scale) as i32;
         let th_px = dc.text_height();
+        if let Some(g) = self.goto {
+            let (text, color) = match g {
+                Some(n) => (tf(Msg::PalGotoLine, &[&n.to_string()]), th.text),
+                None => (t(Msg::PalGotoLineHint).to_string(), th.text_dim),
+            };
+            let r = Rect::new(rr.x, rr.y, rr.w, self.row_h);
+            if g.is_some() {
+                dc.fill_rect(r, th.sel_bg);
+            }
+            dc.text(r.x + pad, rr.y + (self.row_h - th_px) / 2, r, &text, color);
+            return;
+        }
         if self.matches.is_empty() {
             dc.text(
                 rr.x + pad,

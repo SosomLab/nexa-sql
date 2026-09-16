@@ -8,7 +8,7 @@
 
 use nsql_i18n::{t, Msg};
 use nsql_settings::Settings;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 
 /// 명령 하나 — 기본 코드는 Sublime Text 관례(없는 것은 `""`).
@@ -229,6 +229,121 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "ctrl+cmd+g",
         linux: "alt+f3",
     },
+    // ★ Sublime 줄·선택 편집(T-98 · 사용자 09-16). 2단 코드는 `ctrl+k,ctrl+u`처럼 쉼표로.
+    //   macOS의 Control 단독은 `control+…`(⌘와 다른 키 · 예 ⌃G = 줄 이동).
+    Command {
+        id: "edit.duplicate_line",
+        label: Msg::MnDuplicateLine,
+        win: "ctrl+shift+d",
+        mac: "cmd+shift+d",
+        linux: "ctrl+shift+d",
+    },
+    Command {
+        id: "edit.delete_line",
+        label: Msg::MnDeleteLine,
+        win: "ctrl+shift+k",
+        mac: "control+shift+k",
+        linux: "ctrl+shift+k",
+    },
+    Command {
+        id: "edit.join_lines",
+        label: Msg::MnJoinLines,
+        win: "ctrl+j",
+        mac: "cmd+j",
+        linux: "ctrl+j",
+    },
+    Command {
+        id: "edit.swap_line_up",
+        label: Msg::MnSwapLineUp,
+        win: "ctrl+shift+up",
+        mac: "ctrl+cmd+up",
+        linux: "ctrl+shift+up",
+    },
+    Command {
+        id: "edit.swap_line_down",
+        label: Msg::MnSwapLineDown,
+        win: "ctrl+shift+down",
+        mac: "ctrl+cmd+down",
+        linux: "ctrl+shift+down",
+    },
+    Command {
+        id: "edit.toggle_comment",
+        label: Msg::MnToggleComment,
+        win: "ctrl+/",
+        mac: "cmd+/",
+        linux: "ctrl+/",
+    },
+    Command {
+        id: "edit.indent",
+        label: Msg::MnIndent,
+        win: "ctrl+]",
+        mac: "cmd+]",
+        linux: "ctrl+]",
+    },
+    Command {
+        id: "edit.unindent",
+        label: Msg::MnUnindent,
+        win: "ctrl+[|shift+tab",
+        mac: "cmd+[|shift+tab",
+        linux: "ctrl+[|shift+tab",
+    },
+    Command {
+        id: "edit.select_line",
+        label: Msg::MnSelectLine,
+        win: "ctrl+l",
+        mac: "cmd+l",
+        linux: "ctrl+l",
+    },
+    Command {
+        id: "edit.split_lines",
+        label: Msg::MnSplitLines,
+        win: "ctrl+shift+l",
+        mac: "cmd+shift+l",
+        linux: "ctrl+shift+l",
+    },
+    Command {
+        id: "edit.add_caret_up",
+        label: Msg::MnAddCaretUp,
+        win: "ctrl+alt+up",
+        mac: "control+shift+up",
+        linux: "ctrl+alt+up",
+    },
+    Command {
+        id: "edit.add_caret_down",
+        label: Msg::MnAddCaretDown,
+        win: "ctrl+alt+down",
+        mac: "control+shift+down",
+        linux: "ctrl+alt+down",
+    },
+    Command {
+        id: "edit.upper_case",
+        label: Msg::MnUpperCase,
+        win: "ctrl+k,ctrl+u",
+        mac: "cmd+k,cmd+u",
+        linux: "ctrl+k,ctrl+u",
+    },
+    Command {
+        id: "edit.lower_case",
+        label: Msg::MnLowerCase,
+        win: "ctrl+k,ctrl+l",
+        mac: "cmd+k,cmd+l",
+        linux: "ctrl+k,ctrl+l",
+    },
+    Command {
+        id: "edit.goto_line",
+        label: Msg::MnGotoLine,
+        win: "ctrl+g",
+        mac: "control+g",
+        linux: "ctrl+g",
+    },
+    // Goto Anything(탭 검색 · 최근 파일 · `:줄` · T-96).
+    Command {
+        id: "view.goto_anything",
+        label: Msg::MnGotoAnything,
+        win: "ctrl+p",
+        mac: "cmd+p",
+        linux: "ctrl+p",
+    },
     Command {
         id: "edit.prefs",
         label: Msg::MnPreferences,
@@ -416,18 +531,21 @@ impl Chord {
         let (mods, key) = toks.split_at(toks.len().saturating_sub(1));
         let mut saw_ctrl = false;
         let mut saw_cmd = false;
+        let mut saw_control = false;
         for m in mods {
             match m.to_ascii_lowercase().as_str() {
-                "ctrl" | "control" => saw_ctrl = true,
+                "ctrl" => saw_ctrl = true,
+                // `control` = macOS Control **단독**(⌘ 없이 · 예 ⌃G · 09-16). 다른 OS에선 오지 않는 조합.
+                "control" => saw_control = true,
                 "cmd" | "command" | "super" | "meta" | "primary" | "win" => saw_cmd = true,
                 "shift" => c.shift = true,
                 "alt" | "option" | "opt" => c.alt = true,
                 _ => return None,
             }
         }
-        // `ctrl`만 = 주 조합키(Windows/Linux 코드) · `cmd`와 함께면 macOS Control(⌘와 별개).
+        // `ctrl`만 = 주 조합키(Windows/Linux 코드) · `cmd`와 함께면 macOS Control(⌘와 별개) · `control` = Control 단독.
         c.primary = saw_cmd || saw_ctrl;
-        c.ctrl = saw_cmd && saw_ctrl;
+        c.ctrl = (saw_cmd && saw_ctrl) || saw_control;
         let k = key.first()?.to_ascii_lowercase();
         if k.is_empty() {
             return None;
@@ -481,7 +599,9 @@ impl Chord {
     /// 저장용 문자열(`ctrl+shift+p` · macOS면 `cmd+…`).
     pub(crate) fn code(&self) -> String {
         let mut s = String::new();
-        if self.ctrl {
+        if self.ctrl && !self.primary {
+            s.push_str("control+");
+        } else if self.ctrl {
             s.push_str("ctrl+");
         }
         if self.primary {
@@ -561,7 +681,8 @@ impl Chord {
             primary,
             shift,
             alt,
-            ctrl: ctrl && primary,
+            // macOS Control은 ⌘와 함께(`ctrl+cmd+g`)든 단독(`control+g`)이든 그대로(09-16 · 다른 OS는 늘 false).
+            ctrl,
             key: name,
         })
     }
@@ -571,6 +692,10 @@ impl Chord {
 #[derive(Debug, Default)]
 pub(crate) struct Keymap {
     map: HashMap<Chord, &'static str>,
+    /// 2단 코드(`ctrl+k,ctrl+u` · Sublime의 키 시퀀스) — (첫 조합, 둘째 조합) → 명령.
+    seq: HashMap<(Chord, Chord), &'static str>,
+    /// 2단 코드의 첫 조합들(누르면 다음 키를 기다린다).
+    prefixes: HashSet<Chord>,
     /// 명령별 현재 코드(표시용 · 설정 or 기본).
     codes: HashMap<&'static str, String>,
 }
@@ -591,6 +716,13 @@ impl Keymap {
                 if part.trim().eq_ignore_ascii_case("none") {
                     continue;
                 }
+                if let Some((a, b)) = part.split_once(',') {
+                    if let (Some(a), Some(b)) = (Chord::parse(a), Chord::parse(b)) {
+                        km.prefixes.insert(a.clone());
+                        km.seq.insert((a, b), c.id);
+                    }
+                    continue;
+                }
                 if let Some(ch) = Chord::parse(part) {
                     km.map.insert(ch, c.id);
                 }
@@ -604,6 +736,16 @@ impl Keymap {
         self.map.get(ch).copied()
     }
 
+    /// 이 조합이 2단 코드의 첫 키인가(호스트가 다음 키를 기다린다).
+    pub(crate) fn is_prefix(&self, ch: &Chord) -> bool {
+        self.prefixes.contains(ch)
+    }
+
+    /// 2단 코드 조회.
+    pub(crate) fn lookup_seq(&self, first: &Chord, second: &Chord) -> Option<&'static str> {
+        self.seq.get(&(first.clone(), second.clone())).copied()
+    }
+
     /// 명령의 현재 코드(표시용 · 여러 개면 첫 것).
     pub(crate) fn code_of(&self, id: &str) -> String {
         self.codes.get(id).cloned().unwrap_or_default()
@@ -614,8 +756,15 @@ impl Keymap {
         self.code_of(id)
             .split('|')
             .filter(|p| !p.trim().eq_ignore_ascii_case("none"))
-            .filter_map(Chord::parse)
-            .map(|c| c.display())
+            .filter_map(|p| {
+                // 2단 코드는 `Ctrl+K, Ctrl+U`.
+                let parts: Vec<String> = p
+                    .split(',')
+                    .filter_map(Chord::parse)
+                    .map(|c| c.display())
+                    .collect();
+                (!parts.is_empty() && parts.len() == p.split(',').count()).then(|| parts.join(", "))
+            })
             .collect::<Vec<_>>()
             .join(" / ")
     }
@@ -659,6 +808,33 @@ mod tests {
         assert_eq!(ch("ㅅ", KeyCode::KeyT), "t");
         assert_eq!(ch("T", KeyCode::KeyY), "t", "ASCII는 논리 키 우선");
         assert_eq!(ch("、", KeyCode::Comma), ",");
+    }
+
+    /// 2단 코드(`ctrl+k,ctrl+u`)와 macOS Control 단독(`control+g`) — 09-16.
+    #[test]
+    fn two_key_sequences_and_mac_control_only() {
+        let s = Settings::open(std::path::PathBuf::from(
+            "__keymap_test_nonexistent2__.conf",
+        ));
+        let km = Keymap::from_settings(&s);
+        let (k, u) = if cfg!(target_os = "macos") {
+            ("cmd+k", "cmd+u")
+        } else {
+            ("ctrl+k", "ctrl+u")
+        };
+        let (k, u) = (Chord::parse(k).unwrap(), Chord::parse(u).unwrap());
+        assert!(km.is_prefix(&k));
+        assert_eq!(km.lookup_seq(&k, &u), Some("edit.upper_case"));
+        assert_eq!(km.lookup(&k), None, "첫 키 단독은 명령이 아니다");
+        assert!(km.display_of("edit.upper_case").contains(", "));
+        let g = Chord::parse("control+g").unwrap();
+        assert!(g.ctrl && !g.primary, "Control 단독");
+        assert_eq!(Chord::parse(&g.code()), Some(g.clone()), "코드 왕복");
+        assert_ne!(
+            g,
+            Chord::parse("ctrl+g").unwrap(),
+            "Windows ctrl = 주 조합키와 다르다"
+        );
     }
 
     #[test]

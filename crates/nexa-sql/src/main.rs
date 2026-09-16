@@ -57,8 +57,8 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
-    ComboItem, Control, EditCtxAction, InputEvent, Invalidations, Key as CtlKey, MenuBar, MenuDef,
-    MenuEntry, TextBox, ToolItem, ToolTone, Toolbar, Widget,
+    ComboItem, Control, EditCommand, EditCtxAction, InputEvent, Invalidations, Key as CtlKey,
+    MenuBar, MenuDef, MenuEntry, TextBox, ToolItem, ToolTone, Toolbar, Widget,
 };
 use nexa_dlg::PickerMode;
 use nexa_gfx::{Font, Surface};
@@ -145,6 +145,8 @@ struct App {
     colors_win: ColorsWin,
     /// ★ 단축키 표(사용자 09-15 · Sublime 기본 + `key.*` 설정) · 캡처 창.
     keymap: Keymap,
+    /// 2단 단축키의 첫 조합(`Ctrl+K` 뒤 다음 키 대기 · 09-16).
+    pending_chord: Option<Chord>,
     open_keys: bool,
     keys_win: KeysWin,
     /// 환경 설정 창(T-39 · 사용자 09-15).
@@ -256,10 +258,7 @@ fn resolve_panel_state(
 ) -> ConnState {
     match op {
         Some((n, st)) if n.trim() == name.trim() => st.clone(),
-        _ => results
-            .get(name.trim())
-            .cloned()
-            .unwrap_or(ConnState::Idle),
+        _ => results.get(name.trim()).cloned().unwrap_or(ConnState::Idle),
     }
 }
 
@@ -279,7 +278,10 @@ mod panel_state_tests {
         );
         // 진행 중 작업이 B 자신이면 그것이 우선(Testing).
         let op = ("B".to_string(), ConnState::Testing);
-        assert_eq!(resolve_panel_state(Some(&op), &results, "B"), ConnState::Testing);
+        assert_eq!(
+            resolve_panel_state(Some(&op), &results, "B"),
+            ConnState::Testing
+        );
         // 결과가 없는 프로필은 Idle · 이름 앞뒤 공백 무시.
         assert_eq!(resolve_panel_state(None, &results, "C"), ConnState::Idle);
         assert_eq!(
@@ -550,9 +552,13 @@ impl App {
         self.conn_win.set_note(name, st.clone());
         // 완료 결과는 프로필별로도 남긴다(나중에 Details로 열 때 복원 · 사용자 09-16).
         if !name.trim().is_empty()
-            && !matches!(st, ConnState::Idle | ConnState::Testing | ConnState::Connecting)
+            && !matches!(
+                st,
+                ConnState::Idle | ConnState::Testing | ConnState::Connecting
+            )
         {
-            self.panel_results.insert(name.trim().to_string(), st.clone());
+            self.panel_results
+                .insert(name.trim().to_string(), st.clone());
         }
         self.panel_op = Some((name.to_string(), st));
     }
@@ -770,6 +776,7 @@ impl App {
         let (matches, _) = self.find_matches();
         if matches.is_empty() {
             self.find.set_status(t(Msg::StFindNone));
+            self.ed_mut().set_find_marks(Vec::new());
             self.redraw();
             return;
         }
@@ -802,6 +809,8 @@ impl App {
             Msg::StFindCount,
             &[&(idx + 1).to_string(), &matches.len().to_string()],
         ));
+        // 일치 전부 표시(T-73).
+        self.ed_mut().set_find_marks(matches);
         self.redraw();
     }
 
@@ -866,6 +875,7 @@ impl App {
             FindAction::ReplaceAll => self.find_replace_all(),
             FindAction::Close => {
                 self.find.close();
+                self.ed_mut().set_find_marks(Vec::new());
                 self.layout();
                 self.set_focus(Focus::Editor);
                 self.redraw();
@@ -1883,6 +1893,32 @@ impl App {
                 self.status = tf(Msg::StSelections, &[&n.to_string()]);
                 self.set_focus(Focus::Editor);
             }
+            // ★ Sublime 줄·선택 편집(T-98 · 09-16) — 편집기에 포커스일 때만.
+            "edit.duplicate_line" => self.editor_cmd(EditCommand::DuplicateLines),
+            "edit.delete_line" => self.editor_cmd(EditCommand::DeleteLines),
+            "edit.join_lines" => self.editor_cmd(EditCommand::JoinLines),
+            "edit.swap_line_up" => self.editor_cmd(EditCommand::SwapLinesUp),
+            "edit.swap_line_down" => self.editor_cmd(EditCommand::SwapLinesDown),
+            "edit.toggle_comment" => self.editor_cmd(EditCommand::ToggleComment),
+            "edit.indent" => self.editor_cmd(EditCommand::Indent),
+            "edit.unindent" => self.editor_cmd(EditCommand::Unindent),
+            "edit.select_line" => self.editor_cmd(EditCommand::SelectLines),
+            "edit.split_lines" => self.editor_cmd(EditCommand::SplitIntoLines),
+            "edit.add_caret_up" => self.editor_cmd(EditCommand::AddCaretUp),
+            "edit.add_caret_down" => self.editor_cmd(EditCommand::AddCaretDown),
+            "edit.upper_case" => self.editor_cmd(EditCommand::UpperCase),
+            "edit.lower_case" => self.editor_cmd(EditCommand::LowerCase),
+            // Goto Anything(T-96): 탭 · 최근 파일 · `:줄`.
+            "view.goto_anything" | "tab.find" => self.open_goto_anything(""),
+            "edit.goto_line" => self.open_goto_anything(":"),
+            id if id.starts_with("goto.line:") => {
+                if let Ok(n) = id["goto.line:".len()..].parse::<usize>() {
+                    self.ed_mut().goto_line(n);
+                    self.set_focus(Focus::Editor);
+                }
+            }
+            // 줄끝 변환 메뉴(T-89 잔여) — 상태줄 팝업과 같은 경로.
+            id if id.starts_with("eol.") => self.indent_pick(id),
             "edit.find_next" => self.find_step(true, true),
             "edit.find_prev" => self.find_step(false, true),
             "edit.next_statement" => self.goto_statement(true),
@@ -1951,6 +1987,63 @@ impl App {
         self.redraw();
     }
 
+    /// 편집기 편집 명령 — 편집기 포커스일 때만 · 바뀌면 찾기 표시 갱신 + 상태줄 선택 수.
+    fn editor_cmd(&mut self, cmd: EditCommand) {
+        if self.focus != Focus::Editor {
+            return;
+        }
+        if self.ed_mut().edit_command(cmd) {
+            let n = self.editors.selection_count();
+            if n > 1 {
+                self.status = tf(Msg::StSelections, &[&n.to_string()]);
+            }
+        }
+    }
+
+    /// Goto Anything(T-96 · Sublime Ctrl+P): 열린 탭(제목 · 경로 · `*`) + 최근 파일 · `:숫자` = 줄 이동.
+    fn open_goto_anything(&mut self, prefill: &str) {
+        let mut cmds: Vec<(String, String)> = Vec::new();
+        for (id, title, path, dirty, active) in self.editors.tab_entries() {
+            let mark = if dirty { "*" } else { "" };
+            let where_ = path
+                .as_deref()
+                .map(nexa_fs::path::display)
+                .unwrap_or_else(|| t(Msg::PalUntitled).to_string());
+            let act = if active { "✓ " } else { "" };
+            cmds.push((
+                format!("tab:{id}"),
+                format!("{act}{title}{mark}  —  {where_}"),
+            ));
+        }
+        for (i, p) in self.recent_files().iter().enumerate() {
+            let name = p
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            cmds.push((
+                format!("file.recent:{i}"),
+                format!(
+                    "{}: {name}  {}",
+                    t(Msg::LblFileRecent),
+                    nexa_fs::path::display(p)
+                ),
+            ));
+        }
+        self.palette.set_commands(cmds);
+        self.palette.open(prefill);
+        self.redraw();
+    }
+
+    /// 찾기 패널이 열려 있으면 일치 구간 전부를 편집기에 표시(반투명 · T-73) · 닫혀 있으면 지운다.
+    fn sync_find_marks(&mut self) {
+        let marks = if self.find.is_visible() {
+            self.find_matches().0
+        } else {
+            Vec::new()
+        };
+        self.ed_mut().set_find_marks(marks);
+    }
+
     fn build_menus() -> Vec<MenuDef> {
         Self::build_menus_with(&[], &[])
     }
@@ -2002,6 +2095,28 @@ impl App {
                     item("edit.select_all", Msg::MnSelectAll),
                     item("edit.expand_selection", Msg::MnExpandSelection),
                     item("edit.select_all_occurrences", Msg::MnSelectAllOccurrences),
+                    item("edit.select_line", Msg::MnSelectLine),
+                    item("edit.split_lines", Msg::MnSplitLines),
+                    item("edit.add_caret_up", Msg::MnAddCaretUp),
+                    item("edit.add_caret_down", Msg::MnAddCaretDown),
+                    MenuEntry::Separator,
+                    item("edit.duplicate_line", Msg::MnDuplicateLine),
+                    item("edit.delete_line", Msg::MnDeleteLine),
+                    item("edit.join_lines", Msg::MnJoinLines),
+                    item("edit.swap_line_up", Msg::MnSwapLineUp),
+                    item("edit.swap_line_down", Msg::MnSwapLineDown),
+                    MenuEntry::Separator,
+                    item("edit.toggle_comment", Msg::MnToggleComment),
+                    item("edit.indent", Msg::MnIndent),
+                    item("edit.unindent", Msg::MnUnindent),
+                    item("edit.upper_case", Msg::MnUpperCase),
+                    item("edit.lower_case", Msg::MnLowerCase),
+                    MenuEntry::Separator,
+                    item("edit.goto_line", Msg::MnGotoLine),
+                    MenuEntry::Separator,
+                    item("eol.crlf", Msg::MnEolCrlf),
+                    item("eol.lf", Msg::MnEolLf),
+                    item("eol.cr", Msg::MnEolCr),
                     MenuEntry::Separator,
                     item("edit.prefs", Msg::MnPreferences),
                 ],
@@ -2010,6 +2125,7 @@ impl App {
                 t(Msg::MnView),
                 vec![
                     item("view.palette", Msg::MnCommandPalette),
+                    item("view.goto_anything", Msg::MnGotoAnything),
                     item("view.explorer", Msg::MnExplorer),
                     item("view.log", Msg::MnLogWindow),
                     item("view.on_top", Msg::MnAlwaysOnTop),
@@ -2035,9 +2151,9 @@ impl App {
                 ],
             ),
             // ★ 탭 메뉴(Golden Tabs · 사용자 09-16): 열린 탭 순서대로 · 활성 탭은 ✓ · 고르면 전환.
-            MenuDef::new(
-                t(Msg::MnTabs),
-                tabs.iter()
+            MenuDef::new(t(Msg::MnTabs), {
+                let mut v: Vec<MenuEntry> = tabs
+                    .iter()
                     .map(|(id, title, active)| {
                         let mut ci = ComboItem::new(format!("tab:{id}"), title.clone());
                         if *active {
@@ -2045,8 +2161,12 @@ impl App {
                         }
                         MenuEntry::Item(ci)
                     })
-                    .collect(),
-            ),
+                    .collect();
+                // 탭 찾기(Goto Anything · T-96 추천안 A).
+                v.push(MenuEntry::Separator);
+                v.push(item("tab.find", Msg::MnFindTab));
+                v
+            }),
             MenuDef::new(t(Msg::MnHelp), vec![item("help.about", Msg::MnAbout)]),
         ]
     }
@@ -2195,6 +2315,29 @@ impl App {
         cmds.push(m("run.rollback", Msg::MnRun, Msg::MnRollback));
         cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
         cmds.push(m("conn.disconnect", Msg::MnRun, Msg::MnDisconnect));
+        for (id, msg) in [
+            ("edit.duplicate_line", Msg::MnDuplicateLine),
+            ("edit.delete_line", Msg::MnDeleteLine),
+            ("edit.join_lines", Msg::MnJoinLines),
+            ("edit.swap_line_up", Msg::MnSwapLineUp),
+            ("edit.swap_line_down", Msg::MnSwapLineDown),
+            ("edit.toggle_comment", Msg::MnToggleComment),
+            ("edit.indent", Msg::MnIndent),
+            ("edit.unindent", Msg::MnUnindent),
+            ("edit.select_line", Msg::MnSelectLine),
+            ("edit.split_lines", Msg::MnSplitLines),
+            ("edit.add_caret_up", Msg::MnAddCaretUp),
+            ("edit.add_caret_down", Msg::MnAddCaretDown),
+            ("edit.upper_case", Msg::MnUpperCase),
+            ("edit.lower_case", Msg::MnLowerCase),
+            ("edit.goto_line", Msg::MnGotoLine),
+            ("eol.crlf", Msg::MnEolCrlf),
+            ("eol.lf", Msg::MnEolLf),
+            ("eol.cr", Msg::MnEolCr),
+        ] {
+            cmds.push(m(id, Msg::MnEdit, msg));
+        }
+        cmds.push(m("view.goto_anything", Msg::MnView, Msg::MnGotoAnything));
         cmds.push(m("edit.prefs", Msg::MnEdit, Msg::MnPreferences));
         cmds.push(m("edit.settings_json", Msg::MnEdit, Msg::MnSettingsJson));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
@@ -3100,6 +3243,10 @@ impl App {
     }
 
     fn paint(&mut self) {
+        // 찾기가 열린 동안 본문이 바뀌면 일치 표시도 따라간다(전체 스캔 · 열려 있을 때만 · T-73).
+        if self.find.is_visible() {
+            self.sync_find_marks();
+        }
         let t_frame = Instant::now();
         let mut marks: [u32; 6] = [0; 6];
         let mut mark_i = 0usize;
@@ -4250,8 +4397,29 @@ impl ApplicationHandler<Wake> for App {
                     self.alt,
                     self.ctrl_mac,
                 ) {
-                    let plain_char = !ch.primary && !ch.alt && ch.key.chars().count() == 1;
+                    // 2단 코드의 둘째 키(`Ctrl+K, Ctrl+U` · 09-16) — 없는 조합이면 안내만.
+                    if let Some(first) = self.pending_chord.take() {
+                        match self.keymap.lookup_seq(&first, &ch) {
+                            Some(id) => self.key_command(id, el),
+                            None => {
+                                self.status = tf(
+                                    Msg::StChordUnbound,
+                                    &[&format!("{}, {}", first.display(), ch.display())],
+                                );
+                                self.redraw();
+                            }
+                        }
+                        return;
+                    }
+                    let plain_char =
+                        !ch.primary && !ch.alt && !ch.ctrl && ch.key.chars().count() == 1;
                     if !plain_char {
+                        if self.keymap.is_prefix(&ch) {
+                            self.status = tf(Msg::StChordPending, &[&ch.display()]);
+                            self.pending_chord = Some(ch);
+                            self.redraw();
+                            return;
+                        }
                         if let Some(id) = self.keymap.lookup(&ch) {
                             self.key_command(id, el);
                             return;
@@ -4541,6 +4709,7 @@ fn main() {
         open_colors: false,
         colors_win,
         keymap,
+        pending_chord: None,
         open_keys: false,
         keys_win: KeysWin::new(),
         open_prefs: false,
