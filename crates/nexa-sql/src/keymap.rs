@@ -841,9 +841,15 @@ mod tests {
     /// ⌘T/Ctrl+T = 새 편집기(사용자 09-15 · 36차에 유실 · 09-16 회귀 테스트).
     #[test]
     fn ctrl_t_opens_new_editor_on_every_preset() {
-        let s = Settings::open(std::path::PathBuf::from("__keymap_test_nonexistent3__.conf"));
+        let s = Settings::open(std::path::PathBuf::from(
+            "__keymap_test_nonexistent3__.conf",
+        ));
         let km = Keymap::from_settings(&s);
-        let code = if cfg!(target_os = "macos") { "cmd+t" } else { "ctrl+t" };
+        let code = if cfg!(target_os = "macos") {
+            "cmd+t"
+        } else {
+            "ctrl+t"
+        };
         assert_eq!(km.lookup(&Chord::parse(code).unwrap()), Some("file.new"));
         for p in [Preset::Windows, Preset::Macos, Preset::Linux] {
             let c = COMMANDS.iter().find(|c| c.id == "file.new").unwrap();
