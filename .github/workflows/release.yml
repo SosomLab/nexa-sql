@@ -1,0 +1,268 @@
+# release — 태그 `v*` push → 3-OS 설치본(MSI · pkg+dmg · deb+rpm) + sha256sums.txt → GitHub Release **초안**(T-72 · docs/33 §3).
+#
+# 원칙(DR-27): 설치본만 · 포터블 없음 · 목적별 exe(nexa-sql · nsql) · macOS Universal 2 `.app` + pkg(D-50 CLI 링크) · Windows MSI(D-49).
+# 스크립트가 원장이다 — 이 워크플로는 `packaging/<os>/build-*.sh|ps1`을 부르기만 한다(로컬과 CI가 같은 명령 · 갈라짐 0).
+# 이식 원천: ../nexa-clip/.github/workflows/release.yml(meta 잡 · 매트릭스 · SHA256SUMS · gh release) — 채널을 설치본 하나로 줄이고
+#   포장 단계를 스크립트로 옮겼다. ci.yml은 손대지 않는다(main green 검사는 그대로).
+# ★ nexa-sql은 형제 저장소 ../nexa-ui를 path 의존한다(DR-4) → ci.yml과 같이 두 저장소를 나란히 체크아웃한다.
+#
+# 서명(DR-20 · 자리만): 아래 시크릿이 있을 때만 각 스크립트가 서명/공증한다 — 없으면 unsigned 산출물 + 릴리스 노트 안내.
+#   macOS   MACOS_CERT_P12(base64) · MACOS_CERT_PASSWORD · MACOS_SIGN_IDENTITY · MACOS_INSTALLER_IDENTITY · MACOS_NOTARY_* (notarytool)
+#   Windows WINDOWS_SIGN_PFX(base64) · WINDOWS_SIGN_PFX_PASSWORD
+# 스모크(docs/33 §3 verify): 설치 → `nsql --version` · `nexa-sql --smoke` → 제거 → 잔여 파일 0 — 러너에서 실제 설치한다(Linux rpm은 목록만).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "릴리스 태그(예: v0.1.0) — 없으면 커밋 SHA로 초안 생성"
+        required: false
+        type: string
+
+permissions:
+  contents: write # 릴리스 초안 생성·자산 업로드
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: nexa-sql
+
+jobs:
+  # ── 버전 산정: 태그 → 0.1.0 / 수동 → 0.0.0-dev.<sha>. 태그 ≠ Cargo.toml 버전이면 멈춘다. ──
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          input_tag="${{ inputs.tag }}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="$GITHUB_REF_NAME"
+          elif [ -n "$input_tag" ]; then tag="$input_tag"
+          else tag="v0.0.0-dev.${GITHUB_SHA::7}"; fi
+          version="${tag#v}"
+          case "$version" in *-*) pre=true ;; *) pre=false ;; esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"; echo "version=$version" >> "$GITHUB_OUTPUT"; echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+          echo "릴리스 $tag (버전 $version · prerelease=$pre)"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            cargo_v=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+            [ "$cargo_v" = "$version" ] || { echo "::error::태그 $version ≠ Cargo.toml $cargo_v"; exit 1; }
+          fi
+
+  # ── 3-OS 빌드 + 포장 + 설치 스모크 ──
+  package:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04 # glibc 2.35 하한 — 배포판 비종속(zig 2.17 링크)은 후속(nexa-clip 방식)
+            slug: linux
+          - os: windows-latest
+            slug: windows
+          - os: macos-latest # Apple Silicon 러너 · x86_64 타깃은 크로스 빌드 → lipo Universal 2
+            slug: macos
+    runs-on: ${{ matrix.os }}
+    env:
+      NSQL_VERSION: ${{ needs.meta.outputs.version }}
+      # 서명 시크릿 — 비어 있으면 스크립트가 unsigned로 진행한다.
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+      MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+      WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexa-sql
+          key: release-${{ matrix.slug }}
+
+      # ── Linux: 포장 도구 + 폰트(--smoke가 nexa-font로 한글 폰트를 찾는다 · ci.yml과 같은 세트) ──
+      - name: Linux 도구
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev rpm fonts-noto-cjk fonts-dejavu-core fonts-noto-core
+      - name: Linux deb + rpm
+        if: runner.os == 'Linux'
+        run: |
+          packaging/linux/build-deb.sh
+          packaging/linux/build-rpm.sh
+      - name: Linux 스모크(설치 → nsql --version · nexa-sql --smoke → 제거 → 잔여 0)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          deb=$(ls target/packaging/linux/*.deb)
+          sudo dpkg -i "$deb"
+          nsql --version | tee /dev/stderr | grep -q "^nsql $NSQL_VERSION\$"
+          nexa-sql --smoke
+          test -f /usr/share/applications/nexa-sql.desktop
+          sudo dpkg -r nexa-sql
+          # `! cmd`는 set -e를 타지 않는다 — 부정은 test 안에서.
+          test ! -e /usr/bin/nsql; test ! -e /usr/bin/nexa-sql; test ! -e /usr/share/nexa-sql
+          # rpm은 ubuntu에 설치할 수 없다 — 목록·서명 검사만(rpm 계열 실기는 docs/33 §3 실기표).
+          rpm=$(ls target/packaging/linux/*.rpm)
+          rpm -qpl "$rpm" | grep -q '^/usr/bin/nsql$'
+          rpm -K --nosignature "$rpm"
+
+      # ── macOS: Universal 2 .app → pkg + dmg ──
+      - name: macOS 타깃
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: macOS 서명 키체인(시크릿 있을 때만 · DR-20 자리)
+        if: runner.os == 'macOS' && env.MACOS_SIGN_IDENTITY != ''
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          rm -f /tmp/cert.p12
+      - name: macOS app + pkg + dmg
+        if: runner.os == 'macOS'
+        run: |
+          packaging/macos/build-app.sh
+          packaging/macos/build-pkg.sh
+          packaging/macos/build-dmg.sh
+      - name: macOS 스모크(pkg 설치 → /usr/local/bin/nsql --version · --smoke → uninstall.sh → 잔여 0)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          pkg=$(ls target/packaging/macos/*.pkg)
+          sudo installer -pkg "$pkg" -target / -verbose
+          test -L /usr/local/bin/nsql
+          /usr/local/bin/nsql --version | tee /dev/stderr | grep -q "^nsql $NSQL_VERSION\$"
+          "/Applications/Nexa SQL.app/Contents/MacOS/nexa-sql" --smoke
+          pkgutil --pkg-info com.sosomlab.nexa-sql
+          sudo "/Applications/Nexa SQL.app/Contents/Resources/uninstall.sh"
+          # `! cmd`는 set -e를 타지 않는다 — 부정은 test 안에서 / if로.
+          test ! -e "/Applications/Nexa SQL.app"; test ! -e /usr/local/bin/nsql
+          if pkgutil --pkg-info com.sosomlab.nexa-sql >/dev/null 2>&1; then echo "::error::pkg 영수증이 남았다"; exit 1; fi
+
+      # ── Windows: MSI(WiX v4) ──
+      - name: Windows 서명 인증서(시크릿 있을 때만 · DR-20 자리)
+        if: runner.os == 'Windows' && env.WINDOWS_SIGN_PFX_PASSWORD != ''
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX }}
+        run: |
+          $p = Join-Path $env:RUNNER_TEMP "sign.pfx"
+          [IO.File]::WriteAllBytes($p, [Convert]::FromBase64String($env:PFX_B64))
+          "WINDOWS_SIGN_PFX=$p" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+      - name: Windows MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/windows/build-msi.ps1
+      - name: Windows 스모크(msiexec /qn → nsql --version · --smoke → /x → 잔여 0)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $msi = (Get-ChildItem target\packaging\windows\*.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart /l*v install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 40; throw "msiexec /i 실패 $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles "Nexa SQL"
+          $v = & (Join-Path $dir "nsql.exe") --version
+          if ($v -ne "nsql $env:NSQL_VERSION") { throw "버전 불일치: $v" }
+          & (Join-Path $dir "nexa-sql.exe") --smoke
+          (Get-ItemProperty 'HKLM:\SOFTWARE\SosomLab\Nexa SQL').InstallDir
+          $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x 실패 $($p.ExitCode)" }
+          if (Test-Path $dir) { throw "제거 후 잔여: $dir" }
+
+      - name: 산출물 모으기
+        shell: bash
+        run: |
+          mkdir -p out
+          find target/packaging -maxdepth 2 \( -name '*.msi' -o -name '*.pkg' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} out/ \;
+          ls -lh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.slug }}
+          path: nexa-sql/out/*
+          if-no-files-found: error
+
+  # ── 릴리스 초안(사용자가 GitHub에서 'Publish release'로 공개 · 매니페스트(winget/choco/homebrew)는 후속) ──
+  publish:
+    needs: [meta, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/download-artifact@v4
+        with:
+          path: nexa-sql/staged
+          pattern: dist-*
+          merge-multiple: true
+      - name: sha256sums.txt
+        run: |
+          set -euo pipefail
+          cd staged && sha256sum * > sha256sums.txt && cat sha256sums.txt
+      - name: 릴리스 노트
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          cat > notes.md <<EOF
+          # Nexa SQL $VERSION
+
+          크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI \`nsql\` — 설치본만 배포합니다(포터블 없음 · DR-27).
+
+          | 운영체제 | 파일 | 설치 |
+          | --- | --- | --- |
+          | Windows x64 | \`nexa-sql-$VERSION-windows-x64.msi\` | 더블클릭 또는 \`msiexec /i … /qn\`(조용한 설치 · PATH 추가 옵션 · .sql 연결은 선택) |
+          | macOS (Universal · Apple Silicon/Intel) | \`nexa-sql-$VERSION-macos-universal.pkg\` | 설치기 실행 → \`/Applications/Nexa SQL.app\` + \`/usr/local/bin/nsql\` 링크 |
+          | macOS (drag-to-Applications) | \`nexa-sql-$VERSION-macos-universal.dmg\` | 끌어 놓기 · CLI 링크는 dmg 안 안내문 |
+          | Linux x86_64 (deb) | \`nexa-sql_${VERSION}_amd64.deb\` | \`sudo dpkg -i\` 또는 \`sudo apt install ./…deb\` |
+          | Linux x86_64 (rpm) | \`nexa-sql-$VERSION-1.x86_64.rpm\` | \`sudo dnf install ./…rpm\` |
+
+          받은 파일은 \`sha256sums.txt\`로 확인하세요. 제거: Windows 프로그램 추가/제거 · macOS \`sudo "/Applications/Nexa SQL.app/Contents/Resources/uninstall.sh"\` · Linux \`dpkg -r nexa-sql\`/\`dnf remove nexa-sql\`.
+          사용자 데이터(설정·연결 프로필)는 OS 사용자 폴더에 있으며 제거해도 보존됩니다.
+
+          ## 서명
+
+          코드 서명 키가 투입되지 않은 빌드는 macOS Gatekeeper·Windows SmartScreen이 경고합니다(DR-20 · 별도 요청 시 서명).
+          - macOS: \`xattr -dr com.apple.quarantine "/Applications/Nexa SQL.app"\`
+          - Windows: SmartScreen "추가 정보 → 실행"
+
+          라이선스: PolyForm Noncommercial 1.0.0 — 변경 내역: docs/DEVLOG.md
+          EOF
+      - name: 릴리스 초안 생성/갱신
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          PRE: ${{ needs.meta.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=(--draft --title "Nexa SQL ${TAG#v}" --notes-file notes.md --target "$GITHUB_SHA")
+          [ "$PRE" = "true" ] && args+=(--prerelease)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" staged/* --clobber
+          else
+            gh release create "$TAG" staged/* "${args[@]}"
+          fi
+          echo "초안 생성 — GitHub Releases에서 'Publish release'로 공개한다."

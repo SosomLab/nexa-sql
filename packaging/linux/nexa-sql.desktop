@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Nexa SQL
+GenericName=SQL Client
+GenericName[ko]=SQL 클라이언트
+Comment=Cross-platform lightweight SQL client with CLI (nsql)
+Comment[ko]=크로스플랫폼 경량 SQL 클라이언트 + CLI(nsql)
+Exec=nexa-sql
+Icon=nexa-sql
+Terminal=false
+Categories=Development;Database;
+Keywords=sql;database;oracle;postgresql;sqlserver;sqlite;
+StartupWMClass=nexa-sql

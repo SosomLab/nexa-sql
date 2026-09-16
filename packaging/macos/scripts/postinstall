@@ -1,0 +1,23 @@
+#!/bin/sh
+# postinstall — Nexa SQL.pkg 설치 후 스크립트(D-50 확정 · 사용자 09-16): CLI를 `/usr/local/bin/nsql`에 심볼릭 링크한다.
+#   $2 = 설치 대상 볼륨 경로 · $3 = 대상 볼륨(/) — pkg 스크립트 규약. 번들 안 실행 파일을 가리키는 링크라 사본이 없고,
+#   앱 갱신 시 링크는 그대로 유효하다(Homebrew cask `binary` 관례와 같은 모양).
+#   제거 = packaging/macos/uninstall.sh(번들 Resources에도 동봉).
+set -eu
+APP="${2:-/Applications}/Nexa SQL.app"
+BIN_DIR="/usr/local/bin"
+LINK="$BIN_DIR/nsql"
+TARGET="$APP/Contents/MacOS/nsql"
+
+[ -x "$TARGET" ] || { echo "postinstall: $TARGET 없음 — 링크 생략" >&2; exit 0; }
+# /usr/local/bin이 없는 새 기기(Apple Silicon 초기 상태)도 있다 — 만들어 준다(설치기는 root).
+[ -d "$BIN_DIR" ] || mkdir -p "$BIN_DIR"
+# 이미 다른 것이 있으면(직접 둔 바이너리 등) 덮어쓰지 않는다 — 우리 링크(같은 대상)만 갱신.
+if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
+    echo "postinstall: $LINK 가 링크가 아니라 건너뜀(직접 만든 파일 보존)" >&2; exit 0
+fi
+ln -sfn "$TARGET" "$LINK"
+echo "postinstall: $LINK → $TARGET"
+# 설치 직후 확인 — 실패해도 설치는 성공으로 둔다(격리 표식 등은 사용자 환경 문제).
+"$LINK" --version >/dev/null 2>&1 || echo "postinstall: nsql --version 실행 실패(격리 표식이면 xattr -dr com.apple.quarantine \"$APP\")" >&2
+exit 0

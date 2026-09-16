@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  nexa-sql.wxs — Windows 설치본(MSI · WiX v4 · D-49 확정 09-16 · DR-27 설치본만).
+
+  빌드 = packaging/windows/build-msi.ps1 이 -d 로 넘기는 전처리 변수:
+    Version  = MSI ProductVersion(숫자 3자리 · 사전 릴리스 접미사는 ps1이 뗀다)
+    Staging  = 스테이징 폴더(nexa-sql.exe · nsql.exe · Packages\ · LICENSE.md · THIRD-PARTY-NOTICES.txt · license.rtf)
+    Branding = packaging\branding (nexa-sql.ico)
+    Arch     = x64 | arm64
+
+  설계 의도(docs/33 §2)
+  - 기계 단위(Program Files\Nexa SQL · HKLM) — 기업 배포·GPO·`msiexec /qn` 조용한 설치. 사용자 데이터는 %APPDATA%\nexa-sql(설치기는 손대지 않는다).
+  - 목적별 exe 둘: nexa-sql.exe(GUI) · nsql.exe(CLI). lib\ 는 향후 공유 dll 자리(지금은 빈 폴더 없음).
+  - 기능(Feature): Main(필수) · PathEnv(PATH 추가 · 기본 켬 · `ADDLOCAL`/`REMOVE`로 조정) · SqlAssoc(.sql 연결 · 기본 끔 — GUI 파일 인자 열기가 후속이라 "다음으로 열기" 후보로만).
+  - UpgradeCode 고정 → 같은 코드의 새 버전은 MajorUpgrade로 교체 설치(다운그레이드 차단).
+  - 서명은 ps1의 자리(signtool · 시크릿 있을 때만 · DR-20).
+
+  조용한 설치/제거 검증 절차(build-msi.ps1 주석 참고):
+    msiexec /i nexa-sql-<ver>-windows-x64.msi /qn /l*v install.log
+    "%ProgramFiles%\Nexa SQL\nsql.exe" -\-version
+    msiexec /x nexa-sql-<ver>-windows-x64.msi /qn
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <?ifndef Version ?><?define Version = "0.0.1" ?><?endif?>
+  <?ifndef Staging ?><?define Staging = "..\..\target\packaging\windows\stage" ?><?endif?>
+  <?ifndef Branding ?><?define Branding = "..\branding" ?><?endif?>
+  <?ifndef Arch ?><?define Arch = "x64" ?><?endif?>
+
+  <Package Name="Nexa SQL"
+           Manufacturer="SosomLab"
+           Version="$(var.Version)"
+           UpgradeCode="B404C009-2003-4CD7-B231-113BA00242E2"
+           Language="1033"
+           Codepage="65001"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="Nexa SQL — cross-platform lightweight SQL client + CLI nsql"
+                        Manufacturer="SosomLab" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Nexa SQL is already installed."
+                  AllowSameVersionUpgrades="yes" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- 프로그램 추가/제거 표시 -->
+    <Icon Id="AppIcon.ico" SourceFile="$(var.Branding)\nexa-sql.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/SosomLab/nexa-sql" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/SosomLab/nexa-sql" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <!-- MSI 검색으로 이전 설치 폴더를 이어 쓴다(레지스트리 InstallDir). -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PrevInstallDir" Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="InstallDir" Type="raw" />
+    </Property>
+
+    <!-- 설치 UI: 기능 트리(PATH·.sql 연결 선택) + 라이선스(RTF는 ps1이 LICENSE.md에서 만든다). /qn 에서는 전부 건너뛴다. -->
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.Staging)\license.rtf" />
+    <!-- 배너/대화상자 비트맵(WixUIBannerBmp 493×58 · WixUIDialogBmp 493×312)은 후속 — 없으면 WiX 기본 그림. -->
+
+    <!-- 레이아웃(docs/33 §2): %ProgramFiles%\Nexa SQL\{nexa-sql.exe, nsql.exe, Packages\, LICENSE…} -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Nexa SQL">
+        <Directory Id="PackagesFolder" Name="Packages" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="Nexa SQL" />
+    </StandardDirectory>
+
+    <!-- ── 필수 파일 ── -->
+    <ComponentGroup Id="MainFiles" Directory="INSTALLFOLDER">
+      <Component Id="GuiExe" Guid="8AD254C2-0B57-4824-887D-A01A820D42F7">
+        <File Id="NexaSqlExe" Source="$(var.Staging)\nexa-sql.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuGui" Directory="AppMenuFolder" Name="Nexa SQL" WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppIcon.ico" Advertise="yes" Description="Nexa SQL" />
+        </File>
+      </Component>
+      <Component Id="CliExe" Guid="93B9A1A8-F8CC-4C4D-9ADE-12B6833DB4A3">
+        <File Id="NsqlExe" Source="$(var.Staging)\nsql.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="Docs" Guid="3EA7048D-1375-4387-8636-F9BED6F72FF9">
+        <File Source="$(var.Staging)\LICENSE.md" KeyPath="yes" />
+        <File Source="$(var.Staging)\LICENSE.ko.md" />
+        <File Source="$(var.Staging)\README.md" />
+        <File Source="$(var.Staging)\THIRD-PARTY-NOTICES.txt" />
+      </Component>
+      <Component Id="InstallDirReg" Guid="4804844A-DBA2-4C64-8564-EB587CB9DF27">
+        <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="Version" Type="string" Value="$(var.Version)" />
+        <!-- 시작 메뉴 폴더는 파일 키패스가 없으므로 여기서 지운다. -->
+        <RemoveFolder Id="RemoveAppMenuFolder" Directory="AppMenuFolder" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- 동봉 패키지(Packages\) — 지금은 비어 있어도 폴더는 만든다(런타임 로더 '동봉' 자리 · docs/09). 파일이 생기면 와일드카드로 전부 담긴다. -->
+    <ComponentGroup Id="PackagesFiles" Directory="PackagesFolder">
+      <Component Id="PackagesDir" Guid="55827817-ED90-4DF5-8564-9E7756A59B7B">
+        <CreateFolder />
+        <RemoveFolder Id="RemovePackagesFolder" On="uninstall" />
+      </Component>
+      <Files Include="$(var.Staging)\Packages\**" />
+    </ComponentGroup>
+
+    <!-- ── 선택: PATH 추가(nsql을 어느 콘솔에서나) ── -->
+    <ComponentGroup Id="PathEnvFiles" Directory="INSTALLFOLDER">
+      <Component Id="PathEnv" Guid="2DB6334C-9C33-46E5-9507-E1E279C96AE7">
+        <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="PathAdded" Type="integer" Value="1" KeyPath="yes" />
+        <Environment Id="PathEntry" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" Permanent="no" System="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- ── 선택: .sql 파일 연결(기본 끔) — "다음으로 열기" 후보. 기본 앱 강탈은 하지 않는다(Advertise 없음 · HKCR 직접 쓰기). ── -->
+    <ComponentGroup Id="SqlAssocFiles" Directory="INSTALLFOLDER">
+      <Component Id="SqlAssoc" Guid="6C0F3B1E-1B2A-4E7B-9F0C-7A5E2D1C9B44">
+        <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="SqlAssoc" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryKey Root="HKCR" Key="NexaSQL.sql">
+          <RegistryValue Type="string" Value="SQL Script" />
+          <RegistryValue Key="DefaultIcon" Type="string" Value="[INSTALLFOLDER]nexa-sql.exe,0" />
+          <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]nexa-sql.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+        <RegistryValue Root="HKCR" Key=".sql\OpenWithProgids" Name="NexaSQL.sql" Type="string" Value="" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Nexa SQL" Description="GUI(nexa-sql.exe) and CLI(nsql.exe)" Level="1" AllowAbsent="no" AllowAdvertise="no" Display="expand">
+      <ComponentGroupRef Id="MainFiles" />
+      <ComponentGroupRef Id="PackagesFiles" />
+      <Feature Id="PathEnv" Title="Add to PATH" Description="Adds the install folder to the system PATH so 'nsql' works in any console." Level="1" AllowAdvertise="no">
+        <ComponentGroupRef Id="PathEnvFiles" />
+      </Feature>
+      <Feature Id="SqlAssoc" Title="Associate .sql files" Description="Registers Nexa SQL as an 'Open with' candidate for .sql files." Level="2" AllowAdvertise="no">
+        <ComponentGroupRef Id="SqlAssocFiles" />
+      </Feature>
+    </Feature>
+  </Package>
+</Wix>

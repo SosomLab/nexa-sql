@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- distribution.xml — productbuild 배포 정의 틀(@VERSION@ · @PKG@ 는 build-pkg.sh가 치환).
+     Universal 2 번들이므로 hostArchitectures 둘 다 · macOS 11+ (Info.plist LSMinimumSystemVersion과 같은 값). -->
+<installer-gui-script minSpecVersion="2">
+  <title>Nexa SQL @VERSION@</title>
+  <organization>com.sosomlab</organization>
+  <options customize="never" require-scripts="true" hostArchitectures="x86_64,arm64" rootVolumeOnly="true"/>
+  <allowed-os-versions><os-version min="11.0"/></allowed-os-versions>
+  <license file="LICENSE.md" mime-type="text/plain"/>
+  <welcome file="welcome.txt" mime-type="text/plain"/>
+  <domains enable_localSystem="true"/>
+  <choices-outline>
+    <line choice="default"><line choice="com.sosomlab.nexa-sql"/></line>
+  </choices-outline>
+  <choice id="default"/>
+  <choice id="com.sosomlab.nexa-sql" visible="false" title="Nexa SQL">
+    <pkg-ref id="com.sosomlab.nexa-sql"/>
+  </choice>
+  <pkg-ref id="com.sosomlab.nexa-sql" version="@VERSION@" onConclusion="none">@PKG@</pkg-ref>
+</installer-gui-script>

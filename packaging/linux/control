@@ -1,0 +1,16 @@
+Package: nexa-sql
+Version: @VERSION@
+Section: database
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Sangyong Bae <kiros33@gmail.com>
+Installed-Size: @SIZE@
+Depends: libc6 (>= 2.17)
+Recommends: libx11-6, libxkbcommon0, libwayland-client0, fonts-noto-cjk
+Homepage: https://github.com/SosomLab/nexa-sql
+Description: Cross-platform lightweight SQL client + CLI (nsql)
+ Nexa SQL은 Windows · macOS · Linux에서 같은 화면으로 동작하는 경량 SQL 클라이언트(IDE)와
+ 명령줄 도구 nsql입니다. 전부 Rust로 만든 정적 링크 실행 파일이며 자체 래스터라이저로 그려
+ Qt·WebView·Electron을 쓰지 않습니다. SQLite · Oracle · SQL Server · PostgreSQL 드라이버를 내장하고
+ SQL*Plus식 스크립트(세션 변수·바인드·EXEC)를 GUI와 CLI가 같은 코어로 실행합니다.
+ 사용자 데이터는 ~/.config/nexa-sql 에 둡니다. 라이선스: PolyForm Noncommercial 1.0.0.

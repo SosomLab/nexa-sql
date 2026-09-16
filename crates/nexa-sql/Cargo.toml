@@ -7,6 +7,8 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Nexa SQL — GUI(최소 슬라이스: 접속 · SQL 편집 · 실행 · 결과 그리드 · 상태줄). nexa-ui 위에 그린다"
+# Windows 실행 파일 아이콘·버전 리소스(T-62) — rc.exe/windres가 있을 때만 · 외부 crate 0 · 다른 OS 불변.
+build = "build.rs"
 
 [lints]
 workspace = true
