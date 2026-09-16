@@ -318,6 +318,11 @@ pub struct ResultSet {
     pub rows: Vec<Vec<Value>>,
 }
 
+/// 열린 서버 커서(추가 페치용 · docs/43 §3-2) — 세션당 **1개**. 드라이버가 실행마다 새 번호를 매기므로
+/// 앞 커서가 닫힌 뒤 옛 핸들로 `fetch_next`하면 오류가 난다(호스트는 OFFSET 재질의로 폴백).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct CursorHandle(pub u32);
+
 /// 드라이버 실행 결과.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct ExecResult {
@@ -329,6 +334,9 @@ pub struct ExecResult {
     pub messages: Vec<String>,
     /// 단계별 소요([`Timeline`] · docs/26). 드라이버가 채운 만큼만 — 비면 러너가 전체 시간을 `Execute`로 넣는다.
     pub timing: Timeline,
+    /// **마지막 결과 집합이 페치 상한에서 잘렸고** 드라이버가 서버 커서를 열어 둔 경우만 `Some` —
+    /// 호스트는 [`Session::fetch_next`]로 이어 받는다(docs/43 D-70). 커서를 못 여는 드라이버는 항상 `None`.
+    pub pending: Option<CursorHandle>,
 }
 
 // ────────────────────────────────────────────── 성능 계측(docs/26 — 사용자 09-14 "어디가 느린지 단계별로")
@@ -557,6 +565,25 @@ pub trait Session {
     /// 접속 설명(상태줄).
     fn describe(&self) -> String {
         self.dialect().to_string()
+    }
+    /// 서버 커서 유지가 되는가(docs/43 §3-3). `false`면 호스트가 OFFSET 재질의로 폴백하고 [`ExecResult::pending`]은 늘 `None`.
+    fn cursor_supported(&self) -> bool {
+        false
+    }
+    /// 열린 커서에서 다음 `max`행(0 = 끝까지) — `(결과, 더 있음)`. `더 있음 = false`면 드라이버가 커서를 닫은 뒤다.
+    /// 옛 핸들(닫힘·교체)이면 `Err`.
+    fn fetch_next(&mut self, h: CursorHandle, max: usize) -> Result<(ResultSet, bool), DbError> {
+        let _ = max;
+        Err(DbError {
+            code: None,
+            message: format!("cursor #{} is not open", h.0),
+            position: None,
+        })
+    }
+    /// 커서를 닫는다(이미 닫혔으면 무시). 새 실행·커밋·롤백·접속 해제 때 호스트/드라이버가 부른다.
+    fn close_cursor(&mut self, h: CursorHandle) -> Result<(), DbError> {
+        let _ = h;
+        Ok(())
     }
 }
 

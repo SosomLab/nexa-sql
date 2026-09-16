@@ -10,6 +10,10 @@
 //! - **실행 전 빠른 판정**(`Cmd::Run.preflight`) — UI가 신호등이 초록이 아니라고 알리거나 직전 실행이 접속성 오류였으면,
 //!   쿼리를 드라이버에 넘기기 전에 호스트:포트 TCP 연결을 `probe.timeout` 안에 먼저 본다. 실패면 드라이버의 긴 타임아웃을
 //!   기다리지 않고 바로 오류를 낸다(쿼리는 보내지 않음).
+//!
+//! 추가 페치(T-48a · docs/43 §3): `Cmd::FetchPage`는 러너가 **같은 문장의 서버 커서**를 그 위치에 열어 두었으면 `fetch_next`,
+//! 아니면 종전 OFFSET 재질의(`nsql_io::paging`)로 간다 — 판정·폴백은 [`Runner::fetch_page`] 한 곳. 설정 `grid.fetch_mode`
+//! (cursor|offset|off) · `db.fetch_size` · `db.cursor_idle_secs`는 실행마다 다시 읽어 러너에 넣는다(파일 한 번 · 왕복 대비 무시 가능).
 
 use crate::probe;
 use nsql_core::{DbError, Dialect, Session};
@@ -121,6 +125,16 @@ fn resolve_target(target: &str, default_dialect: Dialect) -> Result<ConnectSpec,
     nsql_drivers::parse_target(target, default_dialect)
 }
 
+/// 페치 설정(docs/43 §4-3)을 러너에 반영 — `grid.fetch_mode`(cursor만 커서 유지) · `db.fetch_size` · `db.cursor_idle_secs`.
+fn apply_fetch_settings(runner: &mut Runner) {
+    let Ok(s) = nsql_settings::Settings::open_default() else {
+        return;
+    };
+    runner.keep_cursor = s.get("grid.fetch_mode").unwrap_or("cursor") == "cursor";
+    runner.fetch_size = s.int("db.fetch_size").max(0) as usize;
+    runner.cursor_idle_secs = s.int("db.cursor_idle_secs").max(0) as u64;
+}
+
 /// 저장된 프로필 이름(상태줄 안내용 · 실패하면 빈 목록).
 pub(crate) fn profile_names() -> Vec<String> {
     Vault::open_default()
@@ -190,6 +204,7 @@ pub(crate) fn spawn(
                     let v = Vault::open_default().map_err(|e| e.to_string())?;
                     v.resolve(name).map_err(|e| e.to_string())
                 }));
+            apply_fetch_settings(&mut runner);
             let mut emit = {
                 let etx = etx.clone();
                 let wake = wake_shared.clone();
@@ -270,15 +285,18 @@ pub(crate) fn spawn(
                     } => {
                         let result = match runner.dialect() {
                             None => Err(t(Msg::ExpNotConnected).to_string()),
-                            Some(d) => {
-                                // ★ 래핑은 limit+1행을 달라고 하고 상한은 limit — 한 행이 더 오면 `more`(09-16: 두 번째
-                                //   페이지부터 more가 늘 false라 400행에서 멈췄다).
-                                let (q, max) = if limit == 0 {
-                                    (sql, 0)
+                            Some(_) => {
+                                if limit == 0 {
+                                    // 전체 조회 = 그리드 **교체**(처음부터) — 열린 커서는 위치가 무의미하므로 닫고 원문을 다시 실행(상한 0).
+                                    runner.close_cursor();
+                                    runner.query_once(&sql, 0).map_err(|e| e.message)
                                 } else {
-                                    (nsql_io::paging::page_sql(d, &sql, offset, limit + 1), limit)
-                                };
-                                runner.query_once(&q, max).map_err(|e| e.message)
+                                    // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
+                                    runner
+                                        .fetch_page(&sql, offset, limit)
+                                        .map(|(rs, more, tl, _)| (rs, more, tl.total()))
+                                        .map_err(|e| e.message)
+                                }
                             }
                         };
                         let _ = ctx_tx.send(ConnOutcome::Page {
@@ -292,17 +310,7 @@ pub(crate) fn spawn(
                     Cmd::Count { key, sql } => {
                         let result = match runner.dialect() {
                             None => Err(t(Msg::ExpNotConnected).to_string()),
-                            Some(d) => runner
-                                .query_once(&nsql_io::paging::count_sql(d, &sql), 0)
-                                .map_err(|e| e.message)
-                                .and_then(|(rs, _, _)| {
-                                    rs.rows
-                                        .first()
-                                        .and_then(|r| r.first())
-                                        .and_then(|v| v.display().trim().parse::<f64>().ok())
-                                        .map(|n| n.max(0.0) as u64)
-                                        .ok_or_else(|| t(Msg::ErrCountParse).to_string())
-                                }),
+                            Some(_) => runner.count(&sql).map(|(n, _)| n).map_err(|e| e.message),
                         };
                         let _ = ctx_tx.send(ConnOutcome::Count { key, result });
                         wake_now();
@@ -320,6 +328,7 @@ pub(crate) fn spawn(
                     }
                     c @ (Cmd::Commit | Cmd::Rollback) => {
                         let commit = matches!(c, Cmd::Commit);
+                        runner.close_cursor(); // 커밋/롤백 = 커서 닫기(docs/43 D-70)
                         let r = match runner.session.as_mut() {
                             Some(s) => {
                                 if commit {
@@ -346,6 +355,7 @@ pub(crate) fn spawn(
                         true
                     }
                     Cmd::Disconnect => {
+                        runner.close_cursor();
                         if let Some(mut s) = runner.session.take() {
                             let _ = s.commit();
                         }
@@ -379,6 +389,7 @@ pub(crate) fn spawn(
                         max_rows,
                     } => {
                         runner.set_max_rows(max_rows);
+                        apply_fetch_settings(&mut runner);
                         // 실행 전 빠른 판정 — 신호등이 초록이 아니거나(UI) 직전 실행이 접속성 오류였으면(워커) 포트를 먼저 본다.
                         let want = preflight.or_else(|| suspect.then(|| Duration::from_secs(2)));
                         if let (Some(timeout), Some((host, port))) = (want, active_ep.as_ref()) {
@@ -432,6 +443,7 @@ pub(crate) fn spawn(
                         true
                     }
                     Cmd::Quit => {
+                        runner.close_cursor();
                         if let Some(s) = runner.session.as_mut() {
                             let _ = s.commit();
                         }

@@ -247,6 +247,10 @@ fn query(s: &mut dyn Session, sql: &str) -> Result<ResultSet, DbError> {
         sql: sql.to_string(),
         params: vec![],
     })?;
+    // 메타 질의는 추가 페치를 안 한다 — 드라이버가 상한에서 커서를 열어 뒀으면 바로 닫는다(핸들 누수 방지 · T-48a).
+    if let Some(h) = r.pending {
+        let _ = s.close_cursor(h);
+    }
     Ok(r.result_sets.into_iter().next().unwrap_or_default())
 }
 

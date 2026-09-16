@@ -272,11 +272,12 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "config",
-        usage: "nsql config list [all] | get <key> | set <key> <value> | reset <key> | export-json | path",
+        usage: "nsql config list [all|perf] | get <key> | set <key> <value> | reset <key> | export-json | path",
         brief: Msg::HlpCmdConfig,
         detail: Msg::HlpCmdConfigDetail,
         args: &[
             ("list [all]", Msg::HlpArgConfigList),
+            ("list perf", Msg::HlpArgConfigListPerf),
             ("get <key>", Msg::HlpArgConfigGet),
             ("set <key> <value>", Msg::HlpArgConfigSet),
             ("reset <key>", Msg::HlpArgConfigReset),
@@ -284,7 +285,26 @@ const CMDS: &[Cmd] = &[
         ],
         opts: &[],
         notes: &[],
-        examples: &["nsql config list", "nsql config set cli.width 160", "nsql config set ui.lang ko", "nsql config get grid.max_rows"],
+        examples: &["nsql config list", "nsql config list perf", "nsql config set perf.mode low", "nsql config set cli.width 160", "nsql config set ui.lang ko", "nsql config get grid.max_rows"],
+    },
+    Cmd {
+        name: "grep",
+        usage: "nsql grep <pattern> [<path>…] [-i] [-w] [-e] [--no-ignore] [-j <n>] [--max-file-kb <n>]",
+        brief: Msg::HlpCmdGrep,
+        detail: Msg::HlpCmdGrepDetail,
+        args: &[
+            ("<pattern>", Msg::HlpArgGrepPattern),
+            ("<path>…", Msg::HlpArgGrepPaths),
+            ("-i, --ignore-case", Msg::HlpArgGrepIgnoreCase),
+            ("-w, --word", Msg::HlpArgGrepWord),
+            ("-e, --regex", Msg::HlpArgGrepRegex),
+            ("--no-ignore", Msg::HlpArgGrepNoIgnore),
+            ("-j, --threads <n>", Msg::HlpArgGrepThreads),
+            ("--max-file-kb <n>", Msg::HlpArgGrepMaxFileKb),
+        ],
+        opts: &[],
+        notes: &[],
+        examples: &["nsql grep SELECT", "nsql grep -i -w emp scripts/ ../Oracle", "nsql grep -e 'sp_\\w+_create' --no-ignore ."],
     },
 ];
 
@@ -406,6 +426,17 @@ fn detail(c: &Cmd) -> String {
         for line in t(Msg::HlpShellCommandList).split('\n') {
             o.push_str(&format!("  {line}\n"));
         }
+        // T-48d 추가 페치(\more · \all · \count · \pager) + set max_rows(기본값은 설정 cli.max_rows).
+        for line in t(Msg::CliShellSetMaxRows).split('\n') {
+            o.push_str(&format!("  {line}\n"));
+        }
+        for line in t(Msg::HlpShellFetchList).split('\n') {
+            o.push_str(&format!("  {line}\n"));
+        }
+        o.push_str(&format!(
+            "  {}\n",
+            default_note("cli.max_rows").trim_start_matches(". ")
+        ));
         // T-52 다른 CLI 별칭(psql · sqlcmd · sqlite3) + SPOOL(T-9).
         o.push_str(&format!("\n{}\n", t(Msg::HlpShellAliases)));
         for line in t(Msg::HlpShellAliasList).split('\n') {

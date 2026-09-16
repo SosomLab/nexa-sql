@@ -6,10 +6,14 @@
 //! - REF CURSOR는 `OracleType::RefCursor`로 바인드 → 실행 후 `bind_value::<RefCursor>` → 핸들 보관 → `PRINT`가 1회 소비.
 //! - `SET SERVEROUTPUT ON`이면 실행마다 `DBMS_OUTPUT.GET_LINE`을 폴링해 메시지로.
 //! - Instant Client는 ODPI-C가 런타임 dlopen — 없으면 접속 시 오류 메시지에 그대로 드러난다(경로 안내는 CLI 몫).
+//! - ★ 커서 유지(T-48a · docs/43 §3-3): 조회는 `Statement::into_result_set`으로 **소유 ResultSet**(문장 수명 = 커서 수명)을 만들고,
+//!   상한(`max_rows`)까지 읽은 뒤 한 행을 **엿봐**(peek) 남은 행이 있으면 세션 구조체에 보관한다([`OpenCursor`]) →
+//!   [`Session::fetch_next`]가 이어 읽는다. 세션당 1개(새 커서가 앞 커서를 대체) · 커밋/롤백/접속 해제가 닫는다.
+//!   `fetch_array_size` = 세션 옵션 `fetch_size`(설정 `db.fetch_size` · SQL*Plus ARRAYSIZE 격).
 
 use nsql_core::{
-    Column, CursorId, DbError, Dialect, Direction, ExecRequest, ExecResult, ResultSet, Session,
-    Stage, Value, VarType,
+    Column, CursorHandle, CursorId, DbError, Dialect, Direction, ExecRequest, ExecResult,
+    ResultSet, Session, Stage, Value, VarType,
 };
 use nsql_script::ConnectSpec;
 use oracle::sql_type::{OracleType, RefCursor};
@@ -42,6 +46,18 @@ fn with_client_hint(mut e: DbError) -> DbError {
     e
 }
 
+/// 한 묶음 = (읽은 행, 엿본 행 — `Some`이면 뒤에 더 있다).
+type Batch = (Vec<Vec<Value>>, Option<Vec<Value>>);
+
+/// 열린 서버 커서(추가 페치용 · docs/43 D-70) — 소유 ResultSet이 문장 핸들을 쥔다(drop = 커서 닫힘).
+struct OpenCursor {
+    id: u32,
+    rs: oracle::ResultSet<'static, Row>,
+    columns: Vec<Column>,
+    /// 상한에서 엿본 다음 행(다음 `fetch_next`의 첫 행).
+    carry: Option<Vec<Value>>,
+}
+
 #[allow(missing_debug_implementations)]
 pub struct OracleSession {
     conn: Connection,
@@ -49,8 +65,11 @@ pub struct OracleSession {
     next_cursor: u64,
     serveroutput: bool,
     fetch_size: u32,
-    /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows` · 호스트가 상한+1을 넘긴다).
+    /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`). 커서 지원 세션이므로 호스트는 상한을 그대로 넘긴다(초과 판정은 peek).
     max_rows: usize,
+    /// 추가 페치 커서(세션당 1개).
+    open: Option<OpenCursor>,
+    next_open: u32,
     description: String,
 }
 
@@ -103,6 +122,8 @@ impl OracleSession {
             serveroutput: false,
             fetch_size: 500,
             max_rows: 0,
+            open: None,
+            next_open: 1,
             description: spec.redacted(),
         })
     }
@@ -195,6 +216,31 @@ impl OracleSession {
             },
         }
     }
+
+    /// 소유 ResultSet에서 `max`행(0 = 끝까지)을 읽고 상한에 닿았으면 한 행을 더 엿본다 — (읽은 행, 엿본 행).
+    fn read_batch(
+        rs: &mut oracle::ResultSet<'static, Row>,
+        max: usize,
+        carry: Option<Vec<Value>>,
+    ) -> Result<Batch, DbError> {
+        let mut out: Vec<Vec<Value>> = Vec::new();
+        if let Some(c) = carry {
+            out.push(c);
+        }
+        loop {
+            if max > 0 && out.len() >= max {
+                let peek = match rs.next() {
+                    Some(r) => Some(Self::row_to_values(&r.map_err(|e| err(&e))?)?),
+                    None => None,
+                };
+                return Ok((out, peek));
+            }
+            match rs.next() {
+                Some(r) => out.push(Self::row_to_values(&r.map_err(|e| err(&e))?)?),
+                None => return Ok((out, None)),
+            }
+        }
+    }
 }
 
 impl Session for OracleSession {
@@ -277,24 +323,32 @@ impl Session for OracleSession {
         if stmt.is_query() {
             // Execute = 첫 응답까지(옵티마이저·실행) · Fetch = 배열 페치 + 디코딩(행 수 기록).
             let t0 = std::time::Instant::now();
-            let rs = stmt.query(&[]).map_err(|e| err(&e))?;
+            let mut rs = stmt.into_result_set::<Row>(&[]).map_err(|e| err(&e))?;
             let columns = Self::columns(rs.column_info());
             result.timing.push(Stage::Execute, t0.elapsed());
             let t1 = std::time::Instant::now();
-            let mut rows = Vec::new();
-            for row in rs {
-                if self.max_rows > 0 && rows.len() >= self.max_rows {
-                    break; // 페치 상한(호스트가 초과분 1행으로 "더 있음"을 판정)
-                }
-                let row = row.map_err(|e| err(&e))?;
-                rows.push(Self::row_to_values(&row)?);
-            }
-            let rs_out = ResultSet { columns, rows };
+            let (rows, peek) = Self::read_batch(&mut rs, self.max_rows, None)?;
+            let rs_out = ResultSet {
+                columns: columns.clone(),
+                rows,
+            };
             let span = result.timing.push(Stage::Fetch, t1.elapsed());
             span.rows = Some(rs_out.rows.len() as u64);
             span.bytes = Some(rs_out.approx_bytes());
             span.note = Some(format!("array {}", self.fetch_size));
             result.result_sets.push(rs_out);
+            // 남은 행이 있으면 커서 유지(앞 커서는 대체 = 세션당 1개).
+            if let Some(first) = peek {
+                let id = self.next_open;
+                self.next_open += 1;
+                self.open = Some(OpenCursor {
+                    id,
+                    rs,
+                    columns,
+                    carry: Some(first),
+                });
+                result.pending = Some(CursorHandle(id));
+            }
         } else {
             let t0 = std::time::Instant::now();
             stmt.execute(&[]).map_err(|e| err(&e))?;
@@ -369,11 +423,50 @@ impl Session for OracleSession {
         Ok(ResultSet { columns, rows })
     }
 
+    fn cursor_supported(&self) -> bool {
+        true
+    }
+
+    fn fetch_next(&mut self, h: CursorHandle, max: usize) -> Result<(ResultSet, bool), DbError> {
+        let Some(cur) = self.open.as_mut().filter(|c| c.id == h.0) else {
+            return Err(DbError {
+                code: None,
+                message: format!("cursor #{} is not open", h.0),
+                position: None,
+            });
+        };
+        let r = Self::read_batch(&mut cur.rs, max, cur.carry.take());
+        match r {
+            Ok((rows, peek)) => {
+                let more = peek.is_some();
+                let columns = cur.columns.clone();
+                cur.carry = peek;
+                if !more {
+                    self.open = None; // 끝 = 문장 핸들 해제
+                }
+                Ok((ResultSet { columns, rows }, more))
+            }
+            Err(e) => {
+                self.open = None;
+                Err(e)
+            }
+        }
+    }
+
+    fn close_cursor(&mut self, h: CursorHandle) -> Result<(), DbError> {
+        if self.open.as_ref().is_some_and(|c| c.id == h.0) {
+            self.open = None;
+        }
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), DbError> {
+        self.open = None; // 커밋/롤백 = 커서 닫기(docs/43 · ORA-01002 방지)
         self.conn.commit().map_err(|e| err(&e))
     }
 
     fn rollback(&mut self) -> Result<(), DbError> {
+        self.open = None;
         self.conn.rollback().map_err(|e| err(&e))
     }
 }

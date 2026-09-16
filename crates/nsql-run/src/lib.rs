@@ -11,7 +11,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use nsql_core::{
-    Column, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session, Stage, Timeline, Value,
+    Column, CursorHandle, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session, Stage,
+    Timeline, Value,
 };
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::{
@@ -285,6 +286,28 @@ pub struct Runner {
     pub strict: bool,
     /// 실행 중인 스크립트 폴더 스택 — `@@`·`:r`의 기준(맨 위 = 현재 스크립트).
     script_dirs: Vec<PathBuf>,
+    /// ★ 서버 커서(T-48a · docs/43 D-70) — 마지막 실행이 상한에서 잘렸고 드라이버가 커서를 열어 둔 경우. 세션당 1개.
+    /// 스크립트 문장 실행([`Runner::execute`]) · 접속/해제 · 호스트의 [`Runner::close_cursor`]가 닫는다.
+    cursor: Option<OpenCursor>,
+    /// 커서 유지 여부(설정 `grid.fetch_mode` = cursor). `false`면 실행 뒤 열린 커서를 곧바로 닫는다(OFFSET 재질의 폴백 · 종전 동작).
+    pub keep_cursor: bool,
+    /// 왕복당 행수(설정 `db.fetch_size` · Oracle ARRAYSIZE 격 · 0 = 드라이버 기본) — 접속 시 세션 옵션 `fetch_size`로.
+    pub fetch_size: usize,
+    /// 유휴 커서 상한(설정 `db.cursor_idle_secs` · 0 = 없음) — 마지막 페치 뒤 이 시간이 지나면 닫고 OFFSET 폴백.
+    pub cursor_idle_secs: u64,
+}
+
+/// 러너가 아는 열린 커서의 상태(핸들 · 원문 · 지금까지 넘긴 행 수).
+#[derive(Debug)]
+struct OpenCursor {
+    handle: CursorHandle,
+    /// 잘린 결과를 만든 문장 원문(호스트의 "더 가져오기"가 같은 문장인지 확인).
+    sql: String,
+    /// 호스트에 넘긴 행 수(= 다음 페치의 OFFSET) — `fetch_page`가 커서/OFFSET 중 어느 쪽을 쓸지 판정.
+    served: usize,
+    /// 자동 커밋을 커서가 닫힐 때까지 미뤘는가(PG WITHOUT HOLD 커서 보호 · 닫을 때 커밋).
+    deferred_commit: bool,
+    last_used: Instant,
 }
 
 impl Runner {
@@ -300,7 +323,25 @@ impl Runner {
             spool: None,
             strict: false,
             script_dirs: Vec::new(),
+            cursor: None,
+            keep_cursor: true,
+            fetch_size: 0,
+            cursor_idle_secs: 0,
         }
+    }
+
+    /// 왕복당 행수(체이닝 · 설정 `db.fetch_size`).
+    #[must_use]
+    pub fn with_fetch_size(mut self, n: usize) -> Self {
+        self.fetch_size = n;
+        self
+    }
+
+    /// 커서 유지 여부(체이닝 · 설정 `grid.fetch_mode`).
+    #[must_use]
+    pub fn with_keep_cursor(mut self, on: bool) -> Self {
+        self.keep_cursor = on;
+        self
     }
 
     /// `SPOOL` 포트 장착(체이닝) — CLI Printer가 같은 핸들에 출력을 복사한다.
@@ -331,10 +372,11 @@ impl Runner {
         self
     }
 
-    /// 페치 상한 장착(체이닝 · 0 = 무제한).
+    /// 페치 상한 장착(체이닝 · 0 = 무제한) — 세션이 이미 있으면 바로 알린다.
     #[must_use]
     pub fn with_max_rows(mut self, n: usize) -> Self {
         self.max_rows = n;
+        self.push_max_rows();
         self
     }
 
@@ -352,7 +394,8 @@ impl Runner {
         self.session.as_ref().map(|s| s.dialect())
     }
 
-    /// 단문 1회 — 이벤트 없이 결과만(추가 페치 · 전체 조회 · COUNT · docs/43 §3). `max_rows`(0 = 무제한)는 이 호출에만.
+    /// 단문 1회 — 이벤트 없이 결과만(OFFSET 재질의 · 전체 조회 · COUNT · docs/43 §3). `max_rows`(0 = 무제한)는 이 호출에만.
+    /// **곁가지 실행**: 드라이버 상한 0으로 실행해 서버 커서를 열지 않고(열린 커서를 건드리지 않음) 초과분은 여기서 자른다.
     /// 세션이 없으면 `Err`(호출자가 먼저 확인한다). 반환 = (첫 결과 집합 · 더 있음 · 소요).
     pub fn query_once(
         &mut self,
@@ -360,7 +403,7 @@ impl Runner {
         max_rows: usize,
     ) -> Result<(ResultSet, bool, Duration), DbError> {
         let prev = self.max_rows;
-        self.set_max_rows(max_rows);
+        self.set_max_rows(0);
         let r = match self.session.as_mut() {
             Some(s) => {
                 let t = Instant::now();
@@ -369,6 +412,9 @@ impl Runner {
                     params: Vec::new(),
                 })
                 .map(|res| {
+                    if let Some(h) = res.pending {
+                        let _ = s.close_cursor(h);
+                    }
                     let rs = res.result_sets.into_iter().next().unwrap_or_default();
                     let (rs, more) = trim_rows(rs, max_rows);
                     (rs, more, t.elapsed())
@@ -382,6 +428,193 @@ impl Runner {
         };
         self.set_max_rows(prev);
         r
+    }
+
+    // ────────────────────────────────────────────── 추가 페치(T-48a · docs/43 §3-1)
+
+    /// 열린 커서의 (핸들, 지금까지 넘긴 행 수).
+    #[must_use]
+    pub fn cursor(&self) -> Option<(CursorHandle, usize)> {
+        self.cursor.as_ref().map(|c| (c.handle, c.served))
+    }
+
+    /// 호스트의 "더 가져오기"가 열린 커서로 이어질 수 있는가 — 같은 문장이고 `offset`이 커서 위치와 같을 때.
+    /// 유휴 상한(`cursor_idle_secs`)을 넘겼으면 닫고 `false`(호스트는 OFFSET 폴백).
+    pub fn cursor_matches(&mut self, sql: &str, offset: usize) -> bool {
+        let Some(c) = self.cursor.as_ref() else {
+            return false;
+        };
+        if self.cursor_idle_secs > 0 && c.last_used.elapsed().as_secs() >= self.cursor_idle_secs {
+            self.close_cursor();
+            return false;
+        }
+        c.served == offset && same_sql(&c.sql, sql)
+    }
+
+    /// 열린 커서를 닫는다(없으면 무시). 미뤄 둔 자동 커밋이 있으면 여기서 커밋한다.
+    pub fn close_cursor(&mut self) {
+        if let Some(c) = self.cursor.take() {
+            if let Some(s) = self.session.as_mut() {
+                let _ = s.close_cursor(c.handle);
+                if c.deferred_commit {
+                    let _ = s.commit();
+                }
+            }
+        }
+    }
+
+    /// 커서에서 다음 `n`행(0 = 끝까지) — `(결과, 더 있음, Navigate 스팬)`. 옛 핸들·닫힌 커서면 `Err`(호스트는 OFFSET 폴백).
+    /// 끝에 닿으면 커서를 닫는다(미룬 자동 커밋 포함).
+    pub fn fetch_next(
+        &mut self,
+        h: CursorHandle,
+        n: usize,
+    ) -> Result<(ResultSet, bool, Timeline), DbError> {
+        if !self.cursor.as_ref().is_some_and(|c| c.handle == h) {
+            return Err(msg_err(format!("cursor #{} is not open", h.0)));
+        }
+        let Some(session) = self.session.as_mut() else {
+            self.cursor = None;
+            return Err(msg_err(t(Msg::NoSession)));
+        };
+        let t0 = Instant::now();
+        let r = session.fetch_next(h, n);
+        let mut timeline = Timeline::new();
+        match r {
+            Ok((rs, more)) => {
+                let span = timeline.push(Stage::Navigate, t0.elapsed());
+                span.rows = Some(rs.rows.len() as u64);
+                span.bytes = Some(rs.approx_bytes());
+                span.note = Some(format!("cursor #{}", h.0));
+                if let Some(c) = self.cursor.as_mut() {
+                    c.served += rs.rows.len();
+                    c.last_used = Instant::now();
+                }
+                if !more {
+                    // 드라이버가 이미 닫았다 — 러너 상태·미룬 커밋만 정리.
+                    if let Some(c) = self.cursor.take() {
+                        if c.deferred_commit {
+                            let _ = session.commit();
+                        }
+                    }
+                }
+                Ok((rs, more, timeline))
+            }
+            Err(e) => {
+                self.close_cursor();
+                Err(e)
+            }
+        }
+    }
+
+    /// 커서에서 끝까지 — 배치(`fetch_size`·최소 2000)로 읽어 이어 붙인다. `budget_bytes`(0 = 무제한)에 닿거나 `progress`
+    /// (행 수, 바이트 → 계속?)가 `false`를 돌려주면 멈춘다. 반환 = (모은 행, 아직 남았는가(예산/취소로 멈춤), Navigate 스팬).
+    pub fn fetch_all(
+        &mut self,
+        h: CursorHandle,
+        budget_bytes: u64,
+        progress: &mut dyn FnMut(u64, u64) -> bool,
+    ) -> Result<(ResultSet, bool, Timeline), DbError> {
+        let batch = self.fetch_size.max(2000);
+        let mut acc = ResultSet::default();
+        let mut bytes: u64 = 0;
+        let mut timeline = Timeline::new();
+        let t0 = Instant::now();
+        let mut stopped = false;
+        loop {
+            let (mut rs, more, _) = self.fetch_next(h, batch)?;
+            bytes += rs.approx_bytes();
+            if acc.columns.is_empty() {
+                acc.columns = std::mem::take(&mut rs.columns);
+            }
+            acc.rows.append(&mut rs.rows);
+            if !more {
+                break;
+            }
+            let over_budget = budget_bytes > 0 && bytes >= budget_bytes;
+            if over_budget || !progress(acc.rows.len() as u64, bytes) {
+                stopped = true;
+                break;
+            }
+        }
+        let span = timeline.push(Stage::Navigate, t0.elapsed());
+        span.rows = Some(acc.rows.len() as u64);
+        span.bytes = Some(bytes);
+        span.note = Some(
+            if stopped {
+                "fetch all (stopped)"
+            } else {
+                "fetch all"
+            }
+            .into(),
+        );
+        Ok((acc, stopped, timeline))
+    }
+
+    /// `SELECT COUNT(*) FROM (질의) x` — 같은 세션에서 곁가지로(열린 커서는 그대로). 반환 = (건수, Navigate 스팬).
+    pub fn count(&mut self, sql: &str) -> Result<(u64, Timeline), DbError> {
+        let Some(d) = self.dialect() else {
+            return Err(msg_err(t(Msg::NoSession)));
+        };
+        let t0 = Instant::now();
+        let (rs, _, _) = self.query_once(&nsql_io::paging::count_sql(d, sql), 0)?;
+        let n = rs
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|v| v.display().trim().parse::<f64>().ok())
+            .map(|n| n.max(0.0) as u64)
+            .ok_or_else(|| msg_err(t(Msg::ErrCountParse)))?;
+        let mut timeline = Timeline::new();
+        let span = timeline.push(Stage::Navigate, t0.elapsed());
+        span.rows = Some(n);
+        span.note = Some("count".into());
+        Ok((n, timeline))
+    }
+
+    /// OFFSET 재질의(docs/43 §3-4 · 커서가 없을 때) — `offset`행을 건너뛰고 `limit`행(0 = 남은 전부). 반환 = (결과, 더 있음, Navigate 스팬).
+    pub fn fetch_offset(
+        &mut self,
+        sql: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(ResultSet, bool, Timeline), DbError> {
+        let Some(d) = self.dialect() else {
+            return Err(msg_err(t(Msg::NoSession)));
+        };
+        // 래핑은 limit+1행을 달라고 하고 상한은 limit — 한 행이 더 오면 `more`.
+        let (q, max) = if limit == 0 {
+            (nsql_io::paging::page_sql(d, sql, offset, 0), 0)
+        } else {
+            (nsql_io::paging::page_sql(d, sql, offset, limit + 1), limit)
+        };
+        let t0 = Instant::now();
+        let (rs, more, _) = self.query_once(&q, max)?;
+        let mut timeline = Timeline::new();
+        let span = timeline.push(Stage::Navigate, t0.elapsed());
+        span.rows = Some(rs.rows.len() as u64);
+        span.bytes = Some(rs.approx_bytes());
+        span.note = Some(format!("offset {offset}"));
+        Ok((rs, more, timeline))
+    }
+
+    /// 다음 세그먼트 — 같은 문장의 커서가 `offset` 위치에 열려 있으면 커서로, 아니면 OFFSET 재질의로(호스트 공용 · GUI 워커 · CLI `\more`).
+    /// 커서 경로가 실패하면(옛 핸들 · 유휴 초과) 조용히 OFFSET으로 간다. 반환 = (결과, 더 있음, Navigate 스팬, 커서를 썼는가).
+    pub fn fetch_page(
+        &mut self,
+        sql: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(ResultSet, bool, Timeline, bool), DbError> {
+        if limit > 0 && self.cursor_matches(sql, offset) {
+            if let Some((h, _)) = self.cursor() {
+                if let Ok((rs, more, tl)) = self.fetch_next(h, limit) {
+                    return Ok((rs, more, tl, true));
+                }
+            }
+        }
+        self.fetch_offset(sql, offset, limit)
+            .map(|(rs, more, tl)| (rs, more, tl, false))
     }
 
     /// 프로필 해석기 장착(체이닝).
@@ -445,6 +678,7 @@ impl Runner {
             },
             _ => spec,
         };
+        self.close_cursor();
         if let Some(s) = self.session.as_mut() {
             let _ = s.commit();
         }
@@ -732,6 +966,7 @@ impl Runner {
             }
             Action::Connect(spec) => self.connect(&spec, emit),
             Action::Disconnect => {
+                self.close_cursor();
                 if let Some(mut s) = self.session.take() {
                     let _ = s.commit();
                 }
@@ -909,6 +1144,9 @@ impl Runner {
         expect_out: bool,
         emit: &mut dyn FnMut(RunEvent),
     ) -> bool {
+        // 새 실행 = 앞 커서 닫기(docs/43 D-70 · 세션당 1개).
+        self.close_cursor();
+        let keep_cursor = self.keep_cursor;
         let Some(session) = self.session.as_mut() else {
             emit(RunEvent::Error {
                 index,
@@ -921,7 +1159,8 @@ impl Runner {
         let mode = prepared.mode;
         let line_offset = prepared.line_offset;
         let started = Instant::now();
-        match session.execute(&prepared.into_request()) {
+        let request = prepared.into_request();
+        match session.execute(&request) {
             Ok(mut result) => {
                 let elapsed = started.elapsed();
                 // 드라이버가 단계를 나누지 않았으면 전체를 Execute로(실행+페치 합산이라 note로 밝힌다).
@@ -940,8 +1179,32 @@ impl Runner {
                 }
                 let n_sets = result.result_sets.len();
                 let max_rows = self.max_rows;
-                for rs in result.result_sets.drain(..) {
-                    let (rs, more) = trim_rows(rs, max_rows);
+                // 드라이버가 커서를 열어 뒀으면(마지막 결과 집합이 잘림) 유지 모드일 때만 러너가 맡는다 · 아니면 바로 닫는다.
+                let pending = result.pending.take();
+                let mut kept: Option<OpenCursor> = None;
+                if let Some(h) = pending {
+                    if keep_cursor && n_sets > 0 {
+                        let served = result.result_sets.last().map_or(0, |r| {
+                            if max_rows > 0 {
+                                r.rows.len().min(max_rows)
+                            } else {
+                                r.rows.len()
+                            }
+                        });
+                        kept = Some(OpenCursor {
+                            handle: h,
+                            sql: item.text.clone(),
+                            served,
+                            deferred_commit: false,
+                            last_used: Instant::now(),
+                        });
+                    } else if let Some(s) = self.session.as_mut() {
+                        let _ = s.close_cursor(h);
+                    }
+                }
+                for (i, rs) in result.result_sets.drain(..).enumerate() {
+                    let (rs, trimmed) = trim_rows(rs, max_rows);
+                    let more = trimmed || (i + 1 == n_sets && pending.is_some());
                     emit(RunEvent::ResultSet {
                         index,
                         rs,
@@ -960,12 +1223,19 @@ impl Runner {
                     emit(RunEvent::Print { pairs });
                 }
                 if self.engine.settings.autocommit {
-                    if let Some(s) = self.session.as_mut() {
-                        let t = Instant::now();
-                        let _ = s.commit();
-                        timeline.push(Stage::Commit, t.elapsed());
+                    match kept.as_mut() {
+                        // 커서가 살아 있는 동안은 커밋을 미룬다(PG WITHOUT HOLD 커서 보호 · 닫힐 때 커밋).
+                        Some(c) => c.deferred_commit = true,
+                        None => {
+                            if let Some(s) = self.session.as_mut() {
+                                let t = Instant::now();
+                                let _ = s.commit();
+                                timeline.push(Stage::Commit, t.elapsed());
+                            }
+                        }
                     }
                 }
+                self.cursor = kept;
                 emit(RunEvent::Timing { index, timeline });
                 // ★ 컴파일 결과(사용자 09-15 "객체 생성·수정"): Oracle은 CREATE가 성공해도 INVALID일 수 있다 —
                 // SQL*Plus의 "Warning: … created with compilation errors" + SHOW ERRORS를 한 번에.
@@ -1002,13 +1272,22 @@ impl Runner {
         trim_rows(rs, self.max_rows)
     }
 
-    /// 드라이버에 페치 상한(+1 · 초과 여부 판정용)을 알린다 — 접속 직후 · 상한 변경 시.
+    /// 드라이버에 페치 상한을 알린다 — 접속 직후 · 상한 변경 시. 커서를 못 여는 드라이버에는 **+1**(초과 여부 판정용 · 러너가 자른다),
+    /// 커서 지원 드라이버에는 상한 그대로(드라이버가 한 행을 엿봐 `pending`으로 알린다). 왕복당 행수(`fetch_size`)도 함께.
     fn push_max_rows(&mut self) {
         let n = self.max_rows;
+        let fetch_size = self.fetch_size;
         let sink = self.message_sink.clone();
         if let Some(s) = self.session.as_mut() {
-            let v = if n == 0 { 0 } else { n + 1 };
+            let v = if n == 0 || s.cursor_supported() {
+                n
+            } else {
+                n + 1
+            };
             let _ = s.set_option("max_rows", &v.to_string());
+            if fetch_size > 0 {
+                let _ = s.set_option("fetch_size", &fetch_size.to_string());
+            }
             s.set_message_sink(sink);
         }
     }
@@ -1212,6 +1491,12 @@ fn text_result_set(cols: &[&str], rows: Vec<Vec<String>>) -> ResultSet {
             .map(|r| r.into_iter().map(Value::Str).collect())
             .collect(),
     }
+}
+
+/// 같은 문장인가 — 앞뒤 공백·끝 `;`만 무시(호스트가 보관한 원문과 러너의 `Item.text` 비교).
+fn same_sql(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim().trim_end_matches(';').trim_end().to_string();
+    norm(a) == norm(b)
 }
 
 fn msg_err(m: impl Into<String>) -> DbError {
@@ -1567,5 +1852,144 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rs.rows[0][0], Value::Int(5));
+    }
+
+    fn seeded(n: usize) -> Runner {
+        let mut r = runner();
+        let (errs, _) = collect(
+            &mut r,
+            &format!(
+                "CREATE TABLE t(id INTEGER);\nWITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < {n}) INSERT INTO t SELECT x FROM c;\n"
+            ),
+        );
+        assert_eq!(errs, 0);
+        r
+    }
+
+    fn first_rs(ev: &[RunEvent]) -> (&ResultSet, bool) {
+        ev.iter()
+            .find_map(|e| match e {
+                RunEvent::ResultSet { rs, more, .. } => Some((rs, *more)),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// T-48a: 상한에서 잘린 조회는 커서를 남기고(`more` = true · 이벤트 모양은 종전 그대로) `fetch_next`가 이어 준다 ·
+    /// `fetch_page`는 위치·문장이 맞으면 커서, 아니면 OFFSET · 끝에서 커서가 닫힌다 · Navigate 스팬.
+    #[test]
+    fn cursor_fetch_next_and_fetch_page() {
+        let mut r = seeded(25).with_max_rows(10);
+        let (errs, ev) = collect(&mut r, "SELECT id FROM t ORDER BY id;\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        let (rs, more) = first_rs(&ev);
+        assert_eq!(rs.rows.len(), 10);
+        assert!(more);
+        let (h, served) = r.cursor().expect("커서 유지");
+        assert_eq!(served, 10);
+        // 위치가 다르면 OFFSET 재질의(커서는 그대로).
+        let (rs, more, tl, used) = r
+            .fetch_page("SELECT id FROM t ORDER BY id", 20, 10)
+            .unwrap();
+        assert!(!used);
+        assert_eq!(rs.rows.len(), 5);
+        assert!(!more);
+        assert_eq!(tl.spans[0].stage, Stage::Navigate);
+        assert!(tl.spans[0].note.as_deref().unwrap().starts_with("offset"));
+        assert_eq!(r.cursor().map(|c| c.0), Some(h));
+        // 위치가 맞으면 커서.
+        let (rs, more, tl, used) = r
+            .fetch_page("SELECT id FROM t ORDER BY id;", 10, 10)
+            .unwrap();
+        assert!(used);
+        assert_eq!(rs.rows[0][0], Value::Int(11));
+        assert!(more);
+        assert_eq!(tl.spans[0].note.as_deref(), Some("cursor #1"));
+        assert_eq!(r.cursor().map(|c| c.1), Some(20));
+        let (rs, more, _) = r.fetch_next(h, 10).unwrap();
+        assert_eq!(rs.rows.len(), 5);
+        assert!(!more);
+        assert!(r.cursor().is_none(), "끝 = 닫힘");
+        // 옛 핸들은 오류 → fetch_page는 OFFSET으로.
+        assert!(r.fetch_next(h, 10).is_err());
+        let (rs, _, _, used) = r.fetch_page("SELECT id FROM t ORDER BY id", 0, 3).unwrap();
+        assert!(!used);
+        assert_eq!(rs.rows.len(), 3);
+    }
+
+    /// 정확히 상한만큼이면 더 없음(커서 0) · 상한 0이면 무제한 · `keep_cursor` 끄면 커서를 바로 닫는다(OFFSET 폴백만).
+    #[test]
+    fn exact_limit_and_fetch_mode_off() {
+        let mut r = seeded(10).with_max_rows(10);
+        let (_, ev) = collect(&mut r, "SELECT id FROM t;\n");
+        let (rs, more) = first_rs(&ev);
+        assert_eq!(rs.rows.len(), 10);
+        assert!(!more);
+        assert!(r.cursor().is_none());
+
+        let mut r = seeded(30).with_max_rows(10).with_keep_cursor(false);
+        let (_, ev) = collect(&mut r, "SELECT id FROM t;\n");
+        let (rs, more) = first_rs(&ev);
+        assert_eq!(rs.rows.len(), 10);
+        assert!(more, "더 있음은 여전히 알린다");
+        assert!(r.cursor().is_none(), "유지 모드 꺼짐 = 즉시 닫힘");
+        let (rs, more, _, used) = r.fetch_page("SELECT id FROM t", 10, 10).unwrap();
+        assert!(!used);
+        assert_eq!(rs.rows.len(), 10);
+        assert!(more);
+    }
+
+    /// 새 실행·COUNT: 스크립트 문장 실행은 앞 커서를 닫고, `count`는 곁가지라 커서를 살려 둔다 · `fetch_all`은 끝까지 모은다.
+    #[test]
+    fn new_statement_closes_cursor_but_count_keeps_it() {
+        let mut r = seeded(45).with_max_rows(10);
+        collect(&mut r, "SELECT id FROM t ORDER BY id;\n");
+        let (h, _) = r.cursor().unwrap();
+        let (n, tl) = r.count("SELECT id FROM t ORDER BY id").unwrap();
+        assert_eq!(n, 45);
+        assert_eq!(tl.spans[0].note.as_deref(), Some("count"));
+        assert_eq!(
+            r.cursor().map(|c| c.0),
+            Some(h),
+            "COUNT는 커서를 건드리지 않는다"
+        );
+        let mut calls = 0;
+        let (rs, stopped, tl) = r
+            .fetch_all(h, 0, &mut |_, _| {
+                calls += 1;
+                true
+            })
+            .unwrap();
+        assert_eq!(rs.rows.len(), 35);
+        assert_eq!(rs.rows[0][0], Value::Int(11));
+        assert!(!stopped);
+        assert_eq!(tl.spans[0].rows, Some(35));
+        assert!(r.cursor().is_none());
+        // 새 커서 → 다음 문장 실행이 닫는다.
+        collect(&mut r, "SELECT id FROM t ORDER BY id;\n");
+        assert!(r.cursor().is_some());
+        collect(&mut r, "SELECT 1;\n");
+        assert!(r.cursor().is_none());
+    }
+
+    /// `fetch_all` 예산: 바이트 예산에 닿으면 멈추고 `stopped` = true · 커서는 살아 있다.
+    #[test]
+    fn fetch_all_stops_at_budget() {
+        let mut r = seeded(5000).with_max_rows(10);
+        r.fetch_size = 100;
+        collect(&mut r, "SELECT id FROM t ORDER BY id;\n");
+        let (h, _) = r.cursor().unwrap();
+        let (rs, stopped, _) = r.fetch_all(h, 1, &mut |_, _| true).unwrap();
+        assert!(stopped);
+        assert_eq!(rs.rows.len(), 2000, "첫 배치(최소 2000) 뒤 예산 판정");
+        assert!(r.cursor().is_some());
+        r.close_cursor();
+        assert!(r.cursor().is_none());
+    }
+
+    #[test]
+    fn same_sql_ignores_terminator_and_whitespace() {
+        assert!(same_sql("select 1", "  select 1;\n"));
+        assert!(!same_sql("select 1", "select 2"));
     }
 }

@@ -6,11 +6,17 @@
 //! - OUT 파라미터가 없는 방언(함수·프로시저의 OUT은 결과 행으로 온다) — `EXEC :V := expr`는 엔진이 `SELECT expr AS "V"`로
 //!   만들고 호스트가 1행 결과의 컬럼 이름을 변수로 흡수한다. `CALL p(...)`의 OUT도 1행 결과.
 //! - TLS: 현재 `NoTls`(서버가 `hostssl`만 허용하면 접속 오류에 그대로 드러난다) — rustls 연결은 T-70.
+//! - ★ 커서 유지(T-48a · docs/43 §3-3): 동기 `postgres` 크레이트의 Portal은 `Transaction<'_>` 수명에 묶여 세션 구조체에 담을 수
+//!   없다(자기 참조). 그래서 psql `FETCH_COUNT`와 같은 **SQL 커서** — `DECLARE nsql_cur NO SCROLL CURSOR WITHOUT HOLD FOR <질의>` +
+//!   `FETCH FORWARD n FROM nsql_cur` + `CLOSE`. 커서는 트랜잭션 안에서만 살므로 명시 트랜잭션이 없으면 드라이버가 `BEGIN`을
+//!   열고([`PgCursor::own_txn`]) 닫을 때 `COMMIT`한다(docs/43 "자동 커밋 모드에선 결과를 다 읽기 전까지 암묵 트랜잭션 유지").
+//!   파라미터 없는 SELECT/WITH/VALUES/TABLE만(단순 질의 프로토콜) · 실서버 검증 전(단위 테스트 = SQL 조립·판정 규칙).
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use nsql_core::{
-    Column, CursorId, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session, Value,
+    Column, CursorHandle, CursorId, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session,
+    Value,
 };
 use nsql_script::ConnectSpec;
 use postgres::error::SqlState;
@@ -24,11 +30,31 @@ struct Notices {
     sink: Option<nsql_core::MessageSink>,
 }
 
+/// 서버 커서 이름(세션당 1개).
+const CURSOR_NAME: &str = "nsql_cur";
+
+/// 열린 SQL 커서(docs/43 D-70).
+#[derive(Debug)]
+struct PgCursor {
+    id: u32,
+    /// 드라이버가 `BEGIN`으로 연 트랜잭션인가(닫을 때 `COMMIT`).
+    own_txn: bool,
+    columns: Vec<Column>,
+    /// 상한에서 엿본 다음 행.
+    carry: Option<Vec<Value>>,
+}
+
 #[allow(missing_debug_implementations)]
 pub struct PgSession {
     client: Client,
     description: String,
     notices: std::sync::Arc<std::sync::Mutex<Notices>>,
+    /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`).
+    max_rows: usize,
+    /// 사용자가 `BEGIN`으로 연 트랜잭션 안인가(문장 머리로 추적 · 커서 트랜잭션 소유 판정용).
+    in_txn: bool,
+    cursor: Option<PgCursor>,
+    next_cursor: u32,
 }
 
 fn err(e: postgres::Error) -> DbError {
@@ -102,6 +128,10 @@ impl PgSession {
             client,
             description: spec.redacted(),
             notices,
+            max_rows: 0,
+            in_txn: false,
+            cursor: None,
+            next_cursor: 1,
         })
     }
 }
@@ -367,6 +397,60 @@ fn returns_rows(sql: &str) -> bool {
     ) || up.contains(" RETURNING ")
 }
 
+/// 서버 커서로 감쌀 수 있는 문장인가 — 파라미터 없는 SELECT/WITH/VALUES/TABLE(`DECLARE … FOR`가 받는 형태).
+fn cursorable(sql: &str) -> bool {
+    let up = sql.trim_start().to_ascii_uppercase();
+    let head = up.split_whitespace().next().unwrap_or("");
+    matches!(head, "SELECT" | "WITH" | "VALUES" | "TABLE") && !up.contains(" INTO ")
+}
+
+/// 트랜잭션 경계 문장의 머리 → `Some(true)` = 열림 · `Some(false)` = 닫힘 · `None` = 무관.
+fn txn_boundary(sql: &str) -> Option<bool> {
+    let up = strip_semicolon(sql).to_ascii_uppercase();
+    let mut it = up.split_whitespace();
+    let head = it.next().unwrap_or("");
+    match head {
+        "BEGIN" => Some(true),
+        "START" if it.next() == Some("TRANSACTION") => Some(true),
+        "COMMIT" | "END" | "ROLLBACK" | "ABORT" => Some(false),
+        _ => None,
+    }
+}
+
+/// 뒤의 `;`를 뗀 본문.
+fn strip_semicolon(sql: &str) -> &str {
+    let mut s = sql.trim();
+    while let Some(rest) = s.strip_suffix(';') {
+        s = rest.trim_end();
+    }
+    s
+}
+
+fn declare_sql(sql: &str) -> String {
+    format!(
+        "DECLARE {CURSOR_NAME} NO SCROLL CURSOR WITHOUT HOLD FOR {}",
+        strip_semicolon(sql)
+    )
+}
+
+/// `n` 0 = 남은 전부.
+fn fetch_sql(n: usize) -> String {
+    if n == 0 {
+        format!("FETCH FORWARD ALL FROM {CURSOR_NAME}")
+    } else {
+        format!("FETCH FORWARD {n} FROM {CURSOR_NAME}")
+    }
+}
+
+fn close_sql() -> String {
+    format!("CLOSE {CURSOR_NAME}")
+}
+
+/// `DECLARE … FOR ` 접두 길이(오류 위치를 원문 기준으로 되돌릴 때).
+fn declare_prefix_len() -> usize {
+    declare_sql("").len()
+}
+
 fn rows_to_result_set(rows: &[postgres::Row]) -> ResultSet {
     let Some(first) = rows.first() else {
         return ResultSet::default();
@@ -409,11 +493,84 @@ impl Session for PgSession {
     }
 
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
-        let mut result = self.execute_inner(req)?;
+        let r = self.execute_inner(req);
+        if r.is_ok() {
+            if let Some(open) = txn_boundary(&req.sql) {
+                self.in_txn = open;
+                if !open {
+                    self.cursor = None; // 사용자의 COMMIT/ROLLBACK = WITHOUT HOLD 커서 소멸
+                }
+            }
+        }
+        let mut result = r?;
         if let Ok(mut n) = self.notices.lock() {
             result.messages.append(&mut n.buf);
         }
         Ok(result)
+    }
+
+    fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
+        if name == "max_rows" {
+            self.max_rows = value.parse().unwrap_or(0);
+        }
+        Ok(())
+    }
+
+    fn cursor_supported(&self) -> bool {
+        true
+    }
+
+    fn fetch_next(&mut self, h: CursorHandle, max: usize) -> Result<(ResultSet, bool), DbError> {
+        if !self.cursor.as_ref().is_some_and(|c| c.id == h.0) {
+            return Err(DbError {
+                code: None,
+                message: format!("cursor #{} is not open", h.0),
+                position: None,
+            });
+        }
+        let carry_n = usize::from(self.cursor.as_ref().is_some_and(|c| c.carry.is_some()));
+        // 상한+1을 받아 마지막 한 행으로 "더 있음"을 판정(carry 포함).
+        let want = if max == 0 {
+            0
+        } else {
+            max + 1 - carry_n.min(max + 1)
+        };
+        let fetched = match self.simple_rows(&fetch_sql(want)) {
+            Ok(x) => x,
+            Err(e) => {
+                self.close_open_cursor();
+                return Err(e);
+            }
+        };
+        let Some(cur) = self.cursor.as_mut() else {
+            return Err(DbError {
+                code: None,
+                message: format!("cursor #{} is not open", h.0),
+                position: None,
+            });
+        };
+        let mut rows: Vec<Vec<Value>> = cur.carry.take().into_iter().collect();
+        let (cols, data) = fetched;
+        if cur.columns.is_empty() {
+            cur.columns = cols;
+        }
+        rows.extend(data);
+        let more = max > 0 && rows.len() > max;
+        if more {
+            cur.carry = rows.pop();
+        }
+        let columns = cur.columns.clone();
+        if !more {
+            self.close_open_cursor();
+        }
+        Ok((ResultSet { columns, rows }, more))
+    }
+
+    fn close_cursor(&mut self, h: CursorHandle) -> Result<(), DbError> {
+        if self.cursor.as_ref().is_some_and(|c| c.id == h.0) {
+            self.close_open_cursor();
+        }
+        Ok(())
     }
 
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
@@ -427,10 +584,14 @@ impl Session for PgSession {
     }
 
     fn commit(&mut self) -> Result<(), DbError> {
+        self.close_open_cursor();
+        self.in_txn = false;
         self.client.simple_query("COMMIT").map(|_| ()).map_err(err)
     }
 
     fn rollback(&mut self) -> Result<(), DbError> {
+        self.close_open_cursor();
+        self.in_txn = false;
         self.client
             .simple_query("ROLLBACK")
             .map(|_| ())
@@ -439,8 +600,111 @@ impl Session for PgSession {
 }
 
 impl PgSession {
+    /// 단순 질의 1회 → (컬럼, 행) — 첫 결과 집합만(커서 FETCH용).
+    fn simple_rows(&mut self, sql: &str) -> Result<(Vec<Column>, Vec<Vec<Value>>), DbError> {
+        let msgs = self.client.simple_query(sql).map_err(err)?;
+        let mut columns: Vec<Column> = Vec::new();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for m in msgs {
+            match m {
+                SimpleQueryMessage::RowDescription(desc) => {
+                    columns = desc
+                        .iter()
+                        .map(|c| Column {
+                            name: c.name().to_string(),
+                            type_name: String::new(),
+                        })
+                        .collect();
+                }
+                SimpleQueryMessage::Row(r) => {
+                    if columns.is_empty() {
+                        columns = r
+                            .columns()
+                            .iter()
+                            .map(|c| Column {
+                                name: c.name().to_string(),
+                                type_name: String::new(),
+                            })
+                            .collect();
+                    }
+                    rows.push(
+                        (0..columns.len())
+                            .map(|i| r.get(i).map_or(Value::Null, |s| Value::Str(s.to_string())))
+                            .collect(),
+                    );
+                }
+                _ => {}
+            }
+        }
+        Ok((columns, rows))
+    }
+
+    /// 열린 커서를 닫는다(`CLOSE` · 우리가 연 트랜잭션이면 `COMMIT`) — 오류는 무시(이미 소멸했을 수 있다).
+    fn close_open_cursor(&mut self) {
+        if let Some(c) = self.cursor.take() {
+            let _ = self.client.simple_query(&close_sql());
+            if c.own_txn {
+                let _ = self.client.simple_query("COMMIT");
+            }
+        }
+    }
+
+    /// 서버 커서로 조회(파라미터 없는 SELECT · 상한 > 0). 상한+1행을 받아 남은 행이 있으면 커서를 열어 둔다.
+    fn execute_cursor(&mut self, sql: &str) -> Result<ExecResult, DbError> {
+        self.close_open_cursor();
+        let own_txn = !self.in_txn;
+        if own_txn {
+            self.client.simple_query("BEGIN").map_err(err)?;
+        }
+        if let Err(e) = self.client.simple_query(&declare_sql(sql)) {
+            if own_txn {
+                let _ = self.client.simple_query("ROLLBACK");
+            }
+            let mut d = err(e);
+            // 오류 위치를 원문 기준으로.
+            if let Some(p) = d.position.as_mut() {
+                *p = p.saturating_sub(declare_prefix_len());
+            }
+            return Err(d);
+        }
+        let max = self.max_rows;
+        let (columns, mut rows) = match self.simple_rows(&fetch_sql(max + 1)) {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = self.client.simple_query(&close_sql());
+                if own_txn {
+                    let _ = self.client.simple_query("ROLLBACK");
+                }
+                return Err(e);
+            }
+        };
+        let mut result = ExecResult::default();
+        if rows.len() > max {
+            let carry = rows.pop();
+            let id = self.next_cursor;
+            self.next_cursor += 1;
+            self.cursor = Some(PgCursor {
+                id,
+                own_txn,
+                columns: columns.clone(),
+                carry,
+            });
+            result.pending = Some(CursorHandle(id));
+        } else {
+            let _ = self.client.simple_query(&close_sql());
+            if own_txn {
+                let _ = self.client.simple_query("COMMIT");
+            }
+        }
+        result.result_sets.push(ResultSet { columns, rows });
+        Ok(result)
+    }
+
     fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
         let mut result = ExecResult::default();
+        if req.params.is_empty() && self.max_rows > 0 && cursorable(&req.sql) {
+            return self.execute_cursor(&req.sql);
+        }
         if req.params.is_empty() {
             // 단순 질의 프로토콜 — 텍스트 셀 · 여러 결과 집합 · 행 수.
             let msgs = self.client.simple_query(&req.sql).map_err(err)?;
@@ -543,5 +807,34 @@ mod tests {
         assert!(returns_rows("INSERT INTO t VALUES (1) RETURNING id"));
         assert!(!returns_rows("UPDATE t SET a = $1"));
         assert!(returns_rows("CALL p($1)"));
+    }
+
+    /// 커서 유지(T-48a): 어떤 문장을 DECLARE로 감싸는가 · 조립 SQL · 트랜잭션 경계 추적.
+    #[test]
+    fn cursor_sql_and_rules() {
+        assert!(cursorable("select * from t"));
+        assert!(cursorable("  WITH x AS (SELECT 1) SELECT * FROM x;"));
+        assert!(cursorable("VALUES (1), (2)"));
+        assert!(!cursorable("SELECT * INTO t2 FROM t"), "SELECT INTO는 DDL");
+        assert!(!cursorable("SHOW search_path"));
+        assert!(!cursorable("EXPLAIN SELECT 1"));
+        assert!(!cursorable("INSERT INTO t VALUES (1) RETURNING id"));
+        assert_eq!(
+            declare_sql("select * from t;"),
+            "DECLARE nsql_cur NO SCROLL CURSOR WITHOUT HOLD FOR select * from t"
+        );
+        assert_eq!(fetch_sql(201), "FETCH FORWARD 201 FROM nsql_cur");
+        assert_eq!(fetch_sql(0), "FETCH FORWARD ALL FROM nsql_cur");
+        assert_eq!(close_sql(), "CLOSE nsql_cur");
+        assert_eq!(declare_prefix_len(), 51);
+        assert_eq!(txn_boundary("begin"), Some(true));
+        assert_eq!(
+            txn_boundary("START TRANSACTION ISOLATION LEVEL SERIALIZABLE"),
+            Some(true)
+        );
+        assert_eq!(txn_boundary("start something"), None);
+        assert_eq!(txn_boundary("COMMIT;"), Some(false));
+        assert_eq!(txn_boundary("rollback"), Some(false));
+        assert_eq!(txn_boundary("SELECT 1"), None);
     }
 }

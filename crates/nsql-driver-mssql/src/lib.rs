@@ -314,6 +314,12 @@ impl Session for MssqlSession {
         Ok(result)
     }
 
+    /// 커서 유지 없음(T-48a 1차 · docs/43 §3-3) — tiberius `QueryStream`은 클라이언트를 빌려 세션 구조체에 담을 수 없다.
+    /// 호스트가 OFFSET 재질의로 폴백한다. 스트림 유지(워커 태스크)는 T-48c.
+    fn cursor_supported(&self) -> bool {
+        false
+    }
+
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
         Err(DbError { code: None, message: "SQL Server: 커서 변수는 sp_executesql로 넘길 수 없습니다 — 결과 집합으로 받으세요(docs/05 §7)".into(), position: None })
     }

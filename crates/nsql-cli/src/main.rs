@@ -13,6 +13,7 @@
 mod cat;
 mod config;
 mod conn;
+mod grep;
 mod help;
 mod plan;
 mod term;
@@ -25,7 +26,7 @@ use nsql_io::{
 use nsql_run::{Opener, RunEvent, Runner, Spool, SpoolHandle};
 use nsql_script::{split_script, ConnectSpec};
 use nsql_vault::Vault;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::Path;
 
 struct Opts {
@@ -292,6 +293,130 @@ fn strict_setting() -> bool {
         .unwrap_or(false)
 }
 
+/// 셸 추가 페치 명령(T-48d · docs/43 §5) — `\more [n]`/`more [n]` · `\all` · `\count` · `\pager on|off`.
+#[derive(Debug, PartialEq, Eq)]
+enum FetchCmd {
+    More(Option<usize>),
+    All,
+    Count,
+    Pager(Option<bool>),
+}
+
+fn fetch_cmd(line: &str) -> Option<FetchCmd> {
+    let t = line.trim().trim_end_matches(';').trim();
+    let (head, rest) = match t.find(char::is_whitespace) {
+        Some(i) => (&t[..i], t[i..].trim()),
+        None => (t, ""),
+    };
+    let low = head.to_ascii_lowercase();
+    Some(match low.as_str() {
+        "\\more" | "more" => {
+            if rest.is_empty() {
+                FetchCmd::More(None)
+            } else {
+                FetchCmd::More(Some(rest.parse().ok()?))
+            }
+        }
+        "\\all" if rest.is_empty() => FetchCmd::All,
+        "\\count" if rest.is_empty() => FetchCmd::Count,
+        "\\pager" => match rest.to_ascii_lowercase().as_str() {
+            "" => FetchCmd::Pager(None),
+            "on" => FetchCmd::Pager(Some(true)),
+            "off" => FetchCmd::Pager(Some(false)),
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+/// 셸 페치 명령 실행 — 마지막 문장의 다음 세그먼트(커서 · 폴백 OFFSET) · 전체 · 건수 · 페이저.
+fn run_fetch_cmd(cmd: FetchCmd, p: &mut Printer, runner: &mut Runner) {
+    if let FetchCmd::Pager(v) = cmd {
+        p.pager = v.unwrap_or(!p.pager);
+        eprintln!(
+            "{}",
+            tf(
+                Msg::CliPagerStatus,
+                &[if p.pager { "on" } else { "off" }, &pager_name()]
+            )
+        );
+        return;
+    }
+    let Some(sql) = p.last_sql.clone() else {
+        eprintln!("{}", t(Msg::CliNoMoreRows));
+        return;
+    };
+    match cmd {
+        FetchCmd::Count => match runner.count(&sql) {
+            Ok((n, tl)) => {
+                let line = tf(
+                    Msg::CliCountResult,
+                    &[&n.to_string(), &format!("{:.3}", tl.total().as_secs_f64())],
+                );
+                p.out(format!("{line}\n").as_bytes());
+                if p.timing {
+                    p.err(&format!("⏱ {}", tl.summary()));
+                }
+            }
+            Err(e) => p.err(&format!("ERROR: {e}")),
+        },
+        FetchCmd::More(n) => {
+            if !p.more {
+                eprintln!("{}", t(Msg::CliNoMoreRows));
+                return;
+            }
+            let n = n.unwrap_or(p.max_rows);
+            let offset = p.served;
+            match runner.fetch_page(&sql, offset, n) {
+                Ok((rs, more, tl, cursor)) => p.print_page(&rs, more, &tl, cursor),
+                Err(e) => p.err(&format!("ERROR: {e}")),
+            }
+        }
+        FetchCmd::All => {
+            if !p.more {
+                eprintln!("{}", t(Msg::CliNoMoreRows));
+                return;
+            }
+            // 커서가 살아 있으면 배치로 스트리밍(메모리 상한 불필요) · 아니면 OFFSET 재질의 한 번(남은 전부).
+            let batch = runner.fetch_size.max(2000);
+            if runner.cursor_matches(&sql, p.served) {
+                while let Some((h, _)) = runner.cursor() {
+                    match runner.fetch_next(h, batch) {
+                        Ok((rs, more, tl)) => {
+                            p.print_page(&rs, more, &tl, true);
+                            if !more {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            p.err(&format!("ERROR: {e}"));
+                            break;
+                        }
+                    }
+                }
+            } else {
+                match runner.fetch_offset(&sql, p.served, 0) {
+                    Ok((rs, more, tl)) => p.print_page(&rs, more, &tl, false),
+                    Err(e) => p.err(&format!("ERROR: {e}")),
+                }
+            }
+        }
+        FetchCmd::Pager(_) => {}
+    }
+}
+
+/// 페치 관련 설정(docs/43 §4-3) — `db.fetch_size` · `grid.fetch_mode`(cursor만 유지) · `db.cursor_idle_secs`.
+fn fetch_settings() -> (usize, bool, u64) {
+    match nsql_settings::Settings::open_default() {
+        Ok(s) => (
+            s.int("db.fetch_size").max(0) as usize,
+            s.get("grid.fetch_mode").unwrap_or("cursor") == "cursor",
+            s.int("db.cursor_idle_secs").max(0) as u64,
+        ),
+        Err(_) => (0, true, 0),
+    }
+}
+
 /// 셸 별칭(T-52 · docs/27 §1-1 ⑥ · psql `\d` · sqlite3 `.tables` · sqlcmd `:r`) → SQL*Plus식 명령 한 줄.
 /// 순수 함수(테스트) — 바꾼 줄은 그대로 스크립트 엔진으로 간다. `:r`은 엔진이 이미 안다(`Command::Include`).
 #[derive(Debug, PartialEq, Eq)]
@@ -322,6 +447,9 @@ fn shell_alias(line: &str) -> Option<ShellAlias> {
 fn print_shell_help() {
     eprintln!("{}", t(Msg::HlpShellCommands));
     for line in t(Msg::HlpShellCommandList).split('\n') {
+        eprintln!("  {line}");
+    }
+    for line in t(Msg::HlpShellFetchList).split('\n') {
         eprintln!("  {line}");
     }
     eprintln!("\n{}", t(Msg::HlpShellAliases));
@@ -412,13 +540,17 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
     let t = line.trim();
     let low = t.to_ascii_lowercase();
     let fmt_name = p.format.name();
+    let max_rows = p.max_rows;
+    let pager = p.pager;
     let show = |g: &GridOpts| {
         eprintln!(
-            "width {} (0 = 무제한 · set width auto = 터미널 폭) · colwidth {} · overflow {} · format {}",
+            "width {} (0 = 무제한 · set width auto = 터미널 폭) · colwidth {} · overflow {} · format {} · max_rows {} · pager {}",
             g.line_width,
             g.max_col,
             g.overflow.name(),
-            fmt_name
+            fmt_name,
+            max_rows,
+            if pager { "on" } else { "off" }
         );
     };
     if low == "\\x" {
@@ -433,6 +565,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
     if low == "show" || low == "set" || low == "get" || low == "\\pset" || low == "help set" {
         show(g);
         eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliShellSetHelp));
+        eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliShellSetMaxRows));
         return true;
     }
     // get/show <키> — 값 하나만.
@@ -446,6 +579,8 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
             "colwidth" | "max_col_width" | "col" => g.max_col.to_string(),
             "overflow" | "wrap" => g.overflow.name().to_string(),
             "format" | "fmt" => fmt_name.clone(),
+            "max_rows" | "maxrows" | "rows" => max_rows.to_string(),
+            "pager" => if pager { "on" } else { "off" }.to_string(),
             "all" | "" => {
                 show(g);
                 return true;
@@ -478,6 +613,25 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
         "colwidth" | "max_col_width" | "col" => match num(v) {
             Some(n) => g.max_col = n,
             None => eprintln!("set colwidth <n>"),
+        },
+        // 셸 조회 상한(T-48d · 세션 동안만 · 영구는 `nsql config set cli.max_rows`).
+        "max_rows" | "maxrows" | "rows" => match num(v) {
+            Some(n) => {
+                p.max_rows = n;
+                let g = *g;
+                show(&g);
+                return true;
+            }
+            None => eprintln!("set max_rows <n>"),
+        },
+        "pager" => match v {
+            "on" | "off" => {
+                p.pager = v == "on";
+                let g = *g;
+                show(&g);
+                return true;
+            }
+            _ => eprintln!("set pager on|off"),
         },
         "overflow" | "wrap" => match Overflow::parse(v) {
             Some(x) => g.overflow = x,
@@ -516,6 +670,42 @@ fn resolve_target(target: &str, dialect: Dialect) -> Result<ConnectSpec, String>
         }
     }
     nsql_drivers::parse_target(target, dialect)
+}
+
+/// `$PAGER`(없으면 Unix `less -FRSX` · Windows `more`)에 bytes를 흘려 보내고 끝날 때까지 기다린다(psql `\pset pager`).
+fn page_through(bytes: &[u8]) -> Result<(), String> {
+    let spec = std::env::var("PAGER").ok().filter(|p| !p.trim().is_empty());
+    let (prog, args): (String, Vec<String>) = match spec {
+        Some(p) => {
+            let mut it = p.split_whitespace().map(str::to_string);
+            (it.next().unwrap_or_default(), it.collect())
+        }
+        None if cfg!(windows) => ("more".into(), vec![]),
+        None => ("less".into(), vec!["-FRSX".into()]),
+    };
+    let mut child = std::process::Command::new(&prog)
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{prog}: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(bytes);
+    }
+    child.wait().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// 페이저 이름(상태 표시용).
+fn pager_name() -> String {
+    std::env::var("PAGER")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                "more".into()
+            } else {
+                "less -FRSX".into()
+            }
+        })
 }
 
 /// 스풀에 복사(켜져 있을 때만) — 쓰기 실패는 한 번만 stderr에(스풀은 닫힌다).
@@ -559,6 +749,18 @@ struct Printer {
     log: Option<nsql_log::LogHub>,
     /// `SPOOL`(T-9) — 이 Printer가 찍는 모든 것(stdout·stderr 오류·타이밍)과 실시간 서버 메시지를 파일에도. Runner와 공유.
     spool: SpoolHandle,
+    /// `nsql shell`인가(T-48d · docs/43 §5) — 상한·`\more` 안내·페이저는 셸에서만(D-68: run/export/파이프는 무제한).
+    shell: bool,
+    /// 셸 조회 상한(설정 `cli.max_rows` · `set max_rows` · 0 = 무제한). grid/markdown일 때만 적용([`Printer::shell_limit`]).
+    max_rows: usize,
+    /// 마지막 결과가 상한에서 잘렸는가(`\more`·`\all`·auto_more의 조건).
+    more: bool,
+    /// 마지막 문장에서 지금까지 보여 준 행 수(= 다음 페치의 OFFSET).
+    served: usize,
+    /// `\pager on` — 결과 표를 `$PAGER`(기본 less)로.
+    pager: bool,
+    /// 설정 `cli.auto_more` — 잘린 결과 뒤 묻지 않고 다음 세그먼트를 이어 출력.
+    auto_more: bool,
 }
 
 impl Printer {
@@ -578,6 +780,84 @@ impl Printer {
             timing: o.timing,
             log: log_hub(o),
             spool: Spool::new_handle(),
+            shell: false,
+            max_rows: 0,
+            more: false,
+            served: 0,
+            pager: false,
+            auto_more: false,
+        }
+    }
+
+    /// 셸에서 러너에 줄 상한 — 표 형식(grid/markdown)일 때만 `max_rows`, csv/tsv/json 등 복사·저장용 출력은 0(D-68).
+    fn shell_limit(&self) -> usize {
+        if self.shell && matches!(self.format, Format::Grid | Format::Markdown) {
+            self.max_rows
+        } else {
+            0
+        }
+    }
+
+    /// 결과 표 출력 — `\pager on`이고 터미널이면 `$PAGER`(기본 `less -FRSX`)로, 아니면 stdout. 스풀에는 늘 복사.
+    fn out_table(&mut self, bytes: &[u8]) {
+        if !(self.pager && self.shell && io::stdout().is_terminal()) {
+            self.out(bytes);
+            return;
+        }
+        let _ = io::stdout().flush();
+        match page_through(bytes) {
+            Ok(()) => spool_write(&self.spool, bytes),
+            Err(e) => {
+                eprintln!("{}", tf(Msg::CliPagerFailed, &[&e]));
+                self.out(bytes);
+            }
+        }
+    }
+
+    /// 추가 페치 결과 한 묶음(`\more` · `\all` · auto_more) — 표 + 피드백 한 줄 + (더 있으면) 안내.
+    fn print_page(
+        &mut self,
+        rs: &nsql_core::ResultSet,
+        more: bool,
+        tl: &nsql_core::Timeline,
+        cursor: bool,
+    ) {
+        let mut out: Vec<u8> = Vec::new();
+        let _ =
+            nsql_io::write_result_set_opts(&mut out, rs, &self.format, self.dialect, &self.grid);
+        self.served += rs.rows.len();
+        self.more = more;
+        self.last = Some(rs.clone());
+        if matches!(self.format, Format::Grid | Format::Markdown) {
+            let _ = writeln!(
+                out,
+                "\n{}",
+                tf(
+                    Msg::CliFetchedRows,
+                    &[
+                        &rs.rows.len().to_string(),
+                        &format!("{:.3}", tl.total().as_secs_f64()),
+                        t(if cursor {
+                            Msg::CliMoreSource
+                        } else {
+                            Msg::CliMoreSourceOffset
+                        }),
+                        &self.served.to_string(),
+                    ]
+                )
+            );
+            if more {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    tf(Msg::CliShellMoreHint, &[&self.served.to_string()])
+                );
+            }
+            let _ = writeln!(out);
+        }
+        self.out_table(&out);
+        if self.timing {
+            self.err(&format!("⏱ {}", tl.summary()));
         }
     }
 
@@ -753,19 +1033,33 @@ impl Printer {
                 if self.feedback {
                     self.last = Some(rs.clone());
                 }
+                // 셸의 추가 페치 상태(T-48d): 이 결과가 잘렸는가 · 지금까지 보여 준 행 수.
+                self.more = more;
+                self.served = rs.rows.len();
                 if self.feedback && matches!(self.format, Format::Grid | Format::Markdown) {
-                    let note = if more {
+                    let note = if more && !self.shell {
                         format!(" {}", t(Msg::CliRowsMore))
                     } else {
                         String::new()
                     };
                     let _ = writeln!(
                         out,
-                        "\n{} rows ({:.3}s){note}\n",
+                        "\n{} rows ({:.3}s){note}",
                         rs.rows.len(),
                         elapsed.as_secs_f64()
                     );
+                    // 셸에서 잘리면 표 뒤 한 줄 안내(grid/markdown일 때만 · docs/43 §5).
+                    if more && self.shell {
+                        let _ = writeln!(
+                            out,
+                            "{}",
+                            tf(Msg::CliShellMoreHint, &[&rs.rows.len().to_string()])
+                        );
+                    }
+                    let _ = writeln!(out);
                 }
+                self.out_table(&out);
+                return;
             }
             RunEvent::Done {
                 rows_affected,
@@ -875,8 +1169,11 @@ fn cmd_run(o: &Opts) -> i32 {
     };
     let src = read_source(path);
     let mut printer = Printer::new(o, o.format.clone(), true);
+    // run = 무제한(D-68 · `--max-rows`면 그 값) · 커서 유지 없음(배치는 이어 받을 일이 없다).
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
+        .with_fetch_size(fetch_settings().0)
+        .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver())
         .with_spool(printer.spool.clone())
@@ -914,12 +1211,27 @@ fn cmd_shell(o: &Opts) -> i32 {
         return 2;
     };
     let mut printer = Printer::new(o, o.format.clone(), true);
+    // 셸만 상한(D-68): 설정 `cli.max_rows`(200) · `--max-rows`가 있으면 그 값 · 세션 중 `set max_rows`.
+    printer.shell = true;
+    let st = nsql_settings::Settings::open_default().ok();
+    printer.max_rows = if o.max_rows > 0 {
+        o.max_rows
+    } else {
+        st.as_ref()
+            .map_or(200, |s| s.int("cli.max_rows").max(0) as usize)
+    };
+    printer.auto_more = st.as_ref().is_some_and(|s| s.flag("cli.auto_more"));
+    drop(st);
+    let (fetch_size, keep_cursor, idle) = fetch_settings();
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
-        .with_max_rows(o.max_rows)
+        .with_max_rows(printer.shell_limit())
+        .with_fetch_size(fetch_size)
+        .with_keep_cursor(keep_cursor)
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver())
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting());
+    runner.cursor_idle_secs = idle;
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     eprintln!("{}", t(Msg::CliShellBanner));
     let stdin = io::stdin();
@@ -941,6 +1253,12 @@ fn cmd_shell(o: &Opts) -> i32 {
             )
         {
             break;
+        }
+        if buf.is_empty() {
+            if let Some(cmd) = fetch_cmd(t) {
+                run_fetch_cmd(cmd, &mut printer, &mut runner);
+                continue;
+            }
         }
         if buf.is_empty() && shell_set(t, &mut printer, runner.session.as_deref_mut()) {
             continue;
@@ -980,9 +1298,15 @@ fn cmd_shell(o: &Opts) -> i32 {
         let src = std::mem::take(&mut buf);
         let mut prompt = prompt_stdin;
         printer.set_source(&src);
+        runner.set_max_rows(printer.shell_limit());
         runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
         printer.flush_sql(runner.session.as_deref_mut());
+        // `cli.auto_more`: psql FETCH_COUNT처럼 묻지 않고 세그먼트를 이어 출력(스트리밍).
+        while printer.auto_more && printer.more {
+            run_fetch_cmd(FetchCmd::More(None), &mut printer, &mut runner);
+        }
     }
+    runner.close_cursor();
     if let Some(s) = runner.session.as_mut() {
         let _ = s.commit();
     }
@@ -1007,6 +1331,7 @@ fn cmd_explain(o: &Opts) -> i32 {
     let mut printer = Printer::new(o, o.format.clone(), false);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
+        .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
@@ -1039,8 +1364,11 @@ fn cmd_export(o: &Opts) -> i32 {
         (f, _) => f.clone(),
     };
     let mut printer = Printer::new(o, Format::Grid, false);
+    // export = 무제한(D-68) · 커서 유지 없음 · 왕복당 행수는 설정(`db.fetch_size`).
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
+        .with_fetch_size(fetch_settings().0)
+        .with_keep_cursor(false)
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
@@ -1133,6 +1461,7 @@ fn main() {
         "conn" => conn::cmd_conn(&o),
         "cat" | "catalog" | "obj" => cat::cmd_cat(&o),
         "config" | "settings" => config::cmd_config(&o),
+        "grep" => grep::cmd_grep(&o.positional),
         other => {
             eprintln!("알 수 없는 명령: {other}\n");
             usage()
@@ -1146,6 +1475,22 @@ mod tests {
     use super::*;
 
     /// T-52 별칭 표 — psql · sqlite3 · sqlcmd 어휘가 SQL*Plus식 한 줄로.
+    /// T-48d: 셸 페치 명령 파싱 — `\more [n]`·`more`·`\all`·`\count`·`\pager` · SQL과 헷갈리지 않는다.
+    #[test]
+    fn fetch_commands_parse() {
+        assert_eq!(fetch_cmd("\\more"), Some(FetchCmd::More(None)));
+        assert_eq!(fetch_cmd("more 50;"), Some(FetchCmd::More(Some(50))));
+        assert_eq!(fetch_cmd("\\more x"), None);
+        assert_eq!(fetch_cmd("\\all"), Some(FetchCmd::All));
+        assert_eq!(fetch_cmd("\\count"), Some(FetchCmd::Count));
+        assert_eq!(fetch_cmd("\\pager"), Some(FetchCmd::Pager(None)));
+        assert_eq!(fetch_cmd("\\pager ON"), Some(FetchCmd::Pager(Some(true))));
+        assert_eq!(fetch_cmd("\\pager maybe"), None);
+        assert_eq!(fetch_cmd("\\all x"), None);
+        assert_eq!(fetch_cmd("SELECT more FROM t;"), None);
+        assert_eq!(fetch_cmd("COUNT"), None);
+    }
+
     #[test]
     fn shell_aliases_map_onto_sqlplus_commands() {
         let rw = |l: &str| match shell_alias(l) {

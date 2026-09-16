@@ -14,19 +14,41 @@ fn core(sql: &str) -> &str {
     s
 }
 
-/// `offset`행을 건너뛰고 `limit`행만 — 방언별 페이징 문법으로 감싼 질의.
+/// `offset`행을 건너뛰고 `limit`행만(`limit` 0 = 남은 전부) — 방언별 페이징 문법으로 감싼 질의.
 #[must_use]
 pub fn page_sql(dialect: Dialect, sql: &str, offset: usize, limit: usize) -> String {
     let q = core(sql);
     match dialect {
         Dialect::Oracle => {
-            format!("SELECT * FROM (\n{q}\n) OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY")
+            let fetch = if limit > 0 {
+                format!(" FETCH NEXT {limit} ROWS ONLY")
+            } else {
+                String::new()
+            };
+            format!("SELECT * FROM (\n{q}\n) OFFSET {offset} ROWS{fetch}")
         }
-        Dialect::Mssql => format!(
-            "SELECT * FROM (\n{q}\n) x ORDER BY (SELECT NULL) OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
-        ),
+        Dialect::Mssql => {
+            let fetch = if limit > 0 {
+                format!(" FETCH NEXT {limit} ROWS ONLY")
+            } else {
+                String::new()
+            };
+            format!("SELECT * FROM (\n{q}\n) x ORDER BY (SELECT NULL) OFFSET {offset} ROWS{fetch}")
+        }
         Dialect::Postgres | Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => {
-            format!("SELECT * FROM (\n{q}\n) x LIMIT {limit} OFFSET {offset}")
+            let lim = if limit > 0 {
+                format!("LIMIT {limit} ")
+            } else if dialect == Dialect::Sqlite || dialect == Dialect::Mysql {
+                // SQLite·MySQL은 OFFSET만 못 쓴다 → LIMIT -1 / 큰 수.
+                if dialect == Dialect::Sqlite {
+                    "LIMIT -1 ".into()
+                } else {
+                    "LIMIT 18446744073709551615 ".into()
+                }
+            } else {
+                String::new()
+            };
+            format!("SELECT * FROM (\n{q}\n) x {lim}OFFSET {offset}")
         }
     }
 }
@@ -67,6 +89,19 @@ mod tests {
         assert!(o.ends_with(") OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY"));
         let m = page_sql(Dialect::Mssql, "select * from t", 5, 5);
         assert!(m.contains("ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH NEXT 5 ROWS ONLY"));
+    }
+
+    /// `limit` 0 = 남은 전부(CLI `\all`의 OFFSET 폴백).
+    #[test]
+    fn zero_limit_means_rest() {
+        assert!(
+            page_sql(Dialect::Oracle, "select 1 from dual", 200, 0).ends_with(") OFFSET 200 ROWS")
+        );
+        assert!(page_sql(Dialect::Mssql, "select 1", 200, 0).ends_with("OFFSET 200 ROWS"));
+        assert!(page_sql(Dialect::Postgres, "select 1", 200, 0).ends_with(") x OFFSET 200"));
+        assert!(page_sql(Dialect::Sqlite, "select 1", 200, 0).ends_with(") x LIMIT -1 OFFSET 200"));
+        assert!(page_sql(Dialect::Mysql, "select 1", 200, 0)
+            .contains("LIMIT 18446744073709551615 OFFSET 200"));
     }
 
     #[test]
