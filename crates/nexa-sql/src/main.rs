@@ -67,6 +67,7 @@ use nsql_settings::{Settings, ThemeMode};
 use nsql_vault::Vault;
 use palette::{Palette, PaletteAction};
 use prefs_win::{PrefsAction, PrefsWin};
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -146,7 +147,14 @@ struct App {
     /// 찾기/바꾸기 바(편집기 위 · T-73).
     find: FindBar,
     editors: Editors,
+    /// 활성 편집기 탭의 결과 그리드. 다른 탭의 그리드는 `grid_stash`에 잠들어 있다가 탭을 고르면 교체된다(사용자 09-16 "편집기와 결과는 쌍").
     grid: grid::Grid,
+    /// 비활성 탭의 결과 그리드(탭 id → 그리드 · 탭이 닫히면 버림).
+    grid_stash: HashMap<u64, grid::Grid>,
+    /// `grid`가 속한 탭 id.
+    grid_tab: u64,
+    /// 마지막 실행을 시작한 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
+    run_tab: u64,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
     explorer: Explorer,
     /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
@@ -275,12 +283,8 @@ impl App {
         // 스플리터 ② 편집기|결과 — 띠 = 편집기 아래 여백(pad) 자리.
         self.split_h
             .set_rect(Rect::new(rx, body_top + editor_h - pad, rw, pad.max(grip)));
-        self.grid.set_bounds(Rect::new(
-            rx,
-            body_top + editor_h,
-            rw,
-            body_h - editor_h - pad,
-        ));
+        let gb = Rect::new(rx, body_top + editor_h, rw, body_h - editor_h - pad);
+        self.all_grids().for_each(|g| g.set_bounds(gb));
         self.palette.set_bounds(w, chrome_h, s);
     }
 
@@ -1022,7 +1026,10 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
-            "grid.row_numbers" => self.grid.set_row_numbers(self.settings.flag(key)),
+            "grid.row_numbers" => {
+                let on = self.settings.flag(key);
+                self.all_grids().for_each(|g| g.set_row_numbers(on));
+            }
             "grid.scroll" => self
                 .grid
                 .set_row_snap(self.settings.get(key) == Some("row")),
@@ -1746,10 +1753,12 @@ impl App {
                 self.keymap.display_of("edit.select_all"),
             ],
         });
-        self.grid.set_shortcuts(
+        let (sc_copy, sc_all) = (
             self.keymap.display_of("edit.copy"),
             self.keymap.display_of("edit.select_all"),
         );
+        self.all_grids()
+            .for_each(|g| g.set_shortcuts(sc_copy.clone(), sc_all.clone()));
     }
 
     fn open_conn_window(&mut self, el: &ActiveEventLoop) {
@@ -2018,6 +2027,7 @@ impl App {
         };
         let src = text.unwrap_or_else(|| self.ed_mut().text());
         self.grid.set_source_sql(&src);
+        self.run_tab = self.editors.active_id();
         if src.trim().is_empty() {
             self.status = t(Msg::ErrNoSql).into();
             return;
@@ -2205,7 +2215,10 @@ impl App {
                     } else {
                         tf(Msg::StRows, &[&n, &secs])
                     };
-                    self.grid.set_result(rs);
+                    // 결과는 실행을 시작한 탭의 그리드로(탭이 이미 닫혔으면 버림).
+                    if let Some(g) = self.run_grid() {
+                        g.set_result(rs);
+                    }
                 }
                 RunEvent::Done {
                     rows_affected,
@@ -2244,7 +2257,7 @@ impl App {
                     self.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     self.busy = false;
                     self.dialect = dialect;
-                    self.grid.set_dialect(dialect);
+                    self.all_grids().for_each(|g| g.set_dialect(dialect));
                     self.tx_dirty = false;
                     self.sync_disconnect_btn(true);
                     // 탐색기 메타 세션(별도) — 같은 스펙으로.
@@ -2310,7 +2323,41 @@ impl App {
         }
     }
 
+    /// 활성 그리드 + 잠든 그리드 전부(설정 전파용).
+    fn all_grids(&mut self) -> impl Iterator<Item = &mut grid::Grid> {
+        std::iter::once(&mut self.grid).chain(self.grid_stash.values_mut())
+    }
+
+    /// 마지막 실행 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
+    fn run_grid(&mut self) -> Option<&mut grid::Grid> {
+        if self.run_tab == self.grid_tab {
+            Some(&mut self.grid)
+        } else {
+            self.grid_stash.get_mut(&self.run_tab)
+        }
+    }
+
+    /// ★ 편집기 탭 ↔ 결과 그리드 쌍 동기화(사용자 09-16): 활성 탭이 바뀌었으면 그 탭의 그리드를 꺼내 오고(없으면 설정만
+    /// 물려받은 빈 그리드) 지금 것은 잠재운다 · 닫힌 탭의 그리드는 버린다. 페인트 직전과 이벤트 뒤에 부른다.
+    fn sync_grid_tab(&mut self) {
+        let cur = self.editors.active_id();
+        if cur != self.grid_tab {
+            let b = self.grid.bounds;
+            let next = self
+                .grid_stash
+                .remove(&cur)
+                .unwrap_or_else(|| self.grid.fresh_like());
+            let old = std::mem::replace(&mut self.grid, next);
+            self.grid_stash.insert(self.grid_tab, old);
+            self.grid_tab = cur;
+            self.grid.set_bounds(b);
+        }
+        let alive = self.editors.tab_ids();
+        self.grid_stash.retain(|id, _| alive.contains(id));
+    }
+
     fn paint(&mut self) {
+        self.sync_grid_tab();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -3608,6 +3655,9 @@ fn main() {
         find: FindBar::new(),
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
+        grid_stash: HashMap::new(),
+        grid_tab: 0,
+        run_tab: 0,
         explorer,
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),

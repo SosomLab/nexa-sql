@@ -213,6 +213,19 @@ fn cmp_value(a: &Value, b: &Value) -> std::cmp::Ordering {
 }
 
 impl Grid {
+    /// 결과·선택·스크롤은 비우고 **설정만**(영역 · 행번호 · 스크롤 단위 · 단축키 문구 · 방언) 물려받은 새 그리드 — 새 편집기 탭의 짝(사용자 09-16).
+    pub(crate) fn fresh_like(&self) -> Grid {
+        Grid {
+            bounds: self.bounds,
+            row_snap: self.row_snap,
+            row_numbers: self.row_numbers,
+            sc_copy: self.sc_copy.clone(),
+            sc_all: self.sc_all.clone(),
+            dialect: self.dialect,
+            ..Grid::default()
+        }
+    }
+
     pub(crate) fn set_row_numbers(&mut self, on: bool) {
         self.row_numbers = on;
     }

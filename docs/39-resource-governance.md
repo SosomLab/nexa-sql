@@ -141,7 +141,7 @@
 | 글리프 비트맵(nexa-gfx) | 8192 | `ui.glyph_cache`(신설 · HIDDEN) | 초과 시 전체 비움 |
 | OS 아이콘 RGBA(nexa-fs) | 512 | `file.icon_cache`(신설 · HIDDEN) | LRU · 프로세스 종료 |
 | 파일 대화상자 목록·프로브·아이콘 사본 | 폴더 1개 분 | — | 대화상자 닫힘(Drop) |
-| 결과 셋 | 탭당 1 · `grid.max_rows` | `grid.max_rows` | 다음 실행 |
+| 결과 셋 | **편집기 탭당 그리드 1**(13차 · `grid_stash`) · 각 ≤ `grid.max_rows` | `grid.max_rows` | 다음 실행 · 탭 닫힘(즉시) |
 | 로그 창 | (신설 상한) | `log.max_lines` | 초과 시 앞에서 버림 |
 | 실행 취소 | (신설 상한) | `editor.undo_max` | 탭 닫힘 |
 | 최근 파일·폴더 | `file.recent` 개수 | 기존(10) | — |

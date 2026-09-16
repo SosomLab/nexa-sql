@@ -49,12 +49,6 @@ impl ActivityBar {
                     bottom: false,
                 },
                 ActItem {
-                    id: "conn.toggle",
-                    icon: toolicons::mi_plug(),
-                    panel: false,
-                    bottom: true,
-                },
-                ActItem {
                     id: "edit.prefs",
                     icon: toolicons::mi_gear(),
                     panel: false,

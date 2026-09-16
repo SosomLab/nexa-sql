@@ -23,6 +23,9 @@ pub(crate) struct Editors {
     titles: Vec<String>,
     active: usize,
     counter: usize,
+    /// 탭별 안정 id(닫혀도 재사용 없음) — 호스트가 결과 그리드를 탭과 짝지을 때 쓴다(사용자 09-16).
+    ids: Vec<u64>,
+    next_id: u64,
     bounds: Rect,
     scale: f32,
     line_numbers: bool,
@@ -99,6 +102,8 @@ impl Editors {
             crlf: Vec::new(),
             saved_crlf: Vec::new(),
             default_crlf: cfg!(windows),
+            ids: Vec::new(),
+            next_id: 1,
             encs: Vec::new(),
             shown_titles: Vec::new(),
             pending_close: None,
@@ -118,6 +123,8 @@ impl Editors {
         tb.set_rulers(self.rulers.clone());
         tb.set_whitespace(self.whitespace);
         tb.set_indent(self.indent.0, self.indent.1);
+        // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
+        tb.set_focus_ring(false);
         tb
     }
 
@@ -283,8 +290,25 @@ impl Editors {
         self.encs.push("utf8".into());
         self.syntax.push(syntax);
         self.titles.push(title);
+        self.ids.push(self.next_id);
+        self.next_id += 1;
         self.active = self.bufs.len() - 1;
         self.sync_tabs();
+    }
+
+    /// 탭의 안정 id.
+    pub(crate) fn tab_id(&self, i: usize) -> u64 {
+        self.ids.get(i).copied().unwrap_or(0)
+    }
+
+    /// 활성 탭의 안정 id.
+    pub(crate) fn active_id(&self) -> u64 {
+        self.tab_id(self.active)
+    }
+
+    /// 살아 있는 탭 id 전부(닫힌 탭의 결과 그리드 회수용).
+    pub(crate) fn tab_ids(&self) -> Vec<u64> {
+        self.ids.clone()
     }
 
     // ───────────────────────── 파일(T-74) ─────────────────────────
@@ -444,6 +468,9 @@ impl Editors {
             self.saved_crlf[i] = self.default_crlf;
             self.counter += 1;
             self.titles[i] = format!("Script_{}", self.counter);
+            // 새 스크립트가 됐으니 id도 새로(짝 결과 그리드 비움).
+            self.ids[i] = self.next_id;
+            self.next_id += 1;
             self.sync_tabs();
             return;
         }
@@ -455,6 +482,7 @@ impl Editors {
         self.crlf.remove(i);
         self.saved_crlf.remove(i);
         self.encs.remove(i);
+        self.ids.remove(i);
         if i < self.indents.len() {
             self.indents.remove(i);
         }

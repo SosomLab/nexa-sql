@@ -426,11 +426,6 @@ fn shape_files(x: f32, y: f32) -> bool {
     back || front || lines
 }
 
-/// 활동 막대 — 접속(플러그 = 툴바 접속 아이콘 재사용).
-fn shape_plug(x: f32, y: f32) -> bool {
-    shape_connect(x, y)
-}
-
 /// 활동 막대 — 환경 설정(톱니: 고리 + 이 8개).
 fn shape_gear(x: f32, y: f32) -> bool {
     let (cx, cy) = (128.0, 128.0);
@@ -453,9 +448,6 @@ fn shape_gear(x: f32, y: f32) -> bool {
 
 pub(crate) fn mi_files() -> MenuIcon {
     menu_icon(shape_files)
-}
-pub(crate) fn mi_plug() -> MenuIcon {
-    menu_icon(shape_plug)
 }
 pub(crate) fn mi_gear() -> MenuIcon {
     menu_icon(shape_gear)
@@ -577,7 +569,6 @@ mod tests {
             shape_braces,
             shape_db,
             shape_files,
-            shape_plug,
             shape_gear,
         ] {
             let (opaque, partial) = coverage(s);
