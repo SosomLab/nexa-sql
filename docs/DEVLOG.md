@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (14차 · win)** — **탭 정지점**(Golden 방식 · 렌더러 원점 기준) + 설정 `editor.tab_stops`(stop/fixed · 즉시 반영). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (13차 · win)** — 활동 막대 플러그 제거 · **편집기 탭 ↔ 결과 그리드 쌍**(탭 id · `grid_stash` · 실행 탭으로 결과 · 닫힘 회수) · 편집기 포커스 링 끔(nexa-ui `set_focus_ring`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (12차 · win)** — **자원 거버넌스 설계 [39](39-resource-governance.md)**(기준 S-1~14 · 부하원 원장 · `perf.mode` 거버너 · 4층 게이트 · T-90 · D-58~61). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (11차 · win)** — 저장소 최신화(Windows 빌드/테스트/CI ✓) · **즉시 접속 해제**(서버 무응답이어도 Disconnect = 워커·메타 스레드 교체 · 갇힌 세션은 버림 · `StDisconnectedAbandon`) · 워커 테스트. → [journal](journal/2026-09-16.md)

@@ -140,6 +140,10 @@ pub struct Entry {
 }
 
 /// 줄끝(docs/38 · DBeaver/Eclipse "New text file line delimiter" 대응 · 09-16).
+const TAB_STOPS_OPTS: &[(&str, Msg)] = &[
+    ("stop", Msg::ValTabStopsStop),
+    ("fixed", Msg::ValTabStopsFixed),
+];
 const EOL_NEW_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValEolAuto),
     ("lf", Msg::ValEolLf),
@@ -265,6 +269,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         // 기본 off = Tab 키가 **탭 문자**(폭 4 = `editor.tab_size`) — 사용자 확정 09-16(이전 on = 공백).
         default: "off",
+    },
+    Entry {
+        key: "editor.tab_stops",
+        cat: Msg::CatEditor,
+        label: Msg::LblTabStops,
+        desc: Msg::DescTabStops,
+        kind: SettingKind::Choice(TAB_STOPS_OPTS),
+        // 기본 = 정지점(Golden/Sublime/VS Code 관례 · 사용자 09-16) · fixed = 종전 절대 4칸.
+        default: "stop",
     },
     Entry {
         key: "editor.rulers",

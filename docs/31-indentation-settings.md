@@ -1,3 +1,5 @@
+> **09-16 추가**: 탭/공백 적용 방식 설정 `editor.tab_stops` = `stop`(정지점 · 앞 글자 수를 고려해 탭 폭의 다음 배수 열까지 · Golden/Sublime/VS Code · 기본) | `fixed`(늘 탭 폭). 렌더링·Tab 키 공백·붙여넣기·열 계산 전부 한 규칙([journal 14차](journal/2026-09-16.md)).
+
 # 31. 들여쓰기(탭 크기·공백) 설정 계층 — Sublime · VS Code · IntelliJ 비교와 권장 설계 (2026-09-15)
 
 > **진행**: 09-15 19차 — 탭별 계층(`Editors.indents` · 상태줄 팝업 = 활성 탭만 · 붙여넣기 탭→공백 변환 · `TextBox::paint`가 자기 탭 폭을 주입) ✅ · 문법/프로젝트 계층·감지는 미구현.

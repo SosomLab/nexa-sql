@@ -41,6 +41,8 @@ pub(crate) struct Editors {
     whitespace: WhitespaceStyle,
     /// (탭 폭, 공백 들여쓰기) **기본값**(설정 `editor.tab_size`/`editor.indent_spaces`) — 새 탭의 시작값.
     indent: (u8, bool),
+    /// 탭 정지점 방식(설정 `editor.tab_stops` · 09-16).
+    tab_stops: bool,
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
     /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
@@ -104,6 +106,7 @@ impl Editors {
             default_crlf: cfg!(windows),
             ids: Vec::new(),
             next_id: 1,
+            tab_stops: true,
             encs: Vec::new(),
             shown_titles: Vec::new(),
             pending_close: None,
@@ -123,6 +126,7 @@ impl Editors {
         tb.set_rulers(self.rulers.clone());
         tb.set_whitespace(self.whitespace);
         tb.set_indent(self.indent.0, self.indent.1);
+        tb.set_tab_stops(self.tab_stops);
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
         tb.set_focus_ring(false);
         tb
@@ -195,6 +199,14 @@ impl Editors {
     }
 
     /// 들여쓰기 **기본값**(설정) — 재정의가 없는 탭에 적용하고 새 탭의 시작값이 된다.
+    /// 탭/공백 적용 방식(설정 `editor.tab_stops` · 모든 탭 공통).
+    pub(crate) fn set_tab_stops(&mut self, on: bool) {
+        self.tab_stops = on;
+        for b in &mut self.bufs {
+            b.set_tab_stops(on);
+        }
+    }
+
     pub(crate) fn set_indent(&mut self, tab_size: u8, spaces: bool) {
         self.indent = (tab_size, spaces);
         for (i, b) in self.bufs.iter_mut().enumerate() {

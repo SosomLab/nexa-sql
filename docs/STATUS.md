@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (14차 · win) — 탭 정지점 ✅ · `editor.tab_stops` ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (13차 · win) — 탭 ↔ 결과 그리드 쌍 ✅ · 플러그 제거 ✅ · 편집기 링 끔 ✅
 
 → [journal](journal/2026-09-16.md)

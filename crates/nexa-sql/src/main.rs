@@ -913,6 +913,9 @@ impl App {
     fn apply_indent(&mut self) {
         let ts = self.settings.int("editor.tab_size").clamp(1, 8);
         nexa_gfx::text::set_tab_cols(ts as u32);
+        let stops = self.settings.get("editor.tab_stops") != Some("fixed");
+        nexa_gfx::text::set_tab_stops(stops);
+        self.editors.set_tab_stops(stops);
         self.editors
             .set_indent(ts as u8, self.settings.flag("editor.indent_spaces"));
         self.redraw();
@@ -1034,7 +1037,7 @@ impl App {
                 .grid
                 .set_row_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
-            "editor.tab_size" | "editor.indent_spaces" => self.apply_indent(),
+            "editor.tab_size" | "editor.indent_spaces" | "editor.tab_stops" => self.apply_indent(),
             "file.eol_new" => self
                 .editors
                 .set_default_crlf(eol::default_crlf(self.settings.get(key).unwrap_or("auto"))),
