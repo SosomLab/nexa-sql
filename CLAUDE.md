@@ -8,7 +8,7 @@
 **올 러스트 · 단일 바이너리 · `../nexa-ui`(자체 CPU 래스터) 위에 그린다** — Qt·WebView·Electron 없음.
 
 - 조직: **SosomLab** · 개발자: Sangyong Bae · kiros33@gmail.com · 저장소 <https://github.com/SosomLab/nexa-sql> · 라이선스 **PolyForm NC 1.0.0**
-- 현 단계: **M1·M2 병행 진행(2026-09-16 · 맥 세션 종료 → Windows 이관)** — 드라이버 4종(sqlite·oracle·mssql·pg) · CLI · GUI(접속 창·탐색기·편집기·그리드·자체 파일 대화상자·스플리터) · DR-1~29 · 줄끝 정책 [38](docs/38-line-endings.md). **⏳ Windows 재검증 T-88 · 결정 대기 T-87 · D-51~57.**
+- 현 단계: **M1·M2 병행 진행(2026-09-16 · 맥 세션 종료 → Windows 이관)** — 드라이버 4종(sqlite·oracle·mssql·pg) · CLI · GUI(접속 창·탐색기·편집기·그리드·자체 파일 대화상자·스플리터) · DR-1~29 · 줄끝 정책 [38](docs/38-line-endings.md) · **글자 = Windows GDI 힌팅 글리프(D-77 · `ui.text_gdi`)**. **⏳ Windows 재검증 T-88 · 결정 대기 T-87 · D-51~57 · 결과 다중 탭 T-93.**
 - **09-16 Windows 세션(11~37차 · [STATUS](docs/STATUS.md) · [journal](docs/journal/2026-09-16.md))**: 로그 창(스크롤·스위치 4·형식 어댑터 8·파일 싱크·필터·선택·F10) · 토스트+DBMS 오류 정규화 [42](docs/42-db-error-normalization.md) · 결과→SQL 키 규칙 [41](docs/41-sql-copy-key-rules.md) · CLI 폭/형식/도움말(기본값은 설정에서) · **페치 모델 [43](docs/43-fetch-model-and-result-tabs.md)(결과 도구줄 5그룹 · 보기 모드 7종 · 스크롤 끝 자동 페치 OFFSET 폴백 · 지연 텍스트 변환 · 다중 탭 검토 D-73~75)** · 상태줄(선택 3종 · 줄끝 3종 · 인코딩 CJK `encoding_rs` · git) · 편집기(거터 띠·여백·선택어 외곽선·구분선 설정·정규식 **D-76 fancy-regex**·실행 뒤 캐럿·Alt+↓/↑) · 단축키 프리셋 `key.preset`(Sublime 정렬) · 글자 선명도(Segoe UI·정수 스냅·대비 감마) · 설정 창(종속 잠금·콤보) · 탭 메뉴 · 자원 거버넌스 설계 [39](docs/39-resource-governance.md). **다음 = T-93 결과 다중 탭(확인 뒤) · T-48a 커서 유지 · T-94 데이터 편집기 · T-96 탭 검색 · T-97 미니맵 · T-98 Sublime 편집 명령.**
 - ★ 형제 저장소 clone은 `git@kiros33.github.com:SosomLab/<repo>.git`(SSH 별칭 · 사용자 지정 09-13).
 

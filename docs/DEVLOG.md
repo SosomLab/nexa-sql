@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (44차 · win)** — ★ **글자 선명도 = Windows GDI 글리프 경로**(`ui.text_gdi` · nexa-ui 21차 · D-77) · 자체 캡처 on/off 비교 · ClearType 답 · `ui.text_weight`. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (43차 · win)** — 캡처 판독: 언어 복구 · 10pt 소수 크기 정수 래스터(nexa-ui 20차) · 상태줄 왼쪽 문구 겹침 수정. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (42차 · win)** — **T-99 오토힌트**(`ui.text_hint` · nexa-ui 19차) · 도구줄 상태 글자 = UI 글꼴 · **i18n 전수 점검**(러너 로그·CLI 오류·창 제목 → Msg). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (41차 · win)** — 글꼴 크기 `Size` 종류(`13`/`13px`/`10pt` · `font_px`) · grid.font_face 배치 · 설정 카드 강조선 제거 · 팝업 위 구분선 결함. → [journal](journal/2026-09-16.md)

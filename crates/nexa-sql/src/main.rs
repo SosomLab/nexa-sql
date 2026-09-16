@@ -1200,6 +1200,10 @@ impl App {
         nexa_gfx::text::set_text_contrast(pct / 100.0);
         nexa_gfx::text::set_text_snap(self.settings.flag("ui.text_snap"));
         nexa_gfx::text::set_text_hint(self.settings.flag("ui.text_hint"));
+        nexa_gfx::text::set_text_gdi(self.settings.flag("ui.text_gdi"));
+        nexa_gfx::text::set_text_weight(
+            self.settings.int("ui.text_weight").clamp(0, 60) as f32 / 100.0,
+        );
     }
 
     /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
@@ -1373,7 +1377,7 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
-            "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" => {
+            "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" | "ui.text_weight" => {
                 self.apply_text_render();
                 self.log_win.redraw();
             }

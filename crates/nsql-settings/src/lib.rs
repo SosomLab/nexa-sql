@@ -281,6 +281,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "140",
     },
     Entry {
+        key: "ui.text_weight",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTextWeight,
+        desc: Msg::DescTextWeight,
+        kind: SettingKind::Int { min: 0, max: 60 },
+        default: "25",
+    },
+    Entry {
+        key: "ui.text_gdi",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTextGdi,
+        desc: Msg::DescTextGdi,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "ui.text_hint",
         cat: Msg::CatAppearance,
         label: Msg::LblTextHint,
