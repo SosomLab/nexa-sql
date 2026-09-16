@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (46차 · win)** — ★ 설정 창 "닫기 깨짐" → GDI 경로 = **ClearType + 진짜 볼드**(nexa-ui 23차) · 테스트 자동화(줄기 가시성 단위 테스트 · `scripts/win-capture.ps1`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (45차 · win)** — nexa-ui CI windows 빨강(영문 로케일 GDI 이름) → name 테이블 이름 후보(nexa-ui 22차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (44차 · win)** — ★ **글자 선명도 = Windows GDI 글리프 경로**(`ui.text_gdi` · nexa-ui 21차 · D-77) · 자체 캡처 on/off 비교 · ClearType 답 · `ui.text_weight`. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (43차 · win)** — 캡처 판독: 언어 복구 · 10pt 소수 크기 정수 래스터(nexa-ui 20차) · 상태줄 왼쪽 문구 겹침 수정. → [journal](journal/2026-09-16.md)

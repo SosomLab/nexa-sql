@@ -1190,7 +1190,7 @@ impl Msg {
             Msg::CliErrNeedQuery => ["-q <sql> or -t <table> is required", "-q <sql> 또는 -t <table>이 필요합니다"],
             Msg::LblTextHint => ["Auto-hint glyphs", "글자 오토힌트"],
             Msg::LblTextGdi => ["Use OS text rasterizer (Windows GDI)", "OS 글자 래스터라이저 사용(Windows GDI)"],
-            Msg::DescTextGdi => ["Windows only: hinted glyph bitmaps and integer advances from GDI (the same rasterizer as Golden). Off = built-in rasterizer with the options below", "Windows 전용: 힌팅된 글리프 비트맵과 정수 전진 폭을 GDI에서 가져온다(Golden과 같은 래스터). 끄면 내장 래스터 + 아래 옵션"],
+            Msg::DescTextGdi => ["Windows only: ClearType glyphs (hinted, sub-pixel, real bold) and integer advances from GDI — the same rasterizer as Windows and Golden. Off = built-in rasterizer with the options below", "Windows 전용: GDI ClearType 글리프(힌팅·서브픽셀·진짜 볼드)와 정수 전진 폭 — Windows·Golden과 같은 래스터. 끄면 내장 래스터 + 아래 옵션"],
             Msg::DescTextHint => ["Align horizontal strokes (x-height to whole pixels) and vertical stems (one pixel column) like GDI/FreeType light. Off = plain anti-aliasing", "가로 획(x-높이를 정수 px에)과 세로 줄기(한 픽셀 열)를 GDI/FreeType light처럼 격자에 맞춘다. 끄면 순수 안티에일리어싱"],
             Msg::LblKeyPreset => ["Key binding preset", "단축키 기본 세트"],
             Msg::DescKeyPreset => ["Default set like Sublime Text's per-OS keymap files: auto = this OS · windows · macos · linux. key.* overrides apply on top", "Sublime Text의 OS별 keymap 파일과 같은 기본 세트: auto = 이 OS · windows · macos · linux. key.* 재정의가 그 위에 얹힌다"],

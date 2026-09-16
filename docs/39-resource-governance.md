@@ -139,7 +139,7 @@
 | 캐시 | 상한 | 키 | 회수 시점 |
 |---|---|---|---|
 | 글리프 비트맵(nexa-gfx) | 8192 | `ui.glyph_cache`(신설 · HIDDEN) | 초과 시 전체 비움 |
-| GDI face(HDC·HFONT · 스레드 로컬 · nexa-gfx `gdi.rs`) + 전진 폭 캐시 | face × 크기(≤ 수십) · 전진 폭 face×em×문자 | `ui.text_gdi`(끄면 0) | 프로세스 종료(44차) |
+| GDI face(HDC·HFONT·32bpp DIB ≈ em×3 × em×2 px · 스레드 로컬 · nexa-gfx `gdi.rs`) + 전진 폭 캐시 | face × 크기 × 굵게(≤ 수십) · 전진 폭 face×em×문자×굵게 · 글리프 비트맵은 rgb 3바이트/px | `ui.text_gdi`(끄면 0) | 프로세스 종료(44·46차) |
 | OS 아이콘 RGBA(nexa-fs) | 512 | `file.icon_cache`(신설 · HIDDEN) | LRU · 프로세스 종료 |
 | 파일 대화상자 목록·프로브·아이콘 사본 | 폴더 1개 분 | — | 대화상자 닫힘(Drop) |
 | 결과 셋 | **편집기 탭당 그리드 1**(13차 · `grid_stash`) · 각 ≤ `grid.max_rows` | `grid.max_rows` | 다음 실행 · 탭 닫힘(즉시) |
