@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (47차 · win · 보조)** — **CLI 사용 문서 [40](40-cli-usage.md) 신설**(978줄 · 전량 실측) — 순서대로 12단계(서버 없이 SQLite) · **출력 형식 상세**(markdown·json·jsonl·SQL 5종·표 4모드·stdout/stderr·종료 코드) · 접속 문자열 직접 지정(퍼센트 인코딩·`NSQL_PASSWORD`·`@` 생략 불가) · `--overflow` 도움말 기본값 오기 발견(T-101). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (46차 · win)** — ★ 설정 창 "닫기 깨짐" → GDI 경로 = **ClearType + 진짜 볼드**(nexa-ui 23차) · 테스트 자동화(줄기 가시성 단위 테스트 · `scripts/win-capture.ps1`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (45차 · win)** — nexa-ui CI windows 빨강(영문 로케일 GDI 이름) → name 테이블 이름 후보(nexa-ui 22차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (44차 · win)** — ★ **글자 선명도 = Windows GDI 글리프 경로**(`ui.text_gdi` · nexa-ui 21차 · D-77) · 자체 캡처 on/off 비교 · ClearType 답 · `ui.text_weight`. → [journal](journal/2026-09-16.md)
