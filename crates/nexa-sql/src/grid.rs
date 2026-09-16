@@ -111,6 +111,8 @@ pub(crate) struct Grid {
     row_numbers: bool,
     /// 설정 `grid.copy_null` — 복사 시 null을 `NULL`로(기본 끔 = 빈 칸).
     copy_null: bool,
+    /// 행 높이 비율(% · 글꼴 높이 대비 · 설정 `grid.row_height_pct`).
+    row_pct: i32,
     gutter_w: i32,
     /// 표시 순서 → 원본 컬럼 index(드래그 이동 · 재조회 시 초기화 — 사용자 09-14).
     col_order: Vec<usize>,
@@ -220,6 +222,7 @@ impl Default for Grid {
             row_snap: false,
             row_numbers: true,
             copy_null: false,
+            row_pct: 150,
             gutter_w: 0,
             col_order: Vec::new(),
             row_order: Vec::new(),
@@ -328,6 +331,7 @@ impl Grid {
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
             copy_null: self.copy_null,
+            row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
             dialect: self.dialect,
@@ -361,6 +365,15 @@ impl Grid {
     // ── 도구줄·페치 상태(호스트 연동)
 
     /// 이 결과 탭의 세그먼트 크기(0 = 전체).
+    /// 결과 행의 대략 바이트(메모리 예산 D-72 · 탭 합계용).
+    pub(crate) fn approx_bytes(&self) -> u64 {
+        if self.rs.is_some() {
+            self.approx_bytes
+        } else {
+            0
+        }
+    }
+
     pub(crate) fn page_rows(&self) -> usize {
         self.page_rows
     }
@@ -899,6 +912,11 @@ impl Grid {
     }
 
     /// 복사할 때 null을 `NULL` 글자로(설정 `grid.copy_null` · 기본 끔 = 빈 칸 · 사용자 09-16).
+    /// 행 높이 비율(% · 설정 `grid.row_height_pct`).
+    pub(crate) fn set_row_pct(&mut self, pct: i32) {
+        self.row_pct = pct.clamp(110, 300);
+    }
+
     pub(crate) fn set_copy_null(&mut self, on: bool) {
         self.copy_null = on;
     }
@@ -2049,7 +2067,10 @@ impl Grid {
         dc.fill_rect(Rect::new(b.x, b.y, b.w, 1), th.border);
         dc.select_font(FontSlot::Base, false);
         let pad = (6.0 * s).round() as i32;
-        self.row_h = dc.text_height() + pad;
+        // 행 높이 = 글꼴 높이 × 비율(설정 `grid.row_height_pct` · 기본 150% · 사용자 09-16 "폰트 크기에 적당한 비율") — 글자는
+        // 잉크 기준 세로 중앙(`text_center_y`) · 헤더는 행보다 위아래 1px씩 2px 더.
+        let th_px = dc.text_height();
+        self.row_h = ((th_px as f32 * self.row_pct as f32 / 100.0).round() as i32).max(th_px + 2);
         // 푸터(결과 도구줄) 높이 = 아이콘 16 + 여백 — 보기 모드·결과 유무와 무관하게 늘 보인다(사용자 09-16).
         self.tb_view.set_scale(s);
         self.footer_h =
@@ -2084,7 +2105,7 @@ impl Grid {
             let label = t(Msg::GridNoRecords);
             let gw = dc.text_width("0") * 2 + pad * 2;
             let cw = dc.text_width(label) + pad * 2;
-            let header = Rect::new(b.x, b.y + 1, gw + cw, self.row_h);
+            let header = Rect::new(b.x, b.y + 1, gw + cw, self.row_h + 2);
             self.header_h = header.h + 1;
             dc.fill_rect(header, th.chrome_bg);
             dc.fill_rect(Rect::new(b.x, header.bottom() - 1, header.w, 1), th.border);
@@ -2150,7 +2171,7 @@ impl Grid {
                 *cw = w;
             }
         }
-        let header = Rect::new(b.x, b.y + 1, b.w, self.row_h);
+        let header = Rect::new(b.x, b.y + 1, b.w, self.row_h + 2);
         self.header_h = header.h + 1;
         // 행번호 열 폭(자릿수 × 숫자 폭 + 여백) — 가로 스크롤과 무관한 고정 열.
         self.gutter_w = if self.row_numbers {

@@ -32,6 +32,7 @@ mod log_win;
 mod palette;
 mod prefs_win;
 mod probe;
+mod results;
 mod rx;
 mod syntax;
 mod theme;
@@ -71,6 +72,7 @@ use nsql_settings::{Settings, ThemeMode};
 use nsql_vault::Vault;
 use palette::{Palette, PaletteAction};
 use prefs_win::{PrefsAction, PrefsWin};
+use results::{PanelAction as ResultAction, ResultPanel, ResultTab};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -95,6 +97,24 @@ enum Focus {
     Grid,
     Explorer,
     Find,
+}
+
+/// 잃는 순간의 확인(Commit/Rollback) 뒤 이어질 동작(DR-30).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TxAfter {
+    CloseTab(usize),
+    Disconnect,
+    Exit,
+    SwitchAuto,
+}
+
+/// 수동 커밋 대기 문장 하나(T-77) — 편집기 탭 · 시각 · 시:분 · 요약.
+#[derive(Clone, Debug)]
+struct TxItem {
+    editor: u64,
+    at: Instant,
+    when: String,
+    summary: String,
 }
 
 struct App {
@@ -168,11 +188,21 @@ struct App {
     open_conn: bool,
     /// 찾기/바꾸기 바(편집기 위 · T-73).
     find: FindBar,
+    /// 선택 범위에서 찾기 — 켤 때의 선택(문자 인덱스 · 편집으로 길이가 바뀌면 그대로 둔다).
+    find_scope: Option<(usize, usize)>,
     editors: Editors,
-    /// 활성 편집기 탭의 결과 그리드. 다른 탭의 그리드는 `grid_stash`에 잠들어 있다가 탭을 고르면 교체된다(사용자 09-16 "편집기와 결과는 쌍").
+    /// **활성 결과 탭**의 그리드(활성 편집기 탭의 결과 패널 중 활성 탭). 그리기·이벤트는 이것 하나만 만진다(D-71 · T-93).
     grid: grid::Grid,
-    /// 비활성 탭의 결과 그리드(탭 id → 그리드 · 탭이 닫히면 버림).
-    grid_stash: HashMap<u64, grid::Grid>,
+    /// 활성 편집기 탭의 결과 패널(결과 탭 여러 개 · 활성 탭 자리는 자리표시자 · `grid`가 실제).
+    panel: ResultPanel,
+    /// `panel`이 속한 편집기 탭 id(0 = 아직 없음).
+    panel_editor: u64,
+    /// 잠든 편집기 탭들의 결과 패널(편집기 탭 id → 패널 · 편집기 탭이 닫히면 통째로 drop = rows 즉시 해제).
+    panels: HashMap<u64, ResultPanel>,
+    /// 결과 탭 id 발급(전역 고유 · 워커 요청 키).
+    next_result_id: u64,
+    /// 결과 영역(탭 바 + 그리드) — 재배치 근거.
+    result_area: Rect,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
     /// 테이블 키 캐시(접속당 · 표기 그대로 키) — Copy SQL의 키 조회 왕복을 테이블당 1회로(docs/41).
@@ -185,9 +215,9 @@ struct App {
     view_wait: Option<nsql_io::SqlKind>,
     /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
     offset_warned: std::collections::HashSet<u64>,
-    /// `grid`가 속한 탭 id.
+    /// `grid`가 속한 **결과 탭** id.
     grid_tab: u64,
-    /// 마지막 실행을 시작한 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
+    /// 마지막 실행의 대상 결과 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
     run_tab: u64,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
     explorer: Explorer,
@@ -200,6 +230,15 @@ struct App {
     dialect: Dialect,
     /// 수동 커밋 모드에서 커밋되지 않은 변경이 있는가(상태줄 ● · 사용자 09-15).
     tx_dirty: bool,
+    /// 수동 커밋 대기 문장(DR-30 · T-77). 세션은 공유(T-54 전)라 목록은 하나 · 탭 배지는 탭별 수.
+    tx_pending: Vec<TxItem>,
+    /// 오래된 미커밋 경고를 로그에 남겼다(1회).
+    tx_stale_logged: bool,
+    /// 실행을 시작한 편집기 탭 id(대기 문장의 소속).
+    run_editor: u64,
+    /// 확인 뒤 이어질 동작.
+    tx_after: Option<TxAfter>,
+    status_tx_rect: Rect,
     /// ★ Oracle 라이브 로그 모니터(T-71 · docs/32 §2): 편집기 세션 SID · 다음 폴링 시각 · 로그 테이블 기준 시각 · 마지막 세션 줄(중복 억제) · 실행 끝 뒤 마지막 1회.
     live_sid: Option<String>,
     live_next: Instant,
@@ -259,6 +298,94 @@ fn resolve_panel_state(
     match op {
         Some((n, st)) if n.trim() == name.trim() => st.clone(),
         _ => results.get(name.trim()).cloned().unwrap_or(ConnState::Idle),
+    }
+}
+
+/// 방언별 암묵 커밋(DDL이 트랜잭션을 끝내는 서버 · docs/34 §2-3): Oracle · MySQL. MSSQL·PG·SQLite는 DDL도 트랜잭션 안.
+fn implicit_commit(dialect: Dialect, stmt: &str) -> bool {
+    let d = dialect.to_string().to_ascii_lowercase();
+    if !(d.starts_with("oracle") || d.starts_with("mysql")) {
+        return false;
+    }
+    matches!(
+        first_word(stmt).as_str(),
+        "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "GRANT" | "REVOKE" | "RENAME" | "COMMENT"
+    )
+}
+
+fn first_word(stmt: &str) -> String {
+    stmt.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .find(|w| !w.is_empty())
+        .map(|w| w.to_ascii_uppercase())
+        .unwrap_or_default()
+}
+
+/// 한 줄 요약(공백 접기 · `max` 글자).
+fn one_line(s: &str, max: usize) -> String {
+    let joined: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = joined.chars().take(max).collect();
+    if joined.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+#[cfg(test)]
+mod tx_tests {
+    use super::*;
+
+    #[test]
+    fn implicit_commit_only_for_oracle_mysql_ddl() {
+        assert!(implicit_commit(Dialect::Oracle, "create table t (a int)"));
+        assert!(implicit_commit(Dialect::Oracle, "  TRUNCATE TABLE t"));
+        assert!(!implicit_commit(Dialect::Oracle, "update t set a = 1"));
+        assert!(!implicit_commit(Dialect::Sqlite, "create table t (a int)"));
+        assert_eq!(one_line("update  t\n set a = 1", 8), "update t…");
+    }
+}
+
+/// 대소문자 보존 치환(VS Code Preserve Case · Sublime Alt+A): 일치가 전부 대문자 → 대문자 · 첫 글자만 대문자 → 첫 글자만 ·
+/// 그 밖(전부 소문자 · 혼합)은 입력 그대로.
+fn preserve_case(matched: &str, repl: &str) -> String {
+    let letters: Vec<char> = matched.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.is_empty() {
+        return repl.to_string();
+    }
+    if letters.iter().all(|c| c.is_uppercase()) && letters.len() > 1 {
+        return repl.to_uppercase();
+    }
+    let first_upper = letters[0].is_uppercase();
+    let rest_lower = letters.iter().skip(1).all(|c| c.is_lowercase());
+    if first_upper && rest_lower {
+        let mut out = String::new();
+        let mut done = false;
+        for c in repl.chars() {
+            if !done && c.is_alphabetic() {
+                out.extend(c.to_uppercase());
+                done = true;
+            } else {
+                out.extend(c.to_lowercase());
+            }
+        }
+        return out;
+    }
+    if letters.iter().all(|c| c.is_lowercase()) {
+        return repl.to_lowercase();
+    }
+    repl.to_string()
+}
+
+#[cfg(test)]
+mod find_case_tests {
+    use super::preserve_case;
+
+    #[test]
+    fn preserve_case_follows_match_shape() {
+        assert_eq!(preserve_case("HELLO", "world"), "WORLD");
+        assert_eq!(preserve_case("Hello", "wORLD"), "World");
+        assert_eq!(preserve_case("hello", "World"), "world");
+        assert_eq!(preserve_case("hELLo", "World"), "World", "혼합은 그대로");
+        assert_eq!(preserve_case("123", "abc"), "abc", "글자가 없으면 그대로");
     }
 }
 
@@ -362,11 +489,15 @@ impl App {
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
         // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
         self.find.set_bounds(self.editors.editor_bounds(), s);
+        self.find.set_clamp_width(w);
         // 스플리터 ② 편집기|결과 — 띠 = 편집기 아래 여백(pad) 자리.
         self.split_h
             .set_rect(Rect::new(rx, body_top + editor_h - pad, rw, pad.max(grip)));
         let gb = Rect::new(rx, body_top + editor_h, rw, body_h - editor_h - pad);
-        self.all_grids().for_each(|g| g.set_bounds(gb));
+        // 결과 영역 = 결과 탭 바(보일 때만) + 그리드(T-93).
+        self.result_area = gb;
+        let grid_rect = self.panel.set_bounds(gb, s);
+        self.all_grids().for_each(|g| g.set_bounds(grid_rect));
         self.palette.set_bounds(w, chrome_h, s);
     }
 
@@ -726,6 +857,15 @@ impl App {
     }
 
     fn find_matches(&mut self) -> (Vec<(usize, usize)>, Vec<char>) {
+        let (mut out, text) = self.find_matches_all();
+        // 선택 범위에서 찾기(≡ · Alt+L): 켤 때 잡은 범위 안의 일치만.
+        if let Some((a, e)) = self.find_scope {
+            out.retain(|(s, t)| *s >= a && *t <= e);
+        }
+        (out, text)
+    }
+
+    fn find_matches_all(&mut self) -> (Vec<(usize, usize)>, Vec<char>) {
         let full = self.ed_mut().text();
         let text: Vec<char> = full.chars().collect();
         // ★ 정규식 모드 = fancy-regex(문자 인덱스로 변환) · 아니면 종전 문자 비교(빠른 경로 유지).
@@ -818,14 +958,25 @@ impl App {
     /// 일치 `(a, b)`에 넣을 치환문 — 정규식 모드면 `$1`/`${name}` 확장 · 아니면 글자 그대로.
     fn find_expansion(&mut self, a: usize) -> String {
         let repl = self.find.replacement();
-        if !self.find.regex() {
-            return repl;
-        }
-        let Some(r) = self.find_rx() else {
-            return repl;
-        };
         let full = self.ed_mut().text();
-        rx::expand_at(&r, &full, a, &repl)
+        let base = if self.find.regex() {
+            match self.find_rx() {
+                Some(r) => rx::expand_at(&r, &full, a, &repl),
+                None => repl,
+            }
+        } else {
+            repl
+        };
+        if !self.find.preserve_case() {
+            return base;
+        }
+        // 대소문자 보존(AB · Alt+A): 일치가 전부 대문자면 대문자로 · 첫 글자만 대문자면 첫 글자만 · 전부 소문자면 소문자로.
+        let (matches, _) = self.find_matches();
+        let Some(&(s, e)) = matches.iter().find(|(s, _)| *s == a) else {
+            return base;
+        };
+        let matched: String = full.chars().skip(s).take(e - s).collect();
+        preserve_case(&matched, &base)
     }
 
     fn find_replace_one(&mut self) {
@@ -873,8 +1024,44 @@ impl App {
             }
             FindAction::Replace => self.find_replace_one(),
             FindAction::ReplaceAll => self.find_replace_all(),
+            FindAction::ScopeChanged => {
+                if self.find.in_selection() {
+                    match self.ed_mut().selection() {
+                        Some((a, b)) if b > a => {
+                            self.find_scope = Some((a, b));
+                            self.ed_mut().set_find_scope(Some((a, b)));
+                            // 범위 안 첫 일치로(선택은 범위 표시가 대신한다).
+                            let mut inv = Invalidations::default();
+                            self.ed_mut().select_range(a, a, &mut inv);
+                        }
+                        _ => {
+                            self.find.set_in_selection(false);
+                            self.status = t(Msg::StFindNoSelection).into();
+                        }
+                    }
+                } else {
+                    self.find_scope = None;
+                    self.ed_mut().set_find_scope(None);
+                }
+                self.find_step(true, false);
+            }
+            FindAction::SelectAll => {
+                let (matches, _) = self.find_matches();
+                if matches.is_empty() {
+                    self.find.set_status(t(Msg::StFindNone));
+                } else {
+                    let n = matches.len();
+                    self.ed_mut().set_regions_pub(&matches);
+                    self.find
+                        .set_status(tf(Msg::StSelections, &[&n.to_string()]));
+                    self.set_focus(Focus::Editor);
+                }
+                self.redraw();
+            }
             FindAction::Close => {
                 self.find.close();
+                self.find_scope = None;
+                self.ed_mut().set_find_scope(None);
                 self.ed_mut().set_find_marks(Vec::new());
                 self.layout();
                 self.set_focus(Focus::Editor);
@@ -1229,6 +1416,11 @@ impl App {
             self.layout();
             return;
         }
+        if let Some(rest) = id.strip_prefix("tx.") {
+            self.tx_pick(rest);
+            self.redraw();
+            return;
+        }
         match id {
             "eol.lf" => self.editors.set_active_eol(eol::Eol::Lf),
             "eol.crlf" => self.editors.set_active_eol(eol::Eol::Crlf),
@@ -1274,6 +1466,14 @@ impl App {
         );
     }
 
+    /// 설정 → 미니맵(T-97).
+    fn apply_minimap(&mut self) {
+        let on = self.settings.flag("editor.minimap");
+        let w = self.settings.int("editor.minimap_width").clamp(20, 400) as i32;
+        self.editors.set_minimap(on, w);
+        self.redraw();
+    }
+
     /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
     fn apply_indent(&mut self) {
         let ts = self.settings.int("editor.tab_size").clamp(1, 8);
@@ -1306,6 +1506,17 @@ impl App {
     /// 늦게 오는 이벤트는 버려진 채널로 사라진다) · 새 워커를 만들어 다음 접속을 받는다 · UI는 지금 해제 상태로.
     /// 탐색기 메타 스레드도 같은 방식(`Explorer::disconnect`).
     fn disconnect_now(&mut self) {
+        // 미커밋 문장이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30).
+        if !self.tx_pending.is_empty() {
+            self.tx_after = Some(TxAfter::Disconnect);
+            self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
+            self.redraw();
+            return;
+        }
+        self.disconnect_force();
+    }
+
+    fn disconnect_force(&mut self) {
         let stuck = self.busy;
         self.worker.send(worker::Cmd::Disconnect);
         let (w, ev) = self.spawn_worker();
@@ -1323,7 +1534,7 @@ impl App {
                 .push(LogEntry::new(LogKind::Info, self.status.clone()));
         }
         self.explorer.disconnect();
-        self.tx_dirty = false;
+        self.tx_clear();
         self.sync_disconnect_btn(false);
         self.on_conn_disconnected();
         self.redraw();
@@ -1475,6 +1686,10 @@ impl App {
                 let on = self.settings.flag(key);
                 self.all_grids().for_each(|g| g.set_row_numbers(on));
             }
+            "grid.row_height_pct" => {
+                let pct = self.settings.int(key).clamp(110, 300) as i32;
+                self.all_grids().for_each(|g| g.set_row_pct(pct));
+            }
             "grid.copy_null" => {
                 let on = self.settings.flag(key);
                 self.all_grids().for_each(|g| g.set_copy_null(on));
@@ -1490,6 +1705,30 @@ impl App {
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
+            "editor.minimap" | "editor.minimap_width" => self.apply_minimap(),
+            // 자원 거버너(T-90a/d · docs/39): 상한 세터 4종 · 모드가 바뀌면 원장 키 전부 재적용(실효 값이 바뀌므로).
+            "log.max_lines" => self
+                .log_win
+                .set_max_lines(self.settings.int(key).max(100) as usize),
+            "editor.undo_max" => self
+                .editors
+                .set_undo_max(self.settings.int(key).max(1) as usize),
+            "ui.glyph_cache" => {
+                nexa_gfx::text::set_glyph_cache_max(self.settings.int(key).max(256) as usize);
+            }
+            "file.icon_cache" => {
+                nexa_fs::shell::set_icon_cache_max(self.settings.int(key).max(16) as usize);
+            }
+            "perf.mode" => {
+                let keys: Vec<&'static str> = nsql_settings::PERF.iter().map(|(k, _)| *k).collect();
+                for k in keys {
+                    self.apply_setting(k);
+                }
+                self.status = tf(
+                    Msg::StPerfMode,
+                    &[t(self.settings.perf_mode_display().label())],
+                );
+            }
             "editor.tab_size" | "editor.indent_spaces" | "editor.tab_stops" => self.apply_indent(),
             "file.eol_new" => self
                 .editors
@@ -1516,18 +1755,13 @@ impl App {
             "log.switch_scale" => self.log_win.set_switch_scale(self.settings.int(key)),
             "grid.max_rows" => {
                 let n = self.settings.int(key).max(0) as usize;
-                self.grid.set_default_page_rows(n);
-                for g in self.grid_stash.values_mut() {
-                    g.set_default_page_rows(n);
-                }
+                self.all_grids().for_each(|g| g.set_default_page_rows(n));
             }
             "grid.auto_fetch" => {
                 let on = self.settings.flag(key);
-                self.grid.set_auto_fetch(on);
-                for g in self.grid_stash.values_mut() {
-                    g.set_auto_fetch(on);
-                }
+                self.all_grids().for_each(|g| g.set_auto_fetch(on));
             }
+            "grid.result_tabs" | "grid.result_tabbar" => self.apply_result_tab_opts(),
             "tabs.rows" => {
                 let multi = self.settings.get(key) != Some("single");
                 self.editors.set_multiline_tabs(multi);
@@ -1621,13 +1855,242 @@ impl App {
         self.redraw();
     }
 
-    /// 결과 탭 키(편집기 탭 id)로 그리드 찾기 — 활성이면 `grid` · 아니면 잠든 것.
+    /// 결과 탭 id로 그리드 찾기 — 활성이면 `grid` · 아니면 잠든 것(활성 패널의 다른 탭 · 잠든 패널의 탭).
     fn grid_for(&mut self, key: u64) -> Option<&mut grid::Grid> {
         if key == self.grid_tab {
-            Some(&mut self.grid)
-        } else {
-            self.grid_stash.get_mut(&key)
+            return Some(&mut self.grid);
         }
+        if let Some(t) = self.panel.tabs.iter_mut().find(|t| t.id == key) {
+            return Some(&mut t.grid);
+        }
+        self.panels
+            .values_mut()
+            .flat_map(|p| p.tabs.iter_mut())
+            .find(|t| t.id == key)
+            .map(|t| &mut t.grid)
+    }
+
+    /// 잠든 그리드 전부(활성 패널의 비활성 탭 + 잠든 패널의 탭 · 활성 자리표시자 포함 — 빈 그리드라 무해).
+    fn sleeping_grids(&self) -> impl Iterator<Item = &grid::Grid> {
+        self.panel.tabs.iter().map(|t| &t.grid).chain(
+            self.panels
+                .values()
+                .flat_map(|p| p.tabs.iter().map(|t| &t.grid)),
+        )
+    }
+
+    fn sleeping_grids_mut(&mut self) -> impl Iterator<Item = &mut grid::Grid> {
+        self.panel.tabs.iter_mut().map(|t| &mut t.grid).chain(
+            self.panels
+                .values_mut()
+                .flat_map(|p| p.tabs.iter_mut().map(|t| &mut t.grid)),
+        )
+    }
+
+    /// 설정 `grid.result_tabs`/`grid.result_tabbar` → 모든 패널. 끄면 활성 탭 외 전부 즉시 해제(D-73 "강제로 메모리 줄이기").
+    fn apply_result_tab_opts(&mut self) {
+        let enabled = self.settings.flag("grid.result_tabs");
+        let always = self.settings.get("grid.result_tabbar") == Some("always");
+        self.panel.set_options(enabled, always);
+        for p in self.panels.values_mut() {
+            p.set_options(enabled, always);
+        }
+        if !enabled {
+            let keep = self.panel.active_id();
+            self.panel.tabs.retain(|t| t.id == keep);
+            self.panel.active = 0;
+            for p in self.panels.values_mut() {
+                let keep = p.active_id();
+                p.tabs.retain(|t| t.id == keep);
+                p.active = 0;
+            }
+        }
+        self.panel.sync_bar();
+        self.layout();
+        self.redraw();
+    }
+
+    /// 결과 탭 전체의 행 바이트 합이 예산(`grid.memory_budget_mb`)을 넘는가(D-72).
+    fn over_budget(&self) -> bool {
+        let budget = (self.settings.int("grid.memory_budget_mb").max(1) as u64) * 1024 * 1024;
+        let used: u64 = self.grid.approx_bytes()
+            + self
+                .sleeping_grids()
+                .map(grid::Grid::approx_bytes)
+                .sum::<u64>();
+        used > budget
+    }
+
+    /// 활성 패널의 결과 탭 `i`를 활성으로(그리드 맞바꾸기 · D-71 "그리기는 활성 탭만").
+    fn activate_result(&mut self, i: usize) {
+        if i >= self.panel.tabs.len() || i == self.panel.active {
+            return;
+        }
+        let a = self.panel.active;
+        std::mem::swap(&mut self.grid, &mut self.panel.tabs[a].grid);
+        self.panel.active = i;
+        std::mem::swap(&mut self.grid, &mut self.panel.tabs[i].grid);
+        self.grid_tab = self.panel.tabs[i].id;
+        let b = self.panel.tabs[a].grid.bounds;
+        self.grid.set_bounds(b);
+        self.panel.sync_bar();
+        self.set_focus(Focus::Grid);
+    }
+
+    /// 새 결과 탭(Ctrl+\ · D-71): 현재 설정을 물려받은 빈 그리드 · 상한을 넘으면 가장 오래된 비고정 탭 정리.
+    fn new_result_tab(&mut self) {
+        let a = self.panel.active;
+        // 실제 그리드를 제자리에 돌려놓고 그 설정을 물려받는다.
+        std::mem::swap(&mut self.grid, &mut self.panel.tabs[a].grid);
+        let fresh = self.panel.tabs[a].grid.fresh_like();
+        let id = self.next_result_id;
+        self.next_result_id += 1;
+        let tab = ResultTab {
+            id,
+            title: t(Msg::ResultTabDefault).to_string(),
+            pinned: false,
+            named: false,
+            grid: fresh,
+            seq: id,
+        };
+        self.panel.push(tab);
+        let max = self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize;
+        if self.panel.tabs.len() > max && self.settings.flag("grid.result_tab_evict") {
+            if let Some(v) = self.panel.evict_candidate() {
+                let gone = self.panel.remove(v).map(|t| t.title).unwrap_or_default();
+                self.status = tf(Msg::StResultTabEvicted, &[&gone]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            }
+        }
+        let i = self.panel.index_of(id).unwrap_or(0);
+        self.panel.active = i;
+        std::mem::swap(&mut self.grid, &mut self.panel.tabs[i].grid);
+        self.grid_tab = id;
+        self.panel.sync_bar();
+        if self.panel.take_bar_changed() {
+            self.layout();
+        }
+    }
+
+    /// 결과가 도착한 탭의 제목(사용자가 이름 붙이거나 고정한 탭은 그대로).
+    fn retitle_result(&mut self, key: u64) {
+        let base = match self.grid_for(key) {
+            Some(g) => results::title_from_sql(g.source_table().as_deref(), g.source_sql()),
+            None => return,
+        };
+        let cur_editor = self.panel_editor;
+        let panel = if self.panel.index_of(key).is_some() {
+            Some(&mut self.panel)
+        } else {
+            self.panels.values_mut().find(|p| p.index_of(key).is_some())
+        };
+        let _ = cur_editor;
+        if let Some(p) = panel {
+            if let Some(i) = p.index_of(key) {
+                if !p.tabs[i].named && !p.tabs[i].pinned {
+                    let title = p.unique_title(&base, i);
+                    p.tabs[i].title = title;
+                }
+            }
+            p.sync_bar();
+        }
+    }
+
+    /// 결과 탭 패널 동작(탭 바 클릭 · 우클릭 메뉴 · 단축키).
+    fn panel_action(&mut self, a: ResultAction) {
+        let n = self.panel.tabs.len();
+        match a {
+            ResultAction::Activate(i) => self.activate_result(i),
+            ResultAction::Close(i) => self.close_result_tab(i),
+            ResultAction::CloseOthers(i) => {
+                self.activate_result(i);
+                let keep = self.grid_tab;
+                let ids: Vec<u64> = self
+                    .panel
+                    .tabs
+                    .iter()
+                    .filter(|t| t.id != keep && !t.pinned)
+                    .map(|t| t.id)
+                    .collect();
+                for id in ids {
+                    if let Some(j) = self.panel.index_of(id) {
+                        self.close_result_tab(j);
+                    }
+                }
+            }
+            ResultAction::CloseRight(i) => {
+                let ids: Vec<u64> = self
+                    .panel
+                    .tabs
+                    .iter()
+                    .skip(i + 1)
+                    .filter(|t| !t.pinned)
+                    .map(|t| t.id)
+                    .collect();
+                for id in ids {
+                    if let Some(j) = self.panel.index_of(id) {
+                        self.close_result_tab(j);
+                    }
+                }
+            }
+            ResultAction::TogglePin(i) => {
+                if let Some(t) = self.panel.tabs.get_mut(i) {
+                    t.pinned = !t.pinned;
+                }
+            }
+            ResultAction::MoveFirst(i) if i < n => self.move_result_tab(i, 0),
+            ResultAction::MoveLast(i) if i < n => self.move_result_tab(i, n - 1),
+            ResultAction::Move { from, to } if from < n && to < n => self.move_result_tab(from, to),
+            _ => {}
+        }
+        self.panel.sync_bar();
+        if self.panel.take_bar_changed() {
+            self.layout();
+        }
+        self.redraw();
+    }
+
+    fn move_result_tab(&mut self, from: usize, to: usize) {
+        let active_id = self.grid_tab;
+        let t = self.panel.tabs.remove(from);
+        self.panel.tabs.insert(to, t);
+        self.panel.active = self.panel.index_of(active_id).unwrap_or(0);
+    }
+
+    /// 결과 탭 닫기 = rows·커서 즉시 해제(D-72). 활성 탭이면 이웃을 활성으로 · 마지막 하나면 빈 탭으로 교체.
+    fn close_result_tab(&mut self, i: usize) {
+        if i >= self.panel.tabs.len() {
+            return;
+        }
+        if i == self.panel.active {
+            // 실제 그리드를 자리에 돌려놓은 뒤 제거 → 이웃 탭의 그리드를 꺼낸다.
+            std::mem::swap(&mut self.grid, &mut self.panel.tabs[i].grid);
+            let bounds = self.grid.bounds;
+            drop(self.panel.remove(i));
+            if self.panel.tabs.is_empty() {
+                let id = self.next_result_id;
+                self.next_result_id += 1;
+                let fresh = self.grid.fresh_like();
+                self.panel.push(ResultTab {
+                    id,
+                    title: t(Msg::ResultTabDefault).to_string(),
+                    pinned: false,
+                    named: false,
+                    grid: fresh,
+                    seq: id,
+                });
+                self.panel.active = 0;
+            }
+            let a = self.panel.active;
+            std::mem::swap(&mut self.grid, &mut self.panel.tabs[a].grid);
+            self.grid_tab = self.panel.tabs[a].id;
+            self.grid.set_bounds(bounds);
+        } else {
+            drop(self.panel.remove(i));
+            self.panel.active = self.panel.index_of(self.grid_tab).unwrap_or(0);
+        }
+        self.offset_warned.remove(&self.grid_tab);
     }
 
     /// 추가 페치·전체 조회·건수를 워커에(같은 세션 · docs/43 §3-4 OFFSET 폴백).
@@ -1638,6 +2101,18 @@ impl App {
             return;
         }
         let key = self.grid_tab;
+        // 메모리 예산(D-72): 결과 탭 합계가 예산을 넘으면 추가/전체 페치를 거부하고 안내.
+        if !matches!(req, grid::FetchReq::Count) && self.over_budget() {
+            self.grid.fetch_failed();
+            self.status = tf(
+                Msg::StBudgetExceeded,
+                &[&self.settings.int("grid.memory_budget_mb").to_string()],
+            );
+            self.log_win
+                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            self.redraw();
+            return;
+        }
         match req {
             grid::FetchReq::Next { offset, limit } => {
                 if self.settings.flag("grid.offset_warn")
@@ -1834,7 +2309,7 @@ impl App {
                 self.editors.new_tab(None);
                 self.set_focus(Focus::Editor);
             }
-            "file.exit" => self.exit_requested = true,
+            "file.exit" => self.request_exit(),
             // ★ 파일 열기/저장(T-74) — 자체 대화상자(nexa-dlg) · 네이티브 0.
             "file.open" => self.open_file_dlg = Some(PickerMode::Open),
             "file.save" => match self.editors.active_path() {
@@ -1866,12 +2341,20 @@ impl App {
                 }
             }
             "edit.find" | "edit.replace" => {
-                let seed = self.editors.cur().copy_selection();
-                self.find.open(id == "edit.replace", seed);
-                let _ = self.find.with_replace();
-                self.layout();
-                self.set_focus(Focus::Find);
-                self.find_step(true, false);
+                if id == "edit.replace" && self.find.is_visible() && self.focus == Focus::Find {
+                    // 열린 채 Ctrl+H = 바꾸기 줄 펼침/접기(VS Code).
+                    self.find.toggle_replace();
+                    self.layout();
+                    self.redraw();
+                } else {
+                    let seed = self.editors.cur().copy_selection();
+                    self.find.open(id == "edit.replace", seed);
+                    self.find
+                        .set_tooltip_delay(self.settings.int("ui.tooltip_delay_ms").max(0) as u128);
+                    self.layout();
+                    self.set_focus(Focus::Find);
+                    self.find_step(true, false);
+                }
             }
             // ★ Sublime Ctrl+D — 캐럿 밑 단어 → 다음 출현을 추가 선택(다중 커서 · 09-15).
             "edit.expand_selection" => {
@@ -1942,7 +2425,7 @@ impl App {
             }
             "file.close_tab" => {
                 let i = self.editors.active();
-                self.editors.close_tab(i);
+                self.close_tab_guarded(i);
                 self.set_focus(Focus::Editor);
             }
             "tab.next" | "tab.prev" => {
@@ -1967,6 +2450,29 @@ impl App {
                 }
             }
             "run.statement" => self.run_sql(false),
+            // Ctrl+\ = 새 결과 탭에 실행(T-93 · 끄면 Ctrl+Enter와 같다 · D-73).
+            "run.statement_new_tab" => {
+                if self.settings.flag("grid.result_tabs") && !self.busy {
+                    self.new_result_tab();
+                }
+                self.run_sql(false);
+            }
+            "result.tab.close" => {
+                let i = self.panel.active;
+                self.panel_action(ResultAction::Close(i));
+            }
+            "result.tab.next" | "result.tab.prev" => {
+                let n = self.panel.tabs.len();
+                if n > 1 {
+                    let i = self.panel.active;
+                    let j = if id == "result.tab.next" {
+                        (i + 1) % n
+                    } else {
+                        (i + n - 1) % n
+                    };
+                    self.panel_action(ResultAction::Activate(j));
+                }
+            }
             "run.all" => self.run_sql(true),
             "run.explain" => self.run_explain(),
             "run.commit" => self.worker.send(worker::Cmd::Commit),
@@ -1985,6 +2491,282 @@ impl App {
             _ => {}
         }
         self.redraw();
+    }
+
+    // ───────────────────────── 트랜잭션 UX(DR-30 · T-77 · docs/34) ─────────────────────────
+
+    /// DML/DDL 완료 → 대기 목록 갱신. 수동 모드의 DML(영향 행 > 0) = 대기 +1 · 방언별 암묵 커밋 DDL = 비움 ·
+    /// 자동 모드 + `tx.smart_commit` = 첫 DML 뒤 수동으로 전환.
+    fn tx_on_done(&mut self, stmt: &str, rows_affected: Option<u64>) {
+        let auto = self.settings.flag("session.autocommit");
+        if implicit_commit(self.dialect, stmt) {
+            if !self.tx_pending.is_empty() {
+                let w = first_word(stmt);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, tf(Msg::StTxImplicit, &[&w])));
+                self.tx_clear();
+            }
+            return;
+        }
+        if !rows_affected.is_some_and(|n| n > 0) {
+            return;
+        }
+        if auto {
+            if self.settings.flag("tx.smart_commit") {
+                self.set_autocommit_now(false);
+                self.status = t(Msg::StTxSmartSwitched).into();
+            }
+            return;
+        }
+        let stamp = nsql_log::now_local().stamp();
+        let when = stamp.get(11..16).unwrap_or("").to_string();
+        self.tx_pending.push(TxItem {
+            editor: self.run_editor,
+            at: Instant::now(),
+            when,
+            summary: one_line(stmt, 60),
+        });
+        self.tx_dirty = true;
+        self.tx_stale_logged = false;
+        self.sync_tx_ui();
+    }
+
+    /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
+    fn tx_clear(&mut self) {
+        self.tx_pending.clear();
+        self.tx_dirty = false;
+        self.tx_stale_logged = false;
+        self.sync_tx_ui();
+    }
+
+    /// 탭 배지 · 툴바 Commit/Rollback 활성·색 — 세 층이 같은 사실을 말한다.
+    fn sync_tx_ui(&mut self) {
+        let stale = self.tx_is_stale();
+        let mut map: HashMap<u64, (usize, bool)> = HashMap::new();
+        for it in &self.tx_pending {
+            let e = map.entry(it.editor).or_insert((0, stale));
+            e.0 += 1;
+            e.1 = stale;
+        }
+        let mode = self.settings.get("tx.badge").unwrap_or("count").to_string();
+        self.editors.set_tx_badges(map, &mode);
+        let has = !self.tx_pending.is_empty();
+        let mut inv = Invalidations::default();
+        for id in ["run.commit", "run.rollback"] {
+            self.toolbar.set_item_enabled(id, has, &mut inv);
+            self.toolbar.set_item_tone(
+                id,
+                if !has {
+                    ToolTone::Default
+                } else if stale {
+                    ToolTone::Danger
+                } else {
+                    ToolTone::Accent
+                },
+                &mut inv,
+            );
+        }
+        self.redraw();
+    }
+
+    fn tx_is_stale(&self) -> bool {
+        let min = self.settings.int("tx.stale_min").max(1) as u64;
+        self.tx_pending
+            .first()
+            .is_some_and(|f| f.at.elapsed().as_secs() >= min * 60)
+    }
+
+    /// 오래된 미커밋 감시(about_to_wait · 1회 로그 + 배지 ⚠).
+    fn tx_tick(&mut self) {
+        if self.tx_pending.is_empty() || self.tx_stale_logged || !self.tx_is_stale() {
+            return;
+        }
+        self.tx_stale_logged = true;
+        let min = self.settings.int("tx.stale_min").max(1).to_string();
+        self.log_win
+            .push(LogEntry::new(LogKind::Error, tf(Msg::StTxStale, &[&min])));
+        self.status = tf(Msg::StTxStale, &[&min]);
+        self.sync_tx_ui();
+    }
+
+    /// 상태줄 트랜잭션 팝업: 모드 전환 · Commit(n) · Rollback(n) · 대기 문장 목록.
+    fn open_tx_menu(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let auto = self.settings.flag("session.autocommit");
+        let n = self.tx_pending.len();
+        let mark = |on: bool, s: &str| {
+            if on {
+                format!("✓ {s}")
+            } else {
+                format!("   {s}")
+            }
+        };
+        let mut items = vec![
+            CtxItem::item("tx.auto", mark(auto, t(Msg::MnTxAuto))).with_active(auto),
+            CtxItem::item("tx.manual", mark(!auto, t(Msg::MnTxManual))).with_active(!auto),
+            CtxItem::Separator,
+            CtxItem::item("tx.commit", tf(Msg::MnTxCommitN, &[&n.to_string()]))
+                .with_shortcut(self.keymap.display_of("run.commit")),
+            CtxItem::item("tx.rollback", tf(Msg::MnTxRollbackN, &[&n.to_string()]))
+                .with_shortcut(self.keymap.display_of("run.rollback")),
+        ];
+        if n > 0 {
+            items.push(CtxItem::Separator);
+            for it in self.tx_pending.iter().take(12) {
+                items.push(CtxItem::item(
+                    "tx.noop",
+                    format!("{}  {}", it.when, it.summary),
+                ));
+            }
+        }
+        self.open_status_popup(self.status_tx_rect, items);
+    }
+
+    /// 잃는 순간의 확인 팝업(Commit / Rollback / Cancel) — 상태줄 트랜잭션 세그먼트 자리(없으면 창 가운데).
+    fn open_tx_guard(&mut self, commit: Msg, rollback: Msg) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let n = self.tx_pending.len().to_string();
+        self.status = tf(Msg::StTxGuard, &[&n]);
+        let items = vec![
+            CtxItem::item("tx.commit_then", t(commit)),
+            CtxItem::item("tx.rollback_then", t(rollback)),
+            CtxItem::Separator,
+            CtxItem::item("tx.cancel", t(Msg::MnTxCancel)),
+        ];
+        let mut r = self.status_tx_rect;
+        if r.w == 0 {
+            if let Some(w) = &self.window {
+                let sz = w.inner_size();
+                r = Rect::new(
+                    sz.width as i32 / 2 - px(120.0, self.scale),
+                    sz.height as i32 / 2,
+                    0,
+                    0,
+                );
+            }
+        }
+        self.open_status_popup(r, items);
+    }
+
+    fn open_status_popup(&mut self, r: Rect, items: Vec<nexa_ctl::controls::ctxmenu::CtxItem>) {
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(r);
+        self.status_menu.set_scale(self.scale);
+        self.status_menu
+            .open_at(r.x, r.y, items, host, px(300.0, self.scale));
+    }
+
+    /// 팝업 항목(`tx.*`).
+    fn tx_pick(&mut self, id: &str) {
+        match id {
+            "auto" => self.set_autocommit(true),
+            "manual" => self.set_autocommit(false),
+            "commit" => self.worker.send(worker::Cmd::Commit),
+            "rollback" => self.worker.send(worker::Cmd::Rollback),
+            "commit_then" => {
+                self.worker.send(worker::Cmd::Commit);
+                self.tx_clear();
+                self.run_tx_after();
+            }
+            "rollback_then" => {
+                self.worker.send(worker::Cmd::Rollback);
+                self.tx_clear();
+                self.run_tx_after();
+            }
+            "cancel" => self.tx_after = None,
+            _ => {}
+        }
+    }
+
+    fn run_tx_after(&mut self) {
+        match self.tx_after.take() {
+            Some(TxAfter::CloseTab(i)) => {
+                self.editors.close_tab_confirmed(i);
+                self.set_focus(Focus::Editor);
+            }
+            Some(TxAfter::Disconnect) => self.disconnect_force(),
+            Some(TxAfter::Exit) => self.exit_requested = true,
+            Some(TxAfter::SwitchAuto) => self.set_autocommit_now(true),
+            None => {}
+        }
+    }
+
+    /// 모드 전환 — 수동 → 자동인데 대기 문장이 있으면 먼저 묻는다.
+    fn set_autocommit(&mut self, on: bool) {
+        if on && !self.tx_pending.is_empty() {
+            self.tx_after = Some(TxAfter::SwitchAuto);
+            self.open_tx_guard(Msg::MnTxCommitSwitch, Msg::MnTxRollbackSwitch);
+            return;
+        }
+        self.set_autocommit_now(on);
+    }
+
+    /// 설정 + 살아 있는 세션(스크립트 `SET AUTOCOMMIT` · 워커 큐 순서 보장).
+    fn set_autocommit_now(&mut self, on: bool) {
+        let _ = self
+            .settings
+            .set("session.autocommit", if on { "on" } else { "off" });
+        self.persist_settings();
+        if !self.busy {
+            let src = if on {
+                "SET AUTOCOMMIT ON"
+            } else {
+                "SET AUTOCOMMIT OFF"
+            };
+            self.last_run_items = split_items(src);
+            self.busy = true;
+            self.worker.send(worker::Cmd::Run {
+                src: src.to_string(),
+                preflight: None,
+                max_rows: self.grid.page_rows(),
+            });
+        }
+        if on {
+            self.tx_clear();
+        }
+        self.sync_tx_ui();
+    }
+
+    /// 미커밋 탭 닫기(설정 `tx.close_action`: ask / commit / rollback).
+    fn close_tab_guarded(&mut self, i: usize) {
+        let id = self.editors.tab_id(i);
+        let n = self.tx_pending.iter().filter(|t| t.editor == id).count();
+        if n == 0 {
+            self.editors.close_tab_confirmed(i);
+            return;
+        }
+        match self.settings.get("tx.close_action").unwrap_or("ask") {
+            "commit" => {
+                self.worker.send(worker::Cmd::Commit);
+                self.tx_clear();
+                self.editors.close_tab_confirmed(i);
+            }
+            "rollback" => {
+                self.worker.send(worker::Cmd::Rollback);
+                self.tx_clear();
+                self.editors.close_tab_confirmed(i);
+            }
+            _ => {
+                self.tx_after = Some(TxAfter::CloseTab(i));
+                self.open_tx_guard(Msg::MnTxCommitClose, Msg::MnTxRollbackClose);
+            }
+        }
+    }
+
+    /// 종료 — 미커밋이 있으면 묻는다.
+    fn request_exit(&mut self) {
+        if self.tx_pending.is_empty() {
+            self.exit_requested = true;
+            return;
+        }
+        self.tx_after = Some(TxAfter::Exit);
+        self.open_tx_guard(Msg::MnTxCommitExit, Msg::MnTxRollbackExit);
     }
 
     /// 편집기 편집 명령 — 편집기 포커스일 때만 · 바뀌면 찾기 표시 갱신 + 상태줄 선택 수.
@@ -2140,6 +2922,7 @@ impl App {
                 t(Msg::MnRun),
                 vec![
                     item("run.statement", Msg::MnRunStatement),
+                    item("run.statement_new_tab", Msg::MnRunStatementNewTab),
                     item("run.all", Msg::MnRunAll),
                     item("run.explain", Msg::MnExplain),
                     MenuEntry::Separator,
@@ -2200,6 +2983,13 @@ impl App {
             ToolItem::new("file.save_as", toolicons::save_as()).tip(t(Msg::TipSaveAs)),
             ToolItem::new("run.statement", toolicons::run_statement()).tip(t(Msg::TipRunStatement)),
             ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
+            // 트랜잭션(DR-30): 대기 문장이 있을 때만 활성 · Material check/undo.
+            ToolItem::new("run.commit", toolicons::commit())
+                .tip(t(Msg::TipCommit))
+                .disabled(),
+            ToolItem::new("run.rollback", toolicons::rollback())
+                .tip(t(Msg::TipRollback))
+                .disabled(),
             ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
             ToolItem::new("conn.disconnect", toolicons::disconnect())
                 .tip(t(Msg::TipDisconnect))
@@ -2309,6 +3099,14 @@ impl App {
         cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
         cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
         cmds.push(m("run.statement", Msg::MnRun, Msg::MnRunStatement));
+        cmds.push(m(
+            "run.statement_new_tab",
+            Msg::MnRun,
+            Msg::MnRunStatementNewTab,
+        ));
+        cmds.push(m("result.tab.close", Msg::MnRun, Msg::MnResultCloseTab));
+        cmds.push(m("result.tab.next", Msg::MnRun, Msg::MnResultNextTab));
+        cmds.push(m("result.tab.prev", Msg::MnRun, Msg::MnResultPrevTab));
         cmds.push(m("run.all", Msg::MnRun, Msg::MnRunAll));
         cmds.push(m("run.explain", Msg::MnRun, Msg::MnExplain));
         cmds.push(m("run.commit", Msg::MnRun, Msg::MnCommit));
@@ -2876,7 +3674,8 @@ impl App {
         };
         let src = text.unwrap_or_else(|| self.ed_mut().text());
         self.grid.set_source_sql(&src);
-        self.run_tab = self.editors.active_id();
+        self.run_tab = self.grid_tab;
+        self.run_editor = self.editors.active_id();
         if src.trim().is_empty() {
             self.status = t(Msg::ErrNoSql).into();
             return;
@@ -3076,27 +3875,26 @@ impl App {
                     } else {
                         tf(Msg::StRows, &[&n, &secs])
                     };
-                    // 결과는 실행을 시작한 탭의 그리드로(탭이 이미 닫혔으면 버림).
+                    // 결과는 실행을 시작한 결과 탭의 그리드로(탭이 이미 닫혔으면 버림) · 탭 제목 갱신(T-93).
                     if let Some(g) = self.run_grid() {
                         g.set_result(rs);
                         g.set_more(more);
                     }
+                    let k = self.run_tab;
+                    self.retitle_result(k);
                 }
                 RunEvent::Done {
+                    index,
                     rows_affected,
                     elapsed,
-                    ..
                 } => {
                     let secs = format!("{:.3}", elapsed.as_secs_f64());
                     self.status = match rows_affected {
                         Some(n) => tf(Msg::StRowsAffected, &[&n.to_string(), &secs]),
                         None => tf(Msg::StOk, &[&secs]),
                     };
-                    if rows_affected.is_some_and(|n| n > 0)
-                        && !self.settings.flag("session.autocommit")
-                    {
-                        self.tx_dirty = true;
-                    }
+                    let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
+                    self.tx_on_done(&stmt, rows_affected);
                 }
                 RunEvent::Print { pairs } => {
                     for (n, v) in pairs {
@@ -3106,7 +3904,7 @@ impl App {
                 }
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) || m == t(Msg::StRolledBack) {
-                        self.tx_dirty = false;
+                        self.tx_clear();
                         self.status = m.clone();
                     }
                     self.log.push(m);
@@ -3120,7 +3918,7 @@ impl App {
                     self.busy = false;
                     self.dialect = dialect;
                     self.all_grids().for_each(|g| g.set_dialect(dialect));
-                    self.tx_dirty = false;
+                    self.tx_clear();
                     self.sync_disconnect_btn(true);
                     // 탐색기 메타 세션(별도) — 같은 스펙으로.
                     if let Some(spec) = self.last_spec.clone() {
@@ -3131,7 +3929,7 @@ impl App {
                 RunEvent::Disconnected => {
                     self.status = t(Msg::StDisconnected).into();
                     self.explorer.disconnect();
-                    self.tx_dirty = false;
+                    self.tx_clear();
                     self.sync_disconnect_btn(false);
                 }
                 RunEvent::Timing { timeline, .. } => {
@@ -3210,36 +4008,79 @@ impl App {
 
     /// 활성 그리드 + 잠든 그리드 전부(설정 전파용).
     fn all_grids(&mut self) -> impl Iterator<Item = &mut grid::Grid> {
-        std::iter::once(&mut self.grid).chain(self.grid_stash.values_mut())
+        let (grid, panel, panels) = (&mut self.grid, &mut self.panel, &mut self.panels);
+        std::iter::once(grid)
+            .chain(panel.tabs.iter_mut().map(|t| &mut t.grid))
+            .chain(
+                panels
+                    .values_mut()
+                    .flat_map(|p| p.tabs.iter_mut().map(|t| &mut t.grid)),
+            )
     }
 
-    /// 마지막 실행 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
+    /// 마지막 실행 대상 결과 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
     fn run_grid(&mut self) -> Option<&mut grid::Grid> {
-        if self.run_tab == self.grid_tab {
-            Some(&mut self.grid)
-        } else {
-            self.grid_stash.get_mut(&self.run_tab)
-        }
+        let k = self.run_tab;
+        self.grid_for(k)
     }
 
-    /// ★ 편집기 탭 ↔ 결과 그리드 쌍 동기화(사용자 09-16): 활성 탭이 바뀌었으면 그 탭의 그리드를 꺼내 오고(없으면 설정만
-    /// 물려받은 빈 그리드) 지금 것은 잠재운다 · 닫힌 탭의 그리드는 버린다. 페인트 직전과 이벤트 뒤에 부른다.
+    /// ★ 편집기 탭 ↔ 결과 패널 쌍 동기화(사용자 09-16 · T-93): 활성 편집기 탭이 바뀌었으면 그 탭의 패널을 꺼내 오고
+    /// (없으면 설정만 물려받은 빈 탭 하나) 지금 패널은 잠재운다 · 닫힌 편집기 탭의 패널은 통째로 버린다(rows 즉시 해제).
+    /// 페인트 직전과 이벤트 뒤에 부른다.
     fn sync_grid_tab(&mut self) {
         self.sync_tabs_menu();
         let cur = self.editors.active_id();
-        if cur != self.grid_tab {
+        if cur != self.panel_editor {
             let b = self.grid.bounds;
-            let next = self
-                .grid_stash
-                .remove(&cur)
-                .unwrap_or_else(|| self.grid.fresh_like());
-            let old = std::mem::replace(&mut self.grid, next);
-            self.grid_stash.insert(self.grid_tab, old);
-            self.grid_tab = cur;
+            // 실제 그리드를 활성 자리에 돌려놓고 패널을 잠재운다.
+            let a = self
+                .panel
+                .active
+                .min(self.panel.tabs.len().saturating_sub(1));
+            if let Some(slot) = self.panel.tabs.get_mut(a) {
+                std::mem::swap(&mut self.grid, &mut slot.grid);
+            }
+            let enabled = self.settings.flag("grid.result_tabs");
+            let always = self.settings.get("grid.result_tabbar") == Some("always");
+            let next = self.panels.remove(&cur).unwrap_or_else(|| {
+                let id = self.next_result_id;
+                self.next_result_id += 1;
+                let fresh = self
+                    .panel
+                    .tabs
+                    .get(a)
+                    .map_or_else(grid::Grid::default, |t| t.grid.fresh_like());
+                ResultPanel::new(
+                    ResultTab {
+                        id,
+                        title: t(Msg::ResultTabDefault).to_string(),
+                        pinned: false,
+                        named: false,
+                        grid: fresh,
+                        seq: id,
+                    },
+                    enabled,
+                    always,
+                )
+            });
+            let old = std::mem::replace(&mut self.panel, next);
+            if self.panel_editor != 0 {
+                self.panels.insert(self.panel_editor, old);
+            }
+            self.panel_editor = cur;
+            let a = self
+                .panel
+                .active
+                .min(self.panel.tabs.len().saturating_sub(1));
+            self.panel.active = a;
+            std::mem::swap(&mut self.grid, &mut self.panel.tabs[a].grid);
+            self.grid_tab = self.panel.tabs[a].id;
             self.grid.set_bounds(b);
+            self.panel.sync_bar();
+            self.layout();
         }
         let alive = self.editors.tab_ids();
-        self.grid_stash.retain(|id, _| alive.contains(id));
+        self.panels.retain(|id, _| alive.contains(id));
     }
 
     fn paint(&mut self) {
@@ -3296,6 +4137,7 @@ impl App {
                     .with_caret_on(caret_on);
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
                 self.editors.paint_tabs(&mut dc, &th);
+                self.panel.paint_bar(&mut dc, &th);
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
                 self.toolbar.paint(&mut dc, &th);
@@ -3318,13 +4160,18 @@ impl App {
                 let (ln, col) = self.editors.caret_line_col();
                 let mut segs: Vec<(String, bool)> = Vec::new();
                 // 트랜잭션 모드(자동/수동 · 수동에 미커밋 변경이 있으면 ●).
+                // 트랜잭션 세그먼트(DR-30): Auto / Manual / "Manual ● n pending · since hh:mm" · 클릭 = 팝업.
                 let tx = if self.settings.flag("session.autocommit") {
                     t(Msg::StTxAuto).to_string()
-                } else if self.tx_dirty {
-                    format!("● {}", t(Msg::StTxManual))
+                } else if let Some(first) = self.tx_pending.first() {
+                    tf(
+                        Msg::StTxPending,
+                        &[&self.tx_pending.len().to_string(), &first.when],
+                    )
                 } else {
                     t(Msg::StTxManual).to_string()
                 };
+                let tx_idx = segs.len();
                 segs.push((tx, false));
                 // 접속 세그먼트 = 프로필 이름만(URL은 툴팁 카드·접속 창에 · 사용자 09-15).
                 let conn = match self.conn_win.panel.state_ref() {
@@ -3398,11 +4245,15 @@ impl App {
                 self.status_tab_rect = Rect::new(0, 0, 0, 0);
                 self.status_eol_rect = Rect::new(0, 0, 0, 0);
                 self.status_enc_rect = Rect::new(0, 0, 0, 0);
+                self.status_tx_rect = Rect::new(0, 0, 0, 0);
                 let last = segs.len() - 1;
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
                     xr -= tw;
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
+                    if idx == tx_idx {
+                        self.status_tx_rect = r;
+                    }
                     let ty = dc.text_center_y(sy, px(24.0, s));
                     dc.text(
                         xr,
@@ -3538,10 +4389,12 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.toolbar.paint_tooltip(&mut dc, &th);
+                self.find.paint_tooltip(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
                 self.grid.paint_overlays(&mut dc, &th);
+                self.panel.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
@@ -3715,6 +4568,11 @@ impl App {
                 self.redraw();
                 return;
             }
+            if self.status_tx_rect.contains(Point { x, y }) {
+                self.open_tx_menu();
+                self.redraw();
+                return;
+            }
             if self.status_enc_rect.contains(Point { x, y }) {
                 self.open_enc_menu();
                 self.redraw();
@@ -3836,9 +4694,26 @@ impl App {
         }
         // 편집기 탭 바(클릭·드래그·휠 · 툴팁 호버).
         if self.editors.route_tabs(&ev, &mut inv) {
+            if let Some(i) = self.editors.take_tx_close_request() {
+                self.close_tab_guarded(i);
+            }
             self.set_focus(Focus::Editor);
             self.redraw();
             return;
+        }
+        // 결과 탭 바·우클릭 메뉴(T-93) — 커서 아래일 때만(마우스 라우팅 규칙).
+        {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            if let Some(act) = self.panel.route(&ev, cur) {
+                if let Some(a) = act {
+                    self.panel_action(a);
+                }
+                self.redraw();
+                return;
+            }
         }
         // ★ 좌클릭·우클릭 모두 커서 아래 컨트롤에 포커스(마우스 라우팅 규칙 · CLAUDE.md §3) — 우클릭이 빠져 있어
         //   편집기에 포커스가 있으면 그리드 우클릭이 편집기로 가서 메뉴가 안 떴다(사용자 09-16 · 좌클릭 뒤에야 동작).
@@ -3990,11 +4865,12 @@ impl ApplicationHandler<Wake> for App {
         }
         // 오버레이 스크롤바 페이드(편집기·그리드·로그 창) — 보이는 동안만 ≈30ms 타이머.
         let now_ms = self.started.elapsed().as_millis() as u64;
+        self.tx_tick();
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
         redraw |= self.git.poll();
         // 잠든 결과 탭의 텍스트 변환도 이어서 거둔다(다른 탭에서 완성 · 09-16) — 그리지는 않는다.
-        for g in self.grid_stash.values_mut() {
+        for g in self.sleeping_grids_mut() {
             let _ = g.tick(now_ms);
         }
         redraw |= self.editors.tick();
@@ -4043,7 +4919,8 @@ impl ApplicationHandler<Wake> for App {
             || self.grid.bars_visible()
             || self.grid.text_pending()
             || self.git.pending()
-            || self.grid_stash.values().any(|g| g.text_pending())
+            || self.sleeping_grids().any(|g| g.text_pending())
+            || self.panel.menu_open()
             || self.log_win.bars_visible()
             || self.log_win.tooltip_pending()
             || self.log_win.drag_active()
@@ -4309,6 +5186,11 @@ impl ApplicationHandler<Wake> for App {
         }
         match &event {
             WindowEvent::CloseRequested => {
+                if !self.tx_pending.is_empty() {
+                    self.request_exit();
+                    self.redraw();
+                    return;
+                }
                 self.worker.send(worker::Cmd::Quit);
                 el.exit();
                 return;
@@ -4414,6 +5296,20 @@ impl ApplicationHandler<Wake> for App {
                     let plain_char =
                         !ch.primary && !ch.alt && !ch.ctrl && ch.key.chars().count() == 1;
                     if !plain_char {
+                        // `find.*`는 찾기 패널에 포커스일 때만(그 밖에선 가로채지 않는다 — mac Alt+글자 입력 보존).
+                        if let Some(id) = self.keymap.lookup(&ch) {
+                            if id.starts_with("find.") {
+                                if self.focus == Focus::Find && self.find.is_visible() {
+                                    let a = self.find.command(id);
+                                    self.find_action(a);
+                                    self.redraw();
+                                    return;
+                                }
+                                if !cfg!(target_os = "macos") {
+                                    return;
+                                }
+                            }
+                        }
                         if self.keymap.is_prefix(&ch) {
                             self.status = tf(Msg::StChordPending, &[&ch.display()]);
                             self.pending_chord = Some(ch);
@@ -4723,9 +5619,25 @@ fn main() {
         conn_win: ConnWin::new(panel),
         open_conn: true,
         find: FindBar::new(),
+        find_scope: None,
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
-        grid_stash: HashMap::new(),
+        panel: ResultPanel::new(
+            ResultTab {
+                id: 0,
+                title: String::new(),
+                pinned: false,
+                named: false,
+                grid: grid::Grid::default(),
+                seq: 0,
+            },
+            true,
+            false,
+        ),
+        panel_editor: 0,
+        panels: HashMap::new(),
+        next_result_id: 1,
+        result_area: Rect::new(0, 0, 0, 0),
         key_cache: HashMap::new(),
         sql_wait: None,
         single_run: false,
@@ -4740,6 +5652,11 @@ fn main() {
         last_spec: None,
         dialect: DEFAULT_DIALECT,
         tx_dirty: false,
+        tx_pending: Vec::new(),
+        tx_stale_logged: false,
+        run_editor: 0,
+        tx_after: None,
+        status_tx_rect: Rect::new(0, 0, 0, 0),
         live_sid: None,
         live_next: Instant::now(),
         live_since: None,
@@ -4771,8 +5688,25 @@ fn main() {
         panel_results: HashMap::new(),
     };
     app.grid.set_row_snap(row_snap);
+    app.apply_result_tab_opts();
+    {
+        let pct = app.settings.int("grid.row_height_pct").clamp(110, 300) as i32;
+        app.grid.set_row_pct(pct);
+    }
     app.editors
         .set_scroll_snap(app.settings.get("editor.scroll") == Some("row"));
+    app.apply_minimap();
+    // 자원 거버너 상한(T-90d · 부팅 1회) — 실효 값(`perf.mode` 반영).
+    app.log_win
+        .set_max_lines(app.settings.int("log.max_lines").max(100) as usize);
+    app.editors
+        .set_undo_max(app.settings.int("editor.undo_max").max(1) as usize);
+    nexa_gfx::text::set_glyph_cache_max(app.settings.int("ui.glyph_cache").max(256) as usize);
+    nexa_fs::shell::set_icon_cache_max(app.settings.int("file.icon_cache").max(16) as usize);
+    // D-58: full 모드인데 배터리/원격 세션이면 1회 안내.
+    if let Some(m) = app.settings.perf_hint() {
+        app.status = t(m).into();
+    }
     app.grid.set_copy_null(app.settings.flag("grid.copy_null"));
     app.log_win
         .set_on_top(app.settings.flag("log.always_on_top"));
@@ -4946,6 +5880,8 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
     ("file.save_as", Msg::TipSaveAs),
     ("run.statement", Msg::TipRunStatement),
     ("run.all", Msg::TipRunAll),
+    ("run.commit", Msg::TipCommit),
+    ("run.rollback", Msg::TipRollback),
     ("conn.toggle", Msg::TipConnect),
     ("conn.disconnect", Msg::TipDisconnect),
     ("view.log", Msg::TipLog),

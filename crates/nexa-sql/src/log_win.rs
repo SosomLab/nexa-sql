@@ -656,6 +656,27 @@ impl LogWin {
         self.window = None;
     }
 
+    /// 로그 줄 상한(설정 `log.max_lines` · docs/39 §3-6 T-90d) — 줄이면 **앞(오래된 것)부터 즉시 버리고** 배치·필터 목록도 맞춘다.
+    pub(crate) fn set_max_lines(&mut self, n: usize) {
+        let dropped = self.buf.set_cap(n);
+        if dropped > 0 {
+            for _ in 0..dropped {
+                self.meta.pop_front();
+            }
+            self.row_start.clear();
+            self.rebuild_vis();
+            self.scroll_y = 0;
+            self.jump = self.autoscroll;
+            self.redraw();
+        }
+    }
+
+    /// 현재 줄 상한.
+    #[allow(dead_code)]
+    pub(crate) fn max_lines(&self) -> usize {
+        self.buf.cap()
+    }
+
     pub(crate) fn push(&mut self, e: LogEntry) {
         let before = self.buf.len();
         self.buf.push(e);
@@ -1338,5 +1359,32 @@ impl LogWin {
         }
         let _ = buf.present();
         self.surface = Some(surface);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-90d(docs/39 §3-6 `log.max_lines`): 상한을 줄이면 버퍼·배치·표시 목록이 함께 앞에서 잘리고 · 그 뒤 push는 상한 안에서 돈다.
+    #[test]
+    fn max_lines_trims_buffer_meta_and_visible() {
+        let mut w = LogWin::new("raw");
+        assert_eq!(w.max_lines(), 10_000);
+        for i in 0..8 {
+            w.push(LogEntry::new(LogKind::Info, i.to_string()));
+        }
+        assert_eq!(w.visible_len(), 8);
+        w.set_max_lines(3);
+        assert_eq!(w.max_lines(), 3);
+        assert_eq!(w.visible_len(), 3);
+        assert_eq!(w.meta.len(), 3);
+        assert_eq!(w.buf.get(0).map(|e| e.message.as_str()), Some("5"));
+        w.push(LogEntry::new(LogKind::Info, "x"));
+        assert_eq!(w.visible_len(), 3);
+        assert_eq!(w.meta.len(), 3);
+        assert_eq!(w.buf.get(2).map(|e| e.message.as_str()), Some("x"));
+        w.set_max_lines(100);
+        assert_eq!(w.visible_len(), 3, "늘리면 그대로");
     }
 }

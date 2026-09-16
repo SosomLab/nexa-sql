@@ -685,3 +685,365 @@ mod tests {
         assert!(!off(480.0, 420.0), "사선 위쪽 · 구멍 자리는 빔");
     }
 }
+
+// ───────────────────────── Material Symbols SVG 경로 → 마스크(사용자 09-16 "구글 머티리얼 아이콘 SVG 그대로") ─────────────────────────
+//
+// `d` 문자열(M/L/H/V/C/S/Q/T/Z · 상대/절대 · 암묵 반복)을 다각형으로 펴고(베지어 = 선분 근사) **비영(non-zero) winding**으로
+// 채운다 — Material 경로는 구멍을 반대 방향으로 감으므로 짝홀보다 비영이 원본과 같다. 좌표계 `viewBox="0 -960 960 960"`
+// → y + 960 → 256 좌표. 아이콘은 프로세스 수명 동안 한 번 래스터해 `OnceLock`에 둔다.
+
+/// 경로 토큰(명령 글자 · 숫자).
+fn svg_tokens(d: &str) -> Vec<(char, f32)> {
+    let mut out = Vec::new();
+    let b = d.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i] as char;
+        if c.is_ascii_alphabetic() {
+            out.push((c, 0.0));
+            i += 1;
+        } else if c == '-' || c == '.' || c.is_ascii_digit() {
+            let start = i;
+            if c == '-' {
+                i += 1;
+            }
+            let mut dot = c == '.';
+            while i < b.len() {
+                let ch = b[i] as char;
+                if ch.is_ascii_digit() {
+                    i += 1;
+                } else if ch == '.' && !dot {
+                    dot = true;
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if let Ok(v) = d[start..i].parse::<f32>() {
+                out.push(('#', v));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 경로 → 닫힌 다각형들(960 좌표 · y는 +960 보정).
+fn svg_polys(d: &str) -> Vec<Vec<(f32, f32)>> {
+    let toks = svg_tokens(d);
+    let mut polys: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut cur: Vec<(f32, f32)> = Vec::new();
+    let (mut x, mut y) = (0.0f32, 0.0f32);
+    let (mut sx, mut sy) = (0.0f32, 0.0f32);
+    let mut cmd = 'M';
+    let mut i = 0;
+    let mut last_ctrl: Option<(f32, f32)> = None;
+    let num = |toks: &[(char, f32)], i: &mut usize| -> Option<f32> {
+        if *i < toks.len() && toks[*i].0 == '#' {
+            let v = toks[*i].1;
+            *i += 1;
+            Some(v)
+        } else {
+            None
+        }
+    };
+    let flatten_q = |cur: &mut Vec<(f32, f32)>, p0: (f32, f32), c: (f32, f32), p1: (f32, f32)| {
+        for k in 1..=8 {
+            let t = k as f32 / 8.0;
+            let u = 1.0 - t;
+            cur.push((
+                u * u * p0.0 + 2.0 * u * t * c.0 + t * t * p1.0,
+                u * u * p0.1 + 2.0 * u * t * c.1 + t * t * p1.1,
+            ));
+        }
+    };
+    let flatten_c = |cur: &mut Vec<(f32, f32)>,
+                     p0: (f32, f32),
+                     c1: (f32, f32),
+                     c2: (f32, f32),
+                     p1: (f32, f32)| {
+        for k in 1..=12 {
+            let t = k as f32 / 12.0;
+            let u = 1.0 - t;
+            cur.push((
+                u * u * u * p0.0
+                    + 3.0 * u * u * t * c1.0
+                    + 3.0 * u * t * t * c2.0
+                    + t * t * t * p1.0,
+                u * u * u * p0.1
+                    + 3.0 * u * u * t * c1.1
+                    + 3.0 * u * t * t * c2.1
+                    + t * t * t * p1.1,
+            ));
+        }
+    };
+    while i < toks.len() {
+        if toks[i].0 != '#' {
+            cmd = toks[i].0;
+            i += 1;
+        }
+        let rel = cmd.is_ascii_lowercase();
+        let up = cmd.to_ascii_uppercase();
+        match up {
+            'M' => {
+                let (Some(a), Some(b)) = (num(&toks, &mut i), num(&toks, &mut i)) else {
+                    break;
+                };
+                if cur.len() > 1 {
+                    polys.push(std::mem::take(&mut cur));
+                } else {
+                    cur.clear();
+                }
+                x = if rel { x + a } else { a };
+                y = if rel { y + b } else { b };
+                (sx, sy) = (x, y);
+                cur.push((x, y));
+                cmd = if rel { 'l' } else { 'L' };
+                last_ctrl = None;
+            }
+            'L' => {
+                let (Some(a), Some(b)) = (num(&toks, &mut i), num(&toks, &mut i)) else {
+                    break;
+                };
+                x = if rel { x + a } else { a };
+                y = if rel { y + b } else { b };
+                cur.push((x, y));
+                last_ctrl = None;
+            }
+            'H' => {
+                let Some(a) = num(&toks, &mut i) else { break };
+                x = if rel { x + a } else { a };
+                cur.push((x, y));
+                last_ctrl = None;
+            }
+            'V' => {
+                let Some(b) = num(&toks, &mut i) else { break };
+                y = if rel { y + b } else { b };
+                cur.push((x, y));
+                last_ctrl = None;
+            }
+            'Q' => {
+                let (Some(a), Some(b), Some(c), Some(d2)) = (
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                ) else {
+                    break;
+                };
+                let ctrl = if rel { (x + a, y + b) } else { (a, b) };
+                let p1 = if rel { (x + c, y + d2) } else { (c, d2) };
+                flatten_q(&mut cur, (x, y), ctrl, p1);
+                last_ctrl = Some(ctrl);
+                (x, y) = p1;
+            }
+            'T' => {
+                let (Some(c), Some(d2)) = (num(&toks, &mut i), num(&toks, &mut i)) else {
+                    break;
+                };
+                let ctrl = last_ctrl.map_or((x, y), |(cx, cy)| (2.0 * x - cx, 2.0 * y - cy));
+                let p1 = if rel { (x + c, y + d2) } else { (c, d2) };
+                flatten_q(&mut cur, (x, y), ctrl, p1);
+                last_ctrl = Some(ctrl);
+                (x, y) = p1;
+            }
+            'C' => {
+                let (Some(a), Some(b), Some(c), Some(d2), Some(e), Some(f)) = (
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                ) else {
+                    break;
+                };
+                let c1 = if rel { (x + a, y + b) } else { (a, b) };
+                let c2 = if rel { (x + c, y + d2) } else { (c, d2) };
+                let p1 = if rel { (x + e, y + f) } else { (e, f) };
+                flatten_c(&mut cur, (x, y), c1, c2, p1);
+                last_ctrl = Some(c2);
+                (x, y) = p1;
+            }
+            'S' => {
+                let (Some(c), Some(d2), Some(e), Some(f)) = (
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                    num(&toks, &mut i),
+                ) else {
+                    break;
+                };
+                let c1 = last_ctrl.map_or((x, y), |(cx, cy)| (2.0 * x - cx, 2.0 * y - cy));
+                let c2 = if rel { (x + c, y + d2) } else { (c, d2) };
+                let p1 = if rel { (x + e, y + f) } else { (e, f) };
+                flatten_c(&mut cur, (x, y), c1, c2, p1);
+                last_ctrl = Some(c2);
+                (x, y) = p1;
+            }
+            'Z' => {
+                if cur.len() > 1 {
+                    polys.push(std::mem::take(&mut cur));
+                } else {
+                    cur.clear();
+                }
+                (x, y) = (sx, sy);
+                cur.push((x, y));
+                last_ctrl = None;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    if cur.len() > 2 {
+        polys.push(cur);
+    }
+    for p in &mut polys {
+        for v in p.iter_mut() {
+            v.1 += 960.0;
+        }
+    }
+    polys
+}
+
+/// 비영 winding — 점이 다각형 집합 안인가.
+fn in_polys_nonzero(x: f32, y: f32, polys: &[Vec<(f32, f32)>]) -> bool {
+    let mut wn = 0i32;
+    for p in polys {
+        let n = p.len();
+        if n < 3 {
+            continue;
+        }
+        for i in 0..n {
+            let (x0, y0) = p[i];
+            let (x1, y1) = p[(i + 1) % n];
+            if y0 <= y {
+                if y1 > y && (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0) > 0.0 {
+                    wn += 1;
+                }
+            } else if y1 <= y && (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0) < 0.0 {
+                wn -= 1;
+            }
+        }
+    }
+    wn != 0
+}
+
+/// 클로저 도형 → 커버리지(4×4 슈퍼샘플링).
+fn rasterize_dyn(shape: &dyn Fn(f32, f32) -> bool) -> Vec<u8> {
+    let unit = 256.0 / SIDE as f32;
+    let mut out = Vec::with_capacity((SIDE * SIDE) as usize);
+    for py in 0..SIDE {
+        for px in 0..SIDE {
+            let mut hit = 0u32;
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let x = (px as f32 + (sx as f32 + 0.5) / SS as f32) * unit;
+                    let y = (py as f32 + (sy as f32 + 0.5) / SS as f32) * unit;
+                    if shape(x, y) {
+                        hit += 1;
+                    }
+                }
+            }
+            out.push((hit * 255 / (SS * SS)) as u8);
+        }
+    }
+    out
+}
+
+/// Material Symbols `d` → 메뉴/버튼 아이콘 마스크(색은 그리는 쪽이 틴트).
+pub(crate) fn svg_glyph(d: &str) -> MenuIcon {
+    let polys = svg_polys(d);
+    let alpha = rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys));
+    MenuIcon::from_alpha(SIDE, SIDE, &alpha)
+}
+
+macro_rules! material {
+    ($(#[$m:meta])* $name:ident, $d:expr) => {
+        $(#[$m])*
+        pub(crate) fn $name() -> MenuIcon {
+            thread_local! {
+                static CELL: std::cell::RefCell<Option<MenuIcon>> = const { std::cell::RefCell::new(None) };
+            }
+            CELL.with(|c| c.borrow_mut().get_or_insert_with(|| svg_glyph($d)).clone())
+        }
+    };
+}
+
+// Material Symbols Outlined 24px(viewBox 0 -960 960 960 · Apache-2.0) — 찾기 위젯(사용자 09-16 · VS Code 배치).
+material!(/// `match_case` — 대소문자 구분(Aa).
+    mi_match_case, "m131-252 165-440h79l165 440h-76l-39-112H247l-40 112h-76Zm139-176h131l-64-182h-4l-63 182Zm395 186q-51 0-81-27.5T554-342q0-44 34.5-72.5T677-443q23 0 45 4t38 11v-12q0-29-20.5-47T685-505q-23 0-42 9.5T610-468l-47-35q24-29 54.5-43t68.5-14q69 0 103 32.5t34 97.5v178h-63v-37h-4q-14 23-38 35t-53 12Zm12-54q35 0 59.5-24t24.5-56q-14-8-33.5-12.5T689-393q-32 0-50 14t-18 37q0 20 16 33t40 13Z");
+material!(/// `match_word` — 단어 단위(ab 밑줄).
+    mi_match_word, "M40-199v-200h80v120h720v-120h80v200H40Zm342-161v-34h-3q-13 20-35 31.5T294-351q-49 0-77-25.5T189-446q0-42 32.5-68.5T305-541q23 0 42.5 3.5T381-526v-14q0-27-18.5-43T312-599q-21 0-39.5 9T241-564l-43-32q19-27 48-41t67-14q62 0 95 29.5t33 85.5v176h-59Zm-66-134q-32 0-49 12.5T250-446q0 20 15 32.5t39 12.5q32 0 54.5-22.5T381-478q-14-8-32-12t-33-4Zm185 134v-401h62v113l-3 40h3q3-5 24-25.5t66-20.5q64 0 101 46t37 106q0 60-36.5 105.5T653-351q-41 0-62.5-18T563-397h-3v37h-59Zm143-238q-40 0-62 29.5T560-503q0 37 22 66t62 29q40 0 62.5-29t22.5-66q0-37-22.5-66T644-598Z");
+material!(/// `regular_expression` — 정규식(.*).
+    mi_regex, "M197-199q-56-57-86.5-130T80-482q0-80 30-153t87-130l57 57q-46 45-70 103.5T160-482q0 64 24.5 122.5T254-256l-57 57Zm183-41q-25 0-42.5-17.5T320-300q0-25 17.5-42.5T380-360q25 0 42.5 17.5T440-300q0 25-17.5 42.5T380-240Zm139-200v-71l-61 36-40-70 61-35-61-35 40-70 61 36v-71h80v71l61-36 40 70-61 35 61 35-40 70-61-36v71h-80Zm244 241-57-57q46-45 70-103.5T800-482q0-64-24.5-122.5T706-708l57-57q56 57 86.5 130T880-482q0 80-30 153t-87 130Z");
+material!(/// `arrow_upward` — 이전 일치.
+    mi_arrow_up, "M440-160v-487L216-423l-56-57 320-320 320 320-56 57-224-224v487h-80Z");
+material!(/// `arrow_downward` — 다음 일치.
+    mi_arrow_down, "M440-800v487L216-537l-56 57 320 320 320-320-56-57-224 224v-487h-80Z");
+material!(/// `close` — 닫기.
+    mi_close, "m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z");
+material!(/// `chevron_right` — 바꾸기 줄 접힘.
+    mi_chevron_right, "M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z");
+material!(/// `expand_more` — 바꾸기 줄 펼침.
+    mi_chevron_down, "M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z");
+material!(/// `find_replace` — 바꾸기.
+    mi_find_replace, "M164-560q14-103 91.5-171.5T440-800q59 0 110.5 22.5T640-716v-84h80v240H480v-80h120q-29-36-69.5-58T440-720q-72 0-127 45.5T244-560h-80Zm620 440L608-296q-36 27-78.5 41.5T440-240q-59 0-110.5-22.5T240-324v84h-80v-240h240v80H280q29 36 69.5 58t90.5 22q72 0 127-45.5T636-480h80q-5 36-18 67.5T664-352l176 176-56 56Z");
+material!(/// `published_with_changes` — 모두 바꾸기.
+    mi_replace_all, "M440-82q-76-8-141.5-41.5t-114-87Q136-264 108-333T80-480q0-91 36.5-168T216-780h-96v-80h240v240h-80v-109q-55 44-87.5 108.5T160-480q0 123 80.5 212.5T440-163v81Zm-17-214L254-466l56-56 113 113 227-227 56 57-283 283Zm177 196v-240h80v109q55-45 87.5-109T800-480q0-123-80.5-212.5T520-797v-81q152 15 256 128t104 270q0 91-36.5 168T744-180h96v80H600Z");
+material!(/// `abc` — 대소문자 보존(AB).
+    mi_preserve_case, "M680-360q-17 0-28.5-11.5T640-400v-160q0-17 11.5-28.5T680-600h120q17 0 28.5 11.5T840-560v40h-60v-20h-80v120h80v-20h60v40q0 17-11.5 28.5T800-360H680Zm-300 0v-240h160q17 0 28.5 11.5T580-560v40q0 17-11.5 28.5T540-480q17 0 28.5 11.5T580-440v40q0 17-11.5 28.5T540-360H380Zm60-150h80v-30h-80v30Zm0 90h80v-30h-80v30Zm-320 60v-200q0-17 11.5-28.5T160-600h120q17 0 28.5 11.5T320-560v200h-60v-60h-80v60h-60Zm60-120h80v-60h-80v60Z");
+material!(/// `segment` — 선택 범위에서 찾기(≡).
+    mi_in_selection, "M360-240v-80h480v80H360Zm0-200v-80h480v80H360ZM120-640v-80h720v80H120Z");
+
+/// Material SVG → 툴바 아이콘(`&'static` 마스크 · 프로세스 수명 1회).
+fn svg_tool(d: &str) -> ToolIcon {
+    let polys = svg_polys(d);
+    let alpha = rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys));
+    ToolIcon::Mask {
+        w: SIDE,
+        h: SIDE,
+        alpha: Box::leak(alpha.into_boxed_slice()),
+    }
+}
+
+/// Material `check` — Commit(툴바 · T-77).
+pub(crate) fn commit() -> ToolIcon {
+    svg_tool("M382-240 154-468l 57-57 171 171 367-367 57 57-424 424Z")
+}
+/// Material `undo` — Rollback(툴바 · T-77).
+pub(crate) fn rollback() -> ToolIcon {
+    svg_tool("M280-200v-80h284q63 0 109.5-40T720-420q0-60-46.5-100T564-560H312l104 104-56 56-200-200 200-200 56 56-104 104h252q97 0 166.5 63T800-420q0 94-69.5 157T564-200H280Z")
+}
+
+#[cfg(test)]
+mod svg_tests {
+    use super::*;
+
+    /// 경로 파서·비영 채움 — 화살표 마스크의 무게중심은 세로축 가운데·잉크가 있고 빈 배경은 0(사용자 09-16 Material SVG).
+    #[test]
+    fn material_paths_rasterize_with_ink_in_expected_places() {
+        let up = mi_arrow_up();
+        let ink: u32 = up.alpha.iter().map(|&a| a as u32).sum();
+        assert!(ink > 0, "잉크가 있어야 한다");
+        // 위 화살표: 위쪽 절반이 아래쪽 절반보다 잉크가 많다(머리 부분).
+        let half = (SIDE * SIDE / 2) as usize;
+        let top: u32 = up.alpha[..half].iter().map(|&a| a as u32).sum();
+        let bottom: u32 = up.alpha[half..].iter().map(|&a| a as u32).sum();
+        assert!(top > bottom, "위 화살표 머리는 위쪽에: {top} vs {bottom}");
+        // 구멍이 있는 글자(match_case의 a 안)도 비영 규칙으로 뚫린다: 전체가 채워지지 않는다.
+        let mc = mi_match_case();
+        let filled = mc.alpha.iter().filter(|&&a| a == 255).count();
+        assert!(filled < (SIDE * SIDE / 2) as usize);
+        // 모서리(여백)는 비어 있다.
+        assert_eq!(mc.alpha[0], 0);
+        assert_eq!(mi_close().alpha[0], 0);
+        // 파서: 상대 좌표·암묵 반복·소수.
+        let polys = svg_polys("m10-20 5 5 5-5Z");
+        assert_eq!(polys.len(), 1);
+        assert_eq!(polys[0].len(), 3);
+        assert!((polys[0][0].1 - 940.0).abs() < 0.01, "y + 960 보정");
+    }
+}

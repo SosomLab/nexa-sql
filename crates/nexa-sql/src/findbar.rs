@@ -1,18 +1,33 @@
-//! 찾기/바꾸기 **플로팅 위젯**(T-73 · 사용자 09-15 "VS Code의 Find/Replace 구조를 차용해 편집기 상단 중앙에 Floating") —
-//! 편집기 위에 떠 있는 작은 패널(레이아웃 흐름 밖 · 본문을 밀지 않는다).
+//! 찾기/바꾸기 **플로팅 위젯** — VS Code Find Widget을 픽셀 치수까지 그대로(사용자 09-16 · 캡처 11장 대조).
 //!
 //! ```text
-//! [›] [찾기 ▢ Aa ab] n of m  ↑ ↓ ×
-//!     [바꾸기 ▢]  [바꾸기][모두]          ← 왼쪽 › 를 누르면 펼침(⌄) · Ctrl+H는 펼친 채 연다
+//! ┌──────────────────────────────────────────────────────────────────────────┐ ← 419 × 34(찾기만) / 62(바꾸기 펼침) · 아래 모서리 r4
+//! │[›]│[Find                              Aa ab .*]│ 2 of 23 │ ↑ ↓ ≡ × │
+//! │   │[Replace                                 AB]│ ⇄ ⇄⇄                   │
+//! └──────────────────────────────────────────────────────────────────────────┘
+//!   3+18   26                      243  246   315  318 343 368 393(+22)
 //! ```
-//! Ctrl+F 열기(선택 텍스트를 씨앗으로) · Ctrl+H 바꾸기 열기 · Enter = 다음 · Shift+Enter = 이전 · Esc = 닫기(편집기로 포커스).
-//! 검색 자체(대소문자 · 단어 단위 · 순환)는 호스트([`crate::main`])가 편집기 텍스트에 대해 수행하고 이 위젯은 입력·토글·상태만 가진다. 정규식은 T-59.
+//! - 왼쪽 세로 토글(`.button.toggle` 18px · 전체 높이 · 셰브론 › / ⌄) = 바꾸기 줄 펼침/접기.
+//! - 입력 상자 25px(위 3px) · 안쪽 오른쪽에 20×20 토글(위 3 · 오른쪽 2 · 간격 2 · r3 · 1px 테두리).
+//! - 일치 수 69px("No results" / "2 of 23") · 동작 버튼 22×22(아이콘 16 + 3 · r5 · 간격 3).
+//! - 아이콘 = Google Material Symbols SVG를 마스크로(`toolicons::mi_*`) · 글자색 틴트.
+//! - 토글 **On** = accent 40% 채움 + accent 테두리 · **hover** = 1초(`ui.fade_slow`)에 걸쳐 밝아지는 회색 · **선택(포커스)** = 점선 accent
+//!   테두리 — 세 상태가 서로 구별된다(사용자 09-16).
+//! - 툴팁 = 버튼 **위** 캡슐 · 단축키는 Sublime Text 기준(Alt+C/W/R/A · Shift+Enter/Enter · Ctrl+Shift+H · Ctrl+Alt+Enter · Esc).
+//! - 검색 자체(대소문자 · 단어 · 정규식 · 범위)는 호스트가 편집기 텍스트에 대해 수행하고 여기는 입력·토글·상태만.
 
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::controls::ctxmenu::MenuIcon;
+use nexa_ctl::draw::{draw_tooltip_in, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
-use nexa_ctl::theme::Theme;
-use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
+use nexa_ctl::theme::{Color, IconImage, Theme};
+use nexa_ctl::tokens::{hover_color, Fade, FadeSpeed};
+use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nsql_i18n::{t, Msg};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Instant;
+
+use crate::toolicons;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FindAction {
@@ -24,13 +39,222 @@ pub(crate) enum FindAction {
     Close,
     /// 질의·토글이 바뀌었다(호스트가 개수를 다시 센다 · 첫 일치로 이동).
     Changed,
+    /// "선택 범위에서 찾기"가 켜지거나 꺼졌다(호스트가 범위를 잡거나 푼다).
+    ScopeChanged,
+    /// 일치 전부 다중 선택(Sublime Alt+Enter "Find All").
+    SelectAll,
 }
 
-/// 패널 폭(논리 px) · 행 높이 · 여백.
-const PANEL_W: f32 = 440.0;
-const ROW_H: f32 = 30.0;
-const PAD: f32 = 6.0;
+/// 토글·동작 버튼 종류(툴팁·단축키 문구).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BtnKind {
+    Fold,
+    Case,
+    Word,
+    Regex,
+    Prev,
+    Next,
+    Selection,
+    Close,
+    Preserve,
+    Replace,
+    ReplaceAll,
+}
+
+impl BtnKind {
+    fn tip(self) -> Msg {
+        match self {
+            BtnKind::Fold => Msg::TipFindToggleReplace,
+            BtnKind::Case => Msg::TipFindCase,
+            BtnKind::Word => Msg::TipFindWord,
+            BtnKind::Regex => Msg::TipFindRegex,
+            BtnKind::Prev => Msg::TipFindPrev,
+            BtnKind::Next => Msg::TipFindNext,
+            BtnKind::Selection => Msg::TipFindSelection,
+            BtnKind::Close => Msg::TipFindClose,
+            BtnKind::Preserve => Msg::TipFindPreserve,
+            BtnKind::Replace => Msg::TipFindReplace,
+            BtnKind::ReplaceAll => Msg::TipFindReplaceAll,
+        }
+    }
+    fn is_toggle(self) -> bool {
+        matches!(
+            self,
+            BtnKind::Case | BtnKind::Word | BtnKind::Regex | BtnKind::Selection | BtnKind::Preserve
+        )
+    }
+}
+
+// VS Code findWidget.css 치수(논리 px).
+const WIDGET_W: f32 = 419.0;
+const ROW1_H: f32 = 34.0;
+const ROW2_H: f32 = 62.0;
+const PAD_L: f32 = 9.0;
+const PAD_R: f32 = 4.0;
+const FOLD_X: f32 = 3.0;
+const FOLD_W: f32 = 18.0;
+const PART_ML: f32 = 17.0;
+const INPUT_H: f32 = 25.0;
+const INPUT_TOP: f32 = 3.0;
+const ROW_PITCH: f32 = 28.0;
+const TOGGLE: f32 = 20.0;
+const TOGGLE_GAP: f32 = 2.0;
+const TOGGLE_TOP: f32 = 3.0;
+const TOGGLE_RIGHT: f32 = 2.0;
+const BTN: f32 = 22.0;
+const BTN_GAP: f32 = 3.0;
+const COUNT_W: f32 = 69.0;
+const COUNT_GAP: f32 = 3.0;
 const MARGIN_RIGHT: f32 = 20.0;
+
+/// 아이콘 버튼/토글 하나 — 상태 3종이 구별된다(On · hover 페이드 · 포커스).
+struct FindBtn {
+    kind: BtnKind,
+    rect: Rect,
+    icon: MenuIcon,
+    tint: RefCell<Option<(Color, Rc<IconImage>)>>,
+    checked: bool,
+    hover: Fade,
+    hover_on: bool,
+    pressed: bool,
+    focused: bool,
+    enabled: bool,
+    clicked: bool,
+    /// 툴팁 대기 시작(hover 진입 시각).
+    hover_since: Option<Instant>,
+    /// 둥근 정도(토글 3 · 동작 5 · 접기 2).
+    radius: f32,
+}
+
+impl FindBtn {
+    fn new(kind: BtnKind, icon: MenuIcon) -> Self {
+        let radius = match kind {
+            BtnKind::Fold => 2.0,
+            k if k.is_toggle() => 3.0,
+            _ => 5.0,
+        };
+        FindBtn {
+            kind,
+            rect: Rect::default(),
+            icon,
+            tint: RefCell::new(None),
+            checked: false,
+            // 1초에 걸쳐 밝아진다(사용자 09-16) = `FadeSpeed::Slow` ↔ 설정 `ui.fade_slow`.
+            hover: Fade::at(FadeSpeed::Slow),
+            hover_on: false,
+            pressed: false,
+            focused: false,
+            enabled: true,
+            clicked: false,
+            hover_since: None,
+            radius,
+        }
+    }
+
+    fn tinted(&self, fg: Color) -> Rc<IconImage> {
+        if let Some((c, img)) = self.tint.borrow().as_ref() {
+            if *c == fg {
+                return img.clone();
+            }
+        }
+        let (r, g, b) = fg.rgb();
+        let img = Rc::new(IconImage::from_alpha_tinted(
+            self.icon.w,
+            self.icon.h,
+            &self.icon.alpha,
+            (r, g, b),
+        ));
+        *self.tint.borrow_mut() = Some((fg, img.clone()));
+        img
+    }
+
+    fn set_hover(&mut self, on: bool) {
+        if on != self.hover_on {
+            self.hover_on = on;
+            self.hover.set(on);
+            self.hover_since = on.then(Instant::now);
+        }
+    }
+
+    fn on_event(&mut self, ev: &InputEvent) {
+        match *ev {
+            InputEvent::MouseMove { x, y } => {
+                let inside = self.rect.contains(Point { x, y });
+                self.set_hover(inside);
+            }
+            InputEvent::MouseDown { x, y, .. } => {
+                let inside = self.rect.contains(Point { x, y });
+                self.pressed = inside && self.enabled;
+                self.focused = inside;
+            }
+            InputEvent::MouseUp { x, y } => {
+                if self.pressed && self.rect.contains(Point { x, y }) {
+                    self.clicked = true;
+                }
+                self.pressed = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn take_clicked(&mut self) -> bool {
+        std::mem::take(&mut self.clicked)
+    }
+
+    fn clear_transient(&mut self) {
+        self.pressed = false;
+        self.focused = false;
+        self.set_hover(false);
+        self.hover.jump(false);
+    }
+
+    fn paint(&self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
+        let b = self.rect;
+        if b.w <= 0 || b.h <= 0 {
+            return;
+        }
+        let r = (self.radius * s).round() as i32;
+        let px = |v: f32| (v * s).round().max(1.0) as i32;
+        // On = accent 40% + accent 테두리(VS Code inputOption.activeBackground/activeBorder).
+        if self.checked {
+            dc.fill_round_rect_alpha(b, r, th.accent, 0.4);
+            dc.stroke_round_rect(b, r, th.accent, 1.0);
+        }
+        // hover = 회색 오버레이가 1초에 걸쳐 진해진다(On 위에도 얹혀 "켜진 채 hover"가 보인다).
+        let hv = self.hover.value();
+        if hv > 0.0 && self.enabled {
+            let (hc, ha) = hover_color(th);
+            dc.fill_round_rect_alpha(b, r, hc, (ha * 1.2).min(1.0) * hv);
+        }
+        if self.pressed {
+            dc.fill_round_rect_alpha(b, r, th.text, 0.12);
+        }
+        // 아이콘 16px(스케일) · 글자색 틴트(비활성 = 흐림).
+        let fg = if self.enabled { th.text } else { th.text_dim };
+        let img = self.tinted(fg);
+        let icon = px(16.0);
+        let dst = Rect::new(b.x + (b.w - icon) / 2, b.y + (b.h - icon) / 2, icon, icon);
+        dc.image_scaled(dst, &img, b);
+        // 포커스(선택) = 점선 accent 테두리(VS Code focus-visible dashed) — On의 실선과 구별.
+        if self.focused {
+            let dash = px(2.0);
+            let mut x = b.x;
+            while x < b.right() {
+                let w = dash.min(b.right() - x);
+                dc.fill_rect(Rect::new(x, b.y, w, 1), th.accent);
+                dc.fill_rect(Rect::new(x, b.bottom() - 1, w, 1), th.accent);
+                x += dash * 2;
+            }
+            let mut y = b.y;
+            while y < b.bottom() {
+                let h = dash.min(b.bottom() - y);
+                dc.fill_rect(Rect::new(b.x, y, 1, h), th.accent);
+                dc.fill_rect(Rect::new(b.right() - 1, y, 1, h), th.accent);
+                y += dash * 2;
+            }
+        }
+    }
+}
 
 pub(crate) struct FindBar {
     visible: bool,
@@ -39,47 +263,61 @@ pub(crate) struct FindBar {
     scale: f32,
     query: TextBox,
     repl: TextBox,
-    toggle_btn: Button,
-    case_btn: Button,
-    word_btn: Button,
-    /// 정규식 토글(D-76 · `.*`).
-    regex_btn: Button,
-    prev_btn: Button,
-    next_btn: Button,
-    repl_btn: Button,
-    all_btn: Button,
-    close_btn: Button,
-    case_sensitive: bool,
-    whole_word: bool,
-    regex: bool,
+    /// 입력 상자 전체 틀(토글 포함) — 텍스트박스는 왼쪽 부분만 차지한다.
+    find_frame: Rect,
+    repl_frame: Rect,
+    count_rect: Rect,
+    btns: Vec<FindBtn>,
     status: String,
     shift: bool,
+    /// 툴팁 지연(ms · 설정 `ui.tooltip_delay_ms`).
+    tooltip_ms: u128,
+    /// 창 클라이언트 폭(툴팁 클램프).
+    clamp_w: i32,
 }
 
 impl FindBar {
     pub(crate) fn new() -> Self {
+        let btns = vec![
+            FindBtn::new(BtnKind::Fold, toolicons::mi_chevron_right()),
+            FindBtn::new(BtnKind::Case, toolicons::mi_match_case()),
+            FindBtn::new(BtnKind::Word, toolicons::mi_match_word()),
+            FindBtn::new(BtnKind::Regex, toolicons::mi_regex()),
+            FindBtn::new(BtnKind::Prev, toolicons::mi_arrow_up()),
+            FindBtn::new(BtnKind::Next, toolicons::mi_arrow_down()),
+            FindBtn::new(BtnKind::Selection, toolicons::mi_in_selection()),
+            FindBtn::new(BtnKind::Close, toolicons::mi_close()),
+            FindBtn::new(BtnKind::Preserve, toolicons::mi_preserve_case()),
+            FindBtn::new(BtnKind::Replace, toolicons::mi_find_replace()),
+            FindBtn::new(BtnKind::ReplaceAll, toolicons::mi_replace_all()),
+        ];
+        let mut query = TextBox::new(t(Msg::PhFind));
+        query.set_focus_ring(false);
+        let mut repl = TextBox::new(t(Msg::PhReplace));
+        repl.set_focus_ring(false);
         FindBar {
             visible: false,
             with_replace: false,
             bounds: Rect::default(),
             scale: 1.0,
-            query: TextBox::new(t(Msg::PhFind)),
-            repl: TextBox::new(t(Msg::PhReplace)),
-            toggle_btn: Button::new("›"),
-            case_btn: Button::new(t(Msg::BtnMatchCase)),
-            word_btn: Button::new(t(Msg::BtnWholeWord)),
-            regex_btn: Button::new(t(Msg::BtnRegex)),
-            prev_btn: Button::new("↑"),
-            next_btn: Button::new("↓"),
-            repl_btn: Button::new(t(Msg::BtnReplace)),
-            all_btn: Button::new(t(Msg::BtnReplaceAll)),
-            close_btn: Button::new("×"),
-            case_sensitive: false,
-            whole_word: false,
-            regex: false,
+            query,
+            repl,
+            find_frame: Rect::default(),
+            repl_frame: Rect::default(),
+            count_rect: Rect::default(),
+            btns,
             status: String::new(),
             shift: false,
+            tooltip_ms: 600,
+            clamp_w: i32::MAX / 2,
         }
+    }
+
+    fn btn(&self, k: BtnKind) -> &FindBtn {
+        self.btns.iter().find(|b| b.kind == k).expect("버튼")
+    }
+    fn btn_mut(&mut self, k: BtnKind) -> &mut FindBtn {
+        self.btns.iter_mut().find(|b| b.kind == k).expect("버튼")
     }
 
     pub(crate) fn is_visible(&self) -> bool {
@@ -103,20 +341,39 @@ impl FindBar {
     }
 
     pub(crate) fn case_sensitive(&self) -> bool {
-        self.case_sensitive
+        self.btn(BtnKind::Case).checked
     }
 
     pub(crate) fn whole_word(&self) -> bool {
-        self.whole_word
+        self.btn(BtnKind::Word).checked
     }
 
     /// 정규식 모드(D-76).
     pub(crate) fn regex(&self) -> bool {
-        self.regex
+        self.btn(BtnKind::Regex).checked
+    }
+
+    /// 선택 범위에서 찾기(≡ · Alt+L).
+    pub(crate) fn in_selection(&self) -> bool {
+        self.btn(BtnKind::Selection).checked
+    }
+
+    /// 대소문자 보존(AB · Alt+A).
+    pub(crate) fn preserve_case(&self) -> bool {
+        self.btn(BtnKind::Preserve).checked
+    }
+
+    /// 호스트가 범위를 잡지 못했을 때(선택 없음) 토글을 되돌린다.
+    pub(crate) fn set_in_selection(&mut self, on: bool) {
+        self.btn_mut(BtnKind::Selection).checked = on;
     }
 
     pub(crate) fn set_status(&mut self, s: impl Into<String>) {
         self.status = s.into();
+    }
+
+    pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
+        self.tooltip_ms = ms;
     }
 
     /// 열기(이미 열려 있으면 질의 상자로 포커스) — `seed` = 편집기 선택 텍스트(한 줄일 때).
@@ -126,7 +383,7 @@ impl FindBar {
         if let Some(s) = seed.filter(|s| !s.is_empty() && !s.contains('\n')) {
             self.query.set_text(&s);
         }
-        self.sync_toggle_label();
+        self.sync_fold_icon();
         self.focus_query();
     }
 
@@ -135,21 +392,40 @@ impl FindBar {
         self.with_replace = false;
         self.query.set_focused(false);
         self.repl.set_focused(false);
-        for b in self.buttons() {
-            b.set_focused(false);
+        for b in &mut self.btns {
+            b.clear_transient();
         }
+        self.btn_mut(BtnKind::Selection).checked = false;
     }
 
-    fn sync_toggle_label(&mut self) {
-        self.toggle_btn
-            .set_label(if self.with_replace { "⌄" } else { "›" });
+    /// 바꾸기 줄 펼침/접기(Ctrl+H · 왼쪽 셰브론) — 호스트가 다시 배치.
+    pub(crate) fn toggle_replace(&mut self) {
+        self.with_replace = !self.with_replace;
+        if !self.with_replace {
+            self.repl.set_focused(false);
+            if !self.query.is_focused() {
+                self.focus_query();
+            }
+        }
+        self.sync_fold_icon();
+    }
+
+    fn sync_fold_icon(&mut self) {
+        let icon = if self.with_replace {
+            toolicons::mi_chevron_down()
+        } else {
+            toolicons::mi_chevron_right()
+        };
+        let b = self.btn_mut(BtnKind::Fold);
+        b.icon = icon;
+        *b.tint.borrow_mut() = None;
     }
 
     fn focus_query(&mut self) {
         self.query.set_focused(true);
         self.repl.set_focused(false);
-        for b in self.buttons() {
-            b.set_focused(false);
+        for b in &mut self.btns {
+            b.focused = false;
         }
     }
 
@@ -161,8 +437,8 @@ impl FindBar {
         } else {
             self.query.set_focused(false);
             self.repl.set_focused(false);
-            for b in self.buttons() {
-                b.set_focused(false);
+            for b in &mut self.btns {
+                b.focused = false;
             }
         }
     }
@@ -178,86 +454,82 @@ impl FindBar {
         }
     }
 
-    fn buttons(&mut self) -> [&mut Button; 9] {
-        [
-            &mut self.toggle_btn,
-            &mut self.case_btn,
-            &mut self.word_btn,
-            &mut self.regex_btn,
-            &mut self.prev_btn,
-            &mut self.next_btn,
-            &mut self.repl_btn,
-            &mut self.all_btn,
-            &mut self.close_btn,
-        ]
-    }
-
-    /// 편집기 사각형 기준으로 **오른쪽 위**에 떠 있게 놓는다(VS Code 관례 · 본문을 밀지 않는다).
+    /// 편집기 사각형 기준 **오른쪽 위**에 붙는다(VS Code · 본문을 밀지 않는다).
     pub(crate) fn set_bounds(&mut self, editor: Rect, scale: f32) {
         self.scale = scale;
         let s = scale;
         let px = |v: f32| (v * s).round() as i32;
-        let pad = px(PAD);
-        let row = px(ROW_H);
-        let rows = if self.with_replace { 2 } else { 1 };
-        let w = px(PANEL_W).min((editor.w - px(MARGIN_RIGHT) * 2).max(px(200.0)));
-        let h = pad * 2 + row * rows + if rows == 2 { pad } else { 0 };
-        let x = editor.right() - px(MARGIN_RIGHT) - w;
-        let y = editor.y + px(4.0);
-        self.bounds = Rect::new(x.max(editor.x), y, w, h);
+        let w = px(WIDGET_W).min((editor.w - px(MARGIN_RIGHT)).max(px(260.0)));
+        let h = px(if self.with_replace { ROW2_H } else { ROW1_H });
+        let x = (editor.right() - px(MARGIN_RIGHT) - w).max(editor.x);
+        self.bounds = Rect::new(x, editor.y, w, h);
         let b = self.bounds;
         let mut inv = Invalidations::default();
-        let small = px(26.0);
-        let y1 = b.y + pad;
-        // 왼쪽 펼침 토글(두 행 높이 걸침).
-        self.toggle_btn.set_scale(s);
-        self.toggle_btn
-            .set_bounds(Rect::new(b.x + pad, y1, px(18.0), h - pad * 2), &mut inv);
-        let x0 = b.x + pad + px(18.0) + px(4.0);
-        // 1행: [찾기 ▢][Aa][ab] 상태 [↑][↓][×]
-        let close_x = b.right() - pad - small;
-        let next_x = close_x - px(2.0) - small;
-        let prev_x = next_x - px(2.0) - small;
-        let status_w = px(84.0);
-        let toggles_w = small * 3 + px(6.0);
-        let qw = (prev_x - px(6.0) - status_w - toggles_w - px(4.0) - x0).max(px(80.0));
-        self.query.set_scale(s);
-        self.query.set_bounds(Rect::new(x0, y1, qw, row), &mut inv);
-        let mut tx = x0 + qw + px(4.0);
-        for btn in [&mut self.case_btn, &mut self.word_btn, &mut self.regex_btn] {
-            btn.set_scale(s);
-            btn.set_bounds(Rect::new(tx, y1, small, row), &mut inv);
-            tx += small + px(2.0);
-        }
-        for (btn, x) in [
-            (&mut self.prev_btn, prev_x),
-            (&mut self.next_btn, next_x),
-            (&mut self.close_btn, close_x),
+        // 왼쪽 접기 토글: x 3 · 폭 18 · 전체 높이.
+        self.btn_mut(BtnKind::Fold).rect = Rect::new(b.x + px(FOLD_X), b.y, px(FOLD_W), h);
+        // 오른쪽 동작 버튼: 닫기부터 왼쪽으로 22 + 3.
+        let bw = px(BTN);
+        let pitch = bw + px(BTN_GAP);
+        let y1 = b.y + px(INPUT_TOP);
+        let row_h = px(INPUT_H);
+        let by = |row_y: i32| row_y + (row_h - bw) / 2;
+        let close_x = b.right() - px(PAD_R) - bw;
+        let sel_x = close_x - pitch;
+        let next_x = sel_x - pitch;
+        let prev_x = next_x - pitch;
+        for (k, x) in [
+            (BtnKind::Close, close_x),
+            (BtnKind::Selection, sel_x),
+            (BtnKind::Next, next_x),
+            (BtnKind::Prev, prev_x),
         ] {
-            btn.set_scale(s);
-            btn.set_bounds(Rect::new(x, y1, small, row), &mut inv);
+            self.btn_mut(k).rect = Rect::new(x, by(y1), bw, bw);
         }
-        // 2행: [바꾸기 ▢][바꾸기][모두]
+        // 일치 수 69px(버튼 왼쪽 3px 앞).
+        let count_w = px(COUNT_W);
+        self.count_rect = Rect::new(prev_x - px(COUNT_GAP) - count_w, y1, count_w, row_h);
+        // 찾기 입력 틀: 26px부터 일치 수 3px 앞까지 · 안쪽 오른쪽에 토글 3개.
+        let in_x = b.x + px(PAD_L) + px(PART_ML);
+        let in_w = (self.count_rect.x - px(COUNT_GAP) - in_x).max(px(80.0));
+        self.find_frame = Rect::new(in_x, y1, in_w, row_h);
+        let tg = px(TOGGLE);
+        let tgap = px(TOGGLE_GAP);
+        let ty = y1 + px(TOGGLE_TOP);
+        let mut tx = self.find_frame.right() - px(TOGGLE_RIGHT) - tg;
+        for k in [BtnKind::Regex, BtnKind::Word, BtnKind::Case] {
+            self.btn_mut(k).rect = Rect::new(tx, ty, tg, tg);
+            tx -= tg + tgap;
+        }
+        // 텍스트박스 = 틀의 왼쪽(토글 영역 제외).
+        let text_w = (tx + tg + tgap - in_x).max(px(40.0));
+        self.query.set_scale(s);
+        self.query
+            .set_bounds(Rect::new(in_x, y1, text_w, row_h), &mut inv);
+        // 바꾸기 줄(펼쳤을 때만): 같은 x · 같은 폭 · AB 토글 · 바꾸기/모두 버튼은 틀 오른쪽 3px 뒤.
         if self.with_replace {
-            let y2 = y1 + row + pad;
-            let all_w = px(52.0);
-            let rep_w = px(76.0);
-            let all_x = b.right() - pad - all_w;
-            let rep_x = all_x - px(4.0) - rep_w;
-            let rw = (rep_x - px(6.0) - x0).max(px(80.0));
+            let y2 = y1 + px(ROW_PITCH);
+            self.repl_frame = Rect::new(in_x, y2, in_w, row_h);
+            let px_x = self.repl_frame.right() - px(TOGGLE_RIGHT) - tg;
+            self.btn_mut(BtnKind::Preserve).rect = Rect::new(px_x, y2 + px(TOGGLE_TOP), tg, tg);
+            let rtext_w = (px_x - tgap - in_x).max(px(40.0));
             self.repl.set_scale(s);
-            self.repl.set_bounds(Rect::new(x0, y2, rw, row), &mut inv);
-            self.repl_btn.set_scale(s);
-            self.repl_btn
-                .set_bounds(Rect::new(rep_x, y2, rep_w, row), &mut inv);
-            self.all_btn.set_scale(s);
-            self.all_btn
-                .set_bounds(Rect::new(all_x, y2, all_w, row), &mut inv);
+            self.repl
+                .set_bounds(Rect::new(in_x, y2, rtext_w, row_h), &mut inv);
+            let rx = self.repl_frame.right() + px(COUNT_GAP);
+            self.btn_mut(BtnKind::Replace).rect = Rect::new(rx, by(y2), bw, bw);
+            self.btn_mut(BtnKind::ReplaceAll).rect = Rect::new(rx + pitch, by(y2), bw, bw);
         } else {
+            self.repl_frame = Rect::default();
             self.repl.set_bounds(Rect::default(), &mut inv);
-            self.repl_btn.set_bounds(Rect::default(), &mut inv);
-            self.all_btn.set_bounds(Rect::default(), &mut inv);
+            for k in [BtnKind::Preserve, BtnKind::Replace, BtnKind::ReplaceAll] {
+                self.btn_mut(k).rect = Rect::default();
+            }
         }
+    }
+
+    /// 창 클라이언트 폭(툴팁이 창 밖으로 나가지 않게).
+    pub(crate) fn set_clamp_width(&mut self, w: i32) {
+        self.clamp_w = w;
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
@@ -265,8 +537,8 @@ impl FindBar {
             return false;
         }
         let mut any = self.query.tick(now_ms) | self.repl.tick(now_ms);
-        for b in self.buttons() {
-            any |= b.tick(now_ms);
+        for b in &mut self.btns {
+            any |= b.hover.tick(now_ms);
         }
         any
     }
@@ -275,20 +547,41 @@ impl FindBar {
         self.visible
             && (self.query.is_animating()
                 || self.repl.is_animating()
-                || self.toggle_btn.is_animating()
-                || self.case_btn.is_animating()
-                || self.word_btn.is_animating()
-                || self.regex_btn.is_animating()
-                || self.prev_btn.is_animating()
-                || self.next_btn.is_animating()
-                || self.repl_btn.is_animating()
-                || self.all_btn.is_animating()
-                || self.close_btn.is_animating())
+                || self.btns.iter().any(|b| b.hover.is_animating())
+                || self.tooltip_pending())
     }
 
-    /// 펼침 상태가 바뀌었는가(호스트가 다시 배치) — 1회성.
-    pub(crate) fn with_replace(&self) -> bool {
-        self.with_replace
+    /// 툴팁 지연 중(호스트가 프레임 예약).
+    pub(crate) fn tooltip_pending(&self) -> bool {
+        self.btns.iter().any(|b| {
+            b.hover_since
+                .is_some_and(|t0| t0.elapsed().as_millis() < self.tooltip_ms + 50)
+        })
+    }
+
+    /// 단축키(호스트 키맵 `find.*` · 패널에 포커스일 때만 호스트가 부른다).
+    pub(crate) fn command(&mut self, id: &str) -> FindAction {
+        match id {
+            "find.case" => self.flip(BtnKind::Case),
+            "find.word" => self.flip(BtnKind::Word),
+            "find.regex" => self.flip(BtnKind::Regex),
+            "find.preserve" => self.flip(BtnKind::Preserve),
+            "find.selection" => self.flip(BtnKind::Selection),
+            "find.replace_one" => FindAction::Replace,
+            "find.replace_all" => FindAction::ReplaceAll,
+            "find.all" => FindAction::SelectAll,
+            _ => FindAction::None,
+        }
+    }
+
+    fn flip(&mut self, k: BtnKind) -> FindAction {
+        let b = self.btn_mut(k);
+        b.checked = !b.checked;
+        if k == BtnKind::Selection {
+            FindAction::ScopeChanged
+        } else {
+            FindAction::Changed
+        }
     }
 
     /// 이벤트 → 호스트 동작. 마우스는 커서가 패널 안일 때 · 키는 패널에 포커스일 때 호스트가 넘긴다.
@@ -300,14 +593,12 @@ impl FindBar {
         if let InputEvent::Key { shift, .. } = ev {
             self.shift = *shift;
         }
-        // Enter/Esc는 텍스트박스보다 먼저(단일행 박스의 Enter = commit이라 무해하지만 명확히).
+        // Enter = 다음(Shift = 이전) · Esc = 닫기(Sublime 규약 · 바꾸기 상자에서도 Enter = 다음 · 바꾸기는 Ctrl+Shift+H).
         if let InputEvent::Key { key, shift, .. } = ev {
             match key {
                 CtlKey::Enter => {
                     return if *shift {
                         FindAction::Prev
-                    } else if self.repl.is_focused() {
-                        FindAction::Replace
                     } else {
                         FindAction::Next
                     };
@@ -323,109 +614,142 @@ impl FindBar {
             let in_r = self.with_replace && self.repl.bounds().contains(p);
             self.query.set_focused(in_q);
             self.repl.set_focused(in_r);
-            let hit: Vec<bool> = self
-                .buttons()
-                .iter()
-                .map(|b| b.bounds().contains(p))
-                .collect();
-            for (b, h) in self.buttons().iter_mut().zip(hit) {
-                b.set_focused(h);
-            }
         }
         self.query.on_event(ev, &mut inv);
         if self.with_replace {
             self.repl.on_event(ev, &mut inv);
         }
-        for b in self.buttons() {
-            b.on_event(ev, &mut inv);
+        for b in &mut self.btns {
+            b.on_event(ev);
+        }
+        // 버튼 하나만 포커스(마지막 눌린 것).
+        if let InputEvent::MouseDown { x, y, .. } = *ev {
+            let p = Point { x, y };
+            let hit = self.btns.iter().position(|b| b.rect.contains(p));
+            for (i, b) in self.btns.iter_mut().enumerate() {
+                b.focused = Some(i) == hit;
+            }
         }
         if self.query.take_changed().is_some() {
             return FindAction::Changed;
         }
         let _ = self.repl.take_changed();
-        if self.toggle_btn.take_clicked() {
-            self.with_replace = !self.with_replace;
-            self.sync_toggle_label();
-            if !self.with_replace {
-                self.repl.set_focused(false);
+        let clicked: Vec<BtnKind> = self
+            .btns
+            .iter_mut()
+            .filter_map(|b| b.take_clicked().then_some(b.kind))
+            .collect();
+        let Some(&k) = clicked.first() else {
+            return FindAction::None;
+        };
+        match k {
+            BtnKind::Fold => {
+                self.toggle_replace();
+                FindAction::Changed
             }
-            return FindAction::Changed;
+            BtnKind::Case
+            | BtnKind::Word
+            | BtnKind::Regex
+            | BtnKind::Preserve
+            | BtnKind::Selection => self.flip(k),
+            BtnKind::Prev => FindAction::Prev,
+            BtnKind::Next => FindAction::Next,
+            BtnKind::Close => FindAction::Close,
+            BtnKind::Replace => FindAction::Replace,
+            BtnKind::ReplaceAll => FindAction::ReplaceAll,
         }
-        if self.case_btn.take_clicked() {
-            self.case_sensitive = !self.case_sensitive;
-            return FindAction::Changed;
+    }
+
+    /// 입력 틀(토글 포함) 하나 그리기 — 텍스트박스는 왼쪽 부분이라 그 오른쪽 경계선을 지워 한 상자로 보이게 한다.
+    fn paint_frame(dc: &mut dyn DrawCtx, th: &Theme, frame: Rect, tb: &TextBox, s: f32) {
+        let r = (6.0 * s).round() as i32;
+        dc.fill_round_rect(frame, r, th.field_bg);
+        dc.stroke_round_rect(frame, r, th.border, 1.0);
+        tb.paint(dc, th);
+        let tbb = tb.bounds();
+        if tbb.w > 0 {
+            // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다(둥근 모서리 안쪽만).
+            dc.fill_rect(
+                Rect::new(tbb.right() - 2, tbb.y + r, 3, (tbb.h - r * 2).max(0)),
+                th.field_bg,
+            );
         }
-        if self.word_btn.take_clicked() {
-            self.whole_word = !self.whole_word;
-            return FindAction::Changed;
+        if tb.is_focused() {
+            dc.stroke_round_rect(frame, r, th.accent, 1.0);
         }
-        if self.regex_btn.take_clicked() {
-            self.regex = !self.regex;
-            return FindAction::Changed;
-        }
-        if self.prev_btn.take_clicked() {
-            return FindAction::Prev;
-        }
-        if self.next_btn.take_clicked() {
-            return FindAction::Next;
-        }
-        if self.repl_btn.take_clicked() {
-            return FindAction::Replace;
-        }
-        if self.all_btn.take_clicked() {
-            return FindAction::ReplaceAll;
-        }
-        if self.close_btn.take_clicked() {
-            return FindAction::Close;
-        }
-        FindAction::None
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.visible {
             return;
         }
+        let s = self.scale;
         let b = self.bounds;
-        let r = (4.0 * self.scale).round() as i32;
-        // 떠 있는 패널 — 테두리 + 아래쪽 한 줄 더 진하게(그림자 대신).
-        dc.fill_round_rect(b, r, th.chrome_bg);
-        dc.stroke_round_rect(b, r, th.border, 1.0);
-        dc.fill_rect(Rect::new(b.x + 1, b.bottom(), b.w - 2, 1), th.border);
+        let r = (4.0 * s).round() as i32;
+        // 떠 있는 패널 — 아래 모서리만 둥글게(위는 편집기 위쪽에 붙음) · 테두리 + 그림자 한 줄.
+        dc.fill_round_rect(Rect::new(b.x, b.y - r, b.w, b.h + r), r, th.chrome_bg);
+        dc.stroke_round_rect(Rect::new(b.x, b.y - r, b.w, b.h + r), r, th.border, 1.0);
+        dc.fill_rect_alpha(Rect::new(b.x + 1, b.bottom(), b.w - 2, 1), th.text, 0.12);
         dc.select_font(FontSlot::Base, false);
-        // 켜진 토글은 선택색 배경.
-        if self.case_sensitive {
-            dc.fill_round_rect(self.case_btn.bounds(), 4, th.sel_bg);
-        }
-        if self.whole_word {
-            dc.fill_round_rect(self.word_btn.bounds(), 4, th.sel_bg);
-        }
-        if self.regex {
-            dc.fill_round_rect(self.regex_btn.bounds(), 4, th.sel_bg);
-        }
-        self.toggle_btn.paint(dc, th);
-        self.query.paint(dc, th);
-        self.case_btn.paint(dc, th);
-        self.word_btn.paint(dc, th);
-        self.regex_btn.paint(dc, th);
-        self.prev_btn.paint(dc, th);
-        self.next_btn.paint(dc, th);
+        Self::paint_frame(dc, th, self.find_frame, &self.query, s);
         if self.with_replace {
-            self.repl.paint(dc, th);
-            self.repl_btn.paint(dc, th);
-            self.all_btn.paint(dc, th);
+            Self::paint_frame(dc, th, self.repl_frame, &self.repl, s);
         }
-        self.close_btn.paint(dc, th);
-        // 상태(n of m · No results) — 토글 오른쪽 · ↑ 왼쪽에 우측 정렬.
+        // 일치 수("No results" / "2 of 23") — 왼쪽 정렬 · 흐린 글자 · 없음은 경고색.
         if !self.status.is_empty() {
-            let tw = dc.text_width(&self.status);
-            let th_txt = dc.text_height();
-            let q = self.query.bounds();
-            let x = self.prev_btn.bounds().x - tw - (8.0 * self.scale).round() as i32;
-            dc.text(x, q.y + (q.h - th_txt) / 2, b, &self.status, th.text_dim);
+            dc.select_font(FontSlot::Status, false);
+            let cr = self.count_rect;
+            let ty = dc.text_center_y(cr.y, cr.h);
+            let none = self.status == t(Msg::StFindNone);
+            dc.text(
+                cr.x + (2.0 * s).round() as i32,
+                ty,
+                cr,
+                &self.status,
+                if none { th.danger } else { th.text_dim },
+            );
+        }
+        for btn in &self.btns {
+            if !self.with_replace
+                && matches!(
+                    btn.kind,
+                    BtnKind::Preserve | BtnKind::Replace | BtnKind::ReplaceAll
+                )
+            {
+                continue;
+            }
+            btn.paint(dc, th, s);
         }
         self.query.paint_popup(dc, th);
         if self.with_replace {
             self.repl.paint_popup(dc, th);
         }
+    }
+
+    /// 툴팁(팝업 층 · 버튼 **위** 캡슐 · hover가 지연 시간을 넘긴 버튼 하나).
+    pub(crate) fn paint_tooltip(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if !self.visible {
+            return;
+        }
+        let Some(btn) = self.btns.iter().find(|b| {
+            b.hover_on
+                && b.rect.w > 0
+                && b.hover_since
+                    .is_some_and(|t0| t0.elapsed().as_millis() >= self.tooltip_ms)
+        }) else {
+            return;
+        };
+        let s = self.scale;
+        let text = t(btn.kind.tip()).to_string();
+        // 캡슐 높이를 재서 버튼 위에 오도록 앵커를 잡는다(draw_tooltip은 앵커 아래 6px에 그린다).
+        dc.select_font(FontSlot::Status, false);
+        let h = dc.text_height() + (8.0 * s).round() as i32;
+        let anchor = Rect::new(
+            btn.rect.x,
+            btn.rect.y - h - (12.0 * s).round() as i32,
+            btn.rect.w,
+            0,
+        );
+        draw_tooltip_in(dc, th, anchor, (0, self.clamp_w), &text, s);
     }
 }

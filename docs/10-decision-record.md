@@ -36,6 +36,10 @@
 | **DR-28** | **PostgreSQL = 내장 드라이버 1급 지원**(`nsql-driver-pg` · rust-postgres 동기 · DR-3 예외 원장) — Oracle·MSSQL·SQLite와 같은 엔진 관용(세션 변수 · SELECT INTO 별칭 · CALL OUT) · 카탈로그·탐색기·CLI 동등 | 사용자 09-15 *"postgresql까지 지원 범위를 확대"* | ✅ 09-15(matrixdb2 실서버) |
 | **DR-29** | **내장 드라이버는 정적 링크 유지 · 확장 드라이버는 in-process 동적 라이브러리(C ABI cdylib · 지연 로드)** — 실측(09-15 release): CLI 기동 ~20ms · GUI 사설 메모리 8.5MB · 드라이버 전역 초기화 0(tokio 런타임·ODPI-C는 첫 접속 시) → 정적 링크는 기동·메모리·속도 비용이 없다(코드는 요구 페이징 · 안 쓰는 드라이버 페이지는 적재되지 않음). 파일 분리가 필요한 경우(GitHub 다운로드·SxS Instant Client·재설치 없는 갱신)만 **같은 프로세스 안에서 `dlopen`하는 cdylib**(IPC 0 · 직접 호출) — DR-24의 stdio JSON-RPC **프로세스**는 격리가 꼭 필요한 선택 모드로 강등(같은 ABI를 프로세스 호스트가 감싼다) | 사용자 09-15 *"로딩 시간·불필요한 메모리·속도 지연 없는 구조"* · *"exe 분리가 아니라 동적 라이브러리/플러그인"* · *"분리가 필요없는 수준이면 지금도 괜찮아"* · [22 §0](22-driver-extensions.md) | ✅ 09-15(구조 확정 · cdylib 구현 = T-27 개정) |
 
+| **DR-30** | **트랜잭션 UX**([34](34-transaction-ux.md) 권장안 그대로) — 수동 커밋 단위 = 탭 세션 · 모드 계층 전역 → 프로필 → 탭 · 표시 3층(탭 배지 `●n` · 상태줄 세그먼트+팝업 · 툴바 Commit 배지) · 잃는 순간만 모달 · 오래된 미커밋 빨강(`tx.stale_min`) · `tx.smart_commit` 기본 off(D-52) | 사용자 09-16(일괄 진행 질의에 "권장안으로 확정") · 종전 D-51 | ✅ 09-16 · 구현 = T-77 |
+| **DR-31** | **자원 거버너**([39](39-resource-governance.md)) — `perf.mode` 기본 **full** + 배터리/원격 세션이면 상태줄 1회 안내(D-58) · 개별 키를 바꾸면 표시 **custom**(D-59) · OS 신호 모듈 = 새 크레이트 **`nexa-sys`**(nexa-ui · D-60) · `db.statement_timeout` 기본 **0**(D-61) | 사용자 09-16 · 종전 D-58~61 | ✅ 09-16 · 구현 = T-90(a/d 1차 ✅) |
+| **DR-32** | **설치기** — Windows **MSI(WiX)**(조용한 설치·GPO · D-49) · macOS `.pkg` 설치 스크립트가 **`/usr/local/bin/nsql` 링크**(D-50) | 사용자 09-16 · 종전 D-49/50 · [33 §2](33-distribution-and-packaging.md) | ✅ 09-16 · 구현 = T-72 |
+
 ## 2. 권장 확정 대기 (DP)
 
 > 09-12 DP-1~9 → DR-10~18로 승격(사용자 *"나머진 한꺼번에 개발 진행"*). DP-10(서명) → DR-20 보류. 현재 대기 항목 없음.
@@ -52,18 +56,18 @@
 | ~~D-6~~ | → **D-23~D-31**로 세분([23](23-license-activation.md) · 09-14) |
 | D-8 | `similar`(비교·3-way 병합) 원장 등재 |
 | D-48 | Oracle 라이브 로그 기본 소스 — 자율 트랜잭션 로그 테이블(현장 관행 · 권장) vs V$SESSION client_info(코드 1줄 · 권한) — 권장 = 테이블 기본 + 세션 세그먼트 병행([32 §2](32-server-messages-and-live-log.md)) |
-| D-49 | Windows 설치기 — MSI(WiX · 조용한 설치·GPO · 권장) vs NSIS(nexa-clip 보유)([33 §4](33-distribution-and-packaging.md)) |
-| D-50 | macOS CLI 노출 — pkg 설치 스크립트로 `/usr/local/bin/nsql` 링크(권장) vs Homebrew만 |
-| D-51 | 트랜잭션 UX([34](34-transaction-ux.md)) — 수동 커밋 단위 = 탭 세션 · 모드 계층 전역→프로필→탭 · 표시 3층(탭 배지 ●n · 상태줄 세그먼트+팝업 · 툴바 Commit 배지) · 잃는 순간만 모달 · 오래된 미커밋 빨강 — 권장안 확정 요청 |
+| ~~D-49~~ | → **DR-32**(MSI · 09-16) |
+| ~~D-50~~ | → **DR-32**(pkg 스크립트 `/usr/local/bin/nsql` 링크 · 09-16) |
+| ~~D-51~~ | → **DR-30**(권장안 확정 · 09-16) |
 | D-62~66 | ✅ 09-16 결과 → SQL 키 규칙([41 §2](41-sql-copy-key-rules.md)): PK → 첫 유니크 → 앞 3컬럼 + 경고 1회 · 설정 `sql.key_mode` pk/all · 경고 = CLI 주석/GUI 상태줄+로그 · 테이블 미추정 = `T` · 키 조회 = 필요 시 1회 캐시 |
 | D-67 | 가상 키(테이블별 사용자 지정 · T-92) — 앞 3컬럼 경고가 잦으면 도입 |
 | D-77 | ✅ 09-16 **글자 래스터 = Windows는 OS(GDI) ClearType 글리프**([journal 44·46차](journal/2026-09-16.md)): nexa-gfx `gdi.rs` — 32bpp DIB에 `CLEARTYPE_QUALITY`로 그려 **채널별(R·G·B) 커버리지** + 정수 전진 폭 + **진짜 볼드 face**(Windows·Golden과 같은 래스터 · Win32 수동 extern으로 crate 0) · 설정 `ui.text_gdi`(기본 켬) · 못 여는 face·비BMP·다른 OS = 내장 ab_glyph + 오토힌트(T-99). 회색 `GGO_GRAY8`은 맑은 고딕의 얇은 세로 획을 지워(46차 `닫`) 폐기 · macOS/Linux OS 경로 = T-100 |
 | D-76 | ✅ 09-16 **정규식 엔진 = `regex` + `fancy-regex`**(찾기·바꾸기·파일 찾기/바꾸기 · [journal 32차](journal/2026-09-16.md)): 선형 시간 RE2식 코어 + lookaround/역참조는 fancy만 백트래킹(시간 상한) · 순수 Rust(DR-3) · `$1` 치환 규약 |
 | D-68~72 | ✅ 09-16 페치 모델·결과 탭([43 §0](43-fetch-model-and-result-tabs.md)): 상한 = **대화형만**(GUI 그리드 · `nsql shell` · run/export/파이프 무제한) · 기본 **200**(전역 → 탭 로컬 · D-42 답) · 추가 페치 = **서버 커서 유지 + OFFSET 폴백**(D-43 답 · 세션당 커서 1) · 결과 탭 = 편집기 탭 ↔ 패널(Ctrl+Enter 교체 · Ctrl+\\ 추가) · 메모리 예산 `grid.memory_budget_mb` 256(탭 합계) |
-| D-58 | 자원 거버너([39 §4](39-resource-governance.md)) `perf.mode` 기본 = `auto`(배터리/원격 세션이면 balanced) vs `full`(지금 그대로 · 안내만) — 권장 `full` + 상태줄 1회 안내 |
-| D-59 | 개별 키를 직접 바꿨을 때 모드 표시 = `custom`(권장) vs 모드 유지·값만 우선 |
-| D-60 | OS 신호(배터리·원격 세션·동작 줄이기) 모듈 위치 — `nexa-fs::sys`(규칙 그대로) vs 새 `nexa-sys` 크레이트(권장) |
-| D-61 | `db.statement_timeout` 기본 — 0(없음 · DBeaver 동일 · 권장) vs 60초 |
+| ~~D-58~~ | → **DR-31**(`perf.mode` 기본 full + 1회 안내 · 09-16) |
+| ~~D-59~~ | → **DR-31**(custom 표시 · 09-16) |
+| ~~D-60~~ | → **DR-31**(`nexa-sys` 크레이트 · 09-16) |
+| ~~D-61~~ | → **DR-31**(기본 0 · 09-16) |
 | D-52 | `tx.smart_commit`(자동 모드라도 DML 실행 시 그 탭을 수동으로 · DBeaver 기본) — 권장 기본 off(자동 커밋 기본 유지) |
 | D-9 | 로프 크레이트 `crop` vs `ropey` — E-1 착수 시 |
 | ~~D-14~~ | → **DR-21**(Codespaces + DBMS별 Docker + Actions) |

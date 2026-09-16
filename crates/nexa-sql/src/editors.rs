@@ -14,6 +14,7 @@ use nexa_ctl::{
     Widget,
 };
 use nsql_i18n::{t, Msg};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -53,6 +54,16 @@ pub(crate) struct Editors {
     tab_stops: bool,
     /// 휠 스크롤을 줄 경계에 맞추는가(설정 `editor.scroll` = row · 기본 pixel · 09-16).
     scroll_snap: bool,
+    /// 미니맵(켬 · 폭 논리 px · T-97).
+    minimap: (bool, i32),
+    /// 되돌리기 깊이 상한(`editor.undo_max`).
+    undo_max: usize,
+    /// 탭별 미커밋 문장 수·오래됨(수동 커밋 · DR-30 T-77) — 제목 뒤 `●n`(오래되면 `⚠n`).
+    tx_badges: HashMap<u64, (usize, bool)>,
+    /// 배지 모양(설정 `tx.badge`: count · dot · off).
+    tx_badge_mode: String,
+    /// 미커밋 탭의 닫기 요청(탭 바 ×) — 호스트가 확인 뒤 처리.
+    tx_close_req: Option<usize>,
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
     /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
@@ -123,6 +134,11 @@ impl Editors {
             next_id: 1,
             tab_stops: true,
             scroll_snap: false,
+            minimap: (false, 80),
+            undo_max: 1000,
+            tx_badges: HashMap::new(),
+            tx_badge_mode: "count".into(),
+            tx_close_req: None,
             encs: Vec::new(),
             shown_titles: Vec::new(),
             pending_close: None,
@@ -150,6 +166,9 @@ impl Editors {
         tb.set_indent(self.indent.0, self.indent.1);
         tb.set_tab_stops(self.tab_stops);
         tb.set_scroll_snap(self.scroll_snap);
+        tb.set_minimap(self.minimap.0);
+        tb.set_minimap_width(self.minimap.1);
+        tb.set_history_max(self.undo_max);
         tb.set_line_comment(syntax.line_comments.first().cloned());
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
         tb.set_focus_ring(false);
@@ -285,6 +304,23 @@ impl Editors {
         self.tab_stops = on;
         for b in &mut self.bufs {
             b.set_tab_stops(on);
+        }
+    }
+
+    /// 미니맵(설정 `editor.minimap`/`editor.minimap_width` · T-97) — 전 탭 + 새 탭.
+    pub(crate) fn set_minimap(&mut self, on: bool, width: i32) {
+        self.minimap = (on, width);
+        for b in &mut self.bufs {
+            b.set_minimap(on);
+            b.set_minimap_width(width);
+        }
+    }
+
+    /// 되돌리기 깊이 상한(설정 `editor.undo_max` · T-90d) — 전 탭 + 새 탭.
+    pub(crate) fn set_undo_max(&mut self, n: usize) {
+        self.undo_max = n;
+        for b in &mut self.bufs {
+            b.set_history_max(n);
         }
     }
 
@@ -537,11 +573,40 @@ impl Editors {
     }
 
     fn shown_title(&self, i: usize) -> String {
-        if self.is_dirty(i) {
+        let base = if self.is_dirty(i) {
             format!("*{}", self.titles[i])
         } else {
             self.titles[i].clone()
+        };
+        // 미커밋 배지(수동 커밋 · n>0일 때만 · DR-30): count `●3` · dot `●` · 오래되면 `⚠`.
+        match self.tx_badges.get(&self.tab_id(i)) {
+            Some(&(n, stale)) if n > 0 && self.tx_badge_mode != "off" => {
+                let mark = if stale { '⚠' } else { '●' };
+                if self.tx_badge_mode == "dot" {
+                    format!("{base} {mark}")
+                } else {
+                    format!("{base} {mark}{n}")
+                }
+            }
+            _ => base,
         }
+    }
+
+    /// 미커밋 배지 갱신(호스트 · 탭 id → (문장 수, 오래됨)).
+    pub(crate) fn set_tx_badges(&mut self, badges: HashMap<u64, (usize, bool)>, mode: &str) {
+        self.tx_badges = badges;
+        self.tx_badge_mode = mode.to_string();
+    }
+
+    /// 미커밋 탭 닫기 요청(탭 바 × · 1회성) — 호스트가 Commit/Rollback을 물은 뒤 닫는다.
+    pub(crate) fn take_tx_close_request(&mut self) -> Option<usize> {
+        self.tx_close_req.take()
+    }
+
+    /// 탭 닫기(확인 없이 · 미커밋 확인을 이미 거친 뒤).
+    pub(crate) fn close_tab_confirmed(&mut self, i: usize) {
+        self.tx_badges.remove(&self.tab_id(i));
+        self.close_tab(i);
     }
 
     /// 1회성 안내(상태줄).
@@ -551,6 +616,15 @@ impl Editors {
 
     pub(crate) fn close_tab(&mut self, i: usize) {
         if i >= self.bufs.len() {
+            return;
+        }
+        // 미커밋 문장이 있는 탭은 호스트에 넘긴다(잃는 순간만 묻는다 · DR-30).
+        if self
+            .tx_badges
+            .get(&self.tab_id(i))
+            .is_some_and(|(n, _)| *n > 0)
+        {
+            self.tx_close_req = Some(i);
             return;
         }
         // ★ 저장하지 않은 변경 = 2단 닫기(같은 탭을 3초 안에 다시 닫으면 버린다 · Delete 2단과 같은 관례).
