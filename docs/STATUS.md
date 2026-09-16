@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (49차 · mac · 일괄 배치 2 · 병렬 에이전트 5) — DR-30~32 ✅ · T-93 결과 다중 탭 ✅ · 찾기 위젯 VS Code 치수+Material ✅ · T-77 트랜잭션 UX 1차 ✅ · T-48a/d 서버 커서+CLI ✅ · T-90a/d 거버너+nexa-sys ✅ · T-97 미니맵 ✅ · T-81b 검색 엔진+nsql grep ✅ · T-72/T-62 배포 파이프라인 ✅ · 그리드 행 높이 ✅
+
+사용자 질의 4개 답으로 범위 확정 → 병렬 5 + 직접. 결정 3건 DR 승격. GUI: 결과 탭(`results.rs` · Ctrl+\\ · 예산) · 찾기 위젯(419px · SVG 마스크 래스터 · 3상태 토글 · In selection · Preserve case · Alt+Enter) · 트랜잭션(배지 ●n · 팝업 · 툴바 · 잃는 순간 팝업 · 공유 세션 1차) · 미니맵/거버너 배선 · 행 높이 150%. 코어: 서버 커서(SQLite 세션 스레드 · Oracle · PG DECLARE · MSSQL 폴백 · Oracle e2e) · `perf.mode` 원장 24키 · `nexa-sys` · `nsql-search`(21k파일 0.3~0.6s) · 배포(맥 pkg/dmg 실기 · MSI/deb/rpm CI). 워크스페이스 테스트·clippy 전부 green · 커밋 nexa-ui 2 · nexa-sql 4(문서 포함 5) · **push 대기(사용자 요청 시)**. **⏳ 실기 대상 = journal 49차 6항목 + 48차 9항목**. **다음**: T-81a 검색 패널 · T-48b/c · T-90b/c · 서명 키 · PG 실서버 · T-54 탭별 세션. → [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (48차 · mac · 자율 배치) — 접속 창 결과 보존 ✅ · 트랙패드 스크롤 5단 수정 ✅(잔여 누적 · 픽셀 스크롤 · row 모드 표시 스냅 · 1:1+축 잠금 · CursorMoved 잔여 초기화 제거) · ⌘T 새 편집기 복구 ✅ · T-98 편집 명령 14종 ✅ · T-96 Goto Anything ✅ · T-89/T-73 잔여 ✅ · T-9/T-52 CLI ✅ · T-101 ✅
 
 사용자 "진행 가능한 전체 작업 개발" + QA 5건. 편집기 = nexa-ui `EditCommand`(조각 편집 재매핑 · 되돌리기 1) + 키맵 2단 코드(`Ctrl+K, Ctrl+U`) + macOS `control+…` · `Ctrl+P` 탭/최근/`:줄` · Edit 메뉴 줄끝 3종 · 찾기 일치 전부 표시. 스크롤 = 입력 누적기(3px 양자화·축 잠금·픽셀 1:1) + 편집기 픽셀 스크롤 + `grid.scroll`/`editor.scroll` row = 표시 시점 스냅. CLI = SPOOL 포트 · `@@` 상대경로/인자 · `script.strict` · 셸 별칭(보조 에이전트). ⌘T는 36차 프리셋 정렬 때 유실된 것을 복구(회귀 테스트). 테스트 전부 green · clippy 0 · check-3os 뒤 push(두 저장소). **⏳ 사용자 실기 9항목 + ⌘T** = [journal 48차](journal/2026-09-16.md). **다음**: 실기 피드백 → T-93 결과 다중 탭(확인 대기) → T-48a → T-97 미니맵 → T-94. → [journal](journal/2026-09-16.md)

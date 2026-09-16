@@ -191,11 +191,11 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 
 | 단계 | 내용 | 산출 |
 |---|---|---|
-| **T-48a** 포트 | `Session::fetch_next/close_cursor/cursor_supported` · `ExecResult.pending` · 러너 `fetch_next/fetch_all/count` · `RunEvent::ResultSet.cursor` · Navigate 스팬 · Oracle·SQLite 커서 유지 · PG Portal · MSSQL 폴백 · OFFSET 래퍼(4방언 · 테스트) | core/run/driver |
+| **T-48a** 포트 ✅ 09-16 49차 | `Session::fetch_next/close_cursor/cursor_supported` · `ExecResult.pending` · 러너 `fetch_next/fetch_all/count/fetch_page` · Navigate 스팬 · Oracle·SQLite 커서 유지 · **PG = DECLARE CURSOR**(Portal은 동기 크레이트 수명 문제 · 실서버 미검증) · MSSQL 폴백 · OFFSET 래퍼 · `RunEvent` 모양 불변(러너가 커서 보관) · 커서 열린 동안 자동 커밋 유예 | core/run/driver |
 | **T-48b** GUI 1차 | 결과 도구줄(세그먼트 상자 · Fetch next · Fetch all(진행·취소) · Count · Refresh · 이동) · 탭 로컬 max_rows · 예산 · 상태 문구 · 설정 8종 | `grid.rs`/`main.rs` |
-| **T-93** 결과 탭 | `ResultPanel`/`ResultTab` · Ctrl+\\ · 탭바(TabBar 재사용) · 우클릭 메뉴 · 상한·고정·해제 · 편집기 탭 쌍 유지 | GUI |
+| **T-93** 결과 탭 ✅ 09-16 49차 | `ResultPanel`/`ResultTab` · Ctrl+\\ · 탭바(TabBar 재사용) · 우클릭 메뉴 · 상한·고정·해제 · 편집기 탭 쌍 유지 · 메모리 예산(D-72) | GUI `results.rs` |
 | **T-48c** 자동 페치·MSSQL 스트림 | 스크롤 끝 자동 페치 · tiberius 스트림 유지 · `db.cursor_idle_secs` | GUI/driver |
-| **T-48d** CLI | `cli.max_rows` · `\more/\all/\count` · `\pager` · `cli.auto_more` · 도움말 | CLI |
+| **T-48d** CLI ✅ 09-16 49차 | `cli.max_rows` · `\more/\all/\count` · `\pager` · `cli.auto_more` · 도움말 · Oracle e2e(`\more` 25~31ms · count 62,449) | CLI |
 | **T-94** 데이터 편집기 | 행 추가/삭제/복제 · 셀 편집 · Save = [41](41-sql-copy-key-rules.md) 키 규칙으로 INSERT/UPDATE/DELETE · [34](34-transaction-ux.md) | 별도 설계 |
 
 **검증 게이트**(39 §6): Oracle 사내 실서버 100만 행 테이블 — 첫 세그먼트 ≤ 0.3s · Fetch next 10회 연속 왕복 ≤ 0.2s/회 · Fetch all 예산 256 MB에서 멈춤 + 안내 · 탭 닫기 뒤 Private 복귀 · 커서 유휴 시 V$OPEN_CURSOR 1개.

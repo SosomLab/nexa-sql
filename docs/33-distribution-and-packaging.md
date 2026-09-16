@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-15): *"포터블 배포는 하지 않을 것 · 목적별 실행파일을 분리하고 공유/정적 라이브러리도 별도 구성해서 설치본으로 배포 · macOS의 특징을 최대한 고려해 일관성 있는 배포판"*.
 > **선행**: [22 드라이버 확장](22-driver-extensions.md)(SxS 드라이버 프로세스) · [25 §9](25-license-tiers-and-server.md)(저장소 분리) · nexa-clip `packaging/`(3-OS 파이프라인 · choco/winget/homebrew/linux) · [01 아키텍처](01-architecture.md).
-> **상태**: 📐 설계 · 결정 **DR-27**(포터블 없음 · 설치본) · 작업 **T-72**(파이프라인) · T-62(아이콘)와 합류.
+> **상태**: ✅ **DR-27** · **DR-32**(09-16: D-49 MSI · D-50 pkg 링크) · **T-72/T-62 ✅ 09-16 49차**(맥 실기 pkg/dmg · MSI/deb/rpm은 CI · 서명·매니페스트 후속 · [journal 49차](journal/2026-09-16.md)).
 
 ---
 
@@ -65,12 +65,12 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 | 단계 | 내용 | 원천 |
 |---|---|---|
-| build | `cargo build --release --workspace`(3-OS 매트릭스 · mac은 두 타깃 + `lipo`) | nexa-clip `check-3os.sh` · CI |
-| assemble | 레이아웃(§2)대로 스테이징 · `Packages/` · 아이콘(T-62 · `packaging/branding` SSOT) · 라이선스 파일 · `THIRD-PARTY-NOTICES`(T-10 cargo-deny) | `packaging/<os>/` |
-| package | Windows MSI · macOS pkg+dmg · Linux deb/rpm | `packaging/render-manifests.sh` 이식 |
-| sign | 자리만(키 없으면 건너뜀 · 결과에 "unsigned" 표기) | DR-20 |
-| verify | 설치 → `nsql --version` · `nexa-sql --smoke` · 제거 → 잔여 파일 0(사용자 폴더는 보존) | 실기표(nexa-clip 21) |
-| publish | GitHub Releases(태그) · sha256 · 매니페스트(winget/choco/homebrew) | [22 §4](22-driver-extensions.md) 규약 재사용 |
+| build ✅ | `packaging/macos/build-app.sh`(두 타깃 `--locked` + lipo) · `windows/build-msi.ps1` · `linux/build-deb.sh` — 로컬·CI 같은 스크립트 | nexa-clip 이식 |
+| assemble ✅ | `packaging/lib.sh stage_common`(LICENSE 2종·README·THIRD-PARTY-NOTICES·`Packages/`) · 아이콘 = branding SSOT(iconutil / `.rc`+build.rs / hicolor 8종) | `packaging/<os>/` |
+| package ✅ | MSI(WiX v4 `nexa-sql.wxs` · UpgradeCode 고정 · PathEnv/SqlAssoc Feature) · pkg(pkgbuild+productbuild · postinstall 링크 = DR-32)+dmg · deb(dpkg-deb)/rpm(spec · 같은 스테이징) | 맥 실기 pkg/dmg · MSI/deb/rpm은 CI |
+| sign 📐 | 자리만 — `MACOS_SIGN_IDENTITY`/`MACOS_INSTALLER_IDENTITY`/`MACOS_NOTARY_PROFILE` · `WINDOWS_SIGN_PFX(_PASSWORD)`/`WINDOWS_SIGN_THUMBPRINT` 없으면 unsigned | DR-20 |
+| verify ✅(CI) | release.yml 스모크 = 실제 설치 → `nsql --version`·`nexa-sql --smoke` → 제거(uninstall.sh / msiexec /x / dpkg -r) → 잔여 0 · rpm은 목록만 | — |
+| publish ✅ 초안 | `sha256sums.txt` + GitHub Release **초안**(`gh release create --draft`) · 매니페스트(winget/choco/brew)는 후속 | [22 §4](22-driver-extensions.md) |
 
 ---
 
@@ -79,8 +79,8 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | # | 결정 |
 |---|---|
 | **DR-27** | **배포 = 설치본만**(MSI · pkg/dmg · deb/rpm) · 포터블 없음 · 목적별 exe(GUI `nexa-sql` · CLI `nsql` · 드라이버 프로세스) · Rust 코어는 정적 · OS 런타임/드라이버 lib은 공유 lib 별도 위치 · macOS `.app`+Universal 2+`.pkg` · 사용자 데이터는 OS 사용자 폴더 |
-| D-49 | Windows 설치기: MSI(WiX · 권장) vs NSIS(nexa-clip 보유) — 기업 배포(조용한 설치·GPO)면 MSI |
-| D-50 | macOS CLI 노출: `/usr/local/bin/nsql` 링크(pkg 스크립트) vs Homebrew만 |
+| ~~D-49~~ | → **DR-32** = MSI(WiX v4) · 09-16 |
+| ~~D-50~~ | → **DR-32** = pkg postinstall `/usr/local/bin/nsql` 링크 · 09-16 |
 
 | ID | 항목 | 의존 |
 |---|---|---|

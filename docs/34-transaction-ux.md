@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-15): *"트랜잭션 기본은 자동 Commit, 설정으로 수동 Commit이면 각 Editor 창별로 트랜잭션 상태를 표시 — 어떤 방식이 쉽게 식별되고 관리가 좋은가."*
 > **선행**: [18 세션·프로젝트](18-session-and-projects.md) · [26 §3](26-performance-architecture.md)(실행 계층) · [29 §4 상태줄](29-editor-syntax-palette-statusbar.md) · T-54 `session.mode`(탭별 세션) · 09-15 3차 트랜잭션 1차(전역 `session.autocommit` · Commit/Rollback · 상태줄 Auto/Manual ●).
-> **상태**: 📐 설계 · 결정 **D-51** · 작업 **T-77**(T-54 위에).
+> **상태**: ✅ **DR-30**(09-16 권장안 확정) · **T-77 1차 구현 ✅ 09-16 49차**(공유 세션 기준 — 탭별 세션 T-54 뒤 배지가 탭별 트랜잭션이 된다 · [journal 49차](journal/2026-09-16.md)).
 
 ---
 
