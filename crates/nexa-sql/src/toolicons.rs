@@ -309,6 +309,25 @@ fn shape_disconnect(x: f32, y: f32) -> bool {
 }
 
 /// ≡ — 로그 창.
+/// 보기 모드(사용자 09-16 SVG · Material `table` 계열): 둥근 사각 외곽에서 6칸(좁은 왼쪽 열 + 넓은 오른쪽 열 × 3행)을 뺀다.
+fn shape_view_mode(x: f32, y: f32) -> bool {
+    // SVG: 외곽 (80,160)-(880,800) r≈80 · 칸 x 160..280 / 360..800 · y 240..347 / 427..534 / 613..720 (y = svg + 960).
+    let (sx, sy) = (x / M, y / M);
+    if !in_rounded_rect(sx, sy, 80.0, 160.0, 800.0, 640.0, 80.0) {
+        return false;
+    }
+    let rows = [(240.0, 347.0), (427.0, 534.0), (613.0, 720.0)];
+    let cols = [(160.0, 280.0), (360.0, 800.0)];
+    for (y0, y1) in rows {
+        for (x0, x1) in cols {
+            if sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn shape_log(x: f32, y: f32) -> bool {
     [72.0, 128.0, 184.0]
         .iter()
@@ -534,6 +553,10 @@ pub(crate) fn connect() -> ToolIcon {
 }
 pub(crate) fn log() -> ToolIcon {
     mask(shape_log)
+}
+/// 결과 도구줄 보기 모드 버튼(▾는 툴바가 붙인다).
+pub(crate) fn view_mode() -> ToolIcon {
+    mask(shape_view_mode)
 }
 pub(crate) fn disconnect() -> ToolIcon {
     mask(shape_disconnect)

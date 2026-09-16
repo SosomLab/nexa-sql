@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (35차 · win)** — 보기 모드 버튼 = 사용자 SVG 표 아이콘 + ▾ 드롭다운(nexa-ui 17차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (34차 · win)** — **정규식 엔진 도입**(D-76 · `fancy-regex` · `rx.rs` 공용 · 찾기 바 `.*` · `$1` 치환 · T-59 폐기) · 편집기 첫 글자 여백 `editor.text_pad_left`. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (33차 · win)** — 상태줄 줄끝 3종(CR 지원) · **인코딩 세그먼트**(UTF/CJK/CP1252 · `encoding_rs` · 저장/다시 열기 한 팝업 · Hex 제외) · **git 세그먼트**(`main (6)` · 배경 git CLI · `statusbar.git`) · 툴바 버튼 표시 설정(`toolbar.hidden` · 우클릭). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (32차 · win)** — 선택어 동일 출현 외곽선(`editor.highlight_selection`) · 컬럼 구분선 설정 4종(표시·위치·색·투명도 25%) · **정규식 엔진 D-76 = `regex` + `fancy-regex`** · T-97 미니맵. → [journal](journal/2026-09-16.md)

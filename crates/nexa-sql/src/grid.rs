@@ -238,9 +238,9 @@ impl Default for Grid {
             dialect: Dialect::Oracle,
             source_table: None,
             source_sql: String::new(),
-            tb_view: Self::bar(vec![
-                ToolItem::new("view", ToolIcon::Glyph("▦".into())).tip(t(Msg::TipViewMode))
-            ]),
+            tb_view: Self::bar(vec![ToolItem::new("view", toolicons::view_mode())
+                .with_dropdown()
+                .tip(t(Msg::TipViewMode))]),
             tb_refresh: Self::bar(vec![
                 ToolItem::new("refresh", ToolIcon::Glyph("↻".into())).tip(t(Msg::TipRefresh))
             ]),
