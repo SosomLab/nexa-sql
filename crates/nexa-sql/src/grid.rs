@@ -14,6 +14,32 @@ use nexa_ctl::{
 };
 use nsql_core::{fmt_bytes, Dialect, ResultSet, Value};
 use nsql_i18n::{t, Msg};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+
+/// 텍스트 보기 변환 스레드 → 그리드 메시지.
+enum TextMsg {
+    Chunk {
+        lines: Vec<String>,
+        done: usize,
+        total: usize,
+    },
+    Finished,
+}
+
+/// 진행 중인 텍스트 변환(취소 깃발은 스레드가 블록마다 본다).
+struct TextJob {
+    rx: mpsc::Receiver<TextMsg>,
+    cancel: Arc<AtomicBool>,
+    done: usize,
+    total: usize,
+}
+
+impl Drop for TextJob {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
 
 /// 결과 보기 모드(사용자 09-16 · DBeaver 결과 패널 그룹 1): 그리드 · 텍스트 표 · Markdown · JSON · TSV · CSV · SQL 5종.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +188,10 @@ pub(crate) struct Grid {
     text_lines: Vec<String>,
     text_w: i32,
     text_scroll: (i32, i32),
+    /// 가장 긴 줄(문자 수 기준)의 index — 폭은 이 한 줄만 잰다(전 줄 글꼴 측정이 병목이었다 · 09-16).
+    text_longest: Option<usize>,
+    /// 진행 중인 변환(백그라운드 스레드 · 블록 채널 · 취소 깃발 · 진척).
+    text_job: Option<TextJob>,
     /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
     perf_report: bool,
 }
@@ -251,6 +281,8 @@ impl Default for Grid {
             text_lines: Vec::new(),
             text_w: 0,
             text_scroll: (0, 0),
+            text_longest: None,
+            text_job: None,
             perf_report: false,
         }
     }
@@ -421,36 +453,148 @@ impl Grid {
         if self.view != ResultView::Sql(kind) {
             return;
         }
-        let text = self.render_sql_text(kind, key);
-        self.set_text_lines(text);
+        self.start_text_job(Format::Sql(kind), key.clone());
     }
 
-    fn set_text_lines(&mut self, text: String) {
-        self.text_lines = text.lines().map(str::to_string).collect();
-        self.text_w = 0;
-    }
-
-    /// 텍스트 계열 보기 본문 다시 만들기(결과가 바뀌었을 때).
+    /// 텍스트 계열 보기 본문 다시 만들기(결과가 바뀌었을 때) — SQL은 키가 필요해 호스트에 미룬다.
     fn refresh_text_view(&mut self) {
-        let text = match (self.view, self.rs.as_ref()) {
-            (ResultView::Grid, _) | (_, None) => String::new(),
-            (ResultView::Sql(k), Some(_)) => {
+        match self.view {
+            ResultView::Grid => self.cancel_text_job(),
+            ResultView::Sql(k) => {
+                self.cancel_text_job();
                 self.pending_view = Some(k);
-                return;
             }
-            (v, Some(rs)) => {
+            v => {
                 let fmt = match v {
-                    ResultView::Text | ResultView::Grid | ResultView::Sql(_) => Format::Grid,
                     ResultView::Markdown => Format::Markdown,
                     ResultView::Json => Format::Json,
                     ResultView::Tsv => Format::Tsv,
                     ResultView::Csv => Format::Csv,
+                    _ => Format::Grid,
                 };
-                let ordered = self.ordered_rs(rs);
-                nsql_io::render_result_set(&ordered, &fmt, self.dialect, &GridOpts::default())
+                let names = self.all_col_names();
+                let key = nsql_io::choose_key(nsql_io::KeyMode::All, None, &names);
+                self.start_text_job(fmt, key);
             }
+        }
+    }
+
+    /// ★ 지연 변환(사용자 09-16): 틀은 즉시 바꾸고 본문은 **백그라운드 스레드**가 500행 블록으로 순차 변환해 채널로
+    ///   보낸다 · 다른 보기로 바꾸면 취소 깃발로 즉시 중단 · 다른 탭으로 가도 스레드는 이어서 완성(호스트 tick이 회수).
+    fn start_text_job(&mut self, fmt: Format, key: KeySpec) {
+        self.cancel_text_job();
+        self.text_lines.clear();
+        self.text_w = 0;
+        self.text_longest = None;
+        self.text_scroll = (0, 0);
+        let Some(rs) = self.rs.as_ref() else {
+            return;
         };
-        self.set_text_lines(text);
+        let ordered = self.ordered_rs(rs);
+        let total = ordered.rows.len();
+        let dialect = self.dialect;
+        let table = self.source_table.clone().unwrap_or_else(|| "T".into());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<TextMsg>();
+        let flag = cancel.clone();
+        let spawned = std::thread::Builder::new()
+            .name("nsql-textview".into())
+            .spawn(move || {
+                let layout = nsql_io::block_layout(&ordered, &GridOpts::default());
+                let block = 500usize;
+                let mut start = 0usize;
+                loop {
+                    if flag.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let end = (start + block).min(total);
+                    let text = nsql_io::render_block(
+                        &ordered,
+                        &fmt,
+                        dialect,
+                        &layout,
+                        start..end,
+                        start == 0,
+                        end >= total,
+                        &table,
+                        &key,
+                    );
+                    let lines: Vec<String> = text.lines().map(str::to_string).collect();
+                    if tx
+                        .send(TextMsg::Chunk {
+                            lines,
+                            done: end,
+                            total,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if end >= total {
+                        let _ = tx.send(TextMsg::Finished);
+                        return;
+                    }
+                    start = end;
+                }
+            });
+        if spawned.is_ok() {
+            self.text_job = Some(TextJob {
+                rx,
+                cancel,
+                done: 0,
+                total,
+            });
+        }
+    }
+
+    fn cancel_text_job(&mut self) {
+        if let Some(job) = self.text_job.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// 변환 스레드가 보낸 블록을 거둔다(호스트 tick · 33ms) — 새 줄이 있으면 true.
+    pub(crate) fn poll_text(&mut self) -> bool {
+        let Some(job) = self.text_job.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        let mut finished = false;
+        while let Ok(msg) = job.rx.try_recv() {
+            match msg {
+                TextMsg::Chunk { lines, done, total } => {
+                    let base = self.text_lines.len();
+                    for (i, l) in lines.iter().enumerate() {
+                        let n = l.chars().count();
+                        let cur = self
+                            .text_longest
+                            .and_then(|j| self.text_lines.get(j))
+                            .map_or(0, |t| t.chars().count());
+                        if n > cur {
+                            self.text_longest = Some(base + i);
+                            self.text_w = 0; // 다음 페인트에서 이 줄만 잰다.
+                        }
+                    }
+                    self.text_lines.extend(lines);
+                    job.done = done;
+                    job.total = total;
+                    changed = true;
+                }
+                TextMsg::Finished => {
+                    finished = true;
+                    changed = true;
+                }
+            }
+        }
+        if finished {
+            self.text_job = None;
+        }
+        changed
+    }
+
+    /// 변환이 진행 중인가(호스트가 tick을 돌릴 근거).
+    pub(crate) fn text_pending(&self) -> bool {
+        self.text_job.is_some()
     }
 
     /// 표시 순서(정렬·컬럼 이동)대로 복제한 결과 — 텍스트 보기·SQL 보기의 원천.
@@ -472,16 +616,6 @@ impl Grid {
                 })
                 .collect(),
         }
-    }
-
-    fn render_sql_text(&self, kind: SqlKind, key: &KeySpec) -> String {
-        let Some(rs) = self.rs.as_ref() else {
-            return String::new();
-        };
-        let ordered = self.ordered_rs(rs);
-        let names: Vec<String> = ordered.columns.iter().map(|c| c.name.clone()).collect();
-        let table = self.source_table.clone().unwrap_or_else(|| "T".into());
-        generate(self.dialect, &table, &names, &ordered.rows, kind, key)
     }
 
     /// 전 컬럼 이름(SQL 보기의 키 선택 근거).
@@ -1481,7 +1615,8 @@ impl Grid {
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
         let a = self.bars.tick(now_ms);
         let b = self.hover.tick(now_ms);
-        a || b
+        let c = self.poll_text();
+        a || b || c
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
@@ -2248,13 +2383,12 @@ impl Grid {
     fn paint_text_view(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32, pad: i32) {
         let body = self.text_body_rect();
         if self.text_w == 0 {
-            self.text_w = self
-                .text_lines
-                .iter()
-                .map(|l| dc.text_width(l))
-                .max()
-                .unwrap_or(0)
-                + pad * 2;
+            // 가장 긴 줄(문자 수) 하나만 잰다 — 전 줄 측정은 수천 줄에서 수백 ms였다(09-16).
+            let w = self
+                .text_longest
+                .and_then(|i| self.text_lines.get(i))
+                .map_or(0, |l| dc.text_width(l));
+            self.text_w = w + pad * 2;
         }
         let (cw, ch) = self.text_content_size();
         let mx = (cw - body.w).max(0);
@@ -2285,6 +2419,39 @@ impl Grid {
             self.text_scroll.1,
             s,
         );
+        // 진척 카드(우하단 · 반투명 · 변환 중에만).
+        if let Some(job) = &self.text_job {
+            let pct = (job.done * 100)
+                .checked_div(job.total)
+                .map_or(100, |p| p.min(100));
+            let name = match self.view {
+                ResultView::Markdown => "Markdown",
+                ResultView::Json => "JSON",
+                ResultView::Tsv => "TSV",
+                ResultView::Csv => "CSV",
+                ResultView::Sql(_) => "SQL",
+                _ => "Text",
+            };
+            let msg = nsql_i18n::tf(Msg::StTextRender, &[name, &pct.to_string()]);
+            dc.select_font(FontSlot::Status, false);
+            let tw = dc.text_width(&msg);
+            let th_px = dc.text_height();
+            let cw2 = tw + pad * 3;
+            let ch2 = th_px + pad * 2;
+            let r = Rect::new(
+                body.right() - cw2 - pad * 2,
+                body.bottom() - ch2 - pad * 2,
+                cw2,
+                ch2,
+            );
+            dc.fill_round_rect_alpha(r, pad, th.text, 0.78);
+            // 진행 막대(카드 아래 2px).
+            let bar_w = (cw2 - pad * 2) * pct as i32 / 100;
+            dc.fill_rect(Rect::new(r.x + pad, r.bottom() - 3, bar_w, 2), th.accent);
+            let ty = dc.text_center_y(r.y, ch2) - 1;
+            dc.text(r.x + pad + pad / 2, ty, r, &msg, th.panel_bg);
+            dc.select_font(FontSlot::Base, false);
+        }
     }
 }
 

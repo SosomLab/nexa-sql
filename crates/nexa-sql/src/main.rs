@@ -3579,6 +3579,10 @@ impl ApplicationHandler<Wake> for App {
         let now_ms = self.started.elapsed().as_millis() as u64;
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
+        // 잠든 결과 탭의 텍스트 변환도 이어서 거둔다(다른 탭에서 완성 · 09-16) — 그리지는 않는다.
+        for g in self.grid_stash.values_mut() {
+            let _ = g.tick(now_ms);
+        }
         redraw |= self.editors.tick();
         redraw |= self.split_v.tick(now_ms);
         redraw |= self.split_h.tick(now_ms);
@@ -3623,6 +3627,8 @@ impl ApplicationHandler<Wake> for App {
         }
         let bars_live = self.ed_mut().scrollbars_visible()
             || self.grid.bars_visible()
+            || self.grid.text_pending()
+            || self.grid_stash.values().any(|g| g.text_pending())
             || self.log_win.bars_visible()
             || self.log_win.tooltip_pending()
             || self.log_win.drag_active()

@@ -439,6 +439,166 @@ pub fn format_grid_opts(rs: &ResultSet, o: &GridOpts) -> String {
     }
 }
 
+/// ★ 블록 렌더(GUI 지연 텍스트 보기 · 사용자 09-16): 큰 결과를 행 구간으로 나눠 **순차** 변환한다. 배치(표 폭·정렬)는
+/// 한 번 계산해 두고 모든 블록이 같은 값을 쓴다 — 블록마다 따로 재면 열이 어긋난다.
+#[derive(Clone, Debug)]
+pub struct BlockLayout {
+    widths: Vec<usize>,
+    right: Vec<bool>,
+}
+
+/// 표(grid) 형식의 배치 — 전 행을 한 번 훑는다(문자열 폭만 · 글꼴 측정 없음).
+#[must_use]
+pub fn block_layout(rs: &ResultSet, o: &GridOpts) -> BlockLayout {
+    let n = rs.columns.len();
+    let cap = |w: usize| if o.max_col > 0 { w.min(o.max_col) } else { w };
+    let mut widths: Vec<usize> = rs
+        .columns
+        .iter()
+        .map(|c| cap(disp_width(&c.name)))
+        .collect();
+    for row in &rs.rows {
+        for (i, v) in row.iter().enumerate().take(n) {
+            widths[i] = cap(widths[i].max(disp_width(&cell_text(v))));
+        }
+    }
+    let right: Vec<bool> = (0..n)
+        .map(|i| {
+            matches!(
+                rs.rows.first().and_then(|r| r.get(i)),
+                Some(Value::Int(_) | Value::Float(_) | Value::Decimal(_))
+            )
+        })
+        .collect();
+    BlockLayout { widths, right }
+}
+
+/// 행 구간 `range`를 형식대로 — `first`면 머리(표 헤더·JSON `[`) · `last`면 꼬리(JSON `]`). Sql은 `key`로 문장 생성.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn render_block(
+    rs: &ResultSet,
+    fmt: &Format,
+    dialect: Dialect,
+    layout: &BlockLayout,
+    range: std::ops::Range<usize>,
+    first: bool,
+    last: bool,
+    table: &str,
+    key: &KeySpec,
+) -> String {
+    let end = range.end.min(rs.rows.len());
+    let start = range.start.min(end);
+    let rows = &rs.rows[start..end];
+    let n = rs.columns.len();
+    match fmt {
+        Format::Grid => {
+            let cells: Vec<Vec<String>> = rows
+                .iter()
+                .map(|r| r.iter().map(cell_text).collect())
+                .collect();
+            let cols: Vec<usize> = (0..n).collect();
+            render_table_rows(rs, &cells, &layout.widths, &layout.right, &cols, first)
+        }
+        Format::Markdown => {
+            let esc = |s: &str| s.replace('|', "\\|").replace(['\n', '\r'], " ");
+            let mut o = String::new();
+            if first {
+                o.push('|');
+                for c in &rs.columns {
+                    o.push(' ');
+                    o.push_str(&esc(&c.name));
+                    o.push_str(" |");
+                }
+                o.push('\n');
+                o.push('|');
+                for r in &layout.right {
+                    o.push_str(if *r { " ---: |" } else { " --- |" });
+                }
+                o.push('\n');
+            }
+            for row in rows {
+                o.push('|');
+                for v in row.iter().take(n) {
+                    o.push(' ');
+                    o.push_str(&esc(&cell_text(v)));
+                    o.push_str(" |");
+                }
+                o.push('\n');
+            }
+            o
+        }
+        Format::Csv | Format::Tsv => {
+            let delim = if matches!(fmt, Format::Csv) {
+                b','
+            } else {
+                b'\t'
+            };
+            let d = (delim as char).to_string();
+            let mut o = String::new();
+            if first {
+                let header: Vec<String> = rs
+                    .columns
+                    .iter()
+                    .map(|c| quote_field(&c.name, delim))
+                    .collect();
+                o.push_str(&header.join(&d));
+                o.push('\n');
+            }
+            for row in rows {
+                let cells: Vec<String> = row
+                    .iter()
+                    .map(|v| quote_field(&cell_text(v), delim))
+                    .collect();
+                o.push_str(&cells.join(&d));
+                o.push('\n');
+            }
+            o
+        }
+        Format::Json | Format::JsonLines => {
+            let array = matches!(fmt, Format::Json);
+            let mut o = String::new();
+            if array && first {
+                o.push_str("[\n");
+            }
+            for (i, row) in rows.iter().enumerate() {
+                let mut buf: Vec<u8> = Vec::new();
+                let _ = write_json_row(&mut buf, rs, row);
+                if array {
+                    o.push_str("  ");
+                }
+                o.push_str(&String::from_utf8_lossy(&buf));
+                let is_last_row = last && start + i + 1 == end;
+                if array && !is_last_row {
+                    o.push(',');
+                }
+                o.push('\n');
+            }
+            if array && last {
+                o.push_str("]\n");
+            }
+            o
+        }
+        Format::Sql(kind) => {
+            let names: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
+            generate(dialect, table, &names, rows, *kind, key)
+        }
+        Format::Insert { table: t } => {
+            let cols: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
+            let mut o = String::new();
+            for row in rows {
+                let vals: Vec<String> = row.iter().map(|v| v.to_sql_literal(dialect)).collect();
+                o.push_str(&format!(
+                    "INSERT INTO {t} ({}) VALUES ({});\n",
+                    cols.join(", "),
+                    vals.join(", ")
+                ));
+            }
+            o
+        }
+    }
+}
+
 /// 표 하나 — `cols` 순서의 컬럼만 · `rownum` = 행 번호 열 폭(`#`).
 fn render_table(
     rs: &ResultSet,
@@ -447,6 +607,31 @@ fn render_table(
     right: &[bool],
     cols: &[usize],
     rownum: Option<usize>,
+) -> String {
+    render_table_rows_num(rs, cells, widths, right, cols, rownum, true)
+}
+
+/// 헤더 없이 행만(블록 렌더 · 행 번호 열 없음).
+fn render_table_rows(
+    rs: &ResultSet,
+    cells: &[Vec<String>],
+    widths: &[usize],
+    right: &[bool],
+    cols: &[usize],
+    header: bool,
+) -> String {
+    render_table_rows_num(rs, cells, widths, right, cols, None, header)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_table_rows_num(
+    rs: &ResultSet,
+    cells: &[Vec<String>],
+    widths: &[usize],
+    right: &[bool],
+    cols: &[usize],
+    rownum: Option<usize>,
+    header: bool,
 ) -> String {
     let mut o = String::new();
     let put = |o: &mut String, text: &str, w: usize, right: bool| {
@@ -483,8 +668,10 @@ fn render_table(
         o.truncate(end);
         o.push('\n');
     };
-    line(&mut o, Some("#"), &|i| rs.columns[i].name.clone(), false);
-    line(&mut o, None, &|_| String::new(), true);
+    if header {
+        line(&mut o, Some("#"), &|i| rs.columns[i].name.clone(), false);
+        line(&mut o, None, &|_| String::new(), true);
+    }
     for (r, row) in cells.iter().enumerate() {
         let num = (r + 1).to_string();
         line(

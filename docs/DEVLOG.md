@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (29차 · win)** — **텍스트 보기 지연 변환**(nsql-io `block_layout/render_block` · 그리드 `TextJob` 스레드 500행 블록 · 취소 깃발 · 잠든 탭도 완성 · 가장 긴 줄만 측정 · 우하단 반투명 진척 카드) · 툴팁 왼쪽 잘림(nexa-ui `draw_tooltip_in`) · 툴팁 문구. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (28차 · win)** — 자동 페치 휠/비포커스 경로 결함 · 결과 글꼴 기본 14 · 편집기 거터 표시 띠(4px) + 2px 여백 · 보기 모드 메뉴 이미지 아이콘 + 강조색. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (27차 · win)** — 결과 다중 탭 비용 검토 → 도입 · 끄기 설정·탭 바 auto·단일 행 고정([43 §4-3a](43-fetch-model-and-result-tabs.md) D-73~75). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (26차 · win)** — 실행 뒤 캐럿 옵션 `run.after_statement`(stay/next_ok/next_always) + **Alt+↓/↑ 다음·이전 문장** · 결과 글꼴 `grid.font_face`(기본 시스템 UI · 13px) · 헤더 경계 더블클릭 자동 너비(`grid.col_min/max_width`) · No Records Golden 방식 · **탭 메뉴** · 결과 도구줄 툴팁 위쪽 · 탭 검색 추천안(T-96). → [journal](journal/2026-09-16.md)
