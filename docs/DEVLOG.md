@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
-- **2026-09-16 (22차 · win)** — **로그 형식 어댑터 확장 4종**(형식 8종 compact/jsonl/csv/tsv/template · 템플릿 `log.template` · 파일 싱크 `log.file`(회전) · 종류/컬럼 필터 + 로그 창 우클릭 메뉴(종류·컬럼·파일 저장·복사·지우기)) · 푸터 스위치 재구성(Wrap/Sort/Scroll/Top · 구분선 · 툴팁 · Sort+Scroll = 1번 줄) · 푸터 글자 세로 가운데. → [journal](journal/2026-09-16.md)
+- **2026-09-16 (22차 · win)** — **로그 형식 어댑터 확장 4종**(형식 8종 compact/jsonl/csv/tsv/template · 템플릿 `log.template` · 파일 싱크 `log.file`(회전) · 종류/컬럼 필터 + 로그 창 우클릭 메뉴(종류·컬럼·파일 저장·복사·지우기)) · 푸터 스위치 재구성(Wrap/Sort/Scroll/Top · 구분선 · 툴팁 · Sort+Scroll = 1번 줄) · 푸터 글자 세로 가운데 · **CLI 도움말 기본값을 설정에서 읽음**(`--overflow` 문구 오류 수정 · `Opt.setting`/`Cmd.notes`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (21차 · win)** — 로그 창 스크롤 전부 + 스위치 4종(줄바꿈·최신 먼저·자동 스크롤·항상 위) · **토스트 + DBMS 오류 정규화 [42](42-db-error-normalization.md)**(코드 부각) · Save As 덮어쓰기 카드 · 메인 창 항상 위 · NULL 표시/복사 설정 · 그리드 스크롤바 트랙/끝/컬럼 확장 · 헤더 경계선. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (20차 · win)** — `nsql export -f sql:*` 키 조회 · 실서버(Oracle·SQL Server·PostgreSQL) 키 규칙 검증 · push. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (19차 · win)** — **결과 → SQL 5종 CLI/GUI 공용**(`nsql_io::sqlgen` · 복합 키) · 키 규칙 PK → 유니크 → 앞 3컬럼 + 경고 1회 · `nsql_catalog::keys` 4방언 · 설정 `sql.key_mode` · [41 설계·결정](41-sql-copy-key-rules.md) D-62~67. → [journal](journal/2026-09-16.md)

@@ -3,11 +3,15 @@
 
 use nsql_i18n::{t, Msg};
 
-/// 옵션 하나 — 플래그 표기 · 값 자리 · 설명.
+/// 옵션 하나 — 플래그 표기 · 값 자리 · 설명 · (있으면) 기본값을 주는 설정 키.
+///
+/// 기본값 문구는 **설정에서 읽어** 붙인다(하드코딩 금지 · 사용자 09-16: `--overflow` 도움말이 `wrap`이라 적혀 있었는데
+/// 실제 기본은 `none`이었다). 사용자가 바꾼 값이면 그 값 + 내장 기본을 함께.
 struct Opt {
     flags: &'static str,
     arg: &'static str,
     desc: Msg,
+    setting: Option<&'static str>,
 }
 
 /// 옵션 원장(표기 순서 = 도움말 순서).
@@ -16,111 +20,133 @@ const OPTS: &[Opt] = &[
         flags: "-c, --connect",
         arg: "<target>",
         desc: Msg::HlpOptConnect,
+        setting: None,
     },
     Opt {
         flags: "-d, --dialect",
         arg: "<name>",
         desc: Msg::HlpOptDialect,
+        setting: None,
     },
     Opt {
         flags: "-f, --format",
         arg: "<fmt>",
         desc: Msg::HlpOptFormat,
+        setting: Some("cli.format"),
     },
     Opt {
         flags: "--host",
         arg: "<host>",
         desc: Msg::HlpOptHost,
+        setting: None,
     },
     Opt {
         flags: "--port",
         arg: "<n>",
         desc: Msg::HlpOptPort,
+        setting: None,
     },
     Opt {
         flags: "--db, --database",
         arg: "<name>",
         desc: Msg::HlpOptDb,
+        setting: None,
     },
     Opt {
         flags: "-u, --user",
         arg: "<user>",
         desc: Msg::HlpOptUser,
+        setting: None,
     },
     Opt {
         flags: "-p, --password",
         arg: "<pw>",
         desc: Msg::HlpOptPassword,
+        setting: None,
     },
     Opt {
         flags: "--no-prompt",
         arg: "",
         desc: Msg::HlpOptNoPrompt,
+        setting: None,
     },
     Opt {
         flags: "--max-rows",
         arg: "<n>",
         desc: Msg::HlpOptMaxRows,
+        setting: None,
     },
     Opt {
         flags: "--width, --linesize",
         arg: "<n>",
         desc: Msg::HlpOptWidth,
+        setting: Some("cli.width"),
     },
     Opt {
         flags: "--max-col-width",
         arg: "<n>",
         desc: Msg::HlpOptMaxColWidth,
+        setting: Some("cli.max_col_width"),
     },
     Opt {
         flags: "--overflow",
         arg: "<mode>",
         desc: Msg::HlpOptOverflow,
+        setting: Some("cli.overflow"),
     },
     Opt {
         flags: "-x, --expanded",
         arg: "",
         desc: Msg::HlpOptExpanded,
+        setting: None,
     },
     Opt {
         flags: "--timing",
         arg: "",
         desc: Msg::HlpOptTiming,
+        setting: None,
     },
     Opt {
         flags: "--log",
         arg: "",
         desc: Msg::HlpOptLog,
+        setting: None,
     },
     Opt {
         flags: "-q, --query",
         arg: "<sql>",
         desc: Msg::HlpOptQuery,
+        setting: None,
     },
     Opt {
         flags: "-t, --table",
         arg: "<table>",
         desc: Msg::HlpOptTable,
+        setting: None,
     },
     Opt {
         flags: "-o, --out",
         arg: "<file>",
         desc: Msg::HlpOptOut,
+        setting: None,
     },
     Opt {
         flags: "-s, --schema",
         arg: "<schema>",
         desc: Msg::HlpOptSchema,
+        setting: None,
     },
     Opt {
         flags: "-h, --help",
         arg: "",
         desc: Msg::HlpOptHelp,
+        setting: None,
     },
     Opt {
         flags: "-V, --version",
         arg: "",
         desc: Msg::HlpOptVersion,
+        setting: None,
     },
 ];
 
@@ -132,6 +158,8 @@ struct Cmd {
     detail: Msg,
     args: &'static [(&'static str, Msg)],
     opts: &'static [&'static str],
+    /// 이 명령에서만 기본값이 다른 옵션(플래그 표기 → 문구) — 예: `export -f`는 csv.
+    notes: &'static [(&'static str, Msg)],
     examples: &'static [&'static str],
 }
 
@@ -154,6 +182,7 @@ const CMDS: &[Cmd] = &[
         detail: Msg::HlpCmdRunDetail,
         args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
         opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        notes: &[],
         examples: &[
             "nsql run -c prod report.sql",
             "nsql run -c oracle://scott:tiger@db:1521/orcl -f csv query.sql > out.csv",
@@ -169,6 +198,7 @@ const CMDS: &[Cmd] = &[
         detail: Msg::HlpCmdShellDetail,
         args: &[],
         opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        notes: &[],
         examples: &["nsql shell -c prod", "nsql shell -c prod --width 160", "nsql shell -c sqlite:app.db -d sqlite"],
     },
     Cmd {
@@ -178,6 +208,7 @@ const CMDS: &[Cmd] = &[
         detail: Msg::HlpCmdExportDetail,
         args: &[],
         opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-q", "-t", "-f", "-o", "--max-rows"],
+        notes: &[("-f, --format", Msg::HlpExportFmtDefault)],
         examples: &["nsql export -c prod -t EMP -f csv -o emp.csv", "nsql export -c prod -q \"SELECT * FROM emp WHERE deptno=10\" -f insert:EMP"],
     },
     Cmd {
@@ -187,6 +218,7 @@ const CMDS: &[Cmd] = &[
         detail: Msg::HlpCmdExplainDetail,
         args: &[("<file>", Msg::HlpArgExplainFile)],
         opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-q"],
+        notes: &[],
         examples: &["nsql explain -c prod -q \"SELECT * FROM emp\"", "nsql explain -c prod slow.sql"],
     },
     Cmd {
@@ -196,6 +228,7 @@ const CMDS: &[Cmd] = &[
         detail: Msg::HlpCmdPlanDetail,
         args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
         opts: &["-d"],
+        notes: &[],
         examples: &["nsql plan -d mssql session-vars.sql 2026 Q1"],
     },
     Cmd {
@@ -212,6 +245,7 @@ const CMDS: &[Cmd] = &[
             ("path", Msg::HlpArgConnPath),
         ],
         opts: CONN_OPTS,
+        notes: &[],
         examples: &[
             "nsql conn add prod oracle://scott@db:1521/orcl        # asks for the password",
             "nsql conn add prod -d oracle --host db --port 1521 --db orcl --user scott",
@@ -233,6 +267,7 @@ const CMDS: &[Cmd] = &[
             ("errors <name>", Msg::HlpArgCatErrors),
         ],
         opts: &["-c", "-d", "-s", "-f", "--width", "--max-col-width", "--overflow", "-x"],
+        notes: &[],
         examples: &["nsql cat -c prod tables", "nsql cat -c prod -s HR columns EMPLOYEES", "nsql cat -c prod source packages PKG_ORDER"],
     },
     Cmd {
@@ -248,6 +283,7 @@ const CMDS: &[Cmd] = &[
             ("path", Msg::HlpArgConfigPath),
         ],
         opts: &[],
+        notes: &[],
         examples: &["nsql config list", "nsql config set cli.width 160", "nsql config set ui.lang ko", "nsql config get grid.max_rows"],
     },
 ];
@@ -269,8 +305,8 @@ fn row(out: &mut String, left: &str, desc: &str, width: usize) {
     }
 }
 
-fn opts_table(out: &mut String, flags: &[&str]) {
-    let rows: Vec<(String, Msg)> = flags
+fn opts_table(out: &mut String, flags: &[&str], notes: &[(&str, Msg)]) {
+    let rows: Vec<(String, String)> = flags
         .iter()
         .filter_map(|f| opt_by_flag(f))
         .map(|o| {
@@ -279,7 +315,13 @@ fn opts_table(out: &mut String, flags: &[&str]) {
             } else {
                 format!("{} {}", o.flags, o.arg)
             };
-            (left, o.desc)
+            let mut desc = t(o.desc).to_string();
+            if let Some((_, m)) = notes.iter().find(|(f, _)| *f == o.flags) {
+                desc.push_str(&format!(". {}", t(*m)));
+            } else if let Some(key) = o.setting {
+                desc.push_str(&default_note(key));
+            }
+            (left, desc)
         })
         .collect();
     let w = rows
@@ -288,8 +330,28 @@ fn opts_table(out: &mut String, flags: &[&str]) {
         .max()
         .unwrap_or(0);
     for (l, d) in rows {
-        row(out, &l, t(d), w);
+        row(out, &l, &d, w);
     }
+}
+
+/// ` Default: <key> = <값>` — 값은 **지금 설정 파일에서 get**(없으면 레지스트리 기본). 사용자가 바꿔 두었으면
+/// `(built-in <내장 기본>)`을 덧붙여 어느 쪽이 어긋났는지 보이게.
+fn default_note(key: &str) -> String {
+    let Some(e) = nsql_settings::entry(key) else {
+        return String::new();
+    };
+    let cur = nsql_settings::Settings::open_default()
+        .ok()
+        .and_then(|st| st.get(key).map(|v| v.to_string()))
+        .unwrap_or_else(|| e.default.to_string());
+    let mut s = format!(". {}", nsql_i18n::tf(Msg::HlpDefaultOf, &[key, &cur]));
+    if cur != e.default {
+        s.push_str(&format!(
+            " {}",
+            nsql_i18n::tf(Msg::HlpBuiltIn, &[e.default])
+        ));
+    }
+    s
 }
 
 /// 전체 개요(명령 목록 + 접속 대상 표기 + 드라이버).
@@ -306,7 +368,11 @@ fn overview(drivers: &str) -> String {
         o.push_str(&format!("  {line}\n"));
     }
     o.push_str(&format!("\n{}\n", t(Msg::HlpCommonOptions)));
-    opts_table(&mut o, &["-c", "-d", "-f", "--width", "-x", "-h", "-V"]);
+    opts_table(
+        &mut o,
+        &["-c", "-d", "-f", "--width", "-x", "-h", "-V"],
+        &[],
+    );
     o.push_str(&format!("\n  {}: {drivers}\n", t(Msg::HlpDrivers)));
     o.push_str(&format!("\n{}\n", t(Msg::HlpMoreHelp)));
     o
@@ -333,7 +399,7 @@ fn detail(c: &Cmd) -> String {
     }
     if !c.opts.is_empty() {
         o.push_str(&format!("\n{}\n", t(Msg::HlpOptions)));
-        opts_table(&mut o, c.opts);
+        opts_table(&mut o, c.opts, c.notes);
     }
     if c.name == "shell" {
         o.push_str(&format!("\n{}\n", t(Msg::HlpShellCommands)));
