@@ -22,7 +22,9 @@ use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::ConnectSpec;
 use nsql_vault::Vault;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) enum Cmd {
@@ -81,11 +83,18 @@ pub(crate) enum ConnOutcome {
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
     Keys(String, Option<nsql_core::KeyInfo>),
-    /// `Cmd::FetchPage` 결과 — `offset` 0 = 전체 조회(교체) · 그 외 = 이어 붙임.
+    /// `Cmd::FetchPage` 결과 — `offset` 0 = 전체 조회(교체) · 그 외 = 이어 붙임. `stop` = 전체 조회가 멈춘 이유(예산·취소).
     Page {
         key: u64,
         offset: usize,
         result: Result<(nsql_core::ResultSet, bool, Duration), String>,
+        stop: Option<FetchStop>,
+    },
+    /// 전체 조회 진행(배치마다 · T-48b): 지금까지 받은 행·바이트.
+    FetchProgress {
+        key: u64,
+        rows: u64,
+        bytes: u64,
     },
     /// `Cmd::Count` 결과.
     Count {
@@ -145,8 +154,19 @@ pub(crate) fn profile_names() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 전체 조회가 끝까지 가지 못한 이유.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FetchStop {
+    /// 메모리 예산(D-72)에 닿아 예산까지만.
+    Budget,
+    /// 사용자가 중지(도구줄 ■ · Esc).
+    Cancelled,
+}
+
 pub(crate) struct Handle {
     tx: mpsc::Sender<Cmd>,
+    /// 전체 조회 취소 깃발(T-48b) — UI가 올리고 워커가 배치 사이에 본다.
+    cancel_fetch: Arc<AtomicBool>,
     /// 명령 완료 신호(상태 메시지 옵션).
     pub done: mpsc::Receiver<Option<String>>,
     /// 접속 계열 결과.
@@ -156,6 +176,11 @@ pub(crate) struct Handle {
 impl Handle {
     pub(crate) fn send(&self, c: Cmd) {
         let _ = self.tx.send(c);
+    }
+
+    /// 진행 중인 전체 조회를 다음 배치 경계에서 멈춘다(지금까지 받은 행은 남는다).
+    pub(crate) fn cancel_fetch(&self) {
+        self.cancel_fetch.store(true, Ordering::Relaxed);
     }
 }
 
@@ -170,6 +195,8 @@ pub(crate) fn spawn(
     let (etx, erx) = mpsc::channel::<RunEvent>();
     let (dtx, drx) = mpsc::channel::<Option<String>>();
     let (ctx_tx, ctx_rx) = mpsc::channel::<ConnOutcome>();
+    let cancel_fetch = Arc::new(AtomicBool::new(false));
+    let cancel_flag = cancel_fetch.clone();
     std::thread::Builder::new()
         .name("nsql-worker".into())
         .spawn(move || {
@@ -286,34 +313,95 @@ pub(crate) fn spawn(
                         limit,
                         budget_bytes,
                     } => {
+                        let mut stop: Option<FetchStop> = None;
                         let result = match runner.dialect() {
                             None => Err(t(Msg::ExpNotConnected).to_string()),
                             Some(_) => {
                                 if limit == 0 {
-                                    // 전체 조회 = 그리드 **교체**(처음부터) — 열린 커서는 위치가 무의미하므로 닫고 원문을 다시 실행(상한 0).
-                                    // 예산(D-72): 받은 행이 예산을 넘으면 예산까지만 남기고 `more`로 알린다(호스트가 안내).
+                                    // 전체 조회 = 그리드 **교체**(처음부터) — 열린 커서는 위치가 무의미하므로 닫고 원문을 다시 실행.
                                     // ★ 왕복당 행수는 `db.fetch_all_size`(기본 5000)로 키운다 — 실측(사용자 09-17 · Oracle WAN
                                     //   155k행): 200이면 34.3s · 5000이면 4.6s. 끝나면 페이징 값으로 되돌린다.
+                                    // T-48b: 커서 지원 드라이버는 **스트리밍**(첫 배치 + fetch_all) — 배치마다 진행률 · 취소 깃발 ·
+                                    //   예산(D-72)은 받으면서 판정(순간 메모리 = 예산). MSSQL은 한 번에 받고(진행률·취소 없음) 뒤에 절단.
                                     runner.close_cursor();
+                                    cancel_flag.store(false, Ordering::Relaxed);
                                     let page_fs = runner.fetch_size;
                                     let all_fs = nsql_settings::Settings::open_default()
                                         .map(|s| s.int("db.fetch_all_size").max(1) as usize)
                                         .unwrap_or(5000);
-                                    runner.set_fetch_size(page_fs.max(all_fs));
-                                    let r = runner.query_once(&sql, 0);
+                                    let batch = page_fs.max(all_fs);
+                                    runner.set_fetch_size(batch);
+                                    let r = if runner.cursor_supported() {
+                                        runner.query_stream(&sql, batch).and_then(
+                                            |(mut rs, h, d)| {
+                                                let Some(h) = h else {
+                                                    return Ok((rs, false, d));
+                                                };
+                                                let rows0 = rs.rows.len() as u64;
+                                                let bytes0 = rs.approx_bytes();
+                                                let _ = ctx_tx.send(ConnOutcome::FetchProgress {
+                                                    key,
+                                                    rows: rows0,
+                                                    bytes: bytes0,
+                                                });
+                                                wake_now();
+                                                let remain = if budget_bytes > 0 {
+                                                    budget_bytes.saturating_sub(bytes0).max(1)
+                                                } else {
+                                                    0
+                                                };
+                                                let mut last = std::time::Instant::now();
+                                                let (rest, stopped, _) = runner.fetch_all(
+                                                    h,
+                                                    remain,
+                                                    &mut |rows, bytes| {
+                                                        if last.elapsed()
+                                                            >= Duration::from_millis(100)
+                                                        {
+                                                            last = std::time::Instant::now();
+                                                            let _ = ctx_tx.send(
+                                                                ConnOutcome::FetchProgress {
+                                                                    key,
+                                                                    rows: rows0 + rows,
+                                                                    bytes: bytes0 + bytes,
+                                                                },
+                                                            );
+                                                            wake_now();
+                                                        }
+                                                        !cancel_flag.load(Ordering::Relaxed)
+                                                    },
+                                                )?;
+                                                rs.rows.extend(rest.rows);
+                                                if stopped {
+                                                    runner.close_cursor();
+                                                    stop = Some(
+                                                        if cancel_flag.load(Ordering::Relaxed) {
+                                                            FetchStop::Cancelled
+                                                        } else {
+                                                            FetchStop::Budget
+                                                        },
+                                                    );
+                                                }
+                                                Ok((rs, stopped, d))
+                                            },
+                                        )
+                                    } else {
+                                        runner.query_once(&sql, 0).map(|(mut rs, more, d)| {
+                                            if budget_bytes > 0 && rs.approx_bytes() > budget_bytes
+                                            {
+                                                let n = rs.rows.len().max(1);
+                                                let per = (rs.approx_bytes() / n as u64).max(1);
+                                                let keep = (budget_bytes / per) as usize;
+                                                rs.rows.truncate(keep.max(1));
+                                                stop = Some(FetchStop::Budget);
+                                                (rs, true, d)
+                                            } else {
+                                                (rs, more, d)
+                                            }
+                                        })
+                                    };
                                     runner.set_fetch_size(page_fs);
-                                    r.map(|(mut rs, more, d)| {
-                                        if budget_bytes > 0 && rs.approx_bytes() > budget_bytes {
-                                            let n = rs.rows.len().max(1);
-                                            let per = (rs.approx_bytes() / n as u64).max(1);
-                                            let keep = (budget_bytes / per) as usize;
-                                            rs.rows.truncate(keep.max(1));
-                                            (rs, true, d)
-                                        } else {
-                                            (rs, more, d)
-                                        }
-                                    })
-                                    .map_err(|e| e.message)
+                                    r.map_err(|e| e.message)
                                 } else {
                                     // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
                                     runner
@@ -327,6 +415,7 @@ pub(crate) fn spawn(
                             key,
                             offset,
                             result,
+                            stop,
                         });
                         wake_now();
                         true
@@ -502,6 +591,7 @@ pub(crate) fn spawn(
     (
         Handle {
             tx,
+            cancel_fetch,
             done: drx,
             conn: ctx_rx,
         },

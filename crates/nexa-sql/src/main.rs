@@ -797,10 +797,21 @@ impl App {
                         self.finish_view_sql(kind, info.as_ref());
                     }
                 }
+                ConnOutcome::FetchProgress { key, rows, bytes } => {
+                    if let Some(g) = self.grid_for(key) {
+                        g.set_fetch_progress(rows, bytes);
+                    }
+                    self.status = tf(
+                        Msg::StFetchingProgress,
+                        &[&rows.to_string(), &nsql_core::fmt_bytes(bytes)],
+                    );
+                    self.redraw();
+                }
                 ConnOutcome::Page {
                     key,
                     offset,
                     result,
+                    stop,
                 } => {
                     match result {
                         Ok((rs, more, elapsed)) => {
@@ -820,14 +831,22 @@ impl App {
                                 None => 0,
                             };
                             self.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
-                            if offset == 0 && more {
-                                // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
-                                self.status = tf(
-                                    Msg::StBudgetExceeded,
-                                    &[&self.settings.int("grid.memory_budget_mb").to_string()],
-                                );
-                                self.log_win
-                                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                            match stop {
+                                Some(worker::FetchStop::Budget) => {
+                                    // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
+                                    self.status = tf(
+                                        Msg::StBudgetExceeded,
+                                        &[&self.settings.int("grid.memory_budget_mb").to_string()],
+                                    );
+                                    self.log_win
+                                        .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                                }
+                                Some(worker::FetchStop::Cancelled) => {
+                                    self.status = tf(Msg::StFetchCancelled, &[&total.to_string()]);
+                                    self.log_win
+                                        .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                                }
+                                None => {}
                             }
                         }
                         Err(e) => {
@@ -1879,6 +1898,10 @@ impl App {
         // 결과 도구줄(docs/43 §4-2): 추가/전체/건수 · 새로고침 · SQL 보기.
         if let Some(req) = self.grid.take_fetch_request() {
             self.send_fetch(req);
+        }
+        if self.grid.take_cancel_request() {
+            self.worker.cancel_fetch();
+            self.status = t(Msg::StFetchCancelling).into();
         }
         if self.grid.take_refresh() {
             self.refresh_result();

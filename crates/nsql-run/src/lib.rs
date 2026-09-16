@@ -436,6 +436,50 @@ impl Runner {
         r
     }
 
+    /// 활성 세션의 드라이버가 서버 커서를 지원하는가(Oracle·SQLite·PG = true · MSSQL = false).
+    #[must_use]
+    pub fn cursor_supported(&self) -> bool {
+        self.session.as_ref().is_some_and(|s| s.cursor_supported())
+    }
+
+    /// 문장을 **커서를 열어 둔 채** 실행 — 첫 `first`행과 커서 핸들(더 없으면 None)을 돌려준다(T-48b 전체 조회 스트리밍).
+    /// 열려 있던 커서는 먼저 닫는다. 이어지는 행은 [`Runner::fetch_all`]/[`Runner::fetch_next`]로.
+    pub fn query_stream(
+        &mut self,
+        sql: &str,
+        first: usize,
+    ) -> Result<(ResultSet, Option<CursorHandle>, Duration), DbError> {
+        self.close_cursor();
+        let prev = self.max_rows;
+        self.set_max_rows(first.max(1));
+        let r = match self.session.as_mut() {
+            Some(s) => {
+                let t = Instant::now();
+                s.execute(&ExecRequest {
+                    sql: sql.to_string(),
+                    params: Vec::new(),
+                })
+                .map(|res| {
+                    let rs = res.result_sets.into_iter().next().unwrap_or_default();
+                    (rs, res.pending, t.elapsed())
+                })
+            }
+            None => Err(msg_err(t(Msg::NoSession))),
+        };
+        self.set_max_rows(prev);
+        let (rs, pending, d) = r?;
+        if let Some(h) = pending {
+            self.cursor = Some(OpenCursor {
+                handle: h,
+                sql: sql.to_string(),
+                served: rs.rows.len(),
+                deferred_commit: false,
+                last_used: Instant::now(),
+            });
+        }
+        Ok((rs, pending, d))
+    }
+
     // ────────────────────────────────────────────── 추가 페치(T-48a · docs/43 §3-1)
 
     /// 열린 커서의 (핸들, 지금까지 넘긴 행 수).
@@ -1883,6 +1927,63 @@ mod tests {
 
     /// T-48a: 상한에서 잘린 조회는 커서를 남기고(`more` = true · 이벤트 모양은 종전 그대로) `fetch_next`가 이어 준다 ·
     /// `fetch_page`는 위치·문장이 맞으면 커서, 아니면 OFFSET · 끝에서 커서가 닫힌다 · Navigate 스팬.
+    /// T-48b: `query_stream`은 커서를 열어 둔 채 첫 배치를 주고, `fetch_all`이 배치마다 진행률을 부르며 취소하면 멈춘다.
+    #[test]
+    fn query_stream_then_fetch_all_with_progress_and_cancel() {
+        let mut r = seeded(25).with_keep_cursor(true);
+        assert!(r.cursor_supported());
+        let (rs, h, _) = r.query_stream("SELECT id FROM t ORDER BY id", 10).unwrap();
+        assert_eq!(rs.rows.len(), 10);
+        let h = h.expect("더 있으면 커서");
+        assert_eq!(r.cursor().map(|c| c.1), Some(10));
+        // fetch_size 5 → 배치 5(최소 2000이 적용되므로 한 번에 끝남) · 진행률은 끝까지 한 번 이상.
+        let mut calls = 0;
+        let (rest, stopped, _) = r
+            .fetch_all(h, 0, &mut |rows, _| {
+                calls += 1;
+                rows < 1000
+            })
+            .unwrap();
+        assert_eq!(rest.rows.len(), 15);
+        assert!(!stopped);
+        assert!(r.cursor().is_none(), "끝에 닿으면 닫힌다");
+        // 취소(배치 최소 2000 → 4,500행 표): 첫 배치 뒤 false → stopped · 받은 행은 남는다 · 커서는 호스트가 닫는다.
+        let mut big = seeded(4500).with_keep_cursor(true);
+        let (rs, h, _) = big
+            .query_stream("SELECT id FROM t ORDER BY id", 10)
+            .unwrap();
+        assert_eq!(rs.rows.len(), 10);
+        let h = h.unwrap();
+        let mut seen = Vec::new();
+        let (rest, stopped, _) = big
+            .fetch_all(h, 0, &mut |rows, _| {
+                seen.push(rows);
+                false
+            })
+            .unwrap();
+        assert!(stopped);
+        assert_eq!(rest.rows.len(), 2000);
+        assert_eq!(seen, vec![2000]);
+        assert!(
+            big.cursor().is_some(),
+            "멈춘 커서는 열려 있다(호스트가 닫음)"
+        );
+        big.close_cursor();
+        assert!(big.cursor().is_none());
+        // 예산: 남은 예산 1바이트 → 첫 배치 뒤 멈춤.
+        let (_, h, _) = big
+            .query_stream("SELECT id FROM t ORDER BY id", 10)
+            .unwrap();
+        let (_, stopped, _) = big.fetch_all(h.unwrap(), 1, &mut |_, _| true).unwrap();
+        assert!(stopped);
+        big.close_cursor();
+        // 다 담기면 커서 없음.
+        let (rs, h, _) = r.query_stream("SELECT id FROM t ORDER BY id", 100).unwrap();
+        assert_eq!(rs.rows.len(), 25);
+        assert!(h.is_none());
+        let _ = calls;
+    }
+
     #[test]
     fn cursor_fetch_next_and_fetch_page() {
         let mut r = seeded(25).with_max_rows(10);

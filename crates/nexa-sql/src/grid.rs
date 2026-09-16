@@ -61,6 +61,19 @@ enum TextDrag {
     Gutter,
 }
 
+/// 천 단위 구분(`155312` → `155,312`) — 푸터 진행 표시용.
+fn group_digits(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// 텍스트 보기 히트 요청 — 글꼴이 있는 페인트에서 (줄, 문자)로 푼다(로그 창과 같은 규약 · 09-16).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextHit {
@@ -198,6 +211,10 @@ pub(crate) struct Grid {
     /// 전체 조회가 나가 있다 — 그 사이 도착하는 늦은 세그먼트는 버린다(사용자 09-17: 자동 페치 중 누른 전체 조회가 무시되던 결함).
     fetch_all_pending: bool,
     fetch_req: Option<FetchReq>,
+    /// 전체 조회 진행(행, 바이트 · T-48b) — 푸터 "가져오는 중… n행 · MB".
+    fetch_progress: Option<(u64, u64)>,
+    /// 사용자가 가져오기 중지를 눌렀다(호스트가 워커 깃발로).
+    cancel_req: bool,
     want_refresh: bool,
     /// 마지막 실행 시각(`YYYY-MM-DD HH:MM:SS.mmm`).
     last_run_at: Option<String>,
@@ -302,6 +319,9 @@ impl Default for Grid {
             ]),
             tb_fetch: Self::bar(vec![
                 ToolItem::new("fetch.all", toolicons::fetch_all()).tip(t(Msg::TipFetchAll)),
+                ToolItem::new("fetch.stop", toolicons::fetch_stop())
+                    .tip(t(Msg::TipFetchCancel))
+                    .disabled(),
                 ToolItem::new("count", ToolIcon::Glyph("Σ".into())).tip(t(Msg::TipCount)),
             ]),
             page_box: Self::page_box(200),
@@ -314,6 +334,8 @@ impl Default for Grid {
             fetching: false,
             fetch_all_pending: false,
             fetch_req: None,
+            fetch_progress: None,
+            cancel_req: false,
             want_refresh: false,
             last_run_at: None,
             view: ResultView::Grid,
@@ -452,6 +474,27 @@ impl Grid {
     pub(crate) fn fetch_failed(&mut self) {
         self.fetching = false;
         self.fetch_all_pending = false;
+        self.fetch_progress = None;
+        self.sync_stop_button();
+    }
+
+    /// 전체 조회 진행(워커 배치마다).
+    pub(crate) fn set_fetch_progress(&mut self, rows: u64, bytes: u64) {
+        if self.fetch_all_pending {
+            self.fetch_progress = Some((rows, bytes));
+        }
+    }
+
+    /// 중지 요청(도구줄 ■ · Esc) — 1회성.
+    pub(crate) fn take_cancel_request(&mut self) -> bool {
+        std::mem::take(&mut self.cancel_req)
+    }
+
+    /// 전체 조회가 나가 있는 동안만 중지 버튼을 켠다.
+    fn sync_stop_button(&mut self) {
+        let mut inv = Invalidations::default();
+        self.tb_fetch
+            .set_item_enabled("fetch.stop", self.fetch_all_pending, &mut inv);
     }
 
     /// 다음 세그먼트 이어 붙이기(정렬 중이면 다시 정렬 · 스크롤 유지).
@@ -488,6 +531,8 @@ impl Grid {
         }
         if matches!(r, Some(FetchReq::All)) {
             self.fetch_all_pending = true;
+            self.fetch_progress = None;
+            self.sync_stop_button();
         }
         r
     }
@@ -773,7 +818,10 @@ impl Grid {
                     (&mut self.tb_view, &["view"][..]),
                     (&mut self.tb_refresh, &["refresh"][..]),
                     (&mut self.tb_edit, &[][..]),
-                    (&mut self.tb_fetch, &["fetch.all", "count"][..]),
+                    (
+                        &mut self.tb_fetch,
+                        &["fetch.all", "fetch.stop", "count"][..],
+                    ),
                 ] {
                     if tb.bounds().contains(p) || !down {
                         tb.on_event(ev, &mut inv);
@@ -794,6 +842,9 @@ impl Grid {
                     // 전체 조회는 자동 페치(다음 세그먼트)가 나가 있어도 받는다 — 결과는 교체라 늦은 세그먼트는 버린다.
                     Some("fetch.all") if !self.fetch_all_pending && self.rs.is_some() => {
                         self.fetch_req = Some(FetchReq::All);
+                    }
+                    Some("fetch.stop") if self.fetch_all_pending => {
+                        self.cancel_req = true;
                     }
                     Some("count") if !self.fetching && !self.source_sql.trim().is_empty() => {
                         self.fetch_req = Some(FetchReq::Count);
@@ -951,8 +1002,12 @@ impl Grid {
             InputEvent::Key {
                 key: Key::Escape, ..
             } => {
-                self.text_sel = None;
-                self.text_lines_sel.clear();
+                if self.fetch_all_pending {
+                    self.cancel_req = true;
+                } else {
+                    self.text_sel = None;
+                    self.text_lines_sel.clear();
+                }
             }
             _ => {}
         }
@@ -2131,6 +2186,11 @@ impl Grid {
                 InputEvent::Key {
                     key: Key::Escape, ..
                 } => {
+                    // 전체 조회 중 Esc = 가져오기 중지(선택 해제보다 먼저 · T-48b).
+                    if self.fetch_all_pending {
+                        self.cancel_req = true;
+                        return;
+                    }
                     self.regions.clear();
                     self.sel_anchor = None;
                     self.sel_cur = None;
@@ -2703,7 +2763,16 @@ impl Grid {
             ));
         }
         if self.fetching {
-            info.push_str(&format!(" · {}", t(Msg::StFetching)));
+            match self.fetch_progress {
+                Some((rows, bytes)) => info.push_str(&format!(
+                    " · {}",
+                    nsql_i18n::tf(
+                        Msg::StFetchingProgress,
+                        &[&group_digits(rows), &fmt_bytes(bytes)]
+                    )
+                )),
+                None => info.push_str(&format!(" · {}", t(Msg::StFetching))),
+            }
         }
         info.push_str(&format!(" · ~{}", fmt_bytes(self.approx_bytes)));
         if let Some(at) = &self.last_run_at {
@@ -2993,6 +3062,15 @@ mod tests {
         g.apply_text_hit(9, 0, down(false, false));
         assert!(g.text_lines_sel.is_empty());
         assert_eq!(g.text_sel, Some(((9, 0), (9, 6))));
+    }
+
+    /// 푸터 진행 표시의 천 단위 구분.
+    #[test]
+    fn group_digits_thousands() {
+        assert_eq!(group_digits(0), "0");
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1000), "1,000");
+        assert_eq!(group_digits(155312), "155,312");
     }
 
     /// 느린 트랙패드 휠(사건당 -3 = 1px)이 누적된다 — 픽셀 모드는 1px씩, 행 모드는 저장값은 누적되되 표시는 행 경계(사용자 09-16).

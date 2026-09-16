@@ -623,6 +623,10 @@ pub(crate) fn refresh() -> ToolIcon {
 pub(crate) fn fetch_all() -> ToolIcon {
     mask(shape_fetch_all)
 }
+/// 결과 도구줄 가져오기 중지(Material `stop_circle` · T-48b).
+pub(crate) fn fetch_stop() -> ToolIcon {
+    svg_tool("M320-320h320v-320H320v320ZM480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z")
+}
 pub(crate) fn disconnect() -> ToolIcon {
     mask(shape_disconnect)
 }
