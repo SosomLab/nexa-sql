@@ -935,6 +935,36 @@ impl Grid {
                 return;
             }
         }
+        // ★ 스크롤바가 **선택보다 먼저**(휠 = 픽셀 · 썸/트랙 클릭 · 드래그 · 호버). 소비되면 셀 선택·키 처리로 흘리지 않는다
+        //   (09-16: 가로 바 트랙을 눌렀는데 뒤의 셀이 선택됐다 — 선택 판정이 먼저 return했다).
+        if self.row_h > 0 && self.rs.is_some() {
+            let (cw, ch) = self.content_size();
+            let b = self.bounds;
+            // ★ 뷰포트 = 행번호 열(고정)·헤더(고정) 제외 — 바는 데이터 영역에만(09-16: 세로 바가 헤더까지 걸쳤다) ·
+            //   가로 바의 끝이 키보드 `max_scroll`과 같은 자리.
+            let b = Rect::new(
+                b.x + self.gutter_w,
+                b.y + self.header_h,
+                b.w - self.gutter_w,
+                b.h - self.header_h - self.row_h,
+            );
+            let ch = ch - self.header_h;
+            let (nx, ny, consumed) = self.bars.on_event(
+                ev,
+                b,
+                cw.max(b.w),
+                ch.max(b.h),
+                self.scroll_x,
+                self.scroll_y,
+                scale,
+            );
+            self.scroll_x = nx;
+            self.scroll_y = ny;
+            self.clamp();
+            if consumed {
+                return;
+            }
+        }
         // ★ 선택(사용자 09-15 · dir2 탐색기 규약): 클릭 = 셀 · 드래그 = 사각 범위 · Shift+클릭 = 앵커~셀 ·
         //   Ctrl+클릭 = 구간 추가/제거 · 행번호 클릭 = 행 전체(Shift 연속 · Ctrl 개별 · 드래그 = 행 범위) ·
         //   좌상단 모서리 = 전체 · 방향키 = 이동 · Shift+방향키 = 범위 · Ctrl+방향키 = 포커스만 · Esc = 해제.
@@ -1190,35 +1220,6 @@ impl Grid {
         // 호버 행 — 목표만 바꾼다(진행도는 `tick`이 흘린다 · 드래그/폭 조절 중엔 위에서 이미 돌아갔다).
         if let InputEvent::MouseMove { x, y } = *ev {
             self.hover.set(self.row_at_point(x, y));
-        }
-        // 스크롤바가 먼저(휠 = 픽셀 · 썸 드래그 · 호버). 소비되면 키 처리로 흘리지 않는다.
-        if self.row_h > 0 && self.rs.is_some() {
-            let (cw, ch) = self.content_size();
-            let b = self.bounds;
-            // ★ 뷰포트 = 행번호 열(고정)·헤더(고정) 제외 — 바는 데이터 영역에만(09-16: 세로 바가 헤더까지 걸쳤다) ·
-            //   가로 바의 끝이 키보드 `max_scroll`과 같은 자리.
-            let b = Rect::new(
-                b.x + self.gutter_w,
-                b.y + self.header_h,
-                b.w - self.gutter_w,
-                b.h - self.header_h - self.row_h,
-            );
-            let ch = ch - self.header_h;
-            let (nx, ny, consumed) = self.bars.on_event(
-                ev,
-                b,
-                cw.max(b.w),
-                ch.max(b.h),
-                self.scroll_x,
-                self.scroll_y,
-                scale,
-            );
-            self.scroll_x = nx;
-            self.scroll_y = ny;
-            self.clamp();
-            if consumed {
-                return;
-            }
         }
         let page = self.body_h().max(self.row_h);
         match ev {
