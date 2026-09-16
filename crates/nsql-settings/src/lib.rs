@@ -265,6 +265,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "17",
     },
     Entry {
+        key: "ui.text_contrast",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTextContrast,
+        desc: Msg::DescTextContrast,
+        kind: SettingKind::Int { min: 100, max: 250 },
+        default: "140",
+    },
+    Entry {
+        key: "ui.text_snap",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTextSnap,
+        desc: Msg::DescTextSnap,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "ui.font_size",
         // 기본 14 → 15 · 편집기 14 → 16 · 그리드 15 신설 — Golden 기준 가독성(사용자 09-15 "폰트가 너무 작다").
         cat: Msg::CatAppearance,

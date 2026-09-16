@@ -997,6 +997,13 @@ impl App {
         self.redraw();
     }
 
+    /// 설정 → nexa-gfx 텍스트 렌더(대비 감마 · 정수 스냅) — 전 창 공통(글리프 캐시 키에 감마가 들어 있어 비울 필요 없음).
+    fn apply_text_render(&self) {
+        let pct = self.settings.int("ui.text_contrast").clamp(100, 250) as f32;
+        nexa_gfx::text::set_text_contrast(pct / 100.0);
+        nexa_gfx::text::set_text_snap(self.settings.flag("ui.text_snap"));
+    }
+
     /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
     fn apply_indent(&mut self) {
         let ts = self.settings.int("editor.tab_size").clamp(1, 8);
@@ -1168,6 +1175,10 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "ui.text_contrast" | "ui.text_snap" => {
+                self.apply_text_render();
+                self.log_win.redraw();
+            }
             "grid.font_face" => {
                 self.grid_font = load_grid_font(self.settings.get(key).unwrap_or(""));
             }
@@ -4355,6 +4366,7 @@ fn main() {
         app.settings.int("ui.toast_secs"),
         app.settings.int("ui.toast_alpha"),
     );
+    app.apply_text_render();
     app.grid.set_default_page_rows(max_rows);
     app.grid.set_col_limits(
         app.settings.int("grid.col_min_width") as i32,
@@ -4477,6 +4489,11 @@ impl FrameTrace {
 fn load_grid_font(face: &str) -> Option<Font> {
     let face = face.trim();
     if face.is_empty() {
+        // Windows: 시스템 UI 체인은 맑은 고딕이 먼저라(x-높이 작고 획이 가늘다) Golden(Segoe UI/Tahoma)보다 작고 연하게
+        // 보였다(사용자 09-16) → 결과 글꼴은 Segoe UI를 앞에 두고 한글은 맑은 고딕으로 폴백. 다른 OS = UI 글꼴.
+        if cfg!(target_os = "windows") {
+            return nexa_font::ui_font(Some("Segoe UI")).map(|l| l.font);
+        }
         return None;
     }
     if face.eq_ignore_ascii_case("mono") {
