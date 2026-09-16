@@ -7,7 +7,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-use nsql_core::{DbError, Dialect, ExecRequest, ResultSet, Session, Value};
+use nsql_core::{DbError, Dialect, ExecRequest, KeyInfo, ResultSet, Session, Value};
 
 /// 오브젝트 종류(트리 폴더 = 종류).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -311,6 +311,108 @@ pub fn current_schema(s: &mut dyn Session) -> Result<String, DbError> {
     };
     let rs = query(s, sql)?;
     Ok(rs.rows.first().map(|r| col(r, 0)).unwrap_or_default())
+}
+
+// ───────────────────────────────────────────── 키(PK · 유니크)
+
+/// (종류 'P'/'U', 이름, 컬럼) 행을 [`KeyInfo`]로 — 같은 이름은 한 묶음 · PK가 앞.
+fn fold_keys(rows: &[Vec<Value>]) -> KeyInfo {
+    let mut info = KeyInfo::default();
+    for r in rows {
+        let (kind, name, column) = (col(r, 0), col(r, 1), col(r, 2));
+        if column.is_empty() {
+            continue;
+        }
+        if kind == "P" {
+            info.pk.push(column);
+        } else if let Some((_, cols)) = info.unique.iter_mut().find(|(n, _)| *n == name) {
+            cols.push(column);
+        } else {
+            info.unique.push((name, vec![column]));
+        }
+    }
+    info
+}
+
+/// 테이블의 기본 키·유니크 제약/인덱스(순서 유지 · docs/41 키 규칙의 원천). 없으면 빈 [`KeyInfo`].
+pub fn keys(s: &mut dyn Session, schema: &str, table: &str) -> Result<KeyInfo, DbError> {
+    let dialect = s.dialect();
+    match dialect {
+        Dialect::Oracle => {
+            let cons = query(s, &format!(
+                "SELECT c.constraint_type, c.constraint_name, cc.column_name FROM all_constraints c JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name WHERE c.owner = {} AND c.table_name = {} AND c.constraint_type IN ('P','U') AND c.status = 'ENABLED' ORDER BY DECODE(c.constraint_type, 'P', 0, 1), c.constraint_name, cc.position",
+                lit(schema), lit(table)
+            ))?;
+            let idx = query(s, &format!(
+                "SELECT 'U', i.index_name, ic.column_name FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name WHERE i.table_owner = {} AND i.table_name = {} AND i.uniqueness = 'UNIQUE' ORDER BY i.index_name, ic.column_position",
+                lit(schema), lit(table)
+            ))?;
+            let mut rows = cons.rows;
+            rows.extend(idx.rows);
+            Ok(fold_keys(&rows))
+        }
+        Dialect::Mssql => {
+            let rs = query(s, &format!(
+                "SELECT CASE WHEN i.is_primary_key = 1 THEN 'P' ELSE 'U' END, i.name, c.name FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE i.object_id = OBJECT_ID({}) AND (i.is_primary_key = 1 OR i.is_unique = 1) AND ic.is_included_column = 0 ORDER BY CASE WHEN i.is_primary_key = 1 THEN 0 ELSE 1 END, i.index_id, ic.key_ordinal",
+                lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)))
+            ))?;
+            Ok(fold_keys(&rs.rows))
+        }
+        Dialect::Postgres => {
+            let rs = query(s, &format!(
+                "SELECT CASE WHEN i.indisprimary THEN 'P' ELSE 'U' END, ic.relname, a.attname FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_class ic ON ic.oid = i.indexrelid JOIN unnest(i.indkey) WITH ORDINALITY k(attnum, ord) ON true JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum WHERE n.nspname = {} AND c.relname = {} AND (i.indisprimary OR i.indisunique) ORDER BY CASE WHEN i.indisprimary THEN 0 ELSE 1 END, ic.relname, k.ord",
+                lit(schema), lit(table)
+            ))?;
+            Ok(fold_keys(&rs.rows))
+        }
+        Dialect::Mysql | Dialect::Odbc => {
+            let rs = query(s, &format!(
+                "SELECT CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 'P' ELSE 'U' END, tc.constraint_name, kcu.column_name FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} AND tc.constraint_type IN ('PRIMARY KEY','UNIQUE') ORDER BY CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN 0 ELSE 1 END, tc.constraint_name, kcu.ordinal_position",
+                lit(schema), lit(table)
+            ))?;
+            Ok(fold_keys(&rs.rows))
+        }
+        Dialect::Sqlite => {
+            let mut info = KeyInfo::default();
+            // PRAGMA table_info: cid, name, type, notnull, dflt_value, pk(복합이면 1,2,…)
+            let ti = query(
+                s,
+                &format!("PRAGMA table_info({})", quote_ident(dialect, table)),
+            )?;
+            let mut pk: Vec<(i64, String)> = ti
+                .rows
+                .iter()
+                .filter(|r| cell_i64(&r[5]) > 0)
+                .map(|r| (cell_i64(&r[5]), col(r, 1)))
+                .collect();
+            pk.sort();
+            info.pk = pk.into_iter().map(|(_, n)| n).collect();
+            // PRAGMA index_list: seq, name, unique, origin, partial
+            let il = query(
+                s,
+                &format!("PRAGMA index_list({})", quote_ident(dialect, table)),
+            )?;
+            for r in &il.rows {
+                if cell_i64(&r[2]) != 1 || col(r, 3) == "pk" {
+                    continue;
+                }
+                let name = col(r, 1);
+                let ii = query(
+                    s,
+                    &format!("PRAGMA index_info({})", quote_ident(dialect, &name)),
+                )?;
+                let mut cols: Vec<(i64, String)> = ii
+                    .rows
+                    .iter()
+                    .map(|r| (cell_i64(&r[0]), col(r, 2)))
+                    .collect();
+                cols.sort();
+                info.unique
+                    .push((name, cols.into_iter().map(|(_, n)| n).collect()));
+            }
+            Ok(info)
+        }
+    }
 }
 
 // ───────────────────────────────────────────── 오브젝트 목록

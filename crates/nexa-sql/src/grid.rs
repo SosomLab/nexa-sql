@@ -24,65 +24,11 @@ pub(crate) enum CopyKind {
     Markdown,
     /// JSON 배열(객체마다 컬럼 = 값 · 숫자/불리언/NULL은 리터럴).
     Json,
-    /// SQL 문(종류별 · 행마다 한 문장 · 테이블 = 실행문에서 추정 · 키 = 첫 선택 컬럼).
-    Sql(SqlKind),
 }
 
-/// SQL 복사 종류(DBeaver Advanced Copy ▸ SQL · 사용자 09-15).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SqlKind {
-    Select,
-    Insert,
-    Update,
-    Delete,
-    Merge,
-}
-
-/// 실행한 SQL에서 대상 테이블을 추정한다 — `FROM t` · `INSERT INTO t` · `UPDATE t` · `MERGE INTO t`(서브쿼리 `FROM (`는 건너뜀).
-pub(crate) fn guess_table(sql: &str) -> Option<String> {
-    let toks: Vec<&str> = sql
-        .split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '(' || c == ')')
-        .filter(|t| !t.is_empty())
-        .collect();
-    let mut i = 0;
-    while i < toks.len() {
-        let up = toks[i].to_ascii_uppercase();
-        let next = toks.get(i + 1).copied();
-        let cand = match up.as_str() {
-            "FROM" | "UPDATE" => next,
-            "INTO"
-                if i > 0
-                    && matches!(
-                        toks[i - 1].to_ascii_uppercase().as_str(),
-                        "INSERT" | "MERGE"
-                    ) =>
-            {
-                next
-            }
-            _ => None,
-        };
-        if let Some(t) = cand {
-            let tu = t.to_ascii_uppercase();
-            let is_kw = matches!(tu.as_str(), "SELECT" | "WHERE" | "DUAL" | "VALUES");
-            let is_ident = t.chars().all(|c| {
-                c.is_alphanumeric()
-                    || c == '_'
-                    || c == '.'
-                    || c == '"'
-                    || c == '$'
-                    || c == '#'
-                    || c == '['
-                    || c == ']'
-                    || c == '`'
-            });
-            if !is_kw && is_ident && !sql.contains(&format!("FROM ({t}")) {
-                return Some(t.to_string());
-            }
-        }
-        i += 1;
-    }
-    None
-}
+/// SQL 문 종류·테이블 추정은 nsql-io(CLI와 공용 · docs/41).
+pub(crate) use nsql_io::SqlKind;
+use nsql_io::{generate, guess_table, KeySpec};
 
 /// 드래그 선택 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,6 +85,8 @@ pub(crate) struct Grid {
     menu: CtxMenu,
     /// 호스트가 가져갈 복사 텍스트(셀 수와 함께).
     pending_copy: Option<(String, usize)>,
+    /// 메뉴에서 고른 SQL 복사 종류(호스트가 키 정보를 받아 `copy_sql`로 완성 · docs/41).
+    pending_sql: Option<SqlKind>,
     /// 메뉴 단축키 문구(복사 · 전체 선택 · 호스트 주입).
     sc_copy: String,
     sc_all: String,
@@ -180,6 +128,7 @@ impl Default for Grid {
             drag_sel: None,
             menu: CtxMenu::new(),
             pending_copy: None,
+            pending_sql: None,
             sc_copy: String::new(),
             sc_all: String::new(),
             menu_click_consumed: false,
@@ -284,6 +233,75 @@ impl Grid {
     /// 호스트가 클립보드에 쓸 텍스트(셀 수).
     pub(crate) fn take_copy(&mut self) -> Option<(String, usize)> {
         self.pending_copy.take()
+    }
+
+    /// 메뉴에서 고른 SQL 종류(1회성) — 호스트가 키를 정한 뒤 [`Self::copy_sql`].
+    pub(crate) fn take_pending_sql(&mut self) -> Option<SqlKind> {
+        self.pending_sql.take()
+    }
+
+    /// 실행문에서 추정한 대상 테이블.
+    pub(crate) fn source_table(&self) -> Option<String> {
+        self.source_table.clone()
+    }
+
+    /// 선택 구간의 컬럼 이름(표시 순서 · 중복 없이) — 키 선택의 입력.
+    pub(crate) fn selected_col_names(&self) -> Vec<String> {
+        let Some(rs) = self.rs.as_ref() else {
+            return Vec::new();
+        };
+        let mut regions = self.regions.clone();
+        regions.sort_unstable();
+        let mut names: Vec<String> = Vec::new();
+        for (_, _, c0, c1) in regions {
+            for &ci in &self.col_order[c0..=c1.min(self.col_order.len().saturating_sub(1))] {
+                if let Some(c) = rs.columns.get(ci) {
+                    if !names.iter().any(|n| n.eq_ignore_ascii_case(&c.name)) {
+                        names.push(c.name.clone());
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// 선택 구간 → SQL 문(구간마다 · 행마다 · 공용 생성기 · 키 = 호스트가 고른 `key`).
+    pub(crate) fn copy_sql(&self, kind: SqlKind, key: &KeySpec) -> Option<(String, usize)> {
+        let rs = self.rs.as_ref()?;
+        let table = self.source_table.clone().unwrap_or_else(|| "T".into());
+        let mut regions = self.regions.clone();
+        regions.sort_unstable();
+        regions.dedup();
+        let mut out = String::new();
+        let mut cells = 0usize;
+        for (i, (r0, r1, c0, c1)) in regions.into_iter().enumerate() {
+            let cols: Vec<usize> = self.col_order[c0..=c1.min(self.col_order.len() - 1)].to_vec();
+            let names: Vec<String> = cols
+                .iter()
+                .map(|&ci| {
+                    rs.columns
+                        .get(ci)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let mut rows: Vec<Vec<Value>> = Vec::new();
+            for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                let ri = self.row_order.get(di).copied().unwrap_or(di);
+                let Some(row) = rs.rows.get(ri) else { continue };
+                rows.push(
+                    cols.iter()
+                        .map(|&ci| row.get(ci).cloned().unwrap_or(Value::Null))
+                        .collect(),
+                );
+                cells += cols.len();
+            }
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&generate(self.dialect, &table, &names, &rows, kind, key));
+        }
+        (cells > 0).then_some((out, cells))
     }
 
     fn in_sel(&self, di: usize, pos: usize) -> bool {
@@ -573,93 +591,6 @@ impl Grid {
                 out.push_str(&rows_out.join(",\n"));
                 out.push_str("\n]\n");
             }
-            CopyKind::Sql(kind) => {
-                let table = self.source_table.clone().unwrap_or_else(|| "T".into());
-                let col_list = names.join(", ");
-                // 키 = 첫 선택 컬럼(PK 정보는 카탈로그 연동 뒤 — 지금은 DBeaver "가상 키" 대신 첫 컬럼).
-                let key_name = names.first().cloned().unwrap_or_default();
-                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                    let ri = self.row_order.get(di).copied().unwrap_or(di);
-                    let Some(row) = rs.rows.get(ri) else { continue };
-                    let lits: Vec<String> = cols
-                        .iter()
-                        .map(|&ci| {
-                            row.get(ci)
-                                .map(|v| v.to_sql_literal(self.dialect))
-                                .unwrap_or_else(|| "NULL".into())
-                        })
-                        .collect();
-                    cells += lits.len();
-                    let key_lit = lits.first().cloned().unwrap_or_else(|| "NULL".into());
-                    let key_pred = if key_lit == "NULL" {
-                        format!("{key_name} IS NULL")
-                    } else {
-                        format!("{key_name} = {key_lit}")
-                    };
-                    let sets: Vec<String> = names
-                        .iter()
-                        .zip(lits.iter())
-                        .skip(1)
-                        .map(|(n, l)| format!("{n} = {l}"))
-                        .collect();
-                    let stmt = match kind {
-                        SqlKind::Select => {
-                            format!("SELECT {col_list} FROM {table} WHERE {key_pred};")
-                        }
-                        SqlKind::Insert => {
-                            format!(
-                                "INSERT INTO {table} ({col_list}) VALUES ({});",
-                                lits.join(", ")
-                            )
-                        }
-                        SqlKind::Update => {
-                            if sets.is_empty() {
-                                format!(
-                                    "UPDATE {table} SET {key_name} = {key_lit} WHERE {key_pred};"
-                                )
-                            } else {
-                                format!("UPDATE {table} SET {} WHERE {key_pred};", sets.join(", "))
-                            }
-                        }
-                        SqlKind::Delete => format!("DELETE FROM {table} WHERE {key_pred};"),
-                        SqlKind::Merge => {
-                            let src: Vec<String> = names
-                                .iter()
-                                .zip(lits.iter())
-                                .map(|(n, l)| format!("{l} AS {n}"))
-                                .collect();
-                            let upd: Vec<String> = names
-                                .iter()
-                                .skip(1)
-                                .map(|n| format!("t.{n} = s.{n}"))
-                                .collect();
-                            let ins_vals: Vec<String> =
-                                names.iter().map(|n| format!("s.{n}")).collect();
-                            let src_sel = match self.dialect {
-                                Dialect::Oracle => format!("SELECT {} FROM DUAL", src.join(", ")),
-                                _ => format!("SELECT {}", src.join(", ")),
-                            };
-                            let upd_clause = if upd.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" WHEN MATCHED THEN UPDATE SET {}", upd.join(", "))
-                            };
-                            match self.dialect {
-                                Dialect::Mssql => format!(
-                                    "MERGE {table} AS t USING ({src_sel}) AS s ON t.{key_name} = s.{key_name}{upd_clause} WHEN NOT MATCHED THEN INSERT ({col_list}) VALUES ({});",
-                                    ins_vals.join(", ")
-                                ),
-                                _ => format!(
-                                    "MERGE INTO {table} t USING ({src_sel}) s ON (t.{key_name} = s.{key_name}){upd_clause} WHEN NOT MATCHED THEN INSERT ({col_list}) VALUES ({});",
-                                    ins_vals.join(", ")
-                                ),
-                            }
-                        }
-                    };
-                    out.push_str(&stmt);
-                    out.push('\n');
-                }
-            }
         }
         (cells > 0).then_some((out, cells))
     }
@@ -790,6 +721,11 @@ impl Grid {
     }
 
     fn menu_pick(&mut self, id: &str) {
+        // SQL 종류는 호스트가 키(PK/유니크)를 받아 완성한다(docs/41).
+        if let Some(k) = id.strip_prefix("sql_").and_then(SqlKind::parse) {
+            self.pending_sql = Some(k);
+            return;
+        }
         let kind = match id {
             "copy" => CopyKind::Tsv,
             "copy_h" => CopyKind::TsvWithHeaders,
@@ -797,11 +733,6 @@ impl Grid {
             "copy_txt" => CopyKind::Text,
             "copy_md" => CopyKind::Markdown,
             "copy_json" => CopyKind::Json,
-            "sql_select" => CopyKind::Sql(SqlKind::Select),
-            "sql_insert" => CopyKind::Sql(SqlKind::Insert),
-            "sql_update" => CopyKind::Sql(SqlKind::Update),
-            "sql_delete" => CopyKind::Sql(SqlKind::Delete),
-            "sql_merge" => CopyKind::Sql(SqlKind::Merge),
             "all" => {
                 self.select_all();
                 return;
@@ -1562,8 +1493,18 @@ mod tests {
         let mut g = grid_with(&[100, 80]);
         g.set_source_sql("SELECT * FROM T1 WHERE 1 = 1");
         g.select_all();
+        let key = nsql_io::choose_key(nsql_io::KeyMode::Pk, None, &g.selected_col_names());
+        assert_eq!(
+            key.cols,
+            vec!["c0", "c1"],
+            "카탈로그 없음 = 앞 컬럼(최대 3)"
+        );
+        let key1 = KeySpec {
+            cols: vec!["c0".into()],
+            source: nsql_io::KeySource::Pk,
+        };
         let out = |k: SqlKind| {
-            g.copy_selection(CopyKind::Sql(k))
+            g.copy_sql(k, &key1)
                 .expect("복사 결과")
                 .0
                 .trim_end()

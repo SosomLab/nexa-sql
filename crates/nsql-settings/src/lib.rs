@@ -152,6 +152,7 @@ const CLI_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("json", Msg::ValFmtJson),
     ("jsonl", Msg::ValFmtJsonl),
 ];
+const KEY_MODE_OPTS: &[(&str, Msg)] = &[("pk", Msg::ValKeyModePk), ("all", Msg::ValKeyModeAll)];
 const OVERFLOW_OPTS: &[(&str, Msg)] = &[
     ("wrap", Msg::ValOverflowWrap),
     ("truncate", Msg::ValOverflowTruncate),
@@ -318,6 +319,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(OVERFLOW_OPTS),
         // 기본 none(사용자 09-16 확정: 종전처럼 한 줄 · 편집기에 붙여 넣으면 정렬) · wrap은 선택.
         default: "none",
+    },
+    // ── 생성 SQL(UPDATE/DELETE/MERGE 등)의 유일성 기준(docs/41 · 사용자 09-16) — GUI Copy SQL · CLI -f sql:* 공통.
+    Entry {
+        key: "sql.key_mode",
+        cat: Msg::CatGrid,
+        label: Msg::LblSqlKeyMode,
+        desc: Msg::DescSqlKeyMode,
+        kind: SettingKind::Choice(KEY_MODE_OPTS),
+        default: "pk",
     },
     Entry {
         key: "cli.format",

@@ -32,6 +32,13 @@ pub(crate) enum Cmd {
         reconnect_same: bool,
     },
     Disconnect,
+    /// 테이블 키(PK·유니크) 조회 — 그리드 Copy SQL의 키 규칙(docs/41). 스키마 없음 = 현재 스키마.
+    Keys {
+        /// 캐시 키(실행문의 테이블 표기 그대로 · 답에 그대로 실린다).
+        key: String,
+        schema: Option<String>,
+        table: String,
+    },
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
@@ -51,6 +58,8 @@ pub(crate) enum ConnOutcome {
     Disconnected,
     /// 편집기 세션의 Oracle SID(라이브 로그 모니터가 V$SESSION을 볼 때 · T-71).
     SessionId(String),
+    /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
+    Keys(String, Option<nsql_core::KeyInfo>),
 }
 
 fn err(message: String) -> RunEvent {
@@ -224,6 +233,16 @@ pub(crate) fn spawn(
                             }
                         }
                         let _ = dtx.send(None);
+                        wake_now();
+                        true
+                    }
+                    Cmd::Keys { key, schema, table } => {
+                        let info = runner.session.as_mut().and_then(|s| {
+                            let schema =
+                                schema.or_else(|| nsql_catalog::current_schema(s.as_mut()).ok())?;
+                            nsql_catalog::keys(s.as_mut(), &schema, &table).ok()
+                        });
+                        let _ = ctx_tx.send(ConnOutcome::Keys(key, info));
                         wake_now();
                         true
                     }

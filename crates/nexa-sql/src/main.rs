@@ -153,6 +153,10 @@ struct App {
     grid_stash: HashMap<u64, grid::Grid>,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
+    /// 테이블 키 캐시(접속당 · 표기 그대로 키) — Copy SQL의 키 조회 왕복을 테이블당 1회로(docs/41).
+    key_cache: HashMap<String, Option<nsql_core::KeyInfo>>,
+    /// 키 조회를 기다리는 SQL 복사 종류.
+    sql_wait: Option<nsql_io::SqlKind>,
     /// `grid`가 속한 탭 id.
     grid_tab: u64,
     /// 마지막 실행을 시작한 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
@@ -507,6 +511,7 @@ impl App {
             match o {
                 ConnOutcome::Connected(d) => {
                     self.attempt_done();
+                    self.key_cache.clear();
                     let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
                     // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
@@ -532,6 +537,12 @@ impl App {
                 }
                 ConnOutcome::SessionId(sid) => {
                     self.live_sid = Some(sid);
+                }
+                ConnOutcome::Keys(table, info) => {
+                    self.key_cache.insert(table, info.clone());
+                    if let Some(kind) = self.sql_wait.take() {
+                        self.finish_sql_copy(kind, info.as_ref());
+                    }
                 }
                 ConnOutcome::Disconnected => self.on_conn_disconnected(),
             }
@@ -969,6 +980,8 @@ impl App {
     /// 접속 계열 결과 `Disconnected`의 UI 반영(워커 이벤트 · 즉시 해제 공용).
     fn on_conn_disconnected(&mut self) {
         self.live_sid = None;
+        self.key_cache.clear();
+        self.sql_wait = None;
         self.editors.set_conn_desc("");
         self.conn_win.clear_connect_marks();
         self.conn_win.clear_active();
@@ -1085,6 +1098,76 @@ impl App {
                 self.status = t(Msg::ErrClipboard).into();
             }
         }
+        if let Some(kind) = self.grid.take_pending_sql() {
+            self.begin_sql_copy(kind);
+        }
+    }
+
+    /// 설정 `sql.key_mode`.
+    fn key_mode(&self) -> nsql_io::KeyMode {
+        self.settings
+            .get("sql.key_mode")
+            .and_then(nsql_io::KeyMode::parse)
+            .unwrap_or(nsql_io::KeyMode::Pk)
+    }
+
+    /// ★ Copy SQL(docs/41): 키 = 설정(pk: 카탈로그 PK → 유니크 → 앞 3컬럼 + 경고 1회 · all: 전체 컬럼). 카탈로그는 워커에
+    ///   1회 묻고(테이블당 캐시) 답이 오면 완성한다 — UI 스레드는 디스크·네트워크를 만지지 않는다.
+    fn begin_sql_copy(&mut self, kind: nsql_io::SqlKind) {
+        if self.key_mode() == nsql_io::KeyMode::All {
+            self.finish_sql_copy(kind, None);
+            return;
+        }
+        let Some(guess) = self.grid.source_table() else {
+            self.finish_sql_copy(kind, None);
+            return;
+        };
+        if let Some(info) = self.key_cache.get(&guess) {
+            let info = info.clone();
+            self.finish_sql_copy(kind, info.as_ref());
+            return;
+        }
+        let (schema, table) = nsql_io::split_table(self.dialect, &guess);
+        self.sql_wait = Some(kind);
+        self.worker.send(worker::Cmd::Keys {
+            key: guess,
+            schema,
+            table,
+        });
+    }
+
+    /// 키 정보로 문장을 만들어 클립보드에 · 대체 키/테이블 미추정은 상태줄 + 로그에 1회 경고.
+    fn finish_sql_copy(&mut self, kind: nsql_io::SqlKind, info: Option<&nsql_core::KeyInfo>) {
+        let names = self.grid.selected_col_names();
+        let key = nsql_io::choose_key(self.key_mode(), info, &names);
+        let Some((text, n)) = self.grid.copy_sql(kind, &key) else {
+            return;
+        };
+        if !clipboard::write_text(&text) {
+            self.status = t(Msg::ErrClipboard).into();
+            return;
+        }
+        self.status = tf(Msg::StCopied, &[&n.to_string()]);
+        let table = self.grid.source_table();
+        let mut warns: Vec<String> = Vec::new();
+        if table.is_none() {
+            warns.push(t(Msg::SqlKeyWarnNoTable).to_string());
+        }
+        if key.needs_warning() && kind != nsql_io::SqlKind::Insert {
+            warns.push(tf(
+                Msg::SqlKeyWarnFirstN,
+                &[
+                    table.as_deref().unwrap_or("T"),
+                    &key.cols.len().to_string(),
+                    &key.cols.join(", "),
+                ],
+            ));
+        }
+        for w in warns {
+            self.status = w.clone();
+            self.log_win.push(LogEntry::new(LogKind::Error, w));
+        }
+        self.redraw();
     }
 
     /// 단축키로 온 명령 — 팔레트 토글·로그 창·접속 창처럼 이벤트 루프 핸들이 필요한 것만 여기서, 나머지는 [`Self::menu_action`].
@@ -3683,6 +3766,8 @@ fn main() {
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
         grid: grid::Grid::default(),
         grid_stash: HashMap::new(),
+        key_cache: HashMap::new(),
+        sql_wait: None,
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
         grid_tab: 0,
         run_tab: 0,

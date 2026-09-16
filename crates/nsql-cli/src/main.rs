@@ -18,7 +18,9 @@ mod plan;
 mod term;
 
 use nsql_core::{DbError, Dialect, Session};
-use nsql_io::{Format, GridOpts, Overflow};
+use nsql_io::{
+    choose_key, generate, guess_table, split_table, Format, GridOpts, KeyMode, Overflow, SqlKind,
+};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::{split_script, ConnectSpec};
 use nsql_vault::Vault;
@@ -221,6 +223,14 @@ fn resolver() -> nsql_run::Resolver {
     })
 }
 
+/// 설정 `sql.key_mode`(pk 기본 · all).
+fn key_mode_setting() -> KeyMode {
+    nsql_settings::Settings::open_default()
+        .ok()
+        .and_then(|s| s.get("sql.key_mode").and_then(KeyMode::parse))
+        .unwrap_or(KeyMode::Pk)
+}
+
 /// 표 폭 옵션 — 설정 `cli.width`/`cli.max_col_width`/`cli.overflow`(`nsql config set …`) 위에 플래그가 덮는다.
 /// 줄 폭 0 = 터미널이면 콘솔 폭 · 파이프/파일이면 무제한.
 fn grid_opts(o: &Opts) -> GridOpts {
@@ -253,7 +263,7 @@ fn grid_opts(o: &Opts) -> GridOpts {
 }
 
 /// 셸 `set`/`show`/`\x` — 세션 동안만 바뀐다(영구는 `nsql config set cli.*`). 처리했으면 true.
-fn shell_set(line: &str, p: &mut Printer) -> bool {
+fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 'static)>) -> bool {
     let dialect = p.dialect;
     if let Some(rest) = line.trim().to_ascii_lowercase().strip_prefix("copy") {
         let rest = rest.trim().trim_end_matches(';');
@@ -262,7 +272,25 @@ fn shell_set(line: &str, p: &mut Printer) -> bool {
             match &p.last {
                 None => eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliCopyNoResult)),
                 Some(rs) => {
-                    let text = nsql_io::render_result_set(rs, &fmt, dialect, &p.grid);
+                    let text = if let Format::Sql(kind) = &fmt {
+                        let (t, warn) = sql_statements(
+                            session,
+                            dialect,
+                            p.key_mode,
+                            p.last_sql.as_deref().unwrap_or(""),
+                            rs,
+                            *kind,
+                        );
+                        let mut t = t;
+                        for w in warn {
+                            t.push_str("-- ");
+                            t.push_str(&w);
+                            t.push('\n');
+                        }
+                        t
+                    } else {
+                        nsql_io::render_result_set(rs, &fmt, dialect, &p.grid)
+                    };
                     match term::clipboard_write(&text) {
                         Ok(()) => eprintln!(
                             "{}",
@@ -369,7 +397,9 @@ fn shell_set(line: &str, p: &mut Printer) -> bool {
                 );
                 return true;
             }
-            None => eprintln!("set format grid|markdown|csv|tsv|json|jsonl"),
+            None => eprintln!(
+                "set format grid|markdown|csv|tsv|json|jsonl|sql:select|insert|update|delete|merge"
+            ),
         },
         _ => return false,
     }
@@ -395,6 +425,21 @@ struct Printer {
     grid: GridOpts,
     /// 마지막 결과(셸 `copy` — 터미널이 접은 줄이 아니라 원문을 클립보드로 · 09-16).
     last: Option<nsql_core::ResultSet>,
+    /// 마지막 결과를 만든 문장(테이블 추정용).
+    last_sql: Option<String>,
+    /// 스크립트의 문장 목록(index → 본문 · `Begin.index`로 찾는다).
+    stmts: Vec<String>,
+    cur_stmt: usize,
+    /// `-f sql:*` 결과는 실행이 끝난 뒤(세션이 자유로울 때) 키를 조회해 찍는다 — (결과, more, 소요, 문장 index, 종류).
+    deferred: Vec<(
+        nsql_core::ResultSet,
+        bool,
+        std::time::Duration,
+        usize,
+        SqlKind,
+    )>,
+    /// 설정 `sql.key_mode`.
+    key_mode: KeyMode,
     dialect: Dialect,
     errors: usize,
     feedback: bool,
@@ -402,6 +447,94 @@ struct Printer {
     timing: bool,
     /// 실행 로그 허브(`--log` · 별도 스레드 stderr 싱크 · 없으면 None).
     log: Option<nsql_log::LogHub>,
+}
+
+impl Printer {
+    /// 스크립트 문장 목록(테이블 추정용 · 실행 전에).
+    fn set_source(&mut self, src: &str) {
+        self.stmts = split_script(src).into_iter().map(|i| i.text).collect();
+        self.cur_stmt = 0;
+    }
+
+    /// `-f sql:*`로 모아 둔 결과를 찍는다 — 세션으로 키(PK/유니크)를 조회하고 결과마다 경고는 1회(문장 끝에 SQL 주석).
+    fn flush_sql(&mut self, mut session: Option<&mut (dyn Session + 'static)>) {
+        if self.deferred.is_empty() {
+            return;
+        }
+        let items = std::mem::take(&mut self.deferred);
+        let out = io::stdout();
+        let mut out = out.lock();
+        for (rs, more, elapsed, idx, kind) in items {
+            let sql = self.stmts.get(idx).map(String::as_str).unwrap_or("");
+            let (text, warn) = sql_statements(
+                session.as_deref_mut(),
+                self.dialect,
+                self.key_mode,
+                sql,
+                &rs,
+                kind,
+            );
+            let _ = out.write_all(text.as_bytes());
+            for w in warn {
+                let _ = writeln!(out, "-- {w}");
+            }
+            if self.feedback {
+                let note = if more {
+                    format!(" {}", nsql_i18n::t(nsql_i18n::Msg::CliRowsMore))
+                } else {
+                    String::new()
+                };
+                let _ = writeln!(
+                    out,
+                    "\n{} rows ({:.3}s){note}\n",
+                    rs.rows.len(),
+                    elapsed.as_secs_f64()
+                );
+            }
+        }
+    }
+}
+
+/// 결과 → SQL 문(docs/41 키 규칙): 테이블 = 실행문에서 추정 · 키 = 설정(pk: 카탈로그 PK → 유니크 → 앞 3컬럼 · all: 전체) ·
+/// 경고(테이블 미추정 · 앞 컬럼 대체)는 결과당 1회로 돌려준다(호출자가 맨 아래에 `-- ` 주석으로).
+fn sql_statements(
+    session: Option<&mut (dyn Session + 'static)>,
+    dialect: Dialect,
+    mode: KeyMode,
+    sql: &str,
+    rs: &nsql_core::ResultSet,
+    kind: SqlKind,
+) -> (String, Vec<String>) {
+    let names: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
+    let guess = guess_table(sql);
+    let table = guess.clone().unwrap_or_else(|| "T".into());
+    let mut warn = Vec::new();
+    let key = if mode == KeyMode::All {
+        choose_key(KeyMode::All, None, &names)
+    } else {
+        let info = match (&guess, session) {
+            (Some(g), Some(s)) => {
+                let (schema, t) = split_table(dialect, g);
+                let schema = schema.or_else(|| nsql_catalog::current_schema(s).ok());
+                schema.and_then(|sc| nsql_catalog::keys(s, &sc, &t).ok())
+            }
+            _ => None,
+        };
+        choose_key(KeyMode::Pk, info.as_ref(), &names)
+    };
+    if guess.is_none() {
+        warn.push(nsql_i18n::t(nsql_i18n::Msg::SqlKeyWarnNoTable).to_string());
+    }
+    if key.needs_warning() && kind != SqlKind::Insert {
+        warn.push(nsql_i18n::tf(
+            nsql_i18n::Msg::SqlKeyWarnFirstN,
+            &[&table, &key.cols.len().to_string(), &key.cols.join(", ")],
+        ));
+    }
+    (
+        generate(dialect, &table, &names, &rs.rows, kind, &key),
+        warn,
+    )
 }
 
 /// `--log`면 설정 `log.format`으로 stderr 싱크를 **로그 스레드**에 띄운다(메인 경로 비차단 · docs/26 §3).
@@ -433,10 +566,18 @@ impl Printer {
         let out = io::stdout();
         let mut out = out.lock();
         match ev {
-            RunEvent::Begin { .. } => {}
+            RunEvent::Begin { index, .. } => self.cur_stmt = index,
             RunEvent::ResultSet {
                 rs, elapsed, more, ..
             } => {
+                self.last_sql = self.stmts.get(self.cur_stmt).cloned();
+                if let Format::Sql(kind) = &self.format {
+                    // 키 조회에 세션이 필요 — 실행 중엔 Runner가 쥐고 있으므로 끝난 뒤 `flush_sql`.
+                    self.deferred
+                        .push((rs.clone(), more, elapsed, self.cur_stmt, *kind));
+                    self.last = Some(rs);
+                    return;
+                }
                 let _ = nsql_io::write_result_set_opts(
                     &mut out,
                     &rs,
@@ -561,6 +702,11 @@ fn cmd_run(o: &Opts) -> i32 {
         format: o.format.clone(),
         grid: grid_opts(o),
         last: None,
+        last_sql: None,
+        stmts: Vec::new(),
+        cur_stmt: 0,
+        deferred: Vec::new(),
+        key_mode: key_mode_setting(),
         dialect: o.dialect,
         errors: 0,
         feedback: true,
@@ -575,7 +721,9 @@ fn cmd_run(o: &Opts) -> i32 {
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
     let mut prompt = |name: &str| if no_prompt { None } else { prompt_stdin(name) };
+    printer.set_source(&src);
     let errs = runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
+    printer.flush_sql(runner.session.as_deref_mut());
     if let Some(s) = runner.session.as_mut() {
         let _ = s.commit();
     }
@@ -595,6 +743,11 @@ fn cmd_shell(o: &Opts) -> i32 {
         format: o.format.clone(),
         grid: grid_opts(o),
         last: None,
+        last_sql: None,
+        stmts: Vec::new(),
+        cur_stmt: 0,
+        deferred: Vec::new(),
+        key_mode: key_mode_setting(),
         dialect: o.dialect,
         errors: 0,
         feedback: true,
@@ -627,7 +780,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         {
             break;
         }
-        if buf.is_empty() && shell_set(t, &mut printer) {
+        if buf.is_empty() && shell_set(t, &mut printer, runner.session.as_deref_mut()) {
             continue;
         }
         buf.push_str(t);
@@ -647,7 +800,9 @@ fn cmd_shell(o: &Opts) -> i32 {
         }
         let src = std::mem::take(&mut buf);
         let mut prompt = prompt_stdin;
+        printer.set_source(&src);
         runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
+        printer.flush_sql(runner.session.as_deref_mut());
     }
     if let Some(s) = runner.session.as_mut() {
         let _ = s.commit();
@@ -673,6 +828,11 @@ fn cmd_explain(o: &Opts) -> i32 {
         format: o.format.clone(),
         grid: grid_opts(o),
         last: None,
+        last_sql: None,
+        stmts: Vec::new(),
+        cur_stmt: 0,
+        deferred: Vec::new(),
+        key_mode: key_mode_setting(),
         dialect: o.dialect,
         errors: 0,
         feedback: false,
@@ -716,6 +876,11 @@ fn cmd_export(o: &Opts) -> i32 {
         format: Format::Grid,
         grid: grid_opts(o),
         last: None,
+        last_sql: None,
+        stmts: Vec::new(),
+        cur_stmt: 0,
+        deferred: Vec::new(),
+        key_mode: key_mode_setting(),
         dialect: o.dialect,
         errors: 0,
         feedback: false,

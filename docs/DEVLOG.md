@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (19차 · win)** — **결과 → SQL 5종 CLI/GUI 공용**(`nsql_io::sqlgen` · 복합 키) · 키 규칙 PK → 유니크 → 앞 3컬럼 + 경고 1회 · `nsql_catalog::keys` 4방언 · 설정 `sql.key_mode` · [41 설계·결정](41-sql-copy-key-rules.md) D-62~67. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (18차 · win)** — CLI 표 기본 `none` · 줄 끝 공백 제거 · **markdown 형식** · `cli.format` · 셸 `set format`/`copy [fmt]`(Win32 클립보드) · **GUI 3단 메뉴(Copy SQL ▸ MERGE) 클릭 유실 + 우클릭 포커스** 수정(nexa-ui 9차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (17차 · win)** — **CLI 도움말 상세**(`help.rs` 옵션/명령 원장 · `nsql <명령> --help` · `nsql help` · 인자·옵션·예 · 전부 `Msg`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (16차 · win)** — **CLI 표 폭**: 설정 `cli.width`(0 = 터미널 폭)/`cli.max_col_width`/`cli.overflow`(wrap·truncate·expanded·none) · 플래그 `--width`/`--max-col-width`/`--overflow`/`-x` · 셸 `set width|colwidth|overflow`·`\x`·`show` · nsql-io `GridOpts`. → [journal](journal/2026-09-16.md)

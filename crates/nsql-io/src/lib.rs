@@ -4,6 +4,11 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod sqlgen;
+pub use sqlgen::{
+    choose_key, generate, guess_table, split_table, KeyMode, KeySource, KeySpec, SqlKind,
+};
+
 use nsql_core::{Dialect, ResultSet, Value};
 use std::io::{self, Write};
 
@@ -20,6 +25,8 @@ pub enum Format {
     JsonLines,
     /// GitHub 표(`| a | b |` · 숫자는 오른쪽 정렬 표시 · 편집기/위키에 붙여 넣기 · 09-16).
     Markdown,
+    /// 행마다 SQL 문(`sql:select|insert|update|delete|merge` · 키 = docs/41 규칙 · 테이블 = 실행문에서 추정).
+    Sql(SqlKind),
     /// `INSERT INTO table (cols) VALUES (…);` 행마다.
     Insert {
         table: String,
@@ -38,6 +45,8 @@ impl Format {
             "json" => Format::Json,
             "jsonl" | "jsonlines" | "ndjson" => Format::JsonLines,
             "markdown" | "md" => Format::Markdown,
+            "sql" => Format::Sql(SqlKind::Insert),
+            k if k.starts_with("sql:") => Format::Sql(SqlKind::parse(&k[4..])?),
             _ => {
                 let t = low.strip_prefix("insert")?;
                 let table = t.trim_start_matches(':').trim();
@@ -133,6 +142,12 @@ pub fn write_result_set_opts(
     match fmt {
         Format::Grid => out.write_all(format_grid_opts(rs, grid).as_bytes()),
         Format::Markdown => out.write_all(format_markdown(rs).as_bytes()),
+        Format::Sql(kind) => {
+            // 세션 없는 경로(export 파일 · 단순 렌더) = 테이블 `T` · 앞 3개 컬럼 키. 키 조회는 호출자(CLI Printer · GUI)가 한다.
+            let names: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
+            let key = choose_key(KeyMode::Pk, None, &names);
+            out.write_all(generate(dialect, "T", &names, &rs.rows, *kind, &key).as_bytes())
+        }
         Format::Csv => write_delimited(out, rs, b','),
         Format::Tsv => write_delimited(out, rs, b'\t'),
         Format::Json => {
@@ -198,6 +213,7 @@ impl Format {
             Format::Json => "json".into(),
             Format::JsonLines => "jsonl".into(),
             Format::Markdown => "markdown".into(),
+            Format::Sql(k) => format!("sql:{}", k.name()),
             Format::Insert { table } => format!("insert:{table}"),
         }
     }

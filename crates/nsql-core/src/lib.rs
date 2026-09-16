@@ -296,6 +296,13 @@ pub struct ExecRequest {
     pub params: Vec<BindParam>,
 }
 
+/// 테이블 키 정보(카탈로그 → SQL 생성의 키 선택 · docs/41): `pk` = 기본 키 컬럼(순서) · `unique` = 유니크 제약/인덱스(이름, 컬럼).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct KeyInfo {
+    pub pk: Vec<String>,
+    pub unique: Vec<(String, Vec<String>)>,
+}
+
 /// 결과 컬럼 메타.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Column {

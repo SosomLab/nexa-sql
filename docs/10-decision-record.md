@@ -55,6 +55,8 @@
 | D-49 | Windows 설치기 — MSI(WiX · 조용한 설치·GPO · 권장) vs NSIS(nexa-clip 보유)([33 §4](33-distribution-and-packaging.md)) |
 | D-50 | macOS CLI 노출 — pkg 설치 스크립트로 `/usr/local/bin/nsql` 링크(권장) vs Homebrew만 |
 | D-51 | 트랜잭션 UX([34](34-transaction-ux.md)) — 수동 커밋 단위 = 탭 세션 · 모드 계층 전역→프로필→탭 · 표시 3층(탭 배지 ●n · 상태줄 세그먼트+팝업 · 툴바 Commit 배지) · 잃는 순간만 모달 · 오래된 미커밋 빨강 — 권장안 확정 요청 |
+| D-62~66 | ✅ 09-16 결과 → SQL 키 규칙([41 §2](41-sql-copy-key-rules.md)): PK → 첫 유니크 → 앞 3컬럼 + 경고 1회 · 설정 `sql.key_mode` pk/all · 경고 = CLI 주석/GUI 상태줄+로그 · 테이블 미추정 = `T` · 키 조회 = 필요 시 1회 캐시 |
+| D-67 | 가상 키(테이블별 사용자 지정 · T-92) — 앞 3컬럼 경고가 잦으면 도입 |
 | D-58 | 자원 거버너([39 §4](39-resource-governance.md)) `perf.mode` 기본 = `auto`(배터리/원격 세션이면 balanced) vs `full`(지금 그대로 · 안내만) — 권장 `full` + 상태줄 1회 안내 |
 | D-59 | 개별 키를 직접 바꿨을 때 모드 표시 = `custom`(권장) vs 모드 유지·값만 우선 |
 | D-60 | OS 신호(배터리·원격 세션·동작 줄이기) 모듈 위치 — `nexa-fs::sys`(규칙 그대로) vs 새 `nexa-sys` 크레이트(권장) |
