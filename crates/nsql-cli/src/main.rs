@@ -82,11 +82,15 @@ fn parse_opts() -> Opts {
         println!("nsql {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
+    let default_format = nsql_settings::Settings::open_default()
+        .ok()
+        .and_then(|s| s.get("cli.format").and_then(Format::parse))
+        .unwrap_or(Format::Grid);
     let mut o = Opts {
         cmd,
         target: None,
         dialect: Dialect::Oracle,
-        format: Format::Grid,
+        format: default_format,
         no_prompt: false,
         timing: false,
         log: false,
@@ -223,7 +227,7 @@ fn grid_opts(o: &Opts) -> GridOpts {
     let mut g = GridOpts {
         max_col: 60,
         line_width: 0,
-        overflow: Overflow::Wrap,
+        overflow: Overflow::None,
     };
     if let Ok(s) = nsql_settings::Settings::open_default() {
         g.line_width = s.int("cli.width").max(0) as usize;
@@ -231,7 +235,7 @@ fn grid_opts(o: &Opts) -> GridOpts {
         g.overflow = s
             .get("cli.overflow")
             .and_then(Overflow::parse)
-            .unwrap_or(Overflow::Wrap);
+            .unwrap_or(Overflow::None);
     }
     if let Some(w) = o.width {
         g.line_width = w;
@@ -249,15 +253,44 @@ fn grid_opts(o: &Opts) -> GridOpts {
 }
 
 /// 셸 `set`/`show`/`\x` — 세션 동안만 바뀐다(영구는 `nsql config set cli.*`). 처리했으면 true.
-fn shell_set(line: &str, g: &mut GridOpts) -> bool {
+fn shell_set(line: &str, p: &mut Printer) -> bool {
+    let dialect = p.dialect;
+    if let Some(rest) = line.trim().to_ascii_lowercase().strip_prefix("copy") {
+        let rest = rest.trim().trim_end_matches(';');
+        if rest.is_empty() || Format::parse(rest).is_some() {
+            let fmt = Format::parse(rest).unwrap_or_else(|| p.format.clone());
+            match &p.last {
+                None => eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliCopyNoResult)),
+                Some(rs) => {
+                    let text = nsql_io::render_result_set(rs, &fmt, dialect, &p.grid);
+                    match term::clipboard_write(&text) {
+                        Ok(()) => eprintln!(
+                            "{}",
+                            nsql_i18n::tf(
+                                nsql_i18n::Msg::CliCopied,
+                                &[&rs.rows.len().to_string(), &fmt.name()]
+                            )
+                        ),
+                        Err(e) => {
+                            eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliCopyFailed, &[&e]))
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+    }
+    let g = &mut p.grid;
     let t = line.trim();
     let low = t.to_ascii_lowercase();
+    let fmt_name = p.format.name();
     let show = |g: &GridOpts| {
         eprintln!(
-            "width {} (0 = 무제한 · set width auto = 터미널 폭) · colwidth {} · overflow {}",
+            "width {} (0 = 무제한 · set width auto = 터미널 폭) · colwidth {} · overflow {} · format {}",
             g.line_width,
             g.max_col,
-            g.overflow.name()
+            g.overflow.name(),
+            fmt_name
         );
     };
     if low == "\\x" {
@@ -271,7 +304,7 @@ fn shell_set(line: &str, g: &mut GridOpts) -> bool {
     }
     if low == "show" || low == "set" || low == "get" || low == "\\pset" || low == "help set" {
         show(g);
-        eprintln!("set width <n|auto> · set colwidth <n> · set overflow wrap|truncate|expanded|none · get <키> · \\x · 영구: nsql config set cli.width <n>");
+        eprintln!("set width <n|auto> · set colwidth <n> · set overflow none|wrap|truncate|expanded · set format grid|markdown|csv|tsv|json|jsonl · get <키> · \\x · copy [fmt] · 영구: nsql config set cli.*");
         return true;
     }
     // get/show <키> — 값 하나만.
@@ -284,6 +317,7 @@ fn shell_set(line: &str, g: &mut GridOpts) -> bool {
             "width" | "linesize" | "line_width" => g.line_width.to_string(),
             "colwidth" | "max_col_width" | "col" => g.max_col.to_string(),
             "overflow" | "wrap" => g.overflow.name().to_string(),
+            "format" | "fmt" => fmt_name.clone(),
             "all" | "" => {
                 show(g);
                 return true;
@@ -319,7 +353,23 @@ fn shell_set(line: &str, g: &mut GridOpts) -> bool {
         },
         "overflow" | "wrap" => match Overflow::parse(v) {
             Some(x) => g.overflow = x,
-            None => eprintln!("set overflow wrap|truncate|expanded|none"),
+            None => eprintln!("set overflow none|wrap|truncate|expanded"),
+        },
+        "format" | "fmt" => match Format::parse(v) {
+            Some(f) => {
+                let g = *g;
+                p.format = f;
+                let fmt_name = p.format.name();
+                eprintln!(
+                    "width {} · colwidth {} · overflow {} · format {}",
+                    g.line_width,
+                    g.max_col,
+                    g.overflow.name(),
+                    fmt_name
+                );
+                return true;
+            }
+            None => eprintln!("set format grid|markdown|csv|tsv|json|jsonl"),
         },
         _ => return false,
     }
@@ -343,6 +393,8 @@ struct Printer {
     format: Format,
     /// 표 폭·넘침(설정 `cli.*` → 플래그 → 셸 `set`).
     grid: GridOpts,
+    /// 마지막 결과(셸 `copy` — 터미널이 접은 줄이 아니라 원문을 클립보드로 · 09-16).
+    last: Option<nsql_core::ResultSet>,
     dialect: Dialect,
     errors: usize,
     feedback: bool,
@@ -392,7 +444,10 @@ impl Printer {
                     self.dialect,
                     &self.grid,
                 );
-                if self.feedback && self.format == Format::Grid {
+                if self.feedback {
+                    self.last = Some(rs.clone());
+                }
+                if self.feedback && matches!(self.format, Format::Grid | Format::Markdown) {
                     let note = if more {
                         format!(" {}", nsql_i18n::t(nsql_i18n::Msg::CliRowsMore))
                     } else {
@@ -505,6 +560,7 @@ fn cmd_run(o: &Opts) -> i32 {
     let mut printer = Printer {
         format: o.format.clone(),
         grid: grid_opts(o),
+        last: None,
         dialect: o.dialect,
         errors: 0,
         feedback: true,
@@ -538,6 +594,7 @@ fn cmd_shell(o: &Opts) -> i32 {
     let mut printer = Printer {
         format: o.format.clone(),
         grid: grid_opts(o),
+        last: None,
         dialect: o.dialect,
         errors: 0,
         feedback: true,
@@ -570,7 +627,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         {
             break;
         }
-        if buf.is_empty() && shell_set(t, &mut printer.grid) {
+        if buf.is_empty() && shell_set(t, &mut printer) {
             continue;
         }
         buf.push_str(t);
@@ -615,6 +672,7 @@ fn cmd_explain(o: &Opts) -> i32 {
     let mut printer = Printer {
         format: o.format.clone(),
         grid: grid_opts(o),
+        last: None,
         dialect: o.dialect,
         errors: 0,
         feedback: false,
@@ -657,6 +715,7 @@ fn cmd_export(o: &Opts) -> i32 {
     let mut printer = Printer {
         format: Format::Grid,
         grid: grid_opts(o),
+        last: None,
         dialect: o.dialect,
         errors: 0,
         feedback: false,

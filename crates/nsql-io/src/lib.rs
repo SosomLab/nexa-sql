@@ -18,6 +18,8 @@ pub enum Format {
     Json,
     /// 줄당 객체 하나.
     JsonLines,
+    /// GitHub 표(`| a | b |` · 숫자는 오른쪽 정렬 표시 · 편집기/위키에 붙여 넣기 · 09-16).
+    Markdown,
     /// `INSERT INTO table (cols) VALUES (…);` 행마다.
     Insert {
         table: String,
@@ -35,6 +37,7 @@ impl Format {
             "tsv" | "delimited" => Format::Tsv,
             "json" => Format::Json,
             "jsonl" | "jsonlines" | "ndjson" => Format::JsonLines,
+            "markdown" | "md" => Format::Markdown,
             _ => {
                 let t = low.strip_prefix("insert")?;
                 let table = t.trim_start_matches(':').trim();
@@ -129,6 +132,7 @@ pub fn write_result_set_opts(
 ) -> io::Result<()> {
     match fmt {
         Format::Grid => out.write_all(format_grid_opts(rs, grid).as_bytes()),
+        Format::Markdown => out.write_all(format_markdown(rs).as_bytes()),
         Format::Csv => write_delimited(out, rs, b','),
         Format::Tsv => write_delimited(out, rs, b'\t'),
         Format::Json => {
@@ -181,6 +185,68 @@ fn write_delimited(out: &mut dyn Write, rs: &ResultSet, delim: u8) -> io::Result
         writeln!(out, "{}", cells.join(&d.to_string()))?;
     }
     Ok(())
+}
+
+/// 형식 이름(`set format`·설정 표시용).
+impl Format {
+    #[must_use]
+    pub fn name(&self) -> String {
+        match self {
+            Format::Grid => "grid".into(),
+            Format::Csv => "csv".into(),
+            Format::Tsv => "tsv".into(),
+            Format::Json => "json".into(),
+            Format::JsonLines => "jsonl".into(),
+            Format::Markdown => "markdown".into(),
+            Format::Insert { table } => format!("insert:{table}"),
+        }
+    }
+}
+
+/// 결과 집합을 문자열로(클립보드 복사용 · `write_result_set_opts`와 같은 내용).
+#[must_use]
+pub fn render_result_set(
+    rs: &ResultSet,
+    fmt: &Format,
+    dialect: Dialect,
+    grid: &GridOpts,
+) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    let _ = write_result_set_opts(&mut buf, rs, fmt, dialect, grid);
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// GitHub Flavored Markdown 표 — 셀의 `|`는 `\|`, 줄바꿈은 공백 · 숫자 컬럼은 `---:`.
+pub fn format_markdown(rs: &ResultSet) -> String {
+    let esc = |s: &str| s.replace('|', "\\|").replace(['\n', '\r'], " ");
+    let n = rs.columns.len();
+    let mut o = String::new();
+    o.push('|');
+    for c in &rs.columns {
+        o.push(' ');
+        o.push_str(&esc(&c.name));
+        o.push_str(" |");
+    }
+    o.push('\n');
+    o.push('|');
+    for i in 0..n {
+        let num = matches!(
+            rs.rows.first().and_then(|r| r.get(i)),
+            Some(Value::Int(_) | Value::Float(_) | Value::Decimal(_))
+        );
+        o.push_str(if num { " ---: |" } else { " --- |" });
+    }
+    o.push('\n');
+    for row in &rs.rows {
+        o.push('|');
+        for v in row.iter().take(n) {
+            o.push(' ');
+            o.push_str(&esc(&cell_text(v)));
+            o.push_str(" |");
+        }
+        o.push('\n');
+    }
+    o
 }
 
 /// RFC 4180 — 구분자·따옴표·줄바꿈이 있으면 `"…"`로 감싸고 `"`는 `""`.
@@ -395,6 +461,9 @@ fn render_table(
                 put(o, &get(i), widths[i], right[i]);
             }
         }
+        // 줄 끝 공백은 지운다(편집기에 붙여 넣어도 깔끔 · 정렬은 앞 컬럼 패딩으로 유지 · 사용자 09-16).
+        let end = o.trim_end_matches(' ').len();
+        o.truncate(end);
         o.push('\n');
     };
     line(&mut o, Some("#"), &|i| rs.columns[i].name.clone(), false);
@@ -603,7 +672,7 @@ mod tests {
     fn grid_aligns_with_cjk_width() {
         let g = format_grid(&rs(), 60);
         let lines: Vec<&str> = g.lines().collect();
-        assert_eq!(lines[0], "ID  이름  ");
+        assert_eq!(lines[0], "ID  이름");
         assert_eq!(lines[1], "--  ------");
         assert_eq!(lines[2], " 1  홍길동");
         assert_eq!(disp_width("홍길동"), 6);
@@ -695,6 +764,17 @@ mod grid_width_tests {
         assert!(out.starts_with("-[ RECORD 1 ]"));
         assert_eq!(out.matches("-[ RECORD ").count(), 12);
         assert!(out.contains("COL_0 | value1_0_"));
+    }
+
+    #[test]
+    fn markdown_table_and_no_trailing_spaces() {
+        let out = format_markdown(&rs());
+        assert!(out.starts_with("| COL_0 | COL_1 |"));
+        assert!(out.lines().nth(1).unwrap().starts_with("| --- |"));
+        assert_eq!(out.lines().count(), 14);
+        let g = format_grid(&rs(), 60);
+        assert!(g.lines().all(|l| !l.ends_with(' ')), "줄 끝 공백 없음");
+        assert_eq!(Format::parse("md"), Some(Format::Markdown));
     }
 
     #[test]

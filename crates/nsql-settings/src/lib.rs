@@ -144,6 +144,14 @@ const TAB_STOPS_OPTS: &[(&str, Msg)] = &[
     ("stop", Msg::ValTabStopsStop),
     ("fixed", Msg::ValTabStopsFixed),
 ];
+const CLI_FORMAT_OPTS: &[(&str, Msg)] = &[
+    ("grid", Msg::ValFmtGrid),
+    ("markdown", Msg::ValFmtMarkdown),
+    ("csv", Msg::ValFmtCsv),
+    ("tsv", Msg::ValFmtTsv),
+    ("json", Msg::ValFmtJson),
+    ("jsonl", Msg::ValFmtJsonl),
+];
 const OVERFLOW_OPTS: &[(&str, Msg)] = &[
     ("wrap", Msg::ValOverflowWrap),
     ("truncate", Msg::ValOverflowTruncate),
@@ -308,7 +316,16 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblCliOverflow,
         desc: Msg::DescCliOverflow,
         kind: SettingKind::Choice(OVERFLOW_OPTS),
-        default: "wrap",
+        // 기본 none(사용자 09-16 확정: 종전처럼 한 줄 · 편집기에 붙여 넣으면 정렬) · wrap은 선택.
+        default: "none",
+    },
+    Entry {
+        key: "cli.format",
+        cat: Msg::CatCli,
+        label: Msg::LblCliFormat,
+        desc: Msg::DescCliFormat,
+        kind: SettingKind::Choice(CLI_FORMAT_OPTS),
+        default: "grid",
     },
     Entry {
         key: "editor.rulers",

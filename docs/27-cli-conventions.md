@@ -110,9 +110,9 @@
 
 | 층 | 우리 | 대응 |
 |---|---|---|
-| 영구 기본값 | `nsql config set cli.width N`(0 = 터미널 폭 · 파이프면 무제한) · `cli.max_col_width`(60) · `cli.overflow`(wrap 기본 · truncate · expanded · none) | psql `~/.psqlrc` `\pset` · sqlplus `login.sql` `SET LINESIZE` |
+| 영구 기본값 | `nsql config set cli.width N`(0 = 터미널 폭 · 파이프면 무제한) · `cli.max_col_width`(60) · `cli.overflow`(**none 기본** · wrap · truncate · expanded) · `cli.format`(grid 기본 · markdown · csv · tsv · json · jsonl) | psql `~/.psqlrc` `\pset` · sqlplus `login.sql` `SET LINESIZE` |
 | 1회성 | `--width N` · `--max-col-width N` · `--overflow …` · `-x` | sqlcmd `-w`/`-y` · psql `-x` |
-| 세션 | 셸 `set width <n|auto>` · `set colwidth <n>` · `set overflow …` · `\x` · `show` | sqlplus `SET LINESIZE` · psql `\x`/`\pset` |
+| 세션 | 셸 `set width <n|auto>` · `set colwidth <n>` · `set overflow …` · `set format …` · `\x` · `get`/`show` · `copy [fmt]`(마지막 결과 → 클립보드) | sqlplus `SET LINESIZE` · psql `\x`/`\pset` |
 
 wrap = 컬럼을 폭에 맞는 묶음으로 나눠 묶음마다 표(맨 앞 `#` 행 번호) · 구현 nsql-io `GridOpts`.
 

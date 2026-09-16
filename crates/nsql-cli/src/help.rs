@@ -159,6 +159,7 @@ const CMDS: &[Cmd] = &[
             "nsql run -c oracle://scott:tiger@db:1521/orcl -f csv query.sql > out.csv",
             "echo \"SELECT 1 FROM dual;\" | nsql run -c prod -",
             "nsql run -c prod --width 120 --overflow truncate wide.sql",
+            "nsql run -c prod -f markdown query.sql > result.md",
         ],
     },
     Cmd {

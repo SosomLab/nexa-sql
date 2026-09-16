@@ -27,6 +27,52 @@ pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bo
     }
 }
 
+/// 클립보드에 텍스트 쓰기(외부 crate 0) — Windows = Win32 `CF_UNICODETEXT`(`clip.exe`는 코드 페이지/BOM 문제) ·
+/// macOS `pbcopy` · Linux `wl-copy`/`xclip`/`xsel`.
+pub(crate) fn clipboard_write(text: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        win::clipboard_write(text)
+    }
+    #[cfg(not(windows))]
+    {
+        let candidates: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+            &[("pbcopy", &[])]
+        } else {
+            &[
+                ("wl-copy", &[]),
+                ("xclip", &["-selection", "clipboard"]),
+                ("xsel", &["--clipboard", "--input"]),
+            ]
+        };
+        let mut last = String::from("no clipboard command");
+        for (cmd, args) in candidates {
+            let child = std::process::Command::new(cmd)
+                .args(*args)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            let mut child = match child {
+                Ok(c) => c,
+                Err(e) => {
+                    last = format!("{cmd}: {e}");
+                    continue;
+                }
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            match child.wait() {
+                Ok(st) if st.success() => return Ok(()),
+                Ok(st) => last = format!("{cmd}: exit {st}"),
+                Err(e) => last = format!("{cmd}: {e}"),
+            }
+        }
+        Err(last)
+    }
+}
+
 /// 표준 출력 터미널의 열 수(터미널이 아니거나 알 수 없으면 `None`) — Windows 콘솔 API · unix `COLUMNS`/`stty size`.
 pub(crate) fn columns() -> Option<usize> {
     if !io::stdout().is_terminal() {
@@ -148,6 +194,59 @@ mod win {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetConsoleScreenBufferInfo(h: *mut c_void, info: *mut ScreenBufferInfo) -> i32;
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn OpenClipboard(owner: *mut c_void) -> i32;
+        fn EmptyClipboard() -> i32;
+        fn SetClipboardData(format: u32, mem: *mut c_void) -> *mut c_void;
+        fn CloseClipboard() -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalAlloc(flags: u32, bytes: usize) -> *mut c_void;
+        fn GlobalLock(mem: *mut c_void) -> *mut c_void;
+        fn GlobalUnlock(mem: *mut c_void) -> i32;
+        fn GlobalFree(mem: *mut c_void) -> *mut c_void;
+    }
+    const CF_UNICODETEXT: u32 = 13;
+    const GMEM_MOVEABLE: u32 = 0x0002;
+
+    /// `CF_UNICODETEXT`로 게시(UTF-16LE + NUL · 성공하면 소유권은 시스템).
+    pub(super) fn clipboard_write(text: &str) -> Result<(), String> {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let bytes = wide.len() * 2;
+        // SAFETY: Win32 클립보드 규약 — Open → Empty → SetClipboardData(전역 메모리 소유권 이전) → Close · 실패 시 해제.
+        unsafe {
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return Err("OpenClipboard".into());
+            }
+            let mut result = Err("SetClipboardData".to_string());
+            if EmptyClipboard() != 0 {
+                let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+                if !mem.is_null() {
+                    let dst = GlobalLock(mem);
+                    if !dst.is_null() {
+                        std::ptr::copy_nonoverlapping(
+                            wide.as_ptr().cast::<u8>(),
+                            dst.cast::<u8>(),
+                            bytes,
+                        );
+                        GlobalUnlock(mem);
+                        if SetClipboardData(CF_UNICODETEXT, mem).is_null() {
+                            GlobalFree(mem);
+                        } else {
+                            result = Ok(());
+                        }
+                    } else {
+                        GlobalFree(mem);
+                    }
+                }
+            }
+            CloseClipboard();
+            result
+        }
     }
 
     /// 콘솔 창의 열 수(보이는 창 폭 · 버퍼 폭이 아님).

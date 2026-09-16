@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (18차 · win) — CLI 기본 none·markdown·copy ✅ · 그리드 3단 메뉴/우클릭 포커스 버그 ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (17차 · win) — CLI 도움말 상세 ✅
 
 → [journal](journal/2026-09-16.md)

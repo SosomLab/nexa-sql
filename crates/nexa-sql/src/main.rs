@@ -2890,7 +2890,9 @@ impl App {
             self.redraw();
             return;
         }
-        if let InputEvent::MouseDown { x, y, .. } = ev {
+        // ★ 좌클릭·우클릭 모두 커서 아래 컨트롤에 포커스(마우스 라우팅 규칙 · CLAUDE.md §3) — 우클릭이 빠져 있어
+        //   편집기에 포커스가 있으면 그리드 우클릭이 편집기로 가서 메뉴가 안 떴다(사용자 09-16 · 좌클릭 뒤에야 동작).
+        if let InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
             if self.editors.editor_bounds().contains(p) {
                 self.set_focus(Focus::Editor);
