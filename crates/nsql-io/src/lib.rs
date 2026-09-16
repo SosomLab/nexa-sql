@@ -58,7 +58,7 @@ pub enum Overflow {
     Wrap,
     /// 넓은 컬럼부터 줄여 한 줄에 맞춘다(최소 4칸 · 잘린 값은 `…`).
     Truncate,
-    /// 레코드 보기 — 행마다 `컬럼 | 값` 세로 나열(psql `\x` · mysql `\G`).
+    /// 레코드 보기 — 행마다 `컬럼 | 값` 세로 나열(psql `\x` · mysql `\G`) · 폭과 무관하게 늘 적용.
     Expanded,
     /// 그대로(터미널이 접는다 · 파이프/파일용).
     None,
@@ -290,7 +290,14 @@ pub fn format_grid_opts(rs: &ResultSet, o: &GridOpts) -> String {
         .collect();
     let total = |ws: &[usize]| ws.iter().sum::<usize>() + SEP * ws.len().saturating_sub(1);
     let fits = o.line_width == 0 || n == 0 || total(&widths) <= o.line_width;
-    let mode = if fits { Overflow::None } else { o.overflow };
+    // expanded는 폭과 무관하게 늘 레코드 보기(psql `\x`처럼 명시 선택) · 나머지는 넘칠 때만.
+    let mode = if o.overflow == Overflow::Expanded {
+        Overflow::Expanded
+    } else if fits {
+        Overflow::None
+    } else {
+        o.overflow
+    };
     match mode {
         Overflow::None => {
             let cols: Vec<usize> = (0..n).collect();
