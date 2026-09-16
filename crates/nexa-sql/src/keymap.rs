@@ -183,9 +183,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     Command {
         id: "conn.toggle",
         label: Msg::MnConnect,
-        win: "ctrl+shift+c",
-        mac: "cmd+shift+c",
-        linux: "ctrl+shift+c",
+        // ⌘⇧C는 nexa-clip 전역 단축키와 충돌(사용자 09-17) → DBeaver "새 접속"과 같은 Ctrl/⌘+Shift+N.
+        win: "ctrl+shift+n",
+        mac: "cmd+shift+n",
+        linux: "ctrl+shift+n",
     },
     Command {
         id: "view.log",
