@@ -277,6 +277,17 @@ fn json_value_for(kind: SettingKind, v: &str) -> String {
         SettingKind::Int { .. } => v
             .parse::<i64>()
             .map_or_else(|_| escape(v), |n| n.to_string()),
+        // 글꼴 크기: `13`은 숫자로 · `10pt`는 문자열로(단위 보존).
+        SettingKind::Size { .. } => v.parse::<f64>().map_or_else(
+            |_| escape(v),
+            |n| {
+                if n.fract() == 0.0 {
+                    format!("{}", n as i64)
+                } else {
+                    n.to_string()
+                }
+            },
+        ),
         SettingKind::Bool => (v == "on").to_string(),
         _ => escape(v),
     }

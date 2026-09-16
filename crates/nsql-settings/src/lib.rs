@@ -117,6 +117,8 @@ pub enum SettingKind {
     Lang,
     /// 정수 범위.
     Int { min: i64, max: i64 },
+    /// 글꼴 크기 — `13` · `13px` · `10pt`(1pt = 96/72 px · 사용자 09-16). 범위는 px 기준. 저장은 입력한 단위 그대로.
+    Size { min: i64, max: i64 },
     /// on/off.
     Bool,
     /// 자유 텍스트(목록·색 등 — 앱이 해석).
@@ -267,7 +269,7 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatAppearance,
         label: Msg::LblMenuFontSize,
         desc: Msg::DescMenuFontSize,
-        kind: SettingKind::Int { min: 10, max: 32 },
+        kind: SettingKind::Size { min: 10, max: 32 },
         default: "17",
     },
     Entry {
@@ -292,7 +294,7 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatAppearance,
         label: Msg::LblUiFontSize,
         desc: Msg::DescUiFontSize,
-        kind: SettingKind::Int { min: 8, max: 40 },
+        kind: SettingKind::Size { min: 8, max: 40 },
         default: "15",
     },
     Entry {
@@ -496,14 +498,6 @@ pub const REGISTRY: &[Entry] = &[
         default: "off",
     },
     Entry {
-        key: "grid.font_face",
-        cat: Msg::CatGrid,
-        label: Msg::LblGridFontFace,
-        desc: Msg::DescGridFontFace,
-        kind: SettingKind::Text,
-        default: "",
-    },
-    Entry {
         key: "grid.col_min_width",
         cat: Msg::CatGrid,
         label: Msg::LblGridColMin,
@@ -621,7 +615,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblExplorerFontSize,
         desc: Msg::DescExplorerFontSize,
         // 0 = 메뉴 글꼴 크기를 그대로 따른다(DBeaver처럼 풀다운·탐색기 동일 · 사용자 09-15).
-        kind: SettingKind::Int { min: 0, max: 40 },
+        kind: SettingKind::Size { min: 0, max: 40 },
         default: "0",
     },
     Entry {
@@ -1433,15 +1427,23 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatEditor,
         label: Msg::LblEditorFontSize,
         desc: Msg::DescEditorFontSize,
-        kind: SettingKind::Int { min: 8, max: 40 },
+        kind: SettingKind::Size { min: 8, max: 40 },
         default: "16",
+    },
+    Entry {
+        key: "grid.font_face",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFontFace,
+        desc: Msg::DescGridFontFace,
+        kind: SettingKind::Text,
+        default: "",
     },
     Entry {
         key: "grid.font_size",
         cat: Msg::CatGrid,
         label: Msg::LblGridFontSize,
         desc: Msg::DescGridFontSize,
-        kind: SettingKind::Int { min: 8, max: 40 },
+        kind: SettingKind::Size { min: 8, max: 40 },
         default: "13",
     },
 ];
@@ -1598,6 +1600,7 @@ pub fn allowed(kind: SettingKind) -> String {
             .collect::<Vec<_>>()
             .join(" | "),
         SettingKind::Int { min, max } => format!("{min}..{max}"),
+        SettingKind::Size { min, max } => format!("{min}..{max}px | Npt"),
         SettingKind::Bool => "on | off".into(),
         SettingKind::Text => "text".into(),
     }
@@ -1619,6 +1622,23 @@ pub fn normalize(kind: SettingKind, raw: &str) -> Option<String> {
             let n: i64 = v.parse().ok()?;
             (min..=max).contains(&n).then(|| n.to_string())
         }
+        SettingKind::Size { min, max } => {
+            let (n, unit) = parse_size(v)?;
+            let px = if unit == "pt" { n * 96.0 / 72.0 } else { n };
+            if !(min as f32..=max as f32).contains(&px) {
+                return None;
+            }
+            let num = if (n.fract()).abs() < 1e-6 {
+                format!("{}", n as i64)
+            } else {
+                format!("{n}")
+            };
+            Some(if unit == "pt" {
+                format!("{num}pt")
+            } else {
+                num
+            })
+        }
         SettingKind::Bool => match v.to_ascii_lowercase().as_str() {
             "on" | "true" | "1" | "yes" => Some("on".into()),
             "off" | "false" | "0" | "no" => Some("off".into()),
@@ -1626,6 +1646,28 @@ pub fn normalize(kind: SettingKind, raw: &str) -> Option<String> {
         },
         SettingKind::Text => Some(v.to_string()),
     }
+}
+
+/// `13` · `13px` · `10pt` → (수치, 단위 `px`|`pt`). 모르는 형식 = None.
+#[must_use]
+pub fn parse_size(v: &str) -> Option<(f32, &'static str)> {
+    let t = v.trim().to_ascii_lowercase();
+    let (num, unit) = if let Some(n) = t.strip_suffix("pt") {
+        (n.trim(), "pt")
+    } else if let Some(n) = t.strip_suffix("px") {
+        (n.trim(), "px")
+    } else {
+        (t.as_str(), "px")
+    };
+    let n: f32 = num.parse().ok()?;
+    (n.is_finite() && n >= 0.0).then_some((n, unit))
+}
+
+/// 글꼴 크기 값 → px(`10pt` = 13.33px). 형식이 틀리면 None.
+#[must_use]
+pub fn size_px(v: &str) -> Option<f32> {
+    let (n, unit) = parse_size(v)?;
+    Some(if unit == "pt" { n * 96.0 / 72.0 } else { n })
 }
 
 // ────────────────────────────────────────────────────────────── 설정 값
@@ -1774,6 +1816,15 @@ impl Settings {
         self.get(key) == Some("on")
     }
 
+    /// 글꼴 크기(px) — `Size` 항목(`13` · `13px` · `10pt`) · 틀리면 레지스트리 기본.
+    #[must_use]
+    pub fn font_px(&self, key: &str) -> f32 {
+        self.get(key)
+            .and_then(size_px)
+            .or_else(|| entry(key).and_then(|e| size_px(e.default)))
+            .unwrap_or(0.0)
+    }
+
     /// 정수 설정(레지스트리 기본값 보장 → 실패 없음).
     #[must_use]
     pub fn int(&self, key: &str) -> i64 {
@@ -1811,6 +1862,19 @@ impl Settings {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_units() {
+        assert_eq!(size_px("13"), Some(13.0));
+        assert_eq!(size_px("13px"), Some(13.0));
+        assert!((size_px("10pt").unwrap_or(0.0) - 13.333_333).abs() < 1e-3);
+        assert_eq!(size_px("abc"), None);
+        let k = SettingKind::Size { min: 8, max: 40 };
+        assert_eq!(normalize(k, "10pt"), Some("10pt".into()));
+        assert_eq!(normalize(k, "13px"), Some("13".into()));
+        assert_eq!(normalize(k, "10.5pt"), Some("10.5pt".into()));
+        assert_eq!(normalize(k, "99"), None);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("nsql-settings-{}-{}", std::process::id(), name));

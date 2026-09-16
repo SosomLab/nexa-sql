@@ -273,7 +273,7 @@ impl PrefsWin {
                             .unwrap_or(0);
                         CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
-                    SettingKind::Int { .. } | SettingKind::Text => {
+                    SettingKind::Int { .. } | SettingKind::Size { .. } | SettingKind::Text => {
                         CardCtl::Text(Box::new(TextBox::new("").with_text(&sn.value)))
                     }
                 };
@@ -1145,7 +1145,8 @@ impl PrefsWin {
                     continue;
                 }
                 dc.fill_round_rect(clip, (6.0 * s).round() as i32, th.panel_bg);
-                if c.modified {
+                // 기본값과 다른 값의 왼쪽 강조선은 그리지 않는다(사용자 09-16 — 초기화 버튼이 같은 뜻을 전한다).
+                if false && c.modified {
                     dc.fill_rect(
                         Rect::new(r.x, r.y, (3.0 * s).round() as i32, r.h).intersection(&list),
                         th.accent,

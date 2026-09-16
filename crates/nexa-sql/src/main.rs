@@ -263,7 +263,7 @@ impl App {
         let panel_w = px(300.0, s);
         let btn_w = px(84.0, s);
         // 메뉴바 · 툴바(창 전폭)
-        let menu_px = self.settings.int("ui.menu_font_size") as f32;
+        let menu_px = self.settings.font_px("ui.menu_font_size");
         let menu_h = px(menu_px + 11.0, s);
         self.menubar.set_scale(s);
         self.toolbar.set_scale(s);
@@ -2041,7 +2041,7 @@ impl App {
                     let hl = self.editors.cur().highlighter().cloned();
                     failed = match (rich, hl) {
                         (true, Some(h)) => {
-                            let px = self.settings.int("editor.font_size") as i32;
+                            let px = self.settings.font_px("editor.font_size").round() as i32;
                             let html = nexa_ctl::to_html(
                                 &text,
                                 h.as_ref(),
@@ -3057,9 +3057,9 @@ impl App {
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
             let th = self.theme;
-            let ui_px = self.settings.int("ui.font_size") as f32;
-            let mono_px = self.settings.int("editor.font_size") as f32;
-            let grid_px = self.settings.int("grid.font_size") as f32;
+            let ui_px = self.settings.font_px("ui.font_size");
+            let mono_px = self.settings.font_px("editor.font_size");
+            let grid_px = self.settings.font_px("grid.font_size");
             // ── UI 층(한글 UI 본)
             {
                 let prefs = FontPrefs {
@@ -3274,10 +3274,10 @@ impl App {
             }
             // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
             {
-                let exp_px = match self.settings.int("explorer.font_size") {
-                    0 => self.settings.int("ui.menu_font_size"),
-                    n => n,
-                } as f32;
+                let exp_px = match self.settings.font_px("explorer.font_size") {
+                    e if e <= 0.0 => self.settings.font_px("ui.menu_font_size"),
+                    e => e,
+                };
                 let prefs = FontPrefs {
                     base: SlotFont {
                         size: exp_px,
@@ -3329,7 +3329,7 @@ impl App {
             {
                 let prefs = FontPrefs {
                     base: SlotFont {
-                        size: self.settings.int("ui.menu_font_size") as f32,
+                        size: self.settings.font_px("ui.menu_font_size"),
                         bold: false,
                         italic: false,
                     },
@@ -3883,7 +3883,7 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.file_win.is(id) {
-            let ui_px = self.settings.int("ui.font_size") as f32;
+            let ui_px = self.settings.font_px("ui.font_size");
             match self.file_win.handle(&event) {
                 FileWinAction::Paint => self.file_win.paint(&self.ui_font, &self.theme, ui_px),
                 FileWinAction::Confirm(mode, path, enc) => {
@@ -3931,7 +3931,7 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.conn_win.is(id) {
-            let ui_px = self.settings.int("ui.font_size") as f32;
+            let ui_px = self.settings.font_px("ui.font_size");
             for a in self.conn_win.handle(&event) {
                 match a {
                     ConnWinAction::Paint => {
@@ -3947,7 +3947,7 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.prefs_win.is(id) {
-            let ui_px = self.settings.int("ui.font_size") as f32;
+            let ui_px = self.settings.font_px("ui.font_size");
             match self.prefs_win.handle(&event) {
                 PrefsAction::Paint => self.prefs_win.paint(&self.ui_font, &self.theme, ui_px),
                 PrefsAction::Changed { key, value } => {
@@ -3993,7 +3993,7 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.keys_win.is(id) {
-            let ui_px = self.settings.int("ui.font_size") as f32;
+            let ui_px = self.settings.font_px("ui.font_size");
             match self.keys_win.handle(&event) {
                 KeysAction::Paint => self.keys_win.paint(&self.ui_font, &self.theme, ui_px),
                 KeysAction::Changed { id, code } => {
@@ -4019,7 +4019,7 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.colors_win.is(id) {
-            let ui_px = self.settings.int("ui.font_size") as f32;
+            let ui_px = self.settings.font_px("ui.font_size");
             match self.colors_win.handle(&event, &self.theme) {
                 ColorsAction::Paint => self.colors_win.paint(&self.ui_font, &self.theme, ui_px),
                 ColorsAction::Changed { target, hex } => {
@@ -4054,7 +4054,7 @@ impl ApplicationHandler<Wake> for App {
             match self.log_win.handle(&event) {
                 LogWinAction::Paint => {
                     // 시스템 UI 글꼴 · 본문 = 편집기 기본 크기 · 푸터 = 메인 상태줄 크기(사용자 09-16).
-                    let body_px = self.settings.int("editor.font_size") as f32;
+                    let body_px = self.settings.font_px("editor.font_size");
                     let footer_px = nexa_ctl::theme::FontPrefs::default().status.size;
                     self.log_win
                         .paint(&self.ui_font, &self.theme, body_px, footer_px);
