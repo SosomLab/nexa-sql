@@ -10,6 +10,10 @@
 - **후속 과제**: T-48a(서버 커서 유지) · T-94(데이터 편집기) · T-96(탭 검색 Ctrl+P) · T-97(미니맵) · T-98(Sublime 편집 명령) · T-90(거버너).
 - **주의**: `docs/README.md`·`docs/40-cli-usage.md`는 다른 세션 소유(미커밋) — 그 세션이 커밋한다.
 
+## 2026-09-16 (45차 · win) — nexa-ui CI 수정(GDI 이름 후보 = name 테이블) ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (44차 · win) — ★ 글자 선명도 = GDI 글리프 경로(`ui.text_gdi`) ✅ · 자체 캡처 비교 ✅ · D-77
 
 → [journal](journal/2026-09-16.md)
