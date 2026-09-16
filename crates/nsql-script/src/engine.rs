@@ -266,7 +266,8 @@ impl Engine {
             Command::Describe { object } => vec![Action::Describe(object.clone())],
             Command::Show { what } => vec![Action::Show(what.clone())],
             Command::Spool { target } => vec![Action::Spool(target.clone())],
-            Command::Prompt { text } => vec![Action::Prompt(text.clone())],
+            // 치환 뒤 본문(`PROMPT hello &1` — SQL*Plus처럼 &var가 풀린다 · T-9 09-16). 명령어 뒤 첫 공백 하나만 뗀다.
+            Command::Prompt { .. } => vec![Action::Prompt(after_command_word(text))],
             Command::Run {
                 path,
                 args,
@@ -407,6 +408,22 @@ impl Engine {
         }
         Ok(out)
     }
+}
+
+/// 명령어(첫 단어) 뒤의 본문 — `PROMPT  a b` → `a b`(앞 공백은 하나만 뗀다 · SQL*Plus).
+fn after_command_word(text: &str) -> String {
+    let t = text.trim_start();
+    let n = t
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .map(char::len_utf8)
+        .sum::<usize>();
+    let rest = &t[n..];
+    rest.strip_prefix(' ')
+        .unwrap_or(rest)
+        .trim_end_matches(';')
+        .trim_end()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -599,6 +616,25 @@ mod tests {
             }
         );
         assert_eq!(acts[4], Action::Print(vec![("X".into(), Value::Int(1))]));
+    }
+
+    /// `PROMPT`도 치환 변수를 푼다(SQL*Plus) · 미정의면 프롬프트 요청.
+    #[test]
+    fn prompt_substitutes_variables() {
+        let mut e = Engine::new(Dialect::Oracle);
+        e.set_args(&["2026".to_string()]);
+        let acts = plan_all(&mut e, "PROMPT Year &1 · &&x\n");
+        assert_eq!(acts, vec![Action::NeedInput { name: "X".into() }]);
+        e.define("x", "Q1");
+        let acts = plan_all(&mut e, "PROMPT Year &1 · &x\nPROMPT\n");
+        assert_eq!(
+            acts,
+            vec![
+                Action::Prompt("Year 2026 · Q1".into()),
+                Action::Prompt(String::new())
+            ]
+        );
+        assert_eq!(after_command_word("prompt  two spaces"), " two spaces");
     }
 
     #[test]

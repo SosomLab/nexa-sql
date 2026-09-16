@@ -493,6 +493,69 @@ fn parse_set(rest: &str) -> Result<Option<Command>, String> {
     })))
 }
 
+/// `SPOOL` 인자 해석 결과(호스트가 파일을 연다 · T-9). SQL*Plus 의미: 확장자가 없으면 `.lst`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SpoolCmd {
+    /// 맨몸 `SPOOL` — 현재 대상 보고.
+    Status,
+    /// `SPOOL OFF` · `SPOOL OUT`(OUT = 인쇄 없이 닫기와 동일).
+    Off,
+    Start {
+        path: String,
+        mode: SpoolMode,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SpoolMode {
+    /// 기본 — 있으면 덮어쓴다(SQL*Plus `REPLACE`).
+    Replace,
+    Append,
+    /// 이미 있으면 오류.
+    Create,
+}
+
+/// `SPOOL [file [CREATE|REPLACE|APPEND] | OFF | OUT]`. 경로는 따옴표(`"a b.lst"`)로 감쌀 수 있다.
+/// 실패 = 알 수 없는 옵션 토큰(호스트가 메시지로).
+pub fn parse_spool(target: &str) -> Result<SpoolCmd, String> {
+    let t = target.trim();
+    if t.is_empty() {
+        return Ok(SpoolCmd::Status);
+    }
+    let (path, rest) = if let Some(q) = t.strip_prefix('"') {
+        match q.find('"') {
+            Some(i) => (q[..i].to_string(), q[i + 1..].trim()),
+            None => (q.to_string(), ""),
+        }
+    } else {
+        let n = t.find(char::is_whitespace).unwrap_or(t.len());
+        (t[..n].to_string(), t[n..].trim())
+    };
+    if rest.is_empty() && matches!(path.to_ascii_uppercase().as_str(), "OFF" | "OUT") {
+        return Ok(SpoolCmd::Off);
+    }
+    let mode = match rest.to_ascii_uppercase().as_str() {
+        "" | "REP" | "REPLACE" => SpoolMode::Replace,
+        "APP" | "APPEND" => SpoolMode::Append,
+        "CRE" | "CREATE" => SpoolMode::Create,
+        _ => return Err(rest.to_string()),
+    };
+    Ok(SpoolCmd::Start {
+        path: spool_default_ext(&path),
+        mode,
+    })
+}
+
+/// 마지막 경로 요소에 확장자가 없으면 `.lst`(SQL*Plus).
+fn spool_default_ext(path: &str) -> String {
+    let base = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    if base.contains('.') {
+        path.to_string()
+    } else {
+        format!("{path}.lst")
+    }
+}
+
 /// 실행 계획 스크립트(GUI Explain · CLI `nsql explain`) — 방언별 관용. `stmt`는 한 문장(끝 `;` 없어도 됨).
 #[must_use]
 pub fn explain_script(dialect: Dialect, stmt: &str) -> String {
@@ -651,6 +714,72 @@ mod tests {
         assert!(!is_command_start("SELECT 1"));
         assert!(!is_command_start("EXECUTION_LOG"));
         assert!(is_command_start("GO"));
+    }
+
+    #[test]
+    fn spool_forms() {
+        assert_eq!(parse_spool(""), Ok(SpoolCmd::Status));
+        assert_eq!(parse_spool("off"), Ok(SpoolCmd::Off));
+        assert_eq!(parse_spool("OUT"), Ok(SpoolCmd::Off));
+        assert_eq!(
+            parse_spool("out.txt"),
+            Ok(SpoolCmd::Start {
+                path: "out.txt".into(),
+                mode: SpoolMode::Replace
+            })
+        );
+        // 확장자 없음 → .lst · 디렉터리에 점이 있어도 파일 이름만 본다.
+        assert_eq!(
+            parse_spool("./a.b/report append"),
+            Ok(SpoolCmd::Start {
+                path: "./a.b/report.lst".into(),
+                mode: SpoolMode::Append
+            })
+        );
+        assert_eq!(
+            parse_spool("\"my out.log\" CREATE"),
+            Ok(SpoolCmd::Start {
+                path: "my out.log".into(),
+                mode: SpoolMode::Create
+            })
+        );
+        assert_eq!(parse_spool("x.lst bogus"), Err("bogus".into()));
+        // 명령 해석기와 이어진다.
+        assert_eq!(
+            parse_command("spo out.lst"),
+            Ok(Some(Command::Spool {
+                target: "out.lst".into()
+            }))
+        );
+    }
+
+    /// `@`는 cwd 기준 · `@@`는 호출 스크립트 기준 · 인자는 `&1..&n`(호스트가 정의) · sqlcmd `:r`도 포함.
+    #[test]
+    fn include_forms() {
+        assert_eq!(
+            parse_command("@init.sql 2026 Q1").unwrap(),
+            Some(Command::Run {
+                path: "init.sql".into(),
+                args: vec!["2026".into(), "Q1".into()],
+                relative_to_caller: false
+            })
+        );
+        assert_eq!(
+            parse_command("@@lib/common.sql").unwrap(),
+            Some(Command::Run {
+                path: "lib/common.sql".into(),
+                args: vec![],
+                relative_to_caller: true
+            })
+        );
+        assert_eq!(
+            parse_command(":r C:\\x\\a.sql").unwrap(),
+            Some(Command::Include {
+                path: "C:\\x\\a.sql".into()
+            })
+        );
+        assert!(is_command_start("@@a.sql"));
+        assert!(is_command_start(":r a.sql"));
     }
 
     #[test]

@@ -406,6 +406,11 @@ fn detail(c: &Cmd) -> String {
         for line in t(Msg::HlpShellCommandList).split('\n') {
             o.push_str(&format!("  {line}\n"));
         }
+        // T-52 다른 CLI 별칭(psql · sqlcmd · sqlite3) + SPOOL(T-9).
+        o.push_str(&format!("\n{}\n", t(Msg::HlpShellAliases)));
+        for line in t(Msg::HlpShellAliasList).split('\n') {
+            o.push_str(&format!("  {line}\n"));
+        }
     }
     if !c.examples.is_empty() {
         o.push_str(&format!("\n{}\n", t(Msg::HlpExamples)));

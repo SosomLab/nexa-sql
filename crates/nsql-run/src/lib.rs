@@ -13,10 +13,19 @@
 use nsql_core::{
     Column, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session, Stage, Timeline, Value,
 };
+use nsql_i18n::{t, tf, Msg};
 use nsql_script::{
-    split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared, SqlKind,
+    parse_spool, split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared,
+    SpoolCmd, SpoolMode, SqlKind,
 };
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// `@`/`@@` 중첩 상한(자기 자신을 부르는 스크립트 보호).
+const MAX_SCRIPT_DEPTH: usize = 32;
 
 /// 호스트로 흘러가는 이벤트.
 #[derive(Debug)]
@@ -65,7 +74,6 @@ pub enum RunEvent {
 
 /// 이벤트 → 로그 엔트리(GUI 로그 창 · CLI `--log` 공용 매핑 · docs/26 §3). 타임스탬프는 엔트리 생성 시각.
 pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
-    use nsql_i18n::{t, tf, Msg};
     use nsql_log::{LogEntry, LogKind};
     match ev {
         RunEvent::Begin { line, summary, .. } => {
@@ -141,6 +149,96 @@ pub type Prompter<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
 /// `Err` = 이름 꼴인데 프로필이 없거나 봉투를 열 수 없음.
 pub type Resolver = Box<dyn FnMut(&str) -> Result<Option<ConnectSpec>, String>>;
 
+/// `SPOOL` 파일 상태(T-9 · SQL*Plus 의미) — 호스트가 **찍는 모든 출력**을 [`Spool::write`]로 복사한다. Runner는 `SPOOL` 명령으로
+/// 열고 닫기만 하고 무엇을 쓰는지는 호스트 Printer가 정한다(렌더링은 호스트 소관 · docs/30 포트). 장착하지 않은 호스트(GUI)는
+/// [`Msg::SpoolNotSupported`] 메시지. 실시간 서버 메시지 싱크(다른 스레드)도 같은 핸들에 쓰므로 `Arc<Mutex>`.
+#[derive(Debug, Default)]
+pub struct Spool {
+    path: Option<PathBuf>,
+    file: Option<BufWriter<File>>,
+    /// 쓰기 실패 — 스풀을 닫고 한 번만 보고한다([`Spool::take_error`]).
+    error: Option<String>,
+}
+
+/// 호스트와 Runner가 공유하는 스풀 핸들.
+pub type SpoolHandle = Arc<Mutex<Spool>>;
+
+impl Spool {
+    #[must_use]
+    pub fn new_handle() -> SpoolHandle {
+        Arc::new(Mutex::new(Spool::default()))
+    }
+
+    #[must_use]
+    pub fn is_on(&self) -> bool {
+        self.file.is_some()
+    }
+
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// 명령 적용 → 사용자에게 보일 메시지(없으면 `None` · 시작은 SQL*Plus처럼 조용하다). 실패 = 메시지.
+    /// 이미 스풀 중에 새 `SPOOL file`이면 앞 파일을 닫고 새 파일로.
+    pub fn apply(&mut self, cmd: &SpoolCmd) -> Result<Option<String>, String> {
+        match cmd {
+            SpoolCmd::Status => Ok(Some(match &self.path {
+                Some(p) => tf(Msg::SpoolStatusOn, &[&p.display().to_string()]),
+                None => t(Msg::SpoolStatusOff).to_string(),
+            })),
+            SpoolCmd::Off => Ok(Some(match self.close() {
+                Some(p) => tf(Msg::SpoolStopped, &[&p.display().to_string()]),
+                None => t(Msg::SpoolStatusOff).to_string(),
+            })),
+            SpoolCmd::Start { path, mode } => {
+                let mut o = std::fs::OpenOptions::new();
+                match mode {
+                    SpoolMode::Replace => o.write(true).create(true).truncate(true),
+                    SpoolMode::Append => o.append(true).create(true),
+                    SpoolMode::Create => o.write(true).create_new(true),
+                };
+                match o.open(path) {
+                    Ok(f) => {
+                        self.close();
+                        self.path = Some(PathBuf::from(path));
+                        self.file = Some(BufWriter::new(f));
+                        self.error = None;
+                        Ok(None)
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        Err(tf(Msg::SpoolExists, &[path]))
+                    }
+                    Err(e) => Err(tf(Msg::SpoolOpenFailed, &[path, &e.to_string()])),
+                }
+            }
+        }
+    }
+
+    /// 출력 복사 — 켜져 있을 때만. 쓰기 실패면 닫고 오류를 보관한다.
+    pub fn write(&mut self, bytes: &[u8]) {
+        if let Some(f) = self.file.as_mut() {
+            if let Err(e) = f.write_all(bytes) {
+                self.error = Some(e.to_string());
+                self.close();
+            }
+        }
+    }
+
+    /// 마지막 쓰기 오류(한 번만).
+    pub fn take_error(&mut self) -> Option<String> {
+        self.error.take()
+    }
+
+    /// 닫는다(플러시) — 닫힌 파일 경로.
+    pub fn close(&mut self) -> Option<PathBuf> {
+        if let Some(mut f) = self.file.take() {
+            let _ = f.flush();
+        }
+        self.path.take()
+    }
+}
+
 /// 접속 테스트 결과(`nsql conn test` · GUI "Test Connection" 공용).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestReport {
@@ -181,6 +279,12 @@ pub struct Runner {
     pub max_rows: usize,
     /// 서버 메시지 실시간 싱크(접속마다 세션에 심는다 · GUI = 이벤트 채널 · CLI = stdout).
     pub message_sink: Option<nsql_core::MessageSink>,
+    /// `SPOOL` 포트(T-9) — 호스트가 장착하면 파일을 열고 닫는다. 없으면 "미지원" 메시지.
+    pub spool: Option<SpoolHandle>,
+    /// 엄격 모드(설정 `script.strict` · T-9): 미정의 `&var`는 프롬프트 대신 오류 · 선언 없는 `:bind`는 암묵 선언 대신 오류.
+    pub strict: bool,
+    /// 실행 중인 스크립트 폴더 스택 — `@@`·`:r`의 기준(맨 위 = 현재 스크립트).
+    script_dirs: Vec<PathBuf>,
 }
 
 impl Runner {
@@ -193,7 +297,24 @@ impl Runner {
             connection: None,
             max_rows: 0,
             message_sink: None,
+            spool: None,
+            strict: false,
+            script_dirs: Vec::new(),
         }
+    }
+
+    /// `SPOOL` 포트 장착(체이닝) — CLI Printer가 같은 핸들에 출력을 복사한다.
+    #[must_use]
+    pub fn with_spool(mut self, spool: SpoolHandle) -> Self {
+        self.spool = Some(spool);
+        self
+    }
+
+    /// 엄격 모드(체이닝 · 설정 `script.strict`).
+    #[must_use]
+    pub fn with_strict(mut self, on: bool) -> Self {
+        self.strict = on;
+        self
     }
 
     /// 실시간 메시지 싱크 장착(체이닝).
@@ -354,13 +475,29 @@ impl Runner {
         }
     }
 
-    /// 스크립트 전체 실행. 오류 시 `WHENEVER SQLERROR EXIT`면 중단. 반환 = 오류 수.
+    /// 스크립트 전체 실행(출처 파일 없음 — 편집기 버퍼·stdin · `@@`는 cwd 기준). 오류 시 `WHENEVER SQLERROR EXIT`면 중단. 반환 = 오류 수.
     pub fn run_script(
         &mut self,
         src: &str,
         prompt: Prompter<'_>,
         emit: &mut dyn FnMut(RunEvent),
     ) -> usize {
+        self.run_script_in(src, None, prompt, emit)
+    }
+
+    /// 스크립트 전체 실행 — `script_path`가 있으면 그 폴더가 안쪽 `@@path`·`:r path`의 기준이 된다(`nsql run file.sql`).
+    pub fn run_script_in(
+        &mut self,
+        src: &str,
+        script_path: Option<&Path>,
+        prompt: Prompter<'_>,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> usize {
+        let pushed = script_path.map(|p| {
+            let dir = p.parent().filter(|d| !d.as_os_str().is_empty());
+            self.script_dirs
+                .push(dir.map_or_else(|| PathBuf::from("."), Path::to_path_buf));
+        });
         let items = split_script(src);
         let mut errors = 0;
         for (i, item) in items.iter().enumerate() {
@@ -371,7 +508,87 @@ impl Runner {
                 }
             }
         }
+        if pushed.is_some() {
+            self.script_dirs.pop();
+        }
         errors
+    }
+
+    /// `@path`(cwd 기준) · `@@path`·`:r path`(호출 스크립트 폴더 기준 · 없으면 cwd) → 실제 경로.
+    /// 그 경로가 없고 확장자도 없으면 `.sql`을 붙여 본다(SQL*Plus).
+    fn resolve_script(&self, path: &str, relative_to_caller: bool) -> PathBuf {
+        let p = Path::new(path);
+        let mut full = match self.script_dirs.last() {
+            Some(dir) if relative_to_caller && p.is_relative() => dir.join(p),
+            _ => p.to_path_buf(),
+        };
+        if !full.exists() && full.extension().is_none() {
+            let alt = full.with_extension("sql");
+            if alt.exists() {
+                full = alt;
+            }
+        }
+        full
+    }
+
+    /// `@`/`@@`/`:r` 포함 실행(T-9). 인자가 있으면 `&1..&n`을 정의하고 **돌아올 때 호출자의 값을 복원**한다(중첩 안전 ·
+    /// 인자가 없으면 호출자의 `&1..`을 그대로 물려받는다). 프롬프트는 호출자의 것을 그대로 쓴다.
+    fn include(
+        &mut self,
+        index: usize,
+        item: &Item,
+        full: &Path,
+        args: &[String],
+        prompt: Prompter<'_>,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        if self.script_dirs.len() >= MAX_SCRIPT_DEPTH {
+            emit(RunEvent::Error {
+                index,
+                line: item.line,
+                error: msg_err(tf(
+                    Msg::ScriptNestTooDeep,
+                    &[&full.display().to_string(), &MAX_SCRIPT_DEPTH.to_string()],
+                )),
+            });
+            return false;
+        }
+        let src = match std::fs::read_to_string(full) {
+            Ok(s) => s,
+            Err(e) => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: msg_err(tf(
+                        Msg::ScriptReadFailed,
+                        &[&full.display().to_string(), &e.to_string()],
+                    )),
+                });
+                return false;
+            }
+        };
+        let saved: Vec<(String, Option<String>)> = (1..=args.len())
+            .map(|i| {
+                let k = i.to_string();
+                let v = self.engine.defines.get(&k).cloned();
+                (k, v)
+            })
+            .collect();
+        if !args.is_empty() {
+            self.engine.set_args(args);
+        }
+        let errs = self.run_script_in(&src, Some(full), prompt, emit);
+        for (k, v) in saved {
+            match v {
+                Some(v) => {
+                    self.engine.defines.insert(k, v);
+                }
+                None => {
+                    self.engine.defines.remove(&k);
+                }
+            }
+        }
+        errs == 0
     }
 
     /// 항목 하나. 반환 = 성공 여부.
@@ -391,6 +608,15 @@ impl Runner {
         loop {
             let actions = self.engine.plan(item);
             if let [Action::NeedInput { name }] = actions.as_slice() {
+                // 엄격 모드(T-9): 묻지 않고 오류 — 배치에서 조용히 빈 값이 들어가는 사고 방지.
+                if self.strict {
+                    emit(RunEvent::Error {
+                        index,
+                        line: item.line,
+                        error: msg_err(tf(Msg::StrictUndefined, &[name])),
+                    });
+                    return false;
+                }
                 match prompt(name) {
                     Some(v) => {
                         self.engine.define(name, &v);
@@ -399,7 +625,7 @@ impl Runner {
                             emit(RunEvent::Error {
                                 index,
                                 line: item.line,
-                                error: msg_err("치환 변수 루프"),
+                                error: msg_err(t(Msg::SubstLoop)),
                             });
                             return false;
                         }
@@ -409,7 +635,7 @@ impl Runner {
                         emit(RunEvent::Error {
                             index,
                             line: item.line,
-                            error: msg_err(format!("치환 변수 &{name} 미정의")),
+                            error: msg_err(tf(Msg::SubstUndefined, &[name])),
                         });
                         return false;
                     }
@@ -417,7 +643,7 @@ impl Runner {
             }
             let mut ok = true;
             for a in actions {
-                if !self.perform(index, item, a, emit) {
+                if !self.perform(index, item, a, prompt, emit) {
                     ok = false;
                     break;
                 }
@@ -431,6 +657,7 @@ impl Runner {
         index: usize,
         item: &Item,
         action: Action,
+        prompt: Prompter<'_>,
         emit: &mut dyn FnMut(RunEvent),
     ) -> bool {
         match action {
@@ -438,7 +665,24 @@ impl Runner {
                 prepared,
                 expect_out,
                 ..
-            } => self.execute(index, item, prepared, expect_out, emit),
+            } => {
+                // 엄격 모드(T-9): 선언 없는 `:bind`는 암묵 선언 대신 오류(SQL*Plus "bind variable not declared").
+                if self.strict && !prepared.implicit.is_empty() {
+                    for n in &prepared.implicit {
+                        self.engine.vars.remove(n);
+                    }
+                    emit(RunEvent::Error {
+                        index,
+                        line: item.line,
+                        error: msg_err(tf(
+                            Msg::StrictImplicitBind,
+                            &[&prepared.implicit.join(", ")],
+                        )),
+                    });
+                    return false;
+                }
+                self.execute(index, item, prepared, expect_out, emit)
+            }
             Action::LocalAssign { name, value } => {
                 emit(RunEvent::Message(format!(":{name} = {}", value.display())));
                 true
@@ -472,7 +716,7 @@ impl Runner {
                                 emit(RunEvent::Error {
                                     index,
                                     line: item.line,
-                                    error: msg_err("접속이 없습니다"),
+                                    error: msg_err(t(Msg::NoSession)),
                                 });
                                 return false;
                             }
@@ -498,6 +742,13 @@ impl Runner {
             Action::Describe(o) => self.describe(index, item, &o, emit),
             Action::Show(w) => {
                 let w_up = w.trim().to_ascii_uppercase();
+                // `SHOW TABLES|VIEWS|<kind>` — 카탈로그 목록(T-52 · psql `\dt` · sqlite `.tables` 별칭의 종착).
+                if !matches!(w_up.as_str(), "USER" | "VARIABLES" | "VAR") {
+                    if let Some(kind) = nsql_catalog::ObjectKind::parse(&w_up.to_ascii_lowercase())
+                    {
+                        return self.show_objects(index, item, kind, emit);
+                    }
+                }
                 let text = match w_up.as_str() {
                     "USER" => format!("USER = {}", self.connection.clone().unwrap_or_default()),
                     "VARIABLES" | "VAR" => self
@@ -507,39 +758,29 @@ impl Runner {
                         .map(|(n, v)| format!("{n} = {}", v.value.display()))
                         .collect::<Vec<_>>()
                         .join("\n"),
-                    _ => format!("SHOW {w}: 미지원(설정 = {:?})", self.engine.settings.other),
+                    _ => tf(Msg::ShowUnsupported, &[w.trim()]),
                 };
                 emit(RunEvent::Message(text));
                 true
             }
-            Action::Spool(t) => {
-                emit(RunEvent::Message(format!("SPOOL {t}: 호스트 미구현(T-9)")));
-                true
-            }
+            Action::Spool(target) => self.spool_cmd(index, item, &target, emit),
             Action::Prompt(t) => {
                 emit(RunEvent::Message(t));
                 true
             }
-            Action::RunScript { path, .. } => match std::fs::read_to_string(&path) {
-                Ok(src) => {
-                    let mut no_prompt = |_: &str| None;
-                    let errs = self.run_script(&src, &mut no_prompt, emit);
-                    errs == 0
-                }
-                Err(e) => {
-                    emit(RunEvent::Error {
-                        index,
-                        line: item.line,
-                        error: msg_err(format!("{path}: {e}")),
-                    });
-                    false
-                }
-            },
+            Action::RunScript {
+                path,
+                args,
+                relative_to_caller,
+            } => {
+                let full = self.resolve_script(&path, relative_to_caller);
+                self.include(index, item, &full, &args, prompt, emit)
+            }
             Action::NeedInput { name } => {
                 emit(RunEvent::Error {
                     index,
                     line: item.line,
-                    error: msg_err(format!("치환 변수 &{name} 미정의")),
+                    error: msg_err(tf(Msg::SubstUndefined, &[&name])),
                 });
                 false
             }
@@ -573,6 +814,93 @@ impl Runner {
         }
     }
 
+    /// `SPOOL …`(T-9) — 해석은 [`parse_spool`], 파일은 호스트가 장착한 [`Spool`]. 시작은 조용히 · OFF/맨몸은 메시지.
+    fn spool_cmd(
+        &mut self,
+        index: usize,
+        item: &Item,
+        target: &str,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        let cmd = match parse_spool(target) {
+            Ok(c) => c,
+            Err(opt) => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: msg_err(tf(Msg::SpoolBadOption, &[&opt])),
+                });
+                return false;
+            }
+        };
+        let Some(handle) = self.spool.as_ref() else {
+            emit(RunEvent::Message(t(Msg::SpoolNotSupported).to_string()));
+            return true;
+        };
+        let r = handle
+            .lock()
+            .map_err(|e| e.to_string())
+            .and_then(|mut s| s.apply(&cmd));
+        match r {
+            Ok(Some(m)) => {
+                emit(RunEvent::Message(m));
+                true
+            }
+            Ok(None) => true,
+            Err(m) => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: msg_err(m),
+                });
+                false
+            }
+        }
+    }
+
+    /// `SHOW TABLES|VIEWS|…` — 현재 스키마의 오브젝트 목록을 결과 집합으로(`nsql cat <kind>`와 같은 컬럼).
+    fn show_objects(
+        &mut self,
+        index: usize,
+        item: &Item,
+        kind: nsql_catalog::ObjectKind,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        let Some(session) = self.session.as_mut() else {
+            emit(RunEvent::Error {
+                index,
+                line: item.line,
+                error: msg_err(t(Msg::NoSession)),
+            });
+            return false;
+        };
+        let schema = nsql_catalog::current_schema(session.as_mut()).unwrap_or_default();
+        let started = Instant::now();
+        match nsql_catalog::objects(session.as_mut(), &schema, kind) {
+            Ok(list) => {
+                let rows = list
+                    .into_iter()
+                    .map(|i| vec![i.schema, i.name, i.status, i.modified, i.extra])
+                    .collect();
+                emit(RunEvent::ResultSet {
+                    index,
+                    rs: text_result_set(&["Schema", "Name", "Status", "Modified", "Extra"], rows),
+                    elapsed: started.elapsed(),
+                    more: false,
+                });
+                true
+            }
+            Err(e) => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: e,
+                });
+                false
+            }
+        }
+    }
+
     fn execute(
         &mut self,
         index: usize,
@@ -585,7 +913,7 @@ impl Runner {
             emit(RunEvent::Error {
                 index,
                 line: item.line,
-                error: msg_err("접속이 없습니다 — CONNECT 먼저"),
+                error: msg_err(t(Msg::NoSession)),
             });
             return false;
         };
@@ -759,7 +1087,7 @@ impl Runner {
             emit(RunEvent::Error {
                 index,
                 line: item.line,
-                error: msg_err("접속이 없습니다 — CONNECT 먼저"),
+                error: msg_err(t(Msg::NoSession)),
             });
             return false;
         };
@@ -866,6 +1194,23 @@ fn absorb_from_result_set(result: &mut ExecResult, _names: &[String]) {
     result.result_sets.pop();
     if result.rows_affected.is_none() {
         result.rows_affected = Some(0);
+    }
+}
+
+/// 문자열만 담는 결과 집합(카탈로그 목록용).
+fn text_result_set(cols: &[&str], rows: Vec<Vec<String>>) -> ResultSet {
+    ResultSet {
+        columns: cols
+            .iter()
+            .map(|n| Column {
+                name: (*n).to_string(),
+                type_name: String::new(),
+            })
+            .collect(),
+        rows: rows
+            .into_iter()
+            .map(|r| r.into_iter().map(Value::Str).collect())
+            .collect(),
     }
 }
 
@@ -982,6 +1327,215 @@ mod tests {
             !ev.iter().any(|e| matches!(e, RunEvent::ResultSet { .. })),
             "중단"
         );
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("nsql-run-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn result_sets(ev: &[RunEvent]) -> Vec<&ResultSet> {
+        ev.iter()
+            .filter_map(|e| match e {
+                RunEvent::ResultSet { rs, .. } => Some(rs),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// T-9(a) SPOOL: 시작은 조용히 · 맨몸은 상태 · OFF는 닫고 보고 · CREATE는 기존 파일 거부 · 모르는 옵션은 오류 ·
+    /// 포트가 없는 호스트는 "미지원" 메시지. 파일에는 호스트가 `write`한 것만 들어간다.
+    #[test]
+    fn spool_port_opens_and_closes_files() {
+        let dir = temp_dir("spool");
+        let target = dir.join("out");
+        let handle = Spool::new_handle();
+        let mut r = runner().with_spool(handle.clone());
+        let (errs, ev) = collect(&mut r, "SPOOL\n");
+        assert_eq!(errs, 0);
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Message(m) if m == t(Msg::SpoolStatusOff))));
+        let (errs, ev) = collect(&mut r, &format!("SPOOL {}\n", target.display()));
+        assert_eq!(errs, 0, "{ev:?}");
+        assert!(
+            !ev.iter().any(|e| matches!(e, RunEvent::Message(_))),
+            "시작은 조용히"
+        );
+        {
+            let mut sp = handle.lock().unwrap();
+            assert!(sp.is_on());
+            assert_eq!(
+                sp.path().unwrap().extension().unwrap(),
+                "lst",
+                ".lst 기본 확장자"
+            );
+            sp.write(b"line 1\n");
+        }
+        let (_, ev) = collect(&mut r, "SPOOL\n");
+        assert!(ev.iter().any(
+            |e| matches!(e, RunEvent::Message(m) if m.contains("out.lst") && m != t(Msg::SpoolStatusOff))
+        ));
+        let (errs, ev) = collect(&mut r, "SPOOL OFF\n");
+        assert_eq!(errs, 0);
+        assert!(!handle.lock().unwrap().is_on());
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Message(m) if m.contains("out.lst"))));
+        let lst = dir.join("out.lst");
+        assert_eq!(std::fs::read_to_string(&lst).unwrap(), "line 1\n");
+        // APPEND는 이어쓰기 · 기본(REPLACE)은 덮어쓰기.
+        collect(&mut r, &format!("SPOOL {} APPEND\n", lst.display()));
+        handle.lock().unwrap().write(b"line 2\n");
+        collect(&mut r, "SPOOL OUT\n");
+        assert_eq!(std::fs::read_to_string(&lst).unwrap(), "line 1\nline 2\n");
+        collect(&mut r, &format!("SPOOL {}\n", lst.display()));
+        handle.lock().unwrap().write(b"fresh\n");
+        collect(&mut r, "SPOOL OFF\n");
+        assert_eq!(std::fs::read_to_string(&lst).unwrap(), "fresh\n");
+        // CREATE = 이미 있으면 오류 · 모르는 옵션 = 오류.
+        let (errs, _) = collect(&mut r, &format!("SPOOL {} CREATE\n", lst.display()));
+        assert_eq!(errs, 1);
+        let (errs, _) = collect(&mut r, "SPOOL x.lst BOGUS\n");
+        assert_eq!(errs, 1);
+        // 포트 없는 호스트.
+        let mut plain = runner();
+        let (errs, ev) = collect(&mut plain, "SPOOL a.lst\n");
+        assert_eq!(errs, 0);
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Message(m) if m == t(Msg::SpoolNotSupported))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-9(b) `@`는 cwd 기준 · `@@`는 호출 스크립트 폴더 기준(중첩도 자기 폴더) · 인자 `&1..&n` 전달 · 돌아오면 호출자의 `&1` 복원 ·
+    /// 확장자 없으면 `.sql` 보완 · 없는 파일은 오류.
+    #[test]
+    fn include_resolves_relative_to_caller_and_passes_args() {
+        let dir = temp_dir("include");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(
+            dir.join("main.sql"),
+            "DEFINE tag = outer\nSELECT '&1' AS main_arg;\n@@sub/child 7 x\nSELECT '&1' AS restored;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("sub/child.sql"),
+            "SELECT &1 AS child_arg, '&2' AS second, '&tag' AS inherited;\n@@leaf.sql\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("sub/leaf.sql"), "SELECT '&1' AS leaf_sees;\n").unwrap();
+        let mut r = runner();
+        r.engine.set_args(&["top".to_string()]);
+        let src = std::fs::read_to_string(dir.join("main.sql")).unwrap();
+        let mut ev = Vec::new();
+        let mut no_prompt = |_: &str| None;
+        let errs = r.run_script_in(
+            &src,
+            Some(&dir.join("main.sql")),
+            &mut no_prompt,
+            &mut |e| ev.push(e),
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        let sets = result_sets(&ev);
+        assert_eq!(sets.len(), 4, "{ev:?}");
+        assert_eq!(sets[0].rows[0][0], Value::Str("top".into()));
+        assert_eq!(
+            sets[1].rows[0],
+            vec![
+                Value::Int(7),
+                Value::Str("x".into()),
+                Value::Str("outer".into())
+            ]
+        );
+        assert_eq!(
+            sets[2].rows[0][0],
+            Value::Str("7".into()),
+            "인자 없는 중첩은 물려받는다"
+        );
+        assert_eq!(
+            sets[3].rows[0][0],
+            Value::Str("top".into()),
+            "돌아오면 복원"
+        );
+        assert!(
+            !r.engine.defines.contains_key("2"),
+            "호출자에 없던 &2는 지운다"
+        );
+        // `@`는 cwd 기준 — 절대 경로면 어디서든.
+        let (errs, ev) = collect(
+            &mut r,
+            &format!("@{} 1 2\n", dir.join("sub/child.sql").display()),
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        // 없는 파일.
+        let (errs, ev) = collect(&mut r, "@@nope.sql\n");
+        assert_eq!(errs, 1);
+        assert!(ev.iter().any(
+            |e| matches!(e, RunEvent::Error { error, .. } if error.message.contains("nope.sql"))
+        ));
+        // 자기 자신을 부르는 스크립트는 상한에서 멈춘다.
+        std::fs::write(dir.join("loop.sql"), "@@loop.sql\n").unwrap();
+        let (errs, ev) = collect(&mut r, &format!("@{}\n", dir.join("loop.sql").display()));
+        assert!(errs >= 1);
+        assert!(ev.iter().any(|e| matches!(e, RunEvent::Error { error, .. } if error.message.contains(&MAX_SCRIPT_DEPTH.to_string()))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-9(d) 엄격 모드: 미정의 `&var`는 프롬프트가 있어도 오류 · 선언 없는 `:bind`는 오류(그리고 암묵 선언을 남기지 않는다) ·
+    /// DEFINE/VARIABLE로 선언하면 통과.
+    #[test]
+    fn strict_mode_rejects_undefined_substitution_and_implicit_bind() {
+        let mut r = runner().with_strict(true);
+        let mut ev = Vec::new();
+        let mut prompt = |_: &str| Some("5".to_string());
+        let errs = r.run_script("SELECT &N AS n;\n", &mut prompt, &mut |e| ev.push(e));
+        assert_eq!(errs, 1);
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Error { error, .. } if error.message.contains("&N"))));
+        let (errs, ev) = collect(&mut r, "SELECT :UNDECLARED AS x;\n");
+        assert_eq!(errs, 1, "{ev:?}");
+        assert!(ev.iter().any(
+            |e| matches!(e, RunEvent::Error { error, .. } if error.message.contains(":UNDECLARED"))
+        ));
+        assert!(
+            r.engine.vars.get("UNDECLARED").is_none(),
+            "암묵 선언을 남기지 않는다"
+        );
+        let (errs, ev) = collect(
+            &mut r,
+            "DEFINE n = 3\nVARIABLE v NUMBER = 4\nSELECT :v + &n AS x;\n",
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        // 느슨한 기본은 그대로 프롬프트.
+        let mut loose = runner();
+        let mut ev = Vec::new();
+        let errs = loose.run_script("SELECT &N AS n;\n", &mut prompt, &mut |e| ev.push(e));
+        assert_eq!(errs, 0);
+    }
+
+    /// T-52 `SHOW TABLES`(psql `\dt` · sqlite `.tables`의 종착) — 카탈로그 목록을 결과 집합으로.
+    #[test]
+    fn show_tables_lists_catalog_objects() {
+        let mut r = runner();
+        let (errs, ev) = collect(
+            &mut r,
+            "CREATE TABLE emp(id INTEGER);\nCREATE TABLE dept(id INTEGER);\nSHOW TABLES\nSHOW USER\n",
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        let sets = result_sets(&ev);
+        assert_eq!(sets.len(), 1);
+        let names: Vec<String> = sets[0].rows.iter().map(|row| row[1].display()).collect();
+        assert!(
+            names.contains(&"emp".to_string()) && names.contains(&"dept".to_string()),
+            "{names:?}"
+        );
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Message(m) if m.starts_with("USER = "))));
     }
 
     #[test]

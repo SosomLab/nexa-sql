@@ -18,13 +18,15 @@ mod plan;
 mod term;
 
 use nsql_core::{DbError, Dialect, Session};
+use nsql_i18n::{t, tf, Msg};
 use nsql_io::{
     choose_key, generate, guess_table, split_table, Format, GridOpts, KeyMode, Overflow, SqlKind,
 };
-use nsql_run::{Opener, RunEvent, Runner};
+use nsql_run::{Opener, RunEvent, Runner, Spool, SpoolHandle};
 use nsql_script::{split_script, ConnectSpec};
 use nsql_vault::Vault;
 use std::io::{self, BufRead, Read, Write};
+use std::path::Path;
 
 struct Opts {
     cmd: String,
@@ -282,6 +284,53 @@ fn key_mode_setting() -> KeyMode {
         .unwrap_or(KeyMode::Pk)
 }
 
+/// 설정 `script.strict`(HIDDEN · T-9) — 미정의 `&var`·선언 없는 `:bind`를 오류로.
+fn strict_setting() -> bool {
+    nsql_settings::Settings::open_default()
+        .ok()
+        .and_then(|s| s.get("script.strict").map(|v| v == "on"))
+        .unwrap_or(false)
+}
+
+/// 셸 별칭(T-52 · docs/27 §1-1 ⑥ · psql `\d` · sqlite3 `.tables` · sqlcmd `:r`) → SQL*Plus식 명령 한 줄.
+/// 순수 함수(테스트) — 바꾼 줄은 그대로 스크립트 엔진으로 간다. `:r`은 엔진이 이미 안다(`Command::Include`).
+#[derive(Debug, PartialEq, Eq)]
+enum ShellAlias {
+    Rewrite(String),
+    Help,
+}
+
+fn shell_alias(line: &str) -> Option<ShellAlias> {
+    let t = line.trim().trim_end_matches(';').trim();
+    let (head, rest) = match t.find(char::is_whitespace) {
+        Some(i) => (&t[..i], t[i..].trim()),
+        None => (t, ""),
+    };
+    let low = head.to_ascii_lowercase();
+    Some(match (low.as_str(), rest.is_empty()) {
+        ("\\?" | "\\h" | "help", true) => ShellAlias::Help,
+        ("\\d" | "\\dt" | ".tables" | ".table", true) => ShellAlias::Rewrite("SHOW TABLES".into()),
+        ("\\dv" | ".views", true) => ShellAlias::Rewrite("SHOW VIEWS".into()),
+        ("\\d" | ".schema", false) => ShellAlias::Rewrite(format!("DESCRIBE {rest}")),
+        ("\\i" | ".read", false) => ShellAlias::Rewrite(format!("@{rest}")),
+        ("\\c" | "\\connect", false) => ShellAlias::Rewrite(format!("CONNECT {rest}")),
+        _ => return None,
+    })
+}
+
+/// 셸 `\?`/`help` — 명령 표 + 별칭 표(stderr · `help set`과 같은 자리).
+fn print_shell_help() {
+    eprintln!("{}", t(Msg::HlpShellCommands));
+    for line in t(Msg::HlpShellCommandList).split('\n') {
+        eprintln!("  {line}");
+    }
+    eprintln!("\n{}", t(Msg::HlpShellAliases));
+    for line in t(Msg::HlpShellAliasList).split('\n') {
+        eprintln!("  {line}");
+    }
+    eprintln!("\n{}", t(Msg::CliShellSetHelp));
+}
+
 /// 표 폭 옵션 — 설정 `cli.width`/`cli.max_col_width`/`cli.overflow`(`nsql config set …`) 위에 플래그가 덮는다.
 /// 줄 폭 0 = 터미널이면 콘솔 폭 · 파이프/파일이면 무제한.
 fn grid_opts(o: &Opts) -> GridOpts {
@@ -469,6 +518,16 @@ fn resolve_target(target: &str, dialect: Dialect) -> Result<ConnectSpec, String>
     nsql_drivers::parse_target(target, dialect)
 }
 
+/// 스풀에 복사(켜져 있을 때만) — 쓰기 실패는 한 번만 stderr에(스풀은 닫힌다).
+fn spool_write(spool: &SpoolHandle, bytes: &[u8]) {
+    if let Ok(mut sp) = spool.lock() {
+        sp.write(bytes);
+        if let Some(e) = sp.take_error() {
+            eprintln!("{}", tf(Msg::SpoolWriteFailed, &[&e]));
+        }
+    }
+}
+
 /// 이벤트 → 터미널 출력. 반환 = 오류 수.
 struct Printer {
     format: Format,
@@ -498,9 +557,49 @@ struct Printer {
     timing: bool,
     /// 실행 로그 허브(`--log` · 별도 스레드 stderr 싱크 · 없으면 None).
     log: Option<nsql_log::LogHub>,
+    /// `SPOOL`(T-9) — 이 Printer가 찍는 모든 것(stdout·stderr 오류·타이밍)과 실시간 서버 메시지를 파일에도. Runner와 공유.
+    spool: SpoolHandle,
 }
 
 impl Printer {
+    fn new(o: &Opts, format: Format, feedback: bool) -> Printer {
+        Printer {
+            format,
+            grid: grid_opts(o),
+            last: None,
+            last_sql: None,
+            stmts: Vec::new(),
+            cur_stmt: 0,
+            deferred: Vec::new(),
+            key_mode: key_mode_setting(),
+            dialect: o.dialect,
+            errors: 0,
+            feedback,
+            timing: o.timing,
+            log: log_hub(o),
+            spool: Spool::new_handle(),
+        }
+    }
+
+    /// stdout + 스풀.
+    fn out(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let o = io::stdout();
+        let mut o = o.lock();
+        let _ = o.write_all(bytes);
+        drop(o);
+        spool_write(&self.spool, bytes);
+    }
+
+    /// stderr + 스풀(SQL*Plus처럼 오류도 스풀에 남는다). stdout을 먼저 비워 순서를 지킨다.
+    fn err(&mut self, text: &str) {
+        let _ = io::stdout().flush();
+        eprintln!("{text}");
+        spool_write(&self.spool, format!("{text}\n").as_bytes());
+    }
+
     /// 스크립트 문장 목록(테이블 추정용 · 실행 전에).
     fn set_source(&mut self, src: &str) {
         self.stmts = split_script(src).into_iter().map(|i| i.text).collect();
@@ -513,8 +612,7 @@ impl Printer {
             return;
         }
         let items = std::mem::take(&mut self.deferred);
-        let out = io::stdout();
-        let mut out = out.lock();
+        let mut out: Vec<u8> = Vec::new();
         for (rs, more, elapsed, idx, kind) in items {
             let sql = self.stmts.get(idx).map(String::as_str).unwrap_or("");
             let (text, warn) = sql_statements(
@@ -543,6 +641,7 @@ impl Printer {
                 );
             }
         }
+        self.out(&out);
     }
 }
 
@@ -629,8 +728,8 @@ impl Printer {
                 hub.push(e);
             }
         }
-        let out = io::stdout();
-        let mut out = out.lock();
+        // stdout으로 갈 것은 버퍼에 모아 한 번에(스풀 tee) · 오류·타이밍은 `err`(stderr + 스풀).
+        let mut out: Vec<u8> = Vec::new();
         match ev {
             RunEvent::Begin { index, .. } => self.cur_stmt = index,
             RunEvent::ResultSet {
@@ -656,7 +755,7 @@ impl Printer {
                 }
                 if self.feedback && matches!(self.format, Format::Grid | Format::Markdown) {
                     let note = if more {
-                        format!(" {}", nsql_i18n::t(nsql_i18n::Msg::CliRowsMore))
+                        format!(" {}", t(Msg::CliRowsMore))
                     } else {
                         String::new()
                     };
@@ -705,33 +804,36 @@ impl Printer {
             }
             RunEvent::Timing { timeline, .. } => {
                 if self.timing {
-                    eprintln!("⏱ {}", timeline.summary());
+                    self.err(&format!("⏱ {}", timeline.summary()));
                 }
             }
             RunEvent::Error { index, line, error } => {
                 self.errors += 1;
-                let _ = out.flush();
                 // 공통 분류 + 코드 부각(docs/42) — `ERROR line n: [ORA-00942 · Table not found: X] 원문`.
                 let stmt = self.stmts.get(index).map(String::as_str).unwrap_or("");
                 let c = nsql_core::classify(self.dialect, error.code, &error.message, stmt);
                 let head = err_head(&c);
                 if head.is_empty() {
-                    eprintln!("ERROR line {line}: {error}");
+                    self.err(&format!("ERROR line {line}: {error}"));
                 } else {
-                    eprintln!("ERROR line {line}: [{head}] {}", error.message);
+                    self.err(&format!("ERROR line {line}: [{head}] {}", error.message));
                 }
             }
         }
+        self.out(&out);
     }
 }
 
-/// 실행 중 서버 메시지(PRINT · RAISE NOTICE)를 도착 즉시 stdout에(사용자 09-15 "실행 중 로그").
-fn stdout_sink() -> nsql_core::MessageSink {
-    std::sync::Arc::new(|m: String| {
+/// 실행 중 서버 메시지(PRINT · RAISE NOTICE)를 도착 즉시 stdout에(사용자 09-15 "실행 중 로그") — 스풀에도(드라이버 스레드에서 불린다).
+fn stdout_sink(spool: SpoolHandle) -> nsql_core::MessageSink {
+    std::sync::Arc::new(move |m: String| {
+        let line = format!("{m}\n");
         let out = io::stdout();
         let mut out = out.lock();
-        let _ = writeln!(out, "{m}");
+        let _ = out.write_all(line.as_bytes());
         let _ = out.flush();
+        drop(out);
+        spool_write(&spool, line.as_bytes());
     })
 }
 
@@ -772,39 +874,37 @@ fn cmd_run(o: &Opts) -> i32 {
         return 2;
     };
     let src = read_source(path);
-    let mut printer = Printer {
-        format: o.format.clone(),
-        grid: grid_opts(o),
-        last: None,
-        last_sql: None,
-        stmts: Vec::new(),
-        cur_stmt: 0,
-        deferred: Vec::new(),
-        key_mode: key_mode_setting(),
-        dialect: o.dialect,
-        errors: 0,
-        feedback: true,
-        timing: o.timing,
-        log: log_hub(o),
-    };
+    let mut printer = Printer::new(o, o.format.clone(), true);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
-        .with_message_sink(stdout_sink())
-        .with_resolver(resolver());
+        .with_message_sink(stdout_sink(printer.spool.clone()))
+        .with_resolver(resolver())
+        .with_spool(printer.spool.clone())
+        .with_strict(strict_setting());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
     let mut prompt = |name: &str| if no_prompt { None } else { prompt_stdin(name) };
     printer.set_source(&src);
-    let errs = runner.run_script(&src, &mut prompt, &mut |e| printer.handle(e));
+    // 파일이면 그 폴더가 `@@`의 기준(T-9) · stdin이면 cwd.
+    let script_path = (path != "-").then(|| Path::new(path.as_str()));
+    let errs = runner.run_script_in(&src, script_path, &mut prompt, &mut |e| printer.handle(e));
     printer.flush_sql(runner.session.as_deref_mut());
     if let Some(s) = runner.session.as_mut() {
         let _ = s.commit();
     }
+    close_spool(&printer.spool);
     if errs > 0 {
         1
     } else {
         0
+    }
+}
+
+/// 실행 끝 — 열린 스풀을 닫는다(플러시 · SQL*Plus EXIT과 동일).
+fn close_spool(spool: &SpoolHandle) {
+    if let Ok(mut sp) = spool.lock() {
+        sp.close();
     }
 }
 
@@ -813,27 +913,15 @@ fn cmd_shell(o: &Opts) -> i32 {
         eprintln!("-c <target>가 필요합니다");
         return 2;
     };
-    let mut printer = Printer {
-        format: o.format.clone(),
-        grid: grid_opts(o),
-        last: None,
-        last_sql: None,
-        stmts: Vec::new(),
-        cur_stmt: 0,
-        deferred: Vec::new(),
-        key_mode: key_mode_setting(),
-        dialect: o.dialect,
-        errors: 0,
-        feedback: true,
-        timing: o.timing,
-        log: log_hub(o),
-    };
+    let mut printer = Printer::new(o, o.format.clone(), true);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
-        .with_message_sink(stdout_sink())
-        .with_resolver(resolver());
+        .with_message_sink(stdout_sink(printer.spool.clone()))
+        .with_resolver(resolver())
+        .with_spool(printer.spool.clone())
+        .with_strict(strict_setting());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
-    eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지 · 표 폭: set width <n|auto> · set colwidth <n> · set overflow wrap|truncate|expanded|none · \\x · show");
+    eprintln!("{}", t(Msg::CliShellBanner));
     let stdin = io::stdin();
     let mut buf = String::new();
     loop {
@@ -857,6 +945,23 @@ fn cmd_shell(o: &Opts) -> i32 {
         if buf.is_empty() && shell_set(t, &mut printer, runner.session.as_deref_mut()) {
             continue;
         }
+        // 다른 CLI 별칭(T-52): `\d` `.tables` `\i` … → SQL*Plus식 한 줄로 바꿔 엔진에.
+        let rewritten;
+        let t = if buf.is_empty() {
+            match shell_alias(t) {
+                Some(ShellAlias::Help) => {
+                    print_shell_help();
+                    continue;
+                }
+                Some(ShellAlias::Rewrite(r)) => {
+                    rewritten = r;
+                    rewritten.as_str()
+                }
+                None => t,
+            }
+        } else {
+            t
+        };
         buf.push_str(t);
         buf.push('\n');
         let first = buf.lines().next().unwrap_or("").trim();
@@ -881,6 +986,7 @@ fn cmd_shell(o: &Opts) -> i32 {
     if let Some(s) = runner.session.as_mut() {
         let _ = s.commit();
     }
+    close_spool(&printer.spool);
     0
 }
 
@@ -898,24 +1004,10 @@ fn cmd_explain(o: &Opts) -> i32 {
             return 2;
         }
     };
-    let mut printer = Printer {
-        format: o.format.clone(),
-        grid: grid_opts(o),
-        last: None,
-        last_sql: None,
-        stmts: Vec::new(),
-        cur_stmt: 0,
-        deferred: Vec::new(),
-        key_mode: key_mode_setting(),
-        dialect: o.dialect,
-        errors: 0,
-        feedback: false,
-        timing: o.timing,
-        log: log_hub(o),
-    };
+    let mut printer = Printer::new(o, o.format.clone(), false);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
-        .with_message_sink(stdout_sink())
+        .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let src = nsql_script::explain_script(runner.engine.dialect, &sql);
@@ -946,24 +1038,10 @@ fn cmd_export(o: &Opts) -> i32 {
         (Format::Insert { table }, Some(t)) if table == "T" => Format::Insert { table: t.clone() },
         (f, _) => f.clone(),
     };
-    let mut printer = Printer {
-        format: Format::Grid,
-        grid: grid_opts(o),
-        last: None,
-        last_sql: None,
-        stmts: Vec::new(),
-        cur_stmt: 0,
-        deferred: Vec::new(),
-        key_mode: key_mode_setting(),
-        dialect: o.dialect,
-        errors: 0,
-        feedback: false,
-        timing: o.timing,
-        log: log_hub(o),
-    };
+    let mut printer = Printer::new(o, Format::Grid, false);
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(o.max_rows)
-        .with_message_sink(stdout_sink())
+        .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let dialect = runner.engine.dialect;
@@ -1061,4 +1139,43 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-52 별칭 표 — psql · sqlite3 · sqlcmd 어휘가 SQL*Plus식 한 줄로.
+    #[test]
+    fn shell_aliases_map_onto_sqlplus_commands() {
+        let rw = |l: &str| match shell_alias(l) {
+            Some(ShellAlias::Rewrite(s)) => s,
+            other => panic!("{l}: {other:?}"),
+        };
+        assert_eq!(rw("\\d"), "SHOW TABLES");
+        assert_eq!(rw("\\dt;"), "SHOW TABLES");
+        assert_eq!(rw(".tables"), "SHOW TABLES");
+        assert_eq!(rw("\\dv"), "SHOW VIEWS");
+        assert_eq!(rw("\\d emp"), "DESCRIBE emp");
+        assert_eq!(rw(".schema hr.emp"), "DESCRIBE hr.emp");
+        assert_eq!(rw("\\i init.sql"), "@init.sql");
+        assert_eq!(rw(".read sub/x.sql 1 2"), "@sub/x.sql 1 2");
+        assert_eq!(rw("\\c prod"), "CONNECT prod");
+        assert_eq!(shell_alias("\\?"), Some(ShellAlias::Help));
+        assert_eq!(shell_alias("help"), Some(ShellAlias::Help));
+        // 엔진이 아는 것·SQL은 건드리지 않는다.
+        assert_eq!(shell_alias("help set"), None);
+        assert_eq!(shell_alias("SHOW TABLES"), None);
+        assert_eq!(shell_alias("DESC emp"), None);
+        assert_eq!(shell_alias(":r a.sql"), None);
+        assert_eq!(shell_alias("SELECT 1;"), None);
+        assert_eq!(shell_alias("\\i"), None, "파일 없는 \\i는 별칭이 아니다");
+        // 바뀐 줄은 전부 명령 시작이라 셸이 즉시 실행한다.
+        for l in ["\\d", "\\d emp", "\\i x.sql", "\\c prod"] {
+            let ShellAlias::Rewrite(r) = shell_alias(l).expect("alias") else {
+                panic!()
+            };
+            assert!(nsql_script::command::is_command_start(&r), "{r}");
+        }
+    }
 }
