@@ -1195,13 +1195,15 @@ impl Grid {
         if self.row_h > 0 && self.rs.is_some() {
             let (cw, ch) = self.content_size();
             let b = self.bounds;
-            // ★ 뷰포트 = 행번호 열(고정) 제외 — 가로 바의 끝이 키보드 `max_scroll`과 같은 자리(09-16: 바로는 끝까지 못 갔다).
+            // ★ 뷰포트 = 행번호 열(고정)·헤더(고정) 제외 — 바는 데이터 영역에만(09-16: 세로 바가 헤더까지 걸쳤다) ·
+            //   가로 바의 끝이 키보드 `max_scroll`과 같은 자리.
             let b = Rect::new(
                 b.x + self.gutter_w,
-                b.y,
+                b.y + self.header_h,
                 b.w - self.gutter_w,
-                b.h - self.row_h,
+                b.h - self.header_h - self.row_h,
             );
+            let ch = ch - self.header_h;
             let (nx, ny, consumed) = self.bars.on_event(
                 ev,
                 b,
@@ -1456,23 +1458,22 @@ impl Grid {
             fmt_dur(self.render),
             fmt_bytes(self.approx_bytes)
         );
+        // 푸터 글자 = 상태줄 크기(사용자 09-16) · 세로 가운데.
+        dc.select_font(FontSlot::Status, false);
         let iw = dc.text_width(&info);
         dc.fill_rect(footer, th.chrome_bg);
         dc.fill_rect(Rect::new(b.x, footer.y, b.w, 1), th.border);
-        dc.text(
-            b.x + b.w - iw - pad,
-            footer.y + pad / 2,
-            footer,
-            &info,
-            th.text_dim,
-        );
-        // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명) — 푸터 위까지.
+        let iy = dc.text_center_y(footer.y, footer.h);
+        dc.text(b.x + b.w - iw - pad, iy, footer, &info, th.text_dim);
+        dc.select_font(FontSlot::Base, false);
+        // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명) — 헤더 아래부터 푸터 위까지(데이터 영역만).
         let (cw, ch) = self.content_size();
+        let ch = ch - self.header_h;
         let vp = Rect::new(
             b.x + self.gutter_w,
-            b.y,
+            b.y + self.header_h,
             b.w - self.gutter_w,
-            b.h - self.row_h,
+            b.h - self.header_h - self.row_h,
         );
         self.bars.paint(
             dc,

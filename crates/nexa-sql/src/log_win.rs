@@ -734,13 +734,20 @@ impl LogWin {
         Rect::new(0, 0, w, if self.view_h > 0 { self.view_h } else { h })
     }
 
+    /// 스크롤바 뷰포트 = 본문에서 고정 헤더를 뺀 영역.
+    fn bars_vp(&self) -> Rect {
+        let v = self.viewport();
+        Rect::new(v.x, v.y + self.header_h, v.w, (v.h - self.header_h).max(0))
+    }
+
     /// 스크롤바에 마우스/휠을 먼저 준다(픽셀 스크롤 · 세로·가로). 소비되면 true.
     fn bars_event(&mut self, ev: &InputEvent) -> bool {
         if self.row_h <= 0 {
             return false;
         }
-        let vp = self.viewport();
-        let ch = self.content_h();
+        // 바는 헤더 아래 데이터 영역에만(사용자 09-16).
+        let vp = self.bars_vp();
+        let ch = self.content_h() - self.header_h;
         let cw = self.content_w;
         let (nx, ny, consumed) = self.bars.on_event(
             ev,
@@ -1288,13 +1295,13 @@ impl LogWin {
                 th.text_dim,
             );
             // 오버레이 스크롤바(필요할 때만 · 호버 두껍게 · 세로 + 가로)
-            let vp = Rect::new(0, 0, wi, self.view_h);
+            let vp = Rect::new(0, self.header_h, wi, (self.view_h - self.header_h).max(0));
             self.bars.paint(
                 &mut dc,
                 th,
                 vp,
                 self.content_w.max(vp.w),
-                content_h.max(vp.h),
+                (content_h - self.header_h).max(vp.h),
                 self.scroll_x,
                 self.scroll_y,
                 s,
