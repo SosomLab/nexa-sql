@@ -1372,6 +1372,9 @@ impl App {
             | "editor.ruler_color"
             | "editor.ruler_alpha"
             | "editor.highlight_selection" => self.apply_ruler_style(),
+            "editor.text_pad_left" => self
+                .editors
+                .set_text_inset(self.settings.int(key).clamp(0, 32) as i32),
             "tabs.tooltip" => self.editors.set_tooltip(self.settings.flag(key)),
             "log.template" => self
                 .log_win
@@ -4490,6 +4493,8 @@ fn main() {
     app.git
         .set_interval(app.settings.int("statusbar.git_secs").max(2) as u64);
     app.apply_ruler_style();
+    app.editors
+        .set_text_inset(app.settings.int("editor.text_pad_left").clamp(0, 32) as i32);
     app.grid.set_default_page_rows(max_rows);
     app.grid.set_col_limits(
         app.settings.int("grid.col_min_width") as i32,

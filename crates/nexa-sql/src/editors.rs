@@ -44,6 +44,8 @@ pub(crate) struct Editors {
     ruler_color: Option<nexa_ctl::theme::Color>,
     ruler_alpha: f32,
     occurrence_hl: bool,
+    /// 첫 글자 앞 여백(설정 `editor.text_pad_left`).
+    text_inset: i32,
     whitespace: WhitespaceStyle,
     /// (탭 폭, 공백 들여쓰기) **기본값**(설정 `editor.tab_size`/`editor.indent_spaces`) — 새 탭의 시작값.
     indent: (u8, bool),
@@ -106,6 +108,7 @@ impl Editors {
             ruler_color: None,
             ruler_alpha: 0.25,
             occurrence_hl: true,
+            text_inset: 3,
             whitespace: WhitespaceStyle::default(),
             indent: (4, true),
             indents: Vec::new(),
@@ -139,6 +142,7 @@ impl Editors {
         tb.set_rulers_visible(self.rulers_show);
         tb.set_ruler_style(self.ruler_color, self.ruler_alpha);
         tb.set_occurrence_highlight(self.occurrence_hl);
+        tb.set_text_inset(self.text_inset);
         tb.set_whitespace(self.whitespace);
         tb.set_indent(self.indent.0, self.indent.1);
         tb.set_tab_stops(self.tab_stops);
@@ -163,6 +167,14 @@ impl Editors {
             b.set_rulers_visible(show);
             b.set_ruler_style(color, alpha);
             b.set_occurrence_highlight(occurrence);
+        }
+    }
+
+    /// 첫 글자 앞 여백(설정 `editor.text_pad_left` · 전 탭).
+    pub(crate) fn set_text_inset(&mut self, px: i32) {
+        self.text_inset = px;
+        for b in &mut self.bufs {
+            b.set_text_inset(px);
         }
     }
 

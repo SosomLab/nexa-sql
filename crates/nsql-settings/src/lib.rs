@@ -407,6 +407,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "25",
     },
     Entry {
+        key: "editor.text_pad_left",
+        cat: Msg::CatEditor,
+        label: Msg::LblTextPadLeft,
+        desc: Msg::DescTextPadLeft,
+        kind: SettingKind::Int { min: 0, max: 32 },
+        default: "3",
+    },
+    Entry {
         key: "editor.highlight_selection",
         cat: Msg::CatEditor,
         label: Msg::LblHighlightSel,
