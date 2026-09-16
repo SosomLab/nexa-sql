@@ -127,14 +127,14 @@ fn parse_opts() -> Opts {
             "-d" | "--dialect" => {
                 let v = val("-d");
                 o.dialect = Dialect::from_name(&v).unwrap_or_else(|| {
-                    eprintln!("알 수 없는 방언: {v}");
+                    eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliErrDialect, &[&v]));
                     std::process::exit(2)
                 });
             }
             "-f" | "--format" => {
                 let v = val("-f");
                 o.format = Format::parse(&v).unwrap_or_else(|| {
-                    eprintln!("알 수 없는 형식: {v}");
+                    eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliErrFormat, &[&v]));
                     std::process::exit(2)
                 });
             }
@@ -143,7 +143,10 @@ fn parse_opts() -> Opts {
             "--port" => {
                 let v = val("--port");
                 o.port = Some(v.parse().unwrap_or_else(|_| {
-                    eprintln!("--port: 숫자가 아닙니다: {v}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliErrNotNumber, &["--port", &v])
+                    );
                     std::process::exit(2)
                 }));
             }
@@ -156,28 +159,37 @@ fn parse_opts() -> Opts {
             "--max-rows" => {
                 let v = val("--max-rows");
                 o.max_rows = v.parse().unwrap_or_else(|_| {
-                    eprintln!("--max-rows: 숫자가 아닙니다: {v}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliErrNotNumber, &["--max-rows", &v])
+                    );
                     std::process::exit(2)
                 });
             }
             "--width" | "--line-width" | "--linesize" => {
                 let v = val("--width");
                 o.width = Some(v.parse().unwrap_or_else(|_| {
-                    eprintln!("--width: 숫자가 아닙니다: {v}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliErrNotNumber, &["--width", &v])
+                    );
                     std::process::exit(2)
                 }));
             }
             "--max-col-width" | "--colwidth" => {
                 let v = val("--max-col-width");
                 o.max_col = Some(v.parse().unwrap_or_else(|_| {
-                    eprintln!("--max-col-width: 숫자가 아닙니다: {v}");
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(nsql_i18n::Msg::CliErrNotNumber, &["--max-col-width", &v])
+                    );
                     std::process::exit(2)
                 }));
             }
             "--overflow" => {
                 let v = val("--overflow");
                 o.overflow = Some(Overflow::parse(&v).unwrap_or_else(|| {
-                    eprintln!("--overflow: wrap | truncate | expanded | none 중 하나: {v}");
+                    eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliErrOverflow, &[&v]));
                     std::process::exit(2)
                 }));
             }
@@ -195,7 +207,10 @@ fn read_source(path: &str) -> String {
     if path == "-" {
         let mut s = String::new();
         if let Err(e) = io::stdin().read_to_string(&mut s) {
-            eprintln!("stdin 읽기 실패: {e}");
+            eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliErrStdin, &[&e.to_string()])
+            );
             std::process::exit(1);
         }
         s
@@ -368,7 +383,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
     }
     if low == "show" || low == "set" || low == "get" || low == "\\pset" || low == "help set" {
         show(g);
-        eprintln!("set width <n|auto> · set colwidth <n> · set overflow none|wrap|truncate|expanded · set format grid|markdown|csv|tsv|json|jsonl · get <키> · \\x · copy [fmt] · 영구: nsql config set cli.*");
+        eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliShellSetHelp));
         return true;
     }
     // get/show <키> — 값 하나만.
@@ -922,7 +937,7 @@ fn cmd_export(o: &Opts) -> i32 {
         (Some(q), _) => q.clone(),
         (None, Some(t)) => format!("SELECT * FROM {t}"),
         (None, None) => {
-            eprintln!("-q <sql> 또는 -t <table>이 필요합니다");
+            eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliErrNeedQuery));
             return 2;
         }
     };

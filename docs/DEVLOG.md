@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (42차 · win)** — **T-99 오토힌트**(`ui.text_hint` · nexa-ui 19차) · 도구줄 상태 글자 = UI 글꼴 · **i18n 전수 점검**(러너 로그·CLI 오류·창 제목 → Msg). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (41차 · win)** — 글꼴 크기 `Size` 종류(`13`/`13px`/`10pt` · `font_px`) · grid.font_face 배치 · 설정 카드 강조선 제거 · 팝업 위 구분선 결함. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (40차 · win)** — 설정 창 입력란 클립보드(Ctrl+C/X/V/A/Z/Y) · 우클릭 편집 메뉴 · 드래그 선택 — 접속 창과 동일. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (39차 · win)** — 결과 글꼴 = Calibri 13px(Golden 10pt · 레지스트리엔 그리드 글꼴 없음 → 사용자 확인). → [journal](journal/2026-09-16.md)

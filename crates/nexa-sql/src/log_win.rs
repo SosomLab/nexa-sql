@@ -627,7 +627,7 @@ impl LogWin {
             return;
         }
         let mut attrs = Window::default_attributes()
-            .with_title("Nexa SQL — Log")
+            .with_title(format!("Nexa SQL — {}", t(Msg::WinLog)))
             .with_theme(theme)
             .with_inner_size(winit::dpi::LogicalSize::new(592.0, 320.0));
         if let Some((x, y, w)) = near {

@@ -65,33 +65,36 @@ pub enum RunEvent {
 
 /// 이벤트 → 로그 엔트리(GUI 로그 창 · CLI `--log` 공용 매핑 · docs/26 §3). 타임스탬프는 엔트리 생성 시각.
 pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
+    use nsql_i18n::{t, tf, Msg};
     use nsql_log::{LogEntry, LogKind};
     match ev {
         RunEvent::Begin { line, summary, .. } => {
             vec![LogEntry::new(
                 LogKind::Send,
-                format!("line {line}: {summary}"),
+                tf(Msg::LogLineSummary, &[&line.to_string(), summary]),
             )]
         }
-        RunEvent::ResultSet { rs, elapsed, .. } => vec![LogEntry::new(LogKind::Done, "result set")
-            .rows(rs.rows.len() as u64)
-            .elapsed(*elapsed)],
+        RunEvent::ResultSet { rs, elapsed, .. } => {
+            vec![LogEntry::new(LogKind::Done, t(Msg::LogResultSet))
+                .rows(rs.rows.len() as u64)
+                .elapsed(*elapsed)]
+        }
         RunEvent::Done {
             rows_affected,
             elapsed,
             ..
-        } => vec![LogEntry::new(LogKind::Done, "done")
+        } => vec![LogEntry::new(LogKind::Done, t(Msg::LogDone))
             .rows(*rows_affected)
             .elapsed(*elapsed)],
         RunEvent::Print { pairs } => vec![LogEntry::new(
             LogKind::Info,
-            format!(
-                "PRINT {}",
-                pairs
+            tf(
+                Msg::LogPrint,
+                &[&pairs
                     .iter()
                     .map(|(n, _)| n.as_str())
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join(", ")],
             ),
         )],
         RunEvent::Message(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
@@ -105,18 +108,18 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         RunEvent::Disconnected => vec![LogEntry::new(LogKind::Disconnect, "")],
         RunEvent::Error { line, error, .. } => vec![LogEntry::new(
             LogKind::Error,
-            format!("line {line}: {}", error.message),
+            tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]),
         )],
         RunEvent::Timing { timeline, .. } => timeline
             .spans
             .iter()
             .map(|s| {
                 let (kind, msg) = match s.stage {
-                    Stage::Send => (LogKind::Send, "sent"),
-                    Stage::Execute => (LogKind::Execute, "first response"),
-                    Stage::Fetch => (LogKind::Fetch, "fetched"),
-                    Stage::OutputFlush => (LogKind::Output, "server output"),
-                    Stage::Commit => (LogKind::Commit, "commit"),
+                    Stage::Send => (LogKind::Send, t(Msg::LogSent)),
+                    Stage::Execute => (LogKind::Execute, t(Msg::LogFirstResponse)),
+                    Stage::Fetch => (LogKind::Fetch, t(Msg::LogFetched)),
+                    Stage::OutputFlush => (LogKind::Output, t(Msg::LogServerOutput)),
+                    Stage::Commit => (LogKind::Commit, t(Msg::LogCommit)),
                     other => (LogKind::Info, other.label()),
                 };
                 let mut m = msg.to_string();

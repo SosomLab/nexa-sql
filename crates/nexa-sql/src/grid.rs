@@ -198,6 +198,8 @@ pub(crate) struct Grid {
     text_gutter_w: i32,
     /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
     perf_report: bool,
+    /// 도구줄 상태 글자와 그 영역 — UI 글꼴 패스(상태줄과 같은 얼굴·크기)에서 호스트가 그린다(사용자 09-16).
+    footer_info: Option<(String, Rect)>,
 }
 
 impl Default for Grid {
@@ -290,6 +292,7 @@ impl Default for Grid {
             text_keep_scroll: false,
             text_gutter_w: 0,
             perf_report: false,
+            footer_info: None,
         }
     }
 }
@@ -2398,17 +2401,27 @@ impl Grid {
         if let Some(at) = &self.last_run_at {
             info.push_str(&format!(" · {at}"));
         }
+        // 글자는 여기서 그리지 않는다 — 그리드 글꼴(Calibri) 패스가 아니라 상태줄과 같은 UI 글꼴 패스에서(`paint_footer_text`).
+        self.footer_info = Some((
+            info,
+            Rect::new(x, footer.y, footer.right() - x - pad, footer.h),
+        ));
+    }
+
+    /// 도구줄 상태 글자(`7–17 / 200+ · ~291 KB · 시각`) — 호스트의 UI 글꼴 패스에서 `FontSlot::Status`(상태줄과 같은
+    /// 얼굴·크기)로 오른쪽 정렬.
+    pub(crate) fn paint_footer_text(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        let Some((info, area)) = &self.footer_info else {
+            return;
+        };
+        if area.w <= 0 || area.h <= 0 {
+            return;
+        }
         dc.select_font(FontSlot::Status, false);
-        let iw = dc.text_width(&info);
-        let iy = dc.text_center_y(footer.y, footer.h);
-        let ix = (footer.right() - iw - pad).max(x);
-        dc.text(
-            ix,
-            iy,
-            Rect::new(x, footer.y, footer.right() - x, footer.h),
-            &info,
-            th.text_dim,
-        );
+        let iw = dc.text_width(info);
+        let iy = dc.text_center_y(area.y, area.h);
+        let ix = (area.right() - iw).max(area.x);
+        dc.text(ix, iy, *area, info, th.text_dim);
         dc.select_font(FontSlot::Base, false);
     }
 

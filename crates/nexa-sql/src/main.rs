@@ -515,7 +515,7 @@ impl App {
                 Ok((description, elapsed_s)) => {
                     self.log_win.push(LogEntry::new(
                         LogKind::Info,
-                        format!("test ok: {description} ({elapsed_s}s)"),
+                        tf(Msg::LogTestOk, &[&description, &elapsed_s.to_string()]),
                     ));
                     // 상태줄·패널은 프로필 이름으로 간략하게(사용자 09-16) · 접속 문자열 상세는 위 로그 창에.
                     let label = if name.is_empty() { &description } else { &name };
@@ -866,7 +866,7 @@ impl App {
                         }
                         let mut note = String::new();
                         if !r.unknown.is_empty() {
-                            note.push_str(&format!(" · unknown {}", r.unknown.join(",")));
+                            note.push_str(&tf(Msg::StUnknownKeys, &[&r.unknown.join(",")]));
                         }
                         if !r.invalid.is_empty() {
                             note.push_str(&format!(
@@ -1199,6 +1199,7 @@ impl App {
         let pct = self.settings.int("ui.text_contrast").clamp(100, 250) as f32;
         nexa_gfx::text::set_text_contrast(pct / 100.0);
         nexa_gfx::text::set_text_snap(self.settings.flag("ui.text_snap"));
+        nexa_gfx::text::set_text_hint(self.settings.flag("ui.text_hint"));
     }
 
     /// 설정 → nexa-gfx 탭 폭 + 편집기 들여쓰기.
@@ -1372,7 +1373,7 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
-            "ui.text_contrast" | "ui.text_snap" => {
+            "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" => {
                 self.apply_text_render();
                 self.log_win.redraw();
             }
@@ -3270,6 +3271,8 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
+                // 결과 도구줄 상태 글자 = 상태줄과 같은 UI 글꼴·크기(사용자 09-16).
+                self.grid.paint_footer_text(&mut dc, &th);
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
             // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)

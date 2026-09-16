@@ -281,6 +281,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "140",
     },
     Entry {
+        key: "ui.text_hint",
+        cat: Msg::CatAppearance,
+        label: Msg::LblTextHint,
+        desc: Msg::DescTextHint,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "ui.text_snap",
         cat: Msg::CatAppearance,
         label: Msg::LblTextSnap,

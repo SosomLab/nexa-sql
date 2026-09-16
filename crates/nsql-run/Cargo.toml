@@ -16,6 +16,7 @@ nsql-core.workspace = true
 nsql-script.workspace = true
 nsql-io.workspace = true
 nsql-log.workspace = true
+nsql-i18n.workspace = true
 nsql-catalog.workspace = true
 
 [dev-dependencies]
