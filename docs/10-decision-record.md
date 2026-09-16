@@ -57,6 +57,7 @@
 | D-51 | 트랜잭션 UX([34](34-transaction-ux.md)) — 수동 커밋 단위 = 탭 세션 · 모드 계층 전역→프로필→탭 · 표시 3층(탭 배지 ●n · 상태줄 세그먼트+팝업 · 툴바 Commit 배지) · 잃는 순간만 모달 · 오래된 미커밋 빨강 — 권장안 확정 요청 |
 | D-62~66 | ✅ 09-16 결과 → SQL 키 규칙([41 §2](41-sql-copy-key-rules.md)): PK → 첫 유니크 → 앞 3컬럼 + 경고 1회 · 설정 `sql.key_mode` pk/all · 경고 = CLI 주석/GUI 상태줄+로그 · 테이블 미추정 = `T` · 키 조회 = 필요 시 1회 캐시 |
 | D-67 | 가상 키(테이블별 사용자 지정 · T-92) — 앞 3컬럼 경고가 잦으면 도입 |
+| D-76 | ✅ 09-16 **정규식 엔진 = `regex` + `fancy-regex`**(찾기·바꾸기·파일 찾기/바꾸기 · [journal 32차](journal/2026-09-16.md)): 선형 시간 RE2식 코어 + lookaround/역참조는 fancy만 백트래킹(시간 상한) · 순수 Rust(DR-3) · `$1` 치환 규약 |
 | D-68~72 | ✅ 09-16 페치 모델·결과 탭([43 §0](43-fetch-model-and-result-tabs.md)): 상한 = **대화형만**(GUI 그리드 · `nsql shell` · run/export/파이프 무제한) · 기본 **200**(전역 → 탭 로컬 · D-42 답) · 추가 페치 = **서버 커서 유지 + OFFSET 폴백**(D-43 답 · 세션당 커서 1) · 결과 탭 = 편집기 탭 ↔ 패널(Ctrl+Enter 교체 · Ctrl+\\ 추가) · 메모리 예산 `grid.memory_budget_mb` 256(탭 합계) |
 | D-58 | 자원 거버너([39 §4](39-resource-governance.md)) `perf.mode` 기본 = `auto`(배터리/원격 세션이면 balanced) vs `full`(지금 그대로 · 안내만) — 권장 `full` + 상태줄 1회 안내 |
 | D-59 | 개별 키를 직접 바꿨을 때 모드 표시 = `custom`(권장) vs 모드 유지·값만 우선 |

@@ -997,6 +997,18 @@ impl App {
         self.redraw();
     }
 
+    /// 설정 → 편집기 안내선(표시 · 색 · 투명도) + 동일 출현 외곽선(사용자 09-16).
+    fn apply_ruler_style(&mut self) {
+        let show = self.settings.flag("editor.rulers_show");
+        let color = self
+            .settings
+            .get("editor.ruler_color")
+            .and_then(nexa_ctl::theme::color_from_hex);
+        let alpha = self.settings.int("editor.ruler_alpha").clamp(5, 100) as f32 / 100.0;
+        let occ = self.settings.flag("editor.highlight_selection");
+        self.editors.set_ruler_style(show, color, alpha, occ);
+    }
+
     /// 설정 → nexa-gfx 텍스트 렌더(대비 감마 · 정수 스냅) — 전 창 공통(글리프 캐시 키에 감마가 들어 있어 비울 필요 없음).
     fn apply_text_render(&self) {
         let pct = self.settings.int("ui.text_contrast").clamp(100, 250) as f32;
@@ -1210,6 +1222,10 @@ impl App {
             "editor.rulers" => self
                 .editors
                 .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
+            "editor.rulers_show"
+            | "editor.ruler_color"
+            | "editor.ruler_alpha"
+            | "editor.highlight_selection" => self.apply_ruler_style(),
             "tabs.tooltip" => self.editors.set_tooltip(self.settings.flag(key)),
             "log.template" => self
                 .log_win
@@ -4367,6 +4383,7 @@ fn main() {
         app.settings.int("ui.toast_alpha"),
     );
     app.apply_text_render();
+    app.apply_ruler_style();
     app.grid.set_default_page_rows(max_rows);
     app.grid.set_col_limits(
         app.settings.int("grid.col_min_width") as i32,

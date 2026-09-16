@@ -383,6 +383,38 @@ pub const REGISTRY: &[Entry] = &[
         default: "80",
     },
     Entry {
+        key: "editor.rulers_show",
+        cat: Msg::CatEditor,
+        label: Msg::LblRulersShow,
+        desc: Msg::DescRulersShow,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.ruler_color",
+        cat: Msg::CatEditor,
+        label: Msg::LblRulerColor,
+        desc: Msg::DescRulerColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "editor.ruler_alpha",
+        cat: Msg::CatEditor,
+        label: Msg::LblRulerAlpha,
+        desc: Msg::DescRulerAlpha,
+        kind: SettingKind::Int { min: 5, max: 100 },
+        default: "25",
+    },
+    Entry {
+        key: "editor.highlight_selection",
+        cat: Msg::CatEditor,
+        label: Msg::LblHighlightSel,
+        desc: Msg::DescHighlightSel,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "editor.whitespace",
         cat: Msg::CatEditor,
         label: Msg::LblWhitespace,
@@ -1440,6 +1472,9 @@ impl Dep {
 /// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.refresh_secs", "explorer.auto_refresh", Dep::On),
+    ("editor.rulers", "editor.rulers_show", Dep::On),
+    ("editor.ruler_color", "editor.rulers_show", Dep::On),
+    ("editor.ruler_alpha", "editor.rulers_show", Dep::On),
     ("probe.max_retries", "probe.enabled", Dep::On),
     ("probe.timeout", "probe.enabled", Dep::On),
     ("probe.interval", "probe.enabled", Dep::On),

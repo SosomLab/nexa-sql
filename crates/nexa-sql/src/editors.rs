@@ -38,6 +38,11 @@ pub(crate) struct Editors {
     syntax: Vec<Rc<SyntaxSpec>>,
     registry: Rc<SyntaxRegistry>,
     rulers: Vec<usize>,
+    /// 안내선 스타일·표시 · 동일 출현 외곽선(설정 · 새 탭에도 적용).
+    rulers_show: bool,
+    ruler_color: Option<nexa_ctl::theme::Color>,
+    ruler_alpha: f32,
+    occurrence_hl: bool,
     whitespace: WhitespaceStyle,
     /// (탭 폭, 공백 들여쓰기) **기본값**(설정 `editor.tab_size`/`editor.indent_spaces`) — 새 탭의 시작값.
     indent: (u8, bool),
@@ -96,6 +101,10 @@ impl Editors {
             syntax: Vec::new(),
             registry,
             rulers: Vec::new(),
+            rulers_show: true,
+            ruler_color: None,
+            ruler_alpha: 0.25,
+            occurrence_hl: true,
             whitespace: WhitespaceStyle::default(),
             indent: (4, true),
             indents: Vec::new(),
@@ -126,12 +135,34 @@ impl Editors {
         tb.set_scale(self.scale);
         tb.set_highlighter(Some(syntax.clone()));
         tb.set_rulers(self.rulers.clone());
+        tb.set_rulers_visible(self.rulers_show);
+        tb.set_ruler_style(self.ruler_color, self.ruler_alpha);
+        tb.set_occurrence_highlight(self.occurrence_hl);
         tb.set_whitespace(self.whitespace);
         tb.set_indent(self.indent.0, self.indent.1);
         tb.set_tab_stops(self.tab_stops);
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
         tb.set_focus_ring(false);
         tb
+    }
+
+    /// 안내선 표시·색·투명도 · 동일 출현 외곽선(설정 4종 · 전 탭).
+    pub(crate) fn set_ruler_style(
+        &mut self,
+        show: bool,
+        color: Option<nexa_ctl::theme::Color>,
+        alpha: f32,
+        occurrence: bool,
+    ) {
+        self.rulers_show = show;
+        self.ruler_color = color;
+        self.ruler_alpha = alpha;
+        self.occurrence_hl = occurrence;
+        for b in &mut self.bufs {
+            b.set_rulers_visible(show);
+            b.set_ruler_style(color, alpha);
+            b.set_occurrence_highlight(occurrence);
+        }
     }
 
     /// 세로 안내선 열 목록(설정 `editor.rulers`).
@@ -170,7 +201,6 @@ impl Editors {
         true
     }
 
-    /// 캐럿 위치(1-기준 줄 · 열).
     /// 일반 선택(구간 1개)의 요약 — (걸친 줄 수, 문자 수). 없거나 비었으면 None(상태줄 Sublime식 · 사용자 09-16).
     pub(crate) fn selection_summary(&self) -> Option<(usize, usize)> {
         let tb = self.cur();
@@ -184,6 +214,7 @@ impl Editors {
         Some((lines, sel.chars().count()))
     }
 
+    /// 캐럿 위치(1-기준 줄 · 열).
     pub(crate) fn caret_line_col(&self) -> (usize, usize) {
         let tb = self.cur();
         let text = tb.text();
