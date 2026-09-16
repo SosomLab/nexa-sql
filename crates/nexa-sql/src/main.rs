@@ -513,7 +513,7 @@ impl App {
         self.editors
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
         // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
-        self.find.set_bounds(self.editors.editor_bounds(), w, s);
+        self.find.set_bounds(self.editors.editor_bounds(), s);
         self.find.set_clamp_width(w);
         // 스플리터 ② 편집기|결과 — 띠 = 편집기 아래 여백(pad) 자리.
         self.split_h

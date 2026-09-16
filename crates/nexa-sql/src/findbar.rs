@@ -91,9 +91,10 @@ const ROW1_H: f32 = 34.0;
 const ROW2_H: f32 = 62.0;
 const PAD_L: f32 = 9.0;
 const PAD_R: f32 = 4.0;
-const FOLD_X: f32 = 3.0;
+/// 접기 셰브론 왼쪽 여백 = 오른쪽(찾기 상자까지) 여백 = 5(사용자 09-17 · VS Code 3/5에서 조정).
+const FOLD_X: f32 = 5.0;
 const FOLD_W: f32 = 18.0;
-const PART_ML: f32 = 17.0;
+const PART_ML: f32 = 19.0;
 const INPUT_H: f32 = 25.0;
 const INPUT_TOP: f32 = 3.0;
 const ROW_PITCH: f32 = 28.0;
@@ -105,8 +106,7 @@ const BTN: f32 = 22.0;
 const BTN_GAP: f32 = 3.0;
 const COUNT_W: f32 = 69.0;
 const COUNT_GAP: f32 = 3.0;
-/// 우상단 여백(사용자 09-17: 오른쪽·위 각각 10px 동일) — 위 = 편집기(탭 바 아래) 기준 · 오른쪽 = **창 가장자리** 기준.
-/// 편집기는 창 양옆에 8px 안쪽 여백이 있어 편집기 기준 10px은 눈에 18px로 보였다(캡처 09-17).
+/// 우상단 여백(사용자 09-17 "흰 편집 영역 기준 위·오른쪽 각각 10px") — 편집기 텍스트박스 사각형이 기준.
 const MARGIN_RIGHT: f32 = 10.0;
 const MARGIN_TOP: f32 = 10.0;
 
@@ -494,12 +494,11 @@ impl FindBar {
     }
 
     /// 편집기 사각형 기준 **오른쪽 위**에 붙는다(VS Code · 본문을 밀지 않는다).
-    /// `outer_right` = 오른쪽 여백을 잴 창 가장자리(물리 px).
-    pub(crate) fn set_bounds(&mut self, editor: Rect, outer_right: i32, scale: f32) {
+    pub(crate) fn set_bounds(&mut self, editor: Rect, scale: f32) {
         self.scale = scale;
         let s = scale;
         let px = |v: f32| (v * s).round() as i32;
-        let right = outer_right.max(editor.right());
+        let right = editor.right();
         let w = px(WIDGET_W).min((right - editor.x - px(MARGIN_RIGHT)).max(px(260.0)));
         let h = px(if self.with_replace { ROW2_H } else { ROW1_H });
         let x = (right - px(MARGIN_RIGHT) - w).max(editor.x);
@@ -733,9 +732,10 @@ impl FindBar {
         let s = self.scale;
         let b = self.bounds;
         let r = (4.0 * s).round() as i32;
-        // 떠 있는 패널 — 아래 모서리만 둥글게(위는 편집기 위쪽에 붙음) · 테두리 + 그림자 한 줄.
-        dc.fill_round_rect(Rect::new(b.x, b.y - r, b.w, b.h + r), r, th.chrome_bg);
-        dc.stroke_round_rect(Rect::new(b.x, b.y - r, b.w, b.h + r), r, th.border, 1.0);
+        // 떠 있는 패널 — 네 모서리 둥글게 · **bounds에 정확히**(예전엔 편집기 위에 붙어 y−r에서 그려 위 여백을
+        //   8px 잠식했다 · 사용자 09-17 "위 3~5px") · 테두리 + 그림자 한 줄.
+        dc.fill_round_rect(b, r, th.chrome_bg);
+        dc.stroke_round_rect(b, r, th.border, 1.0);
         dc.fill_rect_alpha(Rect::new(b.x + 1, b.bottom(), b.w - 2, 1), th.text, 0.12);
         dc.select_font(FontSlot::Base, false);
         Self::paint_frame(dc, th, self.find_frame, &self.query, s);
