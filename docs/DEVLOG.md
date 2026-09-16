@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (33차 · win)** — 상태줄 줄끝 3종(CR 지원) · **인코딩 세그먼트**(UTF/CJK/CP1252 · `encoding_rs` · 저장/다시 열기 한 팝업 · Hex 제외) · **git 세그먼트**(`main (6)` · 배경 git CLI · `statusbar.git`) · 툴바 버튼 표시 설정(`toolbar.hidden` · 우클릭). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (32차 · win)** — 선택어 동일 출현 외곽선(`editor.highlight_selection`) · 컬럼 구분선 설정 4종(표시·위치·색·투명도 25%) · **정규식 엔진 D-76 = `regex` + `fancy-regex`** · T-97 미니맵. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (31차 · win)** — 결과 글자 선명도: 맑은 고딕→Segoe UI 우선(한글 폴백) · `ui.text_snap` 정수 스냅 · `ui.text_contrast` 감마 140%(nexa-ui 15차). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (30차 · win)** — 자동 페치 400행에서 멈춤(래핑 limit+1) · 상태줄 캐럿/선택 세그먼트 Sublime 3종(위치 · `N줄, M자 선택` · `선택 영역 N개`). → [journal](journal/2026-09-16.md)

@@ -56,6 +56,8 @@ nsql-vault = { path = "crates/nsql-vault" }
 nsql-i18n = { path = "crates/nsql-i18n" }
 nsql-settings = { path = "crates/nsql-settings" }
 nsql-log = { path = "crates/nsql-log" }
+# 파일 인코딩(EUC-KR·Shift_JIS·GB18030·Big5·CP1252) — WHATWG 코덱 · 순수 Rust · DR-3 예외(docs/10 원장 · 09-16).
+encoding_rs = "0.8"
 # nexa-ui(공용 UI) — M1 UI 착수 시 사용. 경로 의존(DR-4 · nexa-ui DR-4).
 nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
 nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }

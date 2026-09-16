@@ -174,21 +174,16 @@ impl FileWin {
         picker.set_show_hidden(show_hidden);
         picker.set_show_dot(show_dot);
         // 하단 인코딩 콤보(Golden/DBeaver 하단 줄 · 세 OS 동일 · 사용자 09-15) — 열기 = 자동 감지 기본 · 저장 = 탭 인코딩.
-        let items: Vec<(&str, String)> = match mode {
-            PickerMode::Open => vec![
-                ("auto", t(Msg::EncAuto).to_string()),
-                ("utf8", t(Msg::EncUtf8).to_string()),
-                ("utf8bom", t(Msg::EncUtf8Bom).to_string()),
-                ("utf16le", t(Msg::EncUtf16Le).to_string()),
-                ("utf16be", t(Msg::EncUtf16Be).to_string()),
-            ],
-            PickerMode::Save => vec![
-                ("utf8", t(Msg::EncUtf8).to_string()),
-                ("utf8bom", t(Msg::EncUtf8Bom).to_string()),
-                ("utf16le", t(Msg::EncUtf16Le).to_string()),
-                ("utf16be", t(Msg::EncUtf16Be).to_string()),
-            ],
-        };
+        // 목록 = `enc::LIST`(상태줄 팝업과 같은 한 곳 · 09-16) · 열기는 자동 감지가 먼저.
+        let mut items: Vec<(&str, String)> = Vec::new();
+        if mode == PickerMode::Open {
+            items.push(("auto", t(Msg::EncAuto).to_string()));
+        }
+        items.extend(
+            crate::enc::LIST
+                .iter()
+                .map(|e| (e.id, t(e.label).to_string())),
+        );
         let refs: Vec<(&str, &str)> = items.iter().map(|(v, l)| (*v, l.as_str())).collect();
         let sel = refs.iter().position(|(v, _)| *v == encoding).unwrap_or(0);
         picker.set_extra(t(Msg::LblEncoding), &refs, sel);

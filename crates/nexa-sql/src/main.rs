@@ -16,11 +16,13 @@ mod colors_win;
 mod conn_win;
 mod connect;
 mod editors;
+mod enc;
 mod eol;
 mod exp_icons;
 mod explorer;
 mod file_win;
 mod findbar;
+mod gitstat;
 mod grid;
 mod icon;
 mod input;
@@ -129,6 +131,10 @@ struct App {
     status_tab_rect: Rect,
     /// 상태줄 줄끝 세그먼트(`LF`/`CRLF` · 클릭 = 팝업 · docs/38).
     status_eol_rect: Rect,
+    /// 상태줄 인코딩 세그먼트(클릭 = 인코딩 팝업).
+    status_enc_rect: Rect,
+    /// 상태줄 git 세그먼트(활성 파일 폴더 · 배경 조회).
+    git: gitstat::GitWatch,
     status_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
     z_order: Vec<WindowId>,
@@ -980,8 +986,133 @@ impl App {
             .open_at(r.x, r.y, items, host, px(260.0, self.scale));
     }
 
+    /// 상태줄 인코딩 팝업(사용자 09-16 · Sublime 두 메뉴를 한 팝업에): 위 = "다른 인코딩으로 다시 열기 ▸"(파일 탭일 때만 ·
+    /// 파일을 그 인코딩으로 다시 디코드) · 아래 = 저장 인코딩 목록(현재 = ✓ 강조). 유니코드 4종 뒤 구분선.
+    fn open_enc_menu(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let cur = self.editors.active_encoding();
+        let mark = |on: bool, s: &str| {
+            if on {
+                format!("✓ {s}")
+            } else {
+                format!("   {s}")
+            }
+        };
+        let list = |prefix: &str, with_mark: bool| -> Vec<CtxItem> {
+            let mut v: Vec<CtxItem> = Vec::new();
+            for (i, e) in enc::LIST.iter().enumerate() {
+                if i == enc::UNICODE_COUNT {
+                    v.push(CtxItem::Separator);
+                }
+                let label = if with_mark {
+                    mark(cur == e.id, t(e.label))
+                } else {
+                    t(e.label).to_string()
+                };
+                let item = CtxItem::item(format!("{prefix}{}", e.id), label);
+                v.push(if with_mark {
+                    item.with_active(cur == e.id)
+                } else {
+                    item
+                });
+            }
+            v
+        };
+        let mut items: Vec<CtxItem> = Vec::new();
+        if self.editors.active_path().is_some() {
+            items.push(CtxItem::submenu(
+                "enc.reopen",
+                t(Msg::MnReopenEnc),
+                list("enc.reopen:", false),
+            ));
+            items.push(CtxItem::Separator);
+        }
+        items.extend(list("enc.set:", true));
+        let r = self.status_enc_rect;
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(r);
+        self.status_menu.set_scale(self.scale);
+        self.status_menu
+            .open_at(r.x, r.y, items, host, px(280.0, self.scale));
+    }
+
+    /// 툴바 우클릭 = 버튼 표시 여부 토글 메뉴(설정 `toolbar.hidden` · 순서 변경은 아직 없음 · 사용자 09-16).
+    fn open_toolbar_menu(&mut self, x: i32, y: i32) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let hidden = self.hidden_toolbar_ids();
+        let items: Vec<CtxItem> = TOOLBAR_ITEMS
+            .iter()
+            .map(|(id, m)| {
+                CtxItem::item(format!("tb:{id}"), t(*m))
+                    .with_checked(!hidden.contains(&id.to_string()))
+            })
+            .collect();
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(Rect::new(x, y, 0, 0));
+        self.status_menu.set_scale(self.scale);
+        self.status_menu
+            .open_at(x, y, items, host, px(220.0, self.scale));
+    }
+
+    fn hidden_toolbar_ids(&self) -> Vec<String> {
+        self.settings
+            .get("toolbar.hidden")
+            .unwrap_or("")
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// 설정 `toolbar.hidden` → 툴바 버튼 표시 여부.
+    fn apply_toolbar_visibility(&mut self) {
+        let hidden = self.hidden_toolbar_ids();
+        let mut inv = Invalidations::default();
+        for (id, _) in TOOLBAR_ITEMS {
+            self.toolbar
+                .set_item_visible(id, !hidden.contains(&id.to_string()), &mut inv);
+        }
+    }
+
     fn indent_pick(&mut self, id: &str) {
         let (ts, spaces) = self.editors.indent();
+        if let Some(e) = id.strip_prefix("enc.set:") {
+            self.editors.set_active_encoding(e);
+            self.status = tf(Msg::StEncSet, &[&enc::label(e)]);
+            return;
+        }
+        if let Some(e) = id.strip_prefix("enc.reopen:") {
+            if let Some(path) = self.editors.active_path() {
+                let e = e.to_string();
+                self.open_file_enc(&path, &e);
+            }
+            return;
+        }
+        if let Some(tid) = id.strip_prefix("tb:") {
+            let mut hidden = self.hidden_toolbar_ids();
+            if let Some(i) = hidden.iter().position(|h| h == tid) {
+                hidden.remove(i);
+            } else {
+                hidden.push(tid.to_string());
+            }
+            let _ = self.settings.set("toolbar.hidden", &hidden.join(","));
+            self.persist_settings();
+            self.apply_toolbar_visibility();
+            self.layout();
+            return;
+        }
         match id {
             "eol.lf" => self.editors.set_active_eol(eol::Eol::Lf),
             "eol.crlf" => self.editors.set_active_eol(eol::Eol::Crlf),
@@ -1196,6 +1327,15 @@ impl App {
             "ui.text_contrast" | "ui.text_snap" => {
                 self.apply_text_render();
                 self.log_win.redraw();
+            }
+            "toolbar.hidden" => {
+                self.apply_toolbar_visibility();
+                self.layout();
+            }
+            "statusbar.git" | "statusbar.git_secs" => {
+                self.git
+                    .set_interval(self.settings.int("statusbar.git_secs").max(2) as u64);
+                self.git.refresh(true);
             }
             "grid.font_face" => {
                 self.grid_font = load_grid_font(self.settings.get(key).unwrap_or(""));
@@ -2096,82 +2236,11 @@ impl App {
 
     /// 바이트 → 문자열(인코딩 지정 · `auto` = BOM 감지). 돌려주는 값 = (본문, 대체 문자 발생, 실제 인코딩).
     fn decode_bytes(bytes: &[u8], enc: &str) -> (String, bool, &'static str) {
-        let enc = if enc == "auto" {
-            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                "utf8bom"
-            } else if bytes.starts_with(&[0xFF, 0xFE]) {
-                "utf16le"
-            } else if bytes.starts_with(&[0xFE, 0xFF]) {
-                "utf16be"
-            } else {
-                "utf8"
-            }
-        } else {
-            enc
-        };
-        match enc {
-            "utf16le" | "utf16be" => {
-                let le = enc == "utf16le";
-                let body = if (le && bytes.starts_with(&[0xFF, 0xFE]))
-                    || (!le && bytes.starts_with(&[0xFE, 0xFF]))
-                {
-                    &bytes[2..]
-                } else {
-                    bytes
-                };
-                let units: Vec<u16> = body
-                    .chunks(2)
-                    .map(|c| {
-                        let (a, b) = (c[0], c.get(1).copied().unwrap_or(0));
-                        if le {
-                            u16::from_le_bytes([a, b])
-                        } else {
-                            u16::from_be_bytes([a, b])
-                        }
-                    })
-                    .collect();
-                let text = String::from_utf16_lossy(&units);
-                let lossy = text.contains('\u{FFFD}');
-                (text, lossy, if le { "utf16le" } else { "utf16be" })
-            }
-            "utf8bom" => {
-                let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-                match std::str::from_utf8(body) {
-                    Ok(s) => (s.to_string(), false, "utf8bom"),
-                    Err(_) => (String::from_utf8_lossy(body).into_owned(), true, "utf8bom"),
-                }
-            }
-            _ => match std::str::from_utf8(bytes) {
-                Ok(s) => (s.to_string(), false, "utf8"),
-                Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true, "utf8"),
-            },
-        }
+        enc::decode(bytes, enc)
     }
 
-    /// 문자열 → 바이트(탭 인코딩).
     fn encode_text(text: &str, enc: &str) -> Vec<u8> {
-        match enc {
-            "utf8bom" => {
-                let mut v = vec![0xEF, 0xBB, 0xBF];
-                v.extend_from_slice(text.as_bytes());
-                v
-            }
-            "utf16le" => {
-                let mut v = vec![0xFF, 0xFE];
-                for u in text.encode_utf16() {
-                    v.extend_from_slice(&u.to_le_bytes());
-                }
-                v
-            }
-            "utf16be" => {
-                let mut v = vec![0xFE, 0xFF];
-                for u in text.encode_utf16() {
-                    v.extend_from_slice(&u.to_be_bytes());
-                }
-                v
-            }
-            _ => text.as_bytes().to_vec(),
-        }
+        enc::encode(text, enc)
     }
 
     /// 파일 → 탭(인코딩 지정). 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
@@ -2227,6 +2296,7 @@ impl App {
         match res {
             Ok(()) => {
                 self.editors.mark_saved(path);
+                self.git.refresh(true);
                 self.push_recent(path);
                 let name = path
                     .file_name()
@@ -2508,6 +2578,7 @@ impl App {
         self.menubar
             .set_menus(App::build_menus_with(&self.recent_files(), &tabs));
         self.toolbar = App::build_toolbar();
+        self.apply_toolbar_visibility();
         self.conn_win.relabel();
         self.editors.rebuild_boxes();
         self.layout();
@@ -3037,6 +3108,20 @@ impl App {
                 } else {
                     tf(Msg::StTabSize, &[&ts])
                 };
+                // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
+                if self.settings.flag("statusbar.git") {
+                    let dir = self
+                        .editors
+                        .active_path()
+                        .and_then(|p| p.parent().map(Path::to_path_buf));
+                    self.git.set_dir(dir);
+                    self.git.refresh(false);
+                    if let Some(info) = self.git.info() {
+                        segs.push((format!("{} ({})", info.branch, info.changed), false));
+                    }
+                }
+                // 인코딩 세그먼트(클릭 = 저장 인코딩 / 다시 열기 팝업 · 사용자 09-16).
+                segs.push((enc::short(&self.editors.active_encoding()), true));
                 // 줄끝 세그먼트(VS Code/Sublime식 · 클릭 = LF/CRLF 팝업 · docs/38 · 사용자 09-16).
                 segs.push((self.editors.active_eol().label().to_string(), true));
                 segs.push((indent_seg, true));
@@ -3046,6 +3131,7 @@ impl App {
                 self.status_syntax_rect = Rect::new(0, 0, 0, 0);
                 self.status_tab_rect = Rect::new(0, 0, 0, 0);
                 self.status_eol_rect = Rect::new(0, 0, 0, 0);
+                self.status_enc_rect = Rect::new(0, 0, 0, 0);
                 let last = segs.len() - 1;
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
@@ -3059,12 +3145,15 @@ impl App {
                         text,
                         if *is_syntax { th.text } else { th.text_dim },
                     );
-                    if *is_syntax && idx == last {
-                        self.status_syntax_rect = r;
-                    } else if *is_syntax && idx + 1 == last {
-                        self.status_tab_rect = r;
-                    } else if *is_syntax {
-                        self.status_eol_rect = r;
+                    // 오른쪽 끝부터: 구문 · 들여쓰기 · 줄끝 · 인코딩(클릭 가능한 4개 · 그 앞은 표시만).
+                    if *is_syntax {
+                        match last - idx {
+                            0 => self.status_syntax_rect = r,
+                            1 => self.status_tab_rect = r,
+                            2 => self.status_eol_rect = r,
+                            3 => self.status_enc_rect = r,
+                            _ => {}
+                        }
                     }
                     xr -= gap;
                     dc.fill_rect(
@@ -3346,6 +3435,11 @@ impl App {
                 self.redraw();
                 return;
             }
+            if self.status_enc_rect.contains(Point { x, y }) {
+                self.open_enc_menu();
+                self.redraw();
+                return;
+            }
         }
         // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다.
         if self.menubar.is_open() {
@@ -3357,6 +3451,13 @@ impl App {
             return;
         }
         if is_mouse {
+            if let InputEvent::RightDown { x, y } = ev {
+                if self.toolbar.bounds().contains(Point { x, y }) {
+                    self.open_toolbar_menu(x, y);
+                    self.redraw();
+                    return;
+                }
+            }
             self.menubar.on_event(&ev, &mut inv);
             if let Some(id) = self.menubar.take_picked() {
                 self.menu_action(&id);
@@ -3611,6 +3712,7 @@ impl ApplicationHandler<Wake> for App {
         let now_ms = self.started.elapsed().as_millis() as u64;
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
+        redraw |= self.git.poll();
         // 잠든 결과 탭의 텍스트 변환도 이어서 거둔다(다른 탭에서 완성 · 09-16) — 그리지는 않는다.
         for g in self.grid_stash.values_mut() {
             let _ = g.tick(now_ms);
@@ -3660,6 +3762,7 @@ impl ApplicationHandler<Wake> for App {
         let bars_live = self.ed_mut().scrollbars_visible()
             || self.grid.bars_visible()
             || self.grid.text_pending()
+            || self.git.pending()
             || self.grid_stash.values().any(|g| g.text_pending())
             || self.log_win.bars_visible()
             || self.log_win.tooltip_pending()
@@ -4294,6 +4397,8 @@ fn main() {
         last_secs: None,
         status_syntax_rect: Rect::new(0, 0, 0, 0),
         status_eol_rect: Rect::new(0, 0, 0, 0),
+        status_enc_rect: Rect::new(0, 0, 0, 0),
+        git: gitstat::GitWatch::new(),
         status_tab_rect: Rect::new(0, 0, 0, 0),
         status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         toggle_log: false,
@@ -4381,6 +4486,9 @@ fn main() {
         app.settings.int("ui.toast_alpha"),
     );
     app.apply_text_render();
+    app.apply_toolbar_visibility();
+    app.git
+        .set_interval(app.settings.int("statusbar.git_secs").max(2) as u64);
     app.apply_ruler_style();
     app.grid.set_default_page_rows(max_rows);
     app.grid.set_col_limits(
@@ -4516,6 +4624,19 @@ fn load_grid_font(face: &str) -> Option<Font> {
     }
     nexa_font::ui_font(Some(face)).map(|l| l.font)
 }
+
+/// 툴바 버튼(id · 라벨 = 툴팁 문구) — 표시 여부 메뉴·설정 `toolbar.hidden`의 원천(순서는 `build_toolbar`와 같다).
+const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
+    ("file.new", Msg::TipNew),
+    ("file.open", Msg::TipOpen),
+    ("file.save", Msg::TipSave),
+    ("file.save_as", Msg::TipSaveAs),
+    ("run.statement", Msg::TipRunStatement),
+    ("run.all", Msg::TipRunAll),
+    ("conn.toggle", Msg::TipConnect),
+    ("conn.disconnect", Msg::TipDisconnect),
+    ("view.log", Msg::TipLog),
+];
 
 /// 파일 대화상자의 용도 — 같은 대화상자를 편집기 열기/저장과 로그 내보내기가 나눠 쓴다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

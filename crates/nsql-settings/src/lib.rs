@@ -554,6 +554,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "1000",
     },
     Entry {
+        key: "toolbar.hidden",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToolbarHidden,
+        desc: Msg::DescToolbarHidden,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
         key: "tabs.rows",
         cat: Msg::CatAppearance,
         label: Msg::LblTabsRows,
@@ -981,6 +989,22 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescScrollNatural,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "statusbar.git",
+        cat: Msg::CatWindow,
+        label: Msg::LblStatusGit,
+        desc: Msg::DescStatusGit,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "statusbar.git_secs",
+        cat: Msg::CatWindow,
+        label: Msg::LblStatusGitSecs,
+        desc: Msg::DescStatusGitSecs,
+        kind: SettingKind::Int { min: 2, max: 600 },
+        default: "15",
     },
     Entry {
         key: "window.always_on_top",
@@ -1472,6 +1496,7 @@ impl Dep {
 /// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.refresh_secs", "explorer.auto_refresh", Dep::On),
+    ("statusbar.git_secs", "statusbar.git", Dep::On),
     ("editor.rulers", "editor.rulers_show", Dep::On),
     ("editor.ruler_color", "editor.rulers_show", Dep::On),
     ("editor.ruler_alpha", "editor.rulers_show", Dep::On),
@@ -1509,6 +1534,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 
 pub const HIDDEN: &[&str] = &[
     "log.kinds",
+    "statusbar.git_secs",
     "log.switch_scale",
     "log.columns",
     "conn.delete_confirm_ms",
