@@ -530,7 +530,7 @@ impl LogWin {
         if self.vis.is_empty() || row_h <= 0 {
             return None;
         }
-        let row_abs = ((y - self.header_h + self.scroll_y).max(0) / row_h) as usize;
+        let row_abs = ((y - self.header_h + self.view_y()).max(0) / row_h) as usize;
         let (di, r) = if self.wrap {
             let i = match self.row_start.binary_search(&(row_abs as u32)) {
                 Ok(i) => i,
@@ -710,13 +710,19 @@ impl LogWin {
     }
 
     fn set_scroll(&mut self, y: i32) {
-        let max = self.max_scroll();
-        let mut y = y.clamp(0, max);
-        if self.row_snap && self.row_h > 0 && y < max {
-            y -= y % self.row_h;
-        }
-        self.scroll_y = y;
+        // 행 단위 모드는 표시 시점에만 맞춘다([`Self::view_y`] · 저장값은 px 누적 — 트랙패드 느린 스크롤 · 09-16).
+        self.scroll_y = y.clamp(0, self.max_scroll());
         self.redraw();
+    }
+
+    /// 그릴 때 쓰는 세로 오프셋 — 행 단위 모드면 행 경계로 내림(맨 아래는 그대로).
+    fn view_y(&self) -> i32 {
+        let max = self.max_scroll();
+        if self.row_snap && self.row_h > 0 && self.scroll_y < max {
+            self.scroll_y - self.scroll_y % self.row_h
+        } else {
+            self.scroll_y
+        }
     }
 
     fn set_scroll_x(&mut self, x: i32) {
@@ -755,7 +761,7 @@ impl LogWin {
             cw.max(vp.w),
             ch.max(vp.h),
             self.scroll_x,
-            self.scroll_y,
+            self.view_y(),
             self.scale,
         );
         self.set_scroll(ny);
@@ -1133,8 +1139,9 @@ impl LogWin {
             self.scroll_y = self.scroll_y.clamp(0, max);
             self.scroll_x = self.scroll_x.clamp(0, self.max_scroll_x());
             let body = Rect::new(0, self.header_h, wi, (self.view_h - self.header_h).max(0));
-            let first_row = (self.scroll_y / row_h) as usize;
-            let sub = self.scroll_y % row_h;
+            let vy = self.view_y();
+            let first_row = (vy / row_h) as usize;
+            let sub = vy % row_h;
             let indent = dc.text_width("    ");
             // 첫 항목과 그 안의 행 오프셋.
             let (first, mut row_in) = if self.wrap {
@@ -1303,7 +1310,7 @@ impl LogWin {
                 self.content_w.max(vp.w),
                 (content_h - self.header_h).max(vp.h),
                 self.scroll_x,
-                self.scroll_y,
+                self.view_y(),
                 s,
             );
             // 스위치 툴팁(600ms 머문 뒤 · 푸터 위쪽에 — 아래는 창 밖).

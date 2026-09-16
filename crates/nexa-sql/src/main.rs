@@ -1471,9 +1471,14 @@ impl App {
             }
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
-            "grid.scroll" => self
-                .grid
-                .set_row_snap(self.settings.get(key) == Some("row")),
+            "grid.scroll" => {
+                let on = self.settings.get(key) == Some("row");
+                self.grid.set_row_snap(on);
+                self.log_win.set_row_snap(on);
+            }
+            "editor.scroll" => self
+                .editors
+                .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             "editor.tab_size" | "editor.indent_spaces" | "editor.tab_stops" => self.apply_indent(),
             "file.eol_new" => self
@@ -4597,6 +4602,8 @@ fn main() {
         panel_results: HashMap::new(),
     };
     app.grid.set_row_snap(row_snap);
+    app.editors
+        .set_scroll_snap(app.settings.get("editor.scroll") == Some("row"));
     app.grid.set_copy_null(app.settings.flag("grid.copy_null"));
     app.log_win
         .set_on_top(app.settings.flag("log.always_on_top"));

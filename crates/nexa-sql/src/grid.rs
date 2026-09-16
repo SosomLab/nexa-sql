@@ -1616,6 +1616,17 @@ impl Grid {
         (w, h)
     }
 
+    /// 그릴 때 쓰는 세로 오프셋 — 행 단위 모드면 행 경계로 내림(맨 아래는 마지막 행이 다 보이도록 그대로).
+    fn view_y(&self) -> i32 {
+        if self.row_snap && self.row_h > 0 {
+            let (_, my) = self.max_scroll();
+            if self.scroll_y < my {
+                return self.scroll_y - self.scroll_y % self.row_h;
+            }
+        }
+        self.scroll_y
+    }
+
     fn max_scroll(&self) -> (i32, i32) {
         let (cw, ch) = self.content_size();
         (
@@ -1628,9 +1639,8 @@ impl Grid {
         let (mx, my) = self.max_scroll();
         self.scroll_x = self.scroll_x.clamp(0, mx);
         self.scroll_y = self.scroll_y.clamp(0, my);
-        if self.row_snap && self.row_h > 0 && self.scroll_y < my {
-            self.scroll_y -= self.scroll_y % self.row_h;
-        }
+        // 행 단위(`grid.scroll = row`)는 **표시 시점**에만 맞춘다([`Self::view_y`]) — 저장값에서 나머지를 버리면 트랙패드의
+        // 느린 스크롤(사건당 1~3px)이 한 행을 영원히 못 넘는다(사용자 09-16).
         // ★ 스크롤이 끝에 닿았고 서버에 더 있으면 다음 세그먼트 1회(진행 중이면 무시 · docs/43 §3-5 자동 페치).
         if self.auto_fetch
             && self.more
@@ -1674,7 +1684,7 @@ impl Grid {
         if !body.contains(Point { x, y }) {
             return None;
         }
-        let di = ((y - body.y + self.scroll_y) / self.row_h) as usize;
+        let di = ((y - body.y + self.view_y()) / self.row_h) as usize;
         (di < self.rows()).then_some(di)
     }
 
@@ -2163,8 +2173,9 @@ impl Grid {
             b.w,
             (footer.y - header.bottom()).max(0),
         );
-        let first = (self.scroll_y / self.row_h.max(1)) as usize;
-        let sub = self.scroll_y % self.row_h.max(1);
+        let vy = self.view_y();
+        let first = (vy / self.row_h.max(1)) as usize;
+        let sub = vy % self.row_h.max(1);
         let mut y = body.y - sub;
         let mut last = first;
         let n = rs.rows.len();
@@ -2313,7 +2324,7 @@ impl Grid {
             cw.max(vp.w),
             ch.max(vp.h),
             self.scroll_x,
-            self.scroll_y,
+            self.view_y(),
             s,
         );
         let n = rs.rows.len();
@@ -2552,6 +2563,40 @@ mod tests {
         g.gutter_w = 30;
         g.col_w = cols.to_vec();
         g
+    }
+
+    /// 느린 트랙패드 휠(사건당 -3 = 1px)이 누적된다 — 픽셀 모드는 1px씩, 행 모드는 저장값은 누적되되 표시는 행 경계(사용자 09-16).
+    #[test]
+    fn slow_wheel_accumulates_in_both_scroll_modes() {
+        let mut g = grid_with(&[100, 80]);
+        let rs = ResultSet {
+            columns: vec![Column {
+                name: "c0".into(),
+                type_name: String::new(),
+            }],
+            rows: (0..100).map(|i| vec![Value::Int(i)]).collect(),
+        };
+        g.set_result(rs);
+        g.row_h = 20;
+        g.header_h = 21;
+        g.gutter_w = 30;
+        g.col_w = vec![100];
+        for _ in 0..7 {
+            g.on_event(&InputEvent::Wheel { delta: -3 }, 1.0);
+        }
+        assert_eq!(g.scroll_y, 7, "픽셀 모드: 1px씩");
+        assert_eq!(g.view_y(), 7);
+        g.set_row_snap(true);
+        assert_eq!(g.view_y(), 0, "행 모드 표시 = 행 경계로 내림");
+        for _ in 0..13 {
+            g.on_event(&InputEvent::Wheel { delta: -3 }, 1.0);
+        }
+        assert_eq!(g.scroll_y, 20, "저장값은 계속 누적");
+        assert_eq!(g.view_y(), 20, "한 행 높이를 채우면 표시가 넘어간다");
+        for _ in 0..20 {
+            g.on_event(&InputEvent::Wheel { delta: 3 }, 1.0);
+        }
+        assert_eq!(g.scroll_y, 0, "반대 방향도 같은 걸음");
     }
 
     /// Advanced Copy ▸ SQL 5종이 전부 문장을 만든다(사용자 09-16 "SQL 유형 모두 복사"). 키 = 첫 컬럼 · 테이블 = 원본 SQL 추정.

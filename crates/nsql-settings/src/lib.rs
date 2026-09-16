@@ -674,6 +674,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(SCROLL_OPTS),
         default: "pixel",
     },
+    // 편집기 휠 단위(사용자 09-16 · 픽셀 스크롤 도입과 함께 그리드와 같은 선택지).
+    Entry {
+        key: "editor.scroll",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorScroll,
+        desc: Msg::DescEditorScroll,
+        kind: SettingKind::Choice(SCROLL_OPTS),
+        default: "pixel",
+    },
     // ★ 단축키(사용자 09-15) — 값 문법은 `nexa-sql::keymap`(Sublime Text 기본 · 비우면 플랫폼 기본).
     Entry {
         key: "key.preset",
@@ -1321,6 +1330,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ── 스크립트 엔진 엄격 모드(T-9 · 09-16) — 배치에서 미정의 &var·암묵 :bind를 오류로. 자주 안 바꾸므로 HIDDEN(`nsql config list all`).
+    Entry {
+        key: "script.strict",
+        cat: Msg::CatSession,
+        label: Msg::LblScriptStrict,
+        desc: Msg::DescScriptStrict,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "settings.json_editor",
         cat: Msg::CatSession,
@@ -1605,6 +1623,7 @@ pub const HIDDEN: &[&str] = &[
     "file.recent",
     "file.show_hidden",
     "file.show_dot",
+    "script.strict",
 ];
 
 /// 비노출 설정인가.
