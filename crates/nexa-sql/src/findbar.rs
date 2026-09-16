@@ -47,7 +47,7 @@ pub(crate) enum FindAction {
 
 /// 토글·동작 버튼 종류(툴팁·단축키 문구).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BtnKind {
+pub(crate) enum BtnKind {
     Fold,
     Case,
     Word,
@@ -62,7 +62,7 @@ enum BtnKind {
 }
 
 impl BtnKind {
-    fn tip(self) -> Msg {
+    pub(crate) fn tip(self) -> Msg {
         match self {
             BtnKind::Fold => Msg::TipFindToggleReplace,
             BtnKind::Case => Msg::TipFindCase,
@@ -107,27 +107,27 @@ const COUNT_W: f32 = 69.0;
 const COUNT_GAP: f32 = 3.0;
 const MARGIN_RIGHT: f32 = 20.0;
 
-/// 아이콘 버튼/토글 하나 — 상태 3종이 구별된다(On · hover 페이드 · 포커스).
-struct FindBtn {
-    kind: BtnKind,
-    rect: Rect,
+/// 아이콘 버튼/토글 하나 — 상태 3종이 구별된다(On · hover 페이드 · 포커스). 파일 검색 패널도 같은 부품을 쓴다.
+pub(crate) struct FindBtn {
+    pub(crate) kind: BtnKind,
+    pub(crate) rect: Rect,
     icon: MenuIcon,
     tint: RefCell<Option<(Color, Rc<IconImage>)>>,
-    checked: bool,
-    hover: Fade,
-    hover_on: bool,
+    pub(crate) checked: bool,
+    pub(crate) hover: Fade,
+    pub(crate) hover_on: bool,
     pressed: bool,
-    focused: bool,
+    pub(crate) focused: bool,
     enabled: bool,
     clicked: bool,
     /// 툴팁 대기 시작(hover 진입 시각).
-    hover_since: Option<Instant>,
+    pub(crate) hover_since: Option<Instant>,
     /// 둥근 정도(토글 3 · 동작 5 · 접기 2).
     radius: f32,
 }
 
 impl FindBtn {
-    fn new(kind: BtnKind, icon: MenuIcon) -> Self {
+    pub(crate) fn new(kind: BtnKind, icon: MenuIcon) -> Self {
         let radius = match kind {
             BtnKind::Fold => 2.0,
             k if k.is_toggle() => 3.0,
@@ -176,7 +176,7 @@ impl FindBtn {
         }
     }
 
-    fn on_event(&mut self, ev: &InputEvent) {
+    pub(crate) fn on_event(&mut self, ev: &InputEvent) {
         match *ev {
             InputEvent::MouseMove { x, y } => {
                 let inside = self.rect.contains(Point { x, y });
@@ -197,18 +197,18 @@ impl FindBtn {
         }
     }
 
-    fn take_clicked(&mut self) -> bool {
+    pub(crate) fn take_clicked(&mut self) -> bool {
         std::mem::take(&mut self.clicked)
     }
 
-    fn clear_transient(&mut self) {
+    pub(crate) fn clear_transient(&mut self) {
         self.pressed = false;
         self.focused = false;
         self.set_hover(false);
         self.hover.jump(false);
     }
 
-    fn paint(&self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
+    pub(crate) fn paint(&self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
         let b = self.rect;
         if b.w <= 0 || b.h <= 0 {
             return;

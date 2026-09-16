@@ -1432,6 +1432,42 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ── 파일 검색(T-81a · docs/36 §2 · D-55)
+    Entry {
+        key: "search.max_file_kb",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchMaxFileKb,
+        desc: Msg::DescSearchMaxFileKb,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 1_048_576,
+        },
+        default: "1024",
+    },
+    Entry {
+        key: "search.threads",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchThreads,
+        desc: Msg::DescSearchThreads,
+        kind: SettingKind::Int { min: 0, max: 16 },
+        default: "0",
+    },
+    Entry {
+        key: "search.gitignore",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchGitignore,
+        desc: Msg::DescSearchGitignore,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "search.excludes",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchExcludes,
+        desc: Msg::DescSearchExcludes,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ── 트랜잭션 UX(DR-30 · T-77 · docs/34 §2-5)
     Entry {
         key: "tx.stale_min",

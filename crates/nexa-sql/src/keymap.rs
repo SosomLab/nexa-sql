@@ -223,6 +223,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     Command {
+        id: "view.search",
+        label: Msg::MnSearchPanel,
+        win: "ctrl+shift+f",
+        mac: "cmd+shift+f",
+        linux: "ctrl+shift+f",
+    },
+    Command {
         id: "view.explorer",
         label: Msg::MnExplorer,
         win: "ctrl+shift+e",

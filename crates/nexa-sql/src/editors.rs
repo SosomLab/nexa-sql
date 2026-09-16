@@ -240,6 +240,20 @@ impl Editors {
         true
     }
 
+    /// 파일 검색용 탭 본문(id · 제목 · 본문 · 경로) — 저장 안 된 변경 포함(T-81a).
+    pub(crate) fn tab_texts(&self) -> Vec<(u64, String, String, Option<PathBuf>)> {
+        (0..self.bufs.len())
+            .map(|i| {
+                (
+                    self.tab_id(i),
+                    self.titles[i].clone(),
+                    self.bufs[i].text(),
+                    self.paths.get(i).cloned().flatten(),
+                )
+            })
+            .collect()
+    }
+
     /// Goto Anything 항목(id · 제목 · 경로 · 더러움 · 활성) — 탭 순서대로(T-96).
     pub(crate) fn tab_entries(&self) -> Vec<(u64, String, Option<PathBuf>, bool, bool)> {
         (0..self.titles.len())

@@ -34,6 +34,7 @@ mod prefs_win;
 mod probe;
 mod results;
 mod rx;
+mod search_panel;
 mod syntax;
 mod theme;
 mod toast;
@@ -73,6 +74,7 @@ use nsql_vault::Vault;
 use palette::{Palette, PaletteAction};
 use prefs_win::{PrefsAction, PrefsWin};
 use results::{PanelAction as ResultAction, ResultPanel, ResultTab};
+use search_panel::{SearchCtx, SearchPanel};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -97,6 +99,8 @@ enum Focus {
     Grid,
     Explorer,
     Find,
+    /// 파일 검색 패널(T-81a).
+    Search,
 }
 
 /// 잃는 순간의 확인(Commit/Rollback) 뒤 이어질 동작(DR-30).
@@ -221,6 +225,8 @@ struct App {
     run_tab: u64,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
     explorer: Explorer,
+    /// 파일 검색 패널(활동 막대 두 번째 · T-81a · docs/36).
+    search: SearchPanel,
     /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
     split_v: Splitter,
     split_h: Splitter,
@@ -463,16 +469,35 @@ impl App {
             .set_bounds(Rect::new(0, body_top, act_w, body_h), s);
         self.act_bar.set_active(if self.explorer.is_visible() {
             Some("view.explorer")
+        } else if self.search.is_visible() {
+            Some("view.search")
         } else {
             None
         });
-        let exp_w = if self.explorer.is_visible() {
+        let exp_w = if self.explorer.is_visible() || self.search.is_visible() {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
             0
         };
-        self.explorer
-            .set_bounds(Rect::new(act_w, body_top, exp_w, body_h), s);
+        self.explorer.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.explorer.is_visible() { exp_w } else { 0 },
+                body_h,
+            ),
+            s,
+        );
+        self.search.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.search.is_visible() { exp_w } else { 0 },
+                body_h,
+            ),
+            s,
+        );
+        self.search.set_clamp_width(w);
         let rx = rx + act_w + exp_w;
         let rw = rw - act_w - exp_w;
         // 스플리터 ① 탐색기|편집기 — 잡히는 띠 = 탐색기 오른쪽 경계 ±3 논리 px(탐색기 보일 때만 · 사용자 09-16).
@@ -561,8 +586,9 @@ impl App {
         self.ed_mut().set_focused(f == Focus::Editor);
         self.explorer.set_focused(f == Focus::Explorer);
         self.find.set_focused(f == Focus::Find);
+        self.search.set_focused(f == Focus::Search);
         if let Some(w) = &self.window {
-            w.set_ime_allowed(f == Focus::Editor || f == Focus::Find);
+            w.set_ime_allowed(f == Focus::Editor || f == Focus::Find || f == Focus::Search);
         }
     }
 
@@ -571,6 +597,7 @@ impl App {
         match self.focus {
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Find => self.find.focused_textbox(),
+            Focus::Search => self.search.focused_textbox(),
             Focus::Grid | Focus::Explorer => None,
         }
     }
@@ -789,9 +816,19 @@ impl App {
                                     }
                                     g.row_count()
                                 }
+                                // (전체 조회가 예산에서 잘렸으면 아래에서 안내)
                                 None => 0,
                             };
                             self.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
+                            if offset == 0 && more {
+                                // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
+                                self.status = tf(
+                                    Msg::StBudgetExceeded,
+                                    &[&self.settings.int("grid.memory_budget_mb").to_string()],
+                                );
+                                self.log_win
+                                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                            }
                         }
                         Err(e) => {
                             if let Some(g) = self.grid_for(key) {
@@ -2129,14 +2166,23 @@ impl App {
                     sql,
                     offset,
                     limit,
+                    budget_bytes: 0,
                 });
             }
-            grid::FetchReq::All => self.worker.send(worker::Cmd::FetchPage {
-                key,
-                sql,
-                offset: 0,
-                limit: 0,
-            }),
+            grid::FetchReq::All => {
+                // 이 탭의 예산 = 전체 예산 − 다른 탭 사용량(이 탭 rows는 교체된다).
+                let budget =
+                    (self.settings.int("grid.memory_budget_mb").max(1) as u64) * 1024 * 1024;
+                let others: u64 = self.sleeping_grids().map(grid::Grid::approx_bytes).sum();
+                let budget_bytes = budget.saturating_sub(others).max(1024 * 1024);
+                self.worker.send(worker::Cmd::FetchPage {
+                    key,
+                    sql,
+                    offset: 0,
+                    limit: 0,
+                    budget_bytes,
+                });
+            }
             grid::FetchReq::Count => self.worker.send(worker::Cmd::Count { key, sql }),
         }
         self.status = t(Msg::StFetching).into();
@@ -2411,8 +2457,33 @@ impl App {
             "view.log" => self.toggle_log = true,
             "view.colors" => self.open_colors = true,
             "view.keys" => self.open_keys = true,
+            "view.search" => {
+                let on = !self.search.is_visible();
+                if on && self.explorer.is_visible() {
+                    self.explorer.set_visible(false);
+                    let _ = self.settings.set("explorer.visible", "off");
+                    let _ = self.settings.save();
+                }
+                self.search.set_visible(on);
+                if on {
+                    let seed = self.editors.cur().copy_selection();
+                    self.search.focus_query(seed);
+                    self.search
+                        .set_tooltip_delay(self.settings.int("ui.tooltip_delay_ms").max(0) as u128);
+                    self.set_focus(Focus::Search);
+                } else if self.focus == Focus::Search {
+                    self.set_focus(Focus::Editor);
+                }
+                self.layout();
+            }
             "view.explorer" => {
                 let on = !self.explorer.is_visible();
+                if on && self.search.is_visible() {
+                    self.search.set_visible(false);
+                    if self.focus == Focus::Search {
+                        self.set_focus(Focus::Editor);
+                    }
+                }
                 self.explorer.set_visible(on);
                 let _ = self
                     .settings
@@ -2490,6 +2561,53 @@ impl App {
             }
             _ => {}
         }
+        self.redraw();
+    }
+
+    // ───────────────────────── 파일 검색(T-81a · docs/36) ─────────────────────────
+
+    /// 검색 시작 — 열린 탭 본문 · 활성 파일 폴더 · 설정을 모아 패널에 넘긴다.
+    fn start_search(&mut self) {
+        let excludes: Vec<String> = self
+            .settings
+            .get("search.excludes")
+            .unwrap_or("")
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        let ctx = SearchCtx {
+            tabs: self.editors.tab_texts(),
+            current_dir: self
+                .editors
+                .active_path()
+                .and_then(|p| p.parent().map(Path::to_path_buf)),
+            max_file_kb: self.settings.int("search.max_file_kb").max(0) as usize,
+            threads: self.settings.int("search.threads").clamp(0, 16) as usize,
+            gitignore: self.settings.flag("search.gitignore"),
+            excludes,
+        };
+        self.search.start(ctx);
+        self.redraw();
+    }
+
+    /// 결과 행 → 그 탭/파일을 열고 줄로 이동 · 일치 구간 선택.
+    fn open_search_result(&mut self, req: search_panel::OpenReq) {
+        match (req.tab, &req.path) {
+            (Some(id), _) => self.editors.switch_to_id(id),
+            (None, Some(p)) => self.open_file(p),
+            (None, None) => return,
+        }
+        let start = {
+            let ed = self.ed_mut();
+            ed.goto_line(req.line);
+            ed.caret() + req.col
+        };
+        let mut inv = Invalidations::default();
+        self.ed_mut().select_range(start, start + req.len, &mut inv);
+        self.set_focus(Focus::Editor);
+        self.layout();
         self.redraw();
     }
 
@@ -2909,6 +3027,7 @@ impl App {
                     item("view.palette", Msg::MnCommandPalette),
                     item("view.goto_anything", Msg::MnGotoAnything),
                     item("view.explorer", Msg::MnExplorer),
+                    item("view.search", Msg::MnSearchPanel),
                     item("view.log", Msg::MnLogWindow),
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     MenuEntry::Separator,
@@ -3093,6 +3212,7 @@ impl App {
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
         cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
+        cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
         cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
         cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
         cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));
@@ -4368,6 +4488,7 @@ impl App {
                 self.act_bar.paint(&mut dc, &th);
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
+                self.search.paint(&mut dc, &th);
             }
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
                                           // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
@@ -4390,6 +4511,7 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.toolbar.paint_tooltip(&mut dc, &th);
                 self.find.paint_tooltip(&mut dc, &th);
+                self.search.paint_tooltip(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
@@ -4664,6 +4786,66 @@ impl App {
                 self.redraw();
             }
         }
+        // 파일 검색 패널(T-81a) — 마우스는 커서 아래 · 키는 포커스일 때.
+        if self.search.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let inside = self.search.bounds().contains(cur);
+            if (is_mouse && inside) || (is_wheel_ev(&ev) && inside) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
+                    self.set_focus(Focus::Search);
+                }
+                if self.search.on_event(&ev) {
+                    self.redraw();
+                }
+                if self.search.take_request() {
+                    self.start_search();
+                }
+                if let Some(req) = self.search.take_open() {
+                    self.open_search_result(req);
+                }
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.focus == Focus::Search
+                && matches!(
+                    ev,
+                    InputEvent::Key { .. }
+                        | InputEvent::Char { .. }
+                        | InputEvent::SelectAll
+                        | InputEvent::Undo
+                        | InputEvent::Redo
+                )
+            {
+                if matches!(
+                    ev,
+                    InputEvent::Key {
+                        key: CtlKey::Escape,
+                        ..
+                    }
+                ) && !self.search.searching()
+                {
+                    self.set_focus(Focus::Editor);
+                    self.redraw();
+                    return;
+                }
+                if self.search.on_event(&ev) {
+                    self.redraw();
+                }
+                if self.search.take_request() {
+                    self.start_search();
+                }
+                if let Some(req) = self.search.take_open() {
+                    self.open_search_result(req);
+                }
+                return;
+            }
+        }
         // ★ 오브젝트 탐색기 — 열린 메뉴는 먼저 · 마우스는 커서 아래 · 키는 포커스일 때.
         if self.explorer.is_visible() {
             let cur = Point {
@@ -4775,7 +4957,7 @@ impl App {
                     self.after_grid_event();
                     inv.push(self.grid.bounds);
                 }
-                Focus::Explorer | Focus::Find => {}
+                Focus::Explorer | Focus::Find | Focus::Search => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -4909,6 +5091,15 @@ impl ApplicationHandler<Wake> for App {
         if self.explorer.tick(now_ms) {
             self.redraw();
         }
+        if self.search.tick(now_ms) || self.search.poll() {
+            self.redraw();
+        }
+        if self.search.take_request() {
+            self.start_search();
+        }
+        if let Some(req) = self.search.take_open() {
+            self.open_search_result(req);
+        }
         if self.find.tick(now_ms) {
             self.redraw();
         }
@@ -4934,6 +5125,7 @@ impl ApplicationHandler<Wake> for App {
             || self.file_win.animating()
             || self.explorer.bars_visible()
             || self.find.animating()
+            || self.search.animating()
             || self.editors.tooltip_pending()
             || self.toasts.animating();
         let mut next = if bars_live {
@@ -5647,6 +5839,7 @@ fn main() {
         grid_tab: 0,
         run_tab: 0,
         explorer,
+        search: SearchPanel::new(),
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),
         last_spec: None,

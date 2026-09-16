@@ -55,11 +55,13 @@ pub(crate) enum Cmd {
     },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
-        /// 결과 탭 키(편집기 탭 id).
+        /// 결과 탭 키(결과 탭 id).
         key: u64,
         sql: String,
         offset: usize,
         limit: usize,
+        /// 전체 조회(limit 0)의 메모리 예산(바이트 · 0 = 무제한 · D-72) — 넘치면 예산까지만 남기고 `more`.
+        budget_bytes: u64,
     },
     /// `SELECT COUNT(*) FROM (질의) x`.
     Count {
@@ -282,14 +284,30 @@ pub(crate) fn spawn(
                         sql,
                         offset,
                         limit,
+                        budget_bytes,
                     } => {
                         let result = match runner.dialect() {
                             None => Err(t(Msg::ExpNotConnected).to_string()),
                             Some(_) => {
                                 if limit == 0 {
                                     // 전체 조회 = 그리드 **교체**(처음부터) — 열린 커서는 위치가 무의미하므로 닫고 원문을 다시 실행(상한 0).
+                                    // 예산(D-72): 받은 행이 예산을 넘으면 예산까지만 남기고 `more`로 알린다(호스트가 안내).
                                     runner.close_cursor();
-                                    runner.query_once(&sql, 0).map_err(|e| e.message)
+                                    runner
+                                        .query_once(&sql, 0)
+                                        .map(|(mut rs, more, d)| {
+                                            if budget_bytes > 0 && rs.approx_bytes() > budget_bytes
+                                            {
+                                                let n = rs.rows.len().max(1);
+                                                let per = (rs.approx_bytes() / n as u64).max(1);
+                                                let keep = (budget_bytes / per) as usize;
+                                                rs.rows.truncate(keep.max(1));
+                                                (rs, true, d)
+                                            } else {
+                                                (rs, more, d)
+                                            }
+                                        })
+                                        .map_err(|e| e.message)
                                 } else {
                                     // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
                                     runner

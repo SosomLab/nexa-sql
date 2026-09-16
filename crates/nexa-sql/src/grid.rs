@@ -54,6 +54,22 @@ pub(crate) enum ResultView {
 }
 
 /// 그리드가 호스트에 부탁하는 페치(docs/43): 다음 세그먼트 · 전체 · 건수.
+/// 텍스트 보기 드래그 종류(본문 = 문자 범위 · 거터 = 줄 범위).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextDrag {
+    Body,
+    Gutter,
+}
+
+/// 텍스트 보기 히트 요청 — 글꼴이 있는 페인트에서 (줄, 문자)로 푼다(로그 창과 같은 규약 · 09-16).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextHit {
+    Anchor { shift: bool },
+    Head,
+    GutterDown { shift: bool, ctrl: bool },
+    GutterHead,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FetchReq {
     Next { offset: usize, limit: usize },
@@ -179,6 +195,8 @@ pub(crate) struct Grid {
     total: Option<u64>,
     /// 추가 페치/전체/건수 요청이 워커에 나가 있다(중복 요청 금지).
     fetching: bool,
+    /// 전체 조회가 나가 있다 — 그 사이 도착하는 늦은 세그먼트는 버린다(사용자 09-17: 자동 페치 중 누른 전체 조회가 무시되던 결함).
+    fetch_all_pending: bool,
     fetch_req: Option<FetchReq>,
     want_refresh: bool,
     /// 마지막 실행 시각(`YYYY-MM-DD HH:MM:SS.mmm`).
@@ -196,10 +214,21 @@ pub(crate) struct Grid {
     text_job: Option<TextJob>,
     /// 다음 텍스트 변환 시작 때 스크롤을 유지(추가 페치 뒤 · 처음부터 다시 그리지 않게).
     text_keep_scroll: bool,
+    /// 변환 중 콘텐츠 높이 하한(변환 전 높이) — 줄이 다시 채워지는 동안 스크롤이 0으로 잘리지 않게(사용자 09-17 CSV 1행 점프).
+    text_ch_hold: i32,
     /// 텍스트 보기 행번호 거터 폭(페인트가 잰다 · 설정 `grid.row_numbers` · 사용자 09-16 "다른 보기에서도 행번호").
     text_gutter_w: i32,
     /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
     perf_report: bool,
+    /// 텍스트 보기 선택(사용자 09-16 "JSON·Markdown도 드래그 복사"): 앵커·헤드 = (줄, 문자 인덱스).
+    text_sel: Option<((usize, usize), (usize, usize))>,
+    /// 거터 Ctrl+클릭으로 모은 개별 줄(그리드 행번호 열과 같은 규약).
+    text_lines_sel: Vec<usize>,
+    text_drag: Option<TextDrag>,
+    /// 페인트가 풀 히트 요청(x, y, 종류).
+    text_hit: Option<(i32, i32, TextHit)>,
+    /// 거터 드래그의 기준 줄.
+    text_gutter_anchor: Option<usize>,
     /// 도구줄 상태 글자와 그 영역 — UI 글꼴 패스(상태줄과 같은 얼굴·크기)에서 호스트가 그린다(사용자 09-16).
     footer_info: Option<(String, Rect)>,
 }
@@ -282,6 +311,7 @@ impl Default for Grid {
             more: false,
             total: None,
             fetching: false,
+            fetch_all_pending: false,
             fetch_req: None,
             want_refresh: false,
             last_run_at: None,
@@ -293,8 +323,14 @@ impl Default for Grid {
             text_longest: None,
             text_job: None,
             text_keep_scroll: false,
+            text_ch_hold: 0,
             text_gutter_w: 0,
             perf_report: false,
+            text_sel: None,
+            text_lines_sel: Vec::new(),
+            text_drag: None,
+            text_hit: None,
+            text_gutter_anchor: None,
             footer_info: None,
         }
     }
@@ -414,10 +450,15 @@ impl Grid {
     /// 추가 페치 실패 — 요청 상태만 푼다.
     pub(crate) fn fetch_failed(&mut self) {
         self.fetching = false;
+        self.fetch_all_pending = false;
     }
 
     /// 다음 세그먼트 이어 붙이기(정렬 중이면 다시 정렬 · 스크롤 유지).
     pub(crate) fn append_page(&mut self, page: ResultSet, more: bool) {
+        // 전체 조회가 나가 있으면 늦게 온 세그먼트는 버린다(교체 결과와 섞이지 않게).
+        if self.fetch_all_pending {
+            return;
+        }
         self.fetching = false;
         self.more = more;
         self.approx_bytes += page.approx_bytes();
@@ -443,6 +484,9 @@ impl Grid {
         let r = self.fetch_req.take();
         if r.is_some() {
             self.fetching = true;
+        }
+        if matches!(r, Some(FetchReq::All)) {
+            self.fetch_all_pending = true;
         }
         r
     }
@@ -484,6 +528,10 @@ impl Grid {
 
     /// 텍스트 계열 보기 본문 다시 만들기(결과가 바뀌었을 때) — SQL은 키가 필요해 호스트에 미룬다.
     fn refresh_text_view(&mut self) {
+        self.text_sel = None;
+        self.text_lines_sel.clear();
+        self.text_drag = None;
+        self.text_hit = None;
         match self.view {
             ResultView::Grid => self.cancel_text_job(),
             ResultView::Sql(k) => {
@@ -509,10 +557,21 @@ impl Grid {
     ///   보낸다 · 다른 보기로 바꾸면 취소 깃발로 즉시 중단 · 다른 탭으로 가도 스레드는 이어서 완성(호스트 tick이 회수).
     fn start_text_job(&mut self, fmt: Format, key: KeySpec) {
         self.cancel_text_job();
+        // 스크롤 유지(추가 페치 뒤): 줄을 비우는 동안 콘텐츠 높이 하한을 종전 값으로 잡아 클램프가 0으로 끌어내리지 않게 —
+        // 변환이 끝나면 새 높이(더 긴 쪽)로 자연히 이어진다(그리드와 같은 동작 · 사용자 09-17).
+        let keep = std::mem::take(&mut self.text_keep_scroll);
+        self.text_ch_hold = if keep {
+            self.row_h * self.text_lines.len() as i32
+        } else {
+            0
+        };
         self.text_lines.clear();
-        self.text_w = 0;
+        // 가로 최대 폭은 커지는 쪽으로만(짧아져도 유지 · 사용자 09-17) — 새 변환에서도 이전 값을 하한으로.
+        if !keep {
+            self.text_w = 0;
+        }
         self.text_longest = None;
-        if !std::mem::take(&mut self.text_keep_scroll) {
+        if !keep {
             self.text_scroll = (0, 0);
         }
         let Some(rs) = self.rs.as_ref() else {
@@ -616,6 +675,7 @@ impl Grid {
         }
         if finished {
             self.text_job = None;
+            self.text_ch_hold = 0;
         }
         changed
     }
@@ -730,7 +790,8 @@ impl Grid {
                         self.open_view_menu(r.x, r.y, scale);
                     }
                     Some("refresh") => self.want_refresh = true,
-                    Some("fetch.all") if !self.fetching && self.rs.is_some() => {
+                    // 전체 조회는 자동 페치(다음 세그먼트)가 나가 있어도 받는다 — 결과는 교체라 늦은 세그먼트는 버린다.
+                    Some("fetch.all") if !self.fetch_all_pending && self.rs.is_some() => {
                         self.fetch_req = Some(FetchReq::All);
                     }
                     Some("count") if !self.fetching && !self.source_sql.trim().is_empty() => {
@@ -845,6 +906,46 @@ impl Grid {
         if consumed {
             return;
         }
+        // 선택(사용자 09-16): 본문 드래그 = 문자 범위 · 거터 클릭/드래그 = 줄 범위 · Ctrl+클릭 = 개별 줄 · Shift = 확장.
+        let gutter = Rect::new(self.bounds.x, body.y, self.text_gutter_w, body.h);
+        match *ev {
+            InputEvent::MouseDown {
+                x,
+                y,
+                shift,
+                primary,
+            } => {
+                let p = Point { x, y };
+                if gutter.w > 0 && gutter.contains(p) {
+                    self.text_hit = Some((
+                        x,
+                        y,
+                        TextHit::GutterDown {
+                            shift,
+                            ctrl: primary,
+                        },
+                    ));
+                    self.text_drag = Some(TextDrag::Gutter);
+                } else if body.contains(p) {
+                    self.text_hit = Some((x, y, TextHit::Anchor { shift }));
+                    self.text_drag = Some(TextDrag::Body);
+                }
+            }
+            InputEvent::MouseMove { x, y } => match self.text_drag {
+                Some(TextDrag::Body) => self.text_hit = Some((x, y, TextHit::Head)),
+                Some(TextDrag::Gutter) => self.text_hit = Some((x, y, TextHit::GutterHead)),
+                None => {}
+            },
+            InputEvent::MouseUp { .. } => self.text_drag = None,
+            InputEvent::SelectAll => self.select_all(),
+            InputEvent::Key {
+                key: Key::Escape, ..
+            } => {
+                self.text_sel = None;
+                self.text_lines_sel.clear();
+            }
+            _ => {}
+        }
         let page = body.h.max(self.row_h);
         match ev {
             InputEvent::Key {
@@ -886,6 +987,119 @@ impl Grid {
         }
     }
 
+    /// 마우스 점 → (줄, 문자) → 선택 갱신(페인트 안 · `text_x` = 본문 텍스트 시작 x).
+    fn resolve_text_hit(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        hx: i32,
+        hy: i32,
+        kind: TextHit,
+        body: Rect,
+        text_x: i32,
+    ) {
+        let n = self.text_lines.len();
+        if n == 0 || self.row_h <= 0 {
+            return;
+        }
+        let line = (((hy - body.y + self.text_scroll.1).max(0)) / self.row_h) as usize;
+        let line = line.min(n - 1);
+        let len = self.text_lines[line].chars().count();
+        let col_at = |dc: &mut dyn DrawCtx, s: &str| -> usize {
+            let mut w = Vec::new();
+            dc.text_prefix_widths(s, &mut w);
+            let rel = hx - text_x;
+            let mut best = 0usize;
+            let mut best_d = i32::MAX;
+            for (i, px) in w.iter().enumerate() {
+                let d = (rel - px).abs();
+                if d < best_d {
+                    best_d = d;
+                    best = i;
+                }
+            }
+            best
+        };
+        match kind {
+            TextHit::Anchor { shift } => {
+                let col = col_at(dc, &self.text_lines[line]);
+                self.text_lines_sel.clear();
+                match (shift, self.text_sel) {
+                    (true, Some((a, _))) => self.text_sel = Some((a, (line, col))),
+                    _ => self.text_sel = Some(((line, col), (line, col))),
+                }
+            }
+            TextHit::Head => {
+                let col = col_at(dc, &self.text_lines[line]);
+                if let Some((a, _)) = self.text_sel {
+                    self.text_sel = Some((a, (line, col)));
+                }
+            }
+            TextHit::GutterDown { shift, ctrl } => {
+                if ctrl {
+                    // Ctrl+클릭 = 개별 줄 토글(그리드 행번호 규약).
+                    if let Some(i) = self.text_lines_sel.iter().position(|&l| l == line) {
+                        self.text_lines_sel.remove(i);
+                    } else {
+                        self.text_lines_sel.push(line);
+                        self.text_lines_sel.sort_unstable();
+                    }
+                    self.text_sel = None;
+                    self.text_gutter_anchor = Some(line);
+                } else if shift {
+                    let a = self.text_gutter_anchor.unwrap_or(line);
+                    let (lo, hi) = (a.min(line), a.max(line));
+                    let hlen = self.text_lines[hi].chars().count();
+                    self.text_sel = Some(((lo, 0), (hi, hlen)));
+                    self.text_lines_sel.clear();
+                } else {
+                    self.text_sel = Some(((line, 0), (line, len)));
+                    self.text_lines_sel.clear();
+                    self.text_gutter_anchor = Some(line);
+                }
+            }
+            TextHit::GutterHead => {
+                let a = self.text_gutter_anchor.unwrap_or(line);
+                let (lo, hi) = (a.min(line), a.max(line));
+                let hlen = self.text_lines[hi].chars().count();
+                self.text_sel = Some(((lo, 0), (hi, hlen)));
+            }
+        }
+    }
+
+    /// 텍스트 보기 복사 — 개별 줄 집합 > 범위 > 전체(선택 없음). 반환 = (텍스트, 줄 수).
+    fn copy_text_selection(&self) -> Option<(String, usize)> {
+        if !self.text_lines_sel.is_empty() {
+            let lines: Vec<&str> = self
+                .text_lines_sel
+                .iter()
+                .filter_map(|&i| self.text_lines.get(i).map(String::as_str))
+                .collect();
+            let text = lines.join("\n");
+            return (!text.is_empty()).then_some((text, lines.len()));
+        }
+        if let Some((a, b)) = self.text_sel {
+            let ((l0, c0), (l1, c1)) = if a <= b { (a, b) } else { (b, a) };
+            if (l0, c0) != (l1, c1) {
+                let mut out = String::new();
+                for i in l0..=l1 {
+                    let Some(line) = self.text_lines.get(i) else {
+                        break;
+                    };
+                    let len = line.chars().count();
+                    let s0 = if i == l0 { c0.min(len) } else { 0 };
+                    let s1 = if i == l1 { c1.min(len) } else { len };
+                    out.extend(line.chars().skip(s0).take(s1.saturating_sub(s0)));
+                    if i < l1 {
+                        out.push('\n');
+                    }
+                }
+                return (!out.is_empty()).then_some((out, l1 - l0 + 1));
+            }
+        }
+        let text = self.text_lines.join("\n");
+        (!text.is_empty()).then_some((text, self.text_lines.len()))
+    }
+
     /// 텍스트 보기 본문(행번호 거터 제외 · 스크롤바 뷰포트).
     fn text_body_rect(&self) -> Rect {
         let b = self.bounds;
@@ -898,7 +1112,13 @@ impl Grid {
     }
 
     fn text_content_size(&self) -> (i32, i32) {
-        (self.text_w, self.row_h * self.text_lines.len() as i32)
+        let h = self.row_h * self.text_lines.len() as i32;
+        let hold = if self.text_job.is_some() {
+            self.text_ch_hold
+        } else {
+            0
+        };
+        (self.text_w, h.max(hold))
     }
 
     /// 자동 컬럼 너비 한계(설정 `grid.col_min_width`/`grid.col_max_width` · 논리 px).
@@ -954,6 +1174,7 @@ impl Grid {
         self.more = false;
         self.total = None;
         self.fetching = false;
+        self.fetch_all_pending = false;
         self.fetch_req = None;
         self.last_run_at = Some(nsql_log::now_local().stamp());
         self.perf_report = true;
@@ -1118,6 +1339,14 @@ impl Grid {
     }
 
     pub(crate) fn select_all(&mut self) {
+        if self.view != ResultView::Grid {
+            if let Some(last) = self.text_lines.len().checked_sub(1) {
+                let len = self.text_lines[last].chars().count();
+                self.text_sel = Some(((0, 0), (last, len)));
+                self.text_lines_sel.clear();
+            }
+            return;
+        }
         let n = self.rows();
         if n == 0 || self.col_order.is_empty() {
             return;
@@ -1150,8 +1379,7 @@ impl Grid {
     /// 선택 셀을 형식대로 텍스트로(없으면 None). 표시 순서(정렬·컬럼 이동 반영).
     pub(crate) fn copy_selection(&self, kind: CopyKind) -> Option<(String, usize)> {
         if self.view != ResultView::Grid {
-            let text = self.text_lines.join("\n");
-            return (!text.is_empty()).then_some((text, self.text_lines.len()));
+            return self.copy_text_selection();
         }
         if self.regions.is_empty() {
             return None;
@@ -2493,11 +2721,53 @@ impl Grid {
             dc.fill_rect(gutter, th.chrome_bg);
             dc.fill_rect(Rect::new(gutter.right() - 1, body.y, 1, body.h), th.border);
         }
+        // 히트 요청(마우스) → (줄, 문자): 글꼴 실측이 있는 여기서 한 번.
+        if let Some((hx, hy, kind)) = self.text_hit.take() {
+            self.resolve_text_hit(dc, hx, hy, kind, body, x);
+        }
+        let sel = self
+            .text_sel
+            .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
+        let space_w = dc.text_width(" ");
         for (i, line) in self.text_lines.iter().enumerate().skip(first) {
             if y >= body.bottom() {
                 break;
             }
+            // 선택 배경(줄 집합 = 전체 · 범위 = 문자 구간 · 다음 줄로 이어지면 줄 끝 + 한 칸).
+            let line_len = line.chars().count();
+            let range = if self.text_lines_sel.contains(&i) {
+                Some((0, line_len, true))
+            } else if let Some(((l0, c0), (l1, c1))) = sel {
+                if i >= l0 && i <= l1 {
+                    let s0 = if i == l0 { c0.min(line_len) } else { 0 };
+                    let s1 = if i == l1 { c1.min(line_len) } else { line_len };
+                    Some((s0, s1, i < l1))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some((s0, s1, spans_next)) = range {
+                let mut w = Vec::new();
+                dc.text_prefix_widths(line, &mut w);
+                let x0 = x + w.get(s0).copied().unwrap_or(0);
+                let mut x1 = x + w.get(s1).copied().unwrap_or(0);
+                if spans_next {
+                    x1 += space_w;
+                }
+                let (x0, x1) = (x0.max(body.x), x1.min(body.right()));
+                if x1 > x0 {
+                    dc.fill_rect(Rect::new(x0, y, x1 - x0, rh), th.sel_bg);
+                }
+            }
             dc.text(x, y, body, line, th.text);
+            // ★ 가로 스크롤 끝 = 실측 최대 폭(사용자 09-17): 글자 수 기준 후보는 비례 글꼴·한글 폭에서 빗나가고 추가
+            //   페치로 더 긴 줄이 올 수 있다 → 보이는 줄을 잴 때마다 **커지는 쪽으로만** 갱신(짧아지면 유지).
+            let lw = dc.text_width(line) + pad * 2;
+            if lw > self.text_w {
+                self.text_w = lw;
+            }
             if gw > 0 {
                 let num = (i + 1).to_string();
                 let nw = dc.text_width(&num);

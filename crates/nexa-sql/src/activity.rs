@@ -49,6 +49,12 @@ impl ActivityBar {
                     bottom: false,
                 },
                 ActItem {
+                    id: "view.search",
+                    icon: toolicons::mi_search(),
+                    panel: true,
+                    bottom: false,
+                },
+                ActItem {
                     id: "edit.prefs",
                     icon: toolicons::mi_gear(),
                     panel: false,
