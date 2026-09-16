@@ -27,6 +27,36 @@ pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bo
     }
 }
 
+/// 표준 출력 터미널의 열 수(터미널이 아니거나 알 수 없으면 `None`) — Windows 콘솔 API · unix `COLUMNS`/`stty size`.
+pub(crate) fn columns() -> Option<usize> {
+    if !io::stdout().is_terminal() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        win::columns()
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(c) = std::env::var("COLUMNS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            if c > 0 {
+                return Some(c);
+            }
+        }
+        let out = std::process::Command::new("stty")
+            .arg("size")
+            .stdin(std::process::Stdio::inherit())
+            .output()
+            .ok()?;
+        let s = String::from_utf8_lossy(&out.stdout);
+        let cols: usize = s.split_whitespace().nth(1)?.parse().ok()?;
+        (cols > 0).then_some(cols)
+    }
+}
+
 /// stderr에 프롬프트를 찍고 stdin 한 줄을 **에코 없이** 읽는다. 터미널이 아니면 그냥 읽는다.
 pub(crate) fn read_password(prompt: &str) -> Option<String> {
     eprint!("{prompt}");
@@ -92,7 +122,50 @@ mod win {
         fn SetConsoleMode(h: *mut c_void, mode: u32) -> i32;
     }
     const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // (DWORD)-11
     const ENABLE_ECHO_INPUT: u32 = 0x4;
+
+    #[repr(C)]
+    struct Coord {
+        x: i16,
+        y: i16,
+    }
+    #[repr(C)]
+    struct SmallRect {
+        left: i16,
+        top: i16,
+        right: i16,
+        bottom: i16,
+    }
+    #[repr(C)]
+    struct ScreenBufferInfo {
+        size: Coord,
+        cursor: Coord,
+        attrs: u16,
+        window: SmallRect,
+        max_window: Coord,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetConsoleScreenBufferInfo(h: *mut c_void, info: *mut ScreenBufferInfo) -> i32;
+    }
+
+    /// 콘솔 창의 열 수(보이는 창 폭 · 버퍼 폭이 아님).
+    pub(super) fn columns() -> Option<usize> {
+        // SAFETY: 표준 출력 핸들 · 출력 구조체는 지역 변수.
+        unsafe {
+            let h = GetStdHandle(STD_OUTPUT_HANDLE);
+            if h.is_null() {
+                return None;
+            }
+            let mut info: ScreenBufferInfo = std::mem::zeroed();
+            if GetConsoleScreenBufferInfo(h, &mut info) == 0 {
+                return None;
+            }
+            let w = i32::from(info.window.right) - i32::from(info.window.left) + 1;
+            usize::try_from(w).ok().filter(|w| *w > 0)
+        }
+    }
 
     /// 에코를 끄고 이전 모드를 돌려준다(콘솔이 아니면 None).
     pub(super) fn echo_off() -> Option<u32> {

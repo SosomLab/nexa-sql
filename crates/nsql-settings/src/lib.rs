@@ -144,6 +144,12 @@ const TAB_STOPS_OPTS: &[(&str, Msg)] = &[
     ("stop", Msg::ValTabStopsStop),
     ("fixed", Msg::ValTabStopsFixed),
 ];
+const OVERFLOW_OPTS: &[(&str, Msg)] = &[
+    ("wrap", Msg::ValOverflowWrap),
+    ("truncate", Msg::ValOverflowTruncate),
+    ("expanded", Msg::ValOverflowExpanded),
+    ("none", Msg::ValOverflowNone),
+];
 const EOL_NEW_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValEolAuto),
     ("lf", Msg::ValEolLf),
@@ -278,6 +284,31 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(TAB_STOPS_OPTS),
         // 기본 = 정지점(Golden/Sublime/VS Code 관례 · 사용자 09-16) · fixed = 종전 절대 4칸.
         default: "stop",
+    },
+    // ── CLI 표 출력(사용자 09-16 · 터미널 폭에서 표가 접혀 깨짐) — `nsql config set cli.width 160` · 1회성은 `--width`.
+    Entry {
+        key: "cli.width",
+        cat: Msg::CatCli,
+        label: Msg::LblCliWidth,
+        desc: Msg::DescCliWidth,
+        kind: SettingKind::Int { min: 0, max: 10000 },
+        default: "0",
+    },
+    Entry {
+        key: "cli.max_col_width",
+        cat: Msg::CatCli,
+        label: Msg::LblCliMaxColWidth,
+        desc: Msg::DescCliMaxColWidth,
+        kind: SettingKind::Int { min: 0, max: 10000 },
+        default: "60",
+    },
+    Entry {
+        key: "cli.overflow",
+        cat: Msg::CatCli,
+        label: Msg::LblCliOverflow,
+        desc: Msg::DescCliOverflow,
+        kind: SettingKind::Choice(OVERFLOW_OPTS),
+        default: "wrap",
     },
     Entry {
         key: "editor.rulers",
@@ -1121,7 +1152,7 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
         ],
     ),
     (Msg::GrpEditors, &[Msg::CatEditor, Msg::CatFiles]),
-    (Msg::GrpConnections, &[Msg::CatConnection]),
+    (Msg::GrpConnections, &[Msg::CatConnection, Msg::CatCli]),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
 ];
 

@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (16차 · win) — CLI 표 폭(설정·플래그·셸) ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (15차 · win) — CLI 비밀번호 프롬프트 ✅ · 편집기 드래그 지연 해소 ✅(프레임 6ms → 1.3ms) · `NSQL_TRACE_FRAMES`
 
 → [journal](journal/2026-09-16.md)

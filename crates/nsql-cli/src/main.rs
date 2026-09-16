@@ -17,7 +17,7 @@ mod plan;
 mod term;
 
 use nsql_core::{DbError, Dialect, Session};
-use nsql_io::Format;
+use nsql_io::{Format, GridOpts, Overflow};
 use nsql_run::{Opener, RunEvent, Runner};
 use nsql_script::{split_script, ConnectSpec};
 use nsql_vault::Vault;
@@ -47,12 +47,16 @@ struct Opts {
     schema: Option<String>,
     /// `--max-rows N` — 결과 셋 페치 상한(기본 0 = 무제한 · GUI는 설정 `grid.max_rows`).
     max_rows: usize,
+    /// `--width N`(줄 폭 · 0 = 터미널 폭) · `--max-col-width N` · `--overflow wrap|truncate|expanded|none` · `-x`(expanded) — 없으면 설정 `cli.*`.
+    width: Option<usize>,
+    max_col: Option<usize>,
+    overflow: Option<Overflow>,
     positional: Vec<String>,
 }
 
 fn usage() -> ! {
     eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] [--max-rows N] <script|-> [args]\n  nsql shell  -c <target> [-d dialect]\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql explain -c <target> (-q <sql> | <file>)          실행 계획(방언별 EXPLAIN 관용)\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
+        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] [--max-rows N] [--width N] [--max-col-width N] [--overflow wrap|truncate|expanded|none | -x] <script|-> [args]\n  nsql shell  -c <target> [-d dialect] [--width N] [-x]                 셸 안: set width|colwidth|overflow · \\x · show\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql explain -c <target> (-q <sql> | <file>)          실행 계획(방언별 EXPLAIN 관용)\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
         nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     );
     std::process::exit(2);
@@ -86,6 +90,9 @@ fn parse_opts() -> Opts {
         out: None,
         schema: None,
         max_rows: 0,
+        width: None,
+        max_col: None,
+        overflow: None,
         positional: Vec::new(),
     };
     let mut it = args.peekable();
@@ -137,6 +144,28 @@ fn parse_opts() -> Opts {
                     std::process::exit(2)
                 });
             }
+            "--width" | "--line-width" | "--linesize" => {
+                let v = val("--width");
+                o.width = Some(v.parse().unwrap_or_else(|_| {
+                    eprintln!("--width: 숫자가 아닙니다: {v}");
+                    std::process::exit(2)
+                }));
+            }
+            "--max-col-width" | "--colwidth" => {
+                let v = val("--max-col-width");
+                o.max_col = Some(v.parse().unwrap_or_else(|_| {
+                    eprintln!("--max-col-width: 숫자가 아닙니다: {v}");
+                    std::process::exit(2)
+                }));
+            }
+            "--overflow" => {
+                let v = val("--overflow");
+                o.overflow = Some(Overflow::parse(&v).unwrap_or_else(|| {
+                    eprintln!("--overflow: wrap | truncate | expanded | none 중 하나: {v}");
+                    std::process::exit(2)
+                }));
+            }
+            "-x" | "--expanded" => o.overflow = Some(Overflow::Expanded),
             "--no-prompt" => o.no_prompt = true,
             "--timing" => o.timing = true,
             "--log" => o.log = true,
@@ -178,6 +207,95 @@ fn resolver() -> nsql_run::Resolver {
     })
 }
 
+/// 표 폭 옵션 — 설정 `cli.width`/`cli.max_col_width`/`cli.overflow`(`nsql config set …`) 위에 플래그가 덮는다.
+/// 줄 폭 0 = 터미널이면 콘솔 폭 · 파이프/파일이면 무제한.
+fn grid_opts(o: &Opts) -> GridOpts {
+    let mut g = GridOpts {
+        max_col: 60,
+        line_width: 0,
+        overflow: Overflow::Wrap,
+    };
+    if let Ok(s) = nsql_settings::Settings::open_default() {
+        g.line_width = s.int("cli.width").max(0) as usize;
+        g.max_col = s.int("cli.max_col_width").max(0) as usize;
+        g.overflow = s
+            .get("cli.overflow")
+            .and_then(Overflow::parse)
+            .unwrap_or(Overflow::Wrap);
+    }
+    if let Some(w) = o.width {
+        g.line_width = w;
+    }
+    if let Some(c) = o.max_col {
+        g.max_col = c;
+    }
+    if let Some(v) = o.overflow {
+        g.overflow = v;
+    }
+    if g.line_width == 0 {
+        g.line_width = term::columns().unwrap_or(0);
+    }
+    g
+}
+
+/// 셸 `set`/`show`/`\x` — 세션 동안만 바뀐다(영구는 `nsql config set cli.*`). 처리했으면 true.
+fn shell_set(line: &str, g: &mut GridOpts) -> bool {
+    let t = line.trim();
+    let low = t.to_ascii_lowercase();
+    let show = |g: &GridOpts| {
+        eprintln!(
+            "width {} (0 = 무제한 · set width auto = 터미널 폭) · colwidth {} · overflow {}",
+            g.line_width,
+            g.max_col,
+            g.overflow.name()
+        );
+    };
+    if low == "\\x" {
+        g.overflow = if g.overflow == Overflow::Expanded {
+            Overflow::Wrap
+        } else {
+            Overflow::Expanded
+        };
+        show(g);
+        return true;
+    }
+    if low == "show" || low == "set" || low == "\\pset" {
+        show(g);
+        return true;
+    }
+    let Some(rest) = low.strip_prefix("set ") else {
+        return false;
+    };
+    let mut it = rest.split_whitespace();
+    let (Some(k), Some(v)) = (it.next(), it.next()) else {
+        show(g);
+        return true;
+    };
+    let num = |v: &str| v.parse::<usize>().ok();
+    match k {
+        "width" | "linesize" | "line_width" => {
+            if v == "auto" {
+                g.line_width = term::columns().unwrap_or(0);
+            } else if let Some(n) = num(v) {
+                g.line_width = n;
+            } else {
+                eprintln!("set width <n|auto>");
+            }
+        }
+        "colwidth" | "max_col_width" | "col" => match num(v) {
+            Some(n) => g.max_col = n,
+            None => eprintln!("set colwidth <n>"),
+        },
+        "overflow" | "wrap" => match Overflow::parse(v) {
+            Some(x) => g.overflow = x,
+            None => eprintln!("set overflow wrap|truncate|expanded|none"),
+        },
+        _ => return false,
+    }
+    show(g);
+    true
+}
+
 /// `-c <target>` — 프로필 이름이면 저장소에서, 아니면 접속 문자열 파싱.
 fn resolve_target(target: &str, dialect: Dialect) -> Result<ConnectSpec, String> {
     if nsql_vault::is_profile_name(target) {
@@ -192,6 +310,8 @@ fn resolve_target(target: &str, dialect: Dialect) -> Result<ConnectSpec, String>
 /// 이벤트 → 터미널 출력. 반환 = 오류 수.
 struct Printer {
     format: Format,
+    /// 표 폭·넘침(설정 `cli.*` → 플래그 → 셸 `set`).
+    grid: GridOpts,
     dialect: Dialect,
     errors: usize,
     feedback: bool,
@@ -234,7 +354,13 @@ impl Printer {
             RunEvent::ResultSet {
                 rs, elapsed, more, ..
             } => {
-                let _ = nsql_io::write_result_set(&mut out, &rs, &self.format, self.dialect);
+                let _ = nsql_io::write_result_set_opts(
+                    &mut out,
+                    &rs,
+                    &self.format,
+                    self.dialect,
+                    &self.grid,
+                );
                 if self.feedback && self.format == Format::Grid {
                     let note = if more {
                         format!(" {}", nsql_i18n::t(nsql_i18n::Msg::CliRowsMore))
@@ -347,6 +473,7 @@ fn cmd_run(o: &Opts) -> i32 {
     let src = read_source(path);
     let mut printer = Printer {
         format: o.format.clone(),
+        grid: grid_opts(o),
         dialect: o.dialect,
         errors: 0,
         feedback: true,
@@ -379,6 +506,7 @@ fn cmd_shell(o: &Opts) -> i32 {
     };
     let mut printer = Printer {
         format: o.format.clone(),
+        grid: grid_opts(o),
         dialect: o.dialect,
         errors: 0,
         feedback: true,
@@ -390,7 +518,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_message_sink(stdout_sink())
         .with_resolver(resolver());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
-    eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지");
+    eprintln!("nsql shell — `;`·단독 `/`·명령 줄로 실행 · exit 종료 · 변수는 세션 동안 유지 · 표 폭: set width <n|auto> · set colwidth <n> · set overflow wrap|truncate|expanded|none · \\x · show");
     let stdin = io::stdin();
     let mut buf = String::new();
     loop {
@@ -410,6 +538,9 @@ fn cmd_shell(o: &Opts) -> i32 {
             )
         {
             break;
+        }
+        if buf.is_empty() && shell_set(t, &mut printer.grid) {
+            continue;
         }
         buf.push_str(t);
         buf.push('\n');
@@ -452,6 +583,7 @@ fn cmd_explain(o: &Opts) -> i32 {
     };
     let mut printer = Printer {
         format: o.format.clone(),
+        grid: grid_opts(o),
         dialect: o.dialect,
         errors: 0,
         feedback: false,
@@ -493,6 +625,7 @@ fn cmd_export(o: &Opts) -> i32 {
     };
     let mut printer = Printer {
         format: Format::Grid,
+        grid: grid_opts(o),
         dialect: o.dialect,
         errors: 0,
         feedback: false,
