@@ -231,6 +231,8 @@ struct App {
     shift: bool,
     primary: bool,
     alt: bool,
+    /// macOS Control 눌림(⌘와 별개 · 키맵 `ctrl+cmd+…`).
+    ctrl_mac: bool,
     started: Instant,
     /// 다음 캐럿 깜빡임 시각 — about_to_wait의 재그리기 게이트.
     next_blink: Instant,
@@ -4107,6 +4109,8 @@ impl ApplicationHandler<Wake> for App {
                 } else {
                     m.state().control_key()
                 };
+                // macOS Control(⌘와 별개 · Sublime `ctrl+cmd+g`) — 다른 OS에선 늘 false.
+                self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
                 // ★ Alt+Shift = 열(블록) 선택 모드(Sublime · 사용자 09-15) — 드래그 시작 판정에 쓴다.
                 let col = self.alt && self.shift;
@@ -4162,6 +4166,7 @@ impl ApplicationHandler<Wake> for App {
                     self.primary,
                     self.shift,
                     self.alt,
+                    self.ctrl_mac,
                 ) {
                     let plain_char = !ch.primary && !ch.alt && ch.key.chars().count() == 1;
                     if !plain_char {
@@ -4508,6 +4513,7 @@ fn main() {
         shift: false,
         primary: false,
         alt: false,
+        ctrl_mac: false,
         started: Instant::now(),
         next_blink: Instant::now(),
         panel_op: None,

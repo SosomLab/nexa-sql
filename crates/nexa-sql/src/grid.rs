@@ -192,6 +192,8 @@ pub(crate) struct Grid {
     text_longest: Option<usize>,
     /// 진행 중인 변환(백그라운드 스레드 · 블록 채널 · 취소 깃발 · 진척).
     text_job: Option<TextJob>,
+    /// 다음 텍스트 변환 시작 때 스크롤을 유지(추가 페치 뒤 · 처음부터 다시 그리지 않게).
+    text_keep_scroll: bool,
     /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
     perf_report: bool,
 }
@@ -283,6 +285,7 @@ impl Default for Grid {
             text_scroll: (0, 0),
             text_longest: None,
             text_job: None,
+            text_keep_scroll: false,
             perf_report: false,
         }
     }
@@ -408,6 +411,8 @@ impl Grid {
         }
         self.perf_report = true;
         if self.view != ResultView::Grid {
+            // 텍스트 보기는 같은 ResultSet에서 다시 파생(표 폭이 새 행으로 바뀔 수 있어 전체 재변환 · 배경 · 스크롤 유지).
+            self.text_keep_scroll = true;
             self.refresh_text_view();
         }
     }
@@ -486,7 +491,9 @@ impl Grid {
         self.text_lines.clear();
         self.text_w = 0;
         self.text_longest = None;
-        self.text_scroll = (0, 0);
+        if !std::mem::take(&mut self.text_keep_scroll) {
+            self.text_scroll = (0, 0);
+        }
         let Some(rs) = self.rs.as_ref() else {
             return;
         };
@@ -841,6 +848,21 @@ impl Grid {
             self.text_scroll.0.clamp(0, mx),
             self.text_scroll.1.clamp(0, my),
         );
+        // ★ 텍스트 계열 보기도 스크롤 끝 = 다음 세그먼트(사용자 09-16 · 데이터 원천은 그리드와 같은 ResultSet) · 변환 중이면 미룸.
+        if self.auto_fetch
+            && self.more
+            && !self.fetching
+            && self.fetch_req.is_none()
+            && self.text_job.is_none()
+            && self.page_rows > 0
+            && my > 0
+            && self.text_scroll.1 >= my - self.row_h.max(1)
+        {
+            self.fetch_req = Some(FetchReq::Next {
+                offset: self.rows(),
+                limit: self.page_rows,
+            });
+        }
     }
 
     fn text_body_rect(&self) -> Rect {

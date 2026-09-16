@@ -197,6 +197,12 @@ const RUN_AFTER_OPTS: &[(&str, Msg)] = &[
     ("next_ok", Msg::ValRunNextOk),
     ("next_always", Msg::ValRunNextAlways),
 ];
+const KEY_PRESET_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValKeyAuto),
+    ("windows", Msg::ValKeyWindows),
+    ("macos", Msg::ValKeyMacos),
+    ("linux", Msg::ValKeyLinux),
+];
 const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("raw", Msg::ValRaw),
     ("markdown", Msg::ValMarkdown),
@@ -651,6 +657,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "pixel",
     },
     // ★ 단축키(사용자 09-15) — 값 문법은 `nexa-sql::keymap`(Sublime Text 기본 · 비우면 플랫폼 기본).
+    Entry {
+        key: "key.preset",
+        cat: Msg::CatKeys,
+        label: Msg::LblKeyPreset,
+        desc: Msg::DescKeyPreset,
+        kind: SettingKind::Choice(KEY_PRESET_OPTS),
+        default: "auto",
+    },
     Entry {
         key: "key.view.palette",
         cat: Msg::CatKeys,

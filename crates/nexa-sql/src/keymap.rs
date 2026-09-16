@@ -18,6 +18,43 @@ pub(crate) struct Command {
     pub label: Msg,
     pub win: &'static str,
     pub mac: &'static str,
+    /// Linux 프리셋(Sublime `Default (Linux).sublime-keymap` — 대부분 Windows와 같다).
+    pub linux: &'static str,
+}
+
+/// 기본 세트 프리셋(Sublime의 OS별 keymap 파일과 같은 구조 · 설정 `key.preset` = auto|windows|macos|linux · 사용자 09-16).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Preset {
+    Windows,
+    Macos,
+    Linux,
+}
+
+impl Preset {
+    /// 실행 OS의 프리셋.
+    pub(crate) fn os() -> Preset {
+        if cfg!(target_os = "macos") {
+            Preset::Macos
+        } else if cfg!(target_os = "linux") {
+            Preset::Linux
+        } else {
+            Preset::Windows
+        }
+    }
+
+    /// 설정 값(`auto` = OS).
+    pub(crate) fn parse(v: &str) -> Preset {
+        match v {
+            "windows" => Preset::Windows,
+            "macos" => Preset::Macos,
+            "linux" => Preset::Linux,
+            _ => Preset::os(),
+        }
+    }
+
+    pub(crate) fn from_settings(s: &Settings) -> Preset {
+        Preset::parse(s.get("key.preset").unwrap_or("auto"))
+    }
 }
 
 /// 단축키가 붙는 명령 표(순서 = 캡처 창 목록 순서).
@@ -27,120 +64,140 @@ pub(crate) const COMMANDS: &[Command] = &[
         label: Msg::MnCommandPalette,
         win: "ctrl+shift+p",
         mac: "cmd+shift+p",
+        linux: "ctrl+shift+p",
     },
     Command {
         id: "file.new",
         label: Msg::MnNew,
-        win: "ctrl+n|ctrl+t",
-        mac: "cmd+n|cmd+t",
+        win: "ctrl+n",
+        mac: "cmd+n",
+        linux: "ctrl+n",
     },
     Command {
         id: "file.open",
         label: Msg::MnOpen,
         win: "ctrl+o",
         mac: "cmd+o",
+        linux: "ctrl+o",
     },
     Command {
         id: "file.save",
         label: Msg::MnSave,
         win: "ctrl+s",
         mac: "cmd+s",
+        linux: "ctrl+s",
     },
     Command {
         id: "file.save_as",
         label: Msg::MnSaveAs,
         win: "ctrl+shift+s",
         mac: "cmd+shift+s",
+        linux: "ctrl+shift+s",
     },
     Command {
         id: "file.close_tab",
         label: Msg::MnCloseTab,
         win: "ctrl+w",
         mac: "cmd+w",
+        linux: "ctrl+w",
     },
     Command {
         id: "tab.next",
         label: Msg::MnNextTab,
         win: "ctrl+tab|ctrl+pagedown",
-        mac: "ctrl+tab|cmd+alt+right",
+        mac: "ctrl+tab|cmd+alt+right|cmd+shift+]",
+        linux: "ctrl+tab|ctrl+pagedown",
     },
     Command {
         id: "tab.prev",
         label: Msg::MnPrevTab,
         win: "ctrl+shift+tab|ctrl+pageup",
-        mac: "ctrl+shift+tab|cmd+alt+left",
+        mac: "ctrl+shift+tab|cmd+alt+left|cmd+shift+[",
+        linux: "ctrl+shift+tab|ctrl+pageup",
     },
     Command {
         id: "run.statement",
         label: Msg::MnRunStatement,
         win: "ctrl+enter",
         mac: "cmd+enter",
+        linux: "ctrl+enter",
     },
     Command {
         id: "run.all",
         label: Msg::MnRunAll,
         win: "f5",
         mac: "f5",
+        linux: "f5",
     },
     Command {
         id: "run.explain",
         label: Msg::MnExplain,
         win: "ctrl+shift+x",
         mac: "cmd+shift+x",
+        linux: "ctrl+shift+x",
     },
     Command {
         id: "run.commit",
         label: Msg::MnCommit,
         win: "ctrl+alt+c",
         mac: "cmd+alt+c",
+        linux: "ctrl+alt+c",
     },
     Command {
         id: "run.rollback",
         label: Msg::MnRollback,
         win: "ctrl+alt+r",
         mac: "cmd+alt+r",
+        linux: "ctrl+alt+r",
     },
     Command {
         id: "conn.toggle",
         label: Msg::MnConnect,
         win: "ctrl+shift+c",
         mac: "cmd+shift+c",
+        linux: "ctrl+shift+c",
     },
     Command {
         id: "view.log",
         label: Msg::MnLogWindow,
         win: "f10",
         mac: "f10",
+        linux: "f10",
     },
     Command {
         id: "view.theme",
         label: Msg::MnTheme,
         win: "ctrl+alt+t",
         mac: "cmd+alt+t",
+        linux: "ctrl+alt+t",
     },
     Command {
         id: "view.lang",
         label: Msg::MnLanguage,
         win: "ctrl+alt+l",
         mac: "cmd+alt+l",
+        linux: "ctrl+alt+l",
     },
     Command {
         id: "view.colors",
         label: Msg::MnColors,
         win: "",
         mac: "",
+        linux: "",
     },
     Command {
         id: "view.keys",
         label: Msg::MnKeys,
         win: "",
         mac: "",
+        linux: "",
     },
     Command {
         id: "view.explorer",
         label: Msg::MnExplorer,
         win: "ctrl+shift+e",
         mac: "cmd+shift+e",
+        linux: "ctrl+shift+e",
     },
     // ★ 다음/이전 문장(`;` 기준 · 사용자 09-16) — Alt+↓/↑: Sublime 기본 맵에서 비어 있고(Ctrl+Shift+↑/↓ = 줄 교체 ·
     //   Ctrl+Alt+↑/↓ = 커서 추가) 방향키라 "이동"으로 읽힌다.
@@ -149,96 +206,112 @@ pub(crate) const COMMANDS: &[Command] = &[
         label: Msg::MnNextStatement,
         win: "alt+down",
         mac: "alt+down",
+        linux: "alt+down",
     },
     Command {
         id: "edit.prev_statement",
         label: Msg::MnPrevStatement,
         win: "alt+up",
         mac: "alt+up",
+        linux: "alt+up",
     },
     Command {
         id: "edit.expand_selection",
         label: Msg::MnExpandSelection,
         win: "ctrl+d",
         mac: "cmd+d",
+        linux: "ctrl+d",
     },
     Command {
         id: "edit.select_all_occurrences",
         label: Msg::MnSelectAllOccurrences,
-        win: "ctrl+shift+d",
-        mac: "cmd+shift+d",
+        win: "alt+f3",
+        mac: "ctrl+cmd+g",
+        linux: "alt+f3",
     },
     Command {
         id: "edit.prefs",
         label: Msg::MnPreferences,
         win: "ctrl+,",
         mac: "cmd+,",
+        linux: "ctrl+,",
     },
     Command {
         id: "conn.disconnect",
         label: Msg::TipDisconnect,
         win: "",
         mac: "",
+        linux: "",
     },
     Command {
         id: "edit.find",
         label: Msg::MnFind,
         win: "ctrl+f",
         mac: "cmd+f",
+        linux: "ctrl+f",
     },
     Command {
         id: "edit.replace",
         label: Msg::MnReplace,
         win: "ctrl+h",
         mac: "cmd+alt+f",
+        linux: "ctrl+h",
     },
     Command {
         id: "edit.find_next",
         label: Msg::MnFindNext,
         win: "f3",
         mac: "cmd+g",
+        linux: "f3",
     },
     Command {
         id: "edit.find_prev",
         label: Msg::MnFindPrev,
         win: "shift+f3",
         mac: "cmd+shift+g",
+        linux: "shift+f3",
     },
     Command {
         id: "edit.undo",
         label: Msg::MnUndo,
         win: "ctrl+z",
         mac: "cmd+z",
+        linux: "ctrl+z",
     },
     Command {
         id: "edit.redo",
         label: Msg::MnRedo,
         win: "ctrl+y|ctrl+shift+z",
         mac: "cmd+shift+z",
+        linux: "ctrl+y|ctrl+shift+z",
     },
     Command {
         id: "edit.cut",
         label: Msg::MnCut,
         win: "ctrl+x",
         mac: "cmd+x",
+        linux: "ctrl+x",
     },
     Command {
         id: "edit.copy",
         label: Msg::MnCopy,
         win: "ctrl+c",
         mac: "cmd+c",
+        linux: "ctrl+c",
     },
     Command {
         id: "edit.paste",
         label: Msg::MnPaste,
         win: "ctrl+v",
         mac: "cmd+v",
+        linux: "ctrl+v",
     },
     Command {
         id: "edit.select_all",
         label: Msg::MnSelectAll,
         win: "ctrl+a",
         mac: "cmd+a",
+        linux: "ctrl+a",
     },
 ];
 
@@ -247,12 +320,12 @@ pub(crate) fn setting_key(id: &str) -> String {
     format!("key.{id}")
 }
 
-/// 플랫폼 기본 코드.
-pub(crate) fn platform_default(c: &Command) -> &'static str {
-    if cfg!(target_os = "macos") {
-        c.mac
-    } else {
-        c.win
+/// 프리셋별 기본 코드.
+pub(crate) fn preset_default(c: &Command, p: Preset) -> &'static str {
+    match p {
+        Preset::Windows => c.win,
+        Preset::Macos => c.mac,
+        Preset::Linux => c.linux,
     }
 }
 
@@ -262,6 +335,8 @@ pub(crate) struct Chord {
     pub primary: bool,
     pub shift: bool,
     pub alt: bool,
+    /// macOS **Control**(⌘와 별개 · Sublime `ctrl+cmd+g`). 코드에 `cmd`와 `ctrl`이 함께 있을 때만 참.
+    pub ctrl: bool,
     /// 소문자 글자 또는 이름(`enter` `tab` `f5` `pageup` …).
     pub key: String,
 }
@@ -334,20 +409,25 @@ impl Chord {
             primary: false,
             shift: false,
             alt: false,
+            ctrl: false,
             key: String::new(),
         };
         let toks: Vec<&str> = s.split('+').map(str::trim).collect();
         let (mods, key) = toks.split_at(toks.len().saturating_sub(1));
+        let mut saw_ctrl = false;
+        let mut saw_cmd = false;
         for m in mods {
             match m.to_ascii_lowercase().as_str() {
-                "ctrl" | "control" | "cmd" | "command" | "super" | "meta" | "primary" | "win" => {
-                    c.primary = true
-                }
+                "ctrl" | "control" => saw_ctrl = true,
+                "cmd" | "command" | "super" | "meta" | "primary" | "win" => saw_cmd = true,
                 "shift" => c.shift = true,
                 "alt" | "option" | "opt" => c.alt = true,
                 _ => return None,
             }
         }
+        // `ctrl`만 = 주 조합키(Windows/Linux 코드) · `cmd`와 함께면 macOS Control(⌘와 별개).
+        c.primary = saw_cmd || saw_ctrl;
+        c.ctrl = saw_cmd && saw_ctrl;
         let k = key.first()?.to_ascii_lowercase();
         if k.is_empty() {
             return None;
@@ -383,6 +463,9 @@ impl Chord {
     fn prefix(&self) -> String {
         let mac = cfg!(target_os = "macos");
         let mut s = String::new();
+        if self.ctrl {
+            s.push_str(if mac { "⌃" } else { "Ctrl+" });
+        }
         if self.primary {
             s.push_str(if mac { "⌘" } else { "Ctrl+" });
         }
@@ -398,6 +481,9 @@ impl Chord {
     /// 저장용 문자열(`ctrl+shift+p` · macOS면 `cmd+…`).
     pub(crate) fn code(&self) -> String {
         let mut s = String::new();
+        if self.ctrl {
+            s.push_str("ctrl+");
+        }
         if self.primary {
             s.push_str(if cfg!(target_os = "macos") {
                 "cmd+"
@@ -424,6 +510,7 @@ impl Chord {
         primary: bool,
         shift: bool,
         alt: bool,
+        ctrl: bool,
     ) -> Option<Chord> {
         let name = match key {
             Key::Character(t) => {
@@ -474,6 +561,7 @@ impl Chord {
             primary,
             shift,
             alt,
+            ctrl: ctrl && primary,
             key: name,
         })
     }
@@ -490,13 +578,14 @@ pub(crate) struct Keymap {
 impl Keymap {
     /// 설정에서 조립 — `key.<id>`가 비어 있으면 플랫폼 기본.
     pub(crate) fn from_settings(s: &Settings) -> Self {
+        let preset = Preset::from_settings(s);
         let mut km = Keymap::default();
         for c in COMMANDS {
             let code = s
                 .get(&setting_key(c.id))
                 .map(str::trim)
                 .filter(|v| !v.is_empty())
-                .map_or_else(|| platform_default(c).to_string(), String::from);
+                .map_or_else(|| preset_default(c, preset).to_string(), String::from);
             for part in code.split('|') {
                 // `none` = 단축키 없음(비우기).
                 if part.trim().eq_ignore_ascii_case("none") {
@@ -562,6 +651,7 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
             )
             .expect("chord")
             .key
@@ -614,5 +704,42 @@ mod tests {
         }
         assert_eq!(km.conflict(&p, "view.palette"), None);
         assert_eq!(km.conflict(&p, "file.new"), Some("view.palette"));
+    }
+
+    #[test]
+    fn presets_and_mac_control_chord() {
+        // 프리셋은 OS와 무관하게 고를 수 있다(설정 `key.preset`).
+        let c = COMMANDS
+            .iter()
+            .find(|c| c.id == "edit.select_all_occurrences")
+            .unwrap();
+        assert_eq!(preset_default(c, Preset::Windows), "alt+f3");
+        assert_eq!(preset_default(c, Preset::Linux), "alt+f3");
+        assert_eq!(preset_default(c, Preset::Macos), "ctrl+cmd+g");
+        // `ctrl+cmd+g`(맥 Control + ⌘)는 `cmd+g`와 다른 조합.
+        let a = Chord::parse("ctrl+cmd+g").unwrap();
+        let b = Chord::parse("cmd+g").unwrap();
+        assert!(a.ctrl && a.primary && !b.ctrl);
+        assert_ne!(a, b);
+        assert_eq!(
+            a.code(),
+            if cfg!(target_os = "macos") {
+                "ctrl+cmd+g"
+            } else {
+                "ctrl+ctrl+g"
+            }
+            .replace("ctrl+ctrl+", "ctrl+cmd+")
+            .replace(
+                "ctrl+cmd+",
+                if cfg!(target_os = "macos") {
+                    "ctrl+cmd+"
+                } else {
+                    "ctrl+ctrl+"
+                }
+            )
+        );
+        // `ctrl`만 = 주 조합키(Windows 코드).
+        let w = Chord::parse("ctrl+shift+p").unwrap();
+        assert!(w.primary && !w.ctrl);
     }
 }

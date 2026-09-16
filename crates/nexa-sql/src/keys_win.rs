@@ -58,6 +58,8 @@ pub(crate) struct KeysWin {
     shift: bool,
     primary: bool,
     alt: bool,
+    /// macOS Control 눌림(⌘와 별개 · 키맵 `ctrl+cmd+…`).
+    ctrl_mac: bool,
     rows: Vec<RowView>,
     selected: Option<usize>,
     /// 캡처 중(선택 행에 다음 키 조합을 넣는다).
@@ -81,6 +83,7 @@ impl KeysWin {
             shift: false,
             primary: false,
             alt: false,
+            ctrl_mac: false,
             rows: Vec::new(),
             selected: None,
             capturing: false,
@@ -293,6 +296,8 @@ impl KeysWin {
                 } else {
                     m.state().control_key()
                 };
+                // macOS Control(⌘와 별개 · Sublime `ctrl+cmd+g`) — 다른 OS에선 늘 false.
+                self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
                 return KeysAction::None;
             }
@@ -333,6 +338,7 @@ impl KeysWin {
                         self.primary,
                         self.shift,
                         self.alt,
+                        self.ctrl_mac,
                     ) else {
                         return KeysAction::None;
                     };
