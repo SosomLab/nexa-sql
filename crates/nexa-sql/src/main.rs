@@ -238,10 +238,56 @@ struct App {
     next_blink: Instant,
     /// 접속 패널 작업(진행/결과) — 한 번에 하나 · 프로필 이름에 묶임(사용자 09-14).
     panel_op: Option<(String, ConnState)>,
+    /// ★ 프로필별 **마지막 완료 결과**(TestOk/Failed/Connected · 사용자 09-16): 상세 폼이 닫힌 채 행 Test가 실패해도,
+    /// 그 뒤 다른 프로필로 접속해 `panel_op`가 바뀌어도, 나중에 Details로 그 프로필을 열면 결과가 그대로 보인다.
+    /// 진행 중(Testing/Connecting)은 넣지 않는다 · 삭제/이름 변경 시 제거 · 접속 해제 시 Connected 항목 제거.
+    panel_results: HashMap<String, ConnState>,
 }
 
 /// 스플리터 잡히는 띠 두께(논리 px).
 const SPLIT_GRIP: f32 = 6.0;
+
+/// 프로필을 폼에 불러올 때 보일 상태(사용자 09-16): 진행 중/직전 작업(`op`)이 그 프로필 것이면 그것 → 아니면 프로필별
+/// 마지막 완료 결과(`results`) → 없으면 Idle. 다른 프로필로 접속해 `op`가 바뀌어도 앞선 테스트 실패가 사라지지 않는다.
+fn resolve_panel_state(
+    op: Option<&(String, ConnState)>,
+    results: &HashMap<String, ConnState>,
+    name: &str,
+) -> ConnState {
+    match op {
+        Some((n, st)) if n.trim() == name.trim() => st.clone(),
+        _ => results
+            .get(name.trim())
+            .cloned()
+            .unwrap_or(ConnState::Idle),
+    }
+}
+
+#[cfg(test)]
+mod panel_state_tests {
+    use super::*;
+
+    #[test]
+    fn last_result_survives_other_profile_ops() {
+        let mut results = HashMap::new();
+        results.insert("B".to_string(), ConnState::Failed("ORA-12541".into()));
+        // 진행 중 작업이 A(다른 프로필)여도 B의 실패는 남는다.
+        let op = ("A".to_string(), ConnState::Connected("A@db".into()));
+        assert_eq!(
+            resolve_panel_state(Some(&op), &results, "B"),
+            ConnState::Failed("ORA-12541".into())
+        );
+        // 진행 중 작업이 B 자신이면 그것이 우선(Testing).
+        let op = ("B".to_string(), ConnState::Testing);
+        assert_eq!(resolve_panel_state(Some(&op), &results, "B"), ConnState::Testing);
+        // 결과가 없는 프로필은 Idle · 이름 앞뒤 공백 무시.
+        assert_eq!(resolve_panel_state(None, &results, "C"), ConnState::Idle);
+        assert_eq!(
+            resolve_panel_state(None, &results, " B "),
+            ConnState::Failed("ORA-12541".into())
+        );
+    }
+}
 
 fn px(v: f32, s: f32) -> i32 {
     (v * s).round() as i32
@@ -452,6 +498,10 @@ impl App {
                 match res {
                     Ok(()) => {
                         self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
+                        // 이름이 바뀌었으면 옛 이름의 결과는 버린다(저장 내용이 달라졌을 수 있으니 옮기지 않는다).
+                        if let Some(old) = &rename_from {
+                            self.panel_results.remove(old.trim());
+                        }
                         // 폼은 이제 새 이름의 프로필을 "불러온" 상태 — 또 바꿔 저장하면 다시 이름 변경.
                         self.conn_win.panel.fill(&name, &spec);
                         self.conn_win.refresh_profiles(Some(&name));
@@ -469,11 +519,8 @@ impl App {
                     Ok(Some(spec)) => {
                         let spec = self.conn_win.with_session_pw(&name, spec);
                         self.conn_win.panel.fill(&name, &spec);
-                        // 상태는 한 번에 하나(사용자 09-14): 진행/결과가 이 프로필 것이면 복원, 아니면 Idle.
-                        let st = match &self.panel_op {
-                            Some((n, st)) if *n == name => st.clone(),
-                            _ => ConnState::Idle,
-                        };
+                        // 상태는 한 번에 하나(사용자 09-14): 진행/결과가 이 프로필 것이면 복원, 아니면 프로필별 마지막 결과(09-16).
+                        let st = self.panel_state_for(&name);
                         self.conn_win.panel.set_state(st);
                     }
                     Ok(None) => {}
@@ -501,7 +548,18 @@ impl App {
         }
         // 상세 패널이 닫혀 있어도 목록 오른쪽 아래에 같은 안내(사용자 09-16).
         self.conn_win.set_note(name, st.clone());
+        // 완료 결과는 프로필별로도 남긴다(나중에 Details로 열 때 복원 · 사용자 09-16).
+        if !name.trim().is_empty()
+            && !matches!(st, ConnState::Idle | ConnState::Testing | ConnState::Connecting)
+        {
+            self.panel_results.insert(name.trim().to_string(), st.clone());
+        }
         self.panel_op = Some((name.to_string(), st));
+    }
+
+    /// 프로필을 폼에 불러올 때 보일 상태 — 진행 중/직전 작업이 이 프로필 것이면 그것, 아니면 프로필별 마지막 결과, 없으면 Idle.
+    fn panel_state_for(&self, name: &str) -> ConnState {
+        resolve_panel_state(self.panel_op.as_ref(), &self.panel_results, name)
     }
 
     fn drain_conn(&mut self) -> bool {
@@ -1264,6 +1322,9 @@ impl App {
     /// 접속 계열 결과 `Disconnected`의 UI 반영(워커 이벤트 · 즉시 해제 공용).
     fn on_conn_disconnected(&mut self) {
         self.live_sid = None;
+        // 해제됐으니 "접속됨" 결과는 더 이상 사실이 아니다(테스트 결과는 유지).
+        self.panel_results
+            .retain(|_, st| !matches!(st, ConnState::Connected(_)));
         self.key_cache.clear();
         self.sql_wait = None;
         self.editors.set_conn_desc("");
@@ -2562,7 +2623,10 @@ impl App {
 
     fn delete_profile(&mut self, name: &str) {
         match Vault::open_default().and_then(|v| v.remove(name)) {
-            Ok(_) => self.status = tf(Msg::StProfileDeleted, &[name]),
+            Ok(_) => {
+                self.status = tf(Msg::StProfileDeleted, &[name]);
+                self.panel_results.remove(name.trim());
+            }
             Err(e) => self.status = e.to_string(),
         }
         // 인접 항목 자동 선택 · 폼이 펼쳐져 있으면 그 항목으로 갱신(비면 New 상태).
@@ -4530,6 +4594,7 @@ fn main() {
         started: Instant::now(),
         next_blink: Instant::now(),
         panel_op: None,
+        panel_results: HashMap::new(),
     };
     app.grid.set_row_snap(row_snap);
     app.grid.set_copy_null(app.settings.flag("grid.copy_null"));
