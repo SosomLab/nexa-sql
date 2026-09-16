@@ -13,6 +13,7 @@
 mod cat;
 mod config;
 mod conn;
+mod help;
 mod plan;
 mod term;
 
@@ -55,10 +56,7 @@ struct Opts {
 }
 
 fn usage() -> ! {
-    eprintln!(
-        "nsql — Nexa SQL 명령줄\n\n  nsql plan   [-d dialect] <script|-> [args]\n  nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] [--timing] [--log] [--max-rows N] [--width N] [--max-col-width N] [--overflow wrap|truncate|expanded|none | -x] <script|-> [args]\n  nsql shell  -c <target> [-d dialect] [--width N] [-x]                 셸 안: set width|colwidth|overflow · \\x · show\n  nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]\n  nsql explain -c <target> (-q <sql> | <file>)          실행 계획(방언별 EXPLAIN 관용)\n  nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path\n  nsql cat    -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>\n              kind: tables views mviews procs funcs packages bodies sequences triggers indexes synonyms types\n\n  target: 프로필 이름(nsql conn) · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc\n  이 빌드의 드라이버: {}",
-        nsql_drivers::available().iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
-    );
+    eprint!("{}", help::text(None));
     std::process::exit(2);
 }
 
@@ -66,8 +64,20 @@ fn parse_opts() -> Opts {
     let mut args = std::env::args().skip(1);
     let Some(cmd) = args.next() else { usage() };
     if cmd == "-h" || cmd == "--help" {
-        usage();
+        help::print(None);
+        std::process::exit(0);
     }
+    // `nsql help [<명령>]` · `nsql <명령> --help` = 그 명령의 인자·옵션·예(사용자 09-16).
+    let rest: Vec<String> = args.collect();
+    if cmd == "help" {
+        help::print(rest.first().map(String::as_str));
+        std::process::exit(0);
+    }
+    if help::wants_help(&rest) {
+        help::print(Some(&cmd));
+        std::process::exit(0);
+    }
+    let args = rest.into_iter();
     if cmd == "--version" || cmd == "-V" {
         println!("nsql {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);

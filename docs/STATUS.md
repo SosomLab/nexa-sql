@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (17차 · win) — CLI 도움말 상세 ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (16차 · win) — CLI 표 폭(설정·플래그·셸) ✅
 
 → [journal](journal/2026-09-16.md)

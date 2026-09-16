@@ -1,0 +1,401 @@
+//! `nsql --help` · `nsql <명령> --help` · `nsql help [<명령>]` — 명령·인자·옵션마다 상세 설명(사용자 09-16).
+//! 문구는 전부 `nsql-i18n::Msg`(영어 기본 · 한국어) · 표는 데이터(옵션 원장)에서 만든다 — 새 옵션은 [`OPTS`]에 한 줄.
+
+use nsql_i18n::{t, Msg};
+
+/// 옵션 하나 — 플래그 표기 · 값 자리 · 설명.
+struct Opt {
+    flags: &'static str,
+    arg: &'static str,
+    desc: Msg,
+}
+
+/// 옵션 원장(표기 순서 = 도움말 순서).
+const OPTS: &[Opt] = &[
+    Opt {
+        flags: "-c, --connect",
+        arg: "<target>",
+        desc: Msg::HlpOptConnect,
+    },
+    Opt {
+        flags: "-d, --dialect",
+        arg: "<name>",
+        desc: Msg::HlpOptDialect,
+    },
+    Opt {
+        flags: "-f, --format",
+        arg: "<fmt>",
+        desc: Msg::HlpOptFormat,
+    },
+    Opt {
+        flags: "--host",
+        arg: "<host>",
+        desc: Msg::HlpOptHost,
+    },
+    Opt {
+        flags: "--port",
+        arg: "<n>",
+        desc: Msg::HlpOptPort,
+    },
+    Opt {
+        flags: "--db, --database",
+        arg: "<name>",
+        desc: Msg::HlpOptDb,
+    },
+    Opt {
+        flags: "-u, --user",
+        arg: "<user>",
+        desc: Msg::HlpOptUser,
+    },
+    Opt {
+        flags: "-p, --password",
+        arg: "<pw>",
+        desc: Msg::HlpOptPassword,
+    },
+    Opt {
+        flags: "--no-prompt",
+        arg: "",
+        desc: Msg::HlpOptNoPrompt,
+    },
+    Opt {
+        flags: "--max-rows",
+        arg: "<n>",
+        desc: Msg::HlpOptMaxRows,
+    },
+    Opt {
+        flags: "--width, --linesize",
+        arg: "<n>",
+        desc: Msg::HlpOptWidth,
+    },
+    Opt {
+        flags: "--max-col-width",
+        arg: "<n>",
+        desc: Msg::HlpOptMaxColWidth,
+    },
+    Opt {
+        flags: "--overflow",
+        arg: "<mode>",
+        desc: Msg::HlpOptOverflow,
+    },
+    Opt {
+        flags: "-x, --expanded",
+        arg: "",
+        desc: Msg::HlpOptExpanded,
+    },
+    Opt {
+        flags: "--timing",
+        arg: "",
+        desc: Msg::HlpOptTiming,
+    },
+    Opt {
+        flags: "--log",
+        arg: "",
+        desc: Msg::HlpOptLog,
+    },
+    Opt {
+        flags: "-q, --query",
+        arg: "<sql>",
+        desc: Msg::HlpOptQuery,
+    },
+    Opt {
+        flags: "-t, --table",
+        arg: "<table>",
+        desc: Msg::HlpOptTable,
+    },
+    Opt {
+        flags: "-o, --out",
+        arg: "<file>",
+        desc: Msg::HlpOptOut,
+    },
+    Opt {
+        flags: "-s, --schema",
+        arg: "<schema>",
+        desc: Msg::HlpOptSchema,
+    },
+    Opt {
+        flags: "-h, --help",
+        arg: "",
+        desc: Msg::HlpOptHelp,
+    },
+    Opt {
+        flags: "-V, --version",
+        arg: "",
+        desc: Msg::HlpOptVersion,
+    },
+];
+
+/// 명령 하나 — 이름 · 사용 줄 · 한 줄 설명 · 상세 · 위치 인자 · 쓰는 옵션(플래그 첫 표기) · 예.
+struct Cmd {
+    name: &'static str,
+    usage: &'static str,
+    brief: Msg,
+    detail: Msg,
+    args: &'static [(&'static str, Msg)],
+    opts: &'static [&'static str],
+    examples: &'static [&'static str],
+}
+
+const CONN_OPTS: &[&str] = &[
+    "-c",
+    "-d",
+    "--host",
+    "--port",
+    "--db",
+    "-u",
+    "-p",
+    "--no-prompt",
+];
+
+const CMDS: &[Cmd] = &[
+    Cmd {
+        name: "run",
+        usage: "nsql run -c <target> [options] <script|-> [args...]",
+        brief: Msg::HlpCmdRun,
+        detail: Msg::HlpCmdRunDetail,
+        args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        examples: &[
+            "nsql run -c prod report.sql",
+            "nsql run -c oracle://scott:tiger@db:1521/orcl -f csv query.sql > out.csv",
+            "echo \"SELECT 1 FROM dual;\" | nsql run -c prod -",
+            "nsql run -c prod --width 120 --overflow truncate wide.sql",
+        ],
+    },
+    Cmd {
+        name: "shell",
+        usage: "nsql shell -c <target> [options]",
+        brief: Msg::HlpCmdShell,
+        detail: Msg::HlpCmdShellDetail,
+        args: &[],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        examples: &["nsql shell -c prod", "nsql shell -c prod --width 160", "nsql shell -c sqlite:app.db -d sqlite"],
+    },
+    Cmd {
+        name: "export",
+        usage: "nsql export -c <target> (-q <sql> | -t <table>) [-f fmt] [-o file]",
+        brief: Msg::HlpCmdExport,
+        detail: Msg::HlpCmdExportDetail,
+        args: &[],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-q", "-t", "-f", "-o", "--max-rows"],
+        examples: &["nsql export -c prod -t EMP -f csv -o emp.csv", "nsql export -c prod -q \"SELECT * FROM emp WHERE deptno=10\" -f insert:EMP"],
+    },
+    Cmd {
+        name: "explain",
+        usage: "nsql explain -c <target> (-q <sql> | <file>)",
+        brief: Msg::HlpCmdExplain,
+        detail: Msg::HlpCmdExplainDetail,
+        args: &[("<file>", Msg::HlpArgExplainFile)],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-q"],
+        examples: &["nsql explain -c prod -q \"SELECT * FROM emp\"", "nsql explain -c prod slow.sql"],
+    },
+    Cmd {
+        name: "plan",
+        usage: "nsql plan [-d dialect] <script|-> [args...]",
+        brief: Msg::HlpCmdPlan,
+        detail: Msg::HlpCmdPlanDetail,
+        args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
+        opts: &["-d"],
+        examples: &["nsql plan -d mssql session-vars.sql 2026 Q1"],
+    },
+    Cmd {
+        name: "conn",
+        usage: "nsql conn list | add <name> [<target>] [conn options] | show <name> | rm <name> | test [<name>] [conn options] | path",
+        brief: Msg::HlpCmdConn,
+        detail: Msg::HlpCmdConnDetail,
+        args: &[
+            ("list", Msg::HlpArgConnList),
+            ("add <name> [<target>]", Msg::HlpArgConnAdd),
+            ("show <name>", Msg::HlpArgConnShow),
+            ("rm <name>", Msg::HlpArgConnRm),
+            ("test [<name>]", Msg::HlpArgConnTest),
+            ("path", Msg::HlpArgConnPath),
+        ],
+        opts: CONN_OPTS,
+        examples: &[
+            "nsql conn add prod oracle://scott@db:1521/orcl        # asks for the password",
+            "nsql conn add prod -d oracle --host db --port 1521 --db orcl --user scott",
+            "nsql conn test prod",
+            "nsql conn test -d oracle --host db --port 1521 --db orcl --user scott",
+        ],
+    },
+    Cmd {
+        name: "cat",
+        usage: "nsql cat -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>",
+        brief: Msg::HlpCmdCat,
+        detail: Msg::HlpCmdCatDetail,
+        args: &[
+            ("schemas", Msg::HlpArgCatSchemas),
+            ("kinds", Msg::HlpArgCatKinds),
+            ("<kind>", Msg::HlpArgCatKind),
+            ("columns <object>", Msg::HlpArgCatColumns),
+            ("source <kind> <name>", Msg::HlpArgCatSource),
+            ("errors <name>", Msg::HlpArgCatErrors),
+        ],
+        opts: &["-c", "-d", "-s", "-f", "--width", "--max-col-width", "--overflow", "-x"],
+        examples: &["nsql cat -c prod tables", "nsql cat -c prod -s HR columns EMPLOYEES", "nsql cat -c prod source packages PKG_ORDER"],
+    },
+    Cmd {
+        name: "config",
+        usage: "nsql config list [all] | get <key> | set <key> <value> | reset <key> | export-json | path",
+        brief: Msg::HlpCmdConfig,
+        detail: Msg::HlpCmdConfigDetail,
+        args: &[
+            ("list [all]", Msg::HlpArgConfigList),
+            ("get <key>", Msg::HlpArgConfigGet),
+            ("set <key> <value>", Msg::HlpArgConfigSet),
+            ("reset <key>", Msg::HlpArgConfigReset),
+            ("path", Msg::HlpArgConfigPath),
+        ],
+        opts: &[],
+        examples: &["nsql config list", "nsql config set cli.width 160", "nsql config set ui.lang ko", "nsql config get grid.max_rows"],
+    },
+];
+
+fn opt_by_flag(flag: &str) -> Option<&'static Opt> {
+    OPTS.iter().find(|o| o.flags.split(", ").any(|f| f == flag))
+}
+
+/// 왼쪽 열 폭에 맞춰 `left  desc` 줄(설명이 여러 줄이면 들여쓰기 유지).
+fn row(out: &mut String, left: &str, desc: &str, width: usize) {
+    let mut first = true;
+    for line in desc.split('\n') {
+        if first {
+            out.push_str(&format!("  {left:<width$}  {line}\n"));
+            first = false;
+        } else {
+            out.push_str(&format!("  {:<width$}  {line}\n", ""));
+        }
+    }
+}
+
+fn opts_table(out: &mut String, flags: &[&str]) {
+    let rows: Vec<(String, Msg)> = flags
+        .iter()
+        .filter_map(|f| opt_by_flag(f))
+        .map(|o| {
+            let left = if o.arg.is_empty() {
+                o.flags.to_string()
+            } else {
+                format!("{} {}", o.flags, o.arg)
+            };
+            (left, o.desc)
+        })
+        .collect();
+    let w = rows
+        .iter()
+        .map(|(l, _)| l.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (l, d) in rows {
+        row(out, &l, t(d), w);
+    }
+}
+
+/// 전체 개요(명령 목록 + 접속 대상 표기 + 드라이버).
+fn overview(drivers: &str) -> String {
+    let mut o = String::new();
+    o.push_str(&format!("{}\n\n", t(Msg::HlpTitle)));
+    o.push_str(&format!("{}\n", t(Msg::HlpCommands)));
+    let w = CMDS.iter().map(|c| c.name.len()).max().unwrap_or(0);
+    for c in CMDS {
+        row(&mut o, c.name, t(c.brief), w);
+    }
+    o.push_str(&format!("\n{}\n", t(Msg::HlpTargets)));
+    for line in t(Msg::HlpTargetForms).split('\n') {
+        o.push_str(&format!("  {line}\n"));
+    }
+    o.push_str(&format!("\n{}\n", t(Msg::HlpCommonOptions)));
+    opts_table(&mut o, &["-c", "-d", "-f", "--width", "-x", "-h", "-V"]);
+    o.push_str(&format!("\n  {}: {drivers}\n", t(Msg::HlpDrivers)));
+    o.push_str(&format!("\n{}\n", t(Msg::HlpMoreHelp)));
+    o
+}
+
+/// 명령 하나의 상세.
+fn detail(c: &Cmd) -> String {
+    let mut o = String::new();
+    o.push_str(&format!("{}\n\n  {}\n\n", t(c.brief), c.usage));
+    for line in t(c.detail).split('\n') {
+        o.push_str(&format!("  {line}\n"));
+    }
+    if !c.args.is_empty() {
+        o.push_str(&format!("\n{}\n", t(Msg::HlpArguments)));
+        let w = c
+            .args
+            .iter()
+            .map(|(a, _)| a.chars().count())
+            .max()
+            .unwrap_or(0);
+        for (a, m) in c.args {
+            row(&mut o, a, t(*m), w);
+        }
+    }
+    if !c.opts.is_empty() {
+        o.push_str(&format!("\n{}\n", t(Msg::HlpOptions)));
+        opts_table(&mut o, c.opts);
+    }
+    if c.name == "shell" {
+        o.push_str(&format!("\n{}\n", t(Msg::HlpShellCommands)));
+        for line in t(Msg::HlpShellCommandList).split('\n') {
+            o.push_str(&format!("  {line}\n"));
+        }
+    }
+    if !c.examples.is_empty() {
+        o.push_str(&format!("\n{}\n", t(Msg::HlpExamples)));
+        for e in c.examples {
+            o.push_str(&format!("  {e}\n"));
+        }
+    }
+    o
+}
+
+fn drivers() -> String {
+    nsql_drivers::available()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 도움말 본문. `cmd`가 없거나 모르는 명령이면 개요.
+pub(crate) fn text(cmd: Option<&str>) -> String {
+    match cmd.and_then(|n| {
+        CMDS.iter().find(|c| {
+            c.name == n
+                || (n == "catalog" && c.name == "cat")
+                || (n == "settings" && c.name == "config")
+        })
+    }) {
+        Some(c) => detail(c),
+        None => overview(&drivers()),
+    }
+}
+
+/// 도움말을 stdout에(`--help` · 종료 0용).
+pub(crate) fn print(cmd: Option<&str>) {
+    print!("{}", text(cmd));
+}
+
+/// 인자 목록에 `-h`/`--help`가 있는가.
+pub(crate) fn wants_help(args: &[String]) -> bool {
+    args.iter().any(|a| a == "-h" || a == "--help")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_option_is_in_the_ledger() {
+        for c in CMDS {
+            for f in c.opts {
+                assert!(opt_by_flag(f).is_some(), "{}: {f}", c.name);
+            }
+        }
+        assert!(overview("sqlite").contains("nsql"));
+        for c in CMDS {
+            let d = detail(c);
+            assert!(d.contains(c.usage), "{}", c.name);
+        }
+    }
+}

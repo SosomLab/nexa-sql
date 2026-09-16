@@ -48,7 +48,7 @@ fn open(o: &Opts) -> Result<Box<dyn Session>, String> {
 }
 
 fn usage() -> i32 {
-    eprintln!("nsql cat -c <target> [-s schema] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>");
+    eprint!("{}", crate::help::text(Some("cat")));
     2
 }
 

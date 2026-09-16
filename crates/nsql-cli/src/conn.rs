@@ -20,9 +20,7 @@ use crate::{opener, term, Opts};
 use nsql_script::ConnectSpec;
 
 fn usage() -> i32 {
-    eprintln!(
-        "nsql conn — 연결 프로필(사용자 폴더에 비밀번호 암호화 저장 · GUI와 공유)\n\n  nsql conn list\n  nsql conn add <name> [<target>] [-d dialect] [--host h] [--port n] [--db d] [--user u] [-p password] [--no-prompt]\n  nsql conn show <name>\n  nsql conn rm <name>\n  nsql conn test [<name>] [-d dialect --host h --port n --db d --user u -p password]\n  nsql conn path\n\n  이후 `-c <name>`(run/shell/export)과 스크립트의 `CONNECT <name>`이 프로필을 쓴다."
-    );
+    eprint!("{}", crate::help::text(Some("conn")));
     2
 }
 

@@ -15,7 +15,7 @@ use nsql_settings::{allowed, Settings};
 use crate::Opts;
 
 fn usage() -> i32 {
-    eprintln!("{}", t(Msg::CfgUsage));
+    eprint!("{}", crate::help::text(Some("config")));
     2
 }
 

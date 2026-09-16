@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-16 (17차 · win)** — **CLI 도움말 상세**(`help.rs` 옵션/명령 원장 · `nsql <명령> --help` · `nsql help` · 인자·옵션·예 · 전부 `Msg`). → [journal](journal/2026-09-16.md)
 - **2026-09-16 (16차 · win)** — **CLI 표 폭**: 설정 `cli.width`(0 = 터미널 폭)/`cli.max_col_width`/`cli.overflow`(wrap·truncate·expanded·none) · 플래그 `--width`/`--max-col-width`/`--overflow`/`-x` · 셸 `set width|colwidth|overflow`·`\x`·`show` · nsql-io `GridOpts`. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (15차 · win)** — CLI 비밀번호 프롬프트(`NSQL_PASSWORD` → 숨김 입력 · `conn test`·`-c` 공통) · **편집기 드래그 지연** = 배경 라운드 사각형 전면 SDF(nexa-ui 8차 · 4.6→0.35ms) · 프레임 계측 `NSQL_TRACE_FRAMES`. → [journal](journal/2026-09-16.md)
 - **2026-09-16 (14차 · win)** — **탭 정지점**(Golden 방식 · 렌더러 원점 기준) + 설정 `editor.tab_stops`(stop/fixed · 즉시 반영). → [journal](journal/2026-09-16.md)
