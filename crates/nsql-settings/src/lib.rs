@@ -1643,6 +1643,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Size { min: 8, max: 40 },
         default: "16",
     },
+    // 편집기 고정폭 글꼴(사용자 09-17): 비면 OS별 기본 사슬(D2Coding → Sarasa → Nanum Gothic Coding → OS 고정폭 → 한글 UI 본) ·
+    // 이름을 주면 먼저 시도하고 못 찾으면 같은 사슬로 fail-over(nexa-font `mono_font`).
+    Entry {
+        key: "editor.font_face",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorFontFace,
+        desc: Msg::DescEditorFontFace,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "grid.font_face",
         cat: Msg::CatGrid,

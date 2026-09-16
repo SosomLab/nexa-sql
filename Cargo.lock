@@ -1298,6 +1298,7 @@ dependencies = [
  "nsql-log",
  "nsql-run",
  "nsql-script",
+ "nsql-search",
  "nsql-settings",
  "nsql-vault",
  "objc2 0.5.2",

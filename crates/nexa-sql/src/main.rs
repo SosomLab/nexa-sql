@@ -1710,7 +1710,23 @@ impl App {
                 self.git.refresh(true);
             }
             "grid.font_face" => {
-                self.grid_font = load_grid_font(self.settings.get(key).unwrap_or(""));
+                let pref = self.settings.get("editor.font_face").map(str::to_string);
+                self.grid_font =
+                    load_grid_font(self.settings.get(key).unwrap_or(""), pref.as_deref());
+            }
+            "editor.font_face" => {
+                // 고정폭 얼굴 교체(편집기 · 행번호 · 그리드 'mono') — 못 찾으면 사슬 fail-over라 항상 Some.
+                let pref = self.settings.get(key).map(str::to_string);
+                if let Some(l) = nexa_font::mono_font(pref.as_deref()) {
+                    self.mono_font = l.font;
+                }
+                let gf = self
+                    .settings
+                    .get("grid.font_face")
+                    .unwrap_or("")
+                    .to_string();
+                self.grid_font = load_grid_font(&gf, pref.as_deref());
+                self.layout();
             }
             "grid.col_min_width" | "grid.col_max_width" => {
                 let (lo, hi) = (
@@ -5683,7 +5699,9 @@ fn main() {
         }
     });
     let ui = nexa_font::ui_font(None);
-    let mono = nexa_font::mono_font(None);
+    // 고정폭 = 설정 `editor.font_face`(비면 OS 기본 사슬 · 없는 이름은 fail-over · 사용자 09-17).
+    let mono_pref = settings.get("editor.font_face").map(str::to_string);
+    let mono = nexa_font::mono_font(mono_pref.as_deref());
     let (Some(ui), Some(mono)) = (ui, mono) else {
         eprintln!("{}", t(Msg::ErrNoFont));
         std::process::exit(1);
@@ -5777,7 +5795,10 @@ fn main() {
         surface: None,
         ui_font: ui.font,
         mono_font: mono.font,
-        grid_font: load_grid_font(settings.get("grid.font_face").unwrap_or("")),
+        grid_font: load_grid_font(
+            settings.get("grid.font_face").unwrap_or(""),
+            settings.get("editor.font_face"),
+        ),
         theme: initial_theme,
         settings,
         scale: 1.0,
@@ -6052,7 +6073,7 @@ impl FrameTrace {
 }
 
 /// 결과 글꼴(설정 `grid.font_face`): 비면 None(= UI 글꼴) · `mono` = 편집기 고정폭 · 그 외 = 글꼴 이름(못 찾으면 시스템 UI 본이 첫 폴백).
-fn load_grid_font(face: &str) -> Option<Font> {
+fn load_grid_font(face: &str, mono_pref: Option<&str>) -> Option<Font> {
     let face = face.trim();
     if face.is_empty() {
         // Windows: 시스템 UI 체인은 맑은 고딕이 먼저라(x-높이 작고 획이 가늘다) 작고 연하게 보였다(사용자 09-16) →
@@ -6065,7 +6086,7 @@ fn load_grid_font(face: &str) -> Option<Font> {
         return None;
     }
     if face.eq_ignore_ascii_case("mono") {
-        return nexa_font::mono_font(None).map(|l| l.font);
+        return nexa_font::mono_font(mono_pref).map(|l| l.font);
     }
     nexa_font::ui_font(Some(face)).map(|l| l.font)
 }

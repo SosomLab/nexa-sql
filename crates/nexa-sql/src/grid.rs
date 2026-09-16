@@ -2493,9 +2493,10 @@ impl Grid {
                 if selected_row {
                     dc.fill_rect_alpha(gclip, th.sel_bg, 0.85);
                 }
+                let ny = dc.text_center_y(y, self.row_h);
                 dc.text(
                     gx0 - pad - nw,
-                    dc.text_center_y(y, self.row_h),
+                    ny,
                     gclip,
                     &num,
                     if selected_row { th.text } else { th.text_dim },
