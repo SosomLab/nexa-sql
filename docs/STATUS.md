@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-16 (20차 · win) — export sql:* 키 조회 ✅ · 실서버 3종 검증 ✅ · push
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (19차 · win) — 결과 → SQL 5종(CLI `-f sql:*` · GUI Copy SQL) ✅ · 키 규칙 + `sql.key_mode` ✅ · [41](41-sql-copy-key-rules.md)
 
 → [journal](journal/2026-09-16.md)

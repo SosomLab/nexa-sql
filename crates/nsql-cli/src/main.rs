@@ -904,11 +904,19 @@ fn cmd_export(o: &Opts) -> i32 {
     let mut errors = 0;
     let mut rows = 0usize;
     let mut no_prompt = |_: &str| None;
+    // `-f sql:*`는 실행 뒤 세션으로 키(PK/유니크)를 조회해 쓴다(run과 같은 규칙 · docs/41).
+    let mut deferred: Vec<nsql_core::ResultSet> = Vec::new();
+    let sql_kind = match &format {
+        Format::Sql(k) => Some(*k),
+        _ => None,
+    };
     for (i, item) in items.iter().enumerate() {
         runner.run_item(i, item, &mut no_prompt, &mut |e| match e {
             RunEvent::ResultSet { rs, .. } => {
                 rows += rs.rows.len();
-                if let Err(e) = nsql_io::write_result_set(&mut out, &rs, &format, dialect) {
+                if sql_kind.is_some() {
+                    deferred.push(rs);
+                } else if let Err(e) = nsql_io::write_result_set(&mut out, &rs, &format, dialect) {
                     eprintln!("쓰기 실패: {e}");
                     errors += 1;
                 }
@@ -919,6 +927,26 @@ fn cmd_export(o: &Opts) -> i32 {
             }
             _ => {}
         });
+    }
+    if let Some(kind) = sql_kind {
+        let key_mode = key_mode_setting();
+        for rs in deferred {
+            let (text, warn) = sql_statements(
+                runner.session.as_deref_mut(),
+                dialect,
+                key_mode,
+                &sql,
+                &rs,
+                kind,
+            );
+            if let Err(e) = out.write_all(text.as_bytes()) {
+                eprintln!("쓰기 실패: {e}");
+                errors += 1;
+            }
+            for w in warn {
+                let _ = writeln!(out, "-- {w}");
+            }
+        }
     }
     let _ = out.flush();
     if o.out.is_some() {

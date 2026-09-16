@@ -69,4 +69,6 @@ generate(dialect, table, names, rows, kind, key):
 | `nokey(p,q,r,s,t)` | 앞 3 | `WHERE p = '1' AND q = '2' AND r = '3'` + `-- WARNING …(p, q, r)` 1줄 |
 | `SELECT 1 AS n, 'k' AS k`(테이블 없음) | 앞 2 | `T` + 경고 2줄(테이블 · 키) |
 
+**실서버**(09-16 20차 · 저장 프로필): Oracle 19c `M4S_I002040` = PK 3컬럼(경고 없음) · Oracle 무키 테이블 = 앞 3 + 경고 · SQL Server `dbo.LOT_BRAND` = PK `ROW_KEY`(스키마 생략도 현재 스키마로) · PostgreSQL `m4p_i001010` = PK `option_cd` · `nsql export -t/-q -f sql:*`(파일 포함) 동일.
+
 5종 전부 문장 생성 · INSERT는 경고 없음 · 셸 `copy sql:delete` 클립보드 확인. 단위 테스트 nsql-io `sqlgen::tests` 4(키 선택 · 복합 키 5종 · NULL 키 · 테이블 추정/분리) · nexa-sql `sql_copy_all_kinds_produce_statements`.
