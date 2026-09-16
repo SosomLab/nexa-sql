@@ -11,8 +11,9 @@ use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{
-    Button, Combo, ComboControl, ComboItem, Control, InputEvent, Invalidations, Key as CtlKey,
-    LabelSide, ScrollBars, TextBox, TreeControl, TreeModel, TreeNode, TreeView, Widget,
+    Button, Combo, ComboControl, ComboItem, Control, EditCtxAction, InputEvent, Invalidations,
+    Key as CtlKey, LabelSide, ScrollBars, TextBox, TreeControl, TreeModel, TreeNode, TreeView,
+    Widget,
 };
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Lang, Msg};
@@ -90,6 +91,8 @@ pub(crate) struct PrefsWin {
     scale: f32,
     cursor: (i32, i32),
     shift: bool,
+    /// 주 조합키(Ctrl · macOS ⌘) — 클립보드 단축키.
+    primary: bool,
     search: TextBox,
     tree: TreeView,
     advanced: Switch,
@@ -140,6 +143,7 @@ impl PrefsWin {
             scale: 1.0,
             cursor: (0, 0),
             shift: false,
+            primary: false,
             search: TextBox::new(t(Msg::PhSearchSettings)),
             tree: TreeView::new(model),
             advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Left),
@@ -512,6 +516,10 @@ impl PrefsWin {
                     },
                     Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
                     Key::Character(t) => {
+                        // 조합키가 눌린 글자는 타이핑이 아니다(단축키 · 위에서 처리).
+                        if self.primary {
+                            return None;
+                        }
                         let c = t.chars().next()?;
                         if c.is_control() {
                             return None;
@@ -566,7 +574,49 @@ impl PrefsWin {
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.shift = m.state().shift_key();
+                self.primary = if cfg!(target_os = "macos") {
+                    m.state().super_key()
+                } else {
+                    m.state().control_key()
+                };
                 return PrefsAction::None;
+            }
+            // ★ 클립보드·되돌리기(Ctrl/⌘ + C/X/V/A/Z/Y) — 포커스 텍스트박스(검색 · 카드 입력란). 종전엔 Ctrl+V가 글자
+            //   `v`로 들어갔다(사용자 09-16 "폰트명에 붙여넣기가 되지 않음"). 접속 창의 `clip`과 같은 OS 클립보드 모듈.
+            WindowEvent::KeyboardInput { event: kev, .. }
+                if kev.state == ElementState::Pressed
+                    && self.primary
+                    && matches!(kev.logical_key.as_ref(), Key::Character(_)) =>
+            {
+                let Key::Character(c) = kev.logical_key.as_ref() else {
+                    return PrefsAction::None;
+                };
+                let mut inv = Invalidations::default();
+                match c.to_ascii_lowercase().as_str() {
+                    "c" => return self.clip(EditCtxAction::Copy),
+                    "x" => return self.clip(EditCtxAction::Cut),
+                    "v" => return self.clip(EditCtxAction::Paste),
+                    "a" => {
+                        if let Some(tb) = self.focused_textbox() {
+                            tb.on_event(&InputEvent::SelectAll, &mut inv);
+                        }
+                        self.redraw();
+                        return PrefsAction::None;
+                    }
+                    "z" if !self.shift => {
+                        if let Some(tb) = self.focused_textbox() {
+                            tb.on_event(&InputEvent::Undo, &mut inv);
+                        }
+                        return self.after_edit();
+                    }
+                    "z" | "y" => {
+                        if let Some(tb) = self.focused_textbox() {
+                            tb.on_event(&InputEvent::Redo, &mut inv);
+                        }
+                        return self.after_edit();
+                    }
+                    _ => return PrefsAction::None,
+                }
             }
             WindowEvent::Ime(ime) => {
                 let mut inv = Invalidations::default();
@@ -606,6 +656,33 @@ impl PrefsWin {
             return PrefsAction::None;
         };
         let mut inv = Invalidations::default();
+        // 우클릭 직전 — 편집 메뉴의 "붙여넣기" 활성 여부(접속 창과 같은 규약).
+        if matches!(ie, InputEvent::RightDown { .. }) {
+            let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
+            for c in &mut self.cards {
+                if let CardCtl::Text(tb) = &mut c.ctl {
+                    tb.set_clipboard_has_text(has);
+                }
+            }
+            self.search.set_clipboard_has_text(has);
+        }
+        // ★ 열린 편집 메뉴 = 모달 · 바깥 좌/우클릭은 닫고 그 클릭을 그대로 진행(팝업 UX 규칙 · 사용자 09-16 "우클릭 메뉴도").
+        let outside_click = matches!(
+            ie,
+            InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+        );
+        if let Some(tb) = self.popup_textbox() {
+            tb.on_event(&ie, &mut inv);
+            let act = tb.take_edit_ctx();
+            let still_open = tb.popup_open();
+            if let Some(act) = act {
+                return self.clip(act);
+            }
+            if still_open || !outside_click {
+                self.redraw();
+                return PrefsAction::None;
+            }
+        }
         // 스플리터: hover = 서서히 진해짐(IntentFade · 마지막 위치만) · 드래그 = 왼쪽 열 폭.
         match ie {
             InputEvent::MouseMove { x, y } => {
@@ -775,8 +852,15 @@ impl PrefsWin {
                 return PrefsAction::None;
             }
         }
-        // 카드 컨트롤(보이는 것만)
-        if self.list.contains(p) || !is_mouse {
+        // 카드 컨트롤(보이는 것만) — 포커스 텍스트박스는 목록 밖으로 끌어도 MouseMove/MouseUp을 받는다(드래그 선택 · 09-16).
+        let drag_follow = matches!(
+            ie,
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+        ) && self
+            .cards
+            .iter()
+            .any(|c| matches!(&c.ctl, CardCtl::Text(tb) if tb.is_focused()));
+        if self.list.contains(p) || !is_mouse || drag_follow {
             for c in &mut self.cards {
                 if c.rect.h == 0 {
                     continue;
@@ -802,6 +886,54 @@ impl PrefsWin {
 
     fn after_edit(&mut self) -> PrefsAction {
         self.collect_changes()
+    }
+
+    /// 클립보드 행동(Ctrl+C/X/V · 입력란 우클릭 편집 메뉴) — 접속 창 `clip`과 같은 OS 클립보드 모듈.
+    fn clip(&mut self, act: EditCtxAction) -> PrefsAction {
+        let mut inv = Invalidations::default();
+        match act {
+            EditCtxAction::Copy => {
+                if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+                self.redraw();
+                PrefsAction::None
+            }
+            EditCtxAction::Cut => {
+                if let Some(text) = self
+                    .focused_textbox()
+                    .and_then(|tb| tb.cut_selection(&mut inv))
+                {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+                self.redraw();
+                self.after_edit()
+            }
+            EditCtxAction::Paste => {
+                if let Some(text) = crate::clipboard::read_text() {
+                    if let Some(tb) = self.focused_textbox() {
+                        tb.paste(&text, &mut inv);
+                    }
+                }
+                self.redraw();
+                self.after_edit()
+            }
+        }
+    }
+
+    /// 편집 메뉴(우클릭)가 열린 텍스트박스(검색 · 카드 입력란).
+    fn popup_textbox(&mut self) -> Option<&mut TextBox> {
+        if self.search.popup_open() {
+            return Some(&mut self.search);
+        }
+        for c in &mut self.cards {
+            if let CardCtl::Text(tb) = &mut c.ctl {
+                if tb.popup_open() {
+                    return Some(&mut **tb);
+                }
+            }
+        }
+        None
     }
 
     /// 컨트롤 변화 수거 → 첫 변경만 보고(한 이벤트에 하나).
@@ -1123,6 +1255,11 @@ impl PrefsWin {
             self.json_btn.paint(&mut dc, th);
             let _ = pad;
             self.search.paint_popup(&mut dc, th);
+            for c in &self.cards {
+                if let CardCtl::Text(tb) = &c.ctl {
+                    tb.paint_popup(&mut dc, th);
+                }
+            }
         }
         let _ = buf.present();
     }
