@@ -2,9 +2,9 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
-## 2026-09-16 (48차 · mac · 자율 배치) — 접속 창 결과 보존 ✅ · 트랙패드 스크롤 4단 수정 ✅(픽셀 스크롤 · 1:1 · 축 잠금 · row 모드 표시 스냅) · T-98 편집 명령 14종 ✅ · T-96 Goto Anything ✅ · T-89/T-73 잔여 ✅ · T-9/T-52 CLI ✅ · T-101 ✅
+## 2026-09-16 (48차 · mac · 자율 배치) — 접속 창 결과 보존 ✅ · 트랙패드 스크롤 5단 수정 ✅(잔여 누적 · 픽셀 스크롤 · row 모드 표시 스냅 · 1:1+축 잠금 · CursorMoved 잔여 초기화 제거) · ⌘T 새 편집기 복구 ✅ · T-98 편집 명령 14종 ✅ · T-96 Goto Anything ✅ · T-89/T-73 잔여 ✅ · T-9/T-52 CLI ✅ · T-101 ✅
 
-사용자 "진행 가능한 전체 작업 개발" + QA 5건. 편집기 = nexa-ui `EditCommand`(조각 편집 재매핑 · 되돌리기 1) + 키맵 2단 코드(`Ctrl+K, Ctrl+U`) + macOS `control+…` · `Ctrl+P` 탭/최근/`:줄` · Edit 메뉴 줄끝 3종 · 찾기 일치 전부 표시. 스크롤 = 입력 누적기(3px 양자화·축 잠금·픽셀 1:1) + 편집기 픽셀 스크롤 + `grid.scroll`/`editor.scroll` row = 표시 시점 스냅. CLI = SPOOL 포트 · `@@` 상대경로/인자 · `script.strict` · 셸 별칭(보조 에이전트). 테스트 전부 green · clippy 0 · 커밋 9(두 저장소 · push 대기). **⏳ 사용자 실기 9항목** = [journal 48차](journal/2026-09-16.md). **다음**: 실기 피드백 → T-93 결과 다중 탭(확인 대기) → T-48a → T-97 미니맵 → T-94. → [journal](journal/2026-09-16.md)
+사용자 "진행 가능한 전체 작업 개발" + QA 5건. 편집기 = nexa-ui `EditCommand`(조각 편집 재매핑 · 되돌리기 1) + 키맵 2단 코드(`Ctrl+K, Ctrl+U`) + macOS `control+…` · `Ctrl+P` 탭/최근/`:줄` · Edit 메뉴 줄끝 3종 · 찾기 일치 전부 표시. 스크롤 = 입력 누적기(3px 양자화·축 잠금·픽셀 1:1) + 편집기 픽셀 스크롤 + `grid.scroll`/`editor.scroll` row = 표시 시점 스냅. CLI = SPOOL 포트 · `@@` 상대경로/인자 · `script.strict` · 셸 별칭(보조 에이전트). ⌘T는 36차 프리셋 정렬 때 유실된 것을 복구(회귀 테스트). 테스트 전부 green · clippy 0 · check-3os 뒤 push(두 저장소). **⏳ 사용자 실기 9항목 + ⌘T** = [journal 48차](journal/2026-09-16.md). **다음**: 실기 피드백 → T-93 결과 다중 탭(확인 대기) → T-48a → T-97 미니맵 → T-94. → [journal](journal/2026-09-16.md)
 
 ## 2026-09-16 · Windows 세션 요약(11~46차) — 다음 작업 진입점
 
