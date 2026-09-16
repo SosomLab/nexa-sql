@@ -6,31 +6,39 @@
 //! (필요할 때만 · 호버 두껍게 · 자동 숨김). **줄바꿈 스위치**(설정 `log.wrap` · 사용자 09-16)를 켜면 창 폭에 접고 가로 스크롤은 없다.
 //! 파일 I/O는 없다(후속 — 파일 싱크는 같은 `LogFormat`을 쓰고 배치 flush로 속도 이슈를 피한다).
 
+use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{LabelSide, Switch};
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{Control, InputEvent, Invalidations, ScrollBars, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
-use nsql_log::{LogBuffer, LogEntry, LogFormat, LogKind};
+use nsql_log::{Columns, LogBuffer, LogEntry, LogFormat, LogKind};
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::Instant;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// 창이 호스트에 요청하는 것.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LogWinAction {
     None,
     /// `RedrawRequested` — 호스트가 폰트·테마를 넘겨 [`LogWin::paint`]를 부른다.
     Paint,
     /// 푸터 스위치를 눌렀다(설정 키 · 값 — 호스트가 설정에 기억).
     Toggled(&'static str, bool),
+    /// 메뉴로 바꾼 문자열 설정(`log.kinds` · `log.columns`).
+    Setting(&'static str, String),
+    /// 메뉴 ▸ 로그를 파일로 저장(호스트가 파일 대화상자).
+    SaveAs,
+    /// 메뉴 ▸ 보이는 줄 복사(클립보드는 호스트 몫).
+    CopyText(String),
 }
 
 /// 항목 하나의 배치(형식 문자열 · 폭 · 줄바꿈 위치) — 페인트에서 지연 계산 · 링 버퍼와 나란히.
@@ -41,12 +49,29 @@ struct LineMeta {
     breaks: Vec<usize>,
 }
 
+/// 스위치 툴팁까지 머무는 시간(ms).
+const TIP_MS: u128 = 600;
+
 pub(crate) struct LogWin {
     window: Option<Rc<Window>>,
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     buf: LogBuffer,
-    fmt: Box<dyn LogFormat>,
+    fmt: Box<dyn LogFormat + Send>,
+    /// 형식 이름 · 템플릿 · 컬럼(설정 `log.format`/`log.template`/`log.columns`).
+    fmt_name: String,
+    template: String,
+    cols: Columns,
+    /// 보이는 종류(설정 `log.kinds` · 비면 전부).
+    kinds: Vec<LogKind>,
+    /// 필터를 통과한 버퍼 index(표시 순서의 원천).
+    vis: Vec<usize>,
+    /// 우클릭 메뉴(종류·컬럼 토글 · 저장 · 복사 · 지우기).
+    menu: ContextMenu,
+    /// 푸터 스위치 위 hover(index · 시작 시각) — 머물면 툴팁.
+    sw_hover: Option<(usize, Instant)>,
+    /// 툴팁을 이미 그렸다(다음 tick에 다시 깨우지 않게).
+    tip_shown: bool,
     /// 항목마다 배치(버퍼와 같은 순서 · `None` = 아직 계산 전).
     meta: VecDeque<Option<LineMeta>>,
     /// 줄바꿈 켬일 때 항목별 누적 행 시작(len+1) — 스크롤 위치 ↔ 항목 변환.
@@ -92,7 +117,15 @@ impl LogWin {
             ctx: None,
             surface: None,
             buf: LogBuffer::new(10_000),
-            fmt: nsql_log::formatter(format),
+            fmt: nsql_log::formatter_with(format, nsql_log::DEFAULT_TEMPLATE, Columns::default()),
+            fmt_name: format.to_string(),
+            template: nsql_log::DEFAULT_TEMPLATE.to_string(),
+            cols: Columns::default(),
+            kinds: Vec::new(),
+            vis: Vec::new(),
+            menu: ContextMenu::new(),
+            sw_hover: None,
+            tip_shown: false,
             meta: VecDeque::new(),
             row_start: Vec::new(),
             layout_key: (0, false, 0),
@@ -109,16 +142,16 @@ impl LogWin {
             shift: false,
             row_snap: false,
             wrap: false,
-            wrap_switch: Switch::new(t(Msg::LblLogWrap), false).with_label_side(LabelSide::Left),
+            wrap_switch: Switch::new(t(Msg::LblLogSwWrap), false).with_label_side(LabelSide::Right),
             newest_first: false,
-            newest_switch: Switch::new(t(Msg::LblLogNewestFirst), false)
-                .with_label_side(LabelSide::Left),
+            newest_switch: Switch::new(t(Msg::LblLogSwSort), false)
+                .with_label_side(LabelSide::Right),
             autoscroll: true,
-            auto_switch: Switch::new(t(Msg::LblLogAutoscroll), true)
-                .with_label_side(LabelSide::Left),
+            auto_switch: Switch::new(t(Msg::LblLogSwScroll), true)
+                .with_label_side(LabelSide::Right),
             jump: true,
             on_top: false,
-            top_switch: Switch::new(t(Msg::LblLogOnTop), false).with_label_side(LabelSide::Left),
+            top_switch: Switch::new(t(Msg::LblLogSwTop), false).with_label_side(LabelSide::Right),
         }
     }
 
@@ -131,9 +164,151 @@ impl LogWin {
 
     /// 형식 어댑터 교체(설정 `log.format` 즉시 반영) — 배치는 다시 계산.
     pub(crate) fn set_format(&mut self, format: &str) {
-        self.fmt = nsql_log::formatter(format);
+        self.fmt_name = format.to_string();
+        self.rebuild_fmt();
+    }
+
+    /// 템플릿(설정 `log.template` · 형식이 template일 때).
+    pub(crate) fn set_template(&mut self, tpl: &str) {
+        self.template = tpl.to_string();
+        self.rebuild_fmt();
+    }
+
+    /// 보이는 컬럼(설정 `log.columns`).
+    pub(crate) fn set_columns(&mut self, cols: &str) {
+        self.cols = Columns::parse(cols);
+        self.rebuild_fmt();
+    }
+
+    /// 보이는 종류(설정 `log.kinds` · 쉼표 · 비면 전부).
+    pub(crate) fn set_kinds(&mut self, kinds: &str) {
+        self.kinds = kinds.split(',').filter_map(LogKind::parse).collect();
+        self.rebuild_vis();
+        self.row_start.clear();
+        self.jump = self.autoscroll;
+        self.redraw();
+    }
+
+    fn rebuild_fmt(&mut self) {
+        self.fmt = nsql_log::formatter_with(&self.fmt_name, &self.template, self.cols);
         self.invalidate_layout();
         self.redraw();
+    }
+
+    fn shown(&self, k: LogKind) -> bool {
+        self.kinds.is_empty() || self.kinds.contains(&k)
+    }
+
+    fn rebuild_vis(&mut self) {
+        self.vis = (0..self.buf.len())
+            .filter(|&i| self.buf.get(i).is_some_and(|e| self.shown(e.kind)))
+            .collect();
+    }
+
+    /// 보이는 줄 전부를 현재 형식으로(헤더 포함 · 저장/복사).
+    pub(crate) fn export_text(&self) -> String {
+        let mut out = String::new();
+        if let Some(h) = self.fmt.header() {
+            out.push_str(&h);
+            out.push('\n');
+        }
+        for i in 0..self.vis.len() {
+            let bi = self.disp(i);
+            if let Some(e) = self.buf.get(bi) {
+                out.push_str(&self.fmt.line(e));
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// 보이는 줄 수.
+    pub(crate) fn visible_len(&self) -> usize {
+        self.vis.len()
+    }
+
+    fn open_menu(&mut self, x: i32, y: i32) {
+        self.menu.set_scale(self.scale);
+        let kinds: Vec<CtxItem> = LogKind::ALL
+            .iter()
+            .map(|k| {
+                CtxItem::item(format!("kind:{}", k.label()), k.label()).with_checked(self.shown(*k))
+            })
+            .collect();
+        let cols: Vec<CtxItem> = Columns::NAMES
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let on = match i {
+                    0 => self.cols.ts,
+                    1 => self.cols.kind,
+                    2 => self.cols.rows,
+                    _ => self.cols.elapsed,
+                };
+                CtxItem::item(format!("col:{n}"), *n).with_checked(on)
+            })
+            .collect();
+        let items = vec![
+            CtxItem::submenu("kinds", t(Msg::MnLogKinds), kinds),
+            CtxItem::submenu("cols", t(Msg::MnLogColumns), cols),
+            CtxItem::Separator,
+            CtxItem::item("save", t(Msg::MnLogSaveAs)),
+            CtxItem::item("copy", t(Msg::MnLogCopyAll)),
+            CtxItem::Separator,
+            CtxItem::item("clear", t(Msg::MnLogClear)),
+        ];
+        let host = self.viewport();
+        self.menu
+            .open_at(x, y, items, host, (self.row_h * 10).max(160));
+        self.redraw();
+    }
+
+    /// 메뉴 항목 → 동작(설정에 남길 것은 액션으로 돌려준다).
+    fn menu_pick(&mut self, id: &str) -> LogWinAction {
+        if let Some(label) = id.strip_prefix("kind:") {
+            let Some(k) = LogKind::parse(label) else {
+                return LogWinAction::None;
+            };
+            let mut set: Vec<LogKind> = if self.kinds.is_empty() {
+                LogKind::ALL.to_vec()
+            } else {
+                self.kinds.clone()
+            };
+            if let Some(i) = set.iter().position(|x| *x == k) {
+                set.remove(i);
+            } else {
+                set.push(k);
+            }
+            let text = if set.len() == LogKind::ALL.len() {
+                String::new()
+            } else {
+                set.iter().map(|k| k.label()).collect::<Vec<_>>().join(",")
+            };
+            self.set_kinds(&text);
+            return LogWinAction::Setting("log.kinds", text);
+        }
+        if let Some(name) = id.strip_prefix("col:") {
+            let mut c = self.cols;
+            c.toggle(name);
+            let text = c.to_setting();
+            self.set_columns(&text);
+            return LogWinAction::Setting("log.columns", text);
+        }
+        match id {
+            "save" => LogWinAction::SaveAs,
+            "copy" => LogWinAction::CopyText(self.export_text()),
+            "clear" => {
+                self.buf.clear();
+                self.meta.clear();
+                self.vis.clear();
+                self.row_start.clear();
+                self.scroll_y = 0;
+                self.scroll_x = 0;
+                self.redraw();
+                LogWinAction::None
+            }
+            _ => LogWinAction::None,
+        }
     }
 
     /// 줄바꿈 켬/끔(설정 `log.wrap` · 스위치).
@@ -179,13 +354,15 @@ impl LogWin {
         }
     }
 
-    /// 표시 순서 → 버퍼 index.
+    /// 표시 순서 → 버퍼 index(필터 통과 목록 위에서 · 최신 먼저면 뒤집음).
     fn disp(&self, i: usize) -> usize {
-        if self.newest_first {
-            self.buf.len().saturating_sub(1 + i)
+        let n = self.vis.len();
+        let vi = if self.newest_first {
+            n.saturating_sub(1 + i)
         } else {
             i
-        }
+        };
+        self.vis.get(vi).copied().unwrap_or(0)
     }
 
     fn invalidate_layout(&mut self) {
@@ -209,7 +386,31 @@ impl LogWin {
 
     /// 스크롤바 페이드 틱 — 다시 그릴 것이 있으면 true.
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.bars.tick(now_ms)
+        self.bars.tick(now_ms) || self.tooltip_due()
+    }
+
+    /// 스위치 위에 머문 지 600ms가 됐고 아직 안 그렸다.
+    fn tooltip_due(&self) -> bool {
+        !self.tip_shown
+            && self
+                .sw_hover
+                .is_some_and(|(_, since)| since.elapsed().as_millis() >= TIP_MS)
+    }
+
+    /// 호스트의 타이머 유지 조건 — 툴팁을 기다리는 중.
+    pub(crate) fn tooltip_pending(&self) -> bool {
+        self.sw_hover.is_some() && !self.tip_shown
+    }
+
+    fn switch_at(&self, p: Point) -> Option<usize> {
+        [
+            &self.wrap_switch,
+            &self.newest_switch,
+            &self.auto_switch,
+            &self.top_switch,
+        ]
+        .iter()
+        .position(|sw| sw.bounds().contains(p))
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
@@ -263,9 +464,16 @@ impl LogWin {
         self.buf.push(e);
         self.meta.push_back(None);
         if self.buf.len() == before {
-            // 링이 앞을 버렸다 — 배치도 같이.
+            // 링이 앞을 버렸다 — 배치·필터 목록도 같이.
             self.meta.pop_front();
             self.row_start.clear();
+            self.rebuild_vis();
+        } else if self
+            .buf
+            .get(self.buf.len() - 1)
+            .is_some_and(|e| self.shown(e.kind))
+        {
+            self.vis.push(self.buf.len() - 1);
         }
         if self.autoscroll {
             self.jump = true; // 페인트에서 최신 줄로(행 수는 배치 뒤에 안다).
@@ -284,7 +492,7 @@ impl LogWin {
         if self.wrap {
             self.row_start.last().copied().unwrap_or(0) as i32
         } else {
-            self.buf.len() as i32
+            self.vis.len() as i32
         }
     }
 
@@ -382,7 +590,28 @@ impl LogWin {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
                 let (x, y) = self.cursor;
-                if !self.bars_event(&InputEvent::MouseMove { x, y }) {
+                if self.menu.is_open() {
+                    if self.menu.on_event(&InputEvent::MouseMove { x, y }) {
+                        self.redraw();
+                    }
+                } else if !self.bars_event(&InputEvent::MouseMove { x, y }) {
+                    let over = self.switch_at(Point { x, y });
+                    match (over, self.sw_hover) {
+                        (Some(i), Some((j, _))) if i == j => {}
+                        (Some(i), _) => {
+                            self.sw_hover = Some((i, Instant::now()));
+                            if std::mem::take(&mut self.tip_shown) {
+                                self.redraw();
+                            }
+                        }
+                        (None, Some(_)) => {
+                            self.sw_hover = None;
+                            if std::mem::take(&mut self.tip_shown) {
+                                self.redraw();
+                            }
+                        }
+                        (None, None) => {}
+                    }
                     let mut inv = Invalidations::default();
                     let mv = InputEvent::MouseMove { x, y };
                     self.wrap_switch.on_event(&mv, &mut inv);
@@ -392,6 +621,36 @@ impl LogWin {
                     if !inv.is_empty() {
                         self.redraw();
                     }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } if *button == MouseButton::Right => {
+                if *state == ElementState::Pressed {
+                    let (x, y) = self.cursor;
+                    if self.menu.is_open() {
+                        self.menu.on_event(&InputEvent::RightDown { x, y });
+                    }
+                    if !self.menu.is_open() {
+                        self.open_menu(x, y);
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. }
+                if *button == MouseButton::Left && self.menu.is_open() =>
+            {
+                let (x, y) = self.cursor;
+                let ev = match state {
+                    ElementState::Pressed => InputEvent::MouseDown {
+                        x,
+                        y,
+                        shift: false,
+                        primary: false,
+                    },
+                    ElementState::Released => InputEvent::MouseUp { x, y },
+                };
+                self.menu.on_event(&ev);
+                self.redraw();
+                if let Some(id) = self.menu.take_picked() {
+                    return self.menu_pick(&id);
                 }
             }
             WindowEvent::MouseInput { state, button, .. } if *button == MouseButton::Left => {
@@ -446,6 +705,11 @@ impl LogWin {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 let page = (self.view_h - self.header_h).max(row);
                 let step_x = row * 2;
+                if self.menu.is_open() {
+                    self.menu.close();
+                    self.redraw();
+                    return LogWinAction::None;
+                }
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) => self.close(),
                     Key::Named(NamedKey::End) => self.set_scroll(i32::MAX / 2),
@@ -527,12 +791,13 @@ impl LogWin {
             });
             changed = true;
         }
-        if self.wrap && (changed || self.row_start.len() != n + 1) {
+        let nv = self.vis.len();
+        if self.wrap && (changed || self.row_start.len() != nv + 1) {
             self.row_start.clear();
-            self.row_start.reserve(n + 1);
+            self.row_start.reserve(nv + 1);
             let mut acc = 0u32;
             self.row_start.push(0);
-            for di in 0..n {
+            for di in 0..nv {
                 let bi = self.disp(di);
                 acc += self.meta[bi]
                     .as_ref()
@@ -627,7 +892,7 @@ impl LogWin {
             // 첫 항목과 그 안의 행 오프셋.
             let (first, mut row_in) = if self.wrap {
                 let i = match self.row_start.binary_search(&(first_row as u32)) {
-                    Ok(i) => i.min(self.buf.len().saturating_sub(1)),
+                    Ok(i) => i.min(self.vis.len().saturating_sub(1)),
                     Err(i) => i.saturating_sub(1),
                 };
                 (
@@ -640,7 +905,7 @@ impl LogWin {
             let mut yy = body.y - sub;
             let mut last = first;
             let x0 = pad - self.scroll_x;
-            'outer: for i in first..self.buf.len() {
+            'outer: for i in first..self.vis.len() {
                 if yy >= body.bottom() {
                     break;
                 }
@@ -690,30 +955,43 @@ impl LogWin {
             dc.fill_rect(Rect::new(0, fy, wi, 1), th.border);
             let mut inv = Invalidations::default();
             let mut x = pad;
-            for (sw, msg) in [
-                (&mut self.wrap_switch, Msg::LblLogWrap),
-                (&mut self.newest_switch, Msg::LblLogNewestFirst),
-                (&mut self.auto_switch, Msg::LblLogAutoscroll),
-                (&mut self.top_switch, Msg::LblLogOnTop),
-            ] {
+            let sep_gap = pad * 2;
+            for (i, (sw, msg)) in [
+                (&mut self.wrap_switch, Msg::LblLogSwWrap),
+                (&mut self.newest_switch, Msg::LblLogSwSort),
+                (&mut self.auto_switch, Msg::LblLogSwScroll),
+                (&mut self.top_switch, Msg::LblLogSwTop),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if i > 0 {
+                    // 구분선(사용자 09-16: 설정 사이를 눈으로 가르게).
+                    dc.fill_rect(
+                        Rect::new(x + sep_gap / 2, fy + 4, 1, hi - fy - 8),
+                        th.border,
+                    );
+                    x += sep_gap;
+                }
                 sw.set_scale(s);
-                // 라벨 폭 + 트랙(44) + 여백 — Switch는 폭을 스스로 재지 않는다.
-                let w = dc.text_width(t(msg)) + (60.0 * s).round() as i32;
+                // 트랙(44) + 라벨 폭 + 여백 — Switch는 폭을 스스로 재지 않는다.
+                let w = dc.text_width(t(msg)) + (56.0 * s).round() as i32;
                 sw.set_bounds(Rect::new(x, fy + 2, w, row_h + pad - 2), &mut inv);
                 sw.paint(&mut dc, th);
-                x += w + pad;
+                x += w;
             }
             let info = format!(
                 "{}–{} / {} · {}",
-                if self.buf.is_empty() { 0 } else { first + 1 },
+                if self.vis.is_empty() { 0 } else { first + 1 },
                 last,
-                self.buf.len(),
+                self.vis.len(),
                 self.fmt.name()
             );
             let iw = dc.text_width(&info);
+            let ity = dc.text_center_y(fy, hi - fy);
             dc.text(
                 wi - iw - pad,
-                fy + pad / 2,
+                ity,
                 Rect::new(0, fy, wi, hi - fy),
                 &info,
                 th.text_dim,
@@ -730,6 +1008,28 @@ impl LogWin {
                 self.scroll_y,
                 s,
             );
+            // 스위치 툴팁(600ms 머문 뒤 · 푸터 위쪽에 — 아래는 창 밖).
+            if self.tooltip_due() {
+                if let Some((i, _)) = self.sw_hover {
+                    let (b, msg) = match i {
+                        0 => (self.wrap_switch.bounds(), Msg::TipLogWrap),
+                        1 => (self.newest_switch.bounds(), Msg::TipLogSort),
+                        2 => (self.auto_switch.bounds(), Msg::TipLogScroll),
+                        _ => (self.top_switch.bounds(), Msg::TipLogTop),
+                    };
+                    let text = t(msg);
+                    dc.select_font(FontSlot::Status, false);
+                    let lines = text.split('\n').count() as i32;
+                    let tip_h = dc.text_height() * lines + (8.0 * s).round() as i32;
+                    let gap = (6.0 * s).round() as i32;
+                    // draw_tooltip은 anchor 아래 gap에 그린다 → 아래가 푸터 위에 닿는 가짜 anchor.
+                    let anchor = Rect::new(b.x, fy - gap - tip_h - gap - 1, b.w, 1);
+                    draw_tooltip(&mut dc, th, anchor, wi, text, s);
+                    self.tip_shown = true;
+                }
+            }
+            // 우클릭 메뉴(맨 위 층).
+            self.menu.paint(&mut dc, th);
         }
         let _ = buf.present();
         self.surface = Some(surface);

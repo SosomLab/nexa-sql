@@ -48,4 +48,4 @@ ErrorClass = NoTable · NoColumn · NoObject · Syntax · Permission · Login ·
 
 - 오류 → **편집기 줄 하이라이트/이동**(line 번호는 이미 있음) · 토스트 클릭 = 그 줄로.
 - 분류별 **도움말 링크**(Oracle `docs.oracle.com/error-help/db/ora-00942` 처럼 메시지에 있는 URL 그대로 노출).
-- 로그 창 필터(분류별) — 로그 형식 어댑터 확장 범위와 함께 결정.
+- 로그 창 필터 — 종류(kind)별은 ✅ 09-16 22차(우클릭 메뉴 · `log.kinds`). **오류 분류별**(ErrorClass) 필터는 `LogEntry`에 분류를 실은 뒤.

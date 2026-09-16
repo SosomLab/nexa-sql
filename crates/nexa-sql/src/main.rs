@@ -108,6 +108,10 @@ struct App {
     log_win: LogWin,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
+    /// 파일 싱크 허브(설정 `log.file` · 배경 스레드 · 비면 None).
+    log_hub: Option<nsql_log::LogHub>,
+    /// 파일 대화상자의 용도(편집기 열기/저장 · 로그 내보내기).
+    file_purpose: FilePurpose,
     /// 마지막 실행의 문장 목록(오류 index → 문장 · 테이블 추정).
     last_run_items: Vec<String>,
     /// 메뉴에서 요청한 종료·로그 창 토글(이벤트 루프 핸들이 필요해 window_event 끝에서 처리).
@@ -994,6 +998,40 @@ impl App {
         self.conn_win.panel.set_state(ConnState::Idle);
     }
 
+    /// 파일 싱크 허브(설정 `log.file` · 형식 `log.file_format`(same = 창과 같게) · 회전 `log.file_max_kb`) — 설정이 바뀌면 새로.
+    fn rebuild_log_hub(&mut self) {
+        self.log_hub = None;
+        let file = self
+            .settings
+            .get("log.file")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if file.is_empty() {
+            return;
+        }
+        let name = self.settings.get("log.format").unwrap_or("raw").to_string();
+        let ff = self
+            .settings
+            .get("log.file_format")
+            .unwrap_or("same")
+            .to_string();
+        let ff = if ff == "same" { name } else { ff };
+        let tpl = self.settings.get("log.template").unwrap_or("").to_string();
+        let cols = nsql_log::Columns::parse(self.settings.get("log.columns").unwrap_or(""));
+        let max = self.settings.int("log.file_max_kb").max(64) as u64 * 1024;
+        match nsql_log::FileSink::open(&file, nsql_log::formatter_with(&ff, &tpl, cols), max) {
+            Ok(sink) => self.log_hub = Some(nsql_log::LogHub::spawn(vec![Box::new(sink)], 4096)),
+            Err(e) => {
+                self.status = tf(Msg::ErrLogFile, &[&e.to_string()]);
+                self.log_win.push(LogEntry::new(
+                    LogKind::Error,
+                    tf(Msg::ErrLogFile, &[&e.to_string()]),
+                ));
+            }
+        }
+    }
+
     /// 메인 창 항상 위(설정 `window.always_on_top`). 로그 창은 메인 창의 소유 창이라 둘 다 켜도 로그가 위(Windows/mac 소유 규칙 · 사용자 09-16).
     fn apply_on_top(&self) {
         if let Some(w) = &self.window {
@@ -1086,6 +1124,14 @@ impl App {
                 .editors
                 .set_rulers(parse_rulers(self.settings.get(key).unwrap_or("80"))),
             "tabs.tooltip" => self.editors.set_tooltip(self.settings.flag(key)),
+            "log.template" => self
+                .log_win
+                .set_template(self.settings.get(key).unwrap_or("")),
+            "log.columns" => self
+                .log_win
+                .set_columns(self.settings.get(key).unwrap_or("")),
+            "log.kinds" => self.log_win.set_kinds(self.settings.get(key).unwrap_or("")),
+            "log.file" | "log.file_format" | "log.file_max_kb" => self.rebuild_log_hub(),
             "log.wrap" => self.log_win.set_wrap(self.settings.flag(key)),
             "log.newest_first" => self.log_win.set_newest_first(self.settings.flag(key)),
             "log.autoscroll" => self.log_win.set_autoscroll(self.settings.flag(key)),
@@ -1666,8 +1712,18 @@ impl App {
                     .filter(|s| !s.is_empty())
                     .map(PathBuf::from)
             });
-        let default_name = match mode {
-            PickerMode::Save => {
+        let default_name = match (mode, self.file_purpose) {
+            (PickerMode::Save, FilePurpose::LogExport) => {
+                let ext = match self.settings.get("log.format").unwrap_or("raw") {
+                    "markdown" => "md",
+                    "jsonl" => "jsonl",
+                    "csv" => "csv",
+                    "tsv" => "tsv",
+                    _ => "log",
+                };
+                format!("nexa-sql.{ext}")
+            }
+            (PickerMode::Save, FilePurpose::Editor) => {
                 let t = self.editors.active_title();
                 if t.contains('.') {
                     t
@@ -1675,7 +1731,7 @@ impl App {
                     format!("{t}.sql")
                 }
             }
-            PickerMode::Open => String::new(),
+            (PickerMode::Open, _) => String::new(),
         };
         let recent_dirs: Vec<PathBuf> = self
             .recent_files()
@@ -2328,6 +2384,9 @@ impl App {
         while let Ok(ev) = self.events.try_recv() {
             changed = true;
             for e in nsql_run::log_entries(&ev) {
+                if let Some(h) = &self.log_hub {
+                    h.push(e.clone());
+                }
                 self.log_win.push(e);
             }
             match ev {
@@ -3232,6 +3291,7 @@ impl ApplicationHandler<Wake> for App {
         let bars_live = self.ed_mut().scrollbars_visible()
             || self.grid.bars_visible()
             || self.log_win.bars_visible()
+            || self.log_win.tooltip_pending()
             || self.conn_win.bars_visible()
             || self.conn_win.tooltip_pending()
             || self.grid.hover_animating()
@@ -3300,9 +3360,26 @@ impl ApplicationHandler<Wake> for App {
                 FileWinAction::Paint => self.file_win.paint(&self.ui_font, &self.theme, ui_px),
                 FileWinAction::Confirm(mode, path, enc) => {
                     self.remember_file_dialog(path.parent());
-                    match mode {
-                        PickerMode::Open => self.open_file_enc(&path, &enc),
-                        PickerMode::Save => {
+                    match (
+                        mode,
+                        std::mem::replace(&mut self.file_purpose, FilePurpose::Editor),
+                    ) {
+                        (PickerMode::Save, FilePurpose::LogExport) => {
+                            // 로그 내보내기(현재 형식 · 보이는 줄 · UTF-8).
+                            let text = self.log_win.export_text();
+                            self.status = match std::fs::write(&path, text) {
+                                Ok(()) => tf(
+                                    Msg::StLogSaved,
+                                    &[
+                                        &path.to_string_lossy(),
+                                        &self.log_win.visible_len().to_string(),
+                                    ],
+                                ),
+                                Err(e) => tf(Msg::ErrLogFile, &[&e.to_string()]),
+                            };
+                        }
+                        (PickerMode::Open, _) => self.open_file_enc(&path, &enc),
+                        (PickerMode::Save, _) => {
                             self.editors.set_active_encoding(&enc);
                             self.save_to(&path);
                         }
@@ -3310,6 +3387,7 @@ impl ApplicationHandler<Wake> for App {
                     self.sync_modal();
                 }
                 FileWinAction::Cancel => {
+                    self.file_purpose = FilePurpose::Editor;
                     self.remember_file_dialog(None);
                     self.sync_modal();
                 }
@@ -3454,6 +3532,18 @@ impl ApplicationHandler<Wake> for App {
                     // 스위치 = 설정과 같은 값(자동 기억 · 설정 창에도 반영).
                     let _ = self.settings.set(key, if on { "on" } else { "off" });
                     let _ = self.settings.save();
+                }
+                LogWinAction::Setting(key, value) => {
+                    let _ = self.settings.set(key, &value);
+                    let _ = self.settings.save();
+                }
+                LogWinAction::SaveAs => {
+                    self.file_purpose = FilePurpose::LogExport;
+                    self.open_file_window(el, PickerMode::Save);
+                    self.sync_modal();
+                }
+                LogWinAction::CopyText(text) => {
+                    let _ = clipboard::write_text(&text);
                 }
                 LogWinAction::None => {}
             }
@@ -3817,6 +3907,8 @@ fn main() {
         scale: 1.0,
         log_win: LogWin::new(&log_format),
         toasts: toast::Toasts::new(),
+        log_hub: None,
+        file_purpose: FilePurpose::Editor,
         last_run_items: Vec::new(),
         exit_requested: false,
         z_order: Vec::new(),
@@ -3909,6 +4001,13 @@ fn main() {
         app.settings.int("ui.toast_alpha"),
     );
     app.log_win.set_wrap(app.settings.flag("log.wrap"));
+    app.log_win
+        .set_template(app.settings.get("log.template").unwrap_or(""));
+    app.log_win
+        .set_columns(app.settings.get("log.columns").unwrap_or(""));
+    app.log_win
+        .set_kinds(app.settings.get("log.kinds").unwrap_or(""));
+    app.rebuild_log_hub();
     app.log_win
         .set_newest_first(app.settings.flag("log.newest_first"));
     app.log_win
@@ -4008,6 +4107,13 @@ impl FrameTrace {
             };
         }
     }
+}
+
+/// 파일 대화상자의 용도 — 같은 대화상자를 편집기 열기/저장과 로그 내보내기가 나눠 쓴다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FilePurpose {
+    Editor,
+    LogExport,
 }
 
 /// 실행 스크립트의 문장 본문 목록(오류 이벤트의 index로 찾는다).

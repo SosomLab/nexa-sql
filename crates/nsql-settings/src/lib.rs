@@ -196,6 +196,22 @@ const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("raw", Msg::ValRaw),
     ("markdown", Msg::ValMarkdown),
     ("grid", Msg::ValGrid),
+    ("compact", Msg::ValLogCompact),
+    ("jsonl", Msg::ValLogJsonl),
+    ("csv", Msg::ValFmtCsv),
+    ("tsv", Msg::ValFmtTsv),
+    ("template", Msg::ValLogTemplate),
+];
+const LOG_FILE_FORMAT_OPTS: &[(&str, Msg)] = &[
+    ("same", Msg::ValLogSame),
+    ("raw", Msg::ValRaw),
+    ("markdown", Msg::ValMarkdown),
+    ("grid", Msg::ValGrid),
+    ("compact", Msg::ValLogCompact),
+    ("jsonl", Msg::ValLogJsonl),
+    ("csv", Msg::ValFmtCsv),
+    ("tsv", Msg::ValFmtTsv),
+    ("template", Msg::ValLogTemplate),
 ];
 
 /// Oracle 실행 중 로그 소스(T-71 · docs/32 §2).
@@ -1172,6 +1188,58 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(LOG_FORMAT_OPTS),
         default: "raw",
     },
+    // ── 로그 형식 어댑터 확장(사용자 09-16 · 4종 전부): 템플릿 · 파일 싱크 · 필터/컬럼.
+    Entry {
+        key: "log.template",
+        cat: Msg::CatLog,
+        label: Msg::LblLogTemplate,
+        desc: Msg::DescLogTemplate,
+        kind: SettingKind::Text,
+        default: "{time} {kind:<8} {msg}",
+    },
+    Entry {
+        key: "log.file",
+        cat: Msg::CatLog,
+        label: Msg::LblLogFile,
+        desc: Msg::DescLogFile,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "log.file_format",
+        cat: Msg::CatLog,
+        label: Msg::LblLogFileFormat,
+        desc: Msg::DescLogFileFormat,
+        kind: SettingKind::Choice(LOG_FILE_FORMAT_OPTS),
+        default: "same",
+    },
+    Entry {
+        key: "log.file_max_kb",
+        cat: Msg::CatLog,
+        label: Msg::LblLogFileMaxKb,
+        desc: Msg::DescLogFileMaxKb,
+        kind: SettingKind::Int {
+            min: 64,
+            max: 1_048_576,
+        },
+        default: "5120",
+    },
+    Entry {
+        key: "log.kinds",
+        cat: Msg::CatLog,
+        label: Msg::LblLogKinds,
+        desc: Msg::DescLogKinds,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "log.columns",
+        cat: Msg::CatLog,
+        label: Msg::LblLogColumns,
+        desc: Msg::DescLogColumns,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ── 로그 창 스위치 3종(사용자 09-16) — 창 아래 스위치와 같은 값(자동 기억).
     Entry {
         key: "log.wrap",
@@ -1270,6 +1338,8 @@ pub fn group_of(cat: Msg) -> Option<Msg> {
 
 /// 비노출 설정(자주 바꾸지 않는 구현 값 · 사용자 09-14) — 레지스트리에는 있어 `set/get/reset`은 되지만 목록·설정 화면엔 기본 숨김.
 pub const HIDDEN: &[&str] = &[
+    "log.kinds",
+    "log.columns",
     "conn.delete_confirm_ms",
     "conn.close_after_connect_ms",
     "conn.window_w",

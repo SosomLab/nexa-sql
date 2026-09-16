@@ -578,18 +578,33 @@ fn log_hub(o: &Opts) -> Option<nsql_log::LogHub> {
     if !o.log {
         return None;
     }
-    let name = nsql_settings::Settings::open_default()
-        .map(|s| s.get("log.format").unwrap_or("raw").to_string())
-        .unwrap_or_else(|_| "raw".into());
-    let fmt: Box<dyn nsql_log::LogFormat + Send> = match name.as_str() {
-        "markdown" => Box::new(nsql_log::MarkdownFormat),
-        "grid" => Box::new(nsql_log::GridFormat),
-        _ => Box::new(nsql_log::RawFormat),
-    };
-    Some(nsql_log::LogHub::spawn(
-        vec![Box::new(nsql_log::StderrSink::new(fmt))],
-        4096,
-    ))
+    // 형식 어댑터(설정 `log.format` · 템플릿 · 컬럼) + 파일 싱크(`log.file` · 형식 `log.file_format` · 회전 `log.file_max_kb`).
+    let st = nsql_settings::Settings::open_default().ok();
+    let get = |k: &str, d: &str| st.as_ref().and_then(|s| s.get(k)).unwrap_or(d).to_string();
+    let name = get("log.format", "raw");
+    let tpl = get("log.template", nsql_log::DEFAULT_TEMPLATE);
+    let cols = nsql_log::Columns::parse(&get("log.columns", ""));
+    let mut sinks: Vec<Box<dyn nsql_log::LogSink>> = vec![Box::new(nsql_log::StderrSink::new(
+        nsql_log::formatter_with(&name, &tpl, cols),
+    ))];
+    let file = get("log.file", "");
+    if !file.trim().is_empty() {
+        let ff = get("log.file_format", "same");
+        let ff = if ff == "same" { name } else { ff };
+        let max_kb: u64 = get("log.file_max_kb", "5120").parse().unwrap_or(5120);
+        match nsql_log::FileSink::open(
+            file.trim(),
+            nsql_log::formatter_with(&ff, &tpl, cols),
+            max_kb * 1024,
+        ) {
+            Ok(s) => sinks.push(Box::new(s)),
+            Err(e) => eprintln!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::ErrLogFile, &[&e.to_string()])
+            ),
+        }
+    }
+    Some(nsql_log::LogHub::spawn(sinks, 4096))
 }
 
 impl Printer {

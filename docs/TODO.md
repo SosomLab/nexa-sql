@@ -82,7 +82,7 @@
 |---|:--:|:--:|---|---|:--:|
 | **T-46b** | P0 | 중 | ✅ 접속 흐름(공용 `from_parts`/`test_connection` · CLI `conn add/test` 필드 · GUI 접속 패널) · ✅ 계측 골격(`Stage/Timeline` · `--timing` · 푸터) | — | ✅ 09-14 |
 | **T-47** | P1 | 소 | Send 스팬 · MSSQL/SQLite Execute·Fetch 분리 · **파일 로그 싱크**(`LogSink` · 배치 flush · 회전 · `NSQL_LOG`) · `--timing=json` | D-44 | ☐ |
-| **T-54** | P1 | 중 | `session.mode` 실체 — 편집기 탭 다중화 시 per-editor 세션(워커 세션 맵 · CONNECT 범위 경고) · **한 탭의 접속 장애가 다른 탭에 번지지 않게(사용자 09-14 14차 · 워커 패닉 격리·빠른 판정은 ✅, 세션 분리는 여기)** · 로그 창 필터/검색/지우기 · 로그 창 Grid = nexa-grid(G-3 뒤) | E-3 D-45 | ☐ |
+| **T-54** | P1 | 중 | `session.mode` 실체 — 편집기 탭 다중화 시 per-editor 세션(워커 세션 맵 · CONNECT 범위 경고) · **한 탭의 접속 장애가 다른 탭에 번지지 않게(사용자 09-14 14차 · 워커 패닉 격리·빠른 판정은 ✅, 세션 분리는 여기)** · 로그 창 필터/지우기 ✅ 09-16 22차(종류·컬럼 · 우클릭 메뉴) · 검색 ☐ · 로그 창 Grid = nexa-grid(G-3 뒤) | E-3 D-45 | ☐ |
 | **T-48** | P0 | 대 | ✅ 09-15 1차 상한 = `grid.max_rows` 200(Oracle/SQLite 조기 중단 · `RunEvent::ResultSet.more` · `--max-rows`) · 잔여 = 페치 모델 — 상한(D-42)·배치 스트리밍·"더 가져오기"(Navigate · D-43) · 예산 경고 · 실행 히스토리 패널 · 메타만(EXPLAIN/COUNT) | D-42 D-43 | 🚧 |
 | **T-49** | P1 | 소 | `DBMS_OUTPUT.GET_LINES` 배열 회수 · 실행 중 주기 폴링 옵션 · UNLIMITED 안내 | — | ☐ |
 | **T-50** | P0 | 대 | 컬럼 지향 결과 저장소 + 페인트 할당 0 + 폭 캐시 — **nexa-grid(U-3 · dir2 `rows.rs` 이식 · [nexa-ui 21 그리드 계열](../../nexa-ui/docs/21-grid-family.md))** 와 함께 · 결과 그리드는 속도·메모리 최우선(사용자 09-14) | nexa-ui U-3 | ☐ |
