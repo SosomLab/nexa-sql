@@ -1188,7 +1188,7 @@ impl Msg {
             Msg::StTextRender => ["Converting to {0}… {1}%", "{0} 변환 중… {1}%"],
             Msg::MnTabs => ["Tabs", "탭"],
             Msg::LblGridFontFace => ["Result font face", "결과 글꼴"],
-            Msg::DescGridFontFace => ["Font family for the result grid and text views. Empty = Segoe UI on Windows (Korean falls back to the system UI font) · mono = the editor's monospace font · or a family name such as Consolas", "결과 그리드·텍스트 보기의 글꼴. 비면 Windows는 Segoe UI(한글은 시스템 UI 글꼴 폴백) · mono = 편집기 고정폭 글꼴 · 또는 Consolas 같은 글꼴 이름"],
+            Msg::DescGridFontFace => ["Font family for the result grid and text views. Empty = Calibri on Windows (Golden default · Korean falls back to the system UI font) · mono = the editor's monospace font · or a family name such as Consolas", "결과 그리드·텍스트 보기의 글꼴. 비면 Windows는 Calibri(Golden 기본 · 한글은 시스템 UI 글꼴 폴백) · mono = 편집기 고정폭 글꼴 · 또는 Consolas 같은 글꼴 이름"],
             Msg::LblGridColMin => ["Column min width (px)", "컬럼 최소 너비(px)"],
             Msg::DescGridColMin => ["Lower bound for automatic column width (first fill · header double-click auto-fit)", "자동 컬럼 너비의 하한(첫 채움 · 헤더 경계 더블클릭 자동 맞춤)"],
             Msg::LblGridColMax => ["Column max width (px)", "컬럼 최대 너비(px)"],

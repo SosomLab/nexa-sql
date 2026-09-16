@@ -9,6 +9,10 @@
 - **후속 과제**: T-48a(서버 커서 유지) · T-94(데이터 편집기) · T-96(탭 검색 Ctrl+P) · T-97(미니맵) · T-98(Sublime 편집 명령) · T-90(거버너).
 - **주의**: `docs/README.md`·`docs/40-cli-usage.md`는 다른 세션 소유(미커밋) — 그 세션이 커밋한다.
 
+## 2026-09-16 (39차 · win) — 결과 글꼴 Calibri 13px ✅
+
+→ [journal](journal/2026-09-16.md)
+
 ## 2026-09-16 (38차 · win) — push ✅(CI 3-OS green) · 툴팁 축약 · 아이콘 2종 · 텍스트 보기 행번호 ✅
 
 → [journal](journal/2026-09-16.md)

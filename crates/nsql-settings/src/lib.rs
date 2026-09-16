@@ -1442,7 +1442,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblGridFontSize,
         desc: Msg::DescGridFontSize,
         kind: SettingKind::Int { min: 8, max: 40 },
-        default: "14",
+        default: "13",
     },
 ];
 

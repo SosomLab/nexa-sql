@@ -4669,10 +4669,12 @@ impl FrameTrace {
 fn load_grid_font(face: &str) -> Option<Font> {
     let face = face.trim();
     if face.is_empty() {
-        // Windows: 시스템 UI 체인은 맑은 고딕이 먼저라(x-높이 작고 획이 가늘다) Golden(Segoe UI/Tahoma)보다 작고 연하게
-        // 보였다(사용자 09-16) → 결과 글꼴은 Segoe UI를 앞에 두고 한글은 맑은 고딕으로 폴백. 다른 OS = UI 글꼴.
+        // Windows: 시스템 UI 체인은 맑은 고딕이 먼저라(x-높이 작고 획이 가늘다) 작고 연하게 보였다(사용자 09-16) →
+        // 결과 글꼴 기본 = **Calibri 10pt(13px)**(사용자 확인 09-16 · Golden 결과 그리드) · 없으면 Segoe UI · 한글은 맑은 고딕 폴백.
         if cfg!(target_os = "windows") {
-            return nexa_font::ui_font(Some("Segoe UI")).map(|l| l.font);
+            return nexa_font::ui_font(Some("Calibri"))
+                .or_else(|| nexa_font::ui_font(Some("Segoe UI")))
+                .map(|l| l.font);
         }
         return None;
     }
