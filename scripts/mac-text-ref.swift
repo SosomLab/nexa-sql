@@ -1,6 +1,6 @@
 // mac-text-ref.swift — CoreText 참조 렌더(T-100 검증 · 09-17): 파인더와 같은 경로(CoreText · Apple 스무딩 · 서브픽셀 위치)로
 // 문자열을 1x 회색 비트맵에 그려 PGM(P5)으로 저장한다. 우리 앱(nexa-gfx CoreText 경로)의 같은 문자열 렌더와 픽셀 비교.
-// 사용: swift scripts/mac-text-ref.swift <out.pgm> [family=Apple SD Gothic Neo] [px=15] [text]
+// 사용: swift scripts/mac-text-ref.swift <out.pgm> [family=Apple SD Gothic Neo | system] [px=15] [text]
 import Foundation
 import CoreText
 import CoreGraphics
@@ -10,7 +10,7 @@ let out = args.count > 1 ? args[1] : "target/textref/ref.pgm"
 let family = args.count > 2 ? args[2] : "Apple SD Gothic Neo"
 let px = args.count > 3 ? Double(args[3]) ?? 15 : 15
 let text = args.count > 4 ? args[4] : "Nexa SQL Script_1.sql 한글 결과 0123 Hg"
-let font = CTFontCreateWithName(family as CFString, px, nil)
+let font: CTFont = family == "system" ? CTFontCreateUIFontForLanguage(.system, px, nil)! : CTFontCreateWithName(family as CFString, px, nil)
 let attrs: [NSAttributedString.Key: Any] = [kCTFontAttributeName as NSAttributedString.Key: font, kCTForegroundColorFromContextAttributeName as NSAttributedString.Key: true]
 let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
 let bounds = CTLineGetBoundsWithOptions(line, [])

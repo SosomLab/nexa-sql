@@ -2157,29 +2157,36 @@ impl App {
         self.redraw();
     }
 
-    /// 창 크기 기억(사용자 09-17): 닫힌 보조 창의 마지막 크기를 설정에 · `main`이면 메인 창 크기도(종료 직전).
+    /// 창 기하 기억(사용자 09-17 규칙): 닫힌 보조 창의 마지막 (위치, 크기)를 설정에 · `main`이면 메인 창도(종료 직전).
     fn persist_window_sizes(&mut self, main: bool) {
         let mut changed = false;
-        let mut put = |settings: &mut Settings, key: &str, s: Option<(f64, f64)>| {
-            if let Some((w, h)) = s {
-                let v = wingeom::format_size(w, h);
-                if settings.get(key) != Some(v.as_str()) {
-                    let _ = settings.set(key, &v);
-                    changed = true;
+        let mut put = |settings: &mut Settings, name: &str, g: Option<((i32, i32), (f64, f64))>| {
+            if let Some(((x, y), (w, h))) = g {
+                for (key, v) in [
+                    (format!("window.{name}_pos"), wingeom::format_pos(x, y)),
+                    (format!("window.{name}_size"), wingeom::format_size(w, h)),
+                ] {
+                    if settings.get(&key) != Some(v.as_str()) {
+                        let _ = settings.set(&key, &v);
+                        changed = true;
+                    }
                 }
             }
         };
-        let s1 = self.conn_win.take_last_size();
-        let s2 = self.log_win.take_last_size();
-        let s3 = self.txlog_win.take_last_size();
-        let s4 = self.prefs_win.take_last_size();
-        put(&mut self.settings, "window.login_size", s1);
-        put(&mut self.settings, "window.log_size", s2);
-        put(&mut self.settings, "window.txlog_size", s3);
-        put(&mut self.settings, "window.prefs_size", s4);
+        let g1 = self.conn_win.take_last();
+        let g2 = self.log_win.take_last();
+        let g3 = self.txlog_win.take_last();
+        let g4 = self.prefs_win.take_last();
+        put(&mut self.settings, "login", g1);
+        put(&mut self.settings, "log", g2);
+        put(&mut self.settings, "txlog", g3);
+        put(&mut self.settings, "prefs", g4);
         if main {
-            let sz = self.window.as_ref().map(|w| wingeom::logical_size(w));
-            put(&mut self.settings, "window.main_size", sz);
+            let g = self
+                .window
+                .as_ref()
+                .and_then(|w| wingeom::outer_pos(w).map(|p| (p, wingeom::logical_size(w))));
+            put(&mut self.settings, "main", g);
         }
         if changed {
             let _ = self.settings.save();
@@ -2187,19 +2194,26 @@ impl App {
         }
     }
 
-    /// 설정의 기억된 크기를 보조 창의 "다음 열기 크기"로.
+    /// 설정의 기억된 기하를 보조 창의 메모로(열 때 같은 모니터면 그대로 · 아니면 기본 규칙).
     fn apply_window_sizes(&mut self) {
-        let get = |s: &Settings, k: &str| s.get(k).and_then(wingeom::parse_size);
+        let memo = |s: &Settings, name: &str| wingeom::Memo {
+            pos: s
+                .get(&format!("window.{name}_pos"))
+                .and_then(wingeom::parse_pos),
+            size: s
+                .get(&format!("window.{name}_size"))
+                .and_then(wingeom::parse_size),
+        };
         let (a, b, c, d) = (
-            get(&self.settings, "window.login_size"),
-            get(&self.settings, "window.log_size"),
-            get(&self.settings, "window.txlog_size"),
-            get(&self.settings, "window.prefs_size"),
+            memo(&self.settings, "login"),
+            memo(&self.settings, "log"),
+            memo(&self.settings, "txlog"),
+            memo(&self.settings, "prefs"),
         );
-        self.conn_win.set_pref_size(a);
-        self.log_win.set_pref_size(b);
-        self.txlog_win.set_pref_size(c);
-        self.prefs_win.set_pref_size(d);
+        self.conn_win.set_memo(a);
+        self.log_win.set_memo(b);
+        self.txlog_win.set_memo(c);
+        self.prefs_win.set_memo(d);
     }
 
     /// 파일 탭 강조색(`editor.tab_accent` · 비면 테마 accent = 결과 탭과 같음).
@@ -4675,6 +4689,9 @@ impl App {
             over,
             owner.as_deref(),
         );
+        if let (Some(o), Some(c)) = (owner.as_deref(), self.conn_win.window()) {
+            winfocus::attach_child(o, c);
+        }
     }
 
     /// 로그인 목록 더블클릭/Enter — 저장소에서 읽어 폼에 채우고 바로 접속.
@@ -6641,9 +6658,15 @@ impl ApplicationHandler<Wake> for App {
         // macOS Dock 아이콘 — 이벤트 루프 생성 직후에 넣으면 winit의 applicationDidFinishLaunching(활성화 정책 Regular)이
         // Dock 타일을 다시 만들며 덮는다(09-16 실기: 호출은 되나 `exec` 그대로) → 기동이 끝난 첫 resumed에서. 다른 OS no-op.
         icon::set_dock_icon();
+        // 메인 창 규칙(사용자 09-17): **마지막 위치에서 종료 시점 크기로** 시작 · `window.monitor`(1-기준 · 왼쪽→오른쪽)가
+        //   있으면 그 모니터 왼쪽 위 안쪽. 모니터 목록은 창을 만든 뒤 창 핸들로 얻는다(`el.available_monitors()`는 macOS
+        //   `resumed` 시점에 비어 있었다 · 09-17) → 위치는 첫 창 이벤트 때 적용(직후 호출은 캐스케이드 배치가 덮는다).
+        // ★ 숨긴 채 만들고 → 위치를 정한 뒤 → 보인다: 보이는 창을 다른 배율 모니터로 옮기면 winit(macOS)이 생성 시점 배율
+        //   (2x)을 유지해 1x 모니터에서 반 크기로 그려졌다(09-17 ASCII 캡처). 숨긴 창은 보이는 순간 그 모니터 배율을 받는다.
         let attrs = icon::with_icon(
             Window::default_attributes()
                 .with_title("Nexa SQL")
+                .with_visible(false)
                 .with_theme(theme::window_theme(self.settings.theme_mode()))
                 .with_inner_size({
                     // 마지막으로 닫힌 크기(`window.main_size` · 사용자 09-17) · 없으면 기본.
@@ -6661,16 +6684,38 @@ impl ApplicationHandler<Wake> for App {
             return;
         };
         let win = Rc::new(win);
-        // 설정 `window.monitor`(1-기준 · 0 = OS 기본): 그 모니터의 왼쪽 위에서 조금 안쪽에 연다(사용자 09-17 "임시로 2번 모니터에").
-        //   모니터 번호는 **왼쪽→오른쪽(x 좌표순)**: winit의 목록 순서는 OS마다 달라 사용자 직관(1 = 왼쪽)과 어긋난다.
-        let mon = self.settings.int("window.monitor");
-        if mon > 0 {
+        {
             let mut mons: Vec<_> = win.available_monitors().collect();
             mons.sort_by_key(|m| (m.position().x, m.position().y));
-            if let Some(m) = mons.get((mon - 1) as usize) {
-                let p = m.position();
-                win.set_outer_position(winit::dpi::PhysicalPosition::new(p.x + 40, p.y + 60));
+            if std::env::var_os("NSQL_TRACE_WINDOW").is_some() {
+                for (i, m) in mons.iter().enumerate() {
+                    eprintln!(
+                        "monitor {}: pos={:?} size={:?} scale={} name={:?}",
+                        i + 1,
+                        m.position(),
+                        m.size(),
+                        m.scale_factor(),
+                        m.name()
+                    );
+                }
             }
+            let mon = self.settings.int("window.monitor");
+            // 논리 좌표: 모니터 위치는 그 모니터 배율로 나눈다(2x 메인 + 1x 보조에서 물리 px는 섞인다 · 09-17).
+            let place = if mon > 0 {
+                mons.get((mon - 1) as usize).map(|m| {
+                    let r = wingeom::monitor_rect(m);
+                    (r.0 + 20, r.1 + 30)
+                })
+            } else {
+                self.settings
+                    .get("window.main_pos")
+                    .and_then(wingeom::parse_pos)
+                    .filter(|p| wingeom::on_any_monitor(*p, mons.iter().cloned()))
+            };
+            if let Some((x, y)) = place {
+                win.set_outer_position(wingeom::logical(x, y));
+            }
+            win.set_visible(true);
         }
         self.scale = win.scale_factor() as f32;
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
@@ -7213,6 +7258,18 @@ impl ApplicationHandler<Wake> for App {
                 self.persist_window_sizes(true);
                 self.worker.send(worker::Cmd::Quit);
                 el.exit();
+                return;
+            }
+            WindowEvent::Moved(_) => {
+                // 다른 배율의 모니터로 옮겨진 뒤 ScaleFactorChanged가 안 오는 경우(프로그램 이동 · 09-17) 배율을 다시 읽는다.
+                if let Some(w) = &self.window {
+                    let s = w.scale_factor() as f32;
+                    if (s - self.scale).abs() > 0.01 {
+                        self.scale = s;
+                        self.layout();
+                    }
+                }
+                self.redraw();
                 return;
             }
             WindowEvent::Resized(_) => {

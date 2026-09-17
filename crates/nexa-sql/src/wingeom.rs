@@ -25,6 +25,77 @@ pub(crate) fn format_size(w: f64, h: f64) -> String {
     format!("{},{}", w.round() as i64, h.round() as i64)
 }
 
+/// `"x,y"` → 바깥 위치(**논리 좌표(points)** · 전역 — macOS는 모니터마다 배율이 달라 물리 px는 섞이면 틀린다 · 09-17).
+pub(crate) fn parse_pos(v: &str) -> Option<(i32, i32)> {
+    let (x, y) = v.trim().split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+pub(crate) fn format_pos(x: i32, y: i32) -> String {
+    format!("{x},{y}")
+}
+
+/// 기억된 기하(창마다 · 설정 `window.<name>_pos`/`_size`) — 규칙(사용자 09-17): **같은 모니터면 기록 위치·크기**,
+/// 다른 모니터면 기본 크기·기본 위치(메인 창 가운데/근처).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Memo {
+    pub(crate) pos: Option<(i32, i32)>,
+    pub(crate) size: Option<(f64, f64)>,
+}
+
+impl Memo {
+    /// 기록 위치가 `owner`(메인 창)와 같은 모니터 안이면 `(위치, 크기)` — 아니면 None(= 기본 규칙).
+    pub(crate) fn on_same_monitor(
+        &self,
+        owner: Option<&Window>,
+    ) -> Option<((i32, i32), Option<(f64, f64)>)> {
+        let pos = self.pos?;
+        let m = owner.and_then(Window::current_monitor)?;
+        rect_contains(monitor_rect(&m), pos).then_some((pos, self.size))
+    }
+}
+
+/// 모니터 사각형(논리 좌표): winit의 물리 위치·크기를 그 모니터의 배율로 나눈다.
+pub(crate) fn monitor_rect(m: &winit::monitor::MonitorHandle) -> (i32, i32, i32, i32) {
+    let s = m.scale_factor().max(0.25);
+    let (p, z) = (m.position(), m.size());
+    (
+        (f64::from(p.x) / s).round() as i32,
+        (f64::from(p.y) / s).round() as i32,
+        (f64::from(z.width) / s).round() as i32,
+        (f64::from(z.height) / s).round() as i32,
+    )
+}
+
+fn rect_contains(r: (i32, i32, i32, i32), p: (i32, i32)) -> bool {
+    p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3
+}
+
+/// 위치(논리)가 어느 모니터 안에라도 있는가(메인 창 복원 · 없어진 모니터의 좌표는 버린다).
+pub(crate) fn on_any_monitor(
+    pos: (i32, i32),
+    mons: impl Iterator<Item = winit::monitor::MonitorHandle>,
+) -> bool {
+    mons.into_iter()
+        .any(|m| rect_contains(monitor_rect(&m), pos))
+}
+
+/// 창의 바깥 위치(논리 좌표) — 실패하면 None.
+pub(crate) fn outer_pos(w: &Window) -> Option<(i32, i32)> {
+    let s = w.scale_factor().max(0.25);
+    w.outer_position().ok().map(|p| {
+        (
+            (f64::from(p.x) / s).round() as i32,
+            (f64::from(p.y) / s).round() as i32,
+        )
+    })
+}
+
+/// 논리 위치 → winit 위치 인자.
+pub(crate) fn logical(x: i32, y: i32) -> winit::dpi::LogicalPosition<f64> {
+    winit::dpi::LogicalPosition::new(f64::from(x), f64::from(y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

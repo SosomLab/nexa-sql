@@ -89,9 +89,9 @@ struct Snap {
 
 pub(crate) struct PrefsWin {
     window: Option<Rc<Window>>,
-    /// 창 크기 기억(`wingeom`): 다음 열기 크기 · 마지막 닫힌 크기.
-    pref_size: Option<(f64, f64)>,
-    last_size: Option<(f64, f64)>,
+    /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
+    memo: crate::wingeom::Memo,
+    last: Option<((i32, i32), (f64, f64))>,
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     scale: f32,
@@ -193,8 +193,9 @@ impl PrefsWin {
             hidden: Vec::new(),
             vtree,
             window: None,
-            pref_size: None,
-            last_size: None,
+            memo: crate::wingeom::Memo::default(),
+
+            last: None,
             ctx: None,
             surface: None,
             scale: 1.0,
@@ -464,13 +465,17 @@ impl PrefsWin {
             w.focus_window();
             return;
         }
-        let (lw, lh) = self.pref_size.unwrap_or((920.0, 640.0));
+        // 창 규칙(사용자 09-17): 같은 모니터면 기록 위치·크기 · 아니면 기본 크기로 메인 창 가운데.
+        let same = self.memo.on_same_monitor(owner);
+        let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((920.0, 640.0));
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinPreferences)))
             .with_theme(theme)
             .with_resizable(true)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
-        if let Some((x, y, w, h)) = over {
+        if let Some(((x, y), _)) = same {
+            attrs = attrs.with_position(crate::wingeom::logical(x, y));
+        } else if let Some((x, y, w, h)) = over {
             let cx = x + (w as i32 - lw as i32) / 2;
             let cy = y + (h as i32 - lh as i32) / 2;
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(cx.max(0), cy.max(0)));
@@ -495,7 +500,9 @@ impl PrefsWin {
 
     pub(crate) fn close(&mut self) {
         if let Some(w) = &self.window {
-            self.last_size = Some(crate::wingeom::logical_size(w));
+            if let Some(p) = crate::wingeom::outer_pos(w) {
+                self.last = Some((p, crate::wingeom::logical_size(w)));
+            }
         }
         self.surface = None;
         self.ctx = None;
@@ -503,14 +510,14 @@ impl PrefsWin {
         self.cards.clear();
     }
 
-    /// 다음 열기 때 쓸 크기(설정 `window.prefs_size`).
-    pub(crate) fn set_pref_size(&mut self, s: Option<(f64, f64)>) {
-        self.pref_size = s;
+    /// 기억된 기하(설정 `window.<name>_pos`/`_size`) — 열 때 같은 모니터면 그대로 쓴다.
+    pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
+        self.memo = m;
     }
 
-    /// 마지막으로 닫힌 크기(1회성 · 호스트가 설정에 저장).
-    pub(crate) fn take_last_size(&mut self) -> Option<(f64, f64)> {
-        self.last_size.take()
+    /// 마지막으로 닫힌 (위치, 크기)(1회성 · 호스트가 설정에 저장).
+    pub(crate) fn take_last(&mut self) -> Option<((i32, i32), (f64, f64))> {
+        self.last.take()
     }
 
     fn s(&self, v: f32) -> i32 {

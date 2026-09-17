@@ -54,9 +54,49 @@ pub(crate) fn set_enabled(w: &Window, on: bool) {
             }
         }
     }
-    #[cfg(not(target_os = "windows"))]
+    // macOS: 소유 창이 열려 있는 동안 메인 창 **이동 잠금**(`setMovable:`) — 입력은 호스트 가드가 막고, 창 이동은 OS 몫이라
+    //   여기서(사용자 09-17 "로그인 창이 떠 있는데 메인 창 옮기기가 동작"). Windows의 EnableWindow와 짝.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(nsw) = ns_window(w) {
+            nsw.setMovable(on);
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (w, on);
+    }
+}
+
+/// macOS NSWindow 핸들(winit raw handle → NSView → window).
+#[cfg(target_os = "macos")]
+fn ns_window(w: &Window) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match w.window_handle().ok()?.as_raw() {
+        RawWindowHandle::AppKit(h) => {
+            // SAFETY: winit이 준 유효한 NSView 포인터(창이 살아 있는 동안).
+            let view: &objc2_app_kit::NSView = unsafe { h.ns_view.cast().as_ref() };
+            view.window()
+        }
+        _ => None,
+    }
+}
+
+/// ★ macOS 소유 관계(사용자 09-17 "Windows처럼 모달"): 보조 창을 메인의 **자식 창**으로 — 항상 메인 위 · 메인과 함께 이동/최소화.
+/// Windows는 `owned_by`(오너 HWND)가 같은 일을 창 생성 때 한다 · Linux no-op.
+pub(crate) fn attach_child(owner: &Window, child: &Window) {
+    #[cfg(target_os = "macos")]
+    {
+        if let (Some(o), Some(c)) = (ns_window(owner), ns_window(child)) {
+            // SAFETY: 두 창 모두 살아 있는 winit 창의 NSWindow · 메인 스레드.
+            unsafe {
+                o.addChildWindow_ordered(&c, objc2_app_kit::NSWindowOrderingMode::NSWindowAbove);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (owner, child);
     }
 }
 

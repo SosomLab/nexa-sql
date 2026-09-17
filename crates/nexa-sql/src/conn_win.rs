@@ -224,9 +224,9 @@ enum WFocus {
 
 pub(crate) struct ConnWin {
     window: Option<Rc<Window>>,
-    /// 창 크기 기억(`wingeom`): 다음 열기 크기 · 마지막 닫힌 크기.
-    pref_size: Option<(f64, f64)>,
-    last_size: Option<(f64, f64)>,
+    /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
+    memo: crate::wingeom::Memo,
+    last: Option<((i32, i32), (f64, f64))>,
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     scale: f32,
@@ -320,8 +320,9 @@ impl ConnWin {
     pub(crate) fn new(panel: ConnectPanel) -> Self {
         let mut w = ConnWin {
             window: None,
-            pref_size: None,
-            last_size: None,
+            memo: crate::wingeom::Memo::default(),
+
+            last: None,
             ctx: None,
             surface: None,
             scale: 1.0,
@@ -911,7 +912,10 @@ impl ConnWin {
             w.focus_window();
             return;
         }
-        let (lw, lh) = self.pref_size.unwrap_or((
+        // 창 규칙(사용자 09-16/09-17): 메인 창과 같은 모니터에 · 기록(설정 `window.login_pos/_size`)이 **같은 모니터**면
+        // 기록된 크기로 기록된 위치에 · 다른 모니터면 기본 크기로 메인 창 가로/세로 가운데.
+        let same = self.memo.on_same_monitor(owner);
+        let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((
             f64::from(self.tuning.window_w),
             f64::from(self.tuning.window_h),
         ));
@@ -919,12 +923,9 @@ impl ConnWin {
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLogin)))
             .with_theme(theme)
             .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
-        // 위치 규칙(사용자 09-16): 기본 = 메인 창 가운데 · 그 뒤로는 마지막으로 닫힌 자리 · 메인 창이 **다른 모니터**로
-        // 옮겨졌으면 다시 메인 창 가운데(모니터 = 마지막으로 열 때의 메인 창 모니터와 비교).
         let monitor = owner.and_then(Window::current_monitor);
-        let same_monitor = monitor.is_some() && monitor == self.last_monitor;
-        if let Some((x, y)) = self.last_pos.filter(|_| same_monitor) {
-            attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
+        if let Some(((x, y), _)) = same {
+            attrs = attrs.with_position(crate::wingeom::logical(x, y));
         } else if let Some((x, y, w, h)) = over {
             // `over`는 물리 px · 창 크기는 논리 px → 메인 창 배율로 맞춘 뒤 가운데(2x에서 오른쪽 아래로 치우치던 것).
             let s = owner.map_or(1.0, Window::scale_factor);
@@ -1033,7 +1034,9 @@ impl ConnWin {
             self.last_pos = Some((p.x, p.y));
         }
         if let Some(w) = &self.window {
-            self.last_size = Some(crate::wingeom::logical_size(w));
+            if let Some(p) = crate::wingeom::outer_pos(w) {
+                self.last = Some((p, crate::wingeom::logical_size(w)));
+            }
         }
         self.surface = None;
         self.ctx = None;
@@ -1041,14 +1044,14 @@ impl ConnWin {
         self.panel.set_focused(false);
     }
 
-    /// 다음 열기 때 쓸 크기(설정 `window.login_size` · 비면 tuning 기본).
-    pub(crate) fn set_pref_size(&mut self, s: Option<(f64, f64)>) {
-        self.pref_size = s;
+    /// 기억된 기하(설정 `window.<name>_pos`/`_size`) — 열 때 같은 모니터면 그대로 쓴다.
+    pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
+        self.memo = m;
     }
 
-    /// 마지막으로 닫힌 크기(1회성 · 호스트가 설정에 저장).
-    pub(crate) fn take_last_size(&mut self) -> Option<(f64, f64)> {
-        self.last_size.take()
+    /// 마지막으로 닫힌 (위치, 크기)(1회성 · 호스트가 설정에 저장).
+    pub(crate) fn take_last(&mut self) -> Option<((i32, i32), (f64, f64))> {
+        self.last.take()
     }
 
     pub(crate) fn redraw(&self) {

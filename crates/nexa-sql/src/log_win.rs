@@ -54,9 +54,9 @@ const TIP_MS: u128 = 600;
 
 pub(crate) struct LogWin {
     window: Option<Rc<Window>>,
-    /// 창 크기 기억(`wingeom`): 다음 열기 크기 · 마지막 닫힌 크기.
-    pref_size: Option<(f64, f64)>,
-    last_size: Option<(f64, f64)>,
+    /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
+    memo: crate::wingeom::Memo,
+    last: Option<((i32, i32), (f64, f64))>,
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     buf: LogBuffer,
@@ -133,8 +133,9 @@ impl LogWin {
     pub(crate) fn new(format: &str) -> Self {
         LogWin {
             window: None,
-            pref_size: None,
-            last_size: None,
+            memo: crate::wingeom::Memo::default(),
+
+            last: None,
             ctx: None,
             surface: None,
             buf: LogBuffer::new(10_000),
@@ -692,14 +693,16 @@ impl LogWin {
             w.focus_window();
             return;
         }
+        // 창 규칙(사용자 09-17): 같은 모니터면 기록 위치·크기 · 아니면 기본 크기로 메인 창 오른쪽.
+        let same = self.memo.on_same_monitor(owner);
+        let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((592.0, 320.0));
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLog)))
             .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                self.pref_size.map_or(592.0, |s| s.0),
-                self.pref_size.map_or(320.0, |s| s.1),
-            ));
-        if let Some((x, y, w)) = near {
+            .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
+        if let Some(((x, y), _)) = same {
+            attrs = attrs.with_position(crate::wingeom::logical(x, y));
+        } else if let Some((x, y, w)) = near {
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y));
         }
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
@@ -721,21 +724,23 @@ impl LogWin {
 
     pub(crate) fn close(&mut self) {
         if let Some(w) = &self.window {
-            self.last_size = Some(crate::wingeom::logical_size(w));
+            if let Some(p) = crate::wingeom::outer_pos(w) {
+                self.last = Some((p, crate::wingeom::logical_size(w)));
+            }
         }
         self.surface = None;
         self.ctx = None;
         self.window = None;
     }
 
-    /// 다음 열기 때 쓸 크기(설정 `window.log_size`).
-    pub(crate) fn set_pref_size(&mut self, s: Option<(f64, f64)>) {
-        self.pref_size = s;
+    /// 기억된 기하(설정 `window.<name>_pos`/`_size`) — 열 때 같은 모니터면 그대로 쓴다.
+    pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
+        self.memo = m;
     }
 
-    /// 마지막으로 닫힌 크기(1회성 · 호스트가 설정에 저장).
-    pub(crate) fn take_last_size(&mut self) -> Option<(f64, f64)> {
-        self.last_size.take()
+    /// 마지막으로 닫힌 (위치, 크기)(1회성 · 호스트가 설정에 저장).
+    pub(crate) fn take_last(&mut self) -> Option<((i32, i32), (f64, f64))> {
+        self.last.take()
     }
 
     /// 로그 줄 상한(설정 `log.max_lines` · docs/39 §3-6 T-90d) — 줄이면 **앞(오래된 것)부터 즉시 버리고** 배치·필터 목록도 맞춘다.
