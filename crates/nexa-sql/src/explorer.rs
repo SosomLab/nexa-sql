@@ -233,6 +233,8 @@ pub(crate) enum ExplorerAction {
     Status(String),
     /// 클립보드에 복사할 텍스트.
     Copy(String),
+    /// 오프라인 서버를 탐색기에서 지운다(루트 우클릭 · `ExplorerSet`이 처리).
+    RemoveServer,
 }
 
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
@@ -294,6 +296,11 @@ pub(crate) struct Explorer {
     suspended: bool,
     /// 마지막으로 메타 요청을 보낸 시각(유휴 회수 판정).
     last_used: Instant,
+    /// 우클릭 메뉴가 놓일 수 있는 영역 — 여러 서버가 세로로 쌓이면 한 칸(`bounds`)이 한 줄 높이일 수 있어 탐색기 전체 영역을 받는다.
+    menu_host: Rect,
+    /// 보이는 창(호스트가 준다) — 여러 서버의 트리를 **한 트리처럼 이어 붙여** 하나의 스크롤로 움직일 때, 이 칸의 `bounds`는
+    /// 내용 전체 높이라 영역 밖으로 나갈 수 있다 → 그리기·히트 테스트는 이 창과의 교집합만(`None` = bounds 그대로).
+    clip: Option<Rect>,
 }
 
 fn err_s(e: DbError) -> String {
@@ -518,6 +525,8 @@ impl Explorer {
             offline: false,
             suspended: false,
             last_used: Instant::now(),
+            menu_host: Rect::default(),
+            clip: None,
         };
         e.reset_tree();
         e
@@ -622,9 +631,48 @@ impl Explorer {
     }
 
     /// 접속됨 — 메타 세션을 따로 연다(편집기 세션과 분리).
-    /// 루트 표시용 (프로필 이름, 호스트:포트).
-    pub(crate) fn title(&self) -> (&str, &str) {
-        (&self.profile_name, &self.endpoint)
+    /// 보이는 창 지정(이어 붙인 트리의 공용 뷰포트).
+    pub(crate) fn set_clip(&mut self, r: Rect) {
+        self.clip = Some(r);
+    }
+
+    /// 실제로 보이는 영역 = bounds ∩ 창.
+    pub(crate) fn visible_rect(&self) -> Rect {
+        match self.clip {
+            Some(c) => self.bounds.intersection(&c),
+            None => self.bounds,
+        }
+    }
+
+    /// 선택 행의 세로 범위(창 좌표 · y, 높이) — 호스트가 키보드 이동 뒤 공용 스크롤을 맞춘다.
+    pub(crate) fn selected_span(&self) -> Option<(i32, i32)> {
+        let sel = self.selected?;
+        let pos = self
+            .screen_rows()
+            .iter()
+            .position(|(n, _)| *n == Some(sel))?;
+        let rh = self.row_h();
+        Some((self.bounds.y + pos as i32 * rh - self.scroll, rh))
+    }
+
+    /// 우클릭 메뉴 영역(탐색기 전체).
+    pub(crate) fn set_menu_host(&mut self, r: Rect) {
+        self.menu_host = r;
+    }
+
+    /// 트리 전체 높이(px) — 여러 서버의 트리를 이어 붙일 때 이 트리가 차지하는 높이.
+    pub(crate) fn content_height(&self) -> i32 {
+        self.content_h().max(self.row_h())
+    }
+
+    /// 다른 서버의 트리를 눌렀다 — 선택은 탐색기 전체에 하나만.
+    pub(crate) fn clear_selection(&mut self) {
+        self.selected = None;
+    }
+
+    /// 우클릭 메뉴(팝업 층) — 모든 서버의 트리를 그린 **뒤에** 그린다(아래 칸이 위 칸의 메뉴를 덮지 않게).
+    pub(crate) fn paint_menu(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        self.menu.paint(dc, th);
     }
 
     pub(crate) fn is_offline(&self) -> bool {
@@ -679,7 +727,13 @@ impl Explorer {
         self.endpoint = match (&spec.host, spec.port) {
             (Some(h), Some(p)) => format!("{h}:{p}"),
             (Some(h), None) => h.clone(),
-            _ => spec.database.clone().unwrap_or_default(),
+            // 파일 방언(SQLite) = 전체 경로 대신 **파일 이름만**(사용자 09-18 · 전체 경로는 접속 창·탭 툴팁에 있다).
+            _ => {
+                let db = spec.database.clone().unwrap_or_default();
+                std::path::Path::new(&db)
+                    .file_name()
+                    .map_or(db.clone(), |f| f.to_string_lossy().into_owned())
+            }
         };
         self.reset_tree();
         self.nodes[0].state = LoadState::Loading;
@@ -1104,7 +1158,7 @@ impl Explorer {
 
     /// 마우스 아래 행 — **마지막 페인트의 행 캐시**로 판정(구조가 바뀌면 곧 다시 그려져 캐시가 따라온다).
     fn row_at(&self, p: Point) -> Option<(Option<usize>, usize)> {
-        if !self.bounds.contains(p) {
+        if !self.visible_rect().contains(p) {
             return None;
         }
         let idx = (p.y - self.bounds.y + self.scroll) / self.row_h();
@@ -1247,11 +1301,19 @@ impl Explorer {
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
+                    NodeKind::Root if self.offline => {
+                        items.push(CtxItem::item("remove", t(Msg::ExpRemoveServer)));
+                    }
                     _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
                 }
                 let text_w = (160.0 * self.scale).round() as i32;
                 self.menu.set_scale(self.scale);
-                self.menu.open_at(x, y, items, self.bounds, text_w);
+                let host = if self.menu_host.h > 0 {
+                    self.menu_host
+                } else {
+                    self.bounds
+                };
+                self.menu.open_at(x, y, items, host, text_w);
                 true
             }
             InputEvent::Key { key, .. } if self.focused => {
@@ -1307,6 +1369,7 @@ impl Explorer {
         match id {
             "select" | "source" => self.activate(i),
             "refresh" => self.refresh(i),
+            "remove" => self.actions.push(ExplorerAction::RemoveServer),
             "copy" => {
                 let name = match &self.nodes[i].kind {
                     NodeKind::Schema(s) => s.clone(),
@@ -1378,8 +1441,14 @@ impl Explorer {
         }
         let b = self.bounds;
         let s = self.scale;
-        dc.fill_rect(b, th.panel_bg);
-        dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
+        // 보이는 부분만(이어 붙인 트리에서는 bounds가 영역 밖으로 나간다).
+        let vis = self.visible_rect();
+        if vis.h <= 0 || vis.w <= 0 {
+            self.rows_cache = self.screen_rows();
+            return;
+        }
+        dc.fill_rect(vis, th.panel_bg);
+        dc.fill_rect(Rect::new(b.right() - 1, vis.y, 1, vis.h), th.border);
         dc.select_font(FontSlot::Base, false);
         let th_txt = dc.text_height();
         let asc = dc.text_ascent();
@@ -1390,13 +1459,13 @@ impl Explorer {
         let chip = (th_txt as f32 * 0.55).round() as i32;
         self.rows_cache = self.screen_rows();
         let rows = std::mem::take(&mut self.rows_cache);
-        let first = (self.scroll / row_h).max(0) as usize;
+        let first = ((vis.y - b.y + self.scroll) / row_h.max(1)).max(0) as usize;
         for (pos, (node, parent)) in rows.iter().enumerate().skip(first) {
             let y = b.y + pos as i32 * row_h - self.scroll;
-            if y >= b.bottom() {
+            if y >= vis.bottom() {
                 break;
             }
-            let rr = Rect::new(b.x, y, b.w, row_h).intersection(&b);
+            let rr = Rect::new(b.x, y, b.w, row_h).intersection(&vis);
             if rr.h <= 0 {
                 continue;
             }
@@ -1495,9 +1564,12 @@ impl Explorer {
                 }
             }
         }
-        self.bars
-            .paint(dc, th, b, b.w, self.content_h().max(b.h), 0, self.scroll, s);
-        self.menu.paint(dc, th);
+        // 이어 붙인 트리(창이 주어짐)에서는 공용 스크롤바를 호스트가 그린다.
+        if self.clip.is_none() {
+            self.bars
+                .paint(dc, th, b, b.w, self.content_h().max(b.h), 0, self.scroll, s);
+        }
+        // (우클릭 메뉴는 `paint_menu` — 호스트가 모든 서버의 트리를 그린 뒤에 그린다.)
         self.rows_cache = rows;
     }
 }

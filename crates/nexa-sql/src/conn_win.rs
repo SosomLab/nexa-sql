@@ -55,8 +55,8 @@ impl Default for ConnTuning {
             tooltip_ms: 600,
             dblclick_ms: 400,
             slide_ms: 200.0,
-            window_w: 640.0,
-            window_h: 520.0,
+            window_w: 748.0,
+            window_h: 526.0,
             panel_w: 292.0,
             button_scale: 1.32,
             port_w: 58.0,
@@ -126,8 +126,10 @@ struct TipTarget {
 
 /// 텍스트 열(원본 index) — 이름 · 종류 · 사용자 · 대상.
 const TEXT_COLS: usize = 5;
-/// 첫 배치의 폭 비율(사용자가 폭을 조절하기 전까지 창 폭을 따라간다) — 이름 · 종류 · 사용자 · 비밀번호(체크) · 대상.
-const COL_FRACS: [f32; TEXT_COLS] = [0.20, 0.14, 0.18, 0.10, 0.38];
+/// 첫 배치의 폭(논리 px · 사용자 09-18 캡처 기준) — 이름 · 종류 · 사용자 · 비밀번호(체크)는 고정, **대상은 남는 폭 전부이되
+/// 최소 [`COL_TARGET_MIN`]**(긴 경로·호스트가 잘리지 않게 넓게 — 창이 좁으면 가로 스크롤). 사용자가 폭을 조절하기 전까지 창 폭을 따라간다.
+const COL_BASE_W: [f32; TEXT_COLS - 1] = [124.0, 88.0, 112.0, 62.0];
+const COL_TARGET_MIN: f32 = 408.0;
 /// 비밀번호 열(원본 index) — 체크박스로 그린다(진하게 = 저장됨 · 연하게 = 세션에만 입력됨).
 const COL_PASSWORD: usize = 3;
 const MIN_COL_W: i32 = 24;
@@ -257,6 +259,10 @@ pub(crate) struct ConnWin {
     sort_keys: Vec<(usize, bool)>,
     /// 헤더 경계 드래그 = 폭 조절(열 · 시작 x · 시작 폭).
     hdr_resize: Option<(usize, i32, i32)>,
+    /// 헤더 경계의 마지막 클릭(열 · 시각) — 400ms 안에 같은 경계를 다시 누르면 자동 맞춤(결과 그리드와 같은 규칙).
+    edge_click: Option<(usize, Instant)>,
+    /// 자동 맞춤 예약(다음 페인트에서 글자 폭을 재서 반영 — 폭 측정은 그리기 문맥이 필요하다).
+    autofit: Option<usize>,
     /// 표시 순서 → 원본 열(헤더 DnD로 이동 · 사용자 09-14).
     col_order: Vec<usize>,
     /// 조정값(설정 주입 · 기본 = 설계 상수).
@@ -346,6 +352,8 @@ impl ConnWin {
             col_w_manual: false,
             sort_keys: Vec::new(),
             hdr_resize: None,
+            edge_click: None,
+            autofit: None,
             col_order: (0..TEXT_COLS).collect(),
             tuning: ConnTuning::default(),
             hdr_drag: None,
@@ -1131,10 +1139,10 @@ impl ConnWin {
         // 텍스트 열 폭 — 사용자가 조절하기 전까지는 창 폭을 비율로 따라간다.
         if !self.col_w_manual || self.col_w.len() != TEXT_COLS {
             let avail = (self.list.w - 2 - self.icons_w()).max(MIN_COL_W * TEXT_COLS as i32);
-            self.col_w = COL_FRACS
-                .iter()
-                .map(|f| ((avail as f32 * f) as i32).max(MIN_COL_W))
-                .collect();
+            let mut w: Vec<i32> = COL_BASE_W.iter().map(|v| self.s(*v)).collect();
+            let fixed: i32 = w.iter().sum();
+            w.push((avail - fixed).max(self.s(COL_TARGET_MIN)));
+            self.col_w = w;
         }
         self.clamp_scroll();
     }
@@ -1956,10 +1964,27 @@ impl ConnWin {
         match ev {
             InputEvent::MouseMove { x, .. } if self.hdr_resize.is_some() => {
                 if let Some((ci, x0, w0)) = self.hdr_resize {
+                    // 끌었으면 더블클릭 후보에서 뺀다(끌기 → 바로 재클릭은 새 조절).
+                    if (x - x0).abs() > 3 {
+                        self.edge_click = None;
+                    }
                     if let Some(w) = self.col_w.get_mut(ci) {
                         *w = (w0 + (x - x0)).max(MIN_COL_W);
                     }
                     self.col_w_manual = true;
+                    // ★ 오른쪽 경계가 뷰포트 밖으로 나가면 그만큼 가로 스크롤 — 마지막 열을 창 밖으로 키워도 경계가 커서를 따라 보인다
+                    //   (결과 그리드와 같은 방식 · 사용자 09-18).
+                    if let Some(pos) = self.col_order.iter().position(|&c| c == ci) {
+                        let left: i32 = self.col_order[..pos]
+                            .iter()
+                            .map(|&c| self.col_w.get(c).copied().unwrap_or(MIN_COL_W))
+                            .sum();
+                        let edge = left + self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
+                        let vp_w = (self.body_rect().w - self.icons_w()).max(1);
+                        if edge - self.scroll_x > vp_w {
+                            self.scroll_x = edge - vp_w;
+                        }
+                    }
                     self.clamp_scroll();
                     // 넘치면 가로 막대가 보이도록(오버레이는 스크롤 전엔 숨어 있어 "스크롤이 없다"로 보인다).
                     let body = self.body_rect();
@@ -2045,6 +2070,19 @@ impl ConnWin {
                 // 헤더: 경계 = 폭 조절 · 열 = 누르고 놓으면 정렬(Shift = 결합) · 끌면 이동(MouseUp에서 판정).
                 self.set_focus(WFocus::List);
                 if let Some(ci) = self.header_edge_at(x) {
+                    // 같은 경계를 400ms 안에 다시 누르면 자동 맞춤(헤더 이름 + 보이는 전 행의 값 · 결과 그리드와 같은 규칙).
+                    let now = Instant::now();
+                    let dbl = self
+                        .edge_click
+                        .is_some_and(|(c, at)| c == ci && now.duration_since(at).as_millis() < 400);
+                    if dbl {
+                        self.autofit = Some(ci);
+                        self.edge_click = None;
+                        self.hdr_resize = None;
+                        self.redraw();
+                        return;
+                    }
+                    self.edge_click = Some((ci, now));
                     let w0 = self.col_w.get(ci).copied().unwrap_or(MIN_COL_W);
                     self.hdr_resize = Some((ci, x, w0));
                 } else if let Some(pos) = self.header_pos_at(x) {
@@ -2278,6 +2316,41 @@ impl ConnWin {
                 t(Msg::ColPassword).to_string(),
                 t(Msg::ColTarget).to_string(),
             ];
+            // 자동 맞춤(경계 더블클릭) — **딱 맞게**(사용자 09-18 "더 Tight하게"): 필요한 폭 = 왼쪽 여백 `pad` + 가장 넓은 글자 +
+            //   오른쪽 여백 `pad/2`(아래 헤더·행의 클립과 같은 식) + 소수 전진 폭 올림 1px. 정렬 배지는 **지금 달려 있을 때만** 셈한다.
+            //   비밀번호 열은 체크 상자가 헤더 글자보다 좁아 헤더("Pass")만 보이면 된다.
+            if let Some(ci) = self.autofit.take() {
+                let tail = pad / 2 + (self.scale.ceil() as i32).max(1);
+                let badge_w = self
+                    .sort_keys
+                    .iter()
+                    .position(|(k, _)| *k == ci)
+                    .map_or(0, |i| {
+                        let bd = if self.sort_keys.len() > 1 {
+                            format!("▲{}", i + 1)
+                        } else {
+                            "▲".to_string()
+                        };
+                        dc.text_width(&bd) + pad
+                    });
+                let mut w = dc.text_width(&col_names[ci]) + badge_w;
+                if ci == COL_PASSWORD {
+                    w = w.max((rh * 12 / 25).max(8));
+                } else {
+                    for &pi in &self.shown {
+                        if let Some(p) = self.profiles.get(pi) {
+                            w = w.max(dc.text_width(&cell_of(p, ci, &self.session_pw)));
+                        }
+                    }
+                }
+                if let Some(cw) = self.col_w.get_mut(ci) {
+                    *cw = (pad + w + tail).max(MIN_COL_W);
+                }
+                self.col_w_manual = true;
+                // (페인트 중에는 surface를 빌린 채라 `clamp_scroll`을 못 부른다 — 같은 식을 필드로 직접.)
+                let content_w = icons_w + self.col_w.iter().sum::<i32>();
+                self.scroll_x = self.scroll_x.clamp(0, (content_w - body.w).max(0));
+            }
             let col_w = self.col_w.clone();
             // 잉크 기준 세로 가운데(09-16 mac: 고정 −8px 상수는 Windows 1x 맑은 고딕에서만 가운데였다).
             let toff = dc.text_center_y(0, rh);
@@ -2333,10 +2406,10 @@ impl ConnWin {
                 });
                 let name_clip = if let Some(bd) = &badge {
                     let bw = dc.text_width(bd);
-                    dc.text(cx + cw - pad - bw, ty(l.y), clip, bd, th.accent);
-                    Rect::new(cx, l.y, (cw - bw - pad * 2).max(0), rh).intersection(&hcells)
+                    dc.text(cx + cw - pad / 2 - bw, ty(l.y), clip, bd, th.accent);
+                    Rect::new(cx, l.y, (cw - bw - pad - pad / 2).max(0), rh).intersection(&hcells)
                 } else {
-                    Rect::new(cx, l.y, (cw - pad).max(0), rh).intersection(&hcells)
+                    Rect::new(cx, l.y, (cw - pad / 2).max(0), rh).intersection(&hcells)
                 };
                 dc.text(cx + pad, ty(l.y), name_clip, name, th.text_dim);
                 // 열 경계선(폭 조절 손잡이 위치).
@@ -2410,7 +2483,8 @@ impl ConnWin {
                 let mut cx = l.x + icons_w - self.scroll_x;
                 for &ci in &col_order {
                     let cw = col_w.get(ci).copied().unwrap_or(MIN_COL_W);
-                    let clip = Rect::new(cx, y, (cw - pad).max(0), rh).intersection(&cells);
+                    // 오른쪽 여백 = pad/2(자동 맞춤과 같은 식 — 열 경계선과 글자 사이 최소 간격).
+                    let clip = Rect::new(cx, y, (cw - pad / 2).max(0), rh).intersection(&cells);
                     if clip.w > 0 && clip.h > 0 {
                         if ci == COL_PASSWORD {
                             // 체크박스: 저장됨 = 진한 체크 · 세션 입력 = 연한 체크 · 없음 = 빈 상자. 크기 = 행 높이의 48%(3/5의 80% · 사용자 09-14).
