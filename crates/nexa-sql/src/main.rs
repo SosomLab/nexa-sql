@@ -20,6 +20,7 @@ mod enc;
 mod eol;
 mod exp_icons;
 mod explorer;
+mod explorers;
 #[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
@@ -39,6 +40,7 @@ mod results;
 mod runtoast;
 mod rx;
 mod search_panel;
+mod sessions;
 mod syntax;
 mod theme;
 mod toast;
@@ -54,7 +56,7 @@ use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
-use explorer::{Explorer, ExplorerAction, LiveReq};
+use explorer::{ExplorerAction, LiveReq};
 use file_win::{FileWin, FileWinAction};
 use findbar::{FindAction, FindBar};
 use keymap::{Chord, Keymap};
@@ -75,7 +77,7 @@ use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
 use nsql_i18n::{current_lang, t, tf, Msg};
 use nsql_log::{LogEntry, LogKind, LogLayer, LogLevel};
-use nsql_run::txlog::{Purpose as TxPurpose, TxLog, TxOutcome};
+use nsql_run::txlog::{Purpose as TxPurpose, TxOutcome};
 use nsql_run::RunEvent;
 use nsql_script::ConnectSpec;
 use nsql_settings::{Settings, ThemeMode};
@@ -123,16 +125,7 @@ enum TxAfter {
     SwitchAuto,
 }
 
-/// 수동 커밋 대기 문장 하나(T-77) — 편집기 탭 · 시각 · 시:분 · 요약.
-#[derive(Clone, Debug)]
-struct TxItem {
-    editor: u64,
-    at: Instant,
-    when: String,
-    summary: String,
-    /// 문장 종류(docs/44 §5 · 버튼 색·툴팁·로그 Tx 열).
-    class: nsql_core::TxClass,
-}
+use sessions::{ConnectIntent, Sess, SessionMode, TxItem, SHARED};
 
 struct App {
     window: Option<Rc<Window>>,
@@ -148,38 +141,23 @@ struct App {
     scale: f32,
     /// 로그 창(별도 창 · `Ctrl/⌘+⇧G`).
     log_win: LogWin,
-    /// 트랜잭션 로그(수집기 · docs/44 · T-107) + 모덜리스 창.
-    txlog: TxLog,
     txlog_win: TxLogWin,
     open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
-    /// 실행 상태 카드(사용자 09-17) + 다음 깨울 시각.
-    run_toast: runtoast::RunToast,
     run_toast_next: Option<Instant>,
     /// 문장 실행 버튼 활성 상태 캐시(다중 커서면 비활성 · 사용자 09-17).
     run_stmt_enabled: bool,
     /// 툴바 ■(실행 중지) 활성 캐시(= busy · 시작값 true = 첫 동기화에서 비활성으로).
     run_stop_enabled: bool,
-    /// 사용자가 중지를 눌렀다 — 뒤따르는 드라이버 오류(interrupted · 57014 · ORA-01013)는 오류가 아니라 "중지됨".
-    run_cancel_requested: bool,
-    /// 실행 텍스트의 첫 줄이 편집기에서 몇 번째 줄인가(0 기준 · 문장 실행이면 그 문장의 줄 · 오류 줄 → 편집기 줄).
-    run_line_base: usize,
-    /// 이번 취소가 세션을 끊는 방식(SQL Server) — 중지 뒤 트랜잭션 Lost + 재접속 안내.
-    run_cancel_drops: bool,
     /// 파일 싱크 허브(설정 `log.file` · 배경 스레드 · 비면 None).
     log_hub: Option<nsql_log::LogHub>,
     /// 파일 대화상자의 용도(편집기 열기/저장 · 로그 내보내기).
     file_purpose: FilePurpose,
-    /// 마지막 실행의 문장 목록(오류 index → 문장 · 테이블 추정).
-    last_run_items: Vec<String>,
     /// 메뉴에서 요청한 종료·로그 창 토글(이벤트 루프 핸들이 필요해 window_event 끝에서 처리).
     exit_requested: bool,
     palette: Palette,
     syntax: Rc<SyntaxRegistry>,
-    /// 마지막 조회 결과(상태줄: 행 수 · 소요).
-    last_rows: Option<usize>,
-    last_secs: Option<f64>,
     /// 상태줄 구문 이름 영역(클릭 → 팔레트 `Set Syntax`).
     status_syntax_rect: Rect,
     /// 상태줄 들여쓰기 세그먼트(`Tab Size: 4`/`Spaces: 4` · 클릭 = 팝업 · T-69 1차).
@@ -253,14 +231,6 @@ struct App {
     result_area: Rect,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
-    /// 테이블 키 캐시(접속당 · 표기 그대로 키) — Copy SQL의 키 조회 왕복을 테이블당 1회로(docs/41).
-    key_cache: HashMap<String, Option<nsql_core::KeyInfo>>,
-    /// 키 조회를 기다리는 SQL 복사 종류.
-    sql_wait: Option<nsql_io::SqlKind>,
-    /// 직전 실행이 Ctrl+Enter 한 문장(끝나면 설정 `run.after_statement`대로 캐럿 이동).
-    single_run: bool,
-    /// SQL 보기 모드가 키를 기다린다(결과 도구줄 ▸ 보기 ▸ SQL).
-    view_wait: Option<nsql_io::SqlKind>,
     /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
     offset_warned: std::collections::HashSet<u64>,
     /// `grid`가 속한 **결과 탭** id.
@@ -268,47 +238,43 @@ struct App {
     extensions: extensions::Registry,
     ext_catalog: Vec<(extensions::manager::Source, extensions::manager::Summary)>,
     grid_tab: u64,
-    /// 마지막 실행의 대상 결과 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
-    run_tab: u64,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
-    explorer: Explorer,
+    explorer: explorers::ExplorerSet,
     /// 파일 검색 패널(활동 막대 두 번째 · T-81a · docs/36).
     search: SearchPanel,
     /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
     split_v: Splitter,
     split_h: Splitter,
-    /// 마지막으로 접속을 시도한 스펙(접속 성공 시 탐색기 메타 세션을 같은 스펙으로 연다).
-    last_spec: Option<ConnectSpec>,
-    /// 현재 접속 방언(Explain · INSERT 복사 · 상태줄).
-    dialect: Dialect,
-    /// 수동 커밋 모드에서 커밋되지 않은 변경이 있는가(상태줄 ● · 사용자 09-15).
-    tx_dirty: bool,
-    /// 수동 커밋 대기 문장(DR-30 · T-77). 세션은 공유(T-54 전)라 목록은 하나 · 탭 배지는 탭별 수.
-    tx_pending: Vec<TxItem>,
-    /// 수동 모드에서 마지막 커밋 뒤 조회만 있었다(읽기 트랜잭션 · 배지 없음 · 초록).
-    tx_read: bool,
-    /// 오래된 미커밋 경고를 로그에 남겼다(1회).
-    tx_stale_logged: bool,
-    /// 실행을 시작한 편집기 탭 id(대기 문장의 소속).
-    run_editor: u64,
     /// 확인 뒤 이어질 동작.
     tx_after: Option<TxAfter>,
     status_tx_rect: Rect,
-    /// ★ Oracle 라이브 로그 모니터(T-71 · docs/32 §2): 편집기 세션 SID · 다음 폴링 시각 · 로그 테이블 기준 시각 · 마지막 세션 줄(중복 억제) · 실행 끝 뒤 마지막 1회.
-    live_sid: Option<String>,
-    live_next: Instant,
-    live_since: Option<String>,
-    live_last: String,
-    live_final: bool,
     /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
     json_watch: Option<(std::path::PathBuf, Option<std::time::SystemTime>)>,
     /// 접속 창이 열려 메인 창을 모달로 막고 있는가(사용자 09-15) — 열림/닫힘 전환 때 OS 활성 상태를 맞춘다.
     conn_modal: bool,
     json_next: Instant,
     focus: Focus,
-    // 워커
-    worker: worker::Handle,
-    events: mpsc::Receiver<RunEvent>,
+    /// 트랜잭션 로그 — **전 세션 합본**(세션 열 · docs/52 D-105): 기록할 때마다 `select_session(지금 세션)`으로 고른다.
+    txlog: nsql_run::txlog::TxLog,
+    // ★ 세션 컨텍스트(docs/52): `sess` = **활성 편집기 탭이 쓰는 세션**(워커 + 실행·트랜잭션 상태 전부) · `parked` = 나머지.
+    //   활성 탭이 바뀌면 `sync_sess`가 통째로 맞바꾼다. 통제 판정은 `Sess::blocked` 하나.
+    sess: Sess,
+    parked: Vec<Sess>,
+    next_sess_id: u64,
+    /// 탭 → 공유 세션 선택(없으면 `default_shared`). 전용 세션은 `Sess::owner`가 우선한다.
+    tab_bind: HashMap<u64, u64>,
+    /// 묶이지 않은 탭이 쓰는 공유 세션.
+    default_shared: u64,
+    /// 개별 모드에서 새 탭이 붙을 기본 접속 정보(접속 창에서 마지막으로 성공한 스펙 = 1 인스턴스 · 1 서버 · 1 계정).
+    default_spec: Option<ConnectSpec>,
+    /// 탐색기·접속 창 표시가 따라가는 세션(접속 창으로 마지막에 붙은 세션).
+    primary_sess: u64,
+    /// 통제 상태를 마지막으로 툴바에 쓴 값(바뀔 때만 쓴다).
+    gate_shown: Option<bool>,
+    /// 탭 표식 메뉴가 가리키는 탭 id.
+    badge_menu_tab: Option<u64>,
+    /// 유휴 세션 점검 다음 시각(§6 · 30초 간격).
+    idle_next: Instant,
     /// 접속 테스트 결과(요청당 스레드 · 워커와 별개).
     tests_tx: mpsc::Sender<worker::TestResult>,
     tests_rx: mpsc::Receiver<worker::TestResult>,
@@ -319,8 +285,6 @@ struct App {
     attempt_queue: std::collections::VecDeque<Attempt>,
     attempts_inflight: usize,
     attempts_max: usize,
-    busy: bool,
-    status: String,
     // 입력 상태
     cursor: (i32, i32),
     shift: bool,
@@ -697,7 +661,7 @@ impl App {
                 let name = self.conn_win.panel.profile_name();
                 // 테스트 중인 프로필은 끝날 때까지 접속도 막는다(사용자 09-14).
                 if self.conn_win.is_testing(&name) {
-                    self.status = t(Msg::StTesting).into();
+                    self.sess.status = t(Msg::StTesting).into();
                     self.conn_win.panel.set_state(ConnState::Testing);
                     return;
                 }
@@ -745,7 +709,7 @@ impl App {
                 });
                 match res {
                     Ok(()) => {
-                        self.status = tf(Msg::WkProfileSaved, &[&name, ""]);
+                        self.sess.status = tf(Msg::WkProfileSaved, &[&name, ""]);
                         // 이름이 바뀌었으면 옛 이름의 결과는 버린다(저장 내용이 달라졌을 수 있으니 옮기지 않는다).
                         if let Some(old) = &rename_from {
                             self.panel_results.remove(old.trim());
@@ -756,7 +720,7 @@ impl App {
                     }
                     Err(e) => {
                         let e = e.to_string();
-                        self.status = tf(Msg::WkProfileSaveFailed, &[&e]);
+                        self.sess.status = tf(Msg::WkProfileSaveFailed, &[&e]);
                         self.conn_win.panel.set_state(ConnState::Failed(e));
                     }
                 }
@@ -830,26 +794,55 @@ impl App {
                     // 상태줄·패널은 프로필 이름으로 간략하게(사용자 09-16) · 접속 문자열 상세는 위 로그 창에.
                     let label = if name.is_empty() { &description } else { &name };
                     let msg = tf(Msg::StTestOk, &[label, &elapsed_s]);
-                    self.status = msg.clone();
+                    self.sess.status = msg.clone();
                     self.conn_win.set_test_mark(&name, TestMark::Ok);
                     self.set_panel_result(&name, ConnState::TestOk(msg));
                 }
                 Err(e) => {
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("test: {e}")));
-                    self.status = tf(Msg::StTestFailed, &[&e]);
+                    self.sess.status = tf(Msg::StTestFailed, &[&e]);
                     self.conn_win.set_test_mark(&name, TestMark::Failed);
                     self.set_panel_result(&name, ConnState::Failed(e));
                     self.conn_win.note_failure(&name);
                 }
             }
         }
-        while let Ok(o) = self.worker.conn.try_recv() {
+        while let Ok(o) = self.sess.worker.conn.try_recv() {
             changed = true;
             match o {
+                ConnOutcome::Connected(d) if !std::mem::take(&mut self.sess.attempt_inflight) => {
+                    // 접속 창을 거치지 않은 접속(개별 모드 자동 접속 · 유휴 뒤 재접속) — 시도 큐·접속 창 표시는 그대로.
+                    self.sess.key_cache.clear();
+                    self.sess.connected = true;
+                    self.sess.desc = d;
+                }
+                ConnOutcome::ConnectFailed(e)
+                    if !std::mem::take(&mut self.sess.attempt_inflight) =>
+                {
+                    self.sess.connected = false;
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
+                    self.sess.status = tf(Msg::StConnectFailed, &[&e]);
+                }
                 ConnOutcome::Connected(d) => {
                     self.attempt_done();
-                    self.key_cache.clear();
+                    self.sess.key_cache.clear();
+                    self.sess.connected = true;
+                    self.sess.desc = d.clone();
+                    // 접속 창으로 붙은 세션 = 탐색기·접속 창 표시가 따라가는 세션 · 개별 모드의 새 탭이 쓸 기본 접속 정보.
+                    //   공유 모드면 이 연결이 **활성 공유 연결**이 된다(묶이지 않은 탭이 따른다 · 기존 연결은 그대로 유지).
+                    let relinked = self.primary_sess != self.sess.id;
+                    self.primary_sess = self.sess.id;
+                    if !self.sess.is_private() {
+                        self.default_shared = self.sess.id;
+                    }
+                    self.default_spec = self.sess.last_spec.clone();
+                    self.sess.spec = self.sess.last_spec.clone();
+                    // 이미 붙어 있던 연결을 다시 고른 경우(워커가 세션을 유지 = Connected 이벤트 없음) 탐색기를 이쪽으로 돌린다.
+                    if relinked {
+                        self.explorer_attach();
+                    }
                     let name = self.panel_op_name();
                     self.conn_win.mark_connected(&name);
                     // 접속 버튼 초록 = 지금 접속된 프로필 하나만 → 잠시 보여 준 뒤 창 닫힘(사용자 09-14).
@@ -866,7 +859,7 @@ impl App {
                     self.attempt_done();
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("connect: {e}")));
-                    self.status = tf(Msg::StConnectFailed, &[&e]);
+                    self.sess.status = tf(Msg::StConnectFailed, &[&e]);
                     let name = self.panel_op_name();
                     self.conn_win.set_connect_mark(&name, None);
                     self.set_panel_result(&name, ConnState::Failed(e));
@@ -874,14 +867,15 @@ impl App {
                     self.conn_win.note_failure(&name);
                 }
                 ConnOutcome::SessionId(sid) => {
-                    self.live_sid = Some(sid);
+                    self.sess.live_sid = Some(sid);
                 }
                 ConnOutcome::Keys(table, info) => {
-                    self.key_cache.insert(table, info.clone());
-                    if let Some(kind) = self.sql_wait.take() {
+                    self.sess.aux_done();
+                    self.sess.key_cache.insert(table, info.clone());
+                    if let Some(kind) = self.sess.sql_wait.take() {
                         self.finish_sql_copy(kind, info.as_ref());
                     }
-                    if let Some(kind) = self.view_wait.take() {
+                    if let Some(kind) = self.sess.view_wait.take() {
                         self.finish_view_sql(kind, info.as_ref());
                     }
                 }
@@ -889,7 +883,7 @@ impl App {
                     if let Some(g) = self.grid_for(key) {
                         g.set_fetch_progress(rows, bytes);
                     }
-                    self.run_toast.progress(rows, bytes);
+                    self.sess.run_toast.progress(rows, bytes);
                     dlog!(self, LogLayer::Fetch, LogLevel::Progress, {
                         LogEntry::new(
                             LogKind::Fetch,
@@ -897,7 +891,7 @@ impl App {
                         )
                         .rows(rows)
                     });
-                    self.status = tf(
+                    self.sess.status = tf(
                         Msg::StFetchingProgress,
                         &[&rows.to_string(), &nsql_core::fmt_bytes(bytes)],
                     );
@@ -911,6 +905,7 @@ impl App {
                     stop,
                     replace,
                 } => {
+                    self.sess.aux_done();
                     match result {
                         Ok((rs, more, elapsed)) => {
                             let n = rs.rows.len().to_string();
@@ -940,7 +935,7 @@ impl App {
                                 // (전체 조회가 예산에서 잘렸으면 아래에서 안내)
                                 None => 0,
                             };
-                            self.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
+                            self.sess.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
                             if all {
                                 let phase = match stop {
                                     Some(worker::FetchStop::Cancelled) => {
@@ -952,7 +947,7 @@ impl App {
                                         stages: String::new(),
                                     },
                                 };
-                                self.run_toast.finish(phase);
+                                self.sess.run_toast.finish(phase);
                                 dlog!(self, LogLayer::Fetch, LogLevel::Timing, {
                                     let b = self.grid_for(key).map_or(0, |g| g.approx_bytes());
                                     LogEntry::new(
@@ -969,17 +964,22 @@ impl App {
                             match stop {
                                 Some(worker::FetchStop::Budget) => {
                                     // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
-                                    self.status = tf(
+                                    self.sess.status = tf(
                                         Msg::StBudgetExceeded,
                                         &[&self.settings.int("grid.memory_budget_mb").to_string()],
                                     );
-                                    self.log_win
-                                        .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                                    self.log_win.push(LogEntry::new(
+                                        LogKind::Info,
+                                        self.sess.status.clone(),
+                                    ));
                                 }
                                 Some(worker::FetchStop::Cancelled) => {
-                                    self.status = tf(Msg::StFetchCancelled, &[&total.to_string()]);
-                                    self.log_win
-                                        .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                                    self.sess.status =
+                                        tf(Msg::StFetchCancelled, &[&total.to_string()]);
+                                    self.log_win.push(LogEntry::new(
+                                        LogKind::Info,
+                                        self.sess.status.clone(),
+                                    ));
                                 }
                                 None => {}
                             }
@@ -988,28 +988,29 @@ impl App {
                             if let Some(g) = self.grid_for(key) {
                                 g.fetch_failed();
                             }
-                            self.status = tf(Msg::StFetchFailed, &[&e]);
+                            self.sess.status = tf(Msg::StFetchFailed, &[&e]);
                             self.log_win
-                                .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                                .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
                         }
                     }
                     self.redraw();
                 }
                 ConnOutcome::Count { key, result } => {
+                    self.sess.aux_done();
                     match result {
                         Ok(n) => {
                             if let Some(g) = self.grid_for(key) {
                                 g.set_total(n);
                             }
-                            self.status = tf(Msg::StCountResult, &[&n.to_string()]);
+                            self.sess.status = tf(Msg::StCountResult, &[&n.to_string()]);
                             self.log_win
-                                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                         }
                         Err(e) => {
                             if let Some(g) = self.grid_for(key) {
                                 g.fetch_failed();
                             }
-                            self.status = tf(Msg::StFetchFailed, &[&e]);
+                            self.sess.status = tf(Msg::StFetchFailed, &[&e]);
                         }
                     }
                     self.redraw();
@@ -1229,7 +1230,7 @@ impl App {
                         }
                         _ => {
                             self.find.set_in_selection(false);
-                            self.status = t(Msg::StFindNoSelection).into();
+                            self.sess.status = t(Msg::StFindNoSelection).into();
                         }
                     }
                 } else {
@@ -1269,7 +1270,7 @@ impl App {
         let path = match self.settings.export_json() {
             Ok(p) => p,
             Err(e) => {
-                self.status = tf(Msg::StJsonError, &[&e.to_string()]);
+                self.sess.status = tf(Msg::StJsonError, &[&e.to_string()]);
                 return;
             }
         };
@@ -1281,13 +1282,13 @@ impl App {
             // T-76 1차(09-16): 편집기 탭으로 연다 — Ctrl+S 저장은 파일 쓰기(T-74) → 위의 1초 감시가 바뀐 키를 반영한다
             // (외부 편집기와 같은 경로 · 별도 훅 없음).
             self.open_file_enc(&path, "utf8");
-            self.status = tf(Msg::StJsonOpened, &[&path.display().to_string()]);
+            self.sess.status = tf(Msg::StJsonOpened, &[&path.display().to_string()]);
             self.redraw();
             return;
         }
         match open_external(&path) {
-            Ok(()) => self.status = tf(Msg::StJsonOpened, &[&path.display().to_string()]),
-            Err(e) => self.status = tf(Msg::StJsonError, &[&e]),
+            Ok(()) => self.sess.status = tf(Msg::StJsonOpened, &[&path.display().to_string()]),
+            Err(e) => self.sess.status = tf(Msg::StJsonError, &[&e]),
         }
         self.redraw();
     }
@@ -1330,20 +1331,20 @@ impl App {
                             note.push_str(" · ");
                             note.push_str(t(Msg::StNeedsRestart));
                         }
-                        self.status =
+                        self.sess.status =
                             tf(Msg::StJsonReloaded, &[&r.changed.len().to_string(), &note]);
                         self.prefs_win.refresh(&self.settings);
                         self.prefs_win.redraw();
                         self.log_win
-                            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                     }
                     Err(e) => {
-                        self.status = tf(Msg::StJsonError, &[&e]);
+                        self.sess.status = tf(Msg::StJsonError, &[&e]);
                         self.log_win
-                            .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                            .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
                     }
                 },
-                Err(e) => self.status = tf(Msg::StJsonError, &[&e.to_string()]),
+                Err(e) => self.sess.status = tf(Msg::StJsonError, &[&e.to_string()]),
             }
             self.redraw();
         }
@@ -1722,10 +1723,19 @@ impl App {
     }
 
     fn indent_pick(&mut self, id: &str) {
+        // 툴바 Disconnect 드롭다운(공유 연결 목록 · docs/52 §7).
+        if id.starts_with("conn.drop") || id.starts_with("conn.use:") {
+            self.disconnect_pick(id);
+            return;
+        }
+        if id.starts_with("ex.") && self.explorer.menu_pick(id) {
+            self.layout();
+            return;
+        }
         let (ts, spaces) = self.editors.indent();
         if let Some(e) = id.strip_prefix("enc.set:") {
             self.editors.set_active_encoding(e);
-            self.status = tf(Msg::StEncSet, &[&enc::label(e)]);
+            self.sess.status = tf(Msg::StEncSet, &[&enc::label(e)]);
             return;
         }
         if let Some(e) = id.strip_prefix("enc.reopen:") {
@@ -1877,18 +1887,18 @@ impl App {
         if id == "ext.enable_mgr" {
             let _ = self.settings.set("extensions.enabled", "on");
             let _ = self.settings.save();
-            self.status = tf(
+            self.sess.status = tf(
                 Msg::StExtManagerEnabled,
                 &[&mgr::default_source(&self.settings).display()],
             );
             self.log_win
-                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             self.prefs_sync();
             self.redraw();
             return;
         }
         if !self.settings.flag("extensions.enabled") {
-            self.status = t(Msg::StExtManagerOff).into();
+            self.sess.status = t(Msg::StExtManagerOff).into();
             self.redraw();
             return;
         }
@@ -1918,14 +1928,14 @@ impl App {
                             }
                         }
                         Err(e) => {
-                            self.status = tf(Msg::StExtIndexFailed, &[&src.display(), &e]);
+                            self.sess.status = tf(Msg::StExtIndexFailed, &[&src.display(), &e]);
                             self.log_win
-                                .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                                .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
                         }
                     }
                 }
                 if cmds.is_empty() {
-                    self.status = t(Msg::StExtNoneAvailable).into();
+                    self.sess.status = t(Msg::StExtNoneAvailable).into();
                     self.redraw();
                     return;
                 }
@@ -1957,7 +1967,7 @@ impl App {
                     }
                 }
                 if cmds.is_empty() {
-                    self.status = t(Msg::StExtNoneInstalled).into();
+                    self.sess.status = t(Msg::StExtNoneInstalled).into();
                     self.redraw();
                     return;
                 }
@@ -1994,7 +2004,7 @@ impl App {
                     ));
                 }
                 if cmds.is_empty() {
-                    self.status = t(Msg::StExtNoneInstalled).into();
+                    self.sess.status = t(Msg::StExtNoneInstalled).into();
                     self.redraw();
                     return;
                 }
@@ -2032,15 +2042,16 @@ impl App {
                         } else {
                             format!(" — {}", meta.message_install)
                         };
-                        self.status = tf(Msg::StExtInstalled, &[&meta.name, &meta.version, &note]);
+                        self.sess.status =
+                            tf(Msg::StExtInstalled, &[&meta.name, &meta.version, &note]);
                         self.log_win
-                            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                         self.apply_extensions(None);
                     }
                     Err(e) => {
-                        self.status = e;
+                        self.sess.status = e;
                         self.log_win
-                            .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                            .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
                     }
                 }
             }
@@ -2050,12 +2061,12 @@ impl App {
                 self.ext_trace(tr);
                 match r {
                     Ok(()) => {
-                        self.status = tf(Msg::StExtRemoved, &[key]);
+                        self.sess.status = tf(Msg::StExtRemoved, &[key]);
                         self.log_win
-                            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                         self.apply_extensions(None);
                     }
-                    Err(e) => self.status = e,
+                    Err(e) => self.sess.status = e,
                 }
             }
             "enable" | "disable" => {
@@ -2067,7 +2078,7 @@ impl App {
                 let next = mgr::list_toggle(&cur, key, verb == "disable");
                 let _ = self.settings.set("extensions.disabled", &next);
                 let _ = self.settings.save();
-                self.status = tf(
+                self.sess.status = tf(
                     if verb == "disable" {
                         Msg::StExtDisabled
                     } else {
@@ -2089,10 +2100,10 @@ impl App {
                     .find(|r| r.id == key)
                     .map(|r| (r.name, r.version, r.kind.as_str().to_string()))
                     .unwrap_or_default();
-                self.status = tf(Msg::StExtInfo, &[&name, &ver, &kind, state]);
+                self.sess.status = tf(Msg::StExtInfo, &[&name, &ver, &kind, state]);
             }
             "repo" => {
-                self.status = if key == "default" {
+                self.sess.status = if key == "default" {
                     mgr::default_source(&self.settings).display()
                 } else {
                     key.parse::<usize>()
@@ -2116,7 +2127,7 @@ impl App {
                     let next = mgr::list_toggle(&cur, &s.display(), false);
                     let _ = self.settings.set("extensions.repositories", &next);
                     let _ = self.settings.save();
-                    self.status = tf(Msg::StExtRepoRemoved, &[&s.display()]);
+                    self.sess.status = tf(Msg::StExtRepoRemoved, &[&s.display()]);
                     self.prefs_sync();
                 }
             }
@@ -2139,7 +2150,7 @@ impl App {
         use extensions::manager as mgr;
         let src = mgr::Source::parse(text);
         if text.trim().is_empty() || mgr::fetch_index(&src).is_err() {
-            self.status = tf(Msg::StExtRepoBad, &[text.trim()]);
+            self.sess.status = tf(Msg::StExtRepoBad, &[text.trim()]);
         } else {
             let cur = self
                 .settings
@@ -2149,9 +2160,9 @@ impl App {
             let next = mgr::list_toggle(&cur, &src.display(), true);
             let _ = self.settings.set("extensions.repositories", &next);
             let _ = self.settings.save();
-            self.status = tf(Msg::StExtRepoAdded, &[&src.display()]);
+            self.sess.status = tf(Msg::StExtRepoAdded, &[&src.display()]);
             self.log_win
-                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             self.prefs_sync();
         }
         self.redraw();
@@ -2306,6 +2317,821 @@ impl App {
         self.redraw();
     }
 
+    // ───────────────────────── 세션 컨텍스트(docs/52) ─────────────────────────
+
+    fn session_mode(&self) -> SessionMode {
+        SessionMode::parse(self.settings.get("session.mode"))
+    }
+
+    /// 접속 창(로그인)이 붙이는 세션 — 개별 모드 = 활성 탭의 세션 · 공유 모드 = `login_plan`
+    /// (같은 서버 = 중복 없이 그 세션 · 놀고 있는 세션 재활용 · 아니면 **추가** · 상한). None = 지금은 못 한다(안내는 여기서).
+    fn login_place(&mut self, spec: &ConnectSpec) -> Option<u64> {
+        if self.session_mode() == SessionMode::PerEditor {
+            return Some(self.sess_id_for_tab(self.editors.active_id()));
+        }
+        let views: Vec<sessions::SharedView> = self
+            .all_sess()
+            .filter(|s| !s.is_private() && !s.closing)
+            .map(|s| sessions::SharedView {
+                id: s.id,
+                same_server: s
+                    .spec
+                    .as_ref()
+                    .or(s.last_spec.as_ref())
+                    .is_some_and(|have| worker::same_server(have, spec)),
+                connected: s.connected,
+                blocked: s.blocked(),
+                idle_closed: s.idle_closed,
+                bound_tabs: self.bound_tabs(s.id),
+            })
+            .collect();
+        let max = self.settings.int("session.max_shared").max(1) as usize;
+        match sessions::login_plan(&views, max) {
+            sessions::LoginPlan::Use(id) | sessions::LoginPlan::Recycle(id) => Some(id),
+            sessions::LoginPlan::New => Some(self.new_shared()),
+            sessions::LoginPlan::Busy(_) => {
+                self.sess.status = t(Msg::StRunning).into();
+                self.fail_login_attempt(t(Msg::StRunning));
+                None
+            }
+            sessions::LoginPlan::Limit => {
+                let m = tf(Msg::StSessSharedLimit, &[&max.to_string()]);
+                self.log_win.push(LogEntry::new(LogKind::Error, m.clone()));
+                self.fail_login_attempt(&m);
+                self.sess.status = m;
+                None
+            }
+        }
+    }
+
+    /// 접속 시도를 워커에 보내지 못했다 — 접속 창의 "접속 중" 표시를 실패로 되돌린다.
+    fn fail_login_attempt(&mut self, why: &str) {
+        let name = self.panel_op_name();
+        self.conn_win.set_connect_mark(&name, None);
+        self.set_panel_result(&name, ConnState::Failed(why.to_string()));
+        self.conn_win.redraw();
+    }
+
+    /// 모든 세션(지금 것 + 잠든 것).
+    fn all_sess(&self) -> impl Iterator<Item = &Sess> {
+        std::iter::once(&self.sess).chain(self.parked.iter())
+    }
+
+    fn sess_by_id(&self, id: u64) -> Option<&Sess> {
+        self.all_sess().find(|s| s.id == id)
+    }
+
+    /// 탭이 쓰는 세션 id — ① 그 탭의 전용 세션(닫는 중이 아닌) ② 탭이 고른 공유 세션 ③ 기본 공유 세션.
+    fn sess_id_for_tab(&self, tab: u64) -> u64 {
+        let private = self
+            .all_sess()
+            .find(|s| s.owner == Some(tab) && !s.closing)
+            .map(|s| s.id);
+        let bound = self.tab_bind.get(&tab).copied();
+        let alive = bound.is_some_and(|id| {
+            self.all_sess()
+                .any(|s| s.id == id && !s.is_private() && !s.closing)
+        });
+        sessions::route_tab(private, bound, alive, self.default_shared)
+    }
+
+    /// 공유 세션에 묶인 탭 수.
+    fn bound_tabs(&self, id: u64) -> usize {
+        self.tab_bind.values().filter(|v| **v == id).count()
+    }
+
+    /// 공유 세션 하나 추가(워커 하나) — 기존 연결은 그대로 둔다(docs/52 §2-1).
+    fn new_shared(&mut self) -> u64 {
+        let (w, ev) = self.spawn_worker();
+        let id = self.next_sess_id;
+        self.next_sess_id += 1;
+        let mut s = Sess::new(id, None, w, ev, DEFAULT_DIALECT);
+        s.run_toast.configure(
+            self.settings.flag("run.toast"),
+            self.settings.int("run.toast_hide_secs"),
+            self.settings.int("ui.toast_alpha"),
+        );
+        self.parked.push(s);
+        id
+    }
+
+    /// 공유 연결 활성화 — 묶이지 않은 탭과 탐색기·접속 창 표시가 이 연결을 따른다.
+    fn activate_shared(&mut self, id: u64) {
+        let Some((spec, profile, desc, connected)) =
+            self.sess_by_id(id).filter(|s| !s.is_private()).map(|s| {
+                (
+                    s.spec.clone(),
+                    s.profile.clone(),
+                    s.desc.clone(),
+                    s.connected,
+                )
+            })
+        else {
+            return;
+        };
+        self.default_shared = id;
+        self.primary_sess = id;
+        self.default_spec = spec.clone();
+        self.editors
+            .set_conn_desc(if connected { desc } else { String::new() });
+        if connected {
+            if let Some(spec) = spec {
+                self.conn_win.mark_connected(&profile);
+                self.conn_win.clear_connect_marks();
+                self.conn_win
+                    .set_connect_mark(&profile, Some(ConnectMark::Connected));
+                self.explorer.connect(&spec, &profile, true);
+            }
+        }
+        self.sync_sess();
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// 공유 세션 해제(툴바 드롭다운 · 메뉴) — 탐색기가 이 연결을 따르고 있었으면 함께 닫고, 묶인 탭은 끊김 표식으로 남는다.
+    fn disconnect_shared(&mut self, id: u64) {
+        if self.sess.id == id {
+            self.disconnect_now();
+            return;
+        }
+        self.with_sess(id, |a| {
+            if !a.sess.tx_pending.is_empty() {
+                // 다른 탭의 세션 — 확인 팝업은 그 탭을 앞에 두고 답해야 한다.
+                a.sess.status = t(Msg::StSessTxPending).into();
+                a.log_win
+                    .push(LogEntry::new(LogKind::Error, a.sess.status.clone()));
+                return;
+            }
+            a.disconnect_force();
+        });
+        self.sess.status = t(Msg::StDisconnected).into();
+        self.reap_sessions();
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// 툴바 Disconnect 드롭다운(§7 · 사용자 09-18 보완): **누르면 늘 연결 목록**이 보인다 — 공유 연결·탭 전용 세션을 한 줄씩,
+    /// 줄을 누르면 **그 연결만** 해제 · 맨 아래 **모두 해제** · 공유 연결이 둘 이상이면 "활성 연결로 ▸". 연결이 하나도 없으면 아무것도 안 한다.
+    fn open_disconnect_menu(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        self.sync_sess();
+        let titles: HashMap<u64, String> = self
+            .editors
+            .tab_list()
+            .into_iter()
+            .map(|(id, title, _)| (id, title))
+            .collect();
+        // (세션 id, 줄 글, 공유인가, 활성 공유인가)
+        let rows: Vec<(u64, String, bool, bool)> = self
+            .all_sess()
+            .filter(|s| !s.closing && (s.connected || s.busy))
+            .map(|s| {
+                let active = s.id == self.default_shared;
+                let label = match s.owner {
+                    // 전용/개별 탭 세션 = 접속 설명 + 탭 제목.
+                    Some(tab) => format!(
+                        "    {}  [{}]",
+                        s.desc,
+                        titles.get(&tab).map_or("", String::as_str)
+                    ),
+                    None if active => format!("●  {}", s.desc),
+                    None => format!("    {}", s.desc),
+                };
+                (s.id, label, !s.is_private(), active)
+            })
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let mut items = vec![CtxItem::maybe(
+            "conn.title",
+            t(Msg::MnSessConnections),
+            false,
+        )];
+        for (id, label, _, _) in &rows {
+            items.push(CtxItem::item(format!("conn.drop:{id}"), label.clone()));
+        }
+        let shared: Vec<&(u64, String, bool, bool)> = rows.iter().filter(|r| r.2).collect();
+        if shared.len() > 1 {
+            items.push(CtxItem::Separator);
+            let subs = shared
+                .iter()
+                .map(|(id, label, _, active)| {
+                    CtxItem::maybe(format!("conn.use:{id}"), label.trim().to_string(), !*active)
+                })
+                .collect();
+            items.push(CtxItem::submenu("conn.use", t(Msg::MnSessActivate), subs));
+        }
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item("conn.drop_all", t(Msg::MnSessDisconnectAll)));
+        let r = self
+            .tool_dock
+            .item_rect("conn.disconnect")
+            .map_or(Rect::new(self.cursor.0, self.cursor.1, 1, 1), |r| {
+                Rect::new(r.x, r.bottom(), r.w, 1)
+            });
+        self.open_status_popup(r, items);
+        self.redraw();
+    }
+
+    /// 세션 하나 해제 — 전용/개별 탭 세션이면 그 탭의 규칙(공유 복귀 · 개별 모드 = 끊김)으로, 공유 연결이면 공유 해제로.
+    fn disconnect_session(&mut self, id: u64) {
+        match self.sess_by_id(id).map(|s| s.owner) {
+            Some(Some(tab)) => self.disconnect_private(tab),
+            Some(None) => self.disconnect_shared(id),
+            None => {}
+        }
+    }
+
+    fn disconnect_pick(&mut self, id: &str) {
+        if id == "conn.drop_all" {
+            let ids: Vec<u64> = self
+                .all_sess()
+                .filter(|s| !s.closing && (s.connected || s.busy))
+                .map(|s| s.id)
+                .collect();
+            for sid in ids {
+                self.disconnect_session(sid);
+            }
+        } else if let Some(sid) = id.strip_prefix("conn.use:").and_then(|v| v.parse().ok()) {
+            self.activate_shared(sid);
+        } else if let Some(sid) = id.strip_prefix("conn.drop:").and_then(|v| v.parse().ok()) {
+            self.disconnect_session(sid);
+        }
+    }
+
+    /// `id` 세션을 잠시 `self.sess` 자리에 놓고 `f`를 돈다(끝나면 되돌린다). 기존 코드는 늘 `self.sess`만 보므로
+    /// 잠든 세션의 이벤트 처리·접속 창의 공유 세션 조작을 같은 코드로 한다.
+    fn with_sess<R>(&mut self, id: u64, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        if self.sess.id == id {
+            return Some(f(self));
+        }
+        let i = self.parked.iter().position(|s| s.id == id)?;
+        let home = self.sess.id;
+        std::mem::swap(&mut self.sess, &mut self.parked[i]);
+        let r = f(self);
+        if let Some(j) = self.parked.iter().position(|s| s.id == home) {
+            std::mem::swap(&mut self.sess, &mut self.parked[j]);
+        }
+        Some(r)
+    }
+
+    /// 활성 편집기 탭의 세션을 `self.sess`로 — 탭 전환·세션 생성/해제 뒤에 부른다(이벤트 뒤 · 페인트 전 · 실행 직전).
+    /// 개별 모드면 처음 활성화된 탭에 전용 세션을 만들고 기본 접속 정보로 붙인다(열기만 하고 안 본 탭은 접속하지 않는다 = 부하 0).
+    fn sync_sess(&mut self) {
+        let tab = self.editors.active_id();
+        if tab == 0 {
+            return;
+        }
+        // 상한에 닿았으면 조용히 공유 세션을 쓴다(표식 없음 = 공유) — 페인트마다 불리므로 여기서 경고를 내지 않는다.
+        let room = self
+            .all_sess()
+            .filter(|s| s.is_private() && !s.closing)
+            .count()
+            < self.settings.int("session.max_private").max(0) as usize;
+        if room
+            && self.session_mode() == SessionMode::PerEditor
+            && !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing)
+        {
+            let spec = self.default_spec.clone();
+            if let Some(id) = self.new_private(tab) {
+                if let Some(spec) = spec {
+                    self.with_sess(id, |a| a.connect_quietly(spec));
+                }
+            }
+        }
+        let want = self.sess_id_for_tab(tab);
+        if self.sess.id != want {
+            if let Some(i) = self.parked.iter().position(|s| s.id == want) {
+                std::mem::swap(&mut self.sess, &mut self.parked[i]);
+                self.sync_sess_ui();
+                self.redraw();
+            }
+        }
+    }
+
+    /// 탭 전용 세션 하나(워커 스레드 하나) — 상한 `session.max_private`(기본 사상: 1 인스턴스 · 1 서버 · 1 계정이라 예외는 아껴 쓴다).
+    fn new_private(&mut self, tab: u64) -> Option<u64> {
+        let max = self.settings.int("session.max_private").max(0) as usize;
+        let n = self
+            .all_sess()
+            .filter(|s| s.is_private() && !s.closing)
+            .count();
+        if n >= max {
+            self.sess.status = tf(Msg::StSessLimit, &[&max.to_string()]);
+            self.log_win
+                .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+            return None;
+        }
+        let (w, ev) = self.spawn_worker();
+        let id = self.next_sess_id;
+        self.next_sess_id += 1;
+        let mut s = Sess::new(id, Some(tab), w, ev, DEFAULT_DIALECT);
+        s.run_toast.configure(
+            self.settings.flag("run.toast"),
+            self.settings.int("run.toast_hide_secs"),
+            self.settings.int("ui.toast_alpha"),
+        );
+        self.parked.push(s);
+        Some(id)
+    }
+
+    /// 접속 창을 거치지 않는 접속(개별 모드의 탭 자동 접속 · 유휴 해제 뒤 재접속) — 시도 큐·접속 창 표시는 건드리지 않는다.
+    fn connect_quietly(&mut self, spec: ConnectSpec) {
+        self.sess.busy = true;
+        self.sess.user_disconnected = false;
+        self.sess.idle_closed = false;
+        self.sess.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+        self.sess.spec = Some(spec.clone());
+        self.sess.touch();
+        self.sess.worker.send(worker::Cmd::ConnectSpec {
+            spec,
+            reconnect_same: false,
+        });
+    }
+
+    /// 모든 세션의 워커 응답을 처리한다 — 잠든 세션은 잠시 앞으로 꺼내 같은 코드로.
+    fn drain_all(&mut self) {
+        self.drain_events();
+        let ids: Vec<u64> = self.parked.iter().map(|s| s.id).collect();
+        for id in ids {
+            self.with_sess(id, |a| a.drain_events());
+        }
+        self.reap_sessions();
+        self.sync_sess();
+        self.sync_sess_ui();
+    }
+
+    /// 닫는 중인 세션 · 주인 탭이 닫힌 전용 세션을 거둔다(워커에 Quit = 커밋 없이 닫지 않는다: 미커밋은 닫기 전에 이미 물었다).
+    fn reap_sessions(&mut self) {
+        let alive = self.editors.tab_ids();
+        for s in &mut self.parked {
+            if s.owner.is_some_and(|t| !alive.contains(&t)) {
+                s.closing = true;
+            }
+        }
+        // 지금 세션이 닫는 중이면 먼저 자리를 비킨다(공유 세션으로).
+        if self.sess.closing || self.sess.owner.is_some_and(|t| !alive.contains(&t)) {
+            self.sess.closing = true;
+            let to = self.default_shared;
+            if let Some(i) = self.parked.iter().position(|s| s.id == to) {
+                std::mem::swap(&mut self.sess, &mut self.parked[i]);
+            }
+        }
+        let before = self.parked.len();
+        self.parked.retain(|s| {
+            if s.closing && s.id != SHARED {
+                // 실행 중이면 먼저 취소를 보낸다(닫힌 탭의 질의가 서버에 남아 돌지 않게).
+                if s.blocked() {
+                    let _ = s.worker.cancel_run();
+                }
+                s.worker.send(worker::Cmd::Disconnect);
+                s.worker.send(worker::Cmd::Quit);
+                false
+            } else {
+                true
+            }
+        });
+        self.tab_bind.retain(|t, _| alive.contains(t));
+        // 끊긴 채 아무도 안 쓰는 공유 세션 객체(추가 접속 실패 · 해제 뒤)는 거둔다 — 활성 연결·묶인 탭이 있는 것은 남긴다.
+        let default = self.default_shared;
+        let binds: Vec<u64> = self.tab_bind.values().copied().collect();
+        self.parked.retain(|s| {
+            let n = binds.iter().filter(|b| **b == s.id).count();
+            if !s.is_private()
+                && sessions::reap_shared(
+                    s.connected,
+                    s.blocked(),
+                    s.idle_closed,
+                    s.id == default,
+                    n,
+                )
+            {
+                s.worker.send(worker::Cmd::Quit);
+                false
+            } else {
+                true
+            }
+        });
+        if self.parked.len() != before {
+            self.sync_sess_ui();
+        }
+    }
+
+    /// 지금 세션이 붙은 서버의 탐색기를 확보한다 — 스펙이 프로필 이름뿐이거나 자격이 없으면 저장소에서 완성해 둔다
+    /// (메타 세션도 같은 자격으로 붙는다 · 같은 서버 판정·재접속에도 같은 스펙을 쓴다).
+    fn explorer_attach(&mut self) {
+        let Some(spec) = self.sess.spec.clone() else {
+            return;
+        };
+        let bare = spec.host.is_none()
+            && spec.password.is_none()
+            && spec.database.is_none()
+            && spec.dialect.is_none();
+        let (full, name) = match spec.user.as_deref() {
+            Some(n) if bare && nsql_vault::is_profile_name(n) => {
+                match Vault::open_default().and_then(|v| v.resolve(n)) {
+                    Ok(Some(f)) => (f, n.to_string()),
+                    _ => return,
+                }
+            }
+            _ => (
+                worker::fill_credentials(&spec, DEFAULT_DIALECT).unwrap_or(spec),
+                self.sess.profile.clone(),
+            ),
+        };
+        self.sess.spec = Some(full.clone());
+        let show = self.sess_id_for_tab(self.editors.active_id()) == self.sess.id;
+        self.explorer.connect(&full, &name, show);
+    }
+
+    /// 세션 상태가 바뀌었을 때 화면의 세 층을 한 번에 맞춘다: 탭 표식·설명 · 통제(툴바) · 트랜잭션 · 해제 버튼.
+    fn sync_sess_ui(&mut self) {
+        let mut info: HashMap<u64, (nexa_ctl::TabBadge, String)> = HashMap::new();
+        // 공유 연결이 둘 이상이면 공유 탭에도 표식(어느 서버인지 · 표식 메뉴로 고른다).
+        let multi = self
+            .all_sess()
+            .filter(|s| !s.is_private() && !s.closing)
+            .count()
+            > 1;
+        for tab in self.editors.tab_ids() {
+            let Some(s) = self.sess_by_id(self.sess_id_for_tab(tab)) else {
+                continue;
+            };
+            let badge = match sessions::badge_kind(s.is_private(), multi, s.connected) {
+                sessions::BadgeKind::None => continue,
+                sessions::BadgeKind::Private => nexa_ctl::TabBadge::Link,
+                sessions::BadgeKind::Shared => nexa_ctl::TabBadge::Shared,
+                sessions::BadgeKind::Off => nexa_ctl::TabBadge::LinkOff,
+            };
+            info.insert(tab, (badge, s.desc.clone()));
+        }
+        self.editors.set_sess_info(info);
+        // 탐색기 참조 수 = 지금 붙어 있는 세션들의 서버(0이 된 서버는 메타 접속만 닫고 트리는 남긴다) · 활성 탭의 서버를 앞으로.
+        let live: Vec<ConnectSpec> = self
+            .all_sess()
+            .filter(|s| (s.connected || s.idle_closed) && !s.closing)
+            .filter_map(|s| s.spec.clone())
+            .collect();
+        self.explorer.sync_refs(&live);
+        let cur = self.sess.spec.clone();
+        self.explorer.show_for(cur.as_ref());
+        self.sync_gate();
+        self.sync_tx_ui();
+        // Disconnect = 끊을 것이 하나라도 있으면 활성(전용 · 공유 어느 것이든).
+        let any = self.all_sess().any(|s| s.connected);
+        self.sync_disconnect_btn(any);
+    }
+
+    /// ★ 통제의 단일 출구(§3): 지금 세션이 막혔으면 실행 계열 진입점을 한꺼번에 끄고, 풀리면 한꺼번에 켠다.
+    /// 툴바 · 결과 도구줄(추가 페치·전체 조회·건수)이 같은 판정을 본다 · 값이 바뀔 때만 쓴다.
+    fn sync_gate(&mut self) {
+        let blocked = !self.gate().run_other;
+        // 활성 그리드는 탭 전환으로 바뀌므로 매번 알린다(그리드가 바뀔 때만 도구줄을 다시 맞춘다).
+        self.grid.set_session_blocked(blocked);
+        if self.gate_shown == Some(blocked) {
+            return;
+        }
+        self.gate_shown = Some(blocked);
+        let mut inv = Invalidations::default();
+        for id in ["run.all", "run.explain"] {
+            self.tool_dock.set_item_enabled(id, !blocked, &mut inv);
+        }
+        // 문장 실행(단일 커서 조건과 겹침) · Commit/Rollback(대기 문장 조건과 겹침)은 각자의 동기화가 통제 상태를 함께 본다.
+        self.sync_run_stmt_button();
+        self.sync_tx_ui();
+        self.redraw();
+    }
+
+    /// 지금 세션의 통제 상태가 화면에 내는 값(순수 판정 `sessions::gate_view` · MC/DC 표 D6).
+    fn gate(&self) -> sessions::GateView {
+        sessions::gate_view(
+            self.sess.busy,
+            self.sess.aux,
+            self.editors.cur().has_multi(),
+            !self.sess.tx_pending.is_empty(),
+        )
+    }
+
+    /// 실행 계열 진입점의 공통 문지기 — 막혔으면 상태줄에 알리고 false.
+    fn gate_open(&mut self) -> bool {
+        self.sync_sess();
+        if self.sess.blocked() {
+            self.sess.status = t(Msg::StRunning).into();
+            self.redraw();
+            return false;
+        }
+        true
+    }
+
+    /// 유휴 세션 점검(§6 · 30초 간격) — 닫아도 안전한 세션만 닫고 스펙은 남긴다(다음 실행 때 조용히 재접속).
+    fn idle_tick(&mut self, now: Instant) {
+        if now < self.idle_next {
+            return;
+        }
+        self.idle_next = now + Duration::from_secs(30);
+        let limit = self.settings.int("session.idle_secs").max(0) as u64;
+        if limit == 0 {
+            return;
+        }
+        // 탐색기 메타 세션도 같은 한도로 유휴 회수(트리는 그대로 · 다음 펼침 때 메타 스레드가 다시 연다).
+        self.explorer.idle_tick(limit);
+        let include_shared = self.settings.flag("session.idle_shared");
+        let manual = !self.settings.flag("session.autocommit");
+        let due: Vec<u64> = self
+            .all_sess()
+            .filter(|s| {
+                sessions::idle_action(sessions::IdleInput {
+                    dialect: s.dialect,
+                    private: s.is_private(),
+                    connected: s.connected && s.spec.is_some(),
+                    blocked: s.blocked(),
+                    // 수동 커밋이면 조회만 했어도 트랜잭션이 열려 있을 수 있다 → 닫지 않는다.
+                    tx_open: !s.tx_pending.is_empty() || s.tx_dirty || (manual && s.tx_read),
+                    stateful: s.stateful,
+                    idle: now.saturating_duration_since(s.last_used),
+                    limit_secs: limit,
+                    include_shared,
+                }) == sessions::IdleAction::Close
+            })
+            .map(|s| s.id)
+            .collect();
+        for id in due {
+            self.with_sess(id, |a| {
+                a.sess.idle_closed = true;
+                a.sess.connected = false;
+                a.sess.worker.send(worker::Cmd::Disconnect);
+                let m = tf(Msg::StSessIdleClosed, &[&a.sess.desc]);
+                a.log_win.push(LogEntry::new(LogKind::Info, m.clone()));
+                a.sess.status = m;
+            });
+        }
+        self.sync_sess_ui();
+    }
+
+    /// 실행 직전: 유휴로 닫힌 세션이면 같은 스펙으로 먼저 다시 붙는다(워커는 순차라 뒤따르는 실행은 접속 뒤에 돈다).
+    fn wake_if_idle(&mut self) {
+        if self.sess.idle_closed {
+            if let Some(spec) = self.sess.spec.clone() {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    tf(Msg::StReconnecting, &[&spec.redacted()]),
+                ));
+                self.connect_quietly(spec);
+                // 이 접속의 완료 신호는 뒤따르는 작업의 busy를 풀면 안 된다.
+                self.sess.skip_done += 1;
+            }
+        }
+    }
+
+    /// 실행할 스크립트를 보고 세션 배치를 정한다(§4). 반환 false = 실행하지 않는다(이미 처리했거나 거부).
+    ///  - `CONNECT 대상`이 먼저 나오면: 이 탭의 전용 세션으로(없으면 만든다) — 스크립트 전체가 그 세션에서 돈다.
+    ///  - `DISCONNECT`가 먼저 나오고 이 탭이 전용 세션이면: 그 세션을 닫는다(공유 모드 = 공유 세션 복귀 · 개별 모드 = 실행 불가 상태).
+    ///    공유 세션 탭의 `DISCONNECT`는 종전대로 워커가 처리한다(공유 세션 해제).
+    fn place_run(&mut self, src: &str) -> bool {
+        let tab = self.editors.active_id();
+        let intent = sessions::connect_intent(src);
+        let plan = sessions::placement(
+            intent.as_ref(),
+            self.sess.is_private(),
+            self.settings.flag("session.private_connect"),
+            intent.is_some() && sessions::statements_before_connect(src),
+        );
+        match plan {
+            sessions::Placement::Refuse => {
+                // D-99: 새 전용 세션에는 아직 접속이 없다 — 앞 문장이 조용히 "not connected"로 실패하게 두지 않는다.
+                self.sess.status = t(Msg::StSessConnectFirst).into();
+                self.log_win
+                    .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+                self.toasts.push(
+                    toast::ToastKind::Error,
+                    "CONNECT".to_string(),
+                    self.sess.status.clone(),
+                );
+                self.redraw();
+                false
+            }
+            sessions::Placement::NewPrivate | sessions::Placement::Retarget => {
+                if plan == sessions::Placement::NewPrivate {
+                    let Some(id) = self.new_private(tab) else {
+                        self.redraw();
+                        return false;
+                    };
+                    // 공유 세션의 결과는 새 세션에서 이어 받을 수 없다 → 이 탭의 옛 결과는 "더 있음"을 내린다.
+                    self.freeze_tab_results();
+                    self.sync_sess();
+                    if self.sess.id != id {
+                        return false;
+                    }
+                }
+                if let Some(ConnectIntent::Connect(spec)) = intent {
+                    self.sess.spec = Some(spec);
+                }
+                self.sess.user_disconnected = false;
+                self.sess.idle_closed = false;
+                true
+            }
+            sessions::Placement::ClosePrivate => {
+                self.disconnect_private(tab);
+                false
+            }
+            sessions::Placement::Run => {
+                // 공유 연결이 여럿일 수 있다 → 탭은 **처음 실행한 연결에 묶인다**(활성 연결을 바꿔도 이 탭은 엉뚱한 서버로 가지 않는다).
+                if !self.sess.is_private() {
+                    self.tab_bind.entry(tab).or_insert(self.sess.id);
+                }
+                // `session.private_connect = off`의 CONNECT = 이 세션이 대상을 바꾼다 → 탐색기·재접속이 새 대상을 알게.
+                if let Some(ConnectIntent::Connect(spec)) = intent {
+                    self.sess.spec = Some(spec);
+                    self.sess.profile.clear();
+                }
+                true
+            }
+        }
+    }
+
+    /// 활성 편집기 탭의 결과 그리드 전부에서 "더 있음"을 내린다(세션이 바뀌어 이어 받기가 뜻을 잃을 때).
+    fn freeze_tab_results(&mut self) {
+        let tab = self.editors.active_id();
+        self.freeze_results_of(tab);
+    }
+
+    fn freeze_results_of(&mut self, tab: u64) {
+        if tab == self.panel_editor {
+            self.grid.set_more(false);
+            for t in &mut self.panel.tabs {
+                t.grid.set_more(false);
+            }
+        } else if let Some(p) = self.panels.get_mut(&tab) {
+            for t in &mut p.tabs {
+                t.grid.set_more(false);
+            }
+        }
+    }
+
+    /// 탭의 전용 세션 해제 — 미커밋이 있으면 먼저 묻는다. 공유 모드 = 세션을 거두고 공유 세션으로 복귀 ·
+    /// 개별 모드 = 세션은 남기되 끊긴 상태(그 탭은 다시 접속할 때까지 실행 불가).
+    fn disconnect_private(&mut self, tab: u64) {
+        let Some(id) = self
+            .all_sess()
+            .find(|s| s.owner == Some(tab) && !s.closing)
+            .map(|s| s.id)
+        else {
+            return;
+        };
+        let per_editor = self.session_mode() == SessionMode::PerEditor;
+        // 미커밋이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30) — 답한 뒤 `disconnect_force`가 다시 여기로 온다.
+        if self.sess.id == id && !self.sess.tx_pending.is_empty() {
+            self.tx_after = Some(TxAfter::Disconnect);
+            self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
+            self.redraw();
+            return;
+        }
+        self.with_sess(id, |a| {
+            if !a.sess.tx_pending.is_empty() {
+                a.sess.status = t(Msg::StSessTxPending).into();
+                a.log_win
+                    .push(LogEntry::new(LogKind::Error, a.sess.status.clone()));
+                return;
+            }
+            let stuck = a.sess.busy;
+            a.sess.worker.send(worker::Cmd::Disconnect);
+            a.editors.set_running(a.sess.run_editor, false);
+            if per_editor {
+                // 갇힌 워커는 버리고 새 워커로(즉시 해제 규약 · 09-16) — 세션 객체는 남는다.
+                if stuck {
+                    let (w, ev) = a.spawn_worker();
+                    a.sess.worker = w;
+                    a.sess.events = ev;
+                }
+                a.sess.busy = false;
+                a.sess.aux = 0;
+                a.sess.connected = false;
+                a.sess.user_disconnected = true;
+                a.sess.idle_closed = false;
+                a.sess.status = t(Msg::StSessDisconnected).into();
+            } else {
+                a.sess.closing = true;
+            }
+            a.tx_close(TxOutcome::Lost);
+            let m = tf(Msg::StSessClosed, &[&a.sess.desc]);
+            a.log_win.push(LogEntry::new(LogKind::Info, m));
+        });
+        if !per_editor {
+            self.freeze_tab_results();
+        }
+        self.reap_sessions();
+        self.sync_sess();
+        if !per_editor {
+            self.sess.status = t(Msg::StSessBackToShared).into();
+        }
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// 탭 표식 메뉴(§7): 세션 설명 · 해제(공유 복귀) · 다시 접속 · 공유 연결 고르기(공유 연결이 둘 이상일 때).
+    fn open_badge_menu(&mut self, i: usize) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let tab = self.editors.tab_id(i);
+        let Some(s) = self.sess_by_id(self.sess_id_for_tab(tab)) else {
+            return;
+        };
+        let per_editor = self.session_mode() == SessionMode::PerEditor;
+        let kind = t(if s.is_private() {
+            Msg::MnSessPrivate
+        } else {
+            Msg::MnSessSharedList
+        });
+        let title = if s.desc.is_empty() {
+            kind.to_string()
+        } else {
+            format!("{kind} — {}", s.desc)
+        };
+        let mut items = vec![CtxItem::maybe("sess.title", title, false)];
+        let cur = s.id;
+        let shared: Vec<(u64, String)> = self
+            .all_sess()
+            .filter(|s| !s.is_private() && s.connected)
+            .map(|s| (s.id, s.desc.clone()))
+            .collect();
+        if !s.is_private() {
+            // 공유 탭의 표식 = 공유 연결 고르기(지금 쓰는 연결은 흐림).
+            items.push(CtxItem::Separator);
+            for (id, d) in shared {
+                items.push(CtxItem::maybe(format!("sess.use:{id}"), d, id != cur));
+            }
+            self.badge_menu_tab = Some(tab);
+            self.editors.open_badge_menu(i, items);
+            self.redraw();
+            return;
+        }
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::maybe(
+            "sess.disconnect",
+            t(if per_editor {
+                Msg::MnSessDisconnect
+            } else {
+                Msg::MnSessDisconnectShared
+            }),
+            s.connected || s.busy || !per_editor,
+        ));
+        items.push(CtxItem::maybe(
+            "sess.reconnect",
+            t(Msg::MnSessReconnect),
+            !s.connected && !s.busy && (s.spec.is_some() || self.default_spec.is_some()),
+        ));
+        if shared.len() > 1 {
+            items.push(CtxItem::Separator);
+            let subs = shared
+                .into_iter()
+                .map(|(id, d)| CtxItem::item(format!("sess.use:{id}"), d))
+                .collect();
+            items.push(CtxItem::submenu("sess.use", t(Msg::MnSessUseShared), subs));
+        }
+        self.badge_menu_tab = Some(tab);
+        self.editors.open_badge_menu(i, items);
+        self.redraw();
+    }
+
+    fn badge_pick(&mut self, tab: u64, id: &str) {
+        match id {
+            "sess.disconnect" => self.disconnect_private(tab),
+            "sess.reconnect" => {
+                let Some(sid) = self
+                    .all_sess()
+                    .find(|s| s.owner == Some(tab) && !s.closing)
+                    .map(|s| s.id)
+                else {
+                    return;
+                };
+                let fallback = self.default_spec.clone();
+                self.with_sess(sid, |a| {
+                    if let Some(spec) = a.sess.spec.clone().or(fallback) {
+                        a.connect_quietly(spec);
+                    }
+                });
+                self.sync_sess_ui();
+            }
+            id if id.starts_with("sess.use:") => {
+                if let Ok(sid) = id["sess.use:".len()..].parse::<u64>() {
+                    // 전용 탭이면 먼저 그 세션을 닫는다(미커밋이 있으면 확인 팝업이 뜨고 여기서는 묶지 않는다).
+                    if self.all_sess().any(|s| s.owner == Some(tab) && !s.closing) {
+                        self.disconnect_private(tab);
+                    }
+                    if !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing) {
+                        self.tab_bind.insert(tab, sid);
+                        // 다른 서버의 결과를 이어 받지 않게.
+                        self.freeze_results_of(tab);
+                        self.sync_sess();
+                        self.sync_sess_ui();
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.redraw();
+    }
+
     /// DB 워커 하나 시작(설정 현재값 · 시작 때와 같은 인자).
     fn spawn_worker(&self) -> (worker::Handle, mpsc::Receiver<RunEvent>) {
         let proxy = self.wake_proxy.clone();
@@ -2327,7 +3153,7 @@ impl App {
     /// 탐색기 메타 스레드도 같은 방식(`Explorer::disconnect`).
     fn disconnect_now(&mut self) {
         // 미커밋 문장이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30).
-        if !self.tx_pending.is_empty() {
+        if !self.sess.tx_pending.is_empty() {
             self.tx_after = Some(TxAfter::Disconnect);
             self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
             self.redraw();
@@ -2337,13 +3163,22 @@ impl App {
     }
 
     fn disconnect_force(&mut self) {
-        let stuck = self.busy;
-        self.worker.send(worker::Cmd::Disconnect);
+        // 전용 세션 탭에서의 해제 = 그 탭의 세션만(공유 모드면 공유 세션으로 복귀 · docs/52 §4).
+        if let Some(tab) = self.sess.owner {
+            self.disconnect_private(tab);
+            return;
+        }
+        let stuck = self.sess.busy;
+        self.sess.worker.send(worker::Cmd::Disconnect);
         let (w, ev) = self.spawn_worker();
-        self.worker = w;
-        self.events = ev;
-        self.busy = false;
-        self.status = t(if stuck {
+        self.sess.worker = w;
+        self.sess.events = ev;
+        self.sess.busy = false;
+        self.sess.aux = 0;
+        self.sess.user_disconnected = true;
+        self.sess.idle_closed = false;
+        self.editors.set_running(self.sess.run_editor, false);
+        self.sess.status = t(if stuck {
             Msg::StDisconnectedAbandon
         } else {
             Msg::StDisconnected
@@ -2351,23 +3186,29 @@ impl App {
         .into();
         if stuck {
             self.log_win
-                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
         }
-        self.explorer.disconnect();
         self.tx_close(TxOutcome::Lost);
-        self.sync_disconnect_btn(false);
         self.on_conn_disconnected();
+        self.sync_sess_ui();
         self.redraw();
     }
 
     /// 접속 계열 결과 `Disconnected`의 UI 반영(워커 이벤트 · 즉시 해제 공용).
     fn on_conn_disconnected(&mut self) {
-        self.live_sid = None;
+        self.sess.live_sid = None;
+        self.sess.connected = false;
+        self.sess.key_cache.clear();
+        self.sess.sql_wait = None;
+        // 접속 창·공유 접속 설명은 **접속 창으로 붙은 세션**이 끊겼을 때만 되돌린다(전용 세션의 해제는 그 탭의 일 · docs/52).
+        if self.sess.id != self.primary_sess {
+            return;
+        }
         // 해제됐으니 "접속됨" 결과는 더 이상 사실이 아니다(테스트 결과는 유지).
         self.panel_results
             .retain(|_, st| !matches!(st, ConnState::Connected(_)));
-        self.key_cache.clear();
-        self.sql_wait = None;
+        self.sess.key_cache.clear();
+        self.sess.sql_wait = None;
         self.editors.set_conn_desc("");
         self.conn_win.clear_connect_marks();
         self.conn_win.clear_active();
@@ -2400,7 +3241,7 @@ impl App {
         match nsql_log::FileSink::open(&file, nsql_log::formatter_with(&ff, &tpl, cols), max) {
             Ok(sink) => self.log_hub = Some(nsql_log::LogHub::spawn(vec![Box::new(sink)], 4096)),
             Err(e) => {
-                self.status = tf(Msg::ErrLogFile, &[&e.to_string()]);
+                self.sess.status = tf(Msg::ErrLogFile, &[&e.to_string()]);
                 self.log_win.push(LogEntry::new(
                     LogKind::Error,
                     tf(Msg::ErrLogFile, &[&e.to_string()]),
@@ -2615,7 +3456,7 @@ impl App {
                     self.apply_setting(k);
                 }
                 let on = self.settings.flag(key);
-                self.status = t(if on {
+                self.sess.status = t(if on {
                     Msg::StPerfBoostOn
                 } else {
                     Msg::StPerfBoostOff
@@ -2630,7 +3471,7 @@ impl App {
                 for k in keys {
                     self.apply_setting(k);
                 }
-                self.status = tf(
+                self.sess.status = tf(
                     Msg::StPerfMode,
                     &[t(self.settings.perf_mode_display().label())],
                 );
@@ -2744,9 +3585,9 @@ impl App {
     fn after_grid_event(&mut self) {
         if let Some((text, n)) = self.grid.take_copy() {
             if clipboard::write_text(&text) {
-                self.status = tf(Msg::StCopied, &[&n.to_string()]);
+                self.sess.status = tf(Msg::StCopied, &[&n.to_string()]);
             } else {
-                self.status = t(Msg::ErrClipboard).into();
+                self.sess.status = t(Msg::ErrClipboard).into();
             }
         }
         if let Some(kind) = self.grid.take_pending_sql() {
@@ -2757,8 +3598,8 @@ impl App {
             self.send_fetch(req);
         }
         if self.grid.take_cancel_request() {
-            self.worker.cancel_fetch();
-            self.status = t(Msg::StFetchCancelling).into();
+            self.sess.worker.cancel_fetch();
+            self.sess.status = t(Msg::StFetchCancelling).into();
         }
         if self.grid.take_refresh() {
             self.refresh_result();
@@ -2893,9 +3734,9 @@ impl App {
         if self.panel.tabs.len() > max && self.settings.flag("grid.result_tab_evict") {
             if let Some(v) = self.panel.evict_candidate() {
                 let gone = self.panel.remove(v).map(|t| t.title).unwrap_or_default();
-                self.status = tf(Msg::StResultTabEvicted, &[&gone]);
+                self.sess.status = tf(Msg::StResultTabEvicted, &[&gone]);
                 self.log_win
-                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             }
         }
         let i = self.panel.index_of(id).unwrap_or(0);
@@ -3035,18 +3876,25 @@ impl App {
             self.grid.fetch_failed();
             return;
         }
+        // ★ 통제(docs/52 §3): 이 탭의 세션이 다른 작업 중이면 추가 페치·전체 조회·건수도 보내지 않는다(요청 상태만 푼다 —
+        //   풀린 뒤 스크롤·버튼으로 다시 요청된다). 워커는 순차라 보내도 안전하지만, 언제 끝날지 모르는 대기를 만들지 않는다.
+        if !self.gate_open() {
+            self.grid.fetch_failed();
+            return;
+        }
+        self.wake_if_idle();
         let key = self.grid_tab;
         // 메모리 예산(D-72 · 09-17 탭별 독립): **이 탭**의 행이 예산을 넘으면 추가 페치만 거부(전체 조회는 교체라 허용).
         //   다른 탭의 크기는 보지 않는다 — 사용자 09-17 "탭은 서로 영향을 미치지 않아야".
         let budget = (self.settings.int("grid.memory_budget_mb").max(1) as u64) * 1024 * 1024;
         if matches!(req, grid::FetchReq::Next { .. }) && self.grid.approx_bytes() > budget {
             self.grid.fetch_failed();
-            self.status = tf(
+            self.sess.status = tf(
                 Msg::StBudgetExceeded,
                 &[&self.settings.int("grid.memory_budget_mb").to_string()],
             );
             self.log_win
-                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             self.redraw();
             return;
         }
@@ -3061,7 +3909,7 @@ impl App {
                         t(Msg::StOffsetWarn).to_string(),
                     ));
                 }
-                self.worker.send(worker::Cmd::FetchPage {
+                self.sess.worker.send(worker::Cmd::FetchPage {
                     key,
                     sql,
                     offset,
@@ -3075,7 +3923,7 @@ impl App {
                 // 전체 조회 = **나머지 이어 받기**(09-17 위치 유지): offset = 이미 든 행 수 · 예산 = 이 탭 예산에서 든 만큼을 뺀 나머지
                 // (탭별 독립 · 다른 탭을 빼지 않는다 · 이미 넘었으면 1 = 첫 배치 뒤 예산 정지).
                 let remain = budget.saturating_sub(self.grid.approx_bytes()).max(1);
-                self.worker.send(worker::Cmd::FetchPage {
+                self.sess.worker.send(worker::Cmd::FetchPage {
                     key,
                     sql,
                     offset: self.grid.row_count(),
@@ -3085,25 +3933,30 @@ impl App {
                     strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
                 });
             }
-            grid::FetchReq::Count => self.worker.send(worker::Cmd::Count { key, sql }),
+            grid::FetchReq::Count => self.sess.worker.send(worker::Cmd::Count { key, sql }),
         }
-        self.status = t(Msg::StFetching).into();
+        self.sess.aux += 1;
+        self.sess.touch();
+        self.sync_gate();
+        self.sess.status = t(Msg::StFetching).into();
         self.redraw();
     }
 
     /// 새로고침 — 같은 문장을 이 탭의 세그먼트 크기로 다시 실행.
     fn refresh_result(&mut self) {
         let src = self.grid.source_sql().to_string();
-        if src.trim().is_empty() || self.busy {
+        if src.trim().is_empty() || !self.gate_open() {
             return;
         }
-        self.run_tab = self.grid_tab;
-        self.busy = true;
-        self.status = t(Msg::StRunning).into();
+        self.wake_if_idle();
+        self.sess.touch();
+        self.sess.run_tab = self.grid_tab;
+        self.sess.busy = true;
+        self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
-        self.last_run_items = split_items(&src);
+        self.sess.last_run_items = split_items(&src);
         let max_rows = self.grid.page_rows();
-        self.worker.send(worker::Cmd::Run {
+        self.sess.worker.send(worker::Cmd::Run {
             src,
             preflight: None,
             max_rows,
@@ -3122,14 +3975,18 @@ impl App {
             self.finish_view_sql(kind, None);
             return;
         };
-        if let Some(info) = self.key_cache.get(&guess) {
+        if let Some(info) = self.sess.key_cache.get(&guess) {
             let info = info.clone();
             self.finish_view_sql(kind, info.as_ref());
             return;
         }
-        let (schema, table) = nsql_io::split_table(self.dialect, &guess);
-        self.view_wait = Some(kind);
-        self.worker.send(worker::Cmd::Keys {
+        if !self.gate_open() {
+            return;
+        }
+        let (schema, table) = nsql_io::split_table(self.sess.dialect, &guess);
+        self.sess.view_wait = Some(kind);
+        self.sess.aux += 1;
+        self.sess.worker.send(worker::Cmd::Keys {
             key: guess,
             schema,
             table,
@@ -3149,7 +4006,7 @@ impl App {
                     &key.cols.join(", "),
                 ],
             );
-            self.status = w.clone();
+            self.sess.status = w.clone();
             self.log_win.push(LogEntry::new(LogKind::Error, w));
         }
         self.grid.finish_view_sql(kind, &key);
@@ -3175,14 +4032,18 @@ impl App {
             self.finish_sql_copy(kind, None);
             return;
         };
-        if let Some(info) = self.key_cache.get(&guess) {
+        if let Some(info) = self.sess.key_cache.get(&guess) {
             let info = info.clone();
             self.finish_sql_copy(kind, info.as_ref());
             return;
         }
-        let (schema, table) = nsql_io::split_table(self.dialect, &guess);
-        self.sql_wait = Some(kind);
-        self.worker.send(worker::Cmd::Keys {
+        if !self.gate_open() {
+            return;
+        }
+        let (schema, table) = nsql_io::split_table(self.sess.dialect, &guess);
+        self.sess.sql_wait = Some(kind);
+        self.sess.aux += 1;
+        self.sess.worker.send(worker::Cmd::Keys {
             key: guess,
             schema,
             table,
@@ -3197,10 +4058,10 @@ impl App {
             return;
         };
         if !clipboard::write_text(&text) {
-            self.status = t(Msg::ErrClipboard).into();
+            self.sess.status = t(Msg::ErrClipboard).into();
             return;
         }
-        self.status = tf(Msg::StCopied, &[&n.to_string()]);
+        self.sess.status = tf(Msg::StCopied, &[&n.to_string()]);
         let table = self.grid.source_table();
         let mut warns: Vec<String> = Vec::new();
         if table.is_none() {
@@ -3217,7 +4078,7 @@ impl App {
             ));
         }
         for w in warns {
-            self.status = w.clone();
+            self.sess.status = w.clone();
             self.log_win.push(LogEntry::new(LogKind::Error, w));
         }
         self.redraw();
@@ -3243,7 +4104,7 @@ impl App {
                     .set("window.always_on_top", if on { "on" } else { "off" });
                 let _ = self.settings.save();
                 self.apply_on_top();
-                self.status = tf(Msg::StOnTop, &[if on { "on" } else { "off" }]);
+                self.sess.status = tf(Msg::StOnTop, &[if on { "on" } else { "off" }]);
                 self.redraw();
             }
             "conn.toggle" => self.open_conn_window(el),
@@ -3329,7 +4190,7 @@ impl App {
                 if self.editors.cur_mut().select_next_occurrence() {
                     let n = self.editors.selection_count();
                     if n > 1 {
-                        self.status = tf(Msg::StSelections, &[&n.to_string()]);
+                        self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
                     }
                 }
                 self.set_focus(Focus::Editor);
@@ -3341,7 +4202,7 @@ impl App {
                     while ed.select_next_occurrence() {}
                 }
                 let n = self.editors.selection_count();
-                self.status = tf(Msg::StSelections, &[&n.to_string()]);
+                self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
                 self.set_focus(Focus::Editor);
             }
             // ★ Sublime 줄·선택 편집(T-98 · 09-16) — 편집기에 포커스일 때만.
@@ -3440,13 +4301,13 @@ impl App {
             id if id.starts_with("syntax.set:") => {
                 let name = &id["syntax.set:".len()..];
                 if self.editors.set_syntax(name) {
-                    self.status = tf(Msg::StSyntaxSet, &[name]);
+                    self.sess.status = tf(Msg::StSyntaxSet, &[name]);
                 }
             }
             "run.statement" => self.run_sql(false),
             // Ctrl+\ = 새 결과 탭에 실행(T-93 · 끄면 Ctrl+Enter와 같다 · D-73).
             "run.statement_new_tab" => {
-                if self.settings.flag("grid.result_tabs") && !self.busy {
+                if self.settings.flag("grid.result_tabs") && !self.sess.busy {
                     self.new_result_tab();
                 }
                 self.run_sql(false);
@@ -3470,18 +4331,31 @@ impl App {
             "run.all" => self.run_sql(true),
             "run.stop" => self.stop_run(),
             "run.explain" => self.run_explain(),
-            "run.commit" => self.worker.send(worker::Cmd::Commit),
-            "run.rollback" => self.worker.send(worker::Cmd::Rollback),
+            "run.commit" | "run.rollback" => {
+                if self.gate_open() {
+                    self.sess.busy = true;
+                    self.sess.touch();
+                    self.sess.worker.send(if id == "run.commit" {
+                        worker::Cmd::Commit
+                    } else {
+                        worker::Cmd::Rollback
+                    });
+                    self.sync_gate();
+                }
+            }
             // 트랜잭션 로그 창(T-107)이 오기 전까지는 상태줄 트랜잭션 팝업(모드 전환 · Commit(n) · Rollback(n) · 대기 목록).
             "tx.log" | "view.txlog" => self.open_txlog = true,
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
-            "conn.disconnect" => self.disconnect_now(),
+            "conn.disconnect" => self.open_disconnect_menu(),
+            id if id.starts_with("conn.drop") || id.starts_with("conn.use:") => {
+                self.disconnect_pick(id);
+            }
             "edit.prefs" => self.open_prefs = true,
             "edit.settings_json" => self.edit_settings_json(),
             "help.demo" => self.start_demo_create(),
             "help.about" => {
-                self.status = format!(
+                self.sess.status = format!(
                     "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
                     env!("CARGO_PKG_VERSION")
                 );
@@ -3544,8 +4418,8 @@ impl App {
     /// 자동 모드 + `tx.smart_commit` = 첫 DML 뒤 수동으로 전환.
     fn tx_on_done(&mut self, index: usize, stmt: &str, rows_affected: Option<u64>) {
         let auto = self.settings.flag("session.autocommit");
-        if implicit_commit(self.dialect, stmt) {
-            if !self.tx_pending.is_empty() {
+        if implicit_commit(self.sess.dialect, stmt) {
+            if !self.sess.tx_pending.is_empty() {
                 let w = first_word(stmt);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, tf(Msg::StTxImplicit, &[&w])));
@@ -3555,39 +4429,41 @@ impl App {
         }
         let class = nsql_core::TxClass::of_sql(stmt);
         // 대기 대상: 영향 행 > 0인 DML · 트랜잭션 DDL 방언(PG·SQL Server·SQLite)의 DDL/TRUNCATE(docs/44 §5).
-        let ddl_pending = class.is_ddl() && self.dialect.ddl_transactional();
+        let ddl_pending = class.is_ddl() && self.sess.dialect.ddl_transactional();
         if !ddl_pending && !rows_affected.is_some_and(|n| n > 0) {
             return;
         }
         if auto {
             if self.settings.flag("tx.smart_commit") {
                 self.set_autocommit_now(false);
-                self.status = t(Msg::StTxSmartSwitched).into();
+                self.sess.status = t(Msg::StTxSmartSwitched).into();
             }
             return;
         }
         let stamp = nsql_log::now_local().stamp();
         let when = stamp.get(11..16).unwrap_or("").to_string();
-        self.txlog.attach_tx(index, stamp, true);
+        self.txlog
+            .select_session(self.sess.id)
+            .attach_tx(index, stamp, true);
         self.txlog_win.redraw();
-        self.tx_pending.push(TxItem {
-            editor: self.run_editor,
+        self.sess.tx_pending.push(TxItem {
+            editor: self.sess.run_editor,
             at: Instant::now(),
             when,
             summary: one_line(stmt, 60),
             class,
         });
-        self.tx_dirty = true;
-        self.tx_stale_logged = false;
+        self.sess.tx_dirty = true;
+        self.sess.tx_stale_logged = false;
         self.sync_tx_ui();
     }
 
     /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
     fn tx_clear(&mut self) {
-        self.tx_pending.clear();
-        self.tx_read = false;
-        self.tx_dirty = false;
-        self.tx_stale_logged = false;
+        self.sess.tx_pending.clear();
+        self.sess.tx_read = false;
+        self.sess.tx_dirty = false;
+        self.sess.tx_stale_logged = false;
         self.sync_tx_ui();
     }
 
@@ -3597,13 +4473,16 @@ impl App {
             return;
         }
         // 수동 모드의 조회는 열린 트랜잭션에 속한다(롤백/커밋 시점 표시 · docs/44 §3).
-        self.txlog
-            .attach_tx(index, nsql_log::now_local().stamp(), false);
+        self.txlog.select_session(self.sess.id).attach_tx(
+            index,
+            nsql_log::now_local().stamp(),
+            false,
+        );
         self.txlog_win.redraw();
-        if self.tx_read {
+        if self.sess.tx_read {
             return;
         }
-        self.tx_read = true;
+        self.sess.tx_read = true;
         self.sync_tx_ui();
     }
 
@@ -3612,13 +4491,14 @@ impl App {
         use nsql_core::TxClass;
         let auto = self.settings.flag("session.autocommit");
         let mut inv = Invalidations::default();
-        let n = self.tx_pending.len();
+        let n = self.sess.tx_pending.len();
         let top = self
+            .sess
             .tx_pending
             .iter()
             .map(|i| i.class)
             .max_by_key(|c| c.severity())
-            .unwrap_or(if self.tx_read {
+            .unwrap_or(if self.sess.tx_read {
                 TxClass::Read
             } else {
                 TxClass::None
@@ -3647,12 +4527,12 @@ impl App {
         };
         let tip = if auto {
             t(Msg::TipTxLogAuto).to_string()
-        } else if n == 0 && !self.tx_read {
+        } else if n == 0 && !self.sess.tx_read {
             t(Msg::TipTxLog).to_string()
         } else {
             let mut kinds: Vec<Msg> = Vec::new();
-            let mut seen: Vec<TxClass> = self.tx_pending.iter().map(|i| i.class).collect();
-            if self.tx_read && seen.is_empty() {
+            let mut seen: Vec<TxClass> = self.sess.tx_pending.iter().map(|i| i.class).collect();
+            if self.sess.tx_read && seen.is_empty() {
                 seen.push(TxClass::Read);
             }
             seen.sort_by_key(|c| std::cmp::Reverse(c.severity()));
@@ -3671,6 +4551,7 @@ impl App {
             }
             let list = kinds.iter().map(|m| t(*m)).collect::<Vec<_>>().join(" · ");
             let since = self
+                .sess
                 .tx_pending
                 .first()
                 .map_or(String::new(), |f| f.when.clone());
@@ -3693,18 +4574,28 @@ impl App {
     fn sync_tx_ui(&mut self) {
         self.sync_tx_button();
         let stale = self.tx_is_stale();
+        // 탭 배지는 **모든 세션**의 대기 문장을 모은다(전용 세션 탭도 자기 배지) · 오래됨은 세션별 첫 문장 기준.
+        let min = self.settings.int("tx.stale_min").max(1) as u64;
         let mut map: HashMap<u64, (usize, bool)> = HashMap::new();
-        for it in &self.tx_pending {
-            let e = map.entry(it.editor).or_insert((0, stale));
-            e.0 += 1;
-            e.1 = stale;
+        for s in self.all_sess() {
+            let st = s
+                .tx_pending
+                .first()
+                .is_some_and(|f| f.at.elapsed().as_secs() >= min * 60);
+            for it in &s.tx_pending {
+                let e = map.entry(it.editor).or_insert((0, st));
+                e.0 += 1;
+                e.1 = st;
+            }
         }
         let mode = self.settings.get("tx.badge").unwrap_or("count").to_string();
         self.editors.set_tx_badges(map, &mode);
-        let has = !self.tx_pending.is_empty();
+        let has = !self.sess.tx_pending.is_empty();
+        // 툴바 Commit/Rollback = 지금 세션에 대기 문장이 있고 **세션이 한가할 때만**(통제 · docs/52 §3) · 색은 대기 여부 그대로.
+        let open = self.gate().commit;
         let mut inv = Invalidations::default();
         for id in ["run.commit", "run.rollback"] {
-            self.tool_dock.set_item_enabled(id, has, &mut inv);
+            self.tool_dock.set_item_enabled(id, open, &mut inv);
             self.tool_dock.set_item_tone(
                 id,
                 if !has {
@@ -3722,21 +4613,22 @@ impl App {
 
     fn tx_is_stale(&self) -> bool {
         let min = self.settings.int("tx.stale_min").max(1) as u64;
-        self.tx_pending
+        self.sess
+            .tx_pending
             .first()
             .is_some_and(|f| f.at.elapsed().as_secs() >= min * 60)
     }
 
     /// 오래된 미커밋 감시(about_to_wait · 1회 로그 + 배지 ⚠).
     fn tx_tick(&mut self) {
-        if self.tx_pending.is_empty() || self.tx_stale_logged || !self.tx_is_stale() {
+        if self.sess.tx_pending.is_empty() || self.sess.tx_stale_logged || !self.tx_is_stale() {
             return;
         }
-        self.tx_stale_logged = true;
+        self.sess.tx_stale_logged = true;
         let min = self.settings.int("tx.stale_min").max(1).to_string();
         self.log_win
             .push(LogEntry::new(LogKind::Error, tf(Msg::StTxStale, &[&min])));
-        self.status = tf(Msg::StTxStale, &[&min]);
+        self.sess.status = tf(Msg::StTxStale, &[&min]);
         self.sync_tx_ui();
     }
 
@@ -3744,7 +4636,7 @@ impl App {
     fn open_tx_menu(&mut self) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
         let auto = self.settings.flag("session.autocommit");
-        let n = self.tx_pending.len();
+        let n = self.sess.tx_pending.len();
         let mark = |on: bool, s: &str| {
             if on {
                 format!("✓ {s}")
@@ -3763,7 +4655,7 @@ impl App {
         ];
         if n > 0 {
             items.push(CtxItem::Separator);
-            for it in self.tx_pending.iter().take(12) {
+            for it in self.sess.tx_pending.iter().take(12) {
                 items.push(CtxItem::item(
                     "tx.noop",
                     format!("{}  {}", it.when, it.summary),
@@ -3776,8 +4668,8 @@ impl App {
     /// 잃는 순간의 확인 팝업(Commit / Rollback / Cancel) — 상태줄 트랜잭션 세그먼트 자리(없으면 창 가운데).
     fn open_tx_guard(&mut self, commit: Msg, rollback: Msg) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
-        let n = self.tx_pending.len().to_string();
-        self.status = tf(Msg::StTxGuard, &[&n]);
+        let n = self.sess.tx_pending.len().to_string();
+        self.sess.status = tf(Msg::StTxGuard, &[&n]);
         let items = vec![
             CtxItem::item("tx.commit_then", t(commit)),
             CtxItem::item("tx.rollback_then", t(rollback)),
@@ -3818,15 +4710,16 @@ impl App {
         match id {
             "auto" => self.set_autocommit(true),
             "manual" => self.set_autocommit(false),
-            "commit" => self.worker.send(worker::Cmd::Commit),
-            "rollback" => self.worker.send(worker::Cmd::Rollback),
+            // 상태줄 팝업의 Commit/Rollback도 메뉴·툴바와 같은 문지기를 지난다(docs/52 §3).
+            "commit" => self.menu_action("run.commit"),
+            "rollback" => self.menu_action("run.rollback"),
             "commit_then" => {
-                self.worker.send(worker::Cmd::Commit);
+                self.sess.worker.send(worker::Cmd::Commit);
                 self.tx_close(TxOutcome::Committed);
                 self.run_tx_after();
             }
             "rollback_then" => {
-                self.worker.send(worker::Cmd::Rollback);
+                self.sess.worker.send(worker::Cmd::Rollback);
                 self.tx_close(TxOutcome::RolledBack);
                 self.run_tx_after();
             }
@@ -3842,7 +4735,8 @@ impl App {
                 self.set_focus(Focus::Editor);
             }
             Some(TxAfter::Disconnect) => self.disconnect_force(),
-            Some(TxAfter::Exit) => self.exit_requested = true,
+            // 다른 세션에도 미커밋이 남아 있을 수 있다 → 다시 점검(전부 답해야 종료).
+            Some(TxAfter::Exit) => self.request_exit(),
             Some(TxAfter::SwitchAuto) => self.set_autocommit_now(true),
             None => {}
         }
@@ -3850,7 +4744,7 @@ impl App {
 
     /// 모드 전환 — 수동 → 자동인데 대기 문장이 있으면 먼저 묻는다.
     fn set_autocommit(&mut self, on: bool) {
-        if on && !self.tx_pending.is_empty() {
+        if on && !self.sess.tx_pending.is_empty() {
             self.tx_after = Some(TxAfter::SwitchAuto);
             self.open_tx_guard(Msg::MnTxCommitSwitch, Msg::MnTxRollbackSwitch);
             return;
@@ -3864,15 +4758,15 @@ impl App {
             .settings
             .set("session.autocommit", if on { "on" } else { "off" });
         self.persist_settings();
-        if !self.busy {
+        if !self.sess.busy {
             let src = if on {
                 "SET AUTOCOMMIT ON"
             } else {
                 "SET AUTOCOMMIT OFF"
             };
-            self.last_run_items = split_items(src);
-            self.busy = true;
-            self.worker.send(worker::Cmd::Run {
+            self.sess.last_run_items = split_items(src);
+            self.sess.busy = true;
+            self.sess.worker.send(worker::Cmd::Run {
                 src: src.to_string(),
                 preflight: None,
                 max_rows: self.grid.page_rows(),
@@ -3914,7 +4808,7 @@ impl App {
             TabMenuReq::Reveal(i) => {
                 if let Some(path) = self.editors.path_of(i) {
                     if let Err(e) = nexa_fs::shell::reveal_in_file_manager(&path) {
-                        self.status = tf(Msg::StRevealFailed, &[&e.to_string()]);
+                        self.sess.status = tf(Msg::StRevealFailed, &[&e.to_string()]);
                     }
                 }
             }
@@ -3923,23 +4817,42 @@ impl App {
 
     fn close_tab_guarded(&mut self, i: usize) {
         let id = self.editors.tab_id(i);
-        let n = self.tx_pending.iter().filter(|t| t.editor == id).count();
+        // 그 탭이 쓰는 세션의 대기 문장(전용 세션이면 그 세션 전부 = 탭을 닫으면 세션도 닫힌다 · docs/52 §8).
+        let sid = self.sess_id_for_tab(id);
+        let n = self.sess_by_id(sid).map_or(0, |s| {
+            if s.is_private() {
+                s.tx_pending.len()
+            } else {
+                s.tx_pending.iter().filter(|t| t.editor == id).count()
+            }
+        });
         if n == 0 {
             self.editors.close_tab_confirmed(i);
             return;
         }
         match self.settings.get("tx.close_action").unwrap_or("ask") {
-            "commit" => {
-                self.worker.send(worker::Cmd::Commit);
-                self.tx_close(TxOutcome::Committed);
-                self.editors.close_tab_confirmed(i);
-            }
-            "rollback" => {
-                self.worker.send(worker::Cmd::Rollback);
-                self.tx_close(TxOutcome::RolledBack);
+            act @ ("commit" | "rollback") => {
+                let commit = act == "commit";
+                self.with_sess(sid, |a| {
+                    a.sess.worker.send(if commit {
+                        worker::Cmd::Commit
+                    } else {
+                        worker::Cmd::Rollback
+                    });
+                    a.tx_close(if commit {
+                        TxOutcome::Committed
+                    } else {
+                        TxOutcome::RolledBack
+                    });
+                });
                 self.editors.close_tab_confirmed(i);
             }
             _ => {
+                // 묻는 팝업은 지금 세션에 답을 보낸다 → 그 탭을 먼저 앞으로.
+                if self.sess.id != sid {
+                    self.editors.switch(i);
+                    self.sync_grid_tab();
+                }
                 self.tx_after = Some(TxAfter::CloseTab(i));
                 self.open_tx_guard(Msg::MnTxCommitClose, Msg::MnTxRollbackClose);
             }
@@ -3948,12 +4861,25 @@ impl App {
 
     /// 종료 — 미커밋이 있으면 묻는다.
     fn request_exit(&mut self) {
-        if self.tx_pending.is_empty() {
-            self.exit_requested = true;
-            return;
+        if self.sess.tx_pending.is_empty() {
+            // 잠든 세션에 미커밋이 있으면 그 탭을 앞으로 꺼내 거기서 묻는다(세션마다 한 번씩 · docs/52 §8).
+            let tab = self
+                .parked
+                .iter()
+                .find(|s| !s.tx_pending.is_empty())
+                .map(|s| s.owner.unwrap_or(s.tx_pending[0].editor));
+            if let Some(tab) = tab {
+                self.editors.switch_to_id(tab);
+                self.sync_grid_tab();
+            }
+            if self.sess.tx_pending.is_empty() {
+                self.exit_requested = true;
+                return;
+            }
         }
         self.tx_after = Some(TxAfter::Exit);
         self.open_tx_guard(Msg::MnTxCommitExit, Msg::MnTxRollbackExit);
+        self.redraw();
     }
 
     /// 편집기 편집 명령 — 편집기 포커스일 때만 · 바뀌면 찾기 표시 갱신 + 상태줄 선택 수.
@@ -3964,7 +4890,7 @@ impl App {
         if self.ed_mut().edit_command(cmd) {
             let n = self.editors.selection_count();
             if n > 1 {
-                self.status = tf(Msg::StSelections, &[&n.to_string()]);
+                self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
             }
         }
     }
@@ -4226,6 +5152,7 @@ impl App {
             vec![
                 ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
                 ToolItem::new("conn.disconnect", toolicons::disconnect())
+                    .with_dropdown()
                     .tip(t(Msg::TipDisconnect))
                     .disabled(),
             ],
@@ -4250,7 +5177,7 @@ impl App {
                 if let Some((text, n)) = self.grid.copy_selection(grid::CopyKind::Tsv) {
                     failed = !clipboard::write_text(&text);
                     if !failed {
-                        self.status = tf(Msg::StCopied, &[&n.to_string()]);
+                        self.sess.status = tf(Msg::StCopied, &[&n.to_string()]);
                     }
                 }
             }
@@ -4295,7 +5222,7 @@ impl App {
             EditCtxAction::Custom(id) => self.menu_action(&id),
         }
         if failed {
-            self.status = t(Msg::ErrClipboard).into();
+            self.sess.status = t(Msg::ErrClipboard).into();
         }
         self.redraw();
     }
@@ -4584,7 +5511,7 @@ impl App {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) => {
-                self.status = tf(
+                self.sess.status = tf(
                     Msg::StFileReadError,
                     &[&path.display().to_string(), &e.to_string()],
                 );
@@ -4603,7 +5530,7 @@ impl App {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        self.status = if lossy {
+        self.sess.status = if lossy {
             tf(Msg::StFileDecodedLossy, &[&name])
         } else {
             tf(Msg::StFileOpened, &[&name])
@@ -4638,11 +5565,11 @@ impl App {
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.status = tf(Msg::StFileSaved, &[&name]);
+                self.sess.status = tf(Msg::StFileSaved, &[&name]);
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
-                self.status = tf(
+                self.sess.status = tf(
                     Msg::StFileWriteError,
                     &[&path.display().to_string(), &e.to_string()],
                 );
@@ -4702,7 +5629,7 @@ impl App {
         if self.conn_win.test_mark(name) == Some(TestMark::Testing) {
             return;
         }
-        self.status = t(Msg::StTesting).into();
+        self.sess.status = t(Msg::StTesting).into();
         self.conn_win.set_test_mark(name, TestMark::Testing);
         self.panel_op = Some((name.to_string(), ConnState::Testing));
         if self.conn_win.panel.profile_name() == name {
@@ -4744,16 +5671,30 @@ impl App {
                     );
                 }
                 Attempt::Connect {
+                    name: a_name,
                     spec,
                     reconnect_same,
-                    ..
                 } => {
-                    self.busy = true;
-                    self.status = tf(Msg::StConnecting, &[&spec.redacted()]);
-                    self.last_spec = Some(spec.clone());
-                    self.worker.send(worker::Cmd::ConnectSpec {
-                        spec,
-                        reconnect_same,
+                    // 접속 창의 대상 세션(docs/52 §2): 공유 모드 = 기본 공유 세션(활성 탭이 전용이어도) · 개별 모드 = 활성 탭의 세션.
+                    let Some(target) = self.login_place(&spec) else {
+                        self.attempts_inflight = self.attempts_inflight.saturating_sub(1);
+                        continue;
+                    };
+                    let profile = a_name.clone();
+                    self.with_sess(target, |a| {
+                        a.sess.profile = profile;
+                        a.sess.busy = true;
+                        a.sess.attempt_inflight = true;
+                        a.sess.user_disconnected = false;
+                        a.sess.idle_closed = false;
+                        a.sess.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                        a.sess.last_spec = Some(spec.clone());
+                        a.sess.spec = Some(spec.clone());
+                        a.sess.touch();
+                        a.sess.worker.send(worker::Cmd::ConnectSpec {
+                            spec,
+                            reconnect_same,
+                        });
                     });
                 }
             }
@@ -4777,19 +5718,16 @@ impl App {
                 }
                 self.start_test(name, spec);
             }
-            Ok(None) => self.status = tf(Msg::StTestFailed, &[name]),
-            Err(e) => self.status = tf(Msg::StTestFailed, &[&e.to_string()]),
+            Ok(None) => self.sess.status = tf(Msg::StTestFailed, &[name]),
+            Err(e) => self.sess.status = tf(Msg::StTestFailed, &[&e.to_string()]),
         }
         self.conn_win.redraw();
     }
 
     fn login_profile(&mut self, name: &str) {
-        if self.busy {
-            self.status = t(Msg::StRunning).into();
-            return;
-        }
+        // (바쁜 세션 판정은 시도를 보낼 때 `login_place`가 한다 — 공유 연결이 여럿이라 대상은 스펙을 봐야 정해진다.)
         if self.conn_win.is_testing(name) {
-            self.status = t(Msg::StTesting).into();
+            self.sess.status = t(Msg::StTesting).into();
             return;
         }
         match Vault::open_default().and_then(|v| v.get(name)) {
@@ -4834,11 +5772,11 @@ impl App {
         });
         match r {
             Ok(Some(new)) => {
-                self.status = tf(Msg::WkProfileSaved, &[&new, ""]);
+                self.sess.status = tf(Msg::WkProfileSaved, &[&new, ""]);
                 self.conn_win.refresh_profiles(Some(&new));
             }
-            Ok(None) => self.status = t(Msg::ErrProfileName).into(),
-            Err(e) => self.status = e.to_string(),
+            Ok(None) => self.sess.status = t(Msg::ErrProfileName).into(),
+            Err(e) => self.sess.status = e.to_string(),
         }
         self.conn_win.redraw();
     }
@@ -4846,10 +5784,10 @@ impl App {
     fn delete_profile(&mut self, name: &str) {
         match Vault::open_default().and_then(|v| v.remove(name)) {
             Ok(_) => {
-                self.status = tf(Msg::StProfileDeleted, &[name]);
+                self.sess.status = tf(Msg::StProfileDeleted, &[name]);
                 self.panel_results.remove(name.trim());
             }
-            Err(e) => self.status = e.to_string(),
+            Err(e) => self.sess.status = e.to_string(),
         }
         // 인접 항목 자동 선택 · 폼이 펼쳐져 있으면 그 항목으로 갱신(비면 New 상태).
         if let Some(next) = self.conn_win.after_delete() {
@@ -4899,7 +5837,9 @@ impl App {
     /// 열린 수동 트랜잭션을 결과와 함께 닫고 대기 목록을 비운다(커밋·롤백·암묵·전환·끊김 — docs/44 §3).
     fn tx_close(&mut self, outcome: TxOutcome) {
         let stamp = nsql_log::now_local().stamp();
-        self.txlog.close_tx(outcome, stamp);
+        self.txlog
+            .select_session(self.sess.id)
+            .close_tx(outcome, stamp);
         self.tx_clear();
         self.txlog_win.redraw();
     }
@@ -4921,30 +5861,35 @@ impl App {
 
     /// 실행 상태 카드 설정(`run.toast` · `run.toast_hide_secs` · 불투명도는 토스트와 공용 `ui.toast_alpha`).
     fn apply_run_toast(&mut self) {
-        self.run_toast.configure(
+        let (on, hide, alpha) = (
             self.settings.flag("run.toast"),
             self.settings.int("run.toast_hide_secs"),
             self.settings.int("ui.toast_alpha"),
         );
+        for s in std::iter::once(&mut self.sess).chain(self.parked.iter_mut()) {
+            s.run_toast.configure(on, hide, alpha);
+        }
     }
 
     /// 실행 시작 → 카드(문장 · 시작 시각 · 문장 수).
     fn run_toast_start(&mut self, src: &str) {
-        self.run_cancel_requested = false;
+        self.sess.run_cancel_requested = false;
         self.sync_run_stmt_button();
-        self.editors.set_running(Some(self.run_editor));
-        self.editors.set_error_line(self.run_editor, None);
+        self.editors.set_running(self.sess.run_editor, true);
+        self.editors.set_error_line(self.sess.run_editor, None);
         let n = split_items(src).len().max(1);
-        self.run_toast.start(src, nsql_log::now_local().stamp(), n);
+        self.sess
+            .run_toast
+            .start(src, nsql_log::now_local().stamp(), n);
     }
 
     /// 중지(카드 ■ = 툴바 ■ · T-108): 실행 중 문장은 드라이버 취소 핸들로 서버에 취소 · 전체 조회는 다음 배치 경계에서.
     fn stop_run(&mut self) {
-        if !self.busy && !self.grid.fetch_all_active() {
+        if !self.sess.busy && !self.grid.fetch_all_active() {
             return;
         }
-        self.run_cancel_requested = self.busy;
-        if self.dialect == Dialect::Mssql
+        self.sess.run_cancel_requested = self.sess.busy;
+        if self.sess.dialect == Dialect::Mssql
             && self.settings.get("mssql.cancel") != Some("socket")
             && self.settings.get("mssql.encrypt") != Some("login")
         {
@@ -4953,9 +5898,9 @@ impl App {
                 t(Msg::StMssqlAttentionFallback),
             ));
         }
-        let (sent, drops) = self.worker.cancel_run();
-        self.run_cancel_drops = drops;
-        self.status = t(if sent && drops {
+        let (sent, drops) = self.sess.worker.cancel_run();
+        self.sess.run_cancel_drops = drops;
+        self.sess.status = t(if sent && drops {
             Msg::StRunCancellingDrop
         } else if sent {
             Msg::StRunCancelling
@@ -4964,7 +5909,7 @@ impl App {
         })
         .into();
         self.log_win
-            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
         self.redraw();
     }
 
@@ -4985,7 +5930,7 @@ impl App {
         let _ = self.settings.set("ui.theme", next.as_str());
         self.persist_settings();
         self.apply_theme();
-        self.status = tf(Msg::StThemeChanged, &[t(next.label())]);
+        self.sess.status = tf(Msg::StThemeChanged, &[t(next.label())]);
     }
 
     /// Ctrl/⌘+⇧L — 언어 전환 · 저장 · 라벨 다시 만들기.
@@ -4995,7 +5940,7 @@ impl App {
         self.persist_settings();
         nsql_i18n::set_lang(next);
         self.relabel();
-        self.status = tf(Msg::StLangChanged, &[next.endonym()]);
+        self.sess.status = tf(Msg::StLangChanged, &[next.endonym()]);
         self.redraw();
     }
 
@@ -5054,10 +5999,10 @@ impl App {
             return;
         }
         let Some(path) = Self::demo_path() else {
-            self.status = tf(Msg::StDemoFailed, &["NSQL_HOME"]);
+            self.sess.status = tf(Msg::StDemoFailed, &["NSQL_HOME"]);
             return;
         };
-        self.status = t(Msg::StDemoCreating).into();
+        self.sess.status = t(Msg::StDemoCreating).into();
         let (tx, rx) = std::sync::mpsc::channel();
         self.demo_job = Some(rx);
         std::thread::Builder::new()
@@ -5084,12 +6029,12 @@ impl App {
                 self.demo_ready = true;
                 self.rebuild_menus();
                 self.conn_win.refresh_profiles(Some("Demo"));
-                self.status = tf(Msg::StDemoCreated, &[&path]);
+                self.sess.status = tf(Msg::StDemoCreated, &[&path]);
                 self.log_win
-                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
             }
             Err(e) => {
-                self.status = tf(Msg::StDemoFailed, &[&e]);
+                self.sess.status = tf(Msg::StDemoFailed, &[&e]);
                 self.toasts
                     .push(toast::ToastKind::Error, t(Msg::MnDemoCreate), e);
             }
@@ -5099,7 +6044,7 @@ impl App {
 
     fn persist_settings(&mut self) {
         if let Err(e) = self.settings.save() {
-            self.status = tf(Msg::CfgSaveFailed, &[&e.to_string()]);
+            self.sess.status = tf(Msg::CfgSaveFailed, &[&e.to_string()]);
         }
     }
 
@@ -5123,13 +6068,12 @@ impl App {
     }
 
     fn run_sql(&mut self, all: bool) {
-        if self.busy {
-            self.status = t(Msg::StRunning).into();
+        if !self.gate_open() {
             return;
         }
         // 다중 커서/선택이면 "캐럿 문장"이 하나가 아니다 → 문장 실행은 막고 전체 실행(F5)만(사용자 09-17).
         if !all && self.editors.cur().has_multi() {
-            self.status = t(Msg::StMultiCaretRun).into();
+            self.sess.status = t(Msg::StMultiCaretRun).into();
             self.redraw();
             return;
         }
@@ -5161,27 +6105,42 @@ impl App {
                 })
             }
         };
-        self.run_line_base = line_base;
         let src = text.unwrap_or_else(|| self.ed_mut().text());
-        self.grid.set_source_sql(&src);
-        self.run_tab = self.grid_tab;
-        self.run_editor = self.editors.active_id();
-        if src.trim().is_empty() {
-            self.status = t(Msg::ErrNoSql).into();
+        // ★ 세션 배치(docs/52 §4): `CONNECT`면 이 탭의 전용 세션으로 · 전용 탭의 `DISCONNECT`면 해제하고 끝.
+        if !self.place_run(&src) {
             return;
         }
-        self.busy = true;
-        self.status = t(Msg::StRunning).into();
+        self.wake_if_idle();
+        self.sess.touch();
+        self.sess.run_line_base = line_base;
+        self.grid.set_source_sql(&src);
+        self.sess.run_tab = self.grid_tab;
+        self.sess.run_editor = self.editors.active_id();
+        if src.trim().is_empty() {
+            self.sess.status = t(Msg::ErrNoSql).into();
+            return;
+        }
+        self.sess.busy = true;
+        self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
         // 신호등이 초록이 아닌 서버(빨강·파랑·확인 중·모름)에는 실행 전 빠른 포트 판정을 건다(사용자 09-14).
         let pol = *self.conn_win.policy();
         let light = self.conn_win.status_of(self.conn_win.active_name());
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
-        self.last_run_items = split_items(&src);
+        self.sess.last_run_items = split_items(&src);
+        // 세션 상태를 바꾸는 문장이 나가면 이 세션은 유휴로 닫지 않는다(닫으면 그 설정·임시 데이터를 잃는다 · docs/52 §6-4).
+        if self
+            .sess
+            .last_run_items
+            .iter()
+            .any(|s| sessions::alters_session_state(s))
+        {
+            self.sess.stateful = true;
+        }
         let max_rows = self.grid.page_rows();
-        self.single_run = !all;
-        self.worker.send(worker::Cmd::Run {
+        self.sess.single_run = !all;
+        self.sess.worker.send(worker::Cmd::Run {
             src,
             preflight,
             max_rows,
@@ -5192,7 +6151,10 @@ impl App {
 
     /// 라이브 로그 설정(끔이면 None) — 매번 읽는다(설정 창에서 바꾸면 다음 실행부터).
     fn live_req(&self) -> Option<LiveReq> {
-        if self.dialect != Dialect::Oracle {
+        // 라이브 모니터는 탐색기 메타 세션(= 접속 창으로 붙은 서버)으로 본다 → 그 세션의 실행만 대상(docs/52 §9).
+        if self.sess.dialect != Dialect::Oracle
+            || !self.explorer.has_server(self.sess.spec.as_ref())
+        {
             return None;
         }
         let source = self
@@ -5202,7 +6164,7 @@ impl App {
         if source == "off" {
             return None;
         }
-        let sid = self.live_sid.clone()?;
+        let sid = self.sess.live_sid.clone()?;
         let table = self
             .settings
             .get("oracle.live.table")
@@ -5228,7 +6190,7 @@ impl App {
                 .unwrap_or("LOG_TEXT")
                 .trim()
                 .to_string(),
-            since: self.live_since.clone(),
+            since: self.sess.live_since.clone(),
         })
     }
 
@@ -5242,29 +6204,29 @@ impl App {
 
     /// 실행 시작 — 기준 시각 초기화 · 첫 폴링 즉시(로그 테이블은 서버 현재 시각을 기준점으로 받는다).
     fn live_start(&mut self) {
-        self.live_since = None;
-        self.live_last.clear();
-        self.live_final = true;
+        self.sess.live_since = None;
+        self.sess.live_last.clear();
+        self.sess.live_final = true;
         if let Some(req) = self.live_req() {
-            self.explorer.live_poll(req);
-            self.live_next = Instant::now() + self.live_interval();
+            self.explorer.live_poll(self.sess.spec.as_ref(), req);
+            self.sess.live_next = Instant::now() + self.live_interval();
         }
     }
 
     /// 주기 폴링(실행 중) · 실행이 끝나면 마지막 1회.
     fn live_tick(&mut self, now: Instant) -> Option<Instant> {
-        if self.busy {
-            if now >= self.live_next {
+        if self.sess.busy {
+            if now >= self.sess.live_next {
                 if let Some(req) = self.live_req() {
-                    self.explorer.live_poll(req);
+                    self.explorer.live_poll(self.sess.spec.as_ref(), req);
                 }
-                self.live_next = now + self.live_interval();
+                self.sess.live_next = now + self.live_interval();
             }
-            Some(self.live_next)
-        } else if self.live_final {
-            self.live_final = false;
+            Some(self.sess.live_next)
+        } else if self.sess.live_final {
+            self.sess.live_final = false;
             if let Some(req) = self.live_req() {
-                self.explorer.live_poll(req);
+                self.explorer.live_poll(self.sess.spec.as_ref(), req);
             }
             None
         } else {
@@ -5279,13 +6241,13 @@ impl App {
             match r {
                 Ok((lines, last_ts)) => {
                     if last_ts.is_some() {
-                        self.live_since = last_ts;
+                        self.sess.live_since = last_ts;
                     }
                     for line in lines {
-                        if line == self.live_last {
+                        if line == self.sess.live_last {
                             continue;
                         }
-                        self.live_last = line.clone();
+                        self.sess.live_last = line.clone();
                         let text = format!("[live] {line}");
                         self.log_win.push(LogEntry::new(LogKind::Output, text));
                         changed = true;
@@ -5303,8 +6265,7 @@ impl App {
 
     /// 실행 계획(사용자 09-15 기본 기능) — 캐럿 문장(또는 선택)을 방언별 EXPLAIN 관용으로 감싸 실행.
     fn run_explain(&mut self) {
-        if self.busy {
-            self.status = t(Msg::StRunning).into();
+        if !self.gate_open() {
             return;
         }
         let text = self
@@ -5320,15 +6281,19 @@ impl App {
                 nsql_script::statement_at(&full, byte_pos).map(|it| it.text)
             });
         let Some(stmt) = text.filter(|s| !s.trim().is_empty()) else {
-            self.status = t(Msg::ErrNoSql).into();
+            self.sess.status = t(Msg::ErrNoSql).into();
             return;
         };
-        let src = nsql_script::explain_script(self.dialect, &stmt);
-        self.busy = true;
-        self.status = t(Msg::StRunning).into();
+        let src = nsql_script::explain_script(self.sess.dialect, &stmt);
+        self.wake_if_idle();
+        self.sess.touch();
+        self.sess.run_tab = self.grid_tab;
+        self.sess.run_editor = self.editors.active_id();
+        self.sess.busy = true;
+        self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
-        self.last_run_items = split_items(&src);
-        self.worker.send(worker::Cmd::Run {
+        self.sess.last_run_items = split_items(&src);
+        self.sess.worker.send(worker::Cmd::Run {
             src,
             preflight: None,
             max_rows: self.grid.page_rows(),
@@ -5340,7 +6305,7 @@ impl App {
     fn drain_events(&mut self) {
         let mut changed = self.drain_conn();
         self.conn_win.drain_probes();
-        while let Ok(ev) = self.events.try_recv() {
+        while let Ok(ev) = self.sess.events.try_recv() {
             changed = true;
             for e in nsql_run::log_entries(&ev) {
                 if let Some(h) = &self.log_hub {
@@ -5351,13 +6316,18 @@ impl App {
             match ev {
                 RunEvent::Begin { index, .. } => {
                     if index == 0 {
-                        self.txlog.begin_batch();
+                        self.txlog.select_session(self.sess.id).begin_batch();
                     }
-                    self.run_toast.set_phase(runtoast::Phase::Running {
+                    self.sess.run_toast.set_phase(runtoast::Phase::Running {
                         index,
-                        total: self.last_run_items.len(),
+                        total: self.sess.last_run_items.len(),
                     });
-                    let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
+                    let stmt = self
+                        .sess
+                        .last_run_items
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_default();
                     dlog!(self, LogLayer::Net, LogLevel::Timing, {
                         let now = nsql_log::now_local().stamp();
                         LogEntry::new(
@@ -5374,9 +6344,9 @@ impl App {
                     } else {
                         TxPurpose::User
                     };
-                    self.txlog.begin(
+                    self.txlog.select_session(self.sess.id).begin(
                         nsql_log::now_local().stamp(),
-                        self.run_editor,
+                        self.sess.run_editor,
                         purpose,
                         index,
                         &stmt,
@@ -5389,9 +6359,16 @@ impl App {
                     elapsed,
                     more,
                 } => {
-                    self.txlog.result(index, rs.rows.len() as u64, elapsed);
-                    self.run_toast
-                        .first_page(rs.rows.len() as u64, rs.approx_bytes(), elapsed);
+                    self.txlog.select_session(self.sess.id).result(
+                        index,
+                        rs.rows.len() as u64,
+                        elapsed,
+                    );
+                    self.sess.run_toast.first_page(
+                        rs.rows.len() as u64,
+                        rs.approx_bytes(),
+                        elapsed,
+                    );
                     dlog!(self, LogLayer::Net, LogLevel::Timing, {
                         let b = rs.approx_bytes();
                         LogEntry::new(
@@ -5404,17 +6381,17 @@ impl App {
                         .rows(rs.rows.len() as u64)
                         .elapsed(elapsed)
                     });
-                    self.run_toast.set_phase(runtoast::Phase::Done {
+                    self.sess.run_toast.set_phase(runtoast::Phase::Done {
                         rows: Some(rs.rows.len() as u64),
                         secs: elapsed.as_secs_f64(),
                         stages: String::new(),
                     });
-                    self.last_rows = Some(rs.rows.len());
-                    self.last_secs = Some(elapsed.as_secs_f64());
+                    self.sess.last_rows = Some(rs.rows.len());
+                    self.sess.last_secs = Some(elapsed.as_secs_f64());
                     let n = rs.rows.len().to_string();
                     let secs = format!("{:.3}", elapsed.as_secs_f64());
                     // 페치 상한에서 잘렸으면 "더 있음"을 알린다(DBeaver식 · 사용자 09-15).
-                    self.status = if more {
+                    self.sess.status = if more {
                         tf(Msg::StRowsMore, &[&n, &secs])
                     } else {
                         tf(Msg::StRows, &[&n, &secs])
@@ -5425,7 +6402,7 @@ impl App {
                         g.set_more(more);
                     }
                     self.tx_on_read(index);
-                    let k = self.run_tab;
+                    let k = self.sess.run_tab;
                     self.retitle_result(k);
                 }
                 RunEvent::Done {
@@ -5434,13 +6411,20 @@ impl App {
                     elapsed,
                 } => {
                     let secs = format!("{:.3}", elapsed.as_secs_f64());
-                    self.status = match rows_affected {
+                    self.sess.status = match rows_affected {
                         Some(n) => tf(Msg::StRowsAffected, &[&n.to_string(), &secs]),
                         None => tf(Msg::StOk, &[&secs]),
                     };
-                    let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
-                    self.txlog.done(index, rows_affected, elapsed);
-                    self.run_toast.set_phase(runtoast::Phase::Done {
+                    let stmt = self
+                        .sess
+                        .last_run_items
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_default();
+                    self.txlog
+                        .select_session(self.sess.id)
+                        .done(index, rows_affected, elapsed);
+                    self.sess.run_toast.set_phase(runtoast::Phase::Done {
                         rows: rows_affected,
                         secs: elapsed.as_secs_f64(),
                         stages: String::new(),
@@ -5452,38 +6436,71 @@ impl App {
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) {
                         self.tx_close(TxOutcome::Committed);
-                        self.status = m.clone();
+                        self.sess.status = m.clone();
                     } else if m == t(Msg::StRolledBack) {
                         self.tx_close(TxOutcome::RolledBack);
-                        self.status = m.clone();
+                        self.sess.status = m.clone();
                     }
                 }
                 RunEvent::Connected {
                     description,
                     dialect,
                 } => {
-                    self.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
-                    self.busy = false;
-                    self.dialect = dialect;
-                    self.all_grids().for_each(|g| g.set_dialect(dialect));
-                    self.tx_close(TxOutcome::Lost);
-                    self.sync_disconnect_btn(true);
-                    // 탐색기 메타 세션(별도) — 같은 스펙으로.
-                    if let Some(spec) = self.last_spec.clone() {
-                        let name = self.conn_win.active_name().to_string();
-                        self.explorer.connect(&spec, &name);
+                    self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
+                    if self.sess.skip_done == 0 {
+                        self.sess.busy = false;
                     }
+                    self.sess.dialect = dialect;
+                    self.sess.connected = true;
+                    self.sess.user_disconnected = false;
+                    self.sess.idle_closed = false;
+                    self.sess.desc = description.clone();
+                    self.sess.key_cache.clear();
+                    self.sess.touch();
+                    self.txlog.set_session_label(self.sess.id, &description);
+                    // 새 접속 = 서버의 세션 상태는 처음부터 — 앞 세션에서 세션 설정·임시 데이터를 만들었으면 한 번 알린다.
+                    if std::mem::take(&mut self.sess.stateful) {
+                        let m = t(Msg::StSessStateLost).to_string();
+                        self.log_win.push(LogEntry::new(LogKind::Info, m.clone()));
+                        self.toasts
+                            .push(toast::ToastKind::Error, description.clone(), m);
+                    }
+                    // 방언은 **이 세션의 결과 그리드**에만(Copy SQL 방언): 공유 세션 = 전용 탭을 뺀 전부 · 전용 세션 = 주인 탭의 것.
+                    self.set_dialect_for_sess_grids(dialect);
+                    self.tx_close(TxOutcome::Lost);
+                    if self.sess.is_private() {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Connect,
+                            tf(Msg::StSessPrivateOpened, &[&description]),
+                        ));
+                    }
+                    if self.sess.attempt_inflight {
+                        self.primary_sess = self.sess.id;
+                    }
+                    // ★ 탐색기 = 서버별(docs/52 §2-2): **어떤 세션이든** 붙은 서버의 탐색기를 확보한다(이미 있으면 그대로 · 메타가
+                    //   인텔리센스·툴팁의 단일 원천이라 그 서버에 붙은 세션이 하나라도 있는 동안 유지된다). 활성 탭의 세션이면 앞으로.
+                    self.explorer_attach();
                 }
                 RunEvent::Disconnected => {
-                    self.status = t(Msg::StDisconnected).into();
-                    self.explorer.disconnect();
+                    self.sess.status = t(Msg::StDisconnected).into();
+                    self.sess.connected = false;
+                    // (탐색기는 `sync_sess_ui`의 참조 수 맞춤이 처리한다 — 이 서버에 붙은 세션이 남아 있으면 유지.)
                     self.tx_close(TxOutcome::Lost);
-                    self.sync_disconnect_btn(false);
+                    // 공유 모드의 전용 세션이 스크립트 안의 DISCONNECT로 끊겼다 → 세션을 거두고 공유 세션으로 복귀(유휴 닫기는 제외).
+                    if self.sess.is_private()
+                        && !self.sess.idle_closed
+                        && self.session_mode() == SessionMode::Shared
+                    {
+                        self.sess.closing = true;
+                    }
                 }
                 RunEvent::Timing { index, timeline } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
-                    self.txlog.timing(index, timeline.total());
-                    self.run_toast
+                    self.txlog
+                        .select_session(self.sess.id)
+                        .timing(index, timeline.total());
+                    self.sess
+                        .run_toast
                         .timing(timeline.total().as_secs_f64(), timeline.summary());
                     for sp in &timeline.spans {
                         let (layer, msg) = match sp.stage {
@@ -5517,43 +6534,55 @@ impl App {
                             .elapsed(sp.dur)
                         });
                     }
-                    self.status = format!("{} · ⏱ {}", self.status, timeline.summary());
+                    self.sess.status = format!("{} · ⏱ {}", self.sess.status, timeline.summary());
                 }
                 RunEvent::Error { index, line, error } => {
-                    self.txlog.error(index, error.code, &error.message);
+                    self.txlog.select_session(self.sess.id).error(
+                        index,
+                        error.code,
+                        &error.message,
+                    );
                     self.txlog_win.redraw();
-                    if std::mem::take(&mut self.run_cancel_requested) {
+                    if std::mem::take(&mut self.sess.run_cancel_requested) {
                         // 사용자가 ■를 눌러 드라이버가 끊은 실행 — 오류 토스트 대신 "중지됨"(T-108).
-                        if std::mem::take(&mut self.run_cancel_drops) {
+                        if std::mem::take(&mut self.sess.run_cancel_drops) {
                             // 소켓을 끊은 취소(SQL Server): 열린 트랜잭션은 서버가 롤백 · 다음 실행 때 자동 재접속.
                             self.tx_close(TxOutcome::Lost);
-                            self.status = t(Msg::StRunCancelledDrop).into();
+                            self.sess.status = t(Msg::StRunCancelledDrop).into();
                             self.log_win
-                                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
                         } else {
-                            self.status = t(Msg::StRunCancelled).into();
+                            self.sess.status = t(Msg::StRunCancelled).into();
                         }
-                        self.run_toast
+                        self.sess
+                            .run_toast
                             .set_phase(runtoast::Phase::Stopped { rows: 0 });
                         if let Some(g) = self.run_grid() {
                             g.clear_result();
                         }
-                        self.busy = false;
+                        self.sess.busy = false;
                         self.sync_run_stmt_button();
-                        self.editors.set_running(None);
+                        self.editors.set_running(self.sess.run_editor, false);
                         self.redraw();
                         continue;
                     }
                     // 공통 분류 + 코드 부각(docs/42): 상태줄 · 결과 메시지 · 로그 창 · 토스트(분류된 오류만).
-                    let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
+                    let stmt = self
+                        .sess
+                        .last_run_items
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_default();
                     let (cls, summary) =
-                        toast::summarize(self.dialect, error.code, &error.message, &stmt);
-                    self.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
+                        toast::summarize(self.sess.dialect, error.code, &error.message, &stmt);
+                    self.sess.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
                     if self.settings.flag("editor.minimap_errors") && line > 0 {
-                        let ed_line = self.run_line_base + line - 1;
-                        self.editors.set_error_line(self.run_editor, Some(ed_line));
+                        let ed_line = self.sess.run_line_base + line - 1;
+                        self.editors
+                            .set_error_line(self.sess.run_editor, Some(ed_line));
                     }
-                    self.run_toast
+                    self.sess
+                        .run_toast
                         .set_phase(runtoast::Phase::Error(summary.clone()));
                     // 오류가 나도 결과 영역은 기본 형태(빈 그리드)로 — 본문은 로그 창·상태줄·토스트(사용자 09-17).
                     if let Some(g) = self.run_grid() {
@@ -5570,43 +6599,63 @@ impl App {
                         self.toasts.push(toast::ToastKind::Error, title, body);
                         self.redraw();
                     }
-                    self.busy = false;
+                    self.sess.busy = false;
                     // 실행 중 접속성 오류 확인 → 활성 서버 신호등 즉시 갱신(사용자 09-14).
-                    if probe::is_connection_error(error.code, &error.message) {
+                    if self.sess.id == self.primary_sess
+                        && probe::is_connection_error(error.code, &error.message)
+                    {
                         let name = self.conn_win.active_name().to_string();
                         self.conn_win.note_failure(&name);
                     }
                 }
             }
         }
-        while let Ok(done) = self.worker.done.try_recv() {
+        while let Ok(done) = self.sess.worker.done.try_recv() {
             changed = true;
-            self.busy = false;
+            self.sess.touch();
+            if self.sess.skip_done > 0 {
+                // 실행 앞에 끼운 재접속의 완료 — 실패했으면 알리기만 하고 뒤따르는 작업의 완료를 기다린다.
+                self.sess.skip_done -= 1;
+                if let Some(m) = done {
+                    self.sess.status = m;
+                }
+                continue;
+            }
+            self.sess.busy = false;
             self.sync_run_stmt_button();
-            self.editors.set_running(None);
+            self.editors.set_running(self.sess.run_editor, false);
             let failed = done.is_some();
-            if std::mem::take(&mut self.run_cancel_requested) && !failed {
+            // 뒤에서 끝난 실행(D-104): 그 탭 제목 앞에 ✓/✗ — 탭을 보면 지워진다.
+            if self.editors.active_id() != self.sess.run_editor {
+                self.editors
+                    .set_done_mark(self.sess.run_editor, Some(!failed));
+            }
+            if std::mem::take(&mut self.sess.run_cancel_requested) && !failed {
                 // Attention 취소(SQL Server · 세션 유지): 오류 없이 부분 결과로 끝난다 → "중지됨".
-                self.run_cancel_drops = false;
+                self.sess.run_cancel_drops = false;
                 // ★ 실행 중지 = 받은 행은 **보기만 유지**(사용자 09-17 결정): 이번 실행 스트림의 앞부분이라 보는 용도로는 정확하지만
                 //   OFFSET 재실행은 정렬이 없으면 순서가 달라질 수 있어 이어 받기(⇊)·자동 페치는 막는다(`more=false`) · 전체는 재실행.
                 //   (⇊ 나머지 이어 받기의 중지는 T-48b대로 받은 행 + 더 있음 유지 — 늘 연속된 앞부분 · 사용자 "이전 세그먼트 방식 유지".)
-                let rows = self.last_rows.unwrap_or(0) as u64;
-                self.status = tf(Msg::StRunCancelledPartial, &[&rows.to_string()]);
+                let rows = self.sess.last_rows.unwrap_or(0) as u64;
+                self.sess.status = tf(Msg::StRunCancelledPartial, &[&rows.to_string()]);
                 self.log_win
-                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
-                self.run_toast.finish(runtoast::Phase::Stopped { rows });
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                self.sess
+                    .run_toast
+                    .finish(runtoast::Phase::Stopped { rows });
                 if let Some(g) = self.run_grid() {
                     g.set_more(false);
                 }
             } else {
-                self.run_toast.finish_keep(done.clone());
+                self.sess.run_toast.finish_keep(done.clone());
             }
             if let Some(m) = done {
-                self.status = m;
+                self.sess.status = m;
             }
             // 현재 문장 실행 뒤 캐럿(설정 `run.after_statement` · 사용자 09-16): stay / next_ok / next_always.
-            if std::mem::take(&mut self.single_run) {
+            if std::mem::take(&mut self.sess.single_run)
+                && self.editors.active_id() == self.sess.run_editor
+            {
                 let mode = self.settings.get("run.after_statement").unwrap_or("stay");
                 if mode == "next_always" || (mode == "next_ok" && !failed) {
                     self.goto_statement(true);
@@ -5627,16 +6676,39 @@ impl App {
                     self.editors.cur_mut().set_text(&text);
                     self.set_focus(Focus::Editor);
                 }
-                ExplorerAction::Status(s) => self.status = s,
+                ExplorerAction::Status(s) => self.sess.status = s,
                 ExplorerAction::Copy(s) => {
                     if !clipboard::write_text(&s) {
-                        self.status = t(Msg::ErrClipboard).into();
+                        self.sess.status = t(Msg::ErrClipboard).into();
                     }
                 }
             }
         }
         if changed {
             self.redraw();
+        }
+    }
+
+    /// 지금 세션(`self.sess`)의 결과 그리드에 방언을 알린다 — 전용 세션 = 주인 탭의 패널 · 공유 세션 = 전용 탭이 아닌 패널 전부.
+    fn set_dialect_for_sess_grids(&mut self, dialect: Dialect) {
+        let owner = self.sess.owner;
+        let private_tabs: Vec<u64> = self.all_sess().filter_map(|s| s.owner).collect();
+        let mine = |tab: u64| match owner {
+            Some(o) => tab == o,
+            None => !private_tabs.contains(&tab),
+        };
+        if mine(self.panel_editor) {
+            self.grid.set_dialect(dialect);
+            for t in &mut self.panel.tabs {
+                t.grid.set_dialect(dialect);
+            }
+        }
+        for (tab, p) in &mut self.panels {
+            if mine(*tab) {
+                for t in &mut p.tabs {
+                    t.grid.set_dialect(dialect);
+                }
+            }
         }
     }
 
@@ -5654,7 +6726,7 @@ impl App {
 
     /// 마지막 실행 대상 결과 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
     fn run_grid(&mut self) -> Option<&mut grid::Grid> {
-        let k = self.run_tab;
+        let k = self.sess.run_tab;
         self.grid_for(k)
     }
 
@@ -5663,6 +6735,22 @@ impl App {
     /// 페인트 직전과 이벤트 뒤에 부른다.
     fn sync_grid_tab(&mut self) {
         self.sync_tabs_menu();
+        // 활성 탭의 세션도 같은 시점에 맞춘다(docs/52) — 표식 클릭·메뉴 선택도 여기서 거둔다.
+        if let Some(i) = self.editors.take_badge_request() {
+            self.open_badge_menu(i);
+        }
+        if let Some((tab, id)) = self.editors.take_badge_pick() {
+            self.badge_pick(tab, &id);
+        }
+        // 탐색기 머리줄(서버가 둘 이상일 때) → 서버 목록 팝업.
+        if let Some(r) = self.explorer.take_header_click() {
+            let items = self.explorer.server_menu();
+            self.open_status_popup(Rect::new(r.x, r.bottom(), r.w, 1), items);
+            self.redraw();
+        }
+        self.reap_sessions();
+        self.sync_sess();
+        self.sync_gate();
         let cur = self.editors.active_id();
         if cur != self.panel_editor {
             let b = self.grid.bounds;
@@ -5788,9 +6876,23 @@ impl App {
                 dc.fill_rect(Rect::new(0, sy, wi, px(24.0, s)), th.chrome_bg);
                 dc.fill_rect(Rect::new(0, sy, wi, 1), th.border);
                 dc.select_font(FontSlot::Base, false);
-                let busy = if self.busy { "⏳ " } else { "" };
+                let busy = if self.sess.blocked() { "⏳ " } else { "" };
                 let ty = dc.text_center_y(sy, px(24.0, s));
-                let left_text = format!("{busy}{}", self.status);
+                // 전용 세션 탭 = 상태줄 앞에 "전용: 접속 설명"(Golden의 Private Session 줄 · docs/52 §7).
+                let left_text = if self.sess.is_private() {
+                    format!(
+                        "{busy}[{}: {}] {}",
+                        t(Msg::StSessPrivate),
+                        if self.sess.desc.is_empty() {
+                            "—"
+                        } else {
+                            self.sess.desc.as_str()
+                        },
+                        self.sess.status
+                    )
+                } else {
+                    format!("{busy}{}", self.sess.status)
+                };
                 // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
                 let (ln, col) = self.editors.caret_line_col();
                 let mut segs: Vec<(String, bool)> = Vec::new();
@@ -5798,10 +6900,10 @@ impl App {
                 // 트랜잭션 세그먼트(DR-30): Auto / Manual / "Manual ● n pending · since hh:mm" · 클릭 = 팝업.
                 let tx = if self.settings.flag("session.autocommit") {
                     t(Msg::StTxAuto).to_string()
-                } else if let Some(first) = self.tx_pending.first() {
+                } else if let Some(first) = self.sess.tx_pending.first() {
                     tf(
                         Msg::StTxPending,
-                        &[&self.tx_pending.len().to_string(), &first.when],
+                        &[&self.sess.tx_pending.len().to_string(), &first.when],
                     )
                 } else {
                     t(Msg::StTxManual).to_string()
@@ -5842,10 +6944,10 @@ impl App {
                 } else {
                     segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
                 }
-                if let Some(n) = self.last_rows {
+                if let Some(n) = self.sess.last_rows {
                     segs.push((tf(Msg::StRowsShort, &[&n.to_string()]), false));
                 }
-                if let Some(secs) = self.last_secs {
+                if let Some(secs) = self.sess.last_secs {
                     segs.push((format!("{secs:.3}s"), false));
                 }
                 // 들여쓰기 세그먼트(Sublime "Tab Size: 4"/"Spaces: 4" · 구문 왼쪽 · 클릭 = 팝업 · 사용자 09-15).
@@ -6077,7 +7179,7 @@ impl App {
                 } else {
                     (wi, hi - px(24.0, s))
                 };
-                let ty = self.run_toast.paint(&mut dc, &th, tx, ty, s);
+                let ty = self.sess.run_toast.paint(&mut dc, &th, tx, ty, s);
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
@@ -6228,14 +7330,16 @@ impl App {
 
     /// 문장 실행 버튼 = 단일 커서일 때만(전체 실행은 늘 활성 · 사용자 09-17). 값이 바뀔 때만 툴바에 쓴다.
     fn sync_run_stmt_button(&mut self) {
-        let stop = self.busy;
+        // ■ = 막힌 상태를 푸는 유일한 버튼 — 실행 중이거나 보조 요청(전체 조회 등)이 진행 중일 때 켠다.
+        let gate = self.gate();
+        let stop = gate.stop;
         if stop != self.run_stop_enabled {
             self.run_stop_enabled = stop;
             let mut inv = Invalidations::default();
             self.tool_dock.set_item_enabled("run.stop", stop, &mut inv);
             self.redraw();
         }
-        let on = !self.editors.cur().has_multi();
+        let on = gate.run_statement;
         if on != self.run_stmt_enabled {
             self.run_stmt_enabled = on;
             let mut inv = Invalidations::default();
@@ -6243,7 +7347,7 @@ impl App {
                 .set_item_enabled("run.statement", on, &mut inv);
             self.tool_dock.set_item_tip(
                 "run.statement",
-                t(if on {
+                t(if on || !self.editors.cur().has_multi() {
                     Msg::TipRunStatement
                 } else {
                     Msg::TipRunStatementMulti
@@ -6264,7 +7368,7 @@ impl App {
                 self.redraw();
                 return;
             }
-            match self.run_toast.click(Point { x, y }) {
+            match self.sess.run_toast.click(Point { x, y }) {
                 runtoast::RunToastHit::Stop => {
                     self.stop_run();
                     return;
@@ -6277,7 +7381,7 @@ impl App {
             }
         }
         if let InputEvent::MouseMove { x, y } = ev {
-            if self.run_toast.hover(Point { x, y }) {
+            if self.sess.run_toast.hover(Point { x, y }) {
                 self.redraw();
             }
         }
@@ -6766,7 +7870,7 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _ev: Wake) {
-        self.drain_events();
+        self.drain_all();
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
@@ -6809,6 +7913,7 @@ impl ApplicationHandler<Wake> for App {
         // 오버레이 스크롤바 페이드(편집기·그리드·로그 창) — 보이는 동안만 ≈30ms 타이머.
         let now_ms = self.started.elapsed().as_millis() as u64;
         self.tx_tick();
+        self.idle_tick(now);
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
         redraw |= self.git.poll();
@@ -6822,7 +7927,7 @@ impl ApplicationHandler<Wake> for App {
         // 더러움 표시(`*`) 갱신 · 닫기 2단 안내.
         redraw |= self.editors.refresh_dirty();
         if let Some(m) = self.editors.take_notice() {
-            self.status = t(m).into();
+            self.sess.status = t(m).into();
             redraw = true;
         }
         if self.editors.relayout_if_needed() {
@@ -6835,7 +7940,7 @@ impl ApplicationHandler<Wake> for App {
             self.redraw();
         }
         {
-            let (rd, next) = self.run_toast.tick(Instant::now());
+            let (rd, next) = self.sess.run_toast.tick(Instant::now());
             self.run_toast_next = next;
             if rd {
                 self.redraw();
@@ -6964,7 +8069,7 @@ impl ApplicationHandler<Wake> for App {
                         (PickerMode::Save, FilePurpose::LogExport) => {
                             // 로그 내보내기(현재 형식 · 보이는 줄 · UTF-8).
                             let text = self.log_win.export_text();
-                            self.status = match std::fs::write(&path, text) {
+                            self.sess.status = match std::fs::write(&path, text) {
                                 Ok(()) => tf(
                                     Msg::StLogSaved,
                                     &[
@@ -7037,7 +8142,7 @@ impl ApplicationHandler<Wake> for App {
                         Ok(()) => {
                             self.persist_settings();
                             if !self.apply_setting(&key) {
-                                self.status = t(Msg::StNeedsRestart).into();
+                                self.sess.status = t(Msg::StNeedsRestart).into();
                             }
                             self.prefs_win.refresh(&self.settings);
                         }
@@ -7049,7 +8154,7 @@ impl ApplicationHandler<Wake> for App {
                     let _ = self.settings.reset(&key);
                     self.persist_settings();
                     if !self.apply_setting(&key) {
-                        self.status = t(Msg::StNeedsRestart).into();
+                        self.sess.status = t(Msg::StNeedsRestart).into();
                     }
                     self.prefs_win.refresh(&self.settings);
                     self.prefs_win.redraw();
@@ -7193,7 +8298,7 @@ impl ApplicationHandler<Wake> for App {
                 TxLogAction::CopySql(eid) => {
                     if let Some(e) = self.txlog.entry(eid) {
                         if !clipboard::write_text(&e.text) {
-                            self.status = t(Msg::ErrClipboard).into();
+                            self.sess.status = t(Msg::ErrClipboard).into();
                         }
                     }
                 }
@@ -7250,13 +8355,17 @@ impl ApplicationHandler<Wake> for App {
         }
         match &event {
             WindowEvent::CloseRequested => {
-                if !self.tx_pending.is_empty() {
+                if self.all_sess().any(|s| !s.tx_pending.is_empty()) {
                     self.request_exit();
                     self.redraw();
-                    return;
+                    if !self.exit_requested {
+                        return;
+                    }
                 }
                 self.persist_window_sizes(true);
-                self.worker.send(worker::Cmd::Quit);
+                for s in self.all_sess() {
+                    s.worker.send(worker::Cmd::Quit);
+                }
                 el.exit();
                 return;
             }
@@ -7368,7 +8477,7 @@ impl ApplicationHandler<Wake> for App {
                             Some(id) if kev.repeat && !keymap::repeatable(id) => {}
                             Some(id) => self.key_command(id, el),
                             None => {
-                                self.status = tf(
+                                self.sess.status = tf(
                                     Msg::StChordUnbound,
                                     &[&format!("{}, {}", first.display(), ch.display())],
                                 );
@@ -7395,7 +8504,7 @@ impl ApplicationHandler<Wake> for App {
                             }
                         }
                         if self.keymap.is_prefix(&ch) {
-                            self.status = tf(Msg::StChordPending, &[&ch.display()]);
+                            self.sess.status = tf(Msg::StChordPending, &[&ch.display()]);
                             self.pending_chord = Some(ch);
                             self.redraw();
                             return;
@@ -7489,7 +8598,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if self.exit_requested {
             self.persist_window_sizes(true);
-            self.worker.send(worker::Cmd::Quit);
+            for s in self.all_sess() {
+                s.worker.send(worker::Cmd::Quit);
+            }
             el.exit();
         }
     }
@@ -7678,10 +8789,12 @@ fn main() {
     let attempts_max = settings.int("connect.max_concurrent").clamp(1, 16) as usize;
     let keymap = Keymap::from_settings(&settings);
     let explorer = {
-        let proxy = wake_proxy.clone();
-        let mut e = Explorer::new(
-            Box::new(move || {
-                let _ = proxy.send_event(Wake);
+        let proxy = std::sync::Mutex::new(wake_proxy.clone());
+        let mut e = explorers::ExplorerSet::new(
+            std::sync::Arc::new(move || {
+                if let Ok(p) = proxy.lock() {
+                    let _ = p.send_event(Wake);
+                }
             }),
             settings.flag("explorer.visible"),
         );
@@ -7694,6 +8807,8 @@ fn main() {
         &recent_colors(&settings),
     );
     let txlog_cap = settings.int("txlog.max_entries").max(16) as usize;
+    let mut sess = Sess::new(SHARED, None, worker, events, DEFAULT_DIALECT);
+    sess.status = status;
     let mut app = App {
         window: None,
         ctx: None,
@@ -7708,26 +8823,18 @@ fn main() {
         settings,
         scale: 1.0,
         log_win: LogWin::new(&log_format),
-        txlog: TxLog::new(txlog_cap),
         txlog_win: TxLogWin::new(),
         open_txlog: false,
         toasts: toast::Toasts::new(),
-        run_toast: runtoast::RunToast::new(),
         run_toast_next: None,
         run_stmt_enabled: true,
         run_stop_enabled: true,
-        run_cancel_requested: false,
-        run_cancel_drops: false,
-        run_line_base: 0,
         log_hub: None,
         file_purpose: FilePurpose::Editor,
-        last_run_items: Vec::new(),
         exit_requested: false,
         z_order: Vec::new(),
         palette: Palette::new(),
         syntax: syntax_reg.clone(),
-        last_rows: None,
-        last_secs: None,
         status_syntax_rect: Rect::new(0, 0, 0, 0),
         status_eol_rect: Rect::new(0, 0, 0, 0),
         status_enc_rect: Rect::new(0, 0, 0, 0),
@@ -7777,48 +8884,38 @@ fn main() {
         panels: HashMap::new(),
         next_result_id: 1,
         result_area: Rect::new(0, 0, 0, 0),
-        key_cache: HashMap::new(),
-        sql_wait: None,
-        single_run: false,
-        view_wait: None,
         offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
         extensions: extensions::Registry::builtin(),
         ext_catalog: Vec::new(),
         grid_tab: 0,
-        run_tab: 0,
         explorer,
         search: SearchPanel::new(),
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),
-        last_spec: None,
-        dialect: DEFAULT_DIALECT,
-        tx_dirty: false,
-        tx_read: false,
-        tx_pending: Vec::new(),
-        tx_stale_logged: false,
-        run_editor: 0,
         tx_after: None,
         status_tx_rect: Rect::new(0, 0, 0, 0),
-        live_sid: None,
-        live_next: Instant::now(),
-        live_since: None,
-        live_last: String::new(),
-        live_final: false,
         json_watch: None,
         conn_modal: false,
         json_next: Instant::now(),
         focus: Focus::Editor,
-        worker,
-        events,
+        txlog: nsql_run::txlog::TxLog::new(txlog_cap),
+        sess,
+        parked: Vec::new(),
+        next_sess_id: 1,
+        tab_bind: HashMap::new(),
+        default_shared: SHARED,
+        default_spec: None,
+        primary_sess: SHARED,
+        gate_shown: None,
+        badge_menu_tab: None,
+        idle_next: Instant::now(),
         tests_tx,
         tests_rx,
         wake_proxy,
         attempt_queue: std::collections::VecDeque::new(),
         attempts_inflight: 0,
         attempts_max,
-        busy: false,
-        status,
         cursor: (0, 0),
         shift: false,
         primary: false,
@@ -7849,7 +8946,7 @@ fn main() {
     nexa_fs::shell::set_icon_cache_max(app.settings.int("file.icon_cache").max(16) as usize);
     // D-58: full 모드인데 배터리/원격 세션이면 1회 안내.
     if let Some(m) = app.settings.perf_hint() {
-        app.status = t(m).into();
+        app.sess.status = t(m).into();
     }
     let null_text = app
         .settings
@@ -7939,7 +9036,7 @@ fn main() {
             match Vault::open_default().and_then(|v| v.get(&target)) {
                 Ok(Some(spec)) => Some(spec),
                 _ => {
-                    app.status = tf(Msg::StArgProfileMissing, &[&target]);
+                    app.sess.status = tf(Msg::StArgProfileMissing, &[&target]);
                     None
                 }
             }
@@ -7948,21 +9045,21 @@ fn main() {
         };
         match spec {
             Some(spec) => {
-                app.busy = true;
-                app.status = tf(Msg::StConnecting, &[&spec.redacted()]);
-                app.last_spec = Some(spec.clone());
+                app.sess.busy = true;
+                app.sess.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                app.sess.last_spec = Some(spec.clone());
                 if nsql_vault::is_profile_name(&target) {
                     app.conn_win.select_by_name(&target);
                 }
-                app.worker.send(worker::Cmd::ConnectSpec {
+                app.sess.worker.send(worker::Cmd::ConnectSpec {
                     spec,
                     reconnect_same: false,
                 });
             }
             None if !nsql_vault::is_profile_name(&target) => {
-                app.busy = true;
-                app.status = tf(Msg::StConnecting, &[&target]);
-                app.worker.send(worker::Cmd::Connect(target));
+                app.sess.busy = true;
+                app.sess.status = tf(Msg::StConnecting, &[&target]);
+                app.sess.worker.send(worker::Cmd::Connect(target));
             }
             None => {}
         }

@@ -125,7 +125,7 @@ fn err(message: String) -> RunEvent {
 }
 
 /// 같은 서버인가 — 비밀번호만 빼고 비교(같으면 세션을 다시 열 이유가 없다).
-fn same_server(a: &ConnectSpec, b: &ConnectSpec) -> bool {
+pub(crate) fn same_server(a: &ConnectSpec, b: &ConnectSpec) -> bool {
     a.dialect == b.dialect
         && a.host == b.host
         && a.port == b.port
@@ -143,6 +143,49 @@ fn resolve_target(target: &str, default_dialect: Dialect) -> Result<ConnectSpec,
         }
     }
     nsql_drivers::parse_target(target, default_dialect)
+}
+
+/// 같은 대상인가(방언·호스트·포트·DB · 포트가 비면 방언 기본 포트 · 대소문자 무시) — 자격을 채울 프로필 찾기용.
+fn same_target(want: &ConnectSpec, have: &ConnectSpec, default_dialect: Dialect) -> bool {
+    let dialect = |s: &ConnectSpec| s.dialect.unwrap_or(default_dialect);
+    let port = |s: &ConnectSpec| s.port.or_else(|| dialect(s).default_port());
+    let eq = |a: &Option<String>, b: &Option<String>| match (a, b) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        (None, None) => true,
+        _ => false,
+    };
+    dialect(want) == dialect(have)
+        && eq(&want.host, &have.host)
+        && port(want) == port(have)
+        && eq(&want.database, &have.database)
+        && want.user.as_ref().is_none_or(|u| {
+            have.user
+                .as_ref()
+                .is_some_and(|h| h.eq_ignore_ascii_case(u))
+        })
+}
+
+/// ★ 자격 없는 접속 문자열(`CONNECT "oracle:host:1521/svc"` · docs/52 §4) — 저장소에서 **같은 대상의 프로필이 정확히 하나**면
+/// 그 자격(사용자·비밀번호·역할)을 빌린다. 없거나 둘 이상이면(모호) 그대로 둔다 = 드라이버가 자격 오류를 낸다.
+/// 기본 사상(1 서버 · 1 계정)에 맞춘 편의이지 추측이 아니다: 후보가 하나일 때만.
+pub(crate) fn fill_credentials(
+    spec: &ConnectSpec,
+    default_dialect: Dialect,
+) -> Option<ConnectSpec> {
+    if spec.password.is_some() || spec.host.is_none() {
+        return None;
+    }
+    let v = Vault::open_default().ok()?;
+    let mut hits = v
+        .list()
+        .ok()?
+        .into_iter()
+        .filter(|p| same_target(spec, &p.spec, default_dialect));
+    let one = hits.next()?;
+    if hits.next().is_some() {
+        return None;
+    }
+    v.resolve(&one.name).ok().flatten()
 }
 
 /// 페치 설정(docs/43 §4-3)을 러너에 반영 — `grid.fetch_mode`(cursor만 커서 유지) · `db.fetch_size` · `db.cursor_idle_secs`.
@@ -237,7 +280,8 @@ pub(crate) fn spawn(
         .spawn(move || {
             let opener: Opener = Box::new(
                 move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-                    nsql_drivers::open(spec, default_dialect)
+                    let filled = fill_credentials(spec, default_dialect);
+                    nsql_drivers::open(filled.as_ref().unwrap_or(spec), default_dialect)
                 },
             );
             let wake_shared = std::sync::Arc::new(std::sync::Mutex::new(wake));
@@ -792,6 +836,22 @@ pub(crate) fn spawn_test(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 자격 빌리기의 대상 비교: 포트 생략 = 방언 기본 포트 · 대소문자 무시 · 사용자를 줬으면 그 사용자만.
+    #[test]
+    fn same_target_matches_default_port_and_case() {
+        let have = ConnectSpec::parse("oracle://scott/x@DB.local:1521/ORCL").expect("spec");
+        let want = ConnectSpec::parse("oracle:db.local/orcl").expect("spec");
+        assert!(same_target(&want, &have, Dialect::Oracle));
+        let other_db = ConnectSpec::parse("oracle:db.local/other").expect("spec");
+        assert!(!same_target(&other_db, &have, Dialect::Oracle));
+        let other_user = ConnectSpec::parse("oracle://hr@db.local:1521/orcl").expect("spec");
+        assert!(!same_target(&other_user, &have, Dialect::Oracle));
+        let same_user = ConnectSpec::parse("oracle://SCOTT@db.local/orcl").expect("spec");
+        assert!(same_target(&same_user, &have, Dialect::Oracle));
+        let pg = ConnectSpec::parse("pg://db.local/orcl").expect("spec");
+        assert!(!same_target(&pg, &have, Dialect::Oracle));
+    }
 
     /// 즉시 해제 규약(사용자 09-16): 옛 워커가 응답 없는 서버에 갇혀 있어도(여기서는 비라우팅 주소 접속 시도)
     /// 새 워커는 독립적으로 Disconnect에 바로 답한다 — UI가 앞 명령을 기다리지 않아도 된다.

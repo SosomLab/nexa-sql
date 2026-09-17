@@ -217,7 +217,7 @@ impl ResultPanel {
                 self.open_menu(i, p);
                 None
             }
-            Some(TabAction::New) | None => None,
+            Some(TabAction::New | TabAction::Badge(_) | TabAction::BadgeContext(_)) | None => None,
         };
         Some(act)
     }

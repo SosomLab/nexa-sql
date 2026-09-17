@@ -63,7 +63,8 @@ pub(crate) struct TxLogWin {
 }
 
 /// 열 폭(논리 px · 문장 열은 나머지 전부).
-const COLS: [(Msg, i32); 7] = [
+/// 마지막 "세션" 열은 기록에 세션이 둘 이상일 때만 보인다(docs/52 D-105 · 전 세션 합본).
+const COLS: [(Msg, i32); 8] = [
     (Msg::TxColTime, 78),
     (Msg::TxColType, 78),
     (Msg::TxColText, 0),
@@ -71,6 +72,7 @@ const COLS: [(Msg, i32); 7] = [
     (Msg::TxColRows, 56),
     (Msg::TxColResult, 120),
     (Msg::TxColTx, 118),
+    (Msg::TxColSession, 170),
 ];
 
 impl TxLogWin {
@@ -506,9 +508,15 @@ impl TxLogWin {
             self.row_h = th_txt + px(6.0);
             let row_h = self.row_h;
             // 열 폭(문장 열 = 나머지)
-            let fixed: i32 = COLS.iter().map(|(_, w)| px(*w as f32)).sum();
+            let ncols = if log.multi_session() {
+                COLS.len()
+            } else {
+                COLS.len() - 1
+            };
+            let cols = &COLS[..ncols];
+            let fixed: i32 = cols.iter().map(|(_, w)| px(*w as f32)).sum();
             let text_w = (table.w - fixed - px(2.0)).max(px(120.0));
-            let widths: Vec<i32> = COLS
+            let widths: Vec<i32> = cols
                 .iter()
                 .map(|(_, w)| if *w == 0 { text_w } else { px(*w as f32) })
                 .collect();
@@ -516,7 +524,7 @@ impl TxLogWin {
             let hdr = Rect::new(table.x + 1, table.y + 1, table.w - 2, row_h);
             dc.fill_rect(hdr, th.chrome_bg);
             let mut cx = hdr.x;
-            for ((m, _), w) in COLS.iter().zip(widths.iter()) {
+            for ((m, _), w) in cols.iter().zip(widths.iter()) {
                 let cell = Rect::new(cx, hdr.y, *w, row_h);
                 dc.text(
                     cx + px(6.0),
@@ -567,7 +575,7 @@ impl TxLogWin {
                 }
                 let dim = matches!(outcome, TxOutcome::RolledBack | TxOutcome::Lost);
                 let fg = if dim { th.text_dim } else { th.text };
-                let cells: [String; 7] = [
+                let cells: [String; 8] = [
                     e.at.get(11..19).unwrap_or(&e.at).to_string(),
                     format!(
                         "SQL / {}",
@@ -602,6 +610,7 @@ impl TxLogWin {
                         TxOutcome::Switched => t(Msg::TxOutSwitched).to_string(),
                         TxOutcome::Lost => t(Msg::TxOutLost).to_string(),
                     },
+                    log.session_label(e.session).to_string(),
                 ];
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
