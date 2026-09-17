@@ -603,66 +603,83 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
-    // 레인보우 괄호 플러그인(사용자 09-17 · docs/51 · D-92~95): 첫 in-process 플러그인 `plugins/rainbow.rs`가 읽는다. 향상 모드는 색을 끈다.
+    // 확장 매니저(사용자 09-17 · docs/50 §10 · Sublime Package Control 방식): 저장소 목록 · 끈 확장 목록.
     Entry {
-        key: "rainbow.enabled",
-        cat: Msg::CatEditor,
+        key: "extensions.repositories",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtRepositories,
+        desc: Msg::DescExtRepositories,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "extensions.disabled",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtDisabled,
+        desc: Msg::DescExtDisabled,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    // 레인보우 괄호 플러그인(사용자 09-17 · docs/51 · D-92~95): 첫 in-process 확장 `extensions/rainbow_pairs.rs`(Rainbow Pairs)가 읽는다. 향상 모드는 색을 끈다.
+    Entry {
+        key: "rainbowpair.enabled",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbow,
         desc: Msg::DescRainbow,
         kind: SettingKind::Bool,
         default: "on",
     },
     Entry {
-        key: "rainbow.quotes",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.quotes",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowQuotes,
         desc: Msg::DescRainbowQuotes,
         kind: SettingKind::Bool,
         default: "on",
     },
     Entry {
-        key: "rainbow.angle",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.angle",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowAngle,
         desc: Msg::DescRainbowAngle,
         kind: SettingKind::Bool,
         default: "off",
     },
     Entry {
-        key: "rainbow.unmatched",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.unmatched",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowUnmatched,
         desc: Msg::DescRainbowUnmatched,
         kind: SettingKind::Bool,
         default: "on",
     },
     Entry {
-        key: "rainbow.match",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.match",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowMatch,
         desc: Msg::DescRainbowMatch,
         kind: SettingKind::Choice(RAINBOW_MATCH),
         default: "near",
     },
     Entry {
-        key: "rainbow.colors",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.colors",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowColors,
         desc: Msg::DescRainbowColors,
         kind: SettingKind::Text,
         default: "",
     },
     Entry {
-        key: "rainbow.auto_close",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.auto_close",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowAutoClose,
         desc: Msg::DescRainbowAutoClose,
         kind: SettingKind::Bool,
         default: "on",
     },
     Entry {
-        key: "rainbow.max_kb",
-        cat: Msg::CatEditor,
+        key: "rainbowpair.max_kb",
+        cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowMaxKb,
         desc: Msg::DescRainbowMaxKb,
         kind: SettingKind::Int {
@@ -2291,7 +2308,16 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     (Msg::GrpEditors, &[Msg::CatEditor, Msg::CatFiles]),
     (Msg::GrpConnections, &[Msg::CatConnection, Msg::CatCli]),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
+    // 확장(사용자 09-17 "Extensions 설정은 별도 그룹 밑에"): 관리자 + 확장별 분류(확장 하나 = 분류 하나).
+    (
+        Msg::GrpExtensions,
+        &[Msg::CatExtManager, Msg::CatExtRainbowPairs],
+    ),
 ];
+
+/// 확장이 소유한 설정 분류 ↔ 확장 id(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다") — 설정 창이 끈/미설치
+/// 확장의 분류를 숨긴다. 새 확장은 여기 한 줄 + `CATEGORY_TREE`의 Extensions 그룹에 분류 하나.
+pub const EXTENSION_CATEGORIES: &[(Msg, &str)] = &[(Msg::CatExtRainbowPairs, "rainbow-pairs")];
 
 /// 카테고리의 트리 순서(그룹 index, 카테고리 index) — 없으면 맨 뒤.
 #[must_use]
@@ -2391,7 +2417,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
-    "rainbow.max_kb",
+    "rainbowpair.max_kb",
     "demo.prompted",
     "log.kinds",
     "statusbar.git_secs",

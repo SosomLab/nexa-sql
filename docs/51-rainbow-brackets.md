@@ -1,6 +1,6 @@
 # 51 · 첫 플러그인 — 레인보우 괄호(인용부호 포함) + 괄호 이동 메뉴 · 유사 패키지 조사 · 설계
 
-> **상태**: 📐 설계(09-17 · 사용자 요청 "괄호·인용부호 `{ " ' [ ( <`를 rainbow로 순차 색 · 짝으로 이동 우클릭 메뉴 · '괄호 이동' 서브메뉴(짝·형제·상위·하위) · 유사 패키지 조사 · 설계 뒤 결정이 끝나면 개발"). 결정 = **D-91~D-95**(§7 · 사용자 답 대기). 선행 = [50 플러그인 시스템](50-plugin-system.md)(3층 · WASM 기본 · D-87~90 대기) · [29 §7-1](29-editor-syntax-palette-statusbar.md)(Ctrl+M 짝 이동 · Ctrl+Shift+M 괄호 안 확장 ✅) · [49](49-auto-indent.md) · [46](46-minimap-features.md).
+> **상태**: 📐 설계(09-17 · 사용자 요청 "괄호·인용부호 `{ " ' [ ( <`를 rainbow로 순차 색 · 짝으로 이동 우클릭 메뉴 · '괄호 이동' 서브메뉴(짝·형제·상위·하위) · 유사 패키지 조사 · 설계 뒤 결정이 끝나면 개발"). 결정 = **D-91~D-95**(§7 · 사용자 답 대기). 선행 = [50 플러그인 시스템](50-extension-system.md)(3층 · WASM 기본 · D-87~90 대기) · [29 §7-1](29-editor-syntax-palette-statusbar.md)(Ctrl+M 짝 이동 · Ctrl+Shift+M 괄호 안 확장 ✅) · [49](49-auto-indent.md) · [46](46-minimap-features.md).
 
 ## 0. 결론 여섯 줄
 
@@ -69,12 +69,12 @@ pub struct PairTable { pairs: Vec<Pair> /* open 오름차순 */, by_close: Vec<u
 ## 5. 플러그인 구조(50과의 관계)
 
 ```
-crates/nexa-sql/src/plugins/mod.rs      PluginHost 트레이트(호스트 API · WASM이 나중에 같은 표면을 노출)
+crates/nexa-sql/src/extensions/mod.rs      PluginHost 트레이트(호스트 API · WASM이 나중에 같은 표면을 노출)
   ├─ editor: text() · caret() · set_caret · select · syntax_tokens(range) · set_color_overlay · set_underlines
   ├─ ui: add_context_menu(submenu, items) · notify · status
   ├─ settings: get(own prefix) · on_change
   └─ events: on_edit(doc_version) · on_caret · on_settings
-crates/nexa-sql/src/plugins/rainbow.rs  첫 플러그인(in-process): PairTable · 오버레이 · 명령 6 · 메뉴 기여
+crates/nexa-sql/src/extensions/rainbow.rs  첫 플러그인(in-process): PairTable · 오버레이 · 명령 6 · 메뉴 기여
 manifest(가상): id "rainbow-brackets" · capabilities [editor.read, editor.overlay, editor.caret, ui.menu, settings]
 ```
 - 나중에 WASM으로 옮길 때: `PluginHost`를 WIT로 내보내고 `rainbow.rs`를 `plugin.wasm`으로 빌드 — 호스트 코드는 그대로.
@@ -82,7 +82,7 @@ manifest(가상): id "rainbow-brackets" · capabilities [editor.read, editor.ove
 
 ## 6. 단계
 
-1. 쌍 표 + 오버레이 API(nexa-ctl) + 깊이 색 + 짝 없음 + 현재 쌍 강조 + `rainbow.*` 설정 + 향상 모드.
+1. 쌍 표 + 오버레이 API(nexa-ctl) + 깊이 색 + 짝 없음 + 현재 쌍 강조 + `rainbowpair.*` 설정 + 향상 모드.
 2. 이동 메뉴 6항목(우클릭 서브메뉴 · 편집 메뉴 · 팔레트 · 키맵) + 테스트(형제/상위/하위).
 3. 자동 닫기·감싸기·건너뛰기(`editor.auto_close` · 49와 조율).
 4. 2순위: 종류 바꾸기/제거/감싸기 · 안내선 · 스코프 흐림 · SQL 키워드 쌍.
@@ -186,11 +186,13 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 
 **✅ 된 것(nexa-sql · 플러그인 층 · 컴파일만 · 배선 전)**
 - `plugins/mod.rs` — `Plugin` 트레이트(id · settings_prefix · commands · menus · on_settings → `PluginEffect` · run) · `EditorOps`(TextBox 구현) · `Registry::builtin()`/`owner_of`/`menu_extras`/`on_settings`.
-- `plugins/rainbow.rs` — `RainbowPlugin`(명령 6 · 서브메뉴 "괄호 이동" · 설정 → `BracketOpts`) · 테스트.
-- 설정 `rainbow.*` 8키(enabled · quotes · angle · unmatched · match off/near/always · colors · auto_close · max_kb HIDDEN) · BOOST `rainbow.enabled=off` · i18n 24 · `EditCtxAction::Custom` 가지 3곳(메인 = `menu_action(id)`).
+- `extensions/rainbow_pairs.rs` — `RainbowPlugin`(명령 6 · 서브메뉴 "괄호 이동" · 설정 → `BracketOpts`) · 테스트.
+- 설정 `rainbowpair.*` 8키(enabled · quotes · angle · unmatched · match off/near/always · colors · auto_close · max_kb HIDDEN) · BOOST `rainbow.enabled=off` · i18n 24 · `EditCtxAction::Custom` 가지 3곳(메인 = `menu_action(id)`).
+
+**✅ 배선 완료(09-17 맥 54차 · T-119)**: 이름 **Rainbow Pairs**(`rainbow-pairs`) · 설정 키 `rainbowpair.*`(설정 창 Extensions ▸ Rainbow Pairs · 끄면 분류 숨김) · `App.extensions` Registry · `apply_extensions`(설정 변경/켜기/끄기 → 전 탭 `set_bracket_opts` + 우클릭 서브메뉴) · 키맵 Ctrl+Alt+, . [ ] · 편집 메뉴 4항목 · 팔레트 · 명령은 `Registry::run`(끈 확장은 무시). 아래 목록은 기록용.
 
 **☐ 남은 배선(T-119 · Mac에서)**
-1. `App`에 `plugins: Registry` 두고 시작·설정 변경(`apply_setting` `rainbow.*`) 때 `on_settings` → `editors.set_bracket_opts`(전 탭 + `make_box`) · boost 뒤에도 재적용.
+1. `App`에 `plugins: Registry` 두고 시작·설정 변경(`apply_setting` `rainbowpair.*`) 때 `on_settings` → `editors.set_bracket_opts`(전 탭 + `make_box`) · boost 뒤에도 재적용.
 2. 키맵 `edit.bracket_prev/next/parent/child`(Ctrl+Alt+, / . / [ / ] · D-93) · `menu_action`에서 `plugins.owner_of(id)` → `run(id, editor)` · 팔레트 등록(`cmds.push`).
 3. 편집 메뉴 "괄호 이동 ▸" 서브메뉴 + 편집기 우클릭 `set_menu_extras(plugins.menu_extras(display))`(단축키 표시는 `keymap::display`).
 4. 색 목록 설정 창 = 색 창(임의 `*_color` 키 모드 재사용 · 쉼표 목록은 T-119 뒤).

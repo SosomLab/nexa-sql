@@ -1,16 +1,17 @@
-//! **첫 in-process 플러그인 — 레인보우 괄호 + 괄호 이동**(docs/51 · D-91~95 · 사용자 09-17).
+//! **첫 in-process 확장 — 레인보우 괄호 + 괄호 이동**(docs/51 · D-91~95 · 사용자 09-17).
 //!
-//! 설정 `rainbow.*` → 편집기 [`nexa_ctl::BracketOpts`] · 명령 4(형제 이전/다음 · 상위 · 하위 · 짝/확장은 편집 코어 명령을 재사용) ·
+//! 설정 `rainbowpair.*` → 편집기 [`nexa_ctl::BracketOpts`] · 명령 4(형제 이전/다음 · 상위 · 하위 · 짝/확장은 편집 코어 명령을 재사용) ·
 //! 우클릭 편집 메뉴 "괄호 이동 ▸". 쌍 표·색·자동 닫기는 nexa-ctl 코어(같은 표) — 이 파일은 "옵션·명령·메뉴"만 든다.
 
-use super::{Command, EditorOps, MenuContribution, Plugin, PluginEffect};
+use super::{Command, EditorOps, Extension, ExtensionEffect, MenuContribution};
 use nexa_ctl::{BracketOpts, PairOpts};
 use nsql_i18n::Msg;
 use nsql_settings::Settings;
 
-pub(crate) struct RainbowPlugin;
+/// **Rainbow Pairs** — 괄호·인용부호 쌍을 깊이별 색으로 구별하고 짝·형제·상위·하위로 이동하는 확장(사용자 09-17 명명).
+pub(crate) struct RainbowPairs;
 
-/// 설정 `rainbow.colors`(`#RRGGBB,...`) 파싱 — 잘못된 항목은 건너뜀.
+/// 설정 `rainbowpair.colors`(`#RRGGBB,...`) 파싱 — 잘못된 항목은 건너뜀.
 fn parse_colors(spec: &str) -> Vec<nexa_ctl::Color> {
     spec.split(',')
         .map(|c| c.trim().trim_start_matches('#'))
@@ -18,13 +19,24 @@ fn parse_colors(spec: &str) -> Vec<nexa_ctl::Color> {
         .collect()
 }
 
-impl Plugin for RainbowPlugin {
+impl Extension for RainbowPairs {
     fn id(&self) -> &'static str {
-        "rainbow-brackets"
+        "rainbow-pairs"
     }
 
     fn settings_prefix(&self) -> &'static str {
-        "rainbow."
+        "rainbowpair."
+    }
+
+    fn name(&self) -> &'static str {
+        "Rainbow Pairs"
+    }
+
+    /// 끄면 색·강조·자동 닫기 전부 기본(off)으로 — 쌍 표 자체는 코어가 유지(Ctrl+M 짝 이동은 내장 기능).
+    fn disabled_effect(&self) -> ExtensionEffect {
+        ExtensionEffect {
+            bracket_opts: Some(BracketOpts::default()),
+        }
     }
 
     fn commands(&self) -> Vec<Command> {
@@ -64,24 +76,24 @@ impl Plugin for RainbowPlugin {
         }]
     }
 
-    fn on_settings(&mut self, s: &Settings) -> PluginEffect {
+    fn on_settings(&mut self, s: &Settings) -> ExtensionEffect {
         let opts = BracketOpts {
-            rainbow: s.flag("rainbow.enabled"),
+            rainbow: s.flag("rainbowpair.enabled"),
             pairs: PairOpts {
-                quotes: s.flag("rainbow.quotes"),
-                angle: s.flag("rainbow.angle"),
+                quotes: s.flag("rainbowpair.quotes"),
+                angle: s.flag("rainbowpair.angle"),
             },
-            unmatched: s.flag("rainbow.unmatched"),
-            match_mode: match s.get("rainbow.match").unwrap_or("near") {
+            unmatched: s.flag("rainbowpair.unmatched"),
+            match_mode: match s.get("rainbowpair.match").unwrap_or("near") {
                 "off" => 0,
                 "always" => 2,
                 _ => 1,
             },
-            colors: parse_colors(s.get("rainbow.colors").unwrap_or("")),
-            auto_close: s.flag("rainbow.auto_close"),
-            max_chars: (s.int("rainbow.max_kb").max(64) as usize) * 1024,
+            colors: parse_colors(s.get("rainbowpair.colors").unwrap_or("")),
+            auto_close: s.flag("rainbowpair.auto_close"),
+            max_chars: (s.int("rainbowpair.max_kb").max(64) as usize) * 1024,
         };
-        PluginEffect {
+        ExtensionEffect {
             bracket_opts: Some(opts),
         }
     }
@@ -110,7 +122,7 @@ mod tests {
             c,
             vec![nexa_ctl::Color(0x00FF_0000), nexa_ctl::Color(0x0000_FF00)]
         );
-        let p = RainbowPlugin;
+        let p = RainbowPairs;
         assert_eq!(p.commands().len(), 6);
         assert_eq!(p.menus()[0].items.len(), 6);
     }

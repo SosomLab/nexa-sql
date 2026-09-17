@@ -96,6 +96,9 @@ pub(crate) struct PrefsWin {
     primary: bool,
     search: TextBox,
     tree: TreeView,
+    /// 숨긴 분류(끈/미설치 확장) · 그로부터 만든 보이는 트리(선택 index의 기준).
+    hidden: Vec<Msg>,
+    vtree: Vec<(Msg, Vec<Msg>)>,
     advanced: Switch,
     json_btn: Button,
     close_btn: Button,
@@ -127,17 +130,63 @@ fn is_key_key(k: &str) -> bool {
 }
 
 impl PrefsWin {
-    pub(crate) fn new() -> Self {
+    /// 보이는 트리(그룹 ▸ 분류) — `CATEGORY_TREE`에서 숨긴 분류(끈/미설치 확장)를 뺀 것.
+    fn visible_tree(hidden: &[Msg]) -> Vec<(Msg, Vec<Msg>)> {
+        CATEGORY_TREE
+            .iter()
+            .map(|(g, cats)| {
+                let kept: Vec<Msg> = cats
+                    .iter()
+                    .copied()
+                    .filter(|c| !hidden.contains(c))
+                    .collect();
+                (*g, kept)
+            })
+            .filter(|(_, cats)| !cats.is_empty())
+            .collect()
+    }
+
+    fn build_model(tree: &[(Msg, Vec<Msg>)]) -> TreeModel {
         let mut roots: Vec<TreeNode> = Vec::new();
-        for (g, cats) in CATEGORY_TREE {
+        for (g, cats) in tree {
             let kids: Vec<TreeNode> = cats.iter().map(|c| TreeNode::leaf(t(*c))).collect();
             roots.push(TreeNode::branch(t(*g), kids));
         }
         let mut model = TreeModel::new(roots);
-        for gi in 0..CATEGORY_TREE.len() {
+        for gi in 0..tree.len() {
             model.set_expanded(&[gi], true);
         }
+        model
+    }
+
+    /// 확장 분류 숨김 갱신(호스트가 확장 켜기/끄기/설치/제거 때) — 트리를 다시 만들고 선택을 보정한다.
+    pub(crate) fn set_hidden_categories(&mut self, hidden: Vec<Msg>) {
+        if self.hidden == hidden {
+            return;
+        }
+        self.hidden = hidden;
+        self.vtree = Self::visible_tree(&self.hidden);
+        self.tree = TreeView::new(Self::build_model(&self.vtree));
+        if self.sel.0 >= self.vtree.len() {
+            self.sel = (0, None);
+        } else if let Some(ci) = self.sel.1 {
+            if ci >= self.vtree[self.sel.0].1.len() {
+                self.sel = (self.sel.0, None);
+            }
+        }
+        if self.window.is_some() {
+            self.rebuild_cards();
+            self.layout();
+            self.redraw();
+        }
+    }
+
+    pub(crate) fn new() -> Self {
+        let vtree = Self::visible_tree(&[]);
+        let model = Self::build_model(&vtree);
         PrefsWin {
+            hidden: Vec::new(),
+            vtree,
             window: None,
             ctx: None,
             surface: None,
@@ -227,6 +276,9 @@ impl PrefsWin {
                 if !adv && nsql_settings::is_hidden(sn.entry.key) {
                     continue;
                 }
+                if self.hidden.contains(&sn.entry.cat) {
+                    continue;
+                }
                 let hay = format!(
                     "{} {} {} {}",
                     sn.entry.key,
@@ -242,10 +294,10 @@ impl PrefsWin {
             chosen.sort_by_key(|s| nsql_settings::tree_order(s.entry.cat));
         } else {
             let (gi, ci) = self.sel;
-            let cats: Vec<Msg> = match CATEGORY_TREE.get(gi) {
+            let cats: Vec<Msg> = match self.vtree.get(gi) {
                 Some((_, cats)) => match ci {
                     Some(c) => cats.get(c).copied().into_iter().collect(),
-                    None => cats.to_vec(),
+                    None => cats.clone(),
                 },
                 None => Vec::new(),
             };

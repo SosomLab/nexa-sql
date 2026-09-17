@@ -20,6 +20,9 @@ mod enc;
 mod eol;
 mod exp_icons;
 mod explorer;
+#[allow(dead_code)]
+// 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
+mod extensions;
 mod file_win;
 mod findbar;
 mod gitstat;
@@ -30,9 +33,6 @@ mod keymap;
 mod keys_win;
 mod log_win;
 mod palette;
-#[allow(dead_code)]
-// 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
-mod plugins;
 mod prefs_win;
 mod probe;
 mod results;
@@ -263,6 +263,9 @@ struct App {
     /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
     offset_warned: std::collections::HashSet<u64>,
     /// `grid`가 속한 **결과 탭** id.
+    /// 확장 레지스트리(in-process · docs/50 §4) + 매니저 팔레트가 고른 후보(설치 목록 · 저장소 목록).
+    extensions: extensions::Registry,
+    ext_catalog: Vec<(extensions::manager::Source, extensions::manager::Summary)>,
     grid_tab: u64,
     /// 마지막 실행의 대상 결과 탭 id — 결과는 실행 중 탭을 바꿔도 그 탭의 그리드로 간다.
     run_tab: u64,
@@ -1790,6 +1793,355 @@ impl App {
     }
 
     /// 설정 → 편집기 안내선(표시 · 색 · 투명도) + 동일 출현 외곽선(사용자 09-16).
+    /// 끈 확장 id 목록(`extensions.disabled`).
+    fn ext_disabled(&self) -> Vec<String> {
+        self.settings
+            .get("extensions.disabled")
+            .unwrap_or("")
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect()
+    }
+
+    /// 확장 효과 적용(시작 · 설정 변경 · 켜기/끄기): 레지스트리 → 편집기 전 탭(괄호 옵션 · 우클릭 서브메뉴).
+    fn apply_extensions(&mut self, changed_key: Option<&str>) {
+        let disabled = self.ext_disabled();
+        let effects = self
+            .extensions
+            .on_settings(&self.settings, changed_key, &disabled);
+        for e in effects {
+            if let Some(b) = e.bracket_opts {
+                self.editors.set_bracket_opts(b);
+            }
+        }
+        let km = &self.keymap;
+        let extras = self
+            .extensions
+            .menu_extras(&disabled, &|id| km.display_of(id));
+        self.editors.set_menu_extras(extras);
+        // 설정 창: 끈/미설치 확장의 분류는 숨긴다(사용자 09-17 "설치되면 보이고 제거하면 사라진다").
+        let builtin = self.extensions.builtin_ids();
+        let installed = extensions::manager::installed();
+        let hidden: Vec<Msg> = nsql_settings::EXTENSION_CATEGORIES
+            .iter()
+            .filter(|(_, id)| {
+                disabled.iter().any(|d| d == id)
+                    || !(builtin.iter().any(|(b, _)| b == id)
+                        || installed.iter().any(|r| r.id == *id))
+            })
+            .map(|(c, _)| *c)
+            .collect();
+        self.prefs_win.set_hidden_categories(hidden);
+        self.redraw();
+    }
+
+    /// 확장 명령(짝/형제/상위/하위 이동 등) — 소유 확장에 위임 · 켜져 있을 때만.
+    fn run_extension_cmd(&mut self, id: &str) {
+        let disabled = self.ext_disabled();
+        if self.extensions.run(id, &disabled, self.editors.cur_mut()) {
+            self.redraw();
+        }
+    }
+
+    /// Extension Manager 팔레트 명령(Sublime Package Control 방식 · docs/50 §10): 텍스트 목록을 만들어 팔레트에 띄우고,
+    /// 고르면 `ext.<verb>:<key>`로 다시 들어온다.
+    fn ext_command(&mut self, id: &str) {
+        use extensions::manager as mgr;
+        let disabled = self.ext_disabled();
+        let builtin: Vec<(String, String)> = self
+            .extensions
+            .builtin_ids()
+            .into_iter()
+            .map(|(i, n)| (i.to_string(), n.to_string()))
+            .collect();
+        let installed = mgr::installed();
+        let is_installed =
+            |x: &str| builtin.iter().any(|(i, _)| i == x) || installed.iter().any(|r| r.id == x);
+        let mut cmds: Vec<(String, String)> = Vec::new();
+        match id {
+            "ext.install" => {
+                self.ext_catalog.clear();
+                for src in mgr::sources(&self.settings) {
+                    match mgr::fetch_index(&src) {
+                        Ok(idx) => {
+                            for p in idx.packages.into_iter().filter(|p| !is_installed(&p.id)) {
+                                let n = self.ext_catalog.len();
+                                cmds.push((
+                                    format!("ext.install:{n}"),
+                                    format!(
+                                        "{} {} — {} [{}] · {}",
+                                        p.name,
+                                        p.version,
+                                        p.summary,
+                                        p.kind.as_str(),
+                                        src.display()
+                                    ),
+                                ));
+                                self.ext_catalog.push((src.clone(), p));
+                            }
+                        }
+                        Err(e) => {
+                            self.status = tf(Msg::StExtIndexFailed, &[&src.display(), &e]);
+                            self.log_win
+                                .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                        }
+                    }
+                }
+                if cmds.is_empty() {
+                    self.status = t(Msg::StExtNoneAvailable).into();
+                    self.redraw();
+                    return;
+                }
+            }
+            "ext.remove" | "ext.list" | "ext.enable" | "ext.disable" => {
+                let verb = id.trim_start_matches("ext.");
+                for (i, n) in &builtin {
+                    let off = disabled.iter().any(|d| d == i);
+                    let ok = match verb {
+                        "enable" => off,
+                        "disable" => !off,
+                        _ => true,
+                    };
+                    if ok {
+                        cmds.push((
+                            format!("ext.{verb}:{i}"),
+                            format!(
+                                "{n} · builtin · {}",
+                                if off {
+                                    t(Msg::StExtDisabled)
+                                } else {
+                                    t(Msg::StExtEnabled)
+                                }
+                            ),
+                        ));
+                    }
+                }
+                for r in &installed {
+                    let off = disabled.iter().any(|d| d == &r.id);
+                    let ok = match verb {
+                        "enable" => off,
+                        "disable" => !off,
+                        _ => true,
+                    };
+                    if ok {
+                        cmds.push((
+                            format!("ext.{verb}:{}", r.id),
+                            format!(
+                                "{} {} · {} · {}",
+                                r.name,
+                                r.version,
+                                r.kind.as_str(),
+                                if off {
+                                    t(Msg::StExtDisabled)
+                                } else {
+                                    t(Msg::StExtEnabled)
+                                }
+                            ),
+                        ));
+                    }
+                }
+                if cmds.is_empty() {
+                    self.status = t(Msg::StExtNoneInstalled).into();
+                    self.redraw();
+                    return;
+                }
+            }
+            "ext.repo_add" => {
+                self.palette
+                    .open_prompt("ext.repo_add", t(Msg::PhExtRepoUrl), "");
+                self.redraw();
+                return;
+            }
+            "ext.repo_list" | "ext.repo_remove" => {
+                let user = mgr::user_sources(&self.settings);
+                if id == "ext.repo_list" {
+                    cmds.push((
+                        "ext.repo:default".into(),
+                        format!(
+                            "{} {}",
+                            mgr::default_source().display(),
+                            t(Msg::StExtRepoDefault)
+                        ),
+                    ));
+                }
+                for (n, s) in user.iter().enumerate() {
+                    cmds.push((
+                        format!(
+                            "{}:{n}",
+                            if id == "ext.repo_list" {
+                                "ext.repo"
+                            } else {
+                                "ext.repo_remove"
+                            }
+                        ),
+                        s.display(),
+                    ));
+                }
+                if cmds.is_empty() {
+                    self.status = t(Msg::StExtNoneInstalled).into();
+                    self.redraw();
+                    return;
+                }
+            }
+            _ => return,
+        }
+        self.palette.set_commands(cmds);
+        self.palette.open("");
+        self.redraw();
+    }
+
+    /// 팔레트에서 고른 확장 항목(`ext.<verb>:<key>`).
+    fn ext_pick(&mut self, id: &str) {
+        use extensions::manager as mgr;
+        let (verb, key) = match id.trim_start_matches("ext.").split_once(':') {
+            Some(p) => p,
+            None => return,
+        };
+        match verb {
+            "install" => {
+                let Some((src, sum)) = key
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| self.ext_catalog.get(n).cloned())
+                else {
+                    return;
+                };
+                match mgr::install(&src, &sum) {
+                    Ok(meta) => {
+                        let note = if meta.message_install.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" — {}", meta.message_install)
+                        };
+                        self.status = tf(Msg::StExtInstalled, &[&meta.name, &meta.version, &note]);
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                        self.apply_extensions(None);
+                    }
+                    Err(e) => {
+                        self.status = e;
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Error, self.status.clone()));
+                    }
+                }
+            }
+            "remove" => {
+                if self.extensions.builtin_ids().iter().any(|(i, _)| *i == key) {
+                    self.status = tf(Msg::StExtBuiltin, &[key]);
+                } else {
+                    match mgr::remove(key) {
+                        Ok(()) => {
+                            self.status = tf(Msg::StExtRemoved, &[key]);
+                            self.log_win
+                                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                        }
+                        Err(e) => self.status = e,
+                    }
+                }
+            }
+            "enable" | "disable" => {
+                let cur = self
+                    .settings
+                    .get("extensions.disabled")
+                    .unwrap_or("")
+                    .to_string();
+                let next = mgr::list_toggle(&cur, key, verb == "disable");
+                let _ = self.settings.set("extensions.disabled", &next);
+                let _ = self.settings.save();
+                self.status = tf(
+                    if verb == "disable" {
+                        Msg::StExtDisabled
+                    } else {
+                        Msg::StExtEnabled
+                    },
+                    &[key],
+                );
+                self.apply_extensions(None);
+            }
+            "list" => {
+                let disabled = self.ext_disabled();
+                let state = if disabled.iter().any(|d| d == key) {
+                    t(Msg::StExtDisabled)
+                } else {
+                    t(Msg::StExtEnabled)
+                };
+                let (name, ver, kind) = mgr::installed()
+                    .into_iter()
+                    .find(|r| r.id == key)
+                    .map(|r| (r.name, r.version, r.kind.as_str().to_string()))
+                    .or_else(|| {
+                        self.extensions
+                            .builtin_ids()
+                            .into_iter()
+                            .find(|(i, _)| *i == key)
+                            .map(|(_, n)| {
+                                (
+                                    n.to_string(),
+                                    env!("CARGO_PKG_VERSION").to_string(),
+                                    "builtin".into(),
+                                )
+                            })
+                    })
+                    .unwrap_or_default();
+                self.status = tf(Msg::StExtInfo, &[&name, &ver, &kind, state]);
+            }
+            "repo" => {
+                self.status = if key == "default" {
+                    mgr::default_source().display()
+                } else {
+                    key.parse::<usize>()
+                        .ok()
+                        .and_then(|n| {
+                            mgr::user_sources(&self.settings)
+                                .get(n)
+                                .map(|s| s.display())
+                        })
+                        .unwrap_or_default()
+                };
+            }
+            "repo_remove" => {
+                let user = mgr::user_sources(&self.settings);
+                if let Some(s) = key.parse::<usize>().ok().and_then(|n| user.get(n)) {
+                    let cur = self
+                        .settings
+                        .get("extensions.repositories")
+                        .unwrap_or("")
+                        .to_string();
+                    let next = mgr::list_toggle(&cur, &s.display(), false);
+                    let _ = self.settings.set("extensions.repositories", &next);
+                    let _ = self.settings.save();
+                    self.status = tf(Msg::StExtRepoRemoved, &[&s.display()]);
+                }
+            }
+            _ => {}
+        }
+        self.redraw();
+    }
+
+    /// "Add Repository" 프롬프트 확정 — 루트에 index.json이 읽히면 설정에 더한다.
+    fn ext_repo_add(&mut self, text: &str) {
+        use extensions::manager as mgr;
+        let src = mgr::Source::parse(text);
+        if text.trim().is_empty() || mgr::fetch_index(&src).is_err() {
+            self.status = tf(Msg::StExtRepoBad, &[text.trim()]);
+        } else {
+            let cur = self
+                .settings
+                .get("extensions.repositories")
+                .unwrap_or("")
+                .to_string();
+            let next = mgr::list_toggle(&cur, &src.display(), true);
+            let _ = self.settings.set("extensions.repositories", &next);
+            let _ = self.settings.save();
+            self.status = tf(Msg::StExtRepoAdded, &[&src.display()]);
+            self.log_win
+                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+        }
+        self.redraw();
+    }
+
     /// 파일 탭 강조색(`editor.tab_accent` · 비면 테마 accent = 결과 탭과 같음).
     fn apply_tab_accent(&mut self) {
         let c = self
@@ -2229,6 +2581,8 @@ impl App {
             | "editor.highlight_selection" => self.apply_ruler_style(),
             k if k.starts_with("editor.occurrence_") => self.apply_occurrence_style(),
             "editor.tab_accent" => self.apply_tab_accent(),
+            "extensions.disabled" => self.apply_extensions(None),
+            k if k.starts_with("rainbowpair.") => self.apply_extensions(Some(k)),
             "editor.text_pad_left" => self
                 .editors
                 .set_text_inset(self.settings.int(key).clamp(0, 32) as i32),
@@ -2874,6 +3228,13 @@ impl App {
                     self.redraw();
                 }
             }
+            "edit.bracket_prev"
+            | "edit.bracket_next"
+            | "edit.bracket_parent"
+            | "edit.bracket_child" => self.run_extension_cmd(id),
+            "ext.install" | "ext.remove" | "ext.list" | "ext.enable" | "ext.disable"
+            | "ext.repo_add" | "ext.repo_list" | "ext.repo_remove" => self.ext_command(id),
+            x if x.starts_with("ext.") => self.ext_pick(x),
             "edit.expand_brackets" => {
                 if self.editors.cur_mut().expand_to_brackets() {
                     self.redraw();
@@ -3623,6 +3984,10 @@ impl App {
                     item("edit.expand_selection", Msg::MnExpandSelection),
                     item("edit.goto_bracket", Msg::MnGotoBracket),
                     item("edit.expand_brackets", Msg::MnExpandBrackets),
+                    item("edit.bracket_prev", Msg::MnBracketPrev),
+                    item("edit.bracket_next", Msg::MnBracketNext),
+                    item("edit.bracket_parent", Msg::MnBracketParent),
+                    item("edit.bracket_child", Msg::MnBracketChild),
                     item("edit.select_all_occurrences", Msg::MnSelectAllOccurrences),
                     item("edit.select_line", Msg::MnSelectLine),
                     item("edit.split_lines", Msg::MnSplitLines),
@@ -3841,7 +4206,7 @@ impl App {
                 }
                 None => failed = true,
             },
-            // 플러그인 메뉴 기여(우클릭 서브메뉴 항목) → 명령 id 그대로 메뉴 경로로(09-17 · plugins).
+            // 플러그인 메뉴 기여(우클릭 서브메뉴 항목) → 명령 id 그대로 메뉴 경로로(09-17 · extensions).
             EditCtxAction::Custom(id) => self.menu_action(&id),
         }
         if failed {
@@ -3870,6 +4235,23 @@ impl App {
             Msg::MnExpandSelection,
         ));
         cmds.push(m("edit.goto_bracket", Msg::MnEdit, Msg::MnGotoBracket));
+        cmds.push(m("edit.bracket_prev", Msg::MnEdit, Msg::MnBracketPrev));
+        cmds.push(m("edit.bracket_next", Msg::MnEdit, Msg::MnBracketNext));
+        cmds.push(m("edit.bracket_parent", Msg::MnEdit, Msg::MnBracketParent));
+        cmds.push(m("edit.bracket_child", Msg::MnEdit, Msg::MnBracketChild));
+        // Extension Manager(Sublime "Package Control: …" 표기 · docs/50 §10).
+        cmds.push(m("ext.install", Msg::MnExtensions, Msg::MnExtInstall));
+        cmds.push(m("ext.remove", Msg::MnExtensions, Msg::MnExtRemove));
+        cmds.push(m("ext.list", Msg::MnExtensions, Msg::MnExtList));
+        cmds.push(m("ext.enable", Msg::MnExtensions, Msg::MnExtEnable));
+        cmds.push(m("ext.disable", Msg::MnExtensions, Msg::MnExtDisable));
+        cmds.push(m("ext.repo_add", Msg::MnExtensions, Msg::MnExtRepoAdd));
+        cmds.push(m("ext.repo_list", Msg::MnExtensions, Msg::MnExtRepoList));
+        cmds.push(m(
+            "ext.repo_remove",
+            Msg::MnExtensions,
+            Msg::MnExtRepoRemove,
+        ));
         cmds.push(m(
             "edit.expand_brackets",
             Msg::MnEdit,
@@ -5800,6 +6182,8 @@ impl App {
                     self.palette.close();
                     if let Some(i) = id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok()) {
                         self.editors.rename_tab(i, &text);
+                    } else if id == "ext.repo_add" {
+                        self.ext_repo_add(&text);
                     }
                 }
             }
@@ -7198,6 +7582,8 @@ fn main() {
         view_wait: None,
         offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
+        extensions: extensions::Registry::builtin(),
+        ext_catalog: Vec::new(),
         grid_tab: 0,
         run_tab: 0,
         explorer,
@@ -7295,6 +7681,7 @@ fn main() {
     nsql_drivers::set_mssql_encryption(app.settings.get("mssql.encrypt") == Some("login"));
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
     app.apply_tab_accent();
+    app.apply_extensions(None);
     app.editors
         .set_text_inset(app.settings.int("editor.text_pad_left").clamp(0, 32) as i32);
     app.grid.set_default_page_rows(max_rows);

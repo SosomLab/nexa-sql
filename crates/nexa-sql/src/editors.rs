@@ -66,6 +66,10 @@ pub(crate) struct Editors {
     /// 첫 글자 앞 여백(설정 `editor.text_pad_left`).
     text_inset: i32,
     whitespace: WhitespaceStyle,
+    /// 확장이 정한 괄호 옵션(Rainbow Pairs · 전 탭 공통 · 새 탭에도).
+    bracket_opts: Option<nexa_ctl::BracketOpts>,
+    /// 확장이 붙인 우클릭 메뉴 서브메뉴(전 탭 공통).
+    menu_extras: Vec<nexa_ctl::controls::ctxmenu::CtxItem>,
     /// (탭 폭, 공백 들여쓰기) **기본값**(설정 `editor.tab_size`/`editor.indent_spaces`) — 새 탭의 시작값.
     indent: (u8, bool),
     /// 탭 정지점 방식(설정 `editor.tab_stops` · 09-16).
@@ -156,6 +160,8 @@ impl Editors {
             ),
             text_inset: 3,
             whitespace: WhitespaceStyle::default(),
+            bracket_opts: None,
+            menu_extras: Vec::new(),
             indent: (4, true),
             indents: Vec::new(),
             paths: Vec::new(),
@@ -202,6 +208,10 @@ impl Editors {
         tb.set_auto_indent(self.auto_indent.0, self.auto_indent.1.clone());
         tb.set_text_inset(self.text_inset);
         tb.set_whitespace(self.whitespace);
+        if let Some(b) = &self.bracket_opts {
+            tb.set_bracket_opts(b.clone());
+        }
+        tb.set_menu_extras(self.menu_extras.clone());
         tb.set_indent(self.indent.0, self.indent.1);
         tb.set_tab_stops(self.tab_stops);
         tb.set_scroll_snap(self.scroll_snap);
@@ -218,6 +228,22 @@ impl Editors {
     }
 
     /// 안내선 표시·색·투명도 · 동일 출현 외곽선(설정 4종 · 전 탭).
+    /// 확장 효과: 괄호 옵션을 전 탭에(새 탭에도).
+    pub(crate) fn set_bracket_opts(&mut self, opts: nexa_ctl::BracketOpts) {
+        for tb in &mut self.bufs {
+            tb.set_bracket_opts(opts.clone());
+        }
+        self.bracket_opts = Some(opts);
+    }
+
+    /// 확장 효과: 우클릭 메뉴 추가 항목을 전 탭에(새 탭에도).
+    pub(crate) fn set_menu_extras(&mut self, items: Vec<nexa_ctl::controls::ctxmenu::CtxItem>) {
+        for tb in &mut self.bufs {
+            tb.set_menu_extras(items.clone());
+        }
+        self.menu_extras = items;
+    }
+
     /// 파일 탭 상단 강조 줄 색(None = 테마 accent).
     pub(crate) fn set_tab_accent(&mut self, c: Option<nexa_ctl::theme::Color>) {
         self.tabs.set_accent(c);

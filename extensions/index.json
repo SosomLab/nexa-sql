@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "name": "Nexa SQL extensions (official)",
+  "packages": [
+    {
+      "id": "rainbow-pairs",
+      "dir": "rainbow-pairs",
+      "name": "Rainbow Pairs",
+      "version": "1.0.0",
+      "kind": "builtin",
+      "summary": "Bracket and quote pairs in depth colors · jump to pair / sibling / parent / child"
+    }
+  ]
+}

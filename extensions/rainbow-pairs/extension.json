@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "id": "rainbow-pairs",
+  "name": "Rainbow Pairs",
+  "version": "1.0.0",
+  "kind": "builtin",
+  "summary": "Bracket and quote pairs in depth colors · jump to pair / sibling / parent / child",
+  "description": "Colors every bracket/quote pair by nesting depth so pairs can be told apart at a glance, marks unmatched ones, underlines the pair around the caret, and adds navigation: matching pair (Ctrl+M), previous/next sibling (Ctrl+Alt+, / .), parent (Ctrl+Alt+[), first child (Ctrl+Alt+]), plus an 'Bracket Navigation' submenu in the editor context menu. Built into the app (kind = builtin): install/remove only toggles it; settings live under rainbowpair.*.",
+  "author": "SosomLab",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/rainbow-pairs",
+  "min_app": "0.0.1",
+  "platforms": ["windows", "macos", "linux"],
+  "requires": [],
+  "settings_prefix": "rainbowpair.",
+  "files": [],
+  "messages": {
+    "install": "Rainbow Pairs is on. Settings: Preferences ▸ Editor ▸ rainbowpair.* · Esc/Ctrl+M to jump between pairs."
+  }
+}
