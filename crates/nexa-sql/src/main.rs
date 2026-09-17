@@ -30,6 +30,9 @@ mod keymap;
 mod keys_win;
 mod log_win;
 mod palette;
+#[allow(dead_code)]
+// 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
+mod plugins;
 mod prefs_win;
 mod probe;
 mod results;
@@ -3838,6 +3841,8 @@ impl App {
                 }
                 None => failed = true,
             },
+            // 플러그인 메뉴 기여(우클릭 서브메뉴 항목) → 명령 id 그대로 메뉴 경로로(09-17 · plugins).
+            EditCtxAction::Custom(id) => self.menu_action(&id),
         }
         if failed {
             self.status = t(Msg::ErrClipboard).into();

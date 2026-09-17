@@ -246,6 +246,11 @@ const INDENT_RULES_OPTS: &[(&str, Msg)] = &[
 ];
 
 const OCC_SHAPES: &[(&str, Msg)] = &[("rect", Msg::ValOccRect), ("round", Msg::ValOccRound)];
+const RAINBOW_MATCH: &[(&str, Msg)] = &[
+    ("off", Msg::ValRainbowMatchOff),
+    ("near", Msg::ValRainbowMatchNear),
+    ("always", Msg::ValRainbowMatchAlways),
+];
 
 const WS_OPTS: &[(&str, Msg)] = &[
     ("none", Msg::ValWsNone),
@@ -597,6 +602,74 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescDiffMarks,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // 레인보우 괄호 플러그인(사용자 09-17 · docs/51 · D-92~95): 첫 in-process 플러그인 `plugins/rainbow.rs`가 읽는다. 향상 모드는 색을 끈다.
+    Entry {
+        key: "rainbow.enabled",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbow,
+        desc: Msg::DescRainbow,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "rainbow.quotes",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowQuotes,
+        desc: Msg::DescRainbowQuotes,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "rainbow.angle",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowAngle,
+        desc: Msg::DescRainbowAngle,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "rainbow.unmatched",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowUnmatched,
+        desc: Msg::DescRainbowUnmatched,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "rainbow.match",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowMatch,
+        desc: Msg::DescRainbowMatch,
+        kind: SettingKind::Choice(RAINBOW_MATCH),
+        default: "near",
+    },
+    Entry {
+        key: "rainbow.colors",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowColors,
+        desc: Msg::DescRainbowColors,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "rainbow.auto_close",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowAutoClose,
+        desc: Msg::DescRainbowAutoClose,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "rainbow.max_kb",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowMaxKb,
+        desc: Msg::DescRainbowMaxKb,
+        kind: SettingKind::Int {
+            min: 64,
+            max: 65536,
+        },
+        default: "2048",
     },
     // 동일 출현 상자 스타일(사용자 09-17): 모양 · 선 색(+알파) · 선 두께 · 배경 색(+알파). 색은 `#RRGGBB[AA]`.
     Entry {
@@ -2318,6 +2391,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "rainbow.max_kb",
     "demo.prompted",
     "log.kinds",
     "statusbar.git_secs",

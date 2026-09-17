@@ -1438,6 +1438,7 @@ impl ConnWin {
                     }
                 }
             }
+            EditCtxAction::Custom(_) => {}
         }
         if was_filter {
             self.refilter();

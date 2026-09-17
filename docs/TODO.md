@@ -145,6 +145,8 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-116** | P2 | 소 | **일관성 후속**([43 §9-3](43-fetch-model-and-result-tabs.md)): ✅ `strict_all`(09-17) · 겹침 검사(offset−1 행 비교) 옵션 · CLI `\\more` 같은 규칙 | 43 | ☐ |
 | **T-117** | P3 | 소 | 줄 변경 표시 후속(09-17): 기준선 = git HEAD 선택(Sublime `mini_diff: auto`) · 띠 클릭 → 그 줄 되돌리기/디프 팝업 · LCS 상한 초과 시 Myers/patience | 29 | ☐ |
 | **T-118** | P1 | 대 | **플러그인 시스템**([50](50-plugin-system.md) 📐 · D-87~D-90 결정 뒤): ① 매니저(활성화 1회 · 서명 인덱스 · 목록/검색 · 설치/갱신/삭제 · data 패키지) ② WASM 런타임(`wasmi` · 호스트 API · 능력 승인 · 샘플) ③ 결과 후처리·포매터 훅 ④ (선택) 프로세스 플러그인 + Python 러너 + 3-OS 샌드박스 | 22 09 30 | 📐 |
+| **T-119** | P1 | 중 | **레인보우 괄호 플러그인 배선**([51 §11](51-rainbow-brackets.md) · D-91~95 확정 · 코어+플러그인 층 코드 ✅ 09-17): `App.plugins` Registry · `rainbow.*` → `set_bracket_opts` 전 탭 · 키맵 Ctrl+Alt+, . [ ] · 편집 메뉴/우클릭 "괄호 이동 ▸" · 팔레트 · 실기 · 29/24 문서 → 뒤이어 같은 표면을 WASM export로(T-118 ②) | 51 | 🚧 |
+| **T-120** | P3 | 소 | `scripts/check-3os.sh` 교차 타깃이 이 Windows 기기에서 실패(`ring` 빌드에 `x86_64-linux-gnu-gcc` 필요 · 환경 문제 · 09-17): `cargo-zigbuild` 또는 `cross` 도입 · 아니면 교차 빌드는 CI에만 두고 로컬은 `--quick` | — | ☐ |
 | **T-113** | P2 | 중 | **로그 후속**([48 §5](48-logging-architecture.md)): 완전 지연 포맷(`LogRec` 32B · 텍스트는 표시 시점) · ✅ feature `devlog` 컴파일 타임 제거(09-17) · `trace` 수준 생산 지점 · `tx`/`meta` 층 · ✅ 텍스트 보기 변환 시간(09-17) | 48 39 | ☐ |
 | **T-114** | P2 | 소 | **Sublime 커서 후속**([29 §7-1](29-editor-syntax-palette-statusbar.md)): ✅ Ctrl+M 괄호 짝 · ✅ Ctrl+Shift+M 괄호 안 확장(09-17) · Ctrl+Shift+Space 스코프 확장 · ✅ Ctrl+↑/↓ 스크롤만(09-17) · mac ⌘↑/↓ · 가운데 버튼 열 선택 | 29 | 🚧 |
 | **T-111** | P3 | 소 | 색 설정 알파 통합(09-17): `editor.ruler_alpha`·`editor.whitespace_alpha`를 `#RRGGBBAA`로 흡수(마이그레이션 = 6자리 값 + alpha → 8자리) 뒤 키 제거 · 색 창 키 모드에서 최근 색 공유 확인 | 24 | ☐ |

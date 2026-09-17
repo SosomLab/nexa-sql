@@ -938,6 +938,7 @@ impl PrefsWin {
                 self.redraw();
                 self.after_edit()
             }
+            EditCtxAction::Custom(_) => PrefsAction::None,
         }
     }
 
