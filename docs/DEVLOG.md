@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-17 (55차 · mac 밤)** — **T-100 CoreText 글리프 경로**(nexa-ui 30차 · 회색 커버리지·소수 전진·서브픽셀 · 행 방향 결함 수정 · 참조 PGM/ASCII 검증 도구 3종) · `window.monitor` · `ui.font_face`. → [journal](journal/2026-09-17.md)
 - **2026-09-17 (54차 후반 · mac)** — Enable Extension Manager · 기본 저장소 설정(GitHub 주소 자동 raw) · builtin 설치 의미 · 열 선택 마우스 OS별 · **OS별 기본값 `OS_DEFAULTS`**(macOS 텍스트 힌트/스냅/두께/감마 끔 = 글꼴 깨짐 해결). → [journal](journal/2026-09-17.md)
 - **2026-09-17 (54차 · mac · 저녁)** — **확장 매니저 1차**(`extensions/` 루트 · index/extension.json v1 · 팔레트 Install/Remove/List/Enable/Disable/Add·List·Remove Repository · sha256 · SxS · data 설치/되감기) · **plugins → extensions 개명** · **Rainbow Pairs**(T-119 배선 ✅ · `rainbowpair.*` · 설정 그룹 Extensions · 끄면 분류 숨김) · 성능 점검 기준 [50 §11](50-extension-system.md) · 구조 설명 §12. → [journal](journal/2026-09-17.md)
 - **2026-09-17 (53차 · mac · 저녁)** — 저장소 최신화(nexa-ui `aea3980` · nexa-sql `6ce73f7`) · 52차 변경 맥 검증 green(테스트 166+245 · clippy 0) · **플러그인 관리 축 조사 [50 §8-4](50-extension-system.md)**(Marketplace/Open VSX vs Package Control · 설치·갱신·고정·호환·의존·보안·통계 · 매니저 보강 5건). → [journal](journal/2026-09-17.md)

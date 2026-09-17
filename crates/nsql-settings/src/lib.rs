@@ -1505,6 +1505,20 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 2, max: 600 },
         default: "15",
     },
+    // 창 크기 기억(사용자 09-17 · 숨김 · "w,h" 논리 px · 닫힐 때 앱이 쓴다).
+    Entry { key: "window.main_size", cat: Msg::CatWindow, label: Msg::LblWindowSizeMemo, desc: Msg::DescWindowSizeMemo, kind: SettingKind::Text, default: "" },
+    Entry { key: "window.login_size", cat: Msg::CatWindow, label: Msg::LblWindowSizeMemo, desc: Msg::DescWindowSizeMemo, kind: SettingKind::Text, default: "" },
+    Entry { key: "window.log_size", cat: Msg::CatWindow, label: Msg::LblWindowSizeMemo, desc: Msg::DescWindowSizeMemo, kind: SettingKind::Text, default: "" },
+    Entry { key: "window.txlog_size", cat: Msg::CatWindow, label: Msg::LblWindowSizeMemo, desc: Msg::DescWindowSizeMemo, kind: SettingKind::Text, default: "" },
+    Entry { key: "window.prefs_size", cat: Msg::CatWindow, label: Msg::LblWindowSizeMemo, desc: Msg::DescWindowSizeMemo, kind: SettingKind::Text, default: "" },
+    Entry {
+        key: "window.monitor",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowMonitor,
+        desc: Msg::DescWindowMonitor,
+        kind: SettingKind::Int { min: 0, max: 8 },
+        default: "0",
+    },
     Entry {
         key: "window.always_on_top",
         cat: Msg::CatWindow,
@@ -2363,7 +2377,8 @@ pub const OS_DEFAULTS: &[(&str, &str, &str)] = &[
     ("ui.text_snap", "off", "on"),
     ("ui.text_weight", "0", "25"),
     ("ui.text_contrast", "100", "140"),
-    ("ui.text_gdi", "off", "off"),
+    // macOS = CoreText 글리프(T-100 · 파인더와 같은 픽셀) · Linux = 내장 래스터.
+    ("ui.text_gdi", "on", "off"),
 ];
 
 /// 이 OS의 기본값 — [`OS_DEFAULTS`]에 있으면 그것 · 아니면 레지스트리 `default`.
@@ -2487,6 +2502,11 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "window.main_size",
+    "window.login_size",
+    "window.log_size",
+    "window.txlog_size",
+    "window.prefs_size",
     "rainbowpair.max_kb",
     "demo.prompted",
     "log.kinds",

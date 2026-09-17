@@ -23,6 +23,7 @@ mod explorer;
 #[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
+mod wingeom;
 mod file_win;
 mod findbar;
 mod gitstat;
@@ -2154,6 +2155,51 @@ impl App {
             self.prefs_sync();
         }
         self.redraw();
+    }
+
+    /// 창 크기 기억(사용자 09-17): 닫힌 보조 창의 마지막 크기를 설정에 · `main`이면 메인 창 크기도(종료 직전).
+    fn persist_window_sizes(&mut self, main: bool) {
+        let mut changed = false;
+        let mut put = |settings: &mut Settings, key: &str, s: Option<(f64, f64)>| {
+            if let Some((w, h)) = s {
+                let v = wingeom::format_size(w, h);
+                if settings.get(key) != Some(v.as_str()) {
+                    let _ = settings.set(key, &v);
+                    changed = true;
+                }
+            }
+        };
+        let s1 = self.conn_win.take_last_size();
+        let s2 = self.log_win.take_last_size();
+        let s3 = self.txlog_win.take_last_size();
+        let s4 = self.prefs_win.take_last_size();
+        put(&mut self.settings, "window.login_size", s1);
+        put(&mut self.settings, "window.log_size", s2);
+        put(&mut self.settings, "window.txlog_size", s3);
+        put(&mut self.settings, "window.prefs_size", s4);
+        if main {
+            let sz = self.window.as_ref().map(|w| wingeom::logical_size(w));
+            put(&mut self.settings, "window.main_size", sz);
+        }
+        if changed {
+            let _ = self.settings.save();
+            self.apply_window_sizes();
+        }
+    }
+
+    /// 설정의 기억된 크기를 보조 창의 "다음 열기 크기"로.
+    fn apply_window_sizes(&mut self) {
+        let get = |s: &Settings, k: &str| s.get(k).and_then(wingeom::parse_size);
+        let (a, b, c, d) = (
+            get(&self.settings, "window.login_size"),
+            get(&self.settings, "window.log_size"),
+            get(&self.settings, "window.txlog_size"),
+            get(&self.settings, "window.prefs_size"),
+        );
+        self.conn_win.set_pref_size(a);
+        self.log_win.set_pref_size(b);
+        self.txlog_win.set_pref_size(c);
+        self.prefs_win.set_pref_size(d);
     }
 
     /// 파일 탭 강조색(`editor.tab_accent` · 비면 테마 accent = 결과 탭과 같음).
@@ -6599,7 +6645,15 @@ impl ApplicationHandler<Wake> for App {
             Window::default_attributes()
                 .with_title("Nexa SQL")
                 .with_theme(theme::window_theme(self.settings.theme_mode()))
-                .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 720.0)),
+                .with_inner_size({
+                    // 마지막으로 닫힌 크기(`window.main_size` · 사용자 09-17) · 없으면 기본.
+                    let (w, h) = self
+                        .settings
+                        .get("window.main_size")
+                        .and_then(wingeom::parse_size)
+                        .unwrap_or((1100.0, 720.0));
+                    winit::dpi::LogicalSize::new(w, h)
+                }),
         );
         let Ok(win) = el.create_window(attrs) else {
             eprintln!("{}", t(Msg::ErrNoWindow));
@@ -6607,6 +6661,17 @@ impl ApplicationHandler<Wake> for App {
             return;
         };
         let win = Rc::new(win);
+        // 설정 `window.monitor`(1-기준 · 0 = OS 기본): 그 모니터의 왼쪽 위에서 조금 안쪽에 연다(사용자 09-17 "임시로 2번 모니터에").
+        //   모니터 번호는 **왼쪽→오른쪽(x 좌표순)**: winit의 목록 순서는 OS마다 달라 사용자 직관(1 = 왼쪽)과 어긋난다.
+        let mon = self.settings.int("window.monitor");
+        if mon > 0 {
+            let mut mons: Vec<_> = win.available_monitors().collect();
+            mons.sort_by_key(|m| (m.position().x, m.position().y));
+            if let Some(m) = mons.get((mon - 1) as usize) {
+                let p = m.position();
+                win.set_outer_position(winit::dpi::PhysicalPosition::new(p.x + 40, p.y + 60));
+            }
+        }
         self.scale = win.scale_factor() as f32;
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
         self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
@@ -6660,6 +6725,7 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        self.persist_window_sizes(false);
         if std::mem::take(&mut self.pending_demo_prompt) {
             self.open_demo_prompt();
         }
@@ -7144,6 +7210,7 @@ impl ApplicationHandler<Wake> for App {
                     self.redraw();
                     return;
                 }
+                self.persist_window_sizes(true);
                 self.worker.send(worker::Cmd::Quit);
                 el.exit();
                 return;
@@ -7364,6 +7431,7 @@ impl ApplicationHandler<Wake> for App {
             self.sync_modal();
         }
         if self.exit_requested {
+            self.persist_window_sizes(true);
             self.worker.send(worker::Cmd::Quit);
             el.exit();
         }
@@ -7759,6 +7827,7 @@ fn main() {
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
     app.apply_tab_accent();
     app.apply_extensions(None);
+    app.apply_window_sizes();
     app.editors
         .set_text_inset(app.settings.int("editor.text_pad_left").clamp(0, 32) as i32);
     app.grid.set_default_page_rows(max_rows);

@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-17 (55차 · mac 밤) — ★ **T-100 macOS CoreText 글리프 경로 ✅**(nexa-gfx `coretext.rs` · 파인더와 같은 픽셀 · 기본 켬) · 1x 보조 모니터 ASCII 캡처 검증 · `window.monitor` · Rainbow Pairs 다운로드형(WASM) = 다음
+
 ## 2026-09-17 (54차 후반) — Enable Extension Manager · 기본 저장소 `extensions.default_repository`(GitHub 주소 → raw) · builtin도 설치해야 켜짐 · 열 선택 마우스 OS별(`editor.column_select`) · **macOS 글꼴 깨짐 = Windows GDI 모방 텍스트 키 → `OS_DEFAULTS`로 macOS 끔** · push
 
 ## 2026-09-17 (54차 · mac · 저녁) — ★ 확장 매니저 1차 ✅(저장소 = `extensions/` · 메타 v1 · Sublime식 팔레트 8명령 · sha256 · SxS) · plugins → extensions 개명 ✅ · Rainbow Pairs 배선(T-119) ✅ · 설정 그룹 Extensions + 끄면 분류 숨김 ✅ · 성능 점검 기준 50 §11 · "SDK 없이?" 50 §12
