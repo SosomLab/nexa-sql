@@ -30,10 +30,10 @@ VS Code 대조(사용자 평이 좋은 것): `showSlider`(always/mouseover) · `
 | # | 기능 | 설명 · 우리 구현 방식 | 설정 키 |
 |---|---|---|---|
 | 1-1 | **선택 vs 동일 출현 구분** ✅ 09-17 | 선택 = accent 0.6 · 다른 출현 = 출현 상자 선 색(기본 warn) 0.45 — 편집기 본문의 채움/외곽선과 같은 색 논리 | (출현 선 색 `editor.occurrence_line_color`를 따름) |
-| 1-2 | **찾기 결과 띠** | 찾기 바가 열려 있고 매치가 있으면 매치 행에 `find` 색(테마 `warn` 계열 · 선택과 구분) — 찾기 바가 이미 매치 목록을 가지므로 `TextBox::set_minimap_marks(kind, rows)`로 넘긴다 | `editor.minimap_find`(on) |
-| 1-3 | **오류 줄 마크** | 실행 오류(`RunEvent::Error.line`)·구문 오류 줄에 `danger` 띠 + 오른쪽 가장자리 2px 점(줄이 화면 밖이어도 보이게) · 편집하면 지움 | `editor.minimap_errors`(on) |
-| 1-4 | **뷰포트 표시 방식** | `always`(현재) / `hover`(Sublime 기본) · 테두리 on/off · ✅ 09-17 색/테두리: 회색 `#808080` 18% 기본 · 테두리 없음 · `editor.minimap_box_color`/`editor.minimap_border` | `editor.minimap_viewport`(always/hover · 남음) |
-| 1-5 | **클릭 동작** | `center`(현재 · 뷰포트 중앙) / `text`(클릭한 글로 스크롤 · ST4) | `editor.minimap_click`(center/text) |
+| 1-2 ✅ 09-17 | **찾기 결과 띠** | 찾기 바가 열려 있고 매치가 있으면 매치 행에 `find` 색(테마 `warn` 계열 · 선택과 구분) — 찾기 바가 이미 매치 목록을 가지므로 `TextBox::set_minimap_marks(kind, rows)`로 넘긴다 | `editor.minimap_find`(on) |
+| 1-3 ✅ 09-17 | **오류 줄 마크** | 실행 오류(`RunEvent::Error.line`)·구문 오류 줄에 `danger` 띠 + 오른쪽 가장자리 2px 점(줄이 화면 밖이어도 보이게) · 편집하면 지움 | `editor.minimap_errors`(on) |
+| 1-4 | **뷰포트 표시 방식** | `always`(현재) / `hover`(Sublime 기본) · 테두리 on/off · ✅ 09-17 색/테두리: 회색 `#808080` 18% 기본 · 테두리 없음 · `editor.minimap_box_color`/`editor.minimap_border` | `editor.minimap_viewport`(always/hover ✅ 09-17) |
+| 1-5 ✅ 09-17 | **클릭 동작** | `center`(현재 · 뷰포트 중앙) / `text`(클릭한 글로 스크롤 · ST4) | `editor.minimap_click`(center/text) |
 
 ### 2순위 · 자주 쓰는 것
 

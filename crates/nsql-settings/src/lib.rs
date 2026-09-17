@@ -218,6 +218,22 @@ const MSSQL_ENCRYPT_OPTS: &[(&str, Msg)] = &[
     ("login", Msg::ValMssqlEncryptLogin),
 ];
 
+const MINIMAP_VIEWPORT_OPTS: &[(&str, Msg)] = &[
+    ("always", Msg::ValMinimapVpAlways),
+    ("hover", Msg::ValMinimapVpHover),
+];
+
+const MINIMAP_CLICK_OPTS: &[(&str, Msg)] = &[
+    ("center", Msg::ValMinimapClickCenter),
+    ("text", Msg::ValMinimapClickText),
+];
+
+const REFETCH_OPTS: &[(&str, Msg)] = &[
+    ("strict", Msg::ValRefetchStrict),
+    ("strict_all", Msg::ValRefetchStrictAll),
+    ("offset", Msg::ValRefetchOffset),
+];
+
 const MSSQL_CANCEL_OPTS: &[(&str, Msg)] = &[
     ("attention", Msg::ValMssqlCancelAttention),
     ("socket", Msg::ValMssqlCancelSocket),
@@ -573,6 +589,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 줄 변경 표시(사용자 09-17): 저장 기준선 대비 수정(warn)·추가(ok)·삭제 쐐기(danger)를 줄번호 오른쪽 띠에. 향상 모드는 끈다.
+    Entry {
+        key: "editor.diff_marks",
+        cat: Msg::CatEditor,
+        label: Msg::LblDiffMarks,
+        desc: Msg::DescDiffMarks,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // 동일 출현 상자 스타일(사용자 09-17): 모양 · 선 색(+알파) · 선 두께 · 배경 색(+알파). 색은 `#RRGGBB[AA]`.
     Entry {
         key: "editor.occurrence_shape",
@@ -653,6 +678,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescGridOffsetWarn,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // ★ 데이터 일관성(사용자 09-17 · docs/43 §9): 커서가 없고 ORDER BY도 없으면 이어 붙이지 않고 처음부터 다시 받아 교체.
+    Entry {
+        key: "grid.refetch_mode",
+        cat: Msg::CatGrid,
+        label: Msg::LblRefetchMode,
+        desc: Msg::DescRefetchMode,
+        kind: SettingKind::Choice(REFETCH_OPTS),
+        default: "strict",
     },
     Entry {
         key: "grid.max_rows",
@@ -926,6 +960,39 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescMinimapBorder,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // 미니맵 1순위(docs/46 §2 · T-110): 뷰포트 표시 · 클릭 동작 · 찾기 띠 · 오류 줄.
+    Entry {
+        key: "editor.minimap_viewport",
+        cat: Msg::CatEditor,
+        label: Msg::LblMinimapViewport,
+        desc: Msg::DescMinimapViewport,
+        kind: SettingKind::Choice(MINIMAP_VIEWPORT_OPTS),
+        default: "always",
+    },
+    Entry {
+        key: "editor.minimap_click",
+        cat: Msg::CatEditor,
+        label: Msg::LblMinimapClick,
+        desc: Msg::DescMinimapClick,
+        kind: SettingKind::Choice(MINIMAP_CLICK_OPTS),
+        default: "center",
+    },
+    Entry {
+        key: "editor.minimap_find",
+        cat: Msg::CatEditor,
+        label: Msg::LblMinimapFind,
+        desc: Msg::DescMinimapFind,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.minimap_errors",
+        cat: Msg::CatEditor,
+        label: Msg::LblMinimapErrors,
+        desc: Msg::DescMinimapErrors,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     // 편집기 휠 단위(사용자 09-16 · 픽셀 스크롤 도입과 함께 그리드와 같은 선택지).
     Entry {
@@ -2209,6 +2276,10 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("editor.minimap_width", "editor.minimap", Dep::On),
     ("editor.minimap_box_color", "editor.minimap", Dep::On),
     ("editor.minimap_border", "editor.minimap", Dep::On),
+    ("editor.minimap_viewport", "editor.minimap", Dep::On),
+    ("editor.minimap_click", "editor.minimap", Dep::On),
+    ("editor.minimap_find", "editor.minimap", Dep::On),
+    ("editor.minimap_errors", "editor.minimap", Dep::On),
     ("statusbar.git_secs", "statusbar.git", Dep::On),
     ("editor.rulers", "editor.rulers_show", Dep::On),
     ("editor.ruler_color", "editor.rulers_show", Dep::On),

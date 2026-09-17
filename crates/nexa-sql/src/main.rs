@@ -159,6 +159,8 @@ struct App {
     run_stop_enabled: bool,
     /// 사용자가 중지를 눌렀다 — 뒤따르는 드라이버 오류(interrupted · 57014 · ORA-01013)는 오류가 아니라 "중지됨".
     run_cancel_requested: bool,
+    /// 실행 텍스트의 첫 줄이 편집기에서 몇 번째 줄인가(0 기준 · 문장 실행이면 그 문장의 줄 · 오류 줄 → 편집기 줄).
+    run_line_base: usize,
     /// 이번 취소가 세션을 끊는 방식(SQL Server) — 중지 뒤 트랜잭션 Lost + 재접속 안내.
     run_cancel_drops: bool,
     /// 파일 싱크 허브(설정 `log.file` · 배경 스레드 · 비면 None).
@@ -898,14 +900,24 @@ impl App {
                     all,
                     result,
                     stop,
+                    replace,
                 } => {
                     match result {
                         Ok((rs, more, elapsed)) => {
                             let n = rs.rows.len().to_string();
                             let secs = format!("{:.3}", elapsed.as_secs_f64());
+                            if replace {
+                                // 엄격 일관성(docs/43 §9): 처음부터 다시 받아 교체했다 — 로그 1줄.
+                                self.log_win.push(LogEntry::new(
+                                    LogKind::Info,
+                                    tf(Msg::StRefetchReplaced, &[&n]),
+                                ));
+                            }
                             let total = match self.grid_for(key) {
                                 Some(g) => {
-                                    if all {
+                                    if replace {
+                                        g.replace_rows(rs, more);
+                                    } else if all {
                                         // 전체 조회 = 나머지 이어 붙이기(위치·정렬·텍스트 스크롤 유지 · 09-17).
                                         g.append_all(rs, more);
                                     } else if offset == 0 {
@@ -1832,6 +1844,11 @@ impl App {
         let (color, alpha) = color_alpha_setting(&self.settings, "editor.minimap_box_color");
         self.editors
             .set_minimap_box(color, alpha, self.settings.flag("editor.minimap_border"));
+        self.editors.set_minimap_opts(
+            self.settings.get("editor.minimap_viewport") == Some("hover"),
+            self.settings.get("editor.minimap_click") == Some("text"),
+            self.settings.flag("editor.minimap_find"),
+        );
         self.redraw();
     }
 
@@ -2135,10 +2152,15 @@ impl App {
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
+            "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             "editor.minimap"
             | "editor.minimap_width"
             | "editor.minimap_box_color"
-            | "editor.minimap_border" => self.apply_minimap(),
+            | "editor.minimap_border"
+            | "editor.minimap_viewport"
+            | "editor.minimap_click"
+            | "editor.minimap_find"
+            | "editor.minimap_errors" => self.apply_minimap(),
             // 자원 거버너(T-90a/d · docs/39): 상한 세터 4종 · 모드가 바뀌면 원장 키 전부 재적용(실효 값이 바뀌므로).
             "log.max_lines" => self
                 .log_win
@@ -2605,6 +2627,8 @@ impl App {
                     offset,
                     limit,
                     budget_bytes: 0,
+                    strict: self.settings.get("grid.refetch_mode") != Some("offset"),
+                    strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
                 });
             }
             grid::FetchReq::All => {
@@ -2617,6 +2641,8 @@ impl App {
                     offset: self.grid.row_count(),
                     limit: 0,
                     budget_bytes: remain,
+                    strict: self.settings.get("grid.refetch_mode") != Some("offset"),
+                    strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
                 });
             }
             grid::FetchReq::Count => self.worker.send(worker::Cmd::Count { key, sql }),
@@ -2840,6 +2866,16 @@ impl App {
                 }
             }
             // ★ Sublime Ctrl+D — 캐럿 밑 단어 → 다음 출현을 추가 선택(다중 커서 · 09-15).
+            "edit.goto_bracket" => {
+                if self.editors.cur_mut().goto_bracket(false) {
+                    self.redraw();
+                }
+            }
+            "edit.expand_brackets" => {
+                if self.editors.cur_mut().expand_to_brackets() {
+                    self.redraw();
+                }
+            }
             "edit.expand_selection" => {
                 if self.editors.cur_mut().select_next_occurrence() {
                     let n = self.editors.selection_count();
@@ -3582,6 +3618,8 @@ impl App {
                     MenuEntry::Separator,
                     item("edit.select_all", Msg::MnSelectAll),
                     item("edit.expand_selection", Msg::MnExpandSelection),
+                    item("edit.goto_bracket", Msg::MnGotoBracket),
+                    item("edit.expand_brackets", Msg::MnExpandBrackets),
                     item("edit.select_all_occurrences", Msg::MnSelectAllOccurrences),
                     item("edit.select_line", Msg::MnSelectLine),
                     item("edit.split_lines", Msg::MnSplitLines),
@@ -3825,6 +3863,12 @@ impl App {
             "edit.expand_selection",
             Msg::MnEdit,
             Msg::MnExpandSelection,
+        ));
+        cmds.push(m("edit.goto_bracket", Msg::MnEdit, Msg::MnGotoBracket));
+        cmds.push(m(
+            "edit.expand_brackets",
+            Msg::MnEdit,
+            Msg::MnExpandBrackets,
         ));
         cmds.push(m(
             "edit.select_all_occurrences",
@@ -4408,6 +4452,8 @@ impl App {
     fn run_toast_start(&mut self, src: &str) {
         self.run_cancel_requested = false;
         self.sync_run_stmt_button();
+        self.editors.set_running(Some(self.run_editor));
+        self.editors.set_error_line(self.run_editor, None);
         let n = split_items(src).len().max(1);
         self.run_toast.start(src, nsql_log::now_local().stamp(), n);
     }
@@ -4608,21 +4654,34 @@ impl App {
             return;
         }
         // Ctrl/⌘+Enter = 선택 영역 → 없으면 **캐럿 위치의 한 문장**(`;` 종결 · 사용자 09-14) → F5 = 전체.
+        let mut line_base = 0usize;
         let text = if all {
             None
         } else {
-            self.ed_mut()
+            let sel = self
+                .ed_mut()
                 .copy_selection()
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| {
-                    let full = self.ed_mut().text();
-                    let byte_pos = full
-                        .char_indices()
-                        .nth(self.ed_mut().caret())
-                        .map_or(full.len(), |(b, _)| b);
-                    nsql_script::statement_at(&full, byte_pos).map(|it| it.text)
+                .filter(|s| !s.trim().is_empty());
+            if sel.is_some() {
+                // 선택 실행: 선택 시작 줄.
+                if let Some((a, _)) = self.ed_mut().selection() {
+                    let t = self.ed_mut().text();
+                    line_base = t.chars().take(a).filter(|c| *c == '\n').count();
+                }
+                sel
+            } else {
+                let full = self.ed_mut().text();
+                let byte_pos = full
+                    .char_indices()
+                    .nth(self.ed_mut().caret())
+                    .map_or(full.len(), |(b, _)| b);
+                nsql_script::statement_at(&full, byte_pos).map(|it| {
+                    line_base = it.line.saturating_sub(1);
+                    it.text
                 })
+            }
         };
+        self.run_line_base = line_base;
         let src = text.unwrap_or_else(|| self.ed_mut().text());
         self.grid.set_source_sql(&src);
         self.run_tab = self.grid_tab;
@@ -5001,6 +5060,7 @@ impl App {
                         }
                         self.busy = false;
                         self.sync_run_stmt_button();
+                        self.editors.set_running(None);
                         self.redraw();
                         continue;
                     }
@@ -5009,6 +5069,10 @@ impl App {
                     let (cls, summary) =
                         toast::summarize(self.dialect, error.code, &error.message, &stmt);
                     self.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
+                    if self.settings.flag("editor.minimap_errors") && line > 0 {
+                        let ed_line = self.run_line_base + line - 1;
+                        self.editors.set_error_line(self.run_editor, Some(ed_line));
+                    }
                     self.run_toast
                         .set_phase(runtoast::Phase::Error(summary.clone()));
                     // 오류가 나도 결과 영역은 기본 형태(빈 그리드)로 — 본문은 로그 창·상태줄·토스트(사용자 09-17).
@@ -5039,6 +5103,7 @@ impl App {
             changed = true;
             self.busy = false;
             self.sync_run_stmt_button();
+            self.editors.set_running(None);
             let failed = done.is_some();
             if std::mem::take(&mut self.run_cancel_requested) && !failed {
                 // Attention 취소(SQL Server · 세션 유지): 오류 없이 부분 결과로 끝난다 → "중지됨".
@@ -5416,6 +5481,15 @@ impl App {
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
+            if let Some((lines, dur)) = self.grid.take_text_report() {
+                dlog!(self, LogLayer::Load, LogLevel::Timing, {
+                    LogEntry::new(
+                        LogKind::Info,
+                        tf(Msg::LogDetTextView, &[&lines.to_string()]),
+                    )
+                    .elapsed(dur)
+                });
+            }
             if let Some((render, load, bytes, at)) = self.grid.take_perf_report() {
                 self.log_win.push(LogEntry::new(
                     LogKind::Info,
@@ -6539,11 +6613,32 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.txlog_win.is(id) {
-            if let TxLogAction::Paint = self.txlog_win.handle(&event) {
-                let ui_px = self.settings.font_px("ui.font_size");
-                self.txlog_win.set_active_editor(self.editors.active_id());
-                self.txlog_win
-                    .paint(&self.txlog, &self.ui_font, &self.theme, ui_px);
+            match self.txlog_win.handle(&event) {
+                TxLogAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    self.txlog_win.set_active_editor(self.editors.active_id());
+                    self.txlog_win
+                        .paint(&self.txlog, &self.ui_font, &self.theme, ui_px);
+                }
+                TxLogAction::CopySql(eid) => {
+                    if let Some(e) = self.txlog.entry(eid) {
+                        if !clipboard::write_text(&e.text) {
+                            self.status = t(Msg::ErrClipboard).into();
+                        }
+                    }
+                }
+                TxLogAction::OpenSql(eid) => {
+                    if let Some(text) = self.txlog.entry(eid).map(|e| e.text.clone()) {
+                        self.editors.new_tab(None);
+                        self.editors.cur_mut().set_text(&text);
+                        self.set_focus(Focus::Editor);
+                        if let Some(w) = &self.window {
+                            w.focus_window();
+                        }
+                        self.redraw();
+                    }
+                }
+                TxLogAction::None => {}
             }
             return;
         }
@@ -7033,6 +7128,7 @@ fn main() {
         run_stop_enabled: true,
         run_cancel_requested: false,
         run_cancel_drops: false,
+        run_line_base: 0,
         log_hub: None,
         file_purpose: FilePurpose::Editor,
         last_run_items: Vec::new(),
@@ -7188,6 +7284,8 @@ fn main() {
     app.apply_occurrence_style();
     app.apply_run_toast();
     app.apply_detail_mask();
+    app.editors
+        .set_diff_marks(app.settings.flag("editor.diff_marks"));
     app.sync_run_stmt_button();
     nsql_drivers::set_mssql_encryption(app.settings.get("mssql.encrypt") == Some("login"));
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));

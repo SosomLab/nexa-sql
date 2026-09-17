@@ -75,6 +75,12 @@ pub(crate) struct Editors {
     /// 미니맵(켬 · 폭 논리 px · T-97).
     minimap: (bool, i32),
     minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
+    /// 미니맵 동작(뷰포트 hover만 · 클릭 = 글로 · 찾기 띠).
+    minimap_opts: (bool, bool, bool),
+    /// 실행 중인 탭 id(탭 제목 앞 ▶ · T-108).
+    running: Option<u64>,
+    /// 줄 변경 표시(설정 `editor.diff_marks` · 향상 모드 off).
+    diff_marks: bool,
     /// 되돌리기 깊이 상한(`editor.undo_max`).
     undo_max: usize,
     /// 탭별 미커밋 문장 수·오래됨(수동 커밋 · DR-30 T-77) — 제목 뒤 `●n`(오래되면 `⚠n`).
@@ -163,6 +169,9 @@ impl Editors {
             scroll_snap: false,
             minimap: (false, 160),
             minimap_box: (None, None, false),
+            minimap_opts: (false, false, true),
+            running: None,
+            diff_marks: true,
             undo_max: 1000,
             tx_badges: HashMap::new(),
             tx_badge_mode: "count".into(),
@@ -199,6 +208,8 @@ impl Editors {
         tb.set_minimap(self.minimap.0);
         tb.set_minimap_width(self.minimap.1);
         tb.set_minimap_box(self.minimap_box.0, self.minimap_box.1, self.minimap_box.2);
+        tb.set_minimap_behavior(self.minimap_opts.0, self.minimap_opts.1);
+        tb.set_minimap_find(self.minimap_opts.2);
         tb.set_history_max(self.undo_max);
         tb.set_line_comment(syntax.line_comments.first().cloned());
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
@@ -383,6 +394,56 @@ impl Editors {
         for b in &mut self.bufs {
             b.set_minimap(on);
             b.set_minimap_width(width);
+        }
+    }
+
+    /// 미니맵 동작(설정 `editor.minimap_viewport`/`minimap_click`/`minimap_find` · 전 탭).
+    pub(crate) fn set_minimap_opts(&mut self, viewport_hover: bool, click_text: bool, find: bool) {
+        self.minimap_opts = (viewport_hover, click_text, find);
+        for b in &mut self.bufs {
+            b.set_minimap_behavior(viewport_hover, click_text);
+            b.set_minimap_find(find);
+        }
+    }
+
+    /// 줄 변경 표시 켬/끔 — 켜면 저장된 탭마다 기준선을 다시 준다.
+    pub(crate) fn set_diff_marks(&mut self, on: bool) {
+        self.diff_marks = on;
+        for i in 0..self.bufs.len() {
+            let base = if on && self.paths.get(i).is_some_and(|p| p.is_some()) {
+                self.saved.get(i).cloned()
+            } else {
+                None
+            };
+            self.bufs[i].set_baseline(base.as_deref());
+        }
+    }
+
+    fn refresh_baseline(&mut self, i: usize) {
+        let base = if self.diff_marks && self.paths.get(i).is_some_and(|p| p.is_some()) {
+            self.saved.get(i).cloned()
+        } else {
+            None
+        };
+        if let Some(b) = self.bufs.get_mut(i) {
+            b.set_baseline(base.as_deref());
+        }
+    }
+
+    /// 실행 중 탭 표시(제목 앞 ▶ · None = 없음).
+    pub(crate) fn set_running(&mut self, id: Option<u64>) {
+        if self.running != id {
+            self.running = id;
+            self.sync_tabs();
+        }
+    }
+
+    /// 오류 줄 마크(논리 줄 0 기준 · 그 탭의 미니맵) — `None` = 지움.
+    pub(crate) fn set_error_line(&mut self, id: u64, line: Option<usize>) {
+        for i in 0..self.bufs.len() {
+            if self.tab_id(i) == id {
+                self.bufs[i].set_minimap_errors(line.into_iter().collect());
+            }
         }
     }
 
@@ -619,6 +680,7 @@ impl Editors {
         self.titles[i] = name;
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = text.to_string();
+        self.refresh_baseline(i);
         self.eol[i] = eol;
         self.saved_eol[i] = eol;
         self.sync_tabs();
@@ -639,6 +701,7 @@ impl Editors {
         }
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = self.cur().text();
+        self.refresh_baseline(i);
         self.saved_eol[i] = self.eol[i];
         self.sync_tabs();
     }
@@ -660,6 +723,12 @@ impl Editors {
             format!("*{}", self.titles[i])
         } else {
             self.titles[i].clone()
+        };
+        // 실행 중 탭 = 제목 앞 ▶(T-108 · 사용자 09-17).
+        let base = if self.running == Some(self.tab_id(i)) {
+            format!("▶ {base}")
+        } else {
+            base
         };
         // 미커밋 배지(수동 커밋 · n>0일 때만 · DR-30): count `●3` · dot `●` · 오래되면 `⚠`.
         match self.tx_badges.get(&self.tab_id(i)) {

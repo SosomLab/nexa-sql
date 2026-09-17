@@ -245,6 +245,7 @@ pub const BOOST: &[(&str, &str)] = &[
     ("tabs.tooltip", "off"),
     ("editor.minimap", "off"),
     ("editor.highlight_selection", "off"),
+    ("editor.diff_marks", "off"),
     // ── I/O·기동(파일·프로세스·클립보드·둘째 창): git 프로세스 · 복사 시 HTML 생성 · 우클릭 클립보드 읽기 · 시작 시 로그 창
     ("statusbar.git", "off"),
     ("editor.copy_rich", "off"),

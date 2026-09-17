@@ -4,6 +4,7 @@
 //!
 //! 데이터는 호스트의 [`nsql_run::txlog::TxLog`]가 갖고, 창은 그릴 때 빌려 읽는다(복사 0 · 로그 창과 같은 창 골격).
 
+use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::controls::{LabelSide, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -23,6 +24,10 @@ use winit::window::{Window, WindowId};
 pub(crate) enum TxLogAction {
     None,
     Paint,
+    /// 우클릭 메뉴: 문장 복사(entry id).
+    CopySql(u64),
+    /// 우클릭 메뉴: 새 편집기 탭으로(entry id).
+    OpenSql(u64),
 }
 
 pub(crate) struct TxLogWin {
@@ -48,6 +53,10 @@ pub(crate) struct TxLogWin {
     table: Rect,
     /// 접속·탭 설명(제목).
     title_ctx: String,
+    /// 우클릭 메뉴 + 마지막 페인트의 행 → entry id.
+    menu: ContextMenu,
+    row_ids: Vec<u64>,
+    menu_row: Option<u64>,
 }
 
 /// 열 폭(논리 px · 문장 열은 나머지 전부).
@@ -86,6 +95,9 @@ impl TxLogWin {
             hover: None,
             table: Rect::new(0, 0, 0, 0),
             title_ctx: String::new(),
+            menu: ContextMenu::new(),
+            row_ids: Vec::new(),
+            menu_row: None,
         }
     }
 
@@ -204,9 +216,90 @@ impl TxLogWin {
     /// winit 사건 → 호스트 동작(Paint만 · 나머지는 창이 스스로).
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> TxLogAction {
         let mut inv = Invalidations::default();
+        // 우클릭 메뉴가 열려 있으면 모달(팝업 규칙: 항목 선택·Esc = 닫기 · 바깥 클릭 = 닫고 통과).
+        if self.menu.is_open() {
+            let (x, y) = self.cursor;
+            let me = match ev {
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.cursor = (position.x as i32, position.y as i32);
+                    Some(InputEvent::MouseMove {
+                        x: position.x as i32,
+                        y: position.y as i32,
+                    })
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                } => Some(InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift: false,
+                    primary: false,
+                }),
+                WindowEvent::MouseInput {
+                    state: ElementState::Released,
+                    button: MouseButton::Left,
+                    ..
+                } => Some(InputEvent::MouseUp { x, y }),
+                WindowEvent::KeyboardInput { event: kev, .. }
+                    if kev.state == ElementState::Pressed
+                        && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Escape)) =>
+                {
+                    Some(InputEvent::Key {
+                        key: CtlKey::Escape,
+                        shift: false,
+                        primary: false,
+                    })
+                }
+                WindowEvent::RedrawRequested => return TxLogAction::Paint,
+                _ => None,
+            };
+            if let Some(e) = me {
+                let consumed = self.menu.on_event(&e);
+                self.redraw();
+                if let Some(id) = self.menu.take_picked() {
+                    let row = self.menu_row.take();
+                    return match (id.as_str(), row) {
+                        ("copy", Some(r)) => TxLogAction::CopySql(r),
+                        ("open", Some(r)) => TxLogAction::OpenSql(r),
+                        _ => TxLogAction::None,
+                    };
+                }
+                if consumed {
+                    return TxLogAction::None;
+                }
+            }
+        }
         match ev {
             WindowEvent::CloseRequested => self.close(),
             WindowEvent::RedrawRequested => return TxLogAction::Paint,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                // 행 위 우클릭 = 문장 메뉴(복사 · 편집기로).
+                if let Some(r) = self.hover {
+                    if let Some(&id) = self.row_ids.get(r) {
+                        self.menu_row = Some(id);
+                        let (x, y) = self.cursor;
+                        let host = self.table;
+                        self.menu.set_scale(self.scale);
+                        self.menu.open_at(
+                            x,
+                            y,
+                            vec![
+                                CtxItem::item("copy", t(Msg::MnTxCopySql)),
+                                CtxItem::item("open", t(Msg::MnTxOpenSql)),
+                            ],
+                            host,
+                            (220.0 * self.scale) as i32,
+                        );
+                        self.redraw();
+                    }
+                }
+            }
             WindowEvent::Resized(_) => self.redraw(),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.scale = *scale_factor as f32;
@@ -418,6 +511,7 @@ impl TxLogWin {
             );
             self.table = body;
             let rows: Vec<&nsql_run::txlog::TxEntry> = log.entries(&self.filter).collect();
+            self.row_ids = rows.iter().map(|e| e.id).collect();
             self.rows_seen = rows.len();
             let max_scroll = (rows.len() as i32 * row_h - body.h).max(0);
             self.scroll = self.scroll.clamp(0, max_scroll);
@@ -540,6 +634,7 @@ impl TxLogWin {
                 &info,
                 th.text_dim,
             );
+            self.menu.paint(&mut dc, th);
         }
         let _ = buf.present();
         self.surface = Some(surface);

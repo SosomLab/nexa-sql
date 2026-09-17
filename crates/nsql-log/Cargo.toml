@@ -8,6 +8,11 @@ authors.workspace = true
 repository.workspace = true
 description = "Nexa SQL 실행 로그 — 타임스탬프(밀리초) 첫 컬럼 · 구분(전송/실행/최초 응답/페치/완료/오류) · Raw/Markdown/Grid 출력 어댑터(LogFormat) · 링 버퍼 · 의존 0 (사용자 09-14)"
 
+[features]
+# `devlog` 끄면 상세 로그 게이트가 상수 false → 상세 경로 코드가 릴리스 특수 빌드에서 사라진다(docs/48 §5).
+default = ["devlog"]
+devlog = []
+
 [lints]
 workspace = true
 

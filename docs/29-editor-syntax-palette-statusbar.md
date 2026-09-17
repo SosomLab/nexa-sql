@@ -132,10 +132,10 @@ FROM MTXRPTY2.MTX_AGENT_LOG A, MTXRPTY2.MTX_DBMS C, MTXRPTY2.MTX_REPORT D, MTXRP
 | 선택 확장 | +Shift | +⇧ | 위 전부 | ✅ |
 | 캐럿 추가 | Ctrl+클릭 | ⌘클릭 | 같은 자리 = 제거 · 마지막 하나 유지 | ✅ `toggle_caret` |
 | 열 선택 | Alt+Shift+드래그 · 가운데 드래그 | ⌥드래그 | 시작 Col보다 짧은 줄 제외 · 끝 Col은 포인터 기준 줄마다 클램프 | ✅(가운데 버튼 후속) |
-| 괄호 짝 | Ctrl+M | ⌃M | `move_to: brackets` | ☐ |
-| 괄호 안 확장 | Ctrl+Shift+M | ⌃⇧M | `expand_selection: brackets` | ☐ |
+| 괄호 짝 | Ctrl+M | ⌃M | `move_to: brackets` | ✅ 09-17 |
+| 괄호 안 확장 | Ctrl+Shift+M | ⌃⇧M | `expand_selection: brackets` · 재입력 = 괄호 포함 → 바깥 | ✅ 09-17 |
 | 스코프 확장 | Ctrl+Shift+Space | ⌃⇧Space | `expand_selection: scope` | ☐ |
-| 스크롤만 | Ctrl+↑/↓ | ⌃⌥↑/↓ | `scroll_lines`(캐럿 유지) | ☐ |
+| 스크롤만 | Ctrl+↑/↓ | ⌘↑/↓ | `scroll_lines`(캐럿 유지) | ✅ 09-17 |
 | 다중 커서 실행 | — | — | 문장 실행(Ctrl+Enter)·툴바 버튼 **차단** · 전체 실행만 | ✅ |
 
 ## 8. 창 포커스 ✅ (설정 `window.focus` · 카테고리 Window)

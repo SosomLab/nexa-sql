@@ -33,6 +33,8 @@ struct TextJob {
     cancel: Arc<AtomicBool>,
     done: usize,
     total: usize,
+    /// 시작 시각(개발자 모드 `load` 층 — 변환 소요).
+    started: std::time::Instant,
 }
 
 impl Drop for TextJob {
@@ -245,6 +247,8 @@ pub(crate) struct Grid {
     text_job: Option<TextJob>,
     /// 다음 텍스트 변환 시작 때 스크롤을 유지(추가 페치 뒤 · 처음부터 다시 그리지 않게).
     text_keep_scroll: bool,
+    /// 텍스트 변환 완료 보고(줄 수 · 소요 · 1회성 · 호스트가 상세 로그로).
+    text_report: Option<(usize, std::time::Duration)>,
     /// 변환 중 콘텐츠 높이 하한(변환 전 높이) — 줄이 다시 채워지는 동안 스크롤이 0으로 잘리지 않게(사용자 09-17 CSV 1행 점프).
     text_ch_hold: i32,
     /// 텍스트 보기 행번호 거터 폭(페인트가 잰다 · 설정 `grid.row_numbers` · 사용자 09-16 "다른 보기에서도 행번호").
@@ -364,6 +368,7 @@ impl Default for Grid {
             text_longest: None,
             text_job: None,
             text_keep_scroll: false,
+            text_report: None,
             text_ch_hold: 0,
             text_gutter_w: 0,
             perf_report: false,
@@ -593,6 +598,41 @@ impl Grid {
         }
     }
 
+    /// ★ 엄격 일관성 교체(docs/43 §9): 처음부터 다시 받은 결과로 **행 전체를 바꾸되** 스크롤·정렬·컬럼 폭·순서·보기 모드는 그대로.
+    pub(crate) fn replace_rows(&mut self, rs: ResultSet, more: bool) {
+        self.end_fetch_all();
+        self.fetching = false;
+        let same_cols = self
+            .rs
+            .as_ref()
+            .is_some_and(|r| r.columns().len() == rs.columns.len());
+        let n = rs.rows.len();
+        self.rs = Some(ResultData::new(rs));
+        self.row_order = (0..n).collect();
+        if !same_cols {
+            self.col_order = (0..self.rs.as_ref().map_or(0, |r| r.columns().len())).collect();
+            self.col_w.clear();
+            self.sort_keys.clear();
+        }
+        if !self.sort_keys.is_empty() {
+            self.apply_sort();
+        }
+        self.regions.clear();
+        self.sel_anchor = None;
+        self.sel_cur = None;
+        self.drag_sel = None;
+        self.more = more;
+        self.total = None;
+        self.text_lines = Vec::new();
+        self.text_bytes = 0;
+        self.perf_report = true;
+        self.sync_fetch_tools();
+        if self.view != ResultView::Grid {
+            self.text_keep_scroll = true;
+            self.refresh_text_view();
+        }
+    }
+
     /// 호스트가 가져가는 페치 요청(1회성) — 가져가는 순간 진행 중으로 표시. 전체 조회는 다른 페치가 나가 있는 동안 기다린다
     /// (그 세그먼트가 붙은 뒤 `rows()`가 정확한 offset).
     pub(crate) fn take_fetch_request(&mut self) -> Option<FetchReq> {
@@ -765,6 +805,7 @@ impl Grid {
                 cancel,
                 done: 0,
                 total,
+                started: std::time::Instant::now(),
             });
         }
     }
@@ -813,10 +854,17 @@ impl Grid {
             }
         }
         if finished {
-            self.text_job = None;
+            if let Some(job) = self.text_job.take() {
+                self.text_report = Some((self.text_lines.len(), job.started.elapsed()));
+            }
             self.text_ch_hold = 0;
         }
         changed
+    }
+
+    /// 텍스트 변환 완료 보고(1회성).
+    pub(crate) fn take_text_report(&mut self) -> Option<(usize, std::time::Duration)> {
+        self.text_report.take()
     }
 
     /// 변환이 진행 중인가(호스트가 tick을 돌릴 근거).
@@ -1602,7 +1650,8 @@ impl Grid {
         for (i, r) in regions.iter().enumerate() {
             if let Some((text, n)) = self.copy_region(kind, *r, i == 0) {
                 if i > 0 {
-                    out.push('\n');
+                    // 구간 사이 빈 줄(구간 텍스트에는 끝 줄바꿈이 없으므로 둘).
+                    out.push_str("\n\n");
                 }
                 out.push_str(&text);
                 cells += n;
@@ -1651,6 +1700,9 @@ impl Grid {
             "T",
             &KeySpec::default(),
         );
+        // ★ 복사에는 끝 줄바꿈을 붙이지 않는다(사용자 09-17): 렌더러는 블록(줄마다 `\n`)이라 마지막 행 뒤에도 `\n`이 남는데,
+        //   단일 셀/행을 붙여넣을 때 줄바꿈이 따라오면 안 된다 · 여러 행은 행 사이 줄바꿈만.
+        let out = out.trim_end_matches(['\n', '\r']).to_string();
         Some((out, rows.len() * cols.len()))
     }
 
@@ -3197,6 +3249,27 @@ mod tests {
 
     /// DR-33: 복사 = 선택 뷰 → nsql-io 공용 렌더(형식 5종) · NULL 글자는 설정 하나 · 정렬·열 순서(표시 순서) 반영 ·
     /// 추가 페치는 세그먼트로 이어 붙어 같은 세트에서 파생된다.
+    /// 복사 결과 끝에 줄바꿈이 없다(단일 셀 = 값만 · 여러 행 = 행 사이만 · 사용자 09-17).
+    #[test]
+    fn copy_has_no_trailing_newline() {
+        let mut g = grid_with(&[100, 80]);
+        let rs = ResultSet {
+            columns: vec![Column {
+                name: "c0".into(),
+                type_name: String::new(),
+            }],
+            rows: (0..3).map(|i| vec![Value::Int(i)]).collect(),
+        };
+        g.set_result(rs);
+        g.regions = vec![(1, 1, 0, 0)]; // (r0, r1, c0, c1)
+        let (one, n) = g.copy_selection(CopyKind::Tsv).expect("one cell");
+        assert_eq!((one.as_str(), n), ("1", 1));
+        g.regions = vec![(0, 2, 0, 0)];
+        let (many, n) = g.copy_selection(CopyKind::Tsv).expect("three rows");
+        assert_eq!((many.as_str(), n), ("0\n1\n2", 3));
+        assert!(!many.ends_with('\n'));
+    }
+
     #[test]
     fn copy_uses_shared_renderer_null_text_and_segments() {
         let mut g = Grid::default();
@@ -3230,21 +3303,18 @@ mod tests {
         g.col_order = vec![1, 0]; // 열 이동: nm, id
         g.select_all();
         let (csv, cells) = g.copy_selection(CopyKind::Csv).expect("Csv");
-        assert_eq!(csv, "nm,id\na|b,1\n∅,2\n");
+        assert_eq!(csv, "nm,id\na|b,1\n∅,2", "끝 줄바꿈 없음(09-17)");
         assert_eq!(cells, 4);
         let (md, _) = g.copy_selection(CopyKind::Markdown).expect("Markdown");
-        assert_eq!(
-            md,
-            "| nm | id |\n| --- | ---: |\n| a\\|b | 1 |\n| ∅ | 2 |\n"
-        );
+        assert_eq!(md, "| nm | id |\n| --- | ---: |\n| a\\|b | 1 |\n| ∅ | 2 |");
         let (txt, _) = g.copy_selection(CopyKind::Text).expect("Text");
-        assert_eq!(txt, "nm   id\n---  --\na|b   1\n∅     2\n");
+        assert_eq!(txt, "nm   id\n---  --\na|b   1\n∅     2");
         let (tsv, _) = g.copy_selection(CopyKind::Tsv).expect("Tsv");
-        assert_eq!(tsv, "a|b\t1\n∅\t2\n");
+        assert_eq!(tsv, "a|b\t1\n∅\t2");
         let (json, _) = g.copy_selection(CopyKind::Json).expect("Json");
         assert_eq!(
             json,
-            "[\n  {\"nm\": \"a|b\", \"id\": 1},\n  {\"nm\": null, \"id\": 2}\n]\n"
+            "[\n  {\"nm\": \"a|b\", \"id\": 1},\n  {\"nm\": null, \"id\": 2}\n]"
         );
         // 예산 회계: 데이터 + 텍스트 캐시(그리드 보기 = 0).
         assert!(g.approx_bytes() > 0 && g.text_bytes == 0);

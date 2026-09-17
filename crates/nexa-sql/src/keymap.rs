@@ -261,6 +261,20 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "ctrl+d",
     },
     Command {
+        id: "edit.goto_bracket",
+        label: Msg::MnGotoBracket,
+        win: "ctrl+m",
+        mac: "ctrl+m",
+        linux: "ctrl+m",
+    },
+    Command {
+        id: "edit.expand_brackets",
+        label: Msg::MnExpandBrackets,
+        win: "ctrl+shift+m",
+        mac: "ctrl+shift+m",
+        linux: "ctrl+shift+m",
+    },
+    Command {
         id: "edit.select_all_occurrences",
         label: Msg::MnSelectAllOccurrences,
         win: "alt+f3",

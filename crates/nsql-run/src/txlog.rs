@@ -286,6 +286,12 @@ impl TxLog {
         self.records.iter().find(|r| r.id == id)
     }
 
+    /// id로 문장 하나(우클릭 메뉴 · 복사/편집기로).
+    #[must_use]
+    pub fn entry(&self, id: u64) -> Option<&TxEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+
     /// 문장의 트랜잭션 결과(표시 시점에 읽는다).
     #[must_use]
     pub fn outcome_of(&self, e: &TxEntry) -> TxOutcome {

@@ -351,7 +351,15 @@ const fn detail_bit(layer: LogLayer, level: LogLevel) -> u32 {
 /// 이 층·수준의 상세 로그를 만들어야 하는가 — **항상 인라인**(호출 0 · 분기 1).
 #[inline(always)]
 pub fn wants(layer: LogLayer, level: LogLevel) -> bool {
-    DETAIL_MASK.load(std::sync::atomic::Ordering::Relaxed) & detail_bit(layer, level) != 0
+    #[cfg(feature = "devlog")]
+    {
+        DETAIL_MASK.load(std::sync::atomic::Ordering::Relaxed) & detail_bit(layer, level) != 0
+    }
+    #[cfg(not(feature = "devlog"))]
+    {
+        let _ = (layer, level);
+        false
+    }
 }
 
 pub fn set_detail_mask(mask: u32) {

@@ -235,7 +235,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 **구현**: 레지스트리 `perf.boost`(Bool · Performance) · `perf::BOOST` 표 · `Settings::effective` 최우선 · `boost_locked(key)` · `PerfSource::Boost`(`nsql config list perf` 출처 "향상") · 설정 창 = 대상 카드 잠금 + 설명 아래 "⚡ 실행 속도 향상 적용값: X" · 호스트 = 켬/끔 때 대상 키 전부 `apply_setting`(즉시 반영) · 신설 배선 `ui.menu_icons`(nexa-ctl ctxmenu 전역) · `ui.clipboard_probe`(우클릭 클립보드 읽기 생략). 향상 모드는 부하원 원장(§3)에 새 행을 만들지 않는다(기존 키의 값만 강제).
 
-> 09-17 추가: 향상 모드 강제 표에 `log.dev_mode=off`(상세 로그 게이트 0 · [48](48-logging-architecture.md)).
+> 09-17 추가: 향상 모드 강제 표에 `editor.diff_marks=off`(줄 디프 계산 · 편집마다) · `log.dev_mode=off`(상세 로그 게이트 0 · [48](48-logging-architecture.md)).
 
 ## 5. 시나리오 — 모드가 실제로 바꾸는 것(사용자 관점)
 

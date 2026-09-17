@@ -64,6 +64,11 @@ pub(crate) enum Cmd {
         limit: usize,
         /// 전체 조회(limit 0)의 메모리 예산(바이트 · 0 = 무제한 · D-72) — 넘치면 예산까지만 남기고 `more`.
         budget_bytes: u64,
+        /// ★ 일관성 엄격(설정 `grid.refetch_mode=strict` · docs/43 §9): 커서가 없고 최상위 ORDER BY도 없으면 이어 붙이지 않고
+        ///   **처음부터 다시 받아 교체**한다(한 번의 실행이 결과를 정의 → 행수·값 완전 일치).
+        strict: bool,
+        /// `strict_all`(43 §9-3): ORDER BY가 있어도 커서를 잃으면 교체(동점 정렬 대비).
+        strict_all: bool,
     },
     /// `SELECT COUNT(*) FROM (질의) x`.
     Count {
@@ -91,6 +96,8 @@ pub(crate) enum ConnOutcome {
         all: bool,
         result: Result<(nsql_core::ResultSet, bool, Duration), String>,
         stop: Option<FetchStop>,
+        /// 결과가 **처음부터 다시 받은 전체**라 그리드가 교체해야 한다(엄격 모드 · 위치는 유지).
+        replace: bool,
     },
     /// 전체 조회 진행(배치마다 · T-48b): 지금까지 받은 행·바이트.
     FetchProgress {
@@ -340,8 +347,11 @@ pub(crate) fn spawn(
                         offset,
                         limit,
                         budget_bytes,
+                        strict,
+                        strict_all,
                     } => {
                         let mut stop: Option<FetchStop> = None;
+                        let mut replace = false;
                         let result = match runner.dialect() {
                             None => Err(t(Msg::ExpNotConnected).to_string()),
                             Some(_) => {
@@ -360,7 +370,18 @@ pub(crate) fn spawn(
                                         .unwrap_or(5000);
                                     let batch = page_fs.max(all_fs);
                                     runner.set_fetch_size(batch);
-                                    let rows0 = offset as u64;
+                                    let cursor_h = if runner.cursor_matches(&sql, offset) {
+                                        runner.cursor().map(|(h, _)| h)
+                                    } else {
+                                        None
+                                    };
+                                    // ★ 엄격 일관성(docs/43 §9): 커서를 잃었고 정렬(ORDER BY)도 없으면 재실행+건너뛰기/OFFSET은
+                                    //   순서가 달라질 수 있다 → 처음부터 전부 다시 받아 **교체**(offset 0).
+                                    let strict_replace = strict
+                                        && cursor_h.is_none()
+                                        && (strict_all || !nsql_io::paging::has_order_by(&sql));
+                                    replace = strict_replace;
+                                    let rows0 = if strict_replace { 0 } else { offset as u64 };
                                     let mut last = std::time::Instant::now();
                                     let mut progress = |rows: u64, bytes: u64| {
                                         if last.elapsed() >= Duration::from_millis(100) {
@@ -374,15 +395,46 @@ pub(crate) fn spawn(
                                         }
                                         !cancel_flag.load(Ordering::Relaxed)
                                     };
-                                    let cursor_h = if runner.cursor_matches(&sql, offset) {
-                                        runner.cursor().map(|(h, _)| h)
-                                    } else {
-                                        None
-                                    };
                                     let r: Result<
                                         (nsql_core::ResultSet, bool, Duration),
                                         nsql_core::DbError,
-                                    > = if let Some(h) = cursor_h {
+                                    > = if strict_replace {
+                                        // ⓪ 엄격: 처음부터 전부(커서 드라이버는 커서로 스트리밍 · 아니면 OFFSET 0 재질의).
+                                        let t0 = std::time::Instant::now();
+                                        if runner.cursor_supported() {
+                                            runner.query_stream(&sql, batch).and_then(
+                                                |(mut rs, h, _)| {
+                                                    let Some(h) = h else {
+                                                        return Ok((rs, false, t0.elapsed()));
+                                                    };
+                                                    let (rest, stopped, _) = runner.fetch_all(
+                                                        h,
+                                                        budget_bytes,
+                                                        &mut progress,
+                                                    )?;
+                                                    rs.rows.extend(rest.rows);
+                                                    Ok((rs, stopped, t0.elapsed()))
+                                                },
+                                            )
+                                        } else {
+                                            runner.fetch_offset(&sql, 0, 0).map(
+                                                |(mut rs, more, tl)| {
+                                                    if budget_bytes > 0
+                                                        && rs.approx_bytes() > budget_bytes
+                                                    {
+                                                        let n = rs.rows.len().max(1);
+                                                        let per =
+                                                            (rs.approx_bytes() / n as u64).max(1);
+                                                        let keep = (budget_bytes / per) as usize;
+                                                        rs.rows.truncate(keep.max(1));
+                                                        (rs, true, tl.total())
+                                                    } else {
+                                                        (rs, more, tl.total())
+                                                    }
+                                                },
+                                            )
+                                        }
+                                    } else if let Some(h) = cursor_h {
                                         // ① 커서 이어 받기.
                                         let t0 = std::time::Instant::now();
                                         runner
@@ -457,6 +509,42 @@ pub(crate) fn spawn(
                                     });
                                     runner.set_fetch_size(page_fs);
                                     r.map_err(|e| e.message)
+                                } else if strict
+                                    && !runner.cursor_matches(&sql, offset)
+                                    && (strict_all || !nsql_io::paging::has_order_by(&sql))
+                                {
+                                    // ⓪ 엄격(docs/43 §9): 커서 없음 + 정렬 없음 → 처음부터 `offset+limit`행을 한 실행으로 다시 받아 교체.
+                                    //   커서 드라이버는 그 자리에 커서를 남겨 다음 세그먼트부터는 커서로 잇는다.
+                                    replace = true;
+                                    let need = offset + limit;
+                                    let t0 = std::time::Instant::now();
+                                    let r: Result<
+                                        (nsql_core::ResultSet, bool, Duration),
+                                        nsql_core::DbError,
+                                    > = if runner.cursor_supported() {
+                                        runner.query_stream(&sql, need.max(1)).and_then(
+                                            |(mut rs, h, _)| {
+                                                let mut more = h.is_some();
+                                                if let Some(h) = h {
+                                                    while rs.rows.len() < need && more {
+                                                        let (chunk, m, _) = runner
+                                                            .fetch_next(h, need - rs.rows.len())?;
+                                                        more = m;
+                                                        if chunk.rows.is_empty() {
+                                                            break;
+                                                        }
+                                                        rs.rows.extend(chunk.rows);
+                                                    }
+                                                }
+                                                Ok((rs, more, t0.elapsed()))
+                                            },
+                                        )
+                                    } else {
+                                        runner
+                                            .fetch_offset(&sql, 0, need)
+                                            .map(|(rs, more, tl)| (rs, more, tl.total()))
+                                    };
+                                    r.map_err(|e| e.message)
                                 } else {
                                     // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
                                     runner
@@ -472,6 +560,7 @@ pub(crate) fn spawn(
                             all: limit == 0,
                             result,
                             stop,
+                            replace,
                         });
                         wake_now();
                         true
