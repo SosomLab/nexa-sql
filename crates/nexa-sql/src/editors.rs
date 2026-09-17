@@ -7,7 +7,7 @@
 use crate::eol::Eol;
 use crate::syntax::SyntaxRegistry;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
-use nexa_ctl::draw::{draw_tooltip, DrawCtx};
+use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{
@@ -1249,6 +1249,8 @@ impl Editors {
             card.push_str(": ");
             card.push_str(conn);
         }
-        draw_tooltip(dc, th, r, clamp_w, &card, self.scale);
+        // ★ 가로 클램프는 창 왼쪽이 아니라 **편집기 영역의 x부터**(사용자 09-18 캡처): 첫 탭의 카드가 탭 가운데에 맞춰지며
+        //   왼쪽으로 나가 탐색기 밑에 깔렸다(탐색기가 나중에 그려진다) — 결과 도구줄 툴팁(09-16)과 같은 처방.
+        draw_tooltip_in(dc, th, r, (self.bounds.x, clamp_w), &card, self.scale);
     }
 }
