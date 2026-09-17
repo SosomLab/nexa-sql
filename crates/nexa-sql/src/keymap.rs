@@ -902,6 +902,15 @@ pub(crate) struct Keymap {
     codes: HashMap<&'static str, String>,
 }
 
+/// 2단 코드 분리 — 쉼표 앞 글자가 `+`이면 그 쉼표는 **키**(`cmd+,` · `ctrl+alt+,`)라 자르지 않는다(사용자 09-17 ⌘, 결함).
+fn split_seq(code: &str) -> Option<(&str, &str)> {
+    let b = code.as_bytes();
+    (0..b.len())
+        .filter(|&i| b[i] == b',' && i > 0 && b[i - 1] != b'+')
+        .map(|i| (&code[..i], &code[i + 1..]))
+        .next()
+}
+
 impl Keymap {
     /// 설정에서 조립 — `key.<id>`가 비어 있으면 플랫폼 기본.
     pub(crate) fn from_settings(s: &Settings) -> Self {
@@ -918,7 +927,7 @@ impl Keymap {
                 if part.trim().eq_ignore_ascii_case("none") {
                     continue;
                 }
-                if let Some((a, b)) = part.split_once(',') {
+                if let Some((a, b)) = split_seq(part) {
                     if let (Some(a), Some(b)) = (Chord::parse(a), Chord::parse(b)) {
                         km.prefixes.insert(a.clone());
                         km.seq.insert((a, b), c.id);
@@ -1133,6 +1142,15 @@ mod tests {
         assert_eq!(
             km.lookup(&Chord::parse(code).expect("parse")),
             Some("edit.prefs")
+        );
+        // 쉼표 키 vs 2단 코드 구분.
+        assert_eq!(split_seq("cmd+,"), None);
+        assert_eq!(split_seq("ctrl+alt+,"), None);
+        assert_eq!(split_seq("ctrl+k,ctrl+u"), Some(("ctrl+k", "ctrl+u")));
+        assert_eq!(split_seq("ctrl+k,ctrl+,"), Some(("ctrl+k", "ctrl+,")));
+        assert_eq!(
+            km.lookup(&Chord::parse("ctrl+alt+,").expect("parse")),
+            Some("edit.bracket_prev")
         );
     }
 

@@ -279,10 +279,12 @@ pub enum LogLayer {
     Tx = 6,
     /// 메타(탐색기·카탈로그).
     Meta = 7,
+    /// 확장 매니저(저장소 읽기·다운로드 속도·검증·설치 폴더 · 사용자 09-17).
+    Ext = 8,
 }
 
 impl LogLayer {
-    pub const ALL: [LogLayer; 8] = [
+    pub const ALL: [LogLayer; 9] = [
         LogLayer::App,
         LogLayer::Net,
         LogLayer::Exec,
@@ -291,6 +293,7 @@ impl LogLayer {
         LogLayer::Render,
         LogLayer::Tx,
         LogLayer::Meta,
+        LogLayer::Ext,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -302,6 +305,7 @@ impl LogLayer {
             LogLayer::Render => "render",
             LogLayer::Tx => "tx",
             LogLayer::Meta => "meta",
+            LogLayer::Ext => "ext",
         }
     }
     pub fn parse(s: &str) -> Option<LogLayer> {
@@ -341,11 +345,11 @@ impl LogLevel {
 
 /// ★ 상세 로그 게이트(docs/48 §3) — 층×수준 비트 하나의 원자 정수. 꺼져 있으면(0) 상세 로그 코드는 **load 1회 + 예측 가능한
 /// 분기 1개**만 남고 문자열·시각·할당은 전혀 일어나지 않는다. 쓰기는 설정 변경 때만(`Relaxed`로 충분 — 순서 보장 불필요).
-static DETAIL_MASK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static DETAIL_MASK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[inline(always)]
-const fn detail_bit(layer: LogLayer, level: LogLevel) -> u32 {
-    1u32 << ((layer as u32) * 4 + (level as u32))
+const fn detail_bit(layer: LogLayer, level: LogLevel) -> u64 {
+    1u64 << ((layer as u64) * 4 + (level as u64))
 }
 
 /// 이 층·수준의 상세 로그를 만들어야 하는가 — **항상 인라인**(호출 0 · 분기 1).
@@ -362,18 +366,18 @@ pub fn wants(layer: LogLayer, level: LogLevel) -> bool {
     }
 }
 
-pub fn set_detail_mask(mask: u32) {
+pub fn set_detail_mask(mask: u64) {
     DETAIL_MASK.store(mask, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub fn detail_mask() -> u32 {
+pub fn detail_mask() -> u64 {
     DETAIL_MASK.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// 설정 `log.dev_layers` → 마스크. 문법: `layer[:level+level]`을 쉼표로 · 수준 생략 = timing+progress+trace ·
 /// `*` = 전 층 전 수준 · 빈 문자열 = 0. 예 `net,fetch:timing+progress,render:timing`.
-pub fn parse_detail_layers(spec: &str) -> u32 {
-    let mut m = 0u32;
+pub fn parse_detail_layers(spec: &str) -> u64 {
+    let mut m = 0u64;
     for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         let (layer_s, levels_s) = match part.split_once(':') {
             Some((a, b)) => (a, Some(b)),
@@ -398,7 +402,7 @@ pub fn parse_detail_layers(spec: &str) -> u32 {
 }
 
 /// 마스크에 층이 하나라도 켜져 있는가(메뉴 체크 표시).
-pub fn layer_in_mask(mask: u32, layer: LogLayer) -> bool {
+pub fn layer_in_mask(mask: u64, layer: LogLayer) -> bool {
     LogLevel::DETAIL
         .iter()
         .any(|v| mask & detail_bit(layer, *v) != 0)
@@ -1214,7 +1218,7 @@ mod tests {
         assert!(layer_in_mask(m, LogLayer::Render) && !layer_in_mask(m, LogLayer::Load));
         assert_eq!(
             parse_detail_layers("*"),
-            parse_detail_layers("app,net,exec,fetch,load,render,tx,meta")
+            parse_detail_layers("app,net,exec,fetch,load,render,tx,meta,ext")
         );
         set_detail_mask(0);
         let e = LogEntry::new(LogKind::Info, "x").at(LogLayer::Net, LogLevel::Timing);

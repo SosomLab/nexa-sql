@@ -1895,7 +1895,10 @@ impl App {
             "ext.install" => {
                 self.ext_catalog.clear();
                 for src in mgr::sources(&self.settings) {
-                    match mgr::fetch_index(&src) {
+                    let mut tr = mgr::Trace::default();
+                    let r = mgr::fetch_index_traced(&src, &mut tr);
+                    self.ext_trace(tr);
+                    match r {
                         Ok(idx) => {
                             for p in idx.packages.into_iter().filter(|p| !is_installed(&p.id)) {
                                 let n = self.ext_catalog.len();
@@ -2018,7 +2021,10 @@ impl App {
                 else {
                     return;
                 };
-                match mgr::install(&src, &sum) {
+                let mut tr = mgr::Trace::default();
+                let r = mgr::install(&src, &sum, &mut tr);
+                self.ext_trace(tr);
+                match r {
                     Ok(meta) => {
                         let note = if meta.message_install.is_empty() {
                             String::new()
@@ -2037,15 +2043,20 @@ impl App {
                     }
                 }
             }
-            "remove" => match mgr::remove(key) {
-                Ok(()) => {
-                    self.status = tf(Msg::StExtRemoved, &[key]);
-                    self.log_win
-                        .push(LogEntry::new(LogKind::Info, self.status.clone()));
-                    self.apply_extensions(None);
+            "remove" => {
+                let mut tr = mgr::Trace::default();
+                let r = mgr::remove(key, &mut tr);
+                self.ext_trace(tr);
+                match r {
+                    Ok(()) => {
+                        self.status = tf(Msg::StExtRemoved, &[key]);
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                        self.apply_extensions(None);
+                    }
+                    Err(e) => self.status = e,
                 }
-                Err(e) => self.status = e,
-            },
+            }
             "enable" | "disable" => {
                 let cur = self
                     .settings
@@ -2111,6 +2122,15 @@ impl App {
             _ => {}
         }
         self.redraw();
+    }
+
+    /// 매니저 추적 줄 → 로그 창 `ext` 층(개발자 모드 · `log.dev_layers`에 ext · 사용자 09-17 "다운로드 속도·설치 폴더까지").
+    fn ext_trace(&mut self, tr: extensions::manager::Trace) {
+        for line in tr.0 {
+            dlog!(self, LogLayer::Ext, LogLevel::Timing, {
+                LogEntry::new(LogKind::Info, line)
+            });
+        }
     }
 
     /// "Add Repository" 프롬프트 확정 — 루트에 index.json이 읽히면 설정에 더한다.

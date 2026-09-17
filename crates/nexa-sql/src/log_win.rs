@@ -123,7 +123,7 @@ pub(crate) struct LogWin {
     dev: bool,
     dev_switch: Switch,
     /// 상세 층 마스크(메뉴 체크 표시용 · 설정 `log.dev_layers`).
-    dev_mask: u32,
+    dev_mask: u64,
 }
 
 impl LogWin {
@@ -190,7 +190,7 @@ impl LogWin {
     }
 
     /// 상세 층 마스크(메뉴 체크 표시).
-    pub(crate) fn set_dev_mask(&mut self, mask: u32) {
+    pub(crate) fn set_dev_mask(&mut self, mask: u64) {
         self.dev_mask = mask;
     }
 

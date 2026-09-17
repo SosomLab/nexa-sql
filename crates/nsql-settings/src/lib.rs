@@ -2000,7 +2000,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblLogDevLayers,
         desc: Msg::DescLogDevLayers,
         kind: SettingKind::Text,
-        default: "net,exec,fetch,load,render",
+        default: "net,exec,fetch,load,render,ext",
     },
     Entry {
         key: "log.newest_first",

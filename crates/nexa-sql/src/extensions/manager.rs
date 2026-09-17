@@ -9,6 +9,29 @@
 use nsql_settings::json::{self, Json};
 use nsql_settings::{config_dir, Settings};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+/// 상세 추적(개발자 모드 · `ext` 층): 저장소 읽기 · 다운로드 바이트/시간/속도 · 검증 · 보관/배치 폴더 · 기록.
+/// 매니저는 줄만 모으고 호스트가 `log.dev_mode`/층 마스크로 내보낸다(꺼져 있으면 문자열만 만들고 버림 — 사용자 동작 때만).
+#[derive(Default, Debug)]
+pub(crate) struct Trace(pub(crate) Vec<String>);
+
+impl Trace {
+    fn push(&mut self, s: String) {
+        self.0.push(s);
+    }
+}
+
+fn speed(bytes: usize, d: std::time::Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs <= 0.0 || bytes == 0 {
+        return String::new();
+    }
+    format!(
+        " · {}/s",
+        nsql_core::fmt_bytes((bytes as f64 / secs) as u64)
+    )
+}
 
 /// 메타 형식 버전(`"format": 1`).
 pub(crate) const FORMAT: i64 = 1;
@@ -141,8 +164,41 @@ impl Source {
         }
     }
 
-    /// 루트 기준 상대 경로의 바이트를 읽는다.
+    /// 루트 기준 상대 경로의 바이트를 읽는다(추적 없이).
     pub(crate) fn read(&self, rel: &str) -> Result<Vec<u8>, String> {
+        self.read_traced(rel, &mut Trace::default())
+    }
+
+    /// 읽기 + 추적 줄(원격 = `GET <url> → n B · ms · 속도` · 로컬 = `READ <path> → n B`).
+    pub(crate) fn read_traced(&self, rel: &str, tr: &mut Trace) -> Result<Vec<u8>, String> {
+        let t0 = Instant::now();
+        let r = self.read_raw(rel);
+        match &r {
+            Ok(b) => tr.push(format!(
+                "{} {} → {} · {} ms{}",
+                if matches!(self, Source::Url(_)) {
+                    "GET"
+                } else {
+                    "READ"
+                },
+                self.rel_display(rel),
+                nsql_core::fmt_bytes(b.len() as u64),
+                t0.elapsed().as_millis(),
+                speed(b.len(), t0.elapsed())
+            )),
+            Err(e) => tr.push(format!("FAIL {} — {e}", self.rel_display(rel))),
+        }
+        r
+    }
+
+    fn rel_display(&self, rel: &str) -> String {
+        match self {
+            Source::Dir(p) => nexa_fs::path::display(&p.join(rel)),
+            Source::Url(u) => format!("{u}/{rel}"),
+        }
+    }
+
+    fn read_raw(&self, rel: &str) -> Result<Vec<u8>, String> {
         match self {
             Source::Dir(p) => std::fs::read(p.join(rel)).map_err(|e| format!("{}: {e}", rel)),
             Source::Url(u) => {
@@ -160,8 +216,8 @@ impl Source {
         }
     }
 
-    fn read_text(&self, rel: &str) -> Result<String, String> {
-        String::from_utf8(self.read(rel)?).map_err(|_| format!("{rel}: not UTF-8"))
+    fn read_text(&self, rel: &str, tr: &mut Trace) -> Result<String, String> {
+        String::from_utf8(self.read_traced(rel, tr)?).map_err(|_| format!("{rel}: not UTF-8"))
     }
 }
 
@@ -336,11 +392,21 @@ pub(crate) fn parse_meta(text_in: &str) -> Result<Meta, String> {
 }
 
 pub(crate) fn fetch_index(src: &Source) -> Result<Index, String> {
-    parse_index(&src.read_text("index.json")?)
+    fetch_index_traced(src, &mut Trace::default())
 }
 
-pub(crate) fn fetch_meta(src: &Source, dir: &str) -> Result<Meta, String> {
-    parse_meta(&src.read_text(&format!("{dir}/extension.json"))?)
+pub(crate) fn fetch_index_traced(src: &Source, tr: &mut Trace) -> Result<Index, String> {
+    let idx = parse_index(&src.read_text("index.json", tr)?)?;
+    tr.push(format!(
+        "index {:?} · {} package(s)",
+        idx.name,
+        idx.packages.len()
+    ));
+    Ok(idx)
+}
+
+pub(crate) fn fetch_meta(src: &Source, dir: &str, tr: &mut Trace) -> Result<Meta, String> {
+    parse_meta(&src.read_text(&format!("{dir}/extension.json"), tr)?)
 }
 
 /// 이 OS의 플랫폼 이름(`platforms` 비교용).
@@ -442,7 +508,26 @@ pub(crate) fn install_into(
     root: &Path,
     config: &Path,
 ) -> Result<Meta, String> {
-    let meta = fetch_meta(src, &sum.dir)?;
+    install_traced(src, sum, root, config, &mut Trace::default())
+}
+
+/// 설치 + 추적(다운로드마다 바이트·시간·속도 · 검증 · 보관/배치 경로 · 기록 파일).
+pub(crate) fn install_traced(
+    src: &Source,
+    sum: &Summary,
+    root: &Path,
+    config: &Path,
+    tr: &mut Trace,
+) -> Result<Meta, String> {
+    let t0 = Instant::now();
+    tr.push(format!(
+        "install {} {} [{}] from {}",
+        sum.id,
+        sum.version,
+        sum.kind.as_str(),
+        src.display()
+    ));
+    let meta = fetch_meta(src, &sum.dir, tr)?;
     if meta.id != sum.id {
         return Err(format!(
             "index says {} but package says {}",
@@ -460,27 +545,41 @@ pub(crate) fn install_into(
         ));
     }
     let keep = root.join(&meta.id).join(&meta.version);
+    tr.push(format!(
+        "store dir {} · place root {}",
+        nexa_fs::path::display(&keep),
+        nexa_fs::path::display(config)
+    ));
     let mut placed = Vec::new();
+    let mut total = 0usize;
     for f in &meta.files {
-        let bytes = src.read(&format!("{}/{}", sum.dir, f.path))?;
+        let bytes = src.read_traced(&format!("{}/{}", sum.dir, f.path), tr)?;
+        total += bytes.len();
         let got = super::sha256::hex(&bytes);
         if got != f.sha256 {
+            tr.push(format!(
+                "verify {} — sha256 MISMATCH {got} ≠ {}",
+                f.path, f.sha256
+            ));
             return Err(format!(
                 "{}: sha256 mismatch ({} ≠ {})",
                 f.path, got, f.sha256
             ));
         }
+        tr.push(format!("verify {} — sha256 ok ({}…)", f.path, &got[..12]));
         let kept = keep.join(&f.path);
         if let Some(d) = kept.parent() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
         std::fs::write(&kept, &bytes).map_err(|e| e.to_string())?;
+        tr.push(format!("store → {}", nexa_fs::path::display(&kept)));
         if !f.dest.is_empty() {
             let target = config.join(&f.dest);
             if let Some(d) = target.parent() {
                 std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
             }
             std::fs::write(&target, &bytes).map_err(|e| e.to_string())?;
+            tr.push(format!("place → {}", nexa_fs::path::display(&target)));
             placed.push(f.dest.clone());
         }
     }
@@ -488,6 +587,10 @@ pub(crate) fn install_into(
     if let Ok(raw) = src.read(&format!("{}/extension.json", sum.dir)) {
         std::fs::create_dir_all(&keep).map_err(|e| e.to_string())?;
         let _ = std::fs::write(keep.join("extension.json"), raw);
+        tr.push(format!(
+            "meta copy → {}",
+            nexa_fs::path::display(&keep.join("extension.json"))
+        ));
     }
     write_installed(
         root,
@@ -499,31 +602,57 @@ pub(crate) fn install_into(
             placed,
         },
     )?;
+    tr.push(format!(
+        "record → {} · files {} · {} · {} ms{}",
+        nexa_fs::path::display(&installed_path(root, &meta.id)),
+        meta.files.len(),
+        nsql_core::fmt_bytes(total as u64),
+        t0.elapsed().as_millis(),
+        speed(total, t0.elapsed())
+    ));
     Ok(meta)
 }
 
-pub(crate) fn install(src: &Source, sum: &Summary) -> Result<Meta, String> {
+pub(crate) fn install(src: &Source, sum: &Summary, tr: &mut Trace) -> Result<Meta, String> {
     let root = root_dir().ok_or("no config folder")?;
     let config = config_dir().ok_or("no config folder")?;
-    install_into(src, sum, &root, &config)
+    install_traced(src, sum, &root, &config, tr)
 }
 
 /// 삭제 — 배치한 파일을 되감고 `<root>/<id>` 폴더를 지운다.
 pub(crate) fn remove_from(id: &str, root: &Path, config: &Path) -> Result<(), String> {
+    remove_traced(id, root, config, &mut Trace::default())
+}
+
+pub(crate) fn remove_traced(
+    id: &str,
+    root: &Path,
+    config: &Path,
+    tr: &mut Trace,
+) -> Result<(), String> {
     let rec = std::fs::read_to_string(installed_path(root, id))
         .ok()
         .and_then(|t| parse_installed(&t).ok())
         .ok_or_else(|| format!("{id}: not installed"))?;
     for d in &rec.placed {
-        let _ = std::fs::remove_file(config.join(d));
+        let p = config.join(d);
+        let ok = std::fs::remove_file(&p).is_ok();
+        tr.push(format!(
+            "unplace {} {}",
+            nexa_fs::path::display(&p),
+            if ok { "✓" } else { "(missing)" }
+        ));
     }
-    std::fs::remove_dir_all(root.join(id)).map_err(|e| e.to_string())
+    let dir = root.join(id);
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    tr.push(format!("remove dir {}", nexa_fs::path::display(&dir)));
+    Ok(())
 }
 
-pub(crate) fn remove(id: &str) -> Result<(), String> {
+pub(crate) fn remove(id: &str, tr: &mut Trace) -> Result<(), String> {
     let root = root_dir().ok_or("no config folder")?;
     let config = config_dir().ok_or("no config folder")?;
-    remove_from(id, &root, &config)
+    remove_traced(id, &root, &config, tr)
 }
 
 /// 쉼표 목록 설정에 항목 넣기/빼기(`extensions.disabled` · `extensions.repositories`).
