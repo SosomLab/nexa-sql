@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-17 (55차 후반 · mac 밤) — macOS UI 글꼴 = 시스템 SF(파인더와 폭 일치) · 창 배치 규칙 3줄 구현(논리 좌표 · 숨긴 채 생성 후 표시 = 배율 결함 해결) · macOS 로그인 모달(자식 창 + 이동 잠금) · 창 크기/위치 기억 10키 · push
+
 ## 2026-09-17 (55차 · mac 밤) — ★ **T-100 macOS CoreText 글리프 경로 ✅**(nexa-gfx `coretext.rs` · 파인더와 같은 픽셀 · 기본 켬) · 1x 보조 모니터 ASCII 캡처 검증 · `window.monitor` · Rainbow Pairs 다운로드형(WASM) = 다음
 
 ## 2026-09-17 (54차 후반) — Enable Extension Manager · 기본 저장소 `extensions.default_repository`(GitHub 주소 → raw) · builtin도 설치해야 켜짐 · 열 선택 마우스 OS별(`editor.column_select`) · **macOS 글꼴 깨짐 = Windows GDI 모방 텍스트 키 → `OS_DEFAULTS`로 macOS 끔** · push
