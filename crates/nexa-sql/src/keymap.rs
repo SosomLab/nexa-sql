@@ -1120,6 +1120,22 @@ mod tests {
         assert!(c.display().to_lowercase().contains('p'));
     }
 
+    /// ⌘,/Ctrl+, = 설정 창(사용자 09-17 확인).
+    #[test]
+    fn comma_opens_preferences() {
+        let s = Settings::open(std::path::PathBuf::from("__keymap_test_nonexistent__.conf"));
+        let km = Keymap::from_settings(&s);
+        let code = if cfg!(target_os = "macos") {
+            "cmd+,"
+        } else {
+            "ctrl+,"
+        };
+        assert_eq!(
+            km.lookup(&Chord::parse(code).expect("parse")),
+            Some("edit.prefs")
+        );
+    }
+
     #[test]
     fn defaults_are_sublime_and_multi_codes_all_bind() {
         let s = Settings::open(std::path::PathBuf::from("__keymap_test_nonexistent__.conf"));

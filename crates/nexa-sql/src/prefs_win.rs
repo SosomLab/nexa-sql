@@ -75,6 +75,8 @@ struct Card {
     /// 검색 모드에서 카테고리 표시.
     show_cat: bool,
     error: Option<String>,
+    /// 기본값 글자가 컨트롤 줄에 안 들어가면(긴 URL) 설명 아래 한 줄로(사용자 09-17).
+    default_below: bool,
 }
 
 /// 스냅샷 한 줄.
@@ -253,6 +255,8 @@ impl PrefsWin {
                     CardCtl::Text(tb) => {
                         if !tb.is_focused() {
                             tb.set_text(&sn.value);
+                            let mut inv = Invalidations::default();
+                            tb.select_range(0, 0, &mut inv);
                         }
                     }
                 }
@@ -336,7 +340,11 @@ impl PrefsWin {
                         CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
                     SettingKind::Int { .. } | SettingKind::Size { .. } | SettingKind::Text => {
-                        CardCtl::Text(Box::new(TextBox::new("").with_text(&sn.value)))
+                        // 긴 값은 **앞부터** 보이게(캐럿을 0으로 · 사용자 09-17).
+                        let mut tb = TextBox::new("").with_text(&sn.value);
+                        let mut inv = Invalidations::default();
+                        tb.select_range(0, 0, &mut inv);
+                        CardCtl::Text(Box::new(tb))
                     }
                 };
                 let aux = if is_color_key(sn.entry.key) {
@@ -357,6 +365,7 @@ impl PrefsWin {
                     show_cat,
                     error: None,
                     locked: false,
+                    default_below: false,
                 }
             })
             .collect();
@@ -1127,11 +1136,34 @@ impl PrefsWin {
                 let lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
                 let boost_hint =
                     c.locked && boost_on && nsql_settings::perf::boost_value(c.entry.key).is_some();
-                let extra = if c.error.is_some() || boost_hint {
+                let mut extra = if c.error.is_some() || boost_hint {
                     th_txt
                 } else {
                     0
                 };
+                // 기본값 글자("Default: …")가 컨트롤 줄의 빈 자리에 안 들어가면 설명 아래 줄로 내린다(긴 URL · 사용자 09-17).
+                let dw = dc.text_width(&tf(Msg::LblDefaultValue, &[c.entry.default]));
+                let row_used = {
+                    let ctl_w = match &c.ctl {
+                        CardCtl::Bool(_) => (56.0 * s).round() as i32,
+                        CardCtl::Choice(_) => (260.0 * s).round() as i32,
+                        CardCtl::Text(_) => (320.0 * s).round() as i32,
+                    };
+                    let aux_w = if c.aux.is_some() {
+                        (90.0 * s).round() as i32 + (8.0 * s).round() as i32
+                    } else {
+                        0
+                    };
+                    inner_pad * 2
+                        + ctl_w
+                        + (8.0 * s).round() as i32
+                        + aux_w
+                        + (90.0 * s).round() as i32
+                };
+                c.default_below = dw + (16.0 * s).round() as i32 > card_w - row_used;
+                if c.default_below {
+                    extra += th_txt;
+                }
                 let ch = inner_pad * 2
                     + th_txt
                     + (4.0 * s).round() as i32
@@ -1267,17 +1299,22 @@ impl PrefsWin {
                         dc.text(tx, ty, clip, &tf(Msg::PrefsBoostLocked, &[v]), th.accent);
                     }
                 }
-                // 기본값 표시(컨트롤 오른쪽 끝)
+                // 기본값 표시 — 컨트롤 오른쪽 끝 · 안 들어가면 설명 아래 한 줄(사용자 09-17 "is used instead 줄 밑에").
                 let dv = tf(Msg::LblDefaultValue, &[c.entry.default]);
                 let dw = dc.text_width(&dv);
                 let cy = r.bottom() - inner_pad - ctl_h;
-                dc.text(
-                    r.right() - inner_pad - dw,
-                    cy + (ctl_h - th_txt) / 2,
-                    clip,
-                    &dv,
-                    th.text_dim,
-                );
+                if c.default_below {
+                    let ty2 = ty + if c.error.is_some() { th_txt } else { 0 };
+                    dc.text(tx, ty2, clip, &dv, th.text_dim);
+                } else {
+                    dc.text(
+                        r.right() - inner_pad - dw,
+                        cy + (ctl_h - th_txt) / 2,
+                        clip,
+                        &dv,
+                        th.text_dim,
+                    );
+                }
                 match &c.ctl {
                     CardCtl::Bool(sw) => sw.paint(&mut dc, th),
                     CardCtl::Choice(_) => {}
