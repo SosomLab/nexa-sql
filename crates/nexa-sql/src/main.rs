@@ -6017,7 +6017,7 @@ impl App {
         }
     }
 
-    fn to_ctl_event(&mut self, event: &WindowEvent) -> Option<InputEvent> {
+    fn ctl_event(&mut self, event: &WindowEvent) -> Option<InputEvent> {
         let (x, y) = self.cursor;
         let key = |k: CtlKey, shift: bool, primary: bool| InputEvent::Key {
             key: k,
@@ -7254,7 +7254,7 @@ impl ApplicationHandler<Wake> for App {
             }
             _ => {}
         }
-        if let Some(ev) = self.to_ctl_event(&event) {
+        if let Some(ev) = self.ctl_event(&event) {
             self.route(ev);
         }
         if std::mem::take(&mut self.toggle_log) {
