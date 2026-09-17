@@ -108,9 +108,13 @@ pub fn is_command_start(line: &str) -> bool {
     if l.starts_with('@')
         || l.starts_with(":setvar")
         || l.starts_with(":connect")
+        || l.starts_with(":disconnect")
         || l.starts_with(":r ")
     {
         return true;
+    }
+    if is_connect_by(l) {
+        return false;
     }
     let word: String = l
         .chars()
@@ -147,11 +151,28 @@ pub fn is_command_start(line: &str) -> bool {
     ) && (l.len() == word.len() || !l.as_bytes()[word.len()].is_ascii_alphanumeric())
 }
 
+/// Oracle 계층 질의의 `CONNECT BY …` 조각인가(docs/52 §5) — 문장 첫머리에 오면(선택 실행으로 잘린 조각) 접속 명령으로
+/// 오인하지 않고 SQL로 서버에 보낸다(서버가 구문 오류를 낸다 · 무해). `CONNECT BY`뿐이면(뒤에 아무것도 없음) 프로필 이름 `BY`.
+fn is_connect_by(l: &str) -> bool {
+    let mut it = l.split_whitespace();
+    let (Some(a), Some(b), Some(_)) = (it.next(), it.next(), it.next()) else {
+        return false;
+    };
+    (a.eq_ignore_ascii_case("CONNECT") || a.eq_ignore_ascii_case("CONN"))
+        && b.eq_ignore_ascii_case("BY")
+}
+
 /// 한 줄(또는 EXEC 블록 텍스트)을 명령으로 해석한다. SQL이면 `Ok(None)`.
 pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
     let t = text.trim().trim_end_matches(';').trim();
     if t.is_empty() {
         return Ok(None);
+    }
+    if is_connect_by(t) {
+        return Ok(None);
+    }
+    if t == ":disconnect" {
+        return Ok(Some(Command::Disconnect));
     }
     if let Some(rest) = t.strip_prefix("@@") {
         return Ok(Some(run_cmd(rest, true)));
@@ -714,6 +735,18 @@ mod tests {
         assert!(!is_command_start("SELECT 1"));
         assert!(!is_command_start("EXECUTION_LOG"));
         assert!(is_command_start("GO"));
+    }
+
+    /// docs/52 §5: `CONNECT BY …` 조각은 접속 명령이 아니다 · `:disconnect`는 `:connect`의 짝.
+    #[test]
+    fn connect_by_fragment_is_sql_and_colon_disconnect() {
+        assert!(!is_command_start("CONNECT BY PRIOR empno = mgr"));
+        assert_eq!(parse_command("connect by level < 3;"), Ok(None));
+        assert!(is_command_start("CONNECT BY"), "프로필 이름 BY");
+        assert!(is_command_start("CONNECT \"oracle:h:1521/x\""));
+        assert!(is_command_start(":disconnect"));
+        assert_eq!(parse_command(":disconnect"), Ok(Some(Command::Disconnect)));
+        assert_eq!(parse_command("DISC"), Ok(Some(Command::Disconnect)));
     }
 
     #[test]
