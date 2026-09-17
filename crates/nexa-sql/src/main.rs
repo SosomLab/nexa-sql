@@ -1837,7 +1837,15 @@ impl App {
             .map(|(c, _)| *c)
             .collect();
         self.prefs_win.set_hidden_categories(hidden);
+        self.prefs_sync();
         self.redraw();
+    }
+
+    /// 코드가 설정을 바꾼 뒤(확장 켜기/끄기 · 저장소 추가 · 관리자 활성화) 열려 있는 설정 창의 스냅샷을 다시 읽는다
+    /// (사용자 09-17 "팔레트에서 켜도 설정 창은 꺼진 채").
+    fn prefs_sync(&mut self) {
+        self.prefs_win.refresh(&self.settings);
+        self.prefs_win.redraw();
     }
 
     /// 확장 명령(짝/형제/상위/하위 이동 등) — 소유 확장에 위임 · 켜져 있을 때만.
@@ -1874,6 +1882,7 @@ impl App {
             );
             self.log_win
                 .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            self.prefs_sync();
             self.redraw();
             return;
         }
@@ -2096,6 +2105,7 @@ impl App {
                     let _ = self.settings.set("extensions.repositories", &next);
                     let _ = self.settings.save();
                     self.status = tf(Msg::StExtRepoRemoved, &[&s.display()]);
+                    self.prefs_sync();
                 }
             }
             _ => {}
@@ -2121,6 +2131,7 @@ impl App {
             self.status = tf(Msg::StExtRepoAdded, &[&src.display()]);
             self.log_win
                 .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            self.prefs_sync();
         }
         self.redraw();
     }
