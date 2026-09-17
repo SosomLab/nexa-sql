@@ -55,6 +55,22 @@ pub fn open(spec: &ConnectSpec, default_dialect: Dialect) -> Result<Box<dyn Sess
 }
 
 /// 이 빌드에 들어 있는 방언.
+/// SQL Server 암호화 범위(설정 `mssql.encrypt` · T-108): `login_only`면 로그인만 암호화 → 실행 취소가 TDS Attention으로 세션을 유지한다.
+pub fn set_mssql_encryption(login_only: bool) {
+    #[cfg(feature = "mssql")]
+    nsql_driver_mssql::set_encryption(login_only);
+    #[cfg(not(feature = "mssql"))]
+    let _ = login_only;
+}
+
+/// SQL Server 취소 방식(설정 `mssql.cancel`): `socket` = 소켓 종료(항상) · 아니면 Attention(로그인만 암호화일 때 · 아니면 소켓 종료로 대체).
+pub fn set_mssql_cancel_socket(socket: bool) {
+    #[cfg(feature = "mssql")]
+    nsql_driver_mssql::set_cancel_socket(socket);
+    #[cfg(not(feature = "mssql"))]
+    let _ = socket;
+}
+
 pub fn available() -> Vec<Dialect> {
     let mut v = Vec::new();
     if cfg!(feature = "sqlite") {

@@ -477,7 +477,20 @@ fn rows_to_result_set(rows: &[postgres::Row]) -> ResultSet {
     }
 }
 
+/// `CancelToken::cancel_query` — 별도 짧은 접속으로 서버에 취소 요청(문장은 `57014`로 끝난다).
+struct PgCancel(postgres::CancelToken);
+
+impl nsql_core::CancelHandle for PgCancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        self.0.cancel_query(NoTls).map_err(err)
+    }
+}
+
 impl Session for PgSession {
+    fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
+        Some(std::sync::Arc::new(PgCancel(self.client.cancel_token())))
+    }
+
     fn dialect(&self) -> Dialect {
         Dialect::Postgres
     }

@@ -56,7 +56,7 @@
 |---|---|---|
 | `editor.rulers` | `80` | 글자 열 목록(쉼표) — 각 열에 1px 세로선(`Theme.border`) · 빈 값 = 없음. Sublime `rulers: [80, 120]`과 같다. |
 | `editor.whitespace` | `selection` | `none` · `selection`(선택 영역 안만) · `all` — Sublime `draw_white_space`. |
-| `editor.whitespace_chars` | `·→_` | 글자 3개 = 공백 · 탭 · 줄끝(`_` = 표시 안 함 · 예 `·→¶`). |
+| `editor.whitespace_chars` | `·→$` | 글자 3개 = 공백 · 탭 · 줄끝(`_` = 표시 안 함 · 예 `·→¶`). |
 | `editor.whitespace_color` | (빈 값) | 16진 RRGGBB · 비우면 테마 흐린 글자색. |
 | `editor.whitespace_alpha` | `40` | 불투명도 % — 배경(`field_bg`)과 섞어 그린다(별도 알파 블렌딩 없이 비용 0). |
 
@@ -120,6 +120,23 @@ FROM MTXRPTY2.MTX_AGENT_LOG A, MTXRPTY2.MTX_DBMS C, MTXRPTY2.MTX_REPORT D, MTXRP
 - 그리기: 커서마다 캐럿 + 리전 반전(§블록 선택 규칙 — 행 피치 높이 · 줄 넘김 포함 시 오른쪽 끝까지 ✅ nexa-ui 29fe8d7).
 - 정규식: **자체 엔진**(백트래킹 없는 Thompson NFA · 문자 클래스·그룹·수량자·앵커·`\b`·캡처 · 대소문자 옵션) — 외부 crate 0. 찾기 패널이 먼저 쓰고 `.sublime-syntax`(T-59)와 인텔리전스 토크나이저가 뒤에 같이 쓴다. 시간 예산(큰 파일 증분 검색 · 보이는 영역 우선 강조).
 - 붙여넣기: 커서 수 = 줄 수면 줄별 분배(Sublime 규칙).
+
+### 7-1. 커서 이동 규칙(Sublime 기본 키맵 · ✅ 09-17 사용자 요청)
+
+| 동작 | Win/Linux | mac | 규칙 | 상태 |
+|---|---|---|---|---|
+| 단어 이동 | Ctrl+←/→ | ⌥←/→ | `words`/`word_ends`: 공백 건너뛰고 같은 부류(단어=영숫자·`_`·비ASCII · 구분자) 런의 시작/끝 · 줄바꿈은 한 번에 하나 | ✅ `Key::WordLeft/Right` |
+| 서브워드 | Alt+←/→ | ⌃←/→ | `_` 양쪽 · 소→대 · `HTML|Parser` · 글자↔숫자 | ✅ `Key::SubwordLeft/Right` |
+| 줄 처음/끝 | Home/End | ⌘←/→ · Home/End | Home = **스마트**(첫 글자 ↔ 열 0) · End = 줄 끝 | ✅ |
+| 문서 처음/끝 | Ctrl+Home/End | ⌘↑/↓ · Ctrl+Home/End | bof/eof | ✅(Ctrl+Home/End) · ⌘↑/↓ 후속 |
+| 선택 확장 | +Shift | +⇧ | 위 전부 | ✅ |
+| 캐럿 추가 | Ctrl+클릭 | ⌘클릭 | 같은 자리 = 제거 · 마지막 하나 유지 | ✅ `toggle_caret` |
+| 열 선택 | Alt+Shift+드래그 · 가운데 드래그 | ⌥드래그 | 시작 Col보다 짧은 줄 제외 · 끝 Col은 포인터 기준 줄마다 클램프 | ✅(가운데 버튼 후속) |
+| 괄호 짝 | Ctrl+M | ⌃M | `move_to: brackets` | ☐ |
+| 괄호 안 확장 | Ctrl+Shift+M | ⌃⇧M | `expand_selection: brackets` | ☐ |
+| 스코프 확장 | Ctrl+Shift+Space | ⌃⇧Space | `expand_selection: scope` | ☐ |
+| 스크롤만 | Ctrl+↑/↓ | ⌃⌥↑/↓ | `scroll_lines`(캐럿 유지) | ☐ |
+| 다중 커서 실행 | — | — | 문장 실행(Ctrl+Enter)·툴바 버튼 **차단** · 전체 실행만 | ✅ |
 
 ## 8. 창 포커스 ✅ (설정 `window.focus` · 카테고리 Window)
 

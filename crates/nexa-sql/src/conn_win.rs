@@ -398,6 +398,15 @@ impl ConnWin {
         &self.policy
     }
 
+    /// 정책만 교체(설정 변경 · 실행 속도 향상) — 허브는 그대로, 동시 상한만 함께 갱신.
+    pub(crate) fn set_policy(&mut self, policy: ProbePolicy, max_inflight: usize) {
+        self.policy = policy;
+        if let Some(h) = self.hub.as_mut() {
+            h.set_max_inflight(max_inflight);
+            h.set_icmp(policy.icmp);
+        }
+    }
+
     /// 지금 세션이 붙은 프로필 이름(없으면 빈 문자열).
     pub(crate) fn active_name(&self) -> &str {
         self.active.as_deref().unwrap_or("")

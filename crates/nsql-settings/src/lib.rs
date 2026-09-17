@@ -26,6 +26,10 @@ pub const APP_DIR: &str = "nexa-sql";
 /// 설정 파일 이름.
 pub const FILE_NAME: &str = "settings.conf";
 
+/// 기본값이 바뀐 키의 **옛 기본값** — 설정 창이 저장해 둔 옛 기본값은 사용자가 고른 값이 아니므로 새 기본값을 따른다.
+/// (미니맵 폭 80 → 160 · 사용자 09-17 "지금의 2배")
+const OLD_DEFAULTS: &[(&str, &str)] = &[("editor.minimap_width", "80")];
+
 pub mod json;
 pub use json::{to_json, Import as JsonImport, Json};
 pub mod perf;
@@ -157,6 +161,13 @@ const CLI_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("jsonl", Msg::ValFmtJsonl),
 ];
 const KEY_MODE_OPTS: &[(&str, Msg)] = &[("pk", Msg::ValKeyModePk), ("all", Msg::ValKeyModeAll)];
+/// 그리드 컬럼 최대 폭 — 자동(= [`COL_MAX_AUTO_CHARS`]자) · 직접(`grid.col_max_chars`) (사용자 09-17 "폰트 기준 24자 수준").
+const COL_MAX_MODE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValColMaxAuto),
+    ("manual", Msg::ValColMaxManual),
+];
+/// 자동 모드의 컬럼 최대 글자 수(영문 숫자 폭 기준 · 한글 등 전각은 2자로 셈). `grid.col_max_chars`의 기본값과 같다.
+pub const COL_MAX_AUTO_CHARS: i64 = 24;
 const OVERFLOW_OPTS: &[(&str, Msg)] = &[
     ("wrap", Msg::ValOverflowWrap),
     ("truncate", Msg::ValOverflowTruncate),
@@ -201,6 +212,24 @@ const TABBAR_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValTabbarAuto),
     ("always", Msg::ValTabbarAlways),
 ];
+
+const MSSQL_ENCRYPT_OPTS: &[(&str, Msg)] = &[
+    ("required", Msg::ValMssqlEncryptRequired),
+    ("login", Msg::ValMssqlEncryptLogin),
+];
+
+const MSSQL_CANCEL_OPTS: &[(&str, Msg)] = &[
+    ("attention", Msg::ValMssqlCancelAttention),
+    ("socket", Msg::ValMssqlCancelSocket),
+];
+
+const INDENT_RULES_OPTS: &[(&str, Msg)] = &[
+    ("sql", Msg::ValIndentSql),
+    ("brackets", Msg::ValIndentBrackets),
+    ("none", Msg::ValIndentNone),
+];
+
+const OCC_SHAPES: &[(&str, Msg)] = &[("rect", Msg::ValOccRect), ("round", Msg::ValOccRound)];
 
 const WS_OPTS: &[(&str, Msg)] = &[
     ("none", Msg::ValWsNone),
@@ -396,6 +425,47 @@ pub const REGISTRY: &[Entry] = &[
         // 기본 = 정지점(Golden/Sublime/VS Code 관례 · 사용자 09-16) · fixed = 종전 절대 4칸.
         default: "stop",
     },
+    // ── Auto indent(docs/49 · 사용자 09-17): Sublime 변수 4 + 규칙 세트.
+    Entry {
+        key: "editor.auto_indent",
+        cat: Msg::CatEditor,
+        label: Msg::LblAutoIndent,
+        desc: Msg::DescAutoIndent,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.smart_indent",
+        cat: Msg::CatEditor,
+        label: Msg::LblSmartIndent,
+        desc: Msg::DescSmartIndent,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.indent_rules",
+        cat: Msg::CatEditor,
+        label: Msg::LblIndentRules,
+        desc: Msg::DescIndentRules,
+        kind: SettingKind::Choice(INDENT_RULES_OPTS),
+        default: "sql",
+    },
+    Entry {
+        key: "editor.indent_to_bracket",
+        cat: Msg::CatEditor,
+        label: Msg::LblIndentToBracket,
+        desc: Msg::DescIndentToBracket,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "editor.trim_auto_whitespace",
+        cat: Msg::CatEditor,
+        label: Msg::LblTrimAutoWs,
+        desc: Msg::DescTrimAutoWs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ── CLI 표 출력(사용자 09-16 · 터미널 폭에서 표가 접혀 깨짐) — `nsql config set cli.width 160` · 1회성은 `--width`.
     Entry {
         key: "cli.width",
@@ -438,6 +508,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescCliFormat,
         kind: SettingKind::Choice(CLI_FORMAT_OPTS),
         default: "grid",
+    },
+    Entry {
+        key: "cli.null_text",
+        cat: Msg::CatCli,
+        label: Msg::LblCliNullText,
+        desc: Msg::DescCliNullText,
+        kind: SettingKind::Text,
+        default: "",
     },
     Entry {
         key: "editor.rulers",
@@ -495,6 +573,39 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 동일 출현 상자 스타일(사용자 09-17): 모양 · 선 색(+알파) · 선 두께 · 배경 색(+알파). 색은 `#RRGGBB[AA]`.
+    Entry {
+        key: "editor.occurrence_shape",
+        cat: Msg::CatEditor,
+        label: Msg::LblOccShape,
+        desc: Msg::DescOccShape,
+        kind: SettingKind::Choice(OCC_SHAPES),
+        default: "rect",
+    },
+    Entry {
+        key: "editor.occurrence_line_color",
+        cat: Msg::CatEditor,
+        label: Msg::LblOccLineColor,
+        desc: Msg::DescOccLineColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "editor.occurrence_line_width",
+        cat: Msg::CatEditor,
+        label: Msg::LblOccLineWidth,
+        desc: Msg::DescOccLineWidth,
+        kind: SettingKind::Int { min: 0, max: 4 },
+        default: "1",
+    },
+    Entry {
+        key: "editor.occurrence_fill_color",
+        cat: Msg::CatEditor,
+        label: Msg::LblOccFillColor,
+        desc: Msg::DescOccFillColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "editor.whitespace",
         cat: Msg::CatEditor,
@@ -509,7 +620,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblWsChars,
         desc: Msg::DescWsChars,
         kind: SettingKind::Text,
-        default: "·→_",
+        default: "·→$",
     },
     Entry {
         key: "editor.whitespace_color",
@@ -607,12 +718,12 @@ pub const REGISTRY: &[Entry] = &[
         default: "150",
     },
     Entry {
-        key: "grid.copy_null",
+        key: "grid.null_text",
         cat: Msg::CatGrid,
-        label: Msg::LblCopyNull,
-        desc: Msg::DescCopyNull,
-        kind: SettingKind::Bool,
-        default: "off",
+        label: Msg::LblNullText,
+        desc: Msg::DescNullText,
+        kind: SettingKind::Text,
+        default: "NULL",
     },
     Entry {
         key: "grid.col_min_width",
@@ -623,12 +734,20 @@ pub const REGISTRY: &[Entry] = &[
         default: "40",
     },
     Entry {
-        key: "grid.col_max_width",
+        key: "grid.col_max_mode",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridColMaxMode,
+        desc: Msg::DescGridColMaxMode,
+        kind: SettingKind::Choice(COL_MAX_MODE_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "grid.col_max_chars",
         cat: Msg::CatGrid,
         label: Msg::LblGridColMax,
         desc: Msg::DescGridColMax,
-        kind: SettingKind::Int { min: 40, max: 4000 },
-        default: "420",
+        kind: SettingKind::Int { min: 4, max: 400 },
+        default: "24",
     },
     Entry {
         key: "grid.row_numbers",
@@ -683,6 +802,14 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatAppearance,
         label: Msg::LblToolbarHidden,
         desc: Msg::DescToolbarHidden,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "toolbar.layout",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToolbarLayout,
+        desc: Msg::DescToolbarLayout,
         kind: SettingKind::Text,
         default: "",
     },
@@ -782,7 +909,23 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblEditorMinimapWidth,
         desc: Msg::DescEditorMinimapWidth,
         kind: SettingKind::Int { min: 20, max: 400 },
-        default: "80",
+        default: "160",
+    },
+    Entry {
+        key: "editor.minimap_box_color",
+        cat: Msg::CatEditor,
+        label: Msg::LblMinimapBoxColor,
+        desc: Msg::DescMinimapBoxColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "editor.minimap_border",
+        cat: Msg::CatEditor,
+        label: Msg::LblMinimapBorder,
+        desc: Msg::DescMinimapBorder,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     // 편집기 휠 단위(사용자 09-16 · 픽셀 스크롤 도입과 함께 그리드와 같은 선택지).
     Entry {
@@ -1416,6 +1559,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // SQL Server 암호화 범위(T-108 · docs/44 §4): 로그인만 암호화하면 실행 취소(TDS Attention)가 접속을 유지한 채 된다.
+    Entry {
+        key: "mssql.encrypt",
+        cat: Msg::CatConnection,
+        label: Msg::LblMssqlEncrypt,
+        desc: Msg::DescMssqlEncrypt,
+        kind: SettingKind::Choice(MSSQL_ENCRYPT_OPTS),
+        default: "required",
+    },
+    Entry {
+        key: "mssql.cancel",
+        cat: Msg::CatConnection,
+        label: Msg::LblMssqlCancel,
+        desc: Msg::DescMssqlCancel,
+        kind: SettingKind::Choice(MSSQL_CANCEL_OPTS),
+        default: "attention",
+    },
     Entry {
         key: "connect.reconnect_same",
         cat: Msg::CatConnection,
@@ -1423,6 +1583,22 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescReconnectSame,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "run.toast",
+        cat: Msg::CatSession,
+        label: Msg::LblRunToast,
+        desc: Msg::DescRunToast,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "run.toast_hide_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblRunToastHide,
+        desc: Msg::DescRunToastHide,
+        kind: SettingKind::Int { min: 0, max: 600 },
+        default: "5",
     },
     Entry {
         key: "run.after_statement",
@@ -1534,6 +1710,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(SESSION_MODE_OPTS),
         default: "shared",
     },
+    // 데모(사용자 09-17): 최초 실행 1회 "샘플 데이터(Demo) 만들까요?" 팝업을 띄웠는가(자동 기억 · HIDDEN).
+    Entry {
+        key: "demo.prompted",
+        cat: Msg::CatLog,
+        label: Msg::LblDemoPrompted,
+        desc: Msg::DescDemoPrompted,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "log.open_at_start",
         cat: Msg::CatLog,
@@ -1611,6 +1796,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // 개발자 모드(사용자 09-17 · docs/48): 상세 로그는 이 두 키가 만드는 마스크가 켜져 있을 때만 **생성**된다.
+    Entry {
+        key: "log.dev_mode",
+        cat: Msg::CatLog,
+        label: Msg::LblLogDevMode,
+        desc: Msg::DescLogDevMode,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "log.dev_layers",
+        cat: Msg::CatLog,
+        label: Msg::LblLogDevLayers,
+        desc: Msg::DescLogDevLayers,
+        kind: SettingKind::Text,
+        default: "net,exec,fetch,load,render",
+    },
     Entry {
         key: "log.newest_first",
         cat: Msg::CatLog,
@@ -1687,6 +1889,31 @@ pub const REGISTRY: &[Entry] = &[
         // 기본 full = 지금 동작 그대로(D-58) · 배터리/원격이면 상태줄 안내만.
         default: "full",
     },
+    // ★ 실행 속도 향상(사용자 09-17): UI 구성·부가 표시·폴링·I/O 키(`perf::BOOST`)를 최적값으로 강제 + 설정 창 잠금 · 동작 영향 0.
+    Entry {
+        key: "perf.boost",
+        cat: Msg::CatPerformance,
+        label: Msg::LblPerfBoost,
+        desc: Msg::DescPerfBoost,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "ui.menu_icons",
+        cat: Msg::CatAppearance,
+        label: Msg::LblMenuIcons,
+        desc: Msg::DescMenuIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ui.clipboard_probe",
+        cat: Msg::CatAppearance,
+        label: Msg::LblClipboardProbe,
+        desc: Msg::DescClipboardProbe,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "db.statement_timeout",
         cat: Msg::CatSession,
@@ -1706,6 +1933,17 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescLogMaxLines,
         kind: SettingKind::Int {
             min: 100,
+            max: 1_000_000,
+        },
+        default: "10000",
+    },
+    Entry {
+        key: "txlog.max_entries",
+        cat: Msg::CatLog,
+        label: Msg::LblTxLogMax,
+        desc: Msg::DescTxLogMax,
+        kind: SettingKind::Int {
+            min: 16,
             max: 1_000_000,
         },
         default: "10000",
@@ -1962,6 +2200,15 @@ impl Dep {
 /// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.refresh_secs", "explorer.auto_refresh", Dep::On),
+    ("run.toast_hide_secs", "run.toast", Dep::On),
+    ("log.dev_layers", "log.dev_mode", Dep::On),
+    ("editor.smart_indent", "editor.auto_indent", Dep::On),
+    ("editor.indent_rules", "editor.smart_indent", Dep::On),
+    ("editor.indent_to_bracket", "editor.auto_indent", Dep::On),
+    ("editor.trim_auto_whitespace", "editor.auto_indent", Dep::On),
+    ("editor.minimap_width", "editor.minimap", Dep::On),
+    ("editor.minimap_box_color", "editor.minimap", Dep::On),
+    ("editor.minimap_border", "editor.minimap", Dep::On),
     ("statusbar.git_secs", "statusbar.git", Dep::On),
     ("editor.rulers", "editor.rulers_show", Dep::On),
     ("editor.ruler_color", "editor.rulers_show", Dep::On),
@@ -1987,6 +2234,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         Dep::Eq("table"),
     ),
     ("ui.toast_alpha", "ui.toast_secs", Dep::NotEmpty),
+    ("grid.col_max_chars", "grid.col_max_mode", Dep::Eq("manual")),
 ];
 
 /// 자식 키의 (부모, 조건).
@@ -1999,6 +2247,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "demo.prompted",
     "log.kinds",
     "statusbar.git_secs",
     "log.switch_scale",
@@ -2156,6 +2405,16 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// 그리드 컬럼 최대 폭(글자 수) — 자동이면 [`COL_MAX_AUTO_CHARS`] · 직접이면 `grid.col_max_chars`.
+    #[must_use]
+    pub fn grid_col_max_chars(&self) -> i64 {
+        if self.get("grid.col_max_mode") == Some("manual") {
+            self.int("grid.col_max_chars").max(1)
+        } else {
+            COL_MAX_AUTO_CHARS
+        }
+    }
+
     /// 기본 폴더의 `settings.conf`. 폴더를 알 수 없으면 오류(파일이 없는 것은 오류가 아니다 — 전부 기본값).
     pub fn open_default() -> io::Result<Settings> {
         let dir =
@@ -2181,7 +2440,10 @@ impl Settings {
             match entry(&k) {
                 Some(e) => {
                     if let Some(n) = normalize(e.kind, &v) {
-                        if n != e.default {
+                        // 옛 기본값 그대로 저장돼 있던 값은 "기본값 유지"로 본다(기본값이 바뀌면 따라간다).
+                        let old_default =
+                            OLD_DEFAULTS.iter().any(|(key, old)| *key == k && *old == n);
+                        if n != e.default && !old_default {
                             s.values.insert(k, n);
                         }
                     }
@@ -2406,6 +2668,44 @@ mod tests {
             );
             assert_eq!(REGISTRY.iter().filter(|x| x.key == e.key).count(), 1);
         }
+    }
+
+    /// 실행 속도 향상(09-17): 켜면 BOOST 키는 사용자 값·모드와 무관하게 강제값 · 잠금 · 출처 boost · 끄면 저장값 그대로 복귀.
+    /// BOOST 키는 전부 레지스트리에 있고 값이 자기 검증을 통과해야 한다.
+    #[test]
+    fn boost_forces_values_and_locks_without_touching_stored() {
+        for (k, v) in perf::BOOST {
+            let e = entry(k).unwrap_or_else(|| panic!("{k}: 레지스트리에 없음"));
+            assert_eq!(
+                normalize(e.kind, v).as_deref(),
+                Some(*v),
+                "{k}: 강제값이 검증을 통과해야 한다"
+            );
+        }
+        let mut s = Settings::open(tmp("boost"));
+        s.set("ui.fade_fast", "900").unwrap();
+        s.set("statusbar.git", "on").unwrap();
+        assert_eq!(s.effective("ui.fade_fast"), Some("900"));
+        assert!(!s.boost_locked("ui.fade_fast"));
+        s.set("perf.boost", "on").unwrap();
+        assert_eq!(s.effective("ui.fade_fast"), Some("0"), "강제값");
+        assert_eq!(s.int("ui.fade_fast"), 0);
+        assert!(!s.flag("statusbar.git"));
+        assert_eq!(s.get("ui.fade_fast"), Some("900"), "저장값은 그대로");
+        assert!(s.boost_locked("ui.fade_fast"));
+        assert!(
+            !s.boost_locked("grid.max_rows"),
+            "동작에 영향 있는 키는 강제하지 않는다"
+        );
+        assert_eq!(s.perf_source("probe.interval"), Some(PerfSource::Boost));
+        assert_eq!(
+            s.perf_mode_display(),
+            PerfMode::Full,
+            "향상 모드는 custom 표시와 무관"
+        );
+        s.set("perf.boost", "off").unwrap();
+        assert_eq!(s.effective("ui.fade_fast"), Some("900"));
+        assert!(s.flag("statusbar.git"));
     }
 
     /// T-90a(docs/39 §4): 실효 값 우선순위 — 개별 > 모드 프리셋 > 기본 · full = 기본과 동일 · reset하면 다시 모드.

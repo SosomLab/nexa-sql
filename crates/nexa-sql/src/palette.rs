@@ -12,6 +12,11 @@ use nsql_i18n::{t, tf, Msg};
 pub(crate) enum PaletteAction {
     None,
     Pick(String),
+    /// 프롬프트 모드의 입력 확정(`open_prompt`의 id · 입력 글자).
+    Prompt {
+        id: String,
+        text: String,
+    },
     Close,
 }
 
@@ -29,6 +34,8 @@ pub(crate) struct Palette {
     last_query: String,
     /// `:` 로 시작하는 질의 = 줄 이동 모드(Goto Anything · T-96) — 숫자가 있으면 그 줄.
     goto: Option<Option<usize>>,
+    /// 프롬프트 모드(탭 이름 바꾸기 등 · 09-17): 목록 없이 글자 입력만 · Enter = [`PaletteAction::Prompt`].
+    prompt: Option<String>,
 }
 
 const MAX_ROWS: usize = 12;
@@ -46,7 +53,22 @@ impl Palette {
             scale: 1.0,
             last_query: String::new(),
             goto: None,
+            prompt: None,
         }
+    }
+
+    /// 프롬프트 모드로 열기 — `id`는 확정 때 그대로 돌려준다 · `placeholder` 안내 · `initial` 초기 글자(전체 선택).
+    pub(crate) fn open_prompt(&mut self, id: &str, placeholder: &str, initial: &str) {
+        self.open = true;
+        self.prompt = Some(id.to_string());
+        self.input = TextBox::new(placeholder).with_text(initial);
+        self.input.set_scale(self.scale);
+        self.input.set_focused(true);
+        let mut inv = Invalidations::default();
+        self.input.on_event(&InputEvent::SelectAll, &mut inv);
+        self.layout(&mut inv);
+        self.matches.clear();
+        self.sel = 0;
     }
 
     pub(crate) fn set_commands(&mut self, cmds: Vec<(String, String)>) {
@@ -71,6 +93,7 @@ impl Palette {
 
     pub(crate) fn close(&mut self) {
         self.open = false;
+        self.prompt = None;
         self.input.set_focused(false);
     }
 
@@ -103,6 +126,10 @@ impl Palette {
     }
 
     fn refilter(&mut self, force: bool) {
+        if self.prompt.is_some() {
+            self.matches.clear();
+            return;
+        }
         let q = self.input.text();
         if !force && q == self.last_query {
             return;
@@ -141,6 +168,14 @@ impl Palette {
             InputEvent::Key {
                 key: Key::Enter, ..
             } => {
+                if let Some(id) = self.prompt.clone() {
+                    let text = self.input.text().trim().to_string();
+                    return if text.is_empty() {
+                        PaletteAction::Close
+                    } else {
+                        PaletteAction::Prompt { id, text }
+                    };
+                }
                 if let Some(g) = self.goto {
                     return match g {
                         Some(n) => PaletteAction::Pick(format!("goto.line:{n}")),

@@ -2,13 +2,13 @@
 
 > **요청**(사용자 09-15): *"포터블 배포는 하지 않을 것 · 목적별 실행파일을 분리하고 공유/정적 라이브러리도 별도 구성해서 설치본으로 배포 · macOS의 특징을 최대한 고려해 일관성 있는 배포판"*.
 > **선행**: [22 드라이버 확장](22-driver-extensions.md)(SxS 드라이버 프로세스) · [25 §9](25-license-tiers-and-server.md)(저장소 분리) · nexa-clip `packaging/`(3-OS 파이프라인 · choco/winget/homebrew/linux) · [01 아키텍처](01-architecture.md).
-> **상태**: ✅ **DR-27** · **DR-32**(09-16: D-49 MSI · D-50 pkg 링크) · **T-72/T-62 ✅ 09-16 49차**(맥 실기 pkg/dmg · MSI/deb/rpm은 CI · 서명·매니페스트 후속 · [journal 49차](journal/2026-09-16.md)).
+> **상태**: ✅ **DR-27**(→ **D-78 포터블 모드 재검토 · 09-17 사용자 "큰 방향성에서는 포터블 배포도 고려"** · §0-1) · **DR-32**(09-16: D-49 MSI · D-50 pkg 링크) · **T-72/T-62 ✅ 09-16 49차**(맥 실기 pkg/dmg · MSI/deb/rpm은 CI · 서명·매니페스트 후속 · [journal 49차](journal/2026-09-16.md)).
 
 ---
 
 ## 0. 원칙
 
-1. **설치본만 배포한다.** 포터블(zip 풀어 실행 · exe 옆 `data\`)은 만들지 않는다. 사용자 데이터·설정·프로필은 항상 **OS 사용자 폴더**(`%APPDATA%\nexa-sql` · `~/Library/Application Support/nexa-sql` · `~/.config/nexa-sql`). `NSQL_HOME` 재지정은 개발·테스트 전용.
+1. **설치본이 기본.** 사용자 데이터·설정·프로필은 **OS 사용자 폴더**(`%APPDATA%\nexa-sql` · `~/Library/Application Support/nexa-sql` · `~/.config/nexa-sql`). **포터블 모드는 D-78로 재검토(09-17 사용자)** — 설계 조건: exe 옆 `data\`(또는 `NSQL_HOME`)가 있으면 **그 폴더를 사용자 폴더로**(설정·프로필·툴바 배치·최근 파일 = 한 파일 트리 · 코드 경로는 지금의 `NSQL_HOME` 규약 그대로) · 자동 갱신·OS 등록(연결 프로그램·PATH) 없음 · zip 채널은 MSI/pkg와 같은 산출물에서 · 기기 키(DPAPI)·라이선스 기기 ID는 포터블에서 어떻게 할지 결정 필요. **그 전까지 새로 저장하는 상태는 전부 설정 레지스트리/`NSQL_HOME` 아래**에 둔다(exe 옆 파일 금지).
 2. **실행파일은 목적별로 나눈다** — GUI · CLI · (드라이버 프로세스) · (라이선스 도구). 한 exe에 여러 모드를 욱여넣지 않는다(`nexa-sql --cli` 같은 것 없음).
 3. **공통 코드는 라이브러리로 한 번만** — Rust 크레이트(`nsql-core/script/run/io/catalog/…`)는 **정적**(rlib · 각 exe에 링크). OS/외부 런타임(Oracle Instant Client · 향후 ODBC)은 **공유 라이브러리로 별도 위치**에 두고 실행 시 로드한다. 설치본 안에서 한 사본을 모든 exe가 공유.
 4. **3-OS에서 같은 레이아웃 의미** — 폴더 이름과 역할이 같고, OS 관례(macOS `.app` 번들 · Windows `Program Files` · Linux FHS)에만 맞춘다.

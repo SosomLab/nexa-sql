@@ -255,6 +255,145 @@ pub struct LogEntry {
     /// 구간 소요.
     pub elapsed: Option<Duration>,
     pub message: String,
+    /// 처리 층(개발자 모드 상세 로그 · docs/48) — 기본 메시지는 `App`.
+    pub layer: LogLayer,
+    /// 상세 수준 — `Basic`은 늘 보이는 기본 메시지 · 나머지는 개발자 모드 + 마스크가 켜져 있을 때만 **생성**된다.
+    pub level: LogLevel,
+}
+
+/// 처리 층(docs/48 §2) — 상세 로그 마스크의 축. 순서 = 마스크 비트 그룹.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LogLayer {
+    App = 0,
+    /// 네트워크(전송 시각·전송량·속도·첫 응답 도착).
+    Net = 1,
+    /// 서버 실행(첫 응답까지).
+    Exec = 2,
+    /// 행 페치(시작~완료 · 행·바이트·속도).
+    Fetch = 3,
+    /// 수신 뒤 데이터 처리(ResultData 구성 · 텍스트 변환 · 렌더 준비).
+    Load = 4,
+    /// 화면 렌더(시작·종료 시각 · 소요).
+    Render = 5,
+    Tx = 6,
+    /// 메타(탐색기·카탈로그).
+    Meta = 7,
+}
+
+impl LogLayer {
+    pub const ALL: [LogLayer; 8] = [
+        LogLayer::App,
+        LogLayer::Net,
+        LogLayer::Exec,
+        LogLayer::Fetch,
+        LogLayer::Load,
+        LogLayer::Render,
+        LogLayer::Tx,
+        LogLayer::Meta,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            LogLayer::App => "app",
+            LogLayer::Net => "net",
+            LogLayer::Exec => "exec",
+            LogLayer::Fetch => "fetch",
+            LogLayer::Load => "load",
+            LogLayer::Render => "render",
+            LogLayer::Tx => "tx",
+            LogLayer::Meta => "meta",
+        }
+    }
+    pub fn parse(s: &str) -> Option<LogLayer> {
+        let l = s.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|k| k.label() == l)
+    }
+}
+
+/// 상세 수준(docs/48 §2) — 층마다 3비트(timing · progress · trace).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LogLevel {
+    Basic = 0,
+    /// 단계 시각·소요·전송량(실행당 몇 줄).
+    Timing = 1,
+    /// 진행(페치 배치 · 100ms 간격).
+    Progress = 2,
+    /// 추적(호출 단위 · 많음).
+    Trace = 3,
+}
+
+impl LogLevel {
+    pub const DETAIL: [LogLevel; 3] = [LogLevel::Timing, LogLevel::Progress, LogLevel::Trace];
+    pub fn label(self) -> &'static str {
+        match self {
+            LogLevel::Basic => "basic",
+            LogLevel::Timing => "timing",
+            LogLevel::Progress => "progress",
+            LogLevel::Trace => "trace",
+        }
+    }
+    pub fn parse(s: &str) -> Option<LogLevel> {
+        let l = s.trim().to_ascii_lowercase();
+        Self::DETAIL.into_iter().find(|k| k.label() == l)
+    }
+}
+
+/// ★ 상세 로그 게이트(docs/48 §3) — 층×수준 비트 하나의 원자 정수. 꺼져 있으면(0) 상세 로그 코드는 **load 1회 + 예측 가능한
+/// 분기 1개**만 남고 문자열·시각·할당은 전혀 일어나지 않는다. 쓰기는 설정 변경 때만(`Relaxed`로 충분 — 순서 보장 불필요).
+static DETAIL_MASK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[inline(always)]
+const fn detail_bit(layer: LogLayer, level: LogLevel) -> u32 {
+    1u32 << ((layer as u32) * 4 + (level as u32))
+}
+
+/// 이 층·수준의 상세 로그를 만들어야 하는가 — **항상 인라인**(호출 0 · 분기 1).
+#[inline(always)]
+pub fn wants(layer: LogLayer, level: LogLevel) -> bool {
+    DETAIL_MASK.load(std::sync::atomic::Ordering::Relaxed) & detail_bit(layer, level) != 0
+}
+
+pub fn set_detail_mask(mask: u32) {
+    DETAIL_MASK.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn detail_mask() -> u32 {
+    DETAIL_MASK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 설정 `log.dev_layers` → 마스크. 문법: `layer[:level+level]`을 쉼표로 · 수준 생략 = timing+progress+trace ·
+/// `*` = 전 층 전 수준 · 빈 문자열 = 0. 예 `net,fetch:timing+progress,render:timing`.
+pub fn parse_detail_layers(spec: &str) -> u32 {
+    let mut m = 0u32;
+    for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let (layer_s, levels_s) = match part.split_once(':') {
+            Some((a, b)) => (a, Some(b)),
+            None => (part, None),
+        };
+        let layers: Vec<LogLayer> = if layer_s.trim() == "*" {
+            LogLayer::ALL.to_vec()
+        } else {
+            LogLayer::parse(layer_s).into_iter().collect()
+        };
+        let levels: Vec<LogLevel> = match levels_s {
+            Some(ls) => ls.split('+').filter_map(LogLevel::parse).collect(),
+            None => LogLevel::DETAIL.to_vec(),
+        };
+        for l in &layers {
+            for v in &levels {
+                m |= detail_bit(*l, *v);
+            }
+        }
+    }
+    m
+}
+
+/// 마스크에 층이 하나라도 켜져 있는가(메뉴 체크 표시).
+pub fn layer_in_mask(mask: u32, layer: LogLayer) -> bool {
+    LogLevel::DETAIL
+        .iter()
+        .any(|v| mask & detail_bit(layer, *v) != 0)
 }
 
 impl LogEntry {
@@ -265,6 +404,8 @@ impl LogEntry {
             rows: None,
             elapsed: None,
             message: message.into(),
+            layer: LogLayer::App,
+            level: LogLevel::Basic,
         }
     }
     pub fn rows(mut self, n: impl Into<Option<u64>>) -> Self {
@@ -273,6 +414,15 @@ impl LogEntry {
     }
     pub fn elapsed(mut self, d: impl Into<Option<Duration>>) -> Self {
         self.elapsed = d.into();
+        self
+    }
+    /// 상세 로그 표식(층 · 수준) — 메시지 앞에 `⟨net⟩`.
+    pub fn at(mut self, layer: LogLayer, level: LogLevel) -> Self {
+        self.layer = layer;
+        self.level = level;
+        if layer != LogLayer::App {
+            self.message = format!("⟨{}⟩ {}", layer.label(), self.message);
+        }
         self
     }
 }
@@ -1041,6 +1191,29 @@ impl LogHub {
 mod tests {
     use super::*;
 
+    /// 마스크 0 = 아무 층도 원하지 않음 · 문법 파싱 · 층 체크.
+    #[test]
+    fn detail_mask_parse_and_gate() {
+        set_detail_mask(0);
+        assert!(!wants(LogLayer::Net, LogLevel::Timing));
+        let m = parse_detail_layers("net, fetch:timing+progress ,render:timing,bogus");
+        set_detail_mask(m);
+        assert!(wants(LogLayer::Net, LogLevel::Trace));
+        assert!(wants(LogLayer::Fetch, LogLevel::Progress));
+        assert!(!wants(LogLayer::Fetch, LogLevel::Trace));
+        assert!(wants(LogLayer::Render, LogLevel::Timing));
+        assert!(!wants(LogLayer::Load, LogLevel::Timing));
+        assert!(layer_in_mask(m, LogLayer::Render) && !layer_in_mask(m, LogLayer::Load));
+        assert_eq!(
+            parse_detail_layers("*"),
+            parse_detail_layers("app,net,exec,fetch,load,render,tx,meta")
+        );
+        set_detail_mask(0);
+        let e = LogEntry::new(LogKind::Info, "x").at(LogLayer::Net, LogLevel::Timing);
+        assert_eq!(e.message, "⟨net⟩ x");
+        assert_eq!(e.level, LogLevel::Timing);
+    }
+
     fn e() -> LogEntry {
         LogEntry {
             ts: LocalTime {
@@ -1056,6 +1229,8 @@ mod tests {
             rows: Some(500),
             elapsed: Some(Duration::from_micros(340_100)),
             message: "SELECT * FROM t".into(),
+            layer: LogLayer::App,
+            level: LogLevel::Basic,
         }
     }
 

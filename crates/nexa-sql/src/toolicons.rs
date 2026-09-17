@@ -1207,6 +1207,10 @@ fn svg_tool(d: &str) -> ToolIcon {
 pub(crate) fn commit() -> ToolIcon {
     svg_tool("M382-240 154-468l 57-57 171 171 367-367 57 57-424 424Z")
 }
+/// 트랜잭션 로그(툴바 · 09-17) — 문서 외곽 + 줄 3(코드 경로 · 상태색 틴트 · 배지는 툴바가 얹는다).
+pub(crate) fn tx_log() -> ToolIcon {
+    svg_tool("M200-120v-720h560v720H200Zm80-80h400v-560H280v560Zm60-90h280v-60H340v60Zm0-140h280v-60H340v60Zm0-140h280v-60H340v60Z")
+}
 /// Material `undo` — Rollback(툴바 · T-77).
 pub(crate) fn rollback() -> ToolIcon {
     svg_tool("M280-200v-80h284q63 0 109.5-40T720-420q0-60-46.5-100T564-560H312l104 104-56 56-200-200 200-200 56 56-104 104h252q97 0 166.5 63T800-420q0 94-69.5 157T564-200H280Z")

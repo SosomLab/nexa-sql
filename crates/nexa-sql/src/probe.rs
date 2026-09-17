@@ -69,6 +69,20 @@ pub(crate) struct ProbeHub {
     inflight: Arc<AtomicUsize>,
     /// 동시 프로브 스레드 상한(설정 `probe.max_inflight` · 기본 [`MAX_INFLIGHT`]).
     max_inflight: usize,
+    /// TCP 실패 뒤 ICMP 확인(`probe.icmp` · 향상 모드 끔).
+    icmp: bool,
+}
+
+impl ProbeHub {
+    /// 동시 스레드 상한 갱신(설정 변경 · 실행 속도 향상 즉시 반영).
+    pub(crate) fn set_max_inflight(&mut self, n: usize) {
+        self.max_inflight = n.max(1);
+    }
+
+    /// ICMP 확인 켜기/끄기(정책 교체 때).
+    pub(crate) fn set_icmp(&mut self, on: bool) {
+        self.icmp = on;
+    }
 }
 
 impl ProbeHub {
@@ -95,6 +109,7 @@ impl ProbeHub {
             } else {
                 max_inflight
             },
+            icmp: true,
         }
     }
 
@@ -106,10 +121,11 @@ impl ProbeHub {
         self.inflight.fetch_add(1, Ordering::Relaxed);
         let tx = self.tx_res.clone();
         let inflight = Arc::clone(&self.inflight);
+        let icmp = self.icmp;
         let spawned = std::thread::Builder::new()
             .name(format!("nsql-probe:{}", req.name))
             .spawn(move || {
-                let outcome = probe_once(&req.host, req.port, req.timeout);
+                let outcome = probe_once(&req.host, req.port, req.timeout, icmp);
                 inflight.fetch_sub(1, Ordering::Relaxed);
                 let _ = tx.send(ProbeResult {
                     name: req.name,
@@ -130,7 +146,7 @@ impl ProbeHub {
 
 /// 이름 풀이(첫 주소) + `connect_timeout`. 성공 = Up(바로 닫음) · **연결 거부** = 호스트 살아 있음(PortClosed) ·
 /// 타임아웃/불가 = ICMP 에코 1회(Windows `IcmpSendEcho` · 관리자 권한 불필요)로 호스트 생존을 한 번 더 본다 → 응답이면 PortClosed, 아니면 Down.
-pub(crate) fn probe_once(host: &str, port: u16, timeout: Duration) -> Outcome {
+pub(crate) fn probe_once(host: &str, port: u16, timeout: Duration, icmp: bool) -> Outcome {
     let Ok(mut addrs) = (host, port).to_socket_addrs() else {
         return Outcome::Down;
     };
@@ -141,7 +157,7 @@ pub(crate) fn probe_once(host: &str, port: u16, timeout: Duration) -> Outcome {
         Ok(_) => Outcome::Up,
         Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => Outcome::PortClosed,
         Err(_) => {
-            if icmp_alive(addr.ip(), timeout) {
+            if icmp && icmp_alive(addr.ip(), timeout) {
                 Outcome::PortClosed
             } else {
                 Outcome::Down
@@ -238,6 +254,8 @@ pub(crate) struct ProbePolicy {
     pub retry_delay: Duration,
     /// 정상(초록)일 때의 주기 갱신 간격(`probe.interval`).
     pub interval: Duration,
+    /// TCP 실패 뒤 ICMP 핑으로 "서버는 살아 있음"을 구별할지(`probe.icmp` · 끄면 Down으로).
+    pub icmp: bool,
 }
 
 impl Default for ProbePolicy {
@@ -248,6 +266,7 @@ impl Default for ProbePolicy {
             timeout: Duration::from_secs(2),
             retry_delay: Duration::from_secs(60),
             interval: Duration::from_secs(60),
+            icmp: true,
         }
     }
 }
@@ -498,7 +517,7 @@ mod tests {
         // 127.0.0.1:1 — 열려 있을 리 없는 포트 → 연결 거부(호스트는 살아 있다) = PortClosed.
         let t = Instant::now();
         assert_eq!(
-            probe_once("127.0.0.1", 1, Duration::from_millis(800)),
+            probe_once("127.0.0.1", 1, Duration::from_millis(800), true),
             Outcome::PortClosed
         );
         assert!(t.elapsed() < Duration::from_secs(4));
@@ -509,7 +528,7 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = l.local_addr().expect("addr").port();
         assert_eq!(
-            probe_once("127.0.0.1", port, Duration::from_millis(800)),
+            probe_once("127.0.0.1", port, Duration::from_millis(800), true),
             Outcome::Up
         );
     }

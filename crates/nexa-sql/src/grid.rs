@@ -12,7 +12,7 @@ use nexa_ctl::{
     Control, InputEvent, Invalidations, Key, ScrollBars, TextBox, ToolIcon, ToolItem, Toolbar,
     Widget,
 };
-use nsql_core::{fmt_bytes, Dialect, ResultSet, Value};
+use nsql_core::{fmt_bytes, Dialect, ResultData, ResultSet, RowSource, Value, View};
 use nsql_i18n::{t, Msg};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -40,6 +40,14 @@ impl Drop for TextJob {
         self.cancel.store(true, Ordering::Relaxed);
     }
 }
+
+/// 페인트 뒤 1회 보고: (렌더 소요, 탑재 소요, 추정 바이트, 렌더 시작·종료 시각(개발자 모드)).
+pub(crate) type PerfReport = (
+    std::time::Duration,
+    std::time::Duration,
+    u64,
+    Option<(String, String)>,
+);
 
 /// 결과 보기 모드(사용자 09-16 · DBeaver 결과 패널 그룹 1): 그리드 · 텍스트 표 · Markdown · JSON · TSV · CSV · SQL 5종.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,7 +114,7 @@ pub(crate) enum CopyKind {
 
 /// SQL 문 종류·테이블 추정은 nsql-io(CLI와 공용 · docs/41).
 pub(crate) use nsql_io::SqlKind;
-use nsql_io::{generate, guess_table, Format, GridOpts, KeySpec};
+use nsql_io::{guess_table, Format, GridOpts, KeySpec};
 
 /// 드래그 선택 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,12 +127,15 @@ enum DragSel {
 
 pub(crate) struct Grid {
     pub bounds: Rect,
-    rs: Option<ResultSet>,
+    /// ★ 결과 데이터 **한 세트**(DR-33) — 페치 세그먼트 `Arc`. 그리드·텍스트 보기 7종·복사·정렬은 전부 이것 하나에서
+    ///   `View`(행·열 인덱스)로 파생한다(형식별 사본 0 · 변환 스레드 공유 복사 0).
+    rs: Option<ResultData>,
     messages: Vec<String>,
     /// 탑재(set_result)·마지막 렌더 소요 — 푸터에 표시(docs/26 Load·Render).
     load: std::time::Duration,
     render: std::time::Duration,
-    approx_bytes: u64,
+    /// 텍스트 보기 파생 캐시(`text_lines`)의 바이트 — 예산(D-72)·푸터에 데이터와 함께 센다.
+    text_bytes: u64,
     /// 세로 스크롤(픽셀 · 0 = 첫 행 상단).
     scroll_y: i32,
     /// 가로 스크롤(픽셀).
@@ -138,8 +149,8 @@ pub(crate) struct Grid {
     row_snap: bool,
     /// 설정 `grid.row_numbers`(기본 켬) — 왼쪽 고정 행번호 열(가로 스크롤 무관).
     row_numbers: bool,
-    /// 설정 `grid.copy_null` — 복사 시 null을 `NULL`로(기본 끔 = 빈 칸).
-    copy_null: bool,
+    /// 설정 `grid.null_text` — NULL 셀 글자(그리드·텍스트 보기·복사 **공통** · 기본 `NULL` · 사용자 09-17).
+    null_text: String,
     /// 행 높이 비율(% · 글꼴 높이 대비 · 설정 `grid.row_height_pct`).
     row_pct: i32,
     gutter_w: i32,
@@ -158,8 +169,11 @@ pub(crate) struct Grid {
     /// 다음 페인트에서 자동 맞춤할 컬럼(글꼴 측정은 페인트에서).
     autofit: Option<usize>,
     /// 자동 너비 한계(논리 px · 설정 `grid.col_min_width`/`grid.col_max_width`).
+    /// 자동 컬럼 너비 하한(논리 px · `grid.col_min_width`).
     col_min: i32,
-    col_max: i32,
+    /// 자동 컬럼 너비 상한 = **글자 수**(`grid.col_max_mode`/`col_max_chars` · 사용자 09-17 "폰트 기준 24자") — 페인트가 그리드 글꼴의
+    ///   숫자 폭을 단위로 px로 바꾼다(한글 등 전각은 글꼴에서 약 2배라 2자로 셈 · CLI `disp_width`와 같은 뜻).
+    col_max_chars: i32,
     /// 마우스가 올라간 행(표시 index)의 **서서히 진해지는** 강조 — `IntentFade`(70ms 머문 마지막 목표만 · 진입 = `grid.hover_fade` · 사용자 09-14).
     hover: IntentFade,
     /// ★ 선택 구간 목록(표시 행 r0..=r1 · 표시 컬럼 c0..=c1 · 마지막 = 주 구간) — 셀·범위·행 전체·Ctrl 개별(사용자 09-15 · dir2 규약).
@@ -237,6 +251,8 @@ pub(crate) struct Grid {
     text_gutter_w: i32,
     /// 다음 페인트 뒤 렌더·메모리 보고 1회(호스트가 로그로).
     perf_report: bool,
+    /// 렌더 시작·종료 시각(개발자 모드 Render 층이 켜져 있을 때만 · 보고 1회).
+    render_at: Option<(String, String)>,
     /// 텍스트 보기 선택(사용자 09-16 "JSON·Markdown도 드래그 복사"): 앵커·헤드 = (줄, 문자 인덱스).
     text_sel: Option<((usize, usize), (usize, usize))>,
     /// 거터 Ctrl+클릭으로 모은 개별 줄(그리드 행번호 열과 같은 규약).
@@ -259,7 +275,7 @@ impl Default for Grid {
             messages: Vec::new(),
             load: std::time::Duration::ZERO,
             render: std::time::Duration::ZERO,
-            approx_bytes: 0,
+            text_bytes: 0,
             scroll_y: 0,
             scroll_x: 0,
             col_w: Vec::new(),
@@ -268,7 +284,7 @@ impl Default for Grid {
             bars: ScrollBars::new(),
             row_snap: false,
             row_numbers: true,
-            copy_null: false,
+            null_text: "NULL".into(),
             row_pct: 150,
             gutter_w: 0,
             col_order: Vec::new(),
@@ -279,7 +295,7 @@ impl Default for Grid {
             edge_click: None,
             autofit: None,
             col_min: 40,
-            col_max: 420,
+            col_max_chars: 24,
             hover: IntentFade::with_speed(FadeSpeed::Slow),
             regions: Vec::new(),
             sel_anchor: None,
@@ -318,7 +334,9 @@ impl Default for Grid {
                     .disabled(),
             ]),
             tb_fetch: Self::bar(vec![
-                ToolItem::new("fetch.all", toolicons::fetch_all()).tip(t(Msg::TipFetchAll)),
+                ToolItem::new("fetch.all", toolicons::fetch_all())
+                    .tip(t(Msg::TipFetchAll))
+                    .disabled(),
                 ToolItem::new("fetch.stop", toolicons::fetch_stop())
                     .tip(t(Msg::TipFetchCancel))
                     .disabled(),
@@ -349,6 +367,7 @@ impl Default for Grid {
             text_ch_hold: 0,
             text_gutter_w: 0,
             perf_report: false,
+            render_at: None,
             text_sel: None,
             text_lines_sel: Vec::new(),
             text_drag: None,
@@ -389,13 +408,13 @@ impl Grid {
             bounds: self.bounds,
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
-            copy_null: self.copy_null,
+            null_text: self.null_text.clone(),
             row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
             dialect: self.dialect,
             col_min: self.col_min,
-            col_max: self.col_max,
+            col_max_chars: self.col_max_chars,
             page_box: Self::page_box(self.default_page_rows),
             page_rows: self.default_page_rows,
             default_page_rows: self.default_page_rows,
@@ -424,13 +443,9 @@ impl Grid {
     // ── 도구줄·페치 상태(호스트 연동)
 
     /// 이 결과 탭의 세그먼트 크기(0 = 전체).
-    /// 결과 행의 대략 바이트(메모리 예산 D-72 · 탭 합계용).
+    /// 이 탭이 드는 대략 바이트 = 결과 데이터(세그먼트 누적) + 텍스트 보기 파생 캐시(메모리 예산 D-72 · 푸터).
     pub(crate) fn approx_bytes(&self) -> u64 {
-        if self.rs.is_some() {
-            self.approx_bytes
-        } else {
-            0
-        }
+        self.rs.as_ref().map_or(0, ResultData::approx_bytes) + self.text_bytes
     }
 
     pub(crate) fn page_rows(&self) -> usize {
@@ -462,6 +477,7 @@ impl Grid {
     /// 마지막 페치가 상한에서 잘렸다(서버에 더 있음).
     pub(crate) fn set_more(&mut self, more: bool) {
         self.more = more;
+        self.sync_fetch_tools();
     }
 
     /// COUNT(*) 결과.
@@ -473,15 +489,23 @@ impl Grid {
     /// 추가 페치 실패 — 요청 상태만 푼다.
     pub(crate) fn fetch_failed(&mut self) {
         self.fetching = false;
-        self.fetch_all_pending = false;
-        self.fetch_progress = None;
-        self.sync_stop_button();
+        self.end_fetch_all();
     }
 
-    /// 전체 조회 진행(워커 배치마다).
+    /// 전체 조회가 끝났다(교체 결과 도착 · 실패 · 중지) — 진행·취소 상태를 비우고 도구줄을 맞춘다.
+    ///   ★ 완료 뒤에도 ■가 켜져 있던 결함(사용자 09-17): `set_result`가 깃발만 내리고 도구줄을 안 맞췄다.
+    fn end_fetch_all(&mut self) {
+        self.fetch_all_pending = false;
+        self.fetch_progress = None;
+        self.cancel_req = false;
+        self.sync_fetch_tools();
+    }
+
+    /// 전체 조회 진행(워커 배치마다) — `rows` = 전체 행 수(기존 + 받은) · `bytes` = 이번에 받은 바이트(기존 데이터는 여기서 더한다).
     pub(crate) fn set_fetch_progress(&mut self, rows: u64, bytes: u64) {
         if self.fetch_all_pending {
-            self.fetch_progress = Some((rows, bytes));
+            let held = self.rs.as_ref().map_or(0, ResultData::approx_bytes);
+            self.fetch_progress = Some((rows, bytes + held));
         }
     }
 
@@ -490,28 +514,74 @@ impl Grid {
         std::mem::take(&mut self.cancel_req)
     }
 
-    /// 전체 조회가 나가 있는 동안만 중지 버튼을 켠다.
-    fn sync_stop_button(&mut self) {
+    /// 전체 조회 요청(도구줄 ⇊ · 09-17 "나머지 이어 받기"): 더 있을 때만 · 자동 페치가 나가 있으면 **큐에 두었다가** 그 세그먼트가
+    /// 붙은 뒤 정확한 offset으로 보낸다([`Self::take_fetch_request`]) — 종전엔 교체라 늦은 세그먼트를 버렸다.
+    fn request_fetch_all(&mut self) {
+        if self.fetch_all_pending || self.rs.is_none() || !self.more {
+            return;
+        }
+        self.fetch_req = Some(FetchReq::All);
+        self.fetch_all_pending = true;
+        self.fetch_progress = None;
+        self.cancel_req = false;
+        self.sync_fetch_tools();
+    }
+
+    /// 중지(■ · Esc): 아직 큐에만 있으면 요청을 지우고 끝 · 나가 있으면 워커 깃발(호스트가 가져간다).
+    fn request_cancel(&mut self) {
+        if !self.fetch_all_pending {
+            return;
+        }
+        if matches!(self.fetch_req, Some(FetchReq::All)) {
+            self.fetch_req = None;
+            self.end_fetch_all();
+        } else {
+            self.cancel_req = true;
+        }
+    }
+
+    /// 전체 조회 결과(나머지) 이어 붙이기 — 진행·■ 상태를 닫고 [`Self::append_page`].
+    pub(crate) fn append_all(&mut self, page: ResultSet, more: bool) {
+        self.end_fetch_all();
+        self.append_page(page, more);
+    }
+
+    /// 페치 도구줄 활성 상태 = 그리드 상태의 함수 — ■ 중지는 전체 조회가 나가 있는 동안만 · 전체 조회는 결과가 있고
+    ///   나가 있지 않을 때만(클릭 guard와 같은 조건 · 눌러도 아무 일 없는 버튼을 켜 두지 않는다).
+    fn sync_fetch_tools(&mut self) {
         let mut inv = Invalidations::default();
         self.tb_fetch
             .set_item_enabled("fetch.stop", self.fetch_all_pending, &mut inv);
+        // 전체 조회 = 나머지 이어 받기라 **더 있을 때만**(전부 받았으면 흐림 · 09-17).
+        self.tb_fetch.set_item_enabled(
+            "fetch.all",
+            !self.fetch_all_pending && self.rs.is_some() && self.more,
+            &mut inv,
+        );
     }
 
-    /// 다음 세그먼트 이어 붙이기(정렬 중이면 다시 정렬 · 스크롤 유지).
+    /// 전체 조회 도구줄 상태(테스트·검증용): (전체 조회 활성, 중지 활성).
+    #[cfg(test)]
+    fn fetch_tools_enabled(&self) -> (bool, bool) {
+        (
+            self.tb_fetch.item_enabled("fetch.all"),
+            self.tb_fetch.item_enabled("fetch.stop"),
+        )
+    }
+
+    /// 다음 세그먼트 이어 붙이기(정렬 중이면 다시 정렬 · 스크롤 유지). 전체 조회가 큐에 있어도 버리지 않는다(그 뒤 offset으로 나간다).
     pub(crate) fn append_page(&mut self, page: ResultSet, more: bool) {
-        // 전체 조회가 나가 있으면 늦게 온 세그먼트는 버린다(교체 결과와 섞이지 않게).
-        if self.fetch_all_pending {
-            return;
-        }
         self.fetching = false;
         self.more = more;
-        self.approx_bytes += page.approx_bytes();
+        self.sync_fetch_tools();
         let Some(rs) = self.rs.as_mut() else {
             return;
         };
-        let start = rs.rows.len();
-        rs.rows.extend(page.rows);
-        self.row_order.extend(start..self.rows());
+        let start = rs.len();
+        // 세그먼트 덧붙이기 = 이동(복사 0 · DR-33) — 변환 스레드가 옛 세그먼트를 공유 중이어도 서로 간섭 없음.
+        rs.push(page);
+        let end = rs.len();
+        self.row_order.extend(start..end);
         if !self.sort_keys.is_empty() {
             self.apply_sort();
         }
@@ -523,16 +593,15 @@ impl Grid {
         }
     }
 
-    /// 호스트가 가져가는 페치 요청(1회성) — 가져가는 순간 진행 중으로 표시.
+    /// 호스트가 가져가는 페치 요청(1회성) — 가져가는 순간 진행 중으로 표시. 전체 조회는 다른 페치가 나가 있는 동안 기다린다
+    /// (그 세그먼트가 붙은 뒤 `rows()`가 정확한 offset).
     pub(crate) fn take_fetch_request(&mut self) -> Option<FetchReq> {
+        if matches!(self.fetch_req, Some(FetchReq::All)) && self.fetching {
+            return None;
+        }
         let r = self.fetch_req.take();
         if r.is_some() {
             self.fetching = true;
-        }
-        if matches!(r, Some(FetchReq::All)) {
-            self.fetch_all_pending = true;
-            self.fetch_progress = None;
-            self.sync_stop_button();
         }
         r
     }
@@ -548,10 +617,14 @@ impl Grid {
     }
 
     /// 다음 페인트 뒤 1회: 렌더·탑재 소요와 메모리(호스트가 로그로).
-    pub(crate) fn take_perf_report(
-        &mut self,
-    ) -> Option<(std::time::Duration, std::time::Duration, u64)> {
-        std::mem::take(&mut self.perf_report).then_some((self.render, self.load, self.approx_bytes))
+    pub(crate) fn take_perf_report(&mut self) -> Option<PerfReport> {
+        let at = self.render_at.take();
+        std::mem::take(&mut self.perf_report).then_some((
+            self.render,
+            self.load,
+            self.approx_bytes(),
+            at,
+        ))
     }
 
     /// 보기 모드 전환 — SQL은 키가 필요해 호스트에 미룬다.
@@ -579,7 +652,13 @@ impl Grid {
         self.text_drag = None;
         self.text_hit.clear();
         match self.view {
-            ResultView::Grid => self.cancel_text_job(),
+            ResultView::Grid => {
+                // 그리드로 돌아오면 파생 캐시는 버린다(원본 한 세트만 남김 · 메모리 회수).
+                self.cancel_text_job();
+                self.text_lines = Vec::new();
+                self.text_bytes = 0;
+                self.text_longest = None;
+            }
             ResultView::Sql(k) => {
                 self.cancel_text_job();
                 self.pending_view = Some(k);
@@ -611,7 +690,8 @@ impl Grid {
         } else {
             0
         };
-        self.text_lines.clear();
+        self.text_lines = Vec::new();
+        self.text_bytes = 0;
         // 가로 최대 폭은 커지는 쪽으로만(짧아져도 유지 · 사용자 09-17) — 새 변환에서도 이전 값을 하한으로.
         if !keep {
             self.text_w = 0;
@@ -623,8 +703,16 @@ impl Grid {
         let Some(rs) = self.rs.as_ref() else {
             return;
         };
-        let ordered = self.ordered_rs(rs);
-        let total = ordered.rows.len();
+        // ★ 복사 0(DR-33): 데이터는 Arc 세그먼트 공유 · 정렬/열 순서는 인덱스 벡터만 넘긴다 → 스레드가 뷰를 만들어 읽는다.
+        //   (종전 `ordered_rs`는 전 행·문자열을 딥 카피해 380MB 표면 순간 2배 · 09-17 검토)
+        let data = rs.clone();
+        let row_order = self.row_order.clone();
+        let col_order = self.col_order.clone();
+        let total = row_order.len();
+        let opts = GridOpts {
+            null: self.null_text.clone(),
+            ..GridOpts::default()
+        };
         let dialect = self.dialect;
         let table = self.source_table.clone().unwrap_or_else(|| "T".into());
         let cancel = Arc::new(AtomicBool::new(false));
@@ -633,7 +721,8 @@ impl Grid {
         let spawned = std::thread::Builder::new()
             .name("nsql-textview".into())
             .spawn(move || {
-                let layout = nsql_io::block_layout(&ordered, &GridOpts::default());
+                let ordered = View::new(&data).rows(&row_order).cols(&col_order);
+                let layout = nsql_io::block_layout(&ordered, &opts);
                 let block = 500usize;
                 let mut start = 0usize;
                 loop {
@@ -708,6 +797,10 @@ impl Grid {
                             self.text_w = 0; // 다음 페인트에서 이 줄만 잰다.
                         }
                     }
+                    self.text_bytes += lines
+                        .iter()
+                        .map(|l| (l.capacity() + std::mem::size_of::<String>()) as u64)
+                        .sum::<u64>();
                     self.text_lines.extend(lines);
                     job.done = done;
                     job.total = total;
@@ -732,26 +825,6 @@ impl Grid {
     }
 
     /// 표시 순서(정렬·컬럼 이동)대로 복제한 결과 — 텍스트 보기·SQL 보기의 원천.
-    fn ordered_rs(&self, rs: &ResultSet) -> ResultSet {
-        let cols: Vec<usize> = self.col_order.clone();
-        ResultSet {
-            columns: cols
-                .iter()
-                .filter_map(|&ci| rs.columns.get(ci).cloned())
-                .collect(),
-            rows: self
-                .row_order
-                .iter()
-                .filter_map(|&ri| rs.rows.get(ri))
-                .map(|row| {
-                    cols.iter()
-                        .map(|&ci| row.get(ci).cloned().unwrap_or(Value::Null))
-                        .collect()
-                })
-                .collect(),
-        }
-    }
-
     /// 전 컬럼 이름(SQL 보기의 키 선택 근거).
     pub(crate) fn all_col_names(&self) -> Vec<String> {
         let Some(rs) = self.rs.as_ref() else {
@@ -759,7 +832,7 @@ impl Grid {
         };
         self.col_order
             .iter()
-            .filter_map(|&ci| rs.columns.get(ci).map(|c| c.name.clone()))
+            .filter_map(|&ci| rs.columns().get(ci).map(|c| c.name.clone()))
             .collect()
     }
 
@@ -839,13 +912,9 @@ impl Grid {
                         self.open_view_menu(r.x, r.y, scale);
                     }
                     Some("refresh") => self.want_refresh = true,
-                    // 전체 조회는 자동 페치(다음 세그먼트)가 나가 있어도 받는다 — 결과는 교체라 늦은 세그먼트는 버린다.
-                    Some("fetch.all") if !self.fetch_all_pending && self.rs.is_some() => {
-                        self.fetch_req = Some(FetchReq::All);
-                    }
-                    Some("fetch.stop") if self.fetch_all_pending => {
-                        self.cancel_req = true;
-                    }
+                    // 전체 조회 = 나머지 이어 받기(자동 페치가 나가 있으면 큐).
+                    Some("fetch.all") => self.request_fetch_all(),
+                    Some("fetch.stop") => self.request_cancel(),
                     Some("count") if !self.fetching && !self.source_sql.trim().is_empty() => {
                         self.fetch_req = Some(FetchReq::Count);
                     }
@@ -956,6 +1025,9 @@ impl Grid {
         );
         self.text_scroll = (nx, ny);
         if consumed {
+            // ★ 휠·스크롤바로 끝에 닿아도 다음 세그먼트(사용자 09-17 CSV "200행 뒤로 스크롤 시 자동 조회 안 됨" —
+            //   종전엔 키보드 스크롤만 아래 판정을 지났다).
+            self.text_auto_fetch(body, ch);
             return;
         }
         // 선택(사용자 09-16): 본문 드래그 = 문자 범위 · 거터 클릭/드래그 = 줄 범위 · Ctrl+클릭 = 개별 줄 · Shift = 확장.
@@ -1003,7 +1075,7 @@ impl Grid {
                 key: Key::Escape, ..
             } => {
                 if self.fetch_all_pending {
-                    self.cancel_req = true;
+                    self.request_cancel();
                 } else {
                     self.text_sel = None;
                     self.text_lines_sel.clear();
@@ -1035,7 +1107,13 @@ impl Grid {
             self.text_scroll.0.clamp(0, mx),
             self.text_scroll.1.clamp(0, my),
         );
-        // ★ 텍스트 계열 보기도 스크롤 끝 = 다음 세그먼트(사용자 09-16 · 데이터 원천은 그리드와 같은 ResultSet) · 변환 중이면 미룸.
+        self.text_auto_fetch(body, ch);
+    }
+
+    /// ★ 텍스트 계열 보기도 스크롤 끝 = 다음 세그먼트(사용자 09-16 · 데이터 원천은 그리드와 같은 결과 세트) · 변환 중이면 미룸.
+    ///   그리드의 [`Self::clamp`]와 같은 규칙 — 휠·스크롤바·키 어느 경로든 스크롤이 바뀌면 한 번 판정.
+    fn text_auto_fetch(&mut self, body: Rect, ch: i32) {
+        let my = (ch - body.h).max(0);
         if self.auto_fetch
             && self.more
             && !self.fetching
@@ -1214,24 +1292,44 @@ impl Grid {
         (self.text_w, h.max(hold))
     }
 
-    /// 자동 컬럼 너비 한계(설정 `grid.col_min_width`/`grid.col_max_width` · 논리 px).
-    pub(crate) fn set_col_limits(&mut self, min: i32, max: i32) {
-        self.col_min = min.max(1);
-        self.col_max = max.max(self.col_min);
+    /// 자동 컬럼 너비 한계 — 하한 논리 px(`grid.col_min_width`) · 상한 글자 수(`grid.col_max_mode`/`col_max_chars`).
+    /// 바뀌면 폭을 다시 잰다(다음 페인트).
+    pub(crate) fn set_col_limits(&mut self, min_px: i32, max_chars: i32) {
+        let (min_px, max_chars) = (min_px.max(1), max_chars.max(1));
+        if (self.col_min, self.col_max_chars) != (min_px, max_chars) {
+            self.col_min = min_px;
+            self.col_max_chars = max_chars;
+            self.col_w.clear();
+        }
+    }
+
+    /// 자동 컬럼 너비의 [하한, 상한](물리 px) — 상한 = 글자 수 × 그리드 글꼴 숫자 폭 + 여백.
+    fn col_bounds(&self, dc: &mut dyn DrawCtx, s: f32, pad: i32) -> (i32, i32) {
+        let lo = (self.col_min as f32 * s).round() as i32;
+        let unit = dc.text_width("0").max(1);
+        let hi = self.col_max_chars * unit + pad * 2;
+        (lo, hi.max(lo))
     }
 
     pub(crate) fn set_row_numbers(&mut self, on: bool) {
         self.row_numbers = on;
     }
 
-    /// 복사할 때 null을 `NULL` 글자로(설정 `grid.copy_null` · 기본 끔 = 빈 칸 · 사용자 09-16).
     /// 행 높이 비율(% · 설정 `grid.row_height_pct`).
     pub(crate) fn set_row_pct(&mut self, pct: i32) {
         self.row_pct = pct.clamp(110, 300);
     }
 
-    pub(crate) fn set_copy_null(&mut self, on: bool) {
-        self.copy_null = on;
+    /// NULL 셀 글자(설정 `grid.null_text` · 그리드·텍스트 보기·복사 공통 · 사용자 09-17 "뷰마다 다르면 안 된다").
+    pub(crate) fn set_null_text(&mut self, text: &str) {
+        if self.null_text == text {
+            return;
+        }
+        self.null_text = text.to_string();
+        self.col_w.clear(); // 폭은 셀 글자로 재므로 다시.
+        if self.view != ResultView::Grid {
+            self.refresh_text_view();
+        }
     }
 
     /// 스크롤 단위 — `true` = 항목(행) 단위 · `false` = 픽셀(기본).
@@ -1247,14 +1345,16 @@ impl Grid {
 
     pub(crate) fn set_result(&mut self, rs: ResultSet) {
         let t = std::time::Instant::now();
-        self.approx_bytes = rs.approx_bytes();
         // 재조회 = 조회 컬럼 순서·정렬 초기화(이동·정렬 결과 무시 — 사용자 09-14).
         self.col_order = (0..rs.columns.len()).collect();
         self.row_order = (0..rs.rows.len()).collect();
         self.sort_keys.clear();
         self.hdr_drag = None;
         self.hdr_resize = None;
-        self.rs = Some(rs);
+        // 한 세트(DR-33): 덩어리를 이동해 첫 세그먼트로(복사 0). 옛 데이터는 여기서 drop(변환 스레드가 쥔 세그먼트는 그쪽이 끝나면).
+        self.rs = Some(ResultData::new(rs));
+        self.text_lines = Vec::new();
+        self.text_bytes = 0;
         self.messages.clear();
         self.scroll_y = 0;
         self.scroll_x = 0;
@@ -1267,8 +1367,9 @@ impl Grid {
         self.more = false;
         self.total = None;
         self.fetching = false;
-        self.fetch_all_pending = false;
         self.fetch_req = None;
+        // 전체 조회의 교체 결과가 여기로 온다 — 진행·취소·■ 상태를 함께 닫는다(사용자 09-17).
+        self.end_fetch_all();
         self.last_run_at = Some(nsql_log::now_local().stamp());
         self.perf_report = true;
         self.text_scroll = (0, 0);
@@ -1322,7 +1423,7 @@ impl Grid {
         let mut names: Vec<String> = Vec::new();
         for (_, _, c0, c1) in regions {
             for &ci in &self.col_order[c0..=c1.min(self.col_order.len().saturating_sub(1))] {
-                if let Some(c) = rs.columns.get(ci) {
+                if let Some(c) = rs.columns().get(ci) {
                     if !names.iter().any(|n| n.eq_ignore_ascii_case(&c.name)) {
                         names.push(c.name.clone());
                     }
@@ -1341,34 +1442,49 @@ impl Grid {
         regions.dedup();
         let mut out = String::new();
         let mut cells = 0usize;
-        for (i, (r0, r1, c0, c1)) in regions.into_iter().enumerate() {
-            let cols: Vec<usize> = self.col_order[c0..=c1.min(self.col_order.len() - 1)].to_vec();
-            let names: Vec<String> = cols
-                .iter()
-                .map(|&ci| {
-                    rs.columns
-                        .get(ci)
-                        .map(|c| c.name.clone())
-                        .unwrap_or_default()
-                })
-                .collect();
-            let mut rows: Vec<Vec<Value>> = Vec::new();
-            for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                let ri = self.row_order.get(di).copied().unwrap_or(di);
-                let Some(row) = rs.rows.get(ri) else { continue };
-                rows.push(
-                    cols.iter()
-                        .map(|&ci| row.get(ci).cloned().unwrap_or(Value::Null))
-                        .collect(),
-                );
-                cells += cols.len();
+        for (i, region) in regions.into_iter().enumerate() {
+            // 선택 구간 = 뷰(행 인덱스 · 열 부분집합) — 값 복사 0(DR-33) · 문장 생성기는 CLI `-f sql:*`와 같은 코드.
+            let (rows, cols) = self.region_index(region);
+            if rows.is_empty() || cols.is_empty() {
+                continue;
             }
+            let view = View::new(rs).rows(&rows).cols(&cols);
+            let names = view.col_names();
+            cells += rows.len() * cols.len();
             if i > 0 {
                 out.push('\n');
             }
-            out.push_str(&generate(self.dialect, &table, &names, &rows, kind, key));
+            out.push_str(&nsql_io::generate_src(
+                self.dialect,
+                &table,
+                &names,
+                &view,
+                0..rows.len(),
+                kind,
+                key,
+            ));
         }
         (cells > 0).then_some((out, cells))
+    }
+
+    /// 선택 구간 → (원본 행 번호 목록(표시 순서), 원본 열 번호 목록(표시 순서)) — 뷰의 입력. 범위는 결과 크기로 자른다.
+    fn region_index(&self, region: (usize, usize, usize, usize)) -> (Vec<usize>, Vec<usize>) {
+        let (r0, r1, c0, c1) = region;
+        let n = self.rows();
+        let rows: Vec<usize> = if n == 0 || r0 > r1 {
+            Vec::new()
+        } else {
+            (r0..=r1.min(n - 1))
+                .map(|di| self.row_order.get(di).copied().unwrap_or(di))
+                .collect()
+        };
+        let nc = self.col_order.len();
+        let cols: Vec<usize> = if nc == 0 || c0 > c1 || c0 >= nc {
+            Vec::new()
+        } else {
+            self.col_order[c0..=c1.min(nc - 1)].to_vec()
+        };
+        (rows, cols)
     }
 
     fn in_sel(&self, di: usize, pos: usize) -> bool {
@@ -1495,7 +1611,7 @@ impl Grid {
         (cells > 0).then_some((out, cells))
     }
 
-    /// 구간 하나를 형식대로(첫 구간만 헤더).
+    /// 구간 하나를 형식대로(첫 구간만 헤더) — 선택 = 뷰 → 렌더는 nsql-io 하나(텍스트 보기·CLI와 같은 코드 · DR-33). 값 복사 0.
     fn copy_region(
         &self,
         kind: CopyKind,
@@ -1503,176 +1619,39 @@ impl Grid {
         first: bool,
     ) -> Option<(String, usize)> {
         let rs = self.rs.as_ref()?;
-        let (r0, r1, c0, c1) = region;
-        let cols: Vec<usize> = self.col_order[c0..=c1.min(self.col_order.len() - 1)].to_vec();
-        let names: Vec<String> = cols
-            .iter()
-            .map(|&ci| {
-                rs.columns
-                    .get(ci)
-                    .map(|c| c.name.clone())
-                    .unwrap_or_default()
-            })
-            .collect();
-        let mut out = String::new();
-        let mut cells = 0usize;
-        let copy_null = self.copy_null;
-        let plain = |v: &Value| match v {
-            Value::Null if copy_null => "NULL".into(),
-            Value::Null => String::new(),
-            other => other.display(),
-        };
-        match kind {
-            CopyKind::Tsv | CopyKind::TsvWithHeaders => {
-                if kind == CopyKind::TsvWithHeaders && first {
-                    out.push_str(&names.join("\t"));
-                    out.push('\n');
-                }
-                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                    let ri = self.row_order.get(di).copied().unwrap_or(di);
-                    let Some(row) = rs.rows.get(ri) else { continue };
-                    let line: Vec<String> = cols
-                        .iter()
-                        .map(|&ci| row.get(ci).map(plain).unwrap_or_default())
-                        .collect();
-                    cells += line.len();
-                    out.push_str(&line.join("\t"));
-                    out.push('\n');
-                }
-            }
-            CopyKind::Csv => {
-                if first {
-                    out.push_str(
-                        &names
-                            .iter()
-                            .map(|n| nsql_io::quote_field(n, b','))
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    );
-                    out.push('\n');
-                }
-                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                    let ri = self.row_order.get(di).copied().unwrap_or(di);
-                    let Some(row) = rs.rows.get(ri) else { continue };
-                    let line: Vec<String> = cols
-                        .iter()
-                        .map(|&ci| {
-                            nsql_io::quote_field(&row.get(ci).map(plain).unwrap_or_default(), b',')
-                        })
-                        .collect();
-                    cells += line.len();
-                    out.push_str(&line.join(","));
-                    out.push('\n');
-                }
-            }
-            CopyKind::Text => {
-                // 고정폭 정렬(표시 폭 기준 · 숫자 우측 정렬) — 첫 구간만 머리글.
-                let mut lines: Vec<Vec<String>> = Vec::new();
-                let mut numeric: Vec<bool> = vec![false; cols.len()];
-                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                    let ri = self.row_order.get(di).copied().unwrap_or(di);
-                    let Some(row) = rs.rows.get(ri) else { continue };
-                    let line: Vec<String> = cols
-                        .iter()
-                        .enumerate()
-                        .map(|(k, &ci)| {
-                            if let Some(v) = row.get(ci) {
-                                if matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_))
-                                {
-                                    numeric[k] = true;
-                                }
-                            }
-                            row.get(ci).map(plain).unwrap_or_default()
-                        })
-                        .collect();
-                    cells += line.len();
-                    lines.push(line);
-                }
-                let mut widths: Vec<usize> = names.iter().map(|n| nsql_io::disp_width(n)).collect();
-                for l in &lines {
-                    for (k, c) in l.iter().enumerate() {
-                        widths[k] = widths[k].max(nsql_io::disp_width(c));
-                    }
-                }
-                let pad = |s: &str, w: usize, right: bool| -> String {
-                    let fill = w.saturating_sub(nsql_io::disp_width(s));
-                    if right {
-                        format!("{}{}", " ".repeat(fill), s)
-                    } else {
-                        format!("{}{}", s, " ".repeat(fill))
-                    }
-                };
-                if first {
-                    let h: Vec<String> = names
-                        .iter()
-                        .enumerate()
-                        .map(|(k, n)| pad(n, widths[k], false))
-                        .collect();
-                    out.push_str(h.join("  ").trim_end());
-                    out.push('\n');
-                    let u: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
-                    out.push_str(&u.join("  "));
-                    out.push('\n');
-                }
-                for l in &lines {
-                    let cells_s: Vec<String> = l
-                        .iter()
-                        .enumerate()
-                        .map(|(k, c)| pad(c, widths[k], numeric[k]))
-                        .collect();
-                    out.push_str(cells_s.join("  ").trim_end());
-                    out.push('\n');
-                }
-            }
-            CopyKind::Markdown => {
-                let esc = |s: &str| s.replace('|', "\\|").replace('\n', " ");
-                if first {
-                    out.push_str(&format!(
-                        "| {} |\n",
-                        names.iter().map(|n| esc(n)).collect::<Vec<_>>().join(" | ")
-                    ));
-                    out.push_str(&format!(
-                        "|{}|\n",
-                        names.iter().map(|_| " --- ").collect::<Vec<_>>().join("|")
-                    ));
-                }
-                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                    let ri = self.row_order.get(di).copied().unwrap_or(di);
-                    let Some(row) = rs.rows.get(ri) else { continue };
-                    let line: Vec<String> = cols
-                        .iter()
-                        .map(|&ci| esc(&row.get(ci).map(plain).unwrap_or_default()))
-                        .collect();
-                    cells += line.len();
-                    out.push_str(&format!("| {} |\n", line.join(" | ")));
-                }
-            }
-            CopyKind::Json => {
-                // 구간마다 배열 하나(여러 구간이면 배열이 여러 개 — 각각 독립 문서).
-                out.push_str("[\n");
-                let mut rows_out: Vec<String> = Vec::new();
-                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
-                    let ri = self.row_order.get(di).copied().unwrap_or(di);
-                    let Some(row) = rs.rows.get(ri) else { continue };
-                    let fields: Vec<String> = cols
-                        .iter()
-                        .zip(names.iter())
-                        .map(|(&ci, n)| {
-                            let v = row
-                                .get(ci)
-                                .map(nsql_io::json_value)
-                                .unwrap_or_else(|| "null".into());
-                            format!("    {}: {}", nsql_io::json_str(n), v)
-                        })
-                        .collect();
-                    cells += fields.len();
-                    rows_out.push(format!("  {{\n{}\n  }}", fields.join(",\n")));
-                }
-                out.push_str(&rows_out.join(",\n"));
-                out.push_str("\n]\n");
-            }
+        let (rows, cols) = self.region_index(region);
+        if rows.is_empty() || cols.is_empty() {
+            return None;
         }
-        (cells > 0).then_some((out, cells))
+        let view = View::new(rs).rows(&rows).cols(&cols);
+        let opts = GridOpts {
+            max_col: 0, // 복사는 자르지 않는다.
+            null: self.null_text.clone(),
+            ..GridOpts::default()
+        };
+        let (fmt, header) = match kind {
+            CopyKind::Tsv => (Format::Tsv, false),
+            CopyKind::TsvWithHeaders => (Format::Tsv, first),
+            CopyKind::Csv => (Format::Csv, first),
+            // 고정폭 정렬(표시 폭 기준 · 숫자 우측 정렬) — 첫 구간만 머리글.
+            CopyKind::Text => (Format::Grid, first),
+            CopyKind::Markdown => (Format::Markdown, first),
+            // 구간마다 배열 하나(여러 구간이면 배열이 여러 개 — 각각 독립 문서).
+            CopyKind::Json => (Format::Json, true),
+        };
+        let layout = nsql_io::block_layout(&view, &opts);
+        let out = nsql_io::render_block(
+            &view,
+            &fmt,
+            self.dialect,
+            &layout,
+            0..rows.len(),
+            header,
+            true,
+            "T",
+            &KeySpec::default(),
+        );
+        Some((out, rows.len() * cols.len()))
     }
 
     /// 마우스 아래 셀(표시 행 · 표시 컬럼 위치). 행번호 열 위면 컬럼 0.
@@ -1841,12 +1820,12 @@ impl Grid {
     /// 결합 정렬 적용(인덱스 벡터만 재배열 · 안정 정렬이라 같은 값은 원본 순서).
     fn apply_sort(&mut self) {
         let Some(rs) = self.rs.as_ref() else { return };
-        let mut order: Vec<usize> = (0..rs.rows.len()).collect();
+        let mut order: Vec<usize> = (0..rs.len()).collect();
         if !self.sort_keys.is_empty() {
             let keys = self.sort_keys.clone();
             order.sort_by(|&a, &b| {
                 for (col, asc) in &keys {
-                    let (va, vb) = (&rs.rows[a][*col], &rs.rows[b][*col]);
+                    let (va, vb) = (rs.cell(a, *col), rs.cell(b, *col));
                     let o = cmp_value(va, vb);
                     if o != std::cmp::Ordering::Equal {
                         return if *asc { o } else { o.reverse() };
@@ -1935,12 +1914,44 @@ impl Grid {
         self.col_order.len().saturating_sub(1)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_messages(&mut self, m: Vec<String>) {
         self.messages = m;
     }
 
+    /// 결과 비우기 — 오류가 나도 결과 영역은 **기본 형태**(행번호 1 · `** No Records **`)를 유지한다(사용자 09-17).
+    /// 오류·메시지 본문은 로그 창으로만 간다.
+    /// 전체 조회가 진행 중인가(툴바/카드 ■ 활성 판정).
+    pub(crate) fn fetch_all_active(&self) -> bool {
+        self.fetch_all_pending
+    }
+
+    pub(crate) fn clear_result(&mut self) {
+        self.rs = None;
+        self.col_order.clear();
+        self.row_order.clear();
+        self.sort_keys.clear();
+        self.text_lines = Vec::new();
+        self.text_bytes = 0;
+        self.messages.clear();
+        self.scroll_y = 0;
+        self.scroll_x = 0;
+        self.col_w.clear();
+        self.regions.clear();
+        self.sel_anchor = None;
+        self.sel_cur = None;
+        self.drag_sel = None;
+        self.more = false;
+        self.total = None;
+        self.fetching = false;
+        self.fetch_req = None;
+        self.end_fetch_all();
+        self.text_scroll = (0, 0);
+        self.sync_fetch_tools();
+    }
+
     fn rows(&self) -> usize {
-        self.rs.as_ref().map_or(0, |r| r.rows.len())
+        self.rs.as_ref().map_or(0, |r| r.len())
     }
 
     /// 행 영역 높이(헤더·푸터 제외).
@@ -2188,7 +2199,7 @@ impl Grid {
                 } => {
                     // 전체 조회 중 Esc = 가져오기 중지(선택 해제보다 먼저 · T-48b).
                     if self.fetch_all_pending {
-                        self.cancel_req = true;
+                        self.request_cancel();
                         return;
                     }
                     self.regions.clear();
@@ -2383,8 +2394,15 @@ impl Grid {
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
         let t_render = std::time::Instant::now();
+        // 렌더 시작/종료 시각 스탬프 = 보고 대기 중 + Render 층 상세가 켜진 경우에만(게이트 = 원자 load 1회 · docs/48).
+        let stamp = self.perf_report
+            && nsql_log::wants(nsql_log::LogLayer::Render, nsql_log::LogLevel::Timing);
+        let started = stamp.then(|| nsql_log::now_local().stamp());
         self.paint_inner(dc, th, s);
         self.render = t_render.elapsed();
+        if let Some(st) = started {
+            self.render_at = Some((st, nsql_log::now_local().stamp()));
+        }
     }
 
     fn paint_inner(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
@@ -2424,9 +2442,11 @@ impl Grid {
             self.paint_footer(dc, th, s, footer, 0, 0, 0);
             return;
         }
-        // No Records(결과 없음 · 0행) — 헤더 한 줄 + 1행(DBeaver 모양 · 사용자 09-16).
-        let empty = self.rs.as_ref().is_none_or(|r| r.rows.is_empty());
-        if empty && self.view == ResultView::Grid {
+        // No Records(결과 없음 · 0행 · **컬럼도 없음**) — 작은 셀 하나(Golden 모양 · 사용자 09-16).
+        // 컬럼이 있는 0행(빈 테이블 SELECT)은 아래 일반 경로로 **헤더를 그대로** 그리고 1행에 `** No Records **`(사용자 09-17 캡처).
+        let empty = self.rs.as_ref().is_none_or(|r| r.is_empty());
+        let no_cols = self.rs.as_ref().is_none_or(|r| r.columns().is_empty());
+        if empty && no_cols && self.view == ResultView::Grid {
             // Golden 방식(사용자 09-16 2번 이미지): 행번호 칸 + `No Records` 폭만큼의 작은 셀 하나 — 나머지는 빈 바탕.
             let label = t(Msg::GridNoRecords);
             dc.select_font(FontSlot::Mono, false);
@@ -2466,37 +2486,33 @@ impl Grid {
             self.paint_footer(dc, th, s, footer, 0, 0, 0);
             return;
         };
+        let null = self.null_text.clone();
+        let (lo, hi) = self.col_bounds(dc, s, pad);
         if self.col_w.is_empty() {
             self.col_w = rs
-                .columns
+                .columns()
                 .iter()
                 .enumerate()
                 .map(|(i, c)| {
                     let mut w = dc.text_width(&c.name);
-                    for row in rs.rows.iter().take(200) {
+                    for row in rs.rows().take(200) {
                         if let Some(v) = row.get(i) {
-                            w = w.max(dc.text_width(&cell_text(v)));
+                            w = w.max(dc.text_width(&cell_text(v, &null)));
                         }
                     }
-                    (w + pad * 2).clamp(
-                        (self.col_min as f32 * s).round() as i32,
-                        (self.col_max as f32 * s).round() as i32,
-                    )
+                    (w + pad * 2).clamp(lo, hi)
                 })
                 .collect();
         }
         if let Some(ci) = self.autofit.take() {
             // 헤더 이름 + 전 행(최대 5,000행) 중 가장 넓은 값 → [최소, 최대].
-            let mut w = rs.columns.get(ci).map_or(0, |c| dc.text_width(&c.name));
-            for row in rs.rows.iter().take(5000) {
+            let mut w = rs.columns().get(ci).map_or(0, |c| dc.text_width(&c.name));
+            for row in rs.rows().take(5000) {
                 if let Some(v) = row.get(ci) {
-                    w = w.max(dc.text_width(&cell_text(v)));
+                    w = w.max(dc.text_width(&cell_text(v, &null)));
                 }
             }
-            let w = (w + pad * 2).clamp(
-                (self.col_min as f32 * s).round() as i32,
-                (self.col_max as f32 * s).round() as i32,
-            );
+            let w = (w + pad * 2).clamp(lo, hi);
             if let Some(cw) = self.col_w.get_mut(ci) {
                 *cw = w;
             }
@@ -2505,7 +2521,7 @@ impl Grid {
         self.header_h = header.h + 1;
         // 행번호 열 폭(자릿수 × 숫자 폭 + 여백) — 가로 스크롤과 무관한 고정 열.
         self.gutter_w = if self.row_numbers {
-            let digits = rs.rows.len().max(1).to_string().len().max(2) as i32;
+            let digits = rs.len().max(1).to_string().len().max(2) as i32;
             dc.select_font(FontSlot::Mono, false);
             let w = digits * dc.text_width("0") + pad * 2;
             dc.select_font(FontSlot::Base, false);
@@ -2532,13 +2548,13 @@ impl Grid {
         let sub = vy % self.row_h.max(1);
         let mut y = body.y - sub;
         let mut last = first;
-        let n = rs.rows.len();
+        let n = rs.len();
         for di in first..n {
             if y >= body.bottom() {
                 break;
             }
             let ri = self.row_order.get(di).copied().unwrap_or(di);
-            let Some(row) = rs.rows.get(ri) else { break };
+            let Some(row) = rs.row(ri) else { break };
             last = di + 1;
             let rr = Rect::new(b.x, y, b.w, self.row_h).intersection(&body);
             if di % 2 == 1 {
@@ -2562,7 +2578,7 @@ impl Grid {
                     dc.stroke_round_rect(clip, 0, th.accent, 1.0);
                 }
                 if clip.w > 0 && clip.h > 0 {
-                    let txt = cell_text(v);
+                    let txt = cell_text(v, &null);
                     let numeric = matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_));
                     let color = if matches!(v, Value::Null) {
                         th.text_dim
@@ -2603,6 +2619,35 @@ impl Grid {
             }
             y += self.row_h;
         }
+        // 0행 + 컬럼 있음 = 헤더는 구조 그대로 · 1행에 `** No Records **`(첫 컬럼 · 흐리게 · 선택/편집 대상 아님).
+        if n == 0 && !self.col_order.is_empty() && body.h > 0 {
+            let rr = Rect::new(b.x, body.y, b.w, self.row_h).intersection(&body);
+            let cy = dc.text_center_y(body.y, self.row_h);
+            let first_w = self
+                .col_order
+                .first()
+                .and_then(|&ci| self.col_w.get(ci).copied())
+                .unwrap_or(80);
+            let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
+            let clip = Rect::new(gx0 - self.scroll_x, body.y, first_w - 1, self.row_h)
+                .intersection(&cells);
+            dc.text(
+                gx0 - self.scroll_x + pad,
+                cy,
+                clip,
+                t(Msg::GridNoRecords),
+                th.text_dim,
+            );
+            if self.gutter_w > 0 {
+                let gclip = Rect::new(b.x, body.y, self.gutter_w, self.row_h).intersection(&body);
+                dc.fill_rect(gclip, th.chrome_bg);
+                dc.select_font(FontSlot::Mono, false);
+                let nw = dc.text_width("1");
+                dc.text(gx0 - pad - nw, cy, gclip, "1", th.text_dim);
+                dc.select_font(FontSlot::Base, false);
+            }
+            dc.fill_rect(Rect::new(b.x, rr.bottom() - 1, b.w, 1), th.border);
+        }
         if self.gutter_w > 0 {
             dc.fill_rect(Rect::new(gx0 - 1, body.y, 1, body.h), th.border);
         }
@@ -2613,7 +2658,7 @@ impl Grid {
         let dragging = self.hdr_drag.filter(|d| d.3);
         let drop_pos = dragging.map(|d| self.drop_pos_at(d.2));
         for (pos, &ci) in self.col_order.iter().enumerate() {
-            let Some(c) = rs.columns.get(ci) else {
+            let Some(c) = rs.columns().get(ci) else {
                 continue;
             };
             let cw = self.col_w.get(ci).copied().unwrap_or(80);
@@ -2684,7 +2729,7 @@ impl Grid {
             self.view_y(),
             s,
         );
-        let n = rs.rows.len();
+        let n = rs.len();
         self.paint_footer(dc, th, s, footer, first, last, n);
     }
 
@@ -2774,7 +2819,7 @@ impl Grid {
                 None => info.push_str(&format!(" · {}", t(Msg::StFetching))),
             }
         }
-        info.push_str(&format!(" · ~{}", fmt_bytes(self.approx_bytes)));
+        info.push_str(&format!(" · ~{}", fmt_bytes(self.approx_bytes())));
         if let Some(at) = &self.last_run_at {
             info.push_str(&format!(" · {at}"));
         }
@@ -2943,9 +2988,10 @@ impl Grid {
     }
 }
 
-fn cell_text(v: &Value) -> String {
+/// 그리드 셀 글자 — NULL은 설정 글자(`grid.null_text` · 텍스트 보기·복사와 같은 값) · 바이트는 길이만(셀 폭 보호 · 텍스트 계열은 nsql-io가 16진).
+fn cell_text(v: &Value, null: &str) -> String {
     match v {
-        Value::Null => "NULL".into(),
+        Value::Null => null.to_string(),
         Value::Bytes(b) => format!("<{} bytes>", b.len()),
         other => other.display(),
     }
@@ -3065,6 +3111,218 @@ mod tests {
     }
 
     /// 푸터 진행 표시의 천 단위 구분.
+    /// 전체 조회 도구줄: 요청이 나가면 ■만 켜지고, 교체 결과가 오면(완료) ■는 꺼지고 전체 조회가 다시 켜진다 —
+    /// 완료 뒤에도 ■가 켜져 있던 결함(사용자 09-17). 실패·중지 경로도 같다. 결과가 없으면 둘 다 꺼짐.
+    #[test]
+    fn stop_button_follows_fetch_all_lifecycle() {
+        let g = Grid::default();
+        assert_eq!(
+            g.fetch_tools_enabled(),
+            (false, false),
+            "결과 없음 = 둘 다 꺼짐"
+        );
+        let mut g = grid_with(&[100]);
+        assert_eq!(
+            g.fetch_tools_enabled(),
+            (false, false),
+            "더 없음 = 전체 조회도 꺼짐"
+        );
+        g.set_more(true);
+        assert_eq!(
+            g.fetch_tools_enabled(),
+            (true, false),
+            "더 있음 = 전체 조회만"
+        );
+        g.request_fetch_all();
+        assert_eq!(g.take_fetch_request(), Some(FetchReq::All));
+        assert_eq!(
+            g.fetch_tools_enabled(),
+            (false, true),
+            "나가 있는 동안 = ■만"
+        );
+        g.cancel_req = true;
+        // 완료(나머지 도착 · 이어 붙임) — 늦게 눌린 취소 요청도 함께 버린다 · 스크롤은 그대로.
+        g.scroll_y = 40;
+        g.append_all(
+            ResultSet {
+                columns: vec![],
+                rows: vec![vec![Value::Int(7)]],
+            },
+            false,
+        );
+        assert_eq!((g.rows(), g.scroll_y), (2, 40), "이어 붙고 위치 유지");
+        assert_eq!(
+            g.fetch_tools_enabled(),
+            (false, false),
+            "완료 = ■ 꺼짐 · 전부 받았으니 전체 조회도 꺼짐"
+        );
+        assert!(!g.take_cancel_request(), "완료 뒤 취소 요청은 남지 않는다");
+        assert!(g.fetch_progress.is_none());
+        // 실패 경로도 같다.
+        g.set_more(true);
+        g.request_fetch_all();
+        g.take_fetch_request();
+        assert_eq!(g.fetch_tools_enabled(), (false, true));
+        g.fetch_failed();
+        assert_eq!(g.fetch_tools_enabled(), (true, false));
+        // 자동 페치가 나가 있으면 전체 조회는 큐에서 기다렸다가 그 세그먼트 뒤에 나간다(offset 정확).
+        g.fetch_req = Some(FetchReq::Next {
+            offset: 2,
+            limit: 1,
+        });
+        assert!(g.take_fetch_request().is_some());
+        g.request_fetch_all();
+        assert_eq!(
+            g.take_fetch_request(),
+            None,
+            "다른 페치가 나가 있는 동안은 대기"
+        );
+        assert!(g.fetch_tools_enabled().1, "큐에 있어도 ■는 켜짐");
+        g.append_page(
+            ResultSet {
+                columns: vec![],
+                rows: vec![vec![Value::Int(8)]],
+            },
+            true,
+        );
+        assert_eq!(g.rows(), 3, "늦은 세그먼트를 버리지 않는다");
+        assert_eq!(g.take_fetch_request(), Some(FetchReq::All));
+        // 큐에만 있는 전체 조회의 중지 = 요청 취소(워커 깃발 없이).
+        g.fetch_failed();
+        g.request_fetch_all();
+        g.request_cancel();
+        assert_eq!((g.fetch_req, g.take_cancel_request()), (None, false));
+        assert_eq!(g.fetch_tools_enabled(), (true, false));
+    }
+
+    /// DR-33: 복사 = 선택 뷰 → nsql-io 공용 렌더(형식 5종) · NULL 글자는 설정 하나 · 정렬·열 순서(표시 순서) 반영 ·
+    /// 추가 페치는 세그먼트로 이어 붙어 같은 세트에서 파생된다.
+    #[test]
+    fn copy_uses_shared_renderer_null_text_and_segments() {
+        let mut g = Grid::default();
+        g.set_result(ResultSet {
+            columns: vec![
+                Column {
+                    name: "id".into(),
+                    type_name: String::new(),
+                },
+                Column {
+                    name: "nm".into(),
+                    type_name: String::new(),
+                },
+            ],
+            rows: vec![vec![Value::Int(2), Value::Null]],
+        });
+        g.append_page(
+            ResultSet {
+                columns: vec![],
+                rows: vec![vec![Value::Int(1), Value::Str("a|b".into())]],
+            },
+            false,
+        );
+        assert_eq!(
+            (g.rows(), g.rs.as_ref().map_or(0, ResultData::segments)),
+            (2, 2)
+        );
+        g.set_null_text("∅");
+        g.sort_keys = vec![(0, true)];
+        g.apply_sort();
+        g.col_order = vec![1, 0]; // 열 이동: nm, id
+        g.select_all();
+        let (csv, cells) = g.copy_selection(CopyKind::Csv).expect("Csv");
+        assert_eq!(csv, "nm,id\na|b,1\n∅,2\n");
+        assert_eq!(cells, 4);
+        let (md, _) = g.copy_selection(CopyKind::Markdown).expect("Markdown");
+        assert_eq!(
+            md,
+            "| nm | id |\n| --- | ---: |\n| a\\|b | 1 |\n| ∅ | 2 |\n"
+        );
+        let (txt, _) = g.copy_selection(CopyKind::Text).expect("Text");
+        assert_eq!(txt, "nm   id\n---  --\na|b   1\n∅     2\n");
+        let (tsv, _) = g.copy_selection(CopyKind::Tsv).expect("Tsv");
+        assert_eq!(tsv, "a|b\t1\n∅\t2\n");
+        let (json, _) = g.copy_selection(CopyKind::Json).expect("Json");
+        assert_eq!(
+            json,
+            "[\n  {\"nm\": \"a|b\", \"id\": 1},\n  {\"nm\": null, \"id\": 2}\n]\n"
+        );
+        // 예산 회계: 데이터 + 텍스트 캐시(그리드 보기 = 0).
+        assert!(g.approx_bytes() > 0 && g.text_bytes == 0);
+    }
+
+    /// 텍스트 보기: 휠(스크롤바가 소비)로 끝에 닿아도 다음 세그먼트 요청이 나간다(사용자 09-17 CSV).
+    #[test]
+    fn text_view_wheel_to_end_requests_next_page() {
+        let mut g = text_grid();
+        g.view = ResultView::Csv;
+        g.bounds = Rect::new(0, 0, 400, 100);
+        g.text_w = 100;
+        g.more = true;
+        g.page_rows = 200;
+        let mut n = 0;
+        while g.fetch_req.is_none() && n < 50 {
+            g.on_event(&InputEvent::Wheel { delta: -120 }, 1.0);
+            n += 1;
+        }
+        assert_eq!(
+            g.fetch_req,
+            Some(FetchReq::Next {
+                offset: 1,
+                limit: 200
+            }),
+            "휠 {n}회 뒤"
+        );
+    }
+
+    /// ★ 페치 행 수 0(= 전체 조회)에서는 스크롤 자동 페치가 **절대** 나가지 않는다(사용자 09-17: 0으로 조회 중 중지 → 부분 행 상태에서
+    ///   스크롤해도 자동 페치 금지) — 그리드·텍스트 보기 모두 · `more`가 true여도.
+    #[test]
+    fn zero_page_rows_never_auto_fetches() {
+        // 텍스트 보기
+        let mut g = text_grid();
+        g.view = ResultView::Csv;
+        g.bounds = Rect::new(0, 0, 400, 100);
+        g.text_w = 100;
+        g.more = true;
+        g.page_rows = 0;
+        for _ in 0..50 {
+            g.on_event(&InputEvent::Wheel { delta: -120 }, 1.0);
+        }
+        assert_eq!(g.fetch_req, None, "텍스트 보기 · 0행이면 자동 페치 없음");
+        // 그리드
+        let mut g = grid_with(&[100, 80]);
+        let rs = ResultSet {
+            columns: vec![Column {
+                name: "c0".into(),
+                type_name: String::new(),
+            }],
+            rows: (0..100).map(|i| vec![Value::Int(i)]).collect(),
+        };
+        g.set_result(rs);
+        g.set_more(true);
+        g.page_rows = 0;
+        g.bounds = Rect::new(0, 0, 400, 100);
+        g.row_h = 20;
+        for _ in 0..200 {
+            g.on_event(&InputEvent::Wheel { delta: -120 }, 1.0);
+        }
+        assert_eq!(g.fetch_req, None, "그리드 · 0행이면 자동 페치 없음");
+        assert!(
+            g.fetch_tools_enabled().0,
+            "⇊ 전체 조회(이어 받기)는 더 있으면 활성"
+        );
+        // 1 이상이면 나간다(기존 동작 유지)
+        g.page_rows = 200;
+        g.scroll_y = 0;
+        for _ in 0..200 {
+            g.on_event(&InputEvent::Wheel { delta: -120 }, 1.0);
+        }
+        assert!(matches!(
+            g.fetch_req,
+            Some(FetchReq::Next { limit: 200, .. })
+        ));
+    }
+
     #[test]
     fn group_digits_thousands() {
         assert_eq!(group_digits(0), "0");

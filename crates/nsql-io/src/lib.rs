@@ -7,10 +7,11 @@
 pub mod paging;
 pub mod sqlgen;
 pub use sqlgen::{
-    choose_key, generate, guess_table, split_table, KeyMode, KeySource, KeySpec, SqlKind,
+    choose_key, generate, generate_src, guess_table, split_table, KeyMode, KeySource, KeySpec,
+    SqlKind,
 };
 
-use nsql_core::{Dialect, ResultSet, Value};
+use nsql_core::{Dialect, RowSource, Value};
 use std::io::{self, Write};
 
 /// 출력 형식.
@@ -101,7 +102,7 @@ impl Overflow {
 }
 
 /// 텍스트 표 옵션(CLI `--width`/`--max-col-width`/`--overflow` · 설정 `cli.*` · 셸 `set`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GridOpts {
     /// 컬럼 하나의 최대 폭(0 = 무제한 · sqlcmd `-y`).
     pub max_col: usize,
@@ -109,70 +110,75 @@ pub struct GridOpts {
     pub line_width: usize,
     /// 줄 폭을 넘을 때.
     pub overflow: Overflow,
+    /// NULL을 이 글자로(표·Markdown·CSV/TSV 공통 · JSON은 `null` · SQL은 리터럴 · 사용자 09-17 "뷰마다 다르면 안 된다").
+    /// GUI = 설정 `grid.null_text`(기본 `NULL`) · CLI = `cli.null_text`(기본 빈 칸 · psql `\pset null`).
+    pub null: String,
 }
 
 impl Default for GridOpts {
-    /// 종전 동작(컬럼 60 · 줄 폭 무제한).
+    /// 종전 동작(컬럼 60 · 줄 폭 무제한 · NULL = 빈 칸).
     fn default() -> Self {
         GridOpts {
             max_col: 60,
             line_width: 0,
             overflow: Overflow::None,
+            null: String::new(),
         }
     }
 }
 
 /// 결과 집합을 `out`에 쓴다(표는 기본 옵션 = 컬럼 60 · 줄 폭 무제한).
-pub fn write_result_set(
+pub fn write_result_set<S: RowSource + ?Sized>(
     out: &mut dyn Write,
-    rs: &ResultSet,
+    src: &S,
     fmt: &Format,
     dialect: Dialect,
 ) -> io::Result<()> {
-    write_result_set_opts(out, rs, fmt, dialect, &GridOpts::default())
+    write_result_set_opts(out, src, fmt, dialect, &GridOpts::default())
 }
 
-/// 결과 집합을 `out`에 쓴다 — 표 형식은 `grid` 옵션(폭·넘침)을 따른다.
-pub fn write_result_set_opts(
+/// 결과 집합을 `out`에 쓴다 — 표 형식은 `grid` 옵션(폭·넘침·NULL 글자)을 따른다. 원천은 [`RowSource`](한 덩어리·세그먼트·뷰 무엇이든).
+pub fn write_result_set_opts<S: RowSource + ?Sized>(
     out: &mut dyn Write,
-    rs: &ResultSet,
+    src: &S,
     fmt: &Format,
     dialect: Dialect,
     grid: &GridOpts,
 ) -> io::Result<()> {
+    let n = src.len();
     match fmt {
-        Format::Grid => out.write_all(format_grid_opts(rs, grid).as_bytes()),
-        Format::Markdown => out.write_all(format_markdown(rs).as_bytes()),
+        Format::Grid => out.write_all(format_grid_opts(src, grid).as_bytes()),
+        Format::Markdown => out.write_all(format_markdown(src, &grid.null).as_bytes()),
         Format::Sql(kind) => {
             // 세션 없는 경로(export 파일 · 단순 렌더) = 테이블 `T` · 앞 3개 컬럼 키. 키 조회는 호출자(CLI Printer · GUI)가 한다.
-            let names: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
+            let names = src.col_names();
             let key = choose_key(KeyMode::Pk, None, &names);
-            out.write_all(generate(dialect, "T", &names, &rs.rows, *kind, &key).as_bytes())
+            out.write_all(generate_src(dialect, "T", &names, src, 0..n, *kind, &key).as_bytes())
         }
-        Format::Csv => write_delimited(out, rs, b','),
-        Format::Tsv => write_delimited(out, rs, b'\t'),
+        Format::Csv => write_delimited(out, src, b',', &grid.null),
+        Format::Tsv => write_delimited(out, src, b'\t', &grid.null),
         Format::Json => {
             out.write_all(b"[")?;
-            for (i, row) in rs.rows.iter().enumerate() {
-                if i > 0 {
+            for r in 0..n {
+                if r > 0 {
                     out.write_all(b",")?;
                 }
                 out.write_all(b"\n  ")?;
-                write_json_row(out, rs, row)?;
+                write_json_row(out, src, r)?;
             }
-            out.write_all(if rs.rows.is_empty() { b"]\n" } else { b"\n]\n" })
+            out.write_all(if n == 0 { b"]\n" } else { b"\n]\n" })
         }
         Format::JsonLines => {
-            for row in &rs.rows {
-                write_json_row(out, rs, row)?;
+            for r in 0..n {
+                write_json_row(out, src, r)?;
                 out.write_all(b"\n")?;
             }
             Ok(())
         }
         Format::Insert { table } => {
-            let cols: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
-            for row in &rs.rows {
-                let vals: Vec<String> = row.iter().map(|v| v.to_sql_literal(dialect)).collect();
+            let cols = src.col_names();
+            for r in 0..n {
+                let vals: Vec<String> = src.cells(r).map(|v| v.to_sql_literal(dialect)).collect();
                 writeln!(
                     out,
                     "INSERT INTO {table} ({}) VALUES ({});",
@@ -185,18 +191,21 @@ pub fn write_result_set_opts(
     }
 }
 
-fn write_delimited(out: &mut dyn Write, rs: &ResultSet, delim: u8) -> io::Result<()> {
+fn write_delimited<S: RowSource + ?Sized>(
+    out: &mut dyn Write,
+    src: &S,
+    delim: u8,
+    null: &str,
+) -> io::Result<()> {
     let d = delim as char;
-    let header: Vec<String> = rs
-        .columns
-        .iter()
-        .map(|c| quote_field(&c.name, delim))
+    let header: Vec<String> = (0..src.ncols())
+        .map(|c| quote_field(&src.column(c).name, delim))
         .collect();
     writeln!(out, "{}", header.join(&d.to_string()))?;
-    for row in &rs.rows {
-        let cells: Vec<String> = row
-            .iter()
-            .map(|v| quote_field(&cell_text(v), delim))
+    for r in 0..src.len() {
+        let cells: Vec<String> = src
+            .cells(r)
+            .map(|v| quote_field(&cell_text(v, null), delim))
             .collect();
         writeln!(out, "{}", cells.join(&d.to_string()))?;
     }
@@ -222,48 +231,51 @@ impl Format {
 
 /// 결과 집합을 문자열로(클립보드 복사용 · `write_result_set_opts`와 같은 내용).
 #[must_use]
-pub fn render_result_set(
-    rs: &ResultSet,
+pub fn render_result_set<S: RowSource + ?Sized>(
+    src: &S,
     fmt: &Format,
     dialect: Dialect,
     grid: &GridOpts,
 ) -> String {
     let mut buf: Vec<u8> = Vec::new();
-    let _ = write_result_set_opts(&mut buf, rs, fmt, dialect, grid);
+    let _ = write_result_set_opts(&mut buf, src, fmt, dialect, grid);
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// 첫 행 기준 숫자 열(우측 정렬 · Markdown `---:`).
+fn numeric_cols<S: RowSource + ?Sized>(src: &S) -> Vec<bool> {
+    let n = src.ncols();
+    if src.is_empty() {
+        return vec![false; n];
+    }
+    (0..n)
+        .map(|c| {
+            matches!(
+                src.cell(0, c),
+                Value::Int(_) | Value::Float(_) | Value::Decimal(_)
+            )
+        })
+        .collect()
+}
+
 /// GitHub Flavored Markdown 표 — 셀의 `|`는 `\|`, 줄바꿈은 공백 · 숫자 컬럼은 `---:`.
-pub fn format_markdown(rs: &ResultSet) -> String {
-    let esc = |s: &str| s.replace('|', "\\|").replace(['\n', '\r'], " ");
-    let n = rs.columns.len();
-    let mut o = String::new();
-    o.push('|');
-    for c in &rs.columns {
-        o.push(' ');
-        o.push_str(&esc(&c.name));
-        o.push_str(" |");
-    }
-    o.push('\n');
-    o.push('|');
-    for i in 0..n {
-        let num = matches!(
-            rs.rows.first().and_then(|r| r.get(i)),
-            Some(Value::Int(_) | Value::Float(_) | Value::Decimal(_))
-        );
-        o.push_str(if num { " ---: |" } else { " --- |" });
-    }
-    o.push('\n');
-    for row in &rs.rows {
-        o.push('|');
-        for v in row.iter().take(n) {
-            o.push(' ');
-            o.push_str(&esc(&cell_text(v)));
-            o.push_str(" |");
-        }
-        o.push('\n');
-    }
-    o
+pub fn format_markdown<S: RowSource + ?Sized>(src: &S, null: &str) -> String {
+    let layout = BlockLayout {
+        widths: Vec::new(),
+        right: numeric_cols(src),
+        null: null.to_string(),
+    };
+    render_block(
+        src,
+        &Format::Markdown,
+        Dialect::Sqlite,
+        &layout,
+        0..src.len(),
+        true,
+        true,
+        "T",
+        &KeySpec::default(),
+    )
 }
 
 /// RFC 4180 — 구분자·따옴표·줄바꿈이 있으면 `"…"`로 감싸고 `"`는 `""`.
@@ -278,21 +290,23 @@ pub fn quote_field(s: &str, delim: u8) -> String {
     }
 }
 
-fn cell_text(v: &Value) -> String {
+/// 셀 글자(텍스트 계열 공통) — NULL은 `null` 글자 · 바이트는 16진.
+#[must_use]
+pub fn cell_text(v: &Value, null: &str) -> String {
     match v {
-        Value::Null => String::new(),
+        Value::Null => null.to_string(),
         Value::Bytes(b) => b.iter().map(|x| format!("{x:02x}")).collect(),
         other => other.display(),
     }
 }
 
-fn write_json_row(out: &mut dyn Write, rs: &ResultSet, row: &[Value]) -> io::Result<()> {
+fn write_json_row<S: RowSource + ?Sized>(out: &mut dyn Write, src: &S, r: usize) -> io::Result<()> {
     out.write_all(b"{")?;
-    for (i, (c, v)) in rs.columns.iter().zip(row.iter()).enumerate() {
-        if i > 0 {
+    for (c, v) in src.cells(r).enumerate() {
+        if c > 0 {
             out.write_all(b", ")?;
         }
-        write!(out, "{}: {}", json_str(&c.name), json_value(v))?;
+        write!(out, "{}: {}", json_str(&src.column(c).name), json_value(v))?;
     }
     out.write_all(b"}")
 }
@@ -330,13 +344,12 @@ pub fn json_value(v: &Value) -> String {
 }
 
 /// 텍스트 표 — 컬럼 폭은 셀 최대 폭(`max_col` 상한 · 한글 등 전각은 폭 2로 센다). 줄 폭 무제한.
-pub fn format_grid(rs: &ResultSet, max_col: usize) -> String {
+pub fn format_grid<S: RowSource + ?Sized>(src: &S, max_col: usize) -> String {
     format_grid_opts(
-        rs,
+        src,
         &GridOpts {
             max_col,
-            line_width: 0,
-            overflow: Overflow::None,
+            ..GridOpts::default()
         },
     )
 }
@@ -345,32 +358,21 @@ const SEP: usize = 2;
 const MIN_COL: usize = 4;
 
 /// 텍스트 표 — 옵션(컬럼 상한 · 줄 폭 · 넘침 처리).
-pub fn format_grid_opts(rs: &ResultSet, o: &GridOpts) -> String {
-    let n = rs.columns.len();
+pub fn format_grid_opts<S: RowSource + ?Sized>(rs: &S, o: &GridOpts) -> String {
+    let n = rs.ncols();
     let cap = |w: usize| if o.max_col > 0 { w.min(o.max_col) } else { w };
-    let mut widths: Vec<usize> = rs
-        .columns
-        .iter()
-        .map(|c| cap(disp_width(&c.name)))
+    let mut widths: Vec<usize> = (0..n)
+        .map(|c| cap(disp_width(&rs.column(c).name)))
         .collect();
-    let cells: Vec<Vec<String>> = rs
-        .rows
-        .iter()
-        .map(|r| r.iter().map(cell_text).collect())
+    let cells: Vec<Vec<String>> = (0..rs.len())
+        .map(|r| rs.cells(r).map(|v| cell_text(v, &o.null)).collect())
         .collect();
     for row in &cells {
         for (i, c) in row.iter().enumerate().take(n) {
             widths[i] = cap(widths[i].max(disp_width(c)));
         }
     }
-    let right: Vec<bool> = (0..n)
-        .map(|i| {
-            matches!(
-                rs.rows.first().and_then(|r| r.get(i)),
-                Some(Value::Int(_) | Value::Float(_) | Value::Decimal(_))
-            )
-        })
-        .collect();
+    let right = numeric_cols(rs);
     let total = |ws: &[usize]| ws.iter().sum::<usize>() + SEP * ws.len().saturating_sub(1);
     let fits = o.line_width == 0 || n == 0 || total(&widths) <= o.line_width;
     // expanded는 폭과 무관하게 늘 레코드 보기(psql `\x`처럼 명시 선택) · 나머지는 넘칠 때만.
@@ -445,39 +447,35 @@ pub fn format_grid_opts(rs: &ResultSet, o: &GridOpts) -> String {
 pub struct BlockLayout {
     widths: Vec<usize>,
     right: Vec<bool>,
+    /// NULL 글자(`GridOpts::null`) — 모든 블록·형식이 같은 글자를 쓴다.
+    null: String,
 }
 
-/// 표(grid) 형식의 배치 — 전 행을 한 번 훑는다(문자열 폭만 · 글꼴 측정 없음).
+/// 표(grid) 형식의 배치 — 전 행을 한 번 훑는다(문자열 폭만 · 글꼴 측정 없음). 원천은 [`RowSource`](뷰 = 정렬·열 순서 반영).
 #[must_use]
-pub fn block_layout(rs: &ResultSet, o: &GridOpts) -> BlockLayout {
-    let n = rs.columns.len();
+pub fn block_layout<S: RowSource + ?Sized>(rs: &S, o: &GridOpts) -> BlockLayout {
+    let n = rs.ncols();
     let cap = |w: usize| if o.max_col > 0 { w.min(o.max_col) } else { w };
-    let mut widths: Vec<usize> = rs
-        .columns
-        .iter()
-        .map(|c| cap(disp_width(&c.name)))
+    let mut widths: Vec<usize> = (0..n)
+        .map(|c| cap(disp_width(&rs.column(c).name)))
         .collect();
-    for row in &rs.rows {
-        for (i, v) in row.iter().enumerate().take(n) {
-            widths[i] = cap(widths[i].max(disp_width(&cell_text(v))));
+    for r in 0..rs.len() {
+        for (i, v) in rs.cells(r).enumerate() {
+            widths[i] = cap(widths[i].max(disp_width(&cell_text(v, &o.null))));
         }
     }
-    let right: Vec<bool> = (0..n)
-        .map(|i| {
-            matches!(
-                rs.rows.first().and_then(|r| r.get(i)),
-                Some(Value::Int(_) | Value::Float(_) | Value::Decimal(_))
-            )
-        })
-        .collect();
-    BlockLayout { widths, right }
+    BlockLayout {
+        widths,
+        right: numeric_cols(rs),
+        null: o.null.clone(),
+    }
 }
 
 /// 행 구간 `range`를 형식대로 — `first`면 머리(표 헤더·JSON `[`) · `last`면 꼬리(JSON `]`). Sql은 `key`로 문장 생성.
 #[allow(clippy::too_many_arguments)]
 #[must_use]
-pub fn render_block(
-    rs: &ResultSet,
+pub fn render_block<S: RowSource + ?Sized>(
+    rs: &S,
     fmt: &Format,
     dialect: Dialect,
     layout: &BlockLayout,
@@ -487,15 +485,14 @@ pub fn render_block(
     table: &str,
     key: &KeySpec,
 ) -> String {
-    let end = range.end.min(rs.rows.len());
+    let end = range.end.min(rs.len());
     let start = range.start.min(end);
-    let rows = &rs.rows[start..end];
-    let n = rs.columns.len();
+    let n = rs.ncols();
+    let null = layout.null.as_str();
     match fmt {
         Format::Grid => {
-            let cells: Vec<Vec<String>> = rows
-                .iter()
-                .map(|r| r.iter().map(cell_text).collect())
+            let cells: Vec<Vec<String>> = (start..end)
+                .map(|r| rs.cells(r).map(|v| cell_text(v, null)).collect())
                 .collect();
             let cols: Vec<usize> = (0..n).collect();
             render_table_rows(rs, &cells, &layout.widths, &layout.right, &cols, first)
@@ -505,23 +502,24 @@ pub fn render_block(
             let mut o = String::new();
             if first {
                 o.push('|');
-                for c in &rs.columns {
+                for c in 0..n {
                     o.push(' ');
-                    o.push_str(&esc(&c.name));
+                    o.push_str(&esc(&rs.column(c).name));
                     o.push_str(" |");
                 }
                 o.push('\n');
                 o.push('|');
-                for r in &layout.right {
-                    o.push_str(if *r { " ---: |" } else { " --- |" });
+                for c in 0..n {
+                    let num = layout.right.get(c).copied().unwrap_or(false);
+                    o.push_str(if num { " ---: |" } else { " --- |" });
                 }
                 o.push('\n');
             }
-            for row in rows {
+            for r in start..end {
                 o.push('|');
-                for v in row.iter().take(n) {
+                for v in rs.cells(r) {
                     o.push(' ');
-                    o.push_str(&esc(&cell_text(v)));
+                    o.push_str(&esc(&cell_text(v, null)));
                     o.push_str(" |");
                 }
                 o.push('\n');
@@ -537,18 +535,16 @@ pub fn render_block(
             let d = (delim as char).to_string();
             let mut o = String::new();
             if first {
-                let header: Vec<String> = rs
-                    .columns
-                    .iter()
-                    .map(|c| quote_field(&c.name, delim))
+                let header: Vec<String> = (0..n)
+                    .map(|c| quote_field(&rs.column(c).name, delim))
                     .collect();
                 o.push_str(&header.join(&d));
                 o.push('\n');
             }
-            for row in rows {
-                let cells: Vec<String> = row
-                    .iter()
-                    .map(|v| quote_field(&cell_text(v), delim))
+            for r in start..end {
+                let cells: Vec<String> = rs
+                    .cells(r)
+                    .map(|v| quote_field(&cell_text(v, null), delim))
                     .collect();
                 o.push_str(&cells.join(&d));
                 o.push('\n');
@@ -561,14 +557,14 @@ pub fn render_block(
             if array && first {
                 o.push_str("[\n");
             }
-            for (i, row) in rows.iter().enumerate() {
+            for r in start..end {
                 let mut buf: Vec<u8> = Vec::new();
-                let _ = write_json_row(&mut buf, rs, row);
+                let _ = write_json_row(&mut buf, rs, r);
                 if array {
                     o.push_str("  ");
                 }
                 o.push_str(&String::from_utf8_lossy(&buf));
-                let is_last_row = last && start + i + 1 == end;
+                let is_last_row = last && r + 1 == end;
                 if array && !is_last_row {
                     o.push(',');
                 }
@@ -580,14 +576,14 @@ pub fn render_block(
             o
         }
         Format::Sql(kind) => {
-            let names: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
-            generate(dialect, table, &names, rows, *kind, key)
+            let names = rs.col_names();
+            generate_src(dialect, table, &names, rs, start..end, *kind, key)
         }
         Format::Insert { table: t } => {
-            let cols: Vec<String> = rs.columns.iter().map(|c| c.name.clone()).collect();
+            let cols = rs.col_names();
             let mut o = String::new();
-            for row in rows {
-                let vals: Vec<String> = row.iter().map(|v| v.to_sql_literal(dialect)).collect();
+            for r in start..end {
+                let vals: Vec<String> = rs.cells(r).map(|v| v.to_sql_literal(dialect)).collect();
                 o.push_str(&format!(
                     "INSERT INTO {t} ({}) VALUES ({});\n",
                     cols.join(", "),
@@ -600,8 +596,8 @@ pub fn render_block(
 }
 
 /// 표 하나 — `cols` 순서의 컬럼만 · `rownum` = 행 번호 열 폭(`#`).
-fn render_table(
-    rs: &ResultSet,
+fn render_table<S: RowSource + ?Sized>(
+    rs: &S,
     cells: &[Vec<String>],
     widths: &[usize],
     right: &[bool],
@@ -612,8 +608,8 @@ fn render_table(
 }
 
 /// 헤더 없이 행만(블록 렌더 · 행 번호 열 없음).
-fn render_table_rows(
-    rs: &ResultSet,
+fn render_table_rows<S: RowSource + ?Sized>(
+    rs: &S,
     cells: &[Vec<String>],
     widths: &[usize],
     right: &[bool],
@@ -624,8 +620,8 @@ fn render_table_rows(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_table_rows_num(
-    rs: &ResultSet,
+fn render_table_rows_num<S: RowSource + ?Sized>(
+    rs: &S,
     cells: &[Vec<String>],
     widths: &[usize],
     right: &[bool],
@@ -669,7 +665,7 @@ fn render_table_rows_num(
         o.push('\n');
     };
     if header {
-        line(&mut o, Some("#"), &|i| rs.columns[i].name.clone(), false);
+        line(&mut o, Some("#"), &|i| rs.column(i).name.clone(), false);
         line(&mut o, None, &|_| String::new(), true);
     }
     for (r, row) in cells.iter().enumerate() {
@@ -685,11 +681,9 @@ fn render_table_rows_num(
 }
 
 /// 레코드 보기 — `-[ RECORD n ]-` 머리 + `컬럼 | 값`(psql `\x`).
-fn render_expanded(rs: &ResultSet, cells: &[Vec<String>], max_col: usize) -> String {
-    let name_w = rs
-        .columns
-        .iter()
-        .map(|c| disp_width(&c.name))
+fn render_expanded<S: RowSource + ?Sized>(rs: &S, cells: &[Vec<String>], max_col: usize) -> String {
+    let name_w = (0..rs.ncols())
+        .map(|c| disp_width(&rs.column(c).name))
         .max()
         .unwrap_or(0);
     let mut o = String::new();
@@ -698,7 +692,8 @@ fn render_expanded(rs: &ResultSet, cells: &[Vec<String>], max_col: usize) -> Str
         o.push_str(&head);
         o.push_str(&"-".repeat((name_w + 3).saturating_sub(head.len()).max(4)));
         o.push('\n');
-        for (i, c) in rs.columns.iter().enumerate() {
+        for i in 0..rs.ncols() {
+            let c = rs.column(i);
             let v = row.get(i).cloned().unwrap_or_default();
             let v = if max_col > 0 {
                 truncate_width(&v, max_col)
@@ -800,7 +795,7 @@ pub fn parse_delimited(text: &str, delim: u8) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nsql_core::Column;
+    use nsql_core::{Column, ResultSet};
 
     fn rs() -> ResultSet {
         ResultSet {
@@ -882,6 +877,79 @@ mod tests {
         assert_eq!(disp_width("홍길동"), 6);
     }
 
+    /// NULL 글자는 옵션 하나(`GridOpts::null`)를 표·Markdown·CSV가 함께 쓴다 · JSON은 `null` 그대로.
+    #[test]
+    fn null_text_is_one_option_across_text_formats() {
+        let o = GridOpts {
+            null: "NULL".into(),
+            ..GridOpts::default()
+        };
+        let csv = render_result_set(&rs(), &Format::Csv, Dialect::Oracle, &o);
+        assert!(csv.ends_with("NULL,NULL\n"), "{csv}");
+        let md = render_result_set(&rs(), &Format::Markdown, Dialect::Oracle, &o);
+        assert!(md.ends_with("| NULL | NULL |\n"), "{md}");
+        let g = render_result_set(&rs(), &Format::Grid, Dialect::Oracle, &o);
+        assert!(g.lines().last().unwrap().contains("NULL"), "{g}");
+        let j = render_result_set(&rs(), &Format::JsonLines, Dialect::Oracle, &o);
+        assert!(j.lines().nth(2).unwrap().contains("null"), "{j}");
+        // 기본(빈 칸)은 종전 그대로.
+        let csv0 = render_result_set(&rs(), &Format::Csv, Dialect::Oracle, &GridOpts::default());
+        assert!(csv0.ends_with(",\n"));
+    }
+
+    /// 뷰(행 순서·열 부분집합)를 그대로 렌더 — 복사한 ResultSet과 같은 출력.
+    #[test]
+    fn view_renders_same_as_materialized_copy() {
+        use nsql_core::View;
+        let full = rs();
+        let order = [2usize, 0];
+        let cols = [1usize];
+        let v = View::new(&full).rows(&order).cols(&cols);
+        let copy = ResultSet {
+            columns: vec![full.columns[1].clone()],
+            rows: vec![vec![Value::Null], vec![Value::Str("홍길동".into())]],
+        };
+        for f in [
+            Format::Csv,
+            Format::Tsv,
+            Format::Markdown,
+            Format::Json,
+            Format::Grid,
+        ] {
+            let a = render_result_set(&v, &f, Dialect::Oracle, &GridOpts::default());
+            let b = render_result_set(&copy, &f, Dialect::Oracle, &GridOpts::default());
+            assert_eq!(a, b, "{f:?}");
+        }
+        // 블록 렌더도 뷰 위에서(첫 블록 헤더 · 둘째 블록 본문만).
+        let layout = block_layout(&v, &GridOpts::default());
+        let head = render_block(
+            &v,
+            &Format::Csv,
+            Dialect::Oracle,
+            &layout,
+            0..1,
+            true,
+            false,
+            "T",
+            &KeySpec::default(),
+        );
+        let tail = render_block(
+            &v,
+            &Format::Csv,
+            Dialect::Oracle,
+            &layout,
+            1..2,
+            false,
+            true,
+            "T",
+            &KeySpec::default(),
+        );
+        assert_eq!(
+            head + &tail,
+            render_result_set(&copy, &Format::Csv, Dialect::Oracle, &GridOpts::default())
+        );
+    }
+
     #[test]
     fn csv_parse_round_trip() {
         let rows = parse_delimited("a,b\n1,\"x,\"\"y\"\"\nz\"\n,\n", b',');
@@ -902,7 +970,7 @@ mod tests {
 #[cfg(test)]
 mod grid_width_tests {
     use super::*;
-    use nsql_core::Column;
+    use nsql_core::{Column, ResultSet};
 
     fn rs() -> ResultSet {
         ResultSet {
@@ -932,6 +1000,7 @@ mod grid_width_tests {
             max_col: 60,
             line_width: 40,
             overflow: Overflow::Wrap,
+            ..GridOpts::default()
         };
         let out = format_grid_opts(&rs(), &o);
         assert!(max_line(&out) <= 40, "모든 줄이 폭 안: {}", max_line(&out));
@@ -951,6 +1020,7 @@ mod grid_width_tests {
             max_col: 0,
             line_width: 50,
             overflow: Overflow::Truncate,
+            ..GridOpts::default()
         };
         let out = format_grid_opts(&rs(), &o);
         assert!(max_line(&out) <= 50);
@@ -963,6 +1033,7 @@ mod grid_width_tests {
             max_col: 0,
             line_width: 10,
             overflow: Overflow::Expanded,
+            ..GridOpts::default()
         };
         let out = format_grid_opts(&rs(), &o);
         assert!(out.starts_with("-[ RECORD 1 ]"));
@@ -972,7 +1043,7 @@ mod grid_width_tests {
 
     #[test]
     fn markdown_table_and_no_trailing_spaces() {
-        let out = format_markdown(&rs());
+        let out = format_markdown(&rs(), "");
         assert!(out.starts_with("| COL_0 | COL_1 |"));
         assert!(out.lines().nth(1).unwrap().starts_with("| --- |"));
         assert_eq!(out.lines().count(), 14);
@@ -987,6 +1058,7 @@ mod grid_width_tests {
             max_col: 60,
             line_width: 10_000,
             overflow: Overflow::Wrap,
+            ..GridOpts::default()
         };
         let out = format_grid_opts(&rs(), &o);
         assert_eq!(out, format_grid(&rs(), 60));
@@ -994,6 +1066,7 @@ mod grid_width_tests {
             max_col: 60,
             line_width: 40,
             overflow: Overflow::None,
+            ..GridOpts::default()
         };
         assert_eq!(format_grid_opts(&rs(), &o), format_grid(&rs(), 60));
     }

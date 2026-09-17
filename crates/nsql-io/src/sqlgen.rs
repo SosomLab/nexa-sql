@@ -4,7 +4,8 @@
 //! **키 규칙**(`KeyMode::Pk` 기본): PK → 첫 유니크 제약/인덱스 → **앞 3개 컬럼**(경고 1회). `KeyMode::All` = 전체 컬럼이 키.
 //! 키 컬럼은 결과에 **모두 있어야** 채택된다(없으면 다음 후보).
 
-use nsql_core::{Dialect, KeyInfo, Value};
+use nsql_core::{Dialect, KeyInfo, RowSource, Value};
+use std::ops::Range;
 
 /// 생성할 문장 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +80,16 @@ pub enum KeySource {
 pub struct KeySpec {
     pub cols: Vec<String>,
     pub source: KeySource,
+}
+
+impl Default for KeySpec {
+    /// 키 없음(전체 컬럼) — 키가 필요 없는 형식(표·CSV·JSON)을 공용 블록 렌더로 부를 때.
+    fn default() -> Self {
+        KeySpec {
+            cols: Vec::new(),
+            source: KeySource::All,
+        }
+    }
 }
 
 impl KeySpec {
@@ -213,19 +224,7 @@ pub fn generate(
     kind: SqlKind,
     key: &KeySpec,
 ) -> String {
-    let table = if table.is_empty() { "T" } else { table };
-    let key_idx: Vec<usize> = names
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| key.cols.iter().any(|k| eq_ci(k, n)))
-        .map(|(i, _)| i)
-        .collect();
-    let key_idx: Vec<usize> = if key_idx.is_empty() && !names.is_empty() {
-        vec![0]
-    } else {
-        key_idx
-    };
-    let col_list = names.join(", ");
+    let plan = StmtPlan::new(dialect, table, names, kind, key);
     let mut out = String::new();
     for row in rows {
         let lits: Vec<String> = (0..names.len())
@@ -235,6 +234,88 @@ pub fn generate(
                     .unwrap_or_else(|| "NULL".into())
             })
             .collect();
+        plan.push(&mut out, &lits);
+    }
+    out
+}
+
+/// [`generate`]와 같은 문장을 **행 원천의 구간**에서(복사 0 · DR-33) — GUI 복사/SQL 보기 블록 · 뷰(정렬·열 부분집합)를 그대로 받는다.
+/// `names`는 `src`의 열 순서와 같아야 한다(보통 `src.col_names()`).
+#[must_use]
+pub fn generate_src<S: RowSource + ?Sized>(
+    dialect: Dialect,
+    table: &str,
+    names: &[String],
+    src: &S,
+    range: Range<usize>,
+    kind: SqlKind,
+    key: &KeySpec,
+) -> String {
+    let plan = StmtPlan::new(dialect, table, names, kind, key);
+    let mut out = String::new();
+    let end = range.end.min(src.len());
+    for r in range.start.min(end)..end {
+        let mut lits: Vec<String> = src
+            .cells(r)
+            .take(names.len())
+            .map(|v| v.to_sql_literal(dialect))
+            .collect();
+        lits.resize(names.len(), "NULL".into());
+        plan.push(&mut out, &lits);
+    }
+    out
+}
+
+/// 문장 틀(키 열 · 컬럼 목록) — 행마다 다시 계산하지 않는다.
+struct StmtPlan<'a> {
+    dialect: Dialect,
+    table: &'a str,
+    names: &'a [String],
+    key_idx: Vec<usize>,
+    col_list: String,
+    kind: SqlKind,
+}
+
+impl<'a> StmtPlan<'a> {
+    fn new(
+        dialect: Dialect,
+        table: &'a str,
+        names: &'a [String],
+        kind: SqlKind,
+        key: &KeySpec,
+    ) -> Self {
+        let table = if table.is_empty() { "T" } else { table };
+        let key_idx: Vec<usize> = names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| key.cols.iter().any(|k| eq_ci(k, n)))
+            .map(|(i, _)| i)
+            .collect();
+        let key_idx: Vec<usize> = if key_idx.is_empty() && !names.is_empty() {
+            vec![0]
+        } else {
+            key_idx
+        };
+        StmtPlan {
+            dialect,
+            table,
+            names,
+            key_idx,
+            col_list: names.join(", "),
+            kind,
+        }
+    }
+
+    /// 한 행(리터럴 목록 · `names` 순서)의 문장을 `out`에 한 줄로.
+    fn push(&self, out: &mut String, lits: &[String]) {
+        let (dialect, table, names, key_idx, col_list, kind) = (
+            self.dialect,
+            self.table,
+            self.names,
+            &self.key_idx,
+            &self.col_list,
+            self.kind,
+        );
         let pred: Vec<String> = key_idx
             .iter()
             .map(|&i| {
@@ -310,7 +391,6 @@ pub fn generate(
         out.push_str(&stmt);
         out.push('\n');
     }
-    out
 }
 
 #[cfg(test)]
@@ -330,6 +410,42 @@ mod tests {
             Value::Str("x'y".into()),
             Value::Null,
         ]]
+    }
+
+    /// `generate_src`(행 원천 구간 · 뷰) = `generate`(행 벡터)와 같은 문장 — 열 순서를 바꾼 뷰도 이름 순서만 맞으면 같다.
+    #[test]
+    fn generate_src_matches_generate_including_views() {
+        use nsql_core::{Column, ResultSet, View};
+        let key = KeySpec {
+            cols: vec!["ID".into()],
+            source: KeySource::Pk,
+        };
+        let rs = ResultSet {
+            columns: names()
+                .into_iter()
+                .map(|n| Column {
+                    name: n,
+                    type_name: String::new(),
+                })
+                .collect(),
+            rows: rows(),
+        };
+        for k in [SqlKind::Insert, SqlKind::Update, SqlKind::Merge] {
+            let a = generate(Dialect::Oracle, "EMP", &names(), &rows(), k, &key);
+            let b = generate_src(Dialect::Oracle, "EMP", &names(), &rs, 0..1, k, &key);
+            assert_eq!(a, b, "{k:?}");
+        }
+        // 뷰(열 순서 QTY, ID) — 이름도 그 순서로 주면 같은 값이 그 순서로 나온다.
+        let cols = [3usize, 0];
+        let v = View::new(&rs).cols(&cols);
+        let n = v.col_names();
+        let out = generate_src(Dialect::Oracle, "EMP", &n, &v, 0..1, SqlKind::Insert, &key);
+        assert_eq!(out, "INSERT INTO EMP (QTY, ID) VALUES (NULL, 1);\n");
+        // 구간이 길이를 넘으면 잘라서(패닉 없음).
+        assert_eq!(
+            generate_src(Dialect::Oracle, "EMP", &n, &v, 5..9, SqlKind::Insert, &key),
+            ""
+        );
     }
 
     #[test]

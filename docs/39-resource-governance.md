@@ -152,7 +152,7 @@
 ---
 
 > **부하원 추가(09-16 33차)**: 상태줄 git 조회 스레드 `nsql-git`(git CLI 2회 · 폴더 바뀜/저장/15초 · 동시 1) — 끄는 키 `statusbar.git`.
-> **부하원 추가(09-16 29차)**: 텍스트 보기 변환 스레드 `nsql-textview`(변환 중에만 · 500행 블록 · 취소 깃발 · 결과 복제 1회) — 끄는 키 없음(보기를 그리드로 두면 0) · 자세히 [journal 29차](journal/2026-09-16.md).
+> **부하원 추가(09-16 29차)**: 텍스트 보기 변환 스레드 `nsql-textview`(변환 중에만 · 500행 블록 · 취소 깃발 · **결과 복제 0 — 09-17 DR-33: `ResultData` Arc 세그먼트 공유 + 인덱스 뷰** · 파생 `text_lines`는 예산에 포함) — 끄는 키 없음(보기를 그리드로 두면 0) · 자세히 [journal 29차](journal/2026-09-16.md).
 
 ## 4. 거버너 — 설정 체계 설계(포트 + 레지스트리 + 설정 선택)
 
@@ -212,6 +212,30 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 - **`--trace-net` · `--trace-frames`**(T-90e): 소켓 열기·프레임마다 1줄(stderr 또는 로그 창) — §6 자동 점검의 원천.
 
 ---
+
+### 4-6. ★ 실행 속도 향상 `perf.boost`(사용자 09-17) — "UI 구성에만 영향" 키를 최적값으로 **강제 + 잠금**
+
+> **요청 원문 요약**: 성능 항목에 "실행 속도 향상" 메뉴 — 파일/메모리 로딩(I/O) · 아이콘 표시 등 메모리 증가(우클릭 포함) · 렌더링 방식이나 폴링의 시도 횟수·시간 — **실제 동작에는 문제가 없고 UI 구성에만 영향을 미치는 설정**을 모아, 켜면 그 설정들은 수정할 수 없고 설정값과 무관하게 최적값이 적용된다.
+
+**목표(사용자 보충 09-17)**: ① 처음 실행 속도 ② 쿼리 등 네트워크 실행 속도 ③ 백그라운드·편의 기능 스레드 최소화 ④ 메모리 최소화·빠른 회수 ⑤ 체감 속도. 목표 ↔ 항목: ① = 시작 시 로그 창 안 열기 · 아이콘 래스터 0 · git 프로세스 0 ② = 프로브·라이브 로그 폴링 최소(실행 경로의 왕복 수는 그대로 — 결과에 영향이 있는 페치 크기는 제외) ③ = 프로브 스레드 1 · git/감시/자동 갱신 스레드 0 ④ = 아이콘·미니맵·HTML 복사 캐시 0 · 아이콘 캐시 128 · (텍스트 보기 캐시 즉시 해제는 DR-33에서 상시) ⑤ = 애니메이션·페이드·깜빡임·툴팁 0.
+
+**목적 검토(내부)**: `perf.mode`(§4-1)는 *부하를 줄이는* 거버너로 개별 값이 프리셋보다 우선하고(사용자 존중) 동작 상한(행 수·타임아웃)까지 포함한다. 요청은 반대 방향의 **강제 스위치**다 — 개별 값보다 우선하고, 설정 창에서 잠그며, 대상은 **동작 결과에 영향이 0인 키로 한정**한다. 둘은 겹치지 않는다: `perf.boost`는 `perf.mode`와 독립(둘 다 켤 수 있고 강제값이 프리셋보다 위 · custom 표시와 무관). 저장값은 건드리지 않으므로 끄면 그대로 돌아온다. → 우선순위 = **향상 강제값 > 개별 값 > 모드 프리셋 > 기본**([`Settings::effective`]).
+
+**분류(원장 = `nsql-settings::perf::BOOST` · 테스트가 레지스트리 존재·검증 통과를 강제)**
+
+| 구분 | 키 → 강제값 | 사용자 예시와의 대응 | 비고 |
+|---|---|---|---|
+| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
+| 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(신설 · 우클릭 메뉴 아이콘)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
+| I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |
+| 메모리 | `file.icon_cache` 128 | 목표 ④ | 아이콘을 껐으므로 캐시도 최소 |
+| 폴링·시도 횟수·시간·스레드 | `probe.interval` 300 · `probe.max_inflight` 1 · `probe.max_retries` 1 · `probe.icmp` off  · `oracle.live.source` off · `oracle.live.interval_ms` 5000 | "Pooling 등의 시도 횟수, 시간" | 신호등은 남기되 드물게 · 라이브 로그는 표시용이라 끔 |
+
+**제외(동작에 영향)**: `grid.max_rows`·`db.fetch_size`·`db.fetch_all_size`·`db.statement_timeout`·`db.cursor_idle_secs`(결과·페치) · `session.*`·`tx.*`(트랜잭션) · `connect.auto_reconnect`·`connect.max_concurrent`·`probe.enabled`(접속·신호등 자체) · `editor.highlight_max_kb`·`editor.max_occurrences`·`editor.undo_max`·`log.max_lines`(기능 상한 — 줄이면 사용자가 잃는다) · `ui.glyph_cache`·`file.icon_cache`(캐시는 클수록 빠름) · `ui.text_gdi/hint/snap/contrast`(글자 품질) · `log.file`(사용자 기능) · `explorer.visible`(사용자 배치).
+
+**구현**: 레지스트리 `perf.boost`(Bool · Performance) · `perf::BOOST` 표 · `Settings::effective` 최우선 · `boost_locked(key)` · `PerfSource::Boost`(`nsql config list perf` 출처 "향상") · 설정 창 = 대상 카드 잠금 + 설명 아래 "⚡ 실행 속도 향상 적용값: X" · 호스트 = 켬/끔 때 대상 키 전부 `apply_setting`(즉시 반영) · 신설 배선 `ui.menu_icons`(nexa-ctl ctxmenu 전역) · `ui.clipboard_probe`(우클릭 클립보드 읽기 생략). 향상 모드는 부하원 원장(§3)에 새 행을 만들지 않는다(기존 키의 값만 강제).
+
+> 09-17 추가: 향상 모드 강제 표에 `log.dev_mode=off`(상세 로그 게이트 0 · [48](48-logging-architecture.md)).
 
 ## 5. 시나리오 — 모드가 실제로 바꾸는 것(사용자 관점)
 

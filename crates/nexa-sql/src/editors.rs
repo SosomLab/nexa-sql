@@ -6,6 +6,7 @@
 
 use crate::eol::Eol;
 use crate::syntax::SyntaxRegistry;
+use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
@@ -19,8 +20,23 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+/// 탭 우클릭 메뉴 요청(호스트가 처리 · 09-17): 이름 바꾸기 · 닫기(왼쪽/오른쪽/전부) · 파일 위치 열기.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TabMenuReq {
+    Rename(usize),
+    Close(usize),
+    CloseLeft(usize),
+    CloseRight(usize),
+    CloseAll,
+    Reveal(usize),
+}
+
 pub(crate) struct Editors {
     tabs: TabBar,
+    /// 탭 우클릭 메뉴(결과 탭과 같은 부품 · 팝업 층에 그린다).
+    menu: CtxMenu,
+    menu_tab: Option<usize>,
+    tab_menu_req: Option<TabMenuReq>,
     bufs: Vec<TextBox>,
     titles: Vec<String>,
     active: usize,
@@ -45,6 +61,8 @@ pub(crate) struct Editors {
     ruler_color: Option<nexa_ctl::theme::Color>,
     ruler_alpha: f32,
     occurrence_hl: bool,
+    occ_style: nexa_ctl::OccurrenceStyle,
+    auto_indent: (nexa_ctl::AutoIndent, nexa_ctl::IndentRules),
     /// 첫 글자 앞 여백(설정 `editor.text_pad_left`).
     text_inset: i32,
     whitespace: WhitespaceStyle,
@@ -56,6 +74,7 @@ pub(crate) struct Editors {
     scroll_snap: bool,
     /// 미니맵(켬 · 폭 논리 px · T-97).
     minimap: (bool, i32),
+    minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
     /// 되돌리기 깊이 상한(`editor.undo_max`).
     undo_max: usize,
     /// 탭별 미커밋 문장 수·오래됨(수동 커밋 · DR-30 T-77) — 제목 뒤 `●n`(오래되면 `⚠n`).
@@ -103,6 +122,9 @@ impl Editors {
         tabs.set_show_new(true);
         let mut e = Editors {
             tabs,
+            menu: CtxMenu::new(),
+            menu_tab: None,
+            tab_menu_req: None,
             bufs: Vec::new(),
             titles: Vec::new(),
             active: 0,
@@ -121,6 +143,11 @@ impl Editors {
             ruler_color: None,
             ruler_alpha: 0.25,
             occurrence_hl: true,
+            occ_style: nexa_ctl::OccurrenceStyle::default(),
+            auto_indent: (
+                nexa_ctl::AutoIndent::default(),
+                nexa_ctl::IndentRules::sql(),
+            ),
             text_inset: 3,
             whitespace: WhitespaceStyle::default(),
             indent: (4, true),
@@ -134,7 +161,8 @@ impl Editors {
             next_id: 1,
             tab_stops: true,
             scroll_snap: false,
-            minimap: (false, 80),
+            minimap: (false, 160),
+            minimap_box: (None, None, false),
             undo_max: 1000,
             tx_badges: HashMap::new(),
             tx_badge_mode: "count".into(),
@@ -161,6 +189,8 @@ impl Editors {
         tb.set_rulers_visible(self.rulers_show);
         tb.set_ruler_style(self.ruler_color, self.ruler_alpha);
         tb.set_occurrence_highlight(self.occurrence_hl);
+        tb.set_occurrence_style(self.occ_style);
+        tb.set_auto_indent(self.auto_indent.0, self.auto_indent.1.clone());
         tb.set_text_inset(self.text_inset);
         tb.set_whitespace(self.whitespace);
         tb.set_indent(self.indent.0, self.indent.1);
@@ -168,6 +198,7 @@ impl Editors {
         tb.set_scroll_snap(self.scroll_snap);
         tb.set_minimap(self.minimap.0);
         tb.set_minimap_width(self.minimap.1);
+        tb.set_minimap_box(self.minimap_box.0, self.minimap_box.1, self.minimap_box.2);
         tb.set_history_max(self.undo_max);
         tb.set_line_comment(syntax.line_comments.first().cloned());
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
@@ -216,6 +247,26 @@ impl Editors {
     }
 
     /// 공백 표시 스타일(설정 `editor.whitespace*`).
+    /// Auto indent(설정 `editor.auto_indent`/… · 전 탭 · docs/49).
+    pub(crate) fn set_auto_indent(
+        &mut self,
+        cfg: nexa_ctl::AutoIndent,
+        rules: nexa_ctl::IndentRules,
+    ) {
+        for b in &mut self.bufs {
+            b.set_auto_indent(cfg, rules.clone());
+        }
+        self.auto_indent = (cfg, rules);
+    }
+
+    /// 동일 출현 상자 스타일(설정 `editor.occurrence_*` · 전 탭).
+    pub(crate) fn set_occurrence_style(&mut self, st: nexa_ctl::OccurrenceStyle) {
+        self.occ_style = st;
+        for b in &mut self.bufs {
+            b.set_occurrence_style(st);
+        }
+    }
+
     pub(crate) fn set_whitespace(&mut self, ws: WhitespaceStyle) {
         self.whitespace = ws;
         for b in &mut self.bufs {
@@ -332,6 +383,19 @@ impl Editors {
         for b in &mut self.bufs {
             b.set_minimap(on);
             b.set_minimap_width(width);
+        }
+    }
+
+    /// 미니맵 뷰포트 상자(색 · 알파 · 테두리 · 전 탭).
+    pub(crate) fn set_minimap_box(
+        &mut self,
+        color: Option<nexa_ctl::theme::Color>,
+        alpha: Option<f32>,
+        border: bool,
+    ) {
+        self.minimap_box = (color, alpha, border);
+        for b in &mut self.bufs {
+            b.set_minimap_box(color, alpha, border);
         }
     }
 
@@ -784,6 +848,33 @@ impl Editors {
 
     /// 탭 바 이벤트(마우스가 탭 영역에 있거나 드래그 중). 소비했으면 true.
     pub(crate) fn route_tabs(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> bool {
+        // 열린 탭 메뉴 = 모달(바깥 좌/우클릭은 닫고 그 클릭을 그대로 진행 · 팝업 UX 규칙).
+        if self.menu.is_open() {
+            let consumed = self.menu.on_event(ev);
+            if let Some(id) = self.menu.take_picked() {
+                let i = self.menu_tab.take().unwrap_or(self.active);
+                self.tab_menu_req = match id.as_str() {
+                    "rename" => Some(TabMenuReq::Rename(i)),
+                    "close" => Some(TabMenuReq::Close(i)),
+                    "close_left" => Some(TabMenuReq::CloseLeft(i)),
+                    "close_right" => Some(TabMenuReq::CloseRight(i)),
+                    "close_all" => Some(TabMenuReq::CloseAll),
+                    "reveal" => Some(TabMenuReq::Reveal(i)),
+                    _ => None,
+                };
+                inv.push(self.bounds);
+                return true;
+            }
+            if consumed
+                || !matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                )
+            {
+                inv.push(self.bounds);
+                return true;
+            }
+        }
         let p = match *ev {
             InputEvent::MouseMove { x, y }
             | InputEvent::MouseDown { x, y, .. }
@@ -851,11 +942,70 @@ impl Editors {
                         self.sync_tabs();
                     }
                 }
-                TabAction::Context(_) => {}
+                TabAction::Context(i) => {
+                    let (x, y) = self.cursor;
+                    self.open_tab_menu(i, Point { x, y });
+                }
             }
         }
         inv.push(self.bounds);
         true
+    }
+
+    /// 탭 우클릭 메뉴(사용자 09-17): 이름 바꾸기 · 닫기 · 왼쪽/오른쪽 닫기 · 모두 닫기 · 파일 위치 열기(파일이 디스크에 있을 때만).
+    fn open_tab_menu(&mut self, i: usize, p: Point) {
+        self.menu_tab = Some(i);
+        let n = self.bufs.len();
+        let has_file = self
+            .paths
+            .get(i)
+            .and_then(|p| p.as_ref())
+            .is_some_and(|p| p.exists());
+        let items = vec![
+            CtxItem::item("rename", t(Msg::MnTabRename)),
+            CtxItem::Separator,
+            CtxItem::item("close", t(Msg::MnCloseTab)),
+            CtxItem::maybe("close_left", t(Msg::MnTabCloseLeft), i > 0),
+            CtxItem::maybe("close_right", t(Msg::MnTabCloseRight), i + 1 < n),
+            CtxItem::item("close_all", t(Msg::MnTabCloseAll)),
+            CtxItem::Separator,
+            CtxItem::maybe("reveal", t(Msg::MnTabReveal), has_file),
+        ];
+        let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
+        let text_w = (200.0 * self.scale) as i32;
+        self.menu.open_at(p.x, p.y, items, host, text_w);
+    }
+
+    /// 우클릭 메뉴(팝업 층 · 호스트가 맨 마지막에).
+    pub(crate) fn paint_popups(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        self.menu.paint(dc, th);
+    }
+
+    /// 메뉴 선택(1회성).
+    pub(crate) fn take_tab_menu_request(&mut self) -> Option<TabMenuReq> {
+        self.tab_menu_req.take()
+    }
+
+    /// 탭 이름 바꾸기(빈 이름은 무시 · 저장/열기 때 파일 이름으로 다시 덮인다).
+    pub(crate) fn rename_tab(&mut self, i: usize, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || i >= self.titles.len() {
+            return;
+        }
+        self.titles[i] = name.to_string();
+        self.sync_tabs();
+    }
+
+    pub(crate) fn tab_count(&self) -> usize {
+        self.bufs.len()
+    }
+
+    pub(crate) fn title_of(&self, i: usize) -> String {
+        self.titles.get(i).cloned().unwrap_or_default()
+    }
+
+    pub(crate) fn path_of(&self, i: usize) -> Option<PathBuf> {
+        self.paths.get(i).and_then(|p| p.clone())
     }
 
     /// 툴팁 타이머 — 카드가 뜰 시각이 되면 true(호스트가 다시 그린다).

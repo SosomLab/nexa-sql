@@ -10,6 +10,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use std::fmt;
+use std::sync::Arc;
 
 /// DBMS 방언 — 값이 아니라 **문법 규칙의 축**이다(docs/08 §4).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -311,7 +312,8 @@ pub struct Column {
     pub type_name: String,
 }
 
-/// 결과 집합 — M0 임시 모델. 컬럼형(Arrow 여부)은 D-2에서 결정.
+/// 결과 집합 한 덩어리 — 드라이버·러너·CLI가 주고받는 **행 단위 `Vec<Value>`**(DR-33 확정 · 컬럼형/아레나는 T-102 후보).
+/// GUI는 페치 단위로 받은 덩어리를 [`ResultData`]에 세그먼트로 덧붙여 한 세트로 든다. 렌더러는 [`RowSource`]로만 읽는다.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct ResultSet {
     pub columns: Vec<Column>,
@@ -510,13 +512,388 @@ impl Value {
 impl ResultSet {
     /// 행·셀의 메모리 추정(바이트).
     pub fn approx_bytes(&self) -> u64 {
-        let rows_overhead = (self.rows.capacity() * std::mem::size_of::<Vec<Value>>()) as u64;
-        rows_overhead
-            + self
-                .rows
-                .iter()
-                .map(|r| r.iter().map(Value::approx_bytes).sum::<u64>())
-                .sum::<u64>()
+        rows_approx_bytes(&self.rows)
+    }
+}
+
+fn rows_approx_bytes(rows: &[Vec<Value>]) -> u64 {
+    let rows_overhead = std::mem::size_of_val(rows) as u64;
+    rows_overhead
+        + rows
+            .iter()
+            .map(|r| r.iter().map(Value::approx_bytes).sum::<u64>())
+            .sum::<u64>()
+}
+
+// ────────────────────────────────────────────── 트랜잭션 상태 분류(docs/44 §5 · 사용자 09-17)
+
+/// 문장이 트랜잭션에 남기는 흔적의 종류 — 툴바 트랜잭션 버튼 색·배지, 트랜잭션 로그 Tx 열의 근거.
+/// 심각도(잃는 것의 크기) 순: `DdlDrop` > `Delete`/`Truncate` > `Update` > `Insert` > `DdlCreate`/`DdlAlter` > `Read` > `None`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum TxClass {
+    /// 아무것도 없음.
+    None,
+    /// 조회만(SELECT/WITH/SHOW/DESC/EXPLAIN) — 수동 모드에서는 스냅샷·잠금을 쥔 읽기 트랜잭션.
+    Read,
+    /// 오브젝트 추가·변경(CREATE/ALTER/COMMENT/GRANT …) — 트랜잭션 DDL 방언(PG·SQL Server·SQLite)에서만 대기 상태가 된다.
+    DdlCreate,
+    /// 행 추가.
+    Insert,
+    /// 열 값 변경(UPDATE · MERGE).
+    Update,
+    /// 행 삭제.
+    Delete,
+    /// TRUNCATE — 롤백 가능 방언(PG·SQL Server)에서만 트랜잭션 대상 · Oracle/MySQL은 암묵 커밋(대상 아님).
+    Truncate,
+    /// 오브젝트 삭제(DROP).
+    DdlDrop,
+    /// 분류 밖(CALL·EXEC·PL 블록·SET …) — 영향 행이 있으면 갱신으로 취급.
+    Other,
+}
+
+impl TxClass {
+    /// 문장 첫 키워드로 분류(주석·공백 무시 · 대소문자 무시). CTE(`WITH`)는 조회로 본다.
+    #[must_use]
+    pub fn of_sql(sql: &str) -> TxClass {
+        let w = first_keyword(sql);
+        match w.as_str() {
+            "" => TxClass::None,
+            "SELECT" | "WITH" | "SHOW" | "DESC" | "DESCRIBE" | "EXPLAIN" | "VALUES" | "TABLE" => {
+                TxClass::Read
+            }
+            "INSERT" | "REPLACE" | "COPY" | "IMPORT" => TxClass::Insert,
+            "UPDATE" | "MERGE" | "UPSERT" => TxClass::Update,
+            "DELETE" => TxClass::Delete,
+            "TRUNCATE" => TxClass::Truncate,
+            "DROP" => TxClass::DdlDrop,
+            "CREATE" | "ALTER" | "COMMENT" | "GRANT" | "REVOKE" | "RENAME" => TxClass::DdlCreate,
+            _ => TxClass::Other,
+        }
+    }
+
+    /// 심각도(잃는 것의 크기 · 버튼 색은 가장 큰 것을 따른다).
+    #[must_use]
+    pub const fn severity(self) -> u8 {
+        match self {
+            TxClass::None => 0,
+            TxClass::Read => 1,
+            TxClass::DdlCreate => 2,
+            TxClass::Insert => 3,
+            TxClass::Other => 3,
+            TxClass::Update => 4,
+            TxClass::Delete | TxClass::Truncate => 5,
+            TxClass::DdlDrop => 6,
+        }
+    }
+
+    /// DDL(오브젝트) 종류인가.
+    #[must_use]
+    pub const fn is_ddl(self) -> bool {
+        matches!(
+            self,
+            TxClass::DdlCreate | TxClass::DdlDrop | TxClass::Truncate
+        )
+    }
+}
+
+/// 문장 첫 키워드(앞 주석 `--`·`/* */`·공백 건너뜀 · 대문자).
+#[must_use]
+pub fn first_keyword(sql: &str) -> String {
+    let mut rest = sql.trim_start();
+    loop {
+        if let Some(r) = rest.strip_prefix("--") {
+            rest = r.split_once('\n').map_or("", |(_, t)| t).trim_start();
+        } else if let Some(r) = rest.strip_prefix("/*") {
+            rest = r.split_once("*/").map_or("", |(_, t)| t).trim_start();
+        } else {
+            break;
+        }
+    }
+    rest.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .find(|w| !w.is_empty())
+        .map(|w| w.to_ascii_uppercase())
+        .unwrap_or_default()
+}
+
+impl Dialect {
+    /// DDL이 트랜잭션 안에 남는가(롤백 가능) — PG·SQL Server·SQLite = 예 · Oracle·MySQL = 암묵 커밋 · ODBC = 모름(보수적으로 예).
+    #[must_use]
+    pub const fn ddl_transactional(self) -> bool {
+        !matches!(self, Dialect::Oracle | Dialect::Mysql)
+    }
+
+    /// TRUNCATE가 롤백 가능한가(docs/44 §5 · 사용자 09-17 "Truncate는 대상이 아니지?") — Oracle·MySQL = 아니오(DDL 암묵 커밋) ·
+    /// PG·SQL Server = 예 · SQLite = 문장 없음(DELETE 최적화 · 트랜잭션) · ODBC = 모름(보수적으로 아니오).
+    #[must_use]
+    pub const fn truncate_transactional(self) -> bool {
+        matches!(self, Dialect::Postgres | Dialect::Mssql | Dialect::Sqlite)
+    }
+
+    /// 이 문장이 이 방언에서 **암묵 커밋**을 일으키는가(Oracle/MySQL DDL · TRUNCATE 포함).
+    #[must_use]
+    pub fn implicit_commit(self, sql: &str) -> bool {
+        if self.ddl_transactional() {
+            return false;
+        }
+        matches!(
+            first_keyword(sql).as_str(),
+            "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "GRANT" | "REVOKE" | "RENAME" | "COMMENT"
+        )
+    }
+}
+
+// ────────────────────────────────────────────── ★ 결과 데이터 1세트 + 뷰 투영(DR-33 · 사용자 09-17)
+//
+// 원칙: 조회 결과는 **한 세트**만 들고(형식별 사본 0), 그리드·텍스트 보기·복사·CLI는 전부 `RowSource` 포트 하나로 읽는다.
+// - `ResultSet`  = 한 덩어리(드라이버·러너·CLI).
+// - `ResultData` = GUI의 한 세트: 페치 단위 세그먼트를 `Arc`로 들어 **덧붙이기 복사 0 · 변환 스레드 공유 복사 0**.
+// - `View`       = 행 순서(정렬·선택)·열 순서/부분집합의 **인덱스 투영**(복사 0). 뷰 위의 뷰도 된다.
+
+static NULL_VALUE: Value = Value::Null;
+
+/// 행 원천 포트 — 렌더러(nsql-io) · 그리드 페인트 · 복사 · 정렬이 이 포트로만 값을 읽는다.
+pub trait RowSource {
+    fn ncols(&self) -> usize;
+    fn column(&self, c: usize) -> &Column;
+    fn len(&self) -> usize;
+    /// 행 `r`의 **저장 행**(열은 [`Self::col_index`]로 푼다 — 투영 뷰는 열 순서를 바꾸므로 직접 인덱싱하지 않는다).
+    fn raw_row(&self, r: usize) -> &[Value];
+    /// 뷰 열 `c` → 저장 열.
+    fn col_index(&self, c: usize) -> usize {
+        c
+    }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// 셀(없으면 NULL).
+    fn cell(&self, r: usize, c: usize) -> &Value {
+        self.raw_row(r)
+            .get(self.col_index(c))
+            .unwrap_or(&NULL_VALUE)
+    }
+    /// 행 `r`의 셀을 뷰 열 순서로.
+    fn cells(&self, r: usize) -> Cells<'_, Self> {
+        Cells {
+            src: self,
+            row: self.raw_row(r),
+            c: 0,
+            n: self.ncols(),
+        }
+    }
+    /// 컬럼 이름(뷰 순서).
+    fn col_names(&self) -> Vec<String> {
+        (0..self.ncols())
+            .map(|c| self.column(c).name.clone())
+            .collect()
+    }
+}
+
+/// [`RowSource::cells`] 반복자.
+pub struct Cells<'a, S: RowSource + ?Sized> {
+    src: &'a S,
+    row: &'a [Value],
+    c: usize,
+    n: usize,
+}
+
+impl<'a, S: RowSource + ?Sized> Iterator for Cells<'a, S> {
+    type Item = &'a Value;
+    fn next(&mut self) -> Option<&'a Value> {
+        if self.c >= self.n {
+            return None;
+        }
+        let v = self
+            .row
+            .get(self.src.col_index(self.c))
+            .unwrap_or(&NULL_VALUE);
+        self.c += 1;
+        Some(v)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.n - self.c;
+        (left, Some(left))
+    }
+}
+
+impl<S: RowSource + ?Sized> ExactSizeIterator for Cells<'_, S> {}
+
+impl<S: RowSource + ?Sized> fmt::Debug for Cells<'_, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Cells({}/{})", self.c, self.n)
+    }
+}
+
+impl RowSource for ResultSet {
+    fn ncols(&self) -> usize {
+        self.columns.len()
+    }
+    fn column(&self, c: usize) -> &Column {
+        &self.columns[c]
+    }
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+    fn raw_row(&self, r: usize) -> &[Value] {
+        &self.rows[r]
+    }
+}
+
+impl<S: RowSource + ?Sized> RowSource for &S {
+    fn ncols(&self) -> usize {
+        (**self).ncols()
+    }
+    fn column(&self, c: usize) -> &Column {
+        (**self).column(c)
+    }
+    fn len(&self) -> usize {
+        (**self).len()
+    }
+    fn raw_row(&self, r: usize) -> &[Value] {
+        (**self).raw_row(r)
+    }
+    fn col_index(&self, c: usize) -> usize {
+        (**self).col_index(c)
+    }
+}
+
+/// GUI의 결과 **한 세트** — 페치 단위 세그먼트(`Arc`) 목록. `clone`은 Arc 몇 개 복사(셀 복사 0)라 변환 스레드에 그대로 준다.
+/// 행 번호 → 세그먼트는 `starts` 이분 탐색(세그먼트 수 = 페치 횟수 · 수십 개).
+#[derive(Clone, Debug, Default)]
+pub struct ResultData {
+    columns: Arc<Vec<Column>>,
+    segs: Vec<Arc<Vec<Vec<Value>>>>,
+    /// 세그먼트 i의 첫 행 번호.
+    starts: Vec<usize>,
+    len: usize,
+    bytes: u64,
+}
+
+impl ResultData {
+    /// 첫 덩어리에서(이동 · 복사 0).
+    pub fn new(rs: ResultSet) -> Self {
+        let mut d = ResultData {
+            columns: Arc::new(rs.columns),
+            ..Default::default()
+        };
+        d.push_rows(rs.rows);
+        d
+    }
+
+    /// 다음 세그먼트 덧붙이기(이동 · 복사 0). 컬럼은 첫 덩어리 것을 쓴다(빈 세트였으면 이 덩어리 것).
+    pub fn push(&mut self, page: ResultSet) {
+        if self.columns.is_empty() && !page.columns.is_empty() {
+            self.columns = Arc::new(page.columns);
+        }
+        self.push_rows(page.rows);
+    }
+
+    fn push_rows(&mut self, rows: Vec<Vec<Value>>) {
+        if rows.is_empty() {
+            return;
+        }
+        self.bytes += rows_approx_bytes(&rows);
+        self.starts.push(self.len);
+        self.len += rows.len();
+        self.segs.push(Arc::new(rows));
+    }
+
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+
+    pub fn segments(&self) -> usize {
+        self.segs.len()
+    }
+
+    /// 행·셀의 메모리 추정(덧붙일 때 누적 · 매번 훑지 않는다).
+    pub fn approx_bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    fn locate(&self, r: usize) -> Option<(usize, usize)> {
+        if r >= self.len {
+            return None;
+        }
+        let i = self.starts.partition_point(|&s| s <= r).saturating_sub(1);
+        Some((i, r - self.starts[i]))
+    }
+
+    /// 행 `r`(없으면 None).
+    pub fn row(&self, r: usize) -> Option<&[Value]> {
+        let (i, off) = self.locate(r)?;
+        self.segs[i].get(off).map(Vec::as_slice)
+    }
+
+    /// 전 행 순서대로(세그먼트 경계 없이).
+    pub fn rows(&self) -> impl Iterator<Item = &[Value]> + '_ {
+        self.segs.iter().flat_map(|s| s.iter().map(Vec::as_slice))
+    }
+}
+
+impl RowSource for ResultData {
+    fn ncols(&self) -> usize {
+        self.columns.len()
+    }
+    fn column(&self, c: usize) -> &Column {
+        &self.columns[c]
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn raw_row(&self, r: usize) -> &[Value] {
+        self.row(r).unwrap_or(&[])
+    }
+}
+
+/// 인덱스 투영 — 행 순서(정렬·선택 행) · 열 순서/부분집합. 원본을 건드리지 않고 복사도 없다. `None` = 원본 그대로.
+#[derive(Clone, Copy, Debug)]
+pub struct View<'a, S: RowSource + ?Sized> {
+    src: &'a S,
+    rows: Option<&'a [usize]>,
+    cols: Option<&'a [usize]>,
+}
+
+impl<'a, S: RowSource + ?Sized> View<'a, S> {
+    pub fn new(src: &'a S) -> Self {
+        View {
+            src,
+            rows: None,
+            cols: None,
+        }
+    }
+    /// 행 순서(원본 행 번호의 목록 · 부분집합 가능).
+    #[must_use]
+    pub fn rows(mut self, order: &'a [usize]) -> Self {
+        self.rows = Some(order);
+        self
+    }
+    /// 열 순서(원본 열 번호의 목록 · 부분집합 가능).
+    #[must_use]
+    pub fn cols(mut self, order: &'a [usize]) -> Self {
+        self.cols = Some(order);
+        self
+    }
+    /// 뷰 행 `r`의 원본 행 번호.
+    pub fn source_row(&self, r: usize) -> usize {
+        self.rows.map_or(r, |o| o[r])
+    }
+}
+
+impl<S: RowSource + ?Sized> RowSource for View<'_, S> {
+    fn ncols(&self) -> usize {
+        self.cols.map_or_else(|| self.src.ncols(), <[usize]>::len)
+    }
+    fn column(&self, c: usize) -> &Column {
+        self.src.column(self.cols.map_or(c, |o| o[c]))
+    }
+    fn len(&self) -> usize {
+        self.rows.map_or_else(|| self.src.len(), <[usize]>::len)
+    }
+    fn raw_row(&self, r: usize) -> &[Value] {
+        self.src.raw_row(self.source_row(r))
+    }
+    fn col_index(&self, c: usize) -> usize {
+        self.src.col_index(self.cols.map_or(c, |o| o[c]))
     }
 }
 
@@ -544,8 +921,22 @@ impl std::error::Error for DbError {}
 /// 서버 메시지 실시간 싱크(드라이버 스레드에서 불린다 — 호스트는 채널로 넘겨 UI/stdout에).
 pub type MessageSink = std::sync::Arc<dyn Fn(String) + Send + Sync>;
 
+/// ★ 실행 취소 핸들(T-108 · docs/44 §4) — 워커가 실행에 갇혀 있는 동안 **다른 스레드**(UI)에서 부른다.
+/// 드라이버가 지원할 때만 있다: SQLite `InterruptHandle` · PostgreSQL `CancelToken` · Oracle `break_execution` · SQL Server 없음.
+pub trait CancelHandle: Send + Sync {
+    fn cancel(&self) -> Result<(), DbError>;
+    /// 취소가 **세션을 끊는** 방식인가(SQL Server = 소켓 종료 · 열린 트랜잭션은 서버가 롤백 · 다음 실행 때 재접속).
+    fn drops_session(&self) -> bool {
+        false
+    }
+}
+
 pub trait Session {
     fn dialect(&self) -> Dialect;
+    /// 실행 취소 핸들 — 지원하지 않으면 `None`(호스트는 전체 조회 배치 경계에서만 멈춘다).
+    fn cancel_handle(&self) -> Option<std::sync::Arc<dyn CancelHandle>> {
+        None
+    }
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError>;
     /// 서버 커서를 1회 소비해 결과 집합으로(REFCURSOR `PRINT`).
     fn fetch_cursor(&mut self, cursor: CursorId) -> Result<ResultSet, DbError>;
@@ -593,6 +984,115 @@ pub use dberr::{classify, native_code, Classified, ErrorClass};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// docs/44 §5: 분류 · 주석 건너뜀 · 심각도 순서 · TRUNCATE/DDL 방언 규칙.
+    #[test]
+    fn tx_class_and_dialect_rules() {
+        assert_eq!(
+            TxClass::of_sql("  -- 주석\n/* c */ select 1"),
+            TxClass::Read
+        );
+        assert_eq!(
+            TxClass::of_sql("WITH x AS (SELECT 1) SELECT * FROM x"),
+            TxClass::Read
+        );
+        assert_eq!(TxClass::of_sql("insert into t values (1)"), TxClass::Insert);
+        assert_eq!(
+            TxClass::of_sql("MERGE INTO t USING s ON (1=1)"),
+            TxClass::Update
+        );
+        assert_eq!(TxClass::of_sql("delete from t"), TxClass::Delete);
+        assert_eq!(TxClass::of_sql("TRUNCATE TABLE t"), TxClass::Truncate);
+        assert_eq!(TxClass::of_sql("drop view v"), TxClass::DdlDrop);
+        assert_eq!(
+            TxClass::of_sql("create or replace package p as end;"),
+            TxClass::DdlCreate
+        );
+        assert_eq!(TxClass::of_sql("BEGIN NULL; END;"), TxClass::Other);
+        assert_eq!(TxClass::of_sql(""), TxClass::None);
+        assert!(TxClass::DdlDrop.severity() > TxClass::Delete.severity());
+        assert!(TxClass::Delete.severity() > TxClass::Update.severity());
+        assert!(TxClass::Update.severity() > TxClass::Insert.severity());
+        assert!(TxClass::Insert.severity() > TxClass::DdlCreate.severity());
+        assert!(TxClass::DdlCreate.severity() > TxClass::Read.severity());
+        assert!(
+            !Dialect::Oracle.truncate_transactional() && !Dialect::Mysql.truncate_transactional()
+        );
+        assert!(
+            Dialect::Postgres.truncate_transactional() && Dialect::Mssql.truncate_transactional()
+        );
+        assert!(Dialect::Oracle.implicit_commit("truncate table t"));
+        assert!(!Dialect::Postgres.implicit_commit("truncate table t"));
+        assert!(Dialect::Mysql.implicit_commit("CREATE TABLE t(a int)"));
+        assert!(!Dialect::Sqlite.implicit_commit("CREATE TABLE t(a int)"));
+    }
+
+    fn col(n: &str) -> Column {
+        Column {
+            name: n.into(),
+            type_name: String::new(),
+        }
+    }
+
+    /// 세그먼트 덧붙이기 = 복사 0(Arc 공유) · 행 번호는 세그먼트 경계를 넘어 이어진다 · 바이트는 누적.
+    #[test]
+    fn result_data_segments_index_across_pages() {
+        let mut d = ResultData::new(ResultSet {
+            columns: vec![col("a"), col("b")],
+            rows: vec![vec![Value::Int(1), Value::Str("x".into())]],
+        });
+        d.push(ResultSet {
+            columns: vec![],
+            rows: vec![
+                vec![Value::Int(2), Value::Null],
+                vec![Value::Int(3), Value::Str("z".into())],
+            ],
+        });
+        d.push(ResultSet::default()); // 빈 페이지는 세그먼트를 만들지 않는다.
+        assert_eq!((d.len(), d.segments(), d.ncols()), (3, 2, 2));
+        assert_eq!(d.row(0).unwrap()[0], Value::Int(1));
+        assert_eq!(d.row(1).unwrap()[0], Value::Int(2));
+        assert_eq!(d.row(2).unwrap()[1], Value::Str("z".into()));
+        assert!(d.row(3).is_none());
+        assert_eq!(d.rows().count(), 3);
+        assert!(d.approx_bytes() > 0);
+        let shared = d.clone();
+        assert_eq!(shared.len(), 3);
+        // 세그먼트 Arc가 공유된다(복사 0).
+        assert!(Arc::ptr_eq(&d.segs[0], &shared.segs[0]));
+    }
+
+    /// 뷰 = 행·열 인덱스 투영 — 정렬(행 순서)·열 이동·부분집합을 복사 없이, 뷰 위의 뷰도 합성된다.
+    #[test]
+    fn view_projects_rows_and_cols_without_copy() {
+        let rs = ResultSet {
+            columns: vec![col("a"), col("b"), col("c")],
+            rows: vec![
+                vec![Value::Int(1), Value::Int(10), Value::Int(100)],
+                vec![Value::Int(2), Value::Int(20), Value::Int(200)],
+                vec![Value::Int(3), Value::Int(30), Value::Int(300)],
+            ],
+        };
+        let order = [2usize, 0];
+        let cols = [2usize, 0];
+        let v = View::new(&rs).rows(&order).cols(&cols);
+        assert_eq!((v.len(), v.ncols()), (2, 2));
+        assert_eq!(v.column(0).name, "c");
+        assert_eq!(v.cell(0, 0), &Value::Int(300));
+        assert_eq!(v.cell(1, 1), &Value::Int(1));
+        let got: Vec<&Value> = v.cells(0).collect();
+        assert_eq!(got, vec![&Value::Int(300), &Value::Int(3)]);
+        assert_eq!(v.col_names(), vec!["c", "a"]);
+        // 뷰 위의 뷰: 열을 다시 뒤집으면 원래 (a, c) 순서.
+        let flip = [1usize, 0];
+        let vv = View::new(&v).cols(&flip);
+        assert_eq!(vv.col_names(), vec!["a", "c"]);
+        assert_eq!(vv.cell(0, 0), &Value::Int(3));
+        // 없는 열은 NULL(패닉 없음).
+        let wide = [5usize];
+        let bad = View::new(&rs).cols(&wide);
+        assert_eq!(bad.cell(0, 0), &Value::Null);
+    }
 
     #[test]
     fn dialect_names_round_trip() {

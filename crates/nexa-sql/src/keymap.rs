@@ -879,10 +879,53 @@ pub(crate) fn label_of(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// 키를 **누르고 있을 때의 자동 반복**을 그대로 실행해도 되는 명령인가(사용자 09-17: Ctrl+T를 누르고 있자 탭 80개 —
+/// 반복 사건이 전부 명령이 되고, 하나하나가 느려 릴리스 뒤에도 밀린 만큼 계속 만들어졌다).
+/// 허용 = 편집·이동·되돌리기(`edit.*`) · 찾기 이동(`find.*`) · 탭 넘기기 · 문장 이동. 그 밖의 한 번짜리 동작(새 탭 · 닫기 · 실행 ·
+/// 커밋/롤백 · 창 열기 · 접속)은 첫 사건만 받는다 — 밀린 반복 사건은 즉시 버려지므로 UI가 막히지 않는다.
+pub(crate) fn repeatable(id: &str) -> bool {
+    id.starts_with("edit.")
+        || id.starts_with("find.")
+        || matches!(
+            id,
+            "tab.next" | "tab.prev" | "run.next_statement" | "run.prev_statement"
+        )
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// 자동 반복 허용 표(사용자 09-17 Ctrl+T 80개): 편집·이동·찾기·탭 이동만 · 새 탭/닫기/실행/커밋/창 열기는 한 번만.
+    #[test]
+    fn auto_repeat_only_for_editing_and_navigation() {
+        for id in [
+            "edit.undo",
+            "edit.redo",
+            "edit.delete_line",
+            "find.next",
+            "tab.next",
+            "tab.prev",
+        ] {
+            assert!(super::repeatable(id), "{id}");
+        }
+        for id in [
+            "file.new",
+            "file.close_tab",
+            "run.statement",
+            "run.all",
+            "run.commit",
+            "run.rollback",
+            "view.log",
+            "view.palette",
+            "conn.toggle",
+            "conn.disconnect",
+            "file.save",
+        ] {
+            assert!(!super::repeatable(id), "{id}");
+        }
+    }
 
     /// 한글 IME: ⌘+T가 `Character("ㅅ")` + 물리 KeyT → `cmd+t`(사용자 09-16). ASCII면 논리 키 우선.
     #[test]

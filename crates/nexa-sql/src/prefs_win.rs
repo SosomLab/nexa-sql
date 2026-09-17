@@ -37,7 +37,8 @@ pub(crate) enum PrefsAction {
     },
     /// 기본값으로.
     Reset(String),
-    OpenColors,
+    /// 색 창 열기(어느 색 키를 고르는가).
+    OpenColors(String),
     OpenKeys,
     /// settings.json으로 편집(호스트가 내보내고 열고 감시한다).
     EditJson,
@@ -167,12 +168,21 @@ impl PrefsWin {
 
     /// 레지스트리 스냅샷 갱신(열 때 · 값이 바뀔 때). 카드는 값만 갱신(입력 중인 상자는 건드리지 않음).
     pub(crate) fn refresh(&mut self, s: &Settings) {
+        // ★ 실행 속도 향상이 켜져 있으면 강제 대상 카드는 **강제값**을 보여 준다(저장값은 그대로 · 카드는 잠김 · 사용자 09-17
+        //   "설정된 값이 아니라 성능 향상 값으로").
+        let boost = s.boost_on();
         self.snap = s
             .list()
             .into_iter()
             .map(|(e, v, m)| Snap {
                 entry: e,
-                value: v.to_string(),
+                value: if boost {
+                    nsql_settings::perf::boost_value(e.key)
+                        .unwrap_or(v)
+                        .to_string()
+                } else {
+                    v.to_string()
+                },
                 modified: m,
             })
             .collect();
@@ -312,9 +322,12 @@ impl PrefsWin {
                 .map(|s| s.value.clone())
                 .unwrap_or_default()
         };
+        // ★ 실행 속도 향상(`perf.boost` 켬)이 강제하는 키도 잠근다(값은 강제값 · 저장값은 유지 · 09-17).
+        let boost = parent_val("perf.boost") == "on";
         for c in &mut self.cards {
             c.locked = nsql_settings::dependency(c.entry.key)
-                .is_some_and(|(parent, dep)| !dep.satisfied(&parent_val(parent)));
+                .is_some_and(|(parent, dep)| !dep.satisfied(&parent_val(parent)))
+                || (boost && nsql_settings::perf::boost_value(c.entry.key).is_some());
         }
     }
 
@@ -732,7 +745,14 @@ impl PrefsWin {
             }
             let a = self.collect_changes();
             self.redraw();
-            if !matches!(ie, InputEvent::MouseDown { .. }) || self.any_combo_open() || on_head {
+            // ★ 항목을 골라 콤보가 닫힌 클릭은 여기서 끝(변경 보고를 들고 돌아간다). 종전엔 "바깥 클릭 통과" 규칙에
+            //   걸려 같은 클릭이 일반 경로로 이어지며 방금 수거한 `Changed`를 버렸다 → 콤보 설정(공백 표시·성능 모드…)이
+            //   화면엔 바뀐 듯 보여도 저장되지 않았다(사용자 09-17 "전체로 바꿔도 다시 선택 영역").
+            if !matches!(a, PrefsAction::None)
+                || !matches!(ie, InputEvent::MouseDown { .. })
+                || self.any_combo_open()
+                || on_head
+            {
                 return a;
             }
         }
@@ -946,7 +966,7 @@ impl PrefsWin {
             if let Some(b) = &mut c.aux {
                 if b.take_clicked() {
                     return if is_color_key(&key) {
-                        PrefsAction::OpenColors
+                        PrefsAction::OpenColors(key)
                     } else {
                         PrefsAction::OpenKeys
                     };
@@ -1046,9 +1066,19 @@ impl PrefsWin {
             let mut y = list.y + gap - self.scroll;
             let mut inv = Invalidations::default();
             let mut desc_lines: Vec<Vec<String>> = Vec::with_capacity(self.cards.len());
+            let boost_on = self
+                .snap
+                .iter()
+                .any(|s| s.entry.key == "perf.boost" && s.value == "on");
             for c in &mut self.cards {
                 let lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
-                let extra = if c.error.is_some() { th_txt } else { 0 };
+                let boost_hint =
+                    c.locked && boost_on && nsql_settings::perf::boost_value(c.entry.key).is_some();
+                let extra = if c.error.is_some() || boost_hint {
+                    th_txt
+                } else {
+                    0
+                };
                 let ch = inner_pad * 2
                     + th_txt
                     + (4.0 * s).round() as i32
@@ -1177,6 +1207,12 @@ impl PrefsWin {
                 }
                 if let Some(e) = &c.error {
                     dc.text(tx, ty, clip, e, th.danger);
+                }
+                // 향상 모드 강제값 안내(잠긴 카드 · 설명 아래 한 줄).
+                if c.locked && boost_on {
+                    if let Some(v) = nsql_settings::perf::boost_value(c.entry.key) {
+                        dc.text(tx, ty, clip, &tf(Msg::PrefsBoostLocked, &[v]), th.accent);
+                    }
                 }
                 // 기본값 표시(컨트롤 오른쪽 끝)
                 let dv = tf(Msg::LblDefaultValue, &[c.entry.default]);

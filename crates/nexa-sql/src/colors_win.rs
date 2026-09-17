@@ -26,6 +26,8 @@ use winit::window::{Window, WindowId};
 pub(crate) enum ColorTarget {
     Hover,
     Pressed,
+    /// 설정 레지스트리의 임의 색 키(`*_color` · 설정 창 "고르기" · 09-17) — 값은 `#RRGGBBAA`로 저장.
+    Key(&'static str),
 }
 
 impl ColorTarget {
@@ -35,6 +37,7 @@ impl ColorTarget {
         match self {
             ColorTarget::Hover => "ui.hover_color",
             ColorTarget::Pressed => "ui.pressed_color",
+            ColorTarget::Key(k) => k,
         }
     }
 
@@ -42,12 +45,13 @@ impl ColorTarget {
         match self {
             ColorTarget::Hover => Msg::LblColorHover,
             ColorTarget::Pressed => Msg::LblColorPressed,
+            ColorTarget::Key(k) => nsql_settings::entry(k).map_or(Msg::WinColors, |e| e.label),
         }
     }
 
     fn idx(self) -> usize {
         match self {
-            ColorTarget::Hover => 0,
+            ColorTarget::Hover | ColorTarget::Key(_) => 0,
             ColorTarget::Pressed => 1,
         }
     }
@@ -63,7 +67,7 @@ pub(crate) enum ColorsAction {
         target: ColorTarget,
         hex: String,
     },
-    /// 두 색 모두 테마 기본으로.
+    /// 두 색 모두 테마 기본으로(키 모드 = 그 키만).
     Reset,
 }
 
@@ -83,6 +87,8 @@ pub(crate) struct ColorsWin {
     target: ColorTarget,
     /// 대상별 값(`#RRGGBBAA` · None = 테마 기본).
     values: [Option<String>; 2],
+    /// 키 모드(설정 창에서 연 임의 색 키) — 목록은 이 키 하나 · 값 None = 기본(빈 문자열).
+    key_mode: Option<(&'static str, Option<String>)>,
     preview: Button,
     reset_btn: Button,
     close_btn: Button,
@@ -103,6 +109,7 @@ impl ColorsWin {
             panel,
             target: ColorTarget::Hover,
             values: [hover, pressed],
+            key_mode: None,
             preview: Button::new(t(Msg::BtnPreview)),
             reset_btn: Button::new(t(Msg::BtnReset)),
             close_btn: Button::new(t(Msg::BtnClose)),
@@ -148,11 +155,46 @@ impl ColorsWin {
                 || self.panel.is_animating())
     }
 
-    /// 대상의 현재 hex(없으면 테마 기본 = `sel_bg` 불투명).
+    /// 대상의 현재 hex(없으면 테마 기본 = `sel_bg` 불투명 · 키 모드 = 강조색 70%).
     fn value_of(&self, th: &Theme, tg: ColorTarget) -> String {
+        if let ColorTarget::Key(_) = tg {
+            return self
+                .key_mode
+                .as_ref()
+                .and_then(|(_, v)| v.clone())
+                .unwrap_or_else(|| format!("#{:06X}B3", th.accent.0 & 0x00FF_FFFF));
+        }
         self.values[tg.idx()]
             .clone()
             .unwrap_or_else(|| format!("#{:06X}FF", th.sel_bg.0 & 0x00FF_FFFF))
+    }
+
+    /// 지금 보이는 대상 목록(키 모드 = 하나 · 기본 = hover·pressed).
+    fn targets(&self) -> Vec<ColorTarget> {
+        match self.key_mode {
+            Some((k, _)) => vec![ColorTarget::Key(k)],
+            None => ColorTarget::ALL.to_vec(),
+        }
+    }
+
+    /// 설정 창의 색 키 "고르기" — 이 키 하나만 고르는 모드로 전환(열려 있어도 대상만 바꾼다).
+    pub(crate) fn set_key_mode(&mut self, key: &'static str, value: Option<String>, th: &Theme) {
+        self.key_mode = Some((key, value));
+        self.target = ColorTarget::Key(key);
+        let v = self.value_of(th, self.target);
+        self.panel.set_value(&v);
+        self.panel.set_focused(false);
+        self.redraw();
+    }
+
+    /// 기본 모드(hover·pressed).
+    pub(crate) fn set_default_mode(&mut self, th: &Theme) {
+        if self.key_mode.take().is_some() {
+            self.target = ColorTarget::Hover;
+            let v = self.value_of(th, self.target);
+            self.panel.set_value(&v);
+            self.redraw();
+        }
     }
 
     pub(crate) fn open(
@@ -330,9 +372,10 @@ impl ColorsWin {
         let mut inv = Invalidations::default();
         if let InputEvent::MouseDown { x, y, .. } = ie {
             let p = Point { x, y };
-            for (i, r) in self.list_rows.iter().enumerate() {
+            let targets = self.targets();
+            for (i, r) in self.list_rows.iter().enumerate().take(targets.len()) {
                 if r.contains(p) {
-                    let tg = ColorTarget::ALL[i];
+                    let tg = targets[i];
                     if tg != self.target {
                         self.target = tg;
                         let v = self.value_of(th, tg);
@@ -366,7 +409,11 @@ impl ColorsWin {
         }
         let _ = self.preview.take_clicked(); // 미리보기 = 눌러 보는 용도(동작 없음)
         if self.reset_btn.take_clicked() {
-            self.values = [None, None];
+            if let Some((_, v)) = &mut self.key_mode {
+                *v = None;
+            } else {
+                self.values = [None, None];
+            }
             let v = self.value_of(th, self.target);
             self.panel.set_value(&v);
             self.redraw();
@@ -383,13 +430,22 @@ impl ColorsWin {
     /// 패널 변경 수거 → 호스트에 보고(실시간 적용).
     fn after_panel(&mut self) -> ColorsAction {
         if let Some(hex) = self.panel.take_changed() {
-            self.values[self.target.idx()] = Some(hex.clone());
+            if let Some((_, v)) = &mut self.key_mode {
+                *v = Some(hex.clone());
+            } else {
+                self.values[self.target.idx()] = Some(hex.clone());
+            }
             return ColorsAction::Changed {
                 target: self.target,
                 hex,
             };
         }
         ColorsAction::None
+    }
+
+    /// 키 모드의 키(기본 모드 = None).
+    pub(crate) fn key_mode_key(&self) -> Option<&'static str> {
+        self.key_mode.as_ref().map(|(k, _)| *k)
     }
 
     /// 최근 색(호스트 영속화용).
@@ -399,10 +455,8 @@ impl ColorsWin {
 
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
         // surface 가변 대여 전에 값 문자열을 만들어 둔다.
-        let hexes: [String; 2] = [
-            self.value_of(th, ColorTarget::Hover),
-            self.value_of(th, ColorTarget::Pressed),
-        ];
+        let targets = self.targets();
+        let hexes: Vec<String> = targets.iter().map(|&tg| self.value_of(th, tg)).collect();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -441,7 +495,7 @@ impl ColorsWin {
                 th.text_dim,
             );
             let th_txt = dc.text_height();
-            for (i, tg) in ColorTarget::ALL.iter().enumerate() {
+            for (i, tg) in targets.iter().enumerate() {
                 let r = self.list_rows[i];
                 if *tg == self.target {
                     dc.fill_round_rect(r, (5.0 * s).round() as i32, th.sel_bg);
@@ -472,7 +526,7 @@ impl ColorsWin {
                 );
             }
             // 안내.
-            let hint_y = self.list_rows[1].bottom() + (10.0 * s).round() as i32;
+            let hint_y = self.list_rows[targets.len() - 1].bottom() + (10.0 * s).round() as i32;
             let hint_clip = Rect::new(pad, hint_y, (LIST_W * s).round() as i32, hi - hint_y);
             for (i, line) in t(Msg::ColorsHint).split('\n').enumerate() {
                 dc.text(

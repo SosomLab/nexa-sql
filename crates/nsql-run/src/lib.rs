@@ -10,6 +10,8 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod txlog;
+
 use nsql_core::{
     Column, CursorHandle, DbError, Dialect, ExecRequest, ExecResult, ResultSet, Session, Stage,
     Timeline, Value,
@@ -387,6 +389,11 @@ impl Runner {
     }
 
     /// 페치 상한 변경(실행마다 · 결과 탭의 세그먼트 크기 · docs/43) — 세션에도 즉시 알린다.
+    /// 현재 세션의 실행 취소 핸들(T-108) — 호스트 워커가 실행 직전에 꺼내 UI와 공유한다.
+    pub fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
+        self.session.as_ref().and_then(|s| s.cancel_handle())
+    }
+
     pub fn set_max_rows(&mut self, n: usize) {
         if self.max_rows != n {
             self.max_rows = n;

@@ -119,6 +119,11 @@ pub(crate) struct LogWin {
     /// 항상 위(설정 `log.always_on_top` · 스위치) — 소유 창이라 메인 창보다 늘 위.
     on_top: bool,
     top_switch: Switch,
+    /// 개발자 모드(설정 `log.dev_mode` · 스위치) — 꺼지면 상세 수준 줄은 숨긴다(생성 자체는 호스트 마스크가 막는다).
+    dev: bool,
+    dev_switch: Switch,
+    /// 상세 층 마스크(메뉴 체크 표시용 · 설정 `log.dev_layers`).
+    dev_mask: u32,
 }
 
 impl LogWin {
@@ -169,7 +174,24 @@ impl LogWin {
             jump: true,
             on_top: false,
             top_switch: Switch::new(t(Msg::LblLogSwTop), false).with_label_side(LabelSide::Right),
+            dev: false,
+            dev_switch: Switch::new(t(Msg::LblLogSwDev), false).with_label_side(LabelSide::Right),
+            dev_mask: 0,
         }
+    }
+
+    /// 개발자 모드(설정 `log.dev_mode`).
+    pub(crate) fn set_dev(&mut self, on: bool) {
+        self.dev = on;
+        self.dev_switch.set_on(on);
+        self.rebuild_vis();
+        self.row_start.clear();
+        self.redraw();
+    }
+
+    /// 상세 층 마스크(메뉴 체크 표시).
+    pub(crate) fn set_dev_mask(&mut self, mask: u32) {
+        self.dev_mask = mask;
     }
 
     /// 스크롤 단위 — `true` = 줄 경계에 맞춤.
@@ -216,10 +238,15 @@ impl LogWin {
         self.kinds.is_empty() || self.kinds.contains(&k)
     }
 
+    /// 줄 표시 여부 = 종류 필터 + (상세 수준은 개발자 모드일 때만).
+    fn shown_entry(&self, e: &LogEntry) -> bool {
+        self.shown(e.kind) && (self.dev || e.level == nsql_log::LogLevel::Basic)
+    }
+
     fn rebuild_vis(&mut self) {
         self.clear_selection();
         self.vis = (0..self.buf.len())
-            .filter(|&i| self.buf.get(i).is_some_and(|e| self.shown(e.kind)))
+            .filter(|&i| self.buf.get(i).is_some_and(|e| self.shown_entry(e)))
             .collect();
     }
 
@@ -266,9 +293,18 @@ impl LogWin {
                 CtxItem::item(format!("col:{n}"), *n).with_checked(on)
             })
             .collect();
+        let layers: Vec<CtxItem> = nsql_log::LogLayer::ALL
+            .iter()
+            .filter(|l| **l != nsql_log::LogLayer::App)
+            .map(|l| {
+                CtxItem::item(format!("layer:{}", l.label()), l.label())
+                    .with_checked(nsql_log::layer_in_mask(self.dev_mask, *l))
+            })
+            .collect();
         let items = vec![
             CtxItem::submenu("kinds", t(Msg::MnLogKinds), kinds),
             CtxItem::submenu("cols", t(Msg::MnLogColumns), cols),
+            CtxItem::submenu("layers", t(Msg::MnLogDevLayers), layers),
             CtxItem::Separator,
             CtxItem::item("save", t(Msg::MnLogSaveAs)),
             CtxItem::item("copy", t(Msg::MnLogCopyAll)),
@@ -283,6 +319,30 @@ impl LogWin {
 
     /// 메뉴 항목 → 동작(설정에 남길 것은 액션으로 돌려준다).
     fn menu_pick(&mut self, id: &str) -> LogWinAction {
+        if let Some(label) = id.strip_prefix("layer:") {
+            // 층 토글(수준 3개 묶음) → 설정 문자열 재구성(`net,fetch,…` · 전부면 `*`).
+            let Some(l) = nsql_log::LogLayer::parse(label) else {
+                return LogWinAction::None;
+            };
+            let mut on: Vec<nsql_log::LogLayer> = nsql_log::LogLayer::ALL
+                .iter()
+                .copied()
+                .filter(|x| *x != nsql_log::LogLayer::App)
+                .filter(|x| nsql_log::layer_in_mask(self.dev_mask, *x))
+                .collect();
+            if let Some(i) = on.iter().position(|x| *x == l) {
+                on.remove(i);
+            } else {
+                on.push(l);
+            }
+            let text = if on.len() == nsql_log::LogLayer::ALL.len() - 1 {
+                "*".to_string()
+            } else {
+                on.iter().map(|x| x.label()).collect::<Vec<_>>().join(",")
+            };
+            self.dev_mask = nsql_log::parse_detail_layers(&text);
+            return LogWinAction::Setting("log.dev_layers", text);
+        }
         if let Some(label) = id.strip_prefix("kind:") {
             let Some(k) = LogKind::parse(label) else {
                 return LogWinAction::None;
@@ -338,6 +398,7 @@ impl LogWin {
             &mut self.newest_switch,
             &mut self.auto_switch,
             &mut self.top_switch,
+            &mut self.dev_switch,
         ] {
             sw.set_track_scale(self.switch_mult);
         }
@@ -930,6 +991,9 @@ impl LogWin {
                     if up || self.top_switch.bounds().contains(p) {
                         self.top_switch.on_event(&ev, &mut inv);
                     }
+                    if up || self.dev_switch.bounds().contains(p) {
+                        self.dev_switch.on_event(&ev, &mut inv);
+                    }
                     if !inv.is_empty() {
                         self.redraw();
                     }
@@ -948,6 +1012,10 @@ impl LogWin {
                     if let Some(on) = self.top_switch.take_toggled() {
                         self.set_on_top(on);
                         return LogWinAction::Toggled("log.always_on_top", on);
+                    }
+                    if let Some(on) = self.dev_switch.take_toggled() {
+                        self.set_dev(on);
+                        return LogWinAction::Toggled("log.dev_mode", on);
                     }
                 }
             }
@@ -1285,6 +1353,7 @@ impl LogWin {
                 (&mut self.newest_switch, Msg::LblLogSwSort),
                 (&mut self.auto_switch, Msg::LblLogSwScroll),
                 (&mut self.top_switch, Msg::LblLogSwTop),
+                (&mut self.dev_switch, Msg::LblLogSwDev),
             ]
             .into_iter()
             .enumerate()

@@ -24,7 +24,7 @@ use nsql_vault::Vault;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub(crate) enum Cmd {
@@ -83,10 +83,12 @@ pub(crate) enum ConnOutcome {
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
     Keys(String, Option<nsql_core::KeyInfo>),
-    /// `Cmd::FetchPage` 결과 — `offset` 0 = 전체 조회(교체) · 그 외 = 이어 붙임. `stop` = 전체 조회가 멈춘 이유(예산·취소).
+    /// `Cmd::FetchPage` 결과 — `offset`부터 **이어 붙임**(전체 조회도 나머지를 이어 붙인다 · 09-17 위치 유지) ·
+    /// `offset` 0은 교체. `all` = 전체 조회 결과(늦은 세그먼트와 구별) · `stop` = 전체 조회가 멈춘 이유(예산·취소).
     Page {
         key: u64,
         offset: usize,
+        all: bool,
         result: Result<(nsql_core::ResultSet, bool, Duration), String>,
         stop: Option<FetchStop>,
     },
@@ -167,6 +169,8 @@ pub(crate) struct Handle {
     tx: mpsc::Sender<Cmd>,
     /// 전체 조회 취소 깃발(T-48b) — UI가 올리고 워커가 배치 사이에 본다.
     cancel_fetch: Arc<AtomicBool>,
+    /// 실행 중 문장의 취소 핸들(T-108) — 워커가 실행 직전에 넣는다.
+    cancel_run: Arc<Mutex<Option<Arc<dyn nsql_core::CancelHandle>>>>,
     /// 명령 완료 신호(상태 메시지 옵션).
     pub done: mpsc::Receiver<Option<String>>,
     /// 접속 계열 결과.
@@ -181,6 +185,27 @@ impl Handle {
     /// 진행 중인 전체 조회를 다음 배치 경계에서 멈춘다(지금까지 받은 행은 남는다).
     pub(crate) fn cancel_fetch(&self) {
         self.cancel_fetch.store(true, Ordering::Relaxed);
+    }
+
+    /// 실행 중 문장 취소(T-108): 드라이버 핸들이 있으면 서버에 취소를 보내고 true · 없으면(SQL Server) 전체 조회 배치 취소만.
+    /// 반환 = (취소를 보냈는가(스레드에 위임), 세션을 끊는 방식인가).
+    pub(crate) fn cancel_run(&self) -> (bool, bool) {
+        self.cancel_fetch();
+        let h = self.cancel_run.lock().ok().and_then(|g| g.clone());
+        match h {
+            Some(h) => {
+                let drops = h.drops_session();
+                // ★ 취소는 별도 스레드에서(docs/44 §6): PG `cancel_query`는 새 TCP 접속을 **동기**로 열어 서버가 안 닿으면
+                //   OS 접속 타임아웃만큼 막힌다 — UI 스레드에서 부르면 창이 멈춘다. 결과는 로그 창으로만.
+                let _ = std::thread::Builder::new()
+                    .name("nsql-cancel".into())
+                    .spawn(move || {
+                        let _ = h.cancel();
+                    });
+                (true, drops)
+            }
+            None => (false, false),
+        }
     }
 }
 
@@ -197,6 +222,9 @@ pub(crate) fn spawn(
     let (ctx_tx, ctx_rx) = mpsc::channel::<ConnOutcome>();
     let cancel_fetch = Arc::new(AtomicBool::new(false));
     let cancel_flag = cancel_fetch.clone();
+    let cancel_run: Arc<Mutex<Option<Arc<dyn nsql_core::CancelHandle>>>> =
+        Arc::new(Mutex::new(None));
+    let cancel_slot = cancel_run.clone();
     std::thread::Builder::new()
         .name("nsql-worker".into())
         .spawn(move || {
@@ -318,12 +346,13 @@ pub(crate) fn spawn(
                             None => Err(t(Msg::ExpNotConnected).to_string()),
                             Some(_) => {
                                 if limit == 0 {
-                                    // 전체 조회 = 그리드 **교체**(처음부터) — 열린 커서는 위치가 무의미하므로 닫고 원문을 다시 실행.
-                                    // ★ 왕복당 행수는 `db.fetch_all_size`(기본 5000)로 키운다 — 실측(사용자 09-17 · Oracle WAN
-                                    //   155k행): 200이면 34.3s · 5000이면 4.6s. 끝나면 페이징 값으로 되돌린다.
-                                    // T-48b: 커서 지원 드라이버는 **스트리밍**(첫 배치 + fetch_all) — 배치마다 진행률 · 취소 깃발 ·
-                                    //   예산(D-72)은 받으면서 판정(순간 메모리 = 예산). MSSQL은 한 번에 받고(진행률·취소 없음) 뒤에 절단.
-                                    runner.close_cursor();
+                                    // ★ 전체 조회 = **나머지 이어 받기**(사용자 09-17 "현재 위치 유지"): 재실행·교체가 아니라 `offset`
+                                    //   (= 그리드가 이미 든 행 수)부터 끝까지 받아 이어 붙인다 → 스크롤·정렬·텍스트 보기 위치가 그대로.
+                                    //   ① 같은 문장의 커서가 그 위치면 커서에서 fetch_all(재전송 0 · 순서 일관)
+                                    //   ② 커서가 없으면(닫힘·다른 문장) 원문을 커서로 다시 실행해 앞 `offset`행은 **버리고** 이어 받기(메모리 0)
+                                    //   ③ 커서 없는 드라이버(MSSQL) = OFFSET 재질의로 나머지 전부(진행률·취소 없음 · 예산 절단)
+                                    // ★ 왕복당 행수는 `db.fetch_all_size`(기본 5000) — 실측(09-17 Oracle WAN 155k행): 200이면 34.3s · 5000이면 4.6s.
+                                    //   배치마다 진행률 · 취소 깃발 · 예산(D-72)은 받으면서 판정(순간 메모리 = 예산).
                                     cancel_flag.store(false, Ordering::Relaxed);
                                     let page_fs = runner.fetch_size;
                                     let all_fs = nsql_settings::Settings::open_default()
@@ -331,75 +360,101 @@ pub(crate) fn spawn(
                                         .unwrap_or(5000);
                                     let batch = page_fs.max(all_fs);
                                     runner.set_fetch_size(batch);
-                                    let r = if runner.cursor_supported() {
+                                    let rows0 = offset as u64;
+                                    let mut last = std::time::Instant::now();
+                                    let mut progress = |rows: u64, bytes: u64| {
+                                        if last.elapsed() >= Duration::from_millis(100) {
+                                            last = std::time::Instant::now();
+                                            let _ = ctx_tx.send(ConnOutcome::FetchProgress {
+                                                key,
+                                                rows: rows0 + rows,
+                                                bytes,
+                                            });
+                                            wake_now();
+                                        }
+                                        !cancel_flag.load(Ordering::Relaxed)
+                                    };
+                                    let cursor_h = if runner.cursor_matches(&sql, offset) {
+                                        runner.cursor().map(|(h, _)| h)
+                                    } else {
+                                        None
+                                    };
+                                    let r: Result<
+                                        (nsql_core::ResultSet, bool, Duration),
+                                        nsql_core::DbError,
+                                    > = if let Some(h) = cursor_h {
+                                        // ① 커서 이어 받기.
+                                        let t0 = std::time::Instant::now();
+                                        runner
+                                            .fetch_all(h, budget_bytes, &mut progress)
+                                            .map(|(rest, stopped, _)| (rest, stopped, t0.elapsed()))
+                                    } else if runner.cursor_supported() {
+                                        // ② 원문을 커서로 다시 실행 → 앞 offset행은 버리고 이어 받기.
+                                        let t0 = std::time::Instant::now();
                                         runner.query_stream(&sql, batch).and_then(
-                                            |(mut rs, h, d)| {
+                                            |(mut rs, h, _)| {
                                                 let Some(h) = h else {
-                                                    return Ok((rs, false, d));
+                                                    // 커서 없이 끝났다(전체가 첫 배치 안) — 앞 offset행만 버린다.
+                                                    let skip = offset.min(rs.rows.len());
+                                                    rs.rows.drain(..skip);
+                                                    return Ok((rs, false, t0.elapsed()));
                                                 };
-                                                let rows0 = rs.rows.len() as u64;
-                                                let bytes0 = rs.approx_bytes();
-                                                let _ = ctx_tx.send(ConnOutcome::FetchProgress {
-                                                    key,
-                                                    rows: rows0,
-                                                    bytes: bytes0,
-                                                });
-                                                wake_now();
-                                                let remain = if budget_bytes > 0 {
-                                                    budget_bytes.saturating_sub(bytes0).max(1)
+                                                let mut skipped = rs.rows.len();
+                                                if skipped > offset {
+                                                    rs.rows.drain(..offset);
+                                                    // 첫 배치가 offset을 넘었다 — 남은 부분부터 이어 붙일 준비.
                                                 } else {
-                                                    0
-                                                };
-                                                let mut last = std::time::Instant::now();
+                                                    rs.rows.clear();
+                                                    // 나머지 건너뛰기(배치 단위 · 메모리에 남기지 않음).
+                                                    while skipped < offset {
+                                                        let (chunk, more, _) = runner.fetch_next(
+                                                            h,
+                                                            (offset - skipped).min(batch),
+                                                        )?;
+                                                        skipped += chunk.rows.len();
+                                                        if !more || chunk.rows.is_empty() {
+                                                            return Ok((rs, false, t0.elapsed()));
+                                                        }
+                                                    }
+                                                }
                                                 let (rest, stopped, _) = runner.fetch_all(
                                                     h,
-                                                    remain,
-                                                    &mut |rows, bytes| {
-                                                        if last.elapsed()
-                                                            >= Duration::from_millis(100)
-                                                        {
-                                                            last = std::time::Instant::now();
-                                                            let _ = ctx_tx.send(
-                                                                ConnOutcome::FetchProgress {
-                                                                    key,
-                                                                    rows: rows0 + rows,
-                                                                    bytes: bytes0 + bytes,
-                                                                },
-                                                            );
-                                                            wake_now();
-                                                        }
-                                                        !cancel_flag.load(Ordering::Relaxed)
-                                                    },
+                                                    budget_bytes,
+                                                    &mut progress,
                                                 )?;
                                                 rs.rows.extend(rest.rows);
-                                                if stopped {
-                                                    runner.close_cursor();
-                                                    stop = Some(
-                                                        if cancel_flag.load(Ordering::Relaxed) {
-                                                            FetchStop::Cancelled
-                                                        } else {
-                                                            FetchStop::Budget
-                                                        },
-                                                    );
-                                                }
-                                                Ok((rs, stopped, d))
+                                                Ok((rs, stopped, t0.elapsed()))
                                             },
                                         )
                                     } else {
-                                        runner.query_once(&sql, 0).map(|(mut rs, more, d)| {
-                                            if budget_bytes > 0 && rs.approx_bytes() > budget_bytes
-                                            {
-                                                let n = rs.rows.len().max(1);
-                                                let per = (rs.approx_bytes() / n as u64).max(1);
-                                                let keep = (budget_bytes / per) as usize;
-                                                rs.rows.truncate(keep.max(1));
-                                                stop = Some(FetchStop::Budget);
-                                                (rs, true, d)
-                                            } else {
-                                                (rs, more, d)
-                                            }
-                                        })
+                                        // ③ OFFSET 재질의(커서 없는 드라이버).
+                                        runner.fetch_offset(&sql, offset, 0).map(
+                                            |(mut rs, more, tl)| {
+                                                if budget_bytes > 0
+                                                    && rs.approx_bytes() > budget_bytes
+                                                {
+                                                    let n = rs.rows.len().max(1);
+                                                    let per = (rs.approx_bytes() / n as u64).max(1);
+                                                    let keep = (budget_bytes / per) as usize;
+                                                    rs.rows.truncate(keep.max(1));
+                                                    (rs, true, tl.total())
+                                                } else {
+                                                    (rs, more, tl.total())
+                                                }
+                                            },
+                                        )
                                     };
+                                    let r = r.map(|(rs, stopped, d)| {
+                                        if stopped {
+                                            runner.close_cursor();
+                                            stop = Some(if cancel_flag.load(Ordering::Relaxed) {
+                                                FetchStop::Cancelled
+                                            } else {
+                                                FetchStop::Budget
+                                            });
+                                        }
+                                        (rs, stopped, d)
+                                    });
                                     runner.set_fetch_size(page_fs);
                                     r.map_err(|e| e.message)
                                 } else {
@@ -414,6 +469,7 @@ pub(crate) fn spawn(
                         let _ = ctx_tx.send(ConnOutcome::Page {
                             key,
                             offset,
+                            all: limit == 0,
                             result,
                             stop,
                         });
@@ -507,7 +563,7 @@ pub(crate) fn spawn(
                         let want = preflight.or_else(|| suspect.then(|| Duration::from_secs(2)));
                         if let (Some(timeout), Some((host, port))) = (want, active_ep.as_ref()) {
                             let t = std::time::Instant::now();
-                            if probe::probe_once(host, *port, timeout) != probe::Outcome::Up {
+                            if probe::probe_once(host, *port, timeout, true) != probe::Outcome::Up {
                                 let ep = format!("{host}:{port}");
                                 let ms = t.elapsed().as_millis().to_string();
                                 emit(err(tf(Msg::ErrServerUnreachable, &[&ep, &ms])));
@@ -540,6 +596,9 @@ pub(crate) fn spawn(
                         // 치환 변수 프롬프트는 최소 GUI에서 빈 값(T-16c에서 대화상자).
                         let mut prompt = |_: &str| Some(String::new());
                         let mut conn_err = false;
+                        if let Ok(mut g) = cancel_slot.lock() {
+                            *g = runner.cancel_handle();
+                        }
                         let errs = runner.run_script(&src, &mut prompt, &mut |e: RunEvent| {
                             if let RunEvent::Error { error, .. } = &e {
                                 conn_err |= probe::is_connection_error(error.code, &error.message);
@@ -592,6 +651,7 @@ pub(crate) fn spawn(
         Handle {
             tx,
             cancel_fetch,
+            cancel_run,
             done: drx,
             conn: ctx_rx,
         },

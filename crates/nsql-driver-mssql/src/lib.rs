@@ -79,10 +79,114 @@ impl Subscriber for InfoCapture {
 
 type Tds = Client<Compat<TcpStream>>;
 
+/// 암호화 범위(설정 `mssql.encrypt` · 접속 때 읽는다): 0 = 전 구간(`Required`) · 1 = 로그인만(`Off` — 로그인 뒤 평문 · **TDS Attention 취소 가능**).
+static ENCRYPTION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// 호스트가 설정에서 넣는다(`required` = 0 · `login` = 1). 이미 열린 세션은 그대로.
+pub fn set_encryption(login_only: bool) {
+    ENCRYPTION.store(u8::from(login_only), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 취소 방식(설정 `mssql.cancel`): 0 = Attention(가능할 때 · 세션 유지) · 1 = 소켓 종료(항상 · 세션 끊김).
+static CANCEL_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// 호스트가 설정에서 넣는다(`attention` = false · `socket` = true). 다음 취소부터 적용.
+pub fn set_cancel_socket(socket: bool) {
+    CANCEL_MODE.store(u8::from(socket), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn cancel_socket_mode() -> bool {
+    CANCEL_MODE.load(std::sync::atomic::Ordering::Relaxed) == 1
+}
+
+fn login_only_encryption() -> bool {
+    ENCRYPTION.load(std::sync::atomic::Ordering::Relaxed) == 1
+}
+
+/// TDS Attention 패킷(MS-TDS 2.2.1.6 · SSMS/SqlClient·JDBC의 취소): 헤더 8바이트만 — 타입 0x06 · EOM · 길이 8 · SPID 0 · 패킷 id 1 · 창 0.
+const TDS_ATTENTION: [u8; 8] = [0x06, 0x01, 0x00, 0x08, 0x00, 0x00, 0x01, 0x00];
+
+/// 서버 암호화 정책(PRELOGIN ENCRYPTION 응답 · MS-TDS 2.2.6.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerEncrypt {
+    /// `ENCRYPT_OFF` — 로그인만 암호화 가능(Attention 가능).
+    Off,
+    /// `ENCRYPT_ON`.
+    On,
+    /// `ENCRYPT_NOT_SUP` — 암호화 없음(Attention 가능).
+    NotSupported,
+    /// `ENCRYPT_REQ` — 서버가 전 구간 강제(Force Encryption=Yes · Attention 불가).
+    Required,
+}
+
+/// ★ 접속 **전** PRELOGIN 탐침(사용자 09-17 "접속 전에 알 수 있나"): 별도 TCP로 PRELOGIN(ENCRYPTION=OFF)을 보내고 서버의
+/// ENCRYPTION 바이트만 읽는다(1 RTT · 로그인 없이 닫음). tiberius는 협상 결과를 노출하지 않으므로 이 값으로
+/// "로그인만 암호화가 실제로 성립하는가"를 미리 안다.
+pub fn probe_server_encryption(addr: &str, timeout: std::time::Duration) -> Option<ServerEncrypt> {
+    use std::io::{Read, Write};
+    let sa = std::net::ToSocketAddrs::to_socket_addrs(addr)
+        .ok()?
+        .next()?;
+    let mut sock = std::net::TcpStream::connect_timeout(&sa, timeout).ok()?;
+    sock.set_read_timeout(Some(timeout)).ok()?;
+    sock.set_write_timeout(Some(timeout)).ok()?;
+    // 옵션 표 5개(각 5바이트) + 종결자 = 26 → 데이터: VERSION 6 · ENCRYPTION 1 · INSTOPT 1 · THREADID 4 · MARS 1 = 13 → 39바이트.
+    let mut payload: Vec<u8> = Vec::with_capacity(39);
+    let mut off: u16 = 26;
+    for (token, len) in [(0x00u8, 6u16), (0x01, 1), (0x02, 1), (0x03, 4), (0x04, 1)] {
+        payload.push(token);
+        payload.extend_from_slice(&off.to_be_bytes());
+        payload.extend_from_slice(&len.to_be_bytes());
+        off += len;
+    }
+    payload.push(0xFF);
+    payload.extend_from_slice(&[0x0F, 0x00, 0x08, 0xB8, 0x00, 0x00]); // version
+    payload.push(0x00); // ENCRYPT_OFF 요청
+    payload.push(0x00); // instance
+    payload.extend_from_slice(&[0, 0, 0, 0]); // thread id
+    payload.push(0x00); // MARS off
+    let len = (8 + payload.len()) as u16;
+    let mut pkt = vec![0x12, 0x01];
+    pkt.extend_from_slice(&len.to_be_bytes());
+    pkt.extend_from_slice(&[0, 0, 1, 0]);
+    pkt.extend_from_slice(&payload);
+    sock.write_all(&pkt).ok()?;
+    let mut hdr = [0u8; 8];
+    sock.read_exact(&mut hdr).ok()?;
+    let total = u16::from_be_bytes([hdr[2], hdr[3]]) as usize;
+    if !(8..=4096).contains(&total) {
+        return None;
+    }
+    let mut body = vec![0u8; total - 8];
+    sock.read_exact(&mut body).ok()?;
+    let _ = sock.shutdown(std::net::Shutdown::Both);
+    let mut i = 0;
+    while i + 5 <= body.len() && body[i] != 0xFF {
+        let token = body[i];
+        let o = u16::from_be_bytes([body[i + 1], body[i + 2]]) as usize;
+        let l = u16::from_be_bytes([body[i + 3], body[i + 4]]) as usize;
+        if token == 0x01 && l >= 1 && o < body.len() {
+            return Some(match body[o] {
+                0 => ServerEncrypt::Off,
+                1 => ServerEncrypt::On,
+                2 => ServerEncrypt::NotSupported,
+                _ => ServerEncrypt::Required,
+            });
+        }
+        i += 5;
+    }
+    None
+}
+
 #[allow(missing_debug_implementations)]
 pub struct MssqlSession {
     rt: Runtime,
     client: Tds,
+    /// 실행 취소(T-108 · docs/44 §4): tiberius에 취소(TDS Attention)가 없고 전 구간 TLS라 패킷을 직접 보낼 수도 없다 →
+    /// **소켓 복제본을 닫아** 실행을 끊는다(서버가 배치를 중단·열린 트랜잭션 롤백). 세션은 죽고 다음 실행 때 자동 재접속.
+    cancel_sock: std::sync::Arc<std::net::TcpStream>,
+    /// 로그인만 암호화된 접속인가 → 취소 = Attention(세션 유지) · 아니면 소켓 종료(세션 끊김).
+    attention_ok: bool,
     description: String,
     /// 서버 메시지 실시간 싱크(없으면 실행 뒤 `messages`).
     sink: Option<MessageSink>,
@@ -268,12 +372,42 @@ impl MssqlSession {
             }
         }
         config.trust_cert();
-        config.encryption(EncryptionLevel::Required);
+        // 로그인만 암호화(`Off`)면 로그인 뒤 평문 → 소켓 복제본으로 Attention을 보낼 수 있다(T-108 · docs/44 §4).
         config.application_name("nexa-sql");
         let addr = config.get_addr();
+        // 설정이 `login`이면 먼저 PRELOGIN 탐침으로 서버 정책을 본다: 서버가 전 구간을 강제(REQ)하면 tiberius가 조용히
+        // 전 구간으로 올리므로(negotiated_encryption) Attention을 보내면 TLS 스트림이 깨진다 → 이 접속만 `required`로(임시 적용).
+        let want_login = login_only_encryption();
+        let policy = if want_login {
+            probe_server_encryption(&addr, std::time::Duration::from_secs(3))
+        } else {
+            None
+        };
+        let login_only = want_login
+            && matches!(
+                policy,
+                Some(ServerEncrypt::Off | ServerEncrypt::NotSupported)
+            );
+        config.encryption(if login_only {
+            EncryptionLevel::Off
+        } else {
+            EncryptionLevel::Required
+        });
+        let encrypt_note = match (want_login, policy) {
+            (false, _) => "encrypt=required",
+            (true, Some(ServerEncrypt::Off | ServerEncrypt::NotSupported)) => {
+                "encrypt=login(Attention)"
+            }
+            (true, Some(_)) => "encrypt=required(server forces · Attention off)",
+            (true, None) => "encrypt=required(probe failed · Attention off)",
+        };
+        // 동기 소켓으로 열고 복제본을 남긴다(취소 = 복제본 shutdown) → 논블로킹으로 바꿔 tokio에 넘긴다.
+        let std_tcp = std::net::TcpStream::connect(&addr).map_err(io_err)?;
+        std_tcp.set_nodelay(true).map_err(io_err)?;
+        let cancel_sock = std::sync::Arc::new(std_tcp.try_clone().map_err(io_err)?);
+        std_tcp.set_nonblocking(true).map_err(io_err)?;
         let client = rt.block_on(async move {
-            let tcp = TcpStream::connect(&addr).await.map_err(io_err)?;
-            tcp.set_nodelay(true).map_err(io_err)?;
+            let tcp = TcpStream::from_std(std_tcp).map_err(io_err)?;
             Client::connect(config, tcp.compat_write())
                 .await
                 .map_err(err)
@@ -281,13 +415,59 @@ impl MssqlSession {
         Ok(MssqlSession {
             rt,
             client,
-            description: spec.redacted(),
+            cancel_sock,
+            attention_ok: login_only,
+            description: format!("{} · {encrypt_note}", spec.redacted()),
             sink: None,
         })
     }
 }
 
+/// 취소 핸들: `attention` = TDS Attention 패킷(SSMS 방식 · 서버가 배치를 멈추고 `DONE_ATTN`으로 답한다 · 접속 유지) ·
+/// 아니면 소켓 종료(전 구간 TLS라 패킷을 끼워 넣을 수 없을 때 · 세션 끊김).
+struct MssqlCancel {
+    sock: std::sync::Arc<std::net::TcpStream>,
+    attention: bool,
+}
+
+impl nsql_core::CancelHandle for MssqlCancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        use std::io::Write;
+        if !self.attention {
+            return self.sock.shutdown(std::net::Shutdown::Both).map_err(io_err);
+        }
+        // 복제본은 논블로킹 플래그를 공유할 수 있다 — 8바이트는 WouldBlock이 나면 잠깐 뒤 다시 쓴다(블로킹 모드는 바꾸지 않는다).
+        let mut sock: &std::net::TcpStream = &self.sock;
+        let mut left: &[u8] = &TDS_ATTENTION;
+        let mut tries = 0;
+        while !left.is_empty() {
+            match sock.write(left) {
+                Ok(n) => left = &left[n..],
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && tries < 200 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => return Err(io_err(e)),
+            }
+        }
+        let _ = sock.flush();
+        Ok(())
+    }
+
+    fn drops_session(&self) -> bool {
+        !self.attention
+    }
+}
+
 impl Session for MssqlSession {
+    fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
+        // Attention은 로그인만 암호화된 접속에서만 · 설정이 소켓 종료면 항상 소켓 종료.
+        Some(std::sync::Arc::new(MssqlCancel {
+            sock: self.cancel_sock.clone(),
+            attention: self.attention_ok && !cancel_socket_mode(),
+        }))
+    }
+
     fn dialect(&self) -> Dialect {
         Dialect::Mssql
     }

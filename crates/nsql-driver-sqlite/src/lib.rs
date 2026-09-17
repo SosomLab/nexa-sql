@@ -50,6 +50,8 @@ enum Req {
 #[allow(missing_debug_implementations)]
 pub struct SqliteSession {
     tx: Sender<Req>,
+    /// 실행 취소(T-108) — 접속 스레드의 `sqlite3_interrupt`.
+    interrupt: std::sync::Arc<rusqlite::InterruptHandle>,
     /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`).
     max_rows: usize,
     description: String,
@@ -64,6 +66,7 @@ impl SqliteSession {
             Connection::open(target)
         }
         .map_err(err)?;
+        let interrupt = std::sync::Arc::new(conn.get_interrupt_handle());
         let (tx, rx) = channel::<Req>();
         std::thread::Builder::new()
             .name("nsql-sqlite".into())
@@ -75,6 +78,7 @@ impl SqliteSession {
             })?;
         Ok(SqliteSession {
             tx,
+            interrupt,
             max_rows: 0,
             description: if target.is_empty() {
                 ":memory:".into()
@@ -357,7 +361,21 @@ fn serve_execute(
     }
 }
 
+/// `sqlite3_interrupt` — 진행 중 문장은 `SQLITE_INTERRUPT`로 끝난다.
+struct SqliteCancel(std::sync::Arc<rusqlite::InterruptHandle>);
+
+impl nsql_core::CancelHandle for SqliteCancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        self.0.interrupt();
+        Ok(())
+    }
+}
+
 impl Session for SqliteSession {
+    fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
+        Some(std::sync::Arc::new(SqliteCancel(self.interrupt.clone())))
+    }
+
     fn dialect(&self) -> Dialect {
         Dialect::Sqlite
     }

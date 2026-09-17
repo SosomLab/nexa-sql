@@ -462,12 +462,10 @@ fn print_shell_help() {
 /// 표 폭 옵션 — 설정 `cli.width`/`cli.max_col_width`/`cli.overflow`(`nsql config set …`) 위에 플래그가 덮는다.
 /// 줄 폭 0 = 터미널이면 콘솔 폭 · 파이프/파일이면 무제한.
 fn grid_opts(o: &Opts) -> GridOpts {
-    let mut g = GridOpts {
-        max_col: 60,
-        line_width: 0,
-        overflow: Overflow::None,
-    };
+    let mut g = GridOpts::default();
     if let Ok(s) = nsql_settings::Settings::open_default() {
+        // NULL 글자(`cli.null_text` · 기본 빈 칸) — 표·Markdown·CSV/TSV가 한 값을 쓴다(GUI는 `grid.null_text`).
+        g.null = s.get("cli.null_text").unwrap_or("").to_string();
         g.line_width = s.int("cli.width").max(0) as usize;
         g.max_col = s.int("cli.max_col_width").max(0) as usize;
         g.overflow = s
@@ -618,7 +616,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
         "max_rows" | "maxrows" | "rows" => match num(v) {
             Some(n) => {
                 p.max_rows = n;
-                let g = *g;
+                let g = g.clone();
                 show(&g);
                 return true;
             }
@@ -627,7 +625,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
         "pager" => match v {
             "on" | "off" => {
                 p.pager = v == "on";
-                let g = *g;
+                let g = g.clone();
                 show(&g);
                 return true;
             }
@@ -639,7 +637,7 @@ fn shell_set(line: &str, p: &mut Printer, session: Option<&mut (dyn Session + 's
         },
         "format" | "fmt" => match Format::parse(v) {
             Some(f) => {
-                let g = *g;
+                let g = g.clone();
                 p.format = f;
                 let fmt_name = p.format.name();
                 eprintln!(

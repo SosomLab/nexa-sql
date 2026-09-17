@@ -55,7 +55,9 @@ Execute(문장, max_rows = N)
   → 드라이버: 서버 커서 열고 N+1행까지만 받음(조기 중단 · Oracle/SQLite ✅ · PG/MSSQL = §3-3) → ResultSet{rows: N, more: true} + CursorHandle
   → 호스트: 그리드/표에 N행 · 상태줄 "처음 N행 · 더 있음"
 FetchNext(handle, N)      → 커서에서 다음 N행(이어 붙임)  · 커서가 닫혔으면 OFFSET 재질의(§3-4)
-FetchAll(handle)          → 배치(fetch_size)로 끝까지 · 예산(D-72)·취소에 멈춤 · 진행률 이벤트
+FetchAll(offset=든 행 수)  → **나머지를 이어 받아 붙인다**(09-17 · 위치·정렬·텍스트 스크롤 유지): 같은 문장의 커서가 그 위치면 커서 fetch_all ·
+                            커서가 없으면 원문을 커서로 재실행해 앞 offset행은 버리고(메모리 0) 이어 받기 · 커서 없는 드라이버 = OFFSET 재질의 ·
+                            배치(`db.fetch_all_size`)마다 진행률 · 예산(D-72 · 남은 예산)·취소에 멈춤 · 자동 페치가 나가 있으면 큐 · 더 없으면 버튼 흐림
 Count(문장)               → 메타 세션에서 SELECT COUNT(*) FROM (문장) x  · 커서와 무관
 Close(handle)             → 새 실행 · 커밋/롤백 · 탭 닫기 · 접속 해제 · 세션당 1개(새로 열면 앞 것 닫힘)
 ```
@@ -100,7 +102,7 @@ pub struct ExecResult { …, pub pending: Option<CursorHandle> }   // 마지막 
 | 항목 | 규칙 | 설정 |
 |---|---|---|
 | 세그먼트 크기 | 200(전역) · 탭별 상자(1~100,000) | `grid.max_rows` · 탭 로컬 |
-| 예산 | 결과 탭 전체 rows 바이트 합 ≤ 예산 → 넘으면 Fetch next/all/자동 페치 **거부 + 안내**(현재 값·예산·Export 권유) | `grid.memory_budget_mb` 256 |
+| 예산 | **탭별 독립**(09-17): 이 탭의 결과 데이터(`ResultData` 세그먼트 누적) **+ 텍스트 보기 파생 캐시**(`text_bytes` · 그리드로 돌아오면 0) ≤ 예산 → 넘으면 Fetch next/자동 페치 **거부 + 안내** · 전체 조회는 받으면서 예산에서 멈춤 · 뷰 전환은 복사 0이라 봉우리 없음(DR-33) | `grid.memory_budget_mb` 1024 |
 | 전체 페치 | 배치 스트리밍(`fetch_size` 2000) · 진행률(행·MB·초) · **취소 버튼** · 예산·`grid.fetch_all_max`(0 = 예산까지)에서 멈춤 | `grid.fetch_all_max` |
 | 자동 페치 | 스크롤이 마지막 행 − 1화면에 닿으면 다음 세그먼트 1회(연속 요청 금지 · 진행 중이면 무시) | `grid.auto_fetch` 켬 |
 | 해제 | 탭 닫기·재실행·접속 해제 → rows `Vec` drop + `shrink_to_fit` 없는 새 Vec · 커서 close · `grid_stash`에서 제거. 비활성 탭은 **그리기 0 · 폭 캐시만** 유지 | — |
@@ -184,6 +186,43 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 | 메모리 | 예산 합계(D-72) · 해제 시점 명시(§3-5) · S-2 5주기 측정 |
 | CPU/그리기 | 활성 탭만 그림 · 이어 붙일 때 폭 캐시는 새 행만 측정(T-50 컬럼 저장소 전까지 `Vec<Vec<Value>>`) |
 | 끄는 키 | `grid.fetch_mode=off`(단발 페치 · 종전 동작) · `grid.auto_fetch=off` · `cli.auto_more=off` |
+
+## 8. 실행 대기열(Run Queue) — 설계만(사용자 09-17 · 구현 = **T-112 · 우선순위 최하위**)
+
+> **지금 규칙(✅ 구현됨)**: 편집기 하나에서 **실행은 한 번에 하나** — 실행 중(`busy`)이면 Ctrl+Enter/F5/Ctrl+\는 막히고 상태줄에 "실행 중"(`run_sql` 가드). 이전 요청이 끝난 뒤에만 다시 실행된다.
+> **나중(T-112)**: 막는 대신 **대기열에 넣고 순차 실행**. 아래는 그때의 설계.
+
+### 8-1. 동작
+
+| 규칙 | 내용 |
+|---|---|
+| 자리 | 편집기 탭마다 대기열 하나(`RunQueue { running: Option<RunJob>, waiting: VecDeque<RunJob> }`) · 접속 세션은 하나이므로 실제 실행은 **앱 전체에서 한 번에 하나**(탭 간 = FIFO · 세션 단위 직렬) |
+| 상한 | 실행 중 1 + 대기 2 = **카드 최대 3장**(실행 상태 카드 [runtoast](../crates/nexa-sql/src/runtoast.rs) 위로 쌓임) · 3장이 찼을 때 실행 요청 = 상태줄 "대기열이 가득 찼습니다(3)" + 토스트 · 설정 `run.queue_max`(2 · 0 = 지금처럼 막기) |
+| 대기 카드 | 문장 한 줄 · "대기 n번째" · 넣은 시각 · **취소 ×**(대기 중인 것만) — 실행 중인 카드의 ■는 지금처럼 사용자가 직접(취소 포트 T-108) |
+| 취소 | 대기 카드 × → 목록에서 제거 · 뒤 카드가 앞으로 당겨져 **토스트 자리(대기 1번째)** 에 보임 · 실행 중인 것은 일괄 취소 대상 아님 |
+| 일괄 취소 | 툴바 ■ 길게/우클릭 "대기열 전부 취소" · 팔레트 `run.queue_clear` · 상태줄 대기열 세그먼트 클릭 메뉴 — **실행 중 제외** · 개수 확인 토스트 |
+| 다음 실행 | 실행 중 작업이 끝나면(`worker.done` · 오류 포함) 대기열 앞 작업을 **즉시** 시작 · 사용자가 그 사이 편집기를 바꿨어도 작업에 담긴 **문장 스냅샷**으로 실행(캐럿 문장을 다시 읽지 않는다) |
+| 결과 자리 | 앞 결과를 덮어쓰지 않도록 대기열에서 시작하는 실행은 **항상 새 결과 탭(Ctrl+\ 경로 · `run.statement_new_tab`)** — 첫 작업만 사용자가 누른 키대로(Ctrl+Enter = 교체) · 결과 탭 상한(`grid.result_tabs_max`)에 걸리면 고정 안 된 가장 오래된 탭 정리(43 §4 규칙) |
+| 트랜잭션 | 수동 커밋 중이면 대기 작업도 같은 트랜잭션에 이어진다(세션 하나) — 대기 카드에 Tx 배지 · 일괄 취소는 커밋/롤백을 건드리지 않는다 |
+| 접속 끊김 | 실행 중 작업 오류 + 대기열 **전부 취소**(카드에 "접속 끊김" 사유) |
+| 대기열 관리 | ★ **관리 기능 필요(기록)**: 상태줄 세그먼트 "⏳ 실행 1 · 대기 2" → 클릭 = 목록 팝업(순서 바꾸기 ↑↓ · 개별 취소 · 전부 취소 · 문장 보기) · 트랜잭션 로그 창에 대기 작업도 "대기" 행으로(44) |
+
+### 8-2. 구조
+
+```
+run_sql(all) ─▶ RunJob{ id, editor, text(스냅샷), mode: Replace|NewTab, enqueued_at, tx_hint }
+   ├─ running 없음 ──▶ start(job)                     (지금 경로 · 카드 = 실행 중)
+   ├─ waiting.len() < queue_max ──▶ waiting.push_back  (카드 = 대기 n)
+   └─ 가득 ──▶ 거절(상태줄 · 토스트)
+worker.done ─▶ running = None ─▶ waiting.pop_front() ─▶ mode = NewTab 강제 ─▶ start
+cancel(id)   ─▶ waiting.retain(≠ id) ─▶ 카드 재배치
+cancel_all() ─▶ waiting.clear()(running 제외)
+```
+
+- `RunJob.text`는 실행 시점이 아니라 **넣는 시점**의 문장(사용자가 편집해도 대기 작업은 그대로 · 카드 툴팁에 원문).
+- 카드 = `RunToast`를 `Vec`으로(실행 중 1 + 대기 ≤ 2 · 대기 카드는 2행(문장 · "대기 n · hh:mm:ss") · ×). 그리기 순서 = 실행 중 맨 아래 → 대기 1 → 대기 2 → 일반 토스트.
+- 설정: `run.queue_max`(2 · 0 = 막기) · `run.queue_new_tab`(on · off = 교체 허용 — 결과 덮어씀 경고) · `run.queue_toast`(on).
+- 부하: 큐는 메모리 문장 ≤ 3 · 스레드 0 추가(워커 하나) · 26 §8 무관.
 
 ## 7. 작업 순서(T-48 갱신 · [TODO](TODO.md))
 

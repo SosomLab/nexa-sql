@@ -26,3 +26,5 @@ desktop.ini
 # 실기 하네스가 만드는 고정물 — 생성물이다(scripts/linux-watch-e2e.sh)
 /scripts/fixtures/
 /scripts/watch.log
+__pycache__/
+*.pyc

@@ -33,12 +33,15 @@ mod palette;
 mod prefs_win;
 mod probe;
 mod results;
+mod runtoast;
 mod rx;
 mod search_panel;
 mod syntax;
 mod theme;
 mod toast;
+mod toolfloat;
 mod toolicons;
+mod txlog_win;
 mod winfocus;
 mod worker;
 
@@ -59,14 +62,16 @@ use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::{FontSet, RasterCtx};
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
-    ComboItem, Control, EditCommand, EditCtxAction, InputEvent, Invalidations, Key as CtlKey,
-    MenuBar, MenuDef, MenuEntry, TextBox, ToolItem, ToolTone, Toolbar, Widget,
+    ComboItem, Control, DockAction, DockLayout, EditCommand, EditCtxAction, InputEvent,
+    Invalidations, Key as CtlKey, MenuBar, MenuDef, MenuEntry, TextBox, ToolDock, ToolGroup,
+    ToolItem, ToolTone, Widget,
 };
 use nexa_dlg::PickerMode;
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
 use nsql_i18n::{current_lang, t, tf, Msg};
-use nsql_log::{LogEntry, LogKind};
+use nsql_log::{LogEntry, LogKind, LogLayer, LogLevel};
+use nsql_run::txlog::{Purpose as TxPurpose, TxLog, TxOutcome};
 use nsql_run::RunEvent;
 use nsql_script::ConnectSpec;
 use nsql_settings::{Settings, ThemeMode};
@@ -82,6 +87,8 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use syntax::SyntaxRegistry;
+use toolfloat::{FloatAction, ToolFloatWin};
+use txlog_win::{TxLogAction, TxLogWin};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, Ime, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
@@ -119,6 +126,8 @@ struct TxItem {
     at: Instant,
     when: String,
     summary: String,
+    /// 문장 종류(docs/44 §5 · 버튼 색·툴팁·로그 Tx 열).
+    class: nsql_core::TxClass,
 }
 
 struct App {
@@ -135,8 +144,23 @@ struct App {
     scale: f32,
     /// 로그 창(별도 창 · `Ctrl/⌘+⇧G`).
     log_win: LogWin,
+    /// 트랜잭션 로그(수집기 · docs/44 · T-107) + 모덜리스 창.
+    txlog: TxLog,
+    txlog_win: TxLogWin,
+    open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
+    /// 실행 상태 카드(사용자 09-17) + 다음 깨울 시각.
+    run_toast: runtoast::RunToast,
+    run_toast_next: Option<Instant>,
+    /// 문장 실행 버튼 활성 상태 캐시(다중 커서면 비활성 · 사용자 09-17).
+    run_stmt_enabled: bool,
+    /// 툴바 ■(실행 중지) 활성 캐시(= busy · 시작값 true = 첫 동기화에서 비활성으로).
+    run_stop_enabled: bool,
+    /// 사용자가 중지를 눌렀다 — 뒤따르는 드라이버 오류(interrupted · 57014 · ORA-01013)는 오류가 아니라 "중지됨".
+    run_cancel_requested: bool,
+    /// 이번 취소가 세션을 끊는 방식(SQL Server) — 중지 뒤 트랜잭션 Lost + 재접속 안내.
+    run_cancel_drops: bool,
     /// 파일 싱크 허브(설정 `log.file` · 배경 스레드 · 비면 None).
     log_hub: Option<nsql_log::LogHub>,
     /// 파일 대화상자의 용도(편집기 열기/저장 · 로그 내보내기).
@@ -185,7 +209,21 @@ struct App {
     menubar: MenuBar,
     /// 탭 메뉴를 마지막으로 만든 근거(id·제목·활성) — 바뀌면 메뉴를 다시 만든다.
     tabs_menu_sig: String,
-    toolbar: Toolbar,
+    /// ★ 툴바 = 목적별 그룹 도크(nexa-ctl `ToolDock` · 사용자 09-17): 그립 드래그로 순서 이동 · 세로로 끌면 플로팅 창 ·
+    ///   배치는 설정 `toolbar.layout`에 자동 저장 · 우클릭/View 메뉴에서 초기화.
+    tool_dock: ToolDock,
+    /// 플로팅 툴바 창(그룹당 1) — 툴바 컨트롤은 도크가 소유하고 창은 표면만.
+    tool_floats: Vec<ToolFloatWin>,
+    /// 떼어 내기 요청(그룹 id · 클라이언트 좌표) — 창 생성은 이벤트 루프 핸들(`about_to_wait`)에서.
+    pending_float: Vec<(String, Option<(i32, i32)>)>,
+    /// 배치가 바뀌어 저장할 것이 있다(플로팅 창 이동은 잦으므로 틱에서 한 번에).
+    tool_layout_dirty: bool,
+    /// 데모(사용자 09-17): 'Demo' 프로필 + `demo.sqlite`가 있는가(메뉴 비활성 근거 · 시작 때·생성 뒤 갱신).
+    demo_ready: bool,
+    /// 데모 생성 스레드의 결과 채널(Ok = 파일 경로 · Err = 메시지).
+    demo_job: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// 최초 실행 1회 팝업 예약(창이 뜬 뒤 about_to_wait에서 연다).
+    pending_demo_prompt: bool,
     /// 접속 창(별도 창 · 폼 + 로그인 목록). 폼 상태의 단일 원천 = `conn_win.panel`.
     conn_win: ConnWin,
     /// 메뉴/툴바에서 접속 창 열기 요청(창 생성은 이벤트 루프 핸들에서).
@@ -238,6 +276,8 @@ struct App {
     tx_dirty: bool,
     /// 수동 커밋 대기 문장(DR-30 · T-77). 세션은 공유(T-54 전)라 목록은 하나 · 탭 배지는 탭별 수.
     tx_pending: Vec<TxItem>,
+    /// 수동 모드에서 마지막 커밋 뒤 조회만 있었다(읽기 트랜잭션 · 배지 없음 · 초록).
+    tx_read: bool,
     /// 오래된 미커밋 경고를 로그에 남겼다(1회).
     tx_stale_logged: bool,
     /// 실행을 시작한 편집기 탭 id(대기 문장의 소속).
@@ -272,12 +312,13 @@ struct App {
     attempts_max: usize,
     busy: bool,
     status: String,
-    log: Vec<String>,
     // 입력 상태
     cursor: (i32, i32),
     shift: bool,
     primary: bool,
     alt: bool,
+    /// 원시 Control 키(mac에서 ⌘=primary와 구분 · 서브워드 이동).
+    ctrl_raw: bool,
     /// macOS Control 눌림(⌘와 별개 · 키맵 `ctrl+cmd+…`).
     ctrl_mac: bool,
     started: Instant,
@@ -309,14 +350,50 @@ fn resolve_panel_state(
 
 /// 방언별 암묵 커밋(DDL이 트랜잭션을 끝내는 서버 · docs/34 §2-3): Oracle · MySQL. MSSQL·PG·SQLite는 DDL도 트랜잭션 안.
 fn implicit_commit(dialect: Dialect, stmt: &str) -> bool {
-    let d = dialect.to_string().to_ascii_lowercase();
-    if !(d.starts_with("oracle") || d.starts_with("mysql")) {
-        return false;
+    dialect.implicit_commit(stmt)
+}
+
+/// ★ 상세 로그(docs/48): 게이트가 꺼져 있으면 `$make`는 **평가되지 않는다**(문자열·시각 0) — 인라인 원자 load + 분기 1.
+macro_rules! dlog {
+    ($self:ident, $layer:expr, $level:expr, $make:expr) => {
+        if nsql_log::wants($layer, $level) {
+            let __e = $make;
+            detail_push(
+                &mut $self.log_win,
+                $self.log_hub.as_ref(),
+                $layer,
+                $level,
+                __e,
+            );
+        }
+    };
+}
+
+/// 상세 로그 한 줄(느린 경로 · 호출 자체가 드물다 · `#[cold]`로 뜨거운 경로 코드 배치에서 떨어뜨린다).
+/// 필드 둘만 받아 다른 필드가 빌려진 자리(페인트 중)에서도 부를 수 있다.
+#[cold]
+#[inline(never)]
+fn detail_push(
+    log_win: &mut LogWin,
+    hub: Option<&nsql_log::LogHub>,
+    layer: LogLayer,
+    level: LogLevel,
+    e: LogEntry,
+) {
+    let e = e.at(layer, level);
+    if let Some(h) = hub {
+        h.push(e.clone());
     }
-    matches!(
-        first_word(stmt).as_str(),
-        "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "GRANT" | "REVOKE" | "RENAME" | "COMMENT"
-    )
+    log_win.push(e);
+}
+
+/// 전송 속도 문구(`1.2 MB/s` · 0이면 빈 문자열).
+fn speed_of(bytes: u64, dur: Duration) -> String {
+    let secs = dur.as_secs_f64();
+    if secs <= 0.0 || bytes == 0 {
+        return String::new();
+    }
+    format!("{}/s", nsql_core::fmt_bytes((bytes as f64 / secs) as u64))
 }
 
 fn first_word(stmt: &str) -> String {
@@ -447,13 +524,13 @@ impl App {
         let menu_px = self.settings.font_px("ui.menu_font_size");
         let menu_h = px(menu_px + 11.0, s);
         self.menubar.set_scale(s);
-        self.toolbar.set_scale(s);
+        self.tool_dock.set_scale(s);
         self.menubar
             .set_bounds(Rect::new(0, 0, w, menu_h), &mut inv);
         // `preferred_height`는 논리 px(nexa-ctl 규약) → 물리 px로. 그대로 쓰면 HiDPI에서 툴바가 1/배율로 납작해진다
         // (맥 2x 실기 09-16: Windows 100% 32px vs 맥 16px).
-        let tool_h = px(self.toolbar.preferred_height() as f32, s);
-        self.toolbar
+        let tool_h = px(self.tool_dock.preferred_height() as f32, s);
+        self.tool_dock
             .set_bounds(Rect::new(0, menu_h, w, tool_h), &mut inv);
         let chrome_h = menu_h + tool_h;
         // Run 버튼 줄은 제거(사용자 09-15 — 툴바·단축키로 충분) · 접속 패널은 별도 창(conn_win) — 본문은 창 전폭.
@@ -801,6 +878,14 @@ impl App {
                     if let Some(g) = self.grid_for(key) {
                         g.set_fetch_progress(rows, bytes);
                     }
+                    self.run_toast.progress(rows, bytes);
+                    dlog!(self, LogLayer::Fetch, LogLevel::Progress, {
+                        LogEntry::new(
+                            LogKind::Fetch,
+                            tf(Msg::LogDetProgress, &[&nsql_core::fmt_bytes(bytes)]),
+                        )
+                        .rows(rows)
+                    });
                     self.status = tf(
                         Msg::StFetchingProgress,
                         &[&rows.to_string(), &nsql_core::fmt_bytes(bytes)],
@@ -810,6 +895,7 @@ impl App {
                 ConnOutcome::Page {
                     key,
                     offset,
+                    all,
                     result,
                     stop,
                 } => {
@@ -819,7 +905,10 @@ impl App {
                             let secs = format!("{:.3}", elapsed.as_secs_f64());
                             let total = match self.grid_for(key) {
                                 Some(g) => {
-                                    if offset == 0 {
+                                    if all {
+                                        // 전체 조회 = 나머지 이어 붙이기(위치·정렬·텍스트 스크롤 유지 · 09-17).
+                                        g.append_all(rs, more);
+                                    } else if offset == 0 {
                                         g.set_result(rs);
                                         g.set_more(more);
                                     } else {
@@ -831,6 +920,31 @@ impl App {
                                 None => 0,
                             };
                             self.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
+                            if all {
+                                let phase = match stop {
+                                    Some(worker::FetchStop::Cancelled) => {
+                                        runtoast::Phase::Stopped { rows: total as u64 }
+                                    }
+                                    _ => runtoast::Phase::Done {
+                                        rows: Some(total as u64),
+                                        secs: elapsed.as_secs_f64(),
+                                        stages: String::new(),
+                                    },
+                                };
+                                self.run_toast.finish(phase);
+                                dlog!(self, LogLayer::Fetch, LogLevel::Timing, {
+                                    let b = self.grid_for(key).map_or(0, |g| g.approx_bytes());
+                                    LogEntry::new(
+                                        LogKind::Fetch,
+                                        tf(
+                                            Msg::LogDetFetchAll,
+                                            &[&nsql_core::fmt_bytes(b), &speed_of(b, elapsed)],
+                                        ),
+                                    )
+                                    .rows(total as u64)
+                                    .elapsed(elapsed)
+                                });
+                            }
                             match stop {
                                 Some(worker::FetchStop::Budget) => {
                                     // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
@@ -1403,17 +1517,28 @@ impl App {
             .open_at(r.x, r.y, items, host, px(280.0, self.scale));
     }
 
-    /// 툴바 우클릭 = 버튼 표시 여부 토글 메뉴(설정 `toolbar.hidden` · 순서 변경은 아직 없음 · 사용자 09-16).
+    /// 툴바 우클릭 = 그룹 띄우기/붙이기 · 버튼 표시 여부 토글(설정 `toolbar.hidden`) · 배치 초기화(사용자 09-16 · 09-17).
     fn open_toolbar_menu(&mut self, x: i32, y: i32) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
         let hidden = self.hidden_toolbar_ids();
-        let items: Vec<CtxItem> = TOOLBAR_ITEMS
-            .iter()
-            .map(|(id, m)| {
-                CtxItem::item(format!("tb:{id}"), t(*m))
-                    .with_checked(!hidden.contains(&id.to_string()))
+        let mut items: Vec<CtxItem> = self
+            .tool_dock
+            .groups()
+            .into_iter()
+            .map(|(id, title, floating)| {
+                let verb = t(if floating {
+                    Msg::MnDockGroup
+                } else {
+                    Msg::MnFloatGroup
+                });
+                CtxItem::item(format!("tbg:{id}"), format!("{title} — {verb}"))
+                    .with_checked(floating)
             })
             .collect();
+        items.extend(TOOLBAR_ITEMS.iter().map(|(id, m)| {
+            CtxItem::item(format!("tb:{id}"), t(*m)).with_checked(!hidden.contains(&id.to_string()))
+        }));
+        items.push(CtxItem::item("tb.reset", t(Msg::MnResetToolbar)));
         let host = self
             .window
             .as_ref()
@@ -1442,9 +1567,137 @@ impl App {
         let hidden = self.hidden_toolbar_ids();
         let mut inv = Invalidations::default();
         for (id, _) in TOOLBAR_ITEMS {
-            self.toolbar
+            self.tool_dock
                 .set_item_visible(id, !hidden.contains(&id.to_string()), &mut inv);
         }
+        for f in &self.tool_floats {
+            f.redraw();
+        }
+    }
+
+    // ── 툴바 그룹 도크 · 플로팅(사용자 09-17)
+
+    /// 설정 `toolbar.layout` → 도크 배치 + 플로팅 창(시작 시 · 설정 창에서 값을 바꿨을 때).
+    fn apply_tool_layout_setting(&mut self) {
+        let text = self
+            .settings
+            .get("toolbar.layout")
+            .unwrap_or("")
+            .to_string();
+        let layout = DockLayout::parse(&text);
+        // 열린 플로팅 창은 전부 닫고 배치대로 다시 연다(단순 · 드물다).
+        for f in &mut self.tool_floats {
+            f.close();
+        }
+        self.tool_floats.clear();
+        self.tool_dock.apply_layout(&layout);
+        let _ = self.tool_dock.take_actions();
+        for (id, x, y) in layout.floating {
+            self.pending_float.push((id, Some((x, y))));
+        }
+        self.layout();
+        self.redraw();
+    }
+
+    /// 현재 배치를 설정에 저장(그룹 순서 · 플로팅 좌표 — 포터블 배포에서도 `NSQL_HOME` 아래 같은 파일).
+    fn save_tool_layout(&mut self) {
+        self.tool_layout_dirty = false;
+        let text = self.tool_dock.layout().serialize();
+        if self.settings.get("toolbar.layout") != Some(text.as_str()) {
+            let _ = self.settings.set("toolbar.layout", &text);
+            self.persist_settings();
+        }
+    }
+
+    /// 도크가 보고한 일(떼어 내기 · 배치 변경)을 거둔다.
+    fn drain_dock_actions(&mut self) {
+        for a in self.tool_dock.take_actions() {
+            match a {
+                DockAction::Float { id, x, y } => self.pending_float.push((id, Some((x, y)))),
+                DockAction::LayoutChanged => self.tool_layout_dirty = true,
+            }
+        }
+    }
+
+    /// 플로팅 창 만들기 — `at`: 도크 클라이언트 좌표(커서) 또는 저장된 화면 좌표(`screen=true`).
+    fn open_float(&mut self, el: &ActiveEventLoop, gid: &str, at: Option<(i32, i32)>) {
+        if self.tool_floats.iter().any(|f| f.group == gid) {
+            return;
+        }
+        let Some(title) = self.tool_dock.title(gid).map(str::to_string) else {
+            return;
+        };
+        let scale = self.scale.max(0.5);
+        let (bw, bh) = {
+            let h = self.tool_dock.preferred_height() as f32;
+            let w = self
+                .tool_dock
+                .bar(gid)
+                .map_or(120.0, |b| b.preferred_width() as f32 / scale);
+            (w, h)
+        };
+        // 저장된 좌표(이미 플로팅으로 표시)면 그대로, 아니면 커서(클라이언트) → 화면 좌표.
+        let pos = if let Some(p) = self.tool_dock.floating_pos(gid) {
+            Some(p)
+        } else {
+            at.and_then(|(cx, cy)| {
+                let w = self.window.as_ref()?;
+                let o = w.inner_position().ok()?;
+                Some((
+                    o.x + cx - (bw * scale / 2.0) as i32,
+                    o.y + cy - (bh * scale / 2.0) as i32,
+                ))
+            })
+        };
+        let owner = self.window.clone();
+        let win = ToolFloatWin::open(
+            el,
+            gid,
+            &format!("Nexa SQL — {title}"),
+            theme::window_theme(self.settings.theme_mode()),
+            pos,
+            (bw, bh),
+            owner.as_deref(),
+        );
+        let Some(win) = win else { return };
+        let (x, y) = win.position().or(pos).unwrap_or((0, 0));
+        self.tool_dock.float(gid, x, y);
+        let _ = self.tool_dock.take_actions();
+        self.tool_layout_dirty = true;
+        self.tool_floats.push(win);
+        self.layout();
+        self.redraw();
+    }
+
+    /// 그룹을 도크로 되돌린다(플로팅 창 닫기 포함).
+    fn dock_group(&mut self, gid: &str) {
+        if let Some(i) = self.tool_floats.iter().position(|f| f.group == gid) {
+            self.tool_floats[i].close();
+            self.tool_floats.remove(i);
+        }
+        self.tool_dock.dock(gid);
+        let _ = self.tool_dock.take_actions();
+        self.tool_layout_dirty = true;
+        self.layout();
+        self.redraw();
+    }
+
+    /// 툴바 초기화(View 메뉴 · 우클릭 · 사용자 09-17) — 그룹 전부 도크 · 정의 순서 · 숨긴 버튼 복원.
+    fn reset_toolbar(&mut self) {
+        for f in &mut self.tool_floats {
+            f.close();
+        }
+        self.tool_floats.clear();
+        self.pending_float.clear();
+        self.tool_dock.reset();
+        let _ = self.tool_dock.take_actions();
+        let _ = self.settings.reset("toolbar.layout");
+        let _ = self.settings.reset("toolbar.hidden");
+        self.persist_settings();
+        self.apply_toolbar_visibility();
+        self.tool_layout_dirty = false;
+        self.layout();
+        self.redraw();
     }
 
     fn indent_pick(&mut self, id: &str) {
@@ -1459,6 +1712,27 @@ impl App {
                 let e = e.to_string();
                 self.open_file_enc(&path, &e);
             }
+            return;
+        }
+        if id == "demo.create" {
+            self.start_demo_create();
+            return;
+        }
+        if id == "demo.later" || id == "demo.ask" {
+            return;
+        }
+        if let Some(gid) = id.strip_prefix("tbg:") {
+            if self.tool_dock.is_floating(gid) {
+                self.dock_group(gid);
+            } else {
+                // 커서 자리에 띄운다(창은 이벤트 루프 핸들에서).
+                let at = Some(self.cursor);
+                self.pending_float.push((gid.to_string(), at));
+            }
+            return;
+        }
+        if id == "tb.reset" {
+            self.reset_toolbar();
             return;
         }
         if let Some(tid) = id.strip_prefix("tb:") {
@@ -1512,13 +1786,30 @@ impl App {
 
     fn apply_ruler_style(&mut self) {
         let show = self.settings.flag("editor.rulers_show");
-        let color = self
-            .settings
-            .get("editor.ruler_color")
-            .and_then(nexa_ctl::theme::color_from_hex);
-        let alpha = self.settings.int("editor.ruler_alpha").clamp(5, 100) as f32 / 100.0;
+        let (color, hex_alpha) = color_alpha_setting(&self.settings, "editor.ruler_color");
+        // `#RRGGBBAA`의 AA가 있으면 별도 불투명도 설정보다 우선(색 창이 알파를 함께 저장 · 09-17).
+        let alpha = hex_alpha
+            .unwrap_or(self.settings.int("editor.ruler_alpha").clamp(5, 100) as f32 / 100.0);
         let occ = self.settings.flag("editor.highlight_selection");
         self.editors.set_ruler_style(show, color, alpha, occ);
+    }
+
+    /// 동일 출현 상자 스타일(`editor.occurrence_*` · 사용자 09-17): 모양 · 선 색+알파 · 두께 · 배경 색+알파.
+    fn apply_occurrence_style(&mut self) {
+        let (line, la) = color_alpha_setting(&self.settings, "editor.occurrence_line_color");
+        let (fill, fa) = color_alpha_setting(&self.settings, "editor.occurrence_fill_color");
+        let st = nexa_ctl::OccurrenceStyle {
+            round: self.settings.get("editor.occurrence_shape") == Some("round"),
+            line,
+            line_alpha: la.unwrap_or(0.7),
+            width: self
+                .settings
+                .int("editor.occurrence_line_width")
+                .clamp(0, 4) as i32,
+            fill,
+            fill_alpha: fa.unwrap_or(if fill.is_some() { 1.0 } else { 0.0 }),
+        };
+        self.editors.set_occurrence_style(st);
     }
 
     /// 설정 → nexa-gfx 텍스트 렌더(대비 감마 · 정수 스냅) — 전 창 공통(글리프 캐시 키에 감마가 들어 있어 비울 필요 없음).
@@ -1538,6 +1829,9 @@ impl App {
         let on = self.settings.flag("editor.minimap");
         let w = self.settings.int("editor.minimap_width").clamp(20, 400) as i32;
         self.editors.set_minimap(on, w);
+        let (color, alpha) = color_alpha_setting(&self.settings, "editor.minimap_box_color");
+        self.editors
+            .set_minimap_box(color, alpha, self.settings.flag("editor.minimap_border"));
         self.redraw();
     }
 
@@ -1550,6 +1844,19 @@ impl App {
         self.editors.set_tab_stops(stops);
         self.editors
             .set_indent(ts as u8, self.settings.flag("editor.indent_spaces"));
+        // Auto indent(docs/49): 변수 4 + 규칙 세트.
+        let cfg = nexa_ctl::AutoIndent {
+            enabled: self.settings.flag("editor.auto_indent"),
+            smart: self.settings.flag("editor.smart_indent"),
+            to_bracket: self.settings.flag("editor.indent_to_bracket"),
+            trim: self.settings.flag("editor.trim_auto_whitespace"),
+        };
+        let rules = match self.settings.get("editor.indent_rules").unwrap_or("sql") {
+            "brackets" => nexa_ctl::IndentRules::brackets(),
+            "none" => nexa_ctl::IndentRules::none(),
+            _ => nexa_ctl::IndentRules::sql(),
+        };
+        self.editors.set_auto_indent(cfg, rules);
         self.redraw();
     }
 
@@ -1601,7 +1908,7 @@ impl App {
                 .push(LogEntry::new(LogKind::Info, self.status.clone()));
         }
         self.explorer.disconnect();
-        self.tx_clear();
+        self.tx_close(TxOutcome::Lost);
         self.sync_disconnect_btn(false);
         self.on_conn_disconnected();
         self.redraw();
@@ -1670,10 +1977,10 @@ impl App {
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
     fn sync_disconnect_btn(&mut self, connected: bool) {
         let mut inv = Invalidations::default();
-        self.toolbar
+        self.tool_dock
             .set_item_enabled("conn.disconnect", connected, &mut inv);
         // 연결이 하나라도 있으면 Connect 아이콘 = 밝은 녹색(사용자 09-16).
-        self.toolbar.set_item_tone(
+        self.tool_dock.set_item_tone(
             "conn.toggle",
             if connected {
                 ToolTone::Ok
@@ -1702,21 +2009,54 @@ impl App {
             }
             "ui.fade_fast" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Fast,
-                i(&self.settings, key).clamp(0, 5000) as u32,
+                fade_ms(&self.settings, key, 5000),
             ),
             "ui.fade_slow" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Slow,
-                i(&self.settings, key).clamp(0, 5000) as u32,
+                fade_ms(&self.settings, key, 5000),
             ),
-            "ui.toast_secs" | "ui.toast_alpha" => self.toasts.configure(
-                self.settings.int("ui.toast_secs"),
-                self.settings.int("ui.toast_alpha"),
-            ),
+            // 애니메이션 마스터(auto/on/off · 향상 모드 off) = 페이드·슬라이드 전부 0으로/복귀.
+            "ui.animations" => {
+                for k in [
+                    "ui.fade_fast",
+                    "ui.fade_slow",
+                    "ui.fade_out_ms",
+                    "ui.slide_ms",
+                ] {
+                    self.apply_setting(k);
+                }
+            }
+            // 프레임 상한·캐럿 깜빡임은 about_to_wait가 매번 설정을 읽는다(즉시 반영).
+            "ui.max_fps" | "editor.caret_blink" => self.redraw(),
+            "ui.slide_ms" | "ui.tooltip_delay_ms" | "ui.dblclick_ms" => {
+                self.conn_win.set_tuning(conn_tuning(&self.settings));
+            }
+            "probe.interval" | "probe.max_retries" | "probe.max_inflight" | "probe.icmp"
+            | "probe.timeout" | "probe.retry_delay" | "probe.enabled" => {
+                let n = self.settings.int("probe.max_inflight").clamp(1, 64) as usize;
+                self.conn_win.set_policy(probe_policy(&self.settings), n);
+            }
+            "file.os_icons" => nexa_fs::shell::set_os_icons(self.settings.flag(key)),
+            "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
+            "ui.toast_secs" | "ui.toast_alpha" => {
+                self.toasts.configure(
+                    self.settings.int("ui.toast_secs"),
+                    self.settings.int("ui.toast_alpha"),
+                );
+                self.apply_run_toast();
+            }
+            "run.toast" | "run.toast_hide_secs" => self.apply_run_toast(),
+            "mssql.encrypt" => {
+                nsql_drivers::set_mssql_encryption(self.settings.get(key) == Some("login"))
+            }
+            "mssql.cancel" => {
+                nsql_drivers::set_mssql_cancel_socket(self.settings.get(key) == Some("socket"))
+            }
             "ui.hover_intent_ms" => {
                 nexa_ctl::tokens::set_intent_ms(i(&self.settings, key).clamp(0, 500) as u64)
             }
             "ui.fade_out_ms" => {
-                nexa_ctl::tokens::set_fade_out_ms(i(&self.settings, key).clamp(0, 2000) as u32)
+                nexa_ctl::tokens::set_fade_out_ms(fade_ms(&self.settings, key, 2000))
             }
             "input.scroll_natural" => {
                 input::set_natural_scroll(self.settings.flag(key));
@@ -1733,6 +2073,12 @@ impl App {
             "toolbar.hidden" => {
                 self.apply_toolbar_visibility();
                 self.layout();
+            }
+            "toolbar.layout" => {
+                // 설정 창에서 직접 바꿨을 때(비우면 초기 배치). 앱이 저장한 값과 같으면 아무 일도 없다.
+                if self.settings.get(key).unwrap_or("") != self.tool_dock.layout().serialize() {
+                    self.apply_tool_layout_setting();
+                }
             }
             "statusbar.git" | "statusbar.git_secs" => {
                 self.git
@@ -1758,12 +2104,13 @@ impl App {
                 self.grid_font = load_grid_font(&gf, pref.as_deref());
                 self.layout();
             }
-            "grid.col_min_width" | "grid.col_max_width" => {
-                let (lo, hi) = (
+            "grid.col_min_width" | "grid.col_max_mode" | "grid.col_max_chars" => {
+                let (lo, chars) = (
                     self.settings.int("grid.col_min_width") as i32,
-                    self.settings.int("grid.col_max_width") as i32,
+                    self.settings.grid_col_max_chars() as i32,
                 );
-                self.all_grids().for_each(|g| g.set_col_limits(lo, hi));
+                self.all_grids().for_each(|g| g.set_col_limits(lo, chars));
+                self.redraw();
             }
             "grid.row_numbers" => {
                 let on = self.settings.flag(key);
@@ -1773,9 +2120,9 @@ impl App {
                 let pct = self.settings.int(key).clamp(110, 300) as i32;
                 self.all_grids().for_each(|g| g.set_row_pct(pct));
             }
-            "grid.copy_null" => {
-                let on = self.settings.flag(key);
-                self.all_grids().for_each(|g| g.set_copy_null(on));
+            "grid.null_text" => {
+                let text = self.settings.get(key).unwrap_or("NULL").to_string();
+                self.all_grids().for_each(|g| g.set_null_text(&text));
             }
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
@@ -1788,7 +2135,10 @@ impl App {
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
-            "editor.minimap" | "editor.minimap_width" => self.apply_minimap(),
+            "editor.minimap"
+            | "editor.minimap_width"
+            | "editor.minimap_box_color"
+            | "editor.minimap_border" => self.apply_minimap(),
             // 자원 거버너(T-90a/d · docs/39): 상한 세터 4종 · 모드가 바뀌면 원장 키 전부 재적용(실효 값이 바뀌므로).
             "log.max_lines" => self
                 .log_win
@@ -1802,6 +2152,28 @@ impl App {
             "file.icon_cache" => {
                 nexa_fs::shell::set_icon_cache_max(self.settings.int(key).max(16) as usize);
             }
+            "txlog.max_entries" => {
+                let n = self.settings.int("txlog.max_entries").max(16) as usize;
+                self.txlog.set_cap(n);
+            }
+            "perf.boost" => {
+                // 향상 모드 켬/끔 = 강제 대상 키를 전부 다시 적용(실효 값이 바뀐다 · 저장값은 그대로).
+                let keys: Vec<&'static str> =
+                    nsql_settings::perf::BOOST.iter().map(|(k, _)| *k).collect();
+                for k in keys {
+                    self.apply_setting(k);
+                }
+                let on = self.settings.flag(key);
+                self.status = t(if on {
+                    Msg::StPerfBoostOn
+                } else {
+                    Msg::StPerfBoostOff
+                })
+                .into();
+                self.layout();
+            }
+            "ui.menu_icons" => nexa_ctl::controls::set_menu_icons(self.settings.flag(key)),
+            "ui.clipboard_probe" => {}
             "perf.mode" => {
                 let keys: Vec<&'static str> = nsql_settings::PERF.iter().map(|(k, _)| *k).collect();
                 for k in keys {
@@ -1812,7 +2184,14 @@ impl App {
                     &[t(self.settings.perf_mode_display().label())],
                 );
             }
-            "editor.tab_size" | "editor.indent_spaces" | "editor.tab_stops" => self.apply_indent(),
+            "editor.tab_size"
+            | "editor.indent_spaces"
+            | "editor.tab_stops"
+            | "editor.auto_indent"
+            | "editor.smart_indent"
+            | "editor.indent_to_bracket"
+            | "editor.trim_auto_whitespace"
+            | "editor.indent_rules" => self.apply_indent(),
             "file.eol_new" => self
                 .editors
                 .set_default_eol(eol::default_eol(self.settings.get(key).unwrap_or("auto"))),
@@ -1823,6 +2202,7 @@ impl App {
             | "editor.ruler_color"
             | "editor.ruler_alpha"
             | "editor.highlight_selection" => self.apply_ruler_style(),
+            k if k.starts_with("editor.occurrence_") => self.apply_occurrence_style(),
             "editor.tab_accent" => self.apply_tab_accent(),
             "editor.text_pad_left" => self
                 .editors
@@ -1852,6 +2232,7 @@ impl App {
                 self.layout();
             }
             "log.wrap" => self.log_win.set_wrap(self.settings.flag(key)),
+            "log.dev_mode" | "log.dev_layers" => self.apply_detail_mask(),
             "log.newest_first" => self.log_win.set_newest_first(self.settings.flag(key)),
             "log.autoscroll" => self.log_win.set_autoscroll(self.settings.flag(key)),
             "log.format" => self
@@ -1863,8 +2244,22 @@ impl App {
                 self.keys_win.refresh(&self.keymap);
             }
             k if k.starts_with("editor.whitespace") || k.starts_with("editor.show_") => {
-                self.editors
-                    .set_whitespace(whitespace_style(&self.settings));
+                let ws = whitespace_style(&self.settings);
+                self.editors.set_whitespace(ws);
+                // 설정 창에서 바꾼 직후 편집기에 바로 보여야 한다(사용자 09-17) · 로그 창에 적용 사실을 남긴다(진단).
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    tf(
+                        Msg::StWhitespaceApplied,
+                        &[
+                            self.settings
+                                .get("editor.whitespace")
+                                .unwrap_or("selection"),
+                            self.settings.get("editor.whitespace_chars").unwrap_or(""),
+                        ],
+                    ),
+                ));
+                self.redraw();
             }
             "ui.font_size"
             | "ui.menu_font_size"
@@ -2213,13 +2608,15 @@ impl App {
                 });
             }
             grid::FetchReq::All => {
-                // 이 탭의 예산 = 설정값 그대로(탭별 독립 · 다른 탭을 빼지 않는다).
+                // 전체 조회 = **나머지 이어 받기**(09-17 위치 유지): offset = 이미 든 행 수 · 예산 = 이 탭 예산에서 든 만큼을 뺀 나머지
+                // (탭별 독립 · 다른 탭을 빼지 않는다 · 이미 넘었으면 1 = 첫 배치 뒤 예산 정지).
+                let remain = budget.saturating_sub(self.grid.approx_bytes()).max(1);
                 self.worker.send(worker::Cmd::FetchPage {
                     key,
                     sql,
-                    offset: 0,
+                    offset: self.grid.row_count(),
                     limit: 0,
-                    budget_bytes: budget,
+                    budget_bytes: remain,
                 });
             }
             grid::FetchReq::Count => self.worker.send(worker::Cmd::Count { key, sql }),
@@ -2237,7 +2634,7 @@ impl App {
         self.run_tab = self.grid_tab;
         self.busy = true;
         self.status = t(Msg::StRunning).into();
-        self.log.clear();
+        self.run_toast_start(&src);
         self.last_run_items = split_items(&src);
         let max_rows = self.grid.page_rows();
         self.worker.send(worker::Cmd::Run {
@@ -2372,6 +2769,7 @@ impl App {
                 }
             }
             "view.log" => self.toggle_log_window(el),
+            "view.txlog" | "tx.log" => self.open_txlog_window(el),
             "view.on_top" => {
                 let on = !self.settings.flag("window.always_on_top");
                 let _ = self
@@ -2494,6 +2892,7 @@ impl App {
             "edit.undo" => self.route(InputEvent::Undo),
             "edit.redo" => self.route(InputEvent::Redo),
             "view.log" => self.toggle_log = true,
+            "view.toolbar_reset" => self.reset_toolbar(),
             "view.colors" => self.open_colors = true,
             "view.keys" => self.open_keys = true,
             "view.search" => {
@@ -2584,14 +2983,18 @@ impl App {
                 }
             }
             "run.all" => self.run_sql(true),
+            "run.stop" => self.stop_run(),
             "run.explain" => self.run_explain(),
             "run.commit" => self.worker.send(worker::Cmd::Commit),
             "run.rollback" => self.worker.send(worker::Cmd::Rollback),
+            // 트랜잭션 로그 창(T-107)이 오기 전까지는 상태줄 트랜잭션 팝업(모드 전환 · Commit(n) · Rollback(n) · 대기 목록).
+            "tx.log" | "view.txlog" => self.open_txlog = true,
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
             "conn.disconnect" => self.disconnect_now(),
             "edit.prefs" => self.open_prefs = true,
             "edit.settings_json" => self.edit_settings_json(),
+            "help.demo" => self.start_demo_create(),
             "help.about" => {
                 self.status = format!(
                     "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
@@ -2654,18 +3057,21 @@ impl App {
 
     /// DML/DDL 완료 → 대기 목록 갱신. 수동 모드의 DML(영향 행 > 0) = 대기 +1 · 방언별 암묵 커밋 DDL = 비움 ·
     /// 자동 모드 + `tx.smart_commit` = 첫 DML 뒤 수동으로 전환.
-    fn tx_on_done(&mut self, stmt: &str, rows_affected: Option<u64>) {
+    fn tx_on_done(&mut self, index: usize, stmt: &str, rows_affected: Option<u64>) {
         let auto = self.settings.flag("session.autocommit");
         if implicit_commit(self.dialect, stmt) {
             if !self.tx_pending.is_empty() {
                 let w = first_word(stmt);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, tf(Msg::StTxImplicit, &[&w])));
-                self.tx_clear();
+                self.tx_close(TxOutcome::ImplicitCommit(w));
             }
             return;
         }
-        if !rows_affected.is_some_and(|n| n > 0) {
+        let class = nsql_core::TxClass::of_sql(stmt);
+        // 대기 대상: 영향 행 > 0인 DML · 트랜잭션 DDL 방언(PG·SQL Server·SQLite)의 DDL/TRUNCATE(docs/44 §5).
+        let ddl_pending = class.is_ddl() && self.dialect.ddl_transactional();
+        if !ddl_pending && !rows_affected.is_some_and(|n| n > 0) {
             return;
         }
         if auto {
@@ -2677,11 +3083,14 @@ impl App {
         }
         let stamp = nsql_log::now_local().stamp();
         let when = stamp.get(11..16).unwrap_or("").to_string();
+        self.txlog.attach_tx(index, stamp, true);
+        self.txlog_win.redraw();
         self.tx_pending.push(TxItem {
             editor: self.run_editor,
             at: Instant::now(),
             when,
             summary: one_line(stmt, 60),
+            class,
         });
         self.tx_dirty = true;
         self.tx_stale_logged = false;
@@ -2691,13 +3100,113 @@ impl App {
     /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
     fn tx_clear(&mut self) {
         self.tx_pending.clear();
+        self.tx_read = false;
         self.tx_dirty = false;
         self.tx_stale_logged = false;
         self.sync_tx_ui();
     }
 
+    /// 수동 모드의 조회 — 읽기 트랜잭션 표시(배지 없음 · 초록 · docs/44 §5).
+    fn tx_on_read(&mut self, index: usize) {
+        if self.settings.flag("session.autocommit") {
+            return;
+        }
+        // 수동 모드의 조회는 열린 트랜잭션에 속한다(롤백/커밋 시점 표시 · docs/44 §3).
+        self.txlog
+            .attach_tx(index, nsql_log::now_local().stamp(), false);
+        self.txlog_win.redraw();
+        if self.tx_read {
+            return;
+        }
+        self.tx_read = true;
+        self.sync_tx_ui();
+    }
+
+    /// 트랜잭션 버튼 색·배지·툴팁(docs/44 §5): 자동 커밋 = 기본색·배지 없음 · 수동 = 가장 심각한 문장 종류의 색 + 대기 수.
+    fn sync_tx_button(&mut self) {
+        use nsql_core::TxClass;
+        let auto = self.settings.flag("session.autocommit");
+        let mut inv = Invalidations::default();
+        let n = self.tx_pending.len();
+        let top = self
+            .tx_pending
+            .iter()
+            .map(|i| i.class)
+            .max_by_key(|c| c.severity())
+            .unwrap_or(if self.tx_read {
+                TxClass::Read
+            } else {
+                TxClass::None
+            });
+        let stale = self.tx_is_stale();
+        let tone = if auto || top == TxClass::None {
+            ToolTone::Default
+        } else if stale {
+            ToolTone::Danger
+        } else {
+            match top {
+                TxClass::Read => ToolTone::Ok,
+                TxClass::DdlCreate => ToolTone::Custom(nexa_ctl::Color(0x8E5BD6FF)),
+                TxClass::Insert | TxClass::Other => ToolTone::Accent,
+                TxClass::Update => ToolTone::Custom(nexa_ctl::Color(0xE0A020FF)),
+                TxClass::Delete | TxClass::Truncate | TxClass::DdlDrop => ToolTone::Danger,
+                TxClass::None => ToolTone::Default,
+            }
+        };
+        let badge = if auto || n == 0 {
+            None
+        } else if stale {
+            Some(format!("!{n}"))
+        } else {
+            Some(n.to_string())
+        };
+        let tip = if auto {
+            t(Msg::TipTxLogAuto).to_string()
+        } else if n == 0 && !self.tx_read {
+            t(Msg::TipTxLog).to_string()
+        } else {
+            let mut kinds: Vec<Msg> = Vec::new();
+            let mut seen: Vec<TxClass> = self.tx_pending.iter().map(|i| i.class).collect();
+            if self.tx_read && seen.is_empty() {
+                seen.push(TxClass::Read);
+            }
+            seen.sort_by_key(|c| std::cmp::Reverse(c.severity()));
+            seen.dedup();
+            for c in seen {
+                kinds.push(match c {
+                    TxClass::Read => Msg::TxClsRead,
+                    TxClass::Insert => Msg::TxClsInsert,
+                    TxClass::Update => Msg::TxClsUpdate,
+                    TxClass::Delete => Msg::TxClsDelete,
+                    TxClass::Truncate => Msg::TxClsTruncate,
+                    TxClass::DdlCreate => Msg::TxClsDdlCreate,
+                    TxClass::DdlDrop => Msg::TxClsDdlDrop,
+                    TxClass::Other | TxClass::None => Msg::TxClsOther,
+                });
+            }
+            let list = kinds.iter().map(|m| t(*m)).collect::<Vec<_>>().join(" · ");
+            let since = self
+                .tx_pending
+                .first()
+                .map_or(String::new(), |f| f.when.clone());
+            tf(Msg::TipTxState, &[&n.to_string(), &since, &list])
+        };
+        self.tool_dock.set_item_tone("tx.log", tone, &mut inv);
+        self.tool_dock
+            .set_item_badge("tx.log", badge.as_deref(), &mut inv);
+        if let Some(gid) = self.tool_dock.group_of("tx.log").map(str::to_string) {
+            if let Some(bar) = self.tool_dock.bar_mut(&gid) {
+                bar.set_item_tip("tx.log", &tip);
+            }
+        }
+        for f in &self.tool_floats {
+            f.redraw();
+        }
+    }
+
     /// 탭 배지 · 툴바 Commit/Rollback 활성·색 — 세 층이 같은 사실을 말한다.
     fn sync_tx_ui(&mut self) {
+        self.sync_tx_button();
         let stale = self.tx_is_stale();
         let mut map: HashMap<u64, (usize, bool)> = HashMap::new();
         for it in &self.tx_pending {
@@ -2710,8 +3219,8 @@ impl App {
         let has = !self.tx_pending.is_empty();
         let mut inv = Invalidations::default();
         for id in ["run.commit", "run.rollback"] {
-            self.toolbar.set_item_enabled(id, has, &mut inv);
-            self.toolbar.set_item_tone(
+            self.tool_dock.set_item_enabled(id, has, &mut inv);
+            self.tool_dock.set_item_tone(
                 id,
                 if !has {
                     ToolTone::Default
@@ -2828,12 +3337,12 @@ impl App {
             "rollback" => self.worker.send(worker::Cmd::Rollback),
             "commit_then" => {
                 self.worker.send(worker::Cmd::Commit);
-                self.tx_clear();
+                self.tx_close(TxOutcome::Committed);
                 self.run_tx_after();
             }
             "rollback_then" => {
                 self.worker.send(worker::Cmd::Rollback);
-                self.tx_clear();
+                self.tx_close(TxOutcome::RolledBack);
                 self.run_tx_after();
             }
             "cancel" => self.tx_after = None,
@@ -2885,12 +3394,48 @@ impl App {
             });
         }
         if on {
-            self.tx_clear();
+            self.tx_close(TxOutcome::Switched);
         }
         self.sync_tx_ui();
     }
 
     /// 미커밋 탭 닫기(설정 `tx.close_action`: ask / commit / rollback).
+    /// 탭 우클릭 메뉴(09-17): 이름 바꾸기(팔레트 프롬프트) · 닫기 계열(높은 index부터 · 미커밋/미저장 가드는 탭마다) · 파일 위치 열기.
+    fn tab_menu_request(&mut self, req: editors::TabMenuReq) {
+        use editors::TabMenuReq;
+        let n = self.editors.tab_count();
+        match req {
+            TabMenuReq::Rename(i) => {
+                let title = self.editors.title_of(i);
+                self.palette
+                    .open_prompt(&format!("tab.rename:{i}"), t(Msg::PhTabRename), &title);
+            }
+            TabMenuReq::Close(i) => self.close_tab_guarded(i),
+            TabMenuReq::CloseLeft(i) => {
+                for j in (0..i.min(n)).rev() {
+                    self.close_tab_guarded(j);
+                }
+            }
+            TabMenuReq::CloseRight(i) => {
+                for j in ((i + 1)..n).rev() {
+                    self.close_tab_guarded(j);
+                }
+            }
+            TabMenuReq::CloseAll => {
+                for j in (0..n).rev() {
+                    self.close_tab_guarded(j);
+                }
+            }
+            TabMenuReq::Reveal(i) => {
+                if let Some(path) = self.editors.path_of(i) {
+                    if let Err(e) = nexa_fs::shell::reveal_in_file_manager(&path) {
+                        self.status = tf(Msg::StRevealFailed, &[&e.to_string()]);
+                    }
+                }
+            }
+        }
+    }
+
     fn close_tab_guarded(&mut self, i: usize) {
         let id = self.editors.tab_id(i);
         let n = self.tx_pending.iter().filter(|t| t.editor == id).count();
@@ -2901,12 +3446,12 @@ impl App {
         match self.settings.get("tx.close_action").unwrap_or("ask") {
             "commit" => {
                 self.worker.send(worker::Cmd::Commit);
-                self.tx_clear();
+                self.tx_close(TxOutcome::Committed);
                 self.editors.close_tab_confirmed(i);
             }
             "rollback" => {
                 self.worker.send(worker::Cmd::Rollback);
-                self.tx_clear();
+                self.tx_close(TxOutcome::RolledBack);
                 self.editors.close_tab_confirmed(i);
             }
             _ => {
@@ -2984,11 +3529,15 @@ impl App {
     }
 
     fn build_menus() -> Vec<MenuDef> {
-        Self::build_menus_with(&[], &[])
+        Self::build_menus_with(&[], &[], false)
     }
 
     /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
-    fn build_menus_with(recent: &[PathBuf], tabs: &[(u64, String, bool)]) -> Vec<MenuDef> {
+    fn build_menus_with(
+        recent: &[PathBuf],
+        tabs: &[(u64, String, bool)],
+        demo_ready: bool,
+    ) -> Vec<MenuDef> {
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
         let mut file = vec![
             item("file.new", Msg::MnNew),
@@ -3068,7 +3617,9 @@ impl App {
                     item("view.explorer", Msg::MnExplorer),
                     item("view.search", Msg::MnSearchPanel),
                     item("view.log", Msg::MnLogWindow),
+                    item("view.txlog", Msg::MnTxLogWindow),
                     item("view.on_top", Msg::MnAlwaysOnTop),
+                    item("view.toolbar_reset", Msg::MnResetToolbar),
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
                     item("view.keys", Msg::MnKeys),
@@ -3108,7 +3659,19 @@ impl App {
                 v.push(item("tab.find", Msg::MnFindTab));
                 v
             }),
-            MenuDef::new(t(Msg::MnHelp), vec![item("help.about", Msg::MnAbout)]),
+            MenuDef::new(
+                t(Msg::MnHelp),
+                vec![
+                    // 샘플 데이터(사용자 09-17): 이미 있으면 비활성.
+                    if demo_ready {
+                        MenuEntry::Disabled(ComboItem::new("help.demo", t(Msg::MnDemoCreate)))
+                    } else {
+                        item("help.demo", Msg::MnDemoCreate)
+                    },
+                    MenuEntry::Separator,
+                    item("help.about", Msg::MnAbout),
+                ],
+            ),
         ]
     }
 
@@ -3127,37 +3690,64 @@ impl App {
             self.tabs_menu_sig = sig;
             let recent = self.recent_files();
             self.menubar
-                .set_menus(App::build_menus_with(&recent, &tabs));
+                .set_menus(App::build_menus_with(&recent, &tabs, self.demo_ready));
         }
     }
 
-    fn build_toolbar() -> Toolbar {
-        let mut tb = Toolbar::new(vec![
-            // 아이콘은 글꼴 글리프가 아니라 코드로 그린 마스크(`toolicons.rs` · 사용자 09-14).
-            ToolItem::new("file.new", toolicons::new_script()).tip(t(Msg::TipNew)),
-            ToolItem::new("file.open", toolicons::open_file()).tip(t(Msg::TipOpen)),
-            ToolItem::new("file.save", toolicons::save_file()).tip(t(Msg::TipSave)),
-            // 다른 이름으로 저장 — 사용자가 Material `save_as` 아이콘을 준 09-16(툴바에 없던 항목 · 명령 id는 메뉴와 동일).
-            ToolItem::new("file.save_as", toolicons::save_as()).tip(t(Msg::TipSaveAs)),
-            ToolItem::new("run.statement", toolicons::run_statement()).tip(t(Msg::TipRunStatement)),
-            ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
-            // 트랜잭션(DR-30): 대기 문장이 있을 때만 활성 · Material check/undo.
-            ToolItem::new("run.commit", toolicons::commit())
-                .tip(t(Msg::TipCommit))
-                .disabled(),
-            ToolItem::new("run.rollback", toolicons::rollback())
-                .tip(t(Msg::TipRollback))
-                .disabled(),
-            ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
-            ToolItem::new("conn.disconnect", toolicons::disconnect())
-                .tip(t(Msg::TipDisconnect))
-                .disabled(),
-            ToolItem::new("view.log", toolicons::log())
-                .tip(t(Msg::TipLog))
-                .align_right(),
-        ]);
-        tb.set_icon_size(18);
-        tb
+    /// 툴바 = 목적별 그룹(파일 · 실행 · 접속 · 보기) — 아이콘·구분자 계층(nexa-ctl `ToolGroup`). 순서·플로팅은 도크 배치가 기억.
+    fn build_tool_dock() -> ToolDock {
+        // 아이콘은 글꼴 글리프가 아니라 코드로 그린 마스크(`toolicons.rs` · 사용자 09-14).
+        let file = ToolGroup::new(
+            "file",
+            t(Msg::MnFile),
+            vec![
+                ToolItem::new("file.new", toolicons::new_script()).tip(t(Msg::TipNew)),
+                ToolItem::new("file.open", toolicons::open_file()).tip(t(Msg::TipOpen)),
+                ToolItem::separator(),
+                ToolItem::new("file.save", toolicons::save_file()).tip(t(Msg::TipSave)),
+                // 다른 이름으로 저장 — 사용자가 Material `save_as` 아이콘을 준 09-16(명령 id는 메뉴와 동일).
+                ToolItem::new("file.save_as", toolicons::save_as()).tip(t(Msg::TipSaveAs)),
+            ],
+        );
+        let run = ToolGroup::new(
+            "run",
+            t(Msg::MnRun),
+            vec![
+                ToolItem::new("run.statement", toolicons::run_statement())
+                    .tip(t(Msg::TipRunStatement)),
+                ToolItem::new("run.all", toolicons::run_all()).tip(t(Msg::TipRunAll)),
+                ToolItem::new("run.stop", toolicons::fetch_stop()).tip(t(Msg::TipRunStop)),
+                ToolItem::separator(),
+                // 트랜잭션(DR-30): 대기 문장이 있을 때만 활성 · Material check/undo.
+                ToolItem::new("run.commit", toolicons::commit())
+                    .tip(t(Msg::TipCommit))
+                    .disabled(),
+                ToolItem::new("run.rollback", toolicons::rollback())
+                    .tip(t(Msg::TipRollback))
+                    .disabled(),
+                // 트랜잭션 로그(docs/44 §5): 항상 활성 · 수동 모드면 배지 = 대기 수 · 색 = 가장 심각한 문장 종류.
+                ToolItem::new("tx.log", toolicons::tx_log()).tip(t(Msg::TipTxLog)),
+            ],
+        );
+        let conn = ToolGroup::new(
+            "conn",
+            t(Msg::TbGroupConn),
+            vec![
+                ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
+                ToolItem::new("conn.disconnect", toolicons::disconnect())
+                    .tip(t(Msg::TipDisconnect))
+                    .disabled(),
+            ],
+        );
+        let view = ToolGroup::new(
+            "view",
+            t(Msg::MnView),
+            vec![ToolItem::new("view.log", toolicons::log()).tip(t(Msg::TipLog))],
+        )
+        .align_right();
+        let mut dock = ToolDock::new(vec![file, run, conn, view]);
+        dock.set_icon_size(18);
+        dock
     }
 
     /// 복사·잘라내기·붙여넣기·전체 선택 — 포커스 텍스트박스 ↔ OS 클립보드([`clipboard`]). 실패는 상태줄에.
@@ -3248,6 +3838,8 @@ impl App {
         cmds.push(m("edit.find_prev", Msg::MnEdit, Msg::MnFindPrev));
         cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
+        cmds.push(m("view.txlog", Msg::MnView, Msg::MnTxLogWindow));
+        cmds.push(m("view.toolbar_reset", Msg::MnView, Msg::MnResetToolbar));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
         cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
@@ -3357,7 +3949,8 @@ impl App {
         let _ = self.settings.set("file.recent", &joined);
         self.persist_settings();
         let tabs = self.editors.tab_list();
-        self.menubar.set_menus(App::build_menus_with(&v, &tabs));
+        self.menubar
+            .set_menus(App::build_menus_with(&v, &tabs, self.demo_ready));
     }
 
     /// 대화상자를 닫을 때 마지막 폴더·숨김 표시를 기억한다.
@@ -3760,6 +4353,95 @@ impl App {
         }
     }
 
+    /// 트랜잭션 로그 창(모덜리스 · docs/44 §2 · T-107) — 이미 열려 있으면 앞으로.
+    fn open_txlog_window(&mut self, el: &ActiveEventLoop) {
+        let near = self.window.as_ref().and_then(|w| {
+            w.outer_position()
+                .ok()
+                .map(|p| (p.x, p.y, w.outer_size().width))
+        });
+        let owner = self.window.clone();
+        let ctx = self.conn_win.active_name().to_string();
+        self.txlog_win.set_active_editor(self.editors.active_id());
+        self.txlog_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner.as_deref(),
+            &ctx,
+        );
+    }
+
+    /// 열린 수동 트랜잭션을 결과와 함께 닫고 대기 목록을 비운다(커밋·롤백·암묵·전환·끊김 — docs/44 §3).
+    fn tx_close(&mut self, outcome: TxOutcome) {
+        let stamp = nsql_log::now_local().stamp();
+        self.txlog.close_tx(outcome, stamp);
+        self.tx_clear();
+        self.txlog_win.redraw();
+    }
+
+    /// 개발자 모드 마스크(`log.dev_mode` × `log.dev_layers` · 향상 모드는 dev_mode를 끈다) → nsql-log 전역 게이트.
+    fn apply_detail_mask(&mut self) {
+        let on = self.settings.flag("log.dev_mode");
+        let mask = if on {
+            nsql_log::parse_detail_layers(self.settings.get("log.dev_layers").unwrap_or(""))
+        } else {
+            0
+        };
+        nsql_log::set_detail_mask(mask);
+        self.log_win.set_dev(on);
+        self.log_win.set_dev_mask(nsql_log::parse_detail_layers(
+            self.settings.get("log.dev_layers").unwrap_or(""),
+        ));
+    }
+
+    /// 실행 상태 카드 설정(`run.toast` · `run.toast_hide_secs` · 불투명도는 토스트와 공용 `ui.toast_alpha`).
+    fn apply_run_toast(&mut self) {
+        self.run_toast.configure(
+            self.settings.flag("run.toast"),
+            self.settings.int("run.toast_hide_secs"),
+            self.settings.int("ui.toast_alpha"),
+        );
+    }
+
+    /// 실행 시작 → 카드(문장 · 시작 시각 · 문장 수).
+    fn run_toast_start(&mut self, src: &str) {
+        self.run_cancel_requested = false;
+        self.sync_run_stmt_button();
+        let n = split_items(src).len().max(1);
+        self.run_toast.start(src, nsql_log::now_local().stamp(), n);
+    }
+
+    /// 중지(카드 ■ = 툴바 ■ · T-108): 실행 중 문장은 드라이버 취소 핸들로 서버에 취소 · 전체 조회는 다음 배치 경계에서.
+    fn stop_run(&mut self) {
+        if !self.busy && !self.grid.fetch_all_active() {
+            return;
+        }
+        self.run_cancel_requested = self.busy;
+        if self.dialect == Dialect::Mssql
+            && self.settings.get("mssql.cancel") != Some("socket")
+            && self.settings.get("mssql.encrypt") != Some("login")
+        {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                t(Msg::StMssqlAttentionFallback),
+            ));
+        }
+        let (sent, drops) = self.worker.cancel_run();
+        self.run_cancel_drops = drops;
+        self.status = t(if sent && drops {
+            Msg::StRunCancellingDrop
+        } else if sent {
+            Msg::StRunCancelling
+        } else {
+            Msg::StFetchCancelling
+        })
+        .into();
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, self.status.clone()));
+        self.redraw();
+    }
+
     /// `ui.theme` + OS 판정으로 팔레트를 다시 고르고 전체를 다시 그린다.
     fn apply_theme(&mut self) {
         let wt = self.window.as_ref().and_then(|w| w.theme());
@@ -3791,6 +4473,104 @@ impl App {
         self.redraw();
     }
 
+    // ── 데모 프로필·샘플 데이터(사용자 09-17 · docs/21 §5)
+
+    /// 메뉴바를 현재 상태(최근 파일 · 탭 · 데모 준비 여부)로 다시 만든다.
+    fn rebuild_menus(&mut self) {
+        let tabs = self.editors.tab_list();
+        self.menubar.set_menus(App::build_menus_with(
+            &self.recent_files(),
+            &tabs,
+            self.demo_ready,
+        ));
+    }
+
+    /// 데모 SQLite 파일 = 사용자 설정 폴더(`NSQL_HOME`)/demo.sqlite — 설치본·포터블 규약 그대로(exe 옆 금지).
+    fn demo_path() -> Option<PathBuf> {
+        nsql_settings::config_dir().map(|d| d.join("demo.sqlite"))
+    }
+
+    /// 'Demo' 프로필과 파일이 둘 다 있는가.
+    fn demo_exists() -> bool {
+        let has_profile = Vault::open_default()
+            .ok()
+            .and_then(|v| v.peek("Demo").ok().flatten())
+            .is_some();
+        has_profile && Self::demo_path().is_some_and(|p| p.exists())
+    }
+
+    /// 최초 실행 1회 팝업(창 가운데): 만들기 / 나중에.
+    fn open_demo_prompt(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let Some(w) = self.window.as_ref() else {
+            return;
+        };
+        let sz = w.inner_size();
+        let r = Rect::new(
+            (sz.width as i32 / 2 - px(150.0, self.scale)).max(0),
+            (sz.height as i32 / 3).max(0),
+            0,
+            0,
+        );
+        let items = vec![
+            CtxItem::item("demo.ask", t(Msg::DemoAsk)),
+            CtxItem::Separator,
+            CtxItem::item("demo.create", t(Msg::DemoYes)),
+            CtxItem::item("demo.later", t(Msg::DemoLater)),
+        ];
+        self.open_status_popup(r, items);
+        self.redraw();
+    }
+
+    /// 데모 만들기(메뉴 · 팝업): 배경 스레드에서 `demo.sqlite`에 내장 스크립트(`examples/demo.sql`)를 실행 → 끝나면 프로필 저장.
+    fn start_demo_create(&mut self) {
+        if self.demo_job.is_some() || self.demo_ready {
+            return;
+        }
+        let Some(path) = Self::demo_path() else {
+            self.status = tf(Msg::StDemoFailed, &["NSQL_HOME"]);
+            return;
+        };
+        self.status = t(Msg::StDemoCreating).into();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.demo_job = Some(rx);
+        std::thread::Builder::new()
+            .name("nsql-demo".into())
+            .spawn(move || {
+                let r = create_demo_db(&path);
+                let _ = tx.send(r);
+            })
+            .ok();
+        self.redraw();
+    }
+
+    /// 생성 결과: 프로필 'Demo' 저장 → 접속 창 목록 갱신 → 메뉴 비활성 → 안내.
+    fn finish_demo(&mut self, r: Result<String, String>) {
+        match r.and_then(|path| {
+            let target = format!("sqlite:{path}");
+            let spec = nsql_drivers::parse_target(&target, Dialect::Sqlite)?;
+            Vault::open_default()
+                .and_then(|v| v.save("Demo", &spec))
+                .map_err(|e| e.to_string())?;
+            Ok(path)
+        }) {
+            Ok(path) => {
+                self.demo_ready = true;
+                self.rebuild_menus();
+                self.conn_win.refresh_profiles(Some("Demo"));
+                self.status = tf(Msg::StDemoCreated, &[&path]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            }
+            Err(e) => {
+                self.status = tf(Msg::StDemoFailed, &[&e]);
+                self.toasts
+                    .push(toast::ToastKind::Error, t(Msg::MnDemoCreate), e);
+            }
+        }
+        self.redraw();
+    }
+
     fn persist_settings(&mut self) {
         if let Err(e) = self.settings.save() {
             self.status = tf(Msg::CfgSaveFailed, &[&e.to_string()]);
@@ -3800,9 +4580,15 @@ impl App {
     /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
     fn relabel(&mut self) {
         let tabs = self.editors.tab_list();
-        self.menubar
-            .set_menus(App::build_menus_with(&self.recent_files(), &tabs));
-        self.toolbar = App::build_toolbar();
+        self.menubar.set_menus(App::build_menus_with(
+            &self.recent_files(),
+            &tabs,
+            self.demo_ready,
+        ));
+        let layout = self.tool_dock.layout();
+        self.tool_dock = App::build_tool_dock();
+        self.tool_dock.apply_layout(&layout);
+        let _ = self.tool_dock.take_actions();
         self.apply_toolbar_visibility();
         self.conn_win.relabel();
         self.editors.rebuild_boxes();
@@ -3813,6 +4599,12 @@ impl App {
     fn run_sql(&mut self, all: bool) {
         if self.busy {
             self.status = t(Msg::StRunning).into();
+            return;
+        }
+        // 다중 커서/선택이면 "캐럿 문장"이 하나가 아니다 → 문장 실행은 막고 전체 실행(F5)만(사용자 09-17).
+        if !all && self.editors.cur().has_multi() {
+            self.status = t(Msg::StMultiCaretRun).into();
+            self.redraw();
             return;
         }
         // Ctrl/⌘+Enter = 선택 영역 → 없으면 **캐럿 위치의 한 문장**(`;` 종결 · 사용자 09-14) → F5 = 전체.
@@ -3841,7 +4633,7 @@ impl App {
         }
         self.busy = true;
         self.status = t(Msg::StRunning).into();
-        self.log.clear();
+        self.run_toast_start(&src);
         // 신호등이 초록이 아닌 서버(빨강·파랑·확인 중·모름)에는 실행 전 빠른 포트 판정을 건다(사용자 09-14).
         let pol = *self.conn_win.policy();
         let light = self.conn_win.status_of(self.conn_win.active_name());
@@ -3864,7 +4656,10 @@ impl App {
         if self.dialect != Dialect::Oracle {
             return None;
         }
-        let source = self.settings.get("oracle.live.source").unwrap_or("off");
+        let source = self
+            .settings
+            .effective("oracle.live.source")
+            .unwrap_or("off");
         if source == "off" {
             return None;
         }
@@ -3953,13 +4748,8 @@ impl App {
                         }
                         self.live_last = line.clone();
                         let text = format!("[live] {line}");
-                        self.log_win
-                            .push(LogEntry::new(LogKind::Output, text.clone()));
-                        self.log.push(text);
+                        self.log_win.push(LogEntry::new(LogKind::Output, text));
                         changed = true;
-                    }
-                    if changed {
-                        self.grid.set_messages(self.log.clone());
                     }
                 }
                 Err(e) => {
@@ -3997,7 +4787,7 @@ impl App {
         let src = nsql_script::explain_script(self.dialect, &stmt);
         self.busy = true;
         self.status = t(Msg::StRunning).into();
-        self.log.clear();
+        self.run_toast_start(&src);
         self.last_run_items = split_items(&src);
         self.worker.send(worker::Cmd::Run {
             src,
@@ -4020,10 +4810,66 @@ impl App {
                 self.log_win.push(e);
             }
             match ev {
-                RunEvent::Begin { .. } => {}
+                RunEvent::Begin { index, .. } => {
+                    if index == 0 {
+                        self.txlog.begin_batch();
+                    }
+                    self.run_toast.set_phase(runtoast::Phase::Running {
+                        index,
+                        total: self.last_run_items.len(),
+                    });
+                    let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
+                    dlog!(self, LogLayer::Net, LogLevel::Timing, {
+                        let now = nsql_log::now_local().stamp();
+                        LogEntry::new(
+                            LogKind::Send,
+                            tf(Msg::LogDetSent, &[&now, &stmt.len().to_string()]),
+                        )
+                    });
+                    let purpose = if stmt
+                        .trim_start()
+                        .to_ascii_uppercase()
+                        .starts_with("SET AUTOCOMMIT")
+                    {
+                        TxPurpose::Util
+                    } else {
+                        TxPurpose::User
+                    };
+                    self.txlog.begin(
+                        nsql_log::now_local().stamp(),
+                        self.run_editor,
+                        purpose,
+                        index,
+                        &stmt,
+                    );
+                    self.txlog_win.redraw();
+                }
                 RunEvent::ResultSet {
-                    rs, elapsed, more, ..
+                    index,
+                    rs,
+                    elapsed,
+                    more,
                 } => {
+                    self.txlog.result(index, rs.rows.len() as u64, elapsed);
+                    self.run_toast
+                        .first_page(rs.rows.len() as u64, rs.approx_bytes(), elapsed);
+                    dlog!(self, LogLayer::Net, LogLevel::Timing, {
+                        let b = rs.approx_bytes();
+                        LogEntry::new(
+                            LogKind::Fetch,
+                            tf(
+                                Msg::LogDetFirstSeg,
+                                &[&nsql_core::fmt_bytes(b), &speed_of(b, elapsed)],
+                            ),
+                        )
+                        .rows(rs.rows.len() as u64)
+                        .elapsed(elapsed)
+                    });
+                    self.run_toast.set_phase(runtoast::Phase::Done {
+                        rows: Some(rs.rows.len() as u64),
+                        secs: elapsed.as_secs_f64(),
+                        stages: String::new(),
+                    });
                     self.last_rows = Some(rs.rows.len());
                     self.last_secs = Some(elapsed.as_secs_f64());
                     let n = rs.rows.len().to_string();
@@ -4039,6 +4885,7 @@ impl App {
                         g.set_result(rs);
                         g.set_more(more);
                     }
+                    self.tx_on_read(index);
                     let k = self.run_tab;
                     self.retitle_result(k);
                 }
@@ -4053,21 +4900,24 @@ impl App {
                         None => tf(Msg::StOk, &[&secs]),
                     };
                     let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
-                    self.tx_on_done(&stmt, rows_affected);
+                    self.txlog.done(index, rows_affected, elapsed);
+                    self.run_toast.set_phase(runtoast::Phase::Done {
+                        rows: rows_affected,
+                        secs: elapsed.as_secs_f64(),
+                        stages: String::new(),
+                    });
+                    self.tx_on_done(index, &stmt, rows_affected);
                 }
-                RunEvent::Print { pairs } => {
-                    for (n, v) in pairs {
-                        self.log.push(format!("{n} = {}", v.display()));
-                    }
-                    self.grid.set_messages(self.log.clone());
-                }
+                // PRINT · 서버 메시지는 로그 창으로만(`log_entries`) — 결과 영역은 조회 결과만(사용자 09-17).
+                RunEvent::Print { .. } => {}
                 RunEvent::Message(m) => {
-                    if m == t(Msg::StCommitted) || m == t(Msg::StRolledBack) {
-                        self.tx_clear();
+                    if m == t(Msg::StCommitted) {
+                        self.tx_close(TxOutcome::Committed);
+                        self.status = m.clone();
+                    } else if m == t(Msg::StRolledBack) {
+                        self.tx_close(TxOutcome::RolledBack);
                         self.status = m.clone();
                     }
-                    self.log.push(m);
-                    self.grid.set_messages(self.log.clone());
                 }
                 RunEvent::Connected {
                     description,
@@ -4077,7 +4927,7 @@ impl App {
                     self.busy = false;
                     self.dialect = dialect;
                     self.all_grids().for_each(|g| g.set_dialect(dialect));
-                    self.tx_clear();
+                    self.tx_close(TxOutcome::Lost);
                     self.sync_disconnect_btn(true);
                     // 탐색기 메타 세션(별도) — 같은 스펙으로.
                     if let Some(spec) = self.last_spec.clone() {
@@ -4088,20 +4938,83 @@ impl App {
                 RunEvent::Disconnected => {
                     self.status = t(Msg::StDisconnected).into();
                     self.explorer.disconnect();
-                    self.tx_clear();
+                    self.tx_close(TxOutcome::Lost);
                     self.sync_disconnect_btn(false);
                 }
-                RunEvent::Timing { timeline, .. } => {
+                RunEvent::Timing { index, timeline } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
+                    self.txlog.timing(index, timeline.total());
+                    self.run_toast
+                        .timing(timeline.total().as_secs_f64(), timeline.summary());
+                    for sp in &timeline.spans {
+                        let (layer, msg) = match sp.stage {
+                            nsql_core::Stage::Send => (LogLayer::Net, Msg::LogDetStageSend),
+                            nsql_core::Stage::Execute => (LogLayer::Exec, Msg::LogDetStageExec),
+                            nsql_core::Stage::Fetch | nsql_core::Stage::Receive => {
+                                (LogLayer::Fetch, Msg::LogDetStageFetch)
+                            }
+                            nsql_core::Stage::Load => (LogLayer::Load, Msg::LogDetStageLoad),
+                            _ => (LogLayer::App, Msg::LogDetStageOther),
+                        };
+                        if layer == LogLayer::App {
+                            continue;
+                        }
+                        dlog!(self, layer, LogLevel::Timing, {
+                            let b = sp.bytes.unwrap_or(0);
+                            LogEntry::new(
+                                LogKind::Info,
+                                tf(
+                                    msg,
+                                    &[
+                                        sp.stage.label(),
+                                        &nsql_core::fmt_dur(sp.dur),
+                                        &nsql_core::fmt_bytes(b),
+                                        &speed_of(b, sp.dur),
+                                        sp.note.as_deref().unwrap_or(""),
+                                    ],
+                                ),
+                            )
+                            .rows(sp.rows)
+                            .elapsed(sp.dur)
+                        });
+                    }
                     self.status = format!("{} · ⏱ {}", self.status, timeline.summary());
                 }
                 RunEvent::Error { index, line, error } => {
+                    self.txlog.error(index, error.code, &error.message);
+                    self.txlog_win.redraw();
+                    if std::mem::take(&mut self.run_cancel_requested) {
+                        // 사용자가 ■를 눌러 드라이버가 끊은 실행 — 오류 토스트 대신 "중지됨"(T-108).
+                        if std::mem::take(&mut self.run_cancel_drops) {
+                            // 소켓을 끊은 취소(SQL Server): 열린 트랜잭션은 서버가 롤백 · 다음 실행 때 자동 재접속.
+                            self.tx_close(TxOutcome::Lost);
+                            self.status = t(Msg::StRunCancelledDrop).into();
+                            self.log_win
+                                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                        } else {
+                            self.status = t(Msg::StRunCancelled).into();
+                        }
+                        self.run_toast
+                            .set_phase(runtoast::Phase::Stopped { rows: 0 });
+                        if let Some(g) = self.run_grid() {
+                            g.clear_result();
+                        }
+                        self.busy = false;
+                        self.sync_run_stmt_button();
+                        self.redraw();
+                        continue;
+                    }
                     // 공통 분류 + 코드 부각(docs/42): 상태줄 · 결과 메시지 · 로그 창 · 토스트(분류된 오류만).
                     let stmt = self.last_run_items.get(index).cloned().unwrap_or_default();
                     let (cls, summary) =
                         toast::summarize(self.dialect, error.code, &error.message, &stmt);
                     self.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
-                    self.log.push(self.status.clone());
+                    self.run_toast
+                        .set_phase(runtoast::Phase::Error(summary.clone()));
+                    // 오류가 나도 결과 영역은 기본 형태(빈 그리드)로 — 본문은 로그 창·상태줄·토스트(사용자 09-17).
+                    if let Some(g) = self.run_grid() {
+                        g.clear_result();
+                    }
                     if let Some(label) = toast::class_label(cls.class) {
                         let title = match &cls.code {
                             Some(c) => format!("{c} · {label}"),
@@ -4113,7 +5026,6 @@ impl App {
                         self.toasts.push(toast::ToastKind::Error, title, body);
                         self.redraw();
                     }
-                    self.grid.set_messages(self.log.clone());
                     self.busy = false;
                     // 실행 중 접속성 오류 확인 → 활성 서버 신호등 즉시 갱신(사용자 09-14).
                     if probe::is_connection_error(error.code, &error.message) {
@@ -4126,7 +5038,25 @@ impl App {
         while let Ok(done) = self.worker.done.try_recv() {
             changed = true;
             self.busy = false;
+            self.sync_run_stmt_button();
             let failed = done.is_some();
+            if std::mem::take(&mut self.run_cancel_requested) && !failed {
+                // Attention 취소(SQL Server · 세션 유지): 오류 없이 부분 결과로 끝난다 → "중지됨".
+                self.run_cancel_drops = false;
+                // ★ 실행 중지 = 받은 행은 **보기만 유지**(사용자 09-17 결정): 이번 실행 스트림의 앞부분이라 보는 용도로는 정확하지만
+                //   OFFSET 재실행은 정렬이 없으면 순서가 달라질 수 있어 이어 받기(⇊)·자동 페치는 막는다(`more=false`) · 전체는 재실행.
+                //   (⇊ 나머지 이어 받기의 중지는 T-48b대로 받은 행 + 더 있음 유지 — 늘 연속된 앞부분 · 사용자 "이전 세그먼트 방식 유지".)
+                let rows = self.last_rows.unwrap_or(0) as u64;
+                self.status = tf(Msg::StRunCancelledPartial, &[&rows.to_string()]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                self.run_toast.finish(runtoast::Phase::Stopped { rows });
+                if let Some(g) = self.run_grid() {
+                    g.set_more(false);
+                }
+            } else {
+                self.run_toast.finish_keep(done.clone());
+            }
             if let Some(m) = done {
                 self.status = m;
             }
@@ -4274,7 +5204,8 @@ impl App {
         };
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
-        let caret_on = (self.started.elapsed().as_millis() / 500) % 2 == 0;
+        let caret_on = !self.settings.flag("editor.caret_blink")
+            || (self.started.elapsed().as_millis() / 500) % 2 == 0;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
             let th = self.theme;
@@ -4298,12 +5229,12 @@ impl App {
                 self.editors.paint_tabs(&mut dc, &th);
                 self.panel.paint_bar(&mut dc, &th);
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
-                dc.fill_rect(self.toolbar.bounds(), th.chrome_bg);
-                self.toolbar.paint(&mut dc, &th);
+                dc.fill_rect(self.tool_dock.bounds(), th.chrome_bg);
+                self.tool_dock.paint(&mut dc, &th);
                 // 툴바 툴팁은 탐색기·편집기가 덮지 못하게 최상위 층(메뉴바 직전)에서 그린다(09-16 사용자 캡처: 툴바 아래 검은 띠).
                 dc.fill_rect(self.menubar.bounds(), th.chrome_bg);
                 dc.fill_rect(
-                    Rect::new(0, self.toolbar.bounds().bottom() - 1, wi, 1),
+                    Rect::new(0, self.tool_dock.bounds().bottom() - 1, wi, 1),
                     th.border,
                 );
                 // 메뉴바(드롭다운 포함)는 편집기·그리드·탐색기 뒤인 최상위 패스에서 그린다(09-15 사용자 캡처: 풀다운이 뒤로 가림).
@@ -4485,7 +5416,7 @@ impl App {
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
-            if let Some((render, load, bytes)) = self.grid.take_perf_report() {
+            if let Some((render, load, bytes, at)) = self.grid.take_perf_report() {
                 self.log_win.push(LogEntry::new(
                     LogKind::Info,
                     tf(
@@ -4497,6 +5428,24 @@ impl App {
                         ],
                     ),
                 ));
+                dlog!(self, LogLayer::Load, LogLevel::Timing, {
+                    LogEntry::new(
+                        LogKind::Info,
+                        tf(
+                            Msg::LogDetLoad,
+                            &[&nsql_core::fmt_dur(load), &nsql_core::fmt_bytes(bytes)],
+                        ),
+                    )
+                    .elapsed(load)
+                });
+                dlog!(self, LogLayer::Render, LogLevel::Timing, {
+                    let (a, b) = at.unwrap_or_default();
+                    LogEntry::new(
+                        LogKind::Info,
+                        tf(Msg::LogDetRender, &[&a, &b, &nsql_core::fmt_dur(render)]),
+                    )
+                    .elapsed(render)
+                });
             }
             // ── 최상위 카드(탭 툴팁 · UI 글꼴)
             {
@@ -4557,7 +5506,7 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
-                self.toolbar.paint_tooltip(&mut dc, &th);
+                self.tool_dock.paint_tooltip(&mut dc, &th);
                 self.find.paint_tooltip(&mut dc, &th);
                 self.search.paint_tooltip(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
@@ -4565,6 +5514,7 @@ impl App {
                 self.status_menu.paint(&mut dc, &th);
                 self.grid.paint_overlays(&mut dc, &th);
                 self.panel.paint_popups(&mut dc, &th);
+                self.editors.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
@@ -4573,6 +5523,7 @@ impl App {
                 } else {
                     (wi, hi - px(24.0, s))
                 };
+                let ty = self.run_toast.paint(&mut dc, &th, tx, ty, s);
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
@@ -4633,9 +5584,26 @@ impl App {
                     Key::Named(NamedKey::Escape) => key(CtlKey::Escape, false, false),
                     Key::Named(NamedKey::ArrowUp) => key(CtlKey::Up, self.shift, self.primary),
                     Key::Named(NamedKey::ArrowDown) => key(CtlKey::Down, self.shift, self.primary),
-                    Key::Named(NamedKey::ArrowLeft) => key(CtlKey::Left, self.shift, self.primary),
-                    Key::Named(NamedKey::ArrowRight) => {
-                        key(CtlKey::Right, self.shift, self.primary)
+                    // ← → 수식키 번역(Sublime 기본 키맵 · 사용자 09-17): Win/Linux Ctrl = 단어 · Alt = 서브워드 ·
+                    // mac ⌥ = 단어 · ⌃ = 서브워드 · ⌘ = 줄 처음/끝(primary 그대로).
+                    Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
+                        let right =
+                            matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::ArrowRight));
+                        let (word, subword) = if cfg!(target_os = "macos") {
+                            (self.alt, self.ctrl_raw)
+                        } else {
+                            (self.primary && !self.alt, self.alt && !self.primary)
+                        };
+                        let k = match (word, subword, right) {
+                            (true, _, false) => CtlKey::WordLeft,
+                            (true, _, true) => CtlKey::WordRight,
+                            (false, true, false) => CtlKey::SubwordLeft,
+                            (false, true, true) => CtlKey::SubwordRight,
+                            (false, false, false) => CtlKey::Left,
+                            (false, false, true) => CtlKey::Right,
+                        };
+                        let primary = self.primary && !word && !subword;
+                        key(k, self.shift, primary)
                     }
                     Key::Named(NamedKey::Home) => key(CtlKey::Home, self.shift, self.primary),
                     Key::Named(NamedKey::End) => key(CtlKey::End, self.shift, self.primary),
@@ -4664,18 +5632,67 @@ impl App {
         })
     }
 
+    /// 문장 실행 버튼 = 단일 커서일 때만(전체 실행은 늘 활성 · 사용자 09-17). 값이 바뀔 때만 툴바에 쓴다.
+    fn sync_run_stmt_button(&mut self) {
+        let stop = self.busy;
+        if stop != self.run_stop_enabled {
+            self.run_stop_enabled = stop;
+            let mut inv = Invalidations::default();
+            self.tool_dock.set_item_enabled("run.stop", stop, &mut inv);
+            self.redraw();
+        }
+        let on = !self.editors.cur().has_multi();
+        if on != self.run_stmt_enabled {
+            self.run_stmt_enabled = on;
+            let mut inv = Invalidations::default();
+            self.tool_dock
+                .set_item_enabled("run.statement", on, &mut inv);
+            self.tool_dock.set_item_tip(
+                "run.statement",
+                t(if on {
+                    Msg::TipRunStatement
+                } else {
+                    Msg::TipRunStatementMulti
+                }),
+            );
+            self.redraw();
+        }
+    }
+
     fn route(&mut self, ev: InputEvent) {
-        let mut inv = Invalidations::default();
+        self.route_inner(ev, Invalidations::default());
+        self.sync_run_stmt_button();
+    }
+
+    fn route_inner(&mut self, ev: InputEvent, mut inv: Invalidations) {
         if let InputEvent::MouseDown { x, y, .. } = ev {
             if self.toasts.click(Point { x, y }) {
                 self.redraw();
                 return;
             }
+            match self.run_toast.click(Point { x, y }) {
+                runtoast::RunToastHit::Stop => {
+                    self.stop_run();
+                    return;
+                }
+                runtoast::RunToastHit::Card => {
+                    self.redraw();
+                    return;
+                }
+                runtoast::RunToastHit::None => {}
+            }
+        }
+        if let InputEvent::MouseMove { x, y } = ev {
+            if self.run_toast.hover(Point { x, y }) {
+                self.redraw();
+            }
         }
         // 마우스 다운은 포커스를 옮긴다.
         // 우클릭 메뉴가 열리기 전에 "붙여넣기 가능" 여부를 넣어 준다.
         if matches!(ev, InputEvent::RightDown { .. }) {
-            let has = clipboard::read_text().is_some_and(|s| !s.is_empty());
+            // 설정 `ui.clipboard_probe`(향상 모드는 끔): 끄면 클립보드를 읽지 않고 붙여넣기를 항상 활성으로.
+            let has = !self.settings.flag("ui.clipboard_probe")
+                || clipboard::read_text().is_some_and(|s| !s.is_empty());
             if let Some(tb) = self.focused_textbox() {
                 tb.set_clipboard_has_text(has);
             }
@@ -4699,6 +5716,12 @@ impl App {
                 PaletteAction::Pick(id) => {
                     self.palette.close();
                     self.menu_action(&id);
+                }
+                PaletteAction::Prompt { id, text } => {
+                    self.palette.close();
+                    if let Some(i) = id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok()) {
+                        self.editors.rename_tab(i, &text);
+                    }
                 }
             }
             self.redraw();
@@ -4760,7 +5783,7 @@ impl App {
         }
         if is_mouse {
             if let InputEvent::RightDown { x, y } = ev {
-                if self.toolbar.bounds().contains(Point { x, y }) {
+                if self.tool_dock.bounds().contains(Point { x, y }) {
                     self.open_toolbar_menu(x, y);
                     self.redraw();
                     return;
@@ -4770,10 +5793,11 @@ impl App {
             if let Some(id) = self.menubar.take_picked() {
                 self.menu_action(&id);
             }
-            self.toolbar.on_event(&ev, &mut inv);
-            if let Some(id) = self.toolbar.take_clicked() {
+            self.tool_dock.on_event(&ev, &mut inv);
+            if let Some(id) = self.tool_dock.take_clicked() {
                 self.menu_action(&id);
             }
+            self.drain_dock_actions();
             if self.menubar.is_open() {
                 self.redraw();
                 return;
@@ -4935,6 +5959,9 @@ impl App {
             if let Some(i) = self.editors.take_tx_close_request() {
                 self.close_tab_guarded(i);
             }
+            if let Some(req) = self.editors.take_tab_menu_request() {
+                self.tab_menu_request(req);
+            }
             self.set_focus(Focus::Editor);
             self.redraw();
             return;
@@ -5083,6 +6110,16 @@ impl ApplicationHandler<Wake> for App {
                 owner.as_deref(),
             );
         }
+        // 툴바 배치 복원(설정 `toolbar.layout` · 플로팅 창은 about_to_wait에서 생성).
+        self.apply_tool_layout_setting();
+        // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
+        self.demo_ready = Self::demo_exists();
+        self.rebuild_menus();
+        if !self.demo_ready && !self.settings.flag("demo.prompted") {
+            let _ = self.settings.set("demo.prompted", "on");
+            self.persist_settings();
+            self.pending_demo_prompt = true;
+        }
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _ev: Wake) {
@@ -5090,13 +6127,37 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        if std::mem::take(&mut self.pending_demo_prompt) {
+            self.open_demo_prompt();
+        }
+        if let Some(rx) = self.demo_job.as_ref() {
+            if let Ok(r) = rx.try_recv() {
+                self.demo_job = None;
+                self.finish_demo(r);
+            }
+        }
+        // 툴바 떼어 내기 요청 → 플로팅 창(창 생성은 이벤트 루프 핸들이 있는 여기서) · 바뀐 배치는 한 번에 저장.
+        if !self.pending_float.is_empty() {
+            let reqs = std::mem::take(&mut self.pending_float);
+            for (gid, at) in reqs {
+                self.open_float(el, &gid, at);
+            }
+        }
+        if self.tool_layout_dirty {
+            self.save_tool_layout();
+        }
         // 캐럿 깜빡임 — 0.5초 타이머가 **실제로 만료됐을 때만** 다시 그린다.
         // ★ 매 호출마다 request_redraw를 하면 그리기 → about_to_wait → 그리기의 무한 루프가 되어
         //   유휴 CPU 한 코어 100% · 키 입력이 프레임당 하나씩만 처리되는 지연(글자 14개에 3초 ·
         //   옛 결과가 화면에 남음)이 생긴다(09-13 Windows 실기 계측).
         let now = Instant::now();
         if now >= self.next_blink {
-            self.next_blink = now + Duration::from_millis(500);
+            // 캐럿 깜빡임 끔(`editor.caret_blink` · 향상 모드) = 타이머 깨움 없음(캐럿은 켜진 채).
+            self.next_blink = if self.settings.flag("editor.caret_blink") {
+                now + Duration::from_millis(500)
+            } else {
+                now + Duration::from_secs(3600)
+            };
             if self.focus == Focus::Editor {
                 self.redraw();
             }
@@ -5128,6 +6189,13 @@ impl ApplicationHandler<Wake> for App {
         }
         if self.toasts.tick(Instant::now()) {
             self.redraw();
+        }
+        {
+            let (rd, next) = self.run_toast.tick(Instant::now());
+            self.run_toast_next = next;
+            if rd {
+                self.redraw();
+            }
         }
         if self.log_win.tick(now_ms) {
             self.log_win.redraw();
@@ -5184,8 +6252,10 @@ impl ApplicationHandler<Wake> for App {
             || self.search.animating()
             || self.editors.tooltip_pending()
             || self.toasts.animating();
+        // 애니메이션 프레임 간격 = 1000 / `ui.max_fps`(60 = 16ms · 30 = 33ms · 15 = 66ms · 향상 모드 30).
+        let frame_ms = (1000 / self.settings.int("ui.max_fps").clamp(5, 240)).max(4) as u64;
         let mut next = if bars_live {
-            self.next_blink.min(now + Duration::from_millis(33))
+            self.next_blink.min(now + Duration::from_millis(frame_ms))
         } else {
             self.next_blink
         };
@@ -5200,6 +6270,9 @@ impl ApplicationHandler<Wake> for App {
         }
         // Oracle 라이브 로그 폴링(실행 중에만 · 끝나면 마지막 1회).
         if let Some(t) = self.live_tick(now) {
+            next = next.min(t);
+        }
+        if let Some(t) = self.run_toast_next {
             next = next.min(t);
         }
         el.set_control_flow(ControlFlow::WaitUntil(next));
@@ -5337,7 +6410,17 @@ impl ApplicationHandler<Wake> for App {
                     self.prefs_win.refresh(&self.settings);
                     self.prefs_win.redraw();
                 }
-                PrefsAction::OpenColors => self.open_colors = true,
+                PrefsAction::OpenColors(key) => {
+                    // hover/pressed는 기본 모드 · 그 밖의 `*_color` 키는 그 키 하나를 고르는 모드(09-17).
+                    match nsql_settings::entry(&key) {
+                        Some(e) if !matches!(e.key, "ui.hover_color" | "ui.pressed_color") => {
+                            let v = color_setting(&self.settings, e.key);
+                            self.colors_win.set_key_mode(e.key, v, &self.theme);
+                        }
+                        _ => self.colors_win.set_default_mode(&self.theme),
+                    }
+                    self.open_colors = true;
+                }
                 PrefsAction::OpenKeys => self.open_keys = true,
                 PrefsAction::EditJson => self.edit_settings_json(),
                 PrefsAction::None => {}
@@ -5377,6 +6460,11 @@ impl ApplicationHandler<Wake> for App {
                 ColorsAction::Changed { target, hex } => {
                     apply_color(target, Some(&hex));
                     let _ = self.settings.set(target.key(), &hex);
+                    if let ColorTarget::Key(k) = target {
+                        self.apply_setting(k);
+                        self.prefs_win.refresh(&self.settings);
+                        self.prefs_win.redraw();
+                    }
                     let recent = self
                         .colors_win
                         .recent()
@@ -5390,15 +6478,72 @@ impl ApplicationHandler<Wake> for App {
                     self.conn_win.redraw();
                 }
                 ColorsAction::Reset => {
-                    for tg in ColorTarget::ALL {
-                        apply_color(tg, None);
-                        let _ = self.settings.reset(tg.key());
+                    if let Some(k) = self.colors_win.key_mode_key() {
+                        let _ = self.settings.reset(k);
+                        self.apply_setting(k);
+                        self.prefs_win.refresh(&self.settings);
+                        self.prefs_win.redraw();
+                    } else {
+                        for tg in ColorTarget::ALL {
+                            apply_color(tg, None);
+                            let _ = self.settings.reset(tg.key());
+                        }
                     }
                     let _ = self.settings.save();
                     self.redraw();
                     self.conn_win.redraw();
                 }
                 ColorsAction::None => {}
+            }
+            return;
+        }
+        if let Some(fi) = self.tool_floats.iter().position(|f| f.is(id)) {
+            let gid = self.tool_floats[fi].group.clone();
+            match self.tool_floats[fi].handle(&event) {
+                FloatAction::Paint => {
+                    if let Some(bar) = self.tool_dock.bar_mut(&gid) {
+                        self.tool_floats[fi].paint(bar, &self.ui_font, &self.theme);
+                    }
+                }
+                FloatAction::Input(ev) => {
+                    let client = self.tool_floats[fi].client();
+                    let sc = self.tool_floats[fi].scale();
+                    let mut inv = Invalidations::default();
+                    let mut clicked = None;
+                    if let Some(bar) = self.tool_dock.bar_mut(&gid) {
+                        bar.set_scale(sc);
+                        bar.set_bounds(client, &mut inv);
+                        bar.on_event(&ev, &mut inv);
+                        clicked = bar.take_clicked();
+                    }
+                    if matches!(ev, InputEvent::RightDown { .. }) {
+                        // 플로팅 창 우클릭 = 붙이기(한 번의 입력으로 · 팝업 규칙).
+                        self.dock_group(&gid);
+                        return;
+                    }
+                    if !inv.is_empty() {
+                        self.tool_floats[fi].redraw();
+                    }
+                    if let Some(cmd) = clicked {
+                        self.menu_action(&cmd);
+                        self.redraw();
+                    }
+                }
+                FloatAction::Moved(x, y) => {
+                    self.tool_dock.set_floating_pos(&gid, x, y);
+                    self.drain_dock_actions();
+                }
+                FloatAction::Close => self.dock_group(&gid),
+                FloatAction::None => {}
+            }
+            return;
+        }
+        if self.txlog_win.is(id) {
+            if let TxLogAction::Paint = self.txlog_win.handle(&event) {
+                let ui_px = self.settings.font_px("ui.font_size");
+                self.txlog_win.set_active_editor(self.editors.active_id());
+                self.txlog_win
+                    .paint(&self.txlog, &self.ui_font, &self.theme, ui_px);
             }
             return;
         }
@@ -5415,10 +6560,16 @@ impl ApplicationHandler<Wake> for App {
                     // 스위치 = 설정과 같은 값(자동 기억 · 설정 창에도 반영).
                     let _ = self.settings.set(key, if on { "on" } else { "off" });
                     let _ = self.settings.save();
+                    if key == "log.dev_mode" {
+                        self.apply_detail_mask();
+                    }
                 }
                 LogWinAction::Setting(key, value) => {
                     let _ = self.settings.set(key, &value);
                     let _ = self.settings.save();
+                    if key == "log.dev_layers" {
+                        self.apply_detail_mask();
+                    }
                 }
                 LogWinAction::SaveAs => {
                     self.file_purpose = FilePurpose::LogExport;
@@ -5471,6 +6622,7 @@ impl ApplicationHandler<Wake> for App {
                 // macOS Control(⌘와 별개 · Sublime `ctrl+cmd+g`) — 다른 OS에선 늘 false.
                 self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
+                self.ctrl_raw = m.state().control_key();
                 // ★ Alt+Shift = 열(블록) 선택 모드(Sublime · 사용자 09-15) — 드래그 시작 판정에 쓴다.
                 let col = self.alt && self.shift;
                 self.editors.set_column_mode(col);
@@ -5530,6 +6682,8 @@ impl ApplicationHandler<Wake> for App {
                     // 2단 코드의 둘째 키(`Ctrl+K, Ctrl+U` · 09-16) — 없는 조합이면 안내만.
                     if let Some(first) = self.pending_chord.take() {
                         match self.keymap.lookup_seq(&first, &ch) {
+                            // 자동 반복(키를 누르고 있음)은 반복해도 되는 명령만(사용자 09-17 Ctrl+T 80개).
+                            Some(id) if kev.repeat && !keymap::repeatable(id) => {}
                             Some(id) => self.key_command(id, el),
                             None => {
                                 self.status = tf(
@@ -5565,6 +6719,11 @@ impl ApplicationHandler<Wake> for App {
                             return;
                         }
                         if let Some(id) = self.keymap.lookup(&ch) {
+                            // ★ 자동 반복 사건은 편집·이동 명령만 실행(사용자 09-17: Ctrl+T를 누르고 있자 탭 80개 · 릴리스 뒤에도
+                            //   밀린 사건이 계속 처리돼 UI가 막혔다). 한 번짜리 명령의 반복은 여기서 즉시 버린다.
+                            if kev.repeat && !keymap::repeatable(id) {
+                                return;
+                            }
                             self.key_command(id, el);
                             return;
                         }
@@ -5582,6 +6741,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.toggle_log) {
             self.toggle_log_window(el);
+        }
+        if std::mem::take(&mut self.open_txlog) {
+            self.open_txlog_window(el);
         }
         if std::mem::take(&mut self.open_colors) {
             // ★ 설정 창에서 열면 **설정 창을 소유자**로(그 위에 뜬다 · 메인 소유면 설정 창 뒤로 숨어 "안 열린 것처럼" 보이던 결함 · 사용자 09-15).
@@ -5669,6 +6831,17 @@ fn is_wheel_ev(ev: &InputEvent) -> bool {
     matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. })
 }
 
+/// 설정의 색 값 → (색, 알파) — `#RRGGBB` = (색, None) · `#RRGGBBAA` = (색, Some(AA/255)) · 빈 값/오류 = (None, None).
+fn color_alpha_setting(settings: &Settings, key: &str) -> (Option<nexa_ctl::Color>, Option<f32>) {
+    let v = settings.get(key).unwrap_or("").trim();
+    let Some(rgba) = nexa_ctl::rgba_from_hex(v) else {
+        return (None, None);
+    };
+    let color = Some(nexa_ctl::Color(rgba >> 8));
+    let alpha = (v.trim_start_matches('#').len() == 8).then(|| f32::from(rgba as u8) / 255.0);
+    (color, alpha)
+}
+
 /// 설정의 색 값(`#RRGGBB[AA]` · 형식 오류/빈 값 = None).
 fn color_setting(settings: &Settings, key: &str) -> Option<String> {
     let v = settings.get(key)?.trim().to_string();
@@ -5692,6 +6865,7 @@ fn apply_color(target: ColorTarget, hex: Option<&str>) {
     match target {
         ColorTarget::Hover => nexa_ctl::tokens::set_hover_color(rgba),
         ColorTarget::Pressed => nexa_ctl::tokens::set_pressed_color(rgba),
+        ColorTarget::Key(_) => {} // 설정 키는 호스트의 apply_setting이 반영
     }
 }
 
@@ -5753,6 +6927,16 @@ fn main() {
         println!("smoke ok — 드라이버: {:?}", nsql_drivers::available());
         return;
     }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("--help" | "-h" | "/?")
+    ) {
+        println!("{}", t(Msg::GuiUsage));
+        return;
+    }
+    // 실행 인자(사용자 09-17): `-c <대상>`/`--connect <대상>`/`<대상>` = 프로필 이름이든 접속 문자열이든 **시작하면서 접속** ·
+    //   `--fill <프로필>` = 폼만 채움(종전 동작). 모르는 옵션은 무시.
+    let (arg_target, arg_fill_only) = parse_gui_args(&args);
     let Ok(el) = EventLoop::<Wake>::with_user_event().build() else {
         eprintln!("event loop creation failed");
         std::process::exit(1);
@@ -5779,10 +6963,10 @@ fn main() {
     );
     let (tests_tx, tests_rx) = mpsc::channel::<worker::TestResult>();
     let wake_proxy: EventLoopProxy<Wake> = el.create_proxy();
-    let initial_target = args.first().cloned();
+    let initial_target = arg_target;
     let profiles = worker::profile_names();
     let mut panel = ConnectPanel::new(nsql_drivers::available());
-    // 실행 인자로 프로필 이름이 오면 폼을 채운다(접속은 Connect 버튼).
+    // 실행 인자가 프로필 이름이면 폼도 채운다(접속은 아래에서 · `--fill`이면 채우기만).
     if let Some(name) = initial_target
         .as_deref()
         .filter(|n| nsql_vault::is_profile_name(n))
@@ -5824,6 +7008,7 @@ fn main() {
         color_setting(&settings, "ui.pressed_color"),
         &recent_colors(&settings),
     );
+    let txlog_cap = settings.int("txlog.max_entries").max(16) as usize;
     let mut app = App {
         window: None,
         ctx: None,
@@ -5838,7 +7023,16 @@ fn main() {
         settings,
         scale: 1.0,
         log_win: LogWin::new(&log_format),
+        txlog: TxLog::new(txlog_cap),
+        txlog_win: TxLogWin::new(),
+        open_txlog: false,
         toasts: toast::Toasts::new(),
+        run_toast: runtoast::RunToast::new(),
+        run_toast_next: None,
+        run_stmt_enabled: true,
+        run_stop_enabled: true,
+        run_cancel_requested: false,
+        run_cancel_drops: false,
         log_hub: None,
         file_purpose: FilePurpose::Editor,
         last_run_items: Vec::new(),
@@ -5868,7 +7062,13 @@ fn main() {
         open_file_dlg: None,
         menubar: MenuBar::new(App::build_menus()),
         tabs_menu_sig: String::new(),
-        toolbar: App::build_toolbar(),
+        tool_dock: App::build_tool_dock(),
+        tool_floats: Vec::new(),
+        pending_float: Vec::new(),
+        tool_layout_dirty: false,
+        demo_ready: false,
+        demo_job: None,
+        pending_demo_prompt: false,
         conn_win: ConnWin::new(panel),
         open_conn: true,
         find: FindBar::new(),
@@ -5906,6 +7106,7 @@ fn main() {
         last_spec: None,
         dialect: DEFAULT_DIALECT,
         tx_dirty: false,
+        tx_read: false,
         tx_pending: Vec::new(),
         tx_stale_logged: false,
         run_editor: 0,
@@ -5930,11 +7131,11 @@ fn main() {
         attempts_max,
         busy: false,
         status,
-        log: Vec::new(),
         cursor: (0, 0),
         shift: false,
         primary: false,
         alt: false,
+        ctrl_raw: false,
         ctrl_mac: false,
         started: Instant::now(),
         next_blink: Instant::now(),
@@ -5961,21 +7162,18 @@ fn main() {
     if let Some(m) = app.settings.perf_hint() {
         app.status = t(m).into();
     }
-    app.grid.set_copy_null(app.settings.flag("grid.copy_null"));
+    let null_text = app
+        .settings
+        .get("grid.null_text")
+        .unwrap_or("NULL")
+        .to_string();
+    app.grid.set_null_text(&null_text);
+    nexa_ctl::controls::set_menu_icons(app.settings.flag("ui.menu_icons"));
     app.log_win
         .set_on_top(app.settings.flag("log.always_on_top"));
     app.editors.set_rulers(rulers);
-    {
-        let secs = |k: &str, min: i64| Duration::from_secs(app.settings.int(k).max(min) as u64);
-        let policy = probe::ProbePolicy {
-            enabled: app.settings.flag("probe.enabled"),
-            max_retries: app.settings.int("probe.max_retries").max(0) as u32,
-            timeout: secs("probe.timeout", 1),
-            retry_delay: secs("probe.retry_delay", 1),
-            interval: secs("probe.interval", 5),
-        };
-        app.conn_win.set_probe(probe_hub, policy);
-    }
+    app.conn_win
+        .set_probe(probe_hub, probe_policy(&app.settings));
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
     app.toasts.configure(
@@ -5987,13 +7185,19 @@ fn main() {
     app.git
         .set_interval(app.settings.int("statusbar.git_secs").max(2) as u64);
     app.apply_ruler_style();
+    app.apply_occurrence_style();
+    app.apply_run_toast();
+    app.apply_detail_mask();
+    app.sync_run_stmt_button();
+    nsql_drivers::set_mssql_encryption(app.settings.get("mssql.encrypt") == Some("login"));
+    nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
     app.apply_tab_accent();
     app.editors
         .set_text_inset(app.settings.int("editor.text_pad_left").clamp(0, 32) as i32);
     app.grid.set_default_page_rows(max_rows);
     app.grid.set_col_limits(
         app.settings.int("grid.col_min_width") as i32,
-        app.settings.int("grid.col_max_width") as i32,
+        app.settings.grid_col_max_chars() as i32,
     );
     app.grid
         .set_auto_fetch(app.settings.flag("grid.auto_fetch"));
@@ -6017,24 +7221,11 @@ fn main() {
     // 스크롤 방향(맥식 자연스러운 스크롤) — 창 세 개 공통.
     input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
     // 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로").
-    {
-        let s = &app.settings;
-        let i = |k: &str| s.int(k);
-        app.conn_win.set_tuning(conn_win::ConnTuning {
-            delete_confirm_ms: i("conn.delete_confirm_ms").max(0) as u64,
-            close_after_ms: i("conn.close_after_connect_ms").max(0) as u64,
-            tooltip_ms: i("ui.tooltip_delay_ms").max(0) as u128,
-            dblclick_ms: i("ui.dblclick_ms").max(0) as u128,
-            slide_ms: i("ui.slide_ms").max(0) as f32,
-            window_w: i("conn.window_w").max(400) as f32,
-            window_h: i("conn.window_h").max(300) as f32,
-            panel_w: i("conn.panel_w").max(200) as f32,
-            button_scale: i("conn.button_scale_pct").clamp(100, 250) as f32 / 100.0,
-            port_w: i("conn.port_w").max(40) as f32,
-        });
-        nexa_ctl::tokens::set_intent_ms(i("ui.hover_intent_ms").clamp(0, 500) as u64);
-        nexa_ctl::tokens::set_fade_out_ms(i("ui.fade_out_ms").clamp(0, 2000) as u32);
-    }
+    app.conn_win.set_tuning(conn_tuning(&app.settings));
+    nexa_ctl::tokens::set_intent_ms(app.settings.int("ui.hover_intent_ms").clamp(0, 500) as u64);
+    nexa_ctl::tokens::set_fade_out_ms(fade_ms(&app.settings, "ui.fade_out_ms", 2000));
+    nexa_fs::shell::set_os_icons(app.settings.flag("file.os_icons"));
+    nexa_dlg::set_probe_chevrons(app.settings.flag("file.probe_chevrons"));
     // hover / 눌림 색(설정 · `#RRGGBBAA` · 비우면 테마 기본).
     for tg in ColorTarget::ALL {
         apply_color(tg, color_setting(&app.settings, tg.key()).as_deref());
@@ -6042,17 +7233,46 @@ fn main() {
     // 페이드 속도 속성 두 단(Fast/Slow)의 실제 ms — 컨트롤은 속도 이름만 알고 여기서 값이 연계된다(사용자 09-14).
     nexa_ctl::tokens::set_fade_ms(
         nexa_ctl::tokens::FadeSpeed::Fast,
-        app.settings.int("ui.fade_fast").clamp(0, 5000) as u32,
+        fade_ms(&app.settings, "ui.fade_fast", 5000),
     );
     nexa_ctl::tokens::set_fade_ms(
         nexa_ctl::tokens::FadeSpeed::Slow,
-        app.settings.int("ui.fade_slow").clamp(0, 5000) as u32,
+        fade_ms(&app.settings, "ui.fade_slow", 5000),
     );
-    // 접속 문자열(URL)로 실행하면 종전처럼 즉시 접속.
-    if let Some(t) = initial_target.filter(|t| !nsql_vault::is_profile_name(t)) {
-        app.busy = true;
-        app.status = tf(Msg::StConnecting, &[&t]);
-        app.worker.send(worker::Cmd::Connect(t));
+    // ★ 실행 인자 접속(사용자 09-17): 프로필 이름이든 접속 문자열이든 스펙으로 풀어 **Connect 버튼과 같은 경로**(`last_spec` →
+    //   접속 뒤 탐색기도 붙는다 · T-104 해결). 스펙으로 못 풀면 종전 `Cmd::Connect(문자열)`.
+    if let Some(target) = initial_target.filter(|_| !arg_fill_only) {
+        let spec = if nsql_vault::is_profile_name(&target) {
+            match Vault::open_default().and_then(|v| v.get(&target)) {
+                Ok(Some(spec)) => Some(spec),
+                _ => {
+                    app.status = tf(Msg::StArgProfileMissing, &[&target]);
+                    None
+                }
+            }
+        } else {
+            nsql_drivers::parse_target(&target, DEFAULT_DIALECT).ok()
+        };
+        match spec {
+            Some(spec) => {
+                app.busy = true;
+                app.status = tf(Msg::StConnecting, &[&spec.redacted()]);
+                app.last_spec = Some(spec.clone());
+                if nsql_vault::is_profile_name(&target) {
+                    app.conn_win.select_by_name(&target);
+                }
+                app.worker.send(worker::Cmd::ConnectSpec {
+                    spec,
+                    reconnect_same: false,
+                });
+            }
+            None if !nsql_vault::is_profile_name(&target) => {
+                app.busy = true;
+                app.status = tf(Msg::StConnecting, &[&target]);
+                app.worker.send(worker::Cmd::Connect(target));
+            }
+            None => {}
+        }
     }
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("{}", tf(Msg::ErrEventLoop, &[&e.to_string()]));
@@ -6134,9 +7354,11 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
     ("file.save", Msg::TipSave),
     ("file.save_as", Msg::TipSaveAs),
     ("run.statement", Msg::TipRunStatement),
+    ("run.stop", Msg::TipRunStop),
     ("run.all", Msg::TipRunAll),
     ("run.commit", Msg::TipCommit),
     ("run.rollback", Msg::TipRollback),
+    ("tx.log", Msg::TipTxLog),
     ("conn.toggle", Msg::TipConnect),
     ("conn.disconnect", Msg::TipDisconnect),
     ("view.log", Msg::TipLog),
@@ -6175,24 +7397,163 @@ fn whitespace_style(settings: &Settings) -> nexa_ctl::WhitespaceStyle {
     };
     let chars: Vec<char> = settings
         .get("editor.whitespace_chars")
-        .unwrap_or("·→_")
+        .unwrap_or("·→$")
         .chars()
         .collect();
     let pick = |i: usize, d: char| match chars.get(i) {
         Some('_') | None => d,
         Some(c) => *c,
     };
-    let color = settings
-        .get("editor.whitespace_color")
-        .filter(|h| h.len() == 6)
-        .and_then(|h| u32::from_str_radix(h, 16).ok())
-        .map(nexa_ctl::Color);
+    let (color, hex_alpha) = color_alpha_setting(settings, "editor.whitespace_color");
     WhitespaceStyle {
         mode,
         space: pick(0, '\0'),
         tab: pick(1, '\0'),
         eol: pick(2, '\0'),
         color,
-        alpha: (settings.int("editor.whitespace_alpha") as f32 / 100.0).clamp(0.0, 1.0),
+        // `#RRGGBBAA`의 AA가 있으면 `editor.whitespace_alpha`보다 우선(09-17).
+        alpha: hex_alpha
+            .unwrap_or((settings.int("editor.whitespace_alpha") as f32 / 100.0).clamp(0.0, 1.0)),
+    }
+}
+
+/// 페이드·슬라이드 ms — 애니메이션 마스터(`ui.animations` · auto = OS 동작 줄이기)가 꺼져 있으면 0.
+fn fade_ms(settings: &Settings, key: &str, max: i64) -> u32 {
+    if settings.animations_enabled() {
+        settings.int(key).clamp(0, max) as u32
+    } else {
+        0
+    }
+}
+
+/// 신호등 정책(설정 `probe.*` · 실효 값 = 향상 모드 반영).
+fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
+    let secs = |k: &str, min: i64| Duration::from_secs(settings.int(k).max(min) as u64);
+    probe::ProbePolicy {
+        enabled: settings.flag("probe.enabled"),
+        max_retries: settings.int("probe.max_retries").max(0) as u32,
+        timeout: secs("probe.timeout", 1),
+        retry_delay: secs("probe.retry_delay", 1),
+        interval: secs("probe.interval", 5),
+        icmp: settings.flag("probe.icmp"),
+    }
+}
+
+/// 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로") — 슬라이드는 애니메이션 마스터를 따른다.
+fn conn_tuning(settings: &Settings) -> conn_win::ConnTuning {
+    let i = |k: &str| settings.int(k);
+    conn_win::ConnTuning {
+        delete_confirm_ms: i("conn.delete_confirm_ms").max(0) as u64,
+        close_after_ms: i("conn.close_after_connect_ms").max(0) as u64,
+        tooltip_ms: i("ui.tooltip_delay_ms").max(0) as u128,
+        dblclick_ms: i("ui.dblclick_ms").max(0) as u128,
+        slide_ms: fade_ms(settings, "ui.slide_ms", 1000) as f32,
+        window_w: i("conn.window_w").max(400) as f32,
+        window_h: i("conn.window_h").max(300) as f32,
+        panel_w: i("conn.panel_w").max(200) as f32,
+        button_scale: i("conn.button_scale_pct").clamp(100, 250) as f32 / 100.0,
+        port_w: i("conn.port_w").max(40) as f32,
+    }
+}
+
+/// 내장 데모 스크립트(`examples/demo.sql` · SQLite · dept/emp + sales 5,000행) — 배포본에 파일을 따로 두지 않는다(DR-27).
+const DEMO_SQL: &str = include_str!("../../../examples/demo.sql");
+
+/// `path`에 데모 DB를 만든다(파일이 이미 있으면 스크립트를 건너뛰고 그대로 쓴다). 실패하면 만들다 만 파일을 지운다.
+fn create_demo_db(path: &Path) -> Result<String, String> {
+    let shown = path.display().to_string();
+    if path.exists() {
+        return Ok(shown);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let target = format!("sqlite:{shown}");
+    let spec = nsql_drivers::parse_target(&target, Dialect::Sqlite)?;
+    let session = nsql_drivers::open(&spec, Dialect::Sqlite).map_err(|e| e.message)?;
+    let opener: nsql_run::Opener = Box::new(|_| {
+        Err(nsql_core::DbError {
+            code: None,
+            message: "demo: no reconnect".into(),
+            position: None,
+        })
+    });
+    let mut runner = nsql_run::Runner::new(Dialect::Sqlite, opener).with_session(session, "demo");
+    let mut errors: Vec<String> = Vec::new();
+    let mut prompt = |_: &str| Some(String::new());
+    let n = runner.run_script(DEMO_SQL, &mut prompt, &mut |e: nsql_run::RunEvent| {
+        if let nsql_run::RunEvent::Error { error, line, .. } = e {
+            errors.push(format!("line {line}: {}", error.message));
+        }
+    });
+    drop(runner);
+    if n > 0 {
+        let _ = std::fs::remove_file(path);
+        return Err(errors.join(" · "));
+    }
+    Ok(shown)
+}
+
+/// GUI 실행 인자 → (접속 대상, 폼만 채우기). `-c/--connect <대상>` · `--fill <프로필>` · 맨 앞 맨 인자 = 대상.
+fn parse_gui_args(args: &[String]) -> (Option<String>, bool) {
+    let mut target: Option<String> = None;
+    let mut fill_only = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-c" | "--connect" => {
+                target = args.get(i + 1).cloned();
+                i += 1;
+            }
+            "--fill" => {
+                target = args.get(i + 1).cloned();
+                fill_only = true;
+                i += 1;
+            }
+            a if a.starts_with('-') => {}
+            a => {
+                if target.is_none() {
+                    target = Some(a.to_string());
+                }
+            }
+        }
+        i += 1;
+    }
+    (target, fill_only)
+}
+
+#[cfg(test)]
+mod arg_tests {
+    use super::*;
+
+    #[test]
+    fn gui_args_pick_target_and_fill_mode() {
+        let a = |v: &[&str]| parse_gui_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(a(&[]), (None, false));
+        assert_eq!(a(&["Demo"]), (Some("Demo".into()), false));
+        assert_eq!(a(&["-c", "Demo"]), (Some("Demo".into()), false));
+        assert_eq!(
+            a(&["--connect", "sqlite:x.db"]),
+            (Some("sqlite:x.db".into()), false)
+        );
+        assert_eq!(a(&["--fill", "Demo"]), (Some("Demo".into()), true));
+        assert_eq!(a(&["--unknown", "Demo"]), (Some("Demo".into()), false));
+    }
+
+    /// 설정 `editor.whitespace = all`이 편집기 스타일 All로 풀린다(사용자 09-17 "전체로 바꿔도 안 바뀜" 진단).
+    #[test]
+    fn whitespace_style_follows_setting() {
+        let dir = std::env::temp_dir().join(format!("nsql-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Settings::open(dir.join("settings.conf"));
+        assert_eq!(
+            whitespace_style(&s).mode,
+            nexa_ctl::WhitespaceMode::Selection
+        );
+        s.set("editor.whitespace", "all").expect("set");
+        let ws = whitespace_style(&s);
+        assert_eq!(ws.mode, nexa_ctl::WhitespaceMode::All);
+        assert_eq!((ws.space, ws.tab, ws.eol), ('·', '→', '$'));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

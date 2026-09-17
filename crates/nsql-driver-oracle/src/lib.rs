@@ -60,7 +60,8 @@ struct OpenCursor {
 
 #[allow(missing_debug_implementations)]
 pub struct OracleSession {
-    conn: Connection,
+    /// `Arc` = 실행 취소 핸들(T-108 · `break_execution`)이 다른 스레드에서 같은 접속을 가리킨다.
+    conn: std::sync::Arc<Connection>,
     cursors: HashMap<u64, RefCursor>,
     next_cursor: u64,
     serveroutput: bool,
@@ -116,7 +117,7 @@ impl OracleSession {
         init_client().map_err(with_client_hint)?;
         let conn = connector.connect().map_err(|e| with_client_hint(err(&e)))?;
         Ok(OracleSession {
-            conn,
+            conn: std::sync::Arc::new(conn),
             cursors: HashMap::new(),
             next_cursor: 1,
             serveroutput: false,
@@ -243,7 +244,25 @@ impl OracleSession {
     }
 }
 
+/// OCIBreak — 진행 중 호출은 `ORA-01013`으로 끝난다.
+struct OracleCancel(std::sync::Weak<Connection>);
+
+impl nsql_core::CancelHandle for OracleCancel {
+    fn cancel(&self) -> Result<(), DbError> {
+        match self.0.upgrade() {
+            Some(c) => c.break_execution().map_err(|e| err(&e)),
+            None => Ok(()), // 접속이 이미 닫혔다
+        }
+    }
+}
+
 impl Session for OracleSession {
+    fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
+        Some(std::sync::Arc::new(OracleCancel(
+            std::sync::Arc::downgrade(&self.conn),
+        )))
+    }
+
     fn dialect(&self) -> Dialect {
         Dialect::Oracle
     }
@@ -266,7 +285,26 @@ impl Session for OracleSession {
             }
             "fetch_size" => self.fetch_size = value.parse().unwrap_or(500),
             "max_rows" => self.max_rows = value.parse().unwrap_or(0),
-            "autocommit" => self.conn.set_autocommit(value == "true"),
+            "autocommit" => {
+                // `Arc<Connection>`(취소 핸들은 `Weak`만 쥔다) — 취소가 진행 중인 찰나가 아니면 유일 소유자다.
+                let on = value == "true";
+                let mut tries = 0;
+                loop {
+                    if let Some(c) = std::sync::Arc::get_mut(&mut self.conn) {
+                        c.set_autocommit(on);
+                        break;
+                    }
+                    tries += 1;
+                    if tries > 50 {
+                        return Err(DbError {
+                            code: None,
+                            message: "connection busy (cancel in progress)".into(),
+                            position: None,
+                        });
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            }
             _ => {}
         }
         Ok(())

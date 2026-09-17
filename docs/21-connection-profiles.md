@@ -51,3 +51,22 @@ GUI       접속 칸에 이름만 넣고 Connect · [이름 칸] + [접속 문�
 - **D-18** macOS Keychain · Linux Secret Service로 기기 키 보호(현재 0600 평문). 결합 시 `device.key`만 교체 — 프로필 재암호화 불요(키 간접 한 겹의 이유).
 - GUI 프로필 **목록 선택**(콤보/로그인 리스트 — Golden식 · [22](22-driver-extensions.md) §1) · 프로필 삭제 UI — 지금은 이름 입력 + Save만.
 - 프로필별 드라이버 버전 고정(`driver=<id>@<ver>`) — [22 §4](22-driver-extensions.md).
+
+## 5. Demo 프로필 · 샘플 데이터(사용자 09-17)
+
+- **무엇**: 서버 없이 바로 써 볼 수 있는 로컬 SQLite — 프로필 이름 **`Demo`** · 파일 `<사용자 설정 폴더>/demo.sqlite`(`NSQL_HOME` 규약 · exe 옆 금지 · 포터블 D-78과도 같은 트리) · 내용 = `examples/demo.sql`(SCOTT `dept`/`emp` + `sales` 5,000행) — 스크립트는 **바이너리에 내장**(`include_str!` · DR-27 배포본에 파일 없음).
+- **언제**: ① **최초 실행 1회** 팝업 "로컬 SQLite 데모를 만들까요?"(지금 만들기 / 나중에) — 설정 `demo.prompted`(HIDDEN · 자동 기억 · 끄면 다음 시작 때 다시) ② **도움말 ▸ 샘플 데이터 만들기(Demo 프로필)…** — 프로필과 파일이 **둘 다 있으면 비활성**(nexa-ctl 풀다운 `MenuEntry::Disabled`).
+- **어떻게**: 배경 스레드 `nsql-demo`가 `nsql_drivers::open(sqlite:…)` 세션에 러너 `run_script`로 내장 스크립트를 실행 → 오류가 하나라도 있으면 파일을 지우고 실패 안내(토스트) → 성공하면 `Vault::save("Demo", spec)` · 접속 창 목록 갱신 · 메뉴 비활성 · 상태줄/로그 "Demo 프로필 준비됨 — 'Demo'로 접속해 SELECT * FROM emp;". 파일이 이미 있으면(프로필만 없던 경우) 스크립트는 건너뛰고 프로필만 만든다.
+- **CLI**: `nsql run -c Demo examples/demo.sql`처럼 같은 프로필을 쓴다 · `nsql conn add Demo sqlite:<경로>`로 손수 만들 수도 있다. 테스트 `demo_db_is_created_from_embedded_script`.
+
+## 6. GUI 실행 인자로 바로 접속(사용자 09-17)
+
+```
+nexa-sql <프로필>                    # 저장된 프로필로 시작하면서 접속(폼도 그 프로필로 채움)
+nexa-sql -c oracle://u:pw@h:1521/svc  # 접속 문자열로 접속(-c/--connect · 맨 인자도 됨)
+nexa-sql sqlite:demo.sqlite
+nexa-sql --fill <프로필>             # 폼만 채우고 접속하지 않음(종전 동작)
+nexa-sql --help                      # 사용법
+```
+
+프로필·문자열 모두 **Connect 버튼과 같은 경로**(`ConnectSpec` → `last_spec`)를 타므로 접속 뒤 오브젝트 탐색기도 붙는다(종전 T-104 결함 = 문자열 접속이 `last_spec`을 안 채워 탐색기 "Not connected"). 프로필이 없으면 상태줄 안내. 스펙으로 못 푸는 문자열은 종전처럼 워커 `Connect(문자열)`.

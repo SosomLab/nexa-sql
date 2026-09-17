@@ -222,6 +222,52 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("file.icon_cache", b(Domain::Mem, "512", "512", "128")),
 ];
 
+/// ★ **실행 속도 향상**(`perf.boost` · 사용자 09-17) — 켜면 이 표의 키는 **사용자 값과 무관하게 이 값으로 강제**되고 설정 창에서 잠긴다.
+/// 목표(사용자 09-17): ① 처음 실행 속도 ② 쿼리·네트워크 실행 속도 ③ 백그라운드·편의 기능 스레드 최소화 ④ 메모리 최소화·빠른 회수 ⑤ 체감 속도.
+/// 원칙: 실제 동작(결과·트랜잭션·접속)에는 영향이 없고 **UI 구성·부가 표시·폴링·I/O에만** 영향을 주는 키만 넣는다. 저장값은 건드리지 않으므로
+/// 끄면 그대로 돌아온다. 분류·제외 근거 = docs/39 §4-6. 등재 키는 전부 레지스트리에 있고 **배선이 있어야** 한다(강제해도 효과 0인 키는
+/// 넣지 않는다: `explorer.tooltip`·`explorer.auto_refresh`·`probe.dns_cache_secs`·`settings.watch_ms`는 기능 미구현이라 제외 · 테스트).
+pub const BOOST: &[(&str, &str)] = &[
+    // ── 렌더링·애니메이션(GFX): 프레임·페이드·깜빡임 = 다시 그리기 횟수
+    ("ui.animations", "off"),
+    ("ui.max_fps", "30"),
+    ("editor.caret_blink", "off"),
+    ("ui.fade_fast", "0"),
+    ("ui.fade_slow", "0"),
+    ("ui.fade_out_ms", "0"),
+    ("ui.slide_ms", "0"),
+    ("ui.hover_intent_ms", "120"),
+    // ── 아이콘·부가 표시(메모리·래스터): 트리 아이콘 · OS 파일 아이콘 · 우클릭 메뉴 아이콘 · 툴팁 · 미니맵 · 선택어 강조
+    ("explorer.icons", "off"),
+    ("file.os_icons", "off"),
+    ("file.probe_chevrons", "off"),
+    ("ui.menu_icons", "off"),
+    ("tabs.tooltip", "off"),
+    ("editor.minimap", "off"),
+    ("editor.highlight_selection", "off"),
+    // ── I/O·기동(파일·프로세스·클립보드·둘째 창): git 프로세스 · 복사 시 HTML 생성 · 우클릭 클립보드 읽기 · 시작 시 로그 창
+    ("statusbar.git", "off"),
+    ("editor.copy_rich", "off"),
+    ("ui.clipboard_probe", "off"),
+    ("log.open_at_start", "off"),
+    ("log.dev_mode", "off"),
+    // ── 메모리(캐시 상한 · 아이콘은 위에서 껐으므로 캐시도 최소)
+    ("file.icon_cache", "128"),
+    // ── 폴링·시도 횟수·시간·스레드(NET/DB 표시용): 신호등(스레드 1) · 탐색기 자동 갱신 · Oracle 라이브 로그
+    ("probe.interval", "300"),
+    ("probe.max_inflight", "1"),
+    ("probe.max_retries", "1"),
+    ("probe.icmp", "off"),
+    ("oracle.live.source", "off"),
+    ("oracle.live.interval_ms", "5000"),
+];
+
+/// 향상 모드가 이 키를 강제하는 값(등재되지 않은 키 = `None`).
+#[must_use]
+pub fn boost_value(key: &str) -> Option<&'static str> {
+    BOOST.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+}
+
 /// 키의 부하원 등재(없으면 부하원이 아니다).
 #[must_use]
 pub fn binding(key: &str) -> Option<&'static PerfBinding> {
@@ -283,6 +329,8 @@ pub fn set_signals_override(sig: Option<nexa_sys::Signals>) {
 /// 값의 출처(`nsql config list perf` 세 번째 열).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PerfSource {
+    /// 실행 속도 향상 모드가 강제한 값(`perf.boost` · 사용자 값·모드보다 우선).
+    Boost,
     /// 사용자가 개별 키를 직접 바꿨다.
     User,
     /// 모드 프리셋(full/balanced/low · auto는 풀린 모드).
@@ -295,6 +343,7 @@ impl PerfSource {
     #[must_use]
     pub const fn label(self) -> Msg {
         match self {
+            PerfSource::Boost => Msg::CfgSrcBoost,
             PerfSource::User => Msg::CfgSrcUser,
             PerfSource::Mode(_) => Msg::CfgSrcMode,
             PerfSource::Default => Msg::CfgSrcDefault,
@@ -346,10 +395,27 @@ impl Settings {
         PERF.iter().any(|(k, _)| self.is_modified(k))
     }
 
-    /// 실효 값 — 개별 값 > 모드 프리셋 > 기본. 모르는 키는 `None`. 부하원이 아닌 키는 [`Settings::get`]과 같다.
+    /// 실행 속도 향상 모드가 켜져 있는가(`perf.boost`).
+    #[must_use]
+    pub fn boost_on(&self) -> bool {
+        self.get("perf.boost") == Some("on")
+    }
+
+    /// 향상 모드가 지금 이 키를 강제·잠금 중인가(설정 창 잠금 · 값은 [`boost_value`]).
+    #[must_use]
+    pub fn boost_locked(&self, key: &str) -> bool {
+        self.boost_on() && boost_value(key).is_some()
+    }
+
+    /// 실효 값 — **향상 모드 강제값** > 개별 값 > 모드 프리셋 > 기본. 모르는 키는 `None`. 부하원이 아닌 키는 [`Settings::get`]과 같다.
     #[must_use]
     pub fn effective(&self, key: &str) -> Option<&str> {
         let e = entry(key)?;
+        if self.boost_on() {
+            if let Some(v) = boost_value(key) {
+                return Some(v);
+            }
+        }
         if self.is_modified(key) {
             return self.get(key);
         }
@@ -366,6 +432,9 @@ impl Settings {
     pub fn perf_source(&self, key: &str) -> Option<PerfSource> {
         let e = entry(key)?;
         let b = e.perf()?;
+        if self.boost_locked(key) {
+            return Some(PerfSource::Boost);
+        }
         if self.is_modified(key) {
             return Some(PerfSource::User);
         }
