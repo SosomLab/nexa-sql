@@ -49,7 +49,7 @@
 
 | kind | 뜻 | 설치가 하는 일 |
 |---|---|---|
-| `builtin` | 앱에 컴파일된 in-process 확장(예 Rainbow Pairs) | 파일 없음 · "설치/삭제" 대신 **켜기/끄기**(`extensions.disabled`) |
+| `builtin` | 앱에 컴파일된 in-process 확장(예 Rainbow Pairs) | 파일 없음 · **설치 = 켜기 + 설정 분류 표시**(`installed.json` 기록) · 삭제 = 끄기 + 분류 숨김 · 끄기/켜기 = `extensions.disabled` |
 | `data` | 문법 · 테마 · 스니펫 · 키맵 같은 **파일 패키지** | `files[]`를 sha256 검증 뒤 `<설정 폴더>/extensions/<id>/<version>/`에 보관하고 `dest`에 배치 · `installed.json`에 기록(삭제 때 되감기) |
 | `wasm` · `process` | 코드 확장(docs/50 §2 · T-118) | **아직 설치 불가**(거부 메시지) |
 
@@ -61,11 +61,30 @@
 <설정 폴더>/<dest>                                ← 배치 파일(예 Packages/…)
 ```
 
+## 저장소 주소 표기
+
+| 입력 | 앱이 읽는 주소 |
+|---|---|
+| `https://github.com/SosomLab/nexa-sql/extensions` | `https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions`(브랜치 `main` 가정) |
+| `https://github.com/SosomLab/nexa-sql/tree/main/extensions` | 같음 |
+| `https://raw.githubusercontent.com/…/extensions` | 그대로 |
+| `/path/to/folder` | 로컬 폴더 |
+
+기본 저장소 = 설정 `extensions.default_repository`(기본값 위 raw 주소). **소스 트리에서 실행하면** 체크아웃의 `extensions/` 폴더를 대신 읽는다(네트워크 0 · push 전에도 같은 메타).
+
+## 사용 순서(처음 한 번)
+
+1. 명령 팔레트(⌘⇧P / Ctrl+Shift+P) → **`Extension Manager: Enable Extension Manager`** — 설정 `extensions.enabled=on`. 이때부터 관리자 명령이 저장소를 읽는다(명령을 실행할 때만 · 자동 조회 없음).
+2. `Extension Manager: Install Extension` → 기본 저장소 index.json의 미설치 패키지 목록 → **Rainbow Pairs 1.0.0** 선택 → 설치(builtin이라 파일 없음 · `installed.json` 기록) → 상태줄 안내문.
+3. 설치 즉시 켜진다: 괄호·인용부호 깊이 색 · 우클릭 "괄호 이동 ▸" · Ctrl+Alt+, . [ ] · 편집 메뉴 4항목.
+4. 설정: Preferences → 그룹 **Extensions ▸ Rainbow Pairs** — `rainbowpair.enabled/quotes/angle/unmatched/match/colors/auto_close/max_kb`. 바꾸면 즉시 전 탭 반영.
+5. 잠시 끄기 = `Extension Manager: Disable Extension`(설정 분류도 숨김) · 되돌리기 = `Enable Extension` · 없애기 = `Remove Extension`(기록 삭제 · 효과 off · 분류 숨김 · 다시 Install 가능).
+
 ## 매니저 명령(명령 팔레트 · Sublime "Package Control: …" 표기)
 
-`Extension Manager: Install Extension` · `Remove Extension` · `List Extensions` · `Enable Extension` · `Disable Extension` ·
+`Extension Manager: Enable Extension Manager`(최초 1회) · `Install Extension` · `Remove Extension` · `List Extensions` · `Enable Extension` · `Disable Extension` ·
 `Add Repository`(루트 URL/폴더 입력 · index.json이 읽히면 등록) · `List Repositories` · `Remove Repository`.
-설정 = `extensions.repositories`(추가 저장소 · 쉼표) · `extensions.disabled`(끈 확장 id · 쉼표).
+설정 = `extensions.enabled` · `extensions.default_repository` · `extensions.repositories`(추가 저장소 · 쉼표) · `extensions.disabled`(끈 확장 id · 쉼표).
 
 ## 패키지 추가 절차(공식 저장소)
 

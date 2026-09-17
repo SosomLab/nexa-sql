@@ -246,6 +246,14 @@ const INDENT_RULES_OPTS: &[(&str, Msg)] = &[
 ];
 
 const OCC_SHAPES: &[(&str, Msg)] = &[("rect", Msg::ValOccRect), ("round", Msg::ValOccRound)];
+/// 열(블록) 선택 마우스 조합(사용자 09-17): auto = OS 규칙(Windows Alt+Shift+좌드래그 · macOS Option+좌드래그 · Linux Sublime = Shift+우드래그).
+const COLUMN_SELECT: &[(&str, Msg)] = &[
+    ("auto", Msg::ValColumnAuto),
+    ("alt_shift", Msg::ValColumnAltShift),
+    ("alt", Msg::ValColumnAlt),
+    ("shift_right", Msg::ValColumnShiftRight),
+];
+
 const RAINBOW_MATCH: &[(&str, Msg)] = &[
     ("off", Msg::ValRainbowMatchOff),
     ("near", Msg::ValRainbowMatchNear),
@@ -587,6 +595,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "3",
     },
     Entry {
+        key: "editor.column_select",
+        cat: Msg::CatEditor,
+        label: Msg::LblColumnSelect,
+        desc: Msg::DescColumnSelect,
+        kind: SettingKind::Choice(COLUMN_SELECT),
+        default: "auto",
+    },
+    Entry {
         key: "editor.highlight_selection",
         cat: Msg::CatEditor,
         label: Msg::LblHighlightSel,
@@ -604,6 +620,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // 확장 매니저(사용자 09-17 · docs/50 §10 · Sublime Package Control 방식): 저장소 목록 · 끈 확장 목록.
+    Entry {
+        key: "extensions.enabled",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtEnabled,
+        desc: Msg::DescExtEnabled,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "extensions.default_repository",
+        cat: Msg::CatExtManager,
+        label: Msg::LblExtDefaultRepo,
+        desc: Msg::DescExtDefaultRepo,
+        kind: SettingKind::Text,
+        default: "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions",
+    },
     Entry {
         key: "extensions.repositories",
         cat: Msg::CatExtManager,
@@ -2315,6 +2347,36 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     ),
 ];
 
+/// ★ OS별 기본값(사용자 09-17 "OS별 차이를 잘 분석해 기능·UI/UX를 관리"): (키, macOS, Linux). Windows = 레지스트리 `default`.
+/// 텍스트 래스터 5키는 Windows GDI ClearType을 흉내내려 넣은 것(42~44차)이라 macOS에서는 **전부 끈다** — Apple 텍스트는
+/// 힌팅·줄기 스냅 없이 부드러운 AA(1x 모니터에서 특히 차이 · 사용자 09-17 "왼쪽/오른쪽 모니터 차이"). Linux는 FreeType 관례(힌트)라 Windows 값.
+pub const OS_DEFAULTS: &[(&str, &str, &str)] = &[
+    ("ui.text_hint", "off", "on"),
+    ("ui.text_snap", "off", "on"),
+    ("ui.text_weight", "0", "25"),
+    ("ui.text_contrast", "100", "140"),
+    ("ui.text_gdi", "off", "off"),
+];
+
+/// 이 OS의 기본값 — [`OS_DEFAULTS`]에 있으면 그것 · 아니면 레지스트리 `default`.
+#[must_use]
+pub fn default_of(key: &str) -> Option<&'static str> {
+    let e = entry(key)?;
+    let os = OS_DEFAULTS
+        .iter()
+        .find(|(k, _, _)| *k == key)
+        .map(|(_, mac, linux)| {
+            if cfg!(target_os = "macos") {
+                *mac
+            } else if cfg!(target_os = "windows") {
+                e.default
+            } else {
+                *linux
+            }
+        });
+    Some(os.unwrap_or(e.default))
+}
+
 /// 확장이 소유한 설정 분류 ↔ 확장 id(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다") — 설정 창이 끈/미설치
 /// 확장의 분류를 숨긴다. 새 확장은 여기 한 줄 + `CATEGORY_TREE`의 Extensions 그룹에 분류 하나.
 pub const EXTENSION_CATEGORIES: &[(Msg, &str)] = &[(Msg::CatExtRainbowPairs, "rainbow-pairs")];
@@ -2614,7 +2676,8 @@ impl Settings {
                         // 옛 기본값 그대로 저장돼 있던 값은 "기본값 유지"로 본다(기본값이 바뀌면 따라간다).
                         let old_default =
                             OLD_DEFAULTS.iter().any(|(key, old)| *key == k && *old == n);
-                        if n != e.default && !old_default {
+                        let def = default_of(e.key).unwrap_or(e.default);
+                        if n != def && !old_default {
                             s.values.insert(k, n);
                         }
                     }
@@ -2636,7 +2699,8 @@ impl Settings {
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
         let e = entry(key)?;
-        Some(self.values.get(key).map_or(e.default, String::as_str))
+        let def = default_of(e.key).unwrap_or(e.default);
+        Some(self.values.get(key).map_or(def, String::as_str))
     }
 
     /// 사용자가 바꾼 값인가(기본값과 다른가) — VS Code의 "Modified" 표시에 해당.
@@ -2651,7 +2715,7 @@ impl Settings {
         let n = normalize(e.kind, raw).ok_or_else(|| {
             SetError::InvalidValue(key.to_string(), raw.to_string(), allowed(e.kind))
         })?;
-        if n == e.default {
+        if n == default_of(e.key).unwrap_or(e.default) {
             self.values.remove(key);
         } else {
             self.values.insert(key.to_string(), n.clone());
@@ -2663,7 +2727,7 @@ impl Settings {
     pub fn reset(&mut self, key: &str) -> Result<&'static str, SetError> {
         let e = entry(key).ok_or_else(|| SetError::UnknownKey(key.to_string()))?;
         self.values.remove(key);
-        Ok(e.default)
+        Ok(default_of(e.key).unwrap_or(e.default))
     }
 
     /// 원자적 저장(폴더가 없으면 만든다). 내용 = 변경분 + 모르는 키.
@@ -2725,7 +2789,9 @@ impl Settings {
             .map(|e| {
                 (
                     e,
-                    self.values.get(e.key).map_or(e.default, String::as_str),
+                    self.values
+                        .get(e.key)
+                        .map_or(default_of(e.key).unwrap_or(e.default), String::as_str),
                     self.values.contains_key(e.key),
                 )
             })
@@ -2826,6 +2892,23 @@ mod tests {
         assert!(ThemeMode::Dark.is_dark(Some(false)));
         assert_eq!(ThemeMode::parse("AUTO"), Some(ThemeMode::System));
         assert_eq!(ThemeMode::System.next().next().next(), ThemeMode::System);
+    }
+
+    /// OS별 기본값도 자기 검증을 통과하고, 이 OS에서 `get`이 그 값을 돌려준다.
+    #[test]
+    fn os_defaults_are_valid_and_applied() {
+        for (k, mac, linux) in OS_DEFAULTS {
+            let e = entry(k).expect("OS 기본값 키는 레지스트리에 있어야 한다");
+            for v in [*mac, *linux] {
+                assert_eq!(normalize(e.kind, v).as_deref(), Some(v), "{k}: {v}");
+            }
+        }
+        let s = Settings::open(std::env::temp_dir().join("nexa-os-defaults-none.conf"));
+        assert_eq!(s.get("ui.text_hint"), default_of("ui.text_hint"));
+        if cfg!(target_os = "macos") {
+            assert_eq!(s.get("ui.text_hint"), Some("off"));
+            assert_eq!(s.get("ui.text_contrast"), Some("100"));
+        }
     }
 
     #[test]

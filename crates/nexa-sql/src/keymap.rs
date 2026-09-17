@@ -305,6 +305,13 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     // Extension Manager(docs/50 §10 · 팔레트 전용 · 단축키 없음).
     Command {
+        id: "ext.enable_mgr",
+        label: Msg::MnExtEnableManager,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
         id: "ext.install",
         label: Msg::MnExtInstall,
         win: "",

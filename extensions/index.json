@@ -1,6 +1,9 @@
 {
   "format": 1,
   "name": "Nexa SQL extensions (official)",
+  "url": "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions",
+  "source": "https://github.com/SosomLab/nexa-sql/tree/main/extensions",
+  "description": "Official extension repository of Nexa SQL — one folder per package, each with extension.json (format 1).",
   "packages": [
     {
       "id": "rainbow-pairs",

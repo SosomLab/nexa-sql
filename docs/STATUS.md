@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-17 (54차 후반) — Enable Extension Manager · 기본 저장소 `extensions.default_repository`(GitHub 주소 → raw) · builtin도 설치해야 켜짐 · 열 선택 마우스 OS별(`editor.column_select`) · **macOS 글꼴 깨짐 = Windows GDI 모방 텍스트 키 → `OS_DEFAULTS`로 macOS 끔** · push
+
 ## 2026-09-17 (54차 · mac · 저녁) — ★ 확장 매니저 1차 ✅(저장소 = `extensions/` · 메타 v1 · Sublime식 팔레트 8명령 · sha256 · SxS) · plugins → extensions 개명 ✅ · Rainbow Pairs 배선(T-119) ✅ · 설정 그룹 Extensions + 끄면 분류 숨김 ✅ · 성능 점검 기준 50 §11 · "SDK 없이?" 50 §12
 
 **⏳ 실기 = journal 54차 ①~⑥**. 미푸시(요청 시). → [journal](journal/2026-09-17.md)

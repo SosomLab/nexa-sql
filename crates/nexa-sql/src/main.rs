@@ -325,6 +325,8 @@ struct App {
     shift: bool,
     primary: bool,
     alt: bool,
+    /// Linux(Sublime) Shift+우클릭 드래그 열 선택이 진행 중 — 우클릭을 좌드래그로 바꿔 보내고 놓으면 끝(메뉴 안 뜸).
+    col_right_drag: bool,
     /// 원시 Control 키(mac에서 ⌘=primary와 구분 · 서브워드 이동).
     ctrl_raw: bool,
     /// macOS Control 눌림(⌘와 별개 · 키맵 `ctrl+cmd+…`).
@@ -1807,7 +1809,14 @@ impl App {
 
     /// 확장 효과 적용(시작 · 설정 변경 · 켜기/끄기): 레지스트리 → 편집기 전 탭(괄호 옵션 · 우클릭 서브메뉴).
     fn apply_extensions(&mut self, changed_key: Option<&str>) {
-        let disabled = self.ext_disabled();
+        // 끈 것 + **설치 기록 없는 내장 확장** = 효과 없음(설치해야 켜진다 · 사용자 09-17).
+        let installed = extensions::manager::installed();
+        let mut disabled = self.ext_disabled();
+        for (id, _) in self.extensions.builtin_ids() {
+            if !installed.iter().any(|r| r.id == id) && !disabled.iter().any(|d| d == id) {
+                disabled.push(id.to_string());
+            }
+        }
         let effects = self
             .extensions
             .on_settings(&self.settings, changed_key, &disabled);
@@ -1822,15 +1831,9 @@ impl App {
             .menu_extras(&disabled, &|id| km.display_of(id));
         self.editors.set_menu_extras(extras);
         // 설정 창: 끈/미설치 확장의 분류는 숨긴다(사용자 09-17 "설치되면 보이고 제거하면 사라진다").
-        let builtin = self.extensions.builtin_ids();
-        let installed = extensions::manager::installed();
         let hidden: Vec<Msg> = nsql_settings::EXTENSION_CATEGORIES
             .iter()
-            .filter(|(_, id)| {
-                disabled.iter().any(|d| d == id)
-                    || !(builtin.iter().any(|(b, _)| b == id)
-                        || installed.iter().any(|r| r.id == *id))
-            })
+            .filter(|(_, id)| disabled.iter().any(|d| d == id))
             .map(|(c, _)| *c)
             .collect();
         self.prefs_win.set_hidden_categories(hidden);
@@ -1857,9 +1860,28 @@ impl App {
             .map(|(i, n)| (i.to_string(), n.to_string()))
             .collect();
         let installed = mgr::installed();
-        let is_installed =
-            |x: &str| builtin.iter().any(|(i, _)| i == x) || installed.iter().any(|r| r.id == x);
+        // builtin도 **설치 기록**이 있어야 설치된 것(설치 = 켜기 + 설정 분류 표시 · 삭제 = 끄기 + 숨김 · 사용자 09-17).
+        let is_installed = |x: &str| installed.iter().any(|r| r.id == x);
+        let _ = &builtin;
         let mut cmds: Vec<(String, String)> = Vec::new();
+        // Package Control처럼 1회 활성화 — 켜기 전에는 목록/설치를 막는다(네트워크 사용을 알리는 지점).
+        if id == "ext.enable_mgr" {
+            let _ = self.settings.set("extensions.enabled", "on");
+            let _ = self.settings.save();
+            self.status = tf(
+                Msg::StExtManagerEnabled,
+                &[&mgr::default_source(&self.settings).display()],
+            );
+            self.log_win
+                .push(LogEntry::new(LogKind::Info, self.status.clone()));
+            self.redraw();
+            return;
+        }
+        if !self.settings.flag("extensions.enabled") {
+            self.status = t(Msg::StExtManagerOff).into();
+            self.redraw();
+            return;
+        }
         match id {
             "ext.install" => {
                 self.ext_catalog.clear();
@@ -1897,27 +1919,6 @@ impl App {
             }
             "ext.remove" | "ext.list" | "ext.enable" | "ext.disable" => {
                 let verb = id.trim_start_matches("ext.");
-                for (i, n) in &builtin {
-                    let off = disabled.iter().any(|d| d == i);
-                    let ok = match verb {
-                        "enable" => off,
-                        "disable" => !off,
-                        _ => true,
-                    };
-                    if ok {
-                        cmds.push((
-                            format!("ext.{verb}:{i}"),
-                            format!(
-                                "{n} · builtin · {}",
-                                if off {
-                                    t(Msg::StExtDisabled)
-                                } else {
-                                    t(Msg::StExtEnabled)
-                                }
-                            ),
-                        ));
-                    }
-                }
                 for r in &installed {
                     let off = disabled.iter().any(|d| d == &r.id);
                     let ok = match verb {
@@ -1961,7 +1962,7 @@ impl App {
                         "ext.repo:default".into(),
                         format!(
                             "{} {}",
-                            mgr::default_source().display(),
+                            mgr::default_source(&self.settings).display(),
                             t(Msg::StExtRepoDefault)
                         ),
                     ));
@@ -2027,20 +2028,15 @@ impl App {
                     }
                 }
             }
-            "remove" => {
-                if self.extensions.builtin_ids().iter().any(|(i, _)| *i == key) {
-                    self.status = tf(Msg::StExtBuiltin, &[key]);
-                } else {
-                    match mgr::remove(key) {
-                        Ok(()) => {
-                            self.status = tf(Msg::StExtRemoved, &[key]);
-                            self.log_win
-                                .push(LogEntry::new(LogKind::Info, self.status.clone()));
-                        }
-                        Err(e) => self.status = e,
-                    }
+            "remove" => match mgr::remove(key) {
+                Ok(()) => {
+                    self.status = tf(Msg::StExtRemoved, &[key]);
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Info, self.status.clone()));
+                    self.apply_extensions(None);
                 }
-            }
+                Err(e) => self.status = e,
+            },
             "enable" | "disable" => {
                 let cur = self
                     .settings
@@ -2071,25 +2067,12 @@ impl App {
                     .into_iter()
                     .find(|r| r.id == key)
                     .map(|r| (r.name, r.version, r.kind.as_str().to_string()))
-                    .or_else(|| {
-                        self.extensions
-                            .builtin_ids()
-                            .into_iter()
-                            .find(|(i, _)| *i == key)
-                            .map(|(_, n)| {
-                                (
-                                    n.to_string(),
-                                    env!("CARGO_PKG_VERSION").to_string(),
-                                    "builtin".into(),
-                                )
-                            })
-                    })
                     .unwrap_or_default();
                 self.status = tf(Msg::StExtInfo, &[&name, &ver, &kind, state]);
             }
             "repo" => {
                 self.status = if key == "default" {
-                    mgr::default_source().display()
+                    mgr::default_source(&self.settings).display()
                 } else {
                     key.parse::<usize>()
                         .ok()
@@ -3232,8 +3215,10 @@ impl App {
             | "edit.bracket_next"
             | "edit.bracket_parent"
             | "edit.bracket_child" => self.run_extension_cmd(id),
-            "ext.install" | "ext.remove" | "ext.list" | "ext.enable" | "ext.disable"
-            | "ext.repo_add" | "ext.repo_list" | "ext.repo_remove" => self.ext_command(id),
+            "ext.enable_mgr" | "ext.install" | "ext.remove" | "ext.list" | "ext.enable"
+            | "ext.disable" | "ext.repo_add" | "ext.repo_list" | "ext.repo_remove" => {
+                self.ext_command(id)
+            }
             x if x.starts_with("ext.") => self.ext_pick(x),
             "edit.expand_brackets" => {
                 if self.editors.cur_mut().expand_to_brackets() {
@@ -4240,6 +4225,11 @@ impl App {
         cmds.push(m("edit.bracket_parent", Msg::MnEdit, Msg::MnBracketParent));
         cmds.push(m("edit.bracket_child", Msg::MnEdit, Msg::MnBracketChild));
         // Extension Manager(Sublime "Package Control: …" 표기 · docs/50 §10).
+        cmds.push(m(
+            "ext.enable_mgr",
+            Msg::MnExtensions,
+            Msg::MnExtEnableManager,
+        ));
         cmds.push(m("ext.install", Msg::MnExtensions, Msg::MnExtInstall));
         cmds.push(m("ext.remove", Msg::MnExtensions, Msg::MnExtRemove));
         cmds.push(m("ext.list", Msg::MnExtensions, Msg::MnExtList));
@@ -6009,7 +5999,25 @@ impl App {
         }
     }
 
-    fn to_ctl_event(&self, event: &WindowEvent) -> Option<InputEvent> {
+    /// 열(블록) 선택 마우스 규칙(설정 `editor.column_select` · auto = OS별 · 사용자 09-17).
+    fn column_rule(&self) -> &'static str {
+        match self.settings.get("editor.column_select").unwrap_or("auto") {
+            "auto" => {
+                if cfg!(target_os = "windows") {
+                    "alt_shift"
+                } else if cfg!(target_os = "macos") {
+                    "alt"
+                } else {
+                    "shift_right"
+                }
+            }
+            "alt" => "alt",
+            "shift_right" => "shift_right",
+            _ => "alt_shift",
+        }
+    }
+
+    fn to_ctl_event(&mut self, event: &WindowEvent) -> Option<InputEvent> {
         let (x, y) = self.cursor;
         let key = |k: CtlKey, shift: bool, primary: bool| InputEvent::Key {
             key: k,
@@ -6032,7 +6040,29 @@ impl App {
                     InputEvent::MouseUp { x, y }
                 }
                 (ElementState::Pressed, winit::event::MouseButton::Right) => {
-                    InputEvent::RightDown { x, y }
+                    // Linux(Sublime) 규칙: Shift+우클릭 = 열 선택 시작 — 좌드래그로 바꿔 보내고 메뉴는 열지 않는다.
+                    if self.column_rule() == "shift_right"
+                        && self.shift
+                        && self.editors.editor_bounds().contains(Point { x, y })
+                    {
+                        self.col_right_drag = true;
+                        self.editors.set_column_mode(true);
+                        InputEvent::MouseDown {
+                            x,
+                            y,
+                            shift: false,
+                            primary: false,
+                        }
+                    } else {
+                        InputEvent::RightDown { x, y }
+                    }
+                }
+                (ElementState::Released, winit::event::MouseButton::Right)
+                    if self.col_right_drag =>
+                {
+                    self.col_right_drag = false;
+                    self.editors.set_column_mode(false);
+                    InputEvent::MouseUp { x, y }
                 }
                 _ => return None,
             },
@@ -7107,8 +7137,12 @@ impl ApplicationHandler<Wake> for App {
                 self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
                 self.ctrl_raw = m.state().control_key();
-                // ★ Alt+Shift = 열(블록) 선택 모드(Sublime · 사용자 09-15) — 드래그 시작 판정에 쓴다.
-                let col = self.alt && self.shift;
+                // ★ 열(블록) 선택 모드(Sublime · 사용자 09-15/09-17 OS별): Windows Alt+Shift · macOS Option · Linux는 우클릭 쪽에서.
+                let col = match self.column_rule() {
+                    "alt_shift" => self.alt && self.shift,
+                    "alt" => self.alt,
+                    _ => self.col_right_drag,
+                };
                 self.editors.set_column_mode(col);
                 return;
             }
@@ -7622,6 +7656,7 @@ fn main() {
         shift: false,
         primary: false,
         alt: false,
+        col_right_drag: false,
         ctrl_raw: false,
         ctrl_mac: false,
         started: Instant::now(),

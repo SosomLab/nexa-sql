@@ -164,6 +164,8 @@
 
 **설정 창**: 그룹 **Extensions** 아래 `Manager`(저장소·끈 확장)와 **확장마다 분류 하나**(`Rainbow Pairs` = `rainbowpair.*`). `EXTENSION_CATEGORIES`(분류 ↔ 확장 id)로 **끈/미설치 확장의 분류는 트리·검색에서 사라진다**(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다"). 정직한 한계: 설정 레지스트리가 정적이라 **data/wasm 확장이 자기 설정을 가져오는 것(extension.json `settings[]` → 동적 등록)은 후속**(T-118 ②) — 지금은 builtin 확장의 설정만 분류로 있다.
 
+**활성화·기본 저장소(사용자 09-17)**: Package Control처럼 **`Extension Manager: Enable Extension Manager`** 1회(`extensions.enabled`) 뒤에만 목록/설치가 되고, 저장소는 명령을 실행할 때만 읽는다(26 §8). 기본 저장소 = `extensions.default_repository`(기본 raw 주소 · GitHub 주소 `github.com/O/R/extensions`·`tree/B/P`는 raw로 자동 변환 · 소스 트리에서는 체크아웃 폴더). **builtin 확장도 설치해야 켜진다**(설치 기록 = `installed.json` · 설치 → 효과 on + 설정 분류 표시 · 삭제 → off + 숨김) — 사용자의 "설치되면 보이고 제거하면 사라진다"를 내장 확장에도 그대로. 사용 순서 = [extensions/README.md §사용 순서](../extensions/README.md).
+
 **첫 확장 = Rainbow Pairs**(`rainbow-pairs` · builtin · [51](51-rainbow-brackets.md)): 깊이별 동적 색 · 짝 없음 표시 · 현재 쌍 밑줄 · 이동 짝(Ctrl+M · 코어) / 이전·다음 형제(Ctrl+Alt+, / .) / 상위(Ctrl+Alt+[) / 하위(Ctrl+Alt+]) · 편집 메뉴 4항목 · 우클릭 "괄호 이동 ▸" 서브메뉴 · 팔레트 · 자동 닫기/감싸기.
 
 ## 11. 확장이 늘어나도 느려지지 않기 — 점검 기준(사용자 09-17 "편집·드래그·실행 속도·메모리가 나빠지면 안 된다")

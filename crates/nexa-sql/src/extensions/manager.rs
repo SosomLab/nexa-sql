@@ -101,8 +101,32 @@ pub(crate) enum Source {
 }
 
 impl Source {
+    /// 문자열 → 원천. GitHub 주소는 raw 주소로 바꾼다(사용자 09-17 "기본 저장소 = github.com/SosomLab/nexa-sql/extensions"):
+    /// `github.com/O/R/tree/B/P` → `raw.githubusercontent.com/O/R/B/P` · `github.com/O/R/P`(tree 없음) → 브랜치 `main`.
     pub(crate) fn parse(s: &str) -> Source {
         let s = s.trim().trim_end_matches('/');
+        if let Some(rest) = s
+            .strip_prefix("https://github.com/")
+            .or_else(|| s.strip_prefix("http://github.com/"))
+        {
+            let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+            if parts.len() >= 2 {
+                let (owner, repo) = (parts[0], parts[1]);
+                let (branch, path) = match parts.get(2) {
+                    Some(&"tree") | Some(&"blob") if parts.len() >= 4 => {
+                        (parts[3], parts[4..].join("/"))
+                    }
+                    Some(_) => ("main", parts[2..].join("/")),
+                    None => ("main", String::new()),
+                };
+                let mut url = format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}");
+                if !path.is_empty() {
+                    url.push('/');
+                    url.push_str(&path);
+                }
+                return Source::Url(url);
+            }
+        }
         if s.starts_with("http://") || s.starts_with("https://") {
             Source::Url(s.to_string())
         } else {
@@ -141,14 +165,19 @@ impl Source {
     }
 }
 
-/// 기본 저장소 — 소스 트리 `extensions/`가 있으면 그것 · 아니면 GitHub raw.
-pub(crate) fn default_source() -> Source {
-    let p = PathBuf::from(SOURCE_TREE_DIR);
-    if p.join("index.json").is_file() {
-        Source::Dir(p.canonicalize().unwrap_or(p))
-    } else {
-        Source::Url(DEFAULT_REMOTE.to_string())
+/// 기본 저장소 — 설정 `extensions.default_repository`(비면 GitHub raw). 값이 공식 URL 그대로이고 **소스 트리
+/// `extensions/`가 있으면 그 폴더**(개발 중 네트워크 0 · push 전에도 같은 메타). 폴더 경로면 그 폴더.
+pub(crate) fn default_source(s: &Settings) -> Source {
+    let conf = s
+        .get("extensions.default_repository")
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(DEFAULT_REMOTE);
+    let local = PathBuf::from(SOURCE_TREE_DIR);
+    if conf == DEFAULT_REMOTE && local.join("index.json").is_file() {
+        return Source::Dir(local.canonicalize().unwrap_or(local));
     }
+    Source::parse(conf)
 }
 
 /// 설정 `extensions.repositories`(쉼표 구분) — 사용자가 더한 것만.
@@ -164,7 +193,7 @@ pub(crate) fn user_sources(s: &Settings) -> Vec<Source> {
 
 /// 모든 저장소(기본 + 사용자 · 중복 제거).
 pub(crate) fn sources(s: &Settings) -> Vec<Source> {
-    let mut out = vec![default_source()];
+    let mut out = vec![default_source(s)];
     for u in user_sources(s) {
         if !out.contains(&u) {
             out.push(u);
@@ -603,5 +632,20 @@ mod tests {
             Source::parse("https://x/y/"),
             Source::Url("https://x/y".into())
         );
+        // GitHub 주소 → raw(사용자 표기 두 가지 + tree/브랜치).
+        let raw = "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions";
+        assert_eq!(
+            Source::parse("https://github.com/SosomLab/nexa-sql/extensions"),
+            Source::Url(raw.into())
+        );
+        assert_eq!(
+            Source::parse("https://github.com/SosomLab/nexa-sql/tree/main/extensions/"),
+            Source::Url(raw.into())
+        );
+        assert_eq!(
+            Source::parse("https://github.com/SosomLab/nexa-sql/tree/dev/ext"),
+            Source::Url("https://raw.githubusercontent.com/SosomLab/nexa-sql/dev/ext".into())
+        );
+        assert_eq!(Source::parse(raw), Source::Url(raw.into()));
     }
 }
