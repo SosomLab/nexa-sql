@@ -1728,10 +1728,6 @@ impl App {
             self.disconnect_pick(id);
             return;
         }
-        if id.starts_with("ex.") && self.explorer.menu_pick(id) {
-            self.layout();
-            return;
-        }
         let (ts, spaces) = self.editors.indent();
         if let Some(e) = id.strip_prefix("enc.set:") {
             self.editors.set_active_encoding(e);
@@ -6677,6 +6673,8 @@ impl App {
                     self.set_focus(Focus::Editor);
                 }
                 ExplorerAction::Status(s) => self.sess.status = s,
+                // (서버 제거는 `ExplorerSet::take_actions`가 안에서 처리한다.)
+                ExplorerAction::RemoveServer => {}
                 ExplorerAction::Copy(s) => {
                     if !clipboard::write_text(&s) {
                         self.sess.status = t(Msg::ErrClipboard).into();
@@ -6741,12 +6739,6 @@ impl App {
         }
         if let Some((tab, id)) = self.editors.take_badge_pick() {
             self.badge_pick(tab, &id);
-        }
-        // 탐색기 머리줄(서버가 둘 이상일 때) → 서버 목록 팝업.
-        if let Some(r) = self.explorer.take_header_click() {
-            let items = self.explorer.server_menu();
-            self.open_status_popup(Rect::new(r.x, r.bottom(), r.w, 1), items);
-            self.redraw();
         }
         self.reap_sessions();
         self.sync_sess();
@@ -7778,7 +7770,7 @@ impl ApplicationHandler<Wake> for App {
                         .settings
                         .get("window.main_size")
                         .and_then(wingeom::parse_size)
-                        .unwrap_or((1100.0, 720.0));
+                        .unwrap_or((1375.0, 945.0));
                     winit::dpi::LogicalSize::new(w, h)
                 }),
         );

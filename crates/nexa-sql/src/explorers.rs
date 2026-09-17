@@ -4,17 +4,17 @@
 //! 그 서버의 탐색기는 유지된다(공유·전용·개별 어느 세션이든). 세션이 0이 되면 메타 **접속만** 닫고 읽어 둔 트리는 남긴다
 //! (오프라인 · 사용자가 목록에서 직접 지운다 — SSMS식). 메타 세션은 한동안 안 쓰면 유휴 회수하고 다음 요청 때 다시 연다.
 //!
-//! 화면에는 한 번에 한 서버의 트리만 보인다 — 활성 편집기 탭의 서버를 따라가고(재접속·재조회 없음 = 전환 비용 0),
-//! 서버가 둘 이상이면 위에 머리줄(서버 이름 · i/n)이 생겨 눌러서 고른다. 호스트가 보는 API는 [`Explorer`]와 같다.
+//! 화면(사용자 09-18): 서버마다 루트 노드가 접속 순으로 추가되고 **한 트리처럼 이어진다** — 첫 서버의 내용이 끝나는 바로 아래에
+//! 다음 서버의 루트가 온다("한 폴더 안의 내부 폴더 둘을 펼친 모습" · 나뉜 패널이 아님). 각 서버의 트리는 자기 내용 전체 높이로 놓이고
+//! **스크롤은 전체에 하나**(공용 뷰포트 = 탐색기 영역 · 각 트리는 `set_clip`으로 보이는 부분만 그린다).
+//! 마우스는 커서 아래 트리로 · 키는 마지막으로 누른 트리로 · 선택은 전체에 하나. 호스트가 보는 API는 [`Explorer`]와 같다.
 
 use crate::explorer::{Explorer, ExplorerAction, LiveReq, LiveResult};
 use crate::worker::same_server;
-use nexa_ctl::controls::ctxmenu::CtxItem;
-use nexa_ctl::draw::{DrawCtx, FontSlot};
+use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::InputEvent;
-use nsql_i18n::{t, Msg};
 use nsql_script::ConnectSpec;
 use std::sync::Arc;
 
@@ -50,12 +50,12 @@ pub(crate) struct ExplorerSet {
     focused: bool,
     bounds: Rect,
     scale: f32,
-    header: Rect,
-    header_hover: bool,
-    header_clicked: bool,
+    /// 마지막 마우스 위치.
+    cursor: Point,
+    /// 이어 붙인 트리 전체의 세로 스크롤(px) · 공용 오버레이 스크롤바.
+    scroll: i32,
+    bars: nexa_ctl::controls::ScrollBars,
 }
-
-const HEADER_H: f32 = 24.0;
 
 impl ExplorerSet {
     pub(crate) fn new(wake: Arc<dyn Fn() + Send + Sync>, visible: bool) -> Self {
@@ -69,9 +69,9 @@ impl ExplorerSet {
             focused: false,
             bounds: Rect::default(),
             scale: 1.0,
-            header: Rect::default(),
-            header_hover: false,
-            header_clicked: false,
+            cursor: Point { x: -1, y: -1 },
+            scroll: 0,
+            bars: nexa_ctl::controls::ScrollBars::new(),
         };
         let p = s.new_pane(None);
         s.panes.push(p);
@@ -86,10 +86,6 @@ impl ExplorerSet {
         Pane { key, ex }
     }
 
-    fn cur(&self) -> &Explorer {
-        &self.panes[self.shown].ex
-    }
-
     fn cur_mut(&mut self) -> &mut Explorer {
         &mut self.panes[self.shown].ex
     }
@@ -98,10 +94,6 @@ impl ExplorerSet {
         self.panes
             .iter()
             .position(|p| p.key.as_ref().is_some_and(|k| same_server(k, spec)))
-    }
-
-    fn keyed(&self) -> usize {
-        self.panes.iter().filter(|p| p.key.is_some()).count()
     }
 
     // ── 서버 관리
@@ -144,8 +136,9 @@ impl ExplorerSet {
         }
     }
 
+    /// 키보드 대상 칸을 옮긴다 — 지금 대상이 빈 자리(서버 아님)일 때만(사용자가 눌러 고른 칸을 탭 전환이 빼앗지 않는다).
     fn show(&mut self, i: usize) {
-        if i < self.panes.len() && i != self.shown {
+        if i < self.panes.len() && i != self.shown && self.panes[self.shown].key.is_none() {
             self.panes[self.shown].ex.set_focused(false);
             self.shown = i;
             let f = self.focused;
@@ -177,76 +170,40 @@ impl ExplorerSet {
         }
     }
 
-    /// 머리줄이 눌렸다(1회성) → 호스트가 서버 메뉴를 그 아래에 연다.
-    pub(crate) fn take_header_click(&mut self) -> Option<Rect> {
-        std::mem::take(&mut self.header_clicked).then_some(self.header)
-    }
-
-    /// 서버 메뉴 항목 — `ex.show:i` · 오프라인 서버는 `ex.remove:i`(붙은 세션이 있는 서버는 지울 수 없다).
-    pub(crate) fn server_menu(&self) -> Vec<CtxItem> {
-        let mut items = Vec::new();
-        let mut removable = Vec::new();
-        for (i, p) in self.panes.iter().enumerate() {
-            if p.key.is_none() {
-                continue;
-            }
-            let (name, ep) = p.ex.title();
-            let mark = if i == self.shown { "●" } else { "   " };
-            let label = if p.ex.is_offline() {
-                format!("{mark} {name}  {ep} · {}", t(Msg::ExpOffline))
-            } else {
-                format!("{mark} {name}  {ep}")
-            };
-            items.push(CtxItem::maybe(
-                format!("ex.show:{i}"),
-                label,
-                i != self.shown,
-            ));
-            if p.ex.is_offline() {
-                removable.push((i, name.to_string()));
-            }
+    /// 오프라인 서버 제거(루트 우클릭 "탐색기에서 제거") — 붙은 세션이 있는 서버는 지울 수 없다(메뉴에 나오지 않는다).
+    fn remove(&mut self, i: usize) {
+        if i >= self.panes.len() || !self.panes[i].ex.is_offline() {
+            return;
         }
-        if !removable.is_empty() {
-            items.push(CtxItem::Separator);
-            for (i, name) in removable {
-                items.push(CtxItem::item(
-                    format!("ex.remove:{i}"),
-                    format!("{} — {name}", t(Msg::ExpRemoveServer)),
-                ));
-            }
-        }
-        items
-    }
-
-    pub(crate) fn menu_pick(&mut self, id: &str) -> bool {
-        if let Some(i) = id.strip_prefix("ex.show:").and_then(|v| v.parse().ok()) {
-            self.show(i);
-            true
-        } else if let Some(i) = id
-            .strip_prefix("ex.remove:")
-            .and_then(|v| v.parse::<usize>().ok())
-        {
-            if i < self.panes.len() && self.panes[i].ex.is_offline() {
-                self.panes[i].ex.disconnect();
-                if self.panes.len() > 1 {
-                    self.panes.remove(i);
-                } else {
-                    self.panes[i].key = None;
-                }
-                // 지운 칸보다 뒤를 보고 있었으면 한 칸 당긴다 · 보던 칸을 지웠으면 같은 자리(없으면 마지막).
-                if i < self.shown {
-                    self.shown -= 1;
-                }
-                self.shown = self.shown.min(self.panes.len() - 1);
-                let (on, f) = (self.visible, self.focused);
-                self.cur_mut().set_visible(on);
-                self.cur_mut().set_focused(f);
-                self.relayout();
-            }
-            true
+        self.panes[i].ex.disconnect();
+        if self.panes.len() > 1 {
+            self.panes.remove(i);
         } else {
-            false
+            self.panes[i].key = None;
         }
+        if i < self.shown {
+            self.shown -= 1;
+        }
+        self.shown = self.shown.min(self.panes.len() - 1);
+        self.relayout();
+    }
+
+    /// 화면에 놓이는 칸(접속 순) — 서버가 하나라도 있으면 서버 칸만, 없으면 빈 자리("Not connected") 하나.
+    fn laid(&self) -> Vec<usize> {
+        let keyed: Vec<usize> = (0..self.panes.len())
+            .filter(|&i| self.panes[i].key.is_some())
+            .collect();
+        if keyed.is_empty() {
+            vec![0]
+        } else {
+            keyed
+        }
+    }
+
+    fn pane_at(&self, p: Point) -> Option<usize> {
+        self.laid()
+            .into_iter()
+            .find(|&i| self.panes[i].ex.visible_rect().contains(p))
     }
 
     // ── `Explorer`와 같은 호스트 API
@@ -286,7 +243,7 @@ impl ExplorerSet {
     }
 
     pub(crate) fn menu_open(&self) -> bool {
-        self.cur().menu_open()
+        self.panes.iter().any(|p| p.ex.menu_open())
     }
 
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
@@ -295,17 +252,48 @@ impl ExplorerSet {
         self.relayout();
     }
 
+    /// 이어 붙인 전체 높이.
+    fn total_h(&self) -> i32 {
+        self.laid()
+            .iter()
+            .map(|&i| self.panes[i].ex.content_height())
+            .sum()
+    }
+
     fn relayout(&mut self) {
         let b = self.bounds;
-        let h = if self.keyed() > 1 {
-            (HEADER_H * self.scale).round() as i32
-        } else {
-            0
-        };
-        self.header = Rect::new(b.x, b.y, b.w, h.min(b.h));
-        let body = Rect::new(b.x, b.y + h, b.w, (b.h - h).max(0));
         let s = self.scale;
-        self.cur_mut().set_bounds(body, s);
+        let laid = self.laid();
+        self.scroll = self.scroll.clamp(0, (self.total_h() - b.h).max(0));
+        let mut y = b.y - self.scroll;
+        for &i in &laid {
+            let h = self.panes[i].ex.content_height();
+            let ex = &mut self.panes[i].ex;
+            ex.set_bounds(Rect::new(b.x, y, b.w, h), s);
+            ex.set_clip(b);
+            ex.set_menu_host(b);
+            y += h;
+        }
+        // 놓이지 않은 칸(빈 자리)은 영역 0.
+        for i in 0..self.panes.len() {
+            if !laid.contains(&i) {
+                self.panes[i].ex.set_bounds(Rect::new(b.x, b.y, 0, 0), s);
+            }
+        }
+    }
+
+    /// 키보드로 옮긴 선택이 보이도록 공용 스크롤을 맞춘다.
+    fn reveal_selection(&mut self) {
+        let b = self.bounds;
+        if let Some((y, h)) = self.panes[self.shown].ex.selected_span() {
+            if y < b.y {
+                self.scroll -= b.y - y;
+            } else if y + h > b.bottom() {
+                self.scroll += y + h - b.bottom();
+            }
+            self.bars.show();
+            self.relayout();
+        }
     }
 
     pub(crate) fn live_poll(&mut self, spec: Option<&ConnectSpec>, req: LiveReq) {
@@ -327,10 +315,21 @@ impl ExplorerSet {
     }
 
     pub(crate) fn take_actions(&mut self) -> Vec<ExplorerAction> {
-        self.panes
-            .iter_mut()
-            .flat_map(|p| p.ex.take_actions())
-            .collect()
+        let mut out = Vec::new();
+        let mut remove = None;
+        for (i, p) in self.panes.iter_mut().enumerate() {
+            for a in p.ex.take_actions() {
+                if a == ExplorerAction::RemoveServer {
+                    remove = Some(i);
+                } else {
+                    out.push(a);
+                }
+            }
+        }
+        if let Some(i) = remove {
+            self.remove(i);
+        }
+        out
     }
 
     /// 모든 서버의 메타 응답을 반영(보이지 않는 서버도 뒤에서 읽기가 끝난다).
@@ -343,71 +342,109 @@ impl ExplorerSet {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.cur_mut().tick(now_ms)
+        let mut any = self.bars.tick(now_ms);
+        for p in &mut self.panes {
+            any |= p.ex.tick(now_ms);
+        }
+        any
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
-        self.cur().bars_visible()
+        self.visible && (self.bars.is_visible() || self.panes.iter().any(|p| p.ex.bars_visible()))
     }
 
+    /// 마우스 라우팅 규칙(CLAUDE.md): 누름·휠은 **커서 아래 칸에만** · 이동은 전 칸(hover 해제용) · 키는 마지막으로 누른 칸 ·
+    /// 메뉴가 열린 칸이 있으면 그 칸이 먼저(모달).
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {
-        if self.header.h > 0 && !self.cur().menu_open() {
-            match *ev {
-                InputEvent::MouseMove { x, y } => {
-                    let over = self.header.contains(Point { x, y });
-                    if over != self.header_hover {
-                        self.header_hover = over;
-                        return true;
-                    }
-                    if over {
-                        return false;
-                    }
+        if let Some(i) = self.panes.iter().position(|p| p.ex.menu_open()) {
+            return self.panes[i].ex.on_event(ev);
+        }
+        // 공용 스크롤(휠 · 스크롤바 끌기)이 먼저.
+        let total = self.total_h();
+        let (_, ny, consumed) = self.bars.on_event(
+            ev,
+            self.bounds,
+            self.bounds.w,
+            total.max(self.bounds.h),
+            0,
+            self.scroll,
+            self.scale,
+        );
+        if ny != self.scroll {
+            self.scroll = ny;
+            self.relayout();
+        }
+        if consumed {
+            return true;
+        }
+        let at = match *ev {
+            InputEvent::MouseDown { x, y, .. }
+            | InputEvent::RightDown { x, y }
+            | InputEvent::MouseUp { x, y } => Some(Point { x, y }),
+            _ => None,
+        };
+        if let Some(p) = at {
+            let Some(i) = self.pane_at(p) else {
+                return false;
+            };
+            if !matches!(ev, InputEvent::MouseUp { .. }) && i != self.shown {
+                // 다른 서버의 트리를 눌렀다 — 선택·키보드 대상은 전체에 하나.
+                let f = self.focused;
+                self.panes[self.shown].ex.set_focused(false);
+                self.panes[self.shown].ex.clear_selection();
+                self.shown = i;
+                self.panes[i].ex.set_focused(f);
+            }
+            return self.panes[i].ex.on_event(ev);
+        }
+        match ev {
+            InputEvent::MouseMove { x, y } => {
+                self.cursor = Point { x: *x, y: *y };
+                let mut any = false;
+                for i in self.laid() {
+                    any |= self.panes[i].ex.on_event(ev);
                 }
-                InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y }
-                    if self.header.contains(Point { x, y }) =>
-                {
-                    self.header_clicked = true;
-                    return true;
-                }
-                _ => {}
+                any
+            }
+            // (휠은 위의 공용 스크롤이 처리한다.)
+            InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => false,
+            _ => {
+                let r = self.cur_mut().on_event(ev);
+                // 키로 선택을 옮겼으면 공용 스크롤이 따라간다(펼침·접힘으로 높이도 바뀔 수 있다).
+                self.relayout();
+                self.reveal_selection();
+                r
             }
         }
-        self.cur_mut().on_event(ev)
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.visible {
             return;
         }
-        self.cur_mut().paint(dc, th);
-        let h = self.header;
-        if h.h == 0 {
-            return;
+        // 트리가 펼쳐지거나 접히면 칸 높이가 달라진다 → 그릴 때마다 다시 놓는다(칸 수만큼의 덧셈).
+        self.relayout();
+        dc.fill_rect(self.bounds, th.panel_bg);
+        let laid = self.laid();
+        for &i in &laid {
+            self.panes[i].ex.paint(dc, th);
         }
-        dc.fill_rect(h, th.chrome_bg);
-        if self.header_hover {
-            dc.fill_rect_alpha(h, th.text, 0.06);
+        let b = self.bounds;
+        dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
+        self.bars.paint(
+            dc,
+            th,
+            b,
+            b.w,
+            self.total_h().max(b.h),
+            0,
+            self.scroll,
+            self.scale,
+        );
+        // 팝업 층 — 모든 칸을 그린 뒤.
+        for &i in &laid {
+            self.panes[i].ex.paint_menu(dc, th);
         }
-        dc.fill_rect(Rect::new(h.x, h.bottom() - 1, h.w, 1), th.border);
-        dc.fill_rect(Rect::new(h.right() - 1, h.y, 1, h.h), th.border);
-        dc.select_font(FontSlot::Base, true);
-        let pad = (8.0 * self.scale).round() as i32;
-        let ty = dc.text_center_y(h.y, h.h);
-        let (name, ep) = self.cur().title();
-        let pos = self
-            .panes
-            .iter()
-            .filter(|p| p.key.is_some())
-            .position(|p| std::ptr::eq(&p.ex, self.cur()))
-            .map_or(1, |i| i + 1);
-        let count = format!("{pos}/{}  ▾", self.keyed());
-        let cw = dc.text_width(&count);
-        let clip = Rect::new(h.x + pad, h.y, (h.w - pad * 3 - cw).max(0), h.h);
-        let head = if name.is_empty() { ep } else { name };
-        dc.text(clip.x, ty, clip, head, th.text);
-        dc.select_font(FontSlot::Base, false);
-        let cr = Rect::new(h.right() - pad - cw, h.y, cw, h.h);
-        dc.text(cr.x, ty, cr, &count, th.text_dim);
     }
 }
 
