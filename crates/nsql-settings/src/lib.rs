@@ -1902,6 +1902,47 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ── 세션 컨텍스트(docs/52) — 전용 세션·유휴 닫기. 기본 사상 = 1 인스턴스 · 1 서버 · 1 계정(전용 세션은 예외라 상한을 둔다).
+    Entry {
+        key: "session.private_connect",
+        cat: Msg::CatSession,
+        label: Msg::LblSessPrivateConnect,
+        desc: Msg::DescSessPrivateConnect,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "session.max_shared",
+        cat: Msg::CatSession,
+        label: Msg::LblSessMaxShared,
+        desc: Msg::DescSessMaxShared,
+        kind: SettingKind::Int { min: 1, max: 32 },
+        default: "8",
+    },
+    Entry {
+        key: "session.max_private",
+        cat: Msg::CatSession,
+        label: Msg::LblSessMaxPrivate,
+        desc: Msg::DescSessMaxPrivate,
+        kind: SettingKind::Int { min: 0, max: 64 },
+        default: "8",
+    },
+    Entry {
+        key: "session.idle_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblSessIdleSecs,
+        desc: Msg::DescSessIdleSecs,
+        kind: SettingKind::Int { min: 0, max: 86400 },
+        default: "1800",
+    },
+    Entry {
+        key: "session.idle_shared",
+        cat: Msg::CatSession,
+        label: Msg::LblSessIdleShared,
+        desc: Msg::DescSessIdleShared,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     // ── 파일 검색(T-81a · docs/36 §2 · D-55)
     Entry {
         key: "search.max_file_kb",
