@@ -1065,7 +1065,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblEditorMinimap,
         desc: Msg::DescEditorMinimap,
         kind: SettingKind::Bool,
-        default: "off",
+        default: "on",
     },
     Entry {
         key: "editor.minimap_width",
@@ -1679,7 +1679,7 @@ pub const REGISTRY: &[Entry] = &[
             min: 400,
             max: 2000,
         },
-        default: "640",
+        default: "748",
     },
     Entry {
         key: "conn.window_h",
@@ -1690,7 +1690,7 @@ pub const REGISTRY: &[Entry] = &[
             min: 300,
             max: 1600,
         },
-        default: "520",
+        default: "526",
     },
     Entry {
         key: "conn.panel_w",
