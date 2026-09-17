@@ -35,6 +35,9 @@ pub(crate) fn format_pos(x: i32, y: i32) -> String {
     format!("{x},{y}")
 }
 
+/// (위치, 크기) — 같은 모니터 판정 결과.
+pub(crate) type Placement = ((i32, i32), Option<(f64, f64)>);
+
 /// 기억된 기하(창마다 · 설정 `window.<name>_pos`/`_size`) — 규칙(사용자 09-17): **같은 모니터면 기록 위치·크기**,
 /// 다른 모니터면 기본 크기·기본 위치(메인 창 가운데/근처).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -45,10 +48,7 @@ pub(crate) struct Memo {
 
 impl Memo {
     /// 기록 위치가 `owner`(메인 창)와 같은 모니터 안이면 `(위치, 크기)` — 아니면 None(= 기본 규칙).
-    pub(crate) fn on_same_monitor(
-        &self,
-        owner: Option<&Window>,
-    ) -> Option<((i32, i32), Option<(f64, f64)>)> {
+    pub(crate) fn on_same_monitor(&self, owner: Option<&Window>) -> Option<Placement> {
         let pos = self.pos?;
         let m = owner.and_then(Window::current_monitor)?;
         rect_contains(monitor_rect(&m), pos).then_some((pos, self.size))
