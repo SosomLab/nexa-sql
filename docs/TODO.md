@@ -151,7 +151,7 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-122** | P1 | 소 | 문지기 우회 불가화 — `worker.send` 직접 호출을 `Sess` 메서드 뒤로 · [30 §1-2](30-architecture-patterns.md) 체크리스트에 "DB로 가는 새 진입점 = `gate_open()`" · 호스트에 남은 분기 3개(52 §12 ②④⑤) 순수 함수화 + MC/DC | — | ☐ |
 | **T-123** | P2 | 소 | ✅ 09-18 세션 상태 추적(`alters_session_state` → 유휴 닫기 제외 · 세션이 바뀌면 1회 안내 · [52 §6-4](52-session-modes.md)) — 잔여: 자동 커밋의 Oracle GTT(`PRESERVE ROWS`) INSERT 감지(카탈로그 필요) | — | 🚧 |
 | **T-124** | P2 | 소 | ✅ 09-18 트랜잭션 로그 **세션 열**(전 세션 합본 · 세션별 트랜잭션 격리) — 잔여: 실행 로그 창 세션 태그 · 세션 필터 UI | — | 🚧 |
-| **T-125** | P0 | 소 | ⏳ **실기 점검 52 §13 ①~⑳**(Windows·mac) — 통제 흐림/복귀 · `CONNECT`/`DISCONNECT` · 탭 표식 메뉴 · 개별 모드 · 유휴 닫기 · 공유 N · Disconnect ▾ · 로그인 창 확장(목록 크기 유지) · 텍스트박스 앞부분 표시/스크롤 표시 자동 숨김 | — | ☐ |
+| **T-125** | P0 | 소 | ⏳ **실기 점검 52 §13 ①~⑳**(Windows·mac) — 통제 흐림/복귀 · `CONNECT`/`DISCONNECT` · 탭 표식 메뉴 · 개별 모드 · 유휴 닫기 · 공유 N · Disconnect ▾ · 로그인 창 확장(목록 크기 유지) · 텍스트박스 앞부분 표시/스크롤 표시 자동 숨김 · **57차**: 탐색기 서버 루트 이어 붙이기(공용 스크롤·키보드 이동·오프라인 제거) · 로그인 목록 경계 끌기/더블클릭 자동 맞춤 · 새 기본 크기 · `examples/oracle-refcursor-pkg.sql` 실행(`PRINT rc`) | — | ☐ |
 | **T-126** | P3 | 소 | CLI `nsql shell` — 세션 1개 전제 확인 · [27 §6 ④](27-cli-conventions.md) 문구를 DR-34에 맞춤(GUI = 전용 세션 · CLI = 세션 교체) | — | ☐ |
 | **T-113** | P2 | 중 | **로그 후속**([48 §5](48-logging-architecture.md)): 완전 지연 포맷(`LogRec` 32B · 텍스트는 표시 시점) · ✅ feature `devlog` 컴파일 타임 제거(09-17) · `trace` 수준 생산 지점 · `tx`/`meta` 층 · ✅ 텍스트 보기 변환 시간(09-17) | 48 39 | ☐ |
 | **T-114** | P2 | 소 | **Sublime 커서 후속**([29 §7-1](29-editor-syntax-palette-statusbar.md)): ✅ Ctrl+M 괄호 짝 · ✅ Ctrl+Shift+M 괄호 안 확장(09-17) · Ctrl+Shift+Space 스코프 확장 · ✅ Ctrl+↑/↓ 스크롤만(09-17) · mac ⌘↑/↓ · 가운데 버튼 열 선택 | 29 | 🚧 |
