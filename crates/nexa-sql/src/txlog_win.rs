@@ -32,6 +32,9 @@ pub(crate) enum TxLogAction {
 
 pub(crate) struct TxLogWin {
     window: Option<Rc<Window>>,
+    /// 창 크기 기억(`wingeom`): 다음 열기 크기 · 마지막 닫힌 크기.
+    pref_size: Option<(f64, f64)>,
+    last_size: Option<(f64, f64)>,
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     scale: f32,
@@ -74,6 +77,8 @@ impl TxLogWin {
     pub(crate) fn new() -> Self {
         TxLogWin {
             window: None,
+            pref_size: None,
+            last_size: None,
             ctx: None,
             surface: None,
             scale: 1.0,
@@ -120,7 +125,10 @@ impl TxLogWin {
         let mut attrs = Window::default_attributes()
             .with_title(self.title())
             .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(960.0, 420.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                self.pref_size.map_or(960.0, |s| s.0),
+                self.pref_size.map_or(420.0, |s| s.1),
+            ));
         if let Some((x, y, w)) = near {
             attrs =
                 attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y + 360));
@@ -151,10 +159,23 @@ impl TxLogWin {
     }
 
     pub(crate) fn close(&mut self) {
+        if let Some(w) = &self.window {
+            self.last_size = Some(crate::wingeom::logical_size(w));
+        }
         self.surface = None;
         self.ctx = None;
         self.window = None;
         self.search.set_focused(false);
+    }
+
+    /// 다음 열기 때 쓸 크기(설정 `window.txlog_size`).
+    pub(crate) fn set_pref_size(&mut self, s: Option<(f64, f64)>) {
+        self.pref_size = s;
+    }
+
+    /// 마지막으로 닫힌 크기(1회성 · 호스트가 설정에 저장).
+    pub(crate) fn take_last_size(&mut self) -> Option<(f64, f64)> {
+        self.last_size.take()
     }
 
     pub(crate) fn is(&self, id: WindowId) -> bool {

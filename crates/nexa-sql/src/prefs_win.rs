@@ -89,6 +89,9 @@ struct Snap {
 
 pub(crate) struct PrefsWin {
     window: Option<Rc<Window>>,
+    /// 창 크기 기억(`wingeom`): 다음 열기 크기 · 마지막 닫힌 크기.
+    pref_size: Option<(f64, f64)>,
+    last_size: Option<(f64, f64)>,
     ctx: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     scale: f32,
@@ -190,6 +193,8 @@ impl PrefsWin {
             hidden: Vec::new(),
             vtree,
             window: None,
+            pref_size: None,
+            last_size: None,
             ctx: None,
             surface: None,
             scale: 1.0,
@@ -459,7 +464,7 @@ impl PrefsWin {
             w.focus_window();
             return;
         }
-        let (lw, lh) = (920.0, 640.0);
+        let (lw, lh) = self.pref_size.unwrap_or((920.0, 640.0));
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinPreferences)))
             .with_theme(theme)
@@ -489,10 +494,23 @@ impl PrefsWin {
     }
 
     pub(crate) fn close(&mut self) {
+        if let Some(w) = &self.window {
+            self.last_size = Some(crate::wingeom::logical_size(w));
+        }
         self.surface = None;
         self.ctx = None;
         self.window = None;
         self.cards.clear();
+    }
+
+    /// 다음 열기 때 쓸 크기(설정 `window.prefs_size`).
+    pub(crate) fn set_pref_size(&mut self, s: Option<(f64, f64)>) {
+        self.pref_size = s;
+    }
+
+    /// 마지막으로 닫힌 크기(1회성 · 호스트가 설정에 저장).
+    pub(crate) fn take_last_size(&mut self) -> Option<(f64, f64)> {
+        self.last_size.take()
     }
 
     fn s(&self, v: f32) -> i32 {

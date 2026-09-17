@@ -23,7 +23,6 @@ mod explorer;
 #[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
-mod wingeom;
 mod file_win;
 mod findbar;
 mod gitstat;
@@ -47,6 +46,7 @@ mod toolfloat;
 mod toolicons;
 mod txlog_win;
 mod winfocus;
+mod wingeom;
 mod worker;
 
 use activity::ActivityBar;
