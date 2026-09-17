@@ -11,8 +11,8 @@ use nexa_ctl::draw::{draw_tooltip, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{
-    Control, InputEvent, Invalidations, SyntaxSpec, TabAction, TabBar, TextBox, WhitespaceStyle,
-    Widget,
+    Control, InputEvent, Invalidations, SyntaxSpec, TabAction, TabBadge, TabBar, TextBox,
+    WhitespaceStyle, Widget,
 };
 use nsql_i18n::{t, Msg};
 use std::collections::HashMap;
@@ -81,8 +81,17 @@ pub(crate) struct Editors {
     minimap_box: (Option<nexa_ctl::theme::Color>, Option<f32>, bool),
     /// 미니맵 동작(뷰포트 hover만 · 클릭 = 글로 · 찾기 띠).
     minimap_opts: (bool, bool, bool),
-    /// 실행 중인 탭 id(탭 제목 앞 ▶ · T-108).
-    running: Option<u64>,
+    /// 실행 중인 탭 id들(탭 제목 앞 ▶ · T-108) — 세션이 여럿이면 동시에 여러 탭이 실행 중일 수 있다(docs/52).
+    running: Vec<u64>,
+    /// 뒤에서 끝난 실행의 표시(docs/52 D-104): 탭 id → 성공 여부 — 제목 앞 ✓/✗ · 그 탭을 보거나 다시 실행하면 지운다.
+    done_marks: HashMap<u64, bool>,
+    /// 탭별 세션 표식(docs/52 §7): 탭 id → (표식, 접속 설명). 없는 탭 = 공유 세션(표식 없음 · 설명은 `conn_desc`).
+    sess_info: HashMap<u64, (TabBadge, String)>,
+    /// 표식 클릭/우클릭(1회성) — 호스트가 그 탭의 세션 메뉴를 만든다.
+    badge_req: Option<usize>,
+    /// 열린 메뉴가 표식 메뉴인가(고른 id를 호스트에 그대로 넘긴다).
+    menu_is_badge: bool,
+    badge_pick: Option<(u64, String)>,
     /// 줄 변경 표시(설정 `editor.diff_marks` · 향상 모드 off).
     diff_marks: bool,
     /// 되돌리기 깊이 상한(`editor.undo_max`).
@@ -176,7 +185,12 @@ impl Editors {
             minimap: (false, 160),
             minimap_box: (None, None, false),
             minimap_opts: (false, false, true),
-            running: None,
+            running: Vec::new(),
+            done_marks: HashMap::new(),
+            sess_info: HashMap::new(),
+            badge_req: None,
+            menu_is_badge: false,
+            badge_pick: None,
             diff_marks: true,
             undo_max: 1000,
             tx_badges: HashMap::new(),
@@ -457,11 +471,70 @@ impl Editors {
     }
 
     /// 실행 중 탭 표시(제목 앞 ▶ · None = 없음).
-    pub(crate) fn set_running(&mut self, id: Option<u64>) {
-        if self.running != id {
-            self.running = id;
+    /// 뒤에서 끝난 실행 표시(`None` = 지움).
+    pub(crate) fn set_done_mark(&mut self, id: u64, ok: Option<bool>) {
+        let changed = match ok {
+            Some(v) => self.done_marks.insert(id, v) != Some(v),
+            None => self.done_marks.remove(&id).is_some(),
+        };
+        if changed {
             self.sync_tabs();
         }
+    }
+
+    pub(crate) fn set_running(&mut self, id: u64, on: bool) {
+        let had = self.running.contains(&id);
+        if on {
+            self.done_marks.remove(&id);
+        }
+        if on && !had {
+            self.running.push(id);
+            self.sync_tabs();
+        } else if !on && had {
+            self.running.retain(|r| *r != id);
+            self.sync_tabs();
+        }
+    }
+
+    /// 탭별 세션 표식·설명 교체(호스트가 세션 상태가 바뀔 때마다 통째로 준다 · 바뀔 때만 다시 그린다).
+    pub(crate) fn set_sess_info(&mut self, info: HashMap<u64, (TabBadge, String)>) {
+        if self.sess_info != info {
+            self.sess_info = info;
+            self.sync_badges();
+        }
+    }
+
+    fn sync_badges(&mut self) {
+        let badges: Vec<TabBadge> = self
+            .ids
+            .iter()
+            .map(|id| self.sess_info.get(id).map_or(TabBadge::None, |(b, _)| *b))
+            .collect();
+        let mut inv = Invalidations::default();
+        self.tabs.set_badges(badges, &mut inv);
+    }
+
+    /// 표식 클릭/우클릭 요청(탭 index · 1회성).
+    pub(crate) fn take_badge_request(&mut self) -> Option<usize> {
+        self.badge_req.take()
+    }
+
+    /// 표식 메뉴 열기 — 항목은 호스트가 만든다(세션 상태를 아는 쪽) · 표식 상자 바로 아래에.
+    pub(crate) fn open_badge_menu(&mut self, i: usize, items: Vec<CtxItem>) {
+        let (x, y) = match self.tabs.badge_rect_of(i) {
+            Some(r) => (r.x, r.bottom()),
+            None => self.cursor,
+        };
+        self.menu_tab = Some(i);
+        self.menu_is_badge = true;
+        let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
+        let text_w = (260.0 * self.scale) as i32;
+        self.menu.open_at(x, y, items, host, text_w);
+    }
+
+    /// 표식 메뉴에서 고른 항목(탭 id, 항목 id · 1회성).
+    pub(crate) fn take_badge_pick(&mut self) -> Option<(u64, String)> {
+        self.badge_pick.take()
     }
 
     /// 오류 줄 마크(논리 줄 0 기준 · 그 탭의 미니맵) — `None` = 지움.
@@ -751,10 +824,14 @@ impl Editors {
             self.titles[i].clone()
         };
         // 실행 중 탭 = 제목 앞 ▶(T-108 · 사용자 09-17).
-        let base = if self.running == Some(self.tab_id(i)) {
+        let base = if self.running.contains(&self.tab_id(i)) {
             format!("▶ {base}")
         } else {
-            base
+            match self.done_marks.get(&self.tab_id(i)) {
+                Some(true) => format!("✓ {base}"),
+                Some(false) => format!("✗ {base}"),
+                None => base,
+            }
         };
         // 미커밋 배지(수동 커밋 · n>0일 때만 · DR-30): count `●3` · dot `●` · 오래되면 `⚠`.
         match self.tx_badges.get(&self.tab_id(i)) {
@@ -874,6 +951,9 @@ impl Editors {
             self.cur_mut().set_focused(false);
             self.active = i;
             self.cur_mut().set_focused(focused);
+            // 이 탭을 봤다 → 뒤에서 끝난 실행 표시는 지운다.
+            let id = self.tab_id(i);
+            self.done_marks.remove(&id);
             self.sync_tabs();
         }
     }
@@ -885,6 +965,7 @@ impl Editors {
             .collect();
         self.tabs.set_tabs(shown.clone(), self.active, &mut inv);
         self.shown_titles = shown;
+        self.sync_badges();
         self.layout(&mut inv);
     }
 
@@ -948,6 +1029,13 @@ impl Editors {
             let consumed = self.menu.on_event(ev);
             if let Some(id) = self.menu.take_picked() {
                 let i = self.menu_tab.take().unwrap_or(self.active);
+                if std::mem::take(&mut self.menu_is_badge) {
+                    if i < self.ids.len() {
+                        self.badge_pick = Some((self.ids[i], id));
+                    }
+                    inv.push(self.bounds);
+                    return true;
+                }
                 self.tab_menu_req = match id.as_str() {
                     "rename" => Some(TabMenuReq::Rename(i)),
                     "close" => Some(TabMenuReq::Close(i)),
@@ -1041,6 +1129,8 @@ impl Editors {
                     let (x, y) = self.cursor;
                     self.open_tab_menu(i, Point { x, y });
                 }
+                // 세션 표식 — 좌클릭·우클릭 모두 그 탭의 세션 메뉴(호스트가 만든다 · docs/52 §7).
+                TabAction::Badge(i) | TabAction::BadgeContext(i) => self.badge_req = Some(i),
             }
         }
         inv.push(self.bounds);
@@ -1050,6 +1140,7 @@ impl Editors {
     /// 탭 우클릭 메뉴(사용자 09-17): 이름 바꾸기 · 닫기 · 왼쪽/오른쪽 닫기 · 모두 닫기 · 파일 위치 열기(파일이 디스크에 있을 때만).
     fn open_tab_menu(&mut self, i: usize, p: Point) {
         self.menu_tab = Some(i);
+        self.menu_is_badge = false;
         let n = self.bufs.len();
         let has_file = self
             .paths
@@ -1147,11 +1238,16 @@ impl Editors {
             t(Msg::PalSetSyntax),
             self.syntax.get(i).map(|s| s.name.as_str()).unwrap_or("")
         ));
-        if !self.conn_desc.is_empty() {
+        // 접속: 전용 세션 탭은 자기 세션 설명(끊겼으면 빈 글) · 그 외는 공유 세션.
+        let conn = match self.ids.get(i).and_then(|id| self.sess_info.get(id)) {
+            Some((_, d)) => d.as_str(),
+            None => self.conn_desc.as_str(),
+        };
+        if !conn.is_empty() {
             card.push('\n');
             card.push_str(t(Msg::TipConnection));
             card.push_str(": ");
-            card.push_str(&self.conn_desc);
+            card.push_str(conn);
         }
         draw_tooltip(dc, th, r, clamp_w, &card, self.scale);
     }

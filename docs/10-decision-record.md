@@ -40,6 +40,7 @@
 | **DR-31** | **자원 거버너**([39](39-resource-governance.md)) — `perf.mode` 기본 **full** + 배터리/원격 세션이면 상태줄 1회 안내(D-58) · 개별 키를 바꾸면 표시 **custom**(D-59) · OS 신호 모듈 = 새 크레이트 **`nexa-sys`**(nexa-ui · D-60) · `db.statement_timeout` 기본 **0**(D-61) | 사용자 09-16 · 종전 D-58~61 | ✅ 09-16 · 구현 = T-90(a/d 1차 ✅) |
 | **DR-32** | **설치기** — Windows **MSI(WiX)**(조용한 설치·GPO · D-49) · macOS `.pkg` 설치 스크립트가 **`/usr/local/bin/nsql` 링크**(D-50) | 사용자 09-16 · 종전 D-49/50 · [33 §2](33-distribution-and-packaging.md) | ✅ 09-16 · 구현 = T-72 |
 | **DR-33** | ★ **결과 데이터 = 한 세트 + 뷰 투영** — 행 단위 `Vec<Value>` 덩어리(`ResultSet` · 드라이버·러너·CLI) · GUI는 **`ResultData`**(페치 세그먼트 `Arc` · 덧붙이기/공유 복사 0) · **`View`**(행 순서·열 부분집합 인덱스) · 렌더러(nsql-io)·그리드·복사·정렬은 **`RowSource` 포트 하나**로 읽는다 · NULL 글자 = `grid.null_text`/`cli.null_text` 한 설정 · 컬럼형/아레나 저장은 T-102 후보 | 사용자 09-17 *"포맷과 상관없이 데이터는 1세트로 관리하고 뷰에 맞춰서"* · 종전 D-2 잔여 | ✅ 09-17 52차 · [journal](journal/2026-09-17.md) |
+| **DR-34** | ★ **세션 컨텍스트 = 통제의 단위**([52](52-session-modes.md)) — 기본 사상 *1 인스턴스 · 1 서버 · 1 계정* · `Sess` = 워커 + 실행·트랜잭션 상태 전부(활성 탭의 세션을 `self.sess`로 맞바꿈) · **한 세션 = 한 번에 한 작업**(`Sess::blocked` · 실행·Explain·페치·건수·키 조회·Commit/Rollback·접속을 문지기 `gate_open` 하나로) · **공유 연결 N개**(접속 창 Connect = 기존 유지 + 추가 · 같은 서버·DB·계정 중복 금지 · 탭은 처음 실행한 연결에 묶임 · 툴바 Disconnect 드롭다운) · **전용 세션** = 편집기 `CONNECT <프로필\|"접속 문자열">` · `DISCONNECT`/탭 표식 메뉴로 공유 복귀 · **개별 모드** `session.mode=per-editor`(처음 활성화될 때 접속 · 해제한 탭은 실행 불가) · 유휴 닫기(전용만 30분 · 열린 트랜잭션·SQLite 제외 · 주기 핑 없음) · 분기 판단은 순수 함수 + MC/DC 테스트 | 사용자 09-18 *"공유/개별 병행 · 실행 진입점 통합 block · connect 명령으로 Private 세션 · 공유 연결은 여러 개 · 기존 연결은 명시적으로 해제하지 않으면 유지"* | ✅ 09-18 56차 · D-96~108 확정·구현 |
 
 ## 2. 권장 확정 대기 (DP)
 
@@ -111,6 +112,7 @@
 | **D-45** | `CONNECT` 동사 — ⓐ 우리 클라이언트 명령 하나(SQL*Plus 상위 호환 · 별칭 `\c`·`:connect` · 권장) / ⓑ 네이티브·래퍼 분리 / ⓒ 접두 필수([27 §6](27-cli-conventions.md)) |
 | **D-46** | 탐색기 메타 세션 — 프로필당 별도 접속(권장) / 편집기 세션 공유 · 설정 `explorer.session`([28 §6](28-object-explorer.md)) |
 | **D-47** | 세션 공유 시 편집기 실행 중 메타 요청 — 대기(권장) / 거부 |
+| ~~D-96~108~~ | 세션 모드([52 §10](52-session-modes.md)) — ✅ 09-18 권장안 확정·구현(사용자 *"결정에 따른 개발도 모두 진행"*): 전용 = 탭 속성 · `CONNECT` 앞 문장 거부 · 활성화 시 접속 · 공유 N 추가(상한 8) · 세션 상태 있는 세션은 유휴 닫기 제외 · 뒤에서 끝난 실행 ✓/✗ · 트랜잭션 로그 세션 열 · 서버별 탐색기(세션 ≥1 유지) · 같은 서버 = 계정까지 · 끊긴 묶음은 표식으로 |
 | **D-40** | ★ `nexa-license` 서명 알고리즘 **포트화** — `alg=ed25519`(dalek 2.x · beep/clip/sql 기본) + `alg=p256`(dir2 · Windows CNG 인박스 · 외부 crate 0 유지) · 루트 키 2개 · 발급기 양쪽 서명([25 §10-2 #4](25-license-tiers-and-server.md)) — 대안 = dir2 제외(단일 Ed25519) |
 | ~~D-39~~ → DR-26 | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |

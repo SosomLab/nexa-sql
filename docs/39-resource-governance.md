@@ -70,6 +70,10 @@
 | 접속 시 추가 왕복(Oracle SID) | 1 | `oracle.live.source`(none이면 생략) | — | — | none | 워커 `ConnectSpec` |
 | 실행 중 라이브 로그 폴링(Oracle) | `oracle.live.interval_ms` · 실행 중만 | `oracle.live.interval_ms` | 1000 | 2000 | 끔 | `live_tick` |
 | 탐색기 메타 세션(접속마다 세션 1) | 1 | `explorer.visible`(숨김 = 세션 안 엶 · 신설 규칙) | 켬 | 켬 | 숨김 | `Explorer::connect` |
+| 탐색기 메타 세션 **서버당 1**(DR-34 · 52 §2-2 · 그 서버에 붙은 세션 ≥1이면 유지 · 0이면 접속만 닫고 트리 유지) | 서버 수 · 유휴 회수 | `session.idle_secs`(메타 세션 유휴 닫기 · 다음 요청 때 재개) · `explorer.visible` | — | — | — | `ExplorerSet::sync_refs` · `suspend_if_idle` |
+| 공유 연결(서버당 DB 세션 1 + 워커 스레드 1 · DR-34) | 8 | `session.max_shared` | — | — | — | `App::new_shared` |
+| 전용/개별 탭 세션(DB 세션 1 + 워커 스레드 1) | 8 | `session.max_private` · `session.private_connect` | — | — | — | `App::new_private` |
+| 유휴 세션 닫기(서버 자원 회수 · 점검 30s 로컬) | 1800 s · 전용만 | `session.idle_secs`(0 = 끔) · `session.idle_shared` | — | — | — | `App::idle_tick` |
 | 탐색기 자동 새로 고침 | `explorer.refresh_secs` | `explorer.auto_refresh` | 끔 | 끔 | 끔 | `Explorer` |
 | 탐색기 노드 로드 | 펼친 노드만 | (구조 · 프리페치 0) | — | — | — | `Explorer::load` |
 | 인텔리전스 메타(T-57 예정) | — | `intel.prefetch`(신설 · schema/none) | schema | schema | none | T-57 |

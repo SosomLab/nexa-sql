@@ -58,6 +58,8 @@ enum Req {
         spec: ConnectSpec,
     },
     Close,
+    /// 메타 세션만 닫는다(유휴 회수 · docs/52 §2-2) — 스펙은 기억해 두었다가 **다음 요청 때 조용히 다시 연다**.
+    Suspend,
     Schemas {
         gen: u64,
         node: usize,
@@ -286,6 +288,12 @@ pub(crate) struct Explorer {
     /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
     live_results: Vec<LiveResult>,
     pub(crate) live_inflight: bool,
+    /// 이 서버에 붙은 세션이 하나도 없어 메타 접속을 닫았다 — **트리(읽어 둔 메타)는 남긴다**(docs/52 §2-2 · 다시 붙으면 새로 읽는다).
+    offline: bool,
+    /// 메타 세션을 유휴로 닫아 두었다(다음 요청 때 메타 스레드가 다시 연다).
+    suspended: bool,
+    /// 마지막으로 메타 요청을 보낸 시각(유휴 회수 판정).
+    last_used: Instant,
 }
 
 fn err_s(e: DbError) -> String {
@@ -296,11 +304,25 @@ fn err_s(e: DbError) -> String {
 fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn() + Send>) {
     let mut session: Option<Box<dyn Session>> = None;
     let mut cur_gen = 0u64;
+    // 유휴로 닫힌 뒤 다시 열 스펙(`Suspend`는 남기고 `Close`는 지운다).
+    let mut resume: Option<ConnectSpec> = None;
     while let Ok(req) = rx.recv() {
+        // 유휴로 닫혀 있었으면 카탈로그 요청 앞에서 다시 연다(사용자 동작 1회당 1접속 · 26 §8).
+        if session.is_none() && !matches!(req, Req::Open { .. } | Req::Close | Req::Suspend) {
+            if let Some(spec) = resume.as_ref() {
+                let default = spec.dialect.unwrap_or(Dialect::Oracle);
+                if let Ok(Ok(s)) =
+                    catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(spec, default)))
+                {
+                    session = Some(s);
+                }
+            }
+        }
         let resp = match req {
             Req::Open { gen, spec } => {
                 session = None;
                 cur_gen = gen;
+                resume = Some(spec.clone());
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
                 let r = catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(&spec, default)));
                 let r = match r {
@@ -316,6 +338,13 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 Resp::Opened { gen, r }
             }
             Req::Close => {
+                resume = None;
+                if let Some(mut s) = session.take() {
+                    let _ = s.rollback();
+                }
+                continue;
+            }
+            Req::Suspend => {
                 if let Some(mut s) = session.take() {
                     let _ = s.rollback();
                 }
@@ -486,6 +515,9 @@ impl Explorer {
             dots_step: 0,
             live_results: Vec::new(),
             live_inflight: false,
+            offline: false,
+            suspended: false,
+            last_used: Instant::now(),
         };
         e.reset_tree();
         e
@@ -505,6 +537,7 @@ impl Explorer {
         self.scroll = 0;
     }
 
+    #[allow(dead_code)] // 호스트는 `ExplorerSet`을 거친다
     pub(crate) fn is_visible(&self) -> bool {
         self.visible
     }
@@ -573,6 +606,7 @@ impl Explorer {
         }
     }
 
+    #[allow(dead_code)] // 호스트는 `ExplorerSet`을 거친다
     pub(crate) fn bounds(&self) -> Rect {
         self.bounds
     }
@@ -588,7 +622,56 @@ impl Explorer {
     }
 
     /// 접속됨 — 메타 세션을 따로 연다(편집기 세션과 분리).
+    /// 루트 표시용 (프로필 이름, 호스트:포트).
+    pub(crate) fn title(&self) -> (&str, &str) {
+        (&self.profile_name, &self.endpoint)
+    }
+
+    pub(crate) fn is_offline(&self) -> bool {
+        self.offline
+    }
+
+    /// 이 서버에 붙은 세션이 0이 됐다 — 메타 접속만 닫고 읽어 둔 트리는 남긴다(펼치지 않은 가지는 더 못 읽는다).
+    pub(crate) fn go_offline(&mut self) {
+        if self.offline || self.conn_desc.is_empty() {
+            return;
+        }
+        self.offline = true;
+        self.suspended = false;
+        self.gen += 1;
+        let _ = self.tx.send(Req::Close);
+        let (tx, rx) = Self::spawn_meta(&self.wake);
+        self.tx = tx;
+        self.rx = rx;
+        self.live_inflight = false;
+        self.source_pending = false;
+        for n in &mut self.nodes {
+            if n.state == LoadState::Loading {
+                n.state = LoadState::Idle;
+            }
+        }
+    }
+
+    /// 유휴 회수 — 한동안 메타 요청이 없었으면 메타 세션만 닫는다(트리·세대 유지 · 다음 요청 때 자동 재개).
+    pub(crate) fn suspend_if_idle(&mut self, limit_secs: u64) {
+        if limit_secs == 0
+            || self.offline
+            || self.suspended
+            || self.conn_desc.is_empty()
+            || self.live_inflight
+            || self.last_used.elapsed().as_secs() < limit_secs
+            || self.nodes.iter().any(|n| n.state == LoadState::Loading)
+        {
+            return;
+        }
+        self.suspended = true;
+        let _ = self.tx.send(Req::Suspend);
+    }
+
     pub(crate) fn connect(&mut self, spec: &ConnectSpec, profile_name: &str) {
+        self.offline = false;
+        self.suspended = false;
+        self.last_used = Instant::now();
         self.gen += 1;
         self.dialect = None;
         self.conn_desc = spec.redacted();
@@ -610,6 +693,8 @@ impl Explorer {
     /// 메타 스레드가 카탈로그 조회에 갇혀 있을 수 있으므로 기다리지 않는다: 옛 스레드에 Close를 남기고 채널을 버리면
     /// (갇힌 호출이 타임아웃으로 풀린 뒤) 세션을 닫고 스스로 끝난다 · 다음 요청은 새 스레드가 받는다.
     pub(crate) fn disconnect(&mut self) {
+        self.offline = false;
+        self.suspended = false;
         self.gen += 1;
         self.dialect = None;
         self.conn_desc.clear();
@@ -629,9 +714,11 @@ impl Explorer {
 
     /// 라이브 로그 폴링 요청(메타 세션 · 진행 중이면 무시).
     pub(crate) fn live_poll(&mut self, req: LiveReq) {
-        if self.live_inflight || self.dialect != Some(Dialect::Oracle) {
+        if self.live_inflight || self.offline || self.dialect != Some(Dialect::Oracle) {
             return;
         }
+        self.last_used = Instant::now();
+        self.suspended = false;
         self.live_inflight = true;
         let _ = self.tx.send(Req::Live { gen: self.gen, req });
     }
@@ -837,6 +924,16 @@ impl Explorer {
 
     /// (재)로드 요청 — Schema는 로컬로 폴더를 만든다(서버 왕복 0).
     fn load(&mut self, i: usize) {
+        // 오프라인(이 서버에 붙은 세션 0) = 읽어 둔 것만 보여 준다 — 새로 읽으러 서버에 붙지 않는다(사용자가 끊은 서버).
+        if self.offline {
+            if !matches!(self.nodes[i].kind, NodeKind::Schema(_)) {
+                self.nodes[i].state = LoadState::Error(t(Msg::ExpNotConnected).to_string());
+                return;
+            }
+        } else {
+            self.last_used = Instant::now();
+            self.suspended = false;
+        }
         let gen = self.gen;
         match self.nodes[i].kind.clone() {
             NodeKind::Root => {
@@ -911,6 +1008,13 @@ impl Explorer {
     }
 
     fn open_source(&mut self, o: &ObjectInfo) {
+        if self.offline {
+            self.actions
+                .push(ExplorerAction::Status(t(Msg::ExpNotConnected).to_string()));
+            return;
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
         if self.source_pending {
             return;
         }
@@ -1226,6 +1330,12 @@ impl Explorer {
                     (t(Msg::ExpNotConnected).to_string(), String::new())
                 } else if self.profile_name.is_empty() {
                     (self.endpoint.clone(), String::new())
+                } else if self.offline {
+                    // 오프라인 = 읽어 둔 메타만(이 서버에 붙은 세션 없음).
+                    (
+                        self.profile_name.clone(),
+                        format!("{} · {}", self.endpoint, t(Msg::ExpOffline)),
+                    )
                 } else {
                     (self.profile_name.clone(), self.endpoint.clone())
                 }

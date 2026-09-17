@@ -4,6 +4,10 @@
 //! - `user/pass@host:1521/svc` · `user/pass@tns` · `user@host` (비밀번호 프롬프트)
 //! - `/ as sysdba` · `user/pass@host:1521/svc as sysdba`
 //! - `mssql://user:pass@host:1433/db` (스킴 = 방언) · `user/pass@host:1433/db?dialect=mssql`
+//! - 따옴표로 감싼 인자: `CONNECT "oracle://scott/tiger@host:1521/svc"`(양끝 `"`·`'` 한 쌍 제거 · docs/52 §4)
+//! - 짧은 스킴(`//` 없음): `oracle:host:1521/svc`(대상만 · 자격은 호스트가 채운다) · `oracle:scott/tiger@host:1521/svc`
+//!   — 방언 이름 뒤 `:` 이고 ① `@`가 없거나 ② logon에 `/`가 있을 때만 스킴으로 본다(`postgres:pw@host` = 종전 user:pass 유지).
+//! - `sqlite:경로` · `sqlite://경로` · `sqlite::memory:`(파일 방언 — 나머지 전부가 경로 · Windows `C:\…` 포함)
 
 use nsql_core::Dialect;
 
@@ -24,22 +28,56 @@ pub struct ConnectSpec {
 
 impl ConnectSpec {
     pub fn parse(arg: &str) -> Result<ConnectSpec, String> {
-        let mut s = arg.trim().to_string();
+        let mut s = strip_quotes(arg.trim()).trim().to_string();
         if s.is_empty() {
             return Err("CONNECT: 접속 문자열이 없습니다".into());
         }
         let mut spec = ConnectSpec::default();
         let mut url_form = false;
+        // 스킴이 있었는가(`://` · 짧은 `방언:`) — `@`가 없으면 나머지는 logon이 아니라 **대상**이다.
+        let mut has_scheme = false;
 
+        // 파일 방언 축약: sqlite:경로(나머지 전부가 경로 — `:`·`/`·`\\`를 해석하지 않는다).
+        if let Some(i) = s.find(':') {
+            if matches!(Dialect::from_name(&s[..i]), Some(Dialect::Sqlite)) {
+                let rest = &s[i + 1..];
+                // 종전 URL 꼴 `sqlite://host/db`(호스트는 무시되고 db만 쓰인다)는 그대로 아래 URL 경로로 — 그 외는 전부 경로.
+                let legacy_url = rest
+                    .strip_prefix("//")
+                    .is_some_and(|r| !r.starts_with(['/', ':', '.', '~']) && r.contains('/'));
+                if !legacy_url {
+                    let db = rest.strip_prefix("//").unwrap_or(rest).trim();
+                    spec.dialect = Some(Dialect::Sqlite);
+                    spec.database = Some(if db.is_empty() { ":memory:" } else { db }.to_string());
+                    return Ok(spec);
+                }
+            }
+        }
         // 방언 스킴: mssql://…
         if let Some(i) = s.find("://") {
             url_form = true;
+            has_scheme = true;
             let scheme = s[..i].to_string();
             spec.dialect = Dialect::from_name(&scheme);
             if spec.dialect.is_none() {
                 return Err(format!("CONNECT: 알 수 없는 스킴 '{scheme}'"));
             }
             s = s[i + 3..].to_string();
+        } else if let Some(i) = s.find(':') {
+            // 짧은 스킴 `oracle:…` — 모호성 규칙은 모듈 문서 참조.
+            if let Some(d) = Dialect::from_name(&s[..i]) {
+                let rest = &s[i + 1..];
+                let body = rest.split('?').next().unwrap_or(rest);
+                let is_scheme = match body.rfind('@') {
+                    None => !body.is_empty(),
+                    Some(at) => body[..at].contains('/'),
+                };
+                if is_scheme {
+                    has_scheme = true;
+                    spec.dialect = Some(d);
+                    s = rest.to_string();
+                }
+            }
         }
         // ?dialect=…
         if let Some(i) = s.find('?') {
@@ -66,9 +104,10 @@ impl ConnectSpec {
         if s == "/" {
             return Ok(spec);
         }
-        // logon@target
+        // logon@target — 스킴이 있고 `@`가 없으면 전부 대상(`oracle:host:1521/svc` · `mssql://host/db`).
         let (logon, target) = match s.rfind('@') {
             Some(i) => (&s[..i], Some(&s[i + 1..])),
+            None if has_scheme => ("", Some(s)),
             None => (s, None),
         };
         // user/pass 또는 user:pass(URL식)
@@ -197,6 +236,16 @@ impl ConnectSpec {
     }
 }
 
+/// 양끝의 같은 따옴표 한 쌍(`"…"` · `'…'`)을 벗긴다 — `CONNECT "…"`(docs/52 §4).
+fn strip_quotes(s: &str) -> &str {
+    let b = s.as_bytes();
+    if b.len() >= 2 && (b[0] == b'"' || b[0] == b'\'') && b[b.len() - 1] == b[0] {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
 /// `%XX` → 바이트(UTF-8). 잘못된 시퀀스는 그대로 둔다.
 pub fn percent_decode(v: &str) -> String {
     let b = v.as_bytes();
@@ -262,6 +311,47 @@ mod tests {
         assert_eq!(c.dialect, Some(Dialect::Postgres));
         assert!(ConnectSpec::parse("foo://u@h").is_err());
         assert!(ConnectSpec::parse("").is_err());
+    }
+
+    /// docs/52 §4: 따옴표 · 짧은 스킴(대상만/자격 포함) · sqlite 축약 · 프로필 이름(=user만).
+    #[test]
+    fn quoted_short_scheme_sqlite_and_profile_name() {
+        let c = ConnectSpec::parse("\"oracle:192.0.0.1:1521/DB\"").unwrap();
+        assert_eq!(c.dialect, Some(Dialect::Oracle));
+        assert_eq!(c.user, None);
+        assert_eq!(c.host.as_deref(), Some("192.0.0.1"));
+        assert_eq!(c.port, Some(1521));
+        assert_eq!(c.database.as_deref(), Some("DB"));
+        let c = ConnectSpec::parse("'oracle:scott/tiger@h:1521/svc'").unwrap();
+        assert_eq!(c.dialect, Some(Dialect::Oracle));
+        assert_eq!(c.user.as_deref(), Some("scott"));
+        assert_eq!(c.password.as_deref(), Some("tiger"));
+        assert_eq!(c.host.as_deref(), Some("h"));
+        // URL 형식도 자격 없이 대상만 줄 수 있다.
+        let c = ConnectSpec::parse("mssql://db.local:1433/master").unwrap();
+        assert_eq!(c.user, None);
+        assert_eq!(c.host.as_deref(), Some("db.local"));
+        assert_eq!(c.database.as_deref(), Some("master"));
+        // 모호한 모양은 종전 해석 유지: user:pass@host.
+        let c = ConnectSpec::parse("postgres:pw@h").unwrap();
+        assert_eq!(c.dialect, None);
+        assert_eq!(c.user.as_deref(), Some("postgres"));
+        assert_eq!(c.password.as_deref(), Some("pw"));
+        // sqlite 축약 — 나머지 전부가 경로.
+        let c = ConnectSpec::parse("sqlite:C:\\data\\a.db").unwrap();
+        assert_eq!(c.dialect, Some(Dialect::Sqlite));
+        assert_eq!(c.database.as_deref(), Some("C:\\data\\a.db"));
+        let c = ConnectSpec::parse("\"sqlite://:memory:\"").unwrap();
+        assert_eq!(c.database.as_deref(), Some(":memory:"));
+        let c = ConnectSpec::parse("sqlite:///Users/me/a.db").unwrap();
+        assert_eq!(c.database.as_deref(), Some("/Users/me/a.db"));
+        // 종전 URL 꼴은 그대로(호스트 자리 무시 · db만).
+        let c = ConnectSpec::parse("sqlite://x/:memory:").unwrap();
+        assert_eq!(c.database.as_deref(), Some(":memory:"));
+        // 프로필 이름 = user만 있는 스펙(호스트의 해석기가 저장소에서 푼다).
+        let c = ConnectSpec::parse("\"prod-db.1\"").unwrap();
+        assert_eq!(c.user.as_deref(), Some("prod-db.1"));
+        assert!(c.host.is_none() && c.password.is_none());
     }
 
     #[test]

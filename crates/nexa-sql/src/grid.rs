@@ -224,6 +224,9 @@ pub(crate) struct Grid {
     total: Option<u64>,
     /// 추가 페치/전체/건수 요청이 워커에 나가 있다(중복 요청 금지).
     fetching: bool,
+    /// ★ 이 결과가 속한 **세션이 다른 작업 중**(docs/52 §3) — 호스트가 알린다. 켜져 있는 동안 추가 페치·전체 조회·건수·새로고침을
+    ///   요청하지 않는다(자동 페치 포함 · 도구줄 흐림). 진행 중인 전체 조회의 ■는 그대로(막힌 상태를 푸는 버튼).
+    session_blocked: bool,
     /// 전체 조회가 나가 있다 — 그 사이 도착하는 늦은 세그먼트는 버린다(사용자 09-17: 자동 페치 중 누른 전체 조회가 무시되던 결함).
     fetch_all_pending: bool,
     fetch_req: Option<FetchReq>,
@@ -354,6 +357,7 @@ impl Default for Grid {
             more: false,
             total: None,
             fetching: false,
+            session_blocked: false,
             fetch_all_pending: false,
             fetch_req: None,
             fetch_progress: None,
@@ -522,7 +526,7 @@ impl Grid {
     /// 전체 조회 요청(도구줄 ⇊ · 09-17 "나머지 이어 받기"): 더 있을 때만 · 자동 페치가 나가 있으면 **큐에 두었다가** 그 세그먼트가
     /// 붙은 뒤 정확한 offset으로 보낸다([`Self::take_fetch_request`]) — 종전엔 교체라 늦은 세그먼트를 버렸다.
     fn request_fetch_all(&mut self) {
-        if self.fetch_all_pending || self.rs.is_none() || !self.more {
+        if self.session_blocked || self.fetch_all_pending || self.rs.is_none() || !self.more {
             return;
         }
         self.fetch_req = Some(FetchReq::All);
@@ -555,14 +559,25 @@ impl Grid {
     ///   나가 있지 않을 때만(클릭 guard와 같은 조건 · 눌러도 아무 일 없는 버튼을 켜 두지 않는다).
     fn sync_fetch_tools(&mut self) {
         let mut inv = Invalidations::default();
+        let open = !self.session_blocked;
         self.tb_fetch
             .set_item_enabled("fetch.stop", self.fetch_all_pending, &mut inv);
-        // 전체 조회 = 나머지 이어 받기라 **더 있을 때만**(전부 받았으면 흐림 · 09-17).
+        // 전체 조회 = 나머지 이어 받기라 **더 있을 때만**(전부 받았으면 흐림 · 09-17) · 세션이 한가할 때만(docs/52 §3).
         self.tb_fetch.set_item_enabled(
             "fetch.all",
-            !self.fetch_all_pending && self.rs.is_some() && self.more,
+            open && !self.fetch_all_pending && self.rs.is_some() && self.more,
             &mut inv,
         );
+        self.tb_fetch.set_item_enabled("count", open, &mut inv);
+        self.tb_refresh.set_item_enabled("refresh", open, &mut inv);
+    }
+
+    /// 세션 통제 상태(호스트 · docs/52 §3) — 바뀔 때만 도구줄을 다시 맞춘다.
+    pub(crate) fn set_session_blocked(&mut self, blocked: bool) {
+        if self.session_blocked != blocked {
+            self.session_blocked = blocked;
+            self.sync_fetch_tools();
+        }
     }
 
     /// 전체 조회 도구줄 상태(테스트·검증용): (전체 조회 활성, 중지 활성).
@@ -959,11 +974,15 @@ impl Grid {
                         let r = self.tb_view.bounds();
                         self.open_view_menu(r.x, r.y, scale);
                     }
-                    Some("refresh") => self.want_refresh = true,
+                    Some("refresh") if !self.session_blocked => self.want_refresh = true,
                     // 전체 조회 = 나머지 이어 받기(자동 페치가 나가 있으면 큐).
                     Some("fetch.all") => self.request_fetch_all(),
                     Some("fetch.stop") => self.request_cancel(),
-                    Some("count") if !self.fetching && !self.source_sql.trim().is_empty() => {
+                    Some("count")
+                        if !self.session_blocked
+                            && !self.fetching
+                            && !self.source_sql.trim().is_empty() =>
+                    {
                         self.fetch_req = Some(FetchReq::Count);
                     }
                     _ => {}
@@ -1164,6 +1183,7 @@ impl Grid {
         let my = (ch - body.h).max(0);
         if self.auto_fetch
             && self.more
+            && !self.session_blocked
             && !self.fetching
             && self.fetch_req.is_none()
             && self.text_job.is_none()
@@ -2046,6 +2066,7 @@ impl Grid {
         // ★ 스크롤이 끝에 닿았고 서버에 더 있으면 다음 세그먼트 1회(진행 중이면 무시 · docs/43 §3-5 자동 페치).
         if self.auto_fetch
             && self.more
+            && !self.session_blocked
             && !self.fetching
             && self.fetch_req.is_none()
             && self.page_rows > 0

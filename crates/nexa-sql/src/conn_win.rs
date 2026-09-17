@@ -304,6 +304,9 @@ pub(crate) struct ConnWin {
     last_click: Option<(usize, Instant)>,
     /// 상세 폼 열림 정도 0.0(닫힘)~1.0(열림) — 슬라이딩 애니메이션 현재값.
     detail_t: f32,
+    /// ★ **목록 창의 크기**(논리 px · 상세 폼을 뺀 폭 × 높이) — 사용자가 창 크기를 바꾸면 따라간다. 상세 폼은 이 크기를 **그대로 둔 채**
+    ///   오른쪽으로 `panel_w × detail_t`만큼 창을 키운다(09-18: 기본 크기로 되돌아가 목록이 줄던 결함 — 크기 기억 뒤 드러남).
+    base: (f64, f64),
     /// (시작 시각 · from · to) — 진행 중 애니메이션.
     anim: Option<(Instant, f32, f32)>,
     /// 서버 신호등(프로필 이름 → 상태·재시도) — [`crate::probe`].
@@ -372,6 +375,7 @@ impl ConnWin {
             ctx_text_w: 0,
             last_click: None,
             detail_t: 0.0,
+            base: (0.0, 0.0),
             anim: None,
             probes: HashMap::new(),
             hub: None,
@@ -934,6 +938,7 @@ impl ConnWin {
             let cy = y + (h as i32 - ph) / 2;
             attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(cx.max(0), cy.max(0)));
         }
+        self.base = (lw, lh);
         self.last_monitor = monitor;
         // 메인 창의 소유 창 — 작업표시줄 항목 하나 · 항상 메인 위(사용자 09-14).
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
@@ -1013,11 +1018,8 @@ impl ConnWin {
         }
         // 창 자체가 오른쪽으로 커진다/줄어든다(목록 폭은 그대로 · 폼은 새 영역에 드러난다).
         if let Some(w) = &self.window {
-            let lw = f64::from(self.tuning.window_w + self.tuning.panel_w * self.detail_t);
-            let _ = w.request_inner_size(winit::dpi::LogicalSize::new(
-                lw,
-                f64::from(self.tuning.window_h),
-            ));
+            let lw = self.base.0 + f64::from(self.tuning.panel_w * self.detail_t);
+            let _ = w.request_inner_size(winit::dpi::LogicalSize::new(lw, self.base.1));
         }
         !done
     }
@@ -1035,7 +1037,8 @@ impl ConnWin {
         }
         if let Some(w) = &self.window {
             if let Some(p) = crate::wingeom::outer_pos(w) {
-                self.last = Some((p, crate::wingeom::logical_size(w)));
+                // 기억하는 크기 = 목록 창 크기(상세 폼이 열린 채 닫아도 다음에 폼 폭만큼 넓게 열리지 않는다).
+                self.last = Some((p, self.base));
             }
         }
         self.surface = None;
@@ -1482,6 +1485,14 @@ impl ConnWin {
             WindowEvent::CloseRequested => self.close(),
             WindowEvent::RedrawRequested => out.push(ConnWinAction::Paint),
             WindowEvent::Resized(_) => {
+                // 사용자가 바꾼 크기 = 목록 창 크기(상세 폼 폭은 뺀다) · 슬라이드 중의 Resized는 우리가 만든 것이라 건너뛴다.
+                if self.anim.is_none() {
+                    if let Some(w) = &self.window {
+                        let (lw, lh) = crate::wingeom::logical_size(w);
+                        let panel = f64::from(self.tuning.panel_w * self.detail_t);
+                        self.base = ((lw - panel).max(200.0), lh);
+                    }
+                }
                 self.layout();
                 self.redraw();
             }

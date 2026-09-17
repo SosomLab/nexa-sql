@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-18 (56차 후반 · mac)** — D-96~108 권장안 개발: **서버별 탐색기 `ExplorerSet`**(세션 ≥1이면 유지 · 0이면 오프라인 · 메타 유휴 회수) · **세션 상태 추적**(`alters_session_state` → 유휴 닫기 제외 · Oracle `DECLARE` = 블록 범위 검토) · `CONNECT` 앞 문장 거부 · 뒤에서 끝난 실행 ✓/✗ · **트랜잭션 로그 세션 열** · 공유 상한 8. → [journal](journal/2026-09-18.md)
+- **2026-09-18 (56차 · mac)** — ★ **DR-34 세션 컨텍스트**([52](52-session-modes.md)): `Sess` 맞바꾸기 구조 · **실행 통제 단일화**(무통제 5건 수정 · 그리드 도구줄 포함) · **전용 세션** `CONNECT 프로필|"접속 문자열"`/`DISCONNECT` · 탭 앞 표식 + 메뉴 · **개별 모드** · **공유 연결 N개**(추가 접속 · Disconnect ▾ · 탭 묶임) · 유휴 닫기(DBMS별 검토) · 접두 조사(`CONNECT BY` 가드 · `:disconnect`) · 순수 판정 + MC/DC · 맥 로그인 창 확장/텍스트박스 2건(nexa-ui 32차). → [journal](journal/2026-09-18.md)
 - **2026-09-17 (55차 후반 · mac 밤)** — macOS UI 라틴 = 시스템 SF(nexa-ui 31차) · 창 배치 규칙(메인 마지막 위치/크기 · 보조 창 같은 모니터 규칙 · 논리 좌표 · 숨김 생성) · macOS 모달 · `window.*_pos/_size` · Moved 배율. → [journal](journal/2026-09-17.md)
 - **2026-09-17 (55차 · mac 밤)** — **T-100 CoreText 글리프 경로**(nexa-ui 30차 · 회색 커버리지·소수 전진·서브픽셀 · 행 방향 결함 수정 · 참조 PGM/ASCII 검증 도구 3종) · `window.monitor` · `ui.font_face`. → [journal](journal/2026-09-17.md)
 - **2026-09-17 (54차 후반 · mac)** — Enable Extension Manager · 기본 저장소 설정(GitHub 주소 자동 raw) · builtin 설치 의미 · 열 선택 마우스 OS별 · **OS별 기본값 `OS_DEFAULTS`**(macOS 텍스트 힌트/스냅/두께/감마 끔 = 글꼴 깨짐 해결). → [journal](journal/2026-09-17.md)

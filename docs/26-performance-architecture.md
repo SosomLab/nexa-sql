@@ -187,6 +187,10 @@
 | 실행 전 빠른 판정 | SYN 1 | 사용자 실행 시 · 신호등이 초록이 아닐 때만 | 없음 | `worker::Cmd::Run.preflight` |
 | 접속 테스트 | DB 로그인 1 | 클릭당 1 · 같은 프로필 잠금 · **동시 `connect.max_concurrent`(4) · 초과 FIFO 큐** | 없음 | `App::start_test` · `dispatch_attempts` |
 | 접속(Connect) | DB 로그인 1 | 클릭당 1 · 같은 서버면 세션 유지 · 위 큐 공유 | **없음**(자동 재접속 금지) | `handle_panel_action(Connect)` · `Runner::connect` |
+| 공유 연결 추가(DR-34 · [52 §2-1](52-session-modes.md)) | DB 로그인 1 | 접속 창 클릭당 1 · **같은 서버·DB·계정은 중복 접속 없음**(기존 연결 활성화) · 동시 유지 상한 `session.max_shared`(8) · 위 큐 공유 | 없음 | `App::login_place` · `sessions::login_plan` |
+| 전용 세션 `CONNECT` · 개별 모드 탭 접속 | DB 로그인 1 | 사용자 실행 1회당 1 · 개별 모드 = 탭이 **처음 활성화될 때** 1(안 본 탭은 0) · 상한 `session.max_private`(8) | 없음 | `App::place_run` · `sync_sess` · `connect_quietly` |
+| 유휴 닫기 뒤 재접속 | DB 로그인 1 | 닫힌 세션에서 **다음 실행/페치 1회당 1** · 주기 핑·keepalive 질의 **없음**(서버의 유휴 정책을 무력화하지 않는다) · 점검 타이머 30s는 로컬 판정만 | 없음 | `App::idle_tick` · `wake_if_idle` · `sessions::idle_action` |
+| 탐색기 메타 접속(서버당 1 · 52 §2-2) | DB 로그인 1 | **처음 보는 서버에 세션이 붙을 때 1** · 같은 서버의 추가 세션 = 0 · 유휴 회수 뒤에는 다음 펼침/소스 요청 1회당 1 · 오프라인(세션 0) 서버에는 **다시 붙지 않는다** | 없음 | `App::explorer_attach` · `explorer::meta_thread`(`resume`) |
 
 **검토 체크리스트**(네트워크를 만드는 코드를 추가·변경할 때):
 1. 사용자 행동 없이 시작되는 요청인가? → 주기·백오프 상한과 "창이 열려 있을 때만" 조건이 있는가.
