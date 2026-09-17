@@ -364,6 +364,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "17",
     },
     Entry {
+        key: "ui.font_face",
+        cat: Msg::CatAppearance,
+        label: Msg::LblUiFontFace,
+        desc: Msg::DescUiFontFace,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
         key: "ui.text_contrast",
         cat: Msg::CatAppearance,
         label: Msg::LblTextContrast,

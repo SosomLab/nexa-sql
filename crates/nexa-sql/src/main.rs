@@ -2595,6 +2595,15 @@ impl App {
             | "editor.highlight_selection" => self.apply_ruler_style(),
             k if k.starts_with("editor.occurrence_") => self.apply_occurrence_style(),
             "editor.tab_accent" => self.apply_tab_accent(),
+            "ui.font_face" => {
+                let pref = self.settings.get(key).map(str::to_string);
+                if let Some(l) =
+                    nexa_font::ui_font(pref.as_deref()).or_else(|| nexa_font::ui_font(None))
+                {
+                    self.ui_font = l.font;
+                }
+                self.layout();
+            }
             "extensions.disabled" => self.apply_extensions(None),
             k if k.starts_with("rainbowpair.") => self.apply_extensions(Some(k)),
             "editor.text_pad_left" => self
@@ -7456,7 +7465,9 @@ fn main() {
             C::CtxPaste => t(Msg::CtxPaste),
         }
     });
-    let ui = nexa_font::ui_font(None);
+    // UI 글꼴 = 설정 `ui.font_face`(비면 OS 사슬 · 못 찾으면 사슬로 fail-over · 사용자 09-17 비레티나 모니터 비교용).
+    let ui_pref = settings.get("ui.font_face").map(str::to_string);
+    let ui = nexa_font::ui_font(ui_pref.as_deref()).or_else(|| nexa_font::ui_font(None));
     // 고정폭 = 설정 `editor.font_face`(비면 OS 기본 사슬 · 없는 이름은 fail-over · 사용자 09-17).
     let mono_pref = settings.get("editor.font_face").map(str::to_string);
     let mono = nexa_font::mono_font(mono_pref.as_deref());
