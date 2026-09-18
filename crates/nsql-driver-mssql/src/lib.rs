@@ -79,6 +79,14 @@ impl Subscriber for InfoCapture {
 
 type Tds = Client<Compat<TcpStream>>;
 
+/// TCP keepalive 유휴 시간(초 · 0 = 끔) — 호스트가 설정에서 넣는다 · 다음 접속부터.
+static KEEPALIVE_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(60);
+
+/// 설정 `net.keepalive_secs`(docs/53).
+pub fn set_keepalive_secs(secs: u64) {
+    KEEPALIVE_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// 암호화 범위(설정 `mssql.encrypt` · 접속 때 읽는다): 0 = 전 구간(`Required`) · 1 = 로그인만(`Off` — 로그인 뒤 평문 · **TDS Attention 취소 가능**).
 static ENCRYPTION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
@@ -404,6 +412,18 @@ impl MssqlSession {
         // 동기 소켓으로 열고 복제본을 남긴다(취소 = 복제본 shutdown) → 논블로킹으로 바꿔 tokio에 넘긴다.
         let std_tcp = std::net::TcpStream::connect(&addr).map_err(io_err)?;
         std_tcp.set_nodelay(true).map_err(io_err)?;
+        // TCP keepalive(설정 `net.keepalive_secs` · docs/53 §2) — 빈 세그먼트 · 서버 유휴 정책 무관 · 끊긴 경로를 OS가 정리.
+        let ka = KEEPALIVE_SECS.load(std::sync::atomic::Ordering::Relaxed);
+        if ka > 0 {
+            let sock = socket2::SockRef::from(&std_tcp);
+            let mut opt =
+                socket2::TcpKeepalive::new().with_time(std::time::Duration::from_secs(ka));
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+            {
+                opt = opt.with_interval(std::time::Duration::from_secs(ka.clamp(5, 30)));
+            }
+            let _ = sock.set_tcp_keepalive(&opt);
+        }
         let cancel_sock = std::sync::Arc::new(std_tcp.try_clone().map_err(io_err)?);
         std_tcp.set_nonblocking(true).map_err(io_err)?;
         let client = rt.block_on(async move {
@@ -502,6 +522,25 @@ impl Session for MssqlSession {
 
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
         Err(DbError { code: None, message: "SQL Server: 커서 변수는 sp_executesql로 넘길 수 없습니다 — 결과 집합으로 받으세요(docs/05 §7)".into(), position: None })
+    }
+
+    /// `schema` = 기본 데이터베이스 전환(`USE [db]` · SQL Server는 세션 기본 스키마를 바꿀 수 없어 DB 전환이 그 자리 · 사용자 09-18).
+    fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
+        if name != "schema" {
+            return Ok(());
+        }
+        let sql = format!("USE [{}]", value.replace(']', "]]"));
+        let client = &mut self.client;
+        self.rt.block_on(async {
+            client
+                .simple_query(&sql)
+                .await
+                .map_err(err)?
+                .into_results()
+                .await
+                .map_err(err)?;
+            Ok(())
+        })
     }
 
     fn commit(&mut self) -> Result<(), DbError> {

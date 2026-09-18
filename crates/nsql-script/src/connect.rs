@@ -24,6 +24,9 @@ pub struct ConnectSpec {
     pub role: Option<String>,
     /// 스킴이나 `?dialect=`로 명시된 방언. 없으면 호스트가 정한다(연결 프로필 기본값).
     pub dialect: Option<Dialect>,
+    /// 접속 뒤 기본 스키마(`?schema=` · 사용자 09-18): Oracle `ALTER SESSION SET CURRENT_SCHEMA` · PostgreSQL `search_path` ·
+    /// SQL Server `USE`(데이터베이스 전환) · SQLite 없음. 접속 문자열에 `?schema=HR`로 실린다.
+    pub schema: Option<String>,
 }
 
 impl ConnectSpec {
@@ -90,6 +93,10 @@ impl ConnectSpec {
                         if spec.dialect.is_none() {
                             return Err(format!("CONNECT: 알 수 없는 방언 '{v}'"));
                         }
+                    } else if k.eq_ignore_ascii_case("schema") && !v.trim().is_empty() {
+                        spec.schema = Some(percent_decode(v.trim()));
+                    } else if k.eq_ignore_ascii_case("role") && !v.trim().is_empty() {
+                        spec.role = Some(v.trim().to_ascii_uppercase());
                     }
                 }
             }
@@ -232,6 +239,53 @@ impl ConnectSpec {
             s.push_str(" AS ");
             s.push_str(r);
         }
+        if let Some(sc) = &self.schema {
+            s.push_str("?schema=");
+            s.push_str(sc);
+        }
+        s
+    }
+
+    /// **접속 문자열**(우리 형식 · `dialect://user@host:port/db?schema=x` · 비밀번호 없음) — 접속 창 열 · 복사(사용자 09-18).
+    /// `redacted()`와 달리 `/***`를 넣지 않아 그대로 `CONNECT`에 쓸 수 있다(비밀번호는 저장소가 채운다).
+    pub fn connection_string(&self) -> String {
+        let mut s = String::new();
+        if let Some(d) = self.dialect {
+            s.push_str(&format!("{d}://"));
+        }
+        match (&self.host, &self.database) {
+            (Some(h), db) => {
+                if let Some(u) = &self.user {
+                    s.push_str(u);
+                    s.push('@');
+                }
+                s.push_str(h);
+                if let Some(p) = self.port {
+                    s.push_str(&format!(":{p}"));
+                }
+                if let Some(db) = db {
+                    s.push('/');
+                    s.push_str(db);
+                }
+            }
+            (None, Some(db)) => s.push_str(db),
+            (None, None) => {
+                if let Some(u) = &self.user {
+                    s.push_str(u);
+                }
+            }
+        }
+        let mut q: Vec<String> = Vec::new();
+        if let Some(r) = &self.role {
+            q.push(format!("role={r}"));
+        }
+        if let Some(sc) = &self.schema {
+            q.push(format!("schema={sc}"));
+        }
+        if !q.is_empty() {
+            s.push('?');
+            s.push_str(&q.join("&"));
+        }
         s
     }
 }
@@ -352,6 +406,24 @@ mod tests {
         let c = ConnectSpec::parse("\"prod-db.1\"").unwrap();
         assert_eq!(c.user.as_deref(), Some("prod-db.1"));
         assert!(c.host.is_none() && c.password.is_none());
+    }
+
+    /// 09-18: `?schema=` 기본 스키마 · 접속 문자열(우리 형식) 왕복.
+    #[test]
+    fn schema_query_and_connection_string() {
+        let c = ConnectSpec::parse("oracle://scott/tiger@h:1521/svc?schema=HR").unwrap();
+        assert_eq!(c.schema.as_deref(), Some("HR"));
+        assert_eq!(c.connection_string(), "oracle://scott@h:1521/svc?schema=HR");
+        assert_eq!(c.redacted(), "oracle://scott/***@h:1521/svc?schema=HR");
+        let again = ConnectSpec::parse(&c.connection_string()).unwrap();
+        assert_eq!(again.schema.as_deref(), Some("HR"));
+        assert_eq!(again.user.as_deref(), Some("scott"));
+        assert!(again.password.is_none());
+        let s = ConnectSpec::parse("sqlite:/tmp/a.db").unwrap();
+        assert_eq!(s.connection_string(), "sqlite:///tmp/a.db");
+        let r = ConnectSpec::parse("oracle://sys/x@h:1521/svc?role=sysdba").unwrap();
+        assert_eq!(r.role.as_deref(), Some("SYSDBA"));
+        assert_eq!(r.connection_string(), "oracle://sys@h:1521/svc?role=SYSDBA");
     }
 
     #[test]

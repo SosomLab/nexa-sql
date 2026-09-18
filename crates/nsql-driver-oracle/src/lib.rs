@@ -58,6 +58,14 @@ struct OpenCursor {
     carry: Option<Vec<Value>>,
 }
 
+/// OCI 호출 상한(초 · 0 = 없음) — 호스트가 설정에서 넣는다 · 다음 접속부터.
+static CALL_TIMEOUT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 설정 `session.call_timeout_secs`(docs/53).
+pub fn set_call_timeout_secs(secs: u64) {
+    CALL_TIMEOUT_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[allow(missing_debug_implementations)]
 pub struct OracleSession {
     /// `Arc` = 실행 취소 핸들(T-108 · `break_execution`)이 다른 스레드에서 같은 접속을 가리킨다.
@@ -116,6 +124,11 @@ impl OracleSession {
         }
         init_client().map_err(with_client_hint)?;
         let conn = connector.connect().map_err(|e| with_client_hint(err(&e)))?;
+        // 호출 상한(설정 `session.call_timeout_secs` · docs/53 §2): 죽은 소켓에 보낸 호출이 OS 재전송 한도(분)까지 막히지 않게.
+        let secs = CALL_TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed);
+        if secs > 0 {
+            let _ = conn.set_call_timeout(Some(std::time::Duration::from_secs(secs)));
+        }
         Ok(OracleSession {
             conn: std::sync::Arc::new(conn),
             cursors: HashMap::new(),
@@ -257,6 +270,11 @@ impl nsql_core::CancelHandle for OracleCancel {
 }
 
 impl Session for OracleSession {
+    /// OCI 서버 핸들 상태(왕복 0 · `OCI_ATTR_SERVER_STATUS`): 마지막 네트워크 결과·FIN/RST를 반영한다.
+    fn is_alive(&self) -> bool {
+        !matches!(self.conn.status(), Ok(oracle::ConnStatus::NotConnected))
+    }
+
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
         Some(std::sync::Arc::new(OracleCancel(
             std::sync::Arc::downgrade(&self.conn),
@@ -284,6 +302,14 @@ impl Session for OracleSession {
                 self.conn.execute(sql, &[]).map_err(|e| err(&e))?;
             }
             "fetch_size" => self.fetch_size = value.parse().unwrap_or(500),
+            // 기본 스키마 — 세션의 미수식 이름 해석 대상(`?schema=` · 사용자 09-18). 식별자는 따옴표로 감싸 대소문자 그대로.
+            "schema" => {
+                let sql = format!(
+                    "ALTER SESSION SET CURRENT_SCHEMA = \"{}\"",
+                    value.replace('"', "")
+                );
+                self.conn.execute(&sql, &[]).map_err(|e| err(&e))?;
+            }
             "max_rows" => self.max_rows = value.parse().unwrap_or(0),
             "autocommit" => {
                 // `Arc<Connection>`(취소 핸들은 `Weak`만 쥔다) — 취소가 진행 중인 찰나가 아니면 유일 소유자다.

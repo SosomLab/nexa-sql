@@ -44,6 +44,14 @@ struct PgCursor {
     carry: Option<Vec<Value>>,
 }
 
+/// TCP keepalive 유휴 시간(초 · 0 = 끔) — 호스트가 설정에서 넣는다 · 다음 접속부터.
+static KEEPALIVE_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(60);
+
+/// 설정 `net.keepalive_secs`(docs/53).
+pub fn set_keepalive_secs(secs: u64) {
+    KEEPALIVE_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[allow(missing_debug_implementations)]
 pub struct PgSession {
     client: Client,
@@ -112,6 +120,17 @@ impl PgSession {
         }
         cfg.application_name("nexa-sql");
         cfg.connect_timeout(std::time::Duration::from_secs(15));
+        // TCP keepalive(설정 `net.keepalive_secs` · docs/53 §2): 빈 세그먼트라 서버의 유휴 세션 정책을 깨우지 않으면서
+        // 끊긴 경로(VPN)를 OS가 알아채 소켓을 오류 상태로 만든다 → `is_alive`가 왕복 없이 안다.
+        let ka = KEEPALIVE_SECS.load(std::sync::atomic::Ordering::Relaxed);
+        if ka > 0 {
+            cfg.keepalives(true);
+            cfg.keepalives_idle(std::time::Duration::from_secs(ka));
+            cfg.keepalives_interval(std::time::Duration::from_secs(ka.clamp(5, 30)));
+            cfg.keepalives_retries(3);
+        } else {
+            cfg.keepalives(false);
+        }
         let notices = std::sync::Arc::new(std::sync::Mutex::new(Notices::default()));
         let n2 = notices.clone();
         cfg.notice_callback(move |e: postgres::error::DbError| {
@@ -487,6 +506,11 @@ impl nsql_core::CancelHandle for PgCancel {
 }
 
 impl Session for PgSession {
+    /// 소켓이 닫힌 것을 클라이언트가 알았는가(왕복 0 · keepalive가 끊김을 잡으면 여기서 드러난다).
+    fn is_alive(&self) -> bool {
+        !self.client.is_closed()
+    }
+
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
         Some(std::sync::Arc::new(PgCancel(self.client.cancel_token())))
     }
@@ -523,8 +547,14 @@ impl Session for PgSession {
     }
 
     fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
-        if name == "max_rows" {
-            self.max_rows = value.parse().unwrap_or(0);
+        match name {
+            "max_rows" => self.max_rows = value.parse().unwrap_or(0),
+            // 기본 스키마 = `search_path`(`?schema=` · 사용자 09-18) — 뒤에 public을 남겨 공용 객체는 그대로 보이게.
+            "schema" => {
+                let sql = format!("SET search_path TO \"{}\", public", value.replace('"', ""));
+                self.client.simple_query(&sql).map_err(err)?;
+            }
+            _ => {}
         }
         Ok(())
     }

@@ -44,11 +44,44 @@ pub(crate) enum Outcome {
     Down,
 }
 
+/// 프로브 대상 — 서버(호스트:포트 TCP) 또는 파일(SQLite · 열 수 있는가 · 사용자 09-18).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Target {
+    Tcp { host: String, port: u16 },
+    File(String),
+}
+
+impl Target {
+    /// 접속 스펙에서 대상을 고른다 — 파일 방언(SQLite)은 파일 · 그 외는 호스트:포트가 있을 때만.
+    pub(crate) fn of(spec: &nsql_script::ConnectSpec) -> Option<Target> {
+        match (spec.dialect, &spec.host, spec.port) {
+            (Some(nsql_core::Dialect::Sqlite), _, _) => {
+                Some(Target::File(spec.database.clone().unwrap_or_default()))
+            }
+            (_, Some(h), Some(p)) => Some(Target::Tcp {
+                host: h.clone(),
+                port: p,
+            }),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) struct ProbeReq {
     pub name: String,
-    pub host: String,
-    pub port: u16,
+    pub target: Target,
     pub timeout: Duration,
+}
+
+/// 파일 대상 판정: `:memory:`/빈 값 = Up · 열 수 있으면 Up · 없거나 못 열면 Down(로컬·리모트 마운트 모두 `File::open` 한 번).
+pub(crate) fn probe_file(path: &str) -> Outcome {
+    if path.is_empty() || path == ":memory:" {
+        return Outcome::Up;
+    }
+    match std::fs::File::open(path) {
+        Ok(_) => Outcome::Up,
+        Err(_) => Outcome::Down,
+    }
 }
 
 pub(crate) struct ProbeResult {
@@ -125,7 +158,10 @@ impl ProbeHub {
         let spawned = std::thread::Builder::new()
             .name(format!("nsql-probe:{}", req.name))
             .spawn(move || {
-                let outcome = probe_once(&req.host, req.port, req.timeout, icmp);
+                let outcome = match &req.target {
+                    Target::Tcp { host, port } => probe_once(host, *port, req.timeout, icmp),
+                    Target::File(path) => probe_file(path),
+                };
                 inflight.fetch_sub(1, Ordering::Relaxed);
                 let _ = tx.send(ProbeResult {
                     name: req.name,
@@ -264,7 +300,7 @@ impl Default for ProbePolicy {
             enabled: true,
             max_retries: 5,
             timeout: Duration::from_secs(2),
-            retry_delay: Duration::from_secs(60),
+            retry_delay: Duration::from_secs(10),
             interval: Duration::from_secs(60),
             icmp: true,
         }
@@ -272,11 +308,14 @@ impl Default for ProbePolicy {
 }
 
 impl ProbePolicy {
-    /// 실패 `attempts`회째의 다음 확인 대기 — `retry_delay × 2^(attempts-1)` · `max_retries`번까지만 늘어난다.
+    /// 실패 `attempts`회째의 다음 확인 대기 — `retry_delay × 2^(attempts-1)` · `max_retries`번까지 늘되 **`interval`을 넘지 않는다**
+    /// (사용자 09-18: VPN을 다시 켰는데 32분 뒤에나 갱신되던 것 — 창이 열려 있는 동안만 도는 확인이라 정상 주기가 상한이면 충분).
     pub(crate) fn failure_wait(&self, attempts: u32) -> Duration {
         let cap = self
             .retry_delay
-            .saturating_mul(1u32 << self.max_retries.min(16));
+            .saturating_mul(1u32 << self.max_retries.min(16))
+            .min(self.interval)
+            .max(self.retry_delay);
         backoff(attempts, self.retry_delay, cap)
     }
 }
@@ -371,8 +410,7 @@ impl ProbeEntry {
     }
 
     /// 지금 바로 다시 묻도록 당긴다(누적 횟수는 보존). 이미 확인 중이면 그대로.
-    /// (창 재오픈 시 전부 당기던 용도는 09-14에 제거 — 지금은 테스트·수동 갱신 후보용.)
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// 창을 열 때 전부 1회 · 신호등 클릭(사용자 09-18).
     pub(crate) fn poke(&mut self, now: Instant) {
         if self.status != ProbeStatus::Checking {
             self.next_at = Some(now);
@@ -448,10 +486,11 @@ mod tests {
     #[test]
     fn entry_accumulates_and_interval_grows_exponentially() {
         let now = Instant::now();
+        // 09-18: 상한 = min(retry_delay × 2^max_retries, interval) — 정상 주기(600)를 넘지 않는다.
         let pol = ProbePolicy {
             max_retries: 3,
             retry_delay: S(60),
-            interval: S(60),
+            interval: S(600),
             ..ProbePolicy::default()
         };
         let mut e = ProbeEntry::fresh(now);
@@ -477,6 +516,16 @@ mod tests {
         e.apply(Outcome::Up, now, &pol);
         assert_eq!(e.status, ProbeStatus::Up);
         assert_eq!(e.attempts, 0);
+        // 창이 열려 있는 동안의 실제 기본값: 10s → 20 → 40 → 60(= interval 상한) → 60 …(VPN 복구가 늦어도 1분 안에 초록).
+        let real = ProbePolicy::default();
+        let mut e = ProbeEntry::fresh(now);
+        for want in [10u64, 20, 40, 60, 60] {
+            e.apply(Outcome::Down, now, &real);
+            assert_eq!(e.next_at, Some(now + S(want)));
+        }
+        // 파일 대상(SQLite): 열 수 있으면 Up · 없으면 Down · :memory: = Up.
+        assert_eq!(probe_file(":memory:"), Outcome::Up);
+        assert_eq!(probe_file("/definitely/not/here.sqlite"), Outcome::Down);
         assert_eq!(e.next_at, Some(now + S(60)), "성공해도 주기 갱신");
         e.poke(now + S(5));
         assert_eq!(e.next_at, Some(now + S(5)), "즉시 갱신 당김");

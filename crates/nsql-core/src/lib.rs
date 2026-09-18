@@ -24,6 +24,17 @@ pub enum Dialect {
     Odbc,
 }
 
+/// 로그인 항목(접속 폼의 칸과 1:1 · `Dialect::login_required`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginField {
+    Host,
+    Port,
+    Database,
+    Schema,
+    User,
+    Password,
+}
+
 impl Dialect {
     /// 접속 문자열 스킴·설정 값에서 방언을 고른다(대소문자 무관).
     pub fn from_name(s: &str) -> Option<Dialect> {
@@ -68,6 +79,26 @@ impl Dialect {
             Dialect::Mysql => "MySQL",
             Dialect::Sqlite => "SQLite",
             Dialect::Odbc => "ODBC",
+        }
+    }
+
+    /// ★ 접속에 **필수인 로그인 항목**(docs/22 §10 · 09-19) — 접속 폼(라벨 `*` · 빠진 칸 경고)·CLI 인자 검사·확장 드라이버
+    /// 매니페스트가 같은 표를 본다. Save는 여기서 Password를 뺀 것(+ 프로필 이름). Port·Schema는 늘 선택(기본값/없음).
+    pub fn login_required(self) -> &'static [LoginField] {
+        match self {
+            // 서비스/SID 없이는 접속 불가 · OS 인증(`/`)은 미지원.
+            Dialect::Oracle => &[
+                LoginField::Host,
+                LoginField::Database,
+                LoginField::User,
+                LoginField::Password,
+            ],
+            // Database를 비우면 libpq 규칙(= 사용자 이름) · 로그인 기본 DB — 선택.
+            Dialect::Postgres | Dialect::Mssql | Dialect::Mysql => {
+                &[LoginField::Host, LoginField::User, LoginField::Password]
+            }
+            // 파일 경로 / DSN 하나(자격 없음 · ODBC 자격은 DSN 쪽).
+            Dialect::Sqlite | Dialect::Odbc => &[LoginField::Database],
         }
     }
 
@@ -975,6 +1006,11 @@ pub trait Session {
     fn close_cursor(&mut self, h: CursorHandle) -> Result<(), DbError> {
         let _ = h;
         Ok(())
+    }
+    /// 세션이 살아 있다고 **드라이버가 아는가** — 서버 왕복 없이(docs/53 §2): 마지막 네트워크 결과 · 소켓 FIN/RST 인지.
+    /// `false`면 끊긴 것이 확실하다 · `true`는 "아직 모른다"일 수 있다(반쯤 열린 소켓). 기본 = 모른다(true).
+    fn is_alive(&self) -> bool {
+        true
     }
 }
 

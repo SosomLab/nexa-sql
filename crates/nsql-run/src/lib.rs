@@ -693,6 +693,7 @@ impl Runner {
                 database: None,
                 role: None,
                 dialect: None,
+                schema: None,
             } => Some(u.as_str()),
             _ => None,
         }
@@ -746,6 +747,16 @@ impl Runner {
                 self.engine.dialect = dialect;
                 if self.engine.settings.serveroutput {
                     let _ = session.set_option("serveroutput", "on");
+                }
+                // 기본 스키마(`?schema=` · 프로필 설정) — 접속 직후 세션 설정(방언별 · 실패해도 접속은 유지 · 오류는 이벤트로).
+                if let Some(sc) = &spec.schema {
+                    if let Err(e) = session.set_option("schema", sc) {
+                        emit(RunEvent::Error {
+                            index: 0,
+                            line: 0,
+                            error: e,
+                        });
+                    }
                 }
                 self.session = Some(session);
                 self.connection = Some(spec.redacted());
