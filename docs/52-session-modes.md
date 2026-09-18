@@ -56,7 +56,7 @@ Sess { worker(스레드·Runner·세션) · events · busy · aux · connected �
 
 - **활성 공유 연결**(`default_shared`) = 마지막으로 접속 창에서 붙였거나 사용자가 고른 연결. 탐색기·접속 창 표시·묶이지 않은 탭이 따른다.
 - **탭은 처음 실행한 연결에 묶인다**(`tab_bind`) — 활성 연결을 바꿔도 이미 쓰던 탭이 말없이 다른 서버로 가지 않는다(DELETE를 엉뚱한 서버에 날리는 사고 방지). 바꾸려면 탭 표식 메뉴.
-- 공유 연결이 **둘 이상이면 공유 탭에도 표식**(중립색 🔌 · 전용은 강조색) → 클릭 = 공유 연결 고르기. 하나뿐이면 표식 없음(종전 모습 그대로).
+- 공유 탭에도 **항상 표식**(중립색 🔌 · 전용은 강조색 · 미연결/끊김은 사선 · 09-18 "항상 보여지도록") → 클릭 = 공유 연결 고르기/미연결.
 - **툴바 Disconnect = 드롭다운**(사용자 09-18 보완): 누르면 **늘 연결 목록**이 보인다 — 공유 연결(`●` = 활성)과 탭 전용/개별 세션(`접속 설명 [탭 제목]`)을 한 줄씩 · **줄을 누르면 그 연결만 해제** · 맨 아래 **모두 해제** · 공유 연결이 둘 이상이면 `활성 연결로 ▸`. 전용 세션 줄은 그 탭의 규칙(공유 복귀 · 개별 모드 = 끊김)으로 해제된다.
 - 공유 연결을 해제하면: 탐색기가 그 연결을 따르고 있었으면 함께 닫힘 · 그 연결에 묶인 탭은 **끊김 표식**으로 남는다(실행 = not connected) · 남은 연결은 드롭다운/표식 메뉴에서 활성화. 끊긴 세션 객체는 묶인 탭이 없어지면 거둔다(`reap_shared`).
 
@@ -124,6 +124,29 @@ Sess { worker(스레드·Runner·세션) · events · busy · aux · connected �
 - 확장(Rainbow 등)·팔레트는 전부 `menu_action` 경유라 같은 문지기를 지난다. **새 진입점은 `gate_open()`을 부르는 것이 규칙**(30 §1-2 체크리스트에 추가 → T-122).
 - 실행 상태 카드(토스트)는 세션별 — 활성 탭의 것만 보인다. 뒤에서 끝난 실행은 탭의 ▶가 사라지는 것으로만 안다(→ D-104).
 
+### 3-3. 09-19 재검토 — "공유 세션 · 4탭 · 1탭 실행 중" 시나리오(사용자 요청)
+
+전제: 탭 A~D가 같은 공유 세션 · A가 F5로 실행 중(`busy`) · 사용자가 B/C/D로 전환한다. `sync_sess`가 같은 `Sess`를 `self.sess`로 맞바꾸므로 **B/C/D도 `blocked()` = 참**이고, 아래 진입점이 전부 같은 판정을 본다.
+
+| 진입점(B/C/D에서) | 판정 경로 | 09-19 검토 결과 |
+|---|---|---|
+| 툴바 ▶ 문장 · ▶▶ 전체 · Explain | `sync_gate` → `set_item_enabled` (비활성) · 눌러도 `gate_open` | ✅ |
+| 툴바 ■ 중지 | `gate.stop` = 막힘 → 활성 · `stop_run` = 지금 세션(=A의 실행)을 취소 | ✅ 의도(같은 세션이므로 어느 탭에서든 중지 가능 · 단일 세션 사상) |
+| 툴바 Commit/Rollback | `sync_tx_ui`(막힘 ∧ 대기 없음 → 비활성) · `menu_action` → `gate_open` | ✅ |
+| **메뉴바 Run ▸ 문장/새 탭/전체/Explain/Commit/Rollback** | 종전엔 **항상 활성으로 보였고** 누르면 `gate_open`이 거부(상태줄 "실행 중…") | ⚠️ 표시 결함 → **수정**: `build_menus_with(blocked)` → `MenuEntry::Disabled` · `sync_gate`가 바뀔 때 메뉴 재구성 |
+| 단축키 F5/F9/Ctrl+Enter · 팔레트 · 확장 | 전부 `menu_action` → `gate_open` | ✅ |
+| 결과 도구줄(추가 페치 · 전체 조회 · 건수 · 새로고침) · 스크롤 끝 자동 페치 | `grid.set_session_blocked` + `send_fetch`의 문지기 | ✅ |
+| 결과 우클릭(SQL로 복사 · 키 조회 · 텍스트 보기) | `begin_sql_copy`/`begin_view_sql` → `gate_open` | ✅ |
+| 상태줄 트랜잭션 팝업(Auto/Manual · Commit · Rollback) | Commit/Rollback = `menu_action` ✅ · **Auto/Manual 전환**은 `!busy`만 보고 `aux`를 무시 · 막혔을 때 설정만 바뀌고 세션엔 적용 안 됨 | ⚠️ → **수정**: `set_autocommit_now`가 `gate_open`을 먼저(막히면 설정도 그대로) |
+| 탭 닫기(실행 중인 A 탭 자체) | 종전엔 닫혔다(결과가 갈 탭이 사라짐 · 세션은 계속 실행) | ⚠️ → **수정**: `editors.is_running(id)`면 거부 + "■로 중지한 뒤 닫으세요" |
+| 미커밋 팝업 뒤 `commit_then`/`rollback_then` · `tx.close_action` 자동 커밋 | 문지기 없이 큐에 넣는다 — 워커가 순차라 실행 뒤 순서대로 처리(의도 · 3-2 그대로) | ✅ 유지 |
+| 접속 창 Connect(추가 공유 연결) | `login_plan`/`placement` — 활성 탭 세션의 busy와 무관(다른 세션) | ✅ |
+| 탐색기 열기/메타 | 메타 세션(별도) — 편집기 실행과 독립 | ✅ (D-46) |
+| 세션 창 "접속 해제"(작업 중 세션) | `disconnect_session` → `stuck`이면 워커 교체(즉시 해제 규약) | ✅ |
+| 탭 표식 메뉴(다른 공유 연결로 · 미연결) | 세션 바꾸기 = `blocked`와 무관(B는 A의 실행에서 벗어난다) | ✅ 의도 |
+
+수정 3건(메뉴바 · 자동커밋 전환 · 실행 탭 닫기)은 09-19 63차 후반. 나머지 원칙: **새 진입점 = `gate_open()`**(T-122).
+
 ## 4. 전용 세션 — `CONNECT` / `DISCONNECT`
 
 편집기에서 실행(Ctrl+Enter·F5). 실행 전에 호스트가 스크립트를 **파싱만** 해서(`sessions::connect_intent` — 첫 접속 명령) 세션 배치를 정한다.
@@ -148,7 +171,7 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 | 상한 도달 | 상태줄·로그 안내(`StSessLimit`) · 실행하지 않음 |
 | `session.private_connect = off` | 종전 동작(27 §6 ④ — 공유 세션을 바꾼다) |
 
-자격 빌리기(`worker::fill_credentials`): 비밀번호 없는 스펙에 한해 저장소에서 **방언·호스트·포트(기본 포트 보정)·DB가 같고 (사용자를 줬으면 사용자도 같은)** 프로필이 정확히 하나일 때만. 둘 이상이면 모호 → 빌리지 않는다(드라이버가 자격 오류).
+**인라인 접속 문자열은 비밀번호가 있어야 연다(09-19 · `worker::password_required`)**. 종전의 자격 빌리기(`fill_credentials`: 비밀번호 없는 스펙이면 저장소에서 같은 서버·계정 프로필이 하나일 때 그 비밀번호를 몰래 씀)는 **제거** — 사용자가 `CONNECT oracle://BISCM@host:1521/BISCM`을 치면 저장 프로필 SNOP-DB(같은 서버·같은 계정)의 비밀번호로 붙어 "비밀번호 없이 접속됨"으로 보였다(분석 = journal 09-19 63차). 지금 규칙: SQLite가 아니고 호스트가 있는 스펙에 비밀번호가 없거나 비면 `ErrPasswordRequired`("Password required — include it in the connection string (user:pass@host) or use a saved profile") · 저장소 프로필 이름은 워커에 오기 전에 이미 채워져 온다. 비밀번호를 문자열에 쓰지 않는 방법(편집기 변수 · 모달 입력) = **T-132**.
 
 ## 5. 명령 이름 — 접두 문자가 필요한가 (조사)
 
@@ -228,6 +251,30 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 - 통제 중 = 툴바 문장 실행·전체 실행·Explain·Commit·Rollback + 결과 도구줄 새로고침·전체 조회·건수 **흐림** · ■만 활성 · 상태줄 ⏳.
 - 트랜잭션 배지 `●n`은 **모든 세션**의 대기 문장을 탭별로 모은다. 트랜잭션 로그 창·실행 카드는 활성 탭의 세션 것.
 
+### 7-2. 접속 UX 전체 설계 — 툴바 두 버튼 × 모드 × 탭 표식 (사용자 09-18 · 케이스 누수 없이)
+
+**용어**: 활성 공유 연결 = 접속 창에서 마지막으로 붙였거나 사용자가 고른 공유 연결(`default_shared`). 탭의 연결 상태는 셋 중 하나 —
+**공유**(공유 연결 중 하나에 묶임) · **전용**(그 탭만의 세션) · **미연결**(어떤 연결에도 묶이지 않음 = 접속 없는 전용 자리).
+
+| 조작 | 공유 모드 | 개별 모드 |
+|---|---|---|
+| **툴바 Connect(플러그) 본체** | 접속 창 열기. 창에서 Connect = `login_plan`(같은 서버·계정 = 기존 연결 활성화 · 아니면 **추가**) → 그 연결이 활성 공유 연결 · **지금 탭이 미연결/전용이어도 탭은 바뀌지 않는다**(탭 연결은 표식으로) | 접속 창 열기. 창에서 Connect = **지금 탭의 세션**에 접속(미연결 자리면 그 자리에) · 새 탭의 기본 접속 정보 갱신 |
+| 플러그 **색** | 지금 탭의 연결: 초록 = 연결됨 · 빨강 = 끊김 확인(53) · 기본 = 미연결 | 같음 |
+| **툴바 Disconnect** | **지금 탭의 연결 해제**(종전 · 사용자 09-18 원복 · 이 탭에 연결이 있을 때만 활성 · 전용 탭이면 그 세션 · 공유 탭이면 그 공유 연결) — 모두 해제는 세션 창 우클릭 | 같음 |
+| **툴바 세션 목록 버튼**(`conn.sessions`) | **세션 창**(별도 창 · `sessions_win.rs` · 61차) — 서버 머리줄 아래 세션 줄(● 활성 공유 · 공유 · 🔌[탭] · 상태/유휴/대기/탭) · 우클릭 = 활성 연결로 / 탭으로 / 다시 접속 / 접속 해제 · 빈 곳 = 모두 해제 · 더블클릭 = 탭으로/활성 연결로. View ▸ Session Manager · 팔레트도 같은 창 | 같음 |
+| **새 탭** | 그때의 **활성 공유 연결에 바로 묶임**(뒤에 활성 연결을 바꿔도 이 탭은 그대로 · 바꾸려면 표식) | **미연결 자리 + 접속 창이 바로 열림** · 접속하지 않고 닫으면 미연결 |
+| **탭 표식(플러그 이미지 버튼)** 보임 | **항상**(사용자 09-18) — 중립 플러그 = 공유 · 강조 플러그 = 전용 · **사선 플러그 = 미연결·끊김** | 같음(전용 또는 미연결) |
+| 표식 **메뉴** | `No connection` · 공유 연결 목록 · (전용이 있을 때만) 구분자 + 전용 연결 — **지금 것 앞에만 ✓**(배타) · 글자 열 정렬 · 그 외 문구 없음. 공유 줄 = 그 연결로(전용은 폐기) · `No connection` = 전용 해제/미연결 · 전용 줄 = 끊겨 있으면 다시 접속 | 같음(공유 연결이 없으면 `No connection`과 전용 줄만 · 접속은 툴바 Connect) |
+| 전용 탭에서 공유 연결 선택 | **전용 연결 바로 폐기**(미커밋이 있으면 묻는다) → 그 공유 연결에 묶임 · 옛 결과는 이어 받기 불가(`more=false`) | 같음(개별 모드에서도 공유 연결이 있으면) |
+| 탭에서 `CONNECT …` 실행 | 공유 탭 = **새 전용 연결 추가**(앞 문장 있으면 거부 D-99) · 전용 탭 = 기존 연결을 끊고 새로 — 단 **같은 서버·계정**이면 설정 `connect.reconnect_same`: 끔 = 기존 유지(CONNECT 명령만 지우고 나머지 실행 · 로그 1줄) · 켬 = 끊고 다시 | 같음 |
+| 탭에서 `DISCONNECT` | 전용 탭 = 전용 연결 거둠 → 공유 복귀 · 공유 탭 = 공유 연결 해제(종전) | 전용 탭 = 끊긴 채(미연결) |
+| 표식/세션 관리자의 **다시 접속** | 사용자의 명시적 요청 → `connect.reconnect_same`이 켜져 있으면 같은 서버라도 끊고 다시 · 끄면 살아 있으면 유지 | 같음 |
+| 끊김 확인(53 Broken) | 표식 사선 + 플러그 빨강 + 목록 "· 끊김" · 다음 동작 때 판정 → 재접속 | 같음 |
+| 탭 닫기 | 전용 세션은 함께 거둠(미커밋은 묻는다) · 공유 묶음만 풀림 | 세션 거둠 |
+| 접속 창을 열어 두고 다른 탭으로 전환 | 접속 대상은 **창을 연 시점의 규칙**(공유 모드 = 공유 · 개별 모드 = 그때의 활성 탭) — `login_place`가 시도 시점의 활성 탭을 본다 | — |
+
+**누수 점검(상태 × 동작)**: 탭 상태 3 × {툴바 Connect, 툴바 Disconnect 본체/▾, 표식 메뉴 5항목, CONNECT/DISCONNECT 명령, 새 탭, 탭 닫기, 끊김} 을 위 표가 덮는다. 남은 정직한 틈: ① 접속 창을 열어 둔 채 모드 설정을 바꾸면 창의 다음 Connect는 새 모드 규칙 ② 개별 모드에서 파일 열기로 생긴 탭도 "새 탭"이라 접속 창이 뜬다(의도 · 원치 않으면 Esc = 미연결).
+
 ## 8. 잃는 순간 (DR-30 연장)
 
 | 순간 | 처리 |
@@ -290,7 +337,7 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 | D2 | `login_plan` 접속 배치 | same_server · (connected ∨ idle_closed ∨ blocked) · blocked · 재활용 4조건(!connected · !blocked · !idle_closed · bound_tabs=0 ∨ only) · len<max | Use↔New · Use↔Busy · dead-same↔idle-same · Recycle↔New ×4 · only · New↔Limit | ✅ `mcdc_login_plan`(12쌍) |
 | D3 | `placement` 실행 배치 | intent 종류 · is_private · private_connect · **preceded** | NewPrivate↔Retarget↔Run · **NewPrivate↔Refuse(preceded만)** · 전용 탭은 preceded 무관 · ClosePrivate↔Run | ✅ `mcdc_placement` |
 | D4 | `reap_shared` | connected · blocked · idle_closed · is_default · bound_tabs | true 기준 ↔ 5개 각각 | ✅ `mcdc_reap_shared` |
-| D5 | `badge_kind` | private · multi_shared · connected | None↔Private · None↔Shared · Private↔Off · Shared↔Off · (표식 없는 탭은 connected 무관) | ✅ `mcdc_badge_kind` |
+| D5 | `badge_kind` | private · connected(항상 표시 · 60차) | Shared↔Private(private만) · Private↔Off · Shared↔Off | ✅ `mcdc_badge_kind` |
 | D6 | `gate_view` 통제 표시 | busy · aux>0 · multi_caret · has_pending | busy · aux 각각 단독으로 전체 차단 · multi_caret는 문장 실행만 · has_pending은 Commit만 | ✅ `mcdc_gate_view` |
 | D7 | `idle_action` | limit=0 · connected · blocked · tx_open · **stateful** · SQLite · (private ∨ include_shared) · idle≥limit | Close 기준 ↔ 8개 각각 + include_shared 쌍 | ✅ `idle_close_only_when_safe` |
 | D8 | `connect_intent` / `is_connect_by` | 첫 접속 명령 종류 · `CONNECT BY` + 뒤 토큰 유무 | 프로필/문자열/DISCONNECT 선행/문장 중간 CONNECT BY/조각/`CONNECT BY` 단독 | ✅ `connect_intent_…` · `connect_by_fragment_…` |
@@ -299,7 +346,7 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 | D12 | `alters_session_state` | 문장 종류(세션 설정·임시 객체·PL/SQL·세션 함수 vs 조회·DML·영구 DDL) | 참 23종 · 거짓 9종 표 | ✅ `session_state_classifier` |
 | D13 | `statements_before_connect` | 접속 명령 앞의 항목 종류(SQL·EXEC vs 클라이언트 명령) | 4쌍 | ✅ |
 | D14 | `TxLog` 세션 격리 | 세션 선택 · 같은 index · 세션별 열린 트랜잭션 · 세션 필터 | 두 세션 교차 시나리오 | ✅ `sessions_are_isolated_in_one_log` |
-| D10 | `same_target` 자격 빌리기 | 방언 · 호스트 · 포트(기본 보정) · DB · 사용자(줬을 때만) | 각각 다른 값 1개씩 | ✅ `same_target_matches_…` |
+| D10 | `password_required` 인라인 비밀번호 필수(자격 빌리기 제거 09-19) | 방언 ≠ SQLite · 호스트 있음 · 비밀번호 없음/빈 값 | 기준 1 + 조건별 반전 4 | ✅ `password_required_mcdc` |
 
 **순수 함수 밖에 남은 분기(호스트 · 실기로만 확인 = §13)**: ① `with_sess` 맞바꾸기 복귀(세션이 안에서 사라진 경우) ② `RunEvent::Disconnected`의 "전용 ∧ !idle_closed ∧ 공유 모드 → closing" ③ `done`의 `skip_done` ④ `disconnect_private`의 (지금 세션 ∧ 미커밋 → 팝업 / 다른 세션 ∧ 미커밋 → 거부) ⑤ `open_disconnect_menu`의 "대상 1개 ∧ 활성" 바로 해제. ②④⑤는 조건 2~3개짜리라 다음에 순수 함수로 뽑을 후보(T-122에 포함).
 

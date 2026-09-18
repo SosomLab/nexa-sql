@@ -7,7 +7,7 @@
 //! 구성(세로 폼): 프로필 콤보(Golden 로그인 리스트 자리) · DB 종류 · 호스트 · 포트 · 데이터베이스/서비스(파일 기반 방언은 파일/DSN) ·
 //! 사용자 · 비밀번호(마스킹) · 비밀번호 저장 · 프로필 이름 · [Test] [Connect/Disconnect] [Save] · 상태줄(● 색 + 문구).
 
-use nexa_ctl::controls::ComboControl;
+use nexa_ctl::controls::{ButtonTone, ComboControl};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
@@ -54,16 +54,19 @@ enum Field {
     Host,
     Port,
     Database,
+    /// 기본 스키마(`?schema=` · Oracle CURRENT_SCHEMA · PG search_path · 그 외 숨김 · 사용자 09-18).
+    Schema,
     User,
     Password,
     Name,
 }
 
-const FIELDS: [Field; 6] = [
+const FIELDS: [Field; 7] = [
     Field::Name,
     Field::Host,
     Field::Port,
     Field::Database,
+    Field::Schema,
     Field::User,
     Field::Password,
 ];
@@ -76,13 +79,14 @@ pub(crate) struct ConnectPanel {
     status_bars: ScrollBars,
     /// 페인트가 잰 상태 메시지 콘텐츠 높이(px) — 이벤트 경로(폰트 없음)가 스크롤 범위에 쓴다.
     status_content_h: std::cell::Cell<i32>,
-    /// Port 입력란 폭(논리 px · 설정 `conn.port_w` · 기본 58).
+    /// Port 입력란 폭(논리 px · 설정 `conn.port_w` · 기본 72 — 09-19 mac에서 58은 "1522"가 잘렸다).
     port_w: f32,
     focused: bool,
     dialect: Combo,
     host: TextBox,
     port: TextBox,
     database: TextBox,
+    schema: TextBox,
     user: TextBox,
     password: TextBox,
     name: TextBox,
@@ -93,10 +97,137 @@ pub(crate) struct ConnectPanel {
     connect_btn: Button,
     save_btn: Button,
     field_focus: Option<Field>,
+    /// 동작(Test/Connect/Save)을 눌렀을 때 비어 있던 필수 칸 — 경고 띠 · 채우면 즉시 해제(22 §10).
+    warn: Vec<Field>,
     /// 방언 콤보가 바꾼 기본 포트(사용자가 손대지 않은 포트 칸만 따라간다).
     auto_port: Option<u16>,
     pub(crate) state: ConnState,
     connected: bool,
+    /// 저장본 스냅숏(불러오기·New·Save 성공 때 갱신) — 지금 값과 다르면 "바뀜"(T-131).
+    snap: FormSnap,
+    /// 마지막 `sync_dirty`의 바뀐 칸(그리기는 &self라 여기서 읽는다).
+    dirty_now: Vec<Dirty>,
+}
+
+/// 폼 값의 스냅숏(저장본 · 09-19 T-131) — 칸별 비교로 "바뀜"을 판정한다(공백은 양끝만 정규화).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub(crate) struct FormSnap {
+    pub name: String,
+    pub dialect: String,
+    pub host: String,
+    pub port: String,
+    pub database: String,
+    pub schema: String,
+    pub user: String,
+    pub password: String,
+    pub save_pw: bool,
+}
+
+/// 바뀐 칸(순수 판정 · MC/DC: 칸마다 독립).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Dirty {
+    Name,
+    Dialect,
+    Host,
+    Port,
+    Database,
+    Schema,
+    User,
+    Password,
+    SavePw,
+}
+
+/// 어느 동작의 필수 검사인가(22 §10): Save는 Password 대신 프로필 이름.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FormAction {
+    Connect,
+    Save,
+}
+
+/// 폼의 칸 ↔ 원장의 로그인 항목.
+fn field_of(f: nsql_core::LoginField) -> Field {
+    use nsql_core::LoginField as L;
+    match f {
+        L::Host => Field::Host,
+        L::Port => Field::Port,
+        L::Database => Field::Database,
+        L::Schema => Field::Schema,
+        L::User => Field::User,
+        L::Password => Field::Password,
+    }
+}
+
+/// 이 방언·동작에서 필수인 폼 칸(라벨 `*`의 근거 · 원장 = `Dialect::login_required`).
+fn required_fields(dialect: Dialect, action: FormAction) -> Vec<Field> {
+    let mut out: Vec<Field> = dialect
+        .login_required()
+        .iter()
+        .copied()
+        .map(field_of)
+        .filter(|f| action == FormAction::Connect || *f != Field::Password)
+        .collect();
+    if action == FormAction::Save {
+        out.insert(0, Field::Name);
+    }
+    out
+}
+
+/// 빠진 필수 칸(순수 판정 · MC/DC: 방언 × 동작 × 칸별 빈 값) — 폼 순서대로.
+fn missing_fields(dialect: Dialect, action: FormAction, now: &FormSnap) -> Vec<Field> {
+    let empty = |f: Field| match f {
+        Field::Name => now.name.trim().is_empty(),
+        Field::Host => now.host.trim().is_empty(),
+        Field::Port => now.port.trim().is_empty(),
+        Field::Database => now.database.trim().is_empty(),
+        Field::Schema => now.schema.trim().is_empty(),
+        Field::User => now.user.trim().is_empty(),
+        Field::Password => now.password.is_empty(),
+    };
+    let req = required_fields(dialect, action);
+    let mut out: Vec<Field> = Vec::new();
+    for f in [Field::Name]
+        .into_iter()
+        .chain(FIELDS.into_iter().filter(|f| *f != Field::Name))
+    {
+        if req.contains(&f) && empty(f) && !out.contains(&f) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
+    let ne = |a: &str, b: &str| a.trim() != b.trim();
+    let mut out = Vec::new();
+    if ne(&base.name, &now.name) {
+        out.push(Dirty::Name);
+    }
+    if ne(&base.dialect, &now.dialect) {
+        out.push(Dirty::Dialect);
+    }
+    if ne(&base.host, &now.host) {
+        out.push(Dirty::Host);
+    }
+    if ne(&base.port, &now.port) {
+        out.push(Dirty::Port);
+    }
+    if ne(&base.database, &now.database) {
+        out.push(Dirty::Database);
+    }
+    if ne(&base.schema, &now.schema) {
+        out.push(Dirty::Schema);
+    }
+    if ne(&base.user, &now.user) {
+        out.push(Dirty::User);
+    }
+    // 비밀번호는 공백도 값이다.
+    if base.password != now.password {
+        out.push(Dirty::Password);
+    }
+    if base.save_pw != now.save_pw {
+        out.push(Dirty::SavePw);
+    }
+    out
 }
 
 fn digits_only(c: char) -> bool {
@@ -114,7 +245,7 @@ impl ConnectPanel {
             status_scroll: 0,
             status_bars: ScrollBars::new(),
             status_content_h: std::cell::Cell::new(0),
-            port_w: 58.0,
+            port_w: 72.0,
             focused: false,
             dialect: Combo::new(
                 Dialect::ALL
@@ -133,6 +264,7 @@ impl ConnectPanel {
             host: TextBox::new(t(Msg::PhHost)),
             port: TextBox::new(""),
             database: TextBox::new(t(Msg::PhDatabase)),
+            schema: TextBox::new(t(Msg::PhSchema)),
             user: TextBox::new(t(Msg::PhUser)),
             password: TextBox::new(t(Msg::PhPassword)),
             name: TextBox::new(t(Msg::PhProfileName)),
@@ -142,7 +274,10 @@ impl ConnectPanel {
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
             field_focus: None,
+            warn: Vec::new(),
             auto_port: None,
+            snap: FormSnap::default(),
+            dirty_now: Vec::new(),
             state: ConnState::Idle,
             connected: false,
         };
@@ -167,7 +302,8 @@ impl ConnectPanel {
         };
         let db_ph = self.database_placeholder();
         rebuild(&mut self.host, t(Msg::PhHost), false);
-        rebuild(&mut self.database, db_ph, false);
+        rebuild(&mut self.database, &db_ph, false);
+        rebuild(&mut self.schema, t(Msg::PhSchema), false);
         rebuild(&mut self.user, t(Msg::PhUser), false);
         rebuild(&mut self.password, t(Msg::PhPassword), true);
         rebuild(&mut self.name, t(Msg::PhProfileName), false);
@@ -178,12 +314,21 @@ impl ConnectPanel {
         Dialect::from_name(&self.dialect.selected_value()).unwrap_or(Dialect::Sqlite)
     }
 
-    fn database_placeholder(&self) -> &'static str {
-        match self.selected_dialect() {
+    fn database_placeholder(&self) -> String {
+        let d = self.selected_dialect();
+        let base = match d {
             Dialect::Sqlite => t(Msg::PhSqliteFile),
             Dialect::Odbc => t(Msg::PhDsn),
             Dialect::Oracle => t(Msg::PhService),
             _ => t(Msg::PhDatabase),
+        };
+        // 선택 칸은 "(optional)"을 뒤에(22 §10 · 필수 칸은 `*`).
+        if d.login_required()
+            .contains(&nsql_core::LoginField::Database)
+        {
+            base.to_string()
+        } else {
+            format!("{base} {}", t(Msg::PhOptional))
         }
     }
 
@@ -212,6 +357,7 @@ impl ConnectPanel {
             .set_text(&spec.port.map(|p| p.to_string()).unwrap_or_default());
         self.database
             .set_text(spec.database.as_deref().unwrap_or(""));
+        self.schema.set_text(spec.schema.as_deref().unwrap_or(""));
         self.user.set_text(spec.user.as_deref().unwrap_or(""));
         self.password
             .set_text(spec.password.as_deref().unwrap_or(""));
@@ -219,19 +365,30 @@ impl ConnectPanel {
         self.name.set_text(name);
         let d = self.selected_dialect();
         self.apply_dialect(d);
+        self.mark_saved();
     }
 
     /// 폼 → 스펙(GUI·CLI 공용 검증). 실패 문구는 상태줄로.
     fn build_spec(&self) -> Result<ConnectSpec, String> {
         let port = self.port.text().trim().parse::<u16>().ok();
-        ConnectSpec::from_parts(
+        let mut spec = ConnectSpec::from_parts(
             self.selected_dialect(),
             &self.host.text(),
             port,
             &self.database.text(),
             &self.user.text(),
             &self.password.text(),
-        )
+        )?;
+        let sc = self.schema.text();
+        if self.schema_applies() && !sc.trim().is_empty() {
+            spec.schema = Some(sc.trim().to_string());
+        }
+        Ok(spec)
+    }
+
+    /// 기본 스키마 칸이 뜻이 있는 방언(Oracle · PostgreSQL) — SQL Server는 Database가 그 자리 · 파일 방언은 없음.
+    fn schema_applies(&self) -> bool {
+        matches!(self.selected_dialect(), Dialect::Oracle | Dialect::Postgres)
     }
 
     /// 새 프로필 — 폼 비우기(DB 종류는 유지).
@@ -241,6 +398,7 @@ impl ConnectPanel {
             &mut self.host,
             &mut self.port,
             &mut self.database,
+            &mut self.schema,
             &mut self.user,
             &mut self.password,
             &mut self.name,
@@ -250,6 +408,85 @@ impl ConnectPanel {
         self.save_pw.set_checked(false);
         let d = self.selected_dialect();
         self.apply_dialect(d);
+        self.mark_saved();
+    }
+
+    /// 지금 값의 스냅숏.
+    pub(crate) fn snapshot(&self) -> FormSnap {
+        FormSnap {
+            name: self.name.text(),
+            dialect: self.dialect.selected_value(),
+            host: self.host.text(),
+            port: self.port.text(),
+            database: self.database.text(),
+            schema: if self.schema_applies() {
+                self.schema.text()
+            } else {
+                String::new()
+            },
+            user: self.user.text(),
+            password: self.password.text(),
+            save_pw: self.save_pw.is_checked(),
+        }
+    }
+
+    /// 지금 값을 저장본으로(불러오기 · New · Save 성공).
+    pub(crate) fn mark_saved(&mut self) {
+        self.snap = self.snapshot();
+    }
+
+    /// 저장본과 다른 칸.
+    pub(crate) fn dirty(&self) -> Vec<Dirty> {
+        dirty_fields(&self.snap, &self.snapshot())
+    }
+
+    pub(crate) fn is_dirty(&self) -> bool {
+        !self.dirty().is_empty()
+    }
+
+    /// 그리기 직전(창이 부른다): 바뀐 칸을 컨트롤 표시(입력란 띠 · Save 색/라벨)에 반영한다.
+    pub(crate) fn sync_dirty(&mut self) {
+        let dirty = self.dirty();
+        let is = |d: Dirty| dirty.contains(&d);
+        self.host.set_modified(is(Dirty::Host));
+        self.port.set_modified(is(Dirty::Port));
+        self.database.set_modified(is(Dirty::Database));
+        self.schema.set_modified(is(Dirty::Schema));
+        self.user.set_modified(is(Dirty::User));
+        self.password.set_modified(is(Dirty::Password));
+        self.name.set_modified(is(Dirty::Name));
+        // 경고 띠(빠진 필수 칸) — 글자를 넣으면 즉시 해제 · 경고 > 바뀜.
+        let snap = self.snapshot();
+        self.warn.retain(|f| match f {
+            Field::Name => snap.name.trim().is_empty(),
+            Field::Host => snap.host.trim().is_empty(),
+            Field::Port => snap.port.trim().is_empty(),
+            Field::Database => snap.database.trim().is_empty(),
+            Field::Schema => snap.schema.trim().is_empty(),
+            Field::User => snap.user.trim().is_empty(),
+            Field::Password => snap.password.is_empty(),
+        });
+        for f in FIELDS {
+            let on = self.warn.contains(&f);
+            self.textbox(f).set_warning(on);
+        }
+        let n = dirty.len();
+        self.save_btn.set_tone(if n > 0 {
+            ButtonTone::Accent
+        } else {
+            ButtonTone::Default
+        });
+        self.save_btn.set_label(if n > 0 {
+            format!("{} •", t(Msg::BtnSave))
+        } else {
+            t(Msg::BtnSave).to_string()
+        });
+        self.dirty_now = dirty;
+    }
+
+    /// 목록에서 불러온 프로필 이름(New면 None).
+    pub(crate) fn loaded_name(&self) -> Option<String> {
+        self.loaded_name.clone()
     }
 
     /// 폼의 접속 명칭(프로필 이름) — 접속 성공 시 '한 번 이상 접속' 목록에 올린다.
@@ -298,6 +535,7 @@ impl ConnectPanel {
             &mut self.host,
             &mut self.port,
             &mut self.database,
+            &mut self.schema,
             &mut self.user,
             &mut self.password,
             &mut self.name,
@@ -353,6 +591,11 @@ impl ConnectPanel {
             y += field_h + gap;
         }
         place(&mut self.database, &mut inv, &mut y, field_h);
+        if self.schema_applies() {
+            place(&mut self.schema, &mut inv, &mut y, field_h);
+        } else {
+            self.schema.set_bounds(off, &mut inv);
+        }
         place(&mut self.user, &mut inv, &mut y, field_h);
         place(&mut self.password, &mut inv, &mut y, field_h);
         self.save_pw
@@ -455,6 +698,7 @@ impl ConnectPanel {
             Field::Host => &mut self.host,
             Field::Port => &mut self.port,
             Field::Database => &mut self.database,
+            Field::Schema => &mut self.schema,
             Field::User => &mut self.user,
             Field::Password => &mut self.password,
             Field::Name => &mut self.name,
@@ -517,6 +761,7 @@ impl ConnectPanel {
             .iter()
             .copied()
             .filter(|f| !(self.file_based() && matches!(f, Field::Host | Field::Port)))
+            .filter(|f| !(matches!(f, Field::Schema) && !self.schema_applies()))
             .collect()
     }
 
@@ -591,6 +836,7 @@ impl ConnectPanel {
             Field::Host => &self.host,
             Field::Port => &self.port,
             Field::Database => &self.database,
+            Field::Schema => &self.schema,
             Field::User => &self.user,
             Field::Password => &self.password,
             Field::Name => &self.name,
@@ -603,6 +849,7 @@ impl ConnectPanel {
             &self.host,
             &self.port,
             &self.database,
+            &self.schema,
             &self.user,
             &self.password,
             &self.name,
@@ -761,7 +1008,48 @@ impl ConnectPanel {
         None
     }
 
+    /// 필수 칸 검사(22 §10): 빠진 칸이 있으면 경고 띠 + 상태줄 `Required: …` + 첫 칸 포커스 → false(동작 안 함).
+    fn check_required(&mut self, action: FormAction) -> bool {
+        let missing = missing_fields(self.selected_dialect(), action, &self.snapshot());
+        if missing.is_empty() {
+            self.warn.clear();
+            return true;
+        }
+        let names: Vec<String> = missing.iter().map(|f| self.field_label(*f)).collect();
+        self.set_state(ConnState::Failed(tf(
+            Msg::StRequiredFields,
+            &[&names.join(", ")],
+        )));
+        self.field_focus = Some(missing[0]);
+        self.focused = true;
+        self.sync_focus();
+        self.warn = missing;
+        false
+    }
+
+    /// 칸 라벨(방언에 따라 Database 칸 이름이 다르다).
+    fn field_label(&self, f: Field) -> String {
+        match f {
+            Field::Name => t(Msg::LblProfileName).to_string(),
+            Field::Host => t(Msg::LblHost).to_string(),
+            Field::Port => t(Msg::LblPort).to_string(),
+            Field::Database => match self.selected_dialect() {
+                Dialect::Sqlite => t(Msg::LblFile),
+                Dialect::Odbc => t(Msg::LblDsn),
+                Dialect::Oracle => t(Msg::LblService),
+                _ => t(Msg::LblDatabase),
+            }
+            .to_string(),
+            Field::Schema => t(Msg::LblSchema).to_string(),
+            Field::User => t(Msg::LblUser).to_string(),
+            Field::Password => t(Msg::LblPassword).to_string(),
+        }
+    }
+
     fn act_test(&mut self) -> Option<PanelAction> {
+        if !self.check_required(FormAction::Connect) {
+            return None;
+        }
         match self.build_spec() {
             Ok(spec) => {
                 self.set_state(ConnState::Testing);
@@ -779,9 +1067,34 @@ impl ConnectPanel {
         self.act_connect()
     }
 
+    /// 저장(잃는 순간 지킴이 "변경 저장" · T-131).
+    pub(crate) fn save_action(&mut self) -> Option<PanelAction> {
+        self.act_save()
+    }
+
+    /// 변경 버리기 — 저장본(스냅숏)으로 되돌린다.
+    pub(crate) fn discard_changes(&mut self) {
+        let snap = self.snap.clone();
+        self.dialect.select_value(&snap.dialect);
+        self.host.set_text(&snap.host);
+        self.port.set_text(&snap.port);
+        self.database.set_text(&snap.database);
+        self.schema.set_text(&snap.schema);
+        self.user.set_text(&snap.user);
+        self.password.set_text(&snap.password);
+        self.name.set_text(&snap.name);
+        self.save_pw.set_checked(snap.save_pw);
+        let d = self.selected_dialect();
+        self.apply_dialect(d);
+        self.snap = snap;
+    }
+
     fn act_connect(&mut self) -> Option<PanelAction> {
         if self.connected {
             return Some(PanelAction::Disconnect);
+        }
+        if !self.check_required(FormAction::Connect) {
+            return None;
         }
         match self.build_spec() {
             Ok(spec) => {
@@ -796,6 +1109,9 @@ impl ConnectPanel {
     }
 
     fn act_save(&mut self) -> Option<PanelAction> {
+        if !self.check_required(FormAction::Save) {
+            return None;
+        }
         let name = self.name.text().trim().to_string();
         if !nsql_vault::is_profile_name(&name) {
             self.set_state(ConnState::Failed(t(Msg::ErrProfileName).into()));
@@ -830,30 +1146,119 @@ impl ConnectPanel {
         dc.select_font(FontSlot::Base, false);
         // 라벨 16 + 3 — 입력란 포커스 링(바깥 2px)이 위 라벨과 겹치던 문제(사용자 09-14).
         let label_h = self.s(19.0);
-        let label = |dc: &mut dyn DrawCtx, r: Rect, text: &str| {
+        // 바뀐 칸(T-131): 입력란 왼쪽 띠(`sync_dirty`가 켰다) + 라벨 끝 ` •` · 콤보/체크는 왼쪽에 같은 띠를 여기서 그린다.
+        let dirty = &self.dirty_now;
+        let is = |d: Dirty| dirty.contains(&d);
+        let stripe = |dc: &mut dyn DrawCtx, r: Rect| {
+            if r.w > 0 {
+                let m = self.s(4.0);
+                dc.fill_rect(
+                    Rect::new(r.x + 1, r.y + m, self.s(2.0).max(1), (r.h - m * 2).max(1)),
+                    th.accent,
+                );
+            }
+        };
+        // 필수 칸 = 라벨 뒤 `*`(Azure Data Studio식 · 22 §10) — 방언을 바꾸면 따라 바뀐다 · 빠진 칸은 경고색.
+        let req = required_fields(self.selected_dialect(), FormAction::Connect);
+        let req_name = true; // 프로필 이름은 Save에 필수.
+        let warn = self.warn.clone();
+        let label = |dc: &mut dyn DrawCtx, r: Rect, text: &str, changed: bool, field: Field| {
             if r.w == 0 {
                 return;
             }
-            dc.text(r.x, r.y - label_h + self.s(1.0), b, text, th.text_dim);
+            let y = r.y - label_h + self.s(1.0);
+            let missing = warn.contains(&field);
+            dc.text(r.x, y, b, text, if missing { th.warn } else { th.text_dim });
+            let mut x = r.x + dc.text_width(text);
+            let required = if field == Field::Name {
+                req_name
+            } else {
+                req.contains(&field)
+            };
+            if required {
+                x += self.s(3.0);
+                dc.text(x, y, b, "*", if missing { th.warn } else { th.danger });
+                x += dc.text_width("*");
+            }
+            if changed {
+                dc.text(x + self.s(4.0), y, b, "•", th.accent);
+            }
         };
-        label(dc, self.name.bounds(), t(Msg::LblProfileName));
-        label(dc, self.dialect.bounds(), t(Msg::LblDbType));
-        label(dc, self.host.bounds(), t(Msg::LblHost));
-        label(dc, self.port.bounds(), t(Msg::LblPort));
+        label(
+            dc,
+            self.name.bounds(),
+            t(Msg::LblProfileName),
+            is(Dirty::Name),
+            Field::Name,
+        );
+        // DB 종류 콤보 = 필수이나 늘 값이 있다(`*` 없이).
+        {
+            let r = self.dialect.bounds();
+            if r.w > 0 {
+                let y = r.y - label_h + self.s(1.0);
+                let text = t(Msg::LblDbType);
+                dc.text(r.x, y, b, text, th.text_dim);
+                if is(Dirty::Dialect) {
+                    let w = dc.text_width(text);
+                    dc.text(r.x + w + self.s(4.0), y, b, "•", th.accent);
+                }
+            }
+        }
+        label(
+            dc,
+            self.host.bounds(),
+            t(Msg::LblHost),
+            is(Dirty::Host),
+            Field::Host,
+        );
+        label(
+            dc,
+            self.port.bounds(),
+            t(Msg::LblPort),
+            is(Dirty::Port),
+            Field::Port,
+        );
         let db_label = match self.selected_dialect() {
             Dialect::Sqlite => t(Msg::LblFile),
             Dialect::Odbc => t(Msg::LblDsn),
             Dialect::Oracle => t(Msg::LblService),
             _ => t(Msg::LblDatabase),
         };
-        label(dc, self.database.bounds(), db_label);
-        label(dc, self.user.bounds(), t(Msg::LblUser));
-        label(dc, self.password.bounds(), t(Msg::LblPassword));
-        label(dc, self.name.bounds(), t(Msg::LblProfileName));
+        label(
+            dc,
+            self.database.bounds(),
+            db_label,
+            is(Dirty::Database),
+            Field::Database,
+        );
+        if self.schema_applies() {
+            label(
+                dc,
+                self.schema.bounds(),
+                t(Msg::LblSchema),
+                is(Dirty::Schema),
+                Field::Schema,
+            );
+        }
+        label(
+            dc,
+            self.user.bounds(),
+            t(Msg::LblUser),
+            is(Dirty::User),
+            Field::User,
+        );
+        label(
+            dc,
+            self.password.bounds(),
+            t(Msg::LblPassword),
+            is(Dirty::Password),
+            Field::Password,
+        );
         for tb in [
             &self.host,
             &self.port,
             &self.database,
+            &self.schema,
             &self.user,
             &self.password,
             &self.name,
@@ -863,12 +1268,22 @@ impl ConnectPanel {
             }
         }
         self.save_pw.paint(dc, th);
+        if is(Dirty::SavePw) {
+            stripe(dc, self.save_pw.bounds());
+        }
+        if is(Dirty::Dialect) {
+            stripe(dc, self.dialect.bounds());
+        }
         self.test_btn.paint(dc, th);
         self.connect_btn.paint(dc, th);
+        // Save = 바뀐 칸이 있으면 강조 + `Save •`(`sync_dirty` · 툴바 Commit 배지와 같은 문법).
+        let n = dirty.len();
         self.save_btn.paint(dc, th);
         // 상태줄: ● + 문구(패널 폭 안에서 잘림)
         let sr = self.status_rect();
         let (color, text) = match &self.state {
+            // 바뀐 채 아무 결과도 없으면 "저장 필요"를 상태로(결과가 오면 결과가 우선 · 상태는 한 번에 하나).
+            ConnState::Idle if n > 0 => (th.accent, tf(Msg::StUnsaved, &[&n.to_string()])),
             ConnState::Idle => (th.text_dim, t(Msg::StIdle).to_string()),
             ConnState::Connecting => (th.warn, t(Msg::StConnectingShort).to_string()),
             ConnState::Testing => (th.warn, t(Msg::StTesting).to_string()),
@@ -941,4 +1356,131 @@ fn wrap_words(dc: &mut dyn DrawCtx, text: &str, max_w: i32) -> Vec<String> {
         out.push(String::new());
     }
     out
+}
+
+#[cfg(test)]
+mod dirty_tests {
+    use super::*;
+
+    fn base() -> FormSnap {
+        FormSnap {
+            name: "A".into(),
+            dialect: "oracle".into(),
+            host: "h".into(),
+            port: "1521".into(),
+            database: "db".into(),
+            schema: "".into(),
+            user: "u".into(),
+            password: "p".into(),
+            save_pw: true,
+        }
+    }
+
+    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(9칸 독립) · 같으면 빈 목록.
+    #[test]
+    fn each_field_independently() {
+        let b = base();
+        assert!(dirty_fields(&b, &b).is_empty());
+        type Mut = fn(&mut FormSnap);
+        let cases: [(Mut, Dirty); 9] = [
+            (|s| s.name = "B".into(), Dirty::Name),
+            (|s| s.dialect = "pg".into(), Dirty::Dialect),
+            (|s| s.host = "x".into(), Dirty::Host),
+            (|s| s.port = "1".into(), Dirty::Port),
+            (|s| s.database = "y".into(), Dirty::Database),
+            (|s| s.schema = "S".into(), Dirty::Schema),
+            (|s| s.user = "v".into(), Dirty::User),
+            (|s| s.password = "q".into(), Dirty::Password),
+            (|s| s.save_pw = false, Dirty::SavePw),
+        ];
+        for (f, want) in cases {
+            let mut n = base();
+            f(&mut n);
+            assert_eq!(dirty_fields(&b, &n), vec![want]);
+        }
+    }
+
+    /// 필수 칸 판정 MC/DC(22 §10): 방언 × 동작 × 칸별 빈 값 — 각 조건이 결과를 독립적으로 바꾼다.
+    #[test]
+    fn required_fields_by_dialect_and_action() {
+        let full = base();
+        // 다 채웠으면 어느 방언·동작이든 빠진 것 없음.
+        for d in [
+            Dialect::Oracle,
+            Dialect::Postgres,
+            Dialect::Mssql,
+            Dialect::Sqlite,
+        ] {
+            assert!(
+                missing_fields(d, FormAction::Connect, &full).is_empty(),
+                "{d:?}"
+            );
+        }
+        // Oracle: Database(서비스) 필수 · PG/MSSQL: 선택.
+        let mut no_db = base();
+        no_db.database.clear();
+        assert_eq!(
+            missing_fields(Dialect::Oracle, FormAction::Connect, &no_db),
+            vec![Field::Database]
+        );
+        assert!(missing_fields(Dialect::Postgres, FormAction::Connect, &no_db).is_empty());
+        assert!(missing_fields(Dialect::Mssql, FormAction::Connect, &no_db).is_empty());
+        // SQLite: 파일(Database)만 필수 — 호스트·사용자·비밀번호 없어도 됨.
+        let file_only = FormSnap {
+            database: "/tmp/a.db".into(),
+            ..Default::default()
+        };
+        assert!(missing_fields(Dialect::Sqlite, FormAction::Connect, &file_only).is_empty());
+        assert_eq!(
+            missing_fields(Dialect::Sqlite, FormAction::Connect, &FormSnap::default()),
+            vec![Field::Database]
+        );
+        // Password: Connect엔 필수 · Save엔 아님 · Save는 이름이 필수.
+        let mut no_pw = base();
+        no_pw.password.clear();
+        assert_eq!(
+            missing_fields(Dialect::Oracle, FormAction::Connect, &no_pw),
+            vec![Field::Password]
+        );
+        assert!(missing_fields(Dialect::Oracle, FormAction::Save, &no_pw).is_empty());
+        let mut no_name = base();
+        no_name.name.clear();
+        assert!(missing_fields(Dialect::Oracle, FormAction::Connect, &no_name).is_empty());
+        assert_eq!(
+            missing_fields(Dialect::Oracle, FormAction::Save, &no_name),
+            vec![Field::Name]
+        );
+        // Port·Schema는 늘 선택 · 여러 칸이면 폼 순서(Name · Host · … · Password).
+        let mut sparse = base();
+        sparse.port.clear();
+        sparse.schema.clear();
+        sparse.host = " ".into();
+        sparse.user.clear();
+        assert_eq!(
+            missing_fields(Dialect::Postgres, FormAction::Connect, &sparse),
+            vec![Field::Host, Field::User]
+        );
+    }
+
+    /// 양끝 공백은 바뀜이 아니다 — 비밀번호만 공백도 값.
+    #[test]
+    fn trims_except_password() {
+        let b = base();
+        let mut n = base();
+        n.host = " h ".into();
+        n.name = "A ".into();
+        assert!(dirty_fields(&b, &n).is_empty());
+        n.password = "p ".into();
+        assert_eq!(dirty_fields(&b, &n), vec![Dirty::Password]);
+    }
+
+    /// 여러 칸이면 폼 순서대로 전부.
+    #[test]
+    fn multiple_in_form_order() {
+        let b = base();
+        let mut n = base();
+        n.user = "w".into();
+        n.host = "z".into();
+        assert_eq!(dirty_fields(&b, &n), vec![Dirty::Host, Dirty::User]);
+    }
 }

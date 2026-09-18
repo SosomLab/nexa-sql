@@ -1347,6 +1347,7 @@ dependencies = [
  "chrono",
  "nsql-core",
  "nsql-script",
+ "socket2",
  "tiberius",
  "tokio",
  "tokio-util",

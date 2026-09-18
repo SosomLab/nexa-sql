@@ -110,6 +110,10 @@ pub(crate) enum ConnOutcome {
         key: u64,
         result: Result<u64, String>,
     },
+    /// ★ 끊김 확인(docs/53 §3): 동작 직전 빠른 판정이 실패했거나 접속성 오류가 났다 — 세션 객체·스펙은 그대로(Broken).
+    Broken(String),
+    /// 끊김이었던 세션이 다시 살아 있음을 확인했다(판정 성공 · 재접속 성공).
+    Alive,
 }
 
 fn err(message: String) -> RunEvent {
@@ -145,47 +149,25 @@ fn resolve_target(target: &str, default_dialect: Dialect) -> Result<ConnectSpec,
     nsql_drivers::parse_target(target, default_dialect)
 }
 
-/// 같은 대상인가(방언·호스트·포트·DB · 포트가 비면 방언 기본 포트 · 대소문자 무시) — 자격을 채울 프로필 찾기용.
-fn same_target(want: &ConnectSpec, have: &ConnectSpec, default_dialect: Dialect) -> bool {
-    let dialect = |s: &ConnectSpec| s.dialect.unwrap_or(default_dialect);
-    let port = |s: &ConnectSpec| s.port.or_else(|| dialect(s).default_port());
-    let eq = |a: &Option<String>, b: &Option<String>| match (a, b) {
-        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        (None, None) => true,
-        _ => false,
-    };
-    dialect(want) == dialect(have)
-        && eq(&want.host, &have.host)
-        && port(want) == port(have)
-        && eq(&want.database, &have.database)
-        && want.user.as_ref().is_none_or(|u| {
-            have.user
-                .as_ref()
-                .is_some_and(|h| h.eq_ignore_ascii_case(u))
-        })
+/// ★ 인라인 접속 문자열은 **비밀번호가 있어야** 연다(docs/52 §4 · 09-19). 저장소 프로필은 워커에 오기 전에 이미 채워져
+/// 오고(`resolve_target`), SQLite는 자격이 없다. 자격 빌리기(같은 서버·계정 프로필의 비밀번호를 몰래 쓰기)는 하지 않는다 —
+/// 사용자가 보기에 "비밀번호 없이 접속됨"이 되어 오해·오접속을 낳는다. 비밀번호 변수/모달 입력 = T-132.
+pub(crate) fn password_required(spec: &ConnectSpec, default_dialect: Dialect) -> bool {
+    spec.dialect.unwrap_or(default_dialect) != Dialect::Sqlite
+        && spec.host.is_some()
+        && spec.password.as_deref().is_none_or(str::is_empty)
 }
 
-/// ★ 자격 없는 접속 문자열(`CONNECT "oracle:host:1521/svc"` · docs/52 §4) — 저장소에서 **같은 대상의 프로필이 정확히 하나**면
-/// 그 자격(사용자·비밀번호·역할)을 빌린다. 없거나 둘 이상이면(모호) 그대로 둔다 = 드라이버가 자격 오류를 낸다.
-/// 기본 사상(1 서버 · 1 계정)에 맞춘 편의이지 추측이 아니다: 후보가 하나일 때만.
-pub(crate) fn fill_credentials(
-    spec: &ConnectSpec,
-    default_dialect: Dialect,
-) -> Option<ConnectSpec> {
-    if spec.password.is_some() || spec.host.is_none() {
-        return None;
-    }
-    let v = Vault::open_default().ok()?;
-    let mut hits = v
-        .list()
-        .ok()?
-        .into_iter()
-        .filter(|p| same_target(spec, &p.spec, default_dialect));
-    let one = hits.next()?;
-    if hits.next().is_some() {
-        return None;
-    }
-    v.resolve(&one.name).ok().flatten()
+/// 생존 판정 설정(docs/53 §3 · 실행마다 읽는다): (빠른 판정 상한, 마지막 성공 뒤 이 시간이 지나면 동작 전에 판정, 자동 재접속).
+fn liveness_settings() -> (Duration, Duration, bool) {
+    let Ok(s) = nsql_settings::Settings::open_default() else {
+        return (Duration::from_secs(2), Duration::from_secs(60), true);
+    };
+    (
+        Duration::from_secs(s.int("probe.timeout").clamp(1, 60) as u64),
+        Duration::from_secs(s.int("probe.stale_secs").max(0) as u64),
+        s.flag("connect.auto_reconnect"),
+    )
 }
 
 /// 페치 설정(docs/43 §4-3)을 러너에 반영 — `grid.fetch_mode`(cursor만 커서 유지) · `db.fetch_size` · `db.cursor_idle_secs`.
@@ -263,7 +245,6 @@ pub(crate) fn spawn(
     default_dialect: Dialect,
     max_rows: usize,
     autocommit: bool,
-    auto_reconnect: bool,
     wake: Box<dyn Fn() + Send>,
 ) -> (Handle, mpsc::Receiver<RunEvent>) {
     let (tx, rx) = mpsc::channel::<Cmd>();
@@ -280,8 +261,14 @@ pub(crate) fn spawn(
         .spawn(move || {
             let opener: Opener = Box::new(
                 move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-                    let filled = fill_credentials(spec, default_dialect);
-                    nsql_drivers::open(filled.as_ref().unwrap_or(spec), default_dialect)
+                    if password_required(spec, default_dialect) {
+                        return Err(DbError {
+                            code: None,
+                            message: t(Msg::ErrPasswordRequired).into(),
+                            position: None,
+                        });
+                    }
+                    nsql_drivers::open(spec, default_dialect)
                 },
             );
             let wake_shared = std::sync::Arc::new(std::sync::Mutex::new(wake));
@@ -327,7 +314,86 @@ pub(crate) fn spawn(
             let mut active_spec: Option<ConnectSpec> = None;
             let mut active_ep: Option<(String, u16)> = None;
             let mut suspect = false;
+            // 마지막으로 서버와 성공적으로 주고받은 시각(docs/53 §3-1) · 끊김을 UI에 알렸는가(살아나면 Alive 1회).
+            let mut last_ok = std::time::Instant::now();
+            let mut broken_told = false;
             let endpoint = |spec: &ConnectSpec| spec.host.clone().zip(spec.port);
+            // ★ 동작 직전 생존 판정(docs/53 §3): ① UI가 요청했거나(신호등 ≠ 초록) ② 직전 접속성 오류 ③ 드라이버가 끊김을 안다(`is_alive`)
+            //   ④ 마지막 성공 뒤 `probe.stale_secs` 지남 → 호스트:포트 TCP 판정(SYN 1 · `probe.timeout`). 죽었으면 Broken + 오류(막힘 0).
+            //   살아 있고 ②③이면(설정) 같은 스펙으로 재접속. 반환 = 진행해도 되는가.
+            #[allow(clippy::too_many_arguments)]
+            fn ensure_alive(
+                runner: &mut Runner,
+                active_spec: &Option<ConnectSpec>,
+                active_ep: &Option<(String, u16)>,
+                suspect: &mut bool,
+                last_ok: &mut std::time::Instant,
+                broken_told: &mut bool,
+                preflight: Option<Duration>,
+                allow_reconnect: bool,
+                ctx_tx: &mpsc::Sender<ConnOutcome>,
+                emit: &mut dyn FnMut(RunEvent),
+            ) -> Result<(), String> {
+                let (timeout, stale, auto) = liveness_settings();
+                let dead_hint = runner.session.as_ref().is_some_and(|s| !s.is_alive());
+                let stale_now = stale.as_secs() > 0 && last_ok.elapsed() >= stale;
+                let plan = crate::sessions::live_plan(
+                    preflight.is_some(),
+                    *suspect,
+                    dead_hint,
+                    stale_now,
+                    allow_reconnect,
+                    auto,
+                );
+                let timeout = preflight.unwrap_or(timeout);
+                if let (true, Some((host, port))) = (plan.probe, active_ep.as_ref()) {
+                    let t = std::time::Instant::now();
+                    if probe::probe_once(host, *port, timeout, true) != probe::Outcome::Up {
+                        let ep = format!("{host}:{port}");
+                        let ms = t.elapsed().as_millis().to_string();
+                        let m = tf(Msg::ErrServerUnreachable, &[&ep, &ms]);
+                        *suspect = true;
+                        if !*broken_told {
+                            *broken_told = true;
+                            let _ = ctx_tx.send(ConnOutcome::Broken(m.clone()));
+                        }
+                        return Err(m);
+                    }
+                }
+                if plan.reconnect {
+                    if let Some(spec) = active_spec.clone() {
+                        emit(RunEvent::Message(tf(
+                            Msg::StReconnecting,
+                            &[&spec.redacted()],
+                        )));
+                        let mut failed = false;
+                        let ok = runner.connect(&spec, &mut |e: RunEvent| {
+                            if matches!(e, RunEvent::Error { .. }) {
+                                failed = true;
+                            }
+                            emit(e);
+                        });
+                        if !ok || failed {
+                            *suspect = true;
+                            if !*broken_told {
+                                *broken_told = true;
+                                let _ = ctx_tx.send(ConnOutcome::Broken(tf(
+                                    Msg::StReconnecting,
+                                    &[&spec.redacted()],
+                                )));
+                            }
+                            return Err(String::new());
+                        }
+                        *suspect = false;
+                    }
+                }
+                if *broken_told {
+                    *broken_told = false;
+                    let _ = ctx_tx.send(ConnOutcome::Alive);
+                }
+                *last_ok = std::time::Instant::now();
+                Ok(())
+            }
             while let Ok(cmd) = rx.recv() {
                 // 패닉 격리 — 한 명령의 패닉이 워커(=앱 전체)를 죽이지 않는다.
                 let r = catch_unwind(AssertUnwindSafe(|| match cmd {
@@ -346,13 +412,45 @@ pub(crate) fn spawn(
                             return true;
                         }
                         let mut last_err: Option<String> = None;
-                        let ok = runner.connect(&spec, &mut |e: RunEvent| {
-                            if let RunEvent::Error { error, .. } = &e {
-                                last_err = Some(error.message.clone());
+                        // 접속 전 빠른 판정(SYN 1 · docs/53): 끊긴 네트워크에서 드라이버의 긴 접속 타임아웃을 기다리지 않는다.
+                        //   (같은 서버 재접속·유휴 뒤 재접속·접속 창 Connect 모두 — 접속 창의 신호등과 별개로 지금 이 순간을 본다.)
+                        let (timeout, _, _) = liveness_settings();
+                        let reachable = match endpoint(&spec) {
+                            Some((host, port)) => {
+                                let t = std::time::Instant::now();
+                                let up = probe::probe_once(&host, port, timeout, true)
+                                    == probe::Outcome::Up;
+                                if !up {
+                                    let ep = format!("{host}:{port}");
+                                    let ms = t.elapsed().as_millis().to_string();
+                                    last_err = Some(tf(Msg::ErrServerUnreachable, &[&ep, &ms]));
+                                }
+                                up
                             }
-                            emit(e);
-                        });
+                            None => true,
+                        };
+                        let ok = reachable
+                            && runner.connect(&spec, &mut |e: RunEvent| {
+                                if let RunEvent::Error { error, .. } = &e {
+                                    last_err = Some(error.message.clone());
+                                }
+                                emit(e);
+                            });
+                        if !reachable {
+                            if !broken_told {
+                                broken_told = true;
+                                let _ = ctx_tx.send(ConnOutcome::Broken(
+                                    last_err.clone().unwrap_or_default(),
+                                ));
+                            }
+                            emit(err(last_err.clone().unwrap_or_default()));
+                        }
                         if ok {
+                            last_ok = std::time::Instant::now();
+                            if broken_told {
+                                broken_told = false;
+                                let _ = ctx_tx.send(ConnOutcome::Alive);
+                            }
                             active_ep = endpoint(&spec);
                             active_spec = Some(spec.clone());
                             suspect = false;
@@ -396,9 +494,26 @@ pub(crate) fn spawn(
                     } => {
                         let mut stop: Option<FetchStop> = None;
                         let mut replace = false;
-                        let result = match runner.dialect() {
-                            None => Err(t(Msg::ExpNotConnected).to_string()),
-                            Some(_) => {
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let result = match (alive, runner.dialect()) {
+                            (Err(m), _) => Err(if m.is_empty() {
+                                t(Msg::ExpNotConnected).to_string()
+                            } else {
+                                m
+                            }),
+                            (Ok(()), None) => Err(t(Msg::ExpNotConnected).to_string()),
+                            (Ok(()), Some(_)) => {
                                 if limit == 0 {
                                     // ★ 전체 조회 = **나머지 이어 받기**(사용자 09-17 "현재 위치 유지"): 재실행·교체가 아니라 `offset`
                                     //   (= 그리드가 이미 든 행 수)부터 끝까지 받아 이어 붙인다 → 스크롤·정렬·텍스트 보기 위치가 그대로.
@@ -610,16 +725,47 @@ pub(crate) fn spawn(
                         true
                     }
                     Cmd::Count { key, sql } => {
-                        let result = match runner.dialect() {
-                            None => Err(t(Msg::ExpNotConnected).to_string()),
-                            Some(_) => runner.count(&sql).map(|(n, _)| n).map_err(|e| e.message),
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let result = match (alive, runner.dialect()) {
+                            (Err(m), _) => Err(if m.is_empty() {
+                                t(Msg::ExpNotConnected).to_string()
+                            } else {
+                                m
+                            }),
+                            (Ok(()), None) => Err(t(Msg::ExpNotConnected).to_string()),
+                            (Ok(()), Some(_)) => {
+                                runner.count(&sql).map(|(n, _)| n).map_err(|e| e.message)
+                            }
                         };
                         let _ = ctx_tx.send(ConnOutcome::Count { key, result });
                         wake_now();
                         true
                     }
                     Cmd::Keys { key, schema, table } => {
-                        let info = runner.session.as_mut().and_then(|s| {
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let info = alive.ok().and(runner.session.as_mut()).and_then(|s| {
                             let schema =
                                 schema.or_else(|| nsql_catalog::current_schema(s.as_mut()).ok())?;
                             nsql_catalog::keys(s.as_mut(), &schema, &table).ok()
@@ -631,15 +777,37 @@ pub(crate) fn spawn(
                     c @ (Cmd::Commit | Cmd::Rollback) => {
                         let commit = matches!(c, Cmd::Commit);
                         runner.close_cursor(); // 커밋/롤백 = 커서 닫기(docs/43 D-70)
-                        let r = match runner.session.as_mut() {
-                            Some(s) => {
+                                               // 커밋/롤백은 재접속하지 않는다(새 세션엔 그 트랜잭션이 없다) — 죽었으면 바로 오류(막힘 0).
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            false,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let r = match (alive, runner.session.as_mut()) {
+                            (Err(m), _) => Err(DbError {
+                                code: None,
+                                message: if m.is_empty() {
+                                    t(Msg::ExpNotConnected).to_string()
+                                } else {
+                                    m
+                                },
+                                position: None,
+                            }),
+                            (Ok(()), Some(s)) => {
                                 if commit {
                                     s.commit()
                                 } else {
                                     s.rollback()
                                 }
                             }
-                            None => Ok(()),
+                            (Ok(()), None) => Ok(()),
                         };
                         match r {
                             Ok(()) => emit(RunEvent::Message(
@@ -673,7 +841,24 @@ pub(crate) fn spawn(
                     Cmd::Connect(target) => {
                         match resolve_target(&target, default_dialect) {
                             Ok(spec) => {
-                                if runner.connect(&spec, &mut emit) {
+                                // 접속 전 빠른 판정(docs/53) — 실행 인자 접속도 같은 규칙.
+                                let (timeout, _, _) = liveness_settings();
+                                let reachable = match endpoint(&spec) {
+                                    Some((host, port)) => {
+                                        let t = std::time::Instant::now();
+                                        let up = probe::probe_once(&host, port, timeout, true)
+                                            == probe::Outcome::Up;
+                                        if !up {
+                                            let ep = format!("{host}:{port}");
+                                            let ms = t.elapsed().as_millis().to_string();
+                                            emit(err(tf(Msg::ErrServerUnreachable, &[&ep, &ms])));
+                                        }
+                                        up
+                                    }
+                                    None => true,
+                                };
+                                if reachable && runner.connect(&spec, &mut emit) {
+                                    last_ok = std::time::Instant::now();
                                     active_ep = endpoint(&spec);
                                     active_spec = Some(spec);
                                     suspect = false;
@@ -692,39 +877,24 @@ pub(crate) fn spawn(
                     } => {
                         runner.set_max_rows(max_rows);
                         apply_fetch_settings(&mut runner);
-                        // 실행 전 빠른 판정 — 신호등이 초록이 아니거나(UI) 직전 실행이 접속성 오류였으면(워커) 포트를 먼저 본다.
-                        let want = preflight.or_else(|| suspect.then(|| Duration::from_secs(2)));
-                        if let (Some(timeout), Some((host, port))) = (want, active_ep.as_ref()) {
-                            let t = std::time::Instant::now();
-                            if probe::probe_once(host, *port, timeout, true) != probe::Outcome::Up {
-                                let ep = format!("{host}:{port}");
-                                let ms = t.elapsed().as_millis().to_string();
-                                emit(err(tf(Msg::ErrServerUnreachable, &[&ep, &ms])));
-                                let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
-                                wake_now();
-                                return true;
+                        if let Err(m) = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            preflight,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        ) {
+                            if !m.is_empty() {
+                                emit(err(m));
                             }
-                        }
-                        // ★ 자동 재접속(사용자 09-15 기본 기능): 직전 실행이 접속성 오류였고 서버가 살아 있으면 같은 스펙으로 먼저 다시 붙는다.
-                        if suspect && auto_reconnect {
-                            if let Some(spec) = active_spec.clone() {
-                                emit(RunEvent::Message(tf(
-                                    Msg::StReconnecting,
-                                    &[&spec.redacted()],
-                                )));
-                                let mut failed = false;
-                                let ok = runner.connect(&spec, &mut |e: RunEvent| {
-                                    if matches!(e, RunEvent::Error { .. }) {
-                                        failed = true;
-                                    }
-                                    emit(e);
-                                });
-                                if !ok || failed {
-                                    let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
-                                    wake_now();
-                                    return true;
-                                }
-                            }
+                            let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
+                            wake_now();
+                            return true;
                         }
                         // 치환 변수 프롬프트는 최소 GUI에서 빈 값(T-16c에서 대화상자).
                         let mut prompt = |_: &str| Some(String::new());
@@ -739,6 +909,14 @@ pub(crate) fn spawn(
                             emit(e);
                         });
                         suspect = conn_err;
+                        if conn_err {
+                            if !broken_told {
+                                broken_told = true;
+                                let _ = ctx_tx.send(ConnOutcome::Broken(String::new()));
+                            }
+                        } else {
+                            last_ok = std::time::Instant::now();
+                        }
                         let _ = dtx.send(if errs > 0 {
                             Some(tf(Msg::WkErrors, &[&errs.to_string()]))
                         } else {
@@ -837,31 +1015,78 @@ pub(crate) fn spawn_test(
 mod tests {
     use super::*;
 
-    /// 자격 빌리기의 대상 비교: 포트 생략 = 방언 기본 포트 · 대소문자 무시 · 사용자를 줬으면 그 사용자만.
+    /// MC/DC — 비밀번호 필수 판정: 방언(SQLite 제외) · 호스트 있음 · 비밀번호 없음/빈 문자열.
     #[test]
-    fn same_target_matches_default_port_and_case() {
-        let have = ConnectSpec::parse("oracle://scott/x@DB.local:1521/ORCL").expect("spec");
-        let want = ConnectSpec::parse("oracle:db.local/orcl").expect("spec");
-        assert!(same_target(&want, &have, Dialect::Oracle));
-        let other_db = ConnectSpec::parse("oracle:db.local/other").expect("spec");
-        assert!(!same_target(&other_db, &have, Dialect::Oracle));
-        let other_user = ConnectSpec::parse("oracle://hr@db.local:1521/orcl").expect("spec");
-        assert!(!same_target(&other_user, &have, Dialect::Oracle));
-        let same_user = ConnectSpec::parse("oracle://SCOTT@db.local/orcl").expect("spec");
-        assert!(same_target(&same_user, &have, Dialect::Oracle));
-        let pg = ConnectSpec::parse("pg://db.local/orcl").expect("spec");
-        assert!(!same_target(&pg, &have, Dialect::Oracle));
+    fn password_required_mcdc() {
+        let p = |t: &str| ConnectSpec::parse(t).expect("spec");
+        // 기준: 인라인 · 호스트 있음 · 비밀번호 없음 → 필수.
+        assert!(password_required(
+            &p("oracle://scott@db.local:1521/orcl"),
+            Dialect::Oracle
+        ));
+        // 비밀번호 있음 → 아니오.
+        assert!(!password_required(
+            &p("oracle://scott/x@db.local:1521/orcl"),
+            Dialect::Oracle
+        ));
+        // SQLite → 아니오(자격 없음).
+        assert!(!password_required(
+            &p("sqlite:///tmp/a.db"),
+            Dialect::Oracle
+        ));
+        // 호스트 없음(대상만 · 기본 방언) → 아니오(드라이버가 판단).
+        let mut no_host = p("oracle://scott@db.local/orcl");
+        no_host.host = None;
+        assert!(!password_required(&no_host, Dialect::Oracle));
+        // 빈 비밀번호 = 없음.
+        let mut empty = p("oracle://scott/x@db.local/orcl");
+        empty.password = Some(String::new());
+        assert!(password_required(&empty, Dialect::Oracle));
+    }
+
+    /// docs/53: 닿지 않는 서버(TEST-NET-1)에 접속 창 경로로 붙이면 드라이버 타임아웃 대신 **빠른 판정**이 `probe.timeout` 안에
+    /// 실패를 내고 `Broken`을 알린다(막힘 0).
+    #[test]
+    fn unreachable_server_fails_fast_and_reports_broken() {
+        let (w, events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
+        let spec = ConnectSpec::parse("oracle://u/p@192.0.2.1:1521/db").expect("spec");
+        let t = std::time::Instant::now();
+        w.send(Cmd::ConnectSpec {
+            spec,
+            reconnect_same: false,
+        });
+        let mut broken = false;
+        let mut failed = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline && !(broken && failed) {
+            while let Ok(o) = w.conn.try_recv() {
+                match o {
+                    ConnOutcome::Broken(_) => broken = true,
+                    ConnOutcome::ConnectFailed(_) => failed = true,
+                    _ => {}
+                }
+            }
+            if w.done.try_recv().is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = events.try_recv();
+        assert!(broken, "Broken 알림");
+        assert!(failed, "ConnectFailed");
+        // 드라이버(OCI) 접속 타임아웃(수십 초)이 아니라 빠른 판정(기본 2초 · 설정 최대 60초) 안에 끝난다.
+        assert!(t.elapsed() < Duration::from_secs(61), "{:?}", t.elapsed());
     }
 
     /// 즉시 해제 규약(사용자 09-16): 옛 워커가 응답 없는 서버에 갇혀 있어도(여기서는 비라우팅 주소 접속 시도)
     /// 새 워커는 독립적으로 Disconnect에 바로 답한다 — UI가 앞 명령을 기다리지 않아도 된다.
     #[test]
     fn replacement_worker_answers_while_old_one_is_stuck() {
-        let (old, _old_events) = spawn(Dialect::Oracle, 10, true, false, Box::new(|| {}));
+        let (old, _old_events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
         // 비라우팅 주소(TEST-NET-1) — 드라이버가 없거나 즉시 실패해도 상관없다: 새 워커의 독립성만 본다.
         old.send(Cmd::Connect("mssql://u:p@192.0.2.1:1433/db".into()));
         old.send(Cmd::Disconnect);
-        let (new, _events) = spawn(Dialect::Oracle, 10, true, false, Box::new(|| {}));
+        let (new, _events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
         let t = std::time::Instant::now();
         new.send(Cmd::Disconnect);
         let got = new.conn.recv_timeout(Duration::from_secs(5));

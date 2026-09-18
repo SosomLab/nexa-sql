@@ -14,6 +14,7 @@
 use crate::runtoast::RunToast;
 use crate::worker;
 use nsql_core::Dialect;
+use nsql_i18n::Msg;
 use nsql_run::RunEvent;
 use nsql_script::{Command, ConnectSpec, ItemKind};
 use std::collections::HashMap;
@@ -76,8 +77,13 @@ pub(crate) struct Sess {
     pub attempt_inflight: bool,
     /// 사용자가 명시적으로 끊었다(개별 모드: 자동 접속하지 않는다 · 아이콘 = 끊김).
     pub user_disconnected: bool,
+    /// 이 세션의 해제를 시작한 경로(로그 한 줄에 "어느 경로로 어떤 서버를" · 사용자 09-19). 접속되면 비운다.
+    pub disc_path: Option<DiscPath>,
     /// 유휴로 끊었다(다음 실행 때 `spec`으로 조용히 다시 붙는다 · §6).
     pub idle_closed: bool,
+    /// ★ 끊김을 **확인**했다(docs/53 §3 Broken): 동작 직전 빠른 판정 실패 · 접속성 오류 · 드라이버가 끊김을 앎. 세션 객체·스펙은 그대로 —
+    ///   다음 동작 때 판정 → 살아 있으면 재접속(설정) · 사용자가 VPN을 다시 켜면 그 자리에서 이어진다. 표식 = 끊김 · 플러그 = 빨강.
+    pub broken: bool,
     /// 닫는 중(공유 모드의 전용 세션이 해제됨) — 호스트가 다음 틱에 거둔다.
     pub closing: bool,
     /// 실행 앞에 끼워 보낸 재접속의 `done` 신호 수 — 그만큼은 busy를 풀지 않고 넘긴다(뒤따르는 실행이 아직 돈다).
@@ -140,7 +146,9 @@ impl Sess {
             last_spec: None,
             attempt_inflight: false,
             user_disconnected: false,
+            disc_path: None,
             idle_closed: false,
+            broken: false,
             closing: false,
             skip_done: 0,
             last_used: now,
@@ -285,6 +293,24 @@ pub(crate) fn login_plan(shared: &[SharedView], max_shared: usize) -> LoginPlan 
     }
 }
 
+/// 첫 `CONNECT` 명령을 스크립트에서 지운다(같은 서버에 이미 붙어 있고 `connect.reconnect_same`이 꺼져 있을 때 — 줄 번호가
+/// 흔들리지 않게 그 자리를 공백으로 채운다 · 나머지 문장은 그대로 실행).
+pub(crate) fn strip_first_connect(src: &str) -> String {
+    let Some(it) = nsql_script::split_script(src)
+        .into_iter()
+        .find(|it| matches!(it.kind, ItemKind::Command(Command::Connect(_))))
+    else {
+        return src.to_string();
+    };
+    let mut out = String::with_capacity(src.len());
+    out.push_str(&src[..it.span.start]);
+    for ch in src[it.span.start..it.span.end].chars() {
+        out.push(if ch == '\n' { '\n' } else { ' ' });
+    }
+    out.push_str(&src[it.span.end..]);
+    out
+}
+
 /// 첫 접속 명령 **앞에** 서버로 갈 문장이 있는가(D-99) — 새 전용 세션에는 아직 접속이 없어 그 문장은 돌 수 없다.
 pub(crate) fn statements_before_connect(src: &str) -> bool {
     for it in nsql_script::split_script(src) {
@@ -388,16 +414,15 @@ pub(crate) fn reap_shared(
 /// D5 탭 표식.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum BadgeKind {
-    None,
     Private,
     Shared,
     Off,
 }
 
+/// 표식은 **항상** 보인다(사용자 09-18 "항상 보여지도록") — 공유 = 중립 플러그 · 전용 = 강조 플러그 · 미연결/끊김 = 사선.
+/// `multi_shared`는 더 이상 표시를 가르지 않는다(메뉴에서 고를 수 있는 것은 같다).
 pub(crate) fn badge_kind(private: bool, multi_shared: bool, connected: bool) -> BadgeKind {
-    if !private && !multi_shared {
-        return BadgeKind::None;
-    }
+    let _ = multi_shared;
     match (connected, private) {
         (false, _) => BadgeKind::Off,
         (true, true) => BadgeKind::Private,
@@ -421,6 +446,83 @@ pub(crate) fn gate_view(busy: bool, aux: u32, multi_caret: bool, has_pending: bo
         run_other: !blocked,
         commit: !blocked && has_pending,
         stop: blocked,
+    }
+}
+
+/// 접속 해제를 시작한 경로(로그용 · docs/54 §5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DiscPath {
+    Toolbar,
+    ConnWin,
+    Badge,
+    Explorer,
+    SessionsWin,
+    Script,
+    Idle,
+    TabClose,
+    Stop,
+    Switch,
+}
+
+impl DiscPath {
+    pub(crate) fn msg(self) -> Msg {
+        match self {
+            DiscPath::Toolbar => Msg::DiscPathToolbar,
+            DiscPath::ConnWin => Msg::DiscPathConnWin,
+            DiscPath::Badge => Msg::DiscPathBadge,
+            DiscPath::Explorer => Msg::DiscPathExplorer,
+            DiscPath::SessionsWin => Msg::DiscPathSessionsWin,
+            DiscPath::Script => Msg::DiscPathScript,
+            DiscPath::Idle => Msg::DiscPathIdle,
+            DiscPath::TabClose => Msg::DiscPathTabClose,
+            DiscPath::Stop => Msg::DiscPathStop,
+            DiscPath::Switch => Msg::DiscPathSwitch,
+        }
+    }
+}
+
+/// D16 툴바 Disconnect의 뜻(docs/54 · 사용자 09-19) — 지금 탭이 쥔 연결의 종류와 그 연결을 함께 쓰는 탭 수로 정한다.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DisconnectPlan {
+    /// 전용 세션 = 이 탭만의 것 → 바로 해제.
+    Private,
+    /// 공유 연결인데 이 탭만 쓴다 → 바로 해제.
+    SharedAlone,
+    /// 공유 연결을 다른 탭도 쓴다 → "모두 해제 / 이 탭만 떼기 / 취소"를 묻는다.
+    SharedAsk,
+}
+
+/// `private` = 지금 세션이 전용 · `bound_tabs` = 지금(공유) 세션에 묶인 탭 수(전용이면 무시).
+pub(crate) fn disconnect_plan(private: bool, bound_tabs: usize) -> DisconnectPlan {
+    if private {
+        DisconnectPlan::Private
+    } else if bound_tabs > 1 {
+        DisconnectPlan::SharedAsk
+    } else {
+        DisconnectPlan::SharedAlone
+    }
+}
+
+/// D15 동작 직전 생존 판정(docs/53 §3): (빠른 판정을 할 것인가, 판정 뒤 재접속을 시도할 것인가).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct LivePlan {
+    pub probe: bool,
+    pub reconnect: bool,
+}
+
+/// `preflight` = UI 요청(신호등 ≠ 초록) · `suspect` = 직전 접속성 오류 · `dead_hint` = 드라이버가 끊김을 앎 · `stale` = 마지막 성공이 오래됨 ·
+/// `allow` = 이 명령은 재접속해도 되는가(커밋/롤백 = 아니오) · `auto` = 설정 `connect.auto_reconnect`.
+pub(crate) fn live_plan(
+    preflight: bool,
+    suspect: bool,
+    dead_hint: bool,
+    stale: bool,
+    allow: bool,
+    auto: bool,
+) -> LivePlan {
+    LivePlan {
+        probe: preflight || suspect || dead_hint || stale,
+        reconnect: (suspect || dead_hint) && allow && auto,
     }
 }
 
@@ -469,6 +571,20 @@ pub(crate) fn idle_action(i: IdleInput) -> IdleAction {
 
 #[cfg(test)]
 mod tests {
+    /// D16 — 전용/공유 · 묶인 탭 수: 조건별 독립 영향.
+    #[test]
+    fn disconnect_plan_mcdc() {
+        use super::{disconnect_plan, DisconnectPlan};
+        assert_eq!(
+            disconnect_plan(true, 5),
+            DisconnectPlan::Private,
+            "전용이면 탭 수 무관"
+        );
+        assert_eq!(disconnect_plan(false, 1), DisconnectPlan::SharedAlone);
+        assert_eq!(disconnect_plan(false, 0), DisconnectPlan::SharedAlone);
+        assert_eq!(disconnect_plan(false, 2), DisconnectPlan::SharedAsk);
+    }
+
     use super::*;
 
     #[test]
@@ -665,6 +781,16 @@ mod tests {
     }
 
     #[test]
+    fn strip_first_connect_keeps_lines_and_rest() {
+        let src = "CONNECT prod\nselect 1;\nCONNECT other\n";
+        let out = strip_first_connect(src);
+        assert_eq!(out.lines().count(), src.lines().count());
+        assert!(out.starts_with("            \nselect 1;"), "{out:?}");
+        assert!(out.contains("CONNECT other"), "두 번째는 그대로");
+        assert_eq!(strip_first_connect("select 1;"), "select 1;");
+    }
+
+    #[test]
     fn statements_before_connect_detects_only_server_bound_items() {
         assert!(!statements_before_connect("CONNECT prod\nselect 1;"));
         assert!(statements_before_connect("select 1;\nCONNECT prod\n"));
@@ -736,7 +862,11 @@ mod tests {
     /// D5 MC/DC.
     #[test]
     fn mcdc_badge_kind() {
-        assert_eq!(badge_kind(false, false, true), BadgeKind::None);
+        assert_eq!(
+            badge_kind(false, false, true),
+            BadgeKind::Shared,
+            "공유 하나뿐이어도 보인다"
+        );
         assert_eq!(
             badge_kind(true, false, true),
             BadgeKind::Private,
@@ -745,7 +875,7 @@ mod tests {
         assert_eq!(
             badge_kind(false, true, true),
             BadgeKind::Shared,
-            "multi_shared만"
+            "multi_shared는 표시를 가르지 않는다"
         );
         assert_eq!(
             badge_kind(true, false, false),
@@ -759,8 +889,8 @@ mod tests {
         );
         assert_eq!(
             badge_kind(false, false, false),
-            BadgeKind::None,
-            "표식 없는 탭은 접속과 무관"
+            BadgeKind::Off,
+            "미연결은 늘 보인다"
         );
     }
 
@@ -796,6 +926,43 @@ mod tests {
         assert!(!multi.run_statement && multi.run_other && multi.commit && !multi.stop);
         let nopend = gate_view(false, 0, false, false);
         assert!(nopend.run_statement && nopend.run_other && !nopend.commit);
+    }
+
+    /// D15 MC/DC: probe = 네 조건의 OR(각각 단독으로 켠다) · reconnect = (suspect ∨ dead) ∧ allow ∧ auto(각각 단독으로 끈다).
+    #[test]
+    fn mcdc_live_plan() {
+        let off = live_plan(false, false, false, false, true, true);
+        assert_eq!(
+            off,
+            LivePlan {
+                probe: false,
+                reconnect: false
+            }
+        );
+        assert!(
+            live_plan(true, false, false, false, true, true).probe,
+            "preflight만"
+        );
+        assert!(
+            live_plan(false, false, false, true, true, true).probe,
+            "stale만"
+        );
+        let s = live_plan(false, true, false, false, true, true);
+        assert!(s.probe && s.reconnect, "suspect = 판정 + 재접속");
+        let d = live_plan(false, false, true, false, true, true);
+        assert!(d.probe && d.reconnect, "dead_hint = 판정 + 재접속");
+        assert!(
+            !live_plan(false, true, false, false, false, true).reconnect,
+            "allow만 끔(커밋/롤백)"
+        );
+        assert!(
+            !live_plan(false, true, false, false, true, false).reconnect,
+            "auto만 끔"
+        );
+        assert!(
+            !live_plan(false, false, false, true, true, true).reconnect,
+            "stale만으로는 재접속 안 함"
+        );
     }
 
     fn input() -> IdleInput {

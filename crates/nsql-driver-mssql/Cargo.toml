@@ -22,6 +22,8 @@ nsql-script.workspace = true
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls", "chrono"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+# TCP keepalive 옵션(SO_KEEPALIVE · idle/interval) — tokio가 이미 끌어오는 크레이트(DR-3 어댑터 안 격리 · docs/53 §2).
+socket2 = "0.6"
 chrono = "0.4"
 # tiberius는 PRINT/RAISERROR(Info 토큰)를 public API가 아니라 tracing INFO 이벤트로만 내보낸다 — 실행 중 스레드 기본 구독자로 캡처.
 tracing = "0.1"

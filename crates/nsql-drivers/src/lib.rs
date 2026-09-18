@@ -63,6 +63,18 @@ pub fn set_mssql_encryption(login_only: bool) {
     let _ = login_only;
 }
 
+/// 네트워크 생존 옵션(docs/53): TCP keepalive 유휴(초 · PG·SQL Server · 0 = 끔) · Oracle 호출 상한(초 · 0 = 없음). 다음 접속부터.
+pub fn set_net_options(keepalive_secs: u64, call_timeout_secs: u64) {
+    #[cfg(feature = "pg")]
+    nsql_driver_pg::set_keepalive_secs(keepalive_secs);
+    #[cfg(feature = "mssql")]
+    nsql_driver_mssql::set_keepalive_secs(keepalive_secs);
+    #[cfg(feature = "oracle")]
+    nsql_driver_oracle::set_call_timeout_secs(call_timeout_secs);
+    #[cfg(not(all(feature = "pg", feature = "mssql", feature = "oracle")))]
+    let _ = (keepalive_secs, call_timeout_secs);
+}
+
 /// SQL Server 취소 방식(설정 `mssql.cancel`): `socket` = 소켓 종료(항상) · 아니면 Attention(로그인만 암호화일 때 · 아니면 소켓 종료로 대체).
 pub fn set_mssql_cancel_socket(socket: bool) {
     #[cfg(feature = "mssql")]

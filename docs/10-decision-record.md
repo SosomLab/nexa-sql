@@ -113,6 +113,11 @@
 | **D-46** | 탐색기 메타 세션 — 프로필당 별도 접속(권장) / 편집기 세션 공유 · 설정 `explorer.session`([28 §6](28-object-explorer.md)) |
 | **D-47** | 세션 공유 시 편집기 실행 중 메타 요청 — 대기(권장) / 거부 |
 | ~~D-96~108~~ | 세션 모드([52 §10](52-session-modes.md)) — ✅ 09-18 권장안 확정·구현(사용자 *"결정에 따른 개발도 모두 진행"*): 전용 = 탭 속성 · `CONNECT` 앞 문장 거부 · 활성화 시 접속 · 공유 N 추가(상한 8) · 세션 상태 있는 세션은 유휴 닫기 제외 · 뒤에서 끝난 실행 ✓/✗ · 트랜잭션 로그 세션 열 · 서버별 탐색기(세션 ≥1 유지) · 같은 서버 = 계정까지 · 끊긴 묶음은 표식으로 |
+| **D-117** | 탐색기 루트에 참조 탭 수 표시([54 §8](54-connection-model-and-disconnect.md)) — 권장: 루트 오른쪽 흐린 `· 3 tabs` |
+| **D-118** | 툴바 Disconnect `SharedAsk` 팝업 기본 항목 — 권장: 첫 항목 "N개 탭 모두 해제"(DBeaver 의미) |
+| **D-115** | 로그인 필수 항목([22 §10](22-driver-extensions.md)) — 비밀번호 없는 접속(PG `trust` · Oracle OS 인증)을 허용하는 스위치를 둘 것인가 — 권장: **두지 않음**(인라인 규칙 52 §4와 같게 비밀번호 필수 · 대신 T-132 변수/모달) |
+| **D-116** | 필수 표기 — 라벨 `*`(권장 · Azure Data Studio식 · 방언마다 필수가 달라 명확) / 선택 칸 "(optional)"만(GOV.UK식) / 둘 다 |
+| ~~D-109~114~~ | 접속 생존 관리([53 §6](53-connection-liveness.md)) — ✅ 09-18 권장안 확정·구현(사용자 *"제안 방식으로 구현"*): 마지막 성공 60초 뒤 판정 · TCP keepalive 60초 · Oracle 호출 상한 기본 끔 · 다음 실행 때 자동 재접속 · Broken은 표식으로 남김 · OS 신호는 T-130 |
 | **D-40** | ★ `nexa-license` 서명 알고리즘 **포트화** — `alg=ed25519`(dalek 2.x · beep/clip/sql 기본) + `alg=p256`(dir2 · Windows CNG 인박스 · 외부 crate 0 유지) · 루트 키 2개 · 발급기 양쪽 서명([25 §10-2 #4](25-license-tiers-and-server.md)) — 대안 = dir2 제외(단일 Ed25519) |
 | ~~D-39~~ → DR-26 | `nexa-license` 라이브러리 가시성 — 공개(권장 · CI 토큰 불요 · 계열 재사용) / 비공개(CI에 fine-grained PAT) — 서버 저장소는 비공개 확정(DR-25) |
 | **D-18** | 기기 키(`device.key`) OS 비밀 저장 결합 — macOS Keychain · Linux Secret Service(현재 0600 평문 · Windows는 DPAPI ✅). 결합 시 키 파일만 교체, 프로필 재암호화 불요([21 §5](21-connection-profiles.md)) |

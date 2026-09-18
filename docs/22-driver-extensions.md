@@ -170,3 +170,69 @@ nsql driver path                    drivers/ 폴더
 - **D-19** 드라이버 저장소 구성 — 단일 `nexa-sql-drivers`(확장별 태그 접두) vs 확장별 저장소. 권장 = 단일(색인·CI 한 곳) + 서드파티는 별도.
 - **D-20** Oracle OCI 확장의 Instant Client 동봉 여부(D-1과 통합) — OTN 조건 확인 후.
 - **D-21** 갱신 확인 기본값(켬 권장 · 폐쇄망 배포는 설정으로 끔).
+
+## 9. 접속 폼의 "바뀜" 표시와 Save 유도 — 설계(사용자 09-19 · 구현 = T-131)
+
+**목표**: 어떤 칸이 저장본과 다른지 한눈에 · Save를 눌러야 함을 놓치지 않게 · 바꾼 것을 잃는 순간(다른 프로필 불러오기 · 창 닫기)에만 묻는다(DR-30 규칙 그대로).
+
+| 항목 | 결정 | 이유 |
+|---|---|---|
+| 기준본 | `fill()`로 불러온 스펙(+이름 · 저장 비밀번호 여부)을 **스냅숏**으로 보관 · New는 빈 스냅숏 | "바뀜" = 지금 값 ≠ 스냅숏(칸별 비교 · 공백 정규화) |
+| 칸 표시 | 입력란 **왼쪽 안쪽 2px 강조색 띠** + 라벨 끝 `•`(예: `Host •`) | 편집기의 줄 변경 표시(`editor.diff_marks`)와 같은 어휘 — 새 기호를 배우지 않는다 · 테두리 색을 바꾸는 방식은 포커스 링과 겹친다 |
+| 콤보(DB 종류)·체크(Save password) | 같은 띠(컨트롤 왼쪽) | 텍스트박스와 동일 규칙 |
+| Save 버튼 | 바뀐 칸이 하나라도 있으면 **강조색(Accent) + 라벨 `Save •`** · 툴팁 "저장하지 않은 변경 n개" · 없으면 기본 | 툴바 Commit 배지와 같은 문법(대기 = 강조) |
+| 상태줄(폼 아래) | 바뀐 동안 `● 변경됨 — Save로 저장` 한 줄(Test/Connect 결과가 오면 그 결과가 우선 · 결과 뒤에도 바뀜이 남아 있으면 `· 미저장`) | 상태는 한 번에 하나 규칙 유지 |
+| 목록 | 폼이 바뀐 프로필의 이름 뒤 `*`(편집기 탭의 더러움 표시와 같음) | 목록만 보고도 알 수 있게 |
+| 잃는 순간 | 다른 프로필 불러오기 · New · 창 닫기 · 삭제 때 바뀜이 있으면 **저장 / 버림 / 취소** 팝업(`open_tx_guard`와 같은 부품) · Test/Connect는 폼 값으로 그냥 시도(저장 불필요) | 묻는 것은 잃을 때만 |
+| 되돌리기 | 라벨 `•` 클릭 = 그 칸만 스냅숏으로 · 폼 우클릭 "변경 취소" = 전부 | 실수 복구 한 번에 |
+| 초기화 | Save 성공 · 불러오기 · New → 스냅숏 갱신 · 띠 전부 꺼짐 | — |
+
+**부품**: nexa-ctl `TextBox::set_modified(bool)`(왼쪽 띠 · `Combo`·`Checkbox`에도 같은 세터) · 버튼은 기존 `ToolTone::Accent`/라벨 교체 · 팝업은 기존 확인 팝업 재사용. 판정은 순수 함수 `dirty_fields(snapshot, form) -> Vec<Field>`(MC/DC: 칸별 · 공백만 다른 경우 · 비밀번호 저장 체크만 바뀐 경우).
+
+**탭 표식 색(같은 날 결정)**: S(공유) = 초록(연결됨 · 평상시) · P(전용) = 강조색 파랑(예외적·격리된 연결 = "이 탭만 다르다") · 미연결/끊김 = 흐림(+ 끊김 확인은 빨강 플러그).
+
+## 10. 로그인 **필수 항목** 식별 — 조사·설계(사용자 09-19 · 확인 대기 → 구현 = T-133)
+
+**요구**: 접속 폼에서 "무엇을 채워야 접속/저장이 되는가"를 사용자가 **보고 알 수 있게** · 빠졌을 때 **어느 칸인지** 짚어 준다. 지금은 `from_parts`가 호스트/파일 경로만 검사하고 나머지는 드라이버 오류 문장("ORA-01017" 등)으로 돌아와 어느 칸이 문제인지 알 수 없다.
+
+### 10-1. 조사 — 다른 도구는 어떻게 하나
+
+| 도구 | 필수 표시 | 빠졌을 때 | 비고 |
+|---|---|---|---|
+| Azure Data Studio | 라벨 뒤 **빨간 `*`**(Server · Authentication type · 인증별 User/Password) | **Connect 비활성** + 칸 아래 "This field is required" | 폼 규칙이 가장 명시적 |
+| DBeaver | 표시 없음 | Test/Finish 때 대화상자("Host is required" 류) · 드라이버 오류 그대로 | 필수 집합은 드라이버 descriptor(`<parameter>`)가 가짐 |
+| DataGrip | 표시 없음 · 칸 비면 URL 미리보기가 어긋남 | Test Connection 오류 풍선 | URL이 곧 검증 |
+| SSMS | Server name만 · 표시 없음 | Connect 실패 대화상자 | 인증 종류가 User/Password 필요 여부를 정한다 |
+| TablePlus · Navicat | 표시 없음 | 드라이버 오류 | — |
+| 웹 폼 관례(WCAG · GOV.UK · Material) | 필수 `*` **또는** 대부분 필수면 **선택 칸에 "(optional)"** | 제출 시 첫 오류 칸으로 포커스 + 칸 옆 사유 | "비활성 버튼 + 이유 없음"은 나쁜 패턴(왜 못 누르는지 모른다) |
+
+**결론**: 명시적 표기(Azure Data Studio) + 제출 시 지목(웹 관례). 버튼은 **비활성화하지 않는다** — 누르면 빠진 칸을 표시하고 첫 칸으로 포커스(사용자의 다음 동작이 한 번의 입력으로 이어진다 · CLAUDE.md 팝업 규칙과 같은 정신).
+
+### 10-2. 필수 집합 — 방언 × 동작
+
+"필수"는 **동작마다 다르다**: Save는 이름이 필요하고 비밀번호는 없어도 되며(저장 안 함 체크) · Test/Connect는 자격이 필요하다.
+
+| 방언 | Test / Connect | Save | 선택(optional) | 근거 |
+|---|---|---|---|---|
+| Oracle | Host · Database(서비스/SID) · User · Password | Name · Host · Database · User | Port(기본 1521) · Schema | 서비스 없이는 접속 불가 · OS 인증(`/`)은 미지원 |
+| PostgreSQL | Host · User · Password | Name · Host · User | Port(5432) · Database(비면 libpq 규칙 = 사용자 이름) · Schema | `trust` 인증은 비밀번호 없이 되지만 **인라인 규칙(52 §4)과 같게 필수** — 예외는 T-132 |
+| SQL Server | Host · User · Password | Name · Host · User | Port(1433) · Database(로그인 기본 DB) | Windows 인증 미지원(mac/linux) |
+| SQLite | Database(파일 경로 · `:memory:`) | Name · Database | 전부 | 자격 없음 |
+
+원장은 **한 곳**: `nsql_core::Dialect::login_fields() -> &'static [LoginField]`(`LoginField { field, required_for: Connect | Save | Both, default: Option<&str> }`) — 폼·CLI(`nsql connect`의 인자 검사)·확장 드라이버 매니페스트(§2-3 `fields`)가 같은 표를 본다. 폼에 하드코딩하지 않는다([30](30-architecture-patterns.md) 포트+레지스트리).
+
+### 10-3. 표시·동작 설계
+
+| 항목 | 결정 |
+|---|---|
+| 라벨 | 필수 칸은 라벨 뒤 **`*`**(예: `Host *`) — 방언을 바꾸면 따라 바뀐다(Oracle Database `*` · PG Database 없음). `*`는 항상 · `•`(바뀜)와 겹치면 `Host * •` |
+| 빈 필수 칸 | 평소에는 표시 없음(입력 중에 빨갛게 하지 않는다). **동작(Test/Connect/Save)을 누른 순간** 빠진 칸에 **경고색 띠**(바뀜 띠 자리 · 경고 > 바뀜) + 상태줄 `Required: Host, Password` + **첫 빠진 칸으로 포커스** · 그 칸에 글자를 넣으면 띠 즉시 해제 |
+| 버튼 | 비활성화하지 않는다(이유를 알 수 있게) — 행 버튼(목록 아이콘)은 종전대로 `row_ready`(비밀번호 있음 ∨ SQLite)만 |
+| 플레이스홀더 | 선택 칸은 `(optional)`을 뒤에 — Port는 기본값 숫자를 그대로 |
+| 비밀번호 | Connect/Test 필수(SQLite 제외) · Save는 아님(저장 안 함 = 접속 때 세션 비밀번호/T-132) |
+| CLI | `nsql connect`/`--target` 검사도 같은 표 → "Password required — …"(이미 워커에서 · 09-19) |
+| 판정 | 순수 함수 `missing_fields(dialect, action, form) -> Vec<Field>`(MC/DC: 방언 4 × 동작 2 × 칸별 빈 값) |
+
+**부품**: nexa-ctl `TextBox::set_warning(bool)`(경고색 띠 · `set_modified`와 같은 자리 · 우선순위 경고 > 바뀜) · 라벨 `*`는 폼이 그린다 · 포커스 이동은 기존 `own_focus`.
+
+**열린 결정(사용자 확인)**: D-115 PostgreSQL `trust`·Oracle OS 인증처럼 비밀번호 없는 접속을 허용하는 스위치를 둘 것인가(권장: 두지 않음 · T-132 비밀번호 변수/모달로 대신) · D-116 `*` 대신 "(optional)" 표기만 쓸 것인가(권장: `*` — 필수 칸이 적고 방언마다 달라 `*`가 더 명확).

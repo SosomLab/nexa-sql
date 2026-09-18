@@ -90,6 +90,8 @@ pub(crate) enum ConnWinAction {
     Delete(String),
     /// 우클릭 메뉴 Duplicate — `<이름>_Copied`로 복제(비밀번호 포함 · 사용자 09-14).
     Duplicate(String),
+    /// 우클릭 메뉴 Copy connection string — 클립보드로(호스트가 쓴다).
+    CopyText(String),
 }
 
 /// 행 테스트 버튼 위에 얹는 마지막 결과(사용자 09-14 — 형태·기능은 그대로, 표시만 바뀐다).
@@ -107,9 +109,19 @@ pub(crate) enum ConnectMark {
     Connected,
 }
 
+/// 잃는 순간(폼이 바뀐 채 다른 프로필 불러오기 · New · 창 닫기)에 미뤄 둔 동작 — 저장/버림/취소를 물은 뒤 이어서(DR-30 규칙).
+#[derive(Clone, Debug)]
+enum Guard {
+    Load(String),
+    New,
+    Close,
+}
+
 /// 행 안의 아이콘 버튼(신호등 다음 두 칸).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowBtn {
+    /// 신호등 — 클릭 = 지금 다시 확인(사용자 09-18).
+    Light,
     Test,
     Connect,
 }
@@ -305,6 +317,8 @@ pub(crate) struct ConnWin {
     del_arm: Option<(TimeoutButton, Instant)>,
     /// 행 우클릭 메뉴(nexa-ctl 공용 · 항목 id만 돌려준다) + 대상 프로필 + 라벨 폭(페인트 때 실측).
     menu: CtxMenu,
+    /// 잃는 순간 지킴이(T-131): 폼에 저장하지 않은 변경이 있을 때 미뤄 둔 동작(저장/버림 뒤 이어서).
+    guard: Option<Guard>,
     ctx_target: Option<String>,
     ctx_text_w: i32,
     last_click: Option<(usize, Instant)>,
@@ -379,6 +393,7 @@ impl ConnWin {
             focus_btn: 0,
             del_arm: None,
             menu: CtxMenu::new(),
+            guard: None,
             ctx_target: None,
             ctx_text_w: 0,
             last_click: None,
@@ -436,6 +451,10 @@ impl ConnWin {
     }
 
     /// 행 접속 버튼의 상태색(None = 기본 회색).
+    pub(crate) fn connect_mark(&self, name: &str) -> Option<ConnectMark> {
+        self.conn_marks.get(name).copied()
+    }
+
     pub(crate) fn set_connect_mark(&mut self, name: &str, mark: Option<ConnectMark>) {
         if name.is_empty() {
             return;
@@ -513,7 +532,7 @@ impl ConnWin {
         let Some(p) = self.profiles.iter().find(|p| p.name == name) else {
             return;
         };
-        let (Some(host), Some(port)) = (p.spec.host.clone(), p.spec.port) else {
+        let Some(target) = probe::Target::of(&p.spec) else {
             return;
         };
         let now = Instant::now();
@@ -527,8 +546,7 @@ impl ConnWin {
         if let Some(hub) = &self.hub {
             let sent = hub.request(ProbeReq {
                 name: name.to_string(),
-                host,
-                port,
+                target,
                 timeout: self.policy.timeout,
             });
             if sent {
@@ -549,13 +567,18 @@ impl ConnWin {
         }
         let now = Instant::now();
         for p in &self.profiles {
-            if !self.connected.contains(&p.name) || p.spec.host.is_none() || p.spec.port.is_none() {
+            let Some(target) = probe::Target::of(&p.spec) else {
+                continue;
+            };
+            // 서버는 한 번 이상 접속한 프로필만(시도한 적 없는 서버에 트래픽 금지 · 26 §8) · 파일(SQLite)은 로컬 확인이라 늘.
+            if matches!(target, probe::Target::Tcp { .. }) && !self.connected.contains(&p.name) {
                 continue;
             }
-            // 새 대상만 즉시 · 이미 예약된 항목은 그 예약을 지킨다(창을 자주 열어도 확인은 `probe.interval`마다 1회 · 사용자 09-14).
+            // ★ 창을 열 때 **전부 1회 당긴다**(사용자 09-18: VPN을 다시 켠 뒤 열어도 빨강이 그대로였다) — 누적 횟수는 보존.
             self.probes
                 .entry(p.name.clone())
-                .or_insert_with(|| ProbeEntry::fresh(now));
+                .or_insert_with(|| ProbeEntry::fresh(now))
+                .poke(now);
         }
     }
 
@@ -589,12 +612,11 @@ impl ConnWin {
             };
             match e.next_at {
                 Some(t) if t <= now => {
-                    if let (Some(h), Some(port)) = (p.spec.host.clone(), p.spec.port) {
+                    if let Some(target) = probe::Target::of(&p.spec) {
                         // 확인이 필요한 대상만 · 각각 별도 스레드. 상한 초과면 예약을 유지해 다음 틱에.
                         let sent = hub.request(ProbeReq {
                             name: p.name.clone(),
-                            host: h,
-                            port,
+                            target,
                             timeout: self.policy.timeout,
                         });
                         if sent {
@@ -953,6 +975,10 @@ impl ConnWin {
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
+        // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
+        if let Some(((x, y), _)) = same {
+            crate::wingeom::place_outer(&win, Some((x, y)));
+        }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
         if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
@@ -1169,7 +1195,9 @@ impl ConnWin {
         let row = self.row_at(p)?;
         let sw = self.row_h;
         let dx = p.x - self.list.x;
-        if dx >= sw && dx < sw * 2 {
+        if dx >= 0 && dx < sw {
+            Some((row, RowBtn::Light))
+        } else if dx >= sw && dx < sw * 2 {
             Some((row, RowBtn::Test))
         } else if dx >= sw * 2 && dx < sw * 3 {
             Some((row, RowBtn::Connect))
@@ -1230,7 +1258,7 @@ impl ConnWin {
                         TestMark::Failed => Msg::TipTestFailed,
                     }));
                 }
-                if pw_state(p, &self.session_pw) == 0 {
+                if !row_ready(p, &self.session_pw) {
                     s.push('\n');
                     s.push_str(t(Msg::TipNoPassword));
                 }
@@ -1245,7 +1273,7 @@ impl ConnWin {
                         ConnectMark::Connected => Msg::TipConnected,
                     }));
                 }
-                if pw_state(p, &self.session_pw) == 0 {
+                if !row_ready(p, &self.session_pw) {
                     s.push('\n');
                     s.push_str(t(Msg::TipNoPassword));
                 }
@@ -1260,11 +1288,12 @@ impl ConnWin {
     }
 
     /// 행의 프로필에 비밀번호가 있는가(저장됨 또는 세션 입력) — 없으면 Test/Connect 행 버튼 비활성.
+    /// 행 버튼(Test/Connect)을 누를 수 있는가 — 비밀번호가 있거나, **비밀번호가 필요 없는 방언**(SQLite 파일 · 사용자 09-18).
     fn row_has_password(&self, row: usize) -> bool {
         self.shown
             .get(row)
             .and_then(|&i| self.profiles.get(i))
-            .is_some_and(|p| pw_state(p, &self.session_pw) > 0)
+            .is_some_and(|p| row_ready(p, &self.session_pw))
     }
 
     /// 이름으로 행 선택(행 Test/Connect가 폼 Test/Connect와 같은 경로를 타도록 · 사용자 09-14).
@@ -1415,15 +1444,14 @@ impl ConnWin {
     /// 상단 버튼의 클릭 결과 처리 — 창을 닫았으면 true.
     fn handle_top_clicks(&mut self, out: &mut Vec<ConnWinAction>) -> bool {
         if self.btn_new.take_clicked() {
-            self.open_detail(true);
+            self.guarded(Guard::New, out);
         }
         if self.btn_edit.take_clicked() {
             // 이미 펼쳐져 있으면 Esc와 같이 접는다(사용자 09-14).
             if self.detail_open() {
                 self.close_detail();
             } else if let Some(n) = self.selected_name() {
-                out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
-                self.open_detail(false);
+                self.guarded(Guard::Load(n), out);
             }
         }
         if self.btn_delete.take_clicked()
@@ -1433,10 +1461,71 @@ impl ConnWin {
             self.arm_delete();
         }
         if self.btn_close.take_clicked() {
-            self.close();
-            return true;
+            return self.guarded(Guard::Close, out);
         }
         false
+    }
+
+    /// 폼이 바뀐 채면 저장/버림/취소를 묻고(메뉴 · 팝업 규칙) 동작을 미룬다 · 아니면 바로. 반환 = 창을 닫았는가.
+    fn guarded(&mut self, g: Guard, out: &mut Vec<ConnWinAction>) -> bool {
+        if self.panel.is_dirty() {
+            self.guard = Some(g);
+            let r = self.panel.bounds();
+            let (x, y) = if r.w > 0 {
+                (r.x + self.s(12.0), r.y + self.s(12.0))
+            } else {
+                self.cursor
+            };
+            let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
+            self.menu.set_scale(self.scale);
+            self.menu.open_at(
+                x,
+                y,
+                vec![
+                    CtxItem::maybe("guard_title", t(Msg::MnGuardTitle), false),
+                    CtxItem::Separator,
+                    CtxItem::item("guard_save", t(Msg::MnGuardSave)),
+                    CtxItem::item("guard_discard", t(Msg::MnGuardDiscard)),
+                    CtxItem::item("guard_cancel", t(Msg::MnGuardCancel)),
+                ],
+                host,
+                self.ctx_text_w,
+            );
+            self.redraw();
+            return false;
+        }
+        self.perform(g, out)
+    }
+
+    /// 호스트가 저장을 끝낸 뒤 부른다 — 성공이면 미룬 동작을 이어가고(불러오기/New/닫기), 실패면 그대로 둔다(폼에 사유).
+    pub(crate) fn after_save(&mut self, ok: bool) -> Vec<ConnWinAction> {
+        let mut out = Vec::new();
+        match self.guard.take() {
+            Some(g) if ok => {
+                self.perform(g, &mut out);
+                self.redraw();
+            }
+            _ => {}
+        }
+        out
+    }
+
+    fn perform(&mut self, g: Guard, out: &mut Vec<ConnWinAction>) -> bool {
+        match g {
+            Guard::Load(n) => {
+                out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
+                self.open_detail(false);
+                false
+            }
+            Guard::New => {
+                self.open_detail(true);
+                false
+            }
+            Guard::Close => {
+                self.close();
+                true
+            }
+        }
     }
 
     /// 지금 포커스인 텍스트박스(필터 · 폼 입력란) — 클립보드·전체 선택의 대상.
@@ -1490,7 +1579,9 @@ impl ConnWin {
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> Vec<ConnWinAction> {
         let mut out = Vec::new();
         match ev {
-            WindowEvent::CloseRequested => self.close(),
+            WindowEvent::CloseRequested => {
+                self.guarded(Guard::Close, &mut out);
+            }
             WindowEvent::RedrawRequested => out.push(ConnWinAction::Paint),
             WindowEvent::Resized(_) => {
                 // 사용자가 바꾼 크기 = 목록 창 크기(상세 폼 폭은 뺀다) · 슬라이드 중의 Resized는 우리가 만든 것이라 건너뛴다.
@@ -1584,6 +1675,12 @@ impl ConnWin {
                 }
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
+                // ⌘/Ctrl+글자는 입력 소스와 무관하게 물리 키로(한글 자판 ⌘C = "ㅊ" 결함 · 09-19).
+                let letter = if self.primary {
+                    crate::input::shortcut_letter(kev)
+                } else {
+                    None
+                };
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) if !self.panel.popup_open() => {
                         if self.del_arm.is_some() {
@@ -1591,7 +1688,7 @@ impl ConnWin {
                         } else if self.detail_open() {
                             self.close_detail();
                         } else {
-                            self.close();
+                            self.guarded(Guard::Close, &mut out);
                         }
                     }
                     Key::Named(NamedKey::Enter)
@@ -1653,30 +1750,24 @@ impl ConnWin {
                         self.redraw();
                     }
                     // 클립보드·전체 선택(Ctrl/⌘) — 포커스 텍스트박스(필터 · 폼 입력란).
-                    Key::Character(c) if self.primary && matches!(c, "c" | "C") => {
-                        self.clip(EditCtxAction::Copy)
-                    }
-                    Key::Character(c) if self.primary && matches!(c, "x" | "X") => {
-                        self.clip(EditCtxAction::Cut)
-                    }
-                    Key::Character(c) if self.primary && matches!(c, "v" | "V") => {
-                        self.clip(EditCtxAction::Paste)
-                    }
-                    Key::Character(c) if self.primary && !self.shift && matches!(c, "z" | "Z") => {
+                    _ if letter == Some('c') => self.clip(EditCtxAction::Copy),
+                    _ if letter == Some('x') => self.clip(EditCtxAction::Cut),
+                    _ if letter == Some('v') => self.clip(EditCtxAction::Paste),
+                    _ if !self.shift && letter == Some('z') => {
                         let mut inv = Invalidations::default();
                         if let Some(tb) = self.focused_tb() {
                             tb.on_event(&InputEvent::Undo, &mut inv);
                         }
                         self.redraw();
                     }
-                    Key::Character(c) if self.primary && matches!(c, "z" | "Z" | "y" | "Y") => {
+                    _ if matches!(letter, Some('z' | 'y')) => {
                         let mut inv = Invalidations::default();
                         if let Some(tb) = self.focused_tb() {
                             tb.on_event(&InputEvent::Redo, &mut inv);
                         }
                         self.redraw();
                     }
-                    Key::Character(c) if self.primary && matches!(c, "a" | "A") => {
+                    _ if letter == Some('a') => {
                         let mut inv = Invalidations::default();
                         if let Some(tb) = self.focused_tb() {
                             tb.on_event(&InputEvent::SelectAll, &mut inv);
@@ -1820,7 +1911,33 @@ impl ConnWin {
                             out.push(ConnWinAction::Duplicate(n));
                         }
                     }
-                    Some("new") => self.open_detail(true),
+                    Some("copy_cs") => {
+                        if let Some(n) = self.ctx_target.take() {
+                            if let Some(p) = self.profiles.iter().find(|p| p.name == n) {
+                                out.push(ConnWinAction::CopyText(target_of(p)));
+                            }
+                        }
+                    }
+                    Some("new") => {
+                        self.guarded(Guard::New, out);
+                    }
+                    Some("guard_save") => {
+                        // 저장을 호스트에 넘기고 지킴이는 유지 — 저장 결과에 따라 `after_save`가 이어간다.
+                        match self.panel.save_action() {
+                            Some(a) => out.push(ConnWinAction::Panel(a)),
+                            // 저장 불가(이름 오류 등) — 폼에 사유가 떠 있다 · 동작은 취소.
+                            None => self.guard = None,
+                        }
+                    }
+                    Some("guard_discard") => {
+                        if let Some(g) = self.guard.take() {
+                            self.panel.discard_changes();
+                            self.perform(g, out);
+                        }
+                    }
+                    Some("guard_cancel") => {
+                        self.guard = None;
+                    }
                     // 콤보 우클릭: 선택 항목 / 목록(여러 줄) 복사(사용자 09-14).
                     Some("combo_item") => {
                         let _ = crate::clipboard::write_text(&self.panel.dialect_selected_label());
@@ -1934,7 +2051,10 @@ impl ConnWin {
                 self.menu.open_at(
                     x,
                     y,
-                    vec![CtxItem::item("dup", t(Msg::MnDuplicate))],
+                    vec![
+                        CtxItem::item("dup", t(Msg::MnDuplicate)),
+                        CtxItem::item("copy_cs", t(Msg::MnCopyConnString)),
+                    ],
                     host,
                     self.ctx_text_w,
                 );
@@ -2107,14 +2227,23 @@ impl ConnWin {
                 if let Some((_, b)) = self.row_btn_at(p) {
                     self.sel = Some(row);
                     self.last_click = None;
+                    if b == RowBtn::Light {
+                        // 신호등 클릭 = 그 서버를 지금 다시 확인(SYN 1 · 대상 집합 여부 무관 · 1회).
+                        if let Some(n) = self.name_at(row) {
+                            self.note_failure(&n);
+                        }
+                        self.redraw();
+                        return;
+                    }
                     // 비밀번호가 없는 프로필은 행 버튼이 동작하지 않는다 · 테스트 중인 프로필도 끝날 때까지 잠금(사용자 09-14).
                     let testing = self.name_at(row).is_some_and(|n| self.is_testing(&n));
                     if self.row_has_password(row) && !testing {
                         if let Some(n) = self.name_at(row) {
-                            out.push(match b {
-                                RowBtn::Test => ConnWinAction::TestProfile(n),
-                                RowBtn::Connect => ConnWinAction::Login(n),
-                            });
+                            match b {
+                                RowBtn::Test => out.push(ConnWinAction::TestProfile(n)),
+                                RowBtn::Connect => out.push(ConnWinAction::Login(n)),
+                                RowBtn::Light => {}
+                            }
                         }
                     }
                     self.redraw();
@@ -2127,7 +2256,7 @@ impl ConnWin {
                     if double {
                         out.push(ConnWinAction::Login(n));
                     } else if self.detail_open() {
-                        out.push(ConnWinAction::Panel(PanelAction::LoadProfile(n)));
+                        self.guarded(Guard::Load(n), out);
                     }
                 }
                 self.redraw();
@@ -2278,6 +2407,7 @@ impl ConnWin {
                 .with_caret_on(caret_on);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
             if detail_visible {
+                self.panel.sync_dirty();
                 self.panel.paint(&mut dc, th);
                 dc.fill_rect(Rect::new(detail_px, 0, 1, hi), th.border);
             }
@@ -2352,6 +2482,11 @@ impl ConnWin {
                 self.scroll_x = self.scroll_x.clamp(0, (content_w - body.w).max(0));
             }
             let col_w = self.col_w.clone();
+            let dirty_name = if self.panel.is_dirty() {
+                self.panel.loaded_name()
+            } else {
+                None
+            };
             // 잉크 기준 세로 가운데(09-16 mac: 고정 −8px 상수는 Windows 1x 맑은 고딕에서만 가운데였다).
             let toff = dc.text_center_y(0, rh);
             let ty = move |y: i32| y + toff;
@@ -2462,7 +2597,7 @@ impl ConnWin {
                 // 행 버튼 — 테스트(마지막 결과 표시) · 접속. 비밀번호 미저장 = 흐리게(비활성).
                 // 저장됐거나 세션에 입력된 비밀번호가 있으면 활성 · 테스트 중이면 잠금(사용자 09-14).
                 let testing = self.test_marks.get(&p.name) == Some(&TestMark::Testing);
-                let enabled = pw_state(p, &self.session_pw) > 0 && !testing;
+                let enabled = row_ready(p, &self.session_pw) && !testing;
                 let hb = |b: RowBtn| enabled && self.hover_btn == Some((row, b));
                 paint_test_btn(
                     &mut dc,
@@ -2497,13 +2632,12 @@ impl ConnWin {
                                 _ => {}
                             }
                         } else {
-                            dc.text(
-                                cx + pad,
-                                ty(y),
-                                clip,
-                                &cell_of(p, ci, &self.session_pw),
-                                th.text,
-                            );
+                            let mut txt = cell_of(p, ci, &self.session_pw);
+                            // 폼에서 바꾸는 중인 프로필 = 이름 뒤 `*`(편집기 탭의 더러움 표시와 같음 · T-131).
+                            if ci == 0 && dirty_name.as_deref() == Some(p.name.as_str()) {
+                                txt.push('*');
+                            }
+                            dc.text(cx + pad, ty(y), clip, &txt, th.text);
                         }
                     }
                     cx += cw;
@@ -2687,15 +2821,14 @@ fn move_col(order: &mut Vec<usize>, pos: usize, mut to: usize) {
     order.insert(to.min(order.len()), c);
 }
 
-/// `host:port/database` (파일 DB는 경로).
+/// 행 버튼(Test/Connect)에 쓸 자격이 있는가 — 비밀번호가 있거나 **비밀번호가 필요 없는 방언**(SQLite 파일 · 사용자 09-18/19).
+fn row_ready(p: &Profile, session: &HashMap<String, String>) -> bool {
+    pw_state(p, session) > 0 || p.spec.dialect == Some(nsql_core::Dialect::Sqlite)
+}
+
+/// 접속 문자열(우리 형식 · `dialect://user@host:port/db?schema=x` · 비밀번호 없음 · 사용자 09-18) — 열 표시·복사·검색.
 fn target_of(p: &Profile) -> String {
-    let host = p.spec.host.as_deref().unwrap_or("");
-    let db = p.spec.database.as_deref().unwrap_or("");
-    match p.spec.port {
-        Some(port) if !host.is_empty() => format!("{host}:{port}/{db}"),
-        _ if host.is_empty() => db.to_string(),
-        _ => format!("{host}/{db}"),
-    }
+    p.spec.connection_string()
 }
 
 #[cfg(test)]

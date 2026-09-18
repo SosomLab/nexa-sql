@@ -312,8 +312,14 @@ impl LogWin {
             CtxItem::submenu("cols", t(Msg::MnLogColumns), cols),
             CtxItem::submenu("layers", t(Msg::MnLogDevLayers), layers),
             CtxItem::Separator,
-            CtxItem::item("save", t(Msg::MnLogSaveAs)),
+            // 선택이 있을 때만 활성(사용자 09-19) — Ctrl/⌘+C와 같은 글.
+            CtxItem::maybe(
+                "copy_sel",
+                t(Msg::MnLogCopySel),
+                self.selected_text().is_some(),
+            ),
             CtxItem::item("copy", t(Msg::MnLogCopyAll)),
+            CtxItem::item("save", t(Msg::MnLogSaveAs)),
             CtxItem::Separator,
             CtxItem::item("clear", t(Msg::MnLogClear)),
         ];
@@ -381,6 +387,10 @@ impl LogWin {
         match id {
             "save" => LogWinAction::SaveAs,
             "copy" => LogWinAction::CopyText(self.export_text()),
+            "copy_sel" => match self.selected_text() {
+                Some(t) => LogWinAction::CopyText(t),
+                None => LogWinAction::None,
+            },
             "clear" => {
                 self.clear_selection();
                 self.buf.clear();
@@ -709,6 +719,10 @@ impl LogWin {
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
+        // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
+        if let Some(((x, y), _)) = same {
+            crate::wingeom::place_outer(&win, Some((x, y)));
+        }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
         if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
@@ -1053,13 +1067,19 @@ impl LogWin {
                     self.redraw();
                     return LogWinAction::None;
                 }
+                // ⌘/Ctrl+글자 = 입력 소스와 무관하게 물리 키로(한글 자판에서 ⌘C가 "ㅊ"으로 오던 결함 · 09-19).
+                let letter = if self.primary {
+                    crate::input::shortcut_letter(kev)
+                } else {
+                    None
+                };
                 match kev.logical_key.as_ref() {
-                    Key::Character(c) if self.primary && matches!(c, "c" | "C") => {
+                    _ if letter == Some('c') => {
                         if let Some(text) = self.selected_text() {
                             return LogWinAction::CopyText(text);
                         }
                     }
-                    Key::Character(c) if self.primary && matches!(c, "a" | "A") => {
+                    _ if letter == Some('a') => {
                         self.select_all();
                     }
                     Key::Named(NamedKey::Escape) if self.selection().is_some() => {

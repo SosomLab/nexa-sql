@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// 트리 노드 종류.
 #[derive(Clone, Debug)]
@@ -228,13 +228,20 @@ enum Resp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExplorerAction {
     /// 새 편집기 탭에 텍스트(SELECT 템플릿 · 소스).
-    OpenSql { title: String, text: String },
+    OpenSql {
+        title: String,
+        text: String,
+    },
     /// 상태줄 한 줄.
     Status(String),
     /// 클립보드에 복사할 텍스트.
     Copy(String),
     /// 오프라인 서버를 탐색기에서 지운다(루트 우클릭 · `ExplorerSet`이 처리).
     RemoveServer,
+    /// 루트 메뉴(09-19 연결 모델 · docs/54): 이 서버의 모든 세션 해제 / 다시 연결 / 이 연결로 새 탭 — 스펙은 `ExplorerSet`이 채운다.
+    DisconnectServer(Option<ConnectSpec>),
+    ConnectServer(Option<ConnectSpec>),
+    NewTabHere(Option<ConnectSpec>),
 }
 
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
@@ -301,6 +308,10 @@ pub(crate) struct Explorer {
     /// 보이는 창(호스트가 준다) — 여러 서버의 트리를 **한 트리처럼 이어 붙여** 하나의 스크롤로 움직일 때, 이 칸의 `bounds`는
     /// 내용 전체 높이라 영역 밖으로 나갈 수 있다 → 그리기·히트 테스트는 이 창과의 교집합만(`None` = bounds 그대로).
     clip: Option<Rect>,
+    /// 가로 스크롤(호스트 공용 · 09-19 사용자) — 그리기·히트 테스트의 x에서 뺀다.
+    scroll_x: i32,
+    /// 마지막 그리기에서 잰 내용 폭(가장 긴 행의 오른쪽 끝 + 여백 · bounds.x 기준).
+    content_w: i32,
 }
 
 fn err_s(e: DbError) -> String {
@@ -318,10 +329,13 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
         if session.is_none() && !matches!(req, Req::Open { .. } | Req::Close | Req::Suspend) {
             if let Some(spec) = resume.as_ref() {
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
-                if let Ok(Ok(s)) =
-                    catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(spec, default)))
-                {
-                    session = Some(s);
+                // 재개 전 빠른 판정(docs/53): 끊긴 서버에 메타 스레드가 접속 타임아웃까지 갇히지 않게.
+                if reachable(spec) {
+                    if let Ok(Ok(s)) =
+                        catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(spec, default)))
+                    {
+                        session = Some(s);
+                    }
                 }
             }
         }
@@ -331,7 +345,25 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 cur_gen = gen;
                 resume = Some(spec.clone());
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
-                let r = catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(&spec, default)));
+                let r = if reachable(&spec) {
+                    catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(&spec, default)))
+                } else {
+                    Ok(Err(DbError {
+                        code: None,
+                        message: tf(
+                            Msg::ErrServerUnreachable,
+                            &[
+                                &format!(
+                                    "{}:{}",
+                                    spec.host.clone().unwrap_or_default(),
+                                    spec.port.unwrap_or(0)
+                                ),
+                                "2000",
+                            ],
+                        ),
+                        position: None,
+                    }))
+                };
                 let r = match r {
                     Ok(Ok(s)) => {
                         let d = s.dialect();
@@ -419,6 +451,17 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
             break;
         }
         wake();
+    }
+}
+
+/// 접속 전 빠른 판정(호스트:포트 TCP · 2초 · 파일 방언은 해당 없음).
+fn reachable(spec: &ConnectSpec) -> bool {
+    match (&spec.host, spec.port) {
+        (Some(h), Some(p)) => {
+            crate::probe::probe_once(h, p, Duration::from_secs(2), true)
+                == crate::probe::Outcome::Up
+        }
+        _ => true,
     }
 }
 
@@ -527,6 +570,8 @@ impl Explorer {
             last_used: Instant::now(),
             menu_host: Rect::default(),
             clip: None,
+            scroll_x: 0,
+            content_w: 0,
         };
         e.reset_tree();
         e
@@ -634,6 +679,16 @@ impl Explorer {
     /// 보이는 창 지정(이어 붙인 트리의 공용 뷰포트).
     pub(crate) fn set_clip(&mut self, r: Rect) {
         self.clip = Some(r);
+    }
+
+    /// 공용 가로 스크롤 값(호스트가 준다).
+    pub(crate) fn set_scroll_x(&mut self, x: i32) {
+        self.scroll_x = x;
+    }
+
+    /// 마지막 그리기에서 잰 내용 폭(가로 스크롤 범위용).
+    pub(crate) fn content_width(&self) -> i32 {
+        self.content_w
     }
 
     /// 실제로 보이는 영역 = bounds ∩ 창.
@@ -1262,7 +1317,7 @@ impl Explorer {
                     return true;
                 };
                 self.selected = Some(i);
-                let glyph_x = self.bounds.x
+                let glyph_x = self.bounds.x - self.scroll_x
                     + ((self.nodes[i].depth as f32 * INDENT + 4.0) * self.scale).round() as i32;
                 let glyph_w = (16.0 * self.scale).round() as i32;
                 let now = Instant::now();
@@ -1301,8 +1356,16 @@ impl Explorer {
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
+                    // 루트 = 연결 항목(DBeaver 항해자와 같은 자리 · docs/54): 연결됨 → 새 탭 · 새로 고침 · 해제 / 오프라인 → 연결 · 제거.
                     NodeKind::Root if self.offline => {
+                        items.push(CtxItem::item("connect", t(Msg::ExpConnectServer)));
                         items.push(CtxItem::item("remove", t(Msg::ExpRemoveServer)));
+                    }
+                    NodeKind::Root => {
+                        items.push(CtxItem::item("newtab", t(Msg::ExpNewTabHere)));
+                        items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                        items.push(CtxItem::Separator);
+                        items.push(CtxItem::item("disconnect", t(Msg::ExpDisconnectServer)));
                     }
                     _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
                 }
@@ -1370,6 +1433,9 @@ impl Explorer {
             "select" | "source" => self.activate(i),
             "refresh" => self.refresh(i),
             "remove" => self.actions.push(ExplorerAction::RemoveServer),
+            "disconnect" => self.actions.push(ExplorerAction::DisconnectServer(None)),
+            "connect" => self.actions.push(ExplorerAction::ConnectServer(None)),
+            "newtab" => self.actions.push(ExplorerAction::NewTabHere(None)),
             "copy" => {
                 let name = match &self.nodes[i].kind {
                     NodeKind::Schema(s) => s.clone(),
@@ -1460,6 +1526,8 @@ impl Explorer {
         self.rows_cache = self.screen_rows();
         let rows = std::mem::take(&mut self.rows_cache);
         let first = ((vis.y - b.y + self.scroll) / row_h.max(1)).max(0) as usize;
+        let sx = self.scroll_x;
+        let mut content_w = 0;
         for (pos, (node, parent)) in rows.iter().enumerate().skip(first) {
             let y = b.y + pos as i32 * row_h - self.scroll;
             if y >= vis.bottom() {
@@ -1476,7 +1544,7 @@ impl Explorer {
                 None => {
                     // 상태 행: 로딩 중 / 오류(클릭 = 재시도).
                     let depth = self.nodes[*parent].depth + 1;
-                    let x = b.x + ((depth as f32 * INDENT + 8.0) * s).round() as i32;
+                    let x = b.x - sx + ((depth as f32 * INDENT + 8.0) * s).round() as i32;
                     match &self.nodes[*parent].state {
                         LoadState::Loading => {
                             // "Loading" + 점 0~3개(300ms 단계) — 비동기 로드 중임이 보이게(nexa-dir2 · 사용자 09-15).
@@ -1509,12 +1577,13 @@ impl Explorer {
                             dc.fill_rect_alpha(rr, th.text, ha);
                         }
                     }
-                    let gx = b.x + ((n.depth as f32 * INDENT + 4.0) * s).round() as i32;
+                    let gx = b.x - sx + ((n.depth as f32 * INDENT + 4.0) * s).round() as i32;
                     // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
                     let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
-                    // ★ 부분적으로 잘린 마지막 행은 셰브론·아이콘을 그리지 않는다(클립이 없는 도형이라 상태줄 위로 삐져나왔다 · 사용자 09-15).
-                    let full_row = rr.h >= row_h;
-                    if n.expandable && !empty_loaded && full_row {
+                    // ★ 부분적으로 잘린 행(위로 반쯤 스크롤된 첫 행 · 상태줄에 걸린 마지막 행)도 셰브론·아이콘을 **클립해서** 그린다
+                    //   — 종전(09-15)엔 셰브론에 클립이 없어 아예 건너뛰었고, 그래서 반 줄만 올려도 ANONYMOUS의 셰브론·아이콘이
+                    //   사라졌다(사용자 09-19 캡처). 이제 `draw_chevron_90_in(.., Some(rr))` · 아이콘은 원래 `rr`로 클립.
+                    if n.expandable && !empty_loaded {
                         let cw = th_txt.max(10); // 사용자 09-15: 글꼴 높이의 1.0배
                         let chev = Rect::new(gx, vcy - cw / 2, cw, cw);
                         // 색: 접힘 = 진한 회색 · 마우스 오버 또는 펼침 = 본문색(검정) (사용자 09-15).
@@ -1523,11 +1592,17 @@ impl Explorer {
                         } else {
                             th.text_dim
                         };
-                        nexa_ctl::controls::draw_chevron_90(dc, chev, color, n.expanded);
+                        nexa_ctl::controls::draw_chevron_90_in(
+                            dc,
+                            chev,
+                            color,
+                            n.expanded,
+                            Some(rr),
+                        );
                     }
                     let mut x = gx + (16.0 * s).round() as i32;
                     // 아이콘(설정 켬 · DBMS/스키마/폴더/종류별 · 글꼴 높이 크기) 또는 색 칩(끔).
-                    if self.icons_on && full_row {
+                    if self.icons_on {
                         if let Some((k, rgb)) = self.icon_for(n) {
                             let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
                                 .round()
@@ -1552,18 +1627,29 @@ impl Explorer {
                     dc.text(x, ty, rr, &label, th.text);
                     let lw = dc.text_width(&label);
                     dc.select_font(FontSlot::Base, false);
+                    let mut right = x + lw;
                     if !sub.is_empty() {
                         let color = if sub == "INVALID" {
                             th.danger
                         } else {
                             th.text_dim
                         };
-                        dc.text(x + lw + (8.0 * s).round() as i32, ty, rr, &sub, color);
+                        let sx0 = x + lw + (8.0 * s).round() as i32;
+                        dc.text(sx0, ty, rr, &sub, color);
+                        right = sx0 + dc.text_width(&sub);
                     }
+                    // 내용 폭 = 가장 긴 행의 오른쪽 끝(스크롤 되돌린 값) + 여백.
+                    content_w = content_w.max(right + sx - b.x + (12.0 * s).round() as i32);
                     let _ = indent;
                 }
             }
         }
+        // 보이는 행만 쟀으므로 줄어들 때는 천천히(스크롤 중 폭이 요동치지 않게) · 늘 때는 즉시.
+        self.content_w = if content_w >= self.content_w {
+            content_w
+        } else {
+            self.content_w.max(content_w)
+        };
         // 이어 붙인 트리(창이 주어짐)에서는 공용 스크롤바를 호스트가 그린다.
         if self.clip.is_none() {
             self.bars

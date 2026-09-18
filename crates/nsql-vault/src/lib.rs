@@ -145,6 +145,9 @@ impl Vault {
         if let Some(v) = &spec.role {
             known.push(("role", v.clone()));
         }
+        if let Some(v) = &spec.schema {
+            known.push(("schema", v.clone()));
+        }
         if let Some(pw) = &spec.password {
             let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
             known.push(("secret", hex_encode(&env)));
@@ -253,6 +256,7 @@ impl Vault {
                 "port" => spec.port = v.trim().parse().ok(),
                 "database" => spec.database = Some(v),
                 "role" => spec.role = Some(v),
+                "schema" => spec.schema = Some(v),
                 "secret" => secret = Some(v),
                 _ => {}
             }
@@ -306,6 +310,7 @@ mod tests {
             database: Some("orcl".into()),
             role: None,
             dialect: Some(Dialect::Oracle),
+            schema: None,
         }
     }
 

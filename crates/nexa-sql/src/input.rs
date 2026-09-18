@@ -40,6 +40,50 @@ pub(crate) fn natural_scroll() -> bool {
 
 /// 휠 사건 → 컨트롤 입력. 가로 성분(틸트 휠·트랙패드)이 있으면 `HWheel` · Shift+세로 = 가로(관례) · 아니면 세로.
 /// `natural_scroll`이면 두 축 모두 부호를 뒤집는다(내용이 손가락을 따라간다).
+/// 단축키용 **영문 글자**(소문자) — 논리 키가 ASCII면 그것, 아니면(한글·일본어 입력 소스에서 ⌘C가 "ㅊ"으로 온다 · 사용자 09-19
+/// "복사 단축키가 동작하지 않아") **물리 키**(`KeyCode::KeyA..Z`)로. 메인 창 키맵(`Chord::from_winit`)과 같은 규칙.
+pub(crate) fn shortcut_letter(kev: &winit::event::KeyEvent) -> Option<char> {
+    use winit::keyboard::{Key, KeyCode, PhysicalKey};
+    if let Key::Character(t) = kev.logical_key.as_ref() {
+        if let Some(c) = t.chars().next().filter(char::is_ascii_alphabetic) {
+            return Some(c.to_ascii_lowercase());
+        }
+    }
+    let PhysicalKey::Code(code) = kev.physical_key else {
+        return None;
+    };
+    let c = match code {
+        KeyCode::KeyA => 'a',
+        KeyCode::KeyB => 'b',
+        KeyCode::KeyC => 'c',
+        KeyCode::KeyD => 'd',
+        KeyCode::KeyE => 'e',
+        KeyCode::KeyF => 'f',
+        KeyCode::KeyG => 'g',
+        KeyCode::KeyH => 'h',
+        KeyCode::KeyI => 'i',
+        KeyCode::KeyJ => 'j',
+        KeyCode::KeyK => 'k',
+        KeyCode::KeyL => 'l',
+        KeyCode::KeyM => 'm',
+        KeyCode::KeyN => 'n',
+        KeyCode::KeyO => 'o',
+        KeyCode::KeyP => 'p',
+        KeyCode::KeyQ => 'q',
+        KeyCode::KeyR => 'r',
+        KeyCode::KeyS => 's',
+        KeyCode::KeyT => 't',
+        KeyCode::KeyU => 'u',
+        KeyCode::KeyV => 'v',
+        KeyCode::KeyW => 'w',
+        KeyCode::KeyX => 'x',
+        KeyCode::KeyY => 'y',
+        KeyCode::KeyZ => 'z',
+        _ => return None,
+    };
+    Some(c)
+}
+
 pub(crate) fn wheel_event(delta: &MouseScrollDelta, shift: bool) -> InputEvent {
     // ★ 픽셀 delta(macOS 트랙패드 · Linux libinput)는 **1:1**로(사용자 09-16 "DBeaver처럼 부드럽게 · 점진 가속"):
     //   소비자가 전부 `delta/3` px로 쓰므로 ×3 해 둔다. OS가 이미 가속·관성(손을 뗀 뒤 감쇠하는 사건)을 넣어 주므로

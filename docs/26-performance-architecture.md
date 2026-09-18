@@ -191,6 +191,8 @@
 | 전용 세션 `CONNECT` · 개별 모드 탭 접속 | DB 로그인 1 | 사용자 실행 1회당 1 · 개별 모드 = 탭이 **처음 활성화될 때** 1(안 본 탭은 0) · 상한 `session.max_private`(8) | 없음 | `App::place_run` · `sync_sess` · `connect_quietly` |
 | 유휴 닫기 뒤 재접속 | DB 로그인 1 | 닫힌 세션에서 **다음 실행/페치 1회당 1** · 주기 핑·keepalive 질의 **없음**(서버의 유휴 정책을 무력화하지 않는다) · 점검 타이머 30s는 로컬 판정만 | 없음 | `App::idle_tick` · `wake_if_idle` · `sessions::idle_action` |
 | 탐색기 메타 접속(서버당 1 · 52 §2-2) | DB 로그인 1 | **처음 보는 서버에 세션이 붙을 때 1** · 같은 서버의 추가 세션 = 0 · 유휴 회수 뒤에는 다음 펼침/소스 요청 1회당 1 · 오프라인(세션 0) 서버에는 **다시 붙지 않는다** | 없음 | `App::explorer_attach` · `explorer::meta_thread`(`resume`) |
+| 동작 직전 생존 판정([53](53-connection-liveness.md)) | TCP SYN 1(+ICMP 1) · `probe.timeout` 상한 | 실행·페치·건수·키·커밋 **직전**에, 마지막 성공 뒤 `probe.stale_secs`(60s) 지났거나 직전 오류·드라이버 끊김 힌트일 때만 · 접속 시도 전에는 항상 1 | 없음(실패 = 즉시 오류 · Broken) | `worker::ensure_alive` · `sessions::live_plan` |
+| TCP keepalive(PG·SQL Server) | 빈 세그먼트 1(데이터 0) | 접속당 `net.keepalive_secs`(60s) 유휴마다 · 서버 유휴 세션 정책과 무관 · 0 = 끔 | OS(3회 뒤 소켓 오류) | `nsql_drivers::set_net_options` |
 
 **검토 체크리스트**(네트워크를 만드는 코드를 추가·변경할 때):
 1. 사용자 행동 없이 시작되는 요청인가? → 주기·백오프 상한과 "창이 열려 있을 때만" 조건이 있는가.
