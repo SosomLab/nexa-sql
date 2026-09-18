@@ -9317,7 +9317,8 @@ fn main() {
     // ★ 임시(사용자 09-19 · 추후 제거): `dev.start_demo`가 켜져 있고 인자로 대상을 주지 않았으면 Demo 프로필에 자동 접속 +
     //   로그인 창 생략(`-c Demo`와 같은 경로).
     //   ★ 릴리즈에는 절대 들어가지 않는다(사용자 09-19): Debug 빌드(`debug_assertions`)에서만 유효 — Release는 설정이 켜져 있어도 무시.
-    let dev_demo = cfg!(debug_assertions) && settings.flag("dev.start_demo") && arg_target.is_none();
+    let dev_demo =
+        cfg!(debug_assertions) && settings.flag("dev.start_demo") && arg_target.is_none();
     let arg_target = if dev_demo {
         Some("Demo".to_string())
     } else {
