@@ -127,6 +127,23 @@ enum DragSel {
     Rows,
 }
 
+/// 헤더 드래그 상태(컬럼 이동 · nexa-dir2 `ColDrag`와 같은 UX · 사용자 09-19):
+/// 4px 이상 움직이면 활성 → **잡은 컬럼이 고스트로 커서를 따라가고**(가로만 · y = 헤더 행) · 가장 가까운 경계로
+/// **즉시 재배열해 보여 준다**(라이브 미리보기) · MouseUp = 확정 · Esc = `orig`로 복원.
+#[derive(Clone, Debug)]
+struct HdrDrag {
+    /// 지금 표시 위치(미리보기로 옮겨 다닌다).
+    pos: usize,
+    press_x: i32,
+    cur_x: i32,
+    active: bool,
+    shift: bool,
+    /// 잡은 점의 컬럼 왼쪽 기준 오프셋(고스트가 손 아래 그대로).
+    grab_dx: i32,
+    /// 시작 때 `col_order`(Esc 복원).
+    orig: Vec<usize>,
+}
+
 pub(crate) struct Grid {
     pub bounds: Rect,
     /// ★ 결과 데이터 **한 세트**(DR-33) — 페치 세그먼트 `Arc`. 그리드·텍스트 보기 7종·복사·정렬은 전부 이것 하나에서
@@ -162,8 +179,8 @@ pub(crate) struct Grid {
     row_order: Vec<usize>,
     /// 결합 정렬 키(원본 컬럼 · 오름차순) — 클릭 = 단일 키 3단(▲→▼→해제) · Shift+클릭 = 키 추가/토글(dir2 방식).
     sort_keys: Vec<(usize, bool)>,
-    /// 헤더 드래그(표시 위치 · 시작 x · 현재 x · 4px 이상 움직임 · Shift).
-    hdr_drag: Option<(usize, i32, i32, bool, bool)>,
+    /// 헤더 드래그 — 컬럼 이동(고스트 · 라이브 미리보기 · Esc 취소 · 09-19).
+    hdr_drag: Option<HdrDrag>,
     /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
     hdr_resize: Option<(usize, i32, i32)>,
     /// 헤더 경계 직전 클릭(컬럼 · 시각) — 400ms 안에 같은 경계면 더블클릭 = 자동 맞춤(사용자 09-16).
@@ -203,6 +220,9 @@ pub(crate) struct Grid {
     source_table: Option<String>,
     /// 실행문 원문(새로고침 · 추가 페치 · COUNT의 근거).
     source_sql: String,
+    /// ★ 건수(Σ)를 셀 수 있는 결과인가(docs/43 §4-4 · 사용자 09-19) — 이 그리드의 결과가 **조회 문장 하나**에서 왔고
+    /// 그 문장이 `source_sql`에 들어 있을 때만. 실행 시작 · DDL/DML만 실행 · PRINT/REF CURSOR 결과 · 빈 탭 = 거짓.
+    countable: bool,
     // ── 결과 도구줄(사용자 09-16 · docs/43 §4-2): 보기 모드 · 새로고침 · 편집(예정) · 세그먼트 상자 · 전체/건수 · 상태
     tb_view: Toolbar,
     tb_refresh: Toolbar,
@@ -317,6 +337,7 @@ impl Default for Grid {
             dialect: Dialect::Oracle,
             source_table: None,
             source_sql: String::new(),
+            countable: false,
             tb_view: Self::bar(vec![ToolItem::new("view", toolicons::view_mode())
                 .with_dropdown()
                 .tip(t(Msg::TipViewMode))]),
@@ -493,12 +514,14 @@ impl Grid {
     pub(crate) fn set_total(&mut self, n: u64) {
         self.total = Some(n);
         self.fetching = false;
+        self.sync_fetch_tools();
     }
 
     /// 추가 페치 실패 — 요청 상태만 푼다.
     pub(crate) fn fetch_failed(&mut self) {
         self.fetching = false;
         self.end_fetch_all();
+        self.sync_fetch_tools();
     }
 
     /// 전체 조회가 끝났다(교체 결과 도착 · 실패 · 중지) — 진행·취소 상태를 비우고 도구줄을 맞춘다.
@@ -568,8 +591,25 @@ impl Grid {
             open && !self.fetch_all_pending && self.rs.is_some() && self.more,
             &mut inv,
         );
-        self.tb_fetch.set_item_enabled("count", open, &mut inv);
+        // Σ 건수 = 결과가 있고 · 조회 문장에서 왔고 · 세션이 한가하고 · 다른 페치/건수가 나가 있지 않을 때만(09-19 규정).
+        self.tb_fetch.set_item_enabled(
+            "count",
+            open && self.rs.is_some() && self.countable && !self.fetching,
+            &mut inv,
+        );
         self.tb_refresh.set_item_enabled("refresh", open, &mut inv);
+    }
+
+    /// 건수를 셀 수 있는 결과인가(도구줄·호스트 공용 판정).
+    pub(crate) fn can_count(&self) -> bool {
+        !self.session_blocked && self.rs.is_some() && self.countable && !self.fetching
+    }
+
+    /// 결과가 도착했을 때 호스트가 알려 준다: 이 결과를 만든 문장(`source_sql`이 된다)과 그것이 조회 문장인가.
+    pub(crate) fn set_result_origin(&mut self, stmt: &str, is_query: bool) {
+        self.set_source_sql(stmt);
+        self.countable = is_query;
+        self.sync_fetch_tools();
     }
 
     /// 세션 통제 상태(호스트 · docs/52 §3) — 바뀔 때만 도구줄을 다시 맞춘다.
@@ -978,11 +1018,7 @@ impl Grid {
                     // 전체 조회 = 나머지 이어 받기(자동 페치가 나가 있으면 큐).
                     Some("fetch.all") => self.request_fetch_all(),
                     Some("fetch.stop") => self.request_cancel(),
-                    Some("count")
-                        if !self.session_blocked
-                            && !self.fetching
-                            && !self.source_sql.trim().is_empty() =>
-                    {
+                    Some("count") if self.can_count() && !self.source_sql.trim().is_empty() => {
                         self.fetch_req = Some(FetchReq::Count);
                     }
                     _ => {}
@@ -1447,10 +1483,13 @@ impl Grid {
         }
     }
 
-    /// 실행 직전 호스트가 알려 주는 원본 문장 — SQL 복사의 테이블 이름 근거.
+    /// 실행 직전 호스트가 알려 주는 원본 문장(스크립트 전체 · 제목·테이블 이름 근거) — 결과가 오면 `set_result_origin`이
+    /// 그 결과를 만든 **문장 하나**로 바꾼다. 실행이 시작되면 건수는 셀 수 없다(결과가 올 때 다시 판정).
     pub(crate) fn set_source_sql(&mut self, sql: &str) {
         self.source_table = guess_table(sql);
         self.source_sql = sql.to_string();
+        self.countable = false;
+        self.sync_fetch_tools();
     }
 
     pub(crate) fn set_dialect(&mut self, d: Dialect) {
@@ -1973,17 +2012,68 @@ impl Grid {
         Rect::new(self.bounds.x, self.bounds.y + 1, self.bounds.w, self.row_h)
     }
 
-    /// 드래그 목표 위치(현재 x 기준 · 컬럼 중앙을 넘으면 그 다음).
-    fn drop_pos_at(&self, x: i32) -> usize {
+    /// 컬럼(표시 위치)의 왼쪽 x(창 좌표 · 스크롤 반영).
+    fn col_x(&self, pos: usize) -> i32 {
         let mut cx = self.bounds.x + self.gutter_w - self.scroll_x;
-        for (pos, &ci) in self.col_order.iter().enumerate() {
-            let cw = self.col_w.get(ci).copied().unwrap_or(80);
-            if x < cx + cw / 2 {
-                return pos;
-            }
-            cx += cw;
+        for &ci in self.col_order.iter().take(pos) {
+            cx += self.col_w.get(ci).copied().unwrap_or(80);
         }
-        self.col_order.len().saturating_sub(1)
+        cx
+    }
+
+    /// 커서 x에 가장 가까운 컬럼 경계(0..=n · 삽입 위치).
+    fn nearest_boundary(&self, x: i32) -> usize {
+        let n = self.col_order.len();
+        let mut best = 0;
+        let mut best_d = i32::MAX;
+        for k in 0..=n {
+            let d = (self.col_x(k) - x).abs();
+            if d < best_d {
+                best_d = d;
+                best = k;
+            }
+        }
+        best
+    }
+
+    /// 드래그 중 라이브 미리보기 — 고스트 중앙에 가장 가까운 경계로 잡은 컬럼을 옮긴다.
+    fn preview_col_drag(&mut self) {
+        let Some(d) = self.hdr_drag.clone() else {
+            return;
+        };
+        if !d.active || d.pos >= self.col_order.len() {
+            return;
+        }
+        let w = self.col_w.get(self.col_order[d.pos]).copied().unwrap_or(80);
+        let center = d.cur_x - d.grab_dx + w / 2;
+        let ins = self.nearest_boundary(center);
+        let to = if ins > d.pos { ins - 1 } else { ins };
+        if to != d.pos && to < self.col_order.len() {
+            let c = self.col_order.remove(d.pos);
+            self.col_order.insert(to, c);
+            if let Some(d) = self.hdr_drag.as_mut() {
+                d.pos = to;
+            }
+        }
+    }
+
+    /// Esc = 컬럼 이동 취소(시작 때 순서로 복원). 드래그 중이었으면 true(호스트가 키를 소비).
+    pub(crate) fn cancel_col_drag(&mut self) -> bool {
+        let Some(d) = self.hdr_drag.take() else {
+            return false;
+        };
+        if !d.active {
+            return false;
+        }
+        if d.orig.len() == self.col_order.len() {
+            self.col_order = d.orig;
+        }
+        true
+    }
+
+    /// 헤더 드래그(컬럼 이동)가 진행 중인가.
+    pub(crate) fn col_dragging(&self) -> bool {
+        self.hdr_drag.as_ref().is_some_and(|d| d.active)
     }
 
     #[allow(dead_code)]
@@ -2270,6 +2360,10 @@ impl Grid {
                 InputEvent::Key {
                     key: Key::Escape, ..
                 } => {
+                    // 컬럼 이동 중 Esc = 취소(시작 순서로).
+                    if self.cancel_col_drag() {
+                        return;
+                    }
                     // 전체 조회 중 Esc = 가져오기 중지(선택 해제보다 먼저 · T-48b).
                     if self.fetch_all_pending {
                         self.request_cancel();
@@ -2380,7 +2474,15 @@ impl Grid {
                         let w0 = self.col_w.get(ci).copied().unwrap_or(80);
                         self.hdr_resize = Some((ci, x, w0));
                     } else if let Some(pos) = self.header_pos_at(x) {
-                        self.hdr_drag = Some((pos, x, x, false, shift));
+                        self.hdr_drag = Some(HdrDrag {
+                            pos,
+                            press_x: x,
+                            cur_x: x,
+                            active: false,
+                            shift,
+                            grab_dx: x - self.col_x(pos),
+                            orig: self.col_order.clone(),
+                        });
                     }
                     return;
                 }
@@ -2416,24 +2518,22 @@ impl Grid {
                 }
                 InputEvent::MouseMove { x, .. } if self.hdr_drag.is_some() => {
                     if let Some(d) = self.hdr_drag.as_mut() {
-                        d.2 = x;
-                        if (x - d.1).abs() > 4 {
-                            d.3 = true;
+                        d.cur_x = x;
+                        if (x - d.press_x).abs() > 4 {
+                            d.active = true;
                         }
                     }
+                    self.preview_col_drag();
                     return;
                 }
-                InputEvent::MouseUp { x, .. } if self.hdr_drag.is_some() => {
-                    let (pos, _, _, moved, shift) =
-                        self.hdr_drag.take().unwrap_or((0, 0, 0, false, false));
-                    if moved {
-                        let to = self.drop_pos_at(x);
-                        if pos < self.col_order.len() && to != pos {
-                            let c = self.col_order.remove(pos);
-                            self.col_order.insert(to.min(self.col_order.len()), c);
+                InputEvent::MouseUp { .. } if self.hdr_drag.is_some() => {
+                    // 미리보기가 곧 결과 — 놓으면 확정 · 안 움직였으면 정렬 클릭.
+                    if let Some(d) = self.hdr_drag.take() {
+                        if !d.active {
+                            if let Some(&col) = self.col_order.get(d.pos) {
+                                self.toggle_sort(col, d.shift);
+                            }
                         }
-                    } else if let Some(&col) = self.col_order.get(pos) {
-                        self.toggle_sort(col, shift);
                     }
                     return;
                 }
@@ -2728,16 +2828,26 @@ impl Grid {
         dc.fill_rect(header, th.chrome_bg);
         let hcells = Rect::new(gx0, header.y, (b.right() - gx0).max(0), header.h);
         let mut x = gx0 - self.scroll_x;
-        let dragging = self.hdr_drag.filter(|d| d.3);
-        let drop_pos = dragging.map(|d| self.drop_pos_at(d.2));
+        let dragging = self.hdr_drag.as_ref().filter(|d| d.active);
+        let mut ghost: Option<(Rect, String)> = None;
         for (pos, &ci) in self.col_order.iter().enumerate() {
             let Some(c) = rs.columns().get(ci) else {
                 continue;
             };
             let cw = self.col_w.get(ci).copied().unwrap_or(80);
             let clip = Rect::new(x, header.y, cw, header.h).intersection(&hcells);
-            if dragging.is_some_and(|d| d.0 == pos) {
-                dc.fill_rect(clip, th.sel_bg);
+            if let Some(d) = dragging.filter(|d| d.pos == pos) {
+                // 잡은 컬럼의 제자리(= 놓일 자리 · 라이브 미리보기) = 자리 표시 · 본체는 고스트로 커서 아래.
+                dc.fill_rect_alpha(clip, th.accent, 0.12);
+                dc.fill_rect(Rect::new(clip.x, header.y, 1, header.h), th.accent);
+                dc.fill_rect(
+                    Rect::new(clip.right() - 1, header.y, 1, header.h),
+                    th.accent,
+                );
+                let gx = (d.cur_x - d.grab_dx).clamp(hcells.x, (hcells.right() - cw).max(hcells.x));
+                ghost = Some((Rect::new(gx, header.y, cw, header.h), c.name.clone()));
+                x += cw;
+                continue;
             } else if self.col_in_sel(pos) {
                 // 선택에 걸린 컬럼 헤더는 옅게 표시(행번호 강조와 짝).
                 dc.fill_rect_alpha(clip, th.sel_bg, 0.35);
@@ -2767,11 +2877,6 @@ impl Grid {
                 th.text_dim,
                 0.55,
             );
-            if let Some(dp) = drop_pos {
-                if dp == pos {
-                    dc.fill_rect(Rect::new(x, header.y, 2, header.h), th.accent);
-                }
-            }
             x += cw;
         }
         if self.gutter_w > 0 {
@@ -2781,6 +2886,22 @@ impl Grid {
             );
             let hy = dc.text_center_y(header.y, header.h);
             dc.text(b.x + pad, hy, header, "#", th.text_dim);
+        }
+        // 드래그 고스트 헤더(커서 x 추종 · 세로는 헤더 행 고정 · 뷰 안 클램프) — 헤더 층 맨 마지막.
+        if let Some((g, name)) = ghost {
+            dc.fill_rect(g, th.chrome_bg);
+            dc.fill_rect(Rect::new(g.x, g.y, g.w, 1), th.accent);
+            dc.fill_rect(Rect::new(g.x, g.bottom() - 1, g.w, 1), th.accent);
+            dc.fill_rect(Rect::new(g.x, g.y, 1, g.h), th.accent);
+            dc.fill_rect(Rect::new(g.right() - 1, g.y, 1, g.h), th.accent);
+            let hy = dc.text_center_y(g.y, g.h);
+            dc.text(
+                g.x + pad,
+                hy,
+                Rect::new(g.x + 1, g.y + 1, (g.w - 2).max(0), (g.h - 2).max(0)),
+                &name,
+                th.text,
+            );
         }
         dc.fill_rect(Rect::new(b.x, header.bottom() - 1, b.w, 1), th.border);
         // 오버레이 스크롤바(필요할 때만 · 스크롤/호버 시 · 반투명) — 헤더 아래부터 푸터 위까지(데이터 영역만).
@@ -3103,6 +3224,82 @@ mod tests {
         g.text_gutter_w = 30;
         g.footer_h = 0;
         g
+    }
+
+    /// Σ 건수 활성 규정(사용자 09-19 · MC/DC): 결과 있음 · 조회 문장에서 옴 · 세션 한가 · 페치 중 아님 — 하나라도 아니면 꺼짐.
+    #[test]
+    fn count_button_rules() {
+        let mut g = Grid::default();
+        assert!(!g.can_count(), "실행한 적 없음(결과 없음)");
+        g = grid_with(&[100]);
+        assert!(!g.can_count(), "결과는 있으나 출처 문장을 모른다");
+        g.set_result_origin("SELECT * FROM T", true);
+        assert!(g.can_count());
+        assert!(g.tb_fetch.item_enabled("count"));
+        g.set_result_origin("CREATE TABLE X (A INT)", false);
+        assert!(!g.can_count(), "DDL 결과");
+        assert!(!g.tb_fetch.item_enabled("count"));
+        g.set_result_origin("SELECT 1", true);
+        g.set_session_blocked(true);
+        assert!(!g.can_count(), "세션 작업 중");
+        g.set_session_blocked(false);
+        g.fetch_req = Some(FetchReq::Count);
+        let _ = g.take_fetch_request();
+        assert!(!g.can_count(), "건수 요청이 나가 있음");
+        g.set_total(10);
+        assert!(g.can_count());
+        // 다음 실행이 시작되면 결과가 올 때까지 셀 수 없다.
+        g.set_source_sql("CREATE TABLE Y (A INT)");
+        assert!(!g.can_count());
+    }
+
+    /// 헤더 드래그 = 라이브 미리보기(가장 가까운 경계로 즉시) · 놓으면 확정 · Esc = 시작 순서로(사용자 09-19).
+    #[test]
+    fn header_drag_previews_and_escape_restores() {
+        let mut g = grid_with(&[100, 100, 100]);
+        let hy = g.header_rect().y + 5;
+        // c0(30..130)를 x=80에서 잡고(잡은 오프셋 50) 190으로 → 고스트 중앙 190 · 가장 가까운 경계 230 → [1, 0, 2].
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: 80,
+                y: hy,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        g.on_event(&InputEvent::MouseMove { x: 190, y: hy }, 1.0);
+        assert!(g.col_dragging());
+        assert_eq!(g.col_order, vec![1, 0, 2], "미리보기");
+        assert!(g.cancel_col_drag());
+        assert_eq!(g.col_order, vec![0, 1, 2], "Esc 복원");
+        assert!(!g.col_dragging());
+        // 다시 끌고 놓으면 확정 · 정렬은 바뀌지 않는다.
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: 80,
+                y: hy,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        g.on_event(&InputEvent::MouseMove { x: 290, y: hy }, 1.0);
+        g.on_event(&InputEvent::MouseUp { x: 290, y: hy }, 1.0);
+        assert_eq!(g.col_order, vec![1, 2, 0]);
+        assert!(g.sort_keys.is_empty());
+        // 안 움직인 클릭 = 정렬.
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: 80,
+                y: hy,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        g.on_event(&InputEvent::MouseUp { x: 80, y: hy }, 1.0);
+        assert_eq!(g.sort_keys.len(), 1);
     }
 
     /// 다운 요청 뒤 이동은 큐에 **덧붙여** 앵커를 덮지 않는다(사용자 09-17: macOS 클릭 직후 CursorMoved).

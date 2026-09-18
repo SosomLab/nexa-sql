@@ -83,6 +83,8 @@ pub(crate) struct Editors {
     minimap_opts: (bool, bool, bool),
     /// 실행 중인 탭 id들(탭 제목 앞 ▶ · T-108) — 세션이 여럿이면 동시에 여러 탭이 실행 중일 수 있다(docs/52).
     running: Vec<u64>,
+    /// 탭 바 [+]로 새 탭이 생겼다(호스트가 거둔다).
+    new_tab_created: bool,
     /// 뒤에서 끝난 실행의 표시(docs/52 D-104): 탭 id → 성공 여부 — 제목 앞 ✓/✗ · 그 탭을 보거나 다시 실행하면 지운다.
     done_marks: HashMap<u64, bool>,
     /// 탭별 세션 표식(docs/52 §7): 탭 id → (표식, 접속 설명). 없는 탭 = 공유 세션(표식 없음 · 설명은 `conn_desc`).
@@ -108,6 +110,8 @@ pub(crate) struct Editors {
     paths: Vec<Option<PathBuf>>,
     /// 마지막으로 열거나 저장한 본문(더러움 판정 근거 · 새 탭 = 빈 문자열).
     saved: Vec<String>,
+    /// 탭 id → (본문 세대, 저장본과 다른가) — `is_dirty` 캐시.
+    dirty_cache: std::cell::RefCell<HashMap<u64, (u64, bool)>>,
     /// 탭별 줄끝이 CRLF였나(저장 때 원래대로 되돌린다 · 새 탭 = OS 기본).
     eol: Vec<Eol>,
     /// 마지막 열기/저장 시점의 줄끝(줄끝만 바꿔도 더러움 표시 · 09-16).
@@ -175,6 +179,7 @@ impl Editors {
             indents: Vec::new(),
             paths: Vec::new(),
             saved: Vec::new(),
+            dirty_cache: std::cell::RefCell::new(HashMap::new()),
             eol: Vec::new(),
             saved_eol: Vec::new(),
             default_eol: Eol::os(),
@@ -187,6 +192,7 @@ impl Editors {
             minimap_opts: (false, false, true),
             running: Vec::new(),
             done_marks: HashMap::new(),
+            new_tab_created: false,
             sess_info: HashMap::new(),
             badge_req: None,
             menu_is_badge: false,
@@ -383,30 +389,24 @@ impl Editors {
         if a == b {
             return None;
         }
-        let text = tb.text();
-        let sel: String = text.chars().skip(a).take(b - a).collect();
-        let lines = sel.split('\n').count();
-        Some((lines, sel.chars().count()))
+        let chars = tb.chars();
+        let sel = &chars[a.min(chars.len())..b.min(chars.len())];
+        let lines = sel.iter().filter(|&&c| c == '\n').count() + 1;
+        Some((lines, sel.len()))
     }
 
-    /// 캐럿 위치(1-기준 줄 · 열).
+    /// 캐럿 위치(1-기준 줄 · 열) — 캐럿 앞까지만 훑는다(String 생성 없음 · 09-19).
     pub(crate) fn caret_line_col(&self) -> (usize, usize) {
         let tb = self.cur();
-        let text = tb.text();
         let caret = tb.caret();
-        let mut line = 1;
-        let mut col = 1;
-        for (i, c) in text.chars().enumerate() {
-            if i >= caret {
-                break;
-            }
-            if c == '\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
-            }
-        }
+        let chars = tb.chars();
+        let upto = &chars[..caret.min(chars.len())];
+        let line = upto.iter().filter(|&&c| c == '\n').count() + 1;
+        let col = upto
+            .iter()
+            .rposition(|&c| c == '\n')
+            .map_or(upto.len(), |p| upto.len() - p - 1)
+            + 1;
         (line, col)
     }
 
@@ -482,6 +482,11 @@ impl Editors {
         }
     }
 
+    /// 그 탭에서 실행이 진행 중인가(탭 닫기 거부용 · 09-19).
+    pub(crate) fn is_running(&self, id: u64) -> bool {
+        self.running.contains(&id)
+    }
+
     pub(crate) fn set_running(&mut self, id: u64, on: bool) {
         let had = self.running.contains(&id);
         if on {
@@ -508,7 +513,12 @@ impl Editors {
         let badges: Vec<TabBadge> = self
             .ids
             .iter()
-            .map(|id| self.sess_info.get(id).map_or(TabBadge::None, |(b, _)| *b))
+            // 호스트가 아직 알려 주지 않은 탭(방금 만든 탭)도 **처음부터 고정 자리**(미연결 사선) — 나중에 표식이 생기며 제목이 밀리지 않는다(사용자 09-18).
+            .map(|id| {
+                self.sess_info
+                    .get(id)
+                    .map_or(TabBadge::LinkOff, |(b, _)| *b)
+            })
             .collect();
         let mut inv = Invalidations::default();
         self.tabs.set_badges(badges, &mut inv);
@@ -661,6 +671,11 @@ impl Editors {
         self.bufs.len()
     }
 
+    /// 탭 바 [+]로 새 탭이 생겼다(1회성) — 호스트가 새 탭 규칙(docs/52 §7-2)을 적용한다.
+    pub(crate) fn take_new_tab_created(&mut self) -> bool {
+        std::mem::take(&mut self.new_tab_created)
+    }
+
     pub(crate) fn new_tab(&mut self, title: Option<String>) {
         self.counter += 1;
         let title = title.unwrap_or_else(|| format!("Script_{}", self.counter));
@@ -698,12 +713,27 @@ impl Editors {
 
     // ───────────────────────── 파일(T-74) ─────────────────────────
 
-    /// 탭 `i`가 마지막 열기/저장 뒤 바뀌었나.
+    /// 탭 `i`가 마지막 열기/저장 뒤 바뀌었나 — 본문 비교는 **세대가 바뀌었을 때만**(09-19 성능: 종전엔 이벤트 루프마다
+    /// 모든 탭의 본문을 String으로 만들어 비교했다 · `dirty_cache` = (세대, 결과)).
     pub(crate) fn is_dirty(&self, i: usize) -> bool {
-        match (self.bufs.get(i), self.saved.get(i)) {
-            (Some(b), Some(s)) => b.text() != *s || self.eol.get(i) != self.saved_eol.get(i),
-            _ => false,
+        let (Some(b), Some(s)) = (self.bufs.get(i), self.saved.get(i)) else {
+            return false;
+        };
+        let eol_changed = self.eol.get(i) != self.saved_eol.get(i);
+        let rev = b.text_rev();
+        let cache = self.dirty_cache.borrow();
+        if let Some(&(r, d)) = cache.get(&self.tab_id(i)) {
+            if r == rev {
+                return d || eol_changed;
+            }
         }
+        drop(cache);
+        // 세대가 바뀌었다 — 슬라이스끼리 비교(String 생성 없음).
+        let differs = !b.chars().iter().copied().eq(s.chars());
+        self.dirty_cache
+            .borrow_mut()
+            .insert(self.tab_id(i), (rev, differs));
+        differs || eol_changed
     }
 
     /// 활성 탭의 파일 경로.
@@ -748,7 +778,8 @@ impl Editors {
         self.eol.get(self.active).copied().unwrap_or(Eol::os())
     }
 
-    /// 파일을 탭에 연다 — 이미 열린 파일이면 그 탭으로 · 활성 탭이 빈 새 스크립트면 그 탭을 재사용 · 아니면 새 탭.
+    /// 파일을 탭에 연다 — 이미 열린 파일이면 그 탭으로 · 아니면 **언제나 새 탭**(사용자 09-19 "무조건 새 창에" —
+    /// 종전의 "활성 탭이 빈 새 스크립트면 재사용"을 없앴다: 탭의 세션 묶임·설정이 파일에 딸려 가지 않게).
     pub(crate) fn open_file(&mut self, path: &Path, text: &str, eol: Eol) {
         if let Some(i) = self.paths.iter().position(|p| p.as_deref() == Some(path)) {
             self.switch(i);
@@ -758,12 +789,7 @@ impl Editors {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        let reuse = self.paths.get(self.active).is_some_and(Option::is_none)
-            && self.cur().text().is_empty()
-            && !self.is_dirty(self.active);
-        if !reuse {
-            self.new_tab(Some(name.clone()));
-        }
+        self.new_tab(Some(name.clone()));
         let i = self.active;
         let syntax = self.registry.for_title(&name);
         let focused = self.cur().is_focused();
@@ -779,6 +805,7 @@ impl Editors {
         self.titles[i] = name;
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = text.to_string();
+        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
         self.refresh_baseline(i);
         self.eol[i] = eol;
         self.saved_eol[i] = eol;
@@ -800,6 +827,7 @@ impl Editors {
         }
         self.paths[i] = Some(path.to_path_buf());
         self.saved[i] = self.cur().text();
+        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
         self.refresh_baseline(i);
         self.saved_eol[i] = self.eol[i];
         self.sync_tabs();
@@ -899,6 +927,7 @@ impl Editors {
             }
             self.paths[i] = None;
             self.saved[i] = String::new();
+            self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
             self.eol[i] = self.default_eol;
             self.saved_eol[i] = self.default_eol;
             self.counter += 1;
@@ -1100,7 +1129,10 @@ impl Editors {
             match a {
                 TabAction::Switch(i) => self.switch(i),
                 TabAction::Close(i) => self.close_tab(i),
-                TabAction::New => self.new_tab(None),
+                TabAction::New => {
+                    self.new_tab(None);
+                    self.new_tab_created = true;
+                }
                 TabAction::Move { from, to } => {
                     if from < self.bufs.len() && to < self.bufs.len() {
                         let b = self.bufs.remove(from);

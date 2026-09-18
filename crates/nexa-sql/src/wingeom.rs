@@ -91,6 +91,15 @@ pub(crate) fn outer_pos(w: &Window) -> Option<(i32, i32)> {
     })
 }
 
+/// ★ 기억한 바깥 위치를 **생성 뒤 다시** 놓는다(사용자 09-19 "토글할수록 창이 위로 올라감"): macOS winit의 생성 인자
+/// `with_position`은 내용 영역 기준으로 놓는데 저장은 `outer_position`(제목 표시줄 포함 프레임) 기준이라 열고 닫을 때마다
+/// 제목 표시줄 높이만큼 위로 어긋났다. `set_outer_position`은 프레임 기준이라 정확하다(메인 창과 같은 방법).
+pub(crate) fn place_outer(w: &Window, pos: Option<(i32, i32)>) {
+    if let Some((x, y)) = pos {
+        w.set_outer_position(logical(x, y));
+    }
+}
+
 /// 논리 위치 → winit 위치 인자.
 pub(crate) fn logical(x: i32, y: i32) -> winit::dpi::LogicalPosition<f64> {
     winit::dpi::LogicalPosition::new(f64::from(x), f64::from(y))

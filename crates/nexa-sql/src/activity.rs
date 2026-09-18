@@ -157,7 +157,17 @@ impl ActivityBar {
             let hot = self.hover == Some(i) || self.pressed == Some(i);
             let color = if active || hot { th.text } else { th.text_dim };
             if active {
-                dc.fill_rect(Rect::new(slot.x, slot.y, self.s(2.0), slot.h), th.accent);
+                // 선택 표시 세로줄(사용자 09-18): 두께 4(종전 2의 2배) · 위아래 3px씩 짧게(아이콘 기준 가운데 정렬은 그대로).
+                let trim = self.s(3.0);
+                dc.fill_rect(
+                    Rect::new(
+                        slot.x,
+                        slot.y + trim,
+                        self.s(4.0),
+                        (slot.h - trim * 2).max(1),
+                    ),
+                    th.accent,
+                );
             }
             let (r, g, bb) = color.rgb();
             let img =

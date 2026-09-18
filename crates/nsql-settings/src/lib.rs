@@ -1531,6 +1531,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
+        key: "window.sessions_size",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowSizeMemo,
+        desc: Msg::DescWindowSizeMemo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
         key: "window.txlog_size",
         cat: Msg::CatWindow,
         label: Msg::LblWindowSizeMemo,
@@ -1564,6 +1572,14 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "window.log_pos",
+        cat: Msg::CatWindow,
+        label: Msg::LblWindowPosMemo,
+        desc: Msg::DescWindowPosMemo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "window.sessions_pos",
         cat: Msg::CatWindow,
         label: Msg::LblWindowPosMemo,
         desc: Msg::DescWindowPosMemo,
@@ -1648,7 +1664,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblProbeRetryDelay,
         desc: Msg::DescProbeRetryDelay,
         kind: SettingKind::Int { min: 5, max: 3600 },
-        default: "60",
+        default: "10",
     },
     // ── 비노출 설정(사용자 09-14 "자주 바꾸지 않을 값은 비노출 설정으로") — 구현 상수의 설정화. `nsql config list all`로만 보인다.
     Entry {
@@ -1706,7 +1722,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblConnPortW,
         desc: Msg::DescConnPortW,
         kind: SettingKind::Int { min: 40, max: 160 },
-        default: "58",
+        default: "72",
     },
     Entry {
         key: "conn.button_scale_pct",
@@ -1943,6 +1959,31 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ── 접속 생존(docs/53): 동작 직전 빠른 판정 기준 · TCP keepalive · Oracle 호출 상한.
+    Entry {
+        key: "probe.stale_secs",
+        cat: Msg::CatConnection,
+        label: Msg::LblProbeStale,
+        desc: Msg::DescProbeStale,
+        kind: SettingKind::Int { min: 0, max: 86400 },
+        default: "60",
+    },
+    Entry {
+        key: "net.keepalive_secs",
+        cat: Msg::CatConnection,
+        label: Msg::LblNetKeepalive,
+        desc: Msg::DescNetKeepalive,
+        kind: SettingKind::Int { min: 0, max: 7200 },
+        default: "60",
+    },
+    Entry {
+        key: "session.call_timeout_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblCallTimeout,
+        desc: Msg::DescCallTimeout,
+        kind: SettingKind::Int { min: 0, max: 86400 },
+        default: "0",
+    },
     // ── 파일 검색(T-81a · docs/36 §2 · D-55)
     Entry {
         key: "search.max_file_kb",
@@ -2036,6 +2077,16 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescSessionMode,
         kind: SettingKind::Choice(SESSION_MODE_OPTS),
         default: "shared",
+    },
+    // ★ 임시(사용자 09-19 · 특정 시점에 제거): 시작하면 Demo 프로필에 자동 접속하고 로그인 창을 띄우지 않는다(개발 편의 ·
+    //   `window.monitor`와 함께 · HIDDEN · `nsql config set dev.start_demo on`).
+    Entry {
+        key: "dev.start_demo",
+        cat: Msg::CatLog,
+        label: Msg::LblDevStartDemo,
+        desc: Msg::DescDevStartDemo,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     // 데모(사용자 09-17): 최초 실행 1회 "샘플 데이터(Demo) 만들까요?" 팝업을 띄웠는가(자동 기억 · HIDDEN).
     Entry {
@@ -2618,10 +2669,13 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "dev.start_demo",
     "window.main_size",
     "window.login_size",
     "window.log_size",
     "window.txlog_size",
+    "window.sessions_size",
+    "window.sessions_pos",
     "window.prefs_size",
     "window.main_pos",
     "window.login_pos",

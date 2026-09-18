@@ -41,6 +41,7 @@ mod runtoast;
 mod rx;
 mod search_panel;
 mod sessions;
+mod sessions_win;
 mod syntax;
 mod theme;
 mod toast;
@@ -86,6 +87,7 @@ use palette::{Palette, PaletteAction};
 use prefs_win::{PrefsAction, PrefsWin};
 use results::{PanelAction as ResultAction, ResultPanel, ResultTab};
 use search_panel::{SearchCtx, SearchPanel};
+use sessions_win::{SessRow, SessWinAction, SessionsWin};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -142,6 +144,9 @@ struct App {
     /// 로그 창(별도 창 · `Ctrl/⌘+⇧G`).
     log_win: LogWin,
     txlog_win: TxLogWin,
+    /// 세션 창(서버별 전체 세션 · 사용자 09-18) — 트랜잭션 로그 창과 같은 골격.
+    sessions_win: SessionsWin,
+    open_sessions: bool,
     open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
@@ -273,6 +278,8 @@ struct App {
     gate_shown: Option<bool>,
     /// 탭 표식 메뉴가 가리키는 탭 id.
     badge_menu_tab: Option<u64>,
+    /// 마지막으로 표식을 맞춘 시점의 탭 목록(바뀌면 즉시 다시 맞춘다).
+    badge_tabs: Vec<u64>,
     /// 유휴 세션 점검 다음 시각(§6 · 30초 간격).
     idle_next: Instant,
     /// 접속 테스트 결과(요청당 스레드 · 워커와 별개).
@@ -655,6 +662,25 @@ impl App {
     }
 
     /// 접속 패널의 요청 → 워커/저장소.
+    fn handle_conn_win_action(&mut self, a: ConnWinAction) {
+        match a {
+            ConnWinAction::Paint => {
+                let ui_px = self.settings.font_px("ui.font_size");
+                self.conn_win.paint(&self.ui_font, &self.theme, ui_px);
+            }
+            ConnWinAction::Panel(a) => self.handle_panel_action(a),
+            ConnWinAction::Login(name) => self.login_profile(&name),
+            ConnWinAction::TestProfile(name) => self.test_profile(&name),
+            ConnWinAction::Delete(name) => self.delete_profile(&name),
+            ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
+            ConnWinAction::CopyText(text) => {
+                if !clipboard::write_text(&text) {
+                    self.sess.status = t(Msg::ErrClipboard).into();
+                }
+            }
+        }
+    }
+
     fn handle_panel_action(&mut self, a: PanelAction) {
         match a {
             PanelAction::Connect(spec) => {
@@ -688,7 +714,10 @@ impl App {
                 }
                 self.start_test(&name, spec);
             }
-            PanelAction::Disconnect => self.disconnect_now(),
+            PanelAction::Disconnect => {
+                self.sess.disc_path = Some(sessions::DiscPath::ConnWin);
+                self.disconnect_now();
+            }
             PanelAction::Save {
                 name,
                 spec,
@@ -710,6 +739,8 @@ impl App {
                 match res {
                     Ok(()) => {
                         self.sess.status = tf(Msg::WkProfileSaved, &[&name, ""]);
+                        // 저장본 = 지금 값(바뀜 표시 전부 꺼짐 · T-131).
+                        self.conn_win.panel.mark_saved();
                         // 이름이 바뀌었으면 옛 이름의 결과는 버린다(저장 내용이 달라졌을 수 있으니 옮기지 않는다).
                         if let Some(old) = &rename_from {
                             self.panel_results.remove(old.trim());
@@ -717,11 +748,16 @@ impl App {
                         // 폼은 이제 새 이름의 프로필을 "불러온" 상태 — 또 바꿔 저장하면 다시 이름 변경.
                         self.conn_win.panel.fill(&name, &spec);
                         self.conn_win.refresh_profiles(Some(&name));
+                        // 지킴이가 미뤄 둔 동작(다른 프로필 불러오기 · New · 닫기)을 이어간다.
+                        for a in self.conn_win.after_save(true) {
+                            self.handle_conn_win_action(a);
+                        }
                     }
                     Err(e) => {
                         let e = e.to_string();
                         self.sess.status = tf(Msg::WkProfileSaveFailed, &[&e]);
                         self.conn_win.panel.set_state(ConnState::Failed(e));
+                        self.conn_win.after_save(false);
                     }
                 }
             }
@@ -775,6 +811,14 @@ impl App {
 
     /// 프로필을 폼에 불러올 때 보일 상태 — 진행 중/직전 작업이 이 프로필 것이면 그것, 아니면 프로필별 마지막 결과, 없으면 Idle.
     fn panel_state_for(&self, name: &str) -> ConnState {
+        // ★ 진행 중은 **행의 표식이 원천**(사용자 09-19: 테스트 도중 Details를 펼치면 가끔 "Testing"이 안 보였다 — `panel_op`가 다른
+        //   프로필의 결과·프로브에 덮여 있었다). 행 Test/Connect와 폼 Test/Connect는 같은 표식을 본다.
+        if self.conn_win.is_testing(name) {
+            return ConnState::Testing;
+        }
+        if self.conn_win.connect_mark(name) == Some(ConnectMark::Connecting) {
+            return ConnState::Connecting;
+        }
         resolve_panel_state(self.panel_op.as_ref(), &self.panel_results, name)
     }
 
@@ -1016,6 +1060,31 @@ impl App {
                     self.redraw();
                 }
                 ConnOutcome::Disconnected => self.on_conn_disconnected(),
+                // ★ 끊김 확인(docs/53 §3): 세션은 남기고 상태만 — 표식·플러그·목록이 "끊김"을 보인다.
+                ConnOutcome::Broken(m) => {
+                    if !self.sess.broken {
+                        self.sess.broken = true;
+                        let line = if m.is_empty() {
+                            tf(Msg::StSessBroken, &[&self.sess.desc])
+                        } else {
+                            format!("{} — {m}", tf(Msg::StSessBroken, &[&self.sess.desc]))
+                        };
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Error, line.clone()));
+                        self.sess.status = line;
+                        self.sync_sess_ui();
+                    }
+                }
+                ConnOutcome::Alive => {
+                    if self.sess.broken {
+                        self.sess.broken = false;
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            tf(Msg::StSessAlive, &[&self.sess.desc]),
+                        ));
+                        self.sync_sess_ui();
+                    }
+                }
             }
         }
         changed
@@ -1637,6 +1706,8 @@ impl App {
             match a {
                 DockAction::Float { id, x, y } => self.pending_float.push((id, Some((x, y)))),
                 DockAction::LayoutChanged => self.tool_layout_dirty = true,
+                // 행 수가 바뀌었다(다중 행 도크 · 09-19) — 크롬 높이가 달라지니 창 전체를 다시 배치.
+                DockAction::Resized => self.layout(),
             }
         }
     }
@@ -1724,7 +1795,10 @@ impl App {
 
     fn indent_pick(&mut self, id: &str) {
         // 툴바 Disconnect 드롭다운(공유 연결 목록 · docs/52 §7).
-        if id.starts_with("conn.drop") || id.starts_with("conn.use:") {
+        if id.starts_with("conn.drop")
+            || id.starts_with("conn.use:")
+            || id.starts_with("conn.again:")
+        {
             self.disconnect_pick(id);
             return;
         }
@@ -1777,6 +1851,11 @@ impl App {
         }
         if let Some(rest) = id.strip_prefix("tx.") {
             self.tx_pick(rest);
+            self.redraw();
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("disc.") {
+            self.disc_pick(rest);
             self.redraw();
             return;
         }
@@ -2184,10 +2263,12 @@ impl App {
         let g2 = self.log_win.take_last();
         let g3 = self.txlog_win.take_last();
         let g4 = self.prefs_win.take_last();
+        let g5 = self.sessions_win.take_last();
         put(&mut self.settings, "login", g1);
         put(&mut self.settings, "log", g2);
         put(&mut self.settings, "txlog", g3);
         put(&mut self.settings, "prefs", g4);
+        put(&mut self.settings, "sessions", g5);
         if main {
             let g = self
                 .window
@@ -2221,6 +2302,8 @@ impl App {
         self.log_win.set_memo(b);
         self.txlog_win.set_memo(c);
         self.prefs_win.set_memo(d);
+        let e = memo(&self.settings, "sessions");
+        self.sessions_win.set_memo(e);
     }
 
     /// 파일 탭 강조색(`editor.tab_accent` · 비면 테마 accent = 결과 탭과 같음).
@@ -2447,7 +2530,8 @@ impl App {
     /// 공유 세션 해제(툴바 드롭다운 · 메뉴) — 탐색기가 이 연결을 따르고 있었으면 함께 닫고, 묶인 탭은 끊김 표식으로 남는다.
     fn disconnect_shared(&mut self, id: u64) {
         if self.sess.id == id {
-            self.disconnect_now();
+            // 세션 창·탐색기에서 고른 해제 = 이미 연결 단위로 고른 것이라 "다른 탭도 씀" 확인을 다시 묻지 않는다.
+            self.disconnect_current();
             return;
         }
         self.with_sess(id, |a| {
@@ -2466,67 +2550,40 @@ impl App {
         self.redraw();
     }
 
-    /// 툴바 Disconnect 드롭다운(§7 · 사용자 09-18 보완): **누르면 늘 연결 목록**이 보인다 — 공유 연결·탭 전용 세션을 한 줄씩,
-    /// 줄을 누르면 **그 연결만** 해제 · 맨 아래 **모두 해제** · 공유 연결이 둘 이상이면 "활성 연결로 ▸". 연결이 하나도 없으면 아무것도 안 한다.
-    fn open_disconnect_menu(&mut self) {
-        use nexa_ctl::controls::ctxmenu::CtxItem;
-        self.sync_sess();
-        let titles: HashMap<u64, String> = self
-            .editors
-            .tab_list()
-            .into_iter()
-            .map(|(id, title, _)| (id, title))
-            .collect();
-        // (세션 id, 줄 글, 공유인가, 활성 공유인가)
-        let rows: Vec<(u64, String, bool, bool)> = self
-            .all_sess()
-            .filter(|s| !s.closing && (s.connected || s.busy))
-            .map(|s| {
-                let active = s.id == self.default_shared;
-                let label = match s.owner {
-                    // 전용/개별 탭 세션 = 접속 설명 + 탭 제목.
-                    Some(tab) => format!(
-                        "    {}  [{}]",
-                        s.desc,
-                        titles.get(&tab).map_or("", String::as_str)
-                    ),
-                    None if active => format!("●  {}", s.desc),
-                    None => format!("    {}", s.desc),
-                };
-                (s.id, label, !s.is_private(), active)
-            })
-            .collect();
-        if rows.is_empty() {
+    /// 모든 연결 해제(툴바 Disconnect 본체): 지금 세션에 미커밋이 있으면 묻고(DR-30) · 다른 세션은 미커밋이 있으면 남긴다(로그) ·
+    /// 나머지는 전부 끊는다 → 전 탭이 미연결(공유 탭은 끊긴 공유 연결에 묶인 채 · 전용 탭은 세션 규칙대로).
+    fn disconnect_all(&mut self) {
+        if !self.sess.tx_pending.is_empty() {
+            self.tx_after = Some(TxAfter::Disconnect);
+            self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
+            self.redraw();
             return;
         }
-        let mut items = vec![CtxItem::maybe(
-            "conn.title",
-            t(Msg::MnSessConnections),
-            false,
-        )];
-        for (id, label, _, _) in &rows {
-            items.push(CtxItem::item(format!("conn.drop:{id}"), label.clone()));
+        let ids: Vec<u64> = self
+            .all_sess()
+            .filter(|s| !s.closing && (s.connected || s.busy || s.idle_closed))
+            .map(|s| s.id)
+            .collect();
+        let mut skipped = 0usize;
+        for sid in ids {
+            if self
+                .sess_by_id(sid)
+                .is_some_and(|s| !s.tx_pending.is_empty())
+            {
+                skipped += 1;
+                continue;
+            }
+            self.disconnect_session(sid);
         }
-        let shared: Vec<&(u64, String, bool, bool)> = rows.iter().filter(|r| r.2).collect();
-        if shared.len() > 1 {
-            items.push(CtxItem::Separator);
-            let subs = shared
-                .iter()
-                .map(|(id, label, _, active)| {
-                    CtxItem::maybe(format!("conn.use:{id}"), label.trim().to_string(), !*active)
-                })
-                .collect();
-            items.push(CtxItem::submenu("conn.use", t(Msg::MnSessActivate), subs));
-        }
-        items.push(CtxItem::Separator);
-        items.push(CtxItem::item("conn.drop_all", t(Msg::MnSessDisconnectAll)));
-        let r = self
-            .tool_dock
-            .item_rect("conn.disconnect")
-            .map_or(Rect::new(self.cursor.0, self.cursor.1, 1, 1), |r| {
-                Rect::new(r.x, r.bottom(), r.w, 1)
-            });
-        self.open_status_popup(r, items);
+        let note = if skipped > 0 {
+            tf(Msg::StSessSkippedPending, &[&skipped.to_string()])
+        } else {
+            String::new()
+        };
+        self.sess.status = tf(Msg::StSessAllDropped, &[&note]);
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+        self.sync_sess_ui();
         self.redraw();
     }
 
@@ -2541,17 +2598,25 @@ impl App {
 
     fn disconnect_pick(&mut self, id: &str) {
         if id == "conn.drop_all" {
-            let ids: Vec<u64> = self
-                .all_sess()
-                .filter(|s| !s.closing && (s.connected || s.busy))
-                .map(|s| s.id)
-                .collect();
+            let ids: Vec<u64> = self.all_sess().map(|s| s.id).collect();
             for sid in ids {
-                self.disconnect_session(sid);
+                self.mark_disc(sid, sessions::DiscPath::SessionsWin);
             }
+            self.disconnect_all();
         } else if let Some(sid) = id.strip_prefix("conn.use:").and_then(|v| v.parse().ok()) {
             self.activate_shared(sid);
+        } else if let Some(sid) = id.strip_prefix("conn.again:").and_then(|v| v.parse().ok()) {
+            // 세션 관리자의 "다시 접속" = 명시적 요청(설정 `connect.reconnect_same`).
+            let again = self.settings.flag("connect.reconnect_same");
+            let fallback = self.default_spec.clone();
+            self.with_sess(sid, |a| {
+                if let Some(spec) = a.sess.spec.clone().or(fallback) {
+                    a.connect_quietly(spec, again);
+                }
+            });
+            self.sync_sess_ui();
         } else if let Some(sid) = id.strip_prefix("conn.drop:").and_then(|v| v.parse().ok()) {
+            self.mark_disc(sid, sessions::DiscPath::SessionsWin);
             self.disconnect_session(sid);
         }
     }
@@ -2592,17 +2657,62 @@ impl App {
             let spec = self.default_spec.clone();
             if let Some(id) = self.new_private(tab) {
                 if let Some(spec) = spec {
-                    self.with_sess(id, |a| a.connect_quietly(spec));
+                    self.with_sess(id, |a| a.connect_quietly(spec, false));
                 }
             }
         }
         let want = self.sess_id_for_tab(tab);
+        // 공유 모드의 새 탭 = **그때의 활성 공유 연결**에 바로 묶인다(사용자 09-18) — 뒤에 활성 연결을 바꿔도 이 탭은 그대로.
+        if !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing) {
+            self.tab_bind.entry(tab).or_insert(want);
+        }
         if self.sess.id != want {
             if let Some(i) = self.parked.iter().position(|s| s.id == want) {
                 std::mem::swap(&mut self.sess, &mut self.parked[i]);
                 self.sync_sess_ui();
                 self.redraw();
             }
+        }
+    }
+
+    /// 탭을 **미연결**로(사용자 09-18 · 표식 메뉴 "미연결"): 전용 세션이 있으면 그 세션을 끊어 미연결로 남기고 ·
+    /// 공유 탭이면 접속 없는 전용 자리(세션 객체만)를 만들어 어떤 연결에도 묶이지 않게 한다.
+    fn make_unconnected(&mut self, tab: u64) {
+        let private = self
+            .all_sess()
+            .find(|s| s.owner == Some(tab) && !s.closing)
+            .map(|s| s.id);
+        if let Some(id) = private {
+            if self.sess_by_id(id).is_some_and(|s| s.disc_path.is_none()) {
+                self.mark_disc(id, sessions::DiscPath::Badge);
+            }
+            self.disconnect_private_as(tab, true);
+            return;
+        }
+        if let Some(id) = self.new_private(tab) {
+            self.with_sess(id, |a| {
+                a.sess.user_disconnected = true;
+                a.sess.status = t(Msg::StSessUnconnected).into();
+            });
+            self.freeze_results_of(tab);
+            self.sync_sess();
+            self.sync_sess_ui();
+            self.redraw();
+        }
+    }
+
+    /// 새 탭 규칙(사용자 09-18): 공유 모드 = 활성 공유 연결(`sync_sess`가 묶는다) · 개별 모드 = **미연결 자리 + 접속 창을 바로**
+    /// (접속하지 않고 닫으면 미연결 그대로).
+    fn on_new_tab(&mut self) {
+        if self.session_mode() != SessionMode::PerEditor {
+            return;
+        }
+        let tab = self.editors.active_id();
+        if let Some(id) = self.new_private(tab) {
+            self.with_sess(id, |a| a.sess.user_disconnected = true);
+            self.sync_sess();
+            self.sync_sess_ui();
+            self.open_conn = true;
         }
     }
 
@@ -2633,7 +2743,8 @@ impl App {
     }
 
     /// 접속 창을 거치지 않는 접속(개별 모드의 탭 자동 접속 · 유휴 해제 뒤 재접속) — 시도 큐·접속 창 표시는 건드리지 않는다.
-    fn connect_quietly(&mut self, spec: ConnectSpec) {
+    /// `reconnect_same` = 같은 서버에 이미 붙어 있어도 끊고 다시(사용자의 **명시적** 재접속 = 설정 `connect.reconnect_same`).
+    fn connect_quietly(&mut self, spec: ConnectSpec, reconnect_same: bool) {
         self.sess.busy = true;
         self.sess.user_disconnected = false;
         self.sess.idle_closed = false;
@@ -2642,7 +2753,7 @@ impl App {
         self.sess.touch();
         self.sess.worker.send(worker::Cmd::ConnectSpec {
             spec,
-            reconnect_same: false,
+            reconnect_same,
         });
     }
 
@@ -2675,6 +2786,22 @@ impl App {
             }
         }
         let before = self.parked.len();
+        // 거두는 세션의 해제 로그(탭 닫기 · 다른 연결로 전환 · 스크립트 DISCONNECT 뒤 거둠) — 아직 접속돼 있던 것만.
+        let closing: Vec<u64> = self
+            .parked
+            .iter()
+            .filter(|s| s.closing && s.id != SHARED && (s.connected || s.busy))
+            .map(|s| s.id)
+            .collect();
+        for id in closing {
+            let fallback =
+                if alive.contains(&self.sess_by_id(id).and_then(|s| s.owner).unwrap_or(0)) {
+                    sessions::DiscPath::Switch
+                } else {
+                    sessions::DiscPath::TabClose
+                };
+            self.with_sess(id, |a| a.log_disconnect(fallback));
+        }
         self.parked.retain(|s| {
             if s.closing && s.id != SHARED {
                 // 실행 중이면 먼저 취소를 보낸다(닫힌 탭의 질의가 서버에 남아 돌지 않게).
@@ -2714,8 +2841,8 @@ impl App {
         }
     }
 
-    /// 지금 세션이 붙은 서버의 탐색기를 확보한다 — 스펙이 프로필 이름뿐이거나 자격이 없으면 저장소에서 완성해 둔다
-    /// (메타 세션도 같은 자격으로 붙는다 · 같은 서버 판정·재접속에도 같은 스펙을 쓴다).
+    /// 지금 세션이 붙은 서버의 탐색기를 확보한다 — 스펙이 프로필 이름뿐이면 저장소에서 완성해 둔다(메타 세션도 같은 자격으로
+    /// 붙는다 · 같은 서버 판정·재접속에도 같은 스펙을 쓴다). 인라인 스펙은 이미 자격을 갖고 있다(비밀번호 필수 · 09-19).
     fn explorer_attach(&mut self) {
         let Some(spec) = self.sess.spec.clone() else {
             return;
@@ -2731,10 +2858,7 @@ impl App {
                     _ => return,
                 }
             }
-            _ => (
-                worker::fill_credentials(&spec, DEFAULT_DIALECT).unwrap_or(spec),
-                self.sess.profile.clone(),
-            ),
+            _ => (spec, self.sess.profile.clone()),
         };
         self.sess.spec = Some(full.clone());
         let show = self.sess_id_for_tab(self.editors.active_id()) == self.sess.id;
@@ -2754,8 +2878,8 @@ impl App {
             let Some(s) = self.sess_by_id(self.sess_id_for_tab(tab)) else {
                 continue;
             };
-            let badge = match sessions::badge_kind(s.is_private(), multi, s.connected) {
-                sessions::BadgeKind::None => continue,
+            let badge = match sessions::badge_kind(s.is_private(), multi, s.connected && !s.broken)
+            {
                 sessions::BadgeKind::Private => nexa_ctl::TabBadge::Link,
                 sessions::BadgeKind::Shared => nexa_ctl::TabBadge::Shared,
                 sessions::BadgeKind::Off => nexa_ctl::TabBadge::LinkOff,
@@ -2774,9 +2898,10 @@ impl App {
         self.explorer.show_for(cur.as_ref());
         self.sync_gate();
         self.sync_tx_ui();
-        // Disconnect = 끊을 것이 하나라도 있으면 활성(전용 · 공유 어느 것이든).
-        let any = self.all_sess().any(|s| s.connected);
-        self.sync_disconnect_btn(any);
+        self.sessions_win.redraw();
+        // Disconnect = **지금 탭의 연결**이 있을 때만(종전 규칙).
+        let cur = self.sess.connected || self.sess.busy;
+        self.sync_disconnect_btn(cur);
     }
 
     /// ★ 통제의 단일 출구(§3): 지금 세션이 막혔으면 실행 계열 진입점을 한꺼번에 끄고, 풀리면 한꺼번에 켠다.
@@ -2793,6 +2918,8 @@ impl App {
         for id in ["run.all", "run.explain"] {
             self.tool_dock.set_item_enabled(id, !blocked, &mut inv);
         }
+        // 메뉴바 Run 메뉴도 같은 판정(비활성 항목 · 09-19 검토).
+        self.rebuild_menus();
         // 문장 실행(단일 커서 조건과 겹침) · Commit/Rollback(대기 문장 조건과 겹침)은 각자의 동기화가 통제 상태를 함께 본다.
         self.sync_run_stmt_button();
         self.sync_tx_ui();
@@ -2854,9 +2981,9 @@ impl App {
             .collect();
         for id in due {
             self.with_sess(id, |a| {
-                a.sess.idle_closed = true;
-                a.sess.connected = false;
-                a.sess.worker.send(worker::Cmd::Disconnect);
+                // 닫기(commit + logoff)가 죽은 소켓에 갇혀도 세션의 큐가 막히지 않게 — 옛 워커에 Disconnect를 남기고 새 워커로(docs/53 §4-8).
+                a.sess.disc_path = Some(sessions::DiscPath::Idle);
+                a.abandon_worker();
                 let m = tf(Msg::StSessIdleClosed, &[&a.sess.desc]);
                 a.log_win.push(LogEntry::new(LogKind::Info, m.clone()));
                 a.sess.status = m;
@@ -2873,7 +3000,7 @@ impl App {
                     LogKind::Info,
                     tf(Msg::StReconnecting, &[&spec.redacted()]),
                 ));
-                self.connect_quietly(spec);
+                self.connect_quietly(spec, false);
                 // 이 접속의 완료 신호는 뒤따르는 작업의 busy를 풀면 안 된다.
                 self.sess.skip_done += 1;
             }
@@ -2884,7 +3011,7 @@ impl App {
     ///  - `CONNECT 대상`이 먼저 나오면: 이 탭의 전용 세션으로(없으면 만든다) — 스크립트 전체가 그 세션에서 돈다.
     ///  - `DISCONNECT`가 먼저 나오고 이 탭이 전용 세션이면: 그 세션을 닫는다(공유 모드 = 공유 세션 복귀 · 개별 모드 = 실행 불가 상태).
     ///    공유 세션 탭의 `DISCONNECT`는 종전대로 워커가 처리한다(공유 세션 해제).
-    fn place_run(&mut self, src: &str) -> bool {
+    fn place_run(&mut self, src: &mut String) -> bool {
         let tab = self.editors.active_id();
         let intent = sessions::connect_intent(src);
         let plan = sessions::placement(
@@ -2921,7 +3048,25 @@ impl App {
                     }
                 }
                 if let Some(ConnectIntent::Connect(spec)) = intent {
-                    self.sess.spec = Some(spec);
+                    // 전용 탭의 CONNECT가 **같은 서버·계정**이면(동일성 = `same_server`) 설정 `connect.reconnect_same`에 따라:
+                    //   끔 = 기존 접속 유지(CONNECT 명령만 지우고 나머지 실행) · 켬 = 명시적 재접속(끊고 다시).
+                    let same = plan == sessions::Placement::Retarget
+                        && self.sess.connected
+                        && !self.sess.broken
+                        && self
+                            .sess
+                            .spec
+                            .as_ref()
+                            .is_some_and(|have| worker::same_server(have, &spec));
+                    if same && !self.settings.flag("connect.reconnect_same") {
+                        *src = sessions::strip_first_connect(src);
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            tf(Msg::StSessSameKept, &[&self.sess.desc]),
+                        ));
+                    } else {
+                        self.sess.spec = Some(spec);
+                    }
                 }
                 self.sess.user_disconnected = false;
                 self.sess.idle_closed = false;
@@ -2968,6 +3113,12 @@ impl App {
     /// 탭의 전용 세션 해제 — 미커밋이 있으면 먼저 묻는다. 공유 모드 = 세션을 거두고 공유 세션으로 복귀 ·
     /// 개별 모드 = 세션은 남기되 끊긴 상태(그 탭은 다시 접속할 때까지 실행 불가).
     fn disconnect_private(&mut self, tab: u64) {
+        let keep = self.session_mode() == SessionMode::PerEditor;
+        self.disconnect_private_as(tab, keep);
+    }
+
+    /// `keep` = 세션 객체를 **미연결**로 남긴다(개별 모드 · 표식 메뉴 "미연결") · 아니면 거두고 공유 세션으로 복귀(공유 모드).
+    fn disconnect_private_as(&mut self, tab: u64, keep: bool) {
         let Some(id) = self
             .all_sess()
             .find(|s| s.owner == Some(tab) && !s.closing)
@@ -2975,7 +3126,7 @@ impl App {
         else {
             return;
         };
-        let per_editor = self.session_mode() == SessionMode::PerEditor;
+        let per_editor = keep;
         // 미커밋이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30) — 답한 뒤 `disconnect_force`가 다시 여기로 온다.
         if self.sess.id == id && !self.sess.tx_pending.is_empty() {
             self.tx_after = Some(TxAfter::Disconnect);
@@ -2991,6 +3142,7 @@ impl App {
                 return;
             }
             let stuck = a.sess.busy;
+            a.log_disconnect(sessions::DiscPath::Badge);
             a.sess.worker.send(worker::Cmd::Disconnect);
             a.editors.set_running(a.sess.run_editor, false);
             if per_editor {
@@ -3026,63 +3178,45 @@ impl App {
     }
 
     /// 탭 표식 메뉴(§7): 세션 설명 · 해제(공유 복귀) · 다시 접속 · 공유 연결 고르기(공유 연결이 둘 이상일 때).
+    /// 탭 표식 메뉴(사용자 09-18 확정 — 꼭 필요한 것만): `No connection` · 연결할 수 있는 공유 연결 목록 · (전용 연결이 있을 때만)
+    /// 구분자 + 전용 연결 한 줄. **지금 이 탭이 쓰는 것 앞에만 ✓**(1탭 1연결 · 배타) · 체크 유무와 무관하게 글자는 같은 열.
+    /// `No connection` = 이 탭은 어떤 서버에도 연결되지 않은 상태(전용 연결이 있으면 그 연결을 해제).
     fn open_badge_menu(&mut self, i: usize) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
         let tab = self.editors.tab_id(i);
         let Some(s) = self.sess_by_id(self.sess_id_for_tab(tab)) else {
             return;
         };
-        let per_editor = self.session_mode() == SessionMode::PerEditor;
-        let kind = t(if s.is_private() {
-            Msg::MnSessPrivate
-        } else {
-            Msg::MnSessSharedList
-        });
-        let title = if s.desc.is_empty() {
-            kind.to_string()
-        } else {
-            format!("{kind} — {}", s.desc)
-        };
-        let mut items = vec![CtxItem::maybe("sess.title", title, false)];
         let cur = s.id;
-        let shared: Vec<(u64, String)> = self
+        let private = s.is_private();
+        // 이 탭의 세션이 접속돼 있지 않으면(시작 직후 · 해제 뒤 · 미연결 자리) `No connection`에 ✓ — 목록의 다른 줄은 접속된 것만이라 배타.
+        let unconnected = !s.connected && !s.busy && !s.idle_closed;
+        let mut items =
+            vec![CtxItem::item("sess.none", t(Msg::MnSessNoConnection)).with_mark(unconnected)];
+        for sh in self
             .all_sess()
-            .filter(|s| !s.is_private() && s.connected)
-            .map(|s| (s.id, s.desc.clone()))
-            .collect();
-        if !s.is_private() {
-            // 공유 탭의 표식 = 공유 연결 고르기(지금 쓰는 연결은 흐림).
-            items.push(CtxItem::Separator);
-            for (id, d) in shared {
-                items.push(CtxItem::maybe(format!("sess.use:{id}"), d, id != cur));
-            }
-            self.badge_menu_tab = Some(tab);
-            self.editors.open_badge_menu(i, items);
-            self.redraw();
-            return;
-        }
-        items.push(CtxItem::Separator);
-        items.push(CtxItem::maybe(
-            "sess.disconnect",
-            t(if per_editor {
-                Msg::MnSessDisconnect
+            .filter(|s| !s.is_private() && !s.closing && (s.connected || s.busy))
+        {
+            let label = if sh.broken {
+                format!("{} · {}", sh.desc, t(Msg::StSessBrokenTag))
             } else {
-                Msg::MnSessDisconnectShared
-            }),
-            s.connected || s.busy || !per_editor,
-        ));
-        items.push(CtxItem::maybe(
-            "sess.reconnect",
-            t(Msg::MnSessReconnect),
-            !s.connected && !s.busy && (s.spec.is_some() || self.default_spec.is_some()),
-        ));
-        if shared.len() > 1 {
+                sh.desc.clone()
+            };
+            items.push(
+                CtxItem::item(format!("sess.use:{}", sh.id), label)
+                    .with_mark(!private && sh.id == cur),
+            );
+        }
+        if private && !unconnected {
             items.push(CtxItem::Separator);
-            let subs = shared
-                .into_iter()
-                .map(|(id, d)| CtxItem::item(format!("sess.use:{id}"), d))
-                .collect();
-            items.push(CtxItem::submenu("sess.use", t(Msg::MnSessUseShared), subs));
+            let label = if s.broken {
+                format!("{} · {}", s.desc, t(Msg::StSessBrokenTag))
+            } else if !s.connected {
+                format!("{} · {}", s.desc, t(Msg::ExpOffline))
+            } else {
+                s.desc.clone()
+            };
+            items.push(CtxItem::item("sess.private", label).with_mark(true));
         }
         self.badge_menu_tab = Some(tab);
         self.editors.open_badge_menu(i, items);
@@ -3092,6 +3226,16 @@ impl App {
     fn badge_pick(&mut self, tab: u64, id: &str) {
         match id {
             "sess.disconnect" => self.disconnect_private(tab),
+            "sess.none" => self.make_unconnected(tab),
+            // 전용 연결 줄 = 이미 이 탭의 것 — 끊겨 있으면 다시 접속, 아니면 아무것도 안 함.
+            "sess.private" => {
+                if self
+                    .sess_by_id(self.sess_id_for_tab(tab))
+                    .is_some_and(|s| !s.connected)
+                {
+                    self.badge_pick(tab, "sess.reconnect");
+                }
+            }
             "sess.reconnect" => {
                 let Some(sid) = self
                     .all_sess()
@@ -3101,9 +3245,11 @@ impl App {
                     return;
                 };
                 let fallback = self.default_spec.clone();
+                // 표식 메뉴의 "다시 접속" = 사용자의 명시적 요청 → 설정 `connect.reconnect_same`이 켜져 있으면 끊고 다시.
+                let again = self.settings.flag("connect.reconnect_same");
                 self.with_sess(sid, |a| {
                     if let Some(spec) = a.sess.spec.clone().or(fallback) {
-                        a.connect_quietly(spec);
+                        a.connect_quietly(spec, again);
                     }
                 });
                 self.sync_sess_ui();
@@ -3135,7 +3281,6 @@ impl App {
             DEFAULT_DIALECT,
             self.settings.int("grid.max_rows").max(0) as usize,
             self.settings.flag("session.autocommit"),
-            self.settings.flag("connect.auto_reconnect"),
             Box::new(move || {
                 let _ = proxy.send_event(Wake);
             }),
@@ -3148,6 +3293,158 @@ impl App {
     /// 늦게 오는 이벤트는 버려진 채널로 사라진다) · 새 워커를 만들어 다음 접속을 받는다 · UI는 지금 해제 상태로.
     /// 탐색기 메타 스레드도 같은 방식(`Explorer::disconnect`).
     fn disconnect_now(&mut self) {
+        // ★ 툴바 Disconnect의 뜻은 지금 탭이 쥔 연결로 정한다(docs/54 · `sessions::disconnect_plan` D16):
+        //   전용 = 이 탭만 · 공유 혼자 = 바로 · 공유를 다른 탭도 쓰면 "모두 해제 / 이 탭만 떼기 / 취소".
+        let bound = self.bound_tabs(self.sess.id);
+        if sessions::disconnect_plan(self.sess.is_private(), bound)
+            == sessions::DisconnectPlan::SharedAsk
+        {
+            self.open_disc_guard(bound);
+            return;
+        }
+        self.disconnect_current();
+    }
+
+    /// 접속 해제 로그 한 줄(사용자 09-19 "어느 경로로 어떤 서버를") — 지금 세션 기준: 종류(공유/전용[탭]) · 대상 · 경로.
+    /// 경로는 `Sess.disc_path`(진입점이 미리 표시) · 없으면 `fallback`. 워커를 바꾸는 해제는 `Disconnected` 이벤트가 오지
+    /// 않으므로 여기서 바로 남기고, 이벤트로 오는 해제(스크립트·서버)는 `drain_events`가 같은 문장으로 남긴다.
+    fn log_disconnect(&mut self, fallback: sessions::DiscPath) {
+        let path = self.sess.disc_path.unwrap_or(fallback);
+        self.sess.disc_path = Some(path);
+        let kind = match self.sess.owner {
+            Some(tab) => {
+                let title = self
+                    .editors
+                    .tab_list()
+                    .into_iter()
+                    .find(|(id, _, _)| *id == tab)
+                    .map(|(_, t, _)| t)
+                    .unwrap_or_default();
+                tf(Msg::LogSessPrivate, &[&title])
+            }
+            None => t(Msg::LogSessShared).to_string(),
+        };
+        let target = self
+            .sess
+            .spec
+            .as_ref()
+            .map(nsql_script::ConnectSpec::redacted)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.sess.desc.clone());
+        let line = tf(Msg::LogDisconnected, &[&kind, &target, t(path.msg())]);
+        let e = LogEntry::new(LogKind::Disconnect, line);
+        if let Some(h) = &self.log_hub {
+            h.push(e.clone());
+        }
+        self.log_win.push(e);
+    }
+
+    /// 세션 `id`에 해제 경로를 표시(진입점이 부른다 · 그 뒤의 해제가 로그에 경로를 남긴다).
+    fn mark_disc(&mut self, id: u64, path: sessions::DiscPath) {
+        self.with_sess(id, |a| a.sess.disc_path = Some(path));
+    }
+
+    /// 공유 연결을 다른 탭도 쓸 때의 확인 팝업(잃는 순간 규칙과 같은 부품).
+    fn open_disc_guard(&mut self, bound: usize) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let others = bound.saturating_sub(1).to_string();
+        self.sess.status = tf(Msg::StDiscGuard, &[&others]);
+        let items = vec![
+            CtxItem::item("disc.all", tf(Msg::MnDiscAll, &[&bound.to_string()])),
+            CtxItem::item("disc.detach", t(Msg::MnDiscDetach)),
+            CtxItem::Separator,
+            CtxItem::item("disc.cancel", t(Msg::MnTxCancel)),
+        ];
+        let r = self
+            .tool_dock
+            .item_rect("conn.disconnect")
+            .unwrap_or(self.status_tx_rect);
+        self.open_status_popup(Rect::new(r.x, r.bottom(), 0, 0), items);
+        self.redraw();
+    }
+
+    fn disc_pick(&mut self, id: &str) {
+        match id {
+            "all" => self.disconnect_current(),
+            // 이 탭만 떼기 = 미연결 자리(다른 탭들은 그대로 공유 연결을 쓴다).
+            "detach" => self.make_unconnected(self.editors.active_id()),
+            _ => {}
+        }
+    }
+
+    /// 이 서버에 붙은 세션 전부 해제(탐색기 루트 메뉴 · docs/54): 공유 세션 = 해제(묶인 탭은 미연결로 보임) ·
+    /// 전용 세션 = 그 탭을 미연결로 · 메타 세션은 참조 수 0이 되면 `sync_sess_ui`가 닫는다(트리는 오프라인으로 남는다).
+    fn disconnect_server(&mut self, spec: &ConnectSpec) {
+        let ids: Vec<(u64, Option<u64>)> = self
+            .all_sess()
+            .filter(|s| {
+                !s.closing
+                    && s.spec
+                        .as_ref()
+                        .is_some_and(|have| worker::same_server(have, spec))
+            })
+            .map(|s| (s.id, s.owner))
+            .collect();
+        for (id, owner) in ids {
+            self.mark_disc(id, sessions::DiscPath::Explorer);
+            match owner {
+                Some(tab) => self.disconnect_private_as(tab, true),
+                None => self.disconnect_shared(id),
+            }
+        }
+        self.sync_sess();
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// 오프라인 루트를 다시 연결(탐색기 루트 메뉴): 이 서버의 공유 세션이 남아 있으면 그 세션으로 · 없으면 공유 세션을 새로.
+    fn connect_server(&mut self, spec: ConnectSpec) {
+        let existing = self
+            .all_sess()
+            .find(|s| {
+                !s.closing
+                    && !s.is_private()
+                    && s.spec
+                        .as_ref()
+                        .is_some_and(|have| worker::same_server(have, &spec))
+            })
+            .map(|s| s.id);
+        let id = match existing {
+            Some(id) => id,
+            None => self.new_shared(),
+        };
+        let again = self.settings.flag("connect.reconnect_same");
+        self.with_sess(id, |a| a.connect_quietly(spec, again));
+        self.activate_shared(id);
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// 이 연결로 새 탭(탐색기 루트 메뉴): 새 탭을 만들고 이 서버의 공유 세션에 묶는다(없으면 그냥 새 탭).
+    fn new_tab_on(&mut self, spec: &ConnectSpec) {
+        let shared = self
+            .all_sess()
+            .find(|s| {
+                !s.closing
+                    && !s.is_private()
+                    && s.spec
+                        .as_ref()
+                        .is_some_and(|have| worker::same_server(have, spec))
+            })
+            .map(|s| s.id);
+        self.editors.new_tab(None);
+        self.set_focus(Focus::Editor);
+        let tab = self.editors.active_id();
+        if let Some(sid) = shared {
+            self.tab_bind.insert(tab, sid);
+        }
+        self.sync_sess();
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// 지금 탭의 연결 해제(전용 = 그 세션 · 공유 = 그 공유 연결 전체).
+    fn disconnect_current(&mut self) {
         // 미커밋 문장이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30).
         if !self.sess.tx_pending.is_empty() {
             self.tx_after = Some(TxAfter::Disconnect);
@@ -3165,6 +3462,7 @@ impl App {
             return;
         }
         let stuck = self.sess.busy;
+        self.log_disconnect(sessions::DiscPath::Toolbar);
         self.sess.worker.send(worker::Cmd::Disconnect);
         let (w, ev) = self.spawn_worker();
         self.sess.worker = w;
@@ -3188,6 +3486,14 @@ impl App {
         self.on_conn_disconnected();
         self.sync_sess_ui();
         self.redraw();
+    }
+
+    /// 드라이버 네트워크 옵션(docs/53): keepalive · Oracle 호출 상한 — 다음 접속부터.
+    fn apply_net_options(&self) {
+        nsql_drivers::set_net_options(
+            self.settings.int("net.keepalive_secs").max(0) as u64,
+            self.settings.int("session.call_timeout_secs").max(0) as u64,
+        );
     }
 
     /// 접속 계열 결과 `Disconnected`의 UI 반영(워커 이벤트 · 즉시 해제 공용).
@@ -3258,20 +3564,37 @@ impl App {
     }
 
     /// 툴바 접속 해제 버튼 = 접속돼 있을 때만 활성(사용자 09-15).
-    fn sync_disconnect_btn(&mut self, connected: bool) {
+    /// 툴바 두 버튼(docs/52 §7-2): Disconnect = 끊을 연결이 하나라도 있으면 활성 · Connect(플러그) 색 = **지금 탭의 연결** —
+    /// 초록(연결됨) · 빨강(끊김 확인) · 기본(미연결). 탭마다 연결이 다를 수 있으므로 "어딘가 연결됨"이 아니라 이 탭의 사실을 보인다.
+    fn sync_disconnect_btn(&mut self, cur_connected: bool) {
         let mut inv = Invalidations::default();
         self.tool_dock
-            .set_item_enabled("conn.disconnect", connected, &mut inv);
-        // 연결이 하나라도 있으면 Connect 아이콘 = 밝은 녹색(사용자 09-16).
-        self.tool_dock.set_item_tone(
-            "conn.toggle",
-            if connected {
-                ToolTone::Ok
-            } else {
-                ToolTone::Default
-            },
-            &mut inv,
-        );
+            .set_item_enabled("conn.disconnect", cur_connected, &mut inv);
+        // 툴팁·배지 = 누르면 무슨 일이 나는지(docs/54): 전용 / 공유 / 공유 + 함께 쓰는 탭 수(배지).
+        let bound = self.bound_tabs(self.sess.id);
+        let desc = self.sess.desc.clone();
+        let (tip, badge) = match sessions::disconnect_plan(self.sess.is_private(), bound) {
+            sessions::DisconnectPlan::Private => (t(Msg::TipDisconnectPrivate).to_string(), None),
+            sessions::DisconnectPlan::SharedAlone if cur_connected => {
+                (tf(Msg::TipDisconnectShared, &[&desc]), None)
+            }
+            sessions::DisconnectPlan::SharedAlone => (t(Msg::TipDisconnect).to_string(), None),
+            sessions::DisconnectPlan::SharedAsk => (
+                tf(Msg::TipDisconnectSharedN, &[&desc, &bound.to_string()]),
+                Some(bound.to_string()),
+            ),
+        };
+        self.tool_dock.set_item_tip("conn.disconnect", &tip);
+        self.tool_dock
+            .set_item_badge("conn.disconnect", badge.as_deref(), &mut inv);
+        let tone = if self.sess.connected && self.sess.broken {
+            ToolTone::Danger
+        } else if self.sess.connected {
+            ToolTone::Ok
+        } else {
+            ToolTone::Default
+        };
+        self.tool_dock.set_item_tone("conn.toggle", tone, &mut inv);
     }
 
     /// 환경 설정 창에서 바뀐 값을 **즉시** 반영(가능한 것만 · 나머지는 다음 시작).
@@ -3329,6 +3652,7 @@ impl App {
                 self.apply_run_toast();
             }
             "run.toast" | "run.toast_hide_secs" => self.apply_run_toast(),
+            "net.keepalive_secs" | "session.call_timeout_secs" => self.apply_net_options(),
             "mssql.encrypt" => {
                 nsql_drivers::set_mssql_encryption(self.settings.get(key) == Some("login"))
             }
@@ -4093,6 +4417,7 @@ impl App {
             }
             "view.log" => self.toggle_log_window(el),
             "view.txlog" | "tx.log" => self.open_txlog_window(el),
+            "view.sessions" => self.open_sessions_window(el),
             "view.on_top" => {
                 let on = !self.settings.flag("window.always_on_top");
                 let _ = self
@@ -4114,6 +4439,7 @@ impl App {
             "file.new" => {
                 self.editors.new_tab(None);
                 self.set_focus(Focus::Editor);
+                self.on_new_tab();
             }
             "file.exit" => self.request_exit(),
             // ★ 파일 열기/저장(T-74) — 자체 대화상자(nexa-dlg) · 네이티브 0.
@@ -4343,8 +4669,24 @@ impl App {
             "tx.log" | "view.txlog" => self.open_txlog = true,
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
-            "conn.disconnect" => self.open_disconnect_menu(),
-            id if id.starts_with("conn.drop") || id.starts_with("conn.use:") => {
+            // 툴바 Disconnect = **지금 탭의 연결 해제**(종전과 같음 · 사용자 09-18 원복) · 세션 목록 버튼/View = 세션 창.
+            "conn.disconnect" => {
+                self.sess.disc_path = Some(sessions::DiscPath::Toolbar);
+                self.disconnect_now();
+            }
+            // 세션 목록 = 토글(사용자 09-19): 열려 있으면 닫고 · 아니면 연다.
+            "conn.sessions" | "view.sessions" => {
+                if self.sessions_win.is_open() {
+                    self.sessions_win.close();
+                    self.persist_window_sizes(false);
+                } else {
+                    self.open_sessions = true;
+                }
+            }
+            id if id.starts_with("conn.drop")
+                || id.starts_with("conn.use:")
+                || id.starts_with("conn.again:") =>
+            {
                 self.disconnect_pick(id);
             }
             "edit.prefs" => self.open_prefs = true,
@@ -4748,8 +5090,12 @@ impl App {
         self.set_autocommit_now(on);
     }
 
-    /// 설정 + 살아 있는 세션(스크립트 `SET AUTOCOMMIT` · 워커 큐 순서 보장).
+    /// 설정 + 살아 있는 세션(스크립트 `SET AUTOCOMMIT` · 워커 큐 순서 보장). 세션이 작업 중이면 문지기가 거부(설정도 그대로 —
+    /// 설정과 세션이 어긋나지 않게 · 09-19 검토).
     fn set_autocommit_now(&mut self, on: bool) {
+        if !self.gate_open() {
+            return;
+        }
         let _ = self
             .settings
             .set("session.autocommit", if on { "on" } else { "off" });
@@ -4813,6 +5159,12 @@ impl App {
 
     fn close_tab_guarded(&mut self, i: usize) {
         let id = self.editors.tab_id(i);
+        // 실행 중인 탭은 닫지 않는다(결과가 갈 곳이 사라진다) — ■로 중지한 뒤(09-19 검토).
+        if self.editors.is_running(id) {
+            self.sess.status = t(Msg::StTabRunningClose).into();
+            self.redraw();
+            return;
+        }
         // 그 탭이 쓰는 세션의 대기 문장(전용 세션이면 그 세션 전부 = 탭을 닫으면 세션도 닫힌다 · docs/52 §8).
         let sid = self.sess_id_for_tab(id);
         let n = self.sess_by_id(sid).map_or(0, |s| {
@@ -4936,16 +5288,25 @@ impl App {
     }
 
     fn build_menus() -> Vec<MenuDef> {
-        Self::build_menus_with(&[], &[], false)
+        Self::build_menus_with(&[], &[], false, false)
     }
 
     /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
+    /// `blocked` = 지금 탭의 세션이 작업 중(docs/52 §3 통제) — Run 메뉴의 실행 계열은 비활성으로(툴바와 같은 판정 · 09-19).
     fn build_menus_with(
         recent: &[PathBuf],
         tabs: &[(u64, String, bool)],
         demo_ready: bool,
+        blocked: bool,
     ) -> Vec<MenuDef> {
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
+        let gated = |id: &str, m: Msg| {
+            if blocked {
+                MenuEntry::Disabled(ComboItem::new(id, t(m)))
+            } else {
+                MenuEntry::Item(ComboItem::new(id, t(m)))
+            }
+        };
         let mut file = vec![
             item("file.new", Msg::MnNew),
             item("file.open", Msg::MnOpen),
@@ -5031,6 +5392,7 @@ impl App {
                     item("view.search", Msg::MnSearchPanel),
                     item("view.log", Msg::MnLogWindow),
                     item("view.txlog", Msg::MnTxLogWindow),
+                    item("view.sessions", Msg::MnSessManager),
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     item("view.toolbar_reset", Msg::MnResetToolbar),
                     MenuEntry::Separator,
@@ -5043,13 +5405,13 @@ impl App {
             MenuDef::new(
                 t(Msg::MnRun),
                 vec![
-                    item("run.statement", Msg::MnRunStatement),
-                    item("run.statement_new_tab", Msg::MnRunStatementNewTab),
-                    item("run.all", Msg::MnRunAll),
-                    item("run.explain", Msg::MnExplain),
+                    gated("run.statement", Msg::MnRunStatement),
+                    gated("run.statement_new_tab", Msg::MnRunStatementNewTab),
+                    gated("run.all", Msg::MnRunAll),
+                    gated("run.explain", Msg::MnExplain),
                     MenuEntry::Separator,
-                    item("run.commit", Msg::MnCommit),
-                    item("run.rollback", Msg::MnRollback),
+                    gated("run.commit", Msg::MnCommit),
+                    gated("run.rollback", Msg::MnRollback),
                     MenuEntry::Separator,
                     item("conn.toggle", Msg::MnConnect),
                     item("conn.disconnect", Msg::MnDisconnect),
@@ -5102,8 +5464,12 @@ impl App {
         if sig != self.tabs_menu_sig {
             self.tabs_menu_sig = sig;
             let recent = self.recent_files();
-            self.menubar
-                .set_menus(App::build_menus_with(&recent, &tabs, self.demo_ready));
+            self.menubar.set_menus(App::build_menus_with(
+                &recent,
+                &tabs,
+                self.demo_ready,
+                self.gate_shown.unwrap_or(false),
+            ));
         }
     }
 
@@ -5148,9 +5514,9 @@ impl App {
             vec![
                 ToolItem::new("conn.toggle", toolicons::connect()).tip(t(Msg::TipConnect)),
                 ToolItem::new("conn.disconnect", toolicons::disconnect())
-                    .with_dropdown()
                     .tip(t(Msg::TipDisconnect))
                     .disabled(),
+                ToolItem::new("conn.sessions", toolicons::sessions()).tip(t(Msg::TipSessions)),
             ],
         );
         let view = ToolGroup::new(
@@ -5283,6 +5649,7 @@ impl App {
         cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
         cmds.push(m("view.txlog", Msg::MnView, Msg::MnTxLogWindow));
+        cmds.push(m("view.sessions", Msg::MnView, Msg::MnSessManager));
         cmds.push(m("view.toolbar_reset", Msg::MnView, Msg::MnResetToolbar));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
@@ -5393,8 +5760,12 @@ impl App {
         let _ = self.settings.set("file.recent", &joined);
         self.persist_settings();
         let tabs = self.editors.tab_list();
-        self.menubar
-            .set_menus(App::build_menus_with(&v, &tabs, self.demo_ready));
+        self.menubar.set_menus(App::build_menus_with(
+            &v,
+            &tabs,
+            self.demo_ready,
+            self.gate_shown.unwrap_or(false),
+        ));
     }
 
     /// 대화상자를 닫을 때 마지막 폴더·숨김 표시를 기억한다.
@@ -5812,7 +6183,13 @@ impl App {
     }
 
     /// 트랜잭션 로그 창(모덜리스 · docs/44 §2 · T-107) — 이미 열려 있으면 앞으로.
+    /// 트랜잭션 로그 창 — **토글**(사용자 09-19: 열려 있으면 닫는다 · 로그 창·세션 창과 같은 규칙).
     fn open_txlog_window(&mut self, el: &ActiveEventLoop) {
+        if self.txlog_win.is_open() {
+            self.txlog_win.close();
+            self.persist_window_sizes(false);
+            return;
+        }
         let near = self.window.as_ref().and_then(|w| {
             w.outer_position()
                 .ok()
@@ -5828,6 +6205,57 @@ impl App {
             owner.as_deref(),
             &ctx,
         );
+    }
+
+    fn open_sessions_window(&mut self, el: &ActiveEventLoop) {
+        let near = self.window.as_ref().and_then(|w| {
+            w.outer_position()
+                .ok()
+                .map(|p| (p.x, p.y, w.outer_size().width))
+        });
+        let owner = self.window.clone();
+        self.sessions_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner.as_deref(),
+        );
+    }
+
+    /// 세션 창의 표 줄 — 세션 상태의 단일 원천(`Sess`)에서 그릴 때마다 만든다(복사는 줄 수만큼 · 세션은 몇 개뿐).
+    fn session_rows(&self) -> Vec<SessRow> {
+        let titles: HashMap<u64, String> = self
+            .editors
+            .tab_list()
+            .into_iter()
+            .map(|(id, title, _)| (id, title))
+            .collect();
+        let now = Instant::now();
+        let mut rows: Vec<SessRow> = self
+            .all_sess()
+            .filter(|s| !s.closing && (s.connected || s.busy || s.idle_closed || s.is_private()))
+            .map(|s| SessRow {
+                id: s.id,
+                server: if s.desc.is_empty() {
+                    t(Msg::MnSessNoneConnected).to_string()
+                } else {
+                    s.desc.clone()
+                },
+                shared: !s.is_private(),
+                active: s.id == self.default_shared && !s.is_private(),
+                tab: s
+                    .owner
+                    .map(|tab| (tab, titles.get(&tab).cloned().unwrap_or_default())),
+                connected: s.connected,
+                broken: s.broken,
+                busy: s.blocked(),
+                idle_secs: now.saturating_duration_since(s.last_used).as_secs(),
+                pending: s.tx_pending.len(),
+            })
+            .collect();
+        // 접속 순(세션 id 순) · 같은 서버끼리는 창이 모은다.
+        rows.sort_by_key(|r| r.id);
+        rows
     }
 
     /// 열린 수동 트랜잭션을 결과와 함께 닫고 대기 목록을 비운다(커밋·롤백·암묵·전환·끊김 — docs/44 §3).
@@ -5880,8 +6308,40 @@ impl App {
     }
 
     /// 중지(카드 ■ = 툴바 ■ · T-108): 실행 중 문장은 드라이버 취소 핸들로 서버에 취소 · 전체 조회는 다음 배치 경계에서.
+    /// 지금 세션의 워커를 버리고 새 워커로(즉시 해제 규약 09-16 — 죽은 소켓에 갇힌 호출을 기다리지 않는다).
+    /// 세션은 **끊김(Broken)으로 남기고 스펙을 지킨다** → 다음 동작 때 판정 뒤 조용히 재접속(`wake_if_idle`).
+    fn abandon_worker(&mut self) {
+        let (w, ev) = self.spawn_worker();
+        self.log_disconnect(sessions::DiscPath::Stop);
+        self.sess.worker.send(worker::Cmd::Disconnect);
+        self.sess.worker = w;
+        self.sess.events = ev;
+        self.sess.busy = false;
+        self.sess.aux = 0;
+        self.sess.skip_done = 0;
+        self.sess.connected = false;
+        self.sess.idle_closed = true;
+        self.sess.run_cancel_requested = false;
+        self.editors.set_running(self.sess.run_editor, false);
+        self.sess
+            .run_toast
+            .finish(runtoast::Phase::Stopped { rows: 0 });
+        self.grid.fetch_failed();
+        self.tx_close(TxOutcome::Lost);
+    }
+
     fn stop_run(&mut self) {
         if !self.sess.busy && !self.grid.fetch_all_active() {
+            return;
+        }
+        // ★ 끊긴 서버(docs/53 §3): 취소(OCIBreak)도 같은 소켓으로 가 함께 막힌다 → 워커를 버리는 것이 유일한 즉시 중지.
+        if self.sess.broken {
+            self.abandon_worker();
+            self.sess.status = tf(Msg::StSessBrokenStopped, &[&self.sess.desc]);
+            self.log_win
+                .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+            self.sync_sess_ui();
+            self.redraw();
             return;
         }
         self.sess.run_cancel_requested = self.sess.busy;
@@ -5949,6 +6409,7 @@ impl App {
             &self.recent_files(),
             &tabs,
             self.demo_ready,
+            self.gate_shown.unwrap_or(false),
         ));
     }
 
@@ -6051,6 +6512,7 @@ impl App {
             &self.recent_files(),
             &tabs,
             self.demo_ready,
+            self.gate_shown.unwrap_or(false),
         ));
         let layout = self.tool_dock.layout();
         self.tool_dock = App::build_tool_dock();
@@ -6101,9 +6563,9 @@ impl App {
                 })
             }
         };
-        let src = text.unwrap_or_else(|| self.ed_mut().text());
+        let mut src = text.unwrap_or_else(|| self.ed_mut().text());
         // ★ 세션 배치(docs/52 §4): `CONNECT`면 이 탭의 전용 세션으로 · 전용 탭의 `DISCONNECT`면 해제하고 끝.
-        if !self.place_run(&src) {
+        if !self.place_run(&mut src) {
             return;
         }
         self.wake_if_idle();
@@ -6303,11 +6765,18 @@ impl App {
         self.conn_win.drain_probes();
         while let Ok(ev) = self.sess.events.try_recv() {
             changed = true;
-            for e in nsql_run::log_entries(&ev) {
-                if let Some(h) = &self.log_hub {
-                    h.push(e.clone());
+            if matches!(ev, RunEvent::Disconnected) {
+                // 호스트가 시작한 해제는 이미 경로와 함께 남겼다(disc_path) · 스크립트/서버 쪽 해제만 여기서 남긴다.
+                if self.sess.disc_path.is_none() {
+                    self.log_disconnect(sessions::DiscPath::Script);
                 }
-                self.log_win.push(e);
+            } else {
+                for e in nsql_run::log_entries(&ev) {
+                    if let Some(h) = &self.log_hub {
+                        h.push(e.clone());
+                    }
+                    self.log_win.push(e);
+                }
             }
             match ev {
                 RunEvent::Begin { index, .. } => {
@@ -6393,9 +6862,23 @@ impl App {
                         tf(Msg::StRows, &[&n, &secs])
                     };
                     // 결과는 실행을 시작한 결과 탭의 그리드로(탭이 이미 닫혔으면 버림) · 탭 제목 갱신(T-93).
+                    // 이 결과를 만든 문장 하나를 그리드에 알린다 — 건수(Σ)·OFFSET 재질의·새로고침·SQL 복사가 스크립트 전체가
+                    // 아니라 **그 문장**을 쓴다 · 조회 문장이 아니면(EXEC/PRINT의 REF CURSOR 등) 건수 불가(09-19 규정).
+                    let stmt = self.sess.last_run_items.get(index).cloned();
+                    let is_query = stmt.as_deref().is_some_and(|s| {
+                        nsql_script::split_script(s).first().is_some_and(|it| {
+                            matches!(
+                                it.kind,
+                                nsql_script::ItemKind::Sql(nsql_script::SqlKind::Query)
+                            )
+                        })
+                    });
                     if let Some(g) = self.run_grid() {
                         g.set_result(rs);
                         g.set_more(more);
+                        if let Some(s) = stmt.as_deref() {
+                            g.set_result_origin(s, is_query);
+                        }
                     }
                     self.tx_on_read(index);
                     let k = self.sess.run_tab;
@@ -6442,12 +6925,14 @@ impl App {
                     description,
                     dialect,
                 } => {
+                    self.sess.disc_path = None;
                     self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     if self.sess.skip_done == 0 {
                         self.sess.busy = false;
                     }
                     self.sess.dialect = dialect;
                     self.sess.connected = true;
+                    self.sess.broken = false;
                     self.sess.user_disconnected = false;
                     self.sess.idle_closed = false;
                     self.sess.desc = description.clone();
@@ -6483,8 +6968,11 @@ impl App {
                     // (탐색기는 `sync_sess_ui`의 참조 수 맞춤이 처리한다 — 이 서버에 붙은 세션이 남아 있으면 유지.)
                     self.tx_close(TxOutcome::Lost);
                     // 공유 모드의 전용 세션이 스크립트 안의 DISCONNECT로 끊겼다 → 세션을 거두고 공유 세션으로 복귀(유휴 닫기는 제외).
+                    // ★ 사용자가 배지 메뉴 "No connection"으로 **명시적으로** 끊은 세션(`user_disconnected`)은 거두지 않는다 —
+                    //   공유로 되돌리면 사용자의 선택을 무시하는 것(09-19). 툴바 Disconnect(keep=false)는 종전대로 공유 복귀.
                     if self.sess.is_private()
                         && !self.sess.idle_closed
+                        && !self.sess.user_disconnected
                         && self.session_mode() == SessionMode::Shared
                     {
                         self.sess.closing = true;
@@ -6597,11 +7085,15 @@ impl App {
                     }
                     self.sess.busy = false;
                     // 실행 중 접속성 오류 확인 → 활성 서버 신호등 즉시 갱신(사용자 09-14).
-                    if self.sess.id == self.primary_sess
-                        && probe::is_connection_error(error.code, &error.message)
-                    {
-                        let name = self.conn_win.active_name().to_string();
-                        self.conn_win.note_failure(&name);
+                    if probe::is_connection_error(error.code, &error.message) {
+                        if self.sess.id == self.primary_sess {
+                            let name = self.conn_win.active_name().to_string();
+                            self.conn_win.note_failure(&name);
+                        }
+                        if !self.sess.broken {
+                            self.sess.broken = true;
+                            self.sync_sess_ui();
+                        }
                     }
                 }
             }
@@ -6675,6 +7167,21 @@ impl App {
                 ExplorerAction::Status(s) => self.sess.status = s,
                 // (서버 제거는 `ExplorerSet::take_actions`가 안에서 처리한다.)
                 ExplorerAction::RemoveServer => {}
+                ExplorerAction::DisconnectServer(spec) => {
+                    if let Some(spec) = spec {
+                        self.disconnect_server(&spec);
+                    }
+                }
+                ExplorerAction::ConnectServer(spec) => {
+                    if let Some(spec) = spec {
+                        self.connect_server(spec);
+                    }
+                }
+                ExplorerAction::NewTabHere(spec) => {
+                    if let Some(spec) = spec {
+                        self.new_tab_on(&spec);
+                    }
+                }
                 ExplorerAction::Copy(s) => {
                     if !clipboard::write_text(&s) {
                         self.sess.status = t(Msg::ErrClipboard).into();
@@ -6739,6 +7246,16 @@ impl App {
         }
         if let Some((tab, id)) = self.editors.take_badge_pick() {
             self.badge_pick(tab, &id);
+        }
+        // 탭 바 [+]로 만든 새 탭(메뉴 New와 같은 규칙).
+        if self.editors.take_new_tab_created() {
+            self.on_new_tab();
+        }
+        // 탭 목록이 바뀌었으면(새 탭·닫기) 표식을 바로 맞춘다 — 이벤트를 기다리지 않는다(바뀔 때만 · 페인트마다 아님).
+        let ids = self.editors.tab_ids();
+        if ids != self.badge_tabs {
+            self.badge_tabs = ids;
+            self.sync_sess_ui();
         }
         self.reap_sessions();
         self.sync_sess();
@@ -6871,9 +7388,14 @@ impl App {
                 let busy = if self.sess.blocked() { "⏳ " } else { "" };
                 let ty = dc.text_center_y(sy, px(24.0, s));
                 // 전용 세션 탭 = 상태줄 앞에 "전용: 접속 설명"(Golden의 Private Session 줄 · docs/52 §7).
+                let broken = if self.sess.broken {
+                    format!("[{}] ", t(Msg::StSessBrokenTag))
+                } else {
+                    String::new()
+                };
                 let left_text = if self.sess.is_private() {
                     format!(
-                        "{busy}[{}: {}] {}",
+                        "{busy}{broken}[{}: {}] {}",
                         t(Msg::StSessPrivate),
                         if self.sess.desc.is_empty() {
                             "—"
@@ -6883,7 +7405,7 @@ impl App {
                         self.sess.status
                     )
                 } else {
-                    format!("{busy}{}", self.sess.status)
+                    format!("{busy}{broken}{}", self.sess.status)
                 };
                 // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
                 let (ln, col) = self.editors.caret_line_col();
@@ -7155,6 +7677,8 @@ impl App {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.tool_dock.paint_tooltip(&mut dc, &th);
+                // 툴바 그룹 드래그 고스트 — 편집기 위까지 나가므로 팝업 층에.
+                self.tool_dock.paint_drag_overlay(&mut dc, &th);
                 self.find.paint_tooltip(&mut dc, &th);
                 self.search.paint_tooltip(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
@@ -7397,6 +7921,41 @@ impl App {
         //   못 받아 다음 MouseMove가 선택을 바꾸던 결함(사용자 09-15). 중복 전달은 무해(dragging=false 멱등).
         if matches!(ev, InputEvent::MouseUp { .. }) {
             self.ed_mut().on_event(&ev, &mut inv);
+        }
+        // ★ 결과 그리드 컬럼 이동 중(09-19): Esc = 취소(포커스와 무관하게).
+        if self.grid.col_dragging()
+            && matches!(
+                ev,
+                InputEvent::Key {
+                    key: CtlKey::Escape,
+                    ..
+                }
+            )
+        {
+            self.grid.cancel_col_drag();
+            self.redraw();
+            return;
+        }
+        // ★ 툴바 그룹 드래그 중(09-19): 마우스는 도크가 잡고 있고(고스트가 도크 밖까지 따라간다) · Esc = 취소.
+        if self.tool_dock.is_dragging() {
+            if matches!(
+                ev,
+                InputEvent::Key {
+                    key: CtlKey::Escape,
+                    ..
+                }
+            ) {
+                self.tool_dock.cancel_drag(&mut inv);
+                self.drain_dock_actions();
+                self.redraw();
+                return;
+            }
+            if is_mouse {
+                self.tool_dock.on_event(&ev, &mut inv);
+                self.drain_dock_actions();
+                self.redraw();
+                return;
+            }
         }
         // 열린 명령 팔레트는 모달.
         if self.palette.is_open() {
@@ -8097,18 +8656,8 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.conn_win.is(id) {
-            let ui_px = self.settings.font_px("ui.font_size");
             for a in self.conn_win.handle(&event) {
-                match a {
-                    ConnWinAction::Paint => {
-                        self.conn_win.paint(&self.ui_font, &self.theme, ui_px);
-                    }
-                    ConnWinAction::Panel(a) => self.handle_panel_action(a),
-                    ConnWinAction::Login(name) => self.login_profile(&name),
-                    ConnWinAction::TestProfile(name) => self.test_profile(&name),
-                    ConnWinAction::Delete(name) => self.delete_profile(&name),
-                    ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
-                }
+                self.handle_conn_win_action(a);
             }
             return;
         }
@@ -8279,6 +8828,31 @@ impl ApplicationHandler<Wake> for App {
             }
             return;
         }
+        if self.sessions_win.is(id) {
+            match self.sessions_win.handle(&event) {
+                SessWinAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let rows = self.session_rows();
+                    self.sessions_win
+                        .paint(&rows, &self.ui_font, &self.theme, ui_px);
+                }
+                SessWinAction::Activate(sid) => self.activate_shared(sid),
+                SessWinAction::Reconnect(sid) => self.disconnect_pick(&format!("conn.again:{sid}")),
+                SessWinAction::Disconnect(sid) => self.disconnect_session(sid),
+                SessWinAction::DisconnectAll => self.disconnect_all(),
+                SessWinAction::GoTab(tab) => {
+                    self.editors.switch_to_id(tab);
+                    self.sync_grid_tab();
+                    if let Some(w) = &self.window {
+                        w.focus_window();
+                    }
+                    self.redraw();
+                }
+                SessWinAction::None => {}
+            }
+            self.sessions_win.redraw();
+            return;
+        }
         if self.txlog_win.is(id) {
             match self.txlog_win.handle(&event) {
                 TxLogAction::Paint => {
@@ -8420,6 +8994,16 @@ impl ApplicationHandler<Wake> for App {
                         y: self.cursor.1,
                     };
                     let over_edge = self.grid.header_edge_hover(self.cursor.0, self.cursor.1);
+                    // 편집기 본문(거터 제외) 위 = **I-빔**(Sublime·VS Code · 사용자 09-19) — 메뉴·팔레트·팝업이 덮으면 화살표.
+                    let ed = self.editors.editor_bounds();
+                    let gutter = self.editors.cur().gutter_width();
+                    let text_area = Rect::new(ed.x + gutter, ed.y, (ed.w - gutter).max(0), ed.h);
+                    let covered = self.menubar.is_open()
+                        || self.palette.is_open()
+                        || self.tool_dock.is_dragging()
+                        || self.status_menu.is_open()
+                        || self.editors.cur().popup_open();
+                    let over_text = !covered && text_area.contains(cur);
                     // 스플리터 위/드래그 중 = ↔ · ↕ (그리드 헤더 경계보다 우선).
                     w.set_cursor(
                         if self.split_v.is_dragging() || self.split_v.rect().contains(cur) {
@@ -8428,6 +9012,8 @@ impl ApplicationHandler<Wake> for App {
                             winit::window::CursorIcon::RowResize
                         } else if over_edge {
                             winit::window::CursorIcon::ColResize
+                        } else if over_text {
+                            winit::window::CursorIcon::Text
                         } else {
                             winit::window::CursorIcon::Default
                         },
@@ -8527,6 +9113,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_txlog) {
             self.open_txlog_window(el);
+        }
+        if std::mem::take(&mut self.open_sessions) {
+            self.open_sessions_window(el);
         }
         if std::mem::take(&mut self.open_colors) {
             // ★ 설정 창에서 열면 **설정 창을 소유자**로(그 위에 뜬다 · 메인 소유면 설정 창 뒤로 숨어 "안 열린 것처럼" 보이던 결함 · 사용자 09-15).
@@ -8725,6 +9314,15 @@ fn main() {
     // 실행 인자(사용자 09-17): `-c <대상>`/`--connect <대상>`/`<대상>` = 프로필 이름이든 접속 문자열이든 **시작하면서 접속** ·
     //   `--fill <프로필>` = 폼만 채움(종전 동작). 모르는 옵션은 무시.
     let (arg_target, arg_fill_only) = parse_gui_args(&args);
+    // ★ 임시(사용자 09-19 · 추후 제거): `dev.start_demo`가 켜져 있고 인자로 대상을 주지 않았으면 Demo 프로필에 자동 접속 +
+    //   로그인 창 생략(`-c Demo`와 같은 경로).
+    //   ★ 릴리즈에는 절대 들어가지 않는다(사용자 09-19): Debug 빌드(`debug_assertions`)에서만 유효 — Release는 설정이 켜져 있어도 무시.
+    let dev_demo = cfg!(debug_assertions) && settings.flag("dev.start_demo") && arg_target.is_none();
+    let arg_target = if dev_demo {
+        Some("Demo".to_string())
+    } else {
+        arg_target
+    };
     let Ok(el) = EventLoop::<Wake>::with_user_event().build() else {
         eprintln!("event loop creation failed");
         std::process::exit(1);
@@ -8732,12 +9330,10 @@ fn main() {
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
     let max_rows = settings.int("grid.max_rows").max(0) as usize;
     let autocommit = settings.flag("session.autocommit");
-    let auto_reconnect = settings.flag("connect.auto_reconnect");
     let (worker, events) = worker::spawn(
         DEFAULT_DIALECT,
         max_rows,
         autocommit,
-        auto_reconnect,
         Box::new(move || {
             let _ = proxy.send_event(Wake);
         }),
@@ -8816,6 +9412,8 @@ fn main() {
         scale: 1.0,
         log_win: LogWin::new(&log_format),
         txlog_win: TxLogWin::new(),
+        sessions_win: SessionsWin::new(),
+        open_sessions: false,
         open_txlog: false,
         toasts: toast::Toasts::new(),
         run_toast_next: None,
@@ -8855,7 +9453,8 @@ fn main() {
         demo_job: None,
         pending_demo_prompt: false,
         conn_win: ConnWin::new(panel),
-        open_conn: true,
+        // 시작 시 로그인 창 — 인자로 접속 대상을 줬거나 임시 Demo 자동 접속이면 띄우지 않는다.
+        open_conn: initial_target.is_none() || arg_fill_only,
         find: FindBar::new(),
         find_scope: None,
         editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
@@ -8901,6 +9500,7 @@ fn main() {
         primary_sess: SHARED,
         gate_shown: None,
         badge_menu_tab: None,
+        badge_tabs: Vec::new(),
         idle_next: Instant::now(),
         tests_tx,
         tests_rx,
@@ -8970,6 +9570,9 @@ fn main() {
         .set_diff_marks(app.settings.flag("editor.diff_marks"));
     app.sync_run_stmt_button();
     nsql_drivers::set_mssql_encryption(app.settings.get("mssql.encrypt") == Some("login"));
+    app.apply_net_options();
+    // 첫 화면부터 탭 표식(미연결 사선)이 보이게 — 세션 상태 → 화면 3층 동기화 1회.
+    app.sync_sess_ui();
     nsql_drivers::set_mssql_cancel_socket(app.settings.get("mssql.cancel") == Some("socket"));
     app.apply_tab_accent();
     app.apply_extensions(None);
@@ -9143,6 +9746,7 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
     ("tx.log", Msg::TipTxLog),
     ("conn.toggle", Msg::TipConnect),
     ("conn.disconnect", Msg::TipDisconnect),
+    ("conn.sessions", Msg::TipSessions),
     ("view.log", Msg::TipLog),
 ];
 

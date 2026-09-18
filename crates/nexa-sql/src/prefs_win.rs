@@ -484,6 +484,10 @@ impl PrefsWin {
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
+        // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
+        if let Some(((x, y), _)) = same {
+            crate::wingeom::place_outer(&win, Some((x, y)));
+        }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
         if let Ok(ctx) = softbuffer::Context::new(win.clone()) {

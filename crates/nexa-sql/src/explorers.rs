@@ -54,6 +54,8 @@ pub(crate) struct ExplorerSet {
     cursor: Point,
     /// 이어 붙인 트리 전체의 세로 스크롤(px) · 공용 오버레이 스크롤바.
     scroll: i32,
+    /// 공용 가로 스크롤(긴 이름 · 09-19 사용자).
+    scroll_x: i32,
     bars: nexa_ctl::controls::ScrollBars,
 }
 
@@ -71,6 +73,7 @@ impl ExplorerSet {
             scale: 1.0,
             cursor: Point { x: -1, y: -1 },
             scroll: 0,
+            scroll_x: 0,
             bars: nexa_ctl::controls::ScrollBars::new(),
         };
         let p = s.new_pane(None);
@@ -260,11 +263,21 @@ impl ExplorerSet {
             .sum()
     }
 
+    /// 이어 붙인 전체 폭(가장 긴 행 · 그린 뒤에 안다).
+    fn total_w(&self) -> i32 {
+        self.laid()
+            .iter()
+            .map(|&i| self.panes[i].ex.content_width())
+            .max()
+            .unwrap_or(0)
+    }
+
     fn relayout(&mut self) {
         let b = self.bounds;
         let s = self.scale;
         let laid = self.laid();
         self.scroll = self.scroll.clamp(0, (self.total_h() - b.h).max(0));
+        self.scroll_x = self.scroll_x.clamp(0, (self.total_w() - b.w).max(0));
         let mut y = b.y - self.scroll;
         for &i in &laid {
             let h = self.panes[i].ex.content_height();
@@ -272,6 +285,7 @@ impl ExplorerSet {
             ex.set_bounds(Rect::new(b.x, y, b.w, h), s);
             ex.set_clip(b);
             ex.set_menu_host(b);
+            ex.set_scroll_x(self.scroll_x);
             y += h;
         }
         // 놓이지 않은 칸(빈 자리)은 영역 0.
@@ -319,10 +333,19 @@ impl ExplorerSet {
         let mut remove = None;
         for (i, p) in self.panes.iter_mut().enumerate() {
             for a in p.ex.take_actions() {
-                if a == ExplorerAction::RemoveServer {
-                    remove = Some(i);
-                } else {
-                    out.push(a);
+                match a {
+                    ExplorerAction::RemoveServer => remove = Some(i),
+                    // 루트 메뉴의 서버 동작 = 이 칸의 서버 스펙을 채워 호스트로.
+                    ExplorerAction::DisconnectServer(_) => {
+                        out.push(ExplorerAction::DisconnectServer(p.key.clone()));
+                    }
+                    ExplorerAction::ConnectServer(_) => {
+                        out.push(ExplorerAction::ConnectServer(p.key.clone()));
+                    }
+                    ExplorerAction::NewTabHere(_) => {
+                        out.push(ExplorerAction::NewTabHere(p.key.clone()));
+                    }
+                    a => out.push(a),
                 }
             }
         }
@@ -361,17 +384,18 @@ impl ExplorerSet {
         }
         // 공용 스크롤(휠 · 스크롤바 끌기)이 먼저.
         let total = self.total_h();
-        let (_, ny, consumed) = self.bars.on_event(
+        let (nx, ny, consumed) = self.bars.on_event(
             ev,
             self.bounds,
-            self.bounds.w,
+            self.total_w().max(self.bounds.w),
             total.max(self.bounds.h),
-            0,
+            self.scroll_x,
             self.scroll,
             self.scale,
         );
-        if ny != self.scroll {
+        if ny != self.scroll || nx != self.scroll_x {
             self.scroll = ny;
+            self.scroll_x = nx;
             self.relayout();
         }
         if consumed {
@@ -435,9 +459,9 @@ impl ExplorerSet {
             dc,
             th,
             b,
-            b.w,
+            self.total_w().max(b.w),
             self.total_h().max(b.h),
-            0,
+            self.scroll_x,
             self.scroll,
             self.scale,
         );
