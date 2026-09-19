@@ -47,6 +47,7 @@ pub(crate) struct ExplorerSet {
     visible: bool,
     icons: bool,
     font_px: f32,
+    ta_cfg: crate::explorer::TypeAheadCfg,
     focused: bool,
     bounds: Rect,
     scale: f32,
@@ -68,6 +69,7 @@ impl ExplorerSet {
             visible,
             icons: true,
             font_px: 17.0,
+            ta_cfg: crate::explorer::TypeAheadCfg::default(),
             focused: false,
             bounds: Rect::default(),
             scale: 1.0,
@@ -86,6 +88,7 @@ impl ExplorerSet {
         let mut ex = Explorer::new(Box::new(move || w()), self.visible);
         ex.set_icons(self.icons);
         ex.set_font_px(self.font_px);
+        ex.set_typeahead(self.ta_cfg);
         Pane { key, ex }
     }
 
@@ -226,6 +229,14 @@ impl ExplorerSet {
         self.icons = on;
         for p in &mut self.panes {
             p.ex.set_icons(on);
+        }
+    }
+
+    /// 타입어헤드 설정(전 칸 · 새 칸에도).
+    pub(crate) fn set_typeahead(&mut self, cfg: crate::explorer::TypeAheadCfg) {
+        self.ta_cfg = cfg;
+        for p in &mut self.panes {
+            p.ex.set_typeahead(cfg);
         }
     }
 
@@ -468,6 +479,21 @@ impl ExplorerSet {
         // 팝업 층 — 모든 칸을 그린 뒤.
         for &i in &laid {
             self.panes[i].ex.paint_menu(dc, th);
+        }
+        // 타입어헤드 HUD(키보드 대상 칸의 접두 · 탐색기 영역 기준 3×3 위치).
+        if self.focused {
+            let ex = &self.panes[self.shown].ex;
+            let text = ex.typeahead_text();
+            if !text.is_empty() {
+                nexa_ctl::typeahead::paint_hud(
+                    dc,
+                    self.bounds,
+                    self.scale,
+                    ex.typeahead_pos(),
+                    &text,
+                    th,
+                );
+            }
         }
     }
 }

@@ -129,7 +129,22 @@ pub enum SettingKind {
     Bool,
     /// 자유 텍스트(목록·색 등 — 앱이 해석).
     Text,
+    /// 화면 안 위치(3×3) — 설정 창은 이미지 드롭다운(미니 화면 타일)으로 고른다(사용자 09-19). 값 = [`POSITIONS`].
+    Position,
 }
+
+/// [`SettingKind::Position`] 값(행우선 · 왼쪽 위 → 오른쪽 아래).
+pub const POSITIONS: [&str; 9] = [
+    "top_left",
+    "top_center",
+    "top_right",
+    "mid_left",
+    "center",
+    "mid_right",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+];
 
 /// 설정 항목 — 레지스트리 한 줄. VS Code `IConfigurationNode.properties[key]` + TOC 카테고리에 해당.
 #[derive(Clone, Copy, Debug)]
@@ -1049,6 +1064,50 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExplorerTooltip,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // 탐색기 타입어헤드(nexa-beep 이식 · 사용자 09-19): 글자를 치면 접두 항목으로 · 한글 직접 조합 · ↑/↓ 매치 순환 · HUD.
+    Entry {
+        key: "explorer.typeahead",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTypeahead,
+        desc: Msg::DescTypeahead,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "explorer.typeahead_timeout",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTypeaheadTimeout,
+        desc: Msg::DescTypeaheadTimeout,
+        kind: SettingKind::Int {
+            min: 200,
+            max: 60000,
+        },
+        default: "2000",
+    },
+    Entry {
+        key: "explorer.typeahead_space",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTypeaheadSpace,
+        desc: Msg::DescTypeaheadSpace,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "explorer.typeahead_special",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTypeaheadSpecial,
+        desc: Msg::DescTypeaheadSpecial,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "explorer.typeahead_pos",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTypeaheadPos,
+        desc: Msg::DescTypeaheadPos,
+        kind: SettingKind::Position,
+        default: "bottom_left",
     },
     Entry {
         key: "grid.scroll",
@@ -2618,6 +2677,10 @@ impl Dep {
 /// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.refresh_secs", "explorer.auto_refresh", Dep::On),
+    ("explorer.typeahead_timeout", "explorer.typeahead", Dep::On),
+    ("explorer.typeahead_space", "explorer.typeahead", Dep::On),
+    ("explorer.typeahead_special", "explorer.typeahead", Dep::On),
+    ("explorer.typeahead_pos", "explorer.typeahead", Dep::On),
     ("run.toast_hide_secs", "run.toast", Dep::On),
     ("log.dev_layers", "log.dev_mode", Dep::On),
     ("editor.smart_indent", "editor.auto_indent", Dep::On),
@@ -2740,6 +2803,7 @@ pub fn allowed(kind: SettingKind) -> String {
         SettingKind::Size { min, max } => format!("{min}..{max}px | Npt"),
         SettingKind::Bool => "on | off".into(),
         SettingKind::Text => "text".into(),
+        SettingKind::Position => POSITIONS.join(" | "),
     }
 }
 
@@ -2782,6 +2846,13 @@ pub fn normalize(kind: SettingKind, raw: &str) -> Option<String> {
             _ => None,
         },
         SettingKind::Text => Some(v.to_string()),
+        SettingKind::Position => {
+            let lower = v.to_ascii_lowercase();
+            POSITIONS
+                .iter()
+                .find(|p| **p == lower)
+                .map(|p| (*p).to_string())
+        }
     }
 }
 

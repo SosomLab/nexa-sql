@@ -154,6 +154,9 @@ impl TxLogWin {
             }
             self.ctx = Some(ctx);
         }
+        // ★ IME 허용 — 이 창에도 한글 입력란(검색·값)이 있다. winit 창은 기본으로 IME가 붙지 않아(Windows) 한글 조합이
+        //   안 됐다(사용자 09-19 "설정 검색에 한글 입력이 안 된다" · 접속 창·파일 창은 이미 켜 둔 것과 같은 규칙).
+        win.set_ime_allowed(true);
         self.window = Some(win);
         self.search.set_focused(true);
         self.redraw();

@@ -2,6 +2,22 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-19 (75차 · win) — 🔧 설정 창·트랜잭션 로그 창 **한글 입력 불가**(창 생성 시 `set_ime_allowed(true)` 누락) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (74차 · win) — 타입어헤드 HUD 위치 = **이미지 드롭다운**(nexa-ctl `PositionDropdown` · `SettingKind::Position` · 설정 창 `CardCtl::Pos`) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (73차 · win) — 탐색기 DBMS 오브젝트 종류 라벨 12종 = 모든 언어에서 영어(Tables · Views · Procedures …) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (72차 · win) — 🔧 설정 창 왼쪽 위 스위치 조각(화면 밖 카드의 빈 bounds에 nexa-ctl Switch가 (0,0)에 그림 → `is_empty` 가드 · Checkbox도) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (71차 · win) — ★ 탐색기 **타입어헤드**(nexa-beep 이식 · nexa-ctl `typeahead`/`hangul` 부품 · 한글 직접 조합 · Windows 한/영 키 · ↑/↓ 매치 순환 · HUD · 설정 5키 `explorer.typeahead*`) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (70차 · win) — 🔧 탐색기·파일 트리 **← 키**: 펼쳐진 폴더 = 접기 · 아니면 상위로(nexa-ctl TreeControl 공용 + 오브젝트 탐색기) · **DBeaver 내비게이터 키**(→ 첫 자식 · Home/End · PageUp/Down · Backspace · `+`/`-`/`*` · 앞글자 찾기 · [28 §1-1](28-object-explorer.md)) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (69차 · win) — 🔧 결과 도구줄 **연결 전/불필요 시 비활성**(nexa-ctl 글리프 비활성 흐림 결함 · `set_session_connected` · 새로고침 = 결과+출처 · Σ = 서버에 더 있을 때만 · 행 편집 버튼 T-94까지 흐림 · [43 §4-2](43-fetch-model-and-result-tabs.md)) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (68차 · win) — 🔧 툴바 **Disconnect 배지가 새 탭에 바로 안 늘던 결함**(표식 갱신이 탭 묶기보다 먼저 → 순서 교정 + `sess_ui_dirty`) · 실기 자동화 `scripts/win-badge-probe.ps1`(1→없음 · 2 · 3 · 닫기 2 즉시) → [journal](journal/2026-09-19.md)
+
 ## 2026-09-19 (67차 · win) — 🔧 **캐럿 깜빡임 위상 = 입력 기준**(↑로 1열 이동이 "오래 걸리던" 것 = 위상 꺼짐에 옮기면 최대 0.5초 안 보임 · Sublime/VS Code처럼 입력 직후 켜짐) · 실측 [55 §6](55-editor-input-latency.md): Release 입력→present **2~3 ms** · 이동 판정 0.01 ms · 계측 `tmark` 한 줄 + `scripts/win-latency-probe.ps1` · 헛짚기 2건(모달 열린 채 측정 · eprintln 파이프 비용) 기록 → [journal](journal/2026-09-19.md)
 
 ## 2026-09-19 (66차 · mac) — ✅ 접속 창 **접속 중 막**(반투명 덮개 · 입력 차단 · 대상/단계/경과 카드 · 성공 시 닫힘 · 실패 시 사유) · 65차 탐색기 루트 경주 수정

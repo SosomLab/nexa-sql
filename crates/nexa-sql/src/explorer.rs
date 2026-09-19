@@ -51,6 +51,26 @@ struct Node {
     state: LoadState,
 }
 
+/// 탐색기 타입어헤드 설정 한 벌(`explorer.typeahead*` · 호스트가 만들어 전 칸에 준다).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct TypeAheadCfg {
+    pub enabled: bool,
+    pub timeout_ms: u64,
+    pub filter: nexa_ctl::TypeAheadFilter,
+    pub pos: nexa_ctl::HudPos,
+}
+
+impl Default for TypeAheadCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            timeout_ms: nexa_ctl::TYPEAHEAD_TIMEOUT_MS,
+            filter: nexa_ctl::TypeAheadFilter::default(),
+            pos: nexa_ctl::HudPos::BottomLeft,
+        }
+    }
+}
+
 /// 메타 스레드에 보내는 요청(`gen` = 접속 세대 · 옛 세대의 응답은 버린다).
 enum Req {
     Open {
@@ -294,6 +314,11 @@ pub(crate) struct Explorer {
     row_px: i32,
     /// 로딩 점 애니메이션(300ms 단계) — 로딩 중인 노드가 있을 때만 다시 그린다(nexa-dir2 "Loading…" 자리 · 사용자 09-15).
     dots_step: u64,
+    /// 타입어헤드(nexa-ctl 부품 · nexa-beep 이식 · 사용자 09-19): 버퍼+한글 조합+타임아웃. 매칭은 이 파일(`label`).
+    typeahead: nexa_ctl::TypeAhead,
+    ta_cfg: TypeAheadCfg,
+    /// 마지막 틱 시각(ms) — 키 사건에는 시각이 없어 틱이 준 값을 쓴다.
+    now_hint: u64,
     /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
     live_results: Vec<LiveResult>,
     pub(crate) live_inflight: bool,
@@ -563,6 +588,9 @@ impl Explorer {
             source_pending: false,
             row_px: 0,
             dots_step: 0,
+            typeahead: nexa_ctl::TypeAhead::default(),
+            ta_cfg: TypeAheadCfg::default(),
+            now_hint: 0,
             live_results: Vec::new(),
             live_inflight: false,
             offline: false,
@@ -654,6 +682,9 @@ impl Explorer {
     }
 
     pub(crate) fn set_focused(&mut self, on: bool) {
+        if !on {
+            self.typeahead.clear();
+        }
         self.focused = on;
         if !on {
             self.menu.close();
@@ -1237,7 +1268,8 @@ impl Explorer {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        let a = self.bars.tick(now_ms);
+        self.now_hint = now_ms;
+        let a = self.bars.tick(now_ms) | self.typeahead.tick(now_ms);
         let b = self.hover_fade.tick(now_ms);
         // 로딩 점(…)은 300ms마다 한 단계 — 로딩 노드가 있을 때만.
         let mut c = false;
@@ -1384,7 +1416,35 @@ impl Explorer {
                 let pos = self
                     .selected
                     .and_then(|s| rows.iter().position(|&r| r == s));
+                // 타입어헤드 활성이면 ↑/↓ = **접두 매치 안에서만 순환**(역방향 포함) · 순환 중엔 타임아웃 기준을 되돌린다(nexa-beep 규칙).
+                let ta = self.typeahead.composing();
                 match key {
+                    CtlKey::Down if !ta.is_empty() => {
+                        self.typeahead.touch(self.now_hint);
+                        let n = rows.len().max(1);
+                        let from = pos.map_or(0, |p| (p + 1) % n);
+                        if let Some(k) =
+                            nexa_ctl::typeahead::find_prefix(rows.len(), from, &ta, |k| {
+                                self.label(rows[k]).0
+                            })
+                        {
+                            self.selected = Some(rows[k]);
+                            self.ensure_visible(rows[k]);
+                        }
+                    }
+                    CtlKey::Up if !ta.is_empty() => {
+                        self.typeahead.touch(self.now_hint);
+                        let n = rows.len().max(1);
+                        let from = pos.map_or(0, |p| (p + n - 1) % n);
+                        if let Some(k) =
+                            nexa_ctl::typeahead::find_prefix_rev(rows.len(), from, &ta, |k| {
+                                self.label(rows[k]).0
+                            })
+                        {
+                            self.selected = Some(rows[k]);
+                            self.ensure_visible(rows[k]);
+                        }
+                    }
                     CtlKey::Down => {
                         let np = pos.map_or(0, |p| (p + 1).min(rows.len().saturating_sub(1)));
                         if let Some(&n) = rows.get(np) {
@@ -1399,17 +1459,58 @@ impl Explorer {
                             self.ensure_visible(n);
                         }
                     }
+                    // → = 접힌 노드면 펼치고 · 이미 펼쳐져 있으면 **첫 자식으로**(DBeaver/SWT · Windows 탐색기 · 09-19).
                     CtlKey::Right => {
                         if let Some(i) = self.selected {
-                            if !self.nodes[i].expanded {
+                            if self.nodes[i].expandable && !self.nodes[i].expanded {
                                 self.toggle(i);
+                            } else if let Some(&c) = self.nodes[i].children.first() {
+                                if self.nodes[i].expanded {
+                                    self.selected = Some(c);
+                                    self.ensure_visible(c);
+                                }
                             }
                         }
                     }
+                    // Home/End = 첫/마지막 행 · PageUp/PageDown = 보이는 행 수만큼(DBeaver 내비게이터 · 09-19).
+                    CtlKey::Home => {
+                        if let Some(&n) = rows.first() {
+                            self.selected = Some(n);
+                            self.ensure_visible(n);
+                        }
+                    }
+                    CtlKey::End => {
+                        if let Some(&n) = rows.last() {
+                            self.selected = Some(n);
+                            self.ensure_visible(n);
+                        }
+                    }
+                    CtlKey::PageUp | CtlKey::PageDown => {
+                        let page = (self.bounds.h / self.row_h().max(1)).max(1) as usize;
+                        let np = match key {
+                            CtlKey::PageUp => pos.map_or(0, |p| p.saturating_sub(page)),
+                            _ => pos.map_or(0, |p| (p + page).min(rows.len().saturating_sub(1))),
+                        };
+                        if let Some(&n) = rows.get(np) {
+                            self.selected = Some(n);
+                            self.ensure_visible(n);
+                        }
+                    }
+                    // ← = 펼쳐진 노드면 접고 · 아니면(잎·접힘) **상위 노드로**(파일 탐색기 관례 · 사용자 09-19).
                     CtlKey::Left => {
                         if let Some(i) = self.selected {
-                            if self.nodes[i].expanded {
+                            if self.nodes[i].expanded && self.nodes[i].expandable {
                                 self.toggle(i);
+                            } else if let Some(p) = pos.and_then(|p| {
+                                let d = self.nodes[i].depth;
+                                rows[..p]
+                                    .iter()
+                                    .rev()
+                                    .copied()
+                                    .find(|&r| self.nodes[r].depth < d)
+                            }) {
+                                self.selected = Some(p);
+                                self.ensure_visible(p);
                             }
                         }
                     }
@@ -1418,12 +1519,127 @@ impl Explorer {
                             self.activate(i);
                         }
                     }
-                    CtlKey::Escape => self.menu.close(),
+                    CtlKey::Escape => {
+                        self.typeahead.clear();
+                        self.menu.close();
+                    }
                     _ => return false,
                 }
                 true
             }
+            // 글자 키(DBeaver/SWT 트리 관례 · 09-19): 타입어헤드가 비어 있을 때 Backspace = 상위 · `*` = 하위 전부 펼침(읽어 둔 것만) ·
+            //   `+`/`-` = 펼침/접힘. 그 밖의 글자(또는 접두 입력 중의 모든 글자) = **타입어헤드**(nexa-ctl 부품 · 설정 `explorer.typeahead*`).
+            InputEvent::Char { c, .. } if self.focused => self.on_char(c),
             _ => false,
+        }
+    }
+
+    fn on_char(&mut self, c: char) -> bool {
+        let rows = self.visible_rows();
+        let Some(i) = self.selected else {
+            return false;
+        };
+        let pos = rows.iter().position(|&r| r == i);
+        match c {
+            '\u{8}' if self.typeahead.is_active() => {
+                if let Some(q) = self.typeahead.backspace(self.now_hint) {
+                    if let Some(k) = nexa_ctl::typeahead::find_prefix(
+                        rows.len(),
+                        pos.unwrap_or(0),
+                        &q.prefix,
+                        |k| self.label(rows[k]).0,
+                    ) {
+                        self.selected = Some(rows[k]);
+                        self.ensure_visible(rows[k]);
+                    }
+                }
+                true
+            }
+            '\u{8}' => {
+                let d = self.nodes[i].depth;
+                if let Some(p) = pos.and_then(|p| {
+                    rows[..p]
+                        .iter()
+                        .rev()
+                        .copied()
+                        .find(|&r| self.nodes[r].depth < d)
+                }) {
+                    self.selected = Some(p);
+                    self.ensure_visible(p);
+                }
+                true
+            }
+            '+' if !self.typeahead.is_active() => {
+                if self.nodes[i].expandable && !self.nodes[i].expanded {
+                    self.toggle(i);
+                }
+                true
+            }
+            '-' if !self.typeahead.is_active() => {
+                if self.nodes[i].expanded {
+                    self.toggle(i);
+                }
+                true
+            }
+            '*' if !self.typeahead.is_active() => {
+                self.expand_loaded_subtree(i);
+                self.ensure_visible(i);
+                true
+            }
+            c => self.typeahead_char(c, pos, &rows),
+        }
+    }
+
+    /// 타입어헤드 글자 처리 — 설정 필터를 지난 글자를 버퍼에 넣고(한글은 조합) 접두 매치로 점프.
+    /// `include_caret`(접두 확장)이면 지금 행부터, 새 접두면 다음 행부터 순환(nexa-beep 규칙).
+    fn typeahead_char(&mut self, c: char, pos: Option<usize>, rows: &[usize]) -> bool {
+        if !self.ta_cfg.enabled || !self.ta_cfg.filter.accepts(c) {
+            return false;
+        }
+        let q = self.typeahead.push(c, self.now_hint);
+        let n = rows.len();
+        if n == 0 {
+            return true;
+        }
+        let from = pos.map_or(0, |p| if q.include_caret { p } else { (p + 1) % n });
+        if let Some(k) =
+            nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| self.label(rows[k]).0)
+        {
+            self.selected = Some(rows[k]);
+            self.ensure_visible(rows[k]);
+        }
+        true
+    }
+
+    /// 타입어헤드 설정(호스트 · 바뀔 때).
+    pub(crate) fn set_typeahead(&mut self, cfg: TypeAheadCfg) {
+        self.ta_cfg = cfg;
+        self.typeahead.set_timeout(cfg.timeout_ms);
+        if !cfg.enabled {
+            self.typeahead.clear();
+        }
+    }
+
+    /// 입력 중인 접두(HUD 표시용 · 비면 없음).
+    pub(crate) fn typeahead_text(&self) -> String {
+        self.typeahead.composing()
+    }
+
+    /// 타입어헤드 HUD 위치(설정).
+    pub(crate) fn typeahead_pos(&self) -> nexa_ctl::HudPos {
+        self.ta_cfg.pos
+    }
+
+    /// 선택 노드와 그 아래 **읽어 둔** 하위를 전부 펼친다(`*` · 아직 안 읽은 폴더는 요청만 나가고 그 아래는 다음 `*`로).
+    fn expand_loaded_subtree(&mut self, root: usize) {
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            if self.nodes[i].expandable && !self.nodes[i].expanded {
+                self.toggle(i);
+            }
+            if self.nodes[i].state == LoadState::Loaded {
+                stack.extend(self.nodes[i].children.iter().copied());
+            }
         }
     }
 

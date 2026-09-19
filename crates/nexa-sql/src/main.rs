@@ -184,6 +184,9 @@ struct App {
     keymap: Keymap,
     /// 2단 단축키의 첫 조합(`Ctrl+K` 뒤 다음 키 대기 · 09-16).
     pending_chord: Option<Chord>,
+    /// Windows 탐색기 타입어헤드 한/영 상태(앱 소유 · nexa-beep docs/27 §8): 탐색기는 IME를 끊어 OS 한/영이 무력하므로
+    /// 한/영 키를 앱이 받아 토글하고 라틴 키를 두벌식 자모로 번역한다. mac은 레이아웃이 자모를 주므로 안 쓴다.
+    hangul_mode: bool,
     open_keys: bool,
     keys_win: KeysWin,
     /// 환경 설정 창(T-39 · 사용자 09-15).
@@ -286,6 +289,8 @@ struct App {
     badge_menu_tab: Option<u64>,
     /// 마지막으로 표식을 맞춘 시점의 탭 목록(바뀌면 즉시 다시 맞춘다).
     badge_tabs: Vec<u64>,
+    /// 탭↔세션 묶임이 바뀌었으니 표식·해제 버튼 배지를 다시 맞춰야 함(`sync_sess`가 새 탭을 묶는 순간 · 09-19).
+    sess_ui_dirty: bool,
     /// 유휴 세션 점검 다음 시각(§6 · 30초 간격).
     idle_next: Instant,
     /// 접속 테스트 결과(요청당 스레드 · 워커와 별개).
@@ -2691,8 +2696,12 @@ impl App {
         }
         let want = self.sess_id_for_tab(tab);
         // 공유 모드의 새 탭 = **그때의 활성 공유 연결**에 바로 묶인다(사용자 09-18) — 뒤에 활성 연결을 바꿔도 이 탭은 그대로.
-        if !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing) {
-            self.tab_bind.entry(tab).or_insert(want);
+        if !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing)
+            && !self.tab_bind.contains_key(&tab)
+        {
+            self.tab_bind.insert(tab, want);
+            // 함께 쓰는 탭 수가 바뀌었다 → 해제 버튼 배지·툴팁을 바로(사용자 09-19 "탭이 추가돼도 숫자가 안 는다").
+            self.sess_ui_dirty = true;
         }
         if self.sess.id != want {
             if let Some(i) = self.parked.iter().position(|s| s.id == want) {
@@ -2937,6 +2946,9 @@ impl App {
     fn sync_gate(&mut self) {
         let blocked = !self.gate().run_other;
         // 활성 그리드는 탭 전환으로 바뀌므로 매번 알린다(그리드가 바뀔 때만 도구줄을 다시 맞춘다).
+        // 연결 전에는 서버로 나가는 결과 도구줄 버튼(새로고침·전체 조회·건수)을 전부 끈다(사용자 09-19) — 유휴 닫힘은 조용히 재접속하므로 연결로.
+        self.grid
+            .set_session_connected(self.sess.connected || self.sess.idle_closed);
         self.grid.set_session_blocked(blocked);
         if self.gate_shown == Some(blocked) {
             return;
@@ -3106,8 +3118,9 @@ impl App {
             }
             sessions::Placement::Run => {
                 // 공유 연결이 여럿일 수 있다 → 탭은 **처음 실행한 연결에 묶인다**(활성 연결을 바꿔도 이 탭은 엉뚱한 서버로 가지 않는다).
-                if !self.sess.is_private() {
-                    self.tab_bind.entry(tab).or_insert(self.sess.id);
+                if !self.sess.is_private() && !self.tab_bind.contains_key(&tab) {
+                    self.tab_bind.insert(tab, self.sess.id);
+                    self.sess_ui_dirty = true;
                 }
                 // `session.private_connect = off`의 CONNECT = 이 세션이 대상을 바꾼다 → 탐색기·재접속이 새 대상을 알게.
                 if let Some(ConnectIntent::Connect(spec)) = intent {
@@ -3701,6 +3714,13 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "explorer.typeahead"
+            | "explorer.typeahead_timeout"
+            | "explorer.typeahead_space"
+            | "explorer.typeahead_special"
+            | "explorer.typeahead_pos" => {
+                self.explorer.set_typeahead(typeahead_cfg(&self.settings))
+            }
             "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" | "ui.text_weight" => {
                 self.apply_text_render();
                 self.log_win.redraw();
@@ -7282,14 +7302,17 @@ impl App {
         if self.editors.take_new_tab_created() {
             self.on_new_tab();
         }
-        // 탭 목록이 바뀌었으면(새 탭·닫기) 표식을 바로 맞춘다 — 이벤트를 기다리지 않는다(바뀔 때만 · 페인트마다 아님).
-        let ids = self.editors.tab_ids();
-        if ids != self.badge_tabs {
-            self.badge_tabs = ids;
-            self.sync_sess_ui();
-        }
+        // ★ 순서(09-19): 거두기 → 활성 탭 세션 맞추기(새 탭을 공유 연결에 **묶는다**) → 표식·배지. 종전엔 표식을 먼저 맞춰
+        //   새 탭이 아직 안 묶인 상태로 배지(함께 쓰는 탭 수)를 계산했고, 다음 탭 전환 때에야 숫자가 늘었다.
         self.reap_sessions();
         self.sync_sess();
+        // 탭 목록(새 탭·닫기)이나 묶임이 바뀌었으면 표식·해제 버튼 배지를 바로 맞춘다 — 이벤트를 기다리지 않는다(바뀔 때만 · 페인트마다 아님).
+        let ids = self.editors.tab_ids();
+        if ids != self.badge_tabs || self.sess_ui_dirty {
+            self.badge_tabs = ids;
+            self.sess_ui_dirty = false;
+            self.sync_sess_ui();
+        }
         self.sync_gate();
         let cur = self.editors.active_id();
         if cur != self.panel_editor {
@@ -7881,6 +7904,14 @@ impl App {
                         if c.is_control() {
                             return None;
                         }
+                        // Windows 탐색기 한글 모드: IME가 없어 라틴이 온다 → 두벌식 자모로(대문자 = 시프트 · 숫자·기호는 그대로).
+                        let c =
+                            if cfg!(windows) && self.focus == Focus::Explorer && self.hangul_mode {
+                                nexa_ctl::hangul::jamo_from_qwerty(c, c.is_ascii_uppercase())
+                                    .unwrap_or(c)
+                            } else {
+                                c
+                            };
                         InputEvent::Char { c, now_ms: 0 }
                     }
                     _ => return None,
@@ -8249,7 +8280,9 @@ impl App {
                 if !matches!(ev, InputEvent::MouseMove { .. }) {
                     return;
                 }
-            } else if self.focus == Focus::Explorer && matches!(ev, InputEvent::Key { .. }) {
+            } else if self.focus == Focus::Explorer
+                && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. })
+            {
                 if self.explorer.on_event(&ev) {
                     self.redraw();
                 }
@@ -9116,6 +9149,24 @@ impl ApplicationHandler<Wake> for App {
                 return;
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
+                // 한/영 키(Windows · 탐색기 포커스 전용 — nexa-beep docs/27 §8): 탐색기는 IME를 끊어 OS 전환이 무력하므로
+                //   앱이 모드를 토글한다. VK_HANGUL은 키보드 드라이버 수준이라 IME 없이도 온다(논리 HangulMode · 물리 Lang1).
+                if cfg!(windows)
+                    && self.focus == Focus::Explorer
+                    && (kev.logical_key == Key::Named(NamedKey::HangulMode)
+                        || kev.physical_key
+                            == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Lang1))
+                {
+                    self.hangul_mode = !self.hangul_mode;
+                    self.sess.status = t(if self.hangul_mode {
+                        Msg::StHangulOn
+                    } else {
+                        Msg::StHangulOff
+                    })
+                    .into();
+                    self.redraw();
+                    return;
+                }
                 // ★ 단축키 = 키맵 표 조회(Sublime 기본 · `key.*` 설정 · 사용자 09-15). 조합키 없는 글자는 타이핑이므로
                 // 표에 있어도 가로채지 않는다(F-키·Enter 같은 이름 키는 예외).
                 if let Some(ch) = Chord::from_winit(
@@ -9468,6 +9519,7 @@ fn main() {
             settings.flag("explorer.visible"),
         );
         e.set_icons(settings.flag("explorer.icons"));
+        e.set_typeahead(typeahead_cfg(&settings));
         e
     };
     let colors_win = ColorsWin::new(
@@ -9517,6 +9569,7 @@ fn main() {
         colors_win,
         keymap,
         pending_chord: None,
+        hangul_mode: false,
         open_keys: false,
         keys_win: KeysWin::new(),
         open_prefs: false,
@@ -9585,6 +9638,7 @@ fn main() {
         gate_shown: None,
         badge_menu_tab: None,
         badge_tabs: Vec::new(),
+        sess_ui_dirty: false,
         idle_next: Instant::now(),
         tests_tx,
         tests_rx,
@@ -9796,6 +9850,19 @@ impl FrameTrace {
                 ..Self::default()
             };
         }
+    }
+}
+
+/// 탐색기 타입어헤드 설정 한 벌(`explorer.typeahead*`).
+fn typeahead_cfg(s: &Settings) -> explorer::TypeAheadCfg {
+    explorer::TypeAheadCfg {
+        enabled: s.flag("explorer.typeahead"),
+        timeout_ms: s.int("explorer.typeahead_timeout").clamp(200, 60_000) as u64,
+        filter: nexa_ctl::TypeAheadFilter {
+            space: s.flag("explorer.typeahead_space"),
+            special: s.flag("explorer.typeahead_special"),
+        },
+        pos: nexa_ctl::HudPos::parse(s.get("explorer.typeahead_pos").unwrap_or("bottom_left")),
     }
 }
 

@@ -130,13 +130,13 @@ ResultTab   { title, sql, grid: Grid, max_rows: usize /*탭 로컬*/, cursor: Op
 
 | 요소 | 동작 | 1차 |
 |---|---|---|
-| Refresh | 탭의 `sql`을 같은 세션에서 재실행(첫 세그먼트 · 탭 max_rows) | ✅ |
-| 행 추가/삭제/복제 · Save/Cancel | 데이터 편집기(T-94 · [41](41-sql-copy-key-rules.md) 키 규칙으로 문장 생성 · [34](34-transaction-ux.md) 트랜잭션) | 후속 |
+| Refresh | 탭의 `sql`을 같은 세션에서 재실행(첫 세그먼트 · 탭 max_rows) · **활성 = 결과+출처 문장 있음 ∧ 세션 연결·한가**(09-19) | ✅ |
+| 행 추가/삭제/복제 · Save/Cancel | 데이터 편집기(T-94 · [41](41-sql-copy-key-rules.md) 키 규칙으로 문장 생성 · [34](34-transaction-ux.md) 트랜잭션) — 그때까지 **비활성(흐림)** | 후속 |
 | `|<  <  >  >|` | 선택 행 이동(첫/이전/다음/끝) — 키보드와 같음 | ✅ |
 | **세그먼트 상자** `200` | 탭 로컬 max_rows(편집 → Enter → 다음 요청부터) · 초기값 = `grid.max_rows` | ✅ |
 | **`200+`**(Fetch next) | `fetch_next(cursor, max_rows)` → 이어 붙임 · 커서 없으면 OFFSET | ✅ |
 | **Fetch all** | §3-5 · 진행률 + 취소 | ✅ |
-| **Count** | 메타 세션 `SELECT COUNT(*) FROM (sql) x` → 상태 "N / 총 M" · 실패(방언·DDL)면 조용히 비활성 | ✅ |
+| **Count** | 메타 세션 `SELECT COUNT(*) FROM (sql) x` → 상태 "N / 총 M" · 실패(방언·DDL)면 조용히 비활성 · **활성 = 결과 ∧ 조회 문장 ∧ 세션 연결·한가 ∧ 페치 중 아님 ∧ 서버에 더 있음**(전부 받았으면 건수 = 행 수 · 09-19 `can_count`) | ✅ |
 | Export… | 기존 Export(파일 · [40](40-cli-usage.md) CLI와 같은 형식) — **탭 rows가 아니라 재질의로 무제한**(D-68) | ✅(기존) |
 | 상태 문구 | `200행 · 더 있음 · 0.052s(fetch 0.047s) · 15:20:52` · Count 뒤 `200 / 총 12,345` · 예산 근접 시 색 | ✅ |
 

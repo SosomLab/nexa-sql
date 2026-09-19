@@ -4,12 +4,13 @@
 //! 기본값과 다른 카드는 왼쪽 강조 막대 + [초기화]. 값은 바꾸는 즉시 호스트가 저장·반영(`PrefsAction::Changed`).
 //! 이 창은 레지스트리 스냅샷(`refresh`)만 가진다 — 설정 파일·적용은 호스트 몫.
 
-use nexa_ctl::controls::Switch;
+use nexa_ctl::controls::{PositionDropdown, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
+use nexa_ctl::HudPos;
 use nexa_ctl::{
     Button, Combo, ComboControl, ComboItem, Control, EditCtxAction, InputEvent, Invalidations,
     Key as CtlKey, LabelSide, ScrollBars, TextBox, TreeControl, TreeModel, TreeNode, TreeView,
@@ -58,6 +59,8 @@ enum CardCtl {
     Bool(Switch),
     Choice(Box<Combo>),
     Text(Box<TextBox>),
+    /// 3×3 위치 — 이미지 드롭다운(선택 타일 + ▾ · 팝업 = 그리드 · 사용자 09-19). 값은 긴 이름(`bottom_left`) ↔ 컨트롤 코드(`bl`).
+    Pos(Box<PositionDropdown>),
 }
 
 struct Card {
@@ -258,6 +261,7 @@ impl PrefsWin {
                 match &mut c.ctl {
                     CardCtl::Bool(sw) => sw.set_on(sn.value == "on"),
                     CardCtl::Choice(cb) => cb.select_value(&sn.value),
+                    CardCtl::Pos(pd) => pd.select_value(HudPos::parse(&sn.value).code()),
                     CardCtl::Text(tb) => {
                         if !tb.is_focused() {
                             tb.set_text(&sn.value);
@@ -345,6 +349,9 @@ impl PrefsWin {
                             .unwrap_or(0);
                         CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
+                    SettingKind::Position => CardCtl::Pos(Box::new(PositionDropdown::new(
+                        HudPos::parse(&sn.value).code(),
+                    ))),
                     SettingKind::Int { .. } | SettingKind::Size { .. } | SettingKind::Text => {
                         // 긴 값은 **앞부터** 보이게(캐럿을 0으로 · 사용자 09-17).
                         let mut tb = TextBox::new("").with_text(&sn.value);
@@ -430,6 +437,7 @@ impl PrefsWin {
             match &mut c.ctl {
                 CardCtl::Bool(_) => {}
                 CardCtl::Choice(cb) => any |= cb.tick_hover(now_ms),
+                CardCtl::Pos(_) => {}
                 CardCtl::Text(tb) => any |= tb.tick(now_ms),
             }
         }
@@ -449,6 +457,7 @@ impl PrefsWin {
                         || match &c.ctl {
                             CardCtl::Bool(_) => false,
                             CardCtl::Choice(cb) => cb.hover_animating(),
+                            CardCtl::Pos(_) => false,
                             CardCtl::Text(tb) => tb.is_animating(),
                         }
                 }))
@@ -496,6 +505,9 @@ impl PrefsWin {
             }
             self.ctx = Some(ctx);
         }
+        // ★ IME 허용 — 이 창에도 한글 입력란(검색·값)이 있다. winit 창은 기본으로 IME가 붙지 않아(Windows) 한글 조합이
+        //   안 됐다(사용자 09-19 "설정 검색에 한글 입력이 안 된다" · 접속 창·파일 창은 이미 켜 둔 것과 같은 규칙).
+        win.set_ime_allowed(true);
         self.window = Some(win);
         self.rebuild_cards();
         self.layout();
@@ -654,6 +666,7 @@ impl PrefsWin {
     fn any_combo_open(&self) -> bool {
         self.cards.iter().any(|c| match &c.ctl {
             CardCtl::Choice(cb) => cb.is_open(),
+            CardCtl::Pos(pd) => pd.is_open(),
             _ => false,
         })
     }
@@ -735,6 +748,17 @@ impl PrefsWin {
                         _ => {}
                     }
                     self.redraw();
+                }
+                // ★ 검색 상자는 IME 경로에서도 **바로** 거른다 — 조합 중 글자까지 포함(`display_text`)해 한 글자씩 반응.
+                //   종전엔 `take_changed` 수거가 일반 사건 경로에만 있어 한글을 쳐도 다음 키/클릭 때에야 목록이 바뀌었다(사용자 09-19).
+                let _ = self.search.take_changed();
+                if self.search.is_focused() {
+                    let q = self.search.display_text();
+                    if q != self.query {
+                        self.query = q;
+                        self.rebuild_cards();
+                        self.redraw();
+                    }
                 }
                 return self.after_edit();
             }
@@ -824,13 +848,20 @@ impl PrefsWin {
         if self.any_combo_open() {
             let mut on_head = false;
             for c in &mut self.cards {
-                if let CardCtl::Choice(cb) = &mut c.ctl {
-                    if cb.is_open() {
+                match &mut c.ctl {
+                    CardCtl::Choice(cb) if cb.is_open() => {
                         if let InputEvent::MouseDown { x, y, .. } = ie {
                             on_head |= cb.bounds().contains(Point { x, y });
                         }
                         cb.on_event(&ie, &mut inv);
                     }
+                    CardCtl::Pos(pd) if pd.is_open() => {
+                        if let InputEvent::MouseDown { x, y, .. } = ie {
+                            on_head |= pd.bounds().contains(Point { x, y });
+                        }
+                        pd.on_event(&ie, &mut inv);
+                    }
+                    _ => {}
                 }
             }
             let a = self.collect_changes();
@@ -869,6 +900,7 @@ impl PrefsWin {
                 match &mut c.ctl {
                     CardCtl::Text(tb) => tb.set_focused(tb.bounds().contains(p)),
                     CardCtl::Choice(cb) => cb.set_focused(cb.bounds().contains(p)),
+                    CardCtl::Pos(pd) => pd.set_focused(pd.bounds().contains(p)),
                     CardCtl::Bool(sw) => sw.set_focused(false),
                 }
                 c.reset.set_focused(c.reset.bounds().contains(p));
@@ -980,6 +1012,7 @@ impl PrefsWin {
                     match &mut c.ctl {
                         CardCtl::Bool(sw) => sw.on_event(&ie, &mut inv),
                         CardCtl::Choice(cb) => cb.on_event(&ie, &mut inv),
+                        CardCtl::Pos(pd) => pd.on_event(&ie, &mut inv),
                         CardCtl::Text(tb) => tb.on_event(&ie, &mut inv),
                     }
                 }
@@ -1075,6 +1108,14 @@ impl PrefsWin {
                 CardCtl::Choice(cb) => {
                     if let Some(v) = cb.take_changed() {
                         return PrefsAction::Changed { key, value: v };
+                    }
+                }
+                CardCtl::Pos(pd) => {
+                    if let Some(code) = pd.take_changed() {
+                        return PrefsAction::Changed {
+                            key,
+                            value: HudPos::from_code(&code).as_str().to_string(),
+                        };
                     }
                 }
                 CardCtl::Text(tb) => {
@@ -1176,6 +1217,7 @@ impl PrefsWin {
                     let ctl_w = match &c.ctl {
                         CardCtl::Bool(_) => (56.0 * s).round() as i32,
                         CardCtl::Choice(_) => (260.0 * s).round() as i32,
+                        CardCtl::Pos(_) => (64.0 * s).round() as i32,
                         CardCtl::Text(_) => (320.0 * s).round() as i32,
                     };
                     let aux_w = if c.aux.is_some() {
@@ -1207,6 +1249,7 @@ impl PrefsWin {
                 let ctl_w = match &c.ctl {
                     CardCtl::Bool(_) => (56.0 * s).round() as i32,
                     CardCtl::Choice(_) => (260.0 * s).round() as i32,
+                    CardCtl::Pos(_) => (64.0 * s).round() as i32,
                     CardCtl::Text(_) => (320.0 * s).round() as i32,
                 };
                 let visible = y + ch > list.y && y < list.bottom();
@@ -1227,6 +1270,11 @@ impl PrefsWin {
                     CardCtl::Choice(cb) => {
                         cb.set_scale(s);
                         cb.set_bounds(r, &mut inv);
+                    }
+                    CardCtl::Pos(pd) => {
+                        pd.set_scale(s);
+                        pd.set_max_bottom(list.bottom());
+                        pd.set_bounds(r, &mut inv);
                     }
                     CardCtl::Text(tb) => {
                         tb.set_scale(s);
@@ -1347,6 +1395,7 @@ impl PrefsWin {
                 match &c.ctl {
                     CardCtl::Bool(sw) => sw.paint(&mut dc, th),
                     CardCtl::Choice(_) => {}
+                    CardCtl::Pos(pd) => pd.paint(&mut dc, th),
                     CardCtl::Text(tb) => tb.paint(&mut dc, th),
                 }
                 if c.locked {
@@ -1354,6 +1403,7 @@ impl PrefsWin {
                     let cr = match &c.ctl {
                         CardCtl::Bool(sw) => sw.bounds(),
                         CardCtl::Choice(cb) => cb.bounds(),
+                        CardCtl::Pos(pd) => pd.bounds(),
                         CardCtl::Text(tb) => tb.bounds(),
                     };
                     dc.fill_rect_alpha(cr, th.panel_bg, 0.6);
@@ -1391,8 +1441,10 @@ impl PrefsWin {
                 if c.rect.h == 0 {
                     continue;
                 }
-                if let CardCtl::Choice(cb) = &c.ctl {
-                    cb.paint(&mut dc, th);
+                match &c.ctl {
+                    CardCtl::Choice(cb) => cb.paint(&mut dc, th),
+                    CardCtl::Pos(pd) => pd.paint_popup(&mut dc, th),
+                    _ => {}
                 }
             }
             self.bars.paint(

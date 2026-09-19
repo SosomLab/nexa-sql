@@ -247,6 +247,8 @@ pub(crate) struct Grid {
     /// ★ 이 결과가 속한 **세션이 다른 작업 중**(docs/52 §3) — 호스트가 알린다. 켜져 있는 동안 추가 페치·전체 조회·건수·새로고침을
     ///   요청하지 않는다(자동 페치 포함 · 도구줄 흐림). 진행 중인 전체 조회의 ■는 그대로(막힌 상태를 푸는 버튼).
     session_blocked: bool,
+    /// 세션이 연결돼 있는가(호스트 · 유휴 닫힘은 조용히 재접속하므로 연결로 본다) — 아니면 새로고침·전체 조회·건수 전부 비활성(사용자 09-19).
+    session_connected: bool,
     /// 전체 조회가 나가 있다 — 그 사이 도착하는 늦은 세그먼트는 버린다(사용자 09-17: 자동 페치 중 누른 전체 조회가 무시되던 결함).
     fetch_all_pending: bool,
     fetch_req: Option<FetchReq>,
@@ -341,9 +343,9 @@ impl Default for Grid {
             tb_view: Self::bar(vec![ToolItem::new("view", toolicons::view_mode())
                 .with_dropdown()
                 .tip(t(Msg::TipViewMode))]),
-            tb_refresh: Self::bar(vec![
-                ToolItem::new("refresh", toolicons::refresh()).tip(t(Msg::TipRefresh))
-            ]),
+            tb_refresh: Self::bar(vec![ToolItem::new("refresh", toolicons::refresh())
+                .tip(t(Msg::TipRefresh))
+                .disabled()]),
             tb_edit: Self::bar(vec![
                 ToolItem::new("row.add", ToolIcon::Glyph("+".into()))
                     .tip(t(Msg::TipRowAdd))
@@ -379,6 +381,7 @@ impl Default for Grid {
             total: None,
             fetching: false,
             session_blocked: false,
+            session_connected: true,
             fetch_all_pending: false,
             fetch_req: None,
             fetch_progress: None,
@@ -582,7 +585,7 @@ impl Grid {
     ///   나가 있지 않을 때만(클릭 guard와 같은 조건 · 눌러도 아무 일 없는 버튼을 켜 두지 않는다).
     fn sync_fetch_tools(&mut self) {
         let mut inv = Invalidations::default();
-        let open = !self.session_blocked;
+        let open = self.session_open();
         self.tb_fetch
             .set_item_enabled("fetch.stop", self.fetch_all_pending, &mut inv);
         // 전체 조회 = 나머지 이어 받기라 **더 있을 때만**(전부 받았으면 흐림 · 09-17) · 세션이 한가할 때만(docs/52 §3).
@@ -591,18 +594,28 @@ impl Grid {
             open && !self.fetch_all_pending && self.rs.is_some() && self.more,
             &mut inv,
         );
-        // Σ 건수 = 결과가 있고 · 조회 문장에서 왔고 · 세션이 한가하고 · 다른 페치/건수가 나가 있지 않을 때만(09-19 규정).
-        self.tb_fetch.set_item_enabled(
-            "count",
-            open && self.rs.is_some() && self.countable && !self.fetching,
-            &mut inv,
-        );
-        self.tb_refresh.set_item_enabled("refresh", open, &mut inv);
+        // Σ 건수 = 결과가 있고 · 조회 문장에서 왔고 · 세션이 연결·한가하고 · 다른 페치/건수가 나가 있지 않고 ·
+        //   **서버에 더 있을 때만**(전부 받았으면 건수 = 행 수라 불필요 · 사용자 09-19)(09-19 규정 · `can_count`와 같은 식).
+        let count = self.can_count();
+        self.tb_fetch.set_item_enabled("count", count, &mut inv);
+        // 새로고침 = 다시 실행할 문장이 있는 결과가 있을 때만(눌러도 아무 일 없는 버튼을 켜 두지 않는다).
+        self.tb_refresh
+            .set_item_enabled("refresh", self.can_refresh(), &mut inv);
+    }
+
+    /// 세션이 연결돼 있고 한가한가 — 서버에 무언가를 보내는 버튼(새로고침·전체 조회·건수)의 공통 전제.
+    fn session_open(&self) -> bool {
+        !self.session_blocked && self.session_connected
     }
 
     /// 건수를 셀 수 있는 결과인가(도구줄·호스트 공용 판정).
     pub(crate) fn can_count(&self) -> bool {
-        !self.session_blocked && self.rs.is_some() && self.countable && !self.fetching
+        self.session_open() && self.rs.is_some() && self.countable && !self.fetching && self.more
+    }
+
+    /// 새로고침할 수 있는가 — 결과와 그 출처 문장이 있고 세션이 열려 있을 때.
+    fn can_refresh(&self) -> bool {
+        self.session_open() && self.rs.is_some() && !self.source_sql.trim().is_empty()
     }
 
     /// 결과가 도착했을 때 호스트가 알려 준다: 이 결과를 만든 문장(`source_sql`이 된다)과 그것이 조회 문장인가.
@@ -616,6 +629,14 @@ impl Grid {
     pub(crate) fn set_session_blocked(&mut self, blocked: bool) {
         if self.session_blocked != blocked {
             self.session_blocked = blocked;
+            self.sync_fetch_tools();
+        }
+    }
+
+    /// 세션 연결 여부(호스트 · 바뀔 때만) — 연결될 때까지 서버로 나가는 버튼은 전부 비활성(사용자 09-19).
+    pub(crate) fn set_session_connected(&mut self, connected: bool) {
+        if self.session_connected != connected {
+            self.session_connected = connected;
             self.sync_fetch_tools();
         }
     }
@@ -1014,11 +1035,11 @@ impl Grid {
                         let r = self.tb_view.bounds();
                         self.open_view_menu(r.x, r.y, scale);
                     }
-                    Some("refresh") if !self.session_blocked => self.want_refresh = true,
+                    Some("refresh") if self.can_refresh() => self.want_refresh = true,
                     // 전체 조회 = 나머지 이어 받기(자동 페치가 나가 있으면 큐).
                     Some("fetch.all") => self.request_fetch_all(),
                     Some("fetch.stop") => self.request_cancel(),
-                    Some("count") if self.can_count() && !self.source_sql.trim().is_empty() => {
+                    Some("count") if self.can_count() => {
                         self.fetch_req = Some(FetchReq::Count);
                     }
                     _ => {}
@@ -3226,14 +3247,41 @@ mod tests {
         g
     }
 
-    /// Σ 건수 활성 규정(사용자 09-19 · MC/DC): 결과 있음 · 조회 문장에서 옴 · 세션 한가 · 페치 중 아님 — 하나라도 아니면 꺼짐.
+    /// Σ 건수 활성 규정(사용자 09-19 · MC/DC): 결과 있음 · 조회 문장에서 옴 · 세션 연결·한가 · 페치 중 아님 · **서버에 더 있음** —
+    /// 하나라도 아니면 꺼짐. 새로고침은 결과+출처 문장+연결.
     #[test]
     fn count_button_rules() {
         let mut g = Grid::default();
         assert!(!g.can_count(), "실행한 적 없음(결과 없음)");
+        assert!(
+            !g.tb_refresh.item_enabled("refresh"),
+            "결과 없음 = 새로고침도 꺼짐"
+        );
         g = grid_with(&[100]);
         assert!(!g.can_count(), "결과는 있으나 출처 문장을 모른다");
+        assert!(
+            !g.tb_refresh.item_enabled("refresh"),
+            "출처 문장 없음 = 새로고침 꺼짐"
+        );
         g.set_result_origin("SELECT * FROM T", true);
+        assert!(
+            !g.can_count(),
+            "전부 받았으면(더 없음) 건수 = 행 수 → 불필요"
+        );
+        assert!(g.tb_refresh.item_enabled("refresh"));
+        g.set_more(true);
+        assert!(g.can_count());
+        g.set_session_connected(false);
+        assert!(!g.can_count(), "연결 전");
+        assert!(
+            !g.tb_refresh.item_enabled("refresh"),
+            "연결 전 = 새로고침도 꺼짐"
+        );
+        assert!(
+            !g.tb_fetch.item_enabled("fetch.all"),
+            "연결 전 = 전체 조회도 꺼짐"
+        );
+        g.set_session_connected(true);
         assert!(g.can_count());
         assert!(g.tb_fetch.item_enabled("count"));
         g.set_result_origin("CREATE TABLE X (A INT)", false);

@@ -2,6 +2,14 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-19 (75차 · win)** — 설정 창·트랜잭션 로그 창 IME 켜기(한글 입력 불가 원인 = `set_ime_allowed` 누락) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (74차 · win)** — 위치 설정 = 이미지 드롭다운(`PositionDropdown` · `SettingKind::Position` · 설정 창 배선) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (73차 · win)** — DBMS 오브젝트 종류 이름은 번역하지 않음(`Exp*` 12종 영어 고정) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (72차 · win)** — 설정 창 스위치 조각 결함(nexa-ctl Switch/Checkbox 빈 bounds 가드) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (71차 · win)** — 탐색기 타입어헤드(nexa-ctl `TypeAhead`/`TypeAheadFilter`/`find_prefix*`/`HudPos`/`paint_hud` + `hangul::Composer`/`jamo_from_qwerty` · Windows 한/영 토글 `hangul_mode` · 설정 `explorer.typeahead*` 5키 · 실기 캡처 8장) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (70차 · win)** — 탐색기/파일 트리 ← = 접기 또는 상위로(nexa-ctl `expand_selected(false)` · `explorer.rs` Left) · DBeaver 내비게이터 키(→ 첫 자식 · Home/End · Page · Backspace · `+`/`-`/`*` · 앞글자 찾기 `on_char`) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (69차 · win)** — 결과 도구줄 비활성 규정(연결 전 전부 · 새로고침 = 결과+출처 · Σ = 더 있을 때만 · 행 편집 = T-94까지) + nexa-ctl 글리프 항목 비활성 흐림 → [journal](journal/2026-09-19.md)
+- **2026-09-19 (68차 · win)** — 툴바 Disconnect 배지 새 탭 즉시 갱신(`sync_grid_tab` 순서: 묶기 → 배지 · `sess_ui_dirty`) · `scripts/win-badge-probe.ps1` → [journal](journal/2026-09-19.md)
 - **2026-09-19 (67차 · win)** — ↑ 1열 이동 "느림" 실측(55 §6 · `bench_editor` 0 ms · 실제 창 Release 2~3 ms · 경로 0.01 ms) → 원인 = 캐럿 깜빡임 위상 자유 진행 → **`blink_origin` 입력 기준 재설정** · `App.tmark` 지점 계측(`input→present` 한 줄) · `scripts/win-latency-probe.ps1` · 계측 교훈(모달 · eprintln 파이프) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (65~66차 · mac)** — 시작 인자/`dev.start_demo` 접속에서 탐색기 루트가 안 붙던 경주 수정(`spec` 선설정 · `has_server`) · **접속 창 접속 중 막**(반투명 덮개 · 입력 차단 · 대상/단계/경과 · 성공 시 닫힘). → [journal](journal/2026-09-19.md)
 - **2026-09-19 (64차 · mac)** — 접속 폼 **필수 항목 `*`·경고 띠**(T-133 · `Dialect::login_required`) · 편집기 **목표 열 유지**(goal x) · I-빔 · **입력 지연 실측·개선 [55](55-editor-input-latency.md)**(2 MB 페인트 195→13 ms · ↓ 7.5→0 ms · `EditState::rev` 캐시) · 임시 `dev.start_demo`(Debug 전용) · T-135 분할 편집 등록. → [journal](journal/2026-09-19.md)
