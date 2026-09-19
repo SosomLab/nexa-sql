@@ -117,6 +117,18 @@ enum Guard {
     Close,
 }
 
+/// 접속 중 막의 상태.
+#[derive(Clone, Debug)]
+struct Veil {
+    /// 프로필 이름(표시 · 결과 매칭).
+    name: String,
+    /// 대상(접속 문자열 · 비밀번호 없음).
+    target: String,
+    /// 단계 문구(호스트가 갱신).
+    phase: String,
+    started: Instant,
+}
+
 /// 행 안의 아이콘 버튼(신호등 다음 두 칸).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowBtn {
@@ -299,6 +311,9 @@ pub(crate) struct ConnWin {
     session_pw: HashMap<String, String>,
     /// 이 시각에 창을 닫는다(접속 성공 초록을 잠시 보여 준 뒤).
     close_at: Option<Instant>,
+    /// ★ 접속 중 막(사용자 09-19 "접속이 느리면 아무 메시지 없이 기다린다"): 창 전체를 반투명으로 덮고 입력을 막은 채
+    /// 중앙에 대상·단계·경과를 보인다. 성공 = 단계 "접속됨" 뒤 창 닫힘 · 실패 = 막을 걷고 폼/상태줄에 사유.
+    veil: Option<Veil>,
     /// 툴팁 대상 + 머물기 시작 시각(아이콘 열·행 버튼 위 · 다국어 · 사용자 09-14).
     tip: Option<(TipTarget, Instant)>,
     /// 목록 모드 결과 안내(상세 패널이 닫혀 있을 때 목록 오른쪽 아래 · 사용자 09-16) — (프로필 이름, 상태).
@@ -380,6 +395,7 @@ impl ConnWin {
             conn_marks: HashMap::new(),
             session_pw: HashMap::new(),
             close_at: None,
+            veil: None,
             tip: None,
             note: None,
             filter: TextBox::new(t(Msg::PhFilter)),
@@ -414,6 +430,38 @@ impl ConnWin {
     pub(crate) fn set_tuning(&mut self, t: ConnTuning) {
         self.tuning = t;
         self.panel.set_port_w(t.port_w);
+    }
+
+    /// 접속 중 막 올리기(시도 시작) — 같은 이름이면 단계만 갱신.
+    pub(crate) fn veil_begin(&mut self, name: &str, target: &str, phase: &str) {
+        match self.veil.as_mut() {
+            Some(v) if v.name == name => v.phase = phase.to_string(),
+            _ => {
+                self.veil = Some(Veil {
+                    name: name.to_string(),
+                    target: target.to_string(),
+                    phase: phase.to_string(),
+                    started: Instant::now(),
+                });
+            }
+        }
+        self.redraw();
+    }
+
+    /// 단계 문구 갱신(그 이름의 막이 있을 때만).
+    pub(crate) fn veil_phase(&mut self, name: &str, phase: &str) {
+        if let Some(v) = self.veil.as_mut().filter(|v| v.name == name) {
+            v.phase = phase.to_string();
+            self.redraw();
+        }
+    }
+
+    /// 막 걷기(실패 · 취소 · 창 닫힘).
+    pub(crate) fn veil_end(&mut self, name: &str) {
+        if self.veil.as_ref().is_some_and(|v| v.name == name) {
+            self.veil = None;
+            self.redraw();
+        }
     }
 
     /// 접속 성공 초록 표시를 잠시 보여 준 뒤 닫는다(`conn.close_after_connect_ms`).
@@ -585,6 +633,20 @@ impl ConnWin {
     /// 예약된 프로브를 보낸다(순차 스레드) · 다음 예약 시각을 돌려준다(호스트 WaitUntil).
     /// 주기 갱신(`probe.interval`)은 창이 열려 있을 때만 돈다.
     pub(crate) fn tick(&mut self, now: Instant) -> Option<Instant> {
+        // 접속 중 막의 경과 시간·점 애니메이션(250ms).
+        let veil_next = if self.veil.is_some() && self.window.is_some() {
+            self.redraw();
+            Some(now + Duration::from_millis(250))
+        } else {
+            None
+        };
+        if let Some(t) = veil_next {
+            return Some(self.tick_inner(now).map_or(t, |p| p.min(t)));
+        }
+        self.tick_inner(now)
+    }
+
+    fn tick_inner(&mut self, now: Instant) -> Option<Instant> {
         // 예약된 닫기(접속 성공 초록 표시 뒤).
         if let Some(t) = self.close_at {
             if t <= now {
@@ -1065,6 +1127,7 @@ impl ConnWin {
     }
 
     pub(crate) fn close(&mut self) {
+        self.veil = None;
         // 닫히는 자리를 기억(다음 열기 · 같은 모니터일 때만 재사용).
         if let Some(p) = self.window.as_ref().and_then(|w| w.outer_position().ok()) {
             self.last_pos = Some((p.x, p.y));
@@ -1856,6 +1919,10 @@ impl ConnWin {
 
     fn route_inner(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
         let mut inv = Invalidations::default();
+        // 접속 중 막 — 마우스·키 전부 막는다(창 X 닫기만 허용 · 시도는 계속되고 결과는 상태줄/로그로).
+        if self.veil.is_some() {
+            return;
+        }
         // 우클릭 직전 — 편집 메뉴의 "붙여넣기" 활성 여부.
         if matches!(ev, InputEvent::RightDown { .. }) {
             let has = crate::clipboard::read_text().is_some_and(|s| !s.is_empty());
@@ -2723,6 +2790,48 @@ impl ConnWin {
             self.filter.paint_popup(&mut dc, th);
             if detail_visible {
                 self.panel.paint_popups(&mut dc, th);
+            }
+            let sc = |v: f32| (v * s).round() as i32;
+            // ★ 접속 중 막(맨 위): 반투명 덮개 + 중앙 카드(대상 · 단계 · 경과 · 점).
+            if let Some(v) = self.veil.clone() {
+                let full = Rect::new(0, 0, wi, hi);
+                dc.fill_rect_alpha(full, th.panel_bg, 0.72);
+                let secs = v.started.elapsed().as_secs();
+                let dots = ".".repeat(((v.started.elapsed().as_millis() / 300) % 4) as usize);
+                let elapsed = tf(Msg::VeilElapsed, &[&secs.to_string()]);
+                let title = t(Msg::VeilTitle);
+                let phase = format!("{}{dots}", v.phase);
+                dc.select_font(FontSlot::Base, true);
+                let tw = dc.text_width(title).max(dc.text_width(&v.target));
+                let lh = dc.text_height();
+                dc.select_font(FontSlot::Base, false);
+                let pw = dc.text_width(&phase).max(dc.text_width(&elapsed));
+                let pad = sc(20.0);
+                let cw = (tw.max(pw) + pad * 2).min(wi - pad * 2).max(sc(240.0));
+                let ch = lh * 4 + sc(16.0) * 2 + pad;
+                let card = Rect::new((wi - cw) / 2, (hi - ch) / 2, cw, ch);
+                dc.fill_round_rect(card, sc(8.0), th.field_bg);
+                dc.stroke_round_rect(card, sc(8.0), th.accent, 1.0);
+                // 위쪽 강조 띠(진행 중 = 강조색).
+                dc.fill_rect(
+                    Rect::new(card.x + 1, card.y + 1, card.w - 2, sc(3.0)),
+                    th.accent,
+                );
+                let clip = Rect::new(card.x + pad / 2, card.y, card.w - pad, card.h);
+                let mut y = card.y + sc(16.0);
+                let center = |dc: &mut dyn DrawCtx, s: &str, y: i32, color: nexa_gfx::Color| {
+                    let w = dc.text_width(s);
+                    dc.text(card.x + (card.w - w) / 2, y, clip, s, color);
+                };
+                dc.select_font(FontSlot::Base, true);
+                center(&mut dc, title, y, th.text_dim);
+                y += lh + sc(4.0);
+                center(&mut dc, &v.target, y, th.text);
+                y += lh + sc(10.0);
+                dc.select_font(FontSlot::Base, false);
+                center(&mut dc, &phase, y, th.accent);
+                y += lh + sc(4.0);
+                center(&mut dc, &elapsed, y, th.text_dim);
             }
         }
         let _ = buf.present();
