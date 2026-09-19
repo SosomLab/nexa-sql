@@ -73,6 +73,7 @@
 | 탐색기 메타 세션 **서버당 1**(DR-34 · 52 §2-2 · 그 서버에 붙은 세션 ≥1이면 유지 · 0이면 접속만 닫고 트리 유지) | 서버 수 · 유휴 회수 | `session.idle_secs`(메타 세션 유휴 닫기 · 다음 요청 때 재개) · `explorer.visible` | — | — | — | `ExplorerSet::sync_refs` · `suspend_if_idle` |
 | 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout` | — | — | — | `worker::ensure_alive` |
 | TCP keepalive 빈 세그먼트(PG·MSSQL · 53) | 60s | `net.keepalive_secs`(0 = 끔) | — | — | — | 드라이버 `set_keepalive_secs` |
+| 확장 저장소 읽기 스레드 `ext-index`(curl 자식 프로세스 · 50 §14) | 진행 중 1 · 사용자 동작(패널 열기·⟳)으로만 | `extensions.enabled`(끄면 패널·아이콘·읽기 전부 없음) | — | — | — | `App::ext_fetch_start` |
 | 공유 연결(서버당 DB 세션 1 + 워커 스레드 1 · DR-34) | 8 | `session.max_shared` | — | — | — | `App::new_shared` |
 | 전용/개별 탭 세션(DB 세션 1 + 워커 스레드 1) | 8 | `session.max_private` · `session.private_connect` | — | — | — | `App::new_private` |
 | 유휴 세션 닫기(서버 자원 회수 · 점검 30s 로컬) | 1800 s · 전용만 | `session.idle_secs`(0 = 끔) · `session.idle_shared` | — | — | — | `App::idle_tick` |

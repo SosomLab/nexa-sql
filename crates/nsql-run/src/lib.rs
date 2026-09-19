@@ -47,6 +47,11 @@ pub enum RunEvent {
         elapsed: Duration,
         more: bool,
     },
+    /// 수동 커밋 모드에서 **변경 없는 트랜잭션을 러너가 끝냈다**(docs/56 L1 · `deferred` = 열린 커서가 닫힐 때 끝난다).
+    ReadTxEnded {
+        index: usize,
+        deferred: bool,
+    },
     /// DML/DDL 완료.
     Done {
         index: usize,
@@ -118,6 +123,8 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             format!("{description} ({dialect})"),
         )],
         RunEvent::Disconnected => vec![LogEntry::new(LogKind::Disconnect, "")],
+        // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
+        RunEvent::ReadTxEnded { .. } => Vec::new(),
         RunEvent::Error { line, error, .. } => vec![LogEntry::new(
             LogKind::Error,
             tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]),
@@ -298,6 +305,114 @@ pub struct Runner {
     pub fetch_size: usize,
     /// 유휴 커서 상한(설정 `db.cursor_idle_secs` · 0 = 없음) — 마지막 페치 뒤 이 시간이 지나면 닫고 OFFSET 폴백.
     pub cursor_idle_secs: u64,
+    /// 읽기 트랜잭션 자동 종료(설정 `tx.read_end` · docs/56 L1).
+    pub read_end: ReadEnd,
+    /// 열린 트랜잭션에 변경이 있었는가(수동 모드 · 커밋/롤백/암묵 커밋/접속에서 초기화).
+    tx_changed: bool,
+    /// 사용자가 직접 트랜잭션을 열었거나 잠금을 잡았는가(자동 종료 제외 근거).
+    tx_user: bool,
+}
+
+/// 읽기 트랜잭션 자동 종료(docs/56 L1 · 설정 `tx.read_end`): 수동 커밋 모드에서 **변경이 없던 트랜잭션**을 결과를 다 받은 뒤
+/// 조용히 끝낸다 — PG `idle in transaction` · MySQL 메타데이터 잠금 · SQLite 읽기 잠금이 남지 않게.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ReadEnd {
+    /// 끝내지 않는다(종전 동작 — 반복 읽기를 습관적으로 쓰는 환경).
+    Off,
+    /// 문장 분류로 판정(기본).
+    #[default]
+    Auto,
+    /// 분류 판정 뒤 **서버에 한 번 더 묻는다**(함수 호출 SELECT의 부작용까지 · 지원 방언만 · 실패 = 끝내지 않음).
+    Strict,
+}
+
+impl ReadEnd {
+    /// 설정 문자열(`auto` · `strict` · `off`).
+    #[must_use]
+    pub fn parse(s: &str) -> Self {
+        match s.trim() {
+            "off" => Self::Off,
+            "strict" => Self::Strict,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// 트랜잭션을 끝내는 방법(미뤄 둔 종료 포함).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TxEnd {
+    Commit,
+    Rollback,
+}
+
+fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) {
+    match end {
+        Some(TxEnd::Commit) => {
+            let _ = s.commit();
+        }
+        Some(TxEnd::Rollback) => {
+            let _ = s.rollback();
+        }
+        None => {}
+    }
+}
+
+/// 한 문장이 열린 트랜잭션에 남기는 흔적(docs/56 L1 판정의 입력).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TxEffect {
+    /// 조회·빈 문장·영향 0행 DML — 변경 없음.
+    Clean,
+    /// 변경(DML 영향 행 · 트랜잭션 DDL · 프로시저 호출 등 알 수 없는 문장).
+    Change,
+    /// 사용자가 직접 트랜잭션을 열었거나 잠금을 잡았다(`BEGIN` · `SET TRANSACTION` · `SAVEPOINT` · `LOCK` · `FOR UPDATE`).
+    UserHold,
+    /// 트랜잭션이 끝났다(`COMMIT`/`ROLLBACK` 문장 · 암묵 커밋 DDL).
+    Ended,
+}
+
+fn tx_effect(sql: &str, rows_affected: Option<u64>, dialect: Dialect) -> TxEffect {
+    use nsql_core::{TxClass, TxControl};
+    match TxControl::of_sql(sql) {
+        TxControl::Begin => return TxEffect::UserHold,
+        TxControl::End => return TxEffect::Ended,
+        TxControl::None => {}
+    }
+    let class = TxClass::of_sql(sql);
+    match class {
+        TxClass::None => TxEffect::Clean,
+        TxClass::Read => {
+            if nsql_core::is_locking_read(sql) {
+                TxEffect::UserHold
+            } else {
+                TxEffect::Clean
+            }
+        }
+        TxClass::Insert | TxClass::Update | TxClass::Delete => {
+            if rows_affected == Some(0) {
+                TxEffect::Clean
+            } else {
+                TxEffect::Change
+            }
+        }
+        _ if class.is_ddl() && !dialect.ddl_transactional() => TxEffect::Ended,
+        _ => TxEffect::Change,
+    }
+}
+
+/// `strict` 확인 질의 — 이 트랜잭션이 **쓰기를 했는가**를 1/0으로. 지원하지 않는 방언은 `None`(= 분류 판정 그대로).
+fn strict_probe_sql(dialect: Dialect) -> Option<&'static str> {
+    match dialect {
+        Dialect::Postgres => Some(
+            "SELECT CASE WHEN pg_current_xact_id_if_assigned() IS NULL THEN 0 ELSE 1 END",
+        ),
+        Dialect::Oracle => Some(
+            "SELECT CASE WHEN dbms_transaction.local_transaction_id IS NULL THEN 0 ELSE 1 END FROM dual",
+        ),
+        Dialect::Mssql => Some(
+            "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.dm_tran_session_transactions st JOIN sys.dm_tran_database_transactions dt ON dt.transaction_id = st.transaction_id WHERE st.session_id = @@SPID AND dt.database_transaction_log_record_count > 0) THEN 1 ELSE 0 END",
+        ),
+        _ => None,
+    }
 }
 
 /// 러너가 아는 열린 커서의 상태(핸들 · 원문 · 지금까지 넘긴 행 수).
@@ -308,8 +423,9 @@ struct OpenCursor {
     sql: String,
     /// 호스트에 넘긴 행 수(= 다음 페치의 OFFSET) — `fetch_page`가 커서/OFFSET 중 어느 쪽을 쓸지 판정.
     served: usize,
-    /// 자동 커밋을 커서가 닫힐 때까지 미뤘는가(PG WITHOUT HOLD 커서 보호 · 닫을 때 커밋).
-    deferred_commit: bool,
+    /// 트랜잭션 종료를 커서가 닫힐 때까지 미뤘는가(PG WITHOUT HOLD 커서 보호) — 자동 커밋 = Commit · 수동 모드의
+    /// 읽기 트랜잭션 자동 종료(docs/56 L1) = Rollback.
+    deferred_end: Option<TxEnd>,
     last_used: Instant,
 }
 
@@ -330,6 +446,9 @@ impl Runner {
             keep_cursor: true,
             fetch_size: 0,
             cursor_idle_secs: 0,
+            read_end: ReadEnd::Auto,
+            tx_changed: false,
+            tx_user: false,
         }
     }
 
@@ -481,7 +600,7 @@ impl Runner {
                 handle: h,
                 sql: sql.to_string(),
                 served: rs.rows.len(),
-                deferred_commit: false,
+                deferred_end: None,
                 last_used: Instant::now(),
             });
         }
@@ -509,14 +628,69 @@ impl Runner {
         c.served == offset && same_sql(&c.sql, sql)
     }
 
+    /// 트랜잭션이 호스트 명령으로 끝났다(Commit/Rollback 버튼 · 접속/해제) — L1 판정 상태를 비운다.
+    pub fn note_tx_ended(&mut self) {
+        self.tx_changed = false;
+        self.tx_user = false;
+    }
+
+    /// 이 문장 뒤 열린 트랜잭션을 끝내도 되는가(수동 모드 전용 · docs/56 L1). 문장의 흔적을 상태에 반영하고, 변경·사용자 통제가
+    /// 없을 때만 참 — `Strict`면 서버에 "쓰기를 했는가"를 한 번 더 묻는다(쓰기가 보이면 변경으로 기록 · 질의 실패 = 끝내지 않음).
+    fn read_end_due(&mut self, sql: &str, rows_affected: Option<u64>) -> bool {
+        match tx_effect(sql, rows_affected, self.engine.dialect) {
+            TxEffect::Ended => {
+                self.note_tx_ended();
+                return false;
+            }
+            TxEffect::UserHold => {
+                self.tx_user = true;
+                return false;
+            }
+            TxEffect::Change => {
+                self.tx_changed = true;
+                return false;
+            }
+            TxEffect::Clean => {}
+        }
+        if self.read_end == ReadEnd::Off || self.tx_changed || self.tx_user {
+            return false;
+        }
+        if self.read_end == ReadEnd::Strict {
+            if let (Some(probe), Some(s)) =
+                (strict_probe_sql(self.engine.dialect), self.session.as_mut())
+            {
+                let wrote = s
+                    .execute(&ExecRequest {
+                        sql: probe.to_string(),
+                        params: Vec::new(),
+                    })
+                    .ok()
+                    .and_then(|r| {
+                        r.result_sets
+                            .first()
+                            .and_then(|rs| rs.rows.first())
+                            .and_then(|row| row.first())
+                            .map(|v| v.display())
+                    });
+                match wrote.as_deref() {
+                    Some("0") => {}
+                    Some(_) => {
+                        self.tx_changed = true;
+                        return false;
+                    }
+                    None => return false,
+                }
+            }
+        }
+        true
+    }
+
     /// 열린 커서를 닫는다(없으면 무시). 미뤄 둔 자동 커밋이 있으면 여기서 커밋한다.
     pub fn close_cursor(&mut self) {
         if let Some(c) = self.cursor.take() {
             if let Some(s) = self.session.as_mut() {
                 let _ = s.close_cursor(c.handle);
-                if c.deferred_commit {
-                    let _ = s.commit();
-                }
+                finish_tx(s.as_mut(), c.deferred_end);
             }
         }
     }
@@ -551,9 +725,7 @@ impl Runner {
                 if !more {
                     // 드라이버가 이미 닫았다 — 러너 상태·미룬 커밋만 정리.
                     if let Some(c) = self.cursor.take() {
-                        if c.deferred_commit {
-                            let _ = session.commit();
-                        }
+                        finish_tx(session.as_mut(), c.deferred_end);
                     }
                 }
                 Ok((rs, more, timeline))
@@ -1264,7 +1436,7 @@ impl Runner {
                             handle: h,
                             sql: item.text.clone(),
                             served,
-                            deferred_commit: false,
+                            deferred_end: None,
                             last_used: Instant::now(),
                         });
                     } else if let Some(s) = self.session.as_mut() {
@@ -1294,7 +1466,7 @@ impl Runner {
                 if self.engine.settings.autocommit {
                     match kept.as_mut() {
                         // 커서가 살아 있는 동안은 커밋을 미룬다(PG WITHOUT HOLD 커서 보호 · 닫힐 때 커밋).
-                        Some(c) => c.deferred_commit = true,
+                        Some(c) => c.deferred_end = Some(TxEnd::Commit),
                         None => {
                             if let Some(s) = self.session.as_mut() {
                                 let t = Instant::now();
@@ -1303,6 +1475,21 @@ impl Runner {
                             }
                         }
                     }
+                } else if self.read_end_due(&item.text, result.rows_affected) {
+                    // ★ docs/56 L1: 수동 모드라도 변경이 없던 트랜잭션은 결과를 다 받은 뒤 끝낸다(ROLLBACK = 부작용 0).
+                    let deferred = kept.is_some();
+                    match kept.as_mut() {
+                        Some(c) => c.deferred_end = Some(TxEnd::Rollback),
+                        None => {
+                            if let Some(s) = self.session.as_mut() {
+                                let t = Instant::now();
+                                let _ = s.rollback();
+                                let span = timeline.push(Stage::Commit, t.elapsed());
+                                span.note = Some("read tx end (rollback)".into());
+                            }
+                        }
+                    }
+                    emit(RunEvent::ReadTxEnded { index, deferred });
                 }
                 self.cursor = kept;
                 emit(RunEvent::Timing { index, timeline });
@@ -1602,6 +1789,107 @@ mod tests {
             Box::new(SqliteSession::open(":memory:").unwrap()),
             "sqlite :memory:",
         )
+    }
+
+    /// docs/56 L1 — 수동 모드의 읽기 트랜잭션 자동 종료: 조회만이면 끝난다(이벤트) · 변경 뒤 조회는 안 끝낸다 ·
+    /// 0행 DML은 변경 아님 · FOR UPDATE/사용자 BEGIN은 유지 · COMMIT 문장 뒤엔 다시 끝낸다 · off면 안 끝낸다.
+    #[test]
+    fn read_only_transactions_end_in_manual_mode() {
+        let ended = |ev: &[RunEvent]| {
+            ev.iter()
+                .filter(|e| matches!(e, RunEvent::ReadTxEnded { .. }))
+                .count()
+        };
+        let mut r = runner().with_autocommit(false);
+        let (_, ev) = collect(
+            &mut r,
+            "CREATE TABLE t (a INT);
+",
+        );
+        assert_eq!(ended(&ev), 0, "DDL(SQLite = 트랜잭션 DDL) = 변경");
+        r.note_tx_ended();
+        let (_, ev) = collect(
+            &mut r,
+            "SELECT 1;
+",
+        );
+        assert_eq!(ended(&ev), 1, "조회만 = 끝낸다");
+        let (_, ev) = collect(
+            &mut r,
+            "UPDATE t SET a = 1 WHERE a = 99;
+SELECT 2;
+",
+        );
+        assert_eq!(
+            ended(&ev),
+            2,
+            "0행 DML은 변경이 아니다 → 두 문장 모두 뒤에 끝낸다"
+        );
+        let (_, ev) = collect(
+            &mut r,
+            "INSERT INTO t VALUES (1);
+SELECT * FROM t;
+",
+        );
+        assert_eq!(ended(&ev), 0, "변경이 대기 중이면 조회 뒤에도 유지");
+        // 호스트의 Commit/Rollback 버튼 = `note_tx_ended`(SQLite 드라이버는 명시 BEGIN이 없으면 `COMMIT` 문장이 오류라 버튼 경로로 본다).
+        r.note_tx_ended();
+        let (_, ev) = collect(&mut r, "SELECT * FROM t;");
+        assert_eq!(ended(&ev), 1, "커밋 뒤 = 다시 깨끗");
+        r.read_end = ReadEnd::Off;
+        let (_, ev) = collect(
+            &mut r,
+            "SELECT 3;
+",
+        );
+        assert_eq!(ended(&ev), 0, "off = 종전대로 유지");
+        // 자동 커밋 모드는 대상이 아니다(문장마다 커밋).
+        let mut a = runner().with_autocommit(true);
+        let (_, ev) = collect(&mut a, "SELECT 1;");
+        assert_eq!(ended(&ev), 0);
+    }
+
+    #[test]
+    fn tx_effect_rules() {
+        let e = |sql: &str, rows: Option<u64>, d: Dialect| tx_effect(sql, rows, d);
+        assert_eq!(e("select 1", None, Dialect::Postgres), TxEffect::Clean);
+        assert_eq!(
+            e("select * from t for update", None, Dialect::Oracle),
+            TxEffect::UserHold
+        );
+        assert_eq!(e("BEGIN", None, Dialect::Postgres), TxEffect::UserHold);
+        assert_eq!(
+            e("update t set a=1", Some(0), Dialect::Oracle),
+            TxEffect::Clean
+        );
+        assert_eq!(
+            e("update t set a=1", Some(3), Dialect::Oracle),
+            TxEffect::Change
+        );
+        assert_eq!(
+            e("delete from t", None, Dialect::Oracle),
+            TxEffect::Change,
+            "행 수를 모르면 변경"
+        );
+        assert_eq!(
+            e("create table x (a int)", None, Dialect::Oracle),
+            TxEffect::Ended,
+            "암묵 커밋 DDL"
+        );
+        assert_eq!(
+            e("create table x (a int)", None, Dialect::Postgres),
+            TxEffect::Change,
+            "트랜잭션 DDL"
+        );
+        assert_eq!(
+            e("call p()", None, Dialect::Oracle),
+            TxEffect::Change,
+            "알 수 없는 문장 = 변경"
+        );
+        assert_eq!(e("rollback", None, Dialect::Mssql), TxEffect::Ended);
+        assert_eq!(ReadEnd::parse("strict"), ReadEnd::Strict);
+        assert_eq!(ReadEnd::parse("bogus"), ReadEnd::Auto);
+        assert!(strict_probe_sql(Dialect::Sqlite).is_none());
     }
 
     fn collect(r: &mut Runner, src: &str) -> (usize, Vec<RunEvent>) {

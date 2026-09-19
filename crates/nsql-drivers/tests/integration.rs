@@ -169,6 +169,69 @@ fn pg_session_variables_procedure_out_and_notice() {
     assert_eq!(sets[2].rows[0][0], Value::Str("1234.5".into()));
 }
 
+/// docs/56 L1 — 수동 커밋 모드에서 조회만 하면 트랜잭션이 남지 않는다(`idle in transaction` 아님) · 변경 뒤에는 남는다.
+#[test]
+fn pg_read_only_transaction_ends_in_manual_mode() {
+    let Some(mut r) = runner_for("NSQL_PG_URL", Dialect::Postgres) else {
+        return;
+    };
+    let Some(mut watcher) = runner_for("NSQL_PG_URL", Dialect::Postgres) else {
+        return;
+    };
+    // 자동 커밋(기본값이 무엇이든)으로 준비 → 수동으로 전환.
+    run(
+        &mut r,
+        "SET AUTOCOMMIT ON
+DROP TABLE IF EXISTS nsql_it_l1;
+CREATE TABLE nsql_it_l1 (a INT);
+SET AUTOCOMMIT OFF
+",
+    );
+    let ev = run(
+        &mut r,
+        "SELECT pg_backend_pid();
+",
+    );
+    let pid = first_rs(&ev).unwrap().rows[0][0].display();
+    assert!(
+        ev.iter().any(|e| matches!(e, RunEvent::ReadTxEnded { .. })),
+        "조회만 = 읽기 트랜잭션 종료 이벤트: {ev:#?}"
+    );
+    let state = |w: &mut Runner| {
+        let ev = run(
+            w,
+            &format!(
+                "SET AUTOCOMMIT ON
+SELECT state FROM pg_stat_activity WHERE pid = {pid};
+"
+            ),
+        );
+        first_rs(&ev).unwrap().rows[0][0].display()
+    };
+    assert_eq!(
+        state(&mut watcher),
+        "idle",
+        "조회 뒤 트랜잭션이 남으면 안 된다"
+    );
+    // 변경이 있으면 남는다(사용자가 확정해야 한다) — 그 뒤의 조회도 끝내지 않는다.
+    let ev = run(
+        &mut r,
+        "INSERT INTO nsql_it_l1 VALUES (1);
+SELECT * FROM nsql_it_l1;
+",
+    );
+    assert!(!ev.iter().any(|e| matches!(e, RunEvent::ReadTxEnded { .. })));
+    assert_eq!(state(&mut watcher), "idle in transaction");
+    // 정리.
+    run(
+        &mut r,
+        "ROLLBACK;
+SET AUTOCOMMIT ON
+DROP TABLE IF EXISTS nsql_it_l1;
+",
+    );
+}
+
 #[test]
 fn sqlite_always_runs() {
     let opener: Opener = Box::new(|s: &ConnectSpec| nsql_drivers::open(s, Dialect::Sqlite));

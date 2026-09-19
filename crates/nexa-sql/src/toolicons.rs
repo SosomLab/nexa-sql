@@ -502,6 +502,15 @@ fn shape_files(x: f32, y: f32) -> bool {
     back || front || lines
 }
 
+/// 활동 막대 — 확장(붙은 네모 셋 + 떨어진 네모 하나 · VS Code Extensions 느낌 · 사용자 09-19).
+fn shape_extensions(x: f32, y: f32) -> bool {
+    let sq = |x0: f32, y0: f32| {
+        in_rounded_rect(x, y, x0, y0, 70.0, 70.0, 8.0)
+            && !in_rounded_rect(x, y, x0 + 13.0, y0 + 13.0, 44.0, 44.0, 4.0)
+    };
+    sq(40.0, 88.0) || sq(40.0, 146.0) || sq(98.0, 146.0) || sq(128.0, 44.0)
+}
+
 /// 활동 막대 — 환경 설정(톱니: 고리 + 이 8개).
 fn shape_gear(x: f32, y: f32) -> bool {
     let (cx, cy) = (128.0, 128.0);
@@ -524,6 +533,9 @@ fn shape_gear(x: f32, y: f32) -> bool {
 
 pub(crate) fn mi_files() -> MenuIcon {
     menu_icon(shape_files)
+}
+pub(crate) fn mi_extensions() -> MenuIcon {
+    menu_icon(shape_extensions)
 }
 pub(crate) fn mi_gear() -> MenuIcon {
     menu_icon(shape_gear)

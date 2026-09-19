@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-19 (79차 · win) — ★ **확장 패널**(활동 막대 "확장" · 검색 + 설치됨/설치 가능 · 행 버튼 · 상세 탭 · 관리자 켜져 있을 때만) ✅ · 관리자 명령 게이트(`ext.disable_mgr` · 끔 = 모든 확장 정지) ✅ · 빈 목록도 팔레트 안에서 안내 ✅ · 설치 다운로드 추적(파일별 URL·HTTP·크기·시간·속도·IP · 개발자 모드) ✅ · 🔧 일반 편집 모드 괄호 색 끔(확장 없을 때 색이 보이던 결함) · 이웃 깊이 대비 색 순서(nexa-ctl `contrast_order` · `rainbowpair.contrast_order`) ✅ → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (78차 · win) — ★ **T-137 수동 커밋 잠금 방지 L1~L4** ✅([56 §9](56-manual-commit-lock-prevention.md) · 읽기 트랜잭션 자동 종료 · 유휴 경고/카운트다운 자동 롤백 카드 · 막힘 감지 · 서버 안전망 · 설정 8키) · 오류 2회 표시(카드+토스트 → 하나) · 명령 팔레트 마우스(hover 선택·휠·스크롤) → [journal](journal/2026-09-19.md)
+
 ## 2026-09-19 (77차 · win) — 📐 **수동 커밋 잠금 방지 설계 [56](56-manual-commit-lock-prevention.md)**(도구 조사 · 네 겹 L1~L4 · D-100~105 대기 · T-137) · 확장 테스트 안내 [50 §13](50-extension-system.md) · 자동 닫기 = 편집 코어 설정으로 정리(`rainbowpair.auto_close` 제거) → [journal](journal/2026-09-19.md)
 
 ## 2026-09-19 (76차 · win) — 괄호 자동 닫기 주 스위치 **`editor.auto_close_pairs`**(편집기 분류 · 확장 유무와 무관 · 종전엔 숨은 확장 분류에만 있어 끌 수 없었다) → [journal](journal/2026-09-19.md)

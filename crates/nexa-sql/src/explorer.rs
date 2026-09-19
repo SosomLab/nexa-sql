@@ -108,7 +108,15 @@ enum Req {
         gen: u64,
         req: LiveReq,
     },
+    /// 막힘 감지(docs/56 L3) — 편집기 세션(`sid`) 때문에 기다리는 세션 목록을 메타 세션으로 읽는다.
+    Blockers {
+        gen: u64,
+        sid: String,
+    },
 }
+
+/// 막힘 감지 결과 — (편집기 세션 id, 기다리는 세션 설명들 또는 오류).
+pub(crate) type BlockersResult = (String, Result<Vec<String>, String>);
 
 /// 라이브 폴링 결과 — (줄들, 마지막 시각).
 pub(crate) type LiveResult = Result<(Vec<String>, Option<String>), String>;
@@ -131,6 +139,50 @@ fn ident_ok(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#' | '.' | '"'))
+}
+
+/// docs/56 L3 — "세션 `sid`가 쥔 잠금 때문에 기다리는 세션"을 한 문장으로 읽는다(방언별 카탈로그 · 권한 없으면 오류 → 호스트가 기능을 끈다).
+/// `sid`는 숫자만 받는다(문장에 그대로 들어간다). 결과 한 줄 = "세션 사용자 프로그램 대기초".
+fn blockers_query(s: &mut dyn Session, sid: &str) -> Result<Vec<String>, String> {
+    let Some(sql) = blockers_sql(s.dialect(), sid) else {
+        return Ok(Vec::new());
+    };
+    let rs = s
+        .execute(&nsql_core::ExecRequest {
+            sql,
+            params: vec![],
+        })
+        .map(|r| r.result_sets.into_iter().next().unwrap_or_default())
+        .map_err(|e| e.message)?;
+    Ok(rs
+        .rows
+        .iter()
+        .filter_map(|row| row.first())
+        .map(|v| v.display().split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect())
+}
+
+/// 방언별 막힘 질의(지원하지 않는 방언 · 숫자가 아닌 id = `None`).
+pub(crate) fn blockers_sql(dialect: Dialect, sid: &str) -> Option<String> {
+    let sid = sid.trim();
+    if sid.is_empty() || !sid.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(match dialect {
+        Dialect::Oracle => format!(
+            "SELECT sid || ' ' || NVL(username, '?') || ' ' || NVL(program, '') || ' ' || seconds_in_wait || 's' FROM v$session WHERE blocking_session = {sid}"
+        ),
+        Dialect::Postgres => format!(
+            "SELECT pid || ' ' || COALESCE(usename, '?') || ' ' || COALESCE(application_name, '') || ' ' || COALESCE(EXTRACT(EPOCH FROM (now() - query_start))::int, 0) || 's' FROM pg_stat_activity WHERE {sid} = ANY(pg_blocking_pids(pid))"
+        ),
+        Dialect::Mssql => format!(
+            "SELECT CAST(r.session_id AS varchar(10)) + ' ' + ISNULL(s.login_name, '?') + ' ' + ISNULL(s.program_name, '') + ' ' + CAST(r.wait_time / 1000 AS varchar(12)) + 's' FROM sys.dm_exec_requests r JOIN sys.dm_exec_sessions s ON s.session_id = r.session_id WHERE r.blocking_session_id = {sid}"
+        ),
+        Dialect::Mysql => format!(
+            "SELECT CONCAT(waiting_pid, ' ', wait_age_secs, 's') FROM sys.innodb_lock_waits WHERE blocking_pid = {sid}"
+        ),
+        Dialect::Sqlite | Dialect::Odbc => return None,
+    })
 }
 
 fn live_query(s: &mut dyn Session, req: &LiveReq) -> LiveResult {
@@ -242,6 +294,10 @@ enum Resp {
         gen: u64,
         r: LiveResult,
     },
+    Blockers {
+        gen: u64,
+        r: BlockersResult,
+    },
 }
 
 /// 호스트가 처리할 요청.
@@ -322,6 +378,9 @@ pub(crate) struct Explorer {
     /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
     live_results: Vec<LiveResult>,
     pub(crate) live_inflight: bool,
+    /// 막힘 감지 응답(호스트가 가져간다) · 요청 진행 중 표시(docs/56 L3).
+    blockers_results: Vec<BlockersResult>,
+    blockers_inflight: bool,
     /// 이 서버에 붙은 세션이 하나도 없어 메타 접속을 닫았다 — **트리(읽어 둔 메타)는 남긴다**(docs/52 §2-2 · 다시 붙으면 새로 읽는다).
     offline: bool,
     /// 메타 세션을 유휴로 닫아 두었다(다음 요청 때 메타 스레드가 다시 연다).
@@ -471,6 +530,13 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 let r = with_session(&mut session, |s| live_query(s, &req));
                 Resp::Live { gen, r }
             }
+            Req::Blockers { gen, sid } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| blockers_query(s, &sid));
+                Resp::Blockers { gen, r: (sid, r) }
+            }
         };
         if tx.send(resp).is_err() {
             break;
@@ -593,6 +659,8 @@ impl Explorer {
             now_hint: 0,
             live_results: Vec::new(),
             live_inflight: false,
+            blockers_results: Vec::new(),
+            blockers_inflight: false,
             offline: false,
             suspended: false,
             last_used: Instant::now(),
@@ -867,6 +935,25 @@ impl Explorer {
         std::mem::take(&mut self.live_results)
     }
 
+    /// 막힘 감지 요청(메타 세션 · 진행 중이면 무시 · 오프라인이면 안 함 — 접속한 적 없는 서버에 트래픽 0 · 26 §8).
+    pub(crate) fn blockers_poll(&mut self, sid: &str) -> bool {
+        if self.blockers_inflight || self.offline {
+            return false;
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
+        self.blockers_inflight = true;
+        let _ = self.tx.send(Req::Blockers {
+            gen: self.gen,
+            sid: sid.to_string(),
+        });
+        true
+    }
+
+    pub(crate) fn take_blockers(&mut self) -> Vec<BlockersResult> {
+        std::mem::take(&mut self.blockers_results)
+    }
+
     /// 스레드 응답 반영 — 바뀐 게 있으면 true.
     pub(crate) fn drain(&mut self) -> bool {
         let mut changed = false;
@@ -967,6 +1054,13 @@ impl Explorer {
                         continue;
                     }
                     self.live_results.push(r);
+                }
+                Resp::Blockers { gen, r } => {
+                    self.blockers_inflight = false;
+                    if gen != self.gen {
+                        continue;
+                    }
+                    self.blockers_results.push(r);
                 }
                 Resp::Source { gen, title, r } => {
                     self.source_pending = false;
@@ -1873,5 +1967,36 @@ impl Explorer {
         }
         // (우클릭 메뉴는 `paint_menu` — 호스트가 모든 서버의 트리를 그린 뒤에 그린다.)
         self.rows_cache = rows;
+    }
+}
+
+#[cfg(test)]
+mod blockers_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::blockers_sql;
+    use nsql_core::Dialect;
+
+    /// docs/56 L3 — 방언별 막힘 질의: 숫자 id만 · 지원 방언만 · id가 문장에 그대로 들어간다.
+    #[test]
+    fn blockers_sql_per_dialect_and_id_validation() {
+        let o = blockers_sql(Dialect::Oracle, "123").unwrap();
+        assert!(o.contains("v$session") && o.contains("blocking_session = 123"));
+        let p = blockers_sql(Dialect::Postgres, " 4567 ").unwrap();
+        assert!(p.contains("pg_blocking_pids") && p.contains("4567 = ANY"));
+        assert!(blockers_sql(Dialect::Mssql, "55")
+            .unwrap()
+            .contains("blocking_session_id = 55"));
+        assert!(blockers_sql(Dialect::Mysql, "9")
+            .unwrap()
+            .contains("blocking_pid = 9"));
+        assert!(
+            blockers_sql(Dialect::Sqlite, "1").is_none(),
+            "SQLite = 해당 없음"
+        );
+        assert!(blockers_sql(Dialect::Oracle, "").is_none());
+        assert!(
+            blockers_sql(Dialect::Oracle, "1; DROP TABLE t").is_none(),
+            "숫자가 아니면 거부"
+        );
     }
 }

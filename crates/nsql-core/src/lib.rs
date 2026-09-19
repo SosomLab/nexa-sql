@@ -627,6 +627,83 @@ impl TxClass {
     }
 }
 
+/// 사용자가 **직접** 트랜잭션을 통제한 문장인가(docs/56 L1 — 읽기 트랜잭션 자동 종료의 예외·초기화 근거).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TxControl {
+    /// 통제 문장 아님.
+    None,
+    /// 트랜잭션을 열거나 붙잡는다: `BEGIN [TRANSACTION|WORK|TRAN]` · `START TRANSACTION` · `SET TRANSACTION` · `SAVEPOINT` · `LOCK …`.
+    Begin,
+    /// 트랜잭션을 끝낸다: `COMMIT` · `ROLLBACK`(`ROLLBACK TO …` 제외) · `END` · `ABORT`.
+    End,
+}
+
+impl TxControl {
+    /// 문장 앞 두 단어로 판정(주석·대소문자 무시). PL/SQL 익명 블록 `BEGIN … END;`은 통제 문장이 아니다(둘째 단어로 구분).
+    #[must_use]
+    pub fn of_sql(sql: &str) -> TxControl {
+        let up = strip_leading_comments(sql).to_ascii_uppercase();
+        let mut words = up
+            .split(|c: char| c.is_whitespace() || c == ';')
+            .filter(|w| !w.is_empty());
+        let (w1, w2) = (words.next().unwrap_or(""), words.next().unwrap_or(""));
+        match (w1, w2) {
+            (
+                "BEGIN",
+                "" | "TRANSACTION" | "TRAN" | "WORK" | "ISOLATION" | "READ" | "DEFERRED"
+                | "IMMEDIATE" | "EXCLUSIVE",
+            )
+            | ("START", "TRANSACTION")
+            | ("SET", "TRANSACTION")
+            | ("SAVEPOINT", _)
+            | ("SAVE", "TRANSACTION" | "TRAN")
+            | ("LOCK", _) => TxControl::Begin,
+            ("ROLLBACK", "TO") => TxControl::None,
+            ("COMMIT" | "ROLLBACK" | "ABORT", _) | ("END", "" | "TRANSACTION" | "WORK") => {
+                TxControl::End
+            }
+            _ => TxControl::None,
+        }
+    }
+}
+
+/// 잠금이 목적인 조회인가 — `FOR UPDATE/SHARE` · `LOCK IN SHARE MODE` · SQL Server 잠금 힌트. 트랜잭션을 끝내면 뜻이 사라지므로
+/// 읽기 트랜잭션 자동 종료에서 제외한다(오탐은 "안 끝냄"이라 안전 쪽).
+#[must_use]
+pub fn is_locking_read(sql: &str) -> bool {
+    let up: String = sql
+        .to_ascii_uppercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    [
+        " FOR UPDATE",
+        " FOR SHARE",
+        " FOR NO KEY UPDATE",
+        " FOR KEY SHARE",
+        "LOCK IN SHARE MODE",
+        "UPDLOCK",
+        "HOLDLOCK",
+        "XLOCK",
+        "TABLOCKX",
+    ]
+    .iter()
+    .any(|k| up.contains(k))
+}
+
+fn strip_leading_comments(sql: &str) -> &str {
+    let mut rest = sql.trim_start();
+    loop {
+        if let Some(r) = rest.strip_prefix("--") {
+            rest = r.split_once('\n').map_or("", |(_, t)| t).trim_start();
+        } else if let Some(r) = rest.strip_prefix("/*") {
+            rest = r.split_once("*/").map_or("", |(_, t)| t).trim_start();
+        } else {
+            return rest;
+        }
+    }
+}
+
 /// 문장 첫 키워드(앞 주석 `--`·`/* */`·공백 건너뜀 · 대문자).
 #[must_use]
 pub fn first_keyword(sql: &str) -> String {
@@ -1022,6 +1099,39 @@ mod tests {
     use super::*;
 
     /// docs/44 §5: 분류 · 주석 건너뜀 · 심각도 순서 · TRUNCATE/DDL 방언 규칙.
+    #[test]
+    fn tx_control_and_locking_read() {
+        assert_eq!(TxControl::of_sql("begin"), TxControl::Begin);
+        assert_eq!(
+            TxControl::of_sql("-- c\nBEGIN TRANSACTION;"),
+            TxControl::Begin
+        );
+        assert_eq!(TxControl::of_sql("START TRANSACTION"), TxControl::Begin);
+        assert_eq!(
+            TxControl::of_sql("set transaction isolation level serializable"),
+            TxControl::Begin
+        );
+        assert_eq!(TxControl::of_sql("SAVEPOINT a"), TxControl::Begin);
+        assert_eq!(
+            TxControl::of_sql("LOCK TABLE t IN EXCLUSIVE MODE"),
+            TxControl::Begin
+        );
+        assert_eq!(
+            TxControl::of_sql("BEGIN dbms_output.put_line('x'); END;"),
+            TxControl::None,
+            "PL/SQL 블록"
+        );
+        assert_eq!(TxControl::of_sql("commit"), TxControl::End);
+        assert_eq!(TxControl::of_sql("ROLLBACK;"), TxControl::End);
+        assert_eq!(TxControl::of_sql("rollback to a"), TxControl::None);
+        assert_eq!(TxControl::of_sql("END"), TxControl::End);
+        assert_eq!(TxControl::of_sql("select 1"), TxControl::None);
+        assert!(is_locking_read("select * from t\n  for update nowait"));
+        assert!(is_locking_read("SELECT * FROM t WITH (UPDLOCK, ROWLOCK)"));
+        assert!(is_locking_read("select 1 from t lock in share mode"));
+        assert!(!is_locking_read("select * from t where a = 1"));
+    }
+
     #[test]
     fn tx_class_and_dialect_rules() {
         assert_eq!(

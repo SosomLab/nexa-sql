@@ -33,6 +33,69 @@ fn speed(bytes: usize, d: std::time::Duration) -> String {
     )
 }
 
+/// 원격 파일 하나의 전송 통계(curl `-w` · 프로세스 기동 시간을 뺀 **실제 전송** 값).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NetStat {
+    pub http: u32,
+    pub bytes: u64,
+    /// 평균 전송 속도(B/s).
+    pub speed: u64,
+    pub dns_ms: u64,
+    pub connect_ms: u64,
+    pub ttfb_ms: u64,
+    pub total_ms: u64,
+    pub ip: String,
+    /// 리다이렉트를 따라간 최종 URL.
+    pub effective: String,
+}
+
+impl NetStat {
+    const MARK: &'static str = "NSQLW ";
+    /// `%{stderr}` = 통계를 stderr로(본문 stdout과 섞이지 않게 · curl ≥ 7.63).
+    const WRITE_OUT: &'static str = "%{stderr}NSQLW %{http_code} %{size_download} %{speed_download} %{time_namelookup} %{time_connect} %{time_starttransfer} %{time_total} %{remote_ip} %{url_effective}
+";
+
+    fn parse(line: &str) -> Option<NetStat> {
+        let f: Vec<&str> = line.strip_prefix(Self::MARK)?.split_whitespace().collect();
+        if f.len() < 9 {
+            return None;
+        }
+        let ms = |s: &str| s.parse::<f64>().map(|v| (v * 1000.0).round() as u64).ok();
+        Some(NetStat {
+            http: f[0].parse().ok()?,
+            bytes: f[1].parse::<f64>().ok()? as u64,
+            speed: f[2].parse::<f64>().ok()? as u64,
+            dns_ms: ms(f[3])?,
+            connect_ms: ms(f[4])?,
+            ttfb_ms: ms(f[5])?,
+            total_ms: ms(f[6])?,
+            ip: f[7].to_string(),
+            effective: f[8].to_string(),
+        })
+    }
+
+    fn line(&self, url: &str, body_len: usize) -> String {
+        let mut s = format!(
+            "GET {url} → HTTP {} · {} · {} ms (dns {} · connect {} · ttfb {}) · {}/s · from {}",
+            self.http,
+            nsql_core::fmt_bytes(body_len as u64),
+            self.total_ms,
+            self.dns_ms,
+            self.connect_ms,
+            self.ttfb_ms,
+            nsql_core::fmt_bytes(self.speed),
+            self.ip
+        );
+        if self.bytes != body_len as u64 {
+            s.push_str(&format!(" · wire {}", nsql_core::fmt_bytes(self.bytes)));
+        }
+        if self.effective != url {
+            s.push_str(&format!(" · final {}", self.effective));
+        }
+        s
+    }
+}
+
 /// 메타 형식 버전(`"format": 1`).
 pub(crate) const FORMAT: i64 = 1;
 /// 기본 원격 저장소(소스 트리 밖에서 실행할 때).
@@ -169,12 +232,15 @@ impl Source {
         self.read_traced(rel, &mut Trace::default())
     }
 
-    /// 읽기 + 추적 줄(원격 = `GET <url> → n B · ms · 속도` · 로컬 = `READ <path> → n B`).
+    /// 읽기 + 추적 줄 — **파일 하나에 한 줄**(사용자 09-19 "어느 원격 경로에서 · 파일 단위 크기·전송 속도"):
+    /// 원격 = `GET <url> → HTTP 200 · n B · ms (dns · connect · ttfb) · 속도 · from <ip>`(값 = curl `-w` 전송 통계 ·
+    /// 리다이렉트되면 최종 URL도) · 로컬 = `READ <path> → n B`.
     pub(crate) fn read_traced(&self, rel: &str, tr: &mut Trace) -> Result<Vec<u8>, String> {
         let t0 = Instant::now();
         let r = self.read_raw(rel);
         match &r {
-            Ok(b) => tr.push(format!(
+            Ok((b, Some(n))) => tr.push(n.line(&self.rel_display(rel), b.len())),
+            Ok((b, None)) => tr.push(format!(
                 "{} {} → {} · {} ms{}",
                 if matches!(self, Source::Url(_)) {
                     "GET"
@@ -188,7 +254,7 @@ impl Source {
             )),
             Err(e) => tr.push(format!("FAIL {} — {e}", self.rel_display(rel))),
         }
-        r
+        r.map(|(b, _)| b)
     }
 
     fn rel_display(&self, rel: &str) -> String {
@@ -198,20 +264,30 @@ impl Source {
         }
     }
 
-    fn read_raw(&self, rel: &str) -> Result<Vec<u8>, String> {
+    fn read_raw(&self, rel: &str) -> Result<(Vec<u8>, Option<NetStat>), String> {
         match self {
-            Source::Dir(p) => std::fs::read(p.join(rel)).map_err(|e| format!("{}: {e}", rel)),
+            Source::Dir(p) => std::fs::read(p.join(rel))
+                .map(|b| (b, None))
+                .map_err(|e| format!("{}: {e}", rel)),
             Source::Url(u) => {
                 let url = format!("{u}/{rel}");
                 let out = std::process::Command::new("curl")
-                    .args(["-fsSL", "--max-time", "30", &url])
+                    .args(["-fsSL", "--max-time", "30", "-w", NetStat::WRITE_OUT, &url])
                     .output()
                     .map_err(|e| format!("curl: {e}"))?;
+                let err = String::from_utf8_lossy(&out.stderr);
+                let stat = err.lines().find_map(NetStat::parse);
                 if !out.status.success() {
-                    let err = String::from_utf8_lossy(&out.stderr);
-                    return Err(format!("{url}: {}", err.trim()));
+                    let msg: Vec<&str> = err
+                        .lines()
+                        .filter(|l| !l.starts_with(NetStat::MARK))
+                        .collect();
+                    let code = stat
+                        .map(|n| format!(" (HTTP {})", n.http))
+                        .unwrap_or_default();
+                    return Err(format!("{url}: {}{code}", msg.join(" ").trim()));
                 }
-                Ok(out.stdout)
+                Ok((out.stdout, stat))
             }
         }
     }
@@ -496,6 +572,12 @@ pub(crate) fn installed_in(root: &Path) -> Vec<Installed> {
     out
 }
 
+/// 설치본에 보관한 메타 사본(`<root>/<id>/<version>/extension.json`) — 상세 보기용 · 네트워크 0.
+pub(crate) fn installed_meta(id: &str, version: &str) -> Option<Meta> {
+    let p = root_dir()?.join(id).join(version).join("extension.json");
+    parse_meta(&std::fs::read_to_string(p).ok()?).ok()
+}
+
 pub(crate) fn installed() -> Vec<Installed> {
     root_dir().map(|r| installed_in(&r)).unwrap_or_default()
 }
@@ -521,13 +603,20 @@ pub(crate) fn install_traced(
 ) -> Result<Meta, String> {
     let t0 = Instant::now();
     tr.push(format!(
-        "install {} {} [{}] from {}",
+        "install {} {} [{}] from {} ({})",
         sum.id,
         sum.version,
         sum.kind.as_str(),
-        src.display()
+        src.display(),
+        match src {
+            Source::Url(_) => "remote · one GET per file",
+            Source::Dir(_) =>
+                "local folder · no download — set extensions.default_repository to a URL to use the remote",
+        }
     ));
-    let meta = fetch_meta(src, &sum.dir, tr)?;
+    // 메타는 **한 번만** 받는다(그 바이트를 보관 사본으로도 쓴다 — 예전엔 추적 없이 한 번 더 받았다).
+    let meta_raw = src.read_text(&format!("{}/extension.json", sum.dir), tr)?;
+    let meta = parse_meta(&meta_raw)?;
     if meta.id != sum.id {
         return Err(format!(
             "index says {} but package says {}",
@@ -584,9 +673,9 @@ pub(crate) fn install_traced(
         }
     }
     // 메타 사본(오프라인 목록·재설치용).
-    if let Ok(raw) = src.read(&format!("{}/extension.json", sum.dir)) {
+    {
         std::fs::create_dir_all(&keep).map_err(|e| e.to_string())?;
-        let _ = std::fs::write(keep.join("extension.json"), raw);
+        let _ = std::fs::write(keep.join("extension.json"), meta_raw.as_bytes());
         tr.push(format!(
             "meta copy → {}",
             nexa_fs::path::display(&keep.join("extension.json"))
@@ -750,6 +839,36 @@ mod tests {
         assert!(installed_in(&root).is_empty());
         assert!(remove_from("demo-data", &root, &config).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn net_stat_line_per_file() {
+        let n = NetStat::parse(
+            "NSQLW 200 618 2180 0.032303 0.045977 0.283008 0.283381 185.199.108.133 https://h/x/index.json",
+        );
+        let Some(n) = n else {
+            panic!("stat line must parse");
+        };
+        assert_eq!((n.http, n.bytes, n.speed), (200, 618, 2180));
+        assert_eq!(
+            (n.dns_ms, n.connect_ms, n.ttfb_ms, n.total_ms),
+            (32, 46, 283, 283)
+        );
+        let l = n.line("https://h/x/index.json", 618);
+        assert!(
+            l.starts_with("GET https://h/x/index.json → HTTP 200 · "),
+            "{l}"
+        );
+        assert!(
+            l.contains("283 ms (dns 32 · connect 46 · ttfb 283)")
+                && l.contains("from 185.199.108.133")
+        );
+        assert!(!l.contains("final") && !l.contains("wire"), "{l}");
+        // 리다이렉트 = 최종 URL을 덧붙인다 · 통계 줄이 아니면 None.
+        assert!(n
+            .line("https://other/index.json", 618)
+            .contains("final https://h/x/index.json"));
+        assert!(NetStat::parse("curl: (22) The requested URL returned error: 404").is_none());
     }
 
     #[test]

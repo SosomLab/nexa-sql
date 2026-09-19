@@ -312,6 +312,20 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     Command {
+        id: "ext.disable_mgr",
+        label: Msg::MnExtDisableManager,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
+        id: "view.extensions",
+        label: Msg::MnExtensionsPanel,
+        win: "ctrl+shift+x",
+        mac: "cmd+shift+x",
+        linux: "ctrl+shift+x",
+    },
+    Command {
         id: "ext.install",
         label: Msg::MnExtInstall,
         win: "",

@@ -32,10 +32,16 @@ impl Extension for RainbowPairs {
         "Rainbow Pairs"
     }
 
-    /// 끄면 색·강조를 기본(off)으로 — 쌍 표·자동 닫기는 코어가 유지(Ctrl+M 짝 이동 · `editor.auto_close_pairs`는 내장 기능).
+    /// 꺼짐·미설치·확장 관리자 꺼짐 = **일반 편집 모드: 괄호에 색을 입히지 않는다**(깊이 색 · 짝 없음 빨강 모두 끔 ·
+    /// 사용자 09-19 — 종전에는 nexa-ctl 기본값(`rainbow: true`)이 그대로 들어가 확장이 없어도 색이 보였다). 캐럿 옆 쌍의
+    /// 밑줄(글자색 그대로 · 색 없음)·쌍 표·자동 닫기는 편집 코어 기능이라 남는다(Ctrl+M 짝 이동 · `editor.auto_close_pairs`).
     fn disabled_effect(&self) -> ExtensionEffect {
         ExtensionEffect {
-            bracket_opts: Some(BracketOpts::default()),
+            bracket_opts: Some(BracketOpts {
+                rainbow: false,
+                unmatched: false,
+                ..BracketOpts::default()
+            }),
         }
     }
 
@@ -89,7 +95,16 @@ impl Extension for RainbowPairs {
                 "always" => 2,
                 _ => 1,
             },
-            colors: parse_colors(s.get("rainbowpair.colors").unwrap_or("")),
+            // 사용자 색 목록 = 이웃 깊이가 잘 구별되게 다시 배열(보색·색 온도·밝기 · 사용자 09-19 · 끄면 적은 순서).
+            //   비면 테마 팔레트(이미 같은 규칙으로 정렬돼 있다 · nexa-ctl `Theme.rainbow`).
+            colors: {
+                let c = parse_colors(s.get("rainbowpair.colors").unwrap_or(""));
+                if s.flag("rainbowpair.contrast_order") {
+                    nexa_ctl::contrast_order(&c)
+                } else {
+                    c
+                }
+            },
             // 자동 닫기는 편집 코어 기능(`editor.auto_close_pairs`) — 확장은 관여하지 않는다(호스트가 값을 넣는다 · 사용자 09-19).
             auto_close: true,
             max_chars: (s.int("rainbowpair.max_kb").max(64) as usize) * 1024,
@@ -124,6 +139,9 @@ mod tests {
             vec![nexa_ctl::Color(0x00FF_0000), nexa_ctl::Color(0x0000_FF00)]
         );
         let p = RainbowPairs;
+        // 일반 편집 모드(확장 꺼짐/미설치) = 괄호 색 없음.
+        let off = p.disabled_effect().bracket_opts.unwrap_or_default();
+        assert!(!off.rainbow && !off.unmatched && off.auto_close);
         assert_eq!(p.commands().len(), 6);
         assert_eq!(p.menus()[0].items.len(), 6);
     }

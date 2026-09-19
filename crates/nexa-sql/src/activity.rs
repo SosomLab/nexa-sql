@@ -23,6 +23,8 @@ pub(crate) struct ActItem {
     pub panel: bool,
     /// 아래쪽 정렬(동작 버튼).
     bottom: bool,
+    /// 숨김(자리도 차지하지 않는다 · 확장 아이콘 = 확장 관리자가 켜져 있을 때만 · 사용자 09-19).
+    hidden: bool,
 }
 
 pub(crate) struct ActivityBar {
@@ -47,18 +49,28 @@ impl ActivityBar {
                     icon: toolicons::mi_files(),
                     panel: true,
                     bottom: false,
+                    hidden: false,
                 },
                 ActItem {
                     id: "view.search",
                     icon: toolicons::mi_search(),
                     panel: true,
                     bottom: false,
+                    hidden: false,
+                },
+                ActItem {
+                    id: "view.extensions",
+                    icon: toolicons::mi_extensions(),
+                    panel: true,
+                    bottom: false,
+                    hidden: true,
                 },
                 ActItem {
                     id: "edit.prefs",
                     icon: toolicons::mi_gear(),
                     panel: false,
                     bottom: true,
+                    hidden: false,
                 },
             ],
             active: None,
@@ -82,6 +94,20 @@ impl ActivityBar {
         self.active = id;
     }
 
+    /// 항목 표시/숨김 — 바뀌었으면 true(숨기면 hover·눌림도 비운다).
+    pub(crate) fn set_item_visible(&mut self, id: &str, on: bool) -> bool {
+        let Some(it) = self.items.iter_mut().find(|it| it.id == id) else {
+            return false;
+        };
+        if it.hidden != on {
+            return false;
+        }
+        it.hidden = !on;
+        self.hover = None;
+        self.pressed = None;
+        true
+    }
+
     /// 눌린 항목 id(1회성).
     pub(crate) fn take_picked(&mut self) -> Option<&'static str> {
         self.picked.take()
@@ -94,14 +120,21 @@ impl ActivityBar {
     fn slot_rect(&self, i: usize) -> Rect {
         let b = self.bounds;
         let h = self.s(SLOT_H);
-        let tops = self.items.iter().filter(|it| !it.bottom).count();
         let it = &self.items[i];
+        if it.hidden {
+            return Rect::default();
+        }
         if it.bottom {
-            let bottoms_after = self.items[i + 1..].iter().filter(|x| x.bottom).count() as i32;
+            let bottoms_after = self.items[i + 1..]
+                .iter()
+                .filter(|x| x.bottom && !x.hidden)
+                .count() as i32;
             Rect::new(b.x, b.bottom() - h * (bottoms_after + 1), b.w, h)
         } else {
-            let idx = self.items[..i].iter().filter(|x| !x.bottom).count() as i32;
-            let _ = tops;
+            let idx = self.items[..i]
+                .iter()
+                .filter(|x| !x.bottom && !x.hidden)
+                .count() as i32;
             Rect::new(b.x, b.y + h * idx, b.w, h)
         }
     }
@@ -152,6 +185,9 @@ impl ActivityBar {
         dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
         let isz = self.s(ICON_PX);
         for (i, it) in self.items.iter().enumerate() {
+            if it.hidden {
+                continue;
+            }
             let slot = self.slot_rect(i);
             let active = it.panel && self.active == Some(it.id);
             let hot = self.hover == Some(i) || self.pressed == Some(i);

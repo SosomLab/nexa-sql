@@ -572,7 +572,13 @@ impl TxLogWin {
                     (ExecOutcome::Err { .. }, _) => (Some(th.danger), 0.15),
                     (ExecOutcome::Stopped { .. }, _) => (Some(Color(0x00E0_A020)), 0.14),
                     (_, TxOutcome::Pending) => (Some(th.accent), 0.12),
-                    (_, TxOutcome::RolledBack | TxOutcome::Lost) => (Some(th.text_dim), 0.10),
+                    (
+                        _,
+                        TxOutcome::RolledBack
+                        | TxOutcome::Lost
+                        | TxOutcome::AutoRolledBack(_)
+                        | TxOutcome::ReadEnded,
+                    ) => (Some(th.text_dim), 0.10),
                     _ => (None, 0.0),
                 };
                 if ri % 2 == 1 {
@@ -584,7 +590,10 @@ impl TxLogWin {
                 if self.hover == Some(ri) {
                     dc.fill_rect_alpha(r, th.text, 0.06);
                 }
-                let dim = matches!(outcome, TxOutcome::RolledBack | TxOutcome::Lost);
+                let dim = matches!(
+                    outcome,
+                    TxOutcome::RolledBack | TxOutcome::Lost | TxOutcome::AutoRolledBack(_)
+                );
                 let fg = if dim { th.text_dim } else { th.text };
                 let cells: [String; 8] = [
                     e.at.get(11..19).unwrap_or(&e.at).to_string(),
@@ -620,6 +629,13 @@ impl TxLogWin {
                         TxOutcome::ImplicitCommit(by) => tf(Msg::TxOutImplicit, &[by]),
                         TxOutcome::Switched => t(Msg::TxOutSwitched).to_string(),
                         TxOutcome::Lost => t(Msg::TxOutLost).to_string(),
+                        TxOutcome::ReadEnded => t(Msg::TxOutReadEnded).to_string(),
+                        TxOutcome::AutoRolledBack(m) => {
+                            tf(Msg::TxOutAutoRolledBack, &[&m.to_string()])
+                        }
+                        TxOutcome::AutoCommitted(m) => {
+                            tf(Msg::TxOutAutoCommitted, &[&m.to_string()])
+                        }
                     },
                     log.session_label(e.session).to_string(),
                 ];

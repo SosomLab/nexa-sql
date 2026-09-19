@@ -28,6 +28,10 @@ pub(crate) struct Palette {
     /// 필터 결과 — cmds index (점수순).
     matches: Vec<usize>,
     sel: usize,
+    /// 보이는 첫 행(전체 결과 기준) — 결과가 `MAX_ROWS`보다 많으면 ↑/↓·휠로 굴린다(사용자 09-19 마우스 보완).
+    top: usize,
+    /// 마지막으로 본 마우스 위치 — 같은 자리의 MouseMove(키보드 이동 직후 재발행)로 선택이 되돌아가지 않게.
+    last_mouse: (i32, i32),
     bounds: Rect,
     row_h: i32,
     scale: f32,
@@ -48,6 +52,8 @@ impl Palette {
             cmds: Vec::new(),
             matches: Vec::new(),
             sel: 0,
+            top: 0,
+            last_mouse: (i32::MIN, i32::MIN),
             bounds: Rect::new(0, 0, 0, 0),
             row_h: 26,
             scale: 1.0,
@@ -125,6 +131,26 @@ impl Palette {
         Rect::new(b.x + p, top, b.w - p * 2, self.row_h * MAX_ROWS as i32)
     }
 
+    /// 점 아래 결과 행(전체 결과 기준 인덱스 · 목록 밖/빈 행 = None).
+    fn row_at(&self, p: Point) -> Option<usize> {
+        let rr = self.rows_rect();
+        if self.goto.is_some() || self.prompt.is_some() || !rr.contains(p) {
+            return None;
+        }
+        let row = ((p.y - rr.y) / self.row_h.max(1)) as usize;
+        let i = self.top + row;
+        (row < MAX_ROWS && i < self.matches.len()).then_some(i)
+    }
+
+    /// 선택 행이 보이도록 굴린다.
+    fn reveal_sel(&mut self) {
+        if self.sel < self.top {
+            self.top = self.sel;
+        } else if self.sel >= self.top + MAX_ROWS {
+            self.top = self.sel + 1 - MAX_ROWS;
+        }
+    }
+
     fn refilter(&mut self, force: bool) {
         if self.prompt.is_some() {
             self.matches.clear();
@@ -140,6 +166,7 @@ impl Palette {
             self.goto = Some(rest.trim().parse::<usize>().ok().filter(|n| *n > 0));
             self.matches.clear();
             self.sel = 0;
+            self.top = 0;
             return;
         }
         self.goto = None;
@@ -155,6 +182,7 @@ impl Palette {
         });
         self.matches = scored.into_iter().map(|(_, i)| i).collect();
         self.sel = 0;
+        self.top = 0;
     }
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> PaletteAction {
@@ -189,12 +217,55 @@ impl Palette {
             }
             InputEvent::Key { key: Key::Up, .. } => {
                 self.sel = self.sel.saturating_sub(1);
+                self.reveal_sel();
                 return PaletteAction::None;
             }
             InputEvent::Key { key: Key::Down, .. } => {
-                if self.sel + 1 < self.matches.len().min(MAX_ROWS) {
+                if self.sel + 1 < self.matches.len() {
                     self.sel += 1;
                 }
+                self.reveal_sel();
+                return PaletteAction::None;
+            }
+            InputEvent::Key {
+                key: Key::PageUp, ..
+            } => {
+                self.sel = self.sel.saturating_sub(MAX_ROWS);
+                self.reveal_sel();
+                return PaletteAction::None;
+            }
+            InputEvent::Key {
+                key: Key::PageDown, ..
+            } => {
+                self.sel = (self.sel + MAX_ROWS).min(self.matches.len().saturating_sub(1));
+                self.reveal_sel();
+                return PaletteAction::None;
+            }
+            // ★ 마우스(사용자 09-19): 목록 위에서 움직이면 그 행이 선택(키보드 선택과 같은 강조 하나) · 휠 = 목록 굴리기 ·
+            //   클릭 = 실행. 같은 자리의 MouseMove는 무시한다(키보드로 옮긴 선택이 커서 아래 행으로 튀지 않게).
+            InputEvent::MouseMove { x, y } => {
+                if (x, y) != self.last_mouse {
+                    self.last_mouse = (x, y);
+                    if let Some(i) = self.row_at(Point { x, y }) {
+                        self.sel = i;
+                    }
+                }
+                return PaletteAction::None;
+            }
+            InputEvent::Wheel { delta } => {
+                let rows = if delta > 0 { -3isize } else { 3 };
+                let max_top = self.matches.len().saturating_sub(MAX_ROWS);
+                self.top = (self.top as isize + rows).clamp(0, max_top as isize) as usize;
+                // 선택은 보이는 범위 안으로(커서가 목록 위에 있으면 그 행).
+                let under = self.row_at(Point {
+                    x: self.last_mouse.0,
+                    y: self.last_mouse.1,
+                });
+                self.sel = under.unwrap_or_else(|| {
+                    self.sel
+                        .clamp(self.top, (self.top + MAX_ROWS).saturating_sub(1))
+                        .min(self.matches.len().saturating_sub(1))
+                });
                 return PaletteAction::None;
             }
             InputEvent::MouseDown { x, y, .. } => {
@@ -202,11 +273,9 @@ impl Palette {
                 if !self.bounds.contains(p) {
                     return PaletteAction::Close;
                 }
-                let rr = self.rows_rect();
-                if rr.contains(p) {
-                    let row = ((y - rr.y) / self.row_h.max(1)) as usize;
-                    if let Some(&i) = self.matches.get(row) {
-                        return PaletteAction::Pick(self.cmds[i].0.clone());
+                if self.rows_rect().contains(p) {
+                    if let Some(i) = self.row_at(p) {
+                        return PaletteAction::Pick(self.cmds[self.matches[i]].0.clone());
                     }
                     return PaletteAction::None;
                 }
@@ -252,10 +321,16 @@ impl Palette {
             );
             return;
         }
-        for (row, &i) in self.matches.iter().take(MAX_ROWS).enumerate() {
+        for (row, &i) in self
+            .matches
+            .iter()
+            .skip(self.top)
+            .take(MAX_ROWS)
+            .enumerate()
+        {
             let y = rr.y + row as i32 * self.row_h;
             let r = Rect::new(rr.x, y, rr.w, self.row_h);
-            if row == self.sel {
+            if self.top + row == self.sel {
                 dc.fill_rect(r, th.sel_bg);
             }
             dc.text(
@@ -309,5 +384,70 @@ mod tests {
         let b = fuzzy_score("sql", "Set Syntax: Plain Text").unwrap_or(-1);
         assert!(a > b);
         assert_eq!(fuzzy_score("", "anything"), Some(0));
+    }
+
+    /// 마우스(사용자 09-19): 목록 위에서 움직이면 그 행 선택 · 같은 자리 MouseMove는 무시 · 휠 = 굴리기 · 클릭 = 실행 ·
+    /// ↓는 보이는 행 수를 넘어 끝까지(목록이 따라 굴러간다).
+    #[test]
+    fn mouse_hover_wheel_click_and_scrolling() {
+        use super::{Palette, PaletteAction, MAX_ROWS};
+        use nexa_ctl::{InputEvent, Invalidations, Key};
+        let mut p = Palette::new();
+        p.set_commands(
+            (0..40)
+                .map(|i| (format!("cmd.{i}"), format!("Command {i:02}")))
+                .collect(),
+        );
+        p.set_bounds(1000, 40, 1.0);
+        p.open("");
+        let mut inv = Invalidations::default();
+        let rr = p.rows_rect();
+        let at = |row: i32| InputEvent::MouseMove {
+            x: rr.x + 10,
+            y: rr.y + row * p.row_h + 3,
+        };
+        let ev = at(3);
+        p.on_event(&ev, &mut inv);
+        assert_eq!(p.sel, 3, "hover = 선택");
+        // 키보드로 옮긴 뒤 같은 자리 MouseMove가 와도 선택은 그대로.
+        p.on_event(
+            &InputEvent::Key {
+                key: Key::Down,
+                shift: false,
+                primary: false,
+            },
+            &mut inv,
+        );
+        assert_eq!(p.sel, 4);
+        p.on_event(&ev, &mut inv);
+        assert_eq!(p.sel, 4, "같은 자리 = 무시");
+        // 휠 아래 = 3행 굴림 · 선택은 커서 아래 행.
+        p.on_event(&InputEvent::Wheel { delta: -120 }, &mut inv);
+        assert_eq!(p.top, 3);
+        assert_eq!(p.sel, 6, "커서 아래 행(3행째) = top 3 + 3");
+        // ↓를 끝까지 — 보이는 행 수를 넘어 마지막 항목까지.
+        for _ in 0..100 {
+            p.on_event(
+                &InputEvent::Key {
+                    key: Key::Down,
+                    shift: false,
+                    primary: false,
+                },
+                &mut inv,
+            );
+        }
+        assert_eq!(p.sel, 39);
+        assert_eq!(p.top, 40 - MAX_ROWS);
+        // 클릭 = 그 행 실행(굴린 위치 기준).
+        let click = InputEvent::MouseDown {
+            x: rr.x + 10,
+            y: rr.y + 3,
+            shift: false,
+            primary: false,
+        };
+        assert!(matches!(
+            p.on_event(&click, &mut inv),
+            PaletteAction::Pick(id) if id == format!("cmd.{}", 40 - MAX_ROWS)
+        ));
     }
 }

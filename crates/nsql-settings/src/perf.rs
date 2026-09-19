@@ -253,6 +253,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("ui.clipboard_probe", "off"),
     ("log.open_at_start", "off"),
     ("log.dev_mode", "off"),
+    // 막힘 감지 폴링(docs/56 L3) — 네트워크 부하원이라 향상 모드는 끈다(L1·L2는 데이터 안전 기능이라 건드리지 않는다).
+    ("tx.block_poll_secs", "0"),
     // ── 메모리(캐시 상한 · 아이콘은 위에서 껐으므로 캐시도 최소)
     ("file.icon_cache", "128"),
     // ── 폴링·시도 횟수·시간·스레드(NET/DB 표시용): 신호등(스레드 1) · 탐색기 자동 갱신 · Oracle 라이브 로그

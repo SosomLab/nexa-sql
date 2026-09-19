@@ -131,8 +131,8 @@
 | D-100 ✅ ①(09-19) | L1 기본값 — 수동 모드에서 변경 없는 트랜잭션을 자동으로 끝낼까 | ① auto(끝낸다) ② off(종전 유지 · 옵션으로만) | **①** — 잠금 사고의 구조적 원인 제거 · 예외 규칙으로 의도한 읽기 트랜잭션은 보존 |
 | D-101 ✅ ① ROLLBACK(09-19) | L1에서 읽기 트랜잭션을 끝내는 동작 | ① ROLLBACK ② COMMIT | **①**(부작용 0 · 함수 부작용이 있었다면 strict가 걸러 묻는다) |
 | D-102 ✅ **②**(09-19 사용자 — 30분 뒤 카운트다운 자동 롤백이 기본) | L2 자동 종료 기본값 | ① warn(경고만) ② rollback(30분 · 카운트다운) ③ DBeaver처럼 조용히 롤백 | **①** 기본 · ②는 선택 — 말없이 잃는 것보다 알리는 쪽 |
-| D-103 | L3 막힘 감지 기본 | ① 켬(30초 · 미커밋 있을 때만) ② 끔(옵션) | **①** — 트래픽은 미커밋 세션당 30초에 1문장 · 권한 없으면 자동 꺼짐 |
-| D-104 | L4 서버 타임아웃 기본 | ① 0(안 보냄) ② PG만 기본 1800초 | **①** — 서버 정책은 DBA 영역 · 필요할 때 켠다 |
+| D-103 ✅ ①(09-19 · 켬 30초) | L3 막힘 감지 기본 | ① 켬(30초 · 미커밋 있을 때만) ② 끔(옵션) | **①** — 트래픽은 미커밋 세션당 30초에 1문장 · 권한 없으면 자동 꺼짐 |
+| D-104 ✅ ①(09-19 · 0 = 안 보냄) | L4 서버 타임아웃 기본 | ① 0(안 보냄) ② PG만 기본 1800초 | **①** — 서버 정책은 DBA 영역 · 필요할 때 켠다 |
 | D-105 ✅ **①**(09-19 사용자 — L1~L4 한 번에) | 범위 | ① ①~④ 한 번에 ② ①②만 먼저 ③ ①만 먼저 | **②** — L1+L2가 사고의 대부분을 막는다 · L3/L4는 이어서 |
 
 ## 8. 검증 계획
@@ -140,6 +140,23 @@
 - 단위: `read_end` 판정 MC/DC(분류 · 대기 변경 유무 · FOR UPDATE · 사용자 BEGIN · 커서 유지) · L2 시계(경고/재알림/자동 시점) · L3 방언별 질의 파서.
 - 통합(도커 · integration CI): PG에서 수동 모드 SELECT 뒤 `pg_stat_activity.state`가 `idle`(≠ `idle in transaction`) · UPDATE 뒤 다른 접속의 `ALTER TABLE`이 대기 → L3가 1을 보고 · `idle_in_transaction_session_timeout` 만료 뒤 재접속 경로.
 - 실기: 수동 모드로 SELECT 반복 → 툴바 배지 없음 · UPDATE 뒤 10분 → 경고 카드 · `rollback` 선택 시 카운트다운 → 트랜잭션 로그 "자동 롤백".
+
+## 9. 구현(09-19 win 78차 · T-137 ✅ 1차)
+
+추가 확정(사용자 09-19): **유휴 시계 = 그 세션의 문장 실행만**(다른 탭에서 일해도 잊힌 트랜잭션을 잡는다) · **카운트다운 카드 = [지금 롤백] [커밋] [연장] + 작업 표시줄 깜빡임** · **자동 처리의 값·조건은 전부 설정**.
+
+| 겹 | 구현 | 위치 |
+|---|---|---|
+| L1 | 수동 모드에서 문장 뒤 `read_end_due`: 문장 흔적(`TxEffect` = Clean/Change/UserHold/Ended) → 변경·사용자 통제가 없으면 `ROLLBACK`(열린 커서가 있으면 닫힐 때로 미룸 — 자동 커밋의 미룬 커밋과 같은 자리 `deferred_end`) · `strict` = 서버 확인 질의(PG `pg_current_xact_id_if_assigned` · Oracle `local_transaction_id` · SQL Server DMV) · 이벤트 `RunEvent::ReadTxEnded` → 호스트가 읽기 표시를 걷고 트랜잭션 로그에 "읽기만 · 종료됨" | nsql-core `TxControl`·`is_locking_read` · nsql-run `ReadEnd`·`tx_effect`·`read_end_due`·`note_tx_ended` · 호스트 `tx_on_read_ended` |
+| L2 | 순수 판정 `sessions::tx_guard_step`(MC/DC) → 경고 카드(`txwarn.rs` · 비모달 · 실행 카드 위) · 재알림 · 카운트다운 → 만료 시 자동 롤백/커밋(`TxOutcome::AutoRolledBack/AutoCommitted(유휴 분)`) · 나중에/연장 = `tx.remind_min`만큼 미룸 · 그 세션에서 실행하면 전부 되돌림 · 모든 세션(잠든 탭 포함)을 5초(카운트다운 중 1초)마다 점검 | `main.rs tx_guard_tick/tx_warn_show/tx_warn_pick/tx_guard_fire` |
+| L3 | 접속 직후 세션 식별자(Oracle SID · PG pid · SQL Server SPID · MySQL connection id)를 받아 두고, 미커밋이 있는 동안만 메타 세션에 방언별 한 문장(`blockers_sql`) → 0→n = 위험 토스트·로그·상태줄 "차단 중 n" · n→0 = 해소 로그 · 질의 오류(권한 없음) = 그 세션에서 기능 끔 + 로그 1회 | `explorer.rs Req::Blockers` · `main.rs tx_block_tick/tx_block_drain` |
+| L4 | 접속 직후 `server_guard_sql`(PG `idle_in_transaction_session_timeout`·`lock_timeout` · SQL Server `LOCK_TIMEOUT` · MySQL lock wait · Oracle `ddl_lock_timeout`) — PG의 SET은 트랜잭션에 묶이므로 **커밋으로** 끝낸다 | `worker.rs` 접속 직후 블록 |
+
+설정(Session 분류 · 전부 즉시 반영 — 워커는 실행마다 설정을 다시 읽는다): `tx.read_end`(auto) · `tx.stale_min`(10 · 기존) · `tx.remind_min`(10) · `tx.idle_action`(**rollback**) · `tx.idle_limit_min`(30) · `tx.idle_countdown_secs`(60) · `tx.block_poll_secs`(30 · 향상 모드 0) · `tx.server_idle_timeout_secs`(0) · `tx.lock_wait_timeout_secs`(0).
+
+테스트: nsql-core `tx_control_and_locking_read` · nsql-run `read_only_transactions_end_in_manual_mode`·`tx_effect_rules` · nexa-sql `tx_guard_step_mcdc`·`blockers_sql_per_dialect_and_id_validation`·`server_guard_and_session_id_sql` · 통합(CI PG) `pg_read_only_transaction_ends_in_manual_mode`(조회 뒤 `pg_stat_activity.state = idle` · 변경 뒤 `idle in transaction`).
+
+남은 것: ⑤ 접속 유형 프리셋(2차) · 트랜잭션 로그 창 상단 "차단 중" 띠 · MySQL 드라이버가 들어오면 L1 strict/L3 실기 · 부하원 원장(39 §3)·네트워크 표(26 §8)에 L3 폴링 등재.
 
 ## 출처
 

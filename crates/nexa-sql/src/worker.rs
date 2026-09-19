@@ -178,6 +178,59 @@ fn apply_fetch_settings(runner: &mut Runner) {
     runner.keep_cursor = s.get("grid.fetch_mode").unwrap_or("cursor") == "cursor";
     runner.fetch_size = s.int("db.fetch_size").max(0) as usize;
     runner.cursor_idle_secs = s.int("db.cursor_idle_secs").max(0) as u64;
+    // docs/56 L1: 수동 모드의 변경 없는 트랜잭션 자동 종료.
+    runner.read_end = nsql_run::ReadEnd::parse(s.get("tx.read_end").unwrap_or("auto"));
+}
+
+/// docs/56 L4 — 접속 직후 서버 안전망 세션 파라미터(설정 0 = 안 보냄 · 지원 방언만). 돌려주는 값 = 보낼 문장들.
+fn server_guard_sql(dialect: Dialect, idle_tx_secs: i64, lock_wait_secs: i64) -> Vec<String> {
+    let mut out = Vec::new();
+    match dialect {
+        Dialect::Postgres => {
+            if idle_tx_secs > 0 {
+                out.push(format!(
+                    "SET idle_in_transaction_session_timeout = '{idle_tx_secs}s'"
+                ));
+            }
+            if lock_wait_secs > 0 {
+                out.push(format!("SET lock_timeout = '{lock_wait_secs}s'"));
+            }
+        }
+        Dialect::Mssql => {
+            if lock_wait_secs > 0 {
+                out.push(format!("SET LOCK_TIMEOUT {}", lock_wait_secs * 1000));
+            }
+        }
+        Dialect::Mysql => {
+            if lock_wait_secs > 0 {
+                out.push(format!(
+                    "SET SESSION innodb_lock_wait_timeout = {lock_wait_secs}"
+                ));
+                out.push(format!("SET SESSION lock_wait_timeout = {lock_wait_secs}"));
+            }
+        }
+        Dialect::Oracle => {
+            if lock_wait_secs > 0 {
+                out.push(format!(
+                    "ALTER SESSION SET ddl_lock_timeout = {lock_wait_secs}"
+                ));
+            }
+        }
+        Dialect::Sqlite | Dialect::Odbc => {}
+    }
+    out
+}
+
+/// 이 세션의 서버 쪽 식별자를 묻는 문장(Oracle SID · PG backend pid · SQL Server SPID · MySQL connection id) —
+/// 라이브 모니터(Oracle)와 막힘 감지(docs/56 L3)가 메타 세션에서 "이 세션 때문에 기다리는 세션"을 찾는 열쇠.
+fn session_id_sql(dialect: Dialect) -> Option<&'static str> {
+    match dialect {
+        Dialect::Oracle => Some("SELECT SYS_CONTEXT('USERENV','SID') FROM dual"),
+        Dialect::Postgres => Some("SELECT pg_backend_pid()"),
+        Dialect::Mssql => Some("SELECT @@SPID"),
+        Dialect::Mysql => Some("SELECT CONNECTION_ID()"),
+        Dialect::Sqlite | Dialect::Odbc => None,
+    }
 }
 
 /// 저장된 프로필 이름(상태줄 안내용 · 실패하면 빈 목록).
@@ -460,23 +513,47 @@ pub(crate) fn spawn(
                         } else {
                             ConnOutcome::ConnectFailed(last_err.unwrap_or_default())
                         });
-                        // Oracle이면 세션 SID를 알려 준다(라이브 모니터 V$SESSION 조회용).
-                        if ok && runner.engine.dialect == Dialect::Oracle {
+                        // 접속 직후 1회: ① 서버 안전망 세션 파라미터(docs/56 L4 · 설정 0 = 없음) ② 세션 식별자(라이브 모니터 ·
+                        //   막힘 감지 L3). PG의 SET은 트랜잭션에 묶이므로 **커밋으로** 끝낸다(롤백하면 SET이 되돌아간다).
+                        if ok {
+                            runner.note_tx_ended();
+                            let dialect = runner.engine.dialect;
+                            let (idle_tx, lock_wait) = nsql_settings::Settings::open_default()
+                                .map(|s| {
+                                    (
+                                        s.int("tx.server_idle_timeout_secs"),
+                                        s.int("tx.lock_wait_timeout_secs"),
+                                    )
+                                })
+                                .unwrap_or((0, 0));
                             if let Some(s) = runner.session.as_mut() {
-                                let req = nsql_core::ExecRequest {
-                                    sql: "SELECT SYS_CONTEXT('USERENV','SID') FROM dual".into(),
-                                    params: vec![],
-                                };
-                                if let Ok(r) = s.execute(&req) {
-                                    if let Some(v) = r
-                                        .result_sets
-                                        .first()
-                                        .and_then(|rs| rs.rows.first())
-                                        .and_then(|row| row.first())
-                                    {
-                                        let _ = ctx_tx.send(ConnOutcome::SessionId(v.display()));
+                                for sql in server_guard_sql(dialect, idle_tx, lock_wait) {
+                                    let req = nsql_core::ExecRequest {
+                                        sql: sql.clone(),
+                                        params: vec![],
+                                    };
+                                    if let Err(e) = s.execute(&req) {
+                                        emit(RunEvent::Message(format!("{sql} — {}", e.message)));
                                     }
                                 }
+                                if let Some(sql) = session_id_sql(dialect) {
+                                    let req = nsql_core::ExecRequest {
+                                        sql: sql.into(),
+                                        params: vec![],
+                                    };
+                                    if let Ok(r) = s.execute(&req) {
+                                        if let Some(v) = r
+                                            .result_sets
+                                            .first()
+                                            .and_then(|rs| rs.rows.first())
+                                            .and_then(|row| row.first())
+                                        {
+                                            let _ =
+                                                ctx_tx.send(ConnOutcome::SessionId(v.display()));
+                                        }
+                                    }
+                                }
+                                let _ = s.commit();
                             }
                         }
                         let _ = dtx.send(None);
@@ -809,6 +886,7 @@ pub(crate) fn spawn(
                             }
                             (Ok(()), None) => Ok(()),
                         };
+                        runner.note_tx_ended();
                         match r {
                             Ok(()) => emit(RunEvent::Message(
                                 t(if commit {
@@ -1013,6 +1091,30 @@ pub(crate) fn spawn_test(
 
 #[cfg(test)]
 mod tests {
+    /// docs/56 L4 — 서버 안전망 세션 파라미터: 0 = 아무것도 안 보냄 · 방언별 문장 · 세션 식별자 질의.
+    #[test]
+    fn server_guard_and_session_id_sql() {
+        use nsql_core::Dialect;
+        assert!(super::server_guard_sql(Dialect::Postgres, 0, 0).is_empty());
+        let pg = super::server_guard_sql(Dialect::Postgres, 1800, 30);
+        assert_eq!(pg.len(), 2);
+        assert!(pg[0].contains("idle_in_transaction_session_timeout = '1800s'"));
+        assert!(pg[1].contains("lock_timeout = '30s'"));
+        assert_eq!(
+            super::server_guard_sql(Dialect::Mssql, 1800, 30),
+            vec!["SET LOCK_TIMEOUT 30000".to_string()],
+            "SQL Server는 유휴 트랜잭션 타임아웃이 없다"
+        );
+        assert_eq!(super::server_guard_sql(Dialect::Oracle, 0, 15).len(), 1);
+        assert_eq!(super::server_guard_sql(Dialect::Mysql, 0, 15).len(), 2);
+        assert!(super::server_guard_sql(Dialect::Sqlite, 10, 10).is_empty());
+        assert!(
+            super::session_id_sql(Dialect::Postgres).is_some_and(|q| q.contains("pg_backend_pid"))
+        );
+        assert!(super::session_id_sql(Dialect::Mssql).is_some_and(|q| q.contains("@@SPID")));
+        assert!(super::session_id_sql(Dialect::Sqlite).is_none());
+    }
+
     use super::*;
 
     /// MC/DC — 비밀번호 필수 판정: 방언(SQLite 제외) · 호스트 있음 · 비밀번호 없음/빈 문자열.

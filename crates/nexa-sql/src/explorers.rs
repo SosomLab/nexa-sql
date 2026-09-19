@@ -332,6 +332,21 @@ impl ExplorerSet {
             .is_some_and(|i| !self.panes[i].ex.is_offline())
     }
 
+    /// 막힘 감지(docs/56 L3) — 그 서버의 메타 세션에 요청(칸이 없거나 오프라인이면 false).
+    pub(crate) fn blockers_poll(&mut self, spec: Option<&ConnectSpec>, sid: &str) -> bool {
+        match spec.and_then(|s| self.find(s)) {
+            Some(i) => self.panes[i].ex.blockers_poll(sid),
+            None => false,
+        }
+    }
+
+    pub(crate) fn take_blockers(&mut self) -> Vec<crate::explorer::BlockersResult> {
+        self.panes
+            .iter_mut()
+            .flat_map(|p| p.ex.take_blockers())
+            .collect()
+    }
+
     pub(crate) fn take_live(&mut self) -> Vec<LiveResult> {
         self.panes
             .iter_mut()

@@ -211,6 +211,16 @@ const TAB_ROWS_OPTS: &[(&str, Msg)] =
 
 const SCROLL_OPTS: &[(&str, Msg)] = &[("pixel", Msg::ValScrollPixel), ("row", Msg::ValScrollRow)];
 /// 미커밋 탭 닫기(DR-30).
+const TX_READ_END_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValTxReadEndAuto),
+    ("strict", Msg::ValTxReadEndStrict),
+    ("off", Msg::ValTxReadEndOff),
+];
+const TX_IDLE_ACTION_OPTS: &[(&str, Msg)] = &[
+    ("warn", Msg::ValTxIdleWarn),
+    ("rollback", Msg::ValTxIdleRollback),
+    ("commit", Msg::ValTxIdleCommit),
+];
 const TX_CLOSE_OPTS: &[(&str, Msg)] = &[
     ("ask", Msg::ValTxAsk),
     ("commit", Msg::ValTxCommit),
@@ -733,6 +743,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescRainbowColors,
         kind: SettingKind::Text,
         default: "",
+    },
+    Entry {
+        key: "rainbowpair.contrast_order",
+        cat: Msg::CatExtRainbowPairs,
+        label: Msg::LblRainbowContrast,
+        desc: Msg::DescRainbowContrast,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     Entry {
         key: "rainbowpair.max_kb",
@@ -2089,6 +2107,72 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTxStaleMin,
         kind: SettingKind::Int { min: 1, max: 1440 },
         default: "10",
+    },
+    // 수동 커밋 잠금 방지(docs/56 · 사용자 09-19 "자동 처리의 값·조건은 전부 설정으로"): L1 읽기 트랜잭션 자동 종료 ·
+    //   L2 유휴 미커밋 경고/재알림/자동 동작/카운트다운 · L3 막힘 감지 주기 · L4 서버 안전망 세션 파라미터.
+    Entry {
+        key: "tx.read_end",
+        cat: Msg::CatSession,
+        label: Msg::LblTxReadEnd,
+        desc: Msg::DescTxReadEnd,
+        kind: SettingKind::Choice(TX_READ_END_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "tx.remind_min",
+        cat: Msg::CatSession,
+        label: Msg::LblTxRemind,
+        desc: Msg::DescTxRemind,
+        kind: SettingKind::Int { min: 0, max: 1440 },
+        default: "10",
+    },
+    Entry {
+        key: "tx.idle_action",
+        cat: Msg::CatSession,
+        label: Msg::LblTxIdleAction,
+        desc: Msg::DescTxIdleAction,
+        kind: SettingKind::Choice(TX_IDLE_ACTION_OPTS),
+        default: "rollback",
+    },
+    Entry {
+        key: "tx.idle_limit_min",
+        cat: Msg::CatSession,
+        label: Msg::LblTxIdleLimit,
+        desc: Msg::DescTxIdleLimit,
+        kind: SettingKind::Int { min: 1, max: 1440 },
+        default: "30",
+    },
+    Entry {
+        key: "tx.idle_countdown_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblTxIdleCountdown,
+        desc: Msg::DescTxIdleCountdown,
+        kind: SettingKind::Int { min: 5, max: 600 },
+        default: "60",
+    },
+    Entry {
+        key: "tx.block_poll_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblTxBlockPoll,
+        desc: Msg::DescTxBlockPoll,
+        kind: SettingKind::Int { min: 0, max: 3600 },
+        default: "30",
+    },
+    Entry {
+        key: "tx.server_idle_timeout_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblTxServerIdle,
+        desc: Msg::DescTxServerIdle,
+        kind: SettingKind::Int { min: 0, max: 86400 },
+        default: "0",
+    },
+    Entry {
+        key: "tx.lock_wait_timeout_secs",
+        cat: Msg::CatSession,
+        label: Msg::LblTxLockWait,
+        desc: Msg::DescTxLockWait,
+        kind: SettingKind::Int { min: 0, max: 3600 },
+        default: "0",
     },
     Entry {
         key: "tx.close_action",

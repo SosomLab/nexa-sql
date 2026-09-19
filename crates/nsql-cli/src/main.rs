@@ -1094,6 +1094,7 @@ impl Printer {
             RunEvent::Disconnected => {
                 let _ = writeln!(out, "Disconnected");
             }
+            RunEvent::ReadTxEnded { .. } => {}
             RunEvent::Timing { timeline, .. } => {
                 if self.timing {
                     self.err(&format!("⏱ {}", timeline.summary()));

@@ -812,6 +812,30 @@ impl Editors {
         self.sync_tabs();
     }
 
+    /// **안내 탭**(파일 없는 읽을거리 · 확장 상세 등) — 같은 제목의 경로 없는 탭이 있으면 그 탭의 내용을 바꾸고, 없으면
+    /// 새 탭. 내용은 "저장된 상태"로 둔다(닫을 때 저장을 묻지 않게 · 사용자 09-19 확장 패널 "선택하면 상세").
+    pub(crate) fn open_info_tab(&mut self, title: &str, text: &str) {
+        let found =
+            (0..self.titles.len()).find(|&i| self.titles[i] == title && self.paths[i].is_none());
+        match found {
+            Some(i) => self.switch(i),
+            None => self.new_tab(Some(title.to_string())),
+        }
+        let i = self.active;
+        let syntax = self.registry.for_title(title);
+        let focused = self.cur().is_focused();
+        let mut tb = self.make_box(text, &syntax);
+        tb.set_focused(focused);
+        let mut inv = Invalidations::default();
+        tb.set_bounds(self.editor_bounds(), &mut inv);
+        self.bufs[i] = tb;
+        self.syntax[i] = syntax;
+        self.saved[i] = text.to_string();
+        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
+        self.refresh_baseline(i);
+        self.sync_tabs();
+    }
+
     /// 활성 탭을 `path`에 저장한 뒤 — 경로·제목·스냅샷 갱신(구문은 새 확장자 기준).
     pub(crate) fn mark_saved(&mut self, path: &Path) {
         let i = self.active;

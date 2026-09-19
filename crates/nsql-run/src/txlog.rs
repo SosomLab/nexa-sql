@@ -49,6 +49,12 @@ pub enum TxOutcome {
     Switched,
     /// 접속 끊김·재접속·세션 소실(서버가 롤백).
     Lost,
+    /// 변경 없는 읽기 트랜잭션을 앱이 끝냄(docs/56 L1 · `tx.read_end`).
+    ReadEnded,
+    /// 유휴 미커밋을 앱이 자동으로 롤백함(docs/56 L2 · `tx.idle_action = rollback` · 유휴 분).
+    AutoRolledBack(u64),
+    /// 유휴 미커밋을 앱이 자동으로 커밋함(`tx.idle_action = commit`).
+    AutoCommitted(u64),
 }
 
 /// 문장 실행 하나.

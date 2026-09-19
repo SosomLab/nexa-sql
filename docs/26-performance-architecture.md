@@ -193,6 +193,7 @@
 | 탐색기 메타 접속(서버당 1 · 52 §2-2) | DB 로그인 1 | **처음 보는 서버에 세션이 붙을 때 1** · 같은 서버의 추가 세션 = 0 · 유휴 회수 뒤에는 다음 펼침/소스 요청 1회당 1 · 오프라인(세션 0) 서버에는 **다시 붙지 않는다** | 없음 | `App::explorer_attach` · `explorer::meta_thread`(`resume`) |
 | 동작 직전 생존 판정([53](53-connection-liveness.md)) | TCP SYN 1(+ICMP 1) · `probe.timeout` 상한 | 실행·페치·건수·키·커밋 **직전**에, 마지막 성공 뒤 `probe.stale_secs`(60s) 지났거나 직전 오류·드라이버 끊김 힌트일 때만 · 접속 시도 전에는 항상 1 | 없음(실패 = 즉시 오류 · Broken) | `worker::ensure_alive` · `sessions::live_plan` |
 | TCP keepalive(PG·SQL Server) | 빈 세그먼트 1(데이터 0) | 접속당 `net.keepalive_secs`(60s) 유휴마다 · 서버 유휴 세션 정책과 무관 · 0 = 끔 | OS(3회 뒤 소켓 오류) | `nsql_drivers::set_net_options` |
+| 확장 저장소 읽기(`index.json` · 설치 파일 · [50 §14](50-extension-system.md)) | HTTPS GET 파일당 1(curl · ≤ 30초) | **사용자 동작으로만**: 확장 패널을 열 때·⟳·팔레트 Install/Add Repository · 진행 중 1개(`ext_fetch_rx`) · 저장소 수만큼 순차 | **없음** | `ext_fetch_start` · `manager::Source::read_raw` |
 
 **검토 체크리스트**(네트워크를 만드는 코드를 추가·변경할 때):
 1. 사용자 행동 없이 시작되는 요청인가? → 주기·백오프 상한과 "창이 열려 있을 때만" 조건이 있는가.

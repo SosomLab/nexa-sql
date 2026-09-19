@@ -97,6 +97,18 @@ pub(crate) struct Sess {
     pub tx_pending: Vec<TxItem>,
     pub tx_read: bool,
     pub tx_stale_logged: bool,
+    /// 이 세션에서 마지막으로 문장을 실행한 시각 — 유휴 미커밋 판정의 시계(docs/56 L2 · "그 세션의 문장 실행만" = 활동).
+    pub last_exec: Instant,
+    /// 마지막 미커밋 경고 시각(재알림 간격 `tx.remind_min`).
+    pub tx_warned_at: Option<Instant>,
+    /// "나중에/연장"으로 미룬 끝 시각.
+    pub tx_snooze_until: Option<Instant>,
+    /// 자동 처리 카운트다운 마감.
+    pub tx_countdown: Option<Instant>,
+    /// 내 미커밋 때문에 기다리는 세션 수(docs/56 L3 · 마지막 폴링 결과) · 다음 폴링 시각 · 이 서버에서 기능이 꺼졌는가(권한 없음).
+    pub tx_blockers: usize,
+    pub tx_block_next: Instant,
+    pub tx_block_off: bool,
     /// 이 세션에서 **세션 상태를 바꾸는 문장**이 실행됐다(`ALTER SESSION`·`SET`·임시 테이블·PL/SQL 블록 …) — 닫으면 그 상태를
     /// 잃으므로 유휴 닫기 대상에서 뺀다(§6-4). 새로 접속하면 거짓.
     pub stateful: bool,
@@ -158,6 +170,13 @@ impl Sess {
             tx_pending: Vec::new(),
             tx_read: false,
             tx_stale_logged: false,
+            last_exec: Instant::now(),
+            tx_warned_at: None,
+            tx_snooze_until: None,
+            tx_countdown: None,
+            tx_blockers: 0,
+            tx_block_next: Instant::now(),
+            tx_block_off: false,
             stateful: false,
             run_editor: 0,
             run_tab: 0,
@@ -552,6 +571,92 @@ pub(crate) struct IdleInput {
     pub include_shared: bool,
 }
 
+/// 유휴 미커밋 처리 방식(설정 `tx.idle_action` · docs/56 L2).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TxIdleAction {
+    Warn,
+    Rollback,
+    Commit,
+}
+
+impl TxIdleAction {
+    pub(crate) fn parse(s: &str) -> Self {
+        match s.trim() {
+            "warn" => Self::Warn,
+            "commit" => Self::Commit,
+            _ => Self::Rollback,
+        }
+    }
+}
+
+/// 유휴 미커밋 판정의 입력(세션 하나 · 한 틱).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TxGuardIn {
+    /// 대기 중인 변경이 있는가.
+    pub pending: bool,
+    /// 세션이 실행·보조 작업 중인가(통제 · docs/52 §3) — 그동안은 아무것도 하지 않는다.
+    pub blocked: bool,
+    /// 마지막 문장 실행 뒤 흐른 시간.
+    pub idle: Duration,
+    pub stale_min: u64,
+    /// 0 = 한 번만.
+    pub remind_min: u64,
+    pub action: TxIdleAction,
+    pub limit_min: u64,
+    /// 마지막 경고 뒤 흐른 시간(없으면 아직 경고 전).
+    pub since_warn: Option<Duration>,
+    /// "나중에/연장"으로 미룬 중인가.
+    pub snoozed: bool,
+    /// 카운트다운 중이면 남은 시간(0 = 만료).
+    pub counting: Option<Duration>,
+}
+
+/// 이번 틱에 할 일.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TxGuardStep {
+    None,
+    /// 경고 카드를 띄운다(첫 경고 또는 재알림).
+    Warn,
+    /// 자동 처리 카운트다운을 시작한다.
+    StartCountdown,
+    /// 카운트다운 진행 중(카드 갱신만).
+    Counting,
+    /// 카운트다운 만료 — 자동 처리(`action`)를 실행한다.
+    Fire,
+}
+
+/// docs/56 L2 판정(순수 · MC/DC): 대기 변경 없음·작업 중 = 아무것도 안 함 → 카운트다운 중이면 그 흐름 → 미룸이면 쉼 →
+/// 자동 처리 방식이고 한도를 넘겼으면 카운트다운 시작 → 경고 시점(첫 경고 = `stale_min` · 재알림 = `remind_min`)이면 경고.
+pub(crate) fn tx_guard_step(i: TxGuardIn) -> TxGuardStep {
+    if !i.pending || i.blocked {
+        return TxGuardStep::None;
+    }
+    if let Some(left) = i.counting {
+        return if left.is_zero() {
+            TxGuardStep::Fire
+        } else {
+            TxGuardStep::Counting
+        };
+    }
+    if i.snoozed {
+        return TxGuardStep::None;
+    }
+    let idle_min = i.idle.as_secs() / 60;
+    if i.action != TxIdleAction::Warn && idle_min >= i.limit_min {
+        return TxGuardStep::StartCountdown;
+    }
+    if idle_min >= i.stale_min {
+        let due = match i.since_warn {
+            None => true,
+            Some(d) => i.remind_min > 0 && d.as_secs() / 60 >= i.remind_min,
+        };
+        if due {
+            return TxGuardStep::Warn;
+        }
+    }
+    TxGuardStep::None
+}
+
 /// 닫아도 되는가: 접속돼 있고 · 한가하고 · 열린 트랜잭션이 없고 · 한도를 넘겼을 때만.
 /// SQLite는 서버가 없다(파일 핸들 하나) — 닫아서 얻는 것이 없고 `:memory:`는 닫으면 데이터가 사라지므로 **항상 유지**.
 pub(crate) fn idle_action(i: IdleInput) -> IdleAction {
@@ -571,6 +676,124 @@ pub(crate) fn idle_action(i: IdleInput) -> IdleAction {
 
 #[cfg(test)]
 mod tests {
+    /// docs/56 L2 — 유휴 미커밋 판정 MC/DC.
+    #[test]
+    fn tx_guard_step_mcdc() {
+        use super::{tx_guard_step, TxGuardIn, TxGuardStep, TxIdleAction};
+        use std::time::Duration;
+        let min = |m: u64| Duration::from_secs(m * 60);
+        let base = TxGuardIn {
+            pending: true,
+            blocked: false,
+            idle: min(12),
+            stale_min: 10,
+            remind_min: 10,
+            action: TxIdleAction::Rollback,
+            limit_min: 30,
+            since_warn: None,
+            snoozed: false,
+            counting: None,
+        };
+        assert_eq!(
+            tx_guard_step(base),
+            TxGuardStep::Warn,
+            "10분 넘음 · 첫 경고"
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                pending: false,
+                ..base
+            }),
+            TxGuardStep::None
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                blocked: true,
+                ..base
+            }),
+            TxGuardStep::None
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                idle: min(9),
+                ..base
+            }),
+            TxGuardStep::None,
+            "아직"
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                snoozed: true,
+                ..base
+            }),
+            TxGuardStep::None,
+            "미룸"
+        );
+        let warned = TxGuardIn {
+            since_warn: Some(min(3)),
+            ..base
+        };
+        assert_eq!(tx_guard_step(warned), TxGuardStep::None, "재알림 간격 전");
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                since_warn: Some(min(10)),
+                idle: min(22),
+                ..base
+            }),
+            TxGuardStep::Warn,
+            "재알림"
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                since_warn: Some(min(50)),
+                remind_min: 0,
+                idle: min(25),
+                ..base
+            }),
+            TxGuardStep::None,
+            "remind 0 = 한 번만"
+        );
+        let over = TxGuardIn {
+            idle: min(31),
+            since_warn: Some(min(1)),
+            ..base
+        };
+        assert_eq!(tx_guard_step(over), TxGuardStep::StartCountdown);
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                action: TxIdleAction::Warn,
+                since_warn: Some(min(1)),
+                ..over
+            }),
+            TxGuardStep::None,
+            "경고만 = 자동 처리 없음"
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                snoozed: true,
+                ..over
+            }),
+            TxGuardStep::None,
+            "연장 중에는 카운트다운도 쉼"
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                counting: Some(Duration::from_secs(20)),
+                ..over
+            }),
+            TxGuardStep::Counting
+        );
+        assert_eq!(
+            tx_guard_step(TxGuardIn {
+                counting: Some(Duration::ZERO),
+                ..over
+            }),
+            TxGuardStep::Fire
+        );
+        assert_eq!(TxIdleAction::parse("warn"), TxIdleAction::Warn);
+        assert_eq!(TxIdleAction::parse("bogus"), TxIdleAction::Rollback);
+    }
+
     /// D16 — 전용/공유 · 묶인 탭 수: 조건별 독립 영향.
     #[test]
     fn disconnect_plan_mcdc() {

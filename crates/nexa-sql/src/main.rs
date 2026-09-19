@@ -21,6 +21,7 @@ mod eol;
 mod exp_icons;
 mod explorer;
 mod explorers;
+mod ext_panel;
 #[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
@@ -48,6 +49,7 @@ mod toast;
 mod toolfloat;
 mod toolicons;
 mod txlog_win;
+mod txwarn;
 mod winfocus;
 mod wingeom;
 mod worker;
@@ -58,6 +60,7 @@ use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
 use connect::{ConnState, ConnectPanel, PanelAction};
 use editors::Editors;
 use explorer::{ExplorerAction, LiveReq};
+use ext_panel::{ExtPanel, ExtPanelAction, ExtRow};
 use file_win::{FileWin, FileWinAction};
 use findbar::{FindAction, FindBar};
 use keymap::{Chord, Keymap};
@@ -116,7 +119,16 @@ enum Focus {
     Find,
     /// 파일 검색 패널(T-81a).
     Search,
+    /// 확장 패널(검색 상자 · 사용자 09-19).
+    Ext,
 }
+
+/// 저장소 읽기 스레드의 결과 한 벌(원천 · index · 추적 줄).
+type ExtFetch = Vec<(
+    extensions::manager::Source,
+    Result<extensions::manager::Index, String>,
+    extensions::manager::Trace,
+)>;
 
 /// 잃는 순간의 확인(Commit/Rollback) 뒤 이어질 동작(DR-30).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +162,10 @@ struct App {
     open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
+    /// 유휴 미커밋 경고 카드(docs/56 L2) — 세션 하나를 가리킨다(가장 급한 것).
+    tx_warn: txwarn::TxWarn,
+    /// 다음 미커밋 점검 시각(about_to_wait 깨움).
+    tx_guard_next: Instant,
     run_toast_next: Option<Instant>,
     /// 문장 실행 버튼 활성 상태 캐시(다중 커서면 비활성 · 사용자 09-17).
     run_stmt_enabled: bool,
@@ -256,6 +272,10 @@ struct App {
     explorer: explorers::ExplorerSet,
     /// 파일 검색 패널(활동 막대 두 번째 · T-81a · docs/36).
     search: SearchPanel,
+    /// 확장 패널(활동 막대 "확장" · 확장 관리자가 켜져 있을 때만 · 사용자 09-19).
+    ext_panel: ExtPanel,
+    /// 저장소 읽기 스레드의 결과(패널을 열거나 ⟳ · 사용자 동작으로만 · 26 §8).
+    ext_fetch_rx: Option<std::sync::mpsc::Receiver<ExtFetch>>,
     /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
     split_v: Splitter,
     split_h: Splitter,
@@ -537,14 +557,28 @@ impl App {
         let act_w = px(activity::BAR_W, s);
         self.act_bar
             .set_bounds(Rect::new(0, body_top, act_w, body_h), s);
+        // 확장 아이콘·패널 = 확장 관리자가 켜져 있을 때만(꺼지면 아이콘이 사라지고 패널도 닫힌다 · 사용자 09-19).
+        let ext_on = self.settings.flag("extensions.enabled");
+        self.act_bar.set_item_visible("view.extensions", ext_on);
+        if !ext_on && self.ext_panel.is_visible() {
+            self.ext_panel.set_visible(false);
+            if self.focus == Focus::Ext {
+                self.set_focus(Focus::Editor);
+            }
+        }
         self.act_bar.set_active(if self.explorer.is_visible() {
             Some("view.explorer")
         } else if self.search.is_visible() {
             Some("view.search")
+        } else if self.ext_panel.is_visible() {
+            Some("view.extensions")
         } else {
             None
         });
-        let exp_w = if self.explorer.is_visible() || self.search.is_visible() {
+        let exp_w = if self.explorer.is_visible()
+            || self.search.is_visible()
+            || self.ext_panel.is_visible()
+        {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
             0
@@ -568,6 +602,19 @@ impl App {
             s,
         );
         self.search.set_clamp_width(w);
+        self.ext_panel.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.ext_panel.is_visible() {
+                    exp_w
+                } else {
+                    0
+                },
+                body_h,
+            ),
+            s,
+        );
         let rx = rx + act_w + exp_w;
         let rw = rw - act_w - exp_w;
         // 스플리터 ① 탐색기|편집기 — 잡히는 띠 = 탐색기 오른쪽 경계 ±3 논리 px(탐색기 보일 때만 · 사용자 09-16).
@@ -657,8 +704,11 @@ impl App {
         self.explorer.set_focused(f == Focus::Explorer);
         self.find.set_focused(f == Focus::Find);
         self.search.set_focused(f == Focus::Search);
+        self.ext_panel.set_focused(f == Focus::Ext);
         if let Some(w) = &self.window {
-            w.set_ime_allowed(f == Focus::Editor || f == Focus::Find || f == Focus::Search);
+            w.set_ime_allowed(
+                f == Focus::Editor || f == Focus::Find || f == Focus::Search || f == Focus::Ext,
+            );
         }
     }
 
@@ -668,6 +718,7 @@ impl App {
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Find => self.find.focused_textbox(),
             Focus::Search => self.search.focused_textbox(),
+            Focus::Ext => self.ext_panel.focused_textbox(),
             Focus::Grid | Focus::Explorer => None,
         }
     }
@@ -1916,6 +1967,20 @@ impl App {
     /// 설정 → 편집기 안내선(표시 · 색 · 투명도) + 동일 출현 외곽선(사용자 09-16).
     /// 끈 확장 id 목록(`extensions.disabled`).
     fn ext_disabled(&self) -> Vec<String> {
+        // 확장 관리자가 꺼져 있으면 **모든 확장이 꺼진 것**(설치 기록·개별 켬/끔과 무관 · 사용자 09-19).
+        if !self.settings.flag("extensions.enabled") {
+            return self
+                .extensions
+                .builtin_ids()
+                .into_iter()
+                .map(|(id, _)| id.to_string())
+                .collect();
+        }
+        self.ext_disabled_list()
+    }
+
+    /// 설정 `extensions.disabled` 그대로(관리자 상태와 무관 — 패널·목록의 켬/끔 표시용).
+    fn ext_disabled_list(&self) -> Vec<String> {
         self.settings
             .get("extensions.disabled")
             .unwrap_or("")
@@ -1994,16 +2059,25 @@ impl App {
         let _ = &builtin;
         let mut cmds: Vec<(String, String)> = Vec::new();
         // Package Control처럼 1회 활성화 — 켜기 전에는 목록/설치를 막는다(네트워크 사용을 알리는 지점).
-        if id == "ext.enable_mgr" {
-            let _ = self.settings.set("extensions.enabled", "on");
+        if id == "ext.enable_mgr" || id == "ext.disable_mgr" {
+            let on = id == "ext.enable_mgr";
+            let _ = self
+                .settings
+                .set("extensions.enabled", if on { "on" } else { "off" });
             let _ = self.settings.save();
-            self.sess.status = tf(
-                Msg::StExtManagerEnabled,
-                &[&mgr::default_source(&self.settings).display()],
-            );
+            self.sess.status = if on {
+                tf(
+                    Msg::StExtManagerEnabled,
+                    &[&mgr::default_source(&self.settings).display()],
+                )
+            } else {
+                t(Msg::StExtManagerDisabled).into()
+            };
             self.log_win
                 .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
-            self.prefs_sync();
+            // 켬/끔 = 확장 효과 전체 재적용(끄면 전부 정지) + 활동 막대 아이콘·패널(layout).
+            self.apply_extensions(None);
+            self.layout();
             self.redraw();
             return;
         }
@@ -2021,8 +2095,12 @@ impl App {
                     self.ext_trace(tr);
                     match r {
                         Ok(idx) => {
-                            for p in idx.packages.into_iter().filter(|p| !is_installed(&p.id)) {
+                            for p in idx.packages {
                                 let n = self.ext_catalog.len();
+                                if is_installed(&p.id) {
+                                    self.ext_catalog.push((src.clone(), p));
+                                    continue;
+                                }
                                 cmds.push((
                                     format!("ext.install:{n}"),
                                     format!(
@@ -2044,11 +2122,11 @@ impl App {
                         }
                     }
                 }
+                // 비어도 **목록 창은 연다**(안내 한 줄 · 상태줄 글자만으로는 못 본다 · 사용자 09-19).
                 if cmds.is_empty() {
-                    self.sess.status = t(Msg::StExtNoneAvailable).into();
-                    self.redraw();
-                    return;
+                    cmds.push(("ext.noop".into(), t(Msg::StExtNoneAvailable).into()));
                 }
+                self.ext_panel_sync();
             }
             "ext.remove" | "ext.list" | "ext.enable" | "ext.disable" => {
                 let verb = id.trim_start_matches("ext.");
@@ -2068,18 +2146,25 @@ impl App {
                                 r.version,
                                 r.kind.as_str(),
                                 if off {
-                                    t(Msg::StExtDisabled)
+                                    t(Msg::ExtStDisabled)
                                 } else {
-                                    t(Msg::StExtEnabled)
+                                    t(Msg::ExtStEnabled)
                                 }
                             ),
                         ));
                     }
                 }
+                // 설치된 확장이 없어도 **목록 창을 열고 거기서** 알린다(사용자 09-19 · 종전 = 상태줄 "No extensions match").
                 if cmds.is_empty() {
-                    self.sess.status = t(Msg::StExtNoneInstalled).into();
-                    self.redraw();
-                    return;
+                    cmds.push((
+                        "ext.noop".into(),
+                        t(if installed.is_empty() {
+                            Msg::ExtPanelNoneInstalled
+                        } else {
+                            Msg::StExtNoneInstalled
+                        })
+                        .into(),
+                    ));
                 }
             }
             "ext.repo_add" => {
@@ -2243,6 +2328,190 @@ impl App {
             }
             _ => {}
         }
+        if self.ext_panel.is_visible() {
+            self.ext_panel_sync();
+        }
+        self.redraw();
+    }
+
+    /// 옆 패널은 한 번에 하나 — `keep`만 남기고 닫는다(탐색기·파일 검색·확장).
+    fn side_panel_close_others(&mut self, keep: &str) {
+        if keep != "view.explorer" && self.explorer.is_visible() {
+            self.explorer.set_visible(false);
+            let _ = self.settings.set("explorer.visible", "off");
+            let _ = self.settings.save();
+        }
+        if keep != "view.search" && self.search.is_visible() {
+            self.search.set_visible(false);
+        }
+        if keep != "view.extensions" && self.ext_panel.is_visible() {
+            self.ext_panel.set_visible(false);
+        }
+        if matches!(self.focus, Focus::Explorer | Focus::Search | Focus::Ext) {
+            self.set_focus(Focus::Editor);
+        }
+    }
+
+    /// 확장 패널 목록 다시 만들기 — 설치 기록 + 마지막으로 읽은 카탈로그(네트워크 0).
+    fn ext_panel_sync(&mut self) {
+        use extensions::manager as mgr;
+        let installed = mgr::installed();
+        let off = self.ext_disabled_list();
+        let mut rows: Vec<ExtRow> = installed
+            .iter()
+            .map(|r| {
+                let cat = self.ext_catalog.iter().find(|(_, p)| p.id == r.id);
+                ExtRow {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    version: r.version.clone(),
+                    kind: r.kind.as_str().to_string(),
+                    summary: cat.map(|(_, p)| p.summary.clone()).unwrap_or_default(),
+                    installed: true,
+                    enabled: !off.iter().any(|d| d == &r.id),
+                    catalog: self.ext_catalog.iter().position(|(_, p)| p.id == r.id),
+                    source: cat.map(|(s, _)| s.display()).unwrap_or_default(),
+                }
+            })
+            .collect();
+        for (n, (src, p)) in self.ext_catalog.iter().enumerate() {
+            if installed.iter().any(|r| r.id == p.id) || rows.iter().any(|r| r.id == p.id) {
+                continue;
+            }
+            rows.push(ExtRow {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                version: p.version.clone(),
+                kind: p.kind.as_str().to_string(),
+                summary: p.summary.clone(),
+                installed: false,
+                enabled: false,
+                catalog: Some(n),
+                source: src.display(),
+            });
+        }
+        let note = if self.ext_fetch_rx.is_some() {
+            t(Msg::ExtPanelLoading).to_string()
+        } else {
+            String::new()
+        };
+        self.ext_panel.set_rows(rows, note);
+        self.redraw();
+    }
+
+    /// 저장소 `index.json` 읽기를 **스레드로** 시작(원격은 curl 최대 30초 — UI를 막지 않는다). 패널을 열 때와 ⟳에서만.
+    fn ext_fetch_start(&mut self) {
+        use extensions::manager as mgr;
+        if self.ext_fetch_rx.is_some() {
+            return;
+        }
+        let sources = mgr::sources(&self.settings);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("ext-index".into())
+            .spawn(move || {
+                let out: ExtFetch = sources
+                    .into_iter()
+                    .map(|src| {
+                        let mut tr = mgr::Trace::default();
+                        let r = mgr::fetch_index_traced(&src, &mut tr);
+                        (src, r, tr)
+                    })
+                    .collect();
+                let _ = tx.send(out);
+            });
+        if spawned.is_ok() {
+            self.ext_fetch_rx = Some(rx);
+        }
+        self.ext_panel_sync();
+    }
+
+    /// 읽기 결과 수거(틱) — 카탈로그 교체 · 추적 줄 · 실패는 로그.
+    fn ext_fetch_poll(&mut self) {
+        let Some(rx) = &self.ext_fetch_rx else {
+            return;
+        };
+        let got = match rx.try_recv() {
+            Ok(v) => v,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Vec::new(),
+        };
+        self.ext_fetch_rx = None;
+        self.ext_catalog.clear();
+        for (src, r, tr) in got {
+            self.ext_trace(tr);
+            match r {
+                Ok(idx) => {
+                    for p in idx.packages {
+                        self.ext_catalog.push((src.clone(), p));
+                    }
+                }
+                Err(e) => {
+                    let line = tf(Msg::StExtIndexFailed, &[&src.display(), &e]);
+                    self.log_win.push(LogEntry::new(LogKind::Error, line));
+                }
+            }
+        }
+        self.ext_panel_sync();
+    }
+
+    /// 확장 패널이 낸 동작 처리.
+    fn ext_panel_actions(&mut self) {
+        for a in self.ext_panel.take_actions() {
+            match a {
+                ExtPanelAction::Refresh => self.ext_fetch_start(),
+                ExtPanelAction::Install(n) => self.ext_pick(&format!("ext.install:{n}")),
+                ExtPanelAction::Remove(id) => self.ext_pick(&format!("ext.remove:{id}")),
+                ExtPanelAction::Enable(id) => self.ext_pick(&format!("ext.enable:{id}")),
+                ExtPanelAction::Disable(id) => self.ext_pick(&format!("ext.disable:{id}")),
+                ExtPanelAction::Open(row) => self.ext_open_detail(&row),
+            }
+        }
+    }
+
+    /// 확장 상세 = 읽기용 안내 탭(설치본의 메타 사본 → 없으면 저장소에서 · 없으면 목록 정보만).
+    fn ext_open_detail(&mut self, row: &ExtRow) {
+        use extensions::manager as mgr;
+        let mut tr = mgr::Trace::default();
+        let meta = mgr::installed_meta(&row.id, &row.version).or_else(|| {
+            let (src, sum) = row.catalog.and_then(|n| self.ext_catalog.get(n))?;
+            mgr::fetch_meta(src, &sum.dir, &mut tr).ok()
+        });
+        self.ext_trace(tr);
+        let state = t(if !row.installed {
+            Msg::ExtStNotInstalled
+        } else if row.enabled {
+            Msg::ExtStEnabled
+        } else {
+            Msg::ExtStDisabled
+        });
+        let mut out = format!("{} {}\n{}\n\n", row.name, row.version, row.summary);
+        let mut field = |label: Msg, v: &str| {
+            if !v.is_empty() {
+                out.push_str(&format!("{:<16}{v}\n", format!("{}:", t(label))));
+            }
+        };
+        field(Msg::ExtDetState, state);
+        field(Msg::ExtDetVersion, &row.version);
+        field(Msg::ExtDetKind, &row.kind);
+        field(Msg::ExtDetSource, &row.source);
+        if let Some(m) = &meta {
+            field(Msg::ExtDetAuthor, &m.author);
+            field(Msg::ExtDetLicense, &m.license);
+            field(Msg::ExtDetHomepage, &m.homepage);
+            field(Msg::ExtDetRequires, &m.requires.join(", "));
+            field(Msg::ExtDetSettings, &m.settings_prefix);
+            let files: Vec<String> = m.files.iter().map(|f| f.path.clone()).collect();
+            field(Msg::ExtDetFiles, &files.join(", "));
+            if !m.description.is_empty() {
+                out.push('\n');
+                out.push_str(&m.description);
+                out.push('\n');
+            }
+        }
+        self.editors
+            .open_info_tab(&format!("Extension: {}", row.name), &out);
+        self.layout();
         self.redraw();
     }
 
@@ -3795,6 +4064,11 @@ impl App {
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
             "editor.auto_close_pairs" => self.apply_extensions(None),
+            // 확장 관리자 켬/끔(설정 창에서 바꿔도) = 확장 효과 전체 재적용 + 활동 막대 아이콘.
+            "extensions.enabled" => {
+                self.apply_extensions(None);
+                self.layout();
+            }
             "editor.minimap"
             | "editor.minimap_width"
             | "editor.minimap_box_color"
@@ -4550,10 +4824,9 @@ impl App {
             | "edit.bracket_next"
             | "edit.bracket_parent"
             | "edit.bracket_child" => self.run_extension_cmd(id),
-            "ext.enable_mgr" | "ext.install" | "ext.remove" | "ext.list" | "ext.enable"
-            | "ext.disable" | "ext.repo_add" | "ext.repo_list" | "ext.repo_remove" => {
-                self.ext_command(id)
-            }
+            "ext.enable_mgr" | "ext.disable_mgr" | "ext.install" | "ext.remove" | "ext.list"
+            | "ext.enable" | "ext.disable" | "ext.repo_add" | "ext.repo_list"
+            | "ext.repo_remove" => self.ext_command(id),
             x if x.starts_with("ext.") => self.ext_pick(x),
             "edit.expand_brackets" => {
                 if self.editors.cur_mut().expand_to_brackets() {
@@ -4615,8 +4888,32 @@ impl App {
             "view.toolbar_reset" => self.reset_toolbar(),
             "view.colors" => self.open_colors = true,
             "view.keys" => self.open_keys = true,
+            "view.extensions" => {
+                if !self.settings.flag("extensions.enabled") {
+                    self.sess.status = t(Msg::StExtManagerOff).into();
+                    self.redraw();
+                    return;
+                }
+                let on = !self.ext_panel.is_visible();
+                if on {
+                    self.side_panel_close_others("view.extensions");
+                }
+                self.ext_panel.set_visible(on);
+                if on {
+                    self.ext_panel.focus_query();
+                    self.set_focus(Focus::Ext);
+                    self.ext_panel_sync();
+                    self.ext_fetch_start();
+                } else if self.focus == Focus::Ext {
+                    self.set_focus(Focus::Editor);
+                }
+                self.layout();
+            }
             "view.search" => {
                 let on = !self.search.is_visible();
+                if on {
+                    self.side_panel_close_others("view.search");
+                }
                 if on && self.explorer.is_visible() {
                     self.explorer.set_visible(false);
                     let _ = self.settings.set("explorer.visible", "off");
@@ -4636,6 +4933,9 @@ impl App {
             }
             "view.explorer" => {
                 let on = !self.explorer.is_visible();
+                if on {
+                    self.side_panel_close_others("view.explorer");
+                }
                 if on && self.search.is_visible() {
                     self.search.set_visible(false);
                     if self.focus == Focus::Search {
@@ -4850,6 +5150,8 @@ impl App {
 
     /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
     fn tx_clear(&mut self) {
+        self.tx_guard_reset();
+        self.sess.tx_blockers = 0;
         self.sess.tx_pending.clear();
         self.sess.tx_read = false;
         self.sess.tx_dirty = false;
@@ -4873,6 +5175,365 @@ impl App {
             return;
         }
         self.sess.tx_read = true;
+        self.sync_tx_ui();
+    }
+
+    /// docs/56 L3 — 미커밋 변경이 있는 세션마다 주기적으로 "나 때문에 기다리는 세션"을 메타 세션에 묻는다.
+    /// 조건: 설정 주기 > 0 · 세션 식별자를 앎 · 그 서버의 탐색기(메타 세션)가 온라인 · 이 서버에서 꺼지지 않음 · 한가함.
+    fn tx_block_tick(&mut self, now: Instant) -> Option<Instant> {
+        let poll = self.settings.int("tx.block_poll_secs").max(0) as u64;
+        if poll == 0 {
+            return None;
+        }
+        let due: Vec<(u64, String, Option<ConnectSpec>)> = self
+            .all_sess()
+            .filter(|s| {
+                !s.tx_pending.is_empty()
+                    && !s.closing
+                    && !s.tx_block_off
+                    && s.connected
+                    && !s.blocked()
+                    && now >= s.tx_block_next
+            })
+            .filter_map(|s| s.live_sid.clone().map(|sid| (s.id, sid, s.spec.clone())))
+            .collect();
+        for (id, sid, spec) in due {
+            if self.explorer.blockers_poll(spec.as_ref(), &sid) {
+                self.with_sess(id, |a| {
+                    a.sess.tx_block_next = now + Duration::from_secs(poll)
+                });
+            }
+        }
+        self.all_sess()
+            .filter(|s| !s.tx_pending.is_empty() && !s.tx_block_off && s.live_sid.is_some())
+            .map(|s| s.tx_block_next)
+            .min()
+    }
+
+    /// 막힘 감지 응답 반영 — 0 → n이면 위험 토스트·로그·상태줄 · n → 0이면 해소 로그 · 오류(권한 없음)면 그 세션에서 기능을 끈다.
+    fn tx_block_drain(&mut self) -> bool {
+        let mut changed = false;
+        for (sid, r) in self.explorer.take_blockers() {
+            let Some(id) = self
+                .all_sess()
+                .find(|s| s.live_sid.as_deref() == Some(sid.as_str()))
+                .map(|s| s.id)
+            else {
+                continue;
+            };
+            match r {
+                Ok(list) => {
+                    let prev = self.sess_by_id(id).map_or(0, |s| s.tx_blockers);
+                    let pending = self
+                        .sess_by_id(id)
+                        .is_some_and(|s| !s.tx_pending.is_empty());
+                    let n = if pending { list.len() } else { 0 };
+                    if n == prev {
+                        continue;
+                    }
+                    self.with_sess(id, |a| a.sess.tx_blockers = n);
+                    changed = true;
+                    if n > 0 {
+                        let who = list.iter().take(5).cloned().collect::<Vec<_>>().join(" | ");
+                        let text = tf(Msg::StTxBlocking, &[&n.to_string(), &who]);
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Error, text.clone()));
+                        self.toasts.push(
+                            toast::ToastKind::Error,
+                            t(Msg::TxWarnToastTitle),
+                            text.clone(),
+                        );
+                        self.sess.status = text;
+                        if let Some(w) = &self.window {
+                            w.request_user_attention(Some(
+                                winit::window::UserAttentionType::Informational,
+                            ));
+                        }
+                    } else {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            t(Msg::StTxBlockingCleared).to_string(),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    self.with_sess(id, |a| {
+                        a.sess.tx_block_off = true;
+                        a.sess.tx_blockers = 0;
+                    });
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        tf(Msg::StTxBlockPollOff, &[&e]),
+                    ));
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
+    /// 활동·정리 시 유휴 미커밋 상태를 되돌린다(이 세션 · 카드가 이 세션 것이면 걷는다).
+    fn tx_guard_reset(&mut self) {
+        self.sess.last_exec = Instant::now();
+        self.sess.tx_warned_at = None;
+        self.sess.tx_snooze_until = None;
+        self.sess.tx_countdown = None;
+        if self.tx_warn.sess_id() == Some(self.sess.id) {
+            self.tx_warn.hide();
+        }
+    }
+
+    /// docs/56 L2 — 모든 세션의 유휴 미커밋을 점검한다(판정 = `sessions::tx_guard_step`). 돌려주는 값 = 다음에 깰 시각.
+    fn tx_guard_tick(&mut self, now: Instant) -> Option<Instant> {
+        if now < self.tx_guard_next {
+            return Some(self.tx_guard_next);
+        }
+        let ids: Vec<u64> = self
+            .all_sess()
+            .filter(|s| !s.tx_pending.is_empty() && !s.closing)
+            .map(|s| s.id)
+            .collect();
+        if ids.is_empty() {
+            if self.tx_warn.sess_id().is_some() {
+                self.tx_warn.hide();
+                self.redraw();
+            }
+            self.tx_guard_next = now + Duration::from_secs(3600);
+            return None;
+        }
+        let stale_min = self.settings.int("tx.stale_min").max(1) as u64;
+        let remind_min = self.settings.int("tx.remind_min").max(0) as u64;
+        let limit_min = self.settings.int("tx.idle_limit_min").max(1) as u64;
+        let countdown =
+            Duration::from_secs(self.settings.int("tx.idle_countdown_secs").clamp(5, 600) as u64);
+        let action = sessions::TxIdleAction::parse(
+            self.settings.get("tx.idle_action").unwrap_or("rollback"),
+        );
+        for id in ids {
+            let Some(s) = self.sess_by_id(id) else {
+                continue;
+            };
+            let input = sessions::TxGuardIn {
+                pending: true,
+                blocked: s.blocked(),
+                idle: now.saturating_duration_since(s.last_exec),
+                stale_min,
+                remind_min,
+                action,
+                limit_min,
+                since_warn: s.tx_warned_at.map(|t| now.saturating_duration_since(t)),
+                snoozed: s.tx_snooze_until.is_some_and(|t| now < t),
+                counting: s.tx_countdown.map(|t| t.saturating_duration_since(now)),
+            };
+            match sessions::tx_guard_step(input) {
+                sessions::TxGuardStep::None => {}
+                sessions::TxGuardStep::Counting => self.redraw(),
+                sessions::TxGuardStep::Warn => {
+                    self.with_sess(id, |a| a.sess.tx_warned_at = Some(now));
+                    // 카운트다운 카드가 떠 있으면 그것이 우선.
+                    if !self.tx_warn.counting() {
+                        self.tx_warn_show(id, None);
+                    }
+                }
+                sessions::TxGuardStep::StartCountdown => {
+                    let deadline = now + countdown;
+                    self.with_sess(id, |a| {
+                        a.sess.tx_countdown = Some(deadline);
+                        a.sess.tx_warned_at = Some(now);
+                    });
+                    self.tx_warn_show(id, Some((deadline, action)));
+                }
+                sessions::TxGuardStep::Fire => self.tx_guard_fire(id, action),
+            }
+        }
+        self.tx_guard_next = now
+            + if self.tx_warn.counting() {
+                Duration::from_secs(1)
+            } else {
+                Duration::from_secs(5)
+            };
+        Some(self.tx_guard_next)
+    }
+
+    /// 경고/카운트다운 카드를 띄운다(+ 창이 비활성이면 작업 표시줄 깜빡임 · 로그 1줄).
+    fn tx_warn_show(&mut self, id: u64, countdown: Option<(Instant, sessions::TxIdleAction)>) {
+        let Some(s) = self.sess_by_id(id) else { return };
+        let n = s.tx_pending.len();
+        let idle_min = s.last_exec.elapsed().as_secs() / 60;
+        let title = tf(Msg::TxWarnTitle, &[&n.to_string(), &idle_min.to_string()]);
+        let first = s
+            .tx_pending
+            .first()
+            .map(|i| i.summary.clone())
+            .unwrap_or_default();
+        let detail = if s.desc.is_empty() {
+            first
+        } else {
+            format!("{} · {}", s.desc, first)
+        };
+        let (countdown, buttons) = match countdown {
+            Some((deadline, act)) => {
+                let commit = act == sessions::TxIdleAction::Commit;
+                let word = t(if commit {
+                    Msg::TxWarnCommitWord
+                } else {
+                    Msg::TxWarnRollbackWord
+                })
+                .to_string();
+                (
+                    Some((deadline, word)),
+                    vec![
+                        (
+                            txwarn::TxWarnHit::Rollback,
+                            t(Msg::BtnTxRollbackNow).to_string(),
+                        ),
+                        (txwarn::TxWarnHit::Commit, t(Msg::BtnTxCommit).to_string()),
+                        (txwarn::TxWarnHit::Later, t(Msg::BtnTxExtend).to_string()),
+                    ],
+                )
+            }
+            None => (
+                None,
+                vec![
+                    (txwarn::TxWarnHit::Commit, t(Msg::BtnTxCommit).to_string()),
+                    (
+                        txwarn::TxWarnHit::Rollback,
+                        t(Msg::BtnTxRollback).to_string(),
+                    ),
+                    (txwarn::TxWarnHit::Later, t(Msg::BtnTxLater).to_string()),
+                ],
+            ),
+        };
+        self.log_win
+            .push(LogEntry::new(LogKind::Error, format!("{title} — {detail}")));
+        self.tx_warn.show(txwarn::TxWarnView {
+            sess_id: id,
+            title,
+            detail,
+            countdown,
+            buttons,
+        });
+        if let Some(w) = &self.window {
+            w.request_user_attention(Some(winit::window::UserAttentionType::Informational));
+        }
+        self.redraw();
+    }
+
+    /// 카드 버튼 — 커밋/롤백은 그 세션에(작업 중이면 무시) · 나중에/연장 = 재알림 간격(0이면 경고 간격)만큼 미룸.
+    fn tx_warn_pick(&mut self, hit: txwarn::TxWarnHit) {
+        let Some(id) = self.tx_warn.sess_id() else {
+            return;
+        };
+        match hit {
+            txwarn::TxWarnHit::Commit | txwarn::TxWarnHit::Rollback => {
+                let commit = hit == txwarn::TxWarnHit::Commit;
+                self.with_sess(id, |a| {
+                    if a.sess.blocked() || a.sess.tx_pending.is_empty() {
+                        return;
+                    }
+                    a.sess.worker.send(if commit {
+                        worker::Cmd::Commit
+                    } else {
+                        worker::Cmd::Rollback
+                    });
+                    a.tx_close(if commit {
+                        TxOutcome::Committed
+                    } else {
+                        TxOutcome::RolledBack
+                    });
+                });
+                self.tx_warn.hide();
+            }
+            txwarn::TxWarnHit::Later => {
+                let mins = match self.settings.int("tx.remind_min") {
+                    m if m > 0 => m,
+                    _ => self.settings.int("tx.stale_min").max(1),
+                } as u64;
+                let until = Instant::now() + Duration::from_secs(mins * 60);
+                self.with_sess(id, |a| {
+                    a.sess.tx_snooze_until = Some(until);
+                    a.sess.tx_countdown = None;
+                });
+                self.tx_warn.hide();
+            }
+            txwarn::TxWarnHit::Card | txwarn::TxWarnHit::None => {}
+        }
+        self.tx_guard_next = Instant::now();
+    }
+
+    /// 카운트다운 만료 — 자동 처리(롤백/커밋) + 트랜잭션 로그·로그 창·토스트·상태줄 기록.
+    fn tx_guard_fire(&mut self, id: u64, action: sessions::TxIdleAction) {
+        let commit = action == sessions::TxIdleAction::Commit;
+        let done = self.with_sess(id, |a| {
+            if a.sess.blocked() || a.sess.tx_pending.is_empty() {
+                a.sess.tx_countdown = None;
+                return None;
+            }
+            let n = a.sess.tx_pending.len();
+            let idle_min = a.sess.last_exec.elapsed().as_secs() / 60;
+            a.sess.worker.send(if commit {
+                worker::Cmd::Commit
+            } else {
+                worker::Cmd::Rollback
+            });
+            a.tx_close(if commit {
+                TxOutcome::AutoCommitted(idle_min)
+            } else {
+                TxOutcome::AutoRolledBack(idle_min)
+            });
+            Some((n, idle_min))
+        });
+        if self.tx_warn.sess_id() == Some(id) {
+            self.tx_warn.hide();
+        }
+        if let Some(Some((n, idle_min))) = done {
+            let text = tf(
+                if commit {
+                    Msg::StTxAutoCommitted
+                } else {
+                    Msg::StTxAutoRolledBack
+                },
+                &[&n.to_string(), &idle_min.to_string()],
+            );
+            self.log_win
+                .push(LogEntry::new(LogKind::Error, text.clone()));
+            self.toasts.push(
+                toast::ToastKind::Warn,
+                t(Msg::TxWarnToastTitle),
+                text.clone(),
+            );
+            self.sess.status = text;
+        }
+        self.redraw();
+    }
+
+    /// 러너가 변경 없는 읽기 트랜잭션을 끝냈다(docs/56 L1) — 읽기 표시를 걷고 트랜잭션 로그의 열린 기록을 닫는다.
+    /// `deferred` = 열린 커서가 닫힐 때 끝난다(표시는 지금 걷는다 — 잠금은 커서 유휴 상한·다음 실행에서 풀린다).
+    fn tx_on_read_ended(&mut self, index: usize, deferred: bool) {
+        let _ = index;
+        dlog!(self, LogLayer::Tx, LogLevel::Basic, {
+            LogEntry::new(
+                LogKind::Info,
+                tf(
+                    Msg::LogTxReadEnded,
+                    &[if deferred {
+                        " · deferred to cursor close"
+                    } else {
+                        ""
+                    }],
+                ),
+            )
+        });
+        if !self.sess.tx_pending.is_empty() {
+            return;
+        }
+        self.sess.tx_read = false;
+        self.sess.tx_dirty = false;
+        let stamp = nsql_log::now_local().stamp();
+        self.txlog
+            .select_session(self.sess.id)
+            .close_tx(TxOutcome::ReadEnded, stamp);
+        self.txlog_win.redraw();
         self.sync_tx_ui();
     }
 
@@ -5666,23 +6327,33 @@ impl App {
         cmds.push(m("edit.bracket_parent", Msg::MnEdit, Msg::MnBracketParent));
         cmds.push(m("edit.bracket_child", Msg::MnEdit, Msg::MnBracketChild));
         // Extension Manager(Sublime "Package Control: …" 표기 · docs/50 §10).
-        cmds.push(m(
-            "ext.enable_mgr",
-            Msg::MnExtensions,
-            Msg::MnExtEnableManager,
-        ));
-        cmds.push(m("ext.install", Msg::MnExtensions, Msg::MnExtInstall));
-        cmds.push(m("ext.remove", Msg::MnExtensions, Msg::MnExtRemove));
-        cmds.push(m("ext.list", Msg::MnExtensions, Msg::MnExtList));
-        cmds.push(m("ext.enable", Msg::MnExtensions, Msg::MnExtEnable));
-        cmds.push(m("ext.disable", Msg::MnExtensions, Msg::MnExtDisable));
-        cmds.push(m("ext.repo_add", Msg::MnExtensions, Msg::MnExtRepoAdd));
-        cmds.push(m("ext.repo_list", Msg::MnExtensions, Msg::MnExtRepoList));
-        cmds.push(m(
-            "ext.repo_remove",
-            Msg::MnExtensions,
-            Msg::MnExtRepoRemove,
-        ));
+        // 관리자 상태에 맞는 명령만(사용자 09-19): 꺼짐 = "켜기" 하나 · 켜짐 = "끄기" + 나머지(두 번째 "켜기"는 없다).
+        if self.settings.flag("extensions.enabled") {
+            cmds.push(m(
+                "ext.disable_mgr",
+                Msg::MnExtensions,
+                Msg::MnExtDisableManager,
+            ));
+            cmds.push(m("view.extensions", Msg::MnView, Msg::MnExtensionsPanel));
+            cmds.push(m("ext.install", Msg::MnExtensions, Msg::MnExtInstall));
+            cmds.push(m("ext.remove", Msg::MnExtensions, Msg::MnExtRemove));
+            cmds.push(m("ext.list", Msg::MnExtensions, Msg::MnExtList));
+            cmds.push(m("ext.enable", Msg::MnExtensions, Msg::MnExtEnable));
+            cmds.push(m("ext.disable", Msg::MnExtensions, Msg::MnExtDisable));
+            cmds.push(m("ext.repo_add", Msg::MnExtensions, Msg::MnExtRepoAdd));
+            cmds.push(m("ext.repo_list", Msg::MnExtensions, Msg::MnExtRepoList));
+            cmds.push(m(
+                "ext.repo_remove",
+                Msg::MnExtensions,
+                Msg::MnExtRepoRemove,
+            ));
+        } else {
+            cmds.push(m(
+                "ext.enable_mgr",
+                Msg::MnExtensions,
+                Msg::MnExtEnableManager,
+            ));
+        }
         cmds.push(m(
             "edit.expand_brackets",
             Msg::MnEdit,
@@ -6352,6 +7023,8 @@ impl App {
 
     /// 실행 시작 → 카드(문장 · 시작 시각 · 문장 수).
     fn run_toast_start(&mut self, src: &str) {
+        // 이 세션의 문장 실행 = 활동(docs/56 L2) — 유휴 시계·경고·카운트다운을 되돌린다.
+        self.tx_guard_reset();
         self.sess.run_cancel_requested = false;
         self.sync_run_stmt_button();
         self.editors.set_running(self.sess.run_editor, true);
@@ -7033,6 +7706,7 @@ impl App {
                         self.sess.closing = true;
                     }
                 }
+                RunEvent::ReadTxEnded { index, deferred } => self.tx_on_read_ended(index, deferred),
                 RunEvent::Timing { index, timeline } => {
                     // 상태줄 = 결과 요약 + 단계별 소요(docs/26). 렌더 시간은 그리드 푸터가 자체 표시.
                     self.txlog
@@ -7127,7 +7801,11 @@ impl App {
                     if let Some(g) = self.run_grid() {
                         g.clear_result();
                     }
-                    if let Some(label) = toast::class_label(cls.class) {
+                    // ★ 같은 오류를 두 번 보이지 않는다(사용자 09-19 "오류가 왜 2번 출력되나"): 실행 상태 카드(`run.toast`)가
+                    //   이미 분류된 오류 요약을 빨간 카드로 보여 주므로, 카드가 켜져 있으면 오류 토스트는 띄우지 않는다
+                    //   (카드를 끈 사용자에게만 토스트 · 로그 창에는 종전대로 한 줄).
+                    let card_shows = self.settings.flag("run.toast");
+                    if let Some(label) = toast::class_label(cls.class).filter(|_| !card_shows) {
                         let title = match &cls.code {
                             Some(c) => format!("{c} · {label}"),
                             None => label.to_string(),
@@ -7209,6 +7887,9 @@ impl App {
             changed = true;
         }
         if self.live_drain() {
+            changed = true;
+        }
+        if self.tx_block_drain() {
             changed = true;
         }
         for a in self.explorer.take_actions() {
@@ -7474,10 +8155,19 @@ impl App {
                 let tx = if self.settings.flag("session.autocommit") {
                     t(Msg::StTxAuto).to_string()
                 } else if let Some(first) = self.sess.tx_pending.first() {
-                    tf(
+                    let base = tf(
                         Msg::StTxPending,
                         &[&self.sess.tx_pending.len().to_string(), &first.when],
-                    )
+                    );
+                    // 내 미커밋이 남을 막고 있으면 상태줄에도(docs/56 L3).
+                    if self.sess.tx_blockers > 0 {
+                        format!(
+                            "{base} · {}",
+                            tf(Msg::StatusTxBlocking, &[&self.sess.tx_blockers.to_string()])
+                        )
+                    } else {
+                        base
+                    }
                 } else {
                     t(Msg::StTxManual).to_string()
                 };
@@ -7715,6 +8405,7 @@ impl App {
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
                 self.search.paint(&mut dc, &th);
+                self.ext_panel.paint(&mut dc, &th);
             }
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
                                           // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
@@ -7755,6 +8446,7 @@ impl App {
                     (wi, hi - px(24.0, s))
                 };
                 let ty = self.sess.run_toast.paint(&mut dc, &th, tx, ty, s);
+                let ty = self.tx_warn.paint(&mut dc, &th, tx, ty, s);
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
@@ -7970,6 +8662,14 @@ impl App {
                 self.redraw();
                 return;
             }
+            match self.tx_warn.click(Point { x, y }) {
+                txwarn::TxWarnHit::None => {}
+                hit => {
+                    self.tx_warn_pick(hit);
+                    self.redraw();
+                    return;
+                }
+            }
             match self.sess.run_toast.click(Point { x, y }) {
                 runtoast::RunToastHit::Stop => {
                     self.stop_run();
@@ -7984,6 +8684,9 @@ impl App {
         }
         if let InputEvent::MouseMove { x, y } = ev {
             if self.sess.run_toast.hover(Point { x, y }) {
+                self.redraw();
+            }
+            if self.tx_warn.hover(Point { x, y }) {
                 self.redraw();
             }
         }
@@ -8203,6 +8906,52 @@ impl App {
                 self.redraw();
             }
         }
+        // 확장 패널 — 마우스는 커서 아래 · 키는 포커스일 때(마우스 라우팅 규칙).
+        if self.ext_panel.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let inside = self.ext_panel.bounds().contains(cur);
+            if (is_mouse && inside) || (is_wheel_ev(&ev) && inside) {
+                if matches!(ev, InputEvent::MouseDown { .. }) {
+                    self.set_focus(Focus::Ext);
+                }
+                if self.ext_panel.on_event(&ev) {
+                    self.redraw();
+                }
+                self.ext_panel_actions();
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.focus == Focus::Ext
+                && matches!(
+                    ev,
+                    InputEvent::Key { .. }
+                        | InputEvent::Char { .. }
+                        | InputEvent::SelectAll
+                        | InputEvent::Undo
+                        | InputEvent::Redo
+                )
+            {
+                if matches!(
+                    ev,
+                    InputEvent::Key {
+                        key: CtlKey::Escape,
+                        ..
+                    }
+                ) && !self.ext_panel.has_query()
+                {
+                    self.set_focus(Focus::Editor);
+                    self.redraw();
+                    return;
+                }
+                if self.ext_panel.on_event(&ev) {
+                    self.redraw();
+                }
+                return;
+            }
+        }
         // 파일 검색 패널(T-81a) — 마우스는 커서 아래 · 키는 포커스일 때.
         if self.search.is_visible() {
             let cur = Point {
@@ -8382,7 +9131,7 @@ impl App {
                     self.after_grid_event();
                     inv.push(self.grid.bounds);
                 }
-                Focus::Explorer | Focus::Find | Focus::Search => {}
+                Focus::Explorer | Focus::Find | Focus::Search | Focus::Ext => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -8508,6 +9257,16 @@ impl ApplicationHandler<Wake> for App {
             let _ = self.settings.set("demo.prompted", "on");
             self.persist_settings();
             self.pending_demo_prompt = true;
+        } // 자체 캡처용 기동 명령(`NSQL_STARTUP_CMD=open:<파일>,view.extensions,…` · 쉼표 구분): 키 주입(SendKeys) 없이 특정 화면을
+          //   띄워 PrintWindow로 확인하려는 것(사용자가 쓰는 중에 키를 쏘면 다른 창으로 간다 · 09-19 사고). 평소엔 변수 없음 = 비용 0.
+        if let Ok(cmds) = std::env::var("NSQL_STARTUP_CMD") {
+            for id in cmds.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+                // `open:<경로>` = 파일을 탭으로(캡처할 본문 준비) · 나머지 = 명령 id.
+                match id.strip_prefix("open:") {
+                    Some(path) => self.open_file(Path::new(path)),
+                    None => self.menu_action(id),
+                }
+            }
         }
     }
 
@@ -8615,6 +9374,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(req) = self.search.take_open() {
             self.open_search_result(req);
         }
+        if self.ext_panel.tick(now_ms) {
+            self.redraw();
+        }
+        self.ext_fetch_poll();
         if self.find.tick(now_ms) {
             self.redraw();
         }
@@ -8641,6 +9404,7 @@ impl ApplicationHandler<Wake> for App {
             || self.explorer.bars_visible()
             || self.find.animating()
             || self.search.animating()
+            || self.ext_fetch_rx.is_some()
             || self.editors.tooltip_pending()
             || self.toasts.animating();
         // 애니메이션 프레임 간격 = 1000 / `ui.max_fps`(60 = 16ms · 30 = 33ms · 15 = 66ms · 향상 모드 30).
@@ -8664,6 +9428,14 @@ impl ApplicationHandler<Wake> for App {
             next = next.min(t);
         }
         if let Some(t) = self.run_toast_next {
+            next = next.min(t);
+        }
+        // 막힘 감지(docs/56 L3) — 미커밋 세션이 있을 때만 `tx.block_poll_secs` 간격으로 메타 세션에 한 문장.
+        if let Some(t) = self.tx_block_tick(now) {
+            next = next.min(t);
+        }
+        // 유휴 미커밋 점검(docs/56 L2) — 미커밋 세션이 있을 때만 5초(카운트다운 중 1초) 간격으로 깬다.
+        if let Some(t) = self.tx_guard_tick(now) {
             next = next.min(t);
         }
         el.set_control_flow(ControlFlow::WaitUntil(next));
@@ -9148,6 +9920,10 @@ impl ApplicationHandler<Wake> for App {
                         }
                         _ => {}
                     }
+                    // 확장 패널 검색 = 조합 중 글자까지 바로 거른다(설정 창 검색과 같은 규칙 · 09-19).
+                    if self.focus == Focus::Ext {
+                        self.ext_panel.query_changed();
+                    }
                     self.redraw();
                 }
                 return;
@@ -9553,6 +10329,8 @@ fn main() {
         open_sessions: false,
         open_txlog: false,
         toasts: toast::Toasts::new(),
+        tx_warn: txwarn::TxWarn::default(),
+        tx_guard_next: Instant::now(),
         run_toast_next: None,
         run_stmt_enabled: true,
         run_stop_enabled: true,
@@ -9623,6 +10401,8 @@ fn main() {
         grid_tab: 0,
         explorer,
         search: SearchPanel::new(),
+        ext_panel: ExtPanel::new(),
+        ext_fetch_rx: None,
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),
         tx_after: None,

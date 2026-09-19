@@ -222,7 +222,7 @@
 ### 13-1. 설치 전 = 확장 효과가 없어야 한다
 
 1. 편집기에 `SELECT f(a, (b), [c]) FROM t` 입력.
-2. 기대: 괄호가 **한 색**(깊이 색 없음) · 우클릭 메뉴에 "괄호 이동 ▸" **없음** · 편집 메뉴에 형제/상위/하위 항목 **없음** · 설정 창 ▸ 확장 아래에 **"관리자"만** 있고 "Rainbow Pairs" 분류 **없음**.
+2. 기대: 괄호가 **한 색**(깊이 색·짝 없음 빨강 없음 — 79차에 결함 수정: 종전엔 nexa-ctl 기본값 때문에 색이 보였다) · 우클릭 메뉴에 "괄호 이동 ▸" **없음** · 편집 메뉴에 형제/상위/하위 항목 **없음** · 설정 창 ▸ 확장 아래에 **"관리자"만** 있고 "Rainbow Pairs" 분류 **없음**.
 3. 코어 기능은 동작: Ctrl+M(짝 괄호) · `(` 입력 시 `)` 자동 삽입(설정 ▸ 편집기 ▸ "괄호·인용부호 자동 닫기"로 끌 수 있음).
 
 ### 13-2. 관리자 켜기(최초 1회 · 네트워크 0)
@@ -276,3 +276,28 @@
 ### 13-8. 다음 단계(진짜 "내려받은 로직")
 
 T-118 ②: `wasmi` 런타임 + WIT 호스트 API(지금의 `Extension`/`EditorOps` 표면을 그대로 export/import로) → Rainbow Pairs의 정책 층을 **WASM 샘플 패키지**(`kind = wasm` · `files[]`에 `.wasm` + sha256)로 옮겨 "설치 = 코드가 내려와 돈다"를 실증. 결정 D-87~D-90(실행 방식·Python·서명·능력 승인)이 선행.
+
+## 14. 확장 패널 · 관리자 켬/끔 규칙 · 다운로드 추적(사용자 09-19 · journal 79차)
+
+**관리자 상태가 모든 것의 문이다.**
+
+| 관리자 | 팔레트 명령 | 활동 막대 | 확장 효과 |
+|---|---|---|---|
+| 꺼짐(`extensions.enabled = off`) | "Enable Extension Manager" 하나 | 확장 아이콘 **없음** · 패널 닫힘 | **전부 정지**(설치 기록·개별 켬/끔과 무관 — 옵션·메뉴·명령·설정 분류) |
+| 켜짐 | "Disable Extension Manager" + Install/Remove/List/Enable/Disable/Repository… + "View: Extensions" | 확장 아이콘(Ctrl+Shift+X) | 설치 + 켜진 것만 |
+
+**패널**(`ext_panel.rs`): 검색 상자(이름·id·설명 부분 일치 · 조합 중 한글 포함 즉시) · "설치됨 (n)" / "설치 가능 (n)" · 행 버튼(끄기|켜기 · 삭제 · 설치) · 행 클릭 = 상세 안내 탭(설치본의 `extension.json` 사본 → 없으면 저장소에서 1회). 저장소 `index.json`은 **패널을 열 때와 ⟳에서만** 백그라운드 스레드로 읽는다(자동 주기 없음 · 실패 재시도 없음 · 26 §8). 후순위(관리자 전체 기능): 새 버전 알림 · 의존성 설치 · WASM 종류(T-118).
+
+**빈 목록**: 설치된 것이 없어도 목록 창(팔레트)은 열리고 그 안에 "설치된 확장이 없습니다" 한 줄이 보인다(상태줄 글자만 남기지 않는다).
+
+**다운로드 추적**(개발자 모드 `log.dev_mode` + `log.dev_layers`에 `ext`): 파일 하나에 한 줄.
+
+```text
+⟨ext⟩ GET https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions/index.json → HTTP 200 · 618 B · 30 ms (dns 8 · connect 12 · ttfb 29) · 20 KB/s · from 185.199.108.133
+⟨ext⟩ install rainbow-pairs 1.0.0 [builtin] from https://raw.githubusercontent.com/… (remote · one GET per file)
+⟨ext⟩ GET …/rainbow-pairs/extension.json → HTTP 200 · 1 KB · 48 ms (dns 14 · connect 29 · ttfb 48) · 26 KB/s · from 185.199.108.133
+⟨ext⟩ verify <file> — sha256 ok (…) · store → … · place → … · record → … · files n · 합계 · 전체 ms · 속도
+```
+
+값은 curl `-w` 전송 통계(프로세스 기동 시간 제외) · 리다이렉트면 `final <url>` · 실패는 `FAIL <url> — … (HTTP 404)`. 소스 트리에서 실행해 기본 저장소가 로컬 폴더로 풀리면 머리 줄이 `local folder · no download — set extensions.default_repository to a URL to use the remote`라고 알린다(§13-3의 원격 강제 방법).
+

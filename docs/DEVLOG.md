@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-19 (79차 · win)** — `ext_panel.rs`(확장 패널) · 활동 막대 숨김 항목 · `Focus::Ext` · `ext.disable_mgr` · 관리자 끔 = 전 확장 정지 · 빈 목록 `ext.noop` · manager `NetStat`(curl `-w` 파일별 전송 통계) · 메타 이중 다운로드 제거 · `disabled_effect` 색 끔 · nexa-ctl `contrast_order` + 테마 팔레트 순서 · `rainbowpair.contrast_order` · `NSQL_STARTUP_CMD` → [journal](journal/2026-09-19.md)
+- **2026-09-19 (78차 · win)** — T-137 L1~L4(nsql-run `ReadEnd`/`ReadTxEnded` · `txwarn.rs` · `tx_guard_step` · `Req::Blockers` · 워커 접속 직후 L4 · 설정 8키) · 오류 토스트 중복 제거 · 팔레트 마우스/스크롤 → [journal](journal/2026-09-19.md)
 - **2026-09-19 (77차 · win)** — 문서: 56 수동 커밋 잠금 방지(조사·설계 · D-100~105) · 50 §13 확장 테스트 안내 · 자동 닫기 확장 키 제거(코어 `editor.auto_close_pairs`만) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (76차 · win)** — `editor.auto_close_pairs` 주 스위치(확장 효과의 `auto_close`에 AND · `apply_extensions(None)`) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (75차 · win)** — 설정 창·트랜잭션 로그 창 IME 켜기(한글 입력 불가 원인 = `set_ime_allowed` 누락) → [journal](journal/2026-09-19.md)
