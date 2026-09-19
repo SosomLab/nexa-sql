@@ -77,7 +77,9 @@
 1. 명령 팔레트(⌘⇧P / Ctrl+Shift+P) → **`Extension Manager: Enable Extension Manager`** — 설정 `extensions.enabled=on`. 이때부터 관리자 명령이 저장소를 읽는다(명령을 실행할 때만 · 자동 조회 없음).
 2. `Extension Manager: Install Extension` → 기본 저장소 index.json의 미설치 패키지 목록 → **Rainbow Pairs 1.0.0** 선택 → 설치(builtin이라 파일 없음 · `installed.json` 기록) → 상태줄 안내문.
 3. 설치 즉시 켜진다: 괄호·인용부호 깊이 색 · 우클릭 "괄호 이동 ▸" · Ctrl+Alt+, . [ ] · 편집 메뉴 4항목.
-4. 설정: Preferences → 그룹 **Extensions ▸ Rainbow Pairs** — `rainbowpair.enabled/quotes/angle/unmatched/match/colors/auto_close/max_kb`. 바꾸면 즉시 전 탭 반영.
+4. 설정: Preferences → 그룹 **Extensions ▸ Rainbow Pairs** — `rainbowpair.enabled/quotes/angle/unmatched/match/colors/max_kb`. 바꾸면 즉시 전 탭 반영. (괄호·인용부호 **자동 닫기는 확장 기능이 아니라 편집 코어** — 설정 ▸ 편집기 `editor.auto_close_pairs` · 09-19)
+
+> **단계별 테스트 안내**(설치 전/후 효과 · GitHub 원격 강제 · 실패 경로 · `data` 패키지 로컬 시험) = [docs/50 §13](../docs/50-extension-system.md).
 5. 잠시 끄기 = `Extension Manager: Disable Extension`(설정 분류도 숨김) · 되돌리기 = `Enable Extension` · 없애기 = `Remove Extension`(기록 삭제 · 효과 off · 분류 숨김 · 다시 Install 가능).
 
 ## 매니저 명령(명령 팔레트 · Sublime "Package Control: …" 표기)

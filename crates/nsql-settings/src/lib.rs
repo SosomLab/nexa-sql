@@ -518,6 +518,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 괄호·인용부호 자동 닫기(사용자 09-19): **편집 코어 기능**이지 Rainbow Pairs 확장 기능이 아니다 — 확장 분류의 옛 키
+    //   `rainbowpair.auto_close`는 없앴다(그 분류는 확장이 꺼지면 숨고, 꺼진 상태 기본값이 켜짐이라 끌 방법이 없었다).
+    Entry {
+        key: "editor.auto_close_pairs",
+        cat: Msg::CatEditor,
+        label: Msg::LblAutoClosePairs,
+        desc: Msg::DescAutoClosePairs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ── CLI 표 출력(사용자 09-16 · 터미널 폭에서 표가 접혀 깨짐) — `nsql config set cli.width 160` · 1회성은 `--width`.
     Entry {
         key: "cli.width",
@@ -723,14 +733,6 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescRainbowColors,
         kind: SettingKind::Text,
         default: "",
-    },
-    Entry {
-        key: "rainbowpair.auto_close",
-        cat: Msg::CatExtRainbowPairs,
-        label: Msg::LblRainbowAutoClose,
-        desc: Msg::DescRainbowAutoClose,
-        kind: SettingKind::Bool,
-        default: "on",
     },
     Entry {
         key: "rainbowpair.max_kb",

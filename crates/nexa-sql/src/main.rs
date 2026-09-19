@@ -1940,7 +1940,9 @@ impl App {
             .extensions
             .on_settings(&self.settings, changed_key, &disabled);
         for e in effects {
-            if let Some(b) = e.bracket_opts {
+            if let Some(mut b) = e.bracket_opts {
+                // 자동 닫기 = 편집 코어 설정(`editor.auto_close_pairs`) — Rainbow Pairs 기능이 아니다(확장 유무와 무관 · 사용자 09-19).
+                b.auto_close = self.settings.flag("editor.auto_close_pairs");
                 self.editors.set_bracket_opts(b);
             }
         }
@@ -3791,6 +3793,8 @@ impl App {
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
+            // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
+            "editor.auto_close_pairs" => self.apply_extensions(None),
             "editor.minimap"
             | "editor.minimap_width"
             | "editor.minimap_box_color"

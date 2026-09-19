@@ -203,3 +203,76 @@
 - **저수준 문서 API(텍스트 읽기 · 선택 · 토큰 · 영역 데코레이션 · 캐럿 설정)는 필요해지는 순간에 `EditorOps`에 메서드를 더하는 방식**으로 넓힌다 — Sublime `view.substr/sel/add_regions`와 같은 모양(51 §10 수준 2·3). 지금은 필요 없어서 없다. 넓힐 때는 §11 P-1(핫 패스 훅 금지)을 지킨다: 데코레이션은 "확장이 범위를 계산해 넘기면 코어가 그린다" 형태이지, 페인트 때 확장을 부르는 형태가 아니다.
 - **설계·개발 순서(감이 안 잡힐 때)**: ① 기능을 "코어가 계산할 것 / 확장이 정할 것"으로 나눈다(계산·페인트·이동 = 코어 · 옵션·명령·메뉴 = 확장) ② 코어 API를 옵션 구조체 + 동작 메서드로 만든다(nexa-ctl · 테스트 가능) ③ 확장은 `Extension` 5메서드만 구현한다 ④ 호스트는 Registry로 배선(설정→적용 · 명령→run · 메뉴/키/팔레트 등록) ⑤ 같은 표면을 WASM export로 옮긴다(T-118 ②). Rainbow Pairs가 이 순서 그대로의 실례다: 코어 `pairs.rs`(376줄) ↔ 확장 `rainbow_pairs.rs`(120줄) ↔ 호스트 배선(~200줄).
 
+
+## 13. 테스트 안내 — 확장 관리자 켜기 → GitHub에서 설치 → 확장 로직이 "설치됐을 때만" 동작하는지(사용자 09-19)
+
+> 지금 구조에서 "로직 분리"가 어디까지인지 먼저 밝힌다.
+> - **분리된 것(✅)**: Rainbow Pairs의 **정책 로직**(무엇을 켤지 · 어떤 명령/메뉴/설정을 둘지)은 `crates/nexa-sql/src/extensions/rainbow_pairs.rs`에 `Extension` 트레이트 구현으로 떨어져 있고, **설치 기록(`installed.json`)이 없으면 호스트가 효과를 0으로 만든다**(`apply_extensions` — 색·강조·메뉴·설정 분류 모두 없음). 설치해야 켜지고, 삭제하면 사라진다.
+> - **아직인 것(☐ T-118 ②)**: 그 로직이 **앱 바이너리에 컴파일돼 있다**(`kind = builtin`). GitHub에서 내려받는 것은 메타(`index.json` · `extension.json`)와 `data` 패키지의 파일뿐이고, **코드를 내려받아 실행하는 길(`kind = wasm`)은 미구현**(설치를 거부한다). 즉 "설치 = 내려받은 코드가 돈다"가 아니라 "설치 = 내장 로직의 잠금 해제"다.
+> - **코어에 남긴 것(의도)**: 쌍 표 계산·페인트·짝 이동(Ctrl+M)·**괄호/인용부호 자동 닫기(`editor.auto_close_pairs`)** 는 확장이 아니라 편집 코어 — 확장 없이도 동작한다(09-19 사용자 확정: 자동 닫기는 Rainbow Pairs 기능이 아니다).
+
+### 13-0. 준비(깨끗한 상태로)
+
+| 확인 | 방법 |
+|---|---|
+| 설치 기록 없음 | `%APPDATA%\nexa-sql\extensions\`(mac `~/Library/Application Support/nexa-sql/extensions/` · Linux `~/.config/nexa-sql/extensions/`) 폴더가 없거나 비어 있음 — 있으면 앱에서 `Extension Manager: Remove Extension`으로 지우거나 앱을 끄고 폴더 삭제 |
+| 관리자 꺼짐 | `settings.conf`에 `extensions.enabled=on` 줄이 없음(있으면 설정 창 ▸ 확장 ▸ 관리자에서 끔) |
+| 로그 창 | F10(보기 ▸ 실행 로그) → 아래쪽 **Developer(개발자) 스위치 켬**(우클릭 ▸ 개발자 레이어에서 `ext` 체크) — 관리자가 읽은 주소·바이트·시간이 `⟨ext⟩` 줄로 찍힌다(성공/실패 상태줄 문구는 개발자 모드가 아니어도 보임 · 성능 향상 모드면 개발자 모드가 잠김) |
+
+### 13-1. 설치 전 = 확장 효과가 없어야 한다
+
+1. 편집기에 `SELECT f(a, (b), [c]) FROM t` 입력.
+2. 기대: 괄호가 **한 색**(깊이 색 없음) · 우클릭 메뉴에 "괄호 이동 ▸" **없음** · 편집 메뉴에 형제/상위/하위 항목 **없음** · 설정 창 ▸ 확장 아래에 **"관리자"만** 있고 "Rainbow Pairs" 분류 **없음**.
+3. 코어 기능은 동작: Ctrl+M(짝 괄호) · `(` 입력 시 `)` 자동 삽입(설정 ▸ 편집기 ▸ "괄호·인용부호 자동 닫기"로 끌 수 있음).
+
+### 13-2. 관리자 켜기(최초 1회 · 네트워크 0)
+
+1. Ctrl+Shift+P → `Extension Manager: 확장 관리자 켜기`(영문 `Enable Extension Manager`).
+2. 기대: 상태줄 "확장 관리자 켬 — 저장소는 관리자 명령을 실행할 때만 읽습니다 · 기본: <저장소>" · `settings.conf`에 `extensions.enabled=on` · 이 시점엔 **아무 트래픽도 없다**(로그 창에 읽기 줄 없음).
+3. 켜기 전에 `확장 설치`를 먼저 눌러 보면: "확장 관리자가 꺼져 있습니다 — 먼저 …" 안내만 뜨고 아무것도 읽지 않는다.
+
+### 13-3. GitHub에서 내려받아 설치
+
+> ⚠️ **소스 트리에서 빌드한 exe는 기본 저장소 주소가 공식 URL 그대로이면 체크아웃의 `extensions/` 폴더를 대신 읽는다**(개발 편의 · 네트워크 0 — `manager.rs default_source`). GitHub 경로를 시험하려면 아래 둘 중 하나로 **원격을 강제**한다.
+> - (권장) 설정 창 ▸ 확장 ▸ 관리자 ▸ "기본 저장소"를 `https://github.com/SosomLab/nexa-sql/tree/main/extensions`로 바꾼다(공식 raw URL과 **문자열이 달라** 로컬 대체가 꺼지고, 앱이 raw 주소로 바꿔 읽는다) — 시험 뒤 "초기화".
+> - 또는 exe를 저장소 밖 다른 PC/폴더에 복사해 실행(빌드 경로의 `extensions/index.json`이 없으면 자동으로 원격).
+
+1. Ctrl+Shift+P → `Extension Manager: 확장 설치`.
+2. 기대(로그 창 · 개발자 모드): `⟨ext⟩ … https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions/index.json … B … ms` 한 줄(로컬 대체가 걸렸다면 주소 대신 `…\extensions\index.json` **폴더 경로**가 찍힌다 — 그러면 원격 강제가 안 된 것) → 팔레트에 `Rainbow Pairs 1.0.0 — Bracket and quote pairs… [builtin] · https://raw.githubusercontent.com/…` 한 줄.
+3. 그 줄을 Enter → 로그 창에 `…/rainbow-pairs/extension.json` 읽기 한 줄 → 상태줄 "설치됨 Rainbow Pairs 1.0.0 …" + 안내문.
+4. 파일 확인: `%APPDATA%\nexa-sql\extensions\rainbow-pairs\installed.json`(id · name · version · kind=builtin · placed=[]).
+5. 네트워크 실패 시험: 기본 저장소를 `https://github.com/SosomLab/nexa-sql/tree/main/nope`로 → `확장 설치` → 상태줄·로그 "저장소 인덱스 실패 — …: curl …(404)" · 앱은 멈추지 않는다.
+
+### 13-4. 설치 후 = 확장 로직이 즉시 동작
+
+1. 같은 문장에서 괄호·인용부호가 **깊이별 색**(테마 6색 순환) · 짝 없는 괄호 = 빨강+밑줄 · 캐럿 옆 쌍 밑줄.
+2. 우클릭 ▸ "괄호 이동 ▸"(짝/이전 형제/다음 형제/상위/하위/확장) · Ctrl+Alt+, . [ ] · 편집 메뉴 항목.
+3. 설정 창 ▸ 확장 ▸ **Rainbow Pairs** 분류가 나타남 — `rainbowpair.enabled/quotes/angle/unmatched/match/colors`(+고급 `max_kb`) · 바꾸면 열린 모든 탭에 즉시.
+4. 재시작 뒤에도 유지(`installed.json`이 근거).
+
+### 13-5. 끄기 · 켜기 · 삭제 · 재설치
+
+| 동작 | 명령 | 기대 |
+|---|---|---|
+| 잠시 끄기 | `확장 끄기` → Rainbow Pairs | 색·메뉴 사라짐 · 설정 분류 숨김 · `extensions.disabled=rainbow-pairs` · 설치 기록은 유지 |
+| 되켜기 | `확장 켜기` | 즉시 복귀(네트워크 0) |
+| 삭제 | `확장 삭제` | `installed.json` 삭제 · 효과 off · 분류 숨김 · `확장 설치` 목록에 다시 나타남 |
+| 목록 | `확장 목록` | 설치된 것과 상태(켬/끔) |
+
+### 13-6. 저장소 추가(사용자 저장소 · 로컬 폴더로 `data` 패키지 시험)
+
+`data` 패키지는 공식 저장소에 아직 없으므로 파일 내려받기·sha256 검증은 로컬 저장소로 시험한다.
+
+1. 임의 폴더 `D:\ext-test\`에 `index.json`(format 1 · packages 1개 `{"id":"my-snip","name":"My Snippets","version":"0.1.0","kind":"data","summary":"test"}`)과 `my-snip\extension.json`(같은 id · `files:[{"path":"a.sublime-snippet","sha256":"<Get-FileHash 값 소문자>","dest":"Packages/User/a.sublime-snippet"}]`) · `my-snip\a.sublime-snippet`을 둔다([extensions/README.md](../extensions/README.md) 형식 표).
+2. `Extension Manager: 저장소 추가` → `D:\ext-test` 입력 → "저장소 추가됨".
+3. `확장 설치` → My Snippets 선택 → `%APPDATA%\nexa-sql\extensions\my-snip\0.1.0\`에 보관 + `%APPDATA%\nexa-sql\Packages\User\a.sublime-snippet` 배치 · `installed.json.placed[]`에 기록.
+4. sha256을 일부러 틀리게 고쳐 재시험 → "sha256 mismatch"로 **설치 거부**(파일이 남지 않는다) · `files[].path`에 `..\` → 거부 · `kind: "wasm"` → "아직 설치 불가" 거부.
+5. `확장 삭제` → 배치 파일과 보관 폴더가 되감겨 사라진다 · `저장소 삭제`로 저장소 제거.
+
+### 13-7. 자동 점검(단위 테스트)
+
+`cargo test -p nexa-sql extensions` — 메타 파서(index/extension) · 경로 검증 · sha256 · 설치/삭제 되감기(`install_into`/`remove_from` — 임시 폴더) · 주소 표기 변환(github.com → raw).
+
+### 13-8. 다음 단계(진짜 "내려받은 로직")
+
+T-118 ②: `wasmi` 런타임 + WIT 호스트 API(지금의 `Extension`/`EditorOps` 표면을 그대로 export/import로) → Rainbow Pairs의 정책 층을 **WASM 샘플 패키지**(`kind = wasm` · `files[]`에 `.wasm` + sha256)로 옮겨 "설치 = 코드가 내려와 돈다"를 실증. 결정 D-87~D-90(실행 방식·Python·서명·능력 승인)이 선행.

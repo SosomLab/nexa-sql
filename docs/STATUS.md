@@ -2,6 +2,10 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-19 (77차 · win) — 📐 **수동 커밋 잠금 방지 설계 [56](56-manual-commit-lock-prevention.md)**(도구 조사 · 네 겹 L1~L4 · D-100~105 대기 · T-137) · 확장 테스트 안내 [50 §13](50-extension-system.md) · 자동 닫기 = 편집 코어 설정으로 정리(`rainbowpair.auto_close` 제거) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (76차 · win) — 괄호 자동 닫기 주 스위치 **`editor.auto_close_pairs`**(편집기 분류 · 확장 유무와 무관 · 종전엔 숨은 확장 분류에만 있어 끌 수 없었다) → [journal](journal/2026-09-19.md)
+
 ## 2026-09-19 (75차 · win) — 🔧 설정 창·트랜잭션 로그 창 **한글 입력 불가**(창 생성 시 `set_ime_allowed(true)` 누락) → [journal](journal/2026-09-19.md)
 
 ## 2026-09-19 (74차 · win) — 타입어헤드 HUD 위치 = **이미지 드롭다운**(nexa-ctl `PositionDropdown` · `SettingKind::Position` · 설정 창 `CardCtl::Pos`) → [journal](journal/2026-09-19.md)

@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-19 (77차 · win)** — 문서: 56 수동 커밋 잠금 방지(조사·설계 · D-100~105) · 50 §13 확장 테스트 안내 · 자동 닫기 확장 키 제거(코어 `editor.auto_close_pairs`만) → [journal](journal/2026-09-19.md)
+- **2026-09-19 (76차 · win)** — `editor.auto_close_pairs` 주 스위치(확장 효과의 `auto_close`에 AND · `apply_extensions(None)`) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (75차 · win)** — 설정 창·트랜잭션 로그 창 IME 켜기(한글 입력 불가 원인 = `set_ime_allowed` 누락) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (74차 · win)** — 위치 설정 = 이미지 드롭다운(`PositionDropdown` · `SettingKind::Position` · 설정 창 배선) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (73차 · win)** — DBMS 오브젝트 종류 이름은 번역하지 않음(`Exp*` 12종 영어 고정) → [journal](journal/2026-09-19.md)

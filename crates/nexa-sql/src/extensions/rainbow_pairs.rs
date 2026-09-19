@@ -32,7 +32,7 @@ impl Extension for RainbowPairs {
         "Rainbow Pairs"
     }
 
-    /// 끄면 색·강조·자동 닫기 전부 기본(off)으로 — 쌍 표 자체는 코어가 유지(Ctrl+M 짝 이동은 내장 기능).
+    /// 끄면 색·강조를 기본(off)으로 — 쌍 표·자동 닫기는 코어가 유지(Ctrl+M 짝 이동 · `editor.auto_close_pairs`는 내장 기능).
     fn disabled_effect(&self) -> ExtensionEffect {
         ExtensionEffect {
             bracket_opts: Some(BracketOpts::default()),
@@ -90,7 +90,8 @@ impl Extension for RainbowPairs {
                 _ => 1,
             },
             colors: parse_colors(s.get("rainbowpair.colors").unwrap_or("")),
-            auto_close: s.flag("rainbowpair.auto_close"),
+            // 자동 닫기는 편집 코어 기능(`editor.auto_close_pairs`) — 확장은 관여하지 않는다(호스트가 값을 넣는다 · 사용자 09-19).
+            auto_close: true,
             max_chars: (s.int("rainbowpair.max_kb").max(64) as usize) * 1024,
         };
         ExtensionEffect {
