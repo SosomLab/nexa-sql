@@ -884,7 +884,11 @@ impl App {
                     self.default_spec = self.sess.last_spec.clone();
                     self.sess.spec = self.sess.last_spec.clone();
                     // 이미 붙어 있던 연결을 다시 고른 경우(워커가 세션을 유지 = Connected 이벤트 없음) 탐색기를 이쪽으로 돌린다.
-                    if relinked {
+                    // ★ 또한 `RunEvent::Connected`가 이 결과보다 **먼저** 처리되면(두 채널의 경주 · 시작 인자/`dev.start_demo`
+                    //   접속에서 재현 · 사용자 09-19 "sqlite는 접속이 안 되었다" = 탐색기에 Demo 루트가 없음) 그때는 `spec`이
+                    //   비어 있어 탐색기를 못 붙였다 → 지금 spec이 채워졌으니 이 서버의 탐색기가 없으면 여기서 붙인다.
+                    let missing = !self.explorer.has_server(self.sess.spec.as_ref());
+                    if relinked || missing {
                         self.explorer_attach();
                     }
                     let name = self.panel_op_name();
@@ -9644,6 +9648,8 @@ fn main() {
                 app.sess.busy = true;
                 app.sess.status = tf(Msg::StConnecting, &[&spec.redacted()]);
                 app.sess.last_spec = Some(spec.clone());
+                // 스펙을 미리 둔다 — `RunEvent::Connected`의 탐색기 붙이기가 `spec`을 본다(`connect_quietly`와 같게).
+                app.sess.spec = Some(spec.clone());
                 if nsql_vault::is_profile_name(&target) {
                     app.conn_win.select_by_name(&target);
                 }
