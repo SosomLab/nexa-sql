@@ -697,6 +697,14 @@ impl App {
                 self.conn_win
                     .set_connect_mark(&name, Some(ConnectMark::Connecting));
                 self.panel_op = Some((name.clone(), ConnState::Connecting));
+                // ★ 접속 중 막(사용자 09-19): 창 전체를 덮고 대상·단계·경과를 보인다 — 큐 대기면 그 단계부터.
+                let phase = if self.attempts_inflight >= self.attempts_max {
+                    Msg::VeilQueued
+                } else {
+                    Msg::VeilConnecting
+                };
+                self.conn_win
+                    .veil_begin(&name, &spec.connection_string(), t(phase));
                 // 같은 서버면 기존 세션 유지 · 설정 `connect.reconnect_same`이면 닫고 다시 접속(사용자 09-14).
                 let reconnect_same = self.settings.flag("connect.reconnect_same");
                 // 동시 상한·큐를 거친다(초과분은 앞의 시도가 끝나면 시작).
@@ -897,6 +905,7 @@ impl App {
                     self.conn_win.clear_connect_marks();
                     self.conn_win
                         .set_connect_mark(&name, Some(ConnectMark::Connected));
+                    self.conn_win.veil_phase(&name, t(Msg::VeilConnected));
                     self.conn_win.close_after_connect();
                     // 활성 탭에 접속 정보 적용 — 탭이 없으면 새 탭(사용자 09-14).
                     self.editors.ensure_tab();
@@ -910,6 +919,7 @@ impl App {
                     self.sess.status = tf(Msg::StConnectFailed, &[&e]);
                     let name = self.panel_op_name();
                     self.conn_win.set_connect_mark(&name, None);
+                    self.conn_win.veil_end(&name);
                     self.set_panel_result(&name, ConnState::Failed(e));
                     // 접속 실패 확인 → 그 서버 신호등 즉시 갱신(사용자 09-14).
                     self.conn_win.note_failure(&name);
@@ -6049,8 +6059,11 @@ impl App {
                     // 접속 창의 대상 세션(docs/52 §2): 공유 모드 = 기본 공유 세션(활성 탭이 전용이어도) · 개별 모드 = 활성 탭의 세션.
                     let Some(target) = self.login_place(&spec) else {
                         self.attempts_inflight = self.attempts_inflight.saturating_sub(1);
+                        // 자리를 못 잡았다(세션 바쁨·상한) — 막을 걷는다(사유는 login_place가 상태줄에).
+                        self.conn_win.veil_end(&a_name);
                         continue;
                     };
+                    self.conn_win.veil_phase(&a_name, t(Msg::VeilConnecting));
                     let profile = a_name.clone();
                     self.with_sess(target, |a| {
                         a.sess.profile = profile;
