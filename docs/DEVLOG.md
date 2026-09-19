@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-19 (65~66차 · mac)** — 시작 인자/`dev.start_demo` 접속에서 탐색기 루트가 안 붙던 경주 수정(`spec` 선설정 · `has_server`) · **접속 창 접속 중 막**(반투명 덮개 · 입력 차단 · 대상/단계/경과 · 성공 시 닫힘). → [journal](journal/2026-09-19.md)
 - **2026-09-19 (64차 · mac)** — 접속 폼 **필수 항목 `*`·경고 띠**(T-133 · `Dialect::login_required`) · 편집기 **목표 열 유지**(goal x) · I-빔 · **입력 지연 실측·개선 [55](55-editor-input-latency.md)**(2 MB 페인트 195→13 ms · ↓ 7.5→0 ms · `EditState::rev` 캐시) · 임시 `dev.start_demo`(Debug 전용) · T-135 분할 편집 등록. → [journal](journal/2026-09-19.md)
 - **2026-09-19 (63차 후반 · mac)** — 진행 보고 규칙 · **툴바 그룹 드래그 고스트·다중 행·Esc**(nexa-ui 38차) · **그리드 컬럼 고스트·Esc** · 파일 열기 = 새 탭 · 공유 4탭 통제 검토(52 §3-3 · 수정 3) · 편집기 ↑/↓ 줄 끝 · 탐색기 가로 스크롤 + 셰브론 클립 · **Σ 건수 규정**(`countable`) · **Disconnect 연결 모델 [54](54-connection-model-and-disconnect.md)**(자리 = 범위 · 팝업 · 배지 · 루트 메뉴 · 해제 로그 경로) · 로그 창 선택 복사/체크박스/⌘C(한글 자판) · 토글 창 위치 드리프트. → [journal](journal/2026-09-19.md)
 - **2026-09-19 (63차 · mac)** — **T-131 ✅** 접속 폼 바뀜 표시(띠 · `•` · `Save •` · 목록 `*` · 잃는 순간 저장/버림/취소 · `after_save` 이어가기) · **비밀번호 없는 `CONNECT` 분석**(자격 빌리기 `fill_credentials`가 SNOP-DB 비밀번호를 빌림) → 제거 · `password_required` 거부 · T-132 · **No connection 유지**(`user_disconnected`면 공유 복귀 안 함) · **필수 항목 식별 설계 [22 §10](22-driver-extensions.md)**(D-115·116 확인 대기 · T-133). → [journal](journal/2026-09-19.md)
