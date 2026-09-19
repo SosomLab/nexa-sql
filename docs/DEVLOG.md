@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-19 (67차 · win)** — ↑ 1열 이동 "느림" 실측(55 §6 · `bench_editor` 0 ms · 실제 창 Release 2~3 ms · 경로 0.01 ms) → 원인 = 캐럿 깜빡임 위상 자유 진행 → **`blink_origin` 입력 기준 재설정** · `App.tmark` 지점 계측(`input→present` 한 줄) · `scripts/win-latency-probe.ps1` · 계측 교훈(모달 · eprintln 파이프) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (65~66차 · mac)** — 시작 인자/`dev.start_demo` 접속에서 탐색기 루트가 안 붙던 경주 수정(`spec` 선설정 · `has_server`) · **접속 창 접속 중 막**(반투명 덮개 · 입력 차단 · 대상/단계/경과 · 성공 시 닫힘). → [journal](journal/2026-09-19.md)
 - **2026-09-19 (64차 · mac)** — 접속 폼 **필수 항목 `*`·경고 띠**(T-133 · `Dialect::login_required`) · 편집기 **목표 열 유지**(goal x) · I-빔 · **입력 지연 실측·개선 [55](55-editor-input-latency.md)**(2 MB 페인트 195→13 ms · ↓ 7.5→0 ms · `EditState::rev` 캐시) · 임시 `dev.start_demo`(Debug 전용) · T-135 분할 편집 등록. → [journal](journal/2026-09-19.md)
 - **2026-09-19 (63차 후반 · mac)** — 진행 보고 규칙 · **툴바 그룹 드래그 고스트·다중 행·Esc**(nexa-ui 38차) · **그리드 컬럼 고스트·Esc** · 파일 열기 = 새 탭 · 공유 4탭 통제 검토(52 §3-3 · 수정 3) · 편집기 ↑/↓ 줄 끝 · 탐색기 가로 스크롤 + 셰브론 클립 · **Σ 건수 규정**(`countable`) · **Disconnect 연결 모델 [54](54-connection-model-and-disconnect.md)**(자리 = 범위 · 팝업 · 배지 · 루트 메뉴 · 해제 로그 경로) · 로그 창 선택 복사/체크박스/⌘C(한글 자판) · 토글 창 위치 드리프트. → [journal](journal/2026-09-19.md)

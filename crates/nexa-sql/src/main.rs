@@ -98,7 +98,7 @@ use syntax::SyntaxRegistry;
 use toolfloat::{FloatAction, ToolFloatWin};
 use txlog_win::{TxLogAction, TxLogWin};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Ime, WindowEvent};
+use winit::event::{ElementState, Ime, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -236,6 +236,12 @@ struct App {
     result_area: Rect,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
+    /// 계측용: 마지막 입력(키·글자·클릭)이 들어온 시각 — 다음 present 뒤 "입력→화면" 지연을 찍는다.
+    input_at: Option<Instant>,
+    /// 계측용: 입력 뒤 경로의 지점들(이름 · 시각) — present 뒤 한 줄로 찍는다(출력 자체가 지연을 만들지 않게).
+    trace_marks: std::cell::RefCell<Vec<(&'static str, Instant)>>,
+    /// 캐럿 깜빡임 위상 원점 — 입력마다 지금으로 되돌려 캐럿이 **움직인 직후엔 항상 켜져** 보이게(Sublime·VS Code · 09-19).
+    blink_origin: Instant,
     /// ORDER BY 없는 재질의 경고를 낸 결과 탭(탭당 1회).
     offset_warned: std::collections::HashSet<u64>,
     /// `grid`가 속한 **결과 탭** id.
@@ -1104,8 +1110,16 @@ impl App {
         changed
     }
 
+    /// 계측 지점(`NSQL_TRACE_FRAMES=1`일 때만 · 메모리에 쌓고 present 뒤 한 줄).
+    fn tmark(&self, what: &'static str) {
+        if self.frame_trace.is_some() && self.input_at.is_some() {
+            self.trace_marks.borrow_mut().push((what, Instant::now()));
+        }
+    }
+
     fn redraw(&self) {
         if let Some(w) = &self.window {
+            self.tmark("request_redraw");
             w.request_redraw();
         }
     }
@@ -7337,6 +7351,7 @@ impl App {
             self.sync_find_marks();
         }
         let t_frame = Instant::now();
+        self.tmark("paint begin");
         let mut marks: [u32; 6] = [0; 6];
         let mut mark_i = 0usize;
         let mut mark = |t: &mut Instant, marks: &mut [u32; 6]| {
@@ -7364,7 +7379,7 @@ impl App {
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
         let caret_on = !self.settings.flag("editor.caret_blink")
-            || (self.started.elapsed().as_millis() / 500) % 2 == 0;
+            || (self.blink_origin.elapsed().as_millis() / 500) % 2 == 0;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
             let th = self.theme;
@@ -7734,6 +7749,20 @@ impl App {
         mark(&mut t_sec, &mut marks); // 5 = present
         if let Some(tr) = &mut self.frame_trace {
             tr.add(t_frame.elapsed().as_micros() as u32, &marks);
+            if let Some(t0) = self.input_at.take() {
+                let path: Vec<String> = self
+                    .trace_marks
+                    .borrow_mut()
+                    .drain(..)
+                    .map(|(w, t)| format!("{w} +{:.2}", (t - t0).as_secs_f64() * 1000.0))
+                    .collect();
+                eprintln!(
+                    "[frames] input→present {:.2}ms (paint {:.2}ms) · {}",
+                    t0.elapsed().as_secs_f64() * 1000.0,
+                    t_frame.elapsed().as_secs_f64() * 1000.0,
+                    path.join(" · ")
+                );
+            }
         }
     }
 
@@ -7891,6 +7920,11 @@ impl App {
     }
 
     fn route(&mut self, ev: InputEvent) {
+        if self.frame_trace.is_some() {
+            if let InputEvent::Key { .. } = ev {
+                self.tmark("route");
+            }
+        }
         self.route_inner(ev, Invalidations::default());
         self.sync_run_stmt_button();
     }
@@ -8302,7 +8336,10 @@ impl App {
             );
             let _ = enter;
             match self.focus {
-                Focus::Editor => self.ed_mut().on_event(&ev, &mut inv),
+                Focus::Editor => {
+                    self.ed_mut().on_event(&ev, &mut inv);
+                    self.tmark("editor on_event");
+                }
                 Focus::Grid => {
                     self.grid.on_event(&ev, self.scale);
                     self.after_grid_event();
@@ -8596,6 +8633,30 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // 입력(키 누름·IME·마우스 버튼) = 캐럿 깜빡임 위상을 "켜짐"으로 되돌리고(움직인 캐럿이 최대 0.5초 안 보이던 것 · 09-19)
+        //   계측이 켜져 있으면 입력→화면 지연의 시작점을 남긴다.
+        let is_input = matches!(
+            event,
+            WindowEvent::KeyboardInput {
+                event: KeyEvent {
+                    state: ElementState::Pressed,
+                    ..
+                },
+                ..
+            } | WindowEvent::Ime(_)
+                | WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+        );
+        if is_input {
+            let now = Instant::now();
+            self.blink_origin = now;
+            self.next_blink = now + Duration::from_millis(500);
+            if self.frame_trace.is_some() {
+                self.input_at = Some(now);
+            }
+        }
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
         }
@@ -9083,6 +9144,7 @@ impl ApplicationHandler<Wake> for App {
                     }
                     let plain_char =
                         !ch.primary && !ch.alt && !ch.ctrl && ch.key.chars().count() == 1;
+                    self.tmark("key");
                     if !plain_char {
                         // `find.*`는 찾기 패널에 포커스일 때만(그 밖에선 가로채지 않는다 — mac Alt+글자 입력 보존).
                         if let Some(id) = self.keymap.lookup(&ch) {
@@ -9117,6 +9179,7 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                self.tmark("RedrawRequested");
                 self.paint();
                 return;
             }
@@ -9495,6 +9558,9 @@ fn main() {
         result_area: Rect::new(0, 0, 0, 0),
         offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
+        input_at: None,
+        trace_marks: std::cell::RefCell::new(Vec::new()),
+        blink_origin: Instant::now(),
         extensions: extensions::Registry::builtin(),
         ext_catalog: Vec::new(),
         grid_tab: 0,
