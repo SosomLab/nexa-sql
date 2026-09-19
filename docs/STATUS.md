@@ -2,6 +2,12 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-19 (82차 · win) — ★ **큰 파일 성능**(4만 줄: 유휴 그리기 78 → 3.3 ms · 입력 209 → 16 ms · 유휴 CPU 812 → 188 ms) · **되돌리기 = 차이 저장**(묶음마다 본문 전체 복사 제거) · **메모리 회수**(`memtrim.rs` · 즉시 1회 + 유휴 주기 · 큰 탭 닫기 41.5 → 10.5 MB) · 덮어쓰기 = 타임아웃 버튼 · 📐 [59 대용량 파일 처리](59-large-file-handling.md)(결정 대기 D-125~128) → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (81차 · win) — ★ **T-140 외부 파일 변경 처리** ✅([58 §5](58-external-change-policy.md) · 조용한 재로드 · 겹침 0 병합 · 비모달 띠 · 저장 2단 확인 · `file.external_*` 7키) · **접속 유형(개발/시험/운영)** ✅(목록 우클릭 · `?env=` · PROD 칩 · 운영 기준 · 실행 확인) · **메모리 재점검** [26 §7-3](26-performance-architecture.md)(기동 12.0 MB · 이전 대비 내역) · 🔧 세션 창 유휴 CPU 90% → [journal](journal/2026-09-19.md)
+
+## 2026-09-19 (80차 · win) — ★ **T-138 객체 탐색기 갱신** ✅([57](57-explorer-refresh-after-ddl.md) · 실행한 DDL → 그 폴더만 디프 · 커밋 시점 · F5/Shift+F5 · "객체 없음" 신호 · 유휴 워터마크 · 설정 `meta.refresh_*` 7키) · T-137 "차단 중" 띠 ✅ · 안내 탭 = Plain Text + No connection ✅ · 📐 외부 파일 변경 처리 [58](58-external-change-policy.md)(결정 대기) → [journal](journal/2026-09-19.md)
+
 ## 2026-09-19 (79차 · win) — ★ **확장 패널**(활동 막대 "확장" · 검색 + 설치됨/설치 가능 · 행 버튼 · 상세 탭 · 관리자 켜져 있을 때만) ✅ · 관리자 명령 게이트(`ext.disable_mgr` · 끔 = 모든 확장 정지) ✅ · 빈 목록도 팔레트 안에서 안내 ✅ · 설치 다운로드 추적(파일별 URL·HTTP·크기·시간·속도·IP · 개발자 모드) ✅ · 🔧 일반 편집 모드 괄호 색 끔(확장 없을 때 색이 보이던 결함) · 이웃 깊이 대비 색 순서(nexa-ctl `contrast_order` · `rainbowpair.contrast_order`) ✅ → [journal](journal/2026-09-19.md)
 
 ## 2026-09-19 (78차 · win) — ★ **T-137 수동 커밋 잠금 방지 L1~L4** ✅([56 §9](56-manual-commit-lock-prevention.md) · 읽기 트랜잭션 자동 종료 · 유휴 경고/카운트다운 자동 롤백 카드 · 막힘 감지 · 서버 안전망 · 설정 8키) · 오류 2회 표시(카드+토스트 → 하나) · 명령 팔레트 마우스(hover 선택·휠·스크롤) → [journal](journal/2026-09-19.md)

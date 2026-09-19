@@ -46,6 +46,8 @@ pub(crate) struct Editors {
     next_id: u64,
     bounds: Rect,
     scale: f32,
+    /// 탭 줄과 본문 사이에 비워 둘 높이(물리 px) — 외부 변경 확인 띠 자리(docs/58).
+    top_inset: i32,
     line_numbers: bool,
     tooltip_on: bool,
     /// (탭 index · 머문 시작) — 1초 뒤 카드.
@@ -154,6 +156,7 @@ impl Editors {
             counter: 0,
             bounds: Rect::new(0, 0, 0, 0),
             scale: 1.0,
+            top_inset: 0,
             line_numbers,
             tooltip_on,
             hover: None,
@@ -814,7 +817,18 @@ impl Editors {
 
     /// **안내 탭**(파일 없는 읽을거리 · 확장 상세 등) — 같은 제목의 경로 없는 탭이 있으면 그 탭의 내용을 바꾸고, 없으면
     /// 새 탭. 내용은 "저장된 상태"로 둔다(닫을 때 저장을 묻지 않게 · 사용자 09-19 확장 패널 "선택하면 상세").
-    pub(crate) fn open_info_tab(&mut self, title: &str, text: &str) {
+    /// 돌려주는 값 = 새 탭을 만들었는가(호스트가 그 탭을 **No connection**으로 둔다 — 읽을거리에 DB 연결은 필요 없다).
+    pub(crate) fn open_info_tab(&mut self, title: &str, text: &str) -> bool {
+        self.open_info_tab_like(title, text, None)
+    }
+
+    /// `like` = 구문을 고를 파일 이름(디스크 내용 보기 = 원래 파일의 구문) · `None` = Plain Text.
+    pub(crate) fn open_info_tab_like(
+        &mut self,
+        title: &str,
+        text: &str,
+        like: Option<&str>,
+    ) -> bool {
         let found =
             (0..self.titles.len()).find(|&i| self.titles[i] == title && self.paths[i].is_none());
         match found {
@@ -822,7 +836,14 @@ impl Editors {
             None => self.new_tab(Some(title.to_string())),
         }
         let i = self.active;
-        let syntax = self.registry.for_title(title);
+        // 읽을거리는 SQL이 아니다 — **Plain Text** 구문으로(키워드 색·괄호 규칙 없음 · 사용자 09-19 "and/in/to가 칠해진다").
+        let syntax = match like {
+            Some(name) => self.registry.for_title(name),
+            None => self
+                .registry
+                .get("Plain Text")
+                .unwrap_or_else(|| Rc::new(SyntaxSpec::plain())),
+        };
         let focused = self.cur().is_focused();
         let mut tb = self.make_box(text, &syntax);
         tb.set_focused(focused);
@@ -831,6 +852,91 @@ impl Editors {
         self.bufs[i] = tb;
         self.syntax[i] = syntax;
         self.saved[i] = text.to_string();
+        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
+        self.refresh_baseline(i);
+        self.sync_tabs();
+        found.is_none()
+    }
+
+    /// 메모리 회수: **보이지 않는 탭**의 그리기 캐시(본문 문자열·줄 표·행 폭·구문 상태·미니맵 픽셀)를 놓는다 — 다시 보면
+    /// 다시 만들어진다. 돌려주는 값 = 놓은 탭 수.
+    pub(crate) fn release_inactive_caches(&mut self) -> usize {
+        let active = self.active;
+        let mut n = 0;
+        for (i, b) in self.bufs.iter().enumerate() {
+            if i != active {
+                b.release_caches();
+                n += 1;
+            }
+        }
+        n
+    }
+
+    // ───────────── 외부 파일 변경(docs/58 · T-140) ─────────────
+
+    /// 확인 띠 자리(물리 px) — 바뀌었으면 다시 배치하고 true.
+    pub(crate) fn set_top_inset(&mut self, px: i32) -> bool {
+        if self.top_inset == px {
+            return false;
+        }
+        self.top_inset = px;
+        let mut inv = Invalidations::default();
+        self.layout(&mut inv);
+        true
+    }
+
+    /// 확인 띠가 놓일 자리(탭 줄 바로 아래 · 본문 위).
+    pub(crate) fn banner_rect(&self) -> Rect {
+        let ed = self.editor_bounds();
+        Rect::new(ed.x, ed.y - self.top_inset, ed.w, self.top_inset)
+    }
+
+    pub(crate) fn index_of_id(&self, id: u64) -> Option<usize> {
+        self.ids.iter().position(|x| *x == id)
+    }
+
+    /// 파일에 묶인 탭들 — (탭 id, 경로).
+    pub(crate) fn files(&self) -> Vec<(u64, PathBuf)> {
+        (0..self.ids.len())
+            .filter_map(|i| Some((self.ids[i], self.paths[i].clone()?)))
+            .collect()
+    }
+
+    /// 탭의 (버퍼 본문, 기준 = 마지막으로 읽거나 저장한 본문, 인코딩, 줄끝).
+    pub(crate) fn snapshot(&self, i: usize) -> Option<(String, &str, &str, Eol)> {
+        Some((
+            self.bufs.get(i)?.text(),
+            self.saved.get(i)?.as_str(),
+            self.encs.get(i)?.as_str(),
+            *self.eol.get(i)?,
+        ))
+    }
+
+    /// 외부 내용 반영: `buf` = 버퍼에 넣을 본문(`None` = 버퍼는 그대로 · 기준만) · `base` = 새 기준(디스크 본문).
+    /// 버퍼 교체는 **되돌리기 한 단계**(달라진 가운데만 · 캐럿 유지). 줄끝·인코딩이 주어지면 저장 기준까지 맞춘다.
+    pub(crate) fn apply_external(
+        &mut self,
+        i: usize,
+        buf: Option<&str>,
+        base: &str,
+        eol: Option<Eol>,
+        enc: Option<&str>,
+    ) {
+        if i >= self.bufs.len() {
+            return;
+        }
+        if let Some(text) = buf {
+            let mut inv = Invalidations::default();
+            self.bufs[i].replace_all_undoable(text, &mut inv);
+        }
+        self.saved[i] = base.to_string();
+        if let Some(eol) = eol {
+            self.eol[i] = eol;
+            self.saved_eol[i] = eol;
+        }
+        if let Some(enc) = enc {
+            self.encs[i] = enc.to_string();
+        }
         self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
         self.refresh_baseline(i);
         self.sync_tabs();
@@ -1059,7 +1165,8 @@ impl Editors {
             .round()
             .max(1.0) as i32;
         self.tabs.set_bounds(Rect::new(b.x, b.y, b.w, th), inv);
-        let ed = Rect::new(b.x, b.y + th, b.w, (b.h - th).max(0));
+        let top = th + self.top_inset;
+        let ed = Rect::new(b.x, b.y + top, b.w, (b.h - top).max(0));
         for tb in &mut self.bufs {
             tb.set_bounds(ed, inv);
         }

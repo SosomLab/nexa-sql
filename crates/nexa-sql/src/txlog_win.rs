@@ -60,6 +60,8 @@ pub(crate) struct TxLogWin {
     menu: ContextMenu,
     row_ids: Vec<u64>,
     menu_row: Option<u64>,
+    /// "차단 중" 띠의 줄(호스트가 준다 · 비면 띠 없음).
+    blocking: Vec<String>,
 }
 
 /// 열 폭(논리 px · 문장 열은 나머지 전부).
@@ -106,6 +108,7 @@ impl TxLogWin {
             menu: ContextMenu::new(),
             row_ids: Vec::new(),
             menu_row: None,
+            blocking: Vec::new(),
         }
     }
 
@@ -190,6 +193,16 @@ impl TxLogWin {
     /// 마지막으로 닫힌 (위치, 크기)(1회성 · 호스트가 설정에 저장).
     pub(crate) fn take_last(&mut self) -> Option<((i32, i32), (f64, f64))> {
         self.last.take()
+    }
+
+    /// **"차단 중" 띠**(docs/56 L3): 내 미커밋 때문에 기다리는 세션들 — 줄마다 "연결 — 기다리는 세션 설명". 비면 띠 없음.
+    /// 바뀌었으면 true(호스트가 다시 그린다).
+    pub(crate) fn set_blocking(&mut self, lines: Vec<String>) -> bool {
+        if self.blocking == lines {
+            return false;
+        }
+        self.blocking = lines;
+        true
     }
 
     pub(crate) fn is_open(&self) -> bool {
@@ -505,8 +518,42 @@ impl TxLogWin {
                 sw.paint(&mut dc, th);
                 sx += w + pad;
             }
-            // 표
-            let top = pad + sh + pad;
+            // "차단 중" 띠(검색 상자와 표 사이 · 최대 3줄 + 나머지 개수) — 위험색 왼쪽 막대 + 옅은 바탕.
+            let mut top = pad + sh + pad;
+            if !self.blocking.is_empty() {
+                let shown = self.blocking.len().min(3);
+                let extra = self.blocking.len() - shown;
+                let lines = shown + 1 + usize::from(extra > 0);
+                let band = Rect::new(pad, top, wi - pad * 2, th_txt * lines as i32 + px(10.0));
+                dc.fill_rect_alpha(band, th.danger, 0.12);
+                dc.fill_rect(Rect::new(band.x, band.y, px(4.0), band.h), th.danger);
+                let tx = band.x + px(12.0);
+                let mut ty = band.y + px(5.0);
+                dc.select_font(FontSlot::Base, true);
+                dc.text(
+                    tx,
+                    ty,
+                    band,
+                    &tf(Msg::TxBandBlocking, &[&self.blocking.len().to_string()]),
+                    th.danger,
+                );
+                dc.select_font(FontSlot::Base, false);
+                ty += th_txt;
+                for line in self.blocking.iter().take(shown) {
+                    dc.text(tx, ty, band, line, th.text);
+                    ty += th_txt;
+                }
+                if extra > 0 {
+                    dc.text(
+                        tx,
+                        ty,
+                        band,
+                        &tf(Msg::TxBandMore, &[&extra.to_string()]),
+                        th.text_dim,
+                    );
+                }
+                top = band.bottom() + pad;
+            }
             let table = Rect::new(pad, top, wi - pad * 2, (sw_y - pad - top).max(0));
             dc.fill_rect(table, th.field_bg);
             dc.fill_rect(Rect::new(table.x, table.y, table.w, 1), th.border);

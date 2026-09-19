@@ -866,6 +866,7 @@ impl Runner {
                 role: None,
                 dialect: None,
                 schema: None,
+                env: _,
             } => Some(u.as_str()),
             _ => None,
         }

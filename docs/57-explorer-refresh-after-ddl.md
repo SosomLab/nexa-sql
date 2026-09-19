@@ -1,7 +1,7 @@
 # 57 · 객체 탐색기 갱신 — DDL 뒤 · 주기 · 범위 (다른 도구 조사 · 설계) (사용자 요청 09-19)
 
 > **요구**: "create, drop 등 객체 정보가 바뀌어도 객체 탐색기에 갱신이 안 된다 — 갱신 시점·주기·범위를 다른 앱의 설정과 기능으로 조사하고, 우리 구현 방식을 설계해 확인받기".
-> **상태**: 📐 설계 확정(09-19 · D-106~D-110 전부 권장안) → 개발 T-138. 관련: [28 객체 탐색기](28-object-explorer.md) · [47 §5 메타 갱신(D-82 ✅ 수동+DDL 감지+워터마크)](47-intellisense-metadata.md) · [26 §8 네트워크 부하 규칙](26-performance-architecture.md).
+> **상태**: ✅ 구현(09-19 · journal 80차 · §5) — 설계 확정 D-106~D-110 전부 권장안. 관련: [28 객체 탐색기](28-object-explorer.md) · [47 §5 메타 갱신(D-82 ✅ 수동+DDL 감지+워터마크)](47-intellisense-metadata.md) · [26 §8 네트워크 부하 규칙](26-performance-architecture.md).
 
 ## 0. 결론 다섯 줄
 
@@ -83,6 +83,20 @@
 ## 4. 단계
 
 ① `ddl_target` 파서 + 테스트(방언 4) ② 탐색기 디프 갱신(`refresh_diff`) ③ T1 배선(실행 완료·커밋 시점 · 버킷 디바운스 · 전 세션) ④ T3 범위(루트·Shift+F5) ⑤ T4 ⑥ T2 워터마크(방언별 1행 질의) ⑦ 설정·마이그레이션·문서(28 §4 · 26 §8 · 39 §3).
+
+## 5. 구현(09-19 · journal 80차)
+
+| 트리거 | 코드 | 비고 |
+|---|---|---|
+| 파서 | `nsql-core/src/ddl.rs` `ddl_target` → `DdlTarget { verb, kind, schema, name }` | 머리말만 · 모르면 `None` |
+| 디프 | `explorer.rs` `diff_children` · `soft_refresh` · `soft_refresh_subtree` · `fresh`(강조) | 남는 노드 = 인덱스 유지 · 실패 = 옛 트리 유지 |
+| T1 | `main.rs` `meta_on_done` → `Sess.ddl_now`(실행 완료에서 `meta_flush`) / `Sess.ddl_wait`(`tx_close` 커밋 계열에서 · 롤백 = 버림) · `sessions.rs` `ddl_waits_for_commit` | `explorers.rs apply_ddl` = 그 서버 칸만 |
+| T3 | 탐색기 포커스 F5 / Shift+F5 · 우클릭 "새로 고침" → `refresh_selected(hard)` | 읽어 둔 것만 · 디프 |
+| T4 | `RunEvent::Error` + `ErrorClass::NoTable` → `explorer::missing_name` → `note_missing` | 이름이 트리에 있을 때만 · 폴더당 60초 |
+| T2 | `Req::Watermark` · `watermark_sql`(방언별) · `watermark_poll` · 호스트 `meta_refresh_tick` | 유휴로 닫힌 메타 세션은 깨우지 않음 |
+| 스크롤 | `ExplorerSet::drain` `top_anchor` | 위에 행이 생겨도 화면이 밀리지 않음 |
+
+남긴 것: "조회는 성공했는데 트리에 없는 이름"(FROM 절 분석)은 T2가 맡는다 · 메타 저장소(T-57 ②)가 들어오면 같은 트리거가 저장소를 갱신한다.
 
 ## 출처
 

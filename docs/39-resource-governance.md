@@ -73,6 +73,12 @@
 | 탐색기 메타 세션 **서버당 1**(DR-34 · 52 §2-2 · 그 서버에 붙은 세션 ≥1이면 유지 · 0이면 접속만 닫고 트리 유지) | 서버 수 · 유휴 회수 | `session.idle_secs`(메타 세션 유휴 닫기 · 다음 요청 때 재개) · `explorer.visible` | — | — | — | `ExplorerSet::sync_refs` · `suspend_if_idle` |
 | 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout` | — | — | — | `worker::ensure_alive` |
 | TCP keepalive 빈 세그먼트(PG·MSSQL · 53) | 60s | `net.keepalive_secs`(0 = 끔) | — | — | — | 드라이버 `set_keepalive_secs` |
+| 메모리 회수(힙 → OS · 보이지 않는 탭의 그리기 캐시 해제 · 59 §2) | 큰 것을 놓은 1초 뒤 1회 + 유휴 300s(수 ms · UI 스레드) | `mem.trim_on_release` · `mem.trim_secs`(0 = 끔) · `mem.release_results_on_disconnect` | 300 | 300 | 300 | `App::mem_tick` · `memtrim.rs` |
+| 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
+| 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
+| 막힘 감지 폴링(56 L3 · 메타 세션 1문장) | 미커밋 세션당 30s | `tx.block_poll_secs`(0 = 끔 · 향상 모드 0) | 30 | 30 | 0 | `App::tx_block_tick` |
+| 탐색기 유휴 워터마크(57 T2 · 스키마당 1행) | 300s · 유휴일 때만 | `meta.refresh_secs`(0 = 끔 · 향상 모드 0) · `meta.refresh_scope` | 300 | 600 | 0 | `App::meta_refresh_tick` |
+| 탐색기 DDL 뒤 갱신(57 T1·T4 · 폴더당 1질의) | 사용자 실행에 딸림 | `meta.refresh_on_ddl` · `meta.refresh_on_missing` | 켬 | 켬 | 켬 | `App::meta_flush` |
 | 확장 저장소 읽기 스레드 `ext-index`(curl 자식 프로세스 · 50 §14) | 진행 중 1 · 사용자 동작(패널 열기·⟳)으로만 | `extensions.enabled`(끄면 패널·아이콘·읽기 전부 없음) | — | — | — | `App::ext_fetch_start` |
 | 공유 연결(서버당 DB 세션 1 + 워커 스레드 1 · DR-34) | 8 | `session.max_shared` | — | — | — | `App::new_shared` |
 | 전용/개별 탭 세션(DB 세션 1 + 워커 스레드 1) | 8 | `session.max_private` · `session.private_connect` | — | — | — | `App::new_private` |

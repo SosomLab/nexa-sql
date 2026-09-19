@@ -11,6 +11,36 @@
 
 use nsql_core::Dialect;
 
+/// **접속 유형**(docs/56 §4 2차 · 사용자 09-19): 같은 도구로 개발과 운영을 오가는 실수를 줄이는 표식 — 유형이 미커밋 경고
+/// 기준과 실행 확인을 고른다. 서버 식별(같은 서버인가)에는 쓰지 않는다 — 표식일 뿐이다.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConnEnv {
+    Dev,
+    Test,
+    Prod,
+}
+
+impl ConnEnv {
+    #[must_use]
+    pub fn from_name(s: &str) -> Option<ConnEnv> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "dev" | "development" => Some(ConnEnv::Dev),
+            "test" | "qa" | "stage" | "staging" => Some(ConnEnv::Test),
+            "prod" | "production" | "live" => Some(ConnEnv::Prod),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConnEnv::Dev => "dev",
+            ConnEnv::Test => "test",
+            ConnEnv::Prod => "prod",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ConnectSpec {
     pub user: Option<String>,
@@ -27,6 +57,8 @@ pub struct ConnectSpec {
     /// 접속 뒤 기본 스키마(`?schema=` · 사용자 09-18): Oracle `ALTER SESSION SET CURRENT_SCHEMA` · PostgreSQL `search_path` ·
     /// SQL Server `USE`(데이터베이스 전환) · SQLite 없음. 접속 문자열에 `?schema=HR`로 실린다.
     pub schema: Option<String>,
+    /// 접속 유형(`?env=dev|test|prod` · 프로필 키 `env`) — 없으면 유형 없음(= 개발과 같은 기준).
+    pub env: Option<ConnEnv>,
 }
 
 impl ConnectSpec {
@@ -95,6 +127,8 @@ impl ConnectSpec {
                         }
                     } else if k.eq_ignore_ascii_case("schema") && !v.trim().is_empty() {
                         spec.schema = Some(percent_decode(v.trim()));
+                    } else if k.eq_ignore_ascii_case("env") {
+                        spec.env = ConnEnv::from_name(v);
                     } else if k.eq_ignore_ascii_case("role") && !v.trim().is_empty() {
                         spec.role = Some(v.trim().to_ascii_uppercase());
                     }
@@ -282,6 +316,9 @@ impl ConnectSpec {
         if let Some(sc) = &self.schema {
             q.push(format!("schema={sc}"));
         }
+        if let Some(e) = self.env {
+            q.push(format!("env={}", e.as_str()));
+        }
         if !q.is_empty() {
             s.push('?');
             s.push_str(&q.join("&"));
@@ -415,6 +452,14 @@ mod tests {
         assert_eq!(c.schema.as_deref(), Some("HR"));
         assert_eq!(c.connection_string(), "oracle://scott@h:1521/svc?schema=HR");
         assert_eq!(c.redacted(), "oracle://scott/***@h:1521/svc?schema=HR");
+        // 접속 유형 `?env=` — 왕복 · 별칭 · 모르는 값은 무시.
+        let p = ConnectSpec::parse("pg://u@h/db?schema=s&env=production").unwrap();
+        assert_eq!(p.env, Some(ConnEnv::Prod));
+        assert_eq!(p.connection_string(), "postgres://u@h/db?schema=s&env=prod");
+        assert_eq!(
+            ConnectSpec::parse("pg://u@h/db?env=nope").unwrap().env,
+            None
+        );
         let again = ConnectSpec::parse(&c.connection_string()).unwrap();
         assert_eq!(again.schema.as_deref(), Some("HR"));
         assert_eq!(again.user.as_deref(), Some("scott"));

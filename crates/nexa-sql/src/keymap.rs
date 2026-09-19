@@ -312,6 +312,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     Command {
+        id: "mem.trim_now",
+        label: Msg::MnMemTrimNow,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
         id: "ext.disable_mgr",
         label: Msg::MnExtDisableManager,
         win: "",

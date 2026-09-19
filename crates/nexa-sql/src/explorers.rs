@@ -48,6 +48,8 @@ pub(crate) struct ExplorerSet {
     icons: bool,
     font_px: f32,
     ta_cfg: crate::explorer::TypeAheadCfg,
+    /// 새 객체 강조 시간(설정 `meta.refresh_highlight_ms` · 새로 만드는 칸에도 준다).
+    highlight_ms: u64,
     focused: bool,
     bounds: Rect,
     scale: f32,
@@ -70,6 +72,7 @@ impl ExplorerSet {
             icons: true,
             font_px: 17.0,
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
+            highlight_ms: 2000,
             focused: false,
             bounds: Rect::default(),
             scale: 1.0,
@@ -89,6 +92,7 @@ impl ExplorerSet {
         ex.set_icons(self.icons);
         ex.set_font_px(self.font_px);
         ex.set_typeahead(self.ta_cfg);
+        ex.set_highlight_ms(self.highlight_ms);
         Pane { key, ex }
     }
 
@@ -383,11 +387,92 @@ impl ExplorerSet {
 
     /// 모든 서버의 메타 응답을 반영(보이지 않는 서버도 뒤에서 읽기가 끝난다).
     pub(crate) fn drain(&mut self) -> bool {
+        // 조용한 갱신(docs/57 §2-2)이 보이는 곳 **위**에 행을 넣거나 빼도 화면이 밀리지 않게: 맨 위에 걸린 (칸, 노드)를 기억했다가
+        // 반영 뒤 그 노드가 같은 자리에 오도록 공용 스크롤을 맞춘다.
+        let anchor = (self.scroll > 0).then(|| self.top_anchor()).flatten();
         let mut changed = false;
         for p in &mut self.panes {
             changed |= p.ex.drain();
         }
+        if changed {
+            if let Some((pane, node, inner)) = anchor {
+                let top: i32 = self
+                    .laid()
+                    .iter()
+                    .take_while(|&&i| i != pane)
+                    .map(|&i| self.panes[i].ex.content_height())
+                    .sum();
+                if let Some(y) = self.panes[pane].ex.row_top_of(node) {
+                    let want = top + y + inner;
+                    if want != self.scroll {
+                        self.scroll = want;
+                        self.relayout();
+                    }
+                }
+            }
+        }
         changed
+    }
+
+    /// 공용 스크롤의 맨 위에 걸린 (칸 index, 노드, 행 안쪽 px).
+    fn top_anchor(&self) -> Option<(usize, usize, i32)> {
+        let mut top = 0;
+        for &i in &self.laid() {
+            let h = self.panes[i].ex.content_height();
+            if self.scroll < top + h {
+                let (node, inner) = self.panes[i].ex.anchor_at(self.scroll - top)?;
+                return Some((i, node, inner));
+            }
+            top += h;
+        }
+        None
+    }
+
+    /// 실행한 DDL 반영(docs/57 T1) — 그 서버의 칸에만(없거나 오프라인이면 0).
+    pub(crate) fn apply_ddl(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        t: &nsql_core::DdlTarget,
+        default_schema: Option<&str>,
+    ) -> usize {
+        match spec.and_then(|s| self.find(s)) {
+            Some(i) => self.panes[i].ex.apply_ddl(t, default_schema),
+            None => 0,
+        }
+    }
+
+    /// "못 찾음" 신호(docs/57 T4).
+    pub(crate) fn note_missing(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        name: Option<&str>,
+        default_schema: Option<&str>,
+    ) -> usize {
+        match spec.and_then(|s| self.find(s)) {
+            Some(i) => self.panes[i].ex.note_missing(name, default_schema),
+            None => 0,
+        }
+    }
+
+    /// 유휴 워터마크(docs/57 T2) — 온라인인 모든 서버 칸에(각 칸이 스스로 거른다).
+    pub(crate) fn watermark_poll(&mut self, all: bool) -> bool {
+        let mut any = false;
+        for p in &mut self.panes {
+            any |= p.ex.watermark_poll(all);
+        }
+        any
+    }
+
+    /// 수동 새로 고침(docs/57 T3 · F5 / Shift+F5) — 마지막으로 누른 칸의 선택 노드.
+    pub(crate) fn refresh_selected(&mut self, hard: bool) {
+        self.panes[self.shown].ex.refresh_selected(hard);
+    }
+
+    pub(crate) fn set_highlight_ms(&mut self, ms: u64) {
+        self.highlight_ms = ms;
+        for p in &mut self.panes {
+            p.ex.set_highlight_ms(ms);
+        }
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {

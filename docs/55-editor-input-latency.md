@@ -94,3 +94,8 @@ RedrawRequested → App::paint(): 크롬·편집기·그리드·탐색기·팝�
 | 재현 도구 | 없음(수동) | `scripts/win-latency-probe.ps1`(Demo 접속 · 클릭 · SendKeys · 로그 요약) |
 
 ⏳ 실기: 줄 끝에서 ↑ → 1열 캐럿이 **즉시** 보임(어느 순간 눌러도) · 타이핑 중 캐럿 안 깜빡임 · 0.5초 멈추면 깜빡임 시작 · `editor.caret_blink=off`면 늘 켜짐.
+
+## 8. 09-19 Windows 후속 — 큰 파일에서의 그리기·입력([59 §1](59-large-file-handling.md))
+
+메모리 점검([26 §7-3](26-performance-architecture.md))에서 "3.6 MB 스크립트를 열어 두면 유휴 CPU가 높다"로 시작해 벤치(`bench_editor <줄 수> <기능>` — 기능별·입력 비용 추가)로 다섯 군데를 찾았다: ① 구문 상태를 매 프레임 0번 줄부터 재계산(87 ms) ② 편집마다 전 줄 폭 재측정(200 ms) ③ 키마다 본문 전체 `String` 재조립(자동 닫기·내어쓰기·입력 길이 · 24 ms) ④ 매 프레임 본문 `String`·줄 표 재생성 ⑤ 줄끝 표시용 전체 복사. 조치 = 세대(`edit.rev`) + 줄 해시로 묶은 캐시 넷(`MlTextCache` · 행 해시 · `RowWidthCache` · `HlStateCache`)과 버퍼 슬라이스 직접 읽기. 결과: 유휴 그리기 78 → 3.3 ms · 입력 209 → 16 ms · 입력 처리 24 → 0.1 ms. T-136의 남은 몫 = 버퍼 표현 교체(59 §4 2단계 · T-142).
+

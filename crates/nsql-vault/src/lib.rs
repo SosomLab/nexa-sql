@@ -148,6 +148,9 @@ impl Vault {
         if let Some(v) = &spec.schema {
             known.push(("schema", v.clone()));
         }
+        if let Some(e) = spec.env {
+            known.push(("env", e.as_str().to_string()));
+        }
         if let Some(pw) = &spec.password {
             let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
             known.push(("secret", hex_encode(&env)));
@@ -257,6 +260,7 @@ impl Vault {
                 "database" => spec.database = Some(v),
                 "role" => spec.role = Some(v),
                 "schema" => spec.schema = Some(v),
+                "env" => spec.env = nsql_script::ConnEnv::from_name(&v),
                 "secret" => secret = Some(v),
                 _ => {}
             }
@@ -311,6 +315,7 @@ mod tests {
             role: None,
             dialect: Some(Dialect::Oracle),
             schema: None,
+            env: None,
         }
     }
 

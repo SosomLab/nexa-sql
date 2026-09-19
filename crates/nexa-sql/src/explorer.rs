@@ -17,7 +17,7 @@ use nsql_catalog::{ColumnInfo, ObjectInfo, ObjectKind};
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
@@ -113,6 +113,64 @@ enum Req {
         gen: u64,
         sid: String,
     },
+    /// 유휴 워터마크(docs/57 T2) — 스키마마다 1행 질의로 "마지막 DDL 시각·객체 수" 지문을 읽는다.
+    Watermark {
+        gen: u64,
+        schemas: Vec<String>,
+    },
+}
+
+/// 스키마의 변경 지문 질의(방언별 1행 · 지원하지 않으면 `None`). 값 자체는 뜻이 없고 **앞선 값과 다른가**만 본다.
+pub(crate) fn watermark_sql(dialect: Dialect, schema: &str) -> Option<String> {
+    let s = schema.replace('\'', "''");
+    Some(match dialect {
+        Dialect::Oracle => format!(
+            "SELECT TO_CHAR(MAX(LAST_DDL_TIME),'YYYYMMDDHH24MISS')||':'||COUNT(*) FROM ALL_OBJECTS WHERE OWNER = '{s}'"
+        ),
+        Dialect::Mssql => format!(
+            "SELECT ISNULL(CONVERT(varchar(33), MAX(modify_date), 126), '') + ':' + CAST(COUNT(*) AS varchar(20)) FROM sys.objects WHERE schema_id = SCHEMA_ID('{s}')"
+        ),
+        // PostgreSQL에는 DDL 시각이 없다 → 개수 · 최대 oid · 컬럼 수 합(ADD/DROP COLUMN) + 루틴 개수·최대 oid.
+        Dialect::Postgres => format!(
+            "SELECT (SELECT COUNT(*)::text||':'||COALESCE(MAX(c.oid::bigint),0)::text||':'||COALESCE(SUM(c.relnatts),0)::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{s}') || '/' || (SELECT COUNT(*)::text||':'||COALESCE(MAX(p.oid::bigint),0)::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '{s}')"
+        ),
+        Dialect::Mysql => format!(
+            "SELECT CONCAT(COUNT(*), ':', COALESCE(MAX(CREATE_TIME), '')) FROM information_schema.tables WHERE table_schema = '{s}'"
+        ),
+        Dialect::Sqlite => "PRAGMA schema_version".to_string(),
+        Dialect::Odbc => return None,
+    })
+}
+
+fn watermark_query(
+    s: &mut dyn Session,
+    schemas: &[String],
+) -> Vec<(String, Result<String, String>)> {
+    let d = s.dialect();
+    schemas
+        .iter()
+        .filter_map(|schema| {
+            let sql = watermark_sql(d, schema)?;
+            let r = s
+                .execute(&nsql_core::ExecRequest {
+                    sql,
+                    params: vec![],
+                })
+                .map(|r| {
+                    r.result_sets
+                        .into_iter()
+                        .next()
+                        .and_then(|rs| {
+                            rs.rows
+                                .first()
+                                .and_then(|row| row.first().map(|v| v.display()))
+                        })
+                        .unwrap_or_default()
+                })
+                .map_err(|e| e.message);
+            Some((schema.clone(), r))
+        })
+        .collect()
 }
 
 /// 막힘 감지 결과 — (편집기 세션 id, 기다리는 세션 설명들 또는 오류).
@@ -298,6 +356,10 @@ enum Resp {
         gen: u64,
         r: BlockersResult,
     },
+    Watermark {
+        gen: u64,
+        r: Vec<(String, Result<String, String>)>,
+    },
 }
 
 /// 호스트가 처리할 요청.
@@ -396,6 +458,73 @@ pub(crate) struct Explorer {
     scroll_x: i32,
     /// 마지막 그리기에서 잰 내용 폭(가장 긴 행의 오른쪽 끝 + 여백 · bounds.x 기준).
     content_w: i32,
+    /// **조용한 갱신**(docs/57 §2-2) 요청 중인 노드 — 응답이 오면 자식을 통째로 갈지 않고 디프로 반영한다.
+    soft: HashSet<usize>,
+    /// 방금 생긴 노드(디프로 추가됨) → 강조가 끝나는 시각(ms · `now_hint` 기준).
+    fresh: Vec<(usize, u64)>,
+    /// 새 객체 강조 시간(설정 `meta.refresh_highlight_ms` · 0 = 없음).
+    highlight_ms: u64,
+    /// "못 찾음" 신호로 마지막에 갱신한 시각(폴더별 60초에 1회 · docs/57 T4).
+    missing_at: HashMap<usize, Instant>,
+    /// 스키마별 변경 지문(docs/57 T2) · 질의 진행 중 표시.
+    watermarks: HashMap<String, String>,
+    wm_inflight: bool,
+}
+
+/// "객체 없음" 오류문에서 객체 이름을 뽑는다(docs/57 T4) — PostgreSQL `relation "x" does not exist` · SQL Server
+/// `Invalid object name 'dbo.x'` · SQLite `no such table: x` · Oracle 23 `table or view "S"."X" does not exist`.
+/// 이름이 없는 오류문(옛 Oracle ORA-00942)은 `None` — 호출자가 현재 스키마의 테이블·뷰 폴더로 넓힌다.
+pub(crate) fn missing_name(msg: &str) -> Option<String> {
+    if let Some(i) = msg.find("no such table:") {
+        let rest = msg[i + "no such table:".len()..].trim();
+        let name: String = rest
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != ',' && *c != ';')
+            .collect();
+        return (!name.is_empty()).then_some(name);
+    }
+    // 마지막 따옴표 구간(`"S"."X"` = X · `'dbo.x'` = dbo.x)을 이름으로.
+    for q in ['"', '\''] {
+        let parts: Vec<&str> = msg.split(q).collect();
+        if parts.len() >= 3 {
+            let name = parts[parts.len() - 2].trim();
+            if !name.is_empty() && !name.contains(' ') {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `nsql_core::DdlKind` → 탐색기 폴더 종류(스키마는 폴더가 아니라 루트 목록).
+fn folder_kind(k: nsql_core::DdlKind) -> Option<ObjectKind> {
+    use nsql_core::DdlKind as D;
+    Some(match k {
+        D::Table => ObjectKind::Table,
+        D::View => ObjectKind::View,
+        D::MaterializedView => ObjectKind::MaterializedView,
+        D::Index => ObjectKind::Index,
+        D::Sequence => ObjectKind::Sequence,
+        D::Procedure => ObjectKind::Procedure,
+        D::Function => ObjectKind::Function,
+        D::Package => ObjectKind::Package,
+        D::PackageBody => ObjectKind::PackageBody,
+        D::Trigger => ObjectKind::Trigger,
+        D::Synonym => ObjectKind::Synonym,
+        D::Type => ObjectKind::Type,
+        D::Schema => return None,
+    })
+}
+
+/// 디프용 노드 열쇠 — 같은 부모 아래에서 "같은 것"을 알아보는 값(이름 + 종류 · 대소문자 구분).
+fn node_key(k: &NodeKind) -> String {
+    match k {
+        NodeKind::Root => "root".into(),
+        NodeKind::Schema(s) => format!("s:{s}"),
+        NodeKind::Folder { schema, kind } => format!("f:{schema}:{kind:?}"),
+        NodeKind::Object(o) => format!("o:{:?}:{}:{}", o.kind, o.name, o.extra),
+        NodeKind::Column(c) => format!("c:{}", c.name),
+    }
 }
 
 fn err_s(e: DbError) -> String {
@@ -537,6 +666,14 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 let r = with_session(&mut session, |s| blockers_query(s, &sid));
                 Resp::Blockers { gen, r: (sid, r) }
             }
+            Req::Watermark { gen, schemas } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| Ok(watermark_query(s, &schemas)))
+                    .unwrap_or_default();
+                Resp::Watermark { gen, r }
+            }
         };
         if tx.send(resp).is_err() {
             break;
@@ -668,12 +805,23 @@ impl Explorer {
             clip: None,
             scroll_x: 0,
             content_w: 0,
+            soft: HashSet::new(),
+            fresh: Vec::new(),
+            highlight_ms: 2000,
+            missing_at: HashMap::new(),
+            watermarks: HashMap::new(),
+            wm_inflight: false,
         };
         e.reset_tree();
         e
     }
 
     fn reset_tree(&mut self) {
+        self.soft.clear();
+        self.fresh.clear();
+        self.missing_at.clear();
+        self.watermarks.clear();
+        self.wm_inflight = false;
         self.nodes = vec![Node {
             kind: NodeKind::Root,
             depth: 0,
@@ -996,10 +1144,19 @@ impl Explorer {
                                     state: LoadState::Idle,
                                 })
                                 .collect();
-                            self.set_children(node, kids);
-                            self.select_current_schema();
+                            if self.soft.remove(&node) {
+                                self.diff_children(node, kids);
+                            } else {
+                                self.set_children(node, kids);
+                                self.select_current_schema();
+                            }
                         }
-                        Err(e) => self.set_error(node, e),
+                        // 조용한 갱신의 실패는 옛 트리를 그대로 둔다(오류 행으로 바꾸지 않는다).
+                        Err(e) => {
+                            if !self.soft.remove(&node) {
+                                self.set_error(node, e);
+                            }
+                        }
                     }
                 }
                 Resp::Objects { gen, node, r } => {
@@ -1020,9 +1177,17 @@ impl Explorer {
                                     state: LoadState::Idle,
                                 })
                                 .collect();
-                            self.set_children(node, kids);
+                            if self.soft.remove(&node) {
+                                self.diff_children(node, kids);
+                            } else {
+                                self.set_children(node, kids);
+                            }
                         }
-                        Err(e) => self.set_error(node, e),
+                        Err(e) => {
+                            if !self.soft.remove(&node) {
+                                self.set_error(node, e);
+                            }
+                        }
                     }
                 }
                 Resp::Columns { gen, node, r } => {
@@ -1043,9 +1208,33 @@ impl Explorer {
                                     state: LoadState::Loaded,
                                 })
                                 .collect();
-                            self.set_children(node, kids);
+                            if self.soft.remove(&node) {
+                                self.diff_children(node, kids);
+                            } else {
+                                self.set_children(node, kids);
+                            }
                         }
-                        Err(e) => self.set_error(node, e),
+                        Err(e) => {
+                            if !self.soft.remove(&node) {
+                                self.set_error(node, e);
+                            }
+                        }
+                    }
+                }
+                Resp::Watermark { gen, r } => {
+                    self.wm_inflight = false;
+                    if gen != self.gen {
+                        continue;
+                    }
+                    for (schema, v) in r {
+                        let Ok(v) = v else { continue };
+                        let old = self.watermarks.insert(schema.clone(), v.clone());
+                        // 처음 읽은 값은 기준일 뿐 — **앞선 값과 다를 때만** 그 스키마의 읽어 둔 폴더를 조용히 다시 읽는다.
+                        if old.is_some_and(|o| o != v) {
+                            if let Some(i) = self.schema_node(Some(&schema)) {
+                                self.soft_refresh_subtree(i);
+                            }
+                        }
                     }
                 }
                 Resp::Live { gen, r } => {
@@ -1118,6 +1307,297 @@ impl Explorer {
         self.nodes[node].state = LoadState::Loaded;
         self.nodes[node].expanded = true;
         self.clamp_scroll();
+    }
+
+    /// **디프 반영**(docs/57 §2-2): 새 목록과 옛 자식을 열쇠(이름+종류)로 맞춘다 — 남는 노드는 **그대로**(펼침·자식·선택 보존) ·
+    /// 새 노드는 새 목록의 자리에 · 사라진 노드만 뗀다(선택돼 있었으면 부모로). 새 노드는 잠깐 강조(선택은 옮기지 않는다).
+    fn diff_children(&mut self, node: usize, kids: Vec<Node>) {
+        let old: Vec<usize> = std::mem::take(&mut self.nodes[node].children);
+        let mut by_key: HashMap<String, usize> = old
+            .iter()
+            .map(|&i| (node_key(&self.nodes[i].kind), i))
+            .collect();
+        let until = self.now_hint + self.highlight_ms;
+        let mut ids = Vec::with_capacity(kids.len());
+        for k in kids {
+            match by_key.remove(&node_key(&k.kind)) {
+                Some(i) => {
+                    // 같은 객체 — 표시 정보(상태·형식)만 새 값으로 · 구조는 보존.
+                    self.nodes[i].kind = k.kind;
+                    ids.push(i);
+                }
+                None => {
+                    self.nodes.push(k);
+                    let i = self.nodes.len() - 1;
+                    if self.highlight_ms > 0 && !old.is_empty() {
+                        self.fresh.push((i, until));
+                    }
+                    ids.push(i);
+                }
+            }
+        }
+        // 남은 것 = 사라진 객체.
+        for (_, gone) in by_key {
+            let had_sel = self
+                .selected
+                .is_some_and(|s| s == gone || self.is_under(s, gone));
+            self.detach(gone);
+            self.missing_at.remove(&gone);
+            if had_sel {
+                self.selected = Some(node);
+            }
+        }
+        self.nodes[node].children = ids;
+        self.nodes[node].state = LoadState::Loaded;
+        self.clamp_scroll();
+    }
+
+    /// `i`가 `anc`의 자손인가(깊이가 얕아 재귀로 충분).
+    fn is_under(&self, i: usize, anc: usize) -> bool {
+        self.nodes[anc]
+            .children
+            .iter()
+            .any(|&c| c == i || self.is_under(i, c))
+    }
+
+    /// 조용한 갱신 — 이미 읽어 둔 노드만(안 읽은 폴더는 펼칠 때 새로 읽으므로 할 일이 없다) · 상태·펼침은 건드리지 않는다.
+    fn soft_refresh(&mut self, i: usize) -> bool {
+        if self.offline || self.nodes[i].state != LoadState::Loaded || self.soft.contains(&i) {
+            return false;
+        }
+        let gen = self.gen;
+        let req = match self.nodes[i].kind.clone() {
+            NodeKind::Root => Req::Schemas { gen, node: i },
+            NodeKind::Folder { schema, kind } => Req::Objects {
+                gen,
+                node: i,
+                schema,
+                kind,
+            },
+            NodeKind::Object(o) if o.kind.is_relation() => Req::Columns {
+                gen,
+                node: i,
+                schema: o.schema,
+                table: o.name,
+            },
+            _ => return false,
+        };
+        self.last_used = Instant::now();
+        self.suspended = false;
+        self.soft.insert(i);
+        let _ = self.tx.send(req);
+        true
+    }
+
+    /// `root` 아래(자신 포함)의 읽어 둔 노드를 전부 조용히 다시 읽는다 — 돌려주는 값 = 보낸 요청 수.
+    fn soft_refresh_subtree(&mut self, root: usize) -> usize {
+        let mut n = 0;
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            stack.extend(self.nodes[i].children.iter().copied());
+            n += usize::from(self.soft_refresh(i));
+        }
+        n
+    }
+
+    /// 수동 새로 고침(docs/57 T3): 선택 노드 하위(없으면 루트 = 그 서버 전체 · 읽어 둔 것만 · 디프) · `hard` = 캐시를 버리고
+    /// 그 노드부터 새로 읽는다(Shift+F5 · 오류·미로딩 노드는 늘 이쪽).
+    pub(crate) fn refresh_selected(&mut self, hard: bool) {
+        let i = self.selected.unwrap_or(0);
+        if hard || self.nodes[i].state != LoadState::Loaded {
+            if i == 0 {
+                self.watermarks.clear();
+            }
+            self.refresh(i);
+        } else if self.soft_refresh_subtree(i) == 0 {
+            // 스키마 노드처럼 자체 요청이 없는 노드 = 그대로.
+        }
+    }
+
+    /// 이름으로 스키마 노드 찾기(대소문자 무시 · `None` = 접속 계정의 스키마 → 스키마가 하나뿐이면 그것).
+    fn schema_node(&self, schema: Option<&str>) -> Option<usize> {
+        let kids = &self.nodes[0].children;
+        let find = |name: &str| {
+            kids.iter().copied().find(
+                |&i| matches!(&self.nodes[i].kind, NodeKind::Schema(s) if s.eq_ignore_ascii_case(name)),
+            )
+        };
+        match schema {
+            Some(s) => find(s),
+            None => {
+                let user = self
+                    .conn_desc
+                    .split("://")
+                    .nth(1)
+                    .unwrap_or("")
+                    .split(['/', '@'])
+                    .next()
+                    .unwrap_or("");
+                find(user)
+                    .or_else(|| find("public"))
+                    .or_else(|| find("dbo"))
+                    .or_else(|| (kids.len() == 1).then(|| kids[0]))
+            }
+        }
+    }
+
+    fn folder_node(&self, schema_node: usize, kind: ObjectKind) -> Option<usize> {
+        self.nodes[schema_node].children.iter().copied().find(
+            |&i| matches!(&self.nodes[i].kind, NodeKind::Folder { kind: k, .. } if *k == kind),
+        )
+    }
+
+    /// **실행한 DDL 반영**(docs/57 T1): 그 (스키마, 종류) 폴더 하나만 조용히 다시 읽는다. `default_schema` = 문장에 스키마가
+    /// 없을 때 그 세션의 현재 스키마(모르면 접속 계정). 돌려주는 값 = 보낸 요청 수(0 = 읽어 둔 적 없는 자리라 할 일 없음).
+    pub(crate) fn apply_ddl(
+        &mut self,
+        t: &nsql_core::DdlTarget,
+        default_schema: Option<&str>,
+    ) -> usize {
+        use nsql_core::{DdlKind, DdlVerb};
+        let Some(kind) = folder_kind(t.kind) else {
+            // 스키마/사용자 = 루트의 스키마 목록.
+            return usize::from(self.soft_refresh(0));
+        };
+        let Some(sn) = self.schema_node(t.schema.as_deref().or(default_schema)) else {
+            return 0;
+        };
+        let Some(folder) = self.folder_node(sn, kind) else {
+            return 0;
+        };
+        let mut n = 0;
+        if t.verb.changes_list() {
+            n += usize::from(self.soft_refresh(folder));
+            // 테이블이 사라지면 딸린 인덱스·트리거 목록도 바뀐다.
+            if t.verb == DdlVerb::Drop && t.kind == DdlKind::Table {
+                for k in [ObjectKind::Index, ObjectKind::Trigger] {
+                    if let Some(f) = self.folder_node(sn, k) {
+                        n += usize::from(self.soft_refresh(f));
+                    }
+                }
+            }
+        }
+        // 구조 변경(ALTER · COMMENT) = 그 객체가 펼쳐져(컬럼을 읽어) 있으면 컬럼만.
+        if matches!(t.verb, DdlVerb::Alter | DdlVerb::Comment) {
+            let obj = self.nodes[folder].children.iter().copied().find(
+                |&i| matches!(&self.nodes[i].kind, NodeKind::Object(o) if o.name.eq_ignore_ascii_case(&t.name)),
+            );
+            if let Some(o) = obj {
+                n += usize::from(self.soft_refresh(o));
+            }
+        }
+        n
+    }
+
+    /// **"못 찾음" 신호**(docs/57 T4): 실행이 "테이블/뷰 없음"으로 실패했다 — 그 이름이 트리에 **있으면** 트리가 낡은 것 →
+    /// 그 폴더를 다시 읽는다. 이름을 모르면(오류문에 이름이 없는 방언) 현재 스키마의 테이블·뷰 폴더. 폴더당 60초에 1회.
+    pub(crate) fn note_missing(
+        &mut self,
+        name: Option<&str>,
+        default_schema: Option<&str>,
+    ) -> usize {
+        let rel = [
+            ObjectKind::Table,
+            ObjectKind::View,
+            ObjectKind::MaterializedView,
+        ];
+        let mut folders: Vec<usize> = Vec::new();
+        match name {
+            Some(full) => {
+                let last = full.rsplit('.').next().unwrap_or(full);
+                for (i, n) in self.nodes.iter().enumerate() {
+                    let NodeKind::Folder { kind, .. } = &n.kind else {
+                        continue;
+                    };
+                    if !rel.contains(kind) || n.state != LoadState::Loaded {
+                        continue;
+                    }
+                    let has = n.children.iter().any(
+                        |&c| matches!(&self.nodes[c].kind, NodeKind::Object(o) if o.name.eq_ignore_ascii_case(last)),
+                    );
+                    if has {
+                        folders.push(i);
+                    }
+                }
+            }
+            None => {
+                if let Some(sn) = self.schema_node(default_schema) {
+                    folders.extend(rel.iter().filter_map(|k| self.folder_node(sn, *k)));
+                }
+            }
+        }
+        let now = Instant::now();
+        let mut n = 0;
+        for f in folders {
+            let recent = self
+                .missing_at
+                .get(&f)
+                .is_some_and(|t| now.duration_since(*t) < Duration::from_secs(60));
+            if !recent && self.soft_refresh(f) {
+                self.missing_at.insert(f, now);
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// **유휴 워터마크**(docs/57 T2): 읽어 둔 폴더가 있는 스키마마다 지문 1행을 묻는다(`all` = 지문 없이 읽어 둔 것 전부 다시).
+    /// 메타 세션이 유휴로 닫혀 있으면 **깨우지 않는다**(주기 폴링이 접속을 되살리면 유휴 회수가 무의미해진다).
+    pub(crate) fn watermark_poll(&mut self, all: bool) -> bool {
+        if self.offline || self.suspended || self.wm_inflight || self.dialect.is_none() {
+            return false;
+        }
+        if all {
+            return self.soft_refresh_subtree(0) > 0;
+        }
+        let schemas: Vec<String> = self.nodes[0]
+            .children
+            .iter()
+            .filter_map(|&i| match &self.nodes[i].kind {
+                NodeKind::Schema(s)
+                    if self.nodes[i]
+                        .children
+                        .iter()
+                        .any(|&f| self.nodes[f].state == LoadState::Loaded) =>
+                {
+                    Some(s.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        if schemas.is_empty() {
+            return false;
+        }
+        self.wm_inflight = true;
+        let _ = self.tx.send(Req::Watermark {
+            gen: self.gen,
+            schemas,
+        });
+        true
+    }
+
+    /// 새 객체 강조 시간(설정 `meta.refresh_highlight_ms`).
+    pub(crate) fn set_highlight_ms(&mut self, ms: u64) {
+        self.highlight_ms = ms;
+    }
+
+    /// 공용 스크롤 고정용(`ExplorerSet`): 이 칸 안 `off` px 지점의 (노드, 행 안쪽 px).
+    pub(crate) fn anchor_at(&self, off: i32) -> Option<(usize, i32)> {
+        let h = self.row_h().max(1);
+        let rows = self.screen_rows();
+        let idx = (off / h).max(0) as usize;
+        // 상태 행이면 그 위의 실제 노드로.
+        let node = rows.get(idx).map(|(n, parent)| n.unwrap_or(*parent))?;
+        Some((node, off - idx as i32 * h))
+    }
+
+    /// 노드의 화면 행 위쪽 px(이 칸 기준 · 안 보이면 `None`).
+    pub(crate) fn row_top_of(&self, node: usize) -> Option<i32> {
+        let h = self.row_h();
+        self.screen_rows()
+            .iter()
+            .position(|(n, _)| *n == Some(node))
+            .map(|p| p as i32 * h)
     }
 
     fn detach(&mut self, i: usize) {
@@ -1374,7 +1854,10 @@ impl Explorer {
                 c = true;
             }
         }
-        a || b || c
+        // 새 객체 강조 — 시간이 지나면 걷는다(남아 있는 동안은 서서히 옅어지므로 계속 그린다).
+        let had = !self.fresh.is_empty();
+        self.fresh.retain(|(_, until)| *until > now_ms);
+        a || b || c || had
     }
 
     fn is_loading(&self) -> bool {
@@ -1384,7 +1867,10 @@ impl Explorer {
     /// 호스트의 빠른 타이머(≈30ms)를 유지해야 하는가 — 스크롤바 · 호버 페이드 · 로딩 애니메이션.
     pub(crate) fn bars_visible(&self) -> bool {
         self.visible
-            && (self.bars.is_visible() || self.hover_fade.is_animating() || self.is_loading())
+            && (self.bars.is_visible()
+                || self.hover_fade.is_animating()
+                || self.is_loading()
+                || !self.fresh.is_empty())
     }
 
     /// 이벤트 — 다시 그려야 하면 true.
@@ -1741,7 +2227,11 @@ impl Explorer {
         let Some(i) = self.selected else { return };
         match id {
             "select" | "source" => self.activate(i),
-            "refresh" => self.refresh(i),
+            // 읽어 둔 노드 = 디프로 조용히(펼침·선택 보존 · docs/57 T3) · 오류/미로딩 = 새로 읽기.
+            "refresh" => {
+                self.selected = Some(i);
+                self.refresh_selected(false);
+            }
             "remove" => self.actions.push(ExplorerAction::RemoveServer),
             "disconnect" => self.actions.push(ExplorerAction::DisconnectServer(None)),
             "connect" => self.actions.push(ExplorerAction::ConnectServer(None)),
@@ -1881,6 +2371,12 @@ impl Explorer {
                             },
                         );
                     } else {
+                        // 방금 생긴 객체 = 옅은 강조가 서서히 사라진다(선택은 옮기지 않는다 · docs/57 D-110).
+                        if let Some((_, until)) = self.fresh.iter().find(|(f, _)| f == i) {
+                            let left = until.saturating_sub(self.now_hint) as f32
+                                / self.highlight_ms.max(1) as f32;
+                            dc.fill_rect_alpha(rr, th.accent, 0.22 * left.clamp(0.0, 1.0));
+                        }
                         // 호버 = 전경색을 알파로 덮어 서서히(진행도 × 토큰 알파).
                         let ha = hover_alpha(false, self.hover_fade.value(*i));
                         if ha > 0.0 {
@@ -1998,5 +2494,299 @@ mod blockers_tests {
             blockers_sql(Dialect::Oracle, "1; DROP TABLE t").is_none(),
             "숫자가 아니면 거부"
         );
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use nsql_core::{DdlKind, DdlTarget, DdlVerb};
+
+    fn node(kind: NodeKind, depth: usize) -> Node {
+        Node {
+            expandable: !matches!(kind, NodeKind::Column(_)),
+            kind,
+            depth,
+            children: Vec::new(),
+            expanded: false,
+            state: LoadState::Idle,
+        }
+    }
+
+    fn obj(name: &str) -> NodeKind {
+        NodeKind::Object(ObjectInfo {
+            schema: "HR".into(),
+            name: name.into(),
+            kind: ObjectKind::Table,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        })
+    }
+
+    /// 루트 → HR 스키마 → Tables(읽음: A·B·C) + Views(안 읽음) 한 벌.
+    fn sample() -> (Explorer, usize, usize) {
+        let mut ex = Explorer::new(Box::new(|| {}), true);
+        ex.dialect = Some(Dialect::Oracle);
+        ex.conn_desc = "oracle://hr@host/db".into();
+        ex.nodes[0].state = LoadState::Loaded;
+        ex.nodes[0].expanded = true;
+        ex.set_children(0, vec![node(NodeKind::Schema("HR".into()), 1)]);
+        let schema = ex.nodes[0].children[0];
+        ex.set_children(
+            schema,
+            vec![
+                node(
+                    NodeKind::Folder {
+                        schema: "HR".into(),
+                        kind: ObjectKind::Table,
+                    },
+                    2,
+                ),
+                node(
+                    NodeKind::Folder {
+                        schema: "HR".into(),
+                        kind: ObjectKind::View,
+                    },
+                    2,
+                ),
+            ],
+        );
+        let tables = ex.nodes[schema].children[0];
+        ex.set_children(
+            tables,
+            vec![node(obj("A"), 3), node(obj("B"), 3), node(obj("C"), 3)],
+        );
+        (ex, schema, tables)
+    }
+
+    /// 디프: 남는 노드는 인덱스·펼침·자식 그대로 · 새 노드는 새 목록 자리 + 강조 · 사라진 노드의 선택은 부모로.
+    #[test]
+    fn diff_keeps_state_adds_and_removes() {
+        let (mut ex, _, tables) = sample();
+        let (a, b, c) = (
+            ex.nodes[tables].children[0],
+            ex.nodes[tables].children[1],
+            ex.nodes[tables].children[2],
+        );
+        // B를 펼쳐 컬럼 하나를 읽어 둔 상태 · C를 선택.
+        ex.set_children(
+            b,
+            vec![node(
+                NodeKind::Column(ColumnInfo {
+                    name: "ID".into(),
+                    data_type: "int".into(),
+                    nullable: true,
+                    position: 1,
+                    default: String::new(),
+                }),
+                4,
+            )],
+        );
+        ex.selected = Some(c);
+        ex.now_hint = 1000;
+        ex.diff_children(
+            tables,
+            vec![node(obj("A"), 3), node(obj("AB"), 3), node(obj("B"), 3)],
+        );
+        let kids = ex.nodes[tables].children.clone();
+        assert_eq!(kids.len(), 3);
+        assert_eq!((kids[0], kids[2]), (a, b), "남는 노드 = 같은 인덱스");
+        assert!(
+            ex.nodes[b].expanded && ex.nodes[b].children.len() == 1,
+            "펼침·자식 보존"
+        );
+        assert!(matches!(&ex.nodes[kids[1]].kind, NodeKind::Object(o) if o.name == "AB"));
+        assert_eq!(ex.fresh, vec![(kids[1], 3000)], "새 노드만 강조");
+        assert_eq!(ex.selected, Some(tables), "사라진 선택 = 부모로");
+        // 강조는 시간이 지나면 걷힌다.
+        ex.tick(3001);
+        assert!(ex.fresh.is_empty());
+    }
+
+    /// 실행한 DDL → 그 폴더만: 읽어 둔 폴더 = 요청 1 · 안 읽은 폴더 = 0(펼칠 때 새로 읽는다) · ALTER = 읽어 둔 객체의 컬럼만 ·
+    /// 같은 노드에 겹친 요청은 하나 · 오프라인 = 0.
+    #[test]
+    fn apply_ddl_targets_only_loaded_nodes() {
+        let (mut ex, _, tables) = sample();
+        let t = |verb, kind, schema: Option<&str>, name: &str| DdlTarget {
+            verb,
+            kind,
+            schema: schema.map(String::from),
+            name: name.into(),
+        };
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Create, DdlKind::Table, None, "X"), None),
+            1
+        );
+        assert!(ex.soft.contains(&tables));
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Create, DdlKind::Table, Some("hr"), "Y"), None),
+            0,
+            "진행 중인 조용한 갱신과 겹치면 다시 보내지 않는다"
+        );
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Create, DdlKind::View, None, "V"), None),
+            0
+        );
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Create, DdlKind::Table, Some("NOPE"), "X"), None),
+            0
+        );
+        // ALTER TABLE b: 컬럼을 읽어 둔 적 없으면 0 · 읽어 두었으면 1.
+        let b = ex.nodes[tables].children[1];
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Alter, DdlKind::Table, None, "b"), None),
+            0
+        );
+        ex.set_children(b, Vec::new());
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Alter, DdlKind::Table, None, "b"), None),
+            1
+        );
+        // 스키마 생성 = 루트의 스키마 목록.
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Create, DdlKind::Schema, None, "APP"), None),
+            1
+        );
+        ex.soft.clear();
+        ex.offline = true;
+        assert_eq!(
+            ex.apply_ddl(&t(DdlVerb::Drop, DdlKind::Table, None, "A"), None),
+            0
+        );
+    }
+
+    /// 못 찾음 신호: 이름이 트리에 있을 때만 그 폴더 · 폴더당 60초에 1회 · 이름을 모르면 현재 스키마의 읽어 둔 테이블·뷰 폴더.
+    #[test]
+    fn missing_signal_is_rate_limited() {
+        let (mut ex, _, tables) = sample();
+        assert_eq!(
+            ex.note_missing(Some("hr.zzz"), None),
+            0,
+            "트리에 없는 이름 = 트리는 낡지 않았다"
+        );
+        assert_eq!(ex.note_missing(Some("HR.b"), None), 1);
+        ex.soft.clear();
+        assert_eq!(
+            ex.note_missing(Some("b"), None),
+            0,
+            "60초 안 = 다시 읽지 않는다"
+        );
+        ex.missing_at.clear();
+        assert_eq!(ex.note_missing(None, None), 1);
+        assert!(ex.soft.contains(&tables));
+        assert_eq!(
+            missing_name("relation \"emp\" does not exist").as_deref(),
+            Some("emp")
+        );
+        assert_eq!(
+            missing_name("Invalid object name 'dbo.emp'.").as_deref(),
+            Some("dbo.emp")
+        );
+        assert_eq!(missing_name("no such table: emp").as_deref(), Some("emp"));
+        assert_eq!(
+            missing_name("ORA-00942: table or view \"HR\".\"EMP\" does not exist").as_deref(),
+            Some("EMP")
+        );
+        assert_eq!(
+            missing_name("ORA-00942: table or view does not exist"),
+            None
+        );
+    }
+
+    fn pump(ex: &mut Explorer, mut done: impl FnMut(&Explorer) -> bool) {
+        for _ in 0..200 {
+            ex.drain();
+            if done(ex) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("meta thread did not answer in 5s");
+    }
+
+    /// 실제 SQLite 파일로 전 경로: 접속 → Tables 펼침 → 다른 세션이 CREATE/DROP → `apply_ddl` → 디프(남는 노드 인덱스 유지 ·
+    /// 새 노드 강조) → 워터마크(`PRAGMA schema_version`)가 바뀌면 같은 폴더를 조용히 다시 읽는다.
+    #[test]
+    fn sqlite_end_to_end_ddl_refresh() {
+        let path = std::env::temp_dir().join(format!("nsql_t138_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let spec = ConnectSpec::parse(&format!("sqlite:{}", path.display())).unwrap();
+        let mut other = nsql_drivers::open(&spec, Dialect::Sqlite).unwrap();
+        let mut run = |sql: &str| {
+            other
+                .execute(&nsql_core::ExecRequest {
+                    sql: sql.into(),
+                    params: vec![],
+                })
+                .unwrap();
+        };
+        run("CREATE TABLE a (id INTEGER)");
+        let mut ex = Explorer::new(Box::new(|| {}), true);
+        ex.connect(&spec, "t138");
+        pump(&mut ex, |e| !e.nodes[0].children.is_empty());
+        let schema = ex.nodes[0].children[0];
+        if !ex.nodes[schema].expanded {
+            ex.toggle(schema);
+        }
+        let tables = ex.folder_node(schema, ObjectKind::Table).unwrap();
+        ex.toggle(tables);
+        pump(&mut ex, |e| e.nodes[tables].state == LoadState::Loaded);
+        let a = ex.nodes[tables].children[0];
+        // 다른 세션이 테이블을 만든다 → 실행한 DDL 반영.
+        run("CREATE TABLE b (id INTEGER)");
+        let t = nsql_core::ddl_target("CREATE TABLE b (id INTEGER)", Dialect::Sqlite).unwrap();
+        ex.now_hint = 10;
+        assert_eq!(ex.apply_ddl(&t, None), 1);
+        pump(&mut ex, |e| e.soft.is_empty());
+        let kids = ex.nodes[tables].children.clone();
+        assert_eq!(kids.len(), 2);
+        assert_eq!(kids[0], a, "남는 노드는 그대로");
+        assert_eq!(ex.fresh.len(), 1);
+        // 워터마크: 첫 값 = 기준 · DROP 뒤 값이 달라지면 폴더를 다시 읽어 b가 사라진다.
+        assert!(ex.watermark_poll(false));
+        pump(&mut ex, |e| !e.wm_inflight);
+        assert!(ex.soft.is_empty(), "첫 지문은 기준일 뿐");
+        run("DROP TABLE b");
+        assert!(ex.watermark_poll(false));
+        pump(&mut ex, |e| !e.wm_inflight && e.soft.is_empty());
+        assert_eq!(ex.nodes[tables].children, vec![a]);
+        ex.disconnect();
+        drop(other);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 워터마크: 읽어 둔 폴더가 있는 스키마만 묻는다 · 첫 값은 기준 · 달라지면 그 스키마의 읽어 둔 노드를 조용히 다시 · 유휴로 닫힌
+    /// 메타 세션은 깨우지 않는다 · 방언별 질의(따옴표 이스케이프).
+    #[test]
+    fn watermark_rules() {
+        let (mut ex, schema, tables) = sample();
+        assert!(ex.watermark_poll(false));
+        assert!(!ex.watermark_poll(false), "진행 중이면 다시 묻지 않는다");
+        ex.wm_inflight = false;
+        ex.suspended = true;
+        assert!(
+            !ex.watermark_poll(false),
+            "유휴로 닫힌 메타 세션은 깨우지 않는다"
+        );
+        ex.suspended = false;
+        assert!(ex.watermark_poll(true), "all = 지문 없이 읽어 둔 것 전부");
+        assert!(ex.soft.contains(&tables) && ex.soft.contains(&0));
+        let _ = schema;
+        let q = watermark_sql(Dialect::Oracle, "O'X").unwrap();
+        assert!(q.contains("OWNER = 'O''X'") && q.contains("LAST_DDL_TIME"));
+        assert!(watermark_sql(Dialect::Mssql, "dbo")
+            .unwrap()
+            .contains("SCHEMA_ID('dbo')"));
+        assert!(watermark_sql(Dialect::Postgres, "public")
+            .unwrap()
+            .contains("relnatts"));
+        assert_eq!(
+            watermark_sql(Dialect::Sqlite, "main").as_deref(),
+            Some("PRAGMA schema_version")
+        );
+        assert!(watermark_sql(Dialect::Odbc, "x").is_none());
     }
 }

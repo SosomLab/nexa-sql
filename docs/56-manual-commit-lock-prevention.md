@@ -99,6 +99,14 @@
 
 프로필에 `type = dev | test | prod`(색 띠 포함) — DBeaver처럼 유형이 L2/L4 기본값 묶음을 고른다(prod: 경고 5분 · 자동 롤백 10분 · 실행 확인). 1차는 전역 설정만.
 
+**✅ 09-19 구현(journal 81차 · 사용자 "전체 진행" — 값·UI는 아래 가정으로)**
+
+- **지정**: 로그인 목록 ▸ 프로필 **우클릭 ▸ 유형: 없음 / 개발 / 시험 / 운영**(현재 값에 ✓) · 접속 문자열 `?env=dev|test|prod`(별칭 production·live·staging·qa) · 저장소 키 `env`. 폼에는 칸을 두지 않았다(폼은 값을 보존만 — 저장·접속에서 잃지 않는다). 서버 식별(`same_server`)에는 쓰지 않는다.
+- **표식**: 로그인 목록 이름 뒤 `· PROD`(위험색)/`· TEST`(경고색) · 상태줄 맨 앞 칩 `PROD`/`TEST`(지금 탭의 세션이 붙어 있을 때). 개발·없음 = 표식 없음.
+- **운영의 기준**: 첫 미커밋 경고 `tx.prod_stale_min`(5분) · 자동 처리 한도 `tx.prod_idle_limit_min`(10분) — 전역 값과 비교해 **더 엄격한 쪽**(`sessions::tx_limits_for`).
+- **운영의 실행 확인** `run.prod_confirm`(기본 켬): 조회가 아닌 문장(DML·DDL·블록)이 든 실행은 첫 번째를 막고 토스트 + 상태줄 → **같은 본문을 3초 안에 다시 실행하면 진행**(`sessions::prod_confirm_needed` · 앱의 2단 확인 관례).
+- 가정(확인 필요): 유형은 3종 고정 · 시험 = 표식만(기준은 전역) · 색은 테마의 위험/경고색.
+
 ## 5. 설정 키(안) · 모두 Session ▸ 트랜잭션 분류
 
 | 키 | 기본 | 뜻 |
@@ -156,7 +164,7 @@
 
 테스트: nsql-core `tx_control_and_locking_read` · nsql-run `read_only_transactions_end_in_manual_mode`·`tx_effect_rules` · nexa-sql `tx_guard_step_mcdc`·`blockers_sql_per_dialect_and_id_validation`·`server_guard_and_session_id_sql` · 통합(CI PG) `pg_read_only_transaction_ends_in_manual_mode`(조회 뒤 `pg_stat_activity.state = idle` · 변경 뒤 `idle in transaction`).
 
-남은 것: ⑤ 접속 유형 프리셋(2차) · 트랜잭션 로그 창 상단 "차단 중" 띠 · MySQL 드라이버가 들어오면 L1 strict/L3 실기 · 부하원 원장(39 §3)·네트워크 표(26 §8)에 L3 폴링 등재.
+09-19 80차: 트랜잭션 로그 창 **"차단 중" 띠**(`txlog_win.rs set_blocking` · `Sess.tx_blocker_who`) ✅ · 39 §3·26 §8 등재 ✅. 남은 것: ⑤ 접속 유형 프리셋(2차 · 결정 필요) · ~~트랜잭션 로그 창 상단 "차단 중" 띠~~ · MySQL 드라이버가 들어오면 L1 strict/L3 실기 · 부하원 원장(39 §3)·네트워크 표(26 §8)에 L3 폴링 등재.
 
 ## 출처
 

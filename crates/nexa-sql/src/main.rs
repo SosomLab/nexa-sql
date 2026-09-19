@@ -25,6 +25,7 @@ mod ext_panel;
 #[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
+mod extfile;
 mod file_win;
 mod findbar;
 mod gitstat;
@@ -34,6 +35,7 @@ mod input;
 mod keymap;
 mod keys_win;
 mod log_win;
+mod memtrim;
 mod palette;
 mod prefs_win;
 mod probe;
@@ -276,6 +278,26 @@ struct App {
     ext_panel: ExtPanel,
     /// 저장소 읽기 스레드의 결과(패널을 열거나 ⟳ · 사용자 동작으로만 · 26 §8).
     ext_fetch_rx: Option<std::sync::mpsc::Receiver<ExtFetch>>,
+    /// 탐색기 유휴 워터마크의 다음 시각(docs/57 T2).
+    meta_refresh_next: Option<Instant>,
+    /// 외부 파일 변경(docs/58): 감시 스레드(처음 쓸 때 만든다) · 탭별 상태 · 확인 띠 · 다음 폴링 · 메인 창 활성 여부 ·
+    /// 마지막으로 확인한 활성 탭 · 저장 2단 확인(탭, 시각).
+    ext_watch: Option<nexa_fs::watch::StatWatch>,
+    ext_files: HashMap<u64, extfile::ExtInfo>,
+    ext_banner: extfile::Banner,
+    ext_poll_next: Option<Instant>,
+    main_active: bool,
+    ext_last_tab: u64,
+    ext_save_armed: Option<(u64, Instant)>,
+    /// 자체 캡처용: 첫 접속 뒤에 실행할 기동 명령(`NSQL_STARTUP_CMD`의 `@connected:` 항목).
+    startup_after_connect: Vec<String>,
+    startup_connected: bool,
+    /// 자체 캡처·측정용: 시각이 되면 실행할 기동 명령(`@after:<ms>:<명령>`).
+    startup_timed: Vec<(Instant, String)>,
+    /// 메모리 회수(`memtrim.rs`): 큰 것을 놓은 뒤의 1회 회수 예정 시각 · 다음 주기 회수 · 직전 틱의 탭 수(닫힘 감지).
+    mem_trim_due: Option<Instant>,
+    mem_trim_next: Option<Instant>,
+    mem_last_tabs: usize,
     /// 스플리터 ① 탐색기|편집기(세로선) · ② 편집기|결과(가로선) — 사용자 09-16.
     split_v: Splitter,
     split_h: Splitter,
@@ -735,6 +757,7 @@ impl App {
             ConnWinAction::TestProfile(name) => self.test_profile(&name),
             ConnWinAction::Delete(name) => self.delete_profile(&name),
             ConnWinAction::Duplicate(name) => self.duplicate_profile(&name),
+            ConnWinAction::SetEnv(name, env) => self.set_profile_env(&name, env),
             ConnWinAction::CopyText(text) => {
                 if !clipboard::write_text(&text) {
                     self.sess.status = t(Msg::ErrClipboard).into();
@@ -2218,6 +2241,12 @@ impl App {
             Some(p) => p,
             None => return,
         };
+        // 확장 관리자가 꺼져 있으면 고르기도 막는다(명령 쪽 `ext_command`와 같은 문).
+        if !self.settings.flag("extensions.enabled") {
+            self.sess.status = t(Msg::StExtManagerOff).into();
+            self.redraw();
+            return;
+        }
         match verb {
             "install" => {
                 let Some((src, sum)) = key
@@ -2283,19 +2312,28 @@ impl App {
                 );
                 self.apply_extensions(None);
             }
+            // 목록에서 고르면 패널의 행 클릭과 같은 **상세 안내 탭**(종전 = 상태줄 한 줄).
             "list" => {
-                let disabled = self.ext_disabled();
-                let state = if disabled.iter().any(|d| d == key) {
-                    t(Msg::StExtDisabled)
-                } else {
-                    t(Msg::StExtEnabled)
-                };
-                let (name, ver, kind) = mgr::installed()
-                    .into_iter()
-                    .find(|r| r.id == key)
-                    .map(|r| (r.name, r.version, r.kind.as_str().to_string()))
-                    .unwrap_or_default();
-                self.sess.status = tf(Msg::StExtInfo, &[&name, &ver, &kind, state]);
+                let off = self.ext_disabled_list();
+                if let Some(r) = mgr::installed().into_iter().find(|r| r.id == key) {
+                    let cat = self.ext_catalog.iter().position(|(_, p)| p.id == r.id);
+                    let row = ExtRow {
+                        summary: cat
+                            .map(|n| self.ext_catalog[n].1.summary.clone())
+                            .unwrap_or_default(),
+                        source: cat
+                            .map(|n| self.ext_catalog[n].0.display())
+                            .unwrap_or_default(),
+                        enabled: !off.iter().any(|d| d == &r.id),
+                        kind: r.kind.as_str().to_string(),
+                        id: r.id,
+                        name: r.name,
+                        version: r.version,
+                        installed: true,
+                        catalog: cat,
+                    };
+                    self.ext_open_detail(&row);
+                }
             }
             "repo" => {
                 self.sess.status = if key == "default" {
@@ -2485,10 +2523,37 @@ impl App {
         } else {
             Msg::ExtStDisabled
         });
-        let mut out = format!("{} {}\n{}\n\n", row.name, row.version, row.summary);
+        // 한 줄 설명 = 목록의 것 → 없으면(저장소를 읽기 전에 연 설치본) 메타의 것.
+        let summary = if row.summary.is_empty() {
+            meta.as_ref().map(|m| m.summary.clone()).unwrap_or_default()
+        } else {
+            row.summary.clone()
+        };
+        let mut out = format!("{} {}\n{summary}\n\n", row.name, row.version);
+        // 값 열 = 가장 긴 라벨 + 여백(라벨 길이는 언어마다 다르다 — 고정 16칸이면 "Settings prefix:"가 값에 붙었다).
+        let labels = [
+            Msg::ExtDetState,
+            Msg::ExtDetVersion,
+            Msg::ExtDetKind,
+            Msg::ExtDetSource,
+            Msg::ExtDetAuthor,
+            Msg::ExtDetLicense,
+            Msg::ExtDetHomepage,
+            Msg::ExtDetRequires,
+            Msg::ExtDetSettings,
+            Msg::ExtDetFiles,
+        ];
+        let width = labels
+            .iter()
+            .map(|m| t(*m).chars().count())
+            .max()
+            .unwrap_or(0)
+            + 3;
         let mut field = |label: Msg, v: &str| {
             if !v.is_empty() {
-                out.push_str(&format!("{:<16}{v}\n", format!("{}:", t(label))));
+                let head = format!("{}:", t(label));
+                let pad = width.saturating_sub(head.chars().count()).max(1);
+                out.push_str(&format!("{head}{}{v}\n", " ".repeat(pad)));
             }
         };
         field(Msg::ExtDetState, state);
@@ -2509,10 +2574,25 @@ impl App {
                 out.push('\n');
             }
         }
-        self.editors
-            .open_info_tab(&format!("Extension: {}", row.name), &out);
+        self.open_info_tab(&format!("Extension: {}", row.name), &out);
         self.layout();
         self.redraw();
+    }
+
+    /// **안내 탭**(SQL이 아닌 읽을거리 — 확장 상세 등 · 사용자 09-19): Plain Text 구문 + **No connection**. 새로 만든 탭만
+    /// 미연결로 돌린다(이미 있던 탭은 사용자가 고른 연결 상태를 존중). 표식 메뉴의 `No connection`과 같은 경로.
+    fn open_info_tab(&mut self, title: &str, text: &str) {
+        let created = self.editors.open_info_tab(title, text);
+        self.set_focus(Focus::Editor);
+        if created {
+            let tab = self.editors.active_id();
+            let has_private = self.all_sess().any(|s| s.owner == Some(tab) && !s.closing);
+            if !has_private {
+                self.make_unconnected(tab);
+            }
+        }
+        self.sync_sess();
+        self.sync_sess_ui();
     }
 
     /// 매니저 추적 줄 → 로그 창 `ext` 층(개발자 모드 · `log.dev_layers`에 ext · 사용자 09-17 "다운로드 속도·설치 폴더까지").
@@ -3985,6 +4065,15 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "meta.refresh_highlight_ms" => self
+                .explorer
+                .set_highlight_ms(self.settings.int(key).max(0) as u64),
+            "meta.refresh_secs" => self.meta_refresh_next = None,
+            "file.external_poll_ms" | "file.external_check" | "file.external_change" => {
+                self.ext_poll_next = None;
+            }
+            // 안정 대기·크기 상한은 감시 스레드를 만들 때 넣는 값 → 다음 확인 때 새로 만든다.
+            "file.external_settle_ms" | "file.external_merge_max_kb" => self.ext_watch = None,
             "explorer.typeahead"
             | "explorer.typeahead_timeout"
             | "explorer.typeahead_space"
@@ -4775,6 +4864,18 @@ impl App {
                 None => self.open_file_dlg = Some(PickerMode::Save),
             },
             "file.save_as" => self.open_file_dlg = Some(PickerMode::Save),
+            "file.follow" => self.ext_toggle_follow(),
+            // 메모리 지금 정리(팔레트) — 보이지 않는 탭의 그리기 캐시 + 힙 → OS. 결과·본문은 건드리지 않는다.
+            "mem.trim_now" => {
+                let (before, _) = memtrim::usage();
+                self.mem_trim("manual");
+                let (after, _) = memtrim::usage();
+                self.sess.status = tf(
+                    Msg::StMemTrimmed,
+                    &[&nsql_core::fmt_bytes(before), &nsql_core::fmt_bytes(after)],
+                );
+                self.redraw();
+            }
             id if id.starts_with("tab:") => {
                 if let Ok(tid) = id["tab:".len()..].parse::<u64>() {
                     self.editors.switch_to_id(tid);
@@ -4955,6 +5056,8 @@ impl App {
             "file.close_tab" => {
                 let i = self.editors.active();
                 self.close_tab_guarded(i);
+                // 마지막 탭은 닫히지 않고 비워진다(탭 수가 그대로라 틱이 못 본다) → 여기서 회수를 예약.
+                self.mem_released();
                 self.set_focus(Focus::Editor);
             }
             "tab.next" | "tab.prev" => {
@@ -5148,10 +5251,684 @@ impl App {
         self.sync_tx_ui();
     }
 
+    // ───────────────────────── 메모리 회수(사용자 09-19) ─────────────────────────
+
+    /// "방금 큰 것을 놓았다" — 1초 뒤(해제가 실제로 끝나고 · 연달아 닫아도 한 번만) 힙을 OS에 돌려준다.
+    fn mem_released(&mut self) {
+        if self.settings.flag("mem.trim_on_release") {
+            self.mem_trim_due = Some(Instant::now() + Duration::from_secs(1));
+        }
+    }
+
+    /// 틱: ① 탭이 줄었으면 회수 예약 ② 예약된 1회 회수 ③ 유휴 주기 회수(`mem.trim_secs` · 입력 없음 5초 + 실행 중 세션 없음).
+    fn mem_tick(&mut self, now: Instant) -> Option<Instant> {
+        let tabs = self.editors.tab_count();
+        if tabs < self.mem_last_tabs {
+            self.mem_released();
+        }
+        self.mem_last_tabs = tabs;
+        let mut next: Option<Instant> = None;
+        if let Some(due) = self.mem_trim_due {
+            if now >= due {
+                self.mem_trim_due = None;
+                self.mem_trim("release");
+            } else {
+                next = Some(due);
+            }
+        }
+        let secs = self.settings.int("mem.trim_secs").max(0) as u64;
+        if secs > 0 {
+            let at = *self
+                .mem_trim_next
+                .get_or_insert(now + Duration::from_secs(secs));
+            if now >= at {
+                let idle = now.duration_since(self.blink_origin) >= Duration::from_secs(5)
+                    && !self.all_sess().any(|s| s.busy);
+                if idle {
+                    self.mem_trim("periodic");
+                    self.mem_trim_next = Some(now + Duration::from_secs(secs));
+                } else {
+                    // 바쁘면 10초 뒤에 다시 본다.
+                    self.mem_trim_next = Some(now + Duration::from_secs(10));
+                }
+            }
+            next = Some(next.map_or(self.mem_trim_next.unwrap_or(at), |n| {
+                n.min(self.mem_trim_next.unwrap_or(at))
+            }));
+        }
+        next
+    }
+
+    /// 회수 한 번: ① 보이지 않는 탭의 그리기 캐시를 놓는다(다시 보면 다시 만든다) ② 힙을 정리해 OS에 돌려준다.
+    /// 개발자 모드(`load` 층)에는 전후 Private·걸린 시간을 남긴다.
+    fn mem_trim(&mut self, why: &str) {
+        let (before, _) = memtrim::usage();
+        let released = self.editors.release_inactive_caches();
+        let us = memtrim::trim();
+        let (after, ws) = memtrim::usage();
+        dlog!(self, LogLayer::Load, LogLevel::Timing, {
+            LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "memory trim ({why}): private {} → {} · working set {} · {released} tab cache(s) released · {:.1} ms",
+                    nsql_core::fmt_bytes(before),
+                    nsql_core::fmt_bytes(after),
+                    nsql_core::fmt_bytes(ws),
+                    us as f64 / 1000.0
+                ),
+            )
+        });
+        if std::env::var_os("NSQL_TRACE_MEM").is_some() {
+            eprintln!(
+                "[mem] trim ({why}) private {before} -> {after} · {released} caches · {us} us"
+            );
+        }
+    }
+
+    // ───────────────────────── 외부 파일 변경(docs/58 · T-140) ─────────────────────────
+
+    /// 활성 탭을 방금 읽었거나 저장했다 = 디스크와 기준이 맞다 → 서명을 기록하고 대기·유지·삭제 상태를 지운다(따라가기는 유지).
+    fn ext_track_active(&mut self) {
+        let id = self.editors.active_id();
+        let Some(path) = self.editors.active_path() else {
+            self.ext_files.remove(&id);
+            return;
+        };
+        let follow = self.ext_files.get(&id).is_some_and(|e| e.follow);
+        self.ext_files.insert(
+            id,
+            extfile::ExtInfo {
+                sig: nexa_fs::watch::file_sig(&path),
+                follow,
+                ..extfile::ExtInfo::default()
+            },
+        );
+        self.ext_save_armed = None;
+        self.ext_banner_sync();
+    }
+
+    /// 확인 요청(비동기) — `all` = 열린 파일 전부(창 활성화) · 아니면 활성 탭 하나(탭 전환·폴링). 실행 중인 탭은 건너뛴다.
+    fn ext_check(&mut self, all: bool) {
+        if self.settings.get("file.external_change") == Some("off") {
+            return;
+        }
+        let active = self.editors.active_id();
+        let reqs: Vec<nexa_fs::watch::WatchReq> = self
+            .editors
+            .files()
+            .into_iter()
+            .filter(|(id, _)| all || *id == active)
+            .filter(|(id, _)| !self.editors.is_running(*id))
+            .map(|(id, path)| nexa_fs::watch::WatchReq {
+                key: id,
+                path,
+                known: self.ext_files.get(&id).and_then(extfile::ExtInfo::known),
+            })
+            .collect();
+        self.ext_send(reqs);
+    }
+
+    fn ext_send(&mut self, reqs: Vec<nexa_fs::watch::WatchReq>) {
+        if reqs.is_empty() {
+            return;
+        }
+        if self.ext_watch.is_none() {
+            let proxy = std::sync::Mutex::new(self.wake_proxy.clone());
+            let settle = self.settings.int("file.external_settle_ms").max(0) as u64;
+            // 읽기 상한 = 병합 상한의 8배(그보다 큰 파일은 편집기가 열 대상이 아니다 — 읽지 않고 "못 읽음").
+            let max = (self.settings.int("file.external_merge_max_kb").max(16) as u64) * 1024 * 8;
+            self.ext_watch = nexa_fs::watch::StatWatch::spawn(
+                Box::new(move || {
+                    if let Ok(p) = proxy.lock() {
+                        let _ = p.send_event(Wake);
+                    }
+                }),
+                Duration::from_millis(settle),
+                max,
+            );
+        }
+        if let Some(w) = &self.ext_watch {
+            w.check(reqs);
+        }
+    }
+
+    /// 틱: 사건 수거 · 닫힌 탭 정리 · 폴링 예약(활성 창 = 보이는 탭 · 따라가기 탭 = 비활성에서도 간격 ×2).
+    fn ext_tick(&mut self, now: Instant) -> Option<Instant> {
+        let events = self
+            .ext_watch
+            .as_ref()
+            .map(|w| w.poll())
+            .unwrap_or_default();
+        if !events.is_empty() {
+            let mut changed = 0;
+            for ev in events {
+                changed += usize::from(self.ext_on_event(ev));
+            }
+            if changed > 1 {
+                self.sess.status = tf(Msg::StExtMany, &[&changed.to_string()]);
+            }
+            self.ext_banner_sync();
+            self.redraw();
+        }
+        let alive = self.editors.tab_ids();
+        self.ext_files.retain(|id, _| alive.contains(id));
+        // 저장 2단 확인은 3초 창 — 지나고도 남은 "저장 막힘" 띠는 10초 뒤 걷는다(다시 저장하면 다시 묻는다).
+        if self
+            .ext_save_armed
+            .is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(10))
+        {
+            self.ext_save_armed = None;
+            self.ext_banner_sync();
+        }
+        let poll = self.settings.int("file.external_poll_ms").max(0) as u64;
+        if poll == 0
+            || self.settings.get("file.external_check") == Some("focus")
+            || self.settings.get("file.external_change") == Some("off")
+        {
+            return None;
+        }
+        let following = self.ext_files.values().any(|e| e.follow);
+        if !self.main_active && !following {
+            self.ext_poll_next = None;
+            return None;
+        }
+        let step = Duration::from_millis(if self.main_active { poll } else { poll * 2 });
+        let next = *self.ext_poll_next.get_or_insert(now + step);
+        if now < next {
+            return Some(next);
+        }
+        if self.main_active {
+            self.ext_check(false);
+        }
+        if following {
+            let reqs: Vec<nexa_fs::watch::WatchReq> = self
+                .editors
+                .files()
+                .into_iter()
+                .filter(|(id, _)| self.ext_files.get(id).is_some_and(|e| e.follow))
+                .map(|(id, path)| nexa_fs::watch::WatchReq {
+                    key: id,
+                    path,
+                    known: self.ext_files.get(&id).and_then(extfile::ExtInfo::known),
+                })
+                .collect();
+            self.ext_send(reqs);
+        }
+        self.ext_poll_next = Some(now + step);
+        self.ext_poll_next
+    }
+
+    /// 사건 하나 처리 — 돌려주는 값 = 사용자가 알아야 할 변경이었는가.
+    fn ext_on_event(&mut self, ev: nexa_fs::watch::WatchEvent) -> bool {
+        use nexa_fs::watch::WatchEvent as E;
+        match ev {
+            E::Missing { key, path } => {
+                let Some(_) = self.editors.index_of_id(key) else {
+                    return false;
+                };
+                let info = self.ext_files.entry(key).or_default();
+                if info.deleted {
+                    return false;
+                }
+                info.deleted = true;
+                info.pending = None;
+                let name = nexa_fs::path::display(&path);
+                self.sess.status = tf(Msg::StExtDeleted, &[&name]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                true
+            }
+            E::Unreadable { key, path, error } => {
+                dlog!(self, LogLayer::Load, LogLevel::Timing, {
+                    LogEntry::new(
+                        LogKind::Info,
+                        format!(
+                            "external change: {} unreadable — {error} (tab {key})",
+                            nexa_fs::path::display(&path)
+                        ),
+                    )
+                });
+                false
+            }
+            E::Changed {
+                key,
+                path,
+                sig,
+                bytes,
+                ..
+            } => self.ext_on_changed(key, &path, sig, &bytes),
+        }
+    }
+
+    fn ext_on_changed(
+        &mut self,
+        id: u64,
+        path: &Path,
+        sig: nexa_fs::watch::FileSig,
+        bytes: &[u8],
+    ) -> bool {
+        let Some(i) = self.editors.index_of_id(id) else {
+            return false;
+        };
+        // 실행 중인 탭 = 줄 번호가 밀리면 실행 범위·오류 줄이 어긋난다 → 서명을 갱신하지 않고 둔다(다음 확인 때 다시 온다).
+        if self.editors.is_running(id) {
+            return false;
+        }
+        let Some((buf, base, enc, eol)) = self.editors.snapshot(i) else {
+            return false;
+        };
+        let (base, enc) = (base.to_string(), enc.to_string());
+        let (text, _, used) = Self::decode_bytes(bytes, &enc);
+        let (disk_eol, disk) = eol::detect(&text);
+        let max = (self.settings.int("file.external_merge_max_kb").max(16) as usize) * 1024;
+        let decision = extfile::decide(&extfile::DecideIn {
+            base: &base,
+            buf: &buf,
+            disk: &disk,
+            ask_always: self.settings.get("file.external_change") == Some("ask"),
+            merge_on: self.settings.flag("file.external_merge"),
+            size_ok: bytes.len() <= max && buf.len() <= max,
+            format_changed: disk_eol != eol || used != enc,
+        });
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let now = Instant::now();
+        let info = self.ext_files.entry(id).or_default();
+        info.deleted = false;
+        let suggest = info.note_change(now);
+        let follow = info.follow;
+        let mut notable = false;
+        match decision {
+            extfile::Decision::Ignore => {
+                info.sig = Some(sig);
+            }
+            extfile::Decision::AdoptBase => {
+                info.sig = Some(sig);
+                info.pending = None;
+                info.ignored = None;
+                info.diverged = false;
+                self.editors
+                    .apply_external(i, None, &disk, Some(disk_eol), Some(used));
+            }
+            extfile::Decision::Reload => {
+                info.sig = Some(sig);
+                info.pending = None;
+                info.ignored = None;
+                info.diverged = false;
+                self.editors
+                    .apply_external(i, Some(&disk), &disk, Some(disk_eol), Some(used));
+                self.sess.status = tf(Msg::StExtReloaded, &[&name]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                notable = true;
+            }
+            extfile::Decision::Merge(merged) => {
+                info.sig = Some(sig);
+                info.pending = None;
+                info.ignored = None;
+                info.diverged = false;
+                self.ext_backup(&name, &buf);
+                // 기준 = 디스크 본문 → 탭은 "디스크 대비 내 변경"만큼 dirty로 남는다.
+                self.editors
+                    .apply_external(i, Some(&merged.text), &disk, None, None);
+                self.sess.status = tf(Msg::StExtMerged, &[&name, &merged.applied.to_string()]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                notable = true;
+            }
+            extfile::Decision::Ask(conflicts) => {
+                if follow {
+                    // 조용히 따라가기 = 겹치면 내 내용을 지킨다(띠 없음 · 저장은 2단 확인).
+                    info.ignored = Some(sig);
+                    info.diverged = true;
+                } else {
+                    info.pending = Some(extfile::Pending {
+                        sig,
+                        text: disk,
+                        eol: disk_eol,
+                        enc: used.to_string(),
+                        conflicts,
+                    });
+                    info.ignored = None;
+                    self.sess.status = tf(Msg::StExtConflict, &[&name]);
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                    notable = true;
+                }
+            }
+        }
+        // 자주 바뀌는 파일 — 띠가 떠 있을 때 "조용히 따라가기"를 함께 내놓는다(`ext_banner_sync`가 본다).
+        let _ = suggest;
+        notable
+    }
+
+    /// 병합 전 본문 백업(`<설정 폴더>/backup/` · 최근 `file.external_backup_keep`개).
+    fn ext_backup(&mut self, name: &str, text: &str) {
+        let keep = self.settings.int("file.external_backup_keep").max(0) as usize;
+        if keep == 0 {
+            return;
+        }
+        let Some(dir) = nsql_settings::config_dir().map(|d| d.join("backup")) else {
+            return;
+        };
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let stamp: String = nsql_log::now_local()
+            .stamp()
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect();
+        let _ = std::fs::write(dir.join(format!("{stamp}-{name}")), text);
+        // 오래된 것부터 지운다(이름 = 시각 접두라 사전순 = 시간순).
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+            files.sort();
+            let extra = files.len().saturating_sub(keep);
+            for old in files.into_iter().take(extra) {
+                let _ = std::fs::remove_file(old);
+            }
+        }
+    }
+
+    /// 확인 띠를 활성 탭의 상태로 맞춘다(띠 높이가 바뀌면 본문을 다시 배치).
+    fn ext_banner_sync(&mut self) {
+        let id = self.editors.active_id();
+        let armed = self.ext_save_armed.is_some_and(|(t, _)| t == id);
+        let view = self.ext_files.get(&id).and_then(|info| {
+            let follow_btn = info.recent.len() >= 3 && !info.follow;
+            if let Some(p) = &info.pending {
+                let mut buttons = vec![
+                    (extfile::BannerHit::Diff, t(Msg::BtnExtDiff).to_string()),
+                    (extfile::BannerHit::Reload, t(Msg::BtnExtReload).to_string()),
+                    (extfile::BannerHit::Keep, t(Msg::BtnExtKeep).to_string()),
+                ];
+                if follow_btn {
+                    buttons.push((extfile::BannerHit::Follow, t(Msg::BtnExtFollow).to_string()));
+                }
+                Some(extfile::BannerView {
+                    text: if p.conflicts > 0 {
+                        tf(Msg::ExtBanConflict, &[&p.conflicts.to_string()])
+                    } else {
+                        t(Msg::ExtBanChanged).to_string()
+                    },
+                    buttons,
+                    danger: false,
+                })
+            } else if info.deleted {
+                Some(extfile::BannerView {
+                    text: t(Msg::ExtBanDeleted).to_string(),
+                    buttons: vec![(
+                        extfile::BannerHit::Dismiss,
+                        t(Msg::BtnExtDismiss).to_string(),
+                    )],
+                    danger: true,
+                })
+            } else if armed {
+                Some(extfile::BannerView {
+                    text: t(Msg::ExtBanSave).to_string(),
+                    buttons: vec![
+                        (extfile::BannerHit::Diff, t(Msg::BtnExtDiff).to_string()),
+                        (
+                            extfile::BannerHit::Overwrite,
+                            t(Msg::BtnExtOverwrite).to_string(),
+                        ),
+                    ],
+                    danger: true,
+                })
+            } else {
+                None
+            }
+        });
+        let changed = self.ext_banner.set(view);
+        let inset = px(self.ext_banner.height(), self.scale);
+        if self.editors.set_top_inset(inset) || changed {
+            self.layout();
+            self.redraw();
+        }
+    }
+
+    fn ext_banner_pick(&mut self, hit: extfile::BannerHit) {
+        let id = self.editors.active_id();
+        let Some(i) = self.editors.index_of_id(id) else {
+            return;
+        };
+        let name = self.editors.active_title();
+        match hit {
+            extfile::BannerHit::None | extfile::BannerHit::Body => {}
+            extfile::BannerHit::Diff => {
+                // 1차 = 디스크 내용을 읽기용 안내 탭으로(원래 파일의 구문 · No connection) — 좌우 비교 뷰는 docs/19가 들어오면.
+                let text = self
+                    .ext_files
+                    .get(&id)
+                    .and_then(|e| e.pending.as_ref().map(|p| p.text.clone()))
+                    .or_else(|| {
+                        let path = self.editors.active_path()?;
+                        let bytes = std::fs::read(path).ok()?;
+                        let (text, _, _) =
+                            Self::decode_bytes(&bytes, &self.editors.active_encoding());
+                        Some(eol::detect(&text).1)
+                    });
+                if let Some(text) = text {
+                    let title = tf(Msg::ExtDiskTitle, &[&name]);
+                    let created = self.editors.open_info_tab_like(&title, &text, Some(&name));
+                    if created {
+                        let tab = self.editors.active_id();
+                        self.make_unconnected(tab);
+                    }
+                    self.set_focus(Focus::Editor);
+                }
+            }
+            extfile::BannerHit::Reload => {
+                let pending = self.ext_files.get_mut(&id).and_then(|e| e.pending.take());
+                if let Some(p) = pending {
+                    self.editors.apply_external(
+                        i,
+                        Some(&p.text),
+                        &p.text,
+                        Some(p.eol),
+                        Some(&p.enc),
+                    );
+                    if let Some(e) = self.ext_files.get_mut(&id) {
+                        e.sig = Some(p.sig);
+                        e.ignored = None;
+                        e.diverged = false;
+                    }
+                    self.sess.status = tf(Msg::StExtReloaded, &[&name]);
+                }
+            }
+            extfile::BannerHit::Keep | extfile::BannerHit::Follow => {
+                if let Some(e) = self.ext_files.get_mut(&id) {
+                    if let Some(p) = e.pending.take() {
+                        e.ignored = Some(p.sig);
+                        e.diverged = true;
+                    }
+                    if hit == extfile::BannerHit::Follow {
+                        e.follow = true;
+                    }
+                }
+                self.sess.status = tf(
+                    if hit == extfile::BannerHit::Follow {
+                        Msg::StExtFollowOn
+                    } else {
+                        Msg::StExtKept
+                    },
+                    &[&name],
+                );
+            }
+            extfile::BannerHit::Overwrite => {
+                if let Some(path) = self.editors.active_path() {
+                    self.ext_save_armed = Some((id, Instant::now()));
+                    self.save_to(&path);
+                }
+            }
+            extfile::BannerHit::Dismiss => {
+                // 삭제 안내를 닫는다 — 상태(`deleted`)는 남겨 같은 삭제로 다시 띄우지 않는다.
+                if let Some(e) = self.ext_files.get_mut(&id) {
+                    e.deleted = false;
+                    e.sig = None;
+                }
+            }
+        }
+        self.ext_banner_sync();
+    }
+
+    /// 팔레트 "외부 변경 조용히 따라가기(이 탭)".
+    fn ext_toggle_follow(&mut self) {
+        let id = self.editors.active_id();
+        if self.editors.active_path().is_none() {
+            return;
+        }
+        let name = self.editors.active_title();
+        let e = self.ext_files.entry(id).or_default();
+        e.follow = !e.follow;
+        self.sess.status = tf(
+            if e.follow {
+                Msg::StExtFollowOn
+            } else {
+                Msg::StExtFollowOff
+            },
+            &[&name],
+        );
+        self.ext_poll_next = None;
+        self.ext_banner_sync();
+        self.redraw();
+    }
+
+    /// **저장 직전 확인**(동기 · stat 1 + 달라졌을 때만 읽기): true = 저장해도 된다. 디스크가 기준과 다르고 버퍼와도 다르면
+    /// 첫 저장은 막고 띠 + 상태줄로 알린다 — 3초 안에 다시 저장하면(또는 띠의 [덮어쓰기]) 덮어쓴다(앱의 2단 확인 관례).
+    fn ext_save_guard(&mut self, path: &Path) -> bool {
+        let id = self.editors.active_id();
+        // 다른 이름으로 저장 = 이 탭의 파일이 아니다(덮어쓰기 확인은 파일 대화상자의 몫).
+        if self.editors.active_path().as_deref() != Some(path) {
+            return true;
+        }
+        let armed = self
+            .ext_save_armed
+            .is_some_and(|(t, at)| t == id && at.elapsed() <= Duration::from_secs(3));
+        if armed {
+            return true;
+        }
+        let info = self.ext_files.get(&id).cloned().unwrap_or_default();
+        let now_sig = nexa_fs::watch::file_sig(path);
+        let mut differs = info.diverged || info.pending.is_some();
+        if !differs && now_sig != info.sig && now_sig.is_some() {
+            // 서명이 다르다 → 내용으로 확정(내용이 기준이나 버퍼와 같으면 통과 — VS Code와 같은 규칙).
+            if let (Ok(bytes), Some(i)) = (std::fs::read(path), self.editors.index_of_id(id)) {
+                if let Some((buf, base, enc, _)) = self.editors.snapshot(i) {
+                    let (text, _, _) = Self::decode_bytes(&bytes, enc);
+                    let disk = eol::detect(&text).1;
+                    differs = disk != base && disk != buf;
+                }
+            }
+        }
+        if !differs {
+            return true;
+        }
+        self.ext_save_armed = Some((id, Instant::now()));
+        let name = self.editors.active_title();
+        self.sess.status = tf(Msg::StExtSaveBlocked, &[&name]);
+        self.ext_banner_sync();
+        self.redraw();
+        false
+    }
+
+    /// 자체 캡처용 기동 명령 하나 — `open:<경로>` = 파일을 탭으로 · 나머지 = 명령 id.
+    fn startup_cmd(&mut self, id: &str) {
+        match id.strip_prefix("open:") {
+            Some(path) => self.open_file(Path::new(path)),
+            None => self.menu_action(id),
+        }
+    }
+
+    /// 문장에 스키마가 없을 때 쓸 그 세션의 기본 스키마(`?schema=` · SQL Server는 그 값이 DB라 제외 → 탐색기가 `dbo`로).
+    fn meta_default_schema(&self) -> Option<String> {
+        if self.sess.dialect == Dialect::Mssql {
+            return None;
+        }
+        self.sess.spec.as_ref().and_then(|s| s.schema.clone())
+    }
+
+    /// 성공한 문장이 DDL이면 대상을 모은다(docs/57 T1) — 반영은 실행이 끝난 뒤(또는 커밋 때) 한 번에.
+    fn meta_on_done(&mut self, stmt: &str) {
+        if !self.settings.flag("meta.refresh_on_ddl") {
+            return;
+        }
+        let Some(t) = nsql_core::ddl_target(stmt, self.sess.dialect) else {
+            return;
+        };
+        let wait = sessions::ddl_waits_for_commit(
+            self.sess.dialect.ddl_transactional(),
+            self.settings.flag("session.autocommit"),
+            self.settings.flag("meta.refresh_on_commit"),
+        );
+        if wait {
+            self.sess.ddl_wait.push(t);
+        } else {
+            self.sess.ddl_now.push(t);
+        }
+    }
+
+    /// 모아 둔 DDL 대상을 탐색기에 반영 — 같은 (동작 종류·객체 종류·스키마)는 폴더가 같으므로 탐색기가 겹친 요청을 하나로 접는다.
+    fn meta_flush(&mut self, targets: Vec<nsql_core::DdlTarget>) {
+        if targets.is_empty() {
+            return;
+        }
+        let schema = self.meta_default_schema();
+        let mut sent = 0;
+        for t in &targets {
+            sent += self
+                .explorer
+                .apply_ddl(self.sess.spec.as_ref(), t, schema.as_deref());
+        }
+        dlog!(self, LogLayer::Load, LogLevel::Timing, {
+            LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "explorer refresh after DDL: {} target(s) → {sent} folder request(s)",
+                    targets.len()
+                ),
+            )
+        });
+        if sent > 0 {
+            self.redraw();
+        }
+    }
+
+    /// 유휴 워터마크(docs/57 T2): `meta.refresh_secs`마다 · 입력이 `meta.refresh_idle_secs` 동안 없고 실행 중인 세션이 없을 때만.
+    fn meta_refresh_tick(&mut self, now: Instant) -> Option<Instant> {
+        let secs = self.settings.int("meta.refresh_secs").max(0) as u64;
+        if secs == 0 || !self.explorer.is_visible() {
+            return None;
+        }
+        let next = *self
+            .meta_refresh_next
+            .get_or_insert(now + Duration::from_secs(secs));
+        if now < next {
+            return Some(next);
+        }
+        let idle = Duration::from_secs(self.settings.int("meta.refresh_idle_secs").max(0) as u64);
+        let busy = self.all_sess().any(|s| s.busy);
+        if busy || now.duration_since(self.blink_origin) < idle {
+            // 바쁘면 조금 뒤에 다시 본다(주기를 통째로 미루지 않는다).
+            let retry = now + idle.max(Duration::from_secs(5));
+            self.meta_refresh_next = Some(retry);
+            return Some(retry);
+        }
+        let all = self.settings.get("meta.refresh_scope") == Some("all");
+        self.explorer.watermark_poll(all);
+        let next = now + Duration::from_secs(secs);
+        self.meta_refresh_next = Some(next);
+        Some(next)
+    }
+
     /// 대기 목록 비우기(커밋 · 롤백 · 해제 · 암묵 커밋).
     fn tx_clear(&mut self) {
         self.tx_guard_reset();
         self.sess.tx_blockers = 0;
+        self.sess.tx_blocker_who.clear();
         self.sess.tx_pending.clear();
         self.sess.tx_read = false;
         self.sess.tx_dirty = false;
@@ -5210,6 +5987,28 @@ impl App {
             .min()
     }
 
+    /// 트랜잭션 로그 창의 "차단 중" 띠를 전 세션의 현재 상태로 맞춘다(세션마다 "연결 — 기다리는 세션").
+    fn tx_block_band_sync(&mut self) {
+        let lines: Vec<String> = self
+            .all_sess()
+            .filter(|s| !s.tx_pending.is_empty())
+            .flat_map(|s| {
+                let name = if s.profile.is_empty() {
+                    s.desc.clone()
+                } else {
+                    s.profile.clone()
+                };
+                s.tx_blocker_who
+                    .iter()
+                    .map(move |w| format!("{name} — {w}"))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if self.txlog_win.set_blocking(lines) {
+            self.txlog_win.redraw();
+        }
+    }
+
     /// 막힘 감지 응답 반영 — 0 → n이면 위험 토스트·로그·상태줄 · n → 0이면 해소 로그 · 오류(권한 없음)면 그 세션에서 기능을 끈다.
     fn tx_block_drain(&mut self) -> bool {
         let mut changed = false;
@@ -5228,6 +6027,10 @@ impl App {
                         .sess_by_id(id)
                         .is_some_and(|s| !s.tx_pending.is_empty());
                     let n = if pending { list.len() } else { 0 };
+                    // 띠의 내용(누가 기다리는가)은 개수가 같아도 바뀔 수 있다 → 먼저 저장.
+                    let who: Vec<String> = if pending { list.clone() } else { Vec::new() };
+                    self.with_sess(id, |a| a.sess.tx_blocker_who = who);
+                    self.tx_block_band_sync();
                     if n == prev {
                         continue;
                     }
@@ -5313,6 +6116,16 @@ impl App {
             let Some(s) = self.sess_by_id(id) else {
                 continue;
             };
+            // 운영 접속 = 더 엄격한 기준(`tx.prod_*` · 전역 값보다 느슨해지지는 않는다 · docs/56 §4).
+            let prod = s.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
+            let (stale_min, limit_min) = sessions::tx_limits_for(
+                prod,
+                (stale_min, limit_min),
+                (
+                    self.settings.int("tx.prod_stale_min").max(1) as u64,
+                    self.settings.int("tx.prod_idle_limit_min").max(1) as u64,
+                ),
+            );
             let input = sessions::TxGuardIn {
                 pending: true,
                 blocked: s.blocked(),
@@ -6311,6 +7124,8 @@ impl App {
         cmds.push(m("file.open", Msg::MnFile, Msg::MnOpen));
         cmds.push(m("file.save", Msg::MnFile, Msg::MnSave));
         cmds.push(m("file.save_as", Msg::MnFile, Msg::MnSaveAs));
+        cmds.push(m("file.follow", Msg::MnFile, Msg::MnFileFollow));
+        cmds.push(m("mem.trim_now", Msg::MnView, Msg::MnMemTrimNow));
         cmds.push(m("file.exit", Msg::MnFile, Msg::MnExit));
         cmds.push(m("edit.cut", Msg::MnEdit, Msg::MnCut));
         cmds.push(m("edit.copy", Msg::MnEdit, Msg::MnCopy));
@@ -6567,6 +7382,8 @@ impl App {
             PickerMode::Open => "auto".to_string(),
             PickerMode::Save => self.editors.active_encoding(),
         };
+        self.file_win
+            .set_overwrite_confirm_ms(self.settings.int("file.overwrite_confirm_ms").max(0) as u64);
         self.file_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),
@@ -6614,6 +7431,7 @@ impl App {
         let (eol, text) = eol::detect(&text);
         self.editors.open_file(path, &text, eol);
         self.editors.set_active_encoding(used);
+        self.ext_track_active();
         self.set_focus(Focus::Editor);
         self.push_recent(path);
         let name = path
@@ -6631,6 +7449,10 @@ impl App {
 
     /// 활성 탭 → 파일(UTF-8 · BOM 없음 · 원래 줄끝 유지).
     fn save_to(&mut self, path: &Path) {
+        // 저장 직전 확인(docs/58 — 어떤 감지도 놓칠 수 있다 · 마지막 안전망): 디스크가 읽어 온 것과 다르면 2단 저장.
+        if !self.ext_save_guard(path) {
+            return;
+        }
         // 저장 줄끝 = 설정 `file.eol_save`(keep = 탭 줄끝) · docs/38.
         let eol = eol::save_eol(
             self.settings.get("file.eol_save").unwrap_or("keep"),
@@ -6649,6 +7471,7 @@ impl App {
         match res {
             Ok(()) => {
                 self.editors.mark_saved(path);
+                self.ext_track_active();
                 self.git.refresh(true);
                 self.push_recent(path);
                 let name = path
@@ -6845,6 +7668,47 @@ impl App {
     }
 
     /// 우클릭 Duplicate — `<이름>_Copied`(있으면 `_Copied2`…)로 저장(비밀번호 봉투 포함).
+    /// 목록 우클릭 메뉴의 접속 유형 — 저장소의 그 프로필만 고친다(비밀번호 봉투 포함 그대로 다시 쓴다). 지금 붙어 있는 세션이
+    /// 그 프로필이면 세션의 표식도 바로 바꾼다(다시 접속할 필요 없음).
+    fn set_profile_env(&mut self, name: &str, env: Option<nsql_script::ConnEnv>) {
+        let r = Vault::open_default().and_then(|v| {
+            let Some(mut spec) = v.get(name)? else {
+                return Ok(false);
+            };
+            spec.env = env;
+            v.save(name, &spec)?;
+            Ok(true)
+        });
+        match r {
+            Ok(true) => {
+                let label = match env {
+                    Some(nsql_script::ConnEnv::Prod) => t(Msg::MnEnvProd),
+                    Some(nsql_script::ConnEnv::Test) => t(Msg::MnEnvTest),
+                    Some(nsql_script::ConnEnv::Dev) => t(Msg::MnEnvDev),
+                    None => t(Msg::MnEnvNone),
+                };
+                self.sess.status = tf(Msg::StEnvSet, &[name, label]);
+                self.conn_win.refresh_profiles(Some(name));
+                let ids: Vec<u64> = self
+                    .all_sess()
+                    .filter(|s| s.profile == name)
+                    .map(|s| s.id)
+                    .collect();
+                for id in ids {
+                    self.with_sess(id, |a| {
+                        if let Some(sp) = a.sess.spec.as_mut() {
+                            sp.env = env;
+                        }
+                    });
+                }
+            }
+            Ok(false) => {}
+            Err(e) => self.sess.status = e.to_string(),
+        }
+        self.conn_win.redraw();
+        self.redraw();
+    }
+
     fn duplicate_profile(&mut self, name: &str) {
         let r = Vault::open_default().and_then(|v| {
             let Some(spec) = v.get(name)? else {
@@ -6986,6 +7850,25 @@ impl App {
 
     /// 열린 수동 트랜잭션을 결과와 함께 닫고 대기 목록을 비운다(커밋·롤백·암묵·전환·끊김 — docs/44 §3).
     fn tx_close(&mut self, outcome: TxOutcome) {
+        // (세션이 끊기는 경로도 여기를 지난다 — Lost) 큰 결과·메타를 놓았을 수 있다.
+        if matches!(outcome, TxOutcome::Lost) {
+            self.mem_released();
+        }
+        // 커밋을 기다리던 DDL(docs/57 D-107): 커밋 계열 = 이제 다른 세션(메타 세션)도 본다 → 반영 · 롤백·소실 = 버림 ·
+        // 읽기 트랜잭션 종료는 변경이 없던 것이라 대기열과 무관.
+        match &outcome {
+            TxOutcome::Committed
+            | TxOutcome::ImplicitCommit(_)
+            | TxOutcome::Switched
+            | TxOutcome::AutoCommitted(_) => {
+                let ddl = std::mem::take(&mut self.sess.ddl_wait);
+                self.meta_flush(ddl);
+            }
+            TxOutcome::RolledBack | TxOutcome::Lost | TxOutcome::AutoRolledBack(_) => {
+                self.sess.ddl_wait.clear();
+            }
+            _ => {}
+        }
         let stamp = nsql_log::now_local().stamp();
         self.txlog
             .select_session(self.sess.id)
@@ -7305,6 +8188,32 @@ impl App {
         if src.trim().is_empty() {
             self.sess.status = t(Msg::ErrNoSql).into();
             return;
+        }
+        // 운영 접속 + 변경 문장 = 2단 실행(같은 본문을 3초 안에 다시 실행하면 진행 · 앱의 2단 확인 관례 · docs/56 §4).
+        let prod =
+            self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
+        if sessions::prod_confirm_needed(
+            prod,
+            self.settings.flag("run.prod_confirm"),
+            &split_items(&src),
+        ) {
+            let key = nexa_fs::watch::content_hash(src.as_bytes());
+            let armed = self
+                .sess
+                .prod_armed
+                .is_some_and(|(k, at)| k == key && at.elapsed() <= Duration::from_secs(3));
+            if !armed {
+                self.sess.prod_armed = Some((key, Instant::now()));
+                self.sess.status = t(Msg::StProdConfirm).into();
+                self.toasts.push(
+                    toast::ToastKind::Error,
+                    t(Msg::StProdConfirmTitle),
+                    t(Msg::StProdConfirm).to_string(),
+                );
+                self.redraw();
+                return;
+            }
+            self.sess.prod_armed = None;
         }
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
@@ -7637,6 +8546,7 @@ impl App {
                         stages: String::new(),
                     });
                     self.tx_on_done(index, &stmt, rows_affected);
+                    self.meta_on_done(&stmt);
                 }
                 // PRINT · 서버 메시지는 로그 창으로만(`log_entries`) — 결과 영역은 조회 결과만(사용자 09-17).
                 RunEvent::Print { .. } => {}
@@ -7655,6 +8565,7 @@ impl App {
                 } => {
                     self.sess.disc_path = None;
                     self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
+                    self.startup_connected = true;
                     if self.sess.skip_done == 0 {
                         self.sess.busy = false;
                     }
@@ -7691,6 +8602,15 @@ impl App {
                     self.explorer_attach();
                 }
                 RunEvent::Disconnected => {
+                    // 접속이 끊겼다: 결과는 기본으로 **보기용으로 남긴다**(09-18 결정) — `mem.release_results_on_disconnect`를
+                    //   켜면 그 세션으로 받은 결과 그리드를 비워 메모리를 바로 돌려준다.
+                    if self.settings.flag("mem.release_results_on_disconnect") {
+                        self.grid.clear_result();
+                        for g in self.sleeping_grids_mut() {
+                            g.clear_result();
+                        }
+                    }
+                    self.mem_released();
                     self.sess.status = t(Msg::StDisconnected).into();
                     self.sess.connected = false;
                     // (탐색기는 `sync_sess_ui`의 참조 수 맞춤이 처리한다 — 이 서버에 붙은 세션이 남아 있으면 유지.)
@@ -7789,6 +8709,18 @@ impl App {
                     let (cls, summary) =
                         toast::summarize(self.sess.dialect, error.code, &error.message, &stmt);
                     self.sess.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
+                    // "테이블/뷰 없음"인데 탐색기에는 그 이름이 있다 = 트리가 낡았다 → 그 폴더만 다시(docs/57 T4).
+                    if cls.class == nsql_core::ErrorClass::NoTable
+                        && self.settings.flag("meta.refresh_on_missing")
+                    {
+                        let name = explorer::missing_name(&error.message);
+                        let schema = self.meta_default_schema();
+                        self.explorer.note_missing(
+                            self.sess.spec.as_ref(),
+                            name.as_deref(),
+                            schema.as_deref(),
+                        );
+                    }
                     if self.settings.flag("editor.minimap_errors") && line > 0 {
                         let ed_line = self.sess.run_line_base + line - 1;
                         self.editors
@@ -7845,6 +8777,11 @@ impl App {
             self.sess.busy = false;
             self.sync_run_stmt_button();
             self.editors.set_running(self.sess.run_editor, false);
+            // 실행이 끝났다 = 이번 실행의 DDL을 폴더별로 한 번만 탐색기에 반영(스크립트 디바운스 · docs/57 T1).
+            let ddl = std::mem::take(&mut self.sess.ddl_now);
+            self.meta_flush(ddl);
+            // 실행이 끝났다 = 앞선 결과(그리드·텍스트 보기·페치 버퍼)를 놓았다 → 1초 뒤 힙을 한 번 정리.
+            self.mem_released();
             let failed = done.is_some();
             // 뒤에서 끝난 실행(D-104): 그 탭 제목 앞에 ✓/✗ — 탭을 보면 지워진다.
             if self.editors.active_id() != self.sess.run_editor {
@@ -7976,6 +8913,13 @@ impl App {
     /// 페인트 직전과 이벤트 뒤에 부른다.
     fn sync_grid_tab(&mut self) {
         self.sync_tabs_menu();
+        // 탭을 바꿨다 = 그 파일을 확인하고(오래 안 본 탭) 확인 띠를 그 탭의 것으로.
+        let tab = self.editors.active_id();
+        if tab != self.ext_last_tab {
+            self.ext_last_tab = tab;
+            self.ext_check(false);
+            self.ext_banner_sync();
+        }
         // 활성 탭의 세션도 같은 시점에 맞춘다(docs/52) — 표식 클릭·메뉴 선택도 여기서 거둔다.
         if let Some(i) = self.editors.take_badge_request() {
             self.open_badge_menu(i);
@@ -8281,8 +9225,28 @@ impl App {
                 // 왼쪽 상태 문구는 세그먼트 앞에서 잘라 겹치지 않게(09-16 캡처: 긴 타이밍 문구가 세그먼트 위로 지나갔다).
                 dc.select_font(FontSlot::Base, false);
                 let left_w = (xr - px(8.0, s) - px(4.0, s)).max(0);
+                // 접속 유형 표식(운영 = 위험색 · 시험 = 경고색 칩 · 상태줄 맨 앞) — 지금 탭의 세션이 붙어 있을 때만.
+                let env_chip = self
+                    .sess
+                    .connected
+                    .then(|| self.sess.spec.as_ref().and_then(|sp| sp.env))
+                    .flatten()
+                    .and_then(|e| match e {
+                        nsql_script::ConnEnv::Prod => Some(("PROD", th.danger)),
+                        nsql_script::ConnEnv::Test => Some(("TEST", th.warn)),
+                        nsql_script::ConnEnv::Dev => None,
+                    });
+                let mut lx = px(8.0, s);
+                if let Some((label, color)) = env_chip {
+                    let cw = dc.text_width(label) + px(12.0, s);
+                    let chip = Rect::new(lx, sy + px(4.0, s), cw, px(16.0, s));
+                    dc.fill_round_rect(chip, px(3.0, s), color);
+                    let cy = dc.text_center_y(chip.y, chip.h);
+                    dc.text(chip.x + px(6.0, s), cy, chip, label, th.panel_bg);
+                    lx += cw + px(6.0, s);
+                }
                 dc.text(
-                    px(8.0, s),
+                    lx,
                     ty,
                     Rect::new(0, sy, px(8.0, s) + left_w, px(24.0, s)),
                     &left_text,
@@ -8447,6 +9411,8 @@ impl App {
                 };
                 let ty = self.sess.run_toast.paint(&mut dc, &th, tx, ty, s);
                 let ty = self.tx_warn.paint(&mut dc, &th, tx, ty, s);
+                self.ext_banner.set_bounds(self.editors.banner_rect());
+                self.ext_banner.paint(&mut dc, &th, s);
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
@@ -8662,6 +9628,14 @@ impl App {
                 self.redraw();
                 return;
             }
+            match self.ext_banner.click(Point { x, y }) {
+                extfile::BannerHit::None => {}
+                hit => {
+                    self.ext_banner_pick(hit);
+                    self.redraw();
+                    return;
+                }
+            }
             match self.tx_warn.click(Point { x, y }) {
                 txwarn::TxWarnHit::None => {}
                 hit => {
@@ -8687,6 +9661,9 @@ impl App {
                 self.redraw();
             }
             if self.tx_warn.hover(Point { x, y }) {
+                self.redraw();
+            }
+            if self.ext_banner.hover(Point { x, y }) {
                 self.redraw();
             }
         }
@@ -9261,10 +10238,18 @@ impl ApplicationHandler<Wake> for App {
           //   띄워 PrintWindow로 확인하려는 것(사용자가 쓰는 중에 키를 쏘면 다른 창으로 간다 · 09-19 사고). 평소엔 변수 없음 = 비용 0.
         if let Ok(cmds) = std::env::var("NSQL_STARTUP_CMD") {
             for id in cmds.split(',').map(str::trim).filter(|c| !c.is_empty()) {
-                // `open:<경로>` = 파일을 탭으로(캡처할 본문 준비) · 나머지 = 명령 id.
-                match id.strip_prefix("open:") {
-                    Some(path) => self.open_file(Path::new(path)),
-                    None => self.menu_action(id),
+                // `@connected:<명령>` = 첫 접속이 된 뒤에 실행(시작 인자로 접속하는 프로필 + 실행 시험 · 메모리 측정).
+                // `@after:<ms>:<명령>` = 기동 뒤 그 시간이 지나면 실행(닫기 전후 메모리 비교 같은 시차 시험).
+                if let Some(rest) = id.strip_prefix("@after:") {
+                    if let Some((ms, cmd)) = rest.split_once(':') {
+                        let at = Instant::now() + Duration::from_millis(ms.parse().unwrap_or(0));
+                        self.startup_timed.push((at, cmd.to_string()));
+                    }
+                    continue;
+                }
+                match id.strip_prefix("@connected:") {
+                    Some(later) => self.startup_after_connect.push(later.to_string()),
+                    None => self.startup_cmd(id),
                 }
             }
         }
@@ -9434,6 +10419,40 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.tx_block_tick(now) {
             next = next.min(t);
         }
+        // 자체 캡처용 지연 기동 명령 — 접속이 끝나 세션이 한가해진 뒤 한 번.
+        if self.startup_connected && !self.startup_after_connect.is_empty() && !self.sess.blocked()
+        {
+            for id in std::mem::take(&mut self.startup_after_connect) {
+                self.startup_cmd(&id);
+            }
+        }
+        if !self.startup_timed.is_empty() {
+            let due: Vec<String> = self
+                .startup_timed
+                .iter()
+                .filter(|(at, _)| *at <= now)
+                .map(|(_, c)| c.clone())
+                .collect();
+            self.startup_timed.retain(|(at, _)| *at > now);
+            for id in due {
+                self.startup_cmd(&id);
+            }
+            if let Some(t) = self.startup_timed.iter().map(|(at, _)| *at).min() {
+                next = next.min(t);
+            }
+        }
+        // 메모리 회수 — 큰 것을 놓은 직후 1회 + 유휴 주기(`memtrim.rs`).
+        if let Some(t) = self.mem_tick(now) {
+            next = next.min(t);
+        }
+        // 외부 파일 변경(docs/58) — 사건 수거 + 활성 창에서 보이는 탭 폴링.
+        if let Some(t) = self.ext_tick(now) {
+            next = next.min(t);
+        }
+        // 탐색기 유휴 워터마크(docs/57 T2) — `meta.refresh_secs` 간격(기본 300초 · 0 = 끔 · 유휴일 때만 1행 질의).
+        if let Some(t) = self.meta_refresh_tick(now) {
+            next = next.min(t);
+        }
         // 유휴 미커밋 점검(docs/56 L2) — 미커밋 세션이 있을 때만 5초(카운트다운 중 1초) 간격으로 깬다.
         if let Some(t) = self.tx_guard_tick(now) {
             next = next.min(t);
@@ -9468,6 +10487,15 @@ impl ApplicationHandler<Wake> for App {
         }
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
+        }
+        // 메인 창 활성/비활성(docs/58 §2-5): 돌아오는 순간 열린 파일을 한 번에 확인 · 뒤에 있을 때는 아무것도 안 한다.
+        if let WindowEvent::Focused(on) = event {
+            if self.window.as_ref().is_some_and(|w| w.id() == id) {
+                self.main_active = on;
+                if on {
+                    self.ext_check(true);
+                }
+            }
         }
         // ★ 접속 창 = 모달: 열려 있는 동안 **메인 창과 그 일부인 로그·색·단축키·설정 창**의 입력은 버리고
         //   (OS 수준은 `winfocus::set_enabled`) 접속 창을 앞으로(사용자 09-15 "로그 창도 메인의 일부").
@@ -9716,7 +10744,10 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         if self.sessions_win.is(id) {
-            match self.sessions_win.handle(&event) {
+            // ★ 그린 직후에 다시 그리기를 요청하면 끝없이 돈다(세션 창을 열어 두면 유휴 CPU 90% · 09-19 메모리 점검에서 발견).
+            let action = self.sessions_win.handle(&event);
+            let painted = matches!(action, SessWinAction::Paint);
+            match action {
                 SessWinAction::Paint => {
                     let ui_px = self.settings.font_px("ui.font_size");
                     let rows = self.session_rows();
@@ -9737,7 +10768,9 @@ impl ApplicationHandler<Wake> for App {
                 }
                 SessWinAction::None => {}
             }
-            self.sessions_win.redraw();
+            if !painted {
+                self.sessions_win.redraw();
+            }
             return;
         }
         if self.txlog_win.is(id) {
@@ -9944,6 +10977,13 @@ impl ApplicationHandler<Wake> for App {
                         Msg::StHangulOff
                     })
                     .into();
+                    self.redraw();
+                    return;
+                }
+                // 탐색기 포커스의 F5 = 선택 노드 하위를 조용히 다시 읽기 · Shift+F5 = 캐시를 버리고 새로(docs/57 T3).
+                //   편집기 포커스의 F5(전체 실행)와 겹치지 않게 키맵보다 먼저 본다.
+                if self.focus == Focus::Explorer && kev.logical_key == Key::Named(NamedKey::F5) {
+                    self.explorer.refresh_selected(self.shift);
                     self.redraw();
                     return;
                 }
@@ -10403,6 +11443,20 @@ fn main() {
         search: SearchPanel::new(),
         ext_panel: ExtPanel::new(),
         ext_fetch_rx: None,
+        meta_refresh_next: None,
+        ext_watch: None,
+        ext_files: HashMap::new(),
+        ext_banner: extfile::Banner::default(),
+        ext_poll_next: None,
+        main_active: true,
+        ext_last_tab: 0,
+        ext_save_armed: None,
+        startup_after_connect: Vec::new(),
+        startup_connected: false,
+        startup_timed: Vec::new(),
+        mem_trim_due: None,
+        mem_trim_next: None,
+        mem_last_tabs: 0,
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),
         tx_after: None,

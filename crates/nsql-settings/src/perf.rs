@@ -191,7 +191,8 @@ pub const PERF: &[(&str, PerfBinding)] = &[
         b(Domain::Db, "1000", "2000", "5000"),
     ),
     ("explorer.visible", b(Domain::Db, "on", "on", "off")),
-    ("explorer.auto_refresh", b(Domain::Db, "off", "off", "off")),
+    // 탐색기 유휴 워터마크 주기(docs/57 T2) — low = 끔(내가 실행한 DDL 반영 T1은 사용자 동작에 딸린 1질의라 유지).
+    ("meta.refresh_secs", b(Domain::Db, "300", "600", "0")),
     ("connect.auto_reconnect", b(Domain::Db, "on", "on", "off")),
     // ── NET(§3-2 · 26 §8 흡수)
     ("probe.enabled", b(Domain::Net, "on", "on", "off")),
@@ -226,7 +227,7 @@ pub const PERF: &[(&str, PerfBinding)] = &[
 /// 목표(사용자 09-17): ① 처음 실행 속도 ② 쿼리·네트워크 실행 속도 ③ 백그라운드·편의 기능 스레드 최소화 ④ 메모리 최소화·빠른 회수 ⑤ 체감 속도.
 /// 원칙: 실제 동작(결과·트랜잭션·접속)에는 영향이 없고 **UI 구성·부가 표시·폴링·I/O에만** 영향을 주는 키만 넣는다. 저장값은 건드리지 않으므로
 /// 끄면 그대로 돌아온다. 분류·제외 근거 = docs/39 §4-6. 등재 키는 전부 레지스트리에 있고 **배선이 있어야** 한다(강제해도 효과 0인 키는
-/// 넣지 않는다: `explorer.tooltip`·`explorer.auto_refresh`·`probe.dns_cache_secs`·`settings.watch_ms`는 기능 미구현이라 제외 · 테스트).
+/// 넣지 않는다: `explorer.tooltip`·`probe.dns_cache_secs`·`settings.watch_ms`는 기능 미구현이라 제외 · 테스트).
 pub const BOOST: &[(&str, &str)] = &[
     // ── 렌더링·애니메이션(GFX): 프레임·페이드·깜빡임 = 다시 그리기 횟수
     ("ui.animations", "off"),
@@ -255,6 +256,10 @@ pub const BOOST: &[(&str, &str)] = &[
     ("log.dev_mode", "off"),
     // 막힘 감지 폴링(docs/56 L3) — 네트워크 부하원이라 향상 모드는 끈다(L1·L2는 데이터 안전 기능이라 건드리지 않는다).
     ("tx.block_poll_secs", "0"),
+    // 탐색기 유휴 워터마크 폴링(docs/57 T2) — 같은 이유. 실행한 DDL 반영(T1)·못 찾음(T4)은 그대로.
+    ("meta.refresh_secs", "0"),
+    // 보이는 탭의 외부 변경 폴링(docs/58) — 창 활성화·탭 전환·저장 직전 확인은 그대로.
+    ("file.external_poll_ms", "0"),
     // ── 메모리(캐시 상한 · 아이콘은 위에서 껐으므로 캐시도 최소)
     ("file.icon_cache", "128"),
     // ── 폴링·시도 횟수·시간·스레드(NET/DB 표시용): 신호등(스레드 1) · 탐색기 자동 갱신 · Oracle 라이브 로그

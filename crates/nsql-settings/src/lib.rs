@@ -317,6 +317,19 @@ const LOG_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("tsv", Msg::ValFmtTsv),
     ("template", Msg::ValLogTemplate),
 ];
+const EXT_CHANGE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValExtAuto),
+    ("ask", Msg::ValExtAsk),
+    ("off", Msg::ValExtOff),
+];
+const EXT_CHECK_OPTS: &[(&str, Msg)] = &[
+    ("focus_poll", Msg::ValExtCheckPoll),
+    ("focus", Msg::ValExtCheckFocus),
+];
+const META_SCOPE_OPTS: &[(&str, Msg)] = &[
+    ("changed", Msg::ValMetaScopeChanged),
+    ("all", Msg::ValMetaScopeAll),
+];
 const LOG_FILE_FORMAT_OPTS: &[(&str, Msg)] = &[
     ("same", Msg::ValLogSame),
     ("raw", Msg::ValRaw),
@@ -1028,21 +1041,62 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ── 객체 탐색기 갱신(docs/57 · T-138 · 47 §8의 `meta.*`와 한 벌 — 인텔리센스 메타 저장소가 들어와도 같은 키).
     Entry {
-        key: "explorer.auto_refresh",
+        key: "meta.refresh_on_ddl",
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerAutoRefresh,
         desc: Msg::DescExplorerAutoRefresh,
         kind: SettingKind::Bool,
-        default: "off",
+        default: "on",
     },
     Entry {
-        key: "explorer.refresh_secs",
+        key: "meta.refresh_on_commit",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMetaRefreshOnCommit,
+        desc: Msg::DescMetaRefreshOnCommit,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "meta.refresh_on_missing",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMetaRefreshOnMissing,
+        desc: Msg::DescMetaRefreshOnMissing,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "meta.refresh_secs",
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerRefreshSecs,
         desc: Msg::DescExplorerRefreshSecs,
-        kind: SettingKind::Int { min: 60, max: 3600 },
+        kind: SettingKind::Int { min: 0, max: 3600 },
         default: "300",
+    },
+    Entry {
+        key: "meta.refresh_scope",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMetaRefreshScope,
+        desc: Msg::DescMetaRefreshScope,
+        kind: SettingKind::Choice(META_SCOPE_OPTS),
+        default: "changed",
+    },
+    Entry {
+        key: "meta.refresh_idle_secs",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMetaRefreshIdle,
+        desc: Msg::DescMetaRefreshIdle,
+        kind: SettingKind::Int { min: 0, max: 600 },
+        default: "5",
+    },
+    Entry {
+        key: "meta.refresh_highlight_ms",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMetaRefreshHighlight,
+        desc: Msg::DescMetaRefreshHighlight,
+        kind: SettingKind::Int { min: 0, max: 10000 },
+        default: "2000",
     },
     Entry {
         key: "explorer.timeout",
@@ -1415,6 +1469,74 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescEolNew,
         kind: SettingKind::Choice(EOL_NEW_OPTS),
         default: "auto",
+    },
+    // ── 외부 파일 변경(docs/58 · T-140).
+    Entry {
+        key: "file.external_change",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtChange,
+        desc: Msg::DescExtChange,
+        kind: SettingKind::Choice(EXT_CHANGE_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "file.external_merge",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtMerge,
+        desc: Msg::DescExtMerge,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "file.external_check",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtCheck,
+        desc: Msg::DescExtCheck,
+        kind: SettingKind::Choice(EXT_CHECK_OPTS),
+        default: "focus_poll",
+    },
+    Entry {
+        key: "file.external_poll_ms",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtPollMs,
+        desc: Msg::DescExtPollMs,
+        kind: SettingKind::Int { min: 0, max: 60000 },
+        default: "2000",
+    },
+    Entry {
+        key: "file.external_merge_max_kb",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtMergeMaxKb,
+        desc: Msg::DescExtMergeMaxKb,
+        kind: SettingKind::Int {
+            min: 16,
+            max: 65536,
+        },
+        default: "2048",
+    },
+    Entry {
+        key: "file.external_settle_ms",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtSettleMs,
+        desc: Msg::DescExtSettleMs,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "300",
+    },
+    Entry {
+        key: "file.external_backup_keep",
+        cat: Msg::CatFiles,
+        label: Msg::LblExtBackupKeep,
+        desc: Msg::DescExtBackupKeep,
+        kind: SettingKind::Int { min: 0, max: 200 },
+        default: "10",
+    },
+    Entry {
+        key: "file.overwrite_confirm_ms",
+        cat: Msg::CatFiles,
+        label: Msg::LblOverwriteConfirmMs,
+        desc: Msg::DescOverwriteConfirmMs,
+        kind: SettingKind::Int { min: 0, max: 60000 },
+        default: "5000",
     },
     Entry {
         key: "file.eol_save",
@@ -2150,6 +2272,31 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 5, max: 600 },
         default: "60",
     },
+    // ── 접속 유형(운영) 기준(docs/56 §4 2차) — 전역 값과 비교해 더 엄격한 쪽이 적용된다.
+    Entry {
+        key: "tx.prod_stale_min",
+        cat: Msg::CatSession,
+        label: Msg::LblTxProdStale,
+        desc: Msg::DescTxProdStale,
+        kind: SettingKind::Int { min: 1, max: 240 },
+        default: "5",
+    },
+    Entry {
+        key: "tx.prod_idle_limit_min",
+        cat: Msg::CatSession,
+        label: Msg::LblTxProdLimit,
+        desc: Msg::DescTxProdLimit,
+        kind: SettingKind::Int { min: 1, max: 600 },
+        default: "10",
+    },
+    Entry {
+        key: "run.prod_confirm",
+        cat: Msg::CatSession,
+        label: Msg::LblRunProdConfirm,
+        desc: Msg::DescRunProdConfirm,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "tx.block_poll_secs",
         cat: Msg::CatSession,
@@ -2471,6 +2618,31 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "10000",
     },
+    // ── 메모리 회수(`memtrim.rs` · docs/26 §7-4).
+    Entry {
+        key: "mem.trim_on_release",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemTrimOnRelease,
+        desc: Msg::DescMemTrimOnRelease,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "mem.release_results_on_disconnect",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemReleaseOnDisc,
+        desc: Msg::DescMemReleaseOnDisc,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "mem.trim_secs",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemTrimSecs,
+        desc: Msg::DescMemTrimSecs,
+        kind: SettingKind::Int { min: 0, max: 86400 },
+        default: "300",
+    },
     Entry {
         key: "editor.undo_max",
         cat: Msg::CatEditor,
@@ -2762,7 +2934,12 @@ impl Dep {
 
 /// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
-    ("explorer.refresh_secs", "explorer.auto_refresh", Dep::On),
+    ("meta.refresh_on_commit", "meta.refresh_on_ddl", Dep::On),
+    (
+        "file.external_merge",
+        "file.external_change",
+        Dep::Eq("auto"),
+    ),
     ("explorer.typeahead_timeout", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_space", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_special", "explorer.typeahead", Dep::On),
@@ -2832,6 +3009,12 @@ pub const HIDDEN: &[&str] = &[
     "window.txlog_pos",
     "window.prefs_pos",
     "rainbowpair.max_kb",
+    "meta.refresh_idle_secs",
+    "file.external_merge_max_kb",
+    "file.external_settle_ms",
+    "file.external_backup_keep",
+    "file.overwrite_confirm_ms",
+    "meta.refresh_highlight_ms",
     "demo.prompted",
     "log.kinds",
     "statusbar.git_secs",
@@ -3046,7 +3229,30 @@ impl Settings {
                 None => s.unknown.push((k, v)),
             }
         }
+        s.migrate_explorer_refresh();
         s
+    }
+
+    /// 옛 `explorer.auto_refresh`/`explorer.refresh_secs`(배선된 적 없는 키) → `meta.refresh_secs`(docs/57 §2-5): 자동 갱신을
+    /// **켜 둔** 사용자만 그 주기를 옮긴다(꺼짐은 옛 기본값이라 저장돼 있지 않다 → 새 기본 300초). 옛 줄은 다음 저장 때 사라진다.
+    fn migrate_explorer_refresh(&mut self) {
+        let take = |u: &mut Vec<(String, String)>, key: &str| {
+            let v = u.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+            u.retain(|(k, _)| k != key);
+            v
+        };
+        let on = take(&mut self.unknown, "explorer.auto_refresh");
+        let secs = take(&mut self.unknown, "explorer.refresh_secs");
+        if on.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("on"))
+            && !self.values.contains_key("meta.refresh_secs")
+        {
+            if let Some(n) = secs.and_then(|v| v.trim().parse::<u32>().ok()) {
+                if n != 300 {
+                    self.values
+                        .insert("meta.refresh_secs".into(), n.clamp(0, 3600).to_string());
+                }
+            }
+        }
     }
 
     /// 파일 경로.

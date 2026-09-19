@@ -92,6 +92,8 @@ pub(crate) enum ConnWinAction {
     Duplicate(String),
     /// 우클릭 메뉴 Copy connection string — 클립보드로(호스트가 쓴다).
     CopyText(String),
+    /// 우클릭 메뉴 접속 유형(docs/56 §4): (프로필 이름, 새 유형 · `None` = 유형 없음).
+    SetEnv(String, Option<nsql_script::ConnEnv>),
 }
 
 /// 행 테스트 버튼 위에 얹는 마지막 결과(사용자 09-14 — 형태·기능은 그대로, 표시만 바뀐다).
@@ -1985,6 +1987,13 @@ impl ConnWin {
                             }
                         }
                     }
+                    Some(id) if id.starts_with("env:") => {
+                        if let Some(n) = self.ctx_target.take() {
+                            let env = nsql_script::ConnEnv::from_name(&id["env:".len()..]);
+                            self.panel.set_env_if_loaded(&n, env);
+                            out.push(ConnWinAction::SetEnv(n, env));
+                        }
+                    }
                     Some("new") => {
                         self.guarded(Guard::New, out);
                     }
@@ -2118,10 +2127,27 @@ impl ConnWin {
                 self.menu.open_at(
                     x,
                     y,
-                    vec![
-                        CtxItem::item("dup", t(Msg::MnDuplicate)),
-                        CtxItem::item("copy_cs", t(Msg::MnCopyConnString)),
-                    ],
+                    {
+                        // 접속 유형(현재 값에 ✓) — 운영으로 표시하면 미커밋 기준이 엄격해지고 변경 문장 실행을 한 번 더 확인한다.
+                        let cur = self
+                            .ctx_target
+                            .as_ref()
+                            .and_then(|n| self.profiles.iter().find(|p| &p.name == n))
+                            .and_then(|p| p.spec.env);
+                        use nsql_script::ConnEnv as E;
+                        vec![
+                            CtxItem::item("dup", t(Msg::MnDuplicate)),
+                            CtxItem::item("copy_cs", t(Msg::MnCopyConnString)),
+                            CtxItem::Separator,
+                            CtxItem::item("env:none", t(Msg::MnEnvNone)).with_mark(cur.is_none()),
+                            CtxItem::item("env:dev", t(Msg::MnEnvDev))
+                                .with_mark(cur == Some(E::Dev)),
+                            CtxItem::item("env:test", t(Msg::MnEnvTest))
+                                .with_mark(cur == Some(E::Test)),
+                            CtxItem::item("env:prod", t(Msg::MnEnvProd))
+                                .with_mark(cur == Some(E::Prod)),
+                        ]
+                    },
                     host,
                     self.ctx_text_w,
                 );
@@ -2704,7 +2730,19 @@ impl ConnWin {
                             if ci == 0 && dirty_name.as_deref() == Some(p.name.as_str()) {
                                 txt.push('*');
                             }
-                            dc.text(cx + pad, ty(y), clip, &txt, th.text);
+                            // 접속 유형 표식(이름 열): 운영 = 위험색 · 시험 = 경고색(개발·없음 = 표식 없음).
+                            let color = match (ci, p.spec.env) {
+                                (0, Some(nsql_script::ConnEnv::Prod)) => {
+                                    txt.push_str(" · PROD");
+                                    th.danger
+                                }
+                                (0, Some(nsql_script::ConnEnv::Test)) => {
+                                    txt.push_str(" · TEST");
+                                    th.warn
+                                }
+                                _ => th.text,
+                            };
+                            dc.text(cx + pad, ty(y), clip, &txt, color);
                         }
                     }
                     cx += cw;

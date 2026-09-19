@@ -92,6 +92,8 @@ pub(crate) struct ConnectPanel {
     name: TextBox,
     /// 목록에서 불러온 프로필 이름(New/clear면 None) — 저장 시 이름 변경 판정용(09-16).
     loaded_name: Option<String>,
+    /// 접속 유형(docs/56 §4 · 목록 우클릭 메뉴로 지정 · 폼은 값을 보존만 한다).
+    env: Option<nsql_script::ConnEnv>,
     save_pw: Checkbox,
     test_btn: Button,
     connect_btn: Button,
@@ -269,6 +271,7 @@ impl ConnectPanel {
             password: TextBox::new(t(Msg::PhPassword)),
             name: TextBox::new(t(Msg::PhProfileName)),
             loaded_name: None,
+            env: None,
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
@@ -348,6 +351,7 @@ impl ConnectPanel {
     /// 저장소에서 읽은 스펙으로 폼을 채운다.
     pub(crate) fn fill(&mut self, name: &str, spec: &ConnectSpec) {
         self.loaded_name = Some(name.to_string());
+        self.env = spec.env;
         if let Some(d) = spec.dialect {
             self.dialect.select_value(&d.to_string());
             self.auto_port = d.default_port();
@@ -383,7 +387,16 @@ impl ConnectPanel {
         if self.schema_applies() && !sc.trim().is_empty() {
             spec.schema = Some(sc.trim().to_string());
         }
+        // 접속 유형은 폼에 칸이 없다(목록 우클릭 메뉴) — 불러온 값을 그대로 실어 저장·접속에서 잃지 않게 한다.
+        spec.env = self.env;
         Ok(spec)
+    }
+
+    /// 목록 메뉴에서 유형을 바꿨다 — 그 프로필이 폼에 올라와 있으면 폼의 값도 맞춘다.
+    pub(crate) fn set_env_if_loaded(&mut self, name: &str, env: Option<nsql_script::ConnEnv>) {
+        if self.loaded_name.as_deref() == Some(name) {
+            self.env = env;
+        }
     }
 
     /// 기본 스키마 칸이 뜻이 있는 방언(Oracle · PostgreSQL) — SQL Server는 Database가 그 자리 · 파일 방언은 없음.
@@ -394,6 +407,7 @@ impl ConnectPanel {
     /// 새 프로필 — 폼 비우기(DB 종류는 유지).
     pub(crate) fn clear(&mut self) {
         self.loaded_name = None;
+        self.env = None;
         for tb in [
             &mut self.host,
             &mut self.port,

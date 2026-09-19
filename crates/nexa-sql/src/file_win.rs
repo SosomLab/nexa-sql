@@ -40,6 +40,8 @@ pub(crate) struct FileWin {
     shift: bool,
     picker: Option<FilePicker>,
     mode: PickerMode,
+    /// 덮어쓰기 무장 시간(ms · 호스트가 설정에서 넣는다).
+    overwrite_confirm_ms: u64,
 }
 
 /// 앱 문자열 → 선택기 라벨(i18n 규칙: 리터럴은 여기 없다).
@@ -105,7 +107,13 @@ impl FileWin {
             shift: false,
             picker: None,
             mode: PickerMode::Open,
+            overwrite_confirm_ms: 5000,
         }
+    }
+
+    /// 덮어쓰기 무장 시간(설정 `file.overwrite_confirm_ms` · 다음에 여는 창부터).
+    pub(crate) fn set_overwrite_confirm_ms(&mut self, ms: u64) {
+        self.overwrite_confirm_ms = ms;
     }
 
     pub(crate) fn window(&self) -> Option<&Window> {
@@ -169,6 +177,8 @@ impl FileWin {
         }
         self.mode = mode;
         let mut picker = FilePicker::new(mode, start, sql_filters(), labels());
+        // 덮어쓰기 = 타임아웃 버튼(두 번 눌러야 저장 · 사용자 09-19) — 시간은 설정 `file.overwrite_confirm_ms`(0 = 한 번에).
+        picker.set_overwrite_confirm_ms(self.overwrite_confirm_ms);
         picker.set_default_name(default_name);
         picker.set_recent(recent);
         picker.set_show_hidden(show_hidden);

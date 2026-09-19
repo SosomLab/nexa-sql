@@ -2,6 +2,9 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-19 (82차 · win)** — nexa-ctl 그리기 캐시 넷(`MlTextCache`·행 해시·`RowWidthCache`·`HlStateCache`) · 키 경로의 본문 복사 제거 · `SnapBuf` 차이 되돌리기 · `release_caches`/`clear_history`/`approx_bytes` · nexa-dlg 덮어쓰기 `TimeoutButton` · nexa-sql `memtrim.rs`·`mem_tick`·`mem.trim_*`·`mem.trim_now`·`@after:` · docs 59 → [journal](journal/2026-09-19.md)
+- **2026-09-19 (81차 · win)** — `extfile.rs` · 호스트 `ext_*`(감시·판정·띠·저장 가드·백업·따라가기) · nexa-ui `merge3`/`replace_all_undoable`/`nexa-fs watch` · `ConnectSpec.env`·`ConnEnv`·목록 메뉴·PROD 칩·`tx_limits_for`·`prod_confirm_needed` · 세션 창 재그리기 고리 수정 · `@connected:` 기동 명령 · 26 §7-3 메모리 재점검 → [journal](journal/2026-09-19.md)
+- **2026-09-19 (80차 · win)** — `nsql-core/ddl.rs` `ddl_target` · 탐색기 `diff_children`/`soft_refresh`/`apply_ddl`/`note_missing`/`watermark_poll` · `ExplorerSet` 스크롤 고정 · 호스트 `meta_on_done`/`meta_flush`/`meta_refresh_tick` · `ddl_waits_for_commit` MC/DC · 설정 `meta.refresh_*` + 마이그레이션 · txlog "차단 중" 띠 · 안내 탭(Plain Text · No connection · nexa-ctl `SyntaxSpec.numbers`) → [journal](journal/2026-09-19.md)
 - **2026-09-19 (79차 · win)** — `ext_panel.rs`(확장 패널) · 활동 막대 숨김 항목 · `Focus::Ext` · `ext.disable_mgr` · 관리자 끔 = 전 확장 정지 · 빈 목록 `ext.noop` · manager `NetStat`(curl `-w` 파일별 전송 통계) · 메타 이중 다운로드 제거 · `disabled_effect` 색 끔 · nexa-ctl `contrast_order` + 테마 팔레트 순서 · `rainbowpair.contrast_order` · `NSQL_STARTUP_CMD` → [journal](journal/2026-09-19.md)
 - **2026-09-19 (78차 · win)** — T-137 L1~L4(nsql-run `ReadEnd`/`ReadTxEnded` · `txwarn.rs` · `tx_guard_step` · `Req::Blockers` · 워커 접속 직후 L4 · 설정 8키) · 오류 토스트 중복 제거 · 팔레트 마우스/스크롤 → [journal](journal/2026-09-19.md)
 - **2026-09-19 (77차 · win)** — 문서: 56 수동 커밋 잠금 방지(조사·설계 · D-100~105) · 50 §13 확장 테스트 안내 · 자동 닫기 확장 키 제거(코어 `editor.auto_close_pairs`만) → [journal](journal/2026-09-19.md)

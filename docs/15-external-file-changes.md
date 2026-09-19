@@ -1,5 +1,7 @@
 # 15 · 외부 파일 변경 처리 — 조사와 개발 방향 (git식 fast-forward / 3-way 병합 검토)
 
+> ★ 09-19: 정책(자동 병합의 안전 장치) · 확인 빈도 · 감지 시점 · 감시 구조는 **[58](58-external-change-policy.md)** 에서 구체화(결정 D-119~124 · T-140).
+
 > 사용자 요청(09-12): *"외부에서 파일이 수정된 경우 다른 프로그램은 어떻게 처리하는지 조사하고 개발 방향 정리. 텍스트 파일은 git처럼 fast-forward · 충돌 시 직접 병합 후 저장하는 개발자 친화 방식 도입 검토."*
 > 조사(에이전트 · 웹): Sublime Text · VS Code · IntelliJ/DataGrip · Emacs · Vim/Neovim · Notepad++ · Zed · Helix · DBeaver + diff/merge 크레이트.
 

@@ -1093,6 +1093,8 @@ pub trait Session {
 
 pub mod dberr;
 pub use dberr::{classify, native_code, Classified, ErrorClass};
+pub mod ddl;
+pub use ddl::{ddl_target, DdlKind, DdlTarget, DdlVerb};
 
 #[cfg(test)]
 mod tests {

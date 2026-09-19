@@ -109,6 +109,14 @@ pub(crate) struct Sess {
     pub tx_blockers: usize,
     pub tx_block_next: Instant,
     pub tx_block_off: bool,
+    /// 지금 이 세션 때문에 기다리는 세션들의 설명(트랜잭션 로그 창 "차단 중" 띠 · `tx_blockers`와 함께 갱신).
+    pub tx_blocker_who: Vec<String>,
+    /// 운영 접속의 변경 문장 실행 2단 확인(같은 본문을 3초 안에 다시 실행하면 진행 · docs/56 §4).
+    pub prod_armed: Option<(u64, std::time::Instant)>,
+    /// 이번 실행에서 성공한 DDL의 대상(docs/57 T1) — 실행이 끝나면 폴더별로 한 번 탐색기에 반영한다.
+    pub ddl_now: Vec<nsql_core::DdlTarget>,
+    /// 트랜잭션 DDL 방언의 수동 커밋에서 **커밋을 기다리는** DDL 대상(커밋 = 반영 · 롤백·세션 소실 = 버림 · D-107).
+    pub ddl_wait: Vec<nsql_core::DdlTarget>,
     /// 이 세션에서 **세션 상태를 바꾸는 문장**이 실행됐다(`ALTER SESSION`·`SET`·임시 테이블·PL/SQL 블록 …) — 닫으면 그 상태를
     /// 잃으므로 유휴 닫기 대상에서 뺀다(§6-4). 새로 접속하면 거짓.
     pub stateful: bool,
@@ -177,6 +185,10 @@ impl Sess {
             tx_blockers: 0,
             tx_block_next: Instant::now(),
             tx_block_off: false,
+            tx_blocker_who: Vec::new(),
+            prod_armed: None,
+            ddl_now: Vec::new(),
+            ddl_wait: Vec::new(),
             stateful: false,
             run_editor: 0,
             run_tab: 0,
@@ -674,8 +686,79 @@ pub(crate) fn idle_action(i: IdleInput) -> IdleAction {
     IdleAction::Close
 }
 
+/// 접속 유형에 따른 미커밋 기준(docs/56 §4 2차): **운영**이면 (첫 경고 분, 자동 처리 한도 분) 각각 전역 값과 운영 값 중
+/// **작은 쪽** — 운영 접속이 전역 설정보다 느슨해지는 일은 없다. 그 외 유형은 전역 값 그대로.
+pub(crate) fn tx_limits_for(prod: bool, global: (u64, u64), prod_vals: (u64, u64)) -> (u64, u64) {
+    if prod {
+        (
+            global.0.min(prod_vals.0).max(1),
+            global.1.min(prod_vals.1).max(1),
+        )
+    } else {
+        global
+    }
+}
+
+/// 운영 접속에서 **변경 문장**(DML·DDL·PL/SQL 블록 등 SELECT가 아닌 것)을 실행하려 한다 → 한 번 더 확인할 것인가(순수 판정).
+pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]) -> bool {
+    prod && setting_on
+        && items.iter().any(|sql| {
+            let k = nsql_core::first_keyword(sql);
+            !k.is_empty()
+                && !matches!(
+                    k.as_str(),
+                    "SELECT"
+                        | "WITH"
+                        | "EXPLAIN"
+                        | "SHOW"
+                        | "DESC"
+                        | "DESCRIBE"
+                        | "VALUES"
+                        | "PRAGMA"
+                )
+        })
+}
+
+/// 실행한 DDL의 탐색기 반영을 **커밋까지 미루는가**(docs/57 D-107 · 순수 판정): 트랜잭션 DDL 방언 · 수동 커밋 · 설정 켬이
+/// 모두 참일 때만. 하나라도 거짓이면 실행이 끝난 직후 반영한다.
+pub(crate) fn ddl_waits_for_commit(transactional: bool, autocommit: bool, on_commit: bool) -> bool {
+    transactional && !autocommit && on_commit
+}
+
 #[cfg(test)]
 mod tests {
+    /// 접속 유형: 운영 = 더 엄격한 쪽 · 그 외 = 전역 그대로 / 실행 확인 = 운영 · 설정 · 변경 문장 셋이 모두 참일 때만.
+    #[test]
+    fn conn_env_rules() {
+        use super::{prod_confirm_needed as need, tx_limits_for as lim};
+        assert_eq!(lim(false, (10, 30), (5, 10)), (10, 30));
+        assert_eq!(lim(true, (10, 30), (5, 10)), (5, 10));
+        assert_eq!(
+            lim(true, (3, 8), (5, 10)),
+            (3, 8),
+            "전역이 더 엄격하면 전역"
+        );
+        let dml = vec!["select 1".to_string(), "update t set a = 1".to_string()];
+        let ro = vec![
+            "select 1".to_string(),
+            "with x as (select 1) select * from x".to_string(),
+        ];
+        assert!(need(true, true, &dml));
+        assert!(!need(false, true, &dml), "운영 아님");
+        assert!(!need(true, false, &dml), "설정 끔");
+        assert!(!need(true, true, &ro), "조회만");
+    }
+
+    /// MC/DC: 세 조건 각각이 혼자서 결과를 뒤집는 쌍.
+    #[test]
+    fn ddl_waits_for_commit_mcdc() {
+        use super::ddl_waits_for_commit as f;
+        assert!(f(true, false, true));
+        assert!(!f(false, false, true), "방언");
+        assert!(!f(true, true, true), "자동 커밋");
+        assert!(!f(true, false, false), "설정");
+    }
+
     /// docs/56 L2 — 유휴 미커밋 판정 MC/DC.
     #[test]
     fn tx_guard_step_mcdc() {

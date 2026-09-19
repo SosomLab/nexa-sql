@@ -26,7 +26,7 @@ pub mod vars;
 
 pub use bind::{extract_binds, BindRef};
 pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, SpoolMode};
-pub use connect::ConnectSpec;
+pub use connect::{ConnEnv, ConnectSpec};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine};
 pub use split::statement_at;
