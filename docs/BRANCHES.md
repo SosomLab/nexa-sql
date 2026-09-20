@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/mac-hangul-app-compose | 2026-09-20 | 2026-09-21 → main(삭제) | 5 | 86~87차(mac) — ★ T-139 한글 앱 조합 · 분할기 방언 결함(`split_script_in`) · 62 맥 점검 · T-148 보완 다섯(`SHOW ERRORS` 등) · T-147 IOSurface 화면 내보내기(`present.rs` · `gfx.mac_present`) · 결정 번호 중복 정리 |
 | docs/portable-rules | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | 85차 — docs 61(핵심 설계·작업 규칙·OS별 차이 — 다른 PC에서 이어 가기) · CLAUDE.md 세션 공통 규칙 · 검증 스크립트 둘 |
 | docs/status-refresh-84 | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | 84차 마감 정리 — CLAUDE.md "현 단계" · MILESTONES M2 09-19~20 묶음 · CI 실패 표시(T-146) |
 | feat/textbuf-undo-followups | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | ★ 83~84차 — 되돌리기 재설계(연산 기록) · 대용량 파일(큰 파일 모드 · 열기 선택 · 탭 격리 적재) · **편집 버퍼 교체 T-142**(`TextBuf`) · 되돌리기 후속 넷(D-129~132 · `undofile.rs`) · 확장 뷰 탭 · 탐색기 계층형 새로 고침 · 로그인 표식 · docs 59 §5·§6 · 60 |

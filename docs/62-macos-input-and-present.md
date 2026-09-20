@@ -48,6 +48,19 @@
 표본(`sample`)에 `vImage` 색 변환(`vLookupTable_Planar8toPlanar16` · `vMatrixMultiply_Planar16S` · `vConvert_Planar16Q12toRGB888`)이 잡힌다 = CoreAnimation이 **프레임마다 21 MB를 CPU로 색 변환**한다. 키 하나 = 45 ms ≈ 22 fps가 상한이라, 55 §1~8에서 줄인 편집기 비용(1.6 ms)과 무관하게 맥에서는 느리다.
 결정이 필요해 실험 패치는 되돌렸다(**D-133** · T-147): ① softbuffer 포크/패치로 디스플레이 색 공간(가장 작음 · sRGB 값을 P3로 그대로 보내 색이 약간 진해짐) ② 자체 내보내기(IOSurface 배경 레이어 + 색 공간 태그 = GPU 색 맞춤 · 복사 0 · 색 정확 — T-136 D6과 같은 일) ③ 그대로.
 
+### 2-1. 구현(09-21 · 87차 · T-147 · D-133 ②) — 자체 IOSurface 내보내기(선택 사항)
+
+- nexa-ui **nexa-sys `layer_present::LayerPresenter`**(의존 0 · 수동 FFI): 표면 풀(≤ 3 · 합성기가 쥔 장은 `IOSurfaceIsInUse`로 피함) → 프레임마다 할당 0 · **sRGB 색 공간 태그**(색 맞춤 = 합성기) · 레이어 배치는 softbuffer와 같다.
+- nexa-sql **`present.rs` `Presenter`/`Buffer`**(모양 = `softbuffer::Surface`) — 창 11곳(메인 · 로그인 · 파일 · 설정 · 색 · 단축키 · 로그 · 트랜잭션 로그 · 세션 · 툴바 플로팅)이 이 타입 하나로 낸다 · 설정 **`gfx.mac_present`** = `softbuffer`(기본) / `iosurface` · 순수 판정 `use_layer`(MC/DC) · 만들기 실패 = 조용히 softbuffer · 새로 여는 창부터(메인 = 재시작 뒤) · `NSQL_TRACE_FRAMES`가 뒷단 이름을 찍는다.
+- **함정 둘(실측 · Intel i9-9980HK + AMD)**: ① 'BGRA' 표면의 알파 0 = **투명**(창이 하얗다) → present 때 0xFF 채움 ② 행 바이트를 `폭 × 4`(11000)로 강제하면 표면은 만들어지지만 **합성기가 그리지 않는다** → OS 기본 정렬(11008)에 맡기고, 다르면 중간 버퍼에서 행 단위로(같으면 표면에 직접).
+
+| Release · 2750×1890px · 같은 장면 | 프레임 평균 | present | 유휴 CPU(30초) | 풋프린트 |
+|---|---|---|---|---|
+| softbuffer(기본) | 51.2 ms | 36.2 ms | 3.1초 | 74 MB |
+| **iosurface** | **16.0 ms** | **2.9 ms** | **0.9초** | 94 MB(표면 3 + 중간 버퍼 21 MB) |
+
+메인 · 로그인 · 로그 창 캡처로 표시 확인. 기본값을 바꾸지 않은 까닭: 이 기기 한 대에서만 확인했고(Apple Silicon 미확인) 실패 모양이 "빈 창"이라 치명적이다 → **D-133 = 기본 전환 여부**로 남긴다. 남은 것: `nexa-gfx::Surface` 행 간격(stride) → 중간 버퍼·복사 제거 · 유휴 때 풀 줄이기 · 크기 조절 중 실기.
+
 ## 3. 메모리 (Release · 격리 폴더 · SQLite 접속 · `footprint`/`ps` 3회 표본)
 
 | # | 상태 | footprint | RSS | 피크 footprint | Windows Private(26 §7-3) |
@@ -92,12 +105,12 @@
 
 - `SHOW ERRORS` = "unsupported"(우리 예제 `examples/oracle-refcursor-pkg.sql`도 쓴다) → T-148.
 - `nsql run` 종료 코드: 도움말은 "실패한 항목 수"였지만 구현은 0/1/2 → **문구를 구현에 맞춤**(도움말 · 40).
-- `sqlite:////abs`(슬래시 4개)는 앞 `//`를 되풀이 벗겨 상대 경로가 된다 · 접속 전 SQLite 오류가 기본 방언 표기 `[ORA-00014]`로 보인다 → T-148.
+- `sqlite:////abs`(슬래시 4개)는 앞 `//`를 되풀이 벗겨 상대 경로가 된다 · 접속 전 SQLite 오류가 기본 방언 표기 `[ORA-00014]`로 보인다 → T-148 · **✅ 09-21**(`sqlite_path` = 한 번만 벗김 · CLI `printer.dialect` = 대상 방언 · GUI `sessions::error_dialect` MC/DC → `[SQLITE 14 …]`).
 - 시작 인자로 접속하면 탐색기 루트 이름이 프로필 이름이 아니라 `host:port`.
 
 ## 6. 결정 대기
 
 | # | 결정 | 권장 |
 |---|---|---|
-| **D-133** | 맥 화면 내보내기(§2) — ① softbuffer 디스플레이 색 공간 패치 ② 자체 IOSurface 내보내기(T-136 D6과 함께) ③ 그대로 | **②**(색 정확 + 복사 0 + 메모리 2~3벌 해소) · 급하면 ①을 설정으로 |
+| **D-133** | 맥 화면 내보내기(§2) — ① softbuffer 디스플레이 색 공간 패치 ② 자체 IOSurface 내보내기(T-136 D6과 함께) ③ 그대로 → **② 구현됨(09-21 · §2-1 · 설정 `gfx.mac_present`)** · 남은 질문 = **기본값을 `iosurface`로 바꿀 것인가** | 며칠 써 보고 이상 없으면 전환(present 36 → 2.9 ms) · Apple Silicon 확인 뒤 |
 | **D-134** | `input.hangul_compose` 기본값 — auto(권장 · 구현됨) / system | auto |

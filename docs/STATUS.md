@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-21 (87차 · mac) — 🔧 **86차 보완 전부**(T-148 ✅ `SHOW ERRORS` · `sqlite:////` · 오류 표기 방언 · 루트 이름 · `NSQL_TRACE_MEM` 맥) · ★ **T-147 맥 화면 내보내기 🚧**(IOSurface · `gfx.mac_present` · present 36.2 → **2.9 ms** · 프레임 51 → 16 ms · 기본은 softbuffer — **D-133 = 기본 전환 여부**) · 결정 번호 중복 정리 · 테스트 334 · **다음 = ★ 변수 관리 기능(조사 → 설계 → 결정 질문 → 구현)** → [journal](journal/2026-09-21.md)
+
 ## 2026-09-20 (86차 · mac) — ★ **T-139 맥 한글 입력 ✅**(앱 조합 · 전 입력란 `가나다1234 가나다!@#$` 자동 검증) · 🔧 **분할기 방언 결함**(SQLite 트리거/`BEGIN;` 뒤 문장이 오류 없이 미실행 → `split_script_in`) · 전 객체 유형 DDL(Oracle 19c · SQLite) 생성·수정·삭제 자동 시험(스냅숏 1,649개 일치) · 📐 맥 present 37 ms = 색 공간 변환(D-133 · T-147) · 메모리 mac 점검 → [62](62-macos-input-and-present.md) · 미커밋
 
 ## 2026-09-20 (85차 · win) — 📘 **[61 핵심 설계와 작업 규칙](61-core-design-and-working-rules.md)**(다른 PC·맥에서 그대로 이어 가기 — 편집기 불변식 ①~⑦ · 작업·검증·격리 규칙 · Windows ↔ macOS 차이 · 맥에서 처음 할 일) · CLAUDE.md §3 세션 공통 규칙(로컬 메모리 → 저장소) · 검증 스크립트 저장소 편입(`win-burst-capture` · `win-big-probe`) → [journal](journal/2026-09-20.md)

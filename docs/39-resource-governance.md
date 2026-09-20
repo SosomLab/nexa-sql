@@ -74,6 +74,7 @@
 | 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout` | — | — | — | `worker::ensure_alive` |
 | TCP keepalive 빈 세그먼트(PG·MSSQL · 53) | 60s | `net.keepalive_secs`(0 = 끔) | — | — | — | 드라이버 `set_keepalive_secs` |
 | 메모리 회수(힙 → OS · 보이지 않는 탭의 그리기 캐시 해제 · 59 §2) | 큰 것을 놓은 1초 뒤 1회 + 유휴 300s(수 ms · UI 스레드) | `mem.trim_on_release` · `mem.trim_secs`(0 = 끔) · `mem.release_results_on_disconnect` | 300 | 300 | 300 | `App::mem_tick` · `memtrim.rs` |
+| macOS 화면 내보내기 표면 풀(IOSurface ≤ 3장 × 창 픽셀 × 4 B + 폭이 16px 배수가 아니면 중간 버퍼 1장 · 62 §2-1) | 창마다 ≤ 4벌(레티나 메인 창 ≈ 21 MB/장) | `gfx.mac_present`(`softbuffer` = 끔 = 기본) | softbuffer | softbuffer | softbuffer | `present.rs` · nexa-sys `layer_present` |
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
