@@ -9215,10 +9215,12 @@ impl App {
                     });
                     // ★ 같은 문장이 결과를 둘 이상 냈으면(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합) 두 번째부터는
                     //   딸린 결과 탭으로 — 종전에는 같은 그리드를 덮어써 마지막 것만 남았다(09-21).
+                    let same_stmt = self.sess.run_set_stmt == Some(index);
                     let slot = sessions::extra_result_slot(
                         self.sess.run_set_stmt,
                         index,
                         self.sess.run_children,
+                        self.settings.flag("grid.result_per_statement"),
                     );
                     self.sess.run_set_stmt = Some(index);
                     let k = match slot {
@@ -9228,8 +9230,8 @@ impl App {
                         }
                         None => self.sess.run_tab,
                     };
-                    // 이름 있는 결과(커서 변수)나 딸린 탭은 조회 문장 하나로 다시 만들 수 없다 → 건수·재질의 불가.
-                    let is_query = is_query && slot.is_none() && label.is_none();
+                    // 이름 있는 결과(커서 변수)나 같은 문장의 추가 결과는 조회 문장 하나로 다시 만들 수 없다 → 건수·재질의 불가.
+                    let is_query = is_query && !(same_stmt && slot.is_some()) && label.is_none();
                     if let Some(g) = self.grid_for(k) {
                         g.set_result(rs);
                         g.set_more(more);
@@ -9241,7 +9243,8 @@ impl App {
                     self.retitle_result(k);
                     if let Some(name) = label {
                         self.title_result_as(k, &name);
-                    } else if let Some(ord) = slot {
+                    } else if let (Some(ord), true) = (slot, same_stmt) {
+                        // 같은 문장의 이름 없는 추가 결과(암묵 결과 · 다중 결과 집합) = "제목 (n)" · 다른 문장의 결과는 제 SQL에서 제목을 얻었다.
                         let base = self.result_title(self.sess.run_tab);
                         self.title_result_as(k, &format!("{base} ({})", ord + 2));
                     }

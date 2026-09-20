@@ -915,6 +915,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 1, max: 64 },
         default: "8",
     },
+    // D-138(09-21): 스크립트 전체 실행의 조회가 여럿이면 문장마다 결과 탭(상한 `grid.result_tabs_max` 안 · 재실행 = 같은 자리 재사용).
+    // 끄면 종전처럼 마지막 결과가 시작 탭을 덮는다(같은 문장의 커서 여러 개는 늘 탭으로 나뉜다).
+    Entry {
+        key: "grid.result_per_statement",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridResultPerStatement,
+        desc: Msg::DescGridResultPerStatement,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "grid.result_tab_evict",
         cat: Msg::CatGrid,

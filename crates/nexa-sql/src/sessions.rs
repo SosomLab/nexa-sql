@@ -535,14 +535,19 @@ pub(crate) enum DisconnectPlan {
 /// 한 실행 안에서 도착한 결과 집합을 어느 결과 탭에 둘 것인가.
 /// `None` = 실행을 시작한 탭(종전) · `Some(n)` = n번째 딸린 탭(0부터).
 ///
-/// 규칙: **같은 문장이 두 번째 이후로 낸 결과**만 딸린 탭으로 간다(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합).
-/// 다른 문장의 결과는 종전처럼 시작 탭을 덮는다(문장별 탭은 별도 결정). `children` = 이번 실행에서 이미 쓴 딸린 탭 수.
+/// 규칙: 이번 실행의 **첫 결과**는 늘 시작 탭 · 그 뒤로는 ① **같은 문장이 또 낸 결과**(REF CURSOR 여러 개 · 암묵 결과 · 다중
+/// 결과 집합)는 늘 딸린 탭 ② **다른 문장의 결과**는 `per_statement`(설정 `grid.result_per_statement` · D-138)일 때만 딸린 탭,
+/// 아니면 종전처럼 시작 탭을 덮는다. `children` = 이번 실행에서 이미 쓴 딸린 탭 수.
 pub(crate) fn extra_result_slot(
     last_stmt: Option<usize>,
     stmt: usize,
     children: u32,
+    per_statement: bool,
 ) -> Option<u32> {
-    (last_stmt == Some(stmt)).then_some(children)
+    match last_stmt {
+        None => None,
+        Some(last) => (last == stmt || per_statement).then_some(children),
+    }
 }
 
 /// 오류 코드 표기에 쓸 방언 — 접속돼 있으면 세션의 방언 · **아직 아니면 붙으려던 대상의 방언**.
@@ -759,18 +764,24 @@ pub(crate) fn ddl_waits_for_commit(transactional: bool, autocommit: bool, on_com
 
 #[cfg(test)]
 mod tests {
-    /// 딸린 결과 탭 판정 — 같은 문장의 두 번째 결과부터만.
+    /// 딸린 결과 탭 판정(MC/DC) — 첫 결과인가 · 같은 문장인가 · 문장마다 탭 설정인가.
     #[test]
     fn extra_result_slot_rules() {
         use super::extra_result_slot as f;
-        assert_eq!(f(None, 0, 0), None, "첫 결과 = 시작 탭");
+        assert_eq!(f(None, 0, 0, true), None, "첫 결과 = 시작 탭(설정과 무관)");
+        assert_eq!(f(None, 0, 0, false), None);
+        assert_eq!(f(Some(0), 0, 0, false), Some(0), "같은 문장의 두 번째 결과");
+        assert_eq!(f(Some(0), 0, 1, false), Some(1), "세 번째 = 둘째 딸린 탭");
         assert_eq!(
-            f(Some(0), 0, 0),
-            Some(0),
-            "같은 문장의 두 번째 결과 = 첫 딸린 탭"
+            f(Some(0), 1, 1, false),
+            None,
+            "다른 문장 · 설정 끔 = 덮는다(종전)"
         );
-        assert_eq!(f(Some(0), 0, 1), Some(1), "세 번째 = 둘째 딸린 탭");
-        assert_eq!(f(Some(0), 1, 1), None, "다른 문장 = 시작 탭(종전)");
+        assert_eq!(
+            f(Some(0), 1, 1, true),
+            Some(1),
+            "다른 문장 · 설정 켬 = 딸린 탭(D-138)"
+        );
     }
 
     /// 오류 표기 방언(MC/DC) — 조건 둘(접속됨 · 대상 방언 있음)이 각각 혼자 결과를 바꾼다.
