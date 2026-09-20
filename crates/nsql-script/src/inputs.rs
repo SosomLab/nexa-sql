@@ -9,7 +9,7 @@
 //!
 //! 남는 것 = 보통 SQL(조회·DML)이 **읽기만** 하는, 표에도 없고 앞에서 대입되지도 않은 이름 — 대개 오타나 빠진 입력이다.
 
-use crate::bind::{extract_binds, unique_names};
+use crate::bind::{extract_binds, extract_binds_with, unique_names};
 use crate::call::call_shape;
 use crate::command::Command;
 use crate::lexer::{classify, Class};
@@ -40,7 +40,11 @@ pub struct InputNeed {
 /// 글에서 치환 변수 참조 이름(대문자)을 나온 순서대로 — [`crate::Engine::substitute`]와 같은 규칙(주석 안 제외).
 #[must_use]
 pub fn macro_refs(text: &str, define_char: char) -> Vec<String> {
-    let classes = classify(text);
+    macro_refs_with(text, &classify(text), define_char)
+}
+
+/// [`macro_refs`] — 분류를 이미 가진 호출자용.
+fn macro_refs_with(text: &str, classes: &[Class], define_char: char) -> Vec<String> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -96,6 +100,13 @@ pub(crate) fn into_targets(sql: &str) -> Vec<String> {
         .collect()
 }
 
+/// 글에 `INTO`(대소문자 무시)가 들어 있는가 — 값싼 사전 검사(정확한 판정은 [`into_targets`]).
+fn has_word_into(text: &str) -> bool {
+    text.as_bytes()
+        .windows(4)
+        .any(|w| w.eq_ignore_ascii_case(b"INTO"))
+}
+
 /// 실행 전에 빠진 입력을 찾는다. `vars` = 지금 표(탭 + 공유 + 프로필) · `defines` = 지금 치환 변수 · `define_char` = `SET DEFINE`
 /// (`None` = 치환 끔) · `args` = `&1..`로 넘어온 인자 수.
 #[must_use]
@@ -106,12 +117,25 @@ pub fn missing_inputs(
     defines: &BTreeMap<String, String>,
     define_char: Option<char>,
 ) -> Vec<InputNeed> {
+    // ★ 빠른 길(docs/63 §4 계측): 바인드 글자(`:`)도 치환 글자도 없는 스크립트는 나눌 필요조차 없다(덤프·DDL 묶음).
+    let has_colon = src.as_bytes().contains(&b':');
+    let has_macro = define_char.is_some_and(|c| src.contains(c));
+    if !has_colon && !has_macro {
+        return Vec::new();
+    }
     let mut assigned: BTreeSet<String> = BTreeSet::new();
     let mut defined: BTreeSet<String> = defines.keys().cloned().collect();
     let mut seen: BTreeSet<(bool, String)> = BTreeSet::new();
     let mut out = Vec::new();
     let mut define = define_char;
     for item in split_script_in(src, dialect) {
+        // 이 문장에 볼 것이 있는가 — 없으면 토큰화하지 않는다 · 있으면 **한 번만** 토큰화해 두 훑기가 같이 쓴다.
+        let item_colon = item.text.as_bytes().contains(&b':');
+        let item_macro = define.is_some_and(|c| item.text.contains(c));
+        if !item_colon && !item_macro && matches!(item.kind, ItemKind::Sql(_)) {
+            continue;
+        }
+        let classes = classify(&item.text);
         // ① 치환 변수 — 명령이든 SQL이든 글 전체에서(치환이 가장 먼저 돈다).
         if let Some(ch) = define {
             // `DEFINE x = …`·`UNDEFINE x`·`ACCEPT` 줄의 이름 자리는 참조가 아니다.
@@ -119,8 +143,9 @@ pub fn missing_inputs(
                 &item.kind,
                 ItemKind::Command(Command::Define { .. } | Command::Undefine { .. })
             );
-            if !is_def_cmd {
-                for name in macro_refs(&item.text, ch) {
+            // 치환 글자가 없는 문장은 분류(토큰화)하지 않는다.
+            if !is_def_cmd && item_macro {
+                for name in macro_refs_with(&item.text, &classes, ch) {
                     if !defined.contains(&name) && seen.insert((true, name.clone())) {
                         out.push(InputNeed {
                             kind: InputKind::Macro,
@@ -131,7 +156,10 @@ pub fn missing_inputs(
                 }
             }
         }
-        // ② 이 문장이 만드는 것 · 읽는 것.
+        // ② 이 문장이 만드는 것 · 읽는 것 — `:`가 없는 SQL 문장은 바인드도 없다(명령은 선언·정의를 위해 그대로 본다).
+        if matches!(item.kind, ItemKind::Sql(_)) && !item_colon {
+            continue;
+        }
         let mut reads: Vec<String> = Vec::new();
         match &item.kind {
             ItemKind::Invalid(_) => {}
@@ -192,8 +220,14 @@ pub fn missing_inputs(
                 }
             }
             ItemKind::Sql(_) => {
-                let targets: BTreeSet<String> = into_targets(&item.text).into_iter().collect();
-                for b in unique_names(&extract_binds(&item.text)) {
+                let binds = unique_names(&extract_binds_with(&item.text, &classes));
+                // 받는 쪽(`INTO`)은 드물다 — 글자가 있을 때만 찾는다.
+                let targets: BTreeSet<String> = if binds.is_empty() || !has_word_into(&item.text) {
+                    BTreeSet::new()
+                } else {
+                    into_targets(&item.text).into_iter().collect()
+                };
+                for b in binds {
                     if targets.contains(&b) {
                         assigned.insert(b);
                     } else {

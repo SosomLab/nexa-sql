@@ -14,8 +14,12 @@ pub struct BindRef {
 }
 
 pub fn extract_binds(sql: &str) -> Vec<BindRef> {
+    extract_binds_with(sql, &classify(sql))
+}
+
+/// [`extract_binds`] — 분류를 이미 가진 호출자용(같은 글을 두 번 토큰화하지 않게 · docs/63 §4 계측).
+pub fn extract_binds_with(sql: &str, classes: &[Class]) -> Vec<BindRef> {
     let b = sql.as_bytes();
-    let classes = classify(sql);
     let mut out = Vec::new();
     let mut i = 0;
     // 대괄호 깊이 — PostgreSQL 배열 조각 `a[1:3]` · `a[:n]`의 `:`는 바인드가 아니다(Oracle에는 대괄호 문법이 없고,

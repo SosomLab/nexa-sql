@@ -26,6 +26,14 @@ fn runner_for(env: &str, dialect: Dialect) -> Option<Runner> {
     Some(r)
 }
 
+/// 오류가 나도 되는 실행 — (오류 수, 사건). 정책 시험(0행·여러 행 = 오류)이 쓴다.
+fn run_raw(r: &mut Runner, src: &str) -> (usize, Vec<RunEvent>) {
+    let mut ev = Vec::new();
+    let mut no_prompt = |_: &str| None;
+    let errs = r.run_script(src, &mut no_prompt, &mut |e| ev.push(e));
+    (errs, ev)
+}
+
 fn run(r: &mut Runner, src: &str) -> Vec<RunEvent> {
     let mut ev = Vec::new();
     let mut no_prompt = |_: &str| None;
@@ -127,64 +135,57 @@ fn mssql_select_into_row_guard() {
     let Some(mut r) = runner_for("NSQL_MSSQL_URL", Dialect::Mssql) else {
         return;
     };
-    let errors = |ev: &[RunEvent]| {
-        ev.iter()
-            .filter(|e| matches!(e, RunEvent::Error { .. }))
-            .count()
-    };
-    let ev = run(&mut r, "EXEC SELECT 7 INTO :V_ONE\n");
-    // FROM 없는 SELECT는 재작성 대상이 아니다(그대로 EXEC) — 아래 세 줄이 본 시험.
-    let _ = ev;
-    let ev = run(
+    let (errs, ev) = run_raw(
         &mut r,
         "EXEC SELECT TOP 1 object_id INTO :V_ID FROM sys.objects ORDER BY object_id\n",
     );
-    assert_eq!(errors(&ev), 0, "{ev:#?}");
-    let ev = run(
+    assert_eq!(errs, 0, "{ev:#?}");
+    let kept = r.engine.vars.get("V_ID").unwrap().value.clone();
+    let (errs, ev) = run_raw(
         &mut r,
         "EXEC SELECT object_id INTO :V_ID FROM sys.objects WHERE 1 = 0\n",
     );
-    assert_eq!(errors(&ev), 1, "0행 = 오류: {ev:#?}");
-    let ev = run(
+    assert_eq!(errs, 1, "0행 = 오류: {ev:#?}");
+    let (errs, ev) = run_raw(
         &mut r,
         "EXEC SELECT object_id INTO :V_ID FROM sys.objects\n",
     );
-    assert_eq!(errors(&ev), 1, "여러 행 = 오류: {ev:#?}");
+    assert_eq!(errs, 1, "여러 행 = 오류: {ev:#?}");
+    assert_eq!(
+        r.engine.vars.get("V_ID").unwrap().value,
+        kept,
+        "오류면 변수는 그대로"
+    );
 }
 
 /// D-139(OUT 바인드 없는 방언): PostgreSQL `EXEC SELECT … INTO` = 자리 순서로 받고 0행·여러 행은 오류.
 #[test]
 fn pg_select_into_row_policy() {
-    let Some(mut r) = runner_for("NSQL_POSTGRES_URL", Dialect::Postgres) else {
+    let Some(mut r) = runner_for("NSQL_PG_URL", Dialect::Postgres) else {
         return;
     };
-    let errors = |ev: &[RunEvent]| {
-        ev.iter()
-            .filter(|e| matches!(e, RunEvent::Error { .. }))
-            .count()
-    };
-    let ev = run(
+    let (errs, ev) = run_raw(
         &mut r,
         "EXEC SELECT 1, 'x' INTO :A, :B FROM generate_series(1, 1)\nEXEC :N := (SELECT count(*) FROM generate_series(1, 5))\n",
     );
-    assert_eq!(errors(&ev), 0, "{ev:#?}");
+    assert_eq!(errs, 0, "{ev:#?}");
     assert_eq!(
         r.engine.vars.get("B").unwrap().value,
         Value::Str("x".into())
     );
-    let ev = run(
+    let (errs, ev) = run_raw(
         &mut r,
         "EXEC SELECT g INTO :A FROM generate_series(1, 3) g\n",
     );
-    assert_eq!(errors(&ev), 1, "여러 행 = 오류: {ev:#?}");
-    let ev = run(
+    assert_eq!(errs, 1, "여러 행 = 오류: {ev:#?}");
+    let (errs, ev) = run_raw(
         &mut r,
         "EXEC SELECT g INTO :A FROM generate_series(1, 3) g WHERE g > 9\n",
     );
-    assert_eq!(errors(&ev), 1, "0행 = 오류: {ev:#?}");
+    assert_eq!(errs, 1, "0행 = 오류: {ev:#?}");
     // 배열 조각의 `:`는 바인드가 아니다.
-    let ev = run(&mut r, "SELECT (ARRAY[1,2,3,4])[2:3] AS s;\n");
-    assert_eq!(errors(&ev), 0, "{ev:#?}");
+    let (errs, ev) = run_raw(&mut r, "SELECT (ARRAY[1,2,3,4])[2:3] AS s;\n");
+    assert_eq!(errs, 0, "{ev:#?}");
 }
 
 #[test]
