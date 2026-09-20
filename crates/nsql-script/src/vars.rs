@@ -65,6 +65,39 @@ impl VarStore {
         }
     }
 
+    /// 타입 힌트(루틴 서명에서 읽은 타입) — **선언하지 않았고 아직 타입이 정해지지 않은**(`Auto`) 변수에만 적용하고,
+    /// 없으면 `NULL` 값으로 만든다(선언 아님 = `declared: false`). 돌려주는 값 = 적용했는가.
+    pub fn hint_type(&mut self, name: &str, ty: VarType) -> bool {
+        let key = norm(name);
+        match self.vars.get_mut(&key) {
+            Some(v) if v.declared || v.ty != VarType::Auto => false,
+            Some(v) => {
+                v.ty = ty;
+                true
+            }
+            None => {
+                self.vars.insert(
+                    key,
+                    Var {
+                        ty,
+                        value: Value::Null,
+                        declared: false,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// 서명 추론이 필요한가 — 없는 이름이거나, 선언하지 않았고 타입이 `Auto`이며 값이 없는 변수.
+    #[must_use]
+    pub fn needs_type(&self, name: &str) -> bool {
+        match self.vars.get(&norm(name)) {
+            None => true,
+            Some(v) => !v.declared && v.ty == VarType::Auto && v.value == Value::Null,
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<&Var> {
         self.vars.get(&norm(name))
     }

@@ -903,6 +903,77 @@ fn table_ddl(s: &mut dyn Session, schema: &str, name: &str) -> Result<String, Db
 
 // ───────────────────────────────────────────── 컴파일 오류
 
+/// 저장 루틴의 인자 하나(`position` 0 = 함수 반환값 · `name`은 대문자 · 반환값이면 빈 글).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoutineArg {
+    pub overload: String,
+    pub position: i64,
+    pub name: String,
+    /// 서버가 말한 타입 글자(`REF CURSOR` · `NUMBER` · `VARCHAR2` …).
+    pub data_type: String,
+    /// `IN` | `OUT` | `IN/OUT`.
+    pub in_out: String,
+}
+
+/// 호출 이름(`proc` · `pkg.proc` · `schema.proc` · `schema.pkg.proc`)의 인자 목록 — **선언 없이 쓴 바인드의 타입을 서명에서
+/// 정하려고**(REF CURSOR OUT을 문자열로 바인드하면 PLS-00306 · 변수 관리 09-21). 지금은 Oracle(`ALL_ARGUMENTS`)만 · 그 외 = 빈 목록.
+/// 이름이 여러 해석에 맞으면 전부 돌려준다(호출자가 인자 수·이름으로 오버로드를 고른다). 동의어는 풀지 않는다.
+pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
+    if s.dialect() != Dialect::Oracle {
+        return Ok(Vec::new());
+    }
+    let parts: Vec<String> = call_name
+        .split('.')
+        .map(|p| p.trim().trim_matches('"').to_ascii_uppercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let schema = current_schema(s).unwrap_or_default();
+    // (소유자, 패키지 또는 없음, 객체) 후보.
+    let mut cands: Vec<(String, Option<String>, String)> = Vec::new();
+    match parts.as_slice() {
+        [n] => cands.push((schema, None, n.clone())),
+        [a, b] => {
+            cands.push((schema, Some(a.clone()), b.clone()));
+            cands.push((a.clone(), None, b.clone()));
+        }
+        [a, b, c] => cands.push((a.clone(), Some(b.clone()), c.clone())),
+        _ => return Ok(Vec::new()),
+    }
+    let cond: Vec<String> = cands
+        .iter()
+        .map(|(o, p, n)| {
+            let pkg = match p {
+                Some(p) => format!("package_name = {}", lit(p)),
+                None => "package_name IS NULL".to_string(),
+            };
+            format!(
+                "(owner = {} AND {pkg} AND object_name = {})",
+                lit(o),
+                lit(n)
+            )
+        })
+        .collect();
+    let sql = format!(
+        "SELECT NVL(overload, '0'), position, NVL(argument_name, ' '), data_type, in_out \
+         FROM all_arguments WHERE data_level = 0 AND ({}) ORDER BY owner, package_name, overload, position",
+        cond.join(" OR ")
+    );
+    let rs = query(s, &sql)?;
+    Ok(rs
+        .rows
+        .iter()
+        // 인자 없는 루틴은 `data_type`이 빈 자리표시 행 하나로 온다.
+        .filter(|r| !col(r, 3).trim().is_empty())
+        .map(|r| RoutineArg {
+            overload: col(r, 0),
+            position: r.get(1).map(cell_i64).unwrap_or(0),
+            name: col(r, 2).trim().to_ascii_uppercase(),
+            data_type: col(r, 3).trim().to_ascii_uppercase(),
+            in_out: col(r, 4).trim().to_ascii_uppercase(),
+        })
+        .collect())
+}
+
 /// 컴파일 오류(Oracle `ALL_ERRORS` — 그 외 방언은 실행 오류가 곧 컴파일 오류라 빈 목록).
 pub fn compile_errors(
     s: &mut dyn Session,

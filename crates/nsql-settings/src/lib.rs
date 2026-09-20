@@ -2437,6 +2437,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // REF CURSOR 자동 표시(09-21): `VAR rc REFCURSOR` + `EXEC proc(:rc)` 뒤 커서를 바로 결과 탭으로(둘 이상이면 각각) · 끄면 `PRINT rc`.
+    Entry {
+        key: "run.cursor_autoshow",
+        cat: Msg::CatSession,
+        label: Msg::LblCursorAutoshow,
+        desc: Msg::DescCursorAutoshow,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ── 스크립트 엔진 엄격 모드(T-9 · 09-16) — 배치에서 미정의 &var·암묵 :bind를 오류로. 자주 안 바꾸므로 HIDDEN(`nsql config list all`).
     Entry {
         key: "script.strict",

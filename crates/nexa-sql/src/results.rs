@@ -28,6 +28,9 @@ pub(crate) struct ResultTab {
     pub grid: Grid,
     /// 생성 순서(자동 정리 = 가장 오래된 비고정 탭).
     pub seq: u64,
+    /// ★ 한 문장이 결과를 둘 이상 냈을 때(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합)의 **딸린 탭**:
+    /// `(실행을 시작한 탭 id, 몇 번째 추가 결과인가)` — 다시 실행하면 같은 자리를 재사용하고, 이번 실행에서 안 쓰인 것은 걷는다.
+    pub child_of: Option<(u64, u32)>,
 }
 
 /// 호스트가 처리할 패널 동작.
@@ -346,6 +349,7 @@ mod tests {
             named: false,
             grid: Grid::default(),
             seq,
+            child_of: None,
         }
     }
 

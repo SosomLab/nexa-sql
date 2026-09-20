@@ -123,6 +123,12 @@ pub(crate) struct Sess {
     // 실행 하나의 상태.
     pub run_editor: u64,
     pub run_tab: u64,
+    /// 이번 실행에서 마지막으로 결과를 낸 문장 번호 — 같은 문장이 결과를 또 내면 딸린 결과 탭으로 보낸다([`extra_result_slot`]).
+    pub run_set_stmt: Option<usize>,
+    /// 이번 실행에서 쓴 딸린 결과 탭 수(실행이 끝나면 이보다 뒤의 것은 걷는다).
+    pub run_children: u32,
+    /// 지금 끝나기를 기다리는 작업이 **스크립트 실행**인가(접속·커밋의 완료 신호와 구별).
+    pub run_tracking: bool,
     pub last_run_items: Vec<String>,
     pub run_line_base: usize,
     pub single_run: bool,
@@ -192,6 +198,9 @@ impl Sess {
             stateful: false,
             run_editor: 0,
             run_tab: 0,
+            run_set_stmt: None,
+            run_children: 0,
+            run_tracking: false,
             last_run_items: Vec::new(),
             run_line_base: 0,
             single_run: false,
@@ -523,6 +532,19 @@ pub(crate) enum DisconnectPlan {
     SharedAsk,
 }
 
+/// 한 실행 안에서 도착한 결과 집합을 어느 결과 탭에 둘 것인가.
+/// `None` = 실행을 시작한 탭(종전) · `Some(n)` = n번째 딸린 탭(0부터).
+///
+/// 규칙: **같은 문장이 두 번째 이후로 낸 결과**만 딸린 탭으로 간다(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합).
+/// 다른 문장의 결과는 종전처럼 시작 탭을 덮는다(문장별 탭은 별도 결정). `children` = 이번 실행에서 이미 쓴 딸린 탭 수.
+pub(crate) fn extra_result_slot(
+    last_stmt: Option<usize>,
+    stmt: usize,
+    children: u32,
+) -> Option<u32> {
+    (last_stmt == Some(stmt)).then_some(children)
+}
+
 /// 오류 코드 표기에 쓸 방언 — 접속돼 있으면 세션의 방언 · **아직 아니면 붙으려던 대상의 방언**.
 /// 접속 실패는 `Connected`보다 먼저 오므로 세션 방언(기본 Oracle · 또는 직전 서버)으로 분류하면 SQLite 실패가
 /// `[ORA-00014]`로 보인다(86차 mac 점검 · T-148).
@@ -737,6 +759,20 @@ pub(crate) fn ddl_waits_for_commit(transactional: bool, autocommit: bool, on_com
 
 #[cfg(test)]
 mod tests {
+    /// 딸린 결과 탭 판정 — 같은 문장의 두 번째 결과부터만.
+    #[test]
+    fn extra_result_slot_rules() {
+        use super::extra_result_slot as f;
+        assert_eq!(f(None, 0, 0), None, "첫 결과 = 시작 탭");
+        assert_eq!(
+            f(Some(0), 0, 0),
+            Some(0),
+            "같은 문장의 두 번째 결과 = 첫 딸린 탭"
+        );
+        assert_eq!(f(Some(0), 0, 1), Some(1), "세 번째 = 둘째 딸린 탭");
+        assert_eq!(f(Some(0), 1, 1), None, "다른 문장 = 시작 탭(종전)");
+    }
+
     /// 오류 표기 방언(MC/DC) — 조건 둘(접속됨 · 대상 방언 있음)이 각각 혼자 결과를 바꾼다.
     #[test]
     fn error_dialect_mcdc() {

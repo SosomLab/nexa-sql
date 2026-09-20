@@ -41,11 +41,13 @@ pub enum RunEvent {
         summary: String,
     },
     /// 조회 결과. `more` = 페치 상한(`Runner::max_rows`)에서 잘렸다(서버에 행이 더 있다).
+    /// `label` = 이 결과의 이름(REF CURSOR 변수 이름 등 · 호스트가 결과 탭 제목·머리줄로 쓴다 · 보통 조회는 `None`).
     ResultSet {
         index: usize,
         rs: ResultSet,
         elapsed: Duration,
         more: bool,
+        label: Option<String>,
     },
     /// 수동 커밋 모드에서 **변경 없는 트랜잭션을 러너가 끝냈다**(docs/56 L1 · `deferred` = 열린 커서가 닫힐 때 끝난다).
     ReadTxEnded {
@@ -313,6 +315,10 @@ pub struct Runner {
     tx_changed: bool,
     /// 사용자가 직접 트랜잭션을 열었거나 잠금을 잡았는가(자동 종료 제외 근거).
     tx_user: bool,
+    /// 루틴 서명 캐시(호출 이름 대문자 → 인자 목록) — 선언 없는 바인드의 타입 추론용 · DDL 실행·접속에서 비운다.
+    sig_cache: std::collections::HashMap<String, Vec<nsql_catalog::RoutineArg>>,
+    /// 실행 뒤 돌아온 REF CURSOR를 바로 결과 집합으로 보여 주는가(설정 `run.cursor_autoshow` · 기본 켬).
+    pub auto_cursor: bool,
     /// 러너가 수동 모드를 위해 연 트랜잭션이 살아 있는가([`manual_begin_sql`] · 커밋/롤백/접속에서 내림).
     tx_open: bool,
 }
@@ -361,6 +367,17 @@ fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) -> bool {
             true
         }
         None => false,
+    }
+}
+
+/// 서버 타입 글자 → 변수 타입(서명 추론용). 문자열류는 `None` = 그대로 `Auto`(종전 동작을 바꾸지 않는다).
+fn var_type_of(data_type: &str) -> Option<nsql_core::VarType> {
+    use nsql_core::VarType;
+    match data_type {
+        "REF CURSOR" => Some(VarType::RefCursor),
+        "NUMBER" | "INTEGER" | "FLOAT" | "BINARY_INTEGER" | "PLS_INTEGER" => Some(VarType::Number),
+        "CLOB" => Some(VarType::Clob),
+        _ => None,
     }
 }
 
@@ -482,6 +499,8 @@ impl Runner {
             read_end: ReadEnd::Auto,
             tx_changed: false,
             tx_user: false,
+            auto_cursor: true,
+            sig_cache: std::collections::HashMap::new(),
             tx_open: false,
         }
     }
@@ -518,6 +537,13 @@ impl Runner {
     #[must_use]
     pub fn with_message_sink(mut self, sink: nsql_core::MessageSink) -> Self {
         self.message_sink = Some(sink);
+        self
+    }
+
+    /// REF CURSOR 자동 표시(설정 `run.cursor_autoshow`).
+    #[must_use]
+    pub fn with_auto_cursor(mut self, on: bool) -> Self {
+        self.auto_cursor = on;
         self
     }
 
@@ -663,6 +689,85 @@ impl Runner {
     }
 
     /// 트랜잭션이 호스트 명령으로 끝났다(Commit/Rollback 버튼 · 접속/해제) — L1 판정 상태를 비운다.
+    /// ★ 선언 없이 쓴 바인드의 타입을 **루틴 서명에서** 정한다(`EXEC proc(:PC_A, :PC_B)` — Golden 관용 · 변수 관리 09-21).
+    /// REF CURSOR OUT 인자를 문자열로 바인드하면 PLS-00306이므로, 타입이 아직 없는 바인드가 있을 때만 `ALL_ARGUMENTS`를
+    /// 한 번 읽는다(루틴당 1회 · 캐시 · 실패는 조용히 = 종전 동작). 지금은 Oracle만(다른 방언은 OUT 바인드가 없다).
+    fn infer_call_bind_types(&mut self, item: &Item) {
+        if self.engine.dialect != Dialect::Oracle {
+            return;
+        }
+        let ItemKind::Command(nsql_script::Command::Exec { body }) = &item.kind else {
+            return;
+        };
+        let Some(shape) = nsql_script::call_shape(body) else {
+            return;
+        };
+        // (자리(1부터 · 0 = 반환값), 이름 표기, 바인드) 가운데 타입이 필요한 것.
+        let mut need: Vec<(i64, Option<&str>, &str)> = Vec::new();
+        if let Some(r) = shape.ret.as_deref() {
+            if self.engine.vars.needs_type(r) {
+                need.push((0, None, r));
+            }
+        }
+        for (i, a) in shape.args.iter().enumerate() {
+            if let Some(b) = a.bind.as_deref() {
+                if self.engine.vars.needs_type(b) {
+                    need.push((i as i64 + 1, a.named.as_deref(), b));
+                }
+            }
+        }
+        if need.is_empty() {
+            return;
+        }
+        let key = shape.name.to_ascii_uppercase();
+        if !self.sig_cache.contains_key(&key) {
+            let Some(session) = self.session.as_mut() else {
+                return;
+            };
+            let args =
+                nsql_catalog::routine_args(session.as_mut(), &shape.name).unwrap_or_default();
+            self.sig_cache.insert(key.clone(), args);
+        }
+        let Some(all) = self.sig_cache.get(&key) else {
+            return;
+        };
+        // 오버로드 고르기: 이름 표기가 전부 있고 넘긴 인자 수가 형식 인자 수 이하인 첫 묶음.
+        let passed = shape.args.len();
+        let mut overloads: Vec<&str> = all.iter().map(|a| a.overload.as_str()).collect();
+        overloads.dedup();
+        let pick = overloads.into_iter().find(|ov| {
+            let params: Vec<&nsql_catalog::RoutineArg> = all
+                .iter()
+                .filter(|a| a.overload == *ov && a.position >= 1)
+                .collect();
+            passed <= params.len()
+                && shape.args.iter().all(|a| {
+                    a.named
+                        .as_deref()
+                        .is_none_or(|n| params.iter().any(|p| p.name == n))
+                })
+        });
+        let Some(ov) = pick else {
+            return;
+        };
+        let hints: Vec<(String, nsql_core::VarType)> = need
+            .iter()
+            .filter_map(|(pos, named, bind)| {
+                let arg = all.iter().find(|a| {
+                    a.overload == ov
+                        && match named {
+                            Some(n) => a.name == *n,
+                            None => a.position == *pos,
+                        }
+                })?;
+                Some(((*bind).to_string(), var_type_of(&arg.data_type)?))
+            })
+            .collect();
+        for (bind, ty) in hints {
+            self.engine.vars.hint_type(&bind, ty);
+        }
+    }
+
     pub fn note_tx_ended(&mut self) {
         self.tx_changed = false;
         self.tx_user = false;
@@ -920,7 +1025,8 @@ impl Runner {
         self.engine.dialect = session.dialect();
         self.session = Some(session);
         self.connection = Some(description.into());
-        // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146).
+        // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
+        self.sig_cache.clear();
         self.note_tx_ended();
         self.push_max_rows();
         self
@@ -974,7 +1080,8 @@ impl Runner {
                 }
                 self.session = Some(session);
                 self.connection = Some(spec.redacted());
-                // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146).
+                // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
+                self.sig_cache.clear();
                 self.note_tx_ended();
                 self.push_max_rows();
                 emit(RunEvent::Connected {
@@ -1124,6 +1231,7 @@ impl Runner {
             line: item.line,
             summary: summary(item),
         });
+        self.infer_call_bind_types(item);
         let mut guard = 0;
         loop {
             let actions = self.engine.plan(item);
@@ -1184,7 +1292,7 @@ impl Runner {
             Action::Execute {
                 prepared,
                 expect_out,
-                ..
+                kind,
             } => {
                 // 엄격 모드(T-9): 선언 없는 `:bind`는 암묵 선언 대신 오류(SQL*Plus "bind variable not declared").
                 if self.strict && !prepared.implicit.is_empty() {
@@ -1201,6 +1309,16 @@ impl Runner {
                     });
                     return false;
                 }
+                // DDL은 루틴 서명을 바꿀 수 있다 → 서명 캐시를 비운다(다음 EXEC에서 다시 읽는다).
+                if matches!(kind, SqlKind::Ddl)
+                    || item
+                        .text
+                        .trim_start()
+                        .get(..6)
+                        .is_some_and(|w| w.eq_ignore_ascii_case("CREATE"))
+                {
+                    self.sig_cache.clear();
+                }
                 self.execute(index, item, prepared, expect_out, emit)
             }
             Action::LocalAssign { name, value } => {
@@ -1212,34 +1330,8 @@ impl Runner {
                 let mut plain = Vec::new();
                 for (n, v) in pairs {
                     if let Value::Cursor(c) = v {
-                        match self.session.as_mut().map(|s| s.fetch_cursor(c)) {
-                            Some(Ok(rs)) => {
-                                emit(RunEvent::Message(format!("PRINT {n} (refcursor)")));
-                                let (rs, more) = self.trim_rows(rs);
-                                emit(RunEvent::ResultSet {
-                                    index,
-                                    rs,
-                                    elapsed: Duration::ZERO,
-                                    more,
-                                });
-                                self.engine.vars.assign(&n, Value::Null);
-                            }
-                            Some(Err(e)) => {
-                                emit(RunEvent::Error {
-                                    index,
-                                    line: item.line,
-                                    error: e,
-                                });
-                                return false;
-                            }
-                            None => {
-                                emit(RunEvent::Error {
-                                    index,
-                                    line: item.line,
-                                    error: msg_err(t(Msg::NoSession)),
-                                });
-                                return false;
-                            }
+                        if !self.emit_cursor(index, item, &n, c, emit) {
+                            return false;
                         }
                     } else {
                         plain.push((n, v));
@@ -1419,6 +1511,7 @@ impl Runner {
                     rs: text_result_set(&["Schema", "Name", "Status", "Modified", "Extra"], rows),
                     elapsed: started.elapsed(),
                     more: false,
+                    label: None,
                 });
                 true
             }
@@ -1489,7 +1582,12 @@ impl Runner {
                     span.rows = (rows > 0).then_some(rows);
                     span.note = Some("execute+fetch".into());
                 }
-                if expect_out && result.out_params.is_empty() {
+                // OUT 바인드가 없는 방언(PG·MySQL·SQLite·ODBC)만 "1행 결과 = 돌아온 값"으로 읽는다. Oracle·SQL Server는 진짜 OUT이
+                // 있으므로 결과 집합은 결과 집합이다 — 종전에는 프로시저의 암묵 결과(1행)가 변수로 빨려 들어가 그리드에서 사라졌다(09-21 실기).
+                if expect_out
+                    && result.out_params.is_empty()
+                    && !matches!(self.engine.dialect, Dialect::Oracle | Dialect::Mssql)
+                {
                     absorb_from_result_set(&mut result, &names);
                 }
                 for m in result.messages.drain(..) {
@@ -1528,6 +1626,7 @@ impl Runner {
                         rs,
                         elapsed,
                         more,
+                        label: None,
                     });
                 }
                 if n_sets == 0 || result.rows_affected.is_some() {
@@ -1537,8 +1636,39 @@ impl Runner {
                         elapsed,
                     });
                 }
-                if let Some(pairs) = self.engine.absorb(&result) {
-                    emit(RunEvent::Print { pairs });
+                let printed = self.engine.absorb(&result);
+                // ★ 돌아온 REF CURSOR는 바로 결과로 보여 준다(`VAR rc REFCURSOR` + `EXEC proc(:rc)` → 그리드 · 커서가 둘 이상이면
+                //   각각 · 설정 `run.cursor_autoshow` · SQL*Plus의 `SET AUTOPRINT ON`과 같은 효과를 커서에만). 끄면 `PRINT rc`로.
+                let cursors: Vec<(String, nsql_core::CursorId)> = result
+                    .out_params
+                    .iter()
+                    .filter_map(|(n, v)| match v {
+                        Value::Cursor(c) => Some((n.clone(), *c)),
+                        _ => None,
+                    })
+                    .collect();
+                let mut cursor_ok = true;
+                if self.auto_cursor {
+                    for (n, c) in &cursors {
+                        if !self.emit_cursor(index, item, n, *c, emit) {
+                            cursor_ok = false;
+                        }
+                    }
+                }
+                if let Some(pairs) = printed {
+                    // 자동 표시한 커서는 값 목록에서 뺀다(`<refcursor #n>` 글자 대신 그리드로 이미 나갔다).
+                    let shown = self.auto_cursor;
+                    let pairs: Vec<(String, Value)> = pairs
+                        .into_iter()
+                        .filter(|(_, v)| !(shown && matches!(v, Value::Cursor(_))))
+                        .collect();
+                    if !pairs.is_empty() {
+                        emit(RunEvent::Print { pairs });
+                    }
+                }
+                if !cursor_ok {
+                    self.cursor = kept;
+                    return false;
                 }
                 if self.engine.settings.autocommit {
                     match kept.as_mut() {
@@ -1624,6 +1754,50 @@ impl Runner {
                 let _ = s.set_option("fetch_size", &fetch_size.to_string());
             }
             s.set_message_sink(sink);
+        }
+    }
+
+    /// REF CURSOR 변수 하나를 **한 번** 받아 결과 집합으로 낸다(라벨 = 변수 이름) · 변수는 비운다(커서는 1회용).
+    /// `PRINT rc`와 실행 뒤 자동 표시([`Runner::auto_cursor`])가 같이 쓴다. 실패 = 오류 이벤트 + `false`.
+    fn emit_cursor(
+        &mut self,
+        index: usize,
+        item: &Item,
+        name: &str,
+        cursor: nsql_core::CursorId,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> bool {
+        let started = Instant::now();
+        match self.session.as_mut().map(|s| s.fetch_cursor(cursor)) {
+            Some(Ok(rs)) => {
+                emit(RunEvent::Message(format!("PRINT {name} (refcursor)")));
+                let (rs, more) = self.trim_rows(rs);
+                emit(RunEvent::ResultSet {
+                    index,
+                    rs,
+                    elapsed: started.elapsed(),
+                    more,
+                    label: Some(name.to_string()),
+                });
+                self.engine.vars.assign(name, Value::Null);
+                true
+            }
+            Some(Err(e)) => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: e,
+                });
+                false
+            }
+            None => {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: msg_err(t(Msg::NoSession)),
+                });
+                false
+            }
         }
     }
 
@@ -1813,6 +1987,7 @@ impl Runner {
                     rs,
                     elapsed: started.elapsed(),
                     more: false,
+                    label: None,
                 });
                 true
             }

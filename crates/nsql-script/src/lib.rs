@@ -16,6 +16,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod bind;
+pub mod call;
 pub mod command;
 pub mod connect;
 pub mod dialect;
@@ -25,6 +26,7 @@ pub mod split;
 pub mod vars;
 
 pub use bind::{extract_binds, BindRef};
+pub use call::{call_shape, CallArg, CallShape};
 pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, SpoolMode};
 pub use connect::{ConnEnv, ConnectSpec};
 pub use dialect::{prepare, PrepareMode, Prepared};

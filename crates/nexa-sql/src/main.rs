@@ -4589,6 +4589,7 @@ impl App {
             named: false,
             grid: fresh,
             seq: id,
+            child_of: None,
         };
         self.panel.push(tab);
         let max = self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize;
@@ -4607,6 +4608,135 @@ impl App {
         self.panel.sync_bar();
         if self.panel.take_bar_changed() {
             self.layout();
+        }
+    }
+
+    /// `parent` 탭에 딸린 `ord`번째 결과 탭의 id — 있으면 재사용, 없으면 같은 패널 끝에 만든다(활성 탭은 바꾸지 않는다 ·
+    /// 상한 `grid.result_tabs_max`를 넘으면 가장 오래된 비고정 탭을 걷는다). 패널을 못 찾으면 `parent`(덮어쓰기 = 종전).
+    fn child_result_tab(&mut self, parent: u64, ord: u32) -> u64 {
+        let max = self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize;
+        let evict = self.settings.flag("grid.result_tab_evict");
+        let Some(fresh) = self.grid_for(parent).map(|g| g.fresh_like()) else {
+            return parent;
+        };
+        let in_active = self.panel.index_of(parent).is_some();
+        let panel = if in_active {
+            &mut self.panel
+        } else {
+            match self
+                .panels
+                .values_mut()
+                .find(|p| p.index_of(parent).is_some())
+            {
+                Some(p) => p,
+                None => return parent,
+            }
+        };
+        if let Some(t) = panel
+            .tabs
+            .iter()
+            .find(|t| t.child_of == Some((parent, ord)))
+        {
+            return t.id;
+        }
+        let id = self.next_result_id;
+        self.next_result_id += 1;
+        panel.push(ResultTab {
+            id,
+            title: t(Msg::ResultTabDefault).to_string(),
+            pinned: false,
+            named: false,
+            grid: fresh,
+            seq: id,
+            child_of: Some((parent, ord)),
+        });
+        if panel.tabs.len() > max && evict {
+            // 방금 만든 탭·부모·활성 탭은 걷지 않는다.
+            let active = panel.active;
+            let victim = panel
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(i, t)| !t.pinned && *i != active && t.id != id && t.id != parent)
+                .min_by_key(|(_, t)| t.seq)
+                .map(|(i, _)| i);
+            if let Some(v) = victim {
+                panel.remove(v);
+            }
+        }
+        panel.sync_bar();
+        if in_active && self.panel.take_bar_changed() {
+            self.layout();
+        }
+        id
+    }
+
+    /// 실행이 끝났다 — `parent`에 딸린 탭 가운데 이번 실행에서 쓰이지 않은 것(`ord >= used`)을 걷는다(고정·활성 탭은 둔다).
+    fn prune_child_results(&mut self, parent: u64, used: u32) {
+        let in_active = self.panel.index_of(parent).is_some();
+        let panel = if in_active {
+            &mut self.panel
+        } else {
+            match self
+                .panels
+                .values_mut()
+                .find(|p| p.index_of(parent).is_some())
+            {
+                Some(p) => p,
+                None => return,
+            }
+        };
+        let active_id = panel.tabs.get(panel.active).map(|t| t.id);
+        let gone: Vec<u64> = panel
+            .tabs
+            .iter()
+            .filter(|t| {
+                matches!(t.child_of, Some((p, o)) if p == parent && o >= used)
+                    && !t.pinned
+                    && Some(t.id) != active_id
+            })
+            .map(|t| t.id)
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        for id in gone {
+            if let Some(i) = panel.index_of(id) {
+                panel.remove(i);
+            }
+        }
+        panel.sync_bar();
+        if in_active && self.panel.take_bar_changed() {
+            self.layout();
+        }
+        self.mem_released();
+    }
+
+    /// 결과 탭의 지금 제목.
+    fn result_title(&self, key: u64) -> String {
+        self.panel
+            .tabs
+            .iter()
+            .chain(self.panels.values().flat_map(|p| p.tabs.iter()))
+            .find(|t| t.id == key)
+            .map(|t| t.title.clone())
+            .unwrap_or_default()
+    }
+
+    /// 결과 탭 제목을 정해 준다(커서 변수 이름 · 딸린 결과 번호) — 사용자가 이름 붙였거나 고정한 탭은 그대로.
+    fn title_result_as(&mut self, key: u64, title: &str) {
+        let panel = if self.panel.index_of(key).is_some() {
+            Some(&mut self.panel)
+        } else {
+            self.panels.values_mut().find(|p| p.index_of(key).is_some())
+        };
+        if let Some(p) = panel {
+            if let Some(i) = p.index_of(key) {
+                if !p.tabs[i].named && !p.tabs[i].pinned {
+                    p.tabs[i].title = p.unique_title(title, i);
+                }
+            }
+            p.sync_bar();
         }
     }
 
@@ -4716,6 +4846,7 @@ impl App {
                     named: false,
                     grid: fresh,
                     seq: id,
+                    child_of: None,
                 });
                 self.panel.active = 0;
             }
@@ -4812,6 +4943,9 @@ impl App {
         self.wake_if_idle();
         self.sess.touch();
         self.sess.run_tab = self.grid_tab;
+        self.sess.run_set_stmt = None;
+        self.sess.run_children = 0;
+        self.sess.run_tracking = true;
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
@@ -8745,6 +8879,9 @@ impl App {
         self.sess.run_line_base = line_base;
         self.grid.set_source_sql(&src);
         self.sess.run_tab = self.grid_tab;
+        self.sess.run_set_stmt = None;
+        self.sess.run_children = 0;
+        self.sess.run_tracking = true;
         self.sess.run_editor = self.editors.active_id();
         if src.trim().is_empty() {
             self.sess.status = t(Msg::ErrNoSql).into();
@@ -8945,6 +9082,9 @@ impl App {
         self.wake_if_idle();
         self.sess.touch();
         self.sess.run_tab = self.grid_tab;
+        self.sess.run_set_stmt = None;
+        self.sess.run_children = 0;
+        self.sess.run_tracking = true;
         self.sess.run_editor = self.editors.active_id();
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
@@ -9022,6 +9162,7 @@ impl App {
                     rs,
                     elapsed,
                     more,
+                    label,
                 } => {
                     self.txlog.select_session(self.sess.id).result(
                         index,
@@ -9072,7 +9213,24 @@ impl App {
                             )
                         })
                     });
-                    if let Some(g) = self.run_grid() {
+                    // ★ 같은 문장이 결과를 둘 이상 냈으면(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합) 두 번째부터는
+                    //   딸린 결과 탭으로 — 종전에는 같은 그리드를 덮어써 마지막 것만 남았다(09-21).
+                    let slot = sessions::extra_result_slot(
+                        self.sess.run_set_stmt,
+                        index,
+                        self.sess.run_children,
+                    );
+                    self.sess.run_set_stmt = Some(index);
+                    let k = match slot {
+                        Some(ord) => {
+                            self.sess.run_children = ord + 1;
+                            self.child_result_tab(self.sess.run_tab, ord)
+                        }
+                        None => self.sess.run_tab,
+                    };
+                    // 이름 있는 결과(커서 변수)나 딸린 탭은 조회 문장 하나로 다시 만들 수 없다 → 건수·재질의 불가.
+                    let is_query = is_query && slot.is_none() && label.is_none();
+                    if let Some(g) = self.grid_for(k) {
                         g.set_result(rs);
                         g.set_more(more);
                         if let Some(s) = stmt.as_deref() {
@@ -9080,8 +9238,13 @@ impl App {
                         }
                     }
                     self.tx_on_read(index);
-                    let k = self.sess.run_tab;
                     self.retitle_result(k);
+                    if let Some(name) = label {
+                        self.title_result_as(k, &name);
+                    } else if let Some(ord) = slot {
+                        let base = self.result_title(self.sess.run_tab);
+                        self.title_result_as(k, &format!("{base} ({})", ord + 2));
+                    }
                 }
                 RunEvent::Done {
                     index,
@@ -9344,6 +9507,10 @@ impl App {
             self.sess.busy = false;
             self.sync_run_stmt_button();
             self.editors.set_running(self.sess.run_editor, false);
+            // 실행이 끝났다 = 이번 실행에서 쓰이지 않은 딸린 결과 탭(앞선 실행의 커서 탭)을 걷는다.
+            if std::mem::take(&mut self.sess.run_tracking) {
+                self.prune_child_results(self.sess.run_tab, self.sess.run_children);
+            }
             // 실행이 끝났다 = 이번 실행의 DDL을 폴더별로 한 번만 탐색기에 반영(스크립트 디바운스 · docs/57 T1).
             let ddl = std::mem::take(&mut self.sess.ddl_now);
             self.meta_flush(ddl);
@@ -9539,6 +9706,7 @@ impl App {
                         named: false,
                         grid: fresh,
                         seq: id,
+                        child_of: None,
                     },
                     enabled,
                     always,
@@ -12118,6 +12286,7 @@ fn main() {
                 named: false,
                 grid: grid::Grid::default(),
                 seq: 0,
+                child_of: None,
             },
             true,
             false,

@@ -285,6 +285,14 @@ fn key_mode_setting() -> KeyMode {
         .unwrap_or(KeyMode::Pk)
 }
 
+/// 설정 `run.cursor_autoshow` — 실행 뒤 돌아온 REF CURSOR를 바로 결과로(기본 켬 · 끄면 `PRINT rc`).
+fn cursor_autoshow_setting() -> bool {
+    nsql_settings::Settings::open_default()
+        .ok()
+        .and_then(|s| s.get("run.cursor_autoshow").map(|v| v == "on"))
+        .unwrap_or(true)
+}
+
 /// 설정 `script.strict`(HIDDEN · T-9) — 미정의 `&var`·선언 없는 `:bind`를 오류로.
 fn strict_setting() -> bool {
     nsql_settings::Settings::open_default()
@@ -1011,9 +1019,19 @@ impl Printer {
         match ev {
             RunEvent::Begin { index, .. } => self.cur_stmt = index,
             RunEvent::ResultSet {
-                rs, elapsed, more, ..
+                rs,
+                elapsed,
+                more,
+                label,
+                ..
             } => {
                 self.last_sql = self.stmts.get(self.cur_stmt).cloned();
+                // 이름 있는 결과(REF CURSOR 변수)는 표 위에 이름 한 줄 — 커서가 여럿일 때 어느 것인지 보이게(표 형식에서만).
+                if let Some(name) = &label {
+                    if matches!(self.format, Format::Grid | Format::Markdown) {
+                        let _ = writeln!(out, "{name}:");
+                    }
+                }
                 if let Format::Sql(kind) = &self.format {
                     // 키 조회에 세션이 필요 — 실행 중엔 Runner가 쥐고 있으므로 끝난 뒤 `flush_sql`.
                     self.deferred
@@ -1178,7 +1196,8 @@ fn cmd_run(o: &Opts) -> i32 {
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver())
         .with_spool(printer.spool.clone())
-        .with_strict(strict_setting());
+        .with_strict(strict_setting())
+        .with_auto_cursor(cursor_autoshow_setting());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
@@ -1231,7 +1250,8 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_message_sink(stdout_sink(printer.spool.clone()))
         .with_resolver(resolver())
         .with_spool(printer.spool.clone())
-        .with_strict(strict_setting());
+        .with_strict(strict_setting())
+        .with_auto_cursor(cursor_autoshow_setting());
     runner.cursor_idle_secs = idle;
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     eprintln!("{}", t(Msg::CliShellBanner));
