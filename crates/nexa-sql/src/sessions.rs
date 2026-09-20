@@ -123,6 +123,8 @@ pub(crate) struct Sess {
     // 실행 하나의 상태.
     pub run_editor: u64,
     pub run_tab: u64,
+    /// 이 세션의 **연결 공유 층** 변수(보여 주기용 사본 · 원본은 워커의 러너 · D-135).
+    pub shared_vars: Vec<nsql_script::VarState>,
     /// 이번 실행에서 마지막으로 결과를 낸 문장 번호 — 같은 문장이 결과를 또 내면 딸린 결과 탭으로 보낸다([`extra_result_slot`]).
     pub run_set_stmt: Option<usize>,
     /// 이번 실행에서 쓴 딸린 결과 탭 수(실행이 끝나면 이보다 뒤의 것은 걷는다).
@@ -198,6 +200,7 @@ impl Sess {
             stateful: false,
             run_editor: 0,
             run_tab: 0,
+            shared_vars: Vec::new(),
             run_set_stmt: None,
             run_children: 0,
             run_tracking: false,

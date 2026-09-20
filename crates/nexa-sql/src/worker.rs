@@ -54,6 +54,9 @@ pub(crate) enum Cmd {
         preflight: Option<Duration>,
         /// 이번 실행의 페치 상한(결과 탭의 세그먼트 크기 · 0 = 전체 · docs/43).
         max_rows: usize,
+        /// ★ 실행하는 탭의 변수 표(탭 층 · D-135) — 호스트가 탭마다 들고 실행마다 넘긴다. 끝나면 `RunEvent::Vars`로 돌아간다.
+        ///   연결 공유 층은 러너(= 이 세션)에 남는다. `None` = 탭 층을 건드리지 않는다(결과 새로고침 등 편집기와 무관한 실행).
+        vars: Option<Vec<nsql_script::VarState>>,
     },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
@@ -954,7 +957,11 @@ pub(crate) fn spawn(
                         src,
                         preflight,
                         max_rows,
+                        vars,
                     } => {
+                        if let Some(v) = vars {
+                            runner.engine.vars.set_local(v);
+                        }
                         runner.set_max_rows(max_rows);
                         apply_fetch_settings(&mut runner);
                         if let Err(m) = ensure_alive(

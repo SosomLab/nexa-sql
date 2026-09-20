@@ -150,6 +150,8 @@ use sessions::{ConnectIntent, Sess, SessionMode, TxItem, SHARED};
 struct App {
     window: Option<Rc<Window>>,
     surface: Option<present::Presenter>,
+    /// ★ 편집기 탭별 변수 표(탭 층 · D-135 · docs/63) — 실행마다 워커에 넘기고 `RunEvent::Vars`로 돌려받는다. 탭을 닫으면 버린다.
+    tab_vars: std::collections::HashMap<u64, Vec<nsql_script::VarState>>,
     ui_font: Font,
     mono_font: Font,
     /// 결과 그리드·텍스트 보기 글꼴(설정 `grid.font_face` · None = UI 글꼴 · 사용자 09-16 Golden 참고).
@@ -440,6 +442,39 @@ fn detail_push(
 }
 
 /// 전송 속도 문구(`1.2 MB/s` · 0이면 빈 문자열).
+/// 바뀐 변수의 로그 한 줄(`A = 1, B = 'x'`) — 비밀 값은 가리고(D-140) 긴 값은 앞부분만 · 사라진 이름은 `(removed)`.
+fn vars_log_line(
+    changed: &[String],
+    local: &[nsql_script::VarState],
+    shared: &[nsql_script::VarState],
+) -> String {
+    const MAX: usize = 80;
+    let mut parts = Vec::new();
+    for name in changed {
+        let found = local
+            .iter()
+            .chain(shared)
+            .find(|v| v.name.eq_ignore_ascii_case(name));
+        let text = match found {
+            None => "(removed)".to_string(),
+            Some(v) if v.secret => "******".to_string(),
+            Some(v) => {
+                let d = match &v.value {
+                    nsql_core::Value::Str(s) => format!("'{s}'"),
+                    other => other.display(),
+                };
+                if d.chars().count() > MAX {
+                    format!("{}…", d.chars().take(MAX).collect::<String>())
+                } else {
+                    d
+                }
+            }
+        };
+        parts.push(format!(":{name} = {text}"));
+    }
+    parts.join(", ")
+}
+
 fn speed_of(bytes: u64, dur: Duration) -> String {
     let secs = dur.as_secs_f64();
     if secs <= 0.0 || bytes == 0 {
@@ -4955,6 +4990,7 @@ impl App {
             src,
             preflight: None,
             max_rows,
+            vars: self.run_vars(),
         });
         self.live_start();
         self.redraw();
@@ -6965,6 +7001,7 @@ impl App {
                 src: src.to_string(),
                 preflight: None,
                 max_rows: self.grid.page_rows(),
+                vars: self.run_vars(),
             });
         }
         if on {
@@ -8937,6 +8974,7 @@ impl App {
             src,
             preflight,
             max_rows,
+            vars: self.run_vars(),
         });
         self.live_start();
         self.redraw();
@@ -9094,6 +9132,7 @@ impl App {
             src,
             preflight: None,
             max_rows: self.grid.page_rows(),
+            vars: self.run_vars(),
         });
         self.live_start();
         self.redraw();
@@ -9278,6 +9317,22 @@ impl App {
                 }
                 // PRINT · 서버 메시지는 로그 창으로만(`log_entries`) — 결과 영역은 조회 결과만(사용자 09-17).
                 RunEvent::Print { .. } => {}
+                // ★ 변수 표가 바뀌었다(실행당 한 번 · D-135): 탭 층 = 실행한 탭의 표 · 공유 층 = 이 세션의 표 · 로그에 바뀐 값(비밀은 가림).
+                RunEvent::Vars {
+                    local,
+                    shared,
+                    changed,
+                } => {
+                    let line = vars_log_line(&changed, &local, &shared);
+                    self.tab_vars.insert(self.sess.run_editor, local);
+                    self.sess.shared_vars = shared;
+                    if !line.is_empty() {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            tf(Msg::LogVarsChanged, &[&line]),
+                        ));
+                    }
+                }
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) {
                         self.tx_close(TxOutcome::Committed);
@@ -9640,6 +9695,16 @@ impl App {
     }
 
     /// 마지막 실행 대상 결과 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
+    /// 지금 실행하려는 탭의 변수 표(탭 층) — 없으면 빈 표. 실행 명령에 실어 보낸다(D-135).
+    fn run_vars(&self) -> Option<Vec<nsql_script::VarState>> {
+        Some(
+            self.tab_vars
+                .get(&self.editors.active_id())
+                .cloned()
+                .unwrap_or_default(),
+        )
+    }
+
     fn run_grid(&mut self) -> Option<&mut grid::Grid> {
         let k = self.sess.run_tab;
         self.grid_for(k)
@@ -9733,6 +9798,7 @@ impl App {
         }
         let alive = self.editors.tab_ids();
         self.panels.retain(|id, _| alive.contains(id));
+        self.tab_vars.retain(|id, _| alive.contains(id));
     }
 
     fn paint(&mut self) {
@@ -12220,6 +12286,7 @@ fn main() {
     let mut app = App {
         window: None,
         surface: None,
+        tab_vars: std::collections::HashMap::new(),
         ui_font: ui.font,
         mono_font: mono.font,
         grid_font: load_grid_font(

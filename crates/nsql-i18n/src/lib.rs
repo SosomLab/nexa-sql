@@ -1637,6 +1637,8 @@ pub enum Msg {
     /// 설정 `run.cursor_autoshow`.
     LblCursorAutoshow,
     DescCursorAutoshow,
+    /// 로그: 변수 표가 바뀌었다(`{0}` = `:A = 1, :B = 'x'`).
+    LogVarsChanged,
     CliShellBanner,
     HlpShellAliases,
     HlpShellAliasList,
@@ -3709,6 +3711,7 @@ impl Msg {
             Msg::ShowNoErrors => ["No errors.", "오류 없음."],
             Msg::ShowErrorsFor => ["Errors for {0}:", "{0}의 오류:"],
             Msg::NoSession => ["Not connected — CONNECT first", "접속이 없습니다 — CONNECT 먼저"],
+            Msg::LogVarsChanged => ["Variables: {0}", "변수: {0}"],
             Msg::LblCursorAutoshow => ["Show returned cursors", "돌아온 커서 자동 표시"],
             Msg::DescCursorAutoshow => [
                 "After EXEC / a PL/SQL block returns REF CURSOR variables, fetch each one right away and show it as a result (one tab per cursor). Off = show them with PRINT <name>, like SQL*Plus without AUTOPRINT",
@@ -5355,6 +5358,7 @@ impl Msg {
         Msg::ShowNoErrors,
         Msg::ShowErrorsFor,
         Msg::NoSession,
+        Msg::LogVarsChanged,
         Msg::LblCursorAutoshow,
         Msg::DescCursorAutoshow,
         Msg::LblScriptStrict,

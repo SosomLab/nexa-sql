@@ -33,4 +33,4 @@ pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine};
 pub use split::{split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};
-pub use vars::{Var, VarStore};
+pub use vars::{looks_secret, Layer, Var, VarState, VarStore};

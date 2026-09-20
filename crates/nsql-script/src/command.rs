@@ -15,6 +15,11 @@ pub enum Command {
         ty: Option<VarType>,
         init: Option<Value>,
     },
+    /// `VAR[IABLE] name SHARE|LOCAL` — 변수를 연결 공유 층으로 올리거나 탭 층으로 내린다(D-135 · docs/63).
+    VarScope {
+        name: String,
+        shared: bool,
+    },
     Print {
         names: Vec<String>,
     },
@@ -330,13 +335,29 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
             .sum();
         (&rest[..n], rest[n..].trim())
     };
-    let name = Some(name.trim_start_matches(':').to_ascii_uppercase());
+    let bare = name.trim_start_matches(':').to_ascii_uppercase();
+    let name = Some(bare.clone());
     if after.is_empty() {
         return Ok(Command::Variable {
             name,
             ty: None,
             init: None,
         });
+    }
+    match after.to_ascii_uppercase().as_str() {
+        "SHARE" | "SHARED" => {
+            return Ok(Command::VarScope {
+                name: bare,
+                shared: true,
+            })
+        }
+        "LOCAL" | "UNSHARE" => {
+            return Ok(Command::VarScope {
+                name: bare,
+                shared: false,
+            })
+        }
+        _ => {}
     }
     let (ty_text, init_text) = match after.find('=') {
         Some(i) => (after[..i].trim(), Some(after[i + 1..].trim())),

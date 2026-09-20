@@ -49,6 +49,14 @@ pub enum RunEvent {
         more: bool,
         label: Option<String>,
     },
+    /// ★ 변수 표가 바뀌었다(실행 하나가 끝날 때 **한 번** · 바뀐 것이 있을 때만 · docs/63 §3). `local` = 탭 층 전체 ·
+    /// `shared` = 연결 공유 층 전체 · `changed` = 이번 실행에서 바뀐 이름(보여 줄 표기). 호스트는 이것으로 탭의 표를 갱신하고
+    /// 패널·로그를 그린다(매 프레임 0).
+    Vars {
+        local: Vec<nsql_script::VarState>,
+        shared: Vec<nsql_script::VarState>,
+        changed: Vec<String>,
+    },
     /// 수동 커밋 모드에서 **변경 없는 트랜잭션을 러너가 끝냈다**(docs/56 L1 · `deferred` = 열린 커서가 닫힐 때 끝난다).
     ReadTxEnded {
         index: usize,
@@ -126,7 +134,7 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         )],
         RunEvent::Disconnected => vec![LogEntry::new(LogKind::Disconnect, "")],
         // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
-        RunEvent::ReadTxEnded { .. } => Vec::new(),
+        RunEvent::ReadTxEnded { .. } | RunEvent::Vars { .. } => Vec::new(),
         RunEvent::Error { line, error, .. } => vec![LogEntry::new(
             LogKind::Error,
             tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]),
@@ -319,6 +327,8 @@ pub struct Runner {
     sig_cache: std::collections::HashMap<String, Vec<nsql_catalog::RoutineArg>>,
     /// 실행 뒤 돌아온 REF CURSOR를 바로 결과 집합으로 보여 주는가(설정 `run.cursor_autoshow` · 기본 켬).
     pub auto_cursor: bool,
+    /// `run_script_in` 중첩 깊이(`@스크립트`) — 변수 사건은 가장 바깥에서만.
+    run_depth: u32,
     /// 러너가 수동 모드를 위해 연 트랜잭션이 살아 있는가([`manual_begin_sql`] · 커밋/롤백/접속에서 내림).
     tx_open: bool,
 }
@@ -501,6 +511,7 @@ impl Runner {
             tx_user: false,
             auto_cursor: true,
             sig_cache: std::collections::HashMap::new(),
+            run_depth: 0,
             tx_open: false,
         }
     }
@@ -1028,6 +1039,8 @@ impl Runner {
         // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
         self.sig_cache.clear();
         self.note_tx_ended();
+        // 세션에 묶인 값(REF CURSOR 핸들)은 새 세션에서 죽은 핸들이다.
+        self.engine.vars.invalidate_cursors();
         self.push_max_rows();
         self
     }
@@ -1083,6 +1096,8 @@ impl Runner {
                 // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
                 self.sig_cache.clear();
                 self.note_tx_ended();
+                // 세션에 묶인 값(REF CURSOR 핸들)은 새 세션에서 죽은 핸들이다.
+                self.engine.vars.invalidate_cursors();
                 self.push_max_rows();
                 emit(RunEvent::Connected {
                     description: spec.redacted(),
@@ -1127,6 +1142,7 @@ impl Runner {
         // 방언을 아는 분할(SQLite 트리거 `END;` · `BEGIN;` 트랜잭션 — nsql-script `split_script_in`).
         let items = nsql_script::split_script_in(src, self.dialect());
         let mut errors = 0;
+        self.run_depth += 1;
         for (i, item) in items.iter().enumerate() {
             if !self.run_item(i, item, prompt, emit) {
                 errors += 1;
@@ -1135,8 +1151,20 @@ impl Runner {
                 }
             }
         }
+        self.run_depth -= 1;
         if pushed.is_some() {
             self.script_dirs.pop();
+        }
+        // 가장 바깥 실행이 끝났다 = 변수 표의 바뀐 것을 한 번에 알린다(`@스크립트` 안쪽에서는 알리지 않는다).
+        if self.run_depth == 0 {
+            let changed = self.engine.vars.take_dirty();
+            if !changed.is_empty() {
+                emit(RunEvent::Vars {
+                    local: self.engine.vars.local_states(),
+                    shared: self.engine.vars.shared_states(),
+                    changed,
+                });
+            }
         }
         errors
     }
@@ -2490,6 +2518,41 @@ SELECT * FROM t;
         assert!(ev
             .iter()
             .any(|e| matches!(e, RunEvent::Message(m) if m.starts_with("USER = "))));
+    }
+
+    /// D-135 계층: 탭 층은 호스트가 실행마다 갈아 끼운다 → 다른 탭의 값은 안 보이고, `VAR x SHARE`로 올린 값만 같이 본다.
+    /// 변수 사건은 실행당 한 번 · 바뀐 것이 있을 때만.
+    #[test]
+    fn tab_local_vars_and_shared_layer() {
+        let mut r = runner();
+        let vars_of = |ev: &[RunEvent]| {
+            ev.iter().find_map(|e| match e {
+                RunEvent::Vars {
+                    local,
+                    shared,
+                    changed,
+                } => Some((local.clone(), shared.clone(), changed.clone())),
+                _ => None,
+            })
+        };
+        // 탭 A.
+        let (errs, ev) = collect(&mut r, "EXEC :X := 1\nEXEC :Y := 'keep'\nVAR Y SHARE\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        let (local_a, shared, changed) = vars_of(&ev).expect("변수 사건");
+        assert_eq!(local_a.len(), 1);
+        assert_eq!(shared.len(), 1);
+        assert_eq!(changed.len(), 2);
+        // 탭 B(빈 탭 층): X는 없고 공유한 Y는 보인다.
+        r.engine.vars.set_local(Vec::new());
+        let (errs, ev) = collect(&mut r, "PRINT Y\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        assert!(vars_of(&ev).is_none(), "바뀐 것이 없으면 사건도 없다");
+        let (errs, _) = collect(&mut r, "PRINT X\n");
+        assert_eq!(errs, 1, "다른 탭의 변수는 보이지 않는다");
+        // 탭 A로 돌아오면 X가 있다.
+        r.engine.vars.set_local(local_a);
+        let (errs, _) = collect(&mut r, "PRINT X Y\n");
+        assert_eq!(errs, 0);
     }
 
     /// T-146 판정(MC/DC) — 다섯 조건이 각각 혼자 결과를 바꾼다.
