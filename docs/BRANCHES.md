@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/status-refresh-84 | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | 84차 마감 정리 — CLAUDE.md "현 단계" · MILESTONES M2 09-19~20 묶음 · CI 실패 표시(T-146) |
 | feat/textbuf-undo-followups | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | ★ 83~84차 — 되돌리기 재설계(연산 기록) · 대용량 파일(큰 파일 모드 · 열기 선택 · 탭 격리 적재) · **편집 버퍼 교체 T-142**(`TextBuf`) · 되돌리기 후속 넷(D-129~132 · `undofile.rs`) · 확장 뷰 탭 · 탐색기 계층형 새로 고침 · 로그인 표식 · docs 59 §5·§6 · 60 |
 | feat/conn-veil | 2026-09-19 | 2026-09-19 → main(삭제) | 2 | 접속 창 접속 중 막(veil · 66차) · 문서 |
 | feat/liveness-disconnect-model-perf | 2026-09-19 | 2026-09-19 → main(삭제) | 3 | 접속 생존 관리([53](53-connection-liveness.md)) · 세션 창 · 접속 UX·Disconnect 연결 모델([54](54-connection-model-and-disconnect.md)) · T-131/T-133 폼 · 툴바/그리드 드래그 고스트 · Σ 규정 · 편집기 입력 지연 1차([55](55-editor-input-latency.md)) · 임시 dev.start_demo(58~64차) |
