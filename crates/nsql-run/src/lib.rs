@@ -49,6 +49,11 @@ pub enum RunEvent {
         more: bool,
         label: Option<String>,
     },
+    /// ★ 실행 전에 값이 필요한 입력(D-137 · docs/63 V3) — 호스트가 **한 번** 묻고 [`Runner::apply_inputs`]로 돌려준다.
+    /// 러너가 내지 않는다(호스트가 [`Runner::missing_inputs`]로 찾아 자기 채널에 싣는 용도).
+    InputNeeded {
+        needs: Vec<nsql_script::InputNeed>,
+    },
     /// ★ 변수 표가 바뀌었다(실행 하나가 끝날 때 **한 번** · 바뀐 것이 있을 때만 · docs/63 §3). `local` = 탭 층 전체 ·
     /// `shared` = 연결 공유 층 전체 · `changed` = 이번 실행에서 바뀐 이름(보여 줄 표기). 호스트는 이것으로 탭의 표를 갱신하고
     /// 패널·로그를 그린다(매 프레임 0).
@@ -134,7 +139,9 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         )],
         RunEvent::Disconnected => vec![LogEntry::new(LogKind::Disconnect, "")],
         // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
-        RunEvent::ReadTxEnded { .. } | RunEvent::Vars { .. } => Vec::new(),
+        RunEvent::ReadTxEnded { .. } | RunEvent::Vars { .. } | RunEvent::InputNeeded { .. } => {
+            Vec::new()
+        }
         RunEvent::Error { line, error, .. } => vec![LogEntry::new(
             LogKind::Error,
             tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]),
@@ -377,6 +384,18 @@ fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) -> bool {
             true
         }
         None => false,
+    }
+}
+
+/// 입력 창에 친 글 → 바인드 값: 빈 글·`NULL` = NULL · 수 = 수 · `'…'` = 그 안의 글 · 그 밖 = 글 그대로.
+fn input_value(text: &str) -> Value {
+    let t = text.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("NULL") {
+        return Value::Null;
+    }
+    match nsql_script::command::parse_literal(t) {
+        Ok(v) => v,
+        Err(_) => Value::Str(text.to_string()),
     }
 }
 
@@ -717,6 +736,33 @@ impl Runner {
     }
 
     /// 트랜잭션이 호스트 명령으로 끝났다(Commit/Rollback 버튼 · 접속/해제) — L1 판정 상태를 비운다.
+    /// 이 스크립트를 실행하기 전에 물어야 할 입력(D-137) — 표에도 없고 앞에서 대입되지도 않은 채 **읽히는** 바인드와
+    /// 정의되지 않은 치환 변수. 빈 목록 = 바로 실행해도 된다.
+    #[must_use]
+    pub fn missing_inputs(&self, src: &str) -> Vec<nsql_script::InputNeed> {
+        nsql_script::missing_inputs(
+            src,
+            self.dialect(),
+            &self.engine.vars,
+            &self.engine.defines,
+            self.engine.settings.define_char,
+        )
+    }
+
+    /// 호스트가 받은 입력을 넣는다 — 바인드 = 타입 있는 값(`NULL` · 수 · `'글'` · 그 밖 = 글 그대로 · 빈 글 = NULL) ·
+    /// 치환 변수 = 글자 그대로.
+    pub fn apply_inputs(&mut self, values: Vec<(nsql_script::InputKind, String, String)>) {
+        for (kind, name, text) in values {
+            match kind {
+                nsql_script::InputKind::Macro => self.engine.define(&name, &text),
+                nsql_script::InputKind::Bind => {
+                    let v = input_value(&text);
+                    self.engine.vars.assign(&name, v);
+                }
+            }
+        }
+    }
+
     /// ★ 선언 없이 쓴 바인드의 타입을 **루틴 서명에서** 정한다(`EXEC proc(:PC_A, :PC_B)` — Golden 관용 · 변수 관리 09-21).
     /// REF CURSOR OUT 인자를 문자열로 바인드하면 PLS-00306이므로, 타입이 아직 없는 바인드가 있을 때만 `ALL_ARGUMENTS`를
     /// 한 번 읽는다(루틴당 1회 · 캐시 · 실패는 조용히 = 종전 동작). 지금은 Oracle만(다른 방언은 OUT 바인드가 없다).
@@ -2598,6 +2644,30 @@ SELECT * FROM t;
         r.engine.vars.set_local(local_a);
         let (errs, _) = collect(&mut r, "PRINT X Y\n");
         assert_eq!(errs, 0);
+    }
+
+    /// D-137: 빠진 입력 찾기 → 넣기 → 실행(바인드 = 타입 있는 값 · 치환 = 글자) · 다시 물을 것이 없다.
+    #[test]
+    fn missing_inputs_then_apply() {
+        let mut r = runner();
+        let src = "SELECT :N + 1 AS n, '&WHO' AS who;\n";
+        let needs = r.missing_inputs(src);
+        assert_eq!(needs.len(), 2, "{needs:?}");
+        r.apply_inputs(vec![
+            (nsql_script::InputKind::Bind, "N".into(), "41".into()),
+            (nsql_script::InputKind::Macro, "WHO".into(), "kim".into()),
+        ]);
+        assert!(r.missing_inputs(src).is_empty());
+        let (errs, ev) = collect(&mut r, src);
+        assert_eq!(errs, 0, "{ev:?}");
+        let sets = result_sets(&ev);
+        assert_eq!(sets[0].rows[0][0].display(), "42");
+        assert_eq!(sets[0].rows[0][1].display(), "kim");
+        // 빈 칸·NULL = NULL · 따옴표 = 그 안의 글 · 그 밖 = 글 그대로.
+        assert_eq!(super::input_value(" "), Value::Null);
+        assert_eq!(super::input_value("null"), Value::Null);
+        assert_eq!(super::input_value("'a''b'"), Value::Str("a'b".into()));
+        assert_eq!(super::input_value("SEBANG"), Value::Str("SEBANG".into()));
     }
 
     /// T-146 판정(MC/DC) — 다섯 조건이 각각 혼자 결과를 바꾼다.

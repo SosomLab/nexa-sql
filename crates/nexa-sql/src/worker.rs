@@ -255,8 +255,18 @@ pub(crate) enum FetchStop {
     Cancelled,
 }
 
+/// 입력 창의 답(D-137) — 워커는 `RunEvent::InputNeeded`를 낸 뒤 이것을 기다린다(그동안 세션은 "바쁨").
+pub(crate) enum InputReply {
+    /// (종류, 이름, 친 글) — 빈 목록 = "이번엔 건너뛰기"(값 없이 그대로 실행 = 종전 동작).
+    Values(Vec<(nsql_script::InputKind, String, String)>),
+    /// 실행하지 않는다.
+    Cancel,
+}
+
 pub(crate) struct Handle {
     tx: mpsc::Sender<Cmd>,
+    /// 입력 창의 답을 보내는 길(명령 큐와 따로 — 워커가 실행 명령 안에서 기다린다).
+    input_tx: mpsc::Sender<InputReply>,
     /// 전체 조회 취소 깃발(T-48b) — UI가 올리고 워커가 배치 사이에 본다.
     cancel_fetch: Arc<AtomicBool>,
     /// 실행 중 문장의 취소 핸들(T-108) — 워커가 실행 직전에 넣는다.
@@ -270,6 +280,11 @@ pub(crate) struct Handle {
 impl Handle {
     pub(crate) fn send(&self, c: Cmd) {
         let _ = self.tx.send(c);
+    }
+
+    /// 입력 창의 답.
+    pub(crate) fn input(&self, r: InputReply) {
+        let _ = self.input_tx.send(r);
     }
 
     /// 진행 중인 전체 조회를 다음 배치 경계에서 멈춘다(지금까지 받은 행은 남는다).
@@ -309,6 +324,7 @@ pub(crate) fn spawn(
     let (etx, erx) = mpsc::channel::<RunEvent>();
     let (dtx, drx) = mpsc::channel::<Option<String>>();
     let (ctx_tx, ctx_rx) = mpsc::channel::<ConnOutcome>();
+    let (input_tx, input_rx) = mpsc::channel::<InputReply>();
     let cancel_fetch = Arc::new(AtomicBool::new(false));
     let cancel_flag = cancel_fetch.clone();
     let cancel_run: Arc<Mutex<Option<Arc<dyn nsql_core::CancelHandle>>>> =
@@ -983,7 +999,39 @@ pub(crate) fn spawn(
                             wake_now();
                             return true;
                         }
-                        // 치환 변수 프롬프트는 최소 GUI에서 빈 값(T-16c에서 대화상자).
+                        // ★ 실행 전에 빠진 입력을 **한 번** 묻는다(D-137 · 설정 `vars.undeclared` = prompt|auto|error · docs/63 V3).
+                        //   prompt = 입력 창(UI가 답할 때까지 기다린다) · auto = 종전(NULL/빈 글) · error = 실행하지 않는다.
+                        let policy = nsql_settings::Settings::open_default()
+                            .ok()
+                            .and_then(|s| s.get("vars.undeclared").map(str::to_string))
+                            .unwrap_or_else(|| "prompt".into());
+                        if policy != "auto" {
+                            let needs = runner.missing_inputs(&src);
+                            if !needs.is_empty() {
+                                if policy == "error" {
+                                    let names: Vec<String> =
+                                        needs.iter().map(|n| n.name.clone()).collect();
+                                    emit(err(tf(Msg::ErrInputsMissing, &[&names.join(", ")])));
+                                    let _ = dtx.send(Some(tf(Msg::WkErrors, &["1"])));
+                                    wake_now();
+                                    return true;
+                                }
+                                // 밀린 답을 비우고(앞 실행의 늦은 답) 묻는다.
+                                while input_rx.try_recv().is_ok() {}
+                                emit(RunEvent::InputNeeded { needs });
+                                wake_now();
+                                match input_rx.recv() {
+                                    Ok(InputReply::Values(v)) => runner.apply_inputs(v),
+                                    Ok(InputReply::Cancel) | Err(_) => {
+                                        let _ =
+                                            dtx.send(Some(t(Msg::StInputCancelled).to_string()));
+                                        wake_now();
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                        // 실행 중에 새로 드러난 치환 변수(앞의 훑기가 못 본 것)는 빈 값(종전).
                         let mut prompt = |_: &str| Some(String::new());
                         let mut conn_err = false;
                         if let Ok(mut g) = cancel_slot.lock() {
@@ -1048,6 +1096,7 @@ pub(crate) fn spawn(
     (
         Handle {
             tx,
+            input_tx,
             cancel_fetch,
             cancel_run,
             done: drx,

@@ -369,6 +369,13 @@ const HANGUL_COMPOSE_OPTS: &[(&str, Msg)] = &[
     ("app", Msg::OptHangulApp),
 ];
 
+/// 값 없는 바인드·미정의 치환 변수(D-137 · docs/63 V3).
+const VARS_UNDECLARED_OPTS: &[(&str, Msg)] = &[
+    ("prompt", Msg::OptVarsPrompt),
+    ("auto", Msg::OptVarsAuto),
+    ("error", Msg::OptVarsError),
+];
+
 /// macOS 화면 내보내기(T-147 · docs/62 §2).
 const MAC_PRESENT_OPTS: &[(&str, Msg)] = &[
     ("iosurface", Msg::OptMacPresentLayer),
@@ -2446,6 +2453,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTxSmartCommit,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // D-137: 값이 없는 채로 읽히는 바인드·미정의 `&` = 실행당 한 번 묻기(prompt) / 말없이 NULL·빈 글(auto · 종전) / 오류(error).
+    Entry {
+        key: "vars.undeclared",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsUndeclared,
+        desc: Msg::DescVarsUndeclared,
+        kind: SettingKind::Choice(VARS_UNDECLARED_OPTS),
+        default: "prompt",
     },
     // REF CURSOR 자동 표시(09-21): `VAR rc REFCURSOR` + `EXEC proc(:rc)` 뒤 커서를 바로 결과 탭으로(둘 이상이면 각각) · 끄면 `PRINT rc`.
     Entry {

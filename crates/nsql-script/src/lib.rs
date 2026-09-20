@@ -21,6 +21,7 @@ pub mod command;
 pub mod connect;
 pub mod dialect;
 pub mod engine;
+pub mod inputs;
 pub mod lexer;
 pub mod split;
 pub mod vars;
@@ -31,6 +32,7 @@ pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, Spo
 pub use connect::{ConnEnv, ConnectSpec};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine};
+pub use inputs::{macro_refs, missing_inputs, InputKind, InputNeed};
 pub use split::{split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};
 pub use vars::{looks_secret, Layer, Var, VarState, VarStore};

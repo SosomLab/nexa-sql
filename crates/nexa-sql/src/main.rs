@@ -34,6 +34,7 @@ mod gitstat;
 mod grid;
 mod icon;
 mod input;
+mod input_win;
 mod keymap;
 mod keys_win;
 mod log_win;
@@ -165,6 +166,9 @@ struct App {
     txlog_win: TxLogWin,
     /// 세션 창(서버별 전체 세션 · 사용자 09-18) — 트랜잭션 로그 창과 같은 골격.
     sessions_win: SessionsWin,
+    /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
+    input_win: input_win::InputWin,
+    input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
     open_sessions: bool,
     open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
@@ -847,6 +851,7 @@ impl App {
             self.file_win.window(),
             self.prefs_win.window(),
             self.txlog_win.window(),
+            self.input_win.window(),
         ]
         .into_iter()
         .flatten()
@@ -8683,6 +8688,11 @@ impl App {
         if !self.sess.busy && !self.grid.fetch_all_active() {
             return;
         }
+        // 입력 창이 답을 기다리는 중이면 ■ = 입력 취소(워커는 입력을 기다리며 멈춰 있다 — DB로 간 것이 없다).
+        if self.input_win.is_open() && self.input_win.sess == self.sess.id {
+            self.input_reply(worker::InputReply::Cancel);
+            return;
+        }
         // ★ 끊긴 서버(docs/53 §3): 취소(OCIBreak)도 같은 소켓으로 가 함께 막힌다 → 워커를 버리는 것이 유일한 즉시 중지.
         if self.sess.broken {
             self.abandon_worker();
@@ -9328,6 +9338,11 @@ impl App {
                 }
                 // PRINT · 서버 메시지는 로그 창으로만(`log_entries`) — 결과 영역은 조회 결과만(사용자 09-17).
                 RunEvent::Print { .. } => {}
+                // 실행 전에 값이 필요하다(D-137) — 입력 창은 이벤트 루프에서 연다(`about_to_wait`). 워커는 답을 기다린다.
+                RunEvent::InputNeeded { needs } => {
+                    self.sess.status = t(Msg::WinInputs).into();
+                    self.input_pending = Some((self.sess.id, needs));
+                }
                 // ★ 변수 표가 바뀌었다(실행당 한 번 · D-135): 탭 층 = 실행한 탭의 표 · 공유 층 = 이 세션의 표 · 로그에 바뀐 값(비밀은 가림).
                 RunEvent::Vars {
                     local,
@@ -9706,6 +9721,27 @@ impl App {
     }
 
     /// 마지막 실행 대상 결과 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
+    /// 입력 창의 답을 그 세션의 워커에 보내고 창을 닫는다(다중 세션: 물은 세션에게).
+    fn input_reply(&mut self, reply: worker::InputReply) {
+        let sid = self.input_win.sess;
+        self.input_win.close();
+        self.input_pending = None;
+        if sid == self.sess.id {
+            self.sess.worker.input(reply);
+        } else {
+            let mut reply = Some(reply);
+            self.with_sess(sid, |a| {
+                if let Some(r) = reply.take() {
+                    a.sess.worker.input(r);
+                }
+            });
+        }
+        if let Some(w) = &self.window {
+            w.focus_window();
+        }
+        self.redraw();
+    }
+
     /// 지금 실행하려는 탭의 변수 표(탭 층) — 없으면 빈 표. 실행 명령에 실어 보낸다(D-135).
     fn run_vars(&self) -> Option<Vec<nsql_script::VarState>> {
         Some(
@@ -11173,6 +11209,17 @@ impl ApplicationHandler<Wake> for App {
             self.sync_hangul_mode();
         }
         self.persist_window_sizes(false);
+        // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
+        if let Some((sid, needs)) = self.input_pending.take() {
+            let owner = self.window.clone();
+            self.input_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                needs,
+                sid,
+            );
+        }
         if std::mem::take(&mut self.pending_demo_prompt) {
             self.open_demo_prompt();
         }
@@ -11675,6 +11722,25 @@ impl ApplicationHandler<Wake> for App {
                 }
                 FloatAction::Close => self.dock_group(&gid),
                 FloatAction::None => {}
+            }
+            return;
+        }
+        if self.input_win.is(id) {
+            match self.input_win.handle(&event) {
+                input_win::InputWinAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    self.input_win.paint(&self.ui_font, &self.theme, ui_px);
+                }
+                input_win::InputWinAction::Run(values) => {
+                    self.input_reply(worker::InputReply::Values(values));
+                }
+                input_win::InputWinAction::Skip => {
+                    self.input_reply(worker::InputReply::Values(Vec::new()));
+                }
+                input_win::InputWinAction::Cancel => {
+                    self.input_reply(worker::InputReply::Cancel);
+                }
+                input_win::InputWinAction::None => {}
             }
             return;
         }
@@ -12310,6 +12376,8 @@ fn main() {
         log_win: LogWin::new(&log_format),
         txlog_win: TxLogWin::new(),
         sessions_win: SessionsWin::new(),
+        input_win: input_win::InputWin::new(),
+        input_pending: None,
         open_sessions: false,
         open_txlog: false,
         toasts: toast::Toasts::new(),
