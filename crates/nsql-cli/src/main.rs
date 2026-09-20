@@ -1143,6 +1143,8 @@ fn connect_or_exit(
     });
     // 비밀번호 없는 접속 문자열/프로필 = env/프롬프트(sqlplus/psql 관례 · 사용자 09-16).
     term::ensure_password(&mut spec, no_prompt, target);
+    // 접속 실패는 `Connected`보다 먼저 온다 → 오류 코드 표기는 **대상의 방언**으로(SQLite 실패가 `[ORA-00014]`로 보이던 결함 · T-148).
+    printer.dialect = spec.dialect.unwrap_or(dialect);
     let ok = runner.connect(&spec, &mut |e| printer.handle(e));
     if !ok {
         std::process::exit(1);

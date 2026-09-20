@@ -141,7 +141,17 @@ mod imp {
 
     extern "C" {
         fn malloc_zone_pressure_relief(zone: *mut c_void, goal: usize) -> usize;
+        /// `mach_task_self()` 매크로의 실체.
+        static mach_task_self_: u32;
+        fn task_info(task: u32, flavor: u32, info: *mut u64, count: *mut u32) -> i32;
     }
+
+    /// `TASK_VM_INFO` · rev1 길이(`phys_footprint`까지 = 8바이트 19칸 = natural_t 38개).
+    const TASK_VM_INFO: u32 = 22;
+    const REV1_WORDS: usize = 19;
+    /// `task_vm_info`의 칸(모두 8바이트 경계 — `region_count`+`page_size`가 한 칸): 2 = resident_size · 18 = phys_footprint.
+    const IX_RESIDENT: usize = 2;
+    const IX_FOOTPRINT: usize = 18;
 
     pub(super) fn trim() {
         // SAFETY: zone = NULL(모든 영역) · goal = 0(가능한 만큼).
@@ -150,8 +160,17 @@ mod imp {
         }
     }
 
+    /// (메모리 풋프린트, 상주 크기) — 활성 상태 보기의 "메모리"가 `phys_footprint`다(Windows Private Bytes에 대응 ·
+    /// 86차 mac 점검에서 `NSQL_TRACE_MEM`이 `0 -> 0`만 찍던 것 · T-148).
     pub(super) fn usage() -> (u64, u64) {
-        (0, 0)
+        let mut info = [0u64; REV1_WORDS];
+        let mut count = (REV1_WORDS * 2) as u32;
+        // SAFETY: 버퍼 길이를 `count`(natural_t 단위)로 알리고 커널은 그만큼만 채운다 · 자기 태스크 포트는 늘 유효.
+        let kr = unsafe { task_info(mach_task_self_, TASK_VM_INFO, info.as_mut_ptr(), &mut count) };
+        if kr != 0 || (count as usize) < REV1_WORDS * 2 {
+            return (0, 0);
+        }
+        (info[IX_FOOTPRINT], info[IX_RESIDENT])
     }
 }
 
@@ -170,15 +189,17 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    /// 큰 조각 다수를 놓은 뒤 회수 — 실패 없이 돌고(어느 OS든) Windows에서는 사용량을 읽을 수 있다.
+    /// 큰 조각 다수를 놓은 뒤 회수 — 실패 없이 돌고(어느 OS든) Windows·macOS에서는 사용량을 읽을 수 있다.
     #[test]
     fn trim_runs_and_usage_reads() {
         let junk: Vec<String> = (0..50_000).map(|i| format!("cell value {i:08}")).collect();
         drop(junk);
         let _us = super::trim();
         let (private, ws) = super::usage();
-        if cfg!(windows) {
+        if cfg!(any(windows, target_os = "macos")) {
             assert!(private > 0 && ws > 0);
+            // 풋프린트가 터무니없는 값(칸을 잘못 읽음)이 아닌지 — 시험 프로세스는 1 MB ~ 8 GB 사이.
+            assert!((1 << 20..8u64 << 30).contains(&private), "{private}");
         }
     }
 }

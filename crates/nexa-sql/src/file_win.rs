@@ -33,8 +33,7 @@ pub(crate) enum FileWinAction {
 
 pub(crate) struct FileWin {
     window: Option<Rc<Window>>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
     shift: bool,
@@ -100,7 +99,6 @@ impl FileWin {
     pub(crate) fn new() -> Self {
         FileWin {
             window: None,
-            ctx: None,
             surface: None,
             scale: 1.0,
             cursor: (0, 0),
@@ -221,12 +219,7 @@ impl FileWin {
         };
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                self.surface = Some(s);
-            }
-            self.ctx = Some(ctx);
-        }
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
         // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
         win.set_ime_allowed(crate::input::system_ime());
         self.window = Some(win);
@@ -236,7 +229,6 @@ impl FileWin {
 
     pub(crate) fn close(&mut self) {
         self.surface = None;
-        self.ctx = None;
         self.window = None;
         self.picker = None;
     }

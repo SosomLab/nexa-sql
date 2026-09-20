@@ -369,6 +369,12 @@ const HANGUL_COMPOSE_OPTS: &[(&str, Msg)] = &[
     ("app", Msg::OptHangulApp),
 ];
 
+/// macOS 화면 내보내기(T-147 · docs/62 §2).
+const MAC_PRESENT_OPTS: &[(&str, Msg)] = &[
+    ("iosurface", Msg::OptMacPresentLayer),
+    ("softbuffer", Msg::OptMacPresentSoft),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -2646,6 +2652,16 @@ pub const REGISTRY: &[Entry] = &[
         default: "full",
     },
     // ★ 실행 속도 향상(사용자 09-17): UI 구성·부가 표시·폴링·I/O 키(`perf::BOOST`)를 최적값으로 강제 + 설정 창 잠금 · 동작 영향 0.
+    // macOS 화면 내보내기(T-147 · D-133 ②) — IOSurface 풀(할당·복사 0 · 색 맞춤 = 합성기) / 종전 softbuffer. 다른 OS는 무시.
+    Entry {
+        key: "gfx.mac_present",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMacPresent,
+        desc: Msg::DescMacPresent,
+        kind: SettingKind::Choice(MAC_PRESENT_OPTS),
+        // 기본 = 종전 경로. IOSurface는 실기 검증이 끝날 때까지 선택 사항(86차: Intel + AMD에서 빈 화면).
+        default: "softbuffer",
+    },
     Entry {
         key: "perf.boost",
         cat: Msg::CatPerformance,

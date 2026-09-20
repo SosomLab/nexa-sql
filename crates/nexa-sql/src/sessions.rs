@@ -523,6 +523,16 @@ pub(crate) enum DisconnectPlan {
     SharedAsk,
 }
 
+/// 오류 코드 표기에 쓸 방언 — 접속돼 있으면 세션의 방언 · **아직 아니면 붙으려던 대상의 방언**.
+/// 접속 실패는 `Connected`보다 먼저 오므로 세션 방언(기본 Oracle · 또는 직전 서버)으로 분류하면 SQLite 실패가
+/// `[ORA-00014]`로 보인다(86차 mac 점검 · T-148).
+pub(crate) fn error_dialect(connected: bool, session: Dialect, target: Option<Dialect>) -> Dialect {
+    match target {
+        Some(d) if !connected => d,
+        _ => session,
+    }
+}
+
 /// `private` = 지금 세션이 전용 · `bound_tabs` = 지금(공유) 세션에 묶인 탭 수(전용이면 무시).
 pub(crate) fn disconnect_plan(private: bool, bound_tabs: usize) -> DisconnectPlan {
     if private {
@@ -727,6 +737,19 @@ pub(crate) fn ddl_waits_for_commit(transactional: bool, autocommit: bool, on_com
 
 #[cfg(test)]
 mod tests {
+    /// 오류 표기 방언(MC/DC) — 조건 둘(접속됨 · 대상 방언 있음)이 각각 혼자 결과를 바꾼다.
+    #[test]
+    fn error_dialect_mcdc() {
+        use super::error_dialect as f;
+        use nsql_core::Dialect::{Oracle, Sqlite};
+        // 기준: 미접속 + 대상 있음 → 대상.
+        assert_eq!(f(false, Oracle, Some(Sqlite)), Sqlite);
+        // 접속됨만 뒤집음 → 세션.
+        assert_eq!(f(true, Oracle, Some(Sqlite)), Oracle);
+        // 대상 없음만 뒤집음 → 세션.
+        assert_eq!(f(false, Oracle, None), Oracle);
+    }
+
     /// 접속 유형: 운영 = 더 엄격한 쪽 · 그 외 = 전역 그대로 / 실행 확인 = 운영 · 설정 · 변경 문장 셋이 모두 참일 때만.
     #[test]
     fn conn_env_rules() {

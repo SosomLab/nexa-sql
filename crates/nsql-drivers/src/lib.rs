@@ -11,14 +11,25 @@
 use nsql_core::{DbError, Dialect, Session};
 use nsql_script::ConnectSpec;
 
+/// `sqlite:` 뒤 경로 — 권한부(`//`)는 **한 번만** 벗긴다. 종전 `trim_start_matches("//")`는 슬래시 쌍을 전부 먹어
+/// `sqlite:////abs/x.db`(SQLAlchemy식 절대 경로)가 상대 경로 `abs/x.db`가 됐다(86차 mac 점검 · T-148).
+/// 남은 선행 `//`는 POSIX에서 `/` 하나로 접는다(Windows는 UNC `//server/share`일 수 있어 그대로).
+fn sqlite_path(rest: &str) -> String {
+    let p = rest.strip_prefix("//").unwrap_or(rest);
+    if !cfg!(windows) && p.starts_with("//") {
+        return format!("/{}", p.trim_start_matches('/'));
+    }
+    p.to_string()
+}
+
 /// 접속 문자열 → 스펙(SQLite 축약형 처리 후 `ConnectSpec::parse`).
 pub fn parse_target(s: &str, default_dialect: Dialect) -> Result<ConnectSpec, String> {
     let t = s.trim();
     if let Some(rest) = t.strip_prefix("sqlite:") {
-        let db = rest.trim_start_matches("//");
+        let db = sqlite_path(rest);
         return Ok(ConnectSpec {
             dialect: Some(Dialect::Sqlite),
-            database: Some(db.to_string()),
+            database: Some(db),
             ..Default::default()
         });
     }
@@ -113,5 +124,17 @@ mod tests {
         assert_eq!(s.database.as_deref(), Some("/tmp/a.db"));
         let s = parse_target("u/p@h:1521/svc", Dialect::Oracle).unwrap();
         assert_eq!(s.dialect, Some(Dialect::Oracle));
+    }
+
+    /// 슬래시 4개(SQLAlchemy식 절대 경로)가 상대 경로로 바뀌지 않는다(T-148 · 86차).
+    #[test]
+    fn sqlite_four_slashes_stay_absolute() {
+        let s = parse_target("sqlite:////tmp/a.db", Dialect::Oracle).unwrap();
+        #[cfg(not(windows))]
+        assert_eq!(s.database.as_deref(), Some("/tmp/a.db"));
+        #[cfg(windows)]
+        assert_eq!(s.database.as_deref(), Some("//tmp/a.db"));
+        let s = parse_target("sqlite:rel/a.db", Dialect::Oracle).unwrap();
+        assert_eq!(s.database.as_deref(), Some("rel/a.db"));
     }
 }

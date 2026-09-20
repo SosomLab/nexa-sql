@@ -40,6 +40,7 @@ mod log_win;
 mod memtrim;
 mod palette;
 mod prefs_win;
+mod present;
 mod probe;
 mod results;
 mod runtoast;
@@ -148,8 +149,7 @@ use sessions::{ConnectIntent, Sess, SessionMode, TxItem, SHARED};
 
 struct App {
     window: Option<Rc<Window>>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<present::Presenter>,
     ui_font: Font,
     mono_font: Font,
     /// 결과 그리드·텍스트 보기 글꼴(설정 `grid.font_face` · None = UI 글꼴 · 사용자 09-16 Golden 참고).
@@ -4168,6 +4168,10 @@ impl App {
             "input.hangul_compose" => {
                 self.hangul_app = None;
                 self.sync_hangul_mode();
+            }
+            // 새로 여는 창부터(메인 창은 재시작 뒤) — 열려 있는 창의 뒷단은 바꾸지 않는다.
+            "gfx.mac_present" => {
+                present::set_mode(self.settings.get(key).unwrap_or("softbuffer"));
             }
             "explorer.visible" => {
                 self.explorer.set_visible(self.settings.flag(key));
@@ -9264,8 +9268,13 @@ impl App {
                         .get(index)
                         .cloned()
                         .unwrap_or_default();
+                    let err_dialect = sessions::error_dialect(
+                        self.sess.connected,
+                        self.sess.dialect,
+                        self.sess.last_spec.as_ref().and_then(|s| s.dialect),
+                    );
                     let (cls, summary) =
-                        toast::summarize(self.sess.dialect, error.code, &error.message, &stmt);
+                        toast::summarize(err_dialect, error.code, &error.message, &stmt);
                     self.sess.status = tf(Msg::StErrorLine, &[&line.to_string(), &summary]);
                     // "테이블/뷰 없음"인데 탐색기에는 그 이름이 있다 = 트리가 낡았다 → 그 폴더만 다시(docs/57 T4).
                     if cls.class == nsql_core::ErrorClass::NoTable
@@ -10841,15 +10850,14 @@ impl ApplicationHandler<Wake> for App {
         self.scale = win.scale_factor() as f32;
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
         self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
-        match softbuffer::Context::new(win.clone()) {
-            Ok(ctx) => {
-                match softbuffer::Surface::new(&ctx, win.clone()) {
-                    Ok(s) => self.surface = Some(s),
-                    Err(e) => eprintln!("softbuffer surface failed: {e}"),
+        match present::Presenter::new(win.clone()) {
+            Ok(p) => {
+                if self.frame_trace.is_some() {
+                    eprintln!("[frames] present backend = {}", p.backend());
                 }
-                self.ctx = Some(ctx);
+                self.surface = Some(p);
             }
-            Err(e) => eprintln!("softbuffer context failed: {e}"),
+            Err(e) => eprintln!("{e}"),
         }
         let near = win
             .outer_position()
@@ -12040,7 +12048,6 @@ fn main() {
     sess.status = status;
     let mut app = App {
         window: None,
-        ctx: None,
         surface: None,
         ui_font: ui.font,
         mono_font: mono.font,
@@ -12282,6 +12289,8 @@ fn main() {
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
     // 스크롤 방향(맥식 자연스러운 스크롤) — 창 세 개 공통.
     input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
+    // 화면 내보내기 방식(T-147) — 첫 창이 만들어지기 전에.
+    present::set_mode(app.settings.get("gfx.mac_present").unwrap_or("softbuffer"));
     // 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로").
     app.conn_win.set_tuning(conn_tuning(&app.settings));
     nexa_ctl::tokens::set_intent_ms(app.settings.int("ui.hover_intent_ms").clamp(0, 500) as u64);
@@ -12324,6 +12333,9 @@ fn main() {
                 app.sess.spec = Some(spec.clone());
                 if nsql_vault::is_profile_name(&target) {
                     app.conn_win.select_by_name(&target);
+                    // 접속 창 Connect와 같게 프로필 이름을 세션에 — 탐색기 루트·공유 연결 목록이 `host:port`가 아니라
+                    // 프로필 이름으로 보인다(86차 mac 점검 · T-148).
+                    app.sess.profile = target.clone();
                 }
                 app.sess.worker.send(worker::Cmd::ConnectSpec {
                     spec,

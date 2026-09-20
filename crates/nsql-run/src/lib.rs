@@ -278,6 +278,8 @@ pub fn test_connection(spec: &ConnectSpec, opener: &mut Opener) -> Result<TestRe
 
 #[allow(missing_debug_implementations)]
 pub struct Runner {
+    /// 마지막으로 만든 저장 단위(종류 · 소유자 · 이름) — `SHOW ERRORS`가 다시 읽는다(SQL*Plus 관용 · 09-20).
+    last_unit: Option<(String, String, String)>,
     pub engine: Engine,
     pub session: Option<Box<dyn Session>>,
     opener: Opener,
@@ -446,6 +448,7 @@ impl Runner {
             keep_cursor: true,
             fetch_size: 0,
             cursor_idle_secs: 0,
+            last_unit: None,
             read_end: ReadEnd::Auto,
             tx_changed: false,
             tx_user: false,
@@ -1219,13 +1222,24 @@ impl Runner {
             }
             Action::Describe(o) => self.describe(index, item, &o, emit),
             Action::Show(w) => {
-                let w_up = w.trim().to_ascii_uppercase();
+                let w_up = w.trim().trim_end_matches(';').trim().to_ascii_uppercase();
                 // `SHOW TABLES|VIEWS|<kind>` — 카탈로그 목록(T-52 · psql `\dt` · sqlite `.tables` 별칭의 종착).
                 if !matches!(w_up.as_str(), "USER" | "VARIABLES" | "VAR") {
                     if let Some(kind) = nsql_catalog::ObjectKind::parse(&w_up.to_ascii_lowercase())
                     {
                         return self.show_objects(index, item, kind, emit);
                     }
+                }
+                // `SHOW ERR[ORS] [종류 이름]` — 마지막으로 만든 저장 단위(또는 지정한 것)의 컴파일 오류(Oracle `ALL_ERRORS`).
+                //   만들 때 이미 오류로 보고하지만(`report_compile_errors`) SQL*Plus 스크립트의 관용 줄을 "미지원"으로 남기지 않는다.
+                if w_up == "ERR"
+                    || w_up == "ERRORS"
+                    || w_up.starts_with("ERR ")
+                    || w_up.starts_with("ERRORS ")
+                {
+                    let text = self.show_errors(&w_up);
+                    emit(RunEvent::Message(text));
+                    return true;
                 }
                 let text = match w_up.as_str() {
                     "USER" => format!("USER = {}", self.connection.clone().unwrap_or_default()),
@@ -1550,6 +1564,51 @@ impl Runner {
         }
     }
 
+    /// `SHOW ERRORS [종류 이름]`의 본문 — 대상이 없거나 Oracle이 아니면 "오류 없음".
+    fn show_errors(&mut self, w_up: &str) -> String {
+        let mut words = w_up.split_whitespace().skip(1);
+        let named = match (words.next(), words.next(), words.next()) {
+            // `PACKAGE BODY name` 같은 두 낱말 종류.
+            (Some(k1), Some(k2), Some(n)) => Some((format!("{k1} {k2}"), n.to_string())),
+            (Some(k), Some(n), None) => Some((k.to_string(), n.to_string())),
+            _ => None,
+        };
+        if self.engine.dialect != Dialect::Oracle {
+            return t(Msg::ShowNoErrors).to_string();
+        }
+        let Some(session) = self.session.as_mut() else {
+            return t(Msg::NoSession).to_string();
+        };
+        let (kind, owner, name) = match named {
+            Some((k, n)) => {
+                let (owner, name) = match n.split_once('.') {
+                    Some((o, nm)) => (o.to_string(), nm.to_string()),
+                    None => (
+                        nsql_catalog::current_schema(session.as_mut()).unwrap_or_default(),
+                        n,
+                    ),
+                };
+                (k, owner, name)
+            }
+            None => match self.last_unit.clone() {
+                Some(u) => u,
+                None => return t(Msg::ShowNoErrors).to_string(),
+            },
+        };
+        match nsql_catalog::compile_errors(session.as_mut(), &owner, &name) {
+            Ok(errs) if !errs.is_empty() => {
+                let mut out = tf(Msg::ShowErrorsFor, &[&format!("{kind} {owner}.{name}")]);
+                for e in &errs {
+                    out.push('\n');
+                    out.push_str(&e.to_string());
+                }
+                out
+            }
+            Ok(_) => t(Msg::ShowNoErrors).to_string(),
+            Err(e) => e.to_string(),
+        }
+    }
+
     /// `CREATE [OR REPLACE] PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE|VIEW …`가 성공한 뒤 Oracle `ALL_ERRORS`를 읽어
     /// 오류가 있으면 `RunEvent::Error`(줄/열/메시지 목록) — 없으면 true.
     fn report_compile_errors(
@@ -1586,6 +1645,11 @@ impl Runner {
         } else {
             name.to_ascii_uppercase()
         };
+        self.last_unit = Some((
+            kind.code().to_ascii_uppercase(),
+            owner.clone(),
+            name_up.clone(),
+        ));
         match nsql_catalog::compile_errors(session.as_mut(), &owner, &name_up) {
             Ok(errs) if !errs.is_empty() => {
                 let mut msg = format!(
@@ -2180,6 +2244,22 @@ SELECT * FROM t;
         assert!(ev
             .iter()
             .any(|e| matches!(e, RunEvent::Message(m) if m.starts_with("USER = "))));
+    }
+
+    /// `SHOW ERRORS`(SQL*Plus 관용 줄 · 09-20) — "미지원"이 아니라 "오류 없음"(Oracle 밖에서는 컴파일 오류 개념이 없다).
+    #[test]
+    fn show_errors_is_supported() {
+        let mut r = runner();
+        let (errs, ev) = collect(
+            &mut r,
+            "CREATE VIEW v1 AS SELECT 1 AS n;\nSHOW ERRORS\nSHOW ERR;\nSHOW ERRORS VIEW v1\n",
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        let n = ev
+            .iter()
+            .filter(|e| matches!(e, RunEvent::Message(m) if m == nsql_i18n::t(Msg::ShowNoErrors)))
+            .count();
+        assert_eq!(n, 3, "{ev:?}");
     }
 
     #[test]

@@ -34,8 +34,7 @@ pub(crate) struct ToolFloatWin {
     /// 담고 있는 그룹 id.
     pub group: String,
     window: Option<Rc<Window>>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
 }
@@ -71,17 +70,11 @@ impl ToolFloatWin {
         let mut me = ToolFloatWin {
             group: group.to_string(),
             window: None,
-            ctx: None,
             surface: None,
             scale,
             cursor: (-1, -1),
         };
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                me.surface = Some(s);
-            }
-            me.ctx = Some(ctx);
-        }
+        me.surface = crate::present::Presenter::new(win.clone()).ok();
         me.window = Some(win);
         me.redraw();
         Some(me)
@@ -119,7 +112,6 @@ impl ToolFloatWin {
 
     pub(crate) fn close(&mut self) {
         self.surface = None;
-        self.ctx = None;
         self.window = None;
     }
 

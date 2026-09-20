@@ -57,8 +57,7 @@ pub(crate) struct LogWin {
     /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
     memo: crate::wingeom::Memo,
     last: Option<((i32, i32), (f64, f64))>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     buf: LogBuffer,
     fmt: Box<dyn LogFormat + Send>,
     /// 형식 이름 · 템플릿 · 컬럼(설정 `log.format`/`log.template`/`log.columns`).
@@ -136,7 +135,6 @@ impl LogWin {
             memo: crate::wingeom::Memo::default(),
 
             last: None,
-            ctx: None,
             surface: None,
             buf: LogBuffer::new(10_000),
             fmt: nsql_log::formatter_with(format, nsql_log::DEFAULT_TEMPLATE, Columns::default()),
@@ -725,12 +723,7 @@ impl LogWin {
         }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                self.surface = Some(s);
-            }
-            self.ctx = Some(ctx);
-        }
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
         self.window = Some(win);
         self.apply_level();
         self.redraw();
@@ -743,7 +736,6 @@ impl LogWin {
             }
         }
         self.surface = None;
-        self.ctx = None;
         self.window = None;
     }
 

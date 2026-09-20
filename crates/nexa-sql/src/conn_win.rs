@@ -255,8 +255,7 @@ pub(crate) struct ConnWin {
     /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
     memo: crate::wingeom::Memo,
     last: Option<((i32, i32), (f64, f64))>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     scale: f32,
     /// 마지막으로 닫힐 때의 창 위치(물리 px) — 같은 모니터에서 다시 열면 그 자리(사용자 09-16).
     last_pos: Option<(i32, i32)>,
@@ -363,7 +362,6 @@ impl ConnWin {
             memo: crate::wingeom::Memo::default(),
 
             last: None,
-            ctx: None,
             surface: None,
             scale: 1.0,
             last_pos: None,
@@ -1045,12 +1043,7 @@ impl ConnWin {
         }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                self.surface = Some(s);
-            }
-            self.ctx = Some(ctx);
-        }
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
         // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
         win.set_ime_allowed(crate::input::system_ime());
         self.window = Some(win);
@@ -1142,7 +1135,6 @@ impl ConnWin {
             }
         }
         self.surface = None;
-        self.ctx = None;
         self.window = None;
         self.panel.set_focused(false);
     }

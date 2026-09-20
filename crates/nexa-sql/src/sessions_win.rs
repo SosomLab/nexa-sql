@@ -51,8 +51,7 @@ pub(crate) struct SessionsWin {
     window: Option<Rc<Window>>,
     memo: crate::wingeom::Memo,
     last: Option<((i32, i32), (f64, f64))>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
     scroll: i32,
@@ -82,7 +81,6 @@ impl SessionsWin {
             window: None,
             memo: crate::wingeom::Memo::default(),
             last: None,
-            ctx: None,
             surface: None,
             scale: 1.0,
             cursor: (-1, -1),
@@ -132,12 +130,7 @@ impl SessionsWin {
         }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                self.surface = Some(s);
-            }
-            self.ctx = Some(ctx);
-        }
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
         self.window = Some(win);
         self.redraw();
     }
@@ -149,7 +142,6 @@ impl SessionsWin {
             }
         }
         self.surface = None;
-        self.ctx = None;
         self.window = None;
     }
 

@@ -95,8 +95,7 @@ pub(crate) struct PrefsWin {
     /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
     memo: crate::wingeom::Memo,
     last: Option<((i32, i32), (f64, f64))>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
     shift: bool,
@@ -199,7 +198,6 @@ impl PrefsWin {
             memo: crate::wingeom::Memo::default(),
 
             last: None,
-            ctx: None,
             surface: None,
             scale: 1.0,
             cursor: (0, 0),
@@ -499,12 +497,7 @@ impl PrefsWin {
         }
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                self.surface = Some(s);
-            }
-            self.ctx = Some(ctx);
-        }
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
         // ★ IME 허용 — 이 창에도 한글 입력란(검색·값)이 있다. winit 창은 기본으로 IME가 붙지 않아(Windows) 한글 조합이
         //   안 됐다(사용자 09-19 "설정 검색에 한글 입력이 안 된다" · 접속 창·파일 창은 이미 켜 둔 것과 같은 규칙).
         // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
@@ -522,7 +515,6 @@ impl PrefsWin {
             }
         }
         self.surface = None;
-        self.ctx = None;
         self.window = None;
         self.cards.clear();
     }

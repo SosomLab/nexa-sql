@@ -51,8 +51,7 @@ struct RowView {
 
 pub(crate) struct KeysWin {
     window: Option<Rc<Window>>,
-    ctx: Option<softbuffer::Context<Rc<Window>>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
     shift: bool,
@@ -76,7 +75,6 @@ impl KeysWin {
     pub(crate) fn new() -> Self {
         KeysWin {
             window: None,
-            ctx: None,
             surface: None,
             scale: 1.0,
             cursor: (0, 0),
@@ -202,12 +200,7 @@ impl KeysWin {
         };
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
-        if let Ok(ctx) = softbuffer::Context::new(win.clone()) {
-            if let Ok(s) = softbuffer::Surface::new(&ctx, win.clone()) {
-                self.surface = Some(s);
-            }
-            self.ctx = Some(ctx);
-        }
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
         self.window = Some(win);
         self.capturing = false;
         self.sync_enabled();
@@ -217,7 +210,6 @@ impl KeysWin {
 
     pub(crate) fn close(&mut self) {
         self.surface = None;
-        self.ctx = None;
         self.window = None;
         self.capturing = false;
     }
