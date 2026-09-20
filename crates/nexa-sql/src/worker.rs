@@ -45,6 +45,8 @@ pub(crate) enum Cmd {
         schema: Option<String>,
         table: String,
     },
+    /// 연결 공유 층의 변수를 통째로 바꾼다(변수 창이 고쳤다 · D-135) — DB로 가는 것은 없다.
+    SharedVars(Vec<nsql_script::VarState>),
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
@@ -1059,6 +1061,10 @@ pub(crate) fn spawn(
                             None
                         });
                         wake_now();
+                        true
+                    }
+                    Cmd::SharedVars(v) => {
+                        runner.engine.vars.set_shared(v);
                         true
                     }
                     Cmd::Quit => {

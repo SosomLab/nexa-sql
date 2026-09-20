@@ -388,7 +388,8 @@ fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) -> bool {
 }
 
 /// 입력 창에 친 글 → 바인드 값: 빈 글·`NULL` = NULL · 수 = 수 · `'…'` = 그 안의 글 · 그 밖 = 글 그대로.
-fn input_value(text: &str) -> Value {
+#[must_use]
+pub fn input_value(text: &str) -> Value {
     let t = text.trim();
     if t.is_empty() || t.eq_ignore_ascii_case("NULL") {
         return Value::Null;

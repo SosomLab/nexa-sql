@@ -293,6 +293,11 @@ impl VarStore {
         self.vars = Self::from_states(states);
     }
 
+    /// 공유 층을 통째로 정한다(호스트의 변수 창이 고쳤을 때).
+    pub fn set_shared(&mut self, states: Vec<VarState>) {
+        self.shared = Self::from_states(states);
+    }
+
     /// 프로필 층을 정한다(접속 때).
     pub fn set_fixed(&mut self, states: Vec<VarState>) {
         self.fixed = Self::from_states(states);

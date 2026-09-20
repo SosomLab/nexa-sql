@@ -57,6 +57,7 @@ mod toolicons;
 mod txlog_win;
 mod txwarn;
 mod undofile;
+mod vars_win;
 mod varsfile;
 mod winfocus;
 mod wingeom;
@@ -172,7 +173,12 @@ struct App {
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
+    /// 변수 창(docs/63 V2) · 마지막 실행에서 바뀐 이름(탭 id, 대문자 이름들 — 그 탭의 줄을 강조).
+    vars_win: vars_win::VarsWin,
+    vars_changed: (u64, std::collections::HashSet<String>),
     open_sessions: bool,
+    /// 변수 창을 다음 틱에 연다(메뉴·팔레트·기동 명령은 이벤트 루프 핸들이 없다).
+    open_vars: bool,
     open_txlog: bool,
     /// 우측 하단 토스트(오류 분류 · docs/42).
     toasts: toast::Toasts,
@@ -449,6 +455,23 @@ fn detail_push(
 }
 
 /// 전송 속도 문구(`1.2 MB/s` · 0이면 빈 문자열).
+/// 변수 타입의 표시 글자(변수 창).
+fn var_type_text(ty: &nsql_core::VarType) -> String {
+    use nsql_core::VarType as T;
+    match ty {
+        T::Number => "NUMBER".into(),
+        T::Varchar2(n) => format!("VARCHAR2({n})"),
+        T::Char(n) => format!("CHAR({n})"),
+        T::Clob => "CLOB".into(),
+        T::RefCursor => "REFCURSOR".into(),
+        T::BinaryFloat => "BINARY_FLOAT".into(),
+        T::BinaryDouble => "BINARY_DOUBLE".into(),
+        T::Date => "DATE".into(),
+        T::Timestamp => "TIMESTAMP".into(),
+        T::Auto => "auto".into(),
+    }
+}
+
 /// 바뀐 변수의 로그 한 줄(`A = 1, B = 'x'`) — 비밀 값은 가리고(D-140) 긴 값은 앞부분만 · 사라진 이름은 `(removed)`.
 fn vars_log_line(
     changed: &[String],
@@ -855,6 +878,7 @@ impl App {
             self.prefs_win.window(),
             self.txlog_win.window(),
             self.input_win.window(),
+            self.vars_win.window(),
         ]
         .into_iter()
         .flatten()
@@ -4988,7 +5012,10 @@ impl App {
         self.sess.run_tab = self.grid_tab;
         self.sess.run_set_stmt = None;
         self.sess.run_children = 0;
-        self.sess.run_tracking = true;
+        // 결과 새로고침은 **그 탭의 문장 하나**만 다시 돈다 → 딸린 결과 탭을 걷지 않는다(첫 결과 탭을 새로 고쳤다고
+        // 다른 문장의 결과 탭이 닫히면 안 된다) · 변수 표는 지금 편집기 탭의 것.
+        self.sess.run_tracking = false;
+        self.sess.run_editor = self.editors.active_id();
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
@@ -5137,6 +5164,7 @@ impl App {
             "view.log" => self.toggle_log_window(el),
             "view.txlog" | "tx.log" => self.open_txlog_window(el),
             "view.sessions" => self.open_sessions_window(el),
+            "view.variables" => self.open_vars_window(el),
             "view.on_top" => {
                 let on = !self.settings.flag("window.always_on_top");
                 let _ = self
@@ -5444,7 +5472,7 @@ impl App {
                 self.redraw();
             }
             // 이 탭의 변수 표를 새 결과 탭으로(`SHOW VARIABLES` — 러너가 탭 층 + 공유 층 + 프로필 층을 한 표로 낸다 · docs/63 V2).
-            "view.variables" => {
+            "vars.show" => {
                 if !self.sess.busy && self.gate_open() {
                     if self.settings.flag("grid.result_tabs") {
                         self.new_result_tab();
@@ -5499,6 +5527,15 @@ impl App {
                 self.disconnect_now();
             }
             // 세션 목록 = 토글(사용자 09-19): 열려 있으면 닫고 · 아니면 연다.
+            "view.variables" => {
+                if self.vars_win.is_open() {
+                    self.vars_win.close();
+                } else {
+                    self.open_vars = true;
+                    // 창은 다음 `about_to_wait`에서 만든다 — 이벤트가 없으면 그 틱이 오지 않으므로 깨운다.
+                    self.redraw();
+                }
+            }
             "conn.sessions" | "view.sessions" => {
                 if self.sessions_win.is_open() {
                     self.sessions_win.close();
@@ -7317,6 +7354,7 @@ impl App {
                     item("view.txlog", Msg::MnTxLogWindow),
                     item("view.sessions", Msg::MnSessManager),
                     item("view.variables", Msg::MnVariables),
+                    item("vars.show", Msg::MnShowVariables),
                     item("vars.script", Msg::MnVariablesScript),
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     item("view.toolbar_reset", Msg::MnResetToolbar),
@@ -7596,6 +7634,7 @@ impl App {
         cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
         cmds.push(m("view.variables", Msg::MnView, Msg::MnVariables));
         cmds.push(m("vars.script", Msg::MnView, Msg::MnVariablesScript));
+        cmds.push(m("vars.show", Msg::MnView, Msg::MnShowVariables));
         cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
         cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
         cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));
@@ -8592,6 +8631,165 @@ impl App {
         );
     }
 
+    /// 변수 창 열기/닫기(View ▸ Variables).
+    fn open_vars_window(&mut self, el: &ActiveEventLoop) {
+        if self.vars_win.is_open() {
+            self.vars_win.close();
+            return;
+        }
+        let near = self.window.as_ref().and_then(|w| {
+            w.outer_position()
+                .ok()
+                .map(|p| (p.x, p.y, w.outer_size().width))
+        });
+        let owner = self.window.clone();
+        self.vars_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner.as_deref(),
+        );
+        self.vars_win_context();
+    }
+
+    /// 변수 창의 제목 = 지금 편집기 탭.
+    fn vars_win_context(&mut self) {
+        if !self.vars_win.is_open() {
+            return;
+        }
+        let id = self.editors.active_id();
+        let title = self
+            .editors
+            .tab_list()
+            .into_iter()
+            .find(|(t, _, _)| *t == id)
+            .map(|(_, title, _)| title)
+            .unwrap_or_default();
+        self.vars_win.set_context(&title);
+    }
+
+    /// 변수 창의 줄 — 지금 편집기 탭의 표(탭 층) + 이 세션의 공유 층. 비밀 값은 가린다 · 긴 값은 앞부분만.
+    fn vars_rows(&self) -> Vec<vars_win::VarRow> {
+        const MAX: usize = 200;
+        let tab = self.editors.active_id();
+        let changed = (self.vars_changed.0 == tab).then_some(&self.vars_changed.1);
+        let local = self.tab_vars.get(&tab).map(Vec::as_slice).unwrap_or(&[]);
+        local
+            .iter()
+            .map(|v| (v, false))
+            .chain(self.sess.shared_vars.iter().map(|v| (v, true)))
+            .map(|(v, shared)| {
+                let full = match &v.value {
+                    nsql_core::Value::Null => String::new(),
+                    other => other.display(),
+                };
+                let shown = if v.secret {
+                    "******".to_string()
+                } else if matches!(v.value, nsql_core::Value::Null) {
+                    "NULL".to_string()
+                } else if full.chars().count() > MAX {
+                    format!("{}…", full.chars().take(MAX).collect::<String>())
+                } else {
+                    full.clone()
+                };
+                vars_win::VarRow {
+                    name: v.name.clone(),
+                    ty: var_type_text(&v.ty),
+                    value: shown,
+                    edit: if v.secret { String::new() } else { full },
+                    shared,
+                    changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
+                }
+            })
+            .collect()
+    }
+
+    /// 변수 창의 동작을 표에 반영한다 — 탭 층은 App이 주인(바로 고친다 · 보존 파일도) · 공유 층은 워커에 통째로 알린다.
+    fn vars_apply(&mut self, action: vars_win::VarsWinAction) {
+        use vars_win::VarsWinAction as A;
+        let tab = self.editors.active_id();
+        let is = |v: &nsql_script::VarState, n: &str| v.name.eq_ignore_ascii_case(n);
+        let mut shared_dirty = false;
+        match action {
+            A::None | A::Paint => return,
+            A::Script => {
+                self.menu_action("vars.script");
+                return;
+            }
+            A::Set(name, text) => {
+                let value = nsql_run::input_value(&text);
+                let set = |v: &mut nsql_script::VarState| {
+                    if v.ty == nsql_core::VarType::Auto || !v.declared {
+                        v.ty = nsql_core::VarType::infer(&value);
+                    }
+                    v.value = value.clone();
+                };
+                if let Some(v) = self.sess.shared_vars.iter_mut().find(|v| is(v, &name)) {
+                    set(v);
+                    shared_dirty = true;
+                } else {
+                    let list = self.tab_vars.entry(tab).or_default();
+                    match list.iter_mut().find(|v| is(v, &name)) {
+                        Some(v) => set(v),
+                        None => list.push(nsql_script::VarState {
+                            secret: nsql_script::looks_secret(&name),
+                            name: name.clone(),
+                            ty: nsql_core::VarType::infer(&value),
+                            value: value.clone(),
+                            declared: false,
+                            layer: nsql_script::Layer::Local,
+                        }),
+                    }
+                }
+                self.vars_changed = (tab, std::iter::once(name.to_ascii_uppercase()).collect());
+            }
+            A::SetNull(name) => {
+                if let Some(v) = self.sess.shared_vars.iter_mut().find(|v| is(v, &name)) {
+                    v.value = nsql_core::Value::Null;
+                    shared_dirty = true;
+                } else if let Some(v) = self
+                    .tab_vars
+                    .get_mut(&tab)
+                    .and_then(|l| l.iter_mut().find(|v| is(v, &name)))
+                {
+                    v.value = nsql_core::Value::Null;
+                }
+            }
+            A::Delete(name) => {
+                let before = self.sess.shared_vars.len();
+                self.sess.shared_vars.retain(|v| !is(v, &name));
+                shared_dirty = self.sess.shared_vars.len() != before;
+                if let Some(l) = self.tab_vars.get_mut(&tab) {
+                    l.retain(|v| !is(v, &name));
+                }
+            }
+            A::Share(name, up) => {
+                if up {
+                    let list = self.tab_vars.entry(tab).or_default();
+                    if let Some(i) = list.iter().position(|v| is(v, &name)) {
+                        let mut v = list.remove(i);
+                        v.layer = nsql_script::Layer::Shared;
+                        self.sess.shared_vars.push(v);
+                        shared_dirty = true;
+                    }
+                } else if let Some(i) = self.sess.shared_vars.iter().position(|v| is(v, &name)) {
+                    let mut v = self.sess.shared_vars.remove(i);
+                    v.layer = nsql_script::Layer::Local;
+                    self.tab_vars.entry(tab).or_default().push(v);
+                    shared_dirty = true;
+                }
+            }
+        }
+        if shared_dirty {
+            self.sess
+                .worker
+                .send(worker::Cmd::SharedVars(self.sess.shared_vars.clone()));
+        }
+        let local = self.tab_vars.get(&tab).cloned().unwrap_or_default();
+        self.vars_persist_save(tab, &local);
+        self.vars_win.redraw();
+    }
+
     fn open_sessions_window(&mut self, el: &ActiveEventLoop) {
         let near = self.window.as_ref().and_then(|w| {
             w.outer_position()
@@ -9402,6 +9600,11 @@ impl App {
                     changed,
                 } => {
                     let line = vars_log_line(&changed, &local, &shared);
+                    self.vars_changed = (
+                        self.sess.run_editor,
+                        changed.iter().map(|n| n.to_ascii_uppercase()).collect(),
+                    );
+                    self.vars_win.redraw();
                     self.vars_persist_save(self.sess.run_editor, &local);
                     self.tab_vars.insert(self.sess.run_editor, local);
                     self.sess.shared_vars = shared;
@@ -9819,6 +10022,7 @@ impl App {
         let tab = self.editors.active_id();
         if tab != self.ext_last_tab {
             self.ext_last_tab = tab;
+            self.vars_win_context();
             self.ext_check(false);
             self.ext_banner_sync();
         }
@@ -11262,6 +11466,10 @@ impl ApplicationHandler<Wake> for App {
             self.sync_hangul_mode();
         }
         self.persist_window_sizes(false);
+        // 기동 명령·타이머가 부탁한 변수 창(창 이벤트가 없어도 열리게).
+        if std::mem::take(&mut self.open_vars) {
+            self.open_vars_window(el);
+        }
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
         if let Some((sid, needs)) = self.input_pending.take() {
             let owner = self.window.clone();
@@ -11778,6 +11986,18 @@ impl ApplicationHandler<Wake> for App {
             }
             return;
         }
+        if self.vars_win.is(id) {
+            match self.vars_win.handle(&event) {
+                vars_win::VarsWinAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let rows = self.vars_rows();
+                    self.vars_win
+                        .paint(&rows, &self.ui_font, &self.theme, ui_px);
+                }
+                other => self.vars_apply(other),
+            }
+            return;
+        }
         if self.input_win.is(id) {
             match self.input_win.handle(&event) {
                 input_win::InputWinAction::Paint => {
@@ -12128,6 +12348,9 @@ impl ApplicationHandler<Wake> for App {
         if std::mem::take(&mut self.open_txlog) {
             self.open_txlog_window(el);
         }
+        if std::mem::take(&mut self.open_vars) {
+            self.open_vars_window(el);
+        }
         if std::mem::take(&mut self.open_sessions) {
             self.open_sessions_window(el);
         }
@@ -12432,7 +12655,10 @@ fn main() {
         sessions_win: SessionsWin::new(),
         input_win: input_win::InputWin::new(),
         input_pending: None,
+        vars_win: vars_win::VarsWin::new(),
+        vars_changed: (0, std::collections::HashSet::new()),
         open_sessions: false,
+        open_vars: false,
         open_txlog: false,
         toasts: toast::Toasts::new(),
         tx_warn: txwarn::TxWarn::default(),
