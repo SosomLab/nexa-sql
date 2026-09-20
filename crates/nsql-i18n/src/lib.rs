@@ -162,6 +162,8 @@ pub enum Msg {
     MnSessNoneConnected,
     MnSessManager,
     MnSessManagerTitle,
+    /// View ▸ Variables — 이 탭의 변수 표를 결과 탭으로(docs/63 V2).
+    MnVariables,
     MnSessSharedOne,
     MnSessUnconnect,
     MnSessLoginTab,
@@ -1929,6 +1931,7 @@ impl Msg {
                 "Session Manager",
                 "세션 관리자",
             ],
+            Msg::MnVariables => ["Variables", "변수"],
             Msg::MnSessManagerTitle => [
                 "Sessions by server",
                 "서버별 세션",
@@ -3920,6 +3923,7 @@ impl Msg {
         Msg::MnSessNoneConnected,
         Msg::MnSessManager,
         Msg::MnSessManagerTitle,
+        Msg::MnVariables,
         Msg::MnSessSharedOne,
         Msg::MnSessUnconnect,
         Msg::MnSessLoginTab,

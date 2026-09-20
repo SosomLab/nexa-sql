@@ -5421,6 +5421,15 @@ impl App {
             }
             "run.statement" => self.run_sql(false),
             // Ctrl+\ = 새 결과 탭에 실행(T-93 · 끄면 Ctrl+Enter와 같다 · D-73).
+            // 이 탭의 변수 표를 새 결과 탭으로(`SHOW VARIABLES` — 러너가 탭 층 + 공유 층 + 프로필 층을 한 표로 낸다 · docs/63 V2).
+            "view.variables" => {
+                if !self.sess.busy && self.gate_open() {
+                    if self.settings.flag("grid.result_tabs") {
+                        self.new_result_tab();
+                    }
+                    self.run_text("SHOW VARIABLES".to_string(), 0, true);
+                }
+            }
             "run.statement_new_tab" => {
                 if self.settings.flag("grid.result_tabs") && !self.sess.busy {
                     self.new_result_tab();
@@ -7285,6 +7294,7 @@ impl App {
                     item("view.log", Msg::MnLogWindow),
                     item("view.txlog", Msg::MnTxLogWindow),
                     item("view.sessions", Msg::MnSessManager),
+                    item("view.variables", Msg::MnVariables),
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     item("view.toolbar_reset", Msg::MnResetToolbar),
                     MenuEntry::Separator,
@@ -7561,6 +7571,7 @@ impl App {
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
         cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
         cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
+        cmds.push(m("view.variables", Msg::MnView, Msg::MnVariables));
         cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
         cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
         cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));

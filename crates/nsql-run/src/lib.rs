@@ -380,6 +380,23 @@ fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) -> bool {
     }
 }
 
+/// 변수 타입의 표시 글자(`SHOW VARIABLES` · 패널).
+fn var_type_label(ty: &nsql_core::VarType) -> String {
+    use nsql_core::VarType as T;
+    match ty {
+        T::Number => "NUMBER".into(),
+        T::Varchar2(n) => format!("VARCHAR2({n})"),
+        T::Char(n) => format!("CHAR({n})"),
+        T::Clob => "CLOB".into(),
+        T::RefCursor => "REFCURSOR".into(),
+        T::BinaryFloat => "BINARY_FLOAT".into(),
+        T::BinaryDouble => "BINARY_DOUBLE".into(),
+        T::Date => "DATE".into(),
+        T::Timestamp => "TIMESTAMP".into(),
+        T::Auto => "auto".into(),
+    }
+}
+
 /// 서버 타입 글자 → 변수 타입(서명 추론용). 문자열류는 `None` = 그대로 `Auto`(종전 동작을 바꾸지 않는다).
 fn var_type_of(data_type: &str) -> Option<nsql_core::VarType> {
     use nsql_core::VarType;
@@ -1384,7 +1401,7 @@ impl Runner {
             Action::Show(w) => {
                 let w_up = w.trim().trim_end_matches(';').trim().to_ascii_uppercase();
                 // `SHOW TABLES|VIEWS|<kind>` — 카탈로그 목록(T-52 · psql `\dt` · sqlite `.tables` 별칭의 종착).
-                if !matches!(w_up.as_str(), "USER" | "VARIABLES" | "VAR") {
+                if !matches!(w_up.as_str(), "USER" | "VARIABLES" | "VAR" | "VARS") {
                     if let Some(kind) = nsql_catalog::ObjectKind::parse(&w_up.to_ascii_lowercase())
                     {
                         return self.show_objects(index, item, kind, emit);
@@ -1401,15 +1418,43 @@ impl Runner {
                     emit(RunEvent::Message(text));
                     return true;
                 }
-                let text = match w_up.as_str() {
-                    "USER" => format!("USER = {}", self.connection.clone().unwrap_or_default()),
-                    "VARIABLES" | "VAR" => self
+                // `SHOW VARIABLES` = 변수 표를 **결과 표**로(이름 · 타입 · 값 · 층 · 선언 — 비밀 값은 가린다 · docs/63 V2).
+                //   GUI에서는 결과 탭 하나로, CLI에서는 표로 보인다(종전 = 글자 한 덩어리).
+                if matches!(w_up.as_str(), "VARIABLES" | "VAR" | "VARS") {
+                    let rows: Vec<Vec<String>> = self
                         .engine
                         .vars
                         .iter()
-                        .map(|(n, v)| format!("{n} = {}", v.value.display()))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                        .map(|(key, v)| {
+                            let layer = match self.engine.vars.layer_of(key) {
+                                Some(nsql_script::Layer::Shared) => "shared",
+                                Some(nsql_script::Layer::Fixed) => "profile",
+                                _ => "tab",
+                            };
+                            vec![
+                                v.label.clone(),
+                                var_type_label(&v.ty),
+                                if v.secret {
+                                    "******".to_string()
+                                } else {
+                                    v.value.display()
+                                },
+                                layer.to_string(),
+                                if v.declared { "VAR" } else { "auto" }.to_string(),
+                            ]
+                        })
+                        .collect();
+                    emit(RunEvent::ResultSet {
+                        index,
+                        rs: text_result_set(&["Name", "Type", "Value", "Layer", "Declared"], rows),
+                        elapsed: Duration::ZERO,
+                        more: false,
+                        label: Some("Variables".to_string()),
+                    });
+                    return true;
+                }
+                let text = match w_up.as_str() {
+                    "USER" => format!("USER = {}", self.connection.clone().unwrap_or_default()),
                     _ => tf(Msg::ShowUnsupported, &[w.trim()]),
                 };
                 emit(RunEvent::Message(text));
