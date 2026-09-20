@@ -224,6 +224,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     Command {
+        id: "vars.script",
+        label: Msg::MnVariablesScript,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
         id: "view.variables",
         label: Msg::MnVariables,
         win: "",

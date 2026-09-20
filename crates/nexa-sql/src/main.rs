@@ -57,6 +57,7 @@ mod toolicons;
 mod txlog_win;
 mod txwarn;
 mod undofile;
+mod varsfile;
 mod winfocus;
 mod wingeom;
 mod worker;
@@ -153,6 +154,8 @@ struct App {
     surface: Option<present::Presenter>,
     /// ★ 편집기 탭별 변수 표(탭 층 · D-135 · docs/63) — 실행마다 워커에 넘기고 `RunEvent::Vars`로 돌려받는다. 탭을 닫으면 버린다.
     tab_vars: std::collections::HashMap<u64, Vec<nsql_script::VarState>>,
+    /// 오래된 변수 보존 파일 정리를 이번 실행에서 했는가(처음 쓸 때 1회).
+    vars_pruned: bool,
     ui_font: Font,
     mono_font: Font,
     /// 결과 그리드·텍스트 보기 글꼴(설정 `grid.font_face` · None = UI 글꼴 · 사용자 09-16 Golden 참고).
@@ -5426,6 +5429,20 @@ impl App {
             }
             "run.statement" => self.run_sql(false),
             // Ctrl+\ = 새 결과 탭에 실행(T-93 · 끄면 Ctrl+Enter와 같다 · D-73).
+            // 이 탭의 변수(탭 층 + 연결 공유 층)를 **실행할 수 있는 스크립트**로 새 편집기 탭에(내보내기 = 저장 · 가져오기 = 실행 · D-136).
+            "vars.script" => {
+                let mut all = self
+                    .tab_vars
+                    .get(&self.editors.active_id())
+                    .cloned()
+                    .unwrap_or_default();
+                all.extend(self.sess.shared_vars.iter().cloned());
+                let text = nsql_script::vars_to_script(&all);
+                self.editors.new_tab(None);
+                self.editors.cur_mut().set_text(&text);
+                self.set_focus(Focus::Editor);
+                self.redraw();
+            }
             // 이 탭의 변수 표를 새 결과 탭으로(`SHOW VARIABLES` — 러너가 탭 층 + 공유 층 + 프로필 층을 한 표로 낸다 · docs/63 V2).
             "view.variables" => {
                 if !self.sess.busy && self.gate_open() {
@@ -7300,6 +7317,7 @@ impl App {
                     item("view.txlog", Msg::MnTxLogWindow),
                     item("view.sessions", Msg::MnSessManager),
                     item("view.variables", Msg::MnVariables),
+                    item("vars.script", Msg::MnVariablesScript),
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     item("view.toolbar_reset", Msg::MnResetToolbar),
                     MenuEntry::Separator,
@@ -7577,6 +7595,7 @@ impl App {
         cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
         cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
         cmds.push(m("view.variables", Msg::MnView, Msg::MnVariables));
+        cmds.push(m("vars.script", Msg::MnView, Msg::MnVariablesScript));
         cmds.push(m("file.close_tab", Msg::MnFile, Msg::MnCloseTab));
         cmds.push(m("tab.next", Msg::MnView, Msg::MnNextTab));
         cmds.push(m("tab.prev", Msg::MnView, Msg::MnPrevTab));
@@ -8129,6 +8148,7 @@ impl App {
                     self.push_recent(&path);
                     if mode == LoadMode::Open {
                         restored = self.undo_persist_load(i, &path);
+                        self.vars_persist_load(tab, &path);
                     }
                 }
                 if self.editors.active_id() == tab {
@@ -8152,6 +8172,38 @@ impl App {
         self.mem_released();
         self.layout();
         self.redraw();
+    }
+
+    /// 변수 표 보존(D-136 · `varsfile`) — 실행이 그 탭의 변수를 바꿨을 때 · 파일이 있는 탭만.
+    fn vars_persist_save(&mut self, tab: u64, vars: &[nsql_script::VarState]) {
+        if !self.settings.flag("vars.persist") {
+            return;
+        }
+        let Some(path) = self
+            .editors
+            .index_of_id(tab)
+            .and_then(|i| self.editors.path_of(i))
+        else {
+            return;
+        };
+        let Some(dir) = varsfile::dir() else { return };
+        if !self.vars_pruned {
+            self.vars_pruned = true;
+            varsfile::prune_in(&dir, self.settings.int("vars.persist_days").max(0) as u64);
+        }
+        varsfile::store_in(&dir, &path, vars);
+    }
+
+    /// 방금 연 파일의 변수 표를 되살린다(그 탭에 아직 표가 없을 때만).
+    fn vars_persist_load(&mut self, tab: u64, path: &Path) {
+        if !self.settings.flag("vars.persist") || self.tab_vars.contains_key(&tab) {
+            return;
+        }
+        let Some(dir) = varsfile::dir() else { return };
+        let vars = varsfile::load_in(&dir, path);
+        if !vars.is_empty() {
+            self.tab_vars.insert(tab, vars);
+        }
     }
 
     /// 되돌리기 기록 파일 쓰기(docs/60 D-129 · 저장 직후 · 활성 탭) — 기록이 없으면 옛 파일을 지운다. 큰 파일 탭은 건너뛴다.
@@ -9350,6 +9402,7 @@ impl App {
                     changed,
                 } => {
                     let line = vars_log_line(&changed, &local, &shared);
+                    self.vars_persist_save(self.sess.run_editor, &local);
                     self.tab_vars.insert(self.sess.run_editor, local);
                     self.sess.shared_vars = shared;
                     if !line.is_empty() {
@@ -12364,6 +12417,7 @@ fn main() {
         window: None,
         surface: None,
         tab_vars: std::collections::HashMap::new(),
+        vars_pruned: false,
         ui_font: ui.font,
         mono_font: mono.font,
         grid_font: load_grid_font(

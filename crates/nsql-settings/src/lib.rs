@@ -2454,6 +2454,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // D-136: 파일별 변수 보존(`<설정 폴더>/vars/<경로 해시>.sql` — 실행 가능한 VAR/EXEC 스크립트 · 비밀·커서·여러 줄 제외).
+    Entry {
+        key: "vars.persist",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsPersist,
+        desc: Msg::DescVarsPersist,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "vars.persist_days",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsPersistDays,
+        desc: Msg::DescVarsPersistDays,
+        kind: SettingKind::Int { min: 0, max: 3650 },
+        default: "90",
+    },
     // D-137: 값이 없는 채로 읽히는 바인드·미정의 `&` = 실행당 한 번 묻기(prompt) / 말없이 NULL·빈 글(auto · 종전) / 오류(error).
     Entry {
         key: "vars.undeclared",
@@ -3130,6 +3147,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.typeahead_special", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_pos", "explorer.typeahead", Dep::On),
     ("run.toast_hide_secs", "run.toast", Dep::On),
+    ("vars.persist_days", "vars.persist", Dep::On),
     ("log.dev_layers", "log.dev_mode", Dep::On),
     ("editor.smart_indent", "editor.auto_indent", Dep::On),
     ("editor.indent_rules", "editor.smart_indent", Dep::On),

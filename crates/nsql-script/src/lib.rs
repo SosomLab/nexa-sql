@@ -35,4 +35,4 @@ pub use engine::{Action, Diagnostic, Engine};
 pub use inputs::{macro_refs, missing_inputs, InputKind, InputNeed};
 pub use split::{split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};
-pub use vars::{looks_secret, Layer, Var, VarState, VarStore};
+pub use vars::{looks_secret, vars_from_script, vars_to_script, Layer, Var, VarState, VarStore};

@@ -342,9 +342,101 @@ impl VarStore {
     }
 }
 
+/// 타입 → `VAR` 문에 쓸 글자(`Auto`는 선언하지 않는다 = `None`).
+fn type_token(ty: &VarType) -> Option<String> {
+    Some(match ty {
+        VarType::Number => "NUMBER".into(),
+        VarType::Varchar2(n) => format!("VARCHAR2({})", (*n).max(1)),
+        VarType::Char(n) => format!("CHAR({})", (*n).max(1)),
+        VarType::Clob => "CLOB".into(),
+        VarType::RefCursor => "REFCURSOR".into(),
+        VarType::BinaryFloat => "BINARY_FLOAT".into(),
+        VarType::BinaryDouble => "BINARY_DOUBLE".into(),
+        VarType::Date => "DATE".into(),
+        VarType::Timestamp => "TIMESTAMP".into(),
+        VarType::Auto => return None,
+    })
+}
+
+/// 변수 표 → **실행할 수 있는 스크립트**(`VAR 이름 타입` + `EXEC :이름 := 리터럴`) — 보존(D-136)과 내보내기가 같이 쓴다.
+/// 비밀 값·커서·바이트는 값을 쓰지 않는다(선언만 남는다). 다시 읽기 = [`vars_from_script`](그냥 이 스크립트를 실행해도 같다).
+#[must_use]
+pub fn vars_to_script(states: &[VarState]) -> String {
+    let mut out = String::new();
+    for s in states {
+        if s.declared {
+            if let Some(ty) = type_token(&s.ty) {
+                out.push_str(&format!("VAR {} {ty}\n", s.name));
+            }
+        }
+        if s.secret {
+            continue;
+        }
+        let lit = match &s.value {
+            Value::Null | Value::Cursor(_) | Value::Bytes(_) => continue,
+            Value::Int(n) => n.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Decimal(d) => d.clone(),
+            Value::Bool(b) => if *b { "1" } else { "0" }.to_string(),
+            Value::Str(t) => format!("'{}'", t.replace('\'', "''")),
+        };
+        // 여러 줄 글은 한 줄 명령(`EXEC`)에 못 담는다 → 건너뛴다(값은 다음 실행에서 다시 생긴다).
+        if lit.contains('\n') || lit.contains('\r') {
+            continue;
+        }
+        out.push_str(&format!("EXEC :{} := {lit}\n", s.name));
+    }
+    out
+}
+
+/// [`vars_to_script`]가 만든(또는 사람이 쓴 `VAR`/`EXEC :x := 리터럴`만 있는) 스크립트 → 탭 층 변수. DB로 가는 것은 없다 —
+/// 리터럴 대입과 선언만 읽고 나머지 줄은 무시한다.
+#[must_use]
+pub fn vars_from_script(text: &str) -> Vec<VarState> {
+    let mut e = crate::engine::Engine::new(nsql_core::Dialect::Oracle);
+    // 치환은 끈다(값에 `&`가 들어 있을 수 있다).
+    e.settings.define_char = None;
+    for item in crate::split::split_script(text) {
+        if matches!(
+            &item.kind,
+            crate::split::ItemKind::Command(
+                crate::command::Command::Variable { .. } | crate::command::Command::Exec { .. }
+            )
+        ) {
+            // 리터럴 대입·선언은 `plan` 안에서 표에 반영된다 · 서버로 가야 하는 식은 실행하지 않으므로 버려진다.
+            let _ = e.plan(&item);
+        }
+    }
+    e.vars.local_states()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 보존·내보내기 왕복: 선언·타입·값이 돌아오고 비밀·커서·여러 줄은 값이 빠진다 · 결과는 실행 가능한 스크립트다.
+    #[test]
+    fn script_round_trip() {
+        let mut s = VarStore::new();
+        s.declare("n", VarType::Number, Some(Value::Int(42)));
+        s.assign("V_CD", Value::Str("O'Brien & co".into()));
+        s.assign("v_password", Value::Str("hunter2".into()));
+        s.assign("rc", Value::Cursor(nsql_core::CursorId(1)));
+        s.assign("multi", Value::Str("a\nb".into()));
+        let text = vars_to_script(&s.local_states());
+        assert!(text.contains("VAR n NUMBER"), "{text}");
+        assert!(text.contains("EXEC :V_CD := 'O''Brien & co'"), "{text}");
+        assert!(!text.contains("hunter2"), "비밀 값은 쓰지 않는다");
+        let back = vars_from_script(&text);
+        let get = |n: &str| back.iter().find(|v| v.name.eq_ignore_ascii_case(n));
+        assert_eq!(get("n").unwrap().value, Value::Int(42));
+        assert!(get("n").unwrap().declared);
+        assert_eq!(
+            get("V_CD").unwrap().value,
+            Value::Str("O'Brien & co".into())
+        );
+        assert!(get("v_password").is_none() && get("multi").is_none());
+    }
 
     #[test]
     fn declare_assign_infer() {

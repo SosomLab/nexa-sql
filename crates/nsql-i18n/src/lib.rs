@@ -164,6 +164,12 @@ pub enum Msg {
     MnSessManagerTitle,
     /// View ▸ Variables — 이 탭의 변수 표를 결과 탭으로(docs/63 V2).
     MnVariables,
+    MnVariablesScript,
+    /// 설정 `vars.persist` · `vars.persist_days`(D-136).
+    LblVarsPersist,
+    DescVarsPersist,
+    LblVarsPersistDays,
+    DescVarsPersistDays,
     MnSessSharedOne,
     MnSessUnconnect,
     MnSessLoginTab,
@@ -1946,6 +1952,17 @@ impl Msg {
                 "세션 관리자",
             ],
             Msg::MnVariables => ["Variables", "변수"],
+            Msg::MnVariablesScript => ["Variables as Script", "변수를 스크립트로"],
+            Msg::LblVarsPersist => ["Remember variables per file", "파일별 변수 기억"],
+            Msg::DescVarsPersist => [
+                "Keep each file's tab variables in the settings folder (vars/) and restore them when the file is opened again. Secret values, cursors and multi-line text are never written",
+                "파일마다 탭 변수를 설정 폴더(vars/)에 두고 그 파일을 다시 열 때 되살립니다. 비밀 값·커서·여러 줄 글은 쓰지 않습니다",
+            ],
+            Msg::LblVarsPersistDays => ["Variable files: keep (days)", "변수 파일 보관(일)"],
+            Msg::DescVarsPersistDays => [
+                "Remembered variable files older than this are deleted (0 = never)",
+                "이보다 오래된 변수 파일은 지웁니다(0 = 지우지 않음)",
+            ],
             Msg::MnSessManagerTitle => [
                 "Sessions by server",
                 "서버별 세션",
@@ -3957,6 +3974,11 @@ impl Msg {
         Msg::MnSessManager,
         Msg::MnSessManagerTitle,
         Msg::MnVariables,
+        Msg::MnVariablesScript,
+        Msg::LblVarsPersist,
+        Msg::DescVarsPersist,
+        Msg::LblVarsPersistDays,
+        Msg::DescVarsPersistDays,
         Msg::MnSessSharedOne,
         Msg::MnSessUnconnect,
         Msg::MnSessLoginTab,
