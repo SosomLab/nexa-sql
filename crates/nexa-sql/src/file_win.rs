@@ -227,7 +227,8 @@ impl FileWin {
             }
             self.ctx = Some(ctx);
         }
-        win.set_ime_allowed(true);
+        // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
+        win.set_ime_allowed(crate::input::system_ime());
         self.window = Some(win);
         self.layout();
         self.redraw();

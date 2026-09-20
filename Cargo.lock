@@ -1290,6 +1290,7 @@ dependencies = [
  "nexa-font",
  "nexa-fs",
  "nexa-gfx",
+ "nexa-sys",
  "nsql-catalog",
  "nsql-core",
  "nsql-drivers",

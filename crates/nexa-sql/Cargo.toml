@@ -29,6 +29,8 @@ nexa-gfx.workspace = true
 nexa-ctl.workspace = true
 nexa-font.workspace = true
 nexa-fs.workspace = true
+# OS 신호 — 키보드 입력 소스(한글 조합 방식 T-139 · `nexa_sys::input_source`).
+nexa-sys.workspace = true
 nexa-dlg.workspace = true
 encoding_rs.workspace = true
 fancy-regex.workspace = true

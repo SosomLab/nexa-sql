@@ -507,7 +507,8 @@ impl PrefsWin {
         }
         // ★ IME 허용 — 이 창에도 한글 입력란(검색·값)이 있다. winit 창은 기본으로 IME가 붙지 않아(Windows) 한글 조합이
         //   안 됐다(사용자 09-19 "설정 검색에 한글 입력이 안 된다" · 접속 창·파일 창은 이미 켜 둔 것과 같은 규칙).
-        win.set_ime_allowed(true);
+        // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
+        win.set_ime_allowed(crate::input::system_ime());
         self.window = Some(win);
         self.rebuild_cards();
         self.layout();

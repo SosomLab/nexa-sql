@@ -260,6 +260,10 @@ struct App {
     result_area: Rect,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
+    /// `NSQL_TRACE_IME=1` — 키·IME 사건을 stderr로(T-139 진단).
+    trace_ime: bool,
+    /// 지금 한글을 앱이 조합하는가(`sync_hangul_mode` · None = 아직 안 맞춤).
+    hangul_app: Option<bool>,
     /// 계측용: 마지막 입력(키·글자·클릭)이 들어온 시각 — 다음 present 뒤 "입력→화면" 지연을 찍는다.
     input_at: Option<Instant>,
     /// 계측용: 입력 뒤 경로의 지점들(이름 · 시각) — present 뒤 한 줄로 찍는다(출력 자체가 지연을 만들지 않게).
@@ -770,9 +774,49 @@ impl App {
         self.search.set_focused(f == Focus::Search);
         self.ext_panel.set_focused(f == Focus::Ext);
         if let Some(w) = &self.window {
+            // 앱 조합 모드(T-139)면 어느 포커스든 IME를 끊는다(raw 자모 → 상자가 조합) · 아니면 글 입력 포커스에서만 붙인다.
             w.set_ime_allowed(
-                f == Focus::Editor || f == Focus::Find || f == Focus::Search || f == Focus::Ext,
+                input::system_ime()
+                    && (f == Focus::Editor
+                        || f == Focus::Find
+                        || f == Focus::Search
+                        || f == Focus::Ext),
             );
+        }
+    }
+
+    /// 한글 조합 방식 맞춤(T-139): 설정 × OS × 입력 소스 → nexa-ctl 앱 조합 스위치 + 모든 창의 IME 허용.
+    /// 부르는 때 = 기동 · 창 활성화 · 입력 소스 바뀜 알림 · 설정 변경(값이 바뀔 때만 창에 쓴다).
+    fn sync_hangul_mode(&mut self) {
+        let setting = self
+            .settings
+            .get("input.hangul_compose")
+            .unwrap_or("auto")
+            .to_string();
+        let korean = if setting == "auto" && cfg!(target_os = "macos") {
+            nexa_sys::input_source::is_korean()
+        } else {
+            None
+        };
+        let app = input::hangul_app_mode(&setting, cfg!(target_os = "macos"), korean);
+        if self.hangul_app == Some(app) {
+            return;
+        }
+        self.hangul_app = Some(app);
+        nexa_ctl::controls::set_hangul_app_compose(app);
+        input::set_system_ime(!app);
+        let f = self.focus;
+        self.set_focus(f);
+        for w in [
+            self.conn_win.window(),
+            self.file_win.window(),
+            self.prefs_win.window(),
+            self.txlog_win.window(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            w.set_ime_allowed(!app);
         }
     }
 
@@ -4121,6 +4165,10 @@ impl App {
             "input.scroll_natural" => {
                 input::set_natural_scroll(self.settings.flag(key));
             }
+            "input.hangul_compose" => {
+                self.hangul_app = None;
+                self.sync_hangul_mode();
+            }
             "explorer.visible" => {
                 self.explorer.set_visible(self.settings.flag(key));
                 self.layout();
@@ -4426,7 +4474,7 @@ impl App {
             .char_indices()
             .nth(caret)
             .map_or(full.len(), |(b, _)| b);
-        let items = nsql_script::split_script(&full);
+        let items = nsql_script::split_script_in(&full, Some(self.sess.dialect));
         let cur = items
             .iter()
             .position(|it| it.span.start <= byte && byte <= it.span.end);
@@ -4763,7 +4811,7 @@ impl App {
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
-        self.sess.last_run_items = split_items(&src);
+        self.sess.last_run_items = split_items(&src, self.sess.dialect);
         let max_rows = self.grid.page_rows();
         self.sess.worker.send(worker::Cmd::Run {
             src,
@@ -6773,7 +6821,7 @@ impl App {
             } else {
                 "SET AUTOCOMMIT OFF"
             };
-            self.sess.last_run_items = split_items(src);
+            self.sess.last_run_items = split_items(src, self.sess.dialect);
             self.sess.busy = true;
             self.sess.worker.send(worker::Cmd::Run {
                 src: src.to_string(),
@@ -8416,7 +8464,7 @@ impl App {
         self.sync_run_stmt_button();
         self.editors.set_running(self.sess.run_editor, true);
         self.editors.set_error_line(self.sess.run_editor, None);
-        let n = split_items(src).len().max(1);
+        let n = split_items(src, self.sess.dialect).len().max(1);
         self.sess
             .run_toast
             .start(src, nsql_log::now_local().stamp(), n);
@@ -8672,7 +8720,7 @@ impl App {
                     .char_indices()
                     .nth(self.ed_mut().caret())
                     .map_or(full.len(), |(b, _)| b);
-                nsql_script::statement_at(&full, byte_pos).map(|it| {
+                nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect)).map(|it| {
                     line_base = it.line.saturating_sub(1);
                     it.text
                 })
@@ -8704,7 +8752,7 @@ impl App {
         if sessions::prod_confirm_needed(
             prod,
             self.settings.flag("run.prod_confirm"),
-            &split_items(&src),
+            &split_items(&src, self.sess.dialect),
         ) {
             let key = nexa_fs::watch::content_hash(src.as_bytes());
             let armed = self
@@ -8732,7 +8780,7 @@ impl App {
         let light = self.conn_win.status_of(self.conn_win.active_name());
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
-        self.sess.last_run_items = split_items(&src);
+        self.sess.last_run_items = split_items(&src, self.sess.dialect);
         // 세션 상태를 바꾸는 문장이 나가면 이 세션은 유휴로 닫지 않는다(닫으면 그 설정·임시 데이터를 잃는다 · docs/52 §6-4).
         if self
             .sess
@@ -8882,7 +8930,8 @@ impl App {
                     .char_indices()
                     .nth(self.ed_mut().caret())
                     .map_or(full.len(), |(b, _)| b);
-                nsql_script::statement_at(&full, byte_pos).map(|it| it.text)
+                nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect))
+                    .map(|it| it.text)
             });
         let Some(stmt) = text.filter(|s| !s.trim().is_empty()) else {
             self.sess.status = t(Msg::ErrNoSql).into();
@@ -8896,7 +8945,7 @@ impl App {
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
-        self.sess.last_run_items = split_items(&src);
+        self.sess.last_run_items = split_items(&src, self.sess.dialect);
         self.sess.worker.send(worker::Cmd::Run {
             src,
             preflight: None,
@@ -10825,6 +10874,9 @@ impl ApplicationHandler<Wake> for App {
                 owner.as_deref(),
             );
         }
+        // 한글 조합 방식(T-139): 입력 소스 바뀜 알림을 구독하고 지금 상태로 맞춘다.
+        nexa_sys::input_source::watch();
+        self.sync_hangul_mode();
         // 툴바 배치 복원(설정 `toolbar.layout` · 플로팅 창은 about_to_wait에서 생성).
         self.apply_tool_layout_setting();
         // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
@@ -10860,6 +10912,10 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        // 입력 소스가 바뀌었다(한/영 · 다른 입력기 — macOS 분산 알림) → 한글 조합 방식을 다시 맞춘다.
+        if nexa_sys::input_source::take_changed() {
+            self.sync_hangul_mode();
+        }
         self.persist_window_sizes(false);
         if std::mem::take(&mut self.pending_demo_prompt) {
             self.open_demo_prompt();
@@ -11065,6 +11121,20 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // 한글 입력 진단(`NSQL_TRACE_IME=1` · T-139 · 평소 비용 = 환경 변수 조회 없음 — 기동 때 한 번 읽어 둔 깃발):
+        //   창·키(논리/물리/text)·IME 사건을 온 순서대로 stderr에. 판정 로직은 건드리지 않는다.
+        if self.trace_ime {
+            match &event {
+                WindowEvent::KeyboardInput { event: k, is_synthetic, .. } => eprintln!(
+                    "[ime] {:?} key state={:?} logical={:?} physical={:?} text={:?} repeat={} synth={}",
+                    id, k.state, k.logical_key, k.physical_key, k.text, k.repeat, is_synthetic
+                ),
+                WindowEvent::Ime(i) => eprintln!("[ime] {id:?} ime {i:?}"),
+                WindowEvent::Focused(f) => eprintln!("[ime] {id:?} focused={f}"),
+                WindowEvent::ModifiersChanged(m) => eprintln!("[ime] {id:?} mods={:?}", m.state()),
+                _ => {}
+            }
+        }
         // 입력(키 누름·IME·마우스 버튼) = 캐럿 깜빡임 위상을 "켜짐"으로 되돌리고(움직인 캐럿이 최대 0.5초 안 보이던 것 · 09-19)
         //   계측이 켜져 있으면 입력→화면 지연의 시작점을 남긴다.
         let is_input = matches!(
@@ -11091,6 +11161,8 @@ impl ApplicationHandler<Wake> for App {
         }
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
+            // 다른 앱에서 입력 소스를 바꾸고 돌아왔을 수 있다.
+            self.sync_hangul_mode();
         }
         // 메인 창 활성/비활성(docs/58 §2-5): 돌아오는 순간 열린 파일을 한 번에 확인 · 뒤에 있을 때는 아무것도 안 한다.
         if let WindowEvent::Focused(on) = event {
@@ -12049,6 +12121,8 @@ fn main() {
         result_area: Rect::new(0, 0, 0, 0),
         offset_warned: std::collections::HashSet::new(),
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
+        trace_ime: std::env::var_os("NSQL_TRACE_IME").is_some(),
+        hangul_app: None,
         input_at: None,
         trace_marks: std::cell::RefCell::new(Vec::new()),
         blink_origin: Instant::now(),
@@ -12469,8 +12543,9 @@ fn find_in_chars(
 }
 
 /// 실행 스크립트의 문장 본문 목록(오류 이벤트의 index로 찾는다).
-fn split_items(src: &str) -> Vec<String> {
-    nsql_script::split_script(src)
+/// 분할은 **러너와 같은 방언 규칙**이어야 한다(index가 어긋나면 오류·결과가 다른 문장에 붙는다) — `split_script_in`.
+fn split_items(src: &str, dialect: Dialect) -> Vec<String> {
+    nsql_script::split_script_in(src, Some(dialect))
         .into_iter()
         .map(|i| i.text)
         .collect()

@@ -362,6 +362,13 @@ const ANIM_OPTS: &[(&str, Msg)] = &[
     ("off", Msg::ValAnimOff),
 ];
 
+/// 한글 조합 방식(T-139 · 09-20): auto = macOS + 한글 입력 소스면 앱 조합 · 그 밖은 시스템 IME.
+const HANGUL_COMPOSE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::OptHangulAuto),
+    ("system", Msg::OptHangulSystem),
+    ("app", Msg::OptHangulApp),
+];
+
 const THEME_OPTS: &[(&str, Msg)] = &[
     ("system", Msg::ValSystem),
     ("light", Msg::ValLight),
@@ -1760,6 +1767,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescScrollNatural,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "input.hangul_compose",
+        cat: Msg::CatInput,
+        label: Msg::LblHangulCompose,
+        desc: Msg::DescHangulCompose,
+        kind: SettingKind::Choice(HANGUL_COMPOSE_OPTS),
+        default: "auto",
     },
     Entry {
         key: "statusbar.git",

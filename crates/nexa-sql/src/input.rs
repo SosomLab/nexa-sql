@@ -84,6 +84,27 @@ pub(crate) fn shortcut_letter(kev: &winit::event::KeyEvent) -> Option<char> {
     Some(c)
 }
 
+/// ★ 한글을 **앱이 조합**할 것인가(T-139 · 순수 판정 · MC/DC): 설정 `input.hangul_compose` × OS × 지금 입력 소스.
+/// `app` = 늘 · `system` = 안 함 · `auto` = macOS이고 한글 입력 소스일 때만(다른 입력기 = 일본어·중국어는 시스템 IME가 필요하다).
+pub(crate) fn hangul_app_mode(setting: &str, macos: bool, korean_source: Option<bool>) -> bool {
+    match setting {
+        "app" => true,
+        "system" => false,
+        _ => macos && korean_source == Some(true),
+    }
+}
+
+/// 시스템 IME를 붙여도 되는가(창들이 만들 때·모드가 바뀔 때 본다) — 앱 조합 중이면 IME를 끊는다(raw 자모를 받으려고).
+static SYSTEM_IME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub(crate) fn system_ime() -> bool {
+    SYSTEM_IME.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) fn set_system_ime(on: bool) {
+    SYSTEM_IME.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub(crate) fn wheel_event(delta: &MouseScrollDelta, shift: bool) -> InputEvent {
     // ★ 픽셀 delta(macOS 트랙패드 · Linux libinput)는 **1:1**로(사용자 09-16 "DBeaver처럼 부드럽게 · 점진 가속"):
     //   소비자가 전부 `delta/3` px로 쓰므로 ×3 해 둔다. OS가 이미 가속·관성(손을 뗀 뒤 감쇠하는 사건)을 넣어 주므로
@@ -216,5 +237,28 @@ mod tests {
             wheel_event(&MouseScrollDelta::LineDelta(1.0, 0.0), false),
             InputEvent::HWheel { delta } if delta == expect
         ));
+    }
+}
+
+#[cfg(test)]
+mod hangul_mode_tests {
+    use super::hangul_app_mode;
+
+    /// MC/DC — 설정(app/system/auto) · OS(mac) · 입력 소스(한글/아님/모름): 조건 하나씩만 바꿔 결과가 뒤집히는 쌍.
+    #[test]
+    fn hangul_app_mode_mcdc() {
+        // 기준: auto · mac · 한글 → 앱 조합.
+        assert!(hangul_app_mode("auto", true, Some(true)));
+        // 입력 소스만 바꿈(일본어 등) → 시스템 IME.
+        assert!(!hangul_app_mode("auto", true, Some(false)));
+        // 모름 → 시스템 IME(안전한 쪽).
+        assert!(!hangul_app_mode("auto", true, None));
+        // OS만 바꿈(Windows/Linux) → 시스템 IME.
+        assert!(!hangul_app_mode("auto", false, Some(true)));
+        // 설정이 강제값이면 나머지는 무관.
+        assert!(hangul_app_mode("app", false, Some(false)));
+        assert!(!hangul_app_mode("system", true, Some(true)));
+        // 모르는 값 = auto.
+        assert!(hangul_app_mode("whatever", true, Some(true)));
     }
 }
