@@ -34,6 +34,20 @@ pub struct Prepared {
 }
 
 impl Prepared {
+    /// 바인드를 찾지 않고 **원문 그대로** — 저장 코드를 만드는 DDL(`CREATE … PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE`)용.
+    /// 본문의 `:NEW`/`:OLD`(트리거 의사 레코드)나 `:x`는 클라이언트 변수가 아니다 — 종전에는 이것들이 암묵 변수로 만들어져
+    /// 바인드됐다(트리거 DDL = ORA-01027 위험 · 변수 표 오염 · 09-21 점검).
+    #[must_use]
+    pub fn verbatim(sql: &str) -> Prepared {
+        Prepared {
+            sql: sql.to_string(),
+            params: Vec::new(),
+            mode: PrepareMode::Bind,
+            implicit: Vec::new(),
+            line_offset: 0,
+        }
+    }
+
     pub fn into_request(self) -> ExecRequest {
         ExecRequest {
             sql: self.sql,

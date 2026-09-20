@@ -446,8 +446,8 @@ impl Session for OracleSession {
                         .push((p.name.clone(), Self::coerce(&p.ty, s)));
                 }
             }
-            // 암묵 결과(DBMS_SQL.RETURN_RESULT)
-            if let Ok(Some(mut rc)) = stmt.implicit_result() {
+            // 암묵 결과(DBMS_SQL.RETURN_RESULT) — **전부**(프로시저가 커서를 둘 이상 돌려줄 수 있다 · 종전은 첫 장만 · 09-21).
+            while let Ok(Some(mut rc)) = stmt.implicit_result() {
                 if let Ok(rs) = rc.query() {
                     let columns = Self::columns(rs.column_info());
                     let mut rows = Vec::new();

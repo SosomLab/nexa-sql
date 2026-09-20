@@ -139,6 +139,14 @@ impl Engine {
         match &item.kind {
             ItemKind::Invalid(msg) => vec![Action::Error(msg.clone())],
             ItemKind::Sql(kind) => {
+                // 저장 코드를 만드는 DDL은 바인드 대상이 아니다(본문의 `:NEW`·`:OLD`·`:x`는 서버가 해석한다).
+                if matches!(kind, SqlKind::Block) && is_stored_code_ddl(&text) {
+                    return vec![Action::Execute {
+                        prepared: Prepared::verbatim(&text),
+                        expect_out: false,
+                        kind: *kind,
+                    }];
+                }
                 let inout = matches!(kind, SqlKind::Block);
                 let prepared = prepare(self.dialect, &text, &mut self.vars, inout);
                 self.note_implicit(&prepared);
@@ -411,6 +419,17 @@ impl Engine {
 }
 
 /// 명령어(첫 단어) 뒤의 본문 — `PROMPT  a b` → `a b`(앞 공백은 하나만 뗀다 · SQL*Plus).
+/// `CREATE [OR REPLACE|OR ALTER] [[NON]EDITIONABLE] PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE|LIBRARY …`인가 —
+/// 분할기가 `Block`으로 본 문장 중 **저장 코드 DDL**(익명 블록 `BEGIN`/`DECLARE`가 아닌 것).
+fn is_stored_code_ddl(text: &str) -> bool {
+    let first = text
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    first == "CREATE" || first == "ALTER"
+}
+
 fn after_command_word(text: &str) -> String {
     let t = text.trim_start();
     let n = t
@@ -428,6 +447,35 @@ fn after_command_word(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// 트리거 DDL의 `:NEW`/`:OLD`는 클라이언트 바인드가 아니다 — 변수 표를 더럽히지 않고 원문 그대로 간다(09-21).
+    #[test]
+    fn stored_code_ddl_is_not_bound() {
+        use crate::split::split_script;
+        let src = "CREATE OR REPLACE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nBEGIN\n  :NEW.a := :OLD.a + 1;\nEND;\n/\n";
+        let items = split_script(src);
+        let mut e = super::Engine::new(nsql_core::Dialect::Oracle);
+        let acts = e.plan(&items[0]);
+        match &acts[0] {
+            super::Action::Execute {
+                prepared,
+                expect_out,
+                ..
+            } => {
+                assert!(prepared.params.is_empty(), "{:?}", prepared.params);
+                assert!(prepared.sql.contains(":NEW.a"));
+                assert!(!expect_out);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(e.vars.is_empty(), "변수 표가 더러워졌다");
+        // 익명 블록은 종전대로 바인드한다.
+        let items = split_script("BEGIN :V := 1; END;\n/\n");
+        let acts = e.plan(&items[0]);
+        assert!(
+            matches!(&acts[0], super::Action::Execute { prepared, .. } if prepared.params.len() == 1)
+        );
+    }
+
     use super::*;
     use crate::split::split_script;
     use nsql_core::{BindParam, Direction, VarType};
