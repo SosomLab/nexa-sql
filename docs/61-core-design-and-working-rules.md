@@ -78,6 +78,19 @@
 - **사용자의 클립보드를 덮어쓰지 않는다** — 잘라내기·복사 명령을 자동 시험에 넣지 않는다(09-20: 65 MB 잘라내기 대신 줄 삭제 명령으로 시험).
 - 실행 중인 다른 `nexa-sql` 프로세스가 사용자의 것일 수 있다 — 끝낼 때는 **내가 띄운 PID**만(빌드를 위해 Debug exe를 끝내는 것은 사용자가 허락한 예외).
 
+### 1-5. 09-20~21(맥 86~88차)에 굳은 것 — 변수 · 트랜잭션 · 화면 내보내기
+
+| 주제 | 핵심(불변식) | 원문 |
+|---|---|---|
+| **수동 커밋 = 진짜 트랜잭션**(T-146) | PG·SQLite·SQL Server·MySQL은 서버가 문장마다 커밋한다 → **수동 모드의 첫 문장 앞에서 러너가 연다**(`nsql-run` `manual_begin_sql` 순수 함수 + MC/DC · `tx_open`). 커밋·롤백·읽기 종료·접속에서 `tx_open`을 내린다 — **세션을 직접 커밋하는 새 경로를 만들면 `note_tx_ended()`를 같이 부른다**(안 부르면 다음 문장의 `BEGIN`이 "이미 트랜잭션 안"으로 실패) | [journal 09-21](journal/2026-09-21.md) 87차 후반 |
+| **변수 표 = 세 층**(D-135) | 탭(App이 주인 `App.tab_vars` — 실행마다 `Cmd::Run.vars`로 넘기고 `RunEvent::Vars`로 돌려받는다) → 연결 공유(러너 = 세션 · `VAR x SHARE` · 호스트 사본 `Sess.shared_vars` · 고치면 `Cmd::SharedVars`) → 프로필(읽기 전용 · 아직 출처 없음). **변수를 `Runner`/`Sess`에 새로 두지 않는다**(탭이 주인) · 바인드(`VarStore`)와 치환(`Engine.defines`)은 섞지 않는다 | [63 §3](63-variable-management.md) |
+| **결과가 여럿이면 탭도 여럿** | 같은 문장의 두 번째 이후 결과(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합) = 늘 딸린 탭(`ResultTab.child_of`) · 다른 문장의 결과 = 설정 `grid.result_per_statement`(D-138) · 판정 = `sessions::extra_result_slot` · 실행 끝에 안 쓰인 딸린 탭을 걷는다(`run_tracking` — **결과 새로고침은 걷지 않는다**) · `RunEvent::ResultSet.label` = 커서 변수 이름 | [63 §5](63-variable-management.md) |
+| **1행 결과를 추측해 변수로 빨아들이지 않는다** | OUT 바인드가 없는 방언은 요청이 받는 쪽을 명시(`Prepared.captures` · 자리 순서) · Oracle/SQL Server는 결과 집합을 절대 흡수하지 않는다 · 0행·여러 행 = Oracle식 오류(D-139 · SQL Server는 서버 쪽 `@@ROWCOUNT` 검사) | [63 §3-1](63-variable-management.md) |
+| **선언 없는 바인드의 타입 = 루틴 서명** | `nsql-script::call_shape` + `nsql-catalog::routine_args`(지금 Oracle `ALL_ARGUMENTS`만) · 루틴당 1회 캐시 · DDL·접속에서 비움 · 저장 코드 DDL(`CREATE … PROCEDURE/TRIGGER …`)은 바인드하지 않는다(`Prepared::verbatim` — `:NEW`/`:OLD`) | [63 §3](63-variable-management.md) |
+| **실행 전에 한 번 묻는다**(D-137) | 워커가 `missing_inputs`로 찾고 `RunEvent::InputNeeded`를 낸 뒤 `InputReply`를 **기다린다**(세션 = 바쁨 · ■ = 입력 취소) · 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다 — **메뉴·기동 명령이 부탁한 창 열기 깃발은 `about_to_wait`에서도 본다**(`window_event` 끝에서만 보면 이벤트가 없을 때 안 열린다) | [63 §5](63-variable-management.md) |
+| **화면 내보내기는 `present.rs` 한 곳** | 모든 창은 `present::Presenter`로 픽셀을 낸다(`softbuffer::Context/Surface`를 창 코드에 직접 두지 않는다) · macOS IOSurface 경로는 **기본 끔**(`gfx.mac_present`) — 화면·입력 실험은 기본 끔 + 실패 시 조용한 폴백 · 사용자가 병행 테스트하는 `target/` 빌드를 실험 상태로 두지 않는다 | [62 §2-1](62-macos-input-and-present.md) |
+| 맥 한글 입력 | 한글 입력 소스일 때만 앱 조합(`input.hangul_compose=auto` · nexa-ctl `TextBox` 전역 스위치) — **새 창을 만들면 `set_ime_allowed(input::system_ime())` + `sync_hangul_mode`의 창 목록에 등록** | [62 §1](62-macos-input-and-present.md) |
+
 ## 3. OS별로 다른 것
 
 | | Windows | macOS |
@@ -91,6 +104,8 @@
 | 메모리 회수 | `HeapSetInformation` + `HeapCompact` | `malloc_zone_pressure_relief`(형 검사만 했고 실기 미확인) |
 | IME | 한글 조합 = 캐럿 줄 하나에만 끼움(단위 테스트 통과 · 실기는 사용자) | **T-139 맥 한글 입력**이 열려 있다 — 조합 경로가 84차에 바뀌었으므로(`Rows.over`) 맥에서 먼저 확인 |
 | 설정 폴더 | `%APPDATA%\nexa-sql` | `~/Library/Application Support/nexa-sql`(`NSQL_HOME`이 있으면 그것) |
+
+**윈도우에서 처음 할 일(맥 88차 뒤 · 09-21)**: ① 두 저장소 pull(**nexa-ui 먼저** — nexa-sys `layer_present` 추가분 · Windows에서는 늘 `None`인 빈 구현) → `cargo test --workspace` 양쪽(nexa-ui 352 · nexa-sql 353) ② Debug 빌드로 **창 11곳이 전부 열리고 그려지는지**(메인 · 로그인 · 파일 · 설정 · 색 · 단축키 · 로그 · 트랜잭션 로그 · 세션 · 툴바 플로팅 + 새 창 둘 — `present.rs`로 전부 바꿨다 · Windows 경로는 종전 softbuffer지만 손댄 곳이 넓다) ③ **새 창 둘의 실기**(맥에서만 확인했다): 변수 입력 창(`SELECT :X, '&y' FROM dual` 실행 → 격자 · Tab/Enter/Esc/Skip · ■ = 취소 · **Windows 한글 IME**로 값 입력) · 변수 창(View ▸ Variables — 줄 선택 · Set · NULL · Share/Local · Delete · `이름 = 값` · 탭 전환 따라감) — 포커스 링 ≤ 1 · 클릭이 영역 밖 컨트롤에 닿지 않는지(CLAUDE.md §3 포커스·마우스 규칙 ①~⑤) ④ **수동 커밋 실기**(T-146 — SQL Server·PG): Auto-commit 끔 → INSERT → 다른 세션에서 안 보임 → Rollback 버튼 → 사라짐 · Commit → 남음 · 상태줄 ●·툴바 배지 ⑤ 결과 탭: 조회 3개 스크립트 = 탭 3개 · 다시 실행 = 같은 자리 · 첫 탭 ↻ 새로고침에 다른 탭이 닫히지 않는지 · Oracle `examples/oracle-refcursor-pkg.sql` = 커서가 바로 결과로 ⑥ 그다음 [TODO](TODO.md) **T-149 잔여 → T-150~T-153**(아래 §6).
 
 **맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139.
 
@@ -112,3 +127,21 @@
 | 형제 저장소 SSH 별칭 | CLAUDE.md §1(기존) |
 | GUI 자체 캡처 방법 | §3 · §4 · `scripts/` |
 | (메모리에 없던 것) 입력 주입 금지 · 포커스 · 클립보드 · 격리 확인 · 테스트의 실제 설정 폴더 금지 · heredoc · 브랜치 흐름 | §2-1 · §2-4 · §3 |
+
+## 6. 이어 받을 일 — 맥 88차(09-21) 끝의 상태와 다음 순서
+
+> 상태: nexa-sql `main` = 88차 마감 · CI `ci` ✅ · `integration` ✅ 9/9(Oracle·SQL Server·PostgreSQL 컨테이너) · nexa-ui `main` = 50차. 설계 SSOT = [63 변수 관리](63-variable-management.md)(단계표 §5 · 결정 §7) · 기록 = [journal 09-21](journal/2026-09-21.md).
+
+| 순서 | 할 일 | 어디를 고치나 · 어떻게 확인하나 |
+|---|---|---|
+| 1 | **Windows 실기**(위 "윈도우에서 처음 할 일" ②~⑤) | 결과는 journal에 실기표로 · 결함은 그 자리에서 |
+| 2 | **T-150 PostgreSQL refcursor** — `SELECT f()`가 돌려준 커서 이름을 `FETCH ALL IN "이름"`으로 받아 결과 탭으로 | `nsql-driver-pg`: 단순 질의 경로에는 **열 타입이 없다**(`Column.type_name` 빈 글) → 커서 경로(`execute_cursor` — 드라이버가 `BEGIN`을 쥔다)나 `prepare`로 타입(`refcursor`)을 얻은 뒤, **같은 트랜잭션 안에서** FETCH → `ExecResult.result_sets`에 덧붙이고 `CLOSE` · 자동 커밋이면 드라이버/러너가 트랜잭션으로 감싼다(T-146 `tx_open`과 충돌하지 않게) · 검증 = `integration.rs`에 PG 함수(`RETURNS refcursor` · `RETURNS SETOF refcursor`) 테스트 → 작업 브랜치에서 `gh workflow run integration.yml --ref <브랜치>`(main을 건드리지 않고 실서버 확인 — 09-21에 쓴 방법) |
+| 3 | **T-151 서명 추론 넓히기 + 타입** | `nsql-catalog::routine_args`에 PG(`pg_proc`/`pg_get_function_arguments`) · SQL Server(`sys.parameters`) · MySQL(`information_schema.PARAMETERS`) · `VarType`에 DATE/TIMESTAMP 실제 바인드(Oracle 드라이버는 지금 스칼라 OUT을 전부 VARCHAR2(4000)로 묶는다) · BOOLEAN · `Direction::Out`을 실제로 만든다(지금은 전부 InOut) |
+| 4 | **T-152 `Caps` 포트**([63 §3](63-variable-management.md)) | `nsql-script/dialect.rs`·`engine.rs`의 방언 `match`(`wrap_exec` · `prepare` · `exec_targets`의 `Oracle | Mssql` 판정 · 러너의 `absorb` 방언 게이트)를 드라이버 능력 질의로 — 포트(trait) + 레지스트리 + 설정([30](30-architecture-patterns.md)) · MySQL/MariaDB·NoSQL 어댑터가 능력표만 채우면 붙게 |
+| 5 | **T-153 변수 UX 잔여** | `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE`(`nsql-script/command.rs`) · 입력 창에 타입 열·미리보기(`input_win.rs`) · **MacroStore 분리 + 시스템 변수**(`_USER` `_DATE` `_ROW_COUNT` `_SQLCODE` `_ELAPSED_MS`) · `${v:형식}` · CLI `-v name=value` · 편집기 hover에 변수 값 · 미정의 변수 경고(`Diagnostic::ImplicitVariable`은 만들어지기만 하고 **소비자가 없다**) · 값 크기 상한 `vars.max_value_kb` · 프로필 층의 출처(접속 프로필 필드) · 이름 없는 탭 보존(S-1 hot exit와 함께) |
+| 6 | 그 밖에 열려 있던 것 | **T-145**(줄 변경 표시·괄호 표의 줄 단위 갱신) · T-147 잔여(`nexa-gfx::Surface` stride → 중간 버퍼 제거 · D-133 기본 전환) · T-148 잔여(SQLite 열기 실패 14가 "Connection lost"로 분류됨 · MySQL `DELIMITER`) · T-136 · T-103 위키 · T-105 · T-106 |
+
+**알아 둘 흠(09-21에 봤지만 고치지 않은 것)**: ① PG 수동 커밋에서 문장 하나가 실패하면 트랜잭션이 *aborted* 상태로 남아 Rollback 전까지 전부 실패한다(PG의 정상 동작 · psql `ON_ERROR_ROLLBACK`처럼 문장마다 SAVEPOINT를 두는 선택지를 [56](56-manual-commit-lock-prevention.md)에 검토로 남길 것) ② `VAR X NUMBER`는 이름을 대문자로 만든다(표기 보존 D-142는 `EXEC :x := …` 경로만) ③ `VAR X`(타입 없음)는 선언하지 않고 조회만 한다 ④ `vars.show`(SHOW VARIABLES)는 접속이 있어야 돈다(`gate_open`) — 변수 창은 접속 없이도 열린다 ⑤ `open_sessions`·`open_txlog` 같은 창 열기 깃발은 아직 `window_event` 끝에서만 본다(메뉴 클릭은 문제없고 `NSQL_STARTUP_CMD`로 열 때만 늦다 — `open_vars`처럼 `about_to_wait`에도 두면 된다) ⑥ `.devcontainer/devcontainer.json`은 `NSQL_POSTGRES_URL`인데 통합 테스트는 `NSQL_PG_URL`을 본다(Codespaces에서 PG 테스트가 조용히 건너뛰어진다 — 이름을 맞출 것) ⑦ `.devcontainer/devcontainer-lock.json`은 사용자 파일이라 추적하지 않았다.
+
+**결정 대기**: D-133(맥 화면 내보내기 기본값 → `iosurface`?) · D-134(`input.hangul_compose` 기본 auto 확인) · D-87~90 · D-115~118 · Codespaces = 사용자 `gh auth refresh -h github.com -s codespace` 1회 뒤 가능.
+

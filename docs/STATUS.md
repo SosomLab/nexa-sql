@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-21 (88차 인계 · mac → win) — 📘 **윈도우에서 이어 가기**: [61 §1-5](61-core-design-and-working-rules.md)(09-20~21에 굳은 불변식 — 수동 커밋 `tx_open` · 변수 표 세 층 · 결과 탭 · `captures` · 서명 추론 · 입력 창 · `present.rs`) · [61 §3](61-core-design-and-working-rules.md) "윈도우에서 처음 할 일" · [61 §6](61-core-design-and-working-rules.md) 이어 받을 일 순서표 + 알아 둘 흠 7 + 결정 대기 · TODO **T-150~154**(PG refcursor · 서명/타입 · `Caps` 포트 · 변수 UX 잔여 · ⏳ Windows 실기) → [journal](journal/2026-09-21.md)
+
 ## 2026-09-21 (88차 후반 · mac) — ✅ **CI 전부 초록**(T-146 PG 실서버 확인) · 변수 관리 이어서: **변수 창**(보기·제자리 편집·공유 토글·새 변수) · `SELECT … INTO` 행 수 정책(D-139 · SQL Server `@@ROWCOUNT` 검사 · 실서버 9/9) · 기준 계측(문장 준비 3 µs · 덤프 훑기 0.37 ms) · 테스트 353 · 다음 = PG refcursor(Codespaces) · `Caps` 포트 · MacroStore · `ACCEPT` → [journal](journal/2026-09-21.md)
 
 ## 2026-09-21 (88차 · mac) — ★ **변수 관리 D-135~138 확정·구현**: 문장마다 결과 탭 · **계층형 변수 표**(탭 → 연결 공유 → 프로필 · `VAR x SHARE` · 탭이 주인) · `SHOW VARIABLES` 표 · **실행당 한 번 입력 창**(`:바인드` + `&치환` · 종전 GUI는 `&v`가 말없이 빈 글) · **파일별 변수 보존**(실행 가능한 스크립트 · 비밀 미저장) · 테스트 349 · 다음 = 변수 옆 패널 · V5 능력표·PG refcursor · V7 전수 점검 → [journal](journal/2026-09-21.md)

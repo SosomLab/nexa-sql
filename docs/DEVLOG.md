@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-21 (88차 인계 · mac → win)** — docs 61 §1-5(새 불변식)·§3 "윈도우에서 처음 할 일"·§6(이어 받을 일 순서표 · 알아 둘 흠 · 결정 대기) · TODO T-150~154 · CLAUDE.md 현 단계·§4 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (88차 후반 · mac)** — V5 일부(`Prepared.captures` · D-139 `vars.into_policy` · SQL Server `@@ROWCOUNT` 검사 · PG 배열 조각) · V7 `bench_vars` + 훑기 최적화 · **V2 변수 창 `vars_win.rs`**(`Cmd::SharedVars`) · 실서버 통합 9/9 · 테스트 353 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (88차 · mac)** — 변수 관리 결정 확정 → 구현: D-138 문장마다 결과 탭(`grid.result_per_statement`) · D-135 `VarStore` 세 층 + `RunEvent::Vars` + `App.tab_vars` · `SHOW VARIABLES` 표 · D-137 `missing_inputs` + `input_win.rs`(실행당 한 번 입력 · `vars.undeclared`) · D-136 `varsfile.rs`(파일별 보존 = 실행 가능한 스크립트 · `vars.persist`) · 테스트 349 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (87차 후반 · mac)** — ★ **T-146**(수동 커밋이 PG·SQLite·MSSQL·MySQL에서 실제로는 자동 커밋 → 러너 `manual_begin_sql` MC/DC) · ★ **변수 관리 착수**: docs 63(Usage 19군·추상 구조·단계)·63a(조사 원문) · V0 기반 결함 셋 · V1 REF CURSOR 자동 표시(`run.cursor_autoshow`)·결과 라벨·서명 추론(`call_shape`·`routine_args`)·GUI 딸린 결과 탭 · Oracle 실기 → [journal](journal/2026-09-21.md)
