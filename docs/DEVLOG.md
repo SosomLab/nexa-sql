@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-21 (87차 후반 · mac)** — ★ **T-146**(수동 커밋이 PG·SQLite·MSSQL·MySQL에서 실제로는 자동 커밋 → 러너 `manual_begin_sql` MC/DC) · ★ **변수 관리 착수**: docs 63(Usage 19군·추상 구조·단계)·63a(조사 원문) · V0 기반 결함 셋 · V1 REF CURSOR 자동 표시(`run.cursor_autoshow`)·결과 라벨·서명 추론(`call_shape`·`routine_args`)·GUI 딸린 결과 탭 · Oracle 실기 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (87차 · mac)** — 86차 보완 전부: `SHOW ERRORS`(`last_unit` · Oracle 실기) · `sqlite_path`(슬래시 4개) · 접속 실패 오류 표기 = 대상 방언(`error_dialect` MC/DC) · 시작 인자 접속의 탐색기 루트 = 프로필 이름 · `NSQL_TRACE_MEM` 맥(`phys_footprint`) · ★ **`present.rs` + nexa-sys `layer_present`**(IOSurface 화면 내보내기 · 설정 `gfx.mac_present` · present 36 → 2.9 ms · 기본은 softbuffer) · 결정 번호 중복 정리(16 규칙 9) → [journal](journal/2026-09-21.md)
 - **2026-09-20 (86차 · mac)** — 최신화(win 83~85차) · **T-139 맥 한글 입력 수정**(nexa-ctl 앱 조합기 · nexa-sys 입력 소스 · `input.hangul_compose`) · **분할기 방언 결함 수정**(`split_script_in` — SQLite 트리거·`BEGIN;`) · 전 객체 유형 DDL 자동 시험(Oracle·SQLite · 내가 만든 객체만 삭제) · 맥 present 37 ms 원인(색 공간 변환 · D-133) · 메모리 mac 점검 → [62](62-macos-input-and-present.md). → [journal](journal/2026-09-20.md)
 - **2026-09-20 (85차 · win)** — docs 61 신설(핵심 설계 불변식 · 작업 규칙 · OS별 차이) · CLAUDE.md 머리말·§3 세션 공통 규칙·§4 · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1`(격리 폴더 확인 · PID 종료) · nexa-ui CLAUDE.md §3-1 → [journal](journal/2026-09-20.md)

@@ -1,6 +1,7 @@
 # 08 · 세션 변수 · 스크립트 엔진 설계 (`nsql-script`) — ★ 핵심 차별점
 
 > 사용자 요구(09-12): *"Oracle 기준 sqlplus의 기능(변수 선언·세션 내 재사용·refcursor)을 지원하고, SQL Server에서는 직접 안 되는 이 기능을 간접으로라도 다수의 쿼리에서 동일한 변수를 함께 쓰게 하고 싶다."* + *"`connect user/pass@host:port/db;`로 에디터 안에서 세션 전환."*
+> ★ **후속 설계(09-21) = [63 변수 관리](63-variable-management.md)**(Usage 19군 · 타 도구 소스 수준 조사 · 능력표 포트 · 방언별 기법 · 단계 V0~V7) — 이 문서는 1차 엔진의 기록으로 남긴다.
 > 근거 조사: [04 §8](04-oracle-tools.md)(SQL*Plus 의미론) · [05 §7](05-mssql-tools.md)(T-SQL 배치 제약과 우회 3안).
 > **구현 상태(09-12)**: `crates/nsql-script` 33 테스트 green · `nsql plan` dry-run으로 사용자 예시 스크립트가 Oracle·MSSQL 양쪽으로 계획됨([examples/golden-session-vars.sql](../examples/golden-session-vars.sql)).
 
