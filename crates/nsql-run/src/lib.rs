@@ -313,6 +313,8 @@ pub struct Runner {
     tx_changed: bool,
     /// 사용자가 직접 트랜잭션을 열었거나 잠금을 잡았는가(자동 종료 제외 근거).
     tx_user: bool,
+    /// 러너가 수동 모드를 위해 연 트랜잭션이 살아 있는가([`manual_begin_sql`] · 커밋/롤백/접속에서 내림).
+    tx_open: bool,
 }
 
 /// 읽기 트랜잭션 자동 종료(docs/56 L1 · 설정 `tx.read_end`): 수동 커밋 모드에서 **변경이 없던 트랜잭션**을 결과를 다 받은 뒤
@@ -347,15 +349,43 @@ enum TxEnd {
     Rollback,
 }
 
-fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) {
+/// 미뤄 둔 종료를 실행한다. 돌려주는 값 = 트랜잭션을 끝냈는가(러너가 연 트랜잭션 표시를 내린다).
+fn finish_tx(s: &mut dyn Session, end: Option<TxEnd>) -> bool {
     match end {
         Some(TxEnd::Commit) => {
             let _ = s.commit();
+            true
         }
         Some(TxEnd::Rollback) => {
             let _ = s.rollback();
+            true
         }
-        None => {}
+        None => false,
+    }
+}
+
+/// ★ 수동 커밋 모드에서 문장 앞에 열어야 하는 트랜잭션 문장(T-146 · 09-21). Oracle은 첫 DML이 곧 트랜잭션이지만
+/// **PostgreSQL·SQLite·SQL Server·MySQL은 서버가 문장마다 자동 커밋**한다 — 종전에는 수동 모드에서도 아무도 트랜잭션을
+/// 열지 않아 `INSERT`가 "미커밋"으로 보이면서 실제로는 이미 커밋됐다(CI `pg_read_only_transaction_ends_in_manual_mode`).
+///
+/// 조건(전부 참일 때만 연다): 수동 모드 · 암묵 트랜잭션이 없는 방언 · 러너가 연 트랜잭션이 없다 · 사용자가 직접 연
+/// 트랜잭션이 없다 · 이 문장이 트랜잭션 통제 문장(`BEGIN`/`COMMIT`/…)이 아니다.
+fn manual_begin_sql(
+    dialect: Dialect,
+    autocommit: bool,
+    tx_open: bool,
+    tx_user: bool,
+    control: nsql_core::TxControl,
+) -> Option<&'static str> {
+    if autocommit || tx_open || tx_user || control != nsql_core::TxControl::None {
+        return None;
+    }
+    match dialect {
+        Dialect::Postgres | Dialect::Sqlite => Some("BEGIN"),
+        Dialect::Mssql => Some("BEGIN TRANSACTION"),
+        Dialect::Mysql => Some("START TRANSACTION"),
+        // Oracle = 암묵 트랜잭션 · ODBC = 뒤의 DBMS를 모른다(드라이버의 자동 커밋 속성 몫).
+        Dialect::Oracle | Dialect::Odbc => None,
     }
 }
 
@@ -452,6 +482,7 @@ impl Runner {
             read_end: ReadEnd::Auto,
             tx_changed: false,
             tx_user: false,
+            tx_open: false,
         }
     }
 
@@ -635,6 +666,7 @@ impl Runner {
     pub fn note_tx_ended(&mut self) {
         self.tx_changed = false;
         self.tx_user = false;
+        self.tx_open = false;
     }
 
     /// 이 문장 뒤 열린 트랜잭션을 끝내도 되는가(수동 모드 전용 · docs/56 L1). 문장의 흔적을 상태에 반영하고, 변경·사용자 통제가
@@ -693,7 +725,9 @@ impl Runner {
         if let Some(c) = self.cursor.take() {
             if let Some(s) = self.session.as_mut() {
                 let _ = s.close_cursor(c.handle);
-                finish_tx(s.as_mut(), c.deferred_end);
+                if finish_tx(s.as_mut(), c.deferred_end) {
+                    self.tx_open = false;
+                }
             }
         }
     }
@@ -728,7 +762,9 @@ impl Runner {
                 if !more {
                     // 드라이버가 이미 닫았다 — 러너 상태·미룬 커밋만 정리.
                     if let Some(c) = self.cursor.take() {
-                        finish_tx(session.as_mut(), c.deferred_end);
+                        if finish_tx(session.as_mut(), c.deferred_end) {
+                            self.tx_open = false;
+                        }
                     }
                 }
                 Ok((rs, more, timeline))
@@ -884,6 +920,8 @@ impl Runner {
         self.engine.dialect = session.dialect();
         self.session = Some(session);
         self.connection = Some(description.into());
+        // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146).
+        self.note_tx_ended();
         self.push_max_rows();
         self
     }
@@ -936,6 +974,8 @@ impl Runner {
                 }
                 self.session = Some(session);
                 self.connection = Some(spec.redacted());
+                // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146).
+                self.note_tx_ended();
                 self.push_max_rows();
                 emit(RunEvent::Connected {
                     description: spec.redacted(),
@@ -1412,6 +1452,27 @@ impl Runner {
             });
             return false;
         };
+        // ★ 수동 커밋 모드: 서버가 문장마다 자동 커밋하는 방언이면 트랜잭션을 먼저 연다(T-146).
+        if let Some(begin) = manual_begin_sql(
+            self.engine.dialect,
+            self.engine.settings.autocommit,
+            self.tx_open,
+            self.tx_user,
+            nsql_core::TxControl::of_sql(&item.text),
+        ) {
+            if let Err(e) = session.execute(&ExecRequest {
+                sql: begin.to_string(),
+                params: Vec::new(),
+            }) {
+                emit(RunEvent::Error {
+                    index,
+                    line: item.line,
+                    error: e,
+                });
+                return false;
+            }
+            self.tx_open = true;
+        }
         let names: Vec<String> = prepared.params.iter().map(|p| p.name.clone()).collect();
         let mode = prepared.mode;
         let line_offset = prepared.line_offset;
@@ -1489,6 +1550,7 @@ impl Runner {
                                 let _ = s.commit();
                                 timeline.push(Stage::Commit, t.elapsed());
                             }
+                            self.tx_open = false;
                         }
                     }
                 } else if self.read_end_due(&item.text, result.rows_affected) {
@@ -1503,6 +1565,7 @@ impl Runner {
                                 let span = timeline.push(Stage::Commit, t.elapsed());
                                 span.note = Some("read tx end (rollback)".into());
                             }
+                            self.tx_open = false;
                         }
                     }
                     emit(RunEvent::ReadTxEnded { index, deferred });
@@ -1873,6 +1936,10 @@ mod tests {
 ",
         );
         assert_eq!(ended(&ev), 0, "DDL(SQLite = 트랜잭션 DDL) = 변경");
+        // 호스트의 Commit 버튼과 같게: 세션을 실제로 커밋한 뒤 상태를 비운다(러너가 연 트랜잭션이 남아 있으면 안 된다 · T-146).
+        if let Some(s) = r.session.as_mut() {
+            let _ = s.commit();
+        }
         r.note_tx_ended();
         let (_, ev) = collect(
             &mut r,
@@ -1899,6 +1966,10 @@ SELECT * FROM t;
         );
         assert_eq!(ended(&ev), 0, "변경이 대기 중이면 조회 뒤에도 유지");
         // 호스트의 Commit/Rollback 버튼 = `note_tx_ended`(SQLite 드라이버는 명시 BEGIN이 없으면 `COMMIT` 문장이 오류라 버튼 경로로 본다).
+        // 호스트의 Commit 버튼과 같게: 세션을 실제로 커밋한 뒤 상태를 비운다(러너가 연 트랜잭션이 남아 있으면 안 된다 · T-146).
+        if let Some(s) = r.session.as_mut() {
+            let _ = s.commit();
+        }
         r.note_tx_ended();
         let (_, ev) = collect(&mut r, "SELECT * FROM t;");
         assert_eq!(ended(&ev), 1, "커밋 뒤 = 다시 깨끗");
@@ -2244,6 +2315,92 @@ SELECT * FROM t;
         assert!(ev
             .iter()
             .any(|e| matches!(e, RunEvent::Message(m) if m.starts_with("USER = "))));
+    }
+
+    /// T-146 판정(MC/DC) — 다섯 조건이 각각 혼자 결과를 바꾼다.
+    #[test]
+    fn manual_begin_mcdc() {
+        use super::manual_begin_sql as f;
+        use nsql_core::TxControl as C;
+        // 기준: 수동 · PG · 열린 것 없음 · 사용자 트랜잭션 없음 · 보통 문장 → 연다.
+        assert_eq!(
+            f(Dialect::Postgres, false, false, false, C::None),
+            Some("BEGIN")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, true, false, false, C::None),
+            None,
+            "자동 커밋"
+        );
+        assert_eq!(
+            f(Dialect::Postgres, false, true, false, C::None),
+            None,
+            "이미 열림"
+        );
+        assert_eq!(
+            f(Dialect::Postgres, false, false, true, C::None),
+            None,
+            "사용자 BEGIN"
+        );
+        assert_eq!(
+            f(Dialect::Postgres, false, false, false, C::Begin),
+            None,
+            "통제 문장"
+        );
+        assert_eq!(
+            f(Dialect::Postgres, false, false, false, C::End),
+            None,
+            "통제 문장"
+        );
+        assert_eq!(
+            f(Dialect::Oracle, false, false, false, C::None),
+            None,
+            "암묵 트랜잭션 방언"
+        );
+        assert_eq!(
+            f(Dialect::Mssql, false, false, false, C::None),
+            Some("BEGIN TRANSACTION")
+        );
+        assert_eq!(
+            f(Dialect::Mysql, false, false, false, C::None),
+            Some("START TRANSACTION")
+        );
+        assert_eq!(
+            f(Dialect::Sqlite, false, false, false, C::None),
+            Some("BEGIN")
+        );
+    }
+
+    /// T-146 전 경로(SQLite 파일 · 두 접속): 수동 모드의 INSERT는 **ROLLBACK으로 되돌아가야** 한다(종전 = 이미 커밋돼 남았다).
+    #[test]
+    fn manual_mode_insert_is_really_uncommitted() {
+        let path = std::env::temp_dir().join(format!("nsql_t146_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let target = format!("CONNECT sqlite://{}\n", path.display());
+        let mut r = runner().with_autocommit(false);
+        let (errs, ev) = collect(
+            &mut r,
+            &format!("{target}CREATE TABLE t (a INT);\nCOMMIT;\nINSERT INTO t VALUES (1);\nROLLBACK;\nSELECT COUNT(*) FROM t;\n"),
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        let sets = result_sets(&ev);
+        assert_eq!(
+            sets.last().map(|s| s.rows[0][0].display()),
+            Some("0".to_string()),
+            "{ev:?}"
+        );
+        // 커밋하면 남는다.
+        let (errs, ev) = collect(
+            &mut r,
+            "INSERT INTO t VALUES (2);\nCOMMIT;\nSELECT COUNT(*) FROM t;\n",
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        assert_eq!(
+            result_sets(&ev).last().map(|s| s.rows[0][0].display()),
+            Some("1".to_string())
+        );
+        drop(r);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// `SHOW ERRORS`(SQL*Plus 관용 줄 · 09-20) — "미지원"이 아니라 "오류 없음"(Oracle 밖에서는 컴파일 오류 개념이 없다).
