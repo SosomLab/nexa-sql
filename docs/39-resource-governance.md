@@ -76,6 +76,10 @@
 | 메모리 회수(힙 → OS · 보이지 않는 탭의 그리기 캐시 해제 · 59 §2) | 큰 것을 놓은 1초 뒤 1회 + 유휴 300s(수 ms · UI 스레드) | `mem.trim_on_release` · `mem.trim_secs`(0 = 끔) · `mem.release_results_on_disconnect` | 300 | 300 | 300 | `App::mem_tick` · `memtrim.rs` |
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
+| 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
+| 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
+| 되돌리기 기록 파일(60 §7 D-129 · `<설정 폴더>/undo/*.nsqu`) | 저장할 때 1회 쓰기(≤ 4 MB · UI 스레드 · tmp+rename) · 열 때 1회 읽기 · 실행당 첫 저장 때 오래된 파일 치우기 · 큰 파일 탭은 안 씀 | `editor.undo_persist`(off = 쓰기·읽기 0) · `editor.undo_persist_mb` · `editor.undo_persist_days` | — | — | — | `undofile.rs` |
+| 편집 버퍼 `TextBuf`(59 §6 · 탭당) | 본문 UTF-8 + 갭(본문의 1/16 · 4 KB~4 MB) + 줄당 16 B · 줄별 폭·구문 상태 8 B/줄 · 보이지 않는 탭은 회수 때 갭을 접는다 | (회수 설정과 같음) | — | — | — | nexa-ctl `edit/textbuf.rs` |
 | 막힘 감지 폴링(56 L3 · 메타 세션 1문장) | 미커밋 세션당 30s | `tx.block_poll_secs`(0 = 끔 · 향상 모드 0) | 30 | 30 | 0 | `App::tx_block_tick` |
 | 탐색기 유휴 워터마크(57 T2 · 스키마당 1행) | 300s · 유휴일 때만 | `meta.refresh_secs`(0 = 끔 · 향상 모드 0) · `meta.refresh_scope` | 300 | 600 | 0 | `App::meta_refresh_tick` |
 | 탐색기 DDL 뒤 갱신(57 T1·T4 · 폴더당 1질의) | 사용자 실행에 딸림 | `meta.refresh_on_ddl` · `meta.refresh_on_missing` | 켬 | 켬 | 켬 | `App::meta_flush` |

@@ -301,3 +301,7 @@ T-118 ②: `wasmi` 런타임 + WIT 호스트 API(지금의 `Extension`/`EditorOp
 
 값은 curl `-w` 전송 통계(프로세스 기동 시간 제외) · 리다이렉트면 `final <url>` · 실패는 `FAIL <url> — … (HTTP 404)`. 소스 트리에서 실행해 기본 저장소가 로컬 폴더로 풀리면 머리 줄이 `local folder · no download — set extensions.default_repository to a URL to use the remote`라고 알린다(§13-3의 원격 강제 방법).
 
+### 14-1. 확장 상세 = **확장 뷰 탭**(사용자 09-19 "VS Code처럼 · 편집기 탭이 아니라 확장 탭" · journal 83차)
+
+패널에서 행을 고르면 탭 띠에 **뷰 탭**(본문 없는 탭 · 열쇠 `ext:<id>` · 같은 확장은 같은 탭)이 열리고, 편집 영역에 `ext_view.rs`가 상세를 그린다: 머리글(이름 · 버전 · 상태 배지) · 버튼(Install / Enable·Disable / Uninstall — 패널 행 버튼과 같은 동작) · **Details** 표(상태 · 버전 · 종류 · 출처 · 만든이 · 라이선스 · 홈페이지 · 필요 확장 · 설정 접두사 · 파일) · **Description**(패키지 README/설명 · 휠 스크롤). 79차의 "안내 편집기 탭"(`open_info_tab`) 경로는 없앴다 — 상세는 문서가 아니라 화면이다(편집 입력·찾기·실행이 가지 않는다 · 닫을 때 저장을 묻지 않는다 · DB 연결과 무관). 글꼴 = UI 글꼴(제목 ×1.7).
+

@@ -312,6 +312,20 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     Command {
+        id: "file.run_file",
+        label: Msg::MnRunFile,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
+        id: "file.large_force",
+        label: Msg::MnLargeForce,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
         id: "mem.trim_now",
         label: Msg::MnMemTrimNow,
         win: "",

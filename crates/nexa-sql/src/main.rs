@@ -22,11 +22,13 @@ mod exp_icons;
 mod explorer;
 mod explorers;
 mod ext_panel;
+mod ext_view;
 #[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
 mod extfile;
 mod file_win;
+mod fileload;
 mod findbar;
 mod gitstat;
 mod grid;
@@ -52,6 +54,7 @@ mod toolfloat;
 mod toolicons;
 mod txlog_win;
 mod txwarn;
+mod undofile;
 mod winfocus;
 mod wingeom;
 mod worker;
@@ -278,6 +281,10 @@ struct App {
     ext_panel: ExtPanel,
     /// 저장소 읽기 스레드의 결과(패널을 열거나 ⟳ · 사용자 동작으로만 · 26 §8).
     ext_fetch_rx: Option<std::sync::mpsc::Receiver<ExtFetch>>,
+    /// 확장 상세 뷰(편집기 자리에 그리는 전용 페이지) · 뷰 열쇠(`ext:<id>`)별 내용 · 마지막으로 그린 열쇠(바뀌면 스크롤 초기화).
+    ext_view: ext_view::ExtView,
+    ext_details: HashMap<String, ext_view::ExtDetail>,
+    ext_view_key: String,
     /// 탐색기 유휴 워터마크의 다음 시각(docs/57 T2).
     meta_refresh_next: Option<Instant>,
     /// 외부 파일 변경(docs/58): 감시 스레드(처음 쓸 때 만든다) · 탭별 상태 · 확인 띠 · 다음 폴링 · 메인 창 활성 여부 ·
@@ -294,6 +301,12 @@ struct App {
     startup_connected: bool,
     /// 자체 캡처·측정용: 시각이 되면 실행할 기동 명령(`@after:<ms>:<명령>`).
     startup_timed: Vec<(Instant, String)>,
+    /// 파일 적재 스레드의 결과(큰 파일 = 비동기 · docs/59) · 열기 선택을 기다리는 큰 파일(경로, 인코딩, 크기).
+    /// 스레드 적재 중인 파일들(앞 = 막에 보이는 것) — 하나라도 있으면 메인 창 입력을 받지 않는다(`fileload.rs`).
+    file_loads: Vec<LoadJob>,
+    big_pending: Option<(PathBuf, String, u64)>,
+    /// 이 실행에서 오래된 되돌리기 기록 파일을 이미 치웠는가(처음 저장할 때 한 번).
+    undo_pruned: bool,
     /// 메모리 회수(`memtrim.rs`): 큰 것을 놓은 뒤의 1회 회수 예정 시각 · 다음 주기 회수 · 직전 틱의 탭 수(닫힘 감지).
     mem_trim_due: Option<Instant>,
     mem_trim_next: Option<Instant>,
@@ -495,7 +508,36 @@ fn preserve_case(matched: &str, repl: &str) -> String {
 
 #[cfg(test)]
 mod find_case_tests {
-    use super::preserve_case;
+    use super::{find_in_chars, preserve_case};
+
+    /// 줄마다 찾기(T-142 — 본문을 통째로 뜨지 않는다) = 본문 전체에서 찾기와 **같은 답**(질의에 줄바꿈이 없을 때):
+    /// 대소문자 · 단어 단위 · 줄 처음/끝의 경계 · 한글 · 겹치는 후보 · 빈 줄.
+    #[test]
+    fn per_line_find_equals_whole_text_find() {
+        let text = "select a, A_b from tab;\nSELECT a\n\n값 = a; aaa a\ntab tabtab tab\nab";
+        let all: Vec<char> = text.chars().collect();
+        for q in ["a", "A", "tab", "aa", "select", "값", "b", "ab"] {
+            let q: Vec<char> = q.chars().collect();
+            for cs in [false, true] {
+                for ww in [false, true] {
+                    let mut whole = Vec::new();
+                    find_in_chars(&all, 0, &q, cs, ww, &mut whole);
+                    let mut per_line = Vec::new();
+                    let mut base = 0usize;
+                    for line in text.split('\n') {
+                        let lc: Vec<char> = line.chars().collect();
+                        find_in_chars(&lc, base, &q, cs, ww, &mut per_line);
+                        base += lc.len() + 1;
+                    }
+                    assert_eq!(per_line, whole, "{q:?} cs={cs} ww={ww}");
+                }
+            }
+        }
+        // 단어 단위: `tab`은 `tabtab` 안에서는 일치가 아니다.
+        let mut out = Vec::new();
+        find_in_chars(&all, 0, &['t', 'a', 'b'], true, true, &mut out);
+        assert_eq!(out.len(), 3);
+    }
 
     #[test]
     fn preserve_case_follows_match_shape() {
@@ -1225,56 +1267,50 @@ impl App {
         }
     }
 
-    fn find_matches(&mut self) -> (Vec<(usize, usize)>, Vec<char>) {
-        let (mut out, text) = self.find_matches_all();
+    fn find_matches(&mut self) -> Vec<(usize, usize)> {
+        let mut out = self.find_matches_all();
         // 선택 범위에서 찾기(≡ · Alt+L): 켤 때 잡은 범위 안의 일치만.
         if let Some((a, e)) = self.find_scope {
             out.retain(|(s, t)| *s >= a && *t <= e);
         }
-        (out, text)
+        out
     }
 
-    fn find_matches_all(&mut self) -> (Vec<(usize, usize)>, Vec<char>) {
-        let full = self.ed_mut().text();
-        let text: Vec<char> = full.chars().collect();
-        // ★ 정규식 모드 = fancy-regex(문자 인덱스로 변환) · 아니면 종전 문자 비교(빠른 경로 유지).
+    /// 본문 전체의 일치 구간(글자 인덱스). 보통 찾기(정규식 아님 · 질의에 줄바꿈 없음)는 **버퍼의 줄을 하나씩** 본다 —
+    /// 종전에는 찾기 입력마다 본문 전체를 문자열 + 글자 배열로 다시 만들었다(65 MB 파일 = 임시 325 MB · T-142).
+    fn find_matches_all(&mut self) -> Vec<(usize, usize)> {
+        // ★ 정규식 모드 = fancy-regex(문자 인덱스로 변환) — 엔진이 문자열 하나를 요구한다.
         if self.find.regex() {
             let Some(r) = self.find_rx() else {
-                return (Vec::new(), text);
+                return Vec::new();
             };
-            return (rx::find_all(&r, &full), text);
+            let full = self.ed_mut().text();
+            return rx::find_all(&r, &full);
         }
         let q: Vec<char> = self.find.query().chars().collect();
-        if q.is_empty() || q.len() > text.len() {
-            return (Vec::new(), text);
+        let (cs, ww) = (self.find.case_sensitive(), self.find.whole_word());
+        let buf = self.editors.cur().buf();
+        if q.is_empty() || q.len() > buf.len() {
+            return Vec::new();
         }
-        let cs = self.find.case_sensitive();
-        let ww = self.find.whole_word();
-        let eq = |a: char, b: char| {
-            if cs {
-                a == b
-            } else {
-                a.to_lowercase().eq(b.to_lowercase())
-            }
-        };
-        let is_word = |c: char| c.is_alphanumeric() || c == '_';
         let mut out = Vec::new();
-        let mut i = 0;
-        while i + q.len() <= text.len() {
-            if text[i..i + q.len()].iter().zip(&q).all(|(a, b)| eq(*a, *b)) {
-                // 단어 단위(ab 토글): 앞뒤가 단어 문자면 일치가 아니다.
-                let boundary_ok = !ww
-                    || ((i == 0 || !is_word(text[i - 1]))
-                        && (i + q.len() >= text.len() || !is_word(text[i + q.len()])));
-                if boundary_ok {
-                    out.push((i, i + q.len()));
-                    i += q.len();
-                    continue;
-                }
-            }
-            i += 1;
+        if q.contains(&'\n') {
+            // 여러 줄 질의(드묾): 본문을 글자 배열로 떠서 종전 방식 그대로.
+            let text: Vec<char> = buf.iter_from(0).collect();
+            find_in_chars(&text, 0, &q, cs, ww, &mut out);
+            return out;
         }
-        (out, text)
+        let mut line: Vec<char> = Vec::new();
+        for l in 0..buf.line_count() {
+            let s = buf.line_text(l);
+            if s.len() < q.len() {
+                continue; // 바이트 수가 글자 수보다 작을 수는 없다 — 이 줄에는 들어갈 자리가 없다.
+            }
+            line.clear();
+            line.extend(s.chars());
+            find_in_chars(&line, buf.line_start(l), &q, cs, ww, &mut out);
+        }
+        out
     }
 
     /// 다음/이전 일치로 이동(순환) — `advance`면 현재 선택을 지나서, 아니면 캐럿부터.
@@ -1282,7 +1318,7 @@ impl App {
         if !self.find.is_visible() {
             return;
         }
-        let (matches, _) = self.find_matches();
+        let matches = self.find_matches();
         self.find.set_has_matches(!matches.is_empty());
         if matches.is_empty() {
             self.find.set_status(t(Msg::StFindNone));
@@ -1341,7 +1377,7 @@ impl App {
             return base;
         }
         // 대소문자 보존(AB · Alt+A): 일치가 전부 대문자면 대문자로 · 첫 글자만 대문자면 첫 글자만 · 전부 소문자면 소문자로.
-        let (matches, _) = self.find_matches();
+        let matches = self.find_matches();
         let Some(&(s, e)) = matches.iter().find(|(s, _)| *s == a) else {
             return base;
         };
@@ -1350,7 +1386,7 @@ impl App {
     }
 
     fn find_replace_one(&mut self) {
-        let (matches, _) = self.find_matches();
+        let matches = self.find_matches();
         if let Some((a, b)) = self.ed_mut().selection() {
             if matches.contains(&(a, b)) {
                 let repl = self.find_expansion(a);
@@ -1362,7 +1398,7 @@ impl App {
     }
 
     fn find_replace_all(&mut self) {
-        let (matches, _) = self.find_matches();
+        let matches = self.find_matches();
         if matches.is_empty() {
             self.find.set_status(t(Msg::StFindNone));
             self.redraw();
@@ -1373,10 +1409,15 @@ impl App {
             .iter()
             .map(|(a, _)| self.find_expansion(*a))
             .collect();
+        // ★ 한 번 훑어 전부 바꾼다 + 되돌리기 **한 단계**(종전 = 일치마다 `replace_range` — 3 MB 본문 2,000건이 15초 ·
+        //   되돌리기도 2,000번 눌러야 했다 · docs/60).
         let mut inv = Invalidations::default();
-        for ((a, b), repl) in matches.iter().zip(repls.iter()).rev() {
-            self.ed_mut().replace_range(*a, *b, repl, &mut inv);
-        }
+        let edits: Vec<(usize, usize, &str)> = matches
+            .iter()
+            .zip(repls.iter())
+            .map(|((a, b), r)| (*a, *b, r.as_str()))
+            .collect();
+        self.ed_mut().replace_many(&edits, &mut inv);
         self.find
             .set_status(tf(Msg::StReplacedN, &[&matches.len().to_string()]));
         self.redraw();
@@ -1416,7 +1457,7 @@ impl App {
                 self.find_step(true, false);
             }
             FindAction::SelectAll => {
-                let (matches, _) = self.find_matches();
+                let matches = self.find_matches();
                 if matches.is_empty() {
                     self.find.set_status(t(Msg::StFindNone));
                 } else {
@@ -2369,7 +2410,45 @@ impl App {
         if self.ext_panel.is_visible() {
             self.ext_panel_sync();
         }
+        self.ext_details_sync();
         self.redraw();
+    }
+
+    /// 열려 있는 확장 상세 탭의 상태(설치됨·켜짐)를 지금 값으로 맞춘다 — 상세의 버튼을 누른 직후 버튼이 바뀌어야 한다.
+    fn ext_details_sync(&mut self) {
+        if self.ext_details.is_empty() {
+            return;
+        }
+        let installed = extensions::manager::installed();
+        let off = self.ext_disabled_list();
+        for d in self.ext_details.values_mut() {
+            let inst = installed.iter().any(|r| r.id == d.row.id);
+            d.row.installed = inst;
+            d.row.enabled = inst && !off.iter().any(|x| x == &d.row.id);
+            d.row.catalog = self.ext_catalog.iter().position(|(_, p)| p.id == d.row.id);
+            let state = t(if !inst {
+                Msg::ExtStNotInstalled
+            } else if d.row.enabled {
+                Msg::ExtStEnabled
+            } else {
+                Msg::ExtStDisabled
+            });
+            if let Some(f) = d.fields.first_mut() {
+                f.1 = state.to_string();
+            }
+        }
+    }
+
+    /// 확장 상세 뷰가 낸 동작 — 확장 패널과 같은 경로.
+    fn ext_view_actions(&mut self) {
+        for a in self.ext_view.take_actions() {
+            match a {
+                ext_view::ExtViewAction::Install(n) => self.ext_pick(&format!("ext.install:{n}")),
+                ext_view::ExtViewAction::Remove(id) => self.ext_pick(&format!("ext.remove:{id}")),
+                ext_view::ExtViewAction::Enable(id) => self.ext_pick(&format!("ext.enable:{id}")),
+                ext_view::ExtViewAction::Disable(id) => self.ext_pick(&format!("ext.disable:{id}")),
+            }
+        }
     }
 
     /// 옆 패널은 한 번에 하나 — `keep`만 남기고 닫는다(탐색기·파일 검색·확장).
@@ -2529,37 +2608,18 @@ impl App {
         } else {
             row.summary.clone()
         };
-        let mut out = format!("{} {}\n{summary}\n\n", row.name, row.version);
-        // 값 열 = 가장 긴 라벨 + 여백(라벨 길이는 언어마다 다르다 — 고정 16칸이면 "Settings prefix:"가 값에 붙었다).
-        let labels = [
-            Msg::ExtDetState,
-            Msg::ExtDetVersion,
-            Msg::ExtDetKind,
-            Msg::ExtDetSource,
-            Msg::ExtDetAuthor,
-            Msg::ExtDetLicense,
-            Msg::ExtDetHomepage,
-            Msg::ExtDetRequires,
-            Msg::ExtDetSettings,
-            Msg::ExtDetFiles,
-        ];
-        let width = labels
-            .iter()
-            .map(|m| t(*m).chars().count())
-            .max()
-            .unwrap_or(0)
-            + 3;
+        // ★ 편집기 탭이 아니라 **확장 탭**(전용 뷰 · VS Code식 · 사용자 09-19) — 글 본문은 비어 있고 호스트가 뷰를 그린다.
+        let mut fields: Vec<(String, String)> = Vec::new();
         let mut field = |label: Msg, v: &str| {
             if !v.is_empty() {
-                let head = format!("{}:", t(label));
-                let pad = width.saturating_sub(head.chars().count()).max(1);
-                out.push_str(&format!("{head}{}{v}\n", " ".repeat(pad)));
+                fields.push((t(label).to_string(), v.to_string()));
             }
         };
         field(Msg::ExtDetState, state);
         field(Msg::ExtDetVersion, &row.version);
         field(Msg::ExtDetKind, &row.kind);
         field(Msg::ExtDetSource, &row.source);
+        let mut description = String::new();
         if let Some(m) = &meta {
             field(Msg::ExtDetAuthor, &m.author);
             field(Msg::ExtDetLicense, &m.license);
@@ -2568,31 +2628,32 @@ impl App {
             field(Msg::ExtDetSettings, &m.settings_prefix);
             let files: Vec<String> = m.files.iter().map(|f| f.path.clone()).collect();
             field(Msg::ExtDetFiles, &files.join(", "));
-            if !m.description.is_empty() {
-                out.push('\n');
-                out.push_str(&m.description);
-                out.push('\n');
-            }
+            description = m.description.clone();
         }
-        self.open_info_tab(&format!("Extension: {}", row.name), &out);
-        self.layout();
-        self.redraw();
-    }
-
-    /// **안내 탭**(SQL이 아닌 읽을거리 — 확장 상세 등 · 사용자 09-19): Plain Text 구문 + **No connection**. 새로 만든 탭만
-    /// 미연결로 돌린다(이미 있던 탭은 사용자가 고른 연결 상태를 존중). 표식 메뉴의 `No connection`과 같은 경로.
-    fn open_info_tab(&mut self, title: &str, text: &str) {
-        let created = self.editors.open_info_tab(title, text);
+        let mut shown = row.clone();
+        shown.summary = summary;
+        let key = format!("ext:{}", row.id);
+        self.ext_details.insert(
+            key.clone(),
+            ext_view::ExtDetail {
+                row: shown,
+                fields,
+                description,
+            },
+        );
+        let created = self
+            .editors
+            .open_view_tab(&key, &format!("Extension: {}", row.name));
         self.set_focus(Focus::Editor);
         if created {
+            // 읽을거리 탭 = DB 연결이 필요 없다(No connection).
             let tab = self.editors.active_id();
-            let has_private = self.all_sess().any(|s| s.owner == Some(tab) && !s.closing);
-            if !has_private {
-                self.make_unconnected(tab);
-            }
+            self.make_unconnected(tab);
         }
         self.sync_sess();
         self.sync_sess_ui();
+        self.layout();
+        self.redraw();
     }
 
     /// 매니저 추적 줄 → 로그 창 `ext` 층(개발자 모드 · `log.dev_layers`에 ext · 사용자 09-17 "다운로드 속도·설치 폴더까지").
@@ -4153,6 +4214,19 @@ impl App {
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
             "editor.auto_close_pairs" => self.apply_extensions(None),
+            "file.large_l1_mb"
+            | "file.large_l1_lines"
+            | "file.large_l2_mb"
+            | "file.large_l2_lines" => {
+                self.editors.set_large_cfg(large_cfg(&self.settings));
+            }
+            "editor.undo_group_ms" | "editor.undo_giant_mb" => {
+                let (ms, giant) = undo_rules(&self.settings);
+                self.editors.set_undo_rules(ms, giant);
+            }
+            "editor.undo_budget_mb" => self
+                .editors
+                .set_undo_budget(self.settings.int(key).max(1) as usize * 1024 * 1024),
             // 확장 관리자 켬/끔(설정 창에서 바꿔도) = 확장 효과 전체 재적용 + 활동 막대 아이콘.
             "extensions.enabled" => {
                 self.apply_extensions(None);
@@ -4850,6 +4924,17 @@ impl App {
 
     /// 메뉴·툴바 액션(id = 메뉴 항목 값 · 툴바 항목 id — 같은 어휘).
     fn menu_action(&mut self, id: &str) {
+        // 적재 취소(Esc와 같은 길 · 팔레트/자동화용) — 활성 탭의 적재만.
+        if id == "file.load_cancel" {
+            self.file_load_cancel_active();
+            return;
+        }
+        // ★ 적재 중인 탭(사용자 09-20): 그 탭의 본문을 쓰는 명령(편집·찾기·실행·저장)만 막는다 — 새 탭·열기·보기·접속은 그대로.
+        if self.editors.active_loading() && fileload::blocked_while_loading(id) {
+            self.sess.status = t(Msg::StLoadTabBusy).into();
+            self.redraw();
+            return;
+        }
         match id {
             "file.new" => {
                 self.editors.new_tab(None);
@@ -4865,6 +4950,37 @@ impl App {
             },
             "file.save_as" => self.open_file_dlg = Some(PickerMode::Save),
             "file.follow" => self.ext_toggle_follow(),
+            // 큰 파일 열기 선택(팔레트 목록 · docs/59 §4 3단계).
+            "bigfile.open" | "bigfile.readonly" | "bigfile.head" | "bigfile.run" => {
+                // 팔레트 밖(기동 명령 · 단축키)에서 와도 선택 목록은 닫는다.
+                self.palette.close();
+                if let Some((path, enc, _)) = self.big_pending.take() {
+                    let mode = match id {
+                        "bigfile.readonly" => LoadMode::ReadOnly,
+                        "bigfile.head" => LoadMode::Head(
+                            (self.settings.int("file.large_head_mb").max(1) as u64) << 20,
+                        ),
+                        "bigfile.run" => LoadMode::Run,
+                        _ => LoadMode::Open,
+                    };
+                    self.load_file(&path, &enc, mode);
+                }
+            }
+            // 디스크에서 바로 실행 — 파일 대화상자로 고른 뒤 편집기에 싣지 않고 돌린다.
+            "file.run_file" => {
+                self.file_purpose = FilePurpose::RunFile;
+                self.open_file_dlg = Some(PickerMode::Open);
+            }
+            // 큰 파일 모드의 기능 축소를 이 탭에서만 풀거나 다시 건다.
+            "file.large_force" => {
+                self.sess.status = match self.editors.toggle_large_force() {
+                    Some(true) => t(Msg::StLargeForced).into(),
+                    Some(false) => t(Msg::StLargeRestored).into(),
+                    None => t(Msg::StLargeNotLarge).into(),
+                };
+                self.layout();
+                self.redraw();
+            }
             // 메모리 지금 정리(팔레트) — 보이지 않는 탭의 그리기 캐시 + 힙 → OS. 결과·본문은 건드리지 않는다.
             "mem.trim_now" => {
                 let (before, _) = memtrim::usage();
@@ -5329,8 +5445,16 @@ impl App {
 
     /// 활성 탭을 방금 읽었거나 저장했다 = 디스크와 기준이 맞다 → 서명을 기록하고 대기·유지·삭제 상태를 지운다(따라가기는 유지).
     fn ext_track_active(&mut self) {
-        let id = self.editors.active_id();
-        let Some(path) = self.editors.active_path() else {
+        self.ext_track(self.editors.active_id());
+    }
+
+    /// 탭 하나의 파일 서명을 지금 디스크로 다시 잡는다(읽은 직후 · 저장 직후 — 활성 탭이 아닐 수도 있다).
+    fn ext_track(&mut self, id: u64) {
+        let path = self
+            .editors
+            .index_of_id(id)
+            .and_then(|i| self.editors.path_of(i));
+        let Some(path) = path else {
             self.ext_files.remove(&id);
             return;
         };
@@ -5412,6 +5536,7 @@ impl App {
         }
         let alive = self.editors.tab_ids();
         self.ext_files.retain(|id, _| alive.contains(id));
+        self.editors.reap_views();
         // 저장 2단 확인은 3초 창 — 지나고도 남은 "저장 막힘" 띠는 10초 뒤 걷는다(다시 저장하면 다시 묻는다).
         if self
             .ext_save_armed
@@ -5517,16 +5642,22 @@ impl App {
         let Some((buf, base, enc, eol)) = self.editors.snapshot(i) else {
             return false;
         };
-        let (base, enc) = (base.to_string(), enc.to_string());
+        let (mut base, enc) = (base.to_string(), enc.to_string());
         let (text, _, used) = Self::decode_bytes(bytes, &enc);
         let (disk_eol, disk) = eol::detect(&text);
+        // 큰 파일 탭은 저장본 사본을 들고 있지 않다(docs/59) — 고치지 않은 탭이면 "기준 = 버퍼"로 보고 다시 읽기,
+        //   고친 탭이면 병합 없이 묻는다(기준이 없으니 3-way가 성립하지 않는다).
+        let large = self.editors.is_large(i);
+        if large && !self.editors.is_dirty(i) {
+            base = buf.clone();
+        }
         let max = (self.settings.int("file.external_merge_max_kb").max(16) as usize) * 1024;
         let decision = extfile::decide(&extfile::DecideIn {
             base: &base,
             buf: &buf,
             disk: &disk,
             ask_always: self.settings.get("file.external_change") == Some("ask"),
-            merge_on: self.settings.flag("file.external_merge"),
+            merge_on: self.settings.flag("file.external_merge") && !large,
             size_ok: bytes.len() <= max && buf.len() <= max,
             format_changed: disk_eol != eol || used != enc,
         });
@@ -5837,6 +5968,16 @@ impl App {
 
     /// 자체 캡처용 기동 명령 하나 — `open:<경로>` = 파일을 탭으로 · 나머지 = 명령 id.
     fn startup_cmd(&mut self, id: &str) {
+        // `conn.edit:<프로필>` = 로그인 창의 상세 폼을 그 프로필로 열고 두 칸을 바꾼 상태로(필수·바뀜 표식 캡처).
+        if let Some(name) = id.strip_prefix("conn.edit:") {
+            if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
+                self.conn_win.capture_open_detail(name);
+                self.conn_win.panel.fill(name, &spec);
+                self.conn_win.panel.capture_touch();
+                self.conn_win.redraw();
+            }
+            return;
+        }
         match id.strip_prefix("open:") {
             Some(path) => self.open_file(Path::new(path)),
             None => self.menu_action(id),
@@ -6806,7 +6947,7 @@ impl App {
     /// 찾기 패널이 열려 있으면 일치 구간 전부를 편집기에 표시(반투명 · T-73) · 닫혀 있으면 지운다.
     fn sync_find_marks(&mut self) {
         let marks = if self.find.is_visible() {
-            self.find_matches().0
+            self.find_matches()
         } else {
             Vec::new()
         };
@@ -6838,6 +6979,8 @@ impl App {
             item("file.open", Msg::MnOpen),
             item("file.save", Msg::MnSave),
             item("file.save_as", Msg::MnSaveAs),
+            MenuEntry::Separator,
+            item("file.run_file", Msg::MnRunFile),
             MenuEntry::Separator,
             item("file.close_tab", Msg::MnCloseTab),
         ];
@@ -7125,6 +7268,8 @@ impl App {
         cmds.push(m("file.save", Msg::MnFile, Msg::MnSave));
         cmds.push(m("file.save_as", Msg::MnFile, Msg::MnSaveAs));
         cmds.push(m("file.follow", Msg::MnFile, Msg::MnFileFollow));
+        cmds.push(m("file.run_file", Msg::MnFile, Msg::MnRunFile));
+        cmds.push(m("file.large_force", Msg::MnFile, Msg::MnLargeForce));
         cmds.push(m("mem.trim_now", Msg::MnView, Msg::MnMemTrimNow));
         cmds.push(m("file.exit", Msg::MnFile, Msg::MnExit));
         cmds.push(m("edit.cut", Msg::MnEdit, Msg::MnCut));
@@ -7356,7 +7501,7 @@ impl App {
                 };
                 format!("nexa-sql.{ext}")
             }
-            (PickerMode::Save, FilePurpose::Editor) => {
+            (PickerMode::Save, FilePurpose::Editor | FilePurpose::RunFile) => {
                 let t = self.editors.active_title();
                 if t.contains('.') {
                     t
@@ -7415,36 +7560,394 @@ impl App {
 
     /// 파일 → 탭(인코딩 지정). 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
     fn open_file_enc(&mut self, path: &Path, enc: &str) {
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let ask = (self.settings.int("file.large_ask_mb").max(0) as u64) << 20;
+        // ★ 큰 파일(docs/59 §4 3단계): 기준을 넘으면 **먼저 묻는다** — 열기 / 읽기 전용 / 앞부분만 / 열지 않고 실행.
+        if ask > 0 && size >= ask {
+            self.big_pending = Some((path.to_path_buf(), enc.to_string(), size));
+            let mb = format!("{:.0}", size as f64 / 1048576.0);
+            let head = self.settings.int("file.large_head_mb").max(1).to_string();
+            self.palette.set_commands(vec![
+                ("bigfile.open".into(), tf(Msg::BigOpen, &[&mb])),
+                ("bigfile.readonly".into(), t(Msg::BigReadOnly).into()),
+                ("bigfile.head".into(), tf(Msg::BigHead, &[&head])),
+                ("bigfile.run".into(), t(Msg::BigRun).into()),
+            ]);
+            self.palette.open("");
+            self.redraw();
+            return;
+        }
+        self.load_file(path, enc, LoadMode::Open);
+    }
+
+    /// 파일을 읽어 `mode`대로 쓴다. 큰 파일(`file.async_load_mb` 이상)은 **자리 탭**을 먼저 만들고 작업 스레드가 읽기·풀기·
+    /// 편집기 본문 준비까지 끝낸다 — 그동안 진행 막은 그 탭 안에만 보이고 다른 탭은 그대로 쓴다(`fileload.rs`).
+    fn load_file(&mut self, path: &Path, enc: &str, mode: LoadMode) {
+        let to_tab = mode != LoadMode::Run;
+        if matches!(mode, LoadMode::Open | LoadMode::ReadOnly) {
+            // 이미 열려 있으면 읽지 않고 그 탭으로 · 같은 파일을 읽는 중이면 그 자리 탭으로.
+            if let Some(i) = self.editors.path_tab(path) {
+                self.editors.switch(i);
+                self.set_focus(Focus::Editor);
+                self.layout();
+                self.redraw();
+                return;
+            }
+            let dup = self
+                .file_loads
+                .iter()
+                .find(|j| j.path == path)
+                .and_then(|j| j.tab);
+            if let Some(i) = dup.and_then(|id| self.editors.index_of_id(id)) {
+                self.editors.switch(i);
+                self.redraw();
+                return;
+            }
+        }
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let limit = match mode {
+            LoadMode::Head(n) => Some(n),
+            _ => None,
+        };
+        let origin = self.editors.active_id();
+        let async_at = (self.settings.int("file.async_load_mb").max(1) as u64) << 20;
+        if size < async_at {
+            let result = fileload::load(path, enc, limit, to_tab, None);
+            self.file_loaded(FileLoaded {
+                path: path.to_path_buf(),
+                mode,
+                tab: None,
+                origin,
+                result,
+            });
+            return;
+        }
+        let name = editors::file_title(path);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (p, e) = (path.to_path_buf(), enc.to_string());
+        let proxy = std::sync::Mutex::new(self.wake_proxy.clone());
+        let prog = std::sync::Arc::new(fileload::Progress::default());
+        let prog_t = prog.clone();
+        let spawned = std::thread::Builder::new()
+            .name("file-load".into())
+            .spawn(move || {
+                let result = fileload::load(&p, &e, limit, to_tab, Some(&prog_t));
+                let _ = tx.send(result);
+                if let Ok(px) = proxy.lock() {
+                    let _ = px.send_event(Wake);
+                }
+            });
+        if spawned.is_err() {
+            let result = fileload::load(path, enc, limit, to_tab, None);
+            self.file_loaded(FileLoaded {
+                path: path.to_path_buf(),
+                mode,
+                tab: None,
+                origin,
+                result,
+            });
+            return;
+        }
+        // 자리 탭(편집기에 실을 때만) — 비어 있고 읽기 전용 · 경로 없음. "앞부분만"은 읽을거리라 No connection.
+        let tab = to_tab.then(|| {
+            let id = self.editors.begin_load_tab(&name);
+            if matches!(mode, LoadMode::Head(_)) {
+                self.make_unconnected(id);
+            }
+            id
+        });
+        self.file_loads.push(LoadJob {
+            rx,
+            path: path.to_path_buf(),
+            mode,
+            tab,
+            origin,
+            name,
+            total: limit.map_or(size, |n| n.min(size)),
+            started: Instant::now(),
+            prog,
+            ready: None,
+            shown_full: false,
+        });
+        self.sess.status = tf(
+            Msg::StFileLoading,
+            &[&nexa_fs::path::display(path), &nsql_core::fmt_bytes(size)],
+        );
+        if to_tab {
+            self.set_focus(Focus::Editor);
+        }
+        self.layout();
+        self.redraw();
+    }
+
+    /// 적재 스레드의 결과 수거(틱). 자리 탭이 닫혔으면 그 적재를 취소한다. 진행 막이 보이는 중(자리 탭이 활성 + 지연 지남)이면
+    /// **100% 프레임을 한 번 그린 뒤에** 옮겨 넣는다 — 사용자가 본 마지막 값이 100%가 되게.
+    fn file_loads_poll(&mut self) {
+        if self.file_loads.is_empty() {
+            return;
+        }
+        let delay = Duration::from_millis(self.settings.int("file.load_progress_ms").max(0) as u64);
+        let active = self.editors.active_id();
+        let mut done = Vec::new();
+        let mut k = 0;
+        while k < self.file_loads.len() {
+            // 자리 탭을 닫았다 = 그 적재 취소(스레드는 다음 덩어리에서 멈춘다).
+            let closed = self.file_loads[k]
+                .tab
+                .is_some_and(|id| self.editors.index_of_id(id).is_none());
+            if closed {
+                let job = self.file_loads.remove(k);
+                job.prog.cancel();
+                self.sess.status = tf(Msg::StLoadCancelled, &[&job.name]);
+                self.mem_released();
+                continue;
+            }
+            let job = &mut self.file_loads[k];
+            if job.ready.is_none() {
+                match job.rx.try_recv() {
+                    Ok(r) => job.ready = Some(r),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        job.ready = Some(Err("file-load thread ended".into()));
+                    }
+                }
+            }
+            let visible =
+                job.tab == Some(active) && fileload::overlay_due(job.started.elapsed(), delay);
+            if job.ready.is_some() && (!visible || job.shown_full) {
+                let job = self.file_loads.remove(k);
+                if let Some(result) = job.ready {
+                    done.push(FileLoaded {
+                        path: job.path,
+                        mode: job.mode,
+                        tab: job.tab,
+                        origin: job.origin,
+                        result,
+                    });
+                }
+                continue;
+            }
+            k += 1;
+        }
+        for l in done {
+            self.file_loaded(l);
+        }
+        // 막이 보이는 동안만 계속 다시 그린다(다른 탭에서 일하는 중에는 프레임을 만들지 않는다).
+        if self.file_loads.iter().any(|j| j.tab == Some(active)) {
+            self.redraw();
+        }
+    }
+
+    /// 활성 탭의 적재 취소(Esc · `file.load_cancel`): 스레드에 알리고 자리 탭을 닫는다. 돌려주는 값 = 취소했는가.
+    fn file_load_cancel_active(&mut self) -> bool {
+        let active = self.editors.active_id();
+        let Some(k) = self.file_loads.iter().position(|j| j.tab == Some(active)) else {
+            return false;
+        };
+        let job = self.file_loads.remove(k);
+        job.prog.cancel();
+        if let Some(i) = self.editors.index_of_id(active) {
+            self.editors.close_tab_confirmed(i);
+            self.editors.reap_views();
+        }
+        self.sess.status = tf(Msg::StLoadCancelled, &[&job.name]);
+        self.mem_released();
+        self.layout();
+        self.redraw();
+        true
+    }
+
+    /// 진행 막 그리기(편집 영역 가운데) — **활성 탭이 적재 중인 탭일 때만** · 지연이 지난 뒤. 100%를 그렸으면 표시해 둔다
+    /// (수거가 그걸 보고 옮겨 넣는다). 그리는 동안 `surface`가 `self`를 잡고 있어 필드만 받는 연관 함수로 둔다.
+    fn paint_file_load(
+        jobs: &mut [LoadJob],
+        active: u64,
+        delay: Duration,
+        area: Rect,
+        dc: &mut dyn nexa_ctl::draw::DrawCtx,
+        th: &nexa_ctl::theme::Theme,
+        s: f32,
+    ) {
+        let more = jobs.len().saturating_sub(1);
+        let Some(job) = jobs.iter_mut().find(|j| j.tab == Some(active)) else {
+            return;
+        };
+        if !fileload::overlay_due(job.started.elapsed(), delay) {
+            return;
+        }
+        let stage = if job.ready.is_some() {
+            fileload::Stage::Opening
+        } else {
+            // 스레드는 끝났어도 아직 받지 않았으면 그 앞 단계에 둔다 — 100%는 "받았다"는 뜻으로만 쓴다.
+            match job.prog.stage() {
+                fileload::Stage::Opening => fileload::Stage::Preparing,
+                st => st,
+            }
+        };
+        fileload::paint(
+            dc,
+            th,
+            area,
+            s,
+            &fileload::View {
+                name: &job.name,
+                stage,
+                read: job.prog.read(),
+                total: job.total,
+                started: job.started,
+                more,
+            },
+        );
+        if stage == fileload::Stage::Opening {
+            job.shown_full = true;
+        }
+    }
+
+    /// 읽은 결과를 쓴다 — 편집기에 실을 것은 자리 탭(없으면 지금 만든다 = 작은 파일의 동기 경로)에 **옮겨 넣고**,
+    /// 실행만 할 것은 돌린다. 활성 탭은 바꾸지 않는다(사용자가 다른 탭에서 일하고 있을 수 있다).
+    fn file_loaded(&mut self, l: FileLoaded) {
+        let path = l.path;
+        let name = editors::file_title(&path);
+        let loaded = match l.result {
+            Ok(v) => v,
             Err(e) => {
-                self.sess.status = tf(
-                    Msg::StFileReadError,
-                    &[&path.display().to_string(), &e.to_string()],
-                );
+                // 자리 탭은 걷는다(빈 탭이 남지 않게).
+                if let Some(i) = l.tab.and_then(|id| self.editors.index_of_id(id)) {
+                    self.editors.close_tab_confirmed(i);
+                    self.editors.reap_views();
+                }
+                self.sess.status = if e == fileload::CANCELLED {
+                    tf(Msg::StLoadCancelled, &[&name])
+                } else {
+                    tf(Msg::StFileReadError, &[&path.display().to_string(), &e])
+                };
+                self.layout();
                 self.redraw();
                 return;
             }
         };
-        let (text, lossy, used) = Self::decode_bytes(&bytes, enc);
-        // 줄끝 다수결 판정 + `\n` 정규화(docs/38).
-        let (eol, text) = eol::detect(&text);
-        self.editors.open_file(path, &text, eol);
-        self.editors.set_active_encoding(used);
-        self.ext_track_active();
-        self.set_focus(Focus::Editor);
-        self.push_recent(path);
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        self.sess.status = if lossy {
-            tf(Msg::StFileDecodedLossy, &[&name])
-        } else {
-            tf(Msg::StFileOpened, &[&name])
-        };
+        let (eol, used, lossy, truncated) =
+            (loaded.eol, loaded.used, loaded.lossy, loaded.truncated);
+        match (l.mode, loaded.body) {
+            (LoadMode::Run, fileload::Body::Text(text)) => {
+                // ★ 읽는 사이 활성 탭이 바뀌었으면 실행하지 않는다 — 실행은 활성 탭의 세션으로 가므로, 사용자가 고른 것과
+                //   **다른 접속**(운영일 수도 있다)에서 큰 스크립트가 돌 뻔한 경우다.
+                if self.editors.active_id() != l.origin {
+                    let msg = tf(Msg::StRunFileTabChanged, &[&name]);
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Error, msg.clone()));
+                    self.sess.status = msg;
+                } else if self.gate_open() {
+                    let n = nsql_script::split_script(&text).len();
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        tf(Msg::StRunFile, &[&name, &n.to_string()]),
+                    ));
+                    self.run_text(text, 0, true);
+                }
+            }
+            (mode, fileload::Body::Prepared(prep)) => {
+                let head = matches!(mode, LoadMode::Head(_));
+                let tab = match l.tab {
+                    Some(id) => id,
+                    None => {
+                        let id = self.editors.begin_load_tab(&name);
+                        if head {
+                            self.make_unconnected(id);
+                        }
+                        id
+                    }
+                };
+                // "앞부분만" = 경로 없는 읽기 전용 읽을거리(저장해도 원본을 덮지 않는다) · 원래 파일의 구문.
+                let title = if head && truncated {
+                    tf(Msg::BigHeadTitle, &[&name])
+                } else {
+                    name.clone()
+                };
+                let keep_path = (!head).then_some(path.as_path());
+                let t_fill = Instant::now();
+                let filled = self
+                    .editors
+                    .fill_loaded(tab, keep_path, &title, &name, prep, eol);
+                if self.frame_trace.is_some() {
+                    // 계측(`NSQL_TRACE_FRAMES`): UI 스레드가 옮겨 넣느라 멎은 시간 — 다른 탭에서 타이핑 중이면 이만큼 끊긴다.
+                    eprintln!(
+                        "[load] fill {name}: {:.1} ms on the UI thread",
+                        t_fill.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+                let Some(i) = filled else {
+                    self.mem_released();
+                    return; // 자리 탭이 그사이 닫혔다 — 버린다.
+                };
+                self.editors.set_encoding(i, used);
+                if head || mode == LoadMode::ReadOnly {
+                    self.editors.set_read_only(i, true);
+                }
+                let mut restored = 0;
+                if !head {
+                    self.ext_track(tab);
+                    self.push_recent(&path);
+                    if mode == LoadMode::Open {
+                        restored = self.undo_persist_load(i, &path);
+                    }
+                }
+                if self.editors.active_id() == tab {
+                    self.set_focus(Focus::Editor);
+                }
+                let level = self.editors.large_level(i);
+                self.sess.status = if lossy {
+                    tf(Msg::StFileDecodedLossy, &[&name])
+                } else if level > 0 {
+                    tf(Msg::StLargeMode, &[&name, &level.to_string()])
+                } else if restored > 0 {
+                    tf(Msg::StUndoRestored, &[&title, &restored.to_string()])
+                } else {
+                    tf(Msg::StFileOpened, &[&title])
+                };
+            }
+            // 짝이 맞지 않는 조합은 만들지 않는다(실행 = 문자열 · 그 밖 = 준비본).
+            (_, fileload::Body::Text(_)) => {}
+        }
+        // 읽느라 쓴 임시 버퍼를 놓았다 → 힙 정리 예약.
+        self.mem_released();
         self.layout();
         self.redraw();
+    }
+
+    /// 되돌리기 기록 파일 쓰기(docs/60 D-129 · 저장 직후 · 활성 탭) — 기록이 없으면 옛 파일을 지운다. 큰 파일 탭은 건너뛴다.
+    fn undo_persist_save(&mut self, path: &Path) {
+        if !self.settings.flag("editor.undo_persist") {
+            return;
+        }
+        let Some(dir) = undofile::dir() else { return };
+        if !self.undo_pruned {
+            self.undo_pruned = true;
+            undofile::prune_in(
+                &dir,
+                self.settings.int("editor.undo_persist_days").max(0) as u64,
+            );
+        }
+        let i = self.editors.active();
+        if self.editors.large_level(i) > 0 {
+            undofile::store_in(&dir, path, None);
+            return;
+        }
+        let cap = (self.settings.int("editor.undo_persist_mb").max(1) as usize) << 20;
+        let bytes = self.editors.cur().export_history(cap);
+        undofile::store_in(&dir, path, bytes.as_deref());
+    }
+
+    /// 방금 읽은 탭에 되돌리기 기록을 되살린다(본문이 기록의 것과 같을 때만) — 되살린 단계 수.
+    fn undo_persist_load(&mut self, i: usize, path: &Path) -> usize {
+        if !self.settings.flag("editor.undo_persist") || self.editors.large_level(i) > 0 {
+            return 0;
+        }
+        let cap = (self.settings.int("editor.undo_persist_mb").max(1) as u64) << 20;
+        let Some(bytes) = undofile::dir().and_then(|d| undofile::load_in(&d, path, cap)) else {
+            return 0;
+        };
+        self.editors.import_history(i, &bytes)
     }
 
     /// 활성 탭 → 파일(UTF-8 · BOM 없음 · 원래 줄끝 유지).
@@ -7471,6 +7974,7 @@ impl App {
         match res {
             Ok(()) => {
                 self.editors.mark_saved(path);
+                self.undo_persist_save(path);
                 self.ext_track_active();
                 self.git.refresh(true);
                 self.push_recent(path);
@@ -8174,7 +8678,12 @@ impl App {
                 })
             }
         };
-        let mut src = text.unwrap_or_else(|| self.ed_mut().text());
+        let src = text.unwrap_or_else(|| self.ed_mut().text());
+        self.run_text(src, line_base, all);
+    }
+
+    /// 본문 실행의 공통 경로 — 편집기 실행(`run_sql`)과 **디스크에서 바로 실행**(docs/59 §4 3단계 · 편집기에 싣지 않는다)이 같이 쓴다.
+    fn run_text(&mut self, mut src: String, line_base: usize, all: bool) {
         // ★ 세션 배치(docs/52 §4): `CONNECT`면 이 탭의 전용 세션으로 · 전용 탭의 `DISCONNECT`면 해제하고 끝.
         if !self.place_run(&mut src) {
             return;
@@ -9130,6 +9639,14 @@ impl App {
                     _ => "—".to_string(),
                 };
                 segs.push((conn, false));
+                // 큰 파일 모드 · 읽기 전용 표식(docs/59) — 이 탭에서 일부 기능이 꺼져 있음을 늘 보이게.
+                let (large_level, large_forced) = self.editors.active_large();
+                if large_level > 0 && !large_forced {
+                    segs.push((tf(Msg::StLargeSeg, &[&large_level.to_string()]), false));
+                }
+                if self.editors.active_read_only() {
+                    segs.push((t(Msg::StReadOnlySeg).to_string(), false));
+                }
                 let nsel = self.editors.selection_count();
                 if self.focus == Focus::Grid
                     && self
@@ -9264,10 +9781,41 @@ impl App {
                     },
                     ..FontPrefs::default()
                 };
-                let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
-                    .with_fonts(prefs)
-                    .with_caret_on(caret_on);
-                self.editors.cur_mut().paint(&mut dc, &th);
+                let view_key = self.editors.active_view().map(str::to_string);
+                match view_key
+                    .as_ref()
+                    .and_then(|k| self.ext_details.get(k).cloned())
+                {
+                    // ★ 뷰 탭(확장 상세) = 편집기 자리에 전용 페이지를 UI 글꼴로 그린다(글 편집기는 그리지 않는다).
+                    Some(detail) => {
+                        let vprefs = FontPrefs {
+                            base: SlotFont {
+                                size: ui_px,
+                                bold: false,
+                                italic: false,
+                            },
+                            message: SlotFont {
+                                size: ui_px * 1.7,
+                                bold: true,
+                                italic: false,
+                            },
+                            ..FontPrefs::default()
+                        };
+                        let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(vprefs);
+                        if view_key.as_deref() != Some(self.ext_view_key.as_str()) {
+                            self.ext_view_key = view_key.unwrap_or_default();
+                            self.ext_view.reset();
+                        }
+                        self.ext_view.set_bounds(self.editors.editor_bounds(), s);
+                        self.ext_view.paint(&mut dc, &th, &detail);
+                    }
+                    None => {
+                        let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
+                            .with_fonts(prefs)
+                            .with_caret_on(caret_on);
+                        self.editors.cur_mut().paint(&mut dc, &th);
+                    }
+                }
             }
             mark(&mut t_sec, &mut marks); // 1 = 편집기
                                           // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
@@ -9414,6 +9962,11 @@ impl App {
                 self.ext_banner.set_bounds(self.editors.banner_rect());
                 self.ext_banner.paint(&mut dc, &th, s);
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
+                // ★ 파일 적재 진행 막 — 편집 영역 가운데 · 맨 위 층(적재 중에는 입력도 받지 않는다).
+                let delay =
+                    Duration::from_millis(self.settings.int("file.load_progress_ms").max(0) as u64);
+                let active_tab = self.editors.active_id();
+                Self::paint_file_load(&mut self.file_loads, active_tab, delay, eb, &mut dc, &th, s);
             }
             // ── 메뉴바 + 열린 드롭다운(별도 글꼴 크기 `ui.menu_font_size` · 팝업 규칙대로 맨 마지막 층 · 사용자 09-15)
             {
@@ -9620,6 +10173,30 @@ impl App {
         }
         self.route_inner(ev, Invalidations::default());
         self.sync_run_stmt_button();
+        self.giant_notice();
+    }
+
+    /// 막힌 거대 편집(docs/60 D-130)을 알린다 — 편집기가 막았다는 표시를 꺼내 상태줄 + 토스트로.
+    fn giant_notice(&mut self) {
+        let Some((bytes, repeat)) = self.ed_mut().take_giant_blocked() else {
+            return;
+        };
+        let size = nsql_core::fmt_bytes(bytes as u64);
+        let msg = tf(
+            if repeat {
+                Msg::StGiantEditRepeat
+            } else {
+                Msg::StGiantEditTyping
+            },
+            &[&size],
+        );
+        self.toasts.push(
+            toast::ToastKind::Error,
+            t(Msg::StGiantEditTitle),
+            msg.clone(),
+        );
+        self.sess.status = msg;
+        self.redraw();
     }
 
     fn route_inner(&mut self, ev: InputEvent, mut inv: Invalidations) {
@@ -10045,6 +10622,29 @@ impl App {
                 return;
             }
         }
+        // ★ 뷰 탭(확장 상세): 편집기 자리의 마우스·휠은 뷰가 받고, 편집기 포커스의 글자·키 입력은 버린다(편집 대상이 아니다).
+        if self.editors.active_view().is_some() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let in_view = self.editors.editor_bounds().contains(cur);
+            let pointer =
+                is_mouse || matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
+            if pointer && in_view {
+                if matches!(ev, InputEvent::MouseDown { .. }) {
+                    self.set_focus(Focus::Editor);
+                }
+                if self.ext_view.on_event(&ev) {
+                    self.redraw();
+                }
+                self.ext_view_actions();
+                return;
+            }
+            if !pointer && self.focus == Focus::Editor {
+                return;
+            }
+        }
         // ★ 좌클릭·우클릭 모두 커서 아래 컨트롤에 포커스(마우스 라우팅 규칙 · CLAUDE.md §3) — 우클릭이 빠져 있어
         //   편집기에 포커스가 있으면 그리드 우클릭이 편집기로 가서 메뉴가 안 떴다(사용자 09-16 · 좌클릭 뒤에야 동작).
         if let InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } = ev {
@@ -10390,6 +10990,7 @@ impl ApplicationHandler<Wake> for App {
             || self.find.animating()
             || self.search.animating()
             || self.ext_fetch_rx.is_some()
+            || !self.file_loads.is_empty()
             || self.editors.tooltip_pending()
             || self.toasts.animating();
         // 애니메이션 프레임 간격 = 1000 / `ui.max_fps`(60 = 16ms · 30 = 33ms · 15 = 66ms · 향상 모드 30).
@@ -10441,6 +11042,9 @@ impl ApplicationHandler<Wake> for App {
                 next = next.min(t);
             }
         }
+        self.file_loads_poll();
+        // 명령·IME로 온 편집이 거대 편집 확인에 막혔으면 알린다(키 입력은 `route`가 바로 알린다).
+        self.giant_notice();
         // 메모리 회수 — 큰 것을 놓은 직후 1회 + 유휴 주기(`memtrim.rs`).
         if let Some(t) = self.mem_tick(now) {
             next = next.min(t);
@@ -10545,6 +11149,9 @@ impl ApplicationHandler<Wake> for App {
                                 ),
                                 Err(e) => tf(Msg::ErrLogFile, &[&e.to_string()]),
                             };
+                        }
+                        (PickerMode::Open, FilePurpose::RunFile) => {
+                            self.load_file(&path, &enc, LoadMode::Run);
                         }
                         (PickerMode::Open, _) => self.open_file_enc(&path, &enc),
                         (PickerMode::Save, _) => {
@@ -10978,6 +11585,15 @@ impl ApplicationHandler<Wake> for App {
                     })
                     .into();
                     self.redraw();
+                    return;
+                }
+                // ★ 적재 중인 탭에서 Esc = 그 적재 취소(자리 탭을 닫는다 · 사용자 09-20). 팔레트·찾기 막대가 열려 있으면 그쪽의 Esc.
+                if kev.logical_key == Key::Named(NamedKey::Escape)
+                    && self.focus == Focus::Editor
+                    && !self.palette.is_open()
+                    && self.editors.active_loading()
+                    && self.file_load_cancel_active()
+                {
                     return;
                 }
                 // 탐색기 포커스의 F5 = 선택 노드 하위를 조용히 다시 읽기 · Shift+F5 = 캐시를 버리고 새로(docs/57 T3).
@@ -11443,6 +12059,9 @@ fn main() {
         search: SearchPanel::new(),
         ext_panel: ExtPanel::new(),
         ext_fetch_rx: None,
+        ext_view: ext_view::ExtView::default(),
+        ext_details: HashMap::new(),
+        ext_view_key: String::new(),
         meta_refresh_next: None,
         ext_watch: None,
         ext_files: HashMap::new(),
@@ -11454,6 +12073,9 @@ fn main() {
         startup_after_connect: Vec::new(),
         startup_connected: false,
         startup_timed: Vec::new(),
+        file_loads: Vec::new(),
+        big_pending: None,
+        undo_pruned: false,
         mem_trim_due: None,
         mem_trim_next: None,
         mem_last_tabs: 0,
@@ -11510,6 +12132,11 @@ fn main() {
         .set_max_lines(app.settings.int("log.max_lines").max(100) as usize);
     app.editors
         .set_undo_max(app.settings.int("editor.undo_max").max(1) as usize);
+    app.editors.set_large_cfg(large_cfg(&app.settings));
+    app.editors
+        .set_undo_budget(app.settings.int("editor.undo_budget_mb").max(1) as usize * 1024 * 1024);
+    let (ms, giant) = undo_rules(&app.settings);
+    app.editors.set_undo_rules(ms, giant);
     nexa_gfx::text::set_glyph_cache_max(app.settings.int("ui.glyph_cache").max(256) as usize);
     nexa_fs::shell::set_icon_cache_max(app.settings.int("file.icon_cache").max(16) as usize);
     // D-58: full 모드인데 배터리/원격 세션이면 1회 안내.
@@ -11746,6 +12373,99 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
 enum FilePurpose {
     Editor,
     LogExport,
+    /// 디스크에서 바로 실행할 SQL 파일 고르기(docs/59 §4 3단계).
+    RunFile,
+}
+
+/// 읽은 파일을 어떻게 쓸 것인가.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoadMode {
+    Open,
+    ReadOnly,
+    /// 앞부분 이만큼(바이트)만 — 읽기 전용 안내 탭.
+    Head(u64),
+    /// 편집기에 싣지 않고 실행.
+    Run,
+}
+
+struct FileLoaded {
+    path: PathBuf,
+    mode: LoadMode,
+    /// 자리 탭(스레드 적재) · None = 동기 경로(지금 만든다) 또는 실행.
+    tab: Option<u64>,
+    /// 적재를 시작할 때의 활성 탭(실행 = 그 탭의 세션으로만).
+    origin: u64,
+    result: Result<fileload::Loaded, String>,
+}
+
+/// 스레드 적재 한 건(진행 상태 + 받을 곳).
+struct LoadJob {
+    rx: std::sync::mpsc::Receiver<Result<fileload::Loaded, String>>,
+    path: PathBuf,
+    mode: LoadMode,
+    tab: Option<u64>,
+    origin: u64,
+    name: String,
+    /// 읽을 양(바이트 · "앞부분만"이면 그만큼).
+    total: u64,
+    started: Instant,
+    prog: std::sync::Arc<fileload::Progress>,
+    /// 받았지만 아직 옮겨 넣지 않은 결과(100% 프레임을 기다린다).
+    ready: Option<Result<fileload::Loaded, String>>,
+    /// 100% 프레임을 그렸는가.
+    shown_full: bool,
+}
+
+/// 되돌리기 규칙(설정 → (쉬었다 치면 새 묶음 ms, 거대 편집 확인 바이트)).
+fn undo_rules(s: &Settings) -> (u64, usize) {
+    (
+        s.int("editor.undo_group_ms").max(0) as u64,
+        (s.int("editor.undo_giant_mb").max(0) as usize) << 20,
+    )
+}
+
+/// 큰 파일 단계 기준(설정 → [(바이트, 줄 수); L1, L2]).
+fn large_cfg(s: &Settings) -> [(usize, usize); 2] {
+    let mb = |k: &str| (s.int(k).max(0) as usize) << 20;
+    let n = |k: &str| s.int(k).max(0) as usize;
+    [
+        (mb("file.large_l1_mb"), n("file.large_l1_lines")),
+        (mb("file.large_l2_mb"), n("file.large_l2_lines")),
+    ]
+}
+
+/// `text` 안의 `q` 일치를 `out`에 더한다(겹치지 않게 · `base` = `text[0]`의 본문 글자 인덱스). 대소문자·단어 단위 옵션.
+/// 단어 단위: 일치의 앞뒤가 단어 글자면 일치가 아니다(줄의 처음·끝은 경계다 — 그 밖은 줄바꿈이니까).
+fn find_in_chars(
+    text: &[char],
+    base: usize,
+    q: &[char],
+    case_sensitive: bool,
+    whole_word: bool,
+    out: &mut Vec<(usize, usize)>,
+) {
+    let eq = |a: char, b: char| {
+        if case_sensitive {
+            a == b
+        } else {
+            a.to_lowercase().eq(b.to_lowercase())
+        }
+    };
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut i = 0;
+    while i + q.len() <= text.len() {
+        if text[i..i + q.len()].iter().zip(q).all(|(a, b)| eq(*a, *b)) {
+            let boundary_ok = !whole_word
+                || ((i == 0 || !is_word(text[i - 1]))
+                    && (i + q.len() >= text.len() || !is_word(text[i + q.len()])));
+            if boundary_ok {
+                out.push((base + i, base + i + q.len()));
+                i += q.len();
+                continue;
+            }
+        }
+        i += 1;
+    }
 }
 
 /// 실행 스크립트의 문장 본문 목록(오류 이벤트의 index로 찾는다).

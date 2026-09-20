@@ -458,6 +458,14 @@ impl ConnectPanel {
         !self.dirty().is_empty()
     }
 
+    /// 자체 캡처용(`NSQL_STARTUP_CMD conn.edit:<프로필>`): 서비스/DB 칸과 사용자 칸에 글자를 덧붙여 "바뀜" 표식을 띄운다.
+    pub(crate) fn capture_touch(&mut self) {
+        let d = format!("{}X", self.database.text());
+        self.database.set_text(&d);
+        let u = format!("{}X", self.user.text());
+        self.user.set_text(&u);
+    }
+
     /// 그리기 직전(창이 부른다): 바뀐 칸을 컨트롤 표시(입력란 띠 · Save 색/라벨)에 반영한다.
     pub(crate) fn sync_dirty(&mut self) {
         let dirty = self.dirty();
@@ -490,11 +498,8 @@ impl ConnectPanel {
         } else {
             ButtonTone::Default
         });
-        self.save_btn.set_label(if n > 0 {
-            format!("{} •", t(Msg::BtnSave))
-        } else {
-            t(Msg::BtnSave).to_string()
-        });
+        // 라벨은 늘 "Save" — 바뀜 표식은 그릴 때 같은 크기의 원으로 붙인다(글리프 `•`는 글꼴마다 크기가 달랐다).
+        self.save_btn.set_label(t(Msg::BtnSave).to_string());
         self.dirty_now = dirty;
     }
 
@@ -1184,18 +1189,28 @@ impl ConnectPanel {
             let missing = warn.contains(&field);
             dc.text(r.x, y, b, text, if missing { th.warn } else { th.text_dim });
             let mut x = r.x + dc.text_width(text);
+            // ★ 표식 = **같은 크기의 원**(필수 = 빨강 · 바뀜 = 파랑) · 글자 줄의 세로 중앙(사용자 09-19 — 종전에는 글리프
+            //   `*`·`•`라 글꼴마다 크기·높이가 달랐다).
+            let cy = y + dc.text_height() / 2 + self.s(1.0); // 글자 상자 중앙보다 1px 아래 = 눈에 보이는 글자 중앙
             let required = if field == Field::Name {
                 req_name
             } else {
                 req.contains(&field)
             };
             if required {
-                x += self.s(3.0);
-                dc.text(x, y, b, "*", if missing { th.warn } else { th.danger });
-                x += dc.text_width("*");
+                x += self.s(MARK_GAP);
+                mark_dot(
+                    dc,
+                    x,
+                    cy,
+                    self.s(MARK_D),
+                    if missing { th.warn } else { th.danger },
+                );
+                x += self.s(MARK_D);
             }
             if changed {
-                dc.text(x + self.s(4.0), y, b, "•", th.accent);
+                x += self.s(MARK_GAP);
+                mark_dot(dc, x, cy, self.s(MARK_D), th.accent);
             }
         };
         label(
@@ -1214,7 +1229,14 @@ impl ConnectPanel {
                 dc.text(r.x, y, b, text, th.text_dim);
                 if is(Dirty::Dialect) {
                     let w = dc.text_width(text);
-                    dc.text(r.x + w + self.s(4.0), y, b, "•", th.accent);
+                    let cy = y + dc.text_height() / 2 + self.s(1.0);
+                    mark_dot(
+                        dc,
+                        r.x + w + self.s(MARK_GAP),
+                        cy,
+                        self.s(MARK_D),
+                        th.accent,
+                    );
                 }
             }
         }
@@ -1293,6 +1315,19 @@ impl ConnectPanel {
         // Save = 바뀐 칸이 있으면 강조 + `Save •`(`sync_dirty` · 툴바 Commit 배지와 같은 문법).
         let n = dirty.len();
         self.save_btn.paint(dc, th);
+        if n > 0 {
+            // 가운데 정렬된 라벨의 오른쪽 끝 + 간격 · 버튼의 세로 중앙 · 색 = 강조 버튼의 글자색(흰색).
+            let sb = self.save_btn.bounds();
+            let tw = dc.text_width(t(Msg::BtnSave));
+            let x = sb.x + (sb.w + tw) / 2 + self.s(MARK_GAP);
+            mark_dot(
+                dc,
+                x,
+                sb.y + sb.h / 2,
+                self.s(MARK_D),
+                nexa_ctl::Color(0x00FF_FFFF),
+            );
+        }
         // 상태줄: ● + 문구(패널 폭 안에서 잘림)
         let sr = self.status_rect();
         let (color, text) = match &self.state {
@@ -1306,17 +1341,18 @@ impl ConnectPanel {
             ConnState::Failed(e) => (th.danger, e.clone()),
         };
         // 워드랩 + 세로 스크롤(오버레이 막대 · 사용자 09-14).
-        let dot = self.s(8.0);
+        let dot = self.s(MARK_D);
         let tx = sr.x + dot + self.s(6.0);
         let line_h = dc.text_height() + self.s(2.0);
         let lines = wrap_words(dc, &text, (sr.right() - tx).max(1));
         let content_h = line_h * lines.len() as i32;
         self.status_content_h.set(content_h);
         let scroll = self.status_scroll.clamp(0, (content_h - sr.h).max(0));
-        dc.fill_ellipse(
-            Rect::new(sr.x, sr.y + self.s(4.0) - scroll, dot, dot).intersection(&sr),
-            color,
-        );
+        // 첫 줄 글자의 세로 중앙에(스크롤되면 같이 올라간다 · 영역 밖은 그리지 않는다).
+        let dot_y = sr.y - scroll + (dc.text_height() - dot) / 2 + self.s(1.0);
+        if dot_y >= sr.y && dot_y + dot <= sr.bottom() {
+            dc.fill_ellipse(Rect::new(sr.x, dot_y, dot, dot), color);
+        }
         let mut y = sr.y - scroll;
         for line in &lines {
             if y + line_h >= sr.y && y < sr.bottom() {
@@ -1330,6 +1366,15 @@ impl ConnectPanel {
         self.dialect.paint(dc, th);
         // 입력란 팝업은 여기서 그리지 않는다 — 창이 맨 마지막에 `paint_popups`로(최상위).
     }
+}
+
+/// 폼 표식(필수 · 바뀜 · 상태)의 **원 지름**과 앞 간격(논리 px) — 전부 같은 크기(사용자 09-19).
+const MARK_D: f32 = 6.0;
+const MARK_GAP: f32 = 4.0;
+
+/// 표식 원 — 왼쪽 끝 `x` · 세로 중심 `cy` · 지름 `d`.
+fn mark_dot(dc: &mut dyn DrawCtx, x: i32, cy: i32, d: i32, color: nexa_ctl::Color) {
+    dc.fill_ellipse(Rect::new(x, cy - d / 2, d, d), color);
 }
 
 /// 단어 단위 워드랩 — `max_w` 안에 맞게 줄을 나눈다(한 단어가 넘치면 글자 단위로 자른다 · 줄바꿈 문자는 존중).

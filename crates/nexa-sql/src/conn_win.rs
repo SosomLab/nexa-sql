@@ -1362,6 +1362,12 @@ impl ConnWin {
     }
 
     /// 이름으로 행 선택(행 Test/Connect가 폼 Test/Connect와 같은 경로를 타도록 · 사용자 09-14).
+    /// 자체 캡처용: 그 프로필을 고르고 상세 폼을 연다(폼 채우기는 호스트).
+    pub(crate) fn capture_open_detail(&mut self, name: &str) {
+        self.select_by_name(name);
+        self.open_detail(false);
+    }
+
     pub(crate) fn select_by_name(&mut self, name: &str) {
         self.sel = self
             .shown

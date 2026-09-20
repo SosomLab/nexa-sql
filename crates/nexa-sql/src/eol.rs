@@ -37,17 +37,54 @@ impl Eol {
 /// 다수결: CRLF 수 ≥ (단독 LF + 단독 CR) 이면 CRLF(동률은 CRLF — Windows 파일에 LF 몇 줄이 섞인 흔한 경우) ·
 /// 아니면 단독 CR이 단독 LF보다 많으면 CR(옛 Mac) · 그 외 LF. 줄끝이 없으면 LF.
 pub(crate) fn detect(text: &str) -> (Eol, String) {
-    let crlf = text.matches("\r\n").count();
-    let lone_lf = text.matches('\n').count() - crlf;
-    let lone_cr = text.matches('\r').count() - crlf;
-    let eol = if crlf > 0 && crlf >= lone_lf + lone_cr {
+    if !text.as_bytes().contains(&b'\r') {
+        return (Eol::Lf, text.to_string());
+    }
+    normalize(text)
+}
+
+/// [`detect`]의 소유권 판 — **`\r`이 하나도 없으면(LF 파일) 받은 문자열을 그대로 돌려준다**(복사 0 · 큰 파일 적재의
+/// 피크 메모리 · 사용자 09-20). 있으면 한 번 훑어 세고 한 번 훑어 새로 만든다(종전 = 세 번 세고 사본 둘).
+pub(crate) fn detect_owned(text: String) -> (Eol, String) {
+    if !text.as_bytes().contains(&b'\r') {
+        return (Eol::Lf, text);
+    }
+    normalize(&text)
+}
+
+/// `\r`이 있는 본문: 종류를 세고 `\n`으로 정규화한 새 문자열을 만든다(`\r`·`\n`은 ASCII라 조각 경계가 글자 경계다).
+fn normalize(text: &str) -> (Eol, String) {
+    let b = text.as_bytes();
+    let (mut crlf, mut lone_cr, mut lf) = (0usize, 0usize, 0usize);
+    let mut out = String::with_capacity(text.len());
+    let (mut start, mut i) = (0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'\r' => {
+                out.push_str(&text[start..i]);
+                out.push('\n');
+                if b.get(i + 1) == Some(&b'\n') {
+                    crlf += 1;
+                    i += 1;
+                } else {
+                    lone_cr += 1;
+                }
+                start = i + 1;
+            }
+            b'\n' => lf += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push_str(&text[start..]);
+    let eol = if crlf > 0 && crlf >= lf + lone_cr {
         Eol::Crlf
-    } else if lone_cr > lone_lf {
+    } else if lone_cr > lf {
         Eol::Cr
     } else {
         Eol::Lf
     };
-    (eol, text.replace("\r\n", "\n").replace('\r', "\n"))
+    (eol, out)
 }
 
 /// 정규화 본문(`\n`) → 파일 본문.
@@ -82,6 +119,47 @@ pub(crate) fn save_eol(setting: &str, tab: Eol) -> Eol {
 
 #[cfg(test)]
 mod tests {
+    /// 한 번 훑기 구현 = 종전 정의(세 번 세기 + replace 두 번)와 같은 답 · LF 본문은 소유권 판에서 **같은 버퍼**를 돌려준다.
+    #[test]
+    fn one_pass_detect_matches_reference() {
+        fn reference(text: &str) -> (Eol, String) {
+            let crlf = text.matches("\r\n").count();
+            let lone_lf = text.matches('\n').count() - crlf;
+            let lone_cr = text.matches('\r').count() - crlf;
+            let eol = if crlf > 0 && crlf >= lone_lf + lone_cr {
+                Eol::Crlf
+            } else if lone_cr > lone_lf {
+                Eol::Cr
+            } else {
+                Eol::Lf
+            };
+            (eol, text.replace("\r\n", "\n").replace('\r', "\n"))
+        }
+        let cases = [
+            "",
+            "a",
+            "a\nb\n",
+            "a\r\nb\r\n",
+            "a\rb\rc",
+            "a\r\nb\nc\rd",
+            "\r",
+            "\r\n",
+            "\n\r",
+            "\r\r\n\n",
+            "한글\r\n주석\r끝\n",
+            "끝에 CR\r",
+        ];
+        for c in cases {
+            assert_eq!(detect(c), reference(c), "{c:?}");
+            assert_eq!(detect_owned(c.to_string()), reference(c), "{c:?}");
+        }
+        let s = String::from("select 1;\nselect 2;\n");
+        let p = s.as_ptr();
+        let (eol, out) = detect_owned(s);
+        assert_eq!(eol, Eol::Lf);
+        assert_eq!(out.as_ptr(), p, "LF 본문 = 복사 없이 그대로");
+    }
+
     use super::*;
 
     #[test]

@@ -168,6 +168,32 @@ pub(crate) fn decode(bytes: &[u8], enc: &str) -> (String, bool, &'static str) {
     }
 }
 
+/// [`decode`]의 소유권 판 — **BOM 없는 온전한 UTF-8이면 받은 버퍼를 그대로 문자열로 쓴다**(복사 0 · 큰 파일 적재의
+/// 피크 메모리 · 사용자 09-20). BOM 있는 UTF-8은 앞 3바이트만 당긴다. 그 밖(깨진 바이트 · 다른 인코딩)은 [`decode`]와 같다.
+pub(crate) fn decode_owned(bytes: Vec<u8>, enc: &str) -> (String, bool, &'static str) {
+    let bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let kind = match enc {
+        "auto" if bom => "utf8bom",
+        "auto" if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) => "",
+        "auto" | "utf8" if !bom => "utf8",
+        "utf8bom" => "utf8bom",
+        _ => "",
+    };
+    if kind.is_empty() {
+        return decode(&bytes, enc);
+    }
+    match String::from_utf8(bytes) {
+        Ok(mut text) => {
+            if kind == "utf8bom" && bom {
+                text.drain(..3);
+            }
+            let kind: &'static str = if kind == "utf8bom" { "utf8bom" } else { "utf8" };
+            (text, false, kind)
+        }
+        Err(e) => decode(e.as_bytes(), enc),
+    }
+}
+
 /// 본문 → 바이트(저장). 인코딩에 없는 글자는 `?`(encoding_rs 규약)로 대체된다.
 pub(crate) fn encode(text: &str, enc: &str) -> Vec<u8> {
     match enc {
@@ -202,6 +228,42 @@ pub(crate) fn encode(text: &str, enc: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    /// 소유권 판 = 빌림 판과 같은 답(모든 경로) · 온전한 UTF-8은 **같은 버퍼**.
+    #[test]
+    fn decode_owned_matches_decode() {
+        let euc_kr = encode("한글 주석", "euc-kr");
+        let utf16 = encode("select '한글';", "utf16le");
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice("select '한글';\n".as_bytes());
+        let samples: Vec<(Vec<u8>, &str)> = vec![
+            (b"select 1;\n".to_vec(), "auto"),
+            (b"select 1;\n".to_vec(), "utf8"),
+            ("한글 -- 주석".as_bytes().to_vec(), "auto"),
+            (bom.clone(), "auto"),
+            (bom.clone(), "utf8"),
+            (bom.clone(), "utf8bom"),
+            (b"no bom".to_vec(), "utf8bom"),
+            (vec![b'a', 0xFF, b'b'], "auto"),
+            (vec![b'a', 0xFF, b'b'], "utf8"),
+            (euc_kr.clone(), "euc-kr"),
+            (euc_kr, "auto"),
+            (utf16.clone(), "auto"),
+            (utf16, "utf16le"),
+            (Vec::new(), "auto"),
+        ];
+        for (bytes, enc) in samples {
+            assert_eq!(
+                decode_owned(bytes.clone(), enc),
+                decode(&bytes, enc),
+                "{enc} {bytes:?}"
+            );
+        }
+        let v = b"select 1 from dual;".to_vec();
+        let p = v.as_ptr();
+        let (text, lossy, used) = decode_owned(v, "auto");
+        assert_eq!((text.as_ptr(), lossy, used), (p, false, "utf8"));
+    }
+
     use super::*;
 
     #[test]

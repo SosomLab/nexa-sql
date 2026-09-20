@@ -10,6 +10,7 @@ use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
+use nexa_ctl::PreparedText;
 use nexa_ctl::{
     Control, InputEvent, Invalidations, SyntaxSpec, TabAction, TabBadge, TabBar, TextBox,
     WhitespaceStyle, Widget,
@@ -48,6 +49,18 @@ pub(crate) struct Editors {
     scale: f32,
     /// 탭 줄과 본문 사이에 비워 둘 높이(물리 px) — 외부 변경 확인 띠 자리(docs/58).
     top_inset: i32,
+    /// **뷰 탭**(본문이 글 편집기가 아니라 호스트가 그리는 전용 뷰 — 확장 상세 등): 탭 id → 뷰 열쇠(예 `ext:<id>`).
+    /// 탭 줄·전환·닫기는 보통 탭과 같고, 본문 그리기·입력만 호스트의 뷰가 맡는다.
+    view_tabs: std::collections::HashMap<u64, String>,
+    /// **큰 파일 모드**(docs/59 §4 1단계): 탭 id → (단계 1·2, 사용자가 "기능 강제로 켜기"를 눌렀는가). 단계는 읽을 때·저장할 때 정한다.
+    large: std::collections::HashMap<u64, (u8, bool)>,
+    /// 단계 기준: [(바이트, 줄 수); L1, L2] — 둘 중 하나라도 넘으면 그 단계(설정 `file.large_*`).
+    large_cfg: [(usize, usize); 2],
+    /// 읽기 전용 탭(큰 파일을 보기만 · 일부만 열기).
+    read_only: std::collections::HashSet<u64>,
+    /// **적재 중인 탭**(사용자 09-20): 큰 파일을 작업 스레드가 읽는 동안의 자리 탭 — 비어 있고 읽기 전용이며 경로가 없다
+    /// (저장해도 원본을 덮지 않는다). 다 읽으면 [`Self::fill_loaded`]가 그 탭에 본문을 옮겨 넣는다. 다른 탭은 그대로 쓴다.
+    loading: std::collections::HashSet<u64>,
     line_numbers: bool,
     tooltip_on: bool,
     /// (탭 index · 머문 시작) — 1초 뒤 카드.
@@ -100,6 +113,11 @@ pub(crate) struct Editors {
     diff_marks: bool,
     /// 되돌리기 깊이 상한(`editor.undo_max`).
     undo_max: usize,
+    /// 되돌리기 바이트 예산(탭마다 · 설정 `editor.undo_budget_mb`).
+    undo_budget: usize,
+    /// 쉬었다 치면 새 묶음(ms · `editor.undo_group_ms`) · 거대 편집 확인 기준(바이트 · `editor.undo_giant_mb`).
+    undo_group_ms: u64,
+    undo_giant: usize,
     /// 탭별 미커밋 문장 수·오래됨(수동 커밋 · DR-30 T-77) — 제목 뒤 `●n`(오래되면 `⚠n`).
     tx_badges: HashMap<u64, (usize, bool)>,
     /// 배지 모양(설정 `tx.badge`: count · dot · off).
@@ -157,6 +175,11 @@ impl Editors {
             bounds: Rect::new(0, 0, 0, 0),
             scale: 1.0,
             top_inset: 0,
+            view_tabs: std::collections::HashMap::new(),
+            large: std::collections::HashMap::new(),
+            large_cfg: [(5 << 20, 100_000), (20 << 20, 300_000)],
+            read_only: std::collections::HashSet::new(),
+            loading: std::collections::HashSet::new(),
             line_numbers,
             tooltip_on,
             hover: None,
@@ -202,6 +225,9 @@ impl Editors {
             badge_pick: None,
             diff_marks: true,
             undo_max: 1000,
+            undo_budget: 64 << 20,
+            undo_group_ms: 1500,
+            undo_giant: 32 << 20,
             tx_badges: HashMap::new(),
             tx_badge_mode: "count".into(),
             tx_close_req: None,
@@ -244,6 +270,11 @@ impl Editors {
         tb.set_minimap_behavior(self.minimap_opts.0, self.minimap_opts.1);
         tb.set_minimap_find(self.minimap_opts.2);
         tb.set_history_max(self.undo_max);
+        tb.set_history_budget(self.undo_budget);
+        tb.set_undo_group_pause_ms(self.undo_group_ms);
+        tb.set_giant_edit_limit(self.undo_giant);
+        // 방금 넣은 본문 = 저장된 상태(새 탭의 빈 글 · 파일에서 읽은 글) — O(1) 더러움 판정의 기준점.
+        tb.mark_saved();
         tb.set_line_comment(syntax.line_comments.first().cloned());
         // 편집기는 거의 항상 포커스라 링이 늘 보여 거슬린다(사용자 09-16) — 캐럿만으로 충분.
         tb.set_focus_ring(false);
@@ -392,25 +423,19 @@ impl Editors {
         if a == b {
             return None;
         }
-        let chars = tb.chars();
-        let sel = &chars[a.min(chars.len())..b.min(chars.len())];
-        let lines = sel.iter().filter(|&&c| c == '\n').count() + 1;
-        Some((lines, sel.len()))
+        // 줄 표에서 바로(선택이 아무리 커도 O(log 줄 수) — 종전 = 선택 구간을 글자마다 훑었다).
+        let buf = tb.buf();
+        let (a, b) = (a.min(buf.len()), b.min(buf.len()));
+        Some((buf.line_of(b) - buf.line_of(a) + 1, b - a))
     }
 
-    /// 캐럿 위치(1-기준 줄 · 열) — 캐럿 앞까지만 훑는다(String 생성 없음 · 09-19).
+    /// 캐럿 위치(1-기준 줄 · 열) — 버퍼의 줄 표에서 이분 탐색(종전 = 캐럿 앞까지 글자마다 훑었다 · 큰 파일 끝에서 느렸다).
     pub(crate) fn caret_line_col(&self) -> (usize, usize) {
         let tb = self.cur();
-        let caret = tb.caret();
-        let chars = tb.chars();
-        let upto = &chars[..caret.min(chars.len())];
-        let line = upto.iter().filter(|&&c| c == '\n').count() + 1;
-        let col = upto
-            .iter()
-            .rposition(|&c| c == '\n')
-            .map_or(upto.len(), |p| upto.len() - p - 1)
-            + 1;
-        (line, col)
+        let buf = tb.buf();
+        let caret = tb.caret().min(buf.len());
+        let line = buf.line_of(caret);
+        (line + 1, caret - buf.line_start(line) + 1)
     }
 
     /// 설정 화면(T-39)에서 바꿀 때 — 지금은 부팅 값만.
@@ -438,6 +463,7 @@ impl Editors {
             b.set_minimap(on);
             b.set_minimap_width(width);
         }
+        self.enforce_large();
     }
 
     /// 미니맵 동작(설정 `editor.minimap_viewport`/`minimap_click`/`minimap_find` · 전 탭).
@@ -680,8 +706,10 @@ impl Editors {
     }
 
     pub(crate) fn new_tab(&mut self, title: Option<String>) {
-        self.counter += 1;
-        let title = title.unwrap_or_else(|| format!("Script_{}", self.counter));
+        let title = title.unwrap_or_else(|| {
+            self.counter += 1;
+            format!("Script_{}", self.counter)
+        });
         let syntax = self.registry.for_title(&title);
         let tb = self.make_box("", &syntax);
         self.bufs.push(tb);
@@ -723,6 +751,15 @@ impl Editors {
             return false;
         };
         let eol_changed = self.eol.get(i) != self.saved_eol.get(i);
+        // ★ 저장 지점과 같은 상태 = 본문 비교 없이 깨끗(O(1) · docs/60). 아니면 종전대로 세대별 1회 비교
+        //   (손으로 되돌려 친 경우까지 "깨끗"으로 알아보려고).
+        if b.is_saved() {
+            return eol_changed;
+        }
+        // 큰 파일 탭 = 저장본 사본이 없다 → 저장 지점과 다르면 더러움(본문 비교 없음 · docs/59).
+        if self.is_large(i) {
+            return true;
+        }
         let rev = b.text_rev();
         let cache = self.dirty_cache.borrow();
         if let Some(&(r, d)) = cache.get(&self.tab_id(i)) {
@@ -731,8 +768,8 @@ impl Editors {
             }
         }
         drop(cache);
-        // 세대가 바뀌었다 — 슬라이스끼리 비교(String 생성 없음).
-        let differs = !b.chars().iter().copied().eq(s.chars());
+        // 세대가 바뀌었다 — 버퍼의 바이트와 바로 비교(String 생성 없음).
+        let differs = !b.buf().eq_str(s);
         self.dirty_cache
             .borrow_mut()
             .insert(self.tab_id(i), (rev, differs));
@@ -755,6 +792,18 @@ impl Editors {
             .get(self.active)
             .cloned()
             .unwrap_or_else(|| "utf8".into())
+    }
+
+    /// 탭의 인코딩 지정(뒤에서 적재가 끝난 탭 — 활성이 아닐 수 있다).
+    pub(crate) fn set_encoding(&mut self, i: usize, enc: &str) {
+        if let Some(e) = self.encs.get_mut(i) {
+            *e = enc.to_string();
+        }
+    }
+
+    /// 탭의 큰 파일 단계(0 = 보통).
+    pub(crate) fn large_level(&self, i: usize) -> u8 {
+        self.large.get(&self.tab_id(i)).map_or(0, |x| x.0)
     }
 
     /// 활성 탭 인코딩 지정(열기 감지 · 저장 선택).
@@ -781,47 +830,101 @@ impl Editors {
         self.eol.get(self.active).copied().unwrap_or(Eol::os())
     }
 
-    /// 파일을 탭에 연다 — 이미 열린 파일이면 그 탭으로 · 아니면 **언제나 새 탭**(사용자 09-19 "무조건 새 창에" —
-    /// 종전의 "활성 탭이 빈 새 스크립트면 재사용"을 없앴다: 탭의 세션 묶임·설정이 파일에 딸려 가지 않게).
-    pub(crate) fn open_file(&mut self, path: &Path, text: &str, eol: Eol) {
-        if let Some(i) = self.paths.iter().position(|p| p.as_deref() == Some(path)) {
+    /// 파일 본문을 새 탭으로 연다(같은 경로가 열려 있으면 그 탭으로) — 작은 파일의 동기 경로. 큰 파일은 호스트가
+    /// [`Self::begin_load_tab`] → (스레드) → [`Self::fill_loaded`]로 나눠 부른다. 두 길은 같은 코드다.
+    #[cfg(test)]
+    pub(crate) fn open_file(&mut self, path: &Path, text: String, eol: Eol) {
+        if let Some(i) = self.path_tab(path) {
             self.switch(i);
             return;
         }
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        self.new_tab(Some(name.clone()));
+        let name = file_title(path);
+        let id = self.begin_load_tab(&name);
+        self.fill_loaded(id, Some(path), &name, &name, PreparedText::new(text), eol);
+    }
+
+    /// 이 경로를 연 탭.
+    pub(crate) fn path_tab(&self, path: &Path) -> Option<usize> {
+        self.paths.iter().position(|p| p.as_deref() == Some(path))
+    }
+
+    /// **적재 자리 탭**을 만들고 활성으로 한다 — 비어 있음 · 읽기 전용 · 경로 없음. 돌려주는 값 = 탭 id.
+    pub(crate) fn begin_load_tab(&mut self, name: &str) -> u64 {
+        self.new_tab(Some(name.to_string()));
         let i = self.active;
-        let syntax = self.registry.for_title(&name);
-        let focused = self.cur().is_focused();
-        let mut tb = self.make_box(text, &syntax);
+        let id = self.ids[i];
+        self.bufs[i].set_read_only(true);
+        self.loading.insert(id);
+        self.sync_tabs();
+        id
+    }
+
+    /// 적재 중인 탭인가.
+    #[cfg(test)]
+    pub(crate) fn is_loading_id(&self, id: u64) -> bool {
+        self.loading.contains(&id)
+    }
+
+    /// 활성 탭이 적재 중인가(호스트: 진행 막을 그릴지 · Esc = 취소).
+    pub(crate) fn active_loading(&self) -> bool {
+        self.loading.contains(&self.active_id())
+    }
+
+    /// 적재가 끝난 본문을 자리 탭에 **옮겨 넣는다**(활성 탭을 바꾸지 않는다 — 사용자가 다른 탭에서 일하고 있을 수 있다).
+    /// `path` = None이면 경로 없는 읽을거리("앞부분만") · `like` = 구문을 고를 파일 이름. 탭이 이미 닫혔으면 `None`.
+    pub(crate) fn fill_loaded(
+        &mut self,
+        id: u64,
+        path: Option<&Path>,
+        title: &str,
+        like: &str,
+        prep: PreparedText,
+        eol: Eol,
+    ) -> Option<usize> {
+        self.loading.remove(&id);
+        let i = self.index_of_id(id)?;
+        let syntax = self.registry.for_title(like);
+        let (focused, bounds) = (self.bufs[i].is_focused(), self.bufs[i].bounds());
+        // 단계를 **먼저** 정한다(글자 수·줄 수는 준비본이 이미 안다 — 다시 세지 않는다). 큰 파일이면 저장본 사본(파일 크기)과
+        //   줄 변경 기준선을 아예 만들지 않는다(적재 피크 메모리).
+        let level = self.level_for(prep.len_bytes(), prep.lines());
+        let saved = if level == 0 {
+            prep.text().into_owned()
+        } else {
+            String::new()
+        };
+        let mut tb = self.make_box("", &syntax);
+        tb.set_prepared(prep);
+        tb.mark_saved();
         tb.set_focused(focused);
         if let Some((ts, sp)) = self.indents.get(i).copied().flatten() {
             tb.set_indent(ts, sp);
         }
         let mut inv = Invalidations::default();
-        tb.set_bounds(self.editor_bounds(), &mut inv);
+        tb.set_bounds(bounds, &mut inv);
         self.bufs[i] = tb;
+        self.read_only.remove(&id);
         self.syntax[i] = syntax;
-        self.titles[i] = name;
-        self.paths[i] = Some(path.to_path_buf());
-        self.saved[i] = text.to_string();
-        self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
-        self.refresh_baseline(i);
+        self.titles[i] = title.to_string();
+        self.paths[i] = path.map(Path::to_path_buf);
+        self.saved[i] = saved;
+        self.dirty_cache.borrow_mut().remove(&id);
         self.eol[i] = eol;
         self.saved_eol[i] = eol;
+        if level == 0 {
+            self.large.remove(&id);
+            self.refresh_baseline(i);
+        } else {
+            self.large.insert(id, (level, false));
+        }
+        self.enforce_large();
         self.sync_tabs();
+        Some(i)
     }
 
     /// **안내 탭**(파일 없는 읽을거리 · 확장 상세 등) — 같은 제목의 경로 없는 탭이 있으면 그 탭의 내용을 바꾸고, 없으면
     /// 새 탭. 내용은 "저장된 상태"로 둔다(닫을 때 저장을 묻지 않게 · 사용자 09-19 확장 패널 "선택하면 상세").
     /// 돌려주는 값 = 새 탭을 만들었는가(호스트가 그 탭을 **No connection**으로 둔다 — 읽을거리에 DB 연결은 필요 없다).
-    pub(crate) fn open_info_tab(&mut self, title: &str, text: &str) -> bool {
-        self.open_info_tab_like(title, text, None)
-    }
-
     /// `like` = 구문을 고를 파일 이름(디스크 내용 보기 = 원래 파일의 구문) · `None` = Plain Text.
     pub(crate) fn open_info_tab_like(
         &mut self,
@@ -858,6 +961,36 @@ impl Editors {
         found.is_none()
     }
 
+    /// 방금 읽은 탭에 되돌리기 기록을 들인다(docs/60 D-129) — 들인 단계 수(본문이 기록과 다르면 0).
+    pub(crate) fn import_history(&mut self, i: usize, bytes: &[u8]) -> usize {
+        let Some(b) = self.bufs.get_mut(i) else {
+            return 0;
+        };
+        if !b.import_history(bytes) {
+            return 0;
+        }
+        self.dirty_cache.borrow_mut().remove(&self.ids[i]);
+        b.history_stats().0
+    }
+
+    /// 되돌리기 묶음의 정지 기준(ms)과 거대 편집 확인 기준(바이트) — 전 탭 + 새 탭(docs/60 D-130·131).
+    pub(crate) fn set_undo_rules(&mut self, group_ms: u64, giant_bytes: usize) {
+        self.undo_group_ms = group_ms;
+        self.undo_giant = giant_bytes;
+        for b in &mut self.bufs {
+            b.set_undo_group_pause_ms(group_ms);
+            b.set_giant_edit_limit(giant_bytes);
+        }
+    }
+
+    /// 되돌리기 바이트 예산(설정 `editor.undo_budget_mb`) — 전 탭 + 새 탭.
+    pub(crate) fn set_undo_budget(&mut self, bytes: usize) {
+        self.undo_budget = bytes;
+        for b in &mut self.bufs {
+            b.set_history_budget(bytes);
+        }
+    }
+
     /// 메모리 회수: **보이지 않는 탭**의 그리기 캐시(본문 문자열·줄 표·행 폭·구문 상태·미니맵 픽셀)를 놓는다 — 다시 보면
     /// 다시 만들어진다. 돌려주는 값 = 놓은 탭 수.
     pub(crate) fn release_inactive_caches(&mut self) -> usize {
@@ -870,6 +1003,162 @@ impl Editors {
             }
         }
         n
+    }
+
+    // ───────────── 큰 파일 모드 · 읽기 전용(docs/59 §4) ─────────────
+
+    /// 단계 기준(설정 `file.large_l1_mb`/`_lines` · `file.large_l2_mb`/`_lines` · 0 = 그 기준 끔).
+    pub(crate) fn set_large_cfg(&mut self, cfg: [(usize, usize); 2]) {
+        self.large_cfg = cfg;
+    }
+
+    /// 본문 크기로 단계를 정한다(0 = 보통 · 1 = L1 · 2 = L2).
+    fn level_for(&self, bytes: usize, lines: usize) -> u8 {
+        let over = |(b, l): (usize, usize)| (b > 0 && bytes >= b) || (l > 0 && lines >= l);
+        if over(self.large_cfg[1]) {
+            2
+        } else if over(self.large_cfg[0]) {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// 탭의 단계를 지금 본문으로 다시 정하고 기능을 맞춘다(읽은 직후 · 저장 직후). 돌려주는 값 = 새 단계.
+    pub(crate) fn reclassify(&mut self, i: usize) -> u8 {
+        let Some(b) = self.bufs.get(i) else { return 0 };
+        // 버퍼가 아는 값 그대로(UTF-8 바이트 · 줄 수) — 다시 세지 않는다.
+        let level = self.level_for(b.buf().len_bytes(), b.buf().line_count());
+        let id = self.tab_id(i);
+        let forced = self.large.get(&id).is_some_and(|x| x.1);
+        if level == 0 {
+            self.large.remove(&id);
+        } else {
+            self.large.insert(id, (level, forced));
+        }
+        self.enforce_large();
+        level
+    }
+
+    /// 활성 탭의 (단계, 강제로 켬).
+    pub(crate) fn active_large(&self) -> (u8, bool) {
+        self.large
+            .get(&self.active_id())
+            .copied()
+            .unwrap_or((0, false))
+    }
+
+    /// 탭이 큰 파일 모드로 **동작 중**인가(단계 ≥ 1 이고 강제로 켜지 않음) — 호스트가 자동 병합·저장본 비교를 건너뛸 때 본다.
+    pub(crate) fn is_large(&self, i: usize) -> bool {
+        self.large
+            .get(&self.tab_id(i))
+            .is_some_and(|&(l, forced)| l > 0 && !forced)
+    }
+
+    /// "기능 강제로 켜기" 토글(활성 탭) — 돌려주는 값 = 켠 뒤의 상태(단계 0이면 None).
+    pub(crate) fn toggle_large_force(&mut self) -> Option<bool> {
+        let id = self.active_id();
+        let e = self.large.get_mut(&id)?;
+        e.1 = !e.1;
+        let on = e.1;
+        // 강제로 켜면 전역 설정대로 되돌린다(상자를 다시 꾸미는 대신 설정값을 다시 넣는다).
+        let i = self.active;
+        let (mm, occ) = (self.minimap.0, self.occurrence_hl);
+        let syntax = self.syntax[i].clone();
+        if on {
+            let b = &mut self.bufs[i];
+            b.set_minimap(mm);
+            b.set_occurrence_highlight(occ);
+            b.set_highlighter(Some(syntax));
+            self.refresh_baseline(i);
+        }
+        self.enforce_large();
+        Some(on)
+    }
+
+    /// 큰 파일 탭의 기능 축소를 적용한다 — 전역 설정이 바뀌어 전 탭에 다시 들어간 뒤에도 부른다.
+    /// L1: 미니맵 · 선택어 강조 · 줄 변경 기준선 끔(+ 저장본 사본을 버린다 — 더러움은 저장 지점으로 O(1)).
+    /// L2: + 구문 강조 끔(Plain).
+    fn enforce_large(&mut self) {
+        for i in 0..self.bufs.len() {
+            let Some(&(level, forced)) = self.large.get(&self.ids[i]) else {
+                continue;
+            };
+            if level == 0 || forced {
+                continue;
+            }
+            let b = &mut self.bufs[i];
+            b.set_minimap(false);
+            b.set_occurrence_highlight(false);
+            b.set_baseline(None);
+            if level >= 2 {
+                b.set_highlighter(None);
+            }
+            // 저장본 사본(파일 크기만큼)을 놓는다 — `is_dirty`는 큰 탭에서 저장 지점만 본다.
+            if !self.saved[i].is_empty() {
+                self.saved[i] = String::new();
+                self.dirty_cache.borrow_mut().remove(&self.ids[i]);
+            }
+        }
+    }
+
+    /// 읽기 전용 지정/해제.
+    pub(crate) fn set_read_only(&mut self, i: usize, on: bool) {
+        let Some(b) = self.bufs.get_mut(i) else {
+            return;
+        };
+        b.set_read_only(on);
+        let id = self.ids[i];
+        if on {
+            self.read_only.insert(id);
+        } else {
+            self.read_only.remove(&id);
+        }
+        self.sync_tabs();
+    }
+
+    pub(crate) fn active_read_only(&self) -> bool {
+        self.read_only.contains(&self.active_id())
+    }
+
+    /// **뷰 탭 열기** — 같은 열쇠의 탭이 있으면 그 탭으로, 없으면 새 탭(본문은 빈 글 · 저장된 상태라 닫을 때 묻지 않는다).
+    /// 돌려주는 값 = 새로 만들었는가.
+    pub(crate) fn open_view_tab(&mut self, key: &str, title: &str) -> bool {
+        let found = self
+            .view_tabs
+            .iter()
+            .find(|(_, k)| k.as_str() == key)
+            .and_then(|(id, _)| self.index_of_id(*id));
+        match found {
+            Some(i) => {
+                self.switch(i);
+                if self.titles[i] != title {
+                    self.titles[i] = title.to_string();
+                    self.sync_tabs();
+                }
+                false
+            }
+            None => {
+                self.new_tab(Some(title.to_string()));
+                let id = self.active_id();
+                self.view_tabs.insert(id, key.to_string());
+                true
+            }
+        }
+    }
+
+    /// 활성 탭이 뷰 탭이면 그 열쇠.
+    pub(crate) fn active_view(&self) -> Option<&str> {
+        self.view_tabs.get(&self.active_id()).map(String::as_str)
+    }
+
+    /// 닫힌 탭의 뷰 등록을 정리한다(호스트 틱).
+    pub(crate) fn reap_views(&mut self) {
+        let alive = &self.ids;
+        self.view_tabs.retain(|id, _| alive.contains(id));
+        self.large.retain(|id, _| alive.contains(id));
+        self.read_only.retain(|id| alive.contains(id));
+        self.loading.retain(|id| alive.contains(id));
     }
 
     // ───────────── 외부 파일 변경(docs/58 · T-140) ─────────────
@@ -930,6 +1219,10 @@ impl Editors {
             self.bufs[i].replace_all_undoable(text, &mut inv);
         }
         self.saved[i] = base.to_string();
+        // 버퍼가 새 기준과 같아졌으면(다시 읽기 · 같은 수정) 그 상태가 저장 지점이다 — 병합은 더러운 채로 남는다.
+        if self.bufs[i].buf().eq_str(base) {
+            self.bufs[i].mark_saved();
+        }
         if let Some(eol) = eol {
             self.eol[i] = eol;
             self.saved_eol[i] = eol;
@@ -956,10 +1249,14 @@ impl Editors {
             self.syntax[i] = syntax;
         }
         self.paths[i] = Some(path.to_path_buf());
-        self.saved[i] = self.cur().text();
+        self.cur_mut().mark_saved();
         self.dirty_cache.borrow_mut().remove(&self.tab_id(i));
-        self.refresh_baseline(i);
         self.saved_eol[i] = self.eol[i];
+        // 단계를 먼저 정한다 — 큰 파일이면 저장본 사본(파일 크기)을 만들었다 버리지 않고 아예 안 만든다.
+        if self.reclassify(i) == 0 || !self.is_large(i) {
+            self.saved[i] = self.cur().text();
+            self.refresh_baseline(i);
+        }
         self.sync_tabs();
     }
 
@@ -980,6 +1277,14 @@ impl Editors {
             format!("*{}", self.titles[i])
         } else {
             self.titles[i].clone()
+        };
+        // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기).
+        let base = if self.loading.contains(&self.tab_id(i)) {
+            format!("{base} …")
+        } else if self.read_only.contains(&self.tab_id(i)) {
+            format!("{base} [RO]")
+        } else {
+            base
         };
         // 실행 중 탭 = 제목 앞 ▶(T-108 · 사용자 09-17).
         let base = if self.running.contains(&self.tab_id(i)) {
@@ -1415,5 +1720,111 @@ impl Editors {
         // ★ 가로 클램프는 창 왼쪽이 아니라 **편집기 영역의 x부터**(사용자 09-18 캡처): 첫 탭의 카드가 탭 가운데에 맞춰지며
         //   왼쪽으로 나가 탐색기 밑에 깔렸다(탐색기가 나중에 그려진다) — 결과 도구줄 툴팁(09-16)과 같은 처방.
         draw_tooltip_in(dc, th, r, (self.bounds.x, clamp_w), &card, self.scale);
+    }
+}
+
+/// 경로 → 탭 제목(파일 이름 · 없으면 경로 전체).
+pub(crate) fn file_title(path: &Path) -> String {
+    path.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod load_tab_tests {
+    use super::*;
+
+    fn editors() -> Editors {
+        Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()))
+    }
+
+    /// 적재 자리 탭: 만들면 활성 · 비어 있고 편집되지 않으며 경로가 없다 · 그동안 **다른 탭은 그대로 편집된다** ·
+    /// 채우면 활성 탭을 바꾸지 않고 본문·경로·줄끝이 들어가며 편집이 풀리고 더러움이 아니다.
+    #[test]
+    fn placeholder_tab_isolates_loading() {
+        let mut ed = editors();
+        let first = ed.active_id();
+        let id = ed.begin_load_tab("big.sql");
+        assert!(ed.active_loading() && ed.is_loading_id(id));
+        assert!(
+            ed.active_path().is_none(),
+            "저장해도 원본을 덮지 않게 경로가 없다"
+        );
+        assert!(ed.cur().is_read_only());
+        assert_eq!(ed.cur().text(), "");
+        assert!(!ed.is_dirty(ed.active()));
+        // 다른 탭으로 가서 편집한다 — 적재 중에도 된다.
+        let i0 = ed.index_of_id(first).expect("first tab");
+        ed.switch(i0);
+        assert!(!ed.active_loading());
+        ed.cur_mut().set_text("select 1;");
+        // 뒤에서 적재가 끝난다: 활성 탭은 그대로.
+        let p = Path::new("/tmp/nsql-test/big.sql");
+        let at = ed.fill_loaded(
+            id,
+            Some(p),
+            "big.sql",
+            "big.sql",
+            PreparedText::new("select 2;\nselect 3;\n".into()),
+            Eol::Crlf,
+        );
+        let at = at.expect("tab alive");
+        assert_eq!(
+            ed.active_id(),
+            first,
+            "채워도 사용자가 있던 탭을 빼앗지 않는다"
+        );
+        assert_eq!(ed.cur().text(), "select 1;");
+        assert!(!ed.is_loading_id(id));
+        ed.switch(at);
+        assert_eq!(ed.cur().text(), "select 2;\nselect 3;\n");
+        assert_eq!(ed.active_path().as_deref(), Some(p));
+        assert_eq!(ed.active_eol(), Eol::Crlf);
+        assert!(!ed.cur().is_read_only() && !ed.is_dirty(at));
+        assert_eq!(ed.path_tab(p), Some(at));
+    }
+
+    /// 적재 중에 자리 탭을 닫으면 채우기는 조용히 버려진다(호스트가 그 적재를 취소한다).
+    #[test]
+    fn fill_after_close_is_dropped() {
+        let mut ed = editors();
+        let id = ed.begin_load_tab("gone.sql");
+        let i = ed.index_of_id(id).expect("tab");
+        ed.close_tab(i);
+        ed.reap_views();
+        assert!(ed.index_of_id(id).is_none());
+        let r = ed.fill_loaded(
+            id,
+            None,
+            "gone.sql",
+            "gone.sql",
+            PreparedText::new("x".into()),
+            Eol::Lf,
+        );
+        assert!(r.is_none() && !ed.is_loading_id(id));
+    }
+
+    /// 큰 본문은 채울 때 단계가 정해지고 저장본 사본을 만들지 않는다 · 제목 있는 탭은 Script_N 번호를 쓰지 않는다.
+    #[test]
+    fn large_fill_skips_saved_copy_and_counter_is_stable() {
+        let mut ed = editors();
+        ed.set_large_cfg([(0, 1000), (0, 0)]);
+        let body = "select 1;\n".repeat(1500);
+        ed.open_file(Path::new("/tmp/nsql-test/l1.sql"), body.clone(), Eol::Lf);
+        let i = ed.active();
+        assert_eq!(ed.active_large(), (1, false));
+        assert!(ed.saved[i].is_empty(), "큰 파일 = 저장본 사본 없음");
+        assert!(!ed.is_dirty(i));
+        assert_eq!(ed.cur().text(), body);
+        // 같은 경로를 다시 열면 새 탭이 아니라 그 탭.
+        let n = ed.len();
+        ed.open_file(Path::new("/tmp/nsql-test/l1.sql"), "other".into(), Eol::Lf);
+        assert_eq!((ed.len(), ed.active()), (n, i));
+        ed.new_tab(None);
+        assert_eq!(
+            ed.titles[ed.active()],
+            "Script_2",
+            "파일 탭은 번호를 먹지 않는다"
+        );
     }
 }

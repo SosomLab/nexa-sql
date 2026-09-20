@@ -1400,17 +1400,54 @@ impl Explorer {
         n
     }
 
-    /// 수동 새로 고침(docs/57 T3): 선택 노드 하위(없으면 루트 = 그 서버 전체 · 읽어 둔 것만 · 디프) · `hard` = 캐시를 버리고
-    /// 그 노드부터 새로 읽는다(Shift+F5 · 오류·미로딩 노드는 늘 이쪽).
+    /// 노드의 부모(노드는 부모를 들고 있지 않다 — 드문 동작이라 훑어 찾는다).
+    fn parent_of(&self, i: usize) -> Option<usize> {
+        self.nodes.iter().position(|n| n.children.contains(&i))
+    }
+
+    /// **수동 새로 고침 = 계층형**(docs/57 T3 · 사용자 09-19 우클릭 메뉴 · F5): 고른 노드 **아래 전부**가 대상이다.
+    ///
+    /// | 고른 곳 | 다시 읽는 것 |
+    /// |---|---|
+    /// | 서버(루트) | 스키마 목록 + 읽어 둔 모든 종류 폴더 + 컬럼을 읽어 둔 모든 객체 |
+    /// | 스키마 | 그 스키마의 읽어 둔 폴더·객체 |
+    /// | 종류 폴더(Tables …) | 그 종류의 객체 목록 + 그 아래 컬럼을 읽어 둔 객체 |
+    /// | 테이블·뷰 | 그 객체의 컬럼만 |
+    /// | 그 밖의 객체 · 컬럼 | 자기가 속한 목록(폴더 / 테이블) 하나 |
+    ///
+    /// 읽어 둔 것은 **디프**로(펼침·선택·스크롤 보존) · 아직 안 읽었거나 오류인 노드는 새로 읽는다 · `hard` = 캐시를 버리고
+    /// 그 노드부터 새로(Shift+F5). 아직 펼쳐 본 적 없는 하위는 대상이 아니다 — 펼칠 때 어차피 새로 읽는다.
     pub(crate) fn refresh_selected(&mut self, hard: bool) {
-        let i = self.selected.unwrap_or(0);
-        if hard || self.nodes[i].state != LoadState::Loaded {
+        let picked = self.selected.unwrap_or(0);
+        // 자식이 없는 노드(프로시저 같은 객체 · 컬럼)는 자기가 속한 목록을 다시 읽는다.
+        let leaf = match &self.nodes[picked].kind {
+            NodeKind::Column(_) => true,
+            NodeKind::Object(o) => !o.kind.is_relation(),
+            _ => false,
+        };
+        let i = if leaf {
+            self.parent_of(picked).unwrap_or(picked)
+        } else {
+            picked
+        };
+        let what = self.label(i).0;
+        let sent = if hard || self.nodes[i].state != LoadState::Loaded {
             if i == 0 {
                 self.watermarks.clear();
             }
             self.refresh(i);
-        } else if self.soft_refresh_subtree(i) == 0 {
-            // 스키마 노드처럼 자체 요청이 없는 노드 = 그대로.
+            1
+        } else if leaf {
+            // 목록 하나만(그 아래 다른 객체의 컬럼까지 건드리지 않는다).
+            usize::from(self.soft_refresh(i))
+        } else {
+            self.soft_refresh_subtree(i)
+        };
+        if sent > 0 {
+            self.actions.push(ExplorerAction::Status(tf(
+                Msg::StExplorerRefreshed,
+                &[&what],
+            )));
         }
     }
 
@@ -1959,13 +1996,19 @@ impl Explorer {
                             items.push(CtxItem::item("source", t(Msg::ExpOpenSource)));
                         }
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
-                        if o.kind.is_relation() {
-                            items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
-                        }
+                        // ★ 새로 고침은 **계층형**(사용자 09-19): 서버 = 그 서버 전부 · 스키마 = 그 스키마 · 종류 폴더 = 그 종류의
+                        //   객체 전부 · 테이블/뷰 = 그 객체의 정보(컬럼)만 · 그 밖의 객체·컬럼 = 자기가 속한 목록.
+                        items.push(CtxItem::Separator);
+                        items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
-                    NodeKind::Column(_) => items.push(CtxItem::item("copy", t(Msg::ExpCopyName))),
+                    NodeKind::Column(_) => {
+                        items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        items.push(CtxItem::Separator);
+                        items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                    }
                     NodeKind::Schema(_) => {
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        items.push(CtxItem::Separator);
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
                     // 루트 = 연결 항목(DBeaver 항해자와 같은 자리 · docs/54): 연결됨 → 새 탭 · 새로 고침 · 해제 / 오프라인 → 연결 · 제거.
@@ -2656,6 +2699,62 @@ mod refresh_tests {
             ex.apply_ddl(&t(DdlVerb::Drop, DdlKind::Table, None, "A"), None),
             0
         );
+    }
+
+    /// 계층형 새로 고침(우클릭 · F5): 서버 = 읽어 둔 전부 · 종류 폴더 = 목록 + 그 아래 읽어 둔 객체 · 테이블 = 그 컬럼만 ·
+    /// 컬럼 = 속한 테이블만 · 안 읽은 폴더 = 새로 읽기(Loading).
+    #[test]
+    fn manual_refresh_is_hierarchical() {
+        let (mut ex, schema, tables) = sample();
+        let (a, b) = (ex.nodes[tables].children[0], ex.nodes[tables].children[1]);
+        let col = |n: &str| {
+            node(
+                NodeKind::Column(ColumnInfo {
+                    name: n.into(),
+                    data_type: "int".into(),
+                    nullable: true,
+                    position: 1,
+                    default: String::new(),
+                }),
+                4,
+            )
+        };
+        ex.set_children(a, vec![col("ID")]);
+        ex.set_children(b, vec![col("ID")]);
+        let col_b = ex.nodes[b].children[0];
+        let views = ex.nodes[schema].children[1];
+        let pick = |ex: &mut Explorer, i: usize| {
+            ex.soft.clear();
+            ex.selected = Some(i);
+            ex.refresh_selected(false);
+            let mut v: Vec<usize> = ex.soft.iter().copied().collect();
+            v.sort_unstable();
+            v
+        };
+        let mut all = vec![0, tables, a, b];
+        all.sort_unstable();
+        assert_eq!(
+            pick(&mut ex, 0),
+            all,
+            "서버 = 스키마 목록 + 읽어 둔 폴더·객체 전부"
+        );
+        let mut under = vec![tables, a, b];
+        under.sort_unstable();
+        assert_eq!(pick(&mut ex, schema), under, "스키마 = 그 아래 읽어 둔 것");
+        assert_eq!(
+            pick(&mut ex, tables),
+            under,
+            "종류 폴더 = 목록 + 읽어 둔 객체"
+        );
+        assert_eq!(pick(&mut ex, a), vec![a], "테이블 = 그 테이블의 컬럼만");
+        assert_eq!(pick(&mut ex, col_b), vec![b], "컬럼 = 속한 테이블만");
+        // 아직 안 읽은 폴더 = 조용한 갱신이 아니라 새로 읽기.
+        assert!(pick(&mut ex, views).is_empty());
+        assert_eq!(ex.nodes[views].state, LoadState::Loading);
+        assert!(ex
+            .take_actions()
+            .iter()
+            .any(|x| matches!(x, ExplorerAction::Status(_))));
     }
 
     /// 못 찾음 신호: 이름이 트리에 있을 때만 그 폴더 · 폴더당 60초에 1회 · 이름을 모르면 현재 스키마의 읽어 둔 테이블·뷰 폴더.

@@ -53,6 +53,12 @@
 | **merge3 + replace_all_undoable** | nexa-ctl `merge3` · `TextBox` | 줄 단위 3-way 병합(의존 0 · 겹침 수·가져온 줄 범위) + 본문 전체를 되돌리기 한 단계로 바꾸기(캐럿 유지) — 외부 변경 반영 · 포매터 결과 적용 같은 "밖에서 온 새 본문"에 재사용 | 외부 파일 변경(58) |
 | **StatWatch / FileSig** | nexa-fs `watch` | OS 와처 없는 파일 변경 감지(서명 비교 → 안정 대기 → 내용 해시) · 전용 스레드 · 요청 합침 — 언제 확인할지는 호스트가 정한다 | 외부 파일 변경(58) |
 | **memtrim** | nexa-sql `memtrim.rs` | 힙 → OS 정리(3-OS) + 사용량 읽기 — "큰 것을 놓은 뒤 1회 + 유휴 주기" 정책은 호스트 · 워킹셋 트림은 하지 않는다 | 메모리 회수(59 §2) |
+| **PreparedText + set_prepared** | nexa-ctl `TextBox` | 큰 본문을 **UI 스레드 밖에서** 준비(글자 버퍼 + 문자열 + 줄 표 · `Send`)해 복사 없이 옮겨 넣기 — 적재·재로드·생성된 큰 글 | 큰 파일 적재(`fileload.rs`) |
+| **TextBuf**(UTF-8 갭 버퍼 + 줄 표 + 변경 기록) | nexa-ctl `edit::TextBuf` · `CharSeq` | 글자 인덱스로 말하는 큰 본문 버퍼 — 글자당 1~3 B · 편집 O(편집) · 줄 ↔ 글자 O(log) · `LineChange`로 줄별 캐시를 바뀐 줄만 갱신 · `find`/`eq_str`/`content_hash`는 본문을 문자열로 만들지 않는다 → [59 §6](59-large-file-handling.md) | 편집기 · (후보) 로그 창 본문 |
+| **line_edits**(최소 줄 편집) | nexa-ctl `merge3` | 두 본문 → 바뀐 줄들만의 편집 목록(글자 좌표 · 오름차순) — 재로드·서식 정리를 "바뀐 줄만" 기록 | 외부 변경 반영 |
+| **되돌리기 기록 파일**(`export_history`/`import_history` + `undofile`) | nexa-ctl `EditState` · nexa-sql `undofile.rs` | 저장할 때 쓰고 · 열 때 본문 길이·해시가 같으면 복원 · 어긋나면 통째로 버림 · 폴더는 인자로(테스트가 실제 설정을 안 건드린다) | 파일 탭 |
+| **연산 기록 되돌리기**(`replace_many` · 묶음 · 저장 지점 · 예산 · 읽기 전용) | nexa-ctl `EditState` | 되돌리기 = 역연산 맞바꾸기(저장 = 지운 글자만) · 여러 곳 = 한 단계·한 번 훑기 · 더러움 O(1) · 바이트 예산 · 단일 변경 통로 → [60](60-undo-redo-redesign.md) | 찾아 바꾸기 · 외부 변경 반영 · 큰 파일 탭 |
+| **fileload**(자리 탭 · 진행 막 · 취소) | nexa-sql `fileload.rs` + `Editors::begin_load_tab`/`fill_loaded` | "오래 걸리는 일을 **탭 하나에 가두고** 나머지는 그대로" — 진행 상태 = 원자값 · 지연 표시 · 100% 프레임 뒤 교체 · 명령 문지기는 순수 함수 | 큰 파일 열기 · (후보) 큰 결과 내보내기 미리보기 |
 | **세대 + 줄 해시 캐시** | nexa-ctl `TextBox`(`MlTextCache`·`RowWidthCache`·`HlStateCache`) | 본문에서 파생되는 줄 단위 산출물은 (세대, 행 해시)로 묶어 **바뀐 행만** 다시 계산 — 새 줄 단위 기능(진단 표시 · 폴딩)을 넣을 때 같은 틀로 | 큰 파일 성능(59 §1) |
 | **IntentFade / HoverFade / FadeSpeed** | nexa-ctl `tokens` | 지나가는 대상의 hover 비용 0 · 마지막 의도만 · 속도 속성 2단 | 그리드 행 · 목록 행 · 콤보 항목 · 버튼 · 텍스트박스 |
 | **hover/눌림 색 · 페이드 ms · 스크롤바 지연 전역 setter** | nexa-ctl `tokens` · `scroll` | "설정 한 번 = 전 컨트롤 즉시"(핫스왑) | `ui.*` 설정 |
