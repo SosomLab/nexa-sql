@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/session-vars | 2026-09-21 | 2026-09-21 → main(삭제) | 9 | 87차 후반~88차(mac) — ★ T-146 수동 커밋 결함 · ★ 변수 관리(docs 63·63a · REF CURSOR 자동 표시 · 서명 추론 · 딸린/문장별 결과 탭 · 계층형 변수 표 · 입력 창 · 파일별 보존) — 중간 push(사용자 09-21) |
 | fix/mac-hangul-app-compose | 2026-09-20 | 2026-09-21 → main(삭제) | 5 | 86~87차(mac) — ★ T-139 한글 앱 조합 · 분할기 방언 결함(`split_script_in`) · 62 맥 점검 · T-148 보완 다섯(`SHOW ERRORS` 등) · T-147 IOSurface 화면 내보내기(`present.rs` · `gfx.mac_present`) · 결정 번호 중복 정리 |
 | docs/portable-rules | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | 85차 — docs 61(핵심 설계·작업 규칙·OS별 차이 — 다른 PC에서 이어 가기) · CLAUDE.md 세션 공통 규칙 · 검증 스크립트 둘 |
 | docs/status-refresh-84 | 2026-09-20 | 2026-09-20 → main(삭제) | 1 | 84차 마감 정리 — CLAUDE.md "현 단계" · MILESTONES M2 09-19~20 묶음 · CI 실패 표시(T-146) |

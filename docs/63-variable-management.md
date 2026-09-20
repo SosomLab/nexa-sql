@@ -110,9 +110,9 @@
 |---|---|---|
 | **V0 기반 결함** | 저장 코드 DDL은 바인드 안 함(`:NEW`/`:OLD`) · Oracle 암묵 결과 전부 · Oracle/SQL Server는 1행 결과를 변수로 흡수하지 않음 · ★ T-146 수동 커밋이 실제로는 자동 커밋이던 결함 | ✅ 09-21 |
 | **V1 커서·다중 결과** | REF CURSOR 자동 표시(`run.cursor_autoshow`) · 결과 라벨 = 변수 이름 · 서명 추론(`call_shape` + `routine_args`) · GUI 딸린 결과 탭 | ✅ 09-21(Oracle 실기) |
-| **V2 보이기** | `RunEvent::VarsChanged` · GUI **변수 패널**(이름·종류·타입·값·출처·바뀜 · 제자리 편집 · NULL ↔ 빈 글 · 스크립트로 복사) · 로그에 값(비밀 가림) · `SHOW VARIABLES` = 결과 표 · 편집기 hover 값 · 미정의 경고 | ☐ |
-| **V3 입력** | GUI 입력 창(실행당 **한 번** · 빠진 바인드 + `&` 매크로를 한 격자에서 · 타입 · 미리보기 · "이번엔 건너뛰기" · 탭별 마지막 값) · `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE` | ☐ (T-16c 흡수) |
-| **V4 범위·보존** | D-135·136에 따라 표의 주인(탭/세션/계층) · hot exit 보존 · `VAR`/`DEFINE` 스크립트로 내보내기·가져오기 · 재접속/유휴에서 커서 무효화 | ☐ |
+| **V2 보이기** | ✅ 09-21 `RunEvent::Vars` · 로그에 바뀐 값(비밀 가림) · `SHOW VARIABLES` = 결과 표 · View ▸ Variables. ☐ GUI **변수 옆 패널**(제자리 편집 · NULL ↔ 빈 글 · 공유 토글) · 편집기 hover 값 · 미정의 경고 | 🔶 |
+| **V3 입력** | ✅ 09-21 GUI 입력 창(실행당 **한 번** · 빠진 바인드 + `&` 매크로를 한 격자에서 · Skip = 종전 · 값은 탭에 기억 · `vars.undeclared`). ☐ 타입 열·미리보기 · `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE` | 🔶 |
+| **V4 범위·보존** | ✅ 09-21 D-135 계층(탭이 주인 · `VAR x SHARE|LOCAL` · 재접속 = 커서 무효화) · D-136 **파일별 보존**(`vars/<경로 해시>.sql` = 실행 가능한 스크립트 · 비밀·커서 제외) · 스크립트로 내보내기. ☐ 이름 없는 탭(S-1 hot exit와 함께) · 프로필 층 값의 출처(접속 프로필 필드) | 🔶 |
 | **V5 능력표** | `Caps` 포트로 방언 `match` 걷어내기 · `Request.captures`(1행 잡기를 명시 · 0행/여러 행 정책 `vars.into_policy`) · SQL Server `@@ROWCOUNT` 검사 · PG refcursor(`FETCH ALL IN`) · PG 배열 조각 `a[1:3]` 오탐 · DATE/TIMESTAMP/BOOLEAN 타입 | ☐ |
 | **V6 매크로** | MacroStore 분리 · 시스템 변수 · `${v:형식}` · `-v name=value` · 문자열 안 치환은 선택(`define.in_strings`) · 상태줄 `&` 토글 | ☐ |
 | **V7 전수 점검** | §4 표를 계측으로 채운다(`bench_vars`) · 4방언 통합 테스트(Codespaces) · 최적화 | ☐ |
