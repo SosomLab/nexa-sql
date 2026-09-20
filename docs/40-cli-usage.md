@@ -871,7 +871,7 @@ nsql run -c prod -f json query.sql | jq '.[].name'   # 바로 jq로
 nsql run -c prod -f markdown q.sql > result.md       # PR에 붙일 표
 ```
 
-**종료 코드 = 실패한 항목 수**(0 = 전부 성공). CI에서 그대로 쓴다.
+**종료 코드**: 0 = 전 항목 성공 · 1 = 하나 이상 실패(실패마다 stderr에 줄 번호) · 2 = 사용법·접속 오류. CI에서 그대로 쓴다(09-20 정정 — 종전 문구 "실패한 항목 수"는 구현과 달랐다).
 
 ```sh
 nsql run -c prod --no-prompt migrate.sql || echo "실패 $? 건"

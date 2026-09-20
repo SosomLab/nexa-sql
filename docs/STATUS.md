@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-20 (86차 · mac) — ★ **T-139 맥 한글 입력 ✅**(앱 조합 · 전 입력란 `가나다1234 가나다!@#$` 자동 검증) · 🔧 **분할기 방언 결함**(SQLite 트리거/`BEGIN;` 뒤 문장이 오류 없이 미실행 → `split_script_in`) · 전 객체 유형 DDL(Oracle 19c · SQLite) 생성·수정·삭제 자동 시험(스냅숏 1,649개 일치) · 📐 맥 present 37 ms = 색 공간 변환(D-133 · T-147) · 메모리 mac 점검 → [62](62-macos-input-and-present.md) · 미커밋
+
 ## 2026-09-20 (85차 · win) — 📘 **[61 핵심 설계와 작업 규칙](61-core-design-and-working-rules.md)**(다른 PC·맥에서 그대로 이어 가기 — 편집기 불변식 ①~⑦ · 작업·검증·격리 규칙 · Windows ↔ macOS 차이 · 맥에서 처음 할 일) · CLAUDE.md §3 세션 공통 규칙(로컬 메모리 → 저장소) · 검증 스크립트 저장소 편입(`win-burst-capture` · `win-big-probe`) → [journal](journal/2026-09-20.md)
 
 ## 2026-09-20 (84차 · win) — ★ **편집 버퍼 교체 T-142** ✅([59 §6](59-large-file-handling.md) · nexa-ctl `TextBuf` = UTF-8 갭 버퍼 + 줄 표 + 변경 기록 · 그리기 = 보이는 줄만 — 65 MB: 상주 348 → **87 MB** · 피크 443 → 106 MB · 입력 190 → **3 ms** · 유휴 CPU ≈ 0) · **되돌리기 후속 넷** ✅([60 §7](60-undo-redo-redesign.md) · 쉬었다 치면 새 묶음 · 재로드 = 최소 줄 편집 · 거대 편집 2단 확인 · **재시작 뒤에도 남는 기록** `undofile.rs`) · 찾기 = 줄 단위 · 다음 = T-145(줄 변경 표시·괄호 표의 줄 단위 갱신) · Mac = T-139 → [journal](journal/2026-09-20.md)
