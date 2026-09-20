@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-21 (88차 후반 · mac) — ✅ **CI 전부 초록**(T-146 PG 실서버 확인) · 변수 관리 이어서: **변수 창**(보기·제자리 편집·공유 토글·새 변수) · `SELECT … INTO` 행 수 정책(D-139 · SQL Server `@@ROWCOUNT` 검사 · 실서버 9/9) · 기준 계측(문장 준비 3 µs · 덤프 훑기 0.37 ms) · 테스트 353 · 다음 = PG refcursor(Codespaces) · `Caps` 포트 · MacroStore · `ACCEPT` → [journal](journal/2026-09-21.md)
+
 ## 2026-09-21 (88차 · mac) — ★ **변수 관리 D-135~138 확정·구현**: 문장마다 결과 탭 · **계층형 변수 표**(탭 → 연결 공유 → 프로필 · `VAR x SHARE` · 탭이 주인) · `SHOW VARIABLES` 표 · **실행당 한 번 입력 창**(`:바인드` + `&치환` · 종전 GUI는 `&v`가 말없이 빈 글) · **파일별 변수 보존**(실행 가능한 스크립트 · 비밀 미저장) · 테스트 349 · 다음 = 변수 옆 패널 · V5 능력표·PG refcursor · V7 전수 점검 → [journal](journal/2026-09-21.md)
 
 ## 2026-09-21 (87차 후반 · mac) — 🔧 ★ **T-146 = 수동 커밋이 PG·SQLite·MSSQL·MySQL에서 실제로는 자동 커밋이던 데이터 안전 결함** 수정(CI 확인 대기) · ★ **변수 관리 [63](63-variable-management.md)** 설계(Usage 19군 · 타 도구 소스 수준 조사 [63a](63a-variable-research.md) · 능력표 포트 · 단계 V0~V7) + **V0·V1 구현**(REF CURSOR 자동 표시 · 서명 추론 = `VAR` 없이 `EXEC p(:PC_A, :PC_B)` · 암묵 결과 전부 · GUI 딸린 결과 탭 — Oracle 실기 ✅) · 테스트 340 · **⏳ 결정 D-135~138** → [journal](journal/2026-09-21.md)

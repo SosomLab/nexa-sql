@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-21 (88차 후반 · mac)** — V5 일부(`Prepared.captures` · D-139 `vars.into_policy` · SQL Server `@@ROWCOUNT` 검사 · PG 배열 조각) · V7 `bench_vars` + 훑기 최적화 · **V2 변수 창 `vars_win.rs`**(`Cmd::SharedVars`) · 실서버 통합 9/9 · 테스트 353 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (88차 · mac)** — 변수 관리 결정 확정 → 구현: D-138 문장마다 결과 탭(`grid.result_per_statement`) · D-135 `VarStore` 세 층 + `RunEvent::Vars` + `App.tab_vars` · `SHOW VARIABLES` 표 · D-137 `missing_inputs` + `input_win.rs`(실행당 한 번 입력 · `vars.undeclared`) · D-136 `varsfile.rs`(파일별 보존 = 실행 가능한 스크립트 · `vars.persist`) · 테스트 349 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (87차 후반 · mac)** — ★ **T-146**(수동 커밋이 PG·SQLite·MSSQL·MySQL에서 실제로는 자동 커밋 → 러너 `manual_begin_sql` MC/DC) · ★ **변수 관리 착수**: docs 63(Usage 19군·추상 구조·단계)·63a(조사 원문) · V0 기반 결함 셋 · V1 REF CURSOR 자동 표시(`run.cursor_autoshow`)·결과 라벨·서명 추론(`call_shape`·`routine_args`)·GUI 딸린 결과 탭 · Oracle 실기 → [journal](journal/2026-09-21.md)
 - **2026-09-21 (87차 · mac)** — 86차 보완 전부: `SHOW ERRORS`(`last_unit` · Oracle 실기) · `sqlite_path`(슬래시 4개) · 접속 실패 오류 표기 = 대상 방언(`error_dialect` MC/DC) · 시작 인자 접속의 탐색기 루트 = 프로필 이름 · `NSQL_TRACE_MEM` 맥(`phys_footprint`) · ★ **`present.rs` + nexa-sys `layer_present`**(IOSurface 화면 내보내기 · 설정 `gfx.mac_present` · present 36 → 2.9 ms · 기본은 softbuffer) · 결정 번호 중복 정리(16 규칙 9) → [journal](journal/2026-09-21.md)

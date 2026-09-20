@@ -94,14 +94,15 @@
 | 항목 | 기준 | 지금 |
 |---|---|---|
 | 리터럴 대입 | DB 왕복 0 | ✅ |
-| 문장 준비(바인드 추출 + 재작성) | 문장 길이에 선형 · 1 MB 스크립트에서 문장당 0.1 ms 아래 · 실행마다 다시 하지 않아도 되는 것은 캐시 | ☐ 계측 예정(`Timeline`에 `Prepare` 단계) |
+| 문장 준비(바인드 추출 + 재작성) | 문장 길이에 선형 · 1 MB 스크립트에서 문장당 0.1 ms 아래 · 실행마다 다시 하지 않아도 되는 것은 캐시 | ✅ **2.9~3.2 µs/문장**(Release · `bench_vars` · 4만 문장 5.9 MB = 115 ms) |
+| 실행 전 훑기(D-137) | 실행을 눈에 띄게 늦추지 않는다 · 볼 것이 없는 스크립트는 공짜 | ✅ 덤프 4만 문장 **0.37 ms**(`:`·`&`가 없으면 나누지도 않음) · 최악(모든 문장에 바인드+치환) 167 ms/5.9 MB · 보통 1천 문장 4 ms |
 | 서명 조회 | 루틴당 1회(캐시) · 타입이 필요한 바인드가 있을 때만 · 실패는 조용히 종전 동작 | ✅ |
 | 재작성한 SQL | **결정적**(같은 글 → 같은 SQL) — 서버 계획 캐시 재사용 · 진짜 타입 바인드 = 앱과 같은 `sql_id`/계획 | ✅ Oracle·PG / 🔶 SQL Server `DECLARE` 앞붙임은 값이 글자로 들어간다 |
-| 값 크기 | 변수 하나 상한(설정 `vars.max_value_kb`) · 패널은 앞부분만 그린다 · LOB는 보기 창에서 요청 시 | ☐ |
+| 값 크기 | 변수 하나 상한(설정 `vars.max_value_kb`) · 패널은 앞부분만 그린다 · LOB는 보기 창에서 요청 시 | 🔶 창·로그는 앞부분만(200/80자) · 1 MB 값 왕복 0.21 ms · 상한 설정 ☐ |
 | 열린 커서 | **거버넌스 대상**(Oracle `open_cursors` · MariaDB `max_open_cursors` 50) — 자동 표시는 받자마자 닫는다 · 끄면 상한 + 재접속/유휴에서 무효화 | 🔶 자동 표시 ✅ / 무효화 ☐ |
 | 결과 탭 | `grid.result_tabs_max` 안 · 딸린 탭은 재실행 때 재사용 · 안 쓰인 것은 실행 끝에 걷고 `memtrim` | ✅ |
-| 패널 그리기 | 변수 사건(`VarsChanged`)이 올 때만 · 매 프레임 0 · [39 §3](39-resource-governance.md) 원장 등재 + 끄는 키 | ☐ |
-| 비밀 값 | 패널·로그·트랜잭션 로그에서 가림 · 저장 안 함 · 서버 쪽 기록 가능성은 문서로 알림 | ☐ |
+| 패널 그리기 | 변수 사건(`Vars`)이 올 때만 · 매 프레임 0 | ✅ 변수 창 = 사건·탭 전환·자기 입력에서만 다시 그림(닫으면 0) |
+| 비밀 값 | 패널·로그·트랜잭션 로그에서 가림 · 저장 안 함 · 서버 쪽 기록 가능성은 문서로 알림 | ✅ 이름 규칙(D-140) → 창·로그·`SHOW VARIABLES` 가림 · 보존 파일·스크립트에 값 없음 / ☐ `ACCEPT HIDE` |
 | 글자 치환 | 다시 훑지 않음 · 인용형 · PROD 확인 — 주입 위험을 기본으로 낮춘다 | 🔶 |
 
 ## 5. 단계 (브랜치 `feat/session-vars`)
@@ -110,12 +111,12 @@
 |---|---|---|
 | **V0 기반 결함** | 저장 코드 DDL은 바인드 안 함(`:NEW`/`:OLD`) · Oracle 암묵 결과 전부 · Oracle/SQL Server는 1행 결과를 변수로 흡수하지 않음 · ★ T-146 수동 커밋이 실제로는 자동 커밋이던 결함 | ✅ 09-21 |
 | **V1 커서·다중 결과** | REF CURSOR 자동 표시(`run.cursor_autoshow`) · 결과 라벨 = 변수 이름 · 서명 추론(`call_shape` + `routine_args`) · GUI 딸린 결과 탭 | ✅ 09-21(Oracle 실기) |
-| **V2 보이기** | ✅ 09-21 `RunEvent::Vars` · 로그에 바뀐 값(비밀 가림) · `SHOW VARIABLES` = 결과 표 · View ▸ Variables. ☐ GUI **변수 옆 패널**(제자리 편집 · NULL ↔ 빈 글 · 공유 토글) · 편집기 hover 값 · 미정의 경고 | 🔶 |
+| **V2 보이기** | ✅ 09-21 `RunEvent::Vars` · 로그에 바뀐 값(비밀 가림) · `SHOW VARIABLES` = 결과 표 · **변수 창 `vars_win.rs`**(View ▸ Variables — 탭 층 + 공유 층 · 바뀐 줄 강조 · 제자리 편집 · NULL · 공유 토글 · 삭제 · `이름 = 값` 새 변수 · 스크립트로). ☐ 옆 패널 · 편집기 hover 값 · 미정의 경고 | ✅(잔여) |
 | **V3 입력** | ✅ 09-21 GUI 입력 창(실행당 **한 번** · 빠진 바인드 + `&` 매크로를 한 격자에서 · Skip = 종전 · 값은 탭에 기억 · `vars.undeclared`). ☐ 타입 열·미리보기 · `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE` | 🔶 |
 | **V4 범위·보존** | ✅ 09-21 D-135 계층(탭이 주인 · `VAR x SHARE|LOCAL` · 재접속 = 커서 무효화) · D-136 **파일별 보존**(`vars/<경로 해시>.sql` = 실행 가능한 스크립트 · 비밀·커서 제외) · 스크립트로 내보내기. ☐ 이름 없는 탭(S-1 hot exit와 함께) · 프로필 층 값의 출처(접속 프로필 필드) | 🔶 |
-| **V5 능력표** | `Caps` 포트로 방언 `match` 걷어내기 · `Request.captures`(1행 잡기를 명시 · 0행/여러 행 정책 `vars.into_policy`) · SQL Server `@@ROWCOUNT` 검사 · PG refcursor(`FETCH ALL IN`) · PG 배열 조각 `a[1:3]` 오탐 · DATE/TIMESTAMP/BOOLEAN 타입 | ☐ |
+| **V5 능력표** | ✅ 09-21 `Request.captures`(1행 잡기를 명시 · 자리 순서) · D-139 `vars.into_policy` · SQL Server `@@ROWCOUNT` 검사 · PG 배열 조각 오탐 — 실서버 통합 9/9. ☐ `Caps` 포트로 방언 `match` 걷어내기 · **PG refcursor(`FETCH ALL IN`)** · 서명 추론 PG/SQL Server/MySQL · DATE/TIMESTAMP/BOOLEAN 타입 | 🔶 |
 | **V6 매크로** | MacroStore 분리 · 시스템 변수 · `${v:형식}` · `-v name=value` · 문자열 안 치환은 선택(`define.in_strings`) · 상태줄 `&` 토글 | ☐ |
-| **V7 전수 점검** | §4 표를 계측으로 채운다(`bench_vars`) · 4방언 통합 테스트(Codespaces) · 최적화 | ☐ |
+| **V7 전수 점검** | ✅ 09-21 1차 계측 `bench_vars`(§4 표) + 훑기 최적화 · 실서버 통합 9/9(Oracle·SQL Server·PG). ☐ 값 크기 상한 · 4방언 GUI 실기(Codespaces) · 변수 창·입력 창의 포커스/마우스 라우팅 실기표 | 🔶 |
 | 뒤로 | 행마다 실행(배열 바인드) · 그리드 셀 → 변수 · 주-상세 연결 · 서버에 비추기(SESSION_CONTEXT · `set_config`) · MySQL/MariaDB · NoSQL 어댑터 | ☐ |
 
 ## 6. 09-21 실기 (Oracle 19c · SNOP-DB · `NSQLT_` 객체만 · 사전 0 → 이름 지정 삭제 → 잔여 0)
