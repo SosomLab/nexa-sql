@@ -9,6 +9,7 @@
 
 use crate::command::{is_command_start, parse_command, Command};
 use crate::lexer::{classify, Class};
+use nsql_core::Dialect;
 use std::ops::Range;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,7 +45,12 @@ pub struct Item {
 /// 규칙: 캐럿이 문장 안이면 그 문장 · 문장 사이(공백·주석)면 **바로 앞** 문장 · 첫 문장보다 앞이면 첫 문장 ·
 /// 문장이 없으면 `None`. 캐럿이 `;` 바로 뒤(span 끝)도 그 문장으로 본다.
 pub fn statement_at(src: &str, byte_pos: usize) -> Option<Item> {
-    let items = split_script(src);
+    statement_at_in(src, byte_pos, None)
+}
+
+/// [`statement_at`]의 방언 지정판 — 분할 규칙은 [`split_script_in`].
+pub fn statement_at_in(src: &str, byte_pos: usize, dialect: Option<Dialect>) -> Option<Item> {
+    let items = split_script_in(src, dialect);
     let pos = byte_pos.min(src.len());
     let mut chosen: Option<usize> = None;
     for (i, it) in items.iter().enumerate() {
@@ -63,6 +69,19 @@ pub fn statement_at(src: &str, byte_pos: usize) -> Option<Item> {
 }
 
 pub fn split_script(src: &str) -> Vec<Item> {
+    split_script_in(src, None)
+}
+
+/// ★ 방언을 아는 분할(09-20 · 사용자 "모든 객체 유형이 편집기에서 실행되는가" 점검에서 드러난 결함):
+/// 종전 분할은 방언을 몰라 `CREATE TRIGGER`·`BEGIN`을 늘 PL/SQL 블록(단독 `/`로 끝남)으로 봤다 → SQLite에서
+/// `CREATE TRIGGER … BEGIN …; END;` 뒤의 문장들이 한 덩어리로 묶여 **오류도 없이 실행되지 않았고**(드라이버는 첫 문장만 실행),
+/// SQLite·PostgreSQL의 `BEGIN;`(트랜잭션 시작)도 뒤 문장을 전부 삼켰다.
+///
+/// 규칙: `None`·Oracle·ODBC·SQL Server = 종전 그대로(블록은 `/`·`GO`) — 단 어느 방언이든 **`BEGIN;` · `BEGIN TRANSACTION|TRAN|WORK|
+/// DEFERRED|IMMEDIATE|EXCLUSIVE|ISOLATION|READ …`는 트랜잭션 문장**(PL/SQL의 `BEGIN` 뒤에는 이 낱말들이 오지 않는다).
+/// SQLite·MySQL·PostgreSQL = `/` 블록이 없다: 본문에 `BEGIN`이 있으면 짝이 맞는 `END` 뒤의 `;`에서 끝나고(`CASE … END` 중첩 계산),
+/// 없으면 첫 `;`에서 끝난다(PG 함수 본문 `$$…$$`은 문자열이라 안의 `;`를 보지 않는다).
+pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
     let classes = classify(src);
     let b = src.as_bytes();
     let line_starts: Vec<usize> = std::iter::once(0)
@@ -183,7 +202,7 @@ pub fn split_script(src: &str) -> Vec<Item> {
             pos = end_off;
             continue;
         }
-        let (text, end_off, next) = collect_sql(src, &classes, pos, rest);
+        let (text, end_off, next) = collect_sql(src, &classes, pos, rest, dialect);
         let kind = ItemKind::Sql(classify_sql(&text));
         items.push(Item {
             kind,
@@ -243,14 +262,98 @@ fn collect_block_exec(src: &str, classes: &[Class], from: usize) -> (String, usi
 
 /// SQL 문 하나. 블록이면 단독 `/`·`GO` 줄까지, 아니면 코드 영역 `;`까지(같은 줄 뒤 문장은 다음 항목).
 /// 반환 = (텍스트, 항목 끝 오프셋, 다음 스캔 위치).
+/// `/` 줄로 끝나는 블록이 없는 방언인가(문장은 늘 `;`로 끝난다 — 본문의 `BEGIN … END`만 짝을 맞춘다).
+fn semicolon_only(dialect: Option<Dialect>) -> bool {
+    matches!(
+        dialect,
+        Some(Dialect::Sqlite | Dialect::Mysql | Dialect::Postgres)
+    )
+}
+
+/// `BEGIN`으로 시작하지만 블록이 아니라 **트랜잭션 문장**인가(`BEGIN;` · `BEGIN TRANSACTION` …) — 방언 무관.
+fn is_begin_transaction(first_line: &str) -> bool {
+    let up = first_line.to_ascii_uppercase();
+    let mut w = up.split_whitespace();
+    let Some(first) = w.next() else { return false };
+    if first == "BEGIN;" {
+        return true;
+    }
+    if first != "BEGIN" {
+        return false;
+    }
+    match w.next() {
+        None => false, // `BEGIN`만 있는 줄 = PL/SQL·T-SQL 블록의 시작
+        Some(n) => {
+            let n = n.trim_end_matches(';');
+            n.is_empty()
+                || matches!(
+                    n,
+                    "TRANSACTION"
+                        | "TRAN"
+                        | "WORK"
+                        | "DEFERRED"
+                        | "IMMEDIATE"
+                        | "EXCLUSIVE"
+                        | "ISOLATION"
+                        | "READ"
+                        | "DISTRIBUTED"
+                )
+        }
+    }
+}
+
+/// `;`만으로 끝나는 방언의 문장 끝: 본문에 `BEGIN`이 있으면 짝이 맞는 `END` 뒤의 코드 `;` · 없으면 첫 코드 `;`.
+fn collect_semicolon_stmt(src: &str, classes: &[Class], start: usize) -> (String, usize, usize) {
+    let b = src.as_bytes();
+    let mut depth = 0i32;
+    let mut seen_begin = false;
+    let mut i = start;
+    while i < b.len() {
+        if classes[i] != Class::Code {
+            i += 1;
+            continue;
+        }
+        let c = b[i];
+        if c == b';' && (!seen_begin || depth <= 0) {
+            return (src[start..i].trim().to_string(), i + 1, i + 1);
+        }
+        if c.is_ascii_alphabetic() || c == b'_' {
+            let ws = i;
+            while i < b.len()
+                && classes[i] == Class::Code
+                && (b[i].is_ascii_alphanumeric() || b[i] == b'_')
+            {
+                i += 1;
+            }
+            let w = &src[ws..i];
+            if w.eq_ignore_ascii_case("BEGIN") {
+                // `BEGIN ATOMIC`(PG) · 트리거 본문 — 첫 낱말이 BEGIN인 트랜잭션 문장은 여기 오지 않는다.
+                seen_begin = true;
+                depth += 1;
+            } else if w.eq_ignore_ascii_case("CASE") && seen_begin {
+                depth += 1;
+            } else if w.eq_ignore_ascii_case("END") && seen_begin {
+                depth -= 1;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    (src[start..].trim().to_string(), b.len(), b.len())
+}
+
 fn collect_sql(
     src: &str,
     classes: &[Class],
     start: usize,
     first_line: &str,
+    dialect: Option<Dialect>,
 ) -> (String, usize, usize) {
     let b = src.as_bytes();
-    let is_block = starts_block(first_line);
+    if semicolon_only(dialect) && !is_begin_transaction(first_line) {
+        return collect_semicolon_stmt(src, classes, start);
+    }
+    let is_block = starts_block(first_line) && !is_begin_transaction(first_line);
     // PG 함수/프로시저 본문은 `$$ … $$`(문자열로 분류) — 본문이 닫힌 뒤의 코드 `;`가 문장 끝(`/` 줄 불필요).
     let mut saw_dollar = false;
     let mut i = start;
@@ -529,5 +632,78 @@ EXEC :V := 'x';";
 ", 1
         )
         .is_none());
+    }
+}
+
+#[cfg(test)]
+mod dialect_split_tests {
+    use super::*;
+
+    fn texts(src: &str, d: Option<Dialect>) -> Vec<String> {
+        split_script_in(src, d)
+            .into_iter()
+            .map(|i| i.text)
+            .collect()
+    }
+
+    /// 재현(09-20): SQLite 트리거 뒤의 문장들이 한 덩어리로 묶여 실행되지 않던 것 — 트리거는 `END;`에서 끝난다.
+    #[test]
+    fn sqlite_trigger_ends_at_end_semicolon() {
+        let src = "CREATE TABLE t(a);\nCREATE TRIGGER trg AFTER INSERT ON t\nBEGIN\n  INSERT INTO log VALUES (CASE WHEN NEW.a > 0 THEN 'p' ELSE 'n' END);\n  UPDATE k SET v = 1;\nEND;\nINSERT INTO t VALUES (1);\nSELECT json_extract('{}', '$.a');\nSELECT 2;\n";
+        let v = texts(src, Some(Dialect::Sqlite));
+        assert_eq!(v.len(), 5, "{v:#?}");
+        assert!(v[1].starts_with("CREATE TRIGGER") && v[1].ends_with("END"));
+        assert_eq!(v[2], "INSERT INTO t VALUES (1)");
+        assert_eq!(v[4], "SELECT 2");
+    }
+
+    /// `BEGIN;` · `BEGIN TRANSACTION;` = 트랜잭션 문장(방언 무관) — 뒤 문장을 삼키지 않는다.
+    #[test]
+    fn begin_transaction_is_a_plain_statement() {
+        for d in [
+            None,
+            Some(Dialect::Sqlite),
+            Some(Dialect::Postgres),
+            Some(Dialect::Mssql),
+        ] {
+            let v = texts("BEGIN;\nINSERT INTO t VALUES (1);\nCOMMIT;\n", d);
+            assert_eq!(
+                v,
+                vec!["BEGIN", "INSERT INTO t VALUES (1)", "COMMIT"],
+                "{d:?}"
+            );
+            let v = texts("BEGIN TRANSACTION;\nSELECT 1;\n", d);
+            assert_eq!(v.len(), 2, "{d:?}");
+        }
+    }
+
+    /// Oracle·방언 없음 = 종전 그대로: PL/SQL 블록과 트리거는 단독 `/`에서 끝난다(본문의 `;`는 끝이 아니다).
+    #[test]
+    fn oracle_blocks_still_end_at_slash() {
+        let src = "CREATE OR REPLACE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW\nBEGIN\n  :NEW.a := 1;\nEND;\n/\nBEGIN\n  NULL;\nEND;\n/\nSELECT 1 FROM DUAL;\n";
+        for d in [None, Some(Dialect::Oracle)] {
+            let v = texts(src, d);
+            assert_eq!(v.len(), 3, "{d:?} {v:#?}");
+            assert!(v[0].contains(":NEW.a := 1;") && v[0].trim_end().ends_with("END;"));
+            assert_eq!(v[2], "SELECT 1 FROM DUAL");
+        }
+    }
+
+    /// PostgreSQL: `$$` 본문 안의 `;`는 보지 않고 · 트리거는 평문장 · `BEGIN ATOMIC … END;`은 짝을 맞춘다.
+    #[test]
+    fn postgres_bodies() {
+        let src = "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;\nCREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW EXECUTE FUNCTION f();\nCREATE PROCEDURE p() BEGIN ATOMIC INSERT INTO t VALUES (1); INSERT INTO t VALUES (2); END;\nSELECT 1;\n";
+        let v = texts(src, Some(Dialect::Postgres));
+        assert_eq!(v.len(), 4, "{v:#?}");
+        assert!(v[2].ends_with("END"));
+    }
+
+    /// 캐럿 문장도 같은 규칙(`statement_at_in`).
+    #[test]
+    fn statement_at_follows_dialect() {
+        let src =
+            "CREATE TRIGGER trg AFTER INSERT ON t BEGIN UPDATE k SET v = 1; END;\nSELECT 9;\n";
+        let it = statement_at_in(src, src.len() - 2, Some(Dialect::Sqlite)).expect("stmt");
+        assert_eq!(it.text, "SELECT 9");
     }
 }

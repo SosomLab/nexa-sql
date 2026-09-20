@@ -19,8 +19,8 @@ use nsql_core::{
 };
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::{
-    parse_spool, split_script, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared,
-    SpoolCmd, SpoolMode, SqlKind,
+    parse_spool, Action, ConnectSpec, Engine, Item, ItemKind, PrepareMode, Prepared, SpoolCmd,
+    SpoolMode, SqlKind,
 };
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -974,7 +974,8 @@ impl Runner {
             self.script_dirs
                 .push(dir.map_or_else(|| PathBuf::from("."), Path::to_path_buf));
         });
-        let items = split_script(src);
+        // 방언을 아는 분할(SQLite 트리거 `END;` · `BEGIN;` 트랜잭션 — nsql-script `split_script_in`).
+        let items = nsql_script::split_script_in(src, self.dialect());
         let mut errors = 0;
         for (i, item) in items.iter().enumerate() {
             if !self.run_item(i, item, prompt, emit) {

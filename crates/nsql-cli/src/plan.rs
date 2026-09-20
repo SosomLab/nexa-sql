@@ -1,12 +1,12 @@
 //! `nsql plan` — 실행 없이 엔진 계획을 출력한다(DB 불요 · 회귀 점검용).
 
 use nsql_core::Dialect;
-use nsql_script::{split_script, Action, Engine, ItemKind};
+use nsql_script::{Action, Engine, ItemKind};
 
 pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i32 {
     let mut engine = Engine::new(dialect);
     engine.set_args(script_args);
-    let items = split_script(src);
+    let items = nsql_script::split_script_in(src, Some(dialect));
     println!("# dialect={dialect} items={}", items.len());
     let mut errors = 0;
     for (i, item) in items.iter().enumerate() {
