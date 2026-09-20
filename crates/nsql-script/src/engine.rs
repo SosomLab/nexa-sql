@@ -63,6 +63,8 @@ pub enum Diagnostic {
 /// 엔진 설정 — `SET`이 바꾼다.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Settings {
+    /// `SELECT … INTO`가 여러 행이면 첫 행을 쓴다(설정 `vars.into_policy = first` · 기본 = Oracle식 오류 · D-139).
+    pub into_first: bool,
     pub serveroutput: bool,
     pub timing: bool,
     pub autocommit: bool,
@@ -81,6 +83,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            into_first: false,
             serveroutput: false,
             timing: false,
             autocommit: false,
@@ -332,7 +335,8 @@ impl Engine {
             {
                 if let Ok(v) = parse_literal(rhs) {
                     let name = lhs[1..].to_ascii_uppercase();
-                    self.vars.assign(&name, v.clone());
+                    // 표에는 처음 쓴 표기로(D-142) — 찾기는 대문자 키라 같다.
+                    self.vars.assign(&lhs[1..], v.clone());
                     let mut acts = vec![Action::LocalAssign {
                         name: name.clone(),
                         value: v.clone(),
@@ -344,8 +348,24 @@ impl Engine {
                 }
             }
         }
-        let wrapped = wrap_exec(self.dialect, body);
-        let prepared = prepare(self.dialect, &wrapped, &mut self.vars, true);
+        let mut wrapped = wrap_exec(self.dialect, body);
+        // SQL Server의 `SELECT @A = col …`은 **여러 행이면 마지막 행을 말없이** 쓰고 0행이면 옛 값을 남긴다 → 서버에서 바로
+        // 행 수를 검사해 Oracle과 같은 오류로(D-139 · `@@ROWCOUNT`는 바로 다음 문장에서만 유효 · first 정책이면 검사하지 않는다).
+        if self.dialect == Dialect::Mssql
+            && !self.settings.into_first
+            && wrapped != body
+            && body
+                .trim_start()
+                .get(..6)
+                .is_some_and(|w| w.eq_ignore_ascii_case("SELECT"))
+        {
+            wrapped.push_str(TSQL_INTO_GUARD);
+        }
+        let mut prepared = prepare(self.dialect, &wrapped, &mut self.vars, true);
+        // OUT 바인드가 없는 방언: 받는 쪽을 **요청에 명시**한다(추측해서 1행 결과를 빨아들이지 않는다).
+        if !matches!(self.dialect, Dialect::Oracle | Dialect::Mssql) {
+            prepared.captures = exec_targets(body);
+        }
         self.note_implicit(&prepared);
         vec![Action::Execute {
             prepared,
@@ -432,6 +452,29 @@ impl Engine {
 }
 
 /// 명령어(첫 단어) 뒤의 본문 — `PROMPT  a b` → `a b`(앞 공백은 하나만 뗀다 · SQL*Plus).
+/// SQL Server `SELECT @v = …` 바로 뒤에 붙는 행 수 검사(0행 = 51403 · 여러 행 = 51422 — ORA-01403/01422에 맞춘 번호).
+const TSQL_INTO_GUARD: &str = ";\nDECLARE @nsql_into_rc INT = @@ROWCOUNT;\n\
+IF @nsql_into_rc = 0 THROW 51403, N'INTO: no data found (the query returned no rows)', 1;\n\
+IF @nsql_into_rc > 1 THROW 51422, N'INTO: exact fetch returns more than one row', 1";
+
+/// `EXEC` 본문이 값을 받는 변수(자리 순서) — `:V := 식` = [V] · `SELECT … INTO :A, :B …` = [A, B] · 호출 = 없음.
+fn exec_targets(body: &str) -> Vec<String> {
+    if let Some((lhs, _)) = body.split_once(":=") {
+        let l = lhs.trim();
+        if l.starts_with(':') && l.len() > 1 && l[1..].bytes().all(crate::lexer::is_ident_char) {
+            return vec![l[1..].to_ascii_uppercase()];
+        }
+    }
+    if body
+        .trim_start()
+        .get(..6)
+        .is_some_and(|w| w.eq_ignore_ascii_case("SELECT"))
+    {
+        return crate::inputs::into_targets(body);
+    }
+    Vec::new()
+}
+
 /// `CREATE [OR REPLACE|OR ALTER] [[NON]EDITIONABLE] PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE|LIBRARY …`인가 —
 /// 분할기가 `Block`으로 본 문장 중 **저장 코드 DDL**(익명 블록 `BEGIN`/`DECLARE`가 아닌 것).
 fn is_stored_code_ddl(text: &str) -> bool {
@@ -600,14 +643,30 @@ mod tests {
         else {
             panic!("{acts:?}")
         };
-        assert_eq!(
-            prepared.sql,
-            "SELECT @V_CD = A.PROJECT_CD, @V_SEQ = A.SEQ FROM T A"
+        // 대입 SELECT + 바로 뒤의 행 수 검사(D-139 — T-SQL은 여러 행이면 마지막 행을 말없이 쓴다).
+        assert!(
+            prepared
+                .sql
+                .starts_with("SELECT @V_CD = A.PROJECT_CD, @V_SEQ = A.SEQ FROM T A;\nDECLARE @nsql_into_rc INT = @@ROWCOUNT;"),
+            "{}",
+            prepared.sql
         );
+        assert!(prepared.sql.contains("THROW 51403") && prepared.sql.contains("THROW 51422"));
         assert!(prepared
             .params
             .iter()
             .all(|p| p.direction == Direction::InOut));
+        // first 정책이면 검사를 붙이지 않는다(종전 SQL 그대로).
+        let mut e = Engine::new(Dialect::Mssql);
+        e.settings.into_first = true;
+        let acts = plan_all(&mut e, src);
+        let Action::Execute { prepared, .. } = &acts[0] else {
+            panic!("{acts:?}")
+        };
+        assert_eq!(
+            prepared.sql,
+            "SELECT @V_CD = A.PROJECT_CD, @V_SEQ = A.SEQ FROM T A"
+        );
     }
 
     #[test]

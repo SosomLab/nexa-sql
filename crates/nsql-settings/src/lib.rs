@@ -369,6 +369,10 @@ const HANGUL_COMPOSE_OPTS: &[(&str, Msg)] = &[
     ("app", Msg::OptHangulApp),
 ];
 
+/// `SELECT … INTO` 행 수 정책(D-139).
+const VARS_INTO_OPTS: &[(&str, Msg)] =
+    &[("oracle", Msg::OptIntoOracle), ("first", Msg::OptIntoFirst)];
+
 /// 값 없는 바인드·미정의 치환 변수(D-137 · docs/63 V3).
 const VARS_UNDECLARED_OPTS: &[(&str, Msg)] = &[
     ("prompt", Msg::OptVarsPrompt),
@@ -2453,6 +2457,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTxSmartCommit,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // D-139: OUT 바인드가 없는 DBMS의 `EXEC SELECT … INTO` — 0행·여러 행 = 오류(oracle) / 첫 행(first).
+    Entry {
+        key: "vars.into_policy",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsIntoPolicy,
+        desc: Msg::DescVarsIntoPolicy,
+        kind: SettingKind::Choice(VARS_INTO_OPTS),
+        default: "oracle",
     },
     // D-136: 파일별 변수 보존(`<설정 폴더>/vars/<경로 해시>.sql` — 실행 가능한 VAR/EXEC 스크립트 · 비밀·커서·여러 줄 제외).
     Entry {

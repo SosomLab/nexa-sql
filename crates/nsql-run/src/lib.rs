@@ -587,6 +587,13 @@ impl Runner {
         self
     }
 
+    /// `SELECT … INTO` 여러 행 = 첫 행(설정 `vars.into_policy = first`).
+    #[must_use]
+    pub fn with_into_first(mut self, on: bool) -> Self {
+        self.engine.settings.into_first = on;
+        self
+    }
+
     /// REF CURSOR 자동 표시(설정 `run.cursor_autoshow`).
     #[must_use]
     pub fn with_auto_cursor(mut self, on: bool) -> Self {
@@ -1649,7 +1656,7 @@ impl Runner {
         &mut self,
         index: usize,
         item: &Item,
-        prepared: Prepared,
+        mut prepared: Prepared,
         expect_out: bool,
         emit: &mut dyn FnMut(RunEvent),
     ) -> bool {
@@ -1686,6 +1693,7 @@ impl Runner {
             self.tx_open = true;
         }
         let names: Vec<String> = prepared.params.iter().map(|p| p.name.clone()).collect();
+        let captures = std::mem::take(&mut prepared.captures);
         let mode = prepared.mode;
         let line_offset = prepared.line_offset;
         let started = Instant::now();
@@ -1703,10 +1711,27 @@ impl Runner {
                 }
                 // OUT 바인드가 없는 방언(PG·MySQL·SQLite·ODBC)만 "1행 결과 = 돌아온 값"으로 읽는다. Oracle·SQL Server는 진짜 OUT이
                 // 있으므로 결과 집합은 결과 집합이다 — 종전에는 프로시저의 암묵 결과(1행)가 변수로 빨려 들어가 그리드에서 사라졌다(09-21 실기).
-                if expect_out
+                if !captures.is_empty() {
+                    // ★ 요청이 받는 쪽을 명시했다(`EXEC :V := 식` · `EXEC SELECT … INTO :A, :B`) — 한 행을 **자리 순서대로** 받는다.
+                    //   0행·여러 행 = Oracle식 오류(D-139 · `vars.into_policy` = first면 첫 행 · 0행은 그대로 두고 알림).
+                    match capture_row(&mut result, &captures, self.engine.settings.into_first) {
+                        Ok(None) => {}
+                        Ok(Some(note)) => emit(RunEvent::Message(note)),
+                        Err(msg) => {
+                            emit(RunEvent::Error {
+                                index,
+                                line: item.line,
+                                error: msg_err(msg),
+                            });
+                            self.cursor = None;
+                            return false;
+                        }
+                    }
+                } else if expect_out
                     && result.out_params.is_empty()
                     && !matches!(self.engine.dialect, Dialect::Oracle | Dialect::Mssql)
                 {
+                    // 호출(`CALL p(…)`)의 OUT = 1행 결과(PG · MySQL) — 열 이름이 곧 변수 이름.
                     absorb_from_result_set(&mut result, &names);
                 }
                 for m in result.messages.drain(..) {
@@ -2153,6 +2178,40 @@ fn absorb_from_result_set(result: &mut ExecResult, _names: &[String]) {
     if result.rows_affected.is_none() {
         result.rows_affected = Some(0);
     }
+}
+
+/// 마지막 결과 집합의 한 행을 `captures` 이름들로 받는다(자리 순서) — 받은 집합은 결과에서 뺀다(EXEC는 그리드를 내지 않는다).
+/// `Ok(Some(안내))` = 값을 바꾸지 않았다(first 정책의 0행) · `Err` = Oracle식 오류(0행 = ORA-01403 · 여러 행 = ORA-01422에 해당).
+fn capture_row(
+    result: &mut ExecResult,
+    captures: &[String],
+    first: bool,
+) -> Result<Option<String>, String> {
+    let Some(rs) = result.result_sets.pop() else {
+        return Err(t(Msg::ErrIntoNoData).to_string());
+    };
+    if rs.rows.is_empty() {
+        return if first {
+            Ok(Some(t(Msg::ErrIntoNoData).to_string()))
+        } else {
+            Err(t(Msg::ErrIntoNoData).to_string())
+        };
+    }
+    if rs.rows.len() > 1 && !first {
+        return Err(tf(Msg::ErrIntoTooMany, &[&rs.rows.len().to_string()]));
+    }
+    let row = &rs.rows[0];
+    if row.len() < captures.len() {
+        return Err(tf(
+            Msg::ErrIntoColumns,
+            &[&captures.len().to_string(), &row.len().to_string()],
+        ));
+    }
+    result.out_params = captures.iter().cloned().zip(row.iter().cloned()).collect();
+    if result.rows_affected.is_none() {
+        result.rows_affected = Some(0);
+    }
+    Ok(None)
 }
 
 /// 문자열만 담는 결과 집합(카탈로그 목록용).
@@ -2644,6 +2703,57 @@ SELECT * FROM t;
         r.engine.vars.set_local(local_a);
         let (errs, _) = collect(&mut r, "PRINT X Y\n");
         assert_eq!(errs, 0);
+    }
+
+    /// D-139: OUT 바인드가 없는 방언의 `EXEC SELECT … INTO` — 자리 순서로 받고, 0행·여러 행은 Oracle식 오류 · first 정책은 첫 행.
+    #[test]
+    fn select_into_row_policy() {
+        let mut r = runner();
+        let (errs, ev) = collect(
+            &mut r,
+            "CREATE TABLE t (a INT, b TEXT);\nINSERT INTO t VALUES (1, 'x');\nINSERT INTO t VALUES (2, 'y');\n\
+             EXEC SELECT a, b INTO :A, :B FROM t WHERE a = 2\n",
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        assert_eq!(
+            r.engine.vars.get("A").map(|v| v.value.clone()),
+            Some(Value::Int(2))
+        );
+        assert_eq!(
+            r.engine.vars.get("B").map(|v| v.value.clone()),
+            Some(Value::Str("y".into()))
+        );
+        assert!(result_sets(&ev).is_empty(), "EXEC는 그리드를 내지 않는다");
+        // 0행 · 여러 행 = 오류, 값은 그대로.
+        let (errs, _) = collect(&mut r, "EXEC SELECT a INTO :A FROM t WHERE a = 99\n");
+        assert_eq!(errs, 1);
+        let (errs, _) = collect(&mut r, "EXEC SELECT a INTO :A FROM t\n");
+        assert_eq!(errs, 1);
+        assert_eq!(
+            r.engine.vars.get("A").map(|v| v.value.clone()),
+            Some(Value::Int(2))
+        );
+        // first 정책: 여러 행 = 첫 행 · 0행 = 그대로 두고 알림.
+        r.engine.settings.into_first = true;
+        let (errs, _) = collect(&mut r, "EXEC SELECT a INTO :A FROM t ORDER BY a\n");
+        assert_eq!(errs, 0);
+        assert_eq!(
+            r.engine.vars.get("A").map(|v| v.value.clone()),
+            Some(Value::Int(1))
+        );
+        let (errs, _) = collect(&mut r, "EXEC SELECT a INTO :A FROM t WHERE a = 99\n");
+        assert_eq!(errs, 0);
+        assert_eq!(
+            r.engine.vars.get("A").map(|v| v.value.clone()),
+            Some(Value::Int(1))
+        );
+        // 식 대입도 같은 길(자리 순서 — 열 이름에 기대지 않는다).
+        let (errs, _) = collect(&mut r, "EXEC :N := (SELECT COUNT(*) FROM t)\n");
+        assert_eq!(errs, 0);
+        assert_eq!(
+            r.engine.vars.get("N").map(|v| v.value.clone()),
+            Some(Value::Int(2))
+        );
     }
 
     /// D-137: 빠진 입력 찾기 → 넣기 → 실행(바인드 = 타입 있는 값 · 치환 = 글자) · 다시 물을 것이 없다.

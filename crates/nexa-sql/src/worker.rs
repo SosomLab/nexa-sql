@@ -185,6 +185,7 @@ fn apply_fetch_settings(runner: &mut Runner) {
     runner.read_end = nsql_run::ReadEnd::parse(s.get("tx.read_end").unwrap_or("auto"));
     // 실행 뒤 돌아온 REF CURSOR를 바로 결과로(끄면 `PRINT rc`).
     runner.auto_cursor = s.get("run.cursor_autoshow").is_none_or(|v| v == "on");
+    runner.engine.settings.into_first = s.get("vars.into_policy") == Some("first");
 }
 
 /// docs/56 L4 — 접속 직후 서버 안전망 세션 파라미터(설정 0 = 안 보냄 · 지원 방언만). 돌려주는 값 = 보낼 문장들.

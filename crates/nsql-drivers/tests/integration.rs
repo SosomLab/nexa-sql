@@ -121,6 +121,72 @@ fn mssql_session_variables_and_select_into() {
     assert!(matches!(&r.engine.vars.get("V_OBJ").unwrap().value, Value::Str(s) if !s.is_empty()));
 }
 
+/// D-139: SQL Server의 `SELECT @v = col`은 여러 행이면 마지막 행을 말없이 쓴다 → 서버 쪽 `@@ROWCOUNT` 검사로 Oracle과 같은 오류.
+#[test]
+fn mssql_select_into_row_guard() {
+    let Some(mut r) = runner_for("NSQL_MSSQL_URL", Dialect::Mssql) else {
+        return;
+    };
+    let errors = |ev: &[RunEvent]| {
+        ev.iter()
+            .filter(|e| matches!(e, RunEvent::Error { .. }))
+            .count()
+    };
+    let ev = run(&mut r, "EXEC SELECT 7 INTO :V_ONE\n");
+    // FROM 없는 SELECT는 재작성 대상이 아니다(그대로 EXEC) — 아래 세 줄이 본 시험.
+    let _ = ev;
+    let ev = run(
+        &mut r,
+        "EXEC SELECT TOP 1 object_id INTO :V_ID FROM sys.objects ORDER BY object_id\n",
+    );
+    assert_eq!(errors(&ev), 0, "{ev:#?}");
+    let ev = run(
+        &mut r,
+        "EXEC SELECT object_id INTO :V_ID FROM sys.objects WHERE 1 = 0\n",
+    );
+    assert_eq!(errors(&ev), 1, "0행 = 오류: {ev:#?}");
+    let ev = run(
+        &mut r,
+        "EXEC SELECT object_id INTO :V_ID FROM sys.objects\n",
+    );
+    assert_eq!(errors(&ev), 1, "여러 행 = 오류: {ev:#?}");
+}
+
+/// D-139(OUT 바인드 없는 방언): PostgreSQL `EXEC SELECT … INTO` = 자리 순서로 받고 0행·여러 행은 오류.
+#[test]
+fn pg_select_into_row_policy() {
+    let Some(mut r) = runner_for("NSQL_POSTGRES_URL", Dialect::Postgres) else {
+        return;
+    };
+    let errors = |ev: &[RunEvent]| {
+        ev.iter()
+            .filter(|e| matches!(e, RunEvent::Error { .. }))
+            .count()
+    };
+    let ev = run(
+        &mut r,
+        "EXEC SELECT 1, 'x' INTO :A, :B FROM generate_series(1, 1)\nEXEC :N := (SELECT count(*) FROM generate_series(1, 5))\n",
+    );
+    assert_eq!(errors(&ev), 0, "{ev:#?}");
+    assert_eq!(
+        r.engine.vars.get("B").unwrap().value,
+        Value::Str("x".into())
+    );
+    let ev = run(
+        &mut r,
+        "EXEC SELECT g INTO :A FROM generate_series(1, 3) g\n",
+    );
+    assert_eq!(errors(&ev), 1, "여러 행 = 오류: {ev:#?}");
+    let ev = run(
+        &mut r,
+        "EXEC SELECT g INTO :A FROM generate_series(1, 3) g WHERE g > 9\n",
+    );
+    assert_eq!(errors(&ev), 1, "0행 = 오류: {ev:#?}");
+    // 배열 조각의 `:`는 바인드가 아니다.
+    let ev = run(&mut r, "SELECT (ARRAY[1,2,3,4])[2:3] AS s;\n");
+    assert_eq!(errors(&ev), 0, "{ev:#?}");
+}
+
 #[test]
 fn mssql_dml_batches_and_go() {
     let Some(mut r) = runner_for("NSQL_MSSQL_URL", Dialect::Mssql) else {

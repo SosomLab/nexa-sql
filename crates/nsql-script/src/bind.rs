@@ -18,8 +18,18 @@ pub fn extract_binds(sql: &str) -> Vec<BindRef> {
     let classes = classify(sql);
     let mut out = Vec::new();
     let mut i = 0;
+    // 대괄호 깊이 — PostgreSQL 배열 조각 `a[1:3]` · `a[:n]`의 `:`는 바인드가 아니다(Oracle에는 대괄호 문법이 없고,
+    // SQL Server의 `[이름]`은 인용 식별자로 분류돼 여기까지 오지 않는다 · 09-21 조사에서 나온 오탐).
+    let mut bracket = 0i32;
     while i < b.len() {
-        if b[i] == b':' && classes[i] == Class::Code {
+        if classes[i] == Class::Code {
+            match b[i] {
+                b'[' => bracket += 1,
+                b']' => bracket = (bracket - 1).max(0),
+                _ => {}
+            }
+        }
+        if b[i] == b':' && classes[i] == Class::Code && bracket == 0 {
             // `::` 캐스트 — 둘 다 건너뛴다.
             if i + 1 < b.len() && b[i + 1] == b':' {
                 i += 2;
@@ -89,6 +99,13 @@ mod tests {
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].name, "V_PRG_NM");
         assert_eq!(&sql[r[0].start..r[0].end], ":V_PRG_NM");
+    }
+
+    /// PG 배열 조각의 `:`는 바인드가 아니다 — 대괄호 밖의 바인드는 그대로.
+    #[test]
+    fn array_slices_are_not_binds() {
+        let r = extract_binds("SELECT arr[1:3], arr[:2], arr[2:], :x FROM t WHERE y = :y");
+        assert_eq!(unique_names(&r), vec!["X".to_string(), "Y".to_string()]);
     }
 
     #[test]

@@ -66,7 +66,7 @@ pub fn macro_refs(text: &str, define_char: char) -> Vec<String> {
 }
 
 /// `SELECT … INTO :A, :B FROM …` · `… RETURNING x INTO :A`의 받는 바인드(대문자).
-fn into_targets(sql: &str) -> Vec<String> {
+pub(crate) fn into_targets(sql: &str) -> Vec<String> {
     let up = sql.to_ascii_uppercase();
     let classes = classify(sql);
     // 코드 상태의 마지막 ` INTO ` 뒤부터 다음 ` FROM `(없으면 끝)까지의 바인드.

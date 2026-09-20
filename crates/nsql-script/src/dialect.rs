@@ -31,6 +31,10 @@ pub struct Prepared {
     pub implicit: Vec<String>,
     /// 프리펜드로 늘어난 줄 수 — 오류 줄번호 보정용.
     pub line_offset: usize,
+    /// ★ **잡을 행**(docs/63 §3 `captures`): OUT 바인드가 없는 방언에서 `EXEC :V := 식` · `EXEC SELECT … INTO :A, :B`를
+    /// 보통 조회로 바꿔 보냈을 때, 돌아온 **한 행을 자리 순서대로** 받을 변수 이름. 비어 있으면 잡지 않는다(결과는 결과다).
+    /// 0행·여러 행 정책은 러너 몫(D-139 · 설정 `vars.into_policy`).
+    pub captures: Vec<String>,
 }
 
 impl Prepared {
@@ -45,6 +49,7 @@ impl Prepared {
             mode: PrepareMode::Bind,
             implicit: Vec::new(),
             line_offset: 0,
+            captures: Vec::new(),
         }
     }
 
@@ -89,6 +94,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
             mode: PrepareMode::Bind,
             implicit,
             line_offset: 0,
+            captures: Vec::new(),
         },
         Dialect::Mssql => {
             let rewritten = rewrite_select_into_tsql(sql);
@@ -113,6 +119,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                     mode: PrepareMode::DeclarePrepend,
                     implicit,
                     line_offset,
+                    captures: Vec::new(),
                 }
             } else {
                 Prepared {
@@ -121,6 +128,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                     mode: PrepareMode::Bind,
                     implicit,
                     line_offset: 0,
+                    captures: Vec::new(),
                 }
             }
         }
@@ -135,6 +143,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                 mode: PrepareMode::Bind,
                 implicit,
                 line_offset: 0,
+                captures: Vec::new(),
             }
         }
         Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => {
@@ -147,6 +156,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                 mode: PrepareMode::Bind,
                 implicit,
                 line_offset: 0,
+                captures: Vec::new(),
             }
         }
     }

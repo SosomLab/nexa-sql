@@ -285,6 +285,13 @@ fn key_mode_setting() -> KeyMode {
         .unwrap_or(KeyMode::Pk)
 }
 
+/// 설정 `vars.into_policy`(D-139) — `first`면 `SELECT … INTO`의 여러 행에서 첫 행을 쓴다.
+fn into_first_setting() -> bool {
+    nsql_settings::Settings::open_default()
+        .ok()
+        .is_some_and(|s| s.get("vars.into_policy") == Some("first"))
+}
+
 /// 설정 `run.cursor_autoshow` — 실행 뒤 돌아온 REF CURSOR를 바로 결과로(기본 켬 · 끄면 `PRINT rc`).
 fn cursor_autoshow_setting() -> bool {
     nsql_settings::Settings::open_default()
@@ -1199,7 +1206,8 @@ fn cmd_run(o: &Opts) -> i32 {
         .with_resolver(resolver())
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting())
-        .with_auto_cursor(cursor_autoshow_setting());
+        .with_auto_cursor(cursor_autoshow_setting())
+        .with_into_first(into_first_setting());
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     runner.engine.set_args(&o.positional[1..]);
     let no_prompt = o.no_prompt || path == "-";
@@ -1253,7 +1261,8 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_resolver(resolver())
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting())
-        .with_auto_cursor(cursor_autoshow_setting());
+        .with_auto_cursor(cursor_autoshow_setting())
+        .with_into_first(into_first_setting());
     runner.cursor_idle_secs = idle;
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     eprintln!("{}", t(Msg::CliShellBanner));
