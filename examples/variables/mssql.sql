@@ -44,6 +44,12 @@ FROM
 	sys.objects
 WHERE 1=1
 AND	object_id		<	100
+;
+
+SELECT
+	:V_OBJ_CNT
+,	:V_MAX_NAME
+;
 
 EXEC SELECT TOP 1 name INTO :V_FIRST FROM sys.objects ORDER BY name
 

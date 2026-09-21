@@ -1027,6 +1027,38 @@ impl Explorer {
         self.selected = None;
     }
 
+    /// 선택 행이 보이는 행 가운데 몇 번째인지와 행 수 — `ExplorerSet`이 키보드가 이웃 서버 칸으로 넘어갈지 판정한다(mac 09-21).
+    pub(crate) fn selected_pos(&self) -> Option<(usize, usize)> {
+        let rows = self.visible_rows();
+        let sel = self.selected?;
+        let pos = rows.iter().position(|&r| r == sel)?;
+        Some((pos, rows.len()))
+    }
+
+    /// 보이는 행 가운데 `idx`번째를 선택(범위 밖이면 마지막 행) — 세트가 페이지·경계 이동의 목적지를 고른다.
+    pub(crate) fn select_visible(&mut self, idx: usize) {
+        let rows = self.visible_rows();
+        if let Some(&n) = rows.get(idx.min(rows.len().saturating_sub(1))) {
+            self.selected = Some(n);
+            self.ensure_visible(n);
+        }
+    }
+
+    /// 보이는 행 수.
+    pub(crate) fn visible_count(&self) -> usize {
+        self.visible_rows().len()
+    }
+
+    /// 행 높이(px) — 세트가 공용 뷰포트로 페이지 크기를 잰다(칸의 bounds는 내용 전체 높이라 쓸 수 없다).
+    pub(crate) fn row_px(&self) -> i32 {
+        self.row_h()
+    }
+
+    /// 타입어헤드 접두사가 살아 있는가 — 그동안 ↑/↓는 이 트리의 매치 안에서만 돈다.
+    pub(crate) fn typeahead_active(&self) -> bool {
+        !self.typeahead.composing().is_empty()
+    }
+
     /// 우클릭 메뉴(팝업 층) — 모든 서버의 트리를 그린 **뒤에** 그린다(아래 칸이 위 칸의 메뉴를 덮지 않게).
     pub(crate) fn paint_menu(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         self.menu.paint(dc, th);

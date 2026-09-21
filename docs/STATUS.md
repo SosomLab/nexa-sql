@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 
+## 2026-09-21 (90차 · mac) — 최신화(89차 win 8 커밋 · 맥 nexa-sql 407 통과) · 프로필 `BISCM`(oracle)·`M4PLAN`(mssql) 등록·접속 OK · 🔧 **시작 직후 Details 팝업**(폼 저장본이 빈 값이라 첫 프레임부터 바뀜 판정 → 생성자 `mark_saved` · 테스트) · 🔧 **탐색기 키보드 서버 간 이동**(↑/↓ 경계 · PgUp/PgDn 뷰포트 페이지로 이웃 칸 안까지 · Home/End 전체 · `cross_pane` MC/DC) · 🔧 맥 편집기 탭·표식 메뉴 겹침(`Editors::set_bounds`에 `menu.set_scale`) · 🔧 Σ 건수 버튼 초기 활성(도구줄 초기 상태 = 판정 함수) · ★ **비밀번호 창 최상위 모달**(사건 가드 · 맥 자식 창 · Windows EnableWindow) · 🔧 **`EXEC` 블록 현재 문 실행 Msg 102**(정규화 `text` 재분할 → 원문 `span` · 왕복 불변식 테스트) · 🔧 **로그 표현**(`PRINT` = 값 · `VARIABLE` = 이름·타입 · 클라이언트 명령엔 전송 로그 없음 `Begin.server`) · 프로필 `Repository`(postgres) · 흠: `nsql conn add`가 `--password-stdin`·`NSQL_PASSWORD`를 무시(T-132 ③). 워크스페이스 414. 미커밋. → [journal](journal/2026-09-21.md)
+
 ## 2026-09-21 (89차 추가 24 · win) — 남은 작업 묶음: 성능 재점검 = **회귀 없음**(기동 11.1 MB · 10만 행 40.9 MB · 기동 141 ms · 유휴 6초 47 ms) + 바인드 열 이름 판정을 선형으로 · ✅ T-161(감시 시험 조건 대기) · ✅ T-132 ③(`--password-stdin`) · ✅ T-162 ②③ · ✅ T-158(포인터가 밖에 멈춰 있어도 드래그 선택이 이어진다) · "미사용 확장" · bash/gk 누수 = 우리 프로세스 아님(조치 없음). nexa-ui 360 · nexa-sql 405. → [journal](journal/2026-09-21.md)
 
 ## 2026-09-21 (89차 마감 + 추가 21~23 · win) — ✅ **89차 push**(nexa-ui d116a91 · nexa-sql 317e6c7 · CI `ci`·`integration` 초록 — 중간에 CI clippy 1 · Windows 시험 1 · `POSTGRES_HOST` 1을 고침). 그 뒤(미커밋): SQL Server 결과 머리줄 = 변수 이름(바인드만 있는 SELECT 항목) · 읽기 전용 숫자 바인드 `3.0000000000` → `3` · ★ CLI도 비밀번호 자리가 없으면 서버에 가지 않는다 · **저장하지 않은 탭 닫기 = 저장 여부를 묻는다**(저장하고 닫기 → 이름 없으면 저장 창). nexa-sql 403. → [journal](journal/2026-09-21.md)

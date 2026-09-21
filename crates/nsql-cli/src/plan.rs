@@ -67,6 +67,11 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
                             println!("  → PRINT  {n} = {}", v.display());
                         }
                     }
+                    Action::ListVars(list) => {
+                        for (n, t) in list {
+                            println!("  → VARIABLE  {n} {}", t.sql_name());
+                        }
+                    }
                     Action::Connect(c) => println!("  → CONNECT {}", c.redacted()),
                     Action::Disconnect => println!("  → DISCONNECT"),
                     Action::Describe(o) => println!("  → DESCRIBE {o}"),

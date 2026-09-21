@@ -29,7 +29,7 @@
 | 11 | 형식 | NEW_VALUE/OLD_VALUE · 숫자·날짜 형식 · NLS(SQL\*Plus엔 DATE 바인드가 없어 날짜가 글자로 다닌다) | SQL\*Plus | ☐ |
 | 12 | 범위·수명·공유 | 프로세스 전역 · **탭별(Golden)** · 연결별 · 계층(WbJ: 명령줄 > 작업공간 > 프로필) · 디스크 · dev/test/prod 값 묶음 **—** · 가져오기/내보내기 | §2 | 🔶 세션(러너)별 · 저장 없음 |
 | 13 | 비밀 값 | `ACCEPT HIDE` · 가려 보이기·기록 안 함·저장 안 함 **—** | — | ☐ |
-| 14 | 살펴보기 UI | `VARIABLE` `PRINT` `DEFINE` · **편집 가능한 목록(WbVarList)** · 패널(이름·타입·값·바뀜 표시) · 값 위 hover **—** · 미정의 경고 **—** | PL/SQL Developer · DBeaver | 🔶 `SHOW VARIABLES` 글자 / ☐ **GUI에서 값이 안 보인다** |
+| 14 | 살펴보기 UI | `VARIABLE` `PRINT` `DEFINE` · **편집 가능한 목록(WbVarList)** · 패널(이름·타입·값·바뀜 표시) · 값 위 hover **—** · 미정의 경고 **—** | PL/SQL Developer · DBeaver | ✅ `SHOW VARIABLES` 결과 표 · 변수 창 · **GUI 로그의 `PRINT` = 값 · `VARIABLE` = 이름·타입**(mac 09-21) / ☐ hover · 미정의 경고 |
 | 15 | 디버깅·출력 | DBMS_OUTPUT · PRINT · RAISE NOTICE · 디버거 watch | 각 도구 | ✅ 서버 메시지 / ☐ 디버거 |
 | 16 | 결과 ↔ 변수 | 그리드 셀 → 변수 **—** · 주-상세 질의 연결(`:m_<열>`) · 매개변수 있는 저장 질의·템플릿·대시보드 | PL/SQL Developer · Metabase | ☐ |
 | 17 | 트랜잭션 | 클라이언트 변수는 ROLLBACK과 무관 · PG 사용자 GUC는 **트랜잭션을 탄다** | — | ✅(클라이언트 보관) |

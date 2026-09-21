@@ -288,6 +288,9 @@ impl ConnectPanel {
         p.port.set_max_chars(5);
         p.password.set_masked(true);
         p.apply_dialect(first);
+        // 저장본 = 지금의 초기값(방언 콤보 · 기본 포트 · "비밀번호 저장" 켬). 빈 `FormSnap`을 기준으로 두면
+        // 아무것도 만지지 않은 첫 프레임부터 "바뀜"이라 시작 직후 Details가 저장/버림 팝업을 띄웠다(mac 09-21).
+        p.mark_saved();
         p
     }
 
@@ -1433,6 +1436,27 @@ mod dirty_tests {
             password: "p".into(),
             save_pw: true,
         }
+    }
+
+    /// 새 패널은 깨끗하다 — 생성자가 준 초기값(첫 방언 · 기본 포트 · 비밀번호 저장 켬)이 저장본이다.
+    /// 종전엔 저장본이 빈 `FormSnap`이라 시작 직후 Details가 "바뀜" 팝업을 띄웠다(mac 09-21).
+    #[test]
+    fn fresh_panel_is_not_dirty() {
+        for avail in [
+            vec![Dialect::Sqlite, Dialect::Oracle],
+            vec![Dialect::Oracle, Dialect::Mssql], // 첫 방언에 기본 포트(1521)가 있는 경우
+            vec![],
+        ] {
+            let p = ConnectPanel::new(avail.clone());
+            assert!(p.dirty().is_empty(), "{avail:?}: {:?}", p.dirty());
+            assert!(!p.is_dirty());
+        }
+        // 값을 만지면 그때부터 바뀜 · 다시 저장본으로 삼으면 깨끗.
+        let mut p = ConnectPanel::new(vec![Dialect::Oracle]);
+        p.host.set_text("h");
+        assert_eq!(p.dirty(), vec![Dirty::Host]);
+        p.mark_saved();
+        assert!(!p.is_dirty());
     }
 
     /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(9칸 독립) · 같으면 빈 목록.

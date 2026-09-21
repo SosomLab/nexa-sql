@@ -34,11 +34,13 @@ const MAX_SCRIPT_DEPTH: usize = 32;
 /// 호스트로 흘러가는 이벤트.
 #[derive(Debug)]
 pub enum RunEvent {
-    /// 항목 실행 시작(줄 · 종류 요약).
+    /// 항목 실행 시작(줄 · 종류 요약). `server` = 이 항목이 서버로 가는가([`goes_to_server`]) — 클라이언트 명령(`PRINT` ·
+    /// `VARIABLE` · `DEFINE` · `SET` …)은 네트워크를 만들지 않으므로 호스트는 전송 로그를 내지 않는다(mac 09-21).
     Begin {
         index: usize,
         line: usize,
         summary: String,
+        server: bool,
     },
     /// 조회 결과. `more` = 페치 상한(`Runner::max_rows`)에서 잘렸다(서버에 행이 더 있다).
     /// `label` = 이 결과의 이름(REF CURSOR 변수 이름 등 · 호스트가 결과 탭 제목·머리줄로 쓴다 · 보통 조회는 `None`).
@@ -77,9 +79,13 @@ pub enum RunEvent {
         rows_affected: Option<u64>,
         elapsed: Duration,
     },
-    /// `PRINT`·`VARIABLE` 목록 등.
+    /// `PRINT` — 이름·값.
     Print {
         pairs: Vec<(String, Value)>,
+    },
+    /// 인자 없는 `VARIABLE` — 선언된 변수의 이름·타입(SQL*Plus 관용).
+    VarList {
+        vars: Vec<(String, nsql_core::VarType)>,
     },
     /// 서버 메시지(DBMS_OUTPUT · T-SQL PRINT) · 엔진 정보.
     Message(String),
@@ -122,16 +128,14 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         } => vec![LogEntry::new(LogKind::Done, t(Msg::LogDone))
             .rows(*rows_affected)
             .elapsed(*elapsed)],
+        // 값까지(mac 09-21 — 종전에는 이름만 이어 붙여 GUI에서는 `PRINT`로 값을 볼 수 없었다) · 비밀 이름은 가림(D-140).
         RunEvent::Print { pairs } => vec![LogEntry::new(
             LogKind::Info,
-            tf(
-                Msg::LogPrint,
-                &[&pairs
-                    .iter()
-                    .map(|(n, _)| n.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")],
-            ),
+            tf(Msg::LogPrint, &[&print_pairs_text(pairs)]),
+        )],
+        RunEvent::VarList { vars } => vec![LogEntry::new(
+            LogKind::Info,
+            tf(Msg::LogVarList, &[&var_list_text(vars)]),
         )],
         RunEvent::Message(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
         RunEvent::Connected {
@@ -1477,6 +1481,7 @@ impl Runner {
             index,
             line: item.line,
             summary: summary(item),
+            server: goes_to_server(item),
         });
         self.infer_call_bind_types(item);
         if item.text.contains("_DATE") || item.text.contains("_TIMESTAMP") {
@@ -1588,6 +1593,10 @@ impl Runner {
                     value.display()
                 };
                 emit(RunEvent::Message(format!(":{name} = {shown}")));
+                true
+            }
+            Action::ListVars(vars) => {
+                emit(RunEvent::VarList { vars });
                 true
             }
             Action::Print(pairs) => {
@@ -2552,6 +2561,48 @@ fn msg_err(m: impl Into<String>) -> DbError {
     }
 }
 
+/// `PRINT` 한 줄 문구 `A = 1 · B = 'x'` — 비밀 이름(D-140)은 `******`. GUI 로그·CLI 공용.
+pub fn print_pairs_text(pairs: &[(String, Value)]) -> String {
+    pairs
+        .iter()
+        .map(|(n, v)| {
+            let bare = n.trim_start_matches([':', '&', '@']);
+            if nsql_script::looks_secret(bare) {
+                format!("{n} = ******")
+            } else {
+                format!("{n} = {}", v.display())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// 인자 없는 `VARIABLE`의 한 줄 문구 `A NUMBER · B VARCHAR2(40)`.
+pub fn var_list_text(vars: &[(String, nsql_core::VarType)]) -> String {
+    vars.iter()
+        .map(|(n, t)| format!("{n} {}", t.sql_name()))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// 이 항목이 **서버로 가는가** — SQL · `EXEC` · `CONNECT`/`DISCONNECT` · `DESCRIBE` · `SHOW`(`SHOW VARIABLES`는 제외)는 간다.
+/// 나머지 스크립트 명령(`PRINT` · `VARIABLE` · `DEFINE` · `SET` · `ACCEPT` · `PROMPT` · `@파일` …)은 클라이언트 안에서 끝난다.
+/// (`EXEC :V := 리터럴`은 실제로는 왕복 0이지만 계획 전에는 알 수 없어 `EXEC`를 서버행으로 본다.)
+pub fn goes_to_server(item: &Item) -> bool {
+    match &item.kind {
+        ItemKind::Sql(_) => true,
+        ItemKind::Invalid(_) => false,
+        ItemKind::Command(c) => match c {
+            nsql_script::Command::Exec { .. }
+            | nsql_script::Command::Connect(_)
+            | nsql_script::Command::Disconnect
+            | nsql_script::Command::Describe { .. } => true,
+            nsql_script::Command::Show { what } => !what.trim().eq_ignore_ascii_case("VARIABLES"),
+            _ => false,
+        },
+    }
+}
+
 fn summary(item: &Item) -> String {
     match &item.kind {
         ItemKind::Command(c) => format!("{c:?}")
@@ -2743,6 +2794,61 @@ SELECT * FROM t;
         let mut no_prompt = |_: &str| None;
         let errs = r.run_script(src, &mut no_prompt, &mut |e| ev.push(e));
         (errs, ev)
+    }
+
+    /// mac 09-21 로그 점검: `PRINT` 로그에 **값**(비밀 이름은 `******`) · 인자 없는 `VARIABLE` = 이름·타입 목록(`VarList` ·
+    /// 로그 "VARIABLE …" — 종전엔 `PRINT`로 찍혔다) · `Begin.server` = 클라이언트 명령 false · SQL true.
+    #[test]
+    fn print_and_variable_logs_and_server_flag() {
+        let mut r = runner();
+        let (errs, ev) = collect(
+            &mut r,
+            "VAR V_N NUMBER = 3\nEXEC :V_TOKEN := 'abc'\nPRINT V_N V_TOKEN\nVARIABLE\nSELECT 1;\n",
+        );
+        assert_eq!(errs, 0);
+        let print = ev
+            .iter()
+            .find(|e| matches!(e, RunEvent::Print { .. }))
+            .expect("PRINT");
+        let line = log_entries(print)[0].message.clone();
+        assert_eq!(line, "PRINT V_N = 3 · V_TOKEN = ******", "{line}");
+        let list = ev
+            .iter()
+            .find(|e| matches!(e, RunEvent::VarList { .. }))
+            .expect("VARIABLE 목록");
+        let line = log_entries(list)[0].message.clone();
+        assert!(line.starts_with("VARIABLE "), "{line}");
+        assert!(
+            line.contains("V_N NUMBER") && line.contains("V_TOKEN VARCHAR2(3)"),
+            "{line}"
+        );
+        assert!(!line.contains("abc"), "목록에는 값이 없다: {line}");
+        // 서버행 표식: 항목 순서 = VAR · EXEC · PRINT · VARIABLE · SELECT.
+        let flags: Vec<bool> = ev
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::Begin { server, .. } => Some(*server),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, vec![false, true, false, false, true]);
+    }
+
+    /// `goes_to_server` 표 — 명령별 독립 확인.
+    #[test]
+    fn goes_to_server_table() {
+        use nsql_script::split_script;
+        let kinds =
+            |src: &str| -> Vec<bool> { split_script(src).iter().map(goes_to_server).collect() };
+        assert_eq!(
+            kinds("PRINT a\nVARIABLE\nDEFINE x = 1\nSET SERVEROUTPUT ON\nPROMPT hi\n"),
+            vec![false; 5]
+        );
+        assert_eq!(
+            kinds("SELECT 1;\nEXEC p(:a)\nCONNECT x\nDISCONNECT\nDESC t\nSHOW ERRORS\n"),
+            vec![true; 6]
+        );
+        assert_eq!(kinds("SHOW VARIABLES\nSHOW ERRORS\n"), vec![false, true]);
     }
 
     /// `CONNECT dev` — 사용자명만 있는 스펙은 프로필 해석기를 거친다(T-16b). 해석기가 없으면 그대로 접속.

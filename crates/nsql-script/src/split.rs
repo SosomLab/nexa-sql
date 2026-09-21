@@ -707,3 +707,65 @@ mod dialect_split_tests {
         assert_eq!(it.text, "SELECT 9");
     }
 }
+
+/// ★ 왕복 불변식(mac 09-21): 항목의 **원문 조각 `src[span]`을 다시 분할하면 같은 종류·같은 실행 텍스트 하나**가 된다 —
+/// 편집기 "현재 문 실행"·Explain이 캐럿의 문장을 원문 조각으로 넘기는 근거. (`text`는 정규화본이라 이 성질이 없다:
+/// 홀로 선 `EXEC` 줄 + 본문은 `EXEC 본문`이 되고, 그것을 다시 나누면 한 줄 명령 `EXEC SELECT` + SQL 둘로 갈라진다.)
+#[cfg(test)]
+mod span_roundtrip_tests {
+    use super::*;
+
+    const SRC: &str = "EXEC :V := 1;
+
+EXEC
+SELECT
+	COUNT(*)
+,	MAX(name)
+INTO
+	:V_CNT
+,	:V_NAME
+FROM
+	sys.objects
+WHERE 1=1
+;
+
+SELECT :V_CNT, :V_NAME
+FROM DUAL;
+
+BEGIN
+  NULL;
+END;
+/
+DEFINE x = 1
+";
+
+    #[test]
+    fn resplitting_the_source_slice_gives_the_same_item() {
+        for dialect in [None, Some(Dialect::Mssql), Some(Dialect::Oracle)] {
+            let items = split_script_in(SRC, dialect);
+            assert!(items.len() >= 5, "{dialect:?}: {}", items.len());
+            for it in &items {
+                let piece = &SRC[it.span.clone()];
+                let again = split_script_in(piece, dialect);
+                assert_eq!(
+                    again.len(),
+                    1,
+                    "{dialect:?} · 조각이 하나로 남아야: {piece:?} → {again:#?}"
+                );
+                assert_eq!(again[0].kind, it.kind, "{dialect:?} · {piece:?}");
+                assert_eq!(again[0].text, it.text, "{dialect:?} · {piece:?}");
+            }
+        }
+    }
+
+    /// 정규화된 `text`는 그 성질이 없다(문서화 — 이 사실 때문에 호출부가 `span`을 쓴다).
+    #[test]
+    fn normalized_text_of_a_block_exec_does_not_roundtrip() {
+        let items = split_script_in(SRC, Some(Dialect::Mssql));
+        let block = items
+            .iter()
+            .find(|it| it.text.starts_with("EXEC SELECT"))
+            .expect("블록 EXEC");
+        assert_eq!(split_script_in(&block.text, Some(Dialect::Mssql)).len(), 2);
+    }
+}

@@ -28,6 +28,9 @@ pub enum Action {
     },
     /// `PRINT` — 표시할 이름·값. 커서면 호스트가 `fetch_cursor`.
     Print(Vec<(String, Value)>),
+    /// 인자 없는 `VARIABLE` — 선언된 변수 목록(이름 · 타입 · SQL*Plus 관용 · 값은 `PRINT`). mac 09-21: 종전에는 `Print`와
+    /// 같은 동작이라 로그에 `PRINT`로 찍혔다.
+    ListVars(Vec<(String, nsql_core::VarType)>),
     Connect(ConnectSpec),
     Disconnect,
     Describe(String),
@@ -231,12 +234,12 @@ impl Engine {
     fn plan_command(&mut self, cmd: &Command, text: &str) -> Vec<Action> {
         match cmd {
             Command::Variable { name: None, .. } => {
-                let list: Vec<(String, Value)> = self
+                let list: Vec<(String, nsql_core::VarType)> = self
                     .vars
                     .iter()
-                    .map(|(n, v)| (n.clone(), v.value.clone()))
+                    .map(|(n, v)| (n.clone(), v.ty.clone()))
                     .collect();
-                vec![Action::Print(list)]
+                vec![Action::ListVars(list)]
             }
             Command::Variable {
                 name: Some(n),

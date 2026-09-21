@@ -471,20 +471,7 @@ fn detail_push(
 /// 전송 속도 문구(`1.2 MB/s` · 0이면 빈 문자열).
 /// 변수 타입의 표시 글자(변수 창).
 fn var_type_text(ty: &nsql_core::VarType) -> String {
-    use nsql_core::VarType as T;
-    match ty {
-        T::Number => "NUMBER".into(),
-        T::Varchar2(n) => format!("VARCHAR2({n})"),
-        T::Char(n) => format!("CHAR({n})"),
-        T::Clob => "CLOB".into(),
-        T::RefCursor => "REFCURSOR".into(),
-        T::BinaryFloat => "BINARY_FLOAT".into(),
-        T::BinaryDouble => "BINARY_DOUBLE".into(),
-        T::Date => "DATE".into(),
-        T::Timestamp => "TIMESTAMP".into(),
-        T::Boolean => "BOOLEAN".into(),
-        T::Auto => "auto".into(),
-    }
+    ty.sql_name()
 }
 
 /// 바뀐 변수의 로그 한 줄(`A = 1, B = 'x'`) — 비밀 값은 가리고(D-140) 긴 값은 앞부분만 · 사라진 이름은 `(removed)`.
@@ -1746,9 +1733,21 @@ impl App {
         Some(self.json_next)
     }
 
-    /// 모달 창(접속 · 파일) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
+    /// 지금 열린 모달 창(접속 · 파일 · 비밀번호 입력) — 사건 가드·`sync_modal`이 같은 판정을 쓴다.
+    fn modal_window(&self) -> Option<&Window> {
+        if self.input_win.is_modal() {
+            return self.input_win.window();
+        }
+        self.file_win.window().or_else(|| self.conn_win.window())
+    }
+
+    fn modal_open(&self) -> bool {
+        self.conn_win.is_open() || self.file_win.is_open() || self.input_win.is_modal()
+    }
+
+    /// 모달 창(접속 · 파일 · 비밀번호 입력) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
     fn sync_modal(&mut self) {
-        let open = self.conn_win.is_open() || self.file_win.is_open();
+        let open = self.modal_open();
         if open == self.conn_modal && !open {
             return;
         }
@@ -1763,6 +1762,7 @@ impl App {
                 self.prefs_win.window(),
                 self.conn_win.window(),
                 self.file_win.window(),
+                self.input_win.window(),
             ]
             .into_iter()
             .flatten()
@@ -9547,9 +9547,12 @@ impl App {
                     .char_indices()
                     .nth(self.ed_mut().caret())
                     .map_or(full.len(), |(b, _)| b);
+                // ★ 원문 조각(`span`)을 넘긴다 — `it.text`는 정규화된 실행 텍스트라(홀로 선 `EXEC` 줄 + 본문 = `EXEC 본문`)
+                //   다시 스크립트로 분할하면 다른 항목이 된다(mac 09-21: `EXEC` 블록 + `SELECT … INTO :V`가 현재 문 실행에서만
+                //   Msg 102 · 선택 실행과 같은 길 = 원문 그대로).
                 nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect)).map(|it| {
                     line_base = it.line.saturating_sub(1);
-                    it.text
+                    full[it.span].to_string()
                 })
             }
         };
@@ -9761,8 +9764,9 @@ impl App {
                     .char_indices()
                     .nth(self.ed_mut().caret())
                     .map_or(full.len(), |(b, _)| b);
+                // 원문 조각(`span`) — 위 `run_sql`과 같은 이유(정규화된 `text`는 재분할하면 달라진다).
                 nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect))
-                    .map(|it| it.text)
+                    .map(|it| full[it.span].to_string())
             });
         let Some(stmt) = text.filter(|s| !s.trim().is_empty()) else {
             self.sess.status = t(Msg::ErrNoSql).into();
@@ -9865,7 +9869,7 @@ impl App {
                 }
             }
             match ev {
-                RunEvent::Begin { index, .. } => {
+                RunEvent::Begin { index, server, .. } => {
                     if index == 0 {
                         self.txlog.select_session(self.sess.id).begin_batch();
                     }
@@ -9879,13 +9883,16 @@ impl App {
                         .get(index)
                         .cloned()
                         .unwrap_or_default();
-                    dlog!(self, LogLayer::Net, LogLevel::Timing, {
-                        let now = nsql_log::now_local().stamp();
-                        LogEntry::new(
-                            LogKind::Send,
-                            tf(Msg::LogDetSent, &[&now, &stmt.len().to_string()]),
-                        )
-                    });
+                    // 전송 로그는 **서버로 가는 항목에만**(클라이언트 명령은 네트워크 0 · mac 09-21 `PRINT`/`VARIABLE`에 찍히던 것).
+                    if server {
+                        dlog!(self, LogLayer::Net, LogLevel::Timing, {
+                            let now = nsql_log::now_local().stamp();
+                            LogEntry::new(
+                                LogKind::Send,
+                                tf(Msg::LogDetSent, &[&now, &stmt.len().to_string()]),
+                            )
+                        });
+                    }
                     let purpose = if stmt
                         .trim_start()
                         .to_ascii_uppercase()
@@ -10023,8 +10030,8 @@ impl App {
                     self.tx_on_done(index, &stmt, rows_affected);
                     self.meta_on_done(&stmt);
                 }
-                // PRINT · 서버 메시지는 로그 창으로만(`log_entries`) — 결과 영역은 조회 결과만(사용자 09-17).
-                RunEvent::Print { .. } => {}
+                // PRINT · VARIABLE 목록 · 서버 메시지는 로그 창으로만(`log_entries`) — 결과 영역은 조회 결과만(사용자 09-17).
+                RunEvent::Print { .. } | RunEvent::VarList { .. } => {}
                 // 실행 전에 값이 필요하다(D-137) — 입력 창은 이벤트 루프에서 연다(`about_to_wait`). 워커는 답을 기다린다.
                 RunEvent::InputNeeded { needs } => {
                     self.sess.status = t(Msg::WinInputs).into();
@@ -12027,6 +12034,12 @@ impl ApplicationHandler<Wake> for App {
                     rejected,
                     sid,
                 );
+                // ★ 최상위 모달(사용자 mac 09-21): 맥은 자식 창(항상 메인 위 · 함께 이동) · 메인·보조 창 입력은 가드가 막고
+                //   Windows는 `EnableWindow(FALSE)`(`sync_modal`). 접속 창과 같은 길.
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.input_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+                self.sync_modal();
             }
         }
         if std::mem::take(&mut self.pending_demo_prompt) {
@@ -12327,8 +12340,10 @@ impl ApplicationHandler<Wake> for App {
             self.open_file(&p);
             return;
         }
-        let modal_open = self.conn_win.is_open() || self.file_win.is_open();
-        let is_modal_win = self.conn_win.is(id) || self.file_win.is(id);
+        let modal_open = self.modal_open();
+        let is_modal_win = self.conn_win.is(id)
+            || self.file_win.is(id)
+            || (self.input_win.is_modal() && self.input_win.is(id));
         if modal_open
             && !is_modal_win
             && matches!(
@@ -12339,7 +12354,7 @@ impl ApplicationHandler<Wake> for App {
                     | WindowEvent::Ime(_)
             )
         {
-            if let Some(w) = self.file_win.window().or_else(|| self.conn_win.window()) {
+            if let Some(w) = self.modal_window() {
                 w.focus_window();
             }
             return;
@@ -12625,9 +12640,11 @@ impl ApplicationHandler<Wake> for App {
                 }
                 input_win::InputWinAction::Password(secret) => {
                     self.password_reply(worker::PwReply::Value(secret));
+                    self.sync_modal();
                 }
                 input_win::InputWinAction::Cancel if self.input_win.is_password() => {
                     self.password_reply(worker::PwReply::Cancel);
+                    self.sync_modal();
                 }
                 input_win::InputWinAction::Skip => {
                     self.input_reply(worker::InputReply::Values(Vec::new()));
@@ -12635,7 +12652,12 @@ impl ApplicationHandler<Wake> for App {
                 input_win::InputWinAction::Cancel => {
                     self.input_reply(worker::InputReply::Cancel);
                 }
-                input_win::InputWinAction::None => {}
+                input_win::InputWinAction::None => {
+                    // 모달이었다가 닫혔으면(창 닫기 등) 메인을 다시 살린다.
+                    if self.conn_modal && !self.modal_open() {
+                        self.sync_modal();
+                    }
+                }
             }
             return;
         }

@@ -1171,6 +1171,12 @@ impl Printer {
                     }
                 }
             }
+            RunEvent::VarList { vars } => {
+                // SQL*Plus `VARIABLE`(인자 없음) = 선언된 변수의 이름·타입.
+                for (n, t) in vars {
+                    let _ = writeln!(out, "variable {n} {}", t.sql_name());
+                }
+            }
             RunEvent::Print { pairs } => {
                 for (n, v) in pairs {
                     // 비밀 이름 규칙(D-140 · `*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`)은 여기서도 지킨다 — `SHOW VARIABLES`는

@@ -110,6 +110,12 @@ impl InputWin {
         self.password_for.is_some()
     }
 
+    /// ★ 모달인가(사용자 mac 09-21 "비밀번호 창은 최상위 모달 — Enter/버튼 전에는 다른 기능을 쓸 수 없게"): 비밀번호 모드일 때.
+    /// 접속 창·파일 창과 같은 길(`App::sync_modal` + 사건 가드 + 맥 자식 창). 변수 입력 창까지 넓히려면 이 판정만 바꾼다.
+    pub(crate) fn is_modal(&self) -> bool {
+        self.is_open() && self.password_for.is_some()
+    }
+
     /// 입력 격자를 연다(이미 열려 있으면 내용을 바꾼다).
     pub(crate) fn open(
         &mut self,

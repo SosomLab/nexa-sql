@@ -1557,6 +1557,8 @@ impl Editors {
         self.bounds = b;
         self.scale = scale;
         self.tabs.set_scale(scale);
+        // 탭·표식 메뉴도 배율을 받아야 한다 — 빠져 있어 맥 2x에서 행 높이가 1x로 계산돼 항목이 겹쳐 보였다(mac 09-21).
+        self.menu.set_scale(scale);
         for tb in &mut self.bufs {
             tb.set_scale(scale);
         }

@@ -213,6 +213,23 @@ impl VarType {
     }
 
     /// T-SQL 선언 타입 — `DECLARE @v <type>` · `sp_executesql @params` 양쪽에 쓴다.
+    /// 사람이 읽는 타입 이름(SQL*Plus `VARIABLE` 목록 · 변수 창 · 로그). 선언 없이 생긴 변수는 `auto`.
+    pub fn sql_name(&self) -> String {
+        match self {
+            VarType::Number => "NUMBER".into(),
+            VarType::Varchar2(n) => format!("VARCHAR2({n})"),
+            VarType::Char(n) => format!("CHAR({n})"),
+            VarType::Clob => "CLOB".into(),
+            VarType::RefCursor => "REFCURSOR".into(),
+            VarType::BinaryFloat => "BINARY_FLOAT".into(),
+            VarType::BinaryDouble => "BINARY_DOUBLE".into(),
+            VarType::Date => "DATE".into(),
+            VarType::Timestamp => "TIMESTAMP".into(),
+            VarType::Boolean => "BOOLEAN".into(),
+            VarType::Auto => "auto".into(),
+        }
+    }
+
     pub fn tsql_type(&self) -> String {
         match self {
             VarType::Number => "DECIMAL(38,10)".into(),

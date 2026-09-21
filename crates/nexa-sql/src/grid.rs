@@ -298,7 +298,7 @@ pub(crate) struct Grid {
 
 impl Default for Grid {
     fn default() -> Self {
-        Grid {
+        let mut g = Grid {
             bounds: Rect::new(0, 0, 0, 0),
             rs: None,
             messages: Vec::new(),
@@ -370,7 +370,9 @@ impl Default for Grid {
                 ToolItem::new("fetch.stop", toolicons::fetch_stop())
                     .tip(t(Msg::TipFetchCancel))
                     .disabled(),
-                ToolItem::new("count", ToolIcon::Glyph("Σ".into())).tip(t(Msg::TipCount)),
+                ToolItem::new("count", ToolIcon::Glyph("Σ".into()))
+                    .tip(t(Msg::TipCount))
+                    .disabled(),
             ]),
             page_box: Self::page_box(200),
             page_rows: 200,
@@ -407,7 +409,11 @@ impl Default for Grid {
             text_hit: Vec::new(),
             text_gutter_anchor: None,
             footer_info: None,
-        }
+        };
+        // 도구줄의 처음 상태도 판정 함수로(`.disabled()` 표기에 기대지 않는다) — Σ가 `.disabled()` 없이 만들어져
+        // 결과가 오기 전까지 켜진 것처럼 보였다(동기화는 상태가 바뀔 때만 돈다 · mac 09-21).
+        g.sync_fetch_tools();
+        g
     }
 }
 
@@ -3249,6 +3255,18 @@ mod tests {
 
     /// Σ 건수 활성 규정(사용자 09-19 · MC/DC): 결과 있음 · 조회 문장에서 옴 · 세션 연결·한가 · 페치 중 아님 · **서버에 더 있음** —
     /// 하나라도 아니면 꺼짐. 새로고침은 결과+출처 문장+연결.
+    /// 새 그리드는 서버로 나가는 버튼이 전부 꺼져 있다(결과 없음) — 생성자의 `.disabled()` 표기가 아니라 판정 함수로.
+    #[test]
+    fn fresh_grid_tools_are_disabled() {
+        let g = Grid::default();
+        for id in ["fetch.all", "fetch.stop", "count"] {
+            assert!(!g.tb_fetch.item_enabled(id), "{id}");
+        }
+        assert!(!g.tb_refresh.item_enabled("refresh"));
+        assert!(!g.can_count());
+        assert!(!g.can_refresh());
+    }
+
     #[test]
     fn count_button_rules() {
         let mut g = Grid::default();

@@ -8,13 +8,15 @@
 //! 다음 서버의 루트가 온다("한 폴더 안의 내부 폴더 둘을 펼친 모습" · 나뉜 패널이 아님). 각 서버의 트리는 자기 내용 전체 높이로 놓이고
 //! **스크롤은 전체에 하나**(공용 뷰포트 = 탐색기 영역 · 각 트리는 `set_clip`으로 보이는 부분만 그린다).
 //! 마우스는 커서 아래 트리로 · 키는 마지막으로 누른 트리로 · 선택은 전체에 하나. 호스트가 보는 API는 [`Explorer`]와 같다.
+//! 키보드는 칸 경계에서 이웃 서버로 넘어간다([`cross_pane`] · mac 09-21: ↑ = 이전 서버의 마지막 행 · ↓ = 다음 서버의 첫 행 ·
+//! Home/End = 전체의 첫/마지막 · PageUp/Down도 경계에서는 ↑/↓와 같다 · 타입어헤드 중에는 그 트리 안에서만).
 
 use crate::explorer::{Explorer, ExplorerAction, LiveReq, LiveResult};
 use crate::worker::same_server;
 use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
-use nexa_ctl::InputEvent;
+use nexa_ctl::{InputEvent, Key};
 use nsql_script::ConnectSpec;
 use std::sync::Arc;
 
@@ -37,6 +39,63 @@ pub(crate) fn pane_move(has_key: bool, offline: bool, live_sessions: usize) -> P
         PaneMove::GoOffline
     } else {
         PaneMove::Keep
+    }
+}
+
+/// 키보드 이동의 목적지(순수 판정 · MC/DC 표 D12). `pos` = 선택 행의 위치와 보이는 행 수(선택 없음 = `None` → 그 트리가
+/// 스스로 첫 행을 고른다) · `at` = 지금 칸의 순서 · `n` = 놓인 칸 수 · `page` = 공용 뷰포트에 보이는 행 수.
+/// ↑/↓는 칸 경계에서만 넘어가고, PageUp/PageDown은 **한 페이지가 칸 끝을 넘으면 남은 행 수만큼 이웃 칸 안으로**(한 트리처럼).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CrossPane {
+    /// 그 트리가 스스로 처리한다.
+    Stay,
+    /// 지금 칸의 이 행으로(페이지 이동이 칸 안에서 끝남).
+    Within(usize),
+    /// 이전 서버의 마지막 행에서 `n`행 위로.
+    Prev(usize),
+    /// 다음 서버의 첫 행에서 `n`행 아래로.
+    Next(usize),
+    /// 첫 서버의 첫 행으로.
+    First,
+    /// 마지막 서버의 마지막 행으로.
+    Last,
+}
+
+pub(crate) fn cross_pane(
+    key: Key,
+    pos: Option<(usize, usize)>,
+    at: usize,
+    n: usize,
+    page: usize,
+) -> CrossPane {
+    use CrossPane::*;
+    let has_prev = at > 0;
+    let has_next = at + 1 < n;
+    let page = page.max(1);
+    match (key, pos) {
+        (Key::Up, Some((0, _))) if has_prev => Prev(0),
+        (Key::Down, Some((p, len))) if p + 1 >= len && has_next => Next(0),
+        (Key::PageUp, Some((p, _))) => {
+            if p >= page {
+                Within(p - page)
+            } else if has_prev {
+                Prev(page - p - 1)
+            } else {
+                Within(0)
+            }
+        }
+        (Key::PageDown, Some((p, len))) => {
+            if p + page < len {
+                Within(p + page)
+            } else if has_next {
+                Next(p + page - len)
+            } else {
+                Within(len.saturating_sub(1))
+            }
+        }
+        (Key::Home, _) if has_prev => First,
+        (Key::End, _) if has_next => Last,
+        _ => Stay,
     }
 }
 
@@ -559,11 +618,7 @@ impl ExplorerSet {
             };
             if !matches!(ev, InputEvent::MouseUp { .. }) && i != self.shown {
                 // 다른 서버의 트리를 눌렀다 — 선택·키보드 대상은 전체에 하나.
-                let f = self.focused;
-                self.panes[self.shown].ex.set_focused(false);
-                self.panes[self.shown].ex.clear_selection();
-                self.shown = i;
-                self.panes[i].ex.set_focused(f);
+                self.switch_pane(i);
             }
             return self.panes[i].ex.on_event(ev);
         }
@@ -579,6 +634,9 @@ impl ExplorerSet {
             // (휠은 위의 공용 스크롤이 처리한다.)
             InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => false,
             _ => {
+                if self.key_crosses_pane(ev) {
+                    return true;
+                }
                 let r = self.cur_mut().on_event(ev);
                 // 키로 선택을 옮겼으면 공용 스크롤이 따라간다(펼침·접힘으로 높이도 바뀔 수 있다).
                 self.relayout();
@@ -586,6 +644,50 @@ impl ExplorerSet {
                 r
             }
         }
+    }
+
+    /// 선택·키보드 대상을 다른 서버 칸으로(마우스 클릭 · 키보드 경계 넘기 공용) — 선택은 전체에 하나.
+    fn switch_pane(&mut self, i: usize) {
+        let f = self.focused;
+        self.panes[self.shown].ex.set_focused(false);
+        self.panes[self.shown].ex.clear_selection();
+        self.shown = i;
+        self.panes[i].ex.set_focused(f);
+    }
+
+    /// 키가 칸 경계를 넘거나 페이지 이동이면 세트가 목적지를 고른다([`cross_pane`]). 처리했으면 참(사건 소비).
+    fn key_crosses_pane(&mut self, ev: &InputEvent) -> bool {
+        let InputEvent::Key { key, .. } = ev else {
+            return false;
+        };
+        if !self.focused || self.panes[self.shown].ex.typeahead_active() {
+            return false;
+        }
+        let laid = self.laid();
+        let Some(at) = laid.iter().position(|&i| i == self.shown) else {
+            return false;
+        };
+        let cur = &self.panes[self.shown].ex;
+        let page = (self.bounds.h / cur.row_px().max(1)).max(1) as usize;
+        let (i, idx) = match cross_pane(*key, cur.selected_pos(), at, laid.len(), page) {
+            CrossPane::Stay => return false,
+            CrossPane::Within(k) => (self.shown, k),
+            CrossPane::Prev(up) => {
+                let i = laid[at - 1];
+                let len = self.panes[i].ex.visible_count();
+                (i, len.saturating_sub(1 + up))
+            }
+            CrossPane::Next(down) => (laid[at + 1], down),
+            CrossPane::First => (laid[0], 0),
+            CrossPane::Last => (laid[laid.len() - 1], usize::MAX),
+        };
+        if i != self.shown {
+            self.switch_pane(i);
+        }
+        self.panes[i].ex.select_visible(idx);
+        self.relayout();
+        self.reveal_selection();
+        true
     }
 
     /// 우클릭 메뉴가 놓일 수 있는 영역(창 전체) — 탐색기 폭에 가두면 메뉴가 누른 자리에서 왼쪽으로 밀린다(사용자 09-21
@@ -662,5 +764,117 @@ mod tests {
             "세션이 하나라도 있으면 유지"
         );
         assert_eq!(pane_move(true, false, 3), PaneMove::Keep);
+    }
+
+    /// D12 MC/DC — 키보드 칸 경계 넘기(mac 09-21 "서버 루트에서 다른 서버로 키보드 이동 안 됨").
+    /// ↑: 첫 행 **이고** 앞 칸이 있을 때만 · ↓: 마지막 행 **이고** 뒤 칸이 있을 때만 · PageUp/Down: 페이지가 칸 안이면 Within ·
+    /// 넘치면 이웃 칸 안으로 남은 만큼 · 이웃이 없으면 칸 끝 · Home/End: 첫/마지막 칸이 아닐 때만 · 선택 없음·다른 키 = Stay.
+    #[test]
+    fn mcdc_cross_pane() {
+        use CrossPane::*;
+        let pg = 4;
+        // ↑ — 조건 둘(첫 행 · 앞 칸 있음)을 하나씩 뒤집는다.
+        assert_eq!(cross_pane(Key::Up, Some((0, 5)), 1, 3, pg), Prev(0));
+        assert_eq!(
+            cross_pane(Key::Up, Some((1, 5)), 1, 3, pg),
+            Stay,
+            "첫 행이 아니면 트리 안에서"
+        );
+        assert_eq!(
+            cross_pane(Key::Up, Some((0, 5)), 0, 3, pg),
+            Stay,
+            "첫 칸이면 위가 없다"
+        );
+        // ↓ — 마지막 행 · 뒤 칸 있음.
+        assert_eq!(cross_pane(Key::Down, Some((4, 5)), 1, 3, pg), Next(0));
+        assert_eq!(cross_pane(Key::Down, Some((3, 5)), 1, 3, pg), Stay);
+        assert_eq!(
+            cross_pane(Key::Down, Some((4, 5)), 2, 3, pg),
+            Stay,
+            "마지막 칸이면 아래가 없다"
+        );
+        assert_eq!(
+            cross_pane(Key::Down, Some((0, 1)), 0, 2, pg),
+            Next(0),
+            "행 하나뿐인 루트(접힌 서버)"
+        );
+        // PageDown — 칸 안 · 넘침(뒤 칸 있음 = 남은 만큼 안으로) · 넘침(뒤 칸 없음 = 칸 끝).
+        assert_eq!(
+            cross_pane(Key::PageDown, Some((0, 10)), 0, 2, pg),
+            Within(4)
+        );
+        assert_eq!(
+            cross_pane(Key::PageDown, Some((8, 10)), 0, 2, pg),
+            Next(2),
+            "10행 중 8 + 4 = 다음 칸 2번째"
+        );
+        assert_eq!(
+            cross_pane(Key::PageDown, Some((9, 10)), 0, 2, pg),
+            Next(3),
+            "마지막 행에서도 페이지만큼"
+        );
+        assert_eq!(
+            cross_pane(Key::PageDown, Some((8, 10)), 1, 2, pg),
+            Within(9),
+            "뒤 칸 없음 = 칸 끝"
+        );
+        assert_eq!(
+            cross_pane(Key::PageDown, Some((5, 10)), 0, 2, pg),
+            Within(9),
+            "딱 끝에 닿으면 칸 안"
+        );
+        // PageUp — 대칭.
+        assert_eq!(cross_pane(Key::PageUp, Some((6, 10)), 1, 2, pg), Within(2));
+        assert_eq!(
+            cross_pane(Key::PageUp, Some((1, 10)), 1, 2, pg),
+            Prev(2),
+            "1 - 4 = 앞 칸 마지막에서 2행 위"
+        );
+        assert_eq!(cross_pane(Key::PageUp, Some((0, 10)), 1, 2, pg), Prev(3));
+        assert_eq!(
+            cross_pane(Key::PageUp, Some((1, 10)), 0, 2, pg),
+            Within(0),
+            "앞 칸 없음 = 첫 행"
+        );
+        assert_eq!(
+            cross_pane(Key::PageUp, Some((4, 10)), 1, 2, pg),
+            Within(0),
+            "딱 첫 행에 닿으면 칸 안"
+        );
+        assert_eq!(
+            cross_pane(Key::PageDown, Some((0, 3)), 0, 2, 0),
+            Within(1),
+            "페이지 0은 1로"
+        );
+        // Home/End — 칸 위치만 본다.
+        assert_eq!(cross_pane(Key::Home, Some((3, 5)), 2, 3, pg), First);
+        assert_eq!(
+            cross_pane(Key::Home, Some((3, 5)), 0, 3, pg),
+            Stay,
+            "첫 칸의 Home = 그 트리의 첫 행"
+        );
+        assert_eq!(
+            cross_pane(Key::Home, None, 2, 3, pg),
+            First,
+            "선택이 없어도 첫 서버로"
+        );
+        assert_eq!(cross_pane(Key::End, Some((0, 5)), 0, 3, pg), Last);
+        assert_eq!(cross_pane(Key::End, Some((0, 5)), 2, 3, pg), Stay);
+        // 선택 없음 · 다른 키 · 칸 하나.
+        assert_eq!(
+            cross_pane(Key::Up, None, 1, 3, pg),
+            Stay,
+            "선택이 없으면 트리가 첫 행을 고른다"
+        );
+        assert_eq!(cross_pane(Key::Down, None, 1, 3, pg), Stay);
+        assert_eq!(cross_pane(Key::PageDown, None, 1, 3, pg), Stay);
+        assert_eq!(cross_pane(Key::Right, Some((0, 5)), 1, 3, pg), Stay);
+        assert_eq!(cross_pane(Key::Left, Some((0, 5)), 1, 3, pg), Stay);
+        assert_eq!(
+            cross_pane(Key::Down, Some((4, 5)), 0, 1, pg),
+            Stay,
+            "서버 하나"
+        );
+        assert_eq!(cross_pane(Key::End, Some((0, 5)), 0, 1, pg), Stay);
     }
 }
