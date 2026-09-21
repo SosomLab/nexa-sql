@@ -13159,6 +13159,11 @@ enum Attempt {
 const DEFAULT_DIALECT: Dialect = Dialect::Oracle;
 
 fn main() {
+    // 기동 구간 계측(`NSQL_TRACE_FRAMES=1` · docs/39 S-14 · Linux 09-22): 표시는 `[startup]` 한 줄(누적 ms) — 창이 보이기까지 어디에 쓰였는가.
+    let boot = Instant::now();
+    let mut marks: Vec<(&'static str, Duration)> = Vec::new();
+    let mark =
+        |m: &mut Vec<(&'static str, Duration)>, name: &'static str| m.push((name, boot.elapsed()));
     let args: Vec<String> = std::env::args().skip(1).collect();
     // 설정(언어 · 테마 모드 · 글꼴 크기) — 폴더를 모르면 임시 경로의 기본값(저장은 실패해도 앱은 뜬다).
     let settings = Settings::open_default().unwrap_or_else(|_| {
@@ -13180,11 +13185,13 @@ fn main() {
         }
     });
     // UI 글꼴 = 설정 `ui.font_face`(비면 OS 사슬 · 못 찾으면 사슬로 fail-over · 사용자 09-17 비레티나 모니터 비교용).
+    mark(&mut marks, "settings");
     let ui_pref = settings.get("ui.font_face").map(str::to_string);
     let ui = nexa_font::ui_font(ui_pref.as_deref()).or_else(|| nexa_font::ui_font(None));
     // 고정폭 = 설정 `editor.font_face`(비면 OS 기본 사슬 · 없는 이름은 fail-over · 사용자 09-17).
     let mono_pref = settings.get("editor.font_face").map(str::to_string);
     let mono = nexa_font::mono_font(mono_pref.as_deref());
+    mark(&mut marks, "fonts");
     let (Some(ui), Some(mono)) = (ui, mono) else {
         eprintln!("{}", t(Msg::ErrNoFont));
         std::process::exit(1);
@@ -13225,6 +13232,7 @@ fn main() {
         eprintln!("event loop creation failed");
         std::process::exit(1);
     };
+    mark(&mut marks, "event_loop");
     let proxy: EventLoopProxy<Wake> = el.create_proxy();
     let max_rows = settings.int("grid.max_rows").max(0) as usize;
     let autocommit = settings.flag("session.autocommit");
@@ -13246,8 +13254,11 @@ fn main() {
     let (tests_tx, tests_rx) = mpsc::channel::<worker::TestResult>();
     let wake_proxy: EventLoopProxy<Wake> = el.create_proxy();
     let initial_target = arg_target;
+    mark(&mut marks, "worker+probe");
     let profiles = worker::profile_names();
+    mark(&mut marks, "profiles");
     let mut panel = ConnectPanel::new(nsql_drivers::available());
+    mark(&mut marks, "connect_panel");
     // 실행 인자가 프로필 이름이면 폼도 채운다(접속은 아래에서 · `--fill`이면 채우기만).
     if let Some(name) = initial_target
         .as_deref()
@@ -13269,11 +13280,14 @@ fn main() {
     let ed_multi = settings.get("tabs.rows") != Some("single");
     let ed_tooltip = settings.flag("tabs.tooltip");
     let row_snap = settings.get("grid.scroll") == Some("row");
+    mark(&mut marks, "theme");
     let syntax_reg = Rc::new(SyntaxRegistry::load());
+    mark(&mut marks, "syntax");
     let rulers = parse_rulers(settings.get("editor.rulers").unwrap_or("80"));
     let ws_style = whitespace_style(&settings);
     let attempts_max = settings.int("connect.max_concurrent").clamp(1, 16) as usize;
     let keymap = Keymap::from_settings(&settings);
+    mark(&mut marks, "keymap");
     let explorer = {
         let proxy = std::sync::Mutex::new(wake_proxy.clone());
         let mut e = explorers::ExplorerSet::new(
@@ -13288,14 +13302,54 @@ fn main() {
         e.set_typeahead(typeahead_cfg(&settings));
         e
     };
+    mark(&mut marks, "explorer");
     let colors_win = ColorsWin::new(
         color_setting(&settings, "ui.hover_color"),
         color_setting(&settings, "ui.pressed_color"),
         &recent_colors(&settings),
     );
     let txlog_cap = settings.int("txlog.max_entries").max(16) as usize;
+    mark(&mut marks, "colors_win");
     let mut sess = Sess::new(SHARED, None, worker, events, DEFAULT_DIALECT);
     sess.status = status;
+    mark(&mut marks, "sess");
+    // 창 부품의 생성 비용을 `[startup]`에 낱개로 보이게(09-22 Linux: `App { … }` 한 덩어리가 300 ms였다).
+    let log_win = LogWin::new(&log_format);
+    mark(&mut marks, "log_win");
+    let txlog_win = TxLogWin::new();
+    mark(&mut marks, "txlog_win");
+    let sessions_win = SessionsWin::new();
+    mark(&mut marks, "sessions_win");
+    let input_win = input_win::InputWin::new();
+    mark(&mut marks, "input_win");
+    let vars_win = vars_win::VarsWin::new();
+    mark(&mut marks, "vars_win");
+    let git = gitstat::GitWatch::new();
+    mark(&mut marks, "git");
+    let keys_win = KeysWin::new();
+    mark(&mut marks, "keys_win");
+    let prefs_win = PrefsWin::new();
+    mark(&mut marks, "prefs_win");
+    let act_bar = ActivityBar::new();
+    mark(&mut marks, "act_bar");
+    let file_win = FileWin::new();
+    mark(&mut marks, "file_win");
+    let menubar = MenuBar::new(App::build_menus());
+    mark(&mut marks, "menubar");
+    let conn_win = ConnWin::new(panel);
+    mark(&mut marks, "conn_win");
+    let find = FindBar::new();
+    mark(&mut marks, "find");
+    let editors = Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg.clone());
+    mark(&mut marks, "editors");
+    let search = SearchPanel::new();
+    mark(&mut marks, "search");
+    let ext_panel = ExtPanel::new();
+    mark(&mut marks, "ext_panel");
+    let palette = Palette::new();
+    mark(&mut marks, "palette");
+    let toasts = toast::Toasts::new();
+    mark(&mut marks, "toasts");
     let mut app = App {
         window: None,
         surface: None,
@@ -13310,21 +13364,21 @@ fn main() {
         theme: initial_theme,
         settings,
         scale: 1.0,
-        log_win: LogWin::new(&log_format),
-        txlog_win: TxLogWin::new(),
-        sessions_win: SessionsWin::new(),
-        input_win: input_win::InputWin::new(),
+        log_win,
+        txlog_win,
+        sessions_win,
+        input_win,
         input_pending: None,
         pw_pending: None,
         close_after_save: None,
         key_guard: None,
         pw_once: None,
-        vars_win: vars_win::VarsWin::new(),
+        vars_win,
         vars_changed: (0, std::collections::HashSet::new()),
         open_sessions: false,
         open_vars: false,
         open_txlog: false,
-        toasts: toast::Toasts::new(),
+        toasts,
         tx_warn: txwarn::TxWarn::default(),
         tx_guard_next: Instant::now(),
         run_toast_next: None,
@@ -13334,12 +13388,12 @@ fn main() {
         file_purpose: FilePurpose::Editor,
         exit_requested: false,
         z_order: Vec::new(),
-        palette: Palette::new(),
-        syntax: syntax_reg.clone(),
+        palette,
+        syntax: syntax_reg,
         status_syntax_rect: Rect::new(0, 0, 0, 0),
         status_eol_rect: Rect::new(0, 0, 0, 0),
         status_enc_rect: Rect::new(0, 0, 0, 0),
-        git: gitstat::GitWatch::new(),
+        git,
         status_tab_rect: Rect::new(0, 0, 0, 0),
         status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         toggle_log: false,
@@ -13349,15 +13403,15 @@ fn main() {
         pending_chord: None,
         hangul_mode: false,
         open_keys: false,
-        keys_win: KeysWin::new(),
+        keys_win,
         open_prefs: false,
         prefs_query: None,
-        prefs_win: PrefsWin::new(),
-        act_bar: ActivityBar::new(),
-        file_win: FileWin::new(),
+        prefs_win,
+        act_bar,
+        file_win,
         open_file_dlg: None,
         folder_start: None,
-        menubar: MenuBar::new(App::build_menus()),
+        menubar,
         tabs_menu_sig: String::new(),
         tool_dock: App::build_tool_dock(),
         tool_floats: Vec::new(),
@@ -13366,12 +13420,12 @@ fn main() {
         demo_ready: false,
         demo_job: None,
         pending_demo_prompt: false,
-        conn_win: ConnWin::new(panel),
+        conn_win,
         // 시작 시 로그인 창 — 인자로 접속 대상을 줬거나 임시 Demo 자동 접속이면 띄우지 않는다.
         open_conn: initial_target.is_none() || arg_fill_only,
-        find: FindBar::new(),
+        find,
         find_scope: None,
-        editors: Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg),
+        editors,
         grid: grid::Grid::default(),
         panel: ResultPanel::new(
             ResultTab {
@@ -13392,7 +13446,7 @@ fn main() {
         next_result_id: 1,
         result_area: Rect::new(0, 0, 0, 0),
         offset_warned: std::collections::HashSet::new(),
-        frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::default()),
+        frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::new(boot)),
         trace_ime: std::env::var_os("NSQL_TRACE_IME").is_some(),
         hangul_app: None,
         input_at: None,
@@ -13402,8 +13456,8 @@ fn main() {
         ext_catalog: Vec::new(),
         grid_tab: 0,
         explorer,
-        search: SearchPanel::new(),
-        ext_panel: ExtPanel::new(),
+        search,
+        ext_panel,
         ext_fetch_rx: None,
         ext_view: ext_view::ExtView::default(),
         ext_details: HashMap::new(),
@@ -13620,6 +13674,15 @@ fn main() {
             None => {}
         }
     }
+    mark(&mut marks, "app");
+    if app.frame_trace.is_some() {
+        // 누적 ms — 구간 = 앞 표시와의 차. 창 자체는 `resumed`에서 만들어지므로 `[frames] … first paint … at +N ms`가 그 다음 표시다.
+        let line: Vec<String> = marks
+            .iter()
+            .map(|(n, d)| format!("{n} {:.0}", d.as_secs_f64() * 1000.0))
+            .collect();
+        eprintln!("[startup] {} (ms, cumulative)", line.join(" · "));
+    }
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("{}", tf(Msg::ErrEventLoop, &[&e.to_string()]));
         std::process::exit(1);
@@ -13627,8 +13690,9 @@ fn main() {
 }
 
 /// 프레임 계측 누적(`NSQL_TRACE_FRAMES=1`) — 60프레임마다 한 줄: 평균/최대 총 ms · 구간별 평균 ms.
-#[derive(Default)]
 struct FrameTrace {
+    /// `main()` 시작 시각 — 첫 페인트가 기동 뒤 몇 ms인지(`[startup]`과 같은 기준).
+    boot: Instant,
     announced: bool,
     n: u32,
     total_us: u64,
@@ -13637,13 +13701,25 @@ struct FrameTrace {
 }
 
 impl FrameTrace {
+    fn new(boot: Instant) -> Self {
+        FrameTrace {
+            boot,
+            announced: false,
+            n: 0,
+            total_us: 0,
+            max_us: 0,
+            secs_us: [0; 6],
+        }
+    }
+
     fn add(&mut self, total: u32, secs: &[u32; 6]) {
         self.n += 1;
         if !self.announced {
             self.announced = true;
             eprintln!(
-                "[frames] tracing on · first paint {:.2}ms",
-                f64::from(total) / 1000.0
+                "[frames] tracing on · first paint {:.2}ms at +{:.0}ms",
+                f64::from(total) / 1000.0,
+                self.boot.elapsed().as_secs_f64() * 1000.0
             );
         }
         self.total_us += u64::from(total);
@@ -13668,7 +13744,7 @@ impl FrameTrace {
             );
             *self = Self {
                 announced: true,
-                ..Self::default()
+                ..Self::new(self.boot)
             };
         }
     }

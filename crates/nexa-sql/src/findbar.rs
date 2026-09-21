@@ -114,7 +114,9 @@ const MARGIN_TOP: f32 = 10.0;
 pub(crate) struct FindBtn {
     pub(crate) kind: BtnKind,
     pub(crate) rect: Rect,
-    icon: MenuIcon,
+    /// 아이콘은 첫 그리기 때 만든다(찾기 막대는 시작 시 숨겨져 있다 — 09-22 Linux 기동 계측: 11개 즉시 래스터 = 166 ms).
+    icon: fn() -> MenuIcon,
+    built: std::cell::OnceCell<MenuIcon>,
     tint: RefCell<Option<(Color, Rc<IconImage>)>>,
     pub(crate) checked: bool,
     pub(crate) hover: Fade,
@@ -130,7 +132,7 @@ pub(crate) struct FindBtn {
 }
 
 impl FindBtn {
-    pub(crate) fn new(kind: BtnKind, icon: MenuIcon) -> Self {
+    pub(crate) fn new(kind: BtnKind, icon: fn() -> MenuIcon) -> Self {
         let radius = match kind {
             BtnKind::Fold => 2.0,
             k if k.is_toggle() => 3.0,
@@ -140,6 +142,7 @@ impl FindBtn {
             kind,
             rect: Rect::default(),
             icon,
+            built: std::cell::OnceCell::new(),
             tint: RefCell::new(None),
             checked: false,
             // 1초에 걸쳐 밝아진다(사용자 09-16) = `FadeSpeed::Slow` ↔ 설정 `ui.fade_slow`.
@@ -161,10 +164,11 @@ impl FindBtn {
             }
         }
         let (r, g, b) = fg.rgb();
+        let icon = self.built.get_or_init(self.icon);
         let img = Rc::new(IconImage::from_alpha_tinted(
-            self.icon.w,
-            self.icon.h,
-            &self.icon.alpha,
+            icon.w,
+            icon.h,
+            &icon.alpha,
             (r, g, b),
         ));
         *self.tint.borrow_mut() = Some((fg, img.clone()));
@@ -299,17 +303,17 @@ pub(crate) struct FindBar {
 impl FindBar {
     pub(crate) fn new() -> Self {
         let btns = vec![
-            FindBtn::new(BtnKind::Fold, toolicons::mi_chevron_right()),
-            FindBtn::new(BtnKind::Case, toolicons::mi_match_case()),
-            FindBtn::new(BtnKind::Word, toolicons::mi_match_word()),
-            FindBtn::new(BtnKind::Regex, toolicons::mi_regex()),
-            FindBtn::new(BtnKind::Prev, toolicons::mi_arrow_up()),
-            FindBtn::new(BtnKind::Next, toolicons::mi_arrow_down()),
-            FindBtn::new(BtnKind::Selection, toolicons::mi_in_selection()),
-            FindBtn::new(BtnKind::Close, toolicons::mi_close()),
-            FindBtn::new(BtnKind::Preserve, toolicons::mi_preserve_case()),
-            FindBtn::new(BtnKind::Replace, toolicons::mi_find_replace()),
-            FindBtn::new(BtnKind::ReplaceAll, toolicons::mi_replace_all()),
+            FindBtn::new(BtnKind::Fold, toolicons::mi_chevron_right),
+            FindBtn::new(BtnKind::Case, toolicons::mi_match_case),
+            FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
+            FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
+            FindBtn::new(BtnKind::Prev, toolicons::mi_arrow_up),
+            FindBtn::new(BtnKind::Next, toolicons::mi_arrow_down),
+            FindBtn::new(BtnKind::Selection, toolicons::mi_in_selection),
+            FindBtn::new(BtnKind::Close, toolicons::mi_close),
+            FindBtn::new(BtnKind::Preserve, toolicons::mi_preserve_case),
+            FindBtn::new(BtnKind::Replace, toolicons::mi_find_replace),
+            FindBtn::new(BtnKind::ReplaceAll, toolicons::mi_replace_all),
         ];
         let mut query = TextBox::new(t(Msg::PhFind));
         query.set_focus_ring(false);
@@ -450,13 +454,14 @@ impl FindBar {
     }
 
     fn sync_fold_icon(&mut self) {
-        let icon = if self.with_replace {
-            toolicons::mi_chevron_down()
+        let icon: fn() -> MenuIcon = if self.with_replace {
+            toolicons::mi_chevron_down
         } else {
-            toolicons::mi_chevron_right()
+            toolicons::mi_chevron_right
         };
         let b = self.btn_mut(BtnKind::Fold);
         b.icon = icon;
+        b.built = std::cell::OnceCell::new();
         *b.tint.borrow_mut() = None;
     }
 

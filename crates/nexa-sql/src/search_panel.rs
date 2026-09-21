@@ -161,9 +161,9 @@ impl SearchPanel {
             query,
             where_box,
             btns: vec![
-                FindBtn::new(BtnKind::Case, toolicons::mi_match_case()),
-                FindBtn::new(BtnKind::Word, toolicons::mi_match_word()),
-                FindBtn::new(BtnKind::Regex, toolicons::mi_regex()),
+                FindBtn::new(BtnKind::Case, toolicons::mi_match_case),
+                FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
+                FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
             ],
             files: Vec::new(),
             rows: Vec::new(),

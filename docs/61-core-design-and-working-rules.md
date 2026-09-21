@@ -43,7 +43,7 @@
 | 객체 탐색기 갱신 | 실행한 DDL → 그 폴더만 디프 · 커밋 시점 · 유휴 워터마크 · 우클릭 Refresh = 누른 자리가 범위(서버 = 전부 · 폴더 = 그 아래 · 객체 = 그것만) | [57](57-explorer-refresh-after-ddl.md) · [28 §1-2](28-object-explorer.md) |
 | 외부 파일 변경 | 조용한 재로드 · 겹침 0이면 병합 · 비모달 띠 · 저장 2단 확인 · 감지 = 활성화·탭 전환·저장 직전 + 보이는 탭 폴링 · 재로드 = 최소 줄 편집 | [58](58-external-change-policy.md) · [60 §7](60-undo-redo-redesign.md) |
 | 접속 유형 | 개발/시험/운영 · 운영 = 실행 2단 확인 + 짧은 유휴 기준(값·UI는 가정 — 사용자 확인 필요) | [56 §9](56-manual-commit-lock-prevention.md) |
-| 메모리 회수 | 큰 것을 놓은 1초 뒤 1회 + 유휴 주기 · 보이지 않는 탭의 그리기 캐시 해제 · 워킹셋 트림은 하지 않는다 | [59 §2](59-large-file-handling.md) |
+| 메모리 회수 | 큰 것을 놓은 1초 뒤 1회 + 유휴 주기 · 보이지 않는 탭의 그리기 캐시 해제 · 워킹셋 트림은 하지 않는다 | [59 §2](59-large-file-handling.md) | glibc `malloc_trim(0)` |
 | 확장 | 관리자 끔 = 전 확장 정지 · 활동 막대 아이콘 = 관리자 켜짐일 때만 · 상세 = 뷰 탭 | [50 §14](50-extension-system.md) |
 
 ## 2. 작업 규칙(OS 공통)
@@ -111,19 +111,21 @@
 
 ## 3. OS별로 다른 것
 
-| | Windows | macOS |
-|---|---|---|
-| 셸 | 도구의 Bash = Git Bash. **heredoc이 `\n` · `\0` · 백슬래시 · 따옴표를 망가뜨린다** → 코드 패치는 스크립트 **파일**로 써서 경로로 실행(한글 커밋 메시지 정도는 heredoc으로 된다). `"$VAR\\$1"`은 글자 그대로 `$1`이 된다 — 경로는 미리 변수에 조립한다 | zsh/bash 그대로. heredoc 안전 |
-| 화면 캡처 | `PrintWindow(PW_RENDERFULLCONTENT)` — `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1`(연속 · 입력 주입 없음). `CopyFromScreen` · `FindWindow`는 실패한다 | `screencapture -l <창 id>` 또는 `-R x,y,w,h`. 기존 `scripts/mac-capture.sh`는 **System Events로 키를 보낸다** → 사용자가 자리에 없을 때(위키 캡처)만. 세션 중 검증은 `NSQL_STARTUP_CMD` + `screencapture`만 |
-| 측정 | `scripts/win-big-probe.ps1`(초 단위 CPU · 상주 · 피크 · 응답) · `scripts/win-latency-probe.ps1` · `scripts/win-leak-cycle.ps1`(같은 동작 N회 → 뒤 절반의 기울기 = 릭 판정) · `scripts/win-startup-probe.ps1`(창이 보이기까지 · 안정까지 CPU) — ★ **빌드 직후 첫 실행은 버린다**(새 exe의 실시간 검사로 CPU가 수백 ms~2초 튄다 · 09-21 89차) · 회귀 판정은 **앞 커밋을 워크트리에 따로 빌드해 같은 시각에 A/B**로 | `ps -o rss,%cpu -p <pid>` · `/usr/bin/time -l`(피크 RSS) · `sample <pid>` |
-| 빌드 잠김 | 실행 중인 exe가 링크를 막는다 → 빌드 전에 Debug 프로세스 종료 | 없음 |
-| 3-OS 검사 | nexa-ui = `scripts/check-3os.sh` 통과. nexa-sql = **이 PC에서는 교차 컴파일 불가**(`ring`에 교차 C 컴파일러 필요) → 호스트 fmt + clippy + 테스트만, 나머지는 CI | 맥에서는 `check-3os.sh`가 더 넓게 돈다(과거 맥 세션 기록) — push 전에 돌린다 |
-| 글자 | GDI ClearType 글리프(D-77) — 전진폭이 정수로 스냅 | CoreText 경로 — 전진폭이 소수. **행 폭 고정폭 지름길은 탐침으로 전진폭을 구하므로 양쪽에서 돈다**(디버그 빌드가 실측과 대조). 맥에서 큰 파일을 한 번 열어 `debug_assert`가 조용한지 본다 |
-| 메모리 회수 | `HeapSetInformation` + `HeapCompact` | `malloc_zone_pressure_relief`(형 검사만 했고 실기 미확인) |
-| IME | 한글 조합 = 캐럿 줄 하나에만 끼움(단위 테스트 통과 · 실기는 사용자) | **T-139 맥 한글 입력**이 열려 있다 — 조합 경로가 84차에 바뀌었으므로(`Rows.over`) 맥에서 먼저 확인 |
-| 설정 폴더 | `%APPDATA%\nexa-sql` | `~/Library/Application Support/nexa-sql`(`NSQL_HOME`이 있으면 그것) |
+| | Windows | macOS | Linux(09-22 · Ubuntu 26.04 · Wayland) |
+|---|---|---|---|
+| 셸 | 도구의 Bash = Git Bash. **heredoc이 `\n` · `\0` · 백슬래시 · 따옴표를 망가뜨린다** → 코드 패치는 스크립트 **파일**로 써서 경로로 실행(한글 커밋 메시지 정도는 heredoc으로 된다). `"$VAR\\$1"`은 글자 그대로 `$1`이 된다 — 경로는 미리 변수에 조립한다 | zsh/bash 그대로. heredoc 안전 | bash/zsh 그대로. heredoc 안전. 도구의 비대화 셸은 `~/.zshrc`를 읽지 않으므로 Oracle 환경(`LD_LIBRARY_PATH`)은 스크립트에서 직접 export |
+| 화면 캡처 | `PrintWindow(PW_RENDERFULLCONTENT)` — `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1`(연속 · 입력 주입 없음). `CopyFromScreen` · `FindWindow`는 실패한다 | `screencapture -l <창 id>` 또는 `-R x,y,w,h`. 기존 `scripts/mac-capture.sh`는 **System Events로 키를 보낸다** → 사용자가 자리에 없을 때(위키 캡처)만. 세션 중 검증은 `NSQL_STARTUP_CMD` + `screencapture`만 | Wayland라 `xwininfo`·`xdotool`이 앱 창을 못 본다 → 화면 캡처 대신 **`NSQL_TRACE_FRAMES`의 stderr**(`[startup]` · `[frames]` · `[load]`)와 `/proc`으로 판정 · 캡처가 꼭 필요하면 `gnome-screenshot`/`grim`(미검증) |
+| 측정 | `scripts/win-big-probe.ps1`(초 단위 CPU · 상주 · 피크 · 응답) · `scripts/win-latency-probe.ps1` · `scripts/win-leak-cycle.ps1`(같은 동작 N회 → 뒤 절반의 기울기 = 릭 판정) · `scripts/win-startup-probe.ps1`(창이 보이기까지 · 안정까지 CPU) — ★ **빌드 직후 첫 실행은 버린다**(새 exe의 실시간 검사로 CPU가 수백 ms~2초 튄다 · 09-21 89차) · 회귀 판정은 **앞 커밋을 워크트리에 따로 빌드해 같은 시각에 A/B**로 | `ps -o rss,%cpu -p <pid>` · `/usr/bin/time -l`(피크 RSS) · `sample <pid>` | `scripts/linux-startup.sh` · `linux-probe.sh` · `linux-leak.sh`(Windows 셋의 이식 · `/proc/<pid>/{stat,status}` · **RssAnon ≈ Private** — Wayland 화면 버퍼는 `memfd` 공유 매핑이라 익명에 안 잡힌다) · `linux-perf-all.sh`(26 §7-3 전 시나리오 한 번에) · `strace -f -ttt`로 기동 타임라인(`perf record`는 `perf_event_paranoid=4`라 불가) · 벤치 수치는 기기(VM 2코어)가 느린 폭(1.5~2×)을 감안 |
+| 빌드 잠김 | 실행 중인 exe가 링크를 막는다 → 빌드 전에 Debug 프로세스 종료 | 없음 | 없음. Release(LTO fat) 워크스페이스 = 2코어에서 6.5분 |
+| 3-OS 검사 | nexa-ui = `scripts/check-3os.sh` 통과. nexa-sql = **이 PC에서는 교차 컴파일 불가**(`ring`에 교차 C 컴파일러 필요) → 호스트 fmt + clippy + 테스트만, 나머지는 CI | 맥에서는 `check-3os.sh`가 더 넓게 돈다(과거 맥 세션 기록) — push 전에 돌린다 | Windows PC와 같다 — 교차 타깃은 `ring`이 교차 C 컴파일러를 요구해 실패 → 호스트 fmt + clippy + 테스트만(`scripts/linux-all-tests.sh`), 나머지는 CI |
+| 글자 | GDI ClearType 글리프(D-77) — 전진폭이 정수로 스냅 | CoreText 경로 — 전진폭이 소수. **행 폭 고정폭 지름길은 탐침으로 전진폭을 구하므로 양쪽에서 돈다**(디버그 빌드가 실측과 대조). 맥에서 큰 파일을 한 번 열어 `debug_assert`가 조용한지 본다 | nexa-font 고정 경로 후보(Noto Sans CJK KR · DejaVu) + **가족 탐색 = `/usr/share/fonts` 트리 걷기**(D2Coding · 기호 폴백) — 09-22 걷기 1회 캐시 + `file_type()`로 고침(기동 100~700 ms가 이것이었다) · softbuffer 한 길 |
+| 메모리 회수 | `HeapSetInformation` + `HeapCompact` | `malloc_zone_pressure_relief`(형 검사만 했고 실기 미확인) | glibc `malloc_trim(0)` |
+| IME | 한글 조합 = 캐럿 줄 하나에만 끼움(단위 테스트 통과 · 실기는 사용자) | **T-139 맥 한글 입력**이 열려 있다 — 조합 경로가 84차에 바뀌었으므로(`Rows.over`) 맥에서 먼저 확인 | 미확인(Wayland 텍스트 입력 프로토콜 · 실기 대기) |
+| 설정 폴더 | `%APPDATA%\nexa-sql` | `~/Library/Application Support/nexa-sql`(`NSQL_HOME`이 있으면 그것) | `~/.config/nexa-sql`(`NSQL_HOME`이 있으면 그것) · Oracle Instant Client = `~/oracle/instantclient_23_26`(`scripts/install-instantclient-linux.sh`) |
 
 **윈도우에서 처음 할 일(맥 88차 뒤 · 09-21)**: ① 두 저장소 pull(**nexa-ui 먼저** — nexa-sys `layer_present` 추가분 · Windows에서는 늘 `None`인 빈 구현) → `cargo test --workspace` 양쪽(nexa-ui 352 · nexa-sql 353) ② Debug 빌드로 **창 11곳이 전부 열리고 그려지는지**(메인 · 로그인 · 파일 · 설정 · 색 · 단축키 · 로그 · 트랜잭션 로그 · 세션 · 툴바 플로팅 + 새 창 둘 — `present.rs`로 전부 바꿨다 · Windows 경로는 종전 softbuffer지만 손댄 곳이 넓다) ③ **새 창 둘의 실기**(맥에서만 확인했다): 변수 입력 창(`SELECT :X, '&y' FROM dual` 실행 → 격자 · Tab/Enter/Esc/Skip · ■ = 취소 · **Windows 한글 IME**로 값 입력) · 변수 창(View ▸ Variables — 줄 선택 · Set · NULL · Share/Local · Delete · `이름 = 값` · 탭 전환 따라감) — 포커스 링 ≤ 1 · 클릭이 영역 밖 컨트롤에 닿지 않는지(CLAUDE.md §3 포커스·마우스 규칙 ①~⑤) ④ **수동 커밋 실기**(T-146 — SQL Server·PG): Auto-commit 끔 → INSERT → 다른 세션에서 안 보임 → Rollback 버튼 → 사라짐 · Commit → 남음 · 상태줄 ●·툴바 배지 ⑤ 결과 탭: 조회 3개 스크립트 = 탭 3개 · 다시 실행 = 같은 자리 · 첫 탭 ↻ 새로고침에 다른 탭이 닫히지 않는지 · Oracle `examples/oracle-refcursor-pkg.sql` = 커서가 바로 결과로 ⑥ 그다음 [TODO](TODO.md) **T-149 잔여 → T-150~T-153**(아래 §6).
+
+**리눅스에서 처음 할 일(09-22 91차)**: ① 두 저장소 pull(nexa-ui 먼저) → `scripts/linux-all-tests.sh -o /tmp/nsql-tests`(fmt·clippy·test 양쪽 + 3-OS 호스트 + 실서버 통합 = `NSQL_*_PROFILE`) ② Oracle = `scripts/install-instantclient-linux.sh --rc`(새 셸) ③ 성능 = `scripts/linux-perf-all.sh -H <격리 홈> -D <데이터> -o <결과>`(격리 홈에 `Local` SQLite 프로필 먼저 · 26 §7-7과 비교 · 창까지 시간은 `[startup]`으로 구간 확인) ④ 실기 = TODO T-163(Wayland IME · 모달 · 캡처).
 
 **맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139.
 
@@ -133,7 +135,8 @@
 - **앱 안 마우스 사건**(09-21): `ui.move:x/y` · `ui.click:x/y` · `ui.rclick:x/y`(창 좌표 · 장치 픽셀 · 쉼표는 명령 구분자라 `/`) — OS 입력 주입이 아니라 앱이 스스로 `InputEvent`를 만들어 **실제 라우팅 경로(`route`)** 에 넣는다. 컨트롤을 직접 부르는 캡처 명령(`explorer.menu` …)은 라우팅 결함을 못 본다(탐색기 우클릭이 첫 커밋부터 닿지 않던 것을 이것으로 찾았다). Debug 첫 기동은 수 초 — `@after:`는 기동 뒤 기준이니 캡처 대기를 12초 이상.
 - 환경 변수: `NSQL_NO_ACTIVATE=1`(★ 자체 시험 인스턴스는 **반드시** — 창을 활성화하지 않고 띄운다 · 09-21에 캡처용 창이 전경을 가져가 사용자가 치던 글자를 받았다) · `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
 - 벤치(nexa-ui): `cargo run --release -p nexa-ctl --example bench_editor <줄 수> <기능>`(`hl,ln,base,mm,occ,br` 또는 `all` · `BENCH_ASCII=1` · `BENCH_PREPARED=1`) · `--example bench_undo`.
-- 스크립트: `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh`.
+- 스크립트: `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh` · **Linux(09-22)**: `scripts/linux-startup.sh` · `linux-probe.sh` · `linux-leak.sh` · `linux-perf-all.sh`(전 시나리오 + 릭 + CLI) · `linux-all-tests.sh`(두 저장소 게이트 + 3-OS + 실서버 통합 + CLI 기능 · 결과 `summary.txt`) · `install-instantclient-linux.sh`.
+- 기동 구간: `NSQL_TRACE_FRAMES=1` → `[startup] settings · fonts · event_loop · … · app`(누적 ms) + `[frames] … first paint … at +N ms`(09-22 · 39 §2 S-14).
 - 기준 수치(Release · 09-20 · 이 Windows PC): 65 MB 파일 상주 87 MB · 피크 106 MB · 70만 줄 입력 3~4 ms · 그리기 2 ms · 4만 줄 전 기능 입력 8 ms. 맥에서 크게 다르면 원인을 본다.
 
 ## 5. 로컬 메모리에서 저장소로 올린 것(이 PC의 `memory/` → 여기)

@@ -5,6 +5,7 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | docs/ci-result-90 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | mac 90차 push(ae4cd81)의 CI 결과 기록(ci 3-OS · integration 초록 · check-3os 교차 타깃은 CC 없음) |
+| perf/linux-91-full-check | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | Linux 91차 — Oracle Instant Client 스크립트 · 성능 전수(26 §7-7) · Linux 기동 병목 둘(nexa-font 걷기 캐시 · 아이콘 `memo`/지연) · `[startup]` 계측 · `scripts/linux-*.sh` 6종 · 전체 테스트 자동화 · OS별 차이표 |
 | fix/mac-90-login-explorer-modal-logs | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | mac 90차 — 🔧 시작 직후 Details 팝업(`ConnectPanel::new` 저장본) · 🔧 탐색기 키보드 서버 간 이동(`explorers::cross_pane` · PgUp/PgDn 페이지) · 🔧 맥 탭 메뉴 배율 · 🔧 Σ 초기 활성 · ★ 비밀번호 창 최상위 모달 · 🔧 `EXEC` 블록 현재 문 실행(원문 `span` · 왕복 테스트) · 🔧 `PRINT` 값·`VARIABLE` 이름+타입·`Begin.server` · 사용자 샘플 mssql.sql · 기록(journal 90차 · DEVLOG · STATUS · TODO · MILESTONES · 63 · CLAUDE.md) |
 | docs/variables-samples-connect | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 사용자 수정 — 변수 샘플(`examples/variables/mssql.sql` · `oracle.sql`) 끝에 `CONNECT user@host`(비밀번호 없는 꼴 = 입력 창/프롬프트로 묻는다) + 바인드만 있는 `SELECT`(결과 머리줄 = 변수 이름) 예 |
 | docs/ci-result-89-24 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 추가 24 push의 CI 결과 기록(nexa-ui ci · nexa-sql ci·integration 초록) |

@@ -2,7 +2,8 @@
 //!
 //! 256 좌표계의 도형을 4×4 슈퍼샘플링으로 `SIDE`×`SIDE` 1채널 커버리지로 래스터해 [`ToolIcon::Mask`]로 넘긴다 —
 //! 색은 툴바가 테마 기준색(hover/pressed = accent)으로 틴트하므로 여기선 **모양만** 정의한다.
-//! 마스크는 프로세스 수명 동안 한 번만 만들어 `Box::leak`(5개 × 4KB · 툴바가 `&'static`을 요구).
+//! 마스크는 **모양마다 프로세스에서 한 번만** 래스터해 `Box::leak`(`memo` · 툴바가 `&'static`을 요구) — 09-22 Linux 기동 계측: 메모 없이
+//! 호출마다 다시 래스터하면 SVG 경로 아이콘이 개당 ≈15 ms(64×64×16 표본 × 다각형 전체 검사)라 찾기 막대 11개 = 166 ms · 결과 탭마다 20개.
 
 use nexa_ctl::{MenuIcon, ToolIcon};
 
@@ -569,7 +570,28 @@ pub(crate) fn mi_db() -> MenuIcon {
 }
 
 /// 도형 → `SIDE`×`SIDE` 커버리지(4×4 슈퍼샘플링) — 한 번 만들어 영구 보관.
+/// 모양별 메모(키 = 함수 포인터 또는 SVG 경로의 주소·길이·종류). 값은 프로세스 수명 동안 산다.
+fn memo(key: (usize, usize, u8), make: impl FnOnce() -> Vec<u8>) -> &'static [u8] {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Cache = Mutex<HashMap<(usize, usize, u8), &'static [u8]>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let m = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(a) = m.lock().ok().and_then(|g| g.get(&key).copied()) {
+        return a;
+    }
+    let a: &'static [u8] = Box::leak(make().into_boxed_slice());
+    if let Ok(mut g) = m.lock() {
+        g.insert(key, a);
+    }
+    a
+}
+
 fn rasterize(shape: fn(f32, f32) -> bool) -> &'static [u8] {
+    memo((shape as usize, 0, 0), || rasterize_raw(shape))
+}
+
+fn rasterize_raw(shape: fn(f32, f32) -> bool) -> Vec<u8> {
     let unit = 256.0 / SIDE as f32;
     let mut out = Vec::with_capacity((SIDE * SIDE) as usize);
     for py in 0..SIDE {
@@ -587,7 +609,7 @@ fn rasterize(shape: fn(f32, f32) -> bool) -> &'static [u8] {
             out.push((hit * 255 / (SS * SS)) as u8);
         }
     }
-    Box::leak(out.into_boxed_slice())
+    out
 }
 
 fn mask(shape: fn(f32, f32) -> bool) -> ToolIcon {
@@ -1121,20 +1143,30 @@ fn rasterize_dyn(shape: &dyn Fn(f32, f32) -> bool) -> Vec<u8> {
 
 /// Material Symbols `d` → 메뉴/버튼 아이콘 마스크(색은 그리는 쪽이 틴트).
 pub(crate) fn svg_glyph(d: &str) -> MenuIcon {
-    let polys = svg_polys(d);
-    let alpha = rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys));
-    MenuIcon::from_alpha(SIDE, SIDE, &alpha)
+    let alpha = memo((d.as_ptr() as usize, d.len(), 1), || {
+        let polys = svg_polys(d);
+        rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+    });
+    MenuIcon::from_alpha(SIDE, SIDE, alpha)
 }
 
 /// 임의 viewBox SVG `d` → 아이콘 마스크(`evenodd` = 짝홀 채움 · VS Code codicon).
 pub(crate) fn svg_glyph_vb(d: &str, vb: [f32; 4], evenodd: bool) -> MenuIcon {
-    let polys = svg_polys_vb(d, vb);
-    let alpha = if evenodd {
-        rasterize_dyn(&|x, y| in_polys_evenodd(x / M, y / M, &polys))
-    } else {
-        rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
-    };
-    MenuIcon::from_alpha(SIDE, SIDE, &alpha)
+    let vbk = vb
+        .iter()
+        .fold(0usize, |a, v| a.rotate_left(13) ^ v.to_bits() as usize);
+    let alpha = memo(
+        (d.as_ptr() as usize, d.len() ^ vbk, 2 + u8::from(evenodd)),
+        || {
+            let polys = svg_polys_vb(d, vb);
+            if evenodd {
+                rasterize_dyn(&|x, y| in_polys_evenodd(x / M, y / M, &polys))
+            } else {
+                rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+            }
+        },
+    );
+    MenuIcon::from_alpha(SIDE, SIDE, alpha)
 }
 
 /// VS Code codicon 17×17 viewBox(`preserve-case` 계열).
@@ -1206,12 +1238,14 @@ material!(/// `segment` — 선택 범위에서 찾기(≡).
 
 /// Material SVG → 툴바 아이콘(`&'static` 마스크 · 프로세스 수명 1회).
 fn svg_tool(d: &str) -> ToolIcon {
-    let polys = svg_polys(d);
-    let alpha = rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys));
+    let alpha = memo((d.as_ptr() as usize, d.len(), 4), || {
+        let polys = svg_polys(d);
+        rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+    });
     ToolIcon::Mask {
         w: SIDE,
         h: SIDE,
-        alpha: Box::leak(alpha.into_boxed_slice()),
+        alpha,
     }
 }
 
