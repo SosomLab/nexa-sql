@@ -12138,6 +12138,8 @@ impl ApplicationHandler<Wake> for App {
             self.conn_win.redraw();
         }
         let bars_live = self.ed_mut().scrollbars_visible()
+            // 드래그 선택 중 포인터가 편집기 위/아래 밖에 멈춰 있다 → 틱이 자동 스크롤을 이어 간다(T-158 · 그동안만).
+            || self.ed_mut().drag_autoscroll_active()
             || self.grid.bars_visible()
             || self.grid.text_pending()
             || self.git.pending()

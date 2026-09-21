@@ -212,6 +212,9 @@ fn replace_refs_at(sql: &str, refs: &[BindRef], f: impl Fn(usize, &BindRef) -> S
 /// `VALUES (…)` · `SET a = :x`는 해당하지 않는다.
 fn lone_select_items(sql: &str, refs: &[BindRef]) -> Vec<bool> {
     use crate::lexer::{classify, Class};
+    if refs.is_empty() {
+        return Vec::new();
+    }
     let cls = classify(sql);
     let b = sql.as_bytes();
     let code = |i: usize| cls[i] == Class::Code;
@@ -219,23 +222,42 @@ fn lone_select_items(sql: &str, refs: &[BindRef]) -> Vec<bool> {
         "SELECT", "FROM", "WHERE", "GROUP", "ORDER", "HAVING", "SET", "VALUES", "INTO", "ON", "BY",
         "UNION",
     ];
-    refs.iter()
-        .map(|r| {
-            // 앞: 괄호 깊이 · 가장 가까운 절 머리 · 바로 앞 낱말/기호.
-            let (mut depth, mut clause, mut word) = (0i32, String::new(), String::new());
-            let mut prev = String::new();
-            for (i, &byte) in b.iter().enumerate().take(r.start) {
-                if !code(i) {
-                    continue;
+    // ★ **한 번만 훑는다**(문장 길이에 선형): 앞에서부터 괄호 깊이 · 가장 가까운 절 머리 · 바로 앞 낱말/기호를 굴리다가 참조가
+    //   시작하는 자리에서 그 상태를 읽는다. 참조마다 처음부터 다시 훑으면 바인드가 많은 긴 문장(`IN (:a, :b, …)` 수천 개)에서
+    //   길이 × 참조 수가 된다(89차 성능 점검에서 고침).
+    let (mut depth, mut clause_is_select, mut word) = (0i32, false, String::new());
+    // 바로 앞의 의미 있는 것: 낱말이면 그 낱말 · 기호면 그 글자.
+    let mut prev = String::new();
+    let mut out = Vec::with_capacity(refs.len());
+    let mut k = 0;
+    let mut i = 0;
+    while i < b.len() && k < refs.len() {
+        if i == refs[k].start {
+            if !word.is_empty() {
+                if depth == 0 && CLAUSES.contains(&word.as_str()) {
+                    clause_is_select = word == "SELECT";
                 }
-                let c = byte as char;
-                if c.is_ascii_alphanumeric() || c == '_' {
-                    word.push(c.to_ascii_uppercase());
-                    continue;
-                }
+                prev = std::mem::take(&mut word);
+            }
+            let r = &refs[k];
+            let before_ok = depth == 0
+                && clause_is_select
+                && matches!(prev.as_str(), "SELECT" | "DISTINCT" | "ALL" | ",");
+            out.push(before_ok && lone_after(b, &code, r.end));
+            // 바인드 자체는 "낱말도 기호도 아닌 값"이다 — 뒤따르는 것의 `prev`가 되지 않게 표시만 남긴다.
+            prev = String::from("?");
+            i = r.end;
+            k += 1;
+            continue;
+        }
+        if code(i) {
+            let c = b[i] as char;
+            if c.is_ascii_alphanumeric() || c == '_' {
+                word.push(c.to_ascii_uppercase());
+            } else {
                 if !word.is_empty() {
                     if depth == 0 && CLAUSES.contains(&word.as_str()) {
-                        clause = word.clone();
+                        clause_is_select = word == "SELECT";
                     }
                     prev = std::mem::take(&mut word);
                 }
@@ -245,42 +267,36 @@ fn lone_select_items(sql: &str, refs: &[BindRef]) -> Vec<bool> {
                     _ => {}
                 }
                 if !c.is_whitespace() {
-                    prev = c.to_string();
+                    prev.clear();
+                    prev.push(c);
                 }
             }
-            if !word.is_empty() {
-                if depth == 0 && CLAUSES.contains(&word.as_str()) {
-                    clause = word.clone();
-                }
-                prev = word;
-            }
-            let before_ok = depth == 0
-                && clause == "SELECT"
-                && matches!(prev.as_str(), "SELECT" | "DISTINCT" | "ALL" | ",");
-            if !before_ok {
-                return false;
-            }
-            // 뒤: 첫 의미 있는 글자/낱말.
-            let mut i = r.end;
-            while i < b.len() && (!code(i) || (b[i] as char).is_whitespace()) {
-                i += 1;
-            }
-            if i >= b.len() {
-                return true;
-            }
-            let c = b[i] as char;
-            if c == ',' || c == ';' {
-                return true;
-            }
-            let mut w = String::new();
-            while i < b.len() && code(i) && ((b[i] as char).is_ascii_alphanumeric() || b[i] == b'_')
-            {
-                w.push((b[i] as char).to_ascii_uppercase());
-                i += 1;
-            }
-            w == "FROM"
-        })
-        .collect()
+        }
+        i += 1;
+    }
+    out.resize(refs.len(), false);
+    out
+}
+
+/// 바인드 뒤: 첫 의미 있는 것이 `,` · `;` · 끝 · `FROM`이면 그 항목은 바인드 하나로 끝난다.
+fn lone_after(b: &[u8], code: &dyn Fn(usize) -> bool, end: usize) -> bool {
+    let mut i = end;
+    while i < b.len() && (!code(i) || (b[i] as char).is_whitespace()) {
+        i += 1;
+    }
+    if i >= b.len() {
+        return true;
+    }
+    let c = b[i] as char;
+    if c == ',' || c == ';' {
+        return true;
+    }
+    let mut w = String::new();
+    while i < b.len() && code(i) && ((b[i] as char).is_ascii_alphanumeric() || b[i] == b'_') {
+        w.push((b[i] as char).to_ascii_uppercase());
+        i += 1;
+    }
+    w == "FROM"
 }
 
 fn replace_refs(sql: &str, refs: &[BindRef], f: impl Fn(&BindRef) -> String) -> String {
@@ -388,10 +404,12 @@ pub fn rewrite_select_into_tsql(sql: &str) -> String {
     let Some(into) = find_word_ci(sql, &classes, "INTO") else {
         return sql.to_string();
     };
-    let Some(from_rel) = find_word_ci(&sql[into..], &classify(&sql[into..]), "FROM") else {
-        return sql.to_string();
+    // `FROM`이 없는 꼴(`SELECT 식 INTO :V` — T-SQL에는 DUAL이 없다 · T-162 ②): INTO 목록은 문장 끝(`;` 앞)까지이고 꼬리는 없다.
+    //   종전에는 고치지 않고 그대로 보내 `SELECT 식 INTO @V`가 구문 오류(Msg 102)였다.
+    let from = match find_word_ci(&sql[into..], &classify(&sql[into..]), "FROM") {
+        Some(rel) => into + rel,
+        None => sql.trim_end().trim_end_matches(';').trim_end().len(),
     };
-    let from = into + from_rel;
     let select_kw = sql.to_ascii_uppercase().find("SELECT").unwrap_or(0);
     let select_list = &sql[select_kw + 6..into];
     // `TOP n` · `TOP (n)` · `DISTINCT` 접두는 대입 앞에 남긴다(T-SQL: SELECT TOP 1 @v = col …).
@@ -422,11 +440,18 @@ pub fn rewrite_select_into_tsql(sql: &str) -> String {
     } else {
         format!("{prefix} ")
     };
+    let tail = sql[from..].trim_start();
+    if tail.is_empty() || tail.starts_with(';') {
+        return format!(
+            "{}SELECT {prefix}{}{tail}",
+            &sql[..select_kw],
+            assigns.join(", ")
+        );
+    }
     format!(
-        "{}SELECT {prefix}{} {}",
+        "{}SELECT {prefix}{} {tail}",
         &sql[..select_kw],
-        assigns.join(", "),
-        sql[from..].trim_start()
+        assigns.join(", ")
     )
 }
 
@@ -810,6 +835,54 @@ mod tests {
         assert_eq!(
             t("UPDATE t SET a = :V_A, b = :V_B"),
             "UPDATE t SET a = @V_A, b = @V_B"
+        );
+    }
+
+    /// `FROM` 없는 `SELECT 식 INTO :V`(T-162 ②) — T-SQL 대입 꼴로 고친다 · `FROM`이 있는 꼴은 종전 그대로.
+    #[test]
+    fn tsql_select_into_without_from() {
+        assert_eq!(
+            rewrite_select_into_tsql("SELECT DB_NAME(), 1 + 2 INTO :v_db, :v_n;"),
+            "SELECT :V_DB = DB_NAME(), :V_N = 1 + 2;"
+        );
+        assert_eq!(
+            rewrite_select_into_tsql("SELECT GETDATE() INTO :v_now"),
+            "SELECT :V_NOW = GETDATE()"
+        );
+        assert_eq!(
+            rewrite_select_into_tsql("SELECT name INTO :v FROM sys.objects WHERE object_id = 1"),
+            "SELECT :V = name FROM sys.objects WHERE object_id = 1"
+        );
+        // 대상이 바인드가 아니면(진짜 `SELECT … INTO 새_테이블`) 건드리지 않는다.
+        assert_eq!(
+            rewrite_select_into_tsql("SELECT 1 AS a INTO #t"),
+            "SELECT 1 AS a INTO #t"
+        );
+    }
+
+    /// 바인드가 수천 개인 긴 문장도 준비 시간이 길이에 선형이다(열 이름 판정이 참조마다 처음부터 훑던 것을 한 번 훑기로).
+    #[test]
+    fn many_binds_prepare_in_linear_time() {
+        let n = 5000;
+        let mut sql = String::from("SELECT :B0, c FROM t WHERE c IN (");
+        for k in 1..n {
+            sql.push_str(&format!(":B{k}, "));
+        }
+        sql.push_str(":B0)");
+        let mut v = VarStore::new();
+        let t0 = std::time::Instant::now();
+        let p = prepare(Dialect::Mssql, &sql, &mut v, false);
+        assert!(p
+            .sql
+            .starts_with("SELECT @B0 AS [:B0], c FROM t WHERE c IN (@B1, "));
+        assert!(
+            !p.sql[30..].contains(" AS ["),
+            "IN 목록의 바인드에는 열 이름을 붙이지 않는다"
+        );
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            t0.elapsed()
         );
     }
 

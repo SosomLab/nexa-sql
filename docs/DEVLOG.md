@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-21 (89차 추가 24 · win)** — "미사용 확장" 라벨 · 성능 재점검(회귀 없음 · `lone_select_items` 한 번 훑기) · T-161 감시 시험 = 조건 대기 · T-132 ③ `--password-stdin` · T-162 ② FROM 없는 `SELECT … INTO :V`(T-SQL) ③ 비밀 이름 메아리 가림 · T-158 드래그 자동 스크롤 틱(`drag_autoscroll_active`) · 측정 스크립트 `NSQL_NO_ACTIVATE` → [journal](journal/2026-09-21.md)
 - **2026-09-21 (89차 추가 21~23 · win · push 뒤 · 미커밋)** — SQL Server/PG 바인드만 있는 SELECT 항목에 변수 표기를 열 이름으로(`lone_select_items`) · mssql 읽기 전용 숫자 바인드 = `BIGINT`/`DECIMAL(38,s)`(`declared_type`) · ★ CLI `opener` = 비밀번호 자리가 없으면 서버에 가지 않는다(`ErrPasswordRequiredCli`) · 저장하지 않은 탭 닫기 = 탭 옆 메뉴(저장하고 닫기 → 저장 창 · `editor.close_unsaved`) → [journal](journal/2026-09-21.md)
 - **2026-09-21 (89차 추가 20 · win)** — 🔧 `CONNECT <프로필 이름>`을 되풀이하면 매번 다시 접속하던 결함(이름뿐인 스펙은 어떤 접속과도 같은 서버가 아니었다) → 저장소에서 완성한 스펙으로 비교(`sessions::bare_profile_name`) → [journal](journal/2026-09-21.md)
 - **2026-09-21 (89차 추가 19 · win)** — 오프라인 서버에서 새로 고침 = 읽어 둔 목록을 "⚠ 접속 안 됨" 줄로 + 경고 토스트·상태줄(`ExplorerAction::Notice` · `ExpOfflineRefresh`) · 프로필 이름 없는 접속도 루트에 `offline` 표시 → [journal](journal/2026-09-21.md)

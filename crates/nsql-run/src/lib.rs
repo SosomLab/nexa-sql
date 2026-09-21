@@ -1581,7 +1581,13 @@ impl Runner {
                 self.execute(index, item, prepared, expect_out, emit)
             }
             Action::LocalAssign { name, value } => {
-                emit(RunEvent::Message(format!(":{name} = {}", value.display())));
+                // 대입 메아리 — 비밀 이름(D-140)은 값을 찍지 않는다(T-162 ③: CLI 출력·GUI 로그 창·로그 파일로 새는 길이었다).
+                let shown = if nsql_script::looks_secret(&name) {
+                    "******".to_string()
+                } else {
+                    value.display()
+                };
+                emit(RunEvent::Message(format!(":{name} = {shown}")));
                 true
             }
             Action::Print(pairs) => {

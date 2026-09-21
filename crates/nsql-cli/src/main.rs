@@ -35,6 +35,8 @@ struct Opts {
     dialect: Dialect,
     format: Format,
     no_prompt: bool,
+    /// 비밀번호를 표준 입력의 첫 줄에서 읽는다(T-132 ③).
+    password_stdin: bool,
     /// `-v 이름=값`(여러 번) — 스크립트가 돌기 전에 치환 변수(`&이름`)를 정의한다(T-153 · `DEFINE`과 같은 저장소).
     defines: Vec<(String, String)>,
     /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
@@ -99,6 +101,7 @@ fn parse_opts() -> Opts {
         dialect: Dialect::Oracle,
         format: default_format,
         no_prompt: false,
+        password_stdin: false,
         defines: Vec::new(),
         timing: false,
         log: false,
@@ -201,6 +204,7 @@ fn parse_opts() -> Opts {
             }
             "-x" | "--expanded" => o.overflow = Some(Overflow::Expanded),
             "--no-prompt" => o.no_prompt = true,
+            "--password-stdin" => o.password_stdin = true,
             "-v" | "--var" | "--define" => {
                 let v = val("-v");
                 match parse_define(&v) {
@@ -1169,7 +1173,14 @@ impl Printer {
             }
             RunEvent::Print { pairs } => {
                 for (n, v) in pairs {
-                    let _ = writeln!(out, "{n} = {}", v.display());
+                    // 비밀 이름 규칙(D-140 · `*PASS*` `*PWD*` `*SECRET*` `*TOKEN*`)은 여기서도 지킨다 — `SHOW VARIABLES`는
+                    // 가리는데 대입 메아리·`PRINT`는 값을 그대로 찍고 있었다(T-162 ③ · 터미널 기록·CI 로그로 새는 길).
+                    let bare = n.trim_start_matches([':', '&', '@']);
+                    if nsql_script::looks_secret(bare) {
+                        let _ = writeln!(out, "{n} = ******");
+                    } else {
+                        let _ = writeln!(out, "{n} = {}", v.display());
+                    }
                 }
             }
             RunEvent::Message(m) => {
@@ -1562,6 +1573,13 @@ fn main() {
         nsql_i18n::set_lang(s.lang());
     }
     let o = parse_opts();
+    // `--password-stdin`(T-132 ③): 표준 입력의 첫 줄 = 비밀번호. 스크립트를 표준 입력(`-`)에서 읽는 실행과는 함께 쓸 수 없다.
+    if o.password_stdin
+        && (o.positional.first().is_some_and(|p| p == "-") || !term::read_password_from_stdin())
+    {
+        eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliErrPasswordStdin));
+        std::process::exit(2);
+    }
     let code = match o.cmd.as_str() {
         "plan" => {
             let Some(path) = o.positional.first() else {

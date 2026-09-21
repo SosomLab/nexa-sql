@@ -137,6 +137,7 @@
 | hover 페이드(행·버튼·콤보) | `ui.fade_fast/slow` · 의도 70 ms | `ui.animations`(신설 · auto/on/off · auto = OS 동작 줄이기) | auto | auto | off | `IntentFade` |
 | 스크롤바 페이드·숨김 | `HIDE_MS` | `ui.animations` | — | — | off | nexa-ctl `scroll` |
 | 캐럿 깜빡임 | 500 ms | `editor.caret_blink`(신설) | 켬 | 켬 | 끔 | `next_blink` |
+| 드래그 자동 스크롤(T-158 · 09-21) | 50 ms · 걸음당 1~12줄 | `ui.max_fps`(프레임 상한) | 켬 | 켬 | 켬 — **드래그 선택 중 + 포인터가 편집기 위/아래 밖일 때만** 돈다(새 타이머·스레드 0 · 놓으면 0) | nexa-ctl `TextBox::tick` · `drag_autoscroll_active` |
 | 로딩 점 애니메이션 | 300 ms | `ui.animations` | — | — | off(고정 "Loading…") | `explorer` · `FilePicker` |
 | 툴팁 | `ui.tooltip_delay_ms` · `tabs.tooltip` · `explorer.tooltip` | 기존 | — | — | — | — |
 | 슬라이드(패널) | `ui.slide_ms` | `ui.animations` | — | — | 0 | `conn_win` |

@@ -5,9 +5,29 @@ use std::io::{self, BufRead, IsTerminal, Write};
 /// ★ 비밀번호가 비어 있으면 채운다(사용자 09-16 "CLI에서 암호를 물어보지 않고 접속 테스트 오류") — 우선순위:
 /// ① 스펙에 이미 있음 ② 환경변수 `NSQL_PASSWORD`(docs/27 · 배치) ③ 터미널이면 숨김 프롬프트(sqlplus/psql 관례).
 /// `no_prompt`이거나 터미널이 아니면 묻지 않는다(배치는 빈 비밀번호로 시도해 서버 오류를 그대로 보여 준다). SQLite는 비밀번호가 없다.
+/// `--password-stdin`으로 받은 비밀번호(T-132 ③) — 명령줄·환경 변수·셸 기록에 남기지 않는 길. `Secret`이라 끝날 때 덮어써진다.
+static STDIN_PASSWORD: std::sync::OnceLock<nsql_core::Secret> = std::sync::OnceLock::new();
+
+/// 표준 입력의 첫 줄을 비밀번호로 읽어 둔다(줄 끝 문자는 뗀다). 읽을 것이 없으면 `false`.
+pub(crate) fn read_password_from_stdin() -> bool {
+    let mut line = String::new();
+    match io::stdin().lock().read_line(&mut line) {
+        Ok(n) if n > 0 => {
+            let kept = line.trim_end_matches(['\r', '\n']).to_string();
+            nsql_core::secret::wipe_string(&mut line);
+            STDIN_PASSWORD.set(nsql_core::Secret::new(kept)).is_ok()
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bool, label: &str) {
     // `user:@host` = 빈 비밀번호를 **명시**한 것 → 묻지 않는다(사용자 09-21) · `user@host`(없음)일 때만 채운다.
     if spec.password.is_some() || spec.dialect == Some(nsql_core::Dialect::Sqlite) {
+        return;
+    }
+    if let Some(p) = STDIN_PASSWORD.get() {
+        spec.password = Some(p.expose().to_string());
         return;
     }
     if let Ok(p) = std::env::var("NSQL_PASSWORD") {

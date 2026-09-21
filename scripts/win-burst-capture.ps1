@@ -52,6 +52,7 @@ public class NxBurst {
 [NxBurst]::SetProcessDPIAware() | Out-Null
 New-Item -ItemType Directory -Force $Out | Out-Null
 $env:NSQL_HOME = $HomeDir
+$env:NSQL_NO_ACTIVATE = "1"  # 시험 창이 사용자의 전경 포커스를 가져가지 않게(docs/61 §4)
 $env:NSQL_STARTUP_CMD = $Cmd
 if ($ArgList) { $p = Start-Process -FilePath $Exe -ArgumentList $ArgList -WorkingDirectory (Split-Path $Exe) -PassThru }
 else { $p = Start-Process -FilePath $Exe -WorkingDirectory (Split-Path $Exe) -PassThru }

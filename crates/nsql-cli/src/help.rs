@@ -65,6 +65,12 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--password-stdin",
+        arg: "",
+        desc: Msg::HlpOptPasswordStdin,
+        setting: None,
+    },
+    Opt {
         flags: "--no-prompt",
         arg: "",
         desc: Msg::HlpOptNoPrompt,
@@ -177,6 +183,7 @@ const CONN_OPTS: &[&str] = &[
     "--db",
     "-u",
     "-p",
+    "--password-stdin",
     "--no-prompt",
 ];
 
@@ -187,7 +194,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdRun,
         detail: Msg::HlpCmdRunDetail,
         args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
         notes: &[],
         examples: &[
             "nsql run -c prod report.sql",
@@ -203,7 +210,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdShell,
         detail: Msg::HlpCmdShellDetail,
         args: &[],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
         notes: &[],
         examples: &["nsql shell -c prod", "nsql shell -c prod --width 160", "nsql shell -c sqlite:app.db -d sqlite"],
     },
@@ -213,7 +220,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdExport,
         detail: Msg::HlpCmdExportDetail,
         args: &[],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-q", "-t", "-f", "-o", "--max-rows"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q", "-t", "-f", "-o", "--max-rows"],
         notes: &[("-f, --format", Msg::HlpExportFmtDefault)],
         examples: &["nsql export -c prod -t EMP -f csv -o emp.csv", "nsql export -c prod -q \"SELECT * FROM emp WHERE deptno=10\" -f insert:EMP"],
     },
@@ -223,7 +230,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdExplain,
         detail: Msg::HlpCmdExplainDetail,
         args: &[("<file>", Msg::HlpArgExplainFile)],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-q"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q"],
         notes: &[],
         examples: &["nsql explain -c prod -q \"SELECT * FROM emp\"", "nsql explain -c prod slow.sql"],
     },
