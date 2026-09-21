@@ -254,6 +254,7 @@
 | 실패 확인 즉시 재프로브 | 동일 | 프로필당 진행 중 1개(≤4초) · 대상 집합 밖 프로필은 **1회로 끝(재예약 금지)** | 없음 | `note_failure` · `drain_probes`(T-63) |
 | 실행 전 빠른 판정 | SYN 1 | 사용자 실행 시 · 신호등이 초록이 아닐 때만 | 없음 | `worker::Cmd::Run.preflight` |
 | 접속 테스트 | DB 로그인 1 | 클릭당 1 · 같은 프로필 잠금 · **동시 `connect.max_concurrent`(4) · 초과 FIFO 큐** | 없음 | `App::start_test` · `dispatch_attempts` |
+| CLI 접속(`-c` · 스크립트 `CONNECT` · `conn test`) | DB 로그인 1 | 명령당 1 · **비밀번호 자리가 없으면(환경 변수·터미널로도 못 채우면) 로그인을 시도하지 않는다**(09-21 · 빈 비밀번호 시도가 쌓여 계정이 잠기는 것을 막는다) | 없음 | `nsql-cli opener` · `password_missing` |
 | 접속(Connect) | DB 로그인 1 | 클릭당 1 · 같은 서버면 세션 유지 · 위 큐 공유 | **없음**(자동 재접속 금지) | `handle_panel_action(Connect)` · `Runner::connect` |
 | 공유 연결 추가(DR-34 · [52 §2-1](52-session-modes.md)) | DB 로그인 1 | 접속 창 클릭당 1 · **같은 서버·DB·계정은 중복 접속 없음**(기존 연결 활성화) · 동시 유지 상한 `session.max_shared`(8) · 위 큐 공유 | 없음 | `App::login_place` · `sessions::login_plan` |
 | 전용 세션 `CONNECT` · 개별 모드 탭 접속 | DB 로그인 1 | 사용자 실행 1회당 1 · 개별 모드 = 탭이 **처음 활성화될 때** 1(안 본 탭은 0) · 상한 `session.max_private`(8) | 없음 | `App::place_run` · `sync_sess` · `connect_quietly` |

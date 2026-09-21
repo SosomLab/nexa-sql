@@ -248,6 +248,23 @@ pub fn route(sql: &str, has_params: bool, has_outs: bool) -> Route {
     }
 }
 
+/// 매개변수의 T-SQL 선언 타입. 숫자 변수는 값이 돌아올 수 있으면(`OUT`/`IN OUT`) 넉넉한 `DECIMAL(38,10)`이지만, **읽기만 하는
+/// 바인드**는 지금 값에 맞춘다 — 정수 = `BIGINT` · 소수 = 그 자릿수의 `DECIMAL(38,s)`. 그러지 않으면 `SELECT :V_LIMIT`이
+/// `3.0000000000`으로 돌아온다(사용자 09-21 캡처 · 결과 셀은 서버가 준 자릿수를 그대로 보여 주는 것이 맞으므로 보내는 쪽을 고친다).
+fn declared_type(p: &nsql_core::BindParam) -> String {
+    if p.direction == Direction::In && p.ty == nsql_core::VarType::Number {
+        match &p.value {
+            Value::Int(_) => return "BIGINT".into(),
+            Value::Decimal(d) => {
+                let scale = d.split_once('.').map_or(0, |(_, f)| f.len()).min(38);
+                return format!("DECIMAL(38,{scale})");
+            }
+            _ => {}
+        }
+    }
+    p.ty.tsql_type()
+}
+
 /// 배치 렌더링 — 순수 함수(테스트 대상). `(배치 텍스트, 위치 파라미터, 트레일러 컬럼 이름들)`.
 pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
     let mut head = String::new();
@@ -257,7 +274,7 @@ pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
         head.push_str(&format!(
             "DECLARE @{} {} = @P{};\n",
             p.name,
-            p.ty.tsql_type(),
+            declared_type(p),
             i + 1
         ));
         params.push(p.value.clone());

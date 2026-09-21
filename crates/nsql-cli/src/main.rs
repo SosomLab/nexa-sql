@@ -238,12 +238,38 @@ fn read_source(path: &str) -> String {
     }
 }
 
+/// 접속을 여는 한 자리(시작 `-c` · 스크립트 안의 `CONNECT` · `conn test`). ★ 비밀번호 자리가 없는 대상(`user@host`)은
+/// 환경 변수 → 터미널 프롬프트로 채우고, **그래도 없으면 서버에 가지 않고 거절한다**(09-21: 터미널이 아닌 실행에서 스크립트의
+/// `CONNECT user@host`가 빈 비밀번호로 로그인을 시도해 서버에 실패 기록을 남겼다 — 되풀이되면 계정이 잠긴다 · GUI와 같은 규칙).
+/// 빈 비밀번호로 붙으려면 `user:@host`로 명시한다.
 fn opener(default_dialect: Dialect) -> Opener {
     Box::new(
         move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-            nsql_drivers::open(spec, default_dialect)
+            if !password_missing(spec, default_dialect) {
+                return nsql_drivers::open(spec, default_dialect);
+            }
+            let mut filled = spec.clone();
+            let label = spec.redacted();
+            term::ensure_password(&mut filled, false, &label);
+            if password_missing(&filled, default_dialect) {
+                return Err(DbError {
+                    code: None,
+                    message: nsql_i18n::tf(Msg::ErrPasswordRequiredCli, &[&label]),
+                    position: None,
+                });
+            }
+            let r = nsql_drivers::open(&filled, default_dialect);
+            nsql_core::secret::wipe_opt(&mut filled.password);
+            r
         },
     )
+}
+
+/// 비밀번호를 채워야 하는 대상인가 — SQLite가 아니고 · 호스트가 있고 · 비밀번호 자리가 없다(`user:@host`의 빈 값은 "있음").
+fn password_missing(spec: &ConnectSpec, default_dialect: Dialect) -> bool {
+    spec.dialect.unwrap_or(default_dialect) != Dialect::Sqlite
+        && spec.host.is_some()
+        && spec.password.is_none()
 }
 
 /// 스크립트 `CONNECT <프로필>` 해석기 — 저장소는 호출마다 연다(다른 인스턴스가 방금 저장한 프로필도 보인다).

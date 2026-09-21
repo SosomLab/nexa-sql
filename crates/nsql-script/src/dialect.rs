@@ -105,8 +105,16 @@ pub fn prepare_with(caps: &Caps, sql: &str, vars: &mut VarStore, inout: bool) ->
         },
         Marker::AtName => {
             let rewritten = rewrite_select_into_tsql(sql);
-            let rewritten = replace_refs(&rewritten, &extract_binds(&rewritten), |r| {
-                format!("@{}", r.name)
+            // ★ 바인드 하나뿐인 SELECT 항목에는 **변수 표기를 열 이름으로** 붙인다(사용자 09-21): Oracle은 `:V`를 그대로 열 이름으로
+            //   돌려주지만 SQL Server는 매개변수만 있는 열에 이름을 주지 않아 결과 머리줄이 비었다.
+            let refs2 = extract_binds(&rewritten);
+            let lone = lone_select_items(&rewritten, &refs2);
+            let rewritten = replace_refs_at(&rewritten, &refs2, |k, r| {
+                if lone[k] {
+                    format!("@{} AS [{}]", r.name, &rewritten[r.start..r.end])
+                } else {
+                    format!("@{}", r.name)
+                }
             });
             let params: Vec<BindParam> = names.iter().map(|n| param_for(n)).collect();
             if needs_declare_prepend(&rewritten) {
@@ -140,9 +148,15 @@ pub fn prepare_with(caps: &Caps, sql: &str, vars: &mut VarStore, inout: bool) ->
             }
         }
         Marker::DollarN => {
-            let sql2 = replace_refs(sql, &refs, |r| {
+            // PostgreSQL도 매개변수만 있는 열은 `?column?`으로 온다 → 같은 규칙으로 변수 표기를 열 이름으로.
+            let lone = lone_select_items(sql, &refs);
+            let sql2 = replace_refs_at(sql, &refs, |k, r| {
                 let idx = names.iter().position(|n| n == &r.name).map_or(0, |i| i + 1);
-                format!("${idx}")
+                if lone[k] {
+                    format!("${idx} AS \"{}\"", &sql[r.start..r.end])
+                } else {
+                    format!("${idx}")
+                }
             });
             Prepared {
                 sql: sql2,
@@ -177,6 +191,96 @@ fn bind_type(ty: &VarType, declared: bool, inout: bool) -> VarType {
         VarType::Varchar2(n) if inout && !declared => VarType::Varchar2((*n).max(4000)),
         other => other.clone(),
     }
+}
+
+/// [`replace_refs`]와 같되 몇 번째 참조인지도 준다.
+fn replace_refs_at(sql: &str, refs: &[BindRef], f: impl Fn(usize, &BindRef) -> String) -> String {
+    let mut out = String::with_capacity(sql.len() + refs.len() * 8);
+    let mut last = 0;
+    for (k, r) in refs.iter().enumerate() {
+        out.push_str(&sql[last..r.start]);
+        out.push_str(&f(k, r));
+        last = r.end;
+    }
+    out.push_str(&sql[last..]);
+    out
+}
+
+/// 참조마다 "**바인드 하나뿐인 SELECT 항목**인가"(별칭도 연산도 없다) — 그런 열은 서버가 이름을 주지 않는다(SQL Server = 빈 이름 ·
+/// PostgreSQL = `?column?`). 조건: 괄호 밖 · 가장 가까운 절 머리가 `SELECT` · 앞 = `SELECT`/`DISTINCT`/`ALL`/`,` ·
+/// 뒤 = `,`/`;`/끝/`FROM`. 주석·글자 상수 안은 보지 않는다(`lexer::classify`). `ORDER BY :a, :b` · 함수 인자 · `IN (…)` ·
+/// `VALUES (…)` · `SET a = :x`는 해당하지 않는다.
+fn lone_select_items(sql: &str, refs: &[BindRef]) -> Vec<bool> {
+    use crate::lexer::{classify, Class};
+    let cls = classify(sql);
+    let b = sql.as_bytes();
+    let code = |i: usize| cls[i] == Class::Code;
+    const CLAUSES: [&str; 12] = [
+        "SELECT", "FROM", "WHERE", "GROUP", "ORDER", "HAVING", "SET", "VALUES", "INTO", "ON", "BY",
+        "UNION",
+    ];
+    refs.iter()
+        .map(|r| {
+            // 앞: 괄호 깊이 · 가장 가까운 절 머리 · 바로 앞 낱말/기호.
+            let (mut depth, mut clause, mut word) = (0i32, String::new(), String::new());
+            let mut prev = String::new();
+            for (i, &byte) in b.iter().enumerate().take(r.start) {
+                if !code(i) {
+                    continue;
+                }
+                let c = byte as char;
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    word.push(c.to_ascii_uppercase());
+                    continue;
+                }
+                if !word.is_empty() {
+                    if depth == 0 && CLAUSES.contains(&word.as_str()) {
+                        clause = word.clone();
+                    }
+                    prev = std::mem::take(&mut word);
+                }
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                if !c.is_whitespace() {
+                    prev = c.to_string();
+                }
+            }
+            if !word.is_empty() {
+                if depth == 0 && CLAUSES.contains(&word.as_str()) {
+                    clause = word.clone();
+                }
+                prev = word;
+            }
+            let before_ok = depth == 0
+                && clause == "SELECT"
+                && matches!(prev.as_str(), "SELECT" | "DISTINCT" | "ALL" | ",");
+            if !before_ok {
+                return false;
+            }
+            // 뒤: 첫 의미 있는 글자/낱말.
+            let mut i = r.end;
+            while i < b.len() && (!code(i) || (b[i] as char).is_whitespace()) {
+                i += 1;
+            }
+            if i >= b.len() {
+                return true;
+            }
+            let c = b[i] as char;
+            if c == ',' || c == ';' {
+                return true;
+            }
+            let mut w = String::new();
+            while i < b.len() && code(i) && ((b[i] as char).is_ascii_alphanumeric() || b[i] == b'_')
+            {
+                w.push((b[i] as char).to_ascii_uppercase());
+                i += 1;
+            }
+            w == "FROM"
+        })
+        .collect()
 }
 
 fn replace_refs(sql: &str, refs: &[BindRef], f: impl Fn(&BindRef) -> String) -> String {
@@ -651,7 +755,11 @@ mod tests {
             &mut v,
             false,
         );
-        assert_eq!(p.sql, "SELECT $1, $2, $1");
+        // 바인드 하나뿐인 SELECT 항목 = 변수 표기가 열 이름(서버는 `?column?`을 준다 · 09-21).
+        assert_eq!(
+            p.sql,
+            "SELECT $1 AS \":V_PROJECT_CD\", $2 AS \":V_MP_VRSN_SEQ\", $1 AS \":V_PROJECT_CD\""
+        );
         assert_eq!(p.params.len(), 2);
         let p = prepare(
             Dialect::Mysql,
@@ -662,6 +770,47 @@ mod tests {
         assert_eq!(p.sql, "SELECT ?, ?, ?");
         assert_eq!(p.params.len(), 3);
         assert_eq!(p.params[2].name, "V_PROJECT_CD");
+    }
+
+    /// 바인드 하나뿐인 SELECT 항목에만 열 이름을 붙인다(사용자 09-21 — SQL Server 결과 머리줄이 비었다). 연산·함수 인자·
+    /// `IN (…)`·`WHERE`·`ORDER BY`·별칭이 이미 있는 항목·주석/글자 상수 안은 건드리지 않는다.
+    #[test]
+    fn lone_bind_select_items_get_the_variable_as_column_name() {
+        let t = |sql: &str| {
+            let mut v = store();
+            prepare(Dialect::Mssql, sql, &mut v, false).sql
+        };
+        assert_eq!(
+            t("SELECT\n\t:V_A\n,\t:V_B\n;"),
+            "SELECT\n\t@V_A AS [:V_A]\n,\t@V_B AS [:V_B]\n;"
+        );
+        assert_eq!(t("SELECT :v_a FROM t"), "SELECT @V_A AS [:v_a] FROM t");
+        assert_eq!(
+            t("SELECT DISTINCT :V_A, c FROM t"),
+            "SELECT DISTINCT @V_A AS [:V_A], c FROM t"
+        );
+        // 해당 없음.
+        assert_eq!(
+            t("SELECT :V_A + 1, :V_B AS b"),
+            "SELECT @V_A + 1, @V_B AS b"
+        );
+        assert_eq!(t("SELECT f(:V_A, :V_B), c"), "SELECT f(@V_A, @V_B), c");
+        assert_eq!(
+            t("SELECT c FROM t WHERE a = :V_A AND b IN (:V_A, :V_B)"),
+            "SELECT c FROM t WHERE a = @V_A AND b IN (@V_A, @V_B)"
+        );
+        assert_eq!(
+            t("SELECT c FROM t ORDER BY :V_A, :V_B"),
+            "SELECT c FROM t ORDER BY @V_A, @V_B"
+        );
+        assert_eq!(
+            t("SELECT (SELECT :V_A), ':V_B' -- , :V_B\n"),
+            "SELECT (SELECT @V_A), ':V_B' -- , :V_B\n"
+        );
+        assert_eq!(
+            t("UPDATE t SET a = :V_A, b = :V_B"),
+            "UPDATE t SET a = @V_A, b = @V_B"
+        );
     }
 
     #[test]

@@ -175,6 +175,8 @@ struct App {
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
     /// 워커가 비밀번호를 묻는다(세션 id · 가린 접속 문자열) — 입력 창은 이벤트 루프에서 연다.
     pw_pending: Option<(u64, String, bool)>,
+    /// "저장하고 닫기"를 고른 탭(id) — 저장이 끝나(저장 창 포함) 더는 바뀐 것이 없으면 닫는다 · 저장을 취소·실패하면 닫지 않는다.
+    close_after_save: Option<u64>,
     /// ★ **닫힌 창의 키가 메인 창으로 새지 않게**(사용자 09-21 — 비밀번호 창의 Enter가 편집기에 줄바꿈을 넣었다): 입력 창을
     /// 키로 닫은 시각. 그 키가 **떼어질 때까지** 메인 창에 오는 자동 반복 누름을 버린다([`key_guard_step`]).
     key_guard: Option<Instant>,
@@ -2117,7 +2119,83 @@ impl App {
         self.redraw();
     }
 
+    /// 저장하지 않은 탭을 닫으려 한다(X · Ctrl+W · 탭 메뉴 · 모두 닫기) — 설정 `editor.close_unsaved`: `ask` = 탭 옆 메뉴로 묻는다 ·
+    /// `twice` = 종전의 2단 닫기.
+    fn ask_save_close(&mut self, i: usize) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        if self.settings.get("editor.close_unsaved") == Some("twice") {
+            self.editors.close_tab_two_step(i);
+            return;
+        }
+        // 저장은 **활성 탭**에 하는 동작이다 → 닫으려는 탭을 앞으로.
+        self.editors.switch(i);
+        self.sync_grid_tab();
+        let title = self
+            .editors
+            .tab_list()
+            .into_iter()
+            .nth(i)
+            .map(|(_, t, _)| t)
+            .unwrap_or_default();
+        self.sess.status = tf(Msg::StUnsavedAsk, &[&title]);
+        let items = vec![
+            CtxItem::item("close.save", t(Msg::MnCloseSave)),
+            CtxItem::item("close.discard", t(Msg::MnCloseDiscard)),
+            CtxItem::Separator,
+            CtxItem::item("close.cancel", t(Msg::MnCloseCancel)),
+        ];
+        let r = self
+            .editors
+            .tab_rect(i)
+            .map_or(self.status_tx_rect, |r| Rect::new(r.x, r.bottom(), 0, 0));
+        self.open_status_popup(r, items);
+        self.redraw();
+    }
+
+    /// 닫기 확인 메뉴의 답.
+    fn close_pick(&mut self, id: &str) {
+        let tab = self.editors.active_id();
+        match id {
+            "close.discard" => {
+                if let Some(i) = self.editors.index_of_id(tab) {
+                    self.editors.close_tab_forced(i);
+                    self.sync_grid_tab();
+                }
+            }
+            "close.save" => {
+                self.close_after_save = Some(tab);
+                match self.editors.active_path() {
+                    Some(p) => {
+                        self.save_to(&p);
+                        self.finish_close_after_save();
+                    }
+                    // 이름 없는 스크립트 = 저장 창(이미 있는 이름은 그 창이 타임아웃 버튼으로 다시 확인한다).
+                    None => self.open_file_dlg = Some(PickerMode::Save),
+                }
+            }
+            _ => {}
+        }
+        self.redraw();
+    }
+
+    /// "저장하고 닫기"의 뒷부분 — 저장이 실제로 끝나 그 탭에 바뀐 것이 없을 때만 닫는다(저장 실패 · 외부 변경 확인 대기 = 닫지 않는다).
+    fn finish_close_after_save(&mut self) {
+        let Some(tab) = self.close_after_save.take() else {
+            return;
+        };
+        if let Some(i) = self.editors.index_of_id(tab) {
+            if !self.editors.is_dirty(i) {
+                self.editors.close_tab_forced(i);
+                self.sync_grid_tab();
+            }
+        }
+    }
+
     fn indent_pick(&mut self, id: &str) {
+        if id.starts_with("close.") {
+            self.close_pick(id);
+            return;
+        }
         // 툴바 Disconnect 드롭다운(공유 연결 목록 · docs/52 §7).
         if id.starts_with("conn.drop")
             || id.starts_with("conn.use:")
@@ -11933,6 +12011,10 @@ impl ApplicationHandler<Wake> for App {
                 sid,
             );
         }
+        // 저장하지 않은 탭을 닫으려 했다(X · 단축키 · 탭 메뉴 · 모두 닫기 — 어느 길이든 여기서 걷는다).
+        if let Some(i) = self.editors.take_save_close_request() {
+            self.ask_save_close(i);
+        }
         // 워커가 비밀번호를 묻는다 → 같은 입력 창의 비밀번호 모드(다른 물음이 떠 있으면 그 뒤에).
         if self.pw_pending.is_some() && !self.input_win.is_open() {
             if let Some((sid, target, rejected)) = self.pw_pending.take() {
@@ -12307,11 +12389,14 @@ impl ApplicationHandler<Wake> for App {
                         (PickerMode::Save, _) => {
                             self.editors.set_active_encoding(&enc);
                             self.save_to(&path);
+                            self.finish_close_after_save();
                         }
                     }
                     self.sync_modal();
                 }
                 FileWinAction::Cancel => {
+                    // 저장 창을 취소했다 = "저장하고 닫기"도 없던 일(탭은 그대로).
+                    self.close_after_save = None;
                     self.file_purpose = FilePurpose::Editor;
                     self.remember_file_dialog(None);
                     self.sync_modal();
@@ -13207,6 +13292,7 @@ fn main() {
         input_win: input_win::InputWin::new(),
         input_pending: None,
         pw_pending: None,
+        close_after_save: None,
         key_guard: None,
         pw_once: None,
         vars_win: vars_win::VarsWin::new(),

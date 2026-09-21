@@ -221,6 +221,9 @@ const TX_IDLE_ACTION_OPTS: &[(&str, Msg)] = &[
     ("rollback", Msg::ValTxIdleRollback),
     ("commit", Msg::ValTxIdleCommit),
 ];
+/// 저장하지 않은 탭을 닫을 때.
+const CLOSE_UNSAVED_OPTS: &[(&str, Msg)] =
+    &[("ask", Msg::ValCloseAsk), ("twice", Msg::ValCloseTwice)];
 const TX_CLOSE_OPTS: &[(&str, Msg)] = &[
     ("ask", Msg::ValTxAsk),
     ("commit", Msg::ValTxCommit),
@@ -2546,6 +2549,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescTxLockWait,
         kind: SettingKind::Int { min: 0, max: 3600 },
         default: "0",
+    },
+    Entry {
+        key: "editor.close_unsaved",
+        cat: Msg::CatEditor,
+        label: Msg::LblCloseUnsaved,
+        desc: Msg::DescCloseUnsaved,
+        kind: SettingKind::Choice(CLOSE_UNSAVED_OPTS),
+        default: "ask",
     },
     Entry {
         key: "tx.close_action",

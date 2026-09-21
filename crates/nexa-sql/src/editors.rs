@@ -127,6 +127,10 @@ pub(crate) struct Editors {
     tx_badge_mode: String,
     /// 미커밋 탭의 닫기 요청(탭 바 ×) — 호스트가 확인 뒤 처리.
     tx_close_req: Option<usize>,
+    /// 저장하지 않은 탭을 닫으려 한다 — 호스트가 묻는다(저장하고 닫기 · 저장하지 않고 닫기 · 취소 · 사용자 09-21).
+    save_close_req: Option<usize>,
+    /// 다음 `close_tab` 한 번은 저장 여부를 묻지 않는다(호스트가 이미 물었다).
+    close_forced: bool,
     /// 탭별 들여쓰기 재정의(`None` = 기본값 따름) — 상태줄 팝업은 **그 탭만** 바꾼다(Sublime 관례 · 사용자 09-15).
     indents: Vec<Option<(u8, bool)>>,
     /// 탭별 파일 경로(T-74 · `None` = 제목 없는 새 스크립트).
@@ -235,6 +239,8 @@ impl Editors {
             tx_badges: HashMap::new(),
             tx_badge_mode: "count".into(),
             tx_close_req: None,
+            save_close_req: None,
+            close_forced: false,
             encs: Vec::new(),
             shown_titles: Vec::new(),
             pending_close: None,
@@ -1401,6 +1407,30 @@ impl Editors {
         self.close_tab(i);
     }
 
+    /// 저장하지 않은 탭을 닫으려 했다(탭 번호) — 호스트가 꺼내 묻는다.
+    pub(crate) fn take_save_close_request(&mut self) -> Option<usize> {
+        self.save_close_req.take()
+    }
+
+    /// 저장 여부를 **이미 물은 뒤** 닫는다(저장했거나 · 버리기로 했다).
+    pub(crate) fn close_tab_forced(&mut self, i: usize) {
+        self.close_forced = true;
+        self.close_tab(i);
+        self.close_forced = false;
+    }
+
+    /// 종전의 2단 닫기(설정 `editor.close_unsaved = twice`): 같은 탭을 3초 안에 다시 닫으면 버린다.
+    pub(crate) fn close_tab_two_step(&mut self, i: usize) {
+        let again =
+            matches!(self.pending_close, Some((j, t)) if j == i && t.elapsed() <= CLOSE_CONFIRM);
+        if again {
+            self.close_tab_forced(i);
+        } else {
+            self.pending_close = Some((i, Instant::now()));
+            self.notice = Some(Msg::StUnsavedCloseAgain);
+        }
+    }
+
     /// 1회성 안내(상태줄).
     pub(crate) fn take_notice(&mut self) -> Option<Msg> {
         self.notice.take()
@@ -1419,14 +1449,11 @@ impl Editors {
             self.tx_close_req = Some(i);
             return;
         }
-        // ★ 저장하지 않은 변경 = 2단 닫기(같은 탭을 3초 안에 다시 닫으면 버린다 · Delete 2단과 같은 관례).
-        if self.is_dirty(i) {
-            let again = matches!(self.pending_close, Some((j, t)) if j == i && t.elapsed() <= CLOSE_CONFIRM);
-            if !again {
-                self.pending_close = Some((i, Instant::now()));
-                self.notice = Some(Msg::StUnsavedCloseAgain);
-                return;
-            }
+        // ★ 저장하지 않은 변경 = **호스트가 묻는다**(사용자 09-21 — 종전의 "3초 안에 한 번 더 닫기"는 상태줄 한 줄이라 놓치기 쉽고
+        //   저장할 길을 주지 않았다). 호스트는 설정 `editor.close_unsaved`에 따라 메뉴로 묻거나(`ask`) 종전 2단 닫기(`twice`)를 한다.
+        if self.is_dirty(i) && !self.close_forced {
+            self.save_close_req = Some(i);
+            return;
         }
         self.pending_close = None;
         if self.bufs.len() <= 1 {
