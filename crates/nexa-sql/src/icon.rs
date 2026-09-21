@@ -163,6 +163,15 @@ pub(crate) fn with_icon(attrs: winit::window::WindowAttributes) -> winit::window
         let large = winit::window::Icon::from_rgba(icon_rgba(64), 64, 64).ok();
         attrs.with_taskbar_icon(large)
     };
+    // Linux(09-22): Wayland는 창 아이콘을 앱이 직접 줄 수 없다 — 합성기가 **`app_id`와 같은 이름의 `.desktop` 파일의 `Icon=`** 을 쓴다
+    // (없으면 기본 톱니바퀴). `app_id` = `nexa-sql`(`packaging/linux/nexa-sql.desktop` · `StartupWMClass`) · X11은 같은 값이 WM_CLASS.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let attrs = {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        use winit::platform::x11::WindowAttributesExtX11;
+        let attrs = WindowAttributesExtX11::with_name(attrs, "nexa-sql", "nexa-sql");
+        WindowAttributesExtWayland::with_name(attrs, "nexa-sql", "nexa-sql")
+    };
     // 자체 시험(`NSQL_NO_ACTIVATE=1` · docs/61 §2): 창을 **활성화하지 않고** 띄운다 — 캡처용으로 띄운 격리 인스턴스가 전경 포커스를
     // 가져가 사용자가 치던 키를 받던 일(09-21 실기: 시험 창의 편집기에 사용자의 글자가 들어갔다)을 막는다. 평소엔 변수 없음 = 그대로.
     let attrs = if std::env::var_os("NSQL_NO_ACTIVATE").is_some() {
