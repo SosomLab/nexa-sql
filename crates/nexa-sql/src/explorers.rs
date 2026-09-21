@@ -283,8 +283,7 @@ impl ExplorerSet {
     /// 자체 캡처용 — 첫 서버 칸의 `row`번째 줄에서 우클릭한 것과 같은 사건을 준다(전체 영역을 거쳐 = 실제 경로).
     pub(crate) fn capture_menu(&mut self, row: usize) -> bool {
         self.panes
-            .iter_mut()
-            .next()
+            .first_mut()
             .is_some_and(|p| p.ex.capture_menu(row))
     }
 
