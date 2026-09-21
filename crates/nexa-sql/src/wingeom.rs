@@ -100,6 +100,44 @@ pub(crate) fn place_outer(w: &Window, pos: Option<(i32, i32)>) {
     }
 }
 
+/// 창(물리 좌표의 위치·크기)을 모니터 사각형 **안으로** 옮긴 위치 — 오른쪽/아래로 넘치면 당기고, 그래도 크면 왼쪽/위에 맞춘다.
+/// (창이 모니터보다 크면 제목 표시줄이 보이는 쪽 = 왼쪽 위를 지킨다.)
+pub(crate) fn clamp_into(
+    mon: (i32, i32, i32, i32),
+    pos: (i32, i32),
+    size: (i32, i32),
+) -> (i32, i32) {
+    let fit = |p: i32, len: i32, lo: i32, span: i32| -> i32 { p.min(lo + span - len).max(lo) };
+    (
+        fit(pos.0, size.0, mon.0, mon.2),
+        fit(pos.1, size.1, mon.1, mon.3),
+    )
+}
+
+/// ★ **보조 창이 화면 밖으로 나가지 않게**(Windows 종합 점검 09-21): "메인 창 오른쪽에 연다"는 기본 위치는 메인 창이 넓으면
+/// 화면 밖으로 수백 px 나갔다(1920 폭 화면 · 메인 1391 → 로그 창 608 중 191px · 트랜잭션 로그 976 중 559px이 안 보였다).
+/// 만든 직후에 부른다 — 창이 놓인 모니터(없으면 메인 창의 모니터) 안으로 당긴다. 기억한 위치로 연 창에도 같은 규칙
+/// (모니터 해상도가 바뀌었을 수 있다). 옮겼으면 true.
+pub(crate) fn keep_on_screen(w: &Window, owner: Option<&Window>) -> bool {
+    let Some(m) = w
+        .current_monitor()
+        .or_else(|| owner.and_then(Window::current_monitor))
+    else {
+        return false;
+    };
+    let (Ok(p), z) = (w.outer_position(), w.outer_size()) else {
+        return false;
+    };
+    let (mp, mz) = (m.position(), m.size());
+    let mon = (mp.x, mp.y, mz.width as i32, mz.height as i32);
+    let to = clamp_into(mon, (p.x, p.y), (z.width as i32, z.height as i32));
+    if to == (p.x, p.y) {
+        return false;
+    }
+    w.set_outer_position(winit::dpi::PhysicalPosition::new(to.0, to.1));
+    true
+}
+
 /// 논리 위치 → winit 위치 인자.
 pub(crate) fn logical(x: i32, y: i32) -> winit::dpi::LogicalPosition<f64> {
     winit::dpi::LogicalPosition::new(f64::from(x), f64::from(y))
@@ -108,6 +146,34 @@ pub(crate) fn logical(x: i32, y: i32) -> winit::dpi::LogicalPosition<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clamp_keeps_windows_inside_the_monitor() {
+        use super::clamp_into as f;
+        let mon = (0, 0, 1920, 1080);
+        assert_eq!(
+            f(mon, (100, 100), (600, 400)),
+            (100, 100),
+            "안에 있으면 그대로"
+        );
+        assert_eq!(
+            f(mon, (1503, 104), (608, 359)),
+            (1312, 104),
+            "오른쪽으로 넘침 → 당김"
+        );
+        assert_eq!(f(mon, (1503, 464), (976, 459)), (944, 464));
+        assert_eq!(f(mon, (100, 900), (600, 400)), (100, 680), "아래로 넘침");
+        assert_eq!(f(mon, (-50, -20), (600, 400)), (0, 0), "왼쪽·위로 넘침");
+        assert_eq!(
+            f(mon, (500, 300), (2400, 1300)),
+            (0, 0),
+            "모니터보다 크면 왼쪽 위"
+        );
+        // 둘째 모니터(오른쪽 · 음수 y 포함)도 자기 사각형 기준.
+        let right = (1920, -200, 2560, 1440);
+        assert_eq!(f(right, (4300, 1100), (600, 400)), (3880, 840));
+        assert_eq!(f(right, (2000, -300), (600, 400)), (2000, -200));
+    }
+
     #[test]
     fn parse_and_format() {
         assert_eq!(parse_size("1100,720"), Some((1100.0, 720.0)));

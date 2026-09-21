@@ -86,6 +86,87 @@ pub fn set_net_options(keepalive_secs: u64, call_timeout_secs: u64) {
     let _ = (keepalive_secs, call_timeout_secs);
 }
 
+/// Oracle 클라이언트 탐지 결과(설정 창의 읽기 전용 칸 · 사용자 09-21) — **값만** 돌려준다(문구는 호스트가 `Msg`로 만든다).
+/// 파일 시스템만 읽는다(네트워크 0 · 라이브러리를 로드하지 않는다). 출처 코드: `setting` · `env` · `oracle_home` · `search_path` ·
+/// `well_known` · `not_found` / TNS: `setting` · `env` · `client_dir` · `oracle_home` · `not_found`.
+#[derive(Clone, Debug, Default)]
+pub struct OracleClientInfo {
+    /// 이 빌드에 Oracle 드라이버가 들어 있는가.
+    pub included: bool,
+    pub source: &'static str,
+    pub tns_source: &'static str,
+    pub dir: Option<std::path::PathBuf>,
+    pub library: Option<std::path::PathBuf>,
+    /// 이미 로드된 클라이언트의 버전(아직 접속한 적이 없으면 `None`).
+    pub version: Option<String>,
+    pub tns_admin: Option<std::path::PathBuf>,
+    pub tnsnames: Option<std::path::PathBuf>,
+    pub aliases: Vec<String>,
+    pub sqlnet: Option<std::path::PathBuf>,
+    /// 이 OS에서 찾는 클라이언트 라이브러리 파일 이름(`oci.dll` · `libclntsh.so` · `libclntsh.dylib`) — "없음" 안내에 쓴다.
+    pub library_name: &'static str,
+}
+
+/// 지금 설정([`set_oracle_client`])과 환경으로 찾은 Oracle 클라이언트.
+#[must_use]
+pub fn oracle_client_info() -> OracleClientInfo {
+    #[cfg(feature = "oracle")]
+    {
+        use nsql_driver_oracle::client::{detect, Source, TnsSource};
+        let r = detect(&nsql_driver_oracle::client_config());
+        OracleClientInfo {
+            included: true,
+            source: match r.source {
+                Source::Setting => "setting",
+                Source::EnvVar => "env",
+                Source::OracleHome => "oracle_home",
+                Source::SearchPath => "search_path",
+                Source::WellKnown => "well_known",
+                Source::NotFound => "not_found",
+            },
+            tns_source: match r.tns_source {
+                TnsSource::Setting => "setting",
+                TnsSource::EnvVar => "env",
+                TnsSource::ClientDir => "client_dir",
+                TnsSource::OracleHome => "oracle_home",
+                TnsSource::NotFound => "not_found",
+            },
+            dir: r.dir,
+            library: r.library,
+            version: nsql_driver_oracle::loaded_version(),
+            tns_admin: r.tns_admin,
+            tnsnames: r.tnsnames,
+            aliases: r.aliases,
+            sqlnet: r.sqlnet,
+            library_name: nsql_driver_oracle::client::library_name(),
+        }
+    }
+    #[cfg(not(feature = "oracle"))]
+    OracleClientInfo {
+        source: "not_found",
+        tns_source: "not_found",
+        ..OracleClientInfo::default()
+    }
+}
+
+/// 설정 `oracle.client_mode`/`oracle.client_dir`/`oracle.tns_admin` → Oracle 드라이버. `manual`이 아니면 자동 탐지(빈 값).
+/// 첫 Oracle 접속 **전**에 부른 값만 이번 실행에 쓰인다(ODPI-C는 한 번만 초기화된다).
+pub fn set_oracle_client(manual: bool, client_dir: &str, tns_admin: &str) {
+    #[cfg(feature = "oracle")]
+    {
+        let opt = |s: &str| {
+            let t = s.trim().trim_matches('"');
+            (manual && !t.is_empty()).then(|| std::path::PathBuf::from(t))
+        };
+        nsql_driver_oracle::set_client_config(nsql_driver_oracle::client::ClientConfig {
+            client_dir: opt(client_dir),
+            tns_admin: opt(tns_admin),
+        });
+    }
+    #[cfg(not(feature = "oracle"))]
+    let _ = (manual, client_dir, tns_admin);
+}
+
 /// SQL Server 취소 방식(설정 `mssql.cancel`): `socket` = 소켓 종료(항상) · 아니면 Attention(로그인만 암호화일 때 · 아니면 소켓 종료로 대체).
 pub fn set_mssql_cancel_socket(socket: bool) {
     #[cfg(feature = "mssql")]

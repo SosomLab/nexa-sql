@@ -443,6 +443,42 @@ pub(crate) fn placement(
     }
 }
 
+/// `CONNECT <프로필 이름>`의 스펙인가 — 해석기는 이름 하나를 `user`에만 담는다(호스트·DB·방언·비밀번호 없음). 그 이름을 돌려준다.
+/// 같은 서버 판정·탐색기 붙이기는 이 이름을 저장소에서 **완성한 스펙**으로 해야 한다(사용자 09-21: `CONNECT M4PLAN`을 되풀이하면
+/// 이름뿐인 스펙은 어떤 접속과도 "같은 서버"가 아니라서 매번 다시 접속했다).
+pub(crate) fn bare_profile_name(spec: &nsql_script::ConnectSpec) -> Option<&str> {
+    let bare = spec.host.is_none()
+        && spec.password.is_none()
+        && spec.database.is_none()
+        && spec.dialect.is_none();
+    spec.user
+        .as_deref()
+        .filter(|n| bare && nsql_vault::is_profile_name(n))
+}
+
+/// 전용 탭의 `CONNECT`가 지금 세션과 **같은 서버**일 때 기존 접속을 그대로 둘 것인가(= `CONNECT` 줄만 지우고 나머지를 실행).
+/// 같은 서버이고 · 명시적 재접속 설정(`connect.reconnect_same`)이 꺼져 있고 · **자격이 바뀌지 않았을 때만** 유지한다 —
+/// `user:@host`처럼 다른 비밀번호를 들고 온 `CONNECT`는 다시 접속한다(사용자 09-21: 아무 동작도 하지 않던 결함).
+pub(crate) fn keep_same_session(
+    same_server: bool,
+    reconnect_same: bool,
+    cred_changed: bool,
+) -> bool {
+    same_server && !reconnect_same && !cred_changed
+}
+
+/// 스크립트 쪽에서 접속이 끊겼을 때 전용 세션을 거두고 탭을 공유 연결로 돌려보낼 것인가 — 공유 모드의 전용 세션이 스크립트
+/// `DISCONNECT`로 끊겼을 때만. 유휴로 닫힌 것 · 사용자가 "미연결"로 고른 것 · **`CONNECT`가 실패해 접속을 잃은 것**은 남긴다.
+pub(crate) fn reap_on_disconnect(
+    is_private: bool,
+    idle_closed: bool,
+    user_disconnected: bool,
+    shared_mode: bool,
+    lost_by_connect: bool,
+) -> bool {
+    is_private && !idle_closed && !user_disconnected && shared_mode && !lost_by_connect
+}
+
 /// D4 끊긴 공유 세션 객체를 거둘 것인가 — 아무도 안 쓰고(묶인 탭 0 · 활성 아님) 되살릴 것도 아닐 때만.
 pub(crate) fn reap_shared(
     connected: bool,
@@ -501,6 +537,8 @@ pub(crate) enum DiscPath {
     Explorer,
     SessionsWin,
     Script,
+    /// 같은 서버에 다른 자격으로 `CONNECT` → 기존 접속을 먼저 닫았고 새 접속은 실패했다.
+    Reconnect,
     Idle,
     TabClose,
     Stop,
@@ -516,6 +554,7 @@ impl DiscPath {
             DiscPath::Explorer => Msg::DiscPathExplorer,
             DiscPath::SessionsWin => Msg::DiscPathSessionsWin,
             DiscPath::Script => Msg::DiscPathScript,
+            DiscPath::Reconnect => Msg::DiscPathReconnect,
             DiscPath::Idle => Msg::DiscPathIdle,
             DiscPath::TabClose => Msg::DiscPathTabClose,
             DiscPath::Stop => Msg::DiscPathStop,
@@ -951,6 +990,56 @@ mod tests {
     }
 
     /// D16 — 전용/공유 · 묶인 탭 수: 조건별 독립 영향.
+    /// 이름 하나뿐인 스펙만 프로필 이름이다 — 호스트·DB·방언·비밀번호 중 하나라도 있으면 아니다.
+    #[test]
+    fn bare_profile_name_is_a_lone_name() {
+        let p = |s: &str| nsql_script::ConnectSpec::parse(s).expect("spec");
+        assert_eq!(bare_profile_name(&p("M4PLAN")), Some("M4PLAN"));
+        assert_eq!(bare_profile_name(&p("SNOP-DB")), Some("SNOP-DB"));
+        assert_eq!(bare_profile_name(&p("scott@orcl")), None, "호스트가 있다");
+        assert_eq!(
+            bare_profile_name(&p("scott/tiger")),
+            None,
+            "비밀번호가 있다"
+        );
+        assert_eq!(bare_profile_name(&p("oracle://u@h:1521/s")), None);
+    }
+
+    /// MC/DC: 셋이 (같은 서버 · 재접속 설정 끔 · 자격 그대로)일 때만 유지 — 하나씩 뒤집으면 다시 접속.
+    #[test]
+    fn keep_same_session_mcdc() {
+        assert!(keep_same_session(true, false, false));
+        assert!(!keep_same_session(false, false, false), "다른 서버");
+        assert!(!keep_same_session(true, true, false), "명시적 재접속 설정");
+        assert!(!keep_same_session(true, false, true), "자격이 바뀌었다");
+    }
+
+    /// MC/DC: 다섯 조건이 모두 맞을 때만 거둔다 — 하나씩 뒤집으면 남긴다.
+    #[test]
+    fn reap_on_disconnect_mcdc() {
+        assert!(reap_on_disconnect(true, false, false, true, false));
+        assert!(
+            !reap_on_disconnect(false, false, false, true, false),
+            "공유 세션"
+        );
+        assert!(
+            !reap_on_disconnect(true, true, false, true, false),
+            "유휴로 닫힘"
+        );
+        assert!(
+            !reap_on_disconnect(true, false, true, true, false),
+            "사용자가 미연결로"
+        );
+        assert!(
+            !reap_on_disconnect(true, false, false, false, false),
+            "개별 모드"
+        );
+        assert!(
+            !reap_on_disconnect(true, false, false, true, true),
+            "CONNECT 실패로 잃음"
+        );
+    }
+
     #[test]
     fn disconnect_plan_mcdc() {
         use super::{disconnect_plan, DisconnectPlan};

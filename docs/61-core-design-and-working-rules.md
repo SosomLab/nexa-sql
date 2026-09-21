@@ -61,6 +61,16 @@
 
 사용자 문자열 = `nsql-i18n::Msg` · 설정 키 = `nsql-settings::REGISTRY`(구현 상수도 · 자주 안 바꾸면 HIDDEN) · 스레드·디스크·캐시 = 부하원 원장에 등재 + 끄거나 상한을 둘 설정 · 네트워크 = 26 §8 체크리스트 · DB 진입점 = `gate_open()` · 분기 조건 2개 이상 = 순수 함수 + MC/DC · 포커스 링 ≤ 1 · 마우스는 커서 아래 컨트롤에만 · hover = `IntentFade` · 팝업은 맨 마지막 층.
 
+- ★ **팝업 배치 규칙**(사용자 09-21 · 전수 조사 89차): 우클릭 메뉴·툴팁·드롭다운은 **그리기 표면 밖으로 나가지 않는다.**
+
+  | 종류 | 쓰는 부품 | 배치 | 안전망 |
+  |---|---|---|---|
+  | 우클릭 메뉴 · 하위 메뉴(결과 탭 · 편집기 탭 · 편집기 본문 · 그리드 · 탐색기 · 접속 창 · 로그/세션/트랜잭션 로그 창 · 입력란 편집 메뉴 · 파일 대화상자 — 호출 22곳) | nexa-ctl `ContextMenu` | `geom::place_popup` — 정방향(오른쪽·아래) → 반대쪽(끝이 기준점에 닿게) → 가장 가까운 자리로 밀어 넣기 | 첫 paint가 `ctx.surface_size()`를 배워 `geom::nudge_into`로 표면 안에 · 하위 메뉴는 부모가 배운 크기를 물려받아 접는다 |
+  | 툴팁(툴바·도크·플로팅 툴바 · 편집기 탭 · 찾기 막대 · 검색 패널 · 접속 창 · 로그 창 — 호출 7곳) | nexa-ctl `draw::draw_tooltip(_in)` | 기준 아래 6px → 아래로 넘치면 **기준 위** → 그래도 안 되면 밀어 넣기 · 가로는 호출자 범위 ∩ 표면 | 같은 함수 안에서(종전 = 늘 아래 · 가로만 맞춤 → 창 아래쪽 도구줄에서 잘렸다) |
+  | 드롭다운(설정 창 · 접속 폼 · 위치 드롭다운) | nexa-ctl `Combo` | 아래 → 넘치면 위로(`viewport_bottom`) | 호스트가 하한을 안 줘도 paint가 표면 높이를 배운다(`surface_bottom`) |
+
+  규칙: ① 위치를 직접 계산하지 않는다(위 세 부품 · `place_popup`/`nudge_into`/`popup_host`) ② 글자 상자를 직접 그려 툴팁·메뉴를 흉내 내지 않는다 ③ `host`는 아는 한 창 전체 Rect(끝없는 영역을 넘기는 자리는 주석으로 안전망에 기댄다고 적는다 — 지금 결과 탭 · 편집기 탭 · 접속 창 네 곳) ④ 새 팝업 = 창 모서리 근처에서 연 캡처 1장(짧은 창 = 격리 폴더 `window.main_size` · 기동 명령으로 여는 길을 같이 만든다) ⑤ 창보다 큰 팝업은 스크롤이 있어야 한다. `DrawCtx::surface_size()`를 구현하지 않은 그리기 컨텍스트(테스트 기록기)는 `None` = 종전 동작.
+
 ### 2-3. 검증 규칙(이번 주에 효과가 있었던 방법)
 
 - **측정 먼저.** 느리다는 곳을 고치기 전에 재서 병목을 확인한다 — "읽기가 느릴 것"이라던 큰 파일 열기의 실제 병목은 UI 스레드의 행 폭 측정(3.8초)이었다. 도구 = §4.
@@ -76,6 +86,14 @@
 - **단위 테스트는 실제 설정 폴더에 쓰지 않는다.** 파일을 다루는 모듈은 폴더를 인자로 받는다(`undofile::store_in(dir, …)` 패턴) · 테스트는 `std::env::temp_dir()` 아래에서만.
 - **사용자가 자리에 있을 때 키·마우스 입력을 주입하지 않는다**(`SendKeys` · System Events 키 입력은 사용자의 전경 창으로 간다) · **포커스를 빼앗지 않는다**(`SetForegroundWindow` · `activate` 금지). 앱은 `NSQL_STARTUP_CMD`로 몰고 화면은 창 단위로 찍는다(§3 · §4). 키 입력이 있어야만 볼 수 있는 것(한글 조합 · 드래그)은 **단위 테스트로 덮고, 실기는 사용자 몫으로 보고에 적는다.**
 - **사용자의 클립보드를 덮어쓰지 않는다** — 잘라내기·복사 명령을 자동 시험에 넣지 않는다(09-20: 65 MB 잘라내기 대신 줄 삭제 명령으로 시험).
+- ★ **직접 관리하는 대상은 승인 없이 정리한다**(사용자 09-21 89차 — "내가 걱정하는 것은 이 프로젝트의 범위가 아닌 폴더·파일이 삭제되거나 변경되는 것 · 직접 관리하는 대상은 더 유연하게"):
+
+  | | 대상 | 규칙 |
+  |---|---|---|
+  | **직접 관리**(이 세션이 만든 것) | 세션 스크래치패드 · 격리 `NSQL_HOME` 폴더 · 비교용 워크트리(`../_cmp/<저장소>`)와 그 `target/`·빌드 로그 · 저장소의 `target/` 산출물·`target/capture` · 내가 띄운 PID · 실서버의 임시 객체(`pg_temp` — 세션이 끝나면 사라지는 것만) | 생성·삭제·덮어쓰기를 **묻지 않고** 진행 · 보고에 한 줄 · 지우기 전에 **내가 만든 것인지 확인**(경로·내용·만든 시각 — 빈 폴더가 아니면 안을 먼저 본다) |
+  | **먼저 묻는다** | 두 저장소(nexa-sql · nexa-ui)와 스크래치패드 **밖**의 모든 경로 · 사용자의 실제 설정 폴더·프로필·볼트·최근 파일 · 추적 중인 변경을 되돌릴 수 없게 버리는 일(`git reset --hard` · `git clean` · 강제 push · 브랜치 강제 삭제) · 사용자 파일(`.claude/settings.json` = 병합만 · `devcontainer-lock.json`) · 내가 띄우지 않은 프로세스 · 실서버의 영속 객체 | 무엇을·왜를 말하고 승인을 받는다 |
+
+  정리는 **그 일에 맞는 명령**을 쓴다(워크트리 = `git worktree remove` · 빌드 산출물 = `cargo clean -p …` · 프로세스 = PID 지정) — 범위가 명령 자체에 묶여 있어 엉뚱한 경로를 건드릴 수 없다. 참고: 승인 창은 공유 설정 `.claude/settings.json`의 `ask`(`Bash(rm:*)` · `PowerShell(Remove-Item:*)`)에서 나온다 — 이 규칙은 경로를 가리지 못하므로(범위 밖 삭제를 막는 마지막 안전망) **그대로 둔다**.
 - 실행 중인 다른 `nexa-sql` 프로세스가 사용자의 것일 수 있다 — 끝낼 때는 **내가 띄운 PID**만(빌드를 위해 Debug exe를 끝내는 것은 사용자가 허락한 예외).
 
 ### 1-5. 09-20~21(맥 86~88차)에 굳은 것 — 변수 · 트랜잭션 · 화면 내보내기
@@ -97,7 +115,7 @@
 |---|---|---|
 | 셸 | 도구의 Bash = Git Bash. **heredoc이 `\n` · `\0` · 백슬래시 · 따옴표를 망가뜨린다** → 코드 패치는 스크립트 **파일**로 써서 경로로 실행(한글 커밋 메시지 정도는 heredoc으로 된다). `"$VAR\\$1"`은 글자 그대로 `$1`이 된다 — 경로는 미리 변수에 조립한다 | zsh/bash 그대로. heredoc 안전 |
 | 화면 캡처 | `PrintWindow(PW_RENDERFULLCONTENT)` — `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1`(연속 · 입력 주입 없음). `CopyFromScreen` · `FindWindow`는 실패한다 | `screencapture -l <창 id>` 또는 `-R x,y,w,h`. 기존 `scripts/mac-capture.sh`는 **System Events로 키를 보낸다** → 사용자가 자리에 없을 때(위키 캡처)만. 세션 중 검증은 `NSQL_STARTUP_CMD` + `screencapture`만 |
-| 측정 | `scripts/win-big-probe.ps1`(초 단위 CPU · 상주 · 피크 · 응답) · `scripts/win-latency-probe.ps1` | `ps -o rss,%cpu -p <pid>` · `/usr/bin/time -l`(피크 RSS) · `sample <pid>` |
+| 측정 | `scripts/win-big-probe.ps1`(초 단위 CPU · 상주 · 피크 · 응답) · `scripts/win-latency-probe.ps1` · `scripts/win-leak-cycle.ps1`(같은 동작 N회 → 뒤 절반의 기울기 = 릭 판정) · `scripts/win-startup-probe.ps1`(창이 보이기까지 · 안정까지 CPU) — ★ **빌드 직후 첫 실행은 버린다**(새 exe의 실시간 검사로 CPU가 수백 ms~2초 튄다 · 09-21 89차) · 회귀 판정은 **앞 커밋을 워크트리에 따로 빌드해 같은 시각에 A/B**로 | `ps -o rss,%cpu -p <pid>` · `/usr/bin/time -l`(피크 RSS) · `sample <pid>` |
 | 빌드 잠김 | 실행 중인 exe가 링크를 막는다 → 빌드 전에 Debug 프로세스 종료 | 없음 |
 | 3-OS 검사 | nexa-ui = `scripts/check-3os.sh` 통과. nexa-sql = **이 PC에서는 교차 컴파일 불가**(`ring`에 교차 C 컴파일러 필요) → 호스트 fmt + clippy + 테스트만, 나머지는 CI | 맥에서는 `check-3os.sh`가 더 넓게 돈다(과거 맥 세션 기록) — push 전에 돌린다 |
 | 글자 | GDI ClearType 글리프(D-77) — 전진폭이 정수로 스냅 | CoreText 경로 — 전진폭이 소수. **행 폭 고정폭 지름길은 탐침으로 전진폭을 구하므로 양쪽에서 돈다**(디버그 빌드가 실측과 대조). 맥에서 큰 파일을 한 번 열어 `debug_assert`가 조용한지 본다 |
@@ -112,9 +130,10 @@
 ## 4. 자체 검증 도구
 
 - **기동 명령** `NSQL_STARTUP_CMD`(쉼표로 구분 · 3-OS 공통): `open:<경로>` · 명령 id(`edit.duplicate_line` · `file.save` · `view.log` …) · `@connected:<명령>`(첫 접속 뒤) · `@after:<ms>:<명령>`(시차) · `conn.edit:<프로필>` · `bigfile.open|readonly|head|run`(큰 파일 열기 선택) · `file.load_cancel`. 실행 인자로 프로필 이름(`Local`)을 주면 그 프로필로 접속한다.
-- 환경 변수: `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
+- **앱 안 마우스 사건**(09-21): `ui.move:x/y` · `ui.click:x/y` · `ui.rclick:x/y`(창 좌표 · 장치 픽셀 · 쉼표는 명령 구분자라 `/`) — OS 입력 주입이 아니라 앱이 스스로 `InputEvent`를 만들어 **실제 라우팅 경로(`route`)** 에 넣는다. 컨트롤을 직접 부르는 캡처 명령(`explorer.menu` …)은 라우팅 결함을 못 본다(탐색기 우클릭이 첫 커밋부터 닿지 않던 것을 이것으로 찾았다). Debug 첫 기동은 수 초 — `@after:`는 기동 뒤 기준이니 캡처 대기를 12초 이상.
+- 환경 변수: `NSQL_NO_ACTIVATE=1`(★ 자체 시험 인스턴스는 **반드시** — 창을 활성화하지 않고 띄운다 · 09-21에 캡처용 창이 전경을 가져가 사용자가 치던 글자를 받았다) · `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
 - 벤치(nexa-ui): `cargo run --release -p nexa-ctl --example bench_editor <줄 수> <기능>`(`hl,ln,base,mm,occ,br` 또는 `all` · `BENCH_ASCII=1` · `BENCH_PREPARED=1`) · `--example bench_undo`.
-- 스크립트: `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh`.
+- 스크립트: `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh`.
 - 기준 수치(Release · 09-20 · 이 Windows PC): 65 MB 파일 상주 87 MB · 피크 106 MB · 70만 줄 입력 3~4 ms · 그리기 2 ms · 4만 줄 전 기능 입력 8 ms. 맥에서 크게 다르면 원인을 본다.
 
 ## 5. 로컬 메모리에서 저장소로 올린 것(이 PC의 `memory/` → 여기)
@@ -128,18 +147,44 @@
 | GUI 자체 캡처 방법 | §3 · §4 · `scripts/` |
 | (메모리에 없던 것) 입력 주입 금지 · 포커스 · 클립보드 · 격리 확인 · 테스트의 실제 설정 폴더 금지 · heredoc · 브랜치 흐름 | §2-1 · §2-4 · §3 |
 
+### 1-6. 09-21(Windows 89차)에 굳은 것 — 능력표 · PG 커서 · 입력
+
+- **엔진·러너는 방언을 묻지 않는다 — `Caps`를 묻는다**(`nsql-core/caps.rs` · T-152): 새 분기가 필요하면 `Dialect` `match`를 쓰지 말고 능력표에 칸을 더한다(전수 테스트 `table_matches_the_former_dialect_branches`에 한 줄) · 세션이 붙으면 `Engine::set_caps(방언, session.caps())` · 남겨 둔 방언 분기 = 값 인용(`to_sql_literal`)과 카탈로그 질의뿐.
+- **자동 커밋 모드의 `COMMIT`은 `caps.autocommit_needs_commit(tx_open, tx_user)`가 참일 때만**(T-155) · CLI 종료 = `Runner::commit_at_exit`.
+- **PG refcursor는 드라이버가 푼다**(T-150): 결과의 글자 값이 열린 커서 이름이면 그 자리에서 `FETCH … IN` → 결과 집합 + `result_labels` · 자동 커밋이면 호출과 FETCH를 한 트랜잭션으로 · 러너·GUI는 모른다(Oracle 핸들 커서와 같은 "결과 + 라벨" 모양).
+- **PG 호출의 OUT 값은 서명이 말한 자리의 바인드가 받는다**(T-151 · `Engine.call_captures` — 한 번 쓰이고 비워진다).
+- **`ACCEPT`는 실행할 때마다 묻는다**: GUI = 실행 전 입력 창이 한 번에(`InputNeed{prompt,default,hide}`) → `apply_inputs`가 `Engine.accepted`에 표시 → 러너는 그 `ACCEPT`를 지나간다 · CLI = 그 자리에서 묻는다.
+- **실서버 통합 테스트는 프로필로**: `NSQL_PG_PROFILE=<볼트 프로필 이름>`(비밀번호를 환경 변수·명령줄에 쓰지 않는다) · 서버에는 `pg_temp` 임시 객체만 만든다.
+- **날짜·불리언은 진짜 타입으로 바인드한다**(Oracle · T-151): 값이 ISO 꼴(`YYYY-MM-DD[ HH:MM[:SS[.f]]]`)이면 `OracleType::Date`/`Timestamp`, 아니면 종전처럼 글자(서버의 암묵 변환). 변수 값의 표시도 ISO 꼴 — 결과 그리드의 DATE 열과 같다.
+- **T-SQL 호출의 `OUTPUT`은 서명이 보충한다**(`Caps::call_signature = OutputMarks` · `Engine.call_outputs` — 한 번 쓰이고 비워진다) · **선언 없이 생긴 글자 변수는 값이 돌아오는 바인드에서만 4000으로 넓힌다**(`dialect.rs bind_type` — 선언한 길이는 사용자의 뜻).
+- **미정의 바인드 경고는 읽기만 하는 보통 SQL에서만** — 블록·`EXEC`의 바인드는 받는 쪽일 수 있다.
+- **시스템 변수는 `Engine.sysvars`에**(사용자 `DEFINE`과 섞지 않는다 · 이름 = `SYSTEM_VARS`) · `${이름:형식}`은 정의된 이름 + 아는 형식만 바꾼다(모르면 글자 그대로 · 묻지 않는다).
+- **새 부하원은 스위치와 함께**: 결과에 영향을 주면 개별 설정(`vars.signature_lookup` · `pg.refcursor_expand`), 영향이 없으면 `perf::BOOST` 후보(39 §4-6). 실서버 시험은 프로필 환경 변수 셋(`NSQL_ORACLE_PROFILE` · `NSQL_MSSQL_PROFILE` · `NSQL_PG_PROFILE`) — Oracle은 객체를 만들지 않고(익명 블록 · SYS 패키지), SQL Server는 세션 임시 프로시저(`#…`)만.
+- **큰 파일 탭은 상시 비용이 드는 기능을 단계별로 끈다 — 새 기능(특히 확장 효과·플러그인 훅)을 넣을 때 `editors.rs enforce_large`에 한 줄**(`feature_limited(level, 기준)` · 기준은 설정 · 편집 코어는 끄지 않는다 · 단계가 내려가면 `restore_large_features`로 되돌린다).
+- **설정의 종속은 `DEPENDS`로**(부모가 조건을 못 채우면 설정 창에서 잠김 + 흐림) · 키를 바꾸면 옛 값은 `migrate_*`로 옮긴다(`grid.result_tabbar` → `grid.result_tabbar_single`).
+- 자체 캡처: 설정 창은 `NSQL_STARTUP_CMD=edit.prefs:<검색어>`로 그 카드만 보이게 연다 · 격리 폴더의 `settings.conf`는 **`키=값`(공백 없음)** — 덧붙인 뒤 `nsql config get <키>`(같은 `NSQL_HOME`)로 읽히는지 확인한다.
+- **결과 탭 제목 = 번호 규칙이 기본**(`결과N` · 가장 큰 번호 + 1 · `results.rs numbered_index`가 두 언어의 틀을 읽는다) · 사용자가 붙인 이름(`named`)과 커서 라벨은 덮지 않는다.
+- **DBMS별 종속 설정은 "자동 탐지 / 직접 지정 / 읽기 전용 정보" 틀로**([64 §2](64-dbms-clients-and-driver-packaging.md)): 계산 값은 `nsql_settings::INFO_KEYS`(저장 안 함 · `set` 거부 · 설정 창에서 늘 잠김) · 탐지는 파일 시스템만 읽는다 · **직접 지정한 것은 그것만 쓴다**(조용히 다른 것으로 넘어가지 않는다 — 실패가 낫다) · 드라이버는 값만 돌려주고 문구는 호스트가 `Msg`로.
+- **`${…:q}`** = 작은따옴표로 감싸고 안의 작은따옴표는 두 번 · SQL Server `N'…'` · MySQL 역슬래시 두 번(`engine.rs sql_text_literal`).
+- **마우스 이동·키 처리 경로에서 `edit.text()`·`chars_vec()`를 부르지 않는다** — 줄·구간 조회는 `edit.buf()`의 줄 표로(`line_of` · `line_start` · `line_end`). 89차 추가: 드래그 처리가 사건마다 본문 전체를 문자열로 만들어 20 MB에서 12.7 ms/이동이었다 → 입력 경로를 고치면 `bench_editor`에 그 시나리오를 더한다.
+- **드래그 선택은 포인터가 컨트롤 밖에 있어도 세로 위치를 따라간다**(옆 밖 = 그 줄의 처음/끝 · 한 글자씩 미는 가로 자동 스크롤은 같은 줄에 가려진 글이 있을 때만).
+- **"잠금"은 사건 전달을 막는 것으로 끝나지 않는다** — 포커스 지정 · 키/IME/붙여넣기 경로(`focused_textbox`) · 값 수거 · 잠금 재계산 시점 넷을 다 본다. 글자 칸은 nexa-ctl 읽기 전용(`set_read_only` — 복사는 되고 편집은 편집 코어가 거부)으로, 나머지는 포커스를 주지 않는다(`prefs_win.rs apply_deps` · 89차 추가 7).
+- **창은 만들 때 모니터 안으로**(`wingeom::keep_on_screen`) — 새 창을 추가하면 생성 직후 한 줄.
+
 ## 6. 이어 받을 일 — 맥 88차(09-21) 끝의 상태와 다음 순서
 
 > 상태: nexa-sql `main` = 88차 마감 · CI `ci` ✅ · `integration` ✅ 9/9(Oracle·SQL Server·PostgreSQL 컨테이너) · nexa-ui `main` = 50차. 설계 SSOT = [63 변수 관리](63-variable-management.md)(단계표 §5 · 결정 §7) · 기록 = [journal 09-21](journal/2026-09-21.md).
 
 | 순서 | 할 일 | 어디를 고치나 · 어떻게 확인하나 |
 |---|---|---|
-| 1 | **Windows 실기**(위 "윈도우에서 처음 할 일" ②~⑤) | 결과는 journal에 실기표로 · 결함은 그 자리에서 |
-| 2 | **T-150 PostgreSQL refcursor** — `SELECT f()`가 돌려준 커서 이름을 `FETCH ALL IN "이름"`으로 받아 결과 탭으로 | `nsql-driver-pg`: 단순 질의 경로에는 **열 타입이 없다**(`Column.type_name` 빈 글) → 커서 경로(`execute_cursor` — 드라이버가 `BEGIN`을 쥔다)나 `prepare`로 타입(`refcursor`)을 얻은 뒤, **같은 트랜잭션 안에서** FETCH → `ExecResult.result_sets`에 덧붙이고 `CLOSE` · 자동 커밋이면 드라이버/러너가 트랜잭션으로 감싼다(T-146 `tx_open`과 충돌하지 않게) · 검증 = `integration.rs`에 PG 함수(`RETURNS refcursor` · `RETURNS SETOF refcursor`) 테스트 → 작업 브랜치에서 `gh workflow run integration.yml --ref <브랜치>`(main을 건드리지 않고 실서버 확인 — 09-21에 쓴 방법) |
-| 3 | **T-151 서명 추론 넓히기 + 타입** | `nsql-catalog::routine_args`에 PG(`pg_proc`/`pg_get_function_arguments`) · SQL Server(`sys.parameters`) · MySQL(`information_schema.PARAMETERS`) · `VarType`에 DATE/TIMESTAMP 실제 바인드(Oracle 드라이버는 지금 스칼라 OUT을 전부 VARCHAR2(4000)로 묶는다) · BOOLEAN · `Direction::Out`을 실제로 만든다(지금은 전부 InOut) |
-| 4 | **T-152 `Caps` 포트**([63 §3](63-variable-management.md)) | `nsql-script/dialect.rs`·`engine.rs`의 방언 `match`(`wrap_exec` · `prepare` · `exec_targets`의 `Oracle | Mssql` 판정 · 러너의 `absorb` 방언 게이트)를 드라이버 능력 질의로 — 포트(trait) + 레지스트리 + 설정([30](30-architecture-patterns.md)) · MySQL/MariaDB·NoSQL 어댑터가 능력표만 채우면 붙게 |
-| 5 | **T-153 변수 UX 잔여** | `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE`(`nsql-script/command.rs`) · 입력 창에 타입 열·미리보기(`input_win.rs`) · **MacroStore 분리 + 시스템 변수**(`_USER` `_DATE` `_ROW_COUNT` `_SQLCODE` `_ELAPSED_MS`) · `${v:형식}` · CLI `-v name=value` · 편집기 hover에 변수 값 · 미정의 변수 경고(`Diagnostic::ImplicitVariable`은 만들어지기만 하고 **소비자가 없다**) · 값 크기 상한 `vars.max_value_kb` · 프로필 층의 출처(접속 프로필 필드) · 이름 없는 탭 보존(S-1 hot exit와 함께) |
+| 1 | 🚧 89차(win) 자동화 가능한 몫 ✅ · 키 입력 실기 = **TODO T-154 확인표 U-1~U-8**(사용자 · 방법은 요청 시 안내) — **Windows 실기**(위 "윈도우에서 처음 할 일" ②~⑤) | 결과는 journal에 실기표로 · 결함은 그 자리에서 |
+| 2 | ✅ 89차(win) **T-150 PostgreSQL refcursor** — `SELECT f()`가 돌려준 커서 이름을 `FETCH ALL IN "이름"`으로 받아 결과 탭으로 | `nsql-driver-pg`: 단순 질의 경로에는 **열 타입이 없다**(`Column.type_name` 빈 글) → 커서 경로(`execute_cursor` — 드라이버가 `BEGIN`을 쥔다)나 `prepare`로 타입(`refcursor`)을 얻은 뒤, **같은 트랜잭션 안에서** FETCH → `ExecResult.result_sets`에 덧붙이고 `CLOSE` · 자동 커밋이면 드라이버/러너가 트랜잭션으로 감싼다(T-146 `tx_open`과 충돌하지 않게) · 검증 = `integration.rs`에 PG 함수(`RETURNS refcursor` · `RETURNS SETOF refcursor`) 테스트 → 작업 브랜치에서 `gh workflow run integration.yml --ref <브랜치>`(main을 건드리지 않고 실서버 확인 — 09-21에 쓴 방법) |
+| 3 | ✅ 89차 후반(win · 실서버 Oracle·SQL Server) — MySQL만 드라이버 도입 때 · **T-151 서명 추론 넓히기 + 타입** | `nsql-catalog::routine_args`에 PG(`pg_proc`/`pg_get_function_arguments`) · SQL Server(`sys.parameters`) · MySQL(`information_schema.PARAMETERS`) · `VarType`에 DATE/TIMESTAMP 실제 바인드(Oracle 드라이버는 지금 스칼라 OUT을 전부 VARCHAR2(4000)로 묶는다) · BOOLEAN · `Direction::Out`을 실제로 만든다(지금은 전부 InOut) |
+| 4 | ✅ 89차(win) **T-152 `Caps` 포트**([63 §3](63-variable-management.md)) | `nsql-script/dialect.rs`·`engine.rs`의 방언 `match`(`wrap_exec` · `prepare` · `exec_targets`의 `Oracle | Mssql` 판정 · 러너의 `absorb` 방언 게이트)를 드라이버 능력 질의로 — 포트(trait) + 레지스트리 + 설정([30](30-architecture-patterns.md)) · MySQL/MariaDB·NoSQL 어댑터가 능력표만 채우면 붙게 |
+| 5 | 🚧 89차(win) `ACCEPT`·CLI `-v`·미정의 경고 · 후반 `COLUMN NEW_VALUE`·시스템 변수·`${v:형식}`·값 상한 ✅ · 남음 = hover 값·입력 창 타입 열·프로필 층 출처 — **T-153 변수 UX 잔여** | `ACCEPT [HIDE] [DEFAULT]` · `COLUMN … NEW_VALUE`(`nsql-script/command.rs`) · 입력 창에 타입 열·미리보기(`input_win.rs`) · **MacroStore 분리 + 시스템 변수**(`_USER` `_DATE` `_ROW_COUNT` `_SQLCODE` `_ELAPSED_MS`) · `${v:형식}` · CLI `-v name=value` · 편집기 hover에 변수 값 · 미정의 변수 경고(`Diagnostic::ImplicitVariable`은 만들어지기만 하고 **소비자가 없다**) · 값 크기 상한 `vars.max_value_kb` · 프로필 층의 출처(접속 프로필 필드) · 이름 없는 탭 보존(S-1 hot exit와 함께) |
 | 6 | 그 밖에 열려 있던 것 | **T-145**(줄 변경 표시·괄호 표의 줄 단위 갱신) · T-147 잔여(`nexa-gfx::Surface` stride → 중간 버퍼 제거 · D-133 기본 전환) · T-148 잔여(SQLite 열기 실패 14가 "Connection lost"로 분류됨 · MySQL `DELIMITER`) · T-136 · T-103 위키 · T-105 · T-106 |
+
+**89차(win)에 고친 흠**: ②(`VAR X NUMBER` 표기 보존) · ⑤(`about_to_wait`에서도 창 깃발) · ⑥(`NSQL_PG_URL`) — 아래 목록의 나머지(① ③ ④ ⑦)는 그대로.
 
 **알아 둘 흠(09-21에 봤지만 고치지 않은 것)**: ① PG 수동 커밋에서 문장 하나가 실패하면 트랜잭션이 *aborted* 상태로 남아 Rollback 전까지 전부 실패한다(PG의 정상 동작 · psql `ON_ERROR_ROLLBACK`처럼 문장마다 SAVEPOINT를 두는 선택지를 [56](56-manual-commit-lock-prevention.md)에 검토로 남길 것) ② `VAR X NUMBER`는 이름을 대문자로 만든다(표기 보존 D-142는 `EXEC :x := …` 경로만) ③ `VAR X`(타입 없음)는 선언하지 않고 조회만 한다 ④ `vars.show`(SHOW VARIABLES)는 접속이 있어야 돈다(`gate_open`) — 변수 창은 접속 없이도 열린다 ⑤ `open_sessions`·`open_txlog` 같은 창 열기 깃발은 아직 `window_event` 끝에서만 본다(메뉴 클릭은 문제없고 `NSQL_STARTUP_CMD`로 열 때만 늦다 — `open_vars`처럼 `about_to_wait`에도 두면 된다) ⑥ `.devcontainer/devcontainer.json`은 `NSQL_POSTGRES_URL`인데 통합 테스트는 `NSQL_PG_URL`을 본다(Codespaces에서 PG 테스트가 조용히 건너뛰어진다 — 이름을 맞출 것) ⑦ `.devcontainer/devcontainer-lock.json`은 사용자 파일이라 추적하지 않았다.
 

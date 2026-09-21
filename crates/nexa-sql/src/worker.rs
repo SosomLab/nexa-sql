@@ -89,6 +89,12 @@ pub(crate) enum ConnOutcome {
     Connected(String),
     ConnectFailed(String),
     Disconnected,
+    /// 접속 문자열에 비밀번호 자리가 없다 — 입력 창으로 **한 번** 묻는다(`target` = 가린 표시 · 답 = [`PwReply`]).
+    PasswordNeeded {
+        target: String,
+        /// 들고 있던(세션 자격 금고) 비밀번호를 서버가 거부해 폐기하고 다시 묻는 것이다 — 입력 창이 그 사실을 알린다.
+        rejected: bool,
+    },
     /// 편집기 세션의 Oracle SID(라이브 로그 모니터가 V$SESSION을 볼 때 · T-71).
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
@@ -154,13 +160,66 @@ fn resolve_target(target: &str, default_dialect: Dialect) -> Result<ConnectSpec,
     nsql_drivers::parse_target(target, default_dialect)
 }
 
-/// ★ 인라인 접속 문자열은 **비밀번호가 있어야** 연다(docs/52 §4 · 09-19). 저장소 프로필은 워커에 오기 전에 이미 채워져
-/// 오고(`resolve_target`), SQLite는 자격이 없다. 자격 빌리기(같은 서버·계정 프로필의 비밀번호를 몰래 쓰기)는 하지 않는다 —
-/// 사용자가 보기에 "비밀번호 없이 접속됨"이 되어 오해·오접속을 낳는다. 비밀번호 변수/모달 입력 = T-132.
+/// ★ **비밀번호를 물어야 하는가**(docs/52 §4 · T-132 · 사용자 09-21): 접속 문자열에 비밀번호 자리가 **없을 때만**
+/// (`user@host` → `None`). `user:@host`는 빈 비밀번호를 **명시**한 것(`Some("")`)이라 묻지 않고 그대로 접속한다. SQLite는 자격이
+/// 없고, 호스트가 없는 대상은 드라이버가 판단한다. 자격 빌리기(같은 서버·계정 프로필의 비밀번호를 몰래 쓰기)는 하지 않는다 —
+/// "비밀번호 없이 접속됨"처럼 보여 오해·오접속을 낳는다. 물어서 받은 값은 **그 접속에만** 쓰고 버린다([`PwReply`]).
 pub(crate) fn password_required(spec: &ConnectSpec, default_dialect: Dialect) -> bool {
     spec.dialect.unwrap_or(default_dialect) != Dialect::Sqlite
         && spec.host.is_some()
-        && spec.password.as_deref().is_none_or(str::is_empty)
+        && spec.password.is_none()
+}
+
+/// **들고 있던 비밀번호가 무효인가** — 서버가 "사용자/비밀번호가 틀렸다"고 답한 경우만(계정 잠김 · 만료 · DB 없음 · 네트워크는 아니다:
+/// 그때 다시 물어 봐야 같은 실패를 한 번 더 할 뿐이고, 잠긴 계정에는 시도를 보태지 않는다). Oracle ORA-01017 · SQL Server 18456 ·
+/// MySQL 1045 · PostgreSQL "password authentication failed"(28P01).
+pub(crate) fn stale_password(dialect: Dialect, e: &DbError) -> bool {
+    match dialect {
+        // ORA-01005 = 빈 비밀번호를 줬다("null password given") — `user:@host`가 거부된 모양.
+        Dialect::Oracle => {
+            matches!(e.code, Some(1017 | 1005))
+                || e.message.contains("ORA-01017")
+                || e.message.contains("ORA-01005")
+        }
+        Dialect::Mssql => e.code == Some(18456),
+        Dialect::Mysql => e.code == Some(1045),
+        Dialect::Postgres => {
+            let low = e.message.to_ascii_lowercase();
+            low.contains("password authentication failed") || low.contains("28p01")
+        }
+        _ => false,
+    }
+}
+
+/// **자격 자리의 이름** — 비밀번호만 뺀 "같은 서버·계정"(= [`same_server`]가 보는 것과 같은 항목). 접속 문자열의 `?schema=`·`?env=`
+/// 같은 덧붙임은 자격과 무관하므로 넣지 않는다. 세션 자격 금고(nsql-vault `session`)의 열쇠이자 봉투의 도메인이다.
+pub(crate) fn cred_id(spec: &ConnectSpec, default_dialect: Dialect) -> String {
+    format!(
+        "{}://{}@{}:{}/{}#{}",
+        spec.dialect.unwrap_or(default_dialect),
+        spec.user.as_deref().unwrap_or(""),
+        spec.host.as_deref().unwrap_or("").to_ascii_lowercase(),
+        spec.port.map_or(String::new(), |p| p.to_string()),
+        spec.database.as_deref().unwrap_or(""),
+        spec.role.as_deref().unwrap_or(""),
+    )
+}
+
+/// 같은 서버에 붙어 있는 탭에서 `CONNECT`가 들고 온 비밀번호가 **지금 자격과 다른가** — 다르면 "그대로 유지"가 아니라 다시 접속한다.
+/// 비밀번호 자리가 없는 `CONNECT`(`user@host` · 프로필 이름)와 금고를 끈 경우는 "같다"로 본다(종전 동작).
+pub(crate) fn credential_changed(spec: &ConnectSpec, default_dialect: Dialect) -> bool {
+    match spec.password.as_deref() {
+        Some(p) if remember_session_password() => {
+            !nsql_vault::session::matches(&cred_id(spec, default_dialect), p)
+        }
+        _ => false,
+    }
+}
+
+/// 설정 `connect.remember_session_password`(기본 켬) — 입력한 비밀번호를 이번 실행 동안 메모리 봉투로 재사용하는가.
+pub(crate) fn remember_session_password() -> bool {
+    nsql_settings::Settings::open_default()
+        .map_or(true, |s| s.flag("connect.remember_session_password"))
 }
 
 /// 생존 판정 설정(docs/53 §3 · 실행마다 읽는다): (빠른 판정 상한, 마지막 성공 뒤 이 시간이 지나면 동작 전에 판정, 자동 재접속).
@@ -188,6 +247,14 @@ fn apply_fetch_settings(runner: &mut Runner) {
     // 실행 뒤 돌아온 REF CURSOR를 바로 결과로(끄면 `PRINT rc`).
     runner.auto_cursor = s.get("run.cursor_autoshow").is_none_or(|v| v == "on");
     runner.engine.settings.into_first = s.get("vars.into_policy") == Some("first");
+    // 부하원 스위치(39 §3): 호출 서명 조회 · PG 커서 이름 풀기.
+    runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
+    runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
+    // T-153: `${이름:형식}` 치환 · 돌아온 값의 크기 상한.
+    runner.engine.settings.brace_subst = s.get("vars.brace_subst").is_none_or(|v| v == "on");
+    runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
+    runner.engine.settings.max_value_bytes =
+        (s.int("vars.max_value_kb").max(0) as usize).saturating_mul(1024);
 }
 
 /// docs/56 L4 — 접속 직후 서버 안전망 세션 파라미터(설정 0 = 안 보냄 · 지원 방언만). 돌려주는 값 = 보낼 문장들.
@@ -266,8 +333,17 @@ pub(crate) enum InputReply {
     Cancel,
 }
 
+/// 비밀번호 입력 창의 답 — 워커는 `ConnOutcome::PasswordNeeded`를 낸 뒤 이것을 기다린다(그동안 세션은 "바쁨").
+/// 값은 [`nsql_core::Secret`]에 담겨 온다: 접속에 한 번 쓰고 **0으로 덮어써** 버린다 · 스펙·프로필·로그·설정 어디에도 남기지 않는다.
+pub(crate) enum PwReply {
+    Value(nsql_core::Secret),
+    Cancel,
+}
+
 pub(crate) struct Handle {
     tx: mpsc::Sender<Cmd>,
+    /// 비밀번호 입력 창의 답을 보내는 길(접속을 여는 자리에서 기다린다).
+    pw_tx: mpsc::Sender<PwReply>,
     /// 입력 창의 답을 보내는 길(명령 큐와 따로 — 워커가 실행 명령 안에서 기다린다).
     input_tx: mpsc::Sender<InputReply>,
     /// 전체 조회 취소 깃발(T-48b) — UI가 올리고 워커가 배치 사이에 본다.
@@ -283,6 +359,11 @@ pub(crate) struct Handle {
 impl Handle {
     pub(crate) fn send(&self, c: Cmd) {
         let _ = self.tx.send(c);
+    }
+
+    /// 비밀번호 입력 창의 답.
+    pub(crate) fn password(&self, r: PwReply) {
+        let _ = self.pw_tx.send(r);
     }
 
     /// 입력 창의 답.
@@ -328,6 +409,7 @@ pub(crate) fn spawn(
     let (dtx, drx) = mpsc::channel::<Option<String>>();
     let (ctx_tx, ctx_rx) = mpsc::channel::<ConnOutcome>();
     let (input_tx, input_rx) = mpsc::channel::<InputReply>();
+    let (pw_tx, pw_rx) = mpsc::channel::<PwReply>();
     let cancel_fetch = Arc::new(AtomicBool::new(false));
     let cancel_flag = cancel_fetch.clone();
     let cancel_run: Arc<Mutex<Option<Arc<dyn nsql_core::CancelHandle>>>> =
@@ -336,19 +418,102 @@ pub(crate) fn spawn(
     std::thread::Builder::new()
         .name("nsql-worker".into())
         .spawn(move || {
-            let opener: Opener = Box::new(
-                move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
-                    if password_required(spec, default_dialect) {
-                        return Err(DbError {
-                            code: None,
-                            message: t(Msg::ErrPasswordRequired).into(),
-                            position: None,
-                        });
-                    }
-                    nsql_drivers::open(spec, default_dialect)
-                },
-            );
             let wake_shared = std::sync::Arc::new(std::sync::Mutex::new(wake));
+            // ★ 접속을 여는 **한 자리** — 비밀번호 자리가 없는 접속 문자열이면 여기서 물어본다(편집기 `CONNECT` · 시작 인자 ·
+            //   탐색기 "연결" · 끊긴 뒤 재접속이 모두 이 길을 지난다). 받은 값은 이 접속에만 쓰고 덮어써 지운다.
+            let opener: Opener = {
+                let ask_tx = ctx_tx.clone();
+                let ask_wake = wake_shared.clone();
+                Box::new(
+                    move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
+                        let dialect = spec.dialect.unwrap_or(default_dialect);
+                        // ★ **명시한 비밀번호**(`user:pw@host` · 빈 값 `user:@host` 포함 · 저장된 프로필): 그 서버·계정의 자격 자리를
+                        //   이 값으로 **바꿔 든다**(자리는 하나) → 거부되면 자리를 비운다 = 앞서 입력해 둔 값도 다시 쓰이지 않고,
+                        //   다음 `user@host` 접속은 다시 묻는다(사용자 09-21).
+                        if let (Some(p), true) = (
+                            spec.password.as_ref(),
+                            dialect != Dialect::Sqlite && spec.host.is_some(),
+                        ) {
+                            let slot = cred_id(spec, default_dialect);
+                            if remember_session_password() {
+                                nsql_vault::session::remember(
+                                    &slot,
+                                    &nsql_core::Secret::new(p.clone()),
+                                );
+                            }
+                            let r = nsql_drivers::open(spec, default_dialect);
+                            if let Err(e) = &r {
+                                if stale_password(dialect, e) {
+                                    nsql_vault::session::forget(&slot);
+                                }
+                            }
+                            return r;
+                        }
+                        if !password_required(spec, default_dialect) {
+                            return nsql_drivers::open(spec, default_dialect);
+                        }
+                        // ★ 세션 자격 금고(설정 `connect.remember_session_password` · nsql-vault `session`): 이번 실행에서 같은
+                        //   서버·계정에 이미 입력한 비밀번호가 있으면 **묻지 않고** 그것으로 연다. 실패하면 바로 잊는다(다음에는 묻는다 —
+                        //   틀린 비밀번호로 되풀이 시도해 계정을 잠그지 않는다).
+                        let vault_id = cred_id(spec, default_dialect);
+                        let remember = remember_session_password();
+                        let mut rejected = false;
+                        if !remember {
+                            nsql_vault::session::forget(&vault_id);
+                        } else if let Some(secret) = nsql_vault::session::recall(&vault_id) {
+                            let mut once = spec.clone();
+                            once.password = Some(secret.expose().to_string());
+                            drop(secret);
+                            let r = nsql_drivers::open(&once, default_dialect);
+                            nsql_core::secret::wipe_opt(&mut once.password);
+                            match r {
+                                // ★ 들고 있던 비밀번호가 **무효**(서버에서 바뀌었다 · 사용자 09-21): 폐기하고 **이 접속 안에서 바로 다시
+                                //   묻는다**. 그 밖의 실패(네트워크 · 리스너 · 서비스 이름)는 비밀번호 탓이 아니므로 그대로 두고 오류만 낸다.
+                                Err(e)
+                                    if stale_password(
+                                        spec.dialect.unwrap_or(default_dialect),
+                                        &e,
+                                    ) =>
+                                {
+                                    nsql_vault::session::forget(&vault_id);
+                                    rejected = true;
+                                }
+                                other => return other,
+                            }
+                        }
+                        // 밀린 답(앞선 물음의 늦은 답)은 버린다 — `Secret`이라 버려지면서 지워진다.
+                        while pw_rx.try_recv().is_ok() {}
+                        let _ = ask_tx.send(ConnOutcome::PasswordNeeded {
+                            target: spec.redacted(),
+                            rejected,
+                        });
+                        if let Ok(f) = ask_wake.lock() {
+                            f();
+                        }
+                        let secret = match pw_rx.recv() {
+                            Ok(PwReply::Value(s)) => s,
+                            Ok(PwReply::Cancel) | Err(_) => {
+                                return Err(DbError {
+                                    code: None,
+                                    message: t(Msg::ErrPasswordCancelled).into(),
+                                    position: None,
+                                });
+                            }
+                        };
+                        // 이 접속에만 쓰는 스펙 사본 — 드라이버가 돌아오면 비밀번호를 0으로 덮어쓴다(성공·실패 공통).
+                        let mut once = spec.clone();
+                        once.password = Some(secret.expose().to_string());
+                        let r = nsql_drivers::open(&once, default_dialect);
+                        nsql_core::secret::wipe_opt(&mut once.password);
+                        // 접속에 **성공한** 값만 금고에 든다(봉투 · 평문 아님).
+                        if r.is_ok() && remember {
+                            nsql_vault::session::remember(&vault_id, &secret);
+                        }
+                        drop(secret);
+                        r
+                    },
+                )
+            };
             let wake_now = {
                 let w = wake_shared.clone();
                 move || {
@@ -1103,6 +1268,7 @@ pub(crate) fn spawn(
     (
         Handle {
             tx,
+            pw_tx,
             input_tx,
             cancel_fetch,
             cancel_run,
@@ -1205,10 +1371,14 @@ mod tests {
         let mut no_host = p("oracle://scott@db.local/orcl");
         no_host.host = None;
         assert!(!password_required(&no_host, Dialect::Oracle));
-        // 빈 비밀번호 = 없음.
-        let mut empty = p("oracle://scott/x@db.local/orcl");
-        empty.password = Some(String::new());
-        assert!(password_required(&empty, Dialect::Oracle));
+        // 빈 비밀번호를 **명시**(`user:@host`) = 묻지 않는다(사용자 09-21) · 자리가 아예 없으면 묻는다.
+        assert!(!password_required(
+            &p("oracle://scott:@db.local/orcl"),
+            Dialect::Oracle
+        ));
+        let mut none = p("oracle://scott/x@db.local/orcl");
+        none.password = None;
+        assert!(password_required(&none, Dialect::Oracle));
     }
 
     /// docs/53: 닿지 않는 서버(TEST-NET-1)에 접속 창 경로로 붙이면 드라이버 타임아웃 대신 **빠른 판정**이 `probe.timeout` 안에
@@ -1243,6 +1413,169 @@ mod tests {
         assert!(failed, "ConnectFailed");
         // 드라이버(OCI) 접속 타임아웃(수십 초)이 아니라 빠른 판정(기본 2초 · 설정 최대 60초) 안에 끝난다.
         assert!(t.elapsed() < Duration::from_secs(61), "{:?}", t.elapsed());
+    }
+
+    /// 일회성 비밀번호(사용자 09-21): 비밀번호 자리가 없는 접속 문자열 = 서버에 가기 **전에** 묻는다 → 취소하면 접속 실패
+    /// (아무것도 보내지 않음) · `user:@host`(빈 비밀번호 명시)는 묻지 않는다. 로컬 리스너 = 빠른 판정만 통과시키는 더미(네트워크 0).
+    #[test]
+    fn missing_password_is_asked_once_and_cancel_aborts() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        // 받은 연결은 바로 닫는다(드라이버가 응답을 기다리며 매달리지 않게) — 시험이 끝나면 깃발로 멈춘다.
+        listener.set_nonblocking(true).expect("nonblocking");
+        let stop = Arc::new(AtomicBool::new(false));
+        let acceptor = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok((c, _)) = listener.accept() {
+                        drop(c);
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            })
+        };
+        let run = |target: String, reply: Option<PwReply>| -> (bool, Option<String>) {
+            let (w, _events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
+            w.send(Cmd::ConnectSpec {
+                spec: ConnectSpec::parse(&target).expect("spec"),
+                reconnect_same: false,
+            });
+            let mut reply = reply;
+            let (mut asked, mut failed) = (false, None);
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while std::time::Instant::now() < deadline && failed.is_none() {
+                while let Ok(o) = w.conn.try_recv() {
+                    match o {
+                        ConnOutcome::PasswordNeeded { target, rejected } => {
+                            assert!(!target.contains("secret"), "{target}");
+                            assert!(!rejected, "거부 표시는 인증 실패 뒤에만");
+                            asked = true;
+                            if let Some(r) = reply.take() {
+                                w.password(r);
+                            }
+                        }
+                        ConnOutcome::ConnectFailed(e) => failed = Some(e),
+                        _ => {}
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            (asked, failed)
+        };
+        // ① 자리가 없다 → 묻는다 → 취소 = "취소" 오류(드라이버에 가지 않았다).
+        let (asked, failed) = run(
+            format!("oracle://scott@127.0.0.1:{port}/orcl"),
+            Some(PwReply::Cancel),
+        );
+        assert!(asked, "PasswordNeeded");
+        assert_eq!(failed.as_deref(), Some(t(Msg::ErrPasswordCancelled)));
+        // ③ 세션 자격 금고: 이번 실행에서 이 서버·계정의 비밀번호를 이미 받았다 → **묻지 않고** 그것으로 연다. 더미 리스너의 실패는
+        //   인증 실패가 아니므로(네트워크) 비밀번호를 **버리지 않는다** — 버리고 다시 묻는 것은 서버가 비밀번호를 거부했을 때뿐.
+        if remember_session_password() {
+            let target = format!("oracle://scott@127.0.0.1:{port}/orcl");
+            let id = cred_id(&ConnectSpec::parse(&target).expect("spec"), Dialect::Oracle);
+            nsql_vault::session::remember(&id, &nsql_core::Secret::new("secret".into()));
+            let (asked, failed) = run(target, None);
+            assert!(!asked, "금고에 있으면 묻지 않는다");
+            assert!(failed.is_some_and(|e| !e.contains("secret")));
+            assert!(
+                nsql_vault::session::recall(&id).is_some(),
+                "비밀번호 탓이 아닌 실패로는 잊지 않는다"
+            );
+            nsql_vault::session::forget(&id);
+        }
+        // ② 빈 비밀번호를 명시 → 묻지 않는다(더미 리스너라 드라이버 오류로 끝난다 — 그 글은 보지 않는다).
+        let (asked, failed) = run(format!("oracle://scott:@127.0.0.1:{port}/orcl"), None);
+        assert!(!asked, "명시한 빈 비밀번호는 묻지 않는다");
+        assert!(failed.is_some());
+        stop.store(true, Ordering::Relaxed);
+        let _ = acceptor.join();
+    }
+
+    /// 사용자 09-21 시나리오: ① 입력해 둔 값이 자리에 있다 → ② 같은 서버에 `user:@host`(빈 비밀번호 명시)로 접속 = 자리가 빈 값으로
+    /// **바뀐다**(다른 자격이므로 "그대로 유지"가 아니다) → ③ 서버가 거부 = 자리가 **빈다** → ④ 다음 `user@host`는 다시 묻는다.
+    /// (②의 실제 거부는 실서버가 있어야 하므로 여기서는 자리의 변화를 단계별로 본다 · 더미 리스너 = 네트워크 0.)
+    #[test]
+    fn explicit_password_replaces_the_slot_and_rejection_empties_it() {
+        if !remember_session_password() {
+            return;
+        }
+        let none = ConnectSpec::parse("oracle://slot_user@slot-host:1521/svc").expect("spec");
+        let empty =
+            ConnectSpec::parse("oracle://slot_user:@slot-host:1521/svc?schema=HR").expect("spec");
+        let id = cred_id(&none, Dialect::Oracle);
+        assert_eq!(
+            id,
+            cred_id(&empty, Dialect::Oracle),
+            "비밀번호·덧붙임만 다른 것은 같은 자리"
+        );
+        nsql_vault::session::remember(&id, &nsql_core::Secret::new("typed".into()));
+        // 비밀번호 자리가 없는 CONNECT = 자격이 바뀐 것이 아니다 · 같은 값 = 아니다 · 다른 값(빈 값 포함) = 바뀌었다.
+        assert!(!credential_changed(&none, Dialect::Oracle));
+        let mut same = none.clone();
+        same.password = Some("typed".into());
+        assert!(!credential_changed(&same, Dialect::Oracle));
+        assert!(credential_changed(&empty, Dialect::Oracle));
+        // ② 명시한 값이 자리를 바꾼다 → ③ 거부되면 비운다(오프너가 하는 두 걸음).
+        nsql_vault::session::remember(&id, &nsql_core::Secret::new(String::new()));
+        assert!(nsql_vault::session::matches(&id, ""));
+        assert!(stale_password(
+            Dialect::Oracle,
+            &DbError {
+                code: Some(1005),
+                message: "ORA-01005: null password given; logon denied".into(),
+                position: None,
+            }
+        ));
+        nsql_vault::session::forget(&id);
+        // ④ 자리가 비었다 → `user@host`는 다시 묻는다(`password_required` + 금고에 없음).
+        assert!(nsql_vault::session::recall(&id).is_none());
+        assert!(password_required(&none, Dialect::Oracle));
+    }
+
+    /// 무효 판정 = "사용자/비밀번호가 틀렸다"만. 잠김·만료·DB 없음·네트워크는 다시 묻지 않는다(방언마다 하나씩 뒤집어 본다).
+    #[test]
+    fn stale_password_is_only_a_rejected_credential() {
+        let e = |code: Option<i64>, m: &str| DbError {
+            code,
+            message: m.into(),
+            position: None,
+        };
+        assert!(stale_password(Dialect::Oracle, &e(Some(1017), "ORA-01017")));
+        assert!(stale_password(
+            Dialect::Oracle,
+            &e(None, "OCI Error: ORA-01017: invalid")
+        ));
+        assert!(stale_password(
+            Dialect::Oracle,
+            &e(Some(1005), "ORA-01005: null password given")
+        ));
+        assert!(!stale_password(
+            Dialect::Oracle,
+            &e(Some(28000), "ORA-28000: locked")
+        ));
+        assert!(!stale_password(
+            Dialect::Oracle,
+            &e(Some(12541), "ORA-12541: no listener")
+        ));
+        assert!(stale_password(
+            Dialect::Mssql,
+            &e(Some(18456), "Login failed")
+        ));
+        assert!(!stale_password(
+            Dialect::Mssql,
+            &e(Some(4060), "Cannot open database")
+        ));
+        assert!(stale_password(
+            Dialect::Postgres,
+            &e(None, "FATAL: password authentication failed for user \"u\"")
+        ));
+        assert!(!stale_password(
+            Dialect::Postgres,
+            &e(None, "connection refused")
+        ));
+        assert!(!stale_password(Dialect::Sqlite, &e(Some(1017), "x")));
     }
 
     /// 즉시 해제 규약(사용자 09-16): 옛 워커가 응답 없는 서버에 갇혀 있어도(여기서는 비라우팅 주소 접속 시도)

@@ -18,7 +18,7 @@
   "containerEnv": {
     "NSQL_ORACLE_URL": "oracle://nexa:nexa@oracle:1521/FREEPDB1",
     "NSQL_MSSQL_URL": "mssql://sa:Nexa%40Sql2026@mssql:1433/master",
-    "NSQL_POSTGRES_URL": "postgres://nexa:nexa@postgres:5432/nexa",
+    "NSQL_PG_URL": "postgres://nexa:nexa@postgres:5432/nexa",
     "NSQL_MYSQL_URL": "mysql://nexa:nexa@mysql:3306/nexa",
     "LD_LIBRARY_PATH": "/opt/oracle/instantclient",
     "CARGO_TERM_COLOR": "always",

@@ -248,10 +248,14 @@ pub const BOOST: &[(&str, &str)] = &[
     ("editor.highlight_selection", "off"),
     ("editor.diff_marks", "off"),
     ("rainbowpair.enabled", "off"),
+    // 탐색기 갱신 뒤 새 객체 강조(docs/57) — 강조가 사라질 때까지 다시 그리기가 이어진다.
+    ("meta.refresh_highlight_ms", "0"),
     // ── I/O·기동(파일·프로세스·클립보드·둘째 창): git 프로세스 · 복사 시 HTML 생성 · 우클릭 클립보드 읽기 · 시작 시 로그 창
     ("statusbar.git", "off"),
     ("editor.copy_rich", "off"),
     ("ui.clipboard_probe", "off"),
+    // 되돌리기 기록 파일(docs/60 §7 · 저장·닫기 때 쓰기 + 열 때 읽기·검증 = 디스크 I/O와 기동 비용) — 세션 안의 되돌리기는 그대로.
+    ("editor.undo_persist", "off"),
     ("log.open_at_start", "off"),
     ("log.dev_mode", "off"),
     // 막힘 감지 폴링(docs/56 L3) — 네트워크 부하원이라 향상 모드는 끈다(L1·L2는 데이터 안전 기능이라 건드리지 않는다).
@@ -260,6 +264,9 @@ pub const BOOST: &[(&str, &str)] = &[
     ("meta.refresh_secs", "0"),
     // 보이는 탭의 외부 변경 폴링(docs/58) — 창 활성화·탭 전환·저장 직전 확인은 그대로.
     ("file.external_poll_ms", "0"),
+    // ── 메모리: 결과 다중 탭(사용자 09-21 "다중 탭을 끄는 것은 의도적으로 메모리 사용을 억제하기 위한 설정 — 향상 모드에 포함").
+    //    끄면 편집기 탭당 결과 하나만 들고 다른 결과 탭은 즉시 해제된다(D-73) · 결과 자체는 그대로 조회·표시된다.
+    ("grid.result_tabs", "off"),
     // ── 메모리(캐시 상한 · 아이콘은 위에서 껐으므로 캐시도 최소)
     ("file.icon_cache", "128"),
     // ── 폴링·시도 횟수·시간·스레드(NET/DB 표시용): 신호등(스레드 1) · 탐색기 자동 갱신 · Oracle 라이브 로그

@@ -359,6 +359,7 @@ fn type_token(ty: &VarType) -> Option<String> {
         VarType::BinaryDouble => "BINARY_DOUBLE".into(),
         VarType::Date => "DATE".into(),
         VarType::Timestamp => "TIMESTAMP".into(),
+        VarType::Boolean => "BOOLEAN".into(),
         VarType::Auto => return None,
     })
 }
@@ -441,6 +442,27 @@ mod tests {
             Value::Str("O'Brien & co".into())
         );
         assert!(get("v_password").is_none() && get("multi").is_none());
+    }
+
+    /// 선언한 이름의 표기는 친 그대로 남고(D-142 · T-151) 찾기는 대소문자를 가리지 않는다.
+    #[test]
+    fn declared_name_keeps_its_casing() {
+        let mut s = VarStore::new();
+        s.declare("v_OrderCnt", VarType::Number, None);
+        assert_eq!(
+            s.get("V_ORDERCNT").map(|v| v.label.as_str()),
+            Some("v_OrderCnt")
+        );
+        assert_eq!(
+            s.get("v_ordercnt").map(|v| v.label.as_str()),
+            Some("v_OrderCnt")
+        );
+        s.assign("V_ORDERCNT", Value::Int(3));
+        assert_eq!(
+            s.get("v_OrderCnt").map(|v| v.label.as_str()),
+            Some("v_OrderCnt"),
+            "대입은 표기를 바꾸지 않는다"
+        );
     }
 
     #[test]

@@ -28,3 +28,5 @@ nsql-driver-pg = { workspace = true, optional = true }
 
 [dev-dependencies]
 nsql-run.workspace = true
+# 통합 테스트를 저장된 프로필로도 돌린다(`NSQL_PG_PROFILE=<이름>` — 비밀번호를 환경 변수에 적지 않는다).
+nsql-vault.workspace = true

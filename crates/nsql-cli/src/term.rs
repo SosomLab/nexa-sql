@@ -6,9 +6,8 @@ use std::io::{self, BufRead, IsTerminal, Write};
 /// ① 스펙에 이미 있음 ② 환경변수 `NSQL_PASSWORD`(docs/27 · 배치) ③ 터미널이면 숨김 프롬프트(sqlplus/psql 관례).
 /// `no_prompt`이거나 터미널이 아니면 묻지 않는다(배치는 빈 비밀번호로 시도해 서버 오류를 그대로 보여 준다). SQLite는 비밀번호가 없다.
 pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bool, label: &str) {
-    if spec.password.as_deref().is_some_and(|p| !p.is_empty())
-        || spec.dialect == Some(nsql_core::Dialect::Sqlite)
-    {
+    // `user:@host` = 빈 비밀번호를 **명시**한 것 → 묻지 않는다(사용자 09-21) · `user@host`(없음)일 때만 채운다.
+    if spec.password.is_some() || spec.dialect == Some(nsql_core::Dialect::Sqlite) {
         return;
     }
     if let Ok(p) = std::env::var("NSQL_PASSWORD") {

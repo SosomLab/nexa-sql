@@ -27,11 +27,11 @@ pub mod split;
 pub mod vars;
 
 pub use bind::{extract_binds, BindRef};
-pub use call::{call_shape, CallArg, CallShape};
+pub use call::{call_shape, mark_output, tsql_call_shape, CallArg, CallShape};
 pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, SpoolMode};
 pub use connect::{ConnEnv, ConnectSpec};
 pub use dialect::{prepare, PrepareMode, Prepared};
-pub use engine::{Action, Diagnostic, Engine};
+pub use engine::{Action, Diagnostic, Engine, SYSTEM_VARS};
 pub use inputs::{macro_refs, missing_inputs, InputKind, InputNeed};
 pub use split::{split_script, split_script_in, Item, ItemKind, SqlKind};
 pub use split::{statement_at, statement_at_in};

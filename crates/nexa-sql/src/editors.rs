@@ -56,6 +56,9 @@ pub(crate) struct Editors {
     large: std::collections::HashMap<u64, (u8, bool)>,
     /// 단계 기준: [(바이트, 줄 수); L1, L2] — 둘 중 하나라도 넘으면 그 단계(설정 `file.large_*`).
     large_cfg: [(usize, usize); 2],
+    /// 큰 파일 단계별 기능 제한(사용자 09-21 · 0 = 제한 안 함 · 1 = L1부터 · 2 = L2부터): (확장 효과, 구문 강조).
+    /// 설정 `file.large_ext_level`(기본 L1) · `file.large_syntax_level`(기본 L2).
+    large_feature_levels: (u8, u8),
     /// 읽기 전용 탭(큰 파일을 보기만 · 일부만 열기).
     read_only: std::collections::HashSet<u64>,
     /// **적재 중인 탭**(사용자 09-20): 큰 파일을 작업 스레드가 읽는 동안의 자리 탭 — 비어 있고 읽기 전용이며 경로가 없다
@@ -178,6 +181,7 @@ impl Editors {
             view_tabs: std::collections::HashMap::new(),
             large: std::collections::HashMap::new(),
             large_cfg: [(5 << 20, 100_000), (20 << 20, 300_000)],
+            large_feature_levels: (1, 2),
             read_only: std::collections::HashSet::new(),
             loading: std::collections::HashSet::new(),
             line_numbers,
@@ -288,6 +292,8 @@ impl Editors {
             tb.set_bracket_opts(opts.clone());
         }
         self.bracket_opts = Some(opts);
+        // 큰 파일 탭은 확장 효과를 받지 않는다(단계 기준 = `file.large_ext_level`).
+        self.enforce_large();
     }
 
     /// 확장 효과: 우클릭 메뉴 추가 항목을 전 탭에(새 탭에도).
@@ -1007,9 +1013,63 @@ impl Editors {
 
     // ───────────── 큰 파일 모드 · 읽기 전용(docs/59 §4) ─────────────
 
+    /// 자체 캡처용(기동 명령 `tab.drag_demo`): 활성 탭을 잡아 오른쪽으로 조금 끈 **상태로 둔다** — 드래그 고스트·자리 표시를
+    /// OS 입력 주입 없이 찍으려고(컨트롤에 직접 사건을 준다 · 격리 실행에서만 쓴다).
+    pub(crate) fn capture_drag_demo(&mut self) {
+        let i = self.active;
+        let Some(r) = self.tabs.tab_rect(i) else {
+            return;
+        };
+        let mut inv = Invalidations::default();
+        self.tabs.begin_drag(i, r.x + 12, r.y + r.h / 2);
+        self.tabs.on_event(
+            &InputEvent::MouseMove {
+                // 마지막 탭은 왼쪽으로(오른쪽은 띠 끝에 막혀 고스트가 제자리와 겹친다).
+                x: if i + 1 == self.bufs.len() {
+                    r.x + 12 - r.w / 3
+                } else {
+                    r.x + 12 + r.w / 3
+                },
+                y: r.y + r.h / 2,
+            },
+            &mut inv,
+        );
+    }
+
+    /// 편집기 탭의 rect(탭 줄 · 보이지 않으면 None) — 이름 바꾸기 상자가 그 탭에 붙는다.
+    pub(crate) fn tab_rect(&self, i: usize) -> Option<nexa_ctl::geom::Rect> {
+        self.tabs.tab_rect(i)
+    }
+
     /// 단계 기준(설정 `file.large_l1_mb`/`_lines` · `file.large_l2_mb`/`_lines` · 0 = 그 기준 끔).
     pub(crate) fn set_large_cfg(&mut self, cfg: [(usize, usize); 2]) {
         self.large_cfg = cfg;
+    }
+
+    /// 단계별 기능 제한 기준(설정 `file.large_ext_level` · `file.large_syntax_level`) — 바뀌면 전 탭에 다시 맞춘다.
+    pub(crate) fn set_large_feature_levels(&mut self, ext: u8, syntax: u8) {
+        if self.large_feature_levels == (ext, syntax) {
+            return;
+        }
+        self.large_feature_levels = (ext, syntax);
+        // 기준이 느슨해졌을 수 있다 → 큰 탭의 기능을 전역 설정대로 되돌린 뒤 새 기준으로 다시 줄인다.
+        for i in 0..self.bufs.len() {
+            if self.large.contains_key(&self.ids[i]) {
+                self.restore_large_features(i);
+            }
+        }
+        self.enforce_large();
+    }
+
+    /// 큰 파일 모드가 줄였던 **확장 효과 · 구문 강조**를 전역 설정대로 되돌린다(강제로 켜기 · 기준 변경 · 단계가 내려갔을 때).
+    fn restore_large_features(&mut self, i: usize) {
+        let syntax = self.syntax[i].clone();
+        let opts = self.bracket_opts.clone();
+        let b = &mut self.bufs[i];
+        b.set_highlighter(Some(syntax));
+        if let Some(o) = opts {
+            b.set_bracket_opts(o);
+        }
     }
 
     /// 본문 크기로 단계를 정한다(0 = 보통 · 1 = L1 · 2 = L2).
@@ -1030,11 +1090,16 @@ impl Editors {
         // 버퍼가 아는 값 그대로(UTF-8 바이트 · 줄 수) — 다시 세지 않는다.
         let level = self.level_for(b.buf().len_bytes(), b.buf().line_count());
         let id = self.tab_id(i);
+        let before = self.large.get(&id).map_or(0, |x| x.0);
         let forced = self.large.get(&id).is_some_and(|x| x.1);
         if level == 0 {
             self.large.remove(&id);
         } else {
             self.large.insert(id, (level, forced));
+        }
+        // 저장 뒤 파일이 작아져 단계가 내려갔으면 줄였던 확장 효과·구문 강조를 되돌린다(종전에는 닫았다 열어야 돌아왔다).
+        if level < before {
+            self.restore_large_features(i);
         }
         self.enforce_large();
         level
@@ -1070,6 +1135,9 @@ impl Editors {
             b.set_minimap(mm);
             b.set_occurrence_highlight(occ);
             b.set_highlighter(Some(syntax));
+            if let Some(o) = self.bracket_opts.clone() {
+                self.bufs[i].set_bracket_opts(o);
+            }
             self.refresh_baseline(i);
         }
         self.enforce_large();
@@ -1078,8 +1146,10 @@ impl Editors {
 
     /// 큰 파일 탭의 기능 축소를 적용한다 — 전역 설정이 바뀌어 전 탭에 다시 들어간 뒤에도 부른다.
     /// L1: 미니맵 · 선택어 강조 · 줄 변경 기준선 끔(+ 저장본 사본을 버린다 — 더러움은 저장 지점으로 O(1)).
-    /// L2: + 구문 강조 끔(Plain).
+    /// L2: + 구문 강조 끔(Plain). **확장 효과**(괄호 색·짝 표·짝 없음 표시 — Rainbow Pairs 등)와 **구문 강조**를 끄는 단계는 설정이
+    /// 정한다(`file.large_ext_level` 기본 L1 · `file.large_syntax_level` 기본 L2 · 사용자 09-21).
     fn enforce_large(&mut self) {
+        let (ext_at, syntax_at) = self.large_feature_levels;
         for i in 0..self.bufs.len() {
             let Some(&(level, forced)) = self.large.get(&self.ids[i]) else {
                 continue;
@@ -1091,8 +1161,12 @@ impl Editors {
             b.set_minimap(false);
             b.set_occurrence_highlight(false);
             b.set_baseline(None);
-            if level >= 2 {
+            if feature_limited(level, syntax_at) {
                 b.set_highlighter(None);
+            }
+            if feature_limited(level, ext_at) {
+                let base = self.bracket_opts.clone().unwrap_or_default();
+                self.bufs[i].set_bracket_opts(large_bracket_opts(&base));
             }
             // 저장본 사본(파일 크기만큼)을 놓는다 — `is_dirty`는 큰 탭에서 저장 지점만 본다.
             if !self.saved[i].is_empty() {
@@ -1488,6 +1562,20 @@ impl Editors {
     }
 
     /// 탭 바 이벤트(마우스가 탭 영역에 있거나 드래그 중). 소비했으면 true.
+    /// 탭 메뉴·표식 메뉴가 열려 있는가.
+    pub(crate) fn tab_menu_open(&self) -> bool {
+        self.menu.is_open()
+    }
+
+    /// 탭 메뉴·표식 메뉴를 닫는다(다른 영역에서 새 메뉴가 열릴 때 — **한 창에 열린 메뉴는 하나**).
+    pub(crate) fn close_tab_menu(&mut self) {
+        if self.menu.is_open() {
+            self.menu.close();
+            self.menu_tab = None;
+            self.menu_is_badge = false;
+        }
+    }
+
     pub(crate) fn route_tabs(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> bool {
         // 열린 탭 메뉴 = 모달(바깥 좌/우클릭은 닫고 그 클릭을 그대로 진행 · 팝업 UX 규칙).
         if self.menu.is_open() {
@@ -1730,9 +1818,78 @@ pub(crate) fn file_title(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+/// 이 단계에서 그 기능을 줄이는가 — `at` = 줄이기 시작하는 단계(0 = 줄이지 않음).
+fn feature_limited(level: u8, at: u8) -> bool {
+    at > 0 && level >= at
+}
+
+/// 큰 파일 탭의 괄호 옵션 — **확장 효과**(깊이 색 · 현재 쌍 강조 · 짝 없음 표시 · 본문 전체 쌍 표 스캔)는 끄고, 편집 코어인
+/// 자동 닫기(`editor.auto_close_pairs`)는 그대로 둔다. `max_chars = 0` = 쌍 표를 만들지 않는다(편집마다 본문 전체를 훑는 비용 0).
+fn large_bracket_opts(base: &nexa_ctl::BracketOpts) -> nexa_ctl::BracketOpts {
+    nexa_ctl::BracketOpts {
+        rainbow: false,
+        unmatched: false,
+        match_mode: 0,
+        max_chars: 0,
+        ..base.clone()
+    }
+}
+
 #[cfg(test)]
 mod load_tab_tests {
     use super::*;
+
+    /// 큰 파일 단계별 제한(사용자 09-21): 기준 단계 이상에서만 · 0 = 제한 없음 · 확장 효과만 끄고 자동 닫기는 남긴다 ·
+    /// 구문 강조는 기본 L2부터 · 기준을 L1로 당기면 L1 탭도 꺼지고, 풀면(0) 돌아온다 · "강제로 켜기"는 되돌린다.
+    #[test]
+    fn large_levels_limit_extensions_and_syntax() {
+        assert!(!feature_limited(0, 1) && feature_limited(1, 1) && feature_limited(2, 1));
+        assert!(!feature_limited(1, 2) && feature_limited(2, 2));
+        assert!(!feature_limited(2, 0), "0 = 제한하지 않는다");
+        let base = nexa_ctl::BracketOpts::default();
+        let q = large_bracket_opts(&base);
+        assert!(!q.rainbow && !q.unmatched && q.match_mode == 0 && q.max_chars == 0);
+        assert_eq!(
+            q.auto_close, base.auto_close,
+            "자동 닫기 = 편집 코어 · 그대로"
+        );
+
+        let mut ed = editors();
+        ed.set_large_cfg([(0, 1000), (0, 3000)]);
+        let l1 = "select 1;".to_string() + &String::from(char::from(10));
+        ed.open_file(
+            Path::new("/tmp/nsql-test/lv1.sql"),
+            l1.repeat(1500),
+            Eol::Lf,
+        );
+        let i = ed.active();
+        assert_eq!(ed.active_large().0, 1);
+        assert!(
+            ed.bufs[i].highlighter().is_some(),
+            "L1 = 구문 강조 유지(기본 기준 L2)"
+        );
+        ed.set_large_feature_levels(1, 1);
+        assert!(
+            ed.bufs[i].highlighter().is_none(),
+            "기준을 L1로 = L1 탭도 끈다"
+        );
+        ed.set_large_feature_levels(1, 0);
+        assert!(
+            ed.bufs[i].highlighter().is_some(),
+            "0 = 제한 없음 → 되돌린다"
+        );
+        ed.set_large_feature_levels(1, 2);
+        ed.open_file(
+            Path::new("/tmp/nsql-test/lv2.sql"),
+            l1.repeat(3500),
+            Eol::Lf,
+        );
+        let j = ed.active();
+        assert_eq!(ed.active_large().0, 2);
+        assert!(ed.bufs[j].highlighter().is_none(), "L2 = 구문 강조 끔");
+        assert_eq!(ed.toggle_large_force(), Some(true));
+        assert!(ed.bufs[j].highlighter().is_some(), "강제로 켜기 = 되돌린다");
+    }
 
     fn editors() -> Editors {
         Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()))

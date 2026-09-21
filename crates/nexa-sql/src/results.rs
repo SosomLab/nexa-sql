@@ -5,7 +5,7 @@
 //! 활성 그리드 하나만 만진다. 잠든 탭은 rows·폭 캐시만 쥐고 있다가 닫히면 즉시 drop.
 //!
 //! 탭 바 = 편집기 탭과 같은 nexa-ctl `TabBar`(단일 행 고정 · 넘치면 ◀ ▶ · 드래그 재정렬 · 핀). 표시는 설정
-//! `grid.result_tabbar`(auto = 2개 이상일 때만 · always). 우클릭 메뉴 = 닫기 · 다른 탭 닫기 · 오른쪽 탭 닫기 · 고정/해제 ·
+//! `grid.result_tabbar_single`(끔 = 2개 이상일 때만 · 켬 = 1개여도). 우클릭 메뉴 = 닫기 · 다른 탭 닫기 · 오른쪽 탭 닫기 · 고정/해제 ·
 //! 맨 앞/뒤로 · 첫/마지막 탭 활성.
 
 use crate::grid::Grid;
@@ -24,6 +24,9 @@ pub(crate) struct ResultTab {
     pub pinned: bool,
     /// 사용자가 이름을 붙였으면 실행 결과로 제목을 덮지 않는다.
     pub named: bool,
+    /// ★ **이 결과를 만든 실행 쿼리**(사용자 09-21) — 결과가 도착할 때 보관하고 우클릭 ▸ "실행 쿼리 복사"가 클립보드에 담는다.
+    /// 제목을 번호(`결과N`)로 바꾼 뒤에는 탭만 봐서는 어느 문장의 결과인지 알 수 없다. 바인드·치환이 적용되기 전의 **편집기 원문**.
+    pub sql: String,
     /// 잠든 그리드(활성 탭이면 자리표시자).
     pub grid: Grid,
     /// 생성 순서(자동 정리 = 가장 오래된 비고정 탭).
@@ -43,6 +46,10 @@ pub(crate) enum PanelAction {
     TogglePin(usize),
     MoveFirst(usize),
     MoveLast(usize),
+    /// 이름 바꾸기(호스트가 입력 프롬프트를 연다).
+    Rename(usize),
+    /// 이 결과를 만든 실행 쿼리를 클립보드에(호스트가 담는다 — 패널은 클립보드를 모른다).
+    CopySql(usize),
     /// 드래그 재정렬.
     Move {
         from: usize,
@@ -64,8 +71,10 @@ pub(crate) struct ResultPanel {
     menu_tab: Option<usize>,
     /// 탭 수가 1↔2를 넘어 탭 바 표시가 바뀌었다(호스트 재배치 1회성).
     bar_changed: bool,
-    /// 설정 `grid.result_tabbar = always`.
+    /// 설정 `grid.result_tabbar_single = on`.
     always_bar: bool,
+    /// 설정 `grid.result_tab_title = number`(기본).
+    numbered: bool,
     /// 설정 `grid.result_tabs`(끄면 탭 1개만 · 바 없음).
     enabled: bool,
 }
@@ -88,7 +97,75 @@ impl ResultPanel {
             bar_changed: false,
             always_bar,
             enabled,
+            numbered: true,
         }
+        .with_first_numbered()
+    }
+
+    fn with_first_numbered(mut self) -> Self {
+        self.number_if_default(0);
+        self
+    }
+
+    /// 제목 규칙(설정 `grid.result_tab_title`): 참 = `결과1` `결과2` …(기본 · 사용자 09-21) · 거짓 = 테이블 이름/첫 낱말(종전).
+    pub(crate) fn set_numbered(&mut self, on: bool) {
+        self.numbered = on;
+    }
+
+    pub(crate) fn numbered(&self) -> bool {
+        self.numbered
+    }
+
+    /// 다음 번호 제목 — **지금 있는 번호 제목의 가장 큰 수 + 1**(`결과3`·`결과6`이 있으면 `결과7` · 빈 번호를 메우지 않는다 —
+    /// 닫은 탭의 번호가 다른 결과에 다시 붙으면 헷갈린다). 사용자가 같은 꼴로 직접 붙인 이름도 센다(겹치지 않게).
+    pub(crate) fn next_numbered_title(&self) -> String {
+        let max = self
+            .tabs
+            .iter()
+            .filter_map(|t| numbered_index(&t.title))
+            .max()
+            .unwrap_or(0);
+        nsql_i18n::tf(Msg::ResultTabN, &[&(max + 1).to_string()])
+    }
+
+    /// 번호 규칙일 때: 아직 기본 문구("결과")인 탭에 번호 제목을 준다(이름 붙인 탭 · 이미 번호가 있는 탭은 그대로).
+    pub(crate) fn number_if_default(&mut self, i: usize) {
+        if !self.numbered {
+            return;
+        }
+        let Some(tab) = self.tabs.get(i) else { return };
+        if tab.named || numbered_index(&tab.title).is_some() {
+            return;
+        }
+        if tab.title == t(Msg::ResultTabDefault) || tab.title.is_empty() {
+            let title = self.next_numbered_title();
+            self.tabs[i].title = title;
+        }
+    }
+
+    /// 결과가 도착한 탭의 제목을 번호 규칙으로 — 번호가 없으면(종전 규칙의 이름 · 기본 문구) 새 번호 · 있으면 그대로.
+    pub(crate) fn ensure_numbered(&mut self, i: usize) {
+        let Some(tab) = self.tabs.get(i) else { return };
+        if tab.named || tab.pinned || numbered_index(&tab.title).is_some() {
+            return;
+        }
+        let title = self.next_numbered_title();
+        self.tabs[i].title = title;
+    }
+
+    /// 이름 바꾸기 — 빈 이름은 무시 · 붙인 이름은 실행 결과가 덮지 않는다(`named`).
+    pub(crate) fn rename(&mut self, id: u64, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let Some(i) = self.index_of(id) else {
+            return false;
+        };
+        self.tabs[i].title = name.to_string();
+        self.tabs[i].named = true;
+        self.sync_bar();
+        true
     }
 
     pub(crate) fn set_options(&mut self, enabled: bool, always_bar: bool) {
@@ -174,6 +251,8 @@ impl ResultPanel {
             if let Some(id) = self.menu.take_picked() {
                 let i = self.menu_tab.take().unwrap_or(self.active);
                 let act = match id.as_str() {
+                    "rename" => Some(PanelAction::Rename(i)),
+                    "copy_sql" => Some(PanelAction::CopySql(i)),
                     "close" => Some(PanelAction::Close(i)),
                     "close_others" => Some(PanelAction::CloseOthers(i)),
                     "close_right" => Some(PanelAction::CloseRight(i)),
@@ -225,10 +304,30 @@ impl ResultPanel {
         Some(act)
     }
 
+    /// 결과 탭의 rect(탭 줄이 보일 때만) — 이름 바꾸기 상자가 그 탭에 붙는다.
+    pub(crate) fn tab_rect(&self, i: usize) -> Option<Rect> {
+        self.bar_visible().then(|| self.bar.tab_rect(i)).flatten()
+    }
+
+    /// 자체 캡처용(기동 명령 `result.menu`): 활성 탭의 메뉴를 탭 줄 자리에 연다 — 결과 영역이 창 아래쪽이라 메뉴가 아래로
+    /// 넘치는 자리다(잘림 확인 · 입력 주입 없음).
+    pub(crate) fn open_menu_for_capture(&mut self) {
+        let p = Point {
+            x: self.bar_rect.x + (24.0 * self.scale) as i32,
+            y: self.bar_rect.y + self.bar_rect.h / 2,
+        };
+        self.open_menu(self.active, p);
+    }
+
     fn open_menu(&mut self, i: usize, p: Point) {
         self.menu_tab = Some(i);
         let pinned = self.tabs.get(i).is_some_and(|t| t.pinned);
+        // 실행한 적이 없는 탭(쿼리 없음)은 복사 항목을 흐리게.
+        let has_sql = self.tabs.get(i).is_some_and(|t| !t.sql.trim().is_empty());
         let items = vec![
+            CtxItem::item("rename", t(Msg::MnResultRename)),
+            CtxItem::maybe("copy_sql", t(Msg::MnResultCopySql), has_sql),
+            CtxItem::Separator,
             CtxItem::item("close", t(Msg::MnResultCloseTab)),
             CtxItem::item("close_others", t(Msg::MnResultCloseOthers)),
             CtxItem::item("close_right", t(Msg::MnResultCloseRight)),
@@ -248,6 +347,7 @@ impl ResultPanel {
             CtxItem::item("go_first", t(Msg::MnResultFirstTab)),
             CtxItem::item("go_last", t(Msg::MnResultLastTab)),
         ];
+        // 창 크기를 모르는 자리 — 메뉴 부품이 그리는 시점에 표면 안으로 스스로 들어온다(nexa-ctl `place_popup` · 61 §2-2 팝업 규칙).
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;
         self.menu.open_at(p.x, p.y, items, host, text_w);
@@ -268,6 +368,7 @@ impl ResultPanel {
     pub(crate) fn push(&mut self, tab: ResultTab) -> usize {
         let was = self.bar_visible();
         self.tabs.push(tab);
+        self.number_if_default(self.tabs.len() - 1);
         if self.bar_visible() != was {
             self.bar_changed = true;
         }
@@ -320,6 +421,28 @@ impl ResultPanel {
     }
 }
 
+/// 번호 제목(`결과7` · `Result 7`)의 번호 — 지금 언어의 틀과 **다른 언어의 틀** 둘 다 읽는다(언어를 바꾼 뒤에도 번호가 이어지게).
+pub(crate) fn numbered_index(title: &str) -> Option<u32> {
+    let title = title.trim();
+    for lang in nsql_i18n::Lang::ALL {
+        let Some((pre, post)) = nsql_i18n::tr(lang, Msg::ResultTabN).split_once("{0}") else {
+            continue;
+        };
+        if let Some(mid) = title
+            .strip_prefix(pre)
+            .and_then(|rest| rest.strip_suffix(post))
+        {
+            let mid = mid.trim();
+            if !mid.is_empty() && mid.bytes().all(|b| b.is_ascii_digit()) {
+                if let Ok(n) = mid.parse::<u32>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 실행문에서 탭 제목 후보 — 테이블 이름 → 첫 단어(대문자) → 기본 문구.
 pub(crate) fn title_from_sql(table: Option<&str>, sql: &str) -> String {
     if let Some(t) = table.filter(|s| !s.trim().is_empty()) {
@@ -347,6 +470,7 @@ mod tests {
             title: format!("T{id}"),
             pinned,
             named: false,
+            sql: String::new(),
             grid: Grid::default(),
             seq,
             child_of: None,
@@ -381,6 +505,77 @@ mod tests {
         assert_eq!(p.active, 0, "활성 탭 제거 = 마지막 남은 탭");
         assert_eq!(p.tabs.len(), 1);
         assert_eq!(p.evict_candidate(), None, "고정·활성뿐이면 없음");
+    }
+
+    fn tab_default(id: u64) -> ResultTab {
+        ResultTab {
+            title: t(Msg::ResultTabDefault).to_string(),
+            ..tab(id, id, false)
+        }
+    }
+
+    fn panel_of(id: u64) -> ResultPanel {
+        ResultPanel::new(tab_default(id), true, false)
+    }
+
+    /// 실행 쿼리 복사(사용자 09-21): 쿼리가 있는 탭만 메뉴 항목이 켜지고 · 고르면 `CopySql(그 탭)`이 나온다(클립보드는 호스트 몫 —
+    /// 테스트는 클립보드를 건드리지 않는다).
+    #[test]
+    fn copy_sql_menu_item_follows_the_tab() {
+        let mut p = panel_of(1);
+        p.push(tab_default(2));
+        p.tabs[1].sql = "select * from emp".into();
+        let enabled = |p: &mut ResultPanel, i: usize| {
+            p.open_menu(i, Point { x: 5, y: 5 });
+            let on = p.menu.items_for_test().iter().any(
+                |it| matches!(it, CtxItem::Item { id, enabled: true, .. } if id == "copy_sql"),
+            );
+            p.menu.close();
+            on
+        };
+        assert!(!enabled(&mut p, 0), "실행한 적 없는 탭 = 흐림");
+        assert!(enabled(&mut p, 1));
+    }
+
+    /// 번호 제목(사용자 09-21): 새 탭 = 가장 큰 번호 + 1(`결과3`·`결과6` → `결과7` · 빈 번호를 메우지 않는다) · 두 언어의 틀 ·
+    /// 이름 붙인 탭은 그대로 · 같은 꼴로 직접 붙인 이름도 센다 · 이름 바꾸기 = `named`(빈 이름 무시).
+    #[test]
+    fn numbered_titles_and_rename() {
+        assert_eq!(numbered_index("결과7"), Some(7));
+        assert_eq!(numbered_index("Result 12"), Some(12));
+        assert_eq!(numbered_index("결과"), None);
+        assert_eq!(numbered_index("결과 x"), None);
+        assert_eq!(numbered_index("EMP 2"), None);
+        let mut p = panel_of(1);
+        assert_eq!(numbered_index(&p.tabs[0].title), Some(1), "첫 탭 = 1번");
+        for _ in 0..5 {
+            p.push(tab_default(99));
+        }
+        let nums: Vec<u32> = p
+            .tabs
+            .iter()
+            .filter_map(|t| numbered_index(&t.title))
+            .collect();
+        assert_eq!(nums, vec![1, 2, 3, 4, 5, 6]);
+        // 3번·6번만 남긴다 → 다음은 7번.
+        p.tabs
+            .retain(|t| matches!(numbered_index(&t.title), Some(3 | 6)));
+        let i = p.push(tab_default(100));
+        assert_eq!(numbered_index(&p.tabs[i].title), Some(7));
+        // 이름 바꾸기.
+        let id = p.tabs[i].id;
+        assert!(!p.rename(id, "   "));
+        assert!(p.rename(id, " 월말 집계 "));
+        assert_eq!(
+            (p.tabs[i].title.as_str(), p.tabs[i].named),
+            ("월말 집계", true)
+        );
+        p.ensure_numbered(i);
+        assert_eq!(p.tabs[i].title, "월말 집계", "붙인 이름은 덮지 않는다");
+        // 종전 규칙(테이블 이름)이면 번호를 붙이지 않는다.
+        p.set_numbered(false);
+        let j = p.push(tab_default(101));
+        assert_eq!(numbered_index(&p.tabs[j].title), None);
     }
 
     #[test]

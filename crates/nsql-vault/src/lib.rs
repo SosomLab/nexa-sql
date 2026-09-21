@@ -19,6 +19,7 @@
 
 mod devkey;
 mod sealed;
+pub mod session;
 
 use std::fmt;
 use std::io;

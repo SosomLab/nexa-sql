@@ -41,6 +41,14 @@ pub(crate) enum PrefsAction {
     /// 색 창 열기(어느 색 키를 고르는가).
     OpenColors(String),
     OpenKeys,
+    /// 읽기 전용 정보(`INFO_KEYS` — 파일 있음/없음 · 별칭 수)를 다시 계산해 달라 — 이 창이 **다시 활성화될 때**(다른 프로그램에서
+    /// `tnsnames.ora`를 고치고 돌아왔을 때). 갱신 버튼을 두지 않는 대신 돌아오는 순간 스스로 맞춘다(사용자 09-21).
+    RefreshInfo,
+    /// 폴더 고르기 대화상자 열기(어느 설정 키의 경로인가 · 지금 값 = 시작 폴더) — 직접 입력도 그대로 된다(사용자 09-21).
+    BrowseFolder {
+        key: String,
+        current: String,
+    },
     /// settings.json으로 편집(호스트가 내보내고 열고 감시한다).
     EditJson,
 }
@@ -83,6 +91,11 @@ struct Card {
 }
 
 /// 스냅샷 한 줄.
+/// 입력란을 카드 폭만큼 넓힐 글자 설정 — 읽기 전용 정보(탐지 결과·파생 경로)와 폴더 경로.
+fn wide_text(key: &str) -> bool {
+    nsql_settings::is_info(key) || matches!(key, "oracle.client_dir" | "oracle.tns_admin")
+}
+
 #[derive(Clone)]
 struct Snap {
     entry: &'static Entry,
@@ -105,6 +118,8 @@ pub(crate) struct PrefsWin {
     tree: TreeView,
     /// 숨긴 분류(끈/미설치 확장) · 그로부터 만든 보이는 트리(선택 index의 기준).
     hidden: Vec<Msg>,
+    /// 읽기 전용 정보 키의 값(`nsql_settings::INFO_KEYS` — 호스트가 채운다 · 저장되지 않는 계산 값 · 카드는 늘 잠긴다).
+    info: std::collections::HashMap<String, String>,
     vtree: Vec<(Msg, Vec<Msg>)>,
     advanced: Switch,
     json_btn: Button,
@@ -134,6 +149,11 @@ fn is_color_key(k: &str) -> bool {
 
 fn is_key_key(k: &str) -> bool {
     k.starts_with("key.")
+}
+
+/// 값이 **폴더 경로**인 설정 — 입력란 옆에 "찾아보기…"(폴더 전용 대화상자 · 파일은 보이지 않는다)를 둔다.
+fn is_folder_key(k: &str) -> bool {
+    matches!(k, "oracle.client_dir" | "oracle.tns_admin")
 }
 
 impl PrefsWin {
@@ -193,6 +213,7 @@ impl PrefsWin {
         let model = Self::build_model(&vtree);
         PrefsWin {
             hidden: Vec::new(),
+            info: std::collections::HashMap::new(),
             vtree,
             window: None,
             memo: crate::wingeom::Memo::default(),
@@ -224,6 +245,11 @@ impl PrefsWin {
         }
     }
 
+    /// 읽기 전용 정보 값(자동 탐지 결과 · 파생 경로) — [`Self::refresh`] 앞에 부른다.
+    pub(crate) fn set_info(&mut self, values: Vec<(String, String)>) {
+        self.info = values.into_iter().collect();
+    }
+
     /// 레지스트리 스냅샷 갱신(열 때 · 값이 바뀔 때). 카드는 값만 갱신(입력 중인 상자는 건드리지 않음).
     pub(crate) fn refresh(&mut self, s: &Settings) {
         // ★ 실행 속도 향상이 켜져 있으면 강제 대상 카드는 **강제값**을 보여 준다(저장값은 그대로 · 카드는 잠김 · 사용자 09-17
@@ -234,7 +260,17 @@ impl PrefsWin {
             .into_iter()
             .map(|(e, v, m)| Snap {
                 entry: e,
-                value: if boost {
+                value: if nsql_settings::is_info(e.key) {
+                    self.info.get(e.key).cloned().unwrap_or_default()
+                } else if let Some(shown) = self.info.get(e.key).filter(|_| {
+                    // ★ 종속 조건을 못 채워 **잠긴 칸**에 호스트가 보여 줄 값을 줬으면 그것을(사용자 09-21: 자동 탐지 방식일 때
+                    //   "클라이언트 폴더"·"TNS_ADMIN" 칸에 **탐지된 경로를 수정 불가로** · 없으면 공백). 저장값은 그대로다 —
+                    //   직접 지정으로 바꾸면 저장해 둔 값이 다시 보인다.
+                    nsql_settings::dependency(e.key)
+                        .is_some_and(|(parent, dep)| !dep.satisfied(s.get(parent).unwrap_or("")))
+                }) {
+                    shown.clone()
+                } else if boost {
                     nsql_settings::perf::boost_value(e.key)
                         .unwrap_or(v)
                         .to_string()
@@ -261,7 +297,9 @@ impl PrefsWin {
                     CardCtl::Choice(cb) => cb.select_value(&sn.value),
                     CardCtl::Pos(pd) => pd.select_value(HudPos::parse(&sn.value).code()),
                     CardCtl::Text(tb) => {
-                        if !tb.is_focused() {
+                        // 입력 중인 칸은 건드리지 않는다 — 단 **읽기 전용(잠긴) 칸**은 포커스가 있어도 갱신한다: 자동 → 직접 지정으로
+                        // 바꿀 때 보이던 탐지 경로가 남으면 그것을 고쳐 저장하게 된다(사용자가 넣은 적 없는 값).
+                        if !tb.is_focused() || tb.is_read_only() {
                             tb.set_text(&sn.value);
                             let mut inv = Invalidations::default();
                             tb.select_range(0, 0, &mut inv);
@@ -270,6 +308,9 @@ impl PrefsWin {
                 }
             }
         }
+        // ★ 값이 바뀌면 잠금도 다시 계산한다(부모 설정이 바뀌었을 수 있다 — 종전에는 카드를 새로 만들 때만 계산해, 방식을
+        //   자동 ↔ 직접 지정으로 바꿔도 창을 다시 열기 전에는 잠금이 그대로였다).
+        self.apply_deps();
     }
 
     pub(crate) fn set_error(&mut self, key: &str, e: String) {
@@ -362,6 +403,8 @@ impl PrefsWin {
                     Some(Button::new(t(Msg::BtnPick)))
                 } else if is_key_key(sn.entry.key) {
                     Some(Button::new(t(Msg::BtnCapture)))
+                } else if is_folder_key(sn.entry.key) {
+                    Some(Button::new(t(Msg::BtnBrowseFolder)))
                 } else {
                     None
                 };
@@ -399,8 +442,24 @@ impl PrefsWin {
         for c in &mut self.cards {
             c.locked = nsql_settings::dependency(c.entry.key)
                 .is_some_and(|(parent, dep)| !dep.satisfied(&parent_val(parent)))
-                || (boost && nsql_settings::perf::boost_value(c.entry.key).is_some());
+                || (boost && nsql_settings::perf::boost_value(c.entry.key).is_some())
+                // 읽기 전용 정보(자동 탐지 결과 · 파생 경로)는 늘 잠근다.
+                || nsql_settings::is_info(c.entry.key);
+            // ★ 잠금을 **컨트롤에도** 건다(사용자 09-21: 자동 탐지 방식인데 폴더 칸에 글자가 들어갔다 — 잠금이 마우스 사건만
+            //   막았고, 포커스와 키·IME·붙여넣기 경로(`focused_textbox`)는 그대로 열려 있었다). 글자 칸 = **읽기 전용**(선택·복사는
+            //   되고 편집은 안 된다 · 프로그램적 값 갱신 `set_text`는 그대로) · 그 밖(콤보·스위치·위치) = 포커스를 뺀다.
+            match &mut c.ctl {
+                CardCtl::Text(tb) => tb.set_read_only(c.locked),
+                CardCtl::Choice(cb) if c.locked => cb.set_focused(false),
+                CardCtl::Pos(pd) if c.locked => pd.set_focused(false),
+                _ => {}
+            }
         }
+    }
+
+    /// 창 핸들(공유) — 이 창 위에 뜨는 대화상자의 주인으로 넘긴다.
+    pub(crate) fn window_rc(&self) -> Option<Rc<Window>> {
+        self.window.clone()
     }
 
     pub(crate) fn window(&self) -> Option<&Window> {
@@ -459,6 +518,16 @@ impl PrefsWin {
                             CardCtl::Text(tb) => tb.is_animating(),
                         }
                 }))
+    }
+
+    /// 검색어를 미리 넣는다(기동 명령 `edit.prefs:<검색어>` — 자체 캡처용 · 키 입력 주입 없이 그 설정 카드만 보이게).
+    pub(crate) fn preset_query(&mut self, q: &str) {
+        self.search.set_text(q);
+        let _ = self.search.take_changed();
+        self.query = q.to_string();
+        // 열린 직후의 "트리 선택이 바뀌었다" 판정이 검색어를 지우지 않게 지금 선택을 기억해 둔다.
+        self.last_tree_row = self.tree.selected_row();
+        self.rebuild_cards();
     }
 
     pub(crate) fn open(
@@ -675,6 +744,7 @@ impl PrefsWin {
                 self.redraw();
                 return PrefsAction::None;
             }
+            WindowEvent::Focused(true) => return PrefsAction::RefreshInfo,
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.scale = *scale_factor as f32;
                 self.layout();
@@ -890,10 +960,12 @@ impl PrefsWin {
             self.json_btn
                 .set_focused(self.json_btn.bounds().contains(p));
             for c in &mut self.cards {
+                // 잠긴 콤보·위치 상자는 포커스도 받지 않는다(키로 값이 바뀐다) · 잠긴 글자 칸은 읽기 전용이라 포커스는 받는다(선택·복사).
+                let open = !c.locked;
                 match &mut c.ctl {
                     CardCtl::Text(tb) => tb.set_focused(tb.bounds().contains(p)),
-                    CardCtl::Choice(cb) => cb.set_focused(cb.bounds().contains(p)),
-                    CardCtl::Pos(pd) => pd.set_focused(pd.bounds().contains(p)),
+                    CardCtl::Choice(cb) => cb.set_focused(open && cb.bounds().contains(p)),
+                    CardCtl::Pos(pd) => pd.set_focused(open && pd.bounds().contains(p)),
                     CardCtl::Bool(sw) => sw.set_focused(false),
                 }
                 c.reset.set_focused(c.reset.bounds().contains(p));
@@ -1000,7 +1072,8 @@ impl PrefsWin {
                 if c.rect.h == 0 {
                     continue;
                 }
-                // 종속 잠금(부모 조건 불충족) — 컨트롤은 입력을 받지 않는다(초기화 버튼은 허용).
+                // 종속 잠금(부모 조건 불충족) — 컨트롤은 입력을 받지 않는다(초기화 버튼은 허용). 글자 칸만 예외: **읽기 전용**으로
+                // 사건을 받는다(캐럿 이동·선택·복사 — 긴 경로를 복사할 수 있어야 한다 · 편집은 편집 코어가 거부한다).
                 if !c.locked {
                     match &mut c.ctl {
                         CardCtl::Bool(sw) => sw.on_event(&ie, &mut inv),
@@ -1008,6 +1081,8 @@ impl PrefsWin {
                         CardCtl::Pos(pd) => pd.on_event(&ie, &mut inv),
                         CardCtl::Text(tb) => tb.on_event(&ie, &mut inv),
                     }
+                } else if let CardCtl::Text(tb) = &mut c.ctl {
+                    tb.on_event(&ie, &mut inv);
                 }
                 c.reset.on_event(&ie, &mut inv);
                 if let Some(b) = &mut c.aux {
@@ -1084,10 +1159,38 @@ impl PrefsWin {
                 if b.take_clicked() {
                     return if is_color_key(&key) {
                         PrefsAction::OpenColors(key)
+                    } else if is_folder_key(&key) {
+                        // 잠긴 카드(자동 탐지 방식)는 찾아보기도 막는다 — 값이 바뀌어도 쓰이지 않는다.
+                        if c.locked {
+                            continue;
+                        }
+                        PrefsAction::BrowseFolder {
+                            current: c.value.clone(),
+                            key,
+                        }
                     } else {
                         PrefsAction::OpenKeys
                     };
                 }
+            }
+            // 잠긴 카드의 값은 **절대 저장하지 않는다** — 밀린 변경 신호는 버린다(자동 탐지 방식에서 화면에 보이는 탐지 경로가
+            // 설정값으로 저장되면 직접 지정으로 바꿨을 때 사용자가 넣은 적 없는 값이 남는다).
+            if c.locked {
+                match &mut c.ctl {
+                    CardCtl::Bool(sw) => {
+                        let _ = sw.take_toggled();
+                    }
+                    CardCtl::Choice(cb) => {
+                        let _ = cb.take_changed();
+                    }
+                    CardCtl::Pos(pd) => {
+                        let _ = pd.take_changed();
+                    }
+                    CardCtl::Text(tb) => {
+                        let _ = tb.take_changed();
+                    }
+                }
+                continue;
             }
             match &mut c.ctl {
                 CardCtl::Bool(sw) => {
@@ -1196,7 +1299,12 @@ impl PrefsWin {
                 .iter()
                 .any(|s| s.entry.key == "perf.boost" && s.value == "on");
             for c in &mut self.cards {
-                let lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
+                // 설명 + (있으면) 호스트가 준 **한 줄 덧말**(`<키>#note` — 예: 이 값이 무엇으로 정해졌는지 · 사용자 09-21).
+                let note = self.info.get(&format!("{}#note", c.entry.key));
+                let lines = match note.filter(|n| !n.is_empty()) {
+                    Some(n) => Self::wrap(&mut dc, &format!("{}\n{n}", t(c.entry.desc)), text_w),
+                    None => Self::wrap(&mut dc, t(c.entry.desc), text_w),
+                };
                 let boost_hint =
                     c.locked && boost_on && nsql_settings::perf::boost_value(c.entry.key).is_some();
                 let mut extra = if c.error.is_some() || boost_hint {
@@ -1211,6 +1319,16 @@ impl PrefsWin {
                         CardCtl::Bool(_) => (56.0 * s).round() as i32,
                         CardCtl::Choice(_) => (260.0 * s).round() as i32,
                         CardCtl::Pos(_) => (64.0 * s).round() as i32,
+                        CardCtl::Text(_) if wide_text(c.entry.key) => {
+                            card_w
+                                - inner_pad * 2
+                                - (98.0 * s).round() as i32
+                                - if c.aux.is_some() {
+                                    (98.0 * s).round() as i32
+                                } else {
+                                    0
+                                }
+                        }
                         CardCtl::Text(_) => (320.0 * s).round() as i32,
                     };
                     let aux_w = if c.aux.is_some() {
@@ -1224,7 +1342,8 @@ impl PrefsWin {
                         + aux_w
                         + (90.0 * s).round() as i32
                 };
-                c.default_below = dw + (16.0 * s).round() as i32 > card_w - row_used;
+                c.default_below = !c.entry.default.is_empty()
+                    && dw + (16.0 * s).round() as i32 > card_w - row_used;
                 if c.default_below {
                     extra += th_txt;
                 }
@@ -1243,6 +1362,17 @@ impl PrefsWin {
                     CardCtl::Bool(_) => (56.0 * s).round() as i32,
                     CardCtl::Choice(_) => (260.0 * s).round() as i32,
                     CardCtl::Pos(_) => (64.0 * s).round() as i32,
+                    // 경로·읽기 전용 정보는 길다 → 카드 폭만큼(초기화 버튼 자리는 남긴다).
+                    CardCtl::Text(_) if wide_text(c.entry.key) => {
+                        // 초기화 버튼 + (있으면) 보조 버튼("찾아보기…") 자리를 남긴다.
+                        let side = (98.0 * s).round() as i32
+                            + if c.aux.is_some() {
+                                (98.0 * s).round() as i32
+                            } else {
+                                0
+                            };
+                        (card_w - inner_pad * 2 - side).max((320.0 * s).round() as i32)
+                    }
                     CardCtl::Text(_) => (320.0 * s).round() as i32,
                 };
                 let visible = y + ch > list.y && y < list.bottom();
@@ -1373,7 +1503,9 @@ impl PrefsWin {
                 let dv = tf(Msg::LblDefaultValue, &[c.entry.default]);
                 let dw = dc.text_width(&dv);
                 let cy = r.bottom() - inner_pad - ctl_h;
-                if c.default_below {
+                if c.entry.default.is_empty() {
+                    // 기본값이 빈 글(경로 · 읽기 전용 정보)이면 "default:"만 덩그러니 남는다 → 그리지 않는다.
+                } else if c.default_below {
                     let ty2 = ty + if c.error.is_some() { th_txt } else { 0 };
                     dc.text(tx, ty2, clip, &dv, th.text_dim);
                 } else {
@@ -1403,6 +1535,10 @@ impl PrefsWin {
                 }
                 if let Some(b) = &c.aux {
                     b.paint(&mut dc, th);
+                    // 잠긴 카드의 폴더 "찾아보기…"는 눌러도 아무 일도 없다 → 버튼도 흐리게(활성처럼 보이지 않게).
+                    if c.locked && is_folder_key(c.entry.key) {
+                        dc.fill_rect_alpha(b.bounds(), th.panel_bg, 0.6);
+                    }
                     // ★ 색 미리보기 스와치(사용자 09-15) — 값이 비면 테마 선택색(= 실제 적용값) · 알파는 바탕 위에 섞어 보인다.
                     if is_color_key(c.entry.key) && b.bounds().h > 0 {
                         let bb = b.bounds();
@@ -1435,7 +1571,13 @@ impl PrefsWin {
                     continue;
                 }
                 match &c.ctl {
-                    CardCtl::Choice(cb) => cb.paint(&mut dc, th),
+                    CardCtl::Choice(cb) => {
+                        cb.paint(&mut dc, th);
+                        // 잠긴 콤보도 흐리게 — 콤보는 이 층에서 그려져 앞의 흐림이 덮였다(잠긴 것은 열리지 않으므로 드롭다운을 가리지 않는다).
+                        if c.locked {
+                            dc.fill_rect_alpha(cb.bounds(), th.panel_bg, 0.6);
+                        }
+                    }
                     CardCtl::Pos(pd) => pd.paint_popup(&mut dc, th),
                     _ => {}
                 }
@@ -1463,5 +1605,64 @@ impl PrefsWin {
             }
         }
         let _ = buf.present();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 잠금은 컨트롤에도 걸린다(사용자 09-21): 자동 탐지 방식 = 폴더·TNS_ADMIN 칸이 **읽기 전용** + 탐지 경로 표시(없으면 공백) ·
+    /// 읽기 전용 정보 칸도 읽기 전용 · 직접 지정으로 바꾸면 **바로** 풀리고 저장값이 보인다 · 다시 자동이면 다시 잠긴다.
+    #[test]
+    fn locked_text_cards_are_read_only_and_follow_the_parent_setting() {
+        let path =
+            std::env::temp_dir().join(format!("nsql-prefs-lock-{}.conf", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut s = Settings::open(path);
+        let mut w = PrefsWin::new();
+        w.set_info(vec![
+            (
+                "oracle.client_dir".into(),
+                "C:/detected/instantclient".into(),
+            ),
+            ("oracle.tns_admin".into(), String::new()),
+            (
+                "oracle.info_library".into(),
+                "C:/detected/instantclient/oci.dll".into(),
+            ),
+        ]);
+        w.refresh(&s);
+        w.preset_query("oracle.");
+        let ro = |w: &PrefsWin, key: &str| -> (bool, String) {
+            let c = w.cards.iter().find(|c| c.entry.key == key).expect(key);
+            match &c.ctl {
+                CardCtl::Text(tb) => (tb.is_read_only(), tb.text()),
+                _ => panic!("{key}: 글자 칸이 아니다"),
+            }
+        };
+        assert_eq!(
+            ro(&w, "oracle.client_dir"),
+            (true, "C:/detected/instantclient".into())
+        );
+        assert_eq!(
+            ro(&w, "oracle.tns_admin"),
+            (true, String::new()),
+            "없으면 공백"
+        );
+        assert!(ro(&w, "oracle.info_library").0, "정보 칸은 늘 읽기 전용");
+        // 직접 지정 = 바로 풀린다 · 저장값(없음 = 빈 칸)이 보인다.
+        s.set("oracle.client_mode", "manual").expect("set");
+        s.set("oracle.client_dir", "D:/mine").expect("set");
+        w.refresh(&s);
+        assert_eq!(ro(&w, "oracle.client_dir"), (false, "D:/mine".into()));
+        assert!(ro(&w, "oracle.info_library").0);
+        // 다시 자동 = 다시 잠기고 탐지 경로로.
+        s.set("oracle.client_mode", "auto").expect("set");
+        w.refresh(&s);
+        assert_eq!(
+            ro(&w, "oracle.client_dir"),
+            (true, "C:/detected/instantclient".into())
+        );
     }
 }

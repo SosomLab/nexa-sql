@@ -6,7 +6,7 @@
 
 use crate::command::{parse_literal, Command, SetOption};
 use crate::connect::ConnectSpec;
-use crate::dialect::{prepare, wrap_exec, Prepared};
+use crate::dialect::{prepare_with, wrap_exec_with, Prepared};
 use crate::split::{Item, ItemKind, SqlKind};
 use crate::vars::VarStore;
 use nsql_core::{Dialect, ExecResult, Value};
@@ -43,6 +43,14 @@ pub enum Action {
     NeedInput {
         name: String,
     },
+    /// `ACCEPT`(T-153) — 호스트가 값을 물어 [`Engine::define`]한다(빈 답·답 없음 = `default`). 실행 전 입력 창이 이미 답했으면
+    /// 이 행동은 나오지 않는다([`Engine::accepted`]).
+    Accept {
+        name: String,
+        prompt: Option<String>,
+        default: Option<String>,
+        hide: bool,
+    },
     /// 세션에 전달할 옵션(`SET SERVEROUTPUT ON` → `("serveroutput","on")` · `SET ARRAYSIZE` → `("fetch_size","n")`).
     SetOption {
         name: String,
@@ -57,6 +65,8 @@ pub enum Action {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Diagnostic {
     ImplicitVariable(String),
+    /// 돌아온 값이 상한(`vars.max_value_kb`)을 넘어 잘렸다 — (변수 이름, 원래 바이트 수).
+    Truncated(String, usize),
     Info(String),
 }
 
@@ -65,6 +75,14 @@ pub enum Diagnostic {
 pub struct Settings {
     /// `SELECT … INTO`가 여러 행이면 첫 행을 쓴다(설정 `vars.into_policy = first` · 기본 = Oracle식 오류 · D-139).
     pub into_first: bool,
+    /// `${이름[:형식]}` 치환(설정 `vars.brace_subst` · 기본 켬) — 정의된 이름만 바꾸고 모르는 이름은 글자 그대로 둔다.
+    pub brace_subst: bool,
+    /// `${env:이름[:형식]}` = **OS 환경 변수**(설정 `vars.env_subst` · 기본 켬 · 사용자 09-21) — 없는 변수는 글자 그대로 둔다.
+    /// `brace_subst`가 꺼져 있으면 이것도 돌지 않는다.
+    pub env_subst: bool,
+    /// 변수 하나가 담는 값의 상한(바이트 · 설정 `vars.max_value_kb` · 0 = 무제한) — 돌아온 CLOB·긴 글이 변수 표·보존 파일·
+    /// 변수 창을 부풀리지 않게.
+    pub max_value_bytes: usize,
     pub serveroutput: bool,
     pub timing: bool,
     pub autocommit: bool,
@@ -84,6 +102,9 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             into_first: false,
+            brace_subst: true,
+            env_subst: true,
+            max_value_bytes: 1024 * 1024,
             serveroutput: false,
             timing: false,
             autocommit: false,
@@ -103,6 +124,22 @@ impl Default for Settings {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Engine {
     pub dialect: Dialect,
+    /// ★ 드라이버 능력표(T-152) — 엔진의 분기는 방언이 아니라 이것을 묻는다. `new`/`set_dialect`는 내장 방언의 표를,
+    /// 러너는 접속한 세션이 말한 표(`Session::caps`)를 넣는다(`set_caps`).
+    pub caps: nsql_core::Caps,
+    /// **이번 `EXEC 호출`이 돌려줄 값을 받을 바인드들**(OUT/INOUT 인자의 순서 · 바인드가 아닌 자리는 빈 글) — OUT 바인드가 없는
+    /// 방언(PostgreSQL)에서 러너가 루틴 서명으로 정해 넣는다(T-151). 다음 `EXEC` 한 번에 쓰이고 비워진다.
+    pub call_captures: Option<Vec<String>>,
+    /// **이번 `EXEC 호출`에서 `OUTPUT`을 보충할 바인드들**(대문자) — T-SQL은 호출 쪽에 `OUTPUT`이 없으면 값을 돌려주지 않는다.
+    /// 러너가 서명(`sys.parameters`)으로 정해 넣는다(T-151). 다음 `EXEC` 한 번에 쓰이고 비워진다.
+    pub call_outputs: Vec<String>,
+    /// **이번 실행의 입력 창이 이미 답한 `ACCEPT` 이름**(대문자) — 그 `ACCEPT`는 다시 묻지 않고 지나간다(한 번 쓰이고 빠진다).
+    pub accepted: std::collections::BTreeSet<String>,
+    /// **시스템 변수**(`&_USER` · `&_DATE` … — [`SYSTEM_VARS`]) — 호스트(러너)가 채운다. `DEFINE`으로 같은 이름을 정의하면 그쪽이 이긴다
+    /// (SQL*Plus도 `_DATE`를 다시 정의할 수 있다). 사용자 치환 변수(`defines`)와 **섞지 않는다**(목록·보존·`UNDEFINE`에 끼지 않는다).
+    pub sysvars: BTreeMap<String, String>,
+    /// `COLUMN 열 NEW_VALUE 변수` — 열 이름(대문자) → 치환 변수 이름.
+    pub column_new: BTreeMap<String, String>,
     pub vars: VarStore,
     /// 치환 변수(`DEFINE` · `:setvar` · `&1..&n`).
     pub defines: BTreeMap<String, String>,
@@ -114,11 +151,29 @@ impl Engine {
     pub fn new(dialect: Dialect) -> Self {
         Engine {
             dialect,
+            caps: nsql_core::Caps::of(dialect),
+            call_captures: None,
+            call_outputs: Vec::new(),
+            accepted: std::collections::BTreeSet::new(),
+            sysvars: BTreeMap::new(),
+            column_new: BTreeMap::new(),
             vars: VarStore::new(),
             defines: BTreeMap::new(),
             settings: Settings::default(),
             diagnostics: Vec::new(),
         }
+    }
+
+    /// 방언을 바꾼다 — 능력표도 그 방언의 내장 표로.
+    pub fn set_dialect(&mut self, dialect: Dialect) {
+        self.dialect = dialect;
+        self.caps = nsql_core::Caps::of(dialect);
+    }
+
+    /// 접속한 세션의 방언 + **그 세션이 말한 능력표**(확장 드라이버는 내장 표와 다를 수 있다).
+    pub fn set_caps(&mut self, dialect: Dialect, caps: nsql_core::Caps) {
+        self.dialect = dialect;
+        self.caps = caps;
     }
 
     pub fn define(&mut self, name: &str, value: &str) {
@@ -151,8 +206,11 @@ impl Engine {
                     }];
                 }
                 let inout = matches!(kind, SqlKind::Block);
-                let prepared = prepare(self.dialect, &text, &mut self.vars, inout);
-                self.note_implicit(&prepared);
+                let prepared = prepare_with(&self.caps, &text, &mut self.vars, inout);
+                // 경고는 **읽기만 하는 보통 SQL**에서만 — 블록의 바인드는 받는 쪽(OUT)일 수 있다(09-21 실서버: 대입 대상에 오경고).
+                if !inout {
+                    self.note_implicit(&prepared);
+                }
                 vec![Action::Execute {
                     prepared,
                     expect_out: inout,
@@ -272,6 +330,35 @@ impl Engine {
                 Some(v) => vec![Action::Print(vec![(n.clone(), Value::Str(v.clone()))])],
                 None => vec![Action::Error(format!("치환 변수 {n}가 없습니다"))],
             },
+            Command::Column {
+                name,
+                new_value,
+                clear,
+            } => {
+                if *clear {
+                    self.column_new.remove(name);
+                }
+                if let Some(v) = new_value {
+                    self.column_new.insert(name.clone(), v.clone());
+                }
+                vec![Action::Nothing(format!("column {name}"))]
+            }
+            Command::Accept {
+                name,
+                default,
+                prompt,
+                hide,
+            } => {
+                if self.accepted.remove(name) {
+                    return vec![Action::Nothing(format!("accept {name}"))];
+                }
+                vec![Action::Accept {
+                    name: name.clone(),
+                    prompt: prompt.clone(),
+                    default: default.clone(),
+                    hide: *hide,
+                }]
+            }
             Command::Undefine { names } => {
                 for n in names {
                     self.defines.remove(n);
@@ -348,10 +435,14 @@ impl Engine {
                 }
             }
         }
-        let mut wrapped = wrap_exec(self.dialect, body);
+        let mut wrapped = wrap_exec_with(&self.caps, body);
+        let outputs = std::mem::take(&mut self.call_outputs);
+        if !outputs.is_empty() {
+            wrapped = crate::call::mark_output(&wrapped, &outputs);
+        }
         // SQL Server의 `SELECT @A = col …`은 **여러 행이면 마지막 행을 말없이** 쓰고 0행이면 옛 값을 남긴다 → 서버에서 바로
         // 행 수를 검사해 Oracle과 같은 오류로(D-139 · `@@ROWCOUNT`는 바로 다음 문장에서만 유효 · first 정책이면 검사하지 않는다).
-        if self.dialect == Dialect::Mssql
+        if self.caps.into_rowcount_guard
             && !self.settings.into_first
             && wrapped != body
             && body
@@ -361,12 +452,21 @@ impl Engine {
         {
             wrapped.push_str(TSQL_INTO_GUARD);
         }
-        let mut prepared = prepare(self.dialect, &wrapped, &mut self.vars, true);
-        // OUT 바인드가 없는 방언: 받는 쪽을 **요청에 명시**한다(추측해서 1행 결과를 빨아들이지 않는다).
-        if !matches!(self.dialect, Dialect::Oracle | Dialect::Mssql) {
+        let mut prepared = prepare_with(&self.caps, &wrapped, &mut self.vars, true);
+        // OUT 바인드가 없는 DBMS: 받는 쪽을 **요청에 명시**한다(추측해서 1행 결과를 빨아들이지 않는다).
+        if self.caps.captures_rows() {
             prepared.captures = exec_targets(body);
+            // 호출(`EXEC proc(3, :X, :Y)`): 받는 쪽은 서명이 정한다 — 결과 열 이름(= 형식 인자 이름)이 바인드 이름과 다르면
+            // 종전에는 값이 조용히 버려졌다(T-151).
+            if let Some(c) = self
+                .call_captures
+                .take()
+                .filter(|_| prepared.captures.is_empty())
+            {
+                prepared.captures = c;
+            }
         }
-        self.note_implicit(&prepared);
+        // `EXEC`의 바인드는 받는 쪽(OUT 인자 · 대입 대상)일 수 있다 → 미정의 경고는 내지 않는다(보통 SQL에서만).
         vec![Action::Execute {
             prepared,
             expect_out: true,
@@ -395,12 +495,62 @@ impl Engine {
 
     /// 실행 결과의 OUT 값을 저장소로. `autoprint`면 표시할 목록을 돌려준다.
     pub fn absorb(&mut self, result: &ExecResult) -> Option<Vec<(String, Value)>> {
-        self.vars.absorb(&result.out_params);
+        let limit = self.settings.max_value_bytes;
+        let too_big = |v: &Value| matches!(v, Value::Str(s) if limit > 0 && s.len() > limit);
+        if result.out_params.iter().any(|(_, v)| too_big(v)) {
+            // 드문 길: 상한을 넘는 값만 잘라 사본을 만든다(보통 길은 복사 0).
+            let clipped: Vec<(String, Value)> = result
+                .out_params
+                .iter()
+                .map(|(n, v)| match v {
+                    Value::Str(s) if too_big(v) => {
+                        self.diagnostics
+                            .push(Diagnostic::Truncated(n.clone(), s.len()));
+                        (n.clone(), Value::Str(clip_utf8(s, limit).to_string()))
+                    }
+                    _ => (n.clone(), v.clone()),
+                })
+                .collect();
+            self.vars.absorb(&clipped);
+        } else {
+            self.vars.absorb(&result.out_params);
+        }
         if self.settings.autoprint && !result.out_params.is_empty() {
             Some(result.out_params.clone())
         } else {
             None
         }
+    }
+
+    /// `COLUMN … NEW_VALUE`(T-153): 방금 나온 결과의 **마지막 행**에서 등록된 열의 값을 치환 변수에 넣는다(NULL = 빈 글).
+    /// 등록이 없으면 아무것도 하지 않는다(보통 길 = 맵이 비었는지 한 번 본다).
+    pub fn note_result(&mut self, columns: &[nsql_core::Column], last_row: Option<&Vec<Value>>) {
+        if self.column_new.is_empty() {
+            return;
+        }
+        let Some(row) = last_row else {
+            return;
+        };
+        for (c, v) in columns.iter().zip(row.iter()) {
+            if let Some(var) = self.column_new.get(&c.name.to_ascii_uppercase()) {
+                let text = match v {
+                    Value::Null => String::new(),
+                    other => other.display(),
+                };
+                self.defines.insert(var.clone(), text);
+            }
+        }
+    }
+
+    /// 치환 값 찾기: 사용자 정의 → 시스템 변수(이름이 [`SYSTEM_VARS`]에 있으면 값이 아직 없어도 빈 글 — 묻지 않는다).
+    fn macro_value(&self, name: &str) -> Option<&str> {
+        if let Some(v) = self.defines.get(name) {
+            return Some(v.as_str());
+        }
+        if let Some(v) = self.sysvars.get(name) {
+            return Some(v.as_str());
+        }
+        SYSTEM_VARS.contains(&name).then_some("")
     }
 
     /// 치환 변수 전처리(docs/04 §8.2). `&&NAME`은 정의를 남기고, `&NAME`은 한 번만.
@@ -409,6 +559,11 @@ impl Engine {
         let Some(ch) = self.settings.define_char else {
             return Ok(text.to_string());
         };
+        // 빠른 길: 치환 글자도 `${`도 없으면 토큰화하지 않는다.
+        let brace = self.settings.brace_subst && text.contains("${");
+        if !brace && !text.contains(ch) {
+            return Ok(text.to_string());
+        }
         let classes = crate::lexer::classify(text);
         let b = text.as_bytes();
         let mut out = String::with_capacity(text.len());
@@ -429,7 +584,7 @@ impl Engine {
                 }
                 if j > start {
                     let name = text[start..j].to_ascii_uppercase();
-                    match self.defines.get(&name) {
+                    match self.macro_value(&name) {
                         Some(v) => {
                             out.push_str(v);
                             // 뒤따르는 `.`은 이름 종결자(SET CONCAT) — 소비한다.
@@ -443,12 +598,123 @@ impl Engine {
                     }
                 }
             }
+            // `${이름[:형식]}` — 정의된 이름 + 아는 형식일 때만 바꾼다(모르면 글자 그대로 · 묻지 않는다 · 주석 안 제외).
+            if brace
+                && b[i] == b'$'
+                && b.get(i + 1) == Some(&b'{')
+                && !matches!(
+                    classes[i],
+                    crate::lexer::Class::LineComment | crate::lexer::Class::BlockComment
+                )
+            {
+                if let Some(close) = text[i + 2..].find('}') {
+                    let inner = &text[i + 2..i + 2 + close];
+                    // `${env:이름[:형식]}` — OS 환경 변수(이름은 OS 규칙대로: Windows = 대소문자 무관 · 그 밖 = 구분).
+                    if let Some(rest) = inner
+                        .get(..4)
+                        .filter(|p| p.eq_ignore_ascii_case("env:"))
+                        .map(|_| &inner[4..])
+                    {
+                        let (var, fmt) = rest.split_once(':').unwrap_or((rest, ""));
+                        let value = (self.settings.env_subst && !var.trim().is_empty())
+                            .then(|| std::env::var(var.trim()).ok())
+                            .flatten();
+                        if let Some(s) =
+                            value.and_then(|v| format_macro(&v, fmt.trim(), self.dialect))
+                        {
+                            out.push_str(&s);
+                            i += 2 + close + 1;
+                            continue;
+                        }
+                        // 없는 변수 · 꺼진 설정 · 모르는 형식 = 글자 그대로.
+                        out.push_str(&text[i..i + 2 + close + 1]);
+                        i += 2 + close + 1;
+                        continue;
+                    }
+                    let (name, fmt) = inner.split_once(':').unwrap_or((inner, ""));
+                    let key = name.trim().to_ascii_uppercase();
+                    let known = !key.is_empty()
+                        && key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
+                    if known {
+                        if let Some(v) = self.macro_value(&key) {
+                            if let Some(s) = format_macro(v, fmt.trim(), self.dialect) {
+                                out.push_str(&s);
+                                i += 2 + close + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
             let c = text[i..].chars().next().unwrap_or('\0');
             out.push(c);
             i += c.len_utf8();
         }
         Ok(out)
     }
+}
+
+/// 시스템 변수 이름(대문자) — 값은 호스트가 [`Engine::sysvars`]에 넣는다. 실행 전 훑기는 이 이름들을 묻지 않는다.
+/// `_USER` · `_CONNECT_IDENTIFIER` · `_DATE` = SQL*Plus의 미리 정의된 변수 · 나머지는 psql(`ROW_COUNT` · `SQLSTATE`)과 같은 쓰임.
+pub const SYSTEM_VARS: &[&str] = &[
+    "_USER",
+    "_CONNECT_IDENTIFIER",
+    "_DIALECT",
+    "_DATE",
+    "_TIMESTAMP",
+    "_ROW_COUNT",
+    "_SQLCODE",
+    "_ELAPSED_MS",
+    "_FILE",
+];
+
+/// 글을 `limit` 바이트 이하의 글자 경계에서 자른다.
+fn clip_utf8(s: &str, limit: usize) -> &str {
+    if s.len() <= limit {
+        return s;
+    }
+    let mut end = limit;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// 값 → **SQL 글자 상수**(`:q` 형식 · 순수). 규칙: ① 값 전체를 작은따옴표로 감싼다 ② 값 안의 작은따옴표는 **두 번** 쓴다
+/// (`O'Neil` → `'O''Neil'` — SQL 표준 · 전 DBMS 공통 · 값이 글자 상수 밖으로 빠져나가지 못한다 = 주입 방지) ③ SQL Server는
+/// **`N'…'`**(유니코드 상수 — `N`이 없으면 한글 등이 DB 코드페이지로 바뀌며 깨질 수 있다) ④ MySQL은 역슬래시가 이스케이프 문자라
+/// **역슬래시도 두 번 쓴다**(Windows 경로 `C:\Users` 같은 값이 망가지지 않게 · `NO_BACKSLASH_ESCAPES` 모드가 아닌 기본 동작 기준)
+/// ⑤ 그 밖(Oracle · PostgreSQL `standard_conforming_strings = on` · SQLite · ODBC)은 역슬래시가 보통 글자다. 줄바꿈 등 다른 글자는
+/// 그대로 둔다(글자 상수 안에서 유효하다). OS와 무관한 순수 글자 처리 — Windows · macOS · Linux에서 같은 결과.
+fn sql_text_literal(v: &str, dialect: Dialect) -> String {
+    let body = v.replace('\'', "''");
+    match dialect {
+        Dialect::Mssql => format!("N'{body}'"),
+        Dialect::Mysql => format!("'{}'", body.replace('\\', "\\\\")),
+        _ => format!("'{body}'"),
+    }
+}
+
+/// `${이름:형식}`의 형식(순수) — 없음·`raw` = 그대로 · `q` = SQL 글자 상수(psql `:'v'`) · `id` = 인용한 이름(psql `:"v"` — 방언의
+/// 인용 부호) · `upper`/`lower` · `n` = 수일 때만(아니면 바꾸지 않는다 — 주입 방지용). 모르는 형식 = `None`(글자 그대로 둔다).
+fn format_macro(v: &str, fmt: &str, dialect: Dialect) -> Option<String> {
+    Some(match fmt.to_ascii_lowercase().as_str() {
+        "" | "raw" => v.to_string(),
+        "q" | "quote" | "sql" => sql_text_literal(v, dialect),
+        "id" | "ident" => match dialect {
+            Dialect::Mssql => format!("[{}]", v.replace(']', "]]")),
+            Dialect::Mysql => format!("`{}`", v.replace('`', "``")),
+            _ => format!("\"{}\"", v.replace('"', "\"\"")),
+        },
+        "upper" => v.to_uppercase(),
+        "lower" => v.to_lowercase(),
+        "n" | "num" => {
+            let t = v.trim();
+            t.parse::<f64>().ok().filter(|f| f.is_finite())?;
+            t.to_string()
+        }
+        _ => return None,
+    })
 }
 
 /// 명령어(첫 단어) 뒤의 본문 — `PROMPT  a b` → `a b`(앞 공백은 하나만 뗀다 · SQL*Plus).
@@ -503,6 +769,137 @@ fn after_command_word(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// `${env:이름}` = OS 환경 변수(사용자 09-21): 있는 변수 = 값 · 형식(`q`) · 없는 변수·모르는 형식 = 글자 그대로 · 주석 안 제외 ·
+    /// `vars.env_subst`/`vars.brace_subst` 끔 = 그대로 · 사용자 정의 `env`라는 치환 변수와 섞이지 않는다.
+    #[test]
+    fn environment_variables_substitute() {
+        use nsql_core::Dialect;
+        // 모든 OS에 있는 변수(Windows는 이름의 대소문자를 가리지 않는다).
+        let path = std::env::var("PATH").expect("PATH");
+        let mut e = super::Engine::new(Dialect::Postgres);
+        assert_eq!(
+            e.substitute("x ${env:PATH} y").ok(),
+            Some(format!("x {path} y"))
+        );
+        assert_eq!(
+            e.substitute("${ENV:PATH:q}").ok(),
+            Some(format!("'{}'", path.replace('\'', "''")))
+        );
+        assert_eq!(
+            e.substitute("${env:NSQL_NO_SUCH_VARIABLE_42} ${env:} ${env:PATH:zzz} -- ${env:PATH}")
+                .as_deref(),
+            Ok("${env:NSQL_NO_SUCH_VARIABLE_42} ${env:} ${env:PATH:zzz} -- ${env:PATH}")
+        );
+        e.define("env", "mine");
+        assert_eq!(e.substitute("${env}").as_deref(), Ok("mine"));
+        e.settings.env_subst = false;
+        assert_eq!(e.substitute("${env:PATH}").as_deref(), Ok("${env:PATH}"));
+        e.settings.env_subst = true;
+        e.settings.brace_subst = false;
+        assert_eq!(e.substitute("${env:PATH}").as_deref(), Ok("${env:PATH}"));
+    }
+
+    /// T-153 — 시스템 변수(정의가 이긴다 · 값이 없어도 묻지 않는다) · `${이름:형식}`(정의된 이름 + 아는 형식만 · 주석 제외 ·
+    /// 방언별 이름 인용 · `n`은 수일 때만) · `COLUMN … NEW_VALUE`(마지막 행 · NULL = 빈 글 · CLEAR) · 값 상한.
+    #[test]
+    fn system_vars_brace_formats_column_new_value_and_value_cap() {
+        use nsql_core::{Column, Dialect, ExecResult, Value};
+        let mut e = super::Engine::new(Dialect::Oracle);
+        e.sysvars.insert("_USER".into(), "SCOTT".into());
+        assert_eq!(
+            e.substitute("select '&_USER' u, '&_ROW_COUNT' r from dual")
+                .as_deref(),
+            Ok("select 'SCOTT' u, '' r from dual")
+        );
+        e.define("_USER", "ME");
+        assert_eq!(e.substitute("&_USER").as_deref(), Ok("ME"));
+        assert_eq!(e.substitute("&nope"), Err("NOPE".into()));
+
+        e.define("who", "O'Neil");
+        e.define("n", "42");
+        assert_eq!(
+            e.substitute("a=${who:q} b=${who:id} c=${WHO:upper} d=${n:n} e=${who:n} f=${who:zzz} g=${undefined} -- ${who}").as_deref(),
+            Ok("a='O''Neil' b=\"O'Neil\" c=O'NEIL d=42 e=${who:n} f=${who:zzz} g=${undefined} -- ${who}")
+        );
+        // `:q` = SQL 글자 상수: 작은따옴표 두 번 · SQL Server = N'…' · MySQL = 역슬래시도 두 번 · 그 밖 = 역슬래시는 보통 글자.
+        let win_path = "C:\\Users\\O'Neil";
+        assert_eq!(
+            super::sql_text_literal(win_path, Dialect::Oracle),
+            "'C:\\Users\\O''Neil'"
+        );
+        assert_eq!(
+            super::sql_text_literal(win_path, Dialect::Postgres),
+            "'C:\\Users\\O''Neil'"
+        );
+        assert_eq!(
+            super::sql_text_literal(win_path, Dialect::Mssql),
+            "N'C:\\Users\\O''Neil'"
+        );
+        assert_eq!(
+            super::sql_text_literal(win_path, Dialect::Mysql),
+            "'C:\\\\Users\\\\O''Neil'"
+        );
+        assert_eq!(super::sql_text_literal("", Dialect::Sqlite), "''");
+        assert_eq!(
+            super::sql_text_literal("한글 ' 값", Dialect::Mssql),
+            "N'한글 '' 값'"
+        );
+        let mut m = super::Engine::new(Dialect::Mssql);
+        m.define("t", "my]tab");
+        assert_eq!(
+            m.substitute("select * from ${t:id}").as_deref(),
+            Ok("select * from [my]]tab]")
+        );
+        m.settings.brace_subst = false;
+        assert_eq!(m.substitute("${t}").as_deref(), Ok("${t}"));
+
+        let cols = vec![
+            Column {
+                name: "max_id".into(),
+                type_name: String::new(),
+            },
+            Column {
+                name: "other".into(),
+                type_name: String::new(),
+            },
+        ];
+        let item = |s: &str| crate::split::split_script(s).remove(0);
+        e.plan(&item("COLUMN max_id NEW_VALUE v_max"));
+        e.note_result(&cols, Some(&vec![Value::Int(7), Value::Null]));
+        assert_eq!(e.substitute("&v_max").as_deref(), Ok("7"));
+        e.plan(&item("COLUMN other NEW_VALUE v_o"));
+        e.note_result(&cols, Some(&vec![Value::Int(8), Value::Null]));
+        assert_eq!(e.substitute("[&v_max][&v_o]").as_deref(), Ok("[8][]"));
+        e.plan(&item("COLUMN max_id CLEAR"));
+        e.note_result(&cols, Some(&vec![Value::Int(9), Value::Null]));
+        assert_eq!(e.substitute("&v_max").as_deref(), Ok("8"));
+        e.note_result(&cols, None);
+
+        e.settings.max_value_bytes = 5;
+        e.diagnostics.clear();
+        let r = ExecResult {
+            out_params: vec![
+                ("BIG".into(), Value::Str("가나다라".into())),
+                ("OK".into(), Value::Str("abc".into())),
+            ],
+            ..Default::default()
+        };
+        e.absorb(&r);
+        assert_eq!(
+            e.vars.get("BIG").map(|v| v.value.display()).as_deref(),
+            Some("가"),
+            "글자 경계에서 자른다"
+        );
+        assert_eq!(
+            e.vars.get("OK").map(|v| v.value.display()).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            e.diagnostics,
+            vec![super::Diagnostic::Truncated("BIG".into(), 12)]
+        );
+    }
+
     /// 트리거 DDL의 `:NEW`/`:OLD`는 클라이언트 바인드가 아니다 — 변수 표를 더럽히지 않고 원문 그대로 간다(09-21).
     #[test]
     fn stored_code_ddl_is_not_bound() {
@@ -603,13 +1000,8 @@ mod tests {
             .params
             .iter()
             .all(|p| p.direction == Direction::InOut));
-        assert_eq!(
-            e.diagnostics,
-            vec![
-                Diagnostic::ImplicitVariable("V_PROJECT_CD".into()),
-                Diagnostic::ImplicitVariable("V_MP_VRSN_SEQ".into())
-            ]
-        );
+        // `EXEC … INTO :A, :B`의 바인드는 **받는 쪽**이다 — 미정의 경고를 내지 않는다(09-21 실서버에서 본 오경고).
+        assert!(e.diagnostics.is_empty(), "{:?}", e.diagnostics);
         // 드라이버가 돌려준 OUT 값 흡수
         let res = ExecResult {
             out_params: vec![

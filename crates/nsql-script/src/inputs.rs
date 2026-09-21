@@ -35,6 +35,25 @@ pub struct InputNeed {
     pub name: String,
     /// 처음 나온 줄(1부터).
     pub line: usize,
+    /// `ACCEPT … PROMPT 글` — 이름 대신 보여 줄 글(없으면 이름).
+    pub prompt: Option<String>,
+    /// `ACCEPT … DEFAULT 값` — 입력란에 미리 채울 값.
+    pub default: Option<String>,
+    /// `ACCEPT … HIDE` — 입력을 가린다.
+    pub hide: bool,
+}
+
+impl InputNeed {
+    fn plain(kind: InputKind, name: String, line: usize) -> InputNeed {
+        InputNeed {
+            kind,
+            name,
+            line,
+            prompt: None,
+            default: None,
+            hide: false,
+        }
+    }
 }
 
 /// 글에서 치환 변수 참조 이름(대문자)을 나온 순서대로 — [`crate::Engine::substitute`]와 같은 규칙(주석 안 제외).
@@ -100,6 +119,16 @@ pub(crate) fn into_targets(sql: &str) -> Vec<String> {
         .collect()
 }
 
+/// 글에 `ACC`로 시작하는 줄이 있는가(대소문자 무시) — `ACCEPT`를 위한 값싼 사전 검사(정확한 판정은 명령 해석).
+fn has_accept_word(src: &str) -> bool {
+    src.lines().any(|l| {
+        l.trim_start()
+            .as_bytes()
+            .get(..3)
+            .is_some_and(|w| w.eq_ignore_ascii_case(b"ACC"))
+    })
+}
+
 /// 글에 `INTO`(대소문자 무시)가 들어 있는가 — 값싼 사전 검사(정확한 판정은 [`into_targets`]).
 fn has_word_into(text: &str) -> bool {
     text.as_bytes()
@@ -120,7 +149,7 @@ pub fn missing_inputs(
     // ★ 빠른 길(docs/63 §4 계측): 바인드 글자(`:`)도 치환 글자도 없는 스크립트는 나눌 필요조차 없다(덤프·DDL 묶음).
     let has_colon = src.as_bytes().contains(&b':');
     let has_macro = define_char.is_some_and(|c| src.contains(c));
-    if !has_colon && !has_macro {
+    if !has_colon && !has_macro && !has_accept_word(src) {
         return Vec::new();
     }
     let mut assigned: BTreeSet<String> = BTreeSet::new();
@@ -146,12 +175,12 @@ pub fn missing_inputs(
             // 치환 글자가 없는 문장은 분류(토큰화)하지 않는다.
             if !is_def_cmd && item_macro {
                 for name in macro_refs_with(&item.text, &classes, ch) {
+                    // 시스템 변수(`&_USER` …)는 호스트가 채운다 — 묻지 않는다.
+                    if crate::engine::SYSTEM_VARS.contains(&name.as_str()) {
+                        continue;
+                    }
                     if !defined.contains(&name) && seen.insert((true, name.clone())) {
-                        out.push(InputNeed {
-                            kind: InputKind::Macro,
-                            name,
-                            line: item.line,
-                        });
+                        out.push(InputNeed::plain(InputKind::Macro, name, item.line));
                     }
                 }
             }
@@ -174,6 +203,31 @@ pub fn missing_inputs(
                     for n in names {
                         defined.remove(&n.to_ascii_uppercase());
                     }
+                }
+                // `COLUMN 열 NEW_VALUE 변수` — 값은 앞의 조회가 채운다(묻지 않는다).
+                Command::Column {
+                    new_value: Some(v), ..
+                } => {
+                    defined.insert(v.clone());
+                }
+                // `ACCEPT`는 값이 이미 있어도 **실행할 때마다 묻는다**(SQL*Plus) — 뒤의 `&이름`은 이것이 채운다.
+                Command::Accept {
+                    name,
+                    default,
+                    prompt,
+                    hide,
+                } => {
+                    if seen.insert((true, name.clone())) {
+                        out.push(InputNeed {
+                            kind: InputKind::Macro,
+                            name: name.clone(),
+                            line: item.line,
+                            prompt: prompt.clone().filter(|p| !p.trim().is_empty()),
+                            default: default.clone(),
+                            hide: *hide,
+                        });
+                    }
+                    defined.insert(name.clone());
                 }
                 Command::Set(crate::command::SetOption::Define(c)) => define = *c,
                 Command::Variable {
@@ -245,11 +299,7 @@ pub fn missing_inputs(
                 continue;
             }
             if seen.insert((false, name.clone())) {
-                out.push(InputNeed {
-                    kind: InputKind::Bind,
-                    name,
-                    line: item.line,
-                });
+                out.push(InputNeed::plain(InputKind::Bind, name, item.line));
             }
         }
     }
@@ -258,6 +308,47 @@ pub fn missing_inputs(
 
 #[cfg(test)]
 mod tests {
+    /// T-153 — 시스템 변수와 `COLUMN … NEW_VALUE`가 채울 변수는 묻지 않는다.
+    #[test]
+    fn system_and_new_value_macros_are_not_asked() {
+        let vars = VarStore::new();
+        let src = String::from("COLUMN m NEW_VALUE v_m")
+            + &String::from(char::from(10))
+            + "SELECT '&_USER', &v_m, &really_missing FROM dual;";
+        let needs = missing_inputs(&src, None, &vars, &BTreeMap::new(), Some('&'));
+        let names: Vec<&str> = needs.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["REALLY_MISSING"]);
+    }
+
+    /// T-153 — `ACCEPT`는 값이 있어도 묻고(기본값·안내 글·가림을 실어) · 뒤의 `&이름`을 다시 묻지 않는다 · `&`가 없는 스크립트에서도.
+    #[test]
+    fn accept_is_always_asked_once() {
+        let vars = VarStore::new();
+        let mut defs = BTreeMap::new();
+        defs.insert("DEPT".to_string(), "99".to_string());
+        let src = "ACCEPT dept NUMBER DEFAULT 10 PROMPT 'Dept: '\nACCEPT pw HIDE\nSELECT &dept, '&pw' FROM dual;\n";
+        let needs = missing_inputs(src, None, &vars, &defs, Some('&'));
+        assert_eq!(needs.len(), 2, "{needs:?}");
+        assert_eq!(
+            (
+                needs[0].name.as_str(),
+                needs[0].default.as_deref(),
+                needs[0].prompt.as_deref(),
+                needs[0].hide
+            ),
+            ("DEPT", Some("10"), Some("Dept: "), false)
+        );
+        assert_eq!((needs[1].name.as_str(), needs[1].hide), ("PW", true));
+        let only = missing_inputs(
+            "ACCEPT x\nSELECT 1 FROM dual;\n",
+            None,
+            &vars,
+            &BTreeMap::new(),
+            Some('&'),
+        );
+        assert_eq!(only.len(), 1);
+    }
+
     use super::*;
     use nsql_core::Value;
 

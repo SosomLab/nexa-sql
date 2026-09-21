@@ -81,6 +81,8 @@
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
 | 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
 | 되돌리기 기록 파일(60 §7 D-129 · `<설정 폴더>/undo/*.nsqu`) | 저장할 때 1회 쓰기(≤ 4 MB · UI 스레드 · tmp+rename) · 열 때 1회 읽기 · 실행당 첫 저장 때 오래된 파일 치우기 · 큰 파일 탭은 안 씀 | `editor.undo_persist`(off = 쓰기·읽기 0) · `editor.undo_persist_mb` · `editor.undo_persist_days` | — | — | — | `undofile.rs` |
+| 호출 서명 조회(63 · T-151 — `EXEC 루틴(…)` 앞에서 카탈로그 질의: Oracle `ALL_ARGUMENTS` · PostgreSQL `pg_proc` · SQL Server `sys.parameters`) | **루틴당 1회**(세션 캐시 · 재접속 때 비움) · 타입이 필요한 바인드·`OUTPUT` 빠진 바인드·PG 바인드 인자가 있을 때만 · 실패는 조용히(종전 동작) | **`vars.signature_lookup`**(off = 질의 0 · 09-21 신설) | on | on | on | 러너 `infer_call_bind_types` · `nsql-catalog::routine_args` |
+| PostgreSQL 커서 이름 풀기(T-150) | 결과의 글자 값이 커서 이름 꼴일 때만(앞 32행 · 63자 이하) `pg_cursors` 확인 **왕복 1** + 열린 커서마다 `FETCH`·`CLOSE` · 사용자가 실행한 문장 안에서만(스스로 만드는 트래픽 0) | **`pg.refcursor_expand`**(off = 추가 왕복 0 · 이름이 글자로 나온다 · 09-21 신설) | on | on | on | nsql-driver-pg `expand_refcursors` |
 | 편집 버퍼 `TextBuf`(59 §6 · 탭당) | 본문 UTF-8 + 갭(본문의 1/16 · 4 KB~4 MB) + 줄당 16 B · 줄별 폭·구문 상태 8 B/줄 · 보이지 않는 탭은 회수 때 갭을 접는다 | (회수 설정과 같음) | — | — | — | nexa-ctl `edit/textbuf.rs` |
 | 막힘 감지 폴링(56 L3 · 메타 세션 1문장) | 미커밋 세션당 30s | `tx.block_poll_secs`(0 = 끔 · 향상 모드 0) | 30 | 30 | 0 | `App::tx_block_tick` |
 | 탐색기 유휴 워터마크(57 T2 · 스키마당 1행) | 300s · 유휴일 때만 | `meta.refresh_secs`(0 = 끔 · 향상 모드 0) · `meta.refresh_scope` | 300 | 600 | 0 | `App::meta_refresh_tick` |
@@ -254,6 +256,10 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 **구현**: 레지스트리 `perf.boost`(Bool · Performance) · `perf::BOOST` 표 · `Settings::effective` 최우선 · `boost_locked(key)` · `PerfSource::Boost`(`nsql config list perf` 출처 "향상") · 설정 창 = 대상 카드 잠금 + 설명 아래 "⚡ 실행 속도 향상 적용값: X" · 호스트 = 켬/끔 때 대상 키 전부 `apply_setting`(즉시 반영) · 신설 배선 `ui.menu_icons`(nexa-ctl ctxmenu 전역) · `ui.clipboard_probe`(우클릭 클립보드 읽기 생략). 향상 모드는 부하원 원장(§3)에 새 행을 만들지 않는다(기존 키의 값만 강제).
 
+> **09-21 추가 2(사용자 결정)**: 향상 모드 강제 표에 **`grid.result_tabs=off`** — "다중 탭을 끄는 것은 의도적으로 메모리 사용을 억제하기 위한 설정"(목표 ④). 결과 자체는 그대로 조회·표시되고 **동시에 들고 있는 결과의 개수**만 줄어든다(편집기 탭당 하나 · 나머지 즉시 해제 D-73). 다중 탭 설정은 독립 키로 유지하고, 종속 키 `grid.result_tabbar_single`(결과 1개에도 탭 영역)은 그동안 잠긴다. 큰 파일 쪽의 상시 비용은 향상 모드가 아니라 **큰 파일 단계**가 맡는다: 확장 효과 = `file.large_ext_level`(L1) · 구문 강조 = `file.large_syntax_level`(L2) — [59 §5](59-large-file-handling.md).
+>
+> **09-21 추가(Windows 89차 · 사용자 "추가한 기능 가운데 성능 향상 영역에서 관리할 대상 반영 · OS별 동작 포함")**: 향상 모드 강제 표에 `editor.undo_persist=off`(되돌리기 기록 파일 — 저장·닫기 때 쓰기 + 열 때 읽기·검증 · 세션 안의 되돌리기는 그대로) · `meta.refresh_highlight_ms=0`(갱신 뒤 강조가 사라질 때까지의 다시 그리기). **넣지 않은 것**: `vars.signature_lookup`·`pg.refcursor_expand`(결과가 바뀐다 → 개별 스위치로만 · §3-1) · `vars.persist`(다음 실행의 바인드 값이 달라진다) · `grid.result_per_statement`·`run.cursor_autoshow`·`vars.brace_subst`·`vars.max_value_kb`(결과 표시·값). **OS별**: `gfx.mac_present=iosurface`는 **macOS에서만** 효과가 있는 가장 큰 그리기 지렛대(present 36 → 2.9 ms · 유휴 CPU ⅓)지만 Apple Silicon·크기 조절 중 실기(T-147)와 기본값 결정(D-133)이 끝나지 않았다 — 검증 안 된 경로를 **잠금 강제**하면 문제가 났을 때 향상 모드 전체를 꺼야 하므로 **D-133 뒤 등재 후보**로만 둔다(Windows·Linux는 softbuffer 한 길이라 키가 있어도 효과 없음) · 메모리 회수(`mem.trim_secs`)는 OS별 구현(Windows `HeapCompact` · Linux `malloc_trim` · macOS zone pressure relief)이 이미 목표 ④에 맞아 그대로.
+>
 > 09-17 추가: 향상 모드 강제 표에 `editor.diff_marks=off`(줄 디프 계산 · 편집마다) · `log.dev_mode=off`(상세 로그 게이트 0 · [48](48-logging-architecture.md)).
 
 ## 5. 시나리오 — 모드가 실제로 바꾸는 것(사용자 관점)

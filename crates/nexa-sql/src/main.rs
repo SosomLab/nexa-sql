@@ -173,6 +173,14 @@ struct App {
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
+    /// 워커가 비밀번호를 묻는다(세션 id · 가린 접속 문자열) — 입력 창은 이벤트 루프에서 연다.
+    pw_pending: Option<(u64, String, bool)>,
+    /// ★ **닫힌 창의 키가 메인 창으로 새지 않게**(사용자 09-21 — 비밀번호 창의 Enter가 편집기에 줄바꿈을 넣었다): 입력 창을
+    /// 키로 닫은 시각. 그 키가 **떼어질 때까지** 메인 창에 오는 자동 반복 누름을 버린다([`key_guard_step`]).
+    key_guard: Option<Instant>,
+    /// **일회성 비밀번호의 둘째 사본**(세션 id · 값 · 받은 시각): 같은 서버의 탐색기 메타 세션을 붙일 때 한 번 쓰고 지운다.
+    /// 접속이 끝나 탐색기를 붙이는 순간 소비되고, 그러지 못했으면 20초 뒤에 버린다(버려지면서 0으로 덮어쓴다).
+    pw_once: Option<(u64, nsql_core::Secret, Instant)>,
     /// 변수 창(docs/63 V2) · 마지막 실행에서 바뀐 이름(탭 id, 대문자 이름들 — 그 탭의 줄을 강조).
     vars_win: vars_win::VarsWin,
     vars_changed: (u64, std::collections::HashSet<String>),
@@ -227,12 +235,16 @@ struct App {
     keys_win: KeysWin,
     /// 환경 설정 창(T-39 · 사용자 09-15).
     open_prefs: bool,
+    /// 기동 명령 `edit.prefs:<검색어>` — 설정 창을 열면서 넣을 검색어(자체 캡처용).
+    prefs_query: Option<String>,
     prefs_win: PrefsWin,
     /// 좌측 활동 막대(VS Code식 · 사용자 09-15) — 패널 토글 + 동작 버튼.
     act_bar: ActivityBar,
     /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
     file_win: FileWin,
     open_file_dlg: Option<PickerMode>,
+    /// 폴더 고르기의 시작 폴더(설정의 지금 값).
+    folder_start: Option<PathBuf>,
     // 컨트롤
     menubar: MenuBar,
     /// 탭 메뉴를 마지막으로 만든 근거(id·제목·활성) — 바뀌면 메뉴를 다시 만든다.
@@ -468,6 +480,7 @@ fn var_type_text(ty: &nsql_core::VarType) -> String {
         T::BinaryDouble => "BINARY_DOUBLE".into(),
         T::Date => "DATE".into(),
         T::Timestamp => "TIMESTAMP".into(),
+        T::Boolean => "BOOLEAN".into(),
         T::Auto => "auto".into(),
     }
 }
@@ -573,6 +586,44 @@ fn preserve_case(matched: &str, repl: &str) -> String {
         return repl.to_lowercase();
     }
     repl.to_string()
+}
+
+#[cfg(test)]
+mod key_guard_tests {
+    use super::key_guard_step;
+    use std::time::Duration;
+
+    /// 닫힌 창의 키 문지기 — 조건마다 하나씩 뒤집어 본다(문지기 있음 · 누름 · 반복 · 3초 안).
+    #[test]
+    fn key_guard_drops_only_repeats_until_release() {
+        let fresh = Some(Duration::from_millis(50));
+        assert_eq!(
+            key_guard_step(fresh, true, true),
+            (true, true),
+            "자동 반복 = 버림"
+        );
+        assert_eq!(
+            key_guard_step(None, true, true),
+            (false, false),
+            "문지기 없음"
+        );
+        assert_eq!(
+            key_guard_step(fresh, false, false),
+            (false, false),
+            "뗌 = 통과 · 끝"
+        );
+        assert_eq!(
+            key_guard_step(fresh, true, false),
+            (false, false),
+            "새로 누름 = 통과 · 끝"
+        );
+        let old = Some(Duration::from_secs(4));
+        assert_eq!(
+            key_guard_step(old, true, true),
+            (false, false),
+            "3초 뒤에는 끝"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -725,6 +776,7 @@ impl App {
             ),
             s,
         );
+        self.explorer.set_menu_area(Rect::new(0, 0, w, h));
         self.search.set_bounds(
             Rect::new(
                 act_w,
@@ -774,6 +826,7 @@ impl App {
         let grid_rect = self.panel.set_bounds(gb, s);
         self.all_grids().for_each(|g| g.set_bounds(grid_rect));
         self.palette.set_bounds(w, chrome_h, s);
+        self.palette.set_window(w, h);
     }
 
     /// 스플리터 두 개에 마우스 사건을 준다. 소비(드래그 시작·중·끝)했으면 `true` — hover만 바뀐 경우는 다시 그리되 통과.
@@ -1161,6 +1214,18 @@ impl App {
                     self.set_panel_result(&name, ConnState::Failed(e));
                     // 접속 실패 확인 → 그 서버 신호등 즉시 갱신(사용자 09-14).
                     self.conn_win.note_failure(&name);
+                }
+                // 접속 문자열에 비밀번호 자리가 없다 → 한 번 묻는다(입력 창은 `about_to_wait`에서 · 워커는 답을 기다린다).
+                ConnOutcome::PasswordNeeded { target, rejected } => {
+                    self.sess.status = t(Msg::StPasswordPrompt).into();
+                    if rejected {
+                        // 들고 있던 비밀번호가 거부돼 폐기했다 — 로그에 한 줄(값은 없다 · 대상은 가린 표시).
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            tf(Msg::PasswordHintRejected, &[&target]),
+                        ));
+                    }
+                    self.pw_pending = Some((self.sess.id, target, rejected));
                 }
                 ConnOutcome::SessionId(sid) => {
                     self.sess.live_sid = Some(sid);
@@ -3075,7 +3140,7 @@ impl App {
                 self.conn_win.clear_connect_marks();
                 self.conn_win
                     .set_connect_mark(&profile, Some(ConnectMark::Connected));
-                self.explorer.connect(&spec, &profile, true);
+                self.explorer.connect(&spec, &profile, true, false);
             }
         }
         self.sync_sess();
@@ -3407,22 +3472,36 @@ impl App {
         let Some(spec) = self.sess.spec.clone() else {
             return;
         };
-        let bare = spec.host.is_none()
-            && spec.password.is_none()
-            && spec.database.is_none()
-            && spec.dialect.is_none();
-        let (full, name) = match spec.user.as_deref() {
-            Some(n) if bare && nsql_vault::is_profile_name(n) => {
-                match Vault::open_default().and_then(|v| v.resolve(n)) {
-                    Ok(Some(f)) => (f, n.to_string()),
-                    _ => return,
-                }
-            }
-            _ => (spec, self.sess.profile.clone()),
+        let (full, name) = match sessions::bare_profile_name(&spec) {
+            Some(n) => match Vault::open_default().and_then(|v| v.resolve(n)) {
+                Ok(Some(f)) => (f, n.to_string()),
+                _ => return,
+            },
+            None => (spec, self.sess.profile.clone()),
         };
         self.sess.spec = Some(full.clone());
         let show = self.sess_id_for_tab(self.editors.active_id()) == self.sess.id;
-        self.explorer.connect(&full, &name, show);
+        // ★ 일회성 비밀번호(입력 창으로 받은 것): 세션 스펙에는 **넣지 않는다**. 탐색기 메타 세션이 같은 자격으로 붙도록 이 호출에만
+        //   빌려주고 바로 지운다(메타 스레드도 접속 뒤 지운다 · 유휴 회수 없음).
+        let once = match self.pw_once.take() {
+            Some((sid, secret, _)) if sid == self.sess.id && full.password.is_none() => {
+                Some(secret)
+            }
+            other => {
+                self.pw_once = other;
+                None
+            }
+        };
+        match once {
+            Some(secret) => {
+                let mut lend = full.clone();
+                lend.password = Some(secret.expose().to_string());
+                drop(secret);
+                self.explorer.connect(&lend, &name, show, true);
+                nsql_core::secret::wipe_opt(&mut lend.password);
+            }
+            None => self.explorer.connect(&full, &name, show, false),
+        }
     }
 
     /// 세션 상태가 바뀌었을 때 화면의 세 층을 한 번에 맞춘다: 탭 표식·설명 · 통제(툴바) · 트랜잭션 · 해제 버튼.
@@ -3613,6 +3692,16 @@ impl App {
                 if let Some(ConnectIntent::Connect(spec)) = intent {
                     // 전용 탭의 CONNECT가 **같은 서버·계정**이면(동일성 = `same_server`) 설정 `connect.reconnect_same`에 따라:
                     //   끔 = 기존 접속 유지(CONNECT 명령만 지우고 나머지 실행) · 켬 = 명시적 재접속(끊고 다시).
+                    // ★ 프로필 이름(`CONNECT M4PLAN`)은 저장소에서 **완성한 스펙으로 비교**한다 — 이름뿐인 스펙은 어떤 접속과도
+                    //   같지 않아서 되풀이할 때마다 다시 접속했다(사용자 09-21). 세션의 스펙은 접속 뒤 이미 완성본이다(`explorer_attach`).
+                    let target = sessions::bare_profile_name(&spec)
+                        .and_then(|n| {
+                            Vault::open_default()
+                                .and_then(|v| v.resolve(n))
+                                .ok()
+                                .flatten()
+                        })
+                        .unwrap_or_else(|| spec.clone());
                     let same = plan == sessions::Placement::Retarget
                         && self.sess.connected
                         && !self.sess.broken
@@ -3620,8 +3709,14 @@ impl App {
                             .sess
                             .spec
                             .as_ref()
-                            .is_some_and(|have| worker::same_server(have, &spec));
-                    if same && !self.settings.flag("connect.reconnect_same") {
+                            .is_some_and(|have| worker::same_server(have, &target));
+                    //   ★ 단, **자격이 바뀐** CONNECT(`user:@host` · 다른 비밀번호)는 유지가 아니라 다시 접속이다(사용자 09-21).
+                    let keep = sessions::keep_same_session(
+                        same,
+                        self.settings.flag("connect.reconnect_same"),
+                        same && worker::credential_changed(&target, DEFAULT_DIALECT),
+                    );
+                    if keep {
                         *src = sessions::strip_first_connect(src);
                         self.log_win.push(LogEntry::new(
                             LogKind::Info,
@@ -3996,11 +4091,26 @@ impl App {
                         .is_some_and(|have| worker::same_server(have, spec))
             })
             .map(|s| s.id);
+        // ★ 이 서버에 공유 연결이 없고 **전용 세션만** 있다(편집기 `CONNECT`로 붙은 서버 · 사용자 09-21): 새 탭도 같은 스펙으로
+        //   전용 세션을 하나 연다 — 종전에는 묶을 공유 연결이 없어 새 탭이 "연결 없음"으로 남았다. 스펙에 비밀번호가 없으면
+        //   워커가 세션 자격 금고에서 꺼내 쓰고, 금고에도 없으면 한 번 묻는다.
+        let private_spec = if shared.is_none() {
+            self.all_sess()
+                .filter(|s| !s.closing && s.is_private())
+                .filter_map(|s| s.spec.clone())
+                .find(|have| worker::same_server(have, spec))
+        } else {
+            None
+        };
         self.editors.new_tab(None);
         self.set_focus(Focus::Editor);
         let tab = self.editors.active_id();
         if let Some(sid) = shared {
             self.tab_bind.insert(tab, sid);
+        } else if let Some(pspec) = private_spec {
+            if let Some(id) = self.new_private(tab) {
+                self.with_sess(id, |a| a.connect_quietly(pspec, false));
+            }
         }
         self.sync_sess();
         self.sync_sess_ui();
@@ -4020,6 +4130,13 @@ impl App {
     }
 
     fn disconnect_force(&mut self) {
+        // 이 세션이 비밀번호를 묻는 중이면 그 물음부터 거둔다(입력 창을 닫고 워커에 취소 — 늦은 답이 새 워커로 가지 않게).
+        if self.input_win.is_open()
+            && self.input_win.is_password()
+            && self.input_win.sess == self.sess.id
+        {
+            self.password_reply(worker::PwReply::Cancel);
+        }
         // 전용 세션 탭에서의 해제 = 그 탭의 세션만(공유 모드면 공유 세션으로 복귀 · docs/52 §4).
         if let Some(tab) = self.sess.owner {
             self.disconnect_private(tab);
@@ -4166,6 +4283,12 @@ impl App {
         let i = |s: &Settings, k: &str| s.int(k);
         match key {
             "ui.theme" => self.apply_theme(),
+            // 끄는 순간 들고 있던 비밀번호 봉투를 전부 버린다(세션 자격 금고 · 켜는 것은 다음 입력부터).
+            "connect.remember_session_password" => {
+                if !self.settings.flag("connect.remember_session_password") {
+                    nsql_vault::session::clear();
+                }
+            }
             "ui.lang" => {
                 nsql_i18n::set_lang(self.settings.lang());
                 self.relabel();
@@ -4219,6 +4342,12 @@ impl App {
             "net.keepalive_secs" | "session.call_timeout_secs" => self.apply_net_options(),
             "mssql.encrypt" => {
                 nsql_drivers::set_mssql_encryption(self.settings.get(key) == Some("login"))
+            }
+            // Oracle 클라이언트(자동/직접 지정) — 드라이버에 넘기고 설정 창의 읽기 전용 탐지 결과를 다시 계산한다.
+            "oracle.client_mode" | "oracle.client_dir" | "oracle.tns_admin" => {
+                apply_oracle_client(&self.settings);
+                self.prefs_win.set_info(dbms_info_values());
+                self.prefs_win.refresh(&self.settings);
             }
             "mssql.cancel" => {
                 nsql_drivers::set_mssql_cancel_socket(self.settings.get(key) == Some("socket"))
@@ -4339,6 +4468,11 @@ impl App {
             | "file.large_l2_lines" => {
                 self.editors.set_large_cfg(large_cfg(&self.settings));
             }
+            "file.large_ext_level" | "file.large_syntax_level" => {
+                let (ext, syn) = large_feature_levels(&self.settings);
+                self.editors.set_large_feature_levels(ext, syn);
+                self.redraw();
+            }
             "editor.undo_group_ms" | "editor.undo_giant_mb" => {
                 let (ms, giant) = undo_rules(&self.settings);
                 self.editors.set_undo_rules(ms, giant);
@@ -4456,7 +4590,9 @@ impl App {
                 let on = self.settings.flag(key);
                 self.all_grids().for_each(|g| g.set_auto_fetch(on));
             }
-            "grid.result_tabs" | "grid.result_tabbar" => self.apply_result_tab_opts(),
+            "grid.result_tabs" | "grid.result_tabbar_single" | "grid.result_tab_title" => {
+                self.apply_result_tab_opts();
+            }
             "tabs.rows" => {
                 let multi = self.settings.get(key) != Some("single");
                 self.editors.set_multiline_tabs(multi);
@@ -4601,13 +4737,16 @@ impl App {
         )
     }
 
-    /// 설정 `grid.result_tabs`/`grid.result_tabbar` → 모든 패널. 끄면 활성 탭 외 전부 즉시 해제(D-73 "강제로 메모리 줄이기").
+    /// 설정 `grid.result_tabs`/`grid.result_tabbar_single` → 모든 패널. 끄면 활성 탭 외 전부 즉시 해제(D-73 "강제로 메모리 줄이기").
     fn apply_result_tab_opts(&mut self) {
         let enabled = self.settings.flag("grid.result_tabs");
-        let always = self.settings.get("grid.result_tabbar") == Some("always");
+        let always = self.settings.flag("grid.result_tabbar_single");
+        let numbered = self.settings.get("grid.result_tab_title") != Some("table");
         self.panel.set_options(enabled, always);
+        self.panel.set_numbered(numbered);
         for p in self.panels.values_mut() {
             p.set_options(enabled, always);
+            p.set_numbered(numbered);
         }
         if !enabled {
             let keep = self.panel.active_id();
@@ -4654,6 +4793,7 @@ impl App {
             title: t(Msg::ResultTabDefault).to_string(),
             pinned: false,
             named: false,
+            sql: String::new(),
             grid: fresh,
             seq: id,
             child_of: None,
@@ -4713,6 +4853,7 @@ impl App {
             title: t(Msg::ResultTabDefault).to_string(),
             pinned: false,
             named: false,
+            sql: String::new(),
             grid: fresh,
             seq: id,
             child_of: Some((parent, ord)),
@@ -4809,8 +4950,11 @@ impl App {
 
     /// 결과가 도착한 탭의 제목(사용자가 이름 붙이거나 고정한 탭은 그대로).
     fn retitle_result(&mut self, key: u64) {
-        let base = match self.grid_for(key) {
-            Some(g) => results::title_from_sql(g.source_table().as_deref(), g.source_sql()),
+        let (base, sql) = match self.grid_for(key) {
+            Some(g) => (
+                results::title_from_sql(g.source_table().as_deref(), g.source_sql()),
+                g.source_sql().to_string(),
+            ),
             None => return,
         };
         let cur_editor = self.panel_editor;
@@ -4822,7 +4966,12 @@ impl App {
         let _ = cur_editor;
         if let Some(p) = panel {
             if let Some(i) = p.index_of(key) {
-                if !p.tabs[i].named && !p.tabs[i].pinned {
+                // 이 결과를 만든 실행 쿼리를 탭에 보관한다(우클릭 ▸ 실행 쿼리 복사).
+                p.tabs[i].sql.clone_from(&sql);
+                if p.numbered() {
+                    // 번호 규칙(`결과N` · 기본): 번호가 있으면 그대로 · 없으면 새 번호(이름 붙인·고정한 탭은 그대로).
+                    p.ensure_numbered(i);
+                } else if !p.tabs[i].named && !p.tabs[i].pinned {
                     let title = p.unique_title(&base, i);
                     p.tabs[i].title = title;
                 }
@@ -4873,6 +5022,38 @@ impl App {
                     t.pinned = !t.pinned;
                 }
             }
+            ResultAction::CopySql(i) => {
+                // 탭에 보관한 실행 쿼리(없으면 그 탭 그리드의 출처 문장)를 클립보드에.
+                let sql = self
+                    .panel
+                    .tabs
+                    .get(i)
+                    .map(|t| t.sql.clone())
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        let id = self.panel.tabs.get(i)?.id;
+                        self.grid_for(id).map(|g| g.source_sql().to_string())
+                    })
+                    .unwrap_or_default();
+                if sql.trim().is_empty() {
+                    self.sess.status = t(Msg::StResultNoSql).to_string();
+                } else if clipboard::write_text(&sql) {
+                    self.sess.status =
+                        tf(Msg::StResultSqlCopied, &[&sql.lines().count().to_string()]);
+                }
+            }
+            ResultAction::Rename(i) => {
+                if let Some(tab) = self.panel.tabs.get(i) {
+                    let (id, title) = (tab.id, tab.title.clone());
+                    let anchor = self.panel.tab_rect(i);
+                    self.palette.open_prompt_at(
+                        &format!("result.rename:{id}"),
+                        t(Msg::PhResultRename),
+                        &title,
+                        anchor,
+                    );
+                }
+            }
             ResultAction::MoveFirst(i) if i < n => self.move_result_tab(i, 0),
             ResultAction::MoveLast(i) if i < n => self.move_result_tab(i, n - 1),
             ResultAction::Move { from, to } if from < n && to < n => self.move_result_tab(from, to),
@@ -4911,6 +5092,7 @@ impl App {
                     title: t(Msg::ResultTabDefault).to_string(),
                     pinned: false,
                     named: false,
+                    sql: String::new(),
                     grid: fresh,
                     seq: id,
                     child_of: None,
@@ -6259,6 +6441,89 @@ impl App {
     /// 자체 캡처용 기동 명령 하나 — `open:<경로>` = 파일을 탭으로 · 나머지 = 명령 id.
     fn startup_cmd(&mut self, id: &str) {
         // `conn.edit:<프로필>` = 로그인 창의 상세 폼을 그 프로필로 열고 두 칸을 바꾼 상태로(필수·바뀜 표식 캡처).
+        // 자체 캡처용: 이름 바꾸기 입력 상자를 키 없이 연다(`tab.rename` = 편집기 탭 · `result.rename` = 결과 탭).
+        // 자체 캡처용: 설정의 "찾아보기…"를 키·마우스 없이 누른다(`prefs.browse:<폴더 설정 키>`).
+        if let Some(key) = id.strip_prefix("prefs.browse:") {
+            if let Some(k) = nsql_settings::entry(key).map(|e| e.key) {
+                self.file_purpose = FilePurpose::SettingFolder(k);
+                self.folder_start = self
+                    .settings
+                    .get(k)
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_dir());
+                self.open_file_dlg = Some(PickerMode::Folder);
+            }
+            return;
+        }
+        // 자체 캡처용: 탐색기 우클릭 메뉴(`explorer.menu[:n]` = n번째 보이는 줄) · 항목 고르기(`explorer.pick:<id>`).
+        // 자체 시험용: **앱 안에서** 마우스 사건을 만든다(`ui.move:x/y` · `ui.click:x/y` · `ui.rclick:x/y` — 창 좌표 · 장치 픽셀 · 쉼표는 명령 구분자라 못 쓴다).
+        //   OS 입력 주입이 아니다 — 사용자의 커서·포커스·전경 창을 건드리지 않고, 실제 입력과 같은 `route` 경로를 그대로 탄다.
+        if let Some((kind, xy)) = id
+            .strip_prefix("ui.")
+            .and_then(|r| r.split_once(':'))
+            .filter(|(k, _)| matches!(*k, "move" | "click" | "rclick"))
+        {
+            let mut it = xy
+                .split(['/', 'x'])
+                .map(|v| v.trim().parse::<i32>().unwrap_or(0));
+            let (x, y) = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+            self.cursor = (x, y);
+            self.route(InputEvent::MouseMove { x, y });
+            match kind {
+                "click" => {
+                    self.route(InputEvent::MouseDown {
+                        x,
+                        y,
+                        shift: false,
+                        primary: false,
+                    });
+                    self.route(InputEvent::MouseUp { x, y });
+                }
+                "rclick" => self.route(InputEvent::RightDown { x, y }),
+                _ => {}
+            }
+            self.redraw();
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("explorer.menu") {
+            let row = rest.trim_start_matches(':').parse().unwrap_or(0);
+            let ok = self.explorer.capture_menu(row);
+            self.sess.status = format!("explorer.menu row={row} opened={ok}");
+            self.redraw();
+            return;
+        }
+        if let Some(pick) = id.strip_prefix("explorer.pick:") {
+            let ok = self.explorer.capture_pick(pick);
+            if !ok {
+                self.sess.status = format!("explorer.pick {pick}: menu not open");
+            }
+            self.redraw();
+            return;
+        }
+        if id == "tab.drag_demo" {
+            self.editors.capture_drag_demo();
+            self.redraw();
+            return;
+        }
+        if id == "tab.rename" {
+            self.tab_menu_request(editors::TabMenuReq::Rename(self.editors.active()));
+            self.redraw();
+            return;
+        }
+        if id == "result.rename" {
+            self.panel_action(ResultAction::Rename(self.panel.active));
+            return;
+        }
+        if id == "result.menu" {
+            self.panel.open_menu_for_capture();
+            self.redraw();
+            return;
+        }
+        if let Some(q) = id.strip_prefix("edit.prefs:") {
+            self.prefs_query = Some(q.to_string());
+            self.open_prefs = true;
+            return;
+        }
         if let Some(name) = id.strip_prefix("conn.edit:") {
             if let Ok(Some(spec)) = Vault::open_default().and_then(|v| v.get(name)) {
                 self.conn_win.capture_open_detail(name);
@@ -6266,6 +6531,15 @@ impl App {
                 self.conn_win.panel.capture_touch();
                 self.conn_win.redraw();
             }
+            return;
+        }
+        // `tx.manual`/`tx.auto` = 상태줄 Auto-commit 팝업의 선택과 같은 길(수동 커밋 실기를 입력 주입 없이 · `tx.log`는 창이라 아래로).
+        if let Some(rest) = id
+            .strip_prefix("tx.")
+            .filter(|r| matches!(*r, "manual" | "auto"))
+        {
+            self.tx_pick(rest);
+            self.redraw();
             return;
         }
         match id.strip_prefix("open:") {
@@ -7086,8 +7360,14 @@ impl App {
         match req {
             TabMenuReq::Rename(i) => {
                 let title = self.editors.title_of(i);
-                self.palette
-                    .open_prompt(&format!("tab.rename:{i}"), t(Msg::PhTabRename), &title);
+                // 이름을 바꾸는 탭 바로 아래에 붙이고 그 탭을 강조한다(사용자 09-21).
+                let anchor = self.editors.tab_rect(i);
+                self.palette.open_prompt_at(
+                    &format!("tab.rename:{i}"),
+                    t(Msg::PhTabRename),
+                    &title,
+                    anchor,
+                );
             }
             TabMenuReq::Close(i) => self.close_tab_guarded(i),
             TabMenuReq::CloseLeft(i) => {
@@ -7798,7 +8078,10 @@ impl App {
                 };
                 format!("nexa-sql.{ext}")
             }
-            (PickerMode::Save, FilePurpose::Editor | FilePurpose::RunFile) => {
+            (
+                PickerMode::Save,
+                FilePurpose::Editor | FilePurpose::RunFile | FilePurpose::SettingFolder(_),
+            ) => {
                 let t = self.editors.active_title();
                 if t.contains('.') {
                     t
@@ -7806,7 +8089,23 @@ impl App {
                     format!("{t}.sql")
                 }
             }
-            (PickerMode::Open, _) => String::new(),
+            (PickerMode::Open | PickerMode::Folder, _) => String::new(),
+        };
+        // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
+        let (start, owner, over) = if mode == PickerMode::Folder {
+            let pw = self.prefs_win.window_rc();
+            let over2 = pw.as_ref().and_then(|w| {
+                let p = w.outer_position().ok()?;
+                let sz = w.outer_size();
+                Some((p.x, p.y, sz.width, sz.height))
+            });
+            (
+                self.folder_start.take().or(start),
+                pw.or(owner),
+                over2.or(over),
+            )
+        } else {
+            (start, owner, over)
         };
         let recent_dirs: Vec<PathBuf> = self
             .recent_files()
@@ -7821,7 +8120,7 @@ impl App {
         let show_hidden = self.settings.flag("file.show_hidden");
         let show_dot = self.settings.flag("file.show_dot");
         let encoding = match mode {
-            PickerMode::Open => "auto".to_string(),
+            PickerMode::Open | PickerMode::Folder => "auto".to_string(),
             PickerMode::Save => self.editors.active_encoding(),
         };
         self.file_win
@@ -8940,7 +9239,11 @@ impl App {
         }
         // 입력 창이 답을 기다리는 중이면 ■ = 입력 취소(워커는 입력을 기다리며 멈춰 있다 — DB로 간 것이 없다).
         if self.input_win.is_open() && self.input_win.sess == self.sess.id {
-            self.input_reply(worker::InputReply::Cancel);
+            if self.input_win.is_password() {
+                self.password_reply(worker::PwReply::Cancel);
+            } else {
+                self.input_reply(worker::InputReply::Cancel);
+            }
             return;
         }
         // ★ 끊긴 서버(docs/53 §3): 취소(OCIBreak)도 같은 소켓으로 가 함께 막힌다 → 워커를 버리는 것이 유일한 즉시 중지.
@@ -9409,15 +9712,71 @@ impl App {
         self.redraw();
     }
 
+    /// 탐색기가 부탁한 동작(우클릭 메뉴 · 더블클릭 — SQL 열기 · 이름 복사 · 서버 연결/해제 · 새 탭)을 **바로** 처리한다.
+    /// ★ 종전에는 워커 응답을 걷는 `drain_events` 안에서만 걷어서, 메뉴로 고른 연결 해제·이름 복사가 **다음 워커 응답이 올 때까지**
+    ///   실행되지 않았다(응답이 없으면 끝내 안 됨 · 사용자 09-21). 입력을 탐색기에 준 직후에도 부른다.
+    fn explorer_actions(&mut self) -> bool {
+        let mut changed = false;
+        for a in self.explorer.take_actions() {
+            changed = true;
+            match a {
+                ExplorerAction::OpenSql { title, text } => {
+                    self.editors.new_tab(Some(title));
+                    self.editors.cur_mut().set_text(&text);
+                    self.set_focus(Focus::Editor);
+                }
+                ExplorerAction::Status(s) => self.sess.status = s,
+                // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
+                ExplorerAction::Notice(s) => {
+                    self.toasts.push(
+                        toast::ToastKind::Warn,
+                        t(Msg::ExpNotConnected).to_string(),
+                        s.clone(),
+                    );
+                    self.sess.status = s;
+                }
+                // (서버 제거는 `ExplorerSet::take_actions`가 안에서 처리한다.)
+                ExplorerAction::RemoveServer => {}
+                ExplorerAction::DisconnectServer(spec) => {
+                    if let Some(spec) = spec {
+                        self.disconnect_server(&spec);
+                    }
+                }
+                ExplorerAction::ConnectServer(spec) => {
+                    if let Some(spec) = spec {
+                        self.connect_server(spec);
+                    }
+                }
+                ExplorerAction::NewTabHere(spec) => {
+                    if let Some(spec) = spec {
+                        self.new_tab_on(&spec);
+                    }
+                }
+                ExplorerAction::Copy(s) => {
+                    if !clipboard::write_text(&s) {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                }
+            }
+        }
+        changed
+    }
+
     fn drain_events(&mut self) {
         let mut changed = self.drain_conn();
         self.conn_win.drain_probes();
         while let Ok(ev) = self.sess.events.try_recv() {
             changed = true;
-            if matches!(ev, RunEvent::Disconnected) {
+            // 다시 접속하려다 기존 접속을 잃었다(`ConnectionClosed`) — 해제는 같지만 **세션은 거두지 않는다**(아래).
+            let lost_by_connect = matches!(ev, RunEvent::ConnectionClosed);
+            if matches!(ev, RunEvent::Disconnected | RunEvent::ConnectionClosed) {
                 // 호스트가 시작한 해제는 이미 경로와 함께 남겼다(disc_path) · 스크립트/서버 쪽 해제만 여기서 남긴다.
                 if self.sess.disc_path.is_none() {
-                    self.log_disconnect(sessions::DiscPath::Script);
+                    self.log_disconnect(if lost_by_connect {
+                        sessions::DiscPath::Reconnect
+                    } else {
+                        sessions::DiscPath::Script
+                    });
                 }
             } else {
                 for e in nsql_run::log_entries(&ev) {
@@ -9666,7 +10025,7 @@ impl App {
                     //   인텔리센스·툴팁의 단일 원천이라 그 서버에 붙은 세션이 하나라도 있는 동안 유지된다). 활성 탭의 세션이면 앞으로.
                     self.explorer_attach();
                 }
-                RunEvent::Disconnected => {
+                RunEvent::Disconnected | RunEvent::ConnectionClosed => {
                     // 접속이 끊겼다: 결과는 기본으로 **보기용으로 남긴다**(09-18 결정) — `mem.release_results_on_disconnect`를
                     //   켜면 그 세션으로 받은 결과 그리드를 비워 메모리를 바로 돌려준다.
                     if self.settings.flag("mem.release_results_on_disconnect") {
@@ -9683,11 +10042,17 @@ impl App {
                     // 공유 모드의 전용 세션이 스크립트 안의 DISCONNECT로 끊겼다 → 세션을 거두고 공유 세션으로 복귀(유휴 닫기는 제외).
                     // ★ 사용자가 배지 메뉴 "No connection"으로 **명시적으로** 끊은 세션(`user_disconnected`)은 거두지 않는다 —
                     //   공유로 되돌리면 사용자의 선택을 무시하는 것(09-19). 툴바 Disconnect(keep=false)는 종전대로 공유 복귀.
-                    if self.sess.is_private()
-                        && !self.sess.idle_closed
-                        && !self.sess.user_disconnected
-                        && self.session_mode() == SessionMode::Shared
-                    {
+                    // ★ `CONNECT`가 실패해 접속을 잃은 경우(`lost_by_connect`)는 **거두지 않는다**(사용자 09-21 "첫 번째에는 오류
+                    //   토스트가 안 뜬다"): 거두면 ① 이 세션의 실행 상태 카드·상태줄에 실릴 접속 오류가 세션과 함께 사라지고
+                    //   ② 탭이 공유 연결(다른 서버일 수 있다)로 조용히 돌아간다. 탭은 "연결 없음"인 전용 세션으로 남는다 —
+                    //   처음부터 접속에 실패한 전용 세션과 같은 모습이다.
+                    if sessions::reap_on_disconnect(
+                        self.sess.is_private(),
+                        self.sess.idle_closed,
+                        self.sess.user_disconnected,
+                        self.session_mode() == SessionMode::Shared,
+                        lost_by_connect,
+                    ) {
                         self.sess.closing = true;
                     }
                 }
@@ -9903,38 +10268,8 @@ impl App {
         if self.tx_block_drain() {
             changed = true;
         }
-        for a in self.explorer.take_actions() {
+        if self.explorer_actions() {
             changed = true;
-            match a {
-                ExplorerAction::OpenSql { title, text } => {
-                    self.editors.new_tab(Some(title));
-                    self.editors.cur_mut().set_text(&text);
-                    self.set_focus(Focus::Editor);
-                }
-                ExplorerAction::Status(s) => self.sess.status = s,
-                // (서버 제거는 `ExplorerSet::take_actions`가 안에서 처리한다.)
-                ExplorerAction::RemoveServer => {}
-                ExplorerAction::DisconnectServer(spec) => {
-                    if let Some(spec) = spec {
-                        self.disconnect_server(&spec);
-                    }
-                }
-                ExplorerAction::ConnectServer(spec) => {
-                    if let Some(spec) = spec {
-                        self.connect_server(spec);
-                    }
-                }
-                ExplorerAction::NewTabHere(spec) => {
-                    if let Some(spec) = spec {
-                        self.new_tab_on(&spec);
-                    }
-                }
-                ExplorerAction::Copy(s) => {
-                    if !clipboard::write_text(&s) {
-                        self.sess.status = t(Msg::ErrClipboard).into();
-                    }
-                }
-            }
         }
         if changed {
             self.redraw();
@@ -9978,9 +10313,43 @@ impl App {
 
     /// 마지막 실행 대상 결과 탭의 그리드(활성이면 `grid` · 아니면 잠든 것 · 닫혔으면 `None`).
     /// 입력 창의 답을 그 세션의 워커에 보내고 창을 닫는다(다중 세션: 물은 세션에게).
+    /// 비밀번호 입력 창의 답을 **물은 세션의 워커**에 보내고 창을 닫는다. 값이면 둘째 사본을 잠깐 쥔다 — 같은 서버의 탐색기
+    /// 메타 세션이 같은 자격으로 붙어야 트리가 보인다(`explorer_attach`가 소비 · 못 쓰면 20초 뒤 폐기).
+    fn password_reply(&mut self, reply: worker::PwReply) {
+        let sid = self.input_win.sess;
+        self.input_win.close();
+        self.key_guard = Some(Instant::now());
+        self.pw_pending = None;
+        // 세션 자격 금고가 켜져 있으면 탐색기 메타 세션은 금고에서 빌린다 → 둘째 사본을 쥘 필요가 없다.
+        let lend = !worker::remember_session_password();
+        self.pw_once = match &reply {
+            worker::PwReply::Value(s) if lend => Some((
+                sid,
+                nsql_core::Secret::new(s.expose().to_string()),
+                Instant::now(),
+            )),
+            _ => None,
+        };
+        if sid == self.sess.id {
+            self.sess.worker.password(reply);
+        } else {
+            let mut reply = Some(reply);
+            self.with_sess(sid, |a| {
+                if let Some(r) = reply.take() {
+                    a.sess.worker.password(r);
+                }
+            });
+        }
+        if let Some(w) = &self.window {
+            w.focus_window();
+        }
+        self.redraw();
+    }
+
     fn input_reply(&mut self, reply: worker::InputReply) {
         let sid = self.input_win.sess;
         self.input_win.close();
+        self.key_guard = Some(Instant::now());
         self.input_pending = None;
         if sid == self.sess.id {
             self.sess.worker.input(reply);
@@ -10061,7 +10430,7 @@ impl App {
                 std::mem::swap(&mut self.grid, &mut slot.grid);
             }
             let enabled = self.settings.flag("grid.result_tabs");
-            let always = self.settings.get("grid.result_tabbar") == Some("always");
+            let always = self.settings.flag("grid.result_tabbar_single");
             let next = self.panels.remove(&cur).unwrap_or_else(|| {
                 let id = self.next_result_id;
                 self.next_result_id += 1;
@@ -10076,6 +10445,7 @@ impl App {
                         title: t(Msg::ResultTabDefault).to_string(),
                         pinned: false,
                         named: false,
+                        sql: String::new(),
                         grid: fresh,
                         seq: id,
                         child_of: None,
@@ -10084,6 +10454,8 @@ impl App {
                     always,
                 )
             });
+            let mut next = next;
+            next.set_numbered(self.settings.get("grid.result_tab_title") != Some("table"));
             let old = std::mem::replace(&mut self.panel, next);
             if self.panel_editor != 0 {
                 self.panels.insert(self.panel_editor, old);
@@ -10548,6 +10920,7 @@ impl App {
                 self.grid.paint_overlays(&mut dc, &th);
                 self.panel.paint_popups(&mut dc, &th);
                 self.editors.paint_popups(&mut dc, &th);
+                self.explorer.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
@@ -10859,6 +11232,40 @@ impl App {
                 | InputEvent::MouseUp { .. }
                 | InputEvent::MouseMove { .. }
         );
+        // ★ 우클릭도 **포인터 사건**이다(사용자 09-21 "탐색기 우클릭 새로 고침이 안 된다"): `is_mouse`에는 우클릭이 없어서
+        //   탐색기·툴바의 우클릭 분기가 처음부터 닿지 않는 코드였다(메뉴 코드는 있었지만 실제 입력으로는 열리지 않았다).
+        //   우클릭 메뉴가 있는 영역은 `is_ptr`로 판정한다.
+        let is_ptr = is_mouse || matches!(ev, InputEvent::RightDown { .. });
+        // ★ 탐색기 우클릭 메뉴는 **창 위에** 뜬다(탐색기 폭에 갇히지 않는다 · 09-21) → 열려 있는 동안은 다른 영역(분할선·탭 바·
+        //   편집기)보다 **먼저** 사건을 받는다. 메뉴 안 = 메뉴가 먹는다 · 키·휠 = 메뉴가 먹는다 · 바깥 클릭 = 메뉴를 닫고 그 클릭은
+        //   그대로 아래로 흘려 보낸다(CLAUDE.md §3 팝업 규칙 — 다음 동작이 한 번의 입력으로 이어지게).
+        if self.explorer.is_visible() && self.explorer.menu_open() {
+            let at = match ev {
+                InputEvent::MouseDown { x, y, .. }
+                | InputEvent::RightDown { x, y }
+                | InputEvent::MouseUp { x, y }
+                | InputEvent::MouseMove { x, y } => Some(Point { x, y }),
+                _ => None,
+            };
+            let inside = at.is_none_or(|p| self.explorer.menu_bounds().contains(p));
+            if self.explorer.on_event(&ev) {
+                self.redraw();
+            }
+            if self.explorer_actions() {
+                self.redraw();
+            }
+            // ★ 바깥 **클릭**만 아래로 흘린다(메뉴를 닫고 그 클릭을 그대로 진행). 마우스 **이동**은 메뉴 밖이어도 여기서 끝낸다 —
+            //   아래로 흘리면 다른 영역(열려 있던 탭 표식 메뉴 · 탭 툴팁)이 그 이동을 받아 포커스를 편집기로 옮기고, 탐색기는
+            //   포커스를 잃으면서 메뉴를 닫는다(사용자 09-21 "항목으로 가는 사이 메뉴가 사라져 누를 수 없다").
+            let outside_click = !inside
+                && matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                );
+            if !outside_click {
+                return;
+            }
+        }
         // ★ MouseUp은 커서가 어디에 있든 **편집기에도** 전달한다 — 탭 바·탐색기 위에서 놓으면 편집기가 드래그 끝을
         //   못 받아 다음 MouseMove가 선택을 바꾸던 결함(사용자 09-15). 중복 전달은 무해(dragging=false 멱등).
         if matches!(ev, InputEvent::MouseUp { .. }) {
@@ -10912,6 +11319,18 @@ impl App {
                     self.palette.close();
                     if let Some(i) = id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok()) {
                         self.editors.rename_tab(i, &text);
+                    } else if let Some(rid) = id
+                        .strip_prefix("result.rename:")
+                        .and_then(|n| n.parse::<u64>().ok())
+                    {
+                        // 그 사이 편집기 탭을 바꿨어도 결과 탭 id로 찾는다(지금 패널 → 잠든 패널).
+                        if !self.panel.rename(rid, &text) {
+                            for p in self.panels.values_mut() {
+                                if p.rename(rid, &text) {
+                                    break;
+                                }
+                            }
+                        }
                     } else if id == "ext.repo_add" {
                         self.ext_repo_add(&text);
                     }
@@ -10974,14 +11393,14 @@ impl App {
             self.redraw();
             return;
         }
-        if is_mouse {
-            if let InputEvent::RightDown { x, y } = ev {
-                if self.tool_dock.bounds().contains(Point { x, y }) {
-                    self.open_toolbar_menu(x, y);
-                    self.redraw();
-                    return;
-                }
+        if let InputEvent::RightDown { x, y } = ev {
+            if self.tool_dock.bounds().contains(Point { x, y }) {
+                self.open_toolbar_menu(x, y);
+                self.redraw();
+                return;
             }
+        }
+        if is_mouse {
             self.menubar.on_event(&ev, &mut inv);
             if let Some(id) = self.menubar.take_picked() {
                 self.menu_action(&id);
@@ -11003,7 +11422,6 @@ impl App {
                 y: self.cursor.1,
             };
             let in_bar = self.find.bounds().contains(cur);
-            let is_ptr = is_mouse || matches!(ev, InputEvent::RightDown { .. });
             // ★ 상자의 우클릭 메뉴가 열려 있으면 바 밖(메뉴가 펼쳐진 곳)의 마우스·키도 찾기 바로(사용자 09-17).
             let popup = self.find.popup_open();
             if popup || (is_ptr && in_bar) || (self.focus == Focus::Find && !is_ptr) {
@@ -11172,15 +11590,23 @@ impl App {
                 y: self.cursor.1,
             };
             let in_exp = self.explorer.bounds().contains(cur);
-            if self.explorer.menu_open() || (is_mouse && in_exp) || (is_wheel_ev(&ev) && in_exp) {
+            if self.explorer.menu_open() || (is_ptr && in_exp) || (is_wheel_ev(&ev) && in_exp) {
                 if matches!(
                     ev,
                     InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
                 ) && !self.explorer.menu_open()
                 {
+                    // 한 창에 열린 메뉴는 하나 — 탭 표식 메뉴를 열어 둔 채 탐색기에서 우클릭하면 두 메뉴가 함께 떠 있었다.
+                    if self.editors.tab_menu_open() {
+                        self.editors.close_tab_menu();
+                        self.redraw();
+                    }
                     self.set_focus(Focus::Explorer);
                 }
                 if self.explorer.on_event(&ev) {
+                    self.redraw();
+                }
+                if self.explorer_actions() {
                     self.redraw();
                 }
                 if !matches!(ev, InputEvent::MouseMove { .. }) {
@@ -11190,6 +11616,9 @@ impl App {
                 && matches!(ev, InputEvent::Key { .. } | InputEvent::Char { .. })
             {
                 if self.explorer.on_event(&ev) {
+                    self.redraw();
+                }
+                if self.explorer_actions() {
                     self.redraw();
                 }
                 return;
@@ -11203,7 +11632,10 @@ impl App {
             if let Some(req) = self.editors.take_tab_menu_request() {
                 self.tab_menu_request(req);
             }
-            self.set_focus(Focus::Editor);
+            // 포커스는 **누를 때만** 옮긴다 — 이동(hover·툴팁)으로 옮기면 다른 영역의 포커스에 딸린 것(탐색기 메뉴 · 타입어헤드)이 꺼진다.
+            if !matches!(ev, InputEvent::MouseMove { .. }) {
+                self.set_focus(Focus::Editor);
+            }
             self.redraw();
             return;
         }
@@ -11386,6 +11818,8 @@ impl ApplicationHandler<Wake> for App {
             if let Some((x, y)) = place {
                 win.set_outer_position(wingeom::logical(x, y));
             }
+            // 화면 밖으로 나가지 않게(OS가 계단식으로 놓은 기본 위치 · 해상도가 바뀐 뒤의 기억 위치 — 09-21 점검: 1080 높이에서 아래 60px이 잘렸다).
+            wingeom::keep_on_screen(&win, None);
             win.set_visible(true);
         }
         self.scale = win.scale_factor() as f32;
@@ -11460,6 +11894,12 @@ impl ApplicationHandler<Wake> for App {
         self.drain_all();
     }
 
+    /// 이벤트 루프가 끝난다 = 프로그램 종료: 들고 있던 임시 비밀번호(세션 자격 금고)의 봉투와 키를 덮어써 버린다.
+    fn exiting(&mut self, _el: &ActiveEventLoop) {
+        self.pw_once = None;
+        nsql_vault::session::shutdown();
+    }
+
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         // 입력 소스가 바뀌었다(한/영 · 다른 입력기 — macOS 분산 알림) → 한글 조합 방식을 다시 맞춘다.
         if nexa_sys::input_source::take_changed() {
@@ -11467,8 +11907,20 @@ impl ApplicationHandler<Wake> for App {
         }
         self.persist_window_sizes(false);
         // 기동 명령·타이머가 부탁한 변수 창(창 이벤트가 없어도 열리게).
+        // 창 열기 깃발은 이벤트가 없을 때도 본다(메뉴·기동 명령이 부탁한 창 — `window_event` 끝에서만 보면 늦게 열린다 · docs/61 §6 흠 ⑤).
+        if std::mem::take(&mut self.open_txlog) {
+            self.open_txlog_window(el);
+        }
+        if std::mem::take(&mut self.open_sessions) {
+            self.open_sessions_window(el);
+        }
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
+        }
+        // 파일·폴더 대화상자도 같다(설정 창의 "찾아보기…" · 기동 명령 — 메인 창에 사건이 없으면 열리지 않았다).
+        if let Some(mode) = self.open_file_dlg.take() {
+            self.open_file_window(el, mode);
+            self.sync_modal();
         }
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
         if let Some((sid, needs)) = self.input_pending.take() {
@@ -11480,6 +11932,20 @@ impl ApplicationHandler<Wake> for App {
                 needs,
                 sid,
             );
+        }
+        // 워커가 비밀번호를 묻는다 → 같은 입력 창의 비밀번호 모드(다른 물음이 떠 있으면 그 뒤에).
+        if self.pw_pending.is_some() && !self.input_win.is_open() {
+            if let Some((sid, target, rejected)) = self.pw_pending.take() {
+                let owner = self.window.clone();
+                self.input_win.open_password(
+                    el,
+                    theme::window_theme(self.settings.theme_mode()),
+                    owner.as_deref(),
+                    target,
+                    rejected,
+                    sid,
+                );
+            }
         }
         if std::mem::take(&mut self.pending_demo_prompt) {
             self.open_demo_prompt();
@@ -11647,6 +12113,15 @@ impl ApplicationHandler<Wake> for App {
                 self.startup_cmd(&id);
             }
         }
+        // 쓰이지 못한 일회성 비밀번호는 20초 뒤에 버린다(버려지면서 0으로 덮어쓴다).
+        if let Some((_, _, at)) = &self.pw_once {
+            let end = *at + Duration::from_secs(20);
+            if end <= now {
+                self.pw_once = None;
+            } else {
+                next = next.min(end);
+            }
+        }
         if !self.startup_timed.is_empty() {
             let due: Vec<String> = self
                 .startup_timed
@@ -11697,6 +12172,29 @@ impl ApplicationHandler<Wake> for App {
                 WindowEvent::Focused(f) => eprintln!("[ime] {id:?} focused={f}"),
                 WindowEvent::ModifiersChanged(m) => eprintln!("[ime] {id:?} mods={:?}", m.state()),
                 _ => {}
+            }
+        }
+        // ★ 닫힌 창에서 누른 키가 새 포커스 창으로 새는 두 길을 막는다(사용자 09-21 — 비밀번호 창 Enter → 편집기 줄바꿈):
+        //   ① winit은 창이 포커스를 얻을 때 **이미 눌려 있는 키**를 합성 누름(`is_synthetic`)으로 보낸다 → 어느 창이든 버린다
+        //   (사용자가 새로 누른 것이 아니다 · 수식키 상태는 `ModifiersChanged`가 따로 알린다) ② 계속 누르고 있으면 OS 자동 반복이
+        //   새 창으로 온다 → 입력 창을 닫은 뒤 그 키가 떼어질 때까지의 반복 누름을 버린다(`key_guard_step`).
+        if let WindowEvent::KeyboardInput {
+            event: k,
+            is_synthetic,
+            ..
+        } = &event
+        {
+            let pressed = k.state == ElementState::Pressed;
+            if *is_synthetic && pressed {
+                return;
+            }
+            let age = self.key_guard.map(|at| at.elapsed());
+            let (drop_it, keep) = key_guard_step(age, pressed, k.repeat);
+            if !keep {
+                self.key_guard = None;
+            }
+            if drop_it {
+                return;
             }
         }
         // 입력(키 누름·IME·마우스 버튼) = 캐럿 깜빡임 위상을 "켜짐"으로 되돌리고(움직인 캐럿이 최대 0.5초 안 보이던 것 · 09-19)
@@ -11786,6 +12284,22 @@ impl ApplicationHandler<Wake> for App {
                                 Err(e) => tf(Msg::ErrLogFile, &[&e.to_string()]),
                             };
                         }
+                        (PickerMode::Folder, FilePurpose::SettingFolder(key)) => {
+                            // 고른 폴더 → 설정(직접 입력한 것과 같은 길: 저장 · 반영 · 설정 창 갱신).
+                            let value = path.to_string_lossy().into_owned();
+                            match self.settings.set(key, &value) {
+                                Ok(_) => {
+                                    self.persist_settings();
+                                    if !self.apply_setting(key) {
+                                        self.sess.status = t(Msg::StNeedsRestart).into();
+                                    }
+                                    self.prefs_win.refresh(&self.settings);
+                                }
+                                Err(e) => self.prefs_win.set_error(key, e.to_string()),
+                            }
+                            self.prefs_win.redraw();
+                        }
+                        (PickerMode::Folder, _) => {}
                         (PickerMode::Open, FilePurpose::RunFile) => {
                             self.load_file(&path, &enc, LoadMode::Run);
                         }
@@ -11870,6 +12384,21 @@ impl ApplicationHandler<Wake> for App {
                     self.open_colors = true;
                 }
                 PrefsAction::OpenKeys => self.open_keys = true,
+                // 설정 창이 다시 활성화됐다 → 파일 있음/없음·별칭 수를 다시 본다(파일 시스템만 · 네트워크 0 · 라이브러리 로드 0).
+                PrefsAction::RefreshInfo => {
+                    self.prefs_win.set_info(dbms_info_values());
+                    self.prefs_win.refresh(&self.settings);
+                    self.prefs_win.redraw();
+                }
+                PrefsAction::BrowseFolder { key, current } => {
+                    // 폴더 전용 대화상자(파일은 보이지 않는다) — 시작 = 지금 값(있고 폴더면) · 고르면 그 설정에 넣는다.
+                    if let Some(k) = nsql_settings::entry(&key).map(|e| e.key) {
+                        self.file_purpose = FilePurpose::SettingFolder(k);
+                        self.folder_start =
+                            Some(PathBuf::from(current.trim())).filter(|p| p.is_dir());
+                        self.open_file_dlg = Some(PickerMode::Folder);
+                    }
+                }
                 PrefsAction::EditJson => self.edit_settings_json(),
                 PrefsAction::None => {}
             }
@@ -12006,6 +12535,12 @@ impl ApplicationHandler<Wake> for App {
                 }
                 input_win::InputWinAction::Run(values) => {
                     self.input_reply(worker::InputReply::Values(values));
+                }
+                input_win::InputWinAction::Password(secret) => {
+                    self.password_reply(worker::PwReply::Value(secret));
+                }
+                input_win::InputWinAction::Cancel if self.input_win.is_password() => {
+                    self.password_reply(worker::PwReply::Cancel);
                 }
                 input_win::InputWinAction::Skip => {
                     self.input_reply(worker::InputReply::Values(Vec::new()));
@@ -12379,7 +12914,11 @@ impl ApplicationHandler<Wake> for App {
                 Some((p.x, p.y, sz.width, sz.height))
             });
             let owner = self.window.clone();
+            self.prefs_win.set_info(dbms_info_values());
             self.prefs_win.refresh(&self.settings);
+            if let Some(q) = self.prefs_query.take() {
+                self.prefs_win.preset_query(&q);
+            }
             self.prefs_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
@@ -12437,6 +12976,18 @@ fn open_external(path: &std::path::Path) -> Result<(), String> {
         std::process::Command::new("xdg-open").arg(&p).spawn()
     };
     r.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// 닫힌 창의 키 문지기 — `(이 사건을 버리는가, 문지기를 유지하는가)`. `age` = 창을 닫은 뒤 지난 시간(`None` = 문지기 없음).
+/// 자동 반복 누름 = 버림 · 뗌 = 통과시키고 끝 · **새로 누른 키**(반복 아님) = 사용자의 다음 입력이므로 통과시키고 끝 ·
+/// 3초가 지나면(뗌 사건을 다른 창이 받아 놓친 경우) 스스로 끝난다.
+fn key_guard_step(age: Option<Duration>, pressed: bool, repeat: bool) -> (bool, bool) {
+    match age {
+        None => (false, false),
+        Some(a) if a > Duration::from_secs(3) => (false, false),
+        Some(_) if pressed && repeat => (true, true),
+        Some(_) => (false, false),
+    }
 }
 
 fn is_wheel_ev(ev: &InputEvent) -> bool {
@@ -12655,6 +13206,9 @@ fn main() {
         sessions_win: SessionsWin::new(),
         input_win: input_win::InputWin::new(),
         input_pending: None,
+        pw_pending: None,
+        key_guard: None,
+        pw_once: None,
         vars_win: vars_win::VarsWin::new(),
         vars_changed: (0, std::collections::HashSet::new()),
         open_sessions: false,
@@ -12687,10 +13241,12 @@ fn main() {
         open_keys: false,
         keys_win: KeysWin::new(),
         open_prefs: false,
+        prefs_query: None,
         prefs_win: PrefsWin::new(),
         act_bar: ActivityBar::new(),
         file_win: FileWin::new(),
         open_file_dlg: None,
+        folder_start: None,
         menubar: MenuBar::new(App::build_menus()),
         tabs_menu_sig: String::new(),
         tool_dock: App::build_tool_dock(),
@@ -12713,6 +13269,7 @@ fn main() {
                 title: String::new(),
                 pinned: false,
                 named: false,
+                sql: String::new(),
                 grid: grid::Grid::default(),
                 seq: 0,
                 child_of: None,
@@ -12812,6 +13369,10 @@ fn main() {
     app.editors
         .set_undo_max(app.settings.int("editor.undo_max").max(1) as usize);
     app.editors.set_large_cfg(large_cfg(&app.settings));
+    {
+        let (ext, syn) = large_feature_levels(&app.settings);
+        app.editors.set_large_feature_levels(ext, syn);
+    }
     app.editors
         .set_undo_budget(app.settings.int("editor.undo_budget_mb").max(1) as usize * 1024 * 1024);
     let (ms, giant) = undo_rules(&app.settings);
@@ -12852,6 +13413,7 @@ fn main() {
         .set_diff_marks(app.settings.flag("editor.diff_marks"));
     app.sync_run_stmt_button();
     nsql_drivers::set_mssql_encryption(app.settings.get("mssql.encrypt") == Some("login"));
+    apply_oracle_client(&app.settings);
     app.apply_net_options();
     // 첫 화면부터 탭 표식(미연결 사선)이 보이게 — 세션 상태 → 화면 3층 동기화 1회.
     app.sync_sess_ui();
@@ -13057,6 +13619,8 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
 enum FilePurpose {
     Editor,
     LogExport,
+    /// 설정의 폴더 경로 고르기(설정 키) — 고른 폴더를 그 설정에 넣는다.
+    SettingFolder(&'static str),
     /// 디스크에서 바로 실행할 SQL 파일 고르기(docs/59 §4 3단계).
     RunFile,
 }
@@ -13109,6 +13673,145 @@ fn undo_rules(s: &Settings) -> (u64, usize) {
 }
 
 /// 큰 파일 단계 기준(설정 → [(바이트, 줄 수); L1, L2]).
+/// 설정 `oracle.client_*` → Oracle 드라이버(첫 Oracle 접속 전에 넘긴 값이 이번 실행에 쓰인다).
+fn apply_oracle_client(s: &Settings) {
+    nsql_drivers::set_oracle_client(
+        s.get("oracle.client_mode") == Some("manual"),
+        s.get("oracle.client_dir").unwrap_or(""),
+        s.get("oracle.tns_admin").unwrap_or(""),
+    );
+}
+
+/// 설정 창 DBMS 그룹의 **읽기 전용 정보 값**(`nsql_settings::INFO_KEYS`) — 파일 시스템만 읽는다(네트워크 0 · 라이브러리 로드 0).
+fn dbms_info_values() -> Vec<(String, String)> {
+    let o = nsql_drivers::oracle_client_info();
+    // 없는 경로 = **공백**(사용자 09-21).
+    let none = String::new;
+    let path =
+        |p: &Option<std::path::PathBuf>| p.as_ref().map_or_else(none, |x| x.display().to_string());
+    let search_var = if cfg!(target_os = "windows") {
+        "PATH"
+    } else if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+    let source = if !o.included {
+        t(Msg::ValDbmsNotIncluded).to_string()
+    } else {
+        match o.source {
+            "setting" => t(Msg::ValOraSrcSetting).to_string(),
+            "env" => t(Msg::ValOraSrcEnv).to_string(),
+            "oracle_home" => t(Msg::ValOraSrcHome).to_string(),
+            "search_path" => tf(Msg::ValOraSrcPath, &[search_var]),
+            "well_known" => t(Msg::ValOraSrcWellKnown).to_string(),
+            _ => t(Msg::ValOraSrcNotFound).to_string(),
+        }
+    };
+    // TNS_ADMIN이 정해진 방법 — 경로 자체는 위의 TNS_ADMIN 칸에 나온다(중복 표시 제거 · 사용자 09-21).
+    let tns_how = match o.tns_source {
+        "setting" => t(Msg::ValOraTnsSetting),
+        "env" => t(Msg::ValOraTnsEnv),
+        "client_dir" => t(Msg::ValOraTnsClientDir),
+        "oracle_home" => t(Msg::ValOraTnsHome),
+        _ => t(Msg::ValOraTnsNone),
+    };
+    // ★ 정해진 자리에 **있는가**만 말한다(사용자 09-21 — 자동이든 직접 지정이든 같다): 있음 — 경로 / 없음 — 어디에 무엇이 없는지.
+    let found = |p: &std::path::PathBuf| tf(Msg::ValOraFound, &[&p.display().to_string()]);
+    let missing_in = |file: &str, dir: &Option<std::path::PathBuf>| match dir {
+        Some(d) => tf(Msg::ValOraMissingIn, &[file, &d.display().to_string()]),
+        None => t(Msg::ValOraMissing).to_string(),
+    };
+    let tnsnames = match &o.tnsnames {
+        Some(p) => {
+            let head: Vec<&str> = o.aliases.iter().take(8).map(String::as_str).collect();
+            let more = if o.aliases.len() > head.len() {
+                ", …"
+            } else {
+                ""
+            };
+            tf(
+                Msg::ValOraAliases,
+                &[
+                    &p.display().to_string(),
+                    &o.aliases.len().to_string(),
+                    &format!("{}{more}", head.join(", ")),
+                ],
+            )
+        }
+        None => missing_in("tnsnames.ora", &o.tns_admin),
+    };
+    let included = |d: Dialect, yes: Msg| {
+        if nsql_drivers::available().contains(&d) {
+            t(yes).to_string()
+        } else {
+            t(Msg::ValDbmsNotIncluded).to_string()
+        }
+    };
+    vec![
+        // 자동 탐지 방식에서 **잠긴 입력 칸**에 보여 줄 값(탐지된 폴더 · 없으면 공백) — 설정 창이 종속 조건이 안 맞을 때만 쓴다.
+        ("oracle.client_dir".into(), path(&o.dir)),
+        ("oracle.tns_admin".into(), path(&o.tns_admin)),
+        // 판단 근거 한 줄 — 각 폴더 항목의 설명 아래에(별도 항목 "폴더가 정해진 방법"은 없앴다 · 사용자 09-21).
+        (
+            "oracle.client_dir#note".into(),
+            tf(Msg::ValOraBasis, &[&source]),
+        ),
+        (
+            "oracle.tns_admin#note".into(),
+            tf(Msg::ValOraBasis, &[tns_how]),
+        ),
+        (
+            "oracle.info_library".into(),
+            match &o.library {
+                Some(p) => found(p),
+                None if o.included => missing_in(o.library_name, &o.dir),
+                None => String::new(),
+            },
+        ),
+        (
+            "oracle.info_version".into(),
+            o.version
+                .clone()
+                .unwrap_or_else(|| t(Msg::ValOraNotLoaded).to_string()),
+        ),
+        ("oracle.info_tnsnames".into(), tnsnames),
+        (
+            "oracle.info_sqlnet".into(),
+            match &o.sqlnet {
+                Some(p) => found(p),
+                None => missing_in("sqlnet.ora", &o.tns_admin),
+            },
+        ),
+        (
+            "mssql.info_driver".into(),
+            included(Dialect::Mssql, Msg::ValDbmsBuiltinMssql),
+        ),
+        (
+            "pg.info_driver".into(),
+            included(Dialect::Postgres, Msg::ValDbmsBuiltinPg),
+        ),
+        (
+            "sqlite.info_driver".into(),
+            included(Dialect::Sqlite, Msg::ValDbmsBuiltinSqlite),
+        ),
+    ]
+}
+
+/// 큰 파일 단계별 기능 제한 기준(설정 `file.large_ext_level` · `file.large_syntax_level` — off = 0 · l1 = 1 · l2 = 2).
+fn large_feature_levels(s: &Settings) -> (u8, u8) {
+    let lv = |k: &str, d: u8| match s.get(k) {
+        Some("off") => 0,
+        Some("l1") => 1,
+        Some("l2") => 2,
+        _ => d,
+    };
+    (
+        lv("file.large_ext_level", 1),
+        lv("file.large_syntax_level", 2),
+    )
+}
+
 fn large_cfg(s: &Settings) -> [(usize, usize); 2] {
     let mb = |k: &str| (s.int(k).max(0) as usize) << 20;
     let n = |k: &str| s.int(k).max(0) as usize;

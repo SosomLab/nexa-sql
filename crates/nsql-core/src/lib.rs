@@ -161,6 +161,8 @@ pub enum VarType {
     BinaryDouble,
     Date,
     Timestamp,
+    /// PL/SQL `BOOLEAN` · T-SQL `BIT`(T-151) — 글자로 바인드하면 PLS-00306이라 드라이버가 진짜 불리언으로 바인드한다.
+    Boolean,
     /// 선언 없이 대입으로 생긴 변수 — 값에서 타입을 따라간다(Golden 관용 · docs/08 §3-2).
     Auto,
 }
@@ -192,6 +194,7 @@ impl VarType {
             "BINARY_DOUBLE" | "DOUBLE" => VarType::BinaryDouble,
             "DATE" => VarType::Date,
             "TIMESTAMP" | "DATETIME" | "DATETIME2" => VarType::Timestamp,
+            "BOOLEAN" | "BOOL" | "BIT" => VarType::Boolean,
             _ => return None,
         })
     }
@@ -229,6 +232,7 @@ impl VarType {
             VarType::BinaryDouble => "FLOAT".into(),
             VarType::Date => "DATE".into(),
             VarType::Timestamp => "DATETIME2".into(),
+            VarType::Boolean => "BIT".into(),
             // Auto = 값에서 추론 전 — NVARCHAR로 받고 클라이언트가 다시 추론한다(SQL_VARIANT는 드라이버 회수가 불안정).
             VarType::Auto => "NVARCHAR(4000)".into(),
         }
@@ -363,6 +367,9 @@ pub struct ExecResult {
     /// OUT/InOut 바인드의 실행 후 값 — 엔진이 저장소에 흡수한다.
     pub out_params: Vec<(String, Value)>,
     pub result_sets: Vec<ResultSet>,
+    /// `result_sets[i]`의 이름(없으면 비어 있거나 `None`) — 드라이버가 풀어 낸 **커서의 이름**처럼 결과 탭 제목에 쓸 것.
+    /// (PostgreSQL `refcursor` · T-150. Oracle REF CURSOR는 OUT 바인드라 `out_params` 쪽에서 이름이 온다.)
+    pub result_labels: Vec<Option<String>>,
     /// `DBMS_OUTPUT` · T-SQL `PRINT` 등 서버 메시지.
     pub messages: Vec<String>,
     /// 단계별 소요([`Timeline`] · docs/26). 드라이버가 채운 만큼만 — 비면 러너가 전체 시간을 `Execute`로 넣는다.
@@ -1041,6 +1048,11 @@ pub trait CancelHandle: Send + Sync {
 
 pub trait Session {
     fn dialect(&self) -> Dialect;
+    /// ★ 능력표(T-152 · 포트): 엔진·러너는 방언이 아니라 이것을 묻는다. 기본 = 내장 방언의 표([`Caps::of`]) — 확장 드라이버·ODBC
+    /// 뒤의 DBMS처럼 방언 표와 다른 능력을 가진 세션은 덮어쓴다.
+    fn caps(&self) -> Caps {
+        Caps::of(self.dialect())
+    }
     /// 실행 취소 핸들 — 지원하지 않으면 `None`(호스트는 전체 조회 배치 경계에서만 멈춘다).
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn CancelHandle>> {
         None
@@ -1091,6 +1103,10 @@ pub trait Session {
     }
 }
 
+pub mod caps;
+pub mod secret;
+pub use caps::{CallSignature, Caps, CursorOut, ExecForm, IdentFold, Marker, OutValues};
+pub use secret::Secret;
 pub mod dberr;
 pub use dberr::{classify, native_code, Classified, ErrorClass};
 pub mod ddl;

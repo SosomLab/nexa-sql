@@ -16,21 +16,82 @@ use nsql_core::{
     ResultSet, Session, Stage, Value, VarType,
 };
 use nsql_script::ConnectSpec;
-use oracle::sql_type::{OracleType, RefCursor};
+use oracle::sql_type::{OracleType, RefCursor, Timestamp};
 use oracle::{Connection, Connector, InitParams, Privilege, Row};
 use std::collections::HashMap;
 
 /// Instant Client 위치를 지정하는 환경변수(선택). 없으면 ODPI-C 기본 탐색(`ORACLE_HOME/lib` · macOS `~/lib`·`/usr/local/lib` · Linux `LD_LIBRARY_PATH` · Windows `PATH`).
 pub const CLIENT_DIR_ENV: &str = "NSQL_ORACLE_CLIENT_DIR";
 
-/// ODPI-C 초기화 — 첫 접속 전에 1회. `NSQL_ORACLE_CLIENT_DIR`가 있으면 그 폴더에서만 `libclntsh`를 찾는다.
+pub mod client;
+
+/// 호스트가 정한 클라이언트 위치(설정 `oracle.client_mode = manual`일 때만 값이 있다 · 자동이면 빈 값).
+static CLIENT_CONFIG: std::sync::Mutex<Option<client::ClientConfig>> = std::sync::Mutex::new(None);
+
+/// 설정 `oracle.client_*` → 드라이버(사용자 09-21). ODPI-C는 프로세스에서 한 번만 초기화되므로 **첫 Oracle 접속 전**에 부른 값만
+/// 이번 실행에 쓰인다(그 뒤의 변경은 다음 실행부터 — [`loaded_version`]으로 이미 로드됐는지 안다).
+pub fn set_client_config(cfg: client::ClientConfig) {
+    if let Ok(mut g) = CLIENT_CONFIG.lock() {
+        *g = Some(cfg);
+    }
+}
+
+/// 지금 설정(없으면 자동).
+#[must_use]
+pub fn client_config() -> client::ClientConfig {
+    CLIENT_CONFIG
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default()
+}
+
+/// 이미 로드된 클라이언트의 버전(`19.20.0.0.0`) — 아직 Oracle에 접속한 적이 없으면 `None`(물어보려고 로드하지 않는다).
+#[must_use]
+pub fn loaded_version() -> Option<String> {
+    if !InitParams::is_initialized() {
+        return None;
+    }
+    oracle::Version::client().ok().map(|v| v.to_string())
+}
+
+/// ODPI-C 초기화 — 첫 접속 전에 1회. **찾은 폴더를 그대로 넘긴다**([`client::detect`] — 설정 창에 보인 것 = 실제로 로드되는 것):
+/// 직접 지정한 폴더 · `NSQL_ORACLE_CLIENT_DIR` · `ORACLE_HOME` · 잘 알려진 자리. OS 검색 경로에서 찾은 경우와 못 찾은 경우는
+/// 종전처럼 ODPI-C의 기본 탐색에 맡긴다. `TNS_ADMIN`은 직접 지정했거나 클라이언트 폴더에서 찾았을 때만 넘긴다(환경 변수는 OCI가 읽는다).
 fn init_client() -> Result<(), DbError> {
     if InitParams::is_initialized() {
         return Ok(());
     }
+    let cfg = client_config();
+    let report = client::detect(&cfg);
     let mut p = InitParams::new();
-    if let Some(dir) = std::env::var_os(CLIENT_DIR_ENV) {
-        p.oracle_client_lib_dir(dir).map_err(|e| err(&e))?;
+    if let Some(dir) = &cfg.client_dir {
+        // ★ 직접 지정 = **그 폴더만**: 라이브러리가 없어도 그대로 넘겨 ODPI-C가 그 폴더에서만 찾고 실패하게 한다(DPI-1047) —
+        //   넘기지 않으면 기본 탐색(PATH 등)의 다른 클라이언트로 조용히 접속된다(09-21 실서버 테스트가 잡은 결함).
+        p.oracle_client_lib_dir(dir.as_os_str())
+            .map_err(|e| err(&e))?;
+    } else if let (Some(dir), true) = (
+        &report.dir,
+        matches!(
+            report.source,
+            client::Source::Setting
+                | client::Source::EnvVar
+                | client::Source::OracleHome
+                | client::Source::WellKnown
+        ),
+    ) {
+        p.oracle_client_lib_dir(dir.as_os_str())
+            .map_err(|e| err(&e))?;
+    }
+    if let (Some(adm), true) = (
+        &report.tns_admin,
+        matches!(
+            report.tns_source,
+            client::TnsSource::Setting | client::TnsSource::ClientDir
+        ),
+    ) {
+        p.oracle_client_config_dir(adm.as_os_str())
+            .map_err(|e| err(&e))?;
     }
     p.init().map(|_| ()).map_err(|e| err(&e))
 }
@@ -39,7 +100,7 @@ fn init_client() -> Result<(), DbError> {
 fn with_client_hint(mut e: DbError) -> DbError {
     if e.message.contains("DPI-1047") || e.message.to_ascii_lowercase().contains("cannot locate") {
         e.message.push_str(&format!(
-            "\n→ Oracle Instant Client가 필요합니다. 설치 후 {CLIENT_DIR_ENV}=<instantclient 폴더> 로 위치를 알려 주거나 \
+            "\n→ Oracle Instant Client가 필요합니다. 설치 후 설정 ▸ DBMS ▸ Oracle에서 폴더를 직접 지정하거나({CLIENT_DIR_ENV}=<instantclient 폴더>도 된다) \
              macOS는 ~/lib 에 libclntsh.dylib 심볼릭 링크 · Linux는 LD_LIBRARY_PATH · Windows는 PATH. 자세히: docs/20 §5"
         ));
     }
@@ -108,8 +169,9 @@ impl OracleSession {
             (None, _, _) => String::new(),
         };
         let user = spec.user.clone().unwrap_or_default();
-        let pass = spec.password.clone().unwrap_or_default();
-        let mut connector = Connector::new(user.as_str(), pass.as_str(), target.as_str());
+        // 비밀번호는 **빌려 쓴다**(사본 없음 — 일회성 비밀번호를 호출자가 접속 직후 덮어써 지운다 · nsql-core `secret`).
+        let pass: &str = spec.password.as_deref().unwrap_or("");
+        let mut connector = Connector::new(user.as_str(), pass, target.as_str());
         if user.is_empty() && pass.is_empty() {
             connector.external_auth(true);
         }
@@ -210,6 +272,47 @@ impl OracleSession {
             lines.push(line.unwrap_or_default());
         }
         lines
+    }
+
+    /// 값 → 바인드할 시각. `Some(None)` = NULL · `None` = ISO 꼴이 아니다(호출자는 글자 바인드로 물러난다).
+    fn timestamp_of(v: &Value) -> Option<Option<Timestamp>> {
+        match v {
+            Value::Null => Some(None),
+            Value::Str(s) => parse_iso_timestamp(s).map(Some),
+            _ => None,
+        }
+    }
+
+    /// 값 → 바인드할 불리언(`Some(None)` = NULL · `None` = 불리언으로 읽을 수 없다).
+    fn bool_of(v: &Value) -> Option<Option<bool>> {
+        match v {
+            Value::Null => Some(None),
+            Value::Bool(b) => Some(Some(*b)),
+            Value::Int(i) => Some(Some(*i != 0)),
+            Value::Str(s) => parse_bool_text(s).map(Some),
+            _ => None,
+        }
+    }
+
+    /// 돌아온 시각의 표시 글자 — 결과 그리드의 DATE/TIMESTAMP 열과 같은 ISO 꼴(`2026-09-21 13:45:10[.123456]`).
+    fn timestamp_text(t: &Timestamp, date_only_precision: bool) -> String {
+        let base = format!(
+            "{}-{:02}-{:02} {:02}:{:02}:{:02}",
+            t.year(),
+            t.month(),
+            t.day(),
+            t.hour(),
+            t.minute(),
+            t.second()
+        );
+        iso_with_fraction(
+            base,
+            if date_only_precision {
+                0
+            } else {
+                t.nanosecond()
+            },
+        )
     }
 
     fn coerce(ty: &VarType, s: Option<String>) -> Value {
@@ -354,6 +457,27 @@ impl Session for OracleSession {
                 continue;
             }
             let name = p.name.as_str();
+            // ★ 날짜·불리언은 **진짜 타입으로**(T-151 · 09-21 실서버): 글자로 바인드하면 DATE는 세션 NLS 형식으로 바뀌어 시각이
+            // 잘리고(`26/09/21`) 다시 쓰면 ORA-01722 · PL/SQL BOOLEAN은 PLS-00306이다. 값이 ISO 꼴이 아니면(사용자가 NLS 형식으로
+            // 적은 글) 종전처럼 글자로 보내 서버의 암묵 변환에 맡긴다.
+            let native = match &p.ty {
+                VarType::Date | VarType::Timestamp => Self::timestamp_of(&p.value).map(|ts| {
+                    let oty = if p.ty == VarType::Date {
+                        OracleType::Date
+                    } else {
+                        OracleType::Timestamp(9)
+                    };
+                    stmt.bind(name, &(&ts, &oty))
+                }),
+                VarType::Boolean => {
+                    Self::bool_of(&p.value).map(|b| stmt.bind(name, &(&b, &OracleType::Boolean)))
+                }
+                _ => None,
+            };
+            if let Some(bound) = native {
+                bound.map_err(|e| err(&e))?;
+                continue;
+            }
             match (&p.ty, &p.direction) {
                 (VarType::RefCursor, _) => stmt.bind(name, &OracleType::RefCursor),
                 (VarType::Clob, _) => {
@@ -438,6 +562,20 @@ impl Session for OracleSession {
                         }
                         Err(_) => result.out_params.push((p.name.clone(), Value::Null)),
                     }
+                } else if matches!(p.ty, VarType::Date | VarType::Timestamp)
+                    && Self::timestamp_of(&p.value).is_some()
+                {
+                    let ts: Option<Timestamp> =
+                        stmt.bind_value(p.name.as_str()).map_err(|e| err(&e))?;
+                    let v = ts.map_or(Value::Null, |t| {
+                        Value::Str(Self::timestamp_text(&t, p.ty == VarType::Date))
+                    });
+                    result.out_params.push((p.name.clone(), v));
+                } else if p.ty == VarType::Boolean && Self::bool_of(&p.value).is_some() {
+                    let b: Option<bool> = stmt.bind_value(p.name.as_str()).map_err(|e| err(&e))?;
+                    result
+                        .out_params
+                        .push((p.name.clone(), b.map_or(Value::Null, Value::Bool)));
                 } else {
                     let s: Option<String> =
                         stmt.bind_value(p.name.as_str()).map_err(|e| err(&e))?;
@@ -532,5 +670,117 @@ impl Session for OracleSession {
     fn rollback(&mut self) -> Result<(), DbError> {
         self.open = None;
         self.conn.rollback().map_err(|e| err(&e))
+    }
+}
+
+/// 소수 초를 붙인다(뒤의 0은 뗀다 · 0이면 붙이지 않는다) — 순수.
+fn iso_with_fraction(base: String, nanos: u32) -> String {
+    if nanos == 0 {
+        return base;
+    }
+    let frac = format!("{nanos:09}");
+    format!("{base}.{}", frac.trim_end_matches('0'))
+}
+
+/// ISO 꼴 시각(`YYYY-MM-DD[ |T]HH:MM[:SS[.fff…]]` · 날짜만도 허용)을 읽는다 — 그 밖의 꼴(NLS 형식 글)은 `None`.
+/// 자리 검사를 먼저 해서 `26/09/21` 같은 글이 엉뚱한 해로 읽히지 않게 한다.
+fn parse_iso_timestamp(s: &str) -> Option<Timestamp> {
+    let t = s.trim();
+    let b = t.as_bytes();
+    let digits = |r: std::ops::Range<usize>| -> Option<u32> {
+        let part = t.get(r)?;
+        (!part.is_empty() && part.bytes().all(|c| c.is_ascii_digit()))
+            .then(|| part.parse().ok())
+            .flatten()
+    };
+    if b.len() < 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let (y, mo, d) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
+    let (mut h, mut mi, mut sec, mut ns) = (0, 0, 0, 0);
+    if b.len() > 10 {
+        if !(b[10] == b' ' || b[10] == b'T') || b.len() < 16 || b[13] != b':' {
+            return None;
+        }
+        h = digits(11..13)?;
+        mi = digits(14..16)?;
+        if b.len() > 16 {
+            if b[16] != b':' || b.len() < 19 {
+                return None;
+            }
+            sec = digits(17..19)?;
+            if b.len() > 19 {
+                if b[19] != b'.' || b.len() == 20 || b.len() > 29 {
+                    return None;
+                }
+                let frac = digits(20..b.len())?;
+                ns = frac * 10u32.pow((29 - b.len()) as u32);
+            }
+        }
+    }
+    Timestamp::new(y as i32, mo, d, h, mi, sec, ns).ok()
+}
+
+/// 불리언 글자(`true`/`false` · `t`/`f` · `y`/`n` · `yes`/`no` · `on`/`off` · `1`/`0`).
+fn parse_bool_text(s: &str) -> Option<bool> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "true" | "t" | "y" | "yes" | "on" | "1" => Some(true),
+        "false" | "f" | "n" | "no" | "off" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// T-151 — 시각 글자: ISO 꼴만 읽는다(날짜만 · 분까지 · 초 · 소수 초 1~9자리 · `T`) · NLS 꼴·엉뚱한 글은 물러난다 ·
+    /// 표시 글자는 뒤의 0을 뗀다 · 불리언 글자.
+    #[test]
+    fn iso_timestamp_and_bool_text() {
+        let f = |s: &str| {
+            super::parse_iso_timestamp(s).map(|t| {
+                (
+                    t.year(),
+                    t.month(),
+                    t.day(),
+                    t.hour(),
+                    t.minute(),
+                    t.second(),
+                    t.nanosecond(),
+                )
+            })
+        };
+        assert_eq!(f("2026-09-21"), Some((2026, 9, 21, 0, 0, 0, 0)));
+        assert_eq!(f("2026-09-21 13:45"), Some((2026, 9, 21, 13, 45, 0, 0)));
+        assert_eq!(
+            f(" 2026-09-21T13:45:10 "),
+            Some((2026, 9, 21, 13, 45, 10, 0))
+        );
+        assert_eq!(
+            f("2026-09-21 13:45:10.123456"),
+            Some((2026, 9, 21, 13, 45, 10, 123_456_000))
+        );
+        assert_eq!(
+            f("2026-09-21 13:45:10.5"),
+            Some((2026, 9, 21, 13, 45, 10, 500_000_000))
+        );
+        for bad in [
+            "26/09/21",
+            "21-SEP-26",
+            "2026-13-01",
+            "2026-09-21 25:00",
+            "2026-09-21 13:45:10.",
+            "x",
+            "",
+        ] {
+            assert_eq!(f(bad), None, "{bad}");
+        }
+        assert_eq!(super::iso_with_fraction("a".into(), 0), "a");
+        assert_eq!(
+            super::iso_with_fraction("a".into(), 123_456_000),
+            "a.123456"
+        );
+        assert_eq!(super::parse_bool_text(" TRUE "), Some(true));
+        assert_eq!(super::parse_bool_text("off"), Some(false));
+        assert_eq!(super::parse_bool_text("maybe"), None);
     }
 }

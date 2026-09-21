@@ -167,7 +167,9 @@ impl ConnectSpec {
         if !user.is_empty() {
             spec.user = Some(decode(user));
         }
-        spec.password = pass.filter(|p| !p.is_empty()).map(decode);
+        // ★ 비밀번호 자리의 세 가지(사용자 09-21): `user@host` = **없음**(`None` → GUI·CLI가 물어본다) ·
+        //   `user:@host`(`user/@host`) = **빈 비밀번호를 명시**(`Some("")` → 묻지 않고 그대로 접속) · `user:pw@host` = 그 값.
+        spec.password = pass.map(decode);
         if let Some(t) = target {
             // host[:port][/database]
             let (hostport, db) = match t.find('/') {
@@ -469,6 +471,24 @@ mod tests {
         let r = ConnectSpec::parse("oracle://sys/x@h:1521/svc?role=sysdba").unwrap();
         assert_eq!(r.role.as_deref(), Some("SYSDBA"));
         assert_eq!(r.connection_string(), "oracle://sys@h:1521/svc?role=SYSDBA");
+    }
+
+    /// `user@host` = 비밀번호 없음(물어본다) · `user:@host` = 빈 비밀번호를 명시(묻지 않는다) — 둘을 구분한다.
+    #[test]
+    fn explicit_empty_password_is_not_missing() {
+        let none = ConnectSpec::parse("oracle://BISCM@192.168.0.58:1521/BISCM").unwrap();
+        assert_eq!(none.user.as_deref(), Some("BISCM"));
+        assert!(none.password.is_none());
+        let empty = ConnectSpec::parse("oracle://BISCM:@192.168.0.58:1521/BISCM").unwrap();
+        assert_eq!(empty.user.as_deref(), Some("BISCM"));
+        assert_eq!(empty.password.as_deref(), Some(""));
+        assert_eq!(empty.host.as_deref(), Some("192.168.0.58"));
+        assert_eq!(empty.database.as_deref(), Some("BISCM"));
+        // sqlplus식도 같다.
+        let sp = ConnectSpec::parse("scott/@orcl").unwrap();
+        assert_eq!(sp.password.as_deref(), Some(""));
+        // 표시에는 값도 "비어 있음"도 드러나지 않는다.
+        assert!(!empty.redacted().contains(":@"));
     }
 
     #[test]

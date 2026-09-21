@@ -916,9 +916,16 @@ pub struct RoutineArg {
 }
 
 /// 호출 이름(`proc` · `pkg.proc` · `schema.proc` · `schema.pkg.proc`)의 인자 목록 — **선언 없이 쓴 바인드의 타입을 서명에서
-/// 정하려고**(REF CURSOR OUT을 문자열로 바인드하면 PLS-00306 · 변수 관리 09-21). 지금은 Oracle(`ALL_ARGUMENTS`)만 · 그 외 = 빈 목록.
+/// 정하려고**(REF CURSOR OUT을 문자열로 바인드하면 PLS-00306 · 변수 관리 09-21). Oracle(`ALL_ARGUMENTS`) · **PostgreSQL(`pg_proc`
+/// — T-151: 어느 자리가 OUT/INOUT인지 알아야 돌아온 값을 그 자리의 바인드로 받는다)** · 그 외 = 빈 목록.
 /// 이름이 여러 해석에 맞으면 전부 돌려준다(호출자가 인자 수·이름으로 오버로드를 고른다). 동의어는 풀지 않는다.
 pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
+    if s.dialect() == Dialect::Postgres {
+        return pg_routine_args(s, call_name);
+    }
+    if s.dialect() == Dialect::Mssql {
+        return mssql_routine_args(s, call_name);
+    }
     if s.dialect() != Dialect::Oracle {
         return Ok(Vec::new());
     }
@@ -964,6 +971,110 @@ pub fn routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineA
         .iter()
         // 인자 없는 루틴은 `data_type`이 빈 자리표시 행 하나로 온다.
         .filter(|r| !col(r, 3).trim().is_empty())
+        .map(|r| RoutineArg {
+            overload: col(r, 0),
+            position: r.get(1).map(cell_i64).unwrap_or(0),
+            name: col(r, 2).trim().to_ascii_uppercase(),
+            data_type: col(r, 3).trim().to_ascii_uppercase(),
+            in_out: col(r, 4).trim().to_ascii_uppercase(),
+        })
+        .collect())
+}
+
+/// SQL Server 서명 조회문(T-151) — `sys.parameters`: 자리 · 이름(`@` 뗌) · 타입 · OUTPUT 여부. 임시 프로시저(`#이름`)는
+/// `tempdb`에 산다 · `db.schema.proc`은 그 DB의 카탈로그를 본다 · 이름은 글자 상수로 인용한다(주입 방지). 반환값(자리 0)은 뺀다.
+fn mssql_routine_args_sql(call_name: &str) -> Option<String> {
+    let name = call_name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let bare = |p: &str| {
+        p.trim()
+            .trim_matches(|c| c == '[' || c == ']' || c == '"')
+            .to_string()
+    };
+    let parts: Vec<String> = name.split('.').map(bare).collect();
+    let last = parts.last()?;
+    let (catalog, object) = if last.starts_with('#') {
+        ("tempdb.".to_string(), format!("tempdb..{last}"))
+    } else if parts.len() == 3 && !parts[0].is_empty() {
+        (
+            format!("[{}].", parts[0].replace(']', "]]")),
+            name.to_string(),
+        )
+    } else if parts.len() <= 2 {
+        (String::new(), name.to_string())
+    } else {
+        return None;
+    };
+    Some(format!(
+        "SELECT CAST(p.object_id AS VARCHAR(20)), p.parameter_id, p.name, TYPE_NAME(p.user_type_id), \
+         CASE WHEN p.is_output = 1 THEN 'IN/OUT' ELSE 'IN' END \
+         FROM {catalog}sys.parameters p WHERE p.object_id = OBJECT_ID(N{}) AND p.parameter_id >= 1 \
+         ORDER BY p.parameter_id",
+        lit(&object)
+    ))
+}
+
+fn mssql_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
+    let Some(sql) = mssql_routine_args_sql(call_name) else {
+        return Ok(Vec::new());
+    };
+    let rs = query(s, &sql)?;
+    Ok(rs
+        .rows
+        .iter()
+        .map(|r| RoutineArg {
+            overload: col(r, 0),
+            position: r.get(1).map(cell_i64).unwrap_or(0),
+            name: col(r, 2)
+                .trim()
+                .trim_start_matches('@')
+                .to_ascii_uppercase(),
+            data_type: col(r, 3).trim().to_ascii_uppercase(),
+            in_out: col(r, 4).trim().to_ascii_uppercase(),
+        })
+        .collect())
+}
+
+/// PostgreSQL 서명 조회문 — `[스키마.]이름`(인용 부호는 벗기고 소문자로 · 스키마가 없으면 검색 경로에 보이는 것 ·
+/// `pg_temp` = 이 세션의 임시 스키마). 인자마다 한 줄: (오버로드 = 함수 oid · 자리 1부터 · 이름 · 타입 · 방향).
+/// `proargmodes`가 NULL이면 전부 IN이다(`unnest`가 모자란 배열을 NULL로 채운다). `t`(TABLE 열) = OUT · `v`(VARIADIC) = IN.
+fn pg_routine_args_sql(call_name: &str) -> Option<String> {
+    let parts: Vec<String> = call_name
+        .split('.')
+        .map(|p| p.trim().trim_matches('"').to_lowercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let (schema, name) = match parts.as_slice() {
+        [n] => (None, n.clone()),
+        [s, n] => (Some(s.clone()), n.clone()),
+        _ => return None,
+    };
+    let scope = match schema.as_deref() {
+        None => "pg_function_is_visible(p.oid)".to_string(),
+        Some("pg_temp") => "p.pronamespace = pg_my_temp_schema()".to_string(),
+        Some(s) => format!("n.nspname = {}", lit(s)),
+    };
+    Some(format!(
+        "SELECT p.oid::text, a.ord, COALESCE(a.name, ''), format_type(a.typ, NULL), \
+         CASE a.mode WHEN 'o' THEN 'OUT' WHEN 't' THEN 'OUT' WHEN 'b' THEN 'IN/OUT' ELSE 'IN' END \
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace, \
+         LATERAL unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[]), p.proargmodes, p.proargnames) \
+         WITH ORDINALITY AS a(typ, mode, name, ord) \
+         WHERE p.proname = {} AND {scope} ORDER BY p.oid, a.ord",
+        lit(&name)
+    ))
+}
+
+fn pg_routine_args(s: &mut dyn Session, call_name: &str) -> Result<Vec<RoutineArg>, DbError> {
+    let Some(sql) = pg_routine_args_sql(call_name) else {
+        return Ok(Vec::new());
+    };
+    let rs = query(s, &sql)?;
+    Ok(rs
+        .rows
+        .iter()
         .map(|r| RoutineArg {
             overload: col(r, 0),
             position: r.get(1).map(cell_i64).unwrap_or(0),
@@ -1082,6 +1193,41 @@ pub fn select_template(dialect: Dialect, schema: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// SQL Server 서명 조회문: 보통 이름 = 지금 DB · `#임시` = tempdb · 세 마디 = 그 DB의 카탈로그 · 대괄호 · 인용.
+    #[test]
+    fn mssql_routine_args_sql_scopes() {
+        let q = super::mssql_routine_args_sql("dbo.sp_x").expect("sql");
+        assert!(
+            q.contains("FROM sys.parameters") && q.contains("OBJECT_ID(N'dbo.sp_x')"),
+            "{q}"
+        );
+        let q = super::mssql_routine_args_sql("#tmp_p").expect("sql");
+        assert!(
+            q.contains("FROM tempdb.sys.parameters") && q.contains("N'tempdb..#tmp_p'"),
+            "{q}"
+        );
+        let q = super::mssql_routine_args_sql("[Other].[dbo].[p]").expect("sql");
+        assert!(q.contains("FROM [Other].sys.parameters"), "{q}");
+        let q = super::mssql_routine_args_sql("x'y").expect("sql");
+        assert!(q.contains("N'x''y'"), "{q}");
+        assert!(super::mssql_routine_args_sql("a.b.c.d").is_none());
+    }
+
+    /// PostgreSQL 서명 조회문: 이름만 = 검색 경로 · `스키마.이름` = 그 스키마 · `pg_temp` = 이 세션의 임시 스키마 · 인용·대소문자 ·
+    /// 점이 셋 이상이면 조회하지 않는다 · 값은 글자 상수로 인용된다(주입 방지).
+    #[test]
+    fn pg_routine_args_sql_scopes() {
+        let q = super::pg_routine_args_sql("My_Proc").expect("sql");
+        assert!(q.contains("p.proname = 'my_proc'") && q.contains("pg_function_is_visible(p.oid)"));
+        let q = super::pg_routine_args_sql("Sales.\"Do_It\"").expect("sql");
+        assert!(q.contains("p.proname = 'do_it'") && q.contains("n.nspname = 'sales'"));
+        let q = super::pg_routine_args_sql("pg_temp.f").expect("sql");
+        assert!(q.contains("pg_my_temp_schema()"));
+        assert!(super::pg_routine_args_sql("a.b.c").is_none());
+        let q = super::pg_routine_args_sql("x'y").expect("sql");
+        assert!(q.contains("'x''y'"), "{q}");
+    }
+
     use super::*;
 
     #[test]

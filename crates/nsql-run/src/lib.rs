@@ -49,6 +49,10 @@ pub enum RunEvent {
         more: bool,
         label: Option<String>,
     },
+    /// **다시 접속하려다 기존 접속을 잃었다**(같은 서버·계정에 다른 자격으로 `CONNECT` → 기존 접속을 먼저 닫음 → 새 접속 실패 ·
+    /// 바로 뒤에 그 `Error`가 온다). `Disconnected`(스크립트 `DISCONNECT`)와 구별한다 — 호스트는 `Disconnected`를 보면 전용 세션을
+    /// 거두고 탭을 공유 연결로 돌려보내는데, 접속 실패에 그렇게 하면 오류 표시가 세션과 함께 사라지고 탭이 엉뚱한 서버에 붙는다.
+    ConnectionClosed,
     /// ★ 실행 전에 값이 필요한 입력(D-137 · docs/63 V3) — 호스트가 **한 번** 묻고 [`Runner::apply_inputs`]로 돌려준다.
     /// 러너가 내지 않는다(호스트가 [`Runner::missing_inputs`]로 찾아 자기 채널에 싣는 용도).
     InputNeeded {
@@ -137,7 +141,9 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             LogKind::Connect,
             format!("{description} ({dialect})"),
         )],
-        RunEvent::Disconnected => vec![LogEntry::new(LogKind::Disconnect, "")],
+        RunEvent::Disconnected | RunEvent::ConnectionClosed => {
+            vec![LogEntry::new(LogKind::Disconnect, "")]
+        }
         // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
         RunEvent::ReadTxEnded { .. } | RunEvent::Vars { .. } | RunEvent::InputNeeded { .. } => {
             Vec::new()
@@ -304,6 +310,8 @@ pub struct Runner {
     pub resolver: Option<Resolver>,
     /// 마지막 접속 설명(상태줄).
     pub connection: Option<String>,
+    /// 지금 붙어 있는 대상(비밀번호 없음) — 같은 서버·계정에 다시 `CONNECT`하는지 본다.
+    connected_to: Option<ConnectSpec>,
     /// ★ 결과 셋 페치 상한(0 = 무제한 · DBeaver "ResultSet fetch size" 차용 · 사용자 09-15). 드라이버에는
     /// 세션 옵션 `max_rows`로 `상한+1`을 알려 조기 중단(Oracle·SQLite)하고, 호스트는 상한 초과분을 잘라 `more`를 표시한다.
     pub max_rows: usize,
@@ -334,6 +342,11 @@ pub struct Runner {
     sig_cache: std::collections::HashMap<String, Vec<nsql_catalog::RoutineArg>>,
     /// 실행 뒤 돌아온 REF CURSOR를 바로 결과 집합으로 보여 주는가(설정 `run.cursor_autoshow` · 기본 켬).
     pub auto_cursor: bool,
+    /// 호출 서명 조회(T-151 · 설정 `vars.signature_lookup` · 기본 켬) — 끄면 카탈로그 조회 0(= 종전: 타입 추론·`OUTPUT` 보충·
+    /// PG OUT 받기 없음). 부하원 원장 39 §3.
+    pub signature_lookup: bool,
+    /// PostgreSQL 커서 이름 풀기(T-150 · 설정 `pg.refcursor_expand` · 기본 켬) — 드라이버 옵션으로 내려간다.
+    pub refcursor_expand: bool,
     /// `run_script_in` 중첩 깊이(`@스크립트`) — 변수 사건은 가장 바깥에서만.
     run_depth: u32,
     /// 러너가 수동 모드를 위해 연 트랜잭션이 살아 있는가([`manual_begin_sql`] · 커밋/롤백/접속에서 내림).
@@ -413,6 +426,7 @@ fn var_type_label(ty: &nsql_core::VarType) -> String {
         T::BinaryDouble => "BINARY_DOUBLE".into(),
         T::Date => "DATE".into(),
         T::Timestamp => "TIMESTAMP".into(),
+        T::Boolean => "BOOLEAN".into(),
         T::Auto => "auto".into(),
     }
 }
@@ -424,6 +438,14 @@ fn var_type_of(data_type: &str) -> Option<nsql_core::VarType> {
         "REF CURSOR" => Some(VarType::RefCursor),
         "NUMBER" | "INTEGER" | "FLOAT" | "BINARY_INTEGER" | "PLS_INTEGER" => Some(VarType::Number),
         "CLOB" => Some(VarType::Clob),
+        // T-151: 날짜·불리언은 글자로 바인드하면 시각이 잘리거나(NLS 형식) PLS-00306이다 → 진짜 타입으로.
+        "DATE" => Some(VarType::Date),
+        "PL/SQL BOOLEAN" | "BOOLEAN" | "BIT" => Some(VarType::Boolean),
+        // SQL Server(`TYPE_NAME` 대문자).
+        "INT" | "BIGINT" | "SMALLINT" | "TINYINT" | "DECIMAL" | "NUMERIC" | "MONEY"
+        | "SMALLMONEY" | "REAL" => Some(VarType::Number),
+        "DATETIME" | "DATETIME2" | "SMALLDATETIME" => Some(VarType::Timestamp),
+        t if t.starts_with("TIMESTAMP") => Some(VarType::Timestamp),
         _ => None,
     }
 }
@@ -435,7 +457,7 @@ fn var_type_of(data_type: &str) -> Option<nsql_core::VarType> {
 /// 조건(전부 참일 때만 연다): 수동 모드 · 암묵 트랜잭션이 없는 방언 · 러너가 연 트랜잭션이 없다 · 사용자가 직접 연
 /// 트랜잭션이 없다 · 이 문장이 트랜잭션 통제 문장(`BEGIN`/`COMMIT`/…)이 아니다.
 fn manual_begin_sql(
-    dialect: Dialect,
+    caps: &nsql_core::Caps,
     autocommit: bool,
     tx_open: bool,
     tx_user: bool,
@@ -444,13 +466,8 @@ fn manual_begin_sql(
     if autocommit || tx_open || tx_user || control != nsql_core::TxControl::None {
         return None;
     }
-    match dialect {
-        Dialect::Postgres | Dialect::Sqlite => Some("BEGIN"),
-        Dialect::Mssql => Some("BEGIN TRANSACTION"),
-        Dialect::Mysql => Some("START TRANSACTION"),
-        // Oracle = 암묵 트랜잭션 · ODBC = 뒤의 DBMS를 모른다(드라이버의 자동 커밋 속성 몫).
-        Dialect::Oracle | Dialect::Odbc => None,
-    }
+    // 시작문은 능력표가 안다(T-152) — Oracle = 암묵 트랜잭션 · ODBC = 뒤의 DBMS를 모른다(드라이버의 자동 커밋 속성 몫) = 없음.
+    caps.tx_begin
 }
 
 /// 한 문장이 열린 트랜잭션에 남기는 흔적(docs/56 L1 판정의 입력).
@@ -495,22 +512,6 @@ fn tx_effect(sql: &str, rows_affected: Option<u64>, dialect: Dialect) -> TxEffec
     }
 }
 
-/// `strict` 확인 질의 — 이 트랜잭션이 **쓰기를 했는가**를 1/0으로. 지원하지 않는 방언은 `None`(= 분류 판정 그대로).
-fn strict_probe_sql(dialect: Dialect) -> Option<&'static str> {
-    match dialect {
-        Dialect::Postgres => Some(
-            "SELECT CASE WHEN pg_current_xact_id_if_assigned() IS NULL THEN 0 ELSE 1 END",
-        ),
-        Dialect::Oracle => Some(
-            "SELECT CASE WHEN dbms_transaction.local_transaction_id IS NULL THEN 0 ELSE 1 END FROM dual",
-        ),
-        Dialect::Mssql => Some(
-            "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.dm_tran_session_transactions st JOIN sys.dm_tran_database_transactions dt ON dt.transaction_id = st.transaction_id WHERE st.session_id = @@SPID AND dt.database_transaction_log_record_count > 0) THEN 1 ELSE 0 END",
-        ),
-        _ => None,
-    }
-}
-
 /// 러너가 아는 열린 커서의 상태(핸들 · 원문 · 지금까지 넘긴 행 수).
 #[derive(Debug)]
 struct OpenCursor {
@@ -533,6 +534,7 @@ impl Runner {
             opener,
             resolver: None,
             connection: None,
+            connected_to: None,
             max_rows: 0,
             message_sink: None,
             spool: None,
@@ -547,6 +549,8 @@ impl Runner {
             tx_changed: false,
             tx_user: false,
             auto_cursor: true,
+            signature_lookup: true,
+            refcursor_expand: true,
             sig_cache: std::collections::HashMap::new(),
             run_depth: 0,
             tx_open: false,
@@ -590,6 +594,13 @@ impl Runner {
 
     /// `SELECT … INTO` 여러 행 = 첫 행(설정 `vars.into_policy = first`).
     #[must_use]
+    /// 설정 `vars.brace_subst` · `vars.max_value_kb`(T-153).
+    pub fn with_var_limits(mut self, brace_subst: bool, max_value_kb: usize) -> Self {
+        self.engine.settings.brace_subst = brace_subst;
+        self.engine.settings.max_value_bytes = max_value_kb.saturating_mul(1024);
+        self
+    }
+
     pub fn with_into_first(mut self, on: bool) -> Self {
         self.engine.settings.into_first = on;
         self
@@ -760,9 +771,14 @@ impl Runner {
     /// 호스트가 받은 입력을 넣는다 — 바인드 = 타입 있는 값(`NULL` · 수 · `'글'` · 그 밖 = 글 그대로 · 빈 글 = NULL) ·
     /// 치환 변수 = 글자 그대로.
     pub fn apply_inputs(&mut self, values: Vec<(nsql_script::InputKind, String, String)>) {
+        // 새 실행의 답 — 앞 실행에서 쓰이지 않고 남은 `ACCEPT` 표시는 버린다.
+        self.engine.accepted.clear();
         for (kind, name, text) in values {
             match kind {
-                nsql_script::InputKind::Macro => self.engine.define(&name, &text),
+                nsql_script::InputKind::Macro => {
+                    self.engine.define(&name, &text);
+                    self.engine.accepted.insert(name.to_ascii_uppercase());
+                }
                 nsql_script::InputKind::Bind => {
                     let v = input_value(&text);
                     self.engine.vars.assign(&name, v);
@@ -775,15 +791,29 @@ impl Runner {
     /// REF CURSOR OUT 인자를 문자열로 바인드하면 PLS-00306이므로, 타입이 아직 없는 바인드가 있을 때만 `ALL_ARGUMENTS`를
     /// 한 번 읽는다(루틴당 1회 · 캐시 · 실패는 조용히 = 종전 동작). 지금은 Oracle만(다른 방언은 OUT 바인드가 없다).
     fn infer_call_bind_types(&mut self, item: &Item) {
-        if self.engine.dialect != Dialect::Oracle {
+        self.engine.call_captures = None;
+        self.engine.call_outputs.clear();
+        let use_sig = self.engine.caps.call_signature;
+        if use_sig == nsql_core::CallSignature::None || !self.signature_lookup {
             return;
         }
         let ItemKind::Command(nsql_script::Command::Exec { body }) = &item.kind else {
             return;
         };
-        let Some(shape) = nsql_script::call_shape(body) else {
+        // T-SQL은 괄호 없는 호출(`EXEC p 1, :X`)이다 — 모양 읽기만 다르고 뒤는 같다.
+        let marks = use_sig == nsql_core::CallSignature::OutputMarks;
+        let shape = if marks {
+            nsql_script::tsql_call_shape(body)
+        } else {
+            nsql_script::call_shape(body)
+        };
+        let Some(shape) = shape else {
             return;
         };
+        if use_sig == nsql_core::CallSignature::Captures {
+            self.infer_call_captures(&shape);
+            return;
+        }
         // (자리(1부터 · 0 = 반환값), 이름 표기, 바인드) 가운데 타입이 필요한 것.
         let mut need: Vec<(i64, Option<&str>, &str)> = Vec::new();
         if let Some(r) = shape.ret.as_deref() {
@@ -798,7 +828,9 @@ impl Runner {
                 }
             }
         }
-        if need.is_empty() {
+        // SQL Server: `OUTPUT`이 빠진 바인드 인자가 있으면 타입이 필요 없어도 서명을 본다(빠뜨리면 값이 조용히 버려진다).
+        let unmarked = marks && shape.args.iter().any(|a| a.bind.is_some() && !a.output);
+        if need.is_empty() && !unmarked {
             return;
         }
         let key = shape.name.to_ascii_uppercase();
@@ -845,9 +877,99 @@ impl Runner {
                 Some(((*bind).to_string(), var_type_of(&arg.data_type)?))
             })
             .collect();
+        let outputs: Vec<String> = if marks {
+            output_binds(&shape, all, ov)
+        } else {
+            Vec::new()
+        };
         for (bind, ty) in hints {
             self.engine.vars.hint_type(&bind, ty);
         }
+        self.engine.call_outputs = outputs;
+    }
+
+    /// 엔진의 계획·흡수 부산물을 실행 메시지로(선언 없는 바인드 · 상한에서 잘린 값) — 목록은 여기서 비워진다.
+    fn flush_diagnostics(&mut self, emit: &mut dyn FnMut(RunEvent)) {
+        if self.engine.diagnostics.is_empty() {
+            return;
+        }
+        let diags = std::mem::take(&mut self.engine.diagnostics);
+        for d in &diags {
+            if let nsql_script::Diagnostic::Truncated(name, bytes) = d {
+                emit(RunEvent::Message(tf(
+                    Msg::WarnVarTruncated,
+                    &[name, &bytes.to_string()],
+                )));
+            }
+        }
+        let implicit = implicit_names(diags);
+        if !implicit.is_empty() {
+            emit(RunEvent::Message(tf(
+                Msg::WarnImplicitVar,
+                &[&implicit.join(", ")],
+            )));
+        }
+    }
+
+    /// 시스템 변수(T-153): 접속에 딸린 것(`_USER` · `_CONNECT_IDENTIFIER` · `_DIALECT`).
+    fn set_connection_sysvars(&mut self, user: Option<&str>, database: Option<&str>) {
+        let sv = &mut self.engine.sysvars;
+        sv.insert("_USER".into(), user.unwrap_or_default().to_string());
+        sv.insert(
+            "_CONNECT_IDENTIFIER".into(),
+            database.unwrap_or_default().to_string(),
+        );
+        sv.insert("_DIALECT".into(), self.engine.dialect.to_string());
+    }
+
+    /// 시스템 변수: 문장 하나가 끝난 뒤의 것(`_ROW_COUNT` · `_SQLCODE` · `_ELAPSED_MS`).
+    fn set_statement_sysvars(&mut self, rows: Option<u64>, code: i64, elapsed: Duration) {
+        let sv = &mut self.engine.sysvars;
+        sv.insert("_ROW_COUNT".into(), rows.unwrap_or(0).to_string());
+        sv.insert("_SQLCODE".into(), code.to_string());
+        sv.insert("_ELAPSED_MS".into(), elapsed.as_millis().to_string());
+    }
+
+    /// 서명을 읽는다(루틴당 1회 · 캐시 · 실패 = 빈 목록).
+    fn signature(&mut self, name: &str) -> Vec<nsql_catalog::RoutineArg> {
+        let key = name.to_ascii_uppercase();
+        if !self.sig_cache.contains_key(&key) {
+            let Some(session) = self.session.as_mut() else {
+                return Vec::new();
+            };
+            let args = nsql_catalog::routine_args(session.as_mut(), name).unwrap_or_default();
+            self.sig_cache.insert(key.clone(), args);
+        }
+        self.sig_cache.get(&key).cloned().unwrap_or_default()
+    }
+
+    /// ★ PostgreSQL `EXEC proc(3, :X, :Y)`(T-151): `CALL`은 OUT/INOUT 인자를 **1행 결과**로 돌려준다(열 = 형식 인자 이름 · 순서 =
+    /// OUT 인자 순서). 어느 자리가 OUT인지는 서명(`pg_proc`)만 안다 — 그 자리에 바인드를 줬으면 그 바인드가 값을 받는다.
+    /// 종전에는 열 이름과 바인드 이름이 같을 때만 받아졌고, 다르면 **조용히 버려졌다**. 바인드가 하나도 없으면 아무것도 하지 않는다.
+    fn infer_call_captures(&mut self, shape: &nsql_script::CallShape) {
+        if !shape.args.iter().any(|a| a.bind.is_some()) {
+            return;
+        }
+        let all = self.signature(&shape.name);
+        if let Some(c) = call_captures(shape, &all) {
+            self.engine.call_captures = Some(c);
+        }
+    }
+
+    /// 끝낼 때의 커밋(CLI — SQL*Plus처럼 종료 시 커밋): 열린 트랜잭션이 있을 때만 보낸다(T-155 — 서버가 문장마다 커밋하는
+    /// 방언에서 빈 `COMMIT`은 왕복 낭비 + PostgreSQL 경고 "there is no transaction in progress").
+    pub fn commit_at_exit(&mut self) {
+        if !self
+            .engine
+            .caps
+            .autocommit_needs_commit(self.tx_open, self.tx_user)
+        {
+            return;
+        }
+        if let Some(s) = self.session.as_mut() {
+            let _ = s.commit();
+        }
+        self.note_tx_ended();
     }
 
     pub fn note_tx_ended(&mut self) {
@@ -878,9 +1000,7 @@ impl Runner {
             return false;
         }
         if self.read_end == ReadEnd::Strict {
-            if let (Some(probe), Some(s)) =
-                (strict_probe_sql(self.engine.dialect), self.session.as_mut())
-            {
+            if let (Some(probe), Some(s)) = (self.engine.caps.strict_probe, self.session.as_mut()) {
                 let wrote = s
                     .execute(&ExecRequest {
                         sql: probe.to_string(),
@@ -1104,7 +1224,8 @@ impl Runner {
         session: Box<dyn Session>,
         description: impl Into<String>,
     ) -> Self {
-        self.engine.dialect = session.dialect();
+        self.engine.set_caps(session.dialect(), session.caps());
+        self.set_connection_sysvars(None, None);
         self.session = Some(session);
         self.connection = Some(description.into());
         // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
@@ -1145,10 +1266,30 @@ impl Runner {
         if let Some(s) = self.session.as_mut() {
             let _ = s.commit();
         }
+        // ★ **같은 서버·계정**에 다시 `CONNECT` = 자격을 바꿔 다시 붙겠다는 뜻(사용자 09-21 · SQL*Plus와 같다): 기존 접속을
+        //   **먼저 닫는다** → 새 자격이 거부되면 옛 자격의 세션이 살아남지 않는다("연결 없음"으로 끝난다). 다른 서버로의
+        //   `CONNECT`가 실패한 경우는 종전대로 옛 접속을 유지한다.
+        let same_target = self.connected_to.as_ref().is_some_and(|c| {
+            c.dialect == spec.dialect
+                && c.host == spec.host
+                && c.port == spec.port
+                && c.database == spec.database
+                && c.user == spec.user
+                && c.role == spec.role
+        });
+        //   `Disconnected`는 **실패했을 때만** 알린다 — 성공하면 `Connected` 하나로 충분하고, 호스트는 `Disconnected`를 보면
+        //   전용 세션을 거두기 때문이다(곧 이어질 접속이 갈 곳을 잃는다).
+        let closed_first = same_target && self.session.take().is_some();
+        if closed_first {
+            self.connection = None;
+            self.connected_to = None;
+            self.note_tx_ended();
+        }
         match (self.opener)(spec) {
             Ok(mut session) => {
                 let dialect = session.dialect();
-                self.engine.dialect = dialect;
+                self.engine.set_caps(dialect, session.caps());
+                self.set_connection_sysvars(spec.user.as_deref(), spec.database.as_deref());
                 if self.engine.settings.serveroutput {
                     let _ = session.set_option("serveroutput", "on");
                 }
@@ -1164,6 +1305,10 @@ impl Runner {
                 }
                 self.session = Some(session);
                 self.connection = Some(spec.redacted());
+                self.connected_to = Some(ConnectSpec {
+                    password: None,
+                    ..spec.clone()
+                });
                 // 새 세션 = 트랜잭션 없음(러너가 연 트랜잭션 표시도 내린다 · T-146) · 서명 캐시는 서버마다 다르다.
                 self.sig_cache.clear();
                 self.note_tx_ended();
@@ -1177,6 +1322,9 @@ impl Runner {
                 true
             }
             Err(e) => {
+                if closed_first {
+                    emit(RunEvent::ConnectionClosed);
+                }
                 emit(RunEvent::Error {
                     index: 0,
                     line: 0,
@@ -1331,9 +1479,21 @@ impl Runner {
             summary: summary(item),
         });
         self.infer_call_bind_types(item);
+        if item.text.contains("_DATE") || item.text.contains("_TIMESTAMP") {
+            let now = nsql_log::now_local().stamp();
+            let sv = &mut self.engine.sysvars;
+            sv.insert("_DATE".into(), now.get(..10).unwrap_or(&now).to_string());
+            sv.insert(
+                "_TIMESTAMP".into(),
+                now.get(..19).unwrap_or(&now).to_string(),
+            );
+        }
         let mut guard = 0;
         loop {
             let actions = self.engine.plan(item);
+            // ★ 계획 부산물의 소비자(T-153): 선언 없이 쓰여 **NULL로 만들어진 바인드**를 알린다 — 종전에는 아무도 읽지 않아
+            // 오타가 조용히 NULL이 됐고, 목록은 비워지지 않은 채 세션 내내 쌓였다(09-21 Windows 점검).
+            self.flush_diagnostics(emit);
             if let [Action::NeedInput { name }] = actions.as_slice() {
                 // 엄격 모드(T-9): 묻지 않고 오류 — 배치에서 조용히 빈 값이 들어가는 사고 방지.
                 if self.strict {
@@ -1448,6 +1608,7 @@ impl Runner {
                     let _ = s.commit();
                 }
                 self.connection = None;
+                self.connected_to = None;
                 emit(RunEvent::Disconnected);
                 true
             }
@@ -1534,6 +1695,35 @@ impl Runner {
                     error: msg_err(tf(Msg::SubstUndefined, &[&name])),
                 });
                 false
+            }
+            // `ACCEPT`(T-153): 묻는다 — 빈 답·답 없음 = DEFAULT · 엄격 모드(묻지 않음)에서 DEFAULT도 없으면 오류.
+            // 안내 글이 있으면 그것을, 없으면 이름을 호스트의 입력 함수에 넘긴다(CLI = "Enter value for …").
+            Action::Accept {
+                name,
+                prompt: label,
+                default,
+                hide: _,
+            } => {
+                let asked = if self.strict {
+                    None
+                } else {
+                    let label = label.filter(|l| !l.trim().is_empty());
+                    prompt(label.as_deref().unwrap_or(&name))
+                };
+                match accept_value(asked, default) {
+                    Some(v) => {
+                        self.engine.define(&name, &v);
+                        true
+                    }
+                    None => {
+                        emit(RunEvent::Error {
+                            index,
+                            line: item.line,
+                            error: msg_err(tf(Msg::SubstUndefined, &[&name])),
+                        });
+                        false
+                    }
+                }
             }
             Action::SetOption { name, value } => {
                 if let Some(s) = self.session.as_mut() {
@@ -1674,7 +1864,7 @@ impl Runner {
         };
         // ★ 수동 커밋 모드: 서버가 문장마다 자동 커밋하는 방언이면 트랜잭션을 먼저 연다(T-146).
         if let Some(begin) = manual_begin_sql(
-            self.engine.dialect,
+            &self.engine.caps,
             self.engine.settings.autocommit,
             self.tx_open,
             self.tx_user,
@@ -1730,7 +1920,7 @@ impl Runner {
                     }
                 } else if expect_out
                     && result.out_params.is_empty()
-                    && !matches!(self.engine.dialect, Dialect::Oracle | Dialect::Mssql)
+                    && self.engine.caps.captures_rows()
                 {
                     // 호출(`CALL p(…)`)의 OUT = 1행 결과(PG · MySQL) — 열 이름이 곧 변수 이름.
                     absorb_from_result_set(&mut result, &names);
@@ -1763,15 +1953,28 @@ impl Runner {
                         let _ = s.close_cursor(h);
                     }
                 }
+                let mut labels = std::mem::take(&mut result.result_labels).into_iter();
+                let row_count = result.rows_affected.or_else(|| {
+                    result.result_sets.last().map(|r| {
+                        r.rows
+                            .len()
+                            .min(if max_rows > 0 { max_rows } else { usize::MAX })
+                            as u64
+                    })
+                });
+                self.set_statement_sysvars(row_count, 0, elapsed);
                 for (i, rs) in result.result_sets.drain(..).enumerate() {
                     let (rs, trimmed) = trim_rows(rs, max_rows);
+                    // `COLUMN … NEW_VALUE`: 보여 주는 결과의 마지막 행(등록이 없으면 비용 0).
+                    self.engine.note_result(&rs.columns, rs.rows.last());
                     let more = trimmed || (i + 1 == n_sets && pending.is_some());
                     emit(RunEvent::ResultSet {
                         index,
                         rs,
                         elapsed,
                         more,
-                        label: None,
+                        // 드라이버가 풀어 낸 커서의 이름(PostgreSQL refcursor · T-150) — 결과 탭 제목.
+                        label: labels.next().flatten(),
                     });
                 }
                 if n_sets == 0 || result.rows_affected.is_some() {
@@ -1782,6 +1985,7 @@ impl Runner {
                     });
                 }
                 let printed = self.engine.absorb(&result);
+                self.flush_diagnostics(emit);
                 // ★ 돌아온 REF CURSOR는 바로 결과로 보여 준다(`VAR rc REFCURSOR` + `EXEC proc(:rc)` → 그리드 · 커서가 둘 이상이면
                 //   각각 · 설정 `run.cursor_autoshow` · SQL*Plus의 `SET AUTOPRINT ON`과 같은 효과를 커서에만). 끄면 `PRINT rc`로.
                 let cursors: Vec<(String, nsql_core::CursorId)> = result
@@ -1816,7 +2020,13 @@ impl Runner {
                     return false;
                 }
                 if self.engine.settings.autocommit {
+                    let needed = self
+                        .engine
+                        .caps
+                        .autocommit_needs_commit(self.tx_open, self.tx_user);
                     match kept.as_mut() {
+                        // 서버가 이미 커밋했다(열린 트랜잭션 없음) — 보낼 것이 없다.
+                        _ if !needed => {}
                         // 커서가 살아 있는 동안은 커밋을 미룬다(PG WITHOUT HOLD 커서 보호 · 닫힐 때 커밋).
                         Some(c) => c.deferred_end = Some(TxEnd::Commit),
                         None => {
@@ -1852,6 +2062,8 @@ impl Runner {
                 self.report_compile_errors(index, item, emit)
             }
             Err(mut e) => {
+                let code = e.code.unwrap_or(-1);
+                self.set_statement_sysvars(None, code, started.elapsed());
                 if mode == PrepareMode::DeclarePrepend {
                     e.message
                         .push_str(&format!(" (프리펜드 {line_offset}줄 보정 필요)"));
@@ -1895,6 +2107,10 @@ impl Runner {
                 n + 1
             };
             let _ = s.set_option("max_rows", &v.to_string());
+            let _ = s.set_option(
+                "refcursor_expand",
+                if self.refcursor_expand { "on" } else { "off" },
+            );
             if fetch_size > 0 {
                 let _ = s.set_option("fetch_size", &fetch_size.to_string());
             }
@@ -1955,7 +2171,7 @@ impl Runner {
             (Some(k), Some(n), None) => Some((k.to_string(), n.to_string())),
             _ => None,
         };
-        if self.engine.dialect != Dialect::Oracle {
+        if !self.engine.caps.compile_errors {
             return t(Msg::ShowNoErrors).to_string();
         }
         let Some(session) = self.session.as_mut() else {
@@ -1999,7 +2215,7 @@ impl Runner {
         item: &Item,
         emit: &mut dyn FnMut(RunEvent),
     ) -> bool {
-        if self.engine.dialect != Dialect::Oracle {
+        if !self.engine.caps.compile_errors {
             return true;
         }
         if !matches!(
@@ -2074,7 +2290,6 @@ impl Runner {
             });
             return false;
         };
-        let dialect = session.dialect();
         let clean = |s: &str| {
             s.trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`')
                 .to_string()
@@ -2087,22 +2302,10 @@ impl Runner {
             }
         };
         // Oracle·MSSQL은 대소문자 무관 이름을 저장 규칙대로(Oracle 대문자 · PG 소문자).
-        let name = match dialect {
-            Dialect::Oracle => {
-                if object.contains('"') {
-                    name
-                } else {
-                    name.to_ascii_uppercase()
-                }
-            }
-            Dialect::Postgres => {
-                if object.contains('"') {
-                    name
-                } else {
-                    name.to_ascii_lowercase()
-                }
-            }
-            _ => name,
+        let name = if object.contains('"') {
+            name
+        } else {
+            session.caps().fold_ident(&name)
         };
         let started = Instant::now();
         match nsql_catalog::columns(session.as_mut(), &schema, &name) {
@@ -2181,6 +2384,97 @@ fn absorb_from_result_set(result: &mut ExecResult, _names: &[String]) {
     }
 }
 
+/// 진단에서 암묵 변수 이름만(`:이름` 표기 · 나온 순서 · 중복 없이).
+fn implicit_names(diags: Vec<nsql_script::Diagnostic>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for d in diags {
+        if let nsql_script::Diagnostic::ImplicitVariable(n) = d {
+            let n = format!(":{n}");
+            if !out.contains(&n) {
+                out.push(n);
+            }
+        }
+    }
+    out
+}
+
+/// SQL Server 호출에서 **`OUTPUT`을 보충할 바인드**(T-151 · 순수): 서명이 OUTPUT이라 한 인자 자리에 바인드를 주고도 `OUTPUT`을
+/// 쓰지 않은 것. 이름 표기(`@b = :X`)는 이름으로 · 아니면 자리로 맞춘다.
+fn output_binds(
+    shape: &nsql_script::CallShape,
+    all: &[nsql_catalog::RoutineArg],
+    overload: &str,
+) -> Vec<String> {
+    shape
+        .args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.output)
+        .filter_map(|(i, a)| {
+            let bind = a.bind.as_deref()?;
+            let arg = all.iter().find(|p| {
+                p.overload == overload
+                    && match a.named.as_deref() {
+                        Some(n) => p.name == n,
+                        None => p.position == i as i64 + 1,
+                    }
+            })?;
+            arg.in_out.contains("OUT").then(|| bind.to_string())
+        })
+        .collect()
+}
+
+/// `ACCEPT`의 값(순수): 답이 있고 비어 있지 않으면 그 답 · 아니면 DEFAULT · DEFAULT도 없으면 빈 답은 빈 글 · 답 없음은 `None`(오류).
+fn accept_value(asked: Option<String>, default: Option<String>) -> Option<String> {
+    match (asked, default) {
+        (Some(a), _) if !a.is_empty() => Some(a),
+        (_, Some(d)) => Some(d),
+        (Some(a), None) => Some(a),
+        (None, None) => None,
+    }
+}
+
+/// 호출의 **받는 바인드 목록**(T-151 · 순수): 서명에서 넘긴 인자 수가 맞는 첫 오버로드를 골라, 그 OUT/INOUT 인자마다
+/// "그 자리에 넘긴 바인드"(이름 표기 `이름 => :X`면 이름으로 · 아니면 자리로)를 적는다 — 바인드가 아닌 자리는 빈 글(건너뛴다).
+/// 받을 바인드가 하나도 없거나 서명을 모르면 `None`(= 종전 동작).
+fn call_captures(
+    shape: &nsql_script::CallShape,
+    all: &[nsql_catalog::RoutineArg],
+) -> Option<Vec<String>> {
+    let passed = shape.args.len();
+    let mut overloads: Vec<&str> = all.iter().map(|a| a.overload.as_str()).collect();
+    overloads.dedup();
+    let ov = overloads.into_iter().find(|ov| {
+        let params: Vec<&nsql_catalog::RoutineArg> = all
+            .iter()
+            .filter(|a| a.overload == *ov && a.position >= 1)
+            .collect();
+        passed <= params.len()
+            && shape.args.iter().all(|a| {
+                a.named
+                    .as_deref()
+                    .is_none_or(|n| params.iter().any(|p| p.name == n))
+            })
+    })?;
+    let mut out: Vec<String> = Vec::new();
+    for p in all.iter().filter(|a| a.overload == ov && a.position >= 1) {
+        if !p.in_out.contains("OUT") {
+            continue;
+        }
+        let arg = shape
+            .args
+            .iter()
+            .enumerate()
+            .find(|(i, a)| match a.named.as_deref() {
+                Some(n) => n == p.name,
+                None => *i as i64 + 1 == p.position,
+            })
+            .map(|(_, a)| a);
+        out.push(arg.and_then(|a| a.bind.clone()).unwrap_or_default());
+    }
+    out.iter().any(|b| !b.is_empty()).then_some(out)
+}
+
 /// 마지막 결과 집합의 한 행을 `captures` 이름들로 받는다(자리 순서) — 받은 집합은 결과에서 뺀다(EXEC는 그리드를 내지 않는다).
 /// `Ok(Some(안내))` = 값을 바꾸지 않았다(first 정책의 0행) · `Err` = Oracle식 오류(0행 = ORA-01403 · 여러 행 = ORA-01422에 해당).
 fn capture_row(
@@ -2208,7 +2502,13 @@ fn capture_row(
             &[&captures.len().to_string(), &row.len().to_string()],
         ));
     }
-    result.out_params = captures.iter().cloned().zip(row.iter().cloned()).collect();
+    // 빈 이름 = 받지 않는 자리(호출의 OUT 인자에 바인드가 아닌 값을 넘긴 곳 · T-151).
+    result.out_params = captures
+        .iter()
+        .cloned()
+        .zip(row.iter().cloned())
+        .filter(|(n, _)| !n.is_empty())
+        .collect();
     if result.rows_affected.is_none() {
         result.rows_affected = Some(0);
     }
@@ -2272,6 +2572,55 @@ mod tests {
             Box::new(SqliteSession::open(":memory:").unwrap()),
             "sqlite :memory:",
         )
+    }
+
+    /// 같은 서버·계정에 다시 `CONNECT`(자격을 바꿔 붙기 · 사용자 09-21): 기존 접속을 **먼저 닫는다** → 새 접속이 실패하면
+    /// 옛 세션이 살아남지 않고 `Disconnected`를 알린다 · 성공하면 `Connected`만. 다른 서버로의 실패한 `CONNECT`는 옛 접속 유지.
+    #[test]
+    fn reconnect_to_same_target_closes_the_old_session_first() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let fail = Rc::new(Cell::new(false));
+        let f = fail.clone();
+        let opener: Opener = Box::new(move |_spec: &ConnectSpec| {
+            if f.get() {
+                return Err(DbError {
+                    code: Some(1005),
+                    message: "ORA-01005: null password given".into(),
+                    position: None,
+                });
+            }
+            Ok(Box::new(SqliteSession::open(":memory:")?) as Box<dyn Session>)
+        });
+        let mut r = Runner::new(Dialect::Oracle, opener);
+        let a = ConnectSpec::parse("oracle://u@h:1521/svc").unwrap();
+        let mut ev = Vec::new();
+        assert!(r.connect(&a, &mut |e| ev.push(e)));
+        // 같은 대상 · 다른 자격 · 성공 = 끊김 알림 없이 다시 붙는다.
+        let b = ConnectSpec::parse("oracle://u:pw@h:1521/svc?schema=HR").unwrap();
+        ev.clear();
+        assert!(r.connect(&b, &mut |e| ev.push(e)));
+        assert!(!ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Disconnected | RunEvent::ConnectionClosed)));
+        assert!(ev.iter().any(|e| matches!(e, RunEvent::Connected { .. })));
+        // 같은 대상 · 거부 = 옛 세션은 이미 닫혔다 → `Disconnected` + 오류.
+        fail.set(true);
+        ev.clear();
+        let c = ConnectSpec::parse("oracle://u:@h:1521/svc").unwrap();
+        assert!(!r.connect(&c, &mut |e| ev.push(e)));
+        assert!(r.session.is_none() && r.connection.is_none());
+        assert!(matches!(ev.first(), Some(RunEvent::ConnectionClosed)));
+        assert!(matches!(ev.get(1), Some(RunEvent::Error { .. })));
+        // 다른 서버로의 실패 = 옛 접속 유지(종전 동작).
+        fail.set(false);
+        assert!(r.connect(&a, &mut |_| {}));
+        fail.set(true);
+        ev.clear();
+        let other = ConnectSpec::parse("oracle://u:pw@other:1521/svc").unwrap();
+        assert!(!r.connect(&other, &mut |e| ev.push(e)));
+        assert!(r.session.is_some());
+        assert!(!ev.iter().any(|e| matches!(e, RunEvent::Disconnected)));
     }
 
     /// docs/56 L1 — 수동 모드의 읽기 트랜잭션 자동 종료: 조회만이면 끝난다(이벤트) · 변경 뒤 조회는 안 끝낸다 ·
@@ -2380,7 +2729,7 @@ SELECT * FROM t;
         assert_eq!(e("rollback", None, Dialect::Mssql), TxEffect::Ended);
         assert_eq!(ReadEnd::parse("strict"), ReadEnd::Strict);
         assert_eq!(ReadEnd::parse("bogus"), ReadEnd::Auto);
-        assert!(strict_probe_sql(Dialect::Sqlite).is_none());
+        assert!(nsql_core::Caps::of(Dialect::Sqlite).strict_probe.is_none());
     }
 
     fn collect(r: &mut Runner, src: &str) -> (usize, Vec<RunEvent>) {
@@ -2781,11 +3130,216 @@ SELECT * FROM t;
         assert_eq!(super::input_value("SEBANG"), Value::Str("SEBANG".into()));
     }
 
+    /// T-151 — SQL Server `OUTPUT` 보충: 서명이 OUTPUT인 자리의 바인드만 · 이미 `OUTPUT`을 쓴 것·IN 자리·상수는 빼고 · 이름 표기.
+    #[test]
+    fn output_binds_follow_the_signature() {
+        use nsql_catalog::RoutineArg;
+        let arg = |pos: i64, name: &str, io: &str| RoutineArg {
+            overload: "1".into(),
+            position: pos,
+            name: name.into(),
+            data_type: "INT".into(),
+            in_out: io.into(),
+        };
+        let sig = vec![
+            arg(1, "A", "IN"),
+            arg(2, "B", "IN/OUT"),
+            arg(3, "MSG", "IN/OUT"),
+        ];
+        let f = |s: &str| {
+            super::output_binds(&nsql_script::tsql_call_shape(s).expect("call"), &sig, "1")
+        };
+        assert_eq!(f("p 3, :X, :Y"), vec!["X".to_string(), "Y".to_string()]);
+        assert_eq!(f("p :IN_ONLY, :X OUTPUT, :Y"), vec!["Y".to_string()]);
+        assert_eq!(f("p @msg = :M, @a = :A, @b = 5"), vec!["M".to_string()]);
+        assert!(f("p 1, 2, 3").is_empty());
+        assert_eq!(
+            super::var_type_of("DATETIME2"),
+            Some(nsql_core::VarType::Timestamp)
+        );
+        assert_eq!(
+            super::var_type_of("TIMESTAMP(6)"),
+            Some(nsql_core::VarType::Timestamp)
+        );
+        assert_eq!(
+            super::var_type_of("PL/SQL BOOLEAN"),
+            Some(nsql_core::VarType::Boolean)
+        );
+        assert_eq!(super::var_type_of("NVARCHAR"), None);
+    }
+
+    /// T-153 — 러너 왕복: `COLUMN … NEW_VALUE` → 다음 문장의 `&변수` · 시스템 변수(`_ROW_COUNT` · `_SQLCODE` · `_DATE` ·
+    /// `_DIALECT`) · `${이름:q}`.
+    #[test]
+    fn new_value_and_system_vars_round_trip() {
+        let mut r = runner();
+        let last = |ev: &[RunEvent]| -> Vec<String> {
+            ev.iter()
+                .rev()
+                .find_map(|e| match e {
+                    RunEvent::ResultSet { rs, .. } => {
+                        Some(rs.rows[0].iter().map(Value::display).collect())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        let (errs, ev) = collect(
+            &mut r,
+            "CREATE TABLE t (a INT);
+INSERT INTO t VALUES (1),(5),(3);
+COLUMN mx NEW_VALUE v_mx
+SELECT MAX(a) AS mx FROM t;
+SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
+",
+        );
+        assert_eq!(errs, 0, "{ev:?}");
+        assert_eq!(last(&ev), vec!["6", "sqlite", "10"]);
+        let (_, ev) = collect(
+            &mut r,
+            "DELETE FROM t WHERE a > 1;\nSELECT &_ROW_COUNT AS rc, &_SQLCODE AS sc;\n",
+        );
+        assert_eq!(last(&ev), vec!["2", "0"]);
+        let (errs, _) = collect(&mut r, "SELECT * FROM no_such_table;\n");
+        assert_eq!(errs, 1);
+        let (_, ev) = collect(
+            &mut r,
+            "SELECT CASE WHEN &_SQLCODE <> 0 THEN 'failed' ELSE 'ok' END AS s;\n",
+        );
+        assert_eq!(last(&ev), vec!["failed"]);
+        r.engine.define("who", "O'Neil");
+        let (_, ev) = collect(&mut r, "SELECT ${who:q} AS w;\n");
+        assert_eq!(last(&ev), vec!["O'Neil"]);
+    }
+
+    /// T-153 — 선언 없이 쓴 바인드는 **한 번** 알린다(그 뒤에는 표에 있다) · 진단 목록은 실행마다 비워진다(쌓이지 않는다).
+    #[test]
+    fn implicit_binds_are_reported_once() {
+        let mut r = runner();
+        let msgs = |ev: &[RunEvent]| -> Vec<String> {
+            ev.iter()
+                .filter_map(|e| match e {
+                    RunEvent::Message(m) if m.contains(":TYPO") => Some(m.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let (_, ev) = collect(&mut r, "SELECT :TYPO AS a, :TYPO AS b;\n");
+        assert_eq!(msgs(&ev).len(), 1, "{ev:?}");
+        assert!(r.engine.diagnostics.is_empty());
+        let (_, ev) = collect(&mut r, "SELECT :TYPO AS a;\n");
+        assert!(msgs(&ev).is_empty(), "두 번째부터는 표에 있는 변수다");
+        // 대입된 변수는 알리지 않는다.
+        let (_, ev) = collect(&mut r, "EXEC :OK := 1\nSELECT :OK AS a;\n");
+        let ok: Vec<&RunEvent> = ev
+            .iter()
+            .filter(
+                |e| matches!(e, RunEvent::Message(m) if *m == tf(Msg::WarnImplicitVar, &[":OK"])),
+            )
+            .collect();
+        assert!(ok.is_empty(), "{ok:?}");
+    }
+
+    /// T-153 — `ACCEPT` 값 판정(조건마다 혼자 결과를 바꾼다) + 러너 왕복: 물어서 넣는다 · 빈 답 = DEFAULT · 입력 창이 이미
+    /// 답했으면 묻지 않는다 · 엄격 모드 = DEFAULT 아니면 오류.
+    #[test]
+    fn accept_asks_defaults_and_skips() {
+        use super::accept_value as f;
+        let s = |x: &str| Some(x.to_string());
+        assert_eq!(f(s("7"), s("10")), s("7"));
+        assert_eq!(f(s(""), s("10")), s("10"), "빈 답 = DEFAULT");
+        assert_eq!(f(None, s("10")), s("10"), "답 없음 = DEFAULT");
+        assert_eq!(f(s(""), None), s(""));
+        assert_eq!(f(None, None), None);
+
+        let mut r = runner();
+        let src = "ACCEPT n NUMBER DEFAULT 10 PROMPT 'N? '\nSELECT &n + 1 AS v;\n";
+        let mut asked: Vec<String> = Vec::new();
+        let value =
+            |script: &str, r: &mut Runner, answer: Option<&str>, asked: &mut Vec<String>| {
+                let mut out = String::new();
+                let mut prompt = |l: &str| {
+                    asked.push(l.to_string());
+                    answer.map(str::to_string)
+                };
+                r.run_script(script, &mut prompt, &mut |e| {
+                    if let RunEvent::ResultSet { rs, .. } = e {
+                        out = rs.rows[0][0].display();
+                    }
+                });
+                out
+            };
+        assert_eq!(value(src, &mut r, Some("41"), &mut asked), "42");
+        assert_eq!(asked, vec!["N? ".to_string()], "안내 글로 묻는다");
+        assert_eq!(
+            value(src, &mut r, Some(""), &mut asked),
+            "11",
+            "빈 답 = DEFAULT(앞 실행의 41이 아니다)"
+        );
+        // 입력 창이 이미 답했다 → 묻지 않는다.
+        asked.clear();
+        r.apply_inputs(vec![(
+            nsql_script::InputKind::Macro,
+            "N".into(),
+            "5".into(),
+        )]);
+        assert_eq!(value(src, &mut r, Some("999"), &mut asked), "6");
+        assert!(asked.is_empty(), "{asked:?}");
+        // 다음 실행은 다시 묻는다.
+        assert_eq!(value(src, &mut r, Some("1"), &mut asked), "2");
+    }
+
+    /// T-151 — 호출의 받는 바인드: OUT/INOUT 자리의 바인드만(자리 · 이름 표기) · 바인드가 아닌 OUT 자리는 빈 글 · IN 자리의 바인드는
+    /// 받지 않는다 · 인자 수가 맞는 오버로드 · 서명을 모르거나 받을 것이 없으면 None.
+    #[test]
+    fn call_captures_follow_the_signature() {
+        use nsql_catalog::RoutineArg;
+        let arg = |ov: &str, pos: i64, name: &str, io: &str| RoutineArg {
+            overload: ov.into(),
+            position: pos,
+            name: name.into(),
+            data_type: "INTEGER".into(),
+            in_out: io.into(),
+        };
+        let sig = vec![
+            arg("1", 1, "A", "IN"),
+            arg("2", 1, "A", "IN"),
+            arg("2", 2, "B", "IN/OUT"),
+            arg("2", 3, "MSG", "OUT"),
+        ];
+        let shape = |s: &str| nsql_script::call_shape(s).expect("call");
+        let f = |s: &str| super::call_captures(&shape(s), &sig);
+        assert_eq!(
+            f("p(3, :X, :Y)"),
+            Some(vec!["X".to_string(), "Y".to_string()])
+        );
+        assert_eq!(
+            f("p(:IN_ONLY, 5, :Y)"),
+            Some(vec![String::new(), "Y".to_string()]),
+            "IN 자리의 바인드는 받지 않는다 · 값이 온 OUT 자리는 건너뛴다"
+        );
+        assert_eq!(
+            f("p(a => 1, msg => :M, b => :N)"),
+            Some(vec!["N".to_string(), "M".to_string()]),
+            "이름 표기 = 이름으로 · 순서는 서명의 OUT 순서"
+        );
+        assert_eq!(f("p(:ONLY)"), None, "첫 오버로드(IN 하나) = 받을 것이 없다");
+        assert_eq!(f("p(1, 2, 3)"), None);
+        assert_eq!(f("p(1, 2, 3, 4)"), None, "인자 수가 맞는 오버로드가 없다");
+        assert_eq!(
+            super::call_captures(&shape("p(1, :X)"), &[]),
+            None,
+            "서명 모름"
+        );
+    }
+
     /// T-146 판정(MC/DC) — 다섯 조건이 각각 혼자 결과를 바꾼다.
     #[test]
     fn manual_begin_mcdc() {
-        use super::manual_begin_sql as f;
         use nsql_core::TxControl as C;
+        let f = |d: Dialect, a: bool, o: bool, u: bool, c: C| {
+            super::manual_begin_sql(&nsql_core::Caps::of(d), a, o, u, c)
+        };
         // 기준: 수동 · PG · 열린 것 없음 · 사용자 트랜잭션 없음 · 보통 문장 → 연다.
         assert_eq!(
             f(Dialect::Postgres, false, false, false, C::None),

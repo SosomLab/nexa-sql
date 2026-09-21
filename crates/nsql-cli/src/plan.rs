@@ -79,6 +79,13 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
                         relative_to_caller,
                     } => println!("  → RUN {path} {args:?} (relative={relative_to_caller})"),
                     Action::NeedInput { name } => println!("  → INPUT &{name}"),
+                    Action::Accept { name, default, .. } => println!(
+                        "  → ACCEPT &{name}{}",
+                        default
+                            .as_deref()
+                            .map(|d| format!(" (default {d})"))
+                            .unwrap_or_default()
+                    ),
                     Action::SetOption { name, value } => println!("  → SET {name}={value}"),
                     Action::Nothing(msg) => println!("  · {msg}"),
                     Action::Error(e) => {

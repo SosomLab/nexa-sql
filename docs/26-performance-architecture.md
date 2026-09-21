@@ -226,6 +226,21 @@
 
 **회수 규칙**(`memtrim.rs`): 큰 것을 놓은 1초 뒤 1회(`mem.trim_on_release`) + 유휴 주기(`mem.trim_secs` 300) — 보이지 않는 탭의 캐시 해제 + 힙 → OS(`HeapOptimizeResources` + `HeapCompact` / `malloc_trim` / `malloc_zone_pressure_relief`). 워킹셋 트림은 여전히 하지 않는다(§7-2 ③).
 
+### 7-5. 09-21 재점검(Windows 89차 · 맥 86~88차 병합 뒤 · Release · 앞 커밋과 A/B)
+
+| 시나리오 | 09-19~20 | 09-21 |
+|---|---|---|
+| 기동 | 12.0 MB | 11.68 MB |
+| 접속(SQLite) | 10.7 MB | 10.09 MB |
+| 창 4개 추가 | 16.4 MB | 16.22 MB |
+| 2 MB 스크립트 | 27.9 MB | 27.89 MB |
+| 결과 10만 행 | 41.2 MB | 41.16 MB |
+| 65 MB 파일(상주/피크) | 87 / 106 MB | 86.5 / 106.5 MB |
+| 유휴 CPU | 0~31 ms/초 | 0~31 ms/초(60초 타임라인 · 창 4개 포함) |
+| 기동(창 보임 / 안정까지 CPU) | — | ≈155 ms / ≈500 ms |
+
+맥에서 들어온 것(`present.rs` · 변수 표 · 입력 창 · 결과 탭 분리)은 Windows 상주·CPU에 영향이 없다. 릭 주기 4종은 평탄(10만 행 재실행의 +0.3 MB/회는 앞 커밋도 같고 탭을 닫으면 10.9 MB로 회수 = 힙 조각). 측정 규칙 추가: **빌드 직후 첫 실행은 버린다** · 회귀 판정은 같은 시각의 A/B([61 §4](61-core-design-and-working-rules.md)). 도구 = `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1`. §8 점검: T-150은 **사용자가 실행한 문장 안에서만** 추가 왕복(커서 이름 확인 1 + 커서당 FETCH·CLOSE)을 만들고 스스로 트래픽을 만들지 않는다 · T-151 서명 조회 = 루틴당 1회(캐시 · Oracle·PostgreSQL·SQL Server · 끄는 키 `vars.signature_lookup`) · T-150 끄는 키 `pg.refcursor_expand` · T-155는 문장당 왕복을 1회 **줄인다**.
+
 ## 8. 네트워크 부하 원칙 — 09-14 검토 · 상시 관리 항목(사용자 요청)
 
 > 상위 원장 = [39 §3-2 자원 거버넌스](39-resource-governance.md)(09-16) — 이 표는 NET 도메인의 근거 표로 그대로 유지한다.
@@ -243,7 +258,7 @@
 | 공유 연결 추가(DR-34 · [52 §2-1](52-session-modes.md)) | DB 로그인 1 | 접속 창 클릭당 1 · **같은 서버·DB·계정은 중복 접속 없음**(기존 연결 활성화) · 동시 유지 상한 `session.max_shared`(8) · 위 큐 공유 | 없음 | `App::login_place` · `sessions::login_plan` |
 | 전용 세션 `CONNECT` · 개별 모드 탭 접속 | DB 로그인 1 | 사용자 실행 1회당 1 · 개별 모드 = 탭이 **처음 활성화될 때** 1(안 본 탭은 0) · 상한 `session.max_private`(8) | 없음 | `App::place_run` · `sync_sess` · `connect_quietly` |
 | 유휴 닫기 뒤 재접속 | DB 로그인 1 | 닫힌 세션에서 **다음 실행/페치 1회당 1** · 주기 핑·keepalive 질의 **없음**(서버의 유휴 정책을 무력화하지 않는다) · 점검 타이머 30s는 로컬 판정만 | 없음 | `App::idle_tick` · `wake_if_idle` · `sessions::idle_action` |
-| 탐색기 메타 접속(서버당 1 · 52 §2-2) | DB 로그인 1 | **처음 보는 서버에 세션이 붙을 때 1** · 같은 서버의 추가 세션 = 0 · 유휴 회수 뒤에는 다음 펼침/소스 요청 1회당 1 · 오프라인(세션 0) 서버에는 **다시 붙지 않는다** | 없음 | `App::explorer_attach` · `explorer::meta_thread`(`resume`) |
+| 탐색기 메타 접속(서버당 1 · 52 §2-2) | DB 로그인 1 | **처음 보는 서버에 세션이 붙을 때 1** · 같은 서버의 추가 세션 = 0 · 유휴 회수 뒤에는 다음 펼침/소스 요청 1회당 1 · 오프라인(세션 0) 서버에는 **다시 붙지 않는다** · **비밀번호 자리가 없는 스펙으로는 로그인을 시도하지 않는다**(09-21 · 빈 비밀번호 시도가 쌓여 계정이 잠기는 것을 막는다) · 입력한 비밀번호는 세션 자격 금고에서 빌린다(금고 끔 = 일회성 → 그 칸은 유휴 회수 없음) · 금고 값이 거부되면 폐기하고 한 번 다시 묻는다 → **한 번의 접속 동작 = 로그인 시도 최대 2회**(같은 틀린 값으로 되풀이하지 않는다 · 잠김/만료에는 다시 묻지 않는다) | 없음 | `App::explorer_attach` · `explorer::meta_thread`(`resume`) |
 | 동작 직전 생존 판정([53](53-connection-liveness.md)) | TCP SYN 1(+ICMP 1) · `probe.timeout` 상한 | 실행·페치·건수·키·커밋 **직전**에, 마지막 성공 뒤 `probe.stale_secs`(60s) 지났거나 직전 오류·드라이버 끊김 힌트일 때만 · 접속 시도 전에는 항상 1 | 없음(실패 = 즉시 오류 · Broken) | `worker::ensure_alive` · `sessions::live_plan` |
 | TCP keepalive(PG·SQL Server) | 빈 세그먼트 1(데이터 0) | 접속당 `net.keepalive_secs`(60s) 유휴마다 · 서버 유휴 세션 정책과 무관 · 0 = 끔 | OS(3회 뒤 소켓 오류) | `nsql_drivers::set_net_options` |
 | 막힘 감지(L3 · [56 §9](56-manual-commit-lock-prevention.md)) | 메타 세션에 1문장 | **미커밋이 있는 세션만** `tx.block_poll_secs`(30s · 0 = 끔) · 세션 식별자를 알 때 · 세션당 진행 중 1 | 없음(질의 오류 = 그 세션에서 기능 끔) | `App::tx_block_tick` · `explorer::blockers_sql` |

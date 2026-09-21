@@ -40,6 +40,13 @@ pub(crate) struct Palette {
     goto: Option<Option<usize>>,
     /// 프롬프트 모드(탭 이름 바꾸기 등 · 09-17): 목록 없이 글자 입력만 · Enter = [`PaletteAction::Prompt`].
     prompt: Option<String>,
+    /// 프롬프트 모드의 안내 글(입력란 아래 한 줄 — 입력란에 이미 글이 있어 자리표시자가 보이지 않는다).
+    hint: String,
+    /// 프롬프트가 **붙을 대상**(이름을 바꾸는 탭의 rect · 사용자 09-21 "요청한 탭 근처에 · 수정 중인 대상을 식별할 수 있게").
+    /// 있으면 상자가 그 바로 아래(자리가 없으면 위)에 붙고 대상에 강조 테두리를 그린다 · 없으면 종전처럼 창 위 가운데.
+    anchor: Option<Rect>,
+    /// 창 크기(물리 px) — 붙는 상자를 창 안에 두는 데 쓴다.
+    win: (i32, i32),
 }
 
 const MAX_ROWS: usize = 12;
@@ -60,13 +67,34 @@ impl Palette {
             last_query: String::new(),
             goto: None,
             prompt: None,
+            hint: String::new(),
+            anchor: None,
+            win: (0, 0),
         }
     }
 
     /// 프롬프트 모드로 열기 — `id`는 확정 때 그대로 돌려준다 · `placeholder` 안내 · `initial` 초기 글자(전체 선택).
+    /// [`Self::open_prompt`] + **대상 옆에 붙이기** — `anchor` = 이름을 바꾸는 탭의 rect.
+    pub(crate) fn open_prompt_at(
+        &mut self,
+        id: &str,
+        placeholder: &str,
+        initial: &str,
+        anchor: Option<Rect>,
+    ) {
+        self.anchor = anchor;
+        self.open_prompt(id, placeholder, initial);
+    }
+
+    /// 창 크기(붙는 상자의 경계).
+    pub(crate) fn set_window(&mut self, w: i32, h: i32) {
+        self.win = (w, h);
+    }
+
     pub(crate) fn open_prompt(&mut self, id: &str, placeholder: &str, initial: &str) {
         self.open = true;
         self.prompt = Some(id.to_string());
+        self.hint = placeholder.to_string();
         self.input = TextBox::new(placeholder).with_text(initial);
         self.input.set_scale(self.scale);
         self.input.set_focused(true);
@@ -100,6 +128,7 @@ impl Palette {
     pub(crate) fn close(&mut self) {
         self.open = false;
         self.prompt = None;
+        self.anchor = None;
         self.input.set_focused(false);
     }
 
@@ -117,8 +146,38 @@ impl Palette {
         self.layout(&mut inv);
     }
 
-    fn layout(&mut self, inv: &mut Invalidations) {
+    /// ★ 지금 모드의 **실제 상자**(사용자 09-21 "이름 바꾸기는 간단한 형태로 — 불필요한 하단이 함께 표시된다"): 프롬프트(이름
+    /// 바꾸기 · 저장소 추가)는 목록이 없으므로 **입력란 + 안내 한 줄**만 · 폭도 좁게. 명령 팔레트·줄 이동은 종전 크기.
+    fn frame(&self) -> Rect {
         let b = self.bounds;
+        if self.prompt.is_none() {
+            return b;
+        }
+        let pad = (6.0 * self.scale) as i32;
+        let w = ((380.0 * self.scale) as i32).min(b.w);
+        let h = pad + self.row_h + pad / 2 + self.row_h * 3 / 4 + pad;
+        match self.anchor {
+            // 대상 탭 **바로 아래**(왼쪽 끝을 맞춘다) — 자리가 없으면(결과 탭이 창 아래쪽) **바로 위** · 그래도 안 되면 창 안으로
+            // 밀어 넣는다(팝업 배치 규칙 · nexa-ctl `place_popup`과 같은 순서를 세로축에 · 가로는 밀어 넣기).
+            Some(a) if self.win.0 > 0 && self.win.1 > 0 => {
+                let gap = (3.0 * self.scale) as i32;
+                let below = a.bottom() + gap;
+                let y = if below + h <= self.win.1 {
+                    below
+                } else if a.y - gap - h >= 0 {
+                    a.y - gap - h
+                } else {
+                    (self.win.1 - h).max(0)
+                };
+                let host = Rect::new(0, 0, self.win.0, self.win.1);
+                nexa_ctl::geom::nudge_into(Rect::new(a.x, y, w, h), host)
+            }
+            _ => Rect::new(b.x + (b.w - w) / 2, b.y, w, h),
+        }
+    }
+
+    fn layout(&mut self, inv: &mut Invalidations) {
+        let b = self.frame();
         let p = (6.0 * self.scale) as i32;
         self.input
             .set_bounds(Rect::new(b.x + p, b.y + p, b.w - p * 2, self.row_h), inv);
@@ -268,9 +327,13 @@ impl Palette {
                 });
                 return PaletteAction::None;
             }
+            // 바깥 **우클릭**도 취소(사용자 09-21 — 좌클릭만 닫히고 우클릭은 상자가 남았다). 상자 안의 우클릭은 입력란의 편집 메뉴로.
+            InputEvent::RightDown { x, y } if !self.frame().contains(Point { x, y }) => {
+                return PaletteAction::Close;
+            }
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
-                if !self.bounds.contains(p) {
+                if !self.frame().contains(p) {
                     return PaletteAction::Close;
                 }
                 if self.rows_rect().contains(p) {
@@ -291,11 +354,44 @@ impl Palette {
         if !self.open {
             return;
         }
-        let b = self.bounds;
+        let b = self.frame();
         // 그림자 느낌의 테두리 2겹
         dc.fill_rect(Rect::new(b.x - 1, b.y - 1, b.w + 2, b.h + 2), th.border);
         dc.fill_rect(b, th.chrome_bg);
         self.input.paint(dc, th);
+        if let (Some(a), true) = (self.anchor, self.prompt.is_some()) {
+            // ★ 수정 중인 대상 강조: 대상 탭에 **강조색 테두리**(2px) + 상자의 그쪽 변도 같은 색 — 어느 탭의 이름을 바꾸는지
+            //   테두리 색이 이어 준다(탭이 여럿이어도 헷갈리지 않는다).
+            let w2 = (2.0 * self.scale).round().max(2.0) as i32;
+            for r in [
+                Rect::new(a.x, a.y, a.w, w2),
+                Rect::new(a.x, a.bottom() - w2, a.w, w2),
+                Rect::new(a.x, a.y, w2, a.h),
+                Rect::new(a.right() - w2, a.y, w2, a.h),
+            ] {
+                dc.fill_rect(r, th.accent);
+            }
+            let edge_y = if b.y >= a.bottom() {
+                b.y - 1
+            } else {
+                b.bottom() - w2 + 1
+            };
+            dc.fill_rect(Rect::new(b.x - 1, edge_y, b.w + 2, w2), th.accent);
+        }
+        if self.prompt.is_some() {
+            // 간단한 입력 상자: 입력란 아래 안내 한 줄(Enter 적용 · Esc 취소)만 — 목록 영역은 그리지 않는다.
+            let pad = (6.0 * self.scale) as i32;
+            let th_px = dc.text_height();
+            let y = b.y + pad + self.row_h + pad / 2;
+            dc.text(
+                b.x + pad + (4.0 * self.scale) as i32,
+                y + (self.row_h * 3 / 4 - th_px) / 2,
+                b,
+                &self.hint,
+                th.text_dim,
+            );
+            return;
+        }
         let rr = self.rows_rect();
         let pad = (8.0 * self.scale) as i32;
         let th_px = dc.text_height();
@@ -384,6 +480,58 @@ mod tests {
         let b = fuzzy_score("sql", "Set Syntax: Plain Text").unwrap_or(-1);
         assert!(a > b);
         assert_eq!(fuzzy_score("", "anything"), Some(0));
+    }
+
+    /// 이름 바꾸기 상자(프롬프트 · 사용자 09-21): 대상 탭 바로 아래에 붙는다(아래에 자리가 없으면 위) · 상자는 입력란 + 안내 한 줄 ·
+    /// **바깥 좌클릭도 우클릭도 취소** · 상자 안의 클릭은 취소가 아니다.
+    #[test]
+    fn prompt_is_anchored_compact_and_outside_clicks_cancel() {
+        use super::{Palette, PaletteAction};
+        use nexa_ctl::geom::Rect;
+        use nexa_ctl::{InputEvent, Invalidations};
+        let mut p = Palette::new();
+        p.set_bounds(1000, 40, 1.0);
+        p.set_window(1000, 700);
+        let mut inv = Invalidations::default();
+        let tab = Rect::new(120, 90, 110, 28);
+        p.open_prompt_at("tab.rename:1", "hint", "Script_1", Some(tab));
+        let f = p.frame();
+        assert_eq!(
+            (f.x, f.y),
+            (tab.x, tab.bottom() + 3),
+            "탭 바로 아래 · 왼쪽 끝 맞춤"
+        );
+        assert!(f.h < 26 * 4, "목록 영역이 없다: {f:?}");
+        let inside = InputEvent::RightDown {
+            x: f.x + 10,
+            y: f.y + 10,
+        };
+        assert!(!matches!(
+            p.on_event(&inside, &mut inv),
+            PaletteAction::Close
+        ));
+        let outside = InputEvent::RightDown { x: 900, y: 600 };
+        assert!(matches!(
+            p.on_event(&outside, &mut inv),
+            PaletteAction::Close
+        ));
+        let left = InputEvent::MouseDown {
+            x: 900,
+            y: 600,
+            shift: false,
+            primary: false,
+        };
+        assert!(matches!(p.on_event(&left, &mut inv), PaletteAction::Close));
+        // 창 아래쪽의 탭(결과 탭) = 상자가 탭 위로.
+        p.close();
+        let low = Rect::new(80, 680, 90, 18);
+        p.open_prompt_at("result.rename:7", "hint", "Result 1", Some(low));
+        let f = p.frame();
+        assert!(f.bottom() <= low.y, "아래에 자리가 없으면 위로: {f:?}");
+        // 대상을 모르면 종전처럼 위 가운데.
+        p.close();
+        p.open_prompt_at("x", "hint", "", None);
+        assert_eq!(p.frame().y, p.bounds.y);
     }
 
     /// 마우스(사용자 09-19): 목록 위에서 움직이면 그 행 선택 · 같은 자리 MouseMove는 무시 · 휠 = 굴리기 · 클릭 = 실행 ·

@@ -11,6 +11,6 @@ wait_port() { # host port label
 rc=0
 [ -n "${NSQL_ORACLE_URL:-}" ]   && { wait_port "${ORACLE_HOST:-oracle}" 1521 oracle || rc=1; }
 [ -n "${NSQL_MSSQL_URL:-}" ]    && { wait_port "${MSSQL_HOST:-mssql}" 1433 mssql || rc=1; }
-[ -n "${NSQL_POSTGRES_URL:-}" ] && { wait_port "${POSTGRES_HOST:-postgres}" 5432 postgres || rc=1; }
+[ -n "${NSQL_PG_URL:-}" ] && { wait_port "${POSTGRES_HOST:-postgres}" 5432 postgres || rc=1; }
 [ -n "${NSQL_MYSQL_URL:-}" ]    && { wait_port "${MYSQL_HOST:-mysql}" 3306 mysql || rc=1; }
 exit $rc

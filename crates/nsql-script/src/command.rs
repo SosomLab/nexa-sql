@@ -37,6 +37,21 @@ pub enum Command {
     Undefine {
         names: Vec<String>,
     },
+    /// `COL[UMN] 열 NEW_V[ALUE] 변수`(SQL*Plus · T-153) — 그 열의 **마지막 행 값**을 치환 변수에 넣는다(`&변수`로 다음 문장에서 쓴다).
+    /// `COLUMN 열 CLEAR` = 해제. 그 밖의 옵션(`FORMAT` · `HEADING` …)은 표시용이라 받아 주고 무시한다(서버로 보내지 않는다).
+    Column {
+        name: String,
+        new_value: Option<String>,
+        clear: bool,
+    },
+    /// `ACC[EPT] name [NUM[BER]|CHAR|DATE] [FOR[MAT] f] [DEF[AULT] v] [PROMPT 글|NOPR[OMPT]] [HIDE]`(SQL*Plus · T-153) —
+    /// 값을 **물어서** 치환 변수에 넣는다. 타입·형식 낱말은 받아 주되 검사하지 않는다(값은 글자 그대로 끼워진다).
+    Accept {
+        name: String,
+        default: Option<String>,
+        prompt: Option<String>,
+        hide: bool,
+    },
     Describe {
         object: String,
     },
@@ -140,6 +155,10 @@ pub fn is_command_start(line: &str) -> bool {
             | "SET"
             | "DEF"
             | "DEFINE"
+            | "ACC"
+            | "ACCEPT"
+            | "COL"
+            | "COLUMN"
             | "UNDEF"
             | "UNDEFINE"
             | "DESC"
@@ -256,6 +275,8 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
                 }
             }
         }
+        "ACC" | "ACCEPT" => parse_accept(rest)?,
+        "COL" | "COLUMN" => parse_column(rest)?,
         "UNDEF" | "UNDEFINE" => Command::Undefine {
             names: rest
                 .split_whitespace()
@@ -318,6 +339,103 @@ fn unquote(v: &str) -> String {
     }
 }
 
+/// 낱말로 나눈다 — 따옴표(`'…'` · `"…"`) 안의 공백은 나누지 않고, 따옴표는 벗긴다(`''` = `'`).
+fn quoted_words(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut had = false;
+    let mut it = s.chars().peekable();
+    while let Some(ch) = it.next() {
+        match quote {
+            Some(q) if ch == q => {
+                if it.peek() == Some(&q) {
+                    cur.push(q);
+                    it.next();
+                } else {
+                    quote = None;
+                }
+            }
+            Some(_) => cur.push(ch),
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                had = true;
+            }
+            None if ch.is_whitespace() => {
+                if had || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                    had = false;
+                }
+            }
+            None => cur.push(ch),
+        }
+    }
+    if had || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// `COLUMN 열 [NEW_VALUE 변수] [CLEAR] [그 밖의 표시 옵션…]`.
+fn parse_column(rest: &str) -> Result<Command, String> {
+    let words = quoted_words(rest);
+    let mut it = words.into_iter();
+    let name = it
+        .next()
+        .ok_or_else(|| "COLUMN: 열 이름이 필요합니다".to_string())?
+        .to_ascii_uppercase();
+    let (mut new_value, mut clear) = (None, false);
+    while let Some(w) = it.next() {
+        let up = w.to_ascii_uppercase();
+        if up.len() >= 5 && "NEW_VALUE".starts_with(up.as_str()) {
+            new_value = Some(
+                it.next()
+                    .filter(|v| v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+                    .ok_or_else(|| "COLUMN … NEW_VALUE: 변수 이름이 필요합니다".to_string())?
+                    .to_ascii_uppercase(),
+            );
+        } else if up == "CLE" || up == "CLEAR" {
+            clear = true;
+        }
+    }
+    Ok(Command::Column {
+        name,
+        new_value,
+        clear,
+    })
+}
+
+/// `ACCEPT name [타입] [FORMAT f] [DEFAULT v] [PROMPT 글|NOPROMPT] [HIDE]`.
+fn parse_accept(rest: &str) -> Result<Command, String> {
+    let words = quoted_words(rest);
+    let mut it = words.into_iter();
+    let name = it
+        .next()
+        .filter(|n| n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .ok_or_else(|| "ACCEPT: 변수 이름이 필요합니다".to_string())?
+        .to_ascii_uppercase();
+    let (mut default, mut prompt, mut hide) = (None, None, false);
+    while let Some(w) = it.next() {
+        match w.to_ascii_uppercase().as_str() {
+            "NUM" | "NUMBER" | "CHAR" | "DATE" | "BINARY_FLOAT" | "BINARY_DOUBLE" => {}
+            "FOR" | "FORMAT" => {
+                it.next();
+            }
+            "DEF" | "DEFAULT" => default = it.next(),
+            "PROMPT" => prompt = it.next(),
+            "NOPR" | "NOPROMPT" => prompt = Some(String::new()),
+            "HIDE" => hide = true,
+            other => return Err(format!("ACCEPT: 알 수 없는 옵션 {other}")),
+        }
+    }
+    Ok(Command::Accept {
+        name,
+        default,
+        prompt,
+        hide,
+    })
+}
+
 /// `VARIABLE [name [type [= value]]]`.
 fn parse_variable(rest: &str) -> Result<Command, String> {
     if rest.is_empty() {
@@ -335,7 +453,9 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
             .sum();
         (&rest[..n], rest[n..].trim())
     };
-    let bare = name.trim_start_matches(':').to_ascii_uppercase();
+    // 이름은 **친 그대로**(표기 보존 D-142 — 저장소의 열쇠는 `norm`이 대문자로 만든다 · 종전에는 여기서 대문자로 바꿔
+    // `VAR v_Name NUMBER`의 표기가 `V_NAME`으로 보였다 · T-151).
+    let bare = name.trim_start_matches(':').to_string();
     let name = Some(bare.clone());
     if after.is_empty() {
         return Ok(Command::Variable {
@@ -625,6 +745,75 @@ GO
 
 #[cfg(test)]
 mod tests {
+    /// T-153 — `COLUMN … NEW_VALUE`: 줄임말(`COL` · `NEW_V`) · 표시 옵션은 무시 · CLEAR · 이름 없음 = 오류.
+    #[test]
+    fn column_new_value_command() {
+        let p = |s: &str| super::parse_command(s);
+        assert_eq!(
+            p("COLUMN max_id NEW_VALUE v_max"),
+            Ok(Some(super::Command::Column {
+                name: "MAX_ID".into(),
+                new_value: Some("V_MAX".into()),
+                clear: false,
+            }))
+        );
+        assert_eq!(
+            p("col dt format a20 new_v today heading 'Today'"),
+            Ok(Some(super::Command::Column {
+                name: "DT".into(),
+                new_value: Some("TODAY".into()),
+                clear: false,
+            }))
+        );
+        assert_eq!(
+            p("COLUMN x CLEAR"),
+            Ok(Some(super::Command::Column {
+                name: "X".into(),
+                new_value: None,
+                clear: true,
+            }))
+        );
+        assert!(p("COLUMN").is_err());
+        assert!(p("COLUMN x NEW_VALUE").is_err());
+    }
+
+    /// T-153 — `ACCEPT`: 줄임말 · 타입/형식 낱말은 건너뛴다 · 따옴표 안의 공백 · DEFAULT/PROMPT/NOPROMPT/HIDE · 이름 없음·모르는 옵션 = 오류.
+    #[test]
+    fn accept_command_options() {
+        let p = |s: &str| super::parse_command(s);
+        assert_eq!(
+            p("ACCEPT dept NUMBER FORMAT '999' DEFAULT 10 PROMPT 'Department no: ' HIDE"),
+            Ok(Some(super::Command::Accept {
+                name: "DEPT".into(),
+                default: Some("10".into()),
+                prompt: Some("Department no: ".into()),
+                hide: true,
+            }))
+        );
+        assert_eq!(
+            p("acc who def 'O''Neil' nopr"),
+            Ok(Some(super::Command::Accept {
+                name: "WHO".into(),
+                default: Some("O'Neil".into()),
+                prompt: Some(String::new()),
+                hide: false,
+            }))
+        );
+        assert_eq!(
+            p("ACCEPT x"),
+            Ok(Some(super::Command::Accept {
+                name: "X".into(),
+                default: None,
+                prompt: None,
+                hide: false,
+            }))
+        );
+        assert!(p("ACCEPT").is_err());
+        assert!(p("ACCEPT x BOGUS").is_err());
+        assert!(super::is_command_start("ACCEPT x"));
+        assert!(!super::is_command_start("ACCEPTED_ROWS := 1"));
+    }
+
     use super::*;
 
     #[test]
@@ -662,7 +851,7 @@ mod tests {
         assert_eq!(
             parse_command("var v_cnt number").unwrap(),
             Some(Command::Variable {
-                name: Some("V_CNT".into()),
+                name: Some("v_cnt".into()),
                 ty: Some(VarType::Number),
                 init: None
             })
@@ -670,7 +859,7 @@ mod tests {
         assert_eq!(
             parse_command("VARIABLE rc REFCURSOR").unwrap(),
             Some(Command::Variable {
-                name: Some("RC".into()),
+                name: Some("rc".into()),
                 ty: Some(VarType::RefCursor),
                 init: None
             })
@@ -678,7 +867,7 @@ mod tests {
         assert_eq!(
             parse_command("VAR xyz VARCHAR2(10)='te''st'").unwrap(),
             Some(Command::Variable {
-                name: Some("XYZ".into()),
+                name: Some("xyz".into()),
                 ty: Some(VarType::Varchar2(10)),
                 init: Some(Value::Str("te'st".into()))
             })

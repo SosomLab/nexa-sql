@@ -50,6 +50,8 @@ pub(crate) fn labels() -> PickerLabels {
         file_type: t(Msg::LblFileType).into(),
         ok_open: t(Msg::BtnOpen).into(),
         ok_save: t(Msg::BtnSave).into(),
+        ok_folder: t(Msg::BtnSelectFolder).into(),
+        folder_name: t(Msg::LblFolderName).into(),
         cancel: t(Msg::BtnCancel).into(),
         new_folder: t(Msg::BtnNewFolder).into(),
         new_folder_name: t(Msg::LblNewFolderName).into(),
@@ -174,7 +176,13 @@ impl FileWin {
             return;
         }
         self.mode = mode;
-        let mut picker = FilePicker::new(mode, start, sql_filters(), labels());
+        // 폴더 고르기 = 파일 필터가 뜻이 없다(목록에 폴더만) → "폴더" 한 줄.
+        let filters = if mode == PickerMode::Folder {
+            vec![nexa_dlg::FileFilter::new(t(Msg::FilterFolders), &[])]
+        } else {
+            sql_filters()
+        };
+        let mut picker = FilePicker::new(mode, start, filters, labels());
         // 덮어쓰기 = 타임아웃 버튼(두 번 눌러야 저장 · 사용자 09-19) — 시간은 설정 `file.overwrite_confirm_ms`(0 = 한 번에).
         picker.set_overwrite_confirm_ms(self.overwrite_confirm_ms);
         picker.set_default_name(default_name);
@@ -194,12 +202,16 @@ impl FileWin {
         );
         let refs: Vec<(&str, &str)> = items.iter().map(|(v, l)| (*v, l.as_str())).collect();
         let sel = refs.iter().position(|(v, _)| *v == encoding).unwrap_or(0);
-        picker.set_extra(t(Msg::LblEncoding), &refs, sel);
+        // 인코딩 콤보는 파일을 열고 저장할 때만(폴더 고르기에는 없다).
+        if mode != PickerMode::Folder {
+            picker.set_extra(t(Msg::LblEncoding), &refs, sel);
+        }
         self.picker = Some(picker);
         let (lw, lh) = (900.0, 580.0);
         let title = match mode {
             PickerMode::Open => t(Msg::WinOpenFile),
             PickerMode::Save => t(Msg::WinSaveFile),
+            PickerMode::Folder => t(Msg::WinSelectFolder),
         };
         let mut attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {title}"))

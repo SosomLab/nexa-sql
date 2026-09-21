@@ -41,6 +41,8 @@ pub(crate) fn pane_move(has_key: bool, offline: bool, live_sessions: usize) -> P
 }
 
 pub(crate) struct ExplorerSet {
+    /// 우클릭 메뉴 배치 영역(창 전체 · 0 = 탐색기 영역).
+    menu_area: Rect,
     panes: Vec<Pane>,
     shown: usize,
     wake: Arc<dyn Fn() + Send + Sync>,
@@ -65,6 +67,7 @@ pub(crate) struct ExplorerSet {
 impl ExplorerSet {
     pub(crate) fn new(wake: Arc<dyn Fn() + Send + Sync>, visible: bool) -> Self {
         let mut s = ExplorerSet {
+            menu_area: Rect::default(),
             panes: Vec::new(),
             shown: 0,
             wake,
@@ -110,11 +113,12 @@ impl ExplorerSet {
 
     /// 세션이 이 서버에 붙었다 — 탐색기가 없으면 만들고(메타 접속), 있으면 그대로 둔다(오프라인이었으면 다시 붙인다).
     /// `show` = 이 서버의 트리를 앞으로(활성 탭의 세션일 때).
-    pub(crate) fn connect(&mut self, spec: &ConnectSpec, name: &str, show: bool) {
+    /// `once` = `spec`의 비밀번호가 일회성(입력 창으로 받은 것)이다 — 메타 세션이 접속에만 쓰고 지운다.
+    pub(crate) fn connect(&mut self, spec: &ConnectSpec, name: &str, show: bool, once: bool) {
         let i = match self.find(spec) {
             Some(i) => {
                 if self.panes[i].ex.is_offline() {
-                    self.panes[i].ex.connect(spec, name);
+                    self.panes[i].ex.connect(spec, name, once);
                 }
                 i
             }
@@ -130,7 +134,7 @@ impl ExplorerSet {
                 let mut key = spec.clone();
                 key.password = None;
                 self.panes[i].key = Some(key);
-                self.panes[i].ex.connect(spec, name);
+                self.panes[i].ex.connect(spec, name, once);
                 i
             }
         };
@@ -186,6 +190,10 @@ impl ExplorerSet {
             return;
         }
         self.panes[i].ex.disconnect();
+        // 목록에서 뺀 서버 = 이번 실행에서 입력한 비밀번호도 잊는다(세션 자격 금고).
+        if let Some(key) = &self.panes[i].key {
+            nsql_vault::session::forget(&crate::worker::cred_id(key, nsql_core::Dialect::Oracle));
+        }
         if self.panes.len() > 1 {
             self.panes.remove(i);
         } else {
@@ -264,6 +272,30 @@ impl ExplorerSet {
         self.panes.iter().any(|p| p.ex.menu_open())
     }
 
+    /// 열린 우클릭 메뉴의 영역(없으면 빈 영역).
+    pub(crate) fn menu_bounds(&self) -> Rect {
+        self.panes
+            .iter()
+            .find(|p| p.ex.menu_open())
+            .map_or(Rect::default(), |p| p.ex.menu_bounds())
+    }
+
+    /// 자체 캡처용 — 첫 서버 칸의 `row`번째 줄에서 우클릭한 것과 같은 사건을 준다(전체 영역을 거쳐 = 실제 경로).
+    pub(crate) fn capture_menu(&mut self, row: usize) -> bool {
+        self.panes
+            .iter_mut()
+            .next()
+            .is_some_and(|p| p.ex.capture_menu(row))
+    }
+
+    /// 자체 캡처용 — 메뉴가 열린 칸에서 그 항목을 고른다.
+    pub(crate) fn capture_pick(&mut self, id: &str) -> bool {
+        self.panes
+            .iter_mut()
+            .find(|p| p.ex.menu_open())
+            .is_some_and(|p| p.ex.capture_pick(id))
+    }
+
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
         self.bounds = b;
         self.scale = scale;
@@ -299,7 +331,11 @@ impl ExplorerSet {
             let ex = &mut self.panes[i].ex;
             ex.set_bounds(Rect::new(b.x, y, b.w, h), s);
             ex.set_clip(b);
-            ex.set_menu_host(b);
+            ex.set_menu_host(if self.menu_area.h > 0 {
+                self.menu_area
+            } else {
+                b
+            });
             ex.set_scroll_x(self.scroll_x);
             y += h;
         }
@@ -553,6 +589,22 @@ impl ExplorerSet {
         }
     }
 
+    /// 우클릭 메뉴가 놓일 수 있는 영역(창 전체) — 탐색기 폭에 가두면 메뉴가 누른 자리에서 왼쪽으로 밀린다(사용자 09-21
+    /// "누른 자리에 최대한 가깝게"). 메뉴는 창의 팝업 층에서 그린다([`Self::paint_popups`]).
+    pub(crate) fn set_menu_area(&mut self, r: Rect) {
+        self.menu_area = r;
+    }
+
+    /// 팝업 층 — 창의 다른 컨트롤을 모두 그린 **뒤에** 부른다(CLAUDE.md §3 팝업 규칙).
+    pub(crate) fn paint_popups(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if !self.visible {
+            return;
+        }
+        for p in &self.panes {
+            p.ex.paint_menu(dc, th);
+        }
+    }
+
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.visible {
             return;
@@ -576,10 +628,7 @@ impl ExplorerSet {
             self.scroll,
             self.scale,
         );
-        // 팝업 층 — 모든 칸을 그린 뒤.
-        for &i in &laid {
-            self.panes[i].ex.paint_menu(dc, th);
-        }
+        // (우클릭 메뉴는 여기서 그리지 않는다 — 창의 **팝업 층**에서 `paint_popups`로: 탐색기 밖으로 나가도 다른 컨트롤이 덮지 않게.)
         // 타입어헤드 HUD(키보드 대상 칸의 접두 · 탐색기 영역 기준 3×3 위치).
         if self.focused {
             let ex = &self.panes[self.shown].ex;

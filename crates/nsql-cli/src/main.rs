@@ -35,6 +35,8 @@ struct Opts {
     dialect: Dialect,
     format: Format,
     no_prompt: bool,
+    /// `-v 이름=값`(여러 번) — 스크립트가 돌기 전에 치환 변수(`&이름`)를 정의한다(T-153 · `DEFINE`과 같은 저장소).
+    defines: Vec<(String, String)>,
     /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
     timing: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
@@ -97,6 +99,7 @@ fn parse_opts() -> Opts {
         dialect: Dialect::Oracle,
         format: default_format,
         no_prompt: false,
+        defines: Vec::new(),
         timing: false,
         log: false,
         password: None,
@@ -198,6 +201,16 @@ fn parse_opts() -> Opts {
             }
             "-x" | "--expanded" => o.overflow = Some(Overflow::Expanded),
             "--no-prompt" => o.no_prompt = true,
+            "-v" | "--var" | "--define" => {
+                let v = val("-v");
+                match parse_define(&v) {
+                    Some(d) => o.defines.push(d),
+                    None => {
+                        eprintln!("{}", nsql_i18n::tf(nsql_i18n::Msg::CliErrDefine, &[&v]));
+                        std::process::exit(2)
+                    }
+                }
+            }
             "--timing" => o.timing = true,
             "--log" => o.log = true,
             _ => o.positional.push(a),
@@ -283,6 +296,33 @@ fn key_mode_setting() -> KeyMode {
         .ok()
         .and_then(|s| s.get("sql.key_mode").and_then(KeyMode::parse))
         .unwrap_or(KeyMode::Pk)
+}
+
+/// 설정 `vars.signature_lookup` · `pg.refcursor_expand`(부하원 스위치 · 39 §3)를 러너에 넣는다.
+fn apply_load_switches(runner: &mut Runner) {
+    if let Ok(s) = nsql_settings::Settings::open_default() {
+        // Oracle 클라이언트(설정 ▸ DBMS ▸ Oracle) — GUI와 같은 값을 CLI도 쓴다(첫 접속 전).
+        nsql_drivers::set_oracle_client(
+            s.get("oracle.client_mode") == Some("manual"),
+            s.get("oracle.client_dir").unwrap_or(""),
+            s.get("oracle.tns_admin").unwrap_or(""),
+        );
+        runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
+        runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
+        runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
+    }
+}
+
+/// 설정 `vars.brace_subst` · `vars.max_value_kb`(T-153) — (켬, KB).
+fn var_limits_setting() -> (bool, usize) {
+    nsql_settings::Settings::open_default()
+        .ok()
+        .map_or((true, 1024), |s| {
+            (
+                s.get("vars.brace_subst").is_none_or(|v| v == "on"),
+                s.int("vars.max_value_kb").max(0) as usize,
+            )
+        })
 }
 
 /// 설정 `vars.into_policy`(D-139) — `first`면 `SELECT … INTO`의 여러 행에서 첫 행을 쓴다.
@@ -1116,7 +1156,7 @@ impl Printer {
                 self.dialect = dialect;
                 let _ = writeln!(out, "Connected: {description} ({dialect})");
             }
-            RunEvent::Disconnected => {
+            RunEvent::Disconnected | RunEvent::ConnectionClosed => {
                 let _ = writeln!(out, "Disconnected");
             }
             // 변수 표 사건은 GUI용(패널·탭 표) — CLI는 `PRINT`/`SHOW VARIABLES`로 본다.
@@ -1178,8 +1218,21 @@ fn connect_or_exit(
     }
 }
 
+/// `-v 이름=값` → (이름, 값). 이름 = 영숫자·`_`(비면 안 된다) · 값은 `=` 뒤 전부(빈 값 · `=`가 든 값 허용).
+fn parse_define(arg: &str) -> Option<(String, String)> {
+    let (n, v) = arg.split_once('=')?;
+    let n = n.trim();
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .then(|| (n.to_string(), v.to_string()))
+}
+
 fn prompt_stdin(name: &str) -> Option<String> {
-    eprint!("Enter value for {name}: ");
+    // 이름(영숫자·`_`)이면 틀에 넣고, `ACCEPT … PROMPT 글`처럼 글이 오면 그 글 그대로 묻는다(T-153).
+    if name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        eprint!("Enter value for {name}: ");
+    } else {
+        eprint!("{name}");
+    }
     let _ = io::stderr().flush();
     let mut s = String::new();
     io::stdin().lock().read_line(&mut s).ok()?;
@@ -1207,9 +1260,14 @@ fn cmd_run(o: &Opts) -> i32 {
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting())
         .with_auto_cursor(cursor_autoshow_setting())
-        .with_into_first(into_first_setting());
+        .with_into_first(into_first_setting())
+        .with_var_limits(var_limits_setting().0, var_limits_setting().1);
+    apply_load_switches(&mut runner);
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     runner.engine.set_args(&o.positional[1..]);
+    for (n, v) in &o.defines {
+        runner.engine.define(n, v);
+    }
     let no_prompt = o.no_prompt || path == "-";
     let mut prompt = |name: &str| if no_prompt { None } else { prompt_stdin(name) };
     printer.set_source(&src);
@@ -1217,9 +1275,7 @@ fn cmd_run(o: &Opts) -> i32 {
     let script_path = (path != "-").then(|| Path::new(path.as_str()));
     let errs = runner.run_script_in(&src, script_path, &mut prompt, &mut |e| printer.handle(e));
     printer.flush_sql(runner.session.as_deref_mut());
-    if let Some(s) = runner.session.as_mut() {
-        let _ = s.commit();
-    }
+    runner.commit_at_exit();
     close_spool(&printer.spool);
     if errs > 0 {
         1
@@ -1262,9 +1318,14 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_spool(printer.spool.clone())
         .with_strict(strict_setting())
         .with_auto_cursor(cursor_autoshow_setting())
-        .with_into_first(into_first_setting());
+        .with_into_first(into_first_setting())
+        .with_var_limits(var_limits_setting().0, var_limits_setting().1);
+    apply_load_switches(&mut runner);
     runner.cursor_idle_secs = idle;
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
+    for (n, v) in &o.defines {
+        runner.engine.define(n, v);
+    }
     eprintln!("{}", t(Msg::CliShellBanner));
     let stdin = io::stdin();
     let mut buf = String::new();
@@ -1339,9 +1400,7 @@ fn cmd_shell(o: &Opts) -> i32 {
         }
     }
     runner.close_cursor();
-    if let Some(s) = runner.session.as_mut() {
-        let _ = s.commit();
-    }
+    runner.commit_at_exit();
     close_spool(&printer.spool);
     0
 }
@@ -1504,6 +1563,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// T-153 — `-v 이름=값`: 값의 `=`·빈 값 허용 · 이름이 비었거나 글자가 이상하면 거부 · `=`가 없으면 거부.
+    #[test]
+    fn define_option_parses() {
+        let f = super::parse_define;
+        assert_eq!(f("dept=10"), Some(("dept".into(), "10".into())));
+        assert_eq!(f("w=a=b c"), Some(("w".into(), "a=b c".into())));
+        assert_eq!(f("e="), Some(("e".into(), String::new())));
+        assert_eq!(f("=x"), None);
+        assert_eq!(f("novalue"), None);
+        assert_eq!(f("bad name=1"), None);
+    }
+
     use super::*;
 
     /// T-52 별칭 표 — psql · sqlite3 · sqlcmd 어휘가 SQL*Plus식 한 줄로.

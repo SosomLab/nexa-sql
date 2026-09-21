@@ -142,3 +142,11 @@ pub(crate) fn raise_group(bottom_to_top: &[&Window]) {
         let _ = bottom_to_top;
     }
 }
+
+/// 창을 앞으로 — 자체 시험(`NSQL_NO_ACTIVATE`)에서는 **하지 않는다**(시험 인스턴스가 사용자의 전경 창·키 입력을 빼앗지 않게 ·
+/// docs/61 §2). 새로 만드는 창의 활성화는 `icon::with_icon`이 같은 변수로 막는다.
+pub(crate) fn focus(w: &winit::window::Window) {
+    if std::env::var_os("NSQL_NO_ACTIVATE").is_none() {
+        w.focus_window();
+    }
+}

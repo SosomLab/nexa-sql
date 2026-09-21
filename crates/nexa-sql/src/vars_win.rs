@@ -127,6 +127,8 @@ impl VarsWin {
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
+        // 화면 밖으로 나가지 않게(메인 창 오른쪽 기본 위치 · 해상도가 바뀐 뒤의 기억 위치).
+        crate::wingeom::keep_on_screen(&win, owner);
         let win = Rc::new(win);
         self.scale = win.scale_factor() as f32;
         self.surface = crate::present::Presenter::new(win.clone()).ok();

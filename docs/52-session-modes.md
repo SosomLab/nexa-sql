@@ -173,6 +173,8 @@ DISCONNECT                                     -- 전용 세션을 닫고 공유
 
 **인라인 접속 문자열은 비밀번호가 있어야 연다(09-19 · `worker::password_required`)**. 종전의 자격 빌리기(`fill_credentials`: 비밀번호 없는 스펙이면 저장소에서 같은 서버·계정 프로필이 하나일 때 그 비밀번호를 몰래 씀)는 **제거** — 사용자가 `CONNECT oracle://BISCM@host:1521/BISCM`을 치면 저장 프로필 SNOP-DB(같은 서버·같은 계정)의 비밀번호로 붙어 "비밀번호 없이 접속됨"으로 보였다(분석 = journal 09-19 63차). 지금 규칙: SQLite가 아니고 호스트가 있는 스펙에 비밀번호가 없거나 비면 `ErrPasswordRequired`("Password required — include it in the connection string (user:pass@host) or use a saved profile") · 저장소 프로필 이름은 워커에 오기 전에 이미 채워져 온다. 비밀번호를 문자열에 쓰지 않는 방법(편집기 변수 · 모달 입력) = **T-132**.
 
+**09-21 갱신 — 일회성 비밀번호(T-132 ②)**: 거부 대신 **한 번 묻는다**. `user@host`(비밀번호 자리 없음 = `None`)이면 접속을 여는 자리(워커 `Opener`)에서 `ConnOutcome::PasswordNeeded` → 입력 창의 비밀번호 모드 → `PwReply`. 값은 `nsql_core::Secret`으로만 옮기고 그 접속에만 쓴 뒤 0으로 덮어쓴다 — 세션 스펙·프로필·로그 어디에도 남지 않으므로 **끊긴 뒤 재접속은 다시 묻는다**(자격 빌리기는 여전히 없음). `user:@host` = 빈 비밀번호를 **명시**(`Some("")`) → 묻지 않는다. 탐색기 메타 세션은 같은 값을 한 번 빌려 붙고, 그 서버 칸은 유휴 회수를 하지 않는다(다시 열 자격이 없다). **같은 서버 `CONNECT`의 예외(09-21 추가 16)**: `connect.reconnect_same`이 꺼져 있어도 **자격이 바뀐** `CONNECT`(자리의 값과 다른 비밀번호 · `user:@host` 포함)는 유지하지 않고 다시 접속한다 — 러너는 같은 대상이면 기존 접속을 먼저 닫으므로 거부되면 그 탭은 연결 없음이 된다. 자세히 = [21 §7](21-connection-profiles.md).
+
 ## 5. 명령 이름 — 접두 문자가 필요한가 (조사)
 
 **결론: 접두 없이 `CONNECT`/`DISCONNECT`로 전 DBMS에 안전하다.** 문장 **첫머리**가 `CONNECT`/`DISCONNECT`인 서버 SQL은 어느 DBMS에도 없고, 있는 곳에서는 뜻이 같다("클라이언트가 접속을 바꾼다").

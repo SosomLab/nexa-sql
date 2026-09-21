@@ -273,6 +273,41 @@ pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
     (sql, params, outs)
 }
 
+/// 변수는 `DECIMAL(38,10)`으로 선언해 보내므로 정수도 `63.0000000000`으로 돌아온다 → 꼬리 0을 떼고, 소수부가 없으면 정수로
+/// (09-21 실서버 · 표시와 다음 바인드 둘 다 깔끔하게). 그 밖의 값은 그대로.
+fn tidy_decimal(v: &Value) -> Value {
+    // 시각(`DATETIME2` = 소수 초 7자리)도 같은 까닭으로 꼬리 0을 뗀다: `2026-09-22 13:45:10.0000000` → `… 13:45:10`.
+    if let Value::Str(t) = v {
+        let b = t.as_bytes();
+        let timey = b.len() > 20
+            && b[4] == b'-'
+            && b[7] == b'-'
+            && b[13] == b':'
+            && b[16] == b':'
+            && b[19] == b'.'
+            && b[20..].iter().all(u8::is_ascii_digit);
+        if timey {
+            return Value::Str(t.trim_end_matches('0').trim_end_matches('.').to_string());
+        }
+        return v.clone();
+    }
+    let Value::Decimal(d) = v else {
+        return v.clone();
+    };
+    if !d.contains('.') {
+        return v.clone();
+    }
+    let t = d.trim_end_matches('0').trim_end_matches('.');
+    match t.parse::<i64>() {
+        Ok(i) => Value::Int(i),
+        Err(_) => Value::Decimal(if t.is_empty() || t == "-" {
+            "0".into()
+        } else {
+            t.to_string()
+        }),
+    }
+}
+
 /// `Value` → tiberius 파라미터(소유 값 · 문자열은 NVARCHAR).
 fn to_param(v: &Value) -> Box<dyn ToSql> {
     match v {
@@ -596,7 +631,7 @@ impl MssqlSession {
                             for (c, v) in trailer.columns.iter().zip(row.iter()) {
                                 result
                                     .out_params
-                                    .push((c.name.to_ascii_uppercase(), v.clone()));
+                                    .push((c.name.to_ascii_uppercase(), tidy_decimal(v)));
                             }
                         }
                     }
@@ -685,6 +720,38 @@ mod tests {
         );
         assert_eq!(route("SET NOCOUNT ON", false, false), Route::Batch);
         assert_eq!(route("INSERT INTO t VALUES (@V)", true, false), Route::Rpc);
+    }
+
+    /// 돌아온 DECIMAL의 꼬리 0: 정수면 Int · 소수는 필요한 자리만 · 아주 큰 수·다른 값은 그대로.
+    #[test]
+    fn trailer_decimals_are_tidied() {
+        let d = |s: &str| tidy_decimal(&Value::Decimal(s.into()));
+        assert_eq!(d("63.0000000000"), Value::Int(63));
+        assert_eq!(d("-7.0"), Value::Int(-7));
+        assert_eq!(d("1.2500000000"), Value::Decimal("1.25".into()));
+        assert_eq!(d("0.0000000000"), Value::Int(0));
+        assert_eq!(
+            d("12345678901234567890.0"),
+            Value::Decimal("12345678901234567890".into())
+        );
+        assert_eq!(d("42"), Value::Decimal("42".into()));
+        let t = |x: &str| tidy_decimal(&Value::Str(x.into()));
+        assert_eq!(
+            t("2026-09-22 13:45:10.0000000"),
+            Value::Str("2026-09-22 13:45:10".into())
+        );
+        assert_eq!(
+            t("2026-09-22 13:45:10.1230000"),
+            Value::Str("2026-09-22 13:45:10.123".into())
+        );
+        assert_eq!(
+            t("version 10.0000000 of x.y.0"),
+            Value::Str("version 10.0000000 of x.y.0".into())
+        );
+        assert_eq!(
+            tidy_decimal(&Value::Str("1.0".into())),
+            Value::Str("1.0".into())
+        );
     }
 
     #[test]

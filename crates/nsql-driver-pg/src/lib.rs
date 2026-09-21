@@ -59,6 +59,8 @@ pub struct PgSession {
     notices: std::sync::Arc<std::sync::Mutex<Notices>>,
     /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`).
     max_rows: usize,
+    /// 결과의 글자 값이 열린 커서 이름이면 풀어서 결과로(T-150 · 설정 `pg.refcursor_expand` · 끄면 이름 그대로 = 추가 왕복 0).
+    refcursor_expand: bool,
     /// 사용자가 `BEGIN`으로 연 트랜잭션 안인가(문장 머리로 추적 · 커서 트랜잭션 소유 판정용).
     in_txn: bool,
     cursor: Option<PgCursor>,
@@ -148,6 +150,7 @@ impl PgSession {
             description: spec.redacted(),
             notices,
             max_rows: 0,
+            refcursor_expand: true,
             in_txn: false,
             cursor: None,
             next_cursor: 1,
@@ -465,6 +468,69 @@ fn close_sql() -> String {
     format!("CLOSE {CURSOR_NAME}")
 }
 
+// ───────────── refcursor → 결과 집합(T-150 · docs/63 §3-1) ─────────────
+
+/// 커서 이름을 찾아볼 결과의 행 수 상한 — 커서를 돌려주는 호출은 몇 줄이다(큰 조회 결과를 훑지 않는다).
+const REFCURSOR_SCAN_ROWS: usize = 32;
+/// 식별자 길이 상한(PostgreSQL `NAMEDATALEN` - 1).
+const IDENT_MAX: usize = 63;
+
+/// 이 결과가 **커서 이름을 담고 있을 수도 있는가** — 있으면 후보(셀 순서 · 중복 없음)를 돌려준다. 순수 판정:
+/// 문장에 호출 괄호가 있고 · 결과가 작고 · 셀이 짧은 글자이며 숫자가 아니다. 후보가 진짜 열린 커서인지는 `pg_cursors`가 가린다
+/// (단순 질의 경로에는 열 타입이 없다 — `refcursor` 타입으로는 가릴 수 없어서 이름으로 가린다).
+fn cursor_candidates(sql: &str, rs: &ResultSet) -> Vec<String> {
+    if !sql.contains('(') || rs.rows.is_empty() || rs.rows.len() > REFCURSOR_SCAN_ROWS {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for row in &rs.rows {
+        for v in row {
+            let Value::Str(s) = v else { continue };
+            if s.is_empty() || s.len() > IDENT_MAX || s.parse::<f64>().is_ok() {
+                continue;
+            }
+            if !out.iter().any(|x| x == s) {
+                out.push(s.clone());
+            }
+        }
+    }
+    out
+}
+
+/// 식별자 인용(`"` → `""`).
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// 커서에서 행을 꺼내는 문장 — `max` 0 = 전부.
+fn fetch_in_sql(name: &str, max: usize) -> String {
+    if max == 0 {
+        format!("FETCH ALL IN {}", quote_ident(name))
+    } else {
+        format!("FETCH FORWARD {max} IN {}", quote_ident(name))
+    }
+}
+
+/// 드라이버가 트랜잭션으로 감싸도 되는 문장인가 — refcursor는 **만든 트랜잭션 안에서만** 산다. 자동 커밋이면 호출과 FETCH를
+/// 한 트랜잭션으로 묶어야 한다. `CALL`은 감싸지 않는다(프로시저가 안에서 COMMIT하면 명시적 트랜잭션 블록에서 실패한다 —
+/// 그 경우는 사용자가 수동 커밋·`BEGIN`으로 연다 · psql도 같다).
+fn wrappable(sql: &str) -> bool {
+    let up = sql.trim_start().to_ascii_uppercase();
+    let head = up.split_whitespace().next().unwrap_or("");
+    matches!(head, "SELECT" | "WITH" | "VALUES") && sql.contains('(')
+}
+
+/// 결과가 **커서 이름뿐**인가(모든 셀이 풀어 낸 커서) — 그러면 이름 표는 빼고 커서의 내용만 보여 준다.
+fn only_cursor_names(rs: &ResultSet, opened: &[String]) -> bool {
+    !rs.rows.is_empty()
+        && rs.rows.iter().all(|row| {
+            !row.is_empty()
+                && row
+                    .iter()
+                    .all(|v| matches!(v, Value::Str(s) if opened.iter().any(|o| o == s)))
+        })
+}
+
 /// `DECLARE … FOR ` 접두 길이(오류 위치를 원문 기준으로 되돌릴 때).
 fn declare_prefix_len() -> usize {
     declare_sql("").len()
@@ -549,6 +615,7 @@ impl Session for PgSession {
     fn set_option(&mut self, name: &str, value: &str) -> Result<(), DbError> {
         match name {
             "max_rows" => self.max_rows = value.parse().unwrap_or(0),
+            "refcursor_expand" => self.refcursor_expand = value != "off",
             // 기본 스키마 = `search_path`(`?schema=` · 사용자 09-18) — 뒤에 public을 남겨 공용 객체는 그대로 보이게.
             "schema" => {
                 let sql = format!("SET search_path TO \"{}\", public", value.replace('"', ""));
@@ -733,21 +800,96 @@ impl PgSession {
                 carry,
             });
             result.pending = Some(CursorHandle(id));
+            result.result_sets.push(ResultSet { columns, rows });
         } else {
+            result.result_sets.push(ResultSet { columns, rows });
+            // ★ 돌려받은 refcursor는 **이 트랜잭션이 끝나기 전에** 풀어 낸다(T-150).
+            self.expand_refcursors(sql, &mut result);
             let _ = self.client.simple_query(&close_sql());
             if own_txn {
                 let _ = self.client.simple_query("COMMIT");
             }
         }
-        result.result_sets.push(ResultSet { columns, rows });
         Ok(result)
     }
 
+    /// 결과 속의 커서 이름을 그 커서의 **내용**으로 바꾼다(T-150): 후보 → `pg_cursors`로 확인 → `FETCH … IN "이름"` → `CLOSE`.
+    /// 트랜잭션 안에서만 부른다(커서가 살아 있는 동안). 이름뿐인 결과(`SELECT f()`)는 이름 표를 빼고 내용만 · 섞여 있으면 뒤에 덧붙인다.
+    /// 실패는 조용히 — 원래 결과(이름)는 그대로 남는다.
+    fn expand_refcursors(&mut self, sql: &str, result: &mut ExecResult) {
+        if !self.refcursor_expand || result.pending.is_some() || result.result_sets.len() != 1 {
+            return;
+        }
+        let cands = cursor_candidates(sql, &result.result_sets[0]);
+        if cands.is_empty() {
+            return;
+        }
+        let Ok((_, open)) = self.simple_rows("SELECT name FROM pg_cursors") else {
+            return;
+        };
+        let open: Vec<String> = open
+            .into_iter()
+            .filter_map(|r| match r.into_iter().next() {
+                Some(Value::Str(s)) if s != CURSOR_NAME => Some(s),
+                _ => None,
+            })
+            .collect();
+        let names: Vec<String> = cands.into_iter().filter(|c| open.contains(c)).collect();
+        if names.is_empty() {
+            return;
+        }
+        let max = self.max_rows;
+        let mut sets: Vec<(String, ResultSet)> = Vec::with_capacity(names.len());
+        for name in &names {
+            match self.simple_rows(&fetch_in_sql(name, max)) {
+                Ok((columns, rows)) => sets.push((name.clone(), ResultSet { columns, rows })),
+                Err(_) => return, // 원래 결과를 그대로 둔다.
+            }
+            let _ = self
+                .client
+                .simple_query(&format!("CLOSE {}", quote_ident(name)));
+        }
+        if only_cursor_names(&result.result_sets[0], &names) {
+            result.result_sets.clear();
+        }
+        result.result_labels = vec![None; result.result_sets.len()];
+        for (name, rs) in sets {
+            result.result_sets.push(rs);
+            result.result_labels.push(Some(name));
+        }
+    }
+
     fn execute_inner(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
-        let mut result = ExecResult::default();
         if req.params.is_empty() && self.max_rows > 0 && cursorable(&req.sql) {
             return self.execute_cursor(&req.sql);
         }
+        // refcursor(T-150): 커서는 만든 트랜잭션 안에서만 산다 — 자동 커밋이면 호출과 FETCH를 한 트랜잭션으로 묶는다.
+        let wrap = !self.in_txn && wrappable(&req.sql);
+        if wrap {
+            self.client.simple_query("BEGIN").map_err(err)?;
+        }
+        match self.execute_plain(req) {
+            Ok(mut result) => {
+                if wrap || self.in_txn {
+                    self.expand_refcursors(&req.sql, &mut result);
+                }
+                if wrap {
+                    self.client.simple_query("COMMIT").map_err(err)?;
+                }
+                Ok(result)
+            }
+            Err(e) => {
+                if wrap {
+                    let _ = self.client.simple_query("ROLLBACK");
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// 커서 경로가 아닌 실행(단순 질의 · 바인드 질의).
+    fn execute_plain(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+        let mut result = ExecResult::default();
         if req.params.is_empty() {
             // 단순 질의 프로토콜 — 텍스트 셀 · 여러 결과 집합 · 행 수.
             let msgs = self.client.simple_query(&req.sql).map_err(err)?;
@@ -841,6 +983,58 @@ mod tests {
             "2026-07-23 01:02:03.0005"
         );
         assert_eq!(decode_date(&(-1i32).to_be_bytes()), "1999-12-31");
+    }
+
+    /// refcursor 후보(T-150): 호출 괄호가 있는 작은 결과의 **짧은 글자 셀**만 · 숫자·빈 글·긴 글·큰 결과는 아니다 · 중복은 한 번.
+    #[test]
+    fn refcursor_candidates_and_helpers() {
+        let rs = |rows: Vec<Vec<Value>>| ResultSet {
+            columns: vec![Column {
+                name: "f".into(),
+                type_name: String::new(),
+            }],
+            rows,
+        };
+        let s = |x: &str| Value::Str(x.into());
+        let one = rs(vec![vec![s("<unnamed portal 1>")]]);
+        assert_eq!(
+            cursor_candidates("select f()", &one),
+            vec!["<unnamed portal 1>"]
+        );
+        assert!(
+            cursor_candidates("select name from t", &one).is_empty(),
+            "호출 괄호가 없으면 찾지 않는다"
+        );
+        let mixed = rs(vec![
+            vec![s("cur_a"), s("42"), Value::Null, s("")],
+            vec![s("cur_a"), s("3.5"), s("cur_b"), s(&"x".repeat(64))],
+        ]);
+        assert_eq!(
+            cursor_candidates("select f(), n", &mixed),
+            vec!["cur_a", "cur_b"]
+        );
+        let big = rs((0..REFCURSOR_SCAN_ROWS + 1).map(|_| vec![s("c")]).collect());
+        assert!(cursor_candidates("select f()", &big).is_empty());
+        assert!(cursor_candidates("select f()", &rs(vec![])).is_empty());
+        // 이름뿐인 결과만 통째로 바꾼다.
+        let names = vec!["cur_a".to_string(), "cur_b".to_string()];
+        assert!(only_cursor_names(
+            &rs(vec![vec![s("cur_a")], vec![s("cur_b")]]),
+            &names
+        ));
+        assert!(!only_cursor_names(&mixed, &names));
+        assert!(!only_cursor_names(&rs(vec![]), &names));
+        // 인용 · FETCH 문장.
+        assert_eq!(quote_ident("<unnamed portal 1>"), "\"<unnamed portal 1>\"");
+        assert_eq!(quote_ident("we\"ird"), "\"we\"\"ird\"");
+        assert_eq!(fetch_in_sql("c", 0), "FETCH ALL IN \"c\"");
+        assert_eq!(fetch_in_sql("c", 200), "FETCH FORWARD 200 IN \"c\"");
+        // 감싸기: 조회 + 호출 괄호만 · CALL은 아니다(프로시저 안의 COMMIT이 막힌다).
+        assert!(wrappable("select pg_temp.f()"));
+        assert!(wrappable("  WITH x AS (select 1) select * from x"));
+        assert!(!wrappable("select 1"));
+        assert!(!wrappable("call p('c')"));
+        assert!(!wrappable("insert into t values (1)"));
     }
 
     #[test]

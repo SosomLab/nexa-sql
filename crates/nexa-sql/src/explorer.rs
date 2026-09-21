@@ -76,6 +76,8 @@ enum Req {
     Open {
         gen: u64,
         spec: ConnectSpec,
+        /// 비밀번호가 **일회성**(입력 창으로 받은 것)이다 — 접속에만 쓰고 지운다 · 유휴 재개용으로 기억하지 않는다.
+        once: bool,
     },
     Close,
     /// 메타 세션만 닫는다(유휴 회수 · docs/52 §2-2) — 스펙은 기억해 두었다가 **다음 요청 때 조용히 다시 연다**.
@@ -370,6 +372,8 @@ pub(crate) enum ExplorerAction {
         title: String,
         text: String,
     },
+    /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
+    Notice(String),
     /// 상태줄 한 줄.
     Status(String),
     /// 클립보드에 복사할 텍스트.
@@ -447,6 +451,8 @@ pub(crate) struct Explorer {
     offline: bool,
     /// 메타 세션을 유휴로 닫아 두었다(다음 요청 때 메타 스레드가 다시 연다).
     suspended: bool,
+    /// 일회성 비밀번호로 붙은 서버 — 메타 세션을 유휴로 닫으면 다시 열 자격이 없으므로 **닫지 않는다**.
+    one_time: bool,
     /// 마지막으로 메타 요청을 보낸 시각(유휴 회수 판정).
     last_used: Instant,
     /// 우클릭 메뉴가 놓일 수 있는 영역 — 여러 서버가 세로로 쌓이면 한 칸(`bounds`)이 한 줄 높이일 수 있어 탐색기 전체 영역을 받는다.
@@ -532,6 +538,36 @@ fn err_s(e: DbError) -> String {
 }
 
 /// 메타 스레드 — 세션 하나 · 순차 처리 · 요청마다 `catch_unwind`(드라이버 패닉이 UI로 번지지 않게).
+/// 메타 세션을 연다 — 비밀번호 자리가 없는 스펙이면 **세션 자격 금고**에서 빌려 그 접속에만 쓰고 지운다. 금고에도 없으면
+/// 서버에 가지 않는다(빈 비밀번호 로그인 시도가 쌓이면 계정이 잠긴다 · docs/26 §8).
+fn open_meta(spec: &ConnectSpec, default: Dialect) -> Result<Box<dyn Session>, DbError> {
+    if !crate::worker::password_required(spec, default) {
+        return nsql_drivers::open(spec, default);
+    }
+    let lent = crate::worker::remember_session_password()
+        .then(|| nsql_vault::session::recall(&crate::worker::cred_id(spec, default)))
+        .flatten();
+    let Some(secret) = lent else {
+        return Err(DbError {
+            code: None,
+            message: t(Msg::ErrPasswordRequired).into(),
+            position: None,
+        });
+    };
+    let mut once = spec.clone();
+    once.password = Some(secret.expose().to_string());
+    drop(secret);
+    let r = nsql_drivers::open(&once, default);
+    nsql_core::secret::wipe_opt(&mut once.password);
+    // 서버가 거부한 값은 폐기한다(메타 스레드는 묻지 않는다 — 다음 접속 때 워커가 다시 묻는다).
+    if let Err(e) = &r {
+        if crate::worker::stale_password(spec.dialect.unwrap_or(default), e) {
+            nsql_vault::session::forget(&crate::worker::cred_id(spec, default));
+        }
+    }
+    r
+}
+
 fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn() + Send>) {
     let mut session: Option<Box<dyn Session>> = None;
     let mut cur_gen = 0u64;
@@ -544,22 +580,32 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
                 // 재개 전 빠른 판정(docs/53): 끊긴 서버에 메타 스레드가 접속 타임아웃까지 갇히지 않게.
                 if reachable(spec) {
-                    if let Ok(Ok(s)) =
-                        catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(spec, default)))
-                    {
+                    if let Ok(Ok(s)) = catch_unwind(AssertUnwindSafe(|| open_meta(spec, default))) {
                         session = Some(s);
                     }
                 }
             }
         }
         let resp = match req {
-            Req::Open { gen, spec } => {
+            Req::Open {
+                gen,
+                mut spec,
+                once,
+            } => {
                 session = None;
                 cur_gen = gen;
-                resume = Some(spec.clone());
+                // 일회성 비밀번호는 재개용 스펙에 넣지 않는다(이 칸은 유휴 회수도 하지 않는다 — `Explorer::one_time`).
+                resume = Some(if once {
+                    let mut keep = spec.clone();
+                    nsql_core::secret::wipe_opt(&mut keep.password);
+                    keep
+                } else {
+                    spec.clone()
+                });
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
+                // (비밀번호 자리가 없는 스펙 = `open_meta`가 금고에서 빌리거나, 없으면 서버에 가지 않고 거절한다.)
                 let r = if reachable(&spec) {
-                    catch_unwind(AssertUnwindSafe(|| nsql_drivers::open(&spec, default)))
+                    catch_unwind(AssertUnwindSafe(|| open_meta(&spec, default)))
                 } else {
                     Ok(Err(DbError {
                         code: None,
@@ -577,6 +623,9 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                         position: None,
                     }))
                 };
+                if once {
+                    nsql_core::secret::wipe_opt(&mut spec.password);
+                }
                 let r = match r {
                     Ok(Ok(s)) => {
                         let d = s.dialect();
@@ -800,6 +849,7 @@ impl Explorer {
             blockers_inflight: false,
             offline: false,
             suspended: false,
+            one_time: false,
             last_used: Instant::now(),
             menu_host: Rect::default(),
             clip: None,
@@ -916,6 +966,11 @@ impl Explorer {
         self.menu.is_open()
     }
 
+    /// 열린 우클릭 메뉴의 영역(하위 메뉴 포함 · 닫혀 있으면 빈 영역) — 호스트가 "메뉴 안의 사건인가"를 판정한다.
+    pub(crate) fn menu_bounds(&self) -> Rect {
+        self.menu.bounds()
+    }
+
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
         self.bounds = b;
         self.scale = scale;
@@ -1006,6 +1061,7 @@ impl Explorer {
     pub(crate) fn suspend_if_idle(&mut self, limit_secs: u64) {
         if limit_secs == 0
             || self.offline
+            || self.one_time
             || self.suspended
             || self.conn_desc.is_empty()
             || self.live_inflight
@@ -1018,7 +1074,8 @@ impl Explorer {
         let _ = self.tx.send(Req::Suspend);
     }
 
-    pub(crate) fn connect(&mut self, spec: &ConnectSpec, profile_name: &str) {
+    pub(crate) fn connect(&mut self, spec: &ConnectSpec, profile_name: &str, once: bool) {
+        self.one_time = once;
         self.offline = false;
         self.suspended = false;
         self.last_used = Instant::now();
@@ -1042,6 +1099,7 @@ impl Explorer {
         let _ = self.tx.send(Req::Open {
             gen: self.gen,
             spec: spec.clone(),
+            once,
         });
     }
 
@@ -1430,25 +1488,66 @@ impl Explorer {
         } else {
             picked
         };
+        // ★ **연결이 해제된 서버**(오프라인 · 사용자 09-21 "새로 고침해도 아무 동작이 없다 — 해제된 상태에 맞는 정보가 보여야"):
+        //   새로 읽을 수 없으므로, 고른 자리의 읽어 둔 목록을 **"접속 안 됨" 안내 줄로 바꾼다**(옛 목록을 새로 고친 것처럼 두지 않는다) +
+        //   상태줄·경고 토스트. 접힌 노드는 펼치지 않고 읽어 둔 것만 버린다(다음에 펼치면 같은 안내가 나온다). 스키마 = 그 아래 폴더들.
+        if self.offline {
+            let msg = t(Msg::ExpOfflineRefresh).to_string();
+            let targets: Vec<usize> = match &self.nodes[i].kind {
+                NodeKind::Root => Vec::new(),
+                NodeKind::Schema(_) => self.nodes[i].children.clone(),
+                _ => vec![i],
+            };
+            for n in targets {
+                if self.nodes[n].state == LoadState::Idle && self.nodes[n].children.is_empty() {
+                    continue;
+                }
+                let old: Vec<usize> = std::mem::take(&mut self.nodes[n].children);
+                for o in old {
+                    self.detach(o);
+                }
+                // 안내 줄은 짧게("접속 안 됨" — 좁은 패널에서 잘리지 않게) · 긴 설명은 토스트·상태줄에.
+                self.nodes[n].state = if self.nodes[n].expanded {
+                    LoadState::Error(t(Msg::ExpNotConnected).to_string())
+                } else {
+                    LoadState::Idle
+                };
+            }
+            self.clamp_scroll();
+            self.actions.push(ExplorerAction::Notice(msg));
+            return;
+        }
         let what = self.label(i).0;
         let sent = if hard || self.nodes[i].state != LoadState::Loaded {
             if i == 0 {
                 self.watermarks.clear();
             }
-            self.refresh(i);
-            1
+            if self.nodes[i].expanded {
+                self.refresh(i);
+                1
+            } else {
+                // ★ **접혀 있는 노드는 새로 고침으로 펼치지 않는다**(사용자 09-21 — 한 번도 열지 않은 스키마에서 새로 고침을 하면
+                //   저절로 펼쳐졌다). 읽어 둔 것이 있으면 버리기만 한다 → 다음에 펼칠 때 새로 읽는다(그것이 곧 새로 고침이다).
+                let old: Vec<usize> = std::mem::take(&mut self.nodes[i].children);
+                for o in old {
+                    self.detach(o);
+                }
+                self.nodes[i].state = LoadState::Idle;
+                0
+            }
         } else if leaf {
             // 목록 하나만(그 아래 다른 객체의 컬럼까지 건드리지 않는다).
             usize::from(self.soft_refresh(i))
         } else {
             self.soft_refresh_subtree(i)
         };
-        if sent > 0 {
-            self.actions.push(ExplorerAction::Status(tf(
-                Msg::StExplorerRefreshed,
-                &[&what],
-            )));
-        }
+        // ★ 고른 결과는 **항상** 상태줄에 남긴다(사용자 09-21 "새로 고침이 안 된다" — 바뀐 것이 없으면 화면이 그대로라
+        //   눌렸는지조차 알 수 없었다): 오프라인 = 연결 안 됨 · 그 밖 = 새로 고침함(다시 읽을 것이 없는 스키마 노드 포함).
+        let _ = sent;
+        self.actions.push(ExplorerAction::Status(tf(
+            Msg::StExplorerRefreshed,
+            &[&what],
+        )));
     }
 
     /// 이름으로 스키마 노드 찾기(대소문자 무시 · `None` = 접속 계정의 스키마 → 스키마가 하나뿐이면 그것).
@@ -2031,7 +2130,16 @@ impl Explorer {
                 } else {
                     self.bounds
                 };
-                self.menu.open_at(x, y, items, host, text_w);
+                // ★ 누른 자리에 가깝게 · **대상 이름은 가리지 않게**(사용자 09-21): 그 행 바로 아래(자리가 없으면 위)에 연다.
+                let row_h = self.row_h();
+                let idx = (y - self.bounds.y + self.scroll) / row_h;
+                let row = Rect::new(
+                    self.bounds.x,
+                    self.bounds.y - self.scroll + idx * row_h,
+                    self.bounds.w,
+                    row_h,
+                );
+                self.menu.open_beside(x, y, row, items, host, text_w);
                 true
             }
             InputEvent::Key { key, .. } if self.focused => {
@@ -2266,6 +2374,42 @@ impl Explorer {
         }
     }
 
+    /// 자체 캡처용(기동 명령 `explorer.menu[:<n번째 보이는 줄>]`): 그 줄에서 **우클릭한 것과 같은 사건**을 컨트롤에 직접 준다
+    /// (OS 입력 주입 없음) — 메뉴가 뜨는지 · 항목을 골랐을 때 동작하는지 확인하려고.
+    pub(crate) fn capture_menu(&mut self, row: usize) -> bool {
+        let step = (4.0 * self.scale).max(1.0) as i32;
+        let mut seen: Vec<usize> = Vec::new();
+        let mut y = self.bounds.y + step;
+        while y < self.bounds.bottom() {
+            if let Some((Some(i), _)) = self.row_at(Point {
+                x: self.bounds.x + self.bounds.w / 2,
+                y,
+            }) {
+                if !seen.contains(&i) {
+                    seen.push(i);
+                    if seen.len() == row + 1 {
+                        return self.on_event(&InputEvent::RightDown {
+                            x: self.bounds.x + self.bounds.w / 3,
+                            y,
+                        });
+                    }
+                }
+            }
+            y += step;
+        }
+        false
+    }
+
+    /// 자체 캡처용(기동 명령 `explorer.pick:<id>`): 열린 메뉴에서 그 항목을 **클릭한 것과 같은 경로**로 고른다.
+    pub(crate) fn capture_pick(&mut self, id: &str) -> bool {
+        if !self.menu.is_open() {
+            return false;
+        }
+        self.menu.close();
+        self.menu_pick(id);
+        true
+    }
+
     fn menu_pick(&mut self, id: &str) {
         let Some(i) = self.selected else { return };
         match id {
@@ -2301,7 +2445,13 @@ impl Explorer {
                 if self.conn_desc.is_empty() {
                     (t(Msg::ExpNotConnected).to_string(), String::new())
                 } else if self.profile_name.is_empty() {
-                    (self.endpoint.clone(), String::new())
+                    // 접속 문자열로 붙은 서버(프로필 이름 없음)도 오프라인이면 그렇게 보인다(종전에는 표시가 없었다).
+                    let dim = if self.offline {
+                        t(Msg::ExpOffline).to_string()
+                    } else {
+                        String::new()
+                    };
+                    (self.endpoint.clone(), dim)
                 } else if self.offline {
                     // 오프라인 = 읽어 둔 메타만(이 서버에 붙은 세션 없음).
                     (
@@ -2748,13 +2898,68 @@ mod refresh_tests {
         );
         assert_eq!(pick(&mut ex, a), vec![a], "테이블 = 그 테이블의 컬럼만");
         assert_eq!(pick(&mut ex, col_b), vec![b], "컬럼 = 속한 테이블만");
-        // 아직 안 읽은 폴더 = 조용한 갱신이 아니라 새로 읽기.
+        // 아직 안 읽은 **접힌** 폴더 = 펼치지 않는다(사용자 09-21) — 읽을 것이 없고, 다음에 펼칠 때 새로 읽는다.
+        assert!(pick(&mut ex, views).is_empty());
+        assert_eq!(ex.nodes[views].state, LoadState::Idle);
+        assert!(
+            !ex.nodes[views].expanded,
+            "새로 고침이 접힌 노드를 펼치지 않는다"
+        );
+        // 펼쳐져 있는데 아직 못 읽은(오류) 폴더 = 새로 읽는다 · 펼침은 그대로.
+        ex.nodes[views].expanded = true;
+        ex.nodes[views].state = LoadState::Error("x".into());
         assert!(pick(&mut ex, views).is_empty());
         assert_eq!(ex.nodes[views].state, LoadState::Loading);
+        assert!(ex.nodes[views].expanded);
+        // 강제(Shift+F5)도 접힌 노드는 펼치지 않는다 — 읽어 둔 것을 버리기만.
+        ex.nodes[a].expanded = false;
+        ex.selected = Some(a);
+        ex.refresh_selected(true);
+        assert!(!ex.nodes[a].expanded);
+        assert!(ex.nodes[a].children.is_empty());
+        assert_eq!(ex.nodes[a].state, LoadState::Idle);
         assert!(ex
             .take_actions()
             .iter()
             .any(|x| matches!(x, ExplorerAction::Status(_))));
+    }
+
+    /// 연결이 해제된 서버에서 새로 고침 = 읽어 둔 목록을 "접속 안 됨" 안내로 바꾸고 알린다 · 접힌 노드는 펼치지 않는다 · 요청은 0.
+    #[test]
+    fn refresh_on_offline_server_shows_the_disconnected_state() {
+        let (mut ex, schema, tables) = sample();
+        ex.offline = true;
+        ex.nodes[tables].expanded = true;
+        ex.selected = Some(tables);
+        ex.soft.clear();
+        ex.refresh_selected(false);
+        assert!(ex.soft.is_empty(), "서버로 가는 요청 없음");
+        assert!(ex.nodes[tables].children.is_empty());
+        assert!(matches!(ex.nodes[tables].state, LoadState::Error(_)));
+        assert!(ex
+            .take_actions()
+            .iter()
+            .any(|a| matches!(a, ExplorerAction::Notice(_))));
+        // 접힌 폴더 = 펼치지 않는다(읽어 둔 것만 버린다) · 스키마를 고르면 그 아래 폴더들이 대상.
+        let views = ex.nodes[schema].children[1];
+        ex.nodes[views].state = LoadState::Loaded;
+        ex.nodes[views].expanded = false;
+        ex.selected = Some(schema);
+        ex.refresh_selected(false);
+        assert_eq!(ex.nodes[views].state, LoadState::Idle);
+        assert!(!ex.nodes[views].expanded);
+        assert!(
+            !ex.nodes[schema].children.is_empty(),
+            "스키마의 폴더 줄은 남는다"
+        );
+        // 오프라인 표시는 프로필 이름이 없는 접속에도 나온다.
+        ex.conn_desc = "oracle://u@h:1521/s".into();
+        ex.profile_name.clear();
+        ex.endpoint = "h:1521".into();
+        assert_eq!(
+            ex.label(0),
+            ("h:1521".to_string(), t(Msg::ExpOffline).to_string())
+        );
     }
 
     /// 못 찾음 신호: 이름이 트리에 있을 때만 그 폴더 · 폴더당 60초에 1회 · 이름을 모르면 현재 스키마의 읽어 둔 테이블·뷰 폴더.
@@ -2824,7 +3029,7 @@ mod refresh_tests {
         };
         run("CREATE TABLE a (id INTEGER)");
         let mut ex = Explorer::new(Box::new(|| {}), true);
-        ex.connect(&spec, "t138");
+        ex.connect(&spec, "t138", false);
         pump(&mut ex, |e| !e.nodes[0].children.is_empty());
         let schema = ex.nodes[0].children[0];
         if !ex.nodes[schema].expanded {

@@ -136,6 +136,7 @@
 | §4 | 항목 | 구현 |
 |---|---|---|
 | 1단계 | **큰 파일 모드** L1 5 MB/10만 줄 · L2 20 MB/30만 줄(D-125 ①) | `editors.rs` `large`(탭 → 단계·강제) · 읽을 때·저장할 때 재판정. **L1** = 미니맵 · 선택어 강조 · 줄 변경 기준선 끔 + **저장본 사본을 들지 않음** · **L2** = + 구문 강조 끔. 상태줄 `Large L1/L2` 칸 · 명령 "Toggle Large File Optimizations (This Tab)"(`file.large_force` — 이 탭만 기능을 강제로 켬). 큰 탭은 외부 변경 자동 병합도 건너뛴다(기준 사본이 없다 → 띠로 묻는다). 설정 `file.large_l1_mb`/`_lines` · `file.large_l2_mb`/`_lines`(0 = 그 기준 끔) |
+| 1단계 보강(09-21 89차) | **단계별 기능 제한을 설정으로** | **확장 효과**(Rainbow Pairs: 괄호 깊이 색 · 현재 쌍 강조 · 짝 없음 표시 · 편집마다 도는 본문 전체 쌍 표)는 종전에 **제한이 없었다**(상한 `max_chars` 2M 글자뿐 — 10만 줄 L1 파일은 그대로 돌았다) → `file.large_ext_level`(off·l1·l2 · 기본 **l1**) · 구문 강조 = `file.large_syntax_level`(기본 **l2** — 종전 동작을 설정으로 엶). 자동 닫기(`editor.auto_close_pairs`)는 편집 코어라 유지 · 확장의 **명령**(우클릭 메뉴)은 부를 때만 도므로 제한하지 않는다 · 저장 뒤 단계가 내려가면 기능이 돌아온다(`reclassify` → `restore_large_features`) · "이 탭만 강제로 켜기"가 확장 효과도 되돌린다 · `editors.rs` `feature_limited`/`large_bracket_opts` |
 | 1단계 | 저장 기준 `String` 제거 | 더러움 = 되돌리기 **저장 지점**(상태 id · O(1) · [60 §3-4](60-undo-redo-redesign.md)) — 큰 탭은 저장본 사본 0 |
 | 2단계 | 되돌리기 = 연산 기록 + **바이트 예산**(D-127 ③) | ✅ [60](60-undo-redo-redesign.md) — `editor.undo_budget_mb` 64 + 개수 상한 보조. 버퍼 교체(D-126)는 **미구현**: 본문을 바꾸는 길을 두 함수로 모아 두었다(교체 때 고칠 곳) |
 | 3단계 | **열기 선택**(기준 `file.large_ask_mb` 50) | 팔레트 목록 넷: 그대로 열기 / **앞 N MB만**(읽기 전용 · 경로 없음 · No connection · `file.large_head_mb` 8) / **읽기 전용** / **열지 않고 실행** |

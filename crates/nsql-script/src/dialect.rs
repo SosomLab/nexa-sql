@@ -12,7 +12,9 @@
 use crate::bind::{extract_binds, unique_names, BindRef};
 use crate::lexer::{classify, find_word_ci};
 use crate::vars::VarStore;
-use nsql_core::{BindParam, Dialect, Direction, ExecRequest, Value, VarType};
+use nsql_core::{
+    BindParam, Caps, Dialect, Direction, ExecForm, ExecRequest, Marker, Value, VarType,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PrepareMode {
@@ -61,9 +63,14 @@ impl Prepared {
     }
 }
 
-/// `sql`의 `:NAME`을 방언에 맞춰 재작성하고 저장소 값을 붙인다.
+/// `sql`의 `:NAME`을 방언에 맞춰 재작성하고 저장소 값을 붙인다(내장 방언의 능력표로 — 테스트·`nsql plan`용 얇은 껍질).
 /// `inout`이 참이면(PL/SQL 블록·EXEC) 모든 바인드가 InOut — 실행 후 값이 돌아온다.
 pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) -> Prepared {
+    prepare_with(&Caps::of(dialect), sql, vars, inout)
+}
+
+/// [`prepare`]의 본체 — 바인드 자리 표기는 **능력표**(`Marker`)가 정한다(T-152 · 엔진은 세션의 능력표로 부른다).
+pub fn prepare_with(caps: &Caps, sql: &str, vars: &mut VarStore, inout: bool) -> Prepared {
     let refs = extract_binds(sql);
     let names = unique_names(&refs);
     let mut implicit = Vec::new();
@@ -83,12 +90,12 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
         BindParam {
             name: n.to_string(),
             value: v.value.clone(),
-            ty: v.ty.clone(),
+            ty: bind_type(&v.ty, v.declared, inout),
             direction: dir,
         }
     };
-    match dialect {
-        Dialect::Oracle => Prepared {
+    match caps.marker {
+        Marker::Named => Prepared {
             sql: sql.to_string(),
             params: names.iter().map(|n| param_for(n)).collect(),
             mode: PrepareMode::Bind,
@@ -96,7 +103,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
             line_offset: 0,
             captures: Vec::new(),
         },
-        Dialect::Mssql => {
+        Marker::AtName => {
             let rewritten = rewrite_select_into_tsql(sql);
             let rewritten = replace_refs(&rewritten, &extract_binds(&rewritten), |r| {
                 format!("@{}", r.name)
@@ -132,7 +139,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                 }
             }
         }
-        Dialect::Postgres => {
+        Marker::DollarN => {
             let sql2 = replace_refs(sql, &refs, |r| {
                 let idx = names.iter().position(|n| n == &r.name).map_or(0, |i| i + 1);
                 format!("${idx}")
@@ -146,7 +153,7 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                 captures: Vec::new(),
             }
         }
-        Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => {
+        Marker::Question => {
             // `?`는 등장 순서대로 — 같은 변수가 두 번 나오면 두 번 보낸다.
             let sql2 = replace_refs(sql, &refs, |_| "?".to_string());
             let params = refs.iter().map(|r| param_for(&r.name)).collect();
@@ -159,6 +166,16 @@ pub fn prepare(dialect: Dialect, sql: &str, vars: &mut VarStore, inout: bool) ->
                 captures: Vec::new(),
             }
         }
+    }
+}
+
+/// 바인드로 보낼 타입. **선언 없이 대입으로 생긴 글자 변수**의 타입은 "지금 값의 길이"일 뿐 그릇의 크기가 아니다 — 그대로
+/// 보내면 SQL Server가 `NVARCHAR(2)`로 선언해 **돌아오는 값을 말없이 자른다**(09-21 실서버: `'in'` → `'in -> 63'`이 `'in'`).
+/// 선언한 변수(`VAR X VARCHAR2(10)`)의 길이는 사용자의 뜻이므로 그대로 둔다 · 값이 돌아오지 않는 바인드(읽기만)는 넓힐 까닭이 없다.
+fn bind_type(ty: &VarType, declared: bool, inout: bool) -> VarType {
+    match ty {
+        VarType::Varchar2(n) if inout && !declared => VarType::Varchar2((*n).max(4000)),
+        other => other.clone(),
     }
 }
 
@@ -411,11 +428,16 @@ fn contains_subquery(expr: &str) -> bool {
     false
 }
 
-/// `EXEC 본문`을 방언별 실행 문장으로.
+/// `EXEC 본문`을 방언별 실행 문장으로(내장 방언의 능력표로 — 테스트·`nsql plan`용 얇은 껍질).
 pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
+    wrap_exec_with(&Caps::of(dialect), body)
+}
+
+/// `EXEC 본문`을 **능력표의 틀**(`ExecForm`)대로 실행 문장으로(T-152).
+pub fn wrap_exec_with(caps: &Caps, body: &str) -> String {
     let body = body.trim().trim_end_matches(';').trim();
-    match dialect {
-        Dialect::Oracle => {
+    match caps.exec_form {
+        ExecForm::PlsqlBlock => {
             // ★ `:V := (SELECT …)` — PL/SQL은 식 안의 서브쿼리를 허용하지 않는다(PLS-00103 · 19c 실서버 09-13).
             // `SELECT (…) INTO :V FROM DUAL`로 바꾸면 스칼라 서브쿼리·SYSDATE·함수 호출이 모두 SQL 식으로 평가된다.
             if let Some((lhs, rhs)) = body.split_once(":=") {
@@ -431,7 +453,7 @@ pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
             }
             format!("BEGIN {body}; END;")
         }
-        Dialect::Mssql => {
+        ExecForm::TsqlBatch => {
             // `:V := expr` → `SET @V = expr` · 그 외는 T-SQL EXEC 그대로.
             if let Some((lhs, rhs)) = body.split_once(":=") {
                 let lhs = lhs.trim();
@@ -448,19 +470,7 @@ pub fn wrap_exec(dialect: Dialect, body: &str) -> String {
                 format!("EXEC {body}")
             }
         }
-        Dialect::Postgres => {
-            if let Some((lhs, rhs)) = body.split_once(":=") {
-                if let Some(name) = lhs.trim().strip_prefix(':') {
-                    return format!("SELECT {} AS \"{}\"", rhs.trim(), name.to_ascii_uppercase());
-                }
-            }
-            if body.to_ascii_uppercase().starts_with("SELECT") {
-                rewrite_select_into_alias(body)
-            } else {
-                format!("CALL {body}")
-            }
-        }
-        Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => {
+        ExecForm::Call => {
             if let Some((lhs, rhs)) = body.split_once(":=") {
                 if let Some(name) = lhs.trim().strip_prefix(':') {
                     return format!("SELECT {} AS \"{}\"", rhs.trim(), name.to_ascii_uppercase());
@@ -528,6 +538,29 @@ mod tests {
         assert_eq!(p.params[1].ty.tsql_type(), "DECIMAL(38,10)");
         let p = prepare(Dialect::Mssql, "SELECT @x = 1", &mut v, true);
         assert!(p.params.is_empty());
+    }
+
+    /// 선언 없이 생긴 글자 변수: 값이 돌아오는 바인드(InOut)만 넓힌다 · 선언한 길이와 읽기 전용은 그대로.
+    #[test]
+    fn undeclared_text_binds_are_widened_only_when_values_come_back() {
+        use super::bind_type;
+        let t = VarType::Varchar2(2);
+        assert_eq!(bind_type(&t, false, true), VarType::Varchar2(4000));
+        assert_eq!(
+            bind_type(&t, true, true),
+            VarType::Varchar2(2),
+            "선언한 길이 = 사용자의 뜻"
+        );
+        assert_eq!(
+            bind_type(&t, false, false),
+            VarType::Varchar2(2),
+            "읽기만 하는 바인드"
+        );
+        assert_eq!(
+            bind_type(&VarType::Varchar2(9000), false, true),
+            VarType::Varchar2(9000)
+        );
+        assert_eq!(bind_type(&VarType::Number, false, true), VarType::Number);
     }
 
     #[test]

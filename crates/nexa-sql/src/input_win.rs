@@ -24,6 +24,8 @@ pub(crate) enum InputWinAction {
     Paint,
     /// 값을 넣고 실행((종류, 이름, 친 글)).
     Run(Vec<(InputKind, String, String)>),
+    /// 비밀번호 입력 창의 답 — 값은 [`nsql_core::Secret`](버려질 때 0으로 덮어쓴다) · 입력란은 이미 지웠다.
+    Password(nsql_core::Secret),
     /// 값 없이 그대로 실행.
     Skip,
     /// 실행하지 않는다.
@@ -49,6 +51,11 @@ pub(crate) struct InputWin {
     cancel_btn: Button,
     /// 답을 받을 세션(호스트가 기억해 둔다 · 다중 세션에서 섞이지 않게).
     pub sess: u64,
+    /// **비밀번호 모드**(사용자 09-21 — 비밀번호 자리가 없는 접속 문자열): 물을 대상의 표시(가린 접속 문자열). 입력란 하나 ·
+    /// 가림 · 복사 불가 · "건너뛰기" 없음 · 답은 `Password(Secret)` · 닫을 때 입력란을 0으로 덮어쓴다.
+    password_for: Option<String>,
+    /// 들고 있던 비밀번호가 거부돼 다시 묻는 것이다(안내 글이 달라진다).
+    password_rejected: bool,
 }
 
 impl InputWin {
@@ -66,7 +73,41 @@ impl InputWin {
             skip_btn: Button::new(t(Msg::BtnSkipInputs)),
             cancel_btn: Button::new(t(Msg::BtnCancel)),
             sess: 0,
+            password_for: None,
+            password_rejected: false,
         }
+    }
+
+    /// **비밀번호 한 번 묻기** — `target` = 가린 접속 문자열(누구의 비밀번호인지). 같은 창·같은 배선을 쓴다.
+    pub(crate) fn open_password(
+        &mut self,
+        el: &ActiveEventLoop,
+        theme: Option<winit::window::Theme>,
+        owner: Option<&Window>,
+        target: String,
+        rejected: bool,
+        sess: u64,
+    ) {
+        let need = InputNeed {
+            kind: InputKind::Macro,
+            name: "password".into(),
+            line: 0,
+            prompt: None,
+            default: None,
+            hide: true,
+        };
+        self.open(el, theme, owner, vec![need], sess);
+        self.password_for = Some(target);
+        self.password_rejected = rejected;
+        self.run_btn.set_label(t(Msg::BtnConnect));
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL — {}", t(Msg::WinPassword)));
+        }
+        self.redraw();
+    }
+
+    pub(crate) fn is_password(&self) -> bool {
+        self.password_for.is_some()
     }
 
     /// 입력 격자를 연다(이미 열려 있으면 내용을 바꾼다).
@@ -78,21 +119,29 @@ impl InputWin {
         needs: Vec<InputNeed>,
         sess: u64,
     ) {
+        self.wipe_if_password();
+        self.run_btn.set_label(t(Msg::BtnRunInputs));
         self.sess = sess;
         self.rows = needs
             .into_iter()
-            .map(|need| Row {
-                tb: TextBox::new(match need.kind {
+            .map(|need| {
+                let mut tb = TextBox::new(match need.kind {
                     InputKind::Bind => "NULL",
                     InputKind::Macro => "",
-                }),
-                need,
+                });
+                // `ACCEPT`(T-153): DEFAULT = 미리 채운다 · HIDE = 가린다.
+                if let Some(d) = &need.default {
+                    tb.set_text(d);
+                }
+                tb.set_masked(need.hide);
+                Row { tb, need }
             })
             .collect();
         self.focus = 0;
         self.sync_focus();
         if let Some(w) = &self.window {
-            w.focus_window();
+            w.set_title(&format!("Nexa SQL — {}", t(Msg::WinInputs)));
+            crate::winfocus::focus(w);
             self.redraw();
             return;
         }
@@ -121,12 +170,35 @@ impl InputWin {
         self.surface = crate::present::Presenter::new(win.clone()).ok();
         // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
         win.set_ime_allowed(crate::input::system_ime());
-        win.focus_window();
+        crate::winfocus::focus(&win);
         self.window = Some(win);
         self.redraw();
     }
 
+    /// 비밀번호 모드였으면 입력란(본문·되돌리기 기록·조합 글)을 0으로 덮어쓰고 모드를 끝낸다.
+    fn wipe_if_password(&mut self) {
+        if self.password_for.take().is_some() {
+            for r in &mut self.rows {
+                r.tb.wipe();
+            }
+        }
+    }
+
+    /// Enter·실행 버튼 — 보통은 값 목록 · 비밀번호 모드는 `Secret`(입력란은 꺼내는 즉시 지운다).
+    fn submit(&mut self) -> InputWinAction {
+        if self.password_for.is_some() {
+            let s = self
+                .rows
+                .first_mut()
+                .map(|r| r.tb.take_secret_text())
+                .unwrap_or_default();
+            return InputWinAction::Password(nsql_core::Secret::new(s));
+        }
+        InputWinAction::Run(self.values())
+    }
+
     pub(crate) fn close(&mut self) {
+        self.wipe_if_password();
         self.surface = None;
         self.window = None;
         for r in &mut self.rows {
@@ -274,7 +346,7 @@ impl InputWin {
                 }
                 self.redraw();
                 if self.run_btn.take_clicked() {
-                    return InputWinAction::Run(self.values());
+                    return self.submit();
                 }
                 if self.skip_btn.take_clicked() {
                     return InputWinAction::Skip;
@@ -301,7 +373,7 @@ impl InputWin {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) => return InputWinAction::Cancel,
-                    Key::Named(NamedKey::Enter) => return InputWinAction::Run(self.values()),
+                    Key::Named(NamedKey::Enter) => return self.submit(),
                     Key::Named(NamedKey::Tab) | Key::Named(NamedKey::ArrowDown)
                         if !self.rows.is_empty() =>
                     {
@@ -325,12 +397,18 @@ impl InputWin {
                         return InputWinAction::None;
                     }
                     Key::Character(c) if self.primary && c.eq_ignore_ascii_case("v") => {
-                        if let (Some(text), Some(r)) =
+                        let secret = self.password_for.is_some();
+                        if let (Some(mut text), Some(r)) =
                             (crate::clipboard::read_text(), self.rows.get_mut(self.focus))
                         {
                             // 한 줄 입력란 — 첫 줄만.
-                            let line = text.lines().next().unwrap_or("").to_string();
+                            let mut line = text.lines().next().unwrap_or("").to_string();
                             r.tb.paste(&line, &mut inv);
+                            // 비밀번호를 붙여 넣었으면 우리가 뜬 사본은 바로 지운다(클립보드 자체는 사용자의 것 — 건드리지 않는다).
+                            if secret {
+                                nsql_core::secret::wipe_string(&mut line);
+                                nsql_core::secret::wipe_string(&mut text);
+                            }
                         }
                         self.redraw();
                         return InputWinAction::None;
@@ -389,20 +467,37 @@ impl InputWin {
             dc.select_font(FontSlot::Base, false);
             let th_txt = dc.text_height();
             let pad = px(12.0);
-            // 안내 한 줄.
-            dc.text(
-                pad,
-                pad,
-                Rect::new(0, 0, wi, hi),
-                t(Msg::InputsHint),
-                th.text_dim,
-            );
+            // 안내 한 줄(비밀번호 모드 = 누구의 비밀번호인지 + 저장하지 않는다는 약속).
+            let hint = match &self.password_for {
+                Some(target) if self.password_rejected => {
+                    nsql_i18n::tf(Msg::PasswordHintRejected, &[target])
+                }
+                Some(target) => nsql_i18n::tf(Msg::PasswordHint, &[target]),
+                None => t(Msg::InputsHint).to_string(),
+            };
+            dc.text(pad, pad, Rect::new(0, 0, wi, hi), &hint, th.text_dim);
             let row_h = th_txt + px(12.0);
             let gap = px(6.0);
             // 이름 열 폭 = 가장 긴 "접두 + 이름" · 종류 표시는 이름 뒤 흐린 글.
-            let label = |r: &Row| match r.need.kind {
-                InputKind::Bind => format!(":{}", r.need.name),
-                InputKind::Macro => format!("&{}", r.need.name),
+            // `ACCEPT … PROMPT 글`이면 그 글을(끝의 `:`·공백은 떼고) 이름 뒤에 붙인다.
+            let pw_mode = self.password_for.is_some();
+            let label = |r: &Row| {
+                if pw_mode {
+                    return t(Msg::LblPassword).to_string();
+                }
+                let base = match r.need.kind {
+                    InputKind::Bind => format!(":{}", r.need.name),
+                    InputKind::Macro => format!("&{}", r.need.name),
+                };
+                match r
+                    .need
+                    .prompt
+                    .as_deref()
+                    .map(|p| p.trim().trim_end_matches(':').trim())
+                {
+                    Some(p) if !p.is_empty() => format!("{base}  {p}"),
+                    _ => base,
+                }
             };
             let name_w = self
                 .rows
@@ -436,8 +531,16 @@ impl InputWin {
             // 버튼(오른쪽 정렬: Cancel · Skip · Run).
             let bw = px(96.0);
             let mut bx = wi - pad - bw;
-            for b in [&mut self.run_btn, &mut self.skip_btn, &mut self.cancel_btn] {
+            for (k, b) in [&mut self.run_btn, &mut self.skip_btn, &mut self.cancel_btn]
+                .into_iter()
+                .enumerate()
+            {
                 b.set_scale(s);
+                // 비밀번호에는 "건너뛰기"가 없다(빈 비밀번호는 접속 문자열의 `user:@host`로 명시한다).
+                if pw_mode && k == 1 {
+                    b.set_bounds(Rect::default(), inv);
+                    continue;
+                }
                 b.set_bounds(Rect::new(bx, btn_y, bw, btn_h), inv);
                 b.paint(&mut dc, th);
                 bx -= bw + px(8.0);

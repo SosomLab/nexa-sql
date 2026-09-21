@@ -71,6 +71,12 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "-v, --var",
+        arg: "<name=value>",
+        desc: Msg::HlpOptVar,
+        setting: None,
+    },
+    Opt {
         flags: "--max-rows",
         arg: "<n>",
         desc: Msg::HlpOptMaxRows,
@@ -181,7 +187,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdRun,
         detail: Msg::HlpCmdRunDetail,
         args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
         notes: &[],
         examples: &[
             "nsql run -c prod report.sql",
@@ -197,7 +203,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdShell,
         detail: Msg::HlpCmdShellDetail,
         args: &[],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--log"],
         notes: &[],
         examples: &["nsql shell -c prod", "nsql shell -c prod --width 160", "nsql shell -c sqlite:app.db -d sqlite"],
     },

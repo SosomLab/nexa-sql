@@ -232,11 +232,6 @@ const TX_BADGE_OPTS: &[(&str, Msg)] = &[
     ("dot", Msg::ValBadgeDot),
     ("off", Msg::ValBadgeOff),
 ];
-/// 결과 탭 바 표시(D-74).
-const TABBAR_OPTS: &[(&str, Msg)] = &[
-    ("auto", Msg::ValTabbarAuto),
-    ("always", Msg::ValTabbarAlways),
-];
 
 const MSSQL_ENCRYPT_OPTS: &[(&str, Msg)] = &[
     ("required", Msg::ValMssqlEncryptRequired),
@@ -910,13 +905,24 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 결과 탭(다중) 바로 밑: **결과가 1개일 때도 탭 영역을 보일지**(사용자 09-21) — 결과 탭을 쓸 때만 바꿀 수 있다(`DEPENDS` ·
+    // 부모가 꺼지면 설정 창에서 잠긴다). 옛 키 `grid.result_tabbar`(auto|always)는 읽을 때 옮긴다(`migrate_result_tabbar`).
     Entry {
-        key: "grid.result_tabbar",
+        key: "grid.result_tabbar_single",
         cat: Msg::CatGrid,
         label: Msg::LblGridResultTabbar,
         desc: Msg::DescGridResultTabbar,
-        kind: SettingKind::Choice(TABBAR_OPTS),
-        default: "auto",
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // 결과 탭 이름 규칙(사용자 09-21): 번호(결과1·결과2… · 가장 큰 번호 + 1) | 테이블 이름(종전).
+    Entry {
+        key: "grid.result_tab_title",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridResultTabTitle,
+        desc: Msg::DescGridResultTabTitle,
+        kind: SettingKind::Choice(RESULT_TITLE_OPTS),
+        default: "number",
     },
     Entry {
         key: "grid.result_tabs_max",
@@ -1543,6 +1549,23 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "300000",
     },
+    // 큰 파일 단계별 기능 제한(사용자 09-21): 확장 효과(괄호 색·짝 표 등 — Rainbow Pairs)와 구문 강조를 끄기 시작하는 단계.
+    Entry {
+        key: "file.large_ext_level",
+        cat: Msg::CatFiles,
+        label: Msg::LblLargeExtLevel,
+        desc: Msg::DescLargeExtLevel,
+        kind: SettingKind::Choice(LARGE_LEVEL_OPTS),
+        default: "l1",
+    },
+    Entry {
+        key: "file.large_syntax_level",
+        cat: Msg::CatFiles,
+        label: Msg::LblLargeSyntaxLevel,
+        desc: Msg::DescLargeSyntaxLevel,
+        kind: SettingKind::Choice(LARGE_LEVEL_OPTS),
+        default: "l2",
+    },
     Entry {
         key: "file.large_ask_mb",
         cat: Msg::CatFiles,
@@ -2124,9 +2147,91 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 1, max: 16 },
         default: "4",
     },
+    // ★ Oracle 클라이언트(Instant Client · 사용자 09-21): 자동 = 지금 환경에서 찾아 **읽기 전용**으로 보여 준다 · 직접 지정 = 폴더와
+    //   TNS_ADMIN만 바꿀 수 있고(`DEPENDS`) 거기서 나오는 파일 경로들은 읽기 전용(`INFO_KEYS` — 저장하지 않는 계산 값).
+    Entry {
+        key: "oracle.client_mode",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraClientMode,
+        desc: Msg::DescOraClientMode,
+        kind: SettingKind::Choice(ORA_CLIENT_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "oracle.client_dir",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraClientDir,
+        desc: Msg::DescOraClientDir,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.tns_admin",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraTnsAdmin,
+        desc: Msg::DescOraTnsAdmin,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.info_library",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraInfoLibrary,
+        desc: Msg::DescOraInfoLibrary,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.info_version",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraInfoVersion,
+        desc: Msg::DescOraInfoVersion,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.info_tnsnames",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraInfoTnsnames,
+        desc: Msg::DescOraInfoTnsnames,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "oracle.info_sqlnet",
+        cat: Msg::CatDbmsOracle,
+        label: Msg::LblOraInfoSqlnet,
+        desc: Msg::DescOraInfoSqlnet,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "mssql.info_driver",
+        cat: Msg::CatDbmsMssql,
+        label: Msg::LblDbmsInfoDriver,
+        desc: Msg::DescDbmsInfo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "pg.info_driver",
+        cat: Msg::CatDbmsPostgres,
+        label: Msg::LblDbmsInfoDriver,
+        desc: Msg::DescDbmsInfo,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "sqlite.info_driver",
+        cat: Msg::CatDbmsSqlite,
+        label: Msg::LblDbmsInfoDriver,
+        desc: Msg::DescDbmsInfo,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "oracle.live.source",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsOracle,
         label: Msg::LblLiveSource,
         desc: Msg::DescLiveSource,
         kind: SettingKind::Choice(LIVE_SOURCE_OPTS),
@@ -2134,7 +2239,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "oracle.live.interval_ms",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsOracle,
         label: Msg::LblLiveInterval,
         desc: Msg::DescLiveInterval,
         kind: SettingKind::Int {
@@ -2145,7 +2250,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "oracle.live.table",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsOracle,
         label: Msg::LblLiveTable,
         desc: Msg::DescLiveTable,
         kind: SettingKind::Text,
@@ -2153,7 +2258,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "oracle.live.ts_col",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsOracle,
         label: Msg::LblLiveTsCol,
         desc: Msg::DescLiveTsCol,
         kind: SettingKind::Text,
@@ -2161,7 +2266,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "oracle.live.text_col",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsOracle,
         label: Msg::LblLiveTextCol,
         desc: Msg::DescLiveTextCol,
         kind: SettingKind::Text,
@@ -2178,7 +2283,7 @@ pub const REGISTRY: &[Entry] = &[
     // SQL Server 암호화 범위(T-108 · docs/44 §4): 로그인만 암호화하면 실행 취소(TDS Attention)가 접속을 유지한 채 된다.
     Entry {
         key: "mssql.encrypt",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsMssql,
         label: Msg::LblMssqlEncrypt,
         desc: Msg::DescMssqlEncrypt,
         kind: SettingKind::Choice(MSSQL_ENCRYPT_OPTS),
@@ -2186,11 +2291,19 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "mssql.cancel",
-        cat: Msg::CatConnection,
+        cat: Msg::CatDbmsMssql,
         label: Msg::LblMssqlCancel,
         desc: Msg::DescMssqlCancel,
         kind: SettingKind::Choice(MSSQL_CANCEL_OPTS),
         default: "attention",
+    },
+    Entry {
+        key: "connect.remember_session_password",
+        cat: Msg::CatConnection,
+        label: Msg::LblRememberSessionPw,
+        desc: Msg::DescRememberSessionPw,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     Entry {
         key: "connect.reconnect_same",
@@ -2466,6 +2579,52 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescVarsIntoPolicy,
         kind: SettingKind::Choice(VARS_INTO_OPTS),
         default: "oracle",
+    },
+    // 부하원 스위치(39 §3 · 09-21): 호출 서명 조회(루틴당 카탈로그 질의 1회) · PG 커서 이름 풀기(결과마다 확인 왕복 1회).
+    // 둘 다 **결과에 영향을 주므로** 향상 모드(`perf::BOOST`)에는 넣지 않는다 — 끄는 것은 사용자의 선택.
+    Entry {
+        key: "vars.signature_lookup",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsSignatureLookup,
+        desc: Msg::DescVarsSignatureLookup,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "pg.refcursor_expand",
+        cat: Msg::CatDbmsPostgres,
+        label: Msg::LblPgRefcursorExpand,
+        desc: Msg::DescPgRefcursorExpand,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // T-153: `${이름:형식}` 치환 · 돌아온 값의 크기 상한(기본 1 MB — SQL*Plus VARCHAR2 32 KB · CLOB는 무제한 · DBeaver 상한 없음의 사이).
+    Entry {
+        key: "vars.brace_subst",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsBraceSubst,
+        desc: Msg::DescVarsBraceSubst,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "vars.env_subst",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsEnvSubst,
+        desc: Msg::DescVarsEnvSubst,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "vars.max_value_kb",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsMaxValueKb,
+        desc: Msg::DescVarsMaxValueKb,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 1_048_576,
+        },
+        default: "1024",
     },
     // D-136: 파일별 변수 보존(`<설정 폴더>/vars/<경로 해시>.sql` — 실행 가능한 VAR/EXEC 스크립트 · 비밀·커서·여러 줄 제외).
     Entry {
@@ -3061,6 +3220,16 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     (Msg::GrpEditors, &[Msg::CatEditor, Msg::CatFiles]),
     (Msg::GrpConnections, &[Msg::CatConnection, Msg::CatCli]),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
+    // DBMS별 종속 설정(사용자 09-21): 클라이언트 자동 탐지/직접 지정 + 읽기 전용 파생 정보 · 그 DBMS에만 뜻이 있는 키.
+    (
+        Msg::GrpDbms,
+        &[
+            Msg::CatDbmsOracle,
+            Msg::CatDbmsMssql,
+            Msg::CatDbmsPostgres,
+            Msg::CatDbmsSqlite,
+        ],
+    ),
     // 확장(사용자 09-17 "Extensions 설정은 별도 그룹 밑에"): 관리자 + 확장별 분류(확장 하나 = 분류 하나).
     (
         Msg::GrpExtensions,
@@ -3148,6 +3317,43 @@ impl Dep {
 }
 
 /// (자식, 부모, 조건) — 부모가 조건을 만족하지 않으면 자식은 설정 화면에서 잠긴다(값은 유지 · CLI `config set`은 그대로).
+/// Oracle 클라이언트를 정하는 방식.
+const ORA_CLIENT_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValOraClientAuto),
+    ("manual", Msg::ValOraClientManual),
+];
+
+/// ★ **읽기 전용 정보 키**(사용자 09-21): 저장하지 않는 계산 값 — 호스트가 그때그때 채워 설정 창에 잠긴 칸으로 보여 준다
+/// (자동 탐지 결과 · 설정에서 파생된 파일 경로 · 내장 드라이버 안내). `set`은 거부한다 · 설정 파일에 적히지 않는다.
+pub const INFO_KEYS: &[&str] = &[
+    "oracle.info_library",
+    "oracle.info_version",
+    "oracle.info_tnsnames",
+    "oracle.info_sqlnet",
+    "mssql.info_driver",
+    "pg.info_driver",
+    "sqlite.info_driver",
+];
+
+/// 읽기 전용 정보 키인가.
+#[must_use]
+pub fn is_info(key: &str) -> bool {
+    INFO_KEYS.contains(&key)
+}
+
+/// 결과 탭 이름 규칙.
+const RESULT_TITLE_OPTS: &[(&str, Msg)] = &[
+    ("number", Msg::ValResultTitleNumber),
+    ("table", Msg::ValResultTitleTable),
+];
+
+/// 큰 파일 모드가 어떤 기능을 끄기 시작하는 단계.
+const LARGE_LEVEL_OPTS: &[(&str, Msg)] = &[
+    ("off", Msg::ValLargeLevelOff),
+    ("l1", Msg::ValLargeLevelL1),
+    ("l2", Msg::ValLargeLevelL2),
+];
+
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("meta.refresh_on_commit", "meta.refresh_on_ddl", Dep::On),
     (
@@ -3160,6 +3366,12 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.typeahead_special", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_pos", "explorer.typeahead", Dep::On),
     ("run.toast_hide_secs", "run.toast", Dep::On),
+    // 결과가 1개일 때도 탭 줄을 둘지 — 결과 탭(다중)을 쓸 때만 뜻이 있다(`ResultPanel::bar_visible` = enabled && …).
+    ("grid.result_tabbar_single", "grid.result_tabs", Dep::On),
+    ("vars.env_subst", "vars.brace_subst", Dep::On),
+    // Oracle 클라이언트: 직접 지정일 때만 폴더·TNS_ADMIN을 바꿀 수 있다(자동이면 탐지 결과가 읽기 전용으로 보인다).
+    ("oracle.client_dir", "oracle.client_mode", Dep::Eq("manual")),
+    ("oracle.tns_admin", "oracle.client_mode", Dep::Eq("manual")),
     ("vars.persist_days", "vars.persist", Dep::On),
     ("log.dev_layers", "log.dev_mode", Dep::On),
     ("editor.smart_indent", "editor.auto_indent", Dep::On),
@@ -3452,7 +3664,27 @@ impl Settings {
             }
         }
         s.migrate_explorer_refresh();
+        s.migrate_result_tabbar();
         s
+    }
+
+    /// 옛 `grid.result_tabbar = always`(선택 상자) → `grid.result_tabbar_single = on`(스위치 · 사용자 09-21). `auto`는 새 기본값(off)과
+    /// 같아 옮길 것이 없다. 옛 줄은 다음 저장 때 사라진다 · 새 키를 이미 정했으면 건드리지 않는다.
+    fn migrate_result_tabbar(&mut self) {
+        let old = self
+            .unknown
+            .iter()
+            .find(|(k, _)| k == "grid.result_tabbar")
+            .map(|(_, v)| v.clone());
+        self.unknown.retain(|(k, _)| k != "grid.result_tabbar");
+        if old
+            .as_deref()
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("always"))
+            && !self.values.contains_key("grid.result_tabbar_single")
+        {
+            self.values
+                .insert("grid.result_tabbar_single".into(), "on".into());
+        }
     }
 
     /// 옛 `explorer.auto_refresh`/`explorer.refresh_secs`(배선된 적 없는 키) → `meta.refresh_secs`(docs/57 §2-5): 자동 갱신을
@@ -3500,6 +3732,14 @@ impl Settings {
     /// 검증 후 설정(메모리). 기본값과 같으면 사용자 값을 지운다.
     pub fn set(&mut self, key: &str, raw: &str) -> Result<String, SetError> {
         let e = entry(key).ok_or_else(|| SetError::UnknownKey(key.to_string()))?;
+        if is_info(key) {
+            // 읽기 전용 정보 — 저장하지 않는다.
+            return Err(SetError::InvalidValue(
+                key.to_string(),
+                raw.to_string(),
+                "read-only".to_string(),
+            ));
+        }
         let n = normalize(e.kind, raw).ok_or_else(|| {
             SetError::InvalidValue(key.to_string(), raw.to_string(), allowed(e.kind))
         })?;
@@ -3710,6 +3950,52 @@ mod tests {
             );
             assert_eq!(REGISTRY.iter().filter(|x| x.key == e.key).count(), 1);
         }
+    }
+
+    /// DBMS 그룹(사용자 09-21): 읽기 전용 정보 키는 저장되지 않고 `set`을 거부한다 · Oracle 폴더·TNS_ADMIN은 직접 지정일 때만 ·
+    /// 정보 키는 전부 레지스트리에 있고 DBMS 분류에 속한다.
+    #[test]
+    fn dbms_info_keys_are_read_only_and_client_paths_need_manual_mode() {
+        let mut s = Settings::from_text(std::path::PathBuf::from("x"), "");
+        for k in INFO_KEYS {
+            let e = entry(k).expect(k);
+            assert!(group_of(e.cat) == Some(Msg::GrpDbms), "{k}");
+            assert!(s.set(k, "anything").is_err(), "{k}");
+        }
+        for k in ["oracle.client_dir", "oracle.tns_admin"] {
+            let (parent, dep) = dependency(k).expect(k);
+            assert_eq!(parent, "oracle.client_mode");
+            assert!(dep.satisfied("manual") && !dep.satisfied("auto"));
+        }
+        assert_eq!(s.get("oracle.client_mode"), Some("auto"));
+        assert!(s.set("oracle.client_mode", "manual").is_ok());
+        assert!(s
+            .set("oracle.client_dir", "C:/oracle/instantclient_19_20")
+            .is_ok());
+    }
+
+    /// 결과가 1개일 때의 탭 줄 설정은 결과 탭(다중) **바로 밑**에 있고 그 설정에 종속된다(사용자 09-21).
+    #[test]
+    fn single_result_tabbar_sits_under_result_tabs_and_depends_on_it() {
+        let pos = |k: &str| REGISTRY.iter().position(|e| e.key == k).expect(k);
+        assert_eq!(
+            pos("grid.result_tabbar_single"),
+            pos("grid.result_tabs") + 1
+        );
+        let (parent, dep) = dependency("grid.result_tabbar_single").expect("dep");
+        assert_eq!(parent, "grid.result_tabs");
+        assert!(dep.satisfied("on") && !dep.satisfied("off"));
+        // 옛 선택 상자 값의 이관: always → on · auto → 기본(off) · 새 키가 이미 있으면 그대로 · 옛 줄은 남지 않는다.
+        let load = |body: &str| Settings::from_text(std::path::PathBuf::from("x"), body);
+        let a = load("_schema=1\ngrid.result_tabbar=always\n");
+        assert_eq!(a.get("grid.result_tabbar_single"), Some("on"));
+        assert!(!a.unknown.iter().any(|(k, _)| k == "grid.result_tabbar"));
+        let b = load("_schema=1\ngrid.result_tabbar=auto\n");
+        assert_eq!(b.get("grid.result_tabbar_single"), Some("off"));
+        // 새 키를 켜 둔 파일에 옛 줄(auto)이 남아 있어도 끄지 않는다. (옛 줄은 첫 저장 때 사라지고 기본값은 파일에 적히지 않으므로,
+        // 새 키의 "끔"과 옛 "always"가 함께 있는 파일은 생기지 않는다.)
+        let c = load("_schema=1\ngrid.result_tabbar=auto\ngrid.result_tabbar_single=on\n");
+        assert_eq!(c.get("grid.result_tabbar_single"), Some("on"));
     }
 
     /// 실행 속도 향상(09-17): 켜면 BOOST 키는 사용자 값·모드와 무관하게 강제값 · 잠금 · 출처 boost · 끄면 저장값 그대로 복귀.

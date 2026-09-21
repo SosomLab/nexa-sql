@@ -1392,6 +1392,7 @@ dependencies = [
  "nsql-driver-sqlite",
  "nsql-run",
  "nsql-script",
+ "nsql-vault",
 ]
 
 [[package]]
