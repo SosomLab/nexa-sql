@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/ci-result-89-23 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 추가 21~23 push의 CI 결과 기록(ci · integration 초록) |
 | feat/bind-headers-save-on-close | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 추가 21~23 — 바인드만 있는 SELECT 항목에 변수 표기를 열 이름으로(SQL Server·PG `lone_select_items`) · mssql 읽기 전용 숫자 바인드 타입 · CLI `opener` 비밀번호 없으면 서버에 가지 않음 · 저장하지 않은 탭 닫기 = 탭 옆 메뉴(저장하고 닫기 → 저장 창 · `editor.close_unsaved`) |
 | fix/ci-win-test-and-pg-wait | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 push 뒤 CI 둘: 워커 비밀번호 시험이 드라이버의 실패 시점에 기대던 것(Windows CI) · integration `POSTGRES_HOST` 누락(wait-for-db 변수 이름 수정으로 드러남) |
 | fix/ci-clippy-first-mut | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 push 뒤 CI clippy 오류 하나(`iter_mut().next()` → `first_mut()` · 로컬 clippy가 CI보다 낡아 못 본 검사) |
