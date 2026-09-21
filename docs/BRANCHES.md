@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/ci-win-test-and-pg-wait | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 push 뒤 CI 둘: 워커 비밀번호 시험이 드라이버의 실패 시점에 기대던 것(Windows CI) · integration `POSTGRES_HOST` 누락(wait-for-db 변수 이름 수정으로 드러남) |
 | fix/ci-clippy-first-mut | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 push 뒤 CI clippy 오류 하나(`iter_mut().next()` → `first_mut()` · 로컬 clippy가 CI보다 낡아 못 본 검사) |
 | feat/win-89-vars-explorer-secret | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차(win) 전체 — 종합 점검(회귀 없음) · T-150 PG refcursor · T-151 실서버(Oracle DATE 바인드 · SQL Server OUTPUT) · ★ T-152 `Caps` 포트 · T-153(`ACCEPT` · `COLUMN NEW_VALUE` · 시스템 변수 · `${v:형식}` · `${env:…}`) · 결과 탭 번호 이름·이름 바꾸기·실행 쿼리 복사 · 팝업 배치 규칙 · 큰 파일 기능 제한 단계 · 설정 ▸ DBMS(Oracle 클라이언트 · docs 64) · 🔧 탐색기 우클릭 결함 둘 · ★ 일회성 비밀번호 + 세션 자격 금고(`Secret` · nsql-vault `session`) · 같은 서버 `CONNECT` 규칙 · 입력 창 Enter 누수 · 자체 시험 `ui.*`/`NSQL_NO_ACTIVATE` |
 | feat/variables-samples | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 추가 6(win) — DBMS별 변수 사용법 샘플 `examples/variables/`(oracle·mssql·pg·sqlite + README · 실행 검증) · SQL Server `EXEC :V := 서버 식` 빈 값 결함 수정(`needs_declare_prepend`) · 63 §3-2 · TODO T-162 — **이 세션의 변경 조각만**(89차의 나머지 미커밋 작업은 작업 트리에 그대로) |
