@@ -5,6 +5,7 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | docs/ci-result-90 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | mac 90차 push(ae4cd81)의 CI 결과 기록(ci 3-OS · integration 초록 · check-3os 교차 타깃은 CC 없음) |
+| docs/linux-password-window-check | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 확인 대상 기록 — Linux 비밀번호 창(T-163 ⑦ · 시작 인자 경로는 정상) |
 | docs/ci-result-91 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 91차 push CI 결과(cf4585e · nexa-ui b3d8e8b 3-OS 초록 · Windows 원인 = `file_type()`) |
 | feat/linux-modal-x11 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | ★ Linux 모달 = 메인에 붙은 창(창 백엔드 기본 X11 `gfx.linux_backend` · `WM_TRANSIENT_FOR`+`_NET_WM_STATE_MODAL` · x11rb · `xprop` 확인) · 문서(journal §12 · 61 §3 · 26 · 10 원장 · TODO T-163) |
 | fix/linux-app-icon-ci | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | Linux 앱 아이콘(`app_id` · `scripts/install-desktop-linux.sh`) · 91차 CI 결과(1f0d4d0 초록 · nexa-ui Windows ✗ 기록) |
