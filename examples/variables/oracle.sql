@@ -9,6 +9,10 @@
 --   치환 변수   `&v`   = 글자 매크로 · 서버로 가기 전에 글에 끼워진다       (DEFINE · ACCEPT · COLUMN NEW_VALUE · ${v:형식})
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 
+
+CONNECT oracle://BISCM@192.168.0.58:1521/BISCM
+
+
 -- ── 1. 선언 · 리터럴 대입 (DB 왕복 0) ──────────────────────────────────────────────────────
 VAR V_LIMIT NUMBER = 3
 VAR V_NOTE  VARCHAR2(40) = 'it''s a note'
@@ -19,6 +23,17 @@ EXEC	:V_OWNER			:=	'SYS';
 -- ── 2. 서버 식 대입 — `BEGIN :V := 식; END;` 로 간다(OUT 바인드) ─────────────────────────────
 EXEC :V_USER := USER
 EXEC :V_CNT  := 1 + 2
+
+SELECT
+	:V_LIMIT
+,	:V_NOTE
+,	:V_PRG_NM
+,	:V_OWNER
+,	:V_USER
+,	:V_CNT
+FROM
+	DUAL
+;
 
 -- 날짜·시각·불리언은 **진짜 타입**으로 바인드된다(글자로 바뀌어 시각이 잘리지 않는다 · DUMP = Typ=12).
 VAR V_D  DATE

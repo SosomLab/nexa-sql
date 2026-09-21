@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/variables-samples-connect | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 사용자 수정 — 변수 샘플(`examples/variables/mssql.sql` · `oracle.sql`) 끝에 `CONNECT user@host`(비밀번호 없는 꼴 = 입력 창/프롬프트로 묻는다) + 바인드만 있는 `SELECT`(결과 머리줄 = 변수 이름) 예 |
 | docs/ci-result-89-24 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 추가 24 push의 CI 결과 기록(nexa-ui ci · nexa-sql ci·integration 초록) |
 | feat/remaining-89-24 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 추가 24 — 성능 재점검(회귀 없음 · `lone_select_items` 한 번 훑기) · T-132 ③ `--password-stdin` · T-162 ② FROM 없는 `SELECT … INTO :V`(T-SQL) ③ 비밀 이름 메아리 가림 · T-158 드래그 자동 스크롤 틱 연결 · "미사용 확장" · 측정 스크립트 `NSQL_NO_ACTIVATE` |
 | docs/ci-result-89-23 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 추가 21~23 push의 CI 결과 기록(ci · integration 초록) |
