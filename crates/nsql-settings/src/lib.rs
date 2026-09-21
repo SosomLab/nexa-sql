@@ -379,6 +379,12 @@ const VARS_UNDECLARED_OPTS: &[(&str, Msg)] = &[
 ];
 
 /// macOS 화면 내보내기(T-147 · docs/62 §2).
+const LINUX_BACKEND_OPTS: &[(&str, Msg)] = &[
+    ("x11", Msg::OptLinuxBackendX11),
+    ("wayland", Msg::OptLinuxBackendWayland),
+    ("auto", Msg::OptLinuxBackendAuto),
+];
+
 const MAC_PRESENT_OPTS: &[(&str, Msg)] = &[
     ("iosurface", Msg::OptMacPresentLayer),
     ("softbuffer", Msg::OptMacPresentSoft),
@@ -2888,6 +2894,16 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ 실행 속도 향상(사용자 09-17): UI 구성·부가 표시·폴링·I/O 키(`perf::BOOST`)를 최적값으로 강제 + 설정 창 잠금 · 동작 영향 0.
     // macOS 화면 내보내기(T-147 · D-133 ②) — IOSurface 풀(할당·복사 0 · 색 맞춤 = 합성기) / 종전 softbuffer. 다른 OS는 무시.
+    Entry {
+        key: "gfx.linux_backend",
+        cat: Msg::CatPerformance,
+        label: Msg::LblLinuxBackend,
+        desc: Msg::DescLinuxBackend,
+        kind: SettingKind::Choice(LINUX_BACKEND_OPTS),
+        // 기본 = X11(XWayland): winit 0.30의 Wayland 경로는 부모 창·창 활성화를 지원하지 않아 모달(접속·파일·비밀번호 창)이
+        // 메인 뒤로 숨는다(사용자 09-22). Wayland 네이티브는 선택.
+        default: "x11",
+    },
     Entry {
         key: "gfx.mac_present",
         cat: Msg::CatPerformance,

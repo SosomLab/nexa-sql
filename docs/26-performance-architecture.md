@@ -275,7 +275,7 @@
 | `bench_vars` 문장 준비 | 1.2 µs | 1.5 µs | VM 차 |
 | 릭 주기(MB/주기) | 평탄 | 파일 0.02~0.03 · 로그 창 0.000 · 10만 행 재실행 ×16 = 0.20(계단형 · 옛+새 결과 겹침 72 MB → 회수 40 MB = 한 벌 + 힙 조각 8 MB) | 누수 아님(journal §6) |
 
-exe 크기(Linux · LTO fat · strip): GUI 12.61 MiB · CLI 7.49 MiB(Windows 10.3 / 6.69 — ELF vs PE) · 드라이버 몫(CLI · 64 §3-1의 Linux 판): SQLite만 5.02 · +Oracle 0.32 · +PG 0.62 · +SQL Server 1.45 · 전부 7.36 MiB. §8 점검: 이번 세션에 네트워크를 만드는 코드 변경 없음(측정 스크립트는 사용자가 지정한 프로필로만 접속).
+(이 표의 GUI 수치는 Wayland 백엔드 · 91차 후반에 Linux 창 백엔드 기본이 X11(XWayland)로 바뀌었다 — journal 09-22 §12 · 다음 점검에서 A/B.) exe 크기(Linux · LTO fat · strip): GUI 12.61 MiB · CLI 7.49 MiB(Windows 10.3 / 6.69 — ELF vs PE) · 드라이버 몫(CLI · 64 §3-1의 Linux 판): SQLite만 5.02 · +Oracle 0.32 · +PG 0.62 · +SQL Server 1.45 · 전부 7.36 MiB. §8 점검: 이번 세션에 네트워크를 만드는 코드 변경 없음(측정 스크립트는 사용자가 지정한 프로필로만 접속).
 
 ## 8. 네트워크 부하 원칙 — 09-14 검토 · 상시 관리 항목(사용자 요청)
 

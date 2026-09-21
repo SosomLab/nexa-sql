@@ -21,7 +21,15 @@ pub(crate) fn owned_by(attrs: WindowAttributes, owner: Option<&Window>) -> Windo
         }
         attrs
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Linux(09-22): 창 종류 = 대화상자(X11 `_NET_WM_WINDOW_TYPE_DIALOG` · WM이 부모 위에 두고 작업 표시줄에 따로 안 낸다).
+        // 부모 관계 자체는 창이 생긴 뒤 `attach_child`가 `WM_TRANSIENT_FOR`로 건다(winit의 `with_parent_window`는 X11에서 **삽입**이라 못 쓴다).
+        use winit::platform::x11::{WindowAttributesExtX11 as _, WindowType};
+        let _ = owner;
+        attrs.with_x11_window_type(vec![WindowType::Dialog])
+    }
+    #[cfg(target_os = "macos")]
     {
         let _ = owner;
         attrs
@@ -94,7 +102,17 @@ pub(crate) fn attach_child(owner: &Window, child: &Window) {
             }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    // Linux(09-22 · 사용자 "메인을 눌러도 모달이 위에 · 두 창이 하나의 포커스"): X11(XWayland)에서 `WM_TRANSIENT_FOR` = 메인 +
+    // `_NET_WM_STATE_MODAL` → GNOME/KDE가 **부모에 붙은 모달**로 다룬다(부모를 누르면 둘이 함께 올라오고 모달이 위 · 부모와 함께 최소화).
+    // Wayland 네이티브(설정 `gfx.linux_backend = wayland`)에서는 winit 0.30이 부모 창 API가 없어 no-op(호스트 가드만).
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let (Some(o), Some(c)) = (x11_window(owner), x11_window(child)) {
+            // 실패(연결 불가 등)는 조용히 — 호스트 가드가 모달을 지킨다.
+            let _ = x11_set_transient_modal(o, c);
+        }
+    }
+    #[cfg(target_os = "windows")]
     {
         let _ = (owner, child);
     }
@@ -149,4 +167,51 @@ pub(crate) fn focus(w: &winit::window::Window) {
     if std::env::var_os("NSQL_NO_ACTIVATE").is_none() {
         w.focus_window();
     }
+}
+
+/// X11 창 id(XWayland 포함) — Wayland 네이티브 창이면 `None`.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn x11_window(w: &Window) -> Option<u32> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match w.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => u32::try_from(h.window).ok(),
+        RawWindowHandle::Xcb(h) => Some(h.window.get()),
+        _ => None,
+    }
+}
+
+/// `WM_TRANSIENT_FOR` + `_NET_WM_STATE_MODAL`(EWMH 클라이언트 메시지 · 이미 매핑된 창에도 유효). 자체 연결(`DISPLAY`) 한 번 · 짧게 쓰고 닫는다.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn x11_set_transient_modal(owner: u32, child: u32) -> Result<(), Box<dyn std::error::Error>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{
+        AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, PropMode,
+    };
+    use x11rb::wrapper::ConnectionExt as _;
+    let (conn, screen) = x11rb::connect(None)?;
+    conn.change_property32(
+        PropMode::REPLACE,
+        child,
+        AtomEnum::WM_TRANSIENT_FOR,
+        AtomEnum::WINDOW,
+        &[owner],
+    )?;
+    let state = conn.intern_atom(false, b"_NET_WM_STATE")?.reply()?.atom;
+    let modal = conn
+        .intern_atom(false, b"_NET_WM_STATE_MODAL")?
+        .reply()?
+        .atom;
+    // 아직 매핑되지 않은 창은 WM이 매핑 때 **속성**을 읽는다(클라이언트 메시지는 버린다) → 속성에도 덧붙인다.
+    conn.change_property32(PropMode::APPEND, child, state, AtomEnum::ATOM, &[modal])?;
+    let root = conn.setup().roots[screen].root;
+    // 이미 매핑된 창(재사용)은 EWMH 클라이언트 메시지로: data = [_NET_WM_STATE_ADD(1), 상태 원자, 0, 출처 = 응용(1), 0]
+    let ev = ClientMessageEvent::new(32, child, state, [1u32, modal, 0, 1, 0]);
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        ev,
+    )?;
+    conn.flush()?;
+    Ok(())
 }

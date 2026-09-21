@@ -5,6 +5,7 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | docs/ci-result-90 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | mac 90차 push(ae4cd81)의 CI 결과 기록(ci 3-OS · integration 초록 · check-3os 교차 타깃은 CC 없음) |
+| feat/linux-modal-x11 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | ★ Linux 모달 = 메인에 붙은 창(창 백엔드 기본 X11 `gfx.linux_backend` · `WM_TRANSIENT_FOR`+`_NET_WM_STATE_MODAL` · x11rb · `xprop` 확인) · 문서(journal §12 · 61 §3 · 26 · 10 원장 · TODO T-163) |
 | fix/linux-app-icon-ci | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | Linux 앱 아이콘(`app_id` · `scripts/install-desktop-linux.sh`) · 91차 CI 결과(1f0d4d0 초록 · nexa-ui Windows ✗ 기록) |
 | perf/linux-91-full-check | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | Linux 91차 — Oracle Instant Client 스크립트 · 성능 전수(26 §7-7) · Linux 기동 병목 둘(nexa-font 걷기 캐시 · 아이콘 `memo`/지연) · `[startup]` 계측 · `scripts/linux-*.sh` 6종 · 전체 테스트 자동화 · OS별 차이표 |
 | fix/mac-90-login-explorer-modal-logs | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | mac 90차 — 🔧 시작 직후 Details 팝업(`ConnectPanel::new` 저장본) · 🔧 탐색기 키보드 서버 간 이동(`explorers::cross_pane` · PgUp/PgDn 페이지) · 🔧 맥 탭 메뉴 배율 · 🔧 Σ 초기 활성 · ★ 비밀번호 창 최상위 모달 · 🔧 `EXEC` 블록 현재 문 실행(원문 `span` · 왕복 테스트) · 🔧 `PRINT` 값·`VARIABLE` 이름+타입·`Begin.server` · 사용자 샘플 mssql.sql · 기록(journal 90차 · DEVLOG · STATUS · TODO · MILESTONES · 63 · CLAUDE.md) |

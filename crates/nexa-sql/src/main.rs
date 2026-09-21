@@ -13228,7 +13228,28 @@ fn main() {
     } else {
         arg_target
     };
-    let Ok(el) = EventLoop::<Wake>::with_user_event().build() else {
+    // Linux(09-22): 창 백엔드 = 설정 `gfx.linux_backend`(기본 X11 — 모달 창을 메인의 transient로 붙이려면 · Wayland 경로는 winit 0.30이
+    // 부모 창·활성화를 지원하지 않는다). 고른 백엔드로 못 만들면(예: XWayland 없음) winit 기본으로 한 번 더.
+    let built = {
+        let mut b = EventLoop::<Wake>::with_user_event();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use winit::platform::wayland::EventLoopBuilderExtWayland as _;
+            use winit::platform::x11::EventLoopBuilderExtX11 as _;
+            match settings.get("gfx.linux_backend").unwrap_or("x11") {
+                "x11" if std::env::var_os("DISPLAY").is_some() => {
+                    b.with_x11();
+                }
+                "wayland" if std::env::var_os("WAYLAND_DISPLAY").is_some() => {
+                    b.with_wayland();
+                }
+                _ => {}
+            }
+        }
+        b.build()
+            .or_else(|_| EventLoop::<Wake>::with_user_event().build())
+    };
+    let Ok(el) = built else {
         eprintln!("event loop creation failed");
         std::process::exit(1);
     };
