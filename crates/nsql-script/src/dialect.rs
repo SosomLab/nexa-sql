@@ -175,11 +175,14 @@ fn replace_refs(sql: &str, refs: &[BindRef], f: impl Fn(&BindRef) -> String) -> 
 }
 
 /// `sp_executesql`로 감쌀 수 없는 배치(docs/05 §7 (a) 단점) — 첫 문장 제약 DDL · `USE` · `SET` 지속.
+/// ★ `SET @V = 식`은 세션 옵션이 아니라 **변수 대입**(`EXEC :V := 식`의 재작성)이다 — 앞붙임 길로 보내면 바인드가 비어
+/// 값이 돌아오지 않는다(09-21 실서버: `EXEC :V := DB_NAME()`이 오류 없이 빈 값).
 pub fn needs_declare_prepend(tsql: &str) -> bool {
     let up = tsql.trim_start().to_ascii_uppercase();
     let w: Vec<&str> = up.split_whitespace().take(3).collect();
     match w.first().copied() {
-        Some("USE") | Some("SET") => true,
+        Some("SET") => !w.get(1).is_some_and(|t| t.starts_with('@')),
+        Some("USE") => true,
         Some("CREATE") | Some("ALTER") => {
             // CREATE [OR ALTER] <target> — 배치 첫 문장이어야 하는 대상만.
             let w4: Vec<&str> = up.split_whitespace().take(4).collect();
@@ -545,6 +548,27 @@ mod tests {
         );
         assert_eq!(p.line_offset, 1);
         assert!(p.params.is_empty());
+    }
+
+    /// `SET @V = 식`(= `EXEC :V := 식`)은 바인드 길 — 세션 옵션 `SET …` · `USE`만 앞붙임 길(09-21 실서버 결함).
+    #[test]
+    fn mssql_set_variable_is_bound_not_prepended() {
+        assert!(!needs_declare_prepend("SET @V_DB = DB_NAME()"));
+        assert!(!needs_declare_prepend("  set @n = @n + 1"));
+        assert!(needs_declare_prepend("SET NOCOUNT ON"));
+        assert!(needs_declare_prepend("SET SHOWPLAN_TEXT ON"));
+        assert!(needs_declare_prepend("USE tempdb"));
+        let mut v = store();
+        let p = prepare(
+            Dialect::Mssql,
+            &wrap_exec(Dialect::Mssql, ":V_NEW := DB_NAME()"),
+            &mut v,
+            true,
+        );
+        assert_eq!(p.mode, PrepareMode::Bind);
+        assert_eq!(p.sql, "SET @V_NEW = DB_NAME()");
+        assert_eq!(p.params.len(), 1);
+        assert_eq!(p.params[0].direction, Direction::InOut);
     }
 
     #[test]

@@ -89,6 +89,17 @@
 | 커서·다중 결과 | OUT 커서 = 이름 붙은 결과 탭 · 암묵 결과 = "ResultSet #n" | 결과 집합마다 탭(커서 바인드 없음 — `VAR c REFCURSOR`는 안내) | 트랜잭션 안에서 호출 → 커서 **이름**을 읽어 `FETCH ALL IN "n"` → 탭 → `CLOSE`(자동 커밋이면 러너가 감싼다 · T-146 기반) | n번째 결과 = n번째 탭 · OUT = 추가 1행 | `Query` 값(PRINT 때 실행) | 커서/토큰 페이징을 같은 흐름으로 |
 | 테이블 함수 | `TABLE(f(:x))` | `dbo.f(@p)` | SRF | `JSON_TABLE` | `json_each(:j)` | — (전부 보통 조회 + 바인드) |
 
+### 3-2. DBMS별 사용법 샘플 (09-21 · 실행해서 확인한 것만 담았다)
+
+| 파일 | 실행 | 서버에 남는 것 |
+|---|---|---|
+| [examples/variables/oracle.sql](../examples/variables/oracle.sql) | `nsql run -c <프로필> examples/variables/oracle.sql SCOTT` | §1~7·§9 = 없음 · §8만 `NSQLT_VARS_DEMO` 프로시저를 만들고 지운다 |
+| [examples/variables/mssql.sql](../examples/variables/mssql.sql) | `nsql run -c <프로필> examples/variables/mssql.sql 5` | 없음(세션 임시 `#…`) |
+| [examples/variables/pg.sql](../examples/variables/pg.sql) | `nsql run -c <프로필> examples/variables/pg.sql 5` | 없음(`pg_temp.…`) |
+| [examples/variables/sqlite.sql](../examples/variables/sqlite.sql) | `nsql run -c sqlite::memory: examples/variables/sqlite.sql KOREA` | 없음(메모리) |
+
+네 파일은 **같은 절 순서**(선언·리터럴 → 서버 식 → `SELECT … INTO` → 살펴보기 → 바인드 → 프로시저·커서·다중 결과 → 치환 변수 → 범위·비밀)라 나란히 놓고 방언 차이를 볼 수 있다. 접속 없이 재작성만 보려면 `nsql plan -d <방언> <파일>`. MySQL/MariaDB·NoSQL은 드라이버가 없어 샘플도 없다. 검증 중 나온 흠 = [TODO](TODO.md) T-162.
+
 ## 4. 성능·안정성·메모리 기준 (개발 뒤 전수 점검 항목)
 
 | 항목 | 기준 | 지금 |

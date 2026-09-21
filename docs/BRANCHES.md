@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/variables-samples | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 89차 추가 6(win) — DBMS별 변수 사용법 샘플 `examples/variables/`(oracle·mssql·pg·sqlite + README · 실행 검증) · SQL Server `EXEC :V := 서버 식` 빈 값 결함 수정(`needs_declare_prepend`) · 63 §3-2 · TODO T-162 — **이 세션의 변경 조각만**(89차의 나머지 미커밋 작업은 작업 트리에 그대로) |
 | docs/handoff-to-windows-88 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 88차 인계(mac → win) — docs 61 §1-5·§3·§6 · TODO T-150~154 · CLAUDE.md 현 단계·§4 |
 | docs/vars-wrapup-88 | 2026-09-21 | 2026-09-21 → main(삭제) | 1 | 88차 마감 — 최종 CI 결과 · MILESTONES M2 09-20~21 묶음 · 남긴 질문 셋 |
 | feat/session-vars-2 | 2026-09-21 | 2026-09-21 → main(삭제) | 4 | 88차 후반(mac) — 변수 관리 V5 일부(`captures` · D-139 · SQL Server `@@ROWCOUNT`) · V7 `bench_vars` · V2 변수 창 · 실서버 통합 9/9 |
