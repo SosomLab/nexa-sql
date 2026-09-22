@@ -14,13 +14,34 @@
 //!
 //! 호스트가 하는 것: 매 틱 `tick` · 클릭 → [`ProjectPanel::take_open`] · 링크 → [`ProjectPanel::take_command`].
 
+use crate::filterbar::{FilterBar, FilterEvent, SideBtn, GAP_Y, INPUT_H};
+use crate::findbar::BtnKind;
+use crate::toolicons;
+use nexa_ctl::controls::{ContextMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
-use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget};
+use nexa_ctl::{IconImage, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox};
+use nexa_fs::shell::{IconKey, IconService, Lookup};
 use nsql_i18n::{t, tf, Msg};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::Instant;
+
+/// OPEN FILES 한 줄(편집기 탭 · 사용자 09-23 "파일 필터 위쪽에 열린 파일 목록").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpenFile {
+    pub id: u64,
+    pub title: String,
+    pub dirty: bool,
+    pub active: bool,
+    /// 동시 편집 칸에 든 탭(다중 선택 표시).
+    pub grouped: bool,
+}
+
+/// OPEN FILES에 보이는 최대 줄 수(넘치면 "+n").
+const OPEN_FILES_MAX: usize = 8;
 
 /// 행을 열라는 요청(1회성).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +69,7 @@ pub(crate) struct ProjectPanel {
     visible: bool,
     bounds: Rect,
     scale: f32,
-    filter: TextBox,
+    filter: FilterBar,
     /// 프로젝트 이름(없으면 None = 빈 상태).
     name: Option<String>,
     nodes: Vec<Node>,
@@ -56,8 +77,15 @@ pub(crate) struct ProjectPanel {
     /// 보이는 행 = 노드 인덱스.
     rows: Vec<usize>,
     scroll_y: i32,
+    /// 가로 스크롤(긴 이름 · 깊은 트리 · 사용자 09-22) — 내용 폭은 행이 바뀔 때 한 번 잰다(`rows_gen`/`measured_gen`).
+    scroll_x: i32,
+    content_w: i32,
+    rows_gen: u64,
+    measured_gen: u64,
     bars: ScrollBars,
     sel: Option<usize>,
+    /// 선택이 없을 때의 **캐럿 행**(빈 곳 클릭으로 해제한 자리 · 테두리만 · 키보드 이동의 시작점 · 사용자 09-23).
+    caret: Option<usize>,
     hover: Option<(usize, Instant)>,
     list_rect: Rect,
     header_rect: Rect,
@@ -65,7 +93,12 @@ pub(crate) struct ProjectPanel {
     links: Vec<(&'static str, Rect)>,
     row_h: i32,
     open: Option<OpenReq>,
-    command: Option<&'static str>,
+    /// 링크·헤더·우클릭 메뉴가 낸 명령 id(`project.*` · 접미 인자가 붙을 수 있어 String).
+    command: Option<String>,
+    /// 우클릭 메뉴(루트 = 프로젝트에서 폴더 제거 · 어디서나 폴더 추가 · 팝업 배치 규칙 = `ContextMenu` · 사용자 09-22).
+    menu: ContextMenu,
+    /// 메뉴를 연 행(루트 노드면 그 폴더 순번 = `roots` 순번).
+    menu_row: Option<usize>,
     /// 최근 프로젝트가 있는가(빈 상태에 "프로젝트 전환…" 링크를 보일지 · 09-22).
     has_recent: bool,
     last_click: Option<(usize, Instant)>,
@@ -79,17 +112,35 @@ pub(crate) struct ProjectPanel {
     /// 필터 열거가 상한에 걸렸다(안내 한 줄).
     scan_capped: bool,
     filter_text: String,
+    /// 파일/폴더 아이콘(설정 `project.icons` · 파일 대화상자와 같은 OS 셸 아이콘 서비스 · 향상 모드 = 끔 · 사용자 09-22).
+    icons_on: bool,
+    /// 서비스 RGBA → 이 창의 `IconImage` 변환 캐시(키 = 종류) · 폴백 그림 둘.
+    icons: HashMap<IconKey, Rc<IconImage>>,
+    fallback_dir: Rc<IconImage>,
+    fallback_file: Rc<IconImage>,
+    /// 마지막으로 본 서비스 버전(바뀌면 = 조회 결과 도착 → 다시 그린다).
+    icon_version: u64,
+    /// OPEN FILES(편집기 탭 목록 · 호스트가 틱마다 `set_open_files`) · 그 영역.
+    open_files: Vec<OpenFile>,
+    open_rect: Rect,
+    open_rows: Vec<Rect>,
+    /// 활성 탭과 맞춘 선택 경로(사용자 09-22 "탭을 고르면 탐색기에도 선택 표시") — 접혀 있으면 행이 없어 보이지 않다가
+    /// 사용자가 직접 펼치면(`rebuild_rows`) 그 행이 선택된 채 나타난다. 자동 확장(`project.auto_reveal`)은 `reveal`.
+    sel_path: Option<PathBuf>,
 }
 
 const ROW_H: f32 = 22.0;
-const INPUT_H: f32 = 25.0;
 const PAD: f32 = 8.0;
 const INDENT: f32 = 14.0;
 
 impl ProjectPanel {
     pub(crate) fn new() -> Self {
-        let mut filter = TextBox::new(t(Msg::PhProjectFilter));
-        filter.set_focus_ring(false);
+        // 필터 틀(부품) + 오른쪽 부가 토글: 숨김 파일 · 점 파일(Windows만 · 사용자 09-22).
+        let mut side: Vec<SideBtn> = vec![(BtnKind::Hidden, toolicons::mi_visibility)];
+        if cfg!(windows) {
+            side.push((BtnKind::DotFiles, toolicons::mi_dot_file));
+        }
+        let filter = FilterBar::new(t(Msg::PhProjectFilter), &side).with_path_toggle();
         ProjectPanel {
             visible: false,
             bounds: Rect::default(),
@@ -100,8 +151,13 @@ impl ProjectPanel {
             roots: Vec::new(),
             rows: Vec::new(),
             scroll_y: 0,
+            scroll_x: 0,
+            content_w: 0,
+            rows_gen: 0,
+            measured_gen: u64::MAX,
             bars: ScrollBars::new(),
             sel: None,
+            caret: None,
             hover: None,
             list_rect: Rect::default(),
             header_rect: Rect::default(),
@@ -109,6 +165,8 @@ impl ProjectPanel {
             row_h: 22,
             open: None,
             command: None,
+            menu: ContextMenu::new(),
+            menu_row: None,
             has_recent: false,
             last_click: None,
             dblclick_ms: 400,
@@ -119,6 +177,69 @@ impl ProjectPanel {
             scan_max: 5000,
             scan_capped: false,
             filter_text: String::new(),
+            icons_on: true,
+            icons: HashMap::new(),
+            fallback_dir: Rc::new(nexa_ctl::controls::fallback_file_icon(true)),
+            fallback_file: Rc::new(nexa_ctl::controls::fallback_file_icon(false)),
+            icon_version: 0,
+            sel_path: None,
+            open_files: Vec::new(),
+            open_rect: Rect::default(),
+            open_rows: Vec::new(),
+        }
+    }
+
+    /// OPEN FILES 갱신(바뀔 때만 · 줄 수가 바뀌면 다시 배치).
+    pub(crate) fn set_open_files(&mut self, v: Vec<OpenFile>) {
+        if v == self.open_files {
+            return;
+        }
+        let relayout = v.len() != self.open_files.len();
+        self.open_files = v;
+        if relayout {
+            let (b, s) = (self.bounds, self.scale);
+            self.set_bounds(b, s);
+        }
+    }
+
+    /// OPEN FILES 섹션 높이(헤더 1줄 + 항목 ≤ 8줄 · 프로젝트 없으면 0).
+    fn open_files_h(&self, rh: i32) -> i32 {
+        if self.name.is_none() || self.open_files.is_empty() {
+            return 0;
+        }
+        rh * (1 + self.open_files.len().min(OPEN_FILES_MAX) as i32)
+    }
+
+    /// 파일/폴더 아이콘 켬/끔(설정 `project.icons` · 끄면 캐시도 비운다 = 상주 0).
+    pub(crate) fn set_icons(&mut self, on: bool) {
+        self.icons_on = on;
+        if !on {
+            self.icons.clear();
+        }
+    }
+
+    /// 종류 아이콘 — 캐시 적중/도착이면 OS 아이콘, 아니면(조회 중·없음) 자체 그림(파일 대화상자와 같은 규칙 · 절대 막지 않는다).
+    fn icon_for(&mut self, is_dir: bool, ext: &str) -> Rc<IconImage> {
+        let key = IconKey::Kind {
+            ext: ext.to_string(),
+            is_dir,
+        };
+        if let Some(img) = self.icons.get(&key) {
+            return img.clone();
+        }
+        match IconService::global().icon(&key, false) {
+            Lookup::Ready(Some(ic)) => {
+                let rc = Rc::new(IconImage::from_rgba(ic.w, ic.h, ic.rgba.clone()));
+                self.icons.insert(key, rc.clone());
+                rc
+            }
+            Lookup::Ready(None) | Lookup::Pending => {
+                if is_dir {
+                    self.fallback_dir.clone()
+                } else {
+                    self.fallback_file.clone()
+                }
+            }
         }
     }
 
@@ -143,6 +264,7 @@ impl ProjectPanel {
 
     pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
         self.tooltip_ms = ms;
+        self.filter.set_tooltip_delay(ms);
     }
 
     pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
@@ -151,12 +273,20 @@ impl ProjectPanel {
 
     pub(crate) fn set_clamp_width(&mut self, w: i32) {
         self.clamp_w = w;
+        self.filter.set_clamp_width(w);
     }
 
     pub(crate) fn set_list_opts(&mut self, show_hidden: bool, show_dot: bool, scan_max: usize) {
+        let changed = self.show_hidden != show_hidden || self.show_dot != show_dot;
         self.show_hidden = show_hidden;
         self.show_dot = show_dot;
         self.scan_max = scan_max.max(100);
+        self.filter.set_checked(BtnKind::Hidden, show_hidden);
+        self.filter.set_checked(BtnKind::DotFiles, show_dot);
+        // 표시 규칙이 바뀌면 펼친 폴더를 다시 열거(토글 · 설정 창 · 파일 대화상자 어디서 바꿔도).
+        if changed && self.name.is_some() {
+            self.refresh();
+        }
     }
 
     #[cfg(test)]
@@ -165,12 +295,18 @@ impl ProjectPanel {
     }
 
     /// 프로젝트를 바꾼다(없으면 `None`) — 트리를 다시 만든다(루트만 · 펼침은 사용자가).
-    pub(crate) fn set_project(&mut self, name: Option<String>, folders: &[PathBuf]) {
+    pub(crate) fn set_project(
+        &mut self,
+        name: Option<String>,
+        folders: &[PathBuf],
+        selected: Option<&Path>,
+    ) {
         self.name = name;
         self.nodes.clear();
         self.roots.clear();
         self.sel = None;
         self.scroll_y = 0;
+        self.scroll_x = 0;
         self.hover = None;
         for f in folders {
             let label = f
@@ -197,6 +333,38 @@ impl ProjectPanel {
             self.expand(self.roots[0]);
         }
         self.rebuild_rows();
+        // 마지막 클릭 위치 복원(프로젝트 파일 `selected` · 사용자 09-22) — 조상 펼치고 선택 · 없는 경로면 무시.
+        if let Some(p) = selected {
+            self.reveal(p);
+        }
+    }
+
+    /// 필터 글을 넣고 바로 거른다(자체 시험 `project.filter:` · 키 주입 없이).
+    pub(crate) fn set_filter_text(&mut self, text: &str) {
+        self.filter.set_text(text);
+        self.filter_text = text.to_string();
+        if !self.filter_text.trim().is_empty() {
+            self.scan_for_filter();
+        } else {
+            self.scan_capped = false;
+        }
+        self.sel = None;
+        self.scroll_y = 0;
+        self.scroll_x = 0;
+        self.rebuild_rows();
+    }
+
+    /// 활성 탭의 파일을 선택 표시(펼치지 않는다 · 스크롤 안 함) — 보이는 행이면 지금 선택 · 접혀 있으면 펼칠 때 선택돼 나타난다.
+    pub(crate) fn mark_path(&mut self, p: &Path) {
+        self.sel_path = Some(p.to_path_buf());
+        self.sel = self.rows.iter().position(|&n| self.nodes[n].path == p);
+    }
+
+    /// 지금 선택된 항목의 경로(프로젝트 파일 `selected`에 저장).
+    pub(crate) fn selected_path(&self) -> Option<PathBuf> {
+        self.sel
+            .and_then(|r| self.rows.get(r))
+            .map(|&n| self.nodes[n].path.clone())
     }
 
     /// 디스크가 바뀌었을 수 있다 — 펼친 폴더를 다시 열거(호스트: 파일 저장·새 파일 뒤).
@@ -218,7 +386,7 @@ impl ProjectPanel {
             .and_then(|r| self.rows.get(r))
             .map(|&n| self.nodes[n].path.clone());
         let scroll = self.scroll_y;
-        self.set_project(name, &folders);
+        self.set_project(name, &folders, None);
         for p in expanded {
             if let Some(i) = self.nodes.iter().position(|n| n.path == p) {
                 self.expand(i);
@@ -284,7 +452,7 @@ impl ProjectPanel {
 
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         if self.filter.is_focused() {
-            Some(&mut self.filter)
+            Some(self.filter.tb_mut())
         } else {
             None
         }
@@ -298,14 +466,26 @@ impl ProjectPanel {
         let ih = px(INPUT_H);
         self.row_h = px(ROW_H);
         self.header_rect = Rect::new(b.x, b.y + px(4.0), b.w, self.row_h);
-        let y1 = self.header_rect.bottom() + px(4.0);
-        let mut inv = Invalidations::default();
-        self.filter.set_scale(scale);
+        // OPEN FILES(헤더 + 항목 줄) — 파일 필터 위(사용자 09-23).
+        let oh = self.open_files_h(self.row_h);
+        self.open_rect = Rect::new(b.x, self.header_rect.bottom() + px(2.0), b.w, oh);
+        self.open_rows = (0..self.open_files.len().min(OPEN_FILES_MAX))
+            .map(|i| {
+                Rect::new(
+                    b.x,
+                    self.open_rect.y + self.row_h * (1 + i as i32),
+                    b.w,
+                    self.row_h,
+                )
+            })
+            .collect();
+        // 필터 위·아래 여백 = 부품 상수(네 패널 공통 · 사용자 09-22).
+        let y1 = self.open_rect.bottom() + px(GAP_Y);
         self.filter.set_bounds(
             Rect::new(b.x + pad, y1, (b.w - pad * 2).max(px(80.0)), ih),
-            &mut inv,
+            scale,
         );
-        let list_top = y1 + ih + px(4.0);
+        let list_top = y1 + ih + px(GAP_Y);
         self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
         self.clamp_scroll();
     }
@@ -318,8 +498,60 @@ impl ProjectPanel {
         self.has_recent = on;
     }
 
-    pub(crate) fn take_command(&mut self) -> Option<&'static str> {
+    pub(crate) fn take_command(&mut self) -> Option<String> {
         self.command.take()
+    }
+
+    pub(crate) fn menu_open(&self) -> bool {
+        self.menu.is_open()
+    }
+
+    pub(crate) fn close_menu(&mut self) {
+        self.menu.close();
+    }
+
+    /// 메뉴(팝업 층 · 창의 맨 마지막에).
+    pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if self.visible && self.menu.is_open() {
+            self.menu.paint(dc, th);
+        }
+    }
+
+    /// 우클릭 메뉴 열기 — **루트 노드에서만** "프로젝트에서 폴더 제거"(폴더 추가는 Project 풀다운에 · 사용자 09-22 "추가 메뉴는 필요 없다").
+    fn open_menu(&mut self, p: Point) {
+        let row = self.row_at(p);
+        if let Some(r) = row {
+            self.sel = Some(r);
+        }
+        self.menu_row = row;
+        let is_root = row
+            .and_then(|r| self.rows.get(r))
+            .is_some_and(|&n| self.nodes[n].parent.is_none());
+        if !is_root {
+            return;
+        }
+        let items = vec![CtxItem::item(
+            "remove_folder",
+            t(Msg::MnProjectRemoveFolder),
+        )];
+        let text_w = (self.row_h * 10).max(180);
+        // host = 아는 한 창 전체(팝업 배치 규칙 ③) — 패널은 창 높이를 모르므로 폭만 clamp · 세로는 그리는 시점의 표면 크기 안전망.
+        let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
+        self.menu.open_at(p.x, p.y, items, host, text_w);
+    }
+
+    fn menu_pick(&mut self, id: &str) {
+        if id != "remove_folder" {
+            return;
+        }
+        // 루트 노드의 순번 = 프로젝트 폴더 순번(`set_project`가 `folders` 순서대로 루트를 만든다).
+        let idx = self
+            .menu_row
+            .and_then(|r| self.rows.get(r).copied())
+            .and_then(|n| self.roots.iter().position(|&x| x == n));
+        if let Some(i) = idx {
+            self.command = Some(format!("project.remove_folder:{i}"));
+        }
     }
 
     // ───────────────────────── 트리 ──────────────────
@@ -389,11 +621,16 @@ impl ProjectPanel {
         while qi < queue.len() {
             let i = queue[qi];
             qi += 1;
-            if self.nodes.len() >= self.scan_max {
-                self.scan_capped = true;
-                break;
+            // 상한 = 트리에 쌓인 항목 수(메모리 상한) — **새로 열거해야 할 폴더를 만났을 때만** 본다. 이미 열거된 폴더는
+            //   자식만 큐에 넣고 지나간다(이전 필터로 상한을 넘긴 트리에서 새로 열거할 것이 없으면 "멈췄다"가 뜨지 않는다 ·
+            //   사용자 09-22 "5000개 열거가 안 된 것 같은데 왜 표시되지").
+            if !self.nodes[i].loaded {
+                if self.nodes.len() >= self.scan_max {
+                    self.scan_capped = true;
+                    break;
+                }
+                self.list_children(i);
             }
-            self.list_children(i);
             for &c in &self.nodes[i].children {
                 if self.nodes[c].is_dir {
                     queue.push(c);
@@ -402,8 +639,35 @@ impl ProjectPanel {
         }
     }
 
-    fn matches(&self, i: usize, needle: &str) -> bool {
-        self.nodes[i].name.to_lowercase().contains(needle)
+    /// 이름이 필터에 걸리는가 — 옵션(Aa·ab·(.*))은 부품이 본다(`needle`은 종전 호출자 호환용 · 안 쓴다).
+    fn matches(&self, i: usize, _needle: &str) -> bool {
+        if self.filter.is_on(BtnKind::PathMatch) {
+            // 경로까지 검색(기본 끔): 루트 폴더 이름부터의 상대 경로(`/` 구분)에 일반/정규식 매칭.
+            self.filter.matches(&self.rel_path(i))
+        } else {
+            self.filter.matches(&self.nodes[i].name)
+        }
+    }
+
+    /// 루트 폴더 이름부터의 상대 경로(`root/a/b.sql`).
+    fn rel_path(&self, i: usize) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        let mut cur = Some(i);
+        while let Some(n) = cur {
+            parts.push(&self.nodes[n].name);
+            cur = self.nodes[n].parent;
+        }
+        parts.reverse();
+        parts.join("/")
+    }
+
+    /// 자체 시험: 필터 옵션 켜기/끄기(`project.filter:<flags>:<글>` · c/w/r/p).
+    pub(crate) fn set_filter_opts(&mut self, case: bool, word: bool, regex: bool, path: bool) {
+        self.filter.set_checked(BtnKind::Case, case);
+        self.filter.set_checked(BtnKind::Word, word);
+        self.filter.set_checked(BtnKind::Regex, regex);
+        self.filter.set_checked(BtnKind::PathMatch, path);
+        self.filter.refresh();
     }
 
     /// 일치하는 자손이 있는가(필터).
@@ -425,6 +689,8 @@ impl ProjectPanel {
     }
 
     fn rebuild_rows(&mut self) {
+        self.rows_gen = self.rows_gen.wrapping_add(1);
+        self.caret = None;
         self.rows.clear();
         let needle = self.filter_text.trim().to_lowercase();
         if needle.is_empty() {
@@ -456,6 +722,12 @@ impl ProjectPanel {
             }
         }
         self.clamp_scroll();
+        // 활성 탭과 맞춘 선택 경로(`mark_path`)가 이제 보이면 그 행을 선택한다(사용자 선택이 없을 때만).
+        if self.sel.is_none() {
+            if let Some(p) = self.sel_path.clone() {
+                self.sel = self.rows.iter().position(|&n| self.nodes[n].path == p);
+            }
+        }
     }
 
     fn clamp_scroll(&mut self) {
@@ -472,7 +744,16 @@ impl ProjectPanel {
         if !self.visible {
             return false;
         }
-        self.filter.tick(now_ms) | self.bars.tick(now_ms)
+        let mut changed = self.filter.tick(now_ms) | self.bars.tick(now_ms);
+        // 셸 아이콘 조회 결과가 도착했다(서비스 버전 변화) → 다시 그린다(파일 대화상자 `apply_icon_updates`와 같은 규칙).
+        if self.icons_on {
+            let v = IconService::global().version();
+            if v != self.icon_version {
+                self.icon_version = v;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub(crate) fn animating(&self) -> bool {
@@ -522,18 +803,30 @@ impl ProjectPanel {
             return false;
         }
         let mut inv = Invalidations::default();
+        if self.menu.is_open() {
+            let outside = self.menu.is_outside_click(ev);
+            let consumed = self.menu.on_event(ev) && !outside;
+            if let Some(id) = self.menu.take_picked() {
+                self.menu_pick(&id);
+                return true;
+            }
+            if consumed {
+                return true;
+            }
+        }
         if self.name.is_some() {
-            let (_, ny, consumed) = self.bars.on_event(
+            let (nx, ny, consumed) = self.bars.on_event(
                 ev,
                 self.list_rect,
-                self.list_rect.w,
+                self.content_w.max(self.list_rect.w),
                 self.content_h().max(self.list_rect.h),
-                0,
+                self.scroll_x,
                 self.scroll_y,
                 self.scale,
             );
-            if ny != self.scroll_y {
+            if ny != self.scroll_y || nx != self.scroll_x {
                 self.scroll_y = ny;
+                self.scroll_x = nx;
                 return true;
             }
             if consumed {
@@ -549,9 +842,10 @@ impl ProjectPanel {
                         self.ensure_visible(0);
                         return true;
                     }
-                } else if let Some(cur) = self.sel {
+                } else if let Some(cur) = self.sel.or(self.caret) {
                     let n = self.rows.len();
                     match key {
+                        // 선택이 없으면 캐럿 행(테두리)에서부터 움직인다.
                         CtlKey::Down | CtlKey::Up if n > 0 => {
                             let next = if key == CtlKey::Down {
                                 (cur + 1).min(n - 1)
@@ -603,14 +897,21 @@ impl ProjectPanel {
                 if self.name.is_none() {
                     // 빈 상태: 링크 행만 반응.
                     if let Some((id, _)) = self.links.iter().find(|(_, r)| r.contains(p)) {
-                        self.command = Some(id);
+                        self.command = Some((*id).into());
                         return true;
                     }
                     return false;
                 }
+                // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23).
+                if let Some(k) = self.open_rows.iter().position(|r| r.contains(p)) {
+                    if let Some(f) = self.open_files.get(k) {
+                        self.command = Some(format!("editor.switch:{}", f.id));
+                        return true;
+                    }
+                }
                 // 헤더(프로젝트 이름) 클릭 = 프로젝트 전환(최근 목록 팔레트 · 사용자 09-22).
                 if self.header_rect.contains(p) {
-                    self.command = Some("project.switch");
+                    self.command = Some("project.switch".into());
                     return true;
                 }
                 let in_f = self.filter.bounds().contains(p);
@@ -623,7 +924,8 @@ impl ProjectPanel {
                     let dbl = matches!(self.last_click, Some((j, t0)) if j == r && now.duration_since(t0).as_millis() < self.dblclick_ms);
                     self.last_click = Some((r, now));
                     if self.nodes[node].is_dir {
-                        if dbl || (x >= cx0 && x < cx1) {
+                        let xs = x + self.scroll_x;
+                        if dbl || (xs >= cx0 && xs < cx1) {
                             self.last_click = None;
                             self.toggle(node);
                         }
@@ -633,6 +935,21 @@ impl ProjectPanel {
                     } else {
                         self.activate_row(r, false);
                     }
+                    return true;
+                }
+                // 빈 영역(행 아래) 클릭 = 선택 해제(사용자 09-22) — 활성 탭 동기 표시도 함께 지운다.
+                if self.list_rect.contains(p) && !in_f && !self.filter.bounds().contains(p) {
+                    // 배경은 지우고 테두리(캐럿)만 남긴다 — 키보드 이동의 기준점(사용자 09-23).
+                    self.caret = self.sel.or(self.caret);
+                    self.sel = None;
+                    self.sel_path = None;
+                    return true;
+                }
+            }
+            InputEvent::RightDown { x, y } if self.name.is_some() => {
+                let p = Point { x, y };
+                if self.list_rect.contains(p) {
+                    self.open_menu(p);
                     return true;
                 }
             }
@@ -647,9 +964,21 @@ impl ProjectPanel {
             _ => {}
         }
         if self.name.is_some() {
-            self.filter.on_event(ev, &mut inv);
-            if let Some(text) = self.filter.take_changed() {
-                self.filter_text = text;
+            let evt = self.filter.on_event(ev, &mut inv);
+            // 부가 토글 = 설정을 뒤집는 명령(호스트가 `set_list_opts`로 되돌려 준다 · 파일 대화상자와 같은 키).
+            match evt {
+                FilterEvent::Side(BtnKind::Hidden) => {
+                    self.command = Some("project.toggle_hidden".into());
+                    return true;
+                }
+                FilterEvent::Side(BtnKind::DotFiles) => {
+                    self.command = Some("project.toggle_dot".into());
+                    return true;
+                }
+                _ => {}
+            }
+            if evt == FilterEvent::Changed {
+                self.filter_text = self.filter.text();
                 if !self.filter_text.trim().is_empty() {
                     self.scan_for_filter();
                 } else {
@@ -657,6 +986,7 @@ impl ProjectPanel {
                 }
                 self.sel = None;
                 self.scroll_y = 0;
+                self.scroll_x = 0;
                 self.rebuild_rows();
                 return true;
             }
@@ -683,20 +1013,44 @@ impl ProjectPanel {
             None => dc.text(hr.x + pad, hy, hr, t(Msg::ProjNone), th.text_dim),
         }
         dc.select_font(FontSlot::Base, false);
-        // 필터 상자(프로젝트 없으면 흐리게).
-        let fb = self.filter.bounds();
-        let r = px(6.0);
-        dc.fill_round_rect(fb, r, th.field_bg);
-        dc.stroke_round_rect(fb, r, th.border, 1.0);
-        if self.name.is_some() {
-            self.filter.paint(dc, th);
-            if self.filter.is_focused() {
-                dc.stroke_round_rect(fb, r, th.accent, 1.0);
+        // OPEN FILES(사용자 09-23): 제목 줄 + 탭들(활성 = 선택 배경 · 동시 편집 칸 = 외곽선 · 미저장 = ● 앞).
+        if self.open_rect.h > 0 {
+            let hr = Rect::new(
+                self.open_rect.x,
+                self.open_rect.y,
+                self.open_rect.w,
+                self.row_h,
+            );
+            dc.select_font(FontSlot::Base, true);
+            let hy = dc.text_center_y(hr.y, hr.h);
+            dc.text(hr.x + pad, hy, hr, t(Msg::ProjOpenFiles), th.text_dim);
+            dc.select_font(FontSlot::Base, false);
+            for (k, f) in self.open_files.iter().take(OPEN_FILES_MAX).enumerate() {
+                let Some(rr) = self.open_rows.get(k).copied() else {
+                    break;
+                };
+                if f.active {
+                    dc.fill_rect(rr, th.sel_bg);
+                } else if f.grouped {
+                    dc.stroke_round_rect(rr, 0, th.accent, 1.0);
+                }
+                let ty = dc.text_center_y(rr.y, rr.h);
+                let label = if f.dirty {
+                    format!("\u{25cf} {}", f.title)
+                } else {
+                    f.title.clone()
+                };
+                let more = self.open_files.len().saturating_sub(OPEN_FILES_MAX);
+                let label = if k + 1 == OPEN_FILES_MAX && more > 0 {
+                    format!("{label}  (+{more})")
+                } else {
+                    label
+                };
+                dc.text(rr.x + pad * 2, ty, rr, &label, th.text);
             }
-        } else {
-            let ty = dc.text_center_y(fb.y, fb.h);
-            dc.text(fb.x + px(6.0), ty, fb, t(Msg::PhProjectFilter), th.text_dim);
         }
+        // 필터 틀(부품 · 프로젝트 없으면 흐린 자리 표시).
+        self.filter.paint(dc, th, self.name.is_some());
         let lr = self.list_rect;
         let rh = self.row_h.max(1);
         self.links.clear();
@@ -736,68 +1090,142 @@ impl ProjectPanel {
         let first = (self.scroll_y / rh) as usize;
         let mut y = lr.y - self.scroll_y % rh;
         let hover_row = self.hover.map(|(r, _)| r);
-        let chev_w = dc.text_width("▾");
+        // 셰브론·아이콘 = 글꼴 높이(객체 탐색기와 같은 규칙 · 사용자 09-22 "객체 탐색기와 동일하게").
+        let cw = dc.text_height().max(10);
+        let icon_sz = dc.text_height().max(12);
+        // 내용 폭 = 가장 긴 행(셰브론 + 아이콘 + 이름 + 여백) — 행 집합이 바뀐 뒤 첫 그리기에서 한 번 잰다.
+        if self.measured_gen != self.rows_gen {
+            let lead = if self.icons_on {
+                icon_sz + px(5.0)
+            } else {
+                px(2.0)
+            };
+            let mut w = 0;
+            for &node in &self.rows {
+                let (_, cx1) = self.chevron_x(node);
+                let tw = dc.text_width(&self.nodes[node].name);
+                w = w.max(cx1 - lr.x + lead + tw + pad);
+            }
+            self.content_w = w;
+            self.measured_gen = self.rows_gen;
+            let max_x = (self.content_w - lr.w).max(0);
+            self.scroll_x = self.scroll_x.clamp(0, max_x);
+        }
+        let sx = self.scroll_x;
         for r in first..self.rows.len() {
             if y >= lr.bottom() {
                 break;
             }
             let node = self.rows[r];
-            let n = &self.nodes[node];
-            let row_rect = Rect::new(lr.x, y, lr.w, rh);
+            let (is_dir, expanded, empty_loaded, error, name) = {
+                let n = &self.nodes[node];
+                (
+                    n.is_dir,
+                    n.expanded,
+                    n.loaded && n.children.is_empty(),
+                    n.error,
+                    n.name.clone(),
+                )
+            };
+            // ★ 행은 목록 영역으로 클립(스크롤로 반쯤 올라간 첫 행이 필터 상자를 덮던 결함 · 사용자 09-22).
+            let row_rect = Rect::new(lr.x, y, lr.w, rh).intersection(&lr);
+            if row_rect.is_empty() {
+                y += rh;
+                continue;
+            }
             if self.sel == Some(r) {
                 dc.fill_rect(row_rect, th.sel_bg);
             } else if hover_row == Some(r) {
                 dc.fill_rect_alpha(row_rect, th.text, 0.06);
             }
-            let ty = dc.text_center_y(y, rh);
-            let (cx0, _) = self.chevron_x(node);
-            let mut tx = cx0;
-            if n.is_dir {
-                let chev = if n.expanded { "▾" } else { "▸" };
-                dc.text(cx0, ty, row_rect, chev, th.text_dim);
+            if self.sel.is_none() && self.caret == Some(r) {
+                dc.stroke_round_rect(row_rect, 0, th.text_dim, 1.0);
             }
-            tx += chev_w + px(6.0);
-            let color = if n.error { th.danger } else { th.text };
-            let clip = Rect::new(tx, y, (lr.right() - tx).max(0), rh);
-            dc.text(tx, ty, clip, &n.name, color);
+            let ty = dc.text_center_y(y, rh);
+            let (cx0, cx1) = self.chevron_x(node);
+            let (cx0, cx1) = (cx0 - sx, cx1 - sx);
+            let mut tx = cx1;
+            // 셰브론 — 객체 탐색기와 같은 부품(`draw_chevron_90_in` · 읽어서 빈 폴더는 안 그림 · 접힘 = 흐림 · 펼침/호버 = 본문색).
+            if is_dir && !empty_loaded {
+                let chev = Rect::new(cx0, y + (rh - cw) / 2, cw, cw);
+                let color = if expanded || hover_row == Some(r) {
+                    th.text
+                } else {
+                    th.text_dim
+                };
+                nexa_ctl::controls::draw_chevron_90_in(dc, chev, color, expanded, Some(row_rect));
+            }
+            // 파일/폴더 아이콘(설정 `project.icons` · 파일 대화상자와 같은 OS 셸 아이콘 · 없으면 자체 그림).
+            if self.icons_on {
+                let ext = if is_dir {
+                    String::new()
+                } else {
+                    Path::new(&name)
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_lowercase())
+                        .unwrap_or_default()
+                };
+                let img = self.icon_for(is_dir, &ext);
+                let dst = Rect::new(tx, y + (rh - icon_sz) / 2, icon_sz, icon_sz);
+                dc.image_scaled(dst, &img, row_rect);
+                tx += icon_sz + px(5.0);
+            } else {
+                tx += px(2.0);
+            }
+            let color = if error { th.danger } else { th.text };
+            let clip = Rect::new(tx, y, (lr.right() - tx).max(0), rh).intersection(&lr);
+            if !clip.is_empty() {
+                dc.text(tx, ty, clip, &name, color);
+            }
             y += rh;
         }
-        if self.scan_capped && y < lr.bottom() {
+        // 안내 글은 위에서부터 한 줄씩(겹치지 않게 · 사용자 09-22): 행이 없으면 "일치 없음"/"폴더 없음" 먼저, 그 아래 상한 안내.
+        let mut my = if self.rows.is_empty() {
+            lr.y + px(4.0)
+        } else {
+            y
+        };
+        if self.rows.is_empty() {
+            let msg = if self.filter_text.trim().is_empty() {
+                t(Msg::ProjNoFolders)
+            } else {
+                t(Msg::ProjNoMatch)
+            };
+            let ty = dc.text_center_y(my, rh);
+            dc.text(lr.x + pad, ty, lr, msg, th.text_dim);
+            my += rh;
+        }
+        if self.scan_capped && my < lr.bottom() {
             dc.select_font(FontSlot::Status, false);
-            let ty = dc.text_center_y(y, rh);
+            let ty = dc.text_center_y(my, rh);
             dc.text(
                 lr.x + pad,
                 ty,
-                Rect::new(lr.x, y, lr.w, rh),
+                Rect::new(lr.x, my, lr.w, rh),
                 &tf(Msg::ProjScanCapped, &[&self.scan_max.to_string()]),
                 th.warn,
             );
             dc.select_font(FontSlot::Base, false);
         }
-        if self.rows.is_empty() && !self.filter_text.trim().is_empty() {
-            let ty = dc.text_center_y(lr.y + px(4.0), rh);
-            dc.text(lr.x + pad, ty, lr, t(Msg::ProjNoMatch), th.text_dim);
-        } else if self.rows.is_empty() {
-            let ty = dc.text_center_y(lr.y + px(4.0), rh);
-            dc.text(lr.x + pad, ty, lr, t(Msg::ProjNoFolders), th.text_dim);
-        }
         self.bars.paint(
             dc,
             th,
             lr,
-            lr.w,
+            self.content_w.max(lr.w),
             self.content_h().max(lr.h),
-            0,
+            self.scroll_x,
             self.scroll_y,
             s,
         );
-        self.filter.paint_popup(dc, th);
     }
 
     /// 머문 행의 전체 경로 툴팁(팝업 층).
     pub(crate) fn paint_tooltip(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.visible {
             return;
+        }
+        if self.name.is_some() {
+            self.filter.paint_popup(dc, th);
         }
         let Some((r, t0)) = self.hover else { return };
         if t0.elapsed().as_millis() < self.tooltip_ms {
@@ -824,8 +1252,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
-    fn fixture() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("nsql-ppanel-{}", std::process::id()));
+    fn fixture(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nsql-ppanel-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("a/b")).unwrap();
         std::fs::write(dir.join("a/one.sql"), "x").unwrap();
@@ -836,9 +1264,9 @@ mod tests {
 
     #[test]
     fn single_root_expands_and_filter_finds_deep_files() {
-        let dir = fixture();
+        let dir = fixture("t1");
         let mut p = ProjectPanel::new();
-        p.set_project(Some("t".into()), std::slice::from_ref(&dir));
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
         // 루트 하나 = 자동 펼침 · 폴더 먼저.
         let names: Vec<&str> = p.rows.iter().map(|&n| p.nodes[n].name.as_str()).collect();
         assert_eq!(
@@ -846,12 +1274,14 @@ mod tests {
             vec![dir.file_name().unwrap().to_str().unwrap(), "a", "top.txt"]
         );
         // 필터 = 깊이와 무관하게 찾고 조상만 보인다.
+        p.filter.set_text("two");
         p.filter_text = "two".into();
         p.scan_for_filter();
         p.rebuild_rows();
         let names: Vec<&str> = p.rows.iter().map(|&n| p.nodes[n].name.as_str()).collect();
         assert_eq!(names[1..], ["a", "b", "two.sql"]);
         // 필터를 지우면 펼침 상태 그대로(a는 열거만 됐지 펼치지 않았다).
+        p.filter.set_text("");
         p.filter_text.clear();
         p.rebuild_rows();
         assert_eq!(p.rows.len(), 3);
@@ -864,9 +1294,109 @@ mod tests {
     }
 
     #[test]
+    fn set_project_restores_last_selected_path() {
+        let dir = fixture("t2");
+        let mut p = ProjectPanel::new();
+        let target = dir.join("a/b/two.sql");
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), Some(&target));
+        assert_eq!(p.selected_path().as_deref(), Some(target.as_path()));
+        // 없는 경로 = 선택 없음(오류 없이).
+        p.set_project(
+            Some("t".into()),
+            std::slice::from_ref(&dir),
+            Some(Path::new("/nowhere/x.sql")),
+        );
+        assert!(p.selected_path().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn path_toggle_matches_relative_path_and_cap_only_when_pending() {
+        let dir = fixture("path");
+        let mut p = ProjectPanel::new();
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
+        // 이름만: "a/b"는 어떤 이름에도 없다.
+        p.set_filter_text("a/b");
+        assert!(p.rows.is_empty());
+        // 경로까지: root/a/b/two.sql 에 걸린다(조상 a·b가 함께 보인다).
+        p.set_filter_opts(false, false, false, true);
+        p.set_filter_text("a/b");
+        let names: Vec<&str> = p.rows.iter().map(|&n| p.nodes[n].name.as_str()).collect();
+        assert_eq!(names[1..], ["a", "b", "two.sql"]);
+        // 정규식 + 경로.
+        p.set_filter_opts(false, false, true, true);
+        p.set_filter_text(r"^t\d*/a/b/.*\.sql$");
+        assert!(
+            p.rows.is_empty(),
+            "루트 이름은 임시 폴더 이름이라 ^t로 시작하지 않는다"
+        );
+        p.set_filter_text(r"/a/b/.*\.sql$");
+        assert_eq!(p.rows.len(), 4);
+        // 상한: 트리가 상한을 넘겨도 열거할 폴더가 남지 않았으면 "멈춤"이 아니다.
+        p.scan_max = 100;
+        p.set_filter_opts(false, false, false, false);
+        p.set_filter_text("two");
+        assert!(!p.scan_capped);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_cap_flags_only_when_folders_remain() {
+        let dir = std::env::temp_dir().join(format!("nsql-ppanel-{}-cap", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in 0..30 {
+            let sub = dir.join(format!("d{d:02}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            for f in 0..5 {
+                std::fs::write(sub.join(format!("f{f}.sql")), "x").unwrap();
+            }
+        }
+        let mut p = ProjectPanel::new();
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
+        p.scan_max = 100;
+        p.set_filter_text("zzqq");
+        assert!(p.scan_capped, "30개 폴더 중 일부는 못 열었다");
+        assert!(p.rows.is_empty());
+        // 상한을 넉넉히 → 전부 열거 → 멈춤 아님.
+        p.scan_max = 100_000;
+        p.set_filter_text("f3");
+        assert!(!p.scan_capped);
+        assert!(!p.rows.is_empty());
+        // 다시 낮춰도 이미 다 열거했으면 멈춤이 아니다(사용자 09-22).
+        p.scan_max = 100;
+        p.set_filter_text("f4");
+        assert!(!p.scan_capped);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mark_path_selects_only_when_visible() {
+        let dir = fixture("mark");
+        let mut p = ProjectPanel::new();
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
+        let target = dir.join("a/b/two.sql");
+        p.mark_path(&target);
+        // 접혀 있다 → 선택 없음 · 펼치지 않았다.
+        assert!(p.sel.is_none());
+        assert_eq!(p.rows.len(), 3);
+        // 사용자가 a → b를 펼치면 그 행이 선택된 채 나타난다.
+        let a = p.rows[1];
+        p.toggle(a);
+        let b = p.nodes[a]
+            .children
+            .iter()
+            .copied()
+            .find(|&c| p.nodes[c].is_dir)
+            .unwrap();
+        p.toggle(b);
+        assert_eq!(p.selected_path().as_deref(), Some(target.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn empty_state_has_links_and_no_rows() {
         let mut p = ProjectPanel::new();
-        p.set_project(None, &[]);
+        p.set_project(None, &[], None);
         assert!(!p.has_project());
         assert!(p.rows.is_empty());
         // 프로젝트 없는 상태에서 행 활성화는 아무것도 내지 않는다.

@@ -5,10 +5,11 @@
 //! 이 파일은 그리기·히트·검색 거르기만 — 저장소 읽기·설치·켜기/끄기는 호스트(`main.rs ext_*`)가 한다(네트워크는 패널을 열거나
 //! ⟳를 누를 때만 · 26 §8). 확장 관리자가 꺼져 있으면 활동 막대에 아이콘이 없으므로 이 패널도 열리지 않는다.
 
+use crate::filterbar::{FilterBar, FilterEvent, GAP_Y};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
-use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
+use nexa_ctl::{InputEvent, Invalidations, Key as CtlKey, TextBox};
 use nsql_i18n::{t, tf, Msg};
 
 /// 목록 한 줄(호스트가 만든다).
@@ -57,7 +58,7 @@ pub(crate) struct ExtPanel {
     focused: bool,
     bounds: Rect,
     scale: f32,
-    search: TextBox,
+    search: FilterBar,
     rows: Vec<ExtRow>,
     /// 저장소 읽기 결과 안내(오류·"읽는 중"이 아니라 마지막 상태 한 줄 · 비면 없음).
     note: String,
@@ -78,7 +79,7 @@ impl ExtPanel {
             focused: false,
             bounds: Rect::default(),
             scale: 1.0,
-            search: TextBox::new(t(Msg::PhExtSearch)),
+            search: FilterBar::new(t(Msg::PhExtSearch), &[]),
             rows: Vec::new(),
             note: String::new(),
             scroll: 0,
@@ -110,13 +111,11 @@ impl ExtPanel {
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
         self.bounds = b;
         self.scale = scale;
-        self.search.set_scale(scale);
-        let mut inv = Invalidations::default();
         let pad = self.s(8.0);
         let head = self.s(30.0);
         self.search.set_bounds(
             Rect::new(b.x + pad, b.y + head, (b.w - pad * 2).max(0), self.s(28.0)),
-            &mut inv,
+            scale,
         );
     }
 
@@ -132,7 +131,11 @@ impl ExtPanel {
 
     /// IME·편집 컨텍스트 라우팅용.
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
-        self.focused.then_some(&mut self.search)
+        if self.focused {
+            Some(self.search.tb_mut())
+        } else {
+            None
+        }
     }
 
     /// 목록 교체(설치됨 먼저 · 그다음 설치 가능) + 안내 한 줄.
@@ -157,7 +160,7 @@ impl ExtPanel {
 
     fn list_rect(&self) -> Rect {
         let b = self.bounds;
-        let top = b.y + self.s(30.0) + self.s(28.0) + self.s(8.0);
+        let top = b.y + self.s(30.0) + self.s(28.0) + self.s(GAP_Y);
         Rect::new(b.x, top, b.w, (b.bottom() - top).max(0))
     }
 
@@ -168,14 +171,14 @@ impl ExtPanel {
 
     /// 검색어로 거른 rows 인덱스(이름·id·설명 부분 일치 · 대소문자 무시 · 조합 중 글자 포함).
     fn filtered(&self) -> Vec<usize> {
-        let q = self.search.display_text().trim().to_lowercase();
+        // 옵션(Aa·ab·(.*))은 부품이 본다 — 이름·id·설명 중 하나라도.
         (0..self.rows.len())
             .filter(|&i| {
                 let r = &self.rows[i];
-                q.is_empty()
-                    || r.name.to_lowercase().contains(&q)
-                    || r.id.to_lowercase().contains(&q)
-                    || r.summary.to_lowercase().contains(&q)
+                self.search.is_empty()
+                    || self.search.matches(&r.name)
+                    || self.search.matches(&r.id)
+                    || self.search.matches(&r.summary)
             })
             .collect()
     }
@@ -188,6 +191,8 @@ impl ExtPanel {
         let mut inv = Invalidations::default();
         match *ev {
             InputEvent::MouseMove { x, y } => {
+                // 검색 틀 토글 hover.
+                let _ = self.search.on_event(ev, &mut inv);
                 let p = Point { x, y };
                 let h = self
                     .hits
@@ -224,7 +229,9 @@ impl ExtPanel {
                 }
                 if self.search.bounds().contains(p) {
                     self.set_focused(true);
-                    self.search.on_event(ev, &mut inv);
+                    if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
+                        self.scroll = 0;
+                    }
                     return true;
                 }
                 let hit = self
@@ -257,7 +264,11 @@ impl ExtPanel {
                 false
             }
             InputEvent::MouseUp { .. } => {
-                self.search.on_event(ev, &mut inv);
+                // 토글 hover·클릭(뗌에서 확정) — 옵션이 바뀌면 다시 거른다.
+                if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
+                    self.scroll = 0;
+                    return true;
+                }
                 false
             }
             InputEvent::Key {
@@ -276,8 +287,7 @@ impl ExtPanel {
             | InputEvent::Redo
                 if self.focused =>
             {
-                self.search.on_event(ev, &mut inv);
-                if self.search.take_changed().is_some() {
+                if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
                     self.scroll = 0;
                 }
                 true
@@ -288,7 +298,7 @@ impl ExtPanel {
 
     /// IME 조합·확정 뒤 호스트가 부른다 — 목록을 바로 거른다(조합 중 글자 포함).
     pub(crate) fn query_changed(&mut self) {
-        let _ = self.search.take_changed();
+        self.search.refresh();
         self.scroll = 0;
     }
 
@@ -330,7 +340,7 @@ impl ExtPanel {
             "⟳",
             th.text,
         );
-        self.search.paint(dc, th);
+        self.search.paint(dc, th, true);
         // 목록.
         let list = self.list_rect();
         let idx = self.filtered();

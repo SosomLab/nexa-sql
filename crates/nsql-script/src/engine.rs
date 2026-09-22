@@ -83,6 +83,10 @@ pub struct Settings {
     /// `${env:이름[:형식]}` = **OS 환경 변수**(설정 `vars.env_subst` · 기본 켬 · 사용자 09-21) — 없는 변수는 글자 그대로 둔다.
     /// `brace_subst`가 꺼져 있으면 이것도 돌지 않는다.
     pub env_subst: bool,
+    /// ★ 변수 안의 변수 **확장 시점**(설정 `vars.expand_at` · docs/63 §9 · 사용자 09-22): false = **대입 시**(`DEFINE a = &b`의
+    /// `&b`를 정의할 때 바꾼다 · SQL*Plus·psql·sqlcmd) · true = **사용 시**(원문을 보관하고 `&a`를 읽을 때 재귀 치환 · 깊이 16 ·
+    /// 순환 = 오류 · SQL Workbench/J). `DEFINE` 목록은 사용 시 모드에서 `원문  →  현재 값`으로 보여 준다.
+    pub expand_at_use: bool,
     /// 변수 하나가 담는 값의 상한(바이트 · 설정 `vars.max_value_kb` · 0 = 무제한) — 돌아온 CLOB·긴 글이 변수 표·보존 파일·
     /// 변수 창을 부풀리지 않게.
     pub max_value_bytes: usize,
@@ -107,6 +111,7 @@ impl Default for Settings {
             into_first: false,
             brace_subst: true,
             env_subst: true,
+            expand_at_use: false,
             max_value_bytes: 1024 * 1024,
             serveroutput: false,
             timing: false,
@@ -148,6 +153,8 @@ pub struct Engine {
     pub defines: BTreeMap<String, String>,
     pub settings: Settings,
     pub diagnostics: Vec<Diagnostic>,
+    /// 사용 시 확장의 재귀 스택(순환·깊이 검출 · 치환 중에만 비어 있지 않다).
+    subst_stack: Vec<String>,
 }
 
 impl Engine {
@@ -164,6 +171,7 @@ impl Engine {
             defines: BTreeMap::new(),
             settings: Settings::default(),
             diagnostics: Vec::new(),
+            subst_stack: Vec::new(),
         }
     }
 
@@ -193,9 +201,27 @@ impl Engine {
 
     /// 항목 하나를 계획한다. 여러 행동이 나올 수 있다(예: 자동 PRINT).
     pub fn plan(&mut self, item: &Item) -> Vec<Action> {
+        // ★ `DEFINE 이름 = 값`은 치환 **전에** 가로챈다(docs/63 §9): 대입 시 모드 = 값을 지금 치환해 저장(SQL*Plus) ·
+        //   사용 시 모드 = 원문 그대로 저장(읽을 때 재귀 확장). 종전엔 원문을 저장하고 쓸 때 한 번만 바꿔 중첩 참조가 남았다.
+        if let ItemKind::Command(Command::Define {
+            name: Some(n),
+            value: Some(v),
+        }) = &item.kind
+        {
+            let stored = if self.settings.expand_at_use {
+                v.clone()
+            } else {
+                match self.substitute(v) {
+                    Ok(t) => t,
+                    Err(e) => return vec![Self::subst_error(e)],
+                }
+            };
+            self.define(n, &stored);
+            return vec![Action::Nothing(format!("define {n}"))];
+        }
         let text = match self.substitute(&item.text) {
             Ok(t) => t,
-            Err(name) => return vec![Action::NeedInput { name }],
+            Err(e) => return vec![Self::subst_error(e)],
         };
         match &item.kind {
             ItemKind::Invalid(msg) => vec![Action::Error(msg.clone())],
@@ -221,6 +247,51 @@ impl Engine {
                 }]
             }
             ItemKind::Command(cmd) => self.plan_command(cmd, &text),
+        }
+    }
+
+    /// [`Engine::substitute`]의 `Err` → 행동: 미정의 이름 = 입력 요청 · `\0`으로 시작 = 순환/깊이 오류.
+    fn subst_error(e: String) -> Action {
+        match e.strip_prefix('\0') {
+            Some(msg) => Action::Error(msg.to_string()),
+            None => Action::NeedInput { name: e },
+        }
+    }
+
+    /// 사용 시 확장: 저장된 원문에 치환 글자가 남아 있으면 재귀로 편다(깊이 16 · 순환 = `\0` 오류).
+    fn expand_nested(&mut self, name: &str, v: String) -> Result<String, String> {
+        let ch = self.settings.define_char;
+        let nested =
+            ch.is_some_and(|c| v.contains(c)) || (self.settings.brace_subst && v.contains("${"));
+        if !self.settings.expand_at_use || !nested {
+            return Ok(v);
+        }
+        if self.subst_stack.iter().any(|n| n == name) {
+            let chain: Vec<&str> = self
+                .subst_stack
+                .iter()
+                .map(String::as_str)
+                .chain([name])
+                .collect();
+            return Err(format!("\0circular substitution: {}", chain.join(" -> ")));
+        }
+        if self.subst_stack.len() >= 16 {
+            return Err(format!("\0substitution too deep (16): {name}"));
+        }
+        self.subst_stack.push(name.to_string());
+        let r = self.substitute(&v);
+        self.subst_stack.pop();
+        r
+    }
+
+    /// `DEFINE` 표시 글 — 사용 시 모드에서 원문에 참조가 남아 있으면 `원문  →  현재 값`(순환이면 원문만).
+    fn define_display(&mut self, name: &str, raw: &str) -> String {
+        if !self.settings.expand_at_use {
+            return raw.to_string();
+        }
+        match self.expand_nested(name, raw.to_string()) {
+            Ok(v) if v != raw => format!("{raw}  \u{2192}  {v}"),
+            _ => raw.to_string(),
         }
     }
 
@@ -312,10 +383,17 @@ impl Engine {
                 }
             }
             Command::Define { name: None, .. } => {
-                let list = self
+                let pairs: Vec<(String, String)> = self
                     .defines
                     .iter()
-                    .map(|(k, v)| (k.clone(), Value::Str(v.clone())))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let list = pairs
+                    .into_iter()
+                    .map(|(k, v)| {
+                        let shown = self.define_display(&k, &v);
+                        (k, Value::Str(shown))
+                    })
                     .collect();
                 vec![Action::Print(list)]
             }
@@ -329,8 +407,11 @@ impl Engine {
             Command::Define {
                 name: Some(n),
                 value: None,
-            } => match self.defines.get(n) {
-                Some(v) => vec![Action::Print(vec![(n.clone(), Value::Str(v.clone()))])],
+            } => match self.defines.get(n).cloned() {
+                Some(v) => {
+                    let shown = self.define_display(n, &v);
+                    vec![Action::Print(vec![(n.clone(), Value::Str(shown))])]
+                }
                 None => vec![Action::Error(format!("치환 변수 {n}가 없습니다"))],
             },
             Command::Column {
@@ -587,9 +668,10 @@ impl Engine {
                 }
                 if j > start {
                     let name = text[start..j].to_ascii_uppercase();
-                    match self.macro_value(&name) {
+                    match self.macro_value(&name).map(str::to_string) {
                         Some(v) => {
-                            out.push_str(v);
+                            let v = self.expand_nested(&name, v)?;
+                            out.push_str(&v);
                             // 뒤따르는 `.`은 이름 종결자(SET CONCAT) — 소비한다.
                             if j < b.len() && b[j] == b'.' {
                                 j += 1;
@@ -639,8 +721,9 @@ impl Engine {
                     let known = !key.is_empty()
                         && key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
                     if known {
-                        if let Some(v) = self.macro_value(&key) {
-                            if let Some(s) = format_macro(v, fmt.trim(), self.dialect) {
+                        if let Some(v) = self.macro_value(&key).map(str::to_string) {
+                            let v = self.expand_nested(&key, v)?;
+                            if let Some(s) = format_macro(&v, fmt.trim(), self.dialect) {
                                 out.push_str(&s);
                                 i += 2 + close + 1;
                                 continue;
@@ -1080,6 +1163,52 @@ mod tests {
                 ("RC".into(), Value::Null),
                 ("N".into(), Value::Int(5))
             ])
+        );
+    }
+
+    /// docs/63 §9 — 변수 안의 변수: 대입 시(기본) vs 사용 시(설정 `vars.expand_at = use`) · 순환 · 표시.
+    #[test]
+    fn expand_at_assign_vs_use() {
+        let item = |s: &str| crate::split::split_script(s).remove(0);
+        let run = |e: &mut Engine| {
+            for s in ["DEFINE v1 = 2", "DEFINE v2 = &v1 + 5", "DEFINE v1 = 5"] {
+                assert!(matches!(e.plan(&item(s))[0], Action::Nothing(_)));
+            }
+            e.substitute("SELECT &v2 FROM dual")
+        };
+        let mut e = Engine::new(Dialect::Oracle);
+        assert_eq!(
+            run(&mut e).as_deref(),
+            Ok("SELECT 2 + 5 FROM dual"),
+            "대입 시"
+        );
+        let mut e = Engine::new(Dialect::Oracle);
+        e.settings.expand_at_use = true;
+        assert_eq!(
+            run(&mut e).as_deref(),
+            Ok("SELECT 5 + 5 FROM dual"),
+            "사용 시"
+        );
+        // `${v}` 형식도 재귀.
+        assert_eq!(e.substitute("${v2}").as_deref(), Ok("5 + 5"));
+        // 표시 = 원문 → 현재 값.
+        let Action::Print(p) = &e.plan(&item("DEFINE v2"))[0] else {
+            panic!()
+        };
+        assert_eq!(p[0].1, Value::Str("&v1 + 5  \u{2192}  5 + 5".into()));
+        // 순환 = 오류 행동(입력 요청이 아니다).
+        e.plan(&item("DEFINE a = &b"));
+        e.plan(&item("DEFINE b = &a"));
+        assert!(
+            matches!(&e.plan(&item("SELECT &a FROM dual"))[0], Action::Error(m) if m.contains("circular"))
+        );
+        // 미정의 참조는 사용 시 모드에서도 입력 요청.
+        e.plan(&item("DEFINE c = &nope"));
+        assert_eq!(
+            e.plan(&item("SELECT &c FROM dual"))[0],
+            Action::NeedInput {
+                name: "NOPE".into()
+            }
         );
     }
 

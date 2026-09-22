@@ -1333,6 +1333,7 @@ dependencies = [
 name = "nsql-cli"
 version = "0.0.1"
 dependencies = [
+ "nsql-bookmarks",
  "nsql-catalog",
  "nsql-core",
  "nsql-drivers",

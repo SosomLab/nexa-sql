@@ -274,12 +274,13 @@ impl SearchPanel {
             Rect::new(frame.x, y1, (tx + tg + tgap - frame.x).max(px(40.0)), ih),
             &mut inv,
         );
-        let y2 = y1 + ih + px(4.0);
+        // 위·아래 여백 = 다른 패널과 같은 부품 상수(사용자 09-22 "모두 동일하게").
+        let y2 = y1 + ih + px(crate::filterbar::GAP_Y);
         self.where_box.set_scale(s);
         self.where_box
             .set_bounds(Rect::new(frame.x, y2, frame.w, ih), &mut inv);
         self.row_h = px(ROW_H);
-        let list_top = y2 + ih + px(4.0) + self.row_h; // 상태 한 줄
+        let list_top = y2 + ih + px(crate::filterbar::GAP_Y) + self.row_h; // 상태 한 줄
         self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
     }
 

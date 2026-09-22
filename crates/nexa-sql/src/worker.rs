@@ -262,6 +262,7 @@ fn apply_fetch_settings(runner: &mut Runner) {
     // T-153: `${이름:형식}` 치환 · 돌아온 값의 크기 상한.
     runner.engine.settings.brace_subst = s.get("vars.brace_subst").is_none_or(|v| v == "on");
     runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
+    runner.engine.settings.expand_at_use = s.get("vars.expand_at") == Some("use");
     runner.engine.settings.max_value_bytes =
         (s.int("vars.max_value_kb").max(0) as usize).saturating_mul(1024);
 }

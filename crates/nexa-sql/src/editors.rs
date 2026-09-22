@@ -22,6 +22,17 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// 탭 우클릭 메뉴 요청(호스트가 처리 · 09-17): 이름 바꾸기 · 닫기(왼쪽/오른쪽/전부) · 파일 위치 열기.
+/// ★ 편집기 탭 유형(사용자 09-22) — 활성 상단 줄 색 · 우클릭 메뉴 구성/활성의 **기준 데이터**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabKind {
+    /// 파일이 아닌 스크립트(이름만 · 미저장).
+    Scratch = 0,
+    /// 파일을 연 정식 탭.
+    File = 1,
+    /// 미리보기 탭(◦ · 클릭마다 바뀜).
+    Preview = 2,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TabMenuReq {
     Rename(usize),
@@ -30,6 +41,10 @@ pub(crate) enum TabMenuReq {
     CloseRight(usize),
     CloseAll,
     Reveal(usize),
+    /// 미리보기 탭을 정식 탭으로(탭 메뉴 · 미리보기 탭에서만 · 09-22).
+    KeepOpen(usize),
+    /// 프로젝트 탐색기에서 그 파일 보기(프로젝트 폴더 안 파일만 · 사용자 09-22).
+    RevealProject(usize),
 }
 
 pub(crate) struct Editors {
@@ -38,6 +53,10 @@ pub(crate) struct Editors {
     menu: CtxMenu,
     menu_tab: Option<usize>,
     tab_menu_req: Option<TabMenuReq>,
+    /// 프로젝트 루트 폴더(탭 메뉴 "프로젝트 탐색기에서 보기" 활성 판정 · 호스트가 `set_project_folders`로).
+    project_folders: Vec<PathBuf>,
+    /// 탭 유형별 활성 상단 줄 색([`TabKind`] 순서 · None = 테마 accent · 설정 `editor.tab_line_*` · 사용자 09-22).
+    tab_line: [Option<nexa_ctl::Color>; 3],
     bufs: Vec<TextBox>,
     titles: Vec<String>,
     active: usize,
@@ -190,6 +209,8 @@ impl Editors {
             menu: CtxMenu::new(),
             menu_tab: None,
             tab_menu_req: None,
+            project_folders: Vec::new(),
+            tab_line: [None; 3],
             bufs: Vec::new(),
             titles: Vec::new(),
             active: 0,
@@ -587,11 +608,17 @@ impl Editors {
             .collect();
         let mut inv = Invalidations::default();
         self.tabs.set_badges(badges, &mut inv);
+        self.sync_tab_line();
         // 동시 편집 칸에 든 탭 = 탭 상단 줄(사용자 09-22).
         let group: Vec<bool> = (0..self.titles.len())
             .map(|i| self.split.len() > 1 && self.split.contains(&i))
             .collect();
         self.tabs.set_group(group, &mut inv);
+        // 탭별 줄 색 = 유형별(묶인 탭도 자기 색 · 사용자 09-23).
+        let colors: Vec<Option<nexa_ctl::Color>> = (0..self.titles.len())
+            .map(|i| self.tab_line[self.tab_kind(i) as usize])
+            .collect();
+        self.tabs.set_tab_colors(colors, &mut inv);
     }
 
     /// 표식 클릭/우클릭 요청(탭 index · 1회성).
@@ -1890,6 +1917,43 @@ impl Editors {
         }
     }
 
+    /// 탭 유형(미리보기 > 파일 > 스크립트).
+    pub(crate) fn tab_kind(&self, i: usize) -> TabKind {
+        if self.preview_id() == Some(self.tab_id(i)) {
+            TabKind::Preview
+        } else if self.paths.get(i).is_some_and(Option::is_some) {
+            TabKind::File
+        } else {
+            TabKind::Scratch
+        }
+    }
+
+    /// 유형별 활성 줄 색(호스트가 설정·테마로 계산해 준다).
+    pub(crate) fn set_tab_line_colors(&mut self, c: [Option<nexa_ctl::Color>; 3]) {
+        self.tab_line = c;
+        self.sync_tab_line();
+    }
+
+    /// 활성 탭의 유형에 맞는 줄 색을 탭 바에 반영(전환·동기화·설정 변경 때).
+    fn sync_tab_line(&mut self) {
+        let k = self.tab_kind(self.active());
+        self.tabs.set_accent(self.tab_line[k as usize]);
+    }
+
+    /// 동시 편집 칸에 든 탭 index들(OPEN FILES 표시용).
+    pub(crate) fn split_tabs(&self) -> &[usize] {
+        &self.split
+    }
+
+    pub(crate) fn set_project_folders(&mut self, folders: Vec<PathBuf>) {
+        self.project_folders = folders;
+    }
+
+    /// 경로가 프로젝트 폴더 아래인가(탐색기에서 보일 수 있는 파일).
+    pub(crate) fn in_project(&self, path: &std::path::Path) -> bool {
+        self.project_folders.iter().any(|f| path.starts_with(f))
+    }
+
     pub(crate) fn tab_menu_open(&self) -> bool {
         self.menu.is_open()
     }
@@ -1925,6 +1989,8 @@ impl Editors {
                     "close_right" => Some(TabMenuReq::CloseRight(i)),
                     "close_all" => Some(TabMenuReq::CloseAll),
                     "reveal" => Some(TabMenuReq::Reveal(i)),
+                    "reveal_project" => Some(TabMenuReq::RevealProject(i)),
+                    "keep_open" => Some(TabMenuReq::KeepOpen(i)),
                     _ => None,
                 };
                 inv.push(self.bounds);
@@ -2045,8 +2111,17 @@ impl Editors {
             .get(i)
             .and_then(|p| p.as_ref())
             .is_some_and(|p| p.exists());
+        // 파일이 아닌 탭(이름 없는 스크립트)·프로젝트 폴더 밖 파일 = 비활성(사용자 09-22).
+        let in_project = self
+            .paths
+            .get(i)
+            .and_then(|p| p.as_ref())
+            .is_some_and(|p| self.in_project(p));
+        // ★ 탭 유형이 메뉴의 기준 데이터(사용자 09-22): 미리보기 = "계속 열어 두기" · 이름 바꾸기 = 스크립트만(파일 탭 제목 = 파일 이름).
+        let kind = self.tab_kind(i);
         let items = vec![
-            CtxItem::item("rename", t(Msg::MnTabRename)),
+            CtxItem::maybe("keep_open", t(Msg::MnTabKeepOpen), kind == TabKind::Preview),
+            CtxItem::maybe("rename", t(Msg::MnTabRename), kind == TabKind::Scratch),
             CtxItem::Separator,
             CtxItem::item("close", t(Msg::MnCloseTab)),
             CtxItem::maybe("close_left", t(Msg::MnTabCloseLeft), i > 0),
@@ -2054,6 +2129,7 @@ impl Editors {
             CtxItem::item("close_all", t(Msg::MnTabCloseAll)),
             CtxItem::Separator,
             CtxItem::maybe("reveal", t(Msg::MnTabReveal), has_file),
+            CtxItem::maybe("reveal_project", t(Msg::MnTabRevealProject), in_project),
         ];
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;

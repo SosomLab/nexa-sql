@@ -139,6 +139,22 @@ impl Bookmarks {
         self.changed = true;
     }
 
+    /// 프로젝트 파일에 내장된 북마크(JSON)로 바꾼다(프로젝트 복원 · 사용자 09-23) — 실패하면 그대로.
+    pub(crate) fn load_json(&mut self, text: &str) -> bool {
+        match Store::from_json(text) {
+            Ok(st) => {
+                self.store = st;
+                self.seq.clear();
+                self.changed = true;
+                true
+            }
+            Err(e) => {
+                eprintln!("bookmarks(project): {e}");
+                false
+            }
+        }
+    }
+
     /// 디바운스 저장(틱에서 부른다) — 썼으면 true.
     pub(crate) fn tick_save(&mut self) -> bool {
         let Some(d) = self.dirty_since else {
@@ -453,6 +469,48 @@ impl Bookmarks {
             .into_iter()
             .filter(|b| b.is_live() && b.mnemonic.is_some())
             .map(|b| (b.anchor.line as usize, b.mnemonic.unwrap_or(0).to_string()))
+            .collect()
+    }
+
+    /// 미니맵 표식(줄 → 색) — 살아 있고 그룹이 켜진 것만(흐린 표식은 미니맵에 안 그린다 · 69 U-2).
+    pub(crate) fn minimap_for(&self, ed: &Editors, i: usize, color: Color) -> Vec<(usize, Color)> {
+        let doc = Self::doc_key(ed, i);
+        self.store
+            .for_doc(&doc, CASE_INSENSITIVE)
+            .into_iter()
+            .filter(|b| b.is_live() && self.store.group_enabled(b.group))
+            .map(|b| (b.anchor.line as usize, color))
+            .collect()
+    }
+
+    /// 줄 끝 인라인 라벨(줄 → `🔖 라벨`) — 라벨이 있는 것만(니모닉은 거터 · 본문은 이미 그 줄이므로 안 보여 준다).
+    pub(crate) fn inline_for(
+        &self,
+        ed: &Editors,
+        i: usize,
+        max_chars: usize,
+    ) -> Vec<(usize, String)> {
+        let doc = Self::doc_key(ed, i);
+        self.store
+            .for_doc(&doc, CASE_INSENSITIVE)
+            .into_iter()
+            .filter(|b| b.is_live())
+            .filter_map(|b| {
+                let l = b.label.as_deref()?.trim();
+                if l.is_empty() {
+                    return None;
+                }
+                // 길이 상한(`bookmark.inline_label_chars`) — 넘치면 줄임표.
+                let shown: String = if l.chars().count() > max_chars {
+                    l.chars()
+                        .take(max_chars.saturating_sub(1))
+                        .chain(['\u{2026}'])
+                        .collect()
+                } else {
+                    l.to_string()
+                };
+                Some((b.anchor.line as usize, format!("\u{25c6} {shown}")))
+            })
             .collect()
     }
 

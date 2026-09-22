@@ -679,9 +679,9 @@ pub trait BookmarkStore {
 | 단계 | 내용 | 의존 |
 |---|---|---|
 | **U-1**(nexa-ui 선행) | `merge3`에 **`pub fn line_map(old, new) -> Option<Vec<Option<usize>>>`**(지금 private `match_lines` 공개) | — |
-| **U-2**(nexa-ui 선행) 🚧 09-22(거터 니모닉 상자 `set_gutter_labels` ✅ · 미니맵·인라인 남음) | `TextBox` 거터 **글리프 마크**(`set_gutter_glyphs` · 아이콘/숫자 상자 · 지금은 색 띠뿐) · **줄 끝 주석**(`set_line_annotations`) · 미니맵 마크 | — |
+| **U-2**(nexa-ui 선행) ✅ 09-22(거터 니모닉 상자 `set_gutter_labels` · 미니맵 `set_minimap_marks` · 줄 끝 `set_inline_labels` · journal §74) | `TextBox` 거터 **글리프 마크**(`set_gutter_glyphs` · 아이콘/숫자 상자 · 지금은 색 띠뿐) · **줄 끝 주석**(`set_line_annotations`) · 미니맵 마크 | — |
 | **B1** ✅ 09-22 | `nsql-bookmarks` 크레이트(의존 = `nsql-settings::json` 하나) — 모델 · JSON 직렬화 · **재탐색 순수 함수** · 줄 보정 · 정리 · 상한 · 테스트(난수 대조) | — |
-| **B2** 🚧 09-22(거터 색 띠 · 미니맵/인라인은 U-2 뒤) | 편집기 배선 — `bookmarks.rs` · `TextBuf` 줄 변경 기록 소비 · 토글/이동/니모닉 명령 · 거터·미니맵·인라인 표시 | U-1 U-2 B1 |
+| **B2** ✅ 09-22(거터 색 띠 · 미니맵 틱 · 줄 끝 라벨 · 설정 `bookmark.minimap`/`inline_label`/`inline_label_chars` · §74) | 편집기 배선 — `bookmarks.rs` · `TextBuf` 줄 변경 기록 소비 · 토글/이동/니모닉 명령 · 거터·미니맵·인라인 표시 | U-1 U-2 B1 |
 | **B3** ✅ 09-22(개인 워크스페이스 파일만 · 포트는 B7 때) | 저장소 — `BookmarkStore` 포트 + 워크스페이스 backend(기본 워크스페이스부터) · 저장 시점 배선 | B1 · (67 T-165) |
 | **B4a** ✅ 09-22(문서 → 항목 · 그룹 트리는 B4c) | **패널 뼈대** — 활동 막대 항목 `view.bookmarks` + 아이콘 `mi_bookmark` · `bookmarks_panel.rs`(search_panel 골격) · 묶음/정렬/필터 · 가상 스크롤 · 빈 상태 · 배지 · 상태줄 세그먼트 | B2 B3 |
 | **B4b** 🚧 09-22(우클릭 메뉴 넷 · Delete · 5초 되돌리기 토스트 · 제자리 이름 · 남음 = 미리보기 탭·드래그·메모) | **패널 조작** — 미리보기(좌클릭)·이동(더블클릭·Enter)·키보드 전부 · 우클릭 메뉴 넷(항목·무효·문서·그룹·빈 곳) · 제자리 이름 편집 · 드래그 이동(고스트·Esc) · 제거 + 5초 실행 취소 | B4a |
@@ -690,7 +690,7 @@ pub trait BookmarkStore {
 | **B5** | 객체 DDL 문서 — `OpenSql`에 `origin` · 재개(확인 후 접속) · 저장 시 복사본 · rename 제안 | B2 · 57 |
 | **B6** | 무효·부활·정리 — 판정 · `stale_days` · 상한 · 파일 이동 제안 띠 | B3 · 58 |
 | **B7** | 공용/개인 2단 — 프로젝트 파일 backend · "공용으로 올리기" · 프로필 이름만 적기 | 67 T-165 |
-| **B8** | CLI `nsql bookmark list\|add\|rm\|prune` · 문서(이 파일 · 24 설정 · 39 §3) · 캡처(네 모서리) | B1 B3 |
+| **B8** ✅ 09-22(`nsql-cli/bookmark.rs` · 별칭 `bm` · `--project`/`--doc`/`--md`/`--label`/`--days` · 자동 점검 S36 = CLI로 심고 GUI가 읽음 · §74) | CLI `nsql bookmark list\|add\|rm\|prune` · 문서(이 파일 · 39 §3) | B1 B3 |
 
 ★ **nexa-ui를 먼저 push**한다(CLAUDE.md §3 규약).
 

@@ -27,3 +27,4 @@ nsql-i18n.workspace = true
 nsql-settings.workspace = true
 nsql-log.workspace = true
 nsql-search.workspace = true
+nsql-bookmarks.workspace = true

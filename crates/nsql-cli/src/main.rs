@@ -5,11 +5,13 @@
 //! nsql run    -c <target> [-d dialect] [-f grid|csv|tsv|json|jsonl] [--no-prompt] <script|-> [args...]
 //! nsql shell  -c <target> [-d dialect]                          # 대화형(줄 단위 · `;`/`/`/명령으로 실행 · exit)
 //! nsql export -c <target> (-q <sql> | -t <table>) [-f csv|tsv|json|jsonl|insert[:T]] [-o file]
+//! nsql bookmark list [--project <file>] [--doc <path>] [--md] | add <file> <line> [--label <text>] | rm <id> | prune [--days N]
 //! nsql conn   list | add <name> [<target>] [--host h --port n --db d --user u -d dialect -p pw] | show <name> | rm <name> | test [<name>] | path
 //! nsql config list | get <key> | set <key> <value> | reset <key> | path     # 앱 설정(ui.lang · ui.theme …) — GUI와 공유
 //! target: 프로필 이름 · sqlite::memory: · sqlite:file.db · oracle://u:p@h:1521/svc · mssql://u:p@h:1433/db · postgres://u:p@h:5432/db · u/p@h:1521/svc(-d로 방언)
 //! ```
 
+mod bookmark;
 mod cat;
 mod config;
 mod conn;
@@ -340,6 +342,7 @@ fn apply_load_switches(runner: &mut Runner) {
         runner.signature_lookup = s.get("vars.signature_lookup").is_none_or(|v| v == "on");
         runner.refcursor_expand = s.get("pg.refcursor_expand").is_none_or(|v| v == "on");
         runner.engine.settings.env_subst = s.get("vars.env_subst").is_none_or(|v| v == "on");
+        runner.engine.settings.expand_at_use = s.get("vars.expand_at") == Some("use");
     }
 }
 
@@ -1600,6 +1603,7 @@ fn main() {
         "export" => cmd_export(&o),
         "explain" => cmd_explain(&o),
         "conn" => conn::cmd_conn(&o),
+        "bookmark" | "bm" => bookmark::cmd_bookmark(&o),
         "cat" | "catalog" | "obj" => cat::cmd_cat(&o),
         "config" | "settings" => config::cmd_config(&o),
         "grep" => grep::cmd_grep(&o.positional),

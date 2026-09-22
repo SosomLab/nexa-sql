@@ -209,6 +209,7 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ),
     ("file.probe_chevrons", b(Domain::Cpu, "on", "on", "off")),
     ("file.os_icons", b(Domain::Cpu, "on", "on", "off")),
+    ("project.icons", b(Domain::Cpu, "on", "on", "off")),
     // ── GFX(§3-4)
     ("ui.max_fps", b(Domain::Gfx, "60", "30", "15")),
     ("ui.animations", b(Domain::Gfx, "auto", "auto", "off")),
@@ -243,6 +244,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("explorer.icons", "off"),
     ("file.os_icons", "off"),
     ("file.probe_chevrons", "off"),
+    // 프로젝트 탐색기 파일/폴더 아이콘(09-22 · 셸 조회 워커 + 래스터 캐시 · 끄면 상주 0)
+    ("project.icons", "off"),
     ("ui.menu_icons", "off"),
     ("tabs.tooltip", "off"),
     ("editor.minimap", "off"),

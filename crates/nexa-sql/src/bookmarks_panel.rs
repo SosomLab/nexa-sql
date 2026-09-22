@@ -7,6 +7,7 @@
 //! 항목 · 문서 · 그룹 · 빈 곳) — `ContextMenu` 하나(팝업 배치 규칙) · 바깥 클릭 = 닫고 통과.
 //! 미리보기 탭·드래그 이동·메모 편집은 다음 단계(69 §11).
 
+use crate::filterbar::{FilterBar, FilterEvent, GAP_Y};
 use nexa_ctl::controls::{ContextMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -68,7 +69,7 @@ pub(crate) struct BookmarksPanel {
     visible: bool,
     bounds: Rect,
     scale: f32,
-    filter: TextBox,
+    filter: FilterBar,
     filter_text: String,
     rows: Vec<Row>,
     collapsed_groups: Vec<u32>,
@@ -80,6 +81,8 @@ pub(crate) struct BookmarksPanel {
     scroll_y: i32,
     bars: ScrollBars,
     sel: Option<usize>,
+    /// 선택 없음일 때의 캐럿 행(빈 곳 클릭 · 테두리만 · 키 이동 시작점 · 사용자 09-23).
+    caret: Option<usize>,
     hover: Option<(usize, Instant)>,
     list_rect: Rect,
     header_rect: Rect,
@@ -100,8 +103,7 @@ const INDENT: f32 = 14.0;
 
 impl BookmarksPanel {
     pub(crate) fn new() -> Self {
-        let mut filter = TextBox::new(t(Msg::PhBookmarkFilter));
-        filter.set_focus_ring(false);
+        let filter = FilterBar::new(t(Msg::PhBookmarkFilter), &[]);
         BookmarksPanel {
             visible: false,
             bounds: Rect::default(),
@@ -117,6 +119,7 @@ impl BookmarksPanel {
             scroll_y: 0,
             bars: ScrollBars::new(),
             sel: None,
+            caret: None,
             hover: None,
             list_rect: Rect::default(),
             header_rect: Rect::default(),
@@ -164,7 +167,11 @@ impl BookmarksPanel {
         if let Some((_, tb, _)) = self.rename.as_mut() {
             return Some(tb);
         }
-        self.filter.is_focused().then_some(&mut self.filter)
+        if self.filter.is_focused() {
+            Some(self.filter.tb_mut())
+        } else {
+            None
+        }
     }
     pub(crate) fn take_action(&mut self) -> Option<BmAction> {
         if self.actions.is_empty() {
@@ -181,6 +188,9 @@ impl BookmarksPanel {
     }
     /// 메뉴(팝업 층 · 창의 맨 마지막에).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if self.visible {
+            self.filter.paint_popup(dc, th);
+        }
         if self.visible && self.menu.is_open() {
             self.menu.paint(dc, th);
         }
@@ -228,14 +238,12 @@ impl BookmarksPanel {
         let ih = px(INPUT_H);
         self.row_h = px(ROW_H);
         self.header_rect = Rect::new(b.x, b.y + px(4.0), b.w, self.row_h);
-        let y1 = self.header_rect.bottom() + px(4.0);
-        let mut inv = Invalidations::default();
-        self.filter.set_scale(scale);
+        let y1 = self.header_rect.bottom() + px(GAP_Y);
         self.filter.set_bounds(
             Rect::new(b.x + pad, y1, (b.w - pad * 2).max(px(80.0)), ih),
-            &mut inv,
+            scale,
         );
-        let list_top = y1 + ih + px(4.0);
+        let list_top = y1 + ih + px(GAP_Y);
         self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
         self.menu.set_scale(scale);
         self.clamp_scroll();
@@ -262,20 +270,15 @@ impl BookmarksPanel {
             Some(Row::Item { id, .. }) => Some(*id),
             _ => None,
         });
-        let terms: Vec<String> = self
-            .filter_text
-            .split_whitespace()
-            .map(|s| s.to_lowercase())
-            .collect();
-        let filtering = !terms.is_empty();
+        let filtering = !self.filter.is_empty();
         let mut rows: Vec<Row> = Vec::new();
         let groups = self.groups.clone();
         for g in &groups {
             let mut docs: Vec<(DocKey, String, Vec<Bookmark>)> = Vec::new();
             for b in self.items.iter().filter(|b| b.group == g.id) {
                 let name = b.doc.short_name();
-                let hay = format!("{} {} {}", b.display(), b.anchor.text, name).to_lowercase();
-                if !terms.iter().all(|t| hay.contains(t)) {
+                let hay = format!("{} {} {}", b.display(), b.anchor.text, name);
+                if filtering && !self.filter.matches(&hay) {
                     continue;
                 }
                 match docs.iter_mut().find(|(k, _, _)| *k == b.doc) {
@@ -601,6 +604,15 @@ impl BookmarksPanel {
             return false;
         }
         let mut inv = Invalidations::default();
+        if matches!(
+            ev,
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+        ) && self.filter.on_event(ev, &mut inv) == FilterEvent::Changed
+        {
+            self.filter_text = self.filter.text();
+            self.rebuild();
+            return true;
+        }
         if self.menu.is_open() {
             let outside = self.menu.is_outside_click(ev);
             let consumed = self.menu.on_event(ev) && !outside;
@@ -677,7 +689,10 @@ impl BookmarksPanel {
                 let in_f = self.filter.bounds().contains(p);
                 self.filter.set_focused(in_f);
                 if in_f {
-                    self.filter.on_event(ev, &mut inv);
+                    if self.filter.on_event(ev, &mut inv) == FilterEvent::Changed {
+                        self.filter_text = self.filter.text();
+                        self.rebuild();
+                    }
                     return true;
                 }
                 if let Some(r) = self.row_at(p) {
@@ -691,6 +706,10 @@ impl BookmarksPanel {
                             }
                         }
                     }
+                } else if self.list_rect.contains(p) {
+                    // 빈 곳 클릭 = 선택 해제 · 캐럿(테두리)만 남김(사용자 09-23).
+                    self.caret = self.sel.or(self.caret);
+                    self.sel = None;
                 }
                 true
             }
@@ -719,9 +738,9 @@ impl BookmarksPanel {
                             return true;
                         }
                         _ => {
-                            self.filter.on_event(ev, &mut inv);
+                            let evt = self.filter.on_event(ev, &mut inv);
                             let now = self.filter.text();
-                            if now != self.filter_text {
+                            if evt == FilterEvent::Changed || now != self.filter_text {
                                 self.filter_text = now;
                                 self.rebuild();
                             }
@@ -732,13 +751,13 @@ impl BookmarksPanel {
                 let n = self.rows.len();
                 match key {
                     CtlKey::Down if n > 0 => {
-                        let r = self.sel.map_or(0, |s| (s + 1).min(n - 1));
+                        let r = self.sel.or(self.caret).map_or(0, |s| (s + 1).min(n - 1));
                         self.sel = Some(r);
                         self.reveal(r);
                         true
                     }
                     CtlKey::Up if n > 0 => {
-                        let r = self.sel.map_or(0, |s| s.saturating_sub(1));
+                        let r = self.sel.or(self.caret).map_or(0, |s| s.saturating_sub(1));
                         self.sel = Some(r);
                         self.reveal(r);
                         true
@@ -868,14 +887,7 @@ impl BookmarksPanel {
         let title = tf(Msg::BmPanelTitle, &[&self.total_live.to_string()]);
         dc.text(hr.x + pad, hy, hr, &title, th.text);
         dc.select_font(FontSlot::Base, false);
-        let fb = self.filter.bounds();
-        let r = px(6.0);
-        dc.fill_round_rect(fb, r, th.field_bg);
-        dc.stroke_round_rect(fb, r, th.border, 1.0);
-        self.filter.paint(dc, th);
-        if self.filter.is_focused() {
-            dc.stroke_round_rect(fb, r, th.accent, 1.0);
-        }
+        self.filter.paint(dc, th, true);
         let lr = self.list_rect;
         let rh = self.row_h.max(1);
         if self.rows.is_empty() {
@@ -903,7 +915,8 @@ impl BookmarksPanel {
         let first = (self.scroll_y / rh) as usize;
         let mut y = lr.y - self.scroll_y % rh;
         let hover_row = self.hover.map(|(r, _)| r);
-        let chev_w = dc.text_width("▾");
+        // 셰브론 = 객체/프로젝트 탐색기와 같은 부품(`draw_chevron_90_in` · 글꼴 높이 · 접힘 흐림 · 펼침/호버 본문색 · 사용자 09-22).
+        let chev_w = dc.text_height().max(10);
         for r in first..self.rows.len() {
             if y >= lr.bottom() {
                 break;
@@ -918,6 +931,8 @@ impl BookmarksPanel {
                         th.sel_bg_inactive
                     },
                 );
+            } else if self.sel.is_none() && self.caret == Some(r) {
+                dc.stroke_round_rect(row_rect, 0, th.text_dim, 1.0);
             } else if hover_row == Some(r) {
                 dc.fill_rect_alpha(row_rect, th.text, 0.06);
             }
@@ -938,9 +953,19 @@ impl BookmarksPanel {
                     count,
                     ..
                 } => {
-                    let chev = if *expanded { "▾" } else { "▸" };
-                    dc.text(lr.x + pad, ty, row_rect, chev, th.text_dim);
-                    let tx = lr.x + pad + chev_w + px(6.0);
+                    let color = if *expanded || hover_row == Some(r) {
+                        th.text
+                    } else {
+                        th.text_dim
+                    };
+                    nexa_ctl::controls::draw_chevron_90_in(
+                        dc,
+                        Rect::new(lr.x + pad, y + (rh - chev_w) / 2, chev_w, chev_w),
+                        color,
+                        *expanded,
+                        Some(row_rect),
+                    );
+                    let tx = lr.x + pad + chev_w + px(4.0);
                     let sw = dc.text_width("■");
                     dc.text(
                         tx,
@@ -971,9 +996,19 @@ impl BookmarksPanel {
                     enabled,
                     ..
                 } => {
-                    let chev = if *expanded { "▾" } else { "▸" };
-                    dc.text(lr.x + pad + indent, ty, row_rect, chev, th.text_dim);
-                    let tx = lr.x + pad + indent + chev_w + px(6.0);
+                    let color = if *expanded || hover_row == Some(r) {
+                        th.text
+                    } else {
+                        th.text_dim
+                    };
+                    nexa_ctl::controls::draw_chevron_90_in(
+                        dc,
+                        Rect::new(lr.x + pad + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
+                        color,
+                        *expanded,
+                        Some(row_rect),
+                    );
+                    let tx = lr.x + pad + indent + chev_w + px(4.0);
                     let cnt = count.to_string();
                     let cw = dc.text_width(&cnt);
                     let clip = Rect::new(tx, y, (lr.right() - tx - cw - pad * 2).max(0), rh);

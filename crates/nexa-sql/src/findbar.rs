@@ -59,6 +59,10 @@ pub(crate) enum BtnKind {
     Preserve,
     Replace,
     ReplaceAll,
+    /// 프로젝트 탐색기 전용(09-22) — 숨김 파일 표시 · 점 파일 표시(Windows) · 경로까지 검색(틀 안 넷째 토글 · 기본 끔).
+    Hidden,
+    DotFiles,
+    PathMatch,
 }
 
 impl BtnKind {
@@ -68,6 +72,9 @@ impl BtnKind {
             BtnKind::Case => Msg::TipFindCase,
             BtnKind::Word => Msg::TipFindWord,
             BtnKind::Regex => Msg::TipFindRegex,
+            BtnKind::Hidden => Msg::TipProjectHidden,
+            BtnKind::DotFiles => Msg::TipProjectDot,
+            BtnKind::PathMatch => Msg::TipFilterPath,
             BtnKind::Prev => Msg::TipFindPrev,
             BtnKind::Next => Msg::TipFindNext,
             BtnKind::Selection => Msg::TipFindSelection,
@@ -80,7 +87,14 @@ impl BtnKind {
     fn is_toggle(self) -> bool {
         matches!(
             self,
-            BtnKind::Case | BtnKind::Word | BtnKind::Regex | BtnKind::Selection | BtnKind::Preserve
+            BtnKind::Case
+                | BtnKind::Word
+                | BtnKind::Regex
+                | BtnKind::Selection
+                | BtnKind::Preserve
+                | BtnKind::Hidden
+                | BtnKind::DotFiles
+                | BtnKind::PathMatch
         )
     }
 }
@@ -729,6 +743,8 @@ impl FindBar {
             BtnKind::Close => FindAction::Close,
             BtnKind::Replace => FindAction::Replace,
             BtnKind::ReplaceAll => FindAction::ReplaceAll,
+            // 프로젝트 탐색기 전용 토글 — 찾기 막대에는 없다.
+            BtnKind::Hidden | BtnKind::DotFiles | BtnKind::PathMatch => FindAction::None,
         }
     }
 

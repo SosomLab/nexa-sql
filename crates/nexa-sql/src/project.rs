@@ -18,6 +18,28 @@ pub(crate) struct Project {
     pub path: Option<PathBuf>,
     /// 탐색기 루트 폴더(절대 · 순서 = 표시 순서).
     pub folders: Vec<PathBuf>,
+    /// 탐색기에서 마지막으로 고른 항목(절대 · 다시 열 때 그 자리에 선택 · 사용자 09-22).
+    pub last_selected: Option<PathBuf>,
+    /// ★ 작업 환경(사용자 09-23): 편집기 탭들(순서 · 파일 경로 또는 미저장 스크립트 본문 · 캐럿 + fuzzy 앵커) · 활성 탭 · 북마크(JSON).
+    pub tabs: Vec<TabState>,
+    pub active: usize,
+    pub bookmarks: Option<String>,
+}
+
+/// 편집기 탭 하나의 저장 상태(docs/67 §2-4 · 사용자 09-23).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TabState {
+    /// 파일 탭이면 경로(파일 기준 상대로 저장) · 없으면 미저장 스크립트.
+    pub path: Option<PathBuf>,
+    pub title: String,
+    /// 미저장 스크립트의 본문(파일 탭은 None — 원본을 만지지 않는다 · docs/70).
+    pub text: Option<String>,
+    /// 캐럿(0 기준) + 북마크와 같은 fuzzy 앵커(줄 본문 · 앞뒤 문맥 · 빈 값 = 없음).
+    pub line: usize,
+    pub col: usize,
+    pub anchor_text: String,
+    pub before: String,
+    pub after: String,
 }
 
 impl Project {
@@ -47,13 +69,58 @@ impl Project {
         let json = parse(&text)?;
         let mut p = Project {
             path: Some(path.to_path_buf()),
-            folders: Vec::new(),
+            ..Project::default()
         };
         let base = p.base();
         let Json::Obj(fields) = json else {
             return Err("project file is not a JSON object".into());
         };
         for (k, v) in &fields {
+            if k == "active" {
+                if let Json::Num(n) = v {
+                    p.active = (*n).max(0.0) as usize;
+                }
+                continue;
+            }
+            if k == "bookmarks" {
+                if matches!(v, Json::Obj(_)) {
+                    p.bookmarks = Some(json_dump(v));
+                }
+                continue;
+            }
+            if k == "tabs" {
+                if let Json::Arr(items) = v {
+                    for it in items {
+                        let Json::Obj(f) = it else { continue };
+                        let mut t = TabState::default();
+                        for (fk, fv) in f {
+                            match (fk.as_str(), fv) {
+                                ("path", Json::Str(s)) if !s.trim().is_empty() => {
+                                    t.path = Some(resolve(s, base.as_deref()))
+                                }
+                                ("title", Json::Str(s)) => t.title = s.clone(),
+                                ("text", Json::Str(s)) => t.text = Some(s.clone()),
+                                ("line", Json::Num(n)) => t.line = (*n).max(0.0) as usize,
+                                ("col", Json::Num(n)) => t.col = (*n).max(0.0) as usize,
+                                ("anchor", Json::Str(s)) => t.anchor_text = s.clone(),
+                                ("before", Json::Str(s)) => t.before = s.clone(),
+                                ("after", Json::Str(s)) => t.after = s.clone(),
+                                _ => {}
+                            }
+                        }
+                        p.tabs.push(t);
+                    }
+                }
+                continue;
+            }
+            if k == "selected" {
+                if let Json::Str(s) = v {
+                    if !s.trim().is_empty() {
+                        p.last_selected = Some(resolve(s, base.as_deref()));
+                    }
+                }
+                continue;
+            }
             if k == "folders" {
                 if let Json::Arr(items) = v {
                     for it in items {
@@ -93,7 +160,53 @@ impl Project {
         if !self.folders.is_empty() {
             out.push('\n');
         }
-        out.push_str("  ]\n}\n");
+        out.push_str("  ]");
+        if let Some(sel) = &self.last_selected {
+            out.push_str(",\n  \"selected\": \"");
+            out.push_str(&escape(&relativize(sel, base.as_deref())));
+            out.push('"');
+        }
+        // 작업 환경(사용자 09-23): 탭 순서대로 · 파일은 경로만(원본 본문은 쓰지 않는다 · docs/70) · 스크립트는 본문 · 캐럿 앵커.
+        if !self.tabs.is_empty() {
+            out.push_str(&format!(",\n  \"active\": {}", self.active));
+            out.push_str(",\n  \"tabs\": [");
+            for (i, t) in self.tabs.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str("\n    { ");
+                if let Some(p) = &t.path {
+                    out.push_str(&format!(
+                        "\"path\": \"{}\", ",
+                        escape(&relativize(p, base.as_deref()))
+                    ));
+                }
+                out.push_str(&format!(
+                    "\"title\": \"{}\", \"line\": {}, \"col\": {}",
+                    escape(&t.title),
+                    t.line,
+                    t.col
+                ));
+                if !t.anchor_text.is_empty() {
+                    out.push_str(&format!(
+                        ", \"anchor\": \"{}\", \"before\": \"{}\", \"after\": \"{}\"",
+                        escape(&t.anchor_text),
+                        escape(&t.before),
+                        escape(&t.after)
+                    ));
+                }
+                if let Some(txt) = &t.text {
+                    out.push_str(&format!(", \"text\": \"{}\"", escape(txt)));
+                }
+                out.push_str(" }");
+            }
+            out.push_str("\n  ]");
+        }
+        if let Some(b) = &self.bookmarks {
+            out.push_str(",\n  \"bookmarks\": ");
+            out.push_str(b.trim());
+        }
+        out.push_str("\n}\n");
         out
     }
 
@@ -147,6 +260,33 @@ fn relativize(p: &Path, base: Option<&Path>) -> String {
     s.replace('\\', "/")
 }
 
+/// JSON 값 → 글(내장 북마크 객체를 그대로 되돌려 `Store::from_json`에 넘긴다).
+fn json_dump(v: &Json) -> String {
+    match v {
+        Json::Null => "null".into(),
+        Json::Bool(b) => b.to_string(),
+        Json::Num(n) => {
+            if n.fract() == 0.0 && n.abs() < 1e15 {
+                format!("{}", *n as i64)
+            } else {
+                n.to_string()
+            }
+        }
+        Json::Str(s) => format!("\"{}\"", escape(s)),
+        Json::Arr(a) => format!(
+            "[{}]",
+            a.iter().map(json_dump).collect::<Vec<_>>().join(",")
+        ),
+        Json::Obj(o) => format!(
+            "{{{}}}",
+            o.iter()
+                .map(|(k, v)| format!("\"{}\":{}", escape(k), json_dump(v)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -197,7 +337,7 @@ mod tests {
         let file = dir.join("my.nsql-project");
         let mut p = Project {
             path: Some(file.clone()),
-            folders: Vec::new(),
+            ..Project::default()
         };
         assert!(p.add_folder(&dir.join("sql")));
         assert!(!p.add_folder(&dir.join("sql")));
@@ -207,14 +347,46 @@ mod tests {
             PathBuf::from("/elsewhere")
         };
         p.add_folder(&other);
+        // 마지막 선택 위치도 상대 경로로 저장·복원(사용자 09-22).
+        p.last_selected = Some(dir.join("sql/a.sql"));
         let text = p.to_json();
         assert!(text.contains("\"path\": \"sql\""), "{text}");
+        assert!(text.contains("\"selected\": \"sql/a.sql\""), "{text}");
         assert!(!text.contains('\\'), "slashes only: {text}");
         p.save().unwrap();
         let back = Project::load(&file).unwrap();
         assert_eq!(back.folders[0], dir.join("sql"));
         assert_eq!(back.folders[1], other);
         assert_eq!(back.name().as_deref(), Some("my"));
+        assert_eq!(back.last_selected, Some(dir.join("sql/a.sql")));
+        // 작업 환경(탭 · 활성 · 북마크 JSON) 왕복(사용자 09-23).
+        p.tabs = vec![
+            TabState {
+                path: Some(dir.join("sql/a.sql")),
+                title: "a.sql".into(),
+                line: 3,
+                col: 2,
+                anchor_text: "SELECT 1;".into(),
+                before: "-- a".into(),
+                after: "".into(),
+                ..TabState::default()
+            },
+            TabState {
+                title: "Script_2".into(),
+                text: Some("select \"q\"\n from dual".into()),
+                ..TabState::default()
+            },
+        ];
+        p.active = 1;
+        p.bookmarks = Some("{\"version\": 1, \"items\": []}".into());
+        p.save().unwrap();
+        let back = Project::load(&file).unwrap();
+        assert_eq!(back.tabs, p.tabs);
+        assert_eq!(back.active, 1);
+        assert!(back
+            .bookmarks
+            .as_deref()
+            .is_some_and(|b| b.contains("\"version\":1")));
         assert!(p.remove_folder(5).is_none());
         assert_eq!(p.remove_folder(0), Some(dir.join("sql")));
         let _ = std::fs::remove_dir_all(&dir);

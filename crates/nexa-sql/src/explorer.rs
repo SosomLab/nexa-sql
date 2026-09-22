@@ -5,6 +5,7 @@
 //! 동작: 클릭 = 선택 · 글리프/더블클릭 = 펼침 · 더블클릭(테이블·뷰) = `SELECT *` 템플릿 새 탭 · 더블클릭(소스 있는 것) = 소스 새 탭 ·
 //! 우클릭 = 메뉴(Select rows · Open source · Refresh · Copy name) · ↑↓←→ Enter.
 
+use crate::dbms_icons;
 use crate::exp_icons::{self, IconKind};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -389,6 +390,8 @@ pub(crate) enum ExplorerAction {
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
 /// (종류 · 색 · **표시 크기 px**) → 미리 스케일한 아이콘(09-15 사전 스케일 캐시 — 매 프레임 bilinear 샘플링 제거).
 type IconCache = HashMap<(IconKind, (u8, u8, u8), i32), Rc<IconImage>>;
+/// 루트 브랜드 아이콘 캐시(이름 · 색 · 크기).
+type BrandCache = HashMap<(&'static str, (u8, u8, u8), i32, i32), Rc<IconImage>>;
 
 /// 아이콘 기본 크기 16×16(논리 px · 기본 글꼴 17px 기준) — 글꼴 크기에 비례해 스케일(사용자 09-15).
 const ICON_BASE_PX: f32 = 16.0;
@@ -405,6 +408,8 @@ pub(crate) struct Explorer {
     scroll: i32,
     bars: ScrollBars,
     selected: Option<usize>,
+    /// 선택 없음일 때의 캐럿 노드(빈 곳 클릭 · 테두리만 · 키 이동 시작점 · 사용자 09-23).
+    caret: Option<usize>,
     hover: Option<usize>,
     /// 호버 행 = 1초에 걸쳐 서서히 진해짐(`IntentFade` Slow · 그리드·접속 목록과 같은 부품 · 사용자 09-15).
     hover_fade: IntentFade,
@@ -426,6 +431,8 @@ pub(crate) struct Explorer {
     /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
     icons_on: bool,
     icon_cache: IconCache,
+    /// 루트 브랜드 아이콘 캐시(이름 · 색 · 크기 → 그림 · dbms_icons · 사용자 09-22).
+    brand_cache: BrandCache,
     /// 마지막 페인트의 화면 행(노드 index · 부모) — `row_at`(MouseMove마다)이 다시 펼치지 않게(09-15 C).
     rows_cache: Vec<(Option<usize>, usize)>,
     /// 호스트가 알려 주는 현재 트리 글꼴 크기(논리 px) — 아이콘 스케일 기준.
@@ -818,6 +825,7 @@ impl Explorer {
             scroll: 0,
             bars: ScrollBars::new(),
             selected: None,
+            caret: None,
             hover: None,
             hover_fade: IntentFade::with_speed(FadeSpeed::Slow),
             tx,
@@ -835,6 +843,7 @@ impl Explorer {
             focused: false,
             icons_on: true,
             icon_cache: HashMap::new(),
+            brand_cache: HashMap::new(),
             rows_cache: Vec::new(),
             font_px: ICON_REF_FONT_PX,
             source_pending: false,
@@ -933,6 +942,27 @@ impl Explorer {
     }
 
     /// 표시 크기로 미리 스케일한 아이콘(캐시) — 페인트는 스케일 없이 그대로 찍는다.
+    /// 루트(서버) 브랜드 아이콘 — `dbms_icons`(내장 SVG 26 · 방언/제품 힌트 → 이름 · 모르면 generic 틀).
+    fn brand_image(
+        &mut self,
+        name: &'static str,
+        rgb: (u8, u8, u8),
+        w: i32,
+        h: i32,
+    ) -> Rc<IconImage> {
+        self.brand_cache
+            .entry((name, rgb, w, h))
+            .or_insert_with(|| {
+                Rc::new(dbms_icons::image(
+                    name,
+                    rgb,
+                    w.max(1) as u32,
+                    h.max(1) as u32,
+                ))
+            })
+            .clone()
+    }
+
     fn icon_image(&mut self, kind: IconKind, rgb: (u8, u8, u8), size: i32) -> Rc<IconImage> {
         self.icon_cache
             .entry((kind, rgb, size))
@@ -1782,6 +1812,9 @@ impl Explorer {
         if self.selected == Some(i) {
             self.selected = None;
         }
+        if self.caret == Some(i) {
+            self.caret = None;
+        }
         if self.hover == Some(i) {
             self.hover = None;
         }
@@ -2093,6 +2126,12 @@ impl Explorer {
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
                 let Some((node, parent)) = self.row_at(p) else {
+                    // 빈 곳(행 아래) 클릭 = 선택 해제 · 캐럿(테두리)만(사용자 09-23).
+                    if self.bounds.contains(p) && self.selected.is_some() {
+                        self.caret = self.selected;
+                        self.selected = None;
+                        return true;
+                    }
                     return false;
                 };
                 let Some(i) = node else {
@@ -2184,6 +2223,7 @@ impl Explorer {
                 let rows: Vec<usize> = self.visible_rows();
                 let pos = self
                     .selected
+                    .or(self.caret)
                     .and_then(|s| rows.iter().position(|&r| r == s));
                 // 타입어헤드 활성이면 ↑/↓ = **접두 매치 안에서만 순환**(역방향 포함) · 순환 중엔 타임아웃 기준을 되돌린다(nexa-beep 규칙).
                 let ta = self.typeahead.composing();
@@ -2601,6 +2641,8 @@ impl Explorer {
                                 th.sel_bg_inactive
                             },
                         );
+                    } else if self.selected.is_none() && self.caret == Some(*i) {
+                        dc.stroke_round_rect(rr, 0, th.text_dim, 1.0);
                     } else {
                         // 방금 생긴 객체 = 옅은 강조가 서서히 사라진다(선택은 옮기지 않는다 · docs/57 D-110).
                         if let Some((_, until)) = self.fresh.iter().find(|(f, _)| f == i) {
@@ -2644,10 +2686,51 @@ impl Explorer {
                             let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
                                 .round()
                                 .max(8.0) as i32;
-                            let img = self.icon_image(k, rgb, sz);
                             let dst = Rect::new(x, vcy - sz / 2, sz, sz);
-                            dc.image_scaled(dst, &img, rr);
-                            x += sz + (6.0 * s).round() as i32;
+                            let mut adv = sz;
+                            if matches!(n.kind, NodeKind::Root) {
+                                // ★ 서버 루트 = DBMS 파일 아이콘(dbms_icons · 사용자 09-22): 틀 색 = 파일의 대표색(fill) ·
+                                //   `<text>` 줄들(≤3자 1줄 세로 중앙 · 4~6자 2줄)을 Status 굵게 틀 안에 · 로고 파일(경로만)이면 마스크만.
+                                //   루트만 조금 크게(1.35배) 그려 두 줄이 들어간다.
+                                let hint = format!("{} {}", self.profile_name, self.conn_desc);
+                                let pick = dbms_icons::pick(self.dialect, &hint);
+                                let rgb = pick.color.unwrap_or(rgb);
+                                let rs = ((sz as f32) * 1.35).round() as i32;
+                                let dstr = Rect::new(x, vcy - rs / 2, rs, rs);
+                                let img = self.brand_image(pick.name, rgb, rs, rs);
+                                dc.image_scaled(dstr, &img, rr);
+                                if !pick.lines.is_empty() {
+                                    // 세로 배치(사용자 09-22): 원통 안쪽 빈 띠 = 6.0/24 ~ 20.2/24 · 대문자 높이 ≈ 0.64·줄높이(위 0.18 여백) ·
+                                    //   2줄 간격 2px · 1줄 상단 여백 = 2줄 하단 여백(글자와 가장 가까운 테두리 픽셀 사이).
+                                    // 고정폭 굵게(사용자 09-22) — 1줄·2줄 같은 face·size.
+                                    dc.select_font(FontSlot::Mono, true);
+                                    let lh2 = dc.text_height();
+                                    let cap = (lh2 as f32 * 0.64).round() as i32;
+                                    let asc = (lh2 as f32 * 0.18).round() as i32;
+                                    let gap = (2.0 * s).round().max(1.0) as i32;
+                                    let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32;
+                                    let bottom = dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32;
+                                    let n = pick.lines.len() as i32;
+                                    let total = cap * n + gap * (n - 1);
+                                    let margin = (bottom - top - total) / 2;
+                                    let mut vis_top = top + margin;
+                                    let c = dstr.intersection(&rr);
+                                    for line in &pick.lines {
+                                        let tw = dc.text_width(line);
+                                        let lx = dstr.x + (rs - tw) / 2;
+                                        if !c.is_empty() {
+                                            dc.text(lx, vis_top - asc, c, line, th.text);
+                                        }
+                                        vis_top += cap + gap;
+                                    }
+                                    dc.select_font(FontSlot::Base, false);
+                                }
+                                adv = rs;
+                            } else {
+                                let img = self.icon_image(k, rgb, sz);
+                                dc.image_scaled(dst, &img, rr);
+                            }
+                            x += adv + (6.0 * s).round() as i32;
                         }
                     } else if let NodeKind::Object(o) = &n.kind {
                         let cr = Rect::new(x, vcy - chip / 2, chip, chip);

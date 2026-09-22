@@ -319,6 +319,27 @@ const CMDS: &[Cmd] = &[
         notes: &[],
         examples: &["nsql grep SELECT", "nsql grep -i -w emp scripts/ ../Oracle", "nsql grep -e 'sp_\\w+_create' --no-ignore ."],
     },
+    Cmd {
+        name: "bookmark",
+        usage: "nsql bookmark list [--project <file>] [--doc <path>] [--md] | add <file> <line> [--label <text>] | rm <id> | prune [--days N]",
+        brief: Msg::HlpCmdBookmark,
+        detail: Msg::HlpCmdBookmarkDetail,
+        args: &[
+            ("list [--doc <path>] [--md]", Msg::HlpArgBmList),
+            ("add <file> <line> [--label <text>]", Msg::HlpArgBmAdd),
+            ("rm <id>", Msg::HlpArgBmRm),
+            ("prune [--days N]", Msg::HlpArgBmPrune),
+            ("--project <file>", Msg::HlpArgBmProject),
+        ],
+        opts: &[],
+        notes: &[],
+        examples: &[
+            "nsql bookmark list",
+            "nsql bookmark add scripts/report.sql 42 --label \"monthly totals\"",
+            "nsql bookmark list --project D:/work/erp.nsql-project --md",
+            "nsql bookmark prune --days 7",
+        ],
+    },
 ];
 
 fn opt_by_flag(flag: &str) -> Option<&'static Opt> {

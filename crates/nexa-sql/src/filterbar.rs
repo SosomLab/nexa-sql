@@ -1,0 +1,409 @@
+//! 필터 틀 부품(사용자 09-22) — 텍스트박스 + 안쪽 토글 **Aa · ab · (.*)**(찾기 막대와 같은 `FindBtn`) + 틀 오른쪽 부가 토글.
+//!
+//! 프로젝트 탐색기 · 북마크 패널 · 확장 패널이 같은 것을 쓴다(둘째 사용처에서 부품으로 · [30 §2](../../../docs/30-architecture-patterns.md)).
+//! 검색 패널(파일 검색)은 자체 배치이되 토글은 같은 부품이다. 매칭은 이 부품이 한다([`FilterBar::matches`]):
+//! 옵션이 전부 꺼져 있으면 **공백으로 나눈 낱말 전부 포함(대소문자 무시)** · 하나라도 켜지면 `rx::compile`(글자 그대로/정규식 · `\b` · `(?i)`).
+//! 정규식 오류 = 틀 테두리 danger + 아무것도 일치하지 않음.
+
+use crate::findbar::{BtnKind, FindBtn};
+use crate::{rx, toolicons};
+use nexa_ctl::controls::ctxmenu::MenuIcon;
+use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
+use nexa_ctl::geom::{Point, Rect};
+use nexa_ctl::theme::Theme;
+use nexa_ctl::{Control, InputEvent, Invalidations, TextBox, Widget};
+use nsql_i18n::t;
+
+/// 입력 상자 높이(네 패널 공통).
+pub(crate) const INPUT_H: f32 = 25.0;
+/// 필터 위·아래 여백(검색·프로젝트·북마크·확장 패널 공통 · 사용자 09-22 "위와 아래에 추가 여백 · 모두 동일하게").
+pub(crate) const GAP_Y: f32 = 8.0;
+
+/// 틀 오른쪽 부가 토글 하나(종류 · 아이콘).
+pub(crate) type SideBtn = (BtnKind, fn() -> MenuIcon);
+
+/// [`FilterBar::on_event`]의 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FilterEvent {
+    None,
+    /// 글이나 옵션(Aa·ab·(.*))이 바뀌었다 — 호출자는 목록을 다시 거른다.
+    Changed,
+    /// 틀 오른쪽 부가 토글이 눌렸다(호출자가 뜻을 정한다 · 예 숨김 파일).
+    Side(BtnKind),
+}
+
+pub(crate) struct FilterBar {
+    tb: TextBox,
+    /// 틀(텍스트박스 + 안쪽 토글) · `area` = 틀 + 오른쪽 부가 토글(히트 영역).
+    frame: Rect,
+    area: Rect,
+    btns: Vec<FindBtn>,
+    matcher: Option<fancy_regex::Regex>,
+    regex_err: bool,
+    /// 마지막으로 반영한 글(표시 글 = 조합 중 글자 포함).
+    text: String,
+    scale: f32,
+    tooltip_ms: u128,
+    clamp_w: i32,
+    /// 자리 표시 글(비활성 그리기용).
+    placeholder: String,
+}
+
+impl FilterBar {
+    /// `side` = 틀 오른쪽에 붙는 부가 토글(없으면 빈 슬라이스).
+    pub(crate) fn new(placeholder: &str, side: &[SideBtn]) -> Self {
+        let mut tb = TextBox::new(placeholder);
+        tb.set_focus_ring(false);
+        let mut btns = vec![
+            FindBtn::new(BtnKind::Case, toolicons::mi_match_case),
+            FindBtn::new(BtnKind::Word, toolicons::mi_match_word),
+            FindBtn::new(BtnKind::Regex, toolicons::mi_regex),
+        ];
+        for &(k, icon) in side {
+            btns.push(FindBtn::new(k, icon));
+        }
+        FilterBar {
+            tb,
+            frame: Rect::default(),
+            area: Rect::default(),
+            btns,
+            matcher: None,
+            regex_err: false,
+            text: String::new(),
+            scale: 1.0,
+            tooltip_ms: 600,
+            clamp_w: i32::MAX / 2,
+            placeholder: placeholder.to_string(),
+        }
+    }
+
+    fn inline_kind(k: BtnKind) -> bool {
+        matches!(
+            k,
+            BtnKind::Case | BtnKind::Word | BtnKind::Regex | BtnKind::PathMatch
+        )
+    }
+
+    /// 틀 안 넷째 토글 "경로까지 검색"(프로젝트 탐색기 · 기본 끔 · 사용자 09-22) — 매칭 대상은 호출자가 고른다(`is_on(PathMatch)`).
+    pub(crate) fn with_path_toggle(mut self) -> Self {
+        let at = self
+            .btns
+            .iter()
+            .position(|b| !Self::inline_kind(b.kind))
+            .unwrap_or(self.btns.len());
+        self.btns.insert(
+            at,
+            FindBtn::new(BtnKind::PathMatch, toolicons::mi_path_match),
+        );
+        self
+    }
+
+    pub(crate) fn tb_mut(&mut self) -> &mut TextBox {
+        &mut self.tb
+    }
+
+    pub(crate) fn set_focused(&mut self, on: bool) {
+        self.tb.set_focused(on);
+        if !on {
+            for b in &mut self.btns {
+                b.focused = false;
+            }
+        }
+    }
+
+    pub(crate) fn is_focused(&self) -> bool {
+        self.tb.is_focused()
+    }
+
+    pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
+        self.tooltip_ms = ms;
+    }
+
+    pub(crate) fn set_clamp_width(&mut self, w: i32) {
+        self.clamp_w = w;
+    }
+
+    /// 확정된 글.
+    pub(crate) fn text(&self) -> String {
+        self.tb.text()
+    }
+
+    /// 표시 글(IME 조합 중 글자 포함) — 거르기의 기준.
+    pub(crate) fn display_text(&self) -> String {
+        self.tb.display_text()
+    }
+
+    pub(crate) fn set_text(&mut self, s: &str) {
+        self.tb.set_text(s);
+        self.refresh();
+    }
+
+    /// 거르는 글이 비었는가.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.text.trim().is_empty()
+    }
+
+    pub(crate) fn is_on(&self, k: BtnKind) -> bool {
+        self.btns.iter().any(|b| b.kind == k && b.checked)
+    }
+
+    pub(crate) fn set_checked(&mut self, k: BtnKind, on: bool) {
+        if let Some(b) = self.btns.iter_mut().find(|b| b.kind == k) {
+            b.checked = on;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn regex_err(&self) -> bool {
+        self.regex_err
+    }
+
+    /// 히트 영역(틀 + 부가 토글).
+    pub(crate) fn bounds(&self) -> Rect {
+        self.area
+    }
+
+    /// 배치 — `area` = 한 줄 전체(높이 = 입력 상자) · 부가 토글은 오른쪽 끝에서 안쪽으로.
+    pub(crate) fn set_bounds(&mut self, area: Rect, scale: f32) {
+        self.area = area;
+        self.scale = scale;
+        let px = |v: f32| (v * scale).round() as i32;
+        let ih = area.h;
+        let gap = px(4.0);
+        let side_n = self
+            .btns
+            .iter()
+            .filter(|b| !Self::inline_kind(b.kind))
+            .count() as i32;
+        let side_w = side_n * (ih + gap);
+        let frame = Rect::new(area.x, area.y, (area.w - side_w).max(px(80.0)), ih);
+        self.frame = frame;
+        // 안쪽 토글 = 검색 패널·찾기 막대와 같은 크기(20 · 간격 2 · 세로 중앙).
+        let tg = px(20.0);
+        let tgap = px(2.0);
+        let mut tx = frame.right() - px(2.0) - tg;
+        // 안쪽 토글은 넣은 순서대로 왼쪽→오른쪽(Aa · ab · (.*) · [경로]) = 오른쪽 끝에서 거꾸로 놓는다.
+        for b in self
+            .btns
+            .iter_mut()
+            .rev()
+            .filter(|b| Self::inline_kind(b.kind))
+        {
+            b.rect = Rect::new(tx, area.y + (ih - tg) / 2, tg, tg);
+            tx -= tg + tgap;
+        }
+        let mut inv = Invalidations::default();
+        self.tb.set_scale(scale);
+        self.tb.set_bounds(
+            Rect::new(
+                frame.x,
+                frame.y,
+                (tx + tg + tgap - frame.x).max(px(40.0)),
+                ih,
+            ),
+            &mut inv,
+        );
+        let mut x = frame.right() + gap;
+        for b in self.btns.iter_mut().filter(|b| !Self::inline_kind(b.kind)) {
+            b.rect = Rect::new(x, area.y, ih, ih);
+            x += ih + gap;
+        }
+    }
+
+    /// 사건 — 토글은 언제나 · 텍스트박스는 키/글자 = 포커스일 때 · 마우스 = 상자 안일 때(MouseUp·이동은 늘).
+    pub(crate) fn on_event(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> FilterEvent {
+        for b in &mut self.btns {
+            b.on_event(ev);
+        }
+        let mut to_tb = false;
+        match *ev {
+            InputEvent::MouseDown { x, y, .. } => {
+                let p = Point { x, y };
+                let hit = self.btns.iter().position(|b| b.rect.contains(p));
+                for (i, b) in self.btns.iter_mut().enumerate() {
+                    b.focused = Some(i) == hit;
+                }
+                if hit.is_some() {
+                    self.tb.set_focused(false);
+                } else if self.tb.bounds().contains(p) {
+                    self.tb.set_focused(true);
+                    to_tb = true;
+                }
+            }
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. } => to_tb = true,
+            InputEvent::Key { .. }
+            | InputEvent::Char { .. }
+            | InputEvent::Undo
+            | InputEvent::Redo => to_tb = self.tb.is_focused(),
+            _ => to_tb = self.tb.is_focused(),
+        }
+        let clicked: Vec<BtnKind> = self
+            .btns
+            .iter_mut()
+            .filter_map(|b| b.take_clicked().then_some(b.kind))
+            .collect();
+        if let Some(&k) = clicked.first() {
+            if Self::inline_kind(k) {
+                if let Some(b) = self.btns.iter_mut().find(|b| b.kind == k) {
+                    b.checked = !b.checked;
+                }
+                self.refresh();
+                return FilterEvent::Changed;
+            }
+            return FilterEvent::Side(k);
+        }
+        if to_tb {
+            self.tb.on_event(ev, inv);
+        }
+        if self.tb.take_changed().is_some() {
+            self.refresh();
+            return FilterEvent::Changed;
+        }
+        FilterEvent::None
+    }
+
+    /// 표시 글·옵션으로 매처를 다시 만든다(IME 조합 뒤 호스트가 부르기도 한다).
+    pub(crate) fn refresh(&mut self) {
+        self.text = self.tb.display_text();
+        let text = self.text.trim().to_string();
+        let (case, word, regex) = (
+            self.is_on(BtnKind::Case),
+            self.is_on(BtnKind::Word),
+            self.is_on(BtnKind::Regex),
+        );
+        self.regex_err = false;
+        if text.is_empty() || !(case || word || regex) {
+            self.matcher = None;
+            return;
+        }
+        match rx::compile(&text, regex, case, word) {
+            Ok(r) => self.matcher = Some(r),
+            Err(_) => {
+                self.matcher = None;
+                self.regex_err = true;
+            }
+        }
+    }
+
+    /// 이 글이 필터에 걸리는가(빈 필터 = 전부).
+    pub(crate) fn matches(&self, hay: &str) -> bool {
+        if self.regex_err {
+            return false;
+        }
+        match &self.matcher {
+            Some(r) => r.is_match(hay).unwrap_or(false),
+            None => {
+                let q = self.text.trim();
+                if q.is_empty() {
+                    return true;
+                }
+                let h = hay.to_lowercase();
+                q.split_whitespace().all(|t| h.contains(&t.to_lowercase()))
+            }
+        }
+    }
+
+    pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        let mut any = self.tb.tick(now_ms);
+        for b in &mut self.btns {
+            any |= b.hover.tick(now_ms);
+        }
+        any
+    }
+
+    pub(crate) fn is_animating(&self) -> bool {
+        self.tb.is_animating()
+            || self.btns.iter().any(|b| b.hover.is_animating())
+            || self.btns.iter().any(|b| {
+                b.hover_since
+                    .is_some_and(|t0| t0.elapsed().as_millis() < self.tooltip_ms + 50)
+            })
+    }
+
+    /// 틀 + 텍스트박스 + 토글. `enabled` = false면 흐린 자리 표시만(프로젝트 없음 등).
+    pub(crate) fn paint(&self, dc: &mut dyn DrawCtx, th: &Theme, enabled: bool) {
+        let s = self.scale;
+        let px = |v: f32| (v * s).round() as i32;
+        let fb = self.frame;
+        let r = px(6.0);
+        dc.fill_round_rect(fb, r, th.field_bg);
+        dc.stroke_round_rect(
+            fb,
+            r,
+            if self.regex_err { th.danger } else { th.border },
+            1.0,
+        );
+        if !enabled {
+            let ty = dc.text_center_y(fb.y, fb.h);
+            dc.text(fb.x + px(6.0), ty, fb, &self.placeholder, th.text_dim);
+            return;
+        }
+        self.tb.paint(dc, th);
+        let tbb = self.tb.bounds();
+        if tbb.w > 0 {
+            // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다(둥근 모서리 안쪽만 · 찾기 막대 `paint_frame`과 같다).
+            dc.fill_rect(
+                Rect::new(tbb.right() - 2, tbb.y + r, 3, (tbb.h - r * 2).max(0)),
+                th.field_bg,
+            );
+        }
+        if self.tb.is_focused() {
+            dc.stroke_round_rect(fb, r, th.accent, 1.0);
+        }
+        for b in &self.btns {
+            b.paint(dc, th, s);
+        }
+    }
+
+    /// 팝업 층 — 텍스트박스 편집 메뉴 + 토글 툴팁(지연 뒤 · 버튼 아래).
+    pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        self.tb.paint_popup(dc, th);
+        if let Some(b) = self.btns.iter().find(|b| {
+            b.hover_since
+                .is_some_and(|t0| t0.elapsed().as_millis() >= self.tooltip_ms)
+        }) {
+            let anchor = Rect::new(b.rect.x, b.rect.bottom() + (2.0 * self.scale) as i32, 0, 0);
+            draw_tooltip_in(
+                dc,
+                th,
+                anchor,
+                (0, self.clamp_w),
+                t(b.kind.tip()),
+                self.scale,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_terms_case_word_regex() {
+        let mut f = FilterBar::new("", &[]);
+        f.set_text("sel emp");
+        assert!(f.matches("SELECT * FROM Emp"));
+        assert!(!f.matches("select 1"));
+        f.set_checked(BtnKind::Case, true);
+        f.refresh();
+        assert!(!f.matches("SELECT * FROM Emp"));
+        assert!(f.matches("sel emp"));
+        f.set_checked(BtnKind::Case, false);
+        f.set_checked(BtnKind::Word, true);
+        f.set_text("emp");
+        assert!(f.matches("from emp where"));
+        assert!(!f.matches("employee"));
+        f.set_checked(BtnKind::Word, false);
+        f.set_checked(BtnKind::Regex, true);
+        f.set_text("^q_.*\\.sql$");
+        assert!(f.matches("q_lines.sql"));
+        assert!(!f.matches("a.sql"));
+        f.set_text("(");
+        assert!(f.regex_err());
+        assert!(!f.matches("("));
+        f.set_text("");
+        assert!(!f.regex_err());
+        assert!(f.matches("anything"));
+    }
+}

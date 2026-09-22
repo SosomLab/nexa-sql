@@ -233,4 +233,47 @@ Run-Scenario -Id S33 -Title "북마크 토글 + 패널(§70)" -Cmd ("open:" + $q
 Run-Scenario -Id S34 -Title "북마크 다음/이전 이동(§70)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:ui.click:400/141,@after:3200:bookmark.next") -WaitMs 4500 -Expect "캐럿이 2줄로(상태줄 Ln 2)"
 # §71 북마크 패널 우클릭 메뉴(항목 행 · 팝업 규칙 ④ 모서리 캡처 대신 패널 안).
 Run-Scenario -Id S35 -Title "북마크 패널 우클릭 메뉴(§71)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:view.bookmarks,@after:3400:ui.rclick:150/182") -WaitMs 5000 -Expect "그룹 → 문서 → 항목 트리 · 항목 우클릭 메뉴(열기·이름·니모닉 ▸·그룹 이동 ▸·제거)"
+# §76 프로젝트 탐색기 = 셰브론 부품 · OS 파일/폴더 아이콘(project.icons) · 루트 우클릭 메뉴(Remove Folder from Project).
+Run-Scenario -Id S38 -Title "프로젝트 탐색기 아이콘·셰브론·루트 우클릭 메뉴(§76)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.click:60/132,@after:3200:ui.rclick:120/132") -WaitMs 5000 -Expect "루트 펼침(셰브론 ∨ · 하위 폴더 › · 파일 = OS 아이콘) · 루트 행 위 메뉴 'Remove Folder from Project / Add Folder to Project…'"
+Run-Scenario -Id S39 -Title "프로젝트 탐색기 아이콘 끔(project.icons=off · 향상 모드 값)(§76)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.click:60/132") -Conf "project.icons=off`n" -WaitMs 4500 -Expect "아이콘 없이 셰브론 + 이름만"
+# §77 프로젝트 파일의 `selected` = 마지막 클릭 위치 복원(열면 그 행이 선택·보임).
+$projSel = Join-Path $DataDir "fc-sel.nsql-project"
+Set-Content -LiteralPath $projSel -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `".`" } ], `"selected`": `"q_lines.sql`" }"
+Run-Scenario -Id S40 -Title "프로젝트 열기 = 마지막 선택 위치 복원(§77)" -Cmd ("project.load:" + $projSel + ",@after:1200:view.project") -WaitMs 4000 -Expect "패널에서 q_lines.sql 행이 선택(강조)된 채 열림"
+# §78 편집기 탭 우클릭 ▸ Reveal in Project Explorer(프로젝트 폴더 안 파일만 활성) · 활성 탭 따라가기(project.auto_reveal).
+Run-Scenario -Id S41 -Title "편집기 탭 우클릭 메뉴 = Reveal in Project Explorer(§78)" -Cmd ("project.load:" + $projFile + ",open:" + $qLines + ",@after:1500:ui.rclick:470/80") -WaitMs 4000 -Expect "탭 메뉴 맨 아래 'Reveal in Project Explorer' 활성(q_lines.sql은 프로젝트 폴더 안) · Script_1 탭에서는 비활성"
+Run-Scenario -Id S42 -Title "활성 탭 따라가기 = 탐색기 펼침+선택+스크롤(§78)" -Cmd ("project.load:" + $projFile + ",@after:800:view.project,@after:1500:open:" + $qLines) -Conf "project.auto_reveal=on`n" -WaitMs 4500 -Expect "패널: 루트 펼침 · q_lines.sql 행 선택(강조) · 편집기 포커스 유지"
+Run-Scenario -Id S43 -Title "활성 탭 따라가기 끔(기본) = 펼치지 않고 표시만(§78)" -Cmd ("project.load:" + $projFile + ",@after:800:view.project,@after:1500:open:" + $qLines) -WaitMs 4500 -Expect "패널: 루트 펼쳐진 채(루트 하나 = 자동) q_lines.sql 행 선택 표시 · 스크롤 없음"
+# §79 프로젝트 탐색기 가로 스크롤(긴 이름) · 행 클립(스크롤한 첫 행이 필터 상자를 덮지 않음) · 루트 메뉴 = Remove만.
+Run-Scenario -Id S44 -Title "프로젝트 탐색기 가로 스크롤(§79)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.hwheel:180/300/360") -WaitMs 4500 -Expect "긴 폴더 이름의 뒷부분이 보이도록 트리가 왼쪽으로 밀림 · 아래 가로 스크롤바"
+Run-Scenario -Id S45 -Title "프로젝트 탐색기 세로 스크롤 = 필터 상자와 겹치지 않음(§79)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.wheel:180/300/-120") -Conf "window.main_size=1000,420`n" -WaitMs 4500 -Expect "첫 행이 필터 상자 아래에서 잘려 시작(상자 위로 안 올라감)"
+# §80 필터 틀 부품(FilterBar): 프로젝트·북마크·확장 패널 = Aa·ab·(.*) 토글 · 프로젝트는 오른쪽에 숨김/점 파일 토글 · 위·아래 여백 8 · 빈 영역 클릭 = 선택 해제.
+Run-Scenario -Id S46 -Title "프로젝트 탐색기 필터 틀 = 토글 셋 + 숨김/점 파일 토글 · 여백(§80)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.click:150/175,@after:3200:ui.click:180/560") -WaitMs 5000 -Expect "필터 틀 안 오른쪽 Aa·ab·(.*) · 틀 오른쪽 눈·점 아이콘 둘(점 = on) · 헤더/트리와 8px 여백 · 빈 영역 클릭 뒤 선택 없음"
+Run-Scenario -Id S47 -Title "북마크 패널 필터 틀 = 토글 셋(§80)" -Cmd ("open:" + $q500 + ",@after:1000:view.bookmarks") -WaitMs 3500 -Expect "필터 틀 안 오른쪽 Aa·ab·(.*) · 위·아래 여백 8"
+Run-Scenario -Id S48 -Title "확장 패널 검색 틀 = 토글 셋(§80)" -Cmd "@after:1000:view.extensions" -Conf "extensions.enabled=on`n" -WaitMs 3500 -Expect "검색 틀 안 오른쪽 Aa·ab·(.*) · 아래 여백 8"
+# §80 안내 글 겹침 없음: 일치 없음 + 상한 안내가 한 줄씩(scan_max=100 · 필터 = 없는 이름).
+$projBig = Join-Path $DataDir "fc-big.nsql-project"
+$rj = $root.Replace([char]92, '/')
+Set-Content -LiteralPath $projBig -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `"$rj`" } ] }"
+Run-Scenario -Id S49 -Title "필터 안내 글 두 줄(일치 없음 → 상한)(§80)" -Cmd ("project.load:" + $projBig + ",@after:1200:view.project,@after:2000:project.filter:zzqq") -Conf "project.scan_max=100`n" -WaitMs 4500 -Expect "'No match' 아래 줄에 'stopped at 100 (project.scan_max)' — 겹치지 않음"
+# §81 필터 Path 토글(기본 끔): 켜면 루트부터의 상대 경로에 일반/정규식 매칭 · 상한 안내는 실제로 멈췄을 때만.
+Run-Scenario -Id S50 -Title "필터 Path 토글 = 경로 일치(§81)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2000:project.filter:p:check/another") -WaitMs 4500 -Expect "틀 안 넷째 토글(…/) 켜짐 · …ellipsis_check/another_level… 폴더 경로가 걸려 조상과 함께 보임 · 이름만이면 0"
+# §89 작업 환경 복원: 프로젝트 파일의 tabs(파일 + 미저장 스크립트 본문 + 캐럿 앵커) · active · 북마크 → 로딩 때 복원 · OPEN FILES 섹션.
+$projWs = Join-Path $DataDir "fc-ws.nsql-project"
+$ql = $qLines.Replace('\', '/')
+Set-Content -LiteralPath $projWs -Encoding UTF8 -Value ("{ `"version`": 1, `"folders`": [ { `"path`": `".`" } ], `"active`": 1, `"tabs`": [ { `"path`": `"" + $ql + "`", `"title`": `"q_lines.sql`", `"line`": 40, `"col`": 0, `"anchor`": `"SELECT 41;`", `"before`": `"SELECT 40;`", `"after`": `"SELECT 42;`" }, { `"title`": `"Notes`", `"line`": 1, `"col`": 0, `"text`": `"-- restored scratch\nSELECT 'ws';`" } ], `"bookmarks`": { `"version`": 1, `"next_id`": 2, `"next_group`": 2, `"groups`": [ { `"id`": 1, `"name`": `"`", `"default`": true, `"enabled`": true } ], `"items`": [ { `"id`": 1, `"doc`": { `"file`": `"" + $ql + "`" }, `"line`": 4, `"col`": 0, `"text`": `"SELECT 5;`", `"before`": `"SELECT 4;`", `"after`": `"SELECT 6;`", `"hash`": `"0`", `"lines`": 150, `"group`": 1, `"shared`": false, `"state`": `"live`", `"created`": 0, `"visited`": 0 } ] } }")
+Run-Scenario -Id S51 -Title "프로젝트 로딩 = 작업 환경 복원 + OPEN FILES(§89)" -Cmd ("project.load:" + $projWs + ",@after:1500:view.project") -WaitMs 4500 -Expect "탭 = Script_1 · q_lines.sql · Notes(활성 · 본문 '-- restored scratch') · 패널 OPEN FILES 3줄(Notes 강조) · 상태줄 '탭 2개 복원' · q_lines 캐럿 41행(앵커) · 북마크 5행 띠"
+# §75 🔧 풀다운 Project ▸ 새 프로젝트 저장… = 파일 창(메뉴바 픽 → menu_action → project_cmd · 사용자 09-22 "풀다운에서 아무 동작이 없다").
+Run-Scenario -Id S37 -Title "풀다운 Project ▸ Save New Project… = 파일 저장 창(§75)" -Cmd ("open:" + $qLines + ",@after:1000:ui.click:75/14,@after:1600:ui.click:120/48") -WaitMs 4500 -Expect "창 2 = 메인 + 파일 저장 창(제목 Save Project · 이름 칸 .nsql-project)"
+# §74 CLI ↔ GUI 공유(B8) + 미니맵 틱 · 줄 끝 라벨(U-2): 워크스페이스를 비운 뒤 CLI로 심고 GUI가 같은 파일을 읽는다.
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S36")) {
+    $ws = Join-Path $HomeDir "workspaces\default.nsql-workspace"
+    if (Test-Path -LiteralPath $ws) { Remove-Item -LiteralPath $ws -Force }
+    $env:NSQL_HOME = $HomeDir
+    & $Cli bookmark add $qLines 2 --label "monthly totals" 2>&1 | ForEach-Object { Say ("  cli: " + $_) }
+    & $Cli bookmark add $qLines 5 2>&1 | ForEach-Object { Say ("  cli: " + $_) }
+    & $Cli bookmark add $qLines 120 2>&1 | ForEach-Object { Say ("  cli: " + $_) }
+    & $Cli bookmark list 2>$null | ForEach-Object { Say ("  cli: " + $_) }
+}
+Run-Scenario -Id S36 -Title "CLI로 심은 북마크 = 거터·미니맵 틱·줄 끝 라벨(§74)" -Cmd ("open:" + $qLines) -WaitMs 4000 -Expect "거터 2·5줄 색 띠 · 2줄 끝 '◆ monthly totals' 흐린 글 · 미니맵 오른쪽 가장자리 점 셋(120줄 = 화면 밖) · 상태줄 '북마크 3/3'"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

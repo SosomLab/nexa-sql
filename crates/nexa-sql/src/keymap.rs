@@ -1103,7 +1103,12 @@ impl Chord {
                 if c.is_control() || c.is_whitespace() {
                     return None;
                 }
-                if c.is_ascii() {
+                // ★ 숫자 물리 키는 물리 이름으로(사용자 09-23): Shift+2의 논리 키는 `@`라 `ctrl+shift+2`(북마크 니모닉)와 안 맞았다.
+                let digit = physical_name(physical)
+                    .filter(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit());
+                if let Some(d) = digit {
+                    d.to_string()
+                } else if c.is_ascii() {
                     c.to_ascii_lowercase().to_string()
                 } else if let Some(n) = physical_name(physical) {
                     n.to_string()
@@ -1323,6 +1328,9 @@ mod tests {
             .key
         };
         assert_eq!(ch("ㅅ", KeyCode::KeyT), "t");
+        // Shift+숫자 = 논리 키가 기호(`@`)라도 물리 숫자 키로(북마크 니모닉 Ctrl+Shift+2 · 09-23).
+        assert_eq!(ch("@", KeyCode::Digit2), "2");
+        assert_eq!(ch("!", KeyCode::Digit1), "1");
         assert_eq!(ch("T", KeyCode::KeyY), "t", "ASCII는 논리 키 우선");
         assert_eq!(ch("、", KeyCode::Comma), ",");
     }

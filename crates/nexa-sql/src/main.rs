@@ -17,6 +17,7 @@ mod clipboard;
 mod colors_win;
 mod conn_win;
 mod connect;
+mod dbms_icons;
 mod editors;
 mod enc;
 mod eol;
@@ -31,6 +32,7 @@ mod extensions;
 mod extfile;
 mod file_win;
 mod fileload;
+mod filterbar;
 mod findbar;
 mod gitstat;
 mod grid;
@@ -255,6 +257,14 @@ struct App {
     /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
     file_win: FileWin,
     open_file_dlg: Option<PickerMode>,
+    /// 프로젝트 자동 저장(사용자 09-23): 마지막 저장 시각 · 마지막으로 쓴 JSON(같으면 안 쓴다).
+    project_autosave_at: Instant,
+    project_last_json: String,
+    /// 종료 흐름(사용자 09-23): 프로젝트 저장 물음 → 미저장 파일 탭마다 물음 → 종료.
+    exit_pending: bool,
+    exit_project_asked: bool,
+    /// 마지막으로 탐색기와 맞춘 활성 탭(바뀌면 `project_sync_active` · 사용자 09-22).
+    last_synced_tab: u64,
     /// ★ 다중 열기(사용자 09-22): 확인 팝업이 기다리는 (파일들 · 인코딩) · 진행 중인 순차 적재.
     multi_pending: Option<(Vec<PathBuf>, String)>,
     multi_load: Option<MultiLoad>,
@@ -2287,6 +2297,13 @@ impl App {
                     self.editors.close_tab_forced(i);
                     self.sync_grid_tab();
                 }
+                if self.exit_pending {
+                    self.request_exit();
+                }
+            }
+            "close.cancel" => {
+                self.exit_pending = false;
+                self.exit_project_asked = false;
             }
             "close.save" => {
                 self.close_after_save = Some(tab);
@@ -2315,11 +2332,26 @@ impl App {
                 self.sync_grid_tab();
             }
         }
+        if self.exit_pending {
+            self.request_exit();
+        }
     }
 
     fn indent_pick(&mut self, id: &str) {
         if id.starts_with("close.") {
             self.close_pick(id);
+            return;
+        }
+        // 종료 전 프로젝트 저장 물음의 답(사용자 09-23).
+        if id == "project.exit_save" || id == "project.exit_skip" {
+            if id == "project.exit_save" {
+                if let Err(e) = self.project_save() {
+                    self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
+                }
+            }
+            self.exit_project_asked = true;
+            self.request_exit();
+            self.redraw();
             return;
         }
         // 툴바 Disconnect 드롭다운(공유 연결 목록 · docs/52 §7).
@@ -3040,16 +3072,7 @@ impl App {
             MenuEntry::Separator,
             gated("project.add_folder", Msg::MnProjectAddFolder),
         ];
-        for (i, f) in self.project.folders.iter().enumerate() {
-            v.push(MenuEntry::Item(ComboItem::new(
-                format!("project.remove_folder:{i}"),
-                format!(
-                    "{}  {}",
-                    t(Msg::MnProjectRemoveFolder),
-                    nexa_fs::path::display(f)
-                ),
-            )));
-        }
+        // 폴더 제거는 탐색기 루트 우클릭에서만(풀다운의 폴더별 항목은 뺐다 · 사용자 09-23).
         let recent = project::recent_list(self.settings.get("project.recent").unwrap_or(""));
         if !recent.is_empty() {
             v.push(MenuEntry::Separator);
@@ -3096,6 +3119,34 @@ impl App {
             self.project_load_path(Path::new(p.trim()));
             return;
         }
+        // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23).
+        if let Some(id) = id
+            .strip_prefix("editor.switch:")
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        {
+            self.editors.switch_to_id(id);
+            self.sync_grid_tab();
+            self.set_focus(Focus::Editor);
+            self.redraw();
+            return;
+        }
+        // 자체 시험: 탐색기 필터에 글 넣기(`project.filter:<글>` · 키 주입 없이 필터 결과를 캡처).
+        if let Some(q) = id.strip_prefix("project.filter:") {
+            // `project.filter:[cwrp]:<글>` = 옵션(Case·Word·Regex·Path)을 먼저 켠다.
+            let (flags, text) = match q.split_once(':') {
+                Some((f, t)) if !f.is_empty() && f.chars().all(|c| "cwrp".contains(c)) => (f, t),
+                _ => ("", q),
+            };
+            self.project_panel.set_filter_opts(
+                flags.contains('c'),
+                flags.contains('w'),
+                flags.contains('r'),
+                flags.contains('p'),
+            );
+            self.project_panel.set_filter_text(text.trim());
+            self.redraw();
+            return;
+        }
         match id {
             // "새 프로젝트 저장"(파일 모드에서도 늘 활성) = 빈 프로젝트 · "다른 이름으로" = 지금 프로젝트 복사 — 둘 다 저장 뒤 그 프로젝트로 전환.
             "project.new" | "project.save_as" => {
@@ -3117,7 +3168,7 @@ impl App {
             "project.close" | "project.none" => {
                 self.palette.close();
                 if self.project.is_open() {
-                    let _ = self.project.save();
+                    let _ = self.project_save();
                     self.project_set(project::Project::default());
                     self.sess.status = t(Msg::StProjectClosed).into();
                 }
@@ -3134,6 +3185,18 @@ impl App {
                 } else {
                     self.sess.status = t(Msg::StProjectNoProject).into();
                 }
+            }
+            // 탐색기 필터 옆 토글(사용자 09-22) — 파일 대화상자와 같은 설정 키를 뒤집는다 → 변경 훅이 패널에 되돌려 준다.
+            "project.toggle_hidden" | "project.toggle_dot" => {
+                let key = if id == "project.toggle_hidden" {
+                    "file.show_hidden"
+                } else {
+                    "file.show_dot"
+                };
+                let on = !self.settings.flag(key);
+                let _ = self.settings.set(key, if on { "on" } else { "off" });
+                let _ = self.apply_setting(key);
+                self.redraw();
             }
             "project.switch" => {
                 // 팔레트로 고른다: (프로젝트 없음) + 최근 목록.
@@ -3167,7 +3230,7 @@ impl App {
         match project::Project::load(path) {
             Ok(p) => {
                 if self.project.is_open() && self.project.path.as_deref() != Some(path) {
-                    let _ = self.project.save();
+                    let _ = self.project_save();
                 }
                 self.project_set(p);
             }
@@ -3246,10 +3309,218 @@ impl App {
         // 프로젝트가 바뀌면 북마크 저장소도(워크스페이스 파일 · 69 C-17).
         self.bookmarks.bind_project(self.project.path.as_deref());
         self.bm_sync_ui();
+        self.project_restore();
+    }
+
+    /// 프로젝트 파일 저장 — 탐색기의 마지막 선택 위치를 담아서(닫기·전환·폴더 변경·종료 = 전부 이 길).
+    fn project_save(&mut self) -> Result<(), String> {
+        self.project_capture_state();
+        let r = self.project.save();
+        if r.is_ok() {
+            self.project_last_json = self.project.to_json();
+        }
+        r
+    }
+
+    /// 작업 환경을 프로젝트에 담는다(사용자 09-23): 탐색기 선택 · 탭 순서(파일 = 경로만 · 스크립트 = 본문 ≤ 1 MB) ·
+    /// 캐럿 + fuzzy 앵커(북마크 `make_anchor` · 10만 줄 넘는 탭은 줄 번호만) · 활성 탭 · 북마크(JSON).
+    fn project_capture_state(&mut self) {
+        if let Some(p) = self.project_panel.selected_path() {
+            self.project.last_selected = Some(p);
+        }
+        let opts = nsql_bookmarks::RelocateOpts::default();
+        let mut tabs = Vec::new();
+        for i in 0..self.editors.tab_count() {
+            let Some(tb) = self.editors.tab_box(i) else {
+                continue;
+            };
+            let path = self.editors.path_of(i);
+            let buf = tb.buf();
+            let caret = tb.caret();
+            let line = buf.line_of(caret);
+            let col = caret.saturating_sub(buf.line_start(line));
+            let mut t = project::TabState {
+                path: path.clone(),
+                title: self.editors.title_of(i),
+                line,
+                col,
+                ..project::TabState::default()
+            };
+            if buf.line_count() <= 100_000 {
+                let lines: Vec<String> = (0..buf.line_count())
+                    .map(|l| buf.line_text(l).into_owned())
+                    .collect();
+                let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+                let a = nsql_bookmarks::make_anchor(
+                    &refs,
+                    line.min(refs.len().saturating_sub(1)),
+                    col as u32,
+                    &opts,
+                );
+                t.anchor_text = a.text;
+                t.before = a.before;
+                t.after = a.after;
+            }
+            if path.is_none() {
+                let text = tb.text();
+                if text.len() <= 1 << 20 {
+                    t.text = Some(text);
+                }
+            }
+            tabs.push(t);
+        }
+        self.project.tabs = tabs;
+        self.project.active = self.editors.active();
+        self.project.bookmarks = Some(self.bookmarks.store.to_json());
+    }
+
+    /// 프로젝트를 열었을 때 작업 환경 복원(사용자 09-23): 탭 순서대로 파일은 다시 읽고(원본 = 최신) 스크립트는 본문 그대로 ·
+    /// 캐럿은 앵커로 fuzzy 재탐색(외부 수정 대응 · 북마크 `relocate`) · 활성 탭 · 북마크.
+    fn project_restore(&mut self) {
+        let tabs = self.project.tabs.clone();
+        if tabs.is_empty() {
+            return;
+        }
+        let opts = nsql_bookmarks::RelocateOpts::default();
+        let mut ids: Vec<Option<u64>> = Vec::new();
+        for t in &tabs {
+            let id = match &t.path {
+                Some(p) => {
+                    if !p.is_file() {
+                        None
+                    } else {
+                        self.open_file(p);
+                        let i = self.editors.active();
+                        if self.editors.active_path().as_deref() == Some(p.as_path()) {
+                            self.restore_caret(i, t, &opts);
+                            Some(self.editors.tab_id(i))
+                        } else {
+                            None
+                        }
+                    }
+                }
+                None => {
+                    self.editors.new_tab(Some(t.title.clone()));
+                    let i = self.editors.active();
+                    if let Some(tb) = self.editors.tab_box_mut(i) {
+                        if let Some(txt) = &t.text {
+                            tb.set_text(txt);
+                        }
+                    }
+                    self.restore_caret(i, t, &opts);
+                    Some(self.editors.tab_id(i))
+                }
+            };
+            ids.push(id);
+        }
+        if let Some(Some(id)) = ids.get(self.project.active) {
+            self.editors.switch_to_id(*id);
+            self.sync_grid_tab();
+        }
+        if let Some(js) = self.project.bookmarks.clone() {
+            if self.bookmarks.load_json(&js) {
+                self.bm_sync_ui();
+            }
+        }
+        let n = ids.iter().flatten().count();
+        self.sess.status = tf(Msg::StProjectRestored, &[&n.to_string()]);
+        self.project_last_json = self.project.to_json();
+    }
+
+    /// 저장된 캐럿을 지금 본문에 맞춘다 — 앵커가 있으면 북마크와 같은 fuzzy 재탐색(줄 이동 · 못 찾으면 저장된 줄).
+    fn restore_caret(
+        &mut self,
+        i: usize,
+        t: &project::TabState,
+        opts: &nsql_bookmarks::RelocateOpts,
+    ) {
+        let Some(tb) = self.editors.tab_box_mut(i) else {
+            return;
+        };
+        let mut line = t.line;
+        if !t.anchor_text.is_empty() {
+            let buf = tb.buf();
+            let lines: Vec<String> = (0..buf.line_count())
+                .map(|l| buf.line_text(l).into_owned())
+                .collect();
+            let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+            let a = nsql_bookmarks::Anchor {
+                line: t.line as u32,
+                col: t.col as u32,
+                text: t.anchor_text.clone(),
+                before: t.before.clone(),
+                after: t.after.clone(),
+                doc_hash: 0,
+                doc_lines: 0,
+            };
+            if let nsql_bookmarks::Relocated::Moved(l) =
+                nsql_bookmarks::relocate(&a, &refs, None, opts)
+            {
+                line = l;
+            }
+        }
+        tb.goto_line(line + 1);
+    }
+
+    /// 주기 자동 저장(설정 `project.autosave` · `project.autosave_secs`) — 바뀐 것이 있을 때만 쓴다.
+    fn project_autosave_tick(&mut self) {
+        if !self.project.is_open() || !self.settings.flag("project.autosave") {
+            return;
+        }
+        let secs = self.settings.int("project.autosave_secs").max(5) as u64;
+        if self.project_autosave_at.elapsed().as_secs() < secs {
+            return;
+        }
+        self.project_autosave_at = Instant::now();
+        self.project_capture_state();
+        let js = self.project.to_json();
+        if js != self.project_last_json && self.project.save().is_ok() {
+            self.project_last_json = js;
+        }
+    }
+
+    /// OPEN FILES(프로젝트 패널) 동기 — 탭 순서 · 제목 · 미저장 · 활성 · 동시 편집 칸.
+    fn sync_open_files(&mut self) {
+        if !self.project_panel.is_visible() {
+            return;
+        }
+        let split = self.editors.split_tabs().to_vec();
+        let v: Vec<project_panel::OpenFile> = self
+            .editors
+            .tab_list()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (id, title, active))| project_panel::OpenFile {
+                id,
+                title,
+                dirty: self.editors.is_dirty(i),
+                active,
+                grouped: split.len() > 1 && split.contains(&i),
+            })
+            .collect();
+        self.project_panel.set_open_files(v);
+    }
+
+    /// 종료 전 프로젝트 저장 물음(자동 저장이 꺼져 있을 때).
+    fn ask_project_exit(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        self.sess.status = t(Msg::StProjectAsk).into();
+        let items = vec![
+            CtxItem::item("project.exit_save", t(Msg::MnProjectExitSave)),
+            CtxItem::item("project.exit_skip", t(Msg::MnProjectExitSkip)),
+            CtxItem::Separator,
+            CtxItem::item("close.cancel", t(Msg::MnCloseCancel)),
+        ];
+        let r = self.status_tx_rect;
+        self.open_status_popup(r, items);
+        self.redraw();
     }
 
     /// 폴더 목록이 바뀌었다 — 탐색기·메뉴 갱신(`save`면 파일에도).
     fn project_changed(&mut self, save: bool) {
+        if let Some(p) = self.project_panel.selected_path() {
+            self.project.last_selected = Some(p);
+        }
         if save {
             if let Err(e) = self.project.save() {
                 self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
@@ -3259,8 +3530,11 @@ impl App {
         let has_recent =
             !project::recent_list(self.settings.get("project.recent").unwrap_or("")).is_empty();
         self.project_panel.set_has_recent(has_recent);
-        self.project_panel
-            .set_project(self.project.name(), &self.project.folders);
+        self.project_panel.set_project(
+            self.project.name(),
+            &self.project.folders,
+            self.project.last_selected.clone().as_deref(),
+        );
         self.rebuild_menus();
         self.layout();
         self.redraw();
@@ -3272,6 +3546,10 @@ impl App {
             self.settings.flag("file.show_dot"),
             self.settings.int("project.scan_max").max(100) as usize,
         );
+        self.project_panel
+            .set_icons(self.settings.flag("project.icons"));
+        self.editors
+            .set_project_folders(self.project.folders.clone());
         self.project_panel
             .set_tooltip_delay(self.settings.int("ui.tooltip_delay_ms").max(0) as u128);
         self.project_panel
@@ -3300,8 +3578,11 @@ impl App {
                     self.project_set(proj);
                 } else {
                     self.project = proj;
-                    self.project_panel
-                        .set_project(self.project.name(), &self.project.folders);
+                    self.project_panel.set_project(
+                        self.project.name(),
+                        &self.project.folders,
+                        self.project.last_selected.clone().as_deref(),
+                    );
                 }
             }
             Err(e) => {
@@ -3318,7 +3599,7 @@ impl App {
     /// 탐색기가 낸 요청 거두기(열기 · 링크 명령).
     fn project_pump(&mut self) {
         if let Some(id) = self.project_panel.take_command() {
-            self.project_cmd(id);
+            self.project_cmd(&id);
         }
         if let Some(req) = self.project_panel.take_open() {
             self.project_open_req(req);
@@ -5089,6 +5370,10 @@ impl App {
                 self.conn_win.set_policy(probe_policy(&self.settings), n);
             }
             "file.os_icons" => nexa_fs::shell::set_os_icons(self.settings.flag(key)),
+            "project.icons" => self.project_panel.set_icons(self.settings.flag(key)),
+            "editor.tab_line_scratch" | "editor.tab_line_file" | "editor.tab_line_preview" => {
+                self.apply_tab_line_colors()
+            }
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
             "ui.toast_secs" | "ui.toast_alpha" => {
                 self.toasts.configure(
@@ -5267,7 +5552,9 @@ impl App {
                 .editors
                 .set_undo_budget(self.settings.int(key).max(1) as usize * 1024 * 1024),
             // 확장 관리자 켬/끔(설정 창에서 바꿔도) = 확장 효과 전체 재적용 + 활동 막대 아이콘.
-            "project.preview_tab" | "project.scan_max" => self.sync_project_panel_opts(),
+            "project.preview_tab" | "project.scan_max" | "file.show_hidden" | "file.show_dot" => {
+                self.sync_project_panel_opts()
+            }
             "extensions.enabled" => {
                 self.apply_extensions(None);
                 self.layout();
@@ -6178,6 +6465,12 @@ impl App {
         if self.editors.active_loading() && fileload::blocked_while_loading(id) {
             self.sess.status = t(Msg::StLoadTabBusy).into();
             self.redraw();
+            return;
+        }
+        // ★ 프로젝트 명령(docs/67 §2-2 · `project.*` 전부 — 접미 인자가 붙는 것도) — 메뉴바·팔레트·툴바·패널 링크·기동 명령이
+        //   전부 이 한 길로(🔧 09-22 사용자: 풀다운 "새 프로젝트 저장…"이 무반응 — 패널 링크만 `project_cmd`로 갔다).
+        if id.starts_with("project.") {
+            self.project_cmd(id);
             return;
         }
         match id {
@@ -7426,11 +7719,7 @@ impl App {
             self.conn_win.capture_ime_hint(at);
             return;
         }
-        // ★ 프로젝트 명령(docs/67 §2-2 · `project.*` 전부 — 접미 인자가 붙는 것도).
-        if id.starts_with("project.") {
-            self.project_cmd(id);
-            return;
-        }
+        // (프로젝트 명령 `project.*`는 `menu_action` 앞머리에서 `project_cmd`로 — 메뉴바·팔레트와 같은 길.)
         // 자체 시험: 상태 팝업의 선택(`multi.open`/`multi.cancel` · `tx.*` · `disc.*` · `close.*`)은 팝업 픽 경로로(메뉴 동작이 아니다 ·
         //   09-22 기능 점검 S03 — `multi.open`이 `menu_action`으로 떨어져 아무 일도 안 했다).
         if ["multi.", "tx.", "disc.", "close."]
@@ -8328,7 +8617,74 @@ impl App {
                     }
                 }
             }
+            TabMenuReq::KeepOpen(i) => {
+                self.editors.promote_tab(i);
+            }
+            TabMenuReq::RevealProject(i) => {
+                if let Some(path) = self.editors.path_of(i) {
+                    self.reveal_in_project(&path);
+                }
+            }
         }
+    }
+
+    /// 편집기 탭 유형별 활성 줄 색(사용자 09-22): 설정 `editor.tab_line_{scratch,file,preview}`(`#RRGGBB` · 빈 값 = 기본) —
+    /// 기본 = 스크립트 warn(미저장 주의) · 파일 accent · 미리보기 text_dim(임시). 테마·설정이 바뀔 때 다시 계산.
+    fn apply_tab_line_colors(&mut self) {
+        let pick = |s: &Settings, key: &str, dflt: Option<nexa_ctl::Color>| {
+            color_alpha_setting(s, key).0.or(dflt)
+        };
+        let c = [
+            pick(
+                &self.settings,
+                "editor.tab_line_scratch",
+                Some(self.theme.warn),
+            ),
+            pick(&self.settings, "editor.tab_line_file", None),
+            pick(
+                &self.settings,
+                "editor.tab_line_preview",
+                Some(self.theme.text_dim),
+            ),
+        ];
+        self.editors.set_tab_line_colors(c);
+    }
+
+    /// 프로젝트 탐색기에서 파일 보기(탭 메뉴 · 사용자 09-22): 패널이 닫혀 있으면 열고 · 자동 확장 설정과 무관하게
+    /// 조상을 펼쳐 선택 · 보이게 스크롤 · 포커스를 패널로.
+    fn reveal_in_project(&mut self, path: &Path) {
+        if !self.project_panel.is_visible() {
+            self.menu_action("view.project");
+        }
+        if self.project_panel.reveal(path) {
+            self.set_focus(Focus::Project);
+        }
+        self.redraw();
+    }
+
+    /// 활성 탭이 바뀌면 탐색기의 선택을 그 파일에 맞춘다(프로젝트 폴더 안 파일만) — 기본은 펼치지 않고 표시만(`mark_path`) ·
+    /// `project.auto_reveal`이면 조상을 펼치고 스크롤(`reveal` · 포커스는 안 옮긴다).
+    fn project_sync_active(&mut self) {
+        let id = self.editors.active_id();
+        if id == self.last_synced_tab {
+            return;
+        }
+        self.last_synced_tab = id;
+        if !self.project.is_open() {
+            return;
+        }
+        let Some(p) = self.editors.active_path() else {
+            return;
+        };
+        if !self.editors.in_project(&p) {
+            return;
+        }
+        if self.settings.flag("project.auto_reveal") {
+            self.project_panel.reveal(&p);
+        } else {
+            self.project_panel.mark_path(&p);
+        }
+        self.redraw();
     }
 
     fn close_tab_guarded(&mut self, i: usize) {
@@ -8383,6 +8739,28 @@ impl App {
 
     /// 종료 — 미커밋이 있으면 묻는다.
     fn request_exit(&mut self) {
+        // ★ 종료 흐름(사용자 09-23): ① 프로젝트 — 자동 저장이면 저장 · 아니면 묻기 ② 미저장 **파일** 탭마다 묻기(스크립트 탭은
+        //   프로젝트에 본문이 보존되므로 프로젝트가 있으면 묻지 않는다 · 없으면 전부 묻는다) ③ 트랜잭션 확인 → 종료.
+        if self.project.is_open() {
+            if self.settings.flag("project.autosave") {
+                let _ = self.project_save();
+            } else if !self.exit_project_asked {
+                self.exit_pending = true;
+                self.ask_project_exit();
+                return;
+            }
+        }
+        let keep_scratch = self.project.is_open();
+        let dirty = (0..self.editors.tab_count()).find(|&i| {
+            self.editors.is_dirty(i) && !(keep_scratch && self.editors.path_of(i).is_none())
+        });
+        if let Some(i) = dirty {
+            self.exit_pending = true;
+            self.ask_save_close(i);
+            return;
+        }
+        self.exit_pending = false;
+        self.exit_project_asked = false;
         if self.sess.tx_pending.is_empty() {
             // 잠든 세션에 미커밋이 있으면 그 탭을 앞으로 꺼내 거기서 묻는다(세션마다 한 번씩 · docs/52 §8).
             let tab = self
@@ -10363,6 +10741,7 @@ impl App {
     fn apply_theme(&mut self) {
         let wt = self.window.as_ref().and_then(|w| w.theme());
         self.theme = theme::resolve(self.settings.theme_mode(), wt);
+        self.apply_tab_line_colors();
         self.log_win.redraw();
         if let Some(w) = &self.window {
             w.set_theme(theme::window_theme(self.settings.theme_mode()));
@@ -11412,9 +11791,23 @@ impl App {
         } else {
             Vec::new()
         };
+        let on = self.bookmarks.enabled;
+        let mm = if on && self.settings.flag("bookmark.minimap") {
+            self.bookmarks.minimap_for(&self.editors, i, c)
+        } else {
+            Vec::new()
+        };
+        let inline = if on && self.settings.flag("bookmark.inline_label") {
+            let cap = self.settings.int("bookmark.inline_label_chars").max(8) as usize;
+            self.bookmarks.inline_for(&self.editors, i, cap)
+        } else {
+            Vec::new()
+        };
         if let Some(tb) = self.editors.tab_box_mut(i) {
             tb.set_line_marks(marks);
             tb.set_gutter_labels(labels);
+            tb.set_minimap_marks(mm);
+            tb.set_inline_labels(inline);
         }
     }
 
@@ -12300,6 +12693,7 @@ impl App {
                 self.find.paint_tooltip(&mut dc, &th);
                 self.search.paint_tooltip(&mut dc, &th);
                 self.project_panel.paint_tooltip(&mut dc, &th);
+                self.project_panel.paint_popup(&mut dc, &th);
                 self.bm_panel.paint_popup(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
@@ -12557,6 +12951,9 @@ impl App {
         if self.bm_panel.menu_open() {
             m |= 128;
         }
+        if self.project_panel.menu_open() {
+            m |= 256;
+        }
         m
     }
 
@@ -12581,6 +12978,9 @@ impl App {
         }
         if bits & 128 != 0 {
             self.bm_panel.close_menu();
+        }
+        if bits & 256 != 0 {
+            self.project_panel.close_menu();
         }
         if bits & 64 != 0 {
             self.panel.close_menu();
@@ -13094,6 +13494,25 @@ impl App {
                 return;
             }
         }
+        // 프로젝트 탐색기의 우클릭 메뉴는 창 위에 뜬다 → 열린 동안 먼저 받는다(북마크 패널과 같은 규칙 · 바깥 클릭은 닫고 통과).
+        if self.project_panel.is_visible() && self.project_panel.menu_open() {
+            let outside_click = matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) && !self.project_panel.bounds().contains(Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            });
+            if self.project_panel.on_event(&ev) {
+                self.redraw();
+            }
+            self.project_pump();
+            if (!outside_click || self.project_panel.menu_open())
+                && !matches!(ev, InputEvent::MouseMove { .. })
+            {
+                return;
+            }
+        }
         // 프로젝트 탐색기(docs/67 §4) — 마우스는 커서 아래 · 키는 포커스일 때.
         if self.project_panel.is_visible() {
             let cur = Point {
@@ -13101,7 +13520,7 @@ impl App {
                 y: self.cursor.1,
             };
             let inside = self.project_panel.bounds().contains(cur);
-            if (is_mouse && inside) || (is_wheel_ev(&ev) && inside) {
+            if (is_ptr && inside) || (is_wheel_ev(&ev) && inside) {
                 if matches!(
                     ev,
                     InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
@@ -13454,6 +13873,7 @@ impl ApplicationHandler<Wake> for App {
         self.scale = win.scale_factor() as f32;
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
         self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
+        self.apply_tab_line_colors();
         match present::Presenter::new(win.clone()) {
             Ok(p) => {
                 if self.frame_trace.is_some() {
@@ -13496,6 +13916,7 @@ impl ApplicationHandler<Wake> for App {
         self.project_startup();
         self.bookmarks.bind_project(self.project.path.as_deref());
         self.bm_sync_ui();
+        self.project_restore();
         self.rebuild_menus();
         if !self.demo_ready && !self.settings.flag("demo.prompted") {
             let _ = self.settings.set("demo.prompted", "on");
@@ -13694,6 +14115,9 @@ impl ApplicationHandler<Wake> for App {
         if self.bm_panel.tick(now_ms) {
             self.redraw();
         }
+        self.project_sync_active();
+        self.project_autosave_tick();
+        self.sync_open_files();
         self.bm_tick();
         self.project_pump();
         if self.editors.poll_preview() {
@@ -14652,6 +15076,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if self.exit_requested {
             self.persist_window_sizes(true);
+            if self.project.is_open() {
+                let _ = self.project_save();
+            }
             for s in self.all_sess() {
                 s.worker.send(worker::Cmd::Quit);
             }
@@ -15027,6 +15454,11 @@ fn main() {
         act_bar,
         file_win,
         open_file_dlg: None,
+        project_autosave_at: Instant::now(),
+        project_last_json: String::new(),
+        exit_pending: false,
+        exit_project_asked: false,
+        last_synced_tab: u64::MAX,
         multi_pending: None,
         multi_load: None,
         arg_project,

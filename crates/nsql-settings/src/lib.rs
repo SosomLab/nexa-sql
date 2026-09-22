@@ -368,6 +368,10 @@ const HANGUL_COMPOSE_OPTS: &[(&str, Msg)] = &[
 ];
 
 /// `SELECT … INTO` 행 수 정책(D-139).
+/// 변수 안의 변수 확장 시점(docs/63 §9 · 09-22): 대입 시(기본 · SQL*Plus) / 사용 시(재귀 · SQL Workbench/J).
+const VARS_EXPAND_OPTS: &[(&str, Msg)] =
+    &[("assign", Msg::OptExpandAssign), ("use", Msg::OptExpandUse)];
+
 const VARS_INTO_OPTS: &[(&str, Msg)] =
     &[("oracle", Msg::OptIntoOracle), ("first", Msg::OptIntoFirst)];
 
@@ -1263,6 +1267,31 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 탭 유형별 활성 상단 줄 색(09-22 · 빈 값 = 기본: 스크립트 warn · 파일 accent · 미리보기 text_dim).
+    Entry {
+        key: "editor.tab_line_scratch",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabLineScratch,
+        desc: Msg::DescEditorTabLineScratch,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "editor.tab_line_file",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabLineFile,
+        desc: Msg::DescEditorTabLineFile,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "editor.tab_line_preview",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabLinePreview,
+        desc: Msg::DescEditorTabLinePreview,
+        kind: SettingKind::Text,
+        default: "",
+    },
     // ★ 동시 편집(사용자 09-22): 탭 바에서 Shift/Ctrl+클릭으로 나란히 보이는 탭 수 상한.
     Entry {
         key: "editor.split_max",
@@ -1520,7 +1549,7 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 프로젝트(docs/67 · 사용자 09-22): 마지막/최근 프로젝트 파일 · 미리보기 탭 · 필터 열거 상한.
     Entry {
         key: "project.last",
-        cat: Msg::CatFiles,
+        cat: Msg::CatProject,
         label: Msg::LblProjectLast,
         desc: Msg::DescProjectLast,
         kind: SettingKind::Text,
@@ -1528,7 +1557,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "project.recent",
-        cat: Msg::CatFiles,
+        cat: Msg::CatProject,
         label: Msg::LblProjectRecent,
         desc: Msg::DescProjectRecent,
         kind: SettingKind::Text,
@@ -1536,7 +1565,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "project.restore_last",
-        cat: Msg::CatFiles,
+        cat: Msg::CatProject,
         label: Msg::LblProjectRestoreLast,
         desc: Msg::DescProjectRestoreLast,
         kind: SettingKind::Bool,
@@ -1544,15 +1573,48 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "project.preview_tab",
-        cat: Msg::CatFiles,
+        cat: Msg::CatProject,
         label: Msg::LblProjectPreviewTab,
         desc: Msg::DescProjectPreviewTab,
         kind: SettingKind::Bool,
         default: "on",
     },
     Entry {
+        key: "project.icons",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectIcons,
+        desc: Msg::DescProjectIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "project.auto_reveal",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectAutoReveal,
+        desc: Msg::DescProjectAutoReveal,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // ★ 프로젝트 자동 저장(사용자 09-23): 기본 켬 · 30초(작업 환경 JSON은 작고 바뀔 때만 쓴다 — 손실 창 ≤ 30초 · 디스크 부하 0에 가깝다).
+    Entry {
+        key: "project.autosave",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectAutosave,
+        desc: Msg::DescProjectAutosave,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "project.autosave_secs",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectAutosaveSecs,
+        desc: Msg::DescProjectAutosaveSecs,
+        kind: SettingKind::Int { min: 5, max: 3600 },
+        default: "30",
+    },
+    Entry {
         key: "project.scan_max",
-        cat: Msg::CatFiles,
+        cat: Msg::CatProject,
         label: Msg::LblProjectScanMax,
         desc: Msg::DescProjectScanMax,
         kind: SettingKind::Int {
@@ -2804,6 +2866,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "vars.expand_at",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsExpandAt,
+        desc: Msg::DescVarsExpandAt,
+        kind: SettingKind::Choice(VARS_EXPAND_OPTS),
+        default: "assign",
+    },
+    Entry {
         key: "vars.max_value_kb",
         cat: Msg::CatSession,
         label: Msg::LblVarsMaxValueKb,
@@ -3280,6 +3350,30 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "bookmark.minimap",
+        cat: Msg::CatBookmarkDisplay,
+        label: Msg::LblBmMinimap,
+        desc: Msg::DescBmMinimap,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "bookmark.inline_label",
+        cat: Msg::CatBookmarkDisplay,
+        label: Msg::LblBmInline,
+        desc: Msg::DescBmInline,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "bookmark.inline_label_chars",
+        cat: Msg::CatBookmarkDisplay,
+        label: Msg::LblBmInlineChars,
+        desc: Msg::DescBmInlineChars,
+        kind: SettingKind::Int { min: 8, max: 200 },
+        default: "40",
+    },
+    Entry {
         key: "bookmark.statusbar",
         cat: Msg::CatBookmarkDisplay,
         label: Msg::LblBmStatusbar,
@@ -3754,7 +3848,10 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatExplorer,
         ],
     ),
-    (Msg::GrpEditors, &[Msg::CatEditor, Msg::CatFiles]),
+    (
+        Msg::GrpEditors,
+        &[Msg::CatEditor, Msg::CatFiles, Msg::CatProject],
+    ),
     (Msg::GrpConnections, &[Msg::CatConnection, Msg::CatCli]),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
     // DBMS별 종속 설정(사용자 09-21): 클라이언트 자동 탐지/직접 지정 + 읽기 전용 파생 정보 · 그 DBMS에만 뜻이 있는 키.
@@ -3934,6 +4031,13 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("bookmark.max_per_doc", "bookmark.enabled", Dep::On),
     ("bookmark.max_total", "bookmark.enabled", Dep::On),
     ("bookmark.gutter", "bookmark.enabled", Dep::On),
+    ("bookmark.minimap", "bookmark.enabled", Dep::On),
+    ("bookmark.inline_label", "bookmark.enabled", Dep::On),
+    (
+        "bookmark.inline_label_chars",
+        "bookmark.inline_label",
+        Dep::On,
+    ),
     ("bookmark.statusbar", "bookmark.enabled", Dep::On),
     ("bookmark.anchor_context", "bookmark.enabled", Dep::On),
     ("bookmark.anchor_chars", "bookmark.enabled", Dep::On),
