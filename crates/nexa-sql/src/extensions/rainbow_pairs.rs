@@ -107,7 +107,12 @@ impl Extension for RainbowPairs {
             },
             // 자동 닫기는 편집 코어 기능(`editor.auto_close_pairs`) — 확장은 관여하지 않는다(호스트가 값을 넣는다 · 사용자 09-19).
             auto_close: true,
-            max_chars: (s.int("rainbowpair.max_kb").max(64) as usize) * 1024,
+            // 0 = 자체 상한 없음 — 편집기 큰 파일 단계(`file.large_ext_level` · docs/72 §2)가 끈다(09-22: 2 MB 자체 상한과 L1 5 MB가
+            //   두 겹으로 관리되던 것을 정리 · 값을 주면 그 크기에서 확장만 먼저 멈춘다).
+            max_chars: match s.int("rainbowpair.max_kb") {
+                kb if kb <= 0 => usize::MAX,
+                kb => (kb.max(64) as usize) * 1024,
+            },
         };
         ExtensionEffect {
             bracket_opts: Some(opts),

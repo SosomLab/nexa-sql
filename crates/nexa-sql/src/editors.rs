@@ -134,6 +134,8 @@ pub(crate) struct Editors {
     /// 쉬었다 치면 새 묶음(ms · `editor.undo_group_ms`) · 거대 편집 확인 기준(바이트 · `editor.undo_giant_mb`).
     undo_group_ms: u64,
     undo_giant: usize,
+    /// 다중 선택 구간 수 상한(`editor.max_occurrences` · docs/72 §2 · 0 = 없음).
+    max_regions: usize,
     /// 탭별 미커밋 문장 수·오래됨(수동 커밋 · DR-30 T-77) — 제목 뒤 `●n`(오래되면 `⚠n`).
     tx_badges: HashMap<u64, (usize, bool)>,
     /// 배지 모양(설정 `tx.badge`: count · dot · off).
@@ -255,6 +257,7 @@ impl Editors {
             undo_budget: 64 << 20,
             undo_group_ms: 1500,
             undo_giant: 32 << 20,
+            max_regions: 0,
             tx_badges: HashMap::new(),
             tx_badge_mode: "count".into(),
             tx_close_req: None,
@@ -303,6 +306,7 @@ impl Editors {
         tb.set_history_budget(self.undo_budget);
         tb.set_undo_group_pause_ms(self.undo_group_ms);
         tb.set_giant_edit_limit(self.undo_giant);
+        tb.set_max_regions(self.max_regions);
         // 방금 넣은 본문 = 저장된 상태(새 탭의 빈 글 · 파일에서 읽은 글) — O(1) 더러움 판정의 기준점.
         tb.mark_saved();
         tb.set_line_comment(syntax.line_comments.first().cloned());
@@ -716,6 +720,15 @@ impl Editors {
         }
     }
 
+    /// i번째 탭의 편집 상자(북마크 거터·줄 변경 기록 소비).
+    pub(crate) fn tab_box(&self, i: usize) -> Option<&TextBox> {
+        self.bufs.get(i)
+    }
+
+    pub(crate) fn tab_box_mut(&mut self, i: usize) -> Option<&mut TextBox> {
+        self.bufs.get_mut(i)
+    }
+
     pub(crate) fn cur(&self) -> &TextBox {
         &self.bufs[self.active]
     }
@@ -1104,6 +1117,14 @@ impl Editors {
     }
 
     /// 되돌리기 묶음의 정지 기준(ms)과 거대 편집 확인 기준(바이트) — 전 탭 + 새 탭(docs/60 D-130·131).
+    /// 다중 선택 구간 수 상한 → 전 탭(docs/72 §2).
+    pub(crate) fn set_max_regions(&mut self, n: usize) {
+        self.max_regions = n;
+        for b in &mut self.bufs {
+            b.set_max_regions(n);
+        }
+    }
+
     pub(crate) fn set_undo_rules(&mut self, group_ms: u64, giant_bytes: usize) {
         self.undo_group_ms = group_ms;
         self.undo_giant = giant_bytes;

@@ -19,6 +19,7 @@ members = [
   "crates/nsql-driver-pg",     # ① 어댑터 — rust-postgres(동기) · $n 바인드 · 단순 질의 텍스트 폴백 (사용자 09-15)
   "crates/nsql-drivers",  # 접속 문자열 → Box<dyn Session> 레지스트리(feature로 어댑터 선택)
   "crates/nsql-search",   # ★ 파일 검색 엔진 — 병렬 폴더 걷기 · .gitignore 부분집합 · SWAR 리터럴/정규식 매칭 · 스트리밍 · 취소 (GUI 파일 검색 · CLI grep 공용 · T-81b)
+  "crates/nsql-bookmarks", # ★ 북마크 코어 — 모델 · 줄 보정 · 재탐색(Dice) · JSON · 정리 (GUI·CLI 공용 · docs/69 · T-167)
   "crates/nsql-catalog",  # ★ 카탈로그 — 스키마·오브젝트·컬럼·소스·컴파일 오류(방언별 메타 SQL · Session 포트 위 · GUI 탐색기·CLI cat 공용)
   "crates/nsql-cli",      # (bin `nsql`) ★ CLI — 접속·스크립트 실행·export/import·bulk insert. 지금은 dry-run 플래너
   "crates/nexa-sql",      # (bin) GUI 진입 — M1에서 nexa-ui 위에 창을 연다
@@ -58,6 +59,7 @@ nsql-i18n = { path = "crates/nsql-i18n" }
 nsql-settings = { path = "crates/nsql-settings" }
 nsql-log = { path = "crates/nsql-log" }
 nsql-search = { path = "crates/nsql-search" }
+nsql-bookmarks = { path = "crates/nsql-bookmarks" }
 # 파일 인코딩(EUC-KR·Shift_JIS·GB18030·Big5·CP1252) — WHATWG 코덱 · 순수 Rust · DR-3 예외(docs/10 원장 · 09-16).
 encoding_rs = "0.8"
 # 정규식(D-76 · 09-16): regex(선형 시간) 위 fancy-regex(lookaround·역참조만 백트래킹) — 순수 Rust.

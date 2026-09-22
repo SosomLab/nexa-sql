@@ -11,6 +11,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod activity;
+mod bookmarks;
+mod bookmarks_panel;
 mod clipboard;
 mod colors_win;
 mod conn_win;
@@ -136,6 +138,8 @@ enum Focus {
     Ext,
     /// 프로젝트 탐색기(docs/67 · 사용자 09-22).
     Project,
+    /// 북마크 패널(docs/69 · 사용자 09-22).
+    Bookmarks,
 }
 
 /// 저장소 읽기 스레드의 결과 한 벌(원천 · index · 추적 줄).
@@ -280,6 +284,10 @@ struct App {
     demo_job: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// 최초 실행 1회 팝업 예약(창이 뜬 뒤 about_to_wait에서 연다).
     pending_demo_prompt: bool,
+    /// ★ 큰 선택 복사/잘라내기 확인(`editor.copy_confirm_mb` · docs/72 ②-3): 첫 누름 안내 뒤 3초 안 되풀이 = 실행.
+    copy_armed_until: Option<Instant>,
+    /// "새 프로젝트 저장"으로 연 저장 창인가 — 지금 프로젝트를 복사하지 않고 **빈 프로젝트 + 저장 폴더**로(사용자 09-22).
+    project_new_fresh: bool,
     /// 접속 창(별도 창 · 폼 + 로그인 목록). 폼 상태의 단일 원천 = `conn_win.panel`.
     conn_win: ConnWin,
     /// 메뉴/툴바에서 접속 창 열기 요청(창 생성은 이벤트 루프 핸들에서).
@@ -326,6 +334,9 @@ struct App {
     search: SearchPanel,
     /// 프로젝트 탐색기(docs/67 §4) · 열린 프로젝트(없으면 기본 워크스페이스).
     project_panel: project_panel::ProjectPanel,
+    /// 북마크(docs/69 · T-167).
+    bookmarks: bookmarks::Bookmarks,
+    bm_panel: bookmarks_panel::BookmarksPanel,
     project: project::Project,
     /// 확장 패널(활동 막대 "확장" · 확장 관리자가 켜져 있을 때만 · 사용자 09-19).
     ext_panel: ExtPanel,
@@ -766,6 +777,8 @@ impl App {
             Some("view.extensions")
         } else if self.project_panel.is_visible() {
             Some("view.project")
+        } else if self.bm_panel.is_visible() {
+            Some("view.bookmarks")
         } else {
             None
         });
@@ -773,6 +786,7 @@ impl App {
             || self.search.is_visible()
             || self.ext_panel.is_visible()
             || self.project_panel.is_visible()
+            || self.bm_panel.is_visible()
         {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
@@ -812,6 +826,16 @@ impl App {
             s,
         );
         self.project_panel.set_clamp_width(w);
+        self.bm_panel.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.bm_panel.is_visible() { exp_w } else { 0 },
+                body_h,
+            ),
+            s,
+        );
+        self.bm_panel.set_clamp_width(w);
         self.ext_panel.set_bounds(
             Rect::new(
                 act_w,
@@ -916,16 +940,27 @@ impl App {
         self.find.set_focused(f == Focus::Find);
         self.search.set_focused(f == Focus::Search);
         self.project_panel.set_focused(f == Focus::Project);
+        self.bm_panel.set_focused(f == Focus::Bookmarks);
         self.ext_panel.set_focused(f == Focus::Ext);
+        self.ime_refresh();
+    }
+
+    /// 메인 창 IME 허용 = 글 입력 포커스이거나 **팔레트가 열려 있을 때**(사용자 09-22 "팔레트에 한글 입력이 안 됨" — 포커스가
+    /// 그리드/탐색기인 채 팔레트를 열면 IME가 꺼져 한글이 새고 있었다). 앱 조합 모드(T-139)면 늘 끔.
+    fn ime_refresh(&mut self) {
+        let f = self.focus;
+        let palette = self.palette.is_open();
         if let Some(w) = &self.window {
             // 앱 조합 모드(T-139)면 어느 포커스든 IME를 끊는다(raw 자모 → 상자가 조합) · 아니면 글 입력 포커스에서만 붙인다.
             w.set_ime_allowed(
                 input::system_ime()
-                    && (f == Focus::Editor
+                    && (palette
+                        || f == Focus::Editor
                         || f == Focus::Find
                         || f == Focus::Search
                         || f == Focus::Ext
-                        || f == Focus::Project),
+                        || f == Focus::Project
+                        || f == Focus::Bookmarks),
             );
         }
     }
@@ -975,6 +1010,7 @@ impl App {
             Focus::Search => self.search.focused_textbox(),
             Focus::Ext => self.ext_panel.focused_textbox(),
             Focus::Project => self.project_panel.focused_textbox(),
+            Focus::Bookmarks => self.bm_panel.focused_textbox(),
             Focus::Grid | Focus::Explorer => None,
         }
     }
@@ -2621,6 +2657,7 @@ impl App {
         }
         self.palette.set_commands(cmds);
         self.palette.open("");
+        self.ime_refresh();
         self.redraw();
     }
 
@@ -3060,7 +3097,9 @@ impl App {
             return;
         }
         match id {
+            // "새 프로젝트 저장"(파일 모드에서도 늘 활성) = 빈 프로젝트 · "다른 이름으로" = 지금 프로젝트 복사 — 둘 다 저장 뒤 그 프로젝트로 전환.
             "project.new" | "project.save_as" => {
+                self.project_new_fresh = id == "project.new";
                 self.file_purpose = FilePurpose::Project;
                 self.open_file_dlg = Some(PickerMode::Save);
             }
@@ -3115,6 +3154,7 @@ impl App {
                 cmds.push(("project.open".into(), t(Msg::MnProjectOpen).into()));
                 self.palette.set_commands(cmds);
                 self.palette.open("");
+                self.ime_refresh();
             }
             _ => {}
         }
@@ -3147,7 +3187,20 @@ impl App {
         } else {
             path.with_extension(project::EXT)
         };
-        let p = self.project.clone().with_path(&path);
+        let fresh = std::mem::take(&mut self.project_new_fresh);
+        let mut p = if fresh {
+            project::Project::default()
+        } else {
+            self.project.clone()
+        }
+        .with_path(&path);
+        // 프로젝트 파일이 놓인 폴더 = 기본 폴더(새 프로젝트는 늘 · 복사본은 폴더가 없을 때만 · 사용자 09-22).
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            if fresh || p.folders.is_empty() {
+                p.folders.insert(0, dir.to_path_buf());
+                p.folders.dedup();
+            }
+        }
         match p.save() {
             Ok(()) => {
                 self.sess.status = tf(Msg::StProjectSaved, &[&nexa_fs::path::display(&path)]);
@@ -3190,6 +3243,9 @@ impl App {
         }
         self.persist_settings();
         self.project_changed(false);
+        // 프로젝트가 바뀌면 북마크 저장소도(워크스페이스 파일 · 69 C-17).
+        self.bookmarks.bind_project(self.project.path.as_deref());
+        self.bm_sync_ui();
     }
 
     /// 폴더 목록이 바뀌었다 — 탐색기·메뉴 갱신(`save`면 파일에도).
@@ -3200,6 +3256,9 @@ impl App {
             }
         }
         self.sync_project_panel_opts();
+        let has_recent =
+            !project::recent_list(self.settings.get("project.recent").unwrap_or("")).is_empty();
+        self.project_panel.set_has_recent(has_recent);
         self.project_panel
             .set_project(self.project.name(), &self.project.folders);
         self.rebuild_menus();
@@ -3334,6 +3393,9 @@ impl App {
         }
         if keep != "view.project" && self.project_panel.is_visible() {
             self.project_panel.set_visible(false);
+        }
+        if keep != "view.bookmarks" && self.bm_panel.is_visible() {
+            self.bm_panel.set_visible(false);
         }
         if matches!(
             self.focus,
@@ -5158,6 +5220,16 @@ impl App {
                 self.all_grids().for_each(|g| g.set_null_text(&text));
             }
             "grid.row_focus" | "grid.row_focus_color" => self.apply_grid_row_focus(),
+            k if k.starts_with("bookmark.") => {
+                self.bookmarks.apply_settings(&self.settings);
+                let on = self.bookmarks.enabled;
+                self.act_bar.set_item_visible("view.bookmarks", on);
+                if !on && self.bm_panel.is_visible() {
+                    self.bm_panel.set_visible(false);
+                    self.layout();
+                }
+                self.bm_sync_ui();
+            }
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "grid.scroll" => {
@@ -5186,6 +5258,10 @@ impl App {
             "editor.undo_group_ms" | "editor.undo_giant_mb" => {
                 let (ms, giant) = undo_rules(&self.settings);
                 self.editors.set_undo_rules(ms, giant);
+            }
+            "editor.max_occurrences" => {
+                let cap = self.occurrence_cap();
+                self.editors.set_max_regions(cap);
             }
             "editor.undo_budget_mb" => self
                 .editors
@@ -6220,7 +6296,12 @@ impl App {
                 }
             }
             "edit.expand_selection" => {
-                if self.editors.cur_mut().select_next_occurrence() {
+                // ★ 다중 선택 구간 수 상한 `editor.max_occurrences`(docs/72 §2 · 09-22 전까지 키만 있고 미배선).
+                let cap = self.occurrence_cap();
+                let n0 = self.editors.selection_count();
+                if n0 >= cap {
+                    self.sess.status = tf(Msg::StOccurrenceCap, &[&n0.to_string()]);
+                } else if self.editors.cur_mut().select_next_occurrence() {
                     let n = self.editors.selection_count();
                     if n > 1 {
                         self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
@@ -6238,12 +6319,20 @@ impl App {
             }
             // 같은 문자열 전부 선택(Sublime Ctrl+⇧D 계열 · 상한 = 더 못 찾을 때까지).
             "edit.select_all_occurrences" => {
+                let cap = self.occurrence_cap();
                 let ed = self.editors.cur_mut();
+                let mut capped = false;
                 if ed.select_next_occurrence() {
-                    while ed.select_next_occurrence() {}
+                    // 상한(`editor.max_occurrences`)에서 멈춘다 — 구간마다 캐럿·편집이 곱해진다(docs/72 §2).
+                    while ed.selection_count() < cap && ed.select_next_occurrence() {}
+                    capped = ed.selection_count() >= cap;
                 }
                 let n = self.editors.selection_count();
-                self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
+                self.sess.status = if capped {
+                    tf(Msg::StOccurrenceCap, &[&n.to_string()])
+                } else {
+                    tf(Msg::StSelections, &[&n.to_string()])
+                };
                 self.set_focus(Focus::Editor);
             }
             // ★ Sublime 줄·선택 편집(T-98 · 09-16) — 편집기에 포커스일 때만.
@@ -6278,6 +6367,22 @@ impl App {
             "edit.prev_statement" => self.goto_statement(false),
             "edit.undo" => self.route(InputEvent::Undo),
             "edit.redo" => self.route(InputEvent::Redo),
+            // ★ 선택 되돌리기(Sublime soft undo · 사용자 09-22) — 편집기에서만.
+            "edit.soft_undo" | "edit.soft_redo" => {
+                let ed = self.editors.cur_mut();
+                let ok = if id == "edit.soft_undo" {
+                    ed.soft_undo()
+                } else {
+                    ed.soft_redo()
+                };
+                if ok {
+                    let n = self.editors.selection_count();
+                    if n > 1 {
+                        self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
+                    }
+                }
+                self.set_focus(Focus::Editor);
+            }
             "view.log" => self.toggle_log = true,
             "view.toolbar_reset" => self.reset_toolbar(),
             "view.colors" => self.open_colors = true,
@@ -6303,6 +6408,23 @@ impl App {
                 }
                 self.layout();
             }
+            "view.bookmarks" => {
+                let on = !self.bm_panel.is_visible();
+                if on {
+                    self.side_panel_close_others("view.bookmarks");
+                    self.bm_panel.sync(&self.bookmarks.store);
+                }
+                self.bm_panel.set_visible(on);
+                if on {
+                    self.bm_panel.focus_filter();
+                    self.set_focus(Focus::Bookmarks);
+                } else if self.focus == Focus::Bookmarks {
+                    self.set_focus(Focus::Editor);
+                }
+                self.layout();
+                self.redraw();
+            }
+            x if x.starts_with("bookmark.") => self.bookmark_cmd(x),
             "view.project" => {
                 let on = !self.project_panel.is_visible();
                 if on {
@@ -8326,6 +8448,7 @@ impl App {
         }
         self.palette.set_commands(cmds);
         self.palette.open(prefill);
+        self.ime_refresh();
         self.redraw();
     }
 
@@ -8398,6 +8521,14 @@ impl App {
                 vec![
                     item("edit.undo", Msg::MnUndo),
                     item("edit.redo", Msg::MnRedo),
+                    // Sublime Edit ▸ Undo Selection ▸ Soft Undo / Soft Redo.
+                    MenuEntry::sub(
+                        t(Msg::MnGrpUndoSelection),
+                        vec![
+                            item("edit.soft_undo", Msg::MnSoftUndo),
+                            item("edit.soft_redo", Msg::MnSoftRedo),
+                        ],
+                    ),
                     MenuEntry::Separator,
                     item("edit.cut", Msg::MnCut),
                     item("edit.copy", Msg::MnCopy),
@@ -8452,6 +8583,21 @@ impl App {
                     ),
                     item("edit.toggle_comment", Msg::MnToggleComment),
                     MenuEntry::Separator,
+                    // 북마크(docs/69 §6-1).
+                    MenuEntry::sub(
+                        t(Msg::MnBookmarks),
+                        vec![
+                            item("bookmark.toggle", Msg::MnBmToggle),
+                            item("bookmark.next", Msg::MnBmNext),
+                            item("bookmark.prev", Msg::MnBmPrev),
+                            MenuEntry::Separator,
+                            item("bookmark.select_all", Msg::MnBmSelectAll),
+                            item("bookmark.label", Msg::MnBmLabel),
+                            item("bookmark.clear_doc", Msg::MnBmClearDoc),
+                            MenuEntry::Separator,
+                            item("view.bookmarks", Msg::MnBookmarksPanel),
+                        ],
+                    ),
                     MenuEntry::sub(
                         t(Msg::MnGrpFind),
                         vec![
@@ -8641,6 +8787,10 @@ impl App {
                     }
                 }
             }
+            // ★ 큰 선택 복사/잘라내기 확인(사용자 09-22 · docs/72 §2): 문자열을 만들기 전에 바이트 수로 판정 — 첫 누름은 안내,
+            //   3초 안에 같은 동작 = 실행(거대 편집 확인과 같은 꼴).
+            EditCtxAction::Copy | EditCtxAction::Cut
+                if self.focus == Focus::Editor && self.copy_confirm_pending() => {}
             EditCtxAction::Copy => {
                 if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
                     let rich =
@@ -8685,6 +8835,26 @@ impl App {
             self.sess.status = t(Msg::ErrClipboard).into();
         }
         self.redraw();
+    }
+
+    /// 큰 선택 복사/잘라내기 확인이 필요한가 — `editor.copy_confirm_mb`(0 = 안 물음) 이상이면 첫 누름은 안내(3초 무장) · 무장 중 되풀이 = 통과.
+    fn copy_confirm_pending(&mut self) -> bool {
+        let limit = (self.settings.int("editor.copy_confirm_mb").max(0) as usize) << 20;
+        if limit == 0 {
+            return false;
+        }
+        let bytes = self.ed_mut().selected_bytes();
+        if bytes < limit {
+            return false;
+        }
+        let now = Instant::now();
+        if self.copy_armed_until.is_some_and(|t| now <= t) {
+            self.copy_armed_until = None;
+            return false;
+        }
+        self.copy_armed_until = Some(now + Duration::from_secs(3));
+        self.sess.status = tf(Msg::StCopyConfirm, &[&nsql_core::fmt_bytes(bytes as u64)]);
+        true
     }
 
     /// 명령 팔레트 열기(prefill = 초기 질의 · 예 "Set Syntax: ").
@@ -8753,6 +8923,17 @@ impl App {
             Msg::MnEdit,
             Msg::MnSkipOccurrence,
         ));
+        for (id, msg) in [
+            ("bookmark.toggle", Msg::MnBmToggle),
+            ("bookmark.next", Msg::MnBmNext),
+            ("bookmark.prev", Msg::MnBmPrev),
+            ("bookmark.select_all", Msg::MnBmSelectAll),
+            ("bookmark.label", Msg::MnBmLabel),
+            ("bookmark.clear_doc", Msg::MnBmClearDoc),
+            ("view.bookmarks", Msg::MnBookmarksPanel),
+        ] {
+            cmds.push(m(id, Msg::MnBookmarks, msg));
+        }
         cmds.push(m(
             "edit.select_all_occurrences",
             Msg::MnEdit,
@@ -8764,6 +8945,8 @@ impl App {
         cmds.push(m("edit.find_next", Msg::MnEdit, Msg::MnFindNext));
         cmds.push(m("edit.find_prev", Msg::MnEdit, Msg::MnFindPrev));
         cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
+        cmds.push(m("edit.soft_undo", Msg::MnEdit, Msg::MnSoftUndo));
+        cmds.push(m("edit.soft_redo", Msg::MnEdit, Msg::MnSoftRedo));
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
         cmds.push(m("view.txlog", Msg::MnView, Msg::MnTxLogWindow));
         cmds.push(m("view.sessions", Msg::MnView, Msg::MnSessManager));
@@ -8841,6 +9024,7 @@ impl App {
         }
         self.palette.set_commands(cmds);
         self.palette.open(prefill);
+        self.ime_refresh();
         self.redraw();
     }
 
@@ -9015,6 +9199,8 @@ impl App {
             show_hidden,
             show_dot,
             &encoding,
+            // 편집기 파일 열기만 다중 · 프로젝트/실행 파일/내보내기/설정 폴더는 하나(사용자 09-22).
+            !matches!(self.file_purpose, FilePurpose::Editor),
         );
     }
 
@@ -9048,6 +9234,7 @@ impl App {
                 ("bigfile.run".into(), t(Msg::BigRun).into()),
             ]);
             self.palette.open("");
+            self.ime_refresh();
             self.redraw();
             return;
         }
@@ -9365,6 +9552,8 @@ impl App {
                     if mode == LoadMode::Open {
                         restored = self.undo_persist_load(i, &path);
                         self.vars_persist_load(tab, &path);
+                        self.bookmarks.on_opened(&self.editors, i);
+                        self.bm_refresh_tab(i);
                     }
                 }
                 if self.editors.active_id() == tab {
@@ -11208,7 +11397,269 @@ impl App {
         }
     }
 
-    /// 활성 그리드 + 잠든 그리드 전부(설정 전파용).
+    // ───────────── 북마크(docs/69 · T-167) ─────────────
+
+    /// 탭 하나의 거터 마크를 저장소에서 다시 만든다.
+    fn bm_refresh_tab(&mut self, i: usize) {
+        let (c, d) = (self.theme.accent, self.theme.text_dim);
+        let marks = if self.bookmarks.enabled && self.settings.flag("bookmark.gutter") {
+            self.bookmarks.marks_for(&self.editors, i, c, d)
+        } else {
+            Vec::new()
+        };
+        let labels = if self.bookmarks.enabled && self.settings.flag("bookmark.gutter") {
+            self.bookmarks.labels_for(&self.editors, i)
+        } else {
+            Vec::new()
+        };
+        if let Some(tb) = self.editors.tab_box_mut(i) {
+            tb.set_line_marks(marks);
+            tb.set_gutter_labels(labels);
+        }
+    }
+
+    /// 표시 전부(거터 · 패널 · 상태줄) 갱신.
+    fn bm_sync_ui(&mut self) {
+        for i in 0..self.editors.len() {
+            self.bm_refresh_tab(i);
+        }
+        self.bm_panel.sync(&self.bookmarks.store);
+        self.redraw();
+    }
+
+    /// 틱: 활성 탭의 줄 변경 기록 소비(L0) · 바뀐 표시 갱신 · 디바운스 저장.
+    fn bm_tick(&mut self) {
+        if !self.bookmarks.enabled {
+            return;
+        }
+        let i = self.editors.active();
+        let moved = self.bookmarks.sync_tab(&self.editors, i);
+        if self.bookmarks.take_changed() || moved {
+            self.bm_sync_ui();
+        }
+        self.bookmarks.tick_save();
+    }
+
+    /// 패널이 낸 요청 거두기.
+    fn bm_pump(&mut self) {
+        while let Some(a) = self.bm_panel.take_action() {
+            match a {
+                bookmarks_panel::BmAction::Goto(id) => self.bm_goto(id),
+                bookmarks_panel::BmAction::Remove(id) => {
+                    if let Some(b) = self.bookmarks.remove(id) {
+                        self.bm_removed_toast(1, &b.display());
+                    }
+                }
+                bookmarks_panel::BmAction::Rename(id, text) => {
+                    self.bookmarks.set_label(id, Some(text))
+                }
+                bookmarks_panel::BmAction::Mnemonic(id, n) => self.bookmarks.set_mnemonic(id, n),
+                bookmarks_panel::BmAction::MoveGroup(id, g) => self.bookmarks.move_group(id, g),
+                bookmarks_panel::BmAction::RemoveDoc(doc) => {
+                    let n = self.bookmarks.remove_doc(&doc);
+                    if n > 0 {
+                        self.bm_removed_toast(n, &doc.short_name());
+                    }
+                }
+                bookmarks_panel::BmAction::NewGroup => {
+                    let base = t(Msg::BmNewGroupName).to_string();
+                    let gid = self.bookmarks.new_group(&base);
+                    self.bm_panel.sync(&self.bookmarks.store);
+                    self.sess.status = tf(Msg::StBookmarkGroupNew, &[&gid.to_string()]);
+                }
+                bookmarks_panel::BmAction::RenameGroup(g, name) => {
+                    self.bookmarks.rename_group(g, &name)
+                }
+                bookmarks_panel::BmAction::ToggleGroup(g) => self.bookmarks.toggle_group(g),
+                bookmarks_panel::BmAction::DefaultGroup(g) => self.bookmarks.set_default_group(g),
+                bookmarks_panel::BmAction::DeleteGroup(g, keep) => {
+                    if !self.bookmarks.delete_group(g, keep) {
+                        self.sess.status = t(Msg::StBookmarkGroupDefault).into();
+                    } else if !keep {
+                        self.bm_removed_toast(0, "");
+                    }
+                }
+                bookmarks_panel::BmAction::RemoveInvalid => {
+                    let n = self.bookmarks.remove_invalid();
+                    if n > 0 {
+                        self.bm_removed_toast(n, "");
+                    }
+                }
+                bookmarks_panel::BmAction::OpenSettings => self.menu_action("edit.prefs"),
+                bookmarks_panel::BmAction::SelectAllInDoc(doc) => {
+                    if let Some(i) = self.bm_tab_of(&doc) {
+                        self.editors.switch(i);
+                        self.bm_select_all_in(i);
+                        self.set_focus(Focus::Editor);
+                    }
+                }
+            }
+        }
+        if self.bookmarks.take_changed() {
+            self.bm_sync_ui();
+        }
+    }
+
+    /// 제거 뒤 5초 [되돌리기] 토스트(69 C-28 · Ctrl+Z는 본문만) — 클릭 = `bookmark.undo_remove`.
+    fn bm_removed_toast(&mut self, n: usize, what: &str) {
+        let body = if n == 1 {
+            tf(Msg::StBookmarkRemoved, &[what])
+        } else {
+            tf(Msg::StBookmarkCleared, &[&n.to_string()])
+        };
+        self.sess.status = body.clone();
+        self.toasts.push_action(
+            toast::ToastKind::Info,
+            body,
+            t(Msg::StBookmarkUndo).to_string(),
+            "bookmark.undo_remove",
+        );
+    }
+
+    fn bm_tab_of(&self, doc: &nsql_bookmarks::DocKey) -> Option<usize> {
+        let ci = cfg!(any(windows, target_os = "macos"));
+        (0..self.editors.len())
+            .find(|&i| bookmarks::Bookmarks::doc_key(&self.editors, i).same(doc, ci))
+    }
+
+    /// 북마크로 이동 — 열린 탭이면 전환 · 파일이면 열고 · 그 줄로.
+    fn bm_goto(&mut self, id: u64) {
+        let Some(b) = self.bookmarks.store.get(id).cloned() else {
+            return;
+        };
+        let mut idx = self.bm_tab_of(&b.doc);
+        if idx.is_none() {
+            if let nsql_bookmarks::DocKey::File { path } = &b.doc {
+                self.open_file(Path::new(path));
+                idx = self.bm_tab_of(&b.doc);
+            }
+        }
+        let Some(i) = idx else {
+            self.sess.status = t(Msg::StBookmarkNoDoc).into();
+            return;
+        };
+        self.editors.switch(i);
+        self.editors.cur_mut().goto_line(b.anchor.line as usize + 1);
+        if let Some(bm) = self.bookmarks.store.get_mut(id) {
+            bm.visited = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+        }
+        self.set_focus(Focus::Editor);
+        self.redraw();
+    }
+
+    /// 문서의 북마크 줄 전부에 캐럿(Sublime Select All Bookmarks · 69 §6-1).
+    fn bm_select_all_in(&mut self, i: usize) {
+        let lines = self.bookmarks.doc_lines(&self.editors, i);
+        if lines.is_empty() {
+            self.sess.status = t(Msg::StBookmarkNone).into();
+            return;
+        }
+        if let Some(tb) = self.editors.tab_box_mut(i) {
+            let regions: Vec<(usize, usize)> = lines
+                .iter()
+                .map(|&l| {
+                    let a = tb
+                        .buf()
+                        .line_start(l.min(tb.buf().line_count().saturating_sub(1)));
+                    (a, a)
+                })
+                .collect();
+            tb.set_regions_pub(&regions);
+        }
+        let n = lines.len();
+        self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
+    }
+
+    /// `bookmark.*` 명령.
+    fn bookmark_cmd(&mut self, id: &str) {
+        if !self.bookmarks.enabled {
+            self.sess.status = t(Msg::StBookmarkOff).into();
+            return;
+        }
+        let i = self.editors.active();
+        if let Some(n) = id
+            .strip_prefix("bookmark.set_")
+            .and_then(|n| n.parse::<u8>().ok())
+        {
+            match self.bookmarks.set_mnemonic_at_caret(&self.editors, i, n) {
+                Ok(_) => {
+                    let line = self.editors.caret_line_col().0;
+                    self.sess.status = tf(
+                        Msg::StBookmarkMnemonic,
+                        &[&n.to_string(), &line.to_string()],
+                    );
+                }
+                Err(k) => self.sess.status = tf(Msg::StBookmarkCap, &[&format!("bookmark.{k}")]),
+            }
+        } else if let Some(n) = id
+            .strip_prefix("bookmark.goto_")
+            .and_then(|n| n.parse::<u8>().ok())
+        {
+            match self.bookmarks.mnemonic_line(&self.editors, i, n) {
+                Some(l) => {
+                    self.editors.cur_mut().goto_line(l + 1);
+                    self.set_focus(Focus::Editor);
+                }
+                None => self.sess.status = tf(Msg::StBookmarkNoMnemonic, &[&n.to_string()]),
+            }
+        } else {
+            match id {
+                "bookmark.toggle" => match self.bookmarks.toggle_caret(&self.editors, i) {
+                    Ok(true) => {
+                        let line = self.editors.caret_line_col().0;
+                        self.sess.status = tf(Msg::StBookmarkAdded, &[&line.to_string()]);
+                    }
+                    Ok(false) => self.sess.status = tf(Msg::StBookmarkRemoved, &[""]),
+                    Err(k) => {
+                        self.sess.status = tf(Msg::StBookmarkCap, &[&format!("bookmark.{k}")])
+                    }
+                },
+                "bookmark.next" | "bookmark.prev" => {
+                    match self
+                        .bookmarks
+                        .next_line(&self.editors, i, id == "bookmark.next")
+                    {
+                        Some(l) => {
+                            self.editors.cur_mut().goto_line(l + 1);
+                            self.set_focus(Focus::Editor);
+                        }
+                        None => self.sess.status = t(Msg::StBookmarkNone).into(),
+                    }
+                }
+                "bookmark.clear_doc" => {
+                    let n = self.bookmarks.clear_doc(&self.editors, i);
+                    self.sess.status = tf(Msg::StBookmarkCleared, &[&n.to_string()]);
+                }
+                "bookmark.select_all" => self.bm_select_all_in(i),
+                "bookmark.undo_remove" => {
+                    let n = self.bookmarks.undo_remove();
+                    self.sess.status = tf(Msg::StBookmarkRestored, &[&n.to_string()]);
+                }
+                "bookmark.label" => {
+                    if !self.bm_panel.is_visible() {
+                        self.menu_action("view.bookmarks");
+                    }
+                    if !self.bm_panel.begin_rename() {
+                        self.set_focus(Focus::Bookmarks);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self.bookmarks.take_changed() {
+            self.bm_sync_ui();
+        }
+        self.redraw();
+    }
+
+    /// 다중 선택 구간 수 상한(`editor.max_occurrences` · 최소 100 · docs/72 §2).
+    fn occurrence_cap(&self) -> usize {
+        self.settings.int("editor.max_occurrences").max(100) as usize
+    }
+
     /// 행 포커스 배경 설정 → 전 그리드(사용자 09-22).
     fn apply_grid_row_focus(&mut self) {
         let on = self.settings.flag("grid.row_focus");
@@ -11216,6 +11667,7 @@ impl App {
         self.all_grids().for_each(|g| g.set_row_focus(on, c, a));
     }
 
+    /// 활성 그리드 + 잠든 그리드 전부(설정 전파용).
     fn all_grids(&mut self) -> impl Iterator<Item = &mut grid::Grid> {
         let (grid, panel, panels) = (&mut self.grid, &mut self.panel, &mut self.panels);
         std::iter::once(grid)
@@ -11534,6 +11986,18 @@ impl App {
                 if self.editors.active_read_only() {
                     segs.push((t(Msg::StReadOnlySeg).to_string(), false));
                 }
+                // 북마크 `이 문서/전체`(docs/69 §6-2 · `bookmark.statusbar`).
+                if self.bookmarks.enabled && self.settings.flag("bookmark.statusbar") {
+                    let (here, all) = self
+                        .bookmarks
+                        .counts_for(&self.editors, self.editors.active());
+                    if all > 0 {
+                        segs.push((
+                            tf(Msg::StBookmarkSeg, &[&here.to_string(), &all.to_string()]),
+                            false,
+                        ));
+                    }
+                }
                 let nsel = self.editors.selection_count();
                 if self.focus == Focus::Grid
                     && self
@@ -11808,6 +12272,7 @@ impl App {
                 self.explorer.paint(&mut dc, &th);
                 self.search.paint(&mut dc, &th);
                 self.project_panel.paint(&mut dc, &th);
+                self.bm_panel.paint(&mut dc, &th);
                 self.ext_panel.paint(&mut dc, &th);
             }
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
@@ -11835,6 +12300,7 @@ impl App {
                 self.find.paint_tooltip(&mut dc, &th);
                 self.search.paint_tooltip(&mut dc, &th);
                 self.project_panel.paint_tooltip(&mut dc, &th);
+                self.bm_panel.paint_popup(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
@@ -12088,6 +12554,9 @@ impl App {
         if self.panel.menu_open() {
             m |= 64;
         }
+        if self.bm_panel.menu_open() {
+            m |= 128;
+        }
         m
     }
 
@@ -12109,6 +12578,9 @@ impl App {
         }
         if bits & 32 != 0 {
             self.grid.close_menu();
+        }
+        if bits & 128 != 0 {
+            self.bm_panel.close_menu();
         }
         if bits & 64 != 0 {
             self.panel.close_menu();
@@ -12137,9 +12609,18 @@ impl App {
         self.route_inner(ev, Invalidations::default());
         self.sync_run_stmt_button();
         self.giant_notice();
+        self.regions_cap_notice();
     }
 
     /// 막힌 거대 편집(docs/60 D-130)을 알린다 — 편집기가 막았다는 표시를 꺼내 상태줄 + 토스트로.
+    /// 다중 선택 구간 상한에 걸렸으면 상태줄 안내(`editor.max_occurrences` · 줄 나누기·열 선택·Ctrl+클릭 포함 · docs/72).
+    fn regions_cap_notice(&mut self) {
+        if self.ed_mut().take_regions_capped() {
+            let n = self.editors.selection_count();
+            self.sess.status = tf(Msg::StOccurrenceCap, &[&n.to_string()]);
+        }
+    }
+
     fn giant_notice(&mut self) {
         let Some((bytes, repeat)) = self.ed_mut().take_giant_blocked() else {
             return;
@@ -12165,6 +12646,9 @@ impl App {
     fn route_inner(&mut self, ev: InputEvent, mut inv: Invalidations) {
         if let InputEvent::MouseDown { x, y, .. } = ev {
             if self.toasts.click(Point { x, y }) {
+                if let Some(a) = self.toasts.take_action() {
+                    self.menu_action(&a);
+                }
                 self.redraw();
                 return;
             }
@@ -12311,9 +12795,13 @@ impl App {
         if self.palette.is_open() {
             match self.palette.on_event(&ev, &mut inv) {
                 PaletteAction::None => {}
-                PaletteAction::Close => self.palette.close(),
+                PaletteAction::Close => {
+                    self.palette.close();
+                    self.ime_refresh();
+                }
                 PaletteAction::Pick(id) => {
                     self.palette.close();
+                    self.ime_refresh();
                     self.menu_action(&id);
                 }
                 PaletteAction::Prompt { id, text } => {
@@ -12531,6 +13019,78 @@ impl App {
                 if self.ext_panel.on_event(&ev) {
                     self.redraw();
                 }
+                return;
+            }
+        }
+        // 북마크 패널의 우클릭 메뉴는 창 위에 뜬다 → 열린 동안 먼저 받는다(탐색기 메뉴와 같은 규칙 · 바깥 클릭은 닫고 통과).
+        if self.bm_panel.is_visible() && self.bm_panel.menu_open() {
+            let outside_click = matches!(
+                ev,
+                InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+            ) && !self.bm_panel.bounds().contains(Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            });
+            if self.bm_panel.on_event(&ev) {
+                self.redraw();
+            }
+            self.bm_pump();
+            if (!outside_click || self.bm_panel.menu_open())
+                && !matches!(ev, InputEvent::MouseMove { .. })
+            {
+                return;
+            }
+        }
+        // 북마크 패널(docs/69 §6) — 프로젝트 탐색기와 같은 규칙.
+        if self.bm_panel.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let inside = self.bm_panel.bounds().contains(cur);
+            // 우클릭(메뉴)도 포인터 사건 — `is_ptr`(탐색기와 같은 판정 · 09-22 S35: `is_mouse`만 보면 RightDown이 안 닿는다).
+            if (is_ptr && inside) || (is_wheel_ev(&ev) && inside) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
+                    self.set_focus(Focus::Bookmarks);
+                }
+                if self.bm_panel.on_event(&ev) {
+                    self.redraw();
+                }
+                self.bm_pump();
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.focus == Focus::Bookmarks
+                && matches!(
+                    ev,
+                    InputEvent::Key { .. }
+                        | InputEvent::Char { .. }
+                        | InputEvent::SelectAll
+                        | InputEvent::Undo
+                        | InputEvent::Redo
+                )
+            {
+                let handled = self.bm_panel.on_event(&ev);
+                if !handled
+                    && matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Escape,
+                            ..
+                        }
+                    )
+                {
+                    self.set_focus(Focus::Editor);
+                    self.redraw();
+                    return;
+                }
+                if handled {
+                    self.redraw();
+                }
+                self.bm_pump();
                 return;
             }
         }
@@ -12803,7 +13363,12 @@ impl App {
                     self.after_grid_event();
                     inv.push(self.grid.bounds);
                 }
-                Focus::Explorer | Focus::Find | Focus::Search | Focus::Ext | Focus::Project => {}
+                Focus::Explorer
+                | Focus::Find
+                | Focus::Search
+                | Focus::Ext
+                | Focus::Project
+                | Focus::Bookmarks => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -12929,6 +13494,8 @@ impl ApplicationHandler<Wake> for App {
         // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
         self.demo_ready = Self::demo_exists();
         self.project_startup();
+        self.bookmarks.bind_project(self.project.path.as_deref());
+        self.bm_sync_ui();
         self.rebuild_menus();
         if !self.demo_ready && !self.settings.flag("demo.prompted") {
             let _ = self.settings.set("demo.prompted", "on");
@@ -13124,6 +13691,10 @@ impl ApplicationHandler<Wake> for App {
         if self.project_panel.tick(now_ms) {
             self.redraw();
         }
+        if self.bm_panel.tick(now_ms) {
+            self.redraw();
+        }
+        self.bm_tick();
         self.project_pump();
         if self.editors.poll_preview() {
             self.redraw();
@@ -13167,6 +13738,7 @@ impl ApplicationHandler<Wake> for App {
             || self.find.animating()
             || self.search.animating()
             || self.project_panel.animating()
+            || self.bm_panel.animating()
             || self.ext_fetch_rx.is_some()
             || !self.file_loads.is_empty()
             || self.editors.tooltip_pending()
@@ -13237,6 +13809,7 @@ impl ApplicationHandler<Wake> for App {
         self.multi_load_poll();
         // 명령·IME로 온 편집이 거대 편집 확인에 막혔으면 알린다(키 입력은 `route`가 바로 알린다).
         self.giant_notice();
+        self.regions_cap_notice();
         // 메모리 회수 — 큰 것을 놓은 직후 1회 + 유휴 주기(`memtrim.rs`).
         if let Some(t) = self.mem_tick(now) {
             next = next.min(t);
@@ -14387,6 +14960,7 @@ fn main() {
     let search = SearchPanel::new();
     mark(&mut marks, "search");
     let project_panel = project_panel::ProjectPanel::new();
+    let bm_panel = bookmarks_panel::BookmarksPanel::new();
     let ext_panel = ExtPanel::new();
     mark(&mut marks, "ext_panel");
     let palette = Palette::new();
@@ -14469,6 +15043,8 @@ fn main() {
         demo_ready: false,
         demo_job: None,
         pending_demo_prompt: false,
+        copy_armed_until: None,
+        project_new_fresh: false,
         conn_win,
         // 시작 시 로그인 창 — 인자로 접속 대상을 줬거나 임시 Demo 자동 접속이면 띄우지 않는다.
         open_conn: initial_target.is_none() || arg_fill_only,
@@ -14507,6 +15083,8 @@ fn main() {
         explorer,
         search,
         project_panel,
+        bookmarks: bookmarks::Bookmarks::new(),
+        bm_panel,
         project: project::Project::default(),
         ext_panel,
         ext_fetch_rx: None,
@@ -14593,6 +15171,8 @@ fn main() {
         .set_undo_budget(app.settings.int("editor.undo_budget_mb").max(1) as usize * 1024 * 1024);
     let (ms, giant) = undo_rules(&app.settings);
     app.editors.set_undo_rules(ms, giant);
+    let cap = app.occurrence_cap();
+    app.editors.set_max_regions(cap);
     nexa_gfx::text::set_glyph_cache_max(app.settings.int("ui.glyph_cache").max(256) as usize);
     nexa_fs::shell::set_icon_cache_max(app.settings.int("file.icon_cache").max(16) as usize);
     // D-58: full 모드인데 배터리/원격 세션이면 1회 안내.
@@ -14606,6 +15186,9 @@ fn main() {
         .to_string();
     app.grid.set_null_text(&null_text);
     app.apply_grid_row_focus();
+    app.bookmarks.apply_settings(&app.settings);
+    let bm_on = app.bookmarks.enabled;
+    app.act_bar.set_item_visible("view.bookmarks", bm_on);
     nexa_ctl::controls::set_menu_icons(app.settings.flag("ui.menu_icons"));
     app.log_win
         .set_on_top(app.settings.flag("log.always_on_top"));

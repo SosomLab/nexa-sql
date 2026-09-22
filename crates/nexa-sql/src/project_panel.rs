@@ -66,6 +66,8 @@ pub(crate) struct ProjectPanel {
     row_h: i32,
     open: Option<OpenReq>,
     command: Option<&'static str>,
+    /// 최근 프로젝트가 있는가(빈 상태에 "프로젝트 전환…" 링크를 보일지 · 09-22).
+    has_recent: bool,
     last_click: Option<(usize, Instant)>,
     dblclick_ms: u128,
     tooltip_ms: u128,
@@ -107,6 +109,7 @@ impl ProjectPanel {
             row_h: 22,
             open: None,
             command: None,
+            has_recent: false,
             last_click: None,
             dblclick_ms: 400,
             tooltip_ms: 600,
@@ -309,6 +312,10 @@ impl ProjectPanel {
 
     pub(crate) fn take_open(&mut self) -> Option<OpenReq> {
         self.open.take()
+    }
+
+    pub(crate) fn set_has_recent(&mut self, on: bool) {
+        self.has_recent = on;
     }
 
     pub(crate) fn take_command(&mut self) -> Option<&'static str> {
@@ -601,6 +608,11 @@ impl ProjectPanel {
                     }
                     return false;
                 }
+                // 헤더(프로젝트 이름) 클릭 = 프로젝트 전환(최근 목록 팔레트 · 사용자 09-22).
+                if self.header_rect.contains(p) {
+                    self.command = Some("project.switch");
+                    return true;
+                }
                 let in_f = self.filter.bounds().contains(p);
                 self.filter.set_focused(in_f);
                 if let Some(r) = self.row_at(p) {
@@ -705,10 +717,14 @@ impl ProjectPanel {
             }
             dc.select_font(FontSlot::Base, false);
             y += px(4.0);
-            for (id, m) in [
-                ("project.open", Msg::MnProjectOpen),
+            let mut rows: Vec<(&'static str, Msg)> = vec![
                 ("project.new", Msg::MnProjectNew),
-            ] {
+                ("project.open", Msg::MnProjectOpen),
+            ];
+            if self.has_recent {
+                rows.push(("project.switch", Msg::MnProjectSwitch));
+            }
+            for (id, m) in rows {
                 let rr = Rect::new(lr.x, y, lr.w, rh);
                 let ty = dc.text_center_y(y, rh);
                 dc.text(lr.x + pad, ty, rr, t(m), th.accent);

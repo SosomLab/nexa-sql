@@ -85,6 +85,8 @@ SELECT i AS id, 'b_' || i AS name FROM n;
 "@
 $qWord = Join-Path $DataDir "q_word.sql"
 Set-Content -LiteralPath $qWord -Encoding UTF8 -Value "select sum(x) from t where sum > 1 and sum < 9 order by sum;`n-- sum sum sum"
+$qMany = Join-Path $DataDir "q_many.sql"
+Set-Content -LiteralPath $qMany -Encoding UTF8 -Value (("sum " * 150).Trim())
 $a = Join-Path $DataDir "a.sql"; Set-Content -LiteralPath $a -Encoding UTF8 -Value "-- file a`nSELECT 1;"
 $b = Join-Path $DataDir "b.sql"; Set-Content -LiteralPath $b -Encoding UTF8 -Value "-- file b`nSELECT 2;"
 $c = Join-Path $DataDir "c.sql"; Set-Content -LiteralPath $c -Encoding UTF8 -Value "-- file c`nSELECT 3;"
@@ -217,4 +219,18 @@ Run-Scenario -Id S27 -Title "run.toast_max=3 상한(§51)" -Cmd ("open:" + $qErr
 # §43 다중 결과 탭(두 문장) → 결과 탭 2 · 탭 바.
 Run-Scenario -Id S28 -Title "결과 탭 둘 + 탭 바(§43)" -Cmd ("open:" + $qTwo + ",@after:1200:run.all") -WaitMs 5500 -Expect "결과 탭 2개 · 두 번째 활성"
 
+# §65 선택 되돌리기(Sublime soft undo · Ctrl+U): sum에 캐럿 → Ctrl+D ×3(선택 3) → soft_undo → 선택 2 · 다시 soft_undo → 1(상태줄 개수 표시는 2 이상일 때만).
+Run-Scenario -Id S29 -Title "선택 되돌리기 soft undo(§65 · 명령 직접)" -Cmd ("open:" + $qWord + ",@after:1200:ui.click:390/141,@after:1800:edit.expand_selection,@after:2200:edit.expand_selection,@after:2600:edit.expand_selection,@after:3000:edit.soft_undo") -WaitMs 4500 -Expect "상태줄 '2 selection regions'(3 → soft undo → 2)"
+Run-Scenario -Id S30 -Title "선택 다시 실행 soft redo(§65)" -Cmd ("open:" + $qWord + ",@after:1200:ui.click:390/141,@after:1800:edit.expand_selection,@after:2200:edit.expand_selection,@after:2600:edit.expand_selection,@after:3000:edit.soft_undo,@after:3400:edit.soft_undo,@after:3800:edit.soft_redo") -WaitMs 5000 -Expect "상태줄 '2 selection regions'(3 → 2 → 1 → redo → 2)"
+# §66 다중 선택 상한 `editor.max_occurrences`(100 · docs/72): sum 150개에서 Alt+F3 → 100에서 멈추고 상태줄 안내.
+Run-Scenario -Id S31 -Title "다중 선택 상한 editor.max_occurrences(§66 · 명령 직접)" -Cmd ("open:" + $qMany + ",@after:1200:ui.click:372/141,@after:1800:edit.select_all_occurrences") -Conf "editor.max_occurrences=100`n" -WaitMs 4500 -Expect "상태줄 'Stopped at 100 selections (editor.max_occurrences)'"
+# §68 ① 다중 선택 상한 = 줄 나누기에도: 150줄 Ctrl+A → Split into Lines(상한 100) → 100에서 멈추고 상태줄 안내.
+$qLines = Join-Path $DataDir "q_lines.sql"
+Set-Content -LiteralPath $qLines -Encoding UTF8 -Value ((1..150 | ForEach-Object { "SELECT $_;" }) -join "`n")
+Run-Scenario -Id S32 -Title "다중 선택 상한 = Split into Lines(§68 ①)" -Cmd ("open:" + $qLines + ",@after:1200:ui.click:400/141,@after:1800:edit.select_all,@after:2400:edit.split_lines") -Conf "editor.max_occurrences=100`n" -WaitMs 4500 -Expect "상태줄 'Stopped at 100 selections' · 선택 100개"
+# §70 북마크(docs/69 · T-167): 워크스페이스 파일이 시나리오 사이에 남으므로 먼저 clear_doc · 파일 열고 캐럿 줄 토글 → 패널 열기 → 거터 마크 + 패널 행 + 상태줄 개수.
+Run-Scenario -Id S33 -Title "북마크 토글 + 패널(§70)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:view.bookmarks") -WaitMs 4500 -Expect "거터 1·2줄 색 띠 · 패널 'q500.sql 2' + 두 행 · 상태줄 '북마크 2/2'"
+Run-Scenario -Id S34 -Title "북마크 다음/이전 이동(§70)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:ui.click:400/141,@after:3200:bookmark.next") -WaitMs 4500 -Expect "캐럿이 2줄로(상태줄 Ln 2)"
+# §71 북마크 패널 우클릭 메뉴(항목 행 · 팝업 규칙 ④ 모서리 캡처 대신 패널 안).
+Run-Scenario -Id S35 -Title "북마크 패널 우클릭 메뉴(§71)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:view.bookmarks,@after:3400:ui.rclick:150/182") -WaitMs 5000 -Expect "그룹 → 문서 → 항목 트리 · 항목 우클릭 메뉴(열기·이름·니모닉 ▸·그룹 이동 ▸·제거)"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

@@ -45,7 +45,7 @@
 | S-6 | DB | 결과 페치는 `grid.max_rows`(200)까지만 · 페치 왕복 1,000행 ≤ 2 · 메타 조회는 **펼친 노드만**(사전 프리페치 0) · 실행 중 폴링(Oracle 라이브 로그)은 실행 중에만 · 접속 시 추가 왕복 ≤ 2(SID · 방언 확인) | `Timeline` 단계(Fetch 왕복 수 = `--timing`) · 워커 테스트 | 200 ✅ · 왕복 수 계측 미노출 |
 | S-7 | DB | 응답 없는 서버가 UI를 잡지 않는다: 실행·접속·해제·메타 조회 어느 것도 UI 스레드에서 블록 0 · Disconnect는 즉시(09-16 11차) · 문장 타임아웃 설정 가능(`db.statement_timeout` · T-90b) | 워커 교체 테스트 · 실기(VPN 끊기) | Disconnect ✅ · 타임아웃 미구현 |
 | S-8 | CPU | 유휴 CPU **0.0%**(애니메이션 없을 때 `WaitUntil` = 다음 깜빡임뿐) · 애니메이션 중 프레임 간격 ≥ 33 ms(≤ 30 fps) · 프레임 1회 ≤ 8 ms(26 §5) | `typeperf`/작업 관리자 60초 평균 · 37 §5 프레임 계측 | 유휴 0% ✅(WaitUntil) · 프레임 ✅ P-1~4 |
-| S-9 | CPU | 큰 입력에 상한: 구문 강조는 `editor.highlight_max_kb`(1 MB) 초과 시 평문 · Ctrl+D 전체 검색 ≤ `editor.max_occurrences` · 그리드 정렬은 상한 행 안에서만 · 파일 검색은 `search.threads`·`search.max_file_kb`(36) | 단위 테스트(상한 경계) | 미구현(T-90c) |
+| S-9 | CPU | 큰 입력에 상한(★ 규칙 09-22: 원장의 키는 **읽는 코드 위치**를 함께 적는다 — 키만 만들고 안 읽던 `highlight_max_kb`·`max_occurrences` 재발 방지 · 크기 상한의 원장 = [72](72-size-limits-and-large-file-constraints.md)): 구문 강조는 큰 파일 단계 L2(`file.large_syntax_level` · [72](72-size-limits-and-large-file-constraints.md))에서 평문(`editor.highlight_max_kb`는 09-22 폐기 — 미배선이었다) · Ctrl+D/Alt+F3 다중 선택 ≤ `editor.max_occurrences`(09-22 배선) · 그리드 정렬은 상한 행 안에서만 · 파일 검색은 `search.threads`·`search.max_file_kb`(36) | 단위 테스트(상한 경계) | 미구현(T-90c) |
 | S-10 | CPU/디스크 | UI 스레드는 디스크·네트워크를 만지지 않는다(nexa-ui 20 §2-2) · OS 아이콘·열거·프로브는 워커 · 워커는 **사용 뒤 회수**(대화상자 닫힘 = 스레드 0 · 유휴 30초) | `resource_tests`(nexa-fs) · 스레드 수(`memcycle`) | ✅ |
 | S-11 | GFX | 다시 그리기는 **변경이 있을 때만**(입력·이벤트·애니메이션 목표 변경) · 마우스 이동만으로 전체 창 재그리기 금지(hover는 `IntentFade` 70 ms 의도 판정 뒤) · 툴팁·페이드·깜빡임 각각 끌 수 있다 · **드래그 중 프레임 ≤ 2 ms**(1116×759 · 09-16 실측 1.3 ms) | `NSQL_TRACE_FRAMES=1`(✅ 09-16 · 60프레임 평균/최대 · 구간별 · ✅ 09-19 `input→present` 한 줄 = 입력→key→route→editor→request_redraw→RedrawRequested→paint→present 지점별 ms · `scripts/win-latency-probe.ps1`) | 규칙 ✅ · 계측 ✅(라운드 사각형 SDF 수정 뒤 6→1.3 ms) |
 | S-12 | GFX | 이미지·아이콘은 **크기별 사전 스케일 캐시**(매 프레임 리샘플 0) · 코드 도형은 마스크 1회 래스터 · OS 아이콘은 비동기 + 상한 512 | nexa-ui 테스트(글리프 캐시 재사용) | ✅ |
@@ -118,7 +118,7 @@
 
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
-| 구문 강조(탭 전체 재분석) | 없음 | `editor.highlight`(신설 · on/off) · `editor.highlight_max_kb`(신설) | on 1024 | on 512 | on 128 | `editors::make_box` |
+| 구문 강조(탭 전체 재분석) | 없음 | `editor.highlight`(신설 · on/off) · ~~`editor.highlight_max_kb`~~(09-22 폐기 · 미배선 — 컷오프 = `file.large_syntax_level` L2 · [72](72-size-limits-and-large-file-constraints.md)) | on 1024 | on 512 | on 128 | `editors::make_box` |
 | Ctrl+D 전체 선택 검색 | 없음 | `editor.max_occurrences`(신설 · HIDDEN) | 10000 | 5000 | 1000 | `select_next_occurrence` |
 | 결과 그리드 정렬·복사 | `grid.max_rows` 안 | (상한 공유) | — | — | — | `grid.rs` |
 | 파일 대화상자 열거 | 배치 256 · 워커 | `file.list_batch`(신설 · HIDDEN) | 256 | 256 | 512 | nexa-fs `lister` |
@@ -200,6 +200,7 @@
 | **탐색기 갱신**(80차) | 메타 스레드(서버별 `nsql-explorer`) | 없음 | 폴더별 디프 갱신(트리 전체 재구축 0) | — | — | `meta.refresh_*` | `meta.refresh_secs=0` · `meta.refresh_highlight_ms=0` |
 | **수동 커밋 잠금 방지**(79차) | 없음(메타 세션 1문장) | 없음 | — | — | — | `tx.block_poll_secs` | ✅ `0` |
 | **상태줄 git**(33차) | `nsql-git` + `git` 자식 2 | 없음 | — | 폴더 바뀜·저장·15 s | — | `statusbar.git` | ✅ `off` |
+| **북마크**(09-22 · 69) | 스레드 0 · 틱마다 활성 탭의 줄 변경 기록만 소비(O(변경 수)) · 열 때 재탐색 O(줄 수 · `bookmark.relocate_max_lines` 상한) · 저장 = 디바운스 1초/최대 5초 임시 파일 → rename | `bookmark.enabled`(전부 끔) · `bookmark.persist`(저장 끔) · `bookmark.search_lines`/`relocate_max_lines` — 읽는 곳 `bookmarks.rs apply_settings` | `bookmarks.rs` `sync_tab`/`tick_save` |
 | **텍스트 보기 변환**(29차 · DR-33) | `nsql-textview`(변환 중만) | 없음 | **결과 복제 0**(Arc 공유) · 파생 `text_lines`만 예산에 | — | 보기를 그리드로 되돌리면 | (보기 모드) | — |
 | **파일 검색**(T-81) | `nsql-search` ≤ `search.threads` | 없음 | 스트리밍(파일 전체를 들지 않는다) | 폴더 걷기 | 검색 끝 | `search.threads` · `search.max_file_kb` | — |
 | **신호등**(프로브) | `nsql-probe-collect` ≤ `probe.max_inflight` | 없음 | — | 소켓 SYN | — | `probe.enabled` · `probe.interval` | ✅ 300 s · 동시 1 · ICMP off |
@@ -350,7 +351,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 |---|---|---|
 | **T-90a** | ✅ 09-16 49차: 레지스트리 `perf::PERF`(=`Entry::perf()` · 병행 append 충돌 회피로 필드 대신 별도 표 · 필드 이관 후속) + `perf.mode` + `Settings::effective` + `nsql config list perf` + 기존 키 PerfBinding · 잔여 = 상태줄 ⚡ · 설정 창 Performance 카드(모드 + 링크 행) | 중 |
 | **T-90b** | DB: `db.statement_timeout`(드라이버 cancel 포트 — Oracle `OCIBreak` · MSSQL attention · PG `pg_cancel_backend`/소켓 · SQLite `interrupt`) · `db.fetch_size` · 탐색기 숨김 = 세션 안 엶 | 중 |
-| **T-90c** | CPU/GFX: `editor.highlight_max_kb` · `editor.max_occurrences` · `ui.max_fps` · `ui.animations`(OS 동작 줄이기 = nexa-fs::sys) · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons` | 중 |
+| **T-90c** | CPU/GFX: ~~`editor.highlight_max_kb`~~(09-22 폐기) · `editor.max_occurrences`(09-22 배선) · `ui.max_fps` · `ui.animations`(OS 동작 줄이기 = nexa-fs::sys) · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons` | 중 |
 | **T-90d** | ✅ 09-16 49차: `log.max_lines` · `editor.undo_max` · `ui.glyph_cache` · `file.icon_cache` 세터 + 상한 테스트 + main.rs 배선 | 소 |
 | **T-90e** | 진단·게이트: `--trace-net` · `--trace-frames` · 기동 `--timing` · `memcycle.ps1` 시나리오 인자(L-2~L-8) · `perf.yml` CI 잡 · 로그 창 `perf` 종류 | 중 |
 | **T-90f** | (후보) 더티 영역 다시 그리기 · DNS 캐시 · auto 모드 자동 전환(D-58 뒤) | 대 |

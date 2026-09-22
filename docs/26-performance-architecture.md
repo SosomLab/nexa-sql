@@ -294,7 +294,7 @@
 | **지연 import** | **0** | **0** | 지연 로드를 쓰지 않는다 · Oracle OCI만 ODPI-C가 런타임에 직접 연다(접속할 때 · [64](64-dbms-clients-and-driver-packaging.md)) |
 | 기동 뒤 실제 로드 모듈 | 45 | — | 27개 import + OS가 끌고 오는 것(`combase` · `MSCTF` · `textinputframework` 등) · 앱이 추가로 올리는 것 0 |
 | **구성 파일**(격리 `NSQL_HOME` · 기본 상태) | **3개 · 294 B** | 같은 폴더 공유 | `settings.conf`(27 B — 바꾼 키만) · `device.key`(267 B · 볼트 기기 키) · `instance.lock`(0 B · 93차 신설) |
-| 설정 키 | **343**(19 분류) | 같음 | 그중 **부하원 프리셋 25키**(`nsql config list perf` = `PERF` 표) · **향상 모드 강제 36키**(`BOOST` 표 · [45 §4-1](45-perf-boost-benchmark.md)) — 둘은 다른 표다(프리셋 ↔ 강제) |
+| 설정 키 | **343**(19 분류 · 09-22 후반 = `editor.highlight_max_kb` 폐기 −1 · `key.edit.soft_undo/soft_redo`·`editor.copy_confirm_mb` +3 → **345** 예상 · 부하원 25 → **24** · 다음 인벤토리에서 확인 T-168) | 같음 | 그중 **부하원 프리셋 25키**(`nsql config list perf` = `PERF` 표) · **향상 모드 강제 36키**(`BOOST` 표 · [45 §4-1](45-perf-boost-benchmark.md)) — 둘은 다른 표다(프리셋 ↔ 강제) |
 
 기능을 쓰면 생기는 구성 파일(전수): `profiles/<해시>.conf`(프로필 1개 = 파일 1개) · `undo/*.nsqu`(되돌리기 기록 · `editor.undo_persist`) · `vars/<해시>.sql`(변수 보존) · `extensions/`(`index.json`·`installed.json`) · `Packages/`(구문 규격) · `backup/`(덮어쓰기 백업) · `connected.list`(신호등) · `demo.sqlite`(데모) · `workspaces/`(프로젝트 워크스페이스 · T-165 P3 예정). **exe 옆에는 아무것도 쓰지 않는다**(DR-27).
 

@@ -1,0 +1,16 @@
+[package]
+name = "nsql-bookmarks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 북마크 코어 — 모델 · 줄 보정(L0) · 재탐색(L1 · Sørensen–Dice) · JSON 직렬화 · 정리·상한 (GUI·CLI 공용 · docs/69 · T-167 B1)"
+
+[lints]
+workspace = true
+
+[dependencies]
+# JSON 파서 = nsql-settings::json(외부 crate 0 · DR-3). 69 §2-3의 "의존 0"은 파서를 직접 쓰지 않기 위해 이 한 crate로 조정(69 §13).
+nsql-settings.workspace = true

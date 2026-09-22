@@ -202,10 +202,7 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("connect.max_concurrent", b(Domain::Net, "4", "2", "1")),
     ("probe.dns_cache_secs", b(Domain::Net, "0", "300", "3600")),
     // ── CPU(§3-3)
-    (
-        "editor.highlight_max_kb",
-        b(Domain::Cpu, "1024", "512", "128"),
-    ),
+    // `editor.highlight_max_kb`는 09-22 폐기(미배선 — 구문 강조 컷오프는 큰 파일 단계 L2 `file.large_syntax_level` · docs/72 §5).
     (
         "editor.max_occurrences",
         b(Domain::Cpu, "10000", "5000", "1000"),

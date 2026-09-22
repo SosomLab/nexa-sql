@@ -514,6 +514,20 @@ fn shape_project(x: f32, y: f32) -> bool {
     tab || body || trunk || b1 || b2
 }
 
+/// 활동 막대 — 북마크 리본: 위가 둥근 세로 띠, 아래는 V자로 파임(테두리만 · 안은 비움).
+fn shape_bookmark(x: f32, y: f32) -> bool {
+    let outer = in_rounded_rect(x, y, 56.0, 28.0, 112.0, 172.0, 12.0);
+    let inner = in_rounded_rect(x, y, 72.0, 44.0, 80.0, 156.0, 8.0);
+    // 아래 V 파임(바깥·안쪽 같은 각도).
+    let notch = |cx: f32, top: f32, half: f32| -> bool {
+        let dy = y - top;
+        dy >= 0.0 && (x - cx).abs() <= half - dy * (half / 40.0).min(half)
+    };
+    let v_out = notch(112.0, 168.0, 40.0);
+    let v_in = notch(112.0, 152.0, 30.0);
+    (outer && !v_out) && !(inner && !v_in)
+}
+
 /// 활동 막대 — 확장(붙은 네모 셋 + 떨어진 네모 하나 · VS Code Extensions 느낌 · 사용자 09-19).
 fn shape_extensions(x: f32, y: f32) -> bool {
     let sq = |x0: f32, y0: f32| {
@@ -554,6 +568,10 @@ pub(crate) fn mi_gear() -> MenuIcon {
 }
 pub(crate) fn mi_project() -> MenuIcon {
     menu_icon(shape_project)
+}
+/// 활동 막대 — 북마크(리본 · docs/69 §6-3).
+pub(crate) fn mi_bookmark() -> MenuIcon {
+    menu_icon(shape_bookmark)
 }
 
 /// 메뉴 아이콘(알파 마스크 · 색은 메뉴가 상태색으로 틴트).

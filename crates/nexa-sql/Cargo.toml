@@ -22,6 +22,7 @@ nsql-catalog.workspace = true
 nsql-vault.workspace = true
 nsql-io.workspace = true
 nsql-search.workspace = true
+nsql-bookmarks.workspace = true
 nsql-i18n.workspace = true
 nsql-settings.workspace = true
 nsql-log.workspace = true

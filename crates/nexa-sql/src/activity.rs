@@ -65,6 +65,14 @@ impl ActivityBar {
                     bottom: false,
                     hidden: false,
                 },
+                // 북마크 관리자(docs/69 §6-3 · `bookmark.enabled`가 꺼지면 숨김).
+                ActItem {
+                    id: "view.bookmarks",
+                    icon: toolicons::mi_bookmark(),
+                    panel: true,
+                    bottom: false,
+                    hidden: false,
+                },
                 ActItem {
                     id: "view.extensions",
                     icon: toolicons::mi_extensions(),

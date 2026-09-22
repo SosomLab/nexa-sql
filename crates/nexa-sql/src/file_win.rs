@@ -176,6 +176,7 @@ impl FileWin {
         show_hidden: bool,
         show_dot: bool,
         encoding: &str,
+        single: bool,
     ) {
         if let Some(w) = &self.window {
             w.focus_window();
@@ -189,6 +190,8 @@ impl FileWin {
             sql_filters()
         };
         let mut picker = FilePicker::new(mode, start, filters, labels());
+        // 용도가 파일 하나만 뜻하면(프로젝트 파일 · 실행 파일 · 로그 내보내기) 다중 선택 없음(사용자 09-22).
+        picker.set_multi(!single);
         // 덮어쓰기 = 타임아웃 버튼(두 번 눌러야 저장 · 사용자 09-19) — 시간은 설정 `file.overwrite_confirm_ms`(0 = 한 번에).
         picker.set_overwrite_confirm_ms(self.overwrite_confirm_ms);
         picker.set_default_name(default_name);

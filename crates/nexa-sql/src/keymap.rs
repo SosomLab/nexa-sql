@@ -432,6 +432,196 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+k,cmd+d",
         linux: "ctrl+k,ctrl+d",
     },
+    // ★ 북마크(docs/69 §6-1 · Sublime 관례 · T-167).
+    Command {
+        id: "bookmark.toggle",
+        label: Msg::MnBmToggle,
+        win: "ctrl+f2",
+        mac: "cmd+f2",
+        linux: "ctrl+f2",
+    },
+    Command {
+        id: "bookmark.next",
+        label: Msg::MnBmNext,
+        win: "f2",
+        mac: "f2",
+        linux: "f2",
+    },
+    Command {
+        id: "bookmark.prev",
+        label: Msg::MnBmPrev,
+        win: "shift+f2",
+        mac: "shift+f2",
+        linux: "shift+f2",
+    },
+    Command {
+        id: "bookmark.clear_doc",
+        label: Msg::MnBmClearDoc,
+        win: "ctrl+shift+f2",
+        mac: "cmd+shift+f2",
+        linux: "ctrl+shift+f2",
+    },
+    Command {
+        id: "bookmark.select_all",
+        label: Msg::MnBmSelectAll,
+        win: "alt+f2",
+        mac: "alt+f2",
+        linux: "alt+f2",
+    },
+    Command {
+        id: "bookmark.label",
+        label: Msg::MnBmLabel,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
+        id: "view.bookmarks",
+        label: Msg::MnBookmarksPanel,
+        win: "ctrl+shift+b",
+        mac: "cmd+shift+b",
+        linux: "ctrl+shift+b",
+    },
+    Command {
+        id: "bookmark.set_0",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+0",
+        mac: "cmd+shift+0",
+        linux: "ctrl+shift+0",
+    },
+    Command {
+        id: "bookmark.set_1",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+1",
+        mac: "cmd+shift+1",
+        linux: "ctrl+shift+1",
+    },
+    Command {
+        id: "bookmark.set_2",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+2",
+        mac: "cmd+shift+2",
+        linux: "ctrl+shift+2",
+    },
+    Command {
+        id: "bookmark.set_3",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+3",
+        mac: "cmd+shift+3",
+        linux: "ctrl+shift+3",
+    },
+    Command {
+        id: "bookmark.set_4",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+4",
+        mac: "cmd+shift+4",
+        linux: "ctrl+shift+4",
+    },
+    Command {
+        id: "bookmark.set_5",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+5",
+        mac: "cmd+shift+5",
+        linux: "ctrl+shift+5",
+    },
+    Command {
+        id: "bookmark.set_6",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+6",
+        mac: "cmd+shift+6",
+        linux: "ctrl+shift+6",
+    },
+    Command {
+        id: "bookmark.set_7",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+7",
+        mac: "cmd+shift+7",
+        linux: "ctrl+shift+7",
+    },
+    Command {
+        id: "bookmark.set_8",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+8",
+        mac: "cmd+shift+8",
+        linux: "ctrl+shift+8",
+    },
+    Command {
+        id: "bookmark.set_9",
+        label: Msg::MnBmSetMnemonic,
+        win: "ctrl+shift+9",
+        mac: "cmd+shift+9",
+        linux: "ctrl+shift+9",
+    },
+    Command {
+        id: "bookmark.goto_0",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+0",
+        mac: "cmd+0",
+        linux: "ctrl+0",
+    },
+    Command {
+        id: "bookmark.goto_1",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+1",
+        mac: "cmd+1",
+        linux: "ctrl+1",
+    },
+    Command {
+        id: "bookmark.goto_2",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+2",
+        mac: "cmd+2",
+        linux: "ctrl+2",
+    },
+    Command {
+        id: "bookmark.goto_3",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+3",
+        mac: "cmd+3",
+        linux: "ctrl+3",
+    },
+    Command {
+        id: "bookmark.goto_4",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+4",
+        mac: "cmd+4",
+        linux: "ctrl+4",
+    },
+    Command {
+        id: "bookmark.goto_5",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+5",
+        mac: "cmd+5",
+        linux: "ctrl+5",
+    },
+    Command {
+        id: "bookmark.goto_6",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+6",
+        mac: "cmd+6",
+        linux: "ctrl+6",
+    },
+    Command {
+        id: "bookmark.goto_7",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+7",
+        mac: "cmd+7",
+        linux: "ctrl+7",
+    },
+    Command {
+        id: "bookmark.goto_8",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+8",
+        mac: "cmd+8",
+        linux: "ctrl+8",
+    },
+    Command {
+        id: "bookmark.goto_9",
+        label: Msg::MnBmGotoMnemonic,
+        win: "ctrl+9",
+        mac: "cmd+9",
+        linux: "ctrl+9",
+    },
     // ★ Sublime 줄·선택 편집(T-98 · 사용자 09-16). 2단 코드는 `ctrl+k,ctrl+u`처럼 쉼표로.
     //   macOS의 Control 단독은 `control+…`(⌘와 다른 키 · 예 ⌃G = 줄 이동).
     Command {
@@ -659,6 +849,21 @@ pub(crate) const COMMANDS: &[Command] = &[
         win: "ctrl+y|ctrl+shift+z",
         mac: "cmd+shift+z",
         linux: "ctrl+y|ctrl+shift+z",
+    },
+    // ★ 선택 되돌리기/다시 실행(Sublime `soft_undo`/`soft_redo` · 사용자 09-22): Win/Linux `ctrl+u`/`ctrl+shift+u` · 맥 `super+u`/`super+shift+u`.
+    Command {
+        id: "edit.soft_undo",
+        label: Msg::MnSoftUndo,
+        win: "ctrl+u",
+        mac: "cmd+u",
+        linux: "ctrl+u",
+    },
+    Command {
+        id: "edit.soft_redo",
+        label: Msg::MnSoftRedo,
+        win: "ctrl+shift+u",
+        mac: "cmd+shift+u",
+        linux: "ctrl+shift+u",
     },
     Command {
         id: "edit.cut",
@@ -1254,6 +1459,9 @@ mod tests {
             .unwrap();
         assert_eq!(preset_default(c, Preset::Windows), "ctrl+k,ctrl+d");
         assert_eq!(preset_default(c, Preset::Macos), "cmd+k,cmd+d");
+        let c = COMMANDS.iter().find(|c| c.id == "edit.soft_undo").unwrap();
+        assert_eq!(preset_default(c, Preset::Windows), "ctrl+u");
+        assert_eq!(preset_default(c, Preset::Macos), "cmd+u");
         // `ctrl+cmd+g`(맥 Control + ⌘)는 `cmd+g`와 다른 조합.
         let a = Chord::parse("ctrl+cmd+g").unwrap();
         let b = Chord::parse("cmd+g").unwrap();

@@ -192,6 +192,8 @@
 | 자동 | 단위 테스트 | `fileload`(진척 단조·지연·덩어리 읽기·취소·명령 문지기) · `eol`/`enc` 소유권 판 = 종전 정의와 같은 답 + 복사 0 · `editors` 자리 탭 격리·닫힌 뒤 채우기·큰 채우기 · nexa-ctl `PreparedText` = `set_text`와 같은 스냅샷 |
 
 
+> ★ 단계별로 **무엇이 꺼지는지의 원장은 [72](72-size-limits-and-large-file-constraints.md)**(09-22 · 자체 상한 전수 · 위키 [Large-Files-and-Limits](wiki/Large-Files-and-Limits.md)) — 이 문서 §5-1은 구현 배경만.
+
 ## 6. 편집 버퍼 교체(T-142 · D-126 ✅ · 09-20 · journal 84차)
 
 ### 6-1. 무엇으로 바꿨나

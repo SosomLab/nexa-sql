@@ -30,6 +30,8 @@ struct Toast {
     body: String,
     born: Instant,
     rect: Rect,
+    /// 클릭하면 실행할 명령 id(예 북마크 제거 되돌리기 · docs/69 C-28).
+    action: Option<String>,
 }
 
 const MAX_TOASTS: usize = 5;
@@ -68,6 +70,8 @@ pub(crate) struct Toasts {
     fade_to: f32,
     /// 지나간 부분의 막대 불투명도 비율(`ui.toast_bar_spent` % → 0..1).
     spent: f32,
+    /// 클릭된 토스트의 동작 id(1회성 · `take_action`).
+    taken: Option<String>,
 }
 
 impl Toasts {
@@ -79,6 +83,7 @@ impl Toasts {
             progress: true,
             fade_to: 0.35,
             spent: 0.3,
+            taken: None,
         }
     }
 
@@ -107,10 +112,29 @@ impl Toasts {
             body: body.into(),
             born: Instant::now(),
             rect: Rect::default(),
+            action: None,
         });
         while self.items.len() > MAX_TOASTS {
             self.items.remove(0);
         }
+    }
+
+    /// 클릭하면 `action`(명령 id)을 실행하는 토스트 — 호스트가 `take_action`으로 거둔다.
+    pub(crate) fn push_action(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        action: &str,
+    ) {
+        self.push(kind, title, body);
+        if let Some(t) = self.items.last_mut() {
+            t.action = Some(action.to_string());
+        }
+    }
+
+    pub(crate) fn take_action(&mut self) -> Option<String> {
+        self.taken.take()
     }
 
     /// 만료 제거 — 남은 카드가 있으면(페이드 애니메이션) true = 30ms 틱 유지.
@@ -127,7 +151,10 @@ impl Toasts {
     /// 클릭으로 닫기 — 카드 위였으면 true(호출자는 그 클릭을 아래로 흘리지 않는다).
     pub(crate) fn click(&mut self, p: Point) -> bool {
         if let Some(i) = self.items.iter().position(|t| t.rect.contains(p)) {
-            self.items.remove(i);
+            let t = self.items.remove(i);
+            if t.action.is_some() {
+                self.taken = t.action;
+            }
             return true;
         }
         false
