@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/ci-result-95c | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 95차 후반 push CI 결과(nexa-ui 18f7c5d ci ✓ · nexa-sql b598d65 ci 3-OS ✓ · integration ✓) · journal §73 · STATUS |
 | feat/win-95c-soft-undo-size-limits | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 95차 후반(win): ★ soft undo/redo(`edit.soft_undo/soft_redo` · Ctrl+U/⌘U · Edit ▸ Undo Selection ▸) · ★ 제약 원장 72 + 위키 `docs/wiki/Large-Files-and-Limits` · `editor.max_occurrences` 배선 · `editor.highlight_max_kb` 폐기 · 다중 선택 ←/→ 접기(§67) · ★ 제약 후속 7건(`max_regions` 전 입구 · Rainbow 0 · `editor.copy_confirm_mb` · 위키 Home + `scripts/wiki-publish.sh` · T-169·T-170 · §68) · 프로젝트 UX(새 프로젝트 저장·헤더 전환·열기 단일) + 팔레트 IME(§69) · ★ 북마크 1차(`nsql-bookmarks` · `bookmarks.rs` · `bookmarks_panel.rs` · 명령 27 · 설정 14 · §70) · ★ 북마크 2차(그룹 트리 · 우클릭 메뉴 넷 · `Toasts::push_action` 되돌리기 · 거터 니모닉 · §71) · 🔧 다중 캐럿 타이핑 화면 유지(§72) · 자동 점검 S29~S35 · journal §65~72 · STATUS · DEVLOG · TODO(U-37·38 · T-169) · 39 · 59 · 30 · CLAUDE.md |
 | docs/ci-result-95 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 95차 후반 push CI 결과(nexa-sql af49db1 ci 3-OS ✓ · integration ✓) · journal §64 · STATUS |
 | feat/win-95-func-check-perf | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 95차 후반(win · 사용자 부재 중): ★ 기능 점검 자동화 `scripts/win-func-check.ps1`(28 시나리오 ✓ · 도구 결함 3 · `multi.` 기동 명령 경로 수정) · ★ 성능 전수 95차(71 A~F 5회·8초) + C-2 회수 시험 첫 실행 `scripts/win-mem-reclaim.ps1`(회귀 0 · 26 §7-9 · 71 §9) · journal §61~63 · STATUS · DEVLOG · TODO(T-168) · 61 §4 · 30 §2 · CLAUDE.md |
