@@ -62,6 +62,8 @@ pub enum Action {
     /// 아무것도 안 함(REM · SET 처리 완료 · VARIABLE 선언 등). 메시지는 상태줄용.
     Nothing(String),
     Error(String),
+    /// ★ 앞의 행동들(수식 재계산 `EXEC :V := 식`)을 먼저 실행하고 **같은 항목을 다시 계획**하라(docs/63 §9 D-184 · 사용 시 모드).
+    Replan,
 }
 
 /// 계획 부산물 — 경고·정보.
@@ -155,6 +157,8 @@ pub struct Engine {
     pub diagnostics: Vec<Diagnostic>,
     /// 사용 시 확장의 재귀 스택(순환·깊이 검출 · 치환 중에만 비어 있지 않다).
     subst_stack: Vec<String>,
+    /// 치환 변수가 바뀌었다(`DEFINE`/`UNDEFINE`/호스트 전달 · 실행 끝에 변수 창으로 알리고 지운다 · 09-23).
+    pub defines_dirty: bool,
 }
 
 impl Engine {
@@ -172,6 +176,7 @@ impl Engine {
             settings: Settings::default(),
             diagnostics: Vec::new(),
             subst_stack: Vec::new(),
+            defines_dirty: false,
         }
     }
 
@@ -190,6 +195,7 @@ impl Engine {
     pub fn define(&mut self, name: &str, value: &str) {
         self.defines
             .insert(name.to_ascii_uppercase(), value.to_string());
+        self.defines_dirty = true;
     }
 
     /// 스크립트 인자 `&1..&n`.
@@ -233,6 +239,19 @@ impl Engine {
                         expect_out: false,
                         kind: *kind,
                     }];
+                }
+                // 사용 시 모드(D-184): 이 문장이 참조하는 바인드 중 stale 수식이 있으면 먼저 재계산(서버) → 재계획.
+                if self.settings.expand_at_use {
+                    let refs = crate::bind::unique_names(&crate::bind::extract_binds(&text));
+                    let stale = self.vars.take_stale_formulas(&refs);
+                    if !stale.is_empty() {
+                        let mut acts = Vec::new();
+                        for (name, formula) in stale {
+                            acts.extend(self.plan_exec(&format!("EXEC :{name} := {formula}")));
+                        }
+                        acts.push(Action::Replan);
+                        return acts;
+                    }
                 }
                 let inout = matches!(kind, SqlKind::Block);
                 let prepared = prepare_with(&self.caps, &text, &mut self.vars, inout);
@@ -285,7 +304,7 @@ impl Engine {
     }
 
     /// `DEFINE` 표시 글 — 사용 시 모드에서 원문에 참조가 남아 있으면 `원문  →  현재 값`(순환이면 원문만).
-    fn define_display(&mut self, name: &str, raw: &str) -> String {
+    pub fn define_display(&mut self, name: &str, raw: &str) -> String {
         if !self.settings.expand_at_use {
             return raw.to_string();
         }
@@ -516,6 +535,19 @@ impl Engine {
                         acts.push(Action::Print(vec![(name, v)]));
                     }
                     return acts;
+                }
+            }
+        }
+        // 사용 시 모드(D-184): `:V := 식`의 식을 수식으로 기억(의존 = 식 안의 바인드) — 의존이 바뀌면 참조 문장 전에 다시 계산.
+        if self.settings.expand_at_use {
+            if let Some((lhs, rhs)) = body.split_once(":=") {
+                let lhs = lhs.trim();
+                if lhs.starts_with(':')
+                    && lhs.len() > 1
+                    && lhs[1..].bytes().all(crate::lexer::is_ident_char)
+                {
+                    let deps = crate::bind::unique_names(&crate::bind::extract_binds(rhs));
+                    self.vars.set_formula(&lhs[1..], rhs.trim(), deps);
                 }
             }
         }
@@ -1210,6 +1242,39 @@ mod tests {
                 name: "NOPE".into()
             }
         );
+    }
+
+    /// docs/63 §9 D-184 — 사용 시 모드에서 바인드 식은 의존이 바뀌면 참조 문장 전에 다시 계산(재계획).
+    #[test]
+    fn lazy_bind_formula_reevaluates_before_use() {
+        let item = |s: &str| crate::split::split_script(s).remove(0);
+        let mut e = Engine::new(Dialect::Oracle);
+        e.settings.expand_at_use = true;
+        e.plan(&item("EXEC :V1 := 2"));
+        let a = e.plan(&item("EXEC :V2 := :V1 + 5"));
+        assert!(matches!(a[0], Action::Execute { .. }));
+        assert_eq!(
+            e.vars.formula_of("v2").map(|f| f.deps.clone()),
+            Some(vec!["V1".to_string()])
+        );
+        e.vars.assign("V2", Value::Int(7)); // 서버가 돌려준 값 흡수 = fresh
+        assert!(!e.vars.formula_of("V2").unwrap().stale);
+        e.plan(&item("EXEC :V1 := 5")); // 의존이 바뀜 = V2 stale
+        assert!(e.vars.formula_of("V2").unwrap().stale);
+        let acts = e.plan(&item("SELECT :V2 FROM dual"));
+        assert!(matches!(acts.last(), Some(Action::Replan)));
+        let Action::Execute { prepared, .. } = &acts[0] else {
+            panic!()
+        };
+        assert!(prepared.sql.contains(":V2 := :V1 + 5"), "{}", prepared.sql);
+        // 재계산 결과 흡수 뒤 재계획 = 보통 실행 하나.
+        e.vars.assign("V2", Value::Int(10));
+        let acts = e.plan(&item("SELECT :V2 FROM dual"));
+        assert_eq!(acts.len(), 1);
+        // 대입 시 모드(기본)에서는 수식을 기억하지 않는다.
+        let mut e2 = Engine::new(Dialect::Oracle);
+        e2.plan(&item("EXEC :V2 := :V1 + 5"));
+        assert!(e2.vars.formula_of("V2").is_none());
     }
 
     #[test]

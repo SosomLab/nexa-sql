@@ -59,6 +59,8 @@ pub(crate) enum Cmd {
         /// ★ 실행하는 탭의 변수 표(탭 층 · D-135) — 호스트가 탭마다 들고 실행마다 넘긴다. 끝나면 `RunEvent::Vars`로 돌아간다.
         ///   연결 공유 층은 러너(= 이 세션)에 남는다. `None` = 탭 층을 건드리지 않는다(결과 새로고침 등 편집기와 무관한 실행).
         vars: Option<Vec<nsql_script::VarState>>,
+        /// 탭의 치환 변수(`DEFINE` · 이름 · 원문 · 09-23) — `None` = 엔진 것 그대로.
+        defines: Option<Vec<(String, String)>>,
     },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
@@ -1182,9 +1184,14 @@ pub(crate) fn spawn(
                         preflight,
                         max_rows,
                         vars,
+                        defines,
                     } => {
                         if let Some(v) = vars {
                             runner.engine.vars.set_local(v);
+                        }
+                        if let Some(d) = defines {
+                            runner.engine.defines = d.into_iter().collect();
+                            runner.engine.defines_dirty = true;
                         }
                         runner.set_max_rows(max_rows);
                         apply_fetch_settings(&mut runner);

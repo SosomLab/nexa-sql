@@ -124,6 +124,8 @@ pub(crate) struct ProjectPanel {
     open_files: Vec<OpenFile>,
     open_rect: Rect,
     open_rows: Vec<Rect>,
+    /// OPEN FILES에서 머문 행(× 닫기 표시).
+    open_hover: Option<usize>,
     /// 활성 탭과 맞춘 선택 경로(사용자 09-22 "탭을 고르면 탐색기에도 선택 표시") — 접혀 있으면 행이 없어 보이지 않다가
     /// 사용자가 직접 펼치면(`rebuild_rows`) 그 행이 선택된 채 나타난다. 자동 확장(`project.auto_reveal`)은 `reveal`.
     sel_path: Option<PathBuf>,
@@ -186,13 +188,14 @@ impl ProjectPanel {
             open_files: Vec::new(),
             open_rect: Rect::default(),
             open_rows: Vec::new(),
+            open_hover: None,
         }
     }
 
     /// OPEN FILES 갱신(바뀔 때만 · 줄 수가 바뀌면 다시 배치).
-    pub(crate) fn set_open_files(&mut self, v: Vec<OpenFile>) {
+    pub(crate) fn set_open_files(&mut self, v: Vec<OpenFile>) -> bool {
         if v == self.open_files {
-            return;
+            return false;
         }
         let relayout = v.len() != self.open_files.len();
         self.open_files = v;
@@ -200,6 +203,18 @@ impl ProjectPanel {
             let (b, s) = (self.bounds, self.scale);
             self.set_bounds(b, s);
         }
+        true
+    }
+
+    /// OPEN FILES 행의 × 닫기 영역(오른쪽 끝).
+    fn open_close_rect(&self, r: Rect) -> Rect {
+        let w = (r.h as f32 * 0.9).round() as i32;
+        Rect::new(
+            r.right() - w - (4.0 * self.scale).round() as i32,
+            r.y,
+            w,
+            r.h,
+        )
     }
 
     /// OPEN FILES 섹션 높이(헤더 1줄 + 항목 ≤ 8줄 · 프로젝트 없으면 0).
@@ -905,7 +920,13 @@ impl ProjectPanel {
                 // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23).
                 if let Some(k) = self.open_rows.iter().position(|r| r.contains(p)) {
                     if let Some(f) = self.open_files.get(k) {
-                        self.command = Some(format!("editor.switch:{}", f.id));
+                        // × = 그 탭 닫기(미저장이면 호스트가 묻는다) · 그 밖 = 그 탭으로.
+                        let close = self.open_close_rect(self.open_rows[k]).contains(p);
+                        self.command = Some(if close {
+                            format!("editor.close:{}", f.id)
+                        } else {
+                            format!("editor.switch:{}", f.id)
+                        });
                         return true;
                     }
                 }
@@ -954,6 +975,13 @@ impl ProjectPanel {
                 }
             }
             InputEvent::MouseMove { x, y } => {
+                let oh = self
+                    .open_rows
+                    .iter()
+                    .position(|r| r.contains(Point { x, y }));
+                if oh != self.open_hover {
+                    self.open_hover = oh;
+                }
                 let h = self.row_at(Point { x, y });
                 match (h, self.hover) {
                     (Some(a), Some((b, _))) if a == b => {}
@@ -1046,7 +1074,14 @@ impl ProjectPanel {
                 } else {
                     label
                 };
-                dc.text(rr.x + pad * 2, ty, rr, &label, th.text);
+                let cr = self.open_close_rect(rr);
+                let clip = Rect::new(rr.x, rr.y, (cr.x - rr.x).max(0), rr.h);
+                dc.text(rr.x + pad * 2, ty, clip, &label, th.text);
+                // 머문 행 = × 닫기(오른쪽).
+                if self.open_hover == Some(k) {
+                    let xw = dc.text_width("\u{00d7}");
+                    dc.text(cr.x + (cr.w - xw) / 2, ty, cr, "\u{00d7}", th.text_dim);
+                }
             }
         }
         // 필터 틀(부품 · 프로젝트 없으면 흐린 자리 표시).

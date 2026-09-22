@@ -93,6 +93,7 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
                     ),
                     Action::SetOption { name, value } => println!("  → SET {name}={value}"),
                     Action::Nothing(msg) => println!("  · {msg}"),
+                    Action::Replan => println!("  · replan (formula re-evaluated first)"),
                     Action::Error(e) => {
                         errors += 1;
                         println!("  ✗ {e}");

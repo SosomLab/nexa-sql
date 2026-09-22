@@ -54,6 +54,16 @@ pub struct VarStore {
     fixed: BTreeMap<String, Var>,
     /// 마지막 [`VarStore::take_dirty`] 뒤로 바뀐(생김·값·타입·층·사라짐) 이름(대문자 키).
     dirty: BTreeSet<String>,
+    /// ★ 바인드 식의 **사용 시 재계산**(docs/63 §9 D-184 · 09-23): 이름 → 수식(`:V1 + 5`) · 의존 이름 · stale(의존이 바뀐 뒤 아직 재계산 전).
+    formulas: BTreeMap<String, Formula>,
+}
+
+/// 사용 시 재계산할 바인드 식.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Formula {
+    pub text: String,
+    pub deps: Vec<String>,
+    pub stale: bool,
 }
 
 pub fn norm(name: &str) -> String {
@@ -123,8 +133,9 @@ impl VarStore {
                 }
                 if v.value != value {
                     v.value = value;
-                    self.dirty.insert(key);
+                    self.dirty.insert(key.clone());
                 }
+                self.note_assigned(&key);
             }
             None => {
                 let ty = VarType::infer(&value);
@@ -137,9 +148,59 @@ impl VarStore {
                     }
                 }
                 self.vars.insert(key.clone(), var);
-                self.dirty.insert(key);
+                self.dirty.insert(key.clone());
+                self.note_assigned(&key);
             }
         }
+    }
+
+    /// 대입 뒤: 이 이름을 의존하는 수식은 stale · 이 이름 자신의 수식은 방금 계산됐으니 fresh.
+    fn note_assigned(&mut self, key: &str) {
+        for (name, f) in self.formulas.iter_mut() {
+            if name == key {
+                f.stale = false;
+            } else if f.deps.iter().any(|d| d == key) {
+                f.stale = true;
+            }
+        }
+    }
+
+    /// 수식 등록(`EXEC :V := 식` · 사용 시 모드) — 같은 수식이면 그대로.
+    pub fn set_formula(&mut self, name: &str, text: &str, deps: Vec<String>) {
+        let key = norm(name);
+        let deps: Vec<String> = deps
+            .into_iter()
+            .map(|d| norm(&d))
+            .filter(|d| *d != key)
+            .collect();
+        self.formulas.insert(
+            key,
+            Formula {
+                text: text.to_string(),
+                deps,
+                stale: false,
+            },
+        );
+    }
+
+    /// 참조 이름들 중 stale인 수식 — 재계산할 (이름 · 수식). 돌려주면서 stale을 내린다(재계산 실패 시 무한 재계획 방지).
+    pub fn take_stale_formulas(&mut self, refs: &[String]) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for r in refs {
+            let key = norm(r);
+            if let Some(f) = self.formulas.get_mut(&key) {
+                if f.stale {
+                    f.stale = false;
+                    out.push((key, f.text.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// 수식 보기(변수 창 표시용).
+    pub fn formula_of(&self, name: &str) -> Option<&Formula> {
+        self.formulas.get(&norm(name))
     }
 
     /// 타입 힌트(루틴 서명에서 읽은 타입) — **선언하지 않았고 아직 타입이 정해지지 않은**(`Auto`) 변수에만 적용하고,

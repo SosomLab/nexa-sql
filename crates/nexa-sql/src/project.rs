@@ -6,7 +6,7 @@
 //! 폴더 경로는 프로젝트 파일이 있는 폴더 기준 **상대**(그 아래일 때) · 아니면 절대. 읽을 때는 파일 위치로 되돌린다.
 //! 파서·작성기 = `nsql-settings::json`(외부 crate 0 · DR-3). 접속 정보는 담지 않는다(D-149 ①).
 
-use nsql_settings::json::{parse, Json};
+use nsql_settings::json::{dump as json_dump, parse, Json};
 use std::path::{Path, PathBuf};
 
 pub(crate) const EXT: &str = "nsql-project";
@@ -258,33 +258,6 @@ fn relativize(p: &Path, base: Option<&Path>) -> String {
         None => p.to_string_lossy().into_owned(),
     };
     s.replace('\\', "/")
-}
-
-/// JSON 값 → 글(내장 북마크 객체를 그대로 되돌려 `Store::from_json`에 넘긴다).
-fn json_dump(v: &Json) -> String {
-    match v {
-        Json::Null => "null".into(),
-        Json::Bool(b) => b.to_string(),
-        Json::Num(n) => {
-            if n.fract() == 0.0 && n.abs() < 1e15 {
-                format!("{}", *n as i64)
-            } else {
-                n.to_string()
-            }
-        }
-        Json::Str(s) => format!("\"{}\"", escape(s)),
-        Json::Arr(a) => format!(
-            "[{}]",
-            a.iter().map(json_dump).collect::<Vec<_>>().join(",")
-        ),
-        Json::Obj(o) => format!(
-            "{{{}}}",
-            o.iter()
-                .map(|(k, v)| format!("\"{}\":{}", escape(k), json_dump(v)))
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-    }
 }
 
 fn escape(s: &str) -> String {

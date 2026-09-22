@@ -1605,6 +1605,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "project.backup_days",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectBackupDays,
+        desc: Msg::DescProjectBackupDays,
+        kind: SettingKind::Int { min: 1, max: 365 },
+        default: "7",
+    },
+    Entry {
         key: "project.autosave_secs",
         cat: Msg::CatProject,
         label: Msg::LblProjectAutosaveSecs,

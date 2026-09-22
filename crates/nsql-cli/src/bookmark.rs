@@ -49,6 +49,13 @@ fn has(flags: &[(String, Option<String>)], k: &str) -> bool {
     flags.iter().any(|(n, _)| n == k)
 }
 
+/// 북마크의 원천 — 프로젝트 파일(`.nsql-project` · 안의 `bookmarks` 객체 · 09-23) 또는 워크스페이스 파일.
+fn is_project_file(p: &str) -> bool {
+    Path::new(p)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("nsql-project"))
+}
+
 /// 워크스페이스 파일 경로(GUI `bookmarks.rs workspace_path`와 같은 규칙).
 fn workspace_path(project: Option<&str>) -> Option<PathBuf> {
     let dir = nsql_settings::config_dir()?.join("workspaces");
@@ -62,6 +69,24 @@ fn workspace_path(project: Option<&str>) -> Option<PathBuf> {
 }
 
 fn load(path: &Path) -> Result<Store, String> {
+    if is_project_file(&path.to_string_lossy()) {
+        // 프로젝트 파일 안의 `bookmarks` 객체(없으면 빈 저장소).
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err("project file not found".into())
+            }
+            Err(e) => return Err(e.to_string()),
+        };
+        let json = nsql_settings::json::parse(&text)?;
+        let nsql_settings::json::Json::Obj(fields) = json else {
+            return Err("project file is not a JSON object".into());
+        };
+        return match fields.iter().find(|(k, _)| k == "bookmarks") {
+            Some((_, v)) => Store::from_json(&nsql_settings::json::dump(v)),
+            None => Ok(Store::new()),
+        };
+    }
     match std::fs::read_to_string(path) {
         Ok(text) => Store::from_json(&text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Store::new()),
@@ -70,6 +95,22 @@ fn load(path: &Path) -> Result<Store, String> {
 }
 
 fn save(path: &Path, st: &Store) -> Result<(), String> {
+    if is_project_file(&path.to_string_lossy()) {
+        // 프로젝트 파일의 다른 키는 그대로 두고 `bookmarks`만 바꿔 쓴다(GUI가 다음 저장 때 자기 형식으로 다시 쓴다).
+        use nsql_settings::json::{dump, parse, Json};
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let Json::Obj(mut fields) = parse(&text)? else {
+            return Err("project file is not a JSON object".into());
+        };
+        let bm = parse(&st.to_json())?;
+        match fields.iter_mut().find(|(k, _)| k == "bookmarks") {
+            Some(slot) => slot.1 = bm,
+            None => fields.push(("bookmarks".into(), bm)),
+        }
+        let tmp = path.with_extension("nsql-project.tmp");
+        std::fs::write(&tmp, dump(&Json::Obj(fields))).map_err(|e| e.to_string())?;
+        return std::fs::rename(&tmp, path).map_err(|e| e.to_string());
+    }
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
@@ -93,7 +134,12 @@ pub(crate) fn cmd_bookmark(o: &Opts) -> i32 {
     let Some(sub) = pos.first() else {
         return usage();
     };
-    let Some(ws) = workspace_path(flag(&flags, "project")) else {
+    // `--project x.nsql-project` = 그 파일 안의 북마크 · 그 밖 = 워크스페이스 파일.
+    let ws = match flag(&flags, "project") {
+        Some(p) if is_project_file(p) => Some(PathBuf::from(p)),
+        other => workspace_path(other),
+    };
+    let Some(ws) = ws else {
         eprintln!("사용자 설정 폴더를 알 수 없습니다(NSQL_HOME)");
         return 1;
     };

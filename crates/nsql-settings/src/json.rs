@@ -42,6 +42,45 @@ impl Json {
 }
 
 /// JSON 텍스트 파싱(오류 = 위치 포함 메시지).
+/// 값 → JSON 글(공백 없이 · 문자열 이스케이프). 프로젝트 파일에 내장된 객체(북마크)를 그대로 되돌릴 때 쓴다(09-23).
+pub fn dump(v: &Json) -> String {
+    fn esc(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+    match v {
+        Json::Null => "null".into(),
+        Json::Bool(b) => b.to_string(),
+        Json::Num(n) => {
+            if n.fract() == 0.0 && n.abs() < 1e15 {
+                format!("{}", *n as i64)
+            } else {
+                n.to_string()
+            }
+        }
+        Json::Str(s) => format!("\"{}\"", esc(s)),
+        Json::Arr(a) => format!("[{}]", a.iter().map(dump).collect::<Vec<_>>().join(",")),
+        Json::Obj(o) => format!(
+            "{{{}}}",
+            o.iter()
+                .map(|(k, v)| format!("\"{}\":{}", esc(k), dump(v)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
 pub fn parse(text: &str) -> Result<Json, String> {
     let mut p = Parser {
         b: text.as_bytes(),

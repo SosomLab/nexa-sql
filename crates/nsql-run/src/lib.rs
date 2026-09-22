@@ -67,6 +67,8 @@ pub enum RunEvent {
         local: Vec<nsql_script::VarState>,
         shared: Vec<nsql_script::VarState>,
         changed: Vec<String>,
+        /// 치환 변수(`DEFINE` · 이름 · 원문 · 표시값 = 사용 시 모드면 `원문 → 값` · 09-23).
+        defines: Vec<(String, String, String)>,
     },
     /// 수동 커밋 모드에서 **변경 없는 트랜잭션을 러너가 끝냈다**(docs/56 L1 · `deferred` = 열린 커서가 닫힐 때 끝난다).
     ReadTxEnded {
@@ -1381,11 +1383,26 @@ impl Runner {
         // 가장 바깥 실행이 끝났다 = 변수 표의 바뀐 것을 한 번에 알린다(`@스크립트` 안쪽에서는 알리지 않는다).
         if self.run_depth == 0 {
             let changed = self.engine.vars.take_dirty();
-            if !changed.is_empty() {
+            let defines_dirty = std::mem::take(&mut self.engine.defines_dirty);
+            if !changed.is_empty() || defines_dirty {
+                let pairs: Vec<(String, String)> = self
+                    .engine
+                    .defines
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let defines = pairs
+                    .into_iter()
+                    .map(|(k, v)| {
+                        let shown = self.engine.define_display(&k, &v);
+                        (k, v, shown)
+                    })
+                    .collect();
                 emit(RunEvent::Vars {
                     local: self.engine.vars.local_states(),
                     shared: self.engine.vars.shared_states(),
                     changed,
+                    defines,
                 });
             }
         }
@@ -1532,6 +1549,25 @@ impl Runner {
                         return false;
                     }
                 }
+            }
+            // ★ 재계획(D-184): 앞의 재계산 행동을 먼저 실행(OUT 흡수 = 값 갱신)하고 같은 항목을 다시 계획한다.
+            if matches!(actions.last(), Some(Action::Replan)) {
+                let n = actions.len() - 1;
+                for a in actions.into_iter().take(n) {
+                    if !self.perform(index, item, a, prompt, emit) {
+                        return false;
+                    }
+                }
+                guard += 1;
+                if guard > 64 {
+                    emit(RunEvent::Error {
+                        index,
+                        line: item.line,
+                        error: msg_err(t(Msg::SubstLoop)),
+                    });
+                    return false;
+                }
+                continue;
             }
             let mut ok = true;
             for a in actions {
@@ -1753,6 +1789,8 @@ impl Runner {
                 }
                 true
             }
+            // 재계획 표식은 계획 루프가 소비한다(여기 오면 홀로 온 것 = 아무것도 안 함).
+            Action::Replan => true,
             Action::Nothing(m) => {
                 if self.engine.settings.echo {
                     emit(RunEvent::Message(m));
@@ -3143,6 +3181,7 @@ SELECT * FROM t;
                     local,
                     shared,
                     changed,
+                    ..
                 } => Some((local.clone(), shared.clone(), changed.clone())),
                 _ => None,
             })

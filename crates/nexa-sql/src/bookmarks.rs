@@ -136,6 +136,11 @@ impl Bookmarks {
         if n > 0 {
             self.touch();
         }
+        // ★ 프로젝트가 열려 있으면 북마크의 원천은 **프로젝트 파일**(09-23 · `project_restore`가 내장 북마크를 올린다) —
+        //   워크스페이스 파일은 읽기만(옛 파일 이관) 하고 쓰지 않는다. 프로젝트 없음 = `default.nsql-workspace` 그대로.
+        if project.is_some() {
+            self.path = None;
+        }
         self.changed = true;
     }
 

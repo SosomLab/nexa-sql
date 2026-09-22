@@ -11,6 +11,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod activity;
+mod backups;
 mod bookmarks;
 mod bookmarks_panel;
 mod clipboard;
@@ -257,9 +258,13 @@ struct App {
     /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
     file_win: FileWin,
     open_file_dlg: Option<PickerMode>,
+    /// 탭별 치환 변수(`DEFINE` · 이름 · 원문 · 표시값) — 변수 창 행 + 다음 실행에 전달(09-23).
+    tab_defines: HashMap<u64, Vec<(String, String, String)>>,
     /// 프로젝트 자동 저장(사용자 09-23): 마지막 저장 시각 · 마지막으로 쓴 JSON(같으면 안 쓴다).
     project_autosave_at: Instant,
     project_last_json: String,
+    /// 사건(탭 열기/닫기/전환 · 폴더 변경) 뒤 2초 디바운스 저장(09-23).
+    project_touch_at: Option<Instant>,
     /// 종료 흐름(사용자 09-23): 프로젝트 저장 물음 → 미저장 파일 탭마다 물음 → 종료.
     exit_pending: bool,
     exit_project_asked: bool,
@@ -2294,6 +2299,9 @@ impl App {
         match id {
             "close.discard" => {
                 if let Some(i) = self.editors.index_of_id(tab) {
+                    if let Some(p) = self.editors.path_of(i) {
+                        backups::remove(&p);
+                    }
                     self.editors.close_tab_forced(i);
                     self.sync_grid_tab();
                 }
@@ -3119,6 +3127,17 @@ impl App {
             self.project_load_path(Path::new(p.trim()));
             return;
         }
+        // OPEN FILES × = 그 탭 닫기(미저장 확인은 기존 흐름).
+        if let Some(id) = id
+            .strip_prefix("editor.close:")
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        {
+            if let Some(i) = self.editors.index_of_id(id) {
+                self.close_tab_guarded(i);
+            }
+            self.redraw();
+            return;
+        }
         // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23).
         if let Some(id) = id
             .strip_prefix("editor.switch:")
@@ -3369,6 +3388,22 @@ impl App {
             }
             tabs.push(t);
         }
+        // 파일 탭의 미저장 본문 = 스냅숏(docs/70 §5 · 원본은 안 만진다) · clean이면 스냅숏 삭제.
+        for i in 0..self.editors.tab_count() {
+            let Some(p) = self.editors.path_of(i) else {
+                continue;
+            };
+            if self.editors.is_dirty(i) {
+                if let Some(tb) = self.editors.tab_box(i) {
+                    let text = tb.text();
+                    if text.len() <= 8 << 20 {
+                        backups::write(&p, &text);
+                    }
+                }
+            } else {
+                backups::remove(&p);
+            }
+        }
         self.project.tabs = tabs;
         self.project.active = self.editors.active();
         self.project.bookmarks = Some(self.bookmarks.store.to_json());
@@ -3383,6 +3418,7 @@ impl App {
         }
         let opts = nsql_bookmarks::RelocateOpts::default();
         let mut ids: Vec<Option<u64>> = Vec::new();
+        let mut restored_dirty = 0usize;
         for t in &tabs {
             let id = match &t.path {
                 Some(p) => {
@@ -3392,6 +3428,22 @@ impl App {
                         self.open_file(p);
                         let i = self.editors.active();
                         if self.editors.active_path().as_deref() == Some(p.as_path()) {
+                            // 미저장 스냅숏(docs/70 §6 ②): 디스크 해시가 같을 때만 올리고 dirty · 다르면 디스크 본문 그대로.
+                            match backups::read_matching(p) {
+                                Ok(Some(body)) => {
+                                    if let Some(tb) = self.editors.tab_box_mut(i) {
+                                        tb.set_text(&body);
+                                    }
+                                    restored_dirty += 1;
+                                }
+                                Err(()) => {
+                                    self.log_win.push(LogEntry::new(
+                                        LogKind::Info,
+                                        tf(Msg::StBackupExternal, &[&p.to_string_lossy()]),
+                                    ));
+                                }
+                                Ok(None) => {}
+                            }
                             self.restore_caret(i, t, &opts);
                             Some(self.editors.tab_id(i))
                         } else {
@@ -3423,7 +3475,14 @@ impl App {
             }
         }
         let n = ids.iter().flatten().count();
-        self.sess.status = tf(Msg::StProjectRestored, &[&n.to_string()]);
+        self.sess.status = if restored_dirty > 0 {
+            tf(
+                Msg::StProjectRestoredDirty,
+                &[&n.to_string(), &restored_dirty.to_string()],
+            )
+        } else {
+            tf(Msg::StProjectRestored, &[&n.to_string()])
+        };
         self.project_last_json = self.project.to_json();
     }
 
@@ -3468,9 +3527,13 @@ impl App {
             return;
         }
         let secs = self.settings.int("project.autosave_secs").max(5) as u64;
-        if self.project_autosave_at.elapsed().as_secs() < secs {
+        let touched = self
+            .project_touch_at
+            .is_some_and(|t| t.elapsed() >= Duration::from_secs(2));
+        if !touched && self.project_autosave_at.elapsed().as_secs() < secs {
             return;
         }
+        self.project_touch_at = None;
         self.project_autosave_at = Instant::now();
         self.project_capture_state();
         let js = self.project.to_json();
@@ -3498,7 +3561,16 @@ impl App {
                 grouped: split.len() > 1 && split.contains(&i),
             })
             .collect();
-        self.project_panel.set_open_files(v);
+        if self.project_panel.set_open_files(v) {
+            self.project_touch();
+        }
+    }
+
+    /// 작업 환경이 바뀌었다(탭 · 폴더) → 2초 뒤 저장(자동 저장 켬 · 프로젝트 열림).
+    fn project_touch(&mut self) {
+        if self.project.is_open() {
+            self.project_touch_at = Some(Instant::now());
+        }
     }
 
     /// 종료 전 프로젝트 저장 물음(자동 저장이 꺼져 있을 때).
@@ -3518,6 +3590,7 @@ impl App {
 
     /// 폴더 목록이 바뀌었다 — 탐색기·메뉴 갱신(`save`면 파일에도).
     fn project_changed(&mut self, save: bool) {
+        self.project_touch();
         if let Some(p) = self.project_panel.selected_path() {
             self.project.last_selected = Some(p);
         }
@@ -6300,6 +6373,7 @@ impl App {
             preflight: None,
             max_rows,
             vars: self.run_vars(),
+            defines: self.run_defines(),
         });
         self.live_start();
         self.redraw();
@@ -8569,6 +8643,7 @@ impl App {
                 preflight: None,
                 max_rows: self.grid.page_rows(),
                 vars: self.run_vars(),
+                defines: self.run_defines(),
             });
         }
         if on {
@@ -10048,6 +10123,7 @@ impl App {
         match res {
             Ok(()) => {
                 self.editors.mark_saved(path);
+                backups::remove(path);
                 self.undo_persist_save(path);
                 self.ext_track_active();
                 self.git.refresh(true);
@@ -10417,6 +10493,15 @@ impl App {
     }
 
     /// 변수 창의 줄 — 지금 편집기 탭의 표(탭 층) + 이 세션의 공유 층. 비밀 값은 가린다 · 긴 값은 앞부분만.
+    /// 다음 실행에 넘길 치환 변수(활성 탭 · 이름 · 원문).
+    fn run_defines(&self) -> Option<Vec<(String, String)>> {
+        self.tab_defines.get(&self.editors.active_id()).map(|v| {
+            v.iter()
+                .map(|(n, raw, _)| (n.clone(), raw.clone()))
+                .collect()
+        })
+    }
+
     fn vars_rows(&self) -> Vec<vars_win::VarRow> {
         const MAX: usize = 200;
         let tab = self.editors.active_id();
@@ -10449,6 +10534,21 @@ impl App {
                     changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
                 }
             })
+            // 치환 변수(`&이름` · DEFINE) — 표시값 = 사용 시 모드면 `원문 → 현재 값`(63 §9) · 편집 = 원문.
+            .chain(
+                self.tab_defines
+                    .get(&tab)
+                    .into_iter()
+                    .flatten()
+                    .map(|(n, raw, shown)| vars_win::VarRow {
+                        name: format!("&{n}"),
+                        ty: "DEFINE".into(),
+                        value: shown.clone(),
+                        edit: raw.clone(),
+                        shared: false,
+                        changed: false,
+                    }),
+            )
             .collect()
     }
 
@@ -10463,6 +10563,25 @@ impl App {
             A::Script => {
                 self.menu_action("vars.script");
                 return;
+            }
+            A::Set(name, text) if name.starts_with('&') => {
+                // 치환 변수 편집 = 원문을 바꾼다(다음 실행 때 엔진에 전달 · 표시값도 원문으로).
+                let key = name[1..].to_ascii_uppercase();
+                let list = self.tab_defines.entry(tab).or_default();
+                match list.iter_mut().find(|(n, _, _)| *n == key) {
+                    Some(slot) => {
+                        slot.1 = text.clone();
+                        slot.2 = text;
+                    }
+                    None => list.push((key.clone(), text.clone(), text)),
+                }
+                self.vars_changed = (tab, std::iter::once(name.to_ascii_uppercase()).collect());
+            }
+            A::SetNull(name) if name.starts_with('&') => {
+                let key = name[1..].to_ascii_uppercase();
+                if let Some(list) = self.tab_defines.get_mut(&tab) {
+                    list.retain(|(n, _, _)| *n != key);
+                }
             }
             A::Set(name, text) => {
                 let value = nsql_run::input_value(&text);
@@ -11013,6 +11132,7 @@ impl App {
             preflight,
             max_rows,
             vars: self.run_vars(),
+            defines: self.run_defines(),
         });
         self.live_start();
         self.redraw();
@@ -11172,6 +11292,7 @@ impl App {
             preflight: None,
             max_rows: self.grid.page_rows(),
             vars: self.run_vars(),
+            defines: self.run_defines(),
         });
         self.live_start();
         self.redraw();
@@ -11435,7 +11556,9 @@ impl App {
                     local,
                     shared,
                     changed,
+                    defines,
                 } => {
+                    self.tab_defines.insert(self.sess.run_editor, defines);
                     let line = vars_log_line(&changed, &local, &shared);
                     self.vars_changed = (
                         self.sess.run_editor,
@@ -11923,7 +12046,11 @@ impl App {
         let mut idx = self.bm_tab_of(&b.doc);
         if idx.is_none() {
             if let nsql_bookmarks::DocKey::File { path } = &b.doc {
-                self.open_file(Path::new(path));
+                // 북마크 패널에서 연 파일 = **미리보기 탭**(69 B4b · 프로젝트 탐색기와 같은 규칙 `project.preview_tab` · 편집하면 승격).
+                self.project_open_req(project_panel::OpenReq {
+                    path: PathBuf::from(path),
+                    permanent: false,
+                });
                 idx = self.bm_tab_of(&b.doc);
             }
         }
@@ -13913,6 +14040,14 @@ impl ApplicationHandler<Wake> for App {
         self.apply_tool_layout_setting();
         // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
         self.demo_ready = Self::demo_exists();
+        // 오래된 미저장 스냅숏 정리(docs/70 §5 · `project.backup_days`).
+        let pruned = backups::prune(self.settings.int("project.backup_days").max(1) as u64);
+        if pruned > 0 {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                tf(Msg::LogBackupPruned, &[&pruned.to_string()]),
+            ));
+        }
         self.project_startup();
         self.bookmarks.bind_project(self.project.path.as_deref());
         self.bm_sync_ui();
@@ -15454,8 +15589,10 @@ fn main() {
         act_bar,
         file_win,
         open_file_dlg: None,
+        tab_defines: HashMap::new(),
         project_autosave_at: Instant::now(),
         project_last_json: String::new(),
+        project_touch_at: None,
         exit_pending: false,
         exit_project_asked: false,
         last_synced_tab: u64::MAX,
