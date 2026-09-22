@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/kill-app-process-rule | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 규칙 — 개발 중 `target/` 아래 `nexa-sql.exe`는 누가 띄웠든 강제 종료하고 진행(61 §2-4 · CLAUDE.md §3 · journal §15) · Release 재기동 |
 | docs/ci-result-92 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 92차 push CI 결과(nexa-ui e5433cb 3-OS ✓ — Windows 포함 = 시험 경주 원인 확인 · nexa-sql bcb4123 ci 3-OS ✓) |
 | fix/win-92-font-race-docs | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 92차(win) — 최신화·분석(mac 90차 + Linux 91차 · Windows 412 · 회귀 없음) · nexa-ui 53차 Windows CI 실패 원인 정정(nexa-font 시험 `set_text_gdi` 경주 → nexa-ui 54차 가드 + 걷기 캐시 3-OS 복귀) · Windows `[startup]` 첫 기록 · 문서(journal §14 · DEVLOG · STATUS · MILESTONES · TODO T-163 · 61 · CLAUDE.md) |
 | docs/ci-result-90 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | mac 90차 push(ae4cd81)의 CI 결과 기록(ci 3-OS · integration 초록 · check-3os 교차 타깃은 CC 없음) |
