@@ -21,6 +21,8 @@ pub(crate) struct ImeState {
 
 /// LANGID의 주 언어(하위 10비트) → (IME 언어면 (본연 글자, 라틴 글자) · 코드 · 라틴 배열 여부).
 /// 표에 없는 언어는 비라틴 취급(모르는 것을 라틴으로 넘겨 안내를 빼먹지 않게).
+// Linux는 입력 소스 조회가 없어(`current` = None) 순수 함수 둘이 테스트에서만 쓰인다(CI ubuntu `-D warnings`).
+#[cfg_attr(not(any(windows, target_os = "macos", test)), allow(dead_code))]
 fn describe(primary: u16) -> (Option<(&'static str, &'static str)>, &'static str, bool) {
     match primary {
         0x12 => (Some(("가", "A")), "KOR", false),
@@ -82,6 +84,7 @@ fn describe(primary: u16) -> (Option<(&'static str, &'static str)>, &'static str
 }
 
 /// LANGID + (IME 언어면) 변환 모드의 본연 비트 → 상태. 순수 함수(테스트).
+#[cfg_attr(not(any(windows, target_os = "macos", test)), allow(dead_code))]
 pub(crate) fn classify(langid: u16, native: bool) -> ImeState {
     let (ime, lang, latin) = describe(langid & 0x3FF);
     match ime {

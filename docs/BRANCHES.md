@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/ci-linux-imestate-dead-code | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | CI ubuntu `check` — `imestate.rs` `describe`/`classify`가 Linux 빌드에서 미사용(입력 소스 조회 없음) → `cfg_attr(not(windows/macos/test), allow(dead_code))` · macOS·Windows는 3b656be에서 통과 |
 | fix/ci-clippy-as-chunks | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | CI `check` 3-OS 실패 원인 = MSRV 1.89 뒤 새 clippy 린트(`chunks_exact(2)` 상수 → `as_chunks::<2>()` · nsql-search decode.rs · 로컬 1.97.1에는 없는 린트) |
 | fix/clippy-all-targets-93 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | check-3os 호스트 clippy(`--all-targets -D warnings`) — 테스트에서만 쓰는 `is_preview`/`has_project` = `#[cfg(test)]` · `reveal` = 배선 전 `allow(dead_code)`(T-165 P4) · 교차 타깃 3건은 이 PC 한계(CI) |
 | feat/win-93-project-explorer-multi-open | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | ★ 93차(win): 프로젝트 탐색기 + 미리보기 탭(67 §4-1 · `project.rs`·`project_panel.rs`) · 파일 열기 다중 선택 + 순차 적재(`file.open_max`) · 다중 인스턴스 시작 모드(`instance.lock` · MSRV 1.89) · 동시 편집 탭 상단 줄 · 토스트 진행/IME 안내/프로필 해시 파일/가로 스크롤/클릭 안정(§14~§27) · 📐 66·67·67a·68·69(다른 세션)·70 · 규칙 점검(61 §2-4·§3-1) — nexa-ui 55차와 짝 |
