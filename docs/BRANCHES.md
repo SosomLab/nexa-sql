@@ -4,7 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| perf/96-review | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 성능 전수 재실행(26 §7-10 · 71 §10 · 회귀 0) · 프로젝트 패널 아이콘 워커 유휴 회수 `ICON_WORKER_IDLE_MS` · L2 30주기 = 누수 아님 · 기능 점검 S01~S51 51/51 · 테스트 449 · T-168 ①②④⑥ |
+| perf/96-review | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 성능 전수 재실행(26 §7-10 · 71 §10 · 회귀 0) · 프로젝트 패널 아이콘 워커 유휴 회수 `ICON_WORKER_IDLE_MS` · L2 30주기 = 누수 아님 · 기능 점검 S01~S51 51/51 · 테스트 449 · T-168 ①②④⑥ · push `7c4499a` ci ✓ · integration ✓ |
 | feat/96-followups-and-wiki | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차(win) 보완 일괄 7건(북마크 단일 원천·CLI --project · 저장 디바운스 · OPEN FILES × · 변수 창 DEFINE 행 · 미저장 스냅숏 backups.rs · T-171 최소판 Action::Replan · 북마크 미리보기 탭) + 위키 4 페이지 · journal §90 |
 | feat/95c-project-workspace | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 95차 후반~96차(win): 북마크 3차(CLI·미니맵·라벨) · 🔧 풀다운 Project · 프로젝트 탐색기 후속(셰브론·아이콘·루트 메뉴·selected·탭 Reveal·auto_reveal·가로 스크롤·클립) · FilterBar 부품(4 패널 · Path/숨김/점 토글) · 변수 확장 시점 vars.expand_at · DBMS 아이콘 파일 · TabKind 줄 색 · 캐럿 테두리 · ★ 프로젝트 작업 환경(자동 저장·종료 흐름·복원·OPEN FILES) · journal §74~89 |
 | docs/ci-result-95c | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 95차 후반 push CI 결과(nexa-ui 18f7c5d ci ✓ · nexa-sql b598d65 ci 3-OS ✓ · integration ✓) · journal §73 · STATUS |
