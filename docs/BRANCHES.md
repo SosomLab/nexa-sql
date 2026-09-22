@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/win-95-func-check-perf | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 95차 후반(win · 사용자 부재 중): ★ 기능 점검 자동화 `scripts/win-func-check.ps1`(28 시나리오 ✓ · 도구 결함 3 · `multi.` 기동 명령 경로 수정) · ★ 성능 전수 95차(71 A~F 5회·8초) + C-2 회수 시험 첫 실행 `scripts/win-mem-reclaim.ps1`(회귀 0 · 26 §7-9 · 71 §9) · journal §61~63 · STATUS · DEVLOG · TODO(T-168) · 61 §4 · 30 §2 · CLAUDE.md |
 | feat/win-95-run-cards-menus-skip-next | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 93차 후반~95차(win): ★ 실행 Facade(43 §11 · `Requery` · `fetch_card_policy`) · 그리드 선택 표시 5건(`grid.row_focus[_color]`) · 다중 열기 중앙 모달·기본 항목 · placeholder 제거 · 실행 카드 시계 ms·`run.toast_tick_ms` · 헤더 위선 1px · ★ 실행 카드 스택(앱 공유 · 최신 위 · 아래 고정 · 픽셀 휠 · `run.toast_follow/max` · 중지 버튼 색) · 툴팁 카드 왼쪽 · 편집 메뉴 팝업 층 · ★ 팝업 배타 게이트 + 바깥 우클릭 통과 · 좀비 훅 정리 스크립트 · ★ Ctrl+K,Ctrl+D Quick Skip Next(맥 ⌘K,⌘D) · ★ Edit 메뉴 6그룹(하위 메뉴) · journal §43~60 · STATUS · DEVLOG · TODO(U-28~36) · 30 §2 · 43 §11 · CLAUDE.md |
 | docs/ci-result-93b | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 93차 후반 push CI 결과(nexa-ui 7ec2462 ✓ · nexa-sql c979106 ci 3-OS ✓ · integration ✓) · journal §42 |
 | feat/win-93b-file-dialog-select-ime-ellipsis | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 93차 후반(win): IME 안내 = 입력란 아래·언어 바뀌면 즉시(`ui.ime_hint`) · 미리보기 탭 더블클릭 승격 · 파일 창 Ctrl 수식키/Ctrl+Space/Ctrl+A · 트리 키보드 스크롤 추종 · 다중 선택 강조 = 노드 경로 · 긴 경로 가운데 축약 + Alt 전체(`ui.menu_max_width`) · Ctrl+드래그 스윕 · 러버밴드(빈 공간·행) · 71 §C-2 회수 시험 R1~R6 · 다른 세션 94차(71 성능 점검 프로세스 · 26/45/65 · `win-inventory`/`win-perf-all`) 포함 — nexa-ui 56·57차와 짝 |

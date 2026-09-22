@@ -7309,6 +7309,16 @@ impl App {
             self.project_cmd(id);
             return;
         }
+        // 자체 시험: 상태 팝업의 선택(`multi.open`/`multi.cancel` · `tx.*` · `disc.*` · `close.*`)은 팝업 픽 경로로(메뉴 동작이 아니다 ·
+        //   09-22 기능 점검 S03 — `multi.open`이 `menu_action`으로 떨어져 아무 일도 안 했다).
+        if ["multi.", "tx.", "disc.", "close."]
+            .iter()
+            .any(|p| id.starts_with(p))
+        {
+            self.indent_pick(id);
+            self.redraw();
+            return;
+        }
         // 자체 캡처: 파일 대화상자 없이 다중 열기 확인 팝업(`file.open_many:<a>;<b>;…` · 쉼표는 기동 명령 구분자라 `;`).
         if let Some(rest) = id.strip_prefix("file.open_many:") {
             let paths: Vec<PathBuf> = rest

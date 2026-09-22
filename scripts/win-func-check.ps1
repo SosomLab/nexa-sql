@@ -1,0 +1,220 @@
+# win-func-check.ps1 — **기능 점검 자동화**(사용자 09-22 "오늘 요청한 전체 내용에 대해 기능 점검을 자동화") —
+#   시나리오마다 앱을 격리 홈으로 띄우고(`NSQL_STARTUP_CMD`로만 몬다 · OS 키·마우스 주입 0 · docs/61 §4) 창을 PrintWindow로
+#   캡처한 뒤 **자동 판정**(프로세스 생존 · 창 존재 · stderr 패닉 없음)과 **캡처 파일**을 남긴다. 눈으로 봐야 하는 항목(메뉴 위치 ·
+#   색 · 툴팁)은 캡처를 보고 표에 적는다(docs/71 §6과 같은 산출물 규칙 · 결과 = journal).
+#   키 입력이 있어야만 보이는 것(Ctrl+K,Ctrl+D 조합 · 파일 창 드래그)은 `@after:ms:<명령 id>`로 **명령을 직접** 부르거나
+#   단위 테스트에 맡기고 여기서는 다루지 않는다(사용자 실기 U-표).
+#
+# 사용:
+#   pwsh -NoProfile -File scripts/win-func-check.ps1 -HomeDir C:\tmp\nsql-fc-home -DataDir C:\tmp\nsql-fc-data -Out target\func-check
+#   -Only "S05,S06"  = 일부만 · -Exe = 기본 Release
+param(
+    [Parameter(Mandatory = $true)][string]$HomeDir,
+    [Parameter(Mandatory = $true)][string]$DataDir,
+    [Parameter(Mandatory = $true)][string]$Out,
+    [string]$Exe = "",
+    [string]$Cli = "",
+    [string]$Only = ""
+)
+$ErrorActionPreference = "Continue"
+$root = Split-Path -Parent $PSScriptRoot
+if (-not $Exe) { $Exe = Join-Path $root "target\release\nexa-sql.exe" }
+if (-not $Cli) { $Cli = Join-Path $root "target\release\nsql.exe" }
+foreach ($d in @($HomeDir, $DataDir, $Out)) { if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null } }
+$report = Join-Path $Out "func-check.txt"
+if (Test-Path -LiteralPath $report) { Clear-Content -LiteralPath $report }
+function Say($s) { Write-Output $s; Add-Content -LiteralPath $report -Value $s -Encoding UTF8 }
+
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System; using System.Runtime.InteropServices; using System.Text;
+public class NxFc {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  public static IntPtr Biggest(uint pid) {
+    IntPtr best = IntPtr.Zero; long area = 0;
+    EnumWindows((h, x) => { if (!IsWindowVisible(h)) return true; uint p; GetWindowThreadProcessId(h, out p);
+      if (p != pid) return true; RECT r; GetWindowRect(h, out r); long a = (long)(r.R - r.L) * (r.B - r.T);
+      if (a > area) { area = a; best = h; } return true; }, IntPtr.Zero);
+    return best;
+  }
+  public static long[] Windows(uint pid) {
+    var v = new System.Collections.Generic.List<long>();
+    EnumWindows((h, x) => { if (!IsWindowVisible(h)) return true; uint p; GetWindowThreadProcessId(h, out p);
+      if (p == pid) { RECT r; GetWindowRect(h, out r); if (r.R - r.L >= 50 && r.B - r.T >= 50) v.Add((long)h); } return true; }, IntPtr.Zero);
+    return v.ToArray();
+  }
+  public static int CountVisible(uint pid) {
+    int n = 0;
+    EnumWindows((h, x) => { if (!IsWindowVisible(h)) return true; uint p; GetWindowThreadProcessId(h, out p);
+      if (p == pid) { RECT r; GetWindowRect(h, out r); if (r.R - r.L >= 50 && r.B - r.T >= 50) n++; } return true; }, IntPtr.Zero);
+    return n;
+  }
+}
+"@ -ErrorAction SilentlyContinue
+[NxFc]::SetProcessDPIAware() | Out-Null
+
+# ── 격리 홈 · 시험 자료 ────────────────────────────────────────────────────
+$sqlite = Join-Path $HomeDir "local.sqlite"
+$env:NSQL_HOME = $HomeDir
+$env:NSQL_NO_ACTIVATE = "1"
+if (-not (Test-Path -LiteralPath (Join-Path $HomeDir "profiles"))) {
+    & $Cli conn add Local ("sqlite:" + $sqlite) -d sqlite --no-prompt 2>&1 | Out-Null
+}
+$q500 = Join-Path $DataDir "q500.sql"
+Set-Content -LiteralPath $q500 -Encoding UTF8 -Value @"
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
+SELECT i AS id, 'name_' || i AS name, CASE WHEN i % 3 = 0 THEN NULL ELSE i * 1.5 END AS amount, 'SEBANG' AS project_cd, 'memo ' || i AS memo FROM n;
+"@
+$qErr = Join-Path $DataDir "q_err.sql"
+Set-Content -LiteralPath $qErr -Encoding UTF8 -Value "SELECT * FROM no_such_table_zz;"
+$qTwo = Join-Path $DataDir "q_two.sql"
+Set-Content -LiteralPath $qTwo -Encoding UTF8 -Value @"
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 300)
+SELECT i AS id, 'a_' || i AS name FROM n;
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 300)
+SELECT i AS id, 'b_' || i AS name FROM n;
+"@
+$qWord = Join-Path $DataDir "q_word.sql"
+Set-Content -LiteralPath $qWord -Encoding UTF8 -Value "select sum(x) from t where sum > 1 and sum < 9 order by sum;`n-- sum sum sum"
+$a = Join-Path $DataDir "a.sql"; Set-Content -LiteralPath $a -Encoding UTF8 -Value "-- file a`nSELECT 1;"
+$b = Join-Path $DataDir "b.sql"; Set-Content -LiteralPath $b -Encoding UTF8 -Value "-- file b`nSELECT 2;"
+$c = Join-Path $DataDir "c.sql"; Set-Content -LiteralPath $c -Encoding UTF8 -Value "-- file c`nSELECT 3;"
+$longDir = Join-Path $DataDir "very_long_directory_name_for_ellipsis_check\another_level_of_nesting_here\and_one_more_level_to_make_it_long"
+if (-not (Test-Path -LiteralPath $longDir)) { New-Item -ItemType Directory -Path $longDir -Force | Out-Null }
+$longFile = Join-Path $longDir "the_script_with_a_fairly_long_file_name_2026-09-22.sql"
+Set-Content -LiteralPath $longFile -Encoding UTF8 -Value "SELECT 'long';"
+$projFile = Join-Path $DataDir "fc.nsql-project"
+$dj = $DataDir.Replace('\', '/')
+Set-Content -LiteralPath $projFile -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `"$dj`" } ] }"
+
+# 기본 설정: 결과 탭 바 항상(결과 탭 우클릭 시나리오) · 영어 · 데모 안내 끔.
+$baseConf = "lang=en`ngrid.result_tabbar_single=on`ndemo.prompted=on`n"   # demo.prompted = 최초 실행 데모 안내 팝업 끔(같은 status 팝업 자리를 뺏는다)
+
+# ── 시나리오 실행기 ─────────────────────────────────────────────────────────
+function Run-Scenario {
+    param([string]$Id, [string]$Title, [string]$Cmd, [string]$ArgList = "Local", [int]$WaitMs = 4500,
+          [string]$Conf = "", [int]$Shots = 1, [int]$ShotGapMs = 600, [string]$Expect = "", [switch]$NoProfileHome)
+    if ($Only -and (($Only.Split(",") | ForEach-Object { $_.Trim() }) -notcontains $Id)) { return }
+    # 프로필 없는 홈 = 기동 시 접속 창이 먼저 뜬다(접속 창 시나리오용 · 메인만 뜨는 홈에서는 conn.toggle이 기동 명령으로 안 닿는다).
+    $home2 = if ($NoProfileHome) { Join-Path $HomeDir "noprof" } else { $HomeDir }
+    if (-not (Test-Path -LiteralPath $home2)) { New-Item -ItemType Directory -Path $home2 -Force | Out-Null }
+    $env:NSQL_HOME = $home2
+    Set-Content -LiteralPath (Join-Path $home2 "settings.conf") -Value ($baseConf + $Conf) -Encoding UTF8
+    $errLog = Join-Path $Out ("{0}.stderr.txt" -f $Id)
+    $env:NSQL_STARTUP_CMD = $Cmd
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe; $psi.Arguments = $ArgList; $psi.WorkingDirectory = (Split-Path $Exe)
+    $psi.UseShellExecute = $false; $psi.RedirectStandardError = $true; $psi.RedirectStandardOutput = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync(); $outTask = $p.StandardOutput.ReadToEndAsync()
+    Start-Sleep -Milliseconds $WaitMs
+    $alive = -not $p.HasExited
+    $wins = 0; $files = @()
+    if ($alive) {
+        $wins = [NxFc]::CountVisible([uint32]$p.Id)
+        foreach ($i in 0..($Shots - 1)) {
+            # 그 프로세스의 보이는 창 전부(메인 + 접속 창·보조 창) — 큰 것부터 `_w0`, `_w1`, …
+            $hs = [NxFc]::Windows([uint32]$p.Id)
+            $k = 0
+            foreach ($hl in $hs) {
+                $h = [IntPtr]$hl
+                $r = New-Object NxFc+RECT
+                [NxFc]::GetWindowRect($h, [ref]$r) | Out-Null
+                $w = $r.R - $r.L; $hh = $r.B - $r.T
+                if ($w -ge 50 -and $hh -ge 50) {
+                    $bmp = New-Object System.Drawing.Bitmap $w, $hh
+                    $g = [System.Drawing.Graphics]::FromImage($bmp)
+                    $hdc = $g.GetHdc(); [NxFc]::PrintWindow($h, $hdc, 2) | Out-Null; $g.ReleaseHdc($hdc)
+                    $suffix = if ($hs.Count -gt 1) { "_w$k" } else { "" }
+                    $file = Join-Path $Out ("{0}_{1}{2}.png" -f $Id, $i, $suffix)
+                    $bmp.Save($file, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+                    $files += (Split-Path -Leaf $file)
+                    $k++
+                }
+            }
+            if ($i -lt $Shots - 1) { Start-Sleep -Milliseconds $ShotGapMs }
+        }
+        try { $p.Kill() } catch {}
+    }
+    try { $p.WaitForExit(5000) | Out-Null } catch {}
+    $err = ""; try { $err = $errTask.Result } catch {}
+    if ($err) { Set-Content -LiteralPath $errLog -Value $err -Encoding UTF8 }
+    $panic = ($err -match "panicked|RUST_BACKTRACE|thread '.*' panicked")
+    $verdict = if (-not $alive) { "FAIL(exited)" } elseif ($panic) { "FAIL(panic)" } elseif ($wins -lt 1) { "FAIL(no window)" } else { "auto-ok" }
+    Say ("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $Id, $Title, $verdict, $wins, ($files -join " "), $Expect)
+    $env:NSQL_STARTUP_CMD = $null
+    $env:NSQL_HOME = $HomeDir
+}
+
+Say ("== win-func-check " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  commit=" + (& git -C $root rev-parse --short HEAD 2>$null))
+Say ("exe=" + $Exe + "  home=" + $HomeDir)
+Say "| id | 시나리오 | 자동 판정 | 창 | 캡처 | 눈으로 볼 것 |"
+Say "|---|---|---|---|---|---|"
+
+# 좌표 = 창 클라이언트 · 장치 px(배율 1.0 · 기본 창 1375×945 기준 · 캡처 menu0_0.png에서 잰 값).
+#   메뉴바: File(25,14) Project(79,14) Edit(133,14)  · 편집기 탭 Script_1(365,80) · 탭 + (428,80) · 편집기 본문(592,269)
+#   결과 영역: 그리드 첫 셀(≈420,565) · 행번호(334,565) · 결과 탭 바(≈380,507 · tabbar_single=on일 때 · 그리드 헤더는 527) · 푸터 Σ(667,902) · 전체 조회(619,902)
+
+# §29 동시 편집 탭 상단 줄: 파일 둘 열고 두 번째 탭 Shift+클릭 → 두 탭 모두 상단 accent 줄.
+Run-Scenario -Id S01 -Title "동시 편집 탭 상단 줄(§29)" -Cmd ("open:" + $a + ",open:" + $b + ",@after:1500:ui.sclick:365/80") -Expect "탭 두 개 모두 상단 accent 줄 · 두 칸"
+# §30·§45·§47 다중 열기 확인 = 중앙 모달 · 기본 항목(열기)에 accent 테두리.
+Run-Scenario -Id S02 -Title "다중 열기 확인 팝업 = 중앙·기본 항목(§30·45·47)" -Cmd ("file.open_many:" + $a + ";" + $b + ";" + $c) -Expect "창 중앙 팝업 · 3개 목록 · 'Open all' 행에 accent 테두리"
+# 그 팝업의 기본 항목을 고르면 3탭이 순차 적재.
+Run-Scenario -Id S03 -Title "다중 열기 → 순차 적재(§30)" -Cmd ("file.open_many:" + $a + ";" + $b + ";" + $c + ",@after:1200:multi.open") -WaitMs 5500 -Expect "탭 a·b·c 셋 · 내용 채워짐"
+# §31 시작 모드: 프로젝트 인자 = 프로젝트 모드(프로젝트 패널) · 파일 인자 = 파일 모드.
+Run-Scenario -Id S04 -Title "프로젝트 인자 = 프로젝트 모드(§31)" -Cmd "@after:1200:view.project" -ArgList ("Local `"" + $projFile + "`"") -Expect "왼쪽 프로젝트 패널에 DataDir 트리"
+Run-Scenario -Id S05 -Title "파일 인자 = 파일 모드(§31)" -ArgList ("Local `"" + $a + "`" `"" + $b + "`"") -Cmd "" -Expect "탭 a·b · 프로젝트 없음"
+# §28·§34 미리보기 탭: 프로젝트 패널에서 파일 클릭 = ◦ 탭 · 더블클릭 = 정식 탭(좌표는 패널 첫 파일 행 추정).
+Run-Scenario -Id S06 -Title "프로젝트 패널 클릭 = 미리보기 탭(§28)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.click:150/175") -WaitMs 5500 -Shots 1 -Expect "탭 제목 앞 ◦(미리보기) · 패널에 파일 목록"
+Run-Scenario -Id S07 -Title "프로젝트 패널 더블클릭 = 정식 탭(§34)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:2500:ui.dclick:150/175") -WaitMs 5500 -Expect "◦ 없는 정식 탭"
+# §34 IME 안내 = 비밀번호 칸 아래(접속 창 캡처 명령).
+Run-Scenario -Id S08 -Title "IME 안내 = 입력란 아래(§34)" -Cmd "@after:1500:conn.ime_hint:0/0" -ArgList "" -WaitMs 4500 -NoProfileHome -Expect "접속 창 비밀번호 칸 바로 아래 '입력 언어: 가 KOR' 카드"
+# §38 긴 경로 가운데 축약(File ▸ 최근 파일).
+Run-Scenario -Id S09 -Title "긴 경로 가운데 축약(§38)" -Cmd "@after:1000:ui.click:25/14" -Conf ("file.recent=" + $longFile.Replace('\', '\\') + "`nui.menu_max_width=320`n") -Expect "File 메뉴 최근 항목이 가운데 … 축약 · 폭 320 안"
+# §43 실행 Facade + §48 시계 + §50~52 카드 스택: 질의 둘 실행 → 카드 2장(최신 위 · 편집기 영역 아래 고정).
+Run-Scenario -Id S10 -Title "실행 카드 스택 · 최신 위 · 아래 고정(§48·50~52)" -Cmd ("open:" + $q500 + ",@after:1500:run.all,@after:3000:run.all,@after:4200:run.all") -WaitMs 6500 -Shots 2 -ShotGapMs 400 -Expect "카드 3장 · 최신이 맨 위 · 편집기 아래에 붙음 · 시계 00:00:00.mmm · ■ 회색"
+# §50 오류 5번 = 카드 5장(빨간).
+Run-Scenario -Id S11 -Title "오류 5번 = 카드 5장(§50)" -Cmd ("open:" + $qErr + ",@after:1200:run.all,@after:1700:run.all,@after:2200:run.all,@after:2700:run.all,@after:3200:run.all") -WaitMs 5500 -Expect "오류 카드 5장 · 스택"
+# §43 Σ 건수 = 카드 경로 · 전체 조회 = 카드(푸터 버튼 클릭).
+Run-Scenario -Id S12 -Title "Σ 건수·전체 조회 = 실행 카드(§43)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.click:667/902,@after:4200:ui.click:619/902") -WaitMs 6500 -Expect "건수 카드 · 전체 조회 카드(제목이 Count/Fetch all)"
+# §44 그리드 선택 표시: 셀 클릭 = 행 배경 + 행/열 헤더 · NULL 흐림 · §49 헤더 위선 1px.
+Run-Scenario -Id S13 -Title "그리드 셀 선택 표시 · NULL 흐림 · 헤더 선 1px(§44·49)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.click:420/580") -WaitMs 5500 -Expect "셀 진한 선택 + 행 전체 연한 배경 · 행번호·열 헤더 같은 선택색 · amount NULL 더 흐림 · 헤더 위선 1px"
+Run-Scenario -Id S14 -Title "행번호 선택 = 행 배경만(§47)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.click:334/580") -WaitMs 5500 -Expect "행 전체 연한 배경(셀 진한 선택 없음) · 행번호 진한 선택색"
+# §53 카드 툴팁 = 카드 왼쪽(카드 SQL 줄 위 hover · 좌표 = S10 캡처로 보정).
+Run-Scenario -Id S15 -Title "카드 SQL 툴팁 = 카드 왼쪽(§53)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.move:1150/432") -WaitMs 5500 -Expect "툴팁이 카드 왼쪽 · 카드 상단 정렬 · 잘림 없음"
+# §54 우클릭 메뉴가 카드 위 + 글자 크기 UI 글꼴.
+Run-Scenario -Id S16 -Title "편집기 우클릭 메뉴 = 카드 위 · UI 글꼴(§54)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.rclick:1000/450") -WaitMs 5500 -Expect "편집 메뉴가 카드를 덮음 · 메뉴 글자 = 메뉴바와 같은 크기"
+# §55 배타: 풀다운 연 채 편집기 우클릭 = 풀다운 닫히고 편집 메뉴만.
+Run-Scenario -Id S17 -Title "풀다운 → 편집기 우클릭 = 배타(§55)" -Cmd "@after:1000:ui.click:133/14,@after:1800:ui.rclick:592/269" -Expect "Edit 풀다운 없음 · 편집 메뉴만"
+# §55·58 편집 탭 메뉴 → 결과 탭 우클릭 = 편집 탭 메뉴 닫히고 결과 탭 메뉴(한 번에).
+Run-Scenario -Id S18 -Title "편집 탭 메뉴 → 결과 탭 우클릭(§58)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.rclick:365/80,@after:3800:ui.rclick:380/507") -WaitMs 5500 -Expect "편집 탭 메뉴 없음 · 결과 탭 메뉴만"
+# §58 결과 탭 메뉴 → 편집기 본문 우클릭 = 편집 메뉴(한 번에).
+Run-Scenario -Id S19 -Title "결과 탭 메뉴 → 편집기 우클릭(§58)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.rclick:380/507,@after:3800:ui.rclick:592/269") -WaitMs 5500 -Expect "결과 탭 메뉴 없음 · 편집 메뉴만"
+# §58 그리드 메뉴 → 편집기 우클릭.
+Run-Scenario -Id S20 -Title "그리드 메뉴 → 편집기 우클릭(§58)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:ui.rclick:420/580,@after:3800:ui.rclick:592/269") -WaitMs 5500 -Expect "그리드 메뉴 없음 · 편집 메뉴만"
+# §58 편집 탭 메뉴 → 편집기 우클릭.
+Run-Scenario -Id S21 -Title "편집 탭 메뉴 → 편집기 우클릭(§58)" -Cmd "@after:1000:ui.rclick:365/80,@after:1800:ui.rclick:592/269" -Expect "탭 메뉴 없음 · 편집 메뉴만"
+# §59 Ctrl+D · Ctrl+K,Ctrl+D = 명령을 직접(키 조합 대신): sum에 캐럿 → expand ×2 → skip → 선택 3곳 중 마지막이 다음으로.
+Run-Scenario -Id S22 -Title "Quick Skip Next(§59 · 명령 직접)" -Cmd ("open:" + $qWord + ",@after:1200:ui.click:390/141,@after:1800:edit.expand_selection,@after:2200:edit.expand_selection,@after:2600:edit.skip_occurrence") -WaitMs 4500 -Expect "sum 선택 2곳 = 1번째·3번째(2번째는 건너뜀) · 상태줄 '2 selection regions'"
+# §60 Edit 메뉴 그룹 + 하위 메뉴(보통 창 · 좁은 창).
+Run-Scenario -Id S23 -Title "Edit 메뉴 6그룹 · Selection ▸(§60)" -Cmd "@after:1000:ui.click:133/14,@after:1600:ui.move:133/215" -Expect "1레벨 12항목+그룹 6 · Selection 하위 9항목이 오른쪽"
+Run-Scenario -Id S24 -Title "좁은 창에서 하위 메뉴 잘림 없음(§60)" -Cmd "@after:1000:ui.click:133/14,@after:1600:ui.move:133/215" -Conf "window.main_size=430,600`n" -Expect "하위 메뉴가 창 안(nudge)"
+# §56 하위 메뉴 → 비활성 부모 행 hover = 닫힘(편집 메뉴의 확장 하위: 확장이 없으면 그룹 없음 → 참고용).
+Run-Scenario -Id S25 -Title "우클릭 메뉴 → Cut(비활성) hover(§56)" -Cmd "@after:1000:ui.rclick:592/269,@after:1600:ui.move:640/300" -Expect "메뉴만(하위 없음 · 비활성 Cut 위 hover 표시 없음)"
+# §38 결과 탭 우클릭 메뉴 · 실행 쿼리 복사 항목 존재(캡처 명령 result.menu).
+Run-Scenario -Id S26 -Title "결과 탭 메뉴(result.menu)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:result.menu") -WaitMs 5500 -Expect "결과 탭 메뉴 · 항목 정상"
+# §51 run.toast_max 상한(3) · follow: 질의 5번 → 카드 3장만.
+Run-Scenario -Id S27 -Title "run.toast_max=3 상한(§51)" -Cmd ("open:" + $qErr + ",@after:1200:run.all,@after:1700:run.all,@after:2200:run.all,@after:2700:run.all,@after:3200:run.all") -Conf "run.toast_max=3`n" -WaitMs 5500 -Expect "오류 카드 3장만"
+# §43 다중 결과 탭(두 문장) → 결과 탭 2 · 탭 바.
+Run-Scenario -Id S28 -Title "결과 탭 둘 + 탭 바(§43)" -Cmd ("open:" + $qTwo + ",@after:1200:run.all") -WaitMs 5500 -Expect "결과 탭 2개 · 두 번째 활성"
+
+Say ("== done " + (Get-Date -Format "HH:mm:ss"))
