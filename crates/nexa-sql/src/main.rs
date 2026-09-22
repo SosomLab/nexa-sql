@@ -3188,7 +3188,7 @@ impl App {
                 self.palette.close();
                 if self.project.is_open() {
                     let _ = self.project_save();
-                    self.project_set(project::Project::default());
+                    self.project_set(project::Project::default(), false);
                     self.sess.status = t(Msg::StProjectClosed).into();
                 }
             }
@@ -3248,10 +3248,12 @@ impl App {
         self.palette.close();
         match project::Project::load(path) {
             Ok(p) => {
-                if self.project.is_open() && self.project.path.as_deref() != Some(path) {
+                let switching = self.project.path.as_deref() != Some(path);
+                if self.project.is_open() && switching {
                     let _ = self.project_save();
                 }
-                self.project_set(p);
+                // 같은 파일을 다시 열면(전환 목록에서 지금 프로젝트) 복원하지 않는다 — 탭이 겹쳐 늘지 않게.
+                self.project_set(p, switching);
             }
             Err(e) => {
                 self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
@@ -3283,12 +3285,18 @@ impl App {
                 p.folders.dedup();
             }
         }
-        match p.save() {
+        // ★ 지금 작업 환경(탭 경로 · 캐럿 · 북마크 · 패널 상태)을 담아서 쓴다 — 담지 않고 써서 "저장했는데 탭 경로가 없다"
+        //   (사용자 09-23). 새 프로젝트도 지금 열린 탭이 그 프로젝트의 첫 작업 환경이다.
+        let prev = std::mem::replace(&mut self.project, p);
+        self.project_capture_state();
+        match self.project.save() {
             Ok(()) => {
                 self.sess.status = tf(Msg::StProjectSaved, &[&nexa_fs::path::display(&path)]);
-                self.project_set(p);
+                let p = self.project.clone();
+                self.project_set(p, false);
             }
             Err(e) => {
+                self.project = prev;
                 self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
             }
         }
@@ -3302,8 +3310,10 @@ impl App {
         }
     }
 
-    /// 프로젝트 교체 = 상태 · 설정(`project.last` · 최근) · 탐색기 · 메뉴.
-    fn project_set(&mut self, p: project::Project) {
+    /// 프로젝트 교체 = 상태 · 설정(`project.last` · 최근) · 탐색기 · 메뉴 · `restore` = 작업 환경 복원까지
+    /// (**다른** 프로젝트를 열 때만 true — 지금 작업 환경을 그 파일에 저장하는 길(저장 · 새 프로젝트 · 닫기)은 false.
+    ///  저장 때도 복원이 돌아 누를 때마다 스크립트 탭이 하나씩 늘던 결함 · 사용자 09-23).
+    fn project_set(&mut self, p: project::Project, restore: bool) {
         self.project = p;
         let last = self
             .project
@@ -3328,7 +3338,11 @@ impl App {
         // 프로젝트가 바뀌면 북마크 저장소도(워크스페이스 파일 · 69 C-17).
         self.bookmarks.bind_project(self.project.path.as_deref());
         self.bm_sync_ui();
-        self.project_restore();
+        if restore {
+            self.project_restore();
+        } else {
+            self.project_last_json = self.project.to_json();
+        }
     }
 
     /// 프로젝트 파일 저장 — 탐색기의 마지막 선택 위치를 담아서(닫기·전환·폴더 변경·종료 = 전부 이 길).
@@ -3363,6 +3377,7 @@ impl App {
                 title: self.editors.title_of(i),
                 line,
                 col,
+                preview: self.editors.preview_id() == Some(self.editors.tab_id(i)),
                 ..project::TabState::default()
             };
             if buf.line_count() <= 100_000 {
@@ -3407,13 +3422,44 @@ impl App {
         self.project.tabs = tabs;
         self.project.active = self.editors.active();
         self.project.bookmarks = Some(self.bookmarks.store.to_json());
+        // ★ 좌측 패널 상태(사용자 09-23 "각 좌측 기능별로 복원"): 탐색기 펼침 · 보이던 패널 · 검색어 · 북마크 접힘 · 접속 표식.
+        self.project.expanded = self.project_panel.expanded_dirs();
+        self.project.panel = if self.project_panel.is_visible() {
+            Some("project".into())
+        } else if self.bm_panel.is_visible() {
+            Some("bookmarks".into())
+        } else if self.search.is_visible() {
+            Some("search".into())
+        } else if self.ext_panel.is_visible() {
+            Some("ext".into())
+        } else {
+            None
+        };
+        self.project.search = Some(self.search.query_text()).filter(|s| !s.is_empty());
+        self.project.bm_collapsed = self.bm_panel.collapsed_groups();
+        // 접속은 **표식만**(docs/70 §2 · 26 §8 자동 재접속 금지): 붙어 있는 세션의 프로필 이름(중복 제거 · 접속 순서).
+        let mut profiles: Vec<String> = Vec::new();
+        for s in std::iter::once(&self.sess).chain(self.parked.iter()) {
+            if s.connected && !s.profile.is_empty() && !profiles.contains(&s.profile) {
+                profiles.push(s.profile.clone());
+            }
+        }
+        self.project.profiles = profiles;
     }
 
     /// 프로젝트를 열었을 때 작업 환경 복원(사용자 09-23): 탭 순서대로 파일은 다시 읽고(원본 = 최신) 스크립트는 본문 그대로 ·
     /// 캐럿은 앵커로 fuzzy 재탐색(외부 수정 대응 · 북마크 `relocate`) · 활성 탭 · 북마크.
     fn project_restore(&mut self) {
         let tabs = self.project.tabs.clone();
+        // ★ 작업 환경은 **교체**된다(사용자 09-23 "마지막 작업 상태 그대로"): 열려 있던 탭 중 복원 목록에 없는 것은 뒤에서 닫는다
+        //   — 이전 프로젝트가 있었으면 그 파일(스크립트 본문)과 스냅숏(파일 탭 미저장분)에 이미 담겼고, 없었으면(파일 모드에서
+        //   열기) 미저장 탭은 남긴다. 닫기는 복원 뒤에(마지막 탭을 닫으면 빈 탭이 새로 생기는 일을 피한다).
+        let prev_saved = self.project_last_json.contains("\"tabs\"");
+        let old_ids: Vec<u64> = (0..self.editors.tab_count())
+            .map(|i| self.editors.tab_id(i))
+            .collect();
         if tabs.is_empty() {
+            self.project_restore_panels();
             return;
         }
         let opts = nsql_bookmarks::RelocateOpts::default();
@@ -3425,7 +3471,15 @@ impl App {
                     if !p.is_file() {
                         None
                     } else {
-                        self.open_file(p);
+                        if t.preview {
+                            // 미리보기 탭은 미리보기로(북마크·탐색기 한 번 클릭으로 연 것 · 편집하면 승격).
+                            self.project_open_req(project_panel::OpenReq {
+                                path: p.clone(),
+                                permanent: false,
+                            });
+                        } else {
+                            self.open_file(p);
+                        }
                         let i = self.editors.active();
                         if self.editors.active_path().as_deref() == Some(p.as_path()) {
                             // 미저장 스냅숏(docs/70 §6 ②): 디스크 해시가 같을 때만 올리고 dirty · 다르면 디스크 본문 그대로.
@@ -3474,7 +3528,25 @@ impl App {
                 self.bm_sync_ui();
             }
         }
-        let n = ids.iter().flatten().count();
+        // 복원 목록에 없던 옛 탭 닫기(위 주석) — 복원으로 재사용된 탭(같은 파일)은 남는다.
+        let restored: Vec<u64> = ids.iter().flatten().copied().collect();
+        for id in old_ids.into_iter().rev() {
+            if restored.contains(&id) {
+                continue;
+            }
+            let Some(i) = self.editors.index_of_id(id) else {
+                continue;
+            };
+            if !self.editors.is_dirty(i) || prev_saved {
+                self.editors.close_tab_forced(i);
+            }
+        }
+        if let Some(Some(id)) = ids.get(self.project.active) {
+            self.editors.switch_to_id(*id);
+            self.sync_grid_tab();
+        }
+        self.project_restore_panels();
+        let n = restored.len();
         self.sess.status = if restored_dirty > 0 {
             tf(
                 Msg::StProjectRestoredDirty,
@@ -3483,7 +3555,50 @@ impl App {
         } else {
             tf(Msg::StProjectRestored, &[&n.to_string()])
         };
+        if !self.project.profiles.is_empty() {
+            // 접속은 표식만(docs/70 §2) — 어디에 붙어 있었는지 알려 주고 접속은 사용자가.
+            let msg = tf(
+                Msg::StProjectPrevProfiles,
+                &[&self.project.profiles.join(", ")],
+            );
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.toasts
+                .push(toast::ToastKind::Info, t(Msg::MnProject).to_string(), msg);
+        }
         self.project_last_json = self.project.to_json();
+        self.sync_open_files();
+        self.layout();
+        self.redraw();
+    }
+
+    /// 좌측 패널 상태 복원(사용자 09-23 "각 좌측 기능별"): 탐색기 펼침(선택은 `set_project`가) · 검색어 · 북마크 접힘 · 보이던 패널.
+    fn project_restore_panels(&mut self) {
+        let expanded = self.project.expanded.clone();
+        if !expanded.is_empty() {
+            self.project_panel.expand_dirs(&expanded);
+            if let Some(sel) = self.project.last_selected.clone() {
+                self.project_panel.reveal(&sel);
+            }
+        }
+        if let Some(q) = self.project.search.clone() {
+            self.search.set_query_text(&q);
+        }
+        let folded = self.project.bm_collapsed.clone();
+        if !folded.is_empty() {
+            self.bm_panel.set_collapsed_groups(folded);
+        }
+        let want = match self.project.panel.as_deref() {
+            Some("project") => Some(("view.project", self.project_panel.is_visible())),
+            Some("bookmarks") => Some(("view.bookmarks", self.bm_panel.is_visible())),
+            Some("search") => Some(("view.search", self.search.is_visible())),
+            Some("ext") => Some(("view.extensions", self.ext_panel.is_visible())),
+            _ => None,
+        };
+        if let Some((cmd, visible)) = want {
+            if !visible {
+                self.menu_action(cmd);
+            }
+        }
     }
 
     /// 저장된 캐럿을 지금 본문에 맞춘다 — 앵커가 있으면 북마크와 같은 fuzzy 재탐색(줄 이동 · 못 찾으면 저장된 줄).
@@ -3595,7 +3710,8 @@ impl App {
             self.project.last_selected = Some(p);
         }
         if save {
-            if let Err(e) = self.project.save() {
+            // 폴더 추가/제거 때도 작업 환경을 담아 쓴다(탭 목록이 비거나 묵던 결함 · 사용자 09-23).
+            if let Err(e) = self.project_save() {
                 self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
             }
         }
@@ -3629,6 +3745,8 @@ impl App {
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.editors
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
+        self.bm_panel
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
     }
 
     /// 기동 시작 모드(사용자 09-22 · [`startup_project_plan`]): 기본 = **파일 모드**(프로젝트 없음) · 인자 `.nsql-project` =
@@ -3648,7 +3766,8 @@ impl App {
         match project::Project::load(&path) {
             Ok(proj) => {
                 if from_arg {
-                    self.project_set(proj);
+                    // 복원은 기동 마지막(`project_restore` 호출부)에서 한 번 — 여기서 하면 두 번 열린다.
+                    self.project_set(proj, false);
                 } else {
                     self.project = proj;
                     self.project_panel.set_project(
@@ -8715,7 +8834,13 @@ impl App {
                 "editor.tab_line_scratch",
                 Some(self.theme.warn),
             ),
-            pick(&self.settings, "editor.tab_line_file", None),
+            // ★ 파일 탭은 테마 강조색을 **명시**한다 — `None`은 탭 바에서 "바 공통 accent"(= 활성 탭의 유형 색)로 떨어져
+            //   미저장 탭이 활성인 채 파일 탭을 묶으면 파일 탭 줄까지 주황이 됐다(사용자 09-23 "각 탭의 색을 유지").
+            pick(
+                &self.settings,
+                "editor.tab_line_file",
+                Some(self.theme.accent),
+            ),
             pick(
                 &self.settings,
                 "editor.tab_line_preview",
@@ -11960,7 +12085,7 @@ impl App {
     fn bm_pump(&mut self) {
         while let Some(a) = self.bm_panel.take_action() {
             match a {
-                bookmarks_panel::BmAction::Goto(id) => self.bm_goto(id),
+                bookmarks_panel::BmAction::Goto(id, permanent) => self.bm_goto(id, permanent),
                 bookmarks_panel::BmAction::Remove(id) => {
                     if let Some(b) = self.bookmarks.remove(id) {
                         self.bm_removed_toast(1, &b.display());
@@ -12039,17 +12164,18 @@ impl App {
     }
 
     /// 북마크로 이동 — 열린 탭이면 전환 · 파일이면 열고 · 그 줄로.
-    fn bm_goto(&mut self, id: u64) {
+    /// 북마크로 이동 — `permanent` = 정식 탭(더블클릭·Enter·메뉴 Open · 이미 미리보기로 열려 있으면 승격) ·
+    /// false = 미리보기 탭(한 번 클릭 · 69 B4b · 프로젝트 탐색기와 같은 규칙 `project.preview_tab` · 편집하면 승격).
+    fn bm_goto(&mut self, id: u64, permanent: bool) {
         let Some(b) = self.bookmarks.store.get(id).cloned() else {
             return;
         };
         let mut idx = self.bm_tab_of(&b.doc);
-        if idx.is_none() {
-            if let nsql_bookmarks::DocKey::File { path } = &b.doc {
-                // 북마크 패널에서 연 파일 = **미리보기 탭**(69 B4b · 프로젝트 탐색기와 같은 규칙 `project.preview_tab` · 편집하면 승격).
+        if let nsql_bookmarks::DocKey::File { path } = &b.doc {
+            if idx.is_none() || permanent {
                 self.project_open_req(project_panel::OpenReq {
                     path: PathBuf::from(path),
-                    permanent: false,
+                    permanent,
                 });
                 idx = self.bm_tab_of(&b.doc);
             }

@@ -1931,7 +1931,8 @@ impl Editors {
     /// 유형별 활성 줄 색(호스트가 설정·테마로 계산해 준다).
     pub(crate) fn set_tab_line_colors(&mut self, c: [Option<nexa_ctl::Color>; 3]) {
         self.tab_line = c;
-        self.sync_tab_line();
+        // 바 공통 색만이 아니라 **탭별 색 벡터**도 같이(설정·테마가 바뀌면 묶인 탭의 줄도 바로 따라가야 한다).
+        self.sync_badges();
     }
 
     /// 활성 탭의 유형에 맞는 줄 색을 탭 바에 반영(전환·동기화·설정 변경 때).
@@ -2564,6 +2565,29 @@ mod split_tests {
         assert!(!ed.tabs.is_grouped(base));
         ed.tab_click(base, false, false);
         assert!((0..ed.len()).all(|i| !ed.tabs.is_grouped(i)));
+    }
+
+    /// 묶인 탭의 상단 줄 = **각 탭 자기 유형 색**(미저장 = 경고색 · 파일 = 강조색 · 사용자 09-23 "각 탭의 색을 유지").
+    #[test]
+    fn grouped_tabs_keep_their_own_kind_color() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        let base = ed.len() - 1;
+        let (warn, accent, dim) = (
+            nexa_ctl::Color(0xFF8000),
+            nexa_ctl::Color(0x0064FF),
+            nexa_ctl::Color(0x5A5A5A),
+        );
+        ed.set_tab_line_colors([Some(warn), Some(accent), Some(dim)]);
+        ed.open_file(Path::new("C:/x/a.sql"), "-- a".into(), Eol::Lf);
+        let file = ed.active();
+        ed.tab_click(base, true, false); // Shift+클릭 = 둘을 묶는다.
+        assert!(ed.tabs.is_grouped(base) && ed.tabs.is_grouped(file));
+        assert_eq!(ed.tabs.tab_color(base), Some(warn), "scratch keeps warn");
+        assert_eq!(ed.tabs.tab_color(file), Some(accent), "file keeps accent");
+        // 색 설정이 뒤에 바뀌어도 탭별 색이 같이 따라온다.
+        let warn2 = nexa_ctl::Color(0xC80000);
+        ed.set_tab_line_colors([Some(warn2), Some(accent), Some(dim)]);
+        assert_eq!(ed.tabs.tab_color(base), Some(warn2));
     }
 
     /// MC/DC — 수식키 없음 · Ctrl 추가/제거/상한/활성 제거 · Shift 앞·뒤·상한 · 범위 밖.

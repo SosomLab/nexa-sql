@@ -261,12 +261,13 @@ Run-Scenario -Id S50 -Title "필터 Path 토글 = 경로 일치(§81)" -Cmd ("pr
 # §89 작업 환경 복원: 프로젝트 파일의 tabs(파일 + 미저장 스크립트 본문 + 캐럿 앵커) · active · 북마크 → 로딩 때 복원 · OPEN FILES 섹션.
 $projWs = Join-Path $DataDir "fc-ws.nsql-project"
 $ql = $qLines.Replace('\', '/')
-Set-Content -LiteralPath $projWs -Encoding UTF8 -Value ("{ `"version`": 1, `"folders`": [ { `"path`": `".`" } ], `"active`": 1, `"tabs`": [ { `"path`": `"" + $ql + "`", `"title`": `"q_lines.sql`", `"line`": 40, `"col`": 0, `"anchor`": `"SELECT 41;`", `"before`": `"SELECT 40;`", `"after`": `"SELECT 42;`" }, { `"title`": `"Notes`", `"line`": 1, `"col`": 0, `"text`": `"-- restored scratch\nSELECT 'ws';`" } ], `"bookmarks`": { `"version`": 1, `"next_id`": 2, `"next_group`": 2, `"groups`": [ { `"id`": 1, `"name`": `"`", `"default`": true, `"enabled`": true } ], `"items`": [ { `"id`": 1, `"doc`": { `"file`": `"" + $ql + "`" }, `"line`": 4, `"col`": 0, `"text`": `"SELECT 5;`", `"before`": `"SELECT 4;`", `"after`": `"SELECT 6;`", `"hash`": `"0`", `"lines`": 150, `"group`": 1, `"shared`": false, `"state`": `"live`", `"created`": 0, `"visited`": 0 } ] } }")
+$projWsJson = ("{ `"version`": 1, `"folders`": [ { `"path`": `".`" } ], `"active`": 1, `"panel`": `"bookmarks`", `"profiles`": [ `"Local`" ], `"tabs`": [ { `"path`": `"" + $ql + "`", `"title`": `"q_lines.sql`", `"line`": 40, `"col`": 0, `"anchor`": `"SELECT 41;`", `"before`": `"SELECT 40;`", `"after`": `"SELECT 42;`" }, { `"title`": `"Notes`", `"line`": 1, `"col`": 0, `"text`": `"-- restored scratch\nSELECT 'ws';`" } ], `"bookmarks`": { `"version`": 1, `"next_id`": 2, `"next_group`": 2, `"groups`": [ { `"id`": 1, `"name`": `"`", `"default`": true, `"enabled`": true } ], `"items`": [ { `"id`": 1, `"doc`": { `"file`": `"" + $ql + "`" }, `"line`": 4, `"col`": 0, `"text`": `"SELECT 5;`", `"before`": `"SELECT 4;`", `"after`": `"SELECT 6;`", `"hash`": `"0`", `"lines`": 150, `"group`": 1, `"shared`": false, `"state`": `"live`", `"created`": 0, `"visited`": 0 } ] } }")
+Set-Content -LiteralPath $projWs -Encoding UTF8 -Value $projWsJson
 Run-Scenario -Id S51 -Title "프로젝트 로딩 = 작업 환경 복원 + OPEN FILES(§89)" -Cmd ("project.load:" + $projWs + ",@after:1500:view.project") -WaitMs 4500 -Expect "탭 = Script_1 · q_lines.sql · Notes(활성 · 본문 '-- restored scratch') · 패널 OPEN FILES 3줄(Notes 강조) · 상태줄 '탭 2개 복원' · q_lines 캐럿 41행(앵커) · 북마크 5행 띠"
 # §75 🔧 풀다운 Project ▸ 새 프로젝트 저장… = 파일 창(메뉴바 픽 → menu_action → project_cmd · 사용자 09-22 "풀다운에서 아무 동작이 없다").
 Run-Scenario -Id S37 -Title "풀다운 Project ▸ Save New Project… = 파일 저장 창(§75)" -Cmd ("open:" + $qLines + ",@after:1000:ui.click:75/14,@after:1600:ui.click:120/48") -WaitMs 4500 -Expect "창 2 = 메인 + 파일 저장 창(제목 Save Project · 이름 칸 .nsql-project)"
 # §74 CLI ↔ GUI 공유(B8) + 미니맵 틱 · 줄 끝 라벨(U-2): 워크스페이스를 비운 뒤 CLI로 심고 GUI가 같은 파일을 읽는다.
-if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S36")) {
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S36") -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S54") -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S55")) {
     $ws = Join-Path $HomeDir "workspaces\default.nsql-workspace"
     if (Test-Path -LiteralPath $ws) { Remove-Item -LiteralPath $ws -Force }
     $env:NSQL_HOME = $HomeDir
@@ -276,4 +277,18 @@ if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains 
     & $Cli bookmark list 2>$null | ForEach-Object { Say ("  cli: " + $_) }
 }
 Run-Scenario -Id S36 -Title "CLI로 심은 북마크 = 거터·미니맵 틱·줄 끝 라벨(§74)" -Cmd ("open:" + $qLines) -WaitMs 4000 -Expect "거터 2·5줄 색 띠 · 2줄 끝 '◆ monthly totals' 흐린 글 · 미니맵 오른쪽 가장자리 점 셋(120줄 = 화면 밖) · 상태줄 '북마크 3/3'"
+# §92 프로젝트 저장 = 작업 환경을 담아서(탭 경로) · 저장을 거듭해도 탭이 늘지 않는다(사용자 09-23 "저장 누를 때마다 탭 추가").
+$projSave = Join-Path $DataDir "fc-save.nsql-project"
+Set-Content -LiteralPath $projSave -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `".`" } ] }"
+Run-Scenario -Id S52 -Title "프로젝트 저장 3번 = 탭 그대로 · 파일에 탭 경로(§92)" -Cmd ("project.load:" + $projSave + ",open:" + $a + ",open:" + $b + ",@after:1000:view.project,@after:1800:project.save,@after:2600:project.save,@after:3400:project.save") -WaitMs 5000 -Expect "탭 = Script_1 · a.sql · b.sql 셋뿐(저장 3번 뒤에도 추가 없음) · OPEN FILES 3줄"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S52")) {
+$savedTxt = if (Test-Path -LiteralPath $projSave) { Get-Content -LiteralPath $projSave -Raw } else { "" }
+Say ("  file: tabs=" + ($savedTxt -match '"tabs"') + " a.sql=" + ($savedTxt -match '"path": "a\.sql"') + " b.sql=" + ($savedTxt -match '"path": "b\.sql"') + " expanded=" + ($savedTxt -match '"expanded"') + " panel=" + ($savedTxt -match '"panel": "project"'))
+}
+# §92 프로젝트 로딩 = 작업 환경 **교체**(복원 목록에 없던 깨끗한 탭은 닫힘) + 보이던 패널(북마크) + 접속 표식 토스트.
+Set-Content -LiteralPath $projWs -Encoding UTF8 -Value $projWsJson
+Run-Scenario -Id S53 -Title "프로젝트 로딩 = 옛 탭 닫고 교체 · 패널·접속 표식 복원(§92)" -Cmd ("open:" + $a + ",@after:1200:project.load:" + $projWs) -WaitMs 3200 -Expect "탭 = q_lines.sql · Notes만(Script_1·a.sql 닫힘) · 북마크 패널 열림 · 토스트 '마지막 접속: Local' · 상태줄 '탭 2개 복원'"
+# §92 북마크 패널: 한 번 클릭 = 미리보기 탭(◦) · 더블클릭 = 정식 탭(프로젝트 탐색기와 같은 규칙 · 사용자 09-23).
+Run-Scenario -Id S54 -Title "북마크 패널 더블클릭 = 정식 탭(§92)" -Cmd "view.bookmarks,@after:1500:ui.dclick:150/182" -WaitMs 4000 -Expect "탭 q_lines.sql(◦ 없음 · 정식) · 캐럿 2줄"
+Run-Scenario -Id S55 -Title "북마크 패널 한 번 클릭 = 미리보기 탭(§92)" -Cmd "view.bookmarks,@after:1500:ui.click:150/182" -WaitMs 4000 -Expect "탭 ◦ q_lines.sql(미리보기) · 캐럿 2줄"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

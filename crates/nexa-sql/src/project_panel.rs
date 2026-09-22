@@ -462,6 +462,43 @@ impl ProjectPanel {
         false
     }
 
+    /// 지금 펼쳐진 폴더들(루트 포함 · 트리 순서) — 프로젝트 파일에 저장(사용자 09-23 "좌측 기능별 복원").
+    pub(crate) fn expanded_dirs(&self) -> Vec<PathBuf> {
+        self.nodes
+            .iter()
+            .filter(|n| n.is_dir && n.expanded && n.loaded && !n.error)
+            .map(|n| n.path.clone())
+            .collect()
+    }
+
+    /// 저장된 펼침 상태를 되살린다 — 각 폴더까지 조상을 따라 펼친다(선택·스크롤은 건드리지 않음 · 없는 폴더는 건너뜀).
+    pub(crate) fn expand_dirs(&mut self, dirs: &[PathBuf]) {
+        for path in dirs {
+            let root = self
+                .roots
+                .iter()
+                .copied()
+                .find(|&r| path.starts_with(&self.nodes[r].path));
+            let Some(mut cur) = root else { continue };
+            loop {
+                self.expand(cur);
+                if self.nodes[cur].path == *path {
+                    break;
+                }
+                let next = self.nodes[cur]
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&c| self.nodes[c].is_dir && path.starts_with(&self.nodes[c].path));
+                match next {
+                    Some(c) => cur = c,
+                    None => break,
+                }
+            }
+        }
+        self.rebuild_rows();
+    }
+
     pub(crate) fn set_focused(&mut self, on: bool) {
         if !on {
             self.filter.set_focused(false);

@@ -20,7 +20,8 @@ use std::time::Instant;
 /// 패널이 낸 요청.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BmAction {
-    Goto(u64),
+    /// 북마크로 이동 · `permanent` = 정식 탭으로(더블클릭 · Enter · 메뉴 Open) · false = 미리보기 탭(한 번 클릭 · 프로젝트 탐색기와 같은 규칙 · 사용자 09-23).
+    Goto(u64, bool),
     Remove(u64),
     Rename(u64, String),
     SelectAllInDoc(DocKey),
@@ -84,6 +85,9 @@ pub(crate) struct BookmarksPanel {
     /// 선택 없음일 때의 캐럿 행(빈 곳 클릭 · 테두리만 · 키 이동 시작점 · 사용자 09-23).
     caret: Option<usize>,
     hover: Option<(usize, Instant)>,
+    /// 더블클릭 감지(행 · 첫 클릭 시각) · 간격 = `ui.dblclick_ms`(프로젝트 탐색기와 같은 부품 규칙).
+    last_click: Option<(usize, Instant)>,
+    dblclick_ms: u128,
     list_rect: Rect,
     header_rect: Rect,
     row_h: i32,
@@ -121,6 +125,8 @@ impl BookmarksPanel {
             sel: None,
             caret: None,
             hover: None,
+            last_click: None,
+            dblclick_ms: 400,
             list_rect: Rect::default(),
             header_rect: Rect::default(),
             row_h: 22,
@@ -404,11 +410,28 @@ impl BookmarksPanel {
             .unwrap_or(nsql_bookmarks::DEFAULT_GROUP)
     }
 
-    fn activate(&mut self, r: usize) {
+    /// 행 활성화 — 항목 = 이동(`permanent` = 정식 탭 · 아니면 미리보기) · 그룹/문서 = 접기 토글.
+    fn activate(&mut self, r: usize, permanent: bool) {
         match self.rows.get(r).cloned() {
-            Some(Row::Item { id, .. }) => self.actions.push(BmAction::Goto(id)),
+            Some(Row::Item { id, .. }) => self.actions.push(BmAction::Goto(id, permanent)),
             Some(Row::Group { .. } | Row::Doc { .. }) => self.toggle_fold(r),
             None => {}
+        }
+    }
+
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
+    }
+
+    /// 접은 그룹 id들(프로젝트 파일에 저장 · 사용자 09-23 "좌측 기능별 복원").
+    pub(crate) fn collapsed_groups(&self) -> Vec<u32> {
+        self.collapsed_groups.clone()
+    }
+
+    pub(crate) fn set_collapsed_groups(&mut self, ids: Vec<u32>) {
+        if self.collapsed_groups != ids {
+            self.collapsed_groups = ids;
+            self.rebuild();
         }
     }
 
@@ -521,7 +544,7 @@ impl BookmarksPanel {
         match id {
             "open" => {
                 if let Some(i) = item_id {
-                    self.actions.push(BmAction::Goto(i));
+                    self.actions.push(BmAction::Goto(i, true));
                 }
             }
             "rename" | "grp.rename" => {
@@ -544,7 +567,7 @@ impl BookmarksPanel {
                 if let Some(Row::Doc { key, .. }) = row {
                     let act = match id {
                         "doc.open" => match self.items.iter().find(|b| b.doc == key) {
-                            Some(b) => BmAction::Goto(b.id),
+                            Some(b) => BmAction::Goto(b.id, true),
                             None => return,
                         },
                         "doc.select" => BmAction::SelectAllInDoc(key),
@@ -697,8 +720,12 @@ impl BookmarksPanel {
                 }
                 if let Some(r) = self.row_at(p) {
                     self.sel = Some(r);
+                    // 같은 행을 `dblclick_ms` 안에 다시 = 더블클릭 → 정식 탭(프로젝트 탐색기와 같은 규칙 · 사용자 09-23) · 세 번째는 새 시작.
+                    let now = Instant::now();
+                    let dbl = matches!(self.last_click, Some((j, t0)) if j == r && now.duration_since(t0).as_millis() < self.dblclick_ms);
+                    self.last_click = if dbl { None } else { Some((r, now)) };
                     match self.rows.get(r) {
-                        Some(Row::Item { .. }) => self.activate(r),
+                        Some(Row::Item { .. }) => self.activate(r, dbl),
                         _ => {
                             // 셰브론 자리(왼쪽)를 누르면 접기 · 그 밖은 선택만.
                             if x < self.list_rect.x + self.px(22.0) + self.row_indent(r) {
@@ -781,7 +808,8 @@ impl BookmarksPanel {
                                     }
                                 }
                             } else {
-                                self.activate(r);
+                                // Enter = 정식 탭(프로젝트 탐색기 Enter와 같음).
+                                self.activate(r, true);
                             }
                         }
                         true
@@ -1081,5 +1109,81 @@ impl BookmarksPanel {
             self.scroll_y,
             self.scale,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn panel_with_one_item() -> (BookmarksPanel, usize) {
+        let mut p = BookmarksPanel::new();
+        p.set_visible(true);
+        p.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        let mut store = Store::new();
+        let anchor = nsql_bookmarks::make_anchor(
+            &["a", "b", "c"],
+            1,
+            0,
+            &nsql_bookmarks::RelocateOpts::default(),
+        );
+        store
+            .add(
+                DocKey::File {
+                    path: "C:/x/a.sql".into(),
+                },
+                anchor,
+                1,
+                true,
+                100,
+                1000,
+            )
+            .expect("add");
+        p.sync(&store);
+        let r = p
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Item { .. }))
+            .expect("item row");
+        (p, r)
+    }
+
+    /// 한 번 클릭 = 미리보기(`permanent=false`) · 같은 행을 간격 안에 다시 = 정식 탭(`true`) · 세 번째는 새 시작(사용자 09-23).
+    #[test]
+    fn single_click_preview_double_click_permanent() {
+        let (mut p, r) = panel_with_one_item();
+        let y = p.list_rect.y + r as i32 * p.row_h + p.row_h / 2;
+        let x = p.list_rect.x + 120;
+        let down = InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        };
+        p.on_event(&down);
+        p.on_event(&down);
+        p.on_event(&down);
+        let acts: Vec<BmAction> = std::iter::from_fn(|| p.take_action()).collect();
+        let flags: Vec<bool> = acts
+            .iter()
+            .map(|a| match a {
+                BmAction::Goto(_, perm) => *perm,
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(flags, vec![false, true, false]);
+    }
+
+    /// Enter = 정식 탭(프로젝트 탐색기 Enter와 같음).
+    #[test]
+    fn enter_opens_permanent() {
+        let (mut p, r) = panel_with_one_item();
+        p.sel = Some(r);
+        p.on_event(&InputEvent::Key {
+            key: CtlKey::Enter,
+            shift: false,
+            primary: false,
+        });
+        assert!(matches!(p.take_action(), Some(BmAction::Goto(_, true))));
     }
 }

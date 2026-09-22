@@ -24,6 +24,14 @@ pub(crate) struct Project {
     pub tabs: Vec<TabState>,
     pub active: usize,
     pub bookmarks: Option<String>,
+    /// ★ 좌측 패널 상태(사용자 09-23 "각 좌측 기능별로 복원"): 프로젝트 탐색기에서 **펼친 폴더**(절대 · 저장은 상대) ·
+    /// 보이던 좌측 패널(`project`/`bookmarks`/`search`/`ext`/`explorer`) · 파일 검색어 · 북마크 패널에서 접은 그룹 id ·
+    /// 마지막 접속 프로필 이름(**표식만** — 복원 때 재접속하지 않는다 · docs/70 §2).
+    pub expanded: Vec<PathBuf>,
+    pub panel: Option<String>,
+    pub search: Option<String>,
+    pub bm_collapsed: Vec<u32>,
+    pub profiles: Vec<String>,
 }
 
 /// 편집기 탭 하나의 저장 상태(docs/67 §2-4 · 사용자 09-23).
@@ -40,6 +48,8 @@ pub(crate) struct TabState {
     pub anchor_text: String,
     pub before: String,
     pub after: String,
+    /// 미리보기 탭이었나(북마크·탐색기 한 번 클릭) — 복원도 미리보기로(사용자 09-23).
+    pub preview: bool,
 }
 
 impl Project {
@@ -105,10 +115,61 @@ impl Project {
                                 ("anchor", Json::Str(s)) => t.anchor_text = s.clone(),
                                 ("before", Json::Str(s)) => t.before = s.clone(),
                                 ("after", Json::Str(s)) => t.after = s.clone(),
+                                ("preview", Json::Bool(b)) => t.preview = *b,
                                 _ => {}
                             }
                         }
                         p.tabs.push(t);
+                    }
+                }
+                continue;
+            }
+            if k == "expanded" {
+                if let Json::Arr(items) = v {
+                    for it in items {
+                        if let Json::Str(s) = it {
+                            if !s.trim().is_empty() {
+                                p.expanded.push(resolve(s, base.as_deref()));
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            if k == "panel" {
+                if let Json::Str(s) = v {
+                    if !s.trim().is_empty() {
+                        p.panel = Some(s.clone());
+                    }
+                }
+                continue;
+            }
+            if k == "search" {
+                if let Json::Str(s) = v {
+                    if !s.is_empty() {
+                        p.search = Some(s.clone());
+                    }
+                }
+                continue;
+            }
+            if k == "bm_collapsed" {
+                if let Json::Arr(items) = v {
+                    for it in items {
+                        if let Json::Num(n) = it {
+                            p.bm_collapsed.push((*n).max(0.0) as u32);
+                        }
+                    }
+                }
+                continue;
+            }
+            if k == "profiles" {
+                if let Json::Arr(items) = v {
+                    for it in items {
+                        if let Json::Str(s) = it {
+                            if !s.trim().is_empty() {
+                                p.profiles.push(s.clone());
+                            }
+                        }
                     }
                 }
                 continue;
@@ -198,9 +259,41 @@ impl Project {
                 if let Some(txt) = &t.text {
                     out.push_str(&format!(", \"text\": \"{}\"", escape(txt)));
                 }
+                if t.preview {
+                    out.push_str(", \"preview\": true");
+                }
                 out.push_str(" }");
             }
             out.push_str("\n  ]");
+        }
+        // 좌측 패널 상태(사용자 09-23) — 비어 있으면 키를 쓰지 않는다(파일은 짧게 · 옛 파일과 호환).
+        if !self.expanded.is_empty() {
+            out.push_str(",\n  \"expanded\": [");
+            for (i, d) in self.expanded.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!("\"{}\"", escape(&relativize(d, base.as_deref()))));
+            }
+            out.push(']');
+        }
+        if let Some(p) = self.panel.as_deref().filter(|s| !s.is_empty()) {
+            out.push_str(&format!(",\n  \"panel\": \"{}\"", escape(p)));
+        }
+        if let Some(s) = self.search.as_deref().filter(|s| !s.is_empty()) {
+            out.push_str(&format!(",\n  \"search\": \"{}\"", escape(s)));
+        }
+        if !self.bm_collapsed.is_empty() {
+            let ids: Vec<String> = self.bm_collapsed.iter().map(u32::to_string).collect();
+            out.push_str(&format!(",\n  \"bm_collapsed\": [{}]", ids.join(", ")));
+        }
+        if !self.profiles.is_empty() {
+            let names: Vec<String> = self
+                .profiles
+                .iter()
+                .map(|n| format!("\"{}\"", escape(n)))
+                .collect();
+            out.push_str(&format!(",\n  \"profiles\": [{}]", names.join(", ")));
         }
         if let Some(b) = &self.bookmarks {
             out.push_str(",\n  \"bookmarks\": ");
@@ -352,10 +445,25 @@ mod tests {
         ];
         p.active = 1;
         p.bookmarks = Some("{\"version\": 1, \"items\": []}".into());
+        // 좌측 패널 상태 + 미리보기 표식(사용자 09-23) — 상대 경로로 쓰고 절대로 돌아온다.
+        p.tabs[0].preview = true;
+        p.expanded = vec![dir.join("sql"), other.join("x")];
+        p.panel = Some("bookmarks".into());
+        p.search = Some("select \"q\"".into());
+        p.bm_collapsed = vec![0, 7];
+        p.profiles = vec!["BISCM".into(), "Local".into()];
         p.save().unwrap();
+        let text = p.to_json();
+        assert!(text.contains("\"preview\": true"), "{text}");
+        assert!(text.contains("\"expanded\": [\"sql\", "), "{text}");
         let back = Project::load(&file).unwrap();
         assert_eq!(back.tabs, p.tabs);
         assert_eq!(back.active, 1);
+        assert_eq!(back.expanded, p.expanded);
+        assert_eq!(back.panel.as_deref(), Some("bookmarks"));
+        assert_eq!(back.search.as_deref(), Some("select \"q\""));
+        assert_eq!(back.bm_collapsed, vec![0, 7]);
+        assert_eq!(back.profiles, p.profiles);
         assert!(back
             .bookmarks
             .as_deref()

@@ -195,6 +195,17 @@ impl SearchPanel {
         }
     }
 
+    /// 검색어(프로젝트 파일에 저장 · 사용자 09-23 "좌측 기능별 복원").
+    pub(crate) fn query_text(&self) -> String {
+        self.query.text()
+    }
+
+    pub(crate) fn set_query_text(&mut self, s: &str) {
+        if self.query.text() != s {
+            self.query.set_text(s);
+        }
+    }
+
     pub(crate) fn bounds(&self) -> Rect {
         if self.visible {
             self.bounds
