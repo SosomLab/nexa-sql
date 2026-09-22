@@ -109,6 +109,15 @@ pub(crate) enum ConnOutcome {
         stop: Option<FetchStop>,
         /// 결과가 **처음부터 다시 받은 전체**라 그리드가 교체해야 한다(엄격 모드 · 위치는 유지).
         replace: bool,
+        /// 커서에서 이어 읽었다(새 SQL 없음 · docs/43 §11) — 아니면 OFFSET 재질의/재실행이었다.
+        via_cursor: bool,
+    },
+    /// ★ 재질의 알림(docs/43 §11 · 사용자 09-22): 커서가 없어 **새 SQL을 서버에 보내기 직전** — 호스트가 실행 상태 카드를 켠다.
+    Requery {
+        key: u64,
+        offset: usize,
+        /// 0 = 전체(나머지 끝까지).
+        limit: usize,
     },
     /// 전체 조회 진행(배치마다 · T-48b): 지금까지 받은 행·바이트.
     FetchProgress {
@@ -760,6 +769,7 @@ pub(crate) fn spawn(
                     } => {
                         let mut stop: Option<FetchStop> = None;
                         let mut replace = false;
+                        let mut via_cursor = false;
                         let alive = ensure_alive(
                             &mut runner,
                             &active_spec,
@@ -806,6 +816,15 @@ pub(crate) fn spawn(
                                         && cursor_h.is_none()
                                         && (strict_all || !nsql_io::paging::has_order_by(&sql));
                                     replace = strict_replace;
+                                    via_cursor = cursor_h.is_some() && !strict_replace;
+                                    if !via_cursor {
+                                        let _ = ctx_tx.send(ConnOutcome::Requery {
+                                            key,
+                                            offset: if strict_replace { 0 } else { offset },
+                                            limit: 0,
+                                        });
+                                        wake_now();
+                                    }
                                     let rows0 = if strict_replace { 0 } else { offset as u64 };
                                     let mut last = std::time::Instant::now();
                                     let mut progress = |rows: u64, bytes: u64| {
@@ -942,6 +961,12 @@ pub(crate) fn spawn(
                                     //   커서 드라이버는 그 자리에 커서를 남겨 다음 세그먼트부터는 커서로 잇는다.
                                     replace = true;
                                     let need = offset + limit;
+                                    let _ = ctx_tx.send(ConnOutcome::Requery {
+                                        key,
+                                        offset: 0,
+                                        limit: need,
+                                    });
+                                    wake_now();
                                     let t0 = std::time::Instant::now();
                                     let r: Result<
                                         (nsql_core::ResultSet, bool, Duration),
@@ -972,9 +997,22 @@ pub(crate) fn spawn(
                                     r.map_err(|e| e.message)
                                 } else {
                                     // 같은 문장의 커서가 그 위치에 있으면 fetch_next · 아니면 OFFSET 재질의(limit+1행 · 09-16 more 규칙).
+                                    if !(runner.cursor_matches(&sql, offset)
+                                        && runner.cursor().is_some())
+                                    {
+                                        let _ = ctx_tx.send(ConnOutcome::Requery {
+                                            key,
+                                            offset,
+                                            limit,
+                                        });
+                                        wake_now();
+                                    }
                                     runner
                                         .fetch_page(&sql, offset, limit)
-                                        .map(|(rs, more, tl, _)| (rs, more, tl.total()))
+                                        .map(|(rs, more, tl, via)| {
+                                            via_cursor = via;
+                                            (rs, more, tl.total())
+                                        })
                                         .map_err(|e| e.message)
                                 }
                             }
@@ -986,6 +1024,7 @@ pub(crate) fn spawn(
                             result,
                             stop,
                             replace,
+                            via_cursor,
                         });
                         wake_now();
                         true

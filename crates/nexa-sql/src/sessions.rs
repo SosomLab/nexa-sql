@@ -11,7 +11,6 @@
 //! 전부 [`Sess::blocked`] 하나로 막힌다. 공유 세션이면 그 세션을 쓰는 **모든 탭**이 함께 막히고, 탭 전용 세션이면 그 탭만 막힌다.
 //! 중지(■)·접속 해제만 예외(막힌 상태를 푸는 동작).
 
-use crate::runtoast::RunToast;
 use crate::worker;
 use nsql_core::Dialect;
 use nsql_i18n::Msg;
@@ -138,7 +137,10 @@ pub(crate) struct Sess {
     pub run_cancel_drops: bool,
     pub last_rows: Option<usize>,
     pub last_secs: Option<f64>,
-    pub run_toast: RunToast,
+    /// ★ 이 세션의 실행 카드 id(앱 공용 스택 `App.run_toast` 안 · docs/43 §11 · 09-22) — 진행 갱신은 이 id로.
+    pub run_card: Option<u64>,
+    /// ★ 실행 카드가 지금 **페치/건수**의 것(결과 탭 키 · 시작 시각 · docs/43 §11) — 그 결과가 오면 카드를 끝낸다.
+    pub fetch_card: Option<(u64, std::time::Instant)>,
     // Oracle 라이브 로그(T-71) — 공유(탐색기와 짝인) 세션만 쓴다.
     pub live_sid: Option<String>,
     pub live_next: Instant,
@@ -211,7 +213,8 @@ impl Sess {
             run_cancel_drops: false,
             last_rows: None,
             last_secs: None,
-            run_toast: RunToast::new(),
+            run_card: None,
+            fetch_card: None,
             live_sid: None,
             live_next: now,
             live_since: None,
@@ -1472,5 +1475,25 @@ mod tests {
         i.private = false;
         i.include_shared = true;
         assert_eq!(idle_action(i), IdleAction::Close);
+    }
+}
+
+/// ★ 실행 카드 정책(docs/43 §11 · 사용자 09-22 "서버에 새 SQL이 가면 카드 · 커서 이어 읽기는 상태줄/로그만"):
+/// 전체 조회는 길 수 있어 커서여도 카드 · 건수는 늘 새 SQL · 다음 페이지는 재질의일 때만.
+pub(crate) fn fetch_card_policy(all: bool, count: bool, via_cursor: bool) -> bool {
+    all || count || !via_cursor
+}
+
+#[cfg(test)]
+mod fetch_card_tests {
+    use super::fetch_card_policy;
+
+    /// MC/DC: 전체 조회(커서여도 참) · 건수(참) · 다음 페이지 = 커서면 거짓 · 재질의면 참.
+    #[test]
+    fn fetch_card_policy_rules() {
+        assert!(fetch_card_policy(true, false, true));
+        assert!(fetch_card_policy(false, true, true));
+        assert!(!fetch_card_policy(false, false, true));
+        assert!(fetch_card_policy(false, false, false));
     }
 }

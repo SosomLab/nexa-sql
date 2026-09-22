@@ -379,6 +379,8 @@ struct App {
     //   활성 탭이 바뀌면 `sync_sess`가 통째로 맞바꾼다. 통제 판정은 `Sess::blocked` 하나.
     sess: Sess,
     parked: Vec<Sess>,
+    /// ★ 실행 카드 스택(앱에 하나 · 전 탭·세션 공유 · 사용자 09-22).
+    run_toast: runtoast::RunToast,
     next_sess_id: u64,
     /// 탭 → 공유 세션 선택(없으면 `default_shared`). 전용 세션은 `Sess::owner`가 우선한다.
     tab_bind: HashMap<u64, u64>,
@@ -1267,11 +1269,26 @@ impl App {
                         self.finish_view_sql(kind, info.as_ref());
                     }
                 }
+                ConnOutcome::Requery { key, offset, limit } => {
+                    // 커서가 없어 서버에 새 SQL(OFFSET 재질의/재실행)이 간다 — 직접 실행처럼 카드(이미 켜져 있으면 로그만).
+                    let line = tf(Msg::StRequery, &[&offset.to_string(), &limit.to_string()]);
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Info, line.clone()));
+                    if !self.sess.fetch_card.is_some_and(|(k, _)| k == key) {
+                        let sql = self
+                            .grid_for(key)
+                            .map(|g| g.source_sql().to_string())
+                            .unwrap_or_default();
+                        self.fetch_card_start(key, Msg::CardRequery, &sql);
+                    }
+                    self.sess.status = line;
+                    self.redraw();
+                }
                 ConnOutcome::FetchProgress { key, rows, bytes } => {
                     if let Some(g) = self.grid_for(key) {
                         g.set_fetch_progress(rows, bytes);
                     }
-                    self.sess.run_toast.progress(rows, bytes);
+                    self.run_toast.progress(self.sess.run_card, rows, bytes);
                     dlog!(self, LogLayer::Fetch, LogLevel::Progress, {
                         LogEntry::new(
                             LogKind::Fetch,
@@ -1292,8 +1309,18 @@ impl App {
                     result,
                     stop,
                     replace,
+                    via_cursor,
                 } => {
                     self.sess.aux_done();
+                    // 실행 Facade(docs/43 §11): 이 페치의 카드가 켜져 있으면 결과로 끝낸다(실패 = Error).
+                    let card = self.sess.fetch_card.is_some_and(|(k, _)| k == key);
+                    if card {
+                        if let Err(e) = &result {
+                            self.run_toast
+                                .finish(self.sess.run_card, runtoast::Phase::Error(e.clone()));
+                            self.sess.fetch_card = None;
+                        }
+                    }
                     match result {
                         Ok((rs, more, elapsed)) => {
                             let n = rs.rows.len().to_string();
@@ -1323,8 +1350,19 @@ impl App {
                                 // (전체 조회가 예산에서 잘렸으면 아래에서 안내)
                                 None => 0,
                             };
-                            self.sess.status = tf(Msg::StFetched, &[&n, &secs, &total.to_string()]);
-                            if all {
+                            self.sess.status =
+                                if !sessions::fetch_card_policy(all, false, via_cursor) {
+                                    tf(Msg::StFetchedCursor, &[&n, &secs, &total.to_string()])
+                                } else {
+                                    tf(Msg::StFetched, &[&n, &secs, &total.to_string()])
+                                };
+                            if !sessions::fetch_card_policy(all, false, via_cursor) {
+                                // 커서 이어 읽기 = 카드 없이 로그 한 줄(서버에 새 SQL 없음).
+                                self.log_win
+                                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                            }
+                            if all || card {
+                                self.sess.fetch_card = None;
                                 let phase = match stop {
                                     Some(worker::FetchStop::Cancelled) => {
                                         runtoast::Phase::Stopped { rows: total as u64 }
@@ -1335,7 +1373,7 @@ impl App {
                                         stages: String::new(),
                                     },
                                 };
-                                self.sess.run_toast.finish(phase);
+                                self.run_toast.finish(self.sess.run_card, phase);
                                 dlog!(self, LogLayer::Fetch, LogLevel::Timing, {
                                     let b = self.grid_for(key).map_or(0, |g| g.approx_bytes());
                                     LogEntry::new(
@@ -1385,6 +1423,20 @@ impl App {
                 }
                 ConnOutcome::Count { key, result } => {
                     self.sess.aux_done();
+                    if let Some((k, t0)) = self.sess.fetch_card {
+                        if k == key {
+                            self.sess.fetch_card = None;
+                            let phase = match &result {
+                                Ok(n) => runtoast::Phase::Done {
+                                    rows: Some(*n),
+                                    secs: t0.elapsed().as_secs_f64(),
+                                    stages: String::new(),
+                                },
+                                Err(e) => runtoast::Phase::Error(e.clone()),
+                            };
+                            self.run_toast.finish(self.sess.run_card, phase);
+                        }
+                    }
                     match result {
                         Ok(n) => {
                             if let Some(g) = self.grid_for(key) {
@@ -2803,20 +2855,26 @@ impl App {
         ));
         items.push(CtxItem::item("multi.cancel", t(Msg::BtnCancel)));
         self.multi_pending = Some((take, enc));
+        // ★ 화면 **중앙** 모달(사용자 09-22): 한 번 열어 크기를 재고 가운데에 다시 연다 · Enter = 첫 활성 항목(모두 열기).
+        let again = items.clone();
+        self.open_status_popup(Rect::new(0, 0, 0, 0), items);
+        let mb = self.status_menu.bounds();
         let r = self
             .window
             .as_ref()
             .map(|w| {
                 let sz = w.inner_size();
                 Rect::new(
-                    sz.width as i32 / 2 - px(160.0, self.scale),
-                    sz.height as i32 / 3,
+                    (sz.width as i32 - mb.w) / 2,
+                    (sz.height as i32 - mb.h) / 2,
                     0,
                     0,
                 )
             })
             .unwrap_or_default();
-        self.open_status_popup(r, items);
+        let open_idx = again.len().saturating_sub(2); // [정보들 · 구분선 · 열기 · 취소]
+        self.open_status_popup(r, again);
+        self.status_menu.set_default(open_idx); // Enter = 모두 열기(기본 항목 · 테두리 표시)
     }
 
     /// 팝업 항목(`multi.*`).
@@ -3250,6 +3308,15 @@ impl App {
         }
         self.layout();
         self.redraw();
+    }
+
+    /// 우클릭 메뉴 전부 닫기(풀다운과 배타 · 사용자 09-22).
+    fn close_context_menus(&mut self) {
+        self.editors.close_menus();
+        self.status_menu.close();
+        self.explorer.close_menu();
+        self.grid.close_menu();
+        self.panel.close_menu();
     }
 
     /// 옆 패널은 한 번에 하나 — `keep`만 남기고 닫는다(탐색기·파일 검색·확장·프로젝트).
@@ -3738,17 +3805,7 @@ impl App {
         let (w, ev) = self.spawn_worker();
         let id = self.next_sess_id;
         self.next_sess_id += 1;
-        let mut s = Sess::new(id, None, w, ev, DEFAULT_DIALECT);
-        s.run_toast.configure(
-            self.settings.flag("run.toast"),
-            self.settings.int("run.toast_hide_secs"),
-            self.settings.int("ui.toast_alpha"),
-        );
-        s.run_toast.configure_progress(
-            self.settings.flag("ui.toast_progress"),
-            self.settings.int("ui.toast_fade_to"),
-            self.settings.int("ui.toast_bar_spent"),
-        );
+        let s = Sess::new(id, None, w, ev, DEFAULT_DIALECT);
         self.parked.push(s);
         id
     }
@@ -3995,17 +4052,7 @@ impl App {
         let (w, ev) = self.spawn_worker();
         let id = self.next_sess_id;
         self.next_sess_id += 1;
-        let mut s = Sess::new(id, Some(tab), w, ev, DEFAULT_DIALECT);
-        s.run_toast.configure(
-            self.settings.flag("run.toast"),
-            self.settings.int("run.toast_hide_secs"),
-            self.settings.int("ui.toast_alpha"),
-        );
-        s.run_toast.configure_progress(
-            self.settings.flag("ui.toast_progress"),
-            self.settings.int("ui.toast_fade_to"),
-            self.settings.int("ui.toast_bar_spent"),
-        );
+        let s = Sess::new(id, Some(tab), w, ev, DEFAULT_DIALECT);
         self.parked.push(s);
         Some(id)
     }
@@ -4996,7 +5043,11 @@ impl App {
                 );
                 self.apply_run_toast();
             }
-            "run.toast" | "run.toast_hide_secs" => self.apply_run_toast(),
+            "run.toast"
+            | "run.toast_hide_secs"
+            | "run.toast_tick_ms"
+            | "run.toast_follow"
+            | "run.toast_max" => self.apply_run_toast(),
             "net.keepalive_secs" | "session.call_timeout_secs" => self.apply_net_options(),
             "mssql.encrypt" => {
                 nsql_drivers::set_mssql_encryption(self.settings.get(key) == Some("login"))
@@ -5106,6 +5157,7 @@ impl App {
                 let text = self.settings.get(key).unwrap_or("NULL").to_string();
                 self.all_grids().for_each(|g| g.set_null_text(&text));
             }
+            "grid.row_focus" | "grid.row_focus_color" => self.apply_grid_row_focus(),
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "grid.scroll" => {
@@ -5821,6 +5873,8 @@ impl App {
                 });
             }
             grid::FetchReq::All => {
+                // 실행 Facade(docs/43 §11): 전체 조회는 길 수 있어 커서 경로여도 카드.
+                self.fetch_card_start(key, Msg::CardFetchAll, &sql);
                 // 전체 조회 = **나머지 이어 받기**(09-17 위치 유지): offset = 이미 든 행 수 · 예산 = 이 탭 예산에서 든 만큼을 뺀 나머지
                 // (탭별 독립 · 다른 탭을 빼지 않는다 · 이미 넘었으면 1 = 첫 배치 뒤 예산 정지).
                 let remain = budget.saturating_sub(self.grid.approx_bytes()).max(1);
@@ -5834,13 +5888,28 @@ impl App {
                     strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
                 });
             }
-            grid::FetchReq::Count => self.sess.worker.send(worker::Cmd::Count { key, sql }),
+            grid::FetchReq::Count => {
+                // 건수 = 새 SQL(`SELECT COUNT(*) …`) → 카드.
+                self.fetch_card_start(key, Msg::CardCount, &sql);
+                self.sess.worker.send(worker::Cmd::Count { key, sql });
+            }
         }
         self.sess.aux += 1;
         self.sess.touch();
         self.sync_gate();
         self.sess.status = t(Msg::StFetching).into();
         self.redraw();
+    }
+
+    /// ★ 페치/건수의 실행 상태 카드 시작(docs/43 §11 실행 Facade): 직접 실행과 같은 카드 · 결과(`Page`/`Count`)가 오면 끝난다.
+    fn fetch_card_start(&mut self, key: u64, kind: Msg, sql: &str) {
+        let text = format!("{} — {}", t(kind), nsql_run::txlog::one_line(sql, 200));
+        self.sess.fetch_card = Some((key, Instant::now()));
+        self.sess.run_card = self
+            .run_toast
+            .start(&text, nsql_log::now_local().stamp(), 1);
+        self.run_toast
+            .set_phase(self.sess.run_card, runtoast::Phase::Fetching);
     }
 
     /// 새로고침 — 같은 문장을 이 탭의 세그먼트 크기로 다시 실행.
@@ -6156,6 +6225,14 @@ impl App {
                     if n > 1 {
                         self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
                     }
+                }
+                self.set_focus(Focus::Editor);
+            }
+            // ★ Quick Skip Next(Ctrl+K,Ctrl+D · 사용자 09-22): 마지막 출현을 버리고 다음 출현으로.
+            "edit.skip_occurrence" => {
+                if self.editors.cur_mut().skip_next_occurrence() {
+                    let n = self.editors.selection_count();
+                    self.sess.status = tf(Msg::StSelections, &[&n.to_string()]);
                 }
                 self.set_focus(Focus::Editor);
             }
@@ -8302,52 +8379,89 @@ impl App {
         vec![
             MenuDef::new(t(Msg::MnFile), file),
             MenuDef::new(t(Msg::MnProject), project),
+            // ★ Edit 메뉴 = 그룹(하위 메뉴 · 사용자 09-22 "1레벨로 너무 길다 — Sublime/VS Code/IntelliJ 참고"):
+            //   Sublime의 Edit(Line ▸ · Comment ▸ · Convert Case ▸) + Selection 메뉴 + Find 메뉴를 한 메뉴 안 그룹으로 접었다 ·
+            //   자주 쓰는 Undo/Redo · Cut/Copy/Paste · Select All · Toggle Comment · Go to Line · Preferences는 1레벨 유지
+            //   (VS Code Edit 메뉴와 같은 자리) · 설정 = 맨 아래(IntelliJ/Sublime Preferences 자리).
             MenuDef::new(
                 t(Msg::MnEdit),
                 vec![
                     item("edit.undo", Msg::MnUndo),
                     item("edit.redo", Msg::MnRedo),
                     MenuEntry::Separator,
-                    item("edit.find", Msg::MnFind),
-                    item("edit.replace", Msg::MnReplace),
-                    item("edit.find_next", Msg::MnFindNext),
-                    item("edit.find_prev", Msg::MnFindPrev),
-                    MenuEntry::Separator,
                     item("edit.cut", Msg::MnCut),
                     item("edit.copy", Msg::MnCopy),
                     item("edit.paste", Msg::MnPaste),
                     MenuEntry::Separator,
                     item("edit.select_all", Msg::MnSelectAll),
-                    item("edit.expand_selection", Msg::MnExpandSelection),
-                    item("edit.goto_bracket", Msg::MnGotoBracket),
-                    item("edit.expand_brackets", Msg::MnExpandBrackets),
-                    item("edit.bracket_prev", Msg::MnBracketPrev),
-                    item("edit.bracket_next", Msg::MnBracketNext),
-                    item("edit.bracket_parent", Msg::MnBracketParent),
-                    item("edit.bracket_child", Msg::MnBracketChild),
-                    item("edit.select_all_occurrences", Msg::MnSelectAllOccurrences),
-                    item("edit.select_line", Msg::MnSelectLine),
-                    item("edit.split_lines", Msg::MnSplitLines),
-                    item("edit.add_caret_up", Msg::MnAddCaretUp),
-                    item("edit.add_caret_down", Msg::MnAddCaretDown),
-                    MenuEntry::Separator,
-                    item("edit.duplicate_line", Msg::MnDuplicateLine),
-                    item("edit.delete_line", Msg::MnDeleteLine),
-                    item("edit.join_lines", Msg::MnJoinLines),
-                    item("edit.swap_line_up", Msg::MnSwapLineUp),
-                    item("edit.swap_line_down", Msg::MnSwapLineDown),
-                    MenuEntry::Separator,
+                    MenuEntry::sub(
+                        t(Msg::MnGrpSelection),
+                        vec![
+                            item("edit.expand_selection", Msg::MnExpandSelection),
+                            item("edit.skip_occurrence", Msg::MnSkipOccurrence),
+                            item("edit.select_all_occurrences", Msg::MnSelectAllOccurrences),
+                            MenuEntry::Separator,
+                            item("edit.select_line", Msg::MnSelectLine),
+                            item("edit.split_lines", Msg::MnSplitLines),
+                            item("edit.add_caret_up", Msg::MnAddCaretUp),
+                            item("edit.add_caret_down", Msg::MnAddCaretDown),
+                            MenuEntry::Separator,
+                            item("edit.expand_brackets", Msg::MnExpandBrackets),
+                        ],
+                    ),
+                    MenuEntry::sub(
+                        t(Msg::MnGrpBrackets),
+                        vec![
+                            item("edit.goto_bracket", Msg::MnGotoBracket),
+                            item("edit.bracket_prev", Msg::MnBracketPrev),
+                            item("edit.bracket_next", Msg::MnBracketNext),
+                            item("edit.bracket_parent", Msg::MnBracketParent),
+                            item("edit.bracket_child", Msg::MnBracketChild),
+                        ],
+                    ),
+                    MenuEntry::sub(
+                        t(Msg::MnGrpLine),
+                        vec![
+                            item("edit.indent", Msg::MnIndent),
+                            item("edit.unindent", Msg::MnUnindent),
+                            MenuEntry::Separator,
+                            item("edit.swap_line_up", Msg::MnSwapLineUp),
+                            item("edit.swap_line_down", Msg::MnSwapLineDown),
+                            MenuEntry::Separator,
+                            item("edit.duplicate_line", Msg::MnDuplicateLine),
+                            item("edit.delete_line", Msg::MnDeleteLine),
+                            item("edit.join_lines", Msg::MnJoinLines),
+                        ],
+                    ),
+                    MenuEntry::sub(
+                        t(Msg::MnGrpConvertCase),
+                        vec![
+                            item("edit.upper_case", Msg::MnUpperCase),
+                            item("edit.lower_case", Msg::MnLowerCase),
+                        ],
+                    ),
                     item("edit.toggle_comment", Msg::MnToggleComment),
-                    item("edit.indent", Msg::MnIndent),
-                    item("edit.unindent", Msg::MnUnindent),
-                    item("edit.upper_case", Msg::MnUpperCase),
-                    item("edit.lower_case", Msg::MnLowerCase),
                     MenuEntry::Separator,
+                    MenuEntry::sub(
+                        t(Msg::MnGrpFind),
+                        vec![
+                            item("edit.find", Msg::MnFind),
+                            item("edit.replace", Msg::MnReplace),
+                            MenuEntry::Separator,
+                            item("edit.find_next", Msg::MnFindNext),
+                            item("edit.find_prev", Msg::MnFindPrev),
+                        ],
+                    ),
                     item("edit.goto_line", Msg::MnGotoLine),
                     MenuEntry::Separator,
-                    item("eol.crlf", Msg::MnEolCrlf),
-                    item("eol.lf", Msg::MnEolLf),
-                    item("eol.cr", Msg::MnEolCr),
+                    MenuEntry::sub(
+                        t(Msg::MnGrpLineEndings),
+                        vec![
+                            item("eol.crlf", Msg::MnEolCrlf),
+                            item("eol.lf", Msg::MnEolLf),
+                            item("eol.cr", Msg::MnEolCr),
+                        ],
+                    ),
                     MenuEntry::Separator,
                     item("edit.prefs", Msg::MnPreferences),
                 ],
@@ -8623,6 +8737,11 @@ impl App {
             "edit.expand_brackets",
             Msg::MnEdit,
             Msg::MnExpandBrackets,
+        ));
+        cmds.push(m(
+            "edit.skip_occurrence",
+            Msg::MnEdit,
+            Msg::MnSkipOccurrence,
         ));
         cmds.push(m(
             "edit.select_all_occurrences",
@@ -9949,10 +10068,14 @@ impl App {
             self.settings.int("ui.toast_fade_to"),
             self.settings.int("ui.toast_bar_spent"),
         );
-        for s in std::iter::once(&mut self.sess).chain(self.parked.iter_mut()) {
-            s.run_toast.configure(on, hide, alpha);
-            s.run_toast.configure_progress(prog, fade_to, spent);
-        }
+        let tick = self.settings.int("run.toast_tick_ms");
+        self.run_toast.configure(on, hide, alpha);
+        self.run_toast.configure_progress(prog, fade_to, spent);
+        self.run_toast.configure_tick(tick);
+        self.run_toast.configure_stack(
+            self.settings.flag("run.toast_follow"),
+            self.settings.int("run.toast_max"),
+        );
     }
 
     /// 실행 시작 → 카드(문장 · 시작 시각 · 문장 수).
@@ -9964,9 +10087,7 @@ impl App {
         self.editors.set_running(self.sess.run_editor, true);
         self.editors.set_error_line(self.sess.run_editor, None);
         let n = split_items(src, self.sess.dialect).len().max(1);
-        self.sess
-            .run_toast
-            .start(src, nsql_log::now_local().stamp(), n);
+        self.sess.run_card = self.run_toast.start(src, nsql_log::now_local().stamp(), n);
     }
 
     /// 중지(카드 ■ = 툴바 ■ · T-108): 실행 중 문장은 드라이버 취소 핸들로 서버에 취소 · 전체 조회는 다음 배치 경계에서.
@@ -9985,9 +10106,8 @@ impl App {
         self.sess.idle_closed = true;
         self.sess.run_cancel_requested = false;
         self.editors.set_running(self.sess.run_editor, false);
-        self.sess
-            .run_toast
-            .finish(runtoast::Phase::Stopped { rows: 0 });
+        self.run_toast
+            .finish(self.sess.run_card, runtoast::Phase::Stopped { rows: 0 });
         self.grid.fetch_failed();
         self.tx_close(TxOutcome::Lost);
     }
@@ -10558,10 +10678,13 @@ impl App {
                     if index == 0 {
                         self.txlog.select_session(self.sess.id).begin_batch();
                     }
-                    self.sess.run_toast.set_phase(runtoast::Phase::Running {
-                        index,
-                        total: self.sess.last_run_items.len(),
-                    });
+                    self.run_toast.set_phase(
+                        self.sess.run_card,
+                        runtoast::Phase::Running {
+                            index,
+                            total: self.sess.last_run_items.len(),
+                        },
+                    );
                     let stmt = self
                         .sess
                         .last_run_items
@@ -10608,7 +10731,8 @@ impl App {
                         rs.rows.len() as u64,
                         elapsed,
                     );
-                    self.sess.run_toast.first_page(
+                    self.run_toast.first_page(
+                        self.sess.run_card,
                         rs.rows.len() as u64,
                         rs.approx_bytes(),
                         elapsed,
@@ -10625,11 +10749,14 @@ impl App {
                         .rows(rs.rows.len() as u64)
                         .elapsed(elapsed)
                     });
-                    self.sess.run_toast.set_phase(runtoast::Phase::Done {
-                        rows: Some(rs.rows.len() as u64),
-                        secs: elapsed.as_secs_f64(),
-                        stages: String::new(),
-                    });
+                    self.run_toast.set_phase(
+                        self.sess.run_card,
+                        runtoast::Phase::Done {
+                            rows: Some(rs.rows.len() as u64),
+                            secs: elapsed.as_secs_f64(),
+                            stages: String::new(),
+                        },
+                    );
                     self.sess.last_rows = Some(rs.rows.len());
                     self.sess.last_secs = Some(elapsed.as_secs_f64());
                     let n = rs.rows.len().to_string();
@@ -10707,11 +10834,14 @@ impl App {
                     self.txlog
                         .select_session(self.sess.id)
                         .done(index, rows_affected, elapsed);
-                    self.sess.run_toast.set_phase(runtoast::Phase::Done {
-                        rows: rows_affected,
-                        secs: elapsed.as_secs_f64(),
-                        stages: String::new(),
-                    });
+                    self.run_toast.set_phase(
+                        self.sess.run_card,
+                        runtoast::Phase::Done {
+                            rows: rows_affected,
+                            secs: elapsed.as_secs_f64(),
+                            stages: String::new(),
+                        },
+                    );
                     self.tx_on_done(index, &stmt, rows_affected);
                     self.meta_on_done(&stmt);
                 }
@@ -10832,9 +10962,11 @@ impl App {
                     self.txlog
                         .select_session(self.sess.id)
                         .timing(index, timeline.total());
-                    self.sess
-                        .run_toast
-                        .timing(timeline.total().as_secs_f64(), timeline.summary());
+                    self.run_toast.timing(
+                        self.sess.run_card,
+                        timeline.total().as_secs_f64(),
+                        timeline.summary(),
+                    );
                     for sp in &timeline.spans {
                         let (layer, msg) = match sp.stage {
                             nsql_core::Stage::Send => (LogLayer::Net, Msg::LogDetStageSend),
@@ -10887,9 +11019,8 @@ impl App {
                         } else {
                             self.sess.status = t(Msg::StRunCancelled).into();
                         }
-                        self.sess
-                            .run_toast
-                            .set_phase(runtoast::Phase::Stopped { rows: 0 });
+                        self.run_toast
+                            .set_phase(self.sess.run_card, runtoast::Phase::Stopped { rows: 0 });
                         if let Some(g) = self.run_grid() {
                             g.clear_result();
                         }
@@ -10931,9 +11062,8 @@ impl App {
                         self.editors
                             .set_error_line(self.sess.run_editor, Some(ed_line));
                     }
-                    self.sess
-                        .run_toast
-                        .set_phase(runtoast::Phase::Error(summary.clone()));
+                    self.run_toast
+                        .set_phase(self.sess.run_card, runtoast::Phase::Error(summary.clone()));
                     // 오류가 나도 결과 영역은 기본 형태(빈 그리드)로 — 본문은 로그 창·상태줄·토스트(사용자 09-17).
                     if let Some(g) = self.run_grid() {
                         g.clear_result();
@@ -11007,14 +11137,13 @@ impl App {
                 self.sess.status = tf(Msg::StRunCancelledPartial, &[&rows.to_string()]);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
-                self.sess
-                    .run_toast
-                    .finish(runtoast::Phase::Stopped { rows });
+                self.run_toast
+                    .finish(self.sess.run_card, runtoast::Phase::Stopped { rows });
                 if let Some(g) = self.run_grid() {
                     g.set_more(false);
                 }
             } else {
-                self.sess.run_toast.finish_keep(done.clone());
+                self.run_toast.finish_keep(self.sess.run_card, done.clone());
             }
             if let Some(m) = done {
                 self.sess.status = m;
@@ -11070,6 +11199,13 @@ impl App {
     }
 
     /// 활성 그리드 + 잠든 그리드 전부(설정 전파용).
+    /// 행 포커스 배경 설정 → 전 그리드(사용자 09-22).
+    fn apply_grid_row_focus(&mut self) {
+        let on = self.settings.flag("grid.row_focus");
+        let (c, a) = color_alpha_setting(&self.settings, "grid.row_focus_color");
+        self.all_grids().for_each(|g| g.set_row_focus(on, c, a));
+    }
+
     fn all_grids(&mut self) -> impl Iterator<Item = &mut grid::Grid> {
         let (grid, panel, panels) = (&mut self.grid, &mut self.panel, &mut self.panels);
         std::iter::once(grid)
@@ -11576,6 +11712,9 @@ impl App {
                     ..FontSet::single(gf)
                 };
                 let mut dc = RasterCtx::with_font_set(&mut gfx, fonts, s).with_fonts(prefs);
+                // 결과 탭 줄이 바로 위면 그리드의 위 경계선을 끈다(탭 줄 아래선 1px만 · 사용자 09-22).
+                let bar = self.panel.bar_visible();
+                self.grid.set_top_border(!bar);
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
@@ -11689,23 +11828,28 @@ impl App {
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
+                // ★ 토스트·실행 카드는 팝업(우클릭 메뉴·팔레트) **아래 층**(팝업 = 맨 마지막 규칙 · 사용자 09-22 "우클릭 메뉴가 뒤로 숨음").
+                // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
+                let eb = self.editors.editor_bounds();
+                let (top, tx, ty) = if eb.w > 0 && eb.h > 0 {
+                    (eb.y, eb.right(), eb.bottom())
+                } else {
+                    (0, wi, hi - px(24.0, s))
+                };
+                // 실행 카드 누적(아래→위 · 편집기 영역을 넘으면 휠 스크롤 · 사용자 09-22).
+                let ty = self.run_toast.paint(&mut dc, &th, top, tx, ty, s);
+                let ty = self.tx_warn.paint(&mut dc, &th, tx, ty, s);
+                self.ext_banner.set_bounds(self.editors.banner_rect());
+                self.ext_banner.paint(&mut dc, &th, s);
+                self.toasts.paint(&mut dc, &th, tx, ty, s);
+                // 토스트·카드가 바꾼 글꼴 슬롯(Status·굵게)을 되돌린다 — 팝업은 호출자의 글꼴을 쓴다(09-22 메뉴 글자 커짐).
+                dc.select_font(FontSlot::Base, false);
                 self.grid.paint_overlays(&mut dc, &th);
                 self.panel.paint_popups(&mut dc, &th);
                 self.editors.paint_popups(&mut dc, &th);
                 self.explorer.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
-                // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
-                let (tx, ty) = if eb.w > 0 && eb.h > 0 {
-                    (eb.right(), eb.bottom())
-                } else {
-                    (wi, hi - px(24.0, s))
-                };
-                let ty = self.sess.run_toast.paint(&mut dc, &th, tx, ty, s);
-                let ty = self.tx_warn.paint(&mut dc, &th, tx, ty, s);
-                self.ext_banner.set_bounds(self.editors.banner_rect());
-                self.ext_banner.paint(&mut dc, &th, s);
-                self.toasts.paint(&mut dc, &th, tx, ty, s);
                 // ★ 파일 적재 진행 막 — 편집 영역 가운데 · 맨 위 층(적재 중에는 입력도 받지 않는다).
                 let delay =
                     Duration::from_millis(self.settings.int("file.load_progress_ms").max(0) as u64);
@@ -11909,7 +12053,72 @@ impl App {
         }
     }
 
+    /// 열린 팝업 메뉴의 비트 집합(배타 규칙의 입력 · 09-22): 1 풀다운 · 2 편집기 탭 메뉴 · 4 편집기 본문 편집 메뉴 · 8 상태줄/툴바 팝업 ·
+    /// 16 오브젝트 탐색기 · 32 결과 그리드 · 64 결과 탭 줄. 팔레트·툴팁·하위 메뉴(같은 메뉴 안)는 메뉴가 아니다.
+    fn open_menus(&self) -> u32 {
+        let mut m = 0;
+        if self.menubar.is_open() {
+            m |= 1;
+        }
+        if self.editors.tab_menu_open() {
+            m |= 2;
+        }
+        if self.editors.edit_menu_open() {
+            m |= 4;
+        }
+        if self.status_menu.is_open() {
+            m |= 8;
+        }
+        if self.explorer.menu_open() {
+            m |= 16;
+        }
+        if self.grid.menu_open() {
+            m |= 32;
+        }
+        if self.panel.menu_open() {
+            m |= 64;
+        }
+        m
+    }
+
+    fn close_menu_bits(&mut self, bits: u32) {
+        if bits & 1 != 0 {
+            self.menubar.dismiss();
+        }
+        if bits & 2 != 0 {
+            self.editors.close_tab_menu();
+        }
+        if bits & 4 != 0 {
+            self.editors.close_edit_menus();
+        }
+        if bits & 8 != 0 {
+            self.status_menu.close();
+        }
+        if bits & 16 != 0 {
+            self.explorer.close_menu();
+        }
+        if bits & 32 != 0 {
+            self.grid.close_menu();
+        }
+        if bits & 64 != 0 {
+            self.panel.close_menu();
+        }
+    }
+
+    /// ★ 팝업 메뉴 배타 규칙(사용자 09-22 "다른 메뉴들도 배타적 배치가 기본"): 사건 전후로 열린 메뉴 집합을 비교해
+    /// **새로 열린 메뉴가 있으면 나머지를 전부 닫는다**(마지막에 연 것이 이긴다). 같은 메뉴의 하위 메뉴·툴팁·팔레트는 대상이 아니다.
     fn route(&mut self, ev: InputEvent) {
+        let before = self.open_menus();
+        self.route_dispatch(ev);
+        let after = self.open_menus();
+        let fresh = after & !before;
+        if fresh != 0 && after != fresh {
+            self.close_menu_bits(after & !fresh);
+            self.redraw();
+        }
+    }
+
+    fn route_dispatch(&mut self, ev: InputEvent) {
         if self.frame_trace.is_some() {
             if let InputEvent::Key { .. } = ev {
                 self.tmark("route");
@@ -11965,7 +12174,7 @@ impl App {
                     return;
                 }
             }
-            match self.sess.run_toast.click(Point { x, y }) {
+            match self.run_toast.click(Point { x, y }) {
                 runtoast::RunToastHit::Stop => {
                     self.stop_run();
                     return;
@@ -11977,8 +12186,18 @@ impl App {
                 runtoast::RunToastHit::None => {}
             }
         }
+        if let InputEvent::Wheel { delta } = ev {
+            let p = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            if self.run_toast.wheel(p, delta) {
+                self.redraw();
+                return;
+            }
+        }
         if let InputEvent::MouseMove { x, y } = ev {
-            if self.sess.run_toast.hover(Point { x, y }) {
+            if self.run_toast.hover(Point { x, y }) {
                 self.redraw();
             }
             if self.tx_warn.hover(Point { x, y }) {
@@ -12156,14 +12375,18 @@ impl App {
                 return;
             }
         }
-        // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다.
-        if self.menubar.is_open() {
+        // 열린 메뉴는 모달 — 어디를 눌러도 메뉴바가 먼저 받는다. 단 **우클릭**은 풀다운을 닫고 그대로 진행(그 자리의 우클릭 메뉴가 열린다 · 배타).
+        if self.menubar.is_open() && !matches!(ev, InputEvent::RightDown { .. }) {
             self.menubar.on_event(&ev, &mut inv);
             if let Some(id) = self.menubar.take_picked() {
                 self.menu_action(&id);
             }
             self.redraw();
             return;
+        }
+        if matches!(ev, InputEvent::RightDown { .. }) && self.menubar.is_open() {
+            // 우클릭 메뉴가 열리는 길 = 풀다운은 닫는다(배타).
+            self.menubar.dismiss();
         }
         if let InputEvent::RightDown { x, y } = ev {
             if self.tool_dock.bounds().contains(Point { x, y }) {
@@ -12183,6 +12406,8 @@ impl App {
             }
             self.drain_dock_actions();
             if self.menubar.is_open() {
+                // ★ 풀다운이 열리면 다른 팝업(탭·편집·상태줄·탐색기·그리드·결과 메뉴)은 닫는다 — 동시 표시 금지(사용자 09-22).
+                self.close_context_menus();
                 self.redraw();
                 return;
             }
@@ -12220,10 +12445,14 @@ impl App {
         if self.grid.menu_open() {
             self.grid.on_event(&ev, self.scale);
             self.after_grid_event();
-            // 항목을 골랐거나 메뉴 안을 눌렀으면 그 클릭은 끝(아래 셀 선택으로 전파 금지 · 사용자 09-15) · 바깥 클릭만 통과.
+            // 항목을 골랐거나 메뉴 안을 눌렀으면 그 클릭은 끝(아래 셀 선택으로 전파 금지 · 사용자 09-15) · 바깥 **좌/우** 클릭만 통과
+            //   (우클릭도 — 09-22: 그리드 메뉴가 열린 채 편집기/탭을 우클릭하면 닫히기만 했다).
             if self.grid.menu_open()
                 || self.grid.take_menu_click()
-                || !matches!(ev, InputEvent::MouseDown { .. })
+                || !matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                )
             {
                 self.redraw();
                 return;
@@ -12855,7 +13084,7 @@ impl ApplicationHandler<Wake> for App {
             self.redraw();
         }
         {
-            let (rd, next) = self.sess.run_toast.tick(Instant::now());
+            let (rd, next) = self.run_toast.tick(Instant::now());
             self.run_toast_next = next;
             if rd {
                 self.redraw();
@@ -14301,6 +14530,7 @@ fn main() {
         focus: Focus::Editor,
         txlog: nsql_run::txlog::TxLog::new(txlog_cap),
         sess,
+        run_toast: runtoast::RunToast::new(),
         parked: Vec::new(),
         next_sess_id: 1,
         tab_bind: HashMap::new(),
@@ -14365,6 +14595,7 @@ fn main() {
         .unwrap_or("NULL")
         .to_string();
     app.grid.set_null_text(&null_text);
+    app.apply_grid_row_focus();
     nexa_ctl::controls::set_menu_icons(app.settings.flag("ui.menu_icons"));
     app.log_win
         .set_on_top(app.settings.flag("log.always_on_top"));

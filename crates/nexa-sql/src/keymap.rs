@@ -423,6 +423,15 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "ctrl+cmd+g",
         linux: "alt+f3",
     },
+    // ★ Quick Skip Next(Sublime `find_under_expand_skip` · 사용자 09-22): 마지막에 더한 출현을 버리고 다음 출현을 더한다.
+    //   맥은 Sublime `Default (OSX).sublime-keymap`과 같게 `super+k, super+d`.
+    Command {
+        id: "edit.skip_occurrence",
+        label: Msg::MnSkipOccurrence,
+        win: "ctrl+k,ctrl+d",
+        mac: "cmd+k,cmd+d",
+        linux: "ctrl+k,ctrl+d",
+    },
     // ★ Sublime 줄·선택 편집(T-98 · 사용자 09-16). 2단 코드는 `ctrl+k,ctrl+u`처럼 쉼표로.
     //   macOS의 Control 단독은 `control+…`(⌘와 다른 키 · 예 ⌃G = 줄 이동).
     Command {
@@ -1239,6 +1248,12 @@ mod tests {
         assert_eq!(preset_default(c, Preset::Windows), "alt+f3");
         assert_eq!(preset_default(c, Preset::Linux), "alt+f3");
         assert_eq!(preset_default(c, Preset::Macos), "ctrl+cmd+g");
+        let c = COMMANDS
+            .iter()
+            .find(|c| c.id == "edit.skip_occurrence")
+            .unwrap();
+        assert_eq!(preset_default(c, Preset::Windows), "ctrl+k,ctrl+d");
+        assert_eq!(preset_default(c, Preset::Macos), "cmd+k,cmd+d");
         // `ctrl+cmd+g`(맥 Control + ⌘)는 `cmd+g`와 다른 조합.
         let a = Chord::parse("ctrl+cmd+g").unwrap();
         let b = Chord::parse("cmd+g").unwrap();

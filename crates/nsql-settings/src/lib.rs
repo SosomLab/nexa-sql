@@ -986,6 +986,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "NULL",
     },
+    // ★ 행 포커스 배경(사용자 09-22): 셀을 골라도 그 행 전체에 연한 배경 · 색은 `#RRGGBB[AA]`(비면 선택색 35 %).
+    Entry {
+        key: "grid.row_focus",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridRowFocus,
+        desc: Msg::DescGridRowFocus,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.row_focus_color",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridRowFocusColor,
+        desc: Msg::DescGridRowFocusColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "grid.col_min_width",
         cat: Msg::CatGrid,
@@ -1786,6 +1803,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
+        key: "key.edit.skip_occurrence",
+        cat: Msg::CatKeys,
+        label: Msg::MnSkipOccurrence,
+        desc: Msg::DescKey,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
         key: "key.edit.prefs",
         cat: Msg::CatKeys,
         label: Msg::MnPreferences,
@@ -2445,6 +2470,31 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescRunToastHide,
         kind: SettingKind::Int { min: 0, max: 600 },
         default: "5",
+    },
+    // ★ 실행 카드 갱신 주기(사용자 09-22): 경과 시간 `HH:MM:SS.mmm`·카운트다운을 이 주기로만 다시 그린다(향상 모드 = 1000).
+    Entry {
+        key: "run.toast_tick_ms",
+        cat: Msg::CatSession,
+        label: Msg::LblRunToastTick,
+        desc: Msg::DescRunToastTick,
+        kind: SettingKind::Int { min: 30, max: 5000 },
+        default: "100",
+    },
+    Entry {
+        key: "run.toast_follow",
+        cat: Msg::CatSession,
+        label: Msg::LblRunToastFollow,
+        desc: Msg::DescRunToastFollow,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "run.toast_max",
+        cat: Msg::CatSession,
+        label: Msg::LblRunToastMax,
+        desc: Msg::DescRunToastMax,
+        kind: SettingKind::Int { min: 1, max: 500 },
+        default: "30",
     },
     Entry {
         key: "run.after_statement",
@@ -3501,6 +3551,9 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("explorer.typeahead_special", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_pos", "explorer.typeahead", Dep::On),
     ("run.toast_hide_secs", "run.toast", Dep::On),
+    ("run.toast_tick_ms", "run.toast", Dep::On),
+    ("run.toast_follow", "run.toast", Dep::On),
+    ("run.toast_max", "run.toast", Dep::On),
     // 결과가 1개일 때도 탭 줄을 둘지 — 결과 탭(다중)을 쓸 때만 뜻이 있다(`ResultPanel::bar_visible` = enabled && …).
     ("grid.result_tabbar_single", "grid.result_tabs", Dep::On),
     ("vars.env_subst", "vars.brace_subst", Dep::On),
@@ -3515,6 +3568,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("editor.trim_auto_whitespace", "editor.auto_indent", Dep::On),
     ("editor.minimap_width", "editor.minimap", Dep::On),
     ("editor.minimap_box_color", "editor.minimap", Dep::On),
+    ("grid.row_focus_color", "grid.row_focus", Dep::On),
     ("editor.minimap_border", "editor.minimap", Dep::On),
     ("editor.minimap_viewport", "editor.minimap", Dep::On),
     ("editor.minimap_click", "editor.minimap", Dep::On),

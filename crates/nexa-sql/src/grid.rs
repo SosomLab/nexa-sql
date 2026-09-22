@@ -170,6 +170,12 @@ pub(crate) struct Grid {
     row_numbers: bool,
     /// 설정 `grid.null_text` — NULL 셀 글자(그리드·텍스트 보기·복사 **공통** · 기본 `NULL` · 사용자 09-17).
     null_text: String,
+    /// ★ 행 포커스 배경(사용자 09-22 · 설정 `grid.row_focus`): 셀을 골라도 그 행 전체(다중 행 포함)에 셀 선택색보다 연한 배경.
+    row_focus: bool,
+    /// 위쪽 경계선을 그릴지 — 결과 탭 줄이 바로 위에 있으면 탭 줄의 아래선과 겹쳐 2px가 되므로 호스트가 끈다(사용자 09-22).
+    top_border: bool,
+    /// 행 포커스 색·알파 덮어쓰기(설정 `grid.row_focus_color` `#RRGGBB[AA]` · 비면 `sel_bg` 35 %).
+    row_focus_color: (Option<nexa_ctl::Color>, Option<f32>),
     /// 행 높이 비율(% · 글꼴 높이 대비 · 설정 `grid.row_height_pct`).
     row_pct: i32,
     gutter_w: i32,
@@ -313,6 +319,9 @@ impl Default for Grid {
             bars: ScrollBars::new(),
             row_snap: false,
             row_numbers: true,
+            row_focus: true,
+            top_border: true,
+            row_focus_color: (None, None),
             null_text: "NULL".into(),
             row_pct: 150,
             gutter_w: 0,
@@ -447,6 +456,9 @@ impl Grid {
             bounds: self.bounds,
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
+            row_focus: self.row_focus,
+            top_border: self.top_border,
+            row_focus_color: self.row_focus_color,
             null_text: self.null_text.clone(),
             row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
@@ -1452,6 +1464,22 @@ impl Grid {
     }
 
     /// NULL 셀 글자(설정 `grid.null_text` · 그리드·텍스트 보기·복사 공통 · 사용자 09-17 "뷰마다 다르면 안 된다").
+    /// 위쪽 경계선(결과 탭 줄이 위에 있으면 끈다 — 1px 유지).
+    pub(crate) fn set_top_border(&mut self, on: bool) {
+        self.top_border = on;
+    }
+
+    /// 행 포커스 배경(켬/끔 · 색 · 알파 덮어쓰기).
+    pub(crate) fn set_row_focus(
+        &mut self,
+        on: bool,
+        color: Option<nexa_ctl::Color>,
+        alpha: Option<f32>,
+    ) {
+        self.row_focus = on;
+        self.row_focus_color = (color, alpha);
+    }
+
     pub(crate) fn set_null_text(&mut self, text: &str) {
         if self.null_text == text {
             return;
@@ -1526,6 +1554,11 @@ impl Grid {
     /// 직전 클릭을 메뉴가 먹었는가(1회성) — 참이면 호스트는 그 클릭을 아래로 흘리지 않는다.
     pub(crate) fn take_menu_click(&mut self) -> bool {
         std::mem::take(&mut self.menu_click_consumed)
+    }
+
+    /// 우클릭 메뉴 닫기(풀다운과 배타 · 09-22).
+    pub(crate) fn close_menu(&mut self) {
+        self.menu.close();
     }
 
     pub(crate) fn menu_open(&self) -> bool {
@@ -1632,6 +1665,15 @@ impl Grid {
         self.regions
             .iter()
             .any(|&(r0, r1, _, _)| di >= r0 && di <= r1)
+    }
+
+    /// 행 **전체**가 선택인가(행번호로 고른 행 · 사용자 09-22 "행번호로 골라도 1번 이미지처럼") — 그러면 셀마다 진한 채움 대신
+    /// 행 포커스 배경만 칠한다(셀로 고른 것과 같은 모습).
+    fn row_fully_selected(&self, di: usize) -> bool {
+        let last = self.col_order.len().saturating_sub(1);
+        self.regions
+            .iter()
+            .any(|&(r0, r1, c0, c1)| di >= r0 && di <= r1 && c0 == 0 && c1 >= last)
     }
 
     /// 컬럼(표시 위치)이 선택에 걸리는가(헤더 강조).
@@ -2608,7 +2650,9 @@ impl Grid {
     fn paint_inner(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
         let b = self.bounds;
         dc.fill_rect(b, th.panel_bg);
-        dc.fill_rect(Rect::new(b.x, b.y, b.w, 1), th.border);
+        if self.top_border {
+            dc.fill_rect(Rect::new(b.x, b.y, b.w, 1), th.border);
+        }
         dc.select_font(FontSlot::Base, false);
         let pad = (6.0 * s).round() as i32;
         // 행 높이 = 글꼴 높이 × 비율(설정 `grid.row_height_pct` · 기본 150% · 사용자 09-16 "폰트 크기에 적당한 비율") — 글자는
@@ -2765,13 +2809,21 @@ impl Grid {
             if ha > 0.0 {
                 dc.fill_rect_alpha(rr, th.text, ha);
             }
+            // ★ 행 포커스 배경(사용자 09-22): 선택에 걸린 행 전체(다중 행 선택도 같은 규칙) = 셀 선택색보다 연하게.
+            if self.row_focus && self.row_in_sel(di) {
+                let (c, a) = self.row_focus_color;
+                dc.fill_rect_alpha(rr, c.unwrap_or(th.sel_bg), a.unwrap_or(0.35));
+            }
             let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
             let mut x = gx0 - self.scroll_x;
             for (pos, &ci) in self.col_order.iter().enumerate() {
                 let Some(v) = row.get(ci) else { continue };
                 let cw = self.col_w.get(ci).copied().unwrap_or(80);
                 let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&cells);
-                if clip.w > 0 && self.in_sel(di, pos) {
+                if clip.w > 0
+                    && self.in_sel(di, pos)
+                    && !(self.row_focus && self.row_fully_selected(di))
+                {
                     dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
                 }
                 if clip.w > 0 && self.sel_cur == Some((di, pos)) {
@@ -2780,8 +2832,9 @@ impl Grid {
                 if clip.w > 0 && clip.h > 0 {
                     let txt = cell_text(v, &null);
                     let numeric = matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_));
+                    // NULL은 흐린 글자보다 **더 흐리게**(배경 쪽으로 45 % · 사용자 09-22).
                     let color = if matches!(v, Value::Null) {
-                        th.text_dim
+                        th.text_dim.lerp(th.panel_bg, 0.45)
                     } else {
                         th.text
                     };
@@ -2876,8 +2929,8 @@ impl Grid {
                 x += cw;
                 continue;
             } else if self.col_in_sel(pos) {
-                // 선택에 걸린 컬럼 헤더는 옅게 표시(행번호 강조와 짝).
-                dc.fill_rect_alpha(clip, th.sel_bg, 0.35);
+                // 선택에 걸린 컬럼 헤더 = 행번호 강조와 **같은 색**(사용자 09-22 · n×m 선택이면 걸린 열 전부).
+                dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
             }
             // 정렬 배지: ▲/▼ + 결합 순번(키가 2개 이상일 때)
             let badge = self.sort_keys.iter().position(|(k, _)| *k == ci).map(|i| {

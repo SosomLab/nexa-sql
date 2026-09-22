@@ -240,6 +240,11 @@ impl ResultPanel {
         self.tabs.iter().position(|t| t.id == id)
     }
 
+    /// 우클릭 메뉴 닫기(풀다운과 배타 · 09-22).
+    pub(crate) fn close_menu(&mut self) {
+        self.menu.close();
+    }
+
     pub(crate) fn menu_open(&self) -> bool {
         self.menu.is_open()
     }
@@ -247,7 +252,9 @@ impl ResultPanel {
     /// 탭 바·메뉴 이벤트. 소비했으면 `Some(동작 또는 None)` · 바 밖이면 `None`.
     pub(crate) fn route(&mut self, ev: &InputEvent, cursor: Point) -> Option<Option<PanelAction>> {
         if self.menu.is_open() {
-            let consumed = self.menu.on_event(ev);
+            // ★ 바깥 클릭은 닫고 **통과**(사용자 09-22 — `on_event`는 바깥 클릭도 소비로 보고하므로 먼저 잰다).
+            let outside = self.menu.is_outside_click(ev);
+            let consumed = self.menu.on_event(ev) && !outside;
             if let Some(id) = self.menu.take_picked() {
                 let i = self.menu_tab.take().unwrap_or(self.active);
                 let act = match id.as_str() {

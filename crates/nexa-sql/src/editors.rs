@@ -270,9 +270,10 @@ impl Editors {
     }
 
     fn make_box(&self, text: &str, syntax: &Rc<SyntaxSpec>) -> TextBox {
-        let mut tb = TextBox::new(t(Msg::PhEditor))
-            .with_multiline()
-            .with_text(text);
+        // 기본 편집기 placeholder 없음(사용자 09-22).
+        let mut tb = TextBox::new("").with_multiline().with_text(text);
+        // 우클릭 편집 메뉴는 본문 패스가 아니라 팝업 층에서(`paint_popups` · 토스트 위 · UI 글꼴 · 사용자 09-22).
+        tb.set_popup_deferred(true);
         tb.set_line_numbers(self.line_numbers);
         // Golden식 표시 띠(줄번호 오른쪽 4px · 색 막대 자리) + 첫 글자 앞 2px(사용자 09-16).
         tb.set_gutter_marks(true);
@@ -1856,6 +1857,18 @@ impl Editors {
 
     /// 탭 바 이벤트(마우스가 탭 영역에 있거나 드래그 중). 소비했으면 true.
     /// 탭 메뉴·표식 메뉴가 열려 있는가.
+    /// 본문의 우클릭 편집 메뉴가 열려 있는가(어느 칸이든).
+    pub(crate) fn edit_menu_open(&self) -> bool {
+        self.bufs.iter().any(|tb| tb.popup_open())
+    }
+
+    /// 본문 편집 메뉴만 닫기.
+    pub(crate) fn close_edit_menus(&mut self) {
+        for tb in &mut self.bufs {
+            tb.close_menu();
+        }
+    }
+
     pub(crate) fn tab_menu_open(&self) -> bool {
         self.menu.is_open()
     }
@@ -1872,7 +1885,9 @@ impl Editors {
     pub(crate) fn route_tabs(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> bool {
         // 열린 탭 메뉴 = 모달(바깥 좌/우클릭은 닫고 그 클릭을 그대로 진행 · 팝업 UX 규칙).
         if self.menu.is_open() {
-            let consumed = self.menu.on_event(ev);
+            // ★ `on_event`는 바깥 클릭도 "소비"로 보고한다 → 먼저 바깥인지 재 둔다(사용자 09-22: 다시 눌러야 했다).
+            let outside = self.menu.is_outside_click(ev);
+            let consumed = self.menu.on_event(ev) && !outside;
             if let Some(id) = self.menu.take_picked() {
                 let i = self.menu_tab.take().unwrap_or(self.active);
                 if std::mem::take(&mut self.menu_is_badge) {
@@ -2025,7 +2040,25 @@ impl Editors {
     }
 
     /// 우클릭 메뉴(팝업 층 · 호스트가 맨 마지막에).
+    /// 열린 메뉴 전부 닫기(탭 메뉴 · 본문 편집 메뉴) — 풀다운과 배타(사용자 09-22).
+    pub(crate) fn close_menus(&mut self) {
+        self.menu.close();
+        for tb in &mut self.bufs {
+            tb.close_menu();
+        }
+    }
+
     pub(crate) fn paint_popups(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        // 편집기 본문의 우클릭 편집 메뉴(동시 편집이면 칸마다) — 팝업 층 = 토스트·카드 위.
+        if self.is_split() {
+            for &i in &self.split {
+                if let Some(tb) = self.bufs.get(i) {
+                    tb.paint_popup(dc, th);
+                }
+            }
+        } else {
+            self.cur().paint_popup(dc, th);
+        }
         self.menu.paint(dc, th);
     }
 

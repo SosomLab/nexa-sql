@@ -331,6 +331,13 @@ impl ExplorerSet {
         self.panes.iter().any(|p| p.ex.menu_open())
     }
 
+    /// 우클릭 메뉴 전부 닫기(풀다운과 배타 · 09-22).
+    pub(crate) fn close_menu(&mut self) {
+        for p in &mut self.panes {
+            p.ex.close_menu();
+        }
+    }
+
     /// 열린 우클릭 메뉴의 영역(없으면 빈 영역).
     pub(crate) fn menu_bounds(&self) -> Rect {
         self.panes

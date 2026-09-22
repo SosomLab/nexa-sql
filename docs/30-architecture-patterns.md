@@ -60,6 +60,8 @@
 | **연산 기록 되돌리기**(`replace_many` · 묶음 · 저장 지점 · 예산 · 읽기 전용) | nexa-ctl `EditState` | 되돌리기 = 역연산 맞바꾸기(저장 = 지운 글자만) · 여러 곳 = 한 단계·한 번 훑기 · 더러움 O(1) · 바이트 예산 · 단일 변경 통로 → [60](60-undo-redo-redesign.md) | 찾아 바꾸기 · 외부 변경 반영 · 큰 파일 탭 |
 | **fileload**(자리 탭 · 진행 막 · 취소) | nexa-sql `fileload.rs` + `Editors::begin_load_tab`/`fill_loaded` | "오래 걸리는 일을 **탭 하나에 가두고** 나머지는 그대로" — 진행 상태 = 원자값 · 지연 표시 · 100% 프레임 뒤 교체 · 명령 문지기는 순수 함수 | 큰 파일 열기 · (후보) 큰 결과 내보내기 미리보기 |
 | **세대 + 줄 해시 캐시** | nexa-ctl `TextBox`(`MlTextCache`·`RowWidthCache`·`HlStateCache`) | 본문에서 파생되는 줄 단위 산출물은 (세대, 행 해시)로 묶어 **바뀐 행만** 다시 계산 — 새 줄 단위 기능(진단 표시 · 폴딩)을 넣을 때 같은 틀로 | 큰 파일 성능(59 §1) |
+| **is_outside_click**(09-22) | nexa-ctl `ContextMenu` | 열린 팝업의 바깥 좌/우 클릭 판정 — `on_event`는 바깥 클릭을 닫고 **소비**로 보고하므로 컨테이너는 이 판정을 `on_event` 전에 재 두고 `consumed && !outside`로 "닫고 통과"를 구현한다(편집기 탭·결과 탭·탐색기·그리드 공통 · 새 컨텍스트 메뉴 컨테이너도 같은 꼴) | journal 09-22 §58 |
+| **MenuEntry::Sub**(09-22) | nexa-ctl `MenuBar`(pulldown) | 풀다운 하위 메뉴 한 단계(`›` · hover/→/Enter 펼침 · ←/Esc 접힘 · 표면 밖이면 왼쪽 뒤집기 → `nudge_into`) — 메뉴가 길어지면 항목을 늘리지 말고 그룹으로 접는다(Edit 메뉴 6그룹) | journal 09-22 §60 |
 | **ellipsize_middle + show_full**(09-22) | nexa-ctl `draw` | 긴 경로·라벨의 가운데 `…` 축약(접두사 폭 표 · 앞 ≈ 뒤) + 전역 "전체 보기" 스위치(Alt 동안) — 풀다운·우클릭 메뉴·팔레트·검색 결과 공통 · 새로 경로를 보이는 곳은 이 부품을 쓴다 | journal 09-22 §38 |
 | **IntentFade / HoverFade / FadeSpeed** | nexa-ctl `tokens` | 지나가는 대상의 hover 비용 0 · 마지막 의도만 · 속도 속성 2단 | 그리드 행 · 목록 행 · 콤보 항목 · 버튼 · 텍스트박스 |
 | **hover/눌림 색 · 페이드 ms · 스크롤바 지연 전역 setter** | nexa-ctl `tokens` · `scroll` | "설정 한 번 = 전 컨트롤 즉시"(핫스왑) | `ui.*` 설정 |

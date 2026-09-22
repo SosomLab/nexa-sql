@@ -262,3 +262,45 @@ cancel_all() ─▶ waiting.clear()(running 제외)
 | **T-94** 데이터 편집기 | 행 추가/삭제/복제 · 셀 편집 · Save = [41](41-sql-copy-key-rules.md) 키 규칙으로 INSERT/UPDATE/DELETE · [34](34-transaction-ux.md) | 별도 설계 |
 
 **검증 게이트**(39 §6): Oracle 사내 실서버 100만 행 테이블 — 첫 세그먼트 ≤ 0.3s · Fetch next 10회 연속 왕복 ≤ 0.2s/회 · Fetch all 예산 256 MB에서 멈춤 + 안내 · 탭 닫기 뒤 Private 복귀 · 커서 유휴 시 V$OPEN_CURSOR 1개.
+
+---
+
+## 11. 실행 Facade — 어떤 DB 호출이 실행 상태 카드를 거치는가(사용자 09-22)
+
+> **요구**: "전체 조회 버튼·자동 Fetch도 직접 실행한 것처럼 토스트(실행 상태 카드)에 보이게 Facade" + "이미 세션이 연결된 상태에서 **페치만** 되는 거면 토스트 대상은 아닌 것 같은데 DBMS별로 차이가 있나?" → **차이가 있다**. 원칙을 하나로 세운다.
+
+### 11-1. 원칙
+
+**서버에 새 SQL 문장이 가면 카드(실행 상태 카드 = 직접 실행과 같은 경로) · 열린 커서에서 이어 읽기만 하면 카드 없이 상태줄 + 로그 한 줄.** 전체 조회는 길어질 수 있으므로 커서 경로여도 카드(진행 rows/bytes · ■ 중지). 모든 DB 호출은 한 진입점(`db_call`)을 지나 이 정책을 적용받는다 — 호출자가 카드를 직접 켜지 않는다.
+
+### 11-2. 포함 범위 표
+
+| 진입점 | 서버에 가는 것 | 카드 | 상태줄·로그 | 비고 |
+|---|---|---|---|---|
+| 실행(F5/F9 · 실행 파일 · 새로고침 · Explain) | 새 SQL | ✅(지금 그대로) | ✅ | `run_text`/`refresh_result` |
+| **전체 조회**(Σ 옆 ⤓ · `FetchReq::All`) — 커서 살아 있음(Oracle·PG·SQLite) | 커서 이어 읽기(새 SQL 없음) | ✅ **카드**("전체 조회 · 커서" · 진행 · ■) | ✅ | 길 수 있어 예외적으로 카드 |
+| 전체 조회 — 커서 없음/닫힘 · SQL Server | **OFFSET 재질의**(새 SQL) | ✅("전체 조회 · 재질의 OFFSET k") | ✅ | |
+| **자동 페치 / Fetch next(200)** — 커서 이어 읽기 | 새 SQL 없음 | ❌ | 상태줄 `+200 rows (cursor)` · 로그 Info 1줄 | 사용자 09-22 "페치만이면 대상 아님" |
+| 자동 페치 / Fetch next — **재질의**(SQL Server 항상 · 커서 유휴 닫힘 `db.cursor_idle_secs` · 다른 문장 실행 뒤 · `grid.fetch_mode=offset` · 엄격 모드 교체 §9) | 새 SQL(`LIMIT n OFFSET k` 래핑) | ✅(워커가 재질의를 **결정하는 순간** `Requery` 이벤트 → 카드 시작 · 끝나면 Done rows/secs) | ✅ | 사용자 09-22 "200 rows일 때 재실행인지 판단이 안 됨" → 카드·로그에 **`OFFSET k` 재질의**로 드러난다 |
+| Σ 건수(`FetchReq::Count`) | 새 SQL `SELECT COUNT(*) FROM (q) x` | ✅("건수") | ✅ | |
+| 결과→SQL 키 조회(`Cmd::Keys`) | 메타 질의(카탈로그) | ❌ | 로그 perf | 짧고 사용자 문장이 아님 |
+| Commit / Rollback | 명령 | ❌(트랜잭션 토스트 34) | ✅ | 기존 |
+| 접속 · 해제 · 끊김 판정 · 유휴 닫기 | 접속 | ❌(접속 창 막 · 로그) | ✅ | 26 §8 |
+| 탐색기 메타 · 인텔리센스 · 신호등 | 메타 세션 | ❌ | 로그 perf | 39 §3 |
+
+### 11-3. DBMS별 페치 경로(질문의 답)
+
+| 드라이버 | `cursor_supported` | Fetch next(200)의 실제 | 커서를 잃는 때 |
+|---|---|---|---|
+| Oracle | ✅ | 같은 문장·같은 위치면 **커서 이어 읽기**(새 SQL 없음) | 유휴 `db.cursor_idle_secs` · 다른 문장 실행 · 접속 해제 |
+| PostgreSQL | ✅(Portal) | 커서 이어 읽기 — **자동 커밋 모드에선 결과를 다 읽을 때까지 암묵 트랜잭션**(탭 배지 "커서 열림" · 34) | 위와 같음 + 커밋/롤백 |
+| SQLite | ✅ | 커서 이어 읽기 | 위와 같음 |
+| SQL Server | ❌(1차 = OFFSET 폴백 · 스트림 유지 T-48c) | **항상 재질의**(`… ORDER BY (SELECT NULL) OFFSET k ROWS FETCH NEXT n ROWS ONLY`) | — |
+
+`fetch_page`(nsql-run)가 이미 "커서였는가"를 돌려주므로 워커 `Page` 이벤트에 `via_cursor`를 실어 호스트가 표시를 가른다.
+
+### 11-4. 구현(93차 후반 · ✅ journal §43 · 카드 스택 = 앱 공유·최신 최상단 §50~51)
+
+- 워커: `Cmd::FetchPage` 처리에서 커서 경로가 아니면 **실행 직전** `ConnOutcome::Requery { key, offset, limit }` 송신 · `Page`에 `via_cursor` · `Count`는 요청 때 카드.
+- 호스트: `fetch_request`가 유일한 진입점(이미) → All/Count = 요청 때 `run_toast.start(라벨)` · Next = `Requery` 이벤트에서 시작 · `Page`/`Count` 도착 = `finish(Done{rows, secs})`(실패 = `Error`) · 커서 페치 = 상태줄 `StFetchedCursor` + 로그. 카드가 어느 페치의 것인지 = `Sess.fetch_card: Option<u64 key>`.
+- 결정(권장안 · 사용자 확인): **D-184** 전체 조회의 커서 경로도 카드 = ✅(길 수 있음) · **D-185** Count 카드 = ✅ · **D-186** 키 조회 카드 = ❌(로그만).

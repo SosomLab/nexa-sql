@@ -962,6 +962,11 @@ impl Explorer {
         self.bounds
     }
 
+    /// 우클릭 메뉴 닫기(풀다운과 배타 · 09-22).
+    pub(crate) fn close_menu(&mut self) {
+        self.menu.close();
+    }
+
     pub(crate) fn menu_open(&self) -> bool {
         self.menu.is_open()
     }
@@ -2048,7 +2053,8 @@ impl Explorer {
         }
         // 열린 우클릭 메뉴가 먼저(바깥 클릭은 닫고 통과 · CLAUDE.md §3).
         if self.menu.is_open() {
-            let consumed = self.menu.on_event(ev);
+            let outside = self.menu.is_outside_click(ev);
+            let consumed = self.menu.on_event(ev) && !outside;
             if let Some(id) = self.menu.take_picked() {
                 self.menu_pick(&id);
                 return true;
