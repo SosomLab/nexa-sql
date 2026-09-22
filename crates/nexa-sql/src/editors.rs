@@ -885,7 +885,8 @@ impl Editors {
         self.preview.filter(|id| self.index_of_id(*id).is_some())
     }
 
-    /// 탭 `i`가 미리보기 탭인가.
+    /// 탭 `i`가 미리보기 탭인가(테스트 · 탭 메뉴 "미리보기 유지"가 붙으면 호스트도).
+    #[cfg(test)]
     pub(crate) fn is_preview(&self, i: usize) -> bool {
         self.preview_id() == Some(self.tab_id(i))
     }

@@ -156,6 +156,7 @@ impl ProjectPanel {
         self.scan_max = scan_max.max(100);
     }
 
+    #[cfg(test)]
     pub(crate) fn has_project(&self) -> bool {
         self.name.is_some()
     }
@@ -228,7 +229,8 @@ impl ProjectPanel {
         self.clamp_scroll();
     }
 
-    /// 활성 탭의 파일을 트리에서 골라 보인다(있으면 · 조상을 펼친다).
+    /// 활성 탭의 파일을 트리에서 골라 보인다(있으면 · 조상을 펼친다). 호스트 배선 = T-165 P4 잔여(`project.reveal_active`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reveal(&mut self, path: &Path) -> bool {
         // 조상 루트를 찾아 경로를 따라 펼친다.
         let root = self
