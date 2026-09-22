@@ -31,11 +31,13 @@ pub(crate) fn prepare(raw: &[u8]) -> Option<Cow<'_, [u8]>> {
 
 /// UTF-16(BOM 뒤) → UTF-8. 짝 잃은 대리 코드·홀수 바이트는 U+FFFD.
 fn utf16_to_utf8(b: &[u8], big_endian: bool) -> Vec<u8> {
-    let units = b.chunks_exact(2).map(|p| {
+    // `as_chunks`(1.88 · clippy `manual_slice_chunks` — CI stable · MSRV 1.89): 짝 단위 배열 · 나머지 1바이트는 아래서.
+    let (pairs, _odd) = b.as_chunks::<2>();
+    let units = pairs.iter().map(|p| {
         if big_endian {
-            u16::from_be_bytes([p[0], p[1]])
+            u16::from_be_bytes(*p)
         } else {
-            u16::from_le_bytes([p[0], p[1]])
+            u16::from_le_bytes(*p)
         }
     });
     let mut s = String::with_capacity(b.len());
