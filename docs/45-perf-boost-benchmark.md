@@ -74,6 +74,7 @@
 | `meta.refresh_highlight_ms`=0 · `editor.undo_persist`=off | 갱신 강조의 잔여 프레임 · 되돌리기 기록 파일 I/O | 89차 |
 | `grid.result_tabs`=off | 동시에 들고 있는 결과 수 | 89차 끝(사용자 결정 — 메모리 억제가 목적) |
 | `ui.toast_progress`=off | 토스트가 떠 있는 동안 30 ms 틱 | 93차 |
+| `project.icons`=off | 프로젝트 탐색기의 OS 셸 아이콘 조회(워커 스레드 + COM · 셸 이미지 리스트) | 95차 후반 · **96차 실측** [26 §7-10](26-performance-architecture.md) = 패널 시나리오 11.79 → **9.77 MB · 핸들 281 → 225 · GDI 76 → 36** — 강제 키 하나로 되돌아가는 유일한 시나리오 차이 |
 
 **넣지 않은 것**(결과가 바뀐다 → 개별 스위치로만): `vars.signature_lookup` · `pg.refcursor_expand` · `vars.persist` · `grid.result_per_statement` · 큰 파일 단계(`file.large_*`) · `project.*`(패널을 닫으면 0이라 강제할 이유가 없다) · `ui.ime_hint`(포커스 조건부 · low 프리셋에서만 off) · `gfx.mac_present`(macOS 전용 · D-133 대기).
 

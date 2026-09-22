@@ -42,6 +42,8 @@ pub(crate) struct OpenFile {
 
 /// OPEN FILES에 보이는 최대 줄 수(넘치면 "+n").
 const OPEN_FILES_MAX: usize = 8;
+/// 아이콘 조회가 다 끝난 뒤 이만큼 유휴면 셸 아이콘 워커를 거둔다(ms).
+const ICON_WORKER_IDLE_MS: u64 = 5_000;
 
 /// 행을 열라는 요청(1회성).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +122,9 @@ pub(crate) struct ProjectPanel {
     fallback_file: Rc<IconImage>,
     /// 마지막으로 본 서비스 버전(바뀌면 = 조회 결과 도착 → 다시 그린다).
     icon_version: u64,
+    /// 조회가 전부 끝난 시각(ms) · `None` = 조회 중이거나 이미 거뒀다. 이 시각에서 [`ICON_WORKER_IDLE_MS`] 지나면
+    /// 아이콘 워커 스레드(COM 아파트먼트 · 셸 아이콘 캐시 핸들 +GDI)를 거둔다(파일 대화상자는 닫힐 때 거둠 · 패널은 늘 열려 있으니 유휴로 · 96차 성능 점검).
+    icon_idle_since: Option<u64>,
     /// OPEN FILES(편집기 탭 목록 · 호스트가 틱마다 `set_open_files`) · 그 영역.
     open_files: Vec<OpenFile>,
     open_rect: Rect,
@@ -184,6 +189,7 @@ impl ProjectPanel {
             fallback_dir: Rc::new(nexa_ctl::controls::fallback_file_icon(true)),
             fallback_file: Rc::new(nexa_ctl::controls::fallback_file_icon(false)),
             icon_version: 0,
+            icon_idle_since: None,
             sel_path: None,
             open_files: Vec::new(),
             open_rect: Rect::default(),
@@ -242,13 +248,18 @@ impl ProjectPanel {
         if let Some(img) = self.icons.get(&key) {
             return img.clone();
         }
-        match IconService::global().icon(&key, false) {
+        let look = IconService::global().icon(&key, false);
+        match look {
             Lookup::Ready(Some(ic)) => {
                 let rc = Rc::new(IconImage::from_rgba(ic.w, ic.h, ic.rgba.clone()));
                 self.icons.insert(key, rc.clone());
                 rc
             }
-            Lookup::Ready(None) | Lookup::Pending => {
+            Lookup::Pending | Lookup::Ready(None) => {
+                if matches!(look, Lookup::Pending) {
+                    // 새 조회가 나갔다 → 유휴 시계는 결과가 다 도착한 뒤 `tick`에서 다시 시작.
+                    self.icon_idle_since = None;
+                }
                 if is_dir {
                     self.fallback_dir.clone()
                 } else {
@@ -762,10 +773,23 @@ impl ProjectPanel {
         let mut changed = self.filter.tick(now_ms) | self.bars.tick(now_ms);
         // 셸 아이콘 조회 결과가 도착했다(서비스 버전 변화) → 다시 그린다(파일 대화상자 `apply_icon_updates`와 같은 규칙).
         if self.icons_on {
-            let v = IconService::global().version();
+            let svc = IconService::global();
+            let v = svc.version();
             if v != self.icon_version {
                 self.icon_version = v;
                 changed = true;
+            }
+            // 조회가 다 끝난 뒤 유휴 5초 = 워커(COM 아파트먼트·셸 캐시 핸들) 회수 · 캐시(`icons`)는 남아 다시 그리는 데 조회 0.
+            // 워커 스스로의 30초 회수보다 앞당긴다(패널이 열린 채 오래 머무는 동안 핸들 +80 · GDI +37을 들고 있지 않게).
+            if svc.pending() == 0 {
+                match self.icon_idle_since {
+                    None => self.icon_idle_since = Some(now_ms),
+                    Some(t) if t != u64::MAX && now_ms.saturating_sub(t) >= ICON_WORKER_IDLE_MS => {
+                        svc.release_worker();
+                        self.icon_idle_since = Some(u64::MAX); // 거둠 표식 — 다음 조회(`icon_for` Pending)가 `None`으로 되돌린다.
+                    }
+                    Some(_) => {}
+                }
             }
         }
         changed
