@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/win-93-project-explorer-multi-open | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | ★ 93차(win): 프로젝트 탐색기 + 미리보기 탭(67 §4-1 · `project.rs`·`project_panel.rs`) · 파일 열기 다중 선택 + 순차 적재(`file.open_max`) · 다중 인스턴스 시작 모드(`instance.lock` · MSRV 1.89) · 동시 편집 탭 상단 줄 · 토스트 진행/IME 안내/프로필 해시 파일/가로 스크롤/클릭 안정(§14~§27) · 📐 66·67·67a·68·69(다른 세션)·70 · 규칙 점검(61 §2-4·§3-1) — nexa-ui 55차와 짝 |
 | docs/kill-app-process-rule | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 규칙 — 개발 중 `target/` 아래 `nexa-sql.exe`는 누가 띄웠든 강제 종료하고 진행(61 §2-4 · CLAUDE.md §3 · journal §15) · Release 재기동 |
 | docs/ci-result-92 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 92차 push CI 결과(nexa-ui e5433cb 3-OS ✓ — Windows 포함 = 시험 경주 원인 확인 · nexa-sql bcb4123 ci 3-OS ✓) |
 | fix/win-92-font-race-docs | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 92차(win) — 최신화·분석(mac 90차 + Linux 91차 · Windows 412 · 회귀 없음) · nexa-ui 53차 Windows CI 실패 원인 정정(nexa-font 시험 `set_text_gdi` 경주 → nexa-ui 54차 가드 + 걷기 캐시 3-OS 복귀) · Windows `[startup]` 첫 기록 · 문서(journal §14 · DEVLOG · STATUS · MILESTONES · TODO T-163 · 61 · CLAUDE.md) |

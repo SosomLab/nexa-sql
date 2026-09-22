@@ -33,6 +33,8 @@ mod findbar;
 mod gitstat;
 mod grid;
 mod icon;
+mod imehint;
+mod imestate;
 mod input;
 mod input_win;
 mod keymap;
@@ -43,6 +45,8 @@ mod palette;
 mod prefs_win;
 mod present;
 mod probe;
+mod project;
+mod project_panel;
 mod results;
 mod runtoast;
 mod rx;
@@ -130,6 +134,8 @@ enum Focus {
     Search,
     /// 확장 패널(검색 상자 · 사용자 09-19).
     Ext,
+    /// 프로젝트 탐색기(docs/67 · 사용자 09-22).
+    Project,
 }
 
 /// 저장소 읽기 스레드의 결과 한 벌(원천 · index · 추적 줄).
@@ -245,6 +251,14 @@ struct App {
     /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
     file_win: FileWin,
     open_file_dlg: Option<PickerMode>,
+    /// ★ 다중 열기(사용자 09-22): 확인 팝업이 기다리는 (파일들 · 인코딩) · 진행 중인 순차 적재.
+    multi_pending: Option<(Vec<PathBuf>, String)>,
+    multi_load: Option<MultiLoad>,
+    /// 시작 인자(사용자 09-22): 프로젝트 파일 · 열 파일들 · 첫 인스턴스인가 · 인스턴스 잠금(살아 있는 동안 쥔다).
+    arg_project: Option<PathBuf>,
+    arg_files: Vec<PathBuf>,
+    first_instance: bool,
+    _instance_lock: Option<std::fs::File>,
     /// 폴더 고르기의 시작 폴더(설정의 지금 값).
     folder_start: Option<PathBuf>,
     // 컨트롤
@@ -310,6 +324,9 @@ struct App {
     explorer: explorers::ExplorerSet,
     /// 파일 검색 패널(활동 막대 두 번째 · T-81a · docs/36).
     search: SearchPanel,
+    /// 프로젝트 탐색기(docs/67 §4) · 열린 프로젝트(없으면 기본 워크스페이스).
+    project_panel: project_panel::ProjectPanel,
+    project: project::Project,
     /// 확장 패널(활동 막대 "확장" · 확장 관리자가 켜져 있을 때만 · 사용자 09-19).
     ext_panel: ExtPanel,
     /// 저장소 읽기 스레드의 결과(패널을 열거나 ⟳ · 사용자 동작으로만 · 26 §8).
@@ -745,12 +762,15 @@ impl App {
             Some("view.search")
         } else if self.ext_panel.is_visible() {
             Some("view.extensions")
+        } else if self.project_panel.is_visible() {
+            Some("view.project")
         } else {
             None
         });
         let exp_w = if self.explorer.is_visible()
             || self.search.is_visible()
             || self.ext_panel.is_visible()
+            || self.project_panel.is_visible()
         {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
@@ -776,6 +796,20 @@ impl App {
             s,
         );
         self.search.set_clamp_width(w);
+        self.project_panel.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.project_panel.is_visible() {
+                    exp_w
+                } else {
+                    0
+                },
+                body_h,
+            ),
+            s,
+        );
+        self.project_panel.set_clamp_width(w);
         self.ext_panel.set_bounds(
             Rect::new(
                 act_w,
@@ -879,6 +913,7 @@ impl App {
         self.explorer.set_focused(f == Focus::Explorer);
         self.find.set_focused(f == Focus::Find);
         self.search.set_focused(f == Focus::Search);
+        self.project_panel.set_focused(f == Focus::Project);
         self.ext_panel.set_focused(f == Focus::Ext);
         if let Some(w) = &self.window {
             // 앱 조합 모드(T-139)면 어느 포커스든 IME를 끊는다(raw 자모 → 상자가 조합) · 아니면 글 입력 포커스에서만 붙인다.
@@ -887,7 +922,8 @@ impl App {
                     && (f == Focus::Editor
                         || f == Focus::Find
                         || f == Focus::Search
-                        || f == Focus::Ext),
+                        || f == Focus::Ext
+                        || f == Focus::Project),
             );
         }
     }
@@ -936,6 +972,7 @@ impl App {
             Focus::Find => self.find.focused_textbox(),
             Focus::Search => self.search.focused_textbox(),
             Focus::Ext => self.ext_panel.focused_textbox(),
+            Focus::Project => self.project_panel.focused_textbox(),
             Focus::Grid | Focus::Explorer => None,
         }
     }
@@ -1049,7 +1086,8 @@ impl App {
                     }
                 }
             }
-            PanelAction::Edit(_) => {} // 접속 창이 자체 처리(클립보드)
+            PanelAction::Edit(_) => {}     // 접속 창이 자체 처리(클립보드)
+            PanelAction::CopyFile(_) => {} // 접속 창이 자체 처리(`copy_profile_file` → CopyText)
             PanelAction::LoadProfile(name) => {
                 match Vault::open_default().and_then(|v| v.get(&name)) {
                     Ok(Some(spec)) => {
@@ -2251,6 +2289,11 @@ impl App {
             self.layout();
             return;
         }
+        if let Some(rest) = id.strip_prefix("multi.") {
+            self.multi_pick(rest);
+            self.redraw();
+            return;
+        }
         if let Some(rest) = id.strip_prefix("tx.") {
             self.tx_pick(rest);
             self.redraw();
@@ -2705,7 +2748,509 @@ impl App {
         }
     }
 
-    /// 옆 패널은 한 번에 하나 — `keep`만 남기고 닫는다(탐색기·파일 검색·확장).
+    // ───────────────────────── 다중 열기(사용자 09-22) ──────────
+
+    /// 확인 팝업 — 개수·합계 크기 · 상한(`file.open_max`)까지의 목록 · 초과분 안내 · 열기/취소.
+    fn multi_open_ask(&mut self, paths: Vec<PathBuf>, enc: String) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let info = |label: String| CtxItem::Item {
+            id: String::new(),
+            label,
+            enabled: false,
+            icon: None,
+            shortcut: None,
+            children: Vec::new(),
+            checked: None,
+            active: false,
+            mark: None,
+        };
+        let max = self.settings.int("file.open_max").max(1) as usize;
+        let take: Vec<PathBuf> = paths.iter().take(max).cloned().collect();
+        let excluded = paths.len().saturating_sub(take.len());
+        if take.len() == 1 {
+            // 상한이 1이거나 하나만 남았다 = 바로.
+            self.open_file_enc(&take[0], &enc);
+            return;
+        }
+        let sizes: Vec<u64> = take
+            .iter()
+            .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+            .collect();
+        let total: u64 = sizes.iter().sum();
+        let mut items = vec![info(tf(
+            Msg::MultiOpenHeader,
+            &[&take.len().to_string(), &nsql_core::fmt_bytes(total)],
+        ))];
+        items.push(CtxItem::Separator);
+        for (p, sz) in take.iter().zip(&sizes) {
+            items.push(info(format!(
+                "{}  ({})",
+                editors::file_title(p),
+                nsql_core::fmt_bytes(*sz)
+            )));
+        }
+        if excluded > 0 {
+            items.push(CtxItem::Separator);
+            items.push(info(tf(
+                Msg::MultiOpenExcluded,
+                &[&excluded.to_string(), &max.to_string()],
+            )));
+        }
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item(
+            "multi.open",
+            tf(Msg::MultiOpenGo, &[&take.len().to_string()]),
+        ));
+        items.push(CtxItem::item("multi.cancel", t(Msg::BtnCancel)));
+        self.multi_pending = Some((take, enc));
+        let r = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(
+                    sz.width as i32 / 2 - px(160.0, self.scale),
+                    sz.height as i32 / 3,
+                    0,
+                    0,
+                )
+            })
+            .unwrap_or_default();
+        self.open_status_popup(r, items);
+    }
+
+    /// 팝업 항목(`multi.*`).
+    fn multi_pick(&mut self, id: &str) {
+        match id {
+            "open" => self.multi_open_start(),
+            _ => {
+                self.multi_pending = None;
+            }
+        }
+    }
+
+    /// 자리 탭을 전부 만들고 스레드 하나가 순서대로 읽는다. 이미 연 파일은 건너뛴다.
+    fn multi_open_start(&mut self) {
+        let Some((paths, enc)) = self.multi_pending.take() else {
+            return;
+        };
+        let origin = self.editors.active_id();
+        let mut jobs: Vec<(PathBuf, u64)> = Vec::new();
+        for p in paths {
+            if self.editors.path_tab(&p).is_some() {
+                continue;
+            }
+            let id = self.editors.begin_load_tab(&editors::file_title(&p));
+            jobs.push((p, id));
+        }
+        if jobs.is_empty() {
+            self.redraw();
+            return;
+        }
+        // 첫 파일의 탭을 보인다(자리 탭은 마지막 것이 활성이 되므로 되돌린다).
+        self.editors.switch_to_id(jobs[0].1);
+        let n = jobs.len();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let proxy = std::sync::Mutex::new(self.wake_proxy.clone());
+        let spawned = std::thread::Builder::new()
+            .name("multi-open".into())
+            .spawn(move || {
+                for (p, id) in jobs {
+                    let r = fileload::load(&p, &enc, None, true, None);
+                    if tx.send((p, id, r)).is_err() {
+                        break;
+                    }
+                    if let Ok(px) = proxy.lock() {
+                        let _ = px.send_event(Wake);
+                    }
+                }
+            });
+        if spawned.is_err() {
+            self.sess.status = tf(Msg::StFileReadError, &["multi-open", "thread"]);
+            return;
+        }
+        self.multi_load = Some(MultiLoad {
+            rx,
+            remaining: n,
+            total: n,
+            origin,
+            started: Instant::now(),
+        });
+        self.sess.status = tf(Msg::StMultiOpenStart, &[&n.to_string()]);
+        self.set_focus(Focus::Editor);
+        self.layout();
+        self.redraw();
+    }
+
+    /// 순차 적재 결과 수거(틱) — 온 것부터 그 자리 탭에 옮겨 넣는다(활성 탭은 바꾸지 않는다).
+    fn multi_load_poll(&mut self) {
+        let Some(ml) = self.multi_load.as_mut() else {
+            return;
+        };
+        let mut got = Vec::new();
+        while let Ok(item) = ml.rx.try_recv() {
+            got.push(item);
+        }
+        if got.is_empty() {
+            return;
+        }
+        let origin = ml.origin;
+        for (path, tab, result) in got {
+            self.file_loaded(FileLoaded {
+                path,
+                mode: LoadMode::Open,
+                tab: Some(tab),
+                origin,
+                result,
+            });
+            if let Some(ml) = self.multi_load.as_mut() {
+                ml.remaining = ml.remaining.saturating_sub(1);
+            }
+        }
+        let done = self.multi_load.as_ref().is_some_and(|m| m.remaining == 0);
+        if done {
+            let m = self.multi_load.take().unwrap_or_else(|| unreachable!());
+            self.sess.status = tf(
+                Msg::StMultiOpenDone,
+                &[
+                    &m.total.to_string(),
+                    &format!("{:.1}", m.started.elapsed().as_secs_f32()),
+                ],
+            );
+        }
+        self.redraw();
+    }
+
+    // ───────────────────────── 프로젝트(docs/67 · T-165 · 사용자 09-22) ──────────
+
+    /// Project 메뉴 항목 — 명령 · 폴더 제거(폴더마다) · 최근 프로젝트 · 프로젝트 없음.
+    fn project_menu_entries(&self) -> Vec<MenuEntry> {
+        let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
+        let open = self.project.is_open();
+        let gated = |id: &str, m: Msg| {
+            if open {
+                MenuEntry::Item(ComboItem::new(id, t(m)))
+            } else {
+                MenuEntry::Disabled(ComboItem::new(id, t(m)))
+            }
+        };
+        let mut v = vec![
+            item("project.new", Msg::MnProjectNew),
+            item("project.open", Msg::MnProjectOpen),
+            item("project.switch", Msg::MnProjectSwitch),
+            MenuEntry::Separator,
+            gated("project.save", Msg::MnProjectSave),
+            gated("project.save_as", Msg::MnProjectSaveAs),
+            gated("project.close", Msg::MnProjectClose),
+            MenuEntry::Separator,
+            gated("project.add_folder", Msg::MnProjectAddFolder),
+        ];
+        for (i, f) in self.project.folders.iter().enumerate() {
+            v.push(MenuEntry::Item(ComboItem::new(
+                format!("project.remove_folder:{i}"),
+                format!(
+                    "{}  {}",
+                    t(Msg::MnProjectRemoveFolder),
+                    nexa_fs::path::display(f)
+                ),
+            )));
+        }
+        let recent = project::recent_list(self.settings.get("project.recent").unwrap_or(""));
+        if !recent.is_empty() {
+            v.push(MenuEntry::Separator);
+            for (i, p) in recent.iter().enumerate() {
+                let name = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                v.push(MenuEntry::Item(ComboItem::new(
+                    format!("project.recent:{i}"),
+                    format!("{}  {}", name, nexa_fs::path::display(p)),
+                )));
+            }
+        }
+        v
+    }
+
+    /// `project.*` 명령 하나로(메뉴 · 팔레트 · 탐색기 링크 · 기동 명령).
+    fn project_cmd(&mut self, id: &str) {
+        if let Some(rest) = id.strip_prefix("project.recent:") {
+            let recent = project::recent_list(self.settings.get("project.recent").unwrap_or(""));
+            if let Some(p) = rest
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| recent.get(i).cloned())
+            {
+                self.project_load_path(&p);
+            }
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("project.remove_folder:") {
+            if let Some(f) = rest
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.project.remove_folder(i))
+            {
+                self.sess.status = tf(Msg::StProjectFolderRemoved, &[&nexa_fs::path::display(&f)]);
+                self.project_changed(true);
+            }
+            return;
+        }
+        // 자체 캡처·자동화: 대화상자 없이 바로 연다.
+        if let Some(p) = id.strip_prefix("project.load:") {
+            self.project_load_path(Path::new(p.trim()));
+            return;
+        }
+        match id {
+            "project.new" | "project.save_as" => {
+                self.file_purpose = FilePurpose::Project;
+                self.open_file_dlg = Some(PickerMode::Save);
+            }
+            "project.open" => {
+                self.file_purpose = FilePurpose::Project;
+                self.open_file_dlg = Some(PickerMode::Open);
+            }
+            "project.save" => {
+                if let Some(p) = self.project.path.clone() {
+                    self.project_save_to(&p);
+                } else {
+                    self.sess.status = t(Msg::StProjectNoProject).into();
+                }
+            }
+            "project.close" | "project.none" => {
+                self.palette.close();
+                if self.project.is_open() {
+                    let _ = self.project.save();
+                    self.project_set(project::Project::default());
+                    self.sess.status = t(Msg::StProjectClosed).into();
+                }
+            }
+            "project.add_folder" => {
+                if self.project.is_open() {
+                    self.file_purpose = FilePurpose::Project;
+                    self.folder_start = self
+                        .project
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.parent().map(Path::to_path_buf));
+                    self.open_file_dlg = Some(PickerMode::Folder);
+                } else {
+                    self.sess.status = t(Msg::StProjectNoProject).into();
+                }
+            }
+            "project.switch" => {
+                // 팔레트로 고른다: (프로젝트 없음) + 최근 목록.
+                let recent =
+                    project::recent_list(self.settings.get("project.recent").unwrap_or(""));
+                let mut cmds: Vec<(String, String)> =
+                    vec![("project.none".into(), t(Msg::MnProjectNone).into())];
+                for (i, p) in recent.iter().enumerate() {
+                    let name = p
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    cmds.push((
+                        format!("project.recent:{i}"),
+                        format!("{}  {}", name, nexa_fs::path::display(p)),
+                    ));
+                }
+                cmds.push(("project.open".into(), t(Msg::MnProjectOpen).into()));
+                self.palette.set_commands(cmds);
+                self.palette.open("");
+            }
+            _ => {}
+        }
+        self.redraw();
+    }
+
+    /// 프로젝트 파일을 읽어 현재 프로젝트로(현재 것은 먼저 저장).
+    fn project_load_path(&mut self, path: &Path) {
+        self.palette.close();
+        match project::Project::load(path) {
+            Ok(p) => {
+                if self.project.is_open() && self.project.path.as_deref() != Some(path) {
+                    let _ = self.project.save();
+                }
+                self.project_set(p);
+            }
+            Err(e) => {
+                self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+            }
+        }
+        self.redraw();
+    }
+
+    /// 새 프로젝트/다른 이름으로 — 지금 프로젝트(없으면 빈 것)를 그 경로에 쓴다.
+    fn project_save_to(&mut self, path: &Path) {
+        let path = if path.extension().is_some_and(|e| e == project::EXT) {
+            path.to_path_buf()
+        } else {
+            path.with_extension(project::EXT)
+        };
+        let p = self.project.clone().with_path(&path);
+        match p.save() {
+            Ok(()) => {
+                self.sess.status = tf(Msg::StProjectSaved, &[&nexa_fs::path::display(&path)]);
+                self.project_set(p);
+            }
+            Err(e) => {
+                self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
+            }
+        }
+        self.redraw();
+    }
+
+    fn project_add_folder(&mut self, dir: &Path) {
+        if self.project.add_folder(dir) {
+            self.sess.status = tf(Msg::StProjectFolderAdded, &[&nexa_fs::path::display(dir)]);
+            self.project_changed(true);
+        }
+    }
+
+    /// 프로젝트 교체 = 상태 · 설정(`project.last` · 최근) · 탐색기 · 메뉴.
+    fn project_set(&mut self, p: project::Project) {
+        self.project = p;
+        let last = self
+            .project
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let _ = self.settings.set("project.last", &last);
+        if let Some(p) = self.project.path.clone() {
+            let raw = project::push_recent(self.settings.get("project.recent").unwrap_or(""), &p);
+            let _ = self.settings.set("project.recent", &raw);
+            self.sess.status = tf(
+                Msg::StProjectOpened,
+                &[
+                    &self.project.name().unwrap_or_default(),
+                    &self.project.folders.len().to_string(),
+                ],
+            );
+        }
+        self.persist_settings();
+        self.project_changed(false);
+    }
+
+    /// 폴더 목록이 바뀌었다 — 탐색기·메뉴 갱신(`save`면 파일에도).
+    fn project_changed(&mut self, save: bool) {
+        if save {
+            if let Err(e) = self.project.save() {
+                self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
+            }
+        }
+        self.sync_project_panel_opts();
+        self.project_panel
+            .set_project(self.project.name(), &self.project.folders);
+        self.rebuild_menus();
+        self.layout();
+        self.redraw();
+    }
+
+    fn sync_project_panel_opts(&mut self) {
+        self.project_panel.set_list_opts(
+            self.settings.flag("file.show_hidden"),
+            self.settings.flag("file.show_dot"),
+            self.settings.int("project.scan_max").max(100) as usize,
+        );
+        self.project_panel
+            .set_tooltip_delay(self.settings.int("ui.tooltip_delay_ms").max(0) as u128);
+        self.project_panel
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
+    }
+
+    /// 기동 시작 모드(사용자 09-22 · [`startup_project_plan`]): 기본 = **파일 모드**(프로젝트 없음) · 인자 `.nsql-project` =
+    /// 프로젝트 모드 · `project.restore_last`가 켜져 있고 **첫 인스턴스**이며 파일 인자가 없을 때만 마지막 프로젝트 복원.
+    fn project_startup(&mut self) {
+        self.sync_project_panel_opts();
+        let plan = startup_project_plan(
+            self.arg_project.as_deref(),
+            !self.arg_files.is_empty(),
+            self.first_instance,
+            self.settings.flag("project.restore_last"),
+            self.settings.get("project.last").unwrap_or(""),
+        );
+        let Some((path, from_arg)) = plan else {
+            return;
+        };
+        match project::Project::load(&path) {
+            Ok(proj) => {
+                if from_arg {
+                    self.project_set(proj);
+                } else {
+                    self.project = proj;
+                    self.project_panel
+                        .set_project(self.project.name(), &self.project.folders);
+                }
+            }
+            Err(e) => {
+                if from_arg {
+                    self.sess.status = tf(Msg::ErrProjectFile, &[&e]);
+                } else {
+                    let _ = self.settings.set("project.last", "");
+                    self.persist_settings();
+                }
+            }
+        }
+    }
+
+    /// 탐색기가 낸 요청 거두기(열기 · 링크 명령).
+    fn project_pump(&mut self) {
+        if let Some(id) = self.project_panel.take_command() {
+            self.project_cmd(id);
+        }
+        if let Some(req) = self.project_panel.take_open() {
+            self.project_open_req(req);
+        }
+    }
+
+    /// 탐색기 클릭 = 미리보기 탭(설정 `project.preview_tab`) · 더블클릭/Enter = 정식 탭.
+    /// 큰 파일(`file.async_load_mb` 이상)은 미리보기 없이 보통 열기(자리 탭 + 스레드 · 큰 파일 확인).
+    fn project_open_req(&mut self, req: project_panel::OpenReq) {
+        let preview = self.settings.flag("project.preview_tab") && !req.permanent;
+        if !preview {
+            if !self.editors.promote_path(&req.path) {
+                self.open_file(&req.path);
+            }
+            self.set_focus(Focus::Editor);
+            self.layout();
+            self.redraw();
+            return;
+        }
+        if let Some(i) = self.editors.path_tab(&req.path) {
+            self.editors.switch(i);
+            self.layout();
+            self.redraw();
+            return;
+        }
+        let size = std::fs::metadata(&req.path).map(|m| m.len()).unwrap_or(0);
+        let async_at = (self.settings.int("file.async_load_mb").max(1) as u64) << 20;
+        if size >= async_at {
+            self.open_file(&req.path);
+            return;
+        }
+        match fileload::load(&req.path, "auto", None, true, None) {
+            Ok(l) => {
+                if let fileload::Body::Prepared(prep) = l.body {
+                    let i = self.editors.open_preview(&req.path, prep, l.eol);
+                    self.editors.set_encoding(i, l.used);
+                    let id = self.editors.tab_id(i);
+                    self.ext_track(id);
+                    self.sync_grid_tab();
+                    self.sync_gate();
+                }
+            }
+            Err(e) => {
+                self.sess.status = tf(Msg::StFileReadError, &[&req.path.display().to_string(), &e]);
+            }
+        }
+        self.layout();
+        self.redraw();
+    }
+
+    /// 옆 패널은 한 번에 하나 — `keep`만 남기고 닫는다(탐색기·파일 검색·확장·프로젝트).
     fn side_panel_close_others(&mut self, keep: &str) {
         if keep != "view.explorer" && self.explorer.is_visible() {
             self.explorer.set_visible(false);
@@ -2718,7 +3263,13 @@ impl App {
         if keep != "view.extensions" && self.ext_panel.is_visible() {
             self.ext_panel.set_visible(false);
         }
-        if matches!(self.focus, Focus::Explorer | Focus::Search | Focus::Ext) {
+        if keep != "view.project" && self.project_panel.is_visible() {
+            self.project_panel.set_visible(false);
+        }
+        if matches!(
+            self.focus,
+            Focus::Explorer | Focus::Search | Focus::Ext | Focus::Project
+        ) {
             self.set_focus(Focus::Editor);
         }
     }
@@ -3059,6 +3610,8 @@ impl App {
         let on = self.settings.flag("editor.minimap");
         let w = self.settings.int("editor.minimap_width").clamp(20, 400) as i32;
         self.editors.set_minimap(on, w);
+        self.editors
+            .set_split_max(self.settings.int("editor.split_max"));
         let (color, alpha) = color_alpha_setting(&self.settings, "editor.minimap_box_color");
         self.editors
             .set_minimap_box(color, alpha, self.settings.flag("editor.minimap_border"));
@@ -3188,6 +3741,11 @@ impl App {
             self.settings.flag("run.toast"),
             self.settings.int("run.toast_hide_secs"),
             self.settings.int("ui.toast_alpha"),
+        );
+        s.run_toast.configure_progress(
+            self.settings.flag("ui.toast_progress"),
+            self.settings.int("ui.toast_fade_to"),
+            self.settings.int("ui.toast_bar_spent"),
         );
         self.parked.push(s);
         id
@@ -3440,6 +3998,11 @@ impl App {
             self.settings.flag("run.toast"),
             self.settings.int("run.toast_hide_secs"),
             self.settings.int("ui.toast_alpha"),
+        );
+        s.run_toast.configure_progress(
+            self.settings.flag("ui.toast_progress"),
+            self.settings.int("ui.toast_fade_to"),
+            self.settings.int("ui.toast_bar_spent"),
         );
         self.parked.push(s);
         Some(id)
@@ -4402,6 +4965,11 @@ impl App {
             "ui.slide_ms" | "ui.tooltip_delay_ms" | "ui.dblclick_ms" => {
                 self.conn_win.set_tuning(conn_tuning(&self.settings));
             }
+            "ui.ime_hint_secs" => {
+                let secs = self.settings.int("ui.ime_hint_secs");
+                self.conn_win.set_ime_hint_secs(secs);
+                self.input_win.set_ime_hint_secs(secs);
+            }
             "probe.interval" | "probe.max_retries" | "probe.max_inflight" | "probe.icmp"
             | "probe.timeout" | "probe.retry_delay" | "probe.enabled" => {
                 let n = self.settings.int("probe.max_inflight").clamp(1, 64) as usize;
@@ -4413,6 +4981,14 @@ impl App {
                 self.toasts.configure(
                     self.settings.int("ui.toast_secs"),
                     self.settings.int("ui.toast_alpha"),
+                );
+                self.apply_run_toast();
+            }
+            "ui.toast_progress" | "ui.toast_fade_to" | "ui.toast_bar_spent" => {
+                self.toasts.configure_progress(
+                    self.settings.flag("ui.toast_progress"),
+                    self.settings.int("ui.toast_fade_to"),
+                    self.settings.int("ui.toast_bar_spent"),
                 );
                 self.apply_run_toast();
             }
@@ -4559,11 +5135,13 @@ impl App {
                 .editors
                 .set_undo_budget(self.settings.int(key).max(1) as usize * 1024 * 1024),
             // 확장 관리자 켬/끔(설정 창에서 바꿔도) = 확장 효과 전체 재적용 + 활동 막대 아이콘.
+            "project.preview_tab" | "project.scan_max" => self.sync_project_panel_opts(),
             "extensions.enabled" => {
                 self.apply_extensions(None);
                 self.layout();
             }
             "editor.minimap"
+            | "editor.split_max"
             | "editor.minimap_width"
             | "editor.minimap_box_color"
             | "editor.minimap_border"
@@ -5644,6 +6222,21 @@ impl App {
                 }
                 self.layout();
             }
+            "view.project" => {
+                let on = !self.project_panel.is_visible();
+                if on {
+                    self.side_panel_close_others("view.project");
+                    self.sync_project_panel_opts();
+                }
+                self.project_panel.set_visible(on);
+                if on {
+                    self.project_panel.focus_filter();
+                    self.set_focus(Focus::Project);
+                } else if self.focus == Focus::Project {
+                    self.set_focus(Focus::Editor);
+                }
+                self.layout();
+            }
             "view.search" => {
                 let on = !self.search.is_visible();
                 if on {
@@ -6539,23 +7132,44 @@ impl App {
         if let Some((kind, xy)) = id
             .strip_prefix("ui.")
             .and_then(|r| r.split_once(':'))
-            .filter(|(k, _)| matches!(*k, "move" | "click" | "rclick"))
+            .filter(|(k, _)| {
+                matches!(
+                    *k,
+                    "move"
+                        | "click"
+                        | "dclick"
+                        | "sclick"
+                        | "cclick"
+                        | "rclick"
+                        | "wheel"
+                        | "hwheel"
+                )
+            })
         {
             let mut it = xy
                 .split(['/', 'x'])
                 .map(|v| v.trim().parse::<i32>().unwrap_or(0));
             let (x, y) = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+            // `ui.wheel:x/y/delta` · `ui.hwheel:x/y/delta` = 커서 아래로 휠 사건(가로 스크롤 결함 재현 · 09-22).
+            let delta = it.next().unwrap_or(120);
             self.cursor = (x, y);
             self.route(InputEvent::MouseMove { x, y });
             match kind {
-                "click" => {
-                    self.route(InputEvent::MouseDown {
-                        x,
-                        y,
-                        shift: false,
-                        primary: false,
-                    });
-                    self.route(InputEvent::MouseUp { x, y });
+                "wheel" => self.route(InputEvent::Wheel { delta }),
+                "hwheel" => self.route(InputEvent::HWheel { delta }),
+                "click" | "dclick" | "sclick" | "cclick" => {
+                    // `sclick` = Shift+클릭 · `cclick` = Ctrl/⌘+클릭(동시 편집 탭 선택 캡처 · 09-22) ·
+                    // `dclick` = 더블클릭(같은 자리 두 번 · 프로젝트 탐색기의 정식 탭 열기 캡처).
+                    let times = if kind == "dclick" { 2 } else { 1 };
+                    for _ in 0..times {
+                        self.route(InputEvent::MouseDown {
+                            x,
+                            y,
+                            shift: kind == "sclick",
+                            primary: kind == "cclick",
+                        });
+                        self.route(InputEvent::MouseUp { x, y });
+                    }
                 }
                 "rclick" => self.route(InputEvent::RightDown { x, y }),
                 _ => {}
@@ -6600,6 +7214,37 @@ impl App {
         if let Some(q) = id.strip_prefix("edit.prefs:") {
             self.prefs_query = Some(q.to_string());
             self.open_prefs = true;
+            return;
+        }
+        // 자체 캡처용: 로그인 목록의 우클릭 메뉴를 `row`번째 줄에서 연다(`conn.menu[:n]` · 창 밖으로 안 잘리는지 모서리 캡처 · 61 §2-2 ④).
+        if let Some(xy) = id.strip_prefix("conn.ime_hint:") {
+            let mut it = xy.split('/').map(|v| v.trim().parse::<i32>().unwrap_or(0));
+            let at = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+            self.conn_win.capture_ime_hint(at);
+            return;
+        }
+        // ★ 프로젝트 명령(docs/67 §2-2 · `project.*` 전부 — 접미 인자가 붙는 것도).
+        if id.starts_with("project.") {
+            self.project_cmd(id);
+            return;
+        }
+        // 자체 캡처: 파일 대화상자 없이 다중 열기 확인 팝업(`file.open_many:<a>;<b>;…` · 쉼표는 기동 명령 구분자라 `;`).
+        if let Some(rest) = id.strip_prefix("file.open_many:") {
+            let paths: Vec<PathBuf> = rest
+                .split(';')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from)
+                .collect();
+            self.multi_open_ask(paths, "auto".into());
+            self.redraw();
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("conn.menu") {
+            let row = rest.trim_start_matches(':').parse().unwrap_or(0);
+            let ok = self.conn_win.capture_menu(row);
+            self.sess.status = format!("conn.menu row={row} opened={ok}");
+            self.conn_win.redraw();
             return;
         }
         if let Some(name) = id.strip_prefix("conn.edit:") {
@@ -7604,7 +8249,7 @@ impl App {
     }
 
     fn build_menus() -> Vec<MenuDef> {
-        Self::build_menus_with(&[], &[], false, false)
+        Self::build_menus_with(&[], &[], false, false, Vec::new())
     }
 
     /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
@@ -7614,6 +8259,7 @@ impl App {
         tabs: &[(u64, String, bool)],
         demo_ready: bool,
         blocked: bool,
+        project: Vec<MenuEntry>,
     ) -> Vec<MenuDef> {
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
         let gated = |id: &str, m: Msg| {
@@ -7651,6 +8297,7 @@ impl App {
         file.push(item("file.exit", Msg::MnExit));
         vec![
             MenuDef::new(t(Msg::MnFile), file),
+            MenuDef::new(t(Msg::MnProject), project),
             MenuDef::new(
                 t(Msg::MnEdit),
                 vec![
@@ -7708,6 +8355,7 @@ impl App {
                     item("view.goto_anything", Msg::MnGotoAnything),
                     item("view.explorer", Msg::MnExplorer),
                     item("view.search", Msg::MnSearchPanel),
+                    item("view.project", Msg::MnProjectPanel),
                     item("view.log", Msg::MnLogWindow),
                     item("view.txlog", Msg::MnTxLogWindow),
                     item("view.sessions", Msg::MnSessManager),
@@ -7790,6 +8438,7 @@ impl App {
                 &tabs,
                 self.demo_ready,
                 self.gate_shown.unwrap_or(false),
+                self.project_menu_entries(),
             ));
         }
     }
@@ -7990,6 +8639,18 @@ impl App {
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
         cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
         cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
+        cmds.push(m("view.project", Msg::MnView, Msg::MnProjectPanel));
+        cmds.push(m("project.new", Msg::MnProject, Msg::MnProjectNew));
+        cmds.push(m("project.open", Msg::MnProject, Msg::MnProjectOpen));
+        cmds.push(m("project.switch", Msg::MnProject, Msg::MnProjectSwitch));
+        cmds.push(m("project.save", Msg::MnProject, Msg::MnProjectSave));
+        cmds.push(m("project.save_as", Msg::MnProject, Msg::MnProjectSaveAs));
+        cmds.push(m("project.close", Msg::MnProject, Msg::MnProjectClose));
+        cmds.push(m(
+            "project.add_folder",
+            Msg::MnProject,
+            Msg::MnProjectAddFolder,
+        ));
         cmds.push(m("view.variables", Msg::MnView, Msg::MnVariables));
         cmds.push(m("vars.script", Msg::MnView, Msg::MnVariablesScript));
         cmds.push(m("vars.show", Msg::MnView, Msg::MnShowVariables));
@@ -8103,6 +8764,7 @@ impl App {
             &tabs,
             self.demo_ready,
             self.gate_shown.unwrap_or(false),
+            self.project_menu_entries(),
         ));
     }
 
@@ -8167,6 +8829,11 @@ impl App {
                     format!("{t}.sql")
                 }
             }
+            (PickerMode::Save, FilePurpose::Project) => format!(
+                "{}.{}",
+                self.project.name().unwrap_or_else(|| "untitled".into()),
+                project::EXT
+            ),
             (PickerMode::Open | PickerMode::Folder, _) => String::new(),
         };
         // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
@@ -8685,6 +9352,10 @@ impl App {
                 self.ext_track_active();
                 self.git.refresh(true);
                 self.push_recent(path);
+                // 새 파일이 생겼을 수 있다 — 프로젝트 탐색기의 펼친 폴더를 다시 열거.
+                if self.project_panel.is_visible() {
+                    self.project_panel.refresh();
+                }
                 let name = path
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -9269,8 +9940,14 @@ impl App {
             self.settings.int("run.toast_hide_secs"),
             self.settings.int("ui.toast_alpha"),
         );
+        let (prog, fade_to, spent) = (
+            self.settings.flag("ui.toast_progress"),
+            self.settings.int("ui.toast_fade_to"),
+            self.settings.int("ui.toast_bar_spent"),
+        );
         for s in std::iter::once(&mut self.sess).chain(self.parked.iter_mut()) {
             s.run_toast.configure(on, hide, alpha);
+            s.run_toast.configure_progress(prog, fade_to, spent);
         }
     }
 
@@ -9400,6 +10077,7 @@ impl App {
             &tabs,
             self.demo_ready,
             self.gate_shown.unwrap_or(false),
+            self.project_menu_entries(),
         ));
     }
 
@@ -9503,6 +10181,7 @@ impl App {
             &tabs,
             self.demo_ready,
             self.gate_shown.unwrap_or(false),
+            self.project_menu_entries(),
         ));
         let layout = self.tool_dock.layout();
         self.tool_dock = App::build_tool_dock();
@@ -10596,7 +11275,7 @@ impl App {
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
         let caret_on = !self.settings.flag("editor.caret_blink")
-            || (self.blink_origin.elapsed().as_millis() / 500) % 2 == 0;
+            || (self.blink_origin.elapsed().as_millis() / 500).is_multiple_of(2);
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
             let th = self.theme;
@@ -10869,7 +11548,7 @@ impl App {
                         let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s)
                             .with_fonts(prefs)
                             .with_caret_on(caret_on);
-                        self.editors.cur_mut().paint(&mut dc, &th);
+                        self.editors.paint_bodies(&mut dc, &th);
                     }
                 }
             }
@@ -10973,6 +11652,7 @@ impl App {
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
                 self.search.paint(&mut dc, &th);
+                self.project_panel.paint(&mut dc, &th);
                 self.ext_panel.paint(&mut dc, &th);
             }
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
@@ -10999,6 +11679,7 @@ impl App {
                 self.tool_dock.paint_drag_overlay(&mut dc, &th);
                 self.find.paint_tooltip(&mut dc, &th);
                 self.search.paint_tooltip(&mut dc, &th);
+                self.project_panel.paint_tooltip(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
@@ -11608,6 +12289,55 @@ impl App {
                 return;
             }
         }
+        // 프로젝트 탐색기(docs/67 §4) — 마우스는 커서 아래 · 키는 포커스일 때.
+        if self.project_panel.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let inside = self.project_panel.bounds().contains(cur);
+            if (is_mouse && inside) || (is_wheel_ev(&ev) && inside) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
+                    self.set_focus(Focus::Project);
+                }
+                if self.project_panel.on_event(&ev) {
+                    self.redraw();
+                }
+                self.project_pump();
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.focus == Focus::Project
+                && matches!(
+                    ev,
+                    InputEvent::Key { .. }
+                        | InputEvent::Char { .. }
+                        | InputEvent::SelectAll
+                        | InputEvent::Undo
+                        | InputEvent::Redo
+                )
+            {
+                if matches!(
+                    ev,
+                    InputEvent::Key {
+                        key: CtlKey::Escape,
+                        ..
+                    }
+                ) {
+                    self.set_focus(Focus::Editor);
+                    self.redraw();
+                    return;
+                }
+                if self.project_panel.on_event(&ev) {
+                    self.redraw();
+                }
+                self.project_pump();
+                return;
+            }
+        }
         // 파일 검색 패널(T-81a) — 마우스는 커서 아래 · 키는 포커스일 때.
         if self.search.is_visible() {
             let cur = Point {
@@ -11767,6 +12497,10 @@ impl App {
             let p = Point { x, y };
             if self.editors.editor_bounds().contains(p) {
                 self.set_focus(Focus::Editor);
+                // 동시 편집: 누른 칸의 탭이 활성(키·실행 대상)이 된다.
+                if self.editors.activate_pane_at(p) {
+                    self.sync_gate();
+                }
             } else if self.grid.bounds.contains(p) {
                 self.set_focus(Focus::Grid);
             }
@@ -11789,7 +12523,7 @@ impl App {
                 && self.focus != Focus::Editor
                 && matches!(ev, InputEvent::MouseMove { .. })
             {
-                self.ed_mut().on_event(&ev, &mut inv);
+                self.editors.box_at_or_cur_mut(cur).on_event(&ev, &mut inv);
             }
         }
         // 휠은 포커스가 아니라 **커서 아래 영역**으로 간다(편집기·그리드·패널).
@@ -11804,7 +12538,7 @@ impl App {
             self.after_grid_event();
             inv.push(self.grid.bounds);
         } else if is_wheel && self.editors.editor_bounds().contains(cur) {
-            self.ed_mut().on_event(&ev, &mut inv);
+            self.editors.box_at_or_cur_mut(cur).on_event(&ev, &mut inv);
         } else {
             let enter = matches!(
                 ev,
@@ -11824,7 +12558,7 @@ impl App {
                     self.after_grid_event();
                     inv.push(self.grid.bounds);
                 }
-                Focus::Explorer | Focus::Find | Focus::Search | Focus::Ext => {}
+                Focus::Explorer | Focus::Find | Focus::Search | Focus::Ext | Focus::Project => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -11949,6 +12683,7 @@ impl ApplicationHandler<Wake> for App {
         self.apply_tool_layout_setting();
         // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
         self.demo_ready = Self::demo_exists();
+        self.project_startup();
         self.rebuild_menus();
         if !self.demo_ready && !self.settings.flag("demo.prompted") {
             let _ = self.settings.set("demo.prompted", "on");
@@ -11956,6 +12691,10 @@ impl ApplicationHandler<Wake> for App {
             self.pending_demo_prompt = true;
         } // 자체 캡처용 기동 명령(`NSQL_STARTUP_CMD=open:<파일>,view.extensions,…` · 쉼표 구분): 키 주입(SendKeys) 없이 특정 화면을
           //   띄워 PrintWindow로 확인하려는 것(사용자가 쓰는 중에 키를 쏘면 다른 창으로 간다 · 09-19 사고). 평소엔 변수 없음 = 비용 0.
+          // 인자로 받은 파일(프로젝트 파일 제외) = 파일 모드로 연다(사용자 09-22).
+        for f in std::mem::take(&mut self.arg_files) {
+            self.open_file(&f);
+        }
         if let Ok(cmds) = std::env::var("NSQL_STARTUP_CMD") {
             for id in cmds.split(',').map(str::trim).filter(|c| !c.is_empty()) {
                 // `@connected:<명령>` = 첫 접속이 된 뒤에 실행(시작 인자로 접속하는 프로필 + 실행 시험 · 메모리 측정).
@@ -12030,8 +12769,11 @@ impl ApplicationHandler<Wake> for App {
                     el,
                     theme::window_theme(self.settings.theme_mode()),
                     owner.as_deref(),
-                    target,
-                    rejected,
+                    input_win::PasswordAsk {
+                        target,
+                        rejected,
+                        remember: self.settings.flag("connect.remember_session_password"),
+                    },
                     sid,
                 );
                 // ★ 최상위 모달(사용자 mac 09-21): 맥은 자식 창(항상 메인 위 · 함께 이동) · 메인·보조 창 입력은 가드가 막고
@@ -12134,6 +12876,13 @@ impl ApplicationHandler<Wake> for App {
         if self.search.tick(now_ms) || self.search.poll() {
             self.redraw();
         }
+        if self.project_panel.tick(now_ms) {
+            self.redraw();
+        }
+        self.project_pump();
+        if self.editors.poll_preview() {
+            self.redraw();
+        }
         if self.search.take_request() {
             self.start_search();
         }
@@ -12172,6 +12921,7 @@ impl ApplicationHandler<Wake> for App {
             || self.explorer.bars_visible()
             || self.find.animating()
             || self.search.animating()
+            || self.project_panel.animating()
             || self.ext_fetch_rx.is_some()
             || !self.file_loads.is_empty()
             || self.editors.tooltip_pending()
@@ -12185,6 +12935,10 @@ impl ApplicationHandler<Wake> for App {
         };
         // 서버 신호등 재시도 예약(접속 창이 열려 있을 때만).
         if let Some(t) = self.conn_win.tick(now) {
+            next = next.min(t);
+        }
+        // 입력 창의 IME 안내 만료.
+        if let Some(t) = self.input_win.tick(now) {
             next = next.min(t);
         }
         self.sync_modal();
@@ -12235,6 +12989,7 @@ impl ApplicationHandler<Wake> for App {
             }
         }
         self.file_loads_poll();
+        self.multi_load_poll();
         // 명령·IME로 온 편집이 거대 편집 확인에 막혔으면 알린다(키 입력은 `route`가 바로 알린다).
         self.giant_notice();
         // 메모리 회수 — 큰 것을 놓은 직후 1회 + 유휴 주기(`memtrim.rs`).
@@ -12398,6 +13153,11 @@ impl ApplicationHandler<Wake> for App {
                             }
                             self.prefs_win.redraw();
                         }
+                        (PickerMode::Open, FilePurpose::Project) => self.project_load_path(&path),
+                        (PickerMode::Save, FilePurpose::Project) => self.project_save_to(&path),
+                        (PickerMode::Folder, FilePurpose::Project) => {
+                            self.project_add_folder(&path)
+                        }
                         (PickerMode::Folder, _) => {}
                         (PickerMode::Open, FilePurpose::RunFile) => {
                             self.load_file(&path, &enc, LoadMode::Run);
@@ -12409,6 +13169,12 @@ impl ApplicationHandler<Wake> for App {
                             self.finish_close_after_save();
                         }
                     }
+                    self.sync_modal();
+                }
+                FileWinAction::ConfirmMany(paths, enc) => {
+                    self.remember_file_dialog(paths.first().and_then(|p| p.parent()));
+                    self.file_purpose = FilePurpose::Editor;
+                    self.multi_open_ask(paths, enc);
                     self.sync_modal();
                 }
                 FileWinAction::Cancel => {
@@ -13217,6 +13983,12 @@ fn main() {
     }
     // 실행 인자(사용자 09-17): `-c <대상>`/`--connect <대상>`/`<대상>` = 프로필 이름이든 접속 문자열이든 **시작하면서 접속** ·
     //   `--fill <프로필>` = 폼만 채움(종전 동작). 모르는 옵션은 무시.
+    // ★ 시작 모드(사용자 09-22 · 다중 인스턴스): 인자 중 파일은 갈라낸다 — `.nsql-project` = 프로젝트 모드로 진입 ·
+    //   그 밖 존재하는 파일 = 파일 모드로 연다 · 나머지 = 종전 접속 인자. 인스턴스 잠금(설정 폴더 `instance.lock`)은
+    //   "이미 열린 인스턴스가 있는가"만 판단한다(마지막 프로젝트 복원은 첫 인스턴스 + 설정이 켜졌을 때만).
+    let (arg_project, arg_files, args) = split_file_args(&args);
+    let instance_lock = instance_lock();
+    let first_instance = instance_lock.is_some();
     let (arg_target, arg_fill_only) = parse_gui_args(&args);
     // ★ 임시(사용자 09-19 · 추후 제거): `dev.start_demo`가 켜져 있고 인자로 대상을 주지 않았으면 Demo 프로필에 자동 접속 +
     //   로그인 창 생략(`-c Demo`와 같은 경로).
@@ -13365,6 +14137,7 @@ fn main() {
     mark(&mut marks, "editors");
     let search = SearchPanel::new();
     mark(&mut marks, "search");
+    let project_panel = project_panel::ProjectPanel::new();
     let ext_panel = ExtPanel::new();
     mark(&mut marks, "ext_panel");
     let palette = Palette::new();
@@ -13431,6 +14204,12 @@ fn main() {
         act_bar,
         file_win,
         open_file_dlg: None,
+        multi_pending: None,
+        multi_load: None,
+        arg_project,
+        arg_files,
+        first_instance,
+        _instance_lock: instance_lock,
         folder_start: None,
         menubar,
         tabs_menu_sig: String::new(),
@@ -13478,6 +14257,8 @@ fn main() {
         grid_tab: 0,
         explorer,
         search,
+        project_panel,
+        project: project::Project::default(),
         ext_panel,
         ext_fetch_rx: None,
         ext_view: ext_view::ExtView::default(),
@@ -13586,6 +14367,16 @@ fn main() {
         app.settings.int("ui.toast_secs"),
         app.settings.int("ui.toast_alpha"),
     );
+    app.toasts.configure_progress(
+        app.settings.flag("ui.toast_progress"),
+        app.settings.int("ui.toast_fade_to"),
+        app.settings.int("ui.toast_bar_spent"),
+    );
+    {
+        let secs = app.settings.int("ui.ime_hint_secs");
+        app.conn_win.set_ime_hint_secs(secs);
+        app.input_win.set_ime_hint_secs(secs);
+    }
     app.apply_text_render();
     app.apply_toolbar_visibility();
     app.git
@@ -13830,6 +14621,8 @@ enum FilePurpose {
     SettingFolder(&'static str),
     /// 디스크에서 바로 실행할 SQL 파일 고르기(docs/59 §4 3단계).
     RunFile,
+    /// 프로젝트 파일 열기/저장 · 프로젝트 폴더 추가(docs/67).
+    Project,
 }
 
 /// 읽은 파일을 어떻게 쓸 것인가.
@@ -13854,6 +14647,18 @@ struct FileLoaded {
 }
 
 /// 스레드 적재 한 건(진행 상태 + 받을 곳).
+/// ★ **다중 열기 순차 적재**(사용자 09-22): 파일 대화상자에서 여러 파일을 고르면 자리 탭을 **먼저 전부** 만들고,
+/// 작업 스레드 **하나**가 고른 순서대로 읽어 탭마다 결과를 보낸다(파일별 독립 · 동시 스레드 N개의 경합 없음).
+/// 그동안 이미 채워진 탭은 바로 편집할 수 있다(자리 탭만 읽기 전용 · 탭 격리 적재 규칙 docs/59 §5).
+struct MultiLoad {
+    rx: std::sync::mpsc::Receiver<(PathBuf, u64, Result<fileload::Loaded, String>)>,
+    /// 아직 안 온 결과 수.
+    remaining: usize,
+    total: usize,
+    origin: u64,
+    started: Instant,
+}
+
 struct LoadJob {
     rx: std::sync::mpsc::Receiver<Result<fileload::Loaded, String>>,
     path: PathBuf,
@@ -14187,6 +14992,79 @@ fn create_demo_db(path: &Path) -> Result<String, String> {
 }
 
 /// GUI 실행 인자 → (접속 대상, 폼만 채우기). `-c/--connect <대상>` · `--fill <프로필>` · 맨 앞 맨 인자 = 대상.
+/// 인자 중 **파일**을 갈라낸다(사용자 09-22): `.nsql-project` = 프로젝트(첫 것) · 존재하는 파일 = 열 파일 ·
+/// 나머지(옵션과 그 값 · 프로필 이름 · 접속 문자열)는 그대로 돌려준다. `-c`/`--connect`/`--fill` 다음 값은 파일이어도
+/// 접속 대상으로 남긴다(SQLite 파일 경로일 수 있다).
+fn split_file_args(args: &[String]) -> (Option<PathBuf>, Vec<PathBuf>, Vec<String>) {
+    let mut project = None;
+    let mut files = Vec::new();
+    let mut rest = Vec::new();
+    let mut keep_next = false;
+    for a in args {
+        if keep_next {
+            rest.push(a.clone());
+            keep_next = false;
+            continue;
+        }
+        if matches!(a.as_str(), "-c" | "--connect" | "--fill") {
+            keep_next = true;
+            rest.push(a.clone());
+            continue;
+        }
+        if a.starts_with('-') {
+            rest.push(a.clone());
+            continue;
+        }
+        let p = PathBuf::from(a);
+        if p.extension().is_some_and(|e| e == project::EXT) {
+            if project.is_none() {
+                project = Some(p);
+            }
+        } else if p.is_file() {
+            files.push(p);
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    (project, files, rest)
+}
+
+/// 시작 때 열 프로젝트 — `(경로, 인자로 받았는가)`. 규칙(사용자 09-22): ① 인자 프로젝트가 있으면 그것 ② 아니면
+/// `restore_last`가 켜져 있고 **첫 인스턴스**이고 **파일 인자가 없을 때만** `last` ③ 그 밖 = 파일 모드(None).
+fn startup_project_plan(
+    arg_project: Option<&Path>,
+    has_files: bool,
+    first_instance: bool,
+    restore_last: bool,
+    last: &str,
+) -> Option<(PathBuf, bool)> {
+    if let Some(p) = arg_project {
+        return Some((p.to_path_buf(), true));
+    }
+    if restore_last && first_instance && !has_files && !last.trim().is_empty() {
+        return Some((PathBuf::from(last.trim()), false));
+    }
+    None
+}
+
+/// 인스턴스 잠금 — 설정 폴더의 `instance.lock`을 배타 잠금(`File::try_lock` · 3-OS 표준 라이브러리). 잡히면 첫 인스턴스
+/// (파일을 살아 있는 동안 쥔다 · 프로세스가 끝나면 OS가 푼다) · 못 잡으면 이미 다른 인스턴스가 있다. 폴더를 모르면 첫 것으로.
+fn instance_lock() -> Option<std::fs::File> {
+    let dir = nsql_settings::config_dir()?;
+    let _ = std::fs::create_dir_all(&dir);
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("instance.lock"))
+        .ok()?;
+    match f.try_lock() {
+        Ok(()) => Some(f),
+        Err(_) => None,
+    }
+}
+
 fn parse_gui_args(args: &[String]) -> (Option<String>, bool) {
     let mut target: Option<String> = None;
     let mut fill_only = false;
@@ -14230,6 +15108,72 @@ mod arg_tests {
         );
         assert_eq!(a(&["--fill", "Demo"]), (Some("Demo".into()), true));
         assert_eq!(a(&["--unknown", "Demo"]), (Some("Demo".into()), false));
+    }
+
+    /// 파일 인자 분류(09-22): 프로젝트 파일 · 존재하는 파일 · 접속 인자(`-c` 뒤는 파일이어도 접속 대상).
+    #[test]
+    fn file_args_are_split_from_connect_args() {
+        let dir = std::env::temp_dir().join(format!("nsql-args-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("a.sql");
+        std::fs::write(&f, "x").unwrap_or(());
+        let fs = f.to_string_lossy().into_owned();
+        let pj = dir.join("p.nsql-project").to_string_lossy().into_owned();
+        let v: Vec<String> = vec![
+            fs.clone(),
+            "-c".into(),
+            fs.clone(),
+            pj.clone(),
+            "Demo".into(),
+            "--x".into(),
+        ];
+        let (p, files, rest) = split_file_args(&v);
+        assert_eq!(p, Some(PathBuf::from(&pj)));
+        assert_eq!(files, vec![f]);
+        assert_eq!(
+            rest,
+            vec!["-c".to_string(), fs, "Demo".into(), "--x".into()]
+        );
+        let (p2, files2, rest2) = split_file_args(&[]);
+        assert!(p2.is_none() && files2.is_empty() && rest2.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 시작 모드 MC/DC(사용자 09-22): 인자 프로젝트 > (복원 켬 · 첫 인스턴스 · 파일 인자 없음 · last 있음) > 파일 모드.
+    #[test]
+    fn startup_project_plan_rules() {
+        let pj = Path::new("x.nsql-project");
+        // 인자 프로젝트 = 다른 조건과 무관하게 그것.
+        assert_eq!(
+            startup_project_plan(Some(pj), true, false, false, ""),
+            Some((pj.to_path_buf(), true))
+        );
+        // 복원 조건 전부 참 = last.
+        assert_eq!(
+            startup_project_plan(None, false, true, true, "last.nsql-project"),
+            Some((PathBuf::from("last.nsql-project"), false))
+        );
+        // 조건 하나씩 거짓 = 파일 모드.
+        assert_eq!(
+            startup_project_plan(None, true, true, true, "last.nsql-project"),
+            None,
+            "파일 인자"
+        );
+        assert_eq!(
+            startup_project_plan(None, false, false, true, "last.nsql-project"),
+            None,
+            "이후 인스턴스"
+        );
+        assert_eq!(
+            startup_project_plan(None, false, true, false, "last.nsql-project"),
+            None,
+            "복원 끔(기본)"
+        );
+        assert_eq!(
+            startup_project_plan(None, false, true, true, "  "),
+            None,
+            "last 없음"
+        );
     }
 
     /// 설정 `editor.whitespace = all`이 편집기 스타일 All로 풀린다(사용자 09-17 "전체로 바꿔도 안 바뀜" 진단).

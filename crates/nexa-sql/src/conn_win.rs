@@ -6,7 +6,7 @@
 //! 행 클릭 = 폼에 채움 · 더블클릭 = 바로 접속 · 접속되면 창이 닫힌다. `Ctrl/⌘+L` · 툴바 ⇄ · Run ▸ Connect로 연다.
 //! 창 골격은 로그 창과 같다(winit + softbuffer + nexa-ctl 래스터). I/O(저장소·워커)는 전부 호스트 몫 — [`ConnWinAction`]으로 요청.
 
-use crate::connect::{ConnState, ConnectPanel, PanelAction};
+use crate::connect::{ConnState, ConnectPanel, PanelAction, ProfileFile};
 use crate::probe::{self, ProbeEntry, ProbeHub, ProbePolicy, ProbeReq, ProbeStatus};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
@@ -262,6 +262,8 @@ pub(crate) struct ConnWin {
     /// 마지막으로 열 때 메인 창이 있던 모니터 — 메인 창이 다른 모니터로 갔으면 다시 가운데로.
     last_monitor: Option<winit::monitor::MonitorHandle>,
     cursor: (i32, i32),
+    /// 비밀번호 칸에 라틴이 아닌 입력 언어로 글자가 들어올 때의 안내(사용자 09-22).
+    ime_hint: crate::imehint::ImeHint,
     shift: bool,
     primary: bool,
     started: Instant,
@@ -367,6 +369,7 @@ impl ConnWin {
             last_pos: None,
             last_monitor: None,
             cursor: (0, 0),
+            ime_hint: crate::imehint::ImeHint::new(),
             shift: false,
             primary: false,
             started: Instant::now(),
@@ -632,7 +635,34 @@ impl ConnWin {
 
     /// 예약된 프로브를 보낸다(순차 스레드) · 다음 예약 시각을 돌려준다(호스트 WaitUntil).
     /// 주기 갱신(`probe.interval`)은 창이 열려 있을 때만 돈다.
+    pub(crate) fn set_ime_hint_secs(&mut self, secs: i64) {
+        self.ime_hint.set_secs(secs);
+    }
+
+    /// 상세 폼의 비밀번호 칸에 글자가 들어왔다 → IME 안내 갱신(`imehint`).
+    fn note_hidden_input(&mut self) {
+        if self.focus == WFocus::Panel && self.panel.password_focused() {
+            let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
+            if self.ime_hint.note_hidden_input(hwnd, self.cursor) {
+                self.redraw();
+            }
+        }
+    }
+
     pub(crate) fn tick(&mut self, now: Instant) -> Option<Instant> {
+        // IME 안내 만료.
+        let (hint_changed, hint_next) = self.ime_hint.tick(now);
+        if hint_changed {
+            self.redraw();
+        }
+        let inner = self.tick_veil(now);
+        match (inner, hint_next) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn tick_veil(&mut self, now: Instant) -> Option<Instant> {
         // 접속 중 막의 경과 시간·점 애니메이션(250ms).
         let veil_next = if self.veil.is_some() && self.window.is_some() {
             self.redraw();
@@ -741,6 +771,35 @@ impl ConnWin {
     }
 
     /// 저장소를 다시 읽어 목록·폼 콤보를 갱신(`select` = 선택 유지할 이름).
+    /// ★ 프로필 설정 파일 정보 복사의 **단일 진입점**(사용자 09-22) — 상세 보기의 복사 버튼(`PanelAction::CopyFile`)과 목록 우클릭
+    /// 메뉴(`copy_file`/`copy_path`)가 둘 다 여기로 온다. 경로는 기기 키 없이 폴더만으로 찾는다(`Vault::locate_default` — 해시 파일 →
+    /// 종전 꼴 → 저장될 해시 경로). 클립보드 쓰기는 호스트 몫(`ConnWinAction::CopyText` — 다른 복사와 같은 길).
+    fn copy_profile_file(name: &str, what: ProfileFile, out: &mut Vec<ConnWinAction>) {
+        let name = name.trim();
+        if !nsql_vault::is_profile_name(name) {
+            return;
+        }
+        let text = match what {
+            ProfileFile::Name => Some(nsql_vault::Vault::file_name(name)),
+            ProfileFile::Path => {
+                nsql_vault::Vault::locate_default(name).map(|p| p.display().to_string())
+            }
+        };
+        if let Some(t) = text {
+            out.push(ConnWinAction::CopyText(t));
+        }
+    }
+
+    /// 패널 동작을 호스트로 — 단, 파일 정보 복사는 여기서 끝낸다(`copy_profile_file`).
+    fn push_panel_action(&self, a: PanelAction, out: &mut Vec<ConnWinAction>) {
+        match a {
+            PanelAction::CopyFile(what) => {
+                Self::copy_profile_file(&self.panel.profile_name(), what, out)
+            }
+            other => out.push(ConnWinAction::Panel(other)),
+        }
+    }
+
     pub(crate) fn refresh_profiles(&mut self, select: Option<&str>) {
         self.profiles = Vault::open_default()
             .and_then(|v| v.list())
@@ -1361,6 +1420,27 @@ impl ConnWin {
         self.open_detail(false);
     }
 
+    /// 자체 캡처용(`conn.ime_hint:x/y` · 팝업 규칙 ④ 모서리 캡처): IME 안내 카드를 그 창 좌표에 강제로 띄운다.
+    pub(crate) fn capture_ime_hint(&mut self, at: (i32, i32)) {
+        self.ime_hint
+            .show(&tf(Msg::ImeHintText, &["가", "KOR"]), at);
+        self.redraw();
+    }
+
+    /// 자체 캡처용(`NSQL_STARTUP_CMD=conn.menu:<행>` · docs/61 §2-2 팝업 규칙 ④): 목록 `row`번째 보이는 줄의 가운데에 **앱 안에서**
+    /// 우클릭 사건을 만들어 실제 `route` 경로로 메뉴를 연다(OS 입력 주입 아님 · 탐색기 `capture_menu`와 같은 관용). 열렸으면 true.
+    pub(crate) fn capture_menu(&mut self, row: usize) -> bool {
+        if row >= self.shown.len() {
+            return false;
+        }
+        let body = self.body_rect();
+        let x = body.x + self.icons_w() + self.row_h;
+        let y = body.y + row as i32 * self.row_h - self.scroll_y + self.row_h / 2;
+        let mut out = Vec::new();
+        self.route(InputEvent::RightDown { x, y }, &mut out);
+        self.menu.is_open()
+    }
+
     pub(crate) fn select_by_name(&mut self, name: &str) {
         self.sel = self
             .shown
@@ -1715,6 +1795,12 @@ impl ConnWin {
                 self.route(InputEvent::MouseMove { x: p.x, y: p.y }, &mut out);
             }
             WindowEvent::Ime(ime) => {
+                // 가린 칸(비밀번호)에 조합 글자가 들어오면 입력 언어 안내.
+                if matches!(ime, Ime::Preedit(t, _) if !t.is_empty())
+                    || matches!(ime, Ime::Commit(_))
+                {
+                    self.note_hidden_input();
+                }
                 let mut inv = Invalidations::default();
                 let tb = match self.focus {
                     WFocus::Panel => self.panel.focused_textbox(),
@@ -1914,7 +2000,12 @@ impl ConnWin {
     }
 
     fn route(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {
+        let typed = matches!(ev, InputEvent::Char { c, .. } if !c.is_control());
         self.route_inner(ev, out);
+        if typed {
+            // 가린 칸(비밀번호)에 글자가 들어갔으면 입력 언어 안내(IME 조합은 `Ime` 사건 쪽에서).
+            self.note_hidden_input();
+        }
         self.sync_enabled();
     }
 
@@ -1986,6 +2077,16 @@ impl ConnWin {
                             }
                         }
                     }
+                    Some("copy_file") => {
+                        if let Some(n) = self.ctx_target.take() {
+                            Self::copy_profile_file(&n, ProfileFile::Name, out);
+                        }
+                    }
+                    Some("copy_path") => {
+                        if let Some(n) = self.ctx_target.take() {
+                            Self::copy_profile_file(&n, ProfileFile::Path, out);
+                        }
+                    }
                     Some(id) if id.starts_with("env:") => {
                         if let Some(n) = self.ctx_target.take() {
                             let env = nsql_script::ConnEnv::from_name(&id["env:".len()..]);
@@ -1999,7 +2100,7 @@ impl ConnWin {
                     Some("guard_save") => {
                         // 저장을 호스트에 넘기고 지킴이는 유지 — 저장 결과에 따라 `after_save`가 이어간다.
                         match self.panel.save_action() {
-                            Some(a) => out.push(ConnWinAction::Panel(a)),
+                            Some(a) => self.push_panel_action(a, out),
                             // 저장 불가(이름 오류 등) — 폼에 사유가 떠 있다 · 동작은 취소.
                             None => self.guard = None,
                         }
@@ -2145,6 +2246,10 @@ impl ConnWin {
                                 .with_mark(cur == Some(E::Test)),
                             CtxItem::item("env:prod", t(Msg::MnEnvProd))
                                 .with_mark(cur == Some(E::Prod)),
+                            // 설정 파일(사용자 09-22): 이름 = `<해시>.conf` · 경로 = 전체 경로 — 상세 보기의 복사 버튼과 같은 진입점.
+                            CtxItem::Separator,
+                            CtxItem::item("copy_file", t(Msg::MnCopyProfileFile)),
+                            CtxItem::item("copy_path", t(Msg::MnCopyProfilePath)),
                         ]
                     },
                     host,
@@ -2157,7 +2262,7 @@ impl ConnWin {
         // 열린 콤보(폼)는 모달.
         if self.panel.popup_open() {
             if let Some(a) = self.panel.route(&ev, &mut inv) {
-                out.push(ConnWinAction::Panel(a));
+                self.push_panel_action(a, out);
             }
             if !self.panel.popup_open() {
                 // 팝업이 방금 닫혔다 — 커서 아래 대상(예: Details 버튼)의 hover를 바로 다시 판정(사용자 09-14).
@@ -2252,7 +2357,7 @@ impl ConnWin {
             // 폼 위의 휠 = 포커스와 무관하게 폼으로(상태 메시지 스크롤 등).
             match self.panel.route(&ev, &mut inv) {
                 Some(PanelAction::Edit(act)) => self.clip(act),
-                Some(a) => out.push(ConnWinAction::Panel(a)),
+                Some(a) => self.push_panel_action(a, out),
                 None => {}
             }
             self.redraw();
@@ -2377,7 +2482,7 @@ impl ConnWin {
             if self.detail_t > 0.0 {
                 match self.panel.route(&ev, &mut inv) {
                     Some(PanelAction::Edit(act)) => self.clip(act),
-                    Some(a) => out.push(ConnWinAction::Panel(a)),
+                    Some(a) => self.push_panel_action(a, out),
                     None => {}
                 }
             }
@@ -2385,7 +2490,7 @@ impl ConnWin {
             match self.focus {
                 WFocus::Panel => match self.panel.route(&ev, &mut inv) {
                     Some(PanelAction::Edit(act)) => self.clip(act),
-                    Some(a) => out.push(ConnWinAction::Panel(a)),
+                    Some(a) => self.push_panel_action(a, out),
                     None => {}
                 },
                 WFocus::Filter => {
@@ -2478,7 +2583,7 @@ impl ConnWin {
         };
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
-        let caret_on = (self.started.elapsed().as_millis() / 500) % 2 == 0;
+        let caret_on = (self.started.elapsed().as_millis() / 500).is_multiple_of(2);
         let detail_px = self.panel.bounds().x;
         let detail_visible = self.detail_t > 0.0;
         let pad = (10.0 * s).round() as i32;
@@ -2830,6 +2935,8 @@ impl ConnWin {
             }
             let sc = |v: f32| (v * s).round() as i32;
             // ★ 접속 중 막(맨 위): 반투명 덮개 + 중앙 카드(대상 · 단계 · 경과 · 점).
+            // IME 안내(팝업 층 · 막보다 아래 — 막이 떠 있으면 입력이 없다).
+            self.ime_hint.paint(&mut dc, th, Rect::new(0, 0, wi, hi), s);
             if let Some(v) = self.veil.clone() {
                 let full = Rect::new(0, 0, wi, hi);
                 dc.fill_rect_alpha(full, th.panel_bg, 0.72);

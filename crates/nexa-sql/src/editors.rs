@@ -49,6 +49,12 @@ pub(crate) struct Editors {
     scale: f32,
     /// 탭 줄과 본문 사이에 비워 둘 높이(물리 px) — 외부 변경 확인 띠 자리(docs/58).
     top_inset: i32,
+    /// ★ 동시 편집(사용자 09-22): 나란히 보이는 탭 인덱스(2개 이상일 때만 · 비면 단일 모드). 각 칸은 완전히 독립한 편집기이고
+    /// 미니맵만 끈다. 탭 바에서 Shift = 연속 · Ctrl(⌘) = 개별 · 수식키 없는 클릭 = 그 탭 단일 모드. 상한 `editor.split_max`.
+    split: Vec<usize>,
+    split_max: usize,
+    /// 본문 전체 영역(탭 줄·띠 아래) — 동시 편집 때 칸들의 합집합.
+    body: Rect,
     /// **뷰 탭**(본문이 글 편집기가 아니라 호스트가 그리는 전용 뷰 — 확장 상세 등): 탭 id → 뷰 열쇠(예 `ext:<id>`).
     /// 탭 줄·전환·닫기는 보통 탭과 같고, 본문 그리기·입력만 호스트의 뷰가 맡는다.
     view_tabs: std::collections::HashMap<u64, String>,
@@ -64,6 +70,10 @@ pub(crate) struct Editors {
     /// **적재 중인 탭**(사용자 09-20): 큰 파일을 작업 스레드가 읽는 동안의 자리 탭 — 비어 있고 읽기 전용이며 경로가 없다
     /// (저장해도 원본을 덮지 않는다). 다 읽으면 [`Self::fill_loaded`]가 그 탭에 본문을 옮겨 넣는다. 다른 탭은 그대로 쓴다.
     loading: std::collections::HashSet<u64>,
+    /// ★ **미리보기 탭**(Sublime 차용 · 사용자 09-22 · docs/67 §4): 프로젝트 탐색기에서 한 번 클릭한 파일이 들어오는 탭 —
+    /// 한 개만 두고 다음 클릭은 그 탭의 본문을 **바꿔 넣는다**(앞 파일의 버퍼는 버린다) · 본문을 고치면 정식 탭으로 승격(표식 제거 ·
+    /// 다음 클릭은 새 미리보기 탭). 제목 앞 `◦`. 닫히면 없는 것.
+    preview: Option<u64>,
     line_numbers: bool,
     tooltip_on: bool,
     /// (탭 index · 머문 시작) — 1초 뒤 카드.
@@ -182,12 +192,16 @@ impl Editors {
             bounds: Rect::new(0, 0, 0, 0),
             scale: 1.0,
             top_inset: 0,
+            split: Vec::new(),
+            split_max: 3,
+            body: Rect::new(0, 0, 0, 0),
             view_tabs: std::collections::HashMap::new(),
             large: std::collections::HashMap::new(),
             large_cfg: [(5 << 20, 100_000), (20 << 20, 300_000)],
             large_feature_levels: (1, 2),
             read_only: std::collections::HashSet::new(),
             loading: std::collections::HashSet::new(),
+            preview: None,
             line_numbers,
             tooltip_on,
             hover: None,
@@ -563,6 +577,11 @@ impl Editors {
             .collect();
         let mut inv = Invalidations::default();
         self.tabs.set_badges(badges, &mut inv);
+        // 동시 편집 칸에 든 탭 = 탭 상단 줄(사용자 09-22).
+        let group: Vec<bool> = (0..self.titles.len())
+            .map(|i| self.split.len() > 1 && self.split.contains(&i))
+            .collect();
+        self.tabs.set_group(group, &mut inv);
     }
 
     /// 표식 클릭/우클릭 요청(탭 index · 1회성).
@@ -700,7 +719,11 @@ impl Editors {
     }
 
     pub(crate) fn editor_bounds(&self) -> Rect {
-        self.cur().bounds()
+        if self.is_split() {
+            self.body
+        } else {
+            self.cur().bounds()
+        }
     }
 
     /// 새 탭(제목 없으면 `Script_N`). 활성으로.
@@ -853,6 +876,73 @@ impl Editors {
         let name = file_title(path);
         let id = self.begin_load_tab(&name);
         self.fill_loaded(id, Some(path), &name, &name, PreparedText::new(text), eol);
+    }
+
+    // ───────────────────────── 미리보기 탭(docs/67 §4 · 사용자 09-22) ──────────────────
+
+    /// 살아 있는 미리보기 탭 id(닫혔거나 새 스크립트로 바뀌었으면 None).
+    pub(crate) fn preview_id(&self) -> Option<u64> {
+        self.preview.filter(|id| self.index_of_id(*id).is_some())
+    }
+
+    /// 탭 `i`가 미리보기 탭인가.
+    pub(crate) fn is_preview(&self, i: usize) -> bool {
+        self.preview_id() == Some(self.tab_id(i))
+    }
+
+    /// 파일을 **미리보기 탭**에 연다 — 이미 연 탭이 있으면 그 탭으로 · 미리보기 탭이 살아 있고 바뀌지 않았으면 그 본문을
+    /// 바꿔 넣는다(앞 파일의 `TextBox`는 여기서 버려진다 = 메모리 회수) · 없거나 바뀌었으면(승격) 새 미리보기 탭.
+    /// 돌려주는 값 = 탭 인덱스(활성으로 만든다).
+    pub(crate) fn open_preview(&mut self, path: &Path, prep: PreparedText, eol: Eol) -> usize {
+        if let Some(i) = self.path_tab(path) {
+            self.switch(i);
+            return i;
+        }
+        self.poll_preview();
+        let name = file_title(path);
+        let id = match self.preview_id() {
+            Some(id) => id,
+            None => {
+                let id = self.begin_load_tab(&name);
+                self.preview = Some(id);
+                id
+            }
+        };
+        let i = self
+            .fill_loaded(id, Some(path), &name, &name, prep, eol)
+            .unwrap_or(self.active);
+        self.switch(i);
+        i
+    }
+
+    /// 미리보기 탭의 본문이 바뀌었으면 **정식 탭으로 승격**(표식 제거 · 다음 미리보기는 새 탭) — 바뀌었으면 true.
+    /// 호스트의 틱에서 부른다(세대 비교라 값싸다).
+    pub(crate) fn poll_preview(&mut self) -> bool {
+        let Some(id) = self.preview else {
+            return false;
+        };
+        let Some(i) = self.index_of_id(id) else {
+            self.preview = None;
+            return true;
+        };
+        if self.is_dirty(i) {
+            self.preview = None;
+            self.sync_tabs();
+            return true;
+        }
+        false
+    }
+
+    /// 이 경로를 연 탭이 있으면 정식 탭으로(미리보기였으면 승격) 전환 — 있었으면 true(더블클릭 · Enter).
+    pub(crate) fn promote_path(&mut self, path: &Path) -> bool {
+        let Some(i) = self.path_tab(path) else {
+            return false;
+        };
+        if self.preview == Some(self.tab_id(i)) {
+            self.preview = None;
+        }
+        self.switch(i);
+        true
     }
 
     /// 이 경로를 연 탭.
@@ -1358,6 +1448,12 @@ impl Editors {
         } else {
             self.titles[i].clone()
         };
+        // 미리보기 탭 = 제목 앞 ◦(Sublime의 기울임 대신 · 사용자 09-22).
+        let base = if self.preview == Some(self.tab_id(i)) {
+            format!("◦ {base}")
+        } else {
+            base
+        };
         // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기).
         let base = if self.loading.contains(&self.tab_id(i)) {
             format!("{base} …")
@@ -1474,6 +1570,9 @@ impl Editors {
             self.sync_tabs();
             return;
         }
+        if self.preview == Some(self.tab_id(i)) {
+            self.preview = None;
+        }
         self.bufs.remove(i);
         self.titles.remove(i);
         self.syntax.remove(i);
@@ -1512,6 +1611,10 @@ impl Editors {
 
     pub(crate) fn switch(&mut self, i: usize) {
         if i < self.bufs.len() {
+            // 동시 편집 밖의 탭으로 가면 단일 모드로(호스트의 전환·팔레트도 같은 길).
+            if !self.split.is_empty() && !self.split.contains(&i) {
+                self.end_split();
+            }
             let focused = self.cur().is_focused();
             self.cur_mut().set_focused(false);
             self.active = i;
@@ -1575,8 +1678,142 @@ impl Editors {
         self.tabs.set_bounds(Rect::new(b.x, b.y, b.w, th), inv);
         let top = th + self.top_inset;
         let ed = Rect::new(b.x, b.y + top, b.w, (b.h - top).max(0));
+        self.body = ed;
+        // 닫힘·이동으로 어긋난 동시 편집 집합은 버린다(2개 미만 = 단일).
+        let len = self.bufs.len();
+        self.split.retain(|&i| i < len);
+        if self.split.len() < 2 {
+            self.split.clear();
+        }
+        let split = &self.split;
+        let n = split.len();
+        let gap = (self.scale.round() as i32).max(1);
+        for (i, tb) in self.bufs.iter_mut().enumerate() {
+            let r = match split.iter().position(|&s| s == i) {
+                Some(k) if n >= 2 => split_column(ed, k, n, gap),
+                _ => ed,
+            };
+            tb.set_bounds(r, inv);
+        }
+    }
+
+    /// 동시 편집 중인가(칸 2개 이상).
+    pub(crate) fn is_split(&self) -> bool {
+        self.split.len() >= 2
+    }
+
+    pub(crate) fn set_split_max(&mut self, n: i64) {
+        self.split_max = n.clamp(1, 4) as usize;
+        if self.split.len() > self.split_max {
+            self.split.truncate(self.split_max);
+            if !self.split.contains(&self.active) {
+                self.end_split();
+            } else {
+                let mut inv = Invalidations::default();
+                self.layout(&mut inv);
+            }
+        }
+    }
+
+    /// 동시 편집을 끝낸다(단일 모드 · 미니맵 복원 · 재배치). 이미 단일이면 아무 일도 없다.
+    fn end_split(&mut self) {
+        if self.split.is_empty() {
+            return;
+        }
+        self.split.clear();
+        let on = self.minimap.0;
         for tb in &mut self.bufs {
-            tb.set_bounds(ed, inv);
+            tb.set_minimap(on);
+        }
+        self.sync_tabs();
+        let mut inv = Invalidations::default();
+        self.layout(&mut inv);
+    }
+
+    /// 탭 본체 클릭(수식키 포함) — 뷰 탭은 늘 단일 · 수식키 없음 = 단일 전환 · Shift/Ctrl = [`split_plan`].
+    fn tab_click(&mut self, i: usize, shift: bool, primary: bool) {
+        let is_view = |this: &Self, k: usize| {
+            k < this.bufs.len() && this.view_tabs.contains_key(&this.tab_id(k))
+        };
+        if (!shift && !primary) || is_view(self, i) || is_view(self, self.active) {
+            self.end_split();
+            self.switch(i);
+            return;
+        }
+        let (set, act) = split_plan(
+            self.active,
+            &self.split,
+            i,
+            shift,
+            primary,
+            self.split_max,
+            self.bufs.len(),
+        );
+        self.apply_split(set, act);
+    }
+
+    fn apply_split(&mut self, set: Vec<usize>, act: usize) {
+        self.split = set;
+        let on = self.minimap.0;
+        let split = &self.split;
+        for (k, tb) in self.bufs.iter_mut().enumerate() {
+            tb.set_minimap(if split.contains(&k) { false } else { on });
+        }
+        self.switch(act);
+        let mut inv = Invalidations::default();
+        self.layout(&mut inv);
+    }
+
+    /// 본문 그리기 — 단일이면 활성 탭, 동시 편집이면 칸마다 그 탭 + 칸 사이 구분선.
+    pub(crate) fn paint_bodies(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if !self.is_split() {
+            self.cur_mut().paint(dc, th);
+            return;
+        }
+        let body = self.body;
+        let gap = (self.scale.round() as i32).max(1);
+        let idxs = self.split.clone();
+        for (k, &i) in idxs.iter().enumerate() {
+            if let Some(tb) = self.bufs.get_mut(i) {
+                tb.paint(dc, th);
+                if k + 1 < idxs.len() {
+                    let r = tb.bounds();
+                    dc.fill_rect(Rect::new(r.right(), body.y, gap, body.h), th.border);
+                }
+            }
+        }
+    }
+
+    /// 커서 아래 칸의 편집기(동시 편집) · 아니면 활성 탭 — 휠·hover는 포커스가 아니라 커서 아래로 간다.
+    pub(crate) fn box_at_or_cur_mut(&mut self, p: Point) -> &mut TextBox {
+        if self.is_split() {
+            if let Some(&i) = self
+                .split
+                .iter()
+                .find(|&&i| self.bufs.get(i).is_some_and(|tb| tb.bounds().contains(p)))
+            {
+                return &mut self.bufs[i];
+            }
+        }
+        self.cur_mut()
+    }
+
+    /// 동시 편집에서 다른 칸을 누르면 그 탭이 활성(키 입력·실행 대상)이 된다 — 집합은 그대로. 바뀌었으면 true.
+    pub(crate) fn activate_pane_at(&mut self, p: Point) -> bool {
+        if !self.is_split() {
+            return false;
+        }
+        let hit = self
+            .split
+            .iter()
+            .copied()
+            .find(|&i| self.bufs.get(i).is_some_and(|tb| tb.bounds().contains(p)));
+        match hit {
+            Some(i) if i != self.active => {
+                self.switch(i);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1680,13 +1917,21 @@ impl Editors {
         self.tabs.on_event(ev, inv);
         if let Some(a) = self.tabs.take_action() {
             match a {
-                TabAction::Switch(i) => self.switch(i),
-                TabAction::Close(i) => self.close_tab(i),
+                TabAction::Switch(i) => {
+                    let (shift, primary) = self.tabs.last_click_mods();
+                    self.tab_click(i, shift, primary);
+                }
+                TabAction::Close(i) => {
+                    self.end_split();
+                    self.close_tab(i);
+                }
                 TabAction::New => {
+                    self.end_split();
                     self.new_tab(None);
                     self.new_tab_created = true;
                 }
                 TabAction::Move { from, to } => {
+                    self.end_split();
                     if from < self.bufs.len() && to < self.bufs.len() {
                         let b = self.bufs.remove(from);
                         let t = self.titles.remove(from);
@@ -1871,6 +2116,49 @@ mod load_tab_tests {
     /// 큰 파일 단계별 제한(사용자 09-21): 기준 단계 이상에서만 · 0 = 제한 없음 · 확장 효과만 끄고 자동 닫기는 남긴다 ·
     /// 구문 강조는 기본 L2부터 · 기준을 L1로 당기면 L1 탭도 꺼지고, 풀면(0) 돌아온다 · "강제로 켜기"는 되돌린다.
     #[test]
+    fn preview_tab_is_reused_then_promoted_when_edited() {
+        let mut ed = editors();
+        let dir = std::env::temp_dir().join(format!("nsql-preview-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let (a, b, c) = (dir.join("a.sql"), dir.join("b.sql"), dir.join("c.sql"));
+        let base = ed.len();
+        // 1번 클릭 = 미리보기 탭 생성.
+        let i = ed.open_preview(&a, PreparedText::new("A".into()), Eol::Lf);
+        assert_eq!(ed.len(), base + 1);
+        assert!(ed.is_preview(i));
+        let id_a = ed.tab_id(i);
+        // 2번 클릭 = 같은 탭에 교체(탭 수 그대로 · id 그대로 · 경로 바뀜).
+        let j = ed.open_preview(&b, PreparedText::new("B".into()), Eol::Lf);
+        assert_eq!(ed.len(), base + 1);
+        assert_eq!(ed.tab_id(j), id_a);
+        assert_eq!(ed.path_of(j), Some(b.clone()));
+        assert!(ed.shown_title(j).starts_with("◦ "));
+        // 편집 → 승격(표식 사라짐).
+        ed.cur_mut().set_text("B changed");
+        assert!(ed.poll_preview());
+        assert!(!ed.is_preview(j));
+        assert!(ed.preview_id().is_none());
+        // 3번 클릭 = 새 미리보기 탭(승격된 탭은 그대로).
+        let k = ed.open_preview(&c, PreparedText::new("C".into()), Eol::Lf);
+        assert_eq!(ed.len(), base + 2);
+        assert!(ed.is_preview(k));
+        assert_ne!(ed.tab_id(k), id_a);
+        // 이미 연 파일을 다시 클릭 = 그 탭으로(새로 만들지 않는다).
+        let j2 = ed.open_preview(&b, PreparedText::new("B".into()), Eol::Lf);
+        assert_eq!(j2, j);
+        assert_eq!(ed.len(), base + 2);
+        // 더블클릭 = 승격.
+        assert!(ed.promote_path(&c));
+        assert!(!ed.is_preview(k));
+        assert!(!ed.promote_path(&dir.join("none.sql")));
+        // 닫으면 미리보기 없음.
+        let m = ed.open_preview(&a, PreparedText::new("A".into()), Eol::Lf);
+        ed.close_tab_forced(m);
+        assert!(ed.preview_id().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn large_levels_limit_extensions_and_syntax() {
         assert!(!feature_limited(0, 1) && feature_limited(1, 1) && feature_limited(2, 1));
         assert!(!feature_limited(1, 2) && feature_limited(2, 2));
@@ -2012,5 +2300,135 @@ mod load_tab_tests {
             "Script_2",
             "파일 탭은 번호를 먹지 않는다"
         );
+    }
+}
+
+/// 동시 편집 칸 `k`(0..n)의 영역 — 폭을 n등분(마지막 칸이 나머지) · 칸 사이 `gap` px 구분선.
+fn split_column(body: Rect, k: usize, n: usize, gap: i32) -> Rect {
+    let n = n.max(1) as i32;
+    let k = k as i32;
+    let w = (body.w - gap * (n - 1)) / n;
+    let x = body.x + k * (w + gap);
+    let width = if k == n - 1 { body.right() - x } else { w };
+    Rect::new(x, body.y, width.max(0), body.h)
+}
+
+/// ★ 탭 바 클릭 → 동시 편집 집합(순수 · MC/DC 테스트) — 사용자 09-22: Shift(연속) 또는 Ctrl(개별) + 좌클릭으로 최대 `max`개.
+/// 돌려주는 값 = (집합 · 새 활성 탭). 집합이 2개 미만이면 빈 집합(단일 모드).
+/// - 수식키 없음 = `([], i)` · Ctrl = 토글(상한이면 무시 · 활성을 빼면 남은 첫 칸이 활성) · Shift = 활성~i 연속(활성 쪽부터 `max`개).
+pub(crate) fn split_plan(
+    active: usize,
+    split: &[usize],
+    i: usize,
+    shift: bool,
+    primary: bool,
+    max: usize,
+    len: usize,
+) -> (Vec<usize>, usize) {
+    let max = max.max(1);
+    if i >= len {
+        return (split.to_vec(), active);
+    }
+    if !shift && !primary {
+        return (Vec::new(), i);
+    }
+    let base: Vec<usize> = if split.is_empty() {
+        vec![active]
+    } else {
+        split.to_vec()
+    };
+    let (mut set, act) = if primary {
+        let mut set = base;
+        if let Some(pos) = set.iter().position(|&s| s == i) {
+            set.remove(pos);
+            let act = if i == active {
+                set.first().copied().unwrap_or(i)
+            } else {
+                active
+            };
+            (set, act)
+        } else if set.len() >= max {
+            return (if set.len() >= 2 { set } else { Vec::new() }, active);
+        } else {
+            set.push(i);
+            set.sort_unstable();
+            (set, i)
+        }
+    } else {
+        // Shift = 활성에서 i 쪽으로 연속 · 활성 쪽부터 max개.
+        let (lo, hi) = if i >= active {
+            (active, i.min(active + max - 1))
+        } else {
+            (i.max((active + 1).saturating_sub(max)), active)
+        };
+        let set: Vec<usize> = (lo..=hi).collect();
+        let act = if set.contains(&i) {
+            i
+        } else if i > active {
+            hi
+        } else {
+            lo
+        };
+        (set, act)
+    };
+    if set.len() < 2 {
+        set.clear();
+    }
+    (set, act)
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    /// 칸에 든 탭 = 탭 줄의 묶임 표식(상단 줄 · 사용자 09-22) · 단일 복귀 = 전부 해제.
+    #[test]
+    fn grouped_tabs_follow_split_set() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        let base = ed.len() - 1;
+        ed.new_tab(None);
+        ed.new_tab(None);
+        ed.tab_click(base + 1, true, false);
+        assert!(ed.tabs.is_grouped(base + 1) && ed.tabs.is_grouped(base + 2));
+        assert!(!ed.tabs.is_grouped(base));
+        ed.tab_click(base, false, false);
+        assert!((0..ed.len()).all(|i| !ed.tabs.is_grouped(i)));
+    }
+
+    /// MC/DC — 수식키 없음 · Ctrl 추가/제거/상한/활성 제거 · Shift 앞·뒤·상한 · 범위 밖.
+    #[test]
+    fn split_plan_rules() {
+        // 수식키 없음 = 단일 전환.
+        assert_eq!(split_plan(0, &[0, 1], 2, false, false, 3, 5), (vec![], 2));
+        // Ctrl: 단일에서 하나 더 = 둘 · 새 탭이 활성.
+        assert_eq!(split_plan(0, &[], 2, false, true, 3, 5), (vec![0, 2], 2));
+        // Ctrl: 이미 있는 것 = 제거 → 하나 남으면 단일.
+        assert_eq!(split_plan(2, &[0, 2], 2, false, true, 3, 5), (vec![], 0));
+        assert_eq!(
+            split_plan(0, &[0, 2, 4], 2, false, true, 3, 5),
+            (vec![0, 4], 0)
+        );
+        // Ctrl: 상한이면 무시(집합·활성 그대로).
+        assert_eq!(
+            split_plan(0, &[0, 1, 2], 3, false, true, 3, 5),
+            (vec![0, 1, 2], 0)
+        );
+        // Shift: 앞으로 연속 · 상한만큼.
+        assert_eq!(split_plan(0, &[], 2, true, false, 3, 5), (vec![0, 1, 2], 2));
+        assert_eq!(split_plan(0, &[], 4, true, false, 3, 5), (vec![0, 1, 2], 2));
+        // Shift: 뒤로 연속.
+        assert_eq!(split_plan(4, &[], 1, true, false, 3, 5), (vec![2, 3, 4], 2));
+        // Shift: 같은 탭 = 단일.
+        assert_eq!(split_plan(1, &[], 1, true, false, 3, 5), (vec![], 1));
+        // 범위 밖 = 불변.
+        assert_eq!(
+            split_plan(0, &[0, 1], 9, true, false, 3, 5),
+            (vec![0, 1], 0)
+        );
+        // 칸 폭: 3칸 · 1px 구분선 · 마지막 칸이 나머지.
+        let b = Rect::new(10, 0, 302, 100);
+        assert_eq!(split_column(b, 0, 3, 1), Rect::new(10, 0, 100, 100));
+        assert_eq!(split_column(b, 1, 3, 1), Rect::new(111, 0, 100, 100));
+        assert_eq!(split_column(b, 2, 3, 1), Rect::new(212, 0, 100, 100));
     }
 }

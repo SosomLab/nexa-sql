@@ -78,6 +78,7 @@
 | macOS 화면 내보내기 표면 풀(IOSurface ≤ 3장 × 창 픽셀 × 4 B + 폭이 16px 배수가 아니면 중간 버퍼 1장 · 62 §2-1) | 창마다 ≤ 4벌(레티나 메인 창 ≈ 21 MB/장) | `gfx.mac_present`(`softbuffer` = 끔 = 기본) | softbuffer | softbuffer | softbuffer | `present.rs` · nexa-sys `layer_present` |
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
+| ★ 다중 열기 스레드 `multi-open`(journal 09-22 §30 · 열기 창에서 여러 파일 → **스레드 하나**가 고른 순서대로 읽어 자리 탭마다 결과) | 요청당 1개 · 파일 수 ≤ `file.open_max` · 끝나면 종료 · 동시 N개 없음 | `file.open_max`(1~50 · 기본 10) | 10 | 10 | 10 | `main.rs multi_open_start/multi_load_poll` |
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
 | 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
 | 되돌리기 기록 파일(60 §7 D-129 · `<설정 폴더>/undo/*.nsqu`) | 저장할 때 1회 쓰기(≤ 4 MB · UI 스레드 · tmp+rename) · 열 때 1회 읽기 · 실행당 첫 저장 때 오래된 파일 치우기 · 큰 파일 탭은 안 씀 | `editor.undo_persist`(off = 쓰기·읽기 0) · `editor.undo_persist_mb` · `editor.undo_persist_days` | — | — | — | `undofile.rs` |
@@ -141,6 +142,7 @@
 | 로딩 점 애니메이션 | 300 ms | `ui.animations` | — | — | off(고정 "Loading…") | `explorer` · `FilePicker` |
 | 툴팁 | `ui.tooltip_delay_ms` · `tabs.tooltip` · `explorer.tooltip` | 기존 | — | — | — | — |
 | 슬라이드(패널) | `ui.slide_ms` | `ui.animations` | — | — | 0 | `conn_win` |
+| 토스트 남은 시간 표시(왼쪽 상태 막대가 위에서부터 옅어짐 + 카드 진척 페이드 · 09-22) | 카드가 떠 있는 동안 30ms 틱(실행 카드는 끝난 뒤 카운트다운 동안만 · 새 타이머 0) | `ui.toast_progress`(신설) · `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) | 켬 | 켬 | **끔**(향상 모드 = 종전 마지막 300ms 페이드만) | `toast` · `runtoast` |
 | 다시 그리기 단위 | 창 전체 | (구조 · 더티 영역 = T-90f 후보) | — | — | — | `paint` |
 | 글리프 서브픽셀(1/3 px) | 켬 | `ui.text_subpixel`(신설 · HIDDEN) | 켬 | 켬 | 끔(캐시 1/3) | nexa-gfx `GlyphKey.sub` |
 | 아이콘 사전 스케일 캐시 | 크기별 | (구조) | — | — | — | `IconImage::resized` |
@@ -247,7 +249,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 | 구분 | 키 → 강제값 | 사용자 예시와의 대응 | 비고 |
 |---|---|---|---|
-| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
+| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
 | 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(신설 · 우클릭 메뉴 아이콘)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
 | I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |
 | 메모리 | `file.icon_cache` 128 | 목표 ④ | 아이콘을 껐으므로 캐시도 최소 |

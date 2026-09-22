@@ -34,7 +34,7 @@ ErrorClass = NoTable · NoColumn · NoObject · Syntax · Permission · Login ·
 | 곳 | 형식 |
 |---|---|
 | GUI 상태줄 · 결과 메시지 탭 · 로그 창 | `ERROR line 2: [ORA-00942 · 테이블/뷰 없음: M4S_X] ORA-00942: 테이블 또는 뷰가 존재하지 않습니다` |
-| GUI 토스트(우측 하단 · 쌓임 · `ui.toast_secs` 3초 · `ui.toast_alpha` 85% · 클릭 = 닫기 · 최대 5장) | 제목 `ORA-00942 · 테이블/뷰 없음` · 본문 = 대상 이름(없으면 원문 첫 줄). **분류된 오류만**(Unknown은 상태줄만) |
+| GUI 토스트(우측 하단 · 쌓임 · `ui.toast_secs` 3초 · `ui.toast_alpha` 85% · 클릭 = 닫기 · 최대 5장 · **남은 시간 = 왼쪽 색 막대가 위에서부터 옅어짐 + 카드 페이드** `ui.toast_progress` · 09-22 · 실행 상태 카드도 같음) | 제목 `ORA-00942 · 테이블/뷰 없음` · 본문 = 대상 이름(없으면 원문 첫 줄). **분류된 오류만**(Unknown은 상태줄만) |
 | CLI | `ERROR line 2: [ORA-00942 · Table or view not found: M4S_X] 원문` · 분류 안 되면 종전 그대로 |
 
 ## 3. 원칙

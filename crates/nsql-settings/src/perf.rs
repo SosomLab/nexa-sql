@@ -238,6 +238,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("ui.fade_out_ms", "0"),
     ("ui.slide_ms", "0"),
     ("ui.hover_intent_ms", "120"),
+    // 토스트 남은 시간 막대 + 진척 페이드(09-22) — 카드가 떠 있는 동안 30ms마다 다시 그린다 · 끄면 종전(마지막 300ms만).
+    ("ui.toast_progress", "off"),
     // ── 아이콘·부가 표시(메모리·래스터): 트리 아이콘 · OS 파일 아이콘 · 우클릭 메뉴 아이콘 · 툴팁 · 미니맵 · 선택어 강조
     ("explorer.icons", "off"),
     ("file.os_icons", "off"),

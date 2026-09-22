@@ -36,8 +36,9 @@ pub(crate) fn owned_by(attrs: WindowAttributes, owner: Option<&Window>) -> Windo
     }
 }
 
+/// Win32 창 핸들(`HWND`) — 다른 OS에서는 `None`(`imestate`가 IME 상태를 이 창 기준으로 읽는다).
 #[cfg(target_os = "windows")]
-fn hwnd(w: &Window) -> Option<isize> {
+pub(crate) fn hwnd(w: &Window) -> Option<isize> {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match w.window_handle().ok()?.as_raw() {
         RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
@@ -167,6 +168,11 @@ pub(crate) fn focus(w: &winit::window::Window) {
     if std::env::var_os("NSQL_NO_ACTIVATE").is_none() {
         w.focus_window();
     }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hwnd(_w: &Window) -> Option<isize> {
+    None
 }
 
 /// X11 창 id(XWayland 포함) — Wayland 네이티브 창이면 `None`.

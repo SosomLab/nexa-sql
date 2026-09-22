@@ -27,7 +27,7 @@ members = [
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.89"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 authors = ["Sangyong Bae <kiros33@gmail.com>"]
 repository = "https://github.com/SosomLab/nexa-sql"

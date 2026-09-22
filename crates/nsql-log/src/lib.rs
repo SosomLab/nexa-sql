@@ -1327,7 +1327,7 @@ mod tests {
         }
         fn write(&mut self, _: &LogEntry) -> Result<(), String> {
             self.0 += 1;
-            if self.0 % 2 == 0 {
+            if self.0.is_multiple_of(2) {
                 panic!("sink panic must not escape");
             }
             Err("boom".into())

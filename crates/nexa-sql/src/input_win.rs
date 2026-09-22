@@ -37,11 +37,23 @@ struct Row {
     tb: TextBox,
 }
 
+/// 비밀번호 물음의 내용(`open_password`).
+pub(crate) struct PasswordAsk {
+    /// 가린 접속 문자열(누구의 비밀번호인지).
+    pub(crate) target: String,
+    /// 앞서 입력한 것을 서버가 거부했다.
+    pub(crate) rejected: bool,
+    /// 세션 자격 금고(`connect.remember_session_password`)가 켜져 있다 — 안내 문구.
+    pub(crate) remember: bool,
+}
+
 pub(crate) struct InputWin {
     window: Option<Rc<Window>>,
     surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
+    /// 가린 칸에 라틴이 아닌 입력 언어로 글자가 들어올 때의 안내(사용자 09-22).
+    ime_hint: crate::imehint::ImeHint,
     shift: bool,
     primary: bool,
     rows: Vec<Row>,
@@ -56,6 +68,8 @@ pub(crate) struct InputWin {
     password_for: Option<String>,
     /// 들고 있던 비밀번호가 거부돼 다시 묻는 것이다(안내 글이 달라진다).
     password_rejected: bool,
+    /// 세션 자격 금고(`connect.remember_session_password`)가 켜져 있는가 — 안내 문구가 달라진다(사용자 09-22 "설명이 부적합").
+    password_remember: bool,
 }
 
 impl InputWin {
@@ -65,6 +79,7 @@ impl InputWin {
             surface: None,
             scale: 1.0,
             cursor: (0, 0),
+            ime_hint: crate::imehint::ImeHint::new(),
             shift: false,
             primary: false,
             rows: Vec::new(),
@@ -75,17 +90,17 @@ impl InputWin {
             sess: 0,
             password_for: None,
             password_rejected: false,
+            password_remember: true,
         }
     }
 
-    /// **비밀번호 한 번 묻기** — `target` = 가린 접속 문자열(누구의 비밀번호인지). 같은 창·같은 배선을 쓴다.
+    /// **비밀번호 한 번 묻기** — 같은 창·같은 배선을 쓴다(`ask` = 누구의 · 거부됐는지 · 금고 켜짐).
     pub(crate) fn open_password(
         &mut self,
         el: &ActiveEventLoop,
         theme: Option<winit::window::Theme>,
         owner: Option<&Window>,
-        target: String,
-        rejected: bool,
+        ask: PasswordAsk,
         sess: u64,
     ) {
         let need = InputNeed {
@@ -97,13 +112,29 @@ impl InputWin {
             hide: true,
         };
         self.open(el, theme, owner, vec![need], sess);
-        self.password_for = Some(target);
-        self.password_rejected = rejected;
+        self.password_for = Some(ask.target);
+        self.password_rejected = ask.rejected;
+        self.password_remember = ask.remember;
         self.run_btn.set_label(t(Msg::BtnConnect));
         if let Some(w) = &self.window {
             w.set_title(&format!("Nexa SQL — {}", t(Msg::WinPassword)));
+            // 비밀번호 창은 폭이 좁고 안내가 두 줄 — `open`이 잡은 입력 창 크기를 바꾼다.
+            let _ = w.request_inner_size(self.desired_size());
         }
         self.redraw();
+    }
+
+    /// 창 크기(논리 px) = 안내 줄 수 + 입력 줄 수로 **내용만큼**(사용자 09-22 "입력란과 버튼 사이 공간이 너무 넓다" — 종전은
+    /// `120 + n×34` 고정이라 한 줄짜리 비밀번호 창에 빈 띠가 남았다). 비밀번호 창은 폭 440(접속 문자열 한 줄 · 종전 520은 과했다).
+    /// 항목 = 위 여백 12 + 안내 20×L + 10 + 줄 (32+6)×n + 버튼 34 + 아래 여백 12(`paint`의 배치와 같은 수).
+    fn desired_size(&self) -> winit::dpi::LogicalSize<f64> {
+        let n = self.rows.len().clamp(1, 12) as f64;
+        let (w, hint_lines) = if self.password_for.is_some() {
+            (440.0, 2.0)
+        } else {
+            (520.0, 1.0)
+        };
+        winit::dpi::LogicalSize::new(w, 68.0 + 20.0 * hint_lines + 38.0 * n)
     }
 
     pub(crate) fn is_password(&self) -> bool {
@@ -147,23 +178,25 @@ impl InputWin {
         self.sync_focus();
         if let Some(w) = &self.window {
             w.set_title(&format!("Nexa SQL — {}", t(Msg::WinInputs)));
+            let _ = w.request_inner_size(self.desired_size());
             crate::winfocus::focus(w);
             self.redraw();
             return;
         }
-        let n = self.rows.len().clamp(1, 12) as f64;
+        let size = self.desired_size();
         let attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinInputs)))
             .with_theme(theme)
             .with_resizable(true)
-            .with_inner_size(winit::dpi::LogicalSize::new(520.0, 120.0 + n * 34.0));
+            .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         // 메인 창 가운데쯤(실행한 자리에서 눈이 멀리 가지 않게).
         if let Some(o) = owner {
             if let Ok(p) = o.outer_position() {
                 let s = o.outer_size();
                 attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(
-                    p.x + s.width as i32 / 2 - 300,
+                    p.x + s.width as i32 / 2
+                        - (size.width * f64::from(o.scale_factor() as f32) / 2.0) as i32,
                     p.y + s.height as i32 / 3,
                 ));
             }
@@ -247,6 +280,30 @@ impl InputWin {
             .iter()
             .map(|r| (r.need.kind, r.need.name.clone(), r.tb.text()))
             .collect()
+    }
+
+    pub(crate) fn set_ime_hint_secs(&mut self, secs: i64) {
+        self.ime_hint.set_secs(secs);
+    }
+
+    /// IME 안내 만료 → 다시 그림 · 다음 깨울 시각.
+    pub(crate) fn tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let (changed, next) = self.ime_hint.tick(now);
+        if changed {
+            self.redraw();
+        }
+        next
+    }
+
+    /// 포커스 칸이 가린 칸이면 IME 안내를 갱신한다(글자가 들어온 뒤에 부른다).
+    fn note_hidden_input(&mut self) {
+        let hidden = self.rows.get(self.focus).is_some_and(|r| r.need.hide);
+        if hidden {
+            let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
+            if self.ime_hint.note_hidden_input(hwnd, self.cursor) {
+                self.redraw();
+            }
+        }
     }
 
     fn key_event(&self, kev: &winit::event::KeyEvent) -> Option<InputEvent> {
@@ -368,11 +425,15 @@ impl InputWin {
                         r.tb.on_event(&InputEvent::Char { c, now_ms: 0 }, &mut inv);
                     }
                 }
+                self.note_hidden_input();
                 self.redraw();
             }
             WindowEvent::Ime(Ime::Preedit(text, _)) => {
                 if let Some(r) = self.rows.get_mut(self.focus) {
                     r.tb.set_preedit(text, &mut inv);
+                }
+                if !text.is_empty() {
+                    self.note_hidden_input();
                 }
                 self.redraw();
             }
@@ -422,8 +483,12 @@ impl InputWin {
                     _ => {}
                 }
                 if let Some(e) = self.key_event(kev) {
+                    let typed = matches!(e, InputEvent::Char { .. });
                     if let Some(r) = self.rows.get_mut(self.focus) {
                         r.tb.on_event(&e, &mut inv);
+                    }
+                    if typed {
+                        self.note_hidden_input();
                     }
                     self.redraw();
                 }
@@ -473,15 +538,28 @@ impl InputWin {
             dc.select_font(FontSlot::Base, false);
             let th_txt = dc.text_height();
             let pad = px(12.0);
-            // 안내 한 줄(비밀번호 모드 = 누구의 비밀번호인지 + 저장하지 않는다는 약속).
-            let hint = match &self.password_for {
-                Some(target) if self.password_rejected => {
-                    nsql_i18n::tf(Msg::PasswordHintRejected, &[target])
+            // 안내 — 비밀번호 모드 = 두 줄(1 = 누구의 비밀번호인지 · 2 = 짧은 보관 문구: 금고가 켜져 있으면 "종료할 때까지 암호화해
+            // 기억" · 꺼져 있으면 "이번 접속에만" · 거부됐으면 그 사실) · 입력 창 = 한 줄.
+            let hint_lines: Vec<(String, nexa_gfx::Color)> = match &self.password_for {
+                Some(target) => {
+                    let note = if self.password_rejected {
+                        Msg::PasswordHintRejected
+                    } else if self.password_remember {
+                        Msg::PasswordHintSession
+                    } else {
+                        Msg::PasswordHintOnce
+                    };
+                    vec![
+                        (target.clone(), th.text),
+                        (t(note).to_string(), th.text_dim),
+                    ]
                 }
-                Some(target) => nsql_i18n::tf(Msg::PasswordHint, &[target]),
-                None => t(Msg::InputsHint).to_string(),
+                None => vec![(t(Msg::InputsHint).to_string(), th.text_dim)],
             };
-            dc.text(pad, pad, Rect::new(0, 0, wi, hi), &hint, th.text_dim);
+            let clip = Rect::new(0, 0, wi, hi);
+            for (i, (line, color)) in hint_lines.iter().enumerate() {
+                dc.text(pad, pad + th_txt * i as i32, clip, line, *color);
+            }
             let row_h = th_txt + px(12.0);
             let gap = px(6.0);
             // 이름 열 폭 = 가장 긴 "접두 + 이름" · 종류 표시는 이름 뒤 흐린 글.
@@ -514,7 +592,7 @@ impl InputWin {
                 .clamp(px(80.0), wi / 2);
             let btn_h = th_txt + px(14.0);
             let btn_y = hi - pad - btn_h;
-            let mut y = pad + th_txt + px(10.0);
+            let mut y = pad + th_txt * hint_lines.len() as i32 + px(10.0);
             let inv = &mut Invalidations::default();
             for r in &mut self.rows {
                 if y + row_h > btn_y - gap {
@@ -551,6 +629,8 @@ impl InputWin {
                 b.paint(&mut dc, th);
                 bx -= bw + px(8.0);
             }
+            // IME 안내(맨 위 · 팝업 층).
+            self.ime_hint.paint(&mut dc, th, Rect::new(0, 0, wi, hi), s);
         }
         let _ = buf.present();
         self.surface = Some(surface);

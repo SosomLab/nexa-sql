@@ -87,14 +87,15 @@
 - **프로세스 전역 상태(스위치 · 환경 변수 · 현재 폴더)를 만지는 시험은 가드로 직렬화한다** — 시험은 병렬로 돈다. 본보기 = nexa-font `tests::GdiOn`(정적 뮤텍스를 쥔 동안 켬 · Drop에서 끔). 09-22(92차): 가드 없던 두 시험이 CI windows-latest에서만 겹쳐 네 번 실패했고, 로그를 못 본 채 "되돌리니 통과"로 엉뚱한 원인(`file_type()`)을 지목했다 → **CI 실패는 로그를 본 뒤에 고친다**(`gh run view <id> --log-failed` · `gh` 없는 PC면 있는 PC 몫으로 넘긴다) · "되돌리니 통과"는 원인의 증거가 아니다(타이밍도 같이 돌아간다).
 - **사용자가 자리에 있을 때 키·마우스 입력을 주입하지 않는다**(`SendKeys` · System Events 키 입력은 사용자의 전경 창으로 간다) · **포커스를 빼앗지 않는다**(`SetForegroundWindow` · `activate` 금지). 앱은 `NSQL_STARTUP_CMD`로 몰고 화면은 창 단위로 찍는다(§3 · §4). 키 입력이 있어야만 볼 수 있는 것(한글 조합 · 드래그)은 **단위 테스트로 덮고, 실기는 사용자 몫으로 보고에 적는다.**
 - **사용자의 클립보드를 덮어쓰지 않는다** — 잘라내기·복사 명령을 자동 시험에 넣지 않는다(09-20: 65 MB 잘라내기 대신 줄 삭제 명령으로 시험).
-- ★ **직접 관리하는 대상은 승인 없이 정리한다**(사용자 09-21 89차 — "내가 걱정하는 것은 이 프로젝트의 범위가 아닌 폴더·파일이 삭제되거나 변경되는 것 · 직접 관리하는 대상은 더 유연하게"):
+- ★ **확인 요청의 대원칙**(사용자 09-22 92차 — "필수 스크립트에 계속 확인을 요청하는 것은 매우 불필요하고 작업이 Hold되는 원인 · 삭제 안전 확인의 의지는 **프로젝트 외부 리소스를 함부로 수정/삭제하지 않는 안전장치**였다" · 09-21 89차의 정정):
 
   | | 대상 | 규칙 |
   |---|---|---|
-  | **직접 관리**(이 세션이 만든 것) | 세션 스크래치패드 · 격리 `NSQL_HOME` 폴더 · 비교용 워크트리(`../_cmp/<저장소>`)와 그 `target/`·빌드 로그 · 저장소의 `target/` 산출물·`target/capture` · 내가 띄운 PID · 실서버의 임시 객체(`pg_temp` — 세션이 끝나면 사라지는 것만) | 생성·삭제·덮어쓰기를 **묻지 않고** 진행 · 보고에 한 줄 · 지우기 전에 **내가 만든 것인지 확인**(경로·내용·만든 시각 — 빈 폴더가 아니면 안을 먼저 본다) |
-  | **먼저 묻는다** | 두 저장소(nexa-sql · nexa-ui)와 스크래치패드 **밖**의 모든 경로 · 사용자의 실제 설정 폴더·프로필·볼트·최근 파일 · 추적 중인 변경을 되돌릴 수 없게 버리는 일(`git reset --hard` · `git clean` · 강제 push · 브랜치 강제 삭제) · 사용자 파일(`.claude/settings.json` = 병합만 · `devcontainer-lock.json`) · 내가 띄우지 않은 프로세스 · 실서버의 영속 객체 | 무엇을·왜를 말하고 승인을 받는다 |
+  | **묻지 않고 진행** | ① 진행에 필요한 스크립트·명령 실행(cargo · git 조회/커밋 · python · pwsh `scripts/` · gh 조회 · 캡처·측정 스크립트 · 테스트) ② 프로젝트(nexa-sql · nexa-ui) **내부**에서 생성/관리하는 파일의 수정·삭제 ③ 프로젝트 **외부라도 개발 세션이 만든** 파일·폴더의 수정·삭제 — 세션 스크래치패드 · 격리 `NSQL_HOME` · 비교용 워크트리(`../_cmp/<저장소>`)와 그 `target/`·로그 · `target/` 산출물·`target/capture` · `/tmp`·`$TEMP/claude` ④ 이 저장소 `target/` 아래 `nexa-sql.exe` 인스턴스 종료(아래 줄) ⑤ 실서버의 임시 객체(`pg_temp` · `NSQLT_*` — 세션이 끝나면 사라지거나 시나리오가 지우는 것) | 보고에 한 줄 · 지우기 전에 **내가 만든 것인지 확인**(경로·내용·만든 시각) |
+  | **먼저 묻는다** | 프로젝트 **밖의 사용자 리소스**(실제 설정 폴더·프로필·볼트·최근 파일 · 다른 프로젝트 폴더 · 홈의 파일)의 수정/삭제 · 추적 중인 변경을 되돌릴 수 없게 버리는 일(`git reset --hard` · `git clean` · 강제 push · 브랜치 강제 삭제) · 내가 띄우지 않은 **다른 앱**의 프로세스 · 실서버의 영속 객체 · `devcontainer-lock.json` | 무엇을·왜를 말하고 승인을 받는다 |
 
-  정리는 **그 일에 맞는 명령**을 쓴다(워크트리 = `git worktree remove` · 빌드 산출물 = `cargo clean -p …` · 프로세스 = PID 지정) — 범위가 명령 자체에 묶여 있어 엉뚱한 경로를 건드릴 수 없다. 참고: 승인 창은 공유 설정 `.claude/settings.json`의 `ask`(`Bash(rm:*)` · `PowerShell(Remove-Item:*)`)에서 나온다 — 이 규칙은 경로를 가리지 못하므로(범위 밖 삭제를 막는 마지막 안전망) **그대로 둔다**.
+  정리는 **그 일에 맞는 명령**을 쓴다(워크트리 = `git worktree remove` · 빌드 산출물 = `cargo clean -p …` · 프로세스 = PID 지정) — 범위가 명령 자체에 묶여 있어 엉뚱한 경로를 건드릴 수 없다.
+  **확인 창의 출처**: 규칙 문서가 아니라 하네스 권한 설정 `.claude/settings.json`(allow = 명령 **첫 단어** 기준 · `&&`·`;`·`|` 체인은 조각마다 판정 · `ask` = 늘 묻는 것)이다. 09-22 점검: 세션의 명령이 `cd … && …`·변수 대입·`for`/`until`·PowerShell `$x = …; Stop-Process …`처럼 허용 목록에 없는 단어로 시작해 매번 확인/분류기로 갔고, `rm:*`·`Remove-Item:*`이 `ask`라 스크래치·`target/` 정리도 물었다 → allow를 넓히고(`cd`·`sed`·`for`·`until`·`Stop-Process`·`Start-Process`·`$`·스크래치/`target/` 한정 `rm`) `rm`·`Remove-Item`은 `ask`에서 뺀다(외부 삭제 금지는 이 규칙이 지킨다). 이 파일은 하네스 분류기가 **내 편집을 막으므로** 바뀐 내용은 제안 파일(`settings.proposed.json`)로 만들어 사용자가 적용한다. 명령을 쓸 때는 허용된 단어로 시작하고(절대 경로 인자 · 로직은 python 파일), 체인은 짧게.
 - 실행 중인 다른 프로세스는 사용자의 것일 수 있다 — 끝낼 때는 **내가 띄운 PID**만. **예외 = 이 저장소 `target/{debug,release}/nexa-sql.exe` 인스턴스**: 개발(빌드·테스트·재시작) 사이에는 누가 띄웠든 **강제 종료하고 진행**한다(사용자 09-22 92차 "개발 사이에는 기존 프로세스를 강제 종료하고 진행" — 실행 중인 exe가 링크를 막는다) · 종료한 PID·시작 시각은 보고에 한 줄 · 다른 경로의 exe(설치본)·다른 앱은 그대로.
 
 ### 1-5. 09-20~21(맥 86~88차)에 굳은 것 — 변수 · 트랜잭션 · 화면 내보내기
@@ -128,7 +129,28 @@
 
 **리눅스에서 처음 할 일(09-22 91차)**: ① 두 저장소 pull(nexa-ui 먼저) → `scripts/linux-all-tests.sh -o /tmp/nsql-tests`(fmt·clippy·test 양쪽 + 3-OS 호스트 + 실서버 통합 = `NSQL_*_PROFILE`) ② Oracle = `scripts/install-instantclient-linux.sh --rc`(새 셸) ③ 성능 = `scripts/linux-perf-all.sh -H <격리 홈> -D <데이터> -o <결과>`(격리 홈에 `Local` SQLite 프로필 먼저 · 26 §7-7과 비교 · 창까지 시간은 `[startup]`으로 구간 확인) ④ 실기 = TODO T-163(Wayland IME · 모달 · 캡처).
 
-**맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139.
+**맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139 ⑤ **하네스 권한 점검**(아래 §3-1 — 확인 창이 계속 뜨면 맥 추가분을 제안 파일로 만들어 사용자에게 적용을 부탁한다).
+
+### 3-1. 하네스(Claude Code) 권한 설정 — 3-OS 공통 규칙과 OS별 추가분(사용자 09-22 "동일 권한 관리를 mac에서도 다시 요청할 수 있게")
+
+- **원칙** = §2-4 대원칙: 확인은 **프로젝트 외부 리소스의 수정/삭제**에만. 진행에 필요한 스크립트 실행 · 프로젝트 내부 파일 · 세션이 만든 파일/폴더 · `target/`의 앱 프로세스는 묻지 않는다.
+- **어디에**: 저장소의 `.claude/settings.json`(커밋됨 · 3-OS가 같은 파일을 읽는다 · `defaultMode = acceptEdits` · `allow` = 명령 **첫 단어** 기준 · `&&`·`;`·`|` 체인은 조각마다 판정 · `ask` = `sudo` · `git reset --hard` · `git clean` · 강제 push만). 이 파일은 하네스의 자동 모드 분류기가 **에이전트의 편집을 막는다**("자기 수정") → 바꿀 것이 생기면 스크래치패드에 완성본 `settings.proposed.json`을 만들고 **사용자가 복사**한다(09-22 Windows에서 그렇게 적용).
+- **Windows(09-22 적용됨)**: Bash `cd sed cut sort uniq tr fold paste printf xargs diff stat du dirname basename jq curl sleep timeout test true env export tasklist taskkill` · `for /until /while /if /[` · `bash scripts/` · `rm`은 **스크래치(`"$TEMP/claude/` · `C:/Users/<user>/AppData/Local/Temp/claude/`) · `/tmp/` · `target/` · `../_cmp/` · `../nexa-ui/target/` 한정** / PowerShell `cd Stop-Process Start-Process Start-Sleep New-Item Set-Content Add-Content Add-Type Copy-Item Move-Item Rename-Item Remove-Item Env:` · 스크래치/`target/` 한정 `Remove-Item -Recurse -Force` · `Out-String Out-Null Where-Object ForEach-Object Sort-Object Get-Date Join-Path Split-Path foreach/if/try` · `$…` · `"…"` · `[…]` · `& "$root\target\…"`.
+- **macOS 추가분(제안 — 맥 세션이 첫 확인 창에서 만들어 부탁)**: 위 Bash 목록은 그대로 두고 경로·명령만 맥으로 —
+
+  ```json
+  "Bash(rm -rf \"$TMPDIR/claude/:*)", "Bash(rm -f \"$TMPDIR/claude/:*)",
+  "Bash(rm -rf /var/folders/:*)", "Bash(rm -f /var/folders/:*)",
+  "Bash(rm -rf /tmp/:*)", "Bash(rm -f /tmp/:*)", "Bash(rm -rf target/:*)", "Bash(rm -f target/:*)",
+  "Bash(rm -rf ../_cmp/:*)", "Bash(rm -rf ../nexa-ui/target/:*)",
+  "Bash(pkill -f target/:*)", "Bash(kill:*)", "Bash(ps:*)", "Bash(pgrep:*)", "Bash(lsof:*)",
+  "Bash(screencapture:*)", "Bash(open -a:*)", "Bash(open target/:*)", "Bash(xattr:*)", "Bash(codesign:*)", "Bash(otool:*)", "Bash(nm:*)",
+  "Bash(sw_vers:*)", "Bash(sysctl:*)", "Bash(vm_stat:*)", "Bash(sample:*)", "Bash(/usr/bin/time:*)",
+  "Bash(bash scripts/:*)", "Bash(sh scripts/:*)", "Bash(zsh:*)", "Bash(./target/:*)", "Bash(../nexa-ui/target/:*)"
+  ```
+  (`pkill`은 `target/` 아래 nexa-sql만 — 다른 앱은 여전히 묻는다 · `kill`은 PID 지정이라 허용 · PowerShell 항목은 맥에서 무해하게 무시된다.)
+- **Linux 추가분**: 맥과 같되 `screencapture` 대신 `grim`/`gnome-screenshot`, `open` 대신 `xdg-open`, 스크래치 = `/tmp/claude/` 또는 `$XDG_RUNTIME_DIR` · `xprop`/`xwininfo`/`xdotool`(조회만) · `strace`/`ltrace`(측정) · `pkexec`는 묻는다.
+- **점검법**: 세션 초반에 확인 창이 두 번 이상 뜨면 그 명령의 첫 단어를 적어 두고 한 번에 제안 파일로 모아 부탁한다(하나씩 묻지 않는다). 제안은 **기존 항목 전부 유지 + 추가**만(병합) · `ask`의 되돌릴 수 없는 git 항목은 지우지 않는다.
 
 ## 4. 자체 검증 도구
 

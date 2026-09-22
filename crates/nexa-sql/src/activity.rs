@@ -59,6 +59,13 @@ impl ActivityBar {
                     hidden: false,
                 },
                 ActItem {
+                    id: "view.project",
+                    icon: toolicons::mi_project(),
+                    panel: true,
+                    bottom: false,
+                    hidden: false,
+                },
+                ActItem {
                     id: "view.extensions",
                     icon: toolicons::mi_extensions(),
                     panel: true,

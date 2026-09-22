@@ -503,6 +503,17 @@ fn shape_files(x: f32, y: f32) -> bool {
     back || front || lines
 }
 
+/// 활동 막대 — 프로젝트 탐색기(폴더 + 안의 트리 가지 · docs/67 §4 · 사용자 09-22).
+fn shape_project(x: f32, y: f32) -> bool {
+    let tab = in_rounded_rect(x, y, 36.0, 52.0, 80.0, 26.0, 6.0);
+    let body = in_rounded_rect(x, y, 36.0, 68.0, 184.0, 122.0, 10.0)
+        && !in_rounded_rect(x, y, 50.0, 82.0, 156.0, 94.0, 6.0);
+    let trunk = stroke(x, y, (86.0, 104.0), (86.0, 158.0), 10.0);
+    let b1 = stroke(x, y, (86.0, 124.0), (130.0, 124.0), 10.0);
+    let b2 = stroke(x, y, (86.0, 154.0), (150.0, 154.0), 10.0);
+    tab || body || trunk || b1 || b2
+}
+
 /// 활동 막대 — 확장(붙은 네모 셋 + 떨어진 네모 하나 · VS Code Extensions 느낌 · 사용자 09-19).
 fn shape_extensions(x: f32, y: f32) -> bool {
     let sq = |x0: f32, y0: f32| {
@@ -540,6 +551,9 @@ pub(crate) fn mi_extensions() -> MenuIcon {
 }
 pub(crate) fn mi_gear() -> MenuIcon {
     menu_icon(shape_gear)
+}
+pub(crate) fn mi_project() -> MenuIcon {
+    menu_icon(shape_project)
 }
 
 /// 메뉴 아이콘(알파 마스크 · 색은 메뉴가 상태색으로 틴트).

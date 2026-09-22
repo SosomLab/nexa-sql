@@ -182,13 +182,9 @@ fn show(name: &str) -> i32 {
     match v.peek(name) {
         Ok(Some(p)) => {
             println!("{name}: {}", p.describe());
-            println!(
-                "  파일: {}",
-                v.dir()
-                    .join("profiles")
-                    .join(format!("{name}.conf"))
-                    .display()
-            );
+            if let Ok(p) = v.path_of(name) {
+                println!("  파일: {}", p.display());
+            }
             0
         }
         Ok(None) => {

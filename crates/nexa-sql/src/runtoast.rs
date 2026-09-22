@@ -8,6 +8,11 @@
 //!
 //! 왼쪽 색 막대 = 상태(진행 accent · 완료 ok · 오류 danger · 중지 warn). 끝난 뒤 `run.toast_hide_secs` 지나면 사라진다
 //! (0 = 클릭으로 닫을 때까지 유지). 데이터는 호스트가 받는 이벤트에서 그대로 넣는다(별도 계측 없음).
+//!
+//! ★ 남은 시간 표시(사용자 09-22 "이미 있는 왼쪽 세로선을 그대로 활용 · 투명해지면서 줄어들고 위에서 아래로 · 지나간 부분은 70% 투명한
+//! 같은 색" · `ui.toast_progress` · 일반 토스트와 같은 규칙 = [`crate::toast::life_alpha`] · [`crate::toast::bar_remaining`]): 끝난 카드의
+//! **왼쪽 상태 색 막대**가 숨김까지 남은 시간만큼 진하고, 지나간 위쪽은 같은 색을 `ui.toast_bar_spent`(30%)로 — 카드와 함께 진척에 따라
+//! `ui.toast_fade_to`까지 투명해진 뒤 마지막 300ms에 사라진다. 숨김 0초(수동 닫기)·진행 중이면 막대는 가득. 향상 모드(`perf.boost`)는 끈다.
 
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -64,6 +69,11 @@ pub(crate) struct RunToast {
     enabled: bool,
     hide_after: Duration,
     alpha: f32,
+    /// 남은 시간 막대 + 진척 페이드(`ui.toast_progress` · `ui.toast_fade_to` · `ui.toast_bar_spent`).
+    progress: bool,
+    fade_to: f32,
+    /// 지나간 부분의 막대 불투명도 비율(0..1).
+    spent: f32,
     rect: Rect,
     stop_rect: Rect,
     line_rect: Rect,
@@ -92,6 +102,9 @@ impl RunToast {
             enabled: true,
             hide_after: Duration::from_secs(5),
             alpha: 0.9,
+            progress: true,
+            fade_to: 0.35,
+            spent: 0.3,
             rect: Rect::default(),
             stop_rect: Rect::default(),
             line_rect: Rect::default(),
@@ -108,6 +121,23 @@ impl RunToast {
         if !enabled {
             self.run = None;
         }
+    }
+
+    /// 설정 `ui.toast_progress` · `ui.toast_fade_to`(%) · `ui.toast_bar_spent`(%).
+    pub(crate) fn configure_progress(&mut self, on: bool, fade_to_pct: i64, spent_pct: i64) {
+        self.progress = on;
+        self.fade_to = (fade_to_pct.clamp(0, 100) as f32) / 100.0;
+        self.spent = (spent_pct.clamp(0, 100) as f32) / 100.0;
+    }
+
+    /// 끝난 카드의 숨김 진척(0 = 방금 끝남 · 1 = 숨김) — 막대·페이드의 입력. 진행 중이거나 수동 닫기면 `None`.
+    fn hide_progress(&self, now: Instant) -> Option<f32> {
+        let ended = self.run.as_ref()?.ended?;
+        if self.hide_after.is_zero() {
+            return None;
+        }
+        let p = now.duration_since(ended).as_secs_f64() / self.hide_after.as_secs_f64();
+        Some(p.clamp(0.0, 1.0) as f32)
     }
 
     #[cfg(test)]
@@ -258,12 +288,14 @@ impl RunToast {
                 return (true, None);
             }
             let left = self.hide_after - age;
-            let next = if left.as_millis() as u64 <= FADE_MS {
+            // 남은 시간 막대가 켜져 있으면 카운트다운 내내 30ms 틱(막대·투명도가 매 틱 바뀐다) · 꺼져 있으면 종전 = 마지막 300ms만.
+            let animating = self.progress || left.as_millis() as u64 <= FADE_MS;
+            let next = if animating {
                 now + Duration::from_millis(30)
             } else {
                 now + (left - Duration::from_millis(FADE_MS))
             };
-            return (left.as_millis() as u64 <= FADE_MS, Some(next));
+            return (animating, Some(next));
         }
         let secs = now.duration_since(r.started).as_secs();
         if secs != r.shown_secs {
@@ -364,7 +396,11 @@ impl RunToast {
             }
             _ => 1.0,
         };
-        let a = self.alpha * fade;
+        let life = self.hide_progress(now).filter(|_| self.progress);
+        let a = self.alpha
+            * life.map_or(1.0, |p| crate::toast::life_alpha(p, self.fade_to, true))
+            * fade;
+
         let h = pad * 2 + lh * 3 + px(4.0);
         let card = Rect::new(right - gap - w, bottom - gap - h, w, h);
         self.rect = card;
@@ -376,12 +412,27 @@ impl RunToast {
             Phase::Error(_) => th.danger,
             Phase::Stopped { .. } => th.warn,
         };
-        dc.fill_round_rect_alpha(
-            Rect::new(card.x + px(6.0), card.y + pad, bar, h - pad * 2),
-            px(2.0),
-            color,
-            a,
-        );
+        // 왼쪽 상태 막대 = 남은 시간(끝난 카드): 아래를 고정하고 위에서부터 옅어진다 — 지나간 부분은 같은 색을
+        // `ui.toast_bar_spent`(기본 30% = 70% 투명)로 남겨 "사라진다"기보다 "투명해지는" 느낌(사용자 09-22). 진행 중·수동 닫기·꺼짐 = 가득.
+        let full = h - pad * 2;
+        let bar_h = crate::toast::bar_remaining(full, life);
+        let bar_x = card.x + px(6.0);
+        if bar_h < full {
+            dc.fill_round_rect_alpha(
+                Rect::new(bar_x, card.y + pad, bar, full),
+                px(2.0),
+                color,
+                a * self.spent,
+            );
+        }
+        if bar_h > 0 {
+            dc.fill_round_rect_alpha(
+                Rect::new(bar_x, card.y + pad + (full - bar_h), bar, bar_h),
+                px(2.0),
+                color,
+                a,
+            );
+        }
         let tx = card.x + px(6.0) + bar + pad;
         let clip = Rect::new(card.x, card.y, card.w - pad, card.h);
         // 1행: ■ 중지 + 문장 한 줄
@@ -499,5 +550,40 @@ mod tests {
             "0 = 유지"
         );
         assert_eq!(hms(Duration::from_secs(3661)), "01:01:01");
+    }
+
+    /// 남은 시간 진척: 진행 중·수동 닫기(0초)는 없음 · 끝난 뒤 0 → 1 · 켜져 있으면 카운트다운 내내 30ms 틱, 꺼져 있으면 마지막 300ms만.
+    #[test]
+    fn hide_progress_and_tick_cadence() {
+        let mut rt = RunToast::new();
+        rt.configure(true, 4, 90);
+        rt.start("x", "s".into(), 1);
+        assert_eq!(rt.hide_progress(Instant::now()), None, "진행 중");
+        rt.finish(Phase::Error("e".into()));
+        let e = rt.run.as_ref().expect("run").ended.expect("ended");
+        assert_eq!(rt.hide_progress(e), Some(0.0));
+        assert!((rt.hide_progress(e + Duration::from_secs(2)).expect("p") - 0.5).abs() < 1e-6);
+        assert_eq!(rt.hide_progress(e + Duration::from_secs(9)), Some(1.0));
+        // 켜짐 = 1초 뒤에도 30ms 뒤 다시(막대가 움직인다).
+        let (redraw, next) = rt.tick(e + Duration::from_secs(1));
+        assert!(redraw);
+        assert_eq!(
+            next,
+            Some(e + Duration::from_secs(1) + Duration::from_millis(30))
+        );
+        // 꺼짐 = 종전: 마지막 300ms 전까지는 한 번에 건너뛴다.
+        rt.configure_progress(false, 35, 30);
+        let (redraw, next) = rt.tick(e + Duration::from_secs(1));
+        assert!(!redraw);
+        assert_eq!(
+            next,
+            Some(e + Duration::from_secs(4) - Duration::from_millis(FADE_MS))
+        );
+        // 수동 닫기(0초) = 진척 없음.
+        let mut keep = RunToast::new();
+        keep.configure(true, 0, 90);
+        keep.start("x", "s".into(), 1);
+        keep.finish(Phase::Error("e".into()));
+        assert_eq!(keep.hide_progress(Instant::now()), None);
     }
 }

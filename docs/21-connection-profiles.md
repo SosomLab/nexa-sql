@@ -10,7 +10,8 @@
 │                                        Windows %APPDATA%\nexa-sql · macOS ~/Library/Application Support/nexa-sql · Linux ~/.config/nexa-sql
 │                                        환경변수 NSQL_HOME이 있으면 그 폴더(테스트 · 개발용 재지정)
 ├─ device.key                            기기 키 32B — Windows: "NSDK"‖ver‖DPAPI 블롭 · 그 외: 평문 0600
-└─ profiles/<이름>.conf                  프로필 1개 = 파일 1개(nexa-conf key=value · 원자적 쓰기)
+└─ profiles/<해시>.conf                  프로필 1개 = 파일 1개(nexa-conf key=value · 원자적 쓰기) · 해시 = SHA-256(이름) 앞 16 hex · 이름은 안의 `name=`
+                                         (09-22 92차 · 종전 `<이름>.conf`는 읽기 호환 · 저장 시 이관 — 대/소문자 무시 FS에서 `biscm`→`BISCM` 이름 변경이 프로필을 지우던 결함)
      _schema=1
      dialect=oracle  user=scott  host=db  port=1521  database=orcl  role=SYSDBA
      secret=<hex>                        비밀번호 봉투만 암호화 — 나머지는 평문(목록에 보여야 하는 값)

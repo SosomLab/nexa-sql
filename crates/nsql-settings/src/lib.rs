@@ -1249,6 +1249,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 동시 편집(사용자 09-22): 탭 바에서 Shift/Ctrl+클릭으로 나란히 보이는 탭 수 상한.
+    Entry {
+        key: "editor.split_max",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorSplitMax,
+        desc: Msg::DescEditorSplitMax,
+        kind: SettingKind::Int { min: 1, max: 4 },
+        default: "3",
+    },
     Entry {
         key: "editor.minimap_width",
         cat: Msg::CatEditor,
@@ -1494,6 +1503,50 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 프로젝트(docs/67 · 사용자 09-22): 마지막/최근 프로젝트 파일 · 미리보기 탭 · 필터 열거 상한.
+    Entry {
+        key: "project.last",
+        cat: Msg::CatFiles,
+        label: Msg::LblProjectLast,
+        desc: Msg::DescProjectLast,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "project.recent",
+        cat: Msg::CatFiles,
+        label: Msg::LblProjectRecent,
+        desc: Msg::DescProjectRecent,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "project.restore_last",
+        cat: Msg::CatFiles,
+        label: Msg::LblProjectRestoreLast,
+        desc: Msg::DescProjectRestoreLast,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "project.preview_tab",
+        cat: Msg::CatFiles,
+        label: Msg::LblProjectPreviewTab,
+        desc: Msg::DescProjectPreviewTab,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "project.scan_max",
+        cat: Msg::CatFiles,
+        label: Msg::LblProjectScanMax,
+        desc: Msg::DescProjectScanMax,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 200_000,
+        },
+        default: "5000",
+    },
     Entry {
         key: "file.show_hidden",
         cat: Msg::CatFiles,
@@ -1590,6 +1643,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescLargeHeadMb,
         kind: SettingKind::Int { min: 1, max: 1024 },
         default: "8",
+    },
+    // ★ 다중 열기 상한(사용자 09-22): 대화상자에서 여러 파일을 골라도 이 개수까지만(고른 순서).
+    Entry {
+        key: "file.open_max",
+        cat: Msg::CatFiles,
+        label: Msg::LblFileOpenMax,
+        desc: Msg::DescFileOpenMax,
+        kind: SettingKind::Int { min: 1, max: 50 },
+        default: "10",
     },
     Entry {
         key: "file.async_load_mb",
@@ -2093,6 +2155,40 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescToastAlpha,
         kind: SettingKind::Int { min: 30, max: 100 },
         default: "85",
+    },
+    // ★ 토스트 남은 시간 표시(사용자 09-22): 오른쪽 끝 세로 막대 + 진척에 따라 투명해짐. `ui.toast_fade_to` = 수명 끝의 불투명도 비율(HIDDEN).
+    Entry {
+        key: "ui.toast_progress",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToastProgress,
+        desc: Msg::DescToastProgress,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ui.toast_fade_to",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToastFadeTo,
+        desc: Msg::DescToastFadeTo,
+        kind: SettingKind::Int { min: 0, max: 100 },
+        default: "35",
+    },
+    Entry {
+        key: "ui.toast_bar_spent",
+        cat: Msg::CatAppearance,
+        label: Msg::LblToastBarSpent,
+        desc: Msg::DescToastBarSpent,
+        kind: SettingKind::Int { min: 0, max: 100 },
+        default: "30",
+    },
+    // 가린 입력란 IME 안내(사용자 09-22): 비밀번호 칸에 글자가 들어올 때 입력 언어가 라틴이 아니면 마우스 옆에 N초(0 = 끔).
+    Entry {
+        key: "ui.ime_hint_secs",
+        cat: Msg::CatAppearance,
+        label: Msg::LblImeHintSecs,
+        desc: Msg::DescImeHintSecs,
+        kind: SettingKind::Int { min: 0, max: 60 },
+        default: "5",
     },
     Entry {
         key: "ui.tooltip_delay_ms",
@@ -3437,6 +3533,8 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         Dep::Eq("table"),
     ),
     ("ui.toast_alpha", "ui.toast_secs", Dep::NotEmpty),
+    ("ui.toast_fade_to", "ui.toast_progress", Dep::On),
+    ("ui.toast_bar_spent", "ui.toast_progress", Dep::On),
     ("grid.col_max_chars", "grid.col_max_mode", Dep::Eq("manual")),
 ];
 
@@ -3450,6 +3548,8 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "ui.toast_fade_to",
+    "ui.toast_bar_spent",
     "dev.start_demo",
     "window.main_size",
     "window.login_size",
@@ -3499,6 +3599,8 @@ pub const HIDDEN: &[&str] = &[
     "ui.color_recent",
     "file.last_dir",
     "file.recent",
+    "project.last",
+    "project.recent",
     "file.show_hidden",
     "file.show_dot",
     "script.strict",

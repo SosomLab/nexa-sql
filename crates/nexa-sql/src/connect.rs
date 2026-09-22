@@ -36,6 +36,17 @@ pub(crate) enum PanelAction {
     LoadProfile(String),
     /// 입력란 우클릭 메뉴에서 고른 클립보드 행동 — OS 클립보드는 호스트(창) 몫.
     Edit(EditCtxAction),
+    /// 저장 버튼 아래 파일 줄의 복사 버튼 — 접속 창이 목록 우클릭 메뉴와 **같은 진입점**(`ConnWin::copy_profile_file`)으로 처리한다(사용자 09-22).
+    CopyFile(ProfileFile),
+}
+
+/// 프로필 설정 파일의 무엇을 복사하는가(상세 보기 버튼 · 목록 우클릭 메뉴 공용).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProfileFile {
+    /// `<해시>.conf`
+    Name,
+    /// 전체 경로
+    Path,
 }
 
 /// 접속 상태(상태줄 색·문구의 단일 원천).
@@ -98,6 +109,10 @@ pub(crate) struct ConnectPanel {
     test_btn: Button,
     connect_btn: Button,
     save_btn: Button,
+    /// 저장 버튼 아래 한 줄: 프로필 설정 파일 이름(`<해시>.conf` · 사용자 09-22 "해시와 프로필을 연결해 판단할 수 있게") + 복사 버튼.
+    file_rect: Rect,
+    copy_rect: Rect,
+    copy_hover: bool,
     field_focus: Option<Field>,
     /// 동작(Test/Connect/Save)을 눌렀을 때 비어 있던 필수 칸 — 경고 띠 · 채우면 즉시 해제(22 §10).
     warn: Vec<Field>,
@@ -276,6 +291,9 @@ impl ConnectPanel {
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
+            file_rect: Rect::default(),
+            copy_rect: Rect::default(),
+            copy_hover: false,
             field_focus: None,
             warn: Vec::new(),
             auto_port: None,
@@ -506,6 +524,11 @@ impl ConnectPanel {
         self.dirty_now = dirty;
     }
 
+    /// 가린 칸(비밀번호)에 포커스가 있는가 — IME 안내(`imehint`)의 조건.
+    pub(crate) fn password_focused(&self) -> bool {
+        self.field_focus == Some(Field::Password)
+    }
+
     /// 목록에서 불러온 프로필 이름(New면 None).
     pub(crate) fn loaded_name(&self) -> Option<String> {
         self.loaded_name.clone()
@@ -632,14 +655,25 @@ impl ConnectPanel {
             .set_bounds(Rect::new(x0 + bw + gap, y, bw, bh), &mut inv);
         self.save_btn
             .set_bounds(Rect::new(x0 + (bw + gap) * 2, y, bw, bh), &mut inv);
+        y += bh + self.s(6.0);
+        // 파일 줄: 글자(이름) 왼쪽 · 복사 버튼(정사각 · 아이콘 16) 오른쪽 끝.
+        let fh = self.s(22.0);
+        self.file_rect = Rect::new(x, y, w, fh);
+        self.copy_rect = Rect::new(x + w - fh, y, fh, fh);
     }
 
-    /// 상태줄 자리(버튼 아래).
-    /// 상태 메시지 영역 — 버튼 아래부터 패널 바닥까지(워드랩 · 넘치면 스크롤).
+    /// 이 폼의 프로필 설정 파일 이름(`<해시>.conf`) — 이름 칸이 비었거나 규칙에 안 맞으면 `None`.
+    pub(crate) fn profile_file_name(&self) -> Option<String> {
+        let name = self.profile_name();
+        nsql_vault::is_profile_name(&name).then(|| nsql_vault::Vault::file_name(&name))
+    }
+
+    /// 상태줄 자리(파일 줄 아래).
+    /// 상태 메시지 영역 — 파일 줄 아래부터 패널 바닥까지(워드랩 · 넘치면 스크롤).
     fn status_rect(&self) -> Rect {
-        let b = self.test_btn.bounds();
+        let b = self.file_rect;
         let pad = self.s(10.0);
-        let y = b.bottom() + self.s(10.0);
+        let y = b.bottom() + self.s(6.0);
         Rect::new(
             self.bounds.x + pad,
             y,
@@ -952,6 +986,24 @@ impl ConnectPanel {
         }
         if matches!(ev, InputEvent::RightDown { .. }) {
             return None;
+        }
+        // 파일 줄의 복사 버튼 — hover 표시 · 클릭 = 파일 이름 복사(진입점은 접속 창의 `copy_profile_file` 하나).
+        match *ev {
+            InputEvent::MouseMove { x, y, .. } => {
+                let over =
+                    self.profile_file_name().is_some() && self.copy_rect.contains(Point { x, y });
+                if over != self.copy_hover {
+                    self.copy_hover = over;
+                    inv.push(self.copy_rect);
+                }
+            }
+            InputEvent::MouseDown { x, y, .. }
+                if self.profile_file_name().is_some()
+                    && self.copy_rect.contains(Point { x, y }) =>
+            {
+                return Some(PanelAction::CopyFile(ProfileFile::Name));
+            }
+            _ => {}
         }
         // 마우스 사건은 버튼·콤보·체크박스 전부에.
         if matches!(
@@ -1330,6 +1382,41 @@ impl ConnectPanel {
                 self.s(MARK_D),
                 nexa_ctl::Color(0x00FF_FFFF),
             );
+        }
+        // 파일 줄: `<해시>.conf`(흐린 글 · 이름이 없으면 —) + 복사 버튼(우클릭 메뉴의 복사 아이콘 · hover = 옅은 바탕).
+        {
+            let fr = self.file_rect;
+            let file = self.profile_file_name();
+            let label = file.clone().unwrap_or_else(|| "—".to_string());
+            let ty = fr.y + (fr.h - dc.text_height()) / 2;
+            let clip = Rect::new(
+                fr.x,
+                fr.y,
+                (self.copy_rect.x - fr.x - self.s(6.0)).max(0),
+                fr.h,
+            );
+            dc.text(fr.x, ty, clip, &label, th.text_dim);
+            if file.is_some() {
+                let cr = self.copy_rect;
+                if self.copy_hover {
+                    dc.fill_round_rect_alpha(cr, self.s(4.0), th.text, 0.10);
+                }
+                let (r, g, b) = (if self.copy_hover {
+                    th.text
+                } else {
+                    th.text_dim
+                })
+                .rgb();
+                let ic = crate::toolicons::mi_copy();
+                let img =
+                    nexa_ctl::theme::IconImage::from_alpha_tinted(ic.w, ic.h, &ic.alpha, (r, g, b));
+                let sz = self.s(16.0);
+                dc.image_scaled(
+                    Rect::new(cr.x + (cr.w - sz) / 2, cr.y + (cr.h - sz) / 2, sz, sz),
+                    &img,
+                    cr,
+                );
+            }
         }
         // 상태줄: ● + 문구(패널 폭 안에서 잘림)
         let sr = self.status_rect();

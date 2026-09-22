@@ -209,7 +209,7 @@ impl Matcher {
                     }
                     from = s + n;
                     budget = budget.wrapping_add(1);
-                    if budget % 256 == 0 && !keep_going() {
+                    if budget.is_multiple_of(256) && !keep_going() {
                         return;
                     }
                 }
@@ -227,7 +227,7 @@ impl Matcher {
                             }
                         }
                         budget = budget.wrapping_add(1);
-                        if budget % 4096 == 0 && !keep_going() {
+                        if budget.is_multiple_of(4096) && !keep_going() {
                             return;
                         }
                     }
@@ -245,7 +245,7 @@ impl Matcher {
                         out.push((m.start(), m.end()));
                     }
                     budget = budget.wrapping_add(1);
-                    if budget % 256 == 0 && !keep_going() {
+                    if budget.is_multiple_of(256) && !keep_going() {
                         return;
                     }
                 }

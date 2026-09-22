@@ -25,6 +25,8 @@ pub(crate) enum FileWinAction {
     Paint,
     /// 확정 경로(모드 · 경로 · 인코딩 값 `auto|utf8|utf8bom|utf16le|utf16be`).
     Confirm(PickerMode, PathBuf, String),
+    /// ★ 열기 모드 다중 확정(고른 순서 · 파일만 · 인코딩 · 사용자 09-22).
+    ConfirmMany(Vec<PathBuf>, String),
     /// 취소/닫힘.
     Cancel,
     /// 클립보드에 쓸 텍스트(경로/이름 복사).
@@ -82,6 +84,7 @@ pub(crate) fn labels() -> PickerLabels {
         menu_copy_path: t(Msg::MnCopyPath).into(),
         menu_copy_name: t(Msg::ExpCopyName).into(),
         menu_refresh: t(Msg::ExpRefresh).into(),
+        multi_selected: t(Msg::MultiOpenHeader).into(),
     }
 }
 
@@ -396,6 +399,10 @@ impl FileWin {
             PickerAction::Confirm(path) => {
                 self.close();
                 FileWinAction::Confirm(mode, path, enc)
+            }
+            PickerAction::ConfirmMany(paths) => {
+                self.close();
+                FileWinAction::ConfirmMany(paths, enc)
             }
             PickerAction::Cancel => {
                 self.close();
