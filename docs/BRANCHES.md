@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/ci-result-93b | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 93차 후반 push CI 결과(nexa-ui 7ec2462 ✓ · nexa-sql c979106 ci 3-OS ✓ · integration ✓) · journal §42 |
 | feat/win-93b-file-dialog-select-ime-ellipsis | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 93차 후반(win): IME 안내 = 입력란 아래·언어 바뀌면 즉시(`ui.ime_hint`) · 미리보기 탭 더블클릭 승격 · 파일 창 Ctrl 수식키/Ctrl+Space/Ctrl+A · 트리 키보드 스크롤 추종 · 다중 선택 강조 = 노드 경로 · 긴 경로 가운데 축약 + Alt 전체(`ui.menu_max_width`) · Ctrl+드래그 스윕 · 러버밴드(빈 공간·행) · 71 §C-2 회수 시험 R1~R6 · 다른 세션 94차(71 성능 점검 프로세스 · 26/45/65 · `win-inventory`/`win-perf-all`) 포함 — nexa-ui 56·57차와 짝 |
 | docs/ci-result-93 | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | 93차 push CI 결과(nexa-ui f23243d ✓ · nexa-sql f452617 ci 3-OS ✓ · integration ✓ · CI 1.98.1 린트 교훈) · journal §33 · STATUS · DEVLOG |
 | fix/ci-linux-imestate-dead-code | 2026-09-22 | 2026-09-22 → main(삭제) | 1 | CI ubuntu `check` — `imestate.rs` `describe`/`classify`가 Linux 빌드에서 미사용(입력 소스 조회 없음) → `cfg_attr(not(windows/macos/test), allow(dead_code))` · macOS·Windows는 3b656be에서 통과 |
