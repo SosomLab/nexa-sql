@@ -113,6 +113,9 @@ pub(crate) struct Editors {
     running: Vec<u64>,
     /// 탭 바 [+]로 새 탭이 생겼다(호스트가 거둔다).
     new_tab_created: bool,
+    /// 탭 본체 더블클릭 감지(미리보기 탭 승격 · 사용자 09-22): (탭 index · 첫 클릭 시각) · 시간 = `ui.dblclick_ms`.
+    last_tab_click: Option<(usize, Instant)>,
+    dblclick_ms: u128,
     /// 뒤에서 끝난 실행의 표시(docs/52 D-104): 탭 id → 성공 여부 — 제목 앞 ✓/✗ · 그 탭을 보거나 다시 실행하면 지운다.
     done_marks: HashMap<u64, bool>,
     /// 탭별 세션 표식(docs/52 §7): 탭 id → (표식, 접속 설명). 없는 탭 = 공유 세션(표식 없음 · 설명은 `conn_desc`).
@@ -241,6 +244,8 @@ impl Editors {
             running: Vec::new(),
             done_marks: HashMap::new(),
             new_tab_created: false,
+            last_tab_click: None,
+            dblclick_ms: 400,
             sess_info: HashMap::new(),
             badge_req: None,
             menu_is_badge: false,
@@ -927,6 +932,27 @@ impl Editors {
             return true;
         };
         if self.is_dirty(i) {
+            self.preview = None;
+            self.sync_tabs();
+            return true;
+        }
+        false
+    }
+
+    /// 탭 본체 클릭 기록 — 같은 탭을 `dblclick_ms` 안에 다시 클릭했으면 true(그러면 기록을 비운다 = 세 번째는 새 시작).
+    fn note_tab_click(&mut self, i: usize, now: Instant) -> bool {
+        let dbl = matches!(self.last_tab_click, Some((j, t0)) if j == i && now.duration_since(t0).as_millis() < self.dblclick_ms);
+        self.last_tab_click = if dbl { None } else { Some((i, now)) };
+        dbl
+    }
+
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
+    }
+
+    /// 탭 `i`가 미리보기 탭이면 정식 탭으로 승격(표식 제거) — 승격했으면 true.
+    pub(crate) fn promote_tab(&mut self, i: usize) -> bool {
+        if self.preview_id() == Some(self.tab_id(i)) {
             self.preview = None;
             self.sync_tabs();
             return true;
@@ -1920,7 +1946,12 @@ impl Editors {
             match a {
                 TabAction::Switch(i) => {
                     let (shift, primary) = self.tabs.last_click_mods();
+                    // 같은 탭을 곧바로 다시 클릭 = 더블클릭 → 미리보기 탭이면 승격(Sublime · 사용자 09-22).
+                    let dbl = !shift && !primary && self.note_tab_click(i, Instant::now());
                     self.tab_click(i, shift, primary);
+                    if dbl {
+                        self.promote_tab(i);
+                    }
                 }
                 TabAction::Close(i) => {
                     self.end_split();
@@ -2152,6 +2183,15 @@ mod load_tab_tests {
         assert!(ed.promote_path(&c));
         assert!(!ed.is_preview(k));
         assert!(!ed.promote_path(&dir.join("none.sql")));
+        // 탭 본체 더블클릭 = 승격(첫 클릭은 아님 · 두 번째가 시간 안이면).
+        let p = ed.open_preview(&a, PreparedText::new("A".into()), Eol::Lf);
+        let t0 = std::time::Instant::now();
+        assert!(!ed.note_tab_click(p, t0));
+        assert!(ed.is_preview(p));
+        assert!(ed.note_tab_click(p, t0 + std::time::Duration::from_millis(100)));
+        assert!(ed.promote_tab(p) && !ed.is_preview(p));
+        assert!(!ed.promote_tab(p), "이미 정식");
+        ed.close_tab_forced(p);
         // 닫으면 미리보기 없음.
         let m = ed.open_preview(&a, PreparedText::new("A".into()), Eol::Lf);
         ed.close_tab_forced(m);

@@ -121,7 +121,7 @@
 ### 4-1. 구현 상태(09-22 · [journal §28](journal/2026-09-22.md))
 
 - ✅ FOLDERS 트리(`project_panel.rs` · 자체 노드 목록 · 지연 열거 · 루트 하나면 자동 펼침) · **깊이 무관 필터**(펼치지 않은 폴더도 `project.scan_max`까지 열거) · 클릭 = 미리보기 탭 · 더블클릭/Enter = 정식 탭 · Space = 미리보기 · 경로 툴팁 · 프로젝트 없음 = 안내 + Open/New 링크 행 · 저장 뒤 `refresh`.
-- ✅ **미리보기 탭**(Sublime · 사용자 09-22): 편집기 `preview` 하나 — 클릭마다 같은 탭에 바꿔 넣음(앞 버퍼 드롭) · 편집 = 승격(`◦` 제거) · 다음 클릭 = 새 미리보기 · 설정 `project.preview_tab`.
+- ✅ **미리보기 탭**(Sublime · 사용자 09-22): 편집기 `preview` 하나 — 클릭마다 같은 탭에 바꿔 넣음(앞 버퍼 드롭) · 편집 = 승격(`◦` 제거) · **탭 본체 더블클릭 = 승격**(사용자 09-22) · 탐색기 더블클릭/Enter = 처음부터 정식 · 다음 클릭 = 새 미리보기 · 설정 `project.preview_tab`.
 - ✅ 메뉴 Project · 팔레트 · `.nsql-project` 대화상자(Open/Save/Folder) · 최근 · Switch · `project.last` 기동.
 - ⏳ OPEN FILES 섹션·sash · 폴더 감시 · 우클릭 메뉴 · 활성 탭 동기(`reveal` 준비됨) · 워크스페이스 파일·hot exit(P3) · 파일 검색 연동(P5).
 

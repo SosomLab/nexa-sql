@@ -282,27 +282,39 @@ impl InputWin {
             .collect()
     }
 
-    pub(crate) fn set_ime_hint_secs(&mut self, secs: i64) {
-        self.ime_hint.set_secs(secs);
+    pub(crate) fn set_ime_hint(&mut self, on: bool) {
+        self.ime_hint.set_enabled(on);
+        self.redraw();
     }
 
-    /// IME 안내 만료 → 다시 그림 · 다음 깨울 시각.
+    /// 포커스인 가린 칸(비밀번호 · `ACCEPT … HIDE`) — IME 안내가 붙을 자리.
+    fn hidden_box(&self) -> Option<Rect> {
+        self.rows
+            .get(self.focus)
+            .filter(|r| r.need.hide)
+            .map(|r| r.tb.bounds())
+    }
+
+    /// IME 안내(가린 칸 포커스 동안 주기 조회 · 라틴이면 즉시 숨김) → 다시 그림 · 다음 깨울 시각.
     pub(crate) fn tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
-        let (changed, next) = self.ime_hint.tick(now);
+        let bx = self.hidden_box();
+        let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
+        let (changed, next) = self.ime_hint.tick(hwnd, bx, now);
         if changed {
             self.redraw();
         }
         next
     }
 
-    /// 포커스 칸이 가린 칸이면 IME 안내를 갱신한다(글자가 들어온 뒤에 부른다).
+    /// 가린 칸에 글자가 들어왔다 → IME 안내 즉시 갱신.
     fn note_hidden_input(&mut self) {
-        let hidden = self.rows.get(self.focus).is_some_and(|r| r.need.hide);
-        if hidden {
-            let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
-            if self.ime_hint.note_hidden_input(hwnd, self.cursor) {
-                self.redraw();
-            }
+        let bx = self.hidden_box();
+        let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
+        if self
+            .ime_hint
+            .poll(hwnd, bx, std::time::Instant::now(), true)
+        {
+            self.redraw();
         }
     }
 
@@ -354,6 +366,9 @@ impl InputWin {
                 self.redraw();
             }
             WindowEvent::ModifiersChanged(m) => {
+                if nexa_ctl::draw::set_show_full(m.state().alt_key()) {
+                    self.redraw();
+                }
                 self.shift = m.state().shift_key();
                 self.primary = if cfg!(target_os = "macos") {
                     m.state().super_key()

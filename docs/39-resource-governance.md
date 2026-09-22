@@ -78,6 +78,7 @@
 | macOS 화면 내보내기 표면 풀(IOSurface ≤ 3장 × 창 픽셀 × 4 B + 폭이 16px 배수가 아니면 중간 버퍼 1장 · 62 §2-1) | 창마다 ≤ 4벌(레티나 메인 창 ≈ 21 MB/장) | `gfx.mac_present`(`softbuffer` = 끔 = 기본) | softbuffer | softbuffer | softbuffer | `present.rs` · nexa-sys `layer_present` |
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
+| IME 안내 조회(journal 09-22 §34 · 가린 칸에 포커스가 있는 동안 150 ms마다 `GetKeyboardLayout`+`WM_IME_CONTROL` 둘 · 아니면 0) | 포커스 동안만 · 새 타이머 없음(창 tick) | `ui.ime_hint`(끄면 0) | on | on | off | `imehint.rs` · `conn_win`/`input_win` `tick` |
 | ★ 다중 열기 스레드 `multi-open`(journal 09-22 §30 · 열기 창에서 여러 파일 → **스레드 하나**가 고른 순서대로 읽어 자리 탭마다 결과) | 요청당 1개 · 파일 수 ≤ `file.open_max` · 끝나면 종료 · 동시 N개 없음 | `file.open_max`(1~50 · 기본 10) | 10 | 10 | 10 | `main.rs multi_open_start/multi_load_poll` |
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
 | 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
@@ -172,6 +173,39 @@
 | 최근 파일·폴더 | `file.recent` 개수 | 기존(10) | — |
 | 탐색기 노드 | 펼친 것만 | — | 접기/해제 |
 | 폰트 mmap | 파일 기반(공유 페이지) | — | 26 §7 착시 주의 |
+
+### 3-7. ★ 기능 성능 프로파일 — 기능 하나가 무엇을 쓰는가(사용자 09-22)
+
+> **왜 표가 하나 더 필요한가**: §3-1~3-6은 *부하원*(스레드·소켓·캐시)을 도메인별로 모은 표다. 사용자가 요구한 점검 차원은 그보다 넓다 — *"프로세스 & 쓰레드 적용 · 기능이 메인 프로세스에 영향을 미치는지 · 로딩된 상태에 대한 데이터 구조 및 재사용성 · 파일 및 메모리 사용량 · I/O"*. 그래서 **기능 단위**로 그 답을 한 줄에 적는다. 새 기능은 [71 §5](71-performance-review-process.md)의 체크리스트를 채우고 여기 한 줄을 남긴다.
+>
+> 열 뜻: **스레드/프로세스** = 이름 있는 작업 스레드나 자식 프로세스(없으면 UI 스레드) · **메인 영향** = UI 스레드를 잡는 시간과 범위(창 전체 / 그 탭 / 없음) · **적재 구조·재사용** = 켜져 있는 동안 무엇을 몇 벌 들고 있나(복사인가 공유인가) · **회수** = 언제 놓나.
+
+| 기능(들어온 차수) | 스레드/프로세스 | 메인 영향 | 적재 구조 · 재사용 | 파일·I/O | 회수 | 끄는 키 | 향상 모드 |
+|---|---|---|---|---|---|---|---|
+| **결과 데이터**(DR-33 · 52차) | 워커 스레드가 받아 채널로 | 수신 0(소유권 이동) · 그리기는 보이는 행만 | `ResultData` = `Arc` 세그먼트 **한 벌** · 그리드·복사·텍스트 보기·CLI 렌더러는 `RowSource` **인덱스 뷰**(복사 0) · 셀당 ≈ 61 B | — | 다음 실행 · 탭 닫힘(즉시) | `grid.max_rows` · `grid.result_tabs` | `grid.result_tabs=off`(들고 있는 결과 수 억제) |
+| **세션 컨텍스트**(DR-34 · 56~62차) | 세션마다 `nsql-worker` 1(+ SQLite는 `nsql-sqlite` 1) | 없음(문지기 `gate_open`만 UI에서) | 세션별 상태는 `Sess`에(App에 두지 않는다) · 서버별 메타는 `ExplorerSet`이 **공유** | — | 유휴 닫기 · Disconnect | `session.max_shared/max_private/idle_secs` | — |
+| **편집 버퍼 `TextBuf`**(T-142 · 84차) | 없음(UI 스레드) | 입력당 ≤ 3~8 ms(70만 줄) | UTF-8 본문 **한 벌** + 갭(1/16) + 줄 표 16 B/줄 · 줄별 폭·구문 상태 8 B/줄 · **세대(rev)로 캐시 무효화** · 본문 전체를 `Vec<char>`로 뜨지 않는다 | — | 보이지 않는 탭은 갭을 접는다 | (회수 설정) | — |
+| **되돌리기 = 연산 기록**(83차) | 없음 | 묶음당 0.07 ms | `Op{pos, remove_n, insert}` — **지운 글자만** 저장 · 스냅숏 0 · 예산 넘으면 오래된 것부터 | 기록 파일 `undo/*.nsqu`(저장 때 1회 · 열 때 1회) | 탭 닫힘 · 예산 축출 | `editor.undo_budget_mb` · `editor.undo_persist` | `editor.undo_persist=off` |
+| **큰 파일 모드 · 탭 격리 적재**(82~84차) | 파일당 `file-load` 1(8 MB 이상) | **0 ms**(옮겨 넣기) · 진행 막은 **그 탭에만** · 다른 탭은 그대로 | 읽은 버퍼가 그대로 본문(사본 0 · UTF-8·LF면 재사용) · 준비본 문자열을 그리기 캐시가 그대로 씀 | 1 MB 덩어리 읽기 | 탭 닫으면 기준선 | `file.async_load_mb` · `file.large_*` | 큰 파일 **단계**가 맡는다(향상 모드 아님) |
+| **메모리 회수**(83차) | 없음 | 유휴에 수 ms | — | — | 놓은 1초 뒤 1회 + 유휴 300 s | `mem.trim_on_release` · `mem.trim_secs` | — |
+| **외부 파일 변경**(81차) | `file-watch`(보이는 탭만) | 폴링 0(stat 서명) · 달라졌을 때만 읽기 | 저장본 사본 1(병합용 · 큰 파일은 안 만든다) | stat 2 s · 변경 시 읽기 | 탭 닫힘 | `file.external_change` · `file.external_poll_ms` | `file.external_poll_ms=0` |
+| **변수 관리**(88~89차) | 없음 | 문장 준비 1.2 µs | `VarStore` 계층(전역 ▸ 파일 ▸ 실행) · 값 상한 `vars.max_value_kb` · 서명 캐시는 **루틴당 1회**(세션 안) | 보존 파일 `vars/<해시>.sql`(실행당 ≤ 1회) | 재접속 때 서명 캐시 비움 | `vars.persist` · `vars.signature_lookup` | 제외(결과가 바뀐다 — §4-6) |
+| **★ 프로젝트 탐색기**(93차 · [67 §4-1](67-project-workspace.md)) | 없음(UI 스레드) | 펼칠 때 그 폴더 1회 열거 · **필터를 칠 때만** 상한까지 훑는다 | 트리 노드 = 펼친 것 + 필터로 찾은 것만(**지연 열거**) · 상한 `project.scan_max` 5,000에서 멈추고 안내 | 프로젝트 파일 JSON 1(열 때) · 폴더 `read_dir`(펼칠 때) | 패널을 닫아도 노드는 유지(다시 열 때 재사용) · 프로젝트를 닫으면 버림 | `project.scan_max`(상한) · 패널 토글 `view.project` | **미등재**(09-22 실측: 저장소 `crates` 트리를 루트로 열어 둬도 접속 대비 **+0.07 MB · 유휴 CPU 0** — 지연 열거라 강제할 것이 없다 · [45 §4-2](45-perf-boost-benchmark.md) 시나리오 6) |
+| **★ 미리보기 탭**(93차) | 없음 | 없음 | 미리보기 탭은 **한 번에 하나** — 다음 미리보기가 그 자리를 **재사용**(탭·버퍼 새로 만들지 않음) · 편집하면 정식 탭으로 승격 | 파일 읽기 1 | 자리 재사용이 곧 회수 | `project.preview_tab` | 미등재(끄면 탭이 늘어 **메모리가 더 든다**) |
+| **★ 파일 다중 열기**(93차) | `multi-open` **1개**(요청당 · 끝나면 종료) | 자리 탭을 먼저 다 만들고 순차 적재 · 창 안 막음 | 파일마다 자리 탭 → 준비본 이동(사본 0) | 파일 ≤ `file.open_max` 10 | 탭 닫힘 | `file.open_max` | 미등재(사용자 동작에만 딸림) |
+| **★ 다중 인스턴스 시작 모드**(93차) | 없음 | 기동 때 1회 `try_lock` | 잠금 파일 핸들 1개를 프로세스가 보유 | `instance.lock`(0 바이트 · 설정 폴더) | 프로세스 종료 | `project.restore_last`(기본 끔 — 둘째 인스턴스가 프로젝트를 복원하지 않는다) | 미등재(비용 0) |
+| **★ 토스트 진행 막대**(93차) | 없음 | 카드가 떠 있는 동안 30 ms 틱(새 타이머 0) | — | — | 카드가 사라지면 0 | `ui.toast_progress` | ✅ `off` |
+| **★ IME 안내**(93차) | 없음 | 가린 칸에 포커스가 있는 동안 150 ms마다 조회 2 | — | — | 포커스가 떠나면 0 | `ui.ime_hint` | 미등재(포커스 조건부라 상시 비용 0 · low 프리셋에서 off) |
+| **확장 패널**(79차) | `ext-index` 1(사용자 동작 때만) + `curl` 자식 | 없음 | 목록 JSON 1벌 | `extensions/` · `index.json` | 패널 닫힘 | `extensions.enabled` | — |
+| **탐색기 갱신**(80차) | 메타 스레드(서버별 `nsql-explorer`) | 없음 | 폴더별 디프 갱신(트리 전체 재구축 0) | — | — | `meta.refresh_*` | `meta.refresh_secs=0` · `meta.refresh_highlight_ms=0` |
+| **수동 커밋 잠금 방지**(79차) | 없음(메타 세션 1문장) | 없음 | — | — | — | `tx.block_poll_secs` | ✅ `0` |
+| **상태줄 git**(33차) | `nsql-git` + `git` 자식 2 | 없음 | — | 폴더 바뀜·저장·15 s | — | `statusbar.git` | ✅ `off` |
+| **텍스트 보기 변환**(29차 · DR-33) | `nsql-textview`(변환 중만) | 없음 | **결과 복제 0**(Arc 공유) · 파생 `text_lines`만 예산에 | — | 보기를 그리드로 되돌리면 | (보기 모드) | — |
+| **파일 검색**(T-81) | `nsql-search` ≤ `search.threads` | 없음 | 스트리밍(파일 전체를 들지 않는다) | 폴더 걷기 | 검색 끝 | `search.threads` · `search.max_file_kb` | — |
+| **신호등**(프로브) | `nsql-probe-collect` ≤ `probe.max_inflight` | 없음 | — | 소켓 SYN | — | `probe.enabled` · `probe.interval` | ✅ 300 s · 동시 1 · ICMP off |
+
+**스레드 원장**(이름 · 언제 생기고 죽나 — D11): `nsql-worker`(세션마다 · 세션 수명) · `nsql-sqlite`(SQLite 세션 · 연결 소유) · `nsql-cancel`(실행 취소 요청마다 · 1회) · `nsql-probe-collect`(창이 열려 있는 동안) · `nsql-explorer`(서버별 메타 · 유휴 회수) · `nsql-textview`(변환 중) · `nsql-git`(조회마다) · `nsql-log`(파일 싱크를 켰을 때) · `nsql-search`(검색 중) · `file-load`(큰 파일마다 1회) · `multi-open`(다중 열기 1회) · `ext-index`(확장 목록 1회) · `nsql-demo`(데모 DB 생성 1회). **유휴 상주 = 11~14개**(접속 0이면 11 · 접속 1이면 13~14) — 나머지는 일이 끝나면 죽는다.
+**자식 프로세스**: `git`(상태줄) · `curl`(확장 목록) · `ping`(프로브 ICMP · 기본 끔) · `cmd`/`open`/`xdg-open`(OS 연결 프로그램) · `defaults`/`gsettings`(OS 테마) — 전부 **사용자 동작이나 주기 설정에 딸리고**, 끄는 키가 있다. 앱이 상주 자식 프로세스를 두지 않는다(드라이버도 in-process · DR-29).
 
 ---
 

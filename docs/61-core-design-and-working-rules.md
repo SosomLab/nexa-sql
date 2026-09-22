@@ -154,11 +154,14 @@
 
 ## 4. 자체 검증 도구
 
+> ★ **"성능 평가해줘"가 오면** — 도구를 고르기 전에 [71 성능 종합 점검 프로세스](71-performance-review-process.md)를 편다: 규정 대상 12차원 · 순서 A(인벤토리) → B(기동) → C(시나리오) → D(향상 모드 A/B) → E(누수) → F(벤치) → G(병목 추적) · 판정선 · 생략할 때는 **왜 생략했는지**를 보고에 적는다. 실행기 = Windows `scripts/win-perf-all.ps1` · Linux `scripts/linux-perf-all.sh`.
+
+
 - **기동 명령** `NSQL_STARTUP_CMD`(쉼표로 구분 · 3-OS 공통): `open:<경로>` · 명령 id(`edit.duplicate_line` · `file.save` · `view.log` …) · `@connected:<명령>`(첫 접속 뒤) · `@after:<ms>:<명령>`(시차) · `conn.edit:<프로필>` · `bigfile.open|readonly|head|run`(큰 파일 열기 선택) · `file.load_cancel`. 실행 인자로 프로필 이름(`Local`)을 주면 그 프로필로 접속한다.
 - **앱 안 마우스 사건**(09-21): `ui.move:x/y` · `ui.click:x/y` · `ui.rclick:x/y`(창 좌표 · 장치 픽셀 · 쉼표는 명령 구분자라 `/`) — OS 입력 주입이 아니라 앱이 스스로 `InputEvent`를 만들어 **실제 라우팅 경로(`route`)** 에 넣는다. 컨트롤을 직접 부르는 캡처 명령(`explorer.menu` …)은 라우팅 결함을 못 본다(탐색기 우클릭이 첫 커밋부터 닿지 않던 것을 이것으로 찾았다). Debug 첫 기동은 수 초 — `@after:`는 기동 뒤 기준이니 캡처 대기를 12초 이상.
 - 환경 변수: `NSQL_NO_ACTIVATE=1`(★ 자체 시험 인스턴스는 **반드시** — 창을 활성화하지 않고 띄운다 · 09-21에 캡처용 창이 전경을 가져가 사용자가 치던 글자를 받았다) · `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
 - 벤치(nexa-ui): `cargo run --release -p nexa-ctl --example bench_editor <줄 수> <기능>`(`hl,ln,base,mm,occ,br` 또는 `all` · `BENCH_ASCII=1` · `BENCH_PREPARED=1`) · `--example bench_undo`.
-- 스크립트: `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh` · **Linux(09-22)**: `scripts/linux-startup.sh` · `linux-probe.sh` · `linux-leak.sh` · `linux-perf-all.sh`(전 시나리오 + 릭 + CLI) · `linux-all-tests.sh`(두 저장소 게이트 + 3-OS + 실서버 통합 + CLI 기능 · 결과 `summary.txt`) · `install-instantclient-linux.sh`.
+- 스크립트: **`scripts/win-perf-all.ps1`(성능 전수 실행기 · `-Stages`/`-Only`)** · **`scripts/win-inventory.ps1`(용량·정적/동적 라이브러리·구성 파일·설정 키)** · `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh` · **Linux(09-22)**: `scripts/linux-startup.sh` · `linux-probe.sh` · `linux-leak.sh` · `linux-perf-all.sh`(전 시나리오 + 릭 + CLI) · `linux-all-tests.sh`(두 저장소 게이트 + 3-OS + 실서버 통합 + CLI 기능 · 결과 `summary.txt`) · `install-instantclient-linux.sh`.
 - 기동 구간: `NSQL_TRACE_FRAMES=1` → `[startup] settings · fonts · event_loop · … · app`(누적 ms) + `[frames] … first paint … at +N ms`(09-22 · 39 §2 S-14).
 - 기준 수치(Release · 09-20 · 이 Windows PC): 65 MB 파일 상주 87 MB · 피크 106 MB · 70만 줄 입력 3~4 ms · 그리기 2 ms · 4만 줄 전 기능 입력 8 ms. 맥에서 크게 다르면 원인을 본다.
 

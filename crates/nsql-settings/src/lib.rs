@@ -2182,13 +2182,25 @@ pub const REGISTRY: &[Entry] = &[
         default: "30",
     },
     // 가린 입력란 IME 안내(사용자 09-22): 비밀번호 칸에 글자가 들어올 때 입력 언어가 라틴이 아니면 마우스 옆에 N초(0 = 끔).
+    // ★ 메뉴 항목 폭 상한(사용자 09-22): 최근 파일·프로젝트 경로가 길면 가운데 …로 줄인다(Alt = 전체 경로).
     Entry {
-        key: "ui.ime_hint_secs",
+        key: "ui.menu_max_width",
         cat: Msg::CatAppearance,
-        label: Msg::LblImeHintSecs,
-        desc: Msg::DescImeHintSecs,
-        kind: SettingKind::Int { min: 0, max: 60 },
-        default: "5",
+        label: Msg::LblMenuMaxWidth,
+        desc: Msg::DescMenuMaxWidth,
+        kind: SettingKind::Int {
+            min: 200,
+            max: 2000,
+        },
+        default: "480",
+    },
+    Entry {
+        key: "ui.ime_hint",
+        cat: Msg::CatAppearance,
+        label: Msg::LblImeHint,
+        desc: Msg::DescImeHint,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     Entry {
         key: "ui.tooltip_delay_ms",

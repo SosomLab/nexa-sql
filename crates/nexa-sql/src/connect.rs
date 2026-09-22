@@ -529,6 +529,11 @@ impl ConnectPanel {
         self.field_focus == Some(Field::Password)
     }
 
+    /// 비밀번호 칸의 창 좌표(IME 안내가 그 아래 붙는다).
+    pub(crate) fn password_rect(&self) -> Rect {
+        self.password.bounds()
+    }
+
     /// 목록에서 불러온 프로필 이름(New면 None).
     pub(crate) fn loaded_name(&self) -> Option<String> {
         self.loaded_name.clone()

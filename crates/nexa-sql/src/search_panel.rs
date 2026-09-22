@@ -740,7 +740,12 @@ impl SearchPanel {
                     let count = f.matches.len().to_string();
                     let cw = dc.text_width(&count);
                     let label_clip = Rect::new(lr.x, y, (lr.w - cw - indent * 3).max(0), rh);
-                    dc.text(lr.x + indent + sel_w, ty, label_clip, &f.label, th.text);
+                    let shown = nexa_ctl::draw::ellipsize_middle(
+                        dc,
+                        &f.label,
+                        label_clip.right() - (lr.x + indent + sel_w),
+                    );
+                    dc.text(lr.x + indent + sel_w, ty, label_clip, &shown, th.text);
                     dc.text(lr.right() - indent - cw, ty, row_rect, &count, th.text_dim);
                 }
                 Row::Match(fi, mi) => {

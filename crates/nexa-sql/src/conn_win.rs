@@ -635,23 +635,36 @@ impl ConnWin {
 
     /// 예약된 프로브를 보낸다(순차 스레드) · 다음 예약 시각을 돌려준다(호스트 WaitUntil).
     /// 주기 갱신(`probe.interval`)은 창이 열려 있을 때만 돈다.
-    pub(crate) fn set_ime_hint_secs(&mut self, secs: i64) {
-        self.ime_hint.set_secs(secs);
+    pub(crate) fn set_ime_hint(&mut self, on: bool) {
+        self.ime_hint.set_enabled(on);
+        self.redraw();
     }
 
-    /// 상세 폼의 비밀번호 칸에 글자가 들어왔다 → IME 안내 갱신(`imehint`).
-    fn note_hidden_input(&mut self) {
-        if self.focus == WFocus::Panel && self.panel.password_focused() {
-            let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
-            if self.ime_hint.note_hidden_input(hwnd, self.cursor) {
-                self.redraw();
-            }
+    /// 포커스인 가린 칸(상세 폼의 비밀번호) — IME 안내가 붙을 자리.
+    fn hidden_box(&self) -> Option<Rect> {
+        (self.focus == WFocus::Panel && self.panel.password_focused())
+            .then(|| self.panel.password_rect())
+    }
+
+    /// IME 안내 동기(`force` = 글자·조합 사건 직후 · 아니면 스로틀).
+    fn ime_sync(&mut self, force: bool) {
+        let bx = self.hidden_box();
+        let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
+        if self.ime_hint.poll(hwnd, bx, Instant::now(), force) {
+            self.redraw();
         }
     }
 
+    /// 상세 폼의 비밀번호 칸에 글자가 들어왔다 → IME 안내 즉시 갱신.
+    fn note_hidden_input(&mut self) {
+        self.ime_sync(true);
+    }
+
     pub(crate) fn tick(&mut self, now: Instant) -> Option<Instant> {
-        // IME 안내 만료.
-        let (hint_changed, hint_next) = self.ime_hint.tick(now);
+        // IME 안내(가린 칸 포커스 동안 주기 조회 · 라틴이면 즉시 숨김).
+        let bx = self.hidden_box();
+        let hwnd = self.window.as_deref().and_then(crate::winfocus::hwnd);
+        let (hint_changed, hint_next) = self.ime_hint.tick(hwnd, bx, now);
         if hint_changed {
             self.redraw();
         }
@@ -1745,6 +1758,9 @@ impl ConnWin {
                 self.redraw();
             }
             WindowEvent::ModifiersChanged(m) => {
+                if nexa_ctl::draw::set_show_full(m.state().alt_key()) {
+                    self.redraw();
+                }
                 self.shift = m.state().shift_key();
                 self.primary = if cfg!(target_os = "macos") {
                     m.state().super_key()
@@ -2007,6 +2023,8 @@ impl ConnWin {
             self.note_hidden_input();
         }
         self.sync_enabled();
+        // 포커스가 옮겨 갔으면 안내도 따라간다(스로틀).
+        self.ime_sync(false);
     }
 
     fn route_inner(&mut self, ev: InputEvent, out: &mut Vec<ConnWinAction>) {

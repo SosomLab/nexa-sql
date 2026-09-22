@@ -39,6 +39,8 @@ pub(crate) struct FileWin {
     scale: f32,
     cursor: (i32, i32),
     shift: bool,
+    /// 주 수식키(Windows·Linux = Ctrl · macOS = ⌘) — 다중 선택 토글·Ctrl+A(사용자 09-22).
+    primary: bool,
     picker: Option<FilePicker>,
     mode: PickerMode,
     /// 덮어쓰기 무장 시간(ms · 호스트가 설정에서 넣는다).
@@ -108,6 +110,7 @@ impl FileWin {
             scale: 1.0,
             cursor: (0, 0),
             shift: false,
+            primary: false,
             picker: None,
             mode: PickerMode::Open,
             overwrite_confirm_ms: 5000,
@@ -268,7 +271,7 @@ impl FileWin {
         let key = |k: CtlKey| InputEvent::Key {
             key: k,
             shift: self.shift,
-            primary: false,
+            primary: self.primary,
         };
         Some(match ev {
             WindowEvent::CursorMoved { position, .. } => InputEvent::MouseMove {
@@ -280,7 +283,7 @@ impl FileWin {
                     x,
                     y,
                     shift: self.shift,
-                    primary: false,
+                    primary: self.primary,
                 },
                 (ElementState::Released, MouseButton::Left) => InputEvent::MouseUp { x, y },
                 (ElementState::Pressed, MouseButton::Right) => InputEvent::RightDown { x, y },
@@ -301,11 +304,19 @@ impl FileWin {
                         c: '\u{8}',
                         now_ms: 0,
                     },
+                    Key::Named(NamedKey::PageUp) => key(CtlKey::PageUp),
+                    Key::Named(NamedKey::PageDown) => key(CtlKey::PageDown),
+                    // Space: 주 수식키와 함께 = 선택 토글 키(다중 선택 · dir2 규약) · 그냥 = 이름 상자 글자.
+                    Key::Named(NamedKey::Space) if self.primary => key(CtlKey::Space),
                     Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
                     Key::Character(t) => {
                         let c = t.chars().next()?;
                         if c.is_control() {
                             return None;
+                        }
+                        // 주 수식키 + 글자 = 단축키(Ctrl+A 전체 선택) — 글자로 넣지 않는다.
+                        if self.primary {
+                            return (c.eq_ignore_ascii_case(&'a')).then_some(InputEvent::SelectAll);
                         }
                         InputEvent::Char { c, now_ms: 0 }
                     }
@@ -334,7 +345,15 @@ impl FileWin {
                 return FileWinAction::None;
             }
             WindowEvent::ModifiersChanged(m) => {
+                if nexa_ctl::draw::set_show_full(m.state().alt_key()) {
+                    self.redraw();
+                }
                 self.shift = m.state().shift_key();
+                self.primary = if cfg!(target_os = "macos") {
+                    m.state().super_key()
+                } else {
+                    m.state().control_key()
+                };
                 return FileWinAction::None;
             }
             WindowEvent::Ime(ime) => {

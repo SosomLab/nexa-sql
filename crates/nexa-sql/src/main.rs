@@ -3159,6 +3159,8 @@ impl App {
             .set_tooltip_delay(self.settings.int("ui.tooltip_delay_ms").max(0) as u128);
         self.project_panel
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
+        self.editors
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
     }
 
     /// 기동 시작 모드(사용자 09-22 · [`startup_project_plan`]): 기본 = **파일 모드**(프로젝트 없음) · 인자 `.nsql-project` =
@@ -4964,11 +4966,13 @@ impl App {
             "ui.max_fps" | "editor.caret_blink" => self.redraw(),
             "ui.slide_ms" | "ui.tooltip_delay_ms" | "ui.dblclick_ms" => {
                 self.conn_win.set_tuning(conn_tuning(&self.settings));
+                self.sync_project_panel_opts();
             }
-            "ui.ime_hint_secs" => {
-                let secs = self.settings.int("ui.ime_hint_secs");
-                self.conn_win.set_ime_hint_secs(secs);
-                self.input_win.set_ime_hint_secs(secs);
+            "ui.menu_max_width" => self.rebuild_menus(),
+            "ui.ime_hint" => {
+                let on = self.settings.flag("ui.ime_hint");
+                self.conn_win.set_ime_hint(on);
+                self.input_win.set_ime_hint(on);
             }
             "probe.interval" | "probe.max_retries" | "probe.max_inflight" | "probe.icmp"
             | "probe.timeout" | "probe.retry_delay" | "probe.enabled" => {
@@ -10071,6 +10075,8 @@ impl App {
 
     /// 메뉴바를 현재 상태(최근 파일 · 탭 · 데모 준비 여부)로 다시 만든다.
     fn rebuild_menus(&mut self) {
+        self.menubar
+            .set_max_label_width(self.settings.int("ui.menu_max_width") as i32);
         let tabs = self.editors.tab_list();
         self.menubar.set_menus(App::build_menus_with(
             &self.recent_files(),
@@ -13580,6 +13586,10 @@ impl ApplicationHandler<Wake> for App {
                 self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
                 self.ctrl_raw = m.state().control_key();
+                // ★ Alt를 누르는 동안 = 전체 경로 보기(메뉴·팔레트·검색 결과의 가운데 … 축약 해제 · 사용자 09-22).
+                if nexa_ctl::draw::set_show_full(self.alt) {
+                    self.redraw();
+                }
                 // ★ 열(블록) 선택 모드(Sublime · 사용자 09-15/09-17 OS별): Windows Alt+Shift · macOS Option · Linux는 우클릭 쪽에서.
                 let col = match self.column_rule() {
                     "alt_shift" => self.alt && self.shift,
@@ -14373,9 +14383,9 @@ fn main() {
         app.settings.int("ui.toast_bar_spent"),
     );
     {
-        let secs = app.settings.int("ui.ime_hint_secs");
-        app.conn_win.set_ime_hint_secs(secs);
-        app.input_win.set_ime_hint_secs(secs);
+        let on = app.settings.flag("ui.ime_hint");
+        app.conn_win.set_ime_hint(on);
+        app.input_win.set_ime_hint(on);
     }
     app.apply_text_render();
     app.apply_toolbar_visibility();

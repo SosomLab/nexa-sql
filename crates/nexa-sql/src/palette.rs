@@ -404,7 +404,9 @@ impl Palette {
             if g.is_some() {
                 dc.fill_rect(r, th.sel_bg);
             }
-            dc.text(r.x + pad, rr.y + (self.row_h - th_px) / 2, r, &text, color);
+            // 긴 항목(경로 · 최근 프로젝트)은 가운데 … — Alt = 전체(사용자 09-22).
+            let shown = nexa_ctl::draw::ellipsize_middle(dc, &text, r.w - pad * 2);
+            dc.text(r.x + pad, rr.y + (self.row_h - th_px) / 2, r, &shown, color);
             return;
         }
         if self.matches.is_empty() {
