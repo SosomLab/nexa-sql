@@ -34,7 +34,7 @@
 | 2 문장 테이블·alias | `SELECT a.`, `WHERE d.` 의 `a`·`d`, CTE·서브쿼리 alias | 캐럿 문장 | `intel::alias_table` |
 | 3 스키마 객체 | 테이블·뷰·시노님·시퀀스·프로시저·패키지 | 현재 스키마(+ `SCHEMA.` 입력 시 그 스키마 · D-80) | `Snapshot::prefix/prefix_any` |
 | 3' **문서 심볼**(신설) | `DEFINE`/`VARIABLE`/CTE/선언 변수/서브프로그램/라벨 | **현재 문서** 전체 | `outline::Outline::names()` |
-| 4 시스템 객체·내장 함수 | `DBMS_OUTPUT.` · `NVL(` … | 접속 방언 | 정적 패키지(29 §6-4 · 2차) |
+| 4 시스템 객체·내장 함수 | `DBMS_OUTPUT.` · `NVL(` · `ALL_TABLES` · `sys.tables` … | 접속 방언 | 정적 표 `nsql-script::builtins`(T-178 ✅ · 시그니처 도움 `intel.signature_help`) |
 | 5 키워드 | `SELECT`·`GROUP BY`… | 문장 시작·식 | `intel::KEYWORDS` |
 | 6 문서 단어 | 방금 친 식별자·바인드 `:V` | 현재 문서 | 문서 낱말 집합(outline `words`) |
 
@@ -46,7 +46,7 @@
 | 문맥 | `intel::context_at` — 멤버(`qualifier.`) · 관계(FROM/JOIN/UPDATE/INTO/DESC 뒤 · 콤마 목록) · 식 · 시작 · 없음. alias 표 = `[schema.]table [AS] alias` · CTE · 서브쿼리 |
 | 일치 | `intel.match` = fuzzy(기본)/contains/prefix · 대소문자 무시 · **한글 자모열**(97차 규칙) |
 | 랭킹 | 등급 → MRU(최근 확정 20 · `intel.recent_boost`) → 출처 순위 → 길이 → 이름 · 중복 제거(`intel.hide_duplicates`) · 상한 `intel.max_items` |
-| 삽입 | 접두 구간 교체(`replace_range`) · `intel.insert_case`(default/upper/lower/match) · 테이블 뒤 alias(`intel.insert_alias` · 2차) · 공백(`intel.insert_space`) |
+| 삽입 | 접두 구간 교체(`replace_range`) · `intel.insert_case`(default/upper/lower/match) · 함수 `NAME()`+캐럿 안(`intel.insert_parens`) · 테이블 뒤 alias(`intel.insert_alias`) · 키워드 뒤 공백(`intel.insert_space`) · `INSERT INTO t (` 전체 컬럼 조각(`intel.insert_columns`) |
 | 표시 | 종류 아이콘 · 오른쪽 열 = 타입/스키마/종류(`intel.show_types`) · `intel.popup_rows`(12) · 코멘트 툴팁(`intel.show_comments` · 2차) |
 | 아웃라인 | 패널(활동 막대 · 필터 틀 · 클릭 = 이동 · 문장/선언/서브프로그램 깊이) · **Goto Symbol 팔레트**(Ctrl+R · 이름 타이핑 → Enter 이동) · 탭별 캐시(세대) |
 
@@ -76,10 +76,13 @@
 | 메타 feed | `Explorer.meta: MetaStore` — `Resp::Schemas/Objects/Columns`를 트리와 함께 저장 · `Req::ColumnsMeta` 즉시 채움 · `ExplorerSet::meta_view/request_columns`(spec의 칸 · 없으면 보이는 칸) | ✅ |
 | 아웃라인 UI | `outline_panel.rs`(활동 막대 `view.outline` · 필터 · 클릭/Enter 이동 · 탭·세대 열쇠 동기) + Goto Symbol 팔레트(`sym:<byte>`) | ✅ |
 | 자동 점검 | `scripts/win-func-check.ps1` S66(Ctrl+Space) · S67(Goto Symbol) · S68(아웃라인 패널) · 실기 U-78~U-80 | ✅ |
+| **정적 표(T-178 · 99차 §129)** | `nsql-script/src/builtins.rs` — 방언별 내장 함수(시그니처) · Oracle `DBMS_*` 패키지 12 · 사전 객체(`ALL_*`/`V$*` · `pg_catalog.`/`information_schema.` · `sys.`/`INFORMATION_SCHEMA.` · `sqlite_master` …) · `signature()` · `system_members()` · 시험 3 | ✅ |
+| **괄호 주인(T-178)** | `intel::Context::paren_owner/paren_into` — 시그니처 도움 · `INSERT INTO t (` 컬럼 목록 조각 | ✅ |
+| **확정 손질 · 스크롤(T-178)** | 호스트 `pick` = 함수 `NAME()`+캐럿 안 · 키워드 공백 · FROM 뒤 alias(`gen_alias`) · 팝업 `set_max_rows(popup_rows)` · 컬럼 상세 PK/FK/UQ/NOT NULL · 예산 로그 · 설정 7(`intel.functions`·`insert_parens`·`insert_alias`·`insert_space`·`insert_columns`·`signature_help`·`budget_ms`) · S77·S78 · 위키 "3분 사용법" | ✅ |
 
 ## 7. 2차(JetBrains 상위 기능 · 후속 T)
 
-JOIN 완성(FK = `nsql-catalog::keys`) · INSERT 컬럼 목록 생성 · alias 자동 삽입 · 후위 완성(`.count`) · 시그니처 도움 · hover 카드(47 D-84) · 팝업에서 문장 실행 · ML 정렬(수요 시) · 디스크 캐시(D-85) · 시스템 객체 정적 패키지(29 §6-4).
+~~INSERT 컬럼 목록 생성 · alias 자동 삽입 · 시그니처 도움(상태줄) · 시스템 객체 정적 패키지(29 §6-4) · 팝업 스크롤~~ = **99차 §129 ✅**. 남음 = JOIN 완성(FK = `nsql-catalog::keys` · MetaStore에 FK 대상이 들어온 뒤) · 후위 완성(`.count`) · 시그니처 도움을 캐럿 옆 카드로 · hover 카드(47 D-84 · T-179) · 팝업에서 문장 실행 · ML 정렬(수요 시) · 디스크 캐시(D-85) · 후보 워커(예산 로그가 실측되면 · D-202).
 
 ## 8. 결정
 

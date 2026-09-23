@@ -16,6 +16,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod bind;
+pub mod builtins;
 pub mod call;
 pub mod command;
 pub mod connect;

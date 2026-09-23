@@ -49,6 +49,10 @@ pub struct Context {
     pub aliases: Vec<Alias>,
     /// 캐럿 문장 구간(없으면 빈 구간).
     pub statement: Range<usize>,
+    /// 캐럿을 감싸는 **안 닫힌 `(`** 바로 앞 이름(`NVL(` · `DBMS_OUTPUT.PUT_LINE(` · `INSERT INTO emp (`) — 시그니처 도움 · 컬럼 목록 스니펫.
+    pub paren_owner: Option<String>,
+    /// `paren_owner` 앞 낱말이 `INTO`였는가(`INSERT INTO t (` = 컬럼 목록 자리).
+    pub paren_into: bool,
 }
 
 const RELATION_AFTER: &[&str] = &[
@@ -99,7 +103,8 @@ const NOT_ALIAS: &[&str] = &[
     "PARTITION",
 ];
 
-/// ANSI + 방언 공통 키워드(대문자) — `Start`/`Expr` 문맥의 후보(설정 `intel.keywords`).
+/// ANSI + 방언 공통 키워드(대문자) — `Start`/`Expr` 문맥의 후보(설정 `intel.keywords`). 함수 모양(`COALESCE(` · `COUNT(*)` …)은
+/// [`crate::builtins`]로 옮겼다(시그니처와 함께 · T-178).
 pub const KEYWORDS: &[&str] = &[
     "SELECT",
     "FROM",
@@ -181,19 +186,6 @@ pub const KEYWORDS: &[&str] = &[
     "ROWS ONLY",
     "OVER",
     "PARTITION BY",
-    "ROW_NUMBER()",
-    "RANK()",
-    "DENSE_RANK()",
-    "COUNT(*)",
-    "SUM(",
-    "AVG(",
-    "MIN(",
-    "MAX(",
-    "COALESCE(",
-    "NULLIF(",
-    "CAST(",
-    "CURRENT_DATE",
-    "CURRENT_TIMESTAMP",
     "NULL",
     "TRUE",
     "FALSE",
@@ -243,6 +235,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         replace: replace.clone(),
         aliases: Vec::new(),
         statement: 0..0,
+        paren_owner: None,
+        paren_into: false,
     };
     let Some(item) = statement_at_in(src, caret, dialect) else {
         // 문장이 없으면(빈 문서) 시작 문맥.
@@ -285,8 +279,11 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             replace,
             aliases,
             statement: stmt,
+            paren_owner: None,
+            paren_into: false,
         };
     }
+    let (paren_owner, paren_into) = paren_owner(&before).unwrap_or((None, false));
     let last = before[before.len() - 1];
     // `qualifier.` — 점이 접두 바로 앞에 붙어 있을 때만.
     if last.text == "." && last.end == rel {
@@ -319,6 +316,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             replace,
             aliases,
             statement: stmt,
+            paren_owner,
+            paren_into,
         };
     }
     // 관계 자리: 바로 앞 낱말이 FROM/JOIN/… 이거나, 콤마 앞 관계 목록이 이어지는 중.
@@ -332,6 +331,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             replace,
             aliases,
             statement: stmt,
+            paren_owner,
+            paren_into,
         };
     }
     Context {
@@ -340,8 +341,97 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         replace,
         aliases,
         statement: stmt,
+        paren_owner,
+        paren_into,
     }
 }
+
+/// 캐럿을 감싸는 안 닫힌 `(`의 주인 — 바로 앞 이름(`a.b.c` 사슬)과, 그 앞이 `INTO`인가. 주인이 키워드(`IN`·`VALUES`·`EXISTS` …)면 없음.
+/// 반환 `Some((None, _))`는 "안 닫힌 괄호는 있으나 주인이 없다"(그룹 괄호).
+fn paren_owner(before: &[&Word<'_>]) -> Option<(Option<String>, bool)> {
+    let mut depth = 0i32;
+    let mut open: Option<usize> = None;
+    for (i, w) in before.iter().enumerate().rev() {
+        match w.text {
+            ")" => depth += 1,
+            "(" => {
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let k = open?;
+    if k == 0 || !is_name(before[k - 1]) || NOT_OWNER.iter().any(|x| is_word(before[k - 1], x)) {
+        return Some((None, false));
+    }
+    // `a.b.c(` 사슬을 거꾸로.
+    let mut name = before[k - 1].text.to_string();
+    let mut j = k - 1;
+    while j >= 2 && before[j - 1].text == "." && is_name(before[j - 2]) {
+        name = format!("{}.{}", before[j - 2].text, name);
+        j -= 2;
+    }
+    let into = j >= 1 && is_word(before[j - 1], "INTO");
+    Some((Some(name), into))
+}
+
+/// `(` 앞에 있어도 함수·테이블 주인이 아닌 낱말.
+const NOT_OWNER: &[&str] = &[
+    "IN",
+    "VALUES",
+    "EXISTS",
+    "AND",
+    "OR",
+    "NOT",
+    "ON",
+    "WHERE",
+    "SELECT",
+    "FROM",
+    "SET",
+    "THEN",
+    "ELSE",
+    "CASE",
+    "WHEN",
+    "OVER",
+    "AS",
+    "JOIN",
+    "USING",
+    "BY",
+    "HAVING",
+    "IF",
+    "WHILE",
+    "RETURN",
+    "IS",
+    "LOOP",
+    "BETWEEN",
+    "LIKE",
+    "ANY",
+    "ALL",
+    "SOME",
+    "UNION",
+    "INTERSECT",
+    "EXCEPT",
+    "MINUS",
+    "WITH",
+    "RETURNING",
+    "DEFAULT",
+    "CHECK",
+    "REFERENCES",
+    "KEY",
+    "TABLE",
+    "INDEX",
+    "VIEW",
+    "PROCEDURE",
+    "FUNCTION",
+    "TRIGGER",
+    "TYPE",
+    "PARTITION",
+    "DISTINCT",
+];
 
 /// 콤마 앞이 FROM 목록인가 — 마지막 절 키워드가 FROM/JOIN 계열이면.
 fn in_from_list(before: &[&Word<'_>]) -> bool {
@@ -630,6 +720,10 @@ pub enum CandKind {
     Variable,
     Symbol,
     Word,
+    /// 내장 함수·패키지 멤버([`crate::builtins`]) — 확정 때 `()`를 붙일 수 있다(`intel.insert_parens`).
+    Function,
+    /// 여러 글자를 한 번에 넣는 조각(`INSERT INTO t (` 뒤 전체 컬럼 목록 등) — `text`가 통째로 들어간다.
+    Snippet,
 }
 
 /// 후보 하나.
@@ -816,6 +910,32 @@ mod tests {
         );
         let c = ctx("SELECT :v| FROM dual");
         assert_eq!(c.prefix, ":v");
+    }
+
+    /// 안 닫힌 괄호의 주인(T-178): 함수 · 패키지 멤버 사슬 · `INSERT INTO t (` · 키워드는 주인이 아님 · 닫힌 괄호는 건너뜀.
+    #[test]
+    fn paren_owner_for_signature_help_and_column_list() {
+        let c = ctx("SELECT NVL(a, |) FROM dual");
+        assert_eq!(c.paren_owner.as_deref(), Some("NVL"));
+        assert!(!c.paren_into);
+        let c = ctx("BEGIN DBMS_OUTPUT.PUT_LINE(|");
+        assert_eq!(c.paren_owner.as_deref(), Some("DBMS_OUTPUT.PUT_LINE"));
+        let c = ctx("INSERT INTO sch.emp (|");
+        assert_eq!(c.paren_owner.as_deref(), Some("sch.emp"));
+        assert!(c.paren_into);
+        assert_eq!(c.kind, CtxKind::Expr);
+        let c = ctx("SELECT * FROM emp WHERE id IN (|");
+        assert_eq!(c.paren_owner, None, "IN은 주인이 아님");
+        let c = ctx("SELECT NVL(a, 1) + |");
+        assert_eq!(c.paren_owner, None, "닫힌 괄호");
+        let c = ctx("SELECT NVL(SUBSTR(x, 1), |");
+        assert_eq!(
+            c.paren_owner.as_deref(),
+            Some("NVL"),
+            "안쪽이 닫혔으면 바깥"
+        );
+        let c = ctx("INSERT INTO emp VALUES (|");
+        assert_eq!(c.paren_owner, None);
     }
 
     #[test]

@@ -340,7 +340,15 @@ CREATE OR REPLACE PACKAGE BODY pkg_report AS
 END pkg_report;
 /
 "@
-Run-Scenario -Id S66 -Title "코드 완성 팝업 = Ctrl+Space(§117)" -Cmd ("open:" + $qOutline + ",@after:1000:ui.click:392/201,@after:1600:edit.complete") -WaitMs 3500 -Expect "4줄 'SELECT r' 뒤(캐럿 = r 다음) Ctrl+Space → 캐럿 아래 팝업: recent(alias r · cte) · r(alias) · 키워드/문서 단어 … 오른쪽 열 = 종류"
+Run-Scenario -Id S66 -Title "코드 완성 팝업 = Ctrl+Space(§117)" -Cmd ("open:" + $qOutline + ",@after:1000:ui.click:432/181,@after:1600:edit.complete") -WaitMs 3500 -Expect "4줄 'SELECT r' 뒤(캐럿 = r 다음) Ctrl+Space → 캐럿 아래 팝업: recent(alias r · cte) · r(alias) · 키워드/문서 단어 … 오른쪽 열 = 종류"
+# §129 T-178: 내장 함수(시그니처) · 확정 = NAME() + 캐럿 안 · 상태줄 시그니처 도움 · 팝업 스크롤.
+$qIntel = Join-Path $DataDir "q_intel.sql"
+Set-Content -LiteralPath $qIntel -Encoding UTF8 -Value @"
+SELECT coal
+SELECT * FROM sqlite_m
+"@
+Run-Scenario -Id S77 -Title "내장 함수 완성 = 시그니처 열 + 사전 뷰(§129 · T-178)" -Cmd ("open:" + $qIntel + ",@after:1000:ui.click:700/121,@after:1600:edit.complete") -WaitMs 3500 -Expect "1줄 'SELECT coal' 끝에서 Ctrl+Space → 팝업 첫 행 COALESCE · 오른쪽 열 'COALESCE(expr1, expr2, …)' · 문서 단어 coal은 없음(접두 자신) · 아래로 다른 후보(스크롤 표시는 12행 넘을 때)"
+Run-Scenario -Id S78 -Title "사전 뷰 = FROM 뒤 sqlite_m(§129 · T-178)" -Cmd ("open:" + $qIntel + ",@after:1000:ui.click:700/141,@after:1600:edit.complete") -WaitMs 3500 -Expect "2줄 'FROM sqlite_m' 끝에서 Ctrl+Space → sqlite_master · sqlite_schema … (오른쪽 열 system) — 접속 없이도(정적 표)"
 Run-Scenario -Id S67 -Title "Goto Symbol 팔레트(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:goto.symbol") -WaitMs 3500 -Expect "팔레트에 심볼 목록: DEFINE v_user · VARIABLE rc · 문장 머리 · CTE recent/older · package body pkg_report · declared g_count · cursor c_rows · procedure run_report(깊이 2 들여쓰기) · function total_rows · 각 행 끝 :줄"
 Run-Scenario -Id S68 -Title "아웃라인 패널(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:view.outline") -WaitMs 3500 -Expect "좌측 아웃라인 패널: 필터 틀 · 줄 번호 → 이름(문장 흐림 · 서브프로그램 굵게 강조색 · 깊이 들여쓰기) → 오른쪽 종류/타입 · 활동 막대 아웃라인 아이콘 활성"
 Run-Scenario -Id S69 -Title "북마크 패널 문서 이름 = 탭 id로 지금 이름(§118)" -Cmd ("file.new,@after:800:ui.click:400/141,@after:1000:bookmark.toggle,@after:1400:view.bookmarks,@after:2000:tab.rename_to:NoName1") -WaitMs 3500 -Expect "새 탭 Script_2에 북마크 → 탭 이름을 NoName1로 바꾼 뒤 패널 문서 행이 'NoName1 1'(Script_2가 남지 않음) · 탭 제목도 NoName1"

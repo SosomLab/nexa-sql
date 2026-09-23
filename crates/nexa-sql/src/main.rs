@@ -9282,6 +9282,10 @@ impl App {
                 if self.intel.after_char(*c, n) {
                     self.intel_request(false);
                 }
+                // `(` = 시그니처 도움(내장 함수·DBMS_* 멤버 · 상태줄 · T-178).
+                if *c == '(' {
+                    self.intel_signature_help();
+                }
             }
             InputEvent::Key { .. }
             | InputEvent::MouseDown { .. }
@@ -9369,12 +9373,22 @@ impl App {
             self.explorer
                 .request_columns(spec.as_ref(), n.schema.as_deref(), &n.table);
         }
+        // 예산 초과 = 로그 창 한 줄(개발자 상세 · D-202의 근거).
+        if let Some((n, ms)) = self.intel.take_over_budget() {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "[intel] candidates={n} took {ms} ms (> intel.budget_ms {})",
+                    self.intel.cfg().budget_ms
+                ),
+            ));
+        }
         if opened || manual {
             self.redraw();
         }
     }
 
-    /// 확정 글자를 편집기에(접두 구간 교체).
+    /// 확정 글자를 편집기에(접두 구간 교체 · `caret_back` = `NAME()` 안으로).
     fn intel_apply(&mut self) {
         let Some(a) = self.intel.take_accept() else {
             return;
@@ -9384,7 +9398,39 @@ impl App {
         let to = text[..a.replace.end.min(text.len())].chars().count();
         let mut inv = Invalidations::default();
         self.ed_mut().replace_range(from, to, &a.text, &mut inv);
+        if a.caret_back > 0 {
+            let at = (from + a.text.chars().count()).saturating_sub(a.caret_back);
+            self.ed_mut().select_range(at, at, &mut inv);
+            // 괄호 안에서 바로 시그니처(확정한 함수의).
+            self.intel_signature_help();
+        }
         self.redraw();
+    }
+
+    /// 시그니처 도움(`intel.signature_help`): 캐럿을 감싸는 `(`의 주인이 내장 함수면 상태줄에 시그니처 한 줄.
+    fn intel_signature_help(&mut self) {
+        if !self.intel.cfg().signature_help || self.focus != Focus::Editor {
+            return;
+        }
+        let i = self.editors.active();
+        if self.intel_unsuitable(i).is_some() {
+            return;
+        }
+        let (text, caret_c) = {
+            let ed = self.editors.cur();
+            (ed.text(), ed.caret())
+        };
+        let caret_b = text
+            .char_indices()
+            .nth(caret_c)
+            .map_or(text.len(), |(b, _)| b);
+        if let Some(sig) = self
+            .intel
+            .signature_at(&text, caret_b, Some(self.sess.dialect))
+        {
+            self.sess.status = tf(Msg::StIntelSignature, &[&sig]);
+            self.redraw();
+        }
     }
 
     /// Goto Symbol(Ctrl+R · Sublime): 문서 아웃라인 심볼 목록을 팔레트에 — 고르면 `sym:<byte>`.

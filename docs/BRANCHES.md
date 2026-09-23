@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/99m-intel-builtins-signature | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ T-178 인텔리센스 1차(§129 · nsql-script `builtins` 정적 표 · `paren_owner` · 시그니처 도움 · 함수 괄호/키워드 공백/alias 삽입 · INSERT 컬럼 조각 · 팝업 스크롤 · 컬럼 상세 · 예산 로그 · 설정 7 · 위키 3분 사용법 · S77·S78 · U-97~U-99 · 🔧 S06/S46 좌표는 T-177) |
 | feat/99l-history-dropdown-leave-down | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 검색어 이력 드롭다운(기본)/Flat(§127 · nexa-ui 71차 `ContextMenu` 스크롤 · `Recall`/`RecallEvent` · `search.history_view`/`search.history_rows` · FilterBar `Consumed`/`LeaveDown` · 패널 4·찾기·파일 검색·설정 배선 · 마지막 ↓/Tab = 목록 포커스 · 🔧 패널이 ↓를 가로채던 것) · S76 · U-96 · 위키 · STATUS · DEVLOG · TODO |
 | fix/99k-dq-string-pair-failover | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 `"O'Neil"` 짝 오염 + 짝 찾기 fail-over(§126 · nexa-ui 70차 = SQL 규격 `string = ' "` + `strings_span_lines` 줄 끝 재동기화 · 편집기 5종 조사·추천 기록 · S75 · U-95) · STATUS · DEVLOG · TODO |
 | fix/99i-binary-outline-crash | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 이진 파일 아웃라인 = 앱 종료(§125 · nsql-script `outline::words()`가 U+FFFD 한가운데를 바이트로 잘라 패닉 → 비ASCII는 글자 경계까지 건너뜀 · 인용 식별자 벗기기 경계 확인 · fuzz 시험 outline/intel 2) · 호스트 `intel_unsuitable`(큰 파일 · SQL 구문 아님 · 이진 NUL/U+FFFD) = 아웃라인 빈 패널 · 완성/Goto Symbol 안내 `StIntelUnsuitable` · S74 · U-94 · STATUS · DEVLOG · TODO |
