@@ -2874,6 +2874,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "vars.intrinsic",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsIntrinsic,
+        desc: Msg::DescVarsIntrinsic,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "vars.expand_at",
         cat: Msg::CatSession,
         label: Msg::LblVarsExpandAt,

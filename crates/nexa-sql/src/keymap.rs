@@ -433,26 +433,27 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "ctrl+k,ctrl+d",
     },
     // ★ 북마크(docs/69 §6-1 · Sublime 관례 · T-167).
+    // 두 번째 바인딩 = VS Code Bookmarks 확장(alefragnani) 기본키 Ctrl+Alt+K / L / J(다른 세션 검토 · 사용자 09-23 "추가로 매핑").
     Command {
         id: "bookmark.toggle",
         label: Msg::MnBmToggle,
-        win: "ctrl+f2",
-        mac: "cmd+f2",
-        linux: "ctrl+f2",
+        win: "ctrl+f2|ctrl+alt+k",
+        mac: "cmd+f2|cmd+alt+k",
+        linux: "ctrl+f2|ctrl+alt+k",
     },
     Command {
         id: "bookmark.next",
         label: Msg::MnBmNext,
-        win: "f2",
-        mac: "f2",
-        linux: "f2",
+        win: "f2|ctrl+alt+l",
+        mac: "f2|cmd+alt+l",
+        linux: "f2|ctrl+alt+l",
     },
     Command {
         id: "bookmark.prev",
         label: Msg::MnBmPrev,
-        win: "shift+f2",
-        mac: "shift+f2",
-        linux: "shift+f2",
+        win: "shift+f2|ctrl+alt+j",
+        mac: "shift+f2|cmd+alt+j",
+        linux: "shift+f2|ctrl+alt+j",
     },
     Command {
         id: "bookmark.clear_doc",

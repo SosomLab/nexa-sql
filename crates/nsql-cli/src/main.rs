@@ -494,6 +494,43 @@ fn run_fetch_cmd(cmd: FetchCmd, p: &mut Printer, runner: &mut Runner) {
 }
 
 /// 페치 관련 설정(docs/43 §4-3) — `db.fetch_size` · `grid.fetch_mode`(cursor만 유지) · `db.cursor_idle_secs`.
+/// 내장 변수 표(GUI `run_intrinsic`와 같은 규칙 · 설정 `vars.intrinsic` 끔 = 빈 표): 스크립트 경로(절대) · cwd · 홈 · 설정 폴더 ·
+/// 실행 파일 · 방언 · 설정 값 전부(`config:키`). 프로젝트는 CLI에 없으므로 `${workspaceFolder}`는 만들지 않는다.
+fn intrinsic_vars(path: &str, dialect: Dialect) -> std::collections::BTreeMap<String, String> {
+    let s = nsql_settings::Settings::open_default().ok();
+    if s.as_ref().is_some_and(|s| !s.flag("vars.intrinsic")) {
+        return std::collections::BTreeMap::new();
+    }
+    let file = (path != "-")
+        .then(|| std::path::absolute(path).ok())
+        .flatten();
+    let ctx = nsql_script::intrinsic::Context {
+        project_file: None,
+        folders: Vec::new(),
+        file,
+        line: None,
+        column: None,
+        user_home: std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from),
+        app_home: nsql_settings::config_dir(),
+        exec: std::env::current_exe().ok(),
+        cwd: std::env::current_dir().ok(),
+        profile: None,
+        dialect: Some(dialect.to_string()),
+        config: s
+            .as_ref()
+            .map(|s| {
+                nsql_settings::REGISTRY
+                    .iter()
+                    .filter_map(|e| s.get(e.key).map(|v| (e.key.to_string(), v.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    nsql_script::intrinsic::build(&ctx)
+}
+
 fn fetch_settings() -> (usize, bool, u64) {
     match nsql_settings::Settings::open_default() {
         Ok(s) => (
@@ -1309,6 +1346,8 @@ fn cmd_run(o: &Opts) -> i32 {
         .with_into_first(into_first_setting())
         .with_var_limits(var_limits_setting().0, var_limits_setting().1);
     apply_load_switches(&mut runner);
+    // 내장 변수 층(`${workspaceFolder}`는 프로젝트 없음 → 없음 · `${file}` = 스크립트 · `${cwd}` · `${nsqlHome}` · `${config:키}` · 사용자 09-23).
+    runner.engine.settings.intrinsic = std::sync::Arc::new(intrinsic_vars(path, o.dialect));
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     runner.engine.set_args(&o.positional[1..]);
     for (n, v) in &o.defines {

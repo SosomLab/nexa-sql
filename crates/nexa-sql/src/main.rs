@@ -5427,12 +5427,11 @@ impl App {
     /// 파일 싱크 허브(설정 `log.file` · 형식 `log.file_format`(same = 창과 같게) · 회전 `log.file_max_kb`) — 설정이 바뀌면 새로.
     fn rebuild_log_hub(&mut self) {
         self.log_hub = None;
-        let file = self
-            .settings
-            .get("log.file")
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        // 경로 설정도 내장 변수를 받는다(`${nsqlHome}/log.txt` · `${workspaceFolder}/…` · 사용자 09-23).
+        let file = nsql_script::intrinsic::expand(
+            self.settings.get("log.file").unwrap_or("").trim(),
+            &self.run_intrinsic(),
+        );
         if file.is_empty() {
             return;
         }
@@ -6493,6 +6492,7 @@ impl App {
             max_rows,
             vars: self.run_vars(),
             defines: self.run_defines(),
+            intrinsic: Some(self.run_intrinsic()),
         });
         self.live_start();
         self.redraw();
@@ -8763,6 +8763,7 @@ impl App {
                 max_rows: self.grid.page_rows(),
                 vars: self.run_vars(),
                 defines: self.run_defines(),
+                intrinsic: Some(self.run_intrinsic()),
             });
         }
         if on {
@@ -10619,6 +10620,60 @@ impl App {
 
     /// 변수 창의 줄 — 지금 편집기 탭의 표(탭 층) + 이 세션의 공유 층. 비밀 값은 가린다 · 긴 값은 앞부분만.
     /// 다음 실행에 넘길 치환 변수(활성 탭 · 이름 · 원문).
+    /// 내장 변수 스냅숏(`${workspaceFolder}` · `${file}` · `${config:키}` … · [nsql_script::intrinsic] · 사용자 09-23) — 실행마다
+    /// 그 순간의 프로젝트·활성 탭·접속·설정으로 만든다(수십 항목 + 설정 키 · 복사 0 = `Arc`). 설정 `vars.intrinsic` 끔 = 빈 표.
+    fn run_intrinsic(&self) -> std::sync::Arc<std::collections::BTreeMap<String, String>> {
+        if !self.settings.flag("vars.intrinsic") {
+            return std::sync::Arc::default();
+        }
+        std::sync::Arc::new(nsql_script::intrinsic::build(&self.intrinsic_context()))
+    }
+
+    fn intrinsic_context(&self) -> nsql_script::intrinsic::Context {
+        let tb = self.editors.cur();
+        let caret = tb.caret();
+        let line = tb.buf().line_of(caret);
+        let col = caret.saturating_sub(tb.buf().line_start(line));
+        let leaf = |p: &Path| {
+            p.file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        nsql_script::intrinsic::Context {
+            project_file: self.project.path.clone(),
+            folders: self
+                .project
+                .folders
+                .iter()
+                .map(|f| (leaf(f), f.clone()))
+                .collect(),
+            file: self.editors.active_path(),
+            line: Some(line + 1),
+            column: Some(col + 1),
+            user_home: std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from),
+            app_home: nsql_settings::config_dir(),
+            exec: std::env::current_exe().ok(),
+            cwd: std::env::current_dir().ok(),
+            profile: Some(self.sess.profile.clone()).filter(|p| !p.is_empty()),
+            dialect: self
+                .sess
+                .spec
+                .as_ref()
+                .and_then(|s| s.dialect)
+                .map(|d| d.to_string()),
+            config: nsql_settings::REGISTRY
+                .iter()
+                .filter_map(|e| {
+                    self.settings
+                        .get(e.key)
+                        .map(|v| (e.key.to_string(), v.to_string()))
+                })
+                .collect(),
+        }
+    }
+
     fn run_defines(&self) -> Option<Vec<(String, String)>> {
         self.tab_defines.get(&self.editors.active_id()).map(|v| {
             v.iter()
@@ -11258,6 +11313,7 @@ impl App {
             max_rows,
             vars: self.run_vars(),
             defines: self.run_defines(),
+            intrinsic: Some(self.run_intrinsic()),
         });
         self.live_start();
         self.redraw();
@@ -11418,6 +11474,7 @@ impl App {
             max_rows: self.grid.page_rows(),
             vars: self.run_vars(),
             defines: self.run_defines(),
+            intrinsic: Some(self.run_intrinsic()),
         });
         self.live_start();
         self.redraw();
@@ -16216,10 +16273,20 @@ fn undo_rules(s: &Settings) -> (u64, usize) {
 /// 큰 파일 단계 기준(설정 → [(바이트, 줄 수); L1, L2]).
 /// 설정 `oracle.client_*` → Oracle 드라이버(첫 Oracle 접속 전에 넘긴 값이 이번 실행에 쓰인다).
 fn apply_oracle_client(s: &Settings) {
+    // 경로 설정의 내장 변수(`${nsqlHome}` · `${userHome}` · `${env:…}` — 프로젝트·파일은 앱 문맥이라 여기서는 없음 · 사용자 09-23).
+    let m = nsql_script::intrinsic::build(&nsql_script::intrinsic::Context {
+        user_home: std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from),
+        app_home: nsql_settings::config_dir(),
+        exec: std::env::current_exe().ok(),
+        cwd: std::env::current_dir().ok(),
+        ..Default::default()
+    });
     nsql_drivers::set_oracle_client(
         s.get("oracle.client_mode") == Some("manual"),
-        s.get("oracle.client_dir").unwrap_or(""),
-        s.get("oracle.tns_admin").unwrap_or(""),
+        &nsql_script::intrinsic::expand(s.get("oracle.client_dir").unwrap_or(""), &m),
+        &nsql_script::intrinsic::expand(s.get("oracle.tns_admin").unwrap_or(""), &m),
     );
 }
 

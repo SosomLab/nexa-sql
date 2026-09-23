@@ -6,15 +6,15 @@
 
 | 동작 | Windows/Linux | macOS |
 |---|---|---|
-| 토글 | Ctrl+F2 | ⌘F2 |
-| 다음 / 이전 | F2 / Shift+F2 | F2 / ⇧F2 |
+| 토글 | Ctrl+F2 · **Ctrl+Alt+K** | ⌘F2 · **⌘⌥K** |
+| 다음 / 이전 | F2 / Shift+F2 · **Ctrl+Alt+L / Ctrl+Alt+J** | F2 / ⇧F2 · **⌘⌥L / ⌘⌥J** |
 | 이 문서의 북마크 전부 지우기 | Ctrl+Shift+F2 | ⌘⇧F2 |
 | 북마크 줄 전부 멀티커서 선택 | Alt+F2 | ⌥F2 |
 | **니모닉 지정** 0~9 | Ctrl+Shift+숫자 | ⌘⇧숫자 |
 | 니모닉으로 이동 | Ctrl+숫자 | ⌘숫자 |
 | 북마크 패널 | Ctrl+Shift+B | ⌘⇧B |
 
-니모닉을 지정할 때 그 줄에 북마크가 없으면 만들어서 지정합니다.
+니모닉을 지정할 때 그 줄에 북마크가 없으면 만들어서 지정합니다. 굵은 키는 VS Code Bookmarks 확장과 같은 두 번째 바인딩입니다(둘 다 됩니다 · Preferences ▸ Keys에서 바꿀 수 있음).
 
 ## 표시
 

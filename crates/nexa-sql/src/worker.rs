@@ -61,6 +61,8 @@ pub(crate) enum Cmd {
         vars: Option<Vec<nsql_script::VarState>>,
         /// 탭의 치환 변수(`DEFINE` · 이름 · 원문 · 09-23) — `None` = 엔진 것 그대로.
         defines: Option<Vec<(String, String)>>,
+        /// 내장 변수 층(`${workspaceFolder}` … · 호스트가 실행마다 스냅숏 · 사용자 09-23) — `None` = 엔진 것 그대로.
+        intrinsic: Option<std::sync::Arc<std::collections::BTreeMap<String, String>>>,
     },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
@@ -1185,6 +1187,7 @@ pub(crate) fn spawn(
                         max_rows,
                         vars,
                         defines,
+                        intrinsic,
                     } => {
                         if let Some(v) = vars {
                             runner.engine.vars.set_local(v);
@@ -1192,6 +1195,9 @@ pub(crate) fn spawn(
                         if let Some(d) = defines {
                             runner.engine.defines = d.into_iter().collect();
                             runner.engine.defines_dirty = true;
+                        }
+                        if let Some(m) = intrinsic {
+                            runner.engine.settings.intrinsic = m;
                         }
                         runner.set_max_rows(max_rows);
                         apply_fetch_settings(&mut runner);

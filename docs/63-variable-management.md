@@ -204,3 +204,13 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 - `assign`: `DEFINE a = 값`의 값은 **정의할 때** 치환한다(SQL\*Plus) — 종전엔 원문을 저장하고 쓸 때 한 번만 바꿔 중첩이 남았다(DBeaver와 같은 결함) → 이번에 고침.
 - `use`: 원문 저장 · `&a`/`${a}`를 읽을 때 재귀 치환(깊이 16 · 순환 = `Action::Error`) · `DEFINE`(목록·한 개)은 `원문  →  현재 값`으로 보여 준다.
 - 테스트 = 사용자 예(치환 변수판): assign → `2 + 5` · use → `5 + 5` · 순환 오류 · 깊이.
+
+## 10. 내장 변수 층 — `${workspaceFolder}`처럼(09-23 · 사용자 "VS Code 같은 intrinsic 변수 · 시스템 환경 변수 위에 Nexa 층을 겹쳐 사용법은 동일")
+
+- **층 순서**(한 해석기 · `Engine::substitute`): `DEFINE`/`&` 치환 변수 → **내장 표**(`Settings.intrinsic`) → 글자 그대로. `${env:이름}` = **내장 별칭(`NSQL_*`) → OS 환경 변수** — 이미 있던 `${env:…}` 문법으로 `${env:NSQL_PROJECT_DIR}`가 그대로 나온다(프로세스 환경 변수를 실제로 바꾸지는 않는다 · `set_var`는 스레드 안전하지 않고 자식 프로세스 상속도 원하지 않았다).
+- **부품** = [nsql-script `intrinsic.rs`](../crates/nsql-script/src/intrinsic.rs): `Context`(호스트가 아는 것만 · 모르면 변수를 만들지 않는다) → `build()` → `BTreeMap<이름, 값>`(`Arc`로 엔진에 · 복사 0) · `lookup(이름)` · `expand(글, 표)`(설정·경로용 · 형식 없음 · `${env:}` 포함).
+- **이름**: VS Code와 같은 것(`workspaceFolder` · `workspaceFolderBasename` · `workspaceFolder:이름` · `file` · `fileDirname` · `fileBasename` · `fileBasenameNoExtension` · `fileExtname` · `relativeFile` · `relativeFileDirname` · `fileWorkspaceFolder` · `fileDirnameBasename` · `lineNumber` · `columnNumber` · `userHome` · `cwd` · `execPath` · `pathSeparator`/`/` · `config:키`) + Nexa(`workspaceFile` · `workspaceName` · `nsqlHome` · `profile` · `dialect` · `os`) + 대문자 별칭(`NSQL_PROJECT_DIR` `NSQL_PROJECT_FILE` `NSQL_PROJECT_NAME` `NSQL_FILE` `NSQL_FILE_DIR` `NSQL_FILE_NAME` `NSQL_USER_HOME` `NSQL_HOME` `NSQL_CWD` `NSQL_EXEC` `NSQL_PROFILE` `NSQL_DIALECT` `NSQL_OS`). 대소문자 구분(VS Code와 같음) · 마지막 `:형식`(`q`·`id` 등)은 정확한 이름이 없을 때만 형식으로 본다(`workspaceFolder:ui`가 폴더 이름과 겹치지 않게).
+- **배선**: GUI = 실행마다 `run_intrinsic()` 스냅숏(프로젝트 · 등록 폴더 · 활성 탭 경로·캐럿 · 홈 · `NSQL_HOME` · 실행 파일 · cwd · 활성 프로필·방언 · 설정 전부) → `Cmd::Run.intrinsic` · CLI = `intrinsic_vars(path, dialect)`(프로젝트 없음 = `${workspaceFolder}` 없음 · `${file}` = 스크립트 절대 경로) · 경로 설정(`log.file` · `oracle.client_dir` · `oracle.tns_admin`)은 읽을 때 `expand`.
+- 설정 `vars.intrinsic`(Session · on) — 끄면 빈 표(= 층 없음). `vars.brace_subst`가 꺼져 있으면 `${…}` 자체가 돌지 않는다(기존 규칙).
+- 시험: `intrinsic::tests` 3 + 엔진 `intrinsic_layer_between_defines_and_env`(DEFINE 우선 · 폴더 이름 · config · `:q` · env 별칭 · 모르는 이름 그대로). 사용자 문서 = [위키 Variables](wiki/Variables.md).
+- 다음 후보: 프로젝트 파일 경로 앵커([73](73-project-path-portability.md) `${project}`·`${folder:이름}`)를 이 표와 **같은 이름**으로 맞춘다(`${workspaceFolder:이름}` = 73의 `${folder:이름}`) — T-172 P2에서 한 이름으로 통일.

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/intrinsic-vars | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 내장 변수 층 `${workspaceFolder}`(nsql-script `intrinsic.rs` · 엔진 `Settings.intrinsic` · GUI/CLI 배선 · 경로 설정 `expand` · `vars.intrinsic`) · 북마크 키 += VS Code Ctrl+Alt+K/L/J · 📐 73 경로 이식 조사·개선안 · journal §93~94 · 위키 |
 | fix/96b-project-restore | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 후반: 묶인 탭 각자 색 · 북마크 더블클릭 = 정식 탭 · ★ 프로젝트 저장/복원 전면(저장 = 상태 담기 · 열기 = 교체 · 좌측 패널 상태 5키 · `preview` · 접속 표식) · S52~S55 · journal §92 · 70 §6-1 · 69 · 위키 · push `5bb3ecf` ci ✓ · integration ✓ |
 | docs/96-wrap | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 마무리(빌드·재시작 기록 · 위키 `project.icons` 비용 · U-58) |
 | perf/96-review | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 성능 전수 재실행(26 §7-10 · 71 §10 · 회귀 0) · 프로젝트 패널 아이콘 워커 유휴 회수 `ICON_WORKER_IDLE_MS` · L2 30주기 = 누수 아님 · 기능 점검 S01~S51 51/51 · 테스트 449 · T-168 ①②④⑥ · push `7c4499a` ci ✓ · integration ✓ |

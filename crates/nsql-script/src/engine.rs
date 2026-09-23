@@ -85,6 +85,9 @@ pub struct Settings {
     /// `${env:이름[:형식]}` = **OS 환경 변수**(설정 `vars.env_subst` · 기본 켬 · 사용자 09-21) — 없는 변수는 글자 그대로 둔다.
     /// `brace_subst`가 꺼져 있으면 이것도 돌지 않는다.
     pub env_subst: bool,
+    /// ★ 내장 변수 층([`crate::intrinsic`] · 사용자 09-23 "VS Code `${workspaceFolder}`처럼"): 호스트가 `build`로 만든 표.
+    /// `${이름}` = DEFINE → **이 표** → 글자 그대로 · `${env:이름}` = **이 표(`NSQL_*` 별칭)** → OS 환경 변수. 빈 표 = 층 없음.
+    pub intrinsic: std::sync::Arc<BTreeMap<String, String>>,
     /// ★ 변수 안의 변수 **확장 시점**(설정 `vars.expand_at` · docs/63 §9 · 사용자 09-22): false = **대입 시**(`DEFINE a = &b`의
     /// `&b`를 정의할 때 바꾼다 · SQL*Plus·psql·sqlcmd) · true = **사용 시**(원문을 보관하고 `&a`를 읽을 때 재귀 치환 · 깊이 16 ·
     /// 순환 = 오류 · SQL Workbench/J). `DEFINE` 목록은 사용 시 모드에서 `원문  →  현재 값`으로 보여 준다.
@@ -113,6 +116,7 @@ impl Default for Settings {
             into_first: false,
             brace_subst: true,
             env_subst: true,
+            intrinsic: std::sync::Arc::default(),
             expand_at_use: false,
             max_value_bytes: 1024 * 1024,
             serveroutput: false,
@@ -733,8 +737,12 @@ impl Engine {
                         .map(|_| &inner[4..])
                     {
                         let (var, fmt) = rest.split_once(':').unwrap_or((rest, ""));
+                        // ★ 내장 층이 OS 환경 위에 겹친다(사용자 09-23): `${env:NSQL_PROJECT_DIR}` = 내장 별칭 → 없으면 OS.
                         let value = (self.settings.env_subst && !var.trim().is_empty())
-                            .then(|| std::env::var(var.trim()).ok())
+                            .then(|| {
+                                crate::intrinsic::lookup(&self.settings.intrinsic, var)
+                                    .or_else(|| std::env::var(var.trim()).ok())
+                            })
                             .flatten();
                         if let Some(s) =
                             value.and_then(|v| format_macro(&v, fmt.trim(), self.dialect))
@@ -756,6 +764,24 @@ impl Engine {
                         if let Some(v) = self.macro_value(&key).map(str::to_string) {
                             let v = self.expand_nested(&key, v)?;
                             if let Some(s) = format_macro(&v, fmt.trim(), self.dialect) {
+                                out.push_str(&s);
+                                i += 2 + close + 1;
+                                continue;
+                            }
+                        }
+                    }
+                    // ★ 내장 변수 층(DEFINE 다음 · 사용자 09-23): `${workspaceFolder}` · `${workspaceFolder:이름}` · `${config:키}` ·
+                    //   `${fileBasename:q}`처럼 마지막 `:형식`도 받는다(정확한 이름이 먼저 · 없으면 마지막 `:` 앞을 이름으로).
+                    if !self.settings.intrinsic.is_empty() {
+                        let hit = crate::intrinsic::lookup(&self.settings.intrinsic, inner)
+                            .map(|v| (v, ""))
+                            .or_else(|| {
+                                let (n, f) = inner.rsplit_once(':')?;
+                                crate::intrinsic::lookup(&self.settings.intrinsic, n)
+                                    .map(|v| (v, f.trim()))
+                            });
+                        if let Some((v, f)) = hit {
+                            if let Some(s) = format_macro(&v, f, self.dialect) {
                                 out.push_str(&s);
                                 i += 2 + close + 1;
                                 continue;
@@ -887,6 +913,45 @@ fn after_command_word(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// 내장 변수 층(사용자 09-23): `${workspaceFolder}` · `${workspaceFolder:이름}` · `${config:키}` · 형식 접미(`:q`) ·
+    /// `${env:NSQL_PROJECT_DIR}` = 내장 별칭이 OS보다 먼저 · DEFINE 이름이 같으면 DEFINE이 이긴다 · 모르는 이름 = 글자 그대로.
+    #[test]
+    fn intrinsic_layer_between_defines_and_env() {
+        let mut e = Engine::new(Dialect::Oracle);
+        let ctx = crate::intrinsic::Context {
+            project_file: Some(std::path::PathBuf::from("/w/demo.nsql-project")),
+            folders: vec![("ui".into(), std::path::PathBuf::from("/x/ui"))],
+            file: Some(std::path::PathBuf::from("/w/a.sql")),
+            config: vec![("log.file".into(), "log.txt".into())],
+            ..Default::default()
+        };
+        e.settings.intrinsic = std::sync::Arc::new(crate::intrinsic::build(&ctx));
+        let w = std::path::PathBuf::from("/w")
+            .to_string_lossy()
+            .into_owned();
+        let ui = std::path::PathBuf::from("/x/ui")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            e.substitute(
+                "${workspaceFolder}|${workspaceFolder:ui}|${config:log.file}|${fileBasename:q}"
+            )
+            .as_deref(),
+            Ok(format!("{w}|{ui}|log.txt|'a.sql'").as_str())
+        );
+        assert_eq!(
+            e.substitute("${env:NSQL_PROJECT_DIR}").as_deref(),
+            Ok(w.as_str())
+        );
+        // DEFINE이 같은 이름을 가지면 DEFINE(대문자 키)이 먼저.
+        e.define("WORKSPACEFOLDER", "mine");
+        assert_eq!(e.substitute("${WORKSPACEFOLDER}").as_deref(), Ok("mine"));
+        assert_eq!(
+            e.substitute("${nope:q} ${workspaceFolder:zz}").as_deref(),
+            Ok("${nope:q} ${workspaceFolder:zz}")
+        );
+    }
+
     /// `${env:이름}` = OS 환경 변수(사용자 09-21): 있는 변수 = 값 · 형식(`q`) · 없는 변수·모르는 형식 = 글자 그대로 · 주석 안 제외 ·
     /// `vars.env_subst`/`vars.brace_subst` 끔 = 그대로 · 사용자 정의 `env`라는 치환 변수와 섞이지 않는다.
     #[test]
