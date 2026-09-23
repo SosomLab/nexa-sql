@@ -4,7 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
-| fix/bookmark-keys-gutter-save | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 북마크 후속 셋(§95): 두 단계 코드 키 Ctrl+K,Ctrl+K/N/P/X(Ctrl+Alt 안 교체) · 거터 = 북마크 영역 → 줄 번호 → 편집 → 미니맵(nexa-ui 64차) · 🔧 저장 길 북마크·니모닉 소실 · S52 확장 · S56 · 위키 · TODO U-60 |
+| feat/runtoast-copy | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 실행 카드 1행 오른쪽 복사 버튼(`RunToastHit::Copy` · 카드 유지 · 상태줄 "SQL n줄 복사됨" · 시험 1 · §96) |
+| fix/bookmark-keys-gutter-save | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 북마크 후속 셋(§95): 두 단계 코드 키 Ctrl+K,Ctrl+K/N/P/X(Ctrl+Alt 안 교체) · 거터 = 북마크 영역 → 줄 번호 → 편집 → 미니맵(nexa-ui 64차) · 🔧 저장 길 북마크·니모닉 소실 · S52 확장 · S56 · 위키 · TODO U-60 · push `dd45a5e` ci ✓ · integration ✓ |
 | feat/intrinsic-vars | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 내장 변수 층 `${workspaceFolder}`(nsql-script `intrinsic.rs` · 엔진 `Settings.intrinsic` · GUI/CLI 배선 · 경로 설정 `expand` · `vars.intrinsic`) · 북마크 키 += VS Code Ctrl+Alt+K/L/J · 📐 73 경로 이식 조사·개선안 · journal §93~94 · 위키 · push `260e9a3` ci ✓ · integration ✓ |
 | fix/96b-project-restore | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 후반: 묶인 탭 각자 색 · 북마크 더블클릭 = 정식 탭 · ★ 프로젝트 저장/복원 전면(저장 = 상태 담기 · 열기 = 교체 · 좌측 패널 상태 5키 · `preview` · 접속 표식) · S52~S55 · journal §92 · 70 §6-1 · 69 · 위키 · push `5bb3ecf` ci ✓ · integration ✓ |
 | docs/96-wrap | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 96차 마무리(빌드·재시작 기록 · 위키 `project.icons` 비용 · U-58) |

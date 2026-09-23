@@ -49,6 +49,8 @@ pub(crate) enum RunToastHit {
     Stop,
     /// 카드 본문(끝난 카드 = 닫기).
     Card,
+    /// 1행 오른쪽 복사 버튼 — 그 실행의 SQL 원문(카드는 그대로 · 사용자 09-23).
+    Copy(String),
 }
 
 struct Run {
@@ -71,6 +73,8 @@ struct Run {
     rect: Rect,
     stop_rect: Rect,
     line_rect: Rect,
+    /// 1행 오른쪽 복사 버튼 자리(사용자 09-23).
+    copy_rect: Rect,
 }
 
 pub(crate) struct RunToast {
@@ -88,6 +92,7 @@ pub(crate) struct RunToast {
     spent: f32,
     hover_line: Option<u64>,
     hover_stop: Option<u64>,
+    hover_copy: Option<u64>,
     /// 누적이 영역을 넘을 때 아래로 내려 본 양(px · 0 = 맨 위 = 최신).
     scroll: i32,
     /// 새 카드가 오면 맨 위로(설정 `run.toast_follow`).
@@ -141,6 +146,7 @@ impl RunToast {
             spent: 0.3,
             hover_line: None,
             hover_stop: None,
+            hover_copy: None,
             scroll: 0,
             follow: true,
             max_cards: 30,
@@ -255,6 +261,7 @@ impl RunToast {
             rect: Rect::default(),
             stop_rect: Rect::default(),
             line_rect: Rect::default(),
+            copy_rect: Rect::default(),
         });
         self.enforce_max();
         self.on_new_event();
@@ -363,6 +370,7 @@ impl RunToast {
         self.runs.clear();
         self.hover_line = None;
         self.hover_stop = None;
+        self.hover_copy = None;
         self.scroll = 0;
     }
 
@@ -423,16 +431,18 @@ impl RunToast {
 
     /// 마우스 이동 — hover 상태가 바뀌면 true.
     pub(crate) fn hover(&mut self, p: Point) -> bool {
-        let (line, stop) = match self.run_at(p) {
+        let (line, stop, copy) = match self.run_at(p) {
             Some(r) => (
                 r.line_rect.contains(p).then_some(r.id),
                 (r.ended.is_none() && r.stop_rect.contains(p)).then_some(r.id),
+                r.copy_rect.contains(p).then_some(r.id),
             ),
-            None => (None, None),
+            None => (None, None, None),
         };
-        let changed = line != self.hover_line || stop != self.hover_stop;
+        let changed = line != self.hover_line || stop != self.hover_stop || copy != self.hover_copy;
         self.hover_line = line;
         self.hover_stop = stop;
+        self.hover_copy = copy;
         changed
     }
 
@@ -442,6 +452,10 @@ impl RunToast {
         };
         if r.ended.is_none() && r.stop_rect.contains(p) {
             return RunToastHit::Stop;
+        }
+        // 복사 버튼 = 카드를 닫지 않고 SQL만 넘긴다(끝난 카드도).
+        if r.copy_rect.contains(p) {
+            return RunToastHit::Copy(r.sql.clone());
         }
         if r.ended.is_some() {
             let id = r.id;
@@ -541,6 +555,7 @@ impl RunToast {
                 r.rect = Rect::default();
                 r.stop_rect = Rect::default();
                 r.line_rect = Rect::default();
+                r.copy_rect = Rect::default();
                 continue;
             }
             let tip = self.paint_card(dc, th, i, card, area, now, pad, bar, lh, px(6.0), s);
@@ -602,7 +617,8 @@ impl RunToast {
             .filter(|_| self.progress);
         let (alpha, fade_to, spent, hide_after) =
             (self.alpha, self.fade_to, self.spent, self.hide_after);
-        let (hover_line, hover_stop) = (self.hover_line, self.hover_stop);
+        let (hover_line, hover_stop, hover_copy) =
+            (self.hover_line, self.hover_stop, self.hover_copy);
         let r = &mut self.runs[i];
         let fade = match r.ended {
             Some(e) if !hide_after.is_zero() => {
@@ -676,8 +692,32 @@ impl RunToast {
             a,
         );
         let lx = stop.right() + px(8.0);
-        let line_clip =
-            Rect::new(lx, card.y + pad, card.right() - pad - lx, lh).intersection(&area);
+        // 1행 오른쪽 끝 = 복사 버튼(사용자 09-23 "툴팁으로 보이는 쿼리를 클릭 한 번에 복사") — 문장 줄은 그 앞에서 끝난다.
+        let copy_sz = lh;
+        let copy = Rect::new(card.right() - pad - copy_sz, card.y + pad, copy_sz, copy_sz);
+        r.copy_rect = copy.intersection(&area);
+        {
+            let hovered = hover_copy == Some(r.id);
+            if hovered {
+                dc.fill_round_rect_alpha(copy.intersection(&area), px(3.0), th.text, 0.12 * a);
+            }
+            let (cr, cg, cb) = (if hovered { th.text } else { th.text_dim }).rgb();
+            let ic = crate::toolicons::mi_copy();
+            let img =
+                nexa_ctl::theme::IconImage::from_alpha_tinted(ic.w, ic.h, &ic.alpha, (cr, cg, cb));
+            let sz = px(14.0).min(copy_sz);
+            dc.image_scaled(
+                Rect::new(
+                    copy.x + (copy.w - sz) / 2,
+                    copy.y + (copy.h - sz) / 2,
+                    sz,
+                    sz,
+                ),
+                &img,
+                copy.intersection(&area),
+            );
+        }
+        let line_clip = Rect::new(lx, card.y + pad, copy.x - px(6.0) - lx, lh).intersection(&area);
         r.line_rect = line_clip;
         let mut line = r.line.clone();
         if dc.text_width(&line) > line_clip.w {
@@ -713,6 +753,38 @@ mod tests {
             .into_iter()
             .map(|i| rt.runs[i].id)
             .collect()
+    }
+
+    /// 복사 버튼(사용자 09-23): 클릭 = 그 실행의 SQL 원문 · 카드는 남는다(끝난 카드도) · hover 상태가 바뀌면 다시 그린다.
+    #[test]
+    fn copy_button_returns_sql_and_keeps_card() {
+        let mut rt = RunToast::new();
+        rt.configure(true, 2, 90);
+        let c = rt
+            .start("SELECT 1;\nSELECT 2;", "t".into(), 2)
+            .expect("card");
+        rt.finish(
+            Some(c),
+            Phase::Done {
+                rows: Some(2),
+                secs: 0.1,
+                stages: String::new(),
+            },
+        );
+        rt.runs[0].rect = Rect::new(0, 0, 200, 60);
+        rt.runs[0].copy_rect = Rect::new(180, 4, 16, 16);
+        assert!(rt.hover(Point { x: 185, y: 10 }));
+        assert_eq!(rt.hover_copy, Some(c));
+        assert!(
+            matches!(rt.click(Point { x: 185, y: 10 }), RunToastHit::Copy(s) if s == "SELECT 1;\nSELECT 2;")
+        );
+        assert_eq!(rt.runs.len(), 1, "copy must not dismiss the card");
+        // 버튼 밖 카드 본문 클릭 = 끝난 카드 닫기(종전 규칙 그대로).
+        assert!(matches!(
+            rt.click(Point { x: 50, y: 30 }),
+            RunToastHit::Card
+        ));
+        assert!(rt.runs.is_empty());
     }
 
     /// 시작 → 진행(속도) → 완료 → 숨김 시간 뒤 사라짐 · 0초면 유지.

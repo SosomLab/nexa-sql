@@ -13393,6 +13393,17 @@ impl App {
                     self.redraw();
                     return;
                 }
+                runtoast::RunToastHit::Copy(sql) => {
+                    // 실행 카드의 복사 버튼(사용자 09-23) — 결과 탭 "SQL 복사"와 같은 상태줄 문구.
+                    if clipboard::write_text(&sql) {
+                        self.sess.status =
+                            tf(Msg::StResultSqlCopied, &[&sql.lines().count().to_string()]);
+                    } else {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                    self.redraw();
+                    return;
+                }
                 runtoast::RunToastHit::None => {}
             }
         }
