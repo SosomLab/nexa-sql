@@ -50,6 +50,11 @@ pub(crate) struct TabState {
     pub after: String,
     /// 미리보기 탭이었나(북마크·탐색기 한 번 클릭) — 복원도 미리보기로(사용자 09-23).
     pub preview: bool,
+    /// 파일 탭의 미저장 본문을 담았을 때 그 순간의 **디스크 해시**(`backups::disk_hash`) — 로드 때 디스크가 바뀌었으면 알린다
+    /// (사용자 09-23 "미저장 탭 본문을 프로젝트 파일에 탭별로 저장해 로드 때 자동 복구 · 백업은 백업용으로만").
+    pub disk_hash: u64,
+    /// 저장 당시의 탭 id(0 = 없음) — 이름 없는 탭의 북마크(`DocKey::Scratch { tab }`)를 복원 때 새 id로 **재매핑**(사용자 09-23 검토).
+    pub id: u64,
 }
 
 impl Project {
@@ -116,6 +121,9 @@ impl Project {
                                 ("before", Json::Str(s)) => t.before = s.clone(),
                                 ("after", Json::Str(s)) => t.after = s.clone(),
                                 ("preview", Json::Bool(b)) => t.preview = *b,
+                                // 64비트 해시는 JSON 숫자(f64)로는 정밀도가 깨진다 → 글자열.
+                                ("hash", Json::Str(s)) => t.disk_hash = s.parse().unwrap_or(0),
+                                ("id", Json::Num(n)) => t.id = (*n).max(0.0) as u64,
                                 _ => {}
                             }
                         }
@@ -261,6 +269,12 @@ impl Project {
                 }
                 if t.preview {
                     out.push_str(", \"preview\": true");
+                }
+                if t.disk_hash != 0 {
+                    out.push_str(&format!(", \"hash\": \"{}\"", t.disk_hash));
+                }
+                if t.id != 0 {
+                    out.push_str(&format!(", \"id\": {}", t.id));
                 }
                 out.push_str(" }");
             }
@@ -503,6 +517,10 @@ mod tests {
         p.bookmarks = Some("{\"version\": 1, \"items\": []}".into());
         // 좌측 패널 상태 + 미리보기 표식(사용자 09-23) — 상대 경로로 쓰고 절대로 돌아온다.
         p.tabs[0].preview = true;
+        // 파일 탭의 미저장 본문 + 디스크 해시(64비트 → 글자열로 왕복) + 탭 id(사용자 09-23).
+        p.tabs[0].text = Some("-- unsaved edit".into());
+        p.tabs[0].disk_hash = 0xFFFF_FFFF_FFFF_FF01;
+        p.tabs[0].id = 77;
         p.expanded = vec![dir.join("sql"), other.join("x")];
         p.panel = Some("bookmarks".into());
         p.search = Some("select \"q\"".into());

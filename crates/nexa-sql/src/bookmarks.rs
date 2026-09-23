@@ -184,6 +184,28 @@ impl Bookmarks {
         self.changed = true;
     }
 
+    /// 이름 없는 탭의 북마크 열쇠 재매핑(프로젝트 복원 · 사용자 09-23 검토): 프로젝트 파일에 적힌 옛 탭 id → 방금 만든 새 탭 id.
+    /// 본문은 프로젝트 파일에서 그대로 올라오므로 줄 앵커가 맞는다. 표에 없는 Scratch 열쇠(탭이 사라진 것)는 그대로 둔다(무효 처리 규칙).
+    pub(crate) fn remap_scratch(&mut self, map: &[(u64, u64)]) {
+        if map.is_empty() {
+            return;
+        }
+        let mut any = false;
+        for b in &mut self.store.items {
+            if let DocKey::Scratch { tab } = &mut b.doc {
+                if let Some((_, new)) = map.iter().find(|(old, _)| old == tab) {
+                    *tab = *new;
+                    any = true;
+                }
+            }
+        }
+        if any {
+            self.docs.clear();
+            self.seq.clear();
+            self.touch();
+        }
+    }
+
     /// 프로젝트 파일에 내장된 북마크(JSON)로 바꾼다(프로젝트 복원 · 사용자 09-23) — 실패하면 그대로.
     pub(crate) fn load_json(&mut self, text: &str) -> bool {
         match Store::from_json(text) {
@@ -796,5 +818,38 @@ mod tests {
         assert_eq!(bm.path.as_deref(), Some(local.as_path()));
         assert!(bm.store.items.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 이름 없는 탭 북마크의 옛 id → 새 id 재매핑(사용자 09-23 검토): 표에 있는 것만 바뀌고 · 파일 열쇠는 그대로.
+    #[test]
+    fn remap_scratch_ids_after_restore() {
+        let mut bm = Bookmarks::new();
+        let a = make_anchor(&["x", "y"], 0, 0, &RelocateOpts::default());
+        let id1 = bm
+            .store
+            .add(DocKey::Scratch { tab: 5 }, a.clone(), 1, true, 100, 1000)
+            .expect("add");
+        let id2 = bm
+            .store
+            .add(
+                DocKey::File {
+                    path: "C:/x/a.sql".into(),
+                },
+                a,
+                1,
+                true,
+                100,
+                1000,
+            )
+            .expect("add");
+        bm.remap_scratch(&[(5, 42), (9, 43)]);
+        assert_eq!(
+            bm.store.get(id1).map(|b| b.doc.clone()),
+            Some(DocKey::Scratch { tab: 42 })
+        );
+        assert!(matches!(
+            bm.store.get(id2).map(|b| b.doc.clone()),
+            Some(DocKey::File { .. })
+        ));
     }
 }

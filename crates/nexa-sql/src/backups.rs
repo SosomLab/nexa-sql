@@ -60,7 +60,9 @@ pub(crate) fn remove(path: &Path) {
     }
 }
 
-/// 복원용 읽기 — 지금 디스크 해시가 스냅숏의 것과 같으면 `Some(본문)` · 다르거나 없으면 None(`Err` = 밖에서 바뀜).
+/// 스냅숏 읽기(검증용) — 지금 디스크 해시가 스냅숏의 것과 같으면 `Some(본문)` · 다르거나 없으면 None(`Err` = 밖에서 바뀜).
+/// ★ 복원에는 쓰지 않는다(사용자 09-23 "백업은 백업용으로만" — 복원 원천 = 프로젝트 파일 `tabs[].text`) → 시험에서만.
+#[cfg(test)]
 pub(crate) fn read_matching(path: &Path) -> Result<Option<String>, ()> {
     let Some(f) = file_of(path) else {
         return Ok(None);

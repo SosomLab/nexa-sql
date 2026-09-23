@@ -3407,6 +3407,7 @@ impl App {
                 line,
                 col,
                 preview: self.editors.preview_id() == Some(self.editors.tab_id(i)),
+                id: self.editors.tab_id(i),
                 ..project::TabState::default()
             };
             if buf.line_count() <= 100_000 {
@@ -3424,10 +3425,16 @@ impl App {
                 t.before = a.before;
                 t.after = a.after;
             }
-            if path.is_none() {
+            // 본문을 담는 탭 = 이름 없는 스크립트 **+ 미저장 편집이 있는 파일 탭**(사용자 09-23 "탭별로 프로젝트 파일에 · 로드 때 자동 복구 ·
+            // 백업은 백업용으로만") — 파일 탭은 그때의 디스크 해시도 같이(로드 때 밖에서 바뀌었는지 알리려고). 1 MB 상한은 같다.
+            let dirty_file = path.is_some() && self.editors.is_dirty(i);
+            if path.is_none() || dirty_file {
                 let text = tb.text();
                 if text.len() <= 1 << 20 {
                     t.text = Some(text);
+                    if let Some(p) = &path {
+                        t.disk_hash = backups::disk_hash(p);
+                    }
                 }
             }
             tabs.push(t);
@@ -3494,6 +3501,7 @@ impl App {
         let opts = nsql_bookmarks::RelocateOpts::default();
         let mut ids: Vec<Option<u64>> = Vec::new();
         let mut restored_dirty = 0usize;
+        let mut scratch_remap: Vec<(u64, u64)> = Vec::new();
         for t in &tabs {
             let id = match &t.path {
                 Some(p) => {
@@ -3511,21 +3519,19 @@ impl App {
                         }
                         let i = self.editors.active();
                         if self.editors.active_path().as_deref() == Some(p.as_path()) {
-                            // 미저장 스냅숏(docs/70 §6 ②): 디스크 해시가 같을 때만 올리고 dirty · 다르면 디스크 본문 그대로.
-                            match backups::read_matching(p) {
-                                Ok(Some(body)) => {
-                                    if let Some(tb) = self.editors.tab_box_mut(i) {
-                                        tb.set_text(&body);
-                                    }
-                                    restored_dirty += 1;
+                            // ★ 미저장 편집분은 **프로젝트 파일**에서 그대로 올린다(사용자 09-23 "탭별로 저장해 자동 복구" · `backups/`는
+                            //   백업용으로만 · 복원에 쓰지 않는다). 디스크가 그 사이 바뀌었으면(해시 다름) 올리되 로그로 알린다.
+                            if let Some(body) = &t.text {
+                                if let Some(tb) = self.editors.tab_box_mut(i) {
+                                    tb.set_text(body);
                                 }
-                                Err(()) => {
+                                restored_dirty += 1;
+                                if t.disk_hash != 0 && backups::disk_hash(p) != t.disk_hash {
                                     self.log_win.push(LogEntry::new(
                                         LogKind::Info,
                                         tf(Msg::StBackupExternal, &[&p.to_string_lossy()]),
                                     ));
                                 }
-                                Ok(None) => {}
                             }
                             self.restore_caret(i, t, &opts);
                             Some(self.editors.tab_id(i))
@@ -3543,7 +3549,12 @@ impl App {
                         }
                     }
                     self.restore_caret(i, t, &opts);
-                    Some(self.editors.tab_id(i))
+                    let new_id = self.editors.tab_id(i);
+                    // 이름 없는 탭의 북마크(`Scratch { tab }`)는 옛 id → 새 id로 재매핑(사용자 09-23 검토 · 본문이 그대로라 줄이 맞는다).
+                    if t.id != 0 {
+                        scratch_remap.push((t.id, new_id));
+                    }
+                    Some(new_id)
                 }
             };
             ids.push(id);
@@ -3554,6 +3565,7 @@ impl App {
         }
         if let Some(js) = self.project.bookmarks.clone() {
             if self.bookmarks.load_json(&js) {
+                self.bookmarks.remap_scratch(&scratch_remap);
                 self.bm_sync_ui();
             }
         }

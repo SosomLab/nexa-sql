@@ -1124,11 +1124,18 @@ impl ProjectPanel {
                     dc.stroke_round_rect(rr, 0, th.accent, 1.0);
                 }
                 let ty = dc.text_center_y(rr.y, rr.h);
-                let label = if f.dirty {
-                    format!("\u{25cf} {}", f.title)
-                } else {
-                    f.title.clone()
-                };
+                // 미저장 표시(사용자 09-23 정정): 점 자리를 **예약**(폭 = 작은 점 5px + 여백 · 시작 x = 머리글 "열린 파일"의 시작 x)해
+                // 파일명이 늘 같은 x에 서고, 미저장이면 그 자리 가운데에 **작은 점**(글자 ●보다 작게 · 5px 원)을 그린다.
+                let dot_x = hr.x + pad; // 머리글 글자와 같은 시작
+                let dot_d = px(5.0);
+                let dot_w = dot_d + px(6.0);
+                if f.dirty {
+                    dc.fill_ellipse(
+                        Rect::new(dot_x, rr.y + (rr.h - dot_d) / 2, dot_d, dot_d),
+                        th.text,
+                    );
+                }
+                let label = f.title.clone();
                 let more = self.open_files.len().saturating_sub(OPEN_FILES_MAX);
                 let label = if k + 1 == OPEN_FILES_MAX && more > 0 {
                     format!("{label}  (+{more})")
@@ -1136,8 +1143,9 @@ impl ProjectPanel {
                     label
                 };
                 let cr = self.open_close_rect(rr);
-                let clip = Rect::new(rr.x, rr.y, (cr.x - rr.x).max(0), rr.h);
-                dc.text(rr.x + pad * 2, ty, clip, &label, th.text);
+                let tx = dot_x + dot_w;
+                let clip = Rect::new(tx, rr.y, (cr.x - tx).max(0), rr.h);
+                dc.text(tx, ty, clip, &label, th.text);
                 // 머문 행 = × 닫기(오른쪽).
                 if self.open_hover == Some(k) {
                     let xw = dc.text_width("\u{00d7}");
