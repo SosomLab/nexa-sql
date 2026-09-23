@@ -161,3 +161,19 @@
 | **프로젝트 모드** | `.nsql-project` 인자 · 열기 · 전환 | **프로젝트 파일 안**(`local_dir = None`) · 기기별 오버라이드는 73 §4-2 `.local.json` | 탭·캐럿·패널·북마크·접속 표식(§4·70 §6-1) | 프로젝트 설정 절(`"settings": {…}` → 전역 위에 겹침 · 73 D-186~190 뒤) |
 
 규칙: ① 우선순위 = 프로젝트 > 폴더 > 파일(`WorkMode::of`) ② 프로젝트를 닫으면 **직전 모드**(폴더 인자로 켰으면 폴더 · 아니면 파일)로 돌아가고 편집기는 처음 실행 상태(journal §98) ③ 파일 모드에서 새 프로젝트를 만들면 로컬 북마크는 프로젝트로 **이관**(로컬 파일 비움 · 기존 프로젝트를 열 때는 이관 없음) ④ `.nsql/`은 첫 저장 때 만든다(빈 저장소를 위해 파일을 만들지 않는 기존 규칙 그대로) ⑤ 새 로컬 상태를 추가할 때는 자기 경로를 계산하지 말고 `WorkMode::local_dir()` 아래에 둔다(설정·기능별 분리를 한 자리에서).
+
+## 7. 프로젝트 파일 형식 v2 — JSON 헤더 + 탭별 payload 블록(09-23 · 사용자 "메타는 일반 텍스트 · payload는 바이너리 · CDATA식 탭별")
+
+```text
+{ "version": 1, "folders": [...], "tabs": [ { "path": "a.sql", "id": 12, "hash": "…", "blob": true, ... } ], "bookmarks": {...} }
+%%NSQL-BLOBS%%
+tab=12 len=1834
+<a.sql의 미저장 본문 1834바이트 그대로>
+tab=15 len=27
+<Script_2 본문>
+```
+
+- **헤더** = 종전 JSON 그대로(폴더 · 탭 메타 · 패널 · 북마크) — 사람이 읽고 diff한다. 본문 `text`는 **헤더에 넣지 않는다**(`"blob": true` 표식만).
+- **블록** = 마커 줄 `%%NSQL-BLOBS%%` 아래 탭마다 `tab=<id> len=<n>`(일반 텍스트 메타) + 줄바꿈 + **payload n 바이트**(이스케이프 없음 · 어떤 바이트든) + 줄바꿈. 길이로 자르므로 payload 안의 마커·따옴표·줄바꿈이 안전하고 JSON 재파싱 비용이 없다.
+- 부품 = [`nsql-settings::projfile`](../crates/nsql-settings/src/projfile.rs) `split(bytes) → (헤더, 블록들)` · `join(헤더, 블록들) → bytes` — GUI(`Project::load/to_document`)와 CLI(`nsql bookmark --project`: 헤더만 고치고 블록은 되붙임)가 같이 쓴다. 옛 파일(마커 없음 · `text`가 JSON 안)은 그대로 읽힌다.
+- payload는 탭 `id`로 되붙는다 → 본문을 담는 탭은 반드시 `id`가 있다(캡처가 늘 넣는다). 바뀜 비교(`project_last_json`)는 문서 전체 바이트.

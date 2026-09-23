@@ -263,7 +263,8 @@ struct App {
     tab_defines: HashMap<u64, Vec<(String, String, String)>>,
     /// 프로젝트 자동 저장(사용자 09-23): 마지막 저장 시각 · 마지막으로 쓴 JSON(같으면 안 쓴다).
     project_autosave_at: Instant,
-    project_last_json: String,
+    /// 마지막으로 쓴/읽은 프로젝트 **문서 전체**(헤더 JSON + 탭 payload 블록 · `Project::to_document`) — 바뀜 비교용.
+    project_last_json: Vec<u8>,
     /// 사건(탭 열기/닫기/전환 · 폴더 변경) 뒤 2초 디바운스 저장(09-23).
     project_touch_at: Option<Instant>,
     /// 종료 흐름(사용자 09-23): 프로젝트 저장 물음 → 미저장 파일 탭마다 물음 → 종료.
@@ -3370,7 +3371,7 @@ impl App {
                 self.bookmarks.load_json(&js);
             }
             self.bm_sync_ui();
-            self.project_last_json = self.project.to_json();
+            self.project_last_json = self.project.to_document();
         }
     }
 
@@ -3379,7 +3380,7 @@ impl App {
         self.project_capture_state();
         let r = self.project.save();
         if r.is_ok() {
-            self.project_last_json = self.project.to_json();
+            self.project_last_json = self.project.to_document();
         }
         r
     }
@@ -3490,7 +3491,10 @@ impl App {
         // ★ 작업 환경은 **교체**된다(사용자 09-23 "마지막 작업 상태 그대로"): 열려 있던 탭 중 복원 목록에 없는 것은 뒤에서 닫는다
         //   — 이전 프로젝트가 있었으면 그 파일(스크립트 본문)과 스냅숏(파일 탭 미저장분)에 이미 담겼고, 없었으면(파일 모드에서
         //   열기) 미저장 탭은 남긴다. 닫기는 복원 뒤에(마지막 탭을 닫으면 빈 탭이 새로 생기는 일을 피한다).
-        let prev_saved = self.project_last_json.contains("\"tabs\"");
+        let prev_saved = {
+            let n = b"\"tabs\"";
+            self.project_last_json.windows(n.len()).any(|w| w == n)
+        };
         let old_ids: Vec<u64> = (0..self.editors.tab_count())
             .map(|i| self.editors.tab_id(i))
             .collect();
@@ -3606,7 +3610,7 @@ impl App {
             self.toasts
                 .push(toast::ToastKind::Info, t(Msg::MnProject).to_string(), msg);
         }
-        self.project_last_json = self.project.to_json();
+        self.project_last_json = self.project.to_document();
         self.sync_open_files();
         self.layout();
         self.redraw();
@@ -3692,7 +3696,7 @@ impl App {
         self.project_touch_at = None;
         self.project_autosave_at = Instant::now();
         self.project_capture_state();
-        let js = self.project.to_json();
+        let js = self.project.to_document();
         if js != self.project_last_json && self.project.save().is_ok() {
             self.project_last_json = js;
         }
@@ -15843,7 +15847,7 @@ fn main() {
         open_file_dlg: None,
         tab_defines: HashMap::new(),
         project_autosave_at: Instant::now(),
-        project_last_json: String::new(),
+        project_last_json: Vec::new(),
         project_touch_at: None,
         exit_pending: false,
         exit_project_asked: false,

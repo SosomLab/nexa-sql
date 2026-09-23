@@ -71,13 +71,15 @@ fn workspace_path(project: Option<&str>) -> Option<PathBuf> {
 fn load(path: &Path) -> Result<Store, String> {
     if is_project_file(&path.to_string_lossy()) {
         // 프로젝트 파일 안의 `bookmarks` 객체(없으면 빈 저장소).
-        let text = match std::fs::read_to_string(path) {
+        // 헤더(JSON) + 탭 payload 블록(`projfile` · 09-23) — 북마크는 헤더에 있다.
+        let bytes = match std::fs::read(path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err("project file not found".into())
             }
             Err(e) => return Err(e.to_string()),
         };
+        let (text, _blobs) = nsql_settings::projfile::split(&bytes)?;
         let json = nsql_settings::json::parse(&text)?;
         let nsql_settings::json::Json::Obj(fields) = json else {
             return Err("project file is not a JSON object".into());
@@ -98,7 +100,9 @@ fn save(path: &Path, st: &Store) -> Result<(), String> {
     if is_project_file(&path.to_string_lossy()) {
         // 프로젝트 파일의 다른 키는 그대로 두고 `bookmarks`만 바꿔 쓴다(GUI가 다음 저장 때 자기 형식으로 다시 쓴다).
         use nsql_settings::json::{dump, parse, Json};
-        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        // 헤더만 바꾸고 탭 payload 블록은 그대로 되붙인다(`projfile` · 09-23).
+        let (text, blobs) = nsql_settings::projfile::split(&bytes)?;
         let Json::Obj(mut fields) = parse(&text)? else {
             return Err("project file is not a JSON object".into());
         };
@@ -108,7 +112,8 @@ fn save(path: &Path, st: &Store) -> Result<(), String> {
             None => fields.push(("bookmarks".into(), bm)),
         }
         let tmp = path.with_extension("nsql-project.tmp");
-        std::fs::write(&tmp, dump(&Json::Obj(fields))).map_err(|e| e.to_string())?;
+        let out = nsql_settings::projfile::join(&dump(&Json::Obj(fields)), &blobs);
+        std::fs::write(&tmp, out).map_err(|e| e.to_string())?;
         return std::fs::rename(&tmp, path).map_err(|e| e.to_string());
     }
     if let Some(d) = path.parent() {

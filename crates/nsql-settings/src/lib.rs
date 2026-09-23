@@ -31,6 +31,7 @@ pub const FILE_NAME: &str = "settings.conf";
 const OLD_DEFAULTS: &[(&str, &str)] = &[("editor.minimap_width", "80")];
 
 pub mod json;
+pub mod projfile;
 pub use json::{to_json, Import as JsonImport, Json};
 pub mod perf;
 pub use perf::{binding as perf_binding, Domain, PerfBinding, PerfMode, PerfRow, PerfSource, PERF};

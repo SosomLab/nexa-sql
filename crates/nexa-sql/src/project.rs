@@ -80,7 +80,9 @@ impl Project {
 
     /// 파일에서 읽는다(경로는 절대로 되돌린다 · 없는 폴더도 목록에는 남긴다 — 탐색기가 "없음"으로 보인다).
     pub(crate) fn load(path: &Path) -> Result<Project, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        // 헤더(JSON) + 탭 payload 블록(`projfile` · 09-23) — 옛 파일(마커 없음)은 블록 0 · 본문은 헤더의 `text`.
+        let (text, blobs) = nsql_settings::projfile::split(&bytes)?;
         let json = parse(&text)?;
         let mut p = Project {
             path: Some(path.to_path_buf()),
@@ -208,6 +210,15 @@ impl Project {
                 }
             }
         }
+        // 탭 payload 블록 → 같은 `id`의 탭 본문(블록이 있으면 헤더의 옛 `text`보다 우선).
+        for b in blobs {
+            if b.tab == 0 {
+                continue;
+            }
+            if let Some(t) = p.tabs.iter_mut().find(|t| t.id == b.tab) {
+                t.text = Some(String::from_utf8_lossy(&b.data).into_owned());
+            }
+        }
         Ok(p)
     }
 
@@ -264,8 +275,9 @@ impl Project {
                         escape(&t.after)
                     ));
                 }
-                if let Some(txt) = &t.text {
-                    out.push_str(&format!(", \"text\": \"{}\"", escape(txt)));
+                // 본문(`text`)은 헤더에 넣지 않는다 — 마커 아래 탭별 payload 블록(`projfile` · 사용자 09-23 "메타는 텍스트 · payload는 바이너리").
+                if t.text.is_some() && t.id != 0 {
+                    out.push_str(", \"blob\": true");
                 }
                 if t.preview {
                     out.push_str(", \"preview\": true");
@@ -322,7 +334,23 @@ impl Project {
         let Some(p) = &self.path else {
             return Err("no project path".into());
         };
-        std::fs::write(p, self.to_json()).map_err(|e| e.to_string())
+        std::fs::write(p, self.to_document()).map_err(|e| e.to_string())
+    }
+
+    /// 파일 전체 = JSON 헤더(`to_json`) + `%%NSQL-BLOBS%%` + 탭별 payload 블록(본문이 있는 탭 · `tab=<id> len=<n>` + 원문 바이트 ·
+    /// [`nsql_settings::projfile`] · 사용자 09-23). 바뀜 비교(`project_last_json`)도 이것으로.
+    pub(crate) fn to_document(&self) -> Vec<u8> {
+        let blobs: Vec<nsql_settings::projfile::Blob> = self
+            .tabs
+            .iter()
+            .filter_map(|t| {
+                t.text.as_ref().map(|txt| nsql_settings::projfile::Blob {
+                    tab: t.id,
+                    data: txt.as_bytes().to_vec(),
+                })
+            })
+            .collect();
+        nsql_settings::projfile::join(&self.to_json(), &blobs)
     }
 
     /// 다른 이름으로 — 경로만 바꾼다(상대 경로는 저장 때 새 위치 기준으로 다시 계산).
@@ -521,6 +549,8 @@ mod tests {
         p.tabs[0].text = Some("-- unsaved edit".into());
         p.tabs[0].disk_hash = 0xFFFF_FFFF_FFFF_FF01;
         p.tabs[0].id = 77;
+        // 본문(payload)은 `id`로 탭에 되붙는다(`projfile` 블록 · 09-23) — 스크립트 탭도 id가 있어야 본문이 왕복한다.
+        p.tabs[1].id = 78;
         p.expanded = vec![dir.join("sql"), other.join("x")];
         p.panel = Some("bookmarks".into());
         p.search = Some("select \"q\"".into());

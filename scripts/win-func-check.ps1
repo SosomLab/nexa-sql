@@ -283,7 +283,8 @@ Set-Content -LiteralPath $projSave -Encoding UTF8 -Value "{ `"version`": 1, `"fo
 Run-Scenario -Id S52 -Title "프로젝트 저장 3번 = 탭 그대로 · 파일에 탭 경로(§92)" -Cmd ("project.load:" + $projSave + ",open:" + $a + ",open:" + $b + ",@after:1000:view.project,@after:1300:bookmark.set_1,@after:1400:ui.click:400/161,@after:1500:bookmark.set_2,@after:1600:ui.click:460/80,@after:1700:bookmark.set_1,@after:1800:project.save,@after:2600:project.save,@after:3400:project.save") -WaitMs 5000 -Expect "탭 = Script_1 · a.sql · b.sql 셋뿐(저장 3번 뒤에도 추가 없음) · OPEN FILES 3줄 · 파일 검사 mn1x2/mn2x1 = 파일 단위 니모닉 보존"
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S52")) {
 $savedTxt = if (Test-Path -LiteralPath $projSave) { Get-Content -LiteralPath $projSave -Raw } else { "" }
-Say ("  file: tabs=" + ($savedTxt -match '"tabs"') + " a.sql=" + ($savedTxt -match '"path": "a\.sql"') + " b.sql=" + ($savedTxt -match '"path": "b\.sql"') + " expanded=" + ($savedTxt -match '"expanded"') + " panel=" + ($savedTxt -match '"panel": "project"') + " mn1x2=" + (([regex]::Matches($savedTxt, '"mn": 1')).Count -eq 2) + " mn2x1=" + (([regex]::Matches($savedTxt, '"mn": 2')).Count -eq 1))
+Say ("  file: tabs=" + ($savedTxt -match '"tabs"') + " a.sql=" + ($savedTxt -match '"path": "a\.sql"') + " b.sql=" + ($savedTxt -match '"path": "b\.sql"') + " expanded=" + ($savedTxt -match '"expanded"') + " panel=" + ($savedTxt -match '"panel": "project"') + " mn1x2=" + (([regex]::Matches($savedTxt, '"mn": 1')).Count -eq 2) + " mn2x1=" + (([regex]::Matches($savedTxt, '"mn": 2')).Count -eq 1) + " blob=" + ($savedTxt -match '%%NSQL-BLOBS%%') + " notext=" + (-not ($savedTxt -match '"title": "[^"]*"[^
+]*"text":')))
 }
 # §92 프로젝트 로딩 = 작업 환경 **교체**(복원 목록에 없던 깨끗한 탭은 닫힘) + 보이던 패널(북마크) + 접속 표식 토스트.
 Set-Content -LiteralPath $projWs -Encoding UTF8 -Value $projWsJson
