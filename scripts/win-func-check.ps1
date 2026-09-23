@@ -304,4 +304,13 @@ Run-Scenario -Id S58 -Title "폴더 모드 = 북마크가 <폴더>/.nsql/에(§9
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S58")) {
 Say ("  file: folder_ws=" + (Test-Path -LiteralPath $folderWs))
 }
+# §103 프로젝트가 없어도 OPEN FILES(사용자 09-23 "프로젝트 여부와 상관없이 열린 파일은 보여지도록").
+Run-Scenario -Id S59 -Title "파일 모드 + 프로젝트 패널 = OPEN FILES 표시(§103)" -Cmd ("open:" + $a + ",open:" + $b + ",@after:1200:view.project") -WaitMs 3500 -Expect "머리글 '프로젝트 없음' 아래 OPEN FILES 3줄(Script_1 · a.sql · b.sql 활성) → 파일 필터 → 안내 글·링크 셋"
+# §104 북마크 디바운스 저장이 스스로 깬다(사용자 09-23 "값이 바뀌어도 저장이 안 됨"): 토글 뒤 아무 사건 없이 기다려도 파일이 써진다.
+$wsHome = Join-Path $HomeDir "workspaces\default.nsql-workspace"
+if (Test-Path -LiteralPath $wsHome) { Remove-Item -LiteralPath $wsHome -Force }
+Run-Scenario -Id S60 -Title "파일 모드 북마크 = 사건 없이도 디바운스 저장(§104)" -Cmd ("open:" + $q500 + ",@after:800:ui.click:400/141,@after:1000:bookmark.toggle") -WaitMs 4500 -Expect "거터 1줄 띠 · 파일 검사 ws_saved=True(토글 뒤 사건 없이 1~5초 안에 default.nsql-workspace 생성)"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S60")) {
+Say ("  file: ws_saved=" + (Test-Path -LiteralPath $wsHome))
+}
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

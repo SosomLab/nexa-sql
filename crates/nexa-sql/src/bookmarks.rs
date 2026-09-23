@@ -176,6 +176,16 @@ impl Bookmarks {
         if n > 0 {
             self.touch();
         }
+        // 파일·폴더 모드: 이름 없는 탭 열쇠는 메모리 전용이므로 파일에서 온 것(옛 규칙의 잔재 · 지난 실행의 탭 id)은 버린다.
+        if project.is_none() {
+            let before = self.store.items.len();
+            self.store
+                .items
+                .retain(|b| !matches!(b.doc, DocKey::Scratch { .. }));
+            if self.store.items.len() != before {
+                self.touch();
+            }
+        }
         // ★ 프로젝트가 열려 있으면 북마크의 원천은 **프로젝트 파일**(09-23 · `project_restore`가 내장 북마크를 올린다) —
         //   워크스페이스 파일은 읽기만(옛 파일 이관) 하고 쓰지 않는다. 프로젝트 없음 = `default.nsql-workspace` 그대로.
         if project.is_some() {
@@ -238,6 +248,15 @@ impl Bookmarks {
         false
     }
 
+    /// 디바운스 저장이 걸려 있으면 그 **마감 시각**(입력 뒤 1초 · 처음 더럽혀진 뒤 최대 5초 중 이른 것) — 호스트의 틱 스케줄러가
+    /// 이 시각에 깨어 `tick_save`를 부른다(사용자 09-23 "값이 바뀌어도 저장이 안 됨" = 다른 사건이 없으면 틱이 안 돌던 결함).
+    pub(crate) fn next_save_at(&self, now: Instant) -> Option<Instant> {
+        let d = self.dirty_since?;
+        let by_debounce = d + SAVE_DEBOUNCE;
+        let by_max = self.first_dirty.map_or(by_debounce, |f| f + SAVE_MAX_WAIT);
+        Some(by_debounce.min(by_max).max(now))
+    }
+
     /// 즉시 저장(닫기·전환·종료).
     pub(crate) fn save_now(&mut self) {
         self.dirty_since = None;
@@ -254,7 +273,23 @@ impl Bookmarks {
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let text = self.store.to_json();
+        // ★ 파일·폴더 모드(= 로컬 워크스페이스 파일에 쓰는 경우)의 이름 없는 탭 북마크는 **메모리 전용**(사용자 09-23 "일반·폴더 모드의
+        //   이름 없는 탭은 임시 · 영속은 의미 없음 · 복원 필요 없는 것은 파일에 쓰지 않는다") — 파일에는 파일·객체 열쇠만 담는다.
+        //   프로젝트 모드는 여기를 지나지 않는다(`path = None` · 호스트가 `store.to_json()` 전체를 프로젝트 파일에 담고 §101로 재매핑).
+        let text = if self
+            .store
+            .items
+            .iter()
+            .any(|b| matches!(b.doc, DocKey::Scratch { .. }))
+        {
+            let mut persisted = self.store.clone();
+            persisted
+                .items
+                .retain(|b| !matches!(b.doc, DocKey::Scratch { .. }));
+            persisted.to_json()
+        } else {
+            self.store.to_json()
+        };
         let tmp = p.with_extension("nsql-workspace.tmp");
         if std::fs::write(&tmp, text).is_ok() {
             let _ = std::fs::rename(&tmp, p);
@@ -851,5 +886,64 @@ mod tests {
             bm.store.get(id2).map(|b| b.doc.clone()),
             Some(DocKey::File { .. })
         ));
+    }
+
+    /// 디바운스 마감(사용자 09-23 "값이 바뀌어도 저장 안 됨" · 틱 스케줄러 깨움): 깨끗 = None · 더럽힌 뒤 = +1초 · 계속 더럽히면 처음 +5초 상한.
+    #[test]
+    fn next_save_at_follows_debounce_and_max_wait() {
+        let mut bm = Bookmarks::new();
+        let t0 = Instant::now();
+        assert_eq!(bm.next_save_at(t0), None);
+        bm.touch();
+        let d = bm.dirty_since.expect("dirty");
+        assert_eq!(bm.next_save_at(t0), Some(d + SAVE_DEBOUNCE));
+        // 4.5초 동안 계속 더럽혔다고 치면(dirty_since만 뒤로) 상한 = first_dirty + 5초가 먼저.
+        bm.dirty_since = Some(d + Duration::from_millis(4500));
+        assert_eq!(bm.next_save_at(t0), Some(d + SAVE_MAX_WAIT));
+    }
+
+    /// 파일·폴더 모드의 이름 없는 탭 북마크 = 메모리 전용(사용자 09-23): 로컬 파일에는 안 쓰고 · 다시 읽으면 남지 않으며 ·
+    /// 프로젝트에 담는 `store.to_json()`에는 그대로 있다.
+    #[test]
+    fn scratch_bookmarks_stay_in_memory_in_file_mode() {
+        let dir = std::env::temp_dir().join(format!("nsql-bm-scratch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let mut bm = Bookmarks::new();
+        bm.set_folder(Some(dir.clone()));
+        bm.bind_project(None);
+        let a = make_anchor(&["x", "y"], 0, 0, &RelocateOpts::default());
+        bm.store
+            .add(DocKey::Scratch { tab: 3 }, a.clone(), 1, true, 100, 1000)
+            .expect("add");
+        bm.store
+            .add(
+                DocKey::File {
+                    path: "C:/x/a.sql".into(),
+                },
+                a,
+                1,
+                true,
+                100,
+                1000,
+            )
+            .expect("add");
+        assert!(
+            bm.store.to_json().contains("\"tab\": 3"),
+            "project embedding keeps scratch"
+        );
+        bm.touch();
+        bm.save_now();
+        let local = dir
+            .join(".nsql")
+            .join("workspaces")
+            .join("default.nsql-workspace");
+        let back = Store::from_json(&std::fs::read_to_string(&local).expect("read")).expect("json");
+        assert_eq!(back.items.len(), 1, "local file has only the file bookmark");
+        assert!(matches!(back.items[0].doc, DocKey::File { .. }));
+        assert_eq!(bm.store.items.len(), 2, "memory still has both");
+        bm.bind_project(None);
+        assert_eq!(bm.store.items.len(), 1, "reload = scratch gone");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

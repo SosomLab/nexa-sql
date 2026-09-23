@@ -3681,6 +3681,26 @@ impl App {
         tb.goto_line(line + 1);
     }
 
+    /// 자동 저장의 다음 마감 시각(틱 스케줄러 깨움용 · 사용자 09-23): 사건 디바운스면 `touch + 2초` · 아니면 `마지막 저장 + 주기`.
+    fn project_autosave_next(&self, now: Instant) -> Option<Instant> {
+        if !self.project.is_open() || !self.settings.flag("project.autosave") {
+            return None;
+        }
+        let secs = self.settings.int("project.autosave_secs").max(5) as u64;
+        let periodic = self.project_autosave_at + Duration::from_secs(secs);
+        let touched = self.project_touch_at.map(|t| t + Duration::from_secs(2));
+        Some(touched.map_or(periodic, |t| t.min(periodic)).max(now))
+    }
+
+    /// ★ 종료 직전 마지막 저장(사용자 09-23 "프로그램 종료 시 꼭 저장"): 프로젝트(자동 저장이 켜져 있을 때 · 꺼져 있으면
+    /// `request_exit`의 물음이 이미 처리) + **북마크 워크스페이스**(디바운스를 기다리지 않고 지금). 창 닫기·File ▸ Exit 두 길 모두.
+    fn flush_on_exit(&mut self) {
+        if self.project.is_open() && self.settings.flag("project.autosave") {
+            let _ = self.project_save();
+        }
+        self.bookmarks.save_now();
+    }
+
     /// 주기 자동 저장(설정 `project.autosave` · `project.autosave_secs`) — 바뀐 것이 있을 때만 쓴다.
     fn project_autosave_tick(&mut self) {
         if !self.project.is_open() || !self.settings.flag("project.autosave") {
@@ -14641,6 +14661,14 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.tx_guard_tick(now) {
             next = next.min(t);
         }
+        // 🔧 북마크 디바운스 저장 · 프로젝트 자동 저장의 **깨움**(사용자 09-23 "값이 바뀌어도 저장 안 됨"): 종전에는 다른 사건이
+        //   루프를 깨울 때만 `tick_save`/`project_autosave_tick`이 돌아 앱이 가만히 있으면 저장이 미뤄졌다 → 마감 시각에 스스로 깬다.
+        if let Some(t) = self.bookmarks.next_save_at(now) {
+            next = next.min(t);
+        }
+        if let Some(t) = self.project_autosave_next(now) {
+            next = next.min(t);
+        }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
@@ -15158,13 +15186,14 @@ impl ApplicationHandler<Wake> for App {
         }
         match &event {
             WindowEvent::CloseRequested => {
-                if self.all_sess().any(|s| !s.tx_pending.is_empty()) {
-                    self.request_exit();
-                    self.redraw();
-                    if !self.exit_requested {
-                        return;
-                    }
+                // 🔧 창 닫기(X)도 **늘** 종료 흐름(`request_exit` = 프로젝트 저장/물음 · 미저장 파일 탭 물음 · 트랜잭션 확인)을
+                //   지난다 — 종전에는 미커밋이 없으면 흐름을 건너뛰어 프로젝트·북마크가 저장되지 않았다(사용자 09-23 "종료 시 꼭 저장").
+                self.request_exit();
+                self.redraw();
+                if !self.exit_requested {
+                    return;
                 }
+                self.flush_on_exit();
                 self.persist_window_sizes(true);
                 for s in self.all_sess() {
                     s.worker.send(worker::Cmd::Quit);
@@ -15466,10 +15495,8 @@ impl ApplicationHandler<Wake> for App {
             self.sync_modal();
         }
         if self.exit_requested {
+            self.flush_on_exit();
             self.persist_window_sizes(true);
-            if self.project.is_open() {
-                let _ = self.project_save();
-            }
             for s in self.all_sess() {
                 s.worker.send(worker::Cmd::Quit);
             }

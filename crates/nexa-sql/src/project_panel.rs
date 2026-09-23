@@ -223,9 +223,9 @@ impl ProjectPanel {
         )
     }
 
-    /// OPEN FILES 섹션 높이(헤더 1줄 + 항목 ≤ 8줄 · 프로젝트 없으면 0).
+    /// OPEN FILES 섹션 높이(헤더 1줄 + 항목 ≤ 8줄) — **프로젝트가 없어도** 보인다(사용자 09-23 "프로젝트 여부와 상관없이 열린 파일은 보여지도록").
     fn open_files_h(&self, rh: i32) -> i32 {
-        if self.name.is_none() || self.open_files.is_empty() {
+        if self.open_files.is_empty() {
             return 0;
         }
         rh * (1 + self.open_files.len().min(OPEN_FILES_MAX) as i32)
@@ -970,15 +970,7 @@ impl ProjectPanel {
             }
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
-                if self.name.is_none() {
-                    // 빈 상태: 링크 행만 반응.
-                    if let Some((id, _)) = self.links.iter().find(|(_, r)| r.contains(p)) {
-                        self.command = Some((*id).into());
-                        return true;
-                    }
-                    return false;
-                }
-                // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23).
+                // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23) — 프로젝트가 없어도(빈 상태 분기보다 먼저).
                 if let Some(k) = self.open_rows.iter().position(|r| r.contains(p)) {
                     if let Some(f) = self.open_files.get(k) {
                         // × = 그 탭 닫기(미저장이면 호스트가 묻는다) · 그 밖 = 그 탭으로.
@@ -990,6 +982,14 @@ impl ProjectPanel {
                         });
                         return true;
                     }
+                }
+                if self.name.is_none() {
+                    // 빈 상태: 링크 행만 반응.
+                    if let Some((id, _)) = self.links.iter().find(|(_, r)| r.contains(p)) {
+                        self.command = Some((*id).into());
+                        return true;
+                    }
+                    return false;
                 }
                 // 헤더(프로젝트 이름) 클릭 = 프로젝트 전환(최근 목록 팔레트 · 사용자 09-22).
                 if self.header_rect.contains(p) {
