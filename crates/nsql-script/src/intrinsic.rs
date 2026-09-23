@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 pub struct Context {
     /// 프로젝트 파일(`.nsql-project`) — 있으면 `workspaceFolder` = 그 폴더.
     pub project_file: Option<PathBuf>,
+    /// 폴더 모드의 작업 폴더(`nexa-sql .` · 사용자 09-23) — 프로젝트가 없을 때 `workspaceFolder`가 된다.
+    pub workspace_dir: Option<PathBuf>,
     /// 등록 폴더(이름 · 절대 경로) — `workspaceFolder:이름`.
     pub folders: Vec<(String, PathBuf)>,
     /// 활성 편집기의 파일(미저장 스크립트면 None).
@@ -55,18 +57,24 @@ pub fn build(ctx: &Context) -> BTreeMap<String, String> {
         std::path::MAIN_SEPARATOR.to_string(),
     );
     put(&mut m, &["os", "NSQL_OS"], std::env::consts::OS.to_string());
+    // 작업 폴더 = 프로젝트 파일 폴더 > 폴더 모드의 폴더(사용자 09-23 모드 셋) > 없음.
+    let ws_dir: Option<PathBuf> = ctx
+        .project_file
+        .as_ref()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .or_else(|| ctx.workspace_dir.clone());
+    if let Some(dir) = &ws_dir {
+        put(&mut m, &["workspaceFolder", "NSQL_PROJECT_DIR"], s(dir));
+        if let Some(b) = dir.file_name() {
+            put(
+                &mut m,
+                &["workspaceFolderBasename"],
+                b.to_string_lossy().into_owned(),
+            );
+        }
+    }
     if let Some(pf) = &ctx.project_file {
         put(&mut m, &["workspaceFile", "NSQL_PROJECT_FILE"], s(pf));
-        if let Some(dir) = pf.parent() {
-            put(&mut m, &["workspaceFolder", "NSQL_PROJECT_DIR"], s(dir));
-            if let Some(b) = dir.file_name() {
-                put(
-                    &mut m,
-                    &["workspaceFolderBasename"],
-                    b.to_string_lossy().into_owned(),
-                );
-            }
-        }
         if let Some(stem) = pf.file_stem() {
             put(
                 &mut m,
@@ -113,11 +121,8 @@ pub fn build(ctx: &Context) -> BTreeMap<String, String> {
                 .map(|e| format!(".{}", e.to_string_lossy()))
                 .unwrap_or_default(),
         );
-        // 프로젝트 폴더(없으면 등록 폴더) 기준 상대 경로 — VS Code `relativeFile`.
-        let base = ctx
-            .project_file
-            .as_ref()
-            .and_then(|p| p.parent().map(Path::to_path_buf))
+        // 작업 폴더(없으면 등록 폴더) 기준 상대 경로 — VS Code `relativeFile`.
+        let base = ws_dir
             .into_iter()
             .chain(ctx.folders.iter().map(|(_, d)| d.clone()))
             .find(|b| f.starts_with(b));
@@ -205,6 +210,7 @@ mod tests {
     fn ctx() -> Context {
         Context {
             project_file: Some(PathBuf::from("/w/demo.nsql-project")),
+            workspace_dir: None,
             folders: vec![
                 ("demo".into(), PathBuf::from("/w")),
                 ("nexa-ui".into(), PathBuf::from("/x/nexa-ui")),
@@ -241,6 +247,20 @@ mod tests {
         assert_eq!(m["config:log.file"], "${nsqlHome}/log.txt");
         assert_eq!(m["os"], std::env::consts::OS);
         assert!(m.contains_key("pathSeparator") && m.contains_key("/"));
+    }
+
+    /// 폴더 모드(사용자 09-23): 프로젝트가 없어도 `workspaceFolder` = 작업 폴더 · `workspaceFile`/`workspaceName`은 없음.
+    #[test]
+    fn folder_mode_gives_workspace_folder_without_project() {
+        let m = build(&Context {
+            workspace_dir: Some(PathBuf::from("/w")),
+            file: Some(PathBuf::from("/w/sql/a.sql")),
+            ..Default::default()
+        });
+        let p = |s: &str| PathBuf::from(s).to_string_lossy().into_owned();
+        assert_eq!(m["workspaceFolder"], p("/w"));
+        assert_eq!(m["relativeFile"], p("sql/a.sql"));
+        assert!(!m.contains_key("workspaceFile") && !m.contains_key("workspaceName"));
     }
 
     /// 없는 것은 변수를 만들지 않는다(글자 그대로 남는다).

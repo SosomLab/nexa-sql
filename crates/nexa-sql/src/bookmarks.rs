@@ -29,8 +29,13 @@ pub(crate) struct Bookmarks {
     stale_days: u32,
     /// 워크스페이스 파일(없으면 저장 안 함).
     path: Option<PathBuf>,
+    /// 폴더 모드의 작업 폴더(`nexa-sql .` · 사용자 09-23) — 파일 모드 로컬 상태를 `<폴더>/.nsql/`에(`project::WorkMode`).
+    folder: Option<PathBuf>,
     /// 탭 id → (마지막으로 소비한 줄 변경 번호, 그때의 epoch).
     seq: HashMap<u64, (u64, u64)>,
+    /// 다음 `bind_project`에서 **로컬 → 프로젝트 이관**(파일 모드에서 새 프로젝트를 만들 때 · 사용자 09-23): 지금 것을 로컬
+    /// 워크스페이스에 다시 쓰지 않고 로컬 파일을 비운다(프로젝트 파일에 이미 담겼다 · 닫으면 로컬 = 빈 세트).
+    migrate_local: bool,
     /// 탭 id → 마지막에 본 문서 열쇠(이름 없는 탭이 파일로 저장되면 열쇠를 옮긴다 · C-21).
     docs: HashMap<u64, DocKey>,
     dirty_since: Option<Instant>,
@@ -62,7 +67,9 @@ impl Bookmarks {
             max_total: 5000,
             stale_days: 30,
             path: None,
+            folder: None,
             seq: HashMap::new(),
+            migrate_local: false,
             docs: HashMap::new(),
             dirty_since: None,
             first_dirty: None,
@@ -107,21 +114,54 @@ impl Bookmarks {
 
     // ───────────── 저장소(워크스페이스 파일) ─────────────
 
-    /// 워크스페이스 파일 경로 — 프로젝트가 있으면 그 이름, 없으면 `default`(67 D-148).
-    pub(crate) fn workspace_path(project: Option<&Path>) -> Option<PathBuf> {
-        let dir = nsql_settings::config_dir()?.join("workspaces");
-        let stem = project
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().into_owned())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "default".into());
-        Some(dir.join(format!("{stem}.nsql-workspace")))
+    /// 폴더 모드(`nexa-sql .`)의 작업 폴더 — 기동 때 한 번(`bind_project` 전에).
+    pub(crate) fn set_folder(&mut self, dir: Option<PathBuf>) {
+        self.folder = dir;
+    }
+
+    /// 워크스페이스 파일 자리 = 작업 모드(`project::WorkMode` · 사용자 09-23): **파일 모드** = 전역 `<설정>/workspaces/default.nsql-workspace` ·
+    /// **폴더 모드** = `<폴더>/.nsql/default.nsql-workspace` · **프로젝트 모드** = 옛 `<설정>/workspaces/<이름>.nsql-workspace`(읽기만 · 이관용 ·
+    /// 원천은 프로젝트 파일).
+    pub(crate) fn workspace_path(&self, project: Option<&Path>) -> Option<PathBuf> {
+        match crate::project::WorkMode::of(project, self.folder.as_deref()) {
+            crate::project::WorkMode::Project(p) => {
+                let dir = nsql_settings::config_dir()?.join("workspaces");
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "default".into());
+                Some(dir.join(format!("{stem}.nsql-workspace")))
+            }
+            mode => Some(
+                mode.local_dir()?
+                    .join("workspaces")
+                    .join("default.nsql-workspace"),
+            ),
+        }
     }
 
     /// 프로젝트가 정해졌다(시작 · 전환 · 닫기) → 그 워크스페이스의 북마크를 읽는다(먼저 지금 것을 저장).
+    /// 파일 모드에서 새 프로젝트를 만들 때(사용자 09-23 "로컬과 프로젝트 북마크는 분리") — 다음 `bind_project`가 지금 것을 로컬에
+    /// 되쓰지 않고 로컬 파일을 비우게 한다(= 이관 · 프로젝트 파일에는 호스트가 이미 담았다).
+    pub(crate) fn mark_migrate_local(&mut self) {
+        self.migrate_local = true;
+    }
+
     pub(crate) fn bind_project(&mut self, project: Option<&Path>) {
-        self.save_now();
-        self.path = Self::workspace_path(project);
+        if std::mem::take(&mut self.migrate_local) {
+            // 이관: 로컬 워크스페이스 파일 = 빈 저장소(있을 때만 씀 · 없으면 그대로 없음).
+            self.dirty_since = None;
+            self.first_dirty = None;
+            if let Some(p) = self.path.as_ref().filter(|p| p.exists()) {
+                if let Err(e) = std::fs::write(p, Store::new().to_json()) {
+                    eprintln!("bookmarks: {}: {e}", p.display());
+                }
+            }
+        } else {
+            self.save_now();
+        }
+        self.path = self.workspace_path(project);
         self.store = Store::new();
         self.seq.clear();
         if let Some(p) = &self.path {
@@ -706,5 +746,55 @@ impl Bookmarks {
         if any {
             self.touch();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 작업 모드 셋(사용자 09-23): 폴더 모드 = `<폴더>/.nsql/workspaces/default.nsql-workspace` · 파일 모드에서 새 프로젝트를 만들면
+    /// 로컬 북마크는 프로젝트로 **이관**(로컬 파일 = 빈 저장소) · 프로젝트 모드는 파일에 안 쓴다(`path = None`).
+    #[test]
+    fn folder_mode_path_and_migrate_local_on_new_project() {
+        let dir = std::env::temp_dir().join(format!("nsql-bm-modes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let mut bm = Bookmarks::new();
+        bm.set_folder(Some(dir.clone()));
+        bm.bind_project(None);
+        let local = dir
+            .join(".nsql")
+            .join("workspaces")
+            .join("default.nsql-workspace");
+        assert_eq!(bm.path.as_deref(), Some(local.as_path()));
+        // 북마크 하나 → 저장 → 로컬 파일 생김(폴더 모드 = `.nsql/` 아래).
+        let a = make_anchor(&["x", "y"], 0, 0, &RelocateOpts::default());
+        bm.store
+            .add(
+                DocKey::File {
+                    path: "C:/x/a.sql".into(),
+                },
+                a,
+                1,
+                true,
+                100,
+                1000,
+            )
+            .expect("add");
+        bm.touch();
+        bm.save_now();
+        assert!(local.is_file(), "folder mode writes under <dir>/.nsql");
+        // 새 프로젝트(파일 모드 → 프로젝트): 이관 = 로컬 파일은 빈 저장소 · 프로젝트 모드는 path = None.
+        bm.mark_migrate_local();
+        bm.bind_project(Some(Path::new("D:/w/demo.nsql-project")));
+        assert!(bm.path.is_none());
+        let back = Store::from_json(&std::fs::read_to_string(&local).expect("read")).expect("json");
+        assert!(back.items.is_empty(), "local file emptied after migration");
+        // 닫기 → 폴더 모드로 복귀 = 빈 로컬 세트(프로젝트 것이 남지 않는다).
+        bm.bind_project(None);
+        assert_eq!(bm.path.as_deref(), Some(local.as_path()));
+        assert!(bm.store.items.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

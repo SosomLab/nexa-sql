@@ -119,8 +119,8 @@ impl CopyBtn {
             ),
             // 눌림 = 배경 진하게 · 아이콘 작게 · 1px 아래로(안으로 들어가는 느낌).
             Look::Pressed => (th.text, 0.30, th.text_dim, th.text, 13.0, px(1.0)),
-            // 체크 = 녹색 배경(처음 진하다가 옅어짐) + 녹색 테두리 + 녹색 체크.
-            Look::Done(p) => (th.ok, 0.32 * (1.0 - 0.6 * p), th.ok, th.ok, 16.0, 0),
+            // 체크 = 녹색 배경(처음 진하다가 옅어짐) + 녹색 테두리 + 녹색 체크 · 체크 아이콘은 복사 아이콘의 75%(12px · 사용자 09-23).
+            Look::Done(p) => (th.ok, 0.32 * (1.0 - 0.6 * p), th.ok, th.ok, 12.0, 0),
         };
         dc.fill_round_rect_alpha(r, px(3.0), bg_color, bg_alpha * alpha);
         dc.stroke_round_rect_alpha(r, px(3.0), border, 1.0, alpha);

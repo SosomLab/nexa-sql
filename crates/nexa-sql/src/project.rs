@@ -331,6 +331,40 @@ impl Project {
     }
 }
 
+/// ★ 작업 모드 셋(사용자 09-23): **파일 모드**(인자 없음 · 로컬 상태 = 전역 설정 폴더 `%APPDATA%`) · **폴더 모드**(`nexa-sql .` ·
+/// `nexa-sql <폴더>` · 로컬 상태 = `<폴더>/.nsql/`) · **프로젝트 모드**(`.nsql-project` · 상태는 프로젝트 파일 안).
+/// 지금 모드가 나누는 것은 **북마크**뿐 — 설정 오버라이드·최근 파일·되돌리기 기록 같은 다른 로컬 상태도 앞으로는 [`WorkMode::local_dir`]
+/// 한 자리에서 나눈다(67 §6). 프로젝트 모드는 `local_dir = None`(파일 안에 담는다 · 기기별 오버라이드는 73 §4-2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WorkMode {
+    File,
+    Folder(PathBuf),
+    Project(PathBuf),
+}
+
+impl WorkMode {
+    /// 폴더 모드의 로컬 상태 폴더 이름.
+    pub(crate) const LOCAL_DIR: &'static str = ".nsql";
+
+    /// 우선순위 = 프로젝트 > 폴더 > 파일.
+    pub(crate) fn of(project: Option<&Path>, folder: Option<&Path>) -> WorkMode {
+        match (project, folder) {
+            (Some(p), _) => WorkMode::Project(p.to_path_buf()),
+            (None, Some(d)) => WorkMode::Folder(d.to_path_buf()),
+            (None, None) => WorkMode::File,
+        }
+    }
+
+    /// 로컬 상태를 두는 폴더 — 파일 모드 = 전역 설정 폴더 · 폴더 모드 = `<폴더>/.nsql` · 프로젝트 모드 = None.
+    pub(crate) fn local_dir(&self) -> Option<PathBuf> {
+        match self {
+            WorkMode::File => nsql_settings::config_dir(),
+            WorkMode::Folder(d) => Some(d.join(Self::LOCAL_DIR)),
+            WorkMode::Project(_) => None,
+        }
+    }
+}
+
 /// 상대 경로 → 절대(`base` 아래) · 이미 절대면 그대로.
 fn resolve(rel: &str, base: Option<&Path>) -> PathBuf {
     let p = PathBuf::from(rel);
@@ -395,6 +429,28 @@ pub(crate) fn push_recent(raw: &str, path: &Path) -> String {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    /// 작업 모드 셋(사용자 09-23): 프로젝트 > 폴더 > 파일 · 로컬 상태 폴더 = 전역 / `<폴더>/.nsql` / 없음.
+    #[test]
+    fn work_mode_priority_and_local_dir() {
+        let pj = Path::new("D:/w/x.nsql-project");
+        let dir = Path::new("D:/w");
+        assert_eq!(
+            WorkMode::of(Some(pj), Some(dir)),
+            WorkMode::Project(pj.to_path_buf())
+        );
+        assert_eq!(
+            WorkMode::of(None, Some(dir)),
+            WorkMode::Folder(dir.to_path_buf())
+        );
+        assert_eq!(WorkMode::of(None, None), WorkMode::File);
+        assert_eq!(
+            WorkMode::Folder(dir.to_path_buf()).local_dir(),
+            Some(dir.join(".nsql"))
+        );
+        assert_eq!(WorkMode::Project(pj.to_path_buf()).local_dir(), None);
+        assert_eq!(WorkMode::File.local_dir(), nsql_settings::config_dir());
+    }
 
     #[test]
     fn json_round_trip_keeps_folders_relative_under_base() {

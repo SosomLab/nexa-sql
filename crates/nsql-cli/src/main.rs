@@ -506,6 +506,7 @@ fn intrinsic_vars(path: &str, dialect: Dialect) -> std::collections::BTreeMap<St
         .flatten();
     let ctx = nsql_script::intrinsic::Context {
         project_file: None,
+        workspace_dir: None,
         folders: Vec::new(),
         file,
         line: None,

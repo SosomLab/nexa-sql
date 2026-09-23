@@ -277,6 +277,8 @@ struct App {
     /// 시작 인자(사용자 09-22): 프로젝트 파일 · 열 파일들 · 첫 인스턴스인가 · 인스턴스 잠금(살아 있는 동안 쥔다).
     arg_project: Option<PathBuf>,
     arg_files: Vec<PathBuf>,
+    /// 실행 인자의 작업 폴더(`nexa-sql .` · 사용자 09-23) — 파일 모드의 로컬 상태(북마크)를 `<폴더>/.nsql/`에.
+    arg_folder: Option<PathBuf>,
     first_instance: bool,
     _instance_lock: Option<std::fs::File>,
     /// 폴더 고르기의 시작 폴더(설정의 지금 값).
@@ -3190,6 +3192,8 @@ impl App {
                 if self.project.is_open() {
                     let _ = self.project_save();
                     self.project_set(project::Project::default(), false);
+                    // ★ 닫은 뒤 = 처음 실행 상태(사용자 09-23): 전체 상태는 위 저장으로 프로젝트 파일·스냅숏에 담겼다.
+                    self.reset_workspace_to_initial();
                     self.sess.status = t(Msg::StProjectClosed).into();
                 }
             }
@@ -3244,6 +3248,20 @@ impl App {
         self.redraw();
     }
 
+    /// ★ 프로젝트를 닫은 뒤 = **처음 실행 상태**(사용자 09-23 "기본 편집 탭 1개만 남기고 모두 닫기 · 초기 상태"): 편집기는
+    /// 빈 `Script_1` 하나(전체 상태는 직전 `project_save`가 프로젝트 파일·스냅숏에 담았다) · 좌측은 객체 탐색기만 · 북마크는
+    /// 로컬 세트(`bind_project(None)`이 이미 바꿈) · 접속은 그대로(접속은 사용자 몫 · 70 §2).
+    fn reset_workspace_to_initial(&mut self) {
+        self.editors.reset_to_initial();
+        self.side_panel_close_others("view.explorer");
+        self.sync_grid_tab();
+        self.sync_gate();
+        self.apply_tab_line_colors();
+        self.sync_open_files();
+        self.layout();
+        self.redraw();
+    }
+
     /// 프로젝트 파일을 읽어 현재 프로젝트로(현재 것은 먼저 저장).
     fn project_load_path(&mut self, path: &Path) {
         self.palette.close();
@@ -3293,6 +3311,10 @@ impl App {
         match self.project.save() {
             Ok(()) => {
                 self.sess.status = tf(Msg::StProjectSaved, &[&nexa_fs::path::display(&path)]);
+                // 파일 모드 → 새 프로젝트: 로컬 북마크는 프로젝트로 **이관**(로컬 파일 비움 · 사용자 09-23 "닫으면 북마크도 초기화").
+                if !prev.is_open() {
+                    self.bookmarks.mark_migrate_local();
+                }
                 let p = self.project.clone();
                 self.project_set(p, false);
             }
@@ -10653,6 +10675,7 @@ impl App {
         };
         nsql_script::intrinsic::Context {
             project_file: self.project.path.clone(),
+            workspace_dir: self.arg_folder.clone(),
             folders: self
                 .project
                 .folders
@@ -14257,6 +14280,15 @@ impl ApplicationHandler<Wake> for App {
             ));
         }
         self.project_startup();
+        // ★ 작업 모드 셋(사용자 09-23 · [project::WorkMode]): 파일 모드 = 전역(`%APPDATA%`) · **폴더 모드**(`nexa-sql .` · `nexa-sql <폴더>`) =
+        //   `<폴더>/.nsql/` · 프로젝트 모드 = 프로젝트 파일. 지금 폴더 모드가 나누는 것은 북마크뿐 — 설정·다른 기능도 `WorkMode::local_dir`
+        //   한 자리에서 나누도록 설계만(67 §6).
+        if let Some(dir) = self.arg_folder.clone() {
+            self.bookmarks.set_folder(Some(dir.clone()));
+            if self.folder_start.is_none() {
+                self.folder_start = Some(dir);
+            }
+        }
         self.bookmarks.bind_project(self.project.path.as_deref());
         self.bm_sync_ui();
         self.project_restore();
@@ -15578,7 +15610,7 @@ fn main() {
     // ★ 시작 모드(사용자 09-22 · 다중 인스턴스): 인자 중 파일은 갈라낸다 — `.nsql-project` = 프로젝트 모드로 진입 ·
     //   그 밖 존재하는 파일 = 파일 모드로 연다 · 나머지 = 종전 접속 인자. 인스턴스 잠금(설정 폴더 `instance.lock`)은
     //   "이미 열린 인스턴스가 있는가"만 판단한다(마지막 프로젝트 복원은 첫 인스턴스 + 설정이 켜졌을 때만).
-    let (arg_project, arg_files, args) = split_file_args(&args);
+    let (arg_project, arg_files, arg_folder, args) = split_file_args(&args);
     let instance_lock = instance_lock();
     let first_instance = instance_lock.is_some();
     let (arg_target, arg_fill_only) = parse_gui_args(&args);
@@ -15808,6 +15840,7 @@ fn main() {
         multi_load: None,
         arg_project,
         arg_files,
+        arg_folder,
         first_instance,
         _instance_lock: instance_lock,
         folder_start: None,
@@ -16617,9 +16650,14 @@ fn create_demo_db(path: &Path) -> Result<String, String> {
 /// 인자 중 **파일**을 갈라낸다(사용자 09-22): `.nsql-project` = 프로젝트(첫 것) · 존재하는 파일 = 열 파일 ·
 /// 나머지(옵션과 그 값 · 프로필 이름 · 접속 문자열)는 그대로 돌려준다. `-c`/`--connect`/`--fill` 다음 값은 파일이어도
 /// 접속 대상으로 남긴다(SQLite 파일 경로일 수 있다).
-fn split_file_args(args: &[String]) -> (Option<PathBuf>, Vec<PathBuf>, Vec<String>) {
+/// 인자 갈라내기 → (프로젝트 파일, 파일들, **폴더**, 나머지). 폴더(`nexa-sql .` · `nexa-sql c:\…\project` · 사용자 09-23) =
+/// 파일 모드의 **작업 폴더**: 북마크 등 로컬 상태를 `<폴더>/.nsql/`에 둔다(없으면 `%APPDATA%` 전역). 첫 폴더만 · 절대 경로로.
+fn split_file_args(
+    args: &[String],
+) -> (Option<PathBuf>, Vec<PathBuf>, Option<PathBuf>, Vec<String>) {
     let mut project = None;
     let mut files = Vec::new();
+    let mut folder: Option<PathBuf> = None;
     let mut rest = Vec::new();
     let mut keep_next = false;
     for a in args {
@@ -16644,11 +16682,15 @@ fn split_file_args(args: &[String]) -> (Option<PathBuf>, Vec<PathBuf>, Vec<Strin
             }
         } else if p.is_file() {
             files.push(p);
+        } else if p.is_dir() {
+            if folder.is_none() {
+                folder = Some(std::path::absolute(&p).unwrap_or(p));
+            }
         } else {
             rest.push(a.clone());
         }
     }
-    (project, files, rest)
+    (project, files, folder, rest)
 }
 
 /// 시작 때 열 프로젝트 — `(경로, 인자로 받았는가)`. 규칙(사용자 09-22): ① 인자 프로젝트가 있으면 그것 ② 아니면
@@ -16749,15 +16791,21 @@ mod arg_tests {
             "Demo".into(),
             "--x".into(),
         ];
-        let (p, files, rest) = split_file_args(&v);
+        let (p, files, folder, rest) = split_file_args(&v);
         assert_eq!(p, Some(PathBuf::from(&pj)));
         assert_eq!(files, vec![f]);
+        assert_eq!(folder, None, "파일·프로젝트 인자만 = 폴더 없음");
+        // 폴더 인자(사용자 09-23 `nexa-sql .`) = 첫 폴더 · 절대 경로 · 나머지 인자에는 안 남는다.
+        let (_, _, folder2, rest2) =
+            split_file_args(&[dir.to_string_lossy().into_owned(), "Demo".into()]);
+        assert_eq!(folder2.as_deref(), Some(dir.as_path()));
+        assert_eq!(rest2, vec!["Demo".to_string()]);
         assert_eq!(
             rest,
             vec!["-c".to_string(), fs, "Demo".into(), "--x".into()]
         );
-        let (p2, files2, rest2) = split_file_args(&[]);
-        assert!(p2.is_none() && files2.is_empty() && rest2.is_empty());
+        let (p2, files2, folder3, rest3) = split_file_args(&[]);
+        assert!(p2.is_none() && files2.is_empty() && folder3.is_none() && rest3.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

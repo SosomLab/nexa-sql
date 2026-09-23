@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/project-close-reset | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 프로젝트 닫기 = 전체 저장 → 처음 실행 상태(`Editors::reset_to_initial` · `reset_workspace_to_initial`) + 북마크 로컬/프로젝트 분리(새 프로젝트 = 이관 `mark_migrate_local`) · ★ 작업 모드 셋 `project::WorkMode`(파일/폴더 `nexa-sql .` → `.nsql/`/프로젝트 · `local_dir` · 폴더 인자 `split_file_args` · `${workspaceFolder}`) · 체크 아이콘 12px · S57·S58 · 67 §6 · 위키 · journal §97 조정·§98·§99 · TODO U-63·U-64 |
 | feat/copybtn-feedback | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 복사 버튼 부품 `copybtn.rs`(눌림 120 ms → 녹색 체크 `mi_check` → `ui.copy_feedback_ms` 2초 뒤 복귀 · `next_tick`) · 실행 카드 + 접속 창 파일 이름 복사에 적용 · 설정+i18n · 시험 2 · 30 §2 · journal §97 · TODO U-62 |
 | fix/runtoast-copy-place | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 실행 카드 복사 버튼 = 카드 우측 끝 고정 이미지 버튼("라벨 뒤" 철회 · 사용자 정정) |
 | feat/runtoast-copy | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 실행 카드 1행 오른쪽 복사 버튼(`RunToastHit::Copy` · 카드 유지 · 상태줄 "SQL n줄 복사됨" · 시험 1 · §96) |

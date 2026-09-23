@@ -1584,6 +1584,27 @@ impl Editors {
         self.save_close_req.take()
     }
 
+    /// ★ 처음 실행 상태로(프로젝트 닫기 · 사용자 09-23 "전체 상태를 저장하고 닫은 뒤 기본 편집 탭 1개만"): 동시 편집 해제 →
+    /// 탭 전부 **강제** 닫기(상태는 호스트가 프로젝트 파일·스냅숏에 이미 담았다) → 남은 마지막 탭은 빈 `Script_1`(번호 1부터) ·
+    /// 미리보기 없음. 미커밋 트랜잭션이 있는 탭은 닫지 않고 남긴다(그건 트랜잭션 확인 흐름의 몫).
+    pub(crate) fn reset_to_initial(&mut self) {
+        self.end_split();
+        self.close_forced = true;
+        for i in (0..self.bufs.len()).rev() {
+            if self.bufs.len() > 1 {
+                self.close_tab(i);
+            }
+        }
+        self.counter = 0;
+        if self.bufs.len() == 1 {
+            self.close_tab(0); // 마지막 탭 = 비우기 + `Script_1`
+        }
+        self.close_forced = false;
+        self.tx_close_req = None;
+        self.save_close_req = None;
+        self.preview = None;
+    }
+
     /// 저장 여부를 **이미 물은 뒤** 닫는다(저장했거나 · 버리기로 했다).
     pub(crate) fn close_tab_forced(&mut self, i: usize) {
         self.close_forced = true;
@@ -2565,6 +2586,25 @@ mod split_tests {
         assert!(!ed.tabs.is_grouped(base));
         ed.tab_click(base, false, false);
         assert!((0..ed.len()).all(|i| !ed.tabs.is_grouped(i)));
+    }
+
+    /// 프로젝트 닫기 = 처음 실행 상태(사용자 09-23): 탭 전부(파일 · 미저장 스크립트 · 묶음) → 빈 `Script_1` 하나 · 번호 1부터.
+    #[test]
+    fn reset_to_initial_leaves_one_blank_script() {
+        let mut ed = Editors::new(true, true, false, Rc::new(SyntaxRegistry::load()));
+        let base = ed.len() - 1;
+        ed.new_tab(None);
+        ed.cur_mut().set_text("dirty scratch");
+        ed.open_file(Path::new("C:/x/a.sql"), "-- a".into(), Eol::Lf);
+        ed.cur_mut().set_text("-- a edited");
+        ed.tab_click(base, true, false); // 묶음
+        assert!(ed.len() >= 3 && ed.is_split());
+        ed.reset_to_initial();
+        assert_eq!(ed.len(), 1);
+        assert_eq!(ed.title_of(0), "Script_1");
+        assert!(ed.path_of(0).is_none());
+        assert_eq!(ed.cur().text(), "");
+        assert!(!ed.is_dirty(0) && !ed.is_split() && ed.preview_id().is_none());
     }
 
     /// 묶인 탭의 상단 줄 = **각 탭 자기 유형 색**(미저장 = 경고색 · 파일 = 강조색 · 사용자 09-23 "각 탭의 색을 유지").

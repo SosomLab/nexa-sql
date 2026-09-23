@@ -293,4 +293,14 @@ Run-Scenario -Id S54 -Title "북마크 패널 더블클릭 = 정식 탭(§92)" -
 Run-Scenario -Id S55 -Title "북마크 패널 한 번 클릭 = 미리보기 탭(§92)" -Cmd "view.bookmarks,@after:1500:ui.click:150/182" -WaitMs 4000 -Expect "탭 ◦ q_lines.sql(미리보기) · 캐럿 2줄"
 # §95 줄 번호를 꺼도 북마크 띠·니모닉 상자는 슬림 거터에(사용자 09-23 "줄번호 해제하면 표시할 수 없다").
 Run-Scenario -Id S56 -Title "줄 번호 끔 + 북마크·니모닉 = 슬림 거터(§95)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.set_3,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle") -Conf "editor.line_numbers=off`n" -WaitMs 4000 -Expect "줄 번호 없음 · 맨 왼쪽 북마크 영역에 1줄 니모닉 3 상자 + 2줄 색 띠 · 그 오른쪽이 본문(배치 = 북마크 영역 → 줄 번호 → 편집 → 미니맵)"
+# §98 프로젝트 닫기 = 전체 저장 → 처음 실행 상태(사용자 09-23) + 북마크 = 로컬 세트(프로젝트 것 잔존 없음).
+Set-Content -LiteralPath $projWs -Encoding UTF8 -Value $projWsJson
+Run-Scenario -Id S57 -Title "프로젝트 닫기 = 처음 실행 상태 + 북마크 초기화(§98)" -Cmd ("open:" + $a + ",@after:1000:project.load:" + $projWs + ",@after:2500:project.close,@after:3200:view.bookmarks") -WaitMs 4500 -Expect "탭 = 빈 Script_1 하나(q_lines·Notes·a.sql 전부 닫힘) · 프로젝트 패널 닫힘 · 북마크 패널 = 로컬 세트(S33/S36이 심은 q500·q_lines · 기존 프로젝트를 연 것이라 이관 없음 · 프로젝트 것 아님) · 상태줄 'Project closed'"
+# §99 작업 모드 셋: 폴더 인자 = 폴더 모드 → 북마크 저장 위치 = <폴더>/.nsql/(전역 %APPDATA% 아님).
+$folderWs = Join-Path $DataDir ".nsql\workspaces\default.nsql-workspace"
+if (Test-Path -LiteralPath $folderWs) { Remove-Item -LiteralPath $folderWs -Force }
+Run-Scenario -Id S58 -Title "폴더 모드 = 북마크가 <폴더>/.nsql/에(§99)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2200:view.bookmarks") -ArgList ("Local `"" + $DataDir + "`"") -WaitMs 5000 -Expect "북마크 패널에 q500.sql 1줄 · 파일 검사 folder_ws=True(폴더 안 .nsql) · 기동 인자 = 폴더"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S58")) {
+Say ("  file: folder_ws=" + (Test-Path -LiteralPath $folderWs))
+}
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))
