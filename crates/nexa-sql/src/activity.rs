@@ -73,6 +73,14 @@ impl ActivityBar {
                     bottom: false,
                     hidden: false,
                 },
+                // 문서 아웃라인(docs/76 · 문장·변수·서브프로그램 · `intel.enabled`가 꺼지면 숨김).
+                ActItem {
+                    id: "view.outline",
+                    icon: toolicons::mi_outline(),
+                    panel: true,
+                    bottom: false,
+                    hidden: false,
+                },
                 ActItem {
                     id: "view.extensions",
                     icon: toolicons::mi_extensions(),

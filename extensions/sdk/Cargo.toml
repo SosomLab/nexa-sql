@@ -1,0 +1,28 @@
+# Nexa SQL 확장 SDK 작업 공간(게스트 쪽 · wasm32-unknown-unknown) — 앱 작업 공간과 **분리**(루트 Cargo.toml `exclude`).
+# 빌드 = `scripts/ext-build.ps1` / `scripts/ext-build.sh`(또는 `cargo build --release --target wasm32-unknown-unknown` 이 폴더에서).
+[workspace]
+resolver = "2"
+members = [
+  "nexa-ext-sdk",            # SDK — ABI v1 버퍼 · JSON · 호스트 import · export 매크로 (의존 0)
+  "samples/hello-ext",       # 최소 샘플 — 메타 + 명령 하나(로그)
+  "samples/rainbow-pairs",   # Rainbow Pairs 정책 층을 SDK 위에 옮긴 것(앱의 rainbow_pairs.rs와 같은 동작)
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+authors = ["Sangyong Bae <kiros33@gmail.com>"]
+repository = "https://github.com/SosomLab/nexa-sql"
+
+[workspace.dependencies]
+nexa-ext-sdk = { path = "nexa-ext-sdk" }
+
+# 작은 .wasm(정책 층은 계산이 거의 없다): 크기 우선 · LTO · 패닉 = 중단 · 심벌 제거.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

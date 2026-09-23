@@ -43,10 +43,12 @@ mod imehint;
 mod imestate;
 mod input;
 mod input_win;
+mod intel;
 mod keymap;
 mod keys_win;
 mod log_win;
 mod memtrim;
+mod outline_panel;
 mod palette;
 mod prefs_win;
 mod present;
@@ -144,6 +146,8 @@ enum Focus {
     Project,
     /// 북마크 패널(docs/69 · 사용자 09-22).
     Bookmarks,
+    /// 아웃라인 패널(docs/76 · 사용자 09-23).
+    Outline,
 }
 
 /// 저장소 읽기 스레드의 결과 한 벌(원천 · index · 추적 줄).
@@ -358,6 +362,10 @@ struct App {
     /// 북마크(docs/69 · T-167).
     bookmarks: bookmarks::Bookmarks,
     bm_panel: bookmarks_panel::BookmarksPanel,
+    /// 코드 완성(docs/76 · 팝업 · 문서 아웃라인 캐시 · MRU).
+    intel: intel::Intel,
+    /// 아웃라인 패널(docs/76).
+    outline_panel: outline_panel::OutlinePanel,
     project: project::Project,
     /// 확장 패널(활동 막대 "확장" · 확장 관리자가 켜져 있을 때만 · 사용자 09-19).
     ext_panel: ExtPanel,
@@ -800,6 +808,8 @@ impl App {
             Some("view.project")
         } else if self.bm_panel.is_visible() {
             Some("view.bookmarks")
+        } else if self.outline_panel.is_visible() {
+            Some("view.outline")
         } else {
             None
         });
@@ -808,6 +818,7 @@ impl App {
             || self.ext_panel.is_visible()
             || self.project_panel.is_visible()
             || self.bm_panel.is_visible()
+            || self.outline_panel.is_visible()
         {
             px(self.settings.int("explorer.width") as f32, s)
         } else {
@@ -857,6 +868,20 @@ impl App {
             s,
         );
         self.bm_panel.set_clamp_width(w);
+        self.outline_panel.set_bounds(
+            Rect::new(
+                act_w,
+                body_top,
+                if self.outline_panel.is_visible() {
+                    exp_w
+                } else {
+                    0
+                },
+                body_h,
+            ),
+            s,
+        );
+        self.outline_panel.set_clamp_width(w);
         self.ext_panel.set_bounds(
             Rect::new(
                 act_w,
@@ -962,6 +987,7 @@ impl App {
         self.search.set_focused(f == Focus::Search);
         self.project_panel.set_focused(f == Focus::Project);
         self.bm_panel.set_focused(f == Focus::Bookmarks);
+        self.outline_panel.set_focused(f == Focus::Outline);
         self.ext_panel.set_focused(f == Focus::Ext);
         self.ime_refresh();
     }
@@ -981,7 +1007,8 @@ impl App {
                         || f == Focus::Search
                         || f == Focus::Ext
                         || f == Focus::Project
-                        || f == Focus::Bookmarks),
+                        || f == Focus::Bookmarks
+                        || f == Focus::Outline),
             );
         }
     }
@@ -1032,6 +1059,7 @@ impl App {
             Focus::Ext => self.ext_panel.focused_textbox(),
             Focus::Project => self.project_panel.focused_textbox(),
             Focus::Bookmarks => self.bm_panel.focused_textbox(),
+            Focus::Outline => self.outline_panel.focused_textbox(),
             Focus::Grid | Focus::Explorer => None,
         }
     }
@@ -2471,9 +2499,9 @@ impl App {
         if !self.settings.flag("extensions.enabled") {
             return self
                 .extensions
-                .builtin_ids()
+                .ids()
                 .into_iter()
-                .map(|(id, _)| id.to_string())
+                .map(|(id, _)| id)
                 .collect();
         }
         self.ext_disabled_list()
@@ -2495,10 +2523,26 @@ impl App {
     fn apply_extensions(&mut self, changed_key: Option<&str>) {
         // 끈 것 + **설치 기록 없는 내장 확장** = 효과 없음(설치해야 켜진다 · 사용자 09-17).
         let installed = extensions::manager::installed();
+        // ★ 설치된 WASM 패키지 = 모듈을 로드해 레지스트리에(같은 id의 내장은 대체 · 실패면 내장 폴백 · docs/75).
+        let want: Vec<(String, PathBuf)> = extensions::manager::root_dir()
+            .map(|root| {
+                installed
+                    .iter()
+                    .filter(|r| r.kind == extensions::manager::Kind::Wasm)
+                    .filter_map(|r| {
+                        extensions::wasm_module_path(&root, &r.id, &r.version)
+                            .map(|p| (r.id.clone(), p))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for note in self.extensions.sync_wasm(&want) {
+            self.log_win.push(LogEntry::new(LogKind::Info, note));
+        }
         let mut disabled = self.ext_disabled();
-        for (id, _) in self.extensions.builtin_ids() {
-            if !installed.iter().any(|r| r.id == id) && !disabled.iter().any(|d| d == id) {
-                disabled.push(id.to_string());
+        for (id, _) in self.extensions.ids() {
+            if !installed.iter().any(|r| r.id == id) && !disabled.contains(&id) {
+                disabled.push(id);
             }
         }
         let effects = self
@@ -2552,6 +2596,10 @@ impl App {
         if self.extensions.run(id, &disabled, self.editors.cur_mut()) {
             self.redraw();
         }
+        // WASM 확장의 `nx_log` 줄·오류를 로그 창에(docs/75 §6).
+        for note in self.extensions.take_wasm_notes() {
+            self.log_win.push(LogEntry::new(LogKind::Info, note));
+        }
     }
 
     /// Extension Manager 팔레트 명령(Sublime Package Control 방식 · docs/50 §10): 텍스트 목록을 만들어 팔레트에 띄우고,
@@ -2559,12 +2607,7 @@ impl App {
     fn ext_command(&mut self, id: &str) {
         use extensions::manager as mgr;
         let disabled = self.ext_disabled();
-        let builtin: Vec<(String, String)> = self
-            .extensions
-            .builtin_ids()
-            .into_iter()
-            .map(|(i, n)| (i.to_string(), n.to_string()))
-            .collect();
+        let builtin: Vec<(String, String)> = self.extensions.ids();
         let installed = mgr::installed();
         // builtin도 **설치 기록**이 있어야 설치된 것(설치 = 켜기 + 설정 분류 표시 · 삭제 = 끄기 + 숨김 · 사용자 09-17).
         let is_installed = |x: &str| installed.iter().any(|r| r.id == x);
@@ -3654,6 +3697,7 @@ impl App {
         let want = match self.project.panel.as_deref() {
             Some("project") => Some(("view.project", self.project_panel.is_visible())),
             Some("bookmarks") => Some(("view.bookmarks", self.bm_panel.is_visible())),
+            Some("outline") => Some(("view.outline", self.outline_panel.is_visible())),
             Some("search") => Some(("view.search", self.search.is_visible())),
             Some("ext") => Some(("view.extensions", self.ext_panel.is_visible())),
             _ => None,
@@ -3956,9 +4000,12 @@ impl App {
         if keep != "view.bookmarks" && self.bm_panel.is_visible() {
             self.bm_panel.set_visible(false);
         }
+        if keep != "view.outline" && self.outline_panel.is_visible() {
+            self.outline_panel.set_visible(false);
+        }
         if matches!(
             self.focus,
-            Focus::Explorer | Focus::Search | Focus::Ext | Focus::Project
+            Focus::Explorer | Focus::Search | Focus::Ext | Focus::Project | Focus::Outline
         ) {
             self.set_focus(Focus::Editor);
         }
@@ -5808,6 +5855,9 @@ impl App {
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
+            k if k.starts_with("intel.") => self
+                .intel
+                .set_cfg(intel::IntelCfg::from_settings(&self.settings)),
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
             "editor.auto_close_pairs"
@@ -6857,6 +6907,14 @@ impl App {
                 }
             }
             // ★ Sublime Ctrl+D — 캐럿 밑 단어 → 다음 출현을 추가 선택(다중 커서 · 09-15).
+            // 코드 완성 수동 트리거(Ctrl+Space · docs/76) · Goto Symbol(Ctrl+R) · 심볼 이동.
+            "edit.complete" => self.intel_request(true),
+            "goto.symbol" => self.open_goto_symbol(),
+            id if id.starts_with("sym:") => {
+                if let Ok(b) = id[4..].parse::<usize>() {
+                    self.goto_byte(b);
+                }
+            }
             "edit.goto_bracket" => {
                 if self.editors.cur_mut().goto_bracket(false) {
                     self.redraw();
@@ -7005,6 +7063,23 @@ impl App {
                 self.redraw();
             }
             x if x.starts_with("bookmark.") => self.bookmark_cmd(x),
+            // 아웃라인 패널(docs/76): 켜면 활성 탭 심볼 동기 + 필터 포커스 · 다른 좌측 패널은 닫힌다.
+            "view.outline" => {
+                let on = !self.outline_panel.is_visible();
+                if on {
+                    self.side_panel_close_others("view.outline");
+                }
+                self.outline_panel.set_visible(on);
+                if on {
+                    self.outline_sync();
+                    self.outline_panel.focus_filter();
+                    self.set_focus(Focus::Outline);
+                } else if self.focus == Focus::Outline {
+                    self.set_focus(Focus::Editor);
+                }
+                self.layout();
+                self.redraw();
+            }
             "view.project" => {
                 let on = !self.project_panel.is_visible();
                 if on {
@@ -9124,6 +9199,210 @@ impl App {
         }
     }
 
+    // ───────────────────────── 코드 완성 · 아웃라인(docs/76) ─────────────────────────
+
+    /// 캐럿 앞 식별자 길이(줄 안 · 트리거 판정용 · 본문 복사 0).
+    fn intel_prefix_len(&self) -> usize {
+        let ed = self.editors.cur();
+        let buf = ed.buf();
+        let caret = ed.caret();
+        let l = buf.line_of(caret);
+        let start = buf.line_start(l);
+        let line = buf.line_text(l);
+        let col = caret.saturating_sub(start);
+        line.chars()
+            .take(col)
+            .collect::<Vec<char>>()
+            .iter()
+            .rev()
+            .take_while(|c| c.is_alphanumeric() || **c == '_' || **c == '$' || **c == '#')
+            .count()
+    }
+
+    /// 편집기가 사건을 처리한 뒤 — 글자면 트리거 규칙 · 열린 팝업은 이동/클릭에 닫힌다.
+    fn intel_after_event(&mut self, ev: &InputEvent) {
+        if !self.intel.cfg().enabled {
+            return;
+        }
+        match ev {
+            // Backspace = `Char('\u{8}')`: 열린 팝업은 접두가 남아 있으면 다시 거르고 없으면 닫는다.
+            InputEvent::Char { c: '\u{8}', .. } => {
+                if self.intel.is_open() {
+                    if self.intel_prefix_len() == 0 {
+                        self.intel.close();
+                    } else {
+                        self.intel_request(false);
+                    }
+                }
+            }
+            InputEvent::Char { c, .. } => {
+                let n = self.intel_prefix_len();
+                if self.intel.after_char(*c, n) {
+                    self.intel_request(false);
+                }
+            }
+            InputEvent::Key { .. }
+            | InputEvent::MouseDown { .. }
+            | InputEvent::RightDown { .. }
+                if self.intel.is_open() =>
+            {
+                self.intel.close();
+            }
+            _ => {}
+        }
+    }
+
+    /// 후보 조립 + 팝업(`manual` = Ctrl+Space · 자동 설정과 무관). 큰 파일 단계(L1+)에서는 하지 않는다(72 §2).
+    fn intel_request(&mut self, manual: bool) {
+        if !self.intel.cfg().enabled || self.focus != Focus::Editor {
+            return;
+        }
+        let i = self.editors.active();
+        if self.editors.is_large(i) {
+            if manual {
+                self.sess.status = t(Msg::StLargeFileFeatureOff).into();
+            }
+            return;
+        }
+        let tab = self.editors.tab_id(i);
+        let (rev, text, caret_c, anchor) = {
+            let ed = self.editors.cur();
+            (ed.rev(), ed.text(), ed.caret(), ed.caret_point())
+        };
+        let caret_b = text
+            .char_indices()
+            .nth(caret_c)
+            .map_or(text.len(), |(b, _)| b);
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or_default();
+        let spec = self.sess.spec.clone();
+        let dialect = Some(self.sess.dialect);
+        let (names, snap) = self.explorer.meta_view(spec.as_ref());
+        let view = intel::MetaView { names, snap };
+        let opened = self.intel.request(
+            tab,
+            rev,
+            &text,
+            caret_b,
+            dialect,
+            Some(&view),
+            anchor,
+            host,
+            self.scale,
+        );
+        let needs = self.intel.take_needs();
+        for n in needs {
+            self.explorer
+                .request_columns(spec.as_ref(), n.schema.as_deref(), &n.table);
+        }
+        if opened || manual {
+            self.redraw();
+        }
+    }
+
+    /// 확정 글자를 편집기에(접두 구간 교체).
+    fn intel_apply(&mut self) {
+        let Some(a) = self.intel.take_accept() else {
+            return;
+        };
+        let text = self.editors.cur().text();
+        let from = text[..a.replace.start.min(text.len())].chars().count();
+        let to = text[..a.replace.end.min(text.len())].chars().count();
+        let mut inv = Invalidations::default();
+        self.ed_mut().replace_range(from, to, &a.text, &mut inv);
+        self.redraw();
+    }
+
+    /// Goto Symbol(Ctrl+R · Sublime): 문서 아웃라인 심볼 목록을 팔레트에 — 고르면 `sym:<byte>`.
+    fn open_goto_symbol(&mut self) {
+        let i = self.editors.active();
+        if self.editors.is_large(i) {
+            self.sess.status = t(Msg::StLargeFileFeatureOff).into();
+            self.redraw();
+            return;
+        }
+        let tab = self.editors.tab_id(i);
+        let (rev, text) = {
+            let ed = self.editors.cur();
+            (ed.rev(), ed.text())
+        };
+        let dialect = Some(self.sess.dialect);
+        let ol = self
+            .intel
+            .outline_for(tab, rev, &|| text.clone(), dialect)
+            .clone();
+        let mut cmds: Vec<(String, String)> = Vec::new();
+        for s in &ol.symbols {
+            let indent = "  ".repeat(s.depth as usize);
+            let detail = if s.detail.is_empty() {
+                s.kind.label().to_string()
+            } else {
+                format!("{} · {}", s.kind.label(), s.detail)
+            };
+            cmds.push((
+                format!("sym:{}", s.byte),
+                format!("{indent}{}  —  {detail}  :{}", s.name, s.line),
+            ));
+        }
+        if cmds.is_empty() {
+            self.sess.status = t(Msg::OutlineEmpty).into();
+            self.redraw();
+            return;
+        }
+        self.palette.set_commands(cmds);
+        self.palette.open("");
+        self.ime_refresh();
+        self.redraw();
+    }
+
+    /// 아웃라인 패널 동기 — 활성 탭·본문 세대가 바뀌었을 때만 심볼을 다시 준다(큰 파일 단계는 비움).
+    fn outline_sync(&mut self) {
+        if !self.outline_panel.is_visible() {
+            return;
+        }
+        let i = self.editors.active();
+        let tab = self.editors.tab_id(i);
+        let rev = self.editors.cur().rev();
+        if self.outline_panel.key() == Some((tab, rev)) {
+            return;
+        }
+        if self.editors.is_large(i) || !self.intel.cfg().enabled {
+            self.outline_panel
+                .set_symbols((tab, rev), &nsql_script::outline::Outline::default());
+            return;
+        }
+        let text = self.editors.cur().text();
+        let dialect = Some(self.sess.dialect);
+        let ol = self
+            .intel
+            .outline_for(tab, rev, &|| text.clone(), dialect)
+            .clone();
+        self.outline_panel.set_symbols((tab, rev), &ol);
+    }
+
+    /// 아웃라인 패널의 열기 요청 → 그 자리로.
+    fn outline_pump(&mut self) {
+        if let Some(b) = self.outline_panel.take_open() {
+            self.goto_byte(b);
+        }
+    }
+
+    /// 바이트 오프셋으로 캐럿 이동(심볼 이동).
+    fn goto_byte(&mut self, byte: usize) {
+        let text = self.editors.cur().text();
+        let idx = text[..byte.min(text.len())].chars().count();
+        let mut inv = Invalidations::default();
+        self.ed_mut().select_range(idx, idx, &mut inv);
+        self.set_focus(Focus::Editor);
+        self.redraw();
+    }
+
     /// Goto Anything(T-96 · Sublime Ctrl+P): 열린 탭(제목 · 경로 · `*`) + 최근 파일 · `:숫자` = 줄 이동.
     fn open_goto_anything(&mut self, prefill: &str) {
         let mut cmds: Vec<(String, String)> = Vec::new();
@@ -9260,6 +9539,9 @@ impl App {
                     MenuEntry::sub(
                         t(Msg::MnGrpBrackets),
                         vec![
+                            item("edit.complete", Msg::MnComplete),
+                            item("goto.symbol", Msg::MnGotoSymbol),
+                            MenuEntry::Separator,
                             item("edit.goto_bracket", Msg::MnGotoBracket),
                             item("edit.bracket_prev", Msg::MnBracketPrev),
                             item("edit.bracket_next", Msg::MnBracketNext),
@@ -9592,6 +9874,8 @@ impl App {
         cmds.push(m("edit.bracket_next", Msg::MnEdit, Msg::MnBracketNext));
         cmds.push(m("edit.bracket_parent", Msg::MnEdit, Msg::MnBracketParent));
         cmds.push(m("edit.bracket_child", Msg::MnEdit, Msg::MnBracketChild));
+        cmds.push(m("edit.complete", Msg::MnEdit, Msg::MnComplete));
+        cmds.push(m("goto.symbol", Msg::MnEdit, Msg::MnGotoSymbol));
         // Extension Manager(Sublime "Package Control: …" 표기 · docs/50 §10).
         // 관리자 상태에 맞는 명령만(사용자 09-19): 꺼짐 = "켜기" 하나 · 켜짐 = "끄기" + 나머지(두 번째 "켜기"는 없다).
         if self.settings.flag("extensions.enabled") {
@@ -13169,6 +13453,7 @@ impl App {
                 self.search.paint(&mut dc, &th);
                 self.project_panel.paint(&mut dc, &th);
                 self.bm_panel.paint(&mut dc, &th);
+                self.outline_panel.paint(&mut dc, &th);
                 self.ext_panel.paint(&mut dc, &th);
             }
             mark(&mut t_sec, &mut marks); // 3 = 탐색기(+카드)
@@ -13201,6 +13486,8 @@ impl App {
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
+                // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76).
+                self.intel.menu.paint(&mut dc, &th);
                 // ★ 토스트·실행 카드는 팝업(우클릭 메뉴·팔레트) **아래 층**(팝업 = 맨 마지막 규칙 · 사용자 09-22 "우클릭 메뉴가 뒤로 숨음").
                 // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
@@ -13444,6 +13731,9 @@ impl App {
         }
         if self.explorer.menu_open() {
             m |= 16;
+        }
+        if self.intel.is_open() {
+            m |= 1024;
         }
         if self.grid.menu_open() {
             m |= 32;
@@ -13742,6 +14032,75 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ 자동 완성 팝업(docs/76): ↑↓/Enter/Tab/Esc/휠/클릭은 팝업이 먼저 · 글자·Backspace는 편집기로 가서 다시 거른다 ·
+        //   바깥 클릭은 닫고 통과 · 다른 탭이면 닫는다.
+        if self.intel.is_open() {
+            let cur_tab = self.editors.tab_id(self.editors.active());
+            if self.intel.tab() != Some(cur_tab) || self.focus != Focus::Editor {
+                self.intel.close();
+            } else {
+                let outside = self.intel.menu.is_outside_click(&ev);
+                // Tab은 `Char('\t')`로 온다 — 팝업이 열려 있으면 Enter와 같다(확정).
+                let is_tab = matches!(ev, InputEvent::Char { c: '\t', .. });
+                let nav = is_tab
+                    || matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Up
+                                | CtlKey::Down
+                                | CtlKey::Enter
+                                | CtlKey::Escape
+                                | CtlKey::PageUp
+                                | CtlKey::PageDown
+                                | CtlKey::Home
+                                | CtlKey::End,
+                            ..
+                        }
+                    );
+                if nav {
+                    let ev2 = if is_tab {
+                        InputEvent::Key {
+                            key: CtlKey::Enter,
+                            shift: false,
+                            primary: false,
+                        }
+                    } else {
+                        ev
+                    };
+                    self.intel.menu.on_event(&ev2);
+                    if let Some(id) = self.intel.menu.take_picked() {
+                        self.intel.pick(&id);
+                        self.intel_apply();
+                    }
+                    if matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Escape,
+                            ..
+                        }
+                    ) {
+                        self.intel.close();
+                    }
+                    self.redraw();
+                    return;
+                }
+                if is_mouse || is_wheel_ev(&ev) {
+                    let consumed = self.intel.menu.on_event(&ev);
+                    if let Some(id) = self.intel.menu.take_picked() {
+                        self.intel.pick(&id);
+                        self.intel_apply();
+                        self.redraw();
+                        return;
+                    }
+                    if outside {
+                        self.intel.close();
+                    } else if consumed || !matches!(ev, InputEvent::MouseMove { .. }) {
+                        self.redraw();
+                        return;
+                    }
+                }
+            }
+        }
         // 상태줄 들여쓰기 팝업(열려 있으면 모달 · 바깥 클릭은 닫고 통과).
         if self.status_menu.is_open() {
             let consumed = self.status_menu.on_event(&ev);
@@ -14011,6 +14370,58 @@ impl App {
                     self.redraw();
                 }
                 self.bm_pump();
+                return;
+            }
+        }
+        // 아웃라인 패널(docs/76) — 북마크 패널과 같은 규칙(포인터는 안일 때 · 키는 포커스일 때 · 열기 요청은 pump).
+        if self.outline_panel.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let inside = self.outline_panel.bounds().contains(cur);
+            if (is_ptr && inside) || (is_wheel_ev(&ev) && inside) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
+                    self.set_focus(Focus::Outline);
+                }
+                if self.outline_panel.on_event(&ev) {
+                    self.redraw();
+                }
+                self.outline_pump();
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if self.focus == Focus::Outline
+                && matches!(
+                    ev,
+                    InputEvent::Key { .. }
+                        | InputEvent::Char { .. }
+                        | InputEvent::SelectAll
+                        | InputEvent::Undo
+                        | InputEvent::Redo
+                )
+            {
+                let handled = self.outline_panel.on_event(&ev);
+                if !handled
+                    && matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Escape,
+                            ..
+                        }
+                    )
+                {
+                    self.set_focus(Focus::Editor);
+                    self.redraw();
+                    return;
+                }
+                if handled {
+                    self.redraw();
+                }
+                self.outline_pump();
                 return;
             }
         }
@@ -14296,6 +14707,7 @@ impl App {
                 Focus::Editor => {
                     self.ed_mut().on_event(&ev, &mut inv);
                     self.tmark("editor on_event");
+                    self.intel_after_event(&ev);
                 }
                 Focus::Grid => {
                     self.grid.on_event(&ev, self.scale);
@@ -14307,7 +14719,8 @@ impl App {
                 | Focus::Search
                 | Focus::Ext
                 | Focus::Project
-                | Focus::Bookmarks => {}
+                | Focus::Bookmarks
+                | Focus::Outline => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -14652,6 +15065,9 @@ impl ApplicationHandler<Wake> for App {
         if self.bm_panel.tick(now_ms) {
             self.redraw();
         }
+        if self.outline_panel.is_visible() && self.outline_panel.tick(now_ms) {
+            self.redraw();
+        }
         self.project_sync_active();
         self.project_autosave_tick();
         self.sync_open_files();
@@ -14793,6 +15209,15 @@ impl ApplicationHandler<Wake> for App {
             next = next.min(t);
         }
         if let Some(t) = self.project_autosave_next(now) {
+            next = next.min(t);
+        }
+        // 자동 완성 디바운스(docs/76 · `intel.delay_ms`) — 마감이 지나면 요청 · 아니면 그 시각에 깬다.
+        if self.intel.due(now) {
+            self.intel_request(false);
+        }
+        // 아웃라인 패널 = 활성 탭·본문 세대가 바뀌었을 때만 다시(캐시 · 유휴 틱 · D-203).
+        self.outline_sync();
+        if let Some(t) = self.intel.next_wake() {
             next = next.min(t);
         }
         el.set_control_flow(ControlFlow::WaitUntil(next));
@@ -15398,6 +15823,7 @@ impl ApplicationHandler<Wake> for App {
                         || self.palette.is_open()
                         || self.tool_dock.is_dragging()
                         || self.status_menu.is_open()
+                        || self.intel.is_open()
                         || self.editors.cur().popup_open();
                     let over_text = !covered && text_area.contains(cur);
                     // 스플리터 위/드래그 중 = ↔ · ↕ (그리드 헤더 경계보다 우선).
@@ -15435,6 +15861,7 @@ impl ApplicationHandler<Wake> for App {
                         Focus::Ext => self.ext_panel.query_changed(),
                         Focus::Project => self.project_panel.query_changed(),
                         Focus::Bookmarks => self.bm_panel.query_changed(),
+                        Focus::Outline => self.outline_panel.query_changed(),
                         Focus::Find => self.find_step(true, false),
                         _ => {}
                     }
@@ -15937,6 +16364,8 @@ fn main() {
     mark(&mut marks, "search");
     let project_panel = project_panel::ProjectPanel::new();
     let bm_panel = bookmarks_panel::BookmarksPanel::new();
+    let intel = intel::Intel::new(intel::IntelCfg::from_settings(&settings));
+    let outline_panel = outline_panel::OutlinePanel::new();
     let ext_panel = ExtPanel::new();
     mark(&mut marks, "ext_panel");
     let palette = Palette::new();
@@ -16070,6 +16499,8 @@ fn main() {
         project_panel,
         bookmarks: bookmarks::Bookmarks::new(),
         bm_panel,
+        intel,
+        outline_panel,
         project: project::Project::default(),
         ext_panel,
         ext_fetch_rx: None,

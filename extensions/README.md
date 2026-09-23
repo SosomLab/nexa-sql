@@ -51,7 +51,14 @@
 |---|---|---|
 | `builtin` | 앱에 컴파일된 in-process 확장(예 Rainbow Pairs) | 파일 없음 · **설치 = 켜기 + 설정 분류 표시**(`installed.json` 기록) · 삭제 = 끄기 + 분류 숨김 · 끄기/켜기 = `extensions.disabled` |
 | `data` | 문법 · 테마 · 스니펫 · 키맵 같은 **파일 패키지** | `files[]`를 sha256 검증 뒤 `<설정 폴더>/extensions/<id>/<version>/`에 보관하고 `dest`에 배치 · `installed.json`에 기록(삭제 때 되감기) |
-| `wasm` · `process` | 코드 확장(docs/50 §2 · T-118) | **아직 설치 불가**(거부 메시지) |
+| `wasm` | **SDK로 만든 `.wasm` 코드 확장**([docs/75](../docs/75-extension-sdk-and-dynamic-loading.md) · ABI v1) | `files[]`의 `.wasm`을 sha256 검증 뒤 보관하고 `installed.json` 기록 → 앱이 즉시 `wasmi`로 로드(연료·메모리·시간 상한 · 재시작 없음) · **같은 id의 내장 확장을 대체**(로드 실패 = 내장 폴백) · 삭제 = 내림 + 내장 복귀 |
+| `process` | 프로세스 확장(docs/50 §2 · T-118 ④) | **아직 설치 불가**(거부 메시지) |
+
+`files[].url`(선택 · `https://` 절대 URL): 있으면 패키지 폴더 대신 그 주소에서 받는다 — **GitHub Releases 자산**에 두는 큰 파일용(`path`는 보관 이름 · sha256은 그대로 필수).
+
+## SDK로 확장 만들기(요약 · 자세히 = docs/75 §4)
+
+`extensions/sdk/`가 게스트 작업 공간이다: `nexa-ext-sdk`(의존 0) + `samples/hello-ext`(최소) + `samples/rainbow-pairs`(공식 패키지의 소스). `impl Extension for MyExt { meta · on_settings · run }` + `export_extension!(MyExt)` → `cargo build --release`(타깃 = `wasm32-unknown-unknown`) → `.wasm` + `extension.json`(`kind: "wasm"` · `files[] = {path, sha256}`) + `index.json` 한 줄. 우리 저장소는 `scripts/ext-build.ps1`/`.sh`가 빌드·복사·sha256 갱신을 한 번에 한다.
 
 ## 설치본 위치(사용자 설정 폴더)
 
@@ -75,9 +82,9 @@
 ## 사용 순서(처음 한 번)
 
 1. 명령 팔레트(⌘⇧P / Ctrl+Shift+P) → **`Extension Manager: Enable Extension Manager`** — 설정 `extensions.enabled=on`. 이때부터 관리자 명령이 저장소를 읽는다(명령을 실행할 때만 · 자동 조회 없음).
-2. `Extension Manager: Install Extension` → 기본 저장소 index.json의 미설치 패키지 목록 → **Rainbow Pairs 1.0.0** 선택 → 설치(builtin이라 파일 없음 · `installed.json` 기록) → 상태줄 안내문.
-3. 설치 즉시 켜진다: 괄호·인용부호 깊이 색 · 우클릭 "괄호 이동 ▸" · Ctrl+Alt+, . [ ] · 편집 메뉴 4항목.
-4. 설정: Preferences → 그룹 **Extensions ▸ Rainbow Pairs** — `rainbowpair.enabled/quotes/angle/unmatched/match/colors/max_kb`. 바꾸면 즉시 전 탭 반영. (괄호·인용부호 **자동 닫기는 확장 기능이 아니라 편집 코어** — 설정 ▸ 편집기 `editor.auto_close_pairs` · 09-19)
+2. `Extension Manager: Install Extension` → 기본 저장소 index.json의 미설치 패키지 목록 → **Rainbow Pairs 1.1.0 (wasm)** 선택 → `rainbow_pairs.wasm` 내려받기(소스 트리에서는 폴더 복사) · sha256 검증 · 보관 · `installed.json` 기록 → 로그 "wasm extension loaded: rainbow-pairs …" → 상태줄 안내문.
+3. 설치 즉시 켜진다: 괄호·인용부호 깊이 색 · 우클릭 "괄호 이동 ▸" · Ctrl+Alt+, . [ ] · 편집 메뉴 4항목 — 이제 **내려받은 WASM 모듈**이 정책 층을 맡고 앱의 내장판은 폴백이다.
+4. 설정: Preferences → 그룹 **Extensions ▸ Rainbow Pairs** — `rainbowpair.enabled/unmatched/colors/contrast_order/max_kb`(색 층). 쌍 종류·문자열 안·현재 쌍 밑줄·자동 닫기는 **편집 코어 설정** Preferences ▸ Editor(`editor.pair_kinds`·`pair_in_strings`·`pair_match`·`auto_close_pairs` · 09-23). 바꾸면 즉시 전 탭 반영.
 
 > **단계별 테스트 안내**(설치 전/후 효과 · GitHub 원격 강제 · 실패 경로 · `data` 패키지 로컬 시험) = [docs/50 §13](../docs/50-extension-system.md).
 5. 잠시 끄기 = `Extension Manager: Disable Extension`(설정 분류도 숨김) · 되돌리기 = `Enable Extension` · 없애기 = `Remove Extension`(기록 삭제 · 효과 off · 분류 숨김 · 다시 Install 가능).

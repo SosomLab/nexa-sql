@@ -1,0 +1,14 @@
+[package]
+name = "hello-ext"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Nexa SQL 확장 최소 샘플 — 메타 + 명령 하나(로그) · SDK 사용법"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nexa-ext-sdk.workspace = true

@@ -87,6 +87,7 @@
 
 - **호스트 API 표면은 하나**: `PluginHost` 트레이트(Rust) ↔ WIT(`nexa:plugin/host`) ↔ JSON-RPC 메서드 — 이름·인자·의미가 같다. in-process 플러그인 코드는 SDK와 같은 타입을 쓰므로 **파일을 옮겨 wasm으로 빌드하면 그대로 외부 플러그인**이 된다(레인보우 괄호를 첫 샘플로 공개).
 - **개발 도구**: `nsql plugin new <id>`(템플릿 생성) · `nsql plugin check <dir>`(매니페스트·능력·크기 검사) · `nsql plugin pack`(zip) · 앱 안 "플러그인 개발" 패널(dev_dir 로드 · 다시 로드 · 로그).
+- **✅ 09-23 실제 이름**: SDK 크레이트 = `nexa-ext-sdk`(`extensions/sdk/nexa-ext-sdk` · WIT 대신 버퍼+JSON ABI v1) · 템플릿 = `extensions/sdk/samples/hello-ext` · 첫 공개 샘플 = `samples/rainbow-pairs` · 빌드 = `scripts/ext-build.*` — 상세 [75](75-extension-sdk-and-dynamic-loading.md).
 - **문서**: 호스트 API 레퍼런스(WIT에서 생성) · 능력 목록 · 샘플 3종(데코레이션 · 명령/포매터 · 결과 후처리).
 
 ## 6. 의사결정(사용자 답 대기)
@@ -208,7 +209,7 @@
 
 > 지금 구조에서 "로직 분리"가 어디까지인지 먼저 밝힌다.
 > - **분리된 것(✅)**: Rainbow Pairs의 **정책 로직**(무엇을 켤지 · 어떤 명령/메뉴/설정을 둘지)은 `crates/nexa-sql/src/extensions/rainbow_pairs.rs`에 `Extension` 트레이트 구현으로 떨어져 있고, **설치 기록(`installed.json`)이 없으면 호스트가 효과를 0으로 만든다**(`apply_extensions` — 색·강조·메뉴·설정 분류 모두 없음). 설치해야 켜지고, 삭제하면 사라진다.
-> - **아직인 것(☐ T-118 ②)**: 그 로직이 **앱 바이너리에 컴파일돼 있다**(`kind = builtin`). GitHub에서 내려받는 것은 메타(`index.json` · `extension.json`)와 `data` 패키지의 파일뿐이고, **코드를 내려받아 실행하는 길(`kind = wasm`)은 미구현**(설치를 거부한다). 즉 "설치 = 내려받은 코드가 돈다"가 아니라 "설치 = 내장 로직의 잠금 해제"다.
+> - **✅ 09-23(T-118 ② · [75](75-extension-sdk-and-dynamic-loading.md))**: `kind = wasm`이 설치·로드된다 — 공식 패키지 `rainbow-pairs 1.1.0`은 SDK(`extensions/sdk`)로 빌드한 `rainbow_pairs.wasm`이고, 설치하면 **내려받은 모듈이 정책 층을 맡고 내장판은 폴백**이 된다("설치 = 내려받은 코드가 돈다"). 아래 13-3~13-5의 관찰 항목에 로그 줄 `wasm extension loaded: rainbow-pairs …`(설치 뒤) · `wasm extension unloaded`(삭제 뒤)가 더해진다.
 > - **코어에 남긴 것(의도)**: 쌍 표 계산·페인트·짝 이동(Ctrl+M)·**괄호/인용부호 자동 닫기(`editor.auto_close_pairs`)** 는 확장이 아니라 편집 코어 — 확장 없이도 동작한다(09-19 사용자 확정: 자동 닫기는 Rainbow Pairs 기능이 아니다).
 
 ### 13-0. 준비(깨끗한 상태로)

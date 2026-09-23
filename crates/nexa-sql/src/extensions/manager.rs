@@ -157,6 +157,8 @@ pub(crate) struct FileSpec {
     pub(crate) path: String,
     pub(crate) sha256: String,
     pub(crate) dest: String,
+    /// 절대 URL(`https://…`) — 있으면 패키지 폴더 대신 **이 주소**에서 받는다(GitHub Releases 자산 · docs/75 §5 · `path` = 보관 이름).
+    pub(crate) url: String,
 }
 
 /// 패키지 메타(`extension.json`).
@@ -269,29 +271,50 @@ impl Source {
             Source::Dir(p) => std::fs::read(p.join(rel))
                 .map(|b| (b, None))
                 .map_err(|e| format!("{}: {e}", rel)),
-            Source::Url(u) => {
-                let url = format!("{u}/{rel}");
-                let out = std::process::Command::new("curl")
-                    .args(["-fsSL", "--max-time", "30", "-w", NetStat::WRITE_OUT, &url])
-                    .output()
-                    .map_err(|e| format!("curl: {e}"))?;
-                let err = String::from_utf8_lossy(&out.stderr);
-                let stat = err.lines().find_map(NetStat::parse);
-                if !out.status.success() {
-                    let msg: Vec<&str> = err
-                        .lines()
-                        .filter(|l| !l.starts_with(NetStat::MARK))
-                        .collect();
-                    let code = stat
-                        .map(|n| format!(" (HTTP {})", n.http))
-                        .unwrap_or_default();
-                    return Err(format!("{url}: {}{code}", msg.join(" ").trim()));
-                }
-                Ok((out.stdout, stat))
-            }
+            Source::Url(u) => fetch_url(&format!("{u}/{rel}")),
         }
     }
+}
 
+/// 절대 URL GET(curl · 30초 · 전송 통계) — 저장소 상대 경로와 `files[].url` 자산이 같은 길.
+fn fetch_url(url: &str) -> Result<(Vec<u8>, Option<NetStat>), String> {
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--max-time", "30", "-w", NetStat::WRITE_OUT, url])
+        .output()
+        .map_err(|e| format!("curl: {e}"))?;
+    let err = String::from_utf8_lossy(&out.stderr);
+    let stat = err.lines().find_map(NetStat::parse);
+    if !out.status.success() {
+        let msg: Vec<&str> = err
+            .lines()
+            .filter(|l| !l.starts_with(NetStat::MARK))
+            .collect();
+        let code = stat
+            .map(|n| format!(" (HTTP {})", n.http))
+            .unwrap_or_default();
+        return Err(format!("{url}: {}{code}", msg.join(" ").trim()));
+    }
+    Ok((out.stdout, stat))
+}
+
+/// `files[].url` 자산 받기 + 추적 줄(파일 하나에 한 줄 · 상대 경로와 같은 꼴).
+pub(crate) fn fetch_url_traced(url: &str, tr: &mut Trace) -> Result<Vec<u8>, String> {
+    let t0 = Instant::now();
+    let r = fetch_url(url);
+    match &r {
+        Ok((b, Some(n))) => tr.push(n.line(url, b.len())),
+        Ok((b, None)) => tr.push(format!(
+            "GET {url} → {} · {} ms{}",
+            nsql_core::fmt_bytes(b.len() as u64),
+            t0.elapsed().as_millis(),
+            speed(b.len(), t0.elapsed())
+        )),
+        Err(e) => tr.push(format!("FAIL {url} — {e}")),
+    }
+    r.map(|(b, _)| b)
+}
+
+impl Source {
     fn read_text(&self, rel: &str, tr: &mut Trace) -> Result<String, String> {
         String::from_utf8(self.read_traced(rel, tr)?).map_err(|_| format!("{rel}: not UTF-8"))
     }
@@ -437,10 +460,15 @@ pub(crate) fn parse_meta(text_in: &str) -> Result<Meta, String> {
                     return Err(format!("{id}: unsafe path {p:?}"));
                 }
             }
+            let url = text(o, "url");
+            if !url.is_empty() && !url.starts_with("https://") {
+                return Err(format!("{id}: file url must be https ({url})"));
+            }
             files.push(FileSpec {
                 path,
                 sha256: text(o, "sha256").to_ascii_lowercase(),
                 dest,
+                url,
             });
         }
     }
@@ -574,7 +602,12 @@ pub(crate) fn installed_in(root: &Path) -> Vec<Installed> {
 
 /// 설치본에 보관한 메타 사본(`<root>/<id>/<version>/extension.json`) — 상세 보기용 · 네트워크 0.
 pub(crate) fn installed_meta(id: &str, version: &str) -> Option<Meta> {
-    let p = root_dir()?.join(id).join(version).join("extension.json");
+    installed_meta_in(&root_dir()?, id, version)
+}
+
+/// [`installed_meta`]의 루트 지정판(시험 · wasm 모듈 경로 찾기).
+pub(crate) fn installed_meta_in(root: &Path, id: &str, version: &str) -> Option<Meta> {
+    let p = root.join(id).join(version).join("extension.json");
     parse_meta(&std::fs::read_to_string(p).ok()?).ok()
 }
 
@@ -626,12 +659,16 @@ pub(crate) fn install_traced(
     if !meta.platforms.is_empty() && !meta.platforms.iter().any(|p| p == platform()) {
         return Err(format!("{}: not for {}", meta.id, platform()));
     }
-    if matches!(meta.kind, Kind::Wasm | Kind::Process) {
+    if matches!(meta.kind, Kind::Process) {
         return Err(format!(
-            "{}: kind {} is not installable yet (T-118)",
+            "{}: kind {} is not installable yet (T-118 ④)",
             meta.id,
             meta.kind.as_str()
         ));
+    }
+    // wasm 패키지 = `.wasm` 파일이 하나는 있어야 한다(sha256 검증은 아래 공통 경로 · 로드는 호스트 `Registry::sync_wasm`).
+    if meta.kind == Kind::Wasm && !meta.files.iter().any(|f| f.path.ends_with(".wasm")) {
+        return Err(format!("{}: wasm package without a .wasm file", meta.id));
     }
     let keep = root.join(&meta.id).join(&meta.version);
     tr.push(format!(
@@ -642,7 +679,12 @@ pub(crate) fn install_traced(
     let mut placed = Vec::new();
     let mut total = 0usize;
     for f in &meta.files {
-        let bytes = src.read_traced(&format!("{}/{}", sum.dir, f.path), tr)?;
+        // 자산 URL이 있으면 그 주소(GitHub Releases 등) · 없으면 패키지 폴더의 상대 경로.
+        let bytes = if f.url.is_empty() {
+            src.read_traced(&format!("{}/{}", sum.dir, f.path), tr)?
+        } else {
+            fetch_url_traced(&f.url, tr)?
+        };
         total += bytes.len();
         let got = super::sha256::hex(&bytes);
         if got != f.sha256 {

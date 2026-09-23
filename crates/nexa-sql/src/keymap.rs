@@ -274,6 +274,22 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+d",
         linux: "ctrl+d",
     },
+    // 코드 완성(docs/76 · D-79): Ctrl+Space = 수동 트리거(모든 OS 공통 · Sublime/VS Code/JetBrains 관례).
+    Command {
+        id: "edit.complete",
+        label: Msg::MnComplete,
+        win: "ctrl+space",
+        mac: "ctrl+space",
+        linux: "ctrl+space",
+    },
+    // Goto Symbol(Sublime Ctrl+R · 문서 아웃라인 심볼로 이동).
+    Command {
+        id: "goto.symbol",
+        label: Msg::MnGotoSymbol,
+        win: "ctrl+r",
+        mac: "cmd+r",
+        linux: "ctrl+r",
+    },
     Command {
         id: "edit.goto_bracket",
         label: Msg::MnGotoBracket,

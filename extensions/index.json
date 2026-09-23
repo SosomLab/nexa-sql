@@ -9,9 +9,17 @@
       "id": "rainbow-pairs",
       "dir": "rainbow-pairs",
       "name": "Rainbow Pairs",
-      "version": "1.0.0",
-      "kind": "builtin",
-      "summary": "Bracket and quote pairs in depth colors · jump to pair / sibling / parent / child"
+      "version": "1.1.0",
+      "kind": "wasm",
+      "summary": "Bracket and quote pairs in depth colors · jump to pair / sibling / parent / child (WASM)"
+    },
+    {
+      "id": "hello-ext",
+      "dir": "hello-ext",
+      "name": "Hello Extension",
+      "version": "0.1.0",
+      "kind": "wasm",
+      "summary": "SDK sample — one command that writes a log line (extensions/sdk/samples/hello-ext)"
     }
   ]
 }

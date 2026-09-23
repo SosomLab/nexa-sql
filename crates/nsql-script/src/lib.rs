@@ -22,8 +22,10 @@ pub mod connect;
 pub mod dialect;
 pub mod engine;
 pub mod inputs;
+pub mod intel;
 pub mod intrinsic;
 pub mod lexer;
+pub mod outline;
 pub mod split;
 pub mod vars;
 

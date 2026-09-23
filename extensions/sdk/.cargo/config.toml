@@ -1,0 +1,3 @@
+# 이 작업 공간의 기본 타깃 = wasm32 (호스트에서 `cargo test -p nexa-ext-sdk --target <host>`로 SDK 단위 테스트).
+[build]
+target = "wasm32-unknown-unknown"

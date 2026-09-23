@@ -318,5 +318,30 @@ Run-Scenario -Id S61 -Title "거터 우클릭 = 북마크 메뉴(없는 줄 · �
 Run-Scenario -Id S62 -Title "거터 우클릭 = 있는 줄 = 토글 ✓ · 니모닉 해제 활성(§107·§108)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1500:bookmark.set_3,@after:2000:ui.rclick:335/141") -WaitMs 4000 -Expect "2줄 북마크 띠 + 니모닉 3 상자(클릭 400/141 = 2줄) · 메뉴: 'Bookmarks' · 'Toggle Bookmark'(✓) · Mnemonic ▸(3에 ✓ · 해제 활성) · 상태줄 'Mnemonic 3 set on line 2'"
 Run-Scenario -Id S65 -Title "줄 변경 표시 = 복제한 줄에(줄 번호 켬 · §113)" -Cmd ("open:" + $q500 + ",@after:1000:ui.click:400/141,@after:1500:edit.duplicate_line") -WaitMs 3500 -Expect "2줄 복제 → 3줄에 초록 막대(줄 번호 오른쪽 띠) · 탭 미저장 표시"
 Run-Scenario -Id S64 -Title "줄 번호 끔 + 줄 변경 표시(§113)" -Cmd ("open:" + $q500 + ",@after:1000:ui.click:400/141,@after:1500:edit.duplicate_line") -Conf "editor.line_numbers=off`n" -WaitMs 3500 -Expect "줄 번호 없이도 슬림 거터에 2줄(복제된 줄) 초록 막대 · 탭 미저장 표시"
+# §117 IntelliSense · 아웃라인(docs/76): 심볼이 있는 스크립트(DEFINE · CTE · 패키지 본문) → Ctrl+Space 팝업 · Goto Symbol 팔레트 · 아웃라인 패널.
+$qOutline = Join-Path $DataDir "q_outline.sql"
+Set-Content -LiteralPath $qOutline -Encoding UTF8 -Value @"
+DEFINE v_user = 'scott'
+VARIABLE rc REFCURSOR
+WITH recent AS (SELECT 1 AS id FROM dual), older AS (SELECT 2 AS id FROM dual)
+SELECT r.id FROM recent r, older o WHERE r.id = o.id;
+CREATE OR REPLACE PACKAGE BODY pkg_report AS
+  g_count NUMBER := 0;
+  CURSOR c_rows IS SELECT 1 FROM dual;
+  PROCEDURE run_report(p_day IN DATE) IS
+    v_total NUMBER;
+  BEGIN
+    NULL;
+  END run_report;
+  FUNCTION total_rows RETURN NUMBER IS
+  BEGIN
+    RETURN g_count;
+  END total_rows;
+END pkg_report;
+/
+"@
+Run-Scenario -Id S66 -Title "코드 완성 팝업 = Ctrl+Space(§117)" -Cmd ("open:" + $qOutline + ",@after:1000:ui.click:392/201,@after:1600:edit.complete") -WaitMs 3500 -Expect "4줄 'SELECT r' 뒤(캐럿 = r 다음) Ctrl+Space → 캐럿 아래 팝업: recent(alias r · cte) · r(alias) · 키워드/문서 단어 … 오른쪽 열 = 종류"
+Run-Scenario -Id S67 -Title "Goto Symbol 팔레트(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:goto.symbol") -WaitMs 3500 -Expect "팔레트에 심볼 목록: DEFINE v_user · VARIABLE rc · 문장 머리 · CTE recent/older · package body pkg_report · declared g_count · cursor c_rows · procedure run_report(깊이 2 들여쓰기) · function total_rows · 각 행 끝 :줄"
+Run-Scenario -Id S68 -Title "아웃라인 패널(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:view.outline") -WaitMs 3500 -Expect "좌측 아웃라인 패널: 필터 틀 · 줄 번호 → 이름(문장 흐림 · 서브프로그램 굵게 강조색 · 깊이 들여쓰기) → 오른쪽 종류/타입 · 활동 막대 아웃라인 아이콘 활성"
 Run-Scenario -Id S63 -Title "거터 우클릭 = 마지막 줄 아래 빈 영역 = 보기만(§108)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1500:ui.rclick:335/400") -WaitMs 3500 -Expect "빈 영역(335/400 · 2줄 파일) 우클릭 = 'Bookmarks' 한 항목뿐(토글·니모닉 없음) · 캐럿은 그대로 1줄"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

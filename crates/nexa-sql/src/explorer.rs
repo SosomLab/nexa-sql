@@ -99,6 +99,12 @@ enum Req {
         schema: String,
         table: String,
     },
+    /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
+    ColumnsMeta {
+        gen: u64,
+        schema: String,
+        table: String,
+    },
     Source {
         gen: u64,
         schema: String,
@@ -346,6 +352,12 @@ enum Resp {
         node: usize,
         r: Result<Vec<ColumnInfo>, String>,
     },
+    ColumnsMeta {
+        gen: u64,
+        schema: String,
+        table: String,
+        r: Result<Vec<ColumnInfo>, String>,
+    },
     Source {
         gen: u64,
         title: String,
@@ -435,6 +447,8 @@ pub(crate) struct Explorer {
     brand_cache: BrandCache,
     /// 마지막 페인트의 화면 행(노드 index · 부모) — `row_at`(MouseMove마다)이 다시 펼치지 않게(09-15 C).
     rows_cache: Vec<(Option<usize>, usize)>,
+    /// ★ 메타 저장소(docs/47 · docs/76): 트리에 도착한 스키마·객체·컬럼을 **함께** 담는다 — 자동 완성이 스냅샷만 읽는다.
+    meta: nsql_run::meta::MetaStore,
     /// 호스트가 알려 주는 현재 트리 글꼴 크기(논리 px) — 아이콘 스케일 기준.
     font_px: f32,
     /// 소스 요청 중(더블클릭 연타 방지).
@@ -693,6 +707,20 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 Resp::Columns { gen, node, r }
             }
+            Req::ColumnsMeta { gen, schema, table } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::columns(s, &schema, &table).map_err(err_s)
+                });
+                Resp::ColumnsMeta {
+                    gen,
+                    schema,
+                    table,
+                    r,
+                }
+            }
             Req::Source {
                 gen,
                 schema,
@@ -845,6 +873,7 @@ impl Explorer {
             icon_cache: HashMap::new(),
             brand_cache: HashMap::new(),
             rows_cache: Vec::new(),
+            meta: nsql_run::meta::MetaStore::new(64 << 20),
             font_px: ICON_REF_FONT_PX,
             source_pending: false,
             row_px: 0,
@@ -881,6 +910,7 @@ impl Explorer {
         self.missing_at.clear();
         self.watermarks.clear();
         self.wm_inflight = false;
+        self.meta.clear();
         self.nodes = vec![Node {
             kind: NodeKind::Root,
             depth: 0,
@@ -1193,6 +1223,122 @@ impl Explorer {
         std::mem::take(&mut self.actions)
     }
 
+    // ── 메타 저장소(docs/47 · docs/76) — 트리에 도착한 것을 같은 시점에 담는다(서버 접속 추가 0).
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    /// 접속 문자열의 사용자 = 현재 스키마(`select_current_schema`와 같은 규칙).
+    fn conn_user(&self) -> String {
+        self.conn_desc
+            .split("://")
+            .nth(1)
+            .unwrap_or("")
+            .split(['/', '@'])
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    fn meta_set_schemas(&mut self, list: &[String]) {
+        let user = self.conn_user();
+        let current = list.iter().find(|s| s.eq_ignore_ascii_case(&user)).cloned();
+        self.meta.set_schemas(list, current.as_deref());
+    }
+
+    fn meta_load_objects(&mut self, schema: &str, kind: ObjectKind, list: &[ObjectInfo]) {
+        let objs: Vec<nsql_run::meta::NewObj> = list
+            .iter()
+            .map(|o| nsql_run::meta::NewObj {
+                name: o.name.clone(),
+                status: match o.status.as_str() {
+                    "VALID" => nsql_run::meta::ObjStatus::Valid,
+                    "INVALID" => nsql_run::meta::ObjStatus::Invalid,
+                    _ => nsql_run::meta::ObjStatus::Unknown,
+                },
+                modified: None,
+                comment: None,
+                extra: (!o.extra.is_empty()).then(|| o.extra.clone()),
+            })
+            .collect();
+        self.meta.load_bucket(schema, kind, &objs, Self::now_secs());
+    }
+
+    fn meta_set_columns(&mut self, schema: &str, table: &str, list: &[ColumnInfo]) {
+        let Some(id) = self
+            .meta
+            .snapshot()
+            .lookup(&self.meta.names, Some(schema), table)
+        else {
+            return;
+        };
+        let cols: Vec<nsql_run::meta::NewCol> = list
+            .iter()
+            .map(|c| nsql_run::meta::NewCol {
+                name: c.name.clone(),
+                data_type: c.data_type.clone(),
+                nullable: Some(c.nullable),
+                position: c.position.clamp(0, u16::MAX as i64) as u16,
+                default: (!c.default.is_empty()).then(|| c.default.clone()),
+                comment: None,
+                key: 0,
+            })
+            .collect();
+        self.meta.set_columns(id, &cols, Self::now_secs());
+    }
+
+    fn meta_columns_error(&mut self, schema: &str, table: &str, _e: &str) {
+        // 실패 = 상태만 되돌린다(Unknown) — 자동 재시도 없음(26 §8).
+        let _ = (schema, table);
+    }
+
+    /// 자동 완성이 읽는 스냅샷(접속 전이면 빈 스냅샷).
+    pub(crate) fn meta_view(
+        &self,
+    ) -> (
+        &nsql_run::meta::Interner,
+        std::sync::Arc<nsql_run::meta::Snapshot>,
+    ) {
+        (&self.meta.names, self.meta.snapshot())
+    }
+
+    /// 자동 완성 즉시 채움(47 §4): 그 테이블 컬럼을 메타 세션으로 1건 요청(트리 노드 없이 · 이미 로드/로딩 중이면 0).
+    pub(crate) fn request_columns(&mut self, schema: Option<&str>, table: &str) {
+        if self.dialect.is_none() {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        let schema_name = match schema {
+            Some(s) => s.to_string(),
+            None => match snap.current_schema {
+                Some(c) => self.meta.names.get(c).to_string(),
+                None => return,
+            },
+        };
+        let Some(id) = snap.lookup(&self.meta.names, Some(&schema_name), table) else {
+            return;
+        };
+        if !matches!(snap.columns(id), nsql_run::meta::ColState::Unknown) {
+            return;
+        }
+        let Some(table_name) = snap
+            .object(id)
+            .map(|o| self.meta.names.get(o.name).to_string())
+        else {
+            return;
+        };
+        self.meta.mark_columns_loading(id);
+        let _ = self.tx.send(Req::ColumnsMeta {
+            gen: self.gen,
+            schema: schema_name,
+            table: table_name,
+        });
+    }
+
     /// 라이브 로그 폴링 요청(메타 세션 · 진행 중이면 무시).
     pub(crate) fn live_poll(&mut self, req: LiveReq) {
         if self.live_inflight || self.offline || self.dialect != Some(Dialect::Oracle) {
@@ -1258,6 +1404,7 @@ impl Explorer {
                     }
                     match r {
                         Ok(list) => {
+                            self.meta_set_schemas(&list);
                             let kids: Vec<Node> = list
                                 .into_iter()
                                 .map(|s| Node {
@@ -1290,6 +1437,10 @@ impl Explorer {
                     }
                     match r {
                         Ok(list) => {
+                            if let NodeKind::Folder { schema, kind } = &self.nodes[node].kind {
+                                let (s, k) = (schema.clone(), *kind);
+                                self.meta_load_objects(&s, k, &list);
+                            }
                             let depth = self.nodes[node].depth + 1;
                             let kids: Vec<Node> = list
                                 .into_iter()
@@ -1321,6 +1472,10 @@ impl Explorer {
                     }
                     match r {
                         Ok(list) => {
+                            if let NodeKind::Object(o) = &self.nodes[node].kind {
+                                let (s, n) = (o.schema.clone(), o.name.clone());
+                                self.meta_set_columns(&s, &n, &list);
+                            }
                             let depth = self.nodes[node].depth + 1;
                             let kids: Vec<Node> = list
                                 .into_iter()
@@ -1344,6 +1499,20 @@ impl Explorer {
                                 self.set_error(node, e);
                             }
                         }
+                    }
+                }
+                Resp::ColumnsMeta {
+                    gen,
+                    schema,
+                    table,
+                    r,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    match r {
+                        Ok(list) => self.meta_set_columns(&schema, &table, &list),
+                        Err(e) => self.meta_columns_error(&schema, &table, &e),
                     }
                 }
                 Resp::Watermark { gen, r } => {

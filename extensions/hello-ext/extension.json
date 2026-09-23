@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "id": "hello-ext",
+  "name": "Hello Extension",
+  "version": "0.1.0",
+  "kind": "wasm",
+  "summary": "SDK sample — one command that writes a log line (extensions/sdk/samples/hello-ext)",
+  "description": "The smallest possible Nexa SQL extension, built from extensions/sdk/samples/hello-ext with the nexa-ext-sdk crate: it declares one command (hello.say) and a context-menu group; running the command writes 'hello from wasm' to the app log (developer mode, ext layer). Use it to check that the WASM runtime, the download/verify path and the command wiring work, and as the starting point for a new extension.",
+  "author": "SosomLab",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/sdk/samples/hello-ext",
+  "min_app": "0.0.1",
+  "platforms": [],
+  "requires": [],
+  "settings_prefix": "hello.",
+  "files": [
+    { "path": "hello_ext.wasm", "sha256": "cbcc7691bbd863f97fbbab59ad41fb62b96401c84b5ee61ea9c5169e0a05a103", "dest": "" }
+  ],
+  "messages": {
+    "install": "Hello Extension is on — run 'Hello: Say Hi' from the command palette (log window shows the line)."
+  },
+  "repository": "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions"
+}

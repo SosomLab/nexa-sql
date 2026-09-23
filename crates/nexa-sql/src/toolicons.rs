@@ -573,6 +573,18 @@ pub(crate) fn mi_project() -> MenuIcon {
 pub(crate) fn mi_bookmark() -> MenuIcon {
     menu_icon(shape_bookmark)
 }
+/// 활동 막대 — 아웃라인(들여쓴 목록 세 줄 · docs/76).
+pub(crate) fn mi_outline() -> MenuIcon {
+    menu_icon(shape_outline)
+}
+
+/// 아웃라인: 긴 줄 · 들여쓴 줄 · 들여쓴 줄 · 긴 줄(문장 → 심볼 계층).
+fn shape_outline(x: f32, y: f32) -> bool {
+    stroke(x, y, (48.0, 56.0), (208.0, 56.0), 22.0)
+        || stroke(x, y, (96.0, 104.0), (208.0, 104.0), 22.0)
+        || stroke(x, y, (96.0, 152.0), (208.0, 152.0), 22.0)
+        || stroke(x, y, (48.0, 200.0), (208.0, 200.0), 22.0)
+}
 
 /// 메뉴 아이콘(알파 마스크 · 색은 메뉴가 상태색으로 틴트).
 fn menu_icon(shape: fn(f32, f32) -> bool) -> MenuIcon {

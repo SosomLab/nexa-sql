@@ -459,6 +459,29 @@ impl ExplorerSet {
             .collect()
     }
 
+    /// 자동 완성이 읽는 메타 스냅샷(docs/76): `spec`의 칸이 있으면 그 칸 · 없으면 보이는 칸.
+    pub(crate) fn meta_view(
+        &self,
+        spec: Option<&ConnectSpec>,
+    ) -> (
+        &nsql_run::meta::Interner,
+        std::sync::Arc<nsql_run::meta::Snapshot>,
+    ) {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes[i].ex.meta_view()
+    }
+
+    /// 자동 완성 즉시 채움 — 그 서버 칸의 메타 세션으로 컬럼 1건.
+    pub(crate) fn request_columns(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        schema: Option<&str>,
+        table: &str,
+    ) {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes[i].ex.request_columns(schema, table);
+    }
+
     pub(crate) fn take_actions(&mut self) -> Vec<ExplorerAction> {
         let mut out = Vec::new();
         let mut remove = None;

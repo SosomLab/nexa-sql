@@ -35,6 +35,8 @@ nexa-sys.workspace = true
 nexa-dlg.workspace = true
 encoding_rs.workspace = true
 fancy-regex.workspace = true
+# WASM 확장 런타임(`extensions/wasm.rs` · docs/75 · DR-16).
+wasmi.workspace = true
 # 창·입력(winit) + CPU 픽셀 제출(softbuffer) — clip/beep과 같은 판(실증 조합). Linux는 Wayland/X11 런타임 dlopen.
 winit = { version = "0.30", features = ["wayland-dlopen"] }
 softbuffer = { version = "0.4", features = ["wayland-dlopen"] }

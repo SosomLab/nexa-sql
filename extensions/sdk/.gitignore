@@ -1,0 +1,2 @@
+# SDK 작업 공간(게스트 wasm32)의 빌드 산출물 — 공식 패키지에는 scripts/ext-build.*가 복사한 .wasm만 들어간다.
+/target

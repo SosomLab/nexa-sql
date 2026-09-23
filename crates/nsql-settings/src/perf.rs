@@ -210,6 +210,8 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("file.probe_chevrons", b(Domain::Cpu, "on", "on", "off")),
     ("file.os_icons", b(Domain::Cpu, "on", "on", "off")),
     ("project.icons", b(Domain::Cpu, "on", "on", "off")),
+    // 코드 완성 자동 활성화(docs/76 · 타이핑마다 후보 계산 · 수동 Ctrl+Space는 남는다)
+    ("intel.auto_activation", b(Domain::Cpu, "on", "on", "off")),
     // ── GFX(§3-4)
     ("ui.max_fps", b(Domain::Gfx, "60", "30", "15")),
     ("ui.animations", b(Domain::Gfx, "auto", "auto", "off")),
@@ -246,6 +248,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("file.probe_chevrons", "off"),
     // 프로젝트 탐색기 파일/폴더 아이콘(09-22 · 셸 조회 워커 + 래스터 캐시 · 끄면 상주 0)
     ("project.icons", "off"),
+    // 코드 완성 자동 팝업(09-23 · docs/76 · 타이핑마다 후보 계산 0 · Ctrl+Space 수동은 그대로)
+    ("intel.auto_activation", "off"),
     ("ui.menu_icons", "off"),
     ("tabs.tooltip", "off"),
     ("editor.minimap", "off"),

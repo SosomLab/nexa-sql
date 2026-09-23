@@ -3,7 +3,7 @@
 //! 설정 `rainbowpair.*` → 편집기 [`nexa_ctl::BracketOpts`] · 명령 4(형제 이전/다음 · 상위 · 하위 · 짝/확장은 편집 코어 명령을 재사용) ·
 //! 우클릭 편집 메뉴 "괄호 이동 ▸". 쌍 표·색·자동 닫기는 nexa-ctl 코어(같은 표) — 이 파일은 "옵션·명령·메뉴"만 든다.
 
-use super::{Command, EditorOps, Extension, ExtensionEffect, MenuContribution};
+use super::{Command, EditorOps, Extension, ExtensionEffect, Label, MenuContribution};
 use nexa_ctl::BracketOpts;
 use nsql_i18n::Msg;
 use nsql_settings::Settings;
@@ -20,15 +20,15 @@ fn parse_colors(spec: &str) -> Vec<nexa_ctl::Color> {
 }
 
 impl Extension for RainbowPairs {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "rainbow-pairs"
     }
 
-    fn settings_prefix(&self) -> &'static str {
+    fn settings_prefix(&self) -> &str {
         "rainbowpair."
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "Rainbow Pairs"
     }
 
@@ -47,37 +47,19 @@ impl Extension for RainbowPairs {
 
     fn commands(&self) -> Vec<Command> {
         vec![
-            Command {
-                id: "edit.goto_bracket",
-                label: Msg::MnGotoBracket,
-            },
-            Command {
-                id: "edit.bracket_prev",
-                label: Msg::MnBracketPrev,
-            },
-            Command {
-                id: "edit.bracket_next",
-                label: Msg::MnBracketNext,
-            },
-            Command {
-                id: "edit.bracket_parent",
-                label: Msg::MnBracketParent,
-            },
-            Command {
-                id: "edit.bracket_child",
-                label: Msg::MnBracketChild,
-            },
-            Command {
-                id: "edit.expand_brackets",
-                label: Msg::MnExpandBrackets,
-            },
+            Command::msg("edit.goto_bracket", Msg::MnGotoBracket),
+            Command::msg("edit.bracket_prev", Msg::MnBracketPrev),
+            Command::msg("edit.bracket_next", Msg::MnBracketNext),
+            Command::msg("edit.bracket_parent", Msg::MnBracketParent),
+            Command::msg("edit.bracket_child", Msg::MnBracketChild),
+            Command::msg("edit.expand_brackets", Msg::MnExpandBrackets),
         ]
     }
 
     fn menus(&self) -> Vec<MenuContribution> {
         vec![MenuContribution {
-            id: "brackets",
-            label: Msg::MnBracketMenu,
+            id: "brackets".into(),
+            label: Label::Msg(Msg::MnBracketMenu),
             items: self.commands(),
         }]
     }

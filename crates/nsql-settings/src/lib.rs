@@ -278,6 +278,19 @@ const COLUMN_SELECT: &[(&str, Msg)] = &[
     ("shift_right", Msg::ValColumnShiftRight),
 ];
 
+const INTEL_MATCH: &[(&str, Msg)] = &[
+    ("prefix", Msg::ValIntelMatchPrefix),
+    ("contains", Msg::ValIntelMatchContains),
+    ("fuzzy", Msg::ValIntelMatchFuzzy),
+];
+
+const INTEL_CASE: &[(&str, Msg)] = &[
+    ("default", Msg::ValIntelCaseDefault),
+    ("upper", Msg::ValIntelCaseUpper),
+    ("lower", Msg::ValIntelCaseLower),
+    ("match", Msg::ValIntelCaseMatch),
+];
+
 const RAINBOW_MATCH: &[(&str, Msg)] = &[
     ("off", Msg::ValRainbowMatchOff),
     ("near", Msg::ValRainbowMatchNear),
@@ -3324,6 +3337,111 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 4096 },
         default: "32",
     },
+    // ★ 코드 완성(docs/47 §8-1 · docs/76 · 사용자 09-23): 트리거 · 일치 · 표시 · 삽입 — 값은 전부 여기(하드코딩 0).
+    Entry {
+        key: "intel.enabled",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelEnabled,
+        desc: Msg::DescIntelEnabled,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.auto_activation",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelAutoActivation,
+        desc: Msg::DescIntelAutoActivation,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.delay_ms",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelDelayMs,
+        desc: Msg::DescIntelDelayMs,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "250",
+    },
+    Entry {
+        key: "intel.trigger_chars",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelTriggerChars,
+        desc: Msg::DescIntelTriggerChars,
+        kind: SettingKind::Text,
+        default: ".",
+    },
+    Entry {
+        key: "intel.min_chars",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelMinChars,
+        desc: Msg::DescIntelMinChars,
+        kind: SettingKind::Int { min: 1, max: 5 },
+        default: "2",
+    },
+    Entry {
+        key: "intel.match",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelMatch,
+        desc: Msg::DescIntelMatch,
+        kind: SettingKind::Choice(INTEL_MATCH),
+        default: "fuzzy",
+    },
+    Entry {
+        key: "intel.recent_boost",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelRecentBoost,
+        desc: Msg::DescIntelRecentBoost,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.max_items",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelMaxItems,
+        desc: Msg::DescIntelMaxItems,
+        kind: SettingKind::Int { min: 50, max: 2000 },
+        default: "200",
+    },
+    Entry {
+        key: "intel.popup_rows",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelPopupRows,
+        desc: Msg::DescIntelPopupRows,
+        kind: SettingKind::Int { min: 6, max: 30 },
+        default: "12",
+    },
+    Entry {
+        key: "intel.keywords",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelKeywords,
+        desc: Msg::DescIntelKeywords,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.document_words",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelDocumentWords,
+        desc: Msg::DescIntelDocumentWords,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.insert_case",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelInsertCase,
+        desc: Msg::DescIntelInsertCase,
+        kind: SettingKind::Choice(INTEL_CASE),
+        default: "default",
+    },
+    Entry {
+        key: "intel.show_types",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelShowTypes,
+        desc: Msg::DescIntelShowTypes,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 북마크(docs/69 §9 · 독립 그룹 `Bookmarks` · 1차 = 동작·저장/표시/위치 추적 핵심 키 · 나머지는 B4b~).
     Entry {
         key: "bookmark.enabled",
@@ -3880,7 +3998,12 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     ),
     (
         Msg::GrpEditors,
-        &[Msg::CatEditor, Msg::CatFiles, Msg::CatProject],
+        &[
+            Msg::CatEditor,
+            Msg::CatIntel,
+            Msg::CatFiles,
+            Msg::CatProject,
+        ],
     ),
     (Msg::GrpConnections, &[Msg::CatConnection, Msg::CatCli]),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
@@ -4341,7 +4464,9 @@ impl Settings {
         Self::from_text(path, &text)
     }
 
-    fn from_text(path: PathBuf, text: &str) -> Settings {
+    /// 파일 없이 본문으로(시험 · 격리 인스턴스 — 저장은 `path`로).
+    #[must_use]
+    pub fn from_text(path: PathBuf, text: &str) -> Settings {
         let doc = nexa_conf::parse(text);
         let mut s = Settings {
             path,

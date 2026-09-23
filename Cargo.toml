@@ -24,6 +24,8 @@ members = [
   "crates/nsql-cli",      # (bin `nsql`) ★ CLI — 접속·스크립트 실행·export/import·bulk insert. 지금은 dry-run 플래너
   "crates/nexa-sql",      # (bin) GUI 진입 — M1에서 nexa-ui 위에 창을 연다
 ]
+# 확장 SDK 작업 공간(게스트 · wasm32 타깃)은 따로 빌드한다(docs/75 · `scripts/ext-build.*`).
+exclude = ["extensions/sdk"]
 
 [workspace.package]
 version = "0.0.1"
@@ -66,6 +68,9 @@ encoding_rs = "0.8"
 fancy-regex = "0.14"
 # 파일 검색 엔진(nsql-search · T-81b)은 선형 시간 코어 `regex`만 쓴다(lookaround가 필요한 GUI 찾기 바는 fancy-regex).
 regex = "1"
+# WASM 확장 런타임(DR-16 · D-87 ① · docs/75 · 09-23): 인터프리터(JIT 없음 · 순수 Rust · ~0.6 MB) · 연료/메모리 상한 내장 ·
+# nexa-dir2 미리보기 플러그인과 같은 판. 원장 docs/10 §3.
+wasmi = "1.1"
 # nexa-ui(공용 UI) — M1 UI 착수 시 사용. 경로 의존(DR-4 · nexa-ui DR-4).
 nexa-gfx = { path = "../nexa-ui/crates/nexa-gfx" }
 nexa-ctl = { path = "../nexa-ui/crates/nexa-ctl" }

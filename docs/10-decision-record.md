@@ -146,7 +146,7 @@
 | `russh` | ② nsql-net | SSH 터널 | Apache-2.0 | ☐ M2 |
 | `rustybuzz` | ④ nexa-gfx | DP-6 셰이핑 | MIT | ☐ M2 |
 | `syntect` | ④ nexa-edit | `.sublime-syntax` | MIT | ☐ M3 |
-| `wasmi` | ④ 패키지 | DP-7 | MIT/Apache | ☐ M6 |
+| `wasmi` 1.1 | ④ nexa-sql `extensions/wasm.rs` | DR-16 · D-87 ① · [75](75-extension-sdk-and-dynamic-loading.md)(인터프리터 · 연료/메모리 상한 내장 · nexa-dir2와 같은 판) | MIT/Apache | ✅ 09-23 |
 | `postgres` 0.19(동기 · tokio-postgres 위) | ① driver-pg | DR-28 · DR-3 예외 | MIT/Apache | ✅ 09-15 |
 | `tracing` 0.1 | ① driver-mssql | tiberius Info 토큰(PRINT) 캡처 — 이미 전이 의존 | MIT | ✅ 09-15 |
 | `mysql_async` · `rusqlite(bundled)` · `odbc-api` | ① | DP-2 | MIT/Apache | rusqlite ✅ · 나머지 ☐ M4 |
