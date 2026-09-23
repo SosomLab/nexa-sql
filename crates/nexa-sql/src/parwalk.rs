@@ -179,8 +179,9 @@ mod tests {
         for m in rx {
             match m {
                 DirMsg::Dir { path, entries } => {
+                    // 루트 둘(dir · dir/nope)은 서로 순서가 없다(둘 다 처음부터 큐에) — 루트 아래 폴더만 부모 먼저를 검사.
                     if let Some(parent) = path.parent() {
-                        if path != dir && path.starts_with(&dir) {
+                        if path != dir && path != dir.join("nope") && path.starts_with(&dir) {
                             assert!(
                                 seen.contains(&parent.to_path_buf()),
                                 "부모가 먼저: {path:?}"

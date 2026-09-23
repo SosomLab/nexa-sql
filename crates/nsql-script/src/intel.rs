@@ -659,7 +659,7 @@ pub fn rank(
             let m = mru
                 .iter()
                 .position(|x| x.eq_ignore_ascii_case(&c.text))
-                .map_or(usize::MAX, |p| p);
+                .unwrap_or(usize::MAX);
             Some((s, m, c))
         })
         .collect();

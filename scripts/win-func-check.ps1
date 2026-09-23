@@ -352,6 +352,6 @@ if (-not (Test-Path -LiteralPath $skipDir)) { New-Item -ItemType Directory -Path
 Set-Content -LiteralPath (Join-Path $skipDir "ok.sql") -Encoding UTF8 -Value "SELECT 1 FROM t;`nSELECT 2 FROM u;"
 [System.IO.File]::WriteAllText((Join-Path $skipDir "big.sql"), ("SELECT big;`n" * 110000))
 [System.IO.File]::WriteAllBytes((Join-Path $skipDir "bin.dat"), [byte[]](83,69,76,69,67,84,0,1,2,3))
-Run-Scenario -Id S71 -Title "파일 검색 제외 로그 = 제외됨(N) + 이유(§120)" -Cmd ("view.search,@after:1000:search.run:SELECT,@after:3200:ui.click:120/271") -ArgList ("Local `"" + $skipDir + "`"") -WaitMs 4500 -Expect "폴더 모드(skipdir) 검색 SELECT → 상태 '1 files · 2 matches · 2 skipped' · ok.sql 2 일치 · 아래 'Skipped (2)' 행(클릭 120/271로 펼침) → big.sql '크기 초과: 1320 KB > 1024 KB' · bin.dat '이진 파일' · 상태줄 '… · 제외 2'"
+Run-Scenario -Id S71 -Title "파일 검색 제외 로그 = 제외됨(N) + 이유(§120)" -Cmd ("view.search,@after:1000:search.run:SELECT,@after:3200:ui.click:120/249") -ArgList ("Local `"" + $skipDir + "`"") -WaitMs 4500 -Expect "폴더 모드(skipdir) 검색 SELECT → 상태 '1 files · 2 matches · 2 skipped' · ok.sql 2 일치 · 아래 'Skipped (2)' 행(클릭 120/249 = 캡처 y 271 행 · 창 좌표는 캡처보다 한 행 위)으로 펼침 → big.sql '크기 초과: 1320 KB > 1024 KB' · bin.dat '이진 파일' · 상태줄 '… · 제외 2'"
 Run-Scenario -Id S63 -Title "거터 우클릭 = 마지막 줄 아래 빈 영역 = 보기만(§108)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1500:ui.rclick:335/400") -WaitMs 3500 -Expect "빈 영역(335/400 · 2줄 파일) 우클릭 = 'Bookmarks' 한 항목뿐(토글·니모닉 없음) · 캐럿은 그대로 1줄"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

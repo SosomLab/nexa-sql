@@ -948,21 +948,34 @@ impl SearchPanel {
                     );
                 }
                 Row::Skip(si) => {
+                    // 경로 — 이유: 둘 다 행 안에서만(이유가 길면 경로는 최소 폭으로 줄이고 이유도 가운데 축약 · 패널 밖으로 나가지 않는다).
                     let (path, why) = &self.skipped[si];
                     let x0 = lr.x + indent * 2 + sel_w;
+                    let gap = px(8.0);
+                    let max_w = (lr.right() - indent - x0).max(px(40.0));
                     let why_w = dc.text_width(why);
-                    let avail = (lr.right() - indent - why_w - px(8.0) - x0).max(px(40.0));
-                    let shown = nexa_ctl::draw::ellipsize_middle(dc, path, avail);
-                    dc.text(x0, ty, Rect::new(x0, y, avail, rh), &shown, th.text_dim);
-                    let wx =
-                        (x0 + dc.text_width(&shown) + px(8.0)).min(lr.right() - indent - why_w);
+                    let path_avail = (max_w - why_w - gap).clamp(px(60.0).min(max_w), max_w);
+                    let shown = nexa_ctl::draw::ellipsize_middle(dc, path, path_avail);
+                    let sw = dc.text_width(&shown);
                     dc.text(
-                        wx,
+                        x0,
                         ty,
-                        Rect::new(wx, y, (lr.right() - wx).max(0), rh),
-                        why,
+                        Rect::new(x0, y, path_avail, rh),
+                        &shown,
                         th.text_dim,
                     );
+                    let wx = x0 + sw + gap;
+                    let why_avail = (lr.right() - indent - wx).max(0);
+                    if why_avail > 0 {
+                        let why_shown = nexa_ctl::draw::ellipsize_middle(dc, why, why_avail);
+                        dc.text(
+                            wx,
+                            ty,
+                            Rect::new(wx, y, why_avail, rh),
+                            &why_shown,
+                            th.text_dim,
+                        );
+                    }
                 }
             }
             y += rh;
