@@ -385,6 +385,33 @@ fn search_file(
     });
 }
 
+/// 포함/제외 패턴이 이 경로(또는 이름)를 허용하는가 — 폴더 걷기와 **같은 글롭 규칙**을 열린 탭(메모리 본문)에도 적용할 때 쓴다
+/// (사용자 09-23 "필터가 잘 동작하는지" — 범위 `+*.yaml`인데 열린 `.sql` 탭이 결과에 남던 결함). `rel`은 `/`·`\` 어느 구분자든 · 파일로 본다.
+#[must_use]
+pub fn path_allowed(includes: &[String], excludes: &[String], rel: &str) -> bool {
+    let norm = rel.replace('\\', "/");
+    let comps: Vec<&str> = norm.split('/').filter(|c| !c.is_empty()).collect();
+    if comps.is_empty() {
+        return includes.is_empty();
+    }
+    if !includes.is_empty() {
+        let inc = ignore::IgnoreNode::from_lines(includes.iter().map(String::as_str), 0, None);
+        // 루트 기준 패턴(`docs/**/*.md`)은 절대 경로 성분과 안 맞을 수 있어 **이름만**으로도 한 번 더 본다.
+        let name = [*comps.last().unwrap_or(&"")];
+        if !(inc.is_ignored(&comps, false) || inc.is_ignored(&name, false)) {
+            return false;
+        }
+    }
+    if !excludes.is_empty() {
+        let exc = ignore::IgnoreNode::from_lines(excludes.iter().map(String::as_str), 0, None);
+        let name = [*comps.last().unwrap_or(&"")];
+        if exc.is_ignored(&comps, false) || exc.is_ignored(&name, false) {
+            return false;
+        }
+    }
+    true
+}
+
 /// 메모리 본문 검색(열린 탭 · 저장 안 된 버퍼). `label`은 결과의 `path`에 그대로(파일 탭이면 경로 · 메모리 탭이면 제목).
 #[must_use]
 pub fn search_text(text: &str, label: impl AsRef<Path>, matcher: &Matcher) -> Vec<Match> {
@@ -545,6 +572,19 @@ mod tests {
         o.includes = vec!["*.sql".into()];
         let (ms, _, _) = collect(o);
         assert!(ms.is_empty());
+        // 열린 탭용 같은 규칙(경로·이름 · 어느 구분자든 · 이름 없는 탭 제목도).
+        let inc = vec!["*.sql".into(), "*.txt".into()];
+        let exc = vec!["*_test.sql".into()];
+        assert!(path_allowed(&inc, &exc, "D:\\proj\\a.sql"));
+        assert!(path_allowed(&inc, &exc, "/proj/b.txt"));
+        assert!(!path_allowed(&inc, &exc, "/proj/c.log"));
+        assert!(!path_allowed(&inc, &exc, "/proj/d_test.sql"));
+        assert!(
+            !path_allowed(&inc, &exc, "Script_2"),
+            "이름 없는 탭 = 패턴에 안 맞으면 제외"
+        );
+        assert!(path_allowed(&[], &exc, "Script_2"));
+        assert!(!path_allowed(&[], &["*.sql".into()], "x.sql"));
     }
 
     fn rel(t: &Tree, m: &Match) -> String {

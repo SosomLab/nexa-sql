@@ -195,6 +195,9 @@ pub(crate) struct SearchPanel {
     ///   "용량이 크거나 텍스트 검색이 불가능한 대상은 건너뛰고 로그에 제외 파일과 이유"). 결과 아래 접이식 절.
     skipped: Vec<(String, String)>,
     skipped_expanded: bool,
+    /// 가로 스크롤(긴 경로·이유 · Alt 전체 경로 보기 · 사용자 09-23) — 내용 폭은 그린 행의 최대(행 집합이 바뀌면 다시 0부터).
+    scroll_x: i32,
+    content_w: std::cell::Cell<i32>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -242,6 +245,8 @@ impl SearchPanel {
             rw: Recall::new("search.where"),
             skipped: Vec::new(),
             skipped_expanded: false,
+            scroll_x: 0,
+            content_w: std::cell::Cell::new(0),
         }
     }
 
@@ -454,6 +459,16 @@ impl SearchPanel {
         let mut tab_matches = 0usize;
         if spec.open_tabs {
             for (id, label, text, path) in &ctx.tabs {
+                // 포함/제외 패턴은 열린 탭에도(폴더 걷기와 같은 규칙 · 사용자 09-23 "+*.yaml인데 .sql 탭이 남는다") — 파일 탭은 경로 ·
+                //   이름 없는 탭은 제목으로 판정 · 사용자 `-pat`와 설정 제외를 함께 본다.
+                let rel = path
+                    .as_ref()
+                    .map_or_else(|| label.clone(), |p| p.to_string_lossy().into_owned());
+                let mut exc = ctx.excludes.clone();
+                exc.extend(spec.excludes.iter().cloned());
+                if !nsql_search::path_allowed(&spec.includes, &exc, &rel) {
+                    continue;
+                }
                 let ms = search_text(text, label, &matcher);
                 if let Some(p) = path {
                     self.tab_paths.push(p.clone());
@@ -641,6 +656,8 @@ impl SearchPanel {
         }
         let max = (self.rows.len() as i32 * self.row_h - self.list_rect.h).max(0);
         self.scroll_y = self.scroll_y.clamp(0, max);
+        // 행 집합이 바뀌면 내용 폭은 다시 잰다(그리면서 자란다) · 가로 위치는 유지하되 다음 그리기에서 폭 안으로.
+        self.content_w.set(0);
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
@@ -710,17 +727,18 @@ impl SearchPanel {
         let mut inv = Invalidations::default();
         // 목록 스크롤바(휠 포함).
         let content_h = self.rows.len() as i32 * self.row_h;
-        let (_, ny, consumed) = self.bars.on_event(
+        let (nx, ny, consumed) = self.bars.on_event(
             ev,
             self.list_rect,
-            self.list_rect.w,
+            self.content_w.get().max(self.list_rect.w),
             content_h.max(self.list_rect.h),
-            0,
+            self.scroll_x,
             self.scroll_y,
             self.scale,
         );
-        if ny != self.scroll_y {
+        if ny != self.scroll_y || nx != self.scroll_x {
             self.scroll_y = ny;
+            self.scroll_x = nx.max(0);
             return true;
         }
         if consumed {
@@ -899,6 +917,12 @@ impl SearchPanel {
         let mut y = lr.y - self.scroll_y % rh;
         let indent = px(PAD);
         let sel_w = dc.text_width("M");
+        // ★ 가로 스크롤(사용자 09-23): 내용은 `lx`(= lr.x − scroll_x) 기준으로 그리고 목록 영역 `lr`로 클립 · 내용 폭은 그린 행의 최대로
+        //   자란다(Alt 전체 경로 보기에서는 축약하지 않으므로 그만큼 넓어져 스크롤로 닿는다 — 종전엔 잘라 그려 빈칸으로 보였다).
+        let sx = self.scroll_x;
+        let lx = lr.x - sx;
+        let mut content_w = self.content_w.get();
+        let clip_to = |r: Rect| r.intersection(&lr);
         for i in first..self.rows.len() {
             if y >= lr.bottom() {
                 break;
@@ -910,7 +934,8 @@ impl SearchPanel {
                 dc.fill_rect_alpha(row_rect, th.text, 0.06);
             }
             let ty = dc.text_center_y(y, rh);
-            match self.rows[i] {
+            let full = nexa_ctl::draw::show_full();
+            let right = match self.rows[i] {
                 Row::File(fi) => {
                     let f = &self.files[fi];
                     // 셰브론 = 프로젝트 탐색기·북마크 패널과 같은 부품(`draw_chevron_90_in` · 접힘 흐림 · 펼침/호버 본문색 · 사용자 09-23).
@@ -922,26 +947,35 @@ impl SearchPanel {
                     };
                     nexa_ctl::controls::draw_chevron_90_in(
                         dc,
-                        Rect::new(lr.x + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
+                        Rect::new(lx + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
                         color,
                         f.expanded,
                         Some(row_rect),
                     );
-                    let lab_x = lr.x + indent + chev_w + px(4.0);
+                    let lab_x = lx + indent + chev_w + px(4.0);
                     let count = f.matches.len().to_string();
                     let cw = dc.text_width(&count);
-                    let label_clip = Rect::new(lr.x, y, (lr.w - cw - indent * 2).max(0), rh);
-                    let shown =
-                        nexa_ctl::draw::ellipsize_middle(dc, &f.label, label_clip.right() - lab_x);
-                    dc.text(lab_x, ty, label_clip, &shown, th.text);
+                    // 개수는 오른쪽 끝에 고정 · 라벨은 개수 앞까지(전체 보기면 축약 없이 스크롤로).
+                    let label_max = (lr.right() - indent - cw - px(6.0) - lab_x).max(px(40.0));
+                    let shown = nexa_ctl::draw::ellipsize_middle(dc, &f.label, label_max);
+                    let sw = dc.text_width(&shown);
+                    let label_w = if full { sw } else { sw.min(label_max) };
+                    dc.text(
+                        lab_x,
+                        ty,
+                        clip_to(Rect::new(lab_x, y, label_w, rh)),
+                        &shown,
+                        th.text,
+                    );
                     dc.text(lr.right() - indent - cw, ty, row_rect, &count, th.text_dim);
+                    lab_x + sw + px(6.0) + cw + indent
                 }
                 Row::Match(fi, mi) => {
                     let m = &self.files[fi].matches[mi];
                     let num = format!("{}:", m.line_no);
                     let nw = dc.text_width(&num);
-                    let x0 = lr.x + indent * 2 + sel_w;
-                    dc.text(x0, ty, row_rect, &num, th.text_dim);
+                    let x0 = lx + indent * 2 + sel_w;
+                    dc.text(x0, ty, clip_to(Rect::new(x0, y, nw, rh)), &num, th.text_dim);
                     let tx = x0 + nw + px(6.0);
                     let line = m.text.trim_end();
                     // 일치 구간 강조(반투명) — 앞 문맥이 길면 일치가 보이도록 왼쪽을 자른다.
@@ -950,25 +984,25 @@ impl SearchPanel {
                     let shown: String = chars.iter().skip(cut).collect();
                     let mut w = Vec::new();
                     dc.text_prefix_widths(&shown, &mut w);
+                    let total = w.last().copied().unwrap_or(0);
                     let a = m.col - cut;
                     let e = (a + m.len).min(chars.len().saturating_sub(cut));
                     let hx0 = tx + w.get(a).copied().unwrap_or(0);
                     let hx1 = tx + w.get(e).copied().unwrap_or(0);
                     if hx1 > hx0 {
-                        dc.fill_round_rect_alpha(
-                            Rect::new(hx0, y + 2, (hx1 - hx0).min(lr.right() - hx0), rh - 4),
-                            px(2.0),
-                            th.warn,
-                            0.35,
-                        );
+                        let hl = clip_to(Rect::new(hx0, y + 2, hx1 - hx0, rh - 4));
+                        if !hl.is_empty() {
+                            dc.fill_round_rect_alpha(hl, px(2.0), th.warn, 0.35);
+                        }
                     }
                     dc.text(
                         tx,
                         ty,
-                        Rect::new(tx, y, (lr.right() - tx).max(0), rh),
+                        clip_to(Rect::new(tx, y, total, rh)),
                         &shown,
                         th.text,
                     );
+                    tx + total + indent
                 }
                 Row::SkipHeader => {
                     let chev_w = dc.text_height().max(10);
@@ -979,24 +1013,28 @@ impl SearchPanel {
                     };
                     nexa_ctl::controls::draw_chevron_90_in(
                         dc,
-                        Rect::new(lr.x + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
+                        Rect::new(lx + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
                         color,
                         self.skipped_expanded,
                         Some(row_rect),
                     );
-                    let lab_x = lr.x + indent + chev_w + px(4.0);
+                    let lab_x = lx + indent + chev_w + px(4.0);
+                    let label = tf(Msg::SearchSkippedHeader, &[&self.skipped.len().to_string()]);
+                    let lw = dc.text_width(&label);
                     dc.text(
                         lab_x,
                         ty,
-                        row_rect,
-                        &tf(Msg::SearchSkippedHeader, &[&self.skipped.len().to_string()]),
+                        clip_to(Rect::new(lab_x, y, lw, rh)),
+                        &label,
                         th.warn,
                     );
+                    lab_x + lw + indent
                 }
                 Row::Skip(si) => {
-                    // 경로 — 이유: 둘 다 행 안에서만(이유가 길면 경로는 최소 폭으로 줄이고 이유도 가운데 축약 · 패널 밖으로 나가지 않는다).
+                    // 경로 — 이유: 보통은 둘 다 행 안에 맞춘다(이유가 길면 경로는 최소 폭 · 이유도 가운데 축약) ·
+                    //   Alt 전체 보기(`show_full`)면 축약 없이 그리고 내용 폭이 자라 가로 스크롤로 닿는다(사용자 09-23 빈칸 결함).
                     let (path, why) = &self.skipped[si];
-                    let x0 = lr.x + indent * 2 + sel_w;
+                    let x0 = lx + indent * 2 + sel_w;
                     let gap = px(8.0);
                     let max_w = (lr.right() - indent - x0).max(px(40.0));
                     let why_w = dc.text_width(why);
@@ -1006,33 +1044,40 @@ impl SearchPanel {
                     dc.text(
                         x0,
                         ty,
-                        Rect::new(x0, y, path_avail, rh),
+                        clip_to(Rect::new(x0, y, sw, rh)),
                         &shown,
                         th.text_dim,
                     );
                     let wx = x0 + sw + gap;
-                    let why_avail = (lr.right() - indent - wx).max(0);
-                    if why_avail > 0 {
-                        let why_shown = nexa_ctl::draw::ellipsize_middle(dc, why, why_avail);
+                    let why_shown = if full {
+                        why.clone()
+                    } else {
+                        nexa_ctl::draw::ellipsize_middle(dc, why, (lr.right() - indent - wx).max(0))
+                    };
+                    let ww = dc.text_width(&why_shown);
+                    if ww > 0 {
                         dc.text(
                             wx,
                             ty,
-                            Rect::new(wx, y, why_avail, rh),
+                            clip_to(Rect::new(wx, y, ww, rh)),
                             &why_shown,
                             th.text_dim,
                         );
                     }
+                    wx + ww + indent
                 }
-            }
+            };
+            content_w = content_w.max(right - lx);
             y += rh;
         }
+        self.content_w.set(content_w);
         self.bars.paint(
             dc,
             th,
             lr,
-            lr.w,
+            content_w.max(lr.w),
             (self.rows.len() as i32 * rh).max(lr.h),
-            0,
+            sx,
             self.scroll_y,
             s,
         );

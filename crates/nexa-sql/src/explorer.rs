@@ -2872,15 +2872,34 @@ impl Explorer {
                                     // 세로 배치(사용자 09-22): 원통 안쪽 빈 띠 = 6.0/24 ~ 20.2/24 · 대문자 높이 ≈ 0.64·줄높이(위 0.18 여백) ·
                                     //   2줄 간격 2px · 1줄 상단 여백 = 2줄 하단 여백(글자와 가장 가까운 테두리 픽셀 사이).
                                     // 고정폭 굵게(사용자 09-22) — 1줄·2줄 같은 face·size.
-                                    dc.select_font(FontSlot::Mono, true);
-                                    let lh2 = dc.text_height();
-                                    let cap = (lh2 as f32 * 0.64).round() as i32;
-                                    let asc = (lh2 as f32 * 0.18).round() as i32;
+                                    // ★ 틀 안에 맞춘다(사용자 09-23 "라벨이 DB 모양 테두리를 벗어난다"): 가장 긴 줄이 원통 안쪽 폭(≈ 0.78·rs)을
+                                    //   넘거나 줄들이 세로 띠를 넘으면 글꼴을 1px씩 줄인다(`select_font_sized` 음수 증분 · 최대 −8).
                                     let gap = (2.0 * s).round().max(1.0) as i32;
                                     let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32;
                                     let bottom = dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32;
                                     let n = pick.lines.len() as i32;
-                                    let total = cap * n + gap * (n - 1);
+                                    let inner_w = (rs as f32 * 0.78).round() as i32;
+                                    let mut delta = 0.0f32;
+                                    let (lh2, cap, asc, total) = loop {
+                                        dc.select_font_sized(FontSlot::Mono, true, delta);
+                                        let lh2 = dc.text_height();
+                                        let cap = (lh2 as f32 * 0.64).round() as i32;
+                                        let asc = (lh2 as f32 * 0.18).round() as i32;
+                                        let total = cap * n + gap * (n - 1);
+                                        let wmax = pick
+                                            .lines
+                                            .iter()
+                                            .map(|l| dc.text_width(l))
+                                            .max()
+                                            .unwrap_or(0);
+                                        if (wmax <= inner_w && total <= bottom - top)
+                                            || delta <= -8.0
+                                        {
+                                            break (lh2, cap, asc, total);
+                                        }
+                                        delta -= 1.0;
+                                    };
+                                    let _ = lh2;
                                     let margin = (bottom - top - total) / 2;
                                     let mut vis_top = top + margin;
                                     let c = dstr.intersection(&rr);
