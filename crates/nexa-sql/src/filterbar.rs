@@ -6,6 +6,7 @@
 //! 정규식 오류 = 틀 테두리 danger + 아무것도 일치하지 않음.
 
 use crate::findbar::{BtnKind, FindBtn};
+use crate::search_history::{Recall, SharedHistory};
 use crate::{rx, toolicons};
 use nexa_ctl::controls::ctxmenu::MenuIcon;
 use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
@@ -47,6 +48,8 @@ pub(crate) struct FilterBar {
     clamp_w: i32,
     /// 자리 표시 글(비활성 그리기용).
     placeholder: String,
+    /// 검색어 이력(전역 · 상자 이름별 · ↑/↓ 되부르기 · Enter/포커스 잃음 = 기록 · 사용자 09-23) — 호스트가 `set_history`로 준다.
+    history: Option<(SharedHistory, Recall)>,
 }
 
 impl FilterBar {
@@ -74,6 +77,19 @@ impl FilterBar {
             tooltip_ms: 600,
             clamp_w: i32::MAX / 2,
             placeholder: placeholder.to_string(),
+            history: None,
+        }
+    }
+
+    /// 검색어 이력 잇기 — `key` = 상자 이름(`filter.project` 등 · 같은 이름 = 이력 공유).
+    pub(crate) fn set_history(&mut self, h: SharedHistory, key: &str) {
+        self.history = Some((h, Recall::new(key)));
+    }
+
+    /// 지금 글을 이력에 올린다(Enter · 포커스 잃음 · 빈 글은 부품이 무시).
+    fn history_commit(&mut self) {
+        if let Some((h, r)) = &mut self.history {
+            r.commit(&self.tb, h);
         }
     }
 
@@ -103,6 +119,9 @@ impl FilterBar {
     }
 
     pub(crate) fn set_focused(&mut self, on: bool) {
+        if !on && self.tb.is_focused() {
+            self.history_commit();
+        }
         self.tb.set_focused(on);
         if !on {
             for b in &mut self.btns {
@@ -253,7 +272,18 @@ impl FilterBar {
             return FilterEvent::Side(k);
         }
         if to_tb {
+            // ↑/↓ = 이력 되부르기(상자에 포커스 · 이력이 있을 때만 소비) → 상자 글로 다시 거른다.
+            if let Some((h, r)) = &mut self.history {
+                if self.tb.is_focused() && r.on_key(ev, &mut self.tb, h, inv) {
+                    let _ = self.tb.take_changed();
+                    self.refresh();
+                    return FilterEvent::Changed;
+                }
+            }
             self.tb.on_event(ev, inv);
+            if self.tb.take_committed().is_some() {
+                self.history_commit();
+            }
         }
         if self.tb.take_changed().is_some() {
             self.refresh();

@@ -57,7 +57,8 @@
 | CLI 행 수 · 열 폭 | `cli.max_rows` **200** · `cli.max_col_width` **60** | 잘라 표시 |
 | 변수 값 크기 | `vars.max_value_kb` **1,024** | 잘라 저장 + 안내 |
 | 로그 창 · 트랜잭션 로그 | `log.max_lines` **10,000** · `txlog.max_entries` **10,000** · 파일 `log.file_max_kb` | 오래된 줄부터 버림 / 회전 |
-| 프로젝트 트리 열거 | `project.scan_max` **5,000**(폴더당) | 나머지는 "… 더 있음" |
+| 프로젝트 트리 열거 | `project.scan_max` **0 = 무제한**(99차 · 워커 열거 · > 0이면 트리 항목 수 메모리 보호 상한) | 상한에 닿으면 "N개에서 열거를 멈췄습니다" · 읽지 못한 폴더는 로그 |
+| 파일 검색 제외 로그 | `search.max_file_kb` 1,024 · 이진(첫 8KB NUL) · 읽기 실패 · UTF-8 아닌 이름 | 검색 패널 아래 "제외됨(N)" 접이식 목록(경로 — 이유) · 상태줄 "· 제외 N" · CLI `nsql grep` 요약(`NSQL_GREP_LOG=1` = 목록) |
 | 파일 열기 다중 선택 | `file.open_max` **10** | 초과분 제외 표시 |
 | 되돌리기 기록 파일 | `editor.undo_persist_mb` **4** | 저장 안 함 |
 | 세션 수 | `session.max_shared` **8** · `session.max_private` **8** | 접속 거부 + 안내 |

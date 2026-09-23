@@ -50,6 +50,7 @@ mod log_win;
 mod memtrim;
 mod outline_panel;
 mod palette;
+mod parwalk;
 mod prefs_win;
 mod present;
 mod probe;
@@ -58,6 +59,7 @@ mod project_panel;
 mod results;
 mod runtoast;
 mod rx;
+mod search_history;
 mod search_panel;
 mod sessions;
 mod sessions_win;
@@ -362,6 +364,10 @@ struct App {
     /// 북마크(docs/69 · T-167).
     bookmarks: bookmarks::Bookmarks,
     bm_panel: bookmarks_panel::BookmarksPanel,
+    /// 북마크 패널에 마지막으로 준 탭 제목 세대(`Editors::titles_rev`) — 바뀐 틱에만 id → 제목 표를 다시 준다(사용자 09-23).
+    bm_titles_rev: u64,
+    /// 검색어 이력(전역 한 파일 · 상자 이름별 · `search.history_max` · 사용자 09-23) — 찾기/파일 검색/필터/설정 검색이 공유.
+    search_history: search_history::SharedHistory,
     /// 코드 완성(docs/76 · 팝업 · 문서 아웃라인 캐시 · MRU).
     intel: intel::Intel,
     /// 아웃라인 패널(docs/76).
@@ -3861,7 +3867,8 @@ impl App {
         self.project_panel.set_list_opts(
             self.settings.flag("file.show_hidden"),
             self.settings.flag("file.show_dot"),
-            self.settings.int("project.scan_max").max(100) as usize,
+            self.settings.int("project.scan_max").max(0) as usize,
+            self.settings.int("project.scan_threads").max(0) as usize,
         );
         self.project_panel
             .set_icons(self.settings.flag("project.icons"));
@@ -5887,9 +5894,15 @@ impl App {
                 .editors
                 .set_undo_budget(self.settings.int(key).max(1) as usize * 1024 * 1024),
             // 확장 관리자 켬/끔(설정 창에서 바꿔도) = 확장 효과 전체 재적용 + 활동 막대 아이콘.
-            "project.preview_tab" | "project.scan_max" | "file.show_hidden" | "file.show_dot" => {
-                self.sync_project_panel_opts()
-            }
+            "project.preview_tab"
+            | "project.scan_max"
+            | "project.scan_threads"
+            | "file.show_hidden"
+            | "file.show_dot" => self.sync_project_panel_opts(),
+            "search.history_max" => self
+                .search_history
+                .borrow_mut()
+                .set_max(self.settings.int(key).max(0) as usize),
             "extensions.enabled" => {
                 self.apply_extensions(None);
                 self.layout();
@@ -8071,6 +8084,19 @@ impl App {
             if !ok {
                 self.sess.status = format!("explorer.pick {pick}: menu not open");
             }
+            self.redraw();
+            return;
+        }
+        // 자체 시험용: 파일 검색 패널에 검색어를 넣고 실행(`search.run:<글>` · 제외 로그 캡처 09-23).
+        if let Some(q) = id.strip_prefix("search.run:") {
+            self.search.run_query(q);
+            self.redraw();
+            return;
+        }
+        // 자체 시험용: 활성 탭 이름을 바로 바꾼다(`tab.rename_to:<이름>` — 팔레트 입력 없이 · 북마크 패널 문서 이름 추종 캡처 09-23).
+        if let Some(name) = id.strip_prefix("tab.rename_to:") {
+            let i = self.editors.active();
+            self.editors.rename_tab(i, name);
             self.redraw();
             return;
         }
@@ -12536,11 +12562,18 @@ impl App {
         for i in 0..self.editors.len() {
             self.bm_refresh_tab(i);
         }
+        self.bm_titles_rev = self.editors.titles_rev();
+        self.bm_panel.set_tab_titles(self.editors.tab_titles());
         self.bm_panel.sync(&self.bookmarks.store);
         self.redraw();
     }
 
-    /// 틱: 활성 탭의 줄 변경 기록 소비(L0) · 바뀐 표시 갱신 · 디바운스 저장.
+    /// 문서 열쇠의 표시 이름(토스트·상태줄) — 이름 없는 탭은 id로 지금 탭 제목(패널과 같은 규칙).
+    fn bm_doc_name(&self, doc: &nsql_bookmarks::DocKey) -> String {
+        self.bm_panel.doc_name(doc)
+    }
+
+    /// 틱: 활성 탭의 줄 변경 기록 소비(L0) · 바뀐 표시 갱신 · 디바운스 저장 · **탭 이름이 바뀌면 패널의 문서 이름**(id → 제목).
     fn bm_tick(&mut self) {
         if !self.bookmarks.enabled {
             return;
@@ -12549,6 +12582,12 @@ impl App {
         let moved = self.bookmarks.sync_tab(&self.editors, i);
         if self.bookmarks.take_changed() || moved {
             self.bm_sync_ui();
+        } else if self.bm_titles_rev != self.editors.titles_rev() {
+            // 탭 제목 세대가 바뀐 때만(이름 바꾸기 · 열기/닫기 · 저장) — 매 틱 제목 비교는 하지 않는다.
+            self.bm_titles_rev = self.editors.titles_rev();
+            if self.bm_panel.set_tab_titles(self.editors.tab_titles()) {
+                self.redraw();
+            }
         }
         self.bookmarks.tick_save();
     }
@@ -12571,7 +12610,8 @@ impl App {
                 bookmarks_panel::BmAction::RemoveDoc(doc) => {
                     let n = self.bookmarks.remove_doc(&doc);
                     if n > 0 {
-                        self.bm_removed_toast(n, &doc.short_name());
+                        let name = self.bm_doc_name(&doc);
+                        self.bm_removed_toast(n, &name);
                     }
                 }
                 bookmarks_panel::BmAction::NewGroup => {
@@ -15062,6 +15102,13 @@ impl ApplicationHandler<Wake> for App {
         if self.project_panel.tick(now_ms) {
             self.redraw();
         }
+        // 프로젝트 필터 열거의 실패 폴더 = 로그 창(도착 순 병합 · 사용자 09-23).
+        for (path, why) in self.project_panel.take_scan_log() {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!("project filter: skipped {}: {why}", path.display()),
+            ));
+        }
         if self.bm_panel.tick(now_ms) {
             self.redraw();
         }
@@ -16372,6 +16419,11 @@ fn main() {
     mark(&mut marks, "palette");
     let toasts = toast::Toasts::new();
     mark(&mut marks, "toasts");
+    let search_history = search_history::SearchHistory::load_in(
+        nsql_settings::config_dir().as_deref(),
+        settings.int("search.history_max").max(0) as usize,
+    )
+    .shared();
     let mut app = App {
         window: None,
         surface: None,
@@ -16499,6 +16551,8 @@ fn main() {
         project_panel,
         bookmarks: bookmarks::Bookmarks::new(),
         bm_panel,
+        bm_titles_rev: u64::MAX,
+        search_history,
         intel,
         outline_panel,
         project: project::Project::default(),
@@ -16566,6 +16620,17 @@ fn main() {
     };
     app.grid.set_row_snap(row_snap);
     app.apply_result_tab_opts();
+    // 검색어 이력(전역 한 벌)을 상자를 가진 곳마다 건넨다(찾기/바꾸기 · 파일 검색 · 프로젝트/북마크/아웃라인/확장 필터 · 설정 검색 · 사용자 09-23).
+    {
+        let h = app.search_history.clone();
+        app.find.set_history(h.clone());
+        app.search.set_history(h.clone());
+        app.project_panel.set_history(h.clone());
+        app.bm_panel.set_history(h.clone());
+        app.outline_panel.set_history(h.clone());
+        app.ext_panel.set_history(h.clone());
+        app.prefs_win.set_history(h);
+    }
     {
         let pct = app.settings.int("grid.row_height_pct").clamp(110, 300) as i32;
         app.grid.set_row_pct(pct);

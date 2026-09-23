@@ -2,6 +2,8 @@
 //!
 //! - **열거**: 병렬 폴더 걷기([`walk`] · std 스레드 풀 · 폴더 단위 큐 · 링크 루프 차단) · 무시 규칙([`ignore`] · 기본 + `.gitignore` 부분집합) ·
 //!   이진 제외(첫 8KB NUL) · 크기 상한 `max_file_kb`.
+//! - **제외 로그**: 건너뛴 파일은 전부 [`Batch::Skipped`]로 **이유와 함께**([`SkipReason`] — 크기 초과 · 이진 · 읽기 실패 · UTF-8 아닌 이름)
+//!   같은 채널에 실려 온다(워커가 여럿이어도 채널이 하나라 로그는 도착 순으로 **병합**된다 · 사용자 09-23 "제외된 파일과 이유를 검색 로그에").
 //! - **매칭**: [`Matcher`] — 리터럴(SWAR 후보 스캔) · 대소문자 무시(ASCII 빠른 길 + 비ASCII `char` 경로) · 단어 단위 · 정규식(`regex` · 리터럴 접두 사전 필터).
 //! - **줄 번호**: 일치 파일에서만 계산([`lines`]) · 앞뒤 문맥 1줄.
 //! - **인코딩**: UTF-8 그대로 · UTF-16 BOM 변환 · EUC-KR은 T-79 뒤.
@@ -18,6 +20,7 @@
 //!     match b {
 //!         Batch::Matches(ms) => println!("{}: {}", ms[0].path.display(), ms.len()),
 //!         Batch::Error { path, message } => eprintln!("{}: {message}", path.display()),
+//!         Batch::Skipped { path, reason } => eprintln!("skipped {}: {}", path.display(), reason.code()),
 //!         Batch::Done(p) => println!("{} files · {} matches · {:?}", p.files_searched, p.matches, p.elapsed),
 //!     }
 //! }
@@ -110,14 +113,50 @@ pub struct Progress {
     /// 실제로 매칭한 파일 수(이진·읽기 실패 제외).
     pub files_searched: u64,
     /// 일치가 있는 파일 수.
-    pub files_matched: u64,
+    pub matches_files: u64,
     /// 일치 수.
     pub matches: u64,
-    /// 읽기 실패 수.
+    /// 폴더 읽기 실패 수([`Batch::Error`]).
     pub errors: u64,
+    /// 건너뛴 파일 수([`Batch::Skipped`] · 크기·이진·읽기 실패·이름).
+    pub skipped: u64,
     pub elapsed: Duration,
     pub cancelled: bool,
     pub done: bool,
+}
+
+impl Progress {
+    /// 일치가 있는 파일 수(옛 이름 호환).
+    #[must_use]
+    pub fn files_matched(&self) -> u64 {
+        self.matches_files
+    }
+}
+
+/// 파일을 건너뛴 이유(검색 로그 · 사용자 09-23).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkipReason {
+    /// 크기 상한 초과(`bytes` > `limit` · `max_file_kb`).
+    TooLarge { bytes: u64, limit: u64 },
+    /// 이진 파일(첫 8KB에 NUL · 텍스트 검색 불가).
+    Binary,
+    /// 열기/읽기 실패(권한 · 잠김 · 사라짐).
+    Unreadable(String),
+    /// UTF-8이 아닌 이름(무시 규칙을 맞출 수 없어 건너뜀).
+    NonUtf8Name,
+}
+
+impl SkipReason {
+    /// 짧은 코드(로그 · CLI).
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            SkipReason::TooLarge { .. } => "too_large",
+            SkipReason::Binary => "binary",
+            SkipReason::Unreadable(_) => "unreadable",
+            SkipReason::NonUtf8Name => "non_utf8_name",
+        }
+    }
 }
 
 /// 채널로 오는 조각.
@@ -125,8 +164,10 @@ pub struct Progress {
 pub enum Batch {
     /// 한 파일의 일치(같은 `path` · 오름차순 · ≤ [`BATCH_MAX`]).
     Matches(Vec<Match>),
-    /// 폴더/파일 읽기 실패 — 검색은 계속된다.
+    /// 폴더 읽기 실패 — 검색은 계속된다.
     Error { path: PathBuf, message: String },
+    /// 파일 하나를 건너뛰었다(이유 포함) — 검색 로그. 워커가 여럿이어도 채널 하나라 도착 순으로 병합된다.
+    Skipped { path: PathBuf, reason: SkipReason },
     /// 끝(취소 포함) · 마지막 메시지.
     Done(Progress),
 }
@@ -140,6 +181,7 @@ struct Shared {
     files_matched: AtomicU64,
     matches: AtomicU64,
     errors: AtomicU64,
+    skipped: AtomicU64,
     started: Instant,
 }
 
@@ -148,9 +190,10 @@ impl Shared {
         Progress {
             files_seen: self.files_seen.load(Ordering::Relaxed),
             files_searched: self.files_searched.load(Ordering::Relaxed),
-            files_matched: self.files_matched.load(Ordering::Relaxed),
+            matches_files: self.files_matched.load(Ordering::Relaxed),
             matches: self.matches.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
+            skipped: self.skipped.load(Ordering::Relaxed),
             elapsed: self.started.elapsed(),
             cancelled: self.cancel.load(Ordering::Relaxed),
             done: self.done.load(Ordering::Relaxed),
@@ -206,6 +249,7 @@ impl Search {
             files_matched: AtomicU64::new(0),
             matches: AtomicU64::new(0),
             errors: AtomicU64::new(0),
+            skipped: AtomicU64::new(0),
             started: Instant::now(),
         });
         let handle = CancelHandle {
@@ -233,7 +277,11 @@ fn run(opts: SearchOpts, matcher: Matcher, tx: Sender<Batch>, shared: Arc<Shared
             shared.cancel.store(true, Ordering::Relaxed);
         }
     };
-    let visit = |path: PathBuf| search_file(path, max_bytes, &matcher, &shared, &send);
+    let skip = |path: PathBuf, reason: SkipReason| {
+        shared.skipped.fetch_add(1, Ordering::Relaxed);
+        send(Batch::Skipped { path, reason });
+    };
+    let visit = |path: PathBuf| search_file(path, max_bytes, &matcher, &shared, &send, &skip);
     let error = |path: PathBuf, message: String| {
         shared.errors.fetch_add(1, Ordering::Relaxed);
         send(Batch::Error { path, message });
@@ -245,6 +293,7 @@ fn run(opts: SearchOpts, matcher: Matcher, tx: Sender<Batch>, shared: Arc<Shared
         &walk::Hooks {
             visit: &visit,
             error: &error,
+            skip: &skip,
         },
     );
     shared.done.store(true, Ordering::Relaxed);
@@ -257,13 +306,14 @@ thread_local! {
 }
 
 /// 파일 하나 — 열기 → `fstat` 크기 상한 → 첫 8KB 이진 판정(이진이면 나머지를 읽지 않는다) → 읽기 → BOM 처리 → 매칭 →
-/// 일치 파일만 줄 계산 → 배치 전송. `max_bytes` 0 = 무제한.
+/// 일치 파일만 줄 계산 → 배치 전송. `max_bytes` 0 = 무제한. 건너뛰면 이유와 함께 `skip`(검색 로그).
 fn search_file(
     path: PathBuf,
     max_bytes: u64,
     matcher: &Matcher,
     shared: &Shared,
     send: &dyn Fn(Batch),
+    skip: &dyn Fn(PathBuf, SkipReason),
 ) {
     use std::io::Read;
     BUF.with(|cell| {
@@ -272,7 +322,10 @@ fn search_file(
         let read = std::fs::File::open(&path).and_then(|mut f| {
             let len = f.metadata()?.len();
             if max_bytes != 0 && len > max_bytes {
-                return Ok(false);
+                return Ok(Some(SkipReason::TooLarge {
+                    bytes: len,
+                    limit: max_bytes,
+                }));
             }
             shared.files_seen.fetch_add(1, Ordering::Relaxed);
             raw.reserve(len as usize);
@@ -280,25 +333,25 @@ fn search_file(
                 .take(decode::BINARY_PROBE as u64)
                 .read_to_end(&mut raw)?;
             if decode::probe_is_binary(&raw) {
-                return Ok(false);
+                return Ok(Some(SkipReason::Binary));
             }
             f.read_to_end(&mut raw)?;
-            Ok(true)
+            Ok(None)
         });
         match read {
-            Ok(true) => {}
-            Ok(false) => return, // 크기 초과 · 이진
+            Ok(None) => {}
+            Ok(Some(reason)) => {
+                skip(path, reason);
+                return;
+            }
             Err(e) => {
-                shared.errors.fetch_add(1, Ordering::Relaxed);
-                send(Batch::Error {
-                    path,
-                    message: e.to_string(),
-                });
+                skip(path, SkipReason::Unreadable(e.to_string()));
                 return;
             }
         }
         let Some(body) = decode::prepare(&raw) else {
-            return; // 이진(8KB 뒤 판정은 하지 않으므로 여기서는 BOM 처리만)
+            skip(path, SkipReason::Binary); // BOM 뒤 판정에서 이진
+            return;
         };
         shared.files_searched.fetch_add(1, Ordering::Relaxed);
         let mut spans = Vec::new();
@@ -387,18 +440,80 @@ mod tests {
 
     /// 전부 받아 (일치 · 오류 · 끝 통계)로.
     fn collect(o: SearchOpts) -> (Vec<Match>, Vec<PathBuf>, Progress) {
+        let (ms, errs, _, p) = collect_all(o);
+        (ms, errs, p)
+    }
+
+    /// 전부 받아 (일치 · 폴더 오류 · 제외 로그 · 끝 통계)로.
+    #[allow(clippy::type_complexity)]
+    fn collect_all(
+        o: SearchOpts,
+    ) -> (
+        Vec<Match>,
+        Vec<PathBuf>,
+        Vec<(PathBuf, SkipReason)>,
+        Progress,
+    ) {
         let (rx, _h) = Search::spawn(o).expect("spawn");
         let mut ms = Vec::new();
         let mut errs = Vec::new();
+        let mut skipped = Vec::new();
         let mut done = None;
         for b in rx {
             match b {
                 Batch::Matches(v) => ms.extend(v),
                 Batch::Error { path, .. } => errs.push(path),
+                Batch::Skipped { path, reason } => skipped.push((path, reason)),
                 Batch::Done(p) => done = Some(p),
             }
         }
-        (ms, errs, done.expect("Done은 반드시 온다"))
+        (ms, errs, skipped, done.expect("Done은 반드시 온다"))
+    }
+
+    /// 제외 로그: 큰 파일·이진은 이유와 함께 `Skipped`로 오고 통계 `skipped`에 세어진다 · 일치·오류와 같은 채널(병합).
+    #[test]
+    fn skipped_files_are_logged_with_reason() {
+        let t = Tree::new("skip");
+        t.file("ok.sql", b"SELECT 1;\n");
+        t.file("big.sql", &vec![b'S'; 3000]);
+        t.file("bin.dat", b"SELECT\0binary\n");
+        let mut o = opts(&t, "SELECT");
+        o.max_file_kb = 2;
+        let (ms, errs, skipped, p) = collect_all(o);
+        assert!(errs.is_empty());
+        assert_eq!(ms.len(), 1);
+        let mut log: Vec<(String, &'static str)> = skipped
+            .iter()
+            .map(|(pth, r)| {
+                (
+                    pth.strip_prefix(&t.0)
+                        .expect("under root")
+                        .to_string_lossy()
+                        .into_owned(),
+                    r.code(),
+                )
+            })
+            .collect();
+        log.sort();
+        assert_eq!(
+            log,
+            vec![
+                ("big.sql".into(), "too_large"),
+                ("bin.dat".into(), "binary")
+            ]
+        );
+        assert!(matches!(
+            skipped
+                .iter()
+                .find(|(p, _)| p.ends_with("big.sql"))
+                .map(|(_, r)| r),
+            Some(SkipReason::TooLarge {
+                bytes: 3000,
+                limit: 2048
+            })
+        ));
+        assert_eq!(p.skipped, 2);
+        assert_eq!(p.files_searched, 1);
     }
 
     fn rel(t: &Tree, m: &Match) -> String {
@@ -430,7 +545,7 @@ mod tests {
         files.dedup();
         assert_eq!(files, vec!["a.sql", "logs/keep.log", "sub/b.sql"]);
         assert_eq!(p.matches, 4, "대소문자 무시 기본");
-        assert_eq!(p.files_matched, 3);
+        assert_eq!(p.files_matched(), 3);
         assert!(p.done && !p.cancelled);
         assert_eq!(
             p.files_searched,
@@ -659,7 +774,7 @@ mod tests {
                 "{label:16} files_seen={} searched={} matched={} matches={} elapsed={:?}",
                 best.files_seen,
                 best.files_searched,
-                best.files_matched,
+                best.files_matched(),
                 best.matches,
                 best.elapsed
             );

@@ -74,10 +74,15 @@ pub(crate) struct BookmarksPanel {
     filter_text: String,
     rows: Vec<Row>,
     collapsed_groups: Vec<u32>,
-    collapsed_docs: Vec<(u32, String)>,
+    /// 접은 문서 = (그룹, 문서 **열쇠**) — 이름이 아니라 열쇠라 탭 이름이 바뀌어도 접힘이 유지된다(사용자 09-23).
+    collapsed_docs: Vec<(u32, DocKey)>,
     /// 저장소 스냅샷(패널은 저장소를 소유하지 않는다 — `sync`로 받는다).
     items: Vec<Bookmark>,
     groups: Vec<Group>,
+    /// ★ 열린 탭의 **지금 이름**(탭 id → 제목 · 호스트가 `set_tab_titles`로 준다). 이름 없는 탭의 북마크(`DocKey::Scratch { tab }`)는
+    ///   id로만 묶여 있고 이름은 표시할 때 여기서 찾는다 — 만들 때의 이름(`Script_5`)이 굳어 지금 탭(`NoName1`)과 달라지지 않는다
+    ///   (사용자 09-23). 표에 없는 id = 닫힌 탭(`Msg::BmTabGone`).
+    tab_titles: Vec<(u64, String)>,
     total_live: usize,
     scroll_y: i32,
     bars: ScrollBars,
@@ -121,6 +126,7 @@ impl BookmarksPanel {
             collapsed_docs: Vec::new(),
             items: Vec::new(),
             groups: Vec::new(),
+            tab_titles: Vec::new(),
             total_live: 0,
             scroll_y: 0,
             bars: ScrollBars::new(),
@@ -264,6 +270,31 @@ impl BookmarksPanel {
         self.rebuild();
     }
 
+    /// 열린 탭의 지금 이름(탭 id → 제목) — 바뀌었으면 행을 다시 만들고 true(호스트는 탭 제목 세대가 바뀔 때만 부른다).
+    pub(crate) fn set_tab_titles(&mut self, titles: Vec<(u64, String)>) -> bool {
+        if self.tab_titles == titles {
+            return false;
+        }
+        self.tab_titles = titles;
+        self.rebuild();
+        true
+    }
+
+    /// 문서 행에 보일 이름 — 이름 없는 탭은 **id로 지금 탭 제목**을 찾는다(없으면 닫힌 탭) · 파일·객체는 열쇠의 짧은 이름.
+    pub(crate) fn doc_name(&self, key: &DocKey) -> String {
+        match key {
+            DocKey::Scratch { tab } => self
+                .tab_titles
+                .iter()
+                .find(|(id, _)| id == tab)
+                .map_or_else(
+                    || tf(Msg::BmTabGone, &[&tab.to_string()]),
+                    |(_, t)| t.clone(),
+                ),
+            other => other.short_name(),
+        }
+    }
+
     fn group_label(&self, g: &Group) -> String {
         if g.name.trim().is_empty() {
             t(Msg::BmGroupDefaultName).to_string()
@@ -283,7 +314,7 @@ impl BookmarksPanel {
         for g in &groups {
             let mut docs: Vec<(DocKey, String, Vec<Bookmark>)> = Vec::new();
             for b in self.items.iter().filter(|b| b.group == g.id) {
-                let name = b.doc.short_name();
+                let name = self.doc_name(&b.doc);
                 let hay = format!("{} {} {}", b.display(), b.anchor.text, name);
                 if filtering && !self.filter.matches(&hay) {
                     continue;
@@ -315,7 +346,7 @@ impl BookmarksPanel {
                     || !self
                         .collapsed_docs
                         .iter()
-                        .any(|(gid, n)| *gid == g.id && *n == name);
+                        .any(|(gid, k)| *gid == g.id && *k == key);
                 rows.push(Row::Doc {
                     key,
                     name,
@@ -384,16 +415,16 @@ impl BookmarksPanel {
                 }
                 self.rebuild();
             }
-            Some(Row::Doc { name, .. }) => {
+            Some(Row::Doc { key, .. }) => {
                 let gid = self.group_of_row(r);
                 if let Some(i) = self
                     .collapsed_docs
                     .iter()
-                    .position(|(g, n)| *g == gid && *n == name)
+                    .position(|(g, k)| *g == gid && *k == key)
                 {
                     self.collapsed_docs.remove(i);
                 } else {
-                    self.collapsed_docs.push((gid, name));
+                    self.collapsed_docs.push((gid, key));
                 }
                 self.rebuild();
             }
@@ -418,6 +449,11 @@ impl BookmarksPanel {
             Some(Row::Group { .. } | Row::Doc { .. }) => self.toggle_fold(r),
             None => {}
         }
+    }
+
+    /// 필터 검색어 이력 잇기(전역 · `filter.bookmarks` · 사용자 09-23).
+    pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
+        self.filter.set_history(h, "filter.bookmarks");
     }
 
     pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
@@ -1238,6 +1274,50 @@ mod tests {
             })
             .collect();
         assert_eq!(flags, vec![false, true, false]);
+    }
+
+    /// 이름 없는 탭의 북마크는 탭 **id**로만 묶이고 문서 행 이름은 표시할 때 지금 탭 제목에서 찾는다(사용자 09-23 "Script_5 ↔ *NoName1") —
+    /// 탭 이름이 바뀌면 행 이름도 따라오고 · 접힘 상태(열쇠 기준)는 유지되며 · 탭이 닫히면 "(closed tab #id)".
+    #[test]
+    fn scratch_doc_row_follows_current_tab_title() {
+        let mut p = BookmarksPanel::new();
+        p.set_visible(true);
+        p.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        let mut store = Store::new();
+        let anchor = nsql_bookmarks::make_anchor(
+            &["a", "b", "c"],
+            1,
+            0,
+            &nsql_bookmarks::RelocateOpts::default(),
+        );
+        store
+            .add(DocKey::Scratch { tab: 7 }, anchor, 1, true, 100, 1000)
+            .expect("add");
+        let doc_name = |p: &BookmarksPanel| {
+            p.rows
+                .iter()
+                .find_map(|r| match r {
+                    Row::Doc { name, expanded, .. } => Some((name.clone(), *expanded)),
+                    _ => None,
+                })
+                .expect("doc row")
+        };
+        p.set_tab_titles(vec![(7, "Script_5".into())]);
+        p.sync(&store);
+        assert_eq!(doc_name(&p), ("Script_5".into(), true));
+        // 문서 행 접기 → 탭 이름 변경 → 이름은 새것 · 접힘은 그대로(열쇠 기준).
+        let r = p
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Doc { .. }))
+            .expect("doc row");
+        p.toggle_fold(r);
+        assert!(p.set_tab_titles(vec![(7, "NoName1".into())]));
+        assert_eq!(doc_name(&p), ("NoName1".into(), false));
+        // 같은 표를 다시 주면 아무것도 안 한다 · 탭이 닫히면 닫힌 탭 표시.
+        assert!(!p.set_tab_titles(vec![(7, "NoName1".into())]));
+        p.set_tab_titles(Vec::new());
+        assert_eq!(doc_name(&p).0, tf(Msg::BmTabGone, &["7"]));
     }
 
     /// Enter = 정식 탭(프로젝트 탐색기 Enter와 같음).

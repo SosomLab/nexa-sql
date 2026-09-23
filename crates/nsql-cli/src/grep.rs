@@ -84,8 +84,11 @@ pub(crate) fn cmd_grep(positional: &[String]) -> i32 {
     let stdout = std::io::stdout();
     let mut out = std::io::BufWriter::new(stdout.lock());
     let mut found = false;
+    // 제외 로그(크기·이진·읽기 실패·이름) — 워커가 여럿이어도 채널 하나로 병합돼 온다 · 끝에 stderr로 요약(사용자 09-23).
+    let mut skipped: Vec<(std::path::PathBuf, nsql_search::SkipReason)> = Vec::new();
     for b in rx {
         match b {
+            Batch::Skipped { path, reason } => skipped.push((path, reason)),
             Batch::Matches(ms) => {
                 found = true;
                 for m in &ms {
@@ -111,6 +114,22 @@ pub(crate) fn cmd_grep(positional: &[String]) -> i32 {
         }
     }
     let _ = out.flush();
+    if !skipped.is_empty() {
+        let mut counts: Vec<(&'static str, usize)> = Vec::new();
+        for (_, r) in &skipped {
+            match counts.iter_mut().find(|(c, _)| *c == r.code()) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((r.code(), 1)),
+            }
+        }
+        let detail: Vec<String> = counts.iter().map(|(c, n)| format!("{c} {n}")).collect();
+        eprintln!("skipped {} file(s): {}", skipped.len(), detail.join(" · "));
+        if std::env::var_os("NSQL_GREP_LOG").is_some() {
+            for (p, r) in &skipped {
+                eprintln!("  {} ({})", display(p), r.code());
+            }
+        }
+    }
     if found {
         0
     } else {

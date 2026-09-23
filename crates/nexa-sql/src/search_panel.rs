@@ -12,13 +12,14 @@
 //! 매 틱 [`SearchPanel::poll`] · 클릭 → [`SearchPanel::take_open`]으로 파일/탭을 열고 줄로 이동.
 
 use crate::findbar::{BtnKind, FindBtn};
+use crate::search_history::{Recall, SharedHistory};
 use crate::toolicons;
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, ScrollBars, TextBox, Widget};
 use nsql_i18n::{t, tf, Msg};
-use nsql_search::{search_text, Batch, CancelHandle, Matcher, Search, SearchOpts};
+use nsql_search::{search_text, Batch, CancelHandle, Matcher, Search, SearchOpts, SkipReason};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
@@ -121,6 +122,10 @@ struct FileEntry {
 enum Row {
     File(usize),
     Match(usize, usize),
+    /// 제외 로그 머리("제외됨(N)" · 접기/펼치기 · 사용자 09-23).
+    SkipHeader,
+    /// 제외 로그 한 줄(`skipped[i]` = 경로 — 이유).
+    Skip(usize),
 }
 
 pub(crate) struct SearchPanel {
@@ -152,6 +157,14 @@ pub(crate) struct SearchPanel {
     /// 더블클릭 감지(행 · 첫 클릭 시각) · 간격 = `ui.dblclick_ms`(프로젝트 탐색기·북마크 패널과 같은 규칙).
     last_click: Option<(usize, Instant)>,
     dblclick_ms: u128,
+    /// 검색어 이력(전역 · `search.query`/`search.where` · ↑/↓ 되부르기 · 실행 = 기록 · 사용자 09-23).
+    history: Option<SharedHistory>,
+    rq: Recall,
+    rw: Recall,
+    /// ★ 검색 로그 = 건너뛴 파일(표시 경로 · 이유 글) — 워커가 여럿이어도 채널 하나로 **도착 순 병합**(사용자 09-23
+    ///   "용량이 크거나 텍스트 검색이 불가능한 대상은 건너뛰고 로그에 제외 파일과 이유"). 결과 아래 접이식 절.
+    skipped: Vec<(String, String)>,
+    skipped_expanded: bool,
 }
 
 const ROW_H: f32 = 22.0;
@@ -193,11 +206,49 @@ impl SearchPanel {
             tab_paths: Vec::new(),
             last_click: None,
             dblclick_ms: 400,
+            history: None,
+            rq: Recall::new("search.query"),
+            rw: Recall::new("search.where"),
+            skipped: Vec::new(),
+            skipped_expanded: false,
+        }
+    }
+
+    /// 제외 사유 → 사용자 글.
+    fn skip_text(reason: &SkipReason) -> String {
+        match reason {
+            SkipReason::TooLarge { bytes, limit } => tf(
+                Msg::SearchSkipTooLarge,
+                &[&(bytes / 1024).to_string(), &(limit / 1024).to_string()],
+            ),
+            SkipReason::Binary => t(Msg::SearchSkipBinary).into(),
+            SkipReason::Unreadable(e) => tf(Msg::SearchSkipUnreadable, &[e]),
+            SkipReason::NonUtf8Name => t(Msg::SearchSkipNonUtf8).into(),
         }
     }
 
     pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
         self.dblclick_ms = ms.max(1);
+    }
+
+    /// 검색어 이력 잇기(호스트).
+    pub(crate) fn set_history(&mut self, h: SharedHistory) {
+        self.history = Some(h);
+    }
+
+    /// 자체 시험용: 검색어를 넣고 실행을 요청한다(`search.run:<글>` 기동 명령 · 키 주입 없이 · 제외 로그 캡처 09-23).
+    pub(crate) fn run_query(&mut self, q: &str) {
+        self.query.set_text(q);
+        let _ = self.query.take_changed();
+        self.request = true;
+    }
+
+    /// 검색어·범위를 이력에 올린다(검색을 실행하는 순간).
+    fn history_commit(&mut self) {
+        if let Some(h) = &self.history {
+            self.rq.commit(&self.query, h);
+            self.rw.commit(&self.where_box, h);
+        }
     }
 
     pub(crate) fn is_visible(&self) -> bool {
@@ -341,6 +392,7 @@ impl SearchPanel {
         self.cancel();
         self.files.clear();
         self.rows.clear();
+        self.skipped.clear();
         self.sel = None;
         self.scroll_y = 0;
         self.error = None;
@@ -482,7 +534,16 @@ impl SearchPanel {
                     }
                 }
                 Batch::Error { path, message } => {
+                    // 폴더 실패도 검색 로그에(검색은 계속) · 상태줄에는 마지막 것.
+                    self.skipped.push((
+                        nexa_fs::path::display(&path),
+                        tf(Msg::SearchSkipDirError, &[&message]),
+                    ));
                     self.error = Some(format!("{}: {message}", path.display()));
+                }
+                Batch::Skipped { path, reason } => {
+                    self.skipped
+                        .push((nexa_fs::path::display(&path), Self::skip_text(&reason)));
                 }
                 Batch::Done(p) => {
                     done = Some(p);
@@ -500,6 +561,12 @@ impl SearchPanel {
                     &[&p.files_searched.to_string(), &total.to_string(), &secs],
                 )
             };
+            if !self.skipped.is_empty() {
+                self.status.push_str(&tf(
+                    Msg::StSearchSkippedTail,
+                    &[&self.skipped.len().to_string()],
+                ));
+            }
             self.job = None;
         } else if changed {
             if let Some((_, c, _)) = self.job.as_ref() {
@@ -524,6 +591,15 @@ impl SearchPanel {
             if f.expanded {
                 for mi in 0..f.matches.len() {
                     self.rows.push(Row::Match(fi, mi));
+                }
+            }
+        }
+        // 검색 로그(제외 파일)는 결과 아래 접이식 절 — 기본 접힘(개수만).
+        if !self.skipped.is_empty() {
+            self.rows.push(Row::SkipHeader);
+            if self.skipped_expanded {
+                for i in 0..self.skipped.len() {
+                    self.rows.push(Row::Skip(i));
                 }
             }
         }
@@ -582,7 +658,11 @@ impl SearchPanel {
                     }
                 }
             }
-            None => {}
+            Some(Row::SkipHeader) => {
+                self.skipped_expanded = !self.skipped_expanded;
+                self.rebuild_rows();
+            }
+            Some(Row::Skip(_)) | None => {}
         }
     }
 
@@ -610,11 +690,23 @@ impl SearchPanel {
         if consumed {
             return true;
         }
+        // ↑/↓ = 검색어 이력 되부르기(상자에 포커스 · 이력 있을 때만 소비).
+        if let Some(h) = &self.history {
+            if self.query.is_focused() && self.rq.on_key(ev, &mut self.query, h, &mut inv) {
+                let _ = self.query.take_changed();
+                return true;
+            }
+            if self.where_box.is_focused() && self.rw.on_key(ev, &mut self.where_box, h, &mut inv) {
+                let _ = self.where_box.take_changed();
+                return true;
+            }
+        }
         match *ev {
             InputEvent::Key { key, shift, .. } => {
                 match key {
                     CtlKey::Enter => {
                         if self.query.is_focused() || self.where_box.is_focused() {
+                            self.history_commit();
                             self.request = true;
                             return true;
                         }
@@ -830,6 +922,46 @@ impl SearchPanel {
                         Rect::new(tx, y, (lr.right() - tx).max(0), rh),
                         &shown,
                         th.text,
+                    );
+                }
+                Row::SkipHeader => {
+                    let chev_w = dc.text_height().max(10);
+                    let color = if self.skipped_expanded || self.hover == Some(i) {
+                        th.text
+                    } else {
+                        th.text_dim
+                    };
+                    nexa_ctl::controls::draw_chevron_90_in(
+                        dc,
+                        Rect::new(lr.x + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
+                        color,
+                        self.skipped_expanded,
+                        Some(row_rect),
+                    );
+                    let lab_x = lr.x + indent + chev_w + px(4.0);
+                    dc.text(
+                        lab_x,
+                        ty,
+                        row_rect,
+                        &tf(Msg::SearchSkippedHeader, &[&self.skipped.len().to_string()]),
+                        th.warn,
+                    );
+                }
+                Row::Skip(si) => {
+                    let (path, why) = &self.skipped[si];
+                    let x0 = lr.x + indent * 2 + sel_w;
+                    let why_w = dc.text_width(why);
+                    let avail = (lr.right() - indent - why_w - px(8.0) - x0).max(px(40.0));
+                    let shown = nexa_ctl::draw::ellipsize_middle(dc, path, avail);
+                    dc.text(x0, ty, Rect::new(x0, y, avail, rh), &shown, th.text_dim);
+                    let wx =
+                        (x0 + dc.text_width(&shown) + px(8.0)).min(lr.right() - indent - why_w);
+                    dc.text(
+                        wx,
+                        ty,
+                        Rect::new(wx, y, (lr.right() - wx).max(0), rh),
+                        why,
+                        th.text_dim,
                     );
                 }
             }

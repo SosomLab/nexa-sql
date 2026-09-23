@@ -75,6 +75,11 @@ impl OutlinePanel {
         self.visible
     }
 
+    /// 필터 검색어 이력 잇기(전역 · `filter.outline` · 사용자 09-23).
+    pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
+        self.filter.set_history(h, "filter.outline");
+    }
+
     pub(crate) fn set_visible(&mut self, on: bool) {
         self.visible = on;
         if !on {

@@ -115,6 +115,11 @@ pub(crate) struct PrefsWin {
     /// 주 조합키(Ctrl · macOS ⌘) — 클립보드 단축키.
     primary: bool,
     search: TextBox,
+    /// 검색어 이력(전역 · `prefs.search` · ↑/↓ 되부르기 · Enter = 기록 · 사용자 09-23).
+    history: Option<(
+        crate::search_history::SharedHistory,
+        crate::search_history::Recall,
+    )>,
     tree: TreeView,
     /// 숨긴 분류(끈/미설치 확장) · 그로부터 만든 보이는 트리(선택 index의 기준).
     hidden: Vec<Msg>,
@@ -225,6 +230,7 @@ impl PrefsWin {
             shift: false,
             primary: false,
             search: TextBox::new(t(Msg::PhSearchSettings)),
+            history: None,
             tree: TreeView::new(model),
             advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Left),
             json_btn: Button::new(t(Msg::BtnEditJson)),
@@ -243,6 +249,11 @@ impl PrefsWin {
             split_fade: IntentFade::with_speed(FadeSpeed::Fast),
             split_rect: Rect::default(),
         }
+    }
+
+    /// 검색어 이력 잇기(호스트 · 상자 이름 `prefs.search`).
+    pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
+        self.history = Some((h, crate::search_history::Recall::new("prefs.search")));
     }
 
     /// 읽기 전용 정보 값(자동 탐지 결과 · 파생 경로) — [`Self::refresh`] 앞에 부른다.
@@ -1012,7 +1023,22 @@ impl PrefsWin {
             }
         };
         if route(self.search.bounds(), self.search.is_focused()) {
+            // ↑/↓ = 검색어 이력 되부르기(이력 있을 때만 소비) → 그 글로 다시 거른다.
+            if let Some((h, r)) = &mut self.history {
+                if self.search.is_focused() && r.on_key(&ie, &mut self.search, h, &mut inv) {
+                    let _ = self.search.take_changed();
+                    self.query = self.search.text();
+                    self.rebuild_cards();
+                    self.redraw();
+                    return PrefsAction::None;
+                }
+            }
             self.search.on_event(&ie, &mut inv);
+            if self.search.take_committed().is_some() {
+                if let Some((h, r)) = &mut self.history {
+                    r.commit(&self.search, h);
+                }
+            }
         }
         if route(self.tree.bounds(), self.tree.is_focused()) {
             self.tree.on_event(&ie, &mut inv);

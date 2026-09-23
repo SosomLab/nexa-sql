@@ -67,6 +67,26 @@ struct Node {
     error: bool,
 }
 
+/// ★ 필터 열거 워커(사용자 09-23 "폴더/파일이 많아도 멈추지 않게 · 별도 스레드 · 분할 병렬 · 로그 병합") — [`crate::parwalk`]가
+///   아직 열거하지 않은 폴더들 아래를 병렬로 읽어 **폴더째** 보내고, 패널은 틱마다 시간 예산 안에서 트리에 합친다(메인 루프는 막히지 않는다).
+///   필터 글이 바뀌면 이전 열거는 취소되고(수신자 버림) 이미 트리에 들어온 폴더는 `loaded`라 다시 읽지 않는다.
+struct Scan {
+    rx: std::sync::mpsc::Receiver<crate::parwalk::DirMsg>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// 받은 폴더 수(진행 표시).
+    dirs: usize,
+}
+
+impl Drop for Scan {
+    fn drop(&mut self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// 틱 하나가 트리 합치기에 쓰는 시간 예산(ms) — 그 뒤는 다음 틱(입력이 밀리지 않게).
+const SCAN_APPLY_BUDGET_MS: u128 = 6;
+
 pub(crate) struct ProjectPanel {
     visible: bool,
     bounds: Rect,
@@ -109,10 +129,20 @@ pub(crate) struct ProjectPanel {
     clamp_w: i32,
     show_hidden: bool,
     show_dot: bool,
-    /// 필터 때 열거할 최대 항목 수(설정 `project.scan_max`).
+    /// 필터 열거의 메모리 상한(트리 항목 수 · 설정 `project.scan_max` · **0 = 무제한**).
     scan_max: usize,
     /// 필터 열거가 상한에 걸렸다(안내 한 줄).
     scan_capped: bool,
+    /// 진행 중인 필터 열거(워커 · 없으면 None).
+    scan: Option<Scan>,
+    /// 워커 스레드 수(설정 `project.scan_threads` · 0 = 코어 수/2).
+    scan_threads: usize,
+    /// 읽지 못한 폴더(경로 · 사유) — 도착 순 병합 · 호스트가 `take_scan_log`로 로그 창에 옮긴다.
+    scan_log: Vec<(PathBuf, String)>,
+    /// 이번 필터 열거에서 읽지 못한 폴더 수(안내 한 줄).
+    scan_errors: usize,
+    /// 경로 → 노드(워커가 보낸 폴더를 트리에서 찾는다 · 노드는 지워지지 않고 붙기만 한다).
+    path_index: std::collections::HashMap<PathBuf, usize>,
     filter_text: String,
     /// 파일/폴더 아이콘(설정 `project.icons` · 파일 대화상자와 같은 OS 셸 아이콘 서비스 · 향상 모드 = 끔 · 사용자 09-22).
     icons_on: bool,
@@ -181,8 +211,13 @@ impl ProjectPanel {
             clamp_w: i32::MAX / 2,
             show_hidden: false,
             show_dot: true,
-            scan_max: 5000,
+            scan_max: 0,
             scan_capped: false,
+            scan: None,
+            scan_threads: 4,
+            scan_log: Vec::new(),
+            scan_errors: 0,
+            path_index: std::collections::HashMap::new(),
             filter_text: String::new(),
             icons_on: true,
             icons: HashMap::new(),
@@ -293,6 +328,11 @@ impl ProjectPanel {
         self.filter.set_tooltip_delay(ms);
     }
 
+    /// 필터 검색어 이력 잇기(전역 · `filter.project` · 사용자 09-23).
+    pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
+        self.filter.set_history(h, "filter.project");
+    }
+
     pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
         self.dblclick_ms = ms;
     }
@@ -302,11 +342,19 @@ impl ProjectPanel {
         self.filter.set_clamp_width(w);
     }
 
-    pub(crate) fn set_list_opts(&mut self, show_hidden: bool, show_dot: bool, scan_max: usize) {
+    pub(crate) fn set_list_opts(
+        &mut self,
+        show_hidden: bool,
+        show_dot: bool,
+        scan_max: usize,
+        scan_threads: usize,
+    ) {
         let changed = self.show_hidden != show_hidden || self.show_dot != show_dot;
         self.show_hidden = show_hidden;
         self.show_dot = show_dot;
-        self.scan_max = scan_max.max(100);
+        // 0 = 무제한 · 그 밖은 최소 100(사용자 09-23 설계 변경 = 워커 열거라 상한은 메모리 보호용).
+        self.scan_max = if scan_max == 0 { 0 } else { scan_max.max(100) };
+        self.scan_threads = scan_threads.min(crate::parwalk::MAX_THREADS);
         self.filter.set_checked(BtnKind::Hidden, show_hidden);
         self.filter.set_checked(BtnKind::DotFiles, show_dot);
         // 표시 규칙이 바뀌면 펼친 폴더를 다시 열거(토글 · 설정 창 · 파일 대화상자 어디서 바꿔도).
@@ -328,8 +376,12 @@ impl ProjectPanel {
         selected: Option<&Path>,
     ) {
         self.name = name;
+        self.scan = None;
+        self.scan_capped = false;
+        self.scan_errors = 0;
         self.nodes.clear();
         self.roots.clear();
+        self.path_index.clear();
         self.sel = None;
         self.scroll_y = 0;
         self.scroll_x = 0;
@@ -352,6 +404,7 @@ impl ProjectPanel {
                 loaded: false,
                 error: false,
             });
+            self.path_index.insert(f.clone(), i);
             self.roots.push(i);
         }
         // 루트가 하나면 바로 펼친다(한 번 더 누르지 않게).
@@ -372,6 +425,7 @@ impl ProjectPanel {
         if !self.filter_text.trim().is_empty() {
             self.scan_for_filter();
         } else {
+            self.scan = None; // 필터를 비우면 진행 중 열거도 취소
             self.scan_capped = false;
         }
         self.sel = None;
@@ -623,12 +677,17 @@ impl ProjectPanel {
         if self.nodes[i].loaded || !self.nodes[i].is_dir {
             return;
         }
-        self.nodes[i].loaded = true;
         let path = self.nodes[i].path.clone();
+        let listed = nexa_fs::list_opts(&path, self.show_hidden, self.show_dot);
+        self.fill_children(i, listed.map_err(|e| e.to_string()));
+    }
+
+    /// 열거 결과를 노드 `i`의 자식으로 붙인다(동기 펼침과 워커 열거가 같은 길 · 폴더 먼저 · 이름순 대소문자 무시).
+    fn fill_children(&mut self, i: usize, listed: Result<Vec<nexa_fs::Entry>, String>) {
+        self.nodes[i].loaded = true;
         let depth = self.nodes[i].depth + 1;
-        match nexa_fs::list_opts(&path, self.show_hidden, self.show_dot) {
+        match listed {
             Ok(mut entries) => {
-                // 폴더 먼저 · 이름순(대소문자 무시).
                 entries.sort_by(|a, b| {
                     b.is_dir
                         .cmp(&a.is_dir)
@@ -637,6 +696,7 @@ impl ProjectPanel {
                 let mut kids = Vec::with_capacity(entries.len());
                 for e in entries {
                     let k = self.nodes.len();
+                    self.path_index.insert(e.path.clone(), k);
                     self.nodes.push(Node {
                         path: e.path,
                         name: e.name,
@@ -651,6 +711,7 @@ impl ProjectPanel {
                     kids.push(k);
                 }
                 self.nodes[i].children = kids;
+                self.nodes[i].error = false;
             }
             Err(_) => self.nodes[i].error = true,
         }
@@ -676,28 +737,134 @@ impl ProjectPanel {
         self.rebuild_rows();
     }
 
-    /// 필터용 열거 — 아직 열거하지 않은 폴더를 너비 우선으로 상한까지.
+    /// 필터용 열거 — 아직 열거하지 않은 폴더를 **워커가 뒤에서** 병렬로 읽는다(사용자 09-23 설계 변경 · 종전 = 동기 BFS + 5,000 상한).
+    /// 여기서는 열거할 폴더(트리에 있지만 `loaded`가 아닌 것)를 모아 열거를 시작만 하고, 결과는 [`Self::tick`]이 합친다.
+    /// 상한(`scan_max` > 0)은 메모리 보호용 — 이미 넘겼으면 시작하지 않고 "멈춤"만 표시(새로 열거할 폴더가 없으면 표시하지 않는다 ·
+    /// 사용자 09-22 "5000개 열거가 안 된 것 같은데 왜 표시되지").
     fn scan_for_filter(&mut self) {
         self.scan_capped = false;
+        let mut pending: Vec<PathBuf> = Vec::new();
         let mut queue: Vec<usize> = self.roots.clone();
         let mut qi = 0;
         while qi < queue.len() {
             let i = queue[qi];
             qi += 1;
-            // 상한 = 트리에 쌓인 항목 수(메모리 상한) — **새로 열거해야 할 폴더를 만났을 때만** 본다. 이미 열거된 폴더는
-            //   자식만 큐에 넣고 지나간다(이전 필터로 상한을 넘긴 트리에서 새로 열거할 것이 없으면 "멈췄다"가 뜨지 않는다 ·
-            //   사용자 09-22 "5000개 열거가 안 된 것 같은데 왜 표시되지").
             if !self.nodes[i].loaded {
-                if self.nodes.len() >= self.scan_max {
-                    self.scan_capped = true;
-                    break;
+                if !self.nodes[i].error {
+                    pending.push(self.nodes[i].path.clone());
                 }
-                self.list_children(i);
+                continue;
             }
             for &c in &self.nodes[i].children {
                 if self.nodes[c].is_dir {
                     queue.push(c);
                 }
+            }
+        }
+        if pending.is_empty() {
+            self.scan = None;
+            return;
+        }
+        if self.scan_max > 0 && self.nodes.len() >= self.scan_max {
+            self.scan = None;
+            self.scan_capped = true;
+            return;
+        }
+        // 이전 열거는 버린다(Drop = 취소) · 새 열거 시작.
+        self.scan = None;
+        self.scan_errors = 0;
+        let (rx, cancel) = crate::parwalk::spawn(
+            pending,
+            crate::parwalk::ListOpts {
+                show_hidden: self.show_hidden,
+                show_dot: self.show_dot,
+            },
+            self.scan_threads,
+        );
+        self.scan = Some(Scan {
+            rx,
+            cancel,
+            dirs: 0,
+        });
+    }
+
+    /// 워커가 보낸 폴더를 트리에 합친다(틱 · 시간 예산 안에서) — 합친 것이 있으면 true(행 다시 만들기).
+    fn scan_pump(&mut self) -> bool {
+        // 진행 중 열거를 잠시 꺼내 든다(트리를 고치는 동안 self를 둘로 빌리지 않게) · 끝나지 않았으면 되돌려 놓는다.
+        let Some(mut scan) = self.scan.take() else {
+            return false;
+        };
+        let t0 = std::time::Instant::now();
+        let mut applied = false;
+        let mut finished = false;
+        let mut capped = false;
+        loop {
+            if t0.elapsed().as_millis() >= SCAN_APPLY_BUDGET_MS {
+                break;
+            }
+            let msg = match scan.rx.try_recv() {
+                Ok(m) => m,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    finished = true;
+                    break;
+                }
+            };
+            match msg {
+                crate::parwalk::DirMsg::Dir { path, entries } => {
+                    scan.dirs += 1;
+                    let Some(&i) = self.path_index.get(&path) else {
+                        continue; // 트리에 없는 폴더(취소된 옛 열거의 잔여)
+                    };
+                    if self.nodes[i].loaded {
+                        continue;
+                    }
+                    if let Err(e) = &entries {
+                        self.scan_errors += 1;
+                        self.scan_log.push((path.clone(), e.clone()));
+                    }
+                    self.fill_children(i, entries);
+                    applied = true;
+                    if self.scan_max > 0 && self.nodes.len() >= self.scan_max {
+                        capped = true;
+                        break;
+                    }
+                }
+                crate::parwalk::DirMsg::Done { dirs } => {
+                    scan.dirs = scan.dirs.max(dirs);
+                    finished = true;
+                    break;
+                }
+            }
+        }
+        if capped {
+            self.scan_capped = true; // scan은 여기서 버려진다(Drop = 취소)
+        } else if !finished {
+            self.scan = Some(scan);
+        }
+        applied || finished || capped
+    }
+
+    /// 필터 열거가 진행 중인가(호스트는 `animating()`으로 틱을 계속 돌린다 · 시험용).
+    #[cfg(test)]
+    fn scanning(&self) -> bool {
+        self.scan.is_some()
+    }
+
+    /// 읽지 못한 폴더(경로 · 사유)를 거둔다 — 호스트가 로그 창에 쓴다(도착 순 = 병합 순).
+    pub(crate) fn take_scan_log(&mut self) -> Vec<(PathBuf, String)> {
+        std::mem::take(&mut self.scan_log)
+    }
+
+    /// 시험용: 열거가 끝날 때까지 틱을 돌린다(최대 10초).
+    #[cfg(test)]
+    fn scan_wait(&mut self) {
+        let t0 = std::time::Instant::now();
+        while self.scan.is_some() && t0.elapsed().as_secs() < 10 {
+            if self.scan_pump() {
+                self.rebuild_rows();
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
         }
     }
@@ -808,6 +975,11 @@ impl ProjectPanel {
             return false;
         }
         let mut changed = self.filter.tick(now_ms) | self.bars.tick(now_ms);
+        // 필터 열거 워커의 결과 합치기(시간 예산 안 · 남은 것은 다음 틱).
+        if self.scan_pump() {
+            self.rebuild_rows();
+            changed = true;
+        }
         // 셸 아이콘 조회 결과가 도착했다(서비스 버전 변화) → 다시 그린다(파일 대화상자 `apply_icon_updates`와 같은 규칙).
         if self.icons_on {
             let svc = IconService::global();
@@ -833,7 +1005,7 @@ impl ProjectPanel {
     }
 
     pub(crate) fn animating(&self) -> bool {
-        self.visible && self.filter.is_animating()
+        self.visible && (self.filter.is_animating() || self.scan.is_some())
     }
 
     fn row_at(&self, p: Point) -> Option<usize> {
@@ -1080,6 +1252,7 @@ impl ProjectPanel {
         if !self.filter_text.trim().is_empty() {
             self.scan_for_filter();
         } else {
+            self.scan = None; // 필터를 비우면 진행 중 열거도 취소
             self.scan_capped = false;
         }
         self.sel = None;
@@ -1316,16 +1489,33 @@ impl ProjectPanel {
             dc.text(lr.x + pad, ty, lr, msg, th.text_dim);
             my += rh;
         }
-        if self.scan_capped && my < lr.bottom() {
-            dc.select_font(FontSlot::Status, false);
-            let ty = dc.text_center_y(my, rh);
-            dc.text(
-                lr.x + pad,
-                ty,
-                Rect::new(lr.x, my, lr.w, rh),
-                &tf(Msg::ProjScanCapped, &[&self.scan_max.to_string()]),
+        // 상태 줄들(작은 글꼴 · 위에서부터): 열거 중 → 상한 → 읽지 못한 폴더.
+        let mut notes: Vec<(String, nexa_ctl::theme::Color)> = Vec::new();
+        if let Some(sc) = &self.scan {
+            notes.push((tf(Msg::ProjScanning, &[&sc.dirs.to_string()]), th.text_dim));
+        }
+        if self.scan_capped {
+            notes.push((
+                tf(Msg::ProjScanCapped, &[&self.scan_max.to_string()]),
                 th.warn,
-            );
+            ));
+        }
+        if self.scan_errors > 0 {
+            notes.push((
+                tf(Msg::ProjScanErrors, &[&self.scan_errors.to_string()]),
+                th.warn,
+            ));
+        }
+        if !notes.is_empty() {
+            dc.select_font(FontSlot::Status, false);
+            for (text, color) in &notes {
+                if my >= lr.bottom() {
+                    break;
+                }
+                let ty = dc.text_center_y(my, rh);
+                dc.text(lr.x + pad, ty, Rect::new(lr.x, my, lr.w, rh), text, *color);
+                my += rh;
+            }
             dc.select_font(FontSlot::Base, false);
         }
         self.bars.paint(
@@ -1398,6 +1588,7 @@ mod tests {
         p.filter.set_text("two");
         p.filter_text = "two".into();
         p.scan_for_filter();
+        p.scan_wait(); // 워커 열거가 끝날 때까지(사용자 09-23 설계 변경)
         p.rebuild_rows();
         let names: Vec<&str> = p.rows.iter().map(|&n| p.nodes[n].name.as_str()).collect();
         assert_eq!(names[1..], ["a", "b", "two.sql"]);
@@ -1438,25 +1629,30 @@ mod tests {
         p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
         // 이름만: "a/b"는 어떤 이름에도 없다.
         p.set_filter_text("a/b");
+        p.scan_wait();
         assert!(p.rows.is_empty());
         // 경로까지: root/a/b/two.sql 에 걸린다(조상 a·b가 함께 보인다).
         p.set_filter_opts(false, false, false, true);
         p.set_filter_text("a/b");
+        p.scan_wait();
         let names: Vec<&str> = p.rows.iter().map(|&n| p.nodes[n].name.as_str()).collect();
         assert_eq!(names[1..], ["a", "b", "two.sql"]);
         // 정규식 + 경로.
         p.set_filter_opts(false, false, true, true);
         p.set_filter_text(r"^t\d*/a/b/.*\.sql$");
+        p.scan_wait();
         assert!(
             p.rows.is_empty(),
             "루트 이름은 임시 폴더 이름이라 ^t로 시작하지 않는다"
         );
         p.set_filter_text(r"/a/b/.*\.sql$");
+        p.scan_wait();
         assert_eq!(p.rows.len(), 4);
         // 상한: 트리가 상한을 넘겨도 열거할 폴더가 남지 않았으면 "멈춤"이 아니다.
         p.scan_max = 100;
         p.set_filter_opts(false, false, false, false);
         p.set_filter_text("two");
+        p.scan_wait();
         assert!(!p.scan_capped);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1476,17 +1672,55 @@ mod tests {
         p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
         p.scan_max = 100;
         p.set_filter_text("zzqq");
+        assert!(p.scanning(), "워커 열거가 시작된다");
+        p.scan_wait();
         assert!(p.scan_capped, "30개 폴더 중 일부는 못 열었다");
         assert!(p.rows.is_empty());
         // 상한을 넉넉히 → 전부 열거 → 멈춤 아님.
         p.scan_max = 100_000;
         p.set_filter_text("f3");
+        p.scan_wait();
         assert!(!p.scan_capped);
         assert!(!p.rows.is_empty());
-        // 다시 낮춰도 이미 다 열거했으면 멈춤이 아니다(사용자 09-22).
+        assert_eq!(p.rows.len(), 1 + 30 * 2, "루트 + 폴더 30 + f3 30");
+        // 다시 낮춰도 이미 다 열거했으면 멈춤이 아니다(사용자 09-22) — 열거할 폴더가 없어 워커도 뜨지 않는다.
         p.scan_max = 100;
         p.set_filter_text("f4");
+        assert!(!p.scanning());
         assert!(!p.scan_capped);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 무제한(0) + 워커 열거: 큰 트리(200 폴더 · 1,000 파일)를 상한 없이 전부 열거 · 읽지 못한 폴더는 로그(경로 · 사유) ·
+    /// 필터를 바꾸면 이전 열거는 취소되고 새 열거로(사용자 09-23 설계 변경).
+    #[test]
+    fn unlimited_worker_scan_lists_everything_and_logs_failures() {
+        let dir = std::env::temp_dir().join(format!("nsql-ppanel-{}-big", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in 0..200 {
+            let sub = dir.join(format!("g{}/d{d:03}", d % 10));
+            std::fs::create_dir_all(&sub).unwrap();
+            for f in 0..5 {
+                std::fs::write(sub.join(format!("f{f}.sql")), "x").unwrap();
+            }
+        }
+        let mut p = ProjectPanel::new();
+        p.set_project(
+            Some("t".into()),
+            &[dir.clone(), dir.join("missing-root")],
+            None,
+        );
+        p.set_list_opts(false, true, 0, 3);
+        p.set_filter_text("f4");
+        p.scan_wait();
+        assert!(!p.scan_capped);
+        // 루트 2 + g 10 + d 200 + f4 200 = 412 행(missing-root는 오류 노드로 행에 남지 않는다 — 일치 없음).
+        assert_eq!(p.rows.len(), 1 + 10 + 200 + 200);
+        assert_eq!(p.scan_errors, 1, "없는 루트 = 읽기 실패 1");
+        let log = p.take_scan_log();
+        assert_eq!(log.len(), 1);
+        assert!(log[0].0.ends_with("missing-root"));
+        assert!(p.take_scan_log().is_empty(), "거두면 비운다");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

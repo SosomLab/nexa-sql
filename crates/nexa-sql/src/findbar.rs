@@ -27,6 +27,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::search_history::{Recall, SharedHistory};
 use crate::toolicons;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,9 +313,28 @@ pub(crate) struct FindBar {
     tooltip_ms: u128,
     /// 창 클라이언트 폭(툴팁 클램프).
     clamp_w: i32,
+    /// 검색어 이력(전역 · `find.query`/`find.replace` · ↑/↓ 되부르기 · Enter·Replace = 기록 · 사용자 09-23).
+    history: Option<SharedHistory>,
+    rq: Recall,
+    rr: Recall,
 }
 
 impl FindBar {
+    /// 검색어 이력 잇기(호스트).
+    pub(crate) fn set_history(&mut self, h: SharedHistory) {
+        self.history = Some(h);
+    }
+
+    /// 찾기(+바꾸기) 글을 이력에 올린다 — 실행하는 순간(Enter · Replace/Replace All).
+    fn history_commit(&mut self, with_repl: bool) {
+        if let Some(h) = &self.history {
+            self.rq.commit(&self.query, h);
+            if with_repl && self.with_replace {
+                self.rr.commit(&self.repl, h);
+            }
+        }
+    }
+
     pub(crate) fn new() -> Self {
         let btns = vec![
             FindBtn::new(BtnKind::Fold, toolicons::mi_chevron_right),
@@ -348,6 +368,9 @@ impl FindBar {
             shift: false,
             tooltip_ms: 600,
             clamp_w: i32::MAX / 2,
+            history: None,
+            rq: Recall::new("find.query"),
+            rr: Recall::new("find.replace"),
         }
     }
 
@@ -680,10 +703,25 @@ impl FindBar {
             }
             return FindAction::None;
         }
+        // ↑/↓ = 검색어 이력 되부르기(포커스 상자 · 이력 있을 때만) — 찾기 상자는 글이 바뀐 것이라 다시 찾는다.
+        if let Some(h) = &self.history {
+            if self.query.is_focused() && self.rq.on_key(ev, &mut self.query, h, &mut inv) {
+                let _ = self.query.take_changed();
+                return FindAction::Changed;
+            }
+            if self.with_replace
+                && self.repl.is_focused()
+                && self.rr.on_key(ev, &mut self.repl, h, &mut inv)
+            {
+                let _ = self.repl.take_changed();
+                return FindAction::None;
+            }
+        }
         // Enter = 다음(Shift = 이전) · Esc = 닫기(Sublime 규약 · 바꾸기 상자에서도 Enter = 다음 · 바꾸기는 Ctrl+Shift+H).
         if let InputEvent::Key { key, shift, .. } = ev {
             match key {
                 CtlKey::Enter => {
+                    self.history_commit(false);
                     return if *shift {
                         FindAction::Prev
                     } else {
@@ -739,11 +777,23 @@ impl FindBar {
             | BtnKind::Regex
             | BtnKind::Preserve
             | BtnKind::Selection => self.flip(k),
-            BtnKind::Prev => FindAction::Prev,
-            BtnKind::Next => FindAction::Next,
+            BtnKind::Prev => {
+                self.history_commit(false);
+                FindAction::Prev
+            }
+            BtnKind::Next => {
+                self.history_commit(false);
+                FindAction::Next
+            }
             BtnKind::Close => FindAction::Close,
-            BtnKind::Replace => FindAction::Replace,
-            BtnKind::ReplaceAll => FindAction::ReplaceAll,
+            BtnKind::Replace => {
+                self.history_commit(true);
+                FindAction::Replace
+            }
+            BtnKind::ReplaceAll => {
+                self.history_commit(true);
+                FindAction::ReplaceAll
+            }
             // 프로젝트 탐색기 전용 토글 — 찾기 막대에는 없다.
             BtnKind::Hidden | BtnKind::DotFiles | BtnKind::PathMatch => FindAction::None,
         }

@@ -28,6 +28,8 @@ pub(crate) struct Hooks<'a> {
     pub visit: &'a (dyn Fn(PathBuf) + Sync),
     /// 폴더 읽기 실패 등(경로 · 메시지).
     pub error: &'a (dyn Fn(PathBuf, String) + Sync),
+    /// 항목 하나를 건너뛰었다(이유 · 검색 로그) — UTF-8 아닌 이름 · 종류를 알 수 없는 항목.
+    pub skip: &'a (dyn Fn(PathBuf, crate::SkipReason) + Sync),
 }
 
 /// 폴더 작업 하나.
@@ -196,21 +198,38 @@ fn process_dir(
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let Ok(entry) = entry else { continue };
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                (hooks.skip)(
+                    job.path.clone(),
+                    crate::SkipReason::Unreadable(e.to_string()),
+                );
+                continue;
+            }
+        };
         let name_os = entry.file_name();
-        let Some(name) = name_os.to_str() else {
-            continue;
-        }; // UTF-8이 아닌 이름은 건너뛴다(규칙 매칭 불가)
         let path = entry.path();
+        let Some(name) = name_os.to_str() else {
+            // UTF-8이 아닌 이름은 건너뛴다(규칙 매칭 불가) — 로그에 남긴다.
+            (hooks.skip)(path, crate::SkipReason::NonUtf8Name);
+            continue;
+        };
         // 종류는 readdir가 준 것(d_type)으로 — 파일마다 stat를 부르지 않는다(10만 파일에서 syscall 절반).
         // 링크만 대상 종류로 판단(파일 링크는 따라가고, 폴더 링크는 방문 집합이 루프를 막는다).
         let (is_dir, is_file) = match entry.file_type() {
             Ok(ft) if ft.is_symlink() => match std::fs::metadata(&path) {
                 Ok(m) => (m.is_dir(), m.is_file()),
-                Err(_) => continue,
+                Err(e) => {
+                    (hooks.skip)(path, crate::SkipReason::Unreadable(e.to_string()));
+                    continue;
+                }
             },
             Ok(ft) => (ft.is_dir(), ft.is_file()),
-            Err(_) => continue,
+            Err(e) => {
+                (hooks.skip)(path, crate::SkipReason::Unreadable(e.to_string()));
+                continue;
+            }
         };
         let mut comps = parent_comps.clone();
         comps.push(name);

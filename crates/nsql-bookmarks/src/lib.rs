@@ -41,6 +41,8 @@ impl DocKey {
     }
 
     /// 표시용 짧은 이름(파일 이름 · `Script_7` · `SCHEMA.NAME`).
+    /// 이름 없는 탭(`Scratch`)은 **탭 id**로만 묶여 있고 지금 이름은 호스트(GUI)가 id로 찾아 보여 준다 — 여기의 `Script_{id}`는
+    /// 탭을 모르는 곳(CLI · 닫힌 탭)의 대체 표기일 뿐 만들 때의 탭 이름이 아니다(사용자 09-23).
     #[must_use]
     pub fn short_name(&self) -> String {
         match self {

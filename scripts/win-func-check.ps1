@@ -343,5 +343,15 @@ END pkg_report;
 Run-Scenario -Id S66 -Title "코드 완성 팝업 = Ctrl+Space(§117)" -Cmd ("open:" + $qOutline + ",@after:1000:ui.click:392/201,@after:1600:edit.complete") -WaitMs 3500 -Expect "4줄 'SELECT r' 뒤(캐럿 = r 다음) Ctrl+Space → 캐럿 아래 팝업: recent(alias r · cte) · r(alias) · 키워드/문서 단어 … 오른쪽 열 = 종류"
 Run-Scenario -Id S67 -Title "Goto Symbol 팔레트(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:goto.symbol") -WaitMs 3500 -Expect "팔레트에 심볼 목록: DEFINE v_user · VARIABLE rc · 문장 머리 · CTE recent/older · package body pkg_report · declared g_count · cursor c_rows · procedure run_report(깊이 2 들여쓰기) · function total_rows · 각 행 끝 :줄"
 Run-Scenario -Id S68 -Title "아웃라인 패널(§117)" -Cmd ("open:" + $qOutline + ",@after:1200:view.outline") -WaitMs 3500 -Expect "좌측 아웃라인 패널: 필터 틀 · 줄 번호 → 이름(문장 흐림 · 서브프로그램 굵게 강조색 · 깊이 들여쓰기) → 오른쪽 종류/타입 · 활동 막대 아웃라인 아이콘 활성"
+Run-Scenario -Id S69 -Title "북마크 패널 문서 이름 = 탭 id로 지금 이름(§118)" -Cmd ("file.new,@after:800:ui.click:400/141,@after:1000:bookmark.toggle,@after:1400:view.bookmarks,@after:2000:tab.rename_to:NoName1") -WaitMs 3500 -Expect "새 탭 Script_2에 북마크 → 탭 이름을 NoName1로 바꾼 뒤 패널 문서 행이 'NoName1 1'(Script_2가 남지 않음) · 탭 제목도 NoName1"
+$qQuote = Join-Path $DataDir "q_quote.sql"
+Set-Content -LiteralPath $qQuote -Encoding UTF8 -Value "DEFINE who = 'O''Neil'`nSELECT 'it''s' AS v, `"a`"`"b`" AS q FROM DUAL;"
+Run-Scenario -Id S70 -Title "SQL '' 이스케이프 = 쌍 대상 아님(§118)" -Cmd ("open:" + $qQuote + ",@after:1200:ui.click:474/141") -WaitMs 3500 -Expect "2줄 'it''s' 끝 ' 뒤 캐럿(474/141 = Ln 2 Col 15) → 짝 밑줄 = 첫 '(it 앞)와 마지막 '(s 뒤)에만 · 가운데 ''에는 밑줄 없음 · 'it''s'·'O''Neil'이 각각 한 문자열 색"
+$skipDir = Join-Path $DataDir "skipdir"
+if (-not (Test-Path -LiteralPath $skipDir)) { New-Item -ItemType Directory -Path $skipDir | Out-Null }
+Set-Content -LiteralPath (Join-Path $skipDir "ok.sql") -Encoding UTF8 -Value "SELECT 1 FROM t;`nSELECT 2 FROM u;"
+[System.IO.File]::WriteAllText((Join-Path $skipDir "big.sql"), ("SELECT big;`n" * 110000))
+[System.IO.File]::WriteAllBytes((Join-Path $skipDir "bin.dat"), [byte[]](83,69,76,69,67,84,0,1,2,3))
+Run-Scenario -Id S71 -Title "파일 검색 제외 로그 = 제외됨(N) + 이유(§120)" -Cmd ("view.search,@after:1000:search.run:SELECT,@after:3200:ui.click:120/271") -ArgList ("Local `"" + $skipDir + "`"") -WaitMs 4500 -Expect "폴더 모드(skipdir) 검색 SELECT → 상태 '1 files · 2 matches · 2 skipped' · ok.sql 2 일치 · 아래 'Skipped (2)' 행(클릭 120/271로 펼침) → big.sql '크기 초과: 1320 KB > 1024 KB' · bin.dat '이진 파일' · 상태줄 '… · 제외 2'"
 Run-Scenario -Id S63 -Title "거터 우클릭 = 마지막 줄 아래 빈 영역 = 보기만(§108)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1500:ui.rclick:335/400") -WaitMs 3500 -Expect "빈 영역(335/400 · 2줄 파일) 우클릭 = 'Bookmarks' 한 항목뿐(토글·니모닉 없음) · 캐럿은 그대로 1줄"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

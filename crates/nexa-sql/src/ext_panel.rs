@@ -96,6 +96,11 @@ impl ExtPanel {
         self.visible
     }
 
+    /// 검색어 이력 잇기(전역 · `filter.extensions` · 사용자 09-23).
+    pub(crate) fn set_history(&mut self, h: crate::search_history::SharedHistory) {
+        self.search.set_history(h, "filter.extensions");
+    }
+
     pub(crate) fn set_visible(&mut self, on: bool) {
         self.visible = on;
         if !on {

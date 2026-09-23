@@ -1642,10 +1642,19 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblProjectScanMax,
         desc: Msg::DescProjectScanMax,
         kind: SettingKind::Int {
-            min: 100,
-            max: 200_000,
+            min: 0,
+            max: 2_000_000,
         },
-        default: "5000",
+        default: "0",
+    },
+    // 필터 열거 워커 스레드 수(사용자 09-23 "별도 스레드 · 분할 병렬" · 39 §3 부하원) — 0 = 코어 수/2.
+    Entry {
+        key: "project.scan_threads",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectScanThreads,
+        desc: Msg::DescProjectScanThreads,
+        kind: SettingKind::Int { min: 0, max: 16 },
+        default: "4",
     },
     Entry {
         key: "file.show_hidden",
@@ -2723,6 +2732,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescSearchExcludes,
         kind: SettingKind::Text,
         default: "",
+    },
+    // ── 검색어 이력(사용자 09-23 "검색 상자마다 최대 20개(설정) · 프로그램 전역") — 찾기/바꾸기 · 파일 검색 · 필터 · 설정 검색 공통 상한.
+    Entry {
+        key: "search.history_max",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchHistoryMax,
+        desc: Msg::DescSearchHistoryMax,
+        kind: SettingKind::Int { min: 0, max: 500 },
+        default: "20",
     },
     // ── 트랜잭션 UX(DR-30 · T-77 · docs/34 §2-5)
     Entry {

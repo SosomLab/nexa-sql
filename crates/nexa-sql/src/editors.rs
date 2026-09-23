@@ -183,6 +183,8 @@ pub(crate) struct Editors {
     encs: Vec<String>,
     /// 탭 바에 마지막으로 보낸 표시 제목(더러움 `*` 포함) — 바뀔 때만 다시 보낸다.
     shown_titles: Vec<String>,
+    /// 탭 제목·구성 세대(`sync_tabs`마다 +1) — 탭 이름을 **id로 조회해 표시하는 쪽**(북마크 패널)이 바뀐 때만 다시 만들도록.
+    titles_rev: u64,
     /// 더러운 탭 닫기 2단(같은 탭을 3초 안에 다시 닫으면 버림).
     pending_close: Option<(usize, Instant)>,
     /// 호스트 상태줄에 전할 1회성 안내.
@@ -286,6 +288,7 @@ impl Editors {
             close_forced: false,
             encs: Vec::new(),
             shown_titles: Vec::new(),
+            titles_rev: 0,
             pending_close: None,
             notice: None,
         };
@@ -1730,8 +1733,21 @@ impl Editors {
             .collect();
         self.tabs.set_tabs(shown.clone(), self.active, &mut inv);
         self.shown_titles = shown;
+        self.titles_rev = self.titles_rev.wrapping_add(1);
         self.sync_badges();
         self.layout(&mut inv);
+    }
+
+    /// 탭 제목·구성 세대(이름 바꾸기 · 열기 · 닫기 · 저장으로 제목이 바뀔 때마다 +1).
+    pub(crate) fn titles_rev(&self) -> u64 {
+        self.titles_rev
+    }
+
+    /// (탭 id, 지금 제목) — 이름 없는 탭의 북마크를 id로 묶고 표시할 때 이름을 찾는 표(사용자 09-23).
+    pub(crate) fn tab_titles(&self) -> Vec<(u64, String)> {
+        (0..self.titles.len())
+            .map(|i| (self.tab_id(i), self.titles[i].clone()))
+            .collect()
     }
 
     /// 언어 전환 등으로 placeholder를 다시 만들 때 — 본문 보존 재생성.
