@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/99k-dq-string-pair-failover | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 `"O'Neil"` 짝 오염 + 짝 찾기 fail-over(§126 · nexa-ui 70차 = SQL 규격 `string = ' "` + `strings_span_lines` 줄 끝 재동기화 · 편집기 5종 조사·추천 기록 · S75 · U-95) · STATUS · DEVLOG · TODO |
 | fix/99i-binary-outline-crash | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 이진 파일 아웃라인 = 앱 종료(§125 · nsql-script `outline::words()`가 U+FFFD 한가운데를 바이트로 잘라 패닉 → 비ASCII는 글자 경계까지 건너뜀 · 인용 식별자 벗기기 경계 확인 · fuzz 시험 outline/intel 2) · 호스트 `intel_unsuitable`(큰 파일 · SQL 구문 아님 · 이진 NUL/U+FFFD) = 아웃라인 빈 패널 · 완성/Goto Symbol 안내 `StIntelUnsuitable` · S74 · U-94 · STATUS · DEVLOG · TODO |
 | feat/99g-search-hscroll-tab-filter-icon-fit | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 검색 결과 가로 스크롤(§124 · `scroll_x`/`content_w` · 프로젝트 탐색기와 같은 부품) · 🔧 Alt 전체 경로에서 제외 행 빈칸(축약 폭 잘림 → 전체 보기는 축약 없이 스크롤) · 🔧 열린 탭에도 범위 포함/제외 글롭(nsql-search `path_allowed` · `+*.yaml`인데 `.sql` 탭이 남던 것) · 🔧 Oracle 루트 아이콘 라벨 넘침(`select_font_sized` −1px씩 최대 −8) · S73 · U-90~U-93 · STATUS · DEVLOG · TODO |
 | fix/99e-clear-button-refilter | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 × 지우기 뒤 목록 미갱신(§123 · 접속 창 마우스 경로가 `refilter`를 안 부름 → `take_changed`면 다시 거름 · 파일 검색 검색어를 비우면 결과·제외 로그·상태 비움 · 9 상자 전수 점검 · U-89) · CI 기록 649efa5 ✓ · STATUS · DEVLOG · TODO |
