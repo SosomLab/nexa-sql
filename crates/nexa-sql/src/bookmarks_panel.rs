@@ -196,7 +196,7 @@ impl BookmarksPanel {
         }
     }
     pub(crate) fn menu_open(&self) -> bool {
-        self.menu.is_open()
+        self.menu.is_open() || self.filter.popup_open()
     }
     pub(crate) fn close_menu(&mut self) {
         self.menu.close();
@@ -795,13 +795,22 @@ impl BookmarksPanel {
             InputEvent::Key { key, primary, .. } => {
                 if self.filter.is_focused() {
                     match key {
+                        // ↑/↓/PgUp/PgDn/Home/End = 이력(드롭다운/Flat)이 먼저 · 끝에서 ↓ = 목록으로(사용자 09-23) ·
+                        //   이력이 손대지 않으면(None) 종전대로 목록 이동.
                         CtlKey::Down
                         | CtlKey::Up
-                        | CtlKey::Enter
-                        | CtlKey::Delete
                         | CtlKey::Home
                         | CtlKey::End
-                            if !self.rows.is_empty() => {}
+                        | CtlKey::PageUp
+                        | CtlKey::PageDown => match self.filter_feed(ev) {
+                            FilterEvent::Consumed | FilterEvent::Changed => return true,
+                            FilterEvent::LeaveDown => {
+                                self.leave_filter_down();
+                                return true;
+                            }
+                            _ => {}
+                        },
+                        CtlKey::Enter | CtlKey::Delete if !self.rows.is_empty() => {}
                         CtlKey::Escape => {
                             if self.filter_text.is_empty() {
                                 return false;
@@ -812,7 +821,9 @@ impl BookmarksPanel {
                             return true;
                         }
                         _ => {
-                            self.filter_feed(ev);
+                            if self.filter_feed(ev) == FilterEvent::LeaveDown {
+                                self.leave_filter_down();
+                            }
                             return true;
                         }
                     }
@@ -930,13 +941,23 @@ impl BookmarksPanel {
     }
 
     /// 필터 상자에 사건을 넣고 표시 글(조합 중 글자 포함)이 바뀌었으면 다시 거른다.
-    fn filter_feed(&mut self, ev: &InputEvent) {
+    fn filter_feed(&mut self, ev: &InputEvent) -> FilterEvent {
         let mut inv = Invalidations::default();
         let evt = self.filter.on_event(ev, &mut inv);
         let now = self.filter.display_text();
         if evt == FilterEvent::Changed || now != self.filter_text {
             self.filter_text = now;
             self.rebuild();
+        }
+        evt
+    }
+
+    /// 필터에 포커스인 채 이력 끝에서 ↓/Tab — 목록 첫 행으로 포커스(사용자 09-23).
+    fn leave_filter_down(&mut self) {
+        self.filter.set_focused(false);
+        if !self.rows.is_empty() {
+            self.sel = Some(0);
+            self.reveal(0);
         }
     }
 

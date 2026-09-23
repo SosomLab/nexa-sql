@@ -620,7 +620,7 @@ impl ProjectPanel {
     }
 
     pub(crate) fn menu_open(&self) -> bool {
-        self.menu.is_open()
+        self.menu.is_open() || self.filter.popup_open()
     }
 
     pub(crate) fn close_menu(&mut self) {
@@ -1084,12 +1084,10 @@ impl ProjectPanel {
         match *ev {
             InputEvent::Key { key, .. } => {
                 if self.filter.is_focused() {
-                    if key == CtlKey::Down && !self.rows.is_empty() {
-                        self.filter.set_focused(false);
-                        self.sel = Some(0);
-                        self.ensure_visible(0);
-                        return true;
-                    }
+                    // 필터에 포커스: 이력(드롭다운/Flat)이 먼저 · 끝에서 ↓/Tab = 폴더 목록 첫 행으로(사용자 09-23).
+                    let fe = self.filter.on_event(ev, &mut inv);
+                    self.on_filter_event(fe);
+                    return true;
                 } else if let Some(cur) = self.sel.or(self.caret) {
                     let n = self.rows.len();
                     match key {
@@ -1226,24 +1224,31 @@ impl ProjectPanel {
         }
         if self.name.is_some() {
             let evt = self.filter.on_event(ev, &mut inv);
-            // 부가 토글 = 설정을 뒤집는 명령(호스트가 `set_list_opts`로 되돌려 준다 · 파일 대화상자와 같은 키).
-            match evt {
-                FilterEvent::Side(BtnKind::Hidden) => {
-                    self.command = Some("project.toggle_hidden".into());
-                    return true;
-                }
-                FilterEvent::Side(BtnKind::DotFiles) => {
-                    self.command = Some("project.toggle_dot".into());
-                    return true;
-                }
-                _ => {}
-            }
-            if evt == FilterEvent::Changed {
-                self.apply_filter(self.filter.display_text());
-                return true;
-            }
+            self.on_filter_event(evt);
         }
         true
+    }
+
+    /// 필터 틀의 결과 처리 — 부가 토글 = 설정을 뒤집는 명령(호스트가 `set_list_opts`로 되돌려 준다) · 글 변경 = 다시 거름 ·
+    /// 이력 끝 ↓/Tab = 폴더 목록 첫 행으로 포커스(사용자 09-23).
+    fn on_filter_event(&mut self, evt: FilterEvent) {
+        match evt {
+            FilterEvent::Side(BtnKind::Hidden) => {
+                self.command = Some("project.toggle_hidden".into());
+            }
+            FilterEvent::Side(BtnKind::DotFiles) => {
+                self.command = Some("project.toggle_dot".into());
+            }
+            FilterEvent::Changed => self.apply_filter(self.filter.display_text()),
+            FilterEvent::LeaveDown => {
+                if !self.rows.is_empty() {
+                    self.filter.set_focused(false);
+                    self.sel = Some(0);
+                    self.ensure_visible(0);
+                }
+            }
+            FilterEvent::Consumed | FilterEvent::None | FilterEvent::Side(_) => {}
+        }
     }
 
     /// 필터 글이 바뀌었다(조합 중 글자 포함) — 열거·행 재구성.
@@ -1571,6 +1576,67 @@ mod tests {
         std::fs::write(dir.join("a/b/two.sql"), "y").unwrap();
         std::fs::write(dir.join("top.txt"), "z").unwrap();
         dir
+    }
+
+    /// 이력 드롭다운(사용자 09-23): 필터 상자를 클릭하면 최근 검색어 목록이 열리고 · 마지막 항목에서 ↓ 한 번 더 = 폴더 목록 첫 행으로 포커스 ·
+    /// Flat 모드면 클릭해도 안 열리고 치던 글에서 ↓ = 목록으로.
+    #[test]
+    fn filter_history_dropdown_opens_on_click_and_leaves_to_list() {
+        let dir = fixture("hist");
+        let mut p = ProjectPanel::new();
+        p.set_visible(true);
+        p.set_project(Some("t".into()), std::slice::from_ref(&dir), None);
+        p.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        let mut hist = crate::search_history::SearchHistory::new(20);
+        for e in ["one", "two"] {
+            hist.push("filter.project", e);
+        }
+        let h = hist.shared();
+        p.set_history(h.clone());
+        let tb = p.filter.text_bounds();
+        assert!(tb.w > 0 && tb.h > 0, "상자 배치 {tb:?}");
+        let (x, y) = (tb.x + 10, tb.y + tb.h / 2);
+        p.set_focused(true);
+        let down = InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        };
+        p.on_event(&down);
+        p.on_event(&InputEvent::MouseUp { x, y });
+        assert!(p.filter.is_focused(), "클릭 = 필터 포커스");
+        assert!(p.filter.popup_open(), "클릭 = 드롭다운 열림");
+        assert!(p.menu_open());
+        let key = |k: CtlKey| InputEvent::Key {
+            key: k,
+            shift: false,
+            primary: false,
+        };
+        // ↓ ×2 = 두 항목 · 한 번 더 = 닫고 목록 첫 행으로.
+        p.on_event(&key(CtlKey::Down));
+        p.on_event(&key(CtlKey::Down));
+        assert!(p.filter.popup_open());
+        p.on_event(&key(CtlKey::Down));
+        assert!(!p.filter.popup_open(), "마지막에서 ↓ = 닫힘");
+        assert!(!p.filter.is_focused(), "필터 포커스 해제");
+        assert_eq!(p.sel, Some(0), "폴더 목록 첫 행");
+        // Flat: 클릭해도 안 열림 · 치던 글(비어 있음)에서 ↓ = 목록으로.
+        h.borrow_mut()
+            .set_view(crate::search_history::HistoryView::Flat);
+        p.on_event(&down);
+        p.on_event(&InputEvent::MouseUp { x, y });
+        assert!(p.filter.is_focused() && !p.filter.popup_open());
+        p.on_event(&key(CtlKey::Up));
+        assert_eq!(p.filter.text(), "two", "Flat ↑ = 최근");
+        p.on_event(&key(CtlKey::Down));
+        assert_eq!(p.filter.text(), "", "↓ = 치던 글 복귀");
+        p.on_event(&key(CtlKey::Down));
+        assert!(
+            !p.filter.is_focused() && p.sel == Some(0),
+            "한 번 더 ↓ = 목록"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

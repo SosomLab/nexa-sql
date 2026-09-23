@@ -291,6 +291,12 @@ const INTEL_CASE: &[(&str, Msg)] = &[
     ("match", Msg::ValIntelCaseMatch),
 ];
 
+/// 검색어 이력 보기 방식(사용자 09-23 "Dropdown 기본 · Flat은 상자 안 ↑/↓").
+const HISTORY_VIEW: &[(&str, Msg)] = &[
+    ("dropdown", Msg::ValHistoryViewDropdown),
+    ("flat", Msg::ValHistoryViewFlat),
+];
+
 const RAINBOW_MATCH: &[(&str, Msg)] = &[
     ("off", Msg::ValRainbowMatchOff),
     ("near", Msg::ValRainbowMatchNear),
@@ -2741,6 +2747,22 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescSearchHistoryMax,
         kind: SettingKind::Int { min: 0, max: 500 },
         default: "20",
+    },
+    Entry {
+        key: "search.history_view",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchHistoryView,
+        desc: Msg::DescSearchHistoryView,
+        kind: SettingKind::Choice(HISTORY_VIEW),
+        default: "dropdown",
+    },
+    Entry {
+        key: "search.history_rows",
+        cat: Msg::CatFiles,
+        label: Msg::LblSearchHistoryRows,
+        desc: Msg::DescSearchHistoryRows,
+        kind: SettingKind::Int { min: 1, max: 50 },
+        default: "5",
     },
     // ── 트랜잭션 UX(DR-30 · T-77 · docs/34 §2-5)
     Entry {

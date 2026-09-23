@@ -101,6 +101,13 @@ impl ExtPanel {
         self.search.set_history(h, "filter.extensions");
     }
 
+    /// 팝업 층(검색 틀 편집 메뉴 · 이력 드롭다운 · 툴팁) — 창의 맨 마지막에.
+    pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if self.visible {
+            self.search.paint_popup(dc, th);
+        }
+    }
+
     pub(crate) fn set_visible(&mut self, on: bool) {
         self.visible = on;
         if !on {

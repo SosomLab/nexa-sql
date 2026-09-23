@@ -27,7 +27,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::search_history::{Recall, SharedHistory};
+use crate::search_history::{Recall, RecallEvent, SharedHistory};
 use crate::toolicons;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -677,7 +677,10 @@ impl FindBar {
     /// 이벤트 → 호스트 동작. 마우스는 커서가 패널 안일 때 · 키는 패널에 포커스일 때 호스트가 넘긴다.
     /// 찾기/바꾸기 상자의 우클릭 편집 메뉴가 열려 있는가 — 호스트가 마우스를 바 밖까지 보내고 Esc를 메뉴에 준다.
     pub(crate) fn popup_open(&self) -> bool {
-        self.query.popup_open() || (self.with_replace && self.repl.popup_open())
+        self.query.popup_open()
+            || (self.with_replace && self.repl.popup_open())
+            || self.rq.is_open()
+            || self.rr.is_open()
     }
 
     /// 편집 메뉴에서 고른 클립보드 행동(Copy/Cut/Paste) — 호스트가 실행.
@@ -696,7 +699,7 @@ impl FindBar {
             self.shift = *shift;
         }
         // 우클릭 편집 메뉴가 열려 있으면 그 메뉴가 먼저(항목 클릭 · Esc = 메뉴만 닫기 · 사용자 09-17).
-        if self.popup_open() {
+        if self.query.popup_open() || (self.with_replace && self.repl.popup_open()) {
             if self.query.popup_open() {
                 self.query.on_event(ev, &mut inv);
             } else {
@@ -704,18 +707,27 @@ impl FindBar {
             }
             return FindAction::None;
         }
-        // ↑/↓ = 검색어 이력 되부르기(포커스 상자 · 이력 있을 때만) — 찾기 상자는 글이 바뀐 것이라 다시 찾는다.
+        // 검색어 이력(드롭다운/Flat)이 먼저 — 찾기 상자는 글이 바뀐 것이라 다시 찾는다 · 끝에서 ↓/Tab은 찾기 막대엔 다음 컨트롤이 없어 무시.
         if let Some(h) = &self.history {
-            if self.query.is_focused() && self.rq.on_key(ev, &mut self.query, h, &mut inv) {
-                let _ = self.query.take_changed();
-                return FindAction::Changed;
+            if self.query.is_focused() || self.rq.is_open() {
+                match self.rq.on_event(ev, &mut self.query, h, &mut inv) {
+                    RecallEvent::Consumed | RecallEvent::LeaveDown => return FindAction::None,
+                    RecallEvent::Changed => {
+                        let _ = self.query.take_changed();
+                        return FindAction::Changed;
+                    }
+                    RecallEvent::Pass => {}
+                }
             }
-            if self.with_replace
-                && self.repl.is_focused()
-                && self.rr.on_key(ev, &mut self.repl, h, &mut inv)
-            {
-                let _ = self.repl.take_changed();
-                return FindAction::None;
+            if self.with_replace && (self.repl.is_focused() || self.rr.is_open()) {
+                match self.rr.on_event(ev, &mut self.repl, h, &mut inv) {
+                    RecallEvent::Pass => {}
+                    RecallEvent::Changed => {
+                        let _ = self.repl.take_changed();
+                        return FindAction::None;
+                    }
+                    _ => return FindAction::None,
+                }
             }
         }
         // Enter = 다음(Shift = 이전) · Esc = 닫기(Sublime 규약 · 바꾸기 상자에서도 Enter = 다음 · 바꾸기는 Ctrl+Shift+H).
@@ -745,6 +757,16 @@ impl FindBar {
         if self.with_replace {
             self.repl.on_event(ev, &mut inv);
         }
+        // 상자 클릭 = 이력 드롭다운(보기 방식 Dropdown · 이력 있을 때 · 사용자 09-23).
+        if let (InputEvent::MouseDown { x, y, .. }, Some(h)) = (ev, &self.history) {
+            let p = Point { x: *x, y: *y };
+            let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
+            if self.query.bounds().contains(p) {
+                self.rq.on_click(&self.query, h, host, self.scale);
+            } else if self.with_replace && self.repl.bounds().contains(p) {
+                self.rr.on_click(&self.repl, h, host, self.scale);
+            }
+        }
         for b in &mut self.btns {
             b.on_event(ev);
         }
@@ -757,9 +779,16 @@ impl FindBar {
             }
         }
         if self.query.take_changed().is_some() {
+            if let Some(h) = &self.history {
+                self.rq.after_edit(&self.query, h);
+            }
             return FindAction::Changed;
         }
-        let _ = self.repl.take_changed();
+        if self.repl.take_changed().is_some() {
+            if let Some(h) = &self.history {
+                self.rr.after_edit(&self.repl, h);
+            }
+        }
         let clicked: Vec<BtnKind> = self
             .btns
             .iter_mut()
@@ -865,6 +894,8 @@ impl FindBar {
         if self.with_replace {
             self.repl.paint_popup(dc, th);
         }
+        self.rq.paint_popup(dc, th);
+        self.rr.paint_popup(dc, th);
     }
 
     /// 툴팁(팝업 층 · 버튼 **위** 캡슐 · hover가 지연 시간을 넘긴 버튼 하나).

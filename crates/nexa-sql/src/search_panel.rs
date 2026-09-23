@@ -12,7 +12,7 @@
 //! 매 틱 [`SearchPanel::poll`] · 클릭 → [`SearchPanel::take_open`]으로 파일/탭을 열고 줄로 이동.
 
 use crate::findbar::{BtnKind, FindBtn};
-use crate::search_history::{Recall, SharedHistory};
+use crate::search_history::{Recall, RecallEvent, SharedHistory};
 use crate::toolicons;
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
@@ -744,14 +744,38 @@ impl SearchPanel {
         if consumed {
             return true;
         }
-        // ↑/↓ = 검색어 이력 되부르기(상자에 포커스 · 이력 있을 때만 소비).
+        // 검색어 이력(드롭다운/Flat)이 먼저 · 끝에서 ↓/Tab = 결과 목록 첫 행으로(사용자 09-23).
         if let Some(h) = &self.history {
-            if self.query.is_focused() && self.rq.on_key(ev, &mut self.query, h, &mut inv) {
-                let _ = self.query.take_changed();
-                return true;
+            let mut leave = false;
+            if self.query.is_focused() || self.rq.is_open() {
+                match self.rq.on_event(ev, &mut self.query, h, &mut inv) {
+                    RecallEvent::Consumed => return true,
+                    RecallEvent::Changed => {
+                        let _ = self.query.take_changed();
+                        return true;
+                    }
+                    RecallEvent::LeaveDown => leave = true,
+                    RecallEvent::Pass => {}
+                }
             }
-            if self.where_box.is_focused() && self.rw.on_key(ev, &mut self.where_box, h, &mut inv) {
-                let _ = self.where_box.take_changed();
+            if !leave && (self.where_box.is_focused() || self.rw.is_open()) {
+                match self.rw.on_event(ev, &mut self.where_box, h, &mut inv) {
+                    RecallEvent::Consumed => return true,
+                    RecallEvent::Changed => {
+                        let _ = self.where_box.take_changed();
+                        return true;
+                    }
+                    RecallEvent::LeaveDown => leave = true,
+                    RecallEvent::Pass => {}
+                }
+            }
+            if leave {
+                self.query.set_focused(false);
+                self.where_box.set_focused(false);
+                if !self.rows.is_empty() {
+                    self.sel = Some(0);
+                    self.ensure_visible(0);
+                }
                 return true;
             }
         }
@@ -827,11 +851,27 @@ impl SearchPanel {
         }
         self.query.on_event(ev, &mut inv);
         self.where_box.on_event(ev, &mut inv);
+        // 상자 클릭 = 이력 드롭다운(보기 방식 Dropdown · 이력 있을 때 · 사용자 09-23).
+        if let (InputEvent::MouseDown { x, y, .. }, Some(h)) = (ev, &self.history) {
+            let p = Point { x: *x, y: *y };
+            let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
+            if self.query.bounds().contains(p) {
+                self.rq.on_click(&self.query, h, host, self.scale);
+            } else if self.where_box.bounds().contains(p) {
+                self.rw.on_click(&self.where_box, h, host, self.scale);
+            }
+        }
         for b in &mut self.btns {
             b.on_event(ev);
         }
         // 검색어를 ×(또는 전부 지움)로 비우면 결과·제외 로그·상태도 비운다(VS Code와 같음 · 사용자 09-23 "×로 제거해도 결과가 안 바뀜").
-        if self.query.take_changed().is_some() && self.query.text().trim().is_empty() {
+        let q_changed = self.query.take_changed().is_some();
+        if q_changed {
+            if let Some(h) = &self.history {
+                self.rq.after_edit(&self.query, h);
+            }
+        }
+        if q_changed && self.query.text().trim().is_empty() {
             self.cancel();
             self.files.clear();
             self.skipped.clear();
@@ -841,7 +881,11 @@ impl SearchPanel {
             self.sel = None;
             self.scroll_y = 0;
         }
-        let _ = self.where_box.take_changed();
+        if self.where_box.take_changed().is_some() {
+            if let Some(h) = &self.history {
+                self.rw.after_edit(&self.where_box, h);
+            }
+        }
         let mut redraw = true;
         for b in &mut self.btns {
             if b.take_clicked() {
@@ -1083,6 +1127,8 @@ impl SearchPanel {
         );
         self.query.paint_popup(dc, th);
         self.where_box.paint_popup(dc, th);
+        self.rq.paint_popup(dc, th);
+        self.rw.paint_popup(dc, th);
     }
 
     /// 토글 툴팁(팝업 층).

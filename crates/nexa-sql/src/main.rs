@@ -5903,6 +5903,17 @@ impl App {
                 .search_history
                 .borrow_mut()
                 .set_max(self.settings.int(key).max(0) as usize),
+            "search.history_view" => {
+                self.search_history
+                    .borrow_mut()
+                    .set_view(search_history::HistoryView::parse(
+                        self.settings.get(key).unwrap_or("dropdown"),
+                    ))
+            }
+            "search.history_rows" => self
+                .search_history
+                .borrow_mut()
+                .set_rows(self.settings.int(key).max(1) as usize),
             "extensions.enabled" => {
                 self.apply_extensions(None);
                 self.layout();
@@ -13555,6 +13566,8 @@ impl App {
                 self.project_panel.paint_tooltip(&mut dc, &th);
                 self.project_panel.paint_popup(&mut dc, &th);
                 self.bm_panel.paint_popup(&mut dc, &th);
+                self.outline_panel.paint_popup(&mut dc, &th);
+                self.ext_panel.paint_popup(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
@@ -16451,11 +16464,17 @@ fn main() {
     mark(&mut marks, "palette");
     let toasts = toast::Toasts::new();
     mark(&mut marks, "toasts");
-    let search_history = search_history::SearchHistory::load_in(
-        nsql_settings::config_dir().as_deref(),
-        settings.int("search.history_max").max(0) as usize,
-    )
-    .shared();
+    let search_history = {
+        let mut h = search_history::SearchHistory::load_in(
+            nsql_settings::config_dir().as_deref(),
+            settings.int("search.history_max").max(0) as usize,
+        );
+        h.set_view(search_history::HistoryView::parse(
+            settings.get("search.history_view").unwrap_or("dropdown"),
+        ));
+        h.set_rows(settings.int("search.history_rows").max(1) as usize);
+        h.shared()
+    };
     let mut app = App {
         window: None,
         surface: None,

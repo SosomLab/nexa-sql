@@ -6,7 +6,7 @@
 //! 정규식 오류 = 틀 테두리 danger + 아무것도 일치하지 않음.
 
 use crate::findbar::{BtnKind, FindBtn};
-use crate::search_history::{Recall, SharedHistory};
+use crate::search_history::{Recall, RecallEvent, SharedHistory};
 use crate::{rx, toolicons};
 use nexa_ctl::controls::ctxmenu::MenuIcon;
 use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
@@ -31,6 +31,10 @@ pub(crate) enum FilterEvent {
     Changed,
     /// 틀 오른쪽 부가 토글이 눌렸다(호출자가 뜻을 정한다 · 예 숨김 파일).
     Side(BtnKind),
+    /// 이력(드롭다운/Flat)이 사건을 먹었다 — 호출자는 다시 그리기만.
+    Consumed,
+    /// 이력의 끝에서 ↓ 또는 Tab — 호출자가 **목록으로 포커스**를 옮긴다(사용자 09-23 "마지막 기록에서 ↓ = 다른 컨트롤로").
+    LeaveDown,
 }
 
 pub(crate) struct FilterBar {
@@ -119,9 +123,25 @@ impl FilterBar {
         &mut self.tb
     }
 
+    /// 텍스트박스 영역(시험 · 클릭 좌표 계산용).
+    #[cfg(test)]
+    pub(crate) fn text_bounds(&self) -> Rect {
+        self.tb.bounds()
+    }
+
+    /// 팝업(텍스트박스 편집 메뉴 · 이력 드롭다운)이 열려 있는가 — 패널의 `menu_open`에 합친다.
+    pub(crate) fn popup_open(&self) -> bool {
+        self.tb.popup_open() || self.history.as_ref().is_some_and(|(_, r)| r.is_open())
+    }
+
     pub(crate) fn set_focused(&mut self, on: bool) {
         if !on && self.tb.is_focused() {
             self.history_commit();
+        }
+        if !on {
+            if let Some((_, r)) = &mut self.history {
+                r.close();
+            }
         }
         self.tb.set_focused(on);
         if !on {
@@ -273,21 +293,40 @@ impl FilterBar {
             return FilterEvent::Side(k);
         }
         if to_tb {
-            // ↑/↓ = 이력 되부르기(상자에 포커스 · 이력이 있을 때만 소비) → 상자 글로 다시 거른다.
+            // 이력(드롭다운/Flat)이 먼저 — 열린 드롭다운의 이동/고르기 · 닫힌 채 ↑/↓ · 끝에서 ↓/Tab = 목록으로(사용자 09-23).
+            let clicked_tb = matches!(ev, InputEvent::MouseDown { x, y, .. } if self.tb.bounds().contains(Point { x: *x, y: *y }));
             if let Some((h, r)) = &mut self.history {
-                if self.tb.is_focused() && r.on_key(ev, &mut self.tb, h, inv) {
-                    let _ = self.tb.take_changed();
-                    self.refresh();
-                    return FilterEvent::Changed;
+                if self.tb.is_focused() || r.is_open() {
+                    match r.on_event(ev, &mut self.tb, h, inv) {
+                        RecallEvent::Consumed => return FilterEvent::Consumed,
+                        RecallEvent::Changed => {
+                            let _ = self.tb.take_changed();
+                            self.refresh();
+                            return FilterEvent::Changed;
+                        }
+                        RecallEvent::LeaveDown => return FilterEvent::LeaveDown,
+                        RecallEvent::Pass => {}
+                    }
                 }
             }
             self.tb.on_event(ev, inv);
             if self.tb.take_committed().is_some() {
                 self.history_commit();
             }
+            if let Some((h, r)) = &mut self.history {
+                if clicked_tb && self.tb.is_focused() {
+                    // 상자 클릭 = 드롭다운(보기 방식이 Dropdown일 때 · 이력이 있을 때만).
+                    let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
+                    r.on_click(&self.tb, h, host, self.scale);
+                }
+            }
         }
         if self.tb.take_changed().is_some() {
             self.refresh();
+            // 타이핑으로 글이 바뀌면 열린 드롭다운은 그 글로 다시 거른다.
+            if let Some((h, r)) = &mut self.history {
+                r.after_edit(&self.tb, h);
+            }
             return FilterEvent::Changed;
         }
         FilterEvent::None
@@ -400,6 +439,9 @@ impl FilterBar {
     /// 팝업 층 — 텍스트박스 편집 메뉴 + 토글 툴팁(지연 뒤 · 버튼 아래).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         self.tb.paint_popup(dc, th);
+        if let Some((_, r)) = &self.history {
+            r.paint_popup(dc, th);
+        }
         if let Some(b) = self.btns.iter().find(|b| {
             b.hover_since
                 .is_some_and(|t0| t0.elapsed().as_millis() >= self.tooltip_ms)

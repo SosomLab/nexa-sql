@@ -80,6 +80,13 @@ impl OutlinePanel {
         self.filter.set_history(h, "filter.outline");
     }
 
+    /// 팝업 층(필터 편집 메뉴 · 이력 드롭다운 · 툴팁) — 창의 맨 마지막에.
+    pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if self.visible {
+            self.filter.paint_popup(dc, th);
+        }
+    }
+
     pub(crate) fn set_visible(&mut self, on: bool) {
         self.visible = on;
         if !on {
@@ -211,7 +218,7 @@ impl OutlinePanel {
         self.open.take()
     }
 
-    fn filter_feed(&mut self, ev: &InputEvent) {
+    fn filter_feed(&mut self, ev: &InputEvent) -> FilterEvent {
         let mut inv = Invalidations::default();
         let evt = self.filter.on_event(ev, &mut inv);
         let now = self.filter.display_text();
@@ -219,6 +226,15 @@ impl OutlinePanel {
             self.filter_text = now;
             self.rebuild();
         }
+        if evt == FilterEvent::LeaveDown {
+            // 이력 끝에서 ↓/Tab = 심볼 목록 첫 행으로(사용자 09-23).
+            self.filter.set_focused(false);
+            if !self.rows.is_empty() {
+                self.sel = Some(0);
+                self.reveal(0);
+            }
+        }
+        evt
     }
 
     /// IME 조합·확정 뒤(호스트) — 조합 중 글자까지 바로 거른다.
@@ -307,6 +323,23 @@ impl OutlinePanel {
             }
             InputEvent::Key { key, .. } => {
                 let n = self.rows.len();
+                // 필터에 포커스면 이동 키는 이력(드롭다운/Flat)이 먼저 — 손대지 않으면(None) 종전대로 목록 이동.
+                if self.filter.is_focused()
+                    && matches!(
+                        key,
+                        CtlKey::Down
+                            | CtlKey::Up
+                            | CtlKey::Home
+                            | CtlKey::End
+                            | CtlKey::PageUp
+                            | CtlKey::PageDown
+                    )
+                {
+                    match self.filter_feed(ev) {
+                        FilterEvent::None | FilterEvent::Side(_) => {}
+                        _ => return true,
+                    }
+                }
                 match key {
                     CtlKey::Down if n > 0 => {
                         let r = self.sel.map_or(0, |s| (s + 1).min(n - 1));
@@ -340,7 +373,7 @@ impl OutlinePanel {
                     }
                     _ => {
                         if self.filter.is_focused() {
-                            self.filter_feed(ev);
+                            let _ = self.filter_feed(ev);
                             return true;
                         }
                         false

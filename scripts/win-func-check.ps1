@@ -359,5 +359,6 @@ Run-Scenario -Id S74 -Title "이진 파일 아웃라인 = 무시 + 안내(§125 
 $qDq = Join-Path $DataDir "q_dq.sql"
 Set-Content -LiteralPath $qDq -Encoding UTF8 -Value "DEFINE who = `"O'Neil`"`nSELECT 'a' || 'b' AS v FROM DUAL;`nx = 'broken`n('y')"
 Run-Scenario -Id S75 -Title "`"O'Neil`" 뒤 ' 짝 정상 + 줄 끝 재동기화(§126)" -Cmd ("open:" + $qDq + ",@after:1200:ui.click:452/141") -WaitMs 3500 -Expect "1줄 `"O'Neil`" 전체가 문자열 색(' 하나가 문자열을 열지 않음) · 2줄 'a' 뒤 캐럿(452/141 = Ln 2 Col 11) → 짝 밑줄 = 'a'의 두 ' · 4줄 ('y')도 정상(3줄 짝 없는 '는 줄 끝에서 버려짐)"
+Run-Scenario -Id S76 -Title "검색어 이력 드롭다운 = 상자 클릭 → 최근 N개(§127)" -Cmd ("project.load:" + $projFile + ",@after:1200:view.project,@after:1600:project.filter:one,@after:1800:ui.click:100/163,@after:2000:ui.click:180/560,@after:2200:project.filter:two,@after:2400:ui.click:100/163,@after:2600:ui.click:180/560,@after:2800:project.filter:,@after:3000:ui.click:100/163") -Conf "search.history_rows=5`n" -WaitMs 4500 -Expect "필터 상자를 클릭하면 상자 아래 드롭다운(최근순 'two' · 'one' · 5행 상한 · 넘치면 오른쪽 가는 스크롤 표시) · Enter/클릭 = 넣기 · Esc 닫기 · ↓로 마지막 뒤 한 번 더 = 폴더 목록으로 포커스"
 Run-Scenario -Id S63 -Title "거터 우클릭 = 마지막 줄 아래 빈 영역 = 보기만(§108)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1500:ui.rclick:335/400") -WaitMs 3500 -Expect "빈 영역(335/400 · 2줄 파일) 우클릭 = 'Bookmarks' 한 항목뿐(토글·니모닉 없음) · 캐럿은 그대로 1줄"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

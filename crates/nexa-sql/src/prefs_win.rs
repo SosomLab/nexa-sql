@@ -1023,17 +1023,45 @@ impl PrefsWin {
             }
         };
         if route(self.search.bounds(), self.search.is_focused()) {
-            // ↑/↓ = 검색어 이력 되부르기(이력 있을 때만 소비) → 그 글로 다시 거른다.
+            // 검색어 이력(드롭다운/Flat)이 먼저 → 그 글로 다시 거른다 · 끝에서 ↓/Tab = 분류 트리로 포커스(사용자 09-23).
             if let Some((h, r)) = &mut self.history {
-                if self.search.is_focused() && r.on_key(&ie, &mut self.search, h, &mut inv) {
-                    let _ = self.search.take_changed();
-                    self.query = self.search.text();
-                    self.rebuild_cards();
-                    self.redraw();
-                    return PrefsAction::None;
+                if self.search.is_focused() || r.is_open() {
+                    match r.on_event(&ie, &mut self.search, h, &mut inv) {
+                        crate::search_history::RecallEvent::Consumed => {
+                            self.redraw();
+                            return PrefsAction::None;
+                        }
+                        crate::search_history::RecallEvent::Changed => {
+                            let _ = self.search.take_changed();
+                            self.query = self.search.text();
+                            self.rebuild_cards();
+                            self.redraw();
+                            return PrefsAction::None;
+                        }
+                        crate::search_history::RecallEvent::LeaveDown => {
+                            self.search.set_focused(false);
+                            self.tree.set_focused(true);
+                            self.redraw();
+                            return PrefsAction::None;
+                        }
+                        crate::search_history::RecallEvent::Pass => {}
+                    }
                 }
             }
             self.search.on_event(&ie, &mut inv);
+            if is_mouse
+                && matches!(ie, InputEvent::MouseDown { .. })
+                && self.search.bounds().contains(p)
+            {
+                if let Some((h, r)) = &mut self.history {
+                    r.on_click(
+                        &self.search,
+                        h,
+                        Rect::new(0, 0, i32::MAX / 2, i32::MAX / 4),
+                        self.scale,
+                    );
+                }
+            }
             if self.search.take_committed().is_some() {
                 if let Some((h, r)) = &mut self.history {
                     r.commit(&self.search, h);
@@ -1057,6 +1085,9 @@ impl PrefsWin {
             self.json_btn.on_event(&ie, &mut inv);
         }
         if let Some(q) = self.search.take_changed() {
+            if let Some((h, r)) = &mut self.history {
+                r.after_edit(&self.search, h);
+            }
             self.query = q;
             self.rebuild_cards();
             self.redraw();
@@ -1631,6 +1662,9 @@ impl PrefsWin {
             self.json_btn.paint(&mut dc, th);
             let _ = pad;
             self.search.paint_popup(&mut dc, th);
+            if let Some((_, r)) = &self.history {
+                r.paint_popup(&mut dc, th);
+            }
             for c in &self.cards {
                 if let CardCtl::Text(tb) = &c.ctl {
                     tb.paint_popup(&mut dc, th);
