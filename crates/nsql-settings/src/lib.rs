@@ -584,6 +584,32 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ── 쌍 강조(편집 코어 · 사용자 09-23 "Rainbow 확장이 아니라 기본 기능 설정으로 · 강조 대상을 지정해서"): 종류 목록 ·
+    //    문자열 안 · 현재 쌍 강조. Rainbow Pairs 확장은 색만 든다(`rainbowpair.*`). 자동 닫기도 같은 종류 목록을 따른다.
+    Entry {
+        key: "editor.pair_kinds",
+        cat: Msg::CatEditor,
+        label: Msg::LblPairKinds,
+        desc: Msg::DescPairKinds,
+        kind: SettingKind::Text,
+        default: "() [] {} \"\" '' ``",
+    },
+    Entry {
+        key: "editor.pair_in_strings",
+        cat: Msg::CatEditor,
+        label: Msg::LblPairInStrings,
+        desc: Msg::DescPairInStrings,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.pair_match",
+        cat: Msg::CatEditor,
+        label: Msg::LblRainbowMatch,
+        desc: Msg::DescRainbowMatch,
+        kind: SettingKind::Choice(RAINBOW_MATCH),
+        default: "near",
+    },
     // ── CLI 표 출력(사용자 09-16 · 터미널 폭에서 표가 접혀 깨짐) — `nsql config set cli.width 160` · 1회성은 `--width`.
     Entry {
         key: "cli.width",
@@ -751,36 +777,12 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "rainbowpair.quotes",
-        cat: Msg::CatExtRainbowPairs,
-        label: Msg::LblRainbowQuotes,
-        desc: Msg::DescRainbowQuotes,
-        kind: SettingKind::Bool,
-        default: "on",
-    },
-    Entry {
-        key: "rainbowpair.angle",
-        cat: Msg::CatExtRainbowPairs,
-        label: Msg::LblRainbowAngle,
-        desc: Msg::DescRainbowAngle,
-        kind: SettingKind::Bool,
-        default: "off",
-    },
-    Entry {
         key: "rainbowpair.unmatched",
         cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowUnmatched,
         desc: Msg::DescRainbowUnmatched,
         kind: SettingKind::Bool,
         default: "on",
-    },
-    Entry {
-        key: "rainbowpair.match",
-        cat: Msg::CatExtRainbowPairs,
-        label: Msg::LblRainbowMatch,
-        desc: Msg::DescRainbowMatch,
-        kind: SettingKind::Choice(RAINBOW_MATCH),
-        default: "near",
     },
     Entry {
         key: "rainbowpair.colors",

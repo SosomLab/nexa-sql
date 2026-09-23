@@ -2508,6 +2508,18 @@ impl App {
             if let Some(mut b) = e.bracket_opts {
                 // 자동 닫기 = 편집 코어 설정(`editor.auto_close_pairs`) — Rainbow Pairs 기능이 아니다(확장 유무와 무관 · 사용자 09-19).
                 b.auto_close = self.settings.flag("editor.auto_close_pairs");
+                // 쌍 종류 · 문자열 안 · 현재 쌍 강조도 편집 코어 설정(`editor.pair_*` · 사용자 09-23 "Rainbow 확장이 아니라 기본 기능 설정으로").
+                b.pairs = nexa_ctl::PairOpts {
+                    kinds: nexa_ctl::PairOpts::kinds_from_spec(
+                        self.settings.get("editor.pair_kinds").unwrap_or(""),
+                    ),
+                    in_strings: self.settings.flag("editor.pair_in_strings"),
+                };
+                b.match_mode = match self.settings.get("editor.pair_match").unwrap_or("near") {
+                    "off" => 0,
+                    "always" => 2,
+                    _ => 1,
+                };
                 self.editors.set_bracket_opts(b);
             }
         }
@@ -3818,6 +3830,8 @@ impl App {
         self.editors
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.bm_panel
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
+        self.search
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
     }
 
@@ -5796,7 +5810,10 @@ impl App {
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
-            "editor.auto_close_pairs" => self.apply_extensions(None),
+            "editor.auto_close_pairs"
+            | "editor.pair_kinds"
+            | "editor.pair_in_strings"
+            | "editor.pair_match" => self.apply_extensions(None),
             "file.large_l1_mb"
             | "file.large_l1_lines"
             | "file.large_l2_mb"
@@ -7196,12 +7213,30 @@ impl App {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .collect();
+        // 범위 상자가 비었을 때의 기본 = 작업 모드별(사용자 09-23): 파일 모드 = 열린 파일만 · 폴더 모드 = + 그 폴더 이하 ·
+        //   프로젝트 모드 = + 프로젝트 폴더(파일이 있는 곳) + 프로젝트에 추가한 폴더.
+        let mut default_roots: Vec<PathBuf> = Vec::new();
+        match project::WorkMode::of(self.project.path.as_deref(), self.arg_folder.as_deref()) {
+            project::WorkMode::File => {}
+            project::WorkMode::Folder(d) => default_roots.push(d),
+            project::WorkMode::Project(p) => {
+                if let Some(d) = p.parent() {
+                    default_roots.push(d.to_path_buf());
+                }
+                for f in &self.project.folders {
+                    if !default_roots.iter().any(|r| r == f) {
+                        default_roots.push(f.clone());
+                    }
+                }
+            }
+        }
         let ctx = SearchCtx {
             tabs: self.editors.tab_texts(),
             current_dir: self
                 .editors
                 .active_path()
                 .and_then(|p| p.parent().map(Path::to_path_buf)),
+            default_roots,
             max_file_kb: self.settings.int("search.max_file_kb").max(0) as usize,
             threads: self.settings.int("search.threads").clamp(0, 16) as usize,
             gitignore: self.settings.flag("search.gitignore"),
@@ -7212,10 +7247,14 @@ impl App {
     }
 
     /// 결과 행 → 그 탭/파일을 열고 줄로 이동 · 일치 구간 선택.
+    /// 파일은 **프로젝트 탐색기와 같은 규칙**(사용자 09-23): 한 번 클릭 = 미리보기 탭(포커스는 패널에) · 더블클릭/Enter = 정식 탭 + 편집기 포커스.
     fn open_search_result(&mut self, req: search_panel::OpenReq) {
         match (req.tab, &req.path) {
             (Some(id), _) => self.editors.switch_to_id(id),
-            (None, Some(p)) => self.open_file(p),
+            (None, Some(p)) => self.project_open_req(project_panel::OpenReq {
+                path: p.clone(),
+                permanent: req.permanent,
+            }),
             (None, None) => return,
         }
         let start = {
@@ -7225,7 +7264,9 @@ impl App {
         };
         let mut inv = Invalidations::default();
         self.ed_mut().select_range(start, start + req.len, &mut inv);
-        self.set_focus(Focus::Editor);
+        if req.permanent {
+            self.set_focus(Focus::Editor);
+        }
         self.layout();
         self.redraw();
     }
@@ -8756,6 +8797,16 @@ impl App {
     }
 
     fn open_status_popup(&mut self, r: Rect, items: Vec<nexa_ctl::controls::ctxmenu::CtxItem>) {
+        self.open_status_popup_w(r, items, 300.0);
+    }
+
+    /// 폭을 지정하는 판 — 거터 북마크 메뉴처럼 짧은 항목만 있는 팝업은 좁게(사용자 09-23 "메뉴 폭이 너무 넓어").
+    fn open_status_popup_w(
+        &mut self,
+        r: Rect,
+        items: Vec<nexa_ctl::controls::ctxmenu::CtxItem>,
+        width: f32,
+    ) {
         let host = self
             .window
             .as_ref()
@@ -8766,7 +8817,7 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         self.status_menu
-            .open_at(r.x, r.y, items, host, px(300.0, self.scale));
+            .open_at(r.x, r.y, items, host, px(width, self.scale));
     }
 
     /// 팝업 항목(`tx.*`).
@@ -12370,20 +12421,31 @@ impl App {
         if !tb.in_gutter(p) {
             return false;
         }
-        let Some(line) = tb.line_at_point(p) else {
-            return false;
-        };
-        self.editors.cur_mut().goto_line(line + 1);
-        let (bm, mn) = self.bookmarks.line_state(&self.editors, i, line);
-        self.bm_gutter = Some((i, line, bm));
+        // 마지막 줄 아래 빈 영역 = 줄 단위 항목(토글·니모닉) 없이 "북마크 보기"만(사용자 09-23).
+        let on_text = !tb.below_text(p);
+        let line = on_text.then(|| tb.line_at_point(p)).flatten();
+        let state = line.map(|line| {
+            self.editors.cur_mut().goto_line(line + 1);
+            let (bm, mn) = self.bookmarks.line_state(&self.editors, i, line);
+            (line, bm, mn)
+        });
+        self.bm_gutter = state.map(|(line, bm, _)| (i, line, bm));
         self.close_context_menus();
-        let items = bm_gutter_items(bm.is_some(), mn);
-        self.open_status_popup(Rect::new(p.x, p.y, 1, 1), items);
+        let items = bm_gutter_items(state.map(|(_, bm, mn)| (bm.is_some(), mn)));
+        self.open_status_popup_w(Rect::new(p.x, p.y, 1, 1), items, 170.0);
         true
     }
 
-    /// 거터 메뉴의 답 — `add`/`remove` = 토글(캐럿은 이미 그 줄) · `mn:<n>` = 니모닉 지정(없으면 만들어서) · `mn:clear` = 해제.
+    /// 거터 메뉴의 답 — `view` = 좌측 북마크 패널 열기 · `toggle` = 토글(캐럿은 이미 그 줄) · `mn:<n>` = 니모닉 지정(없으면 만들어서) · `mn:clear` = 해제.
     fn bm_gutter_pick(&mut self, rest: &str) {
+        if rest == "view" {
+            self.bm_gutter = None;
+            if !self.bm_panel.is_visible() {
+                self.menu_action("view.bookmarks");
+            }
+            self.redraw();
+            return;
+        }
         let Some((i, line, bm)) = self.bm_gutter.take() else {
             return;
         };
@@ -12392,7 +12454,7 @@ impl App {
         }
         self.editors.cur_mut().goto_line(line + 1);
         match rest {
-            "add" | "remove" => self.bookmark_cmd("bookmark.toggle"),
+            "toggle" => self.bookmark_cmd("bookmark.toggle"),
             "mn:clear" => {
                 if let Some(id) = bm {
                     self.bookmarks.set_mnemonic(id, None);
@@ -15367,9 +15429,14 @@ impl ApplicationHandler<Wake> for App {
                         }
                         _ => {}
                     }
-                    // 확장 패널 검색 = 조합 중 글자까지 바로 거른다(설정 창 검색과 같은 규칙 · 09-19).
-                    if self.focus == Focus::Ext {
-                        self.ext_panel.query_changed();
+                    // ★ 검색에 쓰이는 입력은 전부 조합 중 글자까지 바로 거른다(설정 창 검색과 같은 규칙 · 09-19 확장 패널 →
+                    //   09-23 프로젝트 필터·북마크 필터·찾기 막대로 일반화 · 사용자 "자모 완성과 상관없이 한글 검색").
+                    match self.focus {
+                        Focus::Ext => self.ext_panel.query_changed(),
+                        Focus::Project => self.project_panel.query_changed(),
+                        Focus::Bookmarks => self.bm_panel.query_changed(),
+                        Focus::Find => self.find_step(true, false),
+                        _ => {}
                     }
                     self.redraw();
                 }
@@ -16613,6 +16680,20 @@ fn find_in_chars(
         }
     };
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    // 한글이 든 질의 = 자모열 검색(조합 중 "ㄴ"·"내"도 "내용"에 걸린다 · nsql-core `hangul` · 사용자 09-23).
+    if nsql_core::hangul::has_hangul_chars(q) {
+        let qj = nsql_core::hangul::decompose_chars(q, !case_sensitive);
+        let mut found = Vec::new();
+        nsql_core::hangul::find_jamo(text, &qj, !case_sensitive, &mut found);
+        for (s, e) in found {
+            let boundary_ok = !whole_word
+                || ((s == 0 || !is_word(text[s - 1])) && (e >= text.len() || !is_word(text[e])));
+            if boundary_ok {
+                out.push((base + s, base + e));
+            }
+        }
+        return;
+    }
     let mut i = 0;
     while i + q.len() <= text.len() {
         if text[i..i + q.len()].iter().zip(q).all(|(a, b)| eq(*a, *b)) {
@@ -16698,14 +16779,16 @@ fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
     }
 }
 
-/// 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로") — 슬라이드는 애니메이션 마스터를 따른다.
-/// 거터 우클릭 메뉴 항목(순수 함수 · 사용자 09-23 "그 줄에 북마크/니모닉이 있으면 제거 활성 · 없으면 추가 활성"):
-/// `bmg.add`(없을 때만 활성) · `bmg.remove`(있을 때만) · `bmg.mn:1..9`(늘 · 없으면 만들어 지정 · 지금 것은 ✓) · `bmg.mn:clear`(니모닉이 있을 때만).
-fn bm_gutter_items(
-    has_bm: bool,
-    mnemonic: Option<u8>,
-) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
+/// 거터 우클릭 메뉴 항목(순수 함수 · 사용자 09-23 정정 둘):
+/// 맨 위 `bmg.view`(늘 · 좌측 북마크 패널 열기) → 줄 위에서만(`line = Some((북마크 있음, 니모닉))`)
+/// `bmg.toggle`(늘 활성 · 있으면 ✓ · "제거" 항목 없음) · `bmg.mn:1..9`(없으면 만들어 지정 · 지금 것은 ✓) · `bmg.mn:clear`(니모닉이 있을 때만).
+/// 마지막 줄 아래 빈 영역(`line = None`)에서는 "북마크 보기"만.
+fn bm_gutter_items(line: Option<(bool, Option<u8>)>) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
     use nexa_ctl::controls::ctxmenu::CtxItem;
+    let mut out = vec![CtxItem::item("bmg.view", t(Msg::MnBookmarksPanel))];
+    let Some((has_bm, mnemonic)) = line else {
+        return out;
+    };
     let mn: Vec<CtxItem> = (1..=9u8)
         .map(|n| {
             CtxItem::item(format!("bmg.mn:{n}"), format!("{n}  (Ctrl+{n})"))
@@ -16718,12 +16801,13 @@ fn bm_gutter_items(
             mnemonic.is_some(),
         )))
         .collect();
-    vec![
-        CtxItem::maybe("bmg.add", t(Msg::MnBmToggle), !has_bm),
-        CtxItem::maybe("bmg.remove", t(Msg::MnBmRemove), has_bm),
+    // 토글 하나가 추가/제거를 다 하므로 "제거" 항목은 두지 않는다(사용자 09-23 정정) — 상태는 ✓로만 보인다.
+    out.extend([
         CtxItem::Separator,
+        CtxItem::item("bmg.toggle", t(Msg::MnBmToggle)).with_checked(has_bm),
         CtxItem::submenu("bmg.mn", t(Msg::MnBmMnemonic), mn),
-    ]
+    ]);
+    out
 }
 
 #[cfg(test)]
@@ -16738,15 +16822,27 @@ mod bm_gutter_tests {
         })
     }
 
-    /// 없으면 추가만 · 있으면 제거만 · 니모닉 해제는 니모닉이 있을 때만(사용자 09-23).
+    /// 맨 위 "북마크 보기"는 늘 · 토글 하나(늘 활성 · 있으면 ✓ · "제거" 항목 없음 · 사용자 09-23 정정) ·
+    /// 니모닉 해제는 니모닉이 있을 때만 · 빈 영역(None) = 보기만.
     #[test]
     fn gutter_menu_enables_by_line_state() {
-        let none = bm_gutter_items(false, None);
-        assert_eq!(enabled(&none, "bmg.add"), Some(true));
-        assert_eq!(enabled(&none, "bmg.remove"), Some(false));
-        let bm = bm_gutter_items(true, None);
-        assert_eq!(enabled(&bm, "bmg.add"), Some(false));
-        assert_eq!(enabled(&bm, "bmg.remove"), Some(true));
+        let checked = |items: &[CtxItem], id: &str| -> Option<bool> {
+            items.iter().find_map(|it| match it {
+                CtxItem::Item { id: i, checked, .. } if i == id => *checked,
+                _ => None,
+            })
+        };
+        let blank = bm_gutter_items(None);
+        assert_eq!(blank.len(), 1, "below text: view only");
+        assert_eq!(enabled(&blank, "bmg.view"), Some(true));
+        let none = bm_gutter_items(Some((false, None)));
+        assert_eq!(enabled(&none, "bmg.view"), Some(true));
+        assert_eq!(enabled(&none, "bmg.toggle"), Some(true));
+        assert_eq!(checked(&none, "bmg.toggle"), Some(false));
+        assert_eq!(enabled(&none, "bmg.remove"), None, "no remove item");
+        let bm = bm_gutter_items(Some((true, None)));
+        assert_eq!(enabled(&bm, "bmg.toggle"), Some(true));
+        assert_eq!(checked(&bm, "bmg.toggle"), Some(true));
         let sub = |items: &[CtxItem]| -> Vec<CtxItem> {
             items
                 .iter()
@@ -16759,7 +16855,7 @@ mod bm_gutter_tests {
                 .expect("mnemonic submenu")
         };
         assert_eq!(enabled(&sub(&bm), "bmg.mn:clear"), Some(false));
-        let with_mn = bm_gutter_items(true, Some(3));
+        let with_mn = bm_gutter_items(Some((true, Some(3))));
         assert_eq!(enabled(&sub(&with_mn), "bmg.mn:clear"), Some(true));
         assert_eq!(sub(&with_mn).len(), 11, "1..9 + separator + clear");
     }

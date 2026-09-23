@@ -1067,20 +1067,37 @@ impl ProjectPanel {
                 _ => {}
             }
             if evt == FilterEvent::Changed {
-                self.filter_text = self.filter.text();
-                if !self.filter_text.trim().is_empty() {
-                    self.scan_for_filter();
-                } else {
-                    self.scan_capped = false;
-                }
-                self.sel = None;
-                self.scroll_y = 0;
-                self.scroll_x = 0;
-                self.rebuild_rows();
+                self.apply_filter(self.filter.display_text());
                 return true;
             }
         }
         true
+    }
+
+    /// 필터 글이 바뀌었다(조합 중 글자 포함) — 열거·행 재구성.
+    fn apply_filter(&mut self, text: String) {
+        self.filter_text = text;
+        if !self.filter_text.trim().is_empty() {
+            self.scan_for_filter();
+        } else {
+            self.scan_capped = false;
+        }
+        self.sel = None;
+        self.scroll_y = 0;
+        self.scroll_x = 0;
+        self.rebuild_rows();
+    }
+
+    /// IME 조합·확정 뒤 호스트가 부른다 — 조합 중 글자("기")까지 바로 거른다(확장 패널과 같은 규칙 · 사용자 09-23).
+    pub(crate) fn query_changed(&mut self) {
+        if self.name.is_none() || !self.filter.is_focused() {
+            return;
+        }
+        self.filter.refresh();
+        let now = self.filter.display_text();
+        if now != self.filter_text {
+            self.apply_filter(now);
+        }
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {

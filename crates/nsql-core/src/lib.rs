@@ -1121,6 +1121,7 @@ pub trait Session {
 }
 
 pub mod caps;
+pub mod hangul;
 pub mod secret;
 pub use caps::{CallSignature, Caps, CursorOut, ExecForm, IdentFold, Marker, OutValues};
 pub use secret::Secret;

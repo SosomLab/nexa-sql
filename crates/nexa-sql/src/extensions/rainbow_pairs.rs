@@ -4,7 +4,7 @@
 //! 우클릭 편집 메뉴 "괄호 이동 ▸". 쌍 표·색·자동 닫기는 nexa-ctl 코어(같은 표) — 이 파일은 "옵션·명령·메뉴"만 든다.
 
 use super::{Command, EditorOps, Extension, ExtensionEffect, MenuContribution};
-use nexa_ctl::{BracketOpts, PairOpts};
+use nexa_ctl::BracketOpts;
 use nsql_i18n::Msg;
 use nsql_settings::Settings;
 
@@ -85,16 +85,7 @@ impl Extension for RainbowPairs {
     fn on_settings(&mut self, s: &Settings) -> ExtensionEffect {
         let opts = BracketOpts {
             rainbow: s.flag("rainbowpair.enabled"),
-            pairs: PairOpts {
-                quotes: s.flag("rainbowpair.quotes"),
-                angle: s.flag("rainbowpair.angle"),
-            },
             unmatched: s.flag("rainbowpair.unmatched"),
-            match_mode: match s.get("rainbowpair.match").unwrap_or("near") {
-                "off" => 0,
-                "always" => 2,
-                _ => 1,
-            },
             // 사용자 색 목록 = 이웃 깊이가 잘 구별되게 다시 배열(보색·색 온도·밝기 · 사용자 09-19 · 끄면 적은 순서).
             //   비면 테마 팔레트(이미 같은 규칙으로 정렬돼 있다 · nexa-ctl `Theme.rainbow`).
             colors: {
@@ -105,7 +96,9 @@ impl Extension for RainbowPairs {
                     c
                 }
             },
-            // 자동 닫기는 편집 코어 기능(`editor.auto_close_pairs`) — 확장은 관여하지 않는다(호스트가 값을 넣는다 · 사용자 09-19).
+            // 쌍 종류(`editor.pair_kinds`) · 문자열 안(`editor.pair_in_strings`) · 현재 쌍 강조(`editor.pair_match`) · 자동 닫기
+            //   (`editor.auto_close_pairs`)는 **편집 코어 설정** — 확장은 관여하지 않는다(호스트가 값을 넣는다 · 사용자 09-19 · 09-23
+            //   "Rainbow 확장이 아니라 기본 기능 설정으로"). 확장은 색(깊이 색 · 짝 없음 색)만 든다.
             auto_close: true,
             // 0 = 자체 상한 없음 — 편집기 큰 파일 단계(`file.large_ext_level` · docs/72 §2)가 끈다(09-22: 2 MB 자체 상한과 L1 5 MB가
             //   두 겹으로 관리되던 것을 정리 · 값을 주면 그 크기에서 확장만 먼저 멈춘다).
@@ -113,6 +106,7 @@ impl Extension for RainbowPairs {
                 kb if kb <= 0 => usize::MAX,
                 kb => (kb.max(64) as usize) * 1024,
             },
+            ..BracketOpts::default()
         };
         ExtensionEffect {
             bracket_opts: Some(opts),

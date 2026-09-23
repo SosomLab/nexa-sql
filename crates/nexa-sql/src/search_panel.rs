@@ -35,8 +35,13 @@ pub(crate) struct WhereSpec {
 }
 
 /// Where 문자열 해석 — 콤마 구분 · `<open files>` · `<current file>`(활성 파일 폴더) · `-패턴` = 제외 · 그 밖 = 경로.
-/// 비어 있으면 열린 탭 + 활성 파일 폴더.
-pub(crate) fn parse_where(text: &str, current_dir: Option<&Path>) -> WhereSpec {
+/// 비어 있으면 **열린 탭 + 작업 모드의 기본 범위**(`defaults` · 사용자 09-23): 파일 모드 = 열린 탭만 · 폴더 모드 = + 그 폴더 ·
+/// 프로젝트 모드 = + 프로젝트 폴더와 프로젝트에 추가한 폴더(호스트가 [`SearchCtx::default_roots`]로 준다).
+pub(crate) fn parse_where(
+    text: &str,
+    current_dir: Option<&Path>,
+    defaults: &[PathBuf],
+) -> WhereSpec {
     let mut spec = WhereSpec::default();
     let items: Vec<&str> = text
         .split(',')
@@ -45,9 +50,7 @@ pub(crate) fn parse_where(text: &str, current_dir: Option<&Path>) -> WhereSpec {
         .collect();
     if items.is_empty() {
         spec.open_tabs = true;
-        if let Some(d) = current_dir {
-            spec.roots.push(d.to_path_buf());
-        }
+        spec.roots.extend(defaults.iter().cloned());
         return spec;
     }
     for it in items {
@@ -75,6 +78,8 @@ pub(crate) struct SearchCtx {
     /// 열린 탭 (id · 라벨 · 본문 · 경로).
     pub tabs: Vec<(u64, String, String, Option<PathBuf>)>,
     pub current_dir: Option<PathBuf>,
+    /// 범위 상자가 비었을 때의 폴더 루트(작업 모드별 · 파일 모드 = 없음 · 폴더 = 그 폴더 · 프로젝트 = 프로젝트 폴더 + 추가 폴더).
+    pub default_roots: Vec<PathBuf>,
     pub max_file_kb: usize,
     pub threads: usize,
     pub gitignore: bool,
@@ -91,6 +96,8 @@ pub(crate) struct OpenReq {
     pub line: usize,
     pub col: usize,
     pub len: usize,
+    /// 정식 탭으로(더블클릭 · Enter) · 아니면 미리보기 탭(프로젝트 탐색기와 같은 규칙 · 사용자 09-23).
+    pub permanent: bool,
 }
 
 struct MatchRow {
@@ -142,6 +149,9 @@ pub(crate) struct SearchPanel {
     clamp_w: i32,
     /// 마지막 검색어(같은 경로 파일은 열린 탭 우선 중복 제외).
     tab_paths: Vec<PathBuf>,
+    /// 더블클릭 감지(행 · 첫 클릭 시각) · 간격 = `ui.dblclick_ms`(프로젝트 탐색기·북마크 패널과 같은 규칙).
+    last_click: Option<(usize, Instant)>,
+    dblclick_ms: u128,
 }
 
 const ROW_H: f32 = 22.0;
@@ -181,7 +191,13 @@ impl SearchPanel {
             tooltip_ms: 600,
             clamp_w: i32::MAX / 2,
             tab_paths: Vec::new(),
+            last_click: None,
+            dblclick_ms: 400,
         }
+    }
+
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
     }
 
     pub(crate) fn is_visible(&self) -> bool {
@@ -334,7 +350,11 @@ impl SearchPanel {
             self.status.clear();
             return;
         }
-        let spec = parse_where(&self.where_box.text(), ctx.current_dir.as_deref());
+        let spec = parse_where(
+            &self.where_box.text(),
+            ctx.current_dir.as_deref(),
+            &ctx.default_roots,
+        );
         let matcher = match Matcher::new(&q, self.case(), self.word(), self.regex()) {
             Ok(m) => m,
             Err(e) => {
@@ -539,7 +559,8 @@ impl SearchPanel {
         (i < self.rows.len()).then_some(i)
     }
 
-    fn activate_row(&mut self, i: usize) {
+    /// 행 실행 — 파일 행 = 접기/펼치기 · 일치 행 = 열기 요청(`permanent` = 정식 탭 · 아니면 미리보기).
+    fn activate_row(&mut self, i: usize, permanent: bool) {
         match self.rows.get(i).copied() {
             Some(Row::File(fi)) => {
                 if let Some(f) = self.files.get_mut(fi) {
@@ -556,6 +577,7 @@ impl SearchPanel {
                             line: m.line_no,
                             col: m.col,
                             len: m.len,
+                            permanent,
                         });
                     }
                 }
@@ -597,7 +619,8 @@ impl SearchPanel {
                             return true;
                         }
                         if let Some(i) = self.sel {
-                            self.activate_row(i);
+                            // Enter = 정식 탭(프로젝트 탐색기와 같은 규칙).
+                            self.activate_row(i, true);
                             return true;
                         }
                     }
@@ -640,7 +663,12 @@ impl SearchPanel {
                 }
                 if let Some(i) = self.row_at(p) {
                     self.sel = Some(i);
-                    self.activate_row(i);
+                    // 한 번 클릭 = 미리보기 탭 · 같은 행을 `dblclick_ms` 안에 다시 = 정식 탭(프로젝트 탐색기·북마크와 같은 규칙 ·
+                    //   사용자 09-23 "검색 결과는 미리보기 탭으로 · 이후 동작은 프로젝트 탐색기와 동일") · 세 번째는 새 시작.
+                    let now = Instant::now();
+                    let dbl = matches!(self.last_click, Some((j, t0)) if j == i && now.duration_since(t0).as_millis() < self.dblclick_ms);
+                    self.last_click = if dbl { None } else { Some((i, now)) };
+                    self.activate_row(i, dbl);
                 }
             }
             InputEvent::MouseMove { x, y } => {
@@ -747,17 +775,27 @@ impl SearchPanel {
             match self.rows[i] {
                 Row::File(fi) => {
                     let f = &self.files[fi];
-                    let chev = if f.expanded { "▾" } else { "▸" };
-                    dc.text(lr.x + indent, ty, row_rect, chev, th.text_dim);
+                    // 셰브론 = 프로젝트 탐색기·북마크 패널과 같은 부품(`draw_chevron_90_in` · 접힘 흐림 · 펼침/호버 본문색 · 사용자 09-23).
+                    let chev_w = dc.text_height().max(10);
+                    let color = if f.expanded || self.hover == Some(i) {
+                        th.text
+                    } else {
+                        th.text_dim
+                    };
+                    nexa_ctl::controls::draw_chevron_90_in(
+                        dc,
+                        Rect::new(lr.x + indent, y + (rh - chev_w) / 2, chev_w, chev_w),
+                        color,
+                        f.expanded,
+                        Some(row_rect),
+                    );
+                    let lab_x = lr.x + indent + chev_w + px(4.0);
                     let count = f.matches.len().to_string();
                     let cw = dc.text_width(&count);
-                    let label_clip = Rect::new(lr.x, y, (lr.w - cw - indent * 3).max(0), rh);
-                    let shown = nexa_ctl::draw::ellipsize_middle(
-                        dc,
-                        &f.label,
-                        label_clip.right() - (lr.x + indent + sel_w),
-                    );
-                    dc.text(lr.x + indent + sel_w, ty, label_clip, &shown, th.text);
+                    let label_clip = Rect::new(lr.x, y, (lr.w - cw - indent * 2).max(0), rh);
+                    let shown =
+                        nexa_ctl::draw::ellipsize_middle(dc, &f.label, label_clip.right() - lab_x);
+                    dc.text(lab_x, ty, label_clip, &shown, th.text);
                     dc.text(lr.right() - indent - cw, ty, row_rect, &count, th.text_dim);
                 }
                 Row::Match(fi, mi) => {
@@ -849,14 +887,22 @@ mod tests {
     #[test]
     fn where_parsing_rules() {
         let cur = PathBuf::from("/proj/sql");
-        let w = parse_where("", Some(&cur));
+        // 비면 열린 탭 + 작업 모드 기본 루트(파일 모드 = 없음 · 폴더/프로젝트 = 호스트가 준 것).
+        let w = parse_where("", Some(&cur), &[]);
         assert!(w.open_tabs);
-        assert_eq!(w.roots, vec![cur.clone()]);
-        let w = parse_where("<open files>, /a/b, -*.log, \"/c d\"", Some(&cur));
+        assert!(w.roots.is_empty(), "파일 모드 = 열린 파일만");
+        let w = parse_where(
+            "",
+            Some(&cur),
+            &[PathBuf::from("/ws"), PathBuf::from("/extra")],
+        );
+        assert!(w.open_tabs);
+        assert_eq!(w.roots, vec![PathBuf::from("/ws"), PathBuf::from("/extra")]);
+        let w = parse_where("<open files>, /a/b, -*.log, \"/c d\"", Some(&cur), &[]);
         assert!(w.open_tabs);
         assert_eq!(w.roots, vec![PathBuf::from("/a/b"), PathBuf::from("/c d")]);
         assert_eq!(w.excludes, vec!["*.log".to_string()]);
-        let w = parse_where("<current file>", None);
+        let w = parse_where("<current file>", None, &[]);
         assert!(!w.open_tabs);
         assert!(w.roots.is_empty());
         assert_eq!(byte_to_char_col("가나다x", 6), 2);

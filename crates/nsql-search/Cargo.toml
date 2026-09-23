@@ -12,5 +12,6 @@ description = "Nexa SQL 파일 검색 엔진 — 병렬 폴더 걷기(std 스레
 workspace = true
 
 [dependencies]
-# D-76 예외 — 선형 시간 정규식 코어(순수 Rust). 그 외는 std만.
+# D-76 예외 — 선형 시간 정규식 코어(순수 Rust). 그 외는 std만(+ 자모열 검색 = nsql-core `hangul` · 의존 0).
 regex.workspace = true
+nsql-core = { path = "../nsql-core" }

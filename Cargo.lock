@@ -1444,6 +1444,7 @@ dependencies = [
 name = "nsql-search"
 version = "0.0.1"
 dependencies = [
+ "nsql-core",
  "regex",
 ]
 

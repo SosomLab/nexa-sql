@@ -298,7 +298,18 @@ impl FilterBar {
                     return true;
                 }
                 let h = hay.to_lowercase();
-                q.split_whitespace().all(|t| h.contains(&t.to_lowercase()))
+                // 한글 토큰 = 자모열 비교(조합 중 "ㄱ"·"기"도 걸린다 · nsql-core `hangul` · 사용자 09-23).
+                q.split_whitespace().all(|t| {
+                    if nsql_core::hangul::has_hangul(t) {
+                        nsql_core::hangul::contains_jamo(
+                            hay,
+                            &nsql_core::hangul::decompose(t, true),
+                            true,
+                        )
+                    } else {
+                        h.contains(&t.to_lowercase())
+                    }
+                })
             }
         }
     }

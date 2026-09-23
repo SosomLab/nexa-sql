@@ -210,3 +210,12 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 
 일반 편집 모드(확장 꺼짐·미설치·확장 관리자 꺼짐)에서는 깊이 색과 짝 없음 빨강을 **그리지 않는다** — 캐럿 옆 쌍의 밑줄과 자동 닫기만 편집 코어 기능으로 남는다.
 
+
+## §13 쌍 기능의 층 정리(09-23 · 사용자 "Rainbow Pairs를 명시하지 않은 요구는 기본 기능으로")
+
+| 층 | 무엇 | 설정 |
+|---|---|---|
+| **편집 코어(nexa-ctl `PairTable`/`PairOpts` · 늘 켜짐)** | 쌍 표 · 현재 쌍 밑줄 · 짝/형제/상위/하위 이동 · 자동 닫기 · **문자열 안 스캔**(열린 인용부호 = 바닥 · 안의 짝 없음은 조용히) | `editor.pair_kinds`(`() [] {} <> "" '' ``` 중 고름 · 기본 = `< >` 제외) · `editor.pair_in_strings`(켬 = 문자열 안의 모든 쌍 · 끔 = 그 문자열의 인용부호 쌍만) · `editor.pair_match`(off/near/always) · `editor.auto_close_pairs` |
+| **Rainbow Pairs 확장(색만)** | 깊이 색 · 짝 없음 danger 색 | `rainbowpair.enabled` · `unmatched` · `colors` · `contrast_order` · `max_kb` |
+
+옮긴 키 = `rainbowpair.quotes`·`angle` → `editor.pair_kinds` · `rainbowpair.match` → `editor.pair_match`(옛 키는 무시). 문자열 안 규칙 = 09-23 journal §112.

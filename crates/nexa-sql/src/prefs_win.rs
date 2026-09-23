@@ -323,6 +323,9 @@ impl PrefsWin {
     fn rebuild_cards(&mut self) {
         let adv = self.advanced.is_on();
         let q = self.query.trim().to_lowercase();
+        // 한글 = 자모열 비교(조합 중 "ㄱ"·"기"도 · nsql-core `hangul` · 사용자 09-23 "검색에 쓰이는 모든 입력") — 09-19의
+        //   "조합 중 글자 즉시 반영"(IME 경로 `display_text`) 위에 얹는다.
+        let qj = nsql_core::hangul::has_hangul(&q).then(|| nsql_core::hangul::decompose(&q, true));
         let mut chosen: Vec<Snap> = Vec::new();
         if !q.is_empty() {
             for sn in &self.snap {
@@ -340,7 +343,11 @@ impl PrefsWin {
                     t(sn.entry.cat)
                 )
                 .to_lowercase();
-                if hay.contains(&q) {
+                let hit = match &qj {
+                    Some(j) => nsql_core::hangul::contains_jamo(&hay, j, true),
+                    None => hay.contains(&q),
+                };
+                if hit {
                     chosen.push(sn.clone());
                 }
             }

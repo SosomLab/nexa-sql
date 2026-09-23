@@ -105,6 +105,12 @@ enum Kind {
     Literal(Lit),
     /// 비ASCII가 든 검색어의 대소문자 무시 — `char::to_lowercase` 접기(느린 길 · 검색어에 비ASCII 대소문자가 있을 때만).
     Unicode(Vec<char>),
+    /// 한글이 든 검색어 = **자모열** 비교(조합 중 "ㄱ"·"기"도 걸린다 · nsql-core `hangul` · 사용자 09-23) — `fold` = 대소문자 무시.
+    Jamo {
+        q: Vec<char>,
+        fold: bool,
+        prefilter: Option<Lit>,
+    },
     Regex {
         re: regex::bytes::Regex,
         prefilter: Option<Lit>,
@@ -183,6 +189,15 @@ impl Matcher {
                 .filter(|p| case || p.is_ascii())
                 .map(|p| Lit::new(p.as_bytes(), !case));
             Kind::Regex { re, prefilter }
+        } else if nsql_core::hangul::has_hangul(query) {
+            // 사전 필터 = 첫 한글 앞의 ASCII 리터럴(있으면) — 파일 대부분을 바이트 스캔으로 거른다.
+            let prefix: String = query.chars().take_while(|c| c.is_ascii()).collect();
+            let prefilter = (!prefix.is_empty()).then(|| Lit::new(prefix.as_bytes(), !case));
+            Kind::Jamo {
+                q: nsql_core::hangul::decompose(query, !case),
+                fold: !case,
+                prefilter,
+            }
         } else if !case && needs_unicode_fold(query) {
             Kind::Unicode(query.chars().flat_map(char::to_lowercase).collect())
         } else {
@@ -228,6 +243,41 @@ impl Matcher {
                         }
                         budget = budget.wrapping_add(1);
                         if budget.is_multiple_of(4096) && !keep_going() {
+                            return;
+                        }
+                    }
+                }
+            }
+            Kind::Jamo { q, fold, prefilter } => {
+                if let Some(p) = prefilter {
+                    if p.find(hay, 0).is_none() {
+                        return;
+                    }
+                }
+                // 한글 음절은 3바이트(EA~ED) — 그 바이트가 없는 하이는 자모열 검색 대상이 아니다(빠른 거름).
+                if !hay.iter().any(|&b| (0xE1..=0xED).contains(&b)) {
+                    return;
+                }
+                let mut budget = 0u32;
+                for chunk in hay.utf8_chunks() {
+                    let valid = chunk.valid();
+                    let base = valid.as_ptr() as usize - hay.as_ptr() as usize;
+                    let mut chars: Vec<char> = Vec::with_capacity(valid.len());
+                    let mut offs: Vec<usize> = Vec::with_capacity(valid.len() + 1);
+                    for (i, c) in valid.char_indices() {
+                        chars.push(c);
+                        offs.push(i);
+                    }
+                    offs.push(valid.len());
+                    let mut found = Vec::new();
+                    nsql_core::hangul::find_jamo(&chars, q, *fold, &mut found);
+                    for (cs, ce) in found {
+                        let (s, e) = (base + offs[cs], base + offs[ce]);
+                        if !self.word || on_word_boundary(hay, s, e) {
+                            out.push((s, e));
+                        }
+                        budget = budget.wrapping_add(1);
+                        if budget.is_multiple_of(256) && !keep_going() {
                             return;
                         }
                     }

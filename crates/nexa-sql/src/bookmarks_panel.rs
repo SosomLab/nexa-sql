@@ -98,6 +98,8 @@ pub(crate) struct BookmarksPanel {
     menu_row: Option<usize>,
     clamp_w: i32,
     focused: bool,
+    /// 선택 행의 **이름 글자 시작 x**(마지막 그리기 실측 · 니모닉·줄번호 다음) — 이름 편집 상자를 그 자리에만(사용자 09-23).
+    label_x: std::cell::Cell<Option<(usize, i32)>>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -136,6 +138,7 @@ impl BookmarksPanel {
             menu_row: None,
             clamp_w: i32::MAX / 2,
             focused: false,
+            label_x: std::cell::Cell::new(None),
         }
     }
 
@@ -221,16 +224,14 @@ impl BookmarksPanel {
         tb.set_text(&cur);
         tb.set_focused(true);
         let y = self.list_rect.y + r as i32 * self.row_h - self.scroll_y;
-        let ind = self.px(INDENT);
-        tb.set_bounds(
-            Rect::new(
-                self.list_rect.x + ind,
-                y,
-                self.list_rect.w - ind - 2,
-                self.row_h,
-            ),
-            &mut inv,
-        );
+        // 상자 = 이름 영역에만(니모닉·줄번호 다음 · 마지막 그리기의 실측 x · 없으면 들여쓰기 다음 · 사용자 09-23).
+        let x0 = self
+            .label_x
+            .get()
+            .filter(|(row, _)| *row == r)
+            .map_or(self.list_rect.x + self.px(INDENT), |(_, x)| x);
+        let w = (self.list_rect.right() - self.px(PAD) - x0).max(self.px(40.0));
+        tb.set_bounds(Rect::new(x0, y, w, self.row_h), &mut inv);
         tb.on_event(&InputEvent::SelectAll, &mut inv);
         self.rename = Some((r, tb, kind));
         true
@@ -745,6 +746,16 @@ impl BookmarksPanel {
                 self.clamp_scroll();
                 true
             }
+            InputEvent::Char { .. }
+            | InputEvent::SelectAll
+            | InputEvent::Undo
+            | InputEvent::Redo
+                if self.filter.is_focused() =>
+            {
+                // 🔧 글자 사건이 필터에 닿지 않던 결함(사용자 09-23 "필터에 입력이 되지 않아") — 키 사건과 같은 길.
+                self.filter_feed(ev);
+                true
+            }
             InputEvent::Key { key, primary, .. } => {
                 if self.filter.is_focused() {
                     match key {
@@ -765,12 +776,7 @@ impl BookmarksPanel {
                             return true;
                         }
                         _ => {
-                            let evt = self.filter.on_event(ev, &mut inv);
-                            let now = self.filter.text();
-                            if evt == FilterEvent::Changed || now != self.filter_text {
-                                self.filter_text = now;
-                                self.rebuild();
-                            }
+                            self.filter_feed(ev);
                             return true;
                         }
                     }
@@ -887,6 +893,30 @@ impl BookmarksPanel {
         }
     }
 
+    /// 필터 상자에 사건을 넣고 표시 글(조합 중 글자 포함)이 바뀌었으면 다시 거른다.
+    fn filter_feed(&mut self, ev: &InputEvent) {
+        let mut inv = Invalidations::default();
+        let evt = self.filter.on_event(ev, &mut inv);
+        let now = self.filter.display_text();
+        if evt == FilterEvent::Changed || now != self.filter_text {
+            self.filter_text = now;
+            self.rebuild();
+        }
+    }
+
+    /// IME 조합·확정 뒤 호스트가 부른다 — 조합 중 글자까지 바로 거른다(확장 패널과 같은 규칙 · 사용자 09-23).
+    pub(crate) fn query_changed(&mut self) {
+        if !self.filter.is_focused() {
+            return;
+        }
+        self.filter.refresh();
+        let now = self.filter.display_text();
+        if now != self.filter_text {
+            self.filter_text = now;
+            self.rebuild();
+        }
+    }
+
     fn px(&self, v: f32) -> i32 {
         (v * self.scale).round() as i32
     }
@@ -964,13 +994,8 @@ impl BookmarksPanel {
             } else if hover_row == Some(r) {
                 dc.fill_rect_alpha(row_rect, th.text, 0.06);
             }
-            if let Some((rr, tb, _)) = &self.rename {
-                if *rr == r {
-                    tb.paint(dc, th);
-                    y += rh;
-                    continue;
-                }
-            }
+            // 이름 편집 중인 행 = 니모닉·줄번호(또는 셰브론·■)는 그대로 그리고 **이름 자리에만** 상자(사용자 09-23).
+            let renaming = self.rename.as_ref().is_some_and(|(rr, _, _)| *rr == r);
             let ty = dc.text_center_y(y, rh);
             let indent = self.row_indent(r);
             match &self.rows[r] {
@@ -1003,6 +1028,16 @@ impl BookmarksPanel {
                         if *enabled { th.accent } else { th.text_dim },
                     );
                     let tx = tx + sw + px(6.0);
+                    if self.sel == Some(r) {
+                        self.label_x.set(Some((r, tx)));
+                    }
+                    if renaming {
+                        if let Some((_, tb, _)) = &self.rename {
+                            tb.paint(dc, th);
+                        }
+                        y += rh;
+                        continue;
+                    }
                     dc.select_font(FontSlot::Base, true);
                     let cnt = count.to_string();
                     let cw = dc.text_width(&cnt);
@@ -1076,6 +1111,43 @@ impl BookmarksPanel {
                     dc.text(tx, ty, row_rect, &ln, th.text_dim);
                     dc.select_font(FontSlot::Base, false);
                     tx += lw + px(8.0);
+                    if self.sel == Some(r) {
+                        self.label_x.set(Some((r, tx)));
+                    }
+                    if renaming {
+                        if let Some((_, tb, _)) = &self.rename {
+                            tb.paint(dc, th);
+                        }
+                        y += rh;
+                        continue;
+                    }
+                    let clip = Rect::new(tx, y, (lr.right() - tx - pad).max(0), rh);
+                    let named = bm.label.as_deref().map(str::trim).filter(|l| !l.is_empty());
+                    if let (Some(label), false) = (named, matches!(bm.state, State::Invalid { .. }))
+                    {
+                        // ★ 이름 있는 북마크 = 이름을 강조색·굵게, 줄 본문은 흐리게 — 이름 없는 것(본문만 · 본문색)과
+                        //   한눈에 구분(사용자 09-23 "named와 unnamed를 식별").
+                        dc.select_font(FontSlot::Base, true);
+                        let shown = nexa_ctl::draw::ellipsize_middle(dc, label, clip.w);
+                        let lw = dc.text_width(&shown);
+                        dc.text(
+                            tx,
+                            ty,
+                            clip,
+                            &shown,
+                            if live { th.accent } else { th.text_dim },
+                        );
+                        dc.select_font(FontSlot::Base, false);
+                        let sx = tx + lw + px(8.0);
+                        let snippet = bm.anchor.text.trim();
+                        if !snippet.is_empty() && sx < clip.right() {
+                            let sc = Rect::new(sx, y, clip.right() - sx, rh);
+                            let s2 = nexa_ctl::draw::ellipsize_middle(dc, snippet, sc.w);
+                            dc.text(sx, ty, sc, &s2, th.text_dim);
+                        }
+                        y += rh;
+                        continue;
+                    }
                     let mut text = bm.display();
                     if let State::Invalid { reason, .. } = bm.state {
                         let why = match reason {
@@ -1086,13 +1158,7 @@ impl BookmarksPanel {
                             Reason::TooBig => t(Msg::BmReasonBig),
                         };
                         text = format!("{text}  · {why}");
-                    } else if bm.label.is_some() {
-                        let snippet = bm.anchor.text.trim();
-                        if !snippet.is_empty() {
-                            text = format!("{text}  {snippet}");
-                        }
                     }
-                    let clip = Rect::new(tx, y, (lr.right() - tx - pad).max(0), rh);
                     let shown = nexa_ctl::draw::ellipsize_middle(dc, &text, clip.w);
                     dc.text(tx, ty, clip, &shown, fg);
                 }

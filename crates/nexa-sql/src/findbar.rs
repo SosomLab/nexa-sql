@@ -370,8 +370,9 @@ impl FindBar {
         }
     }
 
+    /// 찾을 글 — **조합 중 글자 포함**(IME preedit · 한 글자씩 바로 찾는다 · 사용자 09-23).
     pub(crate) fn query(&self) -> String {
-        self.query.text()
+        self.query.display_text()
     }
 
     pub(crate) fn replacement(&self) -> String {
