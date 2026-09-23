@@ -313,4 +313,7 @@ Run-Scenario -Id S60 -Title "파일 모드 북마크 = 사건 없이도 디바�
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S60")) {
 Say ("  file: ws_saved=" + (Test-Path -LiteralPath $wsHome))
 }
+# §107 거터(북마크/니모닉 영역) 우클릭 메뉴(사용자 09-23): 없으면 "추가" 활성 · 있으면 "제거"·"니모닉 해제" 활성 · 니모닉 1~9 하위.
+Run-Scenario -Id S61 -Title "거터 우클릭 = 북마크 메뉴(없는 줄 = 추가 활성 · §107)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1500:ui.rclick:335/141") -WaitMs 3500 -Expect "거터 우클릭(335/141 = 2줄) 메뉴: 'Toggle Bookmark'(활성) · 'Remove'(흐림) · 'Mnemonic ▸' · 캐럿 2줄"
+Run-Scenario -Id S62 -Title "거터 우클릭 = 있는 줄 = 제거·니모닉 해제 활성(§107)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1500:bookmark.set_3,@after:2000:ui.rclick:335/141") -WaitMs 4000 -Expect "2줄 북마크 띠 + 니모닉 3 상자(클릭 400/141 = 2줄) · 메뉴: 'Toggle Bookmark'(흐림) · 'Remove'(활성) · Mnemonic ▸(3에 ✓ · 해제 활성) · 상태줄 'Mnemonic 3 set on line 2'"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

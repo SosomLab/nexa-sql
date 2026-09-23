@@ -410,6 +410,20 @@ impl Bookmarks {
     }
 
     /// 캐럿 줄의 북마크에 니모닉 지정(없으면 만들고 지정) — 뺏긴 항목이 있으면 그 id.
+    /// 그 줄의 상태(거터 우클릭 메뉴 · 사용자 09-23): (북마크 id, 니모닉). 없으면 (None, None).
+    pub(crate) fn line_state(
+        &self,
+        ed: &Editors,
+        i: usize,
+        line: usize,
+    ) -> (Option<u64>, Option<u8>) {
+        let doc = Self::doc_key(ed, i);
+        match self.store.at_line(&doc, line, CASE_INSENSITIVE) {
+            Some(b) => (Some(b.id), b.mnemonic),
+            None => (None, None),
+        }
+    }
+
     pub(crate) fn set_mnemonic_at_caret(
         &mut self,
         ed: &Editors,

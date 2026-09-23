@@ -234,6 +234,8 @@ struct App {
     /// 상태줄 git 세그먼트(활성 파일 폴더 · 배경 조회).
     git: gitstat::GitWatch,
     status_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
+    /// 거터(북마크/니모닉 영역) 우클릭 메뉴의 대상 — (탭 index, 논리 줄, 그 줄의 북마크 id) · `status_menu`를 빌려 쓴다(사용자 09-23).
+    bm_gutter: Option<(usize, usize, Option<u64>)>,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
     z_order: Vec<WindowId>,
     toggle_log: bool,
@@ -2352,6 +2354,11 @@ impl App {
     fn indent_pick(&mut self, id: &str) {
         if id.starts_with("close.") {
             self.close_pick(id);
+            return;
+        }
+        // 거터(북마크/니모닉 영역) 우클릭 메뉴의 답(사용자 09-23).
+        if let Some(rest) = id.strip_prefix("bmg.") {
+            self.bm_gutter_pick(rest);
             return;
         }
         // 종료 전 프로젝트 저장 물음의 답(사용자 09-23).
@@ -12350,6 +12357,57 @@ impl App {
     }
 
     /// `bookmark.*` 명령.
+    /// 거터 우클릭(사용자 09-23): 활성 편집기의 거터(북마크/니모닉 영역 + 줄번호) 안이면 그 줄로 캐럿을 옮기고 상태에 맞는 메뉴를 연다.
+    /// 열었으면 true(사건 소비) · 거터 밖이면 false(본문 우클릭 = 종전 편집 메뉴).
+    fn open_bm_gutter_menu(&mut self, p: Point) -> bool {
+        if !self.bookmarks.enabled {
+            return false;
+        }
+        let i = self.editors.active();
+        let Some(tb) = self.editors.tab_box(i) else {
+            return false;
+        };
+        if !tb.in_gutter(p) {
+            return false;
+        }
+        let Some(line) = tb.line_at_point(p) else {
+            return false;
+        };
+        self.editors.cur_mut().goto_line(line + 1);
+        let (bm, mn) = self.bookmarks.line_state(&self.editors, i, line);
+        self.bm_gutter = Some((i, line, bm));
+        self.close_context_menus();
+        let items = bm_gutter_items(bm.is_some(), mn);
+        self.open_status_popup(Rect::new(p.x, p.y, 1, 1), items);
+        true
+    }
+
+    /// 거터 메뉴의 답 — `add`/`remove` = 토글(캐럿은 이미 그 줄) · `mn:<n>` = 니모닉 지정(없으면 만들어서) · `mn:clear` = 해제.
+    fn bm_gutter_pick(&mut self, rest: &str) {
+        let Some((i, line, bm)) = self.bm_gutter.take() else {
+            return;
+        };
+        if self.editors.active() != i {
+            self.editors.switch(i);
+        }
+        self.editors.cur_mut().goto_line(line + 1);
+        match rest {
+            "add" | "remove" => self.bookmark_cmd("bookmark.toggle"),
+            "mn:clear" => {
+                if let Some(id) = bm {
+                    self.bookmarks.set_mnemonic(id, None);
+                    self.bm_sync_ui();
+                }
+            }
+            other => {
+                if let Some(n) = other.strip_prefix("mn:") {
+                    self.bookmark_cmd(&format!("bookmark.set_{n}"));
+                }
+            }
+        }
+        self.redraw();
+    }
+
     fn bookmark_cmd(&mut self, id: &str) {
         if !self.bookmarks.enabled {
             self.sess.status = t(Msg::StBookmarkOff).into();
@@ -13683,6 +13741,12 @@ impl App {
         if let InputEvent::RightDown { x, y } = ev {
             if self.tool_dock.bounds().contains(Point { x, y }) {
                 self.open_toolbar_menu(x, y);
+                self.redraw();
+                return;
+            }
+            // ★ 편집기 거터(북마크/니모닉 영역 + 줄번호) 우클릭 = 북마크 메뉴(사용자 09-23): 그 줄에 캐럿을 두고 상태에 맞춰
+            //   "추가"(없을 때) / "제거"·"니모닉 해제"(있을 때) · "니모닉 지정 ▸ 1~9"(늘). 본문 우클릭(편집 메뉴)은 그대로.
+            if self.open_bm_gutter_menu(Point { x, y }) {
                 self.redraw();
                 return;
             }
@@ -15858,6 +15922,7 @@ fn main() {
         git,
         status_tab_rect: Rect::new(0, 0, 0, 0),
         status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
+        bm_gutter: None,
         toggle_log: false,
         open_colors: false,
         colors_win,
@@ -16634,6 +16699,72 @@ fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
 }
 
 /// 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로") — 슬라이드는 애니메이션 마스터를 따른다.
+/// 거터 우클릭 메뉴 항목(순수 함수 · 사용자 09-23 "그 줄에 북마크/니모닉이 있으면 제거 활성 · 없으면 추가 활성"):
+/// `bmg.add`(없을 때만 활성) · `bmg.remove`(있을 때만) · `bmg.mn:1..9`(늘 · 없으면 만들어 지정 · 지금 것은 ✓) · `bmg.mn:clear`(니모닉이 있을 때만).
+fn bm_gutter_items(
+    has_bm: bool,
+    mnemonic: Option<u8>,
+) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
+    use nexa_ctl::controls::ctxmenu::CtxItem;
+    let mn: Vec<CtxItem> = (1..=9u8)
+        .map(|n| {
+            CtxItem::item(format!("bmg.mn:{n}"), format!("{n}  (Ctrl+{n})"))
+                .with_checked(mnemonic == Some(n))
+        })
+        .chain(std::iter::once(CtxItem::Separator))
+        .chain(std::iter::once(CtxItem::maybe(
+            "bmg.mn:clear",
+            t(Msg::MnBmMnemonicClear),
+            mnemonic.is_some(),
+        )))
+        .collect();
+    vec![
+        CtxItem::maybe("bmg.add", t(Msg::MnBmToggle), !has_bm),
+        CtxItem::maybe("bmg.remove", t(Msg::MnBmRemove), has_bm),
+        CtxItem::Separator,
+        CtxItem::submenu("bmg.mn", t(Msg::MnBmMnemonic), mn),
+    ]
+}
+
+#[cfg(test)]
+mod bm_gutter_tests {
+    use super::*;
+    use nexa_ctl::controls::ctxmenu::CtxItem;
+
+    fn enabled(items: &[CtxItem], id: &str) -> Option<bool> {
+        items.iter().find_map(|it| match it {
+            CtxItem::Item { id: i, enabled, .. } if i == id => Some(*enabled),
+            _ => None,
+        })
+    }
+
+    /// 없으면 추가만 · 있으면 제거만 · 니모닉 해제는 니모닉이 있을 때만(사용자 09-23).
+    #[test]
+    fn gutter_menu_enables_by_line_state() {
+        let none = bm_gutter_items(false, None);
+        assert_eq!(enabled(&none, "bmg.add"), Some(true));
+        assert_eq!(enabled(&none, "bmg.remove"), Some(false));
+        let bm = bm_gutter_items(true, None);
+        assert_eq!(enabled(&bm, "bmg.add"), Some(false));
+        assert_eq!(enabled(&bm, "bmg.remove"), Some(true));
+        let sub = |items: &[CtxItem]| -> Vec<CtxItem> {
+            items
+                .iter()
+                .find_map(|it| match it {
+                    CtxItem::Item { children, .. } if !children.is_empty() => {
+                        Some(children.clone())
+                    }
+                    _ => None,
+                })
+                .expect("mnemonic submenu")
+        };
+        assert_eq!(enabled(&sub(&bm), "bmg.mn:clear"), Some(false));
+        let with_mn = bm_gutter_items(true, Some(3));
+        assert_eq!(enabled(&sub(&with_mn), "bmg.mn:clear"), Some(true));
+        assert_eq!(sub(&with_mn).len(), 11, "1..9 + separator + clear");
+    }
+}
+
 fn conn_tuning(settings: &Settings) -> conn_win::ConnTuning {
     let i = |k: &str| settings.int(k);
     conn_win::ConnTuning {

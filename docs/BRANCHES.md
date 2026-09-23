@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/gutter-bookmark-menu | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 거터(북마크/니모닉 영역+줄번호) 우클릭 메뉴(§107): 없으면 추가·있으면 제거·니모닉 1~9(✓)/해제 · `open_bm_gutter_menu`(status_menu 부품 · `bmg.*`) · 순수 `bm_gutter_items` + 시험 · `Bookmarks::line_state` · nexa-ui 65차 `TextBox::in_gutter/line_at_point` · S61·S62 · 위키 · TODO U-71 |
 | docs/74-vars-identity | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 📐 [74](74-vars-persistence-identity.md) 탭별 변수 보존의 문서 식별(현 설계 = 경로 해시 · 깨지는 경우 · 열쇠 후보 표 · 타 도구 · 층 쌓기 개선안 · 기록 v2 메타 · P1~P3 · D-191~195) · journal §106 · TODO T-174 · CLAUDE.md 지도 |
 | fix/open-files-without-project | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 프로젝트가 없어도 OPEN FILES(§103 · `open_files_h` 가드 제거 · 클릭 분기 순서 · S59) · 🔧 저장 보증(§104 · 북마크 `next_save_at` + `project_autosave_next`로 틱 스케줄러가 스스로 깸 · 창 X도 `request_exit` → `flush_on_exit` · S60) · 파일·폴더 모드 Scratch 북마크 = 메모리 전용(§105 · `save_now` 걸러 쓰기 · 로드 때 제거 · 시험 2) · TODO U-68~U-70 · 위키 · CI 기록(`c3921e4` ci ✓ · integration ✓) |
 | feat/projfile-v2 | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 프로젝트 파일 형식 v2 = JSON 헤더(`"blob": true` 표식) + `%%NSQL-BLOBS%%` 탭별 payload 블록(`tab=<id> len=<n>` + 원문 바이트) · nsql-settings `projfile`(split/join · 시험 3) · `Project::to_document/load` · `project_last_json: Vec<u8>` · CLI `--project` 헤더만 수정 · 67 §7 · 위키 · S52 blob/notext 검사 · journal §102 · TODO U-67 · push `c3921e4` ci ✓ · integration ✓ |
