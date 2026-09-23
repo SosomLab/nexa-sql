@@ -812,7 +812,17 @@ impl SearchPanel {
         for b in &mut self.btns {
             b.on_event(ev);
         }
-        let _ = self.query.take_changed();
+        // 검색어를 ×(또는 전부 지움)로 비우면 결과·제외 로그·상태도 비운다(VS Code와 같음 · 사용자 09-23 "×로 제거해도 결과가 안 바뀜").
+        if self.query.take_changed().is_some() && self.query.text().trim().is_empty() {
+            self.cancel();
+            self.files.clear();
+            self.skipped.clear();
+            self.rows.clear();
+            self.status.clear();
+            self.error = None;
+            self.sel = None;
+            self.scroll_y = 0;
+        }
         let _ = self.where_box.take_changed();
         let mut redraw = true;
         for b in &mut self.btns {

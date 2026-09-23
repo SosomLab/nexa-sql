@@ -2491,6 +2491,11 @@ impl ConnWin {
                 if let Some(act) = self.filter.take_edit_ctx() {
                     self.clip(act);
                 }
+                // 🔧 마우스로 글이 바뀌는 길(× 지우기 · 편집 메뉴 붙여넣기/잘라내기)도 목록을 다시 거른다 — 종전엔 키 경로만
+                //   `refilter`라 ×로 지워도 "저장된 프로필 없음"이 남았다(사용자 09-23).
+                if self.filter.take_changed().is_some() {
+                    self.refilter();
+                }
             }
             self.btn_new.on_event(&ev, &mut inv);
             self.btn_edit.on_event(&ev, &mut inv);
