@@ -433,34 +433,35 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "ctrl+k,ctrl+d",
     },
     // ★ 북마크(docs/69 §6-1 · Sublime 관례 · T-167).
-    // 두 번째 바인딩 = VS Code Bookmarks 확장(alefragnani) 기본키 Ctrl+Alt+K / L / J(다른 세션 검토 · 사용자 09-23 "추가로 매핑").
+    // 두 번째 바인딩 = Visual Studio식 두 단계 코드(Ctrl+K,Ctrl+K 토글 · K,N 다음 · K,P 이전 · K,X 전체 지우기) — HHKB 등에서 Ctrl+F1~F4가
+    //   키보드 펌웨어(블루투스 슬롯)에 먹히는 충돌 대안(다른 세션 검토 · 사용자 09-23). Sublime/Notepad++ 기본(F2 계열)은 그대로.
     Command {
         id: "bookmark.toggle",
         label: Msg::MnBmToggle,
-        win: "ctrl+f2|ctrl+alt+k",
-        mac: "cmd+f2|cmd+alt+k",
-        linux: "ctrl+f2|ctrl+alt+k",
+        win: "ctrl+f2|ctrl+k,ctrl+k",
+        mac: "cmd+f2|cmd+k,cmd+k",
+        linux: "ctrl+f2|ctrl+k,ctrl+k",
     },
     Command {
         id: "bookmark.next",
         label: Msg::MnBmNext,
-        win: "f2|ctrl+alt+l",
-        mac: "f2|cmd+alt+l",
-        linux: "f2|ctrl+alt+l",
+        win: "f2|ctrl+k,ctrl+n",
+        mac: "f2|cmd+k,cmd+n",
+        linux: "f2|ctrl+k,ctrl+n",
     },
     Command {
         id: "bookmark.prev",
         label: Msg::MnBmPrev,
-        win: "shift+f2|ctrl+alt+j",
-        mac: "shift+f2|cmd+alt+j",
-        linux: "shift+f2|ctrl+alt+j",
+        win: "shift+f2|ctrl+k,ctrl+p",
+        mac: "shift+f2|cmd+k,cmd+p",
+        linux: "shift+f2|ctrl+k,ctrl+p",
     },
     Command {
         id: "bookmark.clear_doc",
         label: Msg::MnBmClearDoc,
-        win: "ctrl+shift+f2",
-        mac: "cmd+shift+f2",
-        linux: "ctrl+shift+f2",
+        win: "ctrl+shift+f2|ctrl+k,ctrl+x",
+        mac: "cmd+shift+f2|cmd+k,cmd+x",
+        linux: "ctrl+shift+f2|ctrl+k,ctrl+x",
     },
     Command {
         id: "bookmark.select_all",

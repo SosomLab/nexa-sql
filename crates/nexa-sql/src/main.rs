@@ -3337,10 +3337,16 @@ impl App {
         self.project_changed(false);
         // 프로젝트가 바뀌면 북마크 저장소도(워크스페이스 파일 · 69 C-17).
         self.bookmarks.bind_project(self.project.path.as_deref());
-        self.bm_sync_ui();
         if restore {
+            self.bm_sync_ui();
             self.project_restore();
         } else {
+            // 🔧 저장·새 프로젝트·닫기 길: `bind_project`가 저장소를 비우고 워크스페이스 파일(옛 것)을 읽어 **방금 담은 북마크
+            //   (니모닉 포함)가 사라지던 결함**(사용자 09-23) — 프로젝트 파일에 담긴 북마크를 그대로 되돌린다(복원 길은 `project_restore`가 한다).
+            if let Some(js) = self.project.bookmarks.clone() {
+                self.bookmarks.load_json(&js);
+            }
+            self.bm_sync_ui();
             self.project_last_json = self.project.to_json();
         }
     }

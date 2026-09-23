@@ -229,7 +229,7 @@ $qLines = Join-Path $DataDir "q_lines.sql"
 Set-Content -LiteralPath $qLines -Encoding UTF8 -Value ((1..150 | ForEach-Object { "SELECT $_;" }) -join "`n")
 Run-Scenario -Id S32 -Title "다중 선택 상한 = Split into Lines(§68 ①)" -Cmd ("open:" + $qLines + ",@after:1200:ui.click:400/141,@after:1800:edit.select_all,@after:2400:edit.split_lines") -Conf "editor.max_occurrences=100`n" -WaitMs 4500 -Expect "상태줄 'Stopped at 100 selections' · 선택 100개"
 # §70 북마크(docs/69 · T-167): 워크스페이스 파일이 시나리오 사이에 남으므로 먼저 clear_doc · 파일 열고 캐럿 줄 토글 → 패널 열기 → 거터 마크 + 패널 행 + 상태줄 개수.
-Run-Scenario -Id S33 -Title "북마크 토글 + 패널(§70)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:view.bookmarks") -WaitMs 4500 -Expect "거터 1·2줄 색 띠 · 패널 'q500.sql 2' + 두 행 · 상태줄 '북마크 2/2'"
+Run-Scenario -Id S33 -Title "북마크 토글 + 패널(§70)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:view.bookmarks") -WaitMs 4500 -Expect "북마크 영역(줄 번호 왼쪽) 1·2줄 색 띠 · 패널 'q500.sql 2' + 두 행 · 상태줄 '북마크 2/2'"
 Run-Scenario -Id S34 -Title "북마크 다음/이전 이동(§70)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:ui.click:400/141,@after:3200:bookmark.next") -WaitMs 4500 -Expect "캐럿이 2줄로(상태줄 Ln 2)"
 # §71 북마크 패널 우클릭 메뉴(항목 행 · 팝업 규칙 ④ 모서리 캡처 대신 패널 안).
 Run-Scenario -Id S35 -Title "북마크 패널 우클릭 메뉴(§71)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.toggle,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle,@after:2800:view.bookmarks,@after:3400:ui.rclick:150/182") -WaitMs 5000 -Expect "그룹 → 문서 → 항목 트리 · 항목 우클릭 메뉴(열기·이름·니모닉 ▸·그룹 이동 ▸·제거)"
@@ -280,10 +280,10 @@ Run-Scenario -Id S36 -Title "CLI로 심은 북마크 = 거터·미니맵 틱·�
 # §92 프로젝트 저장 = 작업 환경을 담아서(탭 경로) · 저장을 거듭해도 탭이 늘지 않는다(사용자 09-23 "저장 누를 때마다 탭 추가").
 $projSave = Join-Path $DataDir "fc-save.nsql-project"
 Set-Content -LiteralPath $projSave -Encoding UTF8 -Value "{ `"version`": 1, `"folders`": [ { `"path`": `".`" } ] }"
-Run-Scenario -Id S52 -Title "프로젝트 저장 3번 = 탭 그대로 · 파일에 탭 경로(§92)" -Cmd ("project.load:" + $projSave + ",open:" + $a + ",open:" + $b + ",@after:1000:view.project,@after:1800:project.save,@after:2600:project.save,@after:3400:project.save") -WaitMs 5000 -Expect "탭 = Script_1 · a.sql · b.sql 셋뿐(저장 3번 뒤에도 추가 없음) · OPEN FILES 3줄"
+Run-Scenario -Id S52 -Title "프로젝트 저장 3번 = 탭 그대로 · 파일에 탭 경로(§92)" -Cmd ("project.load:" + $projSave + ",open:" + $a + ",open:" + $b + ",@after:1000:view.project,@after:1300:bookmark.set_1,@after:1400:ui.click:400/161,@after:1500:bookmark.set_2,@after:1600:ui.click:460/80,@after:1700:bookmark.set_1,@after:1800:project.save,@after:2600:project.save,@after:3400:project.save") -WaitMs 5000 -Expect "탭 = Script_1 · a.sql · b.sql 셋뿐(저장 3번 뒤에도 추가 없음) · OPEN FILES 3줄 · 파일 검사 mn1x2/mn2x1 = 파일 단위 니모닉 보존"
 if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S52")) {
 $savedTxt = if (Test-Path -LiteralPath $projSave) { Get-Content -LiteralPath $projSave -Raw } else { "" }
-Say ("  file: tabs=" + ($savedTxt -match '"tabs"') + " a.sql=" + ($savedTxt -match '"path": "a\.sql"') + " b.sql=" + ($savedTxt -match '"path": "b\.sql"') + " expanded=" + ($savedTxt -match '"expanded"') + " panel=" + ($savedTxt -match '"panel": "project"'))
+Say ("  file: tabs=" + ($savedTxt -match '"tabs"') + " a.sql=" + ($savedTxt -match '"path": "a\.sql"') + " b.sql=" + ($savedTxt -match '"path": "b\.sql"') + " expanded=" + ($savedTxt -match '"expanded"') + " panel=" + ($savedTxt -match '"panel": "project"') + " mn1x2=" + (([regex]::Matches($savedTxt, '"mn": 1')).Count -eq 2) + " mn2x1=" + (([regex]::Matches($savedTxt, '"mn": 2')).Count -eq 1))
 }
 # §92 프로젝트 로딩 = 작업 환경 **교체**(복원 목록에 없던 깨끗한 탭은 닫힘) + 보이던 패널(북마크) + 접속 표식 토스트.
 Set-Content -LiteralPath $projWs -Encoding UTF8 -Value $projWsJson
@@ -291,4 +291,6 @@ Run-Scenario -Id S53 -Title "프로젝트 로딩 = 옛 탭 닫고 교체 · 패�
 # §92 북마크 패널: 한 번 클릭 = 미리보기 탭(◦) · 더블클릭 = 정식 탭(프로젝트 탐색기와 같은 규칙 · 사용자 09-23).
 Run-Scenario -Id S54 -Title "북마크 패널 더블클릭 = 정식 탭(§92)" -Cmd "view.bookmarks,@after:1500:ui.dclick:150/182" -WaitMs 4000 -Expect "탭 q_lines.sql(◦ 없음 · 정식) · 캐럿 2줄"
 Run-Scenario -Id S55 -Title "북마크 패널 한 번 클릭 = 미리보기 탭(§92)" -Cmd "view.bookmarks,@after:1500:ui.click:150/182" -WaitMs 4000 -Expect "탭 ◦ q_lines.sql(미리보기) · 캐럿 2줄"
+# §95 줄 번호를 꺼도 북마크 띠·니모닉 상자는 슬림 거터에(사용자 09-23 "줄번호 해제하면 표시할 수 없다").
+Run-Scenario -Id S56 -Title "줄 번호 끔 + 북마크·니모닉 = 슬림 거터(§95)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1200:ui.click:400/141,@after:1600:bookmark.set_3,@after:2000:ui.click:400/161,@after:2400:bookmark.toggle") -Conf "editor.line_numbers=off`n" -WaitMs 4000 -Expect "줄 번호 없음 · 맨 왼쪽 북마크 영역에 1줄 니모닉 3 상자 + 2줄 색 띠 · 그 오른쪽이 본문(배치 = 북마크 영역 → 줄 번호 → 편집 → 미니맵)"
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))
