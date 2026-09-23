@@ -404,7 +404,7 @@ impl ConnWin {
             veil: None,
             tip: None,
             note: None,
-            filter: TextBox::new(t(Msg::PhFilter)),
+            filter: TextBox::new(t(Msg::PhFilter)).with_clearable(),
             btn_new: Button::new(t(Msg::BtnNew)),
             btn_edit: Button::new(t(Msg::BtnEdit)),
             btn_delete: Button::new(t(Msg::BtnDelete)),
@@ -856,7 +856,9 @@ impl ConnWin {
     pub(crate) fn relabel(&mut self) {
         self.panel.relabel();
         let text = self.filter.text();
-        self.filter = TextBox::new(t(Msg::PhFilter)).with_text(&text);
+        self.filter = TextBox::new(t(Msg::PhFilter))
+            .with_clearable()
+            .with_text(&text);
         self.btn_new.set_label(t(Msg::BtnNew));
         self.btn_edit.set_label(t(Msg::BtnEdit));
         self.btn_delete.set_label(t(Msg::BtnDelete));

@@ -8089,7 +8089,12 @@ impl App {
         }
         // 자체 시험용: 파일 검색 패널에 검색어를 넣고 실행(`search.run:<글>` · 제외 로그 캡처 09-23).
         if let Some(q) = id.strip_prefix("search.run:") {
-            self.search.run_query(q);
+            // `검색어|범위` — 범위 상자 글까지(쉼표는 명령 구분자라 범위 안에서는 `;`로 적고 여기서 콤마로 바꾼다).
+            let (q, w) = match q.split_once('|') {
+                Some((q, w)) => (q, Some(w.replace(';', ","))),
+                None => (q, None),
+            };
+            self.search.run_query(q, w.as_deref());
             self.redraw();
             return;
         }

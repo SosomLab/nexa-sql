@@ -62,6 +62,9 @@ pub struct SearchOpts {
     pub roots: Vec<PathBuf>,
     /// 추가 제외 패턴(gitignore 문법 · 루트 기준) — 기본 [`DEFAULT_EXCLUDES`]에 더한다.
     pub excludes: Vec<String>,
+    /// **포함** 패턴(gitignore 문법 · 파일에만) — 비어 있지 않으면 하나라도 맞는 파일만 읽는다(`*.sql` · `*.txt` = OR ·
+    /// 제외는 그 뒤에 AND NOT · 폴더는 늘 내려간다 · 사용자 09-23 "특정 확장자만 조회 · 2개 이상 조건").
+    pub includes: Vec<String>,
     /// 파일 크기 상한(KB · 0 = 무제한).
     pub max_file_kb: usize,
     /// 워커 스레드 수(0 = 코어 수 · 상한 [`MAX_THREADS`]).
@@ -79,6 +82,7 @@ impl Default for SearchOpts {
             regex: false,
             roots: Vec::new(),
             excludes: Vec::new(),
+            includes: Vec::new(),
             max_file_kb: 1024,
             threads: 0,
             gitignore: true,
@@ -269,6 +273,7 @@ fn run(opts: SearchOpts, matcher: Matcher, tx: Sender<Batch>, shared: Arc<Shared
         threads: opts.threads,
         gitignore: opts.gitignore,
         excludes: opts.excludes.clone(),
+        includes: opts.includes.clone(),
     };
     let max_bytes = (opts.max_file_kb as u64).saturating_mul(1024);
     let send = |b: Batch| {
@@ -514,6 +519,32 @@ mod tests {
         ));
         assert_eq!(p.skipped, 2);
         assert_eq!(p.files_searched, 1);
+    }
+
+    /// 포함 패턴(사용자 09-23 "특정 확장자만 조회 · 제외 · 2개 이상 조건"): `*.sql`·`*.txt` = OR · 제외는 그 뒤 AND NOT · 폴더는 늘 내려간다 ·
+    /// 루트가 파일이면 그 이름에도 적용.
+    #[test]
+    fn include_globs_select_files_only() {
+        let t = Tree::new("include");
+        t.file("a.sql", b"SELECT 1\n");
+        t.file("b.txt", b"SELECT 2\n");
+        t.file("c.log", b"SELECT 3\n");
+        t.file("sub/d.sql", b"SELECT 4\n");
+        t.file("sub/d_test.sql", b"SELECT 5\n");
+        let mut o = opts(&t, "SELECT");
+        o.includes = vec!["*.sql".into(), "*.txt".into()];
+        o.excludes = vec!["*_test.sql".into()];
+        let (ms, _, p) = collect(o);
+        let mut files: Vec<String> = ms.iter().map(|m| rel(&t, m)).collect();
+        files.sort();
+        assert_eq!(files, vec!["a.sql", "b.txt", "sub/d.sql"]);
+        assert_eq!(p.files_searched, 3, "c.log · d_test.sql은 읽지도 않는다");
+        // 루트 = 파일 하나 + 포함 패턴이 안 맞으면 0.
+        let mut o = opts(&t, "SELECT");
+        o.roots = vec![t.0.join("c.log")];
+        o.includes = vec!["*.sql".into()];
+        let (ms, _, _) = collect(o);
+        assert!(ms.is_empty());
     }
 
     fn rel(t: &Tree, m: &Match) -> String {

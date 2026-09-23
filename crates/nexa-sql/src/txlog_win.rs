@@ -88,7 +88,7 @@ impl TxLogWin {
             cursor: (-1, -1),
             shift: false,
             primary: false,
-            search: TextBox::new(t(Msg::PhTxSearch)),
+            search: TextBox::new(t(Msg::PhTxSearch)).with_clearable(),
             sw_all: Switch::new(t(Msg::TxSwAll), false).with_label_side(LabelSide::Right),
             sw_prev: Switch::new(t(Msg::TxSwPrev), true).with_label_side(LabelSide::Right),
             sw_tab: Switch::new(t(Msg::TxSwThisTab), false).with_label_side(LabelSide::Right),

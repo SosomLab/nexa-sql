@@ -20,6 +20,8 @@ pub(crate) struct WalkOpts {
     pub gitignore: bool,
     /// 사용자 제외 패턴(gitignore 문법 · 루트 기준).
     pub excludes: Vec<String>,
+    /// 포함 패턴(파일에만 · 비어 있으면 전부) — 같은 글롭 매처로 "무시된다 = 포함된다"로 읽는다.
+    pub includes: Vec<String>,
 }
 
 /// 걷기 중 호출되는 훅(워커 스레드에서 실행).
@@ -128,6 +130,10 @@ pub(crate) fn walk(roots: &[PathBuf], opts: &WalkOpts, cancel: &AtomicBool, hook
         .copied()
         .chain(opts.excludes.iter().map(String::as_str))
         .collect();
+    // 포함 패턴(사용자 09-23 "특정 확장자만 조회") — 파일에만 · 하나라도 맞아야 읽는다.
+    let include: Option<IgnoreNode> = (!opts.includes.is_empty())
+        .then(|| IgnoreNode::from_lines(opts.includes.iter().map(String::as_str), 0, None));
+    let included = |comps: &[&str]| include.as_ref().is_none_or(|n| n.is_ignored(comps, false));
 
     for root in roots {
         let meta = match std::fs::metadata(root) {
@@ -138,7 +144,10 @@ pub(crate) fn walk(roots: &[PathBuf], opts: &WalkOpts, cancel: &AtomicBool, hook
             }
         };
         if meta.is_file() {
-            (hooks.visit)(root.clone());
+            let name = root.file_name().map(|n| n.to_string_lossy().into_owned());
+            if included(&[name.as_deref().unwrap_or("")]) {
+                (hooks.visit)(root.clone());
+            }
             continue;
         }
         let mut ignore = Arc::new(IgnoreNode::from_lines(base_rules.iter().copied(), 0, None));
@@ -160,7 +169,7 @@ pub(crate) fn walk(roots: &[PathBuf], opts: &WalkOpts, cancel: &AtomicBool, hook
         for _ in 0..n {
             s.spawn(|| {
                 while let Some(job) = queue.next(cancel) {
-                    process_dir(job, opts, cancel, hooks, &queue, &visited);
+                    process_dir(job, opts, cancel, hooks, &queue, &visited, &included);
                     queue.finish();
                 }
             });
@@ -175,6 +184,7 @@ fn process_dir(
     hooks: &Hooks<'_>,
     queue: &Queue,
     visited: &Mutex<HashSet<DirKey>>,
+    included: &(dyn Fn(&[&str]) -> bool + Sync),
 ) {
     if let Some(key) = dir_key(&job.path) {
         let mut v = visited.lock().unwrap_or_else(|e| e.into_inner());
@@ -255,7 +265,7 @@ fn process_dir(
                 depth,
                 ignore,
             });
-        } else if is_file {
+        } else if is_file && included(&comps) {
             (hooks.visit)(path);
         }
     }

@@ -55,7 +55,8 @@ pub(crate) struct FilterBar {
 impl FilterBar {
     /// `side` = 틀 오른쪽에 붙는 부가 토글(없으면 빈 슬라이스).
     pub(crate) fn new(placeholder: &str, side: &[SideBtn]) -> Self {
-        let mut tb = TextBox::new(placeholder);
+        // × 지우기 = 검색 입력란 공통(글이 있을 때만 · 사용자 09-23) — 네 패널이 함께 얻는다.
+        let mut tb = TextBox::new(placeholder).with_clearable();
         tb.set_focus_ring(false);
         let mut btns = vec![
             FindBtn::new(BtnKind::Case, toolicons::mi_match_case),

@@ -229,7 +229,7 @@ impl PrefsWin {
             cursor: (0, 0),
             shift: false,
             primary: false,
-            search: TextBox::new(t(Msg::PhSearchSettings)),
+            search: TextBox::new(t(Msg::PhSearchSettings)).with_clearable(),
             history: None,
             tree: TreeView::new(model),
             advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Left),

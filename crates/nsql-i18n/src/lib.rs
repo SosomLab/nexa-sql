@@ -4346,7 +4346,7 @@ impl Msg {
             Msg::LblTxSmartCommit => ["Smart commit", "스마트 커밋"],
             Msg::MnSearchPanel => ["Find in Files…", "파일에서 찾기…"],
             Msg::PhSearchQuery => ["Search", "검색"],
-            Msg::PhSearchWhere => ["Where: <open files>, folder, -*.log", "범위: <open files>, 폴더, -*.log"],
+            Msg::PhSearchWhere => ["Where: <open files>, folder, *.sql, -*.log", "범위: <open files>, 폴더, *.sql, -*.log"],
             Msg::SearchMemoryTab => ["unsaved tab", "저장 안 된 탭"],
             Msg::StSearching => ["Searching…", "검색 중…"],
             Msg::StSearchProgress => ["{0} files · {1} matches…", "{0} 파일 · {1} 일치…"],

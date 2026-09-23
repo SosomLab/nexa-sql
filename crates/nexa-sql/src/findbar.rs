@@ -349,9 +349,10 @@ impl FindBar {
             FindBtn::new(BtnKind::Replace, toolicons::mi_find_replace),
             FindBtn::new(BtnKind::ReplaceAll, toolicons::mi_replace_all),
         ];
-        let mut query = TextBox::new(t(Msg::PhFind));
+        // × 지우기 = 검색 입력란 공통(글이 있을 때만 · nexa-ctl `with_clearable` · 사용자 09-23).
+        let mut query = TextBox::new(t(Msg::PhFind)).with_clearable();
         query.set_focus_ring(false);
-        let mut repl = TextBox::new(t(Msg::PhReplace));
+        let mut repl = TextBox::new(t(Msg::PhReplace)).with_clearable();
         repl.set_focus_ring(false);
         FindBar {
             visible: false,

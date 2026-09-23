@@ -55,7 +55,7 @@ impl Palette {
     pub(crate) fn new() -> Self {
         Palette {
             open: false,
-            input: TextBox::new(t(Msg::PhPalette)),
+            input: TextBox::new(t(Msg::PhPalette)).with_clearable(),
             cmds: Vec::new(),
             matches: Vec::new(),
             sel: 0,
@@ -116,7 +116,10 @@ impl Palette {
 
     pub(crate) fn open(&mut self, prefill: &str) {
         self.open = true;
-        self.input = TextBox::new(t(Msg::PhPalette)).with_text(prefill);
+        // × 지우기 = 검색 입력란 공통(명령 검색 · 글이 있을 때만 · 사용자 09-23).
+        self.input = TextBox::new(t(Msg::PhPalette))
+            .with_clearable()
+            .with_text(prefill);
         self.input.set_scale(self.scale);
         self.input.set_focused(true);
         let mut inv = Invalidations::default();

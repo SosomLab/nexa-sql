@@ -31,13 +31,18 @@ pub(crate) struct WhereSpec {
     pub roots: Vec<PathBuf>,
     /// `-` 접두 제외 패턴(gitignore 문법).
     pub excludes: Vec<String>,
+    /// 포함 패턴(`*.sql` · `+패턴` · gitignore 문법 · 파일에만) — 있으면 하나라도 맞는 파일만(OR) · 제외는 그 뒤(AND NOT).
+    pub includes: Vec<String>,
     /// 열린 탭(메모리 본문)도 검색.
     pub open_tabs: bool,
 }
 
-/// Where 문자열 해석 — 콤마 구분 · `<open files>` · `<current file>`(활성 파일 폴더) · `-패턴` = 제외 · 그 밖 = 경로.
+/// Where 문자열 해석 — 콤마 구분 · `<open files>` · `<current file>`(활성 파일 폴더) · `-패턴` = 제외 · **`*.sql`/`?`가 든 토큰이나
+/// `+패턴` = 포함**(사용자 09-23 "특정 확장자만 조회 · 제외 · 2개 이상 조건" — `*.sql, *.txt, -*_test.sql, D:\proj` = sql 또는 txt이면서
+/// _test가 아닌 파일을 D:\proj 아래에서) · 그 밖 = 경로. 조건은 몇 개든 콤마로 잇는다.
 /// 비어 있으면 **열린 탭 + 작업 모드의 기본 범위**(`defaults` · 사용자 09-23): 파일 모드 = 열린 탭만 · 폴더 모드 = + 그 폴더 ·
 /// 프로젝트 모드 = + 프로젝트 폴더와 프로젝트에 추가한 폴더(호스트가 [`SearchCtx::default_roots`]로 준다).
+/// 패턴만 있고 경로가 없으면 기본 범위에 패턴을 얹는다.
 pub(crate) fn parse_where(
     text: &str,
     current_dir: Option<&Path>,
@@ -54,24 +59,49 @@ pub(crate) fn parse_where(
         spec.roots.extend(defaults.iter().cloned());
         return spec;
     }
+    let mut any_scope = false;
     for it in items {
         let low = it.to_ascii_lowercase();
         if low == "<open files>" || low == "<open tabs>" {
             spec.open_tabs = true;
+            any_scope = true;
         } else if low == "<current file>" || low == "<current folder>" {
             if let Some(d) = current_dir {
                 spec.roots.push(d.to_path_buf());
             }
+            any_scope = true;
         } else if let Some(pat) = it.strip_prefix('-') {
             if !pat.is_empty() {
                 spec.excludes.push(pat.to_string());
             }
+        } else if let Some(pat) = it.strip_prefix('+') {
+            if !pat.is_empty() {
+                spec.includes.push(pat.to_string());
+            }
+        } else if is_glob_token(it) {
+            spec.includes.push(it.to_string());
         } else {
             let p = PathBuf::from(it.trim_matches('"'));
             spec.roots.push(p);
+            any_scope = true;
         }
     }
+    if !any_scope {
+        // 패턴만 적었다 — 범위는 기본(열린 탭 + 작업 모드 폴더)에 패턴을 얹는다.
+        spec.open_tabs = true;
+        spec.roots.extend(defaults.iter().cloned());
+    }
     spec
+}
+
+/// 글롭 토큰인가 — `*`/`?`가 들어 있고 드라이브·절대 경로 꼴이 아닌 것(`*.sql` · `src/**/*.txt` · `test?.sql`).
+fn is_glob_token(s: &str) -> bool {
+    if !(s.contains('*') || s.contains('?')) {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic();
+    !(drive || s.starts_with('/') || s.starts_with('\\'))
 }
 
 /// 검색 시작에 필요한 호스트 컨텍스트.
@@ -173,9 +203,10 @@ const PAD: f32 = 8.0;
 
 impl SearchPanel {
     pub(crate) fn new() -> Self {
-        let mut query = TextBox::new(t(Msg::PhSearchQuery));
+        // × 지우기 = 검색 입력란 공통(글이 있을 때만 · 사용자 09-23).
+        let mut query = TextBox::new(t(Msg::PhSearchQuery)).with_clearable();
         query.set_focus_ring(false);
-        let mut where_box = TextBox::new(t(Msg::PhSearchWhere));
+        let mut where_box = TextBox::new(t(Msg::PhSearchWhere)).with_clearable();
         where_box.set_focus_ring(false);
         SearchPanel {
             visible: false,
@@ -236,10 +267,14 @@ impl SearchPanel {
         self.history = Some(h);
     }
 
-    /// 자체 시험용: 검색어를 넣고 실행을 요청한다(`search.run:<글>` 기동 명령 · 키 주입 없이 · 제외 로그 캡처 09-23).
-    pub(crate) fn run_query(&mut self, q: &str) {
+    /// 자체 시험용: 검색어(와 범위)를 넣고 실행을 요청한다(`search.run:<글>[|<범위>]` 기동 명령 · 키 주입 없이 · 제외 로그·범위 필터 캡처 09-23).
+    pub(crate) fn run_query(&mut self, q: &str, where_text: Option<&str>) {
         self.query.set_text(q);
         let _ = self.query.take_changed();
+        if let Some(w) = where_text {
+            self.where_box.set_text(w);
+            let _ = self.where_box.take_changed();
+        }
         self.request = true;
     }
 
@@ -468,6 +503,7 @@ impl SearchPanel {
             regex: self.regex(),
             roots: spec.roots,
             excludes,
+            includes: spec.includes,
             max_file_kb: ctx.max_file_kb,
             threads: ctx.threads,
             gitignore: ctx.gitignore,
@@ -1051,5 +1087,36 @@ mod tests {
         assert!(!w.open_tabs);
         assert!(w.roots.is_empty());
         assert_eq!(byte_to_char_col("가나다x", 6), 2);
+    }
+
+    /// 범위 필터(사용자 09-23): `*.sql`/`?` 글롭·`+pat` = 포함(OR) · `-pat` = 제외 · 경로는 그대로 루트 · 패턴만 있으면 기본 범위에 얹음 ·
+    /// 드라이브/절대 경로 꼴의 `*`는 경로로 본다.
+    #[test]
+    fn where_include_globs() {
+        let w = parse_where(
+            "*.sql, *.txt, -*_test.sql, D:\\proj, +docs/**/*.md, test?.sql",
+            None,
+            &[PathBuf::from("/ws")],
+        );
+        assert_eq!(
+            w.includes,
+            vec!["*.sql", "*.txt", "docs/**/*.md", "test?.sql"]
+        );
+        assert_eq!(w.excludes, vec!["*_test.sql"]);
+        assert_eq!(
+            w.roots,
+            vec![PathBuf::from("D:\\proj")],
+            "경로가 있으면 기본 범위를 안 얹는다"
+        );
+        assert!(!w.open_tabs);
+        // 패턴만 → 열린 탭 + 기본 폴더.
+        let w = parse_where("*.sql", None, &[PathBuf::from("/ws")]);
+        assert!(w.open_tabs);
+        assert_eq!(w.roots, vec![PathBuf::from("/ws")]);
+        assert_eq!(w.includes, vec!["*.sql"]);
+        // `C:\x\*.sql`처럼 드라이브 꼴은 경로(루트)로.
+        assert!(!is_glob_token("C:\\x\\*.sql"));
+        assert!(!is_glob_token("/abs/*.sql"));
+        assert!(is_glob_token("src/**/*.sql"));
     }
 }

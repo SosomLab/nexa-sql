@@ -1,4 +1,5 @@
-//! `nsql grep <패턴> [경로…] [-i] [-w] [-e] [--no-ignore] [-j N] [--max-file-kb N]` — 파일 검색(`nsql-search` · GUI 파일 검색 패널과 같은 엔진 · T-81b).
+//! `nsql grep <패턴> [경로…] [-i] [-w] [-e] [--no-ignore] [-j N] [--max-file-kb N] [-g 글롭]… [--exclude 글롭]…` — 파일 검색(`nsql-search` ·
+//! GUI 파일 검색 패널과 같은 엔진 · T-81b). `-g *.sql -g *.txt` = 그 확장자만(OR) · `--exclude *_test.sql` = 제외(사용자 09-23).
 //!
 //! 출력 = `path:line:col: text`(색 없음 · 스트리밍) · 종료 코드 0 = 일치 있음 · 1 = 없음 · 2 = 인자/정규식 오류.
 //! 읽기 실패는 stderr에 `path: 메시지`로 찍고 계속한다.
@@ -40,6 +41,15 @@ fn parse(positional: &[String]) -> Result<GrepArgs, String> {
             "--no-ignore" => opts.gitignore = false,
             "-j" | "--threads" => opts.threads = number(a, it.next())?,
             "--max-file-kb" => opts.max_file_kb = number(a, it.next())?,
+            // 포함/제외 글롭(gitignore 문법 · 여러 번 가능 · GUI 범위 상자의 `*.sql` / `-*.log`와 같은 규칙).
+            "-g" | "--glob" | "--include" => match it.next() {
+                Some(p) if !p.is_empty() => opts.includes.push(p.clone()),
+                _ => return Err(tf(Msg::CliGrepBadNumber, &[a])),
+            },
+            "--exclude" => match it.next() {
+                Some(p) if !p.is_empty() => opts.excludes.push(p.clone()),
+                _ => return Err(tf(Msg::CliGrepBadNumber, &[a])),
+            },
             other => return Err(tf(Msg::CliGrepUnknownOption, &[other])),
         }
     }
