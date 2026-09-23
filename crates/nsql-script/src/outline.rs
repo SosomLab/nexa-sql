@@ -139,10 +139,15 @@ pub fn words<'a>(text: &'a str, classes: &[Class]) -> Vec<Word<'a>> {
                 while j < n && classes[j] == Class::Ident {
                     j += 1;
                 }
-                // 따옴표/대괄호 벗김.
+                // 따옴표/대괄호 벗김 — 닫는 글자가 ASCII 인용부호/대괄호일 때만(끝에서 잘린 인용 식별자의 마지막 바이트가
+                //   다국어 글자 한가운데일 수 있다 · 이진 파일 손실 변환 본문에서 패닉하던 자리 · 사용자 09-23).
                 let inner_s = i + 1;
-                let inner_e = if j > i + 1 { j - 1 } else { j };
-                if inner_e > inner_s {
+                let closes = j > i + 1 && matches!(b[j - 1], b'"' | b'\'' | b'`' | b']');
+                let inner_e = if closes { j - 1 } else { j };
+                if inner_e > inner_s
+                    && text.is_char_boundary(inner_s)
+                    && text.is_char_boundary(inner_e)
+                {
                     out.push(Word {
                         text: &text[inner_s..inner_e],
                         start: i,
@@ -176,6 +181,13 @@ pub fn words<'a>(text: &'a str, classes: &[Class]) -> Vec<Word<'a>> {
                         end: j,
                         quoted: false,
                     });
+                    i = j;
+                } else if c >= 0x80 {
+                    // 식별자 밖의 비ASCII 글자(U+FFFD 등) = 낱말이 아니다 — 글자 경계까지 통째로 건너뛴다(바이트 단위로 자르면 패닉).
+                    let mut j = i + 1;
+                    while j < n && (b[j] & 0xC0) == 0x80 {
+                        j += 1;
+                    }
                     i = j;
                 } else {
                     // 기호 1자(`<<`·`>>`는 둘씩).
@@ -662,6 +674,41 @@ mod tests {
             .filter(|s| s.kind == k)
             .map(|s| s.name.clone())
             .collect()
+    }
+
+    /// 이진 파일을 손실 변환한 본문(U+FFFD · 제어 문자 · 잘린 인용부호 · 긴 줄)에서도 패닉하지 않는다(사용자 09-23 `.o` 파일 아웃라인 = 앱 종료).
+    #[test]
+    fn binary_like_input_never_panics() {
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut x: u32 = 0x1234_5678;
+        for _ in 0..20_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            bytes.push((x & 0xff) as u8);
+        }
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        for d in [
+            None,
+            Some(Dialect::Oracle),
+            Some(Dialect::Mssql),
+            Some(Dialect::Postgres),
+            Some(Dialect::Sqlite),
+        ] {
+            let o = outline(&s, d);
+            let _ = o.names();
+        }
+        // 짝 안 맞는 인용부호 · 주석 · 세미콜론 없음 · 키워드 조각 · 다국어 인용 식별자가 끝에서 잘림.
+        for s2 in [
+            "CREATE '\u{fffd}PROCEDURE \"x\u{0}y DECLARE /* \u{fffd}\u{fffd} BEGIN END; DEFINE \u{fffd}= '",
+            "SELECT \"가나다",
+            "SELECT [가나다",
+            "CREATE PROCEDURE \u{fffd}",
+            "DECLARE v \u{fffd}",
+        ] {
+            let _ = outline(s2, Some(Dialect::Oracle));
+            let _ = outline(s2, Some(Dialect::Mssql));
+        }
     }
 
     #[test]

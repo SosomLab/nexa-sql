@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/99i-binary-outline-crash | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 이진 파일 아웃라인 = 앱 종료(§125 · nsql-script `outline::words()`가 U+FFFD 한가운데를 바이트로 잘라 패닉 → 비ASCII는 글자 경계까지 건너뜀 · 인용 식별자 벗기기 경계 확인 · fuzz 시험 outline/intel 2) · 호스트 `intel_unsuitable`(큰 파일 · SQL 구문 아님 · 이진 NUL/U+FFFD) = 아웃라인 빈 패널 · 완성/Goto Symbol 안내 `StIntelUnsuitable` · S74 · U-94 · STATUS · DEVLOG · TODO |
 | feat/99g-search-hscroll-tab-filter-icon-fit | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 검색 결과 가로 스크롤(§124 · `scroll_x`/`content_w` · 프로젝트 탐색기와 같은 부품) · 🔧 Alt 전체 경로에서 제외 행 빈칸(축약 폭 잘림 → 전체 보기는 축약 없이 스크롤) · 🔧 열린 탭에도 범위 포함/제외 글롭(nsql-search `path_allowed` · `+*.yaml`인데 `.sql` 탭이 남던 것) · 🔧 Oracle 루트 아이콘 라벨 넘침(`select_font_sized` −1px씩 최대 −8) · S73 · U-90~U-93 · STATUS · DEVLOG · TODO |
 | fix/99e-clear-button-refilter | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 × 지우기 뒤 목록 미갱신(§123 · 접속 창 마우스 경로가 `refilter`를 안 부름 → `take_changed`면 다시 거름 · 파일 검색 검색어를 비우면 결과·제외 로그·상태 비움 · 9 상자 전수 점검 · U-89) · CI 기록 649efa5 ✓ · STATUS · DEVLOG · TODO |
 | feat/99d-search-clear-and-scope-filters | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 파일 검색 범위 필터(§122 · 범위 상자 한 줄에 `*.sql`/`+pat` 포함(OR) · `-pat` 제외(AND NOT) · 경로 · 다중 조건 콤마 · nsql-search `SearchOpts.includes` · `parse_where`/`is_glob_token` · CLI `-g`/`--exclude` · 시험 2 · S72 · U-88) · 검색 입력란 × 지우기(§121 · nexa-ctl `with_clearable`는 있었으나 nexa-sql 배선 0 → 찾기/바꾸기 · 파일 검색 검색어/범위 · FilterBar(4 패널) · 접속 창 필터 · 설정 검색 · 트랜잭션 로그 검색 · 팔레트 = 9 상자 · 글이 있을 때만) · 위키 · TODO U-87 · STATUS · DEVLOG |

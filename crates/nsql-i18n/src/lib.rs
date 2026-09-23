@@ -1878,6 +1878,8 @@ pub enum Msg {
     StSearchProgress,
     StSearchDone,
     StSearchNone,
+    /// 코드 기능(아웃라인·완성·Goto Symbol)이 이 파일에는 맞지 않을 때(SQL 구문 아님 · 이진 · 사용자 09-23).
+    StIntelUnsuitable,
     /// 파일 검색 제외 로그(사용자 09-23) — 머리 행 · 사유 넷 · 상태줄 꼬리.
     SearchSkippedHeader,
     SearchSkipTooLarge,
@@ -4352,6 +4354,7 @@ impl Msg {
             Msg::StSearchProgress => ["{0} files · {1} matches…", "{0} 파일 · {1} 일치…"],
             Msg::StSearchDone => ["{0} files · {1} matches · {2}s", "{0} 파일 · {1} 일치 · {2}s"],
             Msg::StSearchNone => ["No results ({0} files · {1}s)", "결과 없음({0} 파일 · {1}s)"],
+            Msg::StIntelUnsuitable => ["Outline/completion is off for this file (not SQL syntax or binary content)", "이 파일에는 아웃라인·완성을 쓰지 않습니다(SQL 구문이 아니거나 이진 내용)"],
             Msg::SearchSkippedHeader => ["Skipped ({0})", "제외됨({0})"],
             Msg::SearchSkipTooLarge => ["too large: {0} KB > {1} KB (search.max_file_kb)", "크기 초과: {0} KB > {1} KB(search.max_file_kb)"],
             Msg::SearchSkipBinary => ["binary file", "이진 파일"],
@@ -6512,6 +6515,7 @@ impl Msg {
         Msg::StSearchProgress,
         Msg::StSearchDone,
         Msg::StSearchNone,
+        Msg::StIntelUnsuitable,
         Msg::SearchSkippedHeader,
         Msg::SearchSkipTooLarge,
         Msg::SearchSkipBinary,

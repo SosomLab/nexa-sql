@@ -724,6 +724,30 @@ mod tests {
         context_at(&text, caret, Some(Dialect::Oracle))
     }
 
+    /// 이진 파일을 손실 변환한 본문에서 캐럿이 어디에 있어도 문맥 분석이 패닉하지 않는다(사용자 09-23).
+    #[test]
+    fn binary_like_input_never_panics() {
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut x: u32 = 0x9e37_79b9;
+        for _ in 0..8_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            bytes.push((x & 0xff) as u8);
+        }
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        let mut caret = 0;
+        while caret <= s.len() {
+            if s.is_char_boundary(caret) {
+                for d in [None, Some(Dialect::Oracle), Some(Dialect::Mssql)] {
+                    let _ = context_at(&s, caret, d);
+                }
+            }
+            caret += 37;
+        }
+        let _ = context_at(&s, s.len(), Some(Dialect::Postgres));
+    }
+
     #[test]
     fn member_relation_expr_start_and_none() {
         let c = ctx("SELECT a.| FROM sch.emp a, dept d WHERE 1=1");
