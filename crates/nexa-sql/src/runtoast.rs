@@ -692,20 +692,32 @@ impl RunToast {
             a,
         );
         let lx = stop.right() + px(8.0);
-        // 1행 오른쪽 끝 = 복사 버튼(사용자 09-23 "툴팁으로 보이는 쿼리를 클릭 한 번에 복사") — 문장 줄은 그 앞에서 끝난다.
-        let copy_sz = lh;
-        let copy = Rect::new(card.right() - pad - copy_sz, card.y + pad, copy_sz, copy_sz);
+        // 1행: 문장 한 줄 + **카드 오른쪽 끝의 이미지 버튼**(사용자 09-23 정정 "카드의 우측 끝에 이미지 버튼") — 늘 보이는
+        // 상자(옅은 배경 + 테두리 · hover = 진하게) · 아이콘 16px · 라벨은 버튼 앞 6px에서 `…`로 잘린다.
+        let copy_sz = lh.max(px(20.0));
+        let copy = Rect::new(
+            card.right() - pad - copy_sz,
+            card.y + pad + (lh - copy_sz) / 2,
+            copy_sz,
+            copy_sz,
+        );
+        let max_w = copy.x - px(6.0) - lx;
+        let mut line = r.line.clone();
+        if dc.text_width(&line) > max_w {
+            while dc.text_width(&format!("{line}…")) > max_w && line.pop().is_some() {}
+            line.push('…');
+        }
         r.copy_rect = copy.intersection(&area);
         {
             let hovered = hover_copy == Some(r.id);
-            if hovered {
-                dc.fill_round_rect_alpha(copy.intersection(&area), px(3.0), th.text, 0.12 * a);
-            }
+            let bg = copy.intersection(&area);
+            dc.fill_round_rect_alpha(bg, px(3.0), th.text, if hovered { 0.16 } else { 0.06 } * a);
+            dc.stroke_round_rect_alpha(bg, px(3.0), th.border, 1.0, a);
             let (cr, cg, cb) = (if hovered { th.text } else { th.text_dim }).rgb();
             let ic = crate::toolicons::mi_copy();
             let img =
                 nexa_ctl::theme::IconImage::from_alpha_tinted(ic.w, ic.h, &ic.alpha, (cr, cg, cb));
-            let sz = px(14.0).min(copy_sz);
+            let sz = px(16.0).min(copy_sz - px(2.0));
             dc.image_scaled(
                 Rect::new(
                     copy.x + (copy.w - sz) / 2,
@@ -717,13 +729,8 @@ impl RunToast {
                 copy.intersection(&area),
             );
         }
-        let line_clip = Rect::new(lx, card.y + pad, copy.x - px(6.0) - lx, lh).intersection(&area);
+        let line_clip = Rect::new(lx, card.y + pad, max_w.max(0), lh).intersection(&area);
         r.line_rect = line_clip;
-        let mut line = r.line.clone();
-        if dc.text_width(&line) > line_clip.w {
-            while dc.text_width(&format!("{line}…")) > line_clip.w && line.pop().is_some() {}
-            line.push('…');
-        }
         dc.text(lx, card.y + pad, line_clip, &line, th.text);
         // 2행: 시작 시각 · 경과
         let y2 = card.y + pad + lh + px(2.0);
