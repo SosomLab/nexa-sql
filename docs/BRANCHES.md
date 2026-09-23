@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/copybtn-feedback | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 복사 버튼 부품 `copybtn.rs`(눌림 120 ms → 녹색 체크 `mi_check` → `ui.copy_feedback_ms` 2초 뒤 복귀 · `next_tick`) · 실행 카드 + 접속 창 파일 이름 복사에 적용 · 설정+i18n · 시험 2 · 30 §2 · journal §97 · TODO U-62 |
+| fix/runtoast-copy-place | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 실행 카드 복사 버튼 = 카드 우측 끝 고정 이미지 버튼("라벨 뒤" 철회 · 사용자 정정) |
 | feat/runtoast-copy | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 실행 카드 1행 오른쪽 복사 버튼(`RunToastHit::Copy` · 카드 유지 · 상태줄 "SQL n줄 복사됨" · 시험 1 · §96) |
 | fix/bookmark-keys-gutter-save | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 북마크 후속 셋(§95): 두 단계 코드 키 Ctrl+K,Ctrl+K/N/P/X(Ctrl+Alt 안 교체) · 거터 = 북마크 영역 → 줄 번호 → 편집 → 미니맵(nexa-ui 64차) · 🔧 저장 길 북마크·니모닉 소실 · S52 확장 · S56 · 위키 · TODO U-60 · push `dd45a5e` ci ✓ · integration ✓ |
 | feat/intrinsic-vars | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 내장 변수 층 `${workspaceFolder}`(nsql-script `intrinsic.rs` · 엔진 `Settings.intrinsic` · GUI/CLI 배선 · 경로 설정 `expand` · `vars.intrinsic`) · 북마크 키 += VS Code Ctrl+Alt+K/L/J · 📐 73 경로 이식 조사·개선안 · journal §93~94 · 위키 · push `260e9a3` ci ✓ · integration ✓ |

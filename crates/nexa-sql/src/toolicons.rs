@@ -582,6 +582,16 @@ fn menu_icon(shape: fn(f32, f32) -> bool) -> MenuIcon {
 pub(crate) fn mi_copy() -> MenuIcon {
     menu_icon(shape_copy)
 }
+/// 체크 표시(복사 버튼의 "됐다" 상태 · `copybtn`).
+pub(crate) fn mi_check() -> MenuIcon {
+    menu_icon(shape_check)
+}
+
+/// 체크 — 짧은 획 + 긴 획(둥근 끝).
+fn shape_check(x: f32, y: f32) -> bool {
+    stroke(x, y, (52.0, 136.0), (108.0, 192.0), 30.0)
+        || stroke(x, y, (108.0, 192.0), (208.0, 72.0), 30.0)
+}
 pub(crate) fn mi_cut() -> MenuIcon {
     menu_icon(shape_cut)
 }

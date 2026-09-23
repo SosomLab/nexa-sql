@@ -34,6 +34,8 @@ pub(crate) struct ConnTuning {
     pub tooltip_ms: u128,
     /// 더블클릭 간격(ms · `ui.dblclick_ms`).
     pub dblclick_ms: u128,
+    /// 복사 버튼 체크 표시 시간(ms · `ui.copy_feedback_ms`).
+    pub copy_feedback_ms: i64,
     /// 상세 폼 슬라이딩(ms · `ui.slide_ms`).
     pub slide_ms: f32,
     /// 기본 창 크기(논리 px · `conn.window_w/h`).
@@ -54,6 +56,7 @@ impl Default for ConnTuning {
             close_after_ms: 450,
             tooltip_ms: 600,
             dblclick_ms: 400,
+            copy_feedback_ms: 2000,
             slide_ms: 200.0,
             window_w: 748.0,
             window_h: 526.0,
@@ -433,6 +436,7 @@ impl ConnWin {
     pub(crate) fn set_tuning(&mut self, t: ConnTuning) {
         self.tuning = t;
         self.panel.set_port_w(t.port_w);
+        self.panel.set_copy_feedback_ms(t.copy_feedback_ms);
     }
 
     /// 접속 중 막 올리기(시도 시작) — 같은 이름이면 단계만 갱신.

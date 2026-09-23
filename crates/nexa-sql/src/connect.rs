@@ -111,8 +111,8 @@ pub(crate) struct ConnectPanel {
     save_btn: Button,
     /// 저장 버튼 아래 한 줄: 프로필 설정 파일 이름(`<해시>.conf` · 사용자 09-22 "해시와 프로필을 연결해 판단할 수 있게") + 복사 버튼.
     file_rect: Rect,
-    copy_rect: Rect,
-    copy_hover: bool,
+    /// 파일 줄의 복사 버튼(부품 `copybtn` · 눌림 → 체크 → 복귀 · 사용자 09-23).
+    copy: crate::copybtn::CopyBtn,
     field_focus: Option<Field>,
     /// 동작(Test/Connect/Save)을 눌렀을 때 비어 있던 필수 칸 — 경고 띠 · 채우면 즉시 해제(22 §10).
     warn: Vec<Field>,
@@ -292,8 +292,7 @@ impl ConnectPanel {
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
             file_rect: Rect::default(),
-            copy_rect: Rect::default(),
-            copy_hover: false,
+            copy: crate::copybtn::CopyBtn::new(),
             field_focus: None,
             warn: Vec::new(),
             auto_port: None,
@@ -664,7 +663,7 @@ impl ConnectPanel {
         // 파일 줄: 글자(이름) 왼쪽 · 복사 버튼(정사각 · 아이콘 16) 오른쪽 끝.
         let fh = self.s(22.0);
         self.file_rect = Rect::new(x, y, w, fh);
-        self.copy_rect = Rect::new(x + w - fh, y, fh, fh);
+        self.copy.rect = Rect::new(x + w - fh, y, fh, fh);
     }
 
     /// 이 폼의 프로필 설정 파일 이름(`<해시>.conf`) — 이름 칸이 비었거나 규칙에 안 맞으면 `None`.
@@ -786,7 +785,14 @@ impl ConnectPanel {
             e |= self.textbox(f).tick(now_ms);
         }
         let f = self.tick_status(now_ms);
-        a || b || c || d || e || f
+        // 복사 버튼 애니메이션(눌림 → 체크 → 복귀).
+        let g = self.copy.next_tick(std::time::Instant::now()).is_some();
+        a || b || c || d || e || f || g
+    }
+
+    /// 설정 `ui.copy_feedback_ms`.
+    pub(crate) fn set_copy_feedback_ms(&mut self, ms: i64) {
+        self.copy.set_feedback_ms(ms);
     }
 
     pub(crate) fn animating(&self) -> bool {
@@ -794,6 +800,7 @@ impl ConnectPanel {
             || self.connect_btn.is_animating()
             || self.save_btn.is_animating()
             || self.dialect.hover_animating()
+            || self.copy.next_tick(std::time::Instant::now()).is_some()
             || FIELDS.iter().any(|&f| self.textbox_ref(f).is_animating())
             || self.status_bars_visible()
     }
@@ -995,17 +1002,17 @@ impl ConnectPanel {
         // 파일 줄의 복사 버튼 — hover 표시 · 클릭 = 파일 이름 복사(진입점은 접속 창의 `copy_profile_file` 하나).
         match *ev {
             InputEvent::MouseMove { x, y, .. } => {
-                let over =
-                    self.profile_file_name().is_some() && self.copy_rect.contains(Point { x, y });
-                if over != self.copy_hover {
-                    self.copy_hover = over;
-                    inv.push(self.copy_rect);
+                let over = self.profile_file_name().is_some() && self.copy.hit(Point { x, y });
+                if self.copy.set_hover(over) {
+                    inv.push(self.copy.rect);
                 }
             }
             InputEvent::MouseDown { x, y, .. }
-                if self.profile_file_name().is_some()
-                    && self.copy_rect.contains(Point { x, y }) =>
+                if self.profile_file_name().is_some() && self.copy.hit(Point { x, y }) =>
             {
+                // 눌림 → 체크 → 복귀(부품 시계 시작 · 실제 복사는 호스트의 `copy_profile_file` 한 길).
+                self.copy.press(std::time::Instant::now());
+                inv.push(self.copy.rect);
                 return Some(PanelAction::CopyFile(ProfileFile::Name));
             }
             _ => {}
@@ -1397,30 +1404,13 @@ impl ConnectPanel {
             let clip = Rect::new(
                 fr.x,
                 fr.y,
-                (self.copy_rect.x - fr.x - self.s(6.0)).max(0),
+                (self.copy.rect.x - fr.x - self.s(6.0)).max(0),
                 fr.h,
             );
             dc.text(fr.x, ty, clip, &label, th.text_dim);
             if file.is_some() {
-                let cr = self.copy_rect;
-                if self.copy_hover {
-                    dc.fill_round_rect_alpha(cr, self.s(4.0), th.text, 0.10);
-                }
-                let (r, g, b) = (if self.copy_hover {
-                    th.text
-                } else {
-                    th.text_dim
-                })
-                .rgb();
-                let ic = crate::toolicons::mi_copy();
-                let img =
-                    nexa_ctl::theme::IconImage::from_alpha_tinted(ic.w, ic.h, &ic.alpha, (r, g, b));
-                let sz = self.s(16.0);
-                dc.image_scaled(
-                    Rect::new(cr.x + (cr.w - sz) / 2, cr.y + (cr.h - sz) / 2, sz, sz),
-                    &img,
-                    cr,
-                );
+                self.copy
+                    .paint(dc, th, 1.0, self.scale, std::time::Instant::now());
             }
         }
         // 상태줄: ● + 문구(패널 폭 안에서 잘림)

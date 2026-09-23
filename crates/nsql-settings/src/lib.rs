@@ -2311,6 +2311,17 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "ui.copy_feedback_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblCopyFeedbackMs,
+        desc: Msg::DescCopyFeedbackMs,
+        kind: SettingKind::Int {
+            min: 300,
+            max: 10000,
+        },
+        default: "2000",
+    },
+    Entry {
         key: "ui.tooltip_delay_ms",
         cat: Msg::CatAppearance,
         label: Msg::LblTooltipDelayMs,

@@ -18,6 +18,7 @@ mod clipboard;
 mod colors_win;
 mod conn_win;
 mod connect;
+mod copybtn;
 mod dbms_icons;
 mod editors;
 mod enc;
@@ -5555,6 +5556,11 @@ impl App {
                 self.conn_win.set_tuning(conn_tuning(&self.settings));
                 self.sync_project_panel_opts();
             }
+            // 복사 버튼 체크 표시 시간 — 접속 창(튜닝) + 실행 카드 둘 다.
+            "ui.copy_feedback_ms" => {
+                self.conn_win.set_tuning(conn_tuning(&self.settings));
+                self.apply_run_toast();
+            }
             "ui.menu_max_width" => self.rebuild_menus(),
             "ui.ime_hint" => {
                 let on = self.settings.flag("ui.ime_hint");
@@ -10952,6 +10958,8 @@ impl App {
         );
         let tick = self.settings.int("run.toast_tick_ms");
         self.run_toast.configure(on, hide, alpha);
+        self.run_toast
+            .configure_copy(self.settings.int("ui.copy_feedback_ms"));
         self.run_toast.configure_progress(prog, fade_to, spent);
         self.run_toast.configure_tick(tick);
         self.run_toast.configure_stack(
@@ -16557,6 +16565,7 @@ fn conn_tuning(settings: &Settings) -> conn_win::ConnTuning {
         close_after_ms: i("conn.close_after_connect_ms").max(0) as u64,
         tooltip_ms: i("ui.tooltip_delay_ms").max(0) as u128,
         dblclick_ms: i("ui.dblclick_ms").max(0) as u128,
+        copy_feedback_ms: i("ui.copy_feedback_ms"),
         slide_ms: fade_ms(settings, "ui.slide_ms", 1000) as f32,
         window_w: i("conn.window_w").max(400) as f32,
         window_h: i("conn.window_h").max(300) as f32,

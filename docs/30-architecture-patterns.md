@@ -68,6 +68,7 @@
 | **fallback_file_icon**(09-22) | nexa-ctl `controls` | 셸 아이콘이 없거나 아직 안 온 파일/폴더의 16px 자체 그림 — nexa-dlg 파일 대화상자 + nexa-sql 프로젝트 탐색기(둘째 사용처에서 승격). OS 아이콘은 nexa-fs `IconService` |
 | **TreeGrid 선택 없음**(09-22) | nexa-ctl `TreeGrid` | `clear_selection`/`has_selection` — 빈 곳 클릭 = 강조 0 · 캐럿 행은 남겨 키 이동 기준 · 파일 대화상자 세 모드 공통 |
 | **FilterBar**(09-22) | nexa-sql `filterbar.rs` | 필터 틀 = 텍스트박스 + 안쪽 토글 Aa·ab·(.*)(+Path) + 오른쪽 부가 토글 · 매칭(`matches`) · 위·아래 여백 상수 `GAP_Y` — 프로젝트·북마크·확장 패널(검색 패널은 자체 배치 · 토글 부품 공용) |
+| **CopyBtn**(09-23) | nexa-sql `copybtn.rs` | 복사 버튼 = 상자 + 아이콘 · `press(now)` → 눌림(120 ms · 안으로) → 체크(`mi_check` · 녹색 `theme.ok`) → `ui.copy_feedback_ms` 뒤 복귀 · `next_tick(now)`로 담는 쪽 tick에 얹힘(자체 타이머 0) — 실행 카드 · 접속 창 파일 이름 복사(복사 기능을 가진 버튼은 전부 이 부품) |
 | **dbms_icons**(09-22) | nexa-sql `dbms_icons.rs` + `assets/dbms/*.svg` | DBMS 아이콘 파일(generic 틀 + 대표색 fill + `<text>` 라벨 ≤6자 2줄 · 로고로 교체 가능) · `pick(방언, 힌트)` → 이름·줄·색 · 경로별 fill-rule 마스크 합성 — 탐색기 루트(접속 창·세션 창도 같은 것을 쓸 수 있다) |
 | **ellipsize_middle + show_full**(09-22) | nexa-ctl `draw` | 긴 경로·라벨의 가운데 `…` 축약(접두사 폭 표 · 앞 ≈ 뒤) + 전역 "전체 보기" 스위치(Alt 동안) — 풀다운·우클릭 메뉴·팔레트·검색 결과 공통 · 새로 경로를 보이는 곳은 이 부품을 쓴다 | journal 09-22 §38 |
 | **IntentFade / HoverFade / FadeSpeed** | nexa-ctl `tokens` | 지나가는 대상의 hover 비용 0 · 마지막 의도만 · 속도 속성 2단 | 그리드 행 · 목록 행 · 콤보 항목 · 버튼 · 텍스트박스 |
