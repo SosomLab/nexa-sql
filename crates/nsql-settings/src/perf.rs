@@ -284,6 +284,13 @@ pub const BOOST: &[(&str, &str)] = &[
     ("probe.icmp", "off"),
     ("oracle.live.source", "off"),
     ("oracle.live.interval_ms", "5000"),
+    // ── 코드 완성(09-24 §187 · 사용자 "향상 모드에 포함될 대상인지 검토"): 팝업은 ⌃Space로만 · 아이콘·카드·문서 훑기·접속 직후 질의 없음.
+    //    `intel.enabled`·수동 완성·시그니처 도움·`intel.match`·상한은 결과에 닿으므로 그대로.
+    ("intel.icons", "off"),
+    ("intel.detail_card", "off"),
+    ("intel.document_words", "off"),
+    ("intel.preload", "off"),
+    ("intel.from_routines", "off"),
 ];
 
 /// 향상 모드가 이 키를 강제하는 값(등재되지 않은 키 = `None`).

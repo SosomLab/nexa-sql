@@ -291,6 +291,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 |---|---|---|---|
 | 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
 | 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(신설 · 우클릭 메뉴 아이콘)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
+| 코드 완성(09-24 §187) | `intel.auto_activation` off · `intel.icons` off · `intel.detail_card` off · `intel.document_words` off · `intel.preload` off · `intel.from_routines` off | 팝업은 ⌃Space로만 · 아이콘 래스터·카드 조립·문서 훑기·접속 직후 카탈로그 질의(관계 4 + 함수 3 + 사전 1) 없음 · 수동 완성·시그니처 도움·`intel.match`·상한은 그대로(결과에 닿음) | 72 "코드 완성과 문서 크기" |
 | I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |
 | 메모리 | `file.icon_cache` 128 | 목표 ④ | 아이콘을 껐으므로 캐시도 최소 |
 | 폴링·시도 횟수·시간·스레드 | `probe.interval` 300 · `probe.max_inflight` 1 · `probe.max_retries` 1 · `probe.icmp` off  · `oracle.live.source` off · `oracle.live.interval_ms` 5000 | "Pooling 등의 시도 횟수, 시간" | 신호등은 남기되 드물게 · 라이브 로그는 표시용이라 끔 |

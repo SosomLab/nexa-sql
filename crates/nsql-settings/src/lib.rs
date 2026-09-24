@@ -3555,6 +3555,18 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(INTEL_STAR_SPACE),
         default: "space",
     },
+    // ★ 창 방식 문턱(09-24 §187): 이 크기(KB)를 넘는 문서는 완성 문맥을 캐럿 앞뒤 256 KB 창에서만 구하고 문서 낱말·아웃라인 캐시를 끈다.
+    Entry {
+        key: "intel.max_doc_kb",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelMaxDocKb,
+        desc: Msg::DescIntelMaxDocKb,
+        kind: SettingKind::Int {
+            min: 64,
+            max: 65_536,
+        },
+        default: "1024",
+    },
     Entry {
         key: "intel.card_settle_ms",
         cat: Msg::CatIntel,

@@ -9362,9 +9362,14 @@ impl App {
     /// 코드 기능(아웃라인 · 완성 · Goto Symbol)을 이 탭에 써도 되는가 — 큰 파일 단계가 아니고 · **구문이 SQL**이고 · 본문이
     /// 이진스럽지 않아야(첫 8 KB에 NUL 없음 · U+FFFD 8개 미만). 아니면 `Some(안내)`를 돌려준다(사용자 09-23 "`.o` 파일 아웃라인 = 앱 종료 ·
     /// 적합하지 않은 파일은 아웃라인 무시"). 분석기 자체도 패닉하지 않게 고쳤지만(nsql-script fuzz 시험) 뜻 없는 심볼을 만들지 않는다.
-    fn intel_unsuitable(&self, i: usize) -> Option<Msg> {
+    /// `light` = 가벼운 요청(수동 완성 · 시그니처 도움 — 창 방식이라 큰 파일 1단계에서도 된다) · 아니면(자동 팝업 · 아웃라인 · Goto Symbol)
+    /// 1단계부터 끈다 · 2단계는 전부 끈다(09-24 §187 · 72).
+    fn intel_unsuitable(&self, i: usize, light: bool) -> Option<Msg> {
         if self.editors.is_large(i) {
-            return Some(Msg::StLargeFileFeatureOff);
+            let lvl = self.editors.large_level(i);
+            if lvl >= 2 || !light {
+                return Some(Msg::StLargeFileFeatureOff);
+            }
         }
         if self.editors.syntax_name() != "SQL" {
             return Some(Msg::StIntelUnsuitable);
@@ -9391,7 +9396,7 @@ impl App {
             return;
         }
         let i = self.editors.active();
-        if let Some(why) = self.intel_unsuitable(i) {
+        if let Some(why) = self.intel_unsuitable(i, manual) {
             if manual {
                 self.sess.status = t(why).into();
             }
@@ -9452,6 +9457,10 @@ impl App {
                     self.intel.cfg().budget_ms
                 ),
             ));
+        }
+        // 자기 감속(§187): 연속 초과로 이 탭의 문서 낱말이 꺼졌다 — 상태줄 한 번.
+        if self.intel.take_degraded().is_some() {
+            self.sess.status = t(Msg::StIntelDegraded).into();
         }
         if opened || manual {
             self.redraw();
@@ -9520,7 +9529,7 @@ impl App {
             return;
         }
         let i = self.editors.active();
-        if self.intel_unsuitable(i).is_some() {
+        if self.intel_unsuitable(i, true).is_some() {
             return;
         }
         let (text, caret_c) = {
@@ -9543,7 +9552,7 @@ impl App {
     /// Goto Symbol(Ctrl+R · Sublime): 문서 아웃라인 심볼 목록을 팔레트에 — 고르면 `sym:<byte>`.
     fn open_goto_symbol(&mut self) {
         let i = self.editors.active();
-        if let Some(why) = self.intel_unsuitable(i) {
+        if let Some(why) = self.intel_unsuitable(i, false) {
             self.sess.status = t(why).into();
             self.redraw();
             return;
@@ -9593,7 +9602,7 @@ impl App {
         if self.outline_panel.key() == Some((tab, rev)) {
             return;
         }
-        if !self.intel.cfg().enabled || self.intel_unsuitable(i).is_some() {
+        if !self.intel.cfg().enabled || self.intel_unsuitable(i, false).is_some() {
             // 적합하지 않은 파일(큰 파일 · SQL 아님 · 이진) = 빈 아웃라인(사용자 09-23).
             self.outline_panel
                 .set_symbols((tab, rev), &nsql_script::outline::Outline::default());

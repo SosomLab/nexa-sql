@@ -19,6 +19,7 @@
 | 11 | **`*`/`A.*` → "모든 컬럼 (N)"** 하나만 · 카드에 목록 · 한 줄(기본)/여러 줄(줄 앞 쉼표) · 쉼표 뒤 Space/Tab | `SELECT A.*` 바로 뒤 ⌃Space → Enter | `intel.star_layout` · `intel.star_comma_space` |
 | 12 | `INSERT INTO t (` 컬럼 목록 조각 · 시그니처 도움(상태줄) · 내장 함수·`DBMS_*`·방언 키워드(`TOP`·`ROWNUM`·`ILIKE`·`PRAGMA`) | `INSERT INTO M4S_I002040 (` · `NVL(` · 문장 시작에서 `TO` | `intel.insert_columns` · `intel.functions` · `intel.keywords` |
 | 13a | **문법 절 기반 예약어**(82) — 절마다 올 수 있는 예약어만 · DBMS별 `.sqlg` 참조 파일 · `NSQL_HOME/grammar/*.sqlg`로 덧입힘/새 방언 | SQLite 탭 `SELECT a, ha` → HAVING 없음 · `GROUP BY a ha` → HAVING · 문장 시작 `pra` → PRAGMA · 설정 폴더 `grammar/sqlite.sqlg`(`dialect = sqlite` · `[clause SELECT] next += MYWORD`) 뒤 재시작 → `SELECT my` | — |
+| 13b | 문서 크기 단계·향상 모드(72) — 1 MB 위 창 방식 · L1 수동만 · L2 끔 · 예산 초과 자기 감속 · 향상 모드 강제 키 5 | 4 MB 스크립트에서 ⌃Space · 5 MB에서 자동 팝업 없음/⌃Space 됨 · 향상 모드 켬 → 아이콘·카드 없음 | `intel.max_doc_kb` · `intel.budget_ms` · `perf.boost` |
 | 13 | **캐시 새로 고침** ⌘⇧R(현재 스키마) · Edit ▸ 이 서버/전 서버 · 탐색기 루트·스키마 우클릭 "메타 새로 고침" · 탐색기 "새로 고침"도 함께 낡음 표시 | 다른 도구로 테이블 만든 뒤 ⌘⇧R → 상태줄 "버킷 N · 객체 M" → `FROM ` 에 새 테이블 | — |
 
 ## 2. 편집기·창

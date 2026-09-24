@@ -15,7 +15,7 @@ use nsql_script::builtins;
 use nsql_script::intel::{self, Cand, CandKind, Context, CtxKind, MatchMode};
 use nsql_script::outline::{self, Outline, SymKind};
 use nsql_settings::Settings;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,6 +54,8 @@ pub(crate) struct IntelCfg {
     pub star_tab: bool,
     /// 한 세트로 드는 후보 상한(`intel.max_total` · 페이지 로딩 76 §13 · 그 위는 잘림).
     pub max_total: usize,
+    /// 문서 전체 훑기 상한(KB · `intel.max_doc_kb` · 09-24 §187): 넘으면 캐럿 앞뒤 창(`WINDOW_BYTES`)만 · 문서 낱말·아웃라인 끔.
+    pub max_doc_kb: usize,
     pub keywords: bool,
     pub doc_words: bool,
     pub insert_case: String,
@@ -97,6 +99,7 @@ impl IntelCfg {
             star_lines: s.get("intel.star_layout").unwrap_or("inline") == "lines",
             star_tab: s.get("intel.star_comma_space").unwrap_or("space") == "tab",
             max_total: s.int("intel.max_total").clamp(500, 20_000) as usize,
+            max_doc_kb: s.int("intel.max_doc_kb").clamp(64, 65_536) as usize,
             keywords: s.flag("intel.keywords"),
             doc_words: s.flag("intel.document_words"),
             insert_case: s.get("intel.insert_case").unwrap_or("default").to_string(),
@@ -155,6 +158,10 @@ pub(crate) struct Intel {
     icon_kinds: Vec<Option<IconKind>>,
     prefix_now: String,
     text_w: i32,
+    /// ★ 자기 감속(09-24 §187): 예산(`intel.budget_ms`) 초과가 **연속 2회**면 그 탭의 문서 낱말을 끈다(`words_off`) · 호스트에 한 번 알림.
+    over_streak: u8,
+    words_off: HashSet<u64>,
+    degraded: Option<u64>,
     /// ★ 상세 카드 머무름(사용자 09-24 · hover 효과 규칙과 같은 사상 = 사건은 목표 **덮어쓰기만** · 틱이 머문 마지막 목표만 넘김):
     ///   `card_want` = 마지막 강조 행(index · 바뀐 시각) · `card_shown` = 카드가 보이는 행. 첫 대상은 즉시, 그 뒤는 `card_settle_ms` 머문 뒤.
     card_want: Option<(usize, Instant)>,
@@ -198,6 +205,9 @@ impl Intel {
             icon_kinds: Vec::new(),
             prefix_now: String::new(),
             text_w: 0,
+            over_streak: 0,
+            words_off: HashSet::new(),
+            degraded: None,
             card_want: None,
             card_shown: None,
             cands: Vec::new(),
@@ -403,17 +413,38 @@ impl Intel {
         self.need_objects.clear();
         self.loading = false;
         self.loading_objects = false;
-        let ctx = intel::context_at(doc, caret, dialect);
+        // ★ 창 방식(09-24 §187 · 사용자 "파일 용량별 레벨"): 문서가 `intel.max_doc_kb`를 넘으면 캐럿 앞뒤 창만 문맥으로 읽고(전체
+        //   `classify`/문장 분할 = 4 MB에 130 ms) 문서 낱말·아웃라인 캐시는 만들지 않는다. 구간 값은 절대 바이트로 되돌린다.
+        let windowed = doc.len() > self.cfg.max_doc_kb * 1024;
+        let (base, slice) = if windowed {
+            let (a, b) = window_of(doc, caret);
+            (a, &doc[a..b])
+        } else {
+            (0, doc)
+        };
+        let mut ctx = intel::context_at(slice, caret - base, dialect);
+        if base > 0 {
+            ctx.replace = ctx.replace.start + base..ctx.replace.end + base;
+            ctx.statement = ctx.statement.start + base..ctx.statement.end + base;
+        }
+        let ctx = ctx;
         let prefix_start = ctx.replace.start;
         if ctx.kind == CtxKind::None {
             self.close();
             return false;
         }
-        // 문서 캐시(심볼 · 단어).
-        self.outline_for(tab, rev, &|| doc.to_string(), dialect);
-        let (symbols, doc_words): (Vec<(String, SymKind)>, Vec<String>) = {
+        // 문서 캐시(심볼 · 단어) — 창 방식이거나 자기 감속으로 꺼진 탭은 비운다.
+        let (symbols, doc_words): (Vec<(String, SymKind)>, Vec<String>) = if windowed {
+            (Vec::new(), Vec::new())
+        } else {
+            self.outline_for(tab, rev, &|| doc.to_string(), dialect);
             let d = self.docs.get(&tab).expect("cache");
-            (d.outline.names(), d.words.clone())
+            let words = if self.words_off.contains(&tab) {
+                Vec::new()
+            } else {
+                d.words.clone()
+            };
+            (d.outline.names(), words)
         };
         let mut cands: Vec<Cand> = Vec::new();
         let show_types = self.cfg.show_types;
@@ -1203,8 +1234,24 @@ impl Intel {
         self.menu.open_at(p.x, p.y, items, host, self.text_w);
         self.due = None;
         let ms = t0.elapsed().as_millis();
-        self.over_budget = (ms > u128::from(self.cfg.budget_ms)).then_some((self.cands.len(), ms));
+        // 예산 비교는 Duration으로(정수 ms 비교는 1 ms 아래를 못 본다 · 예산 0 = 늘 초과).
+        let over = t0.elapsed() > Duration::from_millis(self.cfg.budget_ms);
+        self.over_budget = over.then_some((self.cands.len(), ms));
+        // 자기 감속: 연속 2회 초과 → 그 탭의 문서 낱말 끔(다음 요청부터) · 호스트에 한 번 알림.
+        if over {
+            self.over_streak = self.over_streak.saturating_add(1);
+            if self.over_streak >= 2 && self.words_off.insert(tab) {
+                self.degraded = Some(tab);
+            }
+        } else {
+            self.over_streak = 0;
+        }
         true
+    }
+
+    /// 자기 감속이 막 일어난 탭(한 번만).
+    pub(crate) fn take_degraded(&mut self) -> Option<u64> {
+        self.degraded.take()
     }
 
     /// 팝업 항목 조립 — `cands[..shown]` + 끝 안내("N개 더" · "불러오는 중"). 요청·페이지 이어 붙이기가 같은 길을 쓴다.
@@ -1544,6 +1591,37 @@ fn from_kinds(dialect: Option<Dialect>, routines: bool) -> Vec<ObjectKind> {
     v
 }
 
+/// 창 방식 문맥 구간(09-24 §187): 캐럿 앞뒤 `WINDOW_BYTES` 안에서 빈 줄(`\n\n`) 경계를 찾아 자르고(없으면 줄 시작/끝) 글자 경계로 맞춘다.
+/// 문장은 보통 빈 줄로 나뉘므로 캐럿 문장은 통째로 들어온다. 반환 = (시작, 끝) 절대 바이트.
+const WINDOW_BYTES: usize = 256 * 1024;
+fn window_of(doc: &str, caret: usize) -> (usize, usize) {
+    let caret = caret.min(doc.len());
+    let mut a = caret.saturating_sub(WINDOW_BYTES);
+    if a > 0 {
+        a = match doc[a..caret].find("\n\n") {
+            Some(i) => a + i + 2,
+            None => doc[a..caret].find('\n').map_or(a, |i| a + i + 1),
+        };
+    }
+    let mut b = (caret + WINDOW_BYTES).min(doc.len());
+    if b < doc.len() {
+        b = match doc[caret..b].rfind("\n\n") {
+            Some(i) => caret + i,
+            None => doc[caret..b].rfind('\n').map_or(b, |i| caret + i),
+        };
+        if b <= caret {
+            b = (caret + WINDOW_BYTES).min(doc.len());
+        }
+    }
+    while a > 0 && !doc.is_char_boundary(a) {
+        a -= 1;
+    }
+    while b < doc.len() && !doc.is_char_boundary(b) {
+        b += 1;
+    }
+    (a, b)
+}
+
 /// ★ FROM 자리에 올 수 있는가(사용자 09-24 "SQL Server 프로시저가 결과를 FROM으로 주나?" — 아니다): 프로시저는 어느 DBMS든 제외 ·
 /// SQL Server 스칼라·집계 함수(`FN`/`AF`/`FS`)도 제외(테이블 반환 `IF`/`TF`/`FT`만) · Oracle 함수는 컬렉션 반환이 사전에 안 보이므로 남긴다.
 fn from_ok(
@@ -1775,6 +1853,7 @@ mod tests {
             star_lines: false,
             star_tab: false,
             max_total: 5000,
+            max_doc_kb: 65_536,
             keywords: true,
             doc_words: true,
             insert_case: "default".into(),
@@ -2487,6 +2566,113 @@ mod tests {
             !req(&mut it, &m, "SELECT * FROM hr.EMP."),
             "테이블 뒤 `.` = 없음"
         );
+    }
+
+    /// ★ 창 방식(09-24 §187): 문턱을 넘는 문서는 캐럿 앞뒤 창만 읽고 구간은 절대 바이트 · 문서 낱말 없음 · 확정 치환 구간이 맞는다.
+    #[test]
+    fn window_mode_keeps_absolute_offsets_and_skips_doc_words() {
+        let filler = "SELECT 1 FROM dual;\n\n".repeat(400); // ≈ 8 KB
+        let doc = format!("{filler}SELECT zzword FROM emp e WHERE e.na");
+        let mut c = cfg();
+        c.max_doc_kb = 4; // 4 KB 문턱 → 창 방식
+        c.doc_words = true;
+        let mut it = Intel::new(c);
+        let mut m = MetaStore::new(1 << 24);
+        m.set_schemas(&["hr".into()], Some("hr"));
+        m.load_bucket(
+            "hr",
+            ObjectKind::Table,
+            &[NewObj {
+                name: "EMP".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        let emp = m
+            .snapshot()
+            .lookup(&m.names, Some("hr"), "EMP")
+            .expect("emp");
+        m.set_columns(
+            emp,
+            &[NewCol {
+                name: "NAME".into(),
+                data_type: "VARCHAR2".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        assert!(it.request(
+            1,
+            1,
+            &doc,
+            doc.len(),
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            Rect::new(0, 0, 800, 600),
+            1.0,
+            &|_| None
+        ));
+        let names: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
+        assert!(names.contains(&"NAME"), "{names:?}");
+        assert!(
+            !names.contains(&"zzword"),
+            "창 방식 = 문서 낱말 없음: {names:?}"
+        );
+        it.pick("intel:0");
+        let acc = it.take_accept().expect("accept");
+        assert_eq!(
+            &doc[acc.replace.start..acc.replace.end],
+            "na",
+            "치환 구간은 절대 바이트"
+        );
+        // 작은 문서 = 창이 전체 · 큰 문서(≈ 512 KB) = 캐럿 앞 256 KB 안의 빈 줄 경계에서 시작.
+        assert_eq!(window_of(&doc, doc.len()), (0, doc.len()));
+        let big = filler.repeat(64);
+        let (a, b) = window_of(&big, big.len());
+        assert!(
+            a > 0 && b == big.len() && &big[a - 2..a] == "\n\n",
+            "{a} {b}"
+        );
+        let (a2, b2) = window_of(&big, 10);
+        assert_eq!(a2, 0);
+        assert!(b2 < big.len() && big[b2..].starts_with("\n\n"), "{b2}");
+    }
+
+    /// ★ 자기 감속(09-24 §187): 예산 0 ms → 요청마다 초과 → 두 번째 요청 뒤 그 탭의 문서 낱말이 꺼지고 알림 한 번.
+    #[test]
+    fn budget_overrun_twice_turns_off_doc_words() {
+        let mut c = cfg();
+        c.budget_ms = 0;
+        c.doc_words = true;
+        let mut it = Intel::new(c);
+        let doc = "SELECT zzword FROM emp WHERE zz";
+        for rev in 1..=3 {
+            let _ = it.request(
+                7,
+                rev,
+                doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                None,
+                Some(Point { x: 0, y: 0 }),
+                Rect::new(0, 0, 800, 600),
+                1.0,
+                &|_| None,
+            );
+            let has = it.cands.iter().any(|c| c.text == "zzword");
+            if rev <= 2 {
+                assert!(has, "rev {rev}: 아직 문서 낱말");
+            } else {
+                assert!(!has, "세 번째부터 문서 낱말 없음");
+            }
+        }
+        assert_eq!(it.take_degraded(), Some(7));
+        assert_eq!(it.take_degraded(), None, "한 번만");
     }
 
     /// ★ 문법 절 기반 키워드(사용자 09-24 "SQLite SELECT 목록에 HAVING?"): SELECT 목록 = HAVING 없음 · GROUP BY 뒤 = HAVING · 문장 시작 =
