@@ -31,10 +31,27 @@ pub(crate) enum IconKind {
     Synonym,
     Type,
     Column,
+    // ── 83 §1(09-25) 하위 항목·방언 고유 종류.
+    /// 제약(키·체크·외래 키) — 열쇠.
+    Constraint,
+    /// 파티션 — 칸 나눈 상자.
+    Partition,
+    /// 확장 속성 — 꼬리표.
+    Property,
+    /// 규칙·정책 — 방패.
+    Rule,
+    /// 큐 — 쌓인 막대.
+    Queue,
+    /// DB 링크 — 고리 둘.
+    Link,
+    /// 잡·스케줄러 — 시계.
+    Job,
+    /// Java — 컵.
+    Java,
 }
 
 impl IconKind {
-    const ALL: [IconKind; 16] = [
+    const ALL: [IconKind; 24] = [
         IconKind::Dbms,
         IconKind::Schema,
         IconKind::Folder,
@@ -51,6 +68,14 @@ impl IconKind {
         IconKind::Synonym,
         IconKind::Type,
         IconKind::Column,
+        IconKind::Constraint,
+        IconKind::Partition,
+        IconKind::Property,
+        IconKind::Rule,
+        IconKind::Queue,
+        IconKind::Link,
+        IconKind::Job,
+        IconKind::Java,
     ];
 
     fn idx(self) -> usize {
@@ -75,6 +100,14 @@ impl IconKind {
             IconKind::Synonym => shape_synonym,
             IconKind::Type => shape_type,
             IconKind::Column => shape_column,
+            IconKind::Constraint => shape_constraint,
+            IconKind::Partition => shape_partition,
+            IconKind::Property => shape_property,
+            IconKind::Rule => shape_rule,
+            IconKind::Queue => shape_queue,
+            IconKind::Link => shape_link,
+            IconKind::Job => shape_job,
+            IconKind::Java => shape_java,
         }
     }
 
@@ -95,6 +128,14 @@ impl IconKind {
             IconKind::Synonym => (0x6B, 0x7B, 0x95),
             IconKind::Type => (0x9C, 0x5B, 0xB0),
             IconKind::Column => (0x8A, 0x8A, 0x8A),
+            IconKind::Constraint => (0xC9, 0x8A, 0x1B),
+            IconKind::Partition => (0x5B, 0x8D, 0xD9),
+            IconKind::Property => (0x8A, 0x8A, 0x8A),
+            IconKind::Rule => (0x9C, 0x5B, 0xB0),
+            IconKind::Queue => (0xD9, 0x82, 0x2B),
+            IconKind::Link => (0x6B, 0x7B, 0x95),
+            IconKind::Job => (0x4E, 0x9A, 0x51),
+            IconKind::Java => (0xE0, 0x6C, 0x2E),
         }
     }
 }
@@ -279,6 +320,64 @@ fn shape_column(x: f32, y: f32) -> bool {
     rrect(x, y, 100.0, 56.0, 56.0, 144.0, 28.0)
 }
 
+/// 제약 — 열쇠(고리 + 대각 자루 + 톱니 둘).
+fn shape_constraint(x: f32, y: f32) -> bool {
+    (circle(x, y, 84.0, 92.0, 48.0) && !circle(x, y, 84.0, 92.0, 22.0))
+        || stroke(x, y, (116.0, 124.0), (212.0, 220.0), 26.0)
+        || stroke(x, y, (176.0, 184.0), (206.0, 154.0), 22.0)
+        || stroke(x, y, (146.0, 154.0), (176.0, 124.0), 22.0)
+}
+
+/// 파티션 — 상자 윤곽 + 세로·가로 칸막이.
+fn shape_partition(x: f32, y: f32) -> bool {
+    (rrect(x, y, 40.0, 48.0, 176.0, 160.0, 14.0) && !rrect(x, y, 60.0, 68.0, 136.0, 120.0, 6.0))
+        || rect(x, y, 118.0, 138.0, 48.0, 208.0)
+        || rect(x, y, 40.0, 216.0, 118.0, 138.0)
+}
+
+/// 확장 속성 — 꼬리표(몸통 + 뾰족한 끝 + 구멍).
+fn shape_property(x: f32, y: f32) -> bool {
+    (rrect(x, y, 48.0, 76.0, 128.0, 104.0, 14.0)
+        || tri(x, y, (176.0, 76.0), (228.0, 128.0), (176.0, 180.0)))
+        && !circle(x, y, 84.0, 128.0, 16.0)
+}
+
+/// 규칙·정책 — 방패.
+fn shape_rule(x: f32, y: f32) -> bool {
+    let body = rrect(x, y, 56.0, 44.0, 144.0, 120.0, 22.0)
+        || tri(x, y, (56.0, 150.0), (200.0, 150.0), (128.0, 228.0));
+    body && !(rrect(x, y, 80.0, 68.0, 96.0, 80.0, 12.0)
+        || tri(x, y, (84.0, 144.0), (172.0, 144.0), (128.0, 196.0)))
+        || rect(x, y, 118.0, 138.0, 60.0, 196.0)
+}
+
+/// 큐 — 쌓인 막대 셋(위가 짧다 = 들어오는 순서).
+fn shape_queue(x: f32, y: f32) -> bool {
+    rrect(x, y, 72.0, 52.0, 136.0, 36.0, 12.0)
+        || rrect(x, y, 56.0, 110.0, 152.0, 36.0, 12.0)
+        || rrect(x, y, 40.0, 168.0, 176.0, 36.0, 12.0)
+}
+
+/// DB 링크 — 고리 둘이 겹친다.
+fn shape_link(x: f32, y: f32) -> bool {
+    (circle(x, y, 92.0, 128.0, 52.0) && !circle(x, y, 92.0, 128.0, 30.0))
+        || (circle(x, y, 164.0, 128.0, 52.0) && !circle(x, y, 164.0, 128.0, 30.0))
+}
+
+/// 잡·스케줄러 — 시계(테 + 바늘 둘).
+fn shape_job(x: f32, y: f32) -> bool {
+    (circle(x, y, 128.0, 128.0, 96.0) && !circle(x, y, 128.0, 128.0, 74.0))
+        || stroke(x, y, (128.0, 128.0), (128.0, 68.0), 22.0)
+        || stroke(x, y, (128.0, 128.0), (176.0, 156.0), 22.0)
+}
+
+/// Java — 컵(몸통 + 손잡이 + 받침).
+fn shape_java(x: f32, y: f32) -> bool {
+    rrect(x, y, 52.0, 80.0, 128.0, 104.0, 18.0)
+        || (circle(x, y, 190.0, 128.0, 40.0) && !circle(x, y, 190.0, 128.0, 20.0) && x > 170.0)
+        || rrect(x, y, 40.0, 196.0, 176.0, 22.0, 10.0)
+}
+
 /// 도형 → `SIDE`×`SIDE` 커버리지(4×4 슈퍼샘플링).
 fn rasterize(shape: fn(f32, f32) -> bool) -> Vec<u8> {
     let unit = 256.0 / SIDE as f32;
@@ -301,7 +400,7 @@ fn rasterize(shape: fn(f32, f32) -> bool) -> Vec<u8> {
     out
 }
 
-static MASKS: [OnceLock<Vec<u8>>; 16] = [const { OnceLock::new() }; 16];
+static MASKS: [OnceLock<Vec<u8>>; 24] = [const { OnceLock::new() }; 24];
 
 /// 종류의 알파 마스크(처음 한 번 래스터 · 이후 재사용).
 fn mask(kind: IconKind) -> &'static [u8] {

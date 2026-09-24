@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/explorer-dbms-trees-generate-sql | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-202 REF CURSOR 이어 받기(§188~189 · 43 §3-6) · ★ T-203·T-205 객체 탐색기 2차([83](83-object-explorer-dbms-trees-and-generate-sql.md) · DBMS별 트리·하위 폴더·유효성 배지·Generate SQL·SQL Preview·CLI `cat sub/gen`) · 100차 후반 |
 | feat/intel-size-boost | 2026-09-24 | 2026-09-24 → main(삭제) | 1 | ★ T-201 완성 × 문서 크기·향상 모드(§187 · 72 표 · 창 방식 `intel.max_doc_kb` · L1 수동만 · 자기 감속 · BOOST 키 5) |
 | feat/grammar-completion | 2026-09-24 | 2026-09-24 → main(삭제) | 1 | ★ T-200 문법 참조 기반 완성([82](82-grammar-driven-completion.md) · `.sqlg` 5개 · nsql-script `grammar.rs` · 절 감지 · 플러그인 로더) · 71 §8 · T-192 재현 기록 · 대기 작업 정리(§185~186) |
 | feat/mac-100b-paging-refresh-perf | 2026-09-24 | 2026-09-24 → main(삭제) | 1 | ★ Mac 100차 후반(§171~184) — 카드 머무름·불투명 · 창 그룹 앞으로 · IOSurface 기본 + 의존 최적화 · `*` 조각 · T-196 페이지 로딩 · 패키지 테이블 함수 · T-187/188 메타 갱신 · FROM 프로시저 제외 · 메모리 창 2차 · 4-DBMS 검토([76 §14](76-intellisense-and-outline.md)) · 규칙·허용 목록 · 재시작 스크립트 |

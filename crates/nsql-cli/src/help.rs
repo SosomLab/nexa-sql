@@ -268,7 +268,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "cat",
-        usage: "nsql cat -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | source <kind> <name> | errors <name>",
+        usage: "nsql cat -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | sub <object> <sub-kind> [kind] | gen <what> <object> [kind] [sub-kind sub-name] | source <kind> <name> | errors <name>",
         brief: Msg::HlpCmdCat,
         detail: Msg::HlpCmdCatDetail,
         args: &[
@@ -276,12 +276,14 @@ const CMDS: &[Cmd] = &[
             ("kinds", Msg::HlpArgCatKinds),
             ("<kind>", Msg::HlpArgCatKind),
             ("columns <object>", Msg::HlpArgCatColumns),
+            ("sub <object> <sub-kind> [kind]", Msg::HlpArgCatSub),
+            ("gen <what> <object> [kind] [sub-kind sub-name]", Msg::HlpArgCatGen),
             ("source <kind> <name>", Msg::HlpArgCatSource),
             ("errors <name>", Msg::HlpArgCatErrors),
         ],
         opts: &["-c", "-d", "-s", "-f", "--width", "--max-col-width", "--overflow", "-x"],
         notes: &[],
-        examples: &["nsql cat -c prod tables", "nsql cat -c prod -s HR columns EMPLOYEES", "nsql cat -c prod source packages PKG_ORDER"],
+        examples: &["nsql cat -c prod tables", "nsql cat -c prod -s HR columns EMPLOYEES", "nsql cat -c prod sub EMPLOYEES foreign_keys", "nsql cat -c prod gen merge EMPLOYEES", "nsql cat -c prod gen call PKG_ORDER package", "nsql cat -c prod source packages PKG_ORDER"],
     },
     Cmd {
         name: "config",

@@ -91,6 +91,8 @@ pub enum RunEvent {
     },
     /// 서버 메시지(DBMS_OUTPUT · T-SQL PRINT) · 엔진 정보.
     Message(String),
+    /// ★ 눈에 띄어야 하는 안내(T-202 · 사용자 09-24 "강제 전체 조회를 눈에 띄게") — GUI 상태줄 + 로그 · CLI stderr. 텍스트에 ⚠.
+    Warning(String),
     Connected {
         description: String,
         dialect: Dialect,
@@ -140,6 +142,7 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             tf(Msg::LogVarList, &[&var_list_text(vars)]),
         )],
         RunEvent::Message(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
+        RunEvent::Warning(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
         RunEvent::Connected {
             description,
             dialect,
@@ -1199,6 +1202,13 @@ impl Runner {
             .map(|(rs, more, tl)| (rs, more, tl, false))
     }
 
+    /// 이 문장을 OFFSET 재질의·재실행으로 이어 받을 수 있는가 — **조회(SELECT·WITH)만**. 프로시저 호출·`PRINT`가 낸 커서 결과
+    /// (T-202)는 커서가 닫히면 이어 받을 길이 없다(프로시저를 다시 돌리지 않는다 · 호스트는 "커서 닫힘"으로 끝낸다).
+    #[must_use]
+    pub fn requery_ok(sql: &str) -> bool {
+        matches!(nsql_script::classify_sql(sql), nsql_script::SqlKind::Query)
+    }
+
     /// 프로필 해석기 장착(체이닝).
     #[must_use]
     pub fn with_resolver(mut self, r: Resolver) -> Self {
@@ -1640,8 +1650,15 @@ impl Runner {
                 let mut plain = Vec::new();
                 for (n, v) in pairs {
                     if let Value::Cursor(c) = v {
-                        if !self.emit_cursor(index, item, &n, c, emit) {
-                            return false;
+                        let page = self.keep_cursor;
+                        match self.emit_cursor(index, item, &n, c, page, emit) {
+                            Err(()) => return false,
+                            Ok(Some(k)) => {
+                                // 상한을 넘는 커서 = 열린 커서로 유지(T-202 · 앞 커서 닫기 = 세션당 1개).
+                                self.close_cursor();
+                                self.cursor = Some(k);
+                            }
+                            Ok(None) => {}
                         }
                     } else {
                         plain.push((n, v));
@@ -2051,9 +2068,18 @@ impl Runner {
                     .collect();
                 let mut cursor_ok = true;
                 if self.auto_cursor {
-                    for (n, c) in &cursors {
-                        if !self.emit_cursor(index, item, n, *c, emit) {
-                            cursor_ok = false;
+                    // 세션당 열린 커서 1개 → **마지막** 커서만 페이지(상한 + 이어 받기)로 남기고 앞 커서는 전부 읽는다(T-202).
+                    let last = cursors.len().saturating_sub(1);
+                    for (i, (n, c)) in cursors.iter().enumerate() {
+                        match self.emit_cursor(index, item, n, *c, i == last && keep_cursor, emit) {
+                            Err(()) => cursor_ok = false,
+                            Ok(Some(k)) => {
+                                if let (Some(old), Some(s)) = (kept.take(), self.session.as_mut()) {
+                                    let _ = s.close_cursor(old.handle);
+                                }
+                                kept = Some(k);
+                            }
+                            Ok(None) => {}
                         }
                     }
                 }
@@ -2143,10 +2169,6 @@ fn trim_rows(mut rs: ResultSet, max_rows: usize) -> (ResultSet, bool) {
 }
 
 impl Runner {
-    fn trim_rows(&self, rs: ResultSet) -> (ResultSet, bool) {
-        trim_rows(rs, self.max_rows)
-    }
-
     /// 드라이버에 페치 상한을 알린다 — 접속 직후 · 상한 변경 시. 커서를 못 여는 드라이버에는 **+1**(초과 여부 판정용 · 러너가 자른다),
     /// 커서 지원 드라이버에는 상한 그대로(드라이버가 한 행을 엿봐 `pending`으로 알린다). 왕복당 행수(`fetch_size`)도 함께.
     fn push_max_rows(&mut self) {
@@ -2179,22 +2201,50 @@ impl Runner {
         item: &Item,
         name: &str,
         cursor: nsql_core::CursorId,
+        page: bool,
         emit: &mut dyn FnMut(RunEvent),
-    ) -> bool {
+    ) -> Result<Option<OpenCursor>, ()> {
         let started = Instant::now();
-        match self.session.as_mut().map(|s| s.fetch_cursor(cursor)) {
-            Some(Ok(rs)) => {
+        // 페이지 = 상한(`max_rows`)까지만 읽고 커서를 열어 둔다(T-202 · 이어 받기 = 호스트의 `fetch_page`/`fetch_all` ·
+        // 커서 결과는 OFFSET 재질의가 없으므로 커서가 닫히면 끝) · 아니면 전부 읽는다(종전 · 앞 커서 · `keep_cursor` 끔).
+        // ★ 커서를 유지할 수 없으면(드라이버 미지원 · `keep_cursor` 끔 · 앞 커서 · 드라이버가 전부 읽음) 줄 수 제한을 **무시하고
+        //   전부** 읽는다 — 잘라 놓고 이어 받을 길이 없는 것보다 낫다(사용자 09-24) · 상한을 넘었으면 눈에 띄는 경고(`Warning`).
+        let limit = self.max_rows;
+        let max = if page && limit > 0 && self.cursor_supported() {
+            limit
+        } else {
+            0
+        };
+        match self
+            .session
+            .as_mut()
+            .map(|s| s.fetch_cursor_page(cursor, max))
+        {
+            Some(Ok((rs, handle))) => {
                 emit(RunEvent::Message(format!("PRINT {name} (refcursor)")));
-                let (rs, more) = self.trim_rows(rs);
+                let served = rs.rows.len();
+                if limit > 0 && handle.is_none() && served > limit {
+                    emit(RunEvent::Warning(tf(
+                        Msg::RunCursorFullFetch,
+                        &[name, &served.to_string(), &limit.to_string()],
+                    )));
+                }
+                let kept = handle.map(|h| OpenCursor {
+                    handle: h,
+                    sql: item.text.clone(),
+                    served,
+                    deferred_end: None,
+                    last_used: Instant::now(),
+                });
                 emit(RunEvent::ResultSet {
                     index,
                     rs,
                     elapsed: started.elapsed(),
-                    more,
+                    more: kept.is_some(),
                     label: Some(name.to_string()),
                 });
                 self.engine.vars.assign(name, Value::Null);
-                true
+                Ok(kept)
             }
             Some(Err(e)) => {
                 emit(RunEvent::Error {
@@ -2202,7 +2252,7 @@ impl Runner {
                     line: item.line,
                     error: e,
                 });
-                false
+                Err(())
             }
             None => {
                 emit(RunEvent::Error {
@@ -2210,7 +2260,7 @@ impl Runner {
                     line: item.line,
                     error: msg_err(t(Msg::NoSession)),
                 });
-                false
+                Err(())
             }
         }
     }
@@ -3813,5 +3863,170 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
     fn same_sql_ignores_terminator_and_whitespace() {
         assert!(same_sql("select 1", "  select 1;\n"));
         assert!(!same_sql("select 1", "select 2"));
+    }
+    /// T-202 커서 결과 이어 받기 — 모의 세션(Oracle 방언 · REF CURSOR 한 개 · 행 N).
+    struct RefCur {
+        n: usize,
+        pos: usize,
+        pageable: bool,
+        commits: usize,
+    }
+
+    impl RefCur {
+        fn rows(&self, from: usize, to: usize) -> ResultSet {
+            ResultSet {
+                columns: vec![nsql_core::Column {
+                    name: "ID".into(),
+                    type_name: "NUMBER".into(),
+                }],
+                rows: (from..to).map(|i| vec![Value::Int(i as i64)]).collect(),
+            }
+        }
+    }
+
+    impl Session for RefCur {
+        fn dialect(&self) -> Dialect {
+            Dialect::Oracle
+        }
+        fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+            let mut r = ExecResult {
+                rows_affected: Some(0),
+                ..ExecResult::default()
+            };
+            if req.sql.contains("FIND") {
+                r.out_params
+                    .push(("RC".into(), Value::Cursor(nsql_core::CursorId(1))));
+            }
+            Ok(r)
+        }
+        fn fetch_cursor(&mut self, _c: nsql_core::CursorId) -> Result<ResultSet, DbError> {
+            Ok(self.rows(0, self.n))
+        }
+        fn fetch_cursor_page(
+            &mut self,
+            _c: nsql_core::CursorId,
+            max: usize,
+        ) -> Result<(ResultSet, Option<CursorHandle>), DbError> {
+            if self.pageable && max > 0 && self.n > max {
+                self.pos = max;
+                Ok((self.rows(0, max), Some(CursorHandle(9))))
+            } else {
+                Ok((self.rows(0, self.n), None))
+            }
+        }
+        fn cursor_supported(&self) -> bool {
+            self.pageable
+        }
+        fn fetch_next(
+            &mut self,
+            h: CursorHandle,
+            max: usize,
+        ) -> Result<(ResultSet, bool), DbError> {
+            assert_eq!(h, CursorHandle(9));
+            let to = if max == 0 {
+                self.n
+            } else {
+                (self.pos + max).min(self.n)
+            };
+            let rs = self.rows(self.pos, to);
+            self.pos = to;
+            Ok((rs, to < self.n))
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            self.commits += 1;
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+    }
+
+    fn refcur_runner(n: usize, pageable: bool) -> Runner {
+        let opener: Opener = Box::new(|_: &ConnectSpec| {
+            Err(DbError {
+                code: None,
+                message: "no".into(),
+                position: None,
+            })
+        });
+        Runner::new(Dialect::Oracle, opener)
+            .with_session(
+                Box::new(RefCur {
+                    n,
+                    pos: 0,
+                    pageable,
+                    commits: 0,
+                }),
+                "fake oracle",
+            )
+            .with_max_rows(5)
+    }
+
+    /// 상한을 넘는 REF CURSOR = 첫 페이지(5행 · `more`) + 커서 유지 → 같은 문장·위치의 `fetch_page`는 커서로 이어 받는다 ·
+    /// 자동 커밋은 커서가 닫힐 때(재질의 아님 · `requery_ok` = 거짓).
+    #[test]
+    fn refcursor_result_is_paged_through_kept_cursor() {
+        let mut r = refcur_runner(12, true);
+        let (errs, ev) = collect(&mut r, "VARIABLE rc REFCURSOR\nEXEC FIND(:rc)\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        let rs = ev
+            .iter()
+            .find_map(|e| match e {
+                RunEvent::ResultSet {
+                    rs, more, label, ..
+                } => Some((rs.rows.len(), *more, label.clone())),
+                _ => None,
+            })
+            .expect("cursor result");
+        assert_eq!(rs, (5, true, Some("RC".into())));
+        assert!(!ev.iter().any(|e| matches!(e, RunEvent::Warning(_))));
+        assert!(!Runner::requery_ok("EXEC FIND(:rc)"));
+        assert!(r.cursor_matches("EXEC FIND(:rc)", 5));
+        let (page, more, _, via) = r.fetch_page("EXEC FIND(:rc)", 5, 5).unwrap();
+        assert!(via && more);
+        assert_eq!(page.rows.len(), 5);
+        assert_eq!(page.rows[0][0], Value::Int(5));
+        let (last, more, _, via) = r.fetch_page("EXEC FIND(:rc)", 10, 5).unwrap();
+        assert!(via && !more);
+        assert_eq!(last.rows.len(), 2);
+        // 다른 위치는 커서와 어긋남 → 커서 없음(호스트는 requery_ok 거짓이라 "커서 닫힘"으로 끝낸다).
+        assert!(!r.cursor_matches("EXEC FIND(:rc)", 3));
+    }
+
+    /// 커서를 유지할 수 없는 드라이버 = 줄 수 제한을 무시하고 전부(12행 · `more` 없음) + ⚠ 경고 한 줄.
+    #[test]
+    fn refcursor_without_cursor_support_fetches_all_with_warning() {
+        let mut r = refcur_runner(12, false);
+        let (errs, ev) = collect(&mut r, "VARIABLE rc REFCURSOR\nEXEC FIND(:rc)\n");
+        assert_eq!(errs, 0, "{ev:?}");
+        assert!(ev.iter().any(|e| matches!(
+            e,
+            RunEvent::ResultSet { rs, more: false, .. } if rs.rows.len() == 12
+        )));
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RunEvent::Warning(m) if m.contains("12") && m.contains('5'))));
+        assert!(!r.cursor_matches("EXEC FIND(:rc)", 12));
+    }
+
+    /// 상한 안이면 커서 없음 · 경고 없음.
+    #[test]
+    fn refcursor_within_limit_has_no_cursor_and_no_warning() {
+        let mut r = refcur_runner(3, true);
+        let (errs, ev) = collect(&mut r, "VARIABLE rc REFCURSOR\nEXEC FIND(:rc)\n");
+        assert_eq!(errs, 0);
+        assert!(ev.iter().any(
+            |e| matches!(e, RunEvent::ResultSet { rs, more: false, .. } if rs.rows.len() == 3)
+        ));
+        assert!(!ev.iter().any(|e| matches!(e, RunEvent::Warning(_))));
+    }
+
+    #[test]
+    fn requery_ok_is_query_only() {
+        assert!(Runner::requery_ok("SELECT 1 FROM DUAL"));
+        assert!(Runner::requery_ok("  with c as (select 1) select * from c"));
+        assert!(!Runner::requery_ok("EXEC P(:rc)"));
+        assert!(!Runner::requery_ok("BEGIN p(:rc); END;"));
+        assert!(!Runner::requery_ok("PRINT rc"));
     }
 }

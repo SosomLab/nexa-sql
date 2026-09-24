@@ -297,6 +297,11 @@ impl Editors {
         e
     }
 
+    /// 파일 이름(확장자)에 맞는 구문 스펙(SQL Preview 창 등 편집기 밖의 상자용).
+    pub(crate) fn syntax_for_title(&self, title: &str) -> Rc<SyntaxSpec> {
+        self.registry.for_title(title)
+    }
+
     fn make_box(&self, text: &str, syntax: &Rc<SyntaxSpec>) -> TextBox {
         // 기본 편집기 placeholder 없음(사용자 09-22).
         let mut tb = TextBox::new("").with_multiline().with_text(text);

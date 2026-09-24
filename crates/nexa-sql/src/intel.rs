@@ -1695,6 +1695,16 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
                 ObjectKind::Index => IconKind::Index,
                 ObjectKind::Synonym => IconKind::Synonym,
                 ObjectKind::Type => IconKind::Type,
+                ObjectKind::ExternalTable | ObjectKind::ForeignTable => IconKind::Table,
+                ObjectKind::Aggregate => IconKind::Function,
+                ObjectKind::Queue => IconKind::Queue,
+                ObjectKind::DbLink => IconKind::Link,
+                ObjectKind::JavaClass => IconKind::Java,
+                ObjectKind::Job | ObjectKind::SchedulerJob | ObjectKind::SchedulerProgram => {
+                    IconKind::Job
+                }
+                ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
+                ObjectKind::Extension => IconKind::Package,
             });
         }
     }

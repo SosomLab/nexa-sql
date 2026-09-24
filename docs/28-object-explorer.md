@@ -130,6 +130,8 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 
 ## 5. 방언별 노드 종류(1차)
 
+> ★ 09-25 갱신: 2차 트리(DBeaver 대조 · 폴더 순서 · 객체 아래 하위 폴더 18종 · DB 수준 폴더 · 유효성 배지 · Generate SQL)는 **[83](83-object-explorer-dbms-trees-and-generate-sql.md) §1~§2가 원장**이다 — 아래 표는 1차 기록.
+
 | 방언 | 루트 아래 | 스키마 폴더 |
 |---|---|---|
 | Oracle | Schemas(`ALL_USERS`) | Tables · Views · Materialized Views · Sequences · Procedures · Functions · Packages · Triggers · Indexes · Synonyms · Types · DB Links |

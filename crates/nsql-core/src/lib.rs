@@ -1077,6 +1077,16 @@ pub trait Session {
     fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError>;
     /// 서버 커서를 1회 소비해 결과 집합으로(REFCURSOR `PRINT`).
     fn fetch_cursor(&mut self, cursor: CursorId) -> Result<ResultSet, DbError>;
+    /// ★ 서버 커서(REFCURSOR)의 **첫 `max`행만**(0 = 전부) 읽고, 남은 행이 있으면 세션의 열린 커서로 남겨 핸들을 돌려준다
+    /// (T-202 · docs/43 §3-3 — 이어 받기는 [`Self::fetch_next`] · 커서는 세션당 1개라 앞 커서는 대체). 기본 = 전부 읽고 핸들 없음.
+    fn fetch_cursor_page(
+        &mut self,
+        cursor: CursorId,
+        max: usize,
+    ) -> Result<(ResultSet, Option<CursorHandle>), DbError> {
+        let _ = max;
+        self.fetch_cursor(cursor).map(|rs| (rs, None))
+    }
     fn commit(&mut self) -> Result<(), DbError>;
     fn rollback(&mut self) -> Result<(), DbError>;
     /// 세션 옵션(`serveroutput` = on/off · `fetch_size` = n …). 모르는 옵션은 무시한다.

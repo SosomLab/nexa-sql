@@ -1233,6 +1233,9 @@ impl Printer {
             RunEvent::Message(m) => {
                 let _ = writeln!(out, "{m}");
             }
+            RunEvent::Warning(m) => {
+                let _ = writeln!(out, "{m}");
+            }
             RunEvent::Connected {
                 description,
                 dialect,

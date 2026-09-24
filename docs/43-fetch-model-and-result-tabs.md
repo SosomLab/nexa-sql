@@ -109,6 +109,14 @@ pub struct ExecResult { …, pub pending: Option<CursorHandle> }   // 마지막 
 | 부하원 원장 | [39 §3](39-resource-governance.md)에 두 줄: "서버 커서(세션당 1)" · "결과 메모리(예산)" — 끄는 키 `grid.fetch_mode=off`(= 종전 단발 페치) | `grid.fetch_mode` |
 | 측정 | S-2 방식: 200행 ×(Fetch next 10회 → 탭 닫기) 5주기 뒤 Private 증가 ≤ 100 KB · 커서 핸들 0 | `scripts/memcycle.ps1` 시나리오 추가 |
 
+### 3-6. 커서 결과(REF CURSOR `PRINT` · OUT 커서 자동 표시)의 이어 받기(T-202 · 09-24)
+
+- 종전: 드라이버가 커서 행을 **전부** 읽은 뒤 러너가 `grid.max_rows`로 잘라 `more=true` → 그리드의 자동 페치·⇊가 출처 문장(`EXEC …`)을 OFFSET으로 감싸 재질의 → ORA-00900 카드 반복(사용자 캡처).
+- 지금: 포트 `Session::fetch_cursor_page(cursor, max) -> (ResultSet, Option<CursorHandle>)` — 상한까지만 읽고 남은 행이 있으면 **세션의 열린 커서 자리**(§3-3 · 세션당 1개)에 REF CURSOR를 남긴다(Oracle `CursorSrc::Ref` · `RefCursor::query()`는 문장 핸들을 빌려 감싸기만 하므로 페이지마다 다시 감싸 이어 읽음). 러너는 `OpenCursor{ sql = 그 문장 원문, served }`로 보관 → 그리드의 `FetchPage`가 §3-1과 같은 길(`cursor_matches` → `fetch_next` · ⇊ = `fetch_all`)로 이어 받는다. 자동 커밋은 커서가 닫힐 때(`deferred_end`) · 유휴 닫기 `db.cursor_idle_secs` · 새 실행 = 앞 커서 닫기 — 모두 SELECT 커서와 같은 규칙.
+- **재질의 없음**: `Runner::requery_ok(sql)`(조회만 참) — 커서가 닫힌 뒤의 요청은 워커 첫 게이트에서 빈 페이지 + `FetchStop::CursorGone` → 그리드 `more=false` + 상태줄 "커서가 닫혀 나머지 행을 이어 받을 수 없습니다 — 문장을 다시 실행하세요". 프로시저를 다시 돌리지 않는다.
+- **커서 유지 불가 = 전체 조회 강제**(사용자 09-24): 드라이버 `cursor_supported` 거짓 · `keep_cursor` 끔 · 한 문장의 커서 둘 이상 중 앞 커서 · 드라이버가 핸들 없이 전부 읽음 → `max = 0`으로 전부 읽고, 상한을 넘었으면 `RunEvent::Warning` ⚠ "{이름}: 서버 커서를 유지할 수 없어 줄 수 제한(N)을 무시하고 전체 M행을 조회했습니다"(GUI 상태줄 + 로그 · CLI 출력). Σ 건수는 커서 결과에서 여전히 불가(`countable=false`).
+- PG refcursor는 트랜잭션 안에서만 살아 현행(`FETCH ALL` 안내) · MSSQL/SQLite는 REF CURSOR 없음.
+
 ## 4. 설계 — GUI 결과 패널·탭
 
 ### 4-1. 구조(`grid_stash` 확장)

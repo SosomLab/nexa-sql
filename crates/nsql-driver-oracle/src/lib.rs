@@ -113,10 +113,17 @@ type Batch = (Vec<Vec<Value>>, Option<Vec<Value>>);
 /// 열린 서버 커서(추가 페치용 · docs/43 D-70) — 소유 ResultSet이 문장 핸들을 쥔다(drop = 커서 닫힘).
 struct OpenCursor {
     id: u32,
-    rs: oracle::ResultSet<'static, Row>,
+    src: CursorSrc,
     columns: Vec<Column>,
     /// 상한에서 엿본 다음 행(다음 `fetch_next`의 첫 행).
     carry: Option<Vec<Value>>,
+}
+
+/// 열린 커서의 원천 — 조회 문장의 소유 결과 집합, 또는 OUT으로 돌아온 REF CURSOR(T-202). `RefCursor::query()`는 문장 핸들을
+/// **빌려 감싸기만** 하고 페치 위치는 문장 핸들이 기억하므로, 페이지마다 다시 감싸 이어 읽는다(unsafe 0).
+enum CursorSrc {
+    Stmt(oracle::ResultSet<'static, Row>),
+    Ref(RefCursor),
 }
 
 /// OCI 호출 상한(초 · 0 = 없음) — 호스트가 설정에서 넣는다 · 다음 접속부터.
@@ -347,7 +354,7 @@ impl OracleSession {
 
     /// 소유 ResultSet에서 `max`행(0 = 끝까지)을 읽고 상한에 닿았으면 한 행을 더 엿본다 — (읽은 행, 엿본 행).
     fn read_batch(
-        rs: &mut oracle::ResultSet<'static, Row>,
+        rs: &mut oracle::ResultSet<'_, Row>,
         max: usize,
         carry: Option<Vec<Value>>,
     ) -> Result<Batch, DbError> {
@@ -542,7 +549,7 @@ impl Session for OracleSession {
                 self.next_open += 1;
                 self.open = Some(OpenCursor {
                     id,
-                    rs,
+                    src: CursorSrc::Stmt(rs),
                     columns,
                     carry: Some(first),
                 });
@@ -619,6 +626,15 @@ impl Session for OracleSession {
     }
 
     fn fetch_cursor(&mut self, cursor: CursorId) -> Result<ResultSet, DbError> {
+        self.fetch_cursor_page(cursor, 0).map(|(rs, _)| rs)
+    }
+
+    /// REF CURSOR의 첫 `max`행(0 = 전부) · 남은 행이 있으면 커서를 열린 커서 자리에 남긴다(T-202 · 앞 커서는 대체 = 세션당 1개).
+    fn fetch_cursor_page(
+        &mut self,
+        cursor: CursorId,
+        max: usize,
+    ) -> Result<(ResultSet, Option<CursorHandle>), DbError> {
         let Some(mut rc) = self.cursors.remove(&cursor.0) else {
             return Err(DbError {
                 code: None,
@@ -626,14 +642,28 @@ impl Session for OracleSession {
                 position: None,
             });
         };
-        let rs = rc.query().map_err(|e| err(&e))?;
-        let columns = Self::columns(rs.column_info());
-        let mut rows = Vec::new();
-        for row in rs {
-            let row = row.map_err(|e| err(&e))?;
-            rows.push(Self::row_to_values(&row)?);
-        }
-        Ok(ResultSet { columns, rows })
+        let (columns, rows, peek) = {
+            let mut rs = rc.query().map_err(|e| err(&e))?;
+            let columns = Self::columns(rs.column_info());
+            let (rows, peek) = Self::read_batch(&mut rs, max, None)?;
+            (columns, rows, peek)
+        };
+        let out = ResultSet {
+            columns: columns.clone(),
+            rows,
+        };
+        let handle = peek.map(|first| {
+            let id = self.next_open;
+            self.next_open += 1;
+            self.open = Some(OpenCursor {
+                id,
+                src: CursorSrc::Ref(rc),
+                columns,
+                carry: Some(first),
+            });
+            CursorHandle(id)
+        });
+        Ok((out, handle))
     }
 
     fn cursor_supported(&self) -> bool {
@@ -648,7 +678,14 @@ impl Session for OracleSession {
                 position: None,
             });
         };
-        let r = Self::read_batch(&mut cur.rs, max, cur.carry.take());
+        let carry = cur.carry.take();
+        let r = match &mut cur.src {
+            CursorSrc::Stmt(rs) => Self::read_batch(rs, max, carry),
+            CursorSrc::Ref(rc) => match rc.query() {
+                Ok(mut rs) => Self::read_batch(&mut rs, max, carry),
+                Err(e) => Err(err(&e)),
+            },
+        };
         match r {
             Ok((rows, peek)) => {
                 let more = peek.is_some();

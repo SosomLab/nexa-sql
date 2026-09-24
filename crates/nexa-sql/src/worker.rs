@@ -337,6 +337,8 @@ pub(crate) enum FetchStop {
     Budget,
     /// 사용자가 중지(도구줄 ■ · Esc).
     Cancelled,
+    /// 커서 결과(REF CURSOR · T-202)의 커서가 이미 닫혔다(유휴·다른 실행·커밋) — 재질의가 없으므로 "더 없음"으로 끝낸다.
+    CursorGone,
 }
 
 /// 입력 창의 답(D-137) — 워커는 `RunEvent::InputNeeded`를 낸 뒤 이것을 기다린다(그동안 세션은 "바쁨").
@@ -795,7 +797,13 @@ pub(crate) fn spawn(
                             }),
                             (Ok(()), None) => Err(t(Msg::ExpNotConnected).to_string()),
                             (Ok(()), Some(_)) => {
-                                if limit == 0 {
+                                if !runner.cursor_matches(&sql, offset)
+                                    && !nsql_run::Runner::requery_ok(&sql)
+                                {
+                                    // ★ T-202: 커서 결과인데 커서가 없다 — 프로시저를 다시 돌리지 않고 빈 페이지 + 더 없음.
+                                    stop = Some(FetchStop::CursorGone);
+                                    Ok((nsql_core::ResultSet::default(), false, Duration::ZERO))
+                                } else if limit == 0 {
                                     // ★ 전체 조회 = **나머지 이어 받기**(사용자 09-17 "현재 위치 유지"): 재실행·교체가 아니라 `offset`
                                     //   (= 그리드가 이미 든 행 수)부터 끝까지 받아 이어 붙인다 → 스크롤·정렬·텍스트 보기 위치가 그대로.
                                     //   ① 같은 문장의 커서가 그 위치면 커서에서 fetch_all(재전송 0 · 순서 일관)

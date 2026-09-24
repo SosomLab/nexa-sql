@@ -110,6 +110,87 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     &rs(&["#", "Name", "Type", "Nullable", "Default"], rows),
                 );
             }
+            // ★ 하위 항목(83 §1): `sub <object> <kind>` — 제약·외래 키·참조·인덱스·트리거·파티션·의존·규칙·정책·확장 속성·인자·속성·메서드·멤버.
+            "sub" | "subs" => {
+                let (Some(obj), Some(sub)) = (o.positional.get(1), o.positional.get(2)) else {
+                    return Ok(usage());
+                };
+                let Some(sub) = nsql_catalog::SubKind::parse(sub) else {
+                    eprintln!("알 수 없는 하위 종류: {sub}");
+                    return Ok(2);
+                };
+                let (sc, name) = split_name(obj, &schema);
+                // 주인 종류 = 3번째 인자(기본 table) — 인덱스 컬럼·타입 속성·패키지 멤버는 종류가 달라야 맞는 질의를 탄다.
+                let kind = o
+                    .positional
+                    .get(3)
+                    .and_then(|k| ObjectKind::parse(k))
+                    .unwrap_or(ObjectKind::Table);
+                let owner = nsql_catalog::ObjectInfo {
+                    schema: sc,
+                    name,
+                    kind,
+                    status: String::new(),
+                    modified: String::new(),
+                    extra: String::new(),
+                };
+                let list = nsql_catalog::sub_items(s, &owner, sub)?;
+                let rows = list
+                    .into_iter()
+                    .map(|i| vec![i.name, i.detail, i.status, format!("{:?}", i.icon)])
+                    .collect();
+                print_rs(o, dialect, &rs(&["Name", "Detail", "Status", "Icon"], rows));
+            }
+            // ★ Generate SQL(83 §3): `gen <what> <object> [kind] [sub-kind sub-name]` — GUI 미리보기와 같은 함수.
+            "gen" | "generate" => {
+                let (Some(what), Some(obj)) = (o.positional.get(1), o.positional.get(2)) else {
+                    return Ok(usage());
+                };
+                let Some(what) = nsql_catalog::GenWhat::parse(what) else {
+                    eprintln!("알 수 없는 생성 종류: {what}");
+                    return Ok(2);
+                };
+                let (sc, name) = split_name(obj, &schema);
+                let kind = o
+                    .positional
+                    .get(3)
+                    .and_then(|k| ObjectKind::parse(k))
+                    .unwrap_or(ObjectKind::Table);
+                let sub = match (o.positional.get(4), o.positional.get(5)) {
+                    (Some(sk), Some(sn)) => match nsql_catalog::SubKind::parse(sk) {
+                        Some(sk) => Some((sk, sn.clone())),
+                        None => {
+                            eprintln!("알 수 없는 하위 종류: {sk}");
+                            return Ok(2);
+                        }
+                    },
+                    _ => None,
+                };
+                // 서명·테이블 같은 부가(`extra`)는 목록에서 찾아 채운다(PG 오버로드 · SQL Server 함수 종류·인덱스 테이블).
+                let extra = if kind.is_routine() || kind == ObjectKind::Index {
+                    nsql_catalog::objects(s, &sc, kind)?
+                        .into_iter()
+                        .find(|i| i.name.eq_ignore_ascii_case(&name))
+                        .map(|i| i.extra)
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let spec = nsql_catalog::GenSpec {
+                    owner: nsql_catalog::ObjectInfo {
+                        schema: sc,
+                        name,
+                        kind,
+                        status: String::new(),
+                        modified: String::new(),
+                        extra,
+                    },
+                    what,
+                    sub,
+                };
+                let text = nsql_catalog::generate(s, &spec)?;
+                print!("{text}");
+            }
             "source" | "ddl" => {
                 let (Some(kind), Some(name)) = (o.positional.get(1), o.positional.get(2)) else {
                     return Ok(usage());

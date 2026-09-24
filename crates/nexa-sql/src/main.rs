@@ -66,6 +66,7 @@ mod search_history;
 mod search_panel;
 mod sessions;
 mod sessions_win;
+mod sqlprev_win;
 mod syntax;
 mod theme;
 mod toast;
@@ -197,6 +198,14 @@ struct App {
     mem_win: mem_win::MemWin,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
+    /// SQL Preview 모달(탐색기 ▸ Generate SQL · docs/83 §4).
+    sqlprev_win: sqlprev_win::SqlPrevWin,
+    /// 열 차례인 미리보기(사건 루프 밖에서 온 탐색기 응답 → `el`이 있는 자리에서 연다).
+    sqlprev_pending: Option<(
+        nsql_catalog::GenSpec,
+        Result<String, String>,
+        Option<ConnectSpec>,
+    )>,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
     /// 워커가 비밀번호를 묻는다(세션 id · 가린 접속 문자열) — 입력 창은 이벤트 루프에서 연다.
     pw_pending: Option<(u64, String, bool)>,
@@ -1063,6 +1072,7 @@ impl App {
             self.prefs_win.window(),
             self.txlog_win.window(),
             self.input_win.window(),
+            self.sqlprev_win.window(),
             self.vars_win.window(),
         ]
         .into_iter()
@@ -1495,6 +1505,14 @@ impl App {
                                 });
                             }
                             match stop {
+                                Some(worker::FetchStop::CursorGone) => {
+                                    // 커서 결과의 커서가 닫혔다(T-202) — 그리드는 빈 페이지로 `more=false`가 됐다 · 안내 한 줄.
+                                    self.sess.status = t(Msg::StCursorGone).into();
+                                    self.log_win.push(LogEntry::new(
+                                        LogKind::Info,
+                                        self.sess.status.clone(),
+                                    ));
+                                }
                                 Some(worker::FetchStop::Budget) => {
                                     // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
                                     self.sess.status = tf(
@@ -1935,11 +1953,17 @@ impl App {
         if self.input_win.is_modal() {
             return self.input_win.window();
         }
-        self.file_win.window().or_else(|| self.conn_win.window())
+        self.file_win
+            .window()
+            .or_else(|| self.conn_win.window())
+            .or_else(|| self.sqlprev_win.window())
     }
 
     fn modal_open(&self) -> bool {
-        self.conn_win.is_open() || self.file_win.is_open() || self.input_win.is_modal()
+        self.conn_win.is_open()
+            || self.file_win.is_open()
+            || self.input_win.is_modal()
+            || self.sqlprev_win.is_open()
     }
 
     /// 모달 창(접속 · 파일 · 비밀번호 입력) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
@@ -1964,6 +1988,7 @@ impl App {
                 self.conn_win.window(),
                 self.file_win.window(),
                 self.input_win.window(),
+                self.sqlprev_win.window(),
             ]
             .into_iter()
             .flatten()
@@ -8133,6 +8158,31 @@ impl App {
             self.redraw();
             return;
         }
+        // 자체 시험용(83 · 09-25): 줄 펼치기 · 트리 덤프 · SQL Preview 덤프(키 주입 없이 구조·생성 결과를 파일로 확인).
+        if let Some(rest) = id.strip_prefix("explorer.expand") {
+            let row = rest.trim_start_matches(':').parse().unwrap_or(0);
+            let ok = self.explorer.capture_expand(row);
+            self.sess.status = format!("explorer.expand row={row} ok={ok}");
+            self.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("explorer.dump:") {
+            let _ = std::fs::write(path, self.explorer.dump_rows());
+            return;
+        }
+        if let Some(path) = id.strip_prefix("sqlprev.dump:") {
+            let text = if self.sqlprev_win.is_open() {
+                format!(
+                    "{}\n---\n{}",
+                    self.sqlprev_win.note_text(),
+                    self.sqlprev_win.text()
+                )
+            } else {
+                "closed".to_string()
+            };
+            let _ = std::fs::write(path, text);
+            return;
+        }
         if let Some(rest) = id.strip_prefix("explorer.menu") {
             let row = rest.trim_start_matches(':').parse().unwrap_or(0);
             let ok = self.explorer.capture_menu(row);
@@ -10400,6 +10450,7 @@ impl App {
                 self.project.name().unwrap_or_else(|| "untitled".into()),
                 project::EXT
             ),
+            (PickerMode::Save, FilePurpose::SqlPreview) => self.sqlprev_win.file_name(),
             (PickerMode::Open | PickerMode::Folder, _) => String::new(),
         };
         // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
@@ -12272,6 +12323,22 @@ impl App {
                         self.sess.status = t(Msg::ErrClipboard).into();
                     }
                 }
+                // Generate SQL 결과(83 §3) — 창은 `el`이 있는 자리에서 연다(이미 열려 있으면 바로 본문 교체).
+                ExplorerAction::Preview { spec, r, server } => {
+                    if let Err(e) = &r {
+                        self.sess.status = tf(Msg::StGenFailed, &[e]);
+                    } else {
+                        self.sess.status = spec.title();
+                    }
+                    if self.sqlprev_win.is_open() {
+                        self.sqlprev_win.spec = Some(spec);
+                        self.sqlprev_win.server = server;
+                        self.sqlprev_win.set_result(r);
+                    } else {
+                        self.sqlprev_pending = Some((spec, r, server));
+                    }
+                    changed = true;
+                }
             }
         }
         changed
@@ -12503,6 +12570,10 @@ impl App {
                             tf(Msg::LogVarsChanged, &[&line]),
                         ));
                     }
+                }
+                RunEvent::Warning(m) => {
+                    // 눈에 띄게(T-202): 상태줄 + 로그(`log_entries`가 이미 넣었다).
+                    self.sess.status = m;
                 }
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) {
@@ -15422,6 +15493,21 @@ impl ApplicationHandler<Wake> for App {
             self.open_file_window(el, mode);
             self.sync_modal();
         }
+        // Generate SQL 결과 → SQL Preview 모달(docs/83 §4).
+        if let Some((spec, r, server)) = self.sqlprev_pending.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("preview.sql");
+            self.sqlprev_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                spec,
+                server,
+                r,
+                syntax,
+            );
+            self.sync_modal();
+        }
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
         if let Some((sid, needs)) = self.input_pending.take() {
             let owner = self.window.clone();
@@ -15849,6 +15935,7 @@ impl ApplicationHandler<Wake> for App {
         let modal_open = self.modal_open();
         let is_modal_win = self.conn_win.is(id)
             || self.file_win.is(id)
+            || self.sqlprev_win.is(id)
             || (self.input_win.is_modal() && self.input_win.is(id));
         if modal_open
             && !is_modal_win
@@ -15903,6 +15990,14 @@ impl ApplicationHandler<Wake> for App {
                                 Err(e) => self.prefs_win.set_error(key, e.to_string()),
                             }
                             self.prefs_win.redraw();
+                        }
+                        (PickerMode::Save, FilePurpose::SqlPreview) => {
+                            let text = self.sqlprev_win.text();
+                            self.sess.status = match std::fs::write(&path, text) {
+                                Ok(()) => tf(Msg::StSqlPreviewSaved, &[&path.to_string_lossy()]),
+                                Err(e) => tf(Msg::ErrLogFile, &[&e.to_string()]),
+                            };
+                            self.sqlprev_win.set_note(self.sess.status.clone());
                         }
                         (PickerMode::Open, FilePurpose::Project) => self.project_load_path(&path),
                         (PickerMode::Save, FilePurpose::Project) => self.project_save_to(&path),
@@ -16143,6 +16238,55 @@ impl ApplicationHandler<Wake> for App {
                         .paint(&rows, &self.ui_font, &self.theme, ui_px);
                 }
                 other => self.vars_apply(other),
+            }
+            return;
+        }
+        if self.sqlprev_win.is(id) {
+            match self.sqlprev_win.handle(&event) {
+                sqlprev_win::SqlPrevAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    self.sqlprev_win.paint(&self.ui_font, &self.theme, ui_px);
+                }
+                sqlprev_win::SqlPrevAction::Refresh => {
+                    if let Some(spec) = self.sqlprev_win.spec.clone() {
+                        let server = self.sqlprev_win.server.clone();
+                        self.sqlprev_win
+                            .set_note(tf(Msg::StGenerating, &[&spec.title()]));
+                        self.explorer.gen_sql(server.as_ref(), spec);
+                    }
+                }
+                sqlprev_win::SqlPrevAction::Save => {
+                    self.file_purpose = FilePurpose::SqlPreview;
+                    self.open_file_dlg = Some(PickerMode::Save);
+                }
+                sqlprev_win::SqlPrevAction::OpenEditor => {
+                    let title = self.sqlprev_win.file_name();
+                    let text = self.sqlprev_win.text();
+                    self.sqlprev_win.close();
+                    self.editors.new_tab(Some(title));
+                    self.editors.cur_mut().set_text(&text);
+                    self.set_focus(Focus::Editor);
+                    self.sync_modal();
+                }
+                sqlprev_win::SqlPrevAction::Copy => {
+                    let text = self.sqlprev_win.copy_text();
+                    let n = text.chars().count();
+                    if clipboard::write_text(&text) {
+                        self.sqlprev_win
+                            .set_note(tf(Msg::SpCopied, &[&n.to_string()]));
+                    } else {
+                        self.sqlprev_win.set_note(t(Msg::ErrClipboard).to_string());
+                    }
+                }
+                sqlprev_win::SqlPrevAction::Close => {
+                    self.sqlprev_win.close();
+                    self.sync_modal();
+                }
+                sqlprev_win::SqlPrevAction::None => {
+                    if self.conn_modal && !self.modal_open() {
+                        self.sync_modal();
+                    }
+                }
             }
             return;
         }
@@ -16986,6 +17130,8 @@ fn main() {
         txlog_win,
         sessions_win,
         mem_win: mem_win::MemWin::new(),
+        sqlprev_win: sqlprev_win::SqlPrevWin::new(),
+        sqlprev_pending: None,
         input_win,
         input_pending: None,
         pw_pending: None,
@@ -17491,6 +17637,8 @@ enum FilePurpose {
     RunFile,
     /// 프로젝트 파일 열기/저장 · 프로젝트 폴더 추가(docs/67).
     Project,
+    /// SQL Preview 본문을 파일로(docs/83 §4).
+    SqlPreview,
 }
 
 /// 읽은 파일을 어떻게 쓸 것인가.

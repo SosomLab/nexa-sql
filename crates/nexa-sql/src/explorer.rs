@@ -14,7 +14,7 @@ use nexa_ctl::theme::{Color, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key as CtlKey, ScrollBars};
 use nexa_gfx::IconImage;
-use nsql_catalog::{ColumnInfo, ObjectInfo, ObjectKind};
+use nsql_catalog::{ColumnInfo, GenSpec, ObjectInfo, ObjectKind, SubIcon, SubItem, SubKind};
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
@@ -29,9 +29,19 @@ use std::time::{Duration, Instant};
 enum NodeKind {
     Root,
     Schema(String),
-    Folder { schema: String, kind: ObjectKind },
+    Folder {
+        schema: String,
+        kind: ObjectKind,
+    },
     Object(ObjectInfo),
     Column(ColumnInfo),
+    /// ★ 객체 아래 하위 폴더(83 §1 · Columns·Constraints·Foreign Keys·…) — 표 `nsql_catalog::sub_kinds`가 만든다.
+    Sub {
+        owner: Box<ObjectInfo>,
+        sub: SubKind,
+    },
+    /// 하위 폴더의 잎(제약·인덱스·트리거·인자 …).
+    Item(SubItem),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +114,18 @@ enum Req {
         node: usize,
         schema: String,
         table: String,
+    },
+    /// 하위 폴더의 잎(제약·인덱스·트리거·인자 … · 83 §1) — `nsql_catalog::sub_items`.
+    SubItems {
+        gen: u64,
+        node: usize,
+        owner: ObjectInfo,
+        sub: SubKind,
+    },
+    /// Generate SQL(83 §3) — `nsql_catalog::generate`.
+    GenSql {
+        gen: u64,
+        spec: GenSpec,
     },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
     ColumnsMeta {
@@ -382,6 +404,17 @@ enum Resp {
         node: usize,
         r: Result<Vec<ColumnInfo>, String>,
     },
+    /// 하위 폴더의 잎 목록(83 §1).
+    SubItems {
+        gen: u64,
+        node: usize,
+        r: Result<Vec<SubItem>, String>,
+    },
+    GenSql {
+        gen: u64,
+        spec: GenSpec,
+        r: Result<String, String>,
+    },
     ColumnsMeta {
         gen: u64,
         schema: String,
@@ -444,6 +477,12 @@ pub(crate) enum ExplorerAction {
     DisconnectServer(Option<ConnectSpec>),
     ConnectServer(Option<ConnectSpec>),
     NewTabHere(Option<ConnectSpec>),
+    /// ★ Generate SQL 결과(83 §3) → 호스트가 SQL Preview 모달을 연다(`server` = 이 칸의 서버 · `ExplorerSet`이 채운다).
+    Preview {
+        spec: GenSpec,
+        r: Result<String, String>,
+        server: Option<ConnectSpec>,
+    },
 }
 
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
@@ -609,6 +648,8 @@ fn node_key(k: &NodeKind) -> String {
         NodeKind::Folder { schema, kind } => format!("f:{schema}:{kind:?}"),
         NodeKind::Object(o) => format!("o:{:?}:{}:{}", o.kind, o.name, o.extra),
         NodeKind::Column(c) => format!("c:{}", c.name),
+        NodeKind::Sub { owner, sub } => format!("sub:{}:{sub:?}", owner.name),
+        NodeKind::Item(it) => format!("i:{:?}:{}", it.icon, it.name),
     }
 }
 
@@ -656,6 +697,8 @@ fn req_label(r: &Req) -> String {
         Req::Suspend => "suspend".into(),
         Req::Schemas { .. } => "schemas".into(),
         Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
+        Req::SubItems { owner, sub, .. } => format!("sub {} {sub:?}", owner.name),
+        Req::GenSql { spec, .. } => format!("gen {}", spec.title()),
         Req::Columns { schema, table, .. } => format!("columns {schema}.{table}"),
         Req::ColumnsMeta {
             schema,
@@ -678,7 +721,12 @@ fn req_label(r: &Req) -> String {
 fn req_prio(r: &Req) -> u8 {
     match r {
         Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend => 0,
-        Req::Schemas { .. } | Req::Objects { .. } | Req::Columns { .. } | Req::Source { .. } => 1,
+        Req::Schemas { .. }
+        | Req::Objects { .. }
+        | Req::Columns { .. }
+        | Req::SubItems { .. }
+        | Req::GenSql { .. }
+        | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
         Req::ColumnsMeta { urgent: false, .. } => 3,
         Req::ObjectsMeta { .. } => 4,
@@ -850,6 +898,29 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 Resp::Columns { gen, node, r }
             }
+            Req::SubItems {
+                gen,
+                node,
+                owner,
+                sub,
+            } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::sub_items(s, &owner, sub).map_err(err_s)
+                });
+                Resp::SubItems { gen, node, r }
+            }
+            Req::GenSql { gen, spec } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::generate(s, &spec).map_err(err_s)
+                });
+                Resp::GenSql { gen, spec, r }
+            }
             Req::ColumnsMeta {
                 gen,
                 schema,
@@ -1001,6 +1072,40 @@ fn pick_current_schema(list: &[String], server: Option<&str>, user: &str) -> Opt
         .or_else(|| (list.len() == 1).then(|| list[0].clone()))
 }
 
+/// 종류 폴더 라벨(i18n · 방언별 이름 = DBeaver: Oracle·SQL Server "Table Triggers" · SQL Server·PG "Data Types" · 83 §1).
+fn folder_label(dialect: Option<Dialect>, kind: ObjectKind) -> String {
+    let msg = match (dialect, kind) {
+        (Some(Dialect::Oracle | Dialect::Mssql), ObjectKind::Trigger) => Msg::ExpTableTriggers,
+        (Some(Dialect::Mssql | Dialect::Postgres), ObjectKind::Type) => Msg::ExpDataTypes,
+        _ => folder_msg(kind),
+    };
+    t(msg).to_string()
+}
+
+/// 하위 폴더 라벨(i18n · DBMS 용어라 영어 그대로).
+fn sub_msg(sub: SubKind) -> Msg {
+    match sub {
+        SubKind::Columns => Msg::SubColumns,
+        SubKind::Constraints => Msg::SubConstraints,
+        SubKind::UniqueKeys => Msg::SubUniqueKeys,
+        SubKind::CheckConstraints => Msg::SubCheckConstraints,
+        SubKind::ForeignKeys => Msg::SubForeignKeys,
+        SubKind::References => Msg::SubReferences,
+        SubKind::Indexes => Msg::SubIndexes,
+        SubKind::Triggers => Msg::SubTriggers,
+        SubKind::Partitions => Msg::SubPartitions,
+        SubKind::Dependencies => Msg::SubDependencies,
+        SubKind::Rules => Msg::SubRules,
+        SubKind::Policies => Msg::SubPolicies,
+        SubKind::ExtendedProperties => Msg::SubExtendedProperties,
+        SubKind::Arguments => Msg::SubArguments,
+        SubKind::Attributes => Msg::SubAttributes,
+        SubKind::Methods => Msg::SubMethods,
+        SubKind::Procedures => Msg::SubProcedures,
+        SubKind::Functions => Msg::SubFunctions,
+    }
+}
+
 /// 종류 폴더 라벨(i18n).
 fn folder_msg(kind: ObjectKind) -> Msg {
     match kind {
@@ -1016,6 +1121,18 @@ fn folder_msg(kind: ObjectKind) -> Msg {
         ObjectKind::Index => Msg::ExpIndexes,
         ObjectKind::Synonym => Msg::ExpSynonyms,
         ObjectKind::Type => Msg::ExpTypes,
+        ObjectKind::ExternalTable => Msg::ExpExternalTables,
+        ObjectKind::ForeignTable => Msg::ExpForeignTables,
+        ObjectKind::Aggregate => Msg::ExpAggregates,
+        ObjectKind::Queue => Msg::ExpQueues,
+        ObjectKind::DbLink => Msg::ExpDbLinks,
+        ObjectKind::JavaClass => Msg::ExpJava,
+        ObjectKind::Job => Msg::ExpJobs,
+        ObjectKind::SchedulerJob => Msg::ExpSchedulerJobs,
+        ObjectKind::SchedulerProgram => Msg::ExpSchedulerPrograms,
+        ObjectKind::SchemaTrigger => Msg::ExpSchemaTriggers,
+        ObjectKind::Extension => Msg::ExpExtensions,
+        ObjectKind::EventTrigger => Msg::ExpEventTriggers,
     }
 }
 
@@ -1028,10 +1145,36 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
         | ObjectKind::Function
         | ObjectKind::Package
         | ObjectKind::PackageBody => th.syn_keyword,
-        ObjectKind::Trigger => th.warn,
-        ObjectKind::Sequence | ObjectKind::Index | ObjectKind::Synonym | ObjectKind::Type => {
-            th.syn_number
-        }
+        ObjectKind::Trigger | ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => th.warn,
+        ObjectKind::ExternalTable | ObjectKind::ForeignTable => th.accent,
+        ObjectKind::Aggregate => th.syn_keyword,
+        ObjectKind::Sequence
+        | ObjectKind::Index
+        | ObjectKind::Synonym
+        | ObjectKind::Type
+        | ObjectKind::Queue
+        | ObjectKind::DbLink
+        | ObjectKind::JavaClass
+        | ObjectKind::Job
+        | ObjectKind::SchedulerJob
+        | ObjectKind::SchedulerProgram
+        | ObjectKind::Extension => th.syn_number,
+    }
+}
+
+/// 잎 항목 아이콘(카탈로그 힌트 → 탐색기 아이콘 종류).
+fn sub_icon_kind(icon: SubIcon) -> IconKind {
+    match icon {
+        SubIcon::Column | SubIcon::Argument | SubIcon::Attribute => IconKind::Column,
+        SubIcon::Key | SubIcon::Check | SubIcon::ForeignKey => IconKind::Constraint,
+        SubIcon::Reference | SubIcon::Dependency => IconKind::Synonym,
+        SubIcon::Index => IconKind::Index,
+        SubIcon::Trigger => IconKind::Trigger,
+        SubIcon::Partition => IconKind::Partition,
+        SubIcon::Rule | SubIcon::Policy => IconKind::Rule,
+        SubIcon::Property => IconKind::Property,
+        SubIcon::Method | SubIcon::Procedure => IconKind::Procedure,
+        SubIcon::Function => IconKind::Function,
     }
 }
 
@@ -1193,10 +1336,25 @@ impl Explorer {
                     ObjectKind::Index => IconKind::Index,
                     ObjectKind::Synonym => IconKind::Synonym,
                     ObjectKind::Type => IconKind::Type,
+                    ObjectKind::ExternalTable | ObjectKind::ForeignTable => IconKind::Table,
+                    ObjectKind::Aggregate => IconKind::Function,
+                    ObjectKind::Queue => IconKind::Queue,
+                    ObjectKind::DbLink => IconKind::Link,
+                    ObjectKind::JavaClass => IconKind::Java,
+                    ObjectKind::Job | ObjectKind::SchedulerJob | ObjectKind::SchedulerProgram => {
+                        IconKind::Job
+                    }
+                    ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
+                    ObjectKind::Extension => IconKind::Package,
                 };
                 (k, k.color())
             }
             NodeKind::Column(_) => (IconKind::Column, IconKind::Column.color()),
+            NodeKind::Sub { .. } => (IconKind::Folder, IconKind::Folder.color()),
+            NodeKind::Item(it) => {
+                let k = sub_icon_kind(it.icon);
+                (k, k.color())
+            }
         })
     }
 
@@ -1873,7 +2031,7 @@ impl Explorer {
                     match r {
                         Ok(list) => {
                             self.meta_set_schemas(&list, current.as_deref());
-                            let kids: Vec<Node> = list
+                            let mut kids: Vec<Node> = list
                                 .into_iter()
                                 .map(|s| Node {
                                     kind: NodeKind::Schema(s),
@@ -1884,6 +2042,22 @@ impl Explorer {
                                     state: LoadState::Idle,
                                 })
                                 .collect();
+                            // DB 수준 폴더(PG Extensions·Event Triggers · 83 §1) = 스키마 목록 뒤 · 스키마 없음("").
+                            if let Some(d) = self.dialect {
+                                for k in nsql_catalog::db_kinds_for(d) {
+                                    kids.push(Node {
+                                        kind: NodeKind::Folder {
+                                            schema: String::new(),
+                                            kind: *k,
+                                        },
+                                        depth: 1,
+                                        children: Vec::new(),
+                                        expanded: false,
+                                        expandable: true,
+                                        state: LoadState::Idle,
+                                    });
+                                }
+                            }
                             if self.soft.remove(&node) {
                                 self.diff_children(node, kids);
                             } else {
@@ -1908,15 +2082,21 @@ impl Explorer {
                         Ok(list) => {
                             if let NodeKind::Folder { schema, kind } = &self.nodes[node].kind {
                                 let (s, k) = (schema.clone(), *kind);
-                                self.meta_load_objects(&s, k, &list);
-                                self.intel_buckets
-                                    .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
+                                if !s.is_empty() {
+                                    self.meta_load_objects(&s, k, &list);
+                                    self.intel_buckets
+                                        .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
+                                }
                             }
                             let depth = self.nodes[node].depth + 1;
+                            let dlg = self.dialect;
                             let kids: Vec<Node> = list
                                 .into_iter()
                                 .map(|o| Node {
-                                    expandable: o.kind.is_relation(),
+                                    // 하위 폴더가 하나라도 있으면 펼침(83 §1 표).
+                                    expandable: dlg.is_some_and(|d| {
+                                        !nsql_catalog::sub_kinds(d, o.kind).is_empty()
+                                    }),
                                     kind: NodeKind::Object(o),
                                     depth,
                                     children: Vec::new(),
@@ -1943,8 +2123,15 @@ impl Explorer {
                     }
                     match r {
                         Ok(list) => {
-                            if let NodeKind::Object(o) = &self.nodes[node].kind {
-                                let (s, n) = (o.schema.clone(), o.name.clone());
+                            // 컬럼 폴더의 주인(관계)만 메타에(83 §1 — 인덱스 컬럼은 `SubItems` 길).
+                            let owner = match &self.nodes[node].kind {
+                                NodeKind::Object(o) => Some((o.schema.clone(), o.name.clone())),
+                                NodeKind::Sub { owner, .. } if owner.kind.is_relation() => {
+                                    Some((owner.schema.clone(), owner.name.clone()))
+                                }
+                                _ => None,
+                            };
+                            if let Some((s, n)) = owner {
                                 self.meta_set_columns(&s, &n, &list);
                             }
                             let depth = self.nodes[node].depth + 1;
@@ -1952,6 +2139,37 @@ impl Explorer {
                                 .into_iter()
                                 .map(|c| Node {
                                     kind: NodeKind::Column(c),
+                                    depth,
+                                    children: Vec::new(),
+                                    expanded: false,
+                                    expandable: false,
+                                    state: LoadState::Loaded,
+                                })
+                                .collect();
+                            if self.soft.remove(&node) {
+                                self.diff_children(node, kids);
+                            } else {
+                                self.set_children(node, kids);
+                            }
+                        }
+                        Err(e) => {
+                            if !self.soft.remove(&node) {
+                                self.set_error(node, e);
+                            }
+                        }
+                    }
+                }
+                Resp::SubItems { gen, node, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    match r {
+                        Ok(list) => {
+                            let depth = self.nodes[node].depth + 1;
+                            let kids: Vec<Node> = list
+                                .into_iter()
+                                .map(|it| Node {
+                                    kind: NodeKind::Item(it),
                                     depth,
                                     children: Vec::new(),
                                     expanded: false,
@@ -2093,6 +2311,16 @@ impl Explorer {
                     }
                     self.blockers_results.push(r);
                 }
+                Resp::GenSql { gen, spec, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    self.actions.push(ExplorerAction::Preview {
+                        spec,
+                        r,
+                        server: None,
+                    });
+                }
                 Resp::Source { gen, title, r } => {
                     self.source_pending = false;
                     if gen != self.gen {
@@ -2216,11 +2444,19 @@ impl Explorer {
                 schema,
                 kind,
             },
-            NodeKind::Object(o) if o.kind.is_relation() => Req::Columns {
+            NodeKind::Sub { owner, sub } if sub == SubKind::Columns && owner.kind.is_relation() => {
+                Req::Columns {
+                    gen,
+                    node: i,
+                    schema: owner.schema.clone(),
+                    table: owner.name.clone(),
+                }
+            }
+            NodeKind::Sub { owner, sub } => Req::SubItems {
                 gen,
                 node: i,
-                schema: o.schema,
-                table: o.name,
+                owner: *owner,
+                sub,
             },
             _ => return false,
         };
@@ -2301,8 +2537,10 @@ impl Explorer {
         let picked = self.selected.unwrap_or(0);
         // 자식이 없는 노드(프로시저 같은 객체 · 컬럼)는 자기가 속한 목록을 다시 읽는다.
         let leaf = match &self.nodes[picked].kind {
-            NodeKind::Column(_) => true,
-            NodeKind::Object(o) => !o.kind.is_relation(),
+            NodeKind::Column(_) | NodeKind::Item(_) => true,
+            NodeKind::Object(o) => self
+                .dialect
+                .is_none_or(|d| nsql_catalog::sub_kinds(d, o.kind).is_empty()),
             _ => false,
         };
         let i = if leaf {
@@ -2458,7 +2696,8 @@ impl Explorer {
                 |&i| matches!(&self.nodes[i].kind, NodeKind::Object(o) if o.name.eq_ignore_ascii_case(&t.name)),
             );
             if let Some(o) = obj {
-                n += usize::from(self.soft_refresh(o));
+                // 객체 아래 = 하위 폴더(83 §1) → 읽어 둔 폴더(컬럼·제약·인덱스 …)만 다시.
+                n += self.soft_refresh_subtree(o);
             }
         }
         n
@@ -2660,14 +2899,50 @@ impl Explorer {
                     kind,
                 });
             }
-            NodeKind::Object(o) if o.kind.is_relation() => {
+            // 객체 = 하위 폴더(표 · 83 §1) — 서버 왕복 없이 즉시 · 잎은 폴더를 펼칠 때 읽는다.
+            NodeKind::Object(o) => {
+                let Some(d) = self.dialect else { return };
+                let subs = nsql_catalog::sub_kinds(d, o.kind);
+                if subs.is_empty() {
+                    return;
+                }
+                let depth = self.nodes[i].depth + 1;
+                let owner = Box::new(o);
+                let kids: Vec<Node> = subs
+                    .iter()
+                    .map(|sub| Node {
+                        kind: NodeKind::Sub {
+                            owner: owner.clone(),
+                            sub: *sub,
+                        },
+                        depth,
+                        children: Vec::new(),
+                        expanded: false,
+                        expandable: true,
+                        state: LoadState::Idle,
+                    })
+                    .collect();
+                self.set_children(i, kids);
+            }
+            NodeKind::Sub { owner, sub } => {
                 self.nodes[i].state = LoadState::Loading;
-                let _ = self.tx.send(Req::Columns {
-                    gen,
-                    node: i,
-                    schema: o.schema,
-                    table: o.name,
-                });
+                let req = if sub == SubKind::Columns && owner.kind.is_relation() {
+                    // 관계의 컬럼 = 메타 저장소와 공용 길(`Column` 노드 · 완성에 바로 쓰인다).
+                    Req::Columns {
+                        gen,
+                        node: i,
+                        schema: owner.schema.clone(),
+                        table: owner.name.clone(),
+                    }
+                } else {
+                    Req::SubItems {
+                        gen,
+                        node: i,
+                        owner: *owner,
+                        sub,
+                    }
+                };
+                let _ = self.tx.send(req);
             }
             _ => {}
         }
@@ -2695,8 +2970,61 @@ impl Explorer {
             }
             NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
             NodeKind::Column(c) => self.actions.push(ExplorerAction::Copy(c.name)),
+            NodeKind::Item(it) => self.actions.push(ExplorerAction::Copy(it.name)),
             _ => self.toggle(i),
         }
+    }
+
+    /// 잎 노드의 주인(객체 종류 · 하위 폴더) — 부모 `Sub` 노드에서.
+    fn item_owner(&self, i: usize) -> Option<(ObjectKind, SubKind)> {
+        let p = self.parent_of(i)?;
+        match &self.nodes[p].kind {
+            NodeKind::Sub { owner, sub } => Some((owner.kind, *sub)),
+            _ => None,
+        }
+    }
+
+    /// 우클릭 ▸ Generate SQL ▸ 항목(83 §3): 객체 = 그 객체 · 잎(제약·인덱스·트리거) = 주인 객체 + `(폴더, 이름)`.
+    fn gen_pick(&mut self, i: usize, what: nsql_catalog::GenWhat) {
+        let spec = match &self.nodes[i].kind {
+            NodeKind::Object(o) => GenSpec {
+                owner: o.clone(),
+                what,
+                sub: None,
+            },
+            NodeKind::Item(it) => {
+                let Some(p) = self.parent_of(i) else { return };
+                let NodeKind::Sub { owner, sub } = &self.nodes[p].kind else {
+                    return;
+                };
+                GenSpec {
+                    owner: (**owner).clone(),
+                    what,
+                    sub: Some((*sub, it.name.clone())),
+                }
+            }
+            _ => return,
+        };
+        self.gen_sql(spec);
+    }
+
+    /// Generate SQL 요청(새로고침도 같은 길) — 메타 세션에서 만든 뒤 `ExplorerAction::Preview`.
+    pub(crate) fn gen_sql(&mut self, spec: GenSpec) {
+        if self.offline {
+            self.actions
+                .push(ExplorerAction::Status(t(Msg::ExpNotConnected).to_string()));
+            return;
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
+        self.actions.push(ExplorerAction::Status(tf(
+            Msg::StGenerating,
+            &[&spec.title()],
+        )));
+        let _ = self.tx.send(Req::GenSql {
+            gen: self.gen,
+            spec,
+        });
     }
 
     fn open_source(&mut self, o: &ObjectInfo) {
@@ -2935,6 +3263,16 @@ impl Explorer {
                 };
                 self.selected = Some(i);
                 let mut items = Vec::new();
+                let gen_menu = |whats: Vec<nsql_catalog::GenWhat>| {
+                    CtxItem::submenu(
+                        "gen",
+                        t(Msg::MnGenSql),
+                        whats
+                            .iter()
+                            .map(|w| CtxItem::item(format!("gen:{}", w.code()), w.label()))
+                            .collect(),
+                    )
+                };
                 match &self.nodes[i].kind {
                     NodeKind::Object(o) => {
                         if o.kind.is_relation() {
@@ -2943,13 +3281,29 @@ impl Explorer {
                         if o.kind.has_source() {
                             items.push(CtxItem::item("source", t(Msg::ExpOpenSource)));
                         }
+                        // ★ Generate SQL(83 §3): 종류별 항목(테이블 = DML 유형별 · 루틴 = CALL · 공통 = DDL).
+                        if let Some(d) = self.dialect {
+                            let whats = nsql_catalog::gen_whats(d, o.kind, None);
+                            if !whats.is_empty() {
+                                items.push(gen_menu(whats));
+                            }
+                        }
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         // ★ 새로 고침은 **계층형**(사용자 09-19): 서버 = 그 서버 전부 · 스키마 = 그 스키마 · 종류 폴더 = 그 종류의
                         //   객체 전부 · 테이블/뷰 = 그 객체의 정보(컬럼)만 · 그 밖의 객체·컬럼 = 자기가 속한 목록.
                         items.push(CtxItem::Separator);
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
-                    NodeKind::Column(_) => {
+                    NodeKind::Column(_) | NodeKind::Item(_) => {
+                        // 잎(제약·인덱스·트리거)의 DDL.
+                        if let (Some(d), Some((owner_kind, sub))) =
+                            (self.dialect, self.item_owner(i))
+                        {
+                            let whats = nsql_catalog::gen_whats(d, owner_kind, Some(sub));
+                            if !whats.is_empty() {
+                                items.push(gen_menu(whats));
+                            }
+                        }
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::Separator);
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
@@ -3252,6 +3606,44 @@ impl Explorer {
         false
     }
 
+    /// 자체 시험용(기동 명령 `explorer.expand<row>`): `row`번째 보이는 줄을 **펼친다**(이미 펼쳐졌으면 그대로 · 접지 않는다).
+    pub(crate) fn capture_expand(&mut self, row: usize) -> bool {
+        let rows = self.visible_rows();
+        let Some(&i) = rows.get(row) else {
+            return false;
+        };
+        if !self.nodes[i].expandable {
+            return false;
+        }
+        self.selected = Some(i);
+        if !self.nodes[i].expanded {
+            self.toggle(i);
+        }
+        true
+    }
+
+    /// 자체 시험용(기동 명령 `explorer.dump:<파일>`): 보이는 줄을 `깊이|종류|라벨|부가|상태` 한 줄씩(트리 구조 자동 점검 · 83 §1).
+    pub(crate) fn dump_rows(&self) -> String {
+        let mut out = String::new();
+        for i in self.visible_rows() {
+            let n = &self.nodes[i];
+            let tag = match &n.kind {
+                NodeKind::Root => "root".to_string(),
+                NodeKind::Schema(_) => "schema".into(),
+                NodeKind::Folder { .. } => "folder".into(),
+                NodeKind::Object(o) => {
+                    format!("object{}", if o.status == "INVALID" { "!" } else { "" })
+                }
+                NodeKind::Column(_) => "column".into(),
+                NodeKind::Sub { .. } => "sub".into(),
+                NodeKind::Item(it) => format!("item:{:?}", it.icon),
+            };
+            let (label, sub) = self.label(i);
+            out.push_str(&format!("{}|{tag}|{label}|{sub}|{:?}\n", n.depth, n.state));
+        }
+        out
+    }
+
     /// 자체 캡처용(기동 명령 `explorer.pick:<id>`): 열린 메뉴에서 그 항목을 **클릭한 것과 같은 경로**로 고른다.
     pub(crate) fn capture_pick(&mut self, id: &str) -> bool {
         if !self.menu.is_open() {
@@ -3264,6 +3656,12 @@ impl Explorer {
 
     fn menu_pick(&mut self, id: &str) {
         let Some(i) = self.selected else { return };
+        if let Some(code) = id.strip_prefix("gen:") {
+            if let Some(what) = nsql_catalog::GenWhat::parse(code) {
+                self.gen_pick(i, what);
+            }
+            return;
+        }
         match id {
             "select" | "source" => self.activate(i),
             // 읽어 둔 노드 = 디프로 조용히(펼침·선택 보존 · docs/57 T3) · 오류/미로딩 = 새로 읽기.
@@ -3292,6 +3690,7 @@ impl Explorer {
                     NodeKind::Schema(s) => s.clone(),
                     NodeKind::Object(o) => o.name.clone(),
                     NodeKind::Column(c) => c.name.clone(),
+                    NodeKind::Item(it) => it.name.clone(),
                     _ => String::new(),
                 };
                 if !name.is_empty() {
@@ -3328,7 +3727,7 @@ impl Explorer {
             }
             NodeKind::Schema(s) => (s.clone(), String::new()),
             NodeKind::Folder { kind, .. } => {
-                let base = t(folder_msg(*kind)).to_string();
+                let base = folder_label(self.dialect, *kind);
                 if n.state == LoadState::Loaded {
                     (format!("{base} ({})", n.children.len()), String::new())
                 } else {
@@ -3345,8 +3744,31 @@ impl Explorer {
                 } else {
                     String::new()
                 };
-                (format!("{}{extra}", o.name), o.status.clone())
+                // 유효성은 아이콘 배지로(83 §2) — `VALID`/`INVALID` 글자는 뗀다 · 그 밖 상태(`DISABLED` …)는 흐린 글자.
+                let status = if o.status == "VALID" || o.status == "INVALID" {
+                    String::new()
+                } else {
+                    o.status.clone()
+                };
+                (format!("{}{extra}", o.name), status)
             }
+            NodeKind::Sub { sub, .. } => {
+                let base = t(sub_msg(*sub)).to_string();
+                if n.state == LoadState::Loaded {
+                    (format!("{base} ({})", n.children.len()), String::new())
+                } else {
+                    (base, String::new())
+                }
+            }
+            NodeKind::Item(it) => (
+                it.name.clone(),
+                match (it.detail.is_empty(), it.status.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => it.detail.clone(),
+                    (true, false) => it.status.clone(),
+                    (false, false) => format!("{} · {}", it.detail, it.status),
+                },
+            ),
             NodeKind::Column(c) => (
                 c.name.clone(),
                 format!(
@@ -3537,16 +3959,38 @@ impl Explorer {
                                 }
                                 adv = rs;
                             } else {
+                                // ★ 유효성 배지(83 §2 · DBeaver 관례): INVALID = 아이콘 오른쪽 아래 빨간 점(흰 테).
+                                let invalid =
+                                    matches!(&n.kind, NodeKind::Object(o) if o.status == "INVALID");
                                 let img = self.icon_image(k, rgb, sz);
                                 dc.image_scaled(dst, &img, rr);
+                                {
+                                    if invalid {
+                                        let r = ((sz as f32) * 0.22).round().max(2.0) as i32;
+                                        let cx = dst.x + dst.w - r;
+                                        let cy = dst.y + dst.h - r;
+                                        let ring =
+                                            Rect::new(cx - r - 1, cy - r - 1, 2 * r + 2, 2 * r + 2)
+                                                .intersection(&rr);
+                                        dc.fill_round_rect(ring, r + 1, th.panel_bg);
+                                        let dot = Rect::new(cx - r, cy - r, 2 * r, 2 * r)
+                                            .intersection(&rr);
+                                        dc.fill_round_rect(dot, r, th.danger);
+                                    }
+                                }
                             }
                             x += adv + (6.0 * s).round() as i32;
                         }
                     } else if let NodeKind::Object(o) = &n.kind {
                         let cr = Rect::new(x, vcy - chip / 2, chip, chip);
-                        dc.fill_round_rect(cr, 2, kind_color(o.kind, th));
+                        let color = if o.status == "INVALID" {
+                            th.danger
+                        } else {
+                            kind_color(o.kind, th)
+                        };
+                        dc.fill_round_rect(cr, 2, color);
                         x += chip + (6.0 * s).round() as i32;
-                    } else if let NodeKind::Column(_) = &n.kind {
+                    } else if let NodeKind::Column(_) | NodeKind::Item(_) = &n.kind {
                         let cr = Rect::new(x + 2, vcy - chip / 4, chip / 2, chip / 2);
                         dc.fill_round_rect(cr, 2, th.text_dim);
                         x += chip + (6.0 * s).round() as i32;
@@ -3629,7 +4073,7 @@ mod refresh_tests {
 
     fn node(kind: NodeKind, depth: usize) -> Node {
         Node {
-            expandable: !matches!(kind, NodeKind::Column(_)),
+            expandable: !matches!(kind, NodeKind::Column(_) | NodeKind::Item(_)),
             kind,
             depth,
             children: Vec::new(),
@@ -3650,6 +4094,20 @@ mod refresh_tests {
     }
 
     /// 루트 → HR 스키마 → Tables(읽음: A·B·C) + Views(안 읽음) 한 벌.
+    /// 객체 노드 아래 하위 폴더 노드(83 §1 · 시험용).
+    fn sub_of(ex: &Explorer, obj: usize, sub: SubKind) -> Node {
+        let NodeKind::Object(o) = &ex.nodes[obj].kind else {
+            panic!("not an object");
+        };
+        node(
+            NodeKind::Sub {
+                owner: Box::new(o.clone()),
+                sub,
+            },
+            ex.nodes[obj].depth + 1,
+        )
+    }
+
     fn sample() -> (Explorer, usize, usize) {
         let mut ex = Explorer::new(Box::new(|| {}), true);
         ex.dialect = Some(Dialect::Oracle);
@@ -3764,10 +4222,13 @@ mod refresh_tests {
             ex.apply_ddl(&t(DdlVerb::Alter, DdlKind::Table, None, "b"), None),
             0
         );
-        ex.set_children(b, Vec::new());
+        ex.set_children(b, vec![sub_of(&ex, b, SubKind::Columns)]);
+        let sub_b = ex.nodes[b].children[0];
+        ex.set_children(sub_b, Vec::new());
         assert_eq!(
             ex.apply_ddl(&t(DdlVerb::Alter, DdlKind::Table, None, "b"), None),
-            1
+            1,
+            "읽어 둔 하위 폴더(컬럼)만 다시"
         );
         // 스키마 생성 = 루트의 스키마 목록.
         assert_eq!(
@@ -3800,9 +4261,13 @@ mod refresh_tests {
                 4,
             )
         };
-        ex.set_children(a, vec![col("ID")]);
-        ex.set_children(b, vec![col("ID")]);
-        let col_b = ex.nodes[b].children[0];
+        // 객체 → 하위 폴더(Columns) → 컬럼(83 §1).
+        ex.set_children(a, vec![sub_of(&ex, a, SubKind::Columns)]);
+        ex.set_children(b, vec![sub_of(&ex, b, SubKind::Columns)]);
+        let (sub_a, sub_b) = (ex.nodes[a].children[0], ex.nodes[b].children[0]);
+        ex.set_children(sub_a, vec![col("ID")]);
+        ex.set_children(sub_b, vec![col("ID")]);
+        let col_b = ex.nodes[sub_b].children[0];
         let views = ex.nodes[schema].children[1];
         let pick = |ex: &mut Explorer, i: usize| {
             ex.soft.clear();
@@ -3812,23 +4277,31 @@ mod refresh_tests {
             v.sort_unstable();
             v
         };
-        let mut all = vec![0, tables, a, b];
+        let mut all = vec![0, tables, sub_a, sub_b];
         all.sort_unstable();
         assert_eq!(
             pick(&mut ex, 0),
             all,
-            "서버 = 스키마 목록 + 읽어 둔 폴더·객체 전부"
+            "서버 = 스키마 목록 + 읽어 둔 폴더·하위 폴더 전부(객체 노드 자체는 요청 없음)"
         );
-        let mut under = vec![tables, a, b];
+        let mut under = vec![tables, sub_a, sub_b];
         under.sort_unstable();
         assert_eq!(pick(&mut ex, schema), under, "스키마 = 그 아래 읽어 둔 것");
         assert_eq!(
             pick(&mut ex, tables),
             under,
-            "종류 폴더 = 목록 + 읽어 둔 객체"
+            "종류 폴더 = 목록 + 읽어 둔 하위 폴더"
         );
-        assert_eq!(pick(&mut ex, a), vec![a], "테이블 = 그 테이블의 컬럼만");
-        assert_eq!(pick(&mut ex, col_b), vec![b], "컬럼 = 속한 테이블만");
+        assert_eq!(
+            pick(&mut ex, a),
+            vec![sub_a],
+            "테이블 = 그 테이블의 읽어 둔 하위 폴더만"
+        );
+        assert_eq!(
+            pick(&mut ex, col_b),
+            vec![sub_b],
+            "컬럼 = 속한 폴더(Columns)만"
+        );
         // 아직 안 읽은 **접힌** 폴더 = 펼치지 않는다(사용자 09-21) — 읽을 것이 없고, 다음에 펼칠 때 새로 읽는다.
         assert!(pick(&mut ex, views).is_empty());
         assert_eq!(ex.nodes[views].state, LoadState::Idle);

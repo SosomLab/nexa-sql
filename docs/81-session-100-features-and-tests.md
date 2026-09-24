@@ -39,8 +39,15 @@
 | 18 | 개발 빌드 의존 최적화(`profile.dev.package."*"`) — Debug 프레임 94 → 48/14 ms | `cargo build` 첫 빌드 ≈ 7분 · 이후 증분 |
 | 19 | 비활성 앱 캐럿 깜빡임 정지(유휴 CPU 19 % → 0) | 다른 앱을 앞에 두고 활성 상태 보기 |
 | 20 | CLI 접속 2 s = Instant Client 적재 1.3 s + 로그온 0.4 s(앱 여지 없음) | `nsql run --timing` · `NSQL_TRACE_CONNECT=1` |
+| 21 | ★ **REF CURSOR 결과 이어 받기**(T-202 · §189) — 상한까지만 읽고 커서 유지 → 스크롤 끝/⇊ = 커서로 이어 받기(재질의 0) · 커서 닫힘 = "커서가 닫혀…" 한 줄 + `+` 사라짐 · 커서 유지 불가 = 전체 조회 강제 + ⚠ 경고 | GUI: `examples/oracle-refcursor-pkg.sql` `EXEC …FIND_OBJECTS(:V_NAME, :rc, 500)` → RC 탭 스크롤 끝 · CLI: `nsql shell -c BISCM --max-rows 3` → `\more` · `\all`("· cursor") |
+
+| 22 | ★ **DBMS별 객체 트리**(T-203 · §190 · [83 §1](83-object-explorer-dbms-trees-and-generate-sql.md)) — DBeaver 순서의 폴더 · 객체 아래 하위 폴더(Columns·Constraints·Foreign Keys·References·Indexes·Triggers·Partitions·Dependencies·Rules·Policies·Extended Properties·Arguments·Attributes·Methods·Procedures·Functions) · PG 루트 아래 Extensions·Event Triggers | 탐색기에서 테이블·패키지·프로시저 펼치기 · CLI `nsql cat -c BISCM -s BISCM sub M4E_C300000 constraints` |
+| 23 | ★ **유효성 배지**(T-203) — INVALID = 아이콘 오른쪽 아래 빨간 점 · VALID/INVALID 글자 제거 | BISCM ▸ Procedures ▸ `SP_CALL_DATA_COPY_KHJ` |
+| 24 | ★ **SQL 생성 + SQL 미리보기**(T-205 · [83 §3~4](83-object-explorer-dbms-trees-and-generate-sql.md)) — 우클릭 ▸ SQL 생성 ▸ SELECT/INSERT/UPDATE/DELETE/MERGE/CALL/DDL(종류별) → 모달(미니맵 없는 편집 · 새로고침·파일로 저장·편집기에서 열기·복사·닫기) | 탐색기 우클릭 · CLI `nsql cat -c M4PLAN gen merge M4E_C300000` · `gen call NSQL_DEMO_PKG package` · `gen ddl M4E_C300000 table indexes M4E_C300000_PK` |
 
 ## 4. 자동 시험(이미 통과) · 도구
 - 단위: nexa-sql `cargo test -p nexa-sql -- intel`(12) · nsql-script `intel`(11) · nsql-run `meta`(5) · nexa-ctl `ctxmenu`(26) · memstat(2) · 전체 `cargo test --workspace` 두 저장소 · `scripts/check-3os.sh --quick`.
 - 실측 도구: `scripts/mac-perf-all.sh`(전수) · `scripts/mac-restart-debug.sh`(빌드·재기동) · 격리 계측 = `NSQL_HOME=<격리> NSQL_NO_ACTIVATE=1 NSQL_TRACE_FRAMES=1 NSQL_STARTUP_CMD='@after:1500:view.memory' target/debug/nexa-sql`.
+- 커서 결과(T-202): `cargo test -p nsql-run refcursor`(3 · 모의 Oracle 세션 `RefCur`) · `requery_ok`(1).
+- 탐색기 2차(T-203/205): `cargo test -p nsql-catalog`(tree 1 · gen 3) · `cargo test -p nexa-sql explorer`(11) · GUI 덤프 = 83 §6 기동 명령(`explorer.expand`·`explorer.dump`·`sqlprev.dump`).
 - 4-DBMS 카탈로그 확인: `nsql cat -c <프로필> tables|views|funcs|packages` · `columns <표>`(76 §14).

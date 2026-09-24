@@ -361,6 +361,21 @@ impl ExplorerSet {
             .is_some_and(|p| p.ex.capture_menu(row))
     }
 
+    /// 자체 시험용 — 첫 칸의 `row`번째 줄 펼치기.
+    pub(crate) fn capture_expand(&mut self, row: usize) -> bool {
+        self.panes
+            .first_mut()
+            .is_some_and(|p| p.ex.capture_expand(row))
+    }
+
+    /// 자체 시험용 — 첫 칸의 보이는 줄 덤프.
+    pub(crate) fn dump_rows(&self) -> String {
+        self.panes
+            .first()
+            .map(|p| p.ex.dump_rows())
+            .unwrap_or_default()
+    }
+
     /// 자체 캡처용 — 메뉴가 열린 칸에서 그 항목을 고른다.
     pub(crate) fn capture_pick(&mut self, id: &str) -> bool {
         self.panes
@@ -574,6 +589,13 @@ impl ExplorerSet {
                     ExplorerAction::NewTabHere(_) => {
                         out.push(ExplorerAction::NewTabHere(p.key.clone()));
                     }
+                    ExplorerAction::Preview { spec, r, .. } => {
+                        out.push(ExplorerAction::Preview {
+                            spec,
+                            r,
+                            server: p.key.clone(),
+                        });
+                    }
                     a => out.push(a),
                 }
             }
@@ -582,6 +604,25 @@ impl ExplorerSet {
             self.remove(i);
         }
         out
+    }
+
+    /// ★ Generate SQL 다시(SQL Preview "새로고침" · 83 §4) — 그 서버 칸(없으면 보이는 칸)에 같은 사양을 보낸다.
+    pub(crate) fn gen_sql(
+        &mut self,
+        server: Option<&ConnectSpec>,
+        spec: nsql_catalog::GenSpec,
+    ) -> bool {
+        let i = match server {
+            Some(k) => self.panes.iter().position(|p| p.key.as_ref() == Some(k)),
+            None => Some(self.shown),
+        };
+        match i.and_then(|i| self.panes.get_mut(i)) {
+            Some(p) => {
+                p.ex.gen_sql(spec);
+                true
+            }
+            None => false,
+        }
     }
 
     /// 모든 서버의 메타 응답을 반영(보이지 않는 서버도 뒤에서 읽기가 끝난다).

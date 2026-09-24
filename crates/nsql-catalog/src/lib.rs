@@ -24,10 +24,35 @@ pub enum ObjectKind {
     Index,
     Synonym,
     Type,
+    // ── 83 §1(09-25 · DBeaver 트리 대조) — 방언 고유 종류.
+    /// SQL Server External Table(PolyBase) · 관계(컬럼 있음).
+    ExternalTable,
+    /// PostgreSQL Foreign Table · 관계.
+    ForeignTable,
+    /// PostgreSQL Aggregate Function(`prokind = 'a'`).
+    Aggregate,
+    /// Oracle AQ 큐(`ALL_QUEUES`).
+    Queue,
+    /// Oracle Database Link(`ALL_DB_LINKS`).
+    DbLink,
+    /// Oracle Java Class(`ALL_OBJECTS` `JAVA CLASS`).
+    JavaClass,
+    /// Oracle DBMS_JOB(`ALL_JOBS`).
+    Job,
+    /// Oracle Scheduler Job(`ALL_SCHEDULER_JOBS`).
+    SchedulerJob,
+    /// Oracle Scheduler Program(`ALL_SCHEDULER_PROGRAMS`).
+    SchedulerProgram,
+    /// Oracle 스키마/DB 트리거(`ALL_TRIGGERS` base_object_type SCHEMA·DATABASE) — `Trigger`는 테이블·뷰 트리거.
+    SchemaTrigger,
+    /// PostgreSQL Extension(DB 수준 · `pg_extension`).
+    Extension,
+    /// PostgreSQL Event Trigger(DB 수준 · `pg_event_trigger`).
+    EventTrigger,
 }
 
 impl ObjectKind {
-    pub const ALL: [ObjectKind; 12] = [
+    pub const ALL: [ObjectKind; 24] = [
         ObjectKind::Table,
         ObjectKind::View,
         ObjectKind::MaterializedView,
@@ -40,6 +65,18 @@ impl ObjectKind {
         ObjectKind::Index,
         ObjectKind::Synonym,
         ObjectKind::Type,
+        ObjectKind::ExternalTable,
+        ObjectKind::ForeignTable,
+        ObjectKind::Aggregate,
+        ObjectKind::Queue,
+        ObjectKind::DbLink,
+        ObjectKind::JavaClass,
+        ObjectKind::Job,
+        ObjectKind::SchedulerJob,
+        ObjectKind::SchedulerProgram,
+        ObjectKind::SchemaTrigger,
+        ObjectKind::Extension,
+        ObjectKind::EventTrigger,
     ];
 
     /// CLI 인자 · 설정용 코드.
@@ -58,6 +95,18 @@ impl ObjectKind {
             ObjectKind::Index => "index",
             ObjectKind::Synonym => "synonym",
             ObjectKind::Type => "type",
+            ObjectKind::ExternalTable => "external_table",
+            ObjectKind::ForeignTable => "foreign_table",
+            ObjectKind::Aggregate => "aggregate",
+            ObjectKind::Queue => "queue",
+            ObjectKind::DbLink => "dblink",
+            ObjectKind::JavaClass => "java",
+            ObjectKind::Job => "job",
+            ObjectKind::SchedulerJob => "scheduler_job",
+            ObjectKind::SchedulerProgram => "scheduler_program",
+            ObjectKind::SchemaTrigger => "schema_trigger",
+            ObjectKind::Extension => "extension",
+            ObjectKind::EventTrigger => "event_trigger",
         }
     }
 
@@ -77,6 +126,18 @@ impl ObjectKind {
             ObjectKind::Index => "Indexes",
             ObjectKind::Synonym => "Synonyms",
             ObjectKind::Type => "Types",
+            ObjectKind::ExternalTable => "External Tables",
+            ObjectKind::ForeignTable => "Foreign Tables",
+            ObjectKind::Aggregate => "Aggregate Functions",
+            ObjectKind::Queue => "Queues",
+            ObjectKind::DbLink => "Database Links",
+            ObjectKind::JavaClass => "Java",
+            ObjectKind::Job => "Jobs",
+            ObjectKind::SchedulerJob => "Scheduler Jobs",
+            ObjectKind::SchedulerProgram => "Scheduler Programs",
+            ObjectKind::SchemaTrigger => "Schema Triggers",
+            ObjectKind::Extension => "Extensions",
+            ObjectKind::EventTrigger => "Event Triggers",
         }
     }
 
@@ -98,6 +159,18 @@ impl ObjectKind {
             "index" | "indexes" | "idx" => ObjectKind::Index,
             "synonym" | "synonyms" | "syn" => ObjectKind::Synonym,
             "type" | "types" => ObjectKind::Type,
+            "external_table" | "external_tables" | "external" => ObjectKind::ExternalTable,
+            "foreign_table" | "foreign_tables" | "foreign" => ObjectKind::ForeignTable,
+            "aggregate" | "aggregates" | "agg" => ObjectKind::Aggregate,
+            "queue" | "queues" => ObjectKind::Queue,
+            "dblink" | "dblinks" | "db_link" | "links" => ObjectKind::DbLink,
+            "java" | "java_class" => ObjectKind::JavaClass,
+            "job" | "jobs" => ObjectKind::Job,
+            "scheduler_job" | "scheduler_jobs" | "sjobs" => ObjectKind::SchedulerJob,
+            "scheduler_program" | "scheduler_programs" | "programs" => ObjectKind::SchedulerProgram,
+            "schema_trigger" | "schema_triggers" => ObjectKind::SchemaTrigger,
+            "extension" | "extensions" | "ext" => ObjectKind::Extension,
+            "event_trigger" | "event_triggers" => ObjectKind::EventTrigger,
             _ => return None,
         })
     }
@@ -115,15 +188,30 @@ impl ObjectKind {
                 | ObjectKind::PackageBody
                 | ObjectKind::Trigger
                 | ObjectKind::Type
+                | ObjectKind::SchemaTrigger
+                | ObjectKind::EventTrigger
         )
     }
 
-    /// 행 데이터를 가진 종류(`SELECT *` 템플릿).
+    /// 행 데이터를 가진 종류(`SELECT *` 템플릿 · 컬럼 폴더).
     #[must_use]
     pub fn is_relation(self) -> bool {
         matches!(
             self,
-            ObjectKind::Table | ObjectKind::View | ObjectKind::MaterializedView
+            ObjectKind::Table
+                | ObjectKind::View
+                | ObjectKind::MaterializedView
+                | ObjectKind::ExternalTable
+                | ObjectKind::ForeignTable
+        )
+    }
+
+    /// 실행 가능한 루틴(CALL 생성 대상).
+    #[must_use]
+    pub fn is_routine(self) -> bool {
+        matches!(
+            self,
+            ObjectKind::Procedure | ObjectKind::Function | ObjectKind::Aggregate
         )
     }
 }
@@ -177,33 +265,50 @@ impl std::fmt::Display for CompileError {
 #[must_use]
 pub fn kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
     use ObjectKind::*;
+    // ★ 순서·이름 = DBeaver 항해자(83 §1 · 09-25) — Package Bodies 폴더는 뗀다(D-202 · 본문은 패키지 노드의 소스/DDL).
     match dialect {
         Dialect::Oracle => &[
             Table,
             View,
             MaterializedView,
+            Index,
+            Sequence,
+            Queue,
+            Type,
+            Package,
             Procedure,
             Function,
-            Package,
-            PackageBody,
-            Sequence,
-            Trigger,
-            Index,
             Synonym,
-            Type,
+            SchemaTrigger,
+            Trigger,
+            DbLink,
+            JavaClass,
+            Job,
+            SchedulerJob,
+            SchedulerProgram,
         ],
         Dialect::Mssql => &[
-            Table, View, Procedure, Function, Sequence, Trigger, Synonym, Type,
+            Table,
+            ExternalTable,
+            View,
+            Index,
+            Procedure,
+            Function,
+            Sequence,
+            Synonym,
+            Trigger,
+            Type,
         ],
         Dialect::Postgres => &[
             Table,
+            ForeignTable,
             View,
             MaterializedView,
+            Index,
             Procedure,
             Function,
+            Aggregate,
             Sequence,
-            Trigger,
-            Index,
             Type,
         ],
         Dialect::Mysql => &[Table, View, Procedure, Function, Trigger],
@@ -211,6 +316,20 @@ pub fn kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
         Dialect::Odbc => &[Table, View],
     }
 }
+
+/// DB 수준(스키마에 속하지 않는) 폴더 — 루트 아래 스키마 목록 뒤에 붙는다(83 §1 · `objects(s, "", kind)`).
+#[must_use]
+pub fn db_kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
+    match dialect {
+        Dialect::Postgres => &[ObjectKind::Extension, ObjectKind::EventTrigger],
+        _ => &[],
+    }
+}
+
+pub mod tree;
+pub use tree::{sub_items, sub_kinds, SubIcon, SubItem, SubKind};
+pub mod gen;
+pub use gen::{gen_whats, generate, GenSpec, GenWhat};
 
 // ───────────────────────────────────────────── 공통 도우미
 
@@ -807,6 +926,18 @@ fn oracle_type(kind: ObjectKind) -> &'static str {
         ObjectKind::Index => "INDEX",
         ObjectKind::Synonym => "SYNONYM",
         ObjectKind::Type => "TYPE",
+        ObjectKind::JavaClass => "JAVA CLASS",
+        ObjectKind::Queue => "QUEUE",
+        ObjectKind::DbLink => "DATABASE LINK",
+        ObjectKind::Job | ObjectKind::SchedulerJob => "JOB",
+        ObjectKind::SchedulerProgram => "PROGRAM",
+        ObjectKind::SchemaTrigger => "TRIGGER",
+        // Oracle에 없는 종류 — 질의는 빈 목록을 낸다.
+        ObjectKind::ExternalTable
+        | ObjectKind::ForeignTable
+        | ObjectKind::Aggregate
+        | ObjectKind::Extension
+        | ObjectKind::EventTrigger => "",
     }
 }
 
@@ -819,8 +950,45 @@ pub fn objects(
     let dialect = s.dialect();
     let rows: Vec<(String, String, String, String)> = match dialect {
         Dialect::Oracle => {
+            // ★ 83 §1 방언 고유 종류(09-25) — 사전 뷰 하나씩 · 상태는 있는 것만.
+            let special: Option<String> = match kind {
+                ObjectKind::Queue => Some(format!(
+                    "SELECT name, '', '', queue_type || ' · ' || queue_table FROM all_queues WHERE owner = {} ORDER BY name",
+                    lit(schema)
+                )),
+                ObjectKind::DbLink => Some(format!(
+                    "SELECT db_link, '', TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS'), NVL(host, '') FROM all_db_links WHERE owner = {} ORDER BY db_link",
+                    lit(schema)
+                )),
+                ObjectKind::Job => Some(format!(
+                    "SELECT TO_CHAR(job), CASE WHEN broken = 'Y' THEN 'BROKEN' ELSE '' END, TO_CHAR(last_date, 'YYYY-MM-DD HH24:MI:SS'), SUBSTR(what, 1, 80) FROM all_jobs WHERE schema_user = {} ORDER BY job",
+                    lit(schema)
+                )),
+                ObjectKind::SchedulerJob => Some(format!(
+                    "SELECT job_name, CASE WHEN enabled = 'FALSE' THEN 'DISABLED' ELSE NVL(state, '') END, TO_CHAR(last_start_date, 'YYYY-MM-DD HH24:MI:SS'), NVL(job_type, '') FROM all_scheduler_jobs WHERE owner = {} ORDER BY job_name",
+                    lit(schema)
+                )),
+                ObjectKind::SchedulerProgram => Some(format!(
+                    "SELECT program_name, CASE WHEN enabled = 'FALSE' THEN 'DISABLED' ELSE '' END, '', NVL(program_type, '') FROM all_scheduler_programs WHERE owner = {} ORDER BY program_name",
+                    lit(schema)
+                )),
+                // 테이블·뷰 트리거 / 스키마·DB 트리거 — 유효성은 ALL_OBJECTS · ENABLED/DISABLED는 부가.
+                ObjectKind::Trigger | ObjectKind::SchemaTrigger => Some(format!(
+                    "SELECT t.trigger_name, o.status, TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), CASE WHEN t.status = 'DISABLED' THEN 'DISABLED · ' ELSE '' END || t.base_object_type || CASE WHEN t.table_name IS NOT NULL THEN ' ' || t.table_name ELSE '' END FROM all_triggers t JOIN all_objects o ON o.owner = t.owner AND o.object_name = t.trigger_name AND o.object_type = 'TRIGGER' WHERE t.owner = {} AND t.base_object_type {} IN ('SCHEMA', 'DATABASE') ORDER BY t.trigger_name",
+                    lit(schema),
+                    if kind == ObjectKind::SchemaTrigger { "" } else { "NOT" }
+                )),
+                ObjectKind::ExternalTable
+                | ObjectKind::ForeignTable
+                | ObjectKind::Aggregate
+                | ObjectKind::Extension
+                | ObjectKind::EventTrigger => return Ok(Vec::new()),
+                _ => None,
+            };
             // ★ 함수는 `ALL_PROCEDURES.PIPELINED`를 부가에(FROM 자리의 테이블 함수 판정 · 09-24 · 독립 함수 = procedure_name NULL).
-            let sql = if kind == ObjectKind::Function {
+            let sql = if let Some(sp) = special {
+                sp
+            } else if kind == ObjectKind::Function {
                 format!(
                     "SELECT o.object_name, o.status, TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), CASE WHEN p.pipelined = 'YES' THEN 'PIPELINED' ELSE '' END FROM all_objects o LEFT JOIN all_procedures p ON p.owner = o.owner AND p.object_name = o.object_name AND p.object_type = 'FUNCTION' AND p.procedure_name IS NULL WHERE o.owner = {} AND o.object_type = 'FUNCTION' AND (o.object_name NOT LIKE 'BIN$%') ORDER BY o.object_name",
                     lit(schema)
@@ -847,6 +1015,47 @@ pub fn objects(
                 ObjectKind::Trigger => "'TR','TA'",
                 ObjectKind::Sequence => "'SO'",
                 ObjectKind::Synonym => "'SN'",
+                // 인덱스 = 테이블별이 아니라 스키마 전체(DBeaver Indexes 가상 폴더) · 부가 = 테이블 · 유니크.
+                ObjectKind::Index => {
+                    let sql = format!(
+                        "SELECT i.name, '', '', o.name + CASE WHEN i.is_unique = 1 THEN ' · UNIQUE' ELSE '' END + CASE WHEN i.is_primary_key = 1 THEN ' · PK' ELSE '' END FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE s.name = {} AND i.index_id > 0 AND i.is_hypothetical = 0 AND o.type IN ('U','V') ORDER BY i.name",
+                        lit(schema)
+                    );
+                    return Ok(query(s, &sql)?
+                        .rows
+                        .iter()
+                        .map(|r| {
+                            info(
+                                schema,
+                                kind,
+                                col(r, 0),
+                                String::new(),
+                                String::new(),
+                                col(r, 3),
+                            )
+                        })
+                        .collect());
+                }
+                ObjectKind::ExternalTable => {
+                    let sql = format!(
+                        "SELECT t.name, '', CONVERT(varchar(19), t.modify_date, 120), '' FROM sys.external_tables t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE s.name = {} ORDER BY t.name",
+                        lit(schema)
+                    );
+                    return Ok(query(s, &sql)?
+                        .rows
+                        .iter()
+                        .map(|r| {
+                            info(
+                                schema,
+                                kind,
+                                col(r, 0),
+                                String::new(),
+                                col(r, 2),
+                                String::new(),
+                            )
+                        })
+                        .collect());
+                }
                 ObjectKind::Type => {
                     let sql = format!(
                         "SELECT t.name, '', '', '' FROM sys.types t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE t.is_user_defined = 1 AND s.name = {} ORDER BY t.name",
@@ -888,7 +1097,12 @@ pub fn objects(
         }
         Dialect::Postgres => {
             let sql = match kind {
-                ObjectKind::Table => format!("SELECT c.relname, '', '', c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('r','p','f') ORDER BY c.relname", lit(schema)),
+                ObjectKind::Table => format!("SELECT c.relname, '', '', c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('r','p') ORDER BY c.relname", lit(schema)),
+                ObjectKind::ForeignTable => format!("SELECT c.relname, '', '', COALESCE(fs.srvname, '') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_foreign_table ft ON ft.ftrelid = c.oid LEFT JOIN pg_foreign_server fs ON fs.oid = ft.ftserver WHERE n.nspname = {} AND c.relkind = 'f' ORDER BY c.relname", lit(schema)),
+                ObjectKind::Aggregate => format!("SELECT p.proname, '', '', pg_get_function_identity_arguments(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = {} AND p.prokind = 'a' ORDER BY p.proname", lit(schema)),
+                // DB 수준(스키마 무관 · 루트 아래 폴더).
+                ObjectKind::Extension => "SELECT e.extname, '', '', e.extversion || ' · ' || n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY e.extname".to_string(),
+                ObjectKind::EventTrigger => "SELECT evtname, CASE WHEN evtenabled = 'D' THEN 'DISABLED' ELSE '' END, '', evtevent FROM pg_event_trigger ORDER BY evtname".to_string(),
                 ObjectKind::View => format!("SELECT c.relname, '', '', '' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind = 'v' ORDER BY c.relname", lit(schema)),
                 ObjectKind::MaterializedView => format!("SELECT c.relname, '', '', '' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind = 'm' ORDER BY c.relname", lit(schema)),
                 ObjectKind::Sequence => format!("SELECT c.relname, '', '', '' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind = 'S' ORDER BY c.relname", lit(schema)),
