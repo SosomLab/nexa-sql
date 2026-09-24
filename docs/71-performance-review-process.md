@@ -240,3 +240,9 @@ C-2 실행기가 배운 것 → §C-2 절차에 반영: ① `grid.max_rows`를 �
 - **E 단계 판정 보강**: 뒤 절반 기울기가 0.05~0.2 MB/주기로 회차마다 흔들리는 항목(L2)은 10주기로 결론 내지 말고 **30주기 연장**(`win-leak-cycle.ps1 -Cycles 30 -ArgList "Local"` — 프로필 인자를 빼면 접속 없이 도니 표본이 9.5 MB에 머문다)으로 평탄화 여부를 본다 · 상한이 있는 구조(카드 스택 `run.toast_max` · `log.max_lines` · `txlog.max_entries`)는 먼저 후보에서 뺀다.
 - **A 단계 설정 키 집계 규칙 확정**(T-168 ①): `nsql config list all`은 HIDDEN을 뺀 수(레지스트리 `key:` 405 − HIDDEN 9 ≈ 395) — 회차 비교는 같은 규칙이므로 그대로 쓴다.
 - 성능 측정 → 기능 점검(캡처)의 **순차 실행** 규칙을 다시 확인(둘 다 `target/` 아래 앱 인스턴스를 강제 종료하므로 겹치면 서로를 죽인다).
+
+## 8. 상시 점검 항목 — 완성 팝업 반응(사용자 09-24 "인텔리센스 속도는 매우 마음에 들어 · 이 상태가 유지되도록 지속 검토")
+
+- 기준: 팝업 ↑/↓·마우스 이동 1프레임 ≤ **15 ms(Debug · 의존 최적화)** / ≤ 10 ms(Release) · 행마다 서버 질의 0(카드는 머문 대상만) · 같은 행 안 MouseMove = 다시 그리기 0.
+- 방법: 격리 인스턴스 `NSQL_HOME=<격리> NSQL_NO_ACTIVATE=1 NSQL_TRACE_FRAMES=1 NSQL_STARTUP_CMD='@after:1500:view.memory' target/debug/nexa-sql`(메모리 창 250 ms 갱신 = 입력 없이 4 fps) → `[frames] n=60 avg … present …` 줄 · 기준선 = 26 §7-12(Debug 13.9 · Release 9.8 ms).
+- 언제: 완성(`intel*`·`intel_card`·`ctxmenu`)·그리기·present 경로를 바꾼 커밋마다 · 기본값(`gfx.mac_present` · 프로필)을 건드리면 반드시.

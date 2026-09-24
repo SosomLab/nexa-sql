@@ -58,6 +58,11 @@ pub struct Context {
     /// ★ 관계 자리의 멤버(`FROM 스키마.|` · `FROM 스키마.X.|`) — FROM 규칙이 적용된다: 프로시저·스칼라 함수 제외 · 두 단계 사슬의 `X`는
     /// 패키지면 멤버(테이블 함수) · 테이블·뷰면 팝업 없음(§165 정정 · 09-24 패키지 테이블 함수 검토 ① · SQL Server 프로시저 지적).
     pub from_chain: bool,
+    /// ★ 문법 절(09-24 · `grammar`): 캐럿 괄호 깊이의 **마지막 절**(`SELECT` · `FROM` · `GROUP BY` · `LEFT JOIN` …) — 서브쿼리 안이면 그 안의
+    /// 절 · 함수 괄호 안이면 `None`. 호스트는 이 절의 `next`만 키워드로 낸다(`SELECT avg` 자리에 `HAVING`이 나오지 않게).
+    pub clause: Option<String>,
+    /// 문장의 첫 낱말(대문자 · `SELECT`/`INSERT`/`WITH` …).
+    pub stmt_kind: Option<String>,
 }
 
 /// `*` 자리 정보.
@@ -285,6 +290,54 @@ pub fn keywords_for(d: Option<Dialect>) -> impl Iterator<Item = &'static str> {
         .chain(extra.iter().copied().filter(|k| !KEYWORDS.contains(k)))
 }
 
+/// ★ 문법 절 감지(`grammar` · 09-24): `before`를 뒤에서 앞으로 괄호 깊이를 세며 걷는다 — 깊이 0에서 문법의 절 이름(최대 세 낱말 ·
+/// `GROUP BY`·`LEFT OUTER JOIN`)에 맞는 첫 것이 절 · 깊이 0에서 `(`를 만나면(함수 인자·IN 목록 안) `None` · 서브쿼리 안이면 그 안의
+/// `SELECT`/`FROM`…이 먼저 걸린다. 첫 낱말 = 문장 종류.
+fn grammar_clause(
+    before: &[&Word<'_>],
+    dialect: Option<Dialect>,
+) -> (Option<String>, Option<String>) {
+    let g = crate::grammar::for_dialect(dialect);
+    let names = g.clause_names();
+    let up: Vec<String> = before
+        .iter()
+        .map(|w| {
+            if w.quoted {
+                String::new()
+            } else {
+                w.text.to_ascii_uppercase()
+            }
+        })
+        .collect();
+    let stmt = up.first().cloned().filter(|s| !s.is_empty() && s != "(");
+    let mut depth = 0i32;
+    let mut i = up.len();
+    while i > 0 {
+        i -= 1;
+        match up[i].as_str() {
+            ")" => depth += 1,
+            "(" => {
+                if depth == 0 {
+                    return (stmt, None);
+                }
+                depth -= 1;
+            }
+            _ if depth == 0 => {
+                for n in (1..=3).rev() {
+                    if i + 1 >= n {
+                        let cand = up[i + 1 - n..=i].join(" ");
+                        if names.contains(&cand) {
+                            return (stmt, Some(cand));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (stmt, None)
+}
+
 fn is_word(w: &Word<'_>, kw: &str) -> bool {
     !w.quoted && w.text.eq_ignore_ascii_case(kw)
 }
@@ -322,6 +375,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         paren_into: false,
         star: None,
         from_chain: false,
+        clause: None,
+        stmt_kind: None,
     };
     let Some(item) = statement_at_in(src, caret, dialect) else {
         // 문장이 없으면(빈 문서) 시작 문맥.
@@ -368,8 +423,11 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             paren_into: false,
             star: None,
             from_chain: false,
+            clause: None,
+            stmt_kind: None,
         };
     }
+    let (stmt_kind, clause) = grammar_clause(&before, dialect);
     let (paren_owner, paren_into) = paren_owner(&before).unwrap_or((None, false));
     let last = before[before.len() - 1];
     // `qualifier.` — 점이 접두 바로 앞에 붙어 있을 때만.
@@ -418,6 +476,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             paren_into,
             star: None,
             from_chain,
+            clause,
+            stmt_kind,
         };
     }
     // ★ `*` / `alias.*` 바로 뒤(접두 없음 · `COUNT(*`는 제외): "모든 컬럼" 조각 자리 — 치환 구간 = 별표(와 별칭) 전체.
@@ -453,6 +513,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             paren_into,
             star: None,
             from_chain: false,
+            clause,
+            stmt_kind,
         };
     }
     Context {
@@ -465,6 +527,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         paren_into,
         star,
         from_chain: false,
+        clause,
+        stmt_kind,
     }
 }
 
@@ -1037,6 +1101,42 @@ pub fn apply_case(text: &str, prefix: &str, mode: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 문법 절 감지(09-24 `SELECT avg` 자리의 `HAVING`): 마지막 절 · 서브쿼리 안 · 함수 괄호 안 = None · 여러 낱말 절.
+    #[test]
+    fn clause_detection_follows_paren_depth() {
+        let lite = Some(Dialect::Sqlite);
+        let c = context_at("SELECT a, avg", 13, lite);
+        assert_eq!(
+            (c.stmt_kind.as_deref(), c.clause.as_deref()),
+            (Some("SELECT"), Some("SELECT"))
+        );
+        let src = "SELECT a FROM t GROUP BY a ";
+        let c = context_at(src, src.len(), lite);
+        assert_eq!(c.clause.as_deref(), Some("GROUP BY"));
+        let src = "SELECT * FROM t LEFT OUTER JOIN u ";
+        let c = context_at(src, src.len(), lite);
+        assert_eq!(c.clause.as_deref(), Some("LEFT OUTER JOIN"));
+        let src = "SELECT * FROM t WHERE x IN (SELECT y FROM u WHERE ";
+        let c = context_at(src, src.len(), lite);
+        assert_eq!(c.clause.as_deref(), Some("WHERE"), "서브쿼리 안의 절");
+        let src = "SELECT nvl(a, ";
+        let c = context_at(src, src.len(), Some(Dialect::Oracle));
+        assert_eq!(c.clause, None, "함수 괄호 안");
+        let src = "SELECT * FROM t WHERE x IN (SELECT y FROM u) AND ";
+        let c = context_at(src, src.len(), lite);
+        assert_eq!(
+            c.clause.as_deref(),
+            Some("WHERE"),
+            "닫힌 서브쿼리 뒤 = 바깥 절"
+        );
+        let src = "INSERT INTO t (a, b) VALUES (";
+        let c = context_at(src, src.len(), lite);
+        assert_eq!(
+            (c.stmt_kind.as_deref(), c.clause.as_deref()),
+            (Some("INSERT"), None)
+        );
+    }
 
     /// 방언 키워드(09-24): 공통 + 방언 고유 · 중복 없음 · 모르면 공통만.
     #[test]

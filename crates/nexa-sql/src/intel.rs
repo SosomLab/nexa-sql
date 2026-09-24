@@ -1073,10 +1073,20 @@ impl Intel {
                     });
                 }
                 if self.cfg.keywords {
-                    // 공통 + 방언 키워드(`TOP` · `ROWNUM` · `ILIKE` · `PRAGMA` … · 09-24 4-DBMS 검토).
-                    for (i, k) in intel::keywords_for(dialect).enumerate() {
+                    // ★ 문법 절 기반(09-24 · nsql-script `grammar` · `SELECT avg` 자리에 `HAVING` 없음): 문장 시작 = `[start]` · 절을 알면
+                    //   그 절의 `next`만 · 모르는 자리(함수 괄호 안 · 낯선 절) = 공통 + 방언 키워드 전체.
+                    let g = nsql_script::grammar::for_dialect(dialect);
+                    let kws: Vec<String> = match (&ctx.kind, ctx.clause.as_deref()) {
+                        (CtxKind::Start, _) => g.start().to_vec(),
+                        (_, Some(cl)) => match g.next(cl) {
+                            Some(n) => n.to_vec(),
+                            None => intel::keywords_for(dialect).map(String::from).collect(),
+                        },
+                        _ => intel::keywords_for(dialect).map(String::from).collect(),
+                    };
+                    for (i, k) in kws.iter().enumerate() {
                         cands.push(Cand {
-                            text: k.to_string(),
+                            text: k.clone(),
                             kind: CandKind::Keyword,
                             detail: String::new(),
                             source: 5,
@@ -2476,6 +2486,57 @@ mod tests {
         assert!(
             !req(&mut it, &m, "SELECT * FROM hr.EMP."),
             "테이블 뒤 `.` = 없음"
+        );
+    }
+
+    /// ★ 문법 절 기반 키워드(사용자 09-24 "SQLite SELECT 목록에 HAVING?"): SELECT 목록 = HAVING 없음 · GROUP BY 뒤 = HAVING · 문장 시작 =
+    /// `[start]`(SQLite `PRAGMA`) · 함수 괄호 안 = 전체 표(폴백).
+    #[test]
+    fn keywords_follow_grammar_clause() {
+        let mut c = cfg();
+        c.keywords = true;
+        c.doc_words = false;
+        let mut it = Intel::new(c);
+        let host = Rect::new(0, 0, 800, 600);
+        let rev = std::cell::Cell::new(0u64);
+        let req = |it: &mut Intel, doc: &str| -> Vec<String> {
+            rev.set(rev.get() + 1);
+            let _ = it.request(
+                1,
+                rev.get(),
+                doc,
+                doc.len(),
+                Some(Dialect::Sqlite),
+                None,
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None,
+            );
+            it.cands
+                .iter()
+                .filter(|c| c.kind == CandKind::Keyword)
+                .map(|c| c.text.clone())
+                .collect()
+        };
+        let k = req(&mut it, "SELECT a, fr");
+        assert!(k.iter().any(|x| x == "FROM"), "{k:?}");
+        let k = req(&mut it, "SELECT a, ha");
+        assert!(
+            !k.iter().any(|x| x == "HAVING"),
+            "SELECT 목록 뒤에 HAVING 없음: {k:?}"
+        );
+        let k = req(&mut it, "SELECT a FROM t GROUP BY a ha");
+        assert!(k.iter().any(|x| x == "HAVING"), "{k:?}");
+        let k = req(&mut it, "pra");
+        assert!(
+            k.iter().any(|x| x == "PRAGMA") && !k.iter().any(|x| x == "HAVING"),
+            "{k:?}"
+        );
+        let k = req(&mut it, "SELECT coalesce(a, gr");
+        assert!(
+            k.iter().any(|x| x == "GROUP BY"),
+            "함수 괄호 안 = 전체 표: {k:?}"
         );
     }
 

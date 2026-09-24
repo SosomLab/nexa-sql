@@ -18,6 +18,7 @@
 | 10 | 접두 없는 컬럼 = 전 alias 컬럼 · 확정 = `A.컬럼` · Alt = 이름만 | `SELECT | FROM EMP A, DEPT B` → `A.EMPNO`·`B.DEPTNO` · Alt+Enter | `intel.qualify_columns` |
 | 11 | **`*`/`A.*` → "모든 컬럼 (N)"** 하나만 · 카드에 목록 · 한 줄(기본)/여러 줄(줄 앞 쉼표) · 쉼표 뒤 Space/Tab | `SELECT A.*` 바로 뒤 ⌃Space → Enter | `intel.star_layout` · `intel.star_comma_space` |
 | 12 | `INSERT INTO t (` 컬럼 목록 조각 · 시그니처 도움(상태줄) · 내장 함수·`DBMS_*`·방언 키워드(`TOP`·`ROWNUM`·`ILIKE`·`PRAGMA`) | `INSERT INTO M4S_I002040 (` · `NVL(` · 문장 시작에서 `TO` | `intel.insert_columns` · `intel.functions` · `intel.keywords` |
+| 13a | **문법 절 기반 예약어**(82) — 절마다 올 수 있는 예약어만 · DBMS별 `.sqlg` 참조 파일 · `NSQL_HOME/grammar/*.sqlg`로 덧입힘/새 방언 | SQLite 탭 `SELECT a, ha` → HAVING 없음 · `GROUP BY a ha` → HAVING · 문장 시작 `pra` → PRAGMA · 설정 폴더 `grammar/sqlite.sqlg`(`dialect = sqlite` · `[clause SELECT] next += MYWORD`) 뒤 재시작 → `SELECT my` | — |
 | 13 | **캐시 새로 고침** ⌘⇧R(현재 스키마) · Edit ▸ 이 서버/전 서버 · 탐색기 루트·스키마 우클릭 "메타 새로 고침" · 탐색기 "새로 고침"도 함께 낡음 표시 | 다른 도구로 테이블 만든 뒤 ⌘⇧R → 상태줄 "버킷 N · 객체 M" → `FROM ` 에 새 테이블 | — |
 
 ## 2. 편집기·창
@@ -26,6 +27,7 @@
 |---|---|---|---|
 | 14 | 블록 주석 ⌘⌥/(맥 · ⌘⇧?는 macOS 도움말이 선점) · Windows Ctrl+Shift+? · 줄 주석 ⌘/ | 선택 뒤 ⌘⌥/ · 다시 = 해제 | 단축키 설정 |
 | 15 | 보조 창을 클릭하면 메인·다른 창도 함께 앞으로(고른 창 맨 위) | 메모리 창 클릭 → 메인이 뒤에 남지 않음 | `window.focus` |
+| 15a | 미니맵 기본 폭 120 | 새 설정(기본값) 상태에서 미니맵 폭 | `editor.minimap_width` |
 | 16 | **메모리 모니터** — 상태줄 총량(클릭 효과) · 모델리스 창(Top 스위치 · 1초 갱신 · 데이터/시스템 표 · 스파크라인 · **힙 정리** 버튼) · 창 닫힘 = 비용 0 | 상태줄 `NN MB` 클릭 · View ▸ Memory Usage · Fetch all 중 "Result data" 증가 · 200행 재조회 뒤 감소 · 힙 정리 → 상태줄 "전 → 후" | `mem.statusbar` · `mem.refresh_ms` · `mem.always_on_top` |
 
 ## 3. 성능(맥)

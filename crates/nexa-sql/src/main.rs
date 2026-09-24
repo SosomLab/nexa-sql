@@ -16886,6 +16886,14 @@ fn main() {
         e.set_typeahead(typeahead_cfg(&settings));
         e.set_preload(settings.flag("intel.preload"));
         e.set_routines(settings.flag("intel.from_routines"));
+        // ★ 문법 참조 플러그인(nsql-script `grammar` · 09-24): 설정 폴더 `grammar/*.sqlg`가 내장 방언을 대신하거나 새 방언을 더한다.
+        if let Some(dir) = nsql_settings::config_dir() {
+            for (f, r) in nsql_script::grammar::load_dir(&dir.join("grammar")) {
+                if let Err(err) = r {
+                    eprintln!("[grammar] {f}: {err}");
+                }
+            }
+        }
         e
     };
     mark(&mut marks, "explorer");

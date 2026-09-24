@@ -22,6 +22,7 @@ pub mod command;
 pub mod connect;
 pub mod dialect;
 pub mod engine;
+pub mod grammar;
 pub mod inputs;
 pub mod intel;
 pub mod intrinsic;

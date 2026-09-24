@@ -1,0 +1,130 @@
+# nexa-sql 문법 참조 파일(.sqlg) — 절(clause)마다 "다음에 올 수 있는 예약어"와 "놓을 수 있는 객체 종류".
+# 형식: `dialect = 이름` · `extends = 이름`(기본 ansi) · `[start] next = …`(문장 시작) · `[statement 이름] clauses = …`(절 목록 · 감지용)
+#       `[clause 이름] next = a, b` / `next += a`(부모에 더함) / `objects = column, table, view, schema, function, subquery` / `same = 다른 절`(별칭)
+# 여러 낱말 절(GROUP BY · LEFT JOIN)은 그대로 적는다. 대소문자 무관. `#` 뒤는 주석. 재귀(서브쿼리) = objects에 subquery.
+dialect = ansi
+
+[start]
+next = SELECT, WITH, INSERT INTO, UPDATE, DELETE FROM, MERGE INTO, CREATE, ALTER, DROP, TRUNCATE TABLE, GRANT, REVOKE, COMMIT, ROLLBACK, SAVEPOINT, EXPLAIN, DESCRIBE, BEGIN, DECLARE
+
+[statement SELECT]
+clauses = WITH, SELECT, FROM, JOIN, ON, WHERE, GROUP BY, HAVING, ORDER BY, UNION, UNION ALL, INTERSECT, EXCEPT, FETCH FIRST, OFFSET, LIMIT
+[statement INSERT]
+clauses = INSERT INTO, VALUES, SELECT, FROM, WHERE, RETURNING
+[statement UPDATE]
+clauses = UPDATE, SET, FROM, WHERE, RETURNING
+[statement DELETE]
+clauses = DELETE FROM, USING, WHERE, RETURNING
+[statement MERGE]
+clauses = MERGE INTO, USING, ON, WHEN MATCHED, WHEN NOT MATCHED
+
+[clause WITH]
+next = AS, RECURSIVE, SELECT
+objects = subquery
+
+[clause SELECT]
+next = DISTINCT, ALL, AS, FROM, CASE, WHEN, THEN, ELSE, END, NULL, TRUE, FALSE, NOT, EXISTS, CAST, OVER, PARTITION BY, IN, BETWEEN, LIKE, IS NULL, IS NOT NULL, AND, OR
+objects = column, function, subquery
+
+[clause FROM]
+next = WHERE, GROUP BY, ORDER BY, JOIN, INNER JOIN, LEFT JOIN, LEFT OUTER JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, NATURAL JOIN, ON, USING, AS, UNION, UNION ALL, INTERSECT, EXCEPT, FETCH FIRST, ROWS ONLY
+objects = table, view, schema, subquery
+
+[clause JOIN]
+next = ON, USING, AS, WHERE, GROUP BY, ORDER BY, JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN
+objects = table, view, schema, subquery
+[clause INNER JOIN]
+same = JOIN
+[clause LEFT JOIN]
+same = JOIN
+[clause LEFT OUTER JOIN]
+same = JOIN
+[clause RIGHT JOIN]
+same = JOIN
+[clause RIGHT OUTER JOIN]
+same = JOIN
+[clause FULL JOIN]
+same = JOIN
+[clause FULL OUTER JOIN]
+same = JOIN
+[clause CROSS JOIN]
+same = JOIN
+[clause NATURAL JOIN]
+same = JOIN
+
+[clause ON]
+next = AND, OR, NOT, IN, EXISTS, BETWEEN, LIKE, IS NULL, IS NOT NULL, CASE, WHEN, THEN, ELSE, END, NULL, WHERE, GROUP BY, ORDER BY, JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN
+objects = column, function, subquery
+
+[clause WHERE]
+next = AND, OR, NOT, IN, EXISTS, BETWEEN, LIKE, IS NULL, IS NOT NULL, CASE, WHEN, THEN, ELSE, END, NULL, GROUP BY, ORDER BY, UNION, UNION ALL, INTERSECT, EXCEPT, FETCH FIRST, ROWS ONLY
+objects = column, function, subquery
+
+[clause GROUP BY]
+next = HAVING, ORDER BY, UNION, UNION ALL, INTERSECT, EXCEPT, FETCH FIRST
+objects = column, function
+
+[clause HAVING]
+next = AND, OR, NOT, IN, EXISTS, BETWEEN, LIKE, IS NULL, IS NOT NULL, CASE, WHEN, THEN, ELSE, END, ORDER BY, UNION, UNION ALL, INTERSECT, EXCEPT, FETCH FIRST
+objects = column, function, subquery
+
+[clause ORDER BY]
+next = ASC, DESC, NULLS FIRST, NULLS LAST, FETCH FIRST, ROWS ONLY, UNION, UNION ALL, INTERSECT, EXCEPT
+objects = column, function
+
+[clause UNION]
+next = SELECT, ALL, DISTINCT
+objects = subquery
+[clause UNION ALL]
+same = UNION
+[clause INTERSECT]
+same = UNION
+[clause EXCEPT]
+same = UNION
+
+[clause FETCH FIRST]
+next = ROWS ONLY, ROW ONLY, PERCENT ROWS ONLY, WITH TIES
+[clause OFFSET]
+next = ROWS, FETCH FIRST, FETCH NEXT
+[clause LIMIT]
+next = OFFSET
+
+[clause INSERT INTO]
+next = VALUES, SELECT, WITH, DEFAULT VALUES
+objects = table, schema, column
+[clause VALUES]
+next = NULL, DEFAULT, RETURNING
+objects = function
+[clause UPDATE]
+next = SET
+objects = table, schema
+[clause SET]
+next = WHERE, NULL, DEFAULT, CASE, WHEN, THEN, ELSE, END, RETURNING
+objects = column, function, subquery
+[clause DELETE FROM]
+next = WHERE, USING, RETURNING
+objects = table, schema
+[clause RETURNING]
+next = INTO
+objects = column, function
+[clause MERGE INTO]
+next = USING
+objects = table, schema
+[clause USING]
+next = ON, AS
+objects = table, subquery
+[clause WHEN MATCHED]
+next = THEN UPDATE SET, THEN DELETE, AND
+[clause WHEN NOT MATCHED]
+next = THEN INSERT, AND
+
+[clause CREATE]
+next = TABLE, VIEW, INDEX, UNIQUE INDEX, SEQUENCE, TRIGGER, PROCEDURE, FUNCTION, OR REPLACE, SCHEMA, TYPE
+[clause ALTER]
+next = TABLE, VIEW, INDEX, SEQUENCE, TRIGGER, PROCEDURE, FUNCTION, SCHEMA
+objects = table, schema
+[clause DROP]
+next = TABLE, VIEW, INDEX, SEQUENCE, TRIGGER, PROCEDURE, FUNCTION, SCHEMA, TYPE, IF EXISTS
+objects = table, view, schema
+[clause TRUNCATE TABLE]
+objects = table, schema
