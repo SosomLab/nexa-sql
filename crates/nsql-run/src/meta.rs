@@ -115,6 +115,53 @@ pub const KEY_PK: u8 = 1;
 pub const KEY_FK: u8 = 2;
 pub const KEY_UQ: u8 = 4;
 
+/// 테이블 상세(제약·인덱스 — 완성 상세 카드·객체 정보 · 09-24). 종류 = `P`/`U`/`R`/`C`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyEntry {
+    pub name: Sym,
+    pub kind: char,
+    pub cols: Vec<Sym>,
+    pub ref_table: Option<Sym>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexEntry {
+    pub name: Sym,
+    pub unique: bool,
+    pub cols: Vec<Sym>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TableDetail {
+    pub keys: Vec<KeyEntry>,
+    pub indexes: Vec<IndexEntry>,
+    /// 테이블 코멘트(Description · 09-24).
+    pub comment: Option<Sym>,
+    /// 컬럼 코멘트(이름 심볼, 코멘트 심볼).
+    pub col_comments: Vec<(Sym, Sym)>,
+}
+
+/// 테이블 상세 채움 상태(컬럼과 별개 — 필요할 때 한 번).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum DetailState {
+    #[default]
+    Unknown,
+    Loading,
+    Loaded {
+        at: u64,
+        detail: Arc<TableDetail>,
+    },
+}
+
+/// 카탈로그 → 상세 입력.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NewDetail {
+    pub keys: Vec<(String, char, Vec<String>, Option<String>)>,
+    pub indexes: Vec<(String, bool, Vec<String>)>,
+    pub comment: Option<String>,
+    pub col_comments: Vec<(String, String)>,
+}
+
 /// 버킷(스키마 × 종류)의 채움 상태 — 부분 서비스의 근거.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Coverage {
@@ -154,6 +201,8 @@ pub struct Snapshot {
     pub schemas: Vec<Sym>,
     pub objs: Vec<ObjEntry>,
     pub cols: Vec<ColState>,
+    /// 테이블 상세(제약·인덱스) — 요청한 것만(09-24).
+    pub details: HashMap<ObjId, DetailState>,
     pub buckets: HashMap<(Sym, ObjectKind), Arc<Bucket>>,
     /// (스키마, 소문자 이름) → 객체(같은 이름이 종류별로 있으면 첫 것 · 종류 지정 조회는 버킷으로).
     exact: HashMap<(Sym, Sym), ObjId>,
@@ -392,6 +441,75 @@ impl MetaStore {
         self.evict_if_needed(at);
     }
 
+    /// 테이블 상세 채우기(제약·인덱스).
+    pub fn set_detail(&mut self, id: ObjId, d: &NewDetail, at: u64) {
+        let mut s = self.edit();
+        let keys = d
+            .keys
+            .iter()
+            .map(|(n, k, cols, rf)| KeyEntry {
+                name: self.names.intern(n),
+                kind: *k,
+                cols: cols.iter().map(|c| self.names.intern(c)).collect(),
+                ref_table: rf.as_deref().map(|r| self.names.intern(r)),
+            })
+            .collect();
+        let indexes = d
+            .indexes
+            .iter()
+            .map(|(n, u, cols)| IndexEntry {
+                name: self.names.intern(n),
+                unique: *u,
+                cols: cols.iter().map(|c| self.names.intern(c)).collect(),
+            })
+            .collect();
+        let comment = d.comment.as_deref().map(|c| self.names.intern(c));
+        let col_comments = d
+            .col_comments
+            .iter()
+            .map(|(n, c)| (self.names.intern(n), self.names.intern(c)))
+            .collect();
+        s.details.insert(
+            id,
+            DetailState::Loaded {
+                at,
+                detail: Arc::new(TableDetail {
+                    keys,
+                    indexes,
+                    comment,
+                    col_comments,
+                }),
+            },
+        );
+        self.commit(s);
+    }
+
+    pub fn mark_detail_loading(&mut self, id: ObjId) {
+        let mut s = self.edit();
+        if !matches!(s.details.get(&id), Some(DetailState::Loaded { .. })) {
+            s.details.insert(id, DetailState::Loading);
+        }
+        self.commit(s);
+    }
+
+    /// 상세 되돌리기(실패 · 컬럼이 바뀜 → 다음 요청 때 다시).
+    pub fn reset_detail(&mut self, id: ObjId) {
+        let mut s = self.edit();
+        s.details.remove(&id);
+        self.commit(s);
+    }
+
+    /// 컬럼 상태 되돌리기(요청 실패 · 다음 요청 때 다시).
+    pub fn reset_columns(&mut self, id: ObjId) {
+        let mut s = self.edit();
+        if let Some(slot) = s.cols.get_mut(id.0 as usize) {
+            if matches!(slot, ColState::Loading) {
+                *slot = ColState::Unknown;
+            }
+        }
+        self.commit(s);
+    }
+
     pub fn mark_columns_loading(&mut self, id: ObjId) {
         let mut s = self.edit();
         if let Some(slot) = s.cols.get_mut(id.0 as usize) {
@@ -444,6 +562,32 @@ impl MetaStore {
             + s.exact.len() * 24
     }
 
+    /// ★ 버킷 해제(미사용 판정 즉시 회수 · 사용자 09-23): 그 (스키마, 종류)의 객체 목록·정확 조회 열쇠·전역 이름 정렬·컬럼을
+    /// 버리고 버킷을 없앤다(커버리지 = `Missing` · 다음 요청 때 다시 읽는다). 객체 행 자체는 id 안정성 때문에 남긴다(행당 40 B ·
+    /// 컬럼이 무거운 쪽이고 그것은 비운다). 반환 = 실제로 비웠는가.
+    pub fn drop_bucket(&mut self, schema: &str, kind: ObjectKind) -> bool {
+        let Some(sc) = self.names.find(schema) else {
+            return false;
+        };
+        let Some(b) = self.snap.buckets.get(&(sc, kind)).cloned() else {
+            return false;
+        };
+        let mut s = self.edit();
+        let drop: std::collections::HashSet<ObjId> = b.objs.iter().copied().collect();
+        for id in &b.objs {
+            let key = self.names.lower_key(s.objs[id.0 as usize].name);
+            if s.exact.get(&(sc, key)) == Some(id) {
+                s.exact.remove(&(sc, key));
+            }
+            s.cols[id.0 as usize] = ColState::Unknown;
+            s.details.remove(id);
+        }
+        s.buckets.remove(&(sc, kind));
+        s.by_name.retain(|(_, id)| !drop.contains(id));
+        self.commit(s);
+        true
+    }
+
     /// 상한 변경.
     pub fn set_max_bytes(&mut self, n: usize) {
         self.max_bytes = n.max(1 << 20);
@@ -490,11 +634,13 @@ impl Snapshot {
         match schema {
             Some(sc) => {
                 let lsc = sc.to_lowercase();
+                // 접속 스키마 목록에 없는 버킷(사전 `$dict` · 09-24 "ALL_TABLES 컬럼이 안 온다")도 인터닝된 이름으로 찾는다.
                 let sym = self
                     .schemas
                     .iter()
                     .copied()
-                    .find(|s| names.lower(*s) == lsc)?;
+                    .find(|s| names.lower(*s) == lsc)
+                    .or_else(|| names.find(sc))?;
                 find_in(sym)
             }
             None => {
@@ -569,6 +715,12 @@ impl Snapshot {
                 }
             })
             .collect()
+    }
+
+    /// 테이블 상세 상태(없으면 Unknown).
+    #[must_use]
+    pub fn detail(&self, id: ObjId) -> DetailState {
+        self.details.get(&id).cloned().unwrap_or_default()
     }
 
     /// 컬럼(없으면 상태만).
@@ -735,6 +887,84 @@ mod tests {
         assert!(
             s.object(t1).is_some() && s.object(t2).is_some(),
             "객체 목록은 유지"
+        );
+    }
+
+    /// 버킷 해제(미사용 즉시 회수 · 09-23): 목록·정확 조회·전역 정렬·컬럼이 비고 커버리지는 Missing · 다른 버킷은 그대로.
+    #[test]
+    fn drop_bucket_clears_index_and_columns_but_keeps_others() {
+        let mut m = MetaStore::new(1 << 24);
+        m.set_schemas(&["A".into(), "B".into()], Some("A"));
+        m.load_bucket(
+            "A",
+            ObjectKind::Table,
+            &[NewObj {
+                name: "T1".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        m.load_bucket(
+            "B",
+            ObjectKind::Table,
+            &[NewObj {
+                name: "T2".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        let id = m.snapshot().lookup(&m.names, Some("B"), "t2").unwrap();
+        m.set_columns(
+            id,
+            &[NewCol {
+                name: "C".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        assert!(m.drop_bucket("B", ObjectKind::Table));
+        let s = m.snapshot();
+        assert!(matches!(
+            s.coverage(m.names.find("B").unwrap(), ObjectKind::Table),
+            Coverage::Missing
+        ));
+        assert!(s.lookup(&m.names, Some("B"), "T2").is_none());
+        assert!(matches!(s.columns(id), ColState::Unknown));
+        assert!(s
+            .prefix_any(&m.names, "t", 10)
+            .iter()
+            .all(|h| m.names.get(h.name) != "T2"));
+        assert!(
+            s.lookup(&m.names, Some("A"), "T1").is_some(),
+            "다른 버킷은 그대로"
+        );
+        assert!(
+            !m.drop_bucket("B", ObjectKind::Table),
+            "두 번째는 비울 것이 없다"
+        );
+        assert!(!m.drop_bucket("ZZ", ObjectKind::Table));
+    }
+
+    /// 스키마 목록에 없는 버킷(사전 `$dict`)도 스키마를 지정한 조회로 찾는다(09-24 `ALL_TABLES` 컬럼 요청 누락의 원인).
+    #[test]
+    fn lookup_finds_objects_in_buckets_outside_schema_list() {
+        let mut m = MetaStore::new(1 << 24);
+        m.set_schemas(&["BISCM".into()], Some("BISCM"));
+        m.load_bucket(
+            "$dict",
+            ObjectKind::View,
+            &[NewObj {
+                name: "ALL_TABLES".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        let s = m.snapshot();
+        assert!(s.lookup(&m.names, Some("$dict"), "all_tables").is_some());
+        assert!(s.lookup(&m.names, Some("BISCM"), "ALL_TABLES").is_none());
+        assert!(
+            s.lookup(&m.names, None, "ALL_TABLES").is_some(),
+            "전 스키마 조회에도 든다"
         );
     }
 }

@@ -496,7 +496,19 @@ impl Grid {
     /// 이 결과 탭의 세그먼트 크기(0 = 전체).
     /// 이 탭이 드는 대략 바이트 = 결과 데이터(세그먼트 누적) + 텍스트 보기 파생 캐시(메모리 예산 D-72 · 푸터).
     pub(crate) fn approx_bytes(&self) -> u64 {
-        self.rs.as_ref().map_or(0, ResultData::approx_bytes) + self.text_bytes
+        let (d, t) = self.mem_parts();
+        d + t
+    }
+
+    /// (결과 데이터, 텍스트 보기 캐시) 바이트 — 메모리 맵 카테고리 보고(docs/80).
+    /// ★ 전체 조회 **진행 중**에는 받은 행이 워커 버퍼에 쌓이고 `rs`에는 끝나야 붙는다 → 진행 수치(`fetch_progress` = 받은 바이트 +
+    ///   기존)를 데이터로 친다(사용자 09-24 "Fetch 중 실행 카드는 늘어나는데 메모리 사용량은 그대로").
+    pub(crate) fn mem_parts(&self) -> (u64, u64) {
+        let held = self.rs.as_ref().map_or(0, ResultData::approx_bytes);
+        let in_flight = self
+            .fetch_progress
+            .map_or(0, |(_, b)| b.saturating_sub(held));
+        (held + in_flight, self.text_bytes)
     }
 
     pub(crate) fn page_rows(&self) -> usize {

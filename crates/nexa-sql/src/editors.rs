@@ -5,6 +5,7 @@
 //! - 세션 분리(`session.mode = per-editor`)는 T-54 — 지금은 모든 탭이 한 세션.
 
 use crate::eol::Eol;
+use crate::memstat::{Acc, Cat, MemSource};
 use crate::syntax::SyntaxRegistry;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip_in, DrawCtx};
@@ -2681,5 +2682,19 @@ mod split_tests {
         assert_eq!(split_column(b, 0, 3, 1), Rect::new(10, 0, 100, 100));
         assert_eq!(split_column(b, 1, 3, 1), Rect::new(111, 0, 100, 100));
         assert_eq!(split_column(b, 2, 3, 1), Rect::new(212, 0, 100, 100));
+    }
+}
+
+/// 메모리 맵 보고(docs/80): 탭마다 본문·되돌리기 기록·그리기 캐시(nexa-ctl `TextBox::mem_parts`).
+impl MemSource for Editors {
+    fn mem_report(&self, acc: &mut Acc) {
+        for i in 0..self.len() {
+            if let Some(b) = self.tab_box(i) {
+                let (text, hist, cache) = b.mem_parts();
+                acc.add(Cat::EditorText, text as u64);
+                acc.add(Cat::EditorHistory, hist as u64);
+                acc.add(Cat::EditorCache, cache as u64);
+            }
+        }
     }
 }

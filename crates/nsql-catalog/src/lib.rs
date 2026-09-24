@@ -317,6 +317,79 @@ pub fn current_schema(s: &mut dyn Session) -> Result<String, DbError> {
     Ok(rs.rows.first().map(|r| col(r, 0)).unwrap_or_default())
 }
 
+/// 사전 뷰 버킷의 가짜 스키마 이름(메타 저장소 열쇠 · 자동 완성 전용 · docs/76 §8).
+pub const DICT_SCHEMA: &str = "$dict";
+
+/// ★ 접속 계정이 **지금 권한으로 읽을 수 있는** 사전 뷰(사용자 09-23 "권한에 맞춰 ALL_/DBA_ 등 · 다른 DBMS도 같은 개념").
+/// 정적 표(nsql-script `builtins::system_objects`)는 접속 전 폴백이고, 접속 뒤에는 이 결과가 후보의 원천이다.
+/// - Oracle: `ALL_VIEWS`(접근 가능한 뷰만 — `DBA_*`는 SELECT ANY DICTIONARY·SELECT_CATALOG_ROLE이 있을 때만 보인다)
+///   + PUBLIC 시노님 `V$`/`GV$`(`ALL_SYNONYMS`도 접근 가능한 것만).
+/// - PostgreSQL: `pg_catalog`·`information_schema`에서 `has_table_privilege(SELECT)`인 것.
+/// - SQL Server: `sys`·`INFORMATION_SCHEMA`의 뷰·테이블·테이블 값 함수(메타데이터 가시성 규칙이 거른다).
+/// - MySQL: `information_schema.tables`의 시스템 스키마(권한 있는 것만 보인다).
+/// - SQLite: 내장 표(권한 개념 없음). ODBC: 없음.
+///
+/// 이름은 Oracle만 맨이름(`ALL_TABLES`) · 그 밖은 `스키마.이름`(FROM 뒤에 그대로 쓰는 꼴).
+pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
+    let mk = |name: String| ObjectInfo {
+        schema: DICT_SCHEMA.into(),
+        name,
+        kind: ObjectKind::View,
+        status: String::new(),
+        modified: String::new(),
+        extra: String::new(),
+    };
+    // Oracle은 질의 둘로(09-23 실측: `ALL_SYNONYMS`가 수 초 — 메타 워커 큐를 막아 컬럼 로딩이 늦어졌다): ① `ALL_VIEWS`(접근 가능한
+    //   사전 뷰만) ② `V$FIXED_TABLE`(V$/GV$ 이름 · SELECT ANY DICTIONARY·SELECT_CATALOG_ROLE이 없으면 실패 = 그 계정은 V$도 못 읽는다 → 건너뜀).
+    if s.dialect() == Dialect::Oracle {
+        // ★ 09-24 실측(BISCM 19c): `ALL_VIEWS` + LIKE 4개 = **121 s**(앱 로그 `[meta] dictionary`) ↔ `ALL_OBJECTS`(owner SYS · VIEW · LIKE)
+        //   3,078행 ≈ 0.1 s · `V$FIXED_TABLE` 1,518행 ≈ 0.1 s → 그것으로. 둘 다 접근 가능한 것만 보인다(권한 반영 유지).
+        let mut out: Vec<ObjectInfo> = query(s, "SELECT object_name FROM all_objects WHERE owner = 'SYS' AND object_type = 'VIEW' AND (object_name LIKE 'ALL\\_%' ESCAPE '\\' OR object_name LIKE 'DBA\\_%' ESCAPE '\\' OR object_name LIKE 'USER\\_%' ESCAPE '\\' OR object_name LIKE 'CDB\\_%' ESCAPE '\\') ORDER BY object_name")?
+            .rows
+            .iter()
+            .map(|r| col(r, 0))
+            .filter(|n| !n.is_empty())
+            .map(mk)
+            .collect();
+        if let Ok(rs) = query(
+            s,
+            "SELECT name FROM v$fixed_table WHERE name LIKE 'V$%' OR name LIKE 'GV$%' ORDER BY name",
+        ) {
+            out.extend(rs.rows.iter().map(|r| col(r, 0)).filter(|n| !n.is_empty()).map(mk));
+        }
+        return Ok(out);
+    }
+    let sql = match s.dialect() {
+        Dialect::Oracle => unreachable!(),
+        Dialect::Mssql => "SELECT s.name + '.' + o.name FROM sys.all_objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE s.name IN ('sys','INFORMATION_SCHEMA') AND o.type IN ('V','U','S','IF','TF') ORDER BY 1",
+        Dialect::Postgres => "SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ('pg_catalog','information_schema') AND c.relkind IN ('r','v') AND has_table_privilege(c.oid, 'SELECT') ORDER BY 1",
+        Dialect::Mysql => "SELECT CONCAT(table_schema, '.', table_name) FROM information_schema.tables WHERE table_schema IN ('information_schema','performance_schema','mysql','sys') ORDER BY 1",
+        Dialect::Sqlite => {
+            return Ok([
+                "sqlite_master",
+                "sqlite_schema",
+                "sqlite_temp_master",
+                "sqlite_temp_schema",
+                "sqlite_sequence",
+                "sqlite_stat1",
+                "sqlite_stat4",
+            ]
+            .iter()
+            .map(|n| mk((*n).to_string()))
+            .collect());
+        }
+        Dialect::Odbc => return Ok(Vec::new()),
+    };
+    let rs = query(s, sql)?;
+    Ok(rs
+        .rows
+        .iter()
+        .map(|r| col(r, 0))
+        .filter(|n| !n.is_empty())
+        .map(mk)
+        .collect())
+}
+
 // ───────────────────────────────────────────── 키(PK · 유니크)
 
 /// (종류 'P'/'U', 이름, 컬럼) 행을 [`KeyInfo`]로 — 같은 이름은 한 묶음 · PK가 앞.
@@ -419,7 +492,304 @@ pub fn keys(s: &mut dyn Session, schema: &str, table: &str) -> Result<KeyInfo, D
     }
 }
 
+// ───────────────────────────────────────────── 테이블 상세(키·인덱스·제약 — 완성 상세 카드 · T-179 hover 카드 · 09-24)
+
+/// 제약 하나(종류 = `P` 기본 키 · `U` 유니크 · `R` 외래 키 · `C` 체크).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KeyDef {
+    pub name: String,
+    pub kind: char,
+    pub cols: Vec<String>,
+    /// 외래 키가 가리키는 테이블(`R`만).
+    pub ref_table: Option<String>,
+}
+
+/// 인덱스 하나.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IndexDef {
+    pub name: String,
+    pub unique: bool,
+    pub cols: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TableDetail {
+    pub keys: Vec<KeyDef>,
+    pub indexes: Vec<IndexDef>,
+    /// 테이블 코멘트(Description · 없으면 None · 09-24).
+    pub comment: Option<String>,
+    /// 컬럼 코멘트(이름, 코멘트) — 있는 것만.
+    pub col_comments: Vec<(String, String)>,
+}
+
+/// 테이블·컬럼 코멘트(Description · 사용자 09-24) — 실패는 없음으로(코멘트 기능이 없는 DB · 권한).
+fn comments(
+    s: &mut dyn Session,
+    schema: &str,
+    table: &str,
+) -> (Option<String>, Vec<(String, String)>) {
+    let dialect = s.dialect();
+    let (tsql, csql): (Option<String>, Option<String>) = match dialect {
+        Dialect::Oracle => (
+            Some(format!("SELECT comments FROM all_tab_comments WHERE owner = {} AND table_name = {}", lit(schema), lit(table))),
+            Some(format!("SELECT column_name, comments FROM all_col_comments WHERE owner = {} AND table_name = {} AND comments IS NOT NULL", lit(schema), lit(table))),
+        ),
+        Dialect::Mssql => {
+            let obj = lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)));
+            (
+                Some(format!("SELECT CAST(value AS NVARCHAR(4000)) FROM sys.extended_properties WHERE major_id = OBJECT_ID({obj}) AND minor_id = 0 AND name = 'MS_Description'")),
+                Some(format!("SELECT c.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.extended_properties ep JOIN sys.columns c ON c.object_id = ep.major_id AND c.column_id = ep.minor_id WHERE ep.major_id = OBJECT_ID({obj}) AND ep.name = 'MS_Description'")),
+            )
+        }
+        Dialect::Postgres => (
+            Some(format!("SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}", lit(schema), lit(table))),
+            Some(format!("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {} AND a.attnum > 0 AND NOT a.attisdropped AND col_description(a.attrelid, a.attnum) IS NOT NULL", lit(schema), lit(table))),
+        ),
+        Dialect::Mysql | Dialect::Odbc => (
+            Some(format!("SELECT table_comment FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", lit(schema), lit(table))),
+            Some(format!("SELECT column_name, column_comment FROM information_schema.columns WHERE table_schema = {} AND table_name = {} AND column_comment <> ''", lit(schema), lit(table))),
+        ),
+        Dialect::Sqlite => (None, None),
+    };
+    let tc = tsql
+        .and_then(|q| query(s, &q).ok())
+        .and_then(|rs| rs.rows.first().map(|r| col(r, 0)))
+        .filter(|c| !c.trim().is_empty());
+    let cc = csql
+        .and_then(|q| query(s, &q).ok())
+        .map(|rs| {
+            rs.rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1)))
+                .filter(|(n, c)| !n.is_empty() && !c.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    (tc, cc)
+}
+
+/// (종류, 이름, 컬럼, 참조) 행을 접는다 — 같은 이름은 한 묶음 · 순서 유지.
+fn fold_defs(rows: &[Vec<Value>]) -> Vec<KeyDef> {
+    let mut out: Vec<KeyDef> = Vec::new();
+    for r in rows {
+        let (kind, name, column, rf) = (col(r, 0), col(r, 1), col(r, 2), col(r, 3));
+        let kind = kind.chars().next().unwrap_or('C');
+        if let Some(k) = out.iter_mut().find(|k| k.name == name) {
+            if !column.is_empty() {
+                k.cols.push(column);
+            }
+        } else {
+            out.push(KeyDef {
+                name,
+                kind,
+                cols: if column.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![column]
+                },
+                ref_table: (!rf.is_empty()).then_some(rf),
+            });
+        }
+    }
+    out
+}
+
+fn fold_indexes(rows: &[Vec<Value>]) -> Vec<IndexDef> {
+    let mut out: Vec<IndexDef> = Vec::new();
+    for r in rows {
+        let (name, uniq, column) = (col(r, 0), col(r, 1), col(r, 2));
+        if let Some(i) = out.iter_mut().find(|i| i.name == name) {
+            if !column.is_empty() {
+                i.cols.push(column);
+            }
+        } else {
+            out.push(IndexDef {
+                name,
+                unique: truthy(&uniq) || uniq.eq_ignore_ascii_case("UNIQUE"),
+                cols: if column.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![column]
+                },
+            });
+        }
+    }
+    out
+}
+
+/// ★ 테이블 하나의 제약(PK·UK·FK·CHECK)과 인덱스 전부(완성 상세 카드 "이 컬럼이 든 객체" · 객체 정보 · 09-24).
+/// 질의 둘(제약 · 인덱스) · 테이블 단위라 가볍다(`keys()`는 PK/UK만이라 남겨 둔다).
+pub fn table_detail(
+    s: &mut dyn Session,
+    schema: &str,
+    table: &str,
+) -> Result<TableDetail, DbError> {
+    let dialect = s.dialect();
+    let (cons_sql, idx_sql): (String, String) = match dialect {
+        Dialect::Oracle => {
+            // ★ 09-24 실측(BISCM · 접속 제외): 제약 + FK 대상 테이블 **자기 조인** ≈ 1,155 ms ↔ 조인 없이 ≈ 315 ms · 인덱스 ≈ 91 ms →
+            //   조인을 빼고, FK가 있을 때만 대상 테이블 이름을 한 번 더 묻는다(보통 0~1회).
+            let cons = query(s, &format!(
+                "SELECT c.constraint_type, c.constraint_name, cc.column_name, '', c.r_owner, c.r_constraint_name FROM all_constraints c JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name WHERE c.owner = {} AND c.table_name = {} AND c.constraint_type IN ('P','U','R','C') AND c.generated = 'USER NAME' ORDER BY DECODE(c.constraint_type, 'P', 0, 'U', 1, 'R', 2, 3), c.constraint_name, cc.position",
+                lit(schema), lit(table)
+            ))?;
+            let mut keys = fold_defs(&cons.rows);
+            // FK → (r_owner, r_constraint_name) → 대상 테이블(제약 이름별 1행).
+            let mut refs: Vec<(String, String, String)> = Vec::new();
+            for r in &cons.rows {
+                if col(r, 0) == "R" {
+                    let (name, ro, rc) = (col(r, 1), col(r, 4), col(r, 5));
+                    if !rc.is_empty() && !refs.iter().any(|(n, _, _)| *n == name) {
+                        refs.push((name, ro, rc));
+                    }
+                }
+            }
+            if !refs.is_empty() {
+                let list = refs
+                    .iter()
+                    .map(|(_, ro, rc)| format!("({}, {})", lit(ro), lit(rc)))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if let Ok(rs) = query(s, &format!(
+                    "SELECT owner, constraint_name, table_name FROM all_constraints WHERE (owner, constraint_name) IN ({list})"
+                )) {
+                    for r in &rs.rows {
+                        let (ro, rc, tn) = (col(r, 0), col(r, 1), col(r, 2));
+                        for (name, o, c) in &refs {
+                            if *o == ro && *c == rc {
+                                if let Some(k) = keys.iter_mut().find(|k| k.name == *name) {
+                                    k.ref_table = Some(tn.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let idx = query(s, &format!(
+                "SELECT i.index_name, i.uniqueness, ic.column_name FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name WHERE i.table_owner = {} AND i.table_name = {} ORDER BY i.index_name, ic.column_position",
+                lit(schema), lit(table)
+            ))?;
+            let (comment, col_comments) = comments(s, schema, table);
+            return Ok(TableDetail {
+                keys,
+                indexes: fold_indexes(&idx.rows),
+                comment,
+                col_comments,
+            });
+        }
+        Dialect::Mssql => {
+            let obj = lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)));
+            (
+                format!(
+                    "SELECT x.k, x.n, x.c, x.r FROM (SELECT CASE WHEN kc.type = 'PK' THEN 'P' ELSE 'U' END AS k, kc.name AS n, c.name AS c, '' AS r, ic.key_ordinal AS o FROM sys.key_constraints kc JOIN sys.index_columns ic ON ic.object_id = kc.parent_object_id AND ic.index_id = kc.unique_index_id JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE kc.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT 'R', fk.name, c.name, OBJECT_NAME(fk.referenced_object_id), fkc.constraint_column_id FROM sys.foreign_keys fk JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id JOIN sys.columns c ON c.object_id = fkc.parent_object_id AND c.column_id = fkc.parent_column_id WHERE fk.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT 'C', ck.name, ISNULL(c.name, ''), '', 1 FROM sys.check_constraints ck LEFT JOIN sys.columns c ON c.object_id = ck.parent_object_id AND c.column_id = ck.parent_column_id WHERE ck.parent_object_id = OBJECT_ID({obj})) x ORDER BY CASE x.k WHEN 'P' THEN 0 WHEN 'U' THEN 1 WHEN 'R' THEN 2 ELSE 3 END, x.n, x.o"
+                ),
+                format!(
+                    "SELECT i.name, CASE WHEN i.is_unique = 1 THEN 'Y' ELSE 'N' END, c.name FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE i.object_id = OBJECT_ID({obj}) AND i.name IS NOT NULL ORDER BY i.index_id, ic.key_ordinal"
+                ),
+            )
+        }
+        Dialect::Postgres => (
+            format!(
+                "SELECT UPPER(con.contype::text), con.conname, a.attname, COALESCE(rt.relname, '') FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('p','u','f','c') ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END, con.conname, k.ord",
+                lit(schema), lit(table)
+            ),
+            format!(
+                "SELECT ic.relname, CASE WHEN ix.indisunique THEN 'Y' ELSE 'N' END, a.attname FROM pg_index ix JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_class ic ON ic.oid = ix.indexrelid CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum WHERE n.nspname = {} AND t.relname = {} ORDER BY ic.relname, k.ord",
+                lit(schema), lit(table)
+            ),
+        ),
+        Dialect::Mysql | Dialect::Odbc => (
+            format!(
+                "SELECT CASE tc.constraint_type WHEN 'PRIMARY KEY' THEN 'P' WHEN 'UNIQUE' THEN 'U' WHEN 'FOREIGN KEY' THEN 'R' ELSE 'C' END, tc.constraint_name, kcu.column_name, IFNULL(kcu.referenced_table_name, '') FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} ORDER BY 1, 2, kcu.ordinal_position",
+                lit(schema), lit(table)
+            ),
+            format!(
+                "SELECT index_name, CASE WHEN non_unique = 0 THEN 'Y' ELSE 'N' END, column_name FROM information_schema.statistics WHERE table_schema = {} AND table_name = {} ORDER BY index_name, seq_in_index",
+                lit(schema), lit(table)
+            ),
+        ),
+        Dialect::Sqlite => {
+            let mut d = TableDetail::default();
+            let k = keys(s, schema, table)?;
+            if !k.pk.is_empty() {
+                d.keys.push(KeyDef {
+                    name: "PRIMARY KEY".into(),
+                    kind: 'P',
+                    cols: k.pk,
+                    ref_table: None,
+                });
+            }
+            let fk = query(
+                s,
+                &format!("PRAGMA foreign_key_list({})", quote_ident(dialect, table)),
+            )?;
+            // id, seq, table, from, to, …
+            for r in &fk.rows {
+                let name = format!("FK_{}", cell_i64(&r[0]));
+                let from = col(r, 3);
+                if let Some(e) = d.keys.iter_mut().find(|e| e.name == name) {
+                    e.cols.push(from);
+                } else {
+                    d.keys.push(KeyDef {
+                        name,
+                        kind: 'R',
+                        cols: vec![from],
+                        ref_table: Some(col(r, 2)),
+                    });
+                }
+            }
+            let il = query(
+                s,
+                &format!("PRAGMA index_list({})", quote_ident(dialect, table)),
+            )?;
+            for r in &il.rows {
+                let name = col(r, 1);
+                let ii = query(
+                    s,
+                    &format!("PRAGMA index_info({})", quote_ident(dialect, &name)),
+                )?;
+                let mut cols: Vec<(i64, String)> = ii
+                    .rows
+                    .iter()
+                    .map(|r| (cell_i64(&r[0]), col(r, 2)))
+                    .collect();
+                cols.sort();
+                d.indexes.push(IndexDef {
+                    name,
+                    unique: cell_i64(&r[2]) == 1,
+                    cols: cols.into_iter().map(|(_, n)| n).collect(),
+                });
+            }
+            return Ok(d);
+        }
+    };
+    let cons = query(s, &cons_sql)?;
+    let idx = query(s, &idx_sql)?;
+    let (comment, col_comments) = comments(s, schema, table);
+    Ok(TableDetail {
+        keys: fold_defs(&cons.rows),
+        indexes: fold_indexes(&idx.rows),
+        comment,
+        col_comments,
+    })
+}
+
 // ───────────────────────────────────────────── 오브젝트 목록
+
+/// ★ 테이블처럼 FROM 뒤에 쓸 수 있는 함수인가(`objects()`의 `extra`로 판정 · 09-24): Oracle = `PIPELINED` · SQL Server = 테이블 반환
+/// 함수 `IF`/`TF`/`FT` · PostgreSQL = 집합 반환(`SETOF …`). 그 밖·프로시저 = 거짓.
+#[must_use]
+pub fn table_function(dialect: Dialect, kind: ObjectKind, extra: &str) -> bool {
+    if kind != ObjectKind::Function {
+        return false;
+    }
+    match dialect {
+        Dialect::Oracle => extra == "PIPELINED",
+        Dialect::Mssql => matches!(extra, "IF" | "TF" | "FT"),
+        Dialect::Postgres => extra.starts_with("SETOF"),
+        _ => false,
+    }
+}
 
 fn oracle_type(kind: ObjectKind) -> &'static str {
     match kind {
@@ -447,11 +817,19 @@ pub fn objects(
     let dialect = s.dialect();
     let rows: Vec<(String, String, String, String)> = match dialect {
         Dialect::Oracle => {
-            let sql = format!(
-                "SELECT object_name, status, TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), '' FROM all_objects WHERE owner = {} AND object_type = {} AND (object_name NOT LIKE 'BIN$%') ORDER BY object_name",
-                lit(schema),
-                lit(oracle_type(kind))
-            );
+            // ★ 함수는 `ALL_PROCEDURES.PIPELINED`를 부가에(FROM 자리의 테이블 함수 판정 · 09-24 · 독립 함수 = procedure_name NULL).
+            let sql = if kind == ObjectKind::Function {
+                format!(
+                    "SELECT o.object_name, o.status, TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), CASE WHEN p.pipelined = 'YES' THEN 'PIPELINED' ELSE '' END FROM all_objects o LEFT JOIN all_procedures p ON p.owner = o.owner AND p.object_name = o.object_name AND p.object_type = 'FUNCTION' AND p.procedure_name IS NULL WHERE o.owner = {} AND o.object_type = 'FUNCTION' AND (o.object_name NOT LIKE 'BIN$%') ORDER BY o.object_name",
+                    lit(schema)
+                )
+            } else {
+                format!(
+                    "SELECT object_name, status, TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), '' FROM all_objects WHERE owner = {} AND object_type = {} AND (object_name NOT LIKE 'BIN$%') ORDER BY object_name",
+                    lit(schema),
+                    lit(oracle_type(kind))
+                )
+            };
             query(s, &sql)?
                 .rows
                 .iter()
@@ -514,7 +892,7 @@ pub fn objects(
                 ObjectKind::Sequence => format!("SELECT c.relname, '', '', '' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind = 'S' ORDER BY c.relname", lit(schema)),
                 ObjectKind::Index => format!("SELECT c.relname, '', '', t.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} ORDER BY c.relname", lit(schema)),
                 ObjectKind::Procedure | ObjectKind::Function => format!(
-                    "SELECT p.proname, '', '', pg_get_function_identity_arguments(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = {} AND p.prokind = '{}' ORDER BY p.proname",
+                    "SELECT p.proname, '', '', CASE WHEN p.proretset THEN 'SETOF ' ELSE '' END || pg_get_function_identity_arguments(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = {} AND p.prokind = '{}' ORDER BY p.proname",
                     lit(schema),
                     if kind == ObjectKind::Procedure { 'p' } else { 'f' }
                 ),
@@ -1193,6 +1571,30 @@ pub fn select_template(dialect: Dialect, schema: &str, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn table_function_flag_per_dialect() {
+        use super::{table_function, Dialect, ObjectKind};
+        assert!(table_function(
+            Dialect::Oracle,
+            ObjectKind::Function,
+            "PIPELINED"
+        ));
+        assert!(!table_function(Dialect::Oracle, ObjectKind::Function, ""));
+        assert!(table_function(Dialect::Mssql, ObjectKind::Function, "TF"));
+        assert!(!table_function(Dialect::Mssql, ObjectKind::Function, "FN"));
+        assert!(table_function(
+            Dialect::Postgres,
+            ObjectKind::Function,
+            "SETOF a integer"
+        ));
+        assert!(!table_function(
+            Dialect::Postgres,
+            ObjectKind::Procedure,
+            "SETOF"
+        ));
+        assert!(!table_function(Dialect::Sqlite, ObjectKind::Function, "TF"));
+    }
+
     /// SQL Server 서명 조회문: 보통 이름 = 지금 DB · `#임시` = tempdb · 세 마디 = 그 DB의 카탈로그 · 대괄호 · 인용.
     #[test]
     fn mssql_routine_args_sql_scopes() {

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/mac-100-intel-memory | 2026-09-24 | 2026-09-24 → main(삭제) | 1 | ★ Mac 100차 — 인텔리센스 후속(즉시 채움·미리 읽기·권한 사전·회수 · 팝업 위치/폭/스크롤/카드 · 정렬·강조 · 접두 없는 컬럼 `A.컬럼` · FROM 뷰·함수 레이어·아이콘 · `스키마.테이블.` 금지 · 밖 휠) · 블록 주석 · 맥 성능 전수 + 비활성 깜빡임 정지 · ★ 메모리 모니터([80](80-memory-monitor.md)) · 설계 76 §13·78·79 · journal §130~169 |
 | feat/99m-intel-builtins-signature | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ T-178 인텔리센스 1차(§129 · nsql-script `builtins` 정적 표 · `paren_owner` · 시그니처 도움 · 함수 괄호/키워드 공백/alias 삽입 · INSERT 컬럼 조각 · 팝업 스크롤 · 컬럼 상세 · 예산 로그 · 설정 7 · 위키 3분 사용법 · S77·S78 · U-97~U-99 · 🔧 S06/S46 좌표는 T-177) |
 | feat/99l-history-dropdown-leave-down | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | ★ 검색어 이력 드롭다운(기본)/Flat(§127 · nexa-ui 71차 `ContextMenu` 스크롤 · `Recall`/`RecallEvent` · `search.history_view`/`search.history_rows` · FilterBar `Consumed`/`LeaveDown` · 패널 4·찾기·파일 검색·설정 배선 · 마지막 ↓/Tab = 목록 포커스 · 🔧 패널이 ↓를 가로채던 것) · S76 · U-96 · 위키 · STATUS · DEVLOG · TODO |
 | fix/99k-dq-string-pair-failover | 2026-09-23 | 2026-09-23 → main(삭제) | 1 | 🔧 `"O'Neil"` 짝 오염 + 짝 찾기 fail-over(§126 · nexa-ui 70차 = SQL 규격 `string = ' "` + `strings_span_lines` 줄 끝 재동기화 · 편집기 5종 조사·추천 기록 · S75 · U-95) · STATUS · DEVLOG · TODO |

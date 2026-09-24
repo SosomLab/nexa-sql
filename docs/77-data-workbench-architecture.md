@@ -42,7 +42,7 @@
 | 프로시저/함수 **시그니처**(인자 이름·타입·방향) | 완성 시그니처 도움 · hover · 실행 창 | 요청 때 |
 | 지연 채움 `Pending` 표식 + 완료 알림 | 팝업/카드가 "불러오는 중…" → 도착하면 갱신(98차 `NeedColumns`와 같은 길) | — |
 
-원칙: **드라이버 포트 하나**(`Session::describe(ObjectRef) -> ObjectInfo` · 4 드라이버 + 확장 ABI 22)로 채우고, UI는 `MetaStore`만 읽는다. 세션 통제(DR-34 `gate_open`)를 지나며, 실행 중이면 큐에 넣고 상태줄에 안내.
+원칙: **드라이버 포트 하나**(`Session::describe(ObjectRef) -> ObjectInfo` · 4 드라이버 + 확장 ABI 22)로 채우고, UI는 `MetaStore`만 읽는다. **100차(mac · 09-23) 구현분** = 접속 직후 현재 스키마·권한 반영 사전 미리 읽기 · `스키마.` 시점 즉시 채움 · 미사용 버킷 즉시 회수([76 §9](76-intellisense-and-outline.md)) — 사용자 요구 "단일 원천 · 중복 0 · 유니버설 어댑터 · 미사용 즉시 회수"의 첫 적용. 남은 중복 = 트리 노드의 `ObjectInfo` 복사(T-184). 세션 통제(DR-34 `gate_open`)를 지나며, 실행 중이면 큐에 넣고 상태줄에 안내.
 
 ### 1-3. `ObjectAction` — 어디서나 같은 동작 목록
 

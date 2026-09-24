@@ -44,9 +44,12 @@ mod imestate;
 mod input;
 mod input_win;
 mod intel;
+mod intel_card;
 mod keymap;
 mod keys_win;
 mod log_win;
+mod mem_win;
+mod memstat;
 mod memtrim;
 mod outline_panel;
 mod palette;
@@ -190,6 +193,8 @@ struct App {
     txlog_win: TxLogWin,
     /// 세션 창(서버별 전체 세션 · 사용자 09-18) — 트랜잭션 로그 창과 같은 골격.
     sessions_win: SessionsWin,
+    /// 메모리 맵 창(docs/80 · 모델리스 · 닫혀 있으면 비용 0).
+    mem_win: mem_win::MemWin,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
     input_win: input_win::InputWin,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
@@ -207,6 +212,7 @@ struct App {
     vars_win: vars_win::VarsWin,
     vars_changed: (u64, std::collections::HashSet<String>),
     open_sessions: bool,
+    open_mem: bool,
     /// 변수 창을 다음 틱에 연다(메뉴·팔레트·기동 명령은 이벤트 루프 핸들이 없다).
     open_vars: bool,
     open_txlog: bool,
@@ -413,6 +419,14 @@ struct App {
     /// 확인 뒤 이어질 동작.
     tx_after: Option<TxAfter>,
     status_tx_rect: Rect,
+    /// 상태줄 메모리 세그먼트(클릭 = 메모리 맵 창 토글 · docs/80).
+    status_mem_rect: Rect,
+    /// 상태줄 총량(바이트 · 마지막 조회 시각) — 그릴 때 `mem.status_refresh_ms`보다 오래됐으면 OS 한 번.
+    mem_status: (u64, Option<Instant>),
+    /// 세그먼트 눌림 표시(MouseDown~MouseUp).
+    mem_pressed: bool,
+    /// 창이 열려 있을 때 다음 표본 시각.
+    mem_next: Instant,
     /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
     json_watch: Option<(std::path::PathBuf, Option<std::time::SystemTime>)>,
     /// 접속 창이 열려 메인 창을 모달로 막고 있는가(사용자 09-15) — 열림/닫힘 전환 때 OS 활성 상태를 맞춘다.
@@ -461,6 +475,8 @@ struct App {
     shift: bool,
     primary: bool,
     alt: bool,
+    /// 마지막 마우스 위치(창 좌표 · 휠의 안/밖 판정 — 휠 사건에는 좌표가 없다 · 09-24).
+    pointer: Option<Point>,
     /// Linux(Sublime) Shift+우클릭 드래그 열 선택이 진행 중 — 우클릭을 좌드래그로 바꿔 보내고 놓으면 끝(메뉴 안 뜸).
     col_right_drag: bool,
     /// 원시 Control 키(mac에서 ⌘=primary와 구분 · 서브워드 이동).
@@ -2960,10 +2976,13 @@ impl App {
             enabled: false,
             icon: None,
             shortcut: None,
+            sub: None,
             children: Vec::new(),
             checked: None,
             active: false,
             mark: None,
+            emph: false,
+            marks: Vec::new(),
         };
         let max = self.settings.int("file.open_max").max(1) as usize;
         let take: Vec<PathBuf> = paths.iter().take(max).cloned().collect();
@@ -4258,11 +4277,13 @@ impl App {
         let g3 = self.txlog_win.take_last();
         let g4 = self.prefs_win.take_last();
         let g5 = self.sessions_win.take_last();
+        let g6 = self.mem_win.take_last();
         put(&mut self.settings, "login", g1);
         put(&mut self.settings, "log", g2);
         put(&mut self.settings, "txlog", g3);
         put(&mut self.settings, "prefs", g4);
         put(&mut self.settings, "sessions", g5);
+        put(&mut self.settings, "mem", g6);
         if main {
             let g = self
                 .window
@@ -4298,6 +4319,8 @@ impl App {
         self.prefs_win.set_memo(d);
         let e = memo(&self.settings, "sessions");
         self.sessions_win.set_memo(e);
+        let f = memo(&self.settings, "mem");
+        self.mem_win.set_memo(f);
     }
 
     /// 파일 탭 강조색(`editor.tab_accent` · 비면 테마 accent = 결과 탭과 같음).
@@ -5853,6 +5876,11 @@ impl App {
             }
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
+            "mem.always_on_top" => self.mem_win.set_on_top(self.settings.flag(key)),
+            "mem.statusbar" | "mem.status_refresh_ms" => {
+                self.mem_status = (0, None);
+                self.redraw();
+            }
             "grid.scroll" => {
                 let on = self.settings.get(key) == Some("row");
                 self.grid.set_row_snap(on);
@@ -5862,9 +5890,14 @@ impl App {
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
-            k if k.starts_with("intel.") => self
-                .intel
-                .set_cfg(intel::IntelCfg::from_settings(&self.settings)),
+            k if k.starts_with("intel.") => {
+                self.intel
+                    .set_cfg(intel::IntelCfg::from_settings(&self.settings));
+                self.explorer
+                    .set_preload(self.settings.flag("intel.preload"));
+                self.explorer
+                    .set_routines(self.settings.flag("intel.from_routines"));
+            }
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
             "editor.auto_close_pairs"
@@ -6799,6 +6832,14 @@ impl App {
             "view.log" => self.toggle_log_window(el),
             "view.txlog" | "tx.log" => self.open_txlog_window(el),
             "view.sessions" => self.open_sessions_window(el),
+            "view.memory" => {
+                if self.mem_win.is_open() {
+                    self.mem_win.close();
+                    self.persist_window_sizes(false);
+                } else {
+                    self.open_mem_window(el);
+                }
+            }
             "view.variables" => self.open_vars_window(el),
             "view.on_top" => {
                 let on = !self.settings.flag("window.always_on_top");
@@ -7004,6 +7045,7 @@ impl App {
             "edit.swap_line_up" => self.editor_cmd(EditCommand::SwapLinesUp),
             "edit.swap_line_down" => self.editor_cmd(EditCommand::SwapLinesDown),
             "edit.toggle_comment" => self.editor_cmd(EditCommand::ToggleComment),
+            "edit.toggle_block_comment" => self.editor_cmd(EditCommand::ToggleBlockComment),
             "edit.indent" => self.editor_cmd(EditCommand::Indent),
             "edit.unindent" => self.editor_cmd(EditCommand::Unindent),
             "edit.select_line" => self.editor_cmd(EditCommand::SelectLines),
@@ -7271,6 +7313,7 @@ impl App {
                     self.redraw();
                 }
             }
+            "view.memory" => self.toggle_mem_window(),
             "conn.sessions" | "view.sessions" => {
                 if self.sessions_win.is_open() {
                     self.sessions_win.close();
@@ -9184,6 +9227,17 @@ impl App {
     }
 
     /// 종료 — 미커밋이 있으면 묻는다.
+    /// 종료 마무리(저장 · 창 크기 · 워커 종료 · 루프 종료) — 창 이벤트 끝과 유휴 틱 **둘 다**에서 부른다(09-24: 기동 명령·타이머로
+    /// 요청한 종료가 창 이벤트가 없으면 영영 처리되지 않았다 — `scripts/func-block-comment.sh`가 잡음).
+    fn finish_exit(&mut self, el: &ActiveEventLoop) {
+        self.flush_on_exit();
+        self.persist_window_sizes(true);
+        for s in self.all_sess() {
+            s.worker.send(worker::Cmd::Quit);
+        }
+        el.exit();
+    }
+
     fn request_exit(&mut self) {
         // ★ 종료 흐름(사용자 09-23): ① 프로젝트 — 자동 저장이면 저장 · 아니면 묻기 ② 미저장 **파일** 탭마다 묻기(스크립트 탭은
         //   프로젝트에 본문이 보존되므로 프로젝트가 있으면 묻지 않는다 · 없으면 전부 묻는다) ③ 트랜잭션 확인 → 종료.
@@ -9357,6 +9411,9 @@ impl App {
         let dialect = Some(self.sess.dialect);
         let (names, snap) = self.explorer.meta_view(spec.as_ref());
         let view = intel::MetaView { names, snap };
+        // 접두 시작 글자의 좌표(바이트 → 글자 인덱스 → 마지막 그리기의 줄 배치) — 팝업이 타이핑 중 제자리에 있게(09-23).
+        let ed = self.editors.cur();
+        let point_of = |b: usize| ed.point_at(text[..b.min(text.len())].chars().count());
         let opened = self.intel.request(
             tab,
             rev,
@@ -9367,12 +9424,18 @@ impl App {
             anchor,
             host,
             self.scale,
+            &point_of,
         );
         let needs = self.intel.take_needs();
         for n in needs {
             self.explorer
-                .request_columns(spec.as_ref(), n.schema.as_deref(), &n.table);
+                .request_columns(spec.as_ref(), n.schema.as_deref(), &n.table, n.urgent);
         }
+        // ★ 객체 목록 즉시 채움(`스키마.` · 현재 스키마 · 사전 — 09-23): 탐색기 메타 세션 1건씩 · 오면 아래 drain이 팝업을 다시 그린다.
+        for s in self.intel.take_need_objects() {
+            self.explorer.request_objects(spec.as_ref(), &s);
+        }
+        self.intel_card_prefetch();
         // 예산 초과 = 로그 창 한 줄(개발자 상세 · D-202의 근거).
         if let Some((n, ms)) = self.intel.take_over_budget() {
             self.log_win.push(LogEntry::new(
@@ -9385,6 +9448,17 @@ impl App {
         }
         if opened || manual {
             self.redraw();
+        }
+    }
+
+    /// 상세 카드가 쓸 메타(테이블 상세·컬럼)를 미리 요청(강조 행이 바뀔 때 · 이미 있으면 0 · 09-24).
+    fn intel_card_prefetch(&mut self) {
+        if !self.intel.cfg().detail_card {
+            return;
+        }
+        if let Some(id) = self.intel.card_target().and_then(|t| t.needs()) {
+            let spec = self.sess.spec.clone();
+            self.explorer.request_detail(spec.as_ref(), id);
         }
     }
 
@@ -9686,6 +9760,7 @@ impl App {
                         ],
                     ),
                     item("edit.toggle_comment", Msg::MnToggleComment),
+                    item("edit.toggle_block_comment", Msg::MnToggleBlockComment),
                     MenuEntry::Separator,
                     // 북마크(docs/69 §6-1).
                     MenuEntry::sub(
@@ -9737,6 +9812,7 @@ impl App {
                     item("view.log", Msg::MnLogWindow),
                     item("view.txlog", Msg::MnTxLogWindow),
                     item("view.sessions", Msg::MnSessManager),
+                    item("view.memory", Msg::MnMemoryWindow),
                     item("view.variables", Msg::MnVariables),
                     item("vars.show", Msg::MnShowVariables),
                     item("vars.script", Msg::MnVariablesScript),
@@ -10056,6 +10132,7 @@ impl App {
         cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
         cmds.push(m("view.txlog", Msg::MnView, Msg::MnTxLogWindow));
         cmds.push(m("view.sessions", Msg::MnView, Msg::MnSessManager));
+        cmds.push(m("view.memory", Msg::MnView, Msg::MnMemoryWindow));
         cmds.push(m("view.toolbar_reset", Msg::MnView, Msg::MnResetToolbar));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
@@ -10103,6 +10180,7 @@ impl App {
             ("edit.swap_line_up", Msg::MnSwapLineUp),
             ("edit.swap_line_down", Msg::MnSwapLineDown),
             ("edit.toggle_comment", Msg::MnToggleComment),
+            ("edit.toggle_block_comment", Msg::MnToggleBlockComment),
             ("edit.indent", Msg::MnIndent),
             ("edit.unindent", Msg::MnUnindent),
             ("edit.select_line", Msg::MnSelectLine),
@@ -11365,6 +11443,80 @@ impl App {
         self.vars_win.redraw();
     }
 
+    /// 메모리 맵 창 열기(docs/80 · 모델리스 · 최상위는 설정 `mem.always_on_top`) — 첫 표본은 다음 유휴 틱에.
+    fn open_mem_window(&mut self, el: &ActiveEventLoop) {
+        let near = self.window.as_ref().and_then(|w| {
+            w.outer_position()
+                .ok()
+                .map(|p| (p.x, p.y, w.outer_size().width))
+        });
+        let owner = self.window.clone();
+        self.mem_win
+            .set_on_top(self.settings.flag("mem.always_on_top"));
+        self.mem_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner.as_deref(),
+        );
+        self.mem_next = Instant::now();
+    }
+
+    /// 상태줄 세그먼트·메뉴에서 토글(열기는 깃발 → `about_to_wait`가 이벤트 루프로 연다).
+    fn toggle_mem_window(&mut self) {
+        if self.mem_win.is_open() {
+            self.mem_win.close();
+            self.persist_window_sizes(false);
+        } else {
+            self.open_mem = true;
+        }
+    }
+
+    fn mem_every(&self) -> Duration {
+        Duration::from_millis(self.settings.int("mem.refresh_ms").clamp(250, 10_000) as u64)
+    }
+
+    /// 전체 표본(창이 열려 있을 때만 불린다) — 부품 보고(`MemSource`) + 결과 탭 + 창 표면 + 로그.
+    fn mem_sample(&mut self) -> memstat::Sample {
+        use memstat::Cat;
+        let grids: Vec<(u64, u64)> = self.all_grids().map(|g| g.mem_parts()).collect();
+        let main_surface = self.window.as_ref().map_or(0, |w| {
+            let s = w.inner_size();
+            u64::from(s.width) * u64::from(s.height) * 4
+        });
+        let surfaces = main_surface + self.mem_win.surface_bytes();
+        let logs = self.log_win.approx_bytes() + self.txlog.len() as u64 * 256;
+        memstat::sample(&[&self.editors, &self.explorer, &self.intel], |acc| {
+            for (d, tx) in grids {
+                acc.add(Cat::ResultData, d);
+                acc.add(Cat::ResultText, tx);
+            }
+            acc.add(Cat::Surfaces, surfaces);
+            acc.add(Cat::Logs, logs);
+        })
+    }
+
+    /// 상태줄 총량 글(`mem.statusbar` 꺼짐 = None) — 마지막 조회가 `mem.status_refresh_ms`보다 오래됐을 때만 OS 한 번(그릴 때만 · 깨우지 않음).
+    fn mem_status_text(&mut self) -> Option<String> {
+        if !self.settings.flag("mem.statusbar") {
+            return None;
+        }
+        let now = Instant::now();
+        let every = Duration::from_millis(
+            self.settings
+                .int("mem.status_refresh_ms")
+                .clamp(1000, 60_000) as u64,
+        );
+        if self
+            .mem_status
+            .1
+            .is_none_or(|t| now.duration_since(t) >= every)
+        {
+            self.mem_status = (memstat::sys_total(), Some(now));
+        }
+        Some(memstat::fmt(self.mem_status.0))
+    }
+
     fn open_sessions_window(&mut self, el: &ActiveEventLoop) {
         let near = self.window.as_ref().and_then(|w| {
             w.outer_position()
@@ -12573,6 +12725,10 @@ impl App {
         }
         if self.explorer.drain() {
             changed = true;
+            // "불러오는 중"인 완성 팝업은 메타가 도착한 세대에 다시 조립한다(09-23).
+            if self.intel.is_loading() {
+                self.intel_request(false);
+            }
         }
         if self.live_drain() {
             changed = true;
@@ -13155,6 +13311,8 @@ impl App {
     }
 
     fn paint(&mut self) {
+        // 상태줄 메모리 글은 그리기 빌림 전에(5 s에 한 번 OS 조회 · docs/80).
+        let mem_txt = self.mem_status_text();
         // 찾기가 열린 동안 본문이 바뀌면 일치 표시도 따라간다(전체 스캔 · 열려 있을 때만 · T-73).
         if self.find.is_visible() {
             self.sync_find_marks();
@@ -13188,6 +13346,8 @@ impl App {
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
         let caret_on = !self.settings.flag("editor.caret_blink")
+            || !self.main_active
+            || !nexa_sys::layer_present::app_active().unwrap_or(true)
             || (self.blink_origin.elapsed().as_millis() / 500).is_multiple_of(2);
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
@@ -13274,6 +13434,11 @@ impl App {
                 };
                 let tx_idx = segs.len();
                 segs.push((tx, false));
+                // 메모리 총량 세그먼트(docs/80 · `mem.statusbar` · 클릭 = 메모리 맵 창) — 조회는 5 s에 한 번, 그릴 때만.
+                let mem_idx = mem_txt.map(|txt| {
+                    segs.push((txt, false));
+                    segs.len() - 1
+                });
                 // 접속 세그먼트 = 프로필 이름만(URL은 툴팁 카드·접속 창에 · 사용자 09-15).
                 let conn = match self.conn_win.panel.state_ref() {
                     ConnState::Connected(d) => {
@@ -13367,6 +13532,7 @@ impl App {
                 self.status_eol_rect = Rect::new(0, 0, 0, 0);
                 self.status_enc_rect = Rect::new(0, 0, 0, 0);
                 self.status_tx_rect = Rect::new(0, 0, 0, 0);
+                self.status_mem_rect = Rect::new(0, 0, 0, 0);
                 let last = segs.len() - 1;
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
@@ -13374,6 +13540,18 @@ impl App {
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
                     if idx == tx_idx {
                         self.status_tx_rect = r;
+                    }
+                    if Some(idx) == mem_idx {
+                        self.status_mem_rect = r;
+                        // 클릭 효과 = 상태 레이어(hover · pressed · 버튼과 같은 부품).
+                        let st = if self.mem_pressed {
+                            nexa_ctl::tokens::State::Pressed
+                        } else if self.pointer.is_some_and(|p| r.contains(p)) {
+                            nexa_ctl::tokens::State::Hover
+                        } else {
+                            nexa_ctl::tokens::State::Rest
+                        };
+                        dc.state_layer(r, th.text, st);
                     }
                     let ty = dc.text_center_y(sy, px(24.0, s));
                     dc.text(
@@ -13617,8 +13795,27 @@ impl App {
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
-                // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76).
+                // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76) + 상세 카드(옆 · 같은 높이 · 09-24).
                 self.intel.menu.paint(&mut dc, &th);
+                if self.intel.is_open() && self.intel.cfg().detail_card {
+                    if let Some(target) = self.intel.card_target() {
+                        let spec = self.sess.spec.clone();
+                        let (names, snap) = self.explorer.meta_view(spec.as_ref());
+                        if let Some(card) =
+                            intel_card::build(&target, names, &snap, Some(self.sess.dialect))
+                        {
+                            intel_card::paint(
+                                &mut dc,
+                                &th,
+                                self.intel.menu.bounds(),
+                                &card,
+                                self.intel.cfg(),
+                                s,
+                                (wi, hi),
+                            );
+                        }
+                    }
+                }
                 // ★ 토스트·실행 카드는 팝업(우클릭 메뉴·팔레트) **아래 층**(팝업 = 맨 마지막 규칙 · 사용자 09-22 "우클릭 메뉴가 뒤로 숨음").
                 // 토스트 = 편집기 영역의 우하단(결과 그리드를 가리지 않게 · 사용자 09-16 · docs/42).
                 let eb = self.editors.editor_bounds();
@@ -13792,6 +13989,9 @@ impl App {
                         now_ms: 0,
                     },
                     Key::Named(NamedKey::Tab) => InputEvent::Char { c: '\t', now_ms: 0 },
+                    // 수식키(⌘/Ctrl · Control)와 함께 누른 Space는 단축키 후보지 글자가 아니다 — 키맵에 없으면 버린다
+                    //   (사용자 09-23 mac: ⌃Space가 표에 없어 공백이 들어갔다). Shift+Space는 글자 그대로.
+                    Key::Named(NamedKey::Space) if self.primary || self.ctrl_raw => return None,
                     Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
                     Key::Character(t) if !self.primary => {
                         let c = t.chars().next()?;
@@ -13929,6 +14129,13 @@ impl App {
             if let InputEvent::Key { .. } = ev {
                 self.tmark("route");
             }
+        }
+        if let InputEvent::MouseMove { x, y } = ev {
+            self.pointer = Some(Point { x, y });
+        }
+        if matches!(ev, InputEvent::MouseUp { .. }) && self.mem_pressed {
+            self.mem_pressed = false;
+            self.redraw();
         }
         self.route_inner(ev, Invalidations::default());
         self.sync_run_stmt_button();
@@ -14173,7 +14380,17 @@ impl App {
                 let outside = self.intel.menu.is_outside_click(&ev);
                 // Tab은 `Char('\t')`로 온다 — 팝업이 열려 있으면 Enter와 같다(확정).
                 let is_tab = matches!(ev, InputEvent::Char { c: '\t', .. });
+                // ←/→는 라벨이 넘쳐 가로 스크롤이 있을 때만 팝업이(아니면 편집기로 · 09-24).
+                let lr = self.intel.menu.label_overflow() > 0
+                    && matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Left | CtlKey::Right,
+                            ..
+                        }
+                    );
                 let nav = is_tab
+                    || lr
                     || matches!(
                         ev,
                         InputEvent::Key {
@@ -14188,7 +14405,23 @@ impl App {
                             ..
                         }
                     );
-                if nav {
+                // ★ 키 관통(`intel.key_passthrough` · 사용자 09-24 "Enter를 눌러도 창만 사라진다"): 고른 항목이 없으면 Enter/Tab은
+                //   팝업만 닫고 **그 키는 편집기로 그대로** 간다(줄 바꿈·탭 입력) · 끄면 종전처럼 팝업이 삼킨다(두 번 입력).
+                let accept_key = is_tab
+                    || matches!(
+                        ev,
+                        InputEvent::Key {
+                            key: CtlKey::Enter,
+                            ..
+                        }
+                    );
+                if nav
+                    && accept_key
+                    && self.intel.menu.hovered().is_none()
+                    && self.intel.cfg().key_passthrough
+                {
+                    self.intel.close();
+                } else if nav {
                     let ev2 = if is_tab {
                         InputEvent::Key {
                             key: CtlKey::Enter,
@@ -14200,8 +14433,13 @@ impl App {
                     };
                     self.intel.menu.on_event(&ev2);
                     if let Some(id) = self.intel.menu.take_picked() {
-                        self.intel.pick(&id);
+                        // Alt를 누른 채 확정 = 한정자 규칙 반대(`A.컬럼` ↔ 컬럼만 · 09-24).
+                        self.intel.pick_with(&id, self.alt);
                         self.intel_apply();
+                    } else if let Some(full) = self.intel.hovered_full() {
+                        // 강조 행의 전체 이름을 상태줄에(폭 상한으로 가운데 …가 된 긴 이름 · 09-23).
+                        self.sess.status = full;
+                        self.intel_card_prefetch();
                     }
                     if matches!(
                         ev,
@@ -14215,13 +14453,26 @@ impl App {
                     self.redraw();
                     return;
                 }
-                if is_mouse || is_wheel_ev(&ev) {
+                // ★ 팝업 밖 휠(사용자 09-24 "영역 밖 스크롤이 안으로 전달") = 팝업을 닫고 편집기로 흘린다(팝업이 본문과 어긋난 채 남지 않게).
+                if is_wheel_ev(&ev)
+                    && self
+                        .pointer
+                        .is_some_and(|p| !self.intel.menu.bounds().contains(p))
+                {
+                    self.intel.close();
+                    self.redraw();
+                } else if is_mouse || is_wheel_ev(&ev) {
                     let consumed = self.intel.menu.on_event(&ev);
                     if let Some(id) = self.intel.menu.take_picked() {
-                        self.intel.pick(&id);
+                        // Alt를 누른 채 확정 = 한정자 규칙 반대(`A.컬럼` ↔ 컬럼만 · 09-24).
+                        self.intel.pick_with(&id, self.alt);
                         self.intel_apply();
                         self.redraw();
                         return;
+                    }
+                    if let Some(full) = self.intel.hovered_full() {
+                        self.sess.status = full;
+                        self.intel_card_prefetch();
                     }
                     if outside {
                         self.intel.close();
@@ -14263,6 +14514,12 @@ impl App {
             }
             if self.status_eol_rect.contains(Point { x, y }) {
                 self.open_eol_menu();
+                self.redraw();
+                return;
+            }
+            if self.status_mem_rect.contains(Point { x, y }) {
+                self.mem_pressed = true;
+                self.toggle_mem_window();
                 self.redraw();
                 return;
             }
@@ -14893,6 +15150,15 @@ impl ApplicationHandler<Wake> for App {
                     winit::dpi::LogicalSize::new(w, h)
                 }),
         );
+        // ★ 기동 구간 계측 2부(09-24 mac 전수 · 창까지 592 ms 가운데 `App` 뒤 320 ms가 어디인가): resumed 안의 단계별 누적 ms.
+        let boot = self.frame_trace.as_ref().map(|f| f.boot);
+        let mut rmarks: Vec<(&str, u128)> = Vec::new();
+        let rmark = |what: &'static str, v: &mut Vec<(&str, u128)>| {
+            if let Some(b) = boot {
+                v.push((what, b.elapsed().as_millis()));
+            }
+        };
+        rmark("resumed", &mut rmarks);
         let Ok(win) = el.create_window(attrs) else {
             eprintln!("{}", t(Msg::ErrNoWindow));
             el.exit();
@@ -14933,11 +15199,13 @@ impl ApplicationHandler<Wake> for App {
             // 화면 밖으로 나가지 않게(OS가 계단식으로 놓은 기본 위치 · 해상도가 바뀐 뒤의 기억 위치 — 09-21 점검: 1080 높이에서 아래 60px이 잘렸다).
             wingeom::keep_on_screen(&win, None);
             win.set_visible(true);
+            rmark("visible", &mut rmarks);
         }
         self.scale = win.scale_factor() as f32;
         // 창이 생기면 OS 판정(winit)이 정확해진다 — System 모드는 여기서 확정.
         self.theme = theme::resolve(self.settings.theme_mode(), win.theme());
         self.apply_tab_line_colors();
+        rmark("window", &mut rmarks);
         match present::Presenter::new(win.clone()) {
             Ok(p) => {
                 if self.frame_trace.is_some() {
@@ -14951,6 +15219,11 @@ impl ApplicationHandler<Wake> for App {
             .outer_position()
             .ok()
             .map(|p| (p.x, p.y, win.outer_size().width));
+        rmark("present", &mut rmarks);
+        if !rmarks.is_empty() {
+            let line: Vec<String> = rmarks.iter().map(|(w, ms)| format!("{w} {ms}")).collect();
+            eprintln!("[startup:resumed] {} (ms since main)", line.join(" · "));
+        }
         self.window = Some(win);
         self.apply_on_top();
         self.layout();
@@ -15039,6 +15312,10 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        if self.exit_requested {
+            self.finish_exit(el);
+            return;
+        }
         // 입력 소스가 바뀌었다(한/영 · 다른 입력기 — macOS 분산 알림) → 한글 조합 방식을 다시 맞춘다.
         if nexa_sys::input_source::take_changed() {
             self.sync_hangul_mode();
@@ -15051,6 +15328,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_sessions) {
             self.open_sessions_window(el);
+        }
+        if std::mem::take(&mut self.open_mem) {
+            self.open_mem_window(el);
         }
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
@@ -15129,7 +15409,11 @@ impl ApplicationHandler<Wake> for App {
             } else {
                 now + Duration::from_secs(3600)
             };
-            if self.focus == Focus::Editor {
+            // ★ 메인 창이 키 창이 아니면 깜빡이지 않는다(캐럿은 켜진 채 · 09-24 맥 전수: 깜빡임 = 전체 프레임 다시 그리기 ×2/초 ·
+            //   맥 softbuffer present 36 ms/프레임이라 뒤에 있어도 유휴 CPU 19 % · footprint +20 MB였다 → 0).
+            //   맥은 창이 키 창이어도 **앱이 비활성**(뒤에 있음)이면 깜빡이지 않는다(`NSApplication.isActive`).
+            let app_active = nexa_sys::layer_present::app_active().unwrap_or(true);
+            if self.focus == Focus::Editor && self.main_active && app_active {
                 self.redraw();
             }
         }
@@ -15355,8 +15639,34 @@ impl ApplicationHandler<Wake> for App {
         }
         // 아웃라인 패널 = 활성 탭·본문 세대가 바뀌었을 때만 다시(캐시 · 유휴 틱 · D-203).
         self.outline_sync();
+        // ★ 미사용 판정 즉시 회수(사용자 09-23): `스키마.`로 읽어 온 메타 버킷은 열린 문서 어디에도 그 이름이 없으면 바로 버린다
+        //   (문서 낱말 캐시로 판정 · 현재 스키마·사전·트리가 펼친 것은 대상 아님).
+        {
+            let intel = &self.intel;
+            let n = self
+                .explorer
+                .reclaim_intel_buckets(&|s| intel.doc_mentions(s));
+            if n > 0 && self.settings.flag("log.dev_mode") {
+                self.log_win.push(LogEntry::new(
+                    LogKind::Info,
+                    format!("[intel] reclaimed {n} unused schema bucket(s)"),
+                ));
+            }
+        }
         if let Some(t) = self.intel.next_wake() {
             next = next.min(t);
+        }
+        // ★ 메모리 맵 창(docs/80): 열려 있을 때만 `mem.refresh_ms`마다 표본 → 창·상태줄 갱신. 닫혀 있으면 깨우지도 않는다.
+        if self.mem_win.is_open() {
+            if now >= self.mem_next {
+                let every = self.mem_every();
+                self.mem_next = now + every;
+                let s = self.mem_sample();
+                self.mem_status = (s.sys.footprint, Some(now));
+                self.mem_win.set_sample(s, every.as_millis() as u64);
+                self.redraw();
+            }
+            next = next.min(self.mem_next);
         }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
@@ -15432,6 +15742,10 @@ impl ApplicationHandler<Wake> for App {
         if let WindowEvent::Focused(on) = event {
             if self.window.as_ref().is_some_and(|w| w.id() == id) {
                 self.main_active = on;
+                // 위상 초기화: 돌아오면 켜진 채로 깜빡임 재개 · 나가면 켜진 채 한 번 그리고 멈춘다(09-24).
+                self.blink_origin = Instant::now();
+                self.next_blink = self.blink_origin + Duration::from_millis(500);
+                self.redraw();
                 if on {
                     self.ext_check(true);
                 }
@@ -15774,6 +16088,26 @@ impl ApplicationHandler<Wake> for App {
                         self.sync_modal();
                     }
                 }
+            }
+            return;
+        }
+        if self.mem_win.is(id) {
+            match self.mem_win.handle(&event) {
+                mem_win::MemWinAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    self.mem_win.paint(&self.ui_font, &self.theme, ui_px);
+                }
+                mem_win::MemWinAction::Toggled(on) => {
+                    let _ = self
+                        .settings
+                        .set("mem.always_on_top", if on { "on" } else { "off" });
+                }
+                mem_win::MemWinAction::Close => {
+                    self.mem_win.close();
+                    self.persist_window_sizes(false);
+                    self.redraw();
+                }
+                mem_win::MemWinAction::None => {}
             }
             return;
         }
@@ -16126,6 +16460,9 @@ impl ApplicationHandler<Wake> for App {
         if std::mem::take(&mut self.open_sessions) {
             self.open_sessions_window(el);
         }
+        if std::mem::take(&mut self.open_mem) {
+            self.open_mem_window(el);
+        }
         if std::mem::take(&mut self.open_colors) {
             // ★ 설정 창에서 열면 **설정 창을 소유자**로(그 위에 뜬다 · 메인 소유면 설정 창 뒤로 숨어 "안 열린 것처럼" 보이던 결함 · 사용자 09-15).
             let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
@@ -16191,12 +16528,7 @@ impl ApplicationHandler<Wake> for App {
             self.sync_modal();
         }
         if self.exit_requested {
-            self.flush_on_exit();
-            self.persist_window_sizes(true);
-            for s in self.all_sess() {
-                s.worker.send(worker::Cmd::Quit);
-            }
-            el.exit();
+            self.finish_exit(el);
         }
     }
 }
@@ -16456,6 +16788,8 @@ fn main() {
         );
         e.set_icons(settings.flag("explorer.icons"));
         e.set_typeahead(typeahead_cfg(&settings));
+        e.set_preload(settings.flag("intel.preload"));
+        e.set_routines(settings.flag("intel.from_routines"));
         e
     };
     mark(&mut marks, "explorer");
@@ -16538,6 +16872,7 @@ fn main() {
         log_win,
         txlog_win,
         sessions_win,
+        mem_win: mem_win::MemWin::new(),
         input_win,
         input_pending: None,
         pw_pending: None,
@@ -16547,6 +16882,7 @@ fn main() {
         vars_win,
         vars_changed: (0, std::collections::HashSet::new()),
         open_sessions: false,
+        open_mem: false,
         open_vars: false,
         open_txlog: false,
         toasts,
@@ -16663,7 +16999,9 @@ fn main() {
         ext_files: HashMap::new(),
         ext_banner: extfile::Banner::default(),
         ext_poll_next: None,
-        main_active: true,
+        // 포커스 사건이 오기 전에는 비활성(09-24: 한 번도 활성화되지 않은 창(`NSQL_NO_ACTIVATE` 시험 · 뒤에서 띄운 창)이
+        //   계속 깜빡이며 다시 그렸다) — 정상 기동은 첫 `Focused(true)`로 바로 활성이 된다.
+        main_active: false,
         ext_last_tab: 0,
         ext_save_armed: None,
         startup_after_connect: Vec::new(),
@@ -16707,6 +17045,11 @@ fn main() {
         shift: false,
         primary: false,
         alt: false,
+        pointer: None,
+        status_mem_rect: Rect::new(0, 0, 0, 0),
+        mem_status: (0, None),
+        mem_pressed: false,
+        mem_next: Instant::now(),
         col_right_drag: false,
         ctrl_raw: false,
         ctrl_mac: false,

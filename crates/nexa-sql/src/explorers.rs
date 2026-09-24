@@ -109,6 +109,10 @@ pub(crate) struct ExplorerSet {
     icons: bool,
     font_px: f32,
     ta_cfg: crate::explorer::TypeAheadCfg,
+    /// `intel.preload`(새 서버 칸에도 적용).
+    preload: bool,
+    /// `intel.from_routines`(새 서버 칸에도 적용).
+    routines: bool,
     /// 새 객체 강조 시간(설정 `meta.refresh_highlight_ms` · 새로 만드는 칸에도 준다).
     highlight_ms: u64,
     focused: bool,
@@ -134,6 +138,8 @@ impl ExplorerSet {
             icons: true,
             font_px: 17.0,
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
+            preload: true,
+            routines: true,
             highlight_ms: 2000,
             focused: false,
             bounds: Rect::default(),
@@ -154,6 +160,8 @@ impl ExplorerSet {
         ex.set_icons(self.icons);
         ex.set_font_px(self.font_px);
         ex.set_typeahead(self.ta_cfg);
+        ex.set_preload(self.preload);
+        ex.set_routines(self.routines);
         ex.set_highlight_ms(self.highlight_ms);
         Pane { key, ex }
     }
@@ -477,9 +485,45 @@ impl ExplorerSet {
         spec: Option<&ConnectSpec>,
         schema: Option<&str>,
         table: &str,
+        urgent: bool,
     ) {
         let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
-        self.panes[i].ex.request_columns(schema, table);
+        self.panes[i].ex.request_columns(schema, table, urgent);
+    }
+
+    /// 완성 상세 카드(09-24): 테이블 상세·컬럼을 객체 id로 요청.
+    pub(crate) fn request_detail(&mut self, spec: Option<&ConnectSpec>, id: nsql_run::meta::ObjId) {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes[i].ex.request_detail(id);
+        self.panes[i].ex.request_columns_by_id(id);
+    }
+
+    /// 자동 완성 즉시 채움 — 스키마(또는 사전)의 관계 객체(09-23).
+    pub(crate) fn request_objects(&mut self, spec: Option<&ConnectSpec>, schema: &str) {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes[i].ex.request_objects(schema);
+    }
+
+    pub(crate) fn set_preload(&mut self, on: bool) {
+        self.preload = on;
+        for p in &mut self.panes {
+            p.ex.set_preload(on);
+        }
+    }
+
+    pub(crate) fn set_routines(&mut self, on: bool) {
+        self.routines = on;
+        for p in &mut self.panes {
+            p.ex.set_routines(on);
+        }
+    }
+
+    /// 전 서버의 `스키마.` 버킷 가운데 열린 문서가 안 쓰는 것을 즉시 해제(09-23).
+    pub(crate) fn reclaim_intel_buckets(&mut self, used: &dyn Fn(&str) -> bool) -> usize {
+        self.panes
+            .iter_mut()
+            .map(|p| p.ex.reclaim_intel_buckets(used))
+            .sum()
     }
 
     pub(crate) fn take_actions(&mut self) -> Vec<ExplorerAction> {
@@ -774,6 +818,15 @@ impl ExplorerSet {
                     th,
                 );
             }
+        }
+    }
+}
+
+/// 메모리 맵 보고(docs/80): 서버 칸마다 메타·아이콘 캐시.
+impl crate::memstat::MemSource for ExplorerSet {
+    fn mem_report(&self, acc: &mut crate::memstat::Acc) {
+        for p in &self.panes {
+            p.ex.mem_report(acc);
         }
     }
 }

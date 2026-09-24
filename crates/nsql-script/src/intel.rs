@@ -306,6 +306,24 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
                 break;
             }
         }
+        // ★ 관계 자리의 두 단계 사슬(`FROM 스키마.테이블.|`)은 완성 없음 — FROM 자리는 테이블 수준까지(사용자 09-24 "Table 뒤에
+        //   dot이 찍혀도 인텔리센스가 동작하지 않도록"). 사슬 앞 낱말(`before[k-1]`)이 FROM/JOIN/… 또는 관계 목록의 콤마일 때.
+        let chain_head = &before[..k.saturating_sub(1)];
+        let rel_pos = chain_head.last().is_some_and(|w| {
+            RELATION_AFTER.iter().any(|kw| is_word(w, kw))
+                || (w.text == "," && in_from_list(chain_head))
+        });
+        if rel_pos && q.contains('.') {
+            return Context {
+                kind: CtxKind::None,
+                prefix,
+                replace,
+                aliases,
+                statement: stmt,
+                paren_owner,
+                paren_into,
+            };
+        }
         return Context {
             kind: if q.is_empty() {
                 CtxKind::Expr
@@ -664,10 +682,84 @@ pub fn score(candidate: &str, query: &str, mode: MatchMode) -> Option<u32> {
     if is_subsequence(&q.replace('_', ""), &starts_text) {
         return Some(400);
     }
-    if is_subsequence(&q, &c) {
-        return Some(200_u32.saturating_sub((c.len() - q.len()).min(100) as u32));
+    // 부분열(약어 · `MI40` → `M4S_I002040`): 연속 일치가 많고(빈틈 적음) · 낱말 시작에 걸리는 글자가 많을수록 · 짧을수록 높게 — 100~399.
+    fuzzy_quality(&q, &c, &bounds)
+}
+
+/// ★ 일치 위치(글자 인덱스 · 오름차순) — `score`와 같은 등급 순서로 판정해 팝업이 일치한 글자를 강조한다(사용자 09-24).
+/// 빈 질의 = 없음 · 정확/접두/낱말 경계/포함 = 연속 구간 · 약어 = 낱말 시작 글자들 · 부분열 = 탐욕 매칭 위치.
+#[must_use]
+pub fn match_positions(candidate: &str, query: &str) -> Vec<usize> {
+    if query.is_empty() {
+        return Vec::new();
     }
-    None
+    let c: Vec<char> = candidate.to_lowercase().chars().collect();
+    let q: Vec<char> = query.to_lowercase().chars().collect();
+    let run = |start: usize| (start..start + q.len()).collect::<Vec<usize>>();
+    let starts_with_at = |i: usize| i + q.len() <= c.len() && c[i..i + q.len()] == q[..];
+    if starts_with_at(0) {
+        return run(0);
+    }
+    let bounds: Vec<usize> = {
+        // `word_starts`는 바이트 인덱스 → 글자 인덱스로.
+        let bs = word_starts(candidate);
+        let lower = candidate.to_lowercase();
+        bs.iter()
+            .map(|&b| lower[..b.min(lower.len())].chars().count())
+            .collect()
+    };
+    if let Some(&i) = bounds.iter().find(|&&i| starts_with_at(i)) {
+        return run(i);
+    }
+    if let Some(i) = (0..c.len()).find(|&i| starts_with_at(i)) {
+        return run(i);
+    }
+    // 약어: 낱말 시작 글자들이 질의(`_` 제외)를 순서대로 담는가.
+    let qn: Vec<char> = q.iter().copied().filter(|ch| *ch != '_').collect();
+    let mut acr = Vec::new();
+    let mut k = 0;
+    for &i in &bounds {
+        if k < qn.len() && c.get(i) == Some(&qn[k]) {
+            acr.push(i);
+            k += 1;
+        }
+    }
+    if k == qn.len() && !qn.is_empty() {
+        return acr;
+    }
+    // 부분열(탐욕).
+    let mut out = Vec::with_capacity(q.len());
+    let mut pos = 0usize;
+    for qc in q {
+        match c[pos..].iter().position(|ch| *ch == qc) {
+            Some(f) => {
+                out.push(pos + f);
+                pos += f + 1;
+            }
+            None => return Vec::new(),
+        }
+    }
+    out
+}
+
+/// 부분열 품질 점수(09-24 정렬 기준 · docs/76 §11): 탐욕적으로 앞에서부터 맞추고 빈틈 수·낱말 시작 일치 수·길이 차로 보정한다.
+fn fuzzy_quality(q: &str, c: &str, bounds: &[usize]) -> Option<u32> {
+    let cs: Vec<(usize, char)> = c.char_indices().collect();
+    let mut pos = 0usize;
+    let mut matched: Vec<usize> = Vec::with_capacity(q.len());
+    for qc in q.chars() {
+        let found = cs[pos..].iter().position(|(_, ch)| *ch == qc)?;
+        matched.push(pos + found);
+        pos += found + 1;
+    }
+    let gaps = matched.windows(2).filter(|w| w[1] != w[0] + 1).count() as i32;
+    let starts = matched
+        .iter()
+        .filter(|&&i| bounds.contains(&cs[i].0))
+        .count() as i32;
+    let excess = (c.len().saturating_sub(q.len())).min(100) as i32;
+    let s = 200 + 20 * starts - 10 * gaps - excess / 5;
+    Some(s.clamp(100, 399) as u32)
 }
 
 fn word_starts(s: &str) -> Vec<usize> {
@@ -735,9 +827,22 @@ pub struct Cand {
     pub detail: String,
     /// 출처 순위(낮을수록 앞 · docs/29 §6-2: alias 컬럼 1 · 문장 테이블 2 · 스키마 객체 3 · 시스템 4 · 키워드 5 · 문서 6).
     pub source: u8,
+    /// 호스트 태그(불투명 · 0 = 없음 — nexa-sql은 메타 객체 id·컬럼 순번을 넣어 상세 카드를 그린다 · 09-24).
+    pub tag: u64,
+    /// 오른쪽 표식(`PK`·`FK`·`UQ` — 팝업 단축키 자리 · 09-24).
+    pub mark: String,
+    /// ★ 둘러보기 순서(같은 출처 안 · 낮을수록 앞 · 09-24 정렬 기준): 컬럼 = 테이블 안 순번 · 객체 = 종류(테이블 0 · 뷰 1 · 구체화 뷰 2 ·
+    /// 시노님 3 · 그 밖 4) · 키워드 = 표 순서 · 0 = 이름순.
+    pub order: u32,
+    /// 확정 때 앞에 붙일 한정자(JOIN 다중 테이블에서 접두 없이 고른 컬럼 = `A.` · 비어 있으면 없음 · 09-24).
+    pub qualifier: String,
+    /// ★ 레이어(낮을수록 위 · 사용자 09-24 "뷰는 테이블과 같은 레이어 · 함수·프로시저는 낮은 레이어"): **같은 일치 등급 안에서만**
+    /// 적용된다 — 접두 일치 함수는 퍼지 일치 테이블보다 위, 같은 등급이면 테이블·뷰(0) → 테이블 함수(1) → 함수·패키지(2) → 프로시저(3).
+    pub layer: u8,
 }
 
-/// 랭킹 — 점수(일치 등급) → MRU → 출처 순위 → 길이 → 이름. `max`로 자른다.
+/// 랭킹 — 일치 등급(점수/100) → **레이어** → 점수 → MRU → 출처 순위 → 둘러보기 순서 → 길이 → 이름. `max`로 자른다.
+/// 레이어를 등급 안에 두는 까닭: `FN_`을 치면 접두 일치 함수가 퍼지 일치 테이블 수백 개 아래로 밀리지 않게(09-24).
 #[must_use]
 pub fn rank(
     cands: Vec<Cand>,
@@ -758,16 +863,27 @@ pub fn rank(
         })
         .collect();
     scored.sort_by(|a, b| {
-        b.0.cmp(&a.0)
+        (b.0 / 100)
+            .cmp(&(a.0 / 100))
+            .then(a.2.layer.cmp(&b.2.layer))
+            .then(b.0.cmp(&a.0))
             .then(a.1.cmp(&b.1))
             .then(a.2.source.cmp(&b.2.source))
+            // ★ 둘러보기 순서(컬럼 순번 · 객체 종류 · 키워드 표 순서 · 09-24) → 길이 → 이름.
+            .then(a.2.order.cmp(&b.2.order))
             .then(a.2.text.len().cmp(&b.2.text.len()))
             .then(a.2.text.to_lowercase().cmp(&b.2.text.to_lowercase()))
     });
     // 같은 글(대소문자 무시)은 앞 것만(출처가 달라도 — 테이블 `EMP`가 있으면 문서 단어 `emp`는 숨긴다).
     let mut out: Vec<Cand> = Vec::new();
     for (_, _, c) in scored {
-        if out.iter().any(|o| o.text.eq_ignore_ascii_case(&c.text)) {
+        // ★ 같은 이름의 컬럼이라도 alias가 다르면 둘 다(`A.ITEM_CD` · `B.ITEM_CD` · 사용자 09-24 "B.ITEM_CD가 안 보인다").
+        if out.iter().any(|o| {
+            o.text.eq_ignore_ascii_case(&c.text)
+                && !(o.kind == CandKind::Column
+                    && c.kind == CandKind::Column
+                    && !o.qualifier.eq_ignore_ascii_case(&c.qualifier))
+        }) {
             continue;
         }
         out.push(c);
@@ -811,6 +927,107 @@ pub fn apply_case(text: &str, prefix: &str, mode: &str) -> String {
 mod tests {
     use super::*;
 
+    /// 정렬 기준(09-24): 접두 없음 = 출처 → 둘러보기 순서(순번·종류·표 순) → 이름 · 접두 있음 = 점수 → 최근 → 출처 → 순서.
+    #[test]
+    fn rank_browse_order_then_score_first_when_filtering() {
+        let col = |name: &str, pos: u32| Cand {
+            text: name.into(),
+            kind: CandKind::Column,
+            detail: String::new(),
+            source: 1,
+            tag: 0,
+            mark: String::new(),
+            order: pos,
+            qualifier: String::new(),
+            layer: 0,
+        };
+        let cands = vec![
+            col("ZED", 1),
+            col("ALPHA", 3),
+            col("MID", 2),
+            col("ITEM_CD", 4),
+        ];
+        let r = rank(cands.clone(), "", MatchMode::Fuzzy, &[], 10);
+        let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["ZED", "MID", "ALPHA", "ITEM_CD"],
+            "접두 없음 = 순번"
+        );
+        let r = rank(cands.clone(), "i", MatchMode::Fuzzy, &[], 10);
+        let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(names[0], "ITEM_CD", "접두 일치가 포함(MID)보다 먼저");
+        assert_eq!(names[1], "MID");
+        let r = rank(cands, "d", MatchMode::Fuzzy, &["ALPHA".into()], 10);
+        let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["ZED", "MID", "ITEM_CD"],
+            "같은 등급(포함)은 순번 · 접두 없는 ALPHA는 제외"
+        );
+        // 같은 이름 컬럼 · alias 다름 = 둘 다 · 문서 낱말은 컬럼에 가려진다(09-24 `B.ITEM_CD`).
+        let mut a = col("ITEM_CD", 3);
+        a.qualifier = "A".into();
+        let mut b = col("ITEM_CD", 1);
+        b.qualifier = "B".into();
+        b.order += 1000;
+        let w = Cand {
+            text: "item_cd".into(),
+            kind: CandKind::Word,
+            detail: String::new(),
+            source: 6,
+            tag: 0,
+            mark: String::new(),
+            order: 0,
+            qualifier: String::new(),
+            layer: 0,
+        };
+        let r = rank(vec![w, b, a], "item", MatchMode::Fuzzy, &[], 10);
+        let q: Vec<String> = r
+            .iter()
+            .map(|c| format!("{}.{}", c.qualifier, c.text))
+            .collect();
+        assert_eq!(q, vec!["A.ITEM_CD", "B.ITEM_CD"], "{q:?}");
+    }
+
+    /// ★ 레이어는 일치 등급 안에서만(사용자 09-24): 빈 접두 = 레이어 0 전부 → 1 · 접두 일치 함수 > 퍼지 일치 테이블.
+    #[test]
+    fn rank_layer_applies_within_match_grade() {
+        let mk = |n: &str, layer: u8| Cand {
+            text: n.into(),
+            kind: CandKind::Table,
+            detail: String::new(),
+            source: 3,
+            tag: 0,
+            mark: String::new(),
+            order: 0,
+            qualifier: String::new(),
+            layer,
+        };
+        let r = rank(
+            vec![mk("FN_A", 1), mk("V_B", 0), mk("T_A", 0)],
+            "",
+            MatchMode::Fuzzy,
+            &[],
+            10,
+        );
+        let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(names, vec!["T_A", "V_B", "FN_A"], "빈 접두 = 레이어 순");
+        let r = rank(
+            vec![mk("FN_GET", 1), mk("FINGER_T", 0), mk("FN_TAB", 0)],
+            "FN_",
+            MatchMode::Fuzzy,
+            &[],
+            10,
+        );
+        let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["FN_TAB", "FN_GET", "FINGER_T"],
+            "같은 등급(접두)은 레이어 · 낮은 레이어라도 등급이 높으면 위"
+        );
+    }
+
     fn ctx(src: &str) -> Context {
         // `|` = 캐럿.
         let caret = src.find('|').expect("caret");
@@ -840,6 +1057,39 @@ mod tests {
             caret += 37;
         }
         let _ = context_at(&s, s.len(), Some(Dialect::Postgres));
+    }
+
+    /// ★ FROM 자리는 테이블 수준까지(사용자 09-24): `FROM 스키마.테이블.|` = 없음 · `FROM 스키마.|` = 그 스키마 객체 · SELECT 절의
+    /// `스키마.테이블.|`(alias 없이 컬럼) = 종전대로 Member.
+    #[test]
+    fn from_schema_table_dot_has_no_completion() {
+        let c = ctx("SELECT * FROM ORDDATA.ORDDCM_DOCS_USR.|");
+        assert_eq!(c.kind, CtxKind::None);
+        let c = ctx("SELECT * FROM emp e JOIN sch.dept.|");
+        assert_eq!(c.kind, CtxKind::None);
+        let c = ctx("SELECT * FROM emp, sch.dept.|");
+        assert_eq!(c.kind, CtxKind::None);
+        let c = ctx("SELECT * FROM ORDDATA.|");
+        assert_eq!(
+            c.kind,
+            CtxKind::Member {
+                qualifier: "ORDDATA".into()
+            }
+        );
+        let c = ctx("SELECT sch.emp.| FROM sch.emp");
+        assert_eq!(
+            c.kind,
+            CtxKind::Member {
+                qualifier: "sch.emp".into()
+            }
+        );
+        let c = ctx("SELECT * FROM sch.emp WHERE sch.emp.|");
+        assert_eq!(
+            c.kind,
+            CtxKind::Member {
+                qualifier: "sch.emp".into()
+            }
+        );
     }
 
     #[test]
@@ -956,6 +1206,28 @@ mod tests {
     #[test]
     fn scoring_and_ranking() {
         assert_eq!(score("emp", "emp", MatchMode::Fuzzy), Some(1000));
+        // 약어 퍼지(사용자 09-23 "M4S_I002040이라면 MI40으로도"): 부분열이면 낮은 점수로라도 걸린다 · 포함/접두는 아니다.
+        assert!(score("M4S_I002040", "MI40", MatchMode::Fuzzy).is_some());
+        assert_eq!(score("M4S_I002040", "MI40", MatchMode::Contains), None);
+        assert!(
+            score("M4S_I002040", "M4S_", MatchMode::Fuzzy)
+                > score("M4S_I002040", "MI40", MatchMode::Fuzzy)
+        );
+        // 연속 일치가 많을수록 높다(빈틈 적음) · 낱말 시작 일치 가산.
+        assert!(
+            score("ITEM_CD", "itcd", MatchMode::Fuzzy)
+                > score("INTERIM_TYPE_CODE_X", "itcd", MatchMode::Fuzzy)
+        );
+        assert!(
+            score("SALES_CUSTOMER", "sc", MatchMode::Fuzzy).expect("sc") >= 400,
+            "약어 = 낱말 시작 둘"
+        );
+        // 일치 위치(팝업 강조 · 09-24): 접두 · 포함 · 약어 · 부분열 · 없음.
+        assert_eq!(match_positions("ITEM_CD", "item"), vec![0, 1, 2, 3]);
+        assert_eq!(match_positions("DF_ITEM_CD", "item"), vec![3, 4, 5, 6]);
+        assert_eq!(match_positions("SALES_CUSTOMER", "sc"), vec![0, 6]);
+        assert_eq!(match_positions("M4S_I002040", "mi40"), vec![0, 4, 9, 10]);
+        assert!(match_positions("ABC", "z").is_empty() && match_positions("ABC", "").is_empty());
         assert!(
             score("employee", "emp", MatchMode::Prefix).unwrap()
                 > score("sales_emp", "emp", MatchMode::Fuzzy).unwrap()
@@ -990,30 +1262,55 @@ mod tests {
                 kind: CandKind::Column,
                 detail: "".into(),
                 source: 1,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
             },
             Cand {
                 text: "EMP".into(),
                 kind: CandKind::Table,
                 detail: "".into(),
                 source: 3,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
             },
             Cand {
                 text: "employees".into(),
                 kind: CandKind::Table,
                 detail: "".into(),
                 source: 3,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
             },
             Cand {
                 text: "temp".into(),
                 kind: CandKind::Word,
                 detail: "".into(),
                 source: 6,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
             },
             Cand {
                 text: "emp".into(),
                 kind: CandKind::Word,
                 detail: "".into(),
                 source: 6,
+                tag: 0,
+                mark: String::new(),
+                order: 0,
+                qualifier: String::new(),
+                layer: 0,
             },
         ];
         let r = rank(cands, "emp", MatchMode::Fuzzy, &["employees".into()], 10);

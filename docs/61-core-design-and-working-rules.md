@@ -129,27 +129,38 @@
 
 **리눅스에서 처음 할 일(09-22 91차)**: ① 두 저장소 pull(nexa-ui 먼저) → `scripts/linux-all-tests.sh -o /tmp/nsql-tests`(fmt·clippy·test 양쪽 + 3-OS 호스트 + 실서버 통합 = `NSQL_*_PROFILE`) ② Oracle = `scripts/install-instantclient-linux.sh --rc`(새 셸) ③ 성능 = `scripts/linux-perf-all.sh -H <격리 홈> -D <데이터> -o <결과>`(격리 홈에 `Local` SQLite 프로필 먼저 · 26 §7-7과 비교 · 창까지 시간은 `[startup]`으로 구간 확인) ④ 실기 = TODO T-163(Wayland IME · 모달 · 캡처).
 
-**맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139 ⑤ **하네스 권한 점검**(아래 §3-1 — 확인 창이 계속 뜨면 맥 추가분을 제안 파일로 만들어 사용자에게 적용을 부탁한다).
+**맥에서 처음 할 일**: ① 두 저장소 pull(nexa-ui 먼저) → `cargo test --workspace` 양쪽 ② `scripts/check-3os.sh` ③ 큰 파일(수십 MB) 열기 · 한글 조합 입력 · 저장 → 재시작 → 되돌리기 ④ T-139 ⑤ **하네스 권한 점검**(아래 §3-1 — 09-23 맥·Linux 몫을 한 번에 적용 · 새 확인 창이 뜨면 그 첫 단어를 §3-1 목록에 더해 다시 제안한다).
 
 ### 3-1. 하네스(Claude Code) 권한 설정 — 3-OS 공통 규칙과 OS별 추가분(사용자 09-22 "동일 권한 관리를 mac에서도 다시 요청할 수 있게")
 
 - **원칙** = §2-4 대원칙: 확인은 **프로젝트 외부 리소스의 수정/삭제**에만. 진행에 필요한 스크립트 실행 · 프로젝트 내부 파일 · 세션이 만든 파일/폴더 · `target/`의 앱 프로세스는 묻지 않는다.
 - **어디에**: 저장소의 `.claude/settings.json`(커밋됨 · 3-OS가 같은 파일을 읽는다 · `defaultMode = acceptEdits` · `allow` = 명령 **첫 단어** 기준 · `&&`·`;`·`|` 체인은 조각마다 판정 · `ask` = `sudo` · `git reset --hard` · `git clean` · 강제 push만). 이 파일은 하네스의 자동 모드 분류기가 **에이전트의 편집을 막는다**("자기 수정") → 바꿀 것이 생기면 스크래치패드에 완성본 `settings.proposed.json`을 만들고 **사용자가 복사**한다(09-22 Windows에서 그렇게 적용).
 - **Windows(09-22 적용됨)**: Bash `cd sed cut sort uniq tr fold paste printf xargs diff stat du dirname basename jq curl sleep timeout test true env export tasklist taskkill` · `for /until /while /if /[` · `bash scripts/` · `rm`은 **스크래치(`"$TEMP/claude/` · `C:/Users/<user>/AppData/Local/Temp/claude/`) · `/tmp/` · `target/` · `../_cmp/` · `../nexa-ui/target/` 한정** / PowerShell `cd Stop-Process Start-Process Start-Sleep New-Item Set-Content Add-Content Add-Type Copy-Item Move-Item Rename-Item Remove-Item Env:` · 스크래치/`target/` 한정 `Remove-Item -Recurse -Force` · `Out-String Out-Null Where-Object ForEach-Object Sort-Object Get-Date Join-Path Split-Path foreach/if/try` · `$…` · `"…"` · `[…]` · `& "$root\target\…"`.
-- **macOS 추가분(제안 — 맥 세션이 첫 확인 창에서 만들어 부탁)**: 위 Bash 목록은 그대로 두고 경로·명령만 맥으로 —
+- **macOS · Linux(09-23 mac 100차 · 제안 파일로 적용)**: 맥 세션도 분류기에 막혀(`[Self-Modification]`) 스크래치패드에 완성본 `settings.proposed.json`을 만들고 사용자가 복사했다. **한 파일을 3-OS가 읽으므로 맥·Linux 몫을 한 번에 넣었다** — Linux 세션은 `main`을 pull하면 그대로 받는다(추가 확인 창이 뜨면 아래 Linux 목록에 더하고 다시 제안). 항목 = Unix 공통 + macOS + Linux(기존 항목 전부 유지 · `ask`에 `pkexec`·`apt`·`apt-get` 추가).
 
   ```json
+  // Unix 공통(macOS · Linux) — 스크래치 = 세션이 알려 주는 `/private/tmp/claude-<uid>/…`(맥) · `$TMPDIR/claude/` · `$XDG_RUNTIME_DIR/claude/`(Linux) · `/tmp/`(기존)
+  "Bash(rm -rf /private/tmp/claude-:*)", "Bash(rm -f /private/tmp/claude-:*)",
   "Bash(rm -rf \"$TMPDIR/claude/:*)", "Bash(rm -f \"$TMPDIR/claude/:*)",
-  "Bash(rm -rf /var/folders/:*)", "Bash(rm -f /var/folders/:*)",
-  "Bash(rm -rf /tmp/:*)", "Bash(rm -f /tmp/:*)", "Bash(rm -rf target/:*)", "Bash(rm -f target/:*)",
-  "Bash(rm -rf ../_cmp/:*)", "Bash(rm -rf ../nexa-ui/target/:*)",
+  "Bash(rm -rf \"$XDG_RUNTIME_DIR/claude/:*)", "Bash(rm -f \"$XDG_RUNTIME_DIR/claude/:*)",
   "Bash(pkill -f target/:*)", "Bash(kill:*)", "Bash(ps:*)", "Bash(pgrep:*)", "Bash(lsof:*)",
-  "Bash(screencapture:*)", "Bash(open -a:*)", "Bash(open target/:*)", "Bash(xattr:*)", "Bash(codesign:*)", "Bash(otool:*)", "Bash(nm:*)",
-  "Bash(sw_vers:*)", "Bash(sysctl:*)", "Bash(vm_stat:*)", "Bash(sample:*)", "Bash(/usr/bin/time:*)",
-  "Bash(bash scripts/:*)", "Bash(sh scripts/:*)", "Bash(zsh:*)", "Bash(./target/:*)", "Bash(../nexa-ui/target/:*)"
+  "Bash(nohup target/:*)", "Bash(nohup ./target/:*)", "Bash(./target/:*)", "Bash(../nexa-ui/target/:*)",
+  "Bash(sh scripts/:*)", "Bash(zsh:*)", "Bash(/usr/bin/time:*)", "Bash(uname:*)", "Bash(nproc:*)", "Bash(getconf:*)",
+  "Bash(tee:*)", "Bash(seq:*)", "Bash(bc:*)", "Bash(id:*)", "Bash(ldd:*)", "Bash(size:*)", "Bash(readelf:*)",
+  // macOS
+  "Bash(rm -rf /var/folders/:*)", "Bash(rm -f /var/folders/:*)",
+  "Bash(screencapture:*)", "Bash(open -a:*)", "Bash(open target/:*)", "Bash(osascript -e:*)",
+  "Bash(xattr:*)", "Bash(codesign:*)", "Bash(otool:*)", "Bash(nm:*)",
+  "Bash(sw_vers:*)", "Bash(sysctl:*)", "Bash(vm_stat:*)", "Bash(sample:*)",
+  // Linux(scripts/linux-*.sh · install-*-linux.sh가 쓰는 첫 단어 + 창 조회·캡처)
+  "Bash(grim:*)", "Bash(gnome-screenshot:*)", "Bash(xdg-open target/:*)",
+  "Bash(xprop:*)", "Bash(xwininfo:*)", "Bash(xdotool search:*)", "Bash(xdotool getwindow:*)",
+  "Bash(strace:*)", "Bash(ltrace:*)", "Bash(perf:*)", "Bash(free:*)", "Bash(lscpu:*)",
+  // ask에 추가
+  "Bash(pkexec:*)", "Bash(apt:*)", "Bash(apt-get:*)"
   ```
-  (`pkill`은 `target/` 아래 nexa-sql만 — 다른 앱은 여전히 묻는다 · `kill`은 PID 지정이라 허용 · PowerShell 항목은 맥에서 무해하게 무시된다.)
-- **Linux 추가분**: 맥과 같되 `screencapture` 대신 `grim`/`gnome-screenshot`, `open` 대신 `xdg-open`, 스크래치 = `/tmp/claude/` 또는 `$XDG_RUNTIME_DIR` · `xprop`/`xwininfo`/`xdotool`(조회만) · `strace`/`ltrace`(측정) · `pkexec`는 묻는다.
+  (`pkill`은 `target/` 아래 nexa-sql만 — 다른 앱은 여전히 묻는다 · `kill`은 PID 지정이라 허용 · `xdotool`은 조회 동사(`search`·`getwindow*`)만 — 키 주입 `key`/`type`은 허용하지 않는다(61 §2 입력 주입 금지) · `sudo`·`pkexec`·패키지 설치는 묻는다 · PowerShell 항목은 Unix에서 무해하게 무시된다 · `osascript -e`는 창 이름 조회 같은 읽기용 — System Events 키 주입은 규칙으로 금지.)
+- **적용 절차(3-OS 공통)**: ① 세션이 스크래치패드에 `settings.proposed.json`(현재 파일 + 추가분 · 기존 항목 전부 유지)을 만들고 `comm`으로 손실 0을 확인 ② 사용자가 복사 — 맥/Linux `cp <스크래치>/settings.proposed.json .claude/settings.json` · Windows `Copy-Item` ③ `jq -e '.permissions.allow|length' .claude/settings.json`으로 유효한 JSON인지 ④ 커밋(3-OS가 같은 파일을 받는다).
 - **점검법**: 세션 초반에 확인 창이 두 번 이상 뜨면 그 명령의 첫 단어를 적어 두고 한 번에 제안 파일로 모아 부탁한다(하나씩 묻지 않는다). 제안은 **기존 항목 전부 유지 + 추가**만(병합) · `ask`의 되돌릴 수 없는 git 항목은 지우지 않는다.
 
 ## 4. 자체 검증 도구
@@ -161,6 +172,8 @@
 - **앱 안 마우스 사건**(09-21): `ui.move:x/y` · `ui.click:x/y` · `ui.rclick:x/y`(창 좌표 · 장치 픽셀 · 쉼표는 명령 구분자라 `/`) — OS 입력 주입이 아니라 앱이 스스로 `InputEvent`를 만들어 **실제 라우팅 경로(`route`)** 에 넣는다. 컨트롤을 직접 부르는 캡처 명령(`explorer.menu` …)은 라우팅 결함을 못 본다(탐색기 우클릭이 첫 커밋부터 닿지 않던 것을 이것으로 찾았다). Debug 첫 기동은 수 초 — `@after:`는 기동 뒤 기준이니 캡처 대기를 12초 이상.
 - 환경 변수: `NSQL_NO_ACTIVATE=1`(★ 자체 시험 인스턴스는 **반드시** — 창을 활성화하지 않고 띄운다 · 09-21에 캡처용 창이 전경을 가져가 사용자가 치던 글자를 받았다) · `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
 - 벤치(nexa-ui): `cargo run --release -p nexa-ctl --example bench_editor <줄 수> <기능>`(`hl,ln,base,mm,occ,br` 또는 `all` · `BENCH_ASCII=1` · `BENCH_PREPARED=1`) · `--example bench_undo`.
+- 스크립트(맥 · 09-24): **`scripts/mac-perf-all.sh`**(성능 전수 실행기 = `linux-perf-all.sh` 이식 · `mac-startup.sh`/`mac-probe.sh`/`mac-leak.sh` + `mac-common.sh`(`ps -o time/rss` · `ps -M` 스레드 · `vmmap --summary` footprint · `lsof` fd) · 실서버 CLI 타이밍은 `NSQL_PERF_ORACLE/MSSQL/PG=<프로필>`)
+- 스크립트(3-OS · 09-24): **`scripts/func-block-comment.sh`**(기능 점검 자동화의 맥/Linux 첫 예 — 격리 홈 + 기동 명령 + 결과 파일 비교 · 키 주입 0 · 새 편집 명령을 넣으면 같은 틀로 한 경우를 더한다)
 - 스크립트: **`scripts/win-perf-all.ps1`(성능 전수 실행기 · `-Stages`/`-Only`)** · **`scripts/win-inventory.ps1`(용량·정적/동적 라이브러리·구성 파일·설정 키)** · **`scripts/win-mem-reclaim.ps1`(71 §C-2 회수 시험 R1~R6)** · ★ **`scripts/win-func-check.ps1`(기능 점검 자동화 — 시나리오 표 = 격리 홈 + 기동 명령 + 전 창 캡처 + 생존/패닉 자동 판정 · 새 기능을 넣으면 시나리오 한 줄을 더한다 · 09-22 §62 · S01~S35 = 09-22 요청 전부 + soft undo·상한·북마크)** · `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh` · **Linux(09-22)**: `scripts/linux-startup.sh` · `linux-probe.sh` · `linux-leak.sh` · `linux-perf-all.sh`(전 시나리오 + 릭 + CLI) · `linux-all-tests.sh`(두 저장소 게이트 + 3-OS + 실서버 통합 + CLI 기능 · 결과 `summary.txt`) · `install-instantclient-linux.sh`.
 - 기동 구간: `NSQL_TRACE_FRAMES=1` → `[startup] settings · fonts · event_loop · … · app`(누적 ms) + `[frames] … first paint … at +N ms`(09-22 · 39 §2 S-14).
 - 기준 수치(Release · 09-20 · 이 Windows PC): 65 MB 파일 상주 87 MB · 피크 106 MB · 70만 줄 입력 3~4 ms · 그리기 2 ms · 4만 줄 전 기능 입력 8 ms. 맥에서 크게 다르면 원인을 본다.

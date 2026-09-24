@@ -485,6 +485,14 @@ impl LogWin {
         self.window.as_ref().is_some_and(|w| w.id() == id)
     }
 
+    /// 로그 버퍼·배치·필터 목록의 어림 바이트(메모리 맵 `Logs` · docs/80).
+    pub(crate) fn approx_bytes(&self) -> u64 {
+        (self.buf.len() * 192
+            + self.meta.len() * 40
+            + self.vis.len() * 8
+            + self.row_start.len() * 4) as u64
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.window.is_some()
     }

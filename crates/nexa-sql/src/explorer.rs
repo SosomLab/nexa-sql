@@ -83,6 +83,12 @@ enum Req {
     Close,
     /// 메타 세션만 닫는다(유휴 회수 · docs/52 §2-2) — 스펙은 기억해 두었다가 **다음 요청 때 조용히 다시 연다**.
     Suspend,
+    /// ★ 백그라운드 메타 스레드용(09-24): 세션을 **열지 않고** 재개 스펙·세대만 기억한다 — 첫 요청이 올 때 연다(연결 +1은
+    ///   미리 읽기/선적재가 실제로 있을 때만 · 26 §8).
+    Prepare {
+        gen: u64,
+        spec: ConnectSpec,
+    },
     Schemas {
         gen: u64,
         node: usize,
@@ -101,6 +107,26 @@ enum Req {
     },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
     ColumnsMeta {
+        gen: u64,
+        schema: String,
+        table: String,
+        /// 팝업이 지금 기다리는 대상(참)은 큐 맨 앞 · 선적재(거짓)는 뒤(09-23).
+        urgent: bool,
+        /// 메타 저장 열쇠(스키마 버킷 · 이름) — 사전 객체(`ALL_TABLES` · `sys.tables`)는 DB 소유 스키마로 읽고 `$dict`에 저장(09-24).
+        key: (String, String),
+    },
+    /// 자동 완성 즉시 채움 — 스키마 한 종류의 객체 목록(트리 노드 없이 · 09-23 사용자 "`스키마.` 입력 시 그 시점에 캐싱").
+    ObjectsMeta {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+    },
+    /// 권한 반영 사전 뷰(`nsql_catalog::dictionary` · 접속당 한 번).
+    DictMeta {
+        gen: u64,
+    },
+    /// 테이블 상세(제약·인덱스 — 완성 상세 카드 · 09-24 · 급한 세션).
+    DetailMeta {
         gen: u64,
         schema: String,
         table: String,
@@ -341,6 +367,8 @@ enum Resp {
         gen: u64,
         node: usize,
         r: Result<Vec<String>, String>,
+        /// 서버가 알려 준 현재 스키마(`nsql_catalog::current_schema` · 실패·빈 값 = None).
+        current: Option<String>,
     },
     Objects {
         gen: u64,
@@ -357,6 +385,23 @@ enum Resp {
         schema: String,
         table: String,
         r: Result<Vec<ColumnInfo>, String>,
+        key: (String, String),
+    },
+    ObjectsMeta {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+        r: Result<Vec<ObjectInfo>, String>,
+    },
+    DictMeta {
+        gen: u64,
+        r: Result<Vec<ObjectInfo>, String>,
+    },
+    DetailMeta {
+        gen: u64,
+        schema: String,
+        table: String,
+        r: Result<nsql_catalog::TableDetail, String>,
     },
     Source {
         gen: u64,
@@ -426,12 +471,23 @@ pub(crate) struct Explorer {
     /// 호버 행 = 1초에 걸쳐 서서히 진해짐(`IntentFade` Slow · 그리드·접속 목록과 같은 부품 · 사용자 09-15).
     hover_fade: IntentFade,
     tx: mpsc::Sender<Req>,
+    /// 백그라운드 메타 스레드(미리 읽기·선적재 · 자기 세션 · 09-24).
+    tx_bg: mpsc::Sender<Req>,
     rx: mpsc::Receiver<Resp>,
     /// UI 깨우기(메타 스레드를 교체할 때 다시 쓴다).
     wake: Arc<Mutex<Box<dyn Fn() + Send>>>,
     gen: u64,
     dialect: Option<Dialect>,
     conn_desc: String,
+    /// 서버가 알려 준 현재 스키마(접속 뒤 · 트리 선택과 메타의 현재 스키마 판정에 먼저 쓴다).
+    server_schema: Option<String>,
+    /// 자동 완성이 `스키마.`로 읽어 온 버킷(트리가 펼친 것·현재 스키마·사전은 제외) — 열린 문서가 그 이름을 더 이상 쓰지 않으면
+    /// 즉시 해제한다(`reclaim_intel_buckets` · 사용자 09-23 "미사용 판정 즉시 회수").
+    intel_buckets: Vec<(String, ObjectKind)>,
+    /// `intel.from_routines` — 자동 완성 채움에 함수·패키지·프로시저 버킷도(09-24).
+    routines: bool,
+    /// 접속 직후 현재 스키마·사전 미리 읽기(`intel.preload`).
+    preload: bool,
     /// 루트 표시 = 프로필 이름(굵게) + 호스트:포트(흐리게 · docs/28 §1 · 사용자 09-15).
     profile_name: String,
     endpoint: String,
@@ -589,14 +645,78 @@ fn open_meta(spec: &ConnectSpec, default: Dialect) -> Result<Box<dyn Session>, D
     r
 }
 
+/// 계측 라벨(요청 종류 · 대상).
+fn req_label(r: &Req) -> String {
+    match r {
+        Req::Open { .. } => "open".into(),
+        Req::Prepare { .. } => "prepare".into(),
+        Req::Close => "close".into(),
+        Req::Suspend => "suspend".into(),
+        Req::Schemas { .. } => "schemas".into(),
+        Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
+        Req::Columns { schema, table, .. } => format!("columns {schema}.{table}"),
+        Req::ColumnsMeta {
+            schema,
+            table,
+            urgent,
+            ..
+        } => format!(
+            "columns-meta {schema}.{table}{}",
+            if *urgent { "" } else { " (bg)" }
+        ),
+        Req::ObjectsMeta { schema, kind, .. } => format!("objects-meta {schema} {kind:?}"),
+        Req::DictMeta { .. } => "dictionary".into(),
+        Req::DetailMeta { schema, table, .. } => format!("detail {schema}.{table}"),
+        Req::Source { name, .. } => format!("source {name}"),
+        _ => "other".into(),
+    }
+}
+
+/// 메타 워커 큐의 우선순위(낮을수록 먼저 · 09-23).
+fn req_prio(r: &Req) -> u8 {
+    match r {
+        Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend => 0,
+        Req::Schemas { .. } | Req::Objects { .. } | Req::Columns { .. } | Req::Source { .. } => 1,
+        Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
+        Req::ColumnsMeta { urgent: false, .. } => 3,
+        Req::ObjectsMeta { .. } => 4,
+        Req::DictMeta { .. } => 5,
+        _ => 2,
+    }
+}
+
 fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn() + Send>) {
     let mut session: Option<Box<dyn Session>> = None;
     let mut cur_gen = 0u64;
     // 유휴로 닫힌 뒤 다시 열 스펙(`Suspend`는 남기고 `Close`는 지운다).
     let mut resume: Option<ConnectSpec> = None;
-    while let Ok(req) = rx.recv() {
+    // ★ 우선순위 큐(사용자 09-23 "컬럼 로딩이 너무 느리다 · alias 대상부터"): 한 세션이 한 번에 한 질의를 하므로, 쌓인 요청
+    //   가운데 **급한 것부터**(접속/닫기 → 트리·팝업이 기다리는 컬럼 → 폴링 → 선적재 컬럼 → 스키마 미리 읽기 → 사전) 꺼낸다.
+    //   같은 급은 도착 순. 실행 중인 질의는 끊지 않는다(그래서 느린 질의는 잘게 — `nsql_catalog::dictionary`).
+    let mut pending: std::collections::VecDeque<Req> = std::collections::VecDeque::new();
+    loop {
+        if pending.is_empty() {
+            match rx.recv() {
+                Ok(r) => pending.push_back(r),
+                Err(_) => break,
+            }
+        }
+        while let Ok(r) = rx.try_recv() {
+            pending.push_back(r);
+        }
+        let pick = (0..pending.len())
+            .min_by_key(|&i| req_prio(&pending[i]))
+            .unwrap_or(0);
+        let Some(req) = pending.remove(pick) else {
+            break;
+        };
         // 유휴로 닫혀 있었으면 카탈로그 요청 앞에서 다시 연다(사용자 동작 1회당 1접속 · 26 §8).
-        if session.is_none() && !matches!(req, Req::Open { .. } | Req::Close | Req::Suspend) {
+        if session.is_none()
+            && !matches!(
+                req,
+                Req::Open { .. } | Req::Prepare { .. } | Req::Close | Req::Suspend
+            )
+        {
             if let Some(spec) = resume.as_ref() {
                 let default = spec.dialect.unwrap_or(Dialect::Oracle);
                 // 재개 전 빠른 판정(docs/53): 끊긴 서버에 메타 스레드가 접속 타임아웃까지 갇히지 않게.
@@ -607,6 +727,9 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 }
             }
         }
+        // 계측(09-24 "컬럼 캐싱 속도"): 300 ms를 넘는 메타 질의는 stderr에 종류와 시간을 남긴다(개발자 모드 캡처용).
+        let t0 = Instant::now();
+        let what = req_label(&req);
         let resp = match req {
             Req::Open {
                 gen,
@@ -659,6 +782,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 };
                 Resp::Opened { gen, r }
             }
+            Req::Prepare { gen, spec } => {
+                session = None;
+                cur_gen = gen;
+                resume = Some(spec);
+                continue;
+            }
             Req::Close => {
                 resume = None;
                 if let Some(mut s) = session.take() {
@@ -677,7 +806,19 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     continue;
                 }
                 let r = with_session(&mut session, |s| nsql_catalog::schemas(s).map_err(err_s));
-                Resp::Schemas { gen, node, r }
+                // 현재 스키마는 서버가 안다(SQL Server `SCHEMA_NAME()` = dbo · PG `current_schema()` · Oracle CURRENT_SCHEMA) —
+                //   계정 이름과 같은 스키마를 찾던 종전 규칙은 SQL Server·PG에서 비어 완성에 테이블이 0이었다(사용자 09-23).
+                let current = with_session(&mut session, |s| {
+                    nsql_catalog::current_schema(s).map_err(err_s)
+                })
+                .ok()
+                .filter(|c| !c.is_empty());
+                Resp::Schemas {
+                    gen,
+                    node,
+                    r,
+                    current,
+                }
             }
             Req::Objects {
                 gen,
@@ -707,7 +848,13 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 Resp::Columns { gen, node, r }
             }
-            Req::ColumnsMeta { gen, schema, table } => {
+            Req::ColumnsMeta {
+                gen,
+                schema,
+                table,
+                urgent: _,
+                key,
+            } => {
                 if gen != cur_gen {
                     continue;
                 }
@@ -715,6 +862,42 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     nsql_catalog::columns(s, &schema, &table).map_err(err_s)
                 });
                 Resp::ColumnsMeta {
+                    gen,
+                    schema,
+                    table,
+                    r,
+                    key,
+                }
+            }
+            Req::ObjectsMeta { gen, schema, kind } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::objects(s, &schema, kind).map_err(err_s)
+                });
+                Resp::ObjectsMeta {
+                    gen,
+                    schema,
+                    kind,
+                    r,
+                }
+            }
+            Req::DictMeta { gen } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| nsql_catalog::dictionary(s).map_err(err_s));
+                Resp::DictMeta { gen, r }
+            }
+            Req::DetailMeta { gen, schema, table } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::table_detail(s, &schema, &table).map_err(err_s)
+                });
+                Resp::DetailMeta {
                     gen,
                     schema,
                     table,
@@ -759,6 +942,10 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 Resp::Watermark { gen, r }
             }
         };
+        let ms = t0.elapsed().as_millis();
+        if ms >= 300 || what.starts_with("columns") || what.starts_with("detail") {
+            eprintln!("[meta] {what} took {ms} ms");
+        }
         if tx.send(resp).is_err() {
             break;
         }
@@ -788,6 +975,23 @@ fn with_session<T>(
         Ok(r) => r,
         Err(_) => Err("internal: catalog panicked".into()),
     }
+}
+
+/// ★ 현재 스키마 판정(순수 · 09-23): 서버가 알려 준 값(목록에 있을 때) → 접속 계정과 같은 이름 → 방언 기본(`public` · `dbo` ·
+/// `main`) → 스키마가 하나뿐이면 그것. 대소문자 무시 · 반환은 목록의 표기.
+fn pick_current_schema(list: &[String], server: Option<&str>, user: &str) -> Option<String> {
+    let find = |name: &str| {
+        (!name.is_empty())
+            .then(|| list.iter().find(|s| s.eq_ignore_ascii_case(name)).cloned())
+            .flatten()
+    };
+    server
+        .and_then(find)
+        .or_else(|| find(user))
+        .or_else(|| find("public"))
+        .or_else(|| find("dbo"))
+        .or_else(|| find("main"))
+        .or_else(|| (list.len() == 1).then(|| list[0].clone()))
 }
 
 /// 종류 폴더 라벨(i18n).
@@ -825,27 +1029,38 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
 }
 
 impl Explorer {
-    /// 메타 스레드 하나 시작(요청/응답 채널 반환).
+    /// 메타 스레드 **둘** 시작(급한 것 · 백그라운드 — 요청 채널 둘 · 응답 채널 하나).
+    /// ★ 09-24(사용자 "테이블 1개 컬럼 캐싱이 느리다"): 우선순위 큐로도 **실행 중인** 긴 질의(스키마 미리 읽기 `ALL_OBJECTS` · 사전
+    ///   `ALL_VIEWS`)는 끊지 못해 그 뒤에 섰다 → 미리 읽기·선적재는 **자기 세션**(`nsql-explorer-bg` · 첫 요청 때 연다)에서 돌리고
+    ///   트리·팝업이 기다리는 요청은 급한 세션이 즉시 처리한다. 연결 +1은 백그라운드 요청이 실제로 있을 때만(26 §8).
     fn spawn_meta(
         wake: &Arc<Mutex<Box<dyn Fn() + Send>>>,
-    ) -> (mpsc::Sender<Req>, mpsc::Receiver<Resp>) {
+    ) -> (mpsc::Sender<Req>, mpsc::Sender<Req>, mpsc::Receiver<Resp>) {
         let (tx, req_rx) = mpsc::channel::<Req>();
+        let (tx_bg, bg_rx) = mpsc::channel::<Req>();
         let (resp_tx, rx) = mpsc::channel::<Resp>();
-        let w = Arc::clone(wake);
-        let wake_fn: Box<dyn Fn() + Send> = Box::new(move || {
-            if let Ok(f) = w.lock() {
-                f();
-            }
-        });
+        let resp_bg = resp_tx.clone();
+        let mk_wake = |w: Arc<Mutex<Box<dyn Fn() + Send>>>| -> Box<dyn Fn() + Send> {
+            Box::new(move || {
+                if let Ok(f) = w.lock() {
+                    f();
+                }
+            })
+        };
+        let wake_fn = mk_wake(Arc::clone(wake));
         let _ = std::thread::Builder::new()
             .name("nsql-explorer".into())
             .spawn(move || meta_thread(req_rx, resp_tx, wake_fn));
-        (tx, rx)
+        let wake_bg = mk_wake(Arc::clone(wake));
+        let _ = std::thread::Builder::new()
+            .name("nsql-explorer-bg".into())
+            .spawn(move || meta_thread(bg_rx, resp_bg, wake_bg));
+        (tx, tx_bg, rx)
     }
 
     pub(crate) fn new(wake: Box<dyn Fn() + Send>, visible: bool) -> Self {
         let wake = Arc::new(Mutex::new(wake));
-        let (tx, rx) = Self::spawn_meta(&wake);
+        let (tx, tx_bg, rx) = Self::spawn_meta(&wake);
         let mut e = Explorer {
             nodes: Vec::new(),
             bounds: Rect::default(),
@@ -857,11 +1072,16 @@ impl Explorer {
             hover: None,
             hover_fade: IntentFade::with_speed(FadeSpeed::Slow),
             tx,
+            tx_bg,
             rx,
             wake,
             gen: 0,
             dialect: None,
             conn_desc: String::new(),
+            server_schema: None,
+            intel_buckets: Vec::new(),
+            routines: true,
+            preload: true,
             profile_name: String::new(),
             endpoint: String::new(),
             menu: CtxMenu::new(),
@@ -911,6 +1131,8 @@ impl Explorer {
         self.watermarks.clear();
         self.wm_inflight = false;
         self.meta.clear();
+        self.server_schema = None;
+        self.intel_buckets.clear();
         self.nodes = vec![Node {
             kind: NodeKind::Root,
             depth: 0,
@@ -1142,8 +1364,10 @@ impl Explorer {
         self.suspended = false;
         self.gen += 1;
         let _ = self.tx.send(Req::Close);
-        let (tx, rx) = Self::spawn_meta(&self.wake);
+        let _ = self.tx_bg.send(Req::Close);
+        let (tx, tx_bg, rx) = Self::spawn_meta(&self.wake);
         self.tx = tx;
+        self.tx_bg = tx_bg;
         self.rx = rx;
         self.live_inflight = false;
         self.source_pending = false;
@@ -1169,6 +1393,7 @@ impl Explorer {
         }
         self.suspended = true;
         let _ = self.tx.send(Req::Suspend);
+        let _ = self.tx_bg.send(Req::Suspend);
     }
 
     pub(crate) fn connect(&mut self, spec: &ConnectSpec, profile_name: &str, once: bool) {
@@ -1198,6 +1423,15 @@ impl Explorer {
             spec: spec.clone(),
             once,
         });
+        // 백그라운드 스레드는 열지 않고 준비만(일회성 비밀번호는 넘기지 않는다 — 금고에서 빌리거나 못 열면 미리 읽기만 실패).
+        let mut prepared = spec.clone();
+        if once {
+            nsql_core::secret::wipe_opt(&mut prepared.password);
+        }
+        let _ = self.tx_bg.send(Req::Prepare {
+            gen: self.gen,
+            spec: prepared,
+        });
     }
 
     /// 접속 해제 — **서버 상태와 무관하게 즉시**(사용자 09-16: VPN 끊긴 채 "Loading…"이면 해제가 안 됐다).
@@ -1213,8 +1447,10 @@ impl Explorer {
         self.endpoint.clear();
         self.reset_tree();
         let _ = self.tx.send(Req::Close);
-        let (tx, rx) = Self::spawn_meta(&self.wake);
+        let _ = self.tx_bg.send(Req::Close);
+        let (tx, tx_bg, rx) = Self::spawn_meta(&self.wake);
         self.tx = tx;
+        self.tx_bg = tx_bg;
         self.rx = rx;
         self.live_inflight = false;
     }
@@ -1244,10 +1480,149 @@ impl Explorer {
             .to_string()
     }
 
-    fn meta_set_schemas(&mut self, list: &[String]) {
+    fn meta_set_schemas(&mut self, list: &[String], server: Option<&str>) {
         let user = self.conn_user();
-        let current = list.iter().find(|s| s.eq_ignore_ascii_case(&user)).cloned();
+        let current = pick_current_schema(list, server, &user);
+        self.server_schema = current.clone();
         self.meta.set_schemas(list, current.as_deref());
+    }
+
+    /// ★ 접속 직후 미리 읽기(`intel.preload` · 사용자 09-23 "기본 스키마는 접속 시 바로 메모리에"): 현재 스키마의 관계 객체
+    /// (테이블·뷰·구체화 뷰·시노님)와 권한 반영 사전 뷰를 메타 세션으로 한 번 요청한다(26 §8 — 접속 성공 뒤 1회 · 재시도 없음).
+    fn preload_meta(&mut self) {
+        if !self.preload || self.offline {
+            return;
+        }
+        if let Some(cur) = self.server_schema.clone() {
+            self.request_objects(&cur);
+        }
+        self.request_objects(nsql_catalog::DICT_SCHEMA);
+    }
+
+    pub(crate) fn set_preload(&mut self, on: bool) {
+        self.preload = on;
+    }
+
+    pub(crate) fn set_routines(&mut self, on: bool) {
+        self.routines = on;
+    }
+
+    /// 메모리 맵 보고(docs/80): 메타 저장소(탐색기·완성 공용) · 아이콘 캐시(종류 틴트 + 브랜드).
+    pub(crate) fn mem_report(&self, acc: &mut crate::memstat::Acc) {
+        use crate::memstat::Cat;
+        acc.add(Cat::Meta, self.meta.approx_bytes() as u64);
+        let icons: usize = self
+            .icon_cache
+            .values()
+            .map(|i| i.rgba.len())
+            .sum::<usize>()
+            + self
+                .brand_cache
+                .values()
+                .map(|i| i.rgba.len())
+                .sum::<usize>();
+        acc.add(Cat::Icons, icons as u64);
+    }
+
+    /// ★ 자동 완성 즉시 채움 — 스키마 하나의 관계 객체(또는 `DICT_SCHEMA` = 사전 뷰). 이미 읽었거나 읽는 중이면 0 ·
+    /// 실패한 것은 다시 묻지 않는다(26 §8). 현재 스키마·사전이 아닌 스키마는 회수 대상으로 적어 둔다.
+    pub(crate) fn request_objects(&mut self, schema: &str) {
+        let Some(d) = self.dialect else { return };
+        if self.offline {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        fn cov(
+            names: &nsql_run::meta::Interner,
+            snap: &nsql_run::meta::Snapshot,
+            sc: &str,
+            k: ObjectKind,
+        ) -> nsql_run::meta::Coverage {
+            names
+                .find(sc)
+                .map_or(nsql_run::meta::Coverage::Missing, |s| snap.coverage(s, k))
+        }
+        if schema == nsql_catalog::DICT_SCHEMA {
+            if !matches!(
+                cov(&self.meta.names, &snap, schema, ObjectKind::View),
+                nsql_run::meta::Coverage::Missing
+            ) {
+                return;
+            }
+            self.meta.mark_loading(schema, ObjectKind::View);
+            self.last_used = Instant::now();
+            self.suspended = false;
+            let _ = self.tx_bg.send(Req::DictMeta { gen: self.gen });
+            return;
+        }
+        let is_current = self
+            .server_schema
+            .as_deref()
+            .is_some_and(|c| c.eq_ignore_ascii_case(schema));
+        let mut sent = false;
+        // 관계 넷 + (`intel.from_routines`) 함수·패키지·프로시저 — 종류당 `ALL_OBJECTS` 한 질의(26 §8 · 09-24).
+        let mut kinds = vec![
+            ObjectKind::Table,
+            ObjectKind::View,
+            ObjectKind::MaterializedView,
+            ObjectKind::Synonym,
+        ];
+        if self.routines {
+            kinds.extend([
+                ObjectKind::Function,
+                ObjectKind::Package,
+                ObjectKind::Procedure,
+            ]);
+        }
+        for kind in kinds {
+            if !nsql_catalog::kinds_for(d).contains(&kind) {
+                continue;
+            }
+            if !matches!(
+                cov(&self.meta.names, &snap, schema, kind),
+                nsql_run::meta::Coverage::Missing
+            ) {
+                continue;
+            }
+            self.meta.mark_loading(schema, kind);
+            let _ = self.tx_bg.send(Req::ObjectsMeta {
+                gen: self.gen,
+                schema: schema.to_string(),
+                kind,
+            });
+            sent = true;
+            if !is_current
+                && !self
+                    .intel_buckets
+                    .iter()
+                    .any(|(s, k)| s.eq_ignore_ascii_case(schema) && *k == kind)
+            {
+                self.intel_buckets.push((schema.to_string(), kind));
+            }
+        }
+        if sent {
+            self.last_used = Instant::now();
+            self.suspended = false;
+        }
+    }
+
+    /// ★ 미사용 판정 즉시 회수(사용자 09-23): `스키마.`로 읽어 온 버킷 가운데 `used(스키마)`가 거짓인 것(열린 문서 어디에도
+    /// 그 이름이 없음)을 바로 버린다. 반환 = 비운 버킷 수.
+    pub(crate) fn reclaim_intel_buckets(&mut self, used: &dyn Fn(&str) -> bool) -> usize {
+        if self.intel_buckets.is_empty() {
+            return 0;
+        }
+        let mut n = 0;
+        let mut keep = Vec::with_capacity(self.intel_buckets.len());
+        for (schema, kind) in std::mem::take(&mut self.intel_buckets) {
+            if used(&schema) {
+                keep.push((schema, kind));
+            } else if self.meta.drop_bucket(&schema, kind) {
+                n += 1;
+            }
+        }
+        self.intel_buckets = keep;
+        n
     }
 
     fn meta_load_objects(&mut self, schema: &str, kind: ObjectKind, list: &[ObjectInfo]) {
@@ -1307,7 +1682,7 @@ impl Explorer {
     }
 
     /// 자동 완성 즉시 채움(47 §4): 그 테이블 컬럼을 메타 세션으로 1건 요청(트리 노드 없이 · 이미 로드/로딩 중이면 0).
-    pub(crate) fn request_columns(&mut self, schema: Option<&str>, table: &str) {
+    pub(crate) fn request_columns(&mut self, schema: Option<&str>, table: &str, urgent: bool) {
         if self.dialect.is_none() {
             return;
         }
@@ -1319,24 +1694,104 @@ impl Explorer {
                 None => return,
             },
         };
-        let Some(id) = snap.lookup(&self.meta.names, Some(&schema_name), table) else {
-            return;
+        let id = match snap.lookup(&self.meta.names, Some(&schema_name), table) {
+            Some(id) => id,
+            None => {
+                // ★ 사전 객체(`ALL_TABLES` · `sys.tables` · `pg_catalog.pg_class` · 사용자 09-24 "ALL_TABLES 컬럼이 안 온다"):
+                //   현재 스키마에 없으면 사전 버킷에서 찾는다(Oracle = 맨이름 · 그 밖 = `스키마.이름`).
+                let dict_name = match (schema, self.dialect) {
+                    (Some(s), Some(d)) if d != Dialect::Oracle => format!("{s}.{table}"),
+                    _ => table.to_string(),
+                };
+                match snap.lookup(
+                    &self.meta.names,
+                    Some(nsql_catalog::DICT_SCHEMA),
+                    &dict_name,
+                ) {
+                    Some(id) => id,
+                    None => return,
+                }
+            }
         };
         if !matches!(snap.columns(id), nsql_run::meta::ColState::Unknown) {
             return;
         }
-        let Some(table_name) = snap
-            .object(id)
-            .map(|o| self.meta.names.get(o.name).to_string())
-        else {
-            return;
+        self.request_columns_for(id, urgent);
+    }
+
+    /// 객체 id로 컬럼 요청(사전 객체는 DB 소유 스키마로 질의 · 메타에는 자기 버킷 열쇠로 저장 · 09-24).
+    fn request_columns_for(&mut self, id: nsql_run::meta::ObjId, urgent: bool) {
+        let snap = self.meta.snapshot();
+        let Some(o) = snap.object(id) else { return };
+        let key_schema = self.meta.names.get(o.schema).to_string();
+        let key_name = self.meta.names.get(o.name).to_string();
+        let (db_schema, db_table) = if key_schema == nsql_catalog::DICT_SCHEMA {
+            match self.dialect {
+                Some(Dialect::Oracle) => ("SYS".to_string(), key_name.clone()),
+                _ => match key_name.split_once('.') {
+                    Some((s, n)) => (s.to_string(), n.to_string()),
+                    None => ("main".to_string(), key_name.clone()),
+                },
+            }
+        } else {
+            (key_schema.clone(), key_name.clone())
         };
         self.meta.mark_columns_loading(id);
-        let _ = self.tx.send(Req::ColumnsMeta {
+        self.last_used = Instant::now();
+        self.suspended = false;
+        // 급한 것(팝업이 기다림)은 급한 세션 · 선적재는 백그라운드 세션(09-24).
+        let tx = if urgent { &self.tx } else { &self.tx_bg };
+        let _ = tx.send(Req::ColumnsMeta {
             gen: self.gen,
-            schema: schema_name,
-            table: table_name,
+            schema: db_schema,
+            table: db_table,
+            urgent,
+            key: (key_schema, key_name),
         });
+    }
+
+    /// 완성 상세 카드 — 테이블 상세(제약·인덱스) 1건 요청(급한 세션 · 이미 있거나 읽는 중이면 0 · 09-24).
+    pub(crate) fn request_detail(&mut self, id: nsql_run::meta::ObjId) {
+        if self.dialect.is_none() || self.offline {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        if !matches!(snap.detail(id), nsql_run::meta::DetailState::Unknown) {
+            return;
+        }
+        let Some(o) = snap.object(id) else { return };
+        if !o.kind.is_relation() {
+            return;
+        }
+        let (schema, table) = (
+            self.meta.names.get(o.schema).to_string(),
+            self.meta.names.get(o.name).to_string(),
+        );
+        self.meta.mark_detail_loading(id);
+        self.last_used = Instant::now();
+        self.suspended = false;
+        // 상세는 카드용(부차) — 백그라운드 세션에서(급한 컬럼 요청을 절대 막지 않게 · 09-24 실측 1.3 s).
+        let _ = self.tx_bg.send(Req::DetailMeta {
+            gen: self.gen,
+            schema,
+            table,
+        });
+    }
+
+    /// 완성 상세 카드 — 객체 id로 컬럼 1건 요청(급한 세션).
+    pub(crate) fn request_columns_by_id(&mut self, id: nsql_run::meta::ObjId) {
+        if self.dialect.is_none() || self.offline {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        if !matches!(snap.columns(id), nsql_run::meta::ColState::Unknown) {
+            return;
+        }
+        let Some(o) = snap.object(id) else { return };
+        if !o.kind.is_relation() {
+            return;
+        }
+        self.request_columns_for(id, true);
     }
 
     /// 라이브 로그 폴링 요청(메타 세션 · 진행 중이면 무시).
@@ -1398,13 +1853,18 @@ impl Explorer {
                         }
                     }
                 }
-                Resp::Schemas { gen, node, r } => {
+                Resp::Schemas {
+                    gen,
+                    node,
+                    r,
+                    current,
+                } => {
                     if gen != self.gen {
                         continue;
                     }
                     match r {
                         Ok(list) => {
-                            self.meta_set_schemas(&list);
+                            self.meta_set_schemas(&list, current.as_deref());
                             let kids: Vec<Node> = list
                                 .into_iter()
                                 .map(|s| Node {
@@ -1421,6 +1881,7 @@ impl Explorer {
                             } else {
                                 self.set_children(node, kids);
                                 self.select_current_schema();
+                                self.preload_meta();
                             }
                         }
                         // 조용한 갱신의 실패는 옛 트리를 그대로 둔다(오류 행으로 바꾸지 않는다).
@@ -1440,6 +1901,8 @@ impl Explorer {
                             if let NodeKind::Folder { schema, kind } = &self.nodes[node].kind {
                                 let (s, k) = (schema.clone(), *kind);
                                 self.meta_load_objects(&s, k, &list);
+                                self.intel_buckets
+                                    .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
                             }
                             let depth = self.nodes[node].depth + 1;
                             let kids: Vec<Node> = list
@@ -1506,13 +1969,90 @@ impl Explorer {
                     schema,
                     table,
                     r,
+                    key,
                 } => {
                     if gen != self.gen {
                         continue;
                     }
                     match r {
-                        Ok(list) => self.meta_set_columns(&schema, &table, &list),
-                        Err(e) => self.meta_columns_error(&schema, &table, &e),
+                        Ok(list) => self.meta_set_columns(&key.0, &key.1, &list),
+                        Err(e) => {
+                            self.meta_columns_error(&schema, &table, &e);
+                            // 실패 = 상태 되돌림(다음 요청 때 다시 · 자동 재시도 없음).
+                            if let Some(id) =
+                                self.meta
+                                    .snapshot()
+                                    .lookup(&self.meta.names, Some(&key.0), &key.1)
+                            {
+                                self.meta.reset_columns(id);
+                            }
+                        }
+                    }
+                }
+                Resp::ObjectsMeta {
+                    gen,
+                    schema,
+                    kind,
+                    r,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    match r {
+                        Ok(list) => self.meta_load_objects(&schema, kind, &list),
+                        Err(e) => self.meta.mark_error(&schema, kind, &e, Self::now_secs()),
+                    }
+                }
+                Resp::DetailMeta {
+                    gen,
+                    schema,
+                    table,
+                    r,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    let snap = self.meta.snapshot();
+                    let Some(id) = snap.lookup(&self.meta.names, Some(&schema), &table) else {
+                        continue;
+                    };
+                    match r {
+                        Ok(d) => {
+                            let nd = nsql_run::meta::NewDetail {
+                                keys: d
+                                    .keys
+                                    .into_iter()
+                                    .map(|k| (k.name, k.kind, k.cols, k.ref_table))
+                                    .collect(),
+                                indexes: d
+                                    .indexes
+                                    .into_iter()
+                                    .map(|i| (i.name, i.unique, i.cols))
+                                    .collect(),
+                                comment: d.comment,
+                                col_comments: d.col_comments,
+                            };
+                            self.meta.set_detail(id, &nd, Self::now_secs());
+                        }
+                        Err(_) => self.meta.reset_detail(id),
+                    }
+                }
+                Resp::DictMeta { gen, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    match r {
+                        Ok(list) => self.meta_load_objects(
+                            nsql_catalog::DICT_SCHEMA,
+                            ObjectKind::View,
+                            &list,
+                        ),
+                        Err(e) => self.meta.mark_error(
+                            nsql_catalog::DICT_SCHEMA,
+                            ObjectKind::View,
+                            &e,
+                            Self::now_secs(),
+                        ),
                     }
                 }
                 Resp::Watermark { gen, r } => {
@@ -1805,7 +2345,10 @@ impl Explorer {
                     .split(['/', '@'])
                     .next()
                     .unwrap_or("");
-                find(user)
+                self.server_schema
+                    .as_deref()
+                    .and_then(&find)
+                    .or_else(|| find(user))
                     .or_else(|| find("public"))
                     .or_else(|| find("dbo"))
                     .or_else(|| (kids.len() == 1).then(|| kids[0]))
@@ -2874,12 +3417,17 @@ impl Explorer {
                                     // 고정폭 굵게(사용자 09-22) — 1줄·2줄 같은 face·size.
                                     // ★ 틀 안에 맞춘다(사용자 09-23 "라벨이 DB 모양 테두리를 벗어난다"): 가장 긴 줄이 원통 안쪽 폭(≈ 0.78·rs)을
                                     //   넘거나 줄들이 세로 띠를 넘으면 글꼴을 1px씩 줄인다(`select_font_sized` 음수 증분 · 최대 −8).
-                                    let gap = (2.0 * s).round().max(1.0) as i32;
-                                    let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32;
-                                    let bottom = dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32;
+                                    // ★ 09-24(사용자 "줄 사이 1px · 테두리와 글자 사이 1px · 고정폭으로 채움"): 원통 안쪽 = 옆벽 안면
+                                    //   4.6~19.4/24 · 위 타원 바닥 6.0/24 ~ 아래 띠 안면 20.2/24 에서 1px씩 들여온 상자에, **가장 큰**
+                                    //   글꼴(위로 +8부터 1px씩 내려 처음 맞는 크기)로 두 줄(줄 사이 1px)을 채우고 가운데 둔다.
+                                    let m = (1.0 * s).round().max(1.0) as i32;
+                                    let gap = m;
+                                    let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32 + m;
+                                    let bottom =
+                                        dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32 - m;
                                     let n = pick.lines.len() as i32;
-                                    let inner_w = (rs as f32 * 0.78).round() as i32;
-                                    let mut delta = 0.0f32;
+                                    let inner_w = (rs as f32 * 14.8 / 24.0).round() as i32 - 2 * m;
+                                    let mut delta = 8.0f32;
                                     let (lh2, cap, asc, total) = loop {
                                         dc.select_font_sized(FontSlot::Mono, true, delta);
                                         let lh2 = dc.text_height();
@@ -3401,5 +3949,52 @@ mod refresh_tests {
             Some("PRAGMA schema_version")
         );
         assert!(watermark_sql(Dialect::Odbc, "x").is_none());
+    }
+
+    /// 현재 스키마 판정(09-23 사용자 "FROM 뒤 M4S_ 테이블이 안 보인다" — SQL Server는 계정 ≠ 스키마): 서버 값 → 계정 → 기본 → 단일.
+    #[test]
+    fn current_schema_prefers_server_then_user_then_default() {
+        let l = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        let mssql = l(&["dbo", "sales", "hr"]);
+        assert_eq!(
+            pick_current_schema(&mssql, Some("dbo"), "m4plan"),
+            Some("dbo".into())
+        );
+        assert_eq!(
+            pick_current_schema(&mssql, None, "m4plan"),
+            Some("dbo".into()),
+            "계정이 스키마가 아니면 dbo"
+        );
+        assert_eq!(
+            pick_current_schema(&mssql, Some("nope"), "SALES"),
+            Some("sales".into()),
+            "서버 값이 목록에 없으면 계정"
+        );
+        let ora = l(&["BISCM", "SYS", "HR"]);
+        assert_eq!(
+            pick_current_schema(&ora, Some("BISCM"), "biscm"),
+            Some("BISCM".into())
+        );
+        assert_eq!(
+            pick_current_schema(&ora, None, "hr"),
+            Some("HR".into()),
+            "목록 표기로 돌려준다"
+        );
+        let pg = l(&["public", "app"]);
+        assert_eq!(
+            pick_current_schema(&pg, Some("public"), "postgres"),
+            Some("public".into())
+        );
+        assert_eq!(
+            pick_current_schema(&l(&["only"]), None, "x"),
+            Some("only".into()),
+            "하나뿐이면 그것"
+        );
+        assert_eq!(pick_current_schema(&l(&["a", "b"]), None, "x"), None);
+        assert_eq!(
+            pick_current_schema(&l(&["a", "b"]), Some(""), ""),
+            None,
+            "빈 이름은 무시"
+        );
     }
 }

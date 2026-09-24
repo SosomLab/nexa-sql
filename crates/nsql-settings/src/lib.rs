@@ -718,7 +718,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblRulerAlpha,
         desc: Msg::DescRulerAlpha,
         kind: SettingKind::Int { min: 5, max: 100 },
-        default: "25",
+        default: "45",
     },
     Entry {
         key: "editor.text_pad_left",
@@ -3439,7 +3439,9 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatIntel,
         label: Msg::LblIntelMaxItems,
         desc: Msg::DescIntelMaxItems,
-        kind: SettingKind::Int { min: 50, max: 2000 },
+        // 09-24: 상한은 200 유지(사용자) — 잘린 나머지는 "N개 더" 항목으로 보이고, 끝까지 스크롤하면 페이지 단위로 이어 붙이는
+        //   설계 = 76 §13(T-196). 상한 위 = 5000.
+        kind: SettingKind::Int { min: 50, max: 5000 },
         default: "200",
     },
     Entry {
@@ -3448,7 +3450,119 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblIntelPopupRows,
         desc: Msg::DescIntelPopupRows,
         kind: SettingKind::Int { min: 6, max: 30 },
-        default: "12",
+        default: "10",
+    },
+    // ★ 09-23(사용자 "긴 이름 · 가로 스크롤"): 팝업 폭 상한 — 넘치는 이름은 가운데 …(앞뒤 보존) + Shift+휠 가로 스크롤 · 강조 행은 상태줄에 전체.
+    Entry {
+        key: "intel.popup_max_width",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelPopupMaxWidth,
+        desc: Msg::DescIntelPopupMaxWidth,
+        kind: SettingKind::Int {
+            min: 240,
+            max: 2000,
+        },
+        default: "560",
+    },
+    // ★ 09-24(사용자 "팝업 상태에서 키 입력이 관통 · 기본 = 바로 입력 · 옵션 = 두 번"): 고른 항목이 없을 때 Enter/Tab.
+    // ★ 09-24(사용자 "같은 높이의 추가 설명란 · 배경 80% 투명 · 글씨 50%"): 상세 카드(컬럼·테이블·함수 …).
+    Entry {
+        key: "intel.detail_card",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelDetailCard,
+        desc: Msg::DescIntelDetailCard,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.detail_bg_alpha",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelDetailBgAlpha,
+        desc: Msg::DescIntelDetailBgAlpha,
+        kind: SettingKind::Int { min: 0, max: 100 },
+        default: "20",
+    },
+    Entry {
+        key: "intel.detail_text_alpha",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelDetailTextAlpha,
+        desc: Msg::DescIntelDetailTextAlpha,
+        kind: SettingKind::Int { min: 0, max: 100 },
+        default: "50",
+    },
+    // ★ 09-24(사용자 "JOIN에서 alias 없이 완성 → 전 테이블 컬럼 · 기본 A.컬럼 · Alt = 컬럼만").
+    Entry {
+        key: "intel.qualify_columns",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelQualifyColumns,
+        desc: Msg::DescIntelQualifyColumns,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 09-24(사용자 "FROM 자리에 뷰·함수 등 테이블 역할 대상 — 뷰는 테이블과 같은 레이어 · 함수·프로시저는 낮은 레이어").
+    Entry {
+        key: "intel.from_routines",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelFromRoutines,
+        desc: Msg::DescIntelFromRoutines,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.icons",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelIcons,
+        desc: Msg::DescIntelIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 메모리 모니터(docs/80 · 사용자 09-24): 상태줄 총량 · 메모리 맵 창(모델리스 · 최상위) · 창이 닫혀 있으면 비용 0.
+    Entry {
+        key: "mem.statusbar",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemStatusbar,
+        desc: Msg::DescMemStatusbar,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "mem.refresh_ms",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemRefresh,
+        desc: Msg::DescMemRefresh,
+        kind: SettingKind::Int {
+            min: 250,
+            max: 10_000,
+        },
+        default: "1000",
+    },
+    // 상태줄 숫자의 조회 간격(HIDDEN) — 그릴 때만 OS 한 번.
+    Entry {
+        key: "mem.status_refresh_ms",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemStatusRefresh,
+        desc: Msg::DescMemStatusRefresh,
+        kind: SettingKind::Int {
+            min: 1000,
+            max: 60_000,
+        },
+        default: "5000",
+    },
+    Entry {
+        key: "mem.always_on_top",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemOnTop,
+        desc: Msg::DescMemOnTop,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "intel.key_passthrough",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelKeyPassthrough,
+        desc: Msg::DescIntelKeyPassthrough,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     Entry {
         key: "intel.keywords",
@@ -3488,6 +3602,16 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatIntel,
         label: Msg::LblIntelFunctions,
         desc: Msg::DescIntelFunctions,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 09-23(사용자 "기본 스키마는 접속 시 바로 메모리에 · 특정 `스키마.` 입력 시 그 시점에 캐싱"): 접속 직후 현재 스키마의
+    //   테이블·뷰·시노님 + 권한 반영 사전 뷰를 메타 세션으로 한 번 읽는다(26 §8 · 39 §3). 끄면 처음 완성을 요청할 때 읽는다.
+    Entry {
+        key: "intel.preload",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelPreload,
+        desc: Msg::DescIntelPreload,
         kind: SettingKind::Bool,
         default: "on",
     },
@@ -4329,6 +4453,8 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("ui.toast_fade_to", "ui.toast_progress", Dep::On),
     ("ui.toast_bar_spent", "ui.toast_progress", Dep::On),
     ("grid.col_max_chars", "grid.col_max_mode", Dep::Eq("manual")),
+    ("intel.detail_bg_alpha", "intel.detail_card", Dep::On),
+    ("intel.detail_text_alpha", "intel.detail_card", Dep::On),
 ];
 
 /// 자식 키의 (부모, 조건).

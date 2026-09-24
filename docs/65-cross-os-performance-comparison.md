@@ -16,7 +16,7 @@
 
 | | Windows(89차 · 09-21) | macOS(86~90차 · 09-20~22) | Linux(91차 · 09-22) |
 |---|---|---|---|
-| 기기 | 개발 PC(Windows 11 · NVMe · 고성능) | M-시리즈 노트북 | **Ubuntu 26.04 VM · 2코어 · RAM 3.3 GB** · Wayland(GNOME) |
+| 기기 | 개발 PC(Windows 11 · NVMe · 고성능) | **Intel i9-9980HK 16코어 · 32 GB · macOS 26.6**(09-24 정정 · 종전 "M-시리즈" 오기) | **Ubuntu 26.04 VM · 2코어 · RAM 3.3 GB** · Wayland(GNOME) |
 | 빌드 | Release(LTO fat · strip) | 같음 | 같음 · 워크스페이스 Release 6.5분 |
 | 화면 | softbuffer(GDI DIB) · 1375×945 · 배율 1.0 | softbuffer / IOSurface(선택) | softbuffer(wl_shm) — 91차 후반부터 기본 **X11(XWayland)**(모달 때문 · journal §12) |
 | 메모리 지표 | **Private Bytes**(창 버퍼 포함) | `phys_footprint`(`NSQL_TRACE_MEM`) | **RssAnon**(≈ Private · 창 버퍼는 공유 매핑이라 제외) + RSS |

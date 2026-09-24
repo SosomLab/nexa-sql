@@ -106,14 +106,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         id: "tab.next",
         label: Msg::MnNextTab,
         win: "ctrl+tab|ctrl+pagedown",
-        mac: "ctrl+tab|cmd+alt+right|cmd+shift+]",
+        mac: "control+tab|cmd+alt+right|cmd+shift+}",
         linux: "ctrl+tab|ctrl+pagedown",
     },
     Command {
         id: "tab.prev",
         label: Msg::MnPrevTab,
         win: "ctrl+shift+tab|ctrl+pageup",
-        mac: "ctrl+shift+tab|cmd+alt+left|cmd+shift+[",
+        mac: "control+shift+tab|cmd+alt+left|cmd+shift+{",
         linux: "ctrl+shift+tab|ctrl+pageup",
     },
     Command {
@@ -279,7 +279,9 @@ pub(crate) const COMMANDS: &[Command] = &[
         id: "edit.complete",
         label: Msg::MnComplete,
         win: "ctrl+space",
-        mac: "ctrl+space",
+        // ★ 맥 열의 `ctrl`은 ⌘라 `ctrl+space` = ⌘Space(Spotlight)였고 ⌃Space는 표에 없어 공백이 입력됐다(사용자 09-23 mac).
+        //   Sublime OSX keymap의 `ctrl+space`는 Control이므로 이 표기로는 `control+space`.
+        mac: "control+space",
         linux: "ctrl+space",
     },
     // Goto Symbol(Sublime Ctrl+R · 문서 아웃라인 심볼로 이동).
@@ -294,14 +296,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         id: "edit.goto_bracket",
         label: Msg::MnGotoBracket,
         win: "ctrl+m",
-        mac: "ctrl+m",
+        mac: "control+m",
         linux: "ctrl+m",
     },
     Command {
         id: "edit.expand_brackets",
         label: Msg::MnExpandBrackets,
         win: "ctrl+shift+m",
-        mac: "ctrl+shift+m",
+        mac: "control+shift+m",
         linux: "ctrl+shift+m",
     },
     // Rainbow Pairs 확장(docs/51 · D-93): 형제 , . · 상위 [ · 하위 ].
@@ -684,6 +686,17 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+/",
         linux: "ctrl+/",
     },
+    // 블록 주석 `/* … */`(사용자 09-24 · VS Code Shift+Alt+A · Sublime Ctrl+Shift+/ 를 따름).
+    Command {
+        id: "edit.toggle_block_comment",
+        label: Msg::MnToggleBlockComment,
+        // Shift+/ = `?`이므로 `?`로 정의(사용자 09-24) · 맥은 ⌘⌥/(Sublime 맥)도 — ⌘⇧?는 macOS 도움말 검색이 먼저 가져갈 수 있다.
+        win: "ctrl+shift+?",
+        // 맥 = ⌘⇧/(요청) + ⌘⌥/(Sublime 맥 기본 — ⌘⇧/는 macOS "도움말 메뉴 검색"이 먼저 가져갈 수 있다 · 09-24).
+        // 맥 기본 = ⌘⌥/ — ⌘⇧?는 macOS "도움말 메뉴 검색"이 앱보다 먼저 가져가 키 사건이 오지 않는다(09-24 `NSQL_TRACE_IME` 실기).
+        mac: "cmd+alt+/|cmd+shift+?",
+        linux: "ctrl+shift+?",
+    },
     Command {
         id: "edit.indent",
         label: Msg::MnIndent,
@@ -981,6 +994,7 @@ fn physical_name(p: &PhysicalKey) -> Option<&'static str> {
         KeyCode::Digit7 => "7",
         KeyCode::Digit8 => "8",
         KeyCode::Digit9 => "9",
+        // 구두점 물리 키(Shift와 함께 누르면 논리 키가 `?`·`}` 같은 다른 글자로 와서 `cmd+shift+/`가 안 맞았다 · 사용자 09-24).
         KeyCode::Comma => ",",
         KeyCode::Period => ".",
         KeyCode::Slash => "/",
@@ -1124,6 +1138,7 @@ impl Chord {
                 // ★ 숫자 물리 키는 물리 이름으로(사용자 09-23): Shift+2의 논리 키는 `@`라 `ctrl+shift+2`(북마크 니모닉)와 안 맞았다.
                 let digit = physical_name(physical)
                     .filter(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit());
+                // 구두점은 논리 키 그대로 — 바인딩을 Shift 결과 글자로 정의한다(`cmd+shift+?` · `cmd+shift+}` · 사용자 09-24).
                 if let Some(d) = digit {
                     d.to_string()
                 } else if c.is_ascii() {
@@ -1513,5 +1528,101 @@ mod tests {
         // `ctrl`만 = 주 조합키(Windows 코드).
         let w = Chord::parse("ctrl+shift+p").unwrap();
         assert!(w.primary && !w.ctrl);
+    }
+
+    /// ⌃Space = 코드 완성(맥 · 사용자 09-23 "Ctrl+Space를 누르면 공백만 입력"): 맥 열의 `ctrl+`는 ⌘라 ⌃Space가 표에 없었다.
+    /// 맥 기본 표에서 ⌘Tab · ⌘Space · ⌘M(OS 키)에 묶인 명령이 없어야 한다.
+    #[test]
+    fn mac_control_space_is_complete_and_no_os_keys() {
+        use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
+        let c = COMMANDS.iter().find(|c| c.id == "edit.complete").unwrap();
+        let bound = Chord::parse(preset_default(c, Preset::Macos)).unwrap();
+        assert!(
+            bound.ctrl && !bound.primary,
+            "맥 = Control 단독(⌘Space는 Spotlight)"
+        );
+        // 실제 키 사건(Control 누른 Space · ⌘ 없음)이 만드는 조합과 같다.
+        let ev = Chord::from_winit(
+            &Key::Named(NamedKey::Space),
+            &PhysicalKey::Code(KeyCode::Space),
+            false,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(ev, bound);
+        assert_eq!(bound.display(), "⌃Space");
+        for c in COMMANDS.iter() {
+            // 2단 코드(`cmd+k,cmd+d`)는 조합마다 · 키가 `,`인 것(`ctrl+alt+,`)은 통째로.
+            let codes = preset_default(c, Preset::Macos)
+                .split('|')
+                .filter(|s| !s.is_empty())
+                .flat_map(|s| {
+                    if s.ends_with(',') {
+                        vec![s]
+                    } else {
+                        s.split(',').collect()
+                    }
+                });
+            for code in codes {
+                let ch = Chord::parse(code).unwrap_or_else(|| panic!("{}: {code}", c.id));
+                let os_key = ch.primary
+                    && !ch.ctrl
+                    && !ch.alt
+                    && matches!(ch.key.as_str(), "tab" | "space" | "m" | "q" | "h");
+                assert!(
+                    !os_key,
+                    "{}: {code} = ⌘{{Tab·Space·M·Q·H}}는 OS가 먼저 가져간다",
+                    c.id
+                );
+            }
+        }
+    }
+
+    /// Shift 구두점은 논리 글자로 정의(사용자 09-24 "/에 Shift = ?로 정의"): `?` 사건 = `cmd+shift+?` · `}` = `cmd+shift+}` · 실제 표 조회.
+    #[test]
+    fn shifted_punctuation_binds_by_logical_char() {
+        use winit::keyboard::{Key, KeyCode, PhysicalKey};
+        let ch = |t: &str, code: KeyCode| {
+            Chord::from_winit(
+                &Key::Character(t.into()),
+                &PhysicalKey::Code(code),
+                true,
+                true,
+                false,
+                false,
+            )
+            .expect("chord")
+        };
+        assert_eq!(
+            ch("?", KeyCode::Slash),
+            Chord::parse("cmd+shift+?").expect("p")
+        );
+        assert_eq!(
+            ch("}", KeyCode::BracketRight),
+            Chord::parse("cmd+shift+}").expect("p")
+        );
+        let s = Settings::open(std::path::PathBuf::from(
+            "__keymap_test_nonexistent4__.conf",
+        ));
+        let km = Keymap::from_settings(&s);
+        assert_eq!(
+            km.lookup(&ch("?", KeyCode::Slash)),
+            Some("edit.toggle_block_comment")
+        );
+        if cfg!(target_os = "macos") {
+            assert_eq!(km.lookup(&ch("}", KeyCode::BracketRight)), Some("tab.next"));
+        }
+        let plain = Chord::from_winit(
+            &Key::Character("/".into()),
+            &PhysicalKey::Code(KeyCode::Slash),
+            true,
+            false,
+            false,
+            false,
+        )
+        .expect("chord");
+        assert_eq!(km.lookup(&plain), Some("edit.toggle_comment"));
     }
 }

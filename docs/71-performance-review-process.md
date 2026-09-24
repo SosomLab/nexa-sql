@@ -201,6 +201,9 @@ E(누수 주기)는 *되풀이의 기울기*를 보고, 여기는 **놓은 뒤 �
 
 ---
 
+
+**macOS(09-24 · 100차)**: `scripts/mac-perf-all.sh`(B 기동 `mac-startup.sh` · C 시나리오 `mac-probe.sh` · D 향상 모드 = 같은 실행기의 s8 · E 누수 `mac-leak.sh` · CLI 타이밍) · A 인벤토리 = `otool -L`·`stat`·`cargo tree`·`config list all`(스크립트 없이 한 줄) · F 벤치 공통 · 메모리 지표 = `vmmap --summary`의 Physical footprint(≈ Windows Private) + RSS · 결과 = 26 §7-11.
+
 ## 8. 이번 실행(2026-09-22 · Windows 93차 뒤 · 94차)
 
 **전 단계 A~F를 돌렸다**(G는 회귀가 없어 들어가지 않았다). 결과 = [26 §7-8](26-performance-architecture.md)(A 인벤토리 · B 기동 · C 시나리오 · E 누수 · F 벤치) · [45 §4](45-perf-boost-benchmark.md)(D 향상 모드) · [39 §3-7](39-resource-governance.md)(기능 프로파일 · 스레드 원장).

@@ -5,11 +5,12 @@
 //! 호스트(main.rs)가 하는 것: 글자 입력 뒤 [`Intel::after_char`] → 필요하면 [`Intel::request`] · 키(↑↓ Enter Tab Esc)를 팝업에 먼저 ·
 //! [`Intel::take_accept`]로 확정 글자를 편집기에 · 틱에서 [`Intel::due`] 디바운스.
 
-use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
+use crate::exp_icons::{self, IconKind};
+use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem, MenuIcon};
 use nexa_ctl::geom::{Point, Rect};
 use nsql_catalog::ObjectKind;
 use nsql_core::Dialect;
-use nsql_run::meta::{ColState, Interner, Snapshot};
+use nsql_run::meta::{ColState, Coverage, Interner, Snapshot, Sym};
 use nsql_script::builtins;
 use nsql_script::intel::{self, Cand, CandKind, Context, CtxKind, MatchMode};
 use nsql_script::outline::{self, Outline, SymKind};
@@ -31,6 +32,20 @@ pub(crate) struct IntelCfg {
     pub recent: bool,
     pub max_items: usize,
     pub rows: usize,
+    /// 팝업 폭 상한(논리 px · 넘치면 가운데 … + 가로 스크롤 · 09-23).
+    pub popup_max_w: i32,
+    /// 고른 항목이 없을 때 Enter/Tab = 팝업만 닫고 키는 편집기로(참 · 기본) / 키를 삼킨다(거짓 = 두 번 입력 · 09-24).
+    pub key_passthrough: bool,
+    /// 상세 카드(팝업 옆 · 같은 높이 · 09-24) · 배경 투명도 % · 글자 투명도 %.
+    pub detail_card: bool,
+    pub detail_bg_alpha: u8,
+    pub detail_text_alpha: u8,
+    /// 접두 없이 고른 컬럼에 alias를 붙여 넣기(Alt = 반대 · 09-24).
+    pub qualify_columns: bool,
+    /// FROM 자리에 함수·패키지·프로시저도(낮은 레이어 · 채움 요청 포함 · `intel.from_routines` · 09-24).
+    pub routines: bool,
+    /// 항목 왼쪽에 종류 아이콘(탐색기와 같은 도형 · `intel.icons` · 09-24).
+    pub icons: bool,
     pub keywords: bool,
     pub doc_words: bool,
     pub insert_case: String,
@@ -60,8 +75,16 @@ impl IntelCfg {
             min_chars: s.int("intel.min_chars").clamp(1, 5) as usize,
             mode: MatchMode::parse(s.get("intel.match").unwrap_or("fuzzy")),
             recent: s.flag("intel.recent_boost"),
-            max_items: s.int("intel.max_items").clamp(50, 2000) as usize,
+            max_items: s.int("intel.max_items").clamp(50, 5000) as usize,
             rows: s.int("intel.popup_rows").clamp(6, 30) as usize,
+            popup_max_w: s.int("intel.popup_max_width").clamp(240, 2000) as i32,
+            key_passthrough: s.flag("intel.key_passthrough"),
+            detail_card: s.flag("intel.detail_card"),
+            detail_bg_alpha: s.int("intel.detail_bg_alpha").clamp(0, 100) as u8,
+            detail_text_alpha: s.int("intel.detail_text_alpha").clamp(0, 100) as u8,
+            qualify_columns: s.flag("intel.qualify_columns"),
+            routines: s.flag("intel.from_routines"),
+            icons: s.flag("intel.icons"),
             keywords: s.flag("intel.keywords"),
             doc_words: s.flag("intel.document_words"),
             insert_case: s.get("intel.insert_case").unwrap_or("default").to_string(),
@@ -88,6 +111,8 @@ pub(crate) struct MetaView<'a> {
 pub(crate) struct NeedColumns {
     pub schema: Option<String>,
     pub table: String,
+    /// 지금 팝업이 기다리는 대상(참) / FROM 절의 나머지 테이블 선적재(거짓 · 워커 큐에서 뒤로 · 09-23).
+    pub urgent: bool,
 }
 
 /// 확정 결과(편집기에 적용할 것).
@@ -110,6 +135,8 @@ struct DocCache {
 pub(crate) struct Intel {
     pub(crate) menu: ContextMenu,
     cfg: IntelCfg,
+    /// 종류 아이콘 캐시(탐색기 도형을 메뉴 아이콘으로 · 종류당 한 번 래스터).
+    icons: HashMap<IconKind, MenuIcon>,
     cands: Vec<Cand>,
     ctx: Option<Context>,
     /// 팝업이 열린 탭 id(다른 탭이면 닫는다).
@@ -121,12 +148,18 @@ pub(crate) struct Intel {
     accept: Option<Accept>,
     /// 마지막 요청이 남긴 즉시 채움 요청.
     needs: Vec<NeedColumns>,
+    /// 마지막 요청이 남긴 객체 목록 채움 요청(스키마 이름 · `DICT_SCHEMA` = 사전 · 09-23).
+    need_objects: Vec<String>,
     /// "불러오는 중" 표시 여부(마지막 요청).
     pub(crate) loading: bool,
+    /// 객체 목록(테이블 등)을 기다리는 중(표시 문구 선택).
+    loading_objects: bool,
     /// 마지막 요청이 예산(`intel.budget_ms`)을 넘겼으면 (후보 수, ms) — 호스트가 로그 한 줄.
     over_budget: Option<(usize, u128)>,
     /// 마지막 요청의 방언(확정 때 시그니처 조회).
     dialect: Option<Dialect>,
+    /// 마지막으로 팝업을 붙인 캐럿 자리(호스트가 이번에 좌표를 못 주면 열린 팝업은 이 자리에 머문다 · 09-23).
+    last_anchor: Option<Point>,
 }
 
 const MRU_MAX: usize = 20;
@@ -138,6 +171,7 @@ impl Intel {
         Intel {
             menu: ContextMenu::new(),
             cfg,
+            icons: HashMap::new(),
             cands: Vec::new(),
             ctx: None,
             tab: None,
@@ -146,9 +180,12 @@ impl Intel {
             docs: HashMap::new(),
             accept: None,
             needs: Vec::new(),
+            need_objects: Vec::new(),
             loading: false,
+            loading_objects: false,
             over_budget: None,
             dialect: None,
+            last_anchor: None,
         }
     }
 
@@ -279,14 +316,18 @@ impl Intel {
         anchor: Option<Point>,
         host: Rect,
         scale: f32,
+        point_of: &dyn Fn(usize) -> Option<Point>,
     ) -> bool {
         if !self.cfg.enabled {
             return false;
         }
         let t0 = Instant::now();
         self.needs.clear();
+        self.need_objects.clear();
         self.loading = false;
+        self.loading_objects = false;
         let ctx = intel::context_at(doc, caret, dialect);
+        let prefix_start = ctx.replace.start;
         if ctx.kind == CtxKind::None {
             self.close();
             return false;
@@ -299,16 +340,30 @@ impl Intel {
         };
         let mut cands: Vec<Cand> = Vec::new();
         let show_types = self.cfg.show_types;
-        let push_col = |cands: &mut Vec<Cand>, c: &nsql_run::meta::ColEntry, names: &Interner| {
+        // 컬럼 후보 = `이름 : 타입`(사용자 09-24) · 키 표식은 오른쪽 · 태그 = (객체 id, 순번)으로 상세 카드가 찾는다.
+        let push_col = |cands: &mut Vec<Cand>,
+                        id: nsql_run::meta::ObjId,
+                        c: &nsql_run::meta::ColEntry,
+                        names: &Interner| {
             cands.push(Cand {
                 text: names.get(c.name).to_string(),
                 kind: CandKind::Column,
                 detail: if show_types {
-                    col_detail(names.get(c.data_type), c.key, c.nullable)
+                    names.get(c.data_type).to_string()
                 } else {
                     String::new()
                 },
                 source: 1,
+                tag: tag_column(id, c.position),
+                mark: if show_types {
+                    key_marks(c.key, c.nullable)
+                } else {
+                    String::new()
+                },
+                // 둘러보기 순서 = 테이블 안 순번(사용자 09-24).
+                order: u32::from(c.position),
+                qualifier: String::new(),
+                layer: 0,
             });
         };
         let functions = self.cfg.functions;
@@ -326,7 +381,7 @@ impl Intel {
                             Some(id) => match m.snap.columns(id) {
                                 ColState::Loaded { cols, .. } => {
                                     for c in cols.iter() {
-                                        push_col(&mut cands, c, m.names);
+                                        push_col(&mut cands, id, c, m.names);
                                     }
                                 }
                                 ColState::Loading => self.loading = true,
@@ -339,6 +394,7 @@ impl Intel {
                                                 .map(|s| m.names.get(s).to_string())
                                         }),
                                         table: a.table.clone(),
+                                        urgent: true,
                                     });
                                 }
                             },
@@ -349,6 +405,7 @@ impl Intel {
                                 self.needs.push(NeedColumns {
                                     schema: a.schema.clone(),
                                     table: a.table.clone(),
+                                    urgent: true,
                                 });
                             }
                         }
@@ -364,27 +421,19 @@ impl Intel {
                         .copied()
                         .find(|s| m.names.get(*s).eq_ignore_ascii_case(q))
                     {
-                        for kind in [
-                            ObjectKind::Table,
-                            ObjectKind::View,
-                            ObjectKind::Synonym,
-                            ObjectKind::Procedure,
-                            ObjectKind::Function,
-                            ObjectKind::Package,
-                            ObjectKind::Sequence,
-                        ] {
-                            for h in m.snap.prefix(m.names, sc, kind, "", self.cfg.max_items) {
-                                cands.push(Cand {
-                                    text: m.names.get(h.name).to_string(),
-                                    kind: cand_kind(kind),
-                                    detail: if show_types {
-                                        kind_label(kind).to_string()
-                                    } else {
-                                        String::new()
-                                    },
-                                    source: 3,
-                                });
+                        // ★ `스키마.`를 치는 순간 그 스키마를 읽어 캐시(사용자 09-23) — 종류는 FROM 자리와 같은 표(`from_kinds` · 뷰 = 테이블
+                        //   레이어 · 함수·패키지·프로시저 = 낮은 레이어 · 09-24). 시퀀스는 트리가 채운 것만 보인다.
+                        for kind in from_kinds(dialect, self.cfg.routines) {
+                            self.note_coverage(m, sc, kind);
+                            for h in m.snap.prefix(m.names, sc, kind, "", usize::MAX) {
+                                cands.push(obj_cand(m, &h, kind, dialect, show_types));
                             }
+                        }
+                        for h in m
+                            .snap
+                            .prefix(m.names, sc, ObjectKind::Sequence, "", usize::MAX)
+                        {
+                            cands.push(obj_cand(m, &h, ObjectKind::Sequence, dialect, show_types));
                         }
                         resolved = true;
                     } else if !resolved {
@@ -394,7 +443,7 @@ impl Intel {
                             match m.snap.columns(id) {
                                 ColState::Loaded { cols, .. } => {
                                     for c in cols.iter() {
-                                        push_col(&mut cands, c, m.names);
+                                        push_col(&mut cands, id, c, m.names);
                                     }
                                 }
                                 ColState::Loading => self.loading = true,
@@ -403,9 +452,42 @@ impl Intel {
                                     self.needs.push(NeedColumns {
                                         schema: None,
                                         table: q.to_string(),
+                                        urgent: true,
                                     });
                                 }
                             }
+                        }
+                    }
+                }
+                // 2-b) 사전 스키마(`sys.` · `INFORMATION_SCHEMA.` · `pg_catalog.` …) = 서버에서 읽은 권한 반영 사전 버킷(09-23) —
+                //   이름이 `스키마.이름` 꼴이라 앞부분이 맞는 것의 뒷부분을 후보로. 없으면 아래 정적 표.
+                if !resolved {
+                    if let Some((m, ds)) = meta.and_then(dict_sym) {
+                        let want = format!("{}.", qualifier.to_ascii_lowercase());
+                        for h in m
+                            .snap
+                            .prefix(m.names, ds, ObjectKind::View, &want, usize::MAX)
+                        {
+                            let full = m.names.get(h.name);
+                            if full.len() <= want.len() {
+                                continue;
+                            }
+                            cands.push(Cand {
+                                text: full[want.len()..].to_string(),
+                                kind: CandKind::View,
+                                detail: if show_types {
+                                    "system".into()
+                                } else {
+                                    String::new()
+                                },
+                                source: 4,
+                                tag: 0,
+                                mark: String::new(),
+                                order: 0,
+                                qualifier: String::new(),
+                                layer: 0,
+                            });
+                            resolved = true;
                         }
                     }
                 }
@@ -423,6 +505,11 @@ impl Intel {
                                     String::new()
                                 },
                                 source: 4,
+                                tag: 0,
+                                mark: String::new(),
+                                order: 0,
+                                qualifier: String::new(),
+                                layer: 0,
                             });
                         }
                     }
@@ -439,6 +526,11 @@ impl Intel {
                                     String::new()
                                 },
                                 source: 4,
+                                tag: 0,
+                                mark: String::new(),
+                                order: 0,
+                                qualifier: String::new(),
+                                layer: 0,
                             });
                         }
                     }
@@ -450,6 +542,11 @@ impl Intel {
                             kind: CandKind::Word,
                             detail: String::new(),
                             source: 6,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 0,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                     }
                 }
@@ -457,18 +554,13 @@ impl Intel {
             CtxKind::Relation => {
                 if let Some(m) = meta {
                     if let Some(cur) = m.snap.current_schema {
-                        for kind in [ObjectKind::Table, ObjectKind::View, ObjectKind::Synonym] {
-                            for h in m.snap.prefix(m.names, cur, kind, "", self.cfg.max_items) {
-                                cands.push(Cand {
-                                    text: m.names.get(h.name).to_string(),
-                                    kind: cand_kind(kind),
-                                    detail: if show_types {
-                                        kind_label(kind).to_string()
-                                    } else {
-                                        String::new()
-                                    },
-                                    source: 3,
-                                });
+                        // ★ 현재 스키마의 관계 객체 = 접두 없이 바로(사용자 09-23). 버킷이 아직 없으면 호스트에 채움을 요청하고
+                        //   "불러오는 중"을 보인다 · 상한 없이 다 넣고 랭킹이 자른다(종전 = 이름순 앞 200개만 → `M4S_*`가 잘렸다).
+                        //   ★ 뷰·구체화 뷰·시노님은 테이블과 같은 레이어 · 함수·패키지·프로시저는 낮은 레이어(`from_kinds` · 사용자 09-24).
+                        for kind in from_kinds(dialect, self.cfg.routines) {
+                            self.note_coverage(m, cur, kind);
+                            for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
+                                cands.push(obj_cand(m, &h, kind, dialect, show_types));
                             }
                         }
                     }
@@ -482,6 +574,11 @@ impl Intel {
                                 String::new()
                             },
                             source: 4,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 0,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                     }
                 }
@@ -495,6 +592,11 @@ impl Intel {
                             String::new()
                         },
                         source: 2,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
                     });
                 }
                 for (name, k) in &symbols {
@@ -508,11 +610,53 @@ impl Intel {
                                 String::new()
                             },
                             source: 3,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 0,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                     }
                 }
-                // 사전 객체(`ALL_TABLES` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_class`) — 정적 표(T-178).
-                if functions {
+                // 사전 객체(`ALL_TABLES` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_class`) — ★ 접속 뒤에는 서버에서 읽은
+                //   **권한 반영** 버킷(`DICT_SCHEMA` · 사용자 09-23 "권한에 맞춰 ALL_/DBA_") · 그 전(또는 아직 못 읽음)에는 정적 표(T-178).
+                let dict_loaded = meta.and_then(dict_sym).is_some_and(|(m, ds)| {
+                    matches!(
+                        m.snap.coverage(ds, ObjectKind::View),
+                        Coverage::Loaded { .. }
+                    )
+                });
+                if let Some((m, ds)) = meta.and_then(dict_sym) {
+                    match m.snap.coverage(ds, ObjectKind::View) {
+                        Coverage::Loaded { .. } => {
+                            for h in m.snap.prefix(m.names, ds, ObjectKind::View, "", usize::MAX) {
+                                cands.push(Cand {
+                                    text: m.names.get(h.name).to_string(),
+                                    kind: CandKind::View,
+                                    detail: if show_types {
+                                        "system".into()
+                                    } else {
+                                        String::new()
+                                    },
+                                    source: 4,
+                                    tag: 0,
+                                    mark: String::new(),
+                                    order: 0,
+                                    qualifier: String::new(),
+                                    layer: 0,
+                                });
+                            }
+                        }
+                        Coverage::Loading => {}
+                        Coverage::Missing => {
+                            push_need(&mut self.need_objects, nsql_catalog::DICT_SCHEMA)
+                        }
+                        Coverage::Error { .. } => {}
+                    }
+                } else if meta.is_some() {
+                    push_need(&mut self.need_objects, nsql_catalog::DICT_SCHEMA);
+                }
+                if functions && !dict_loaded {
                     for o in builtins::system_objects(dialect) {
                         cands.push(Cand {
                             text: (*o).to_string(),
@@ -523,6 +667,11 @@ impl Intel {
                                 String::new()
                             },
                             source: 4,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 0,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                     }
                 }
@@ -553,22 +702,35 @@ impl Intel {
                                         detail: nsql_i18n::t(nsql_i18n::Msg::IntelAllColumns)
                                             .to_string(),
                                         source: 0,
+                                        tag: 0,
+                                        mark: String::new(),
+                                        order: 0,
+                                        qualifier: String::new(),
+                                        layer: 0,
                                     });
                                 }
                                 ColState::Loading => self.loading = true,
                                 ColState::Loaded { .. } | ColState::Error(_) => {}
                                 ColState::Unknown => {
                                     self.loading = true;
-                                    self.needs.push(NeedColumns { schema, table });
+                                    self.needs.push(NeedColumns {
+                                        schema,
+                                        table,
+                                        urgent: true,
+                                    });
                                 }
                             },
-                            None => self.needs.push(NeedColumns { schema, table }),
+                            None => self.needs.push(NeedColumns {
+                                schema,
+                                table,
+                                urgent: true,
+                            }),
                         }
                     }
                 }
                 if ctx.kind == CtxKind::Expr {
                     // 문장 alias 컬럼(로드된 것만) + alias 이름.
-                    for a in &ctx.aliases {
+                    for (ai, a) in ctx.aliases.iter().enumerate() {
                         cands.push(Cand {
                             text: a.alias.clone(),
                             kind: CandKind::Alias,
@@ -582,18 +744,50 @@ impl Intel {
                                 String::new()
                             },
                             source: 2,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 0,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                         if a.local {
                             continue;
                         }
+                        // ★ 접두 없이 고른 컬럼(JOIN 다중 테이블 · 사용자 09-24): 모든 alias 테이블의 컬럼을 보이고(오른쪽 = alias ·
+                        //   FROM 순서 → 순번), 확정 때 `A.컬럼`(Alt = 컬럼만 · `intel.qualify_columns`). 아직 안 읽은 테이블은 채움 요청.
                         if let Some(m) = meta {
-                            if let Some(id) = m.snap.lookup(m.names, a.schema.as_deref(), &a.table)
-                            {
-                                if let ColState::Loaded { cols, .. } = m.snap.columns(id) {
-                                    for c in cols.iter() {
-                                        push_col(&mut cands, c, m.names);
+                            match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
+                                Some(id) => match m.snap.columns(id) {
+                                    ColState::Loaded { cols, .. } => {
+                                        let base = ai as u32 * 1000;
+                                        for c in cols.iter() {
+                                            push_col(&mut cands, id, c, m.names);
+                                            if let Some(last) = cands.last_mut() {
+                                                last.qualifier = a.alias.clone();
+                                                last.order += base;
+                                            }
+                                        }
                                     }
-                                }
+                                    ColState::Loading => self.loading = true,
+                                    ColState::Unknown => {
+                                        self.loading = true;
+                                        self.needs.push(NeedColumns {
+                                            schema: a.schema.clone().or_else(|| {
+                                                m.snap
+                                                    .current_schema
+                                                    .map(|s| m.names.get(s).to_string())
+                                            }),
+                                            table: a.table.clone(),
+                                            urgent: true,
+                                        });
+                                    }
+                                    ColState::Error(_) => {}
+                                },
+                                None => self.needs.push(NeedColumns {
+                                    schema: a.schema.clone(),
+                                    table: a.table.clone(),
+                                    urgent: true,
+                                }),
                             }
                         }
                     }
@@ -609,6 +803,11 @@ impl Intel {
                                     String::new()
                                 },
                                 source: 4,
+                                tag: 0,
+                                mark: String::new(),
+                                order: 0,
+                                qualifier: String::new(),
+                                layer: 0,
                             });
                         }
                         for p in builtins::packages(dialect) {
@@ -621,6 +820,11 @@ impl Intel {
                                     String::new()
                                 },
                                 source: 4,
+                                tag: 0,
+                                mark: String::new(),
+                                order: 0,
+                                qualifier: String::new(),
+                                layer: 0,
                             });
                         }
                     }
@@ -641,15 +845,26 @@ impl Intel {
                             String::new()
                         },
                         source: 3,
+                        tag: 0,
+                        mark: String::new(),
+                        order: 0,
+                        qualifier: String::new(),
+                        layer: 0,
                     });
                 }
                 if self.cfg.keywords {
-                    for k in intel::KEYWORDS {
+                    for (i, k) in intel::KEYWORDS.iter().enumerate() {
                         cands.push(Cand {
                             text: (*k).to_string(),
                             kind: CandKind::Keyword,
                             detail: String::new(),
                             source: 5,
+                            tag: 0,
+                            mark: String::new(),
+                            // 키워드는 표 순서(자주 쓰는 것부터).
+                            order: i as u32,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                     }
                 }
@@ -660,6 +875,11 @@ impl Intel {
                             kind: CandKind::Word,
                             detail: String::new(),
                             source: 6,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 0,
+                            qualifier: String::new(),
+                            layer: 0,
                         });
                     }
                 }
@@ -668,36 +888,104 @@ impl Intel {
         // 접두를 뺀 문서 단어(자기 자신)는 후보에서 뺀다.
         let prefix = ctx.prefix.clone();
         cands.retain(|c| !(c.kind == CandKind::Word && c.text.eq_ignore_ascii_case(&prefix)));
+        // ★ FROM 절의 나머지 테이블 컬럼은 **이어서 백그라운드로** 선적재(사용자 09-23 "alias 대상부터 · 이후 다른 테이블도
+        //   순차로 · 메인 창에 영향 없이") — 워커 큐에서 급한 것(지금 팝업 대상) 뒤에 선다.
+        if let Some(m) = meta {
+            for a in ctx.aliases.iter().filter(|a| !a.local) {
+                if self
+                    .needs
+                    .iter()
+                    .any(|n| n.table.eq_ignore_ascii_case(&a.table))
+                {
+                    continue;
+                }
+                let Some(id) = m.snap.lookup(m.names, a.schema.as_deref(), &a.table) else {
+                    continue;
+                };
+                if matches!(m.snap.columns(id), ColState::Unknown) {
+                    self.needs.push(NeedColumns {
+                        schema: a
+                            .schema
+                            .clone()
+                            .or_else(|| m.snap.current_schema.map(|s| m.names.get(s).to_string())),
+                        table: a.table.clone(),
+                        urgent: false,
+                    });
+                }
+            }
+        }
         let mru: &[String] = if self.cfg.recent { &self.mru } else { &[] };
-        let mut ranked = intel::rank(cands, &prefix, self.cfg.mode, mru, self.cfg.max_items);
+        // 전부 랭킹한 뒤 상한으로 자른다 — 잘린 수를 알아 "N개 더"를 보인다(사용자 09-24 · 상한 밖은 계속 쳐서 좁히면 나온다).
+        let mut ranked = intel::rank(cands, &prefix, self.cfg.mode, mru, usize::MAX);
+        let total = ranked.len();
+        ranked.truncate(self.cfg.max_items);
+        let cut = total - ranked.len();
         // 조각(컬럼 목록)은 MRU와 무관하게 맨 위(안정 정렬).
         ranked.sort_by_key(|c| c.kind != CandKind::Snippet);
-        if ranked.is_empty() && !self.loading {
+        if ranked.is_empty() && !self.loading && !self.loading_objects {
             self.close();
             return false;
         }
         // 팝업 = 랭킹 전부(≤ `intel.max_items`) · 보이는 행은 `intel.popup_rows`까지 → 넘치면 스크롤(nexa-ui 71차 `set_max_rows` · T-178).
+        let use_icons = self.cfg.icons;
+        let icons = &mut self.icons;
         let mut items: Vec<CtxItem> = ranked
             .iter()
             .enumerate()
             .map(|(i, c)| {
-                let label = if c.kind == CandKind::Snippet && c.text.len() > 48 {
-                    let cut = c
-                        .text
-                        .char_indices()
-                        .nth(45)
-                        .map_or(c.text.len(), |(b, _)| b);
-                    format!("{}…", &c.text[..cut])
+                // 종류 아이콘(탐색기와 같은 도형 · 메타 객체는 실제 종류로 · 09-24).
+                let icon = if use_icons {
+                    icon_kind_of(c, meta).map(|k| menu_icon(icons, k))
                 } else {
-                    c.text.clone()
+                    None
                 };
-                CtxItem::item(format!("intel:{i}"), label).with_shortcut(c.detail.clone())
+                // 긴 라벨(조각·긴 이름)은 자르지 않는다 — 팝업이 폭 상한 안에서 가운데 … + 가로 스크롤(09-23).
+                // 컬럼 = `이름 : 타입` + 오른쪽 키 표식(사용자 09-24) · 그 밖 = 이름 + 오른쪽 설명.
+                // 컬럼 = 이름(본문색) + ` : 타입`(흐리게)만 — 키 표식은 카드에(사용자 09-24 "이름 : 타입만").
+                // 일치 강조(사용자 09-24): 전체 일치 = 굵게+파랑 · 부분 일치 = 일치 글자만 강조색(바이트 범위).
+                let exact = !prefix.is_empty() && c.text.eq_ignore_ascii_case(&prefix);
+                let marks: Vec<std::ops::Range<usize>> = if exact || prefix.is_empty() {
+                    Vec::new()
+                } else {
+                    let idx: Vec<(usize, char)> = c.text.char_indices().collect();
+                    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+                    for p in intel::match_positions(&c.text, &prefix) {
+                        if let Some(&(b, ch)) = idx.get(p) {
+                            let e = b + ch.len_utf8();
+                            match out.last_mut() {
+                                Some(last) if last.end == b => last.end = e,
+                                _ => out.push(b..e),
+                            }
+                        }
+                    }
+                    out
+                };
+                let item = if c.kind == CandKind::Column && !c.detail.is_empty() {
+                    CtxItem::item(format!("intel:{i}"), c.text.clone())
+                        .with_sub(format!(" : {}", c.detail))
+                        .with_shortcut(c.qualifier.clone())
+                } else {
+                    CtxItem::item(format!("intel:{i}"), c.text.clone())
+                        .with_shortcut(c.detail.clone())
+                };
+                item.with_emphasis(exact).with_marks(marks).with_icon(icon)
             })
             .collect();
-        if self.loading {
+        if cut > 0 {
+            items.push(CtxItem::maybe(
+                "intel:more",
+                nsql_i18n::tf(nsql_i18n::Msg::StIntelMore, &[&cut.to_string()]),
+                false,
+            ));
+        }
+        if self.loading || self.loading_objects {
             items.push(CtxItem::maybe(
                 "intel:loading",
-                nsql_i18n::t(nsql_i18n::Msg::StIntelLoading),
+                nsql_i18n::t(if self.loading {
+                    nsql_i18n::Msg::StIntelLoading
+                } else {
+                    nsql_i18n::Msg::StIntelLoadingObjects
+                }),
                 false,
             ));
         }
@@ -705,12 +993,30 @@ impl Intel {
         self.ctx = Some(ctx);
         self.tab = Some(tab);
         self.dialect = dialect;
-        let p = anchor.unwrap_or(Point {
-            x: host.x,
-            y: host.y,
-        });
+        // ★ 앵커 = **접두가 시작한 글자**의 아래 기준선(사용자 09-23 "처음 자리를 유지 · 필요하면 최소 이동"): 같은 낱말을
+        //   이어 치는 동안은 같은 점이라 팝업이 움직이지 않고, 접두가 새로 시작하거나 줄이 바뀔 때만 옮겨진다. 좌표를 못 받으면
+        //   (다시 그리기 전) 캐럿 좌표 → 열린 팝업은 제자리 → 창 원점(안전망).
+        let p = match point_of(prefix_start).or(anchor) {
+            Some(p) => p,
+            None if self.menu.is_open() => self.last_anchor.unwrap_or(Point {
+                x: host.x,
+                y: host.y,
+            }),
+            // ★ 아직 안 그려 좌표가 없으면(트리거 글자 직후) 원점에 열지 않고 **다음 틱(그린 뒤)** 에 다시(09-24 —
+            //   자동으로 뜬 팝업이 옛 배치 때문에 다음 줄에 붙던 결함 · 수동 Ctrl+Space와 같은 자리).
+            None => {
+                self.due = Some(Instant::now() + Duration::from_millis(16));
+                return false;
+            }
+        };
+        self.last_anchor = Some(p);
         self.menu.set_scale(scale);
         self.menu.set_max_rows(Some(self.cfg.rows));
+        // 항목이 적어도 같은 높이(사용자 09-24) — 옆 상세 카드가 이 높이를 쓴다.
+        self.menu.set_min_rows(Some(self.cfg.rows));
+        self.menu.set_max_width(Some(self.cfg.popup_max_w));
+        // 클릭 = 선택(카드) · 더블 클릭/Enter = 확정(사용자 09-24).
+        self.menu.set_click_selects(true);
         self.menu
             .open_at(p.x, p.y, items, host, (280.0 * scale) as i32);
         self.due = None;
@@ -744,8 +1050,69 @@ impl Intel {
         std::mem::take(&mut self.needs)
     }
 
+    /// 마지막 요청이 남긴 객체 목록 채움 요청(스키마 이름 · 사전) — 호스트가 탐색기에 넘긴다(09-23).
+    pub(crate) fn take_need_objects(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.need_objects)
+    }
+
+    /// 강조된 행의 전체 글(이름 + 오른쪽 열) — 긴 이름이 잘려 보일 때 상태줄에 그대로(09-23).
+    pub(crate) fn hovered_full(&self) -> Option<String> {
+        let i = self.menu.hovered()?;
+        let c = self.cands.get(i)?;
+        let mut s = c.text.clone();
+        if !c.detail.is_empty() {
+            s.push_str("  ");
+            s.push_str(&c.detail);
+        }
+        if !c.mark.is_empty() {
+            s.push_str("  ");
+            s.push_str(&c.mark);
+        }
+        Some(s)
+    }
+
+    /// 상세 카드 대상 = 강조 행(없으면 첫 행 · 09-24).
+    pub(crate) fn card_target(&self) -> Option<crate::intel_card::Target> {
+        if !self.is_open() {
+            return None;
+        }
+        let i = self.menu.hovered().unwrap_or(0);
+        let c = self.cands.get(i)?;
+        Some(crate::intel_card::Target::of(c, self.dialect))
+    }
+
+    /// 열린 팝업이 무언가를 기다리는 중인가(메타가 오면 호스트가 다시 요청한다).
+    pub(crate) fn is_loading(&self) -> bool {
+        self.is_open() && (self.loading || self.loading_objects)
+    }
+
+    /// 어느 열린 문서든 이 이름을 낱말로 쓰는가(대소문자 무시 · 문서 낱말 캐시 · `스키마.` 버킷의 미사용 판정 근거 · 09-23).
+    pub(crate) fn doc_mentions(&self, name: &str) -> bool {
+        self.docs
+            .values()
+            .any(|d| d.words.iter().any(|w| w.eq_ignore_ascii_case(name)))
+    }
+
+    /// (스키마, 종류) 버킷 상태를 이번 요청에 반영: 없으면 채움 요청 + "불러오는 중" · 읽는 중이면 "불러오는 중"만.
+    fn note_coverage(&mut self, m: &MetaView<'_>, schema: Sym, kind: ObjectKind) {
+        match m.snap.coverage(schema, kind) {
+            Coverage::Loading => self.loading_objects = true,
+            Coverage::Missing => {
+                self.loading_objects = true;
+                push_need(&mut self.need_objects, m.names.get(schema));
+            }
+            _ => {}
+        }
+    }
+
     /// 팝업이 고른 항목 → 확정(편집기 적용은 호스트).
+    #[cfg(test)]
     pub(crate) fn pick(&mut self, id: &str) {
+        self.pick_with(id, false);
+    }
+
+    /// `plain` = Alt를 누른 채 확정(한정자 규칙을 뒤집는다 · 09-24).
+    pub(crate) fn pick_with(&mut self, id: &str, plain: bool) {
         let Some(i) = id
             .strip_prefix("intel:")
             .and_then(|n| n.parse::<usize>().ok())
@@ -757,6 +1124,13 @@ impl Intel {
         };
         let mut text = intel::apply_case(&c.text, &ctx.prefix, &self.cfg.insert_case);
         let mut caret_back = 0;
+        // 접두 없이 고른 컬럼 = `A.컬럼`(기본 `intel.qualify_columns` · Alt = 반대).
+        if c.kind == CandKind::Column
+            && !c.qualifier.is_empty()
+            && (self.cfg.qualify_columns != plain)
+        {
+            text = format!("{}.{}", c.qualifier, text);
+        }
         match c.kind {
             // 함수 = `NAME()` + 캐럿 안(인자가 없는 값 `SYSDATE`·`@@ROWCOUNT`는 그대로 · 시그니처의 괄호 유무로 판단).
             CandKind::Function if self.cfg.insert_parens => {
@@ -768,6 +1142,11 @@ impl Intel {
                         caret_back = 1;
                     }
                 }
+            }
+            // FROM 자리의 함수·프로시저(테이블 함수 · 09-24) = `NAME()` + 캐럿 안.
+            CandKind::Routine if self.cfg.insert_parens && !text.ends_with('(') => {
+                text.push_str("()");
+                caret_back = 1;
             }
             CandKind::Keyword if self.cfg.insert_space => {
                 if !text.ends_with('(') {
@@ -817,22 +1196,174 @@ impl Intel {
 }
 
 /// 컬럼 오른쪽 열: `PK NUMBER(4)` · `FK VARCHAR2(10) NOT NULL` · `UQ …`.
-fn col_detail(ty: &str, key: u8, nullable: Option<bool>) -> String {
-    let mut parts: Vec<&str> = Vec::new();
+/// 사전 버킷의 스키마 심볼(아직 이름조차 없으면 None = 한 번도 요청 안 함).
+fn dict_sym<'a>(m: &'a MetaView<'a>) -> Option<(&'a MetaView<'a>, Sym)> {
+    m.names.find(nsql_catalog::DICT_SCHEMA).map(|s| (m, s))
+}
+
+/// 채움 요청 목록에 한 번만(대소문자 무시).
+fn push_need(v: &mut Vec<String>, name: &str) {
+    if !v.iter().any(|x| x.eq_ignore_ascii_case(name)) {
+        v.push(name.to_string());
+    }
+}
+
+/// 객체 종류의 둘러보기 순서(테이블 → 뷰 → 구체화 뷰 → 시노님 → 그 밖 · 09-24).
+fn kind_order(k: ObjectKind) -> u32 {
+    match k {
+        // ★ 같은 층(테이블·뷰·구체화 뷰·시노님)은 종류로 가르지 않는다 — 종류 우선이면 뷰가 테이블 449개 뒤로 밀려 상한(`intel.max_items`)
+        //   밖에서 사라졌다(BISCM 실측 · 사용자 09-24 "V로 시작하는 뷰가 목록 끝에 보이지 않아").
+        ObjectKind::Table
+        | ObjectKind::View
+        | ObjectKind::MaterializedView
+        | ObjectKind::Synonym => 0,
+        ObjectKind::Function => 1,
+        ObjectKind::Package => 2,
+        ObjectKind::Procedure => 3,
+        _ => 4,
+    }
+}
+
+/// ★ 레이어(사용자 09-24): 테이블·뷰·구체화 뷰·시노님 = 0(같은 층에서 일치 등급으로 경쟁) · 테이블 함수 = 1 · 함수·패키지 = 2 ·
+/// 프로시저 = 3. 랭킹은 같은 일치 등급 안에서만 레이어를 본다(nsql-script `rank`).
+fn layer_of(k: ObjectKind, table_fn: bool) -> u8 {
+    match k {
+        ObjectKind::Table
+        | ObjectKind::View
+        | ObjectKind::MaterializedView
+        | ObjectKind::Synonym => 0,
+        ObjectKind::Function if table_fn => 1,
+        ObjectKind::Function | ObjectKind::Package => 2,
+        ObjectKind::Procedure => 3,
+        _ => 2,
+    }
+}
+
+/// FROM 자리(`FROM |` · `스키마.|`)에 올릴 객체 종류 — 관계 넷 + `routines`면 함수·패키지·프로시저 · 방언이 지원하는 것만.
+fn from_kinds(dialect: Option<Dialect>, routines: bool) -> Vec<ObjectKind> {
+    let mut v = vec![
+        ObjectKind::Table,
+        ObjectKind::View,
+        ObjectKind::MaterializedView,
+        ObjectKind::Synonym,
+    ];
+    if routines {
+        v.extend([
+            ObjectKind::Function,
+            ObjectKind::Package,
+            ObjectKind::Procedure,
+        ]);
+    }
+    v.retain(|k| dialect.is_none_or(|d| nsql_catalog::kinds_for(d).contains(k)));
+    v
+}
+
+/// 메타 객체 하나 → 후보(레이어 · 테이블 함수 표기 · 카드용 태그).
+fn obj_cand(
+    m: &MetaView<'_>,
+    h: &nsql_run::meta::Hit,
+    kind: ObjectKind,
+    dialect: Option<Dialect>,
+    show_types: bool,
+) -> Cand {
+    let extra = m
+        .snap
+        .object(h.id)
+        .and_then(|o| o.extra)
+        .map_or("", |e| m.names.get(e));
+    let table_fn = dialect.is_some_and(|d| nsql_catalog::table_function(d, kind, extra));
+    Cand {
+        text: m.names.get(h.name).to_string(),
+        kind: cand_kind(kind),
+        detail: if !show_types {
+            String::new()
+        } else if table_fn {
+            "table function".to_string()
+        } else {
+            kind_label(kind)
+        },
+        source: 3,
+        tag: tag_object(h.id),
+        mark: String::new(),
+        order: kind_order(kind),
+        qualifier: String::new(),
+        layer: layer_of(kind, table_fn),
+    }
+}
+
+/// 후보의 아이콘 종류 — 메타 객체(태그 2)는 실제 종류로 · 그 밖은 후보 종류로 · 키워드·낱말·조각은 없음.
+fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
+    if c.tag >> 56 == 2 {
+        let id = nsql_run::meta::ObjId(((c.tag >> 16) & 0xFFFF_FFFF) as u32);
+        if let Some(o) = m.and_then(|m| m.snap.object(id)) {
+            return Some(match o.kind {
+                ObjectKind::Table => IconKind::Table,
+                ObjectKind::View => IconKind::View,
+                ObjectKind::MaterializedView => IconKind::MatView,
+                ObjectKind::Procedure => IconKind::Procedure,
+                ObjectKind::Function => IconKind::Function,
+                ObjectKind::Package => IconKind::Package,
+                ObjectKind::PackageBody => IconKind::PackageBody,
+                ObjectKind::Sequence => IconKind::Sequence,
+                ObjectKind::Trigger => IconKind::Trigger,
+                ObjectKind::Index => IconKind::Index,
+                ObjectKind::Synonym => IconKind::Synonym,
+                ObjectKind::Type => IconKind::Type,
+            });
+        }
+    }
+    Some(match c.kind {
+        CandKind::Column => IconKind::Column,
+        CandKind::Table => IconKind::Table,
+        CandKind::View => IconKind::View,
+        CandKind::Synonym => IconKind::Synonym,
+        CandKind::Sequence => IconKind::Sequence,
+        CandKind::Package => IconKind::Package,
+        CandKind::Routine | CandKind::Function => IconKind::Function,
+        CandKind::Schema => IconKind::Schema,
+        _ => return None,
+    })
+}
+
+/// 종류 아이콘(탐색기 도형 · 종류 색 그대로 · 캐시).
+fn menu_icon(cache: &mut HashMap<IconKind, MenuIcon>, k: IconKind) -> MenuIcon {
+    cache
+        .entry(k)
+        .or_insert_with(|| {
+            let img = exp_icons::image(k, k.color());
+            let alpha: Vec<u8> = img.rgba.chunks(4).map(|p| p[3]).collect();
+            MenuIcon {
+                w: img.w,
+                h: img.h,
+                alpha: alpha.into(),
+                rgba: Some(img.rgba.into()),
+            }
+        })
+        .clone()
+}
+
+/// 후보 태그(상세 카드 · 09-24): 상위 8비트 종류(1 = 컬럼 · 2 = 객체) · 객체 id · 컬럼 순번.
+pub(crate) fn tag_column(id: nsql_run::meta::ObjId, pos: u16) -> u64 {
+    (1u64 << 56) | ((id.0 as u64) << 16) | pos as u64
+}
+pub(crate) fn tag_object(id: nsql_run::meta::ObjId) -> u64 {
+    (2u64 << 56) | ((id.0 as u64) << 16)
+}
+/// 오른쪽 키 표식(`PK` · `FK` · `UQ`).
+fn key_marks(key: u8, nullable: Option<bool>) -> String {
+    let mut m: Vec<&str> = Vec::new();
     if key & nsql_run::meta::KEY_PK != 0 {
-        parts.push("PK");
-    } else if key & nsql_run::meta::KEY_FK != 0 {
-        parts.push("FK");
-    } else if key & nsql_run::meta::KEY_UQ != 0 {
-        parts.push("UQ");
+        m.push("PK");
     }
-    if !ty.is_empty() {
-        parts.push(ty);
+    if key & nsql_run::meta::KEY_FK != 0 {
+        m.push("FK");
     }
-    if nullable == Some(false) && key & nsql_run::meta::KEY_PK == 0 {
-        parts.push("NOT NULL");
+    if key & nsql_run::meta::KEY_UQ != 0 {
+        m.push("UQ");
     }
-    parts.join(" ")
+    // Not Null은 표식에서 뺀다(카드에 있다 · 사용자 09-24).
+    let _ = nullable;
+    m.join(" ")
 }
 
 /// 테이블 이름 → 짧은 alias(`sales_customer` → `sc` · `emp` → `e` · `MyTable` → `mt`) · 문장 안 alias와 겹치면 숫자 붙임 ·
@@ -890,6 +1421,24 @@ fn cand_kind(k: ObjectKind) -> CandKind {
     }
 }
 
+/// 메모리 맵 보고(docs/80): 문서 낱말 캐시 · 후보(열린 동안만) · 종류 아이콘 캐시.
+impl crate::memstat::MemSource for Intel {
+    fn mem_report(&self, acc: &mut crate::memstat::Acc) {
+        let words: usize = self
+            .docs
+            .values()
+            .map(|d| d.words.iter().map(|w| w.len() + 24).sum::<usize>())
+            .sum();
+        let cands: usize = self
+            .cands
+            .iter()
+            .map(|c| c.text.len() + c.detail.len() + c.qualifier.len() + 64)
+            .sum();
+        let icons = self.icons.len() * 32 * 32 * 5;
+        acc.add(crate::memstat::Cat::Intel, (words + cands + icons) as u64);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -906,6 +1455,14 @@ mod tests {
             recent: true,
             max_items: 200,
             rows: 12,
+            popup_max_w: 560,
+            key_passthrough: true,
+            detail_card: true,
+            detail_bg_alpha: 20,
+            detail_text_alpha: 50,
+            qualify_columns: true,
+            routines: false,
+            icons: false,
             keywords: true,
             doc_words: true,
             insert_case: "default".into(),
@@ -984,13 +1541,14 @@ mod tests {
             9,
             Some(Dialect::Oracle),
             Some(&view),
-            None,
+            Some(Point { x: 0, y: 0 }),
             host,
-            1.0
+            1.0,
+            &|_| None
         ));
         let texts: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts, vec!["EMPNO", "ENAME"]);
-        assert!(it.cands[0].detail.contains("PK"));
+        assert!(it.cands[0].mark.contains("PK") && it.cands[0].detail == "NUMBER(4)");
         // dept = 컬럼 없음 → 즉시 채움 요청 + 불러오는 중.
         let doc = "SELECT d.| FROM emp e, dept d".replace('|', "");
         assert!(it.request(
@@ -1000,16 +1558,18 @@ mod tests {
             9,
             Some(Dialect::Oracle),
             Some(&view),
-            None,
+            Some(Point { x: 0, y: 0 }),
             host,
-            1.0
+            1.0,
+            &|_| None
         ));
         assert!(it.loading);
         assert_eq!(
             it.take_needs(),
             vec![NeedColumns {
                 schema: Some("SCOTT".into()),
-                table: "dept".into()
+                table: "dept".into(),
+                urgent: true,
             }]
         );
         // FROM 뒤 = 테이블 + 스키마 · 접두 sc = 퍼지(sales_customer) + 스키마 SCOTT.
@@ -1021,9 +1581,10 @@ mod tests {
             doc.len(),
             Some(Dialect::Oracle),
             Some(&view),
-            None,
+            Some(Point { x: 0, y: 0 }),
             host,
-            1.0
+            1.0,
+            &|_| None
         ));
         let texts: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
         assert!(
@@ -1060,7 +1621,18 @@ mod tests {
         let ora = Some(Dialect::Oracle);
         // 식 자리 `nv` → NVL(시그니처) · 확정 = `NVL()` 캐럿 1 뒤로.
         let doc = "SELECT nv FROM emp";
-        assert!(it.request(1, 1, doc, 9, ora, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            9,
+            ora,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         let i = it.cands.iter().position(|c| c.text == "NVL").expect("nvl");
         assert_eq!(it.cands[i].detail, "NVL(expr1, expr2)");
         it.pick(&format!("intel:{i}"));
@@ -1068,7 +1640,18 @@ mod tests {
         assert_eq!((a.text.as_str(), a.caret_back), ("NVL()", 1));
         // 인자 없는 값 = 괄호 없이.
         let doc = "SELECT sysd";
-        assert!(it.request(1, 1, doc, doc.len(), ora, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            doc.len(),
+            ora,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         let i = it
             .cands
             .iter()
@@ -1078,7 +1661,18 @@ mod tests {
         assert_eq!(it.take_accept().expect("a").text, "SYSDATE");
         // 패키지 멤버 `DBMS_OUTPUT.` → PUT_LINE …(문서 단어로 떨어지지 않음).
         let doc = "BEGIN DBMS_OUTPUT.";
-        assert!(it.request(1, 1, doc, doc.len(), ora, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            doc.len(),
+            ora,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         assert!(it
             .cands
             .iter()
@@ -1086,17 +1680,50 @@ mod tests {
         assert!(!it.cands.iter().any(|c| c.kind == CandKind::Word));
         // 사전 객체: FROM 뒤 `all_t` → ALL_TABLES · MSSQL `sys.` → tables.
         let doc = "SELECT * FROM all_t";
-        assert!(it.request(1, 1, doc, doc.len(), ora, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            doc.len(),
+            ora,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         assert!(it.cands.iter().any(|c| c.text == "ALL_TABLES"));
         let doc = "SELECT * FROM sys.";
         let ms = Some(Dialect::Mssql);
-        assert!(it.request(1, 1, doc, doc.len(), ms, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            doc.len(),
+            ms,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         assert!(it
             .cands
             .iter()
             .any(|c| c.text == "tables" && c.kind == CandKind::View));
         // 키워드 + 공백.
-        assert!(it.request(1, 1, "sel", 3, ora, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            "sel",
+            3,
+            ora,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         it.pick("intel:0");
         assert_eq!(it.take_accept().expect("kw").text, "SELECT ");
         // 시그니처 도움.
@@ -1107,22 +1734,27 @@ mod tests {
         assert_eq!(it.signature_at("SELECT foo(", 11, ora), None);
         // INSERT INTO emp ( → 첫 후보 = 컬럼 전체 조각 · MRU에 안 남음.
         let doc = "INSERT INTO emp (";
-        assert!(it.request(1, 1, doc, doc.len(), ora, Some(&view), None, host, 1.0));
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            doc.len(),
+            ora,
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         assert_eq!(it.cands[0].kind, CandKind::Snippet);
         assert_eq!(it.cands[0].text, "EMPNO, ENAME");
         it.pick("intel:0");
         assert_eq!(it.take_accept().expect("snip").text, "EMPNO, ENAME");
         assert_ne!(it.mru[0], "EMPNO, ENAME");
-        // 컬럼 상세 · alias 생성.
-        assert_eq!(
-            col_detail("NUMBER(4)", nsql_run::meta::KEY_PK, Some(false)),
-            "PK NUMBER(4)"
-        );
-        assert_eq!(
-            col_detail("VARCHAR2(10)", nsql_run::meta::KEY_FK, Some(false)),
-            "FK VARCHAR2(10) NOT NULL"
-        );
-        assert_eq!(col_detail("DATE", 0, Some(true)), "DATE");
+        // 키 표식(팝업 오른쪽 · 09-24 `이름 : 타입` 형식) · alias 생성.
+        assert_eq!(key_marks(nsql_run::meta::KEY_PK, Some(false)), "PK");
+        assert_eq!(key_marks(nsql_run::meta::KEY_FK, Some(false)), "FK");
+        assert_eq!(key_marks(0, Some(true)), "");
         assert_eq!(gen_alias("sales_customer", &[]), "sc");
         assert_eq!(gen_alias("EMP", &["e"]), "e2");
         assert_eq!(gen_alias("MyTable", &[]), "mt");
@@ -1144,15 +1776,27 @@ mod tests {
             caret,
             Some(Dialect::Oracle),
             None,
-            None,
+            Some(Point { x: 0, y: 0 }),
             host,
-            1.0
+            1.0,
+            &|_| None
         ));
         let texts: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(texts[0], "v_user");
         assert!(it.cands[0].kind == CandKind::Variable);
         // 문장 시작 = 키워드.
-        assert!(it.request(7, 3, "sel", 3, Some(Dialect::Oracle), None, None, host, 1.0));
+        assert!(it.request(
+            7,
+            3,
+            "sel",
+            3,
+            Some(Dialect::Oracle),
+            None,
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
         assert_eq!(it.cands[0].text, "SELECT");
         // 트리거 규칙.
         assert!(it.after_char('.', 0), "트리거 문자 = 즉시");
@@ -1171,9 +1815,368 @@ mod tests {
             9,
             Some(Dialect::Oracle),
             None,
-            None,
+            Some(Point { x: 0, y: 0 }),
             host,
-            1.0
+            1.0,
+            &|_| None
         ));
+    }
+
+    /// 09-23(사용자 "FROM 뒤 M4S_ 테이블이 안 보인다 · MI40으로도 · 권한 반영 사전 뷰 · 기본 스키마 접속 시 · 스키마. 시점 캐싱"):
+    /// 버킷이 없으면 채움 요청 + "불러오는 중" · 채워지면 이름순 상한 없이 전부가 랭킹 대상 · 약어 퍼지 · 사전 버킷 우선 · 스키마. 요청 · 문서 언급 판정.
+    /// ★ FROM 자리(사용자 09-24): 뷰·구체화 뷰 = 테이블과 같은 레이어(일치 등급으로 경쟁) · 함수(테이블 함수 먼저)·패키지·
+    /// 프로시저 = 낮은 레이어 · `스키마.`에서도 같은 표 · 함수 확정 = `NAME()` 캐럿 안.
+    /// ★ BISCM 실측 재현(사용자 09-24): 테이블 449 + 뷰 1(`VM4S_I002040`) + 프로시저 72 · 상한 200 → 첫 페이지는 200개 · 뷰는
+    /// 같은 층이지만 길이순(12자)이라 뒤쪽 = 상한 밖 → "322개 더" 항목이 붙는다(끝까지 스크롤하면 이어 붙이는 설계 = 76 §13 · T-196).
+    #[test]
+    fn view_survives_max_items_cut_among_many_tables() {
+        let mut m = MetaStore::new(1 << 24);
+        m.set_schemas(&["BISCM".into()], Some("BISCM"));
+        let tables: Vec<NewObj> = (0..449)
+            .map(|i| NewObj {
+                name: format!("M4S_I{i:06}"),
+                ..Default::default()
+            })
+            .collect();
+        m.load_bucket("BISCM", ObjectKind::Table, &tables, 1);
+        m.load_bucket(
+            "BISCM",
+            ObjectKind::View,
+            &[NewObj {
+                name: "VM4S_I002040".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        m.load_bucket("BISCM", ObjectKind::MaterializedView, &[], 1);
+        m.load_bucket("BISCM", ObjectKind::Synonym, &[], 1);
+        m.load_bucket("BISCM", ObjectKind::Function, &[], 1);
+        m.load_bucket("BISCM", ObjectKind::Package, &[], 1);
+        let procs: Vec<NewObj> = (0..72)
+            .map(|i| NewObj {
+                name: format!("SP_{i:03}"),
+                ..Default::default()
+            })
+            .collect();
+        m.load_bucket("BISCM", ObjectKind::Procedure, &procs, 1);
+        m.load_bucket(nsql_catalog::DICT_SCHEMA, ObjectKind::View, &[], 1);
+        let mut c = cfg();
+        c.routines = true;
+        c.max_items = 200;
+        let mut it = Intel::new(c);
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let doc = "SELECT * FROM ";
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            doc.len(),
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            Rect::new(0, 0, 800, 600),
+            1.0,
+            &|_| None
+        ));
+        let names: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(names.len(), 200, "상한");
+        assert!(
+            !names.iter().any(|n| n.starts_with("SP_")),
+            "프로시저는 아래 층 → 잘림"
+        );
+        assert!(
+            names.iter().all(|n| n.starts_with("M4S_")),
+            "첫 페이지 = 같은 층에서 길이·이름순 앞 200"
+        );
+        let ids = it.menu.item_ids();
+        assert!(ids.contains(&"intel:more"), "N개 더 안내: {ids:?}");
+        assert_eq!(ids.len(), 201, "200 + 안내 1");
+    }
+
+    #[test]
+    fn from_lists_views_with_tables_and_routines_lower() {
+        let mut m = MetaStore::new(1 << 24);
+        m.set_schemas(&["hr".into()], Some("hr"));
+        let obj = |n: &str, extra: Option<&str>| NewObj {
+            name: n.into(),
+            extra: extra.map(String::from),
+            ..Default::default()
+        };
+        m.load_bucket("hr", ObjectKind::Table, &[obj("EMP", None)], 1);
+        m.load_bucket("hr", ObjectKind::View, &[obj("EMP_V", None)], 1);
+        m.load_bucket(
+            "hr",
+            ObjectKind::MaterializedView,
+            &[obj("EMP_MV", None)],
+            1,
+        );
+        m.load_bucket("hr", ObjectKind::Synonym, &[], 1);
+        m.load_bucket(
+            "hr",
+            ObjectKind::Function,
+            &[obj("EMP_FN", Some("PIPELINED")), obj("EMP_SCALAR", None)],
+            1,
+        );
+        m.load_bucket("hr", ObjectKind::Package, &[obj("EMP_PKG", None)], 1);
+        m.load_bucket("hr", ObjectKind::Procedure, &[obj("EMP_PRC", None)], 1);
+        let mut c = cfg();
+        c.routines = true;
+        c.show_types = true;
+        let mut it = Intel::new(c);
+        let host = Rect::new(0, 0, 800, 600);
+        let rev = std::cell::Cell::new(0u64);
+        let req = |it: &mut Intel, m: &MetaStore, doc: &str| {
+            rev.set(rev.get() + 1);
+            let view = MetaView {
+                names: &m.names,
+                snap: m.snapshot(),
+            };
+            assert!(it.request(
+                1,
+                rev.get(),
+                doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            it.cands
+                .iter()
+                .map(|c| (c.text.clone(), c.layer, c.detail.clone()))
+                .collect::<Vec<_>>()
+        };
+        // 1) `스키마.` 접두 없이: 레이어 0(테이블·뷰·MV) → 1(테이블 함수) → 2(함수·패키지) → 3(프로시저) · 모두 읽었으니 요청 없음.
+        let got = req(&mut it, &m, "SELECT * FROM hr.");
+        assert!(!it.is_loading() && it.take_need_objects().is_empty());
+        let names: Vec<&str> = got.iter().map(|(n, _, _)| n.as_str()).collect();
+        let pos = |n: &str| names.iter().position(|x| *x == n).unwrap_or(usize::MAX);
+        assert!(
+            pos("EMP") < pos("EMP_FN")
+                && pos("EMP_V") < pos("EMP_FN")
+                && pos("EMP_MV") < pos("EMP_FN"),
+            "{names:?}"
+        );
+        assert!(
+            pos("EMP_FN") < pos("EMP_SCALAR") && pos("EMP_FN") < pos("EMP_PKG"),
+            "{names:?}"
+        );
+        assert!(
+            pos("EMP_PKG") < pos("EMP_PRC") && pos("EMP_SCALAR") < pos("EMP_PRC"),
+            "{names:?}"
+        );
+        assert!(
+            got.iter()
+                .any(|(n, l, d)| n == "EMP_FN" && *l == 1 && d == "table function"),
+            "{got:?}"
+        );
+        assert!(
+            got.iter().any(|(n, l, _)| n == "EMP_V" && *l == 0),
+            "{got:?}"
+        );
+        // 2) 접두 `EMP_` = 뷰·MV가 함수보다 위(같은 접두 등급 · 레이어) · 테이블 `EMP`는 접두 불일치로 제외.
+        let got = req(&mut it, &m, "SELECT * FROM hr.EMP_");
+        let names: Vec<&str> = got.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "EMP_V",
+                "EMP_MV",
+                "EMP_FN",
+                "EMP_PKG",
+                "EMP_SCALAR",
+                "EMP_PRC"
+            ],
+            "{names:?}"
+        );
+        // 3) 현재 스키마 FROM(접두 없음)에서도 같은 표 · 함수 확정 = `EMP_FN()` + 캐럿 안.
+        let got = req(&mut it, &m, "SELECT * FROM EMP_F");
+        let i = got
+            .iter()
+            .position(|(n, _, _)| n == "EMP_FN")
+            .expect("EMP_FN");
+        it.pick(&format!("intel:{i}"));
+        let acc = it.take_accept().expect("accept");
+        assert_eq!(acc.text, "EMP_FN()");
+        assert_eq!(acc.caret_back, 1);
+    }
+
+    #[test]
+    fn relation_requests_missing_buckets_then_lists_all_and_fuzzy_abbrev() {
+        let mut m = MetaStore::new(1 << 24);
+        m.set_schemas(&["dbo".into(), "sales".into()], Some("dbo"));
+        let mut it = Intel::new(cfg());
+        let host = Rect::new(0, 0, 800, 600);
+        // 본문 세대(rev)가 문서 캐시의 열쇠라 호출마다 올린다.
+        let rev = std::cell::Cell::new(0u64);
+        let req = |it: &mut Intel, m: &MetaStore, doc: &str| {
+            rev.set(rev.get() + 1);
+            let view = MetaView {
+                names: &m.names,
+                snap: m.snapshot(),
+            };
+            assert!(it.request(
+                1,
+                rev.get(),
+                doc,
+                doc.len(),
+                Some(Dialect::Mssql),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            it.cands.iter().map(|c| c.text.clone()).collect::<Vec<_>>()
+        };
+        // 1) 아무 버킷도 없음 → 현재 스키마(dbo)·사전 채움 요청 · 불러오는 중 · 정적 사전 표는 폴백으로 남는다.
+        let texts = req(&mut it, &m, "SELECT * FROM ");
+        assert!(it.is_loading(), "객체를 기다리는 중");
+        let needs = it.take_need_objects();
+        assert!(
+            needs.iter().any(|s| s == "dbo")
+                && needs.iter().any(|s| s == nsql_catalog::DICT_SCHEMA),
+            "{needs:?}"
+        );
+        assert!(
+            texts.contains(&"dbo".to_string()) && texts.contains(&"sys.tables".to_string()),
+            "{texts:?}"
+        );
+        // 2) 테이블 300개(이름순으로 M4S_*가 200번째 뒤) + 권한 반영 사전 버킷 → 상한 없이 · 퍼지 약어 · 사전은 서버 것.
+        let mut objs: Vec<NewObj> = (0..300)
+            .map(|i| NewObj {
+                name: format!("A{i:03}"),
+                ..Default::default()
+            })
+            .collect();
+        objs.push(NewObj {
+            name: "M4S_I002040".into(),
+            ..Default::default()
+        });
+        objs.push(NewObj {
+            name: "M4S_I002050".into(),
+            ..Default::default()
+        });
+        m.load_bucket("dbo", ObjectKind::Table, &objs, 1);
+        m.load_bucket("dbo", ObjectKind::View, &[], 1);
+        m.load_bucket("dbo", ObjectKind::Synonym, &[], 1);
+        m.load_bucket(
+            nsql_catalog::DICT_SCHEMA,
+            ObjectKind::View,
+            &[
+                NewObj {
+                    name: "sys.tables".into(),
+                    ..Default::default()
+                },
+                NewObj {
+                    name: "sys.dm_exec_sessions".into(),
+                    ..Default::default()
+                },
+                NewObj {
+                    name: "INFORMATION_SCHEMA.TABLES".into(),
+                    ..Default::default()
+                },
+            ],
+            1,
+        );
+        let texts = req(&mut it, &m, "SELECT * FROM M4S_");
+        assert!(!it.is_loading());
+        assert!(it.take_need_objects().is_empty());
+        assert_eq!(
+            &texts[..2],
+            &["M4S_I002040".to_string(), "M4S_I002050".to_string()],
+            "{texts:?}"
+        );
+        let texts = req(&mut it, &m, "SELECT * FROM MI40");
+        assert!(
+            texts.contains(&"M4S_I002040".to_string()),
+            "약어 퍼지: {texts:?}"
+        );
+        let texts = req(&mut it, &m, "SELECT * FROM sys");
+        assert!(
+            texts.contains(&"sys.dm_exec_sessions".to_string()),
+            "서버 사전 버킷: {texts:?}"
+        );
+        assert!(
+            !texts.contains(&"sys.columns".to_string()),
+            "정적 표는 사전을 읽은 뒤에는 안 쓴다: {texts:?}"
+        );
+        // 3) `sys.` = 사전 버킷의 뒷부분 · `sales.` = 그 스키마 채움 요청(스키마. 시점 캐싱) · 문서 언급 판정.
+        let texts = req(&mut it, &m, "SELECT * FROM sys.");
+        assert!(
+            texts.contains(&"tables".to_string())
+                && texts.contains(&"dm_exec_sessions".to_string()),
+            "{texts:?}"
+        );
+        let _ = req(&mut it, &m, "SELECT * FROM sales.");
+        assert!(it.is_loading());
+        assert_eq!(it.take_need_objects(), vec!["sales".to_string()]);
+        assert!(it.doc_mentions("SALES") && !it.doc_mentions("zzz"));
+    }
+
+    /// JOIN 다중 테이블 · 접두 없음(사용자 09-24): 모든 alias 컬럼(오른쪽 = alias · FROM 순서 → 순번) · 확정 = `e.EMPNO` · Alt = `EMPNO`.
+    #[test]
+    fn unqualified_columns_from_all_aliases_and_alt_plain() {
+        let m = store();
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let mut it = Intel::new(cfg());
+        let host = Rect::new(0, 0, 800, 600);
+        let doc = "SELECT em FROM emp e, dept d";
+        assert!(it.request(
+            1,
+            1,
+            doc,
+            9,
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
+        let i = it
+            .cands
+            .iter()
+            .position(|c| c.text == "EMPNO")
+            .expect("EMPNO");
+        assert_eq!(it.cands[i].qualifier, "e");
+        assert!(it.loading, "dept 컬럼은 아직 = 채움 요청");
+        assert!(it
+            .take_needs()
+            .iter()
+            .any(|n| n.table == "dept" && n.urgent));
+        it.pick(&format!("intel:{i}"));
+        assert_eq!(
+            it.take_accept().expect("a").text,
+            "e.EMPNO",
+            "기본 = alias 붙임"
+        );
+        assert!(it.request(
+            1,
+            2,
+            doc,
+            9,
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
+        let i = it
+            .cands
+            .iter()
+            .position(|c| c.text == "EMPNO")
+            .expect("EMPNO");
+        it.pick_with(&format!("intel:{i}"), true);
+        assert_eq!(it.take_accept().expect("a").text, "EMPNO", "Alt = 컬럼만");
     }
 }
