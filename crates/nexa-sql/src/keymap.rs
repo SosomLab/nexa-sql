@@ -1541,18 +1541,21 @@ mod tests {
             bound.ctrl && !bound.primary,
             "맥 = Control 단독(⌘Space는 Spotlight)"
         );
-        // 실제 키 사건(Control 누른 Space · ⌘ 없음)이 만드는 조합과 같다.
-        let ev = Chord::from_winit(
-            &Key::Named(NamedKey::Space),
-            &PhysicalKey::Code(KeyCode::Space),
-            false,
-            false,
-            false,
-            true,
-        )
-        .unwrap();
-        assert_eq!(ev, bound);
-        assert_eq!(bound.display(), "⌃Space");
+        // 실제 키 사건(Control 누른 Space · ⌘ 없음)이 만드는 조합과 같다 — **맥에서만**(Windows/Linux의 `from_winit`은 Ctrl을
+        // 주 조합키로 매핑하고 표시도 `Ctrl+Space` · CI ubuntu/windows 실패 09-24 §170).
+        if cfg!(target_os = "macos") {
+            let ev = Chord::from_winit(
+                &Key::Named(NamedKey::Space),
+                &PhysicalKey::Code(KeyCode::Space),
+                false,
+                false,
+                false,
+                true,
+            )
+            .unwrap();
+            assert_eq!(ev, bound);
+            assert_eq!(bound.display(), "⌃Space");
+        }
         for c in COMMANDS.iter() {
             // 2단 코드(`cmd+k,cmd+d`)는 조합마다 · 키가 `,`인 것(`ctrl+alt+,`)은 통째로.
             let codes = preset_default(c, Preset::Macos)
