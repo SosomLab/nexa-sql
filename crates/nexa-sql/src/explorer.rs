@@ -114,6 +114,8 @@ enum Req {
         urgent: bool,
         /// 메타 저장 열쇠(스키마 버킷 · 이름) — 사전 객체(`ALL_TABLES` · `sys.tables`)는 DB 소유 스키마로 읽고 `$dict`에 저장(09-24).
         key: (String, String),
+        /// 패키지면 컬럼 대신 멤버(`nsql_catalog::package_members` · 09-24).
+        pkg: bool,
     },
     /// 자동 완성 즉시 채움 — 스키마 한 종류의 객체 목록(트리 노드 없이 · 09-23 사용자 "`스키마.` 입력 시 그 시점에 캐싱").
     ObjectsMeta {
@@ -854,12 +856,17 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 table,
                 urgent: _,
                 key,
+                pkg,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
                 let r = with_session(&mut session, |s| {
-                    nsql_catalog::columns(s, &schema, &table).map_err(err_s)
+                    if pkg {
+                        nsql_catalog::package_members(s, &schema, &table).map_err(err_s)
+                    } else {
+                        nsql_catalog::columns(s, &schema, &table).map_err(err_s)
+                    }
                 });
                 Resp::ColumnsMeta {
                     gen,
@@ -1545,7 +1552,7 @@ impl Explorer {
         if schema == nsql_catalog::DICT_SCHEMA {
             if !matches!(
                 cov(&self.meta.names, &snap, schema, ObjectKind::View),
-                nsql_run::meta::Coverage::Missing
+                nsql_run::meta::Coverage::Missing | nsql_run::meta::Coverage::Stale { .. }
             ) {
                 return;
             }
@@ -1580,7 +1587,7 @@ impl Explorer {
             }
             if !matches!(
                 cov(&self.meta.names, &snap, schema, kind),
-                nsql_run::meta::Coverage::Missing
+                nsql_run::meta::Coverage::Missing | nsql_run::meta::Coverage::Stale { .. }
             ) {
                 continue;
             }
@@ -1747,6 +1754,7 @@ impl Explorer {
             table: db_table,
             urgent,
             key: (key_schema, key_name),
+            pkg: o.kind == ObjectKind::Package,
         });
     }
 
@@ -1788,7 +1796,7 @@ impl Explorer {
             return;
         }
         let Some(o) = snap.object(id) else { return };
-        if !o.kind.is_relation() {
+        if !o.kind.is_relation() && o.kind != ObjectKind::Package {
             return;
         }
         self.request_columns_for(id, true);
@@ -2239,6 +2247,44 @@ impl Explorer {
         self.nodes.iter().position(|n| n.children.contains(&i))
     }
 
+    /// 노드가 속한 스키마 이름(루트 = None) — 부모를 따라 올라간다.
+    fn schema_of(&self, i: usize) -> Option<String> {
+        let mut cur = Some(i);
+        while let Some(n) = cur {
+            match &self.nodes[n].kind {
+                NodeKind::Schema(s) => return Some(s.clone()),
+                NodeKind::Folder { schema, .. } => return Some(schema.clone()),
+                NodeKind::Object(o) => return Some(o.schema.clone()),
+                _ => {}
+            }
+            cur = self.parent_of(n);
+        }
+        None
+    }
+
+    /// ★ 명시 메타 갱신(79 §4 · T-188): `schema`(None = 이 서버 전부 + 사전)를 `Stale`/`Unknown`으로 표시하고 그 스키마(전부면
+    /// 현재 스키마·사전)는 바로 다시 읽는다(백그라운드 세션 · 미리 읽기와 같은 길). 반환 = (표시한 버킷, 비운 객체).
+    pub(crate) fn refresh_meta(&mut self, schema: Option<&str>) -> (usize, usize) {
+        let buckets = self.meta.mark_stale(schema);
+        let objs = self.meta.mark_columns_unknown(schema);
+        match schema {
+            Some(s) => self.request_objects(s),
+            None => {
+                let _ = self.meta.mark_stale(Some(nsql_catalog::DICT_SCHEMA));
+                if let Some(cur) = self.server_schema.clone() {
+                    self.request_objects(&cur);
+                }
+                self.request_objects(nsql_catalog::DICT_SCHEMA);
+            }
+        }
+        (buckets, objs)
+    }
+
+    /// 서버가 말한 현재 스키마.
+    pub(crate) fn server_schema(&self) -> Option<&str> {
+        self.server_schema.as_deref()
+    }
+
     /// **수동 새로 고침 = 계층형**(docs/57 T3 · 사용자 09-19 우클릭 메뉴 · F5): 고른 노드 **아래 전부**가 대상이다.
     ///
     /// | 고른 곳 | 다시 읽는 것 |
@@ -2294,6 +2340,20 @@ impl Explorer {
             return;
         }
         let what = self.label(i).0;
+        // ★ 메타(완성·툴팁 공용)도 같이 낡음 표시(79 §3 · T-187): 루트 = 전부 · 그 밖 = 그 스키마(버킷 Stale · 컬럼 Unknown · 목록은
+        //   유지 → 다음 요청 때 다시 읽음). 트리 자체의 다시 읽기는 아래 종전 규칙.
+        match &self.nodes[i].kind {
+            NodeKind::Root => {
+                let _ = self.meta.mark_stale(None);
+                let _ = self.meta.mark_columns_unknown(None);
+            }
+            _ => {
+                if let Some(sc) = self.schema_of(i) {
+                    let _ = self.meta.mark_stale(Some(&sc));
+                    let _ = self.meta.mark_columns_unknown(Some(&sc));
+                }
+            }
+        }
         let sent = if hard || self.nodes[i].state != LoadState::Loaded {
             if i == 0 {
                 self.watermarks.clear();
@@ -2898,6 +2958,7 @@ impl Explorer {
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::Separator);
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                        items.push(CtxItem::item("refresh_meta", t(Msg::ExpRefreshMeta)));
                     }
                     // 루트 = 연결 항목(DBeaver 항해자와 같은 자리 · docs/54): 연결됨 → 새 탭 · 새로 고침 · 해제 / 오프라인 → 연결 · 제거.
                     NodeKind::Root if self.offline => {
@@ -2907,6 +2968,7 @@ impl Explorer {
                     NodeKind::Root => {
                         items.push(CtxItem::item("newtab", t(Msg::ExpNewTabHere)));
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                        items.push(CtxItem::item("refresh_meta", t(Msg::ExpRefreshMeta)));
                         items.push(CtxItem::Separator);
                         items.push(CtxItem::item("disconnect", t(Msg::ExpDisconnectServer)));
                     }
@@ -3208,6 +3270,18 @@ impl Explorer {
             "refresh" => {
                 self.selected = Some(i);
                 self.refresh_selected(false);
+            }
+            // ★ 메타(완성 캐시)만 새로 고침(79 §4): 루트 = 이 서버 전부 · 스키마 = 그 스키마.
+            "refresh_meta" => {
+                let scope = match &self.nodes[i].kind {
+                    NodeKind::Root => None,
+                    _ => self.schema_of(i),
+                };
+                let (b, o) = self.refresh_meta(scope.as_deref());
+                self.actions.push(ExplorerAction::Status(tf(
+                    Msg::StIntelRefreshed,
+                    &[&b.to_string(), &o.to_string()],
+                )));
             }
             "remove" => self.actions.push(ExplorerAction::RemoveServer),
             "disconnect" => self.actions.push(ExplorerAction::DisconnectServer(None)),

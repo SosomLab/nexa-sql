@@ -357,6 +357,8 @@ pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
         ) {
             out.extend(rs.rows.iter().map(|r| col(r, 0)).filter(|n| !n.is_empty()).map(mk));
         }
+        // `DUAL`(SYS 테이블 · 위 LIKE에 안 걸림) — 사전 버킷이 읽히면 정적 표가 숨으므로 여기 넣는다(09-24 4-DBMS 검토).
+        out.push(mk("DUAL".to_string()));
         return Ok(out);
     }
     let sql = match s.dialect() {
@@ -1044,6 +1046,35 @@ pub fn columns(s: &mut dyn Session, schema: &str, table: &str) -> Result<Vec<Col
             nullable: truthy(&col(r, 5)),
             position: r.get(6).map(cell_i64).unwrap_or(0),
             default: col(r, 7),
+        })
+        .collect())
+}
+
+/// ★ 패키지 멤버(Oracle · 09-24 패키지 테이블 함수 ②): 이름 · 종류(`PROCEDURE` · `FUNCTION → 타입` · `TABLE FUNCTION → 타입` =
+/// `PIPELINED` 또는 컬렉션 반환 = FROM 뒤에 쓸 수 있음) · 순번 = `subprogram_id`. 메타에는 그 패키지의 "컬럼"으로 든다(단일 원천 ·
+/// 지연 적재·회수 그대로). 패키지가 없는 DBMS = 빈 목록.
+pub fn package_members(
+    s: &mut dyn Session,
+    owner: &str,
+    package: &str,
+) -> Result<Vec<ColumnInfo>, DbError> {
+    if s.dialect() != Dialect::Oracle {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT p.procedure_name, CASE WHEN a.data_type IS NULL THEN 'PROCEDURE' WHEN p.pipelined = 'YES' OR a.data_type IN ('TABLE', 'PL/SQL TABLE', 'VARRAY') THEN 'TABLE FUNCTION → ' || a.data_type ELSE 'FUNCTION → ' || a.data_type END, p.subprogram_id FROM all_procedures p LEFT JOIN all_arguments a ON a.owner = p.owner AND a.package_name = p.object_name AND a.subprogram_id = p.subprogram_id AND a.position = 0 AND a.argument_name IS NULL WHERE p.owner = {} AND p.object_name = {} AND p.object_type = 'PACKAGE' AND p.procedure_name IS NOT NULL ORDER BY p.subprogram_id",
+        lit(owner),
+        lit(package)
+    );
+    Ok(query(s, &sql)?
+        .rows
+        .iter()
+        .map(|r| ColumnInfo {
+            name: col(r, 0),
+            data_type: col(r, 1),
+            nullable: false,
+            position: r.get(2).map(cell_i64).unwrap_or(0),
+            default: String::new(),
         })
         .collect())
 }

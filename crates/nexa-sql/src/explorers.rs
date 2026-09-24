@@ -504,6 +504,37 @@ impl ExplorerSet {
         self.panes[i].ex.request_objects(schema);
     }
 
+    /// ★ 명시 메타 갱신(T-188): `spec`의 서버(없으면 보이는 칸) · `all` = 전 서버. 반환 = (표시한 버킷, 비운 객체) 합.
+    pub(crate) fn refresh_meta(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        schema: Option<&str>,
+        all: bool,
+    ) -> (usize, usize) {
+        if all {
+            let mut total = (0, 0);
+            for p in &mut self.panes {
+                let r = p.ex.refresh_meta(None);
+                total.0 += r.0;
+                total.1 += r.1;
+            }
+            return total;
+        }
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        match self.panes.get_mut(i) {
+            Some(p) => p.ex.refresh_meta(schema),
+            None => (0, 0),
+        }
+    }
+
+    /// `spec` 서버의 현재 스키마(서버가 말한 값).
+    pub(crate) fn current_schema(&self, spec: Option<&ConnectSpec>) -> Option<String> {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes
+            .get(i)
+            .and_then(|p| p.ex.server_schema().map(str::to_string))
+    }
+
     pub(crate) fn set_preload(&mut self, on: bool) {
         self.preload = on;
         for p in &mut self.panes {

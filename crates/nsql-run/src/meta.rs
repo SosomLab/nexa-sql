@@ -167,8 +167,19 @@ pub struct NewDetail {
 pub enum Coverage {
     Missing,
     Loading,
-    Loaded { at: u64, n: usize },
-    Error { message: String, at: u64 },
+    Loaded {
+        at: u64,
+        n: usize,
+    },
+    /// ★ 낡음(79 §3 · 명시 갱신 뒤): 목록은 살아 있어 소비자는 `Loaded`처럼 쓰고, 다음 요청 때 다시 읽는다(깜빡임 0).
+    Stale {
+        at: u64,
+        n: usize,
+    },
+    Error {
+        message: String,
+        at: u64,
+    },
 }
 
 /// 버킷 — 객체 id 목록은 **소문자 이름 정렬**(접두 이진 탐색).
@@ -588,6 +599,53 @@ impl MetaStore {
         true
     }
 
+    /// ★ 명시 갱신(79 §3 · T-187): `schema`(None = 전부)의 `Loaded` 버킷을 `Stale`로 — 목록은 살아 있어 완성은 후보를 내고,
+    /// 다음 요청(`request_objects`)이 다시 읽는다. 반환 = 표시한 버킷 수.
+    pub fn mark_stale(&mut self, schema: Option<&str>) -> usize {
+        let want = schema.and_then(|s| self.names.find(s));
+        if schema.is_some() && want.is_none() {
+            return 0;
+        }
+        let mut s = self.edit();
+        let mut n = 0;
+        for ((sc, _), b) in s.buckets.iter_mut() {
+            if want.is_some_and(|w| w != *sc) {
+                continue;
+            }
+            if let Coverage::Loaded { at, n: cnt } = b.coverage {
+                let mut nb = (**b).clone();
+                nb.coverage = Coverage::Stale { at, n: cnt };
+                *b = Arc::new(nb);
+                n += 1;
+            }
+        }
+        self.commit(s);
+        n
+    }
+
+    /// ★ 명시 갱신: `schema`(None = 전부) 객체의 컬럼·상세를 `Unknown`으로(목록은 유지 · 다음 요청 때 다시). 반환 = 비운 객체 수.
+    pub fn mark_columns_unknown(&mut self, schema: Option<&str>) -> usize {
+        let want = schema.and_then(|s| self.names.find(s));
+        if schema.is_some() && want.is_none() {
+            return 0;
+        }
+        let mut s = self.edit();
+        let mut n = 0;
+        for i in 0..s.cols.len() {
+            let sc = s.objs[i].schema;
+            if want.is_some_and(|w| w != sc) {
+                continue;
+            }
+            if matches!(s.cols[i], ColState::Loaded { .. }) {
+                s.cols[i] = ColState::Unknown;
+                s.details.remove(&ObjId(i as u32));
+                n += 1;
+            }
+        }
+        self.commit(s);
+        n
+    }
+
     /// 상한 변경.
     pub fn set_max_bytes(&mut self, n: usize) {
         self.max_bytes = n.max(1 << 20);
@@ -765,6 +823,58 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 명시 갱신(79 §3 · T-187): `mark_stale`는 Loaded → Stale(목록·접두 조회는 그대로) · `mark_columns_unknown`은 컬럼·상세를 비움 ·
+    /// 스키마를 주면 그 스키마만 · 모르는 스키마 = 0.
+    #[test]
+    fn mark_stale_and_columns_unknown_keep_lists() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(&["hr".into(), "fin".into()], Some("hr"));
+        m.load_bucket("hr", ObjectKind::Table, &[obj("EMP", 1)], 1);
+        m.load_bucket("fin", ObjectKind::Table, &[obj("ACCT", 1)], 1);
+        let emp = m
+            .snapshot()
+            .lookup(&m.names, Some("hr"), "EMP")
+            .expect("emp");
+        m.set_columns(
+            emp,
+            &[NewCol {
+                name: "EMPNO".into(),
+                data_type: "NUMBER".into(),
+                ..Default::default()
+            }],
+            1,
+        );
+        assert_eq!(m.mark_stale(Some("nope")), 0);
+        assert_eq!(m.mark_stale(Some("hr")), 1, "hr 버킷 하나");
+        let s = m.snapshot();
+        let hr = m.names.find("hr").expect("hr");
+        let fin = m.names.find("fin").expect("fin");
+        assert!(matches!(
+            s.coverage(hr, ObjectKind::Table),
+            Coverage::Stale { n: 1, .. }
+        ));
+        assert!(matches!(
+            s.coverage(fin, ObjectKind::Table),
+            Coverage::Loaded { .. }
+        ));
+        assert_eq!(
+            s.prefix(&m.names, hr, ObjectKind::Table, "e", 10).len(),
+            1,
+            "목록은 그대로"
+        );
+        assert!(matches!(s.columns(emp), ColState::Loaded { .. }));
+        assert_eq!(m.mark_columns_unknown(Some("fin")), 0, "fin은 컬럼 없음");
+        assert_eq!(m.mark_columns_unknown(None), 1);
+        assert!(matches!(m.snapshot().columns(emp), ColState::Unknown));
+        // 다시 읽으면 Loaded로.
+        m.mark_loading("hr", ObjectKind::Table);
+        m.load_bucket("hr", ObjectKind::Table, &[obj("EMP", 1)], 2);
+        assert!(matches!(
+            m.snapshot().coverage(hr, ObjectKind::Table),
+            Coverage::Loaded { .. }
+        ));
+    }
 
     fn obj(name: &str, modified: u64) -> NewObj {
         NewObj {

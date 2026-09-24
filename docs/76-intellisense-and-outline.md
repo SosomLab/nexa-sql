@@ -128,7 +128,7 @@
 | 스키마 | Objects(읽은 수) | — |
 | 키워드 · 문서 낱말 · 조각 | 종류 | 조각 = 컬럼 목록 |
 
-데이터 = `nsql_catalog::table_detail`(제약 P/U/R/C + 인덱스) → `Req::DetailMeta`(백그라운드 세션 · 급한 컬럼을 막지 않음) → `MetaStore::set_detail`. 팝업 항목 = `이름 : 타입` + 오른쪽 표식(PK/FK/UQ/NN) · 클릭 = 선택(카드) · 더블 클릭/Enter = 확정. 설정 `intel.detail_card` · `intel.detail_bg_alpha`(20 = 80 % 투명) · `intel.detail_text_alpha`(50) · `intel.popup_rows` 10.
+데이터 = `nsql_catalog::table_detail`(제약 P/U/R/C + 인덱스) → `Req::DetailMeta`(백그라운드 세션 · 급한 컬럼을 막지 않음) → `MetaStore::set_detail`. 팝업 항목 = `이름 : 타입` + 오른쪽 표식(PK/FK/UQ/NN) · 클릭 = 선택(카드) · 더블 클릭/Enter = 확정. 설정 `intel.detail_card` · `intel.detail_bg_alpha`(**투명도 %** · 기본 0 = 불투명 · 09-24 사용자 "투명도 0" · 처음엔 20) · `intel.detail_text_alpha`(0 · 처음엔 50) · `intel.popup_rows` 10 · ★ **카드 머무름** `intel.card_settle_ms`(150 · 09-24 "빠른 스크롤 중엔 누적 · 마지막 대상만") = hover 효과 규칙과 같은 구조(사건은 목표 덮어쓰기만 `note_hover` · 틱 `card_tick`이 머문 마지막 목표만 카드에 · 그때만 `DetailMeta` 선조회 · 첫 대상은 즉시 · 깨움 = 마지막 변경 + settle).
 
 ## 11. 정렬 기준 · 매칭 점수(09-24 · 사용자 "친숙한 정렬 · 필터 뒤는 점수 우선")
 
@@ -141,7 +141,7 @@
 
 `Expr` 문맥에서 문장의 모든 alias(비-CTE)에 대해 컬럼을 후보로(`Cand.qualifier` = alias · 오른쪽 열 = alias · `order` = alias 순서×1000 + 순번) · 안 읽은 테이블은 `NeedColumns`(급함)로 채우고 "불러오는 중". 확정(`Intel::pick_with(id, plain)`) = `qualify_columns != plain`이면 `alias.컬럼` — 호스트가 Alt 상태(`App.alt`)를 `plain`으로 넘긴다(Enter/Tab·더블 클릭 공통). 설정 `intel.qualify_columns`(on). 시험 `unqualified_columns_from_all_aliases_and_alt_plain`.
 
-## 13. 완성 목록 페이지 로딩 설계(09-24 · 사용자 "제한 200은 좋아 · 끝까지 스크롤하면 결과 그리드처럼 자동 추가 페치 · 끝에 읽는 상태 표시 · 메모리 점검·미사용 정리") — 📐 T-196
+## 13. 완성 목록 페이지 로딩 — ✅ 구현(§175 · T-196) · 설계(09-24 · 사용자 "제한 200은 좋아 · 끝까지 스크롤하면 결과 그리드처럼 자동 추가 페치 · 끝에 읽는 상태 표시 · 메모리 점검·미사용 정리") — 📐 T-196
 
 ### 13-1. 현상과 원인(BISCM 실측 · CLI `nsql run -c BISCM -`)
 - BISCM = 테이블 449 · 뷰 1(`VM4S_I002040`) · 함수 2 · 패키지 1 · 프로시저 72. FROM 자리 빈 접두에서 뷰가 안 보인 까닭 = ① 동점 정렬이 종류 우선(테이블 → 뷰)이라 뷰가 449개 뒤 ② `intel.max_items`(200)에서 잘림. ①은 같은 층 종류 무구분으로 고쳤고(§163 `kind_order` 0), ②가 이 절.
@@ -184,3 +184,18 @@
 
 ### 13-6. 구현 순서(T-196 · 작은 단계 셋)
 ① nexa-ctl: `take_reached_end()` · `replace_items()`(first·hover·위치 유지) · `close()`가 항목 해제 · 시험 3 → ② nexa-sql: `Intel.shown` · `extend()` · 끝 항목 글 두 가지("N개 더" / "불러오는 중…") · End = 전부 · 호스트 배선(`intel` 사건 뒤 `take_reached_end`) · 시험(BISCM 재현 = 449+1+72에서 두 페이지 뒤 `VM4S_I002040` 보임) → ③ 설정 `intel.max_total`(HIDDEN) · 39 §3 · 위키 · U-121. 결정 = **D-205**(끝 항목 = 비활성 안내 한 줄 · 그리드와 같은 글) · **D-206**(End = 전부 붙인 뒤 마지막 · 상한 `max_total`).
+
+## 14. 4-DBMS 절별 대상 검토(09-24 · 사용자 "오라클·MSSQL·Postgres·SQLite 각 clause 별로 정확한 대상이 표시되는지") — 실측 = CLI `nsql cat`/`nsql run`(BISCM · M4PLAN · Repository · Demo)
+
+| 절 / 자리 | Oracle(BISCM) | SQL Server(M4PLAN) | PostgreSQL(Repository) | SQLite(Demo) |
+|---|---|---|---|---|
+| 문장 시작 | 공통 키워드 + `ROWNUM`·`CONNECT BY`·`MERGE`… | + `TOP`·`CROSS APPLY`·`EXEC`·`GO` | + `ILIKE`·`LATERAL`·`ON CONFLICT`·`RETURNING` | + `PRAGMA`·`AUTOINCREMENT`·`ATTACH` |
+| `FROM \|` | 테이블 449·뷰 1·MV·시노님(층 0) → 함수 2·패키지 1(층 1~2 · 프로시저 72 제외) → 사전 `ALL_`/`DBA_`/`CDB_`/`V$`/`GV$` + **`DUAL`**(층 1 · 09-24 추가) · 스키마 43 | 테이블 215·뷰(층 0) → 테이블 반환 함수 `FN_TABLE_CO`(IF · 층 1 · 스칼라·프로시저 15 제외) → `sys.`/`INFORMATION_SCHEMA.` 사전 · 스키마 `dbo` | 테이블 178·뷰·MV(층 0) → `SETOF` 함수(층 1 · 프로시저 제외) → `pg_catalog.`/`information_schema.` 사전 · 스키마 `public` | 테이블 4·뷰(층 0) · `sqlite_master`·`sqlite_schema`… 정적 사전 · 스키마 `main` |
+| `FROM 스키마.\|` | 그 스키마 관계 + 함수·패키지(프로시저 제외) · `SYS.`는 사전 버킷 | `dbo.` 같음 · `sys.`/`INFORMATION_SCHEMA.` = 사전 접두 | `public.` 같음 · `pg_catalog.` = 사전 접두 | `main.` = 그대로 |
+| `FROM 스키마.테이블.\|` | 팝업 없음 · **`스키마.패키지.`** = 테이블 함수·함수(프로시저 제외 · `SP_MPS_PEGGING_PKG` = 프로시저 2 → FROM에서는 빔 · 식 자리에서 둘) | 팝업 없음 | 팝업 없음 | 팝업 없음 |
+| `alias.\|` · `테이블.\|` | 컬럼(`VARCHAR2(50)` · N/Y · 순번) | 컬럼(`varchar(100)`) | 컬럼(`character varying(50)`) | 컬럼(`INTEGER`·`TEXT`) |
+| SELECT/WHERE 식 | 전 alias 컬럼(`A.컬럼`/Alt) · 내장 함수 `ORACLE` 표 · `DBMS_*` 패키지 멤버(정적) · 사용자 패키지 멤버(사전) · 키워드 · 문서 낱말 | 내장 `MSSQL` 표 · 키워드 | 내장 `POSTGRES` 표 · 키워드 | 내장 `SQLITE` 표 · 키워드 |
+| `*` / `A.*` | 모든 컬럼 (N) 조각 | 같음 | 같음 | 같음 |
+| `INSERT INTO t (` | 컬럼 목록 조각 | 같음 | 같음 | 같음 |
+
+고친 것(§183): ① Oracle `DUAL`을 사전 결과에 넣음(정적 표는 사전이 읽히면 숨어 `FROM DUAL`이 완성되지 않았다) ② 방언 키워드 표 4개 + `keywords_for(dialect)`(공통과 중복 없음). 남은 것 = SQLite `temp.` 스키마 · MSSQL 임시 테이블 `#t` · PG 다른 스키마의 함수(현재 스키마만 미리 읽음 · `스키마.`로 읽힘) · Oracle 컬렉션 반환(비파이프라인) 함수 판정.

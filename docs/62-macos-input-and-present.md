@@ -112,5 +112,5 @@
 
 | # | 결정 | 권장 |
 |---|---|---|
-| **D-133** | 맥 화면 내보내기(§2) — ① softbuffer 디스플레이 색 공간 패치 ② 자체 IOSurface 내보내기(T-136 D6과 함께) ③ 그대로 → **② 구현됨(09-21 · §2-1 · 설정 `gfx.mac_present`)** · 남은 질문 = **기본값을 `iosurface`로 바꿀 것인가** | 며칠 써 보고 이상 없으면 전환(present 36 → 2.9 ms) · Apple Silicon 확인 뒤 |
+| **D-133** | 맥 화면 내보내기(§2) — ① softbuffer 디스플레이 색 공간 패치 ② 자체 IOSurface 내보내기(T-136 D6과 함께) ③ 그대로 → **② 구현됨(09-21 · §2-1 · 설정 `gfx.mac_present`)** → ✅ **09-24 기본값 `iosurface`로 전환**(100차 §178 · 사용자 "팝업 이동 반응 느림" · Debug(의존 최적화) 프레임 48 → 13.9 ms · present 36 → 3.1 ms · 만들기 실패 = softbuffer 폴백 · 빈 창이면 설정으로 되돌림) | Apple Silicon은 미확인(첫 실기 때 `[frames] present backend` 줄과 화면 확인) |
 | **D-134** | `input.hangul_compose` 기본값 — auto(권장 · 구현됨) / system | auto |

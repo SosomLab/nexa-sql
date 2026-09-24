@@ -3,7 +3,7 @@
 //! 이 창은 표본을 받아 그리기만 한다(닫혀 있으면 아무 비용도 없다).
 
 use crate::memstat::{fmt, Cat, Sample};
-use nexa_ctl::controls::{LabelSide, Switch};
+use nexa_ctl::controls::{Button, LabelSide, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
@@ -11,6 +11,7 @@ use nexa_ctl::theme::{Color, FontPrefs, SlotFont, Theme};
 use nexa_ctl::{InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -22,6 +23,8 @@ pub(crate) enum MemWinAction {
     Paint,
     /// 최상위 스위치가 바뀌었다(설정 `mem.always_on_top`에 반영은 호스트).
     Toggled(bool),
+    /// "힙 정리" 버튼(호스트가 `memtrim::trim` + 즉시 표본).
+    Trim,
     Close,
     None,
 }
@@ -35,6 +38,10 @@ pub(crate) struct MemWin {
     cursor: (i32, i32),
     on_top: bool,
     top_switch: Switch,
+    /// 힙 정리 버튼(80 §7 · T-197 잔여).
+    trim_btn: Button,
+    /// 풋프린트 이력(최근 60 표본 · 스파크라인 · 480 B).
+    hist: VecDeque<u64>,
     sample: Option<Sample>,
     /// 갱신 주기(ms · 바닥 안내 글).
     every_ms: u64,
@@ -51,6 +58,8 @@ impl MemWin {
             cursor: (-1, -1),
             on_top: false,
             top_switch: Switch::new(t(Msg::LblLogSwTop), false).with_label_side(LabelSide::Right),
+            trim_btn: Button::new(t(Msg::MemTrim)),
+            hist: VecDeque::with_capacity(60),
             sample: None,
             every_ms: 1000,
         }
@@ -105,8 +114,9 @@ impl MemWin {
         }
         self.surface = None;
         self.window = None;
-        // 표본은 창과 함께 버린다(닫힌 뒤 상주 0 · docs/80 §5).
+        // 표본·이력은 창과 함께 버린다(닫힌 뒤 상주 0 · docs/80 §5).
         self.sample = None;
+        self.hist = VecDeque::new();
     }
 
     pub(crate) fn set_memo(&mut self, m: crate::wingeom::Memo) {
@@ -119,6 +129,10 @@ impl MemWin {
 
     pub(crate) fn is_open(&self) -> bool {
         self.window.is_some()
+    }
+
+    pub(crate) fn window(&self) -> Option<&Window> {
+        self.window.as_deref()
     }
 
     pub(crate) fn is(&self, id: WindowId) -> bool {
@@ -150,6 +164,10 @@ impl MemWin {
 
     /// 새 표본(호스트가 `mem.refresh_ms`마다) — 그리기 요청까지.
     pub(crate) fn set_sample(&mut self, s: Sample, every_ms: u64) {
+        if self.hist.len() >= 60 {
+            self.hist.pop_front();
+        }
+        self.hist.push_back(s.sys.footprint);
         self.sample = Some(s);
         self.every_ms = every_ms;
         self.redraw();
@@ -179,13 +197,12 @@ impl MemWin {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
                 let mut inv = Invalidations::default();
-                self.top_switch.on_event(
-                    &InputEvent::MouseMove {
-                        x: self.cursor.0,
-                        y: self.cursor.1,
-                    },
-                    &mut inv,
-                );
+                let mv = InputEvent::MouseMove {
+                    x: self.cursor.0,
+                    y: self.cursor.1,
+                };
+                self.top_switch.on_event(&mv, &mut inv);
+                self.trim_btn.on_event(&mv, &mut inv);
                 if !inv.is_empty() {
                     self.redraw();
                 }
@@ -213,6 +230,13 @@ impl MemWin {
                 // 마우스 라우팅 규칙: 눌림은 커서 아래 컨트롤에만 · 뗌은 늘(눌린 상태를 풀게).
                 if up || self.top_switch.bounds().contains(p) {
                     self.top_switch.on_event(&ev, &mut inv);
+                }
+                if up || self.trim_btn.bounds().contains(p) {
+                    self.trim_btn.on_event(&ev, &mut inv);
+                }
+                if self.trim_btn.take_clicked() {
+                    self.redraw();
+                    return MemWinAction::Trim;
                 }
                 if let Some(on) = self.top_switch.take_toggled() {
                     self.on_top = on;
@@ -298,6 +322,26 @@ impl MemWin {
                 &mut inv,
             );
             self.top_switch.paint(&mut dc, th);
+            // 힙 정리 버튼(스위치 왼쪽) — 할당자가 들고 있는 빈 조각을 OS에 돌려준다(`memtrim`).
+            let btn_w = px(96.0);
+            let bx = wi - pad - sw_w - px(12.0) - btn_w;
+            self.trim_btn
+                .set_bounds(Rect::new(bx, y - px(2.0), btn_w, sw_h), &mut inv);
+            self.trim_btn.paint(&mut dc, th);
+            // 스파크라인(최근 60 표본 · 풋프린트 · 버튼 왼쪽) — 막대로(백엔드 무관).
+            if self.hist.len() >= 2 {
+                let sp_w = px(150.0);
+                let area = Rect::new(bx - px(12.0) - sp_w, y - px(2.0), sp_w, sw_h);
+                dc.fill_rect(area, th.field_bg);
+                let max = self.hist.iter().copied().max().unwrap_or(1).max(1);
+                let step = (area.w as f32 / 60.0).max(1.0);
+                for (i, v) in self.hist.iter().enumerate() {
+                    let h = ((*v as f64 / max as f64) * f64::from(area.h - 2)).round() as i32;
+                    let x0 = area.x + (i as f32 * step).round() as i32;
+                    let w = (step - 1.0).max(1.0) as i32;
+                    dc.fill_rect(Rect::new(x0, area.bottom() - 1 - h, w, h.max(1)), th.accent);
+                }
+            }
             y += th_txt + px(10.0);
 
             // ── 총량 ───────────────────────────────────────────────────────────────

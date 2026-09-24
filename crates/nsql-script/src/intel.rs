@@ -53,6 +53,18 @@ pub struct Context {
     pub paren_owner: Option<String>,
     /// `paren_owner` 앞 낱말이 `INTO`였는가(`INSERT INTO t (` = 컬럼 목록 자리).
     pub paren_into: bool,
+    /// ★ 캐럿 바로 앞이 `*`/`alias.*`(SELECT 목록 · 09-24 "모든 컬럼" 조각) — `replace`는 그 별표(와 별칭) 전체를 덮는다.
+    pub star: Option<Star>,
+    /// ★ 관계 자리의 멤버(`FROM 스키마.|` · `FROM 스키마.X.|`) — FROM 규칙이 적용된다: 프로시저·스칼라 함수 제외 · 두 단계 사슬의 `X`는
+    /// 패키지면 멤버(테이블 함수) · 테이블·뷰면 팝업 없음(§165 정정 · 09-24 패키지 테이블 함수 검토 ① · SQL Server 프로시저 지적).
+    pub from_chain: bool,
+}
+
+/// `*` 자리 정보.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Star {
+    /// `A.*`의 `A`(없으면 bare `*`).
+    pub qualifier: Option<String>,
 }
 
 const RELATION_AFTER: &[&str] = &[
@@ -202,6 +214,77 @@ pub const KEYWORDS: &[&str] = &[
     "DESCRIBE",
 ];
 
+/// 방언 고유 키워드(09-24 4-DBMS 검토) — 공통 표 뒤에 붙는다(`keywords_for`).
+const ORACLE_KEYWORDS: &[&str] = &[
+    "ROWNUM",
+    "CONNECT BY",
+    "START WITH",
+    "PRIOR",
+    "NVL",
+    "DECODE",
+    "PIVOT",
+    "UNPIVOT",
+    "MERGE",
+    "RETURNING INTO",
+    "FETCH FIRST",
+    "ROWS ONLY",
+    "SYSDATE",
+];
+const MSSQL_KEYWORDS: &[&str] = &[
+    "TOP",
+    "CROSS APPLY",
+    "OUTER APPLY",
+    "WITH (NOLOCK)",
+    "IDENTITY",
+    "GO",
+    "EXEC",
+    "OUTPUT",
+    "PIVOT",
+    "UNPIVOT",
+    "OFFSET",
+    "FETCH NEXT",
+    "GETDATE()",
+];
+const POSTGRES_KEYWORDS: &[&str] = &[
+    "ILIKE",
+    "LATERAL",
+    "ON CONFLICT",
+    "DO NOTHING",
+    "DO UPDATE",
+    "RETURNING",
+    "LIMIT",
+    "OFFSET",
+    "ARRAY",
+    "UNNEST",
+    "NOW()",
+];
+const SQLITE_KEYWORDS: &[&str] = &[
+    "PRAGMA",
+    "AUTOINCREMENT",
+    "WITHOUT ROWID",
+    "LIMIT",
+    "OFFSET",
+    "GLOB",
+    "ATTACH",
+    "DETACH",
+    "VACUUM",
+];
+
+/// 키워드 후보 = 공통 표 + 방언 표(중복은 뺀다). 방언을 모르면 공통 표만.
+pub fn keywords_for(d: Option<Dialect>) -> impl Iterator<Item = &'static str> {
+    let extra: &'static [&'static str] = match d {
+        Some(Dialect::Oracle) => ORACLE_KEYWORDS,
+        Some(Dialect::Mssql) => MSSQL_KEYWORDS,
+        Some(Dialect::Postgres) => POSTGRES_KEYWORDS,
+        Some(Dialect::Sqlite) => SQLITE_KEYWORDS,
+        _ => &[],
+    };
+    KEYWORDS
+        .iter()
+        .copied()
+        .chain(extra.iter().copied().filter(|k| !KEYWORDS.contains(k)))
+}
+
 fn is_word(w: &Word<'_>, kw: &str) -> bool {
     !w.quoted && w.text.eq_ignore_ascii_case(kw)
 }
@@ -228,7 +311,7 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         s -= 1;
     }
     let prefix = src[s..caret].to_string();
-    let replace = s..caret;
+    let mut replace = s..caret;
     let none = Context {
         kind: CtxKind::None,
         prefix: prefix.clone(),
@@ -237,6 +320,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         statement: 0..0,
         paren_owner: None,
         paren_into: false,
+        star: None,
+        from_chain: false,
     };
     let Some(item) = statement_at_in(src, caret, dialect) else {
         // 문장이 없으면(빈 문서) 시작 문맥.
@@ -281,6 +366,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             statement: stmt,
             paren_owner: None,
             paren_into: false,
+            star: None,
+            from_chain: false,
         };
     }
     let (paren_owner, paren_into) = paren_owner(&before).unwrap_or((None, false));
@@ -313,31 +400,44 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             RELATION_AFTER.iter().any(|kw| is_word(w, kw))
                 || (w.text == "," && in_from_list(chain_head))
         });
-        if rel_pos && q.contains('.') {
+        let from_chain = rel_pos;
+        // ★ 이름 없는 `.`(`ㅁ.`처럼 식별자가 아닌 글자 뒤 · 사용자 09-24 "별칭이 아니면 아무것도 보이지 않아야") = 고를 것 없음.
+        if q.is_empty() {
             return Context {
                 kind: CtxKind::None,
-                prefix,
-                replace,
-                aliases,
-                statement: stmt,
-                paren_owner,
-                paren_into,
+                ..none
             };
         }
         return Context {
-            kind: if q.is_empty() {
-                CtxKind::Expr
-            } else {
-                CtxKind::Member { qualifier: q }
-            },
+            kind: CtxKind::Member { qualifier: q },
             prefix,
             replace,
             aliases,
             statement: stmt,
             paren_owner,
             paren_into,
+            star: None,
+            from_chain,
         };
     }
+    // ★ `*` / `alias.*` 바로 뒤(접두 없음 · `COUNT(*`는 제외): "모든 컬럼" 조각 자리 — 치환 구간 = 별표(와 별칭) 전체.
+    let star = if prefix.is_empty() && last.text == "*" && last.end == rel {
+        let n = before.len();
+        let after_paren = n >= 2 && before[n - 2].text == "(";
+        if after_paren {
+            None
+        } else if n >= 3 && before[n - 2].text == "." && is_name(before[n - 3]) {
+            replace = (stmt.start + before[n - 3].start)..caret;
+            Some(Star {
+                qualifier: Some(before[n - 3].text.to_string()),
+            })
+        } else {
+            replace = (stmt.start + last.start)..caret;
+            Some(Star { qualifier: None })
+        }
+    } else {
+        None
+    };
     // 관계 자리: 바로 앞 낱말이 FROM/JOIN/… 이거나, 콤마 앞 관계 목록이 이어지는 중.
     let relation = RELATION_AFTER.iter().any(|k| is_word(last, k))
         || (last.text == "," && in_from_list(&before))
@@ -351,6 +451,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
             statement: stmt,
             paren_owner,
             paren_into,
+            star: None,
+            from_chain: false,
         };
     }
     Context {
@@ -361,6 +463,8 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         statement: stmt,
         paren_owner,
         paren_into,
+        star,
+        from_chain: false,
     }
 }
 
@@ -862,6 +966,9 @@ pub fn rank(
             Some((s, m, c))
         })
         .collect();
+    // ★ 빈 접두 = 둘러보기: 길이 기준을 빼고 **이름순**(사용자 09-24 "아무 조건 없이 테이블·뷰·테이블 순서?" — 길이순이라 12자 이름들이
+    //   먼저 나와 무작위처럼 보였다). 접두가 있으면 짧은 것 = 더 가까운 일치라 길이 → 이름 그대로.
+    let browse = query.is_empty();
     scored.sort_by(|a, b| {
         (b.0 / 100)
             .cmp(&(a.0 / 100))
@@ -869,9 +976,13 @@ pub fn rank(
             .then(b.0.cmp(&a.0))
             .then(a.1.cmp(&b.1))
             .then(a.2.source.cmp(&b.2.source))
-            // ★ 둘러보기 순서(컬럼 순번 · 객체 종류 · 키워드 표 순서 · 09-24) → 길이 → 이름.
+            // ★ 둘러보기 순서(컬럼 순번 · 객체 종류 · 키워드 표 순서 · 09-24) → (접두 있을 때만) 길이 → 이름.
             .then(a.2.order.cmp(&b.2.order))
-            .then(a.2.text.len().cmp(&b.2.text.len()))
+            .then(if browse {
+                std::cmp::Ordering::Equal
+            } else {
+                a.2.text.len().cmp(&b.2.text.len())
+            })
             .then(a.2.text.to_lowercase().cmp(&b.2.text.to_lowercase()))
     });
     // 같은 글(대소문자 무시)은 앞 것만(출처가 달라도 — 테이블 `EMP`가 있으면 문서 단어 `emp`는 숨긴다).
@@ -926,6 +1037,55 @@ pub fn apply_case(text: &str, prefix: &str, mode: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 방언 키워드(09-24): 공통 + 방언 고유 · 중복 없음 · 모르면 공통만.
+    #[test]
+    fn dialect_keywords_extend_common_without_duplicates() {
+        let ms: Vec<&str> = keywords_for(Some(Dialect::Mssql)).collect();
+        assert!(ms.contains(&"TOP") && ms.contains(&"CROSS APPLY") && !ms.contains(&"ROWNUM"));
+        let ora: Vec<&str> = keywords_for(Some(Dialect::Oracle)).collect();
+        assert!(ora.contains(&"ROWNUM") && ora.contains(&"CONNECT BY") && !ora.contains(&"TOP"));
+        assert_eq!(
+            ora.iter().filter(|k| **k == "FETCH FIRST").count(),
+            1,
+            "공통 표에 있는 것은 한 번만"
+        );
+        let pg: Vec<&str> = keywords_for(Some(Dialect::Postgres)).collect();
+        assert!(pg.contains(&"ILIKE") && pg.contains(&"ON CONFLICT"));
+        let lite: Vec<&str> = keywords_for(Some(Dialect::Sqlite)).collect();
+        assert!(lite.contains(&"PRAGMA"));
+        assert_eq!(keywords_for(None).count(), KEYWORDS.len());
+    }
+
+    /// ★ 빈 접두 = 이름순(길이 무시 · 사용자 09-24) · 접두가 있으면 같은 등급에서 짧은 것 먼저.
+    #[test]
+    fn browse_is_alphabetical_but_typed_prefers_shorter() {
+        let tbl = |n: &str| Cand {
+            text: n.into(),
+            kind: CandKind::Table,
+            detail: String::new(),
+            source: 3,
+            tag: 0,
+            mark: String::new(),
+            order: 0,
+            qualifier: String::new(),
+            layer: 0,
+        };
+        let cands = vec![
+            tbl("VM4S_I002040"),
+            tbl("APS_SCHE_IN_BOD"),
+            tbl("GTT_PEG_CALC"),
+        ];
+        let r = rank(cands, "", MatchMode::Fuzzy, &[], 10);
+        let names: Vec<&str> = r.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["APS_SCHE_IN_BOD", "GTT_PEG_CALC", "VM4S_I002040"]
+        );
+        let cands = vec![tbl("M4S_I002040_LONG"), tbl("M4S_I002040")];
+        let r = rank(cands, "M4S", MatchMode::Fuzzy, &[], 10);
+        assert_eq!(r[0].text, "M4S_I002040", "접두 = 짧은 것 먼저");
+    }
 
     /// 정렬 기준(09-24): 접두 없음 = 출처 → 둘러보기 순서(순번·종류·표 순) → 이름 · 접두 있음 = 점수 → 최근 → 출처 → 순서.
     #[test]
@@ -1059,17 +1219,24 @@ mod tests {
         let _ = context_at(&s, s.len(), Some(Dialect::Postgres));
     }
 
-    /// ★ FROM 자리는 테이블 수준까지(사용자 09-24): `FROM 스키마.테이블.|` = 없음 · `FROM 스키마.|` = 그 스키마 객체 · SELECT 절의
-    /// `스키마.테이블.|`(alias 없이 컬럼) = 종전대로 Member.
+    /// ★ FROM 자리의 두 단계 사슬(사용자 09-24): `FROM 스키마.X.|` = Member + `from_chain`(호스트가 X = 패키지면 멤버 · 테이블이면
+    /// 팝업 없음) · `FROM 스키마.|` = 그 스키마 객체 · SELECT 절의 `스키마.테이블.|` = 종전대로 Member(사슬 아님).
     #[test]
     fn from_schema_table_dot_has_no_completion() {
         let c = ctx("SELECT * FROM ORDDATA.ORDDCM_DOCS_USR.|");
-        assert_eq!(c.kind, CtxKind::None);
+        assert_eq!(
+            c.kind,
+            CtxKind::Member {
+                qualifier: "ORDDATA.ORDDCM_DOCS_USR".into()
+            }
+        );
+        assert!(c.from_chain);
         let c = ctx("SELECT * FROM emp e JOIN sch.dept.|");
-        assert_eq!(c.kind, CtxKind::None);
+        assert!(c.from_chain);
         let c = ctx("SELECT * FROM emp, sch.dept.|");
-        assert_eq!(c.kind, CtxKind::None);
+        assert!(c.from_chain);
         let c = ctx("SELECT * FROM ORDDATA.|");
+        assert!(c.from_chain, "한 단계라도 FROM 자리의 멤버");
         assert_eq!(
             c.kind,
             CtxKind::Member {
@@ -1084,12 +1251,44 @@ mod tests {
             }
         );
         let c = ctx("SELECT * FROM sch.emp WHERE sch.emp.|");
+        assert!(!c.from_chain);
         assert_eq!(
             c.kind,
             CtxKind::Member {
                 qualifier: "sch.emp".into()
             }
         );
+    }
+
+    /// ★ `*`/`A.*` 자리(사용자 09-24 "모든 컬럼"): 별칭·치환 구간 · `COUNT(*`는 아님 · `*` 뒤에 글자가 오면 아님.
+    #[test]
+    fn star_context_and_replace_span() {
+        // 이름 없는 `.`(비식별 글자 `ㅁ` 뒤) = 없음(사용자 09-24 · 종전엔 식 문맥으로 흘러 별칭 컬럼 전체가 떴다).
+        let src = "SELECT A.*\n, ㅁ. FROM emp A";
+        let c = context_at(
+            src,
+            src.find("ㅁ.").unwrap() + "ㅁ.".len(),
+            Some(Dialect::Oracle),
+        );
+        assert_eq!(c.kind, CtxKind::None);
+        let src = "SELECT A.* FROM emp A";
+        let c = context_at(src, 10, Some(Dialect::Oracle));
+        assert_eq!(c.kind, CtxKind::Expr);
+        assert_eq!(
+            c.star.as_ref().and_then(|s| s.qualifier.as_deref()),
+            Some("A")
+        );
+        assert_eq!(&src[c.replace.start..c.replace.end], "A.*");
+        let src = "SELECT * FROM emp";
+        let c = context_at(src, 8, Some(Dialect::Oracle));
+        assert_eq!(c.star, Some(Star { qualifier: None }));
+        assert_eq!(&src[c.replace.start..c.replace.end], "*");
+        let src = "SELECT COUNT(* FROM emp";
+        let c = context_at(src, 14, Some(Dialect::Oracle));
+        assert!(c.star.is_none(), "COUNT(*는 아님");
+        let src = "SELECT * FROM emp";
+        let c = context_at(src, 7, Some(Dialect::Oracle));
+        assert!(c.star.is_none(), "별표 앞");
     }
 
     #[test]

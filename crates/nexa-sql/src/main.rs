@@ -1954,6 +1954,10 @@ impl App {
             let live: Vec<WindowId> = [
                 self.window.as_deref(),
                 self.log_win.window(),
+                self.txlog_win.window(),
+                self.sessions_win.window(),
+                self.vars_win.window(),
+                self.mem_win.window(),
                 self.colors_win.window(),
                 self.keys_win.window(),
                 self.prefs_win.window(),
@@ -7046,6 +7050,9 @@ impl App {
             "edit.swap_line_down" => self.editor_cmd(EditCommand::SwapLinesDown),
             "edit.toggle_comment" => self.editor_cmd(EditCommand::ToggleComment),
             "edit.toggle_block_comment" => self.editor_cmd(EditCommand::ToggleBlockComment),
+            "intel.refresh" | "intel.refresh_server" | "intel.refresh_all" => {
+                self.intel_refresh(id)
+            }
             "edit.indent" => self.editor_cmd(EditCommand::Indent),
             "edit.unindent" => self.editor_cmd(EditCommand::Unindent),
             "edit.select_line" => self.editor_cmd(EditCommand::SelectLines),
@@ -9435,7 +9442,7 @@ impl App {
         for s in self.intel.take_need_objects() {
             self.explorer.request_objects(spec.as_ref(), &s);
         }
-        self.intel_card_prefetch();
+        self.intel_card_settle();
         // 예산 초과 = 로그 창 한 줄(개발자 상세 · D-202의 근거).
         if let Some((n, ms)) = self.intel.take_over_budget() {
             self.log_win.push(LogEntry::new(
@@ -9452,6 +9459,32 @@ impl App {
     }
 
     /// 상세 카드가 쓸 메타(테이블 상세·컬럼)를 미리 요청(강조 행이 바뀔 때 · 이미 있으면 0 · 09-24).
+    /// ★ 인텔리센스 캐시 명시 갱신(79 §4 · T-188): 현재 스키마 / 이 서버 / 전 서버 — 버킷 `Stale`·컬럼 `Unknown` + 그 스키마(전부면
+    /// 현재 스키마·사전) 즉시 다시 읽기 · 상태줄 · 열린 팝업은 닫는다(다음 요청이 새 것으로).
+    fn intel_refresh(&mut self, id: &str) {
+        let spec = self.sess.spec.clone();
+        let (schema, all) = match id {
+            "intel.refresh_all" => (None, true),
+            "intel.refresh_server" => (None, false),
+            _ => (self.explorer.current_schema(spec.as_ref()), false),
+        };
+        let (b, o) = self
+            .explorer
+            .refresh_meta(spec.as_ref(), schema.as_deref(), all);
+        self.intel.close();
+        self.sess.status = tf(Msg::StIntelRefreshed, &[&b.to_string(), &o.to_string()]);
+        self.redraw();
+    }
+
+    /// 강조 행이 바뀐 뒤: 목표만 적고, 머문 대상이 넘어왔을 때만 선조회(빠른 스크롤 중 서버 상세 질의 0 · 09-24).
+    fn intel_card_settle(&mut self) {
+        let now = Instant::now();
+        self.intel.note_hover(now);
+        if self.intel.card_tick(now) {
+            self.intel_card_prefetch();
+        }
+    }
+
     fn intel_card_prefetch(&mut self) {
         if !self.intel.cfg().detail_card {
             return;
@@ -9761,6 +9794,11 @@ impl App {
                     ),
                     item("edit.toggle_comment", Msg::MnToggleComment),
                     item("edit.toggle_block_comment", Msg::MnToggleBlockComment),
+                    MenuEntry::Separator,
+                    // 인텔리센스 캐시 새로 고침(79 §4 · 현재 스키마 · 이 서버 · 전 서버).
+                    item("intel.refresh", Msg::MnIntelRefresh),
+                    item("intel.refresh_server", Msg::MnIntelRefreshServer),
+                    item("intel.refresh_all", Msg::MnIntelRefreshAll),
                     MenuEntry::Separator,
                     // 북마크(docs/69 §6-1).
                     MenuEntry::sub(
@@ -10181,6 +10219,9 @@ impl App {
             ("edit.swap_line_down", Msg::MnSwapLineDown),
             ("edit.toggle_comment", Msg::MnToggleComment),
             ("edit.toggle_block_comment", Msg::MnToggleBlockComment),
+            ("intel.refresh", Msg::MnIntelRefresh),
+            ("intel.refresh_server", Msg::MnIntelRefreshServer),
+            ("intel.refresh_all", Msg::MnIntelRefreshAll),
             ("edit.indent", Msg::MnIndent),
             ("edit.unindent", Msg::MnUnindent),
             ("edit.select_line", Msg::MnSelectLine),
@@ -10227,8 +10268,23 @@ impl App {
                 wins.push(w);
             } else if let Some(w) = self.conn_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
+            } else if let Some(w) = self.txlog_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.sessions_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.vars_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.mem_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.prefs_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.colors_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.keys_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
             }
         }
+        // ★ 보조 창(메모리 창 등)을 골라도 메인·다른 창이 함께 앞으로(사용자 09-24) — 맥은 `orderFront:` · 고른 창이 맨 위.
         winfocus::raise_group(&wins);
     }
 
@@ -14431,7 +14487,21 @@ impl App {
                     } else {
                         ev
                     };
+                    // End = 남은 페이지 전부 붙인 뒤 마지막으로(76 §13 D-206).
+                    if matches!(
+                        ev2,
+                        InputEvent::Key {
+                            key: CtlKey::End,
+                            ..
+                        }
+                    ) {
+                        self.intel.extend_all();
+                    }
                     self.intel.menu.on_event(&ev2);
+                    // 끝에 닿았으면 다음 페이지(T-196).
+                    if self.intel.menu.take_reached_end() {
+                        self.intel.extend();
+                    }
                     if let Some(id) = self.intel.menu.take_picked() {
                         // Alt를 누른 채 확정 = 한정자 규칙 반대(`A.컬럼` ↔ 컬럼만 · 09-24).
                         self.intel.pick_with(&id, self.alt);
@@ -14439,7 +14509,7 @@ impl App {
                     } else if let Some(full) = self.intel.hovered_full() {
                         // 강조 행의 전체 이름을 상태줄에(폭 상한으로 가운데 …가 된 긴 이름 · 09-23).
                         self.sess.status = full;
-                        self.intel_card_prefetch();
+                        self.intel_card_settle();
                     }
                     if matches!(
                         ev,
@@ -14463,6 +14533,9 @@ impl App {
                     self.redraw();
                 } else if is_mouse || is_wheel_ev(&ev) {
                     let consumed = self.intel.menu.on_event(&ev);
+                    if self.intel.menu.take_reached_end() {
+                        self.intel.extend();
+                    }
                     if let Some(id) = self.intel.menu.take_picked() {
                         // Alt를 누른 채 확정 = 한정자 규칙 반대(`A.컬럼` ↔ 컬럼만 · 09-24).
                         self.intel.pick_with(&id, self.alt);
@@ -14472,7 +14545,7 @@ impl App {
                     }
                     if let Some(full) = self.intel.hovered_full() {
                         self.sess.status = full;
-                        self.intel_card_prefetch();
+                        self.intel_card_settle();
                     }
                     if outside {
                         self.intel.close();
@@ -15653,6 +15726,11 @@ impl ApplicationHandler<Wake> for App {
                 ));
             }
         }
+        // 상세 카드 머무름 마감(사용자 09-24): 머문 마지막 대상을 카드에 넘기고 그때만 선조회·다시 그리기.
+        if self.intel.card_tick(now) {
+            self.intel_card_prefetch();
+            self.redraw();
+        }
         if let Some(t) = self.intel.next_wake() {
             next = next.min(t);
         }
@@ -16101,6 +16179,24 @@ impl ApplicationHandler<Wake> for App {
                     let _ = self
                         .settings
                         .set("mem.always_on_top", if on { "on" } else { "off" });
+                }
+                mem_win::MemWinAction::Trim => {
+                    // 힙 정리(80 §7): 할당자 빈 조각 → OS · 곧바로 표본을 다시 떠서 전후를 보인다.
+                    let before = memstat::sys_total();
+                    let us = memtrim::trim();
+                    let s = self.mem_sample();
+                    self.mem_status = (s.sys.footprint, Some(Instant::now()));
+                    let every = self.mem_every();
+                    self.mem_win.set_sample(s, every.as_millis() as u64);
+                    self.sess.status = tf(
+                        Msg::StMemTrimResult,
+                        &[
+                            &memstat::fmt(before),
+                            &memstat::fmt(s.sys.footprint),
+                            &(us / 1000).to_string(),
+                        ],
+                    );
+                    self.redraw();
                 }
                 mem_win::MemWinAction::Close => {
                     self.mem_win.close();

@@ -697,6 +697,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+alt+/|cmd+shift+?",
         linux: "ctrl+shift+?",
     },
+    // 인텔리센스 캐시 새로 고침(79 §4 · SSMS Ctrl+Shift+R · 09-24 T-188) — 현재 스키마.
+    Command {
+        id: "intel.refresh",
+        label: Msg::MnIntelRefresh,
+        win: "ctrl+shift+r",
+        mac: "cmd+shift+r",
+        linux: "ctrl+shift+r",
+    },
     Command {
         id: "edit.indent",
         label: Msg::MnIndent,

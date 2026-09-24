@@ -86,3 +86,9 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+# ★ 개발 빌드도 화면은 빠르게(사용자 09-24 "팝업에서 이동 반응이 느림" = Debug 프레임 평균 94 ms · 26 §7-12): 의존 크레이트(래스터
+#   `nexa-gfx`·컨트롤 `nexa-ctl`·글꼴·softbuffer·드라이버)는 최적화하고, 이 저장소의 크레이트는 디버그 그대로(`debug_assert` · 개발자 로그 ·
+#   디버거). 첫 빌드만 의존 전부를 다시 컴파일한다.
+[profile.dev.package."*"]
+opt-level = 2

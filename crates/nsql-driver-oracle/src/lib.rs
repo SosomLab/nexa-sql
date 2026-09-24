@@ -184,8 +184,19 @@ impl OracleSession {
             }
             _ => {}
         }
+        // `NSQL_TRACE_CONNECT=1` = 클라이언트 적재(`init_client` · Instant Client dlopen)와 접속 왕복을 따로 잰다(T-190).
+        let trace = std::env::var_os("NSQL_TRACE_CONNECT").is_some();
+        let t0 = std::time::Instant::now();
         init_client().map_err(with_client_hint)?;
+        let t1 = std::time::Instant::now();
         let conn = connector.connect().map_err(|e| with_client_hint(err(&e)))?;
+        if trace {
+            eprintln!(
+                "[connect] oracle init_client {:.1}ms · connect {:.1}ms",
+                (t1 - t0).as_secs_f64() * 1000.0,
+                t1.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         // 호출 상한(설정 `session.call_timeout_secs` · docs/53 §2): 죽은 소켓에 보낸 호출이 OS 재전송 한도(분)까지 막히지 않게.
         let secs = CALL_TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed);
         if secs > 0 {

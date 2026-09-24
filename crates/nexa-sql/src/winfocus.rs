@@ -4,7 +4,8 @@
 //! - `single`: 선택한 창만 활성화(다른 창은 그대로).
 //!
 //! Windows = `SetWindowPos(HWND_TOP, SWP_NOACTIVATE)`로 **포커스를 빼앗지 않고** 올린다(user32 FFI · DR-3 크레이트 0).
-//! macOS는 AppKit이 앱 활성화 시 모든 창을 함께 올리므로 기본이 group과 같고, Linux는 WM 정책이라 no-op.
+//! macOS는 **창 하나를 클릭하면 그 창만** 앞으로 온다(앱 활성화가 나머지를 올리지 않는다 · 사용자 09-24 메모리 창 실기) → `NSWindow
+//! orderFront:`로 키를 옮기지 않고 순서대로 올린다. Linux는 WM 정책이라 no-op.
 
 use winit::window::{Window, WindowAttributes};
 
@@ -156,7 +157,16 @@ pub(crate) fn raise_group(bottom_to_top: &[&Window]) {
             }
         }
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        // `orderFront:`는 키 창을 바꾸지 않는다 — 마지막(맨 앞) 창이 이미 키 창이면 그대로 맨 위에 남는다(항상 위 레벨도 그대로).
+        for w in bottom_to_top {
+            if let Some(ns) = ns_window(w) {
+                ns.orderFront(None);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = bottom_to_top;
     }

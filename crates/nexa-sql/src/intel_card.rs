@@ -22,7 +22,8 @@ pub(crate) enum Target {
     Schema(String),
     Keyword(String),
     Word(String),
-    Snippet(String),
+    /// (넣을 본문, 이름 — `모든 컬럼 (N)`).
+    Snippet(String, String),
     None,
 }
 
@@ -36,7 +37,7 @@ impl Target {
             (_, CandKind::Function) => Target::Function(c.text.clone()),
             (_, CandKind::Schema) => Target::Schema(c.text.clone()),
             (_, CandKind::Keyword) => Target::Keyword(c.text.clone()),
-            (_, CandKind::Snippet) => Target::Snippet(c.text.clone()),
+            (_, CandKind::Snippet) => Target::Snippet(c.text.clone(), c.detail.clone()),
             (_, CandKind::Word) => Target::Word(c.text.clone()),
             _ => Target::None,
         }
@@ -246,15 +247,32 @@ pub(crate) fn build(
         Target::Schema(name) => {
             card.title = name.clone();
             card.subtitle = t(Msg::CardSchema).into();
+            // 읽어 둔 버킷의 종류별 수(테이블·뷰·…) · 아직 안 읽었으면 "…"(`스키마.`를 치면 그때 읽는다 · 09-24 빈 카드 지적).
             if let Some(sym) = names.find(name) {
-                let n: usize = snap
+                let mut kinds: Vec<(String, usize)> = snap
                     .buckets
                     .values()
-                    .filter(|b| b.schema == sym)
-                    .map(|b| b.objs.len())
-                    .sum();
-                if n > 0 {
-                    card.rows.push((t(Msg::CardObjects).into(), n.to_string()));
+                    .filter(|b| b.schema == sym && !b.objs.is_empty())
+                    .map(|b| (format!("{:?}", b.kind).to_lowercase(), b.objs.len()))
+                    .collect();
+                kinds.sort();
+                let total: usize = kinds.iter().map(|(_, n)| n).sum();
+                card.rows.push((
+                    t(Msg::CardObjects).into(),
+                    if total > 0 {
+                        total.to_string()
+                    } else {
+                        "…".to_string()
+                    },
+                ));
+                if !kinds.is_empty() {
+                    card.sections.push((
+                        t(Msg::CardObjects).into(),
+                        kinds
+                            .into_iter()
+                            .map(|(k, n)| format!("{k}  {n}"))
+                            .collect(),
+                    ));
                 }
             }
         }
@@ -266,10 +284,22 @@ pub(crate) fn build(
             card.title = w.clone();
             card.subtitle = t(Msg::CardDocWord).into();
         }
-        Target::Snippet(s) => {
-            card.title = t(Msg::CardSnippet).into();
-            card.sections
-                .push((String::new(), s.split(", ").map(str::to_string).collect()));
+        Target::Snippet(s, label) => {
+            // "모든 컬럼 (N)" 조각(09-24): 제목 = 이름 · 컬럼 수 · 목록(쉼표 기준 · 줄바꿈 무관 · 40개 넘으면 … +N).
+            card.title = label.clone();
+            card.subtitle = t(Msg::CardSnippet).into();
+            let names: Vec<String> = s
+                .split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect();
+            card.rows
+                .push((t(Msg::CardColumns).into(), names.len().to_string()));
+            let mut list: Vec<String> = names.iter().take(40).cloned().collect();
+            if names.len() > 40 {
+                list.push(format!("… (+{})", names.len() - 40));
+            }
+            card.sections.push((t(Msg::CardColumns).into(), list));
         }
     }
     Some(card)

@@ -1296,7 +1296,15 @@ fn connect_or_exit(
     term::ensure_password(&mut spec, no_prompt, target);
     // 접속 실패는 `Connected`보다 먼저 온다 → 오류 코드 표기는 **대상의 방언**으로(SQLite 실패가 `[ORA-00014]`로 보이던 결함 · T-148).
     printer.dialect = spec.dialect.unwrap_or(dialect);
+    // `--timing`이면 접속 단계도(09-24 T-190: 실행 110 ms인데 전체 2 s → 접속이 어디서 걸리는지).
+    let t0 = std::time::Instant::now();
     let ok = runner.connect(&spec, &mut |e| printer.handle(e));
+    if printer.timing {
+        printer.err(&format!(
+            "⏱ connect {:.1}ms",
+            t0.elapsed().as_secs_f64() * 1000.0
+        ));
+    }
     if !ok {
         std::process::exit(1);
     }

@@ -278,6 +278,14 @@ const COLUMN_SELECT: &[(&str, Msg)] = &[
     ("shift_right", Msg::ValColumnShiftRight),
 ];
 
+const INTEL_STAR_LAYOUT: &[(&str, Msg)] = &[
+    ("inline", Msg::ValIntelStarInline),
+    ("lines", Msg::ValIntelStarLines),
+];
+const INTEL_STAR_SPACE: &[(&str, Msg)] = &[
+    ("space", Msg::ValIntelStarSpace),
+    ("tab", Msg::ValIntelStarTab),
+];
 const INTEL_MATCH: &[(&str, Msg)] = &[
     ("prefix", Msg::ValIntelMatchPrefix),
     ("contains", Msg::ValIntelMatchContains),
@@ -1329,7 +1337,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblEditorMinimapWidth,
         desc: Msg::DescEditorMinimapWidth,
         kind: SettingKind::Int { min: 20, max: 400 },
-        default: "160",
+        // 09-24 사용자: 160 → 120.
+        default: "120",
     },
     Entry {
         key: "editor.minimap_box_color",
@@ -3234,8 +3243,9 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblMacPresent,
         desc: Msg::DescMacPresent,
         kind: SettingKind::Choice(MAC_PRESENT_OPTS),
-        // 기본 = 종전 경로. IOSurface는 실기 검증이 끝날 때까지 선택 사항(86차: Intel + AMD에서 빈 화면).
-        default: "softbuffer",
+        // ★ 09-24 기본 = IOSurface(D-133 ② 전환 · 100차 실측: Debug(의존 최적화) 프레임 48 → 13.9 ms · present 36 → 3.1 ms). 만들기에
+        //   실패하면 `present.rs`가 조용히 softbuffer로 돌아간다 · 빈 창이 보이면 `softbuffer`로 되돌린다(86차 Intel+AMD 사례는 87차에 수정).
+        default: "iosurface",
     },
     Entry {
         key: "perf.boost",
@@ -3439,10 +3449,21 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatIntel,
         label: Msg::LblIntelMaxItems,
         desc: Msg::DescIntelMaxItems,
-        // 09-24: 상한은 200 유지(사용자) — 잘린 나머지는 "N개 더" 항목으로 보이고, 끝까지 스크롤하면 페이지 단위로 이어 붙이는
-        //   설계 = 76 §13(T-196). 상한 위 = 5000.
+        // 09-24: 200 = **페이지**(사용자) — 끝까지 스크롤하면 이만큼씩 이어 붙는다(76 §13 · T-196) · 한 세트 상한은 `intel.max_total`.
         kind: SettingKind::Int { min: 50, max: 5000 },
         default: "200",
+    },
+    // 한 세트로 드는 후보 상한(HIDDEN · 그 위는 잘림 — "더 좁혀 주세요").
+    Entry {
+        key: "intel.max_total",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelMaxTotal,
+        desc: Msg::DescIntelMaxTotal,
+        kind: SettingKind::Int {
+            min: 500,
+            max: 20_000,
+        },
+        default: "5000",
     },
     Entry {
         key: "intel.popup_rows",
@@ -3480,7 +3501,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblIntelDetailBgAlpha,
         desc: Msg::DescIntelDetailBgAlpha,
         kind: SettingKind::Int { min: 0, max: 100 },
-        default: "20",
+        // 09-24: 20 → 0(사용자 "투명도 0으로 완전하게" · 값 = **투명도 %** · 0 = 불투명).
+        default: "0",
     },
     Entry {
         key: "intel.detail_text_alpha",
@@ -3488,7 +3510,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblIntelDetailTextAlpha,
         desc: Msg::DescIntelDetailTextAlpha,
         kind: SettingKind::Int { min: 0, max: 100 },
-        default: "50",
+        default: "0",
     },
     // ★ 09-24(사용자 "JOIN에서 alias 없이 완성 → 전 테이블 컬럼 · 기본 A.컬럼 · Alt = 컬럼만").
     Entry {
@@ -3515,6 +3537,31 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescIntelIcons,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // ★ `*` 조각의 구분(사용자 09-24): 한 줄 `A, B, C`(기본) / 여러 줄 `A` ↵ `, B` ↵ `, C`(들여쓰기 없음) · 쉼표 뒤 Space(기본)/Tab.
+    Entry {
+        key: "intel.star_layout",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelStarLayout,
+        desc: Msg::DescIntelStarLayout,
+        kind: SettingKind::Choice(INTEL_STAR_LAYOUT),
+        default: "inline",
+    },
+    Entry {
+        key: "intel.star_comma_space",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelStarSpace,
+        desc: Msg::DescIntelStarSpace,
+        kind: SettingKind::Choice(INTEL_STAR_SPACE),
+        default: "space",
+    },
+    Entry {
+        key: "intel.card_settle_ms",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelCardSettle,
+        desc: Msg::DescIntelCardSettle,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "150",
     },
     // ★ 메모리 모니터(docs/80 · 사용자 09-24): 상태줄 총량 · 메모리 맵 창(모델리스 · 최상위) · 창이 닫혀 있으면 비용 0.
     Entry {
@@ -4455,6 +4502,9 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("grid.col_max_chars", "grid.col_max_mode", Dep::Eq("manual")),
     ("intel.detail_bg_alpha", "intel.detail_card", Dep::On),
     ("intel.detail_text_alpha", "intel.detail_card", Dep::On),
+    ("intel.card_settle_ms", "intel.detail_card", Dep::On),
+    ("intel.star_layout", "intel.insert_columns", Dep::On),
+    ("intel.star_comma_space", "intel.insert_columns", Dep::On),
 ];
 
 /// 자식 키의 (부모, 조건).
