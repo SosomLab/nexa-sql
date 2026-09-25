@@ -14,7 +14,7 @@ use nexa_ctl::{
 };
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::{GenOpts, GenSpec};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -135,6 +135,10 @@ impl SqlPrevWin {
         self.server = server;
         // ★ 편집기 탭과 같은 상자(`Editors::preview_box` · 미니맵·거터 표식만 끔 · 사용자 09-25).
         self.tb = tb;
+        // 미리보기 = 읽기 전용(사용자 09-26): 선택·복사·스크롤만 · 잘라내기·붙여넣기·실행 취소는 막는다(메뉴도 비활성 = nexa-ctl `EditMenuCaps.read_only`).
+        self.tb.set_read_only(true);
+        self.tb.set_popup_deferred(true);
+        self.tb.goto_line(1);
         self.tb.set_minimap(false);
         self.set_result(text);
         self.tb.set_focused(true);
@@ -283,6 +287,26 @@ impl SqlPrevWin {
         })
     }
 
+    /// 선택 글(없으면 전체)을 클립보드로 + 안내 줄.
+    fn copy_selection_or_all(&mut self) {
+        let text = self.tb.copy_selection().unwrap_or_else(|| self.copy_text());
+        let n = text.chars().count();
+        if crate::clipboard::write_text(&text) {
+            self.set_note(tf(Msg::SpCopied, &[&n.to_string()]));
+        } else {
+            self.set_note(t(Msg::ErrClipboard).to_string());
+        }
+    }
+
+    /// 우클릭 편집 메뉴가 남긴 요청 처리 — 복사만(읽기 전용 · 잘라내기·붙여넣기는 메뉴에 없다).
+    fn apply_edit_ctx(&mut self) {
+        if let Some(a) = self.tb.take_edit_ctx() {
+            if matches!(a, nexa_ctl::EditCtxAction::Copy) {
+                self.copy_selection_or_all();
+            }
+        }
+    }
+
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> SqlPrevAction {
         let mut inv = Invalidations::default();
         match ev {
@@ -315,6 +339,11 @@ impl SqlPrevWin {
                 let (x, y) = self.cursor;
                 let mv = InputEvent::MouseMove { x, y };
                 self.tb.on_event(&mv, &mut inv);
+                if self.tb.popup_open() {
+                    // 편집 메뉴가 열려 있으면 이동도 메뉴만(버튼 hover 안 바뀜).
+                    self.redraw();
+                    return SqlPrevAction::None;
+                }
                 for b in &mut self.btns {
                     b.on_event(&mv, &mut inv);
                 }
@@ -346,9 +375,18 @@ impl SqlPrevWin {
                     ElementState::Released => InputEvent::MouseUp { x, y },
                 };
                 let up = matches!(e, InputEvent::MouseUp { .. });
+                // ★ 편집 메뉴가 열려 있으면 그 클릭은 **메뉴(텍스트박스)에만**(사용자 09-26 "메뉴 클릭이 미리보기 창으로도 전달") ·
+                //   고른 항목은 클립보드로(복사 · 전체 선택은 상자가 스스로 · 잘라내기·붙여넣기는 읽기 전용이라 없음).
+                if self.tb.popup_open() {
+                    self.tb.on_event(&e, &mut inv);
+                    self.apply_edit_ctx();
+                    self.redraw();
+                    return SqlPrevAction::None;
+                }
                 // 마우스 라우팅 규칙: 누름은 커서 아래 컨트롤에만 · 뗌은 전부.
                 if up || self.tb.bounds().contains(p) {
                     self.tb.on_event(&e, &mut inv);
+                    self.apply_edit_ctx();
                 }
                 for b in &mut self.btns {
                     if up || b.bounds().contains(p) {
@@ -419,34 +457,19 @@ impl SqlPrevWin {
                     Key::Character(c) if self.primary => {
                         let lower = c.to_ascii_lowercase();
                         match lower.as_str() {
-                            "c" => return SqlPrevAction::Copy,
+                            // ⌘/Ctrl+C = 선택 복사 · 선택이 없으면 전체(사용자 09-26).
+                            "c" => {
+                                self.copy_selection_or_all();
+                                self.redraw();
+                                return SqlPrevAction::None;
+                            }
                             "a" => {
                                 self.tb.on_event(&InputEvent::SelectAll, &mut inv);
                                 self.redraw();
                                 return SqlPrevAction::None;
                             }
-                            "v" => {
-                                if let Some(text) = crate::clipboard::read_text() {
-                                    self.tb.paste(&text, &mut inv);
-                                }
-                                self.redraw();
-                                return SqlPrevAction::None;
-                            }
-                            "z" => {
-                                let e = if self.shift {
-                                    InputEvent::Redo
-                                } else {
-                                    InputEvent::Undo
-                                };
-                                self.tb.on_event(&e, &mut inv);
-                                self.redraw();
-                                return SqlPrevAction::None;
-                            }
-                            "y" => {
-                                self.tb.on_event(&InputEvent::Redo, &mut inv);
-                                self.redraw();
-                                return SqlPrevAction::None;
-                            }
+                            // 읽기 전용: 잘라내기·붙여넣기·실행 취소는 없음.
+                            "x" | "v" | "z" | "y" => return SqlPrevAction::None,
                             _ => {}
                         }
                     }
@@ -570,6 +593,20 @@ impl SqlPrevWin {
             };
             let mut dc = RasterCtx::new(&mut gfx, mono_font, s).with_fonts(prefs);
             self.tb.paint(&mut dc, th);
+        }
+        if self.tb.popup_open() {
+            // 우클릭 편집 메뉴 = 맨 마지막 층 · UI 글꼴(09-26).
+            let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+            let prefs = FontPrefs {
+                base: SlotFont {
+                    size: ui_px,
+                    bold: false,
+                    italic: false,
+                },
+                ..FontPrefs::default()
+            };
+            let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
+            self.tb.paint_popup(&mut dc, th);
         }
         let _ = buf.present();
         self.surface = Some(surface);

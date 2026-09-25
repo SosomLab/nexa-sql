@@ -870,13 +870,20 @@ impl App {
         // ★ 객체 상세(docs/86): 탐색기 아래 독립 영역 — 탐색기 높이를 그만큼 줄인다(스크롤 영역이 겹치지 않게).
         let details_on = self.explorer.is_visible() && self.settings.flag("explorer.details");
         self.objdetail.set_visible(details_on);
-        let grip = px(SPLIT_GRIP, s);
+        // 스플리터 띠 = 확장 상태에만(축소 = 머리 줄이 바닥에 붙고 띠 없음 · 사용자 09-26) · 최소 = 머리 줄 + 4줄(`min_h`).
+        let collapsed = self.objdetail.is_collapsed();
+        let grip = if details_on && !collapsed {
+            px(SPLIT_GRIP, s)
+        } else {
+            0
+        };
         let dh = if details_on {
-            if self.objdetail.is_collapsed() {
+            if collapsed {
                 objdetail::DetailPanel::head_h(s)
             } else {
+                let min_h = self.objdetail.min_h();
                 px(self.settings.int("explorer.details_h") as f32, s)
-                    .clamp(px(80.0, s), (body_h * 3 / 4).max(px(80.0, s)))
+                    .clamp(min_h, (body_h * 3 / 4).max(min_h))
             }
         } else {
             0
@@ -896,8 +903,11 @@ impl App {
             s,
         );
         if details_on {
-            self.split_d
-                .set_rect(Rect::new(act_w, body_top + exp_h, exp_w, grip));
+            self.split_d.set_rect(if collapsed {
+                Rect::default()
+            } else {
+                Rect::new(act_w, body_top + exp_h, exp_w, grip)
+            });
             self.objdetail
                 .set_bounds(Rect::new(act_w, body_top + exp_h + grip, exp_w, dh), s);
         } else {
@@ -1029,10 +1039,12 @@ impl App {
                 let grip = px(SPLIT_GRIP, s);
                 let b = self.explorer.bounds();
                 let bottom = b.y + b.h + grip + self.objdetail.bounds().h;
+                let min_h = (self.objdetail.min_h() as f32 / s).round() as i64;
                 let h = ((bottom - (y + grip)) as f32 / s).round() as i64;
-                let _ = self
-                    .settings
-                    .set("explorer.details_h", &h.clamp(80, 1200).to_string());
+                let _ = self.settings.set(
+                    "explorer.details_h",
+                    &h.clamp(min_h.max(80), 1200).to_string(),
+                );
                 self.layout();
                 self.redraw();
                 return true;
@@ -12615,6 +12627,7 @@ impl App {
                 objdetail::DetailAction::OpenInEditor(title, text) => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
+                    self.editors.cur_mut().goto_line(1);
                     self.set_focus(Focus::Editor);
                     self.redraw();
                 }
@@ -12639,6 +12652,8 @@ impl App {
                 ExplorerAction::OpenSql { title, text } => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
+                    // 캐럿 = 문서 처음(BOF · 사용자 09-26 "Open source 뒤 EOF가 아니라 BOF").
+                    self.editors.cur_mut().goto_line(1);
                     self.set_focus(Focus::Editor);
                 }
                 ExplorerAction::Status(s) => self.sess.status = s,
@@ -14284,7 +14299,9 @@ impl App {
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
                 if self.objdetail.is_visible() {
-                    self.split_d.paint(&mut dc, &th);
+                    if !self.objdetail.is_collapsed() {
+                        self.split_d.paint(&mut dc, &th);
+                    }
                     self.objdetail.paint_header(&mut dc, &th, Instant::now());
                 }
                 self.search.paint(&mut dc, &th);
@@ -14322,6 +14339,7 @@ impl App {
                 self.bm_panel.paint_popup(&mut dc, &th);
                 self.outline_panel.paint_popup(&mut dc, &th);
                 self.ext_panel.paint_popup(&mut dc, &th);
+                self.objdetail.paint_popup(&mut dc, &th);
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
@@ -14608,6 +14626,9 @@ impl App {
         if self.project_panel.menu_open() {
             m |= 256;
         }
+        if self.objdetail.menu_open() {
+            m |= 2048;
+        }
         m
     }
 
@@ -14629,6 +14650,9 @@ impl App {
         }
         if bits & 32 != 0 {
             self.grid.close_menu();
+        }
+        if bits & 2048 != 0 {
+            self.objdetail.close_menu();
         }
         if bits & 128 != 0 {
             self.bm_panel.close_menu();
@@ -15490,6 +15514,26 @@ impl App {
         }
         // ★ 객체 상세 패널(docs/86): 마우스 = 패널 안 · 키 = 포커스일 때 — 탐색기보다 먼저(독립 영역).
         if self.objdetail.is_visible() {
+            // 열린 편집 메뉴 = 먼저(팝업 규칙): 메뉴 안·키·휠은 메뉴가 · 바깥 클릭은 닫고 그 클릭은 아래로(09-26).
+            if self.objdetail.menu_open() {
+                let at = match ev {
+                    InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
+                        Some(Point { x, y })
+                    }
+                    _ => None,
+                };
+                let outside = at.is_some_and(|p| !self.objdetail.menu_bounds().contains(p));
+                if outside {
+                    self.objdetail.close_menu();
+                    self.redraw();
+                } else {
+                    if self.objdetail.on_event(&ev, Instant::now()) {
+                        self.redraw();
+                    }
+                    self.detail_actions();
+                    return;
+                }
+            }
             let cur = Point {
                 x: self.cursor.0,
                 y: self.cursor.1,
@@ -17020,7 +17064,12 @@ impl ApplicationHandler<Wake> for App {
                     w.set_cursor(
                         if self.split_v.is_dragging() || self.split_v.rect().contains(cur) {
                             winit::window::CursorIcon::ColResize
-                        } else if self.split_h.is_dragging() || self.split_h.rect().contains(cur) {
+                        } else if self.split_h.is_dragging()
+                            || self.split_h.rect().contains(cur)
+                            || self.split_d.is_dragging()
+                            || (!self.split_d.rect().is_empty()
+                                && self.split_d.rect().contains(cur))
+                        {
                             winit::window::CursorIcon::RowResize
                         } else if over_edge {
                             winit::window::CursorIcon::ColResize

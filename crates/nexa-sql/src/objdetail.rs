@@ -146,6 +146,8 @@ impl DetailPanel {
 
     fn tune_box(tb: &mut TextBox) {
         tb.set_read_only(true);
+        // 우클릭 편집 메뉴는 팝업 층(`paint_popup`)에서만 — 본문(고정폭 패스)이 아니라 UI 글꼴로 · 다른 층이 덮지 않게(09-26).
+        tb.set_popup_deferred(true);
         tb.set_minimap(false);
         tb.set_gutter_marks(false);
         tb.set_line_numbers(false);
@@ -182,6 +184,10 @@ impl DetailPanel {
     pub(crate) fn head_h(scale: f32) -> i32 {
         (HEAD_H * scale).round() as i32
     }
+    /// 확장 상태의 **최소 높이**(물리 px) = 머리 줄 + 본문 4줄 + 상자 여백(사용자 09-26 "헤더 및 하위 4줄").
+    pub(crate) fn min_h(&self) -> i32 {
+        Self::head_h(self.scale) + self.tb.line_h() * 4 + (8.0 * self.scale).round() as i32
+    }
 
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
         self.bounds = b;
@@ -207,6 +213,33 @@ impl DetailPanel {
 
     pub(crate) fn take_actions(&mut self) -> Vec<DetailAction> {
         std::mem::take(&mut self.actions)
+    }
+
+    /// 우클릭 편집 메뉴(복사·전체 선택 · 읽기 전용이라 잘라내기·붙여넣기는 비활성 = nexa-ctl `EditMenuCaps.read_only`)가 열려 있는가.
+    pub(crate) fn menu_open(&self) -> bool {
+        self.tb.popup_open()
+    }
+    pub(crate) fn menu_bounds(&self) -> Rect {
+        self.tb.popup_bounds()
+    }
+    pub(crate) fn close_menu(&mut self) {
+        self.tb.close_menu();
+    }
+    /// 팝업 층(호스트가 모든 층을 그린 뒤 · UI 글꼴).
+    pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if self.visible && !self.collapsed {
+            self.tb.paint_popup(dc, th);
+        }
+    }
+
+    /// 메뉴가 남긴 요청 — 복사만(선택 없으면 전체 본문).
+    fn apply_edit_ctx(&mut self) {
+        if let Some(a) = self.tb.take_edit_ctx() {
+            if matches!(a, nexa_ctl::EditCtxAction::Copy) {
+                let text = self.tb.copy_selection().unwrap_or_else(|| self.tb.text());
+                self.actions.push(DetailAction::Copy(text));
+            }
+        }
     }
 
     /// 선택 대상이 바뀌었다 — 객체는 호스트가 상세를 청하고(로딩 표시) · 컬럼·잎·스키마는 바로 속성만.
@@ -486,7 +519,33 @@ impl DetailPanel {
             return false;
         }
         let mut inv = Invalidations::default();
+        // ★ 편집 메뉴가 열려 있으면 마우스는 전부 메뉴(텍스트박스)로 — 바깥 클릭은 호스트가 닫고 흘려 보낸다(09-26).
+        if self.tb.popup_open()
+            && matches!(
+                ev,
+                InputEvent::MouseMove { .. }
+                    | InputEvent::MouseDown { .. }
+                    | InputEvent::MouseUp { .. }
+                    | InputEvent::RightDown { .. }
+                    | InputEvent::Wheel { .. }
+                    | InputEvent::HWheel { .. }
+                    | InputEvent::Key { .. }
+            )
+        {
+            self.tb.on_event(ev, &mut inv);
+            self.apply_edit_ctx();
+            return true;
+        }
         match ev {
+            InputEvent::RightDown { x, y } => {
+                let p = Point { x: *x, y: *y };
+                if self.collapsed || !self.tb.bounds().contains(p) {
+                    return false;
+                }
+                self.tb.set_focused(true);
+                self.tb.on_event(ev, &mut inv);
+                true
+            }
             InputEvent::MouseMove { x, y } => {
                 let p = Point { x: *x, y: *y };
                 let mut changed = self.copy.set_hover(self.copy.hit(p));

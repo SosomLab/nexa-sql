@@ -785,6 +785,39 @@ fn oracle_meta_type(kind: ObjectKind) -> Option<&'static str> {
     })
 }
 
+/// PL/SQL 단위 DDL(패키지 스펙+본문이 이어 붙어 올 수 있다)을 **블록마다 `/`** 로 끝내고 블록 사이에 빈 줄을 둔다(SQL*Plus 형식 ·
+/// 사용자 09-26). 이미 `/`로 끝난 블록은 그대로 · 마지막은 `\n`으로 끝난다.
+pub fn plsql_terminate(body: &str) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for line in body.lines() {
+        let up = line.trim_start().to_ascii_uppercase();
+        let starts = up.starts_with("CREATE OR REPLACE ") || up.starts_with("CREATE ");
+        if starts && !cur.trim().is_empty() {
+            blocks.push(std::mem::take(&mut cur));
+        }
+        cur.push_str(line);
+        cur.push('\n');
+    }
+    if !cur.trim().is_empty() {
+        blocks.push(cur);
+    }
+    let joined: Vec<String> = blocks
+        .into_iter()
+        .map(|b| {
+            let t = b.trim_end();
+            if t.ends_with('/') {
+                t.to_string()
+            } else {
+                format!("{t}\n/")
+            }
+        })
+        .collect();
+    let mut out = joined.join("\n\n");
+    out.push('\n');
+    out
+}
+
 fn oracle_get_ddl(
     s: &mut dyn Session,
     ty: &str,
@@ -806,6 +839,22 @@ fn oracle_get_ddl(
             message: format!("{owner}.{name}: DDL not found ({ty})"),
             position: None,
         });
+    }
+    // ★ PL/SQL 단위(패키지 스펙+본문 · 프로시저 · 함수 · 트리거 · 타입)는 SQL*Plus처럼 **블록마다 `/`** 로 끝내고 블록 사이에 빈 줄을 둔다
+    //   (사용자 09-26 "그대로 실행하면 선언·본문이 반영되나 · 빈 줄로 구분") — 분할기가 `/`를 문장 끝으로 보므로 붙여 넣어 실행하면 둘 다 컴파일된다.
+    let plsql = matches!(
+        ty,
+        "PACKAGE"
+            | "PACKAGE_SPEC"
+            | "PACKAGE_BODY"
+            | "PROCEDURE"
+            | "FUNCTION"
+            | "TRIGGER"
+            | "TYPE"
+            | "TYPE_BODY"
+    );
+    if plsql {
+        return Ok(plsql_terminate(body));
     }
     let mut out = body.to_string();
     if !out.ends_with(';') && !out.ends_with('/') {
@@ -1482,6 +1531,24 @@ fn sub_ddl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plsql_terminate_splits_spec_and_body_with_blank_line() {
+        let spec_body = "\n  CREATE OR REPLACE PACKAGE \"A\".\"P\" AS\n  PROCEDURE x;\nEND P;\n  CREATE OR REPLACE PACKAGE BODY \"A\".\"P\" AS\n  PROCEDURE x IS BEGIN NULL; END;\nEND P;";
+        let out = plsql_terminate(spec_body);
+        assert_eq!(out.matches("\n/").count(), 2, "{out}");
+        assert!(
+            out.contains("END P;\n/\n\n  CREATE OR REPLACE PACKAGE BODY"),
+            "{out}"
+        );
+        assert!(out.ends_with("END P;\n/\n"), "{out}");
+        // 이미 `/`로 끝난 블록은 그대로.
+        let one = plsql_terminate("CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;\n/\n");
+        assert_eq!(
+            one,
+            "CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;\n/\n"
+        );
+    }
 
     fn info(kind: ObjectKind) -> ObjectInfo {
         ObjectInfo {
