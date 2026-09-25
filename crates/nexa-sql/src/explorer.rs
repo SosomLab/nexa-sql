@@ -3722,16 +3722,11 @@ impl Explorer {
         let t0 = Instant::now();
         self.filter = m.filter(|m| !m.is_empty());
         self.filter_rev += 1;
-        if let Some(m) = self.filter.clone() {
+        if self.filter.is_some() {
             // ★ 84 §1 세 단계: ① 선별(인덱스 · 스키마 순차) → ② 일치를 부분 노드로 즉시 → ③ 그 폴더들을 순차 완성.
             //   판정은 스레드가(85 §6 · `Req::Search` → `Resp::Hits`) — UI는 일치만 받아 노드로 올린다.
             self.ensure_index();
-            let _ = self.tx_bg.send(Req::Search {
-                gen: self.gen,
-                rev: self.filter_rev,
-                matcher: m,
-                limit: self.index_cfg.hits_max,
-            });
+            self.send_search();
         } else {
             // 검색이 끝나면 완성 큐·인덱스 읽기는 멈춘다(미사용 즉시 회수 · 진행 중인 하나는 응답을 그대로 받는다).
             self.complete_q.clear();
@@ -4025,12 +4020,25 @@ impl Explorer {
         self.index_truncated = false;
     }
 
-    /// 인덱스 무효화(스키마 목록·메타 갱신·설정 변경 뒤) — 검색 중이면 바로 다시 채우기 시작한다.
+    /// 인덱스 무효화(스키마 목록·메타 갱신·설정 변경 뒤) — 검색 중이면 바로 다시 채우기 시작하고 **검색 요청도 다시 보낸다**
+    /// (09-25 결함: 검색어가 있는 채로 새 서버에 접속하면 `Prepare`가 스레드의 검색어를 지워 인덱스만 돌고 일치가 오지 않았다).
     fn index_invalidate(&mut self) {
         self.index_reset();
         if self.filter.is_some() {
             self.ensure_index();
+            self.send_search();
         }
+    }
+
+    /// 지금 검색어를 스레드에(세대·검색어 세대 포함) — 응답은 `Resp::Hits{rev}`로 짝을 맞춘다.
+    fn send_search(&mut self) {
+        let Some(m) = self.filter.clone() else { return };
+        let _ = self.tx_bg.send(Req::Search {
+            gen: self.gen,
+            rev: self.filter_rev,
+            matcher: m,
+            limit: self.index_cfg.hits_max,
+        });
     }
 
     /// 트리의 스키마 이름(현재 스키마 먼저 · 그다음 트리 순서).

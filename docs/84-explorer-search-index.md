@@ -128,6 +128,7 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 - 단위: `cargo test -p nexa-sql filterbar`(`search_anim_tests` 둘 · §8-1) · `cargo test -p nexa-sql explorer` — `index_materializes_hits_into_unloaded_folders_and_completes`(안 읽은 폴더 → Partial `1/?` → 디프 완성 `2/3` → 해제 접힘·큐 비움) · 검색 이력 드롭다운 `dropdown_lists_filters_picks_and_leaves`(행 클릭 = 고르기 · 우클릭 = 즉시 감춤).
 - 실서버 CLI: `nsql cat -c <프로필> index` / `-s <스키마> index`(§3 표).
+- 다중 서버 시나리오 = 기동 명령 `connect:<프로필|접속 문자열>`(§206 · 접속 창 Connect와 같은 길) + `explorer.stat:<파일>`(§202 · 칸별 L1/큐/일치/busy).
 - GUI(격리 `NSQL_HOME` + 데모 SQLite): `NSQL_STARTUP_CMD="@after:1800:explorer.dump:d0,@after:2000:explorer.filter:ept,@after:4500:explorer.dump:d1"` → d0 = `schema main Idle`(아무것도 안 펼침) · d1 = `Tables (1/3) Loaded / object dept` — 펼치지 않은 폴더의 객체가 검색으로 올라옴(§197).
 
 ## 11. 남은 것(T-220)

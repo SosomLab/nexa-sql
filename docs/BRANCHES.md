@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/search-new-server-resend | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 검색 중 새 서버 접속 무반응(index_invalidate → send_search) · 기동 명령 connect:(§206) |
 | fix/input-win-attach-child | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 변수 입력 창 자식 창 부착·모달 동기화(SQL Server SELECT :Top 멈춤 · §205) |
 | fix/search-input-lag-and-bm-key | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 검색 입력 지연(아이콘 선굽기 · refilter O(n) · 라벨 캐시) · 🔧 북마크 스크래치→파일 열쇠 이전(§203~204) |
 | fix/search-stall-timer | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 검색 미종료 = 유휴 시 타이머 정지 → background_pending 유지 · 큐 감시 · explorer.stat 진단 · 인덱스 로그(§202) |

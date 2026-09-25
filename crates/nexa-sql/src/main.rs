@@ -8237,6 +8237,25 @@ impl App {
             let _ = std::fs::write(path, self.explorer.stat_text());
             return;
         }
+        // 자체 시험(09-25): 서버 하나 더 접속(접속 창 Connect와 같은 길 = 공유 연결 추가) — `connect:<프로필|접속 문자열>`.
+        if let Some(target) = id.strip_prefix("connect:") {
+            let spec = if nsql_vault::is_profile_name(target) {
+                Vault::open_default()
+                    .ok()
+                    .and_then(|v| v.get(target).ok().flatten())
+            } else {
+                nsql_drivers::parse_target(target, DEFAULT_DIALECT).ok()
+            };
+            if let Some(spec) = spec {
+                self.attempt_queue.push_back(Attempt::Connect {
+                    name: target.to_string(),
+                    spec,
+                    reconnect_same: false,
+                });
+                self.dispatch_attempts();
+            }
+            return;
+        }
         // 진단(09-25 "북마크 니모닉 표시가 안 된다"): 탭마다 문서 열쇠 · 저장소 표식/라벨 수 · 텍스트박스에 걸린 수 · 설정.
         if let Some(path) = id.strip_prefix("bm.stat:") {
             let mut out = format!(
