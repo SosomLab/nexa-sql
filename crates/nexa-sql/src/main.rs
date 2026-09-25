@@ -5137,11 +5137,9 @@ impl App {
                             .as_ref()
                             .is_some_and(|have| worker::same_server(have, &target));
                     //   ★ 단, **자격이 바뀐** CONNECT(`user:@host` · 다른 비밀번호)는 유지가 아니라 다시 접속이다(사용자 09-21).
-                    let keep = sessions::keep_same_session(
-                        same,
-                        self.settings.flag("connect.reconnect_same"),
-                        same && worker::credential_changed(&target, DEFAULT_DIALECT),
-                    );
+                    let reconnect_setting = self.settings.flag("connect.reconnect_same");
+                    let cred_changed = same && worker::credential_changed(&target, DEFAULT_DIALECT);
+                    let keep = sessions::keep_same_session(same, reconnect_setting, cred_changed);
                     if keep {
                         *src = sessions::strip_first_connect(src);
                         self.log_win.push(LogEntry::new(
@@ -5149,6 +5147,21 @@ impl App {
                             tf(Msg::StSessSameKept, &[&self.sess.desc]),
                         ));
                     } else {
+                        // ★ 왜 다시 접속하는지 한 줄(사용자 09-25 "이미 접속됐는데 다시 접속" 진단): 계정·서버 다름 / 자격 변경 /
+                        //   설정 / 접속 안 됨.
+                        let why = if !self.sess.connected || self.sess.broken {
+                            Msg::RsnNotConnected
+                        } else if !same {
+                            Msg::RsnAccountDiffers
+                        } else if cred_changed {
+                            Msg::RsnCredChanged
+                        } else {
+                            Msg::RsnReconnectSetting
+                        };
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            tf(Msg::StSessRetarget, &[&target.redacted(), t(why)]),
+                        ));
                         self.sess.spec = Some(spec);
                     }
                 }

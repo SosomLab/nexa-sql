@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 5)** — §195 CONNECT 동일성 판정 점검 + 재접속 사유 로그(T-217) · Release 빌드 교체.
 - **2026-09-25 (100차 후반 · mac · 4)** — push a049080 **ci ✓ integration ✓** · ★ §194 T-211 글로벌 변수 층(`Layer::Global` · `VAR x GLOBAL` · `vars/global.sql` · 변수 창 층 순환 · 전 세션 전파) · ⑧ 원복(연결별 칸 = 기본 · `explorer.share_catalog`) · 헤더 정렬 · U-150~151.
 - **2026-09-25 (100차 후반 · mac · 3)** — ★ §193 SQL Preview 편집기 동일·생성 옵션·DDL 샘플(T-210) · 카탈로그 단위 메타 공유(T-212 · 54 §10) · 시스템/빈 스키마 숨김(T-213) · 필터 v2(T-214) · 📐 글로벌 변수(63 §11 · T-211) · U-145~149.
 - **2026-09-25 (100차 후반 · mac · 2)** — ★ §191 T-207 서버 묶음 트리 + 연결 해제 UX(54 §9 · D-204/205 · `explorer.disconnect_pick`/`keep_offline`) · ★ §192 T-208 탐색기 검색창(28 §7 · `explorer.filter_scope`) · 🔧 SQL Preview 창 자식 부착 · DDL 앞 구분자 · U-142~144.

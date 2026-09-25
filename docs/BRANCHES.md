@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/connect-retarget-reason | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | CONNECT 동일성 판정 점검 + 재접속 사유 로그(T-217 · §195) |
 | feat/global-vars-layer | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-211 글로벌 변수 층([63 §11](63-variable-management.md)) · ⑧ 원복(연결별 칸 기본 · `explorer.share_catalog`) · 서버 헤더 정렬 · 100차 후반 |
 | feat/preview-editor-catalog-share-filter-v2 | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-210 SQL Preview 편집기 동일·생성 옵션·DDL 샘플([83 §3-1](83-object-explorer-dbms-trees-and-generate-sql.md)) · ★ T-212 카탈로그 단위 메타 공유([54 §10](54-connection-model-and-disconnect.md)) · T-213 시스템 스키마 숨김 · T-214 필터 v2 · 📐 T-211 글로벌 변수([63 §11](63-variable-management.md)) · 100차 후반 |
 | feat/explorer-server-groups-filter | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-207 서버 묶음 트리 + 연결 해제 UX([54 §9](54-connection-model-and-disconnect.md)) · ★ T-208 탐색기 검색창([28 §7](28-object-explorer.md)) · 🔧 SQL Preview 자식 창 · DDL 앞 구분자 · 100차 후반 |
