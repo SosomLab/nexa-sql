@@ -12565,7 +12565,15 @@ impl App {
         if let Some(explorer::DetailTarget::Object(o)) = &t {
             self.explorer.request_details(o.clone());
         }
+        let schema = match &t {
+            Some(explorer::DetailTarget::Schema(s)) => Some(s.clone()),
+            _ => None,
+        };
         self.objdetail.set_target(t);
+        if let Some(sc) = schema {
+            let counts = self.explorer.schema_kind_counts(&sc);
+            self.objdetail.set_schema_counts(counts);
+        }
         self.redraw();
     }
 
@@ -12577,6 +12585,12 @@ impl App {
                     if !clipboard::write_text(&s) {
                         self.sess.status = t(Msg::ErrClipboard).into();
                     }
+                    self.redraw();
+                }
+                objdetail::DetailAction::OpenInEditor(title, text) => {
+                    self.editors.new_tab(Some(title));
+                    self.editors.cur_mut().set_text(&text);
+                    self.set_focus(Focus::Editor);
                     self.redraw();
                 }
                 objdetail::DetailAction::Collapsed(on) => {

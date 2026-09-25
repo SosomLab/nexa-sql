@@ -4,7 +4,7 @@
 
 use crate::gen::{generate, GenOpts, GenSpec, GenWhat};
 use crate::tree::{sub_items, sub_kinds, SubKind};
-use crate::{columns, source, ObjectInfo, ObjectKind};
+use crate::{columns, comments, source, ObjectInfo, ObjectKind};
 use nsql_core::{DbError, Session};
 
 /// 섹션 종류(라벨은 호스트가 i18n으로).
@@ -29,6 +29,7 @@ pub enum HeaderId {
     Default,
     Detail,
     Status,
+    Comment,
 }
 
 /// 섹션 하나 = 표(`headers` + `rows`) 또는 글(`text`).
@@ -97,20 +98,32 @@ pub fn object_details(
     if !o.extra.is_empty() {
         props.push(vec!["detail".into(), o.extra.clone()]);
     }
+    // 코멘트(관계 · 테이블 + 컬럼 · 86 §4 설명 = 코멘트가 있으면 그것) — 실패·없음 = 빈.
+    let (tcomment, col_comments) = if o.kind.is_relation() {
+        comments(s, &o.schema, &o.name)
+    } else {
+        (None, Vec::new())
+    };
+    if let Some(c) = &tcomment {
+        if !c.trim().is_empty() {
+            props.push(vec!["comment".into(), c.clone()]);
+        }
+    }
     out.push(DetailSection::table(
         SectionId::Properties,
         vec![HeaderId::Property, HeaderId::Value],
         props,
     ));
-    // 컬럼(관계) — 트리와 같은 원천.
+    // 컬럼(관계) — 트리와 같은 원천 · 컬럼 코멘트가 하나라도 있으면 열을 붙인다.
     if o.kind.is_relation() {
         if let Ok(cols) = columns(s, &o.schema, &o.name) {
+            let with_comment = !col_comments.is_empty();
             let rows = cols
                 .into_iter()
                 .map(|c| {
-                    vec![
+                    let mut r = vec![
                         c.position.to_string(),
-                        c.name,
+                        c.name.clone(),
                         c.data_type,
                         if c.nullable {
                             "NULL".into()
@@ -118,20 +131,30 @@ pub fn object_details(
                             "NOT NULL".into()
                         },
                         c.default,
-                    ]
+                    ];
+                    if with_comment {
+                        r.push(
+                            col_comments
+                                .iter()
+                                .find(|(n, _)| n.eq_ignore_ascii_case(&c.name))
+                                .map(|(_, cm)| cm.clone())
+                                .unwrap_or_default(),
+                        );
+                    }
+                    r
                 })
                 .collect();
-            out.push(DetailSection::table(
-                SectionId::Columns,
-                vec![
-                    HeaderId::Num,
-                    HeaderId::Name,
-                    HeaderId::Type,
-                    HeaderId::Nullable,
-                    HeaderId::Default,
-                ],
-                rows,
-            ));
+            let mut headers = vec![
+                HeaderId::Num,
+                HeaderId::Name,
+                HeaderId::Type,
+                HeaderId::Nullable,
+                HeaderId::Default,
+            ];
+            if with_comment {
+                headers.push(HeaderId::Comment);
+            }
+            out.push(DetailSection::table(SectionId::Columns, headers, rows));
         }
     }
     // 하위 폴더(제약·인덱스·트리거·인자 … · 83 §1 표) — 컬럼은 위에서 · 비면 뺀다.

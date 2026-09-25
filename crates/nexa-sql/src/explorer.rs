@@ -3759,6 +3759,26 @@ impl Explorer {
         }
     }
 
+    /// ★ 스키마의 종류별 객체 수(86 §3 · 서버 왕복 0): 메타 저장소에 목록이 있는 종류만(L1 이름 층 포함) · (종류, 개수).
+    pub(crate) fn schema_kind_counts(&self, schema: &str) -> Vec<(ObjectKind, usize)> {
+        let Some(d) = self.dialect else {
+            return Vec::new();
+        };
+        let Some(sc) = self.meta.names.find(schema) else {
+            return Vec::new();
+        };
+        let snap = self.meta.snapshot();
+        nsql_catalog::kinds_for(d)
+            .iter()
+            .filter_map(|&k| match snap.coverage(sc, k) {
+                nsql_run::meta::Coverage::Loaded { n, .. }
+                | nsql_run::meta::Coverage::Stale { n, .. }
+                | nsql_run::meta::Coverage::Names { n, .. } => Some((k, n)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// 객체 상세 요청(86 · L3 = 즉시 · 급한 세션).
     pub(crate) fn request_details(&mut self, owner: ObjectInfo) {
         if self.dialect.is_none() {

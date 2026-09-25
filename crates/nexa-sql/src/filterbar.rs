@@ -141,6 +141,8 @@ const SEG_FRACTION: f32 = 0.22;
 const COMET_STEPS: usize = 8;
 const BLINK_MS: u64 = 130;
 const BLINK_PHASES: u64 = 4;
+/// ★ 완료 플래시(사용자 09-25 "종료 시 플래시 느낌으로 이목"): 상자 안쪽을 강조색으로 번쩍 → 이 시간에 걸쳐 사라진다(깜빡임과 겹침).
+const FLASH_MS: u64 = 520;
 
 /// 둥근 사각형 둘레의 폴리라인(시작 = 위쪽 변 왼쪽 끝 · 시계 방향 · 모서리는 호를 6분할).
 pub(crate) fn round_rect_path(fb: Rect, r: i32) -> Vec<(f32, f32)> {
@@ -766,9 +768,17 @@ impl FilterBar {
             }
             SearchState::Done => {
                 if self.blinking() {
-                    let phase = self
+                    let since = self
                         .blink_start
-                        .map_or(0, |t0| self.anim_now.saturating_sub(t0) / BLINK_MS);
+                        .map_or(0, |t0| self.anim_now.saturating_sub(t0));
+                    // 플래시 = 안쪽 채움(0.45 → 0 · FLASH_MS) — 글자 위에 얹히므로 옅게 · 배경색과 강조색 사이.
+                    if since < FLASH_MS {
+                        let k = 1.0 - since as f32 / FLASH_MS as f32;
+                        let inner =
+                            Rect::new(fb.x + 1, fb.y + 1, (fb.w - 2).max(0), (fb.h - 2).max(0));
+                        dc.fill_round_rect_alpha(inner, r, th.accent, 0.45 * k);
+                    }
+                    let phase = since / BLINK_MS;
                     if phase.is_multiple_of(2) {
                         dc.stroke_round_rect(fb, r, th.accent, 2.0);
                     }

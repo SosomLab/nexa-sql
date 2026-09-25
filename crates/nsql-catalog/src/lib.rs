@@ -1005,7 +1005,7 @@ pub struct TableDetail {
 }
 
 /// 테이블·컬럼 코멘트(Description · 사용자 09-24) — 실패는 없음으로(코멘트 기능이 없는 DB · 권한).
-fn comments(
+pub fn comments(
     s: &mut dyn Session,
     schema: &str,
     table: &str,

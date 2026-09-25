@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/details-followups-flash | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | T-225 ①~④(코멘트 설명 · 스키마 개수 · 더블클릭 열기 · 도형 ▾/▴) · 검색 완료 플래시(§208) |
 | feat/object-details-panel | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-223 객체 상세 패널(86 · objdetail.rs · nsql-catalog detail.rs · CLI cat detail · 설정 3키 · §207) |
 | fix/search-new-server-resend | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 검색 중 새 서버 접속 무반응(index_invalidate → send_search) · 기동 명령 connect:(§206) |
 | fix/input-win-attach-child | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 변수 입력 창 자식 창 부착·모달 동기화(SQL Server SELECT :Top 멈춤 · §205) |

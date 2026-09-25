@@ -21,6 +21,8 @@ pub(crate) enum DetailAction {
     Copy(String),
     /// 축소 상태가 바뀌었다(호스트 = 설정 저장 + 배치).
     Collapsed(bool),
+    /// 머리 줄 더블클릭 = 소스/DDL을 편집기 새 탭으로(제목, 글).
+    OpenInEditor(String, String),
 }
 
 pub(crate) struct DetailPanel {
@@ -38,6 +40,9 @@ pub(crate) struct DetailPanel {
     error: Option<String>,
     actions: Vec<DetailAction>,
     hover_toggle: bool,
+    /// 스키마 대상의 종류별 객체 수(호스트가 메타에서 채움 · 서버 왕복 0).
+    schema_counts: Vec<(nsql_catalog::ObjectKind, usize)>,
+    last_head_click: Option<Instant>,
 }
 
 impl DetailPanel {
@@ -63,7 +68,29 @@ impl DetailPanel {
             error: None,
             actions: Vec::new(),
             hover_toggle: false,
+            schema_counts: Vec::new(),
+            last_head_click: None,
         }
+    }
+
+    /// 스키마 대상 = 종류별 객체 수(86 §3).
+    pub(crate) fn set_schema_counts(&mut self, counts: Vec<(nsql_catalog::ObjectKind, usize)>) {
+        self.schema_counts = counts;
+        self.render();
+    }
+
+    /// 소스/DDL 섹션 글(편집기로 열기용).
+    fn code_text(&self) -> Option<(String, String)> {
+        let sec = self
+            .sections
+            .iter()
+            .find(|s| matches!(s.id, SectionId::Source | SectionId::Ddl))?;
+        let text = sec.text.clone()?;
+        let title = match &self.target {
+            Some(DetailTarget::Object(o)) => format!("{}.{}", o.schema, o.name),
+            _ => "detail".into(),
+        };
+        Some((title, text))
     }
 
     pub(crate) fn set_visible(&mut self, on: bool) {
@@ -168,7 +195,20 @@ impl DetailPanel {
     fn description(&self) -> String {
         match &self.target {
             Some(DetailTarget::Object(o)) => {
-                if !o.extra.is_empty() {
+                // 코멘트(상세가 오면) → 부가 → 상태.
+                let comment = self
+                    .sections
+                    .iter()
+                    .find(|s| s.id == SectionId::Properties)
+                    .and_then(|s| {
+                        s.rows
+                            .iter()
+                            .find(|r| r.first().is_some_and(|k| k == "comment"))
+                            .and_then(|r| r.get(1).cloned())
+                    });
+                if let Some(c) = comment.filter(|c| !c.trim().is_empty()) {
+                    c
+                } else if !o.extra.is_empty() {
                     o.extra.clone()
                 } else {
                     o.status.clone()
@@ -220,6 +260,7 @@ impl DetailPanel {
             HeaderId::Default => Msg::DetHdrDefault,
             HeaderId::Detail => Msg::DetHdrDetail,
             HeaderId::Status => Msg::DetHdrStatus,
+            HeaderId::Comment => Msg::DetHdrComment,
         })
         .to_string()
     }
@@ -307,7 +348,21 @@ impl DetailPanel {
                 out.push_str(&nsql_catalog::render_table(&heads, &rows));
             }
             Some(DetailTarget::Schema(s)) => {
-                out.push_str(&format!("== {} ==\n{}\n", t(Msg::DetSecProperties), s));
+                out.push_str(&format!("== {} ==\n{}\n\n", t(Msg::DetSecProperties), s));
+                if !self.schema_counts.is_empty() {
+                    let heads = vec![
+                        Self::header_label(HeaderId::Type),
+                        t(Msg::DetHdrCount).to_string(),
+                    ];
+                    let rows: Vec<Vec<String>> = self
+                        .schema_counts
+                        .iter()
+                        .map(|(k, n)| vec![k.folder().to_string(), n.to_string()])
+                        .collect();
+                    let total: usize = self.schema_counts.iter().map(|(_, n)| n).sum();
+                    out.push_str(&format!("== {} ({total}) ==\n", t(Msg::DetHdrCount)));
+                    out.push_str(&nsql_catalog::render_table(&heads, &rows));
+                }
             }
         }
         self.tb.set_text(&out);
@@ -348,6 +403,20 @@ impl DetailPanel {
                     self.collapsed = !self.collapsed;
                     self.tb.set_focused(self.focused && !self.collapsed);
                     self.actions.push(DetailAction::Collapsed(self.collapsed));
+                    return true;
+                }
+                let hh = Self::head_h(self.scale);
+                if p.y < self.bounds.y + hh {
+                    // 머리 줄 더블클릭(400 ms) = 소스/DDL을 편집기 새 탭으로(86 §8).
+                    let dbl = self
+                        .last_head_click
+                        .is_some_and(|t0| now.duration_since(t0).as_millis() < 400);
+                    self.last_head_click = Some(now);
+                    if dbl {
+                        if let Some((title, text)) = self.code_text() {
+                            self.actions.push(DetailAction::OpenInEditor(title, text));
+                        }
+                    }
                     return true;
                 }
                 if !self.collapsed && self.tb.bounds().contains(p) {
@@ -434,20 +503,28 @@ impl DetailPanel {
                 );
             }
         }
-        // ▾(펼침 상태 = 축소) / ▴(축소 상태 = 확장).
-        let glyph = if self.collapsed { "▴" } else { "▾" };
+        // ▾(펼침 상태 = 축소) / ▴(축소 상태 = 확장) — 글꼴 글리프 대신 도형(3-OS 동일).
         if self.hover_toggle {
             dc.fill_round_rect(self.toggle, px(3.0), th.panel_bg_alt);
         }
-        let gw = dc.text_width(glyph);
-        let gy = dc.text_center_y(self.toggle.y, self.toggle.h);
-        dc.text(
-            self.toggle.x + (self.toggle.w - gw) / 2,
-            gy,
-            self.toggle,
-            glyph,
-            th.text,
-        );
+        let tw = px(8.0);
+        let thh = px(4.0);
+        let cx = self.toggle.x + self.toggle.w / 2;
+        let cy = self.toggle.y + self.toggle.h / 2;
+        let pts: Vec<(i32, i32)> = if self.collapsed {
+            vec![
+                (cx - tw / 2, cy + thh / 2),
+                (cx, cy - thh / 2),
+                (cx + tw / 2, cy + thh / 2),
+            ]
+        } else {
+            vec![
+                (cx - tw / 2, cy - thh / 2),
+                (cx, cy + thh / 2),
+                (cx + tw / 2, cy - thh / 2),
+            ]
+        };
+        dc.polyline(&pts, th.text, 1.5 * s);
         let alpha = match self.copy.look(now) {
             Look::Idle => 0.8,
             _ => 1.0,

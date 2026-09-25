@@ -1255,6 +1255,16 @@ impl ExplorerSet {
             .is_some_and(|p| p.ex.capture_select(row))
     }
 
+    pub(crate) fn schema_kind_counts(
+        &self,
+        schema: &str,
+    ) -> Vec<(nsql_catalog::ObjectKind, usize)> {
+        self.panes
+            .get(self.shown)
+            .map(|p| p.ex.schema_kind_counts(schema))
+            .unwrap_or_default()
+    }
+
     pub(crate) fn request_details(&mut self, owner: nsql_catalog::ObjectInfo) {
         if let Some(p) = self.panes.get_mut(self.shown) {
             p.ex.request_details(owner);

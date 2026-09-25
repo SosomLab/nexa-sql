@@ -112,6 +112,7 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 - 상태 = `filterbar::SearchState { Idle, Running, Done }` — `ExplorerSet::sync_search_state`가 `apply_filter`와 매 `tick`에 계산: 검색어 없음 = Idle · 어느 칸이든 `Explorer::search_busy()`(인덱스 진행/큐 · 완성 진행/큐) = Running · 그 밖 = Done.
 - Running = 둥근 테두리 둘레(`round_rect_path` · 모서리 호 6분할)를 따라 **둘레의 18 %** 길이 선이 **1.6 s에 한 바퀴**(꼬리 = 옅고 굵게 3px · 머리 = `th.accent` 2px · `path_window`로 한 바퀴 넘는 구간은 둘로) · 매 tick 다시 그림(≈30 ms 타이머 = `is_animating`).
 - Running → Done = **두 번 깜빡임**(130 ms × 4 위상 · 켬 = `th.accent` 2px) → 그 뒤 **완료 테두리 `th.ok`** 1px 유지 · Idle로 가면 취소 · Idle → Done(진행 없이 끝난 검색) = 깜빡임 없이 완료 테두리만.
+- §208 완료 플래시 = Running→Done 뒤 520 ms 상자 안쪽 강조색 0.45 → 0 페이드(깜빡임과 겹침 · `FLASH_MS`).
 - §199 강화 = 혜성 꼬리 8단계(배경 → 강조색 · 1.5 → 3px) + 진행 중 테두리 전체 강조색 50 % · 1.2 s · 22 % · 완료 시그니처 원복 = 상자 재포커스·글 변경·초기화(`dismiss_done`) · 검색어가 있는 채로 서버 추가 = 새 칸도 즉시 검색 모드(`new_pane`).
 - 비용 = Running/깜빡임 동안만 타이머(끝나면 정적) · 시험 = `search_anim_tests`(둘레 길이 ≈ 사각 + 2πr · 창 wrap 둘 · 상태 전환·깜빡임 창).
 
