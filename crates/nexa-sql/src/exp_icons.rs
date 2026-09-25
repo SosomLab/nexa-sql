@@ -412,21 +412,6 @@ pub(crate) fn image(kind: IconKind, rgb: (u8, u8, u8)) -> IconImage {
     IconImage::from_alpha_tinted(SIDE, SIDE, mask(kind), rgb)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_icon_has_body() {
-        for k in IconKind::ALL {
-            let m = mask(k);
-            let opaque = m.iter().filter(|&&a| a == 255).count();
-            assert!(opaque > 20, "{k:?} too empty");
-            assert!(opaque < (SIDE * SIDE) as usize * 9 / 10, "{k:?} too full");
-        }
-    }
-}
-
 /// ★ 시작 때 백그라운드에서 종류 아이콘 마스크 전부를 미리 굽는다(09-25 · 첫 표시 지연 0 · `OnceLock`이라 스레드 안전).
 pub(crate) fn prewarm() {
     let _ = mask(IconKind::Dbms);
@@ -453,4 +438,19 @@ pub(crate) fn prewarm() {
     let _ = mask(IconKind::Link);
     let _ = mask(IconKind::Job);
     let _ = mask(IconKind::Java);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_icon_has_body() {
+        for k in IconKind::ALL {
+            let m = mask(k);
+            let opaque = m.iter().filter(|&&a| a == 255).count();
+            assert!(opaque > 20, "{k:?} too empty");
+            assert!(opaque < (SIDE * SIDE) as usize * 9 / 10, "{k:?} too full");
+        }
+    }
 }
