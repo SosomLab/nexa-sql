@@ -12,13 +12,66 @@
 //! Home/End = 전체의 첫/마지막 · PageUp/Down도 경계에서는 ↑/↓와 같다 · 타입어헤드 중에는 그 트리 안에서만).
 
 use crate::explorer::{Explorer, ExplorerAction, LiveReq, LiveResult};
-use crate::worker::same_server;
+use crate::filterbar::{FilterBar, FilterEvent, GAP_Y, INPUT_H};
+use crate::search_history::SharedHistory;
+use crate::worker::{same_host, same_server};
+use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{InputEvent, Key};
+use nexa_ctl::{Invalidations, TextBox};
+use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
 use std::sync::Arc;
+
+/// 서버 헤더 "연결 해제"의 방식(설정 `explorer.disconnect_pick` · docs/54 §9).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DiscPick {
+    /// 연결 1개면 바로 · 2개 이상이면 고르기(모두/개별).
+    Auto,
+    /// 1개여도 고르기.
+    Always,
+    /// 늘 전부(개별 해제는 연결 행 메뉴에서).
+    All,
+}
+
+impl DiscPick {
+    pub(crate) fn parse(s: &str) -> Self {
+        match s {
+            "always" => DiscPick::Always,
+            "all" => DiscPick::All,
+            _ => DiscPick::Auto,
+        }
+    }
+}
+
+/// 헤더 메뉴에 낼 해제 항목의 모양(순수 판정 · MC/DC).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DiscMenu {
+    /// 항목 하나 = 그 연결을 바로.
+    Direct,
+    /// 하위 메뉴 = 모두 해제 + 연결마다.
+    Pick,
+    /// 항목 하나 = 모두 해제(N).
+    AllOnly,
+}
+
+/// 검색창 범위(설정 `explorer.filter_scope` · docs/28 §7): 전 서버 / 키보드 대상 서버만.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FilterScope {
+    All,
+    Shown,
+}
+
+pub(crate) fn disc_menu(mode: DiscPick, n: usize) -> DiscMenu {
+    match (mode, n) {
+        (DiscPick::All, _) => DiscMenu::AllOnly,
+        (DiscPick::Always, _) => DiscMenu::Pick,
+        (DiscPick::Auto, n) if n >= 2 => DiscMenu::Pick,
+        (DiscPick::Auto, _) => DiscMenu::Direct,
+    }
+}
 
 struct Pane {
     /// 서버 키(방언·호스트·포트·DB·계정 · `None` = 아직 아무 서버도 아닌 빈 자리).
@@ -125,6 +178,21 @@ pub(crate) struct ExplorerSet {
     /// 공용 가로 스크롤(긴 이름 · 09-19 사용자).
     scroll_x: i32,
     bars: nexa_ctl::controls::ScrollBars,
+    /// ★ 서버 헤더(docs/54 §9 · 09-25): (그룹 첫 칸, 행 영역) — 배치 때 계산.
+    headers: Vec<(usize, Rect)>,
+    /// 서버 헤더 우클릭 메뉴(연결 해제 = 모두/개별).
+    menu: CtxMenu,
+    menu_group: Option<usize>,
+    /// 헤더 메뉴가 만든 동작(다음 `take_actions`에 합쳐 낸다).
+    pending: Vec<ExplorerAction>,
+    disconnect_pick: DiscPick,
+    /// 세션이 0이 된 연결을 오프라인 행으로 남길 것인가(끔 = 트리에서 뺀다 · 사용자 09-25).
+    keep_offline: bool,
+    /// ★ 검색창(docs/28 §7 · 09-25): 패널 맨 위 필터 틀(Aa·ab·(.*) · 이력) — 전 서버 트리를 거른다(범위 설정).
+    filter: FilterBar,
+    filter_scope: FilterScope,
+    /// 패널 전체(필터 + 트리) · `bounds` = 트리 영역.
+    area: Rect,
 }
 
 impl ExplorerSet {
@@ -148,6 +216,15 @@ impl ExplorerSet {
             scroll: 0,
             scroll_x: 0,
             bars: nexa_ctl::controls::ScrollBars::new(),
+            headers: Vec::new(),
+            menu: CtxMenu::new(),
+            menu_group: None,
+            pending: Vec::new(),
+            disconnect_pick: DiscPick::Auto,
+            keep_offline: false,
+            filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
+            filter_scope: FilterScope::All,
+            area: Rect::default(),
         };
         let p = s.new_pane(None);
         s.panes.push(p);
@@ -231,7 +308,8 @@ impl ExplorerSet {
     /// 지금 붙어 있는 세션들의 서버 목록으로 참조 수를 맞춘다 — 0이 된 서버는 오프라인(트리 유지).
     pub(crate) fn sync_refs(&mut self, live: &[ConnectSpec]) -> bool {
         let mut changed = false;
-        for p in &mut self.panes {
+        let mut gone: Vec<usize> = Vec::new();
+        for (i, p) in self.panes.iter_mut().enumerate() {
             let n = p
                 .key
                 .as_ref()
@@ -239,9 +317,51 @@ impl ExplorerSet {
             if pane_move(p.key.is_some(), p.ex.is_offline(), n) == PaneMove::GoOffline {
                 p.ex.go_offline();
                 changed = true;
+                if !self.keep_offline {
+                    gone.push(i);
+                }
             }
         }
+        // ★ 해제된 연결은 트리에서 뺀다(사용자 09-25 "C2 해제 시 그 행이 사라지게") — `explorer.keep_offline`이면 오프라인 행으로 남긴다.
+        for i in gone.into_iter().rev() {
+            self.remove(i);
+        }
         changed
+    }
+
+    pub(crate) fn set_disconnect_pick(&mut self, mode: &str) {
+        self.disconnect_pick = DiscPick::parse(mode);
+    }
+
+    pub(crate) fn set_keep_offline(&mut self, on: bool) {
+        self.keep_offline = on;
+    }
+
+    /// ★ 서버 묶음(docs/54 §9): 서버 칸을 같은 호스트(방언·호스트·포트)끼리 접속 순으로 묶는다 — 파일 방언(호스트 없음)은 혼자 ·
+    /// 헤더 없음. 돌려주는 값 = (칸 목록, 헤더 있음).
+    fn groups(&self) -> Vec<(Vec<usize>, bool)> {
+        let mut out: Vec<(Vec<usize>, bool)> = Vec::new();
+        for i in 0..self.panes.len() {
+            let Some(k) = &self.panes[i].key else {
+                continue;
+            };
+            let hosted = k.host.is_some();
+            let found = hosted
+                .then(|| {
+                    out.iter().position(|(g, h)| {
+                        *h && self.panes[g[0]]
+                            .key
+                            .as_ref()
+                            .is_some_and(|k0| same_host(k0, k))
+                    })
+                })
+                .flatten();
+            match found {
+                Some(gi) => out[gi].0.push(i),
+                None => out.push((vec![i], hosted)),
+            }
+        }
+        out
     }
 
     /// 메타 세션 유휴 회수(세션 유휴 닫기와 같은 한도 · 0 = 끔).
@@ -275,14 +395,37 @@ impl ExplorerSet {
 
     /// 화면에 놓이는 칸(접속 순) — 서버가 하나라도 있으면 서버 칸만, 없으면 빈 자리("Not connected") 하나.
     fn laid(&self) -> Vec<usize> {
-        let keyed: Vec<usize> = (0..self.panes.len())
-            .filter(|&i| self.panes[i].key.is_some())
-            .collect();
+        let keyed: Vec<usize> = self.groups().into_iter().flat_map(|(g, _)| g).collect();
         if keyed.is_empty() {
             vec![0]
         } else {
             keyed
         }
+    }
+
+    /// 서버 헤더 행 높이(그 그룹 첫 칸의 행 높이).
+    fn header_h(&self, first: usize) -> i32 {
+        self.panes[first].ex.row_px().max(1)
+    }
+
+    fn header_at(&self, p: Point) -> Option<usize> {
+        self.headers
+            .iter()
+            .find(|(_, r)| r.contains(p) && self.bounds.contains(p))
+            .map(|(first, _)| *first)
+    }
+
+    /// 그룹의 온라인 연결 칸.
+    fn group_online(&self, first: usize) -> Vec<usize> {
+        self.groups()
+            .into_iter()
+            .find(|(g, _)| g.first() == Some(&first))
+            .map(|(g, _)| {
+                g.into_iter()
+                    .filter(|&i| !self.panes[i].ex.is_offline())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn pane_at(&self, p: Point) -> Option<usize> {
@@ -332,15 +475,96 @@ impl ExplorerSet {
     }
 
     pub(crate) fn bounds(&self) -> Rect {
+        if self.area.w > 0 {
+            return self.area;
+        }
         self.bounds
     }
 
+    /// 서버 헤더 메뉴(연결 해제) — 항목 = `disc_menu(mode, n)`.
+    fn open_header_menu(&mut self, first: usize, p: Point) {
+        let online = self.group_online(first);
+        let n = online.len();
+        if n == 0 {
+            return;
+        }
+        let conn_label = |ex_i: usize| -> String {
+            let k = self.panes[ex_i].key.as_ref();
+            let db = k.and_then(|k| k.database.clone()).unwrap_or_default();
+            let user = k.and_then(|k| k.user.clone()).unwrap_or_default();
+            match (db.is_empty(), user.is_empty()) {
+                (false, false) => format!("{db} · {user}"),
+                (false, true) => db,
+                (true, false) => user,
+                (true, true) => t(Msg::ExpNotConnected).to_string(),
+            }
+        };
+        let items = match disc_menu(self.disconnect_pick, n) {
+            DiscMenu::Direct => vec![CtxItem::item(
+                format!("disc:{}", online[0]),
+                tf(Msg::ExpDisconnectOne, &[&conn_label(online[0])]),
+            )],
+            DiscMenu::AllOnly => vec![CtxItem::item(
+                "disc:all",
+                tf(Msg::ExpDisconnectAllN, &[&n.to_string()]),
+            )],
+            DiscMenu::Pick => {
+                let mut kids = vec![
+                    CtxItem::item("disc:all", tf(Msg::ExpDisconnectAllN, &[&n.to_string()])),
+                    CtxItem::Separator,
+                ];
+                for i in &online {
+                    kids.push(CtxItem::item(format!("disc:{i}"), conn_label(*i)));
+                }
+                vec![CtxItem::submenu("disc", t(Msg::ExpDisconnectPick), kids)]
+            }
+        };
+        let host = if self.menu_area.h > 0 {
+            self.menu_area
+        } else {
+            self.bounds
+        };
+        let row = self
+            .headers
+            .iter()
+            .find(|(f, _)| *f == first)
+            .map_or(Rect::new(p.x, p.y, 1, 1), |(_, r)| *r);
+        self.menu.set_scale(self.scale);
+        self.menu_group = Some(first);
+        let text_w = (160.0 * self.scale).round() as i32;
+        self.menu.open_beside(p.x, p.y, row, items, host, text_w);
+    }
+
+    fn header_pick(&mut self, id: &str) {
+        let Some(first) = self.menu_group.take() else {
+            return;
+        };
+        let Some(rest) = id.strip_prefix("disc:") else {
+            return;
+        };
+        let targets: Vec<usize> = if rest == "all" {
+            self.group_online(first)
+        } else {
+            rest.parse::<usize>().ok().into_iter().collect()
+        };
+        for i in targets {
+            if let Some(k) = self.panes.get(i).and_then(|p| p.key.clone()) {
+                self.pending.push(ExplorerAction::DisconnectServer(Some(k)));
+            }
+        }
+    }
+
     pub(crate) fn menu_open(&self) -> bool {
+        if self.menu.is_open() || self.filter.popup_open() {
+            return true;
+        }
         self.panes.iter().any(|p| p.ex.menu_open())
     }
 
     /// 우클릭 메뉴 전부 닫기(풀다운과 배타 · 09-22).
     pub(crate) fn close_menu(&mut self) {
+        self.menu.close();
+        self.menu_group = None;
         for p in &mut self.panes {
             p.ex.close_menu();
         }
@@ -348,6 +572,9 @@ impl ExplorerSet {
 
     /// 열린 우클릭 메뉴의 영역(없으면 빈 영역).
     pub(crate) fn menu_bounds(&self) -> Rect {
+        if self.menu.is_open() {
+            return self.menu.bounds();
+        }
         self.panes
             .iter()
             .find(|p| p.ex.menu_open())
@@ -385,17 +612,101 @@ impl ExplorerSet {
     }
 
     pub(crate) fn set_bounds(&mut self, b: Rect, scale: f32) {
-        self.bounds = b;
+        self.area = b;
         self.scale = scale;
+        let px = |v: f32| (v * scale).round() as i32;
+        let (gap, ih, pad) = (px(GAP_Y), px(INPUT_H), px(8.0));
+        // 필터 틀 = 패널 맨 위(다른 패널과 같은 여백 · 폭 0이면 숨김).
+        let bar_h = if b.w > 0 && b.h > 0 {
+            gap + ih + gap
+        } else {
+            0
+        };
+        self.filter.set_bounds(
+            Rect::new(b.x + pad, b.y + gap, (b.w - pad * 2 - 1).max(0), ih),
+            scale,
+        );
+        self.filter.set_clamp_width((b.w - pad * 2).max(0));
+        self.bounds = Rect::new(b.x, b.y + bar_h, b.w, (b.h - bar_h).max(0));
         self.relayout();
+    }
+
+    pub(crate) fn set_history(&mut self, h: SharedHistory) {
+        self.filter.set_history(h, "filter.explorer");
+    }
+
+    pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
+        self.filter.set_tooltip_delay(ms);
+    }
+
+    pub(crate) fn set_filter_scope(&mut self, scope: &str) {
+        self.filter_scope = if scope == "shown" {
+            FilterScope::Shown
+        } else {
+            FilterScope::All
+        };
+        self.apply_filter();
+    }
+
+    /// 검색창에 포커스(⌘F/Ctrl+F가 탐색기에 있을 때 · 사용자 09-25).
+    pub(crate) fn focus_filter(&mut self) {
+        self.filter.set_focused(true);
+        let mut inv = Invalidations::default();
+        self.filter.on_event(&InputEvent::SelectAll, &mut inv);
+    }
+
+    /// 자체 시험용(기동 명령 `explorer.filter:<글>`): 필터 글을 넣고 거른다.
+    pub(crate) fn set_filter_text(&mut self, q: &str) {
+        self.filter.set_text(q);
+        self.filter.refresh();
+        self.apply_filter();
+    }
+
+    pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
+        if self.filter.is_focused() {
+            Some(self.filter.tb_mut())
+        } else {
+            None
+        }
+    }
+
+    /// 필터 글·옵션을 서버 트리에 반영(범위 = 전 서버 / 키보드 대상 서버).
+    fn apply_filter(&mut self) {
+        let q = self.filter.display_text();
+        let f = &self.filter;
+        let pred = |hay: &str| f.matches(hay);
+        for (i, p) in self.panes.iter_mut().enumerate() {
+            let on = match self.filter_scope {
+                FilterScope::All => true,
+                FilterScope::Shown => i == self.shown,
+            };
+            if on {
+                p.ex.apply_filter(&q, &pred);
+            } else {
+                p.ex.apply_filter("", &pred);
+            }
+        }
+        self.relayout();
+    }
+
+    fn filter_on(&self) -> bool {
+        !self.filter.display_text().trim().is_empty()
     }
 
     /// 이어 붙인 전체 높이.
     fn total_h(&self) -> i32 {
-        self.laid()
+        let panes: i32 = self
+            .laid()
             .iter()
             .map(|&i| self.panes[i].ex.content_height())
-            .sum()
+            .sum();
+        let heads: i32 = self
+            .groups()
+            .iter()
+            .filter(|(_, h)| *h)
+            .map(|(g, _)| self.header_h(g[0]))
+            .sum();
+        panes + heads
     }
 
     /// 이어 붙인 전체 폭(가장 긴 행 · 그린 뒤에 안다).
@@ -414,19 +725,31 @@ impl ExplorerSet {
         self.scroll = self.scroll.clamp(0, (self.total_h() - b.h).max(0));
         self.scroll_x = self.scroll_x.clamp(0, (self.total_w() - b.w).max(0));
         let mut y = b.y - self.scroll;
-        for &i in &laid {
-            let h = self.panes[i].ex.content_height();
-            let ex = &mut self.panes[i].ex;
-            ex.set_bounds(Rect::new(b.x, y, b.w, h), s);
-            ex.set_clip(b);
-            ex.set_menu_host(if self.menu_area.h > 0 {
-                self.menu_area
-            } else {
-                b
-            });
-            ex.set_scroll_x(self.scroll_x);
-            y += h;
+        let mut headers = Vec::new();
+        let menu_host = if self.menu_area.h > 0 {
+            self.menu_area
+        } else {
+            b
+        };
+        for (g, hosted) in self.groups() {
+            if hosted {
+                let hh = self.header_h(g[0]);
+                headers.push((g[0], Rect::new(b.x, y, b.w, hh)));
+                y += hh;
+            }
+            for &i in &g {
+                let ex = &mut self.panes[i].ex;
+                ex.set_grouped(hosted);
+                let h = ex.content_height();
+                ex.set_bounds(Rect::new(b.x, y, b.w, h), s);
+                ex.set_clip(b);
+                ex.set_menu_host(menu_host);
+                ex.set_scroll_x(self.scroll_x);
+                y += h;
+            }
         }
+        self.headers = headers;
+        let _ = &laid;
         // 놓이지 않은 칸(빈 자리)은 영역 0.
         for i in 0..self.panes.len() {
             if !laid.contains(&i) {
@@ -573,7 +896,7 @@ impl ExplorerSet {
     }
 
     pub(crate) fn take_actions(&mut self) -> Vec<ExplorerAction> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.pending);
         let mut remove = None;
         for (i, p) in self.panes.iter_mut().enumerate() {
             for a in p.ex.take_actions() {
@@ -634,6 +957,10 @@ impl ExplorerSet {
         for p in &mut self.panes {
             changed |= p.ex.drain();
         }
+        if changed && self.filter_on() {
+            // 새로 읽힌 자식도 같은 필터로(펼치면 그 안을 거른다).
+            self.apply_filter();
+        }
         if changed {
             if let Some((pane, node, inner)) = anchor {
                 let top: i32 = self
@@ -657,13 +984,23 @@ impl ExplorerSet {
     /// 공용 스크롤의 맨 위에 걸린 (칸 index, 노드, 행 안쪽 px).
     fn top_anchor(&self) -> Option<(usize, usize, i32)> {
         let mut top = 0;
-        for &i in &self.laid() {
-            let h = self.panes[i].ex.content_height();
-            if self.scroll < top + h {
-                let (node, inner) = self.panes[i].ex.anchor_at(self.scroll - top)?;
-                return Some((i, node, inner));
+        for (g, hosted) in self.groups() {
+            if hosted {
+                let hh = self.header_h(g[0]);
+                if self.scroll < top + hh {
+                    let (node, inner) = self.panes[g[0]].ex.anchor_at(0)?;
+                    return Some((g[0], node, inner));
+                }
+                top += hh;
             }
-            top += h;
+            for i in g {
+                let h = self.panes[i].ex.content_height();
+                if self.scroll < top + h {
+                    let (node, inner) = self.panes[i].ex.anchor_at(self.scroll - top)?;
+                    return Some((i, node, inner));
+                }
+                top += h;
+            }
         }
         None
     }
@@ -716,7 +1053,7 @@ impl ExplorerSet {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        let mut any = self.bars.tick(now_ms);
+        let mut any = self.bars.tick(now_ms) | self.filter.tick(now_ms);
         for p in &mut self.panes {
             any |= p.ex.tick(now_ms);
         }
@@ -724,12 +1061,94 @@ impl ExplorerSet {
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
-        self.visible && (self.bars.is_visible() || self.panes.iter().any(|p| p.ex.bars_visible()))
+        self.visible
+            && (self.bars.is_visible()
+                || self.filter.is_animating()
+                || self.panes.iter().any(|p| p.ex.bars_visible()))
     }
 
     /// 마우스 라우팅 규칙(CLAUDE.md): 누름·휠은 **커서 아래 칸에만** · 이동은 전 칸(hover 해제용) · 키는 마지막으로 누른 칸 ·
     /// 메뉴가 열린 칸이 있으면 그 칸이 먼저(모달).
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {
+        // ★ 검색창(docs/28 §7): 누름 = 틀 안이면 포커스(밖이면 해제) · 포커스 중 키 = 틀로(Enter = 다음 일치 · Shift+Enter = 이전 ·
+        //   Esc = 지우고 트리로) · 글/옵션 변경 = 다시 거름.
+        let mut inv = Invalidations::default();
+        match ev {
+            InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
+                let p = Point { x: *x, y: *y };
+                let in_f = self.filter.bounds().contains(p);
+                if self.filter.is_focused() != in_f && !self.filter.popup_open() {
+                    self.filter.set_focused(in_f);
+                }
+                if in_f || self.filter.popup_open() {
+                    let fe = self.filter.on_event(ev, &mut inv);
+                    self.on_filter_event(fe);
+                    return true;
+                }
+            }
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. } => {
+                let fe = self.filter.on_event(ev, &mut inv);
+                self.on_filter_event(fe);
+                if self.filter.popup_open() {
+                    return true;
+                }
+            }
+            InputEvent::Key { key, shift, .. } if self.filter.is_focused() => {
+                match key {
+                    Key::Escape => {
+                        self.filter.set_text("");
+                        self.filter.set_focused(false);
+                        self.apply_filter();
+                        return true;
+                    }
+                    Key::Enter if !self.filter.popup_open() => {
+                        let forward = !*shift;
+                        let i = self.shown;
+                        let f = self.focused;
+                        self.panes[i].ex.set_focused(f);
+                        if self.panes[i].ex.select_next_hit(forward) {
+                            self.relayout();
+                            self.reveal_selection();
+                        }
+                        return true;
+                    }
+                    _ => {}
+                }
+                let fe = self.filter.on_event(ev, &mut inv);
+                self.on_filter_event(fe);
+                return true;
+            }
+            InputEvent::Char { .. }
+            | InputEvent::SelectAll
+            | InputEvent::Undo
+            | InputEvent::Redo
+                if self.filter.is_focused() =>
+            {
+                let fe = self.filter.on_event(ev, &mut inv);
+                self.on_filter_event(fe);
+                return true;
+            }
+            InputEvent::Wheel { .. } | InputEvent::HWheel { .. } if self.filter.popup_open() => {
+                let fe = self.filter.on_event(ev, &mut inv);
+                self.on_filter_event(fe);
+                return true;
+            }
+            _ => {}
+        }
+        // 서버 헤더 메뉴(모달 · 바깥 클릭 = 닫고 그 클릭은 그대로 진행 — 팝업 UX 규칙).
+        if self.menu.is_open() {
+            let outside = self.menu.is_outside_click(ev);
+            let consumed = self.menu.on_event(ev) && !outside;
+            if let Some(id) = self.menu.take_picked() {
+                self.header_pick(&id);
+            }
+            if !self.menu.is_open() {
+                self.menu_group = None;
+            }
+            if consumed || !outside {
+                return true;
+            }
+        }
         if let Some(i) = self.panes.iter().position(|p| p.ex.menu_open()) {
             return self.panes[i].ex.on_event(ev);
         }
@@ -759,6 +1178,13 @@ impl ExplorerSet {
             _ => None,
         };
         if let Some(p) = at {
+            // 서버 헤더 행: 우클릭 = 연결 해제 메뉴 · 좌클릭 = 소비만(선택 없음).
+            if let Some(first) = self.header_at(p) {
+                if matches!(ev, InputEvent::RightDown { .. }) {
+                    self.open_header_menu(first, p);
+                }
+                return true;
+            }
             let Some(i) = self.pane_at(p) else {
                 return false;
             };
@@ -789,6 +1215,25 @@ impl ExplorerSet {
                 self.reveal_selection();
                 r
             }
+        }
+    }
+
+    fn on_filter_event(&mut self, fe: FilterEvent) {
+        match fe {
+            FilterEvent::Changed => self.apply_filter(),
+            FilterEvent::LeaveDown => {
+                // 이력 끝에서 ↓/Tab = 트리로(첫 일치가 있으면 그 행).
+                self.filter.set_focused(false);
+                let i = self.shown;
+                let f = self.focused;
+                self.panes[i].ex.set_focused(f);
+                if !self.panes[i].ex.select_next_hit(true) {
+                    self.panes[i].ex.select_visible(0);
+                }
+                self.relayout();
+                self.reveal_selection();
+            }
+            FilterEvent::Consumed | FilterEvent::None | FilterEvent::Side(_) => {}
         }
     }
 
@@ -850,6 +1295,8 @@ impl ExplorerSet {
         for p in &self.panes {
             p.ex.paint_menu(dc, th);
         }
+        self.menu.paint(dc, th);
+        self.filter.paint_popup(dc, th);
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
@@ -858,10 +1305,31 @@ impl ExplorerSet {
         }
         // 트리가 펼쳐지거나 접히면 칸 높이가 달라진다 → 그릴 때마다 다시 놓는다(칸 수만큼의 덧셈).
         self.relayout();
-        dc.fill_rect(self.bounds, th.panel_bg);
+        dc.fill_rect(self.area, th.panel_bg);
+        self.filter.paint(dc, th, true);
         let laid = self.laid();
         for &i in &laid {
             self.panes[i].ex.paint(dc, th);
+        }
+        // ★ 서버 헤더(docs/54 §9): 그룹 첫 칸이 자기 글꼴·아이콘으로 그린다 · 부가 = 연결 수.
+        let heads = self.headers.clone();
+        for (first, r) in heads {
+            let vis = r.intersection(&self.bounds);
+            if vis.h <= 0 {
+                continue;
+            }
+            let n = self.group_online(first).len();
+            let mut sub = tf(Msg::ExpServerConns, &[&n.to_string()]);
+            if self.filter_on() {
+                let hits: usize = self
+                    .groups()
+                    .into_iter()
+                    .find(|(g, _)| g.first() == Some(&first))
+                    .map(|(g, _)| g.iter().map(|&i| self.panes[i].ex.filter_hits()).sum())
+                    .unwrap_or(0);
+                sub = format!("{sub} · {}", tf(Msg::ExpFilterHits, &[&hits.to_string()]));
+            }
+            self.panes[first].ex.paint_server_header(dc, th, vis, &sub);
         }
         let b = self.bounds;
         dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
@@ -906,6 +1374,66 @@ impl crate::memstat::MemSource for ExplorerSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 서버 헤더 해제 메뉴(docs/54 §9 · MC/DC): auto = 1개 바로 · 2개 이상 고르기 · always = 1개여도 고르기 · all = 늘 전부.
+    #[test]
+    fn disc_menu_by_mode_and_count() {
+        assert_eq!(disc_menu(DiscPick::Auto, 1), DiscMenu::Direct);
+        assert_eq!(disc_menu(DiscPick::Auto, 2), DiscMenu::Pick);
+        assert_eq!(disc_menu(DiscPick::Always, 1), DiscMenu::Pick);
+        assert_eq!(disc_menu(DiscPick::All, 3), DiscMenu::AllOnly);
+        assert_eq!(disc_menu(DiscPick::All, 1), DiscMenu::AllOnly);
+        assert_eq!(DiscPick::parse("always"), DiscPick::Always);
+        assert_eq!(DiscPick::parse("nope"), DiscPick::Auto);
+    }
+
+    fn spec(host: &str, db: &str, user: &str) -> ConnectSpec {
+        ConnectSpec {
+            user: Some(user.into()),
+            password: None,
+            host: Some(host.into()),
+            port: Some(1433),
+            database: Some(db.into()),
+            role: None,
+            dialect: Some(nsql_core::Dialect::Mssql),
+            schema: None,
+            env: Default::default(),
+        }
+    }
+
+    /// 서버 묶음(docs/54 §9): 같은 호스트의 연결 둘 = 한 그룹(헤더 1) · 다른 호스트 = 다른 그룹 · 파일 방언(호스트 없음) = 헤더 없음 ·
+    /// 배치 순서 = 그룹 인접 · 세션 0 = 기본(keep_offline 끔)이면 트리에서 빠지고, 켜면 오프라인 행으로 남는다.
+    #[test]
+    fn groups_by_host_and_removes_disconnected() {
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        for sp in [
+            spec("s1", "D1", "u"),
+            spec("s2", "X", "u"),
+            spec("s1", "D2", "u"),
+        ] {
+            set.connect(&sp, "p", false, false);
+        }
+        let g = set.groups();
+        assert_eq!(g.len(), 2, "호스트 둘 = 그룹 둘");
+        assert_eq!(g[0].0.len(), 2, "s1의 D1·D2가 한 그룹");
+        assert!(g[0].1 && g[1].1, "호스트 있는 서버 = 헤더");
+        let laid = set.laid();
+        assert_eq!(laid.len(), 3);
+        assert_eq!(laid[0], g[0].0[0]);
+        assert_eq!(laid[1], g[0].0[1], "같은 서버의 연결은 인접");
+        set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        assert_eq!(set.headers.len(), 2, "그룹마다 헤더 행 하나");
+        // D2 세션이 0 → 기본은 트리에서 빠진다.
+        let live = [spec("s1", "D1", "u"), spec("s2", "X", "u")];
+        set.sync_refs(&live);
+        assert_eq!(set.groups()[0].0.len(), 1, "해제된 연결 행이 사라진다");
+        // keep_offline 켬 = 남는다(오프라인).
+        set.set_keep_offline(true);
+        set.connect(&spec("s1", "D2", "u"), "p", false, false);
+        set.sync_refs(&live);
+        assert_eq!(set.groups()[0].0.len(), 2, "오프라인 행으로 남는다");
+        assert_eq!(set.group_online(set.groups()[0].0[0]).len(), 1);
+    }
 
     /// D11 MC/DC: 서버 키 있음 · 온라인 · 세션 0 — 셋 다 참일 때만 오프라인으로. 각각 하나만 뒤집어 Keep.
     #[test]

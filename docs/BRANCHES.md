@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/explorer-server-groups-filter | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-207 서버 묶음 트리 + 연결 해제 UX([54 §9](54-connection-model-and-disconnect.md)) · ★ T-208 탐색기 검색창([28 §7](28-object-explorer.md)) · 🔧 SQL Preview 자식 창 · DDL 앞 구분자 · 100차 후반 |
 | feat/explorer-dbms-trees-generate-sql | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-202 REF CURSOR 이어 받기(§188~189 · 43 §3-6) · ★ T-203·T-205 객체 탐색기 2차([83](83-object-explorer-dbms-trees-and-generate-sql.md) · DBMS별 트리·하위 폴더·유효성 배지·Generate SQL·SQL Preview·CLI `cat sub/gen`) · 100차 후반 |
 | feat/intel-size-boost | 2026-09-24 | 2026-09-24 → main(삭제) | 1 | ★ T-201 완성 × 문서 크기·향상 모드(§187 · 72 표 · 창 방식 `intel.max_doc_kb` · L1 수동만 · 자기 감속 · BOOST 키 5) |
 | feat/grammar-completion | 2026-09-24 | 2026-09-24 → main(삭제) | 1 | ★ T-200 문법 참조 기반 완성([82](82-grammar-driven-completion.md) · `.sqlg` 5개 · nsql-script `grammar.rs` · 절 감지 · 플러그인 로더) · 71 §8 · T-192 재현 기록 · 대기 작업 정리(§185~186) |

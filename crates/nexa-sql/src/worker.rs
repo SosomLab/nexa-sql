@@ -153,6 +153,11 @@ fn err(message: String) -> RunEvent {
 }
 
 /// 같은 서버인가 — 비밀번호만 빼고 비교(같으면 세션을 다시 열 이유가 없다).
+/// 같은 **서버**(방언·호스트·포트) — 탐색기 묶음 트리의 헤더 단위(docs/54 §9 · 09-25): DB·계정이 달라도 한 서버 아래 연결로.
+pub(crate) fn same_host(a: &ConnectSpec, b: &ConnectSpec) -> bool {
+    a.dialect == b.dialect && a.host == b.host && a.port == b.port
+}
+
 pub(crate) fn same_server(a: &ConnectSpec, b: &ConnectSpec) -> bool {
     a.dialect == b.dialect
         && a.host == b.host

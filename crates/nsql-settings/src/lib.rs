@@ -258,6 +258,15 @@ const REFETCH_OPTS: &[(&str, Msg)] = &[
     ("offset", Msg::ValRefetchOffset),
 ];
 
+const FILTER_SCOPE_OPTS: &[(&str, Msg)] =
+    &[("all", Msg::ValFilterAll), ("shown", Msg::ValFilterShown)];
+
+const DISC_PICK_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::ValDiscAuto),
+    ("always", Msg::ValDiscAlways),
+    ("all", Msg::ValDiscAll),
+];
+
 const MSSQL_CANCEL_OPTS: &[(&str, Msg)] = &[
     ("attention", Msg::ValMssqlCancelAttention),
     ("socket", Msg::ValMssqlCancelSocket),
@@ -1227,6 +1236,30 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExplorerIcons,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "explorer.disconnect_pick",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerDisconnectPick,
+        desc: Msg::DescExplorerDisconnectPick,
+        kind: SettingKind::Choice(DISC_PICK_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "explorer.filter_scope",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerFilterScope,
+        desc: Msg::DescExplorerFilterScope,
+        kind: SettingKind::Choice(FILTER_SCOPE_OPTS),
+        default: "all",
+    },
+    Entry {
+        key: "explorer.keep_offline",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerKeepOffline,
+        desc: Msg::DescExplorerKeepOffline,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     Entry {
         key: "explorer.tooltip",

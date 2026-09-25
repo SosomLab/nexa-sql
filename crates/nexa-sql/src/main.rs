@@ -1092,7 +1092,8 @@ impl App {
             Focus::Project => self.project_panel.focused_textbox(),
             Focus::Bookmarks => self.bm_panel.focused_textbox(),
             Focus::Outline => self.outline_panel.focused_textbox(),
-            Focus::Grid | Focus::Explorer => None,
+            Focus::Explorer => self.explorer.focused_textbox(),
+            Focus::Grid => None,
         }
     }
 
@@ -5818,6 +5819,13 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "explorer.disconnect_pick" => self
+                .explorer
+                .set_disconnect_pick(self.settings.get(key).unwrap_or("auto")),
+            "explorer.keep_offline" => self.explorer.set_keep_offline(self.settings.flag(key)),
+            "explorer.filter_scope" => self
+                .explorer
+                .set_filter_scope(self.settings.get(key).unwrap_or("all")),
             "meta.refresh_highlight_ms" => self
                 .explorer
                 .set_highlight_ms(self.settings.int(key).max(0) as u64),
@@ -6983,6 +6991,11 @@ impl App {
                 } else {
                     self.route(InputEvent::SelectAll);
                 }
+            }
+            // ★ 탐색기에 포커스가 있으면 ⌘F/Ctrl+F = 객체 필터 상자(docs/28 §7 · 사용자 09-25).
+            "edit.find" if self.focus == Focus::Explorer => {
+                self.explorer.focus_filter();
+                self.redraw();
             }
             "edit.find" | "edit.replace" => {
                 if id == "edit.replace" && self.find.is_visible() && self.focus == Focus::Find {
@@ -8163,6 +8176,11 @@ impl App {
             let row = rest.trim_start_matches(':').parse().unwrap_or(0);
             let ok = self.explorer.capture_expand(row);
             self.sess.status = format!("explorer.expand row={row} ok={ok}");
+            self.redraw();
+            return;
+        }
+        if let Some(q) = id.strip_prefix("explorer.filter:") {
+            self.explorer.set_filter_text(q);
             self.redraw();
             return;
         }
@@ -10340,6 +10358,8 @@ impl App {
             } else if let Some(w) = self.colors_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
             } else if let Some(w) = self.keys_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.sqlprev_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
             }
         }
@@ -15497,6 +15517,7 @@ impl ApplicationHandler<Wake> for App {
         if let Some((spec, r, server)) = self.sqlprev_pending.take() {
             let owner = self.window.clone();
             let syntax = self.editors.syntax_for_title("preview.sql");
+            let was_open = self.sqlprev_win.is_open();
             self.sqlprev_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
@@ -15506,6 +15527,12 @@ impl ApplicationHandler<Wake> for App {
                 r,
                 syntax,
             );
+            // ★ 맥 자식 창(비밀번호 창과 같은 길 · 사용자 09-25 "DDL 팝업이 메인 뒤로 숨는다"): 메인의 자식으로 붙여 늘 위에.
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
             self.sync_modal();
         }
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
@@ -17039,6 +17066,10 @@ fn main() {
         e.set_typeahead(typeahead_cfg(&settings));
         e.set_preload(settings.flag("intel.preload"));
         e.set_routines(settings.flag("intel.from_routines"));
+        e.set_disconnect_pick(settings.get("explorer.disconnect_pick").unwrap_or("auto"));
+        e.set_keep_offline(settings.flag("explorer.keep_offline"));
+        e.set_filter_scope(settings.get("explorer.filter_scope").unwrap_or("all"));
+        e.set_tooltip_delay(settings.int("ui.tooltip_delay_ms").max(0) as u128);
         // ★ 문법 참조 플러그인(nsql-script `grammar` · 09-24): 설정 폴더 `grammar/*.sqlg`가 내장 방언을 대신하거나 새 방언을 더한다.
         if let Some(dir) = nsql_settings::config_dir() {
             for (f, r) in nsql_script::grammar::load_dir(&dir.join("grammar")) {
@@ -17325,6 +17356,7 @@ fn main() {
         app.find.set_history(h.clone());
         app.search.set_history(h.clone());
         app.project_panel.set_history(h.clone());
+        app.explorer.set_history(h.clone());
         app.bm_panel.set_history(h.clone());
         app.outline_panel.set_history(h.clone());
         app.ext_panel.set_history(h.clone());

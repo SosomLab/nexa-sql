@@ -532,6 +532,15 @@ pub(crate) struct Explorer {
     /// 루트 표시 = 프로필 이름(굵게) + 호스트:포트(흐리게 · docs/28 §1 · 사용자 09-15).
     profile_name: String,
     endpoint: String,
+    /// ★ 묶음 모드(docs/54 §9 · 09-25): 같은 서버의 연결들이 한 헤더 아래 놓인다 — 루트 행 = **연결(DB · 계정)** 행 · 들여쓰기 +1.
+    grouped: bool,
+    /// 연결의 DB(서비스)·계정(묶음 모드 루트 행 라벨).
+    conn_db: String,
+    conn_user: String,
+    /// ★ 탐색기 검색창(docs/28 §7 · 09-25): 걸러진 노드 집합(None = 필터 없음) · 직접 일치 수 · 강조용 질의 낱말(소문자).
+    filter_keep: Option<std::collections::HashSet<usize>>,
+    filter_hits: usize,
+    filter_tokens: Vec<String>,
     menu: CtxMenu,
     actions: Vec<ExplorerAction>,
     last_click: Option<(usize, Instant)>,
@@ -1248,6 +1257,12 @@ impl Explorer {
             source_pending: false,
             row_px: 0,
             dots_step: 0,
+            grouped: false,
+            conn_db: String::new(),
+            conn_user: String::new(),
+            filter_keep: None,
+            filter_hits: 0,
+            filter_tokens: Vec::new(),
             typeahead: nexa_ctl::TypeAhead::default(),
             ta_cfg: TypeAheadCfg::default(),
             now_hint: 0,
@@ -1360,6 +1375,129 @@ impl Explorer {
 
     /// 표시 크기로 미리 스케일한 아이콘(캐시) — 페인트는 스케일 없이 그대로 찍는다.
     /// 루트(서버) 브랜드 아이콘 — `dbms_icons`(내장 SVG 26 · 방언/제품 힌트 → 이름 · 모르면 generic 틀).
+    /// 서버 브랜드 아이콘(dbms_icons · 라벨 줄 포함) — 루트 행(묶음 아님) · 서버 헤더(묶음 · `ExplorerSet`) 공용. 돌려주는 값 = 그린 폭.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_brand(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        x: i32,
+        vcy: i32,
+        sz: i32,
+        rgb: (u8, u8, u8),
+        rr: Rect,
+    ) -> i32 {
+        let s = self.scale;
+        let hint = format!("{} {}", self.profile_name, self.conn_desc);
+        let pick = dbms_icons::pick(self.dialect, &hint);
+        let rgb = pick.color.unwrap_or(rgb);
+        let rs = ((sz as f32) * 1.35).round() as i32;
+        let dstr = Rect::new(x, vcy - rs / 2, rs, rs);
+        let img = self.brand_image(pick.name, rgb, rs, rs);
+        dc.image_scaled(dstr, &img, rr);
+        if !pick.lines.is_empty() {
+            // 세로 배치(사용자 09-22): 원통 안쪽 빈 띠 = 6.0/24 ~ 20.2/24 · 대문자 높이 ≈ 0.64·줄높이(위 0.18 여백) ·
+            //   2줄 간격 2px · 1줄 상단 여백 = 2줄 하단 여백(글자와 가장 가까운 테두리 픽셀 사이).
+            // 고정폭 굵게(사용자 09-22) — 1줄·2줄 같은 face·size.
+            // ★ 틀 안에 맞춘다(사용자 09-23 "라벨이 DB 모양 테두리를 벗어난다"): 가장 긴 줄이 원통 안쪽 폭(≈ 0.78·rs)을
+            //   넘거나 줄들이 세로 띠를 넘으면 글꼴을 1px씩 줄인다(`select_font_sized` 음수 증분 · 최대 −8).
+            // ★ 09-24(사용자 "줄 사이 1px · 테두리와 글자 사이 1px · 고정폭으로 채움"): 원통 안쪽 = 옆벽 안면
+            //   4.6~19.4/24 · 위 타원 바닥 6.0/24 ~ 아래 띠 안면 20.2/24 에서 1px씩 들여온 상자에, **가장 큰**
+            //   글꼴(위로 +8부터 1px씩 내려 처음 맞는 크기)로 두 줄(줄 사이 1px)을 채우고 가운데 둔다.
+            let m = (1.0 * s).round().max(1.0) as i32;
+            let gap = m;
+            let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32 + m;
+            let bottom = dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32 - m;
+            let n = pick.lines.len() as i32;
+            let inner_w = (rs as f32 * 14.8 / 24.0).round() as i32 - 2 * m;
+            let mut delta = 8.0f32;
+            let (lh2, cap, asc, total) = loop {
+                dc.select_font_sized(FontSlot::Mono, true, delta);
+                let lh2 = dc.text_height();
+                let cap = (lh2 as f32 * 0.64).round() as i32;
+                let asc = (lh2 as f32 * 0.18).round() as i32;
+                let total = cap * n + gap * (n - 1);
+                let wmax = pick
+                    .lines
+                    .iter()
+                    .map(|l| dc.text_width(l))
+                    .max()
+                    .unwrap_or(0);
+                if (wmax <= inner_w && total <= bottom - top) || delta <= -8.0 {
+                    break (lh2, cap, asc, total);
+                }
+                delta -= 1.0;
+            };
+            let _ = lh2;
+            let margin = (bottom - top - total) / 2;
+            let mut vis_top = top + margin;
+            let c = dstr.intersection(&rr);
+            for line in &pick.lines {
+                let tw = dc.text_width(line);
+                let lx = dstr.x + (rs - tw) / 2;
+                if !c.is_empty() {
+                    dc.text(lx, vis_top - asc, c, line, th.text);
+                }
+                vis_top += cap + gap;
+            }
+            dc.select_font(FontSlot::Base, false);
+        }
+        rs
+    }
+
+    fn base_depth(&self) -> usize {
+        usize::from(self.grouped)
+    }
+
+    /// 묶음 모드(docs/54 §9): 참이면 루트 행이 연결(DB · 계정) 행이 되고 트리는 한 단 들여쓴다 — 서버 헤더는 `ExplorerSet`이 그린다.
+    pub(crate) fn set_grouped(&mut self, on: bool) {
+        if self.grouped != on {
+            self.grouped = on;
+            self.rows_cache = self.screen_rows();
+        }
+    }
+
+    /// ★ 서버 헤더 행(묶음 모드 · `ExplorerSet`이 그룹 첫 칸에 부탁): 브랜드 아이콘 + 호스트:포트 + 흐린 부가(연결 수).
+    pub(crate) fn paint_server_header(
+        &mut self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        r: Rect,
+        sub: &str,
+    ) {
+        if r.h <= 0 || r.w <= 0 {
+            return;
+        }
+        let s = self.scale;
+        dc.fill_rect(r, th.panel_bg);
+        dc.select_font(FontSlot::Base, false);
+        let asc = dc.text_ascent();
+        let ty = dc.text_center_y(r.y, r.h);
+        let vcy = ty + (asc as f32 * 0.62).round() as i32;
+        let mut x = r.x - self.scroll_x + (4.0 * s).round() as i32 + (16.0 * s).round() as i32;
+        if self.icons_on {
+            let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
+                .round()
+                .max(8.0) as i32;
+            let rgb = self
+                .dialect
+                .map_or(IconKind::Dbms.color(), exp_icons::dbms_color);
+            let adv = self.draw_brand(dc, th, x, vcy, sz, rgb, r);
+            x += adv + (6.0 * s).round() as i32;
+        }
+        dc.select_font(FontSlot::Base, false);
+        let label = if self.endpoint.is_empty() {
+            self.profile_name.clone()
+        } else {
+            self.endpoint.clone()
+        };
+        dc.text(x, ty, r, &label, th.text);
+        if !sub.is_empty() {
+            let sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
+            dc.text(sx0, ty, r, sub, th.text_dim);
+        }
+    }
+
     fn brand_image(
         &mut self,
         name: &'static str,
@@ -1570,6 +1708,8 @@ impl Explorer {
         self.dialect = None;
         self.conn_desc = spec.redacted();
         self.profile_name = profile_name.to_string();
+        self.conn_db = spec.database.clone().unwrap_or_default();
+        self.conn_user = spec.user.clone().unwrap_or_default();
         self.endpoint = match (&spec.host, spec.port) {
             (Some(h), Some(p)) => format!("{h}:{p}"),
             (Some(h), None) => h.clone(),
@@ -3066,6 +3206,9 @@ impl Explorer {
         let mut out = Vec::new();
         let mut stack = vec![0usize];
         while let Some(i) = stack.pop() {
+            if self.filter_keep.as_ref().is_some_and(|k| !k.contains(&i)) {
+                continue;
+            }
             out.push(i);
             let n = &self.nodes[i];
             if n.expanded {
@@ -3075,6 +3218,122 @@ impl Explorer {
             }
         }
         out
+    }
+
+    /// ★ 검색창 필터(docs/28 §7): `q`가 비면 해제 · 아니면 노드 = 라벨 일치 **또는** 걸러진 자손이 있음 **또는** 아직 안 읽은 펼침
+    /// 가능 노드(내용을 모름 — 펼치면 그 안을 거른다). 걸러진 자손이 있는 읽어 둔 노드는 펼친다(일치가 보이게). 루트는 늘 남는다.
+    pub(crate) fn apply_filter(&mut self, q: &str, pred: &dyn Fn(&str) -> bool) {
+        let q = q.trim();
+        self.filter_tokens = q.split_whitespace().map(|t| t.to_lowercase()).collect();
+        if q.is_empty() {
+            if self.filter_keep.take().is_some() {
+                self.rows_cache = self.screen_rows();
+                self.clamp_scroll();
+            }
+            self.filter_hits = 0;
+            return;
+        }
+        let n = self.nodes.len();
+        // strong = 자기 일치 또는 일치 자손(조상을 살리고 펼치는 힘) · keep = strong 또는 **내용을 모르는 폴더**(안 읽은 컨테이너 —
+        // 펼치면 그 안을 거른다 · 객체·잎은 이름이 곧 내용이라 안 읽었어도 숨긴다).
+        let mut strong = vec![false; n];
+        let mut keep = vec![false; n];
+        let mut hit = vec![false; n];
+        // 자식이 부모보다 뒤에 만들어진다(인덱스 증가) → 뒤에서 앞으로 한 번에.
+        for i in (0..n).rev() {
+            let node = &self.nodes[i];
+            let attached = i == 0 || self.parent_of(i).is_some();
+            if !attached {
+                continue;
+            }
+            // 검색 대상 = 객체·컬럼·잎·스키마 이름(폴더·하위 폴더 라벨은 대상이 아니다 — "Tables"가 "b"에 걸리지 않게).
+            let direct = !matches!(
+                node.kind,
+                NodeKind::Root | NodeKind::Folder { .. } | NodeKind::Sub { .. }
+            ) && pred(&self.label(i).0);
+            let child_strong = node.children.iter().any(|&c| strong[c]);
+            let container = matches!(
+                node.kind,
+                NodeKind::Root
+                    | NodeKind::Schema(_)
+                    | NodeKind::Folder { .. }
+                    | NodeKind::Sub { .. }
+            );
+            let unknown = container && node.expandable && node.state != LoadState::Loaded;
+            hit[i] = direct;
+            strong[i] = direct || child_strong;
+            keep[i] = i == 0 || strong[i] || unknown;
+        }
+        for i in 0..n {
+            if strong[i]
+                && self.nodes[i].state == LoadState::Loaded
+                && self.nodes[i].children.iter().any(|&c| strong[c])
+            {
+                self.nodes[i].expanded = true;
+            }
+        }
+        self.filter_hits = hit.iter().filter(|h| **h).count();
+        self.filter_keep = Some((0..n).filter(|&i| keep[i]).collect());
+        self.rows_cache = self.screen_rows();
+        self.clamp_scroll();
+    }
+
+    pub(crate) fn filter_hits(&self) -> usize {
+        self.filter_hits
+    }
+
+    /// 다음(또는 이전) 직접 일치 행으로 선택을 옮긴다(보이는 순서 · 끝이면 처음부터) — 검색창 Enter.
+    pub(crate) fn select_next_hit(&mut self, forward: bool) -> bool {
+        if self.filter_tokens.is_empty() {
+            return false;
+        }
+        let rows = self.visible_rows();
+        let hits: Vec<usize> = rows
+            .iter()
+            .copied()
+            .filter(|&i| {
+                !matches!(
+                    self.nodes[i].kind,
+                    NodeKind::Root | NodeKind::Folder { .. } | NodeKind::Sub { .. }
+                ) && self.label_hit(i).is_some()
+            })
+            .collect();
+        if hits.is_empty() {
+            return false;
+        }
+        let cur = self
+            .selected
+            .and_then(|s| hits.iter().position(|&h| h == s));
+        let next = match (cur, forward) {
+            (Some(c), true) => (c + 1) % hits.len(),
+            (Some(c), false) => (c + hits.len() - 1) % hits.len(),
+            (None, true) => 0,
+            (None, false) => hits.len() - 1,
+        };
+        let i = hits[next];
+        self.selected = Some(i);
+        self.caret = Some(i);
+        self.ensure_visible(i);
+        true
+    }
+
+    /// 라벨 안 첫 질의 낱말의 (바이트 시작, 바이트 끝) — 강조 그리기·일치 판정(대소문자 무시 · 한글 자모는 부품 판정과 달라 안 그린다).
+    fn label_hit(&self, i: usize) -> Option<(usize, usize)> {
+        let label = self.label(i).0;
+        let low = label.to_lowercase();
+        if low.len() != label.len() {
+            return self
+                .filter_tokens
+                .iter()
+                .any(|t| low.contains(t))
+                .then_some((0, 0));
+        }
+        for t in &self.filter_tokens {
+            if let Some(b) = low.find(t.as_str()) {
+                return Some((b, b + t.len()));
+            }
+        }
+        None
     }
 
     fn row_h(&self) -> i32 {
@@ -3243,7 +3502,9 @@ impl Explorer {
                 };
                 self.selected = Some(i);
                 let glyph_x = self.bounds.x - self.scroll_x
-                    + ((self.nodes[i].depth as f32 * INDENT + 4.0) * self.scale).round() as i32;
+                    + (((self.nodes[i].depth + self.base_depth()) as f32 * INDENT + 4.0)
+                        * self.scale)
+                        .round() as i32;
                 let glyph_w = (16.0 * self.scale).round() as i32;
                 let now = Instant::now();
                 let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.duration_since(t).as_millis() < DBLCLICK_MS);
@@ -3264,14 +3525,15 @@ impl Explorer {
                 self.selected = Some(i);
                 let mut items = Vec::new();
                 let gen_menu = |whats: Vec<nsql_catalog::GenWhat>| {
-                    CtxItem::submenu(
-                        "gen",
-                        t(Msg::MnGenSql),
-                        whats
-                            .iter()
-                            .map(|w| CtxItem::item(format!("gen:{}", w.code()), w.label()))
-                            .collect(),
-                    )
+                    // DDL 앞 구분자(사용자 09-25) — DML/CALL 무리와 DDL을 나눈다(DDL만 있으면 구분자 없음).
+                    let mut kids = Vec::new();
+                    for w in &whats {
+                        if *w == nsql_catalog::GenWhat::Ddl && !kids.is_empty() {
+                            kids.push(CtxItem::Separator);
+                        }
+                        kids.push(CtxItem::item(format!("gen:{}", w.code()), w.label()));
+                    }
+                    CtxItem::submenu("gen", t(Msg::MnGenSql), kids)
                 };
                 match &self.nodes[i].kind {
                     NodeKind::Object(o) => {
@@ -3324,7 +3586,14 @@ impl Explorer {
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                         items.push(CtxItem::item("refresh_meta", t(Msg::ExpRefreshMeta)));
                         items.push(CtxItem::Separator);
-                        items.push(CtxItem::item("disconnect", t(Msg::ExpDisconnectServer)));
+                        items.push(CtxItem::item(
+                            "disconnect",
+                            t(if self.grouped {
+                                Msg::ExpDisconnectConn
+                            } else {
+                                Msg::ExpDisconnectServer
+                            }),
+                        ));
                     }
                     _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
                 }
@@ -3704,6 +3973,25 @@ impl Explorer {
     fn label(&self, i: usize) -> (String, String) {
         let n = &self.nodes[i];
         match &n.kind {
+            NodeKind::Root if self.grouped && !self.conn_desc.is_empty() => {
+                // 묶음 모드(docs/54 §9): 연결 행 = DB(서비스) · 흐리게 = 계정 · 프로필(· 오프라인).
+                let main = if self.conn_db.is_empty() {
+                    self.endpoint.clone()
+                } else {
+                    self.conn_db.clone()
+                };
+                let mut dim: Vec<String> = Vec::new();
+                if !self.conn_user.is_empty() {
+                    dim.push(self.conn_user.clone());
+                }
+                if !self.profile_name.is_empty() && self.profile_name != main {
+                    dim.push(self.profile_name.clone());
+                }
+                if self.offline {
+                    dim.push(t(Msg::ExpOffline).to_string());
+                }
+                (main, dim.join(" · "))
+            }
             NodeKind::Root => {
                 if self.conn_desc.is_empty() {
                     (t(Msg::ExpNotConnected).to_string(), String::new())
@@ -3822,7 +4110,7 @@ impl Explorer {
             match node {
                 None => {
                     // 상태 행: 로딩 중 / 오류(클릭 = 재시도).
-                    let depth = self.nodes[*parent].depth + 1;
+                    let depth = self.nodes[*parent].depth + 1 + self.base_depth();
                     let x = b.x - sx + ((depth as f32 * INDENT + 8.0) * s).round() as i32;
                     match &self.nodes[*parent].state {
                         LoadState::Loading => {
@@ -3864,7 +4152,9 @@ impl Explorer {
                             dc.fill_rect_alpha(rr, th.text, ha);
                         }
                     }
-                    let gx = b.x - sx + ((n.depth as f32 * INDENT + 4.0) * s).round() as i32;
+                    let gx = b.x - sx
+                        + (((n.depth + self.base_depth()) as f32 * INDENT + 4.0) * s).round()
+                            as i32;
                     // 셰브론(nexa-dir2 파일 그리드와 같은 부품 · 사용자 09-15) — 읽어서 자식이 없으면 그리지 않는다.
                     let empty_loaded = n.state == LoadState::Loaded && n.children.is_empty();
                     // ★ 부분적으로 잘린 행(위로 반쯤 스크롤된 첫 행 · 상태줄에 걸린 마지막 행)도 셰브론·아이콘을 **클립해서** 그린다
@@ -3896,68 +4186,11 @@ impl Explorer {
                                 .max(8.0) as i32;
                             let dst = Rect::new(x, vcy - sz / 2, sz, sz);
                             let mut adv = sz;
-                            if matches!(n.kind, NodeKind::Root) {
+                            if matches!(n.kind, NodeKind::Root) && !self.grouped {
                                 // ★ 서버 루트 = DBMS 파일 아이콘(dbms_icons · 사용자 09-22): 틀 색 = 파일의 대표색(fill) ·
                                 //   `<text>` 줄들(≤3자 1줄 세로 중앙 · 4~6자 2줄)을 Status 굵게 틀 안에 · 로고 파일(경로만)이면 마스크만.
                                 //   루트만 조금 크게(1.35배) 그려 두 줄이 들어간다.
-                                let hint = format!("{} {}", self.profile_name, self.conn_desc);
-                                let pick = dbms_icons::pick(self.dialect, &hint);
-                                let rgb = pick.color.unwrap_or(rgb);
-                                let rs = ((sz as f32) * 1.35).round() as i32;
-                                let dstr = Rect::new(x, vcy - rs / 2, rs, rs);
-                                let img = self.brand_image(pick.name, rgb, rs, rs);
-                                dc.image_scaled(dstr, &img, rr);
-                                if !pick.lines.is_empty() {
-                                    // 세로 배치(사용자 09-22): 원통 안쪽 빈 띠 = 6.0/24 ~ 20.2/24 · 대문자 높이 ≈ 0.64·줄높이(위 0.18 여백) ·
-                                    //   2줄 간격 2px · 1줄 상단 여백 = 2줄 하단 여백(글자와 가장 가까운 테두리 픽셀 사이).
-                                    // 고정폭 굵게(사용자 09-22) — 1줄·2줄 같은 face·size.
-                                    // ★ 틀 안에 맞춘다(사용자 09-23 "라벨이 DB 모양 테두리를 벗어난다"): 가장 긴 줄이 원통 안쪽 폭(≈ 0.78·rs)을
-                                    //   넘거나 줄들이 세로 띠를 넘으면 글꼴을 1px씩 줄인다(`select_font_sized` 음수 증분 · 최대 −8).
-                                    // ★ 09-24(사용자 "줄 사이 1px · 테두리와 글자 사이 1px · 고정폭으로 채움"): 원통 안쪽 = 옆벽 안면
-                                    //   4.6~19.4/24 · 위 타원 바닥 6.0/24 ~ 아래 띠 안면 20.2/24 에서 1px씩 들여온 상자에, **가장 큰**
-                                    //   글꼴(위로 +8부터 1px씩 내려 처음 맞는 크기)로 두 줄(줄 사이 1px)을 채우고 가운데 둔다.
-                                    let m = (1.0 * s).round().max(1.0) as i32;
-                                    let gap = m;
-                                    let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32 + m;
-                                    let bottom =
-                                        dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32 - m;
-                                    let n = pick.lines.len() as i32;
-                                    let inner_w = (rs as f32 * 14.8 / 24.0).round() as i32 - 2 * m;
-                                    let mut delta = 8.0f32;
-                                    let (lh2, cap, asc, total) = loop {
-                                        dc.select_font_sized(FontSlot::Mono, true, delta);
-                                        let lh2 = dc.text_height();
-                                        let cap = (lh2 as f32 * 0.64).round() as i32;
-                                        let asc = (lh2 as f32 * 0.18).round() as i32;
-                                        let total = cap * n + gap * (n - 1);
-                                        let wmax = pick
-                                            .lines
-                                            .iter()
-                                            .map(|l| dc.text_width(l))
-                                            .max()
-                                            .unwrap_or(0);
-                                        if (wmax <= inner_w && total <= bottom - top)
-                                            || delta <= -8.0
-                                        {
-                                            break (lh2, cap, asc, total);
-                                        }
-                                        delta -= 1.0;
-                                    };
-                                    let _ = lh2;
-                                    let margin = (bottom - top - total) / 2;
-                                    let mut vis_top = top + margin;
-                                    let c = dstr.intersection(&rr);
-                                    for line in &pick.lines {
-                                        let tw = dc.text_width(line);
-                                        let lx = dstr.x + (rs - tw) / 2;
-                                        if !c.is_empty() {
-                                            dc.text(lx, vis_top - asc, c, line, th.text);
-                                        }
-                                        vis_top += cap + gap;
-                                    }
-                                    dc.select_font(FontSlot::Base, false);
-                                }
-                                adv = rs;
+                                adv = self.draw_brand(dc, th, x, vcy, sz, rgb, rr);
                             } else {
                                 // ★ 유효성 배지(83 §2 · DBeaver 관례): INVALID = 아이콘 오른쪽 아래 빨간 점(흰 테).
                                 let invalid =
@@ -3998,6 +4231,17 @@ impl Explorer {
                     let (label, sub) = self.label(*i);
                     // 메뉴와 같은 글꼴·크기·굵기(DBeaver 캡처 기준 · 사용자 09-15) — 굵게 없음.
                     dc.select_font(FontSlot::Base, false);
+                    // ★ 검색창 일치 강조(docs/28 §7): 첫 질의 낱말 자리에 옅은 강조색 띠.
+                    if !self.filter_tokens.is_empty() {
+                        if let Some((b0, b1)) = self.label_hit(*i) {
+                            if b1 > b0 {
+                                let w0 = dc.text_width(&label[..b0]);
+                                let w1 = dc.text_width(&label[b0..b1]);
+                                let hr = Rect::new(x + w0, ty, w1, th_txt).intersection(&rr);
+                                dc.fill_rect_alpha(hr, th.accent, 0.28);
+                            }
+                        }
+                    }
                     dc.text(x, ty, rr, &label, th.text);
                     let lw = dc.text_width(&label);
                     dc.select_font(FontSlot::Base, false);
@@ -4185,6 +4429,34 @@ mod refresh_tests {
         // 강조는 시간이 지나면 걷힌다.
         ex.tick(3001);
         assert!(ex.fresh.is_empty());
+    }
+
+    /// 검색창 필터(docs/28 §7): 일치 노드 + 조상 + 안 읽은 폴더만 남고, 일치를 품은 읽어 둔 조상은 펼쳐진다 · 빈 글 = 해제 ·
+    /// Enter = 다음 일치로 선택 이동(끝이면 처음).
+    #[test]
+    fn filter_keeps_matches_ancestors_and_unloaded_folders() {
+        let (mut ex, schema, tables) = sample();
+        let b = ex.nodes[tables].children[1];
+        ex.nodes[tables].expanded = false;
+        let pred = |hay: &str| hay.to_lowercase().contains('b');
+        ex.apply_filter("b", &pred);
+        let rows = ex.visible_rows();
+        assert!(rows.contains(&b), "일치 노드");
+        assert!(rows.contains(&tables) && rows.contains(&schema), "조상");
+        assert!(ex.nodes[tables].expanded, "일치를 품은 폴더는 펼쳐진다");
+        let a = ex.nodes[tables].children[0];
+        assert!(!rows.contains(&a), "불일치 노드는 숨는다");
+        let views = ex.nodes[schema].children[1];
+        assert!(
+            rows.contains(&views),
+            "안 읽은 폴더는 남는다(펼치면 그 안을 거른다)"
+        );
+        assert_eq!(ex.filter_hits(), 1);
+        assert!(ex.select_next_hit(true));
+        assert_eq!(ex.selected, Some(b));
+        ex.apply_filter("", &pred);
+        assert!(ex.visible_rows().contains(&a), "빈 글 = 해제");
+        assert_eq!(ex.filter_hits(), 0);
     }
 
     /// 실행한 DDL → 그 폴더만: 읽어 둔 폴더 = 요청 1 · 안 읽은 폴더 = 0(펼칠 때 새로 읽는다) · ALTER = 읽어 둔 객체의 컬럼만 ·
