@@ -1257,7 +1257,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
             }
         };
         let ms = t0.elapsed().as_millis();
-        if ms >= 300 || what.starts_with("columns") || what.starts_with("detail") {
+        // 인덱스·검색은 늘 남긴다(스키마당 1줄 · 09-25 "검색이 끝나지 않는다" 진단).
+        if ms >= 300
+            || what.starts_with("columns")
+            || what.starts_with("detail")
+            || what.starts_with("index")
+        {
             eprintln!("[meta] {what} took {ms} ms");
         }
         if tx.send(resp).is_err() {
@@ -3720,6 +3725,43 @@ impl Explorer {
         }
     }
 
+    /// ★ 뒤에서 할 일이 남았는가(L1 스키마 남음 · L2 컬럼 큐 · 검색 완성) — 호스트가 빠른 타이머를 유지해 `prefetch_step`이 돌게(85 §2 · 09-25 결함:
+    /// 유휴면 틱이 멈춰 L1이 진행되지 않았다).
+    pub(crate) fn background_pending(&self) -> bool {
+        if self.offline || self.dialect.is_none() || self.nodes[0].state != LoadState::Loaded {
+            return false;
+        }
+        let c = self.index_cfg;
+        let l1 = c.on
+            && c.prefetch
+            && (self.index_inflight.is_some()
+                || self
+                    .schema_names()
+                    .iter()
+                    .any(|s| !self.index_done.contains(s)));
+        l1 || !self.warm_q.is_empty() || self.warm_inflight.is_some() || self.search_busy()
+    }
+
+    /// 진단 한 줄(기동 명령 `explorer.stat` · 09-25): 스키마 수 · L1 완료 수 · 진행 중 · 큐 · 완성 · 일치 · 검색 중.
+    pub(crate) fn stat_line(&self) -> String {
+        format!(
+            "schemas={} l1_done={} inflight={:?} index_q={} completing={:?} complete_q={} hits={} busy={} warm_q={} warm_inflight={:?} offline={} root={:?} filter={}",
+            self.schema_names().len(),
+            self.index_done.len(),
+            self.index_inflight,
+            self.index_q.len(),
+            self.completing,
+            self.complete_q.len(),
+            self.filter_hits,
+            self.search_busy(),
+            self.warm_q.len(),
+            self.warm_inflight,
+            self.offline,
+            self.nodes[0].state,
+            self.filter.is_some()
+        )
+    }
+
     /// 검색이 아직 진행 중인가(인덱스 읽기·완성 큐 중 하나라도) — 필터 틀의 진행 표시용(84 §8).
     pub(crate) fn search_busy(&self) -> bool {
         self.filter.is_some()
@@ -3748,6 +3790,11 @@ impl Explorer {
     /// ★ 유휴 선적재 한 걸음(84 §7 · 호스트가 주기적으로 부른다): 검색이 없고 · 인덱스가 켜져 있고 · 온라인이며 · 마지막 응답 뒤 `idle_ms`가 지났으면
     /// 아직 없는 스키마 하나를 **백그라운드 메타 세션**으로 읽는다(사용자 클릭 세션을 막지 않는다). 다 읽으면 트래픽 0.
     pub(crate) fn prefetch_step(&mut self, now: Instant) -> bool {
+        // 감시(09-25 "검색이 끝나지 않는다"): 검색 중이면 큐를 매 틱 한 번 더 민다 — 응답 경로가 어떤 이유로 끊겨도 멈추지 않게(비용 0).
+        if self.filter.is_some() {
+            self.pump_index();
+            self.pump_complete();
+        }
         let l1 = self.l1_step(now);
         let l2 = self.warm_step(now);
         l1 || l2

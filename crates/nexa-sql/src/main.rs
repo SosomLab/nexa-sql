@@ -8233,6 +8233,10 @@ impl App {
             let _ = std::fs::write(path, self.explorer.dump_rows());
             return;
         }
+        if let Some(path) = id.strip_prefix("explorer.stat:") {
+            let _ = std::fs::write(path, self.explorer.stat_text());
+            return;
+        }
         if let Some(path) = id.strip_prefix("sqlprev.dump:") {
             let text = if self.sqlprev_win.is_open() {
                 format!(
@@ -15838,6 +15842,7 @@ impl ApplicationHandler<Wake> for App {
             || self.prefs_win.animating()
             || self.file_win.animating()
             || self.explorer.bars_visible()
+            || self.explorer.background_pending()
             || self.find.animating()
             || self.search.animating()
             || self.project_panel.animating()

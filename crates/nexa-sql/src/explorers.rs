@@ -1237,6 +1237,20 @@ impl ExplorerSet {
                 || self.panes.iter().any(|p| p.ex.bars_visible()))
     }
 
+    /// 뒤에서 할 일(L1·L2·검색 완성)이 남은 칸이 있는가 — 호스트 빠른 타이머 유지 조건(85 §2).
+    pub(crate) fn background_pending(&self) -> bool {
+        self.panes.iter().any(|p| p.ex.background_pending())
+    }
+
+    /// 진단(기동 명령 `explorer.stat:<파일>`): 칸마다 한 줄.
+    pub(crate) fn stat_text(&self) -> String {
+        self.panes
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!("{i}: {}\n", p.ex.stat_line()))
+            .collect()
+    }
+
     /// 마우스 라우팅 규칙(CLAUDE.md): 누름·휠은 **커서 아래 칸에만** · 이동은 전 칸(hover 해제용) · 키는 마지막으로 누른 칸 ·
     /// 메뉴가 열린 칸이 있으면 그 칸이 먼저(모달).
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {

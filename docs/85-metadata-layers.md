@@ -30,6 +30,7 @@
 
 - 원천 = [84 §2](84-explorer-search-index.md) `nsql_catalog::name_index`(스키마 하나 · 방언별 한 질의 · Oracle §2-1 DBA→USER→ALL).
 - 저장 = `MetaStore::load_names(schema, kinds, names, at)` — 스키마의 **모든 종류를 한 편집**으로 `Coverage::Names { at, n, upgrading }` · 이미 `Loaded`/`Stale`/`Loading`인 버킷은 건드리지 않음(내려가지 않음) · 같은 이름은 `ObjId` 유지(컬럼 그대로).
+- 타이머 = L1·L2·검색 완성이 남아 있는 동안 호스트 빠른 타이머를 유지(`background_pending` · §202 결함: 유휴면 틱이 멈춰 진행이 섰다) · 검색 중엔 매 틱 큐 감시.
 - 스케줄 = `Explorer::l1_step`(접속 직후 · 스키마 목록이 오면 · 검색 없어도 · `explorer.index_prefetch` on · 간격 `explorer.index_idle_ms` 250 ms · 백그라운드 세션 · 한 번에 하나) · 검색 중엔 `pump_index`가 같은 큐를 간격 없이 돈다(둘 다 `tx_bg` = 이름 사본이 한 스레드에).
 - 소비 = 완성 `note_coverage(Names)` → 후보를 바로 내고 **청하지 않음** · 검색 = 스레드 사본(§6) · 트리 폴더는 그대로 `Objects`(펼칠 때).
 - 승격 = `request_objects`가 `Missing | Stale | Names{upgrading:false}`를 `ObjectsMeta`로 → `Loaded`(상태·부가) · 승격 중에도 `Names` 목록은 산다(`mark_loading` = `upgrading:true` · 깜빡임 0).
