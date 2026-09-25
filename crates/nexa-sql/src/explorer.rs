@@ -3941,7 +3941,17 @@ impl Explorer {
         });
     }
 
+    /// 소스 열기(스펙) — 패키지 본문은 `open_body`(같은 길 · 종류만 `PackageBody`).
     fn open_source(&mut self, o: &ObjectInfo) {
+        self.open_source_kind(o, o.kind, format!("{}.sql", o.name));
+    }
+
+    /// ★ 패키지 **본문** 열기(사용자 09-26 "Body는 어떻게 열고 수정하나") — `CREATE OR REPLACE PACKAGE BODY …`를 새 탭에 · 고쳐서 실행하면 컴파일.
+    fn open_body(&mut self, o: &ObjectInfo) {
+        self.open_source_kind(o, ObjectKind::PackageBody, format!("{}.body.sql", o.name));
+    }
+
+    fn open_source_kind(&mut self, o: &ObjectInfo, kind: ObjectKind, title: String) {
         if self.offline {
             self.actions
                 .push(ExplorerAction::Status(t(Msg::ExpNotConnected).to_string()));
@@ -3970,9 +3980,9 @@ impl Explorer {
         let _ = self.tx.send(Req::Source {
             gen: self.gen,
             schema: o.schema.clone(),
-            kind: o.kind,
+            kind,
             name,
-            title: format!("{}.sql", o.name),
+            title,
         });
     }
 
@@ -4962,6 +4972,10 @@ impl Explorer {
                         if o.kind.has_source() {
                             items.push(CtxItem::item("source", t(Msg::ExpOpenSource)));
                         }
+                        // 패키지 = 스펙과 본문이 따로(D-202 · Package Bodies 폴더 없음) → 본문 열기.
+                        if o.kind == ObjectKind::Package {
+                            items.push(CtxItem::item("body", t(Msg::ExpOpenBody)));
+                        }
                         // ★ Generate SQL(83 §3): 종류별 항목(테이블 = DML 유형별 · 루틴 = CALL · 공통 = DDL).
                         if let Some(d) = self.dialect {
                             let whats = nsql_catalog::gen_whats(d, o.kind, None);
@@ -5352,6 +5366,11 @@ impl Explorer {
         }
         match id {
             "select" | "source" => self.activate(i),
+            "body" => {
+                if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
+                    self.open_body(&o);
+                }
+            }
             // 읽어 둔 노드 = 디프로 조용히(펼침·선택 보존 · docs/57 T3) · 오류/미로딩 = 새로 읽기.
             "refresh" => {
                 self.selected = Some(i);

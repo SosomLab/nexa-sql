@@ -86,6 +86,9 @@ Package Bodies 폴더는 뗀다(DBeaver와 같이 패키지 노드 아래 멤버
 | **T-205** | 2단계 — Generate SQL(`gen.rs`) + SQL Preview 모달 + CLI `cat gen` | 중 | ✅ §190 |
 | **T-206** | Dependencies PG(`pg_depend`) · Oracle Recycle Bin · 권한 폴더 | 소 | 대기 |
 
+## 5-1. 패키지 스펙·본문(D-202 후속 · §213)
+- Package Bodies 폴더는 두지 않는다(D-202). 패키지 노드 우클릭 = **Open source**(스펙) · **Open body**(본문 = `CREATE OR REPLACE PACKAGE BODY` 새 탭 · 제목 `NAME.body.sql`) · 수정 = 탭에서 고쳐 실행(컴파일) → `SHOW ERRORS`/새로 고침 · Generate SQL ▸ DDL = 스펙+본문.
+
 ## 6. 자체 점검 방법(09-25 · 키 주입 0)
 
 - 단위: `cargo test -p nsql-catalog`(tree·gen) · `cargo test -p nexa-sql explorer`(계층 새로 고침 = Sub 모델) · `exp_icons` 마스크 24.

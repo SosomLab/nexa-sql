@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/package-open-body | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 패키지 우클릭 Open body(본문 = CREATE OR REPLACE PACKAGE BODY 탭 · §213) |
 | feat/comment-warmer | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | L2 코멘트 워머(schema_comments_raw · MetaStore set_schema_comments · meta.warm_comments) · 테이블 설명 NULL 규칙 · CLI cat comments 요약(§212) |
 | feat/column-comment-cache | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 컬럼 설명 즉시(테이블 단위 코멘트 캐시 · comments_raw · NULL 흐림 · 값 그대로) · CLI cat comments(§211) |
 | fix/details-scope-and-font | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 객체 상세 = 탐색기 범위(PK·인덱스·컬럼·인자·의존) · 설명만 · ▼/▲ · preview_box 상자(줄 겹침 수정) · column_details(§209) |
