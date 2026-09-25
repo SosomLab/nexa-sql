@@ -1078,12 +1078,8 @@ impl ExplorerSet {
         }
         if changed {
             if let Some((pane, node, inner)) = anchor {
-                let top: i32 = self
-                    .laid()
-                    .iter()
-                    .take_while(|&&i| i != pane)
-                    .map(|&i| self.panes[i].ex.content_height())
-                    .sum();
+                // ★ 서버 헤더 행 높이까지 더한 칸 시작 위치(09-25: 헤더를 빼고 더해 응답마다 한 행씩 위로 밀리던 결함).
+                let top = self.pane_top(pane);
                 if let Some(y) = self.panes[pane].ex.row_top_of(node) {
                     let want = top + y + inner;
                     if want != self.scroll {
@@ -1096,15 +1092,32 @@ impl ExplorerSet {
         changed
     }
 
-    /// 공용 스크롤의 맨 위에 걸린 (칸 index, 노드, 행 안쪽 px).
+    /// 칸의 시작 y(스크롤 0 기준 · 앞선 그룹의 헤더·칸 높이 합 + 이 그룹의 헤더).
+    fn pane_top(&self, pane: usize) -> i32 {
+        let mut top = 0;
+        for (g, hosted) in self.groups() {
+            if hosted {
+                top += self.header_h(g[0]);
+            }
+            for i in g {
+                if i == pane {
+                    return top;
+                }
+                top += self.panes[i].ex.content_height();
+            }
+        }
+        top
+    }
+
+    /// 공용 스크롤의 맨 위에 걸린 (칸 index, 노드, 행 안쪽 px) — 헤더 위면 그 그룹 첫 칸의 루트에 음수 안쪽(헤더 높이만큼 위).
     fn top_anchor(&self) -> Option<(usize, usize, i32)> {
         let mut top = 0;
         for (g, hosted) in self.groups() {
             if hosted {
                 let hh = self.header_h(g[0]);
                 if self.scroll < top + hh {
-                    let (node, inner) = self.panes[g[0]].ex.anchor_at(0)?;
-                    return Some((g[0], node, inner));
+                    let (node, _) = self.panes[g[0]].ex.anchor_at(0)?;
+                    return Some((g[0], node, self.scroll - (top + hh)));
                 }
                 top += hh;
             }

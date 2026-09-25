@@ -81,7 +81,8 @@ pub struct GenOpts {
     pub qualified: bool,
     /// 빈 줄·주석 줄을 빼고 들여쓰기를 줄인다.
     pub compact: bool,
-    /// 전체 DDL = 인덱스까지 · Oracle은 저장 절(SEGMENT/STORAGE/TABLESPACE)까지.
+    /// 전체 DDL(사용자 09-25) = 기본(테이블·제약·인덱스)에 **설명**(SQL Server 확장 속성 · Oracle/PG `COMMENT ON`)과 Oracle 저장 절
+    /// (SEGMENT/STORAGE/TABLESPACE)까지. 끄면 기본만.
     pub full_ddl: bool,
     /// 외래 키를 `ALTER TABLE … ADD CONSTRAINT`로 따로(끄면 CREATE TABLE 안에 인라인).
     pub separate_fk: bool,
@@ -993,18 +994,17 @@ fn mssql_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErro
     for fk in &fks {
         out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
     }
-    if c.opts.full_ddl {
-        let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
-        for i in &det.indexes {
-            if key_names.iter().any(|k| k.eq_ignore_ascii_case(&i.name)) {
-                continue;
-            }
-            if let Ok(t) = mssql_index_ddl(s, &o.schema, &o.name, &i.name) {
-                out.push_str(&t);
-            }
+    // 인덱스 = 기본 범위(키가 만든 인덱스는 제약 줄이 대신한다).
+    let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
+    for i in &det.indexes {
+        if key_names.iter().any(|k| k.eq_ignore_ascii_case(&i.name)) {
+            continue;
+        }
+        if let Ok(t) = mssql_index_ddl(s, &o.schema, &o.name, &i.name) {
+            out.push_str(&t);
         }
     }
-    // 확장 속성(테이블·컬럼 설명) — DBeaver 모양.
+    // 확장 속성(테이블·컬럼 설명) — DBeaver 모양 · **전체 DDL일 때만**(사용자 09-25).
     let ep = |tbl: &str, val: &str, col_name: Option<&str>| -> String {
         let proc_ = match (&c.db, c.opts.qualified) {
             (Some(db), true) => format!("{}.sys.sp_addextendedproperty", ident(d, db)),
@@ -1024,7 +1024,7 @@ fn mssql_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErro
         t.push_str(";\n");
         t
     };
-    if det.comment.is_some() || !det.col_comments.is_empty() {
+    if c.opts.full_ddl && (det.comment.is_some() || !det.col_comments.is_empty()) {
         out.push_str("\n-- Extended properties\n\n");
         if let Some(cm) = &det.comment {
             out.push_str(&ep(&o.name, cm, None));
@@ -1076,17 +1076,26 @@ fn oracle_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErr
                 }
             }
         }
-        if c.opts.full_ddl {
-            let sql = format!(
-                "SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', {}, {}) FROM dual",
-                lit(&o.name),
-                lit(&o.schema)
-            );
-            if let Ok(rs) = query(s, &sql) {
-                let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
-                if !t.trim().is_empty() {
-                    extra.push_str(t.trim());
-                    extra.push('\n');
+        // 인덱스 = 기본 범위 — 제약(PK·UNIQUE)이 `USING INDEX`로 만든 인덱스는 뺀다(중복 CREATE 방지).
+        let sql = format!(
+            "SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', {}, {}) FROM dual",
+            lit(&o.name),
+            lit(&o.schema)
+        );
+        if let Ok(rs) = query(s, &sql) {
+            let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+            let det_keys: Vec<String> = table_detail(s, &o.schema, &o.name)
+                .map(|d| d.keys.iter().map(|k| k.name.to_ascii_uppercase()).collect())
+                .unwrap_or_default();
+            for stmt in t.split(";\n").map(str::trim).filter(|x| !x.is_empty()) {
+                let up = stmt.to_ascii_uppercase();
+                // 인덱스 이름이 제약 이름과 같으면(스키마 접두 포함 `"BISCM"."X_PK"` · 맨 이름 `X_PK ON`) 키가 만든 인덱스.
+                let dup = det_keys.iter().any(|k| {
+                    up.contains(&format!("\"{k}\" ON")) || up.contains(&format!(" {k} ON"))
+                });
+                if !dup {
+                    extra.push_str(stmt.trim_end_matches(';'));
+                    extra.push_str(";\n");
                 }
             }
         }
@@ -1103,10 +1112,10 @@ fn oracle_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErr
         out.push('\n');
         out.push_str(&extra);
     }
-    // 코멘트(테이블 · 컬럼) — 샘플 모양.
+    // 코멘트(테이블 · 컬럼) — 샘플 모양 · **전체 DDL일 때만**.
     let det = table_detail(s, &o.schema, &o.name)?;
     let qn = q(d, o);
-    if det.comment.is_some() || !det.col_comments.is_empty() {
+    if c.opts.full_ddl && (det.comment.is_some() || !det.col_comments.is_empty()) {
         out.push('\n');
         if let Some(cm) = &det.comment {
             out.push_str(&format!("COMMENT ON TABLE {qn} IS '{}';\n", sql_str(cm)));
@@ -1161,25 +1170,25 @@ fn pg_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> 
     for fk in &fks {
         out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
     }
-    if c.opts.full_ddl {
-        let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
-        for i in &det.indexes {
-            if key_names.iter().any(|k| k.eq_ignore_ascii_case(&i.name)) {
-                continue;
-            }
-            let sql = format!(
-                "SELECT pg_get_indexdef({}::regclass)",
-                lit(&qual(d, &o.schema, &i.name))
-            );
-            if let Ok(rs) = query(s, &sql) {
-                let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
-                if !t.is_empty() {
-                    out.push_str(&format!("{t};\n"));
-                }
+    // 인덱스 = 기본 범위.
+    let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
+    for i in &det.indexes {
+        if key_names.iter().any(|k| k.eq_ignore_ascii_case(&i.name)) {
+            continue;
+        }
+        let sql = format!(
+            "SELECT pg_get_indexdef({}::regclass)",
+            lit(&qual(d, &o.schema, &i.name))
+        );
+        if let Ok(rs) = query(s, &sql) {
+            let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+            if !t.is_empty() {
+                out.push_str(&format!("{t};\n"));
             }
         }
     }
-    if det.comment.is_some() || !det.col_comments.is_empty() {
+    // 코멘트 = 전체 DDL일 때만(사용자 09-25).
+    if c.opts.full_ddl && (det.comment.is_some() || !det.col_comments.is_empty()) {
         out.push('\n');
         if let Some(cm) = &det.comment {
             out.push_str(&format!("COMMENT ON TABLE {qn} IS '{}';\n", sql_str(cm)));

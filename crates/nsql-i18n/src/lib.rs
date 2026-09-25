@@ -4111,7 +4111,7 @@ impl Msg {
             Msg::GenOptSepFk => ["Separate foreign keys", "외래 키 분리"],
             Msg::DescGenQualified => ["Generate SQL: write schema-qualified names (SQL Server: database.schema.object); off = object name only", "SQL 생성: 스키마를 붙인 이름(SQL Server는 DB.스키마.객체) · 끄면 객체 이름만"],
             Msg::DescGenCompact => ["Generate SQL: drop blank and comment lines and reduce indentation", "SQL 생성: 빈 줄·주석 줄을 빼고 들여쓰기를 줄임"],
-            Msg::DescGenFull => ["Generate SQL: DDL with indexes too (Oracle: storage clauses too)", "SQL 생성: 인덱스까지(Oracle은 저장 절까지) 담은 DDL"],
+            Msg::DescGenFull => ["Generate SQL: full DDL = table, constraints and indexes plus descriptions (extended properties / COMMENT ON) and Oracle storage clauses (tablespace); off = the basics only", "SQL 생성: 전체 DDL = 테이블·제약·인덱스에 설명(확장 속성/COMMENT ON)과 Oracle 저장 절(테이블스페이스)까지 · 끄면 기본만"],
             Msg::DescGenSepFk => ["Generate SQL: foreign keys as separate ALTER TABLE statements (off = inline in CREATE TABLE)", "SQL 생성: 외래 키를 별도 ALTER TABLE 문으로(끄면 CREATE TABLE 안에)"],
             Msg::PhExplorerFilter => ["Filter objects", "객체 필터"],
             Msg::ExpFilterHits => ["{0} matches", "일치 {0}"],
