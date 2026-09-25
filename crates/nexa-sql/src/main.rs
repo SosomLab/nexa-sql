@@ -12562,8 +12562,15 @@ impl App {
             return;
         }
         self.detail_key = key;
-        if let Some(explorer::DetailTarget::Object(o)) = &t {
-            self.explorer.request_details(o.clone());
+        match &t {
+            Some(explorer::DetailTarget::Object(o)) => {
+                self.explorer.request_details(o.clone(), None);
+            }
+            Some(explorer::DetailTarget::Column { owner, col }) => {
+                self.explorer
+                    .request_details(owner.clone(), Some(col.clone()));
+            }
+            _ => {}
         }
         let schema = match &t {
             Some(explorer::DetailTarget::Schema(s)) => Some(s.clone()),
@@ -12648,8 +12655,8 @@ impl App {
                         self.sess.status = t(Msg::ErrClipboard).into();
                     }
                 }
-                ExplorerAction::Details { owner, r } => {
-                    self.objdetail.set_sections(&owner, r);
+                ExplorerAction::Details { owner, col, r } => {
+                    self.objdetail.set_sections(&owner, col.as_ref(), r);
                 }
                 // Generate SQL 결과(83 §3) — 창은 `el`이 있는 자리에서 연다(이미 열려 있으면 바로 본문 교체).
                 ExplorerAction::Preview { spec, r, server } => {
@@ -17893,7 +17900,9 @@ fn main() {
     input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
     // 화면 내보내기 방식(T-147) — 첫 창이 만들어지기 전에.
     present::set_mode(app.settings.get("gfx.mac_present").unwrap_or("softbuffer"));
-    // 객체 상세 패널 축소 상태(docs/86 · 설정 기억).
+    // 객체 상세 패널(docs/86): 편집기 탭과 같은 상자(글꼴 지표·줄 간격 일치 · 09-25 캡처의 줄 겹침·하단 미표시) + 축소 상태(설정 기억).
+    let plain = app.editors.syntax_for_title("detail.txt");
+    app.objdetail.set_box(app.editors.preview_box("", &plain));
     app.objdetail
         .set_collapsed(app.settings.flag("explorer.details_collapsed"));
     // 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로").

@@ -1265,9 +1265,13 @@ impl ExplorerSet {
             .unwrap_or_default()
     }
 
-    pub(crate) fn request_details(&mut self, owner: nsql_catalog::ObjectInfo) {
+    pub(crate) fn request_details(
+        &mut self,
+        owner: nsql_catalog::ObjectInfo,
+        col: Option<nsql_catalog::ColumnInfo>,
+    ) {
         if let Some(p) = self.panes.get_mut(self.shown) {
-            p.ex.request_details(owner);
+            p.ex.request_details(owner, col);
         }
     }
 

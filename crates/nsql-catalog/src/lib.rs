@@ -580,7 +580,9 @@ fn index_kind(dialect: Dialect, ty: &str) -> Option<ObjectKind> {
 }
 
 pub mod detail;
-pub use detail::{object_details, render_table, DetailSection, HeaderId, SectionId};
+pub use detail::{
+    column_details, object_details, render_table, DetailSection, HeaderId, SectionId,
+};
 pub mod tree;
 pub use tree::{sub_items, sub_kinds, SubIcon, SubItem, SubKind};
 pub mod gen;

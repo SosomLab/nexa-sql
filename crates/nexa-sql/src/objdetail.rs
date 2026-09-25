@@ -48,11 +48,7 @@ pub(crate) struct DetailPanel {
 impl DetailPanel {
     pub(crate) fn new() -> Self {
         let mut tb = TextBox::new("").with_multiline();
-        tb.set_read_only(true);
-        tb.set_minimap(false);
-        tb.set_gutter_marks(false);
-        tb.set_line_numbers(false);
-        tb.set_wrap(false);
+        Self::tune_box(&mut tb);
         DetailPanel {
             bounds: Rect::default(),
             scale: 1.0,
@@ -91,6 +87,25 @@ impl DetailPanel {
             _ => "detail".into(),
         };
         Some((title, text))
+    }
+
+    fn tune_box(tb: &mut TextBox) {
+        tb.set_read_only(true);
+        tb.set_minimap(false);
+        tb.set_gutter_marks(false);
+        tb.set_line_numbers(false);
+        tb.set_wrap(false);
+    }
+
+    /// 편집기 탭과 같은 설정의 상자로 바꾼다(`Editors::preview_box` · 글꼴 지표·줄 간격이 편집기 글꼴과 맞아야 겹치지 않는다 · 09-25 캡처).
+    pub(crate) fn set_box(&mut self, mut tb: TextBox) {
+        Self::tune_box(&mut tb);
+        self.tb = tb;
+        let (b, s) = (self.bounds, self.scale);
+        if b.w > 0 {
+            self.set_bounds(b, s);
+        }
+        self.render();
     }
 
     pub(crate) fn set_visible(&mut self, on: bool) {
@@ -142,7 +157,11 @@ impl DetailPanel {
         self.target = t;
         self.sections.clear();
         self.error = None;
-        self.loading = matches!(self.target, Some(DetailTarget::Object(_)));
+        // 서버 몫이 오기 전에도 있는 것(이름·상태·컬럼 정보)은 바로 보인다 — "읽는 중" 문구 없음(사용자 09-25).
+        self.loading = matches!(
+            self.target,
+            Some(DetailTarget::Object(_) | DetailTarget::Column { .. })
+        );
         self.render();
     }
 
@@ -150,9 +169,18 @@ impl DetailPanel {
     pub(crate) fn set_sections(
         &mut self,
         owner: &nsql_catalog::ObjectInfo,
+        col: Option<&nsql_catalog::ColumnInfo>,
         r: Result<Vec<DetailSection>, String>,
     ) {
-        let same = matches!(&self.target, Some(DetailTarget::Object(o)) if o.schema == owner.schema && o.name == owner.name && o.kind == owner.kind);
+        let same = match (&self.target, col) {
+            (Some(DetailTarget::Object(o)), None) => {
+                o.schema == owner.schema && o.name == owner.name && o.kind == owner.kind
+            }
+            (Some(DetailTarget::Column { owner: ow, col: c }), Some(cc)) => {
+                ow.schema == owner.schema && ow.name == owner.name && c.name == cc.name
+            }
+            _ => false,
+        };
         if !same {
             return;
         }
@@ -191,36 +219,36 @@ impl DetailPanel {
         }
     }
 
-    /// 설명(Description) = 객체 = 부가(없으면 상태) · 컬럼 = 타입 + NULL 여부 · 잎 = 부가 · 없으면 빈 글.
+    /// 속성 표의 `comment` 값(상세가 왔을 때).
+    fn comment_row(&self) -> Option<String> {
+        self.sections
+            .iter()
+            .find(|s| s.id == SectionId::Properties)
+            .and_then(|s| {
+                s.rows
+                    .iter()
+                    .find(|r| r.first().is_some_and(|k| k == "comment"))
+                    .and_then(|r| r.get(1).cloned())
+            })
+            .filter(|c| !c.trim().is_empty())
+    }
+
+    /// 설명(Description · 사용자 09-25) = 테이블·객체 = 코멘트, 없으면 이름 · 스키마 = 이름 · 컬럼 = 코멘트, 없으면 컬럼 이름 · 잎 = 부가, 없으면 이름.
     fn description(&self) -> String {
         match &self.target {
-            Some(DetailTarget::Object(o)) => {
-                // 코멘트(상세가 오면) → 부가 → 상태.
-                let comment = self
-                    .sections
-                    .iter()
-                    .find(|s| s.id == SectionId::Properties)
-                    .and_then(|s| {
-                        s.rows
-                            .iter()
-                            .find(|r| r.first().is_some_and(|k| k == "comment"))
-                            .and_then(|r| r.get(1).cloned())
-                    });
-                if let Some(c) = comment.filter(|c| !c.trim().is_empty()) {
-                    c
-                } else if !o.extra.is_empty() {
-                    o.extra.clone()
+            Some(DetailTarget::Object(o)) => self.comment_row().unwrap_or_else(|| o.name.clone()),
+            Some(DetailTarget::Column { col, .. }) => {
+                self.comment_row().unwrap_or_else(|| col.name.clone())
+            }
+            Some(DetailTarget::Item { item, .. }) => {
+                if item.detail.is_empty() {
+                    item.name.clone()
                 } else {
-                    o.status.clone()
+                    item.detail.clone()
                 }
             }
-            Some(DetailTarget::Column { col, .. }) => format!(
-                "{} {}",
-                col.data_type,
-                if col.nullable { "NULL" } else { "NOT NULL" }
-            ),
-            Some(DetailTarget::Item { item, .. }) => item.detail.clone(),
-            _ => String::new(),
+            Some(DetailTarget::Schema(s)) => s.clone(),
+            None => String::new(),
         }
     }
 
@@ -269,6 +297,8 @@ impl DetailPanel {
         match id {
             SectionId::Properties => t(Msg::DetSecProperties).to_string(),
             SectionId::Columns => t(Msg::DetSecColumns).to_string(),
+            SectionId::PrimaryKey => t(Msg::DetSecPrimaryKey).to_string(),
+            SectionId::Indexes => t(sub_msg(nsql_catalog::SubKind::Indexes)).to_string(),
             SectionId::Sub(sub) => t(sub_msg(sub)).to_string(),
             SectionId::Source => t(Msg::DetSecSource).to_string(),
             SectionId::Ddl => t(Msg::DetSecDdl).to_string(),
@@ -280,13 +310,53 @@ impl DetailPanel {
         let mut out = String::new();
         match &self.target {
             None => out.push_str(t(Msg::DetNoSelection)),
-            Some(DetailTarget::Object(_)) => {
-                if self.loading {
-                    out.push_str(t(Msg::DetLoading));
-                } else if let Some(e) = &self.error {
+            Some(DetailTarget::Object(o)) | Some(DetailTarget::Column { owner: o, .. }) => {
+                if let Some(e) = &self.error {
                     out.push_str(e);
+                    out.push('\n');
                 }
-                for sec in &self.sections {
+                let secs: Vec<DetailSection> = if self.sections.is_empty() {
+                    // 서버 몫 전 = 탐색기가 이미 아는 것(왕복 0 · 사용자 09-25 "로딩 메시지를 볼 일은 거의 없다").
+                    let rows: Vec<Vec<String>> = match &self.target {
+                        Some(DetailTarget::Column { col, .. }) => vec![
+                            vec!["name".into(), col.name.clone()],
+                            vec!["type".into(), col.data_type.clone()],
+                            vec![
+                                "nullable".into(),
+                                if col.nullable {
+                                    "NULL".into()
+                                } else {
+                                    "NOT NULL".into()
+                                },
+                            ],
+                            vec!["default".into(), col.default.clone()],
+                            vec!["table".into(), format!("{}.{}", o.schema, o.name)],
+                        ],
+                        _ => {
+                            let mut r =
+                                vec![vec!["name".into(), format!("{}.{}", o.schema, o.name)]];
+                            if !o.status.is_empty() {
+                                r.push(vec!["status".into(), o.status.clone()]);
+                            }
+                            if !o.modified.is_empty() {
+                                r.push(vec!["modified".into(), o.modified.clone()]);
+                            }
+                            if !o.extra.is_empty() {
+                                r.push(vec!["detail".into(), o.extra.clone()]);
+                            }
+                            r
+                        }
+                    };
+                    vec![DetailSection {
+                        id: SectionId::Properties,
+                        headers: vec![HeaderId::Property, HeaderId::Value],
+                        rows,
+                        text: None,
+                    }]
+                } else {
+                    self.sections.clone()
+                };
+                for sec in &secs {
                     let n = if sec.text.is_some() {
                         String::new()
                     } else {
@@ -308,29 +378,6 @@ impl DetailPanel {
                     }
                     out.push('\n');
                 }
-            }
-            Some(DetailTarget::Column { owner, col }) => {
-                let heads = vec![
-                    Self::header_label(HeaderId::Property),
-                    Self::header_label(HeaderId::Value),
-                ];
-                let rows = vec![
-                    vec!["table".into(), format!("{}.{}", owner.schema, owner.name)],
-                    vec!["name".into(), col.name.clone()],
-                    vec!["type".into(), col.data_type.clone()],
-                    vec![
-                        "nullable".into(),
-                        if col.nullable {
-                            "NULL".into()
-                        } else {
-                            "NOT NULL".into()
-                        },
-                    ],
-                    vec!["default".into(), col.default.clone()],
-                    vec!["position".into(), col.position.to_string()],
-                ];
-                out.push_str(&format!("== {} ==\n", t(Msg::DetSecProperties)));
-                out.push_str(&nsql_catalog::render_table(&heads, &rows));
             }
             Some(DetailTarget::Item { owner, sub, item }) => {
                 let heads = vec![
@@ -482,49 +529,32 @@ impl DetailPanel {
                 dc.text(chip.x + px(5.0), cy, chip, &kind, th.window_bg);
                 x += cw + px(8.0);
             }
-            let name = self.name_label();
-            let nw = dc.text_width(&name);
-            let clip = Rect::new(x, head.y, (right - x).max(0), hh);
-            dc.text(x, ty, clip, &name, th.text);
-            x += nw + px(10.0);
-            if x < right {
-                let desc = self.description();
-                let d = if self.loading && desc.is_empty() {
-                    t(Msg::DetLoading).to_string()
-                } else {
-                    desc
-                };
-                dc.text(
-                    x,
-                    ty,
-                    Rect::new(x, head.y, (right - x).max(0), hh),
-                    &d,
-                    th.text_dim,
-                );
-            }
+            // 종류 칩 옆 = **설명만**(사용자 09-25 · 코멘트가 없으면 이름이 그 자리에).
+            let desc = self.description();
+            dc.text(
+                x,
+                ty,
+                Rect::new(x, head.y, (right - x).max(0), hh),
+                &desc,
+                th.text,
+            );
         }
         // ▾(펼침 상태 = 축소) / ▴(축소 상태 = 확장) — 글꼴 글리프 대신 도형(3-OS 동일).
         if self.hover_toggle {
             dc.fill_round_rect(self.toggle, px(3.0), th.panel_bg_alt);
         }
-        let tw = px(8.0);
-        let thh = px(4.0);
+        // 채운 삼각형(▼ = 펼침 상태에서 축소 · ▲ = 축소 상태에서 확장 · 사용자 09-25): 1px 가로 띠(DrawCtx에 삼각형 채움이 없다).
+        let tw = px(9.0).max(3);
+        let thh = px(5.0).max(2);
         let cx = self.toggle.x + self.toggle.w / 2;
         let cy = self.toggle.y + self.toggle.h / 2;
-        let pts: Vec<(i32, i32)> = if self.collapsed {
-            vec![
-                (cx - tw / 2, cy + thh / 2),
-                (cx, cy - thh / 2),
-                (cx + tw / 2, cy + thh / 2),
-            ]
-        } else {
-            vec![
-                (cx - tw / 2, cy - thh / 2),
-                (cx, cy + thh / 2),
-                (cx + tw / 2, cy - thh / 2),
-            ]
-        };
-        dc.polyline(&pts, th.text, 1.5 * s);
+        let top = cy - thh / 2;
+        for row in 0..thh {
+            let k = row as f32 / (thh - 1).max(1) as f32; // 0 = 위 · 1 = 아래
+            let frac = if self.collapsed { k } else { 1.0 - k };
+            let w = ((tw as f32) * frac).round().max(1.0) as i32;
+            dc.fill_rect(Rect::new(cx - w / 2, top + row, w, 1), th.text);
+        }
         let alpha = match self.copy.look(now) {
             Look::Idle => 0.8,
             _ => 1.0,

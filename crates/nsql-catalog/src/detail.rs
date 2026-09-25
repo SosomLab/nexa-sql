@@ -2,9 +2,9 @@
 //! CLI `nsql cat detail`이 같은 함수를 쓴다. 유형별 내용은 트리 하위 폴더 표(`sub_kinds`)와 같은 원천에서 나온다(83 §1).
 //! L3 층(85 §4): 필요할 때 즉시 · 호스트가 표시 뒤 회수.
 
-use crate::gen::{generate, GenOpts, GenSpec, GenWhat};
+use crate::gen::GenOpts;
 use crate::tree::{sub_items, sub_kinds, SubKind};
-use crate::{columns, comments, source, ObjectInfo, ObjectKind};
+use crate::{comments, table_detail, ColumnInfo, ObjectInfo, ObjectKind};
 use nsql_core::{DbError, Session};
 
 /// 섹션 종류(라벨은 호스트가 i18n으로).
@@ -12,6 +12,10 @@ use nsql_core::{DbError, Session};
 pub enum SectionId {
     Properties,
     Columns,
+    /// 테이블 기본 키(이름 · 컬럼).
+    PrimaryKey,
+    /// 테이블 인덱스(이름 · 컬럼 · UNIQUE).
+    Indexes,
     Sub(SubKind),
     Source,
     Ddl,
@@ -50,63 +54,43 @@ impl DetailSection {
             text: None,
         }
     }
-    fn text(id: SectionId, text: String) -> Self {
-        DetailSection {
-            id,
-            headers: Vec::new(),
-            rows: Vec::new(),
-            text: Some(text),
-        }
-    }
 }
 
-/// 소스가 의미 있는 종류(루틴·뷰·트리거·타입) — 있으면 DDL 대신 소스를 보인다.
-fn has_source(kind: ObjectKind) -> bool {
+fn is_routine(kind: ObjectKind) -> bool {
     matches!(
         kind,
-        ObjectKind::Procedure
-            | ObjectKind::Function
-            | ObjectKind::Package
-            | ObjectKind::Trigger
-            | ObjectKind::SchemaTrigger
-            | ObjectKind::View
-            | ObjectKind::MaterializedView
-            | ObjectKind::Type
+        ObjectKind::Procedure | ObjectKind::Function | ObjectKind::Package
     )
 }
 
-/// 객체 상세 섹션(86 §3 표) — 속성 → 컬럼 → 하위 폴더별 표(비면 뺀다) → 소스/DDL. 섹션 하나가 실패해도 나머지는 낸다(실패 = 뺀다).
+/// ★ 객체 상세 섹션(86 §3 · 사용자 09-25 "인텔리센스·탐색기에 필요한 데이터 범위 안에서"):
+/// 테이블 = 이름·설명·**PK·인덱스** · 뷰/MV = 이름·설명·**사용 테이블(의존)** · 프로시저/함수/패키지 = 이름·**인자·기본값** ·
+/// 그 밖 = 탐색기가 바로 쓰는 것(속성 + 하위 폴더 표). 소스·DDL·컬럼 목록은 넣지 않는다(탐색기 트리·Generate SQL이 담당).
+/// 섹션 하나가 실패해도 나머지는 낸다(실패 = 뺀다).
 pub fn object_details(
     s: &mut dyn Session,
     o: &ObjectInfo,
-    opts: GenOpts,
+    _opts: GenOpts,
 ) -> Result<Vec<DetailSection>, DbError> {
     let d = s.dialect();
     let mut out = Vec::new();
-    // 속성.
-    let mut props: Vec<Vec<String>> = vec![
-        vec!["type".into(), o.kind.code().to_string()],
-        vec!["schema".into(), o.schema.clone()],
-        vec!["name".into(), o.name.clone()],
-    ];
-    if !o.status.is_empty() {
-        props.push(vec!["status".into(), o.status.clone()]);
+    let mut props: Vec<Vec<String>> = vec![vec!["name".into(), format!("{}.{}", o.schema, o.name)]];
+    // 설명 = 코멘트(관계) — 실패·없음 = 빈.
+    if o.kind.is_relation() {
+        let (tcomment, _) = comments(s, &o.schema, &o.name);
+        if let Some(c) = tcomment.filter(|c| !c.trim().is_empty()) {
+            props.push(vec!["comment".into(), c]);
+        }
     }
-    if !o.modified.is_empty() {
-        props.push(vec!["modified".into(), o.modified.clone()]);
-    }
-    if !o.extra.is_empty() {
-        props.push(vec!["detail".into(), o.extra.clone()]);
-    }
-    // 코멘트(관계 · 테이블 + 컬럼 · 86 §4 설명 = 코멘트가 있으면 그것) — 실패·없음 = 빈.
-    let (tcomment, col_comments) = if o.kind.is_relation() {
-        comments(s, &o.schema, &o.name)
-    } else {
-        (None, Vec::new())
-    };
-    if let Some(c) = &tcomment {
-        if !c.trim().is_empty() {
-            props.push(vec!["comment".into(), c.clone()]);
+    if !o.kind.is_relation() && !is_routine(o.kind) {
+        if !o.status.is_empty() {
+            props.push(vec!["status".into(), o.status.clone()]);
+        }
+        if !o.modified.is_empty() {
+            props.push(vec!["modified".into(), o.modified.clone()]);
+        }
+        if !o.extra.is_empty() {
+            props.push(vec!["detail".into(), o.extra.clone()]);
         }
     }
     out.push(DetailSection::table(
@@ -114,94 +98,144 @@ pub fn object_details(
         vec![HeaderId::Property, HeaderId::Value],
         props,
     ));
-    // 컬럼(관계) — 트리와 같은 원천 · 컬럼 코멘트가 하나라도 있으면 열을 붙인다.
-    if o.kind.is_relation() {
-        if let Ok(cols) = columns(s, &o.schema, &o.name) {
-            let with_comment = !col_comments.is_empty();
-            let rows = cols
-                .into_iter()
-                .map(|c| {
-                    let mut r = vec![
-                        c.position.to_string(),
-                        c.name.clone(),
-                        c.data_type,
-                        if c.nullable {
-                            "NULL".into()
-                        } else {
-                            "NOT NULL".into()
-                        },
-                        c.default,
-                    ];
-                    if with_comment {
-                        r.push(
-                            col_comments
-                                .iter()
-                                .find(|(n, _)| n.eq_ignore_ascii_case(&c.name))
-                                .map(|(_, cm)| cm.clone())
-                                .unwrap_or_default(),
-                        );
+    match o.kind {
+        // 테이블 = PK + 인덱스(제약 전체·컬럼은 트리에).
+        ObjectKind::Table | ObjectKind::ExternalTable | ObjectKind::ForeignTable => {
+            if let Ok(td) = table_detail(s, &o.schema, &o.name) {
+                let pk: Vec<Vec<String>> = td
+                    .keys
+                    .iter()
+                    .filter(|k| k.kind == 'P')
+                    .map(|k| vec![k.name.clone(), k.cols.join(", ")])
+                    .collect();
+                if !pk.is_empty() {
+                    out.push(DetailSection::table(
+                        SectionId::PrimaryKey,
+                        vec![HeaderId::Name, HeaderId::Detail],
+                        pk,
+                    ));
+                }
+                let idx: Vec<Vec<String>> = td
+                    .indexes
+                    .iter()
+                    .map(|i| {
+                        vec![
+                            i.name.clone(),
+                            i.cols.join(", "),
+                            if i.unique {
+                                "UNIQUE".into()
+                            } else {
+                                String::new()
+                            },
+                        ]
+                    })
+                    .collect();
+                if !idx.is_empty() {
+                    out.push(DetailSection::table(
+                        SectionId::Indexes,
+                        vec![HeaderId::Name, HeaderId::Detail, HeaderId::Status],
+                        idx,
+                    ));
+                }
+            }
+        }
+        // 뷰 = 사용 중인 테이블(의존 · 방언이 지원할 때).
+        ObjectKind::View | ObjectKind::MaterializedView => {
+            if sub_kinds(d, o.kind).contains(&SubKind::Dependencies) {
+                if let Ok(items) = sub_items(s, o, SubKind::Dependencies) {
+                    if !items.is_empty() {
+                        out.push(DetailSection::table(
+                            SectionId::Sub(SubKind::Dependencies),
+                            vec![HeaderId::Name, HeaderId::Detail, HeaderId::Status],
+                            items
+                                .into_iter()
+                                .map(|it| vec![it.name, it.detail, it.status])
+                                .collect(),
+                        ));
                     }
-                    r
-                })
-                .collect();
-            let mut headers = vec![
-                HeaderId::Num,
-                HeaderId::Name,
-                HeaderId::Type,
-                HeaderId::Nullable,
-                HeaderId::Default,
-            ];
-            if with_comment {
-                headers.push(HeaderId::Comment);
-            }
-            out.push(DetailSection::table(SectionId::Columns, headers, rows));
-        }
-    }
-    // 하위 폴더(제약·인덱스·트리거·인자 … · 83 §1 표) — 컬럼은 위에서 · 비면 뺀다.
-    for &sub in sub_kinds(d, o.kind) {
-        if sub == SubKind::Columns && o.kind.is_relation() {
-            continue;
-        }
-        let Ok(items) = sub_items(s, o, sub) else {
-            continue;
-        };
-        if items.is_empty() {
-            continue;
-        }
-        let rows = items
-            .into_iter()
-            .map(|it| vec![it.name, it.detail, it.status])
-            .collect();
-        out.push(DetailSection::table(
-            SectionId::Sub(sub),
-            vec![HeaderId::Name, HeaderId::Detail, HeaderId::Status],
-            rows,
-        ));
-    }
-    // 소스(루틴·뷰·트리거·타입) 또는 DDL(그 밖 · Generate SQL과 같은 옵션).
-    let mut had_source = false;
-    if has_source(o.kind) {
-        if let Ok(src) = source(s, &o.schema, o.kind, &o.name) {
-            if !src.trim().is_empty() {
-                out.push(DetailSection::text(SectionId::Source, src));
-                had_source = true;
+                }
             }
         }
-    }
-    if !had_source {
-        let spec = GenSpec {
-            owner: o.clone(),
-            what: GenWhat::Ddl,
-            sub: None,
-            opts,
-        };
-        if let Ok(ddl) = generate(s, &spec) {
-            if !ddl.trim().is_empty() {
-                out.push(DetailSection::text(SectionId::Ddl, ddl));
+        // 루틴 = 인자(이름 · 타입/방향/기본값).
+        k if is_routine(k) => {
+            for sub in [SubKind::Arguments, SubKind::Procedures, SubKind::Functions] {
+                if !sub_kinds(d, k).contains(&sub) {
+                    continue;
+                }
+                if let Ok(items) = sub_items(s, o, sub) {
+                    if !items.is_empty() {
+                        out.push(DetailSection::table(
+                            SectionId::Sub(sub),
+                            vec![HeaderId::Name, HeaderId::Detail, HeaderId::Status],
+                            items
+                                .into_iter()
+                                .map(|it| vec![it.name, it.detail, it.status])
+                                .collect(),
+                        ));
+                    }
+                }
+            }
+        }
+        // 그 밖 = 하위 폴더 표(비면 뺀다) — 탐색기와 같은 원천.
+        _ => {
+            for &sub in sub_kinds(d, o.kind) {
+                let Ok(items) = sub_items(s, o, sub) else {
+                    continue;
+                };
+                if items.is_empty() {
+                    continue;
+                }
+                out.push(DetailSection::table(
+                    SectionId::Sub(sub),
+                    vec![HeaderId::Name, HeaderId::Detail, HeaderId::Status],
+                    items
+                        .into_iter()
+                        .map(|it| vec![it.name, it.detail, it.status])
+                        .collect(),
+                ));
             }
         }
     }
     Ok(out)
+}
+
+/// ★ 컬럼 상세(86 §3): 이름 · 설명(컬럼 코멘트) · 타입 · NOT NULL · 기본값 — 코멘트 질의 1(실패 = 없음).
+pub fn column_details(
+    s: &mut dyn Session,
+    owner: &ObjectInfo,
+    col: &ColumnInfo,
+) -> Result<Vec<DetailSection>, DbError> {
+    let (_, col_comments) = comments(s, &owner.schema, &owner.name);
+    let comment = col_comments
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(&col.name))
+        .map(|(_, c)| c.clone())
+        .filter(|c| !c.trim().is_empty());
+    let mut rows = vec![vec!["name".into(), col.name.clone()]];
+    if let Some(c) = comment {
+        rows.push(vec!["comment".into(), c]);
+    }
+    rows.push(vec!["type".into(), col.data_type.clone()]);
+    rows.push(vec![
+        "nullable".into(),
+        if col.nullable {
+            "NULL".into()
+        } else {
+            "NOT NULL".into()
+        },
+    ]);
+    if !col.default.is_empty() {
+        rows.push(vec!["default".into(), col.default.clone()]);
+    }
+    rows.push(vec![
+        "table".into(),
+        format!("{}.{}", owner.schema, owner.name),
+    ]);
+    Ok(vec![DetailSection::table(
+        SectionId::Properties,
+        vec![HeaderId::Property, HeaderId::Value],
+        rows,
+    )])
 }
 
 /// 표를 고정폭 글로(패널 본문·CLI 공용): 열 폭 = 글자 수 최대 · 두 칸 띄움 · 머리글은 호스트가 준 라벨.
@@ -270,10 +304,10 @@ mod tests {
     }
 
     #[test]
-    fn source_kinds() {
-        assert!(has_source(ObjectKind::Procedure));
-        assert!(has_source(ObjectKind::View));
-        assert!(!has_source(ObjectKind::Table));
-        assert!(!has_source(ObjectKind::Index));
+    fn routine_kinds() {
+        assert!(is_routine(ObjectKind::Procedure));
+        assert!(is_routine(ObjectKind::Package));
+        assert!(!is_routine(ObjectKind::Table));
+        assert!(!is_routine(ObjectKind::View));
     }
 }

@@ -8,8 +8,8 @@
 ## 0. 결론
 
 - **독립 패널** `objdetail.rs`(`DetailPanel`): 탐색기 칸 **아래**, 호스트(`main.rs`)가 배치 — 탐색기 높이를 그만큼 줄이고 사이에 스플리터(`split_d` · 끌면 `explorer.details_h` 기억). 탐색기 스크롤 영역과 겹치지 않는다.
-- **머리 줄**(UI 글꼴 · 1줄) = 종류 칩 · `스키마.이름` · 설명(흐리게) · **▾**(펼침 상태 = 축소) / **▴**(축소 상태 = 확장) · **복사 버튼**(맨 끝). 축소 = 머리 줄만(설정 `explorer.details_collapsed` 기억).
-- **본문**(고정폭 · 편집기 글꼴) = **읽기 전용 텍스트박스**(nexa-ctl `TextBox`) → 선택 · ⌘/Ctrl+C 복사(`edit.copy`) · 상하/좌우 스크롤(줄바꿈 없음) · 유형별 섹션 글.
+- **머리 줄**(UI 글꼴 · 1줄) = 종류 칩 · **설명**(§209 · 코멘트 없으면 이름) · **▼**(펼침 상태 = 축소) / **▲**(축소 상태 = 확장 · 채운 삼각형) · **복사 버튼**(맨 끝). 축소 = 머리 줄만(설정 `explorer.details_collapsed` 기억).
+- **본문**(고정폭 · 편집기 글꼴 · `Editors::preview_box`와 같은 설정 = 글꼴 지표·줄 간격 일치 · §209) = **읽기 전용 텍스트박스**(nexa-ctl `TextBox`) → 선택 · ⌘/Ctrl+C 복사(`edit.copy`) · 상하/좌우 스크롤(줄바꿈 없음) · 유형별 섹션 글.
 - **복사 버튼** = 클릭 → 설명(Description · 없으면 이름) · **Shift+클릭** → `종류 - 이름 - 설명` · 복사됨 효과 = `CopyBtn`(1 s 체크 표시 · 다른 복사 버튼과 같은 부품). 조합키 = **Shift**(마우스 사건이 Shift·⌘/Ctrl만 싣고 ⌥/Alt는 없다 · Shift = "더 넓게" 관례).
 - **데이터** = `nsql_catalog::object_details(session, &ObjectInfo, GenOpts)` → 섹션 목록(§3) · 탐색기 메타 스레드 `Req::Details`(급한 세션 · 사용자가 보고 있다) → `ExplorerAction::Details` → 패널. CLI `nsql cat detail <객체> [종류]`가 같은 함수(실서버 점검).
 
@@ -44,15 +44,18 @@
 - 포커스 = `Focus::Details`(패널 클릭) · 키(이동·선택)는 텍스트박스로 · ⌘/Ctrl+C = 선택 복사 · 편집 키는 읽기 전용이라 무시.
 - 마우스 = 패널 안 사건은 탐색기보다 먼저(독립 영역) · 휠 = 본문 스크롤.
 
-## 3. 유형별 섹션(초안 · `object_details` · 비는 섹션은 뺀다)
+## 3. 유형별 섹션(§209 확정 = **인텔리센스·탐색기 범위 안** · `object_details`/`column_details` · 비는 섹션은 뺀다)
+
+> 09-25 사용자 정정: 소스·DDL·컬럼 목록은 넣지 않는다(트리·Generate SQL 몫). 아래 표의 원안 가운데 굵은 항목만 남았다.
 
 | 대상 | 섹션(순서) | 근거 |
 |---|---|---|
-| 테이블·뷰·MV·외부/외래 테이블 | Properties(종류·스키마·이름·상태·시각·부가) → **Columns**(# · 이름 · 타입 · NULL · 기본값) → 하위 폴더 표(방언별 · 83 §1: Constraints/UniqueKeys/CheckConstraints/ForeignKeys/References/Indexes/Triggers/Partitions/Dependencies/Rules/Policies/ExtendedProperties) → **Source**(뷰·MV) 또는 **DDL**(테이블 · Generate SQL 옵션 그대로) | DBeaver·SQL Developer·DataGrip 공통 순서 |
+| **테이블**(외부/외래 포함) | Properties(**이름 · 설명=코멘트**) → **Primary Key**(이름 · 컬럼) → **Indexes**(이름 · 컬럼 · UNIQUE) — `table_detail` 질의 2 | DBeaver·SQL Developer·DataGrip 공통 순서 |
+| **뷰·MV** | Properties(이름 · 설명) → **사용 테이블**(Dependencies 하위 표 · 방언이 지원할 때) | SQL Developer Dependencies |
 | 인덱스 | Properties → Columns(인덱스 컬럼) → DDL | Toad Indexes 탭 |
-| 프로시저·함수·패키지·트리거·타입 | Properties → Arguments/Attributes/Methods/Procedures/Functions(하위 폴더 표) → **Source** | SQL Developer Code · DataGrip Source |
+| **프로시저·함수·패키지** | Properties(이름) → **Arguments**(이름 · 타입/방향/기본값) · 패키지 = Procedures/Functions | SQL Developer · DataGrip Parameters |
 | 시퀀스·시노님·기타 | Properties → 하위 폴더 표 → DDL(있으면) | pgAdmin SQL |
-| **컬럼**(트리에서 컬럼 선택) | Properties(테이블 · 이름 · 타입 · NULL · 기본값 · 위치) — 서버 왕복 0 | DataGrip 빠른 문서 |
+| **컬럼**(트리에서 컬럼 선택) | Properties(**이름 · 설명=컬럼 코멘트 · 타입 · NOT NULL · 기본값** · 테이블) — 탐색기 값을 즉시 그리고 코멘트만 질의 1(`column_details`) | DataGrip 빠른 문서 |
 | **잎**(제약·인덱스·트리거·인자 …) | Properties(주인 · 종류 · 이름 · 부가 · 상태) — 왕복 0 | — |
 | 스키마 | Properties(이름) → **Count**(종류별 객체 수 · 메타 L1/L2에서 · 왕복 0 · §208) | DBeaver 스키마 |
 
@@ -68,7 +71,7 @@
 | 본문 선택 + ⌘/Ctrl+C | 선택 글 | 표 일부 · DDL 일부 |
 | 효과 | `CopyBtn` 체크 표시 1 s(다른 복사 버튼과 같음) · 실패 = 상태줄 | |
 
-설명(Description)의 정의 = 객체 = **코멘트**(상세가 오면 · §208) → 부가(`extra` · PG 서명·시노님 대상·파이프라인 …) → 상태(VALID/INVALID) · 컬럼 = `타입 NULL여부` · 잎 = 부가.
+설명(Description)의 정의(§209 확정) = 테이블·객체 = **코멘트, 없으면 이름** · 스키마 = 이름 · 컬럼 = **컬럼 코멘트, 없으면 컬럼 이름** · 잎 = 부가, 없으면 이름. 머리 줄에는 종류 칩 옆에 **설명만** 보인다(이름은 설명이 없을 때 그 자리에).
 
 ## 5. 층·부하(85 §4 L3)
 

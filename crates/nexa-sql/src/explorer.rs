@@ -207,6 +207,8 @@ enum Req {
     Details {
         gen: u64,
         owner: ObjectInfo,
+        /// 컬럼 상세면 그 컬럼(코멘트 질의 1).
+        col: Option<ColumnInfo>,
         opts: GenOpts,
     },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
@@ -512,6 +514,7 @@ enum Resp {
     Details {
         gen: u64,
         owner: ObjectInfo,
+        col: Option<ColumnInfo>,
         r: Result<Vec<nsql_catalog::DetailSection>, String>,
     },
     ColumnsMeta {
@@ -611,6 +614,7 @@ pub(crate) enum ExplorerAction {
     /// ★ 객체 상세(86 · T-223) — 상세 패널이 받는다.
     Details {
         owner: ObjectInfo,
+        col: Option<ColumnInfo>,
         r: Result<Vec<nsql_catalog::DetailSection>, String>,
     },
     /// ★ Generate SQL 결과(83 §3) → 호스트가 SQL Preview 모달을 연다(`server` = 이 칸의 서버 · `ExplorerSet`이 채운다).
@@ -1208,14 +1212,20 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 Resp::GenSql { gen, spec, r }
             }
-            Req::Details { gen, owner, opts } => {
+            Req::Details {
+                gen,
+                owner,
+                col,
+                opts,
+            } => {
                 if gen != cur_gen {
                     continue;
                 }
-                let r = with_session(&mut session, |s| {
-                    nsql_catalog::object_details(s, &owner, opts).map_err(err_s)
+                let r = with_session(&mut session, |s| match &col {
+                    Some(c) => nsql_catalog::column_details(s, &owner, c).map_err(err_s),
+                    None => nsql_catalog::object_details(s, &owner, opts).map_err(err_s),
                 });
-                Resp::Details { gen, owner, r }
+                Resp::Details { gen, owner, col, r }
             }
             Req::ColumnsMeta {
                 gen,
@@ -2640,11 +2650,11 @@ impl Explorer {
                         self.index_last_at = Some(Instant::now());
                     }
                 }
-                Resp::Details { gen, owner, r } => {
+                Resp::Details { gen, owner, col, r } => {
                     if gen != self.gen {
                         continue;
                     }
-                    self.actions.push(ExplorerAction::Details { owner, r });
+                    self.actions.push(ExplorerAction::Details { owner, col, r });
                 }
                 Resp::Hits { gen, rev, hits } => {
                     if gen != self.gen || rev != self.filter_rev || self.filter.is_none() {
@@ -3780,8 +3790,8 @@ impl Explorer {
     }
 
     /// 객체 상세 요청(86 · L3 = 즉시 · 급한 세션).
-    pub(crate) fn request_details(&mut self, owner: ObjectInfo) {
-        if self.dialect.is_none() {
+    pub(crate) fn request_details(&mut self, owner: ObjectInfo, col: Option<ColumnInfo>) {
+        if self.dialect.is_none() || self.offline {
             return;
         }
         self.last_used = Instant::now();
@@ -3789,6 +3799,7 @@ impl Explorer {
         let _ = self.tx.send(Req::Details {
             gen: self.gen,
             owner,
+            col,
             opts: self.gen_opts,
         });
     }

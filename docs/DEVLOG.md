@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 20)** — §209 객체 상세 범위 축소·설명 규칙·▼/▲·`preview_box`(`column_details`) · CI 기록 cea6d6d·fee09dd ✓.
 - **2026-09-25 (100차 후반 · mac · 19)** — §208 T-225 ①~④ · 검색 완료 플래시(`FLASH_MS`).
 - **2026-09-25 (100차 후반 · mac · 18)** — §207 ★ T-223 객체 상세 패널(`objdetail.rs` · `nsql_catalog::detail` · CLI `cat detail` · 설정 3키) · 🔧 clippy 2건(CI).
 - **2026-09-25 (100차 후반 · mac · 17)** — §206 🔧 검색 중 새 서버 접속(`send_search` 재요청) · 기동 명령 `connect:`.
