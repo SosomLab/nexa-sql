@@ -256,6 +256,10 @@ impl ExplorerSet {
         ex.set_gen_opts(self.gen_opts);
         ex.set_schema_opts(self.schema_opts);
         ex.set_index_cfg(self.index_cfg);
+        // ★ 검색어가 있는 채로 서버가 추가되면 새 칸도 바로 검색 모드(사용자 09-25) — 스키마 목록이 오는 즉시 인덱스·부분 노드로 이어진다.
+        if self.filter_on() && matches!(self.filter_scope, FilterScope::All) {
+            ex.apply_filter(Some(self.filter.matcher()));
+        }
         Pane {
             key,
             conns: Vec::new(),

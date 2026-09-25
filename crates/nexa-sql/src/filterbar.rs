@@ -102,8 +102,10 @@ pub(crate) enum SearchState {
 }
 
 /// 도는 선 한 바퀴(ms) · 선 길이(둘레 비율) · 완료 깜빡임 한 위상(ms) · 위상 수(켬·끔·켬·끔 = 두 번).
-const LAP_MS: u64 = 1600;
-const SEG_FRACTION: f32 = 0.18;
+const LAP_MS: u64 = 1200;
+const SEG_FRACTION: f32 = 0.22;
+/// 혜성 꼬리 단계 수(꼬리 = 배경에 가깝게 · 머리 = 강조색 · 사용자 09-25 "조금 더 눈에 띄게").
+const COMET_STEPS: usize = 8;
 const BLINK_MS: u64 = 130;
 const BLINK_PHASES: u64 = 4;
 
@@ -223,6 +225,8 @@ pub(crate) struct FilterBar {
     blink_start: Option<u64>,
     blink_pending: bool,
     anim_now: u64,
+    /// 완료 시그니처를 사용자가 "봤다"(상자 재포커스 · 글 변경 · 초기화) → 다음 Running까지 Done을 기본 테두리로(사용자 09-25).
+    done_seen: bool,
 }
 
 impl FilterBar {
@@ -256,6 +260,7 @@ impl FilterBar {
             blink_start: None,
             blink_pending: false,
             anim_now: 0,
+            done_seen: false,
         }
     }
 
@@ -442,6 +447,15 @@ impl FilterBar {
 
     /// 사건 — 토글은 언제나 · 텍스트박스는 키/글자 = 포커스일 때 · 마우스 = 상자 안일 때(MouseUp·이동은 늘).
     pub(crate) fn on_event(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> FilterEvent {
+        let was_focused = self.tb.is_focused();
+        let r = self.on_event_inner(ev, inv);
+        if (!was_focused && self.tb.is_focused()) || r == FilterEvent::Changed {
+            self.dismiss_done();
+        }
+        r
+    }
+
+    fn on_event_inner(&mut self, ev: &InputEvent, inv: &mut Invalidations) -> FilterEvent {
         for b in &mut self.btns {
             b.on_event(ev);
         }
@@ -579,6 +593,15 @@ impl FilterBar {
 
     /// 호스트가 검색 상태를 알려 준다(검색어 없음 = Idle · 인덱스/완성 진행 = Running · 다 끝남 = Done).
     pub(crate) fn set_search_state(&mut self, st: SearchState) {
+        // 완료 시그니처 뒤 사용자가 상자를 다시 만졌으면(포커스·글 변경·초기화) 다음 Running까지 Done = 기본 테두리.
+        let st = if st == SearchState::Done && self.done_seen {
+            SearchState::Idle
+        } else {
+            st
+        };
+        if st == SearchState::Running {
+            self.done_seen = false;
+        }
         if self.search == st {
             return;
         }
@@ -597,6 +620,16 @@ impl FilterBar {
     #[cfg(test)]
     pub(crate) fn search_state(&self) -> SearchState {
         self.search
+    }
+
+    /// 완료 시그니처 원복(사용자 09-25): 상자 재포커스 · 글 변경 · 초기화 → 기본 테두리(다음 검색이 Running으로 가면 다시 살아난다).
+    fn dismiss_done(&mut self) {
+        self.done_seen = true;
+        if self.search == SearchState::Done {
+            self.search = SearchState::Idle;
+            self.blink_start = None;
+            self.blink_pending = false;
+        }
     }
 
     fn blinking(&self) -> bool {
@@ -667,17 +700,20 @@ impl FilterBar {
                 if total <= 0.0 {
                     return;
                 }
+                // ② 진행 중엔 테두리 전체를 강조색 절반으로 물들여 "일하는 중"이 상자 단위로 읽히게.
+                dc.stroke_round_rect(fb, r, th.accent.lerp(th.border, 0.5), 1.0);
+                // ① 혜성: 꼬리(배경에 가깝게) → 머리(강조색) 8단계 그라데이션 · 3px · 1.2 s 한 바퀴.
                 let t = (self.anim_now % LAP_MS) as f32 / LAP_MS as f32;
                 let seg = total * SEG_FRACTION;
                 let start = t * total;
-                // 꼬리(옅게 · 굵게) → 머리(밝게 · 가늘게).
-                let tail = th.accent.lerp(th.field_bg, 0.55);
-                for pts in path_window(&path, total, start, seg) {
-                    dc.polyline(&pts, tail, 3.0);
-                }
-                let head_len = seg * 0.45;
-                for pts in path_window(&path, total, start + seg - head_len, head_len) {
-                    dc.polyline(&pts, th.accent, 2.0);
+                let step = seg / COMET_STEPS as f32;
+                for i in 0..COMET_STEPS {
+                    let k = (i + 1) as f32 / COMET_STEPS as f32; // 0 = 꼬리 끝 · 1 = 머리
+                    let color = th.accent.lerp(th.field_bg, 0.85 * (1.0 - k));
+                    let width = 1.5 + 1.5 * k;
+                    for pts in path_window(&path, total, start + step * i as f32, step + 0.5) {
+                        dc.polyline(&pts, color, width);
+                    }
                 }
             }
             SearchState::Done => {
@@ -799,5 +835,34 @@ mod search_anim_tests {
         // Idle → Done(진행 없이 바로 끝난 검색) = 깜빡임 없이 완료 테두리만.
         f.set_search_state(SearchState::Done);
         assert!(!f.is_animating());
+        assert_eq!(f.search_state(), SearchState::Done);
+        // ★ 완료 시그니처 원복(사용자 09-25): 상자를 다시 포커스하면 기본 테두리 · 호스트가 Done을 다시 말해도 그대로 · 다음 Running에서 해제.
+        let mut inv = Invalidations::default();
+        f.set_bounds(Rect::new(0, 0, 300, 30), 1.0);
+        let tbb = f.text_bounds();
+        f.on_event(
+            &InputEvent::MouseDown {
+                x: tbb.x + 5,
+                y: tbb.y + tbb.h / 2,
+                shift: false,
+                primary: false,
+            },
+            &mut inv,
+        );
+        assert!(f.is_focused());
+        assert_eq!(f.search_state(), SearchState::Idle, "재포커스 = 원복");
+        f.set_search_state(SearchState::Done);
+        assert_eq!(
+            f.search_state(),
+            SearchState::Idle,
+            "본 시그니처는 다시 켜지지 않는다"
+        );
+        f.set_search_state(SearchState::Running);
+        f.set_search_state(SearchState::Done);
+        assert_eq!(
+            f.search_state(),
+            SearchState::Done,
+            "새 검색이 끝나면 다시 시그니처"
+        );
     }
 }
