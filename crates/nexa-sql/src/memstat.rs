@@ -16,6 +16,8 @@ pub(crate) enum Cat {
     EditorHistory,
     EditorCache,
     Meta,
+    MetaCols,
+    MetaDetail,
     Intel,
     Logs,
     Surfaces,
@@ -23,13 +25,15 @@ pub(crate) enum Cat {
 }
 
 impl Cat {
-    pub(crate) const ALL: [Cat; 10] = [
+    pub(crate) const ALL: [Cat; 12] = [
         Cat::ResultData,
         Cat::ResultText,
         Cat::EditorText,
         Cat::EditorHistory,
         Cat::EditorCache,
         Cat::Meta,
+        Cat::MetaCols,
+        Cat::MetaDetail,
         Cat::Intel,
         Cat::Logs,
         Cat::Surfaces,
@@ -49,6 +53,8 @@ impl Cat {
             Cat::EditorHistory => Msg::MemCatEditorHistory,
             Cat::EditorCache => Msg::MemCatEditorCache,
             Cat::Meta => Msg::MemCatMeta,
+            Cat::MetaCols => Msg::MemCatMetaCols,
+            Cat::MetaDetail => Msg::MemCatMetaDetail,
             Cat::Intel => Msg::MemCatIntel,
             Cat::Logs => Msg::MemCatLogs,
             Cat::Surfaces => Msg::MemCatSurfaces,
@@ -65,6 +71,8 @@ impl Cat {
             Cat::EditorHistory => (0x7C, 0xC4, 0x9A),
             Cat::EditorCache => (0xB4, 0xDC, 0xC2),
             Cat::Meta => (0xE0, 0x8E, 0x2B),
+            Cat::MetaCols => (0xE8, 0xA8, 0x55),
+            Cat::MetaDetail => (0xF2, 0xC6, 0x8C),
             Cat::Intel => (0xF0, 0xBE, 0x6E),
             Cat::Logs => (0x9B, 0x6F, 0xC9),
             Cat::Surfaces => (0xD9, 0x53, 0x53),

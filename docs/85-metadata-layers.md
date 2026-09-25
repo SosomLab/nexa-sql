@@ -84,6 +84,7 @@
 | `explorer.index_max` · `explorer.index_hits_max` | 200000 · 2000 | L1 | 84 §5 |
 | `meta.warm_columns_max` · `meta.warm_idle_ms` | 200 · 300 | L2 | 현재 스키마 컬럼 미리 읽기 상한·간격 |
 | `meta.detail_max` · `meta.detail_ttl_secs` · `meta.cols_ttl_secs` | 64 · 300 · 600 | L3 | 상세 상한·TTL · 밖 컬럼 TTL |
+| `meta.disk_cache` | on | L1 | 이름 층 디스크 캐시(§9 · `NSQL_HOME/meta/`) |
 | `intel.preload` · `meta.max_bytes` 등 | (기존) | L2/L3 | 76 §9 · 39 §3-6 |
 
 **D-209(한 줄 고지)**: `explorer.index_idle_ms` 기본 5000 → 250 · `explorer.index_prefetch` 뜻 = "유휴 선적재" → "접속 직후 L1 채움"(사용자 ① "1단계를 최대한 빠르게").
@@ -96,8 +97,8 @@
 
 ## 9. 남은 것(T-222)
 
-- **디스크 캐시**(DataGrip식): L1 이름 층을 `NSQL_HOME/meta/<서버 키>.bin`에 저장 → 다음 실행 첫 검색·완성 즉시 · 무효화 = 79 §3 갱신 + 접속 때 스키마 목록 대조 · (Oracle) `last_ddl_time` 증분.
-- 스키마 순서 학습(최근 일치·사용 많은 스키마 먼저) · 컬럼 이름 인덱스(옵션) · L2에 현재 스키마 외 "최근 쓴 스키마" 포함 · 메모리 창에 (L1, L2, L3) 세 줄.
+- ~~디스크 캐시~~ ✅ §201 = `metacache.rs`(`NSQL_HOME/meta/<cred_id 해시>.names` · 텍스트 · 저장 = L1 완성 때 별 스레드 · 심기 = 스키마 목록이 오면 지금 스키마만 Names + 스레드 사본 seed · 서버 L1이 곧 덮어씀 · `meta.disk_cache` on) · 남음 = (Oracle) `last_ddl_time` 증분 · 캐시 나이 표시.
+- 스키마 순서 학습(최근 일치·사용 많은 스키마 먼저) · 컬럼 이름 인덱스(옵션) · L2에 현재 스키마 외 "최근 쓴 스키마" 포함 · ~~메모리 창 세 줄~~ ✅ §201(`Cat::Meta/MetaCols/MetaDetail`).
 
 ## 10. 자체 점검(09-25 · 키 주입 0)
 

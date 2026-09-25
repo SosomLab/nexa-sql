@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 13)** — §201 T-222 ① L1 디스크 캐시(`metacache.rs`) · ② 메모리 창 메타 L1/L2/L3.
 - **2026-09-25 (100차 후반 · mac · 12)** — CI 기록(18089db·b634e06 ✓ · 064f35e ci ✗ clippy all-targets → 수정) · 규칙 = push 전 `cargo clippy --workspace --all-targets`.
 - **2026-09-25 (100차 후반 · mac · 11)** — §200 ★ T-221 메타 3층([85](85-metadata-layers.md)) · 검색 판정 스레드 분리(`Req::Search`/`Resp::Hits`) · `by_name` 지연 계산 · 설정 `meta.*` 5키 · D-209.
 - **2026-09-25 (100차 후반 · mac · 10)** — §199 새 서버 자동 검색 · 완료 시그니처 원복 · 혜성 꼬리 애니메이션.

@@ -51,6 +51,7 @@ mod log_win;
 mod mem_win;
 mod memstat;
 mod memtrim;
+mod metacache;
 mod outline_panel;
 mod palette;
 mod parwalk;
@@ -5861,7 +5862,8 @@ impl App {
             | "meta.warm_idle_ms"
             | "meta.detail_max"
             | "meta.detail_ttl_secs"
-            | "meta.cols_ttl_secs" => {
+            | "meta.cols_ttl_secs"
+            | "meta.disk_cache" => {
                 self.explorer.set_index_cfg(index_cfg_from(&self.settings));
             }
             "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk" => {
@@ -17770,6 +17772,7 @@ fn index_cfg_from(settings: &Settings) -> explorer::IndexCfg {
         detail_max: settings.int("meta.detail_max").max(0) as usize,
         detail_ttl_secs: settings.int("meta.detail_ttl_secs").max(0) as u64,
         cols_ttl_secs: settings.int("meta.cols_ttl_secs").max(0) as u64,
+        disk_cache: settings.flag("meta.disk_cache"),
     }
 }
 

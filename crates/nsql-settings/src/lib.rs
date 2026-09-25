@@ -1384,6 +1384,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "600",
     },
     Entry {
+        key: "meta.disk_cache",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMetaDiskCache,
+        desc: Msg::DescMetaDiskCache,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "gen.qualified",
         cat: Msg::CatExplorer,
         label: Msg::GenOptQualified,

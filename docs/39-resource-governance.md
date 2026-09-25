@@ -117,6 +117,8 @@
 
 ### 3-3. CPU(+ 디스크)
 
+- ★ L1 디스크 캐시(85 §9 · 09-25): 접속 때 `NSQL_HOME/meta/<해시>.names` 읽기 1 · L1 완성 때 쓰기 1(≤1 MB · 스레드 `nsql-metacache`) · 끄기 = `meta.disk_cache`.
+
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
 | 구문 강조(탭 전체 재분석) | 없음 | `editor.highlight`(신설 · on/off) · ~~`editor.highlight_max_kb`~~(09-22 폐기 · 미배선 — 컷오프 = `file.large_syntax_level` L2 · [72](72-size-limits-and-large-file-constraints.md)) | on 1024 | on 512 | on 128 | `editors::make_box` |

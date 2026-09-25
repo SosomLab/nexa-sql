@@ -75,6 +75,8 @@ pub(crate) struct IndexCfg {
     pub detail_max: usize,
     pub detail_ttl_secs: u64,
     pub cols_ttl_secs: u64,
+    /// ★ L1 디스크 캐시(85 §9 · `meta.disk_cache`): 접속마다 이름 층을 파일에 남기고 다음 실행 첫 검색·완성을 즉시.
+    pub disk_cache: bool,
 }
 
 impl Default for IndexCfg {
@@ -90,6 +92,7 @@ impl Default for IndexCfg {
             detail_max: 64,
             detail_ttl_secs: 300,
             cols_ttl_secs: 600,
+            disk_cache: true,
         }
     }
 }
@@ -168,6 +171,12 @@ enum Req {
     },
     SearchStop {
         gen: u64,
+    },
+    /// 디스크 캐시의 이름을 스레드 사본에 심는다(85 §9 · 서버가 이미 준 스키마는 건너뜀).
+    NamesSeed {
+        gen: u64,
+        schema: String,
+        list: Vec<nsql_catalog::NameEntry>,
     },
     /// 트리가 읽은 전체 목록으로 스레드의 이름 사본을 맞춘다(84 §6 · 인덱스와 트리가 어긋나지 않게).
     NamesUpdate {
@@ -638,6 +647,9 @@ pub(crate) struct Explorer {
     warm_inflight: Option<nsql_run::meta::ObjId>,
     warm_last: Option<Instant>,
     warm_sent: usize,
+    /// L1 디스크 캐시 파일(접속 자격 열쇠의 해시 · 85 §9) · 이번 접속에 저장했는가.
+    cache_path: Option<std::path::PathBuf>,
+    cache_saved: bool,
     /// ★ 부분 폴더 완성 큐(84 §4) — 인덱스가 올린 폴더의 전체 목록을 보이는 순서로 하나씩.
     complete_q: VecDeque<usize>,
     completing: Option<usize>,
@@ -822,6 +834,7 @@ fn req_label(r: &Req) -> String {
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
         Req::NamesUpdate { schema, kind, .. } => format!("names-update {schema} {kind:?}"),
+        Req::NamesSeed { schema, .. } => format!("names-seed {schema}"),
         Req::SubItems { owner, sub, .. } => format!("sub {} {sub:?}", owner.name),
         Req::GenSql { spec, .. } => format!("gen {}", spec.title()),
         Req::Columns { schema, table, .. } => format!("columns {schema}.{table}"),
@@ -854,7 +867,10 @@ fn req_prio(r: &Req) -> u8 {
         | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
-        Req::Search { .. } | Req::SearchStop { .. } | Req::NamesUpdate { .. } => 1,
+        Req::Search { .. }
+        | Req::SearchStop { .. }
+        | Req::NamesUpdate { .. }
+        | Req::NamesSeed { .. } => 1,
         Req::Index { .. } => 2,
         Req::ColumnsMeta { urgent: false, .. } => 3,
         Req::ObjectsMeta { .. } => 4,
@@ -990,6 +1006,26 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if gen == cur_gen {
                     search = None;
                 }
+                continue;
+            }
+            Req::NamesSeed { gen, schema, list } => {
+                if gen != cur_gen || l1_names.contains_key(&schema) {
+                    continue;
+                }
+                if let Some((rev, m, limit)) = &search {
+                    let one: HashMap<String, Vec<nsql_catalog::NameEntry>> =
+                        HashMap::from([(schema.clone(), list.clone())]);
+                    let hits = search_hits(&one, m, *limit);
+                    if !hits.is_empty() {
+                        let _ = tx.send(Resp::Hits {
+                            gen,
+                            rev: *rev,
+                            hits,
+                        });
+                        wake();
+                    }
+                }
+                l1_names.insert(schema, list);
                 continue;
             }
             Req::NamesUpdate {
@@ -1508,6 +1544,8 @@ impl Explorer {
             warm_inflight: None,
             warm_last: None,
             warm_sent: 0,
+            cache_path: None,
+            cache_saved: false,
             complete_q: VecDeque::new(),
             completing: None,
             batching: false,
@@ -1979,6 +2017,12 @@ impl Explorer {
             }
         };
         self.reset_tree();
+        self.cache_path = if self.index_cfg.disk_cache {
+            crate::metacache::path_for(&crate::worker::cred_id(spec, Dialect::Oracle))
+        } else {
+            None
+        };
+        self.cache_saved = false;
         self.nodes[0].state = LoadState::Loading;
         let _ = self.tx.send(Req::Open {
             gen: self.gen,
@@ -2072,7 +2116,11 @@ impl Explorer {
     /// 메모리 맵 보고(docs/80): 메타 저장소(탐색기·완성 공용) · 아이콘 캐시(종류 틴트 + 브랜드).
     pub(crate) fn mem_report(&self, acc: &mut crate::memstat::Acc) {
         use crate::memstat::Cat;
-        acc.add(Cat::Meta, self.meta.approx_bytes() as u64);
+        // 3층(85 §5): L1 이름·목록 · L2 컬럼 · L3 상세.
+        let (l1, l2, l3) = self.meta.layer_bytes();
+        acc.add(Cat::Meta, l1 as u64);
+        acc.add(Cat::MetaCols, l2 as u64);
+        acc.add(Cat::MetaDetail, l3 as u64);
         let icons: usize = self
             .icon_cache
             .values()
@@ -2472,6 +2520,8 @@ impl Explorer {
                                 self.preload_meta();
                                 // 스키마 목록이 새로 왔다 = 인덱스는 처음부터(검색 중이면 바로 다시 채움 — 필터 중 새 접속 · 사용자 09-25 1번 이미지).
                                 self.index_invalidate();
+                                // ★ 디스크 캐시 심기(85 §9): 지난 실행의 이름을 Names로 — 서버 L1이 곧 덮어쓴다(index_done엔 넣지 않음).
+                                self.seed_from_cache();
                             }
                         }
                         // 조용한 갱신의 실패는 옛 트리를 그대로 둔다(오류 행으로 바꾸지 않는다).
@@ -2508,6 +2558,7 @@ impl Explorer {
                             self.index_done.insert(schema);
                             if self.l1_complete() {
                                 self.arm_warm();
+                                self.save_cache();
                             }
                         }
                         // 실패한 스키마 = 트리에 읽힌 것만 검색 대상(다음 무효화 때 다시).
@@ -3815,6 +3866,74 @@ impl Explorer {
         });
         self.index_inflight = Some(next);
         true
+    }
+
+    /// ★ 디스크 캐시 → L1(85 §9): 파일의 항목 가운데 지금 스키마 목록에 있는 것만 `Names`로 심고 스레드 사본에도 준다.
+    fn seed_from_cache(&mut self) {
+        let Some(path) = self.cache_path.clone() else {
+            return;
+        };
+        let Some(d) = self.dialect else { return };
+        let Some((_, _, entries)) = crate::metacache::load(&path) else {
+            return;
+        };
+        let live: HashSet<String> = self.schema_names().into_iter().collect();
+        let mut by_schema: HashMap<String, Vec<(ObjectKind, String)>> = HashMap::new();
+        for (schema, kind, name) in entries {
+            if live.contains(&schema) {
+                by_schema.entry(schema).or_default().push((kind, name));
+            }
+        }
+        let at = Self::now_secs();
+        for (schema, names) in by_schema {
+            self.meta
+                .load_names(&schema, nsql_catalog::kinds_for(d), &names, at);
+            let list: Vec<nsql_catalog::NameEntry> = names
+                .into_iter()
+                .map(|(kind, name)| nsql_catalog::NameEntry {
+                    schema: schema.clone(),
+                    kind,
+                    name,
+                })
+                .collect();
+            let _ = self.tx_bg.send(Req::NamesSeed {
+                gen: self.gen,
+                schema,
+                list,
+            });
+        }
+    }
+
+    /// ★ L1 → 디스크 캐시(85 §9): 스키마 전부 들어갔을 때 한 번 — 파일 쓰기는 별 스레드(UI 프레임을 막지 않게).
+    fn save_cache(&mut self) {
+        if self.cache_saved {
+            return;
+        }
+        let Some(path) = self.cache_path.clone() else {
+            return;
+        };
+        let Some(d) = self.dialect else { return };
+        let snap = self.meta.snapshot();
+        let schemas = self.schema_names();
+        let mut entries: Vec<crate::metacache::Entry> = Vec::new();
+        for sname in &schemas {
+            let Some(sc) = self.meta.names.find(sname) else {
+                continue;
+            };
+            for &kind in nsql_catalog::kinds_for(d) {
+                if !snap.coverage(sc, kind).has_list() {
+                    continue;
+                }
+                for h in snap.prefix(&self.meta.names, sc, kind, "", usize::MAX) {
+                    entries.push((sname.clone(), kind, self.meta.names.get(h.name).to_string()));
+                }
+            }
+        }
+        self.cache_saved = true;
+        let stamp = Self::now_secs();
+        let _ = std::thread::Builder::new()
+            .name("nsql-metacache".into())
+            .spawn(move || crate::metacache::store(&path, stamp, &schemas, &entries));
     }
 
     fn index_reset(&mut self) {
