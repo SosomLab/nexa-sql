@@ -95,6 +95,14 @@ pwsh -NoProfile -File scripts/win-perf-all.ps1 -HomeDir ... -DataDir ... -Out ..
 | 5 | 결과 10만 행 × 5열 | `open:<질의>,@after:2000:run.all` | 셀당 바이트(≈ 61 B) |
 | 6 | **프로젝트 패널**(09-22 신설) | `project.load:<파일>,@after:1500:view.project` | 트리 노드 · 지연 열거 |
 | 7 | 확장 패널 | `view.extensions` | 네트워크 스레드가 잠드는가 |
+| 8 | **탐색기 검색 인덱스 + 메타 3층 워머**(09-26 신설 · 84 · 85 · 실서버 Oracle) | 인자 = 접속 문자열 · `@after:22000:explorer.stat:<f>,mem.dump:<f>` | L1 이름 인덱스·L2 컬럼/코멘트 워머가 끝난 뒤 상주(`Meta`/`MetaCols`/`MetaDetail` 계측) · 백그라운드 세션 CPU · A/B = `explorer.search_index off` + `meta.warm_comments off` + `meta.warm_columns_max 0`(s9b) |
+| 9 | **탐색기 검색 진행**(84 §4 애니메이션 · 판정 스레드) | `@after:5000:explorer.filter:1171` | 검색 중 프레임 최대·평균(애니메이션이 매 프레임인가) · 완료 뒤 유휴 CPU 복귀 |
+| 10 | **객체 상세 패널**(86) | `view.object_details,explorer.expand:1,explorer.expand:2,explorer.select3,explorer.select4,details.dump:<f>` | 선택마다 왕복 0(메타·캐시) · 패널 상주 · 프레임 |
+| 11 | **SQL Preview 모달**(83 §4) | `explorer.menu:3,explorer.pick:gen:ddl,sqlprev.dump:<f>` | 모달 창 표면 · DDL 생성 왕복 · 닫힌 뒤 회수 |
+| 12 | **L3 회수**(85 §4 · TTL) | `meta.detail_ttl_secs=15`·`cols_ttl_secs=15` → `mem.dump` 18 s / 58 s | `MetaDetail`·`MetaCols` 바이트가 TTL 뒤 줄어드는가(회수 = 유휴 틱) |
+| E+ | 누수 주기 2종(09-26) | `explorer.filter:1171;explorer.filter:` ×8 · `view.object_details;view.object_details` ×10 | 검색 결과·부분 폴더·상세 패널 상자가 주기마다 남는가 |
+
+맥 실행기 `scripts/mac-perf-all.sh`는 8~12·E+를 **`NSQL_PERF_ORACLE_TARGET`(접속 문자열·프로필)이 있을 때만** 돈다(실서버 읽기 접속 · 61 §2-4 한 줄 고지). 계측 덤프 기동 명령 = `explorer.stat:<파일>` · `mem.dump:<파일>`(메모리 창 표본 = 총량·anon·부품 원장 12칸 · 09-26) · `details.dump:<파일>` · `sqlprev.dump:<파일>`.
 
 각 시나리오에서 Private·WS·피크·핸들·GDI·USER·스레드·유휴 CPU(6초)를 찍는다.
 
@@ -240,6 +248,13 @@ C-2 실행기가 배운 것 → §C-2 절차에 반영: ① `grid.max_rows`를 �
 - **E 단계 판정 보강**: 뒤 절반 기울기가 0.05~0.2 MB/주기로 회차마다 흔들리는 항목(L2)은 10주기로 결론 내지 말고 **30주기 연장**(`win-leak-cycle.ps1 -Cycles 30 -ArgList "Local"` — 프로필 인자를 빼면 접속 없이 도니 표본이 9.5 MB에 머문다)으로 평탄화 여부를 본다 · 상한이 있는 구조(카드 스택 `run.toast_max` · `log.max_lines` · `txlog.max_entries`)는 먼저 후보에서 뺀다.
 - **A 단계 설정 키 집계 규칙 확정**(T-168 ①): `nsql config list all`은 HIDDEN을 뺀 수(레지스트리 `key:` 405 − HIDDEN 9 ≈ 395) — 회차 비교는 같은 규칙이므로 그대로 쓴다.
 - 성능 측정 → 기능 점검(캡처)의 **순차 실행** 규칙을 다시 확인(둘 다 `target/` 아래 앱 인스턴스를 강제 종료하므로 겹치면 서로를 죽인다).
+
+## 11. 네 번째 실행(2026-09-26 · Mac 100차 후반 · 사용자 "추가된 기능을 포함해 성능·속도·용량·메모리·회수 실측 전수 · 테스트 문서 보완")
+
+- 순서 A → B → C(1~7 + **신규 8~12**) → D → E(+ 누수 2종) → F → G 전부 · 실행기 `scripts/mac-perf-all.sh`(신규 시나리오 = `NSQL_PERF_ORACLE_TARGET` 게이트 · 행 번호 `NSQL_PERF_ROW_TABLES`) + 보충 `perf-rerun.sh`/`perf-tail.sh`(세션 스크래치) · 계측 덤프 기동 명령 `mem.dump:<파일>` 신설.
+- 결과·해석 = [26 §7-12](26-performance-architecture.md). **회귀 없음**(늘어난 것 전부 지목: IOSurface +40 MB · 신규 기능 +2 MB · 워머 진행 중 CPU) · 좋아진 것 = 기동 −31~36 % · 10만 행 정지 1,726 → 33 ms · 활성 유휴 CPU 170~200 → 40~50.
+- G에서 나온 일 = **T-224 상향**(캐럿 부분 present) · **T-227**(객체 상세 응답 → `MetaStore::set_detail` · L3 원장/회수 대상) · **T-228**(CLI 200행 wall +50 ms 기동 구간 지목).
+- 절차 보완 = §3 C 규정 시나리오 8~12·E+ 등재 · 맥 A/B 표준 6종(`mem.statusbar` · `editor.caret_blink` · `ui.animations` · `gfx.mac_present` · `explorer.search_index` · 향상 모드) · **회수 시험은 워머를 끄고 잰다**(`meta.warm_columns_max 0` · `meta.warm_comments off` — 워머가 채우는 동안은 TTL 회수를 판정할 수 없다 · s13 교훈) · 새 계측 대상은 반드시 `memstat::Cat` 원장에(패널 로컬 캐시는 보이지 않는다).
 
 ## 8. 상시 점검 항목 — 완성 팝업 반응(사용자 09-24 "인텔리센스 속도는 매우 마음에 들어 · 이 상태가 유지되도록 지속 검토")
 

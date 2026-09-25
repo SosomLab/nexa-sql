@@ -4,6 +4,7 @@
 #   시험 파일(200 KB · 2 MB · 6.4 MB · 20 MB CRLF·한글 · 65 MB · 10만 행 질의)은 <data>에 없으면 만든다.
 #
 # 사용:  scripts/mac-perf-all.sh -H /tmp/nsql-home -D /tmp/nsql-data -o /tmp/nsql-perf [-p Local]
+#        신규 기능(Oracle) 시나리오 s9~s13 · leak.search/details = NSQL_PERF_ORACLE_TARGET=<접속 문자열|프로필> 일 때만(09-26).
 #        (프로필 `Local`은 <home>에 `nsql conn add Local sqlite:<home>/local.sqlite -d sqlite --no-prompt`로 만든다 · 실서버 CLI 타이밍은
 #         환경 변수 NSQL_PERF_ORACLE · NSQL_PERF_MSSQL · NSQL_PERF_PG 에 **사용자 볼트의 프로필 이름**을 주면 그때만 돈다)
 set -u
@@ -57,6 +58,27 @@ NSQL_HOME=$H "$NSQL" config set perf.boost on >/dev/null 2>&1
 probe s8.boost       10 "" "$PROF"
 NSQL_HOME=$H "$NSQL" config set perf.boost off >/dev/null 2>&1
 unset NSQL_TRACE_FRAMES
+# ★ 신규 기능 시나리오(09-26 · 100차 후반 = 탐색기 검색 인덱스 84 · 메타 3층 85 · 코멘트 워머 · 객체 상세 86 · SQL Preview 83) — 실서버가 있어야 의미가 있어
+#   환경 변수 NSQL_PERF_ORACLE_TARGET(접속 문자열 또는 <home> 볼트의 프로필 이름)이 있을 때만 돈다. 행 번호 = 접속 직후 트리(0 서버 · 1 현재 스키마 · 2 첫 폴더 · 3 첫 객체).
+if [ -n "${NSQL_PERF_ORACLE_TARGET:-}" ]; then
+ORA="$NSQL_PERF_ORACLE_TARGET"; export NSQL_TRACE_FRAMES=1
+probe s9.ora.idx      24 "@after:22000:explorer.stat:$OUT/s9.stat,@after:22500:mem.dump:$OUT/s9.mem" "$ORA"
+NSQL_HOME=$H "$NSQL" config set explorer.search_index off >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config set meta.warm_comments off >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config set meta.warm_columns_max 0 >/dev/null 2>&1
+probe s9b.ora.nowarm  24 "@after:22000:explorer.stat:$OUT/s9b.stat,@after:22500:mem.dump:$OUT/s9b.mem" "$ORA"
+NSQL_HOME=$H "$NSQL" config reset explorer.search_index >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config reset meta.warm_comments >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config reset meta.warm_columns_max >/dev/null 2>&1
+probe s10.ora.search  26 "@after:5000:explorer.filter:1171,@after:24000:explorer.stat:$OUT/s10.stat,@after:24500:mem.dump:$OUT/s10.mem" "$ORA"
+# 행 번호(트리 = 0 루트 · 1~ 스키마 알파벳 · 현재 스키마는 자동 펼침 → 그 아래 첫 폴더 Tables) — 서버마다 다르므로 환경 변수로 덮어쓴다(BISCM = Tables 6 · 첫 테이블 7).
+RT=${NSQL_PERF_ROW_TABLES:-6}; RO=$((RT+1)); RO2=$((RT+2)); RO3=$((RT+3))
+probe s11.ora.details 28 "@after:5000:view.object_details,@after:6000:explorer.expand:$RT,@after:10000:explorer.select$RO,@after:14000:explorer.select$RO2,@after:18000:explorer.expand:$RO,@after:21000:explorer.select$RO2,@after:25000:details.dump:$OUT/s11.details,@after:25500:mem.dump:$OUT/s11.mem" "$ORA"
+probe s12.ora.sqlprev 24 "@after:6000:explorer.expand:$RT,@after:10000:explorer.menu:$RO,@after:11000:explorer.pick:gen:ddl,@after:20000:sqlprev.dump:$OUT/s12.sqlprev,@after:20500:mem.dump:$OUT/s12.mem" "$ORA"
+NSQL_HOME=$H "$NSQL" config set meta.detail_ttl_secs 15 >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config set meta.cols_ttl_secs 15 >/dev/null 2>&1
+probe s13.ora.reclaim 62 "@after:5000:view.object_details,@after:6000:explorer.expand:$RT,@after:10000:explorer.select$RO,@after:13000:explorer.select$RO2,@after:16000:explorer.select$RO3,@after:19000:mem.dump:$OUT/s13a.mem,@after:59000:mem.dump:$OUT/s13b.mem" "$ORA"
+NSQL_HOME=$H "$NSQL" config reset meta.detail_ttl_secs >/dev/null 2>&1; NSQL_HOME=$H "$NSQL" config reset meta.cols_ttl_secs >/dev/null 2>&1
+unset NSQL_TRACE_FRAMES
+say "=== leak: explorer search on/off ×8 (oracle)"; bash "$SC/mac-leak.sh" -H "$H" -n 8 -p 6000 -S 8000 -C "explorer.filter:1171;explorer.filter:" -a "$ORA" -t leak.search | tee -a "$R"
+say "=== leak: object details toggle ×10 (oracle)"; bash "$SC/mac-leak.sh" -H "$H" -n 10 -p 2500 -S 8000 -F "explorer.expand:$RT;explorer.select$RO" -C "view.object_details;view.object_details" -a "$ORA" -t leak.details | tee -a "$R"
+for f in s9.stat s9b.stat s10.stat s9.mem s9b.mem s10.mem s11.mem s12.mem s13a.mem s13b.mem s11.details s12.sqlprev; do [ -f "$OUT/$f" ] && { say "--- $f"; head -c 1500 "$OUT/$f" | tee -a "$R"; echo | tee -a "$R"; }; done
+fi
 say "=== leak: open 6 MB → close ×8"; bash "$SC/mac-leak.sh" -H "$H" -n 8 -p 5000 -C "open:$D/big6m.sql;file.close_tab" -a "$PROF" -t leak.big | tee -a "$R"
 NSQL_HOME=$H "$NSQL" config set grid.max_rows 100000 >/dev/null 2>&1
 say "=== leak: run 100k rows ×8"; bash "$SC/mac-leak.sh" -H "$H" -n 8 -p 7000 -F "open:$D/rows100k.sql" -C "run.all" -a "$PROF" -t leak.rows | tee -a "$R"

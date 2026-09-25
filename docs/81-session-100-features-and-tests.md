@@ -44,6 +44,8 @@
 | 22 | ★ **DBMS별 객체 트리**(T-203 · §190 · [83 §1](83-object-explorer-dbms-trees-and-generate-sql.md)) — DBeaver 순서의 폴더 · 객체 아래 하위 폴더(Columns·Constraints·Foreign Keys·References·Indexes·Triggers·Partitions·Dependencies·Rules·Policies·Extended Properties·Arguments·Attributes·Methods·Procedures·Functions) · PG 루트 아래 Extensions·Event Triggers | 탐색기에서 테이블·패키지·프로시저 펼치기 · CLI `nsql cat -c BISCM -s BISCM sub M4E_C300000 constraints` |
 | 23 | ★ **유효성 배지**(T-203) — INVALID = 아이콘 오른쪽 아래 빨간 점 · VALID/INVALID 글자 제거 | BISCM ▸ Procedures ▸ `SP_CALL_DATA_COPY_KHJ` |
 | 24 | ★ **SQL 생성 + SQL 미리보기**(T-205 · [83 §3~4](83-object-explorer-dbms-trees-and-generate-sql.md)) — 우클릭 ▸ SQL 생성 ▸ SELECT/INSERT/UPDATE/DELETE/MERGE/CALL/DDL(종류별) → 모달(미니맵 없는 편집 · 새로고침·파일로 저장·편집기에서 열기·복사·닫기) | 탐색기 우클릭 · CLI `nsql cat -c M4PLAN gen merge M4E_C300000` · `gen call NSQL_DEMO_PKG package` · `gen ddl M4E_C300000 table indexes M4E_C300000_PK` |
+| 25 | ★ **탐색기 검색 인덱스 · 메타 3층 · 코멘트 워머 · 객체 상세 · 읽기 전용 미리보기**(§187~214) — 성능·메모리·회수 규정 시나리오 8~12 + 누수 주기 2종([71 §3 C](71-performance-review-process.md) · 09-26) | `NSQL_PERF_ORACLE_TARGET='oracle://…' scripts/mac-perf-all.sh -H <home> -D <data> -o <out>` → `<out>/perf.txt` + `s9.stat`(L1/L2 진행) · `s9.mem`~`s13b.mem`(부품 원장) · 판정 = [26 §7-12](26-performance-architecture.md) |
+| 26 | 읽기 전용 상자 규칙(§214) — 잘라내기·붙여넣기 흐림 · 한글 자모 무표시 · 메뉴 클릭 누출 없음 | nexa-ctl 시험 `read_only_disables_cut_and_paste` · `read_only_box_ignores_jamo_and_preedit` · 실기 U-173~U-175 |
 
 ## 4. 자동 시험(이미 통과) · 도구
 - 단위: nexa-sql `cargo test -p nexa-sql -- intel`(12) · nsql-script `intel`(11) · nsql-run `meta`(5) · nexa-ctl `ctxmenu`(26) · memstat(2) · 전체 `cargo test --workspace` 두 저장소 · `scripts/check-3os.sh --quick`.

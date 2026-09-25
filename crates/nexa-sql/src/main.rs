@@ -8348,6 +8348,23 @@ impl App {
             let _ = std::fs::write(path, self.explorer.stat_text());
             return;
         }
+        // 자체 시험(09-26 성능 전수): 메모리 계측 표본을 파일로 — 총량·anon·부품 원장(L1 Meta · L2 MetaCols · L3 MetaDetail …).
+        if let Some(path) = id.strip_prefix("mem.dump:") {
+            let smp = self.mem_sample();
+            let mut out = format!(
+                "footprint={} resident={} anon={} sum={} other={}\n",
+                smp.sys.footprint,
+                smp.sys.resident,
+                smp.sys.anon,
+                smp.data.sum(),
+                smp.other()
+            );
+            for c in memstat::Cat::ALL {
+                out.push_str(&format!("{c:?}={}\n", smp.data.get(c)));
+            }
+            let _ = std::fs::write(path, out);
+            return;
+        }
         // 자체 시험(09-25): 서버 하나 더 접속(접속 창 Connect와 같은 길 = 공유 연결 추가) — `connect:<프로필|접속 문자열>`.
         if let Some(target) = id.strip_prefix("connect:") {
             let spec = if nsql_vault::is_profile_name(target) {
