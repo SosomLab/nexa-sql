@@ -93,6 +93,113 @@ impl Matcher {
     }
 }
 
+/// 검색 진행 상태(호스트 → 필터 틀 · 84 §8).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SearchState {
+    Idle,
+    Running,
+    Done,
+}
+
+/// 도는 선 한 바퀴(ms) · 선 길이(둘레 비율) · 완료 깜빡임 한 위상(ms) · 위상 수(켬·끔·켬·끔 = 두 번).
+const LAP_MS: u64 = 1600;
+const SEG_FRACTION: f32 = 0.18;
+const BLINK_MS: u64 = 130;
+const BLINK_PHASES: u64 = 4;
+
+/// 둥근 사각형 둘레의 폴리라인(시작 = 위쪽 변 왼쪽 끝 · 시계 방향 · 모서리는 호를 6분할).
+pub(crate) fn round_rect_path(fb: Rect, r: i32) -> Vec<(f32, f32)> {
+    let r = r.max(0).min(fb.w / 2).min(fb.h / 2) as f32;
+    let (x0, y0, x1, y1) = (
+        fb.x as f32,
+        fb.y as f32,
+        fb.right() as f32,
+        fb.bottom() as f32,
+    );
+    let mut pts = Vec::with_capacity(32);
+    let arc = |pts: &mut Vec<(f32, f32)>, cx: f32, cy: f32, a0: f32, a1: f32| {
+        let n = 6;
+        for i in 0..=n {
+            let a = a0 + (a1 - a0) * i as f32 / n as f32;
+            pts.push((cx + r * a.cos(), cy + r * a.sin()));
+        }
+    };
+    use std::f32::consts::PI;
+    pts.push((x0 + r, y0));
+    pts.push((x1 - r, y0));
+    arc(&mut pts, x1 - r, y0 + r, -PI / 2.0, 0.0);
+    pts.push((x1, y1 - r));
+    arc(&mut pts, x1 - r, y1 - r, 0.0, PI / 2.0);
+    pts.push((x0 + r, y1));
+    arc(&mut pts, x0 + r, y1 - r, PI / 2.0, PI);
+    pts.push((x0, y0 + r));
+    arc(&mut pts, x0 + r, y0 + r, PI, 1.5 * PI);
+    pts
+}
+
+pub(crate) fn path_len(path: &[(f32, f32)]) -> f32 {
+    path.windows(2)
+        .map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt())
+        .sum()
+}
+
+/// 둘레 위 `[start, start+len)` 구간의 점들(끝점 보간 · 한 바퀴를 넘으면 둘로 나눠 돌려준다).
+pub(crate) fn path_window(
+    path: &[(f32, f32)],
+    total: f32,
+    start: f32,
+    len: f32,
+) -> Vec<Vec<(i32, i32)>> {
+    if total <= 0.0 || len <= 0.0 || path.len() < 2 {
+        return Vec::new();
+    }
+    let s = start.rem_euclid(total);
+    let e = s + len.min(total);
+    let mut out = Vec::new();
+    if e <= total {
+        out.push(path_slice(path, s, e));
+    } else {
+        out.push(path_slice(path, s, total));
+        out.push(path_slice(path, 0.0, e - total));
+    }
+    out.retain(|v| v.len() >= 2);
+    out
+}
+
+fn path_slice(path: &[(f32, f32)], a: f32, b: f32) -> Vec<(i32, i32)> {
+    let mut out: Vec<(i32, i32)> = Vec::new();
+    let mut acc = 0.0f32;
+    let push = |p: (f32, f32), out: &mut Vec<(i32, i32)>| {
+        let q = (p.0.round() as i32, p.1.round() as i32);
+        if out.last() != Some(&q) {
+            out.push(q);
+        }
+    };
+    for w in path.windows(2) {
+        let d = ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt();
+        let (sa, sb) = (acc, acc + d);
+        if sb >= a && sa <= b && d > 0.0 {
+            let ta = ((a - sa) / d).clamp(0.0, 1.0);
+            let tb = ((b - sa) / d).clamp(0.0, 1.0);
+            let pa = (
+                w[0].0 + (w[1].0 - w[0].0) * ta,
+                w[0].1 + (w[1].1 - w[0].1) * ta,
+            );
+            let pb = (
+                w[0].0 + (w[1].0 - w[0].0) * tb,
+                w[0].1 + (w[1].1 - w[0].1) * tb,
+            );
+            push(pa, &mut out);
+            push(pb, &mut out);
+        }
+        acc = sb;
+        if acc > b {
+            break;
+        }
+    }
+    out
+}
+
 pub(crate) struct FilterBar {
     tb: TextBox,
     /// 틀(텍스트박스 + 안쪽 토글) · `area` = 틀 + 오른쪽 부가 토글(히트 영역).
@@ -110,6 +217,12 @@ pub(crate) struct FilterBar {
     placeholder: String,
     /// 검색어 이력(전역 · 상자 이름별 · ↑/↓ 되부르기 · Enter/포커스 잃음 = 기록 · 사용자 09-23) — 호스트가 `set_history`로 준다.
     history: Option<(SharedHistory, Recall)>,
+    /// ★ 검색 진행 표시(84 §8 · 사용자 09-25 "진행 중인지 직관적으로"): 진행 = 테두리를 따라 도는 밝은 선 · 완료 = 두 번 깜빡인 뒤 완료 테두리.
+    search: SearchState,
+    /// 완료 깜빡임 시작 시각(ms · `tick`의 시계) — Running → Done 전환 뒤 첫 tick에 잡는다.
+    blink_start: Option<u64>,
+    blink_pending: bool,
+    anim_now: u64,
 }
 
 impl FilterBar {
@@ -139,6 +252,10 @@ impl FilterBar {
             clamp_w: i32::MAX / 2,
             placeholder: placeholder.to_string(),
             history: None,
+            search: SearchState::Idle,
+            blink_start: None,
+            blink_pending: false,
+            anim_now: 0,
         }
     }
 
@@ -448,15 +565,54 @@ impl FilterBar {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        self.anim_now = now_ms;
         let mut any = self.tb.tick(now_ms);
         for b in &mut self.btns {
             any |= b.hover.tick(now_ms);
         }
-        any
+        if self.blink_pending {
+            self.blink_pending = false;
+            self.blink_start = Some(now_ms);
+        }
+        any || self.search_animating()
+    }
+
+    /// 호스트가 검색 상태를 알려 준다(검색어 없음 = Idle · 인덱스/완성 진행 = Running · 다 끝남 = Done).
+    pub(crate) fn set_search_state(&mut self, st: SearchState) {
+        if self.search == st {
+            return;
+        }
+        if self.search == SearchState::Running && st == SearchState::Done {
+            // 완료 = 두 번 깜빡임(시각은 다음 tick에서).
+            self.blink_pending = true;
+            self.blink_start = None;
+        }
+        if st != SearchState::Done {
+            self.blink_start = None;
+            self.blink_pending = false;
+        }
+        self.search = st;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn search_state(&self) -> SearchState {
+        self.search
+    }
+
+    fn blinking(&self) -> bool {
+        self.blink_pending
+            || self
+                .blink_start
+                .is_some_and(|t0| self.anim_now.saturating_sub(t0) < BLINK_MS * BLINK_PHASES)
+    }
+
+    fn search_animating(&self) -> bool {
+        self.search == SearchState::Running || self.blinking()
     }
 
     pub(crate) fn is_animating(&self) -> bool {
-        self.tb.is_animating()
+        self.search_animating()
+            || self.tb.is_animating()
             || self.btns.iter().any(|b| b.hover.is_animating())
             || self.btns.iter().any(|b| {
                 b.hover_since
@@ -494,8 +650,48 @@ impl FilterBar {
         if self.tb.is_focused() {
             dc.stroke_round_rect(fb, r, th.accent, 1.0);
         }
+        self.paint_search(dc, th, fb, r);
         for b in &self.btns {
             b.paint(dc, th, s);
+        }
+    }
+
+    /// ★ 검색 진행 표시(84 §8): Running = 테두리 둘레를 따라 짧은 밝은 선이 한 바퀴(1.6 s) · Done 직후 = 두 번 깜빡임(강조 2px ↔ 없음) ·
+    /// Done 유지 = 완료 테두리(`th.ok`) — 검색어를 지우면 Idle.
+    fn paint_search(&self, dc: &mut dyn DrawCtx, th: &Theme, fb: Rect, r: i32) {
+        match self.search {
+            SearchState::Idle => {}
+            SearchState::Running => {
+                let path = round_rect_path(fb, r);
+                let total = path_len(&path);
+                if total <= 0.0 {
+                    return;
+                }
+                let t = (self.anim_now % LAP_MS) as f32 / LAP_MS as f32;
+                let seg = total * SEG_FRACTION;
+                let start = t * total;
+                // 꼬리(옅게 · 굵게) → 머리(밝게 · 가늘게).
+                let tail = th.accent.lerp(th.field_bg, 0.55);
+                for pts in path_window(&path, total, start, seg) {
+                    dc.polyline(&pts, tail, 3.0);
+                }
+                let head_len = seg * 0.45;
+                for pts in path_window(&path, total, start + seg - head_len, head_len) {
+                    dc.polyline(&pts, th.accent, 2.0);
+                }
+            }
+            SearchState::Done => {
+                if self.blinking() {
+                    let phase = self
+                        .blink_start
+                        .map_or(0, |t0| self.anim_now.saturating_sub(t0) / BLINK_MS);
+                    if phase.is_multiple_of(2) {
+                        dc.stroke_round_rect(fb, r, th.accent, 2.0);
+                    }
+                } else {
+                    dc.stroke_round_rect(fb, r, th.ok, 1.0);
+                }
+            }
         }
     }
 
@@ -552,5 +748,56 @@ mod tests {
         f.set_text("");
         assert!(!f.regex_err());
         assert!(f.matches("anything"));
+    }
+}
+
+#[cfg(test)]
+mod search_anim_tests {
+    use super::*;
+
+    /// 둘레 폴리라인 = 네 변 + 네 호(≈ 2πr) · 창은 한 바퀴를 넘으면 둘로 · 길이 0 = 없음.
+    #[test]
+    fn round_rect_path_len_and_window_wrap() {
+        let fb = Rect::new(10, 20, 200, 30);
+        let r = 6;
+        let path = round_rect_path(fb, r);
+        let total = path_len(&path);
+        let expect = 2.0 * (200.0 + 30.0) - 8.0 * r as f32 + 2.0 * std::f32::consts::PI * r as f32;
+        assert!((total - expect).abs() < 1.5, "둘레 {total} ≈ {expect}");
+        let one = path_window(&path, total, 10.0, 40.0);
+        assert_eq!(one.len(), 1);
+        assert!(one[0].len() >= 2);
+        // 끝을 넘어가는 창 = 두 조각.
+        let two = path_window(&path, total, total - 5.0, 20.0);
+        assert_eq!(two.len(), 2, "한 바퀴를 넘으면 둘로");
+        assert!(path_window(&path, total, 0.0, 0.0).is_empty());
+        // 시작이 음수/둘레 초과여도 rem_euclid로 안전.
+        assert_eq!(path_window(&path, total, -3.0, 10.0).len(), 2);
+    }
+
+    /// Running → Done = 두 번 깜빡임(4 위상 × 130 ms) 뒤 완료 테두리 · Idle로 가면 깜빡임 취소 · Running 동안은 늘 애니메이션.
+    #[test]
+    fn search_state_transitions_and_blink_window() {
+        let mut f = FilterBar::new("f", &[]);
+        assert!(!f.is_animating());
+        f.set_search_state(SearchState::Running);
+        assert!(f.is_animating(), "도는 선 = 계속 그린다");
+        assert!(f.tick(1000));
+        f.set_search_state(SearchState::Done);
+        assert!(f.is_animating(), "깜빡임 예약 = 애니메이션");
+        assert!(f.tick(1010), "첫 tick에 시작 시각을 잡는다");
+        assert!(f.tick(1010 + BLINK_MS * BLINK_PHASES - 1), "네 위상 동안");
+        assert!(
+            !f.tick(1010 + BLINK_MS * BLINK_PHASES + 1),
+            "끝나면 멈춘다(완료 테두리는 정적)"
+        );
+        assert_eq!(f.search_state(), SearchState::Done);
+        f.set_search_state(SearchState::Running);
+        f.set_search_state(SearchState::Done);
+        f.set_search_state(SearchState::Idle);
+        assert!(!f.is_animating(), "Idle = 깜빡임 취소");
+        // Idle → Done(진행 없이 바로 끝난 검색) = 깜빡임 없이 완료 테두리만.
+        f.set_search_state(SearchState::Done);
+        assert!(!f.is_animating());
     }
 }

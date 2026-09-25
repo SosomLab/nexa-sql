@@ -821,6 +821,7 @@ impl ExplorerSet {
             };
             p.ex.apply_filter(if on { m.clone() } else { None });
         }
+        self.sync_search_state();
         self.relayout();
     }
 
@@ -1202,7 +1203,20 @@ impl ExplorerSet {
         }
     }
 
+    /// ★ 검색 진행 상태를 필터 틀에(84 §8): 검색어 없음 = Idle · 어느 칸이든 인덱스/완성 진행 = Running · 그 밖 = Done.
+    fn sync_search_state(&mut self) {
+        let st = if !self.filter_on() {
+            crate::filterbar::SearchState::Idle
+        } else if self.panes.iter().any(|p| p.ex.search_busy()) {
+            crate::filterbar::SearchState::Running
+        } else {
+            crate::filterbar::SearchState::Done
+        };
+        self.filter.set_search_state(st);
+    }
+
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        self.sync_search_state();
         let mut any = self.bars.tick(now_ms) | self.filter.tick(now_ms);
         for p in &mut self.panes {
             any |= p.ex.tick(now_ms);

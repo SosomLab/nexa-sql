@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 9)** — §198 T-220 ① Oracle `name_index` DBA→USER→ALL(BISCM_SB 3.59 → 0.27 s) · ★ 검색 진행 애니메이션(`filterbar::SearchState` · 도는 선 · 두 번 깜빡임 · 완료 테두리 `th.ok`).
 - **2026-09-25 (100차 후반 · mac · 8)** — CI 기록 ecb82ed ✓ · 9ef00b6 ✓(§196~197 마감).
 - **2026-09-25 (100차 후반 · mac · 7)** — §197 ★ T-219 탐색기 검색 인덱스([84](84-explorer-search-index.md) · `name_index` 스키마 순차 · `Partial` 폴더 · 완성 큐 · 헤더 인덱싱 표시 · 유휴 선적재 · 설정 5키 · CLI `cat index`) · 🔧 검색 이력 드롭다운 클릭 선택·바깥 좌/우클릭 감춤(nexa-ui `TextBox::popup_bounds`).
 - **2026-09-25 (100차 후반 · mac · 6)** — §196 🔧 미리보기 토글 시 탐색기 스크롤 밀림(`pane_top`) · DDL 기본(테이블·제약·인덱스)/전체(+설명·저장 절) 정정 · PK 인덱스 중복 제거(T-218).

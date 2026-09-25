@@ -3480,6 +3480,16 @@ impl Explorer {
         }
     }
 
+    /// 검색이 아직 진행 중인가(인덱스 읽기·완성 큐 중 하나라도) — 필터 틀의 진행 표시용(84 §8).
+    pub(crate) fn search_busy(&self) -> bool {
+        self.filter.is_some()
+            && !self.offline
+            && (self.index_inflight.is_some()
+                || !self.index_q.is_empty()
+                || self.completing.is_some()
+                || !self.complete_q.is_empty())
+    }
+
     /// 인덱스가 상한에서 잘렸는가(헤더 안내용).
     pub(crate) fn index_truncated(&self) -> bool {
         self.index_truncated

@@ -355,6 +355,9 @@ pub fn name_index(
     let kinds = kinds_for(dialect);
     let rows: Vec<(String, String, String)> = match dialect {
         Dialect::Oracle => {
+            // ★ 84 §2-1(09-25 실측 BISCM_SB 1,4xx 객체): `ALL_OBJECTS` 3.3 s(행마다 권한 판정) · `DBA_OBJECTS` 0.09 s · 자기 스키마 `USER_OBJECTS` 0.05 s.
+            //   → DBA 뷰를 먼저(접근 불가 = 이 스레드에서 한 번만 시도 · 메타 스레드 = 세션 하나) → 자기 스키마는 USER_ → 그 밖 ALL_.
+            //   DBA 뷰는 권한 없는 객체도 나오지만(1441 vs 1422) 완성 단계(전체 목록 = ALL_OBJECTS)의 디프가 걸러낸다 — 트리의 권한 반영 규칙은 그대로.
             let types: Vec<String> = kinds
                 .iter()
                 .map(|k| oracle_type(*k))
@@ -366,16 +369,56 @@ pub fn name_index(
             } else {
                 format!(" AND ROWNUM <= {lim}")
             };
-            let sql = format!(
-                "SELECT owner, object_type, object_name FROM all_objects WHERE object_type IN ({}) AND object_name NOT LIKE 'BIN$%'{}{top}",
-                types.join(","),
-                in_list("owner")
+            let body = format!(
+                "object_type IN ({}) AND object_name NOT LIKE 'BIN$%'{top}",
+                types.join(",")
             );
-            query(s, &sql)?
-                .rows
-                .iter()
-                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
-                .collect()
+            let to_rows = |rs: &ResultSet| -> Vec<(String, String, String)> {
+                rs.rows
+                    .iter()
+                    .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                    .collect()
+            };
+            let mut rows: Option<Vec<(String, String, String)>> = None;
+            if ORACLE_DBA_OK.with(|c| c.get() != Some(false)) {
+                let sql = format!(
+                    "SELECT owner, object_type, object_name FROM dba_objects WHERE {body}{}",
+                    in_list("owner")
+                );
+                match query(s, &sql) {
+                    Ok(rs) => {
+                        ORACLE_DBA_OK.with(|c| c.set(Some(true)));
+                        rows = Some(to_rows(&rs));
+                    }
+                    Err(_) => ORACLE_DBA_OK.with(|c| c.set(Some(false))),
+                }
+            }
+            if rows.is_none() && schemas.len() == 1 {
+                // 자기 스키마인가 — USER 한 번(권한 판정 없는 USER_OBJECTS로).
+                let me = query(s, "SELECT USER FROM dual")
+                    .ok()
+                    .and_then(|rs| rs.rows.first().map(|r| col(r, 0)));
+                if me
+                    .as_deref()
+                    .is_some_and(|u| u.eq_ignore_ascii_case(&schemas[0]))
+                {
+                    let sql = format!(
+                        "SELECT {} AS owner, object_type, object_name FROM user_objects WHERE {body}",
+                        lit(&schemas[0])
+                    );
+                    rows = Some(to_rows(&query(s, &sql)?));
+                }
+            }
+            match rows {
+                Some(r) => r,
+                None => {
+                    let sql = format!(
+                        "SELECT owner, object_type, object_name FROM all_objects WHERE {body}{}",
+                        in_list("owner")
+                    );
+                    to_rows(&query(s, &sql)?)
+                }
+            }
         }
         Dialect::Mssql => {
             let top = if lim == usize::MAX {
@@ -476,6 +519,11 @@ pub fn name_index(
         out.push(NameEntry { schema, kind, name });
     }
     Ok((out, truncated))
+}
+
+thread_local! {
+    /// Oracle `DBA_OBJECTS` 접근 가능 여부(이 스레드의 세션 · None = 아직 모름) — 실패는 한 번만 겪는다.
+    static ORACLE_DBA_OK: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// 인덱스 질의의 종류 문자 → 트리 폴더 종류(방언별 · `objects()`와 같은 판정).

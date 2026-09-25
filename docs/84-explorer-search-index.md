@@ -31,12 +31,22 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 | 방언 | 질의 | 종류 판정 |
 |---|---|---|
-| Oracle | `ALL_OBJECTS WHERE object_type IN (트리 종류) AND owner IN (스키마) AND object_name NOT LIKE 'BIN$%' [AND ROWNUM <= max+1]` | `oracle_type(kind)` 역방향 |
+| Oracle | ★ **`DBA_OBJECTS` 우선**(접근 불가 = 그 메타 스레드에서 한 번만 시도 · `ORACLE_DBA_OK` thread_local) → 자기 스키마(`SELECT USER`)는 `USER_OBJECTS` → 그 밖 `ALL_OBJECTS` · `object_type IN (트리 종류) AND owner IN (스키마) AND object_name NOT LIKE 'BIN$%' [AND ROWNUM <= max+1]` · §2-1 | `oracle_type(kind)` 역방향 |
 | SQL Server | `sys.objects`(U·V·P·PC·FN·IF·TF·AF·FS·FT·TR·TA·SO·SN) ∪ `sys.indexes`(IX) ∪ `sys.types`(TY · user_defined) · `TOP (max+1)` | 타입 코드 표 |
 | PostgreSQL | `pg_class`(r·p·f·v·m·S·i·I) ∪ `pg_proc`(proc:p/f/a) ∪ `pg_type`(c·e·d·r) · `LIMIT` | relkind·prokind |
 | MySQL | `information_schema.tables ∪ routines ∪ triggers` | 문자열 |
 | SQLite | `sqlite_master`(table·view·index·trigger) | 문자열 |
 | ODBC | `information_schema.tables` | BASE TABLE·VIEW |
+
+### 2-1. Oracle 사전 뷰 선택(09-25 실측 · T-220 ①)
+
+| 뷰 | BISCM_SB(1,4xx 객체) | 비고 |
+|---|---|---|
+| `ALL_OBJECTS` | 3.30 s | 행마다 권한 판정(비 DBA 계정) · 30 스키마 이름만 한 번 = **67 s** |
+| `DBA_OBJECTS` | **0.089 s** | `SELECT ANY DICTIONARY`/`SELECT_CATALOG_ROLE`이 있는 계정(BISCM 가능) · 권한 없는 객체도 나옴(1441 vs 1422) |
+| `USER_OBJECTS` | 0.050 s | 자기 스키마만 · 권한 판정 없음 |
+
+규칙 = DBA → USER(자기 스키마) → ALL 순 폴백. DBA 뷰가 더 보여 주는 객체는 ③ 완성 응답(`objects()` = `ALL_OBJECTS`)의 디프가 걸러내므로 **트리의 권한 반영 규칙은 그대로**(잠깐 부분 노드로 보였다 사라질 수 있음 · 19/1441 규모). 적용 뒤 `nsql cat -c BISCM -s BISCM_SB index` = 3.59 s → **0.27 s** · BISCM_POC 1.66 → 0.27 s(접속 포함 왕복).
 
 - 잘림 = `max+1`행을 요청해 넘치면 `truncated` · 반환 항목은 `kinds_for(dialect)`에 있는 종류만(트리 폴더와 1:1).
 - **LIKE를 서버에 보내지 않는다** — 대소문자·단어·정규식 판정은 클라이언트 `Matcher` 하나(검색창 옵션 그대로) · 키 입력마다 서버 왕복 0 · 오프라인에서도 읽어 둔 인덱스로 검색.
@@ -96,6 +106,12 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 ## 8. 표시
 
+### 8-1. 검색 진행 애니메이션(사용자 09-25 "진행 중인지 직관적으로 · 테두리 위를 도는 짧은 밝은 선 · 완료 = 두 번 깜빡임 · 완료 테두리는 다르게" · ✅ §198)
+- 상태 = `filterbar::SearchState { Idle, Running, Done }` — `ExplorerSet::sync_search_state`가 `apply_filter`와 매 `tick`에 계산: 검색어 없음 = Idle · 어느 칸이든 `Explorer::search_busy()`(인덱스 진행/큐 · 완성 진행/큐) = Running · 그 밖 = Done.
+- Running = 둥근 테두리 둘레(`round_rect_path` · 모서리 호 6분할)를 따라 **둘레의 18 %** 길이 선이 **1.6 s에 한 바퀴**(꼬리 = 옅고 굵게 3px · 머리 = `th.accent` 2px · `path_window`로 한 바퀴 넘는 구간은 둘로) · 매 tick 다시 그림(≈30 ms 타이머 = `is_animating`).
+- Running → Done = **두 번 깜빡임**(130 ms × 4 위상 · 켬 = `th.accent` 2px) → 그 뒤 **완료 테두리 `th.ok`** 1px 유지 · Idle로 가면 취소 · Idle → Done(진행 없이 끝난 검색) = 깜빡임 없이 완료 테두리만.
+- 비용 = Running/깜빡임 동안만 타이머(끝나면 정적) · 시험 = `search_anim_tests`(둘레 길이 ≈ 사각 + 2πr · 창 wrap 둘 · 상태 전환·깜빡임 창).
+
 - 서버 헤더: `연결 N개 · 일치 M` + 검색 중이고 인덱스가 덜 읽혔으면 `· 인덱싱 d/T`(그룹 합) + 잘렸으면 `· 인덱스 상한`.
 - 폴더 개수: 부분 = `n/?` · 완성 = `n/전체` · 필터 없음 = `전체`(부분 폴더는 접힌 채 `n/?` — 펼치면 완성).
 - 부분 객체 노드 = 아이콘·펼침 화살표는 종류표로 즉시 · 상태 배지·시각은 완성 뒤.
@@ -107,12 +123,12 @@ Resp::Index ─► index[스키마] 교체 · index_done += 스키마 · (검색
 
 ## 10. 자체 점검(09-25 · 키 주입 0)
 
-- 단위: `cargo test -p nexa-sql explorer` — `index_materializes_hits_into_unloaded_folders_and_completes`(안 읽은 폴더 → Partial `1/?` → 디프 완성 `2/3` → 해제 접힘·큐 비움) · 검색 이력 드롭다운 `dropdown_lists_filters_picks_and_leaves`(행 클릭 = 고르기 · 우클릭 = 즉시 감춤).
+- 단위: `cargo test -p nexa-sql filterbar`(`search_anim_tests` 둘 · §8-1) · `cargo test -p nexa-sql explorer` — `index_materializes_hits_into_unloaded_folders_and_completes`(안 읽은 폴더 → Partial `1/?` → 디프 완성 `2/3` → 해제 접힘·큐 비움) · 검색 이력 드롭다운 `dropdown_lists_filters_picks_and_leaves`(행 클릭 = 고르기 · 우클릭 = 즉시 감춤).
 - 실서버 CLI: `nsql cat -c <프로필> index` / `-s <스키마> index`(§3 표).
 - GUI(격리 `NSQL_HOME` + 데모 SQLite): `NSQL_STARTUP_CMD="@after:1800:explorer.dump:d0,@after:2000:explorer.filter:ept,@after:4500:explorer.dump:d1"` → d0 = `schema main Idle`(아무것도 안 펼침) · d1 = `Tables (1/3) Loaded / object dept` — 펼치지 않은 폴더의 객체가 검색으로 올라옴(§197).
 
 ## 11. 남은 것(T-220)
 
-- Oracle 현재 사용자 스키마 = `USER_OBJECTS`(권한 판정 없음 · 더 빠름) 사용 · 스키마 순서 = 최근 검색이 많이 걸린 스키마 먼저(학습).
+- ~~Oracle `USER_OBJECTS`~~ ✅ §198(§2-1 · DBA → USER → ALL) · 스키마 순서 = 최근 검색이 많이 걸린 스키마 먼저(학습).
 - 컬럼 이름 인덱스(`ALL_TAB_COLUMNS` · 옵션 · 무게 큼) · 인덱스 디스크 캐시(다음 실행에 첫 검색 즉시 · 79 §2 소유 규칙 안에서).
-- 검색 중 부분 폴더의 개수 `n/?`에 "읽는 중" 점 애니메이션 · 헤더 진행에 스키마 이름.
+- ~~진행 표시~~ ✅ §8-1(테두리 애니메이션) · 부분 폴더 `n/?` 옆 점 · 헤더 진행에 스키마 이름.
