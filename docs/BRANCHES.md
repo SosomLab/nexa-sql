@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/grid-editing-design | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 📐 87 그리드 데이터 편집 설계(nexa-ctl gridedit 부품 + nexa-sql 어댑터 · E-1~E-6 · D-210~213 · §215) |
 | feat/readonly-preview-details | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | PL/SQL DDL `/`+빈 줄 · SQL Preview 선택 복사·메뉴 누출 · 상세 우클릭 메뉴·한글 조합 차단·세로 스플리터 최소 · Open source BOF(§214) |
 | feat/package-open-body | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 패키지 우클릭 Open body(본문 = CREATE OR REPLACE PACKAGE BODY 탭 · §213) |
 | feat/comment-warmer | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | L2 코멘트 워머(schema_comments_raw · MetaStore set_schema_comments · meta.warm_comments) · 테이블 설명 NULL 규칙 · CLI cat comments 요약(§212) |
