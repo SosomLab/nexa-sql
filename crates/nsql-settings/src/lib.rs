@@ -1254,6 +1254,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "all",
     },
     Entry {
+        key: "explorer.share_catalog",
+        cat: Msg::CatExplorer,
+        label: Msg::LblShareCatalog,
+        desc: Msg::DescShareCatalog,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
         key: "explorer.show_system_schemas",
         cat: Msg::CatExplorer,
         label: Msg::LblShowSystemSchemas,
@@ -3058,6 +3066,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "1024",
     },
     // D-136: 파일별 변수 보존(`<설정 폴더>/vars/<경로 해시>.sql` — 실행 가능한 VAR/EXEC 스크립트 · 비밀·커서·여러 줄 제외).
+    Entry {
+        key: "vars.global_persist",
+        cat: Msg::CatSession,
+        label: Msg::LblVarsGlobalPersist,
+        desc: Msg::DescVarsGlobalPersist,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "vars.persist",
         cat: Msg::CatSession,

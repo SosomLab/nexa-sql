@@ -230,9 +230,9 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 - 요구: 어느 서버·어느 탭에서나 같은 값(예 `:PROJECT_CD` · `:V_USER`) · 앱을 다시 켜도 남음. 지금은 탭마다/연결마다 다시 넣거나 스크립트(`vars.script`)로 옮겨야 한다.
 - 타 도구: SQL Workbench/J = 작업공간 변수(`WbVarDef` · 파일 저장) · DBeaver = 전역 변수 파일(서버끼리 섞임이 단점 · 63 §1) · cbq/usql = 세션 한정.
 
-### 11-3. 설계(T-211 · 구현 = 이어서)
+### 11-3. 설계(T-211 · 구현 ✅ §194)
 - 층 하나 추가: **global**(`Layer::Global`) — 앱 전역(모든 서버·세션·탭) · 우선순위 **tab > shared > global > fixed**(글로벌은 "기본값" 성격 · 탭/연결이 덮어쓴다) · 보존 = `NSQL_HOME/vars/global.sql`(`vars_to_script` 형식 · 실행 가능한 스크립트 · 비밀·커서 값 제외 · 바뀔 때 저장 · 시작 때 읽음).
 - 넣는 법: `VAR x GLOBAL`(↔ `VAR x SHARE` · `VAR x LOCAL`) · 변수 창 Layer 열을 **드롭다운**(tab/shared/global)으로 · 우클릭 "글로벌로 올리기/내리기".
 - 흐름: GUI `App.global_vars`(단일 원천) → 세션이 생기거나 값이 바뀔 때 워커 `Cmd::GlobalVars` → 러너 `VarStore.set_global` · 러너가 스크립트에서 `VAR x GLOBAL`로 올리면 `RunEvent::Vars{global}`로 되돌아와 앱이 갱신·저장 · 다른 세션에도 즉시 전파(브로드캐스트).
 - 서버 간 오염 방지(DBeaver 단점): 글로벌은 **명시적으로 올린 값만**(자동 생성 금지) · 변수 창에 `global` 표시 · 로그 "변수 X 글로벌".
-- 결정: **D-206** 우선순위(권장 tab > shared > global > fixed) · **D-207** 자동 저장(권장 켬 · `vars.global_persist`).
+- 결정: **D-206** 우선순위 tab > shared > global > fixed ✅ · **D-207** 자동 저장 = `vars.global_persist` 기본 켬 ✅ · 변수 창 층 버튼 = 순환(탭 → 공유 → 글로벌) · `SHOW VARIABLES` Layer 열 global/profile.

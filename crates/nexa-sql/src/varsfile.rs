@@ -47,6 +47,41 @@ pub(crate) fn store_in(dir: &Path, file: &Path, vars: &[VarState]) {
     }
 }
 
+/// ★ 글로벌 층 파일(docs/63 §11): `vars/global.sql` — 실행 가능한 스크립트 · 비밀·커서 값 제외.
+pub(crate) fn store_global(dir: &Path, vars: &[VarState]) {
+    let p = dir.join("global.sql");
+    let text = nsql_script::vars_to_script(vars);
+    if text.is_empty() {
+        let _ = std::fs::remove_file(&p);
+        return;
+    }
+    let _ = std::fs::create_dir_all(dir);
+    let tmp = p.with_extension("sql-tmp");
+    if std::fs::write(&tmp, text.as_bytes())
+        .and_then(|()| std::fs::rename(&tmp, &p))
+        .is_err()
+    {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+pub(crate) fn load_global(dir: &Path) -> Vec<VarState> {
+    let p = dir.join("global.sql");
+    match std::fs::metadata(&p) {
+        Ok(m) if m.len() > 0 && m.len() <= MAX_BYTES => {}
+        _ => return Vec::new(),
+    }
+    std::fs::read_to_string(&p)
+        .map(|t| {
+            let mut v = nsql_script::vars_from_script(&t);
+            for s in &mut v {
+                s.layer = nsql_script::Layer::Global;
+            }
+            v
+        })
+        .unwrap_or_default()
+}
+
 /// 읽는다(없거나 너무 크면 빈 목록).
 pub(crate) fn load_in(dir: &Path, file: &Path) -> Vec<VarState> {
     let p = dir.join(name_for(file));

@@ -66,6 +66,8 @@ pub enum RunEvent {
     Vars {
         local: Vec<nsql_script::VarState>,
         shared: Vec<nsql_script::VarState>,
+        /// 앱 전역 층(docs/63 §11 · 스크립트 `VAR x GLOBAL`로 올린 것을 호스트가 받아 저장·전파).
+        global: Vec<nsql_script::VarState>,
         changed: Vec<String>,
         /// 치환 변수(`DEFINE` · 이름 · 원문 · 표시값 = 사용 시 모드면 `원문 → 값` · 09-23).
         defines: Vec<(String, String, String)>,
@@ -1411,6 +1413,7 @@ impl Runner {
                 emit(RunEvent::Vars {
                     local: self.engine.vars.local_states(),
                     shared: self.engine.vars.shared_states(),
+                    global: self.engine.vars.global_states(),
                     changed,
                     defines,
                 });
@@ -1711,6 +1714,7 @@ impl Runner {
                         .map(|(key, v)| {
                             let layer = match self.engine.vars.layer_of(key) {
                                 Some(nsql_script::Layer::Shared) => "shared",
+                                Some(nsql_script::Layer::Global) => "global",
                                 Some(nsql_script::Layer::Fixed) => "profile",
                                 _ => "tab",
                             };

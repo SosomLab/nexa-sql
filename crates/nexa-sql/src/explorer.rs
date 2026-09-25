@@ -1508,7 +1508,8 @@ impl Explorer {
         let asc = dc.text_ascent();
         let ty = dc.text_center_y(r.y, r.h);
         let vcy = ty + (asc as f32 * 0.62).round() as i32;
-        let mut x = r.x - self.scroll_x + (4.0 * s).round() as i32 + (16.0 * s).round() as i32;
+        // 시작 x = 필터 상자의 왼쪽(패널 여백 8px)과 맞춘다(사용자 09-25) — 셰브론 자리를 비우지 않는다.
+        let mut x = r.x - self.scroll_x + (8.0 * s).round() as i32;
         if self.icons_on {
             let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
                 .round()

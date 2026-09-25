@@ -192,6 +192,9 @@ pub(crate) struct ExplorerSet {
     keep_offline: bool,
     gen_opts: nsql_catalog::GenOpts,
     schema_opts: nsql_catalog::SchemaOpts,
+    /// ★ 칸 단위(사용자 09-25 원복): 끔(기본) = **연결(계정)마다 칸·인텔리센스 분리**(권한이 달라 보이는 객체가 다르다) ·
+    /// 켬 = 같은 카탈로그(방언·호스트·포트·DB)의 연결들이 칸을 공유(docs/54 §10 · 설정 `explorer.share_catalog`).
+    share_catalog: bool,
     /// ★ 검색창(docs/28 §7 · 09-25): 패널 맨 위 필터 틀(Aa·ab·(.*) · 이력) — 전 서버 트리를 거른다(범위 설정).
     filter: FilterBar,
     filter_scope: FilterScope,
@@ -228,6 +231,7 @@ impl ExplorerSet {
             keep_offline: false,
             gen_opts: nsql_catalog::GenOpts::default(),
             schema_opts: nsql_catalog::SchemaOpts::default(),
+            share_catalog: false,
             filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
             filter_scope: FilterScope::All,
             area: Rect::default(),
@@ -259,10 +263,23 @@ impl ExplorerSet {
         &mut self.panes[self.shown].ex
     }
 
+    /// 칸 열쇠 판정 — 기본 = 연결(계정) 단위 · `share_catalog`면 카탈로그 단위.
+    fn same_pane(&self, k: &ConnectSpec, spec: &ConnectSpec) -> bool {
+        if self.share_catalog {
+            same_catalog(k, spec)
+        } else {
+            same_server(k, spec)
+        }
+    }
+
     fn find(&self, spec: &ConnectSpec) -> Option<usize> {
         self.panes
             .iter()
-            .position(|p| p.key.as_ref().is_some_and(|k| same_catalog(k, spec)))
+            .position(|p| p.key.as_ref().is_some_and(|k| self.same_pane(k, spec)))
+    }
+
+    pub(crate) fn set_share_catalog(&mut self, on: bool) {
+        self.share_catalog = on;
     }
 
     // ── 서버 관리
@@ -332,9 +349,19 @@ impl ExplorerSet {
     pub(crate) fn sync_refs(&mut self, live: &[ConnectSpec]) -> bool {
         let mut changed = false;
         let mut gone: Vec<usize> = Vec::new();
+        let share = self.share_catalog;
         for (i, p) in self.panes.iter_mut().enumerate() {
             let Some(k) = p.key.clone() else { continue };
-            let alive: Vec<&ConnectSpec> = live.iter().filter(|s| same_catalog(&k, s)).collect();
+            let alive: Vec<&ConnectSpec> = live
+                .iter()
+                .filter(|s| {
+                    if share {
+                        same_catalog(&k, s)
+                    } else {
+                        same_server(&k, s)
+                    }
+                })
+                .collect();
             // 연결 목록 = 살아 있는 것만(사라진 계정은 뺀다).
             let before = p.conns.len();
             p.conns.retain(|c| alive.iter().any(|l| same_server(c, l)));
@@ -1494,6 +1521,17 @@ mod tests {
     #[test]
     fn groups_by_host_and_removes_disconnected() {
         let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        // 기본(연결별 칸): 같은 DB의 다른 계정도 따로 칸.
+        set.connect(&spec("s1", "D1", "u"), "p", false, false);
+        set.connect(&spec("s1", "D1", "u2"), "p", false, false);
+        assert_eq!(
+            set.panes.iter().filter(|p| p.key.is_some()).count(),
+            2,
+            "기본 = 계정마다 칸(권한 분리)"
+        );
+        // 카탈로그 공유(설정 켬): 같은 카탈로그의 계정은 한 칸.
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.set_share_catalog(true);
         for sp in [
             spec("s1", "D1", "u"),
             spec("s2", "X", "u"),

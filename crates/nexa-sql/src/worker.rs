@@ -47,6 +47,8 @@ pub(crate) enum Cmd {
     },
     /// 연결 공유 층의 변수를 통째로 바꾼다(변수 창이 고쳤다 · D-135) — DB로 가는 것은 없다.
     SharedVars(Vec<nsql_script::VarState>),
+    /// 앱 전역 층(docs/63 §11)을 통째로 바꾼다(시작 · 변수 창 · 다른 세션의 `VAR x GLOBAL`).
+    GlobalVars(Vec<nsql_script::VarState>),
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
@@ -1302,6 +1304,10 @@ pub(crate) fn spawn(
                     }
                     Cmd::SharedVars(v) => {
                         runner.engine.vars.set_shared(v);
+                        true
+                    }
+                    Cmd::GlobalVars(v) => {
+                        runner.engine.vars.set_global(v);
                         true
                     }
                     Cmd::Quit => {

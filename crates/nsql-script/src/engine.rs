@@ -351,14 +351,10 @@ impl Engine {
                 self.vars.declare(n, t.clone(), init.clone());
                 vec![Action::Nothing(format!("variable {n} 선언"))]
             }
-            Command::VarScope { name, shared } => {
-                let ok = if *shared {
-                    self.vars.share(name)
-                } else {
-                    self.vars.unshare(name)
-                };
+            Command::VarScope { name, layer } => {
+                let ok = self.vars.set_layer(name, *layer);
                 if ok {
-                    let layer = if *shared { "shared" } else { "local" };
+                    let layer = layer.word();
                     vec![Action::Nothing(format!("variable {name} {layer}"))]
                 } else {
                     vec![Action::Error(format!("변수 {name}가 없습니다"))]

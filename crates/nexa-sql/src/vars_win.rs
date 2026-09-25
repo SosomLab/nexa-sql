@@ -32,7 +32,8 @@ pub(crate) struct VarRow {
     pub value: String,
     /// 입력란에 넣을 값(비밀이면 빈 글).
     pub edit: String,
-    pub shared: bool,
+    /// 사는 층(tab · shared · global · profile).
+    pub layer: nsql_script::Layer,
     pub changed: bool,
 }
 
@@ -43,7 +44,8 @@ pub(crate) enum VarsWinAction {
     Set(String, String),
     SetNull(String),
     /// 층 바꾸기(이름, 공유로 올리는가).
-    Share(String, bool),
+    /// 층 옮기기(탭 → 공유 → 글로벌 → 탭 순환 버튼 · docs/63 §11).
+    Layer(String, nsql_script::Layer),
     Delete(String),
     Script,
 }
@@ -425,7 +427,12 @@ impl VarsWin {
         }
         if self.share_btn.take_clicked() {
             if let Some(r) = &sel {
-                return VarsWinAction::Share(r.name.clone(), !r.shared);
+                let next = match r.layer {
+                    nsql_script::Layer::Local => nsql_script::Layer::Shared,
+                    nsql_script::Layer::Shared => nsql_script::Layer::Global,
+                    _ => nsql_script::Layer::Local,
+                };
+                return VarsWinAction::Layer(r.name.clone(), next);
             }
         }
         if self.del_btn.take_clicked() {
@@ -563,7 +570,7 @@ impl VarsWin {
                     format!(":{}", r.name),
                     r.ty.clone(),
                     r.value.clone(),
-                    if r.shared { "shared" } else { "tab" }.to_string(),
+                    r.layer.word().to_string(),
                 ];
                 let mut cx = body.x;
                 for (i, w) in widths.iter().enumerate() {
@@ -585,11 +592,12 @@ impl VarsWin {
             self.edit
                 .set_bounds(Rect::new(pad, ey, wi - pad * 2, edit_h), inv);
             self.edit.paint(&mut dc, th);
-            let shared_sel = self.selected_row().is_some_and(|r| r.shared);
-            self.share_btn.set_label(if shared_sel {
-                t(Msg::BtnVarsLocal)
-            } else {
-                t(Msg::BtnVarsShare)
+            let layer_sel = self.selected_row().map(|r| r.layer);
+            // 순환 버튼: 다음 층의 이름(탭 → 공유 · 공유 → 글로벌 · 글로벌 → 탭으로).
+            self.share_btn.set_label(match layer_sel {
+                Some(nsql_script::Layer::Shared) => t(Msg::BtnVarsGlobal),
+                Some(nsql_script::Layer::Global) => t(Msg::BtnVarsLocal),
+                _ => t(Msg::BtnVarsShare),
             });
             let by = ey + edit_h + pad;
             let bw = ((wi - pad * 2 - px(8.0) * 4) / 5).max(px(60.0));

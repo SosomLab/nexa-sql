@@ -179,6 +179,8 @@ struct App {
     surface: Option<present::Presenter>,
     /// ★ 편집기 탭별 변수 표(탭 층 · D-135 · docs/63) — 실행마다 워커에 넘기고 `RunEvent::Vars`로 돌려받는다. 탭을 닫으면 버린다.
     tab_vars: std::collections::HashMap<u64, Vec<nsql_script::VarState>>,
+    /// ★ 글로벌 변수 층(docs/63 §11 · 앱 전역 · `vars/global.sql` 보존 · 모든 세션에 전파) — 단일 원천.
+    global_vars: Vec<nsql_script::VarState>,
     /// 오래된 변수 보존 파일 정리를 이번 실행에서 했는가(처음 쓸 때 1회).
     vars_pruned: bool,
     ui_font: Font,
@@ -569,6 +571,7 @@ fn vars_log_line(
     changed: &[String],
     local: &[nsql_script::VarState],
     shared: &[nsql_script::VarState],
+    global: &[nsql_script::VarState],
 ) -> String {
     const MAX: usize = 80;
     let mut parts = Vec::new();
@@ -576,6 +579,7 @@ fn vars_log_line(
         let found = local
             .iter()
             .chain(shared)
+            .chain(global)
             .find(|v| v.name.eq_ignore_ascii_case(name));
         let text = match found {
             None => "(removed)".to_string(),
@@ -4534,6 +4538,8 @@ impl App {
         let id = self.next_sess_id;
         self.next_sess_id += 1;
         let s = Sess::new(id, None, w, ev, DEFAULT_DIALECT);
+        s.worker
+            .send(worker::Cmd::GlobalVars(self.global_vars.clone()));
         self.parked.push(s);
         id
     }
@@ -4781,6 +4787,8 @@ impl App {
         let id = self.next_sess_id;
         self.next_sess_id += 1;
         let s = Sess::new(id, Some(tab), w, ev, DEFAULT_DIALECT);
+        s.worker
+            .send(worker::Cmd::GlobalVars(self.global_vars.clone()));
         self.parked.push(s);
         Some(id)
     }
@@ -5826,6 +5834,7 @@ impl App {
             "explorer.filter_scope" => self
                 .explorer
                 .set_filter_scope(self.settings.get(key).unwrap_or("all")),
+            "explorer.share_catalog" => self.explorer.set_share_catalog(self.settings.flag(key)),
             "explorer.show_system_schemas" | "explorer.hide_empty_schemas" => {
                 self.explorer
                     .set_schema_opts(schema_opts_from(&self.settings));
@@ -7295,6 +7304,7 @@ impl App {
                     .cloned()
                     .unwrap_or_default();
                 all.extend(self.sess.shared_vars.iter().cloned());
+                all.extend(self.global_vars.iter().cloned());
                 let text = nsql_script::vars_to_script(&all);
                 self.editors.new_tab(None);
                 self.editors.cur_mut().set_text(&text);
@@ -11439,9 +11449,19 @@ impl App {
         let local = self.tab_vars.get(&tab).map(Vec::as_slice).unwrap_or(&[]);
         local
             .iter()
-            .map(|v| (v, false))
-            .chain(self.sess.shared_vars.iter().map(|v| (v, true)))
-            .map(|(v, shared)| {
+            .map(|v| (v, nsql_script::Layer::Local))
+            .chain(
+                self.sess
+                    .shared_vars
+                    .iter()
+                    .map(|v| (v, nsql_script::Layer::Shared)),
+            )
+            .chain(
+                self.global_vars
+                    .iter()
+                    .map(|v| (v, nsql_script::Layer::Global)),
+            )
+            .map(|(v, layer)| {
                 let full = match &v.value {
                     nsql_core::Value::Null => String::new(),
                     other => other.display(),
@@ -11460,7 +11480,7 @@ impl App {
                     ty: var_type_text(&v.ty),
                     value: shown,
                     edit: if v.secret { String::new() } else { full },
-                    shared,
+                    layer,
                     changed: changed.is_some_and(|c| c.contains(&v.name.to_ascii_uppercase())),
                 }
             })
@@ -11475,7 +11495,7 @@ impl App {
                         ty: "DEFINE".into(),
                         value: shown.clone(),
                         edit: raw.clone(),
-                        shared: false,
+                        layer: nsql_script::Layer::Local,
                         changed: false,
                     }),
             )
@@ -11488,6 +11508,7 @@ impl App {
         let tab = self.editors.active_id();
         let is = |v: &nsql_script::VarState, n: &str| v.name.eq_ignore_ascii_case(n);
         let mut shared_dirty = false;
+        let mut global_dirty = false;
         match action {
             A::None | A::Paint => return,
             A::Script => {
@@ -11524,6 +11545,9 @@ impl App {
                 if let Some(v) = self.sess.shared_vars.iter_mut().find(|v| is(v, &name)) {
                     set(v);
                     shared_dirty = true;
+                } else if let Some(v) = self.global_vars.iter_mut().find(|v| is(v, &name)) {
+                    set(v);
+                    global_dirty = true;
                 } else {
                     let list = self.tab_vars.entry(tab).or_default();
                     match list.iter_mut().find(|v| is(v, &name)) {
@@ -11544,6 +11568,9 @@ impl App {
                 if let Some(v) = self.sess.shared_vars.iter_mut().find(|v| is(v, &name)) {
                     v.value = nsql_core::Value::Null;
                     shared_dirty = true;
+                } else if let Some(v) = self.global_vars.iter_mut().find(|v| is(v, &name)) {
+                    v.value = nsql_core::Value::Null;
+                    global_dirty = true;
                 } else if let Some(v) = self
                     .tab_vars
                     .get_mut(&tab)
@@ -11556,24 +11583,46 @@ impl App {
                 let before = self.sess.shared_vars.len();
                 self.sess.shared_vars.retain(|v| !is(v, &name));
                 shared_dirty = self.sess.shared_vars.len() != before;
+                let gb = self.global_vars.len();
+                self.global_vars.retain(|v| !is(v, &name));
+                global_dirty = self.global_vars.len() != gb;
                 if let Some(l) = self.tab_vars.get_mut(&tab) {
                     l.retain(|v| !is(v, &name));
                 }
             }
-            A::Share(name, up) => {
-                if up {
-                    let list = self.tab_vars.entry(tab).or_default();
-                    if let Some(i) = list.iter().position(|v| is(v, &name)) {
-                        let mut v = list.remove(i);
-                        v.layer = nsql_script::Layer::Shared;
-                        self.sess.shared_vars.push(v);
+            A::Layer(name, to) => {
+                // 세 층(탭 · 공유 · 글로벌) 사이 이동 — 단일 원천에서 빼서 목적 층에 넣는다(docs/63 §11).
+                let mut taken: Option<nsql_script::VarState> = None;
+                if let Some(l) = self.tab_vars.get_mut(&tab) {
+                    if let Some(i) = l.iter().position(|v| is(v, &name)) {
+                        taken = Some(l.remove(i));
+                    }
+                }
+                if taken.is_none() {
+                    if let Some(i) = self.sess.shared_vars.iter().position(|v| is(v, &name)) {
+                        taken = Some(self.sess.shared_vars.remove(i));
                         shared_dirty = true;
                     }
-                } else if let Some(i) = self.sess.shared_vars.iter().position(|v| is(v, &name)) {
-                    let mut v = self.sess.shared_vars.remove(i);
-                    v.layer = nsql_script::Layer::Local;
-                    self.tab_vars.entry(tab).or_default().push(v);
-                    shared_dirty = true;
+                }
+                if taken.is_none() {
+                    if let Some(i) = self.global_vars.iter().position(|v| is(v, &name)) {
+                        taken = Some(self.global_vars.remove(i));
+                        global_dirty = true;
+                    }
+                }
+                if let Some(mut v) = taken {
+                    v.layer = to;
+                    match to {
+                        nsql_script::Layer::Shared => {
+                            self.sess.shared_vars.push(v);
+                            shared_dirty = true;
+                        }
+                        nsql_script::Layer::Global => {
+                            self.global_vars.push(v);
+                            global_dirty = true;
+                        }
+                        _ => self.tab_vars.entry(tab).or_default().push(v),
+                    }
                 }
             }
         }
@@ -11582,9 +11631,25 @@ impl App {
                 .worker
                 .send(worker::Cmd::SharedVars(self.sess.shared_vars.clone()));
         }
+        if global_dirty {
+            self.global_vars_changed();
+        }
         let local = self.tab_vars.get(&tab).cloned().unwrap_or_default();
         self.vars_persist_save(tab, &local);
         self.vars_win.redraw();
+    }
+
+    /// 글로벌 층이 바뀌었다(변수 창 · 스크립트 `VAR x GLOBAL`) — 파일에 남기고(`vars.global_persist`) 모든 세션에 전파.
+    fn global_vars_changed(&mut self) {
+        if self.settings.flag("vars.global_persist") {
+            if let Some(dir) = varsfile::dir() {
+                varsfile::store_global(&dir, &self.global_vars);
+            }
+        }
+        let v = self.global_vars.clone();
+        for s in self.all_sess() {
+            s.worker.send(worker::Cmd::GlobalVars(v.clone()));
+        }
     }
 
     /// 메모리 맵 창 열기(docs/80 · 모델리스 · 최상위는 설정 `mem.always_on_top`) — 첫 표본은 다음 유휴 틱에.
@@ -12579,11 +12644,17 @@ impl App {
                 RunEvent::Vars {
                     local,
                     shared,
+                    global,
                     changed,
                     defines,
                 } => {
                     self.tab_defines.insert(self.sess.run_editor, defines);
-                    let line = vars_log_line(&changed, &local, &shared);
+                    let line = vars_log_line(&changed, &local, &shared, &global);
+                    // 스크립트가 글로벌 층을 바꿨으면(`VAR x GLOBAL` · 대입) 단일 원천 갱신 + 저장 + 다른 세션에 전파.
+                    if global != self.global_vars {
+                        self.global_vars = global;
+                        self.global_vars_changed();
+                    }
                     self.vars_changed = (
                         self.sess.run_editor,
                         changed.iter().map(|n| n.to_ascii_uppercase()).collect(),
@@ -17102,6 +17173,7 @@ fn main() {
         e.set_filter_scope(settings.get("explorer.filter_scope").unwrap_or("all"));
         e.set_gen_opts(gen_opts_from(&settings));
         e.set_schema_opts(schema_opts_from(&settings));
+        e.set_share_catalog(settings.flag("explorer.share_catalog"));
         e.set_tooltip_delay(settings.int("ui.tooltip_delay_ms").max(0) as u128);
         // ★ 문법 참조 플러그인(nsql-script `grammar` · 09-24): 설정 폴더 `grammar/*.sqlg`가 내장 방언을 대신하거나 새 방언을 더한다.
         if let Some(dir) = nsql_settings::config_dir() {
@@ -17180,6 +17252,9 @@ fn main() {
         window: None,
         surface: None,
         tab_vars: std::collections::HashMap::new(),
+        global_vars: varsfile::dir()
+            .map(|d| varsfile::load_global(&d))
+            .unwrap_or_default(),
         vars_pruned: false,
         ui_font: ui.font,
         mono_font: mono.font,
@@ -17390,6 +17465,10 @@ fn main() {
         app.search.set_history(h.clone());
         app.project_panel.set_history(h.clone());
         app.explorer.set_history(h.clone());
+        // 글로벌 변수 층을 첫 세션에(docs/63 §11).
+        app.sess
+            .worker
+            .send(worker::Cmd::GlobalVars(app.global_vars.clone()));
         app.bm_panel.set_history(h.clone());
         app.outline_panel.set_history(h.clone());
         app.ext_panel.set_history(h.clone());

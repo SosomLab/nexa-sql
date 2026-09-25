@@ -15,10 +15,10 @@ pub enum Command {
         ty: Option<VarType>,
         init: Option<Value>,
     },
-    /// `VAR[IABLE] name SHARE|LOCAL` — 변수를 연결 공유 층으로 올리거나 탭 층으로 내린다(D-135 · docs/63).
+    /// `VAR[IABLE] name SHARE|LOCAL|GLOBAL` — 변수를 연결 공유 · 탭 · 앱 전역 층으로 옮긴다(D-135 · docs/63 §11).
     VarScope {
         name: String,
-        shared: bool,
+        layer: crate::vars::Layer,
     },
     Print {
         names: Vec<String>,
@@ -468,13 +468,19 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
         "SHARE" | "SHARED" => {
             return Ok(Command::VarScope {
                 name: bare,
-                shared: true,
+                layer: crate::vars::Layer::Shared,
             })
         }
-        "LOCAL" | "UNSHARE" => {
+        "LOCAL" | "UNSHARE" | "TAB" => {
             return Ok(Command::VarScope {
                 name: bare,
-                shared: false,
+                layer: crate::vars::Layer::Local,
+            })
+        }
+        "GLOBAL" => {
+            return Ok(Command::VarScope {
+                name: bare,
+                layer: crate::vars::Layer::Global,
             })
         }
         _ => {}

@@ -1,7 +1,9 @@
 //! 세션 변수 저장소 — SQL*Plus 바인드 테이블의 클라이언트 측 복제(docs/04 §8.2).
 //! 이름은 대소문자 무관(대문자 정규화 · 처음 쓴 표기는 `label`로 보존 · D-142). 값은 실행 사이에 **여기에만** 산다.
 //!
-//! ★ **세 층**(D-135 · docs/63 §7): 찾는 순서 = **탭(local) → 연결 공유(shared) → 프로필(fixed · 읽기 전용)**.
+//! ★ **네 층**(D-135 · docs/63 §7 · §11 글로벌 09-25): 찾는 순서 = **탭(local) → 연결 공유(shared) → 글로벌(global · 앱 전역 ·
+//! 디스크 보존) → 프로필(fixed · 읽기 전용)**. 글로벌은 "기본값" 성격 — 탭/연결의 대입은 글로벌을 고치지 않고 앞 층에 값을 만든다 ·
+//! `VAR x GLOBAL`·변수 창으로 올린 이름만 글로벌에 산다.
 //! - 새 변수는 늘 탭 층에 생긴다(다른 탭의 실행이 내 값을 바꾸지 않는다 — Golden의 탭별 목록).
 //! - 일부러 올린 이름(`VAR x SHARE` · 패널)만 공유 층에 살고, 그 이름에 대한 대입은 공유 층을 고친다(같은 연결의 탭들이 같이 본다).
 //! - 프로필 층은 고치지 않는다 — 같은 이름에 대입하면 탭 층에 가리는 값이 생긴다.
@@ -31,8 +33,23 @@ pub enum Layer {
     Local,
     /// 연결 공유.
     Shared,
+    /// 앱 전역(모든 서버·세션·탭 · 디스크 보존 · docs/63 §11).
+    Global,
     /// 프로필(읽기 전용).
     Fixed,
+}
+
+impl Layer {
+    /// 표시·로그용 낱말(`tab` · `shared` · `global` · `profile`).
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Layer::Local => "tab",
+            Layer::Shared => "shared",
+            Layer::Global => "global",
+            Layer::Fixed => "profile",
+        }
+    }
 }
 
 /// 층을 넘나드는 변수 한 줄(호스트 ↔ 러너 · 패널 · 보존).
@@ -51,6 +68,7 @@ pub struct VarState {
 pub struct VarStore {
     vars: BTreeMap<String, Var>,
     shared: BTreeMap<String, Var>,
+    global: BTreeMap<String, Var>,
     fixed: BTreeMap<String, Var>,
     /// 마지막 [`VarStore::take_dirty`] 뒤로 바뀐(생김·값·타입·층·사라짐) 이름(대문자 키).
     dirty: BTreeSet<String>,
@@ -238,6 +256,7 @@ impl VarStore {
         self.vars
             .get(&key)
             .or_else(|| self.shared.get(&key))
+            .or_else(|| self.global.get(&key))
             .or_else(|| self.fixed.get(&key))
     }
 
@@ -249,6 +268,8 @@ impl VarStore {
             Some(Layer::Local)
         } else if self.shared.contains_key(&key) {
             Some(Layer::Shared)
+        } else if self.global.contains_key(&key) {
+            Some(Layer::Global)
         } else if self.fixed.contains_key(&key) {
             Some(Layer::Fixed)
         } else {
@@ -263,7 +284,11 @@ impl VarStore {
     /// 지운다(탭 → 공유 · 프로필 층은 남는다).
     pub fn remove(&mut self, name: &str) -> Option<Var> {
         let key = norm(name);
-        let gone = self.vars.remove(&key).or_else(|| self.shared.remove(&key));
+        let gone = self
+            .vars
+            .remove(&key)
+            .or_else(|| self.shared.remove(&key))
+            .or_else(|| self.global.remove(&key));
         if gone.is_some() {
             self.dirty.insert(key);
         }
@@ -273,7 +298,13 @@ impl VarStore {
     /// 보이는 변수 전부(앞선 층이 가린다 · 이름순).
     pub fn iter(&self) -> impl Iterator<Item = (&String, &Var)> {
         let mut seen: BTreeMap<&String, &Var> = BTreeMap::new();
-        for (k, v) in self.fixed.iter().chain(&self.shared).chain(&self.vars) {
+        for (k, v) in self
+            .fixed
+            .iter()
+            .chain(&self.global)
+            .chain(&self.shared)
+            .chain(&self.vars)
+        {
             seen.insert(k, v);
         }
         seen.into_iter()
@@ -285,7 +316,10 @@ impl VarStore {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.vars.is_empty() && self.shared.is_empty() && self.fixed.is_empty()
+        self.vars.is_empty()
+            && self.shared.is_empty()
+            && self.global.is_empty()
+            && self.fixed.is_empty()
     }
 
     /// 실행 결과의 OUT 값을 되돌려 받는다. 미지의 이름은 무시하지 않고 생성한다
@@ -300,24 +334,44 @@ impl VarStore {
 
     /// 탭 층의 이름을 연결 공유 층으로 올린다(이미 공유면 그대로 참). 없는 이름 = 거짓.
     pub fn share(&mut self, name: &str) -> bool {
-        let key = norm(name);
-        if let Some(v) = self.vars.remove(&key) {
-            self.shared.insert(key.clone(), v);
-            self.dirty.insert(key);
-            return true;
-        }
-        self.shared.contains_key(&key)
+        self.set_layer(name, Layer::Shared)
     }
 
     /// 공유 층의 이름을 탭 층으로 내린다.
     pub fn unshare(&mut self, name: &str) -> bool {
+        self.set_layer(name, Layer::Local)
+    }
+
+    /// ★ 이름을 다른 층(탭 · 공유 · 글로벌)으로 옮긴다(`VAR x SHARE|LOCAL|GLOBAL` · 변수 창) — 이미 그 층이면 참 · 없는 이름·프로필 층 = 거짓.
+    pub fn set_layer(&mut self, name: &str, to: Layer) -> bool {
         let key = norm(name);
-        if let Some(v) = self.shared.remove(&key) {
-            self.vars.insert(key.clone(), v);
-            self.dirty.insert(key);
+        let from = match self.layer_of(name) {
+            Some(Layer::Fixed) | None => return false,
+            Some(l) => l,
+        };
+        if from == to {
             return true;
         }
-        self.vars.contains_key(&key)
+        if to == Layer::Fixed {
+            return false;
+        }
+        let src = match from {
+            Layer::Local => &mut self.vars,
+            Layer::Shared => &mut self.shared,
+            _ => &mut self.global,
+        };
+        let Some(v) = src.remove(&key) else {
+            return false;
+        };
+        let dst = match to {
+            Layer::Local => &mut self.vars,
+            Layer::Shared => &mut self.shared,
+            Layer::Global => &mut self.global,
+            Layer::Fixed => return false,
+        };
+        dst.insert(key.clone(), v);
+        self.dirty.insert(key);
+        true
     }
 
     fn state((_, v): (&String, &Var), layer: Layer) -> VarState {
@@ -364,6 +418,20 @@ impl VarStore {
         self.fixed = Self::from_states(states);
     }
 
+    /// 글로벌 층을 통째로 정한다(호스트가 시작·변경 때 · docs/63 §11).
+    pub fn set_global(&mut self, states: Vec<VarState>) {
+        self.global = Self::from_states(states);
+    }
+
+    /// 글로벌 층의 지금 상태.
+    #[must_use]
+    pub fn global_states(&self) -> Vec<VarState> {
+        self.global
+            .iter()
+            .map(|e| Self::state(e, Layer::Global))
+            .collect()
+    }
+
     /// 탭 층의 지금 상태.
     #[must_use]
     pub fn local_states(&self) -> Vec<VarState> {
@@ -399,7 +467,12 @@ impl VarStore {
 
     /// 세션에 묶인 값(REF CURSOR 핸들)을 전부 비운다 — 재접속·유휴 닫기 뒤에는 죽은 핸들이다(docs/63 §4).
     pub fn invalidate_cursors(&mut self) {
-        for (k, v) in self.vars.iter_mut().chain(self.shared.iter_mut()) {
+        for (k, v) in self
+            .vars
+            .iter_mut()
+            .chain(self.shared.iter_mut())
+            .chain(self.global.iter_mut())
+        {
             if matches!(v.value, Value::Cursor(_)) {
                 v.value = Value::Null;
                 self.dirty.insert(k.clone());
@@ -480,6 +553,42 @@ pub fn vars_from_script(text: &str) -> Vec<VarState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 글로벌 층(docs/63 §11): 우선순위 tab > shared > global > fixed · `set_layer`로 세 층을 오간다 · 대입은 글로벌을 고치지 않고
+    /// 탭 층에 가리는 값을 만든다 · 프로필 층은 옮길 수 없다.
+    #[test]
+    fn global_layer_precedence_and_moves() {
+        let mut s = VarStore::new();
+        s.set_global(vec![VarState {
+            name: "PROJECT".into(),
+            ty: VarType::Auto,
+            value: Value::Str("g".into()),
+            declared: false,
+            secret: false,
+            layer: Layer::Global,
+        }]);
+        assert_eq!(s.layer_of("project"), Some(Layer::Global));
+        assert_eq!(
+            s.get("PROJECT").map(|v| v.value.clone()),
+            Some(Value::Str("g".into()))
+        );
+        // 탭에서 대입 = 글로벌은 그대로 · 탭 층 값이 앞선다.
+        s.assign("project", Value::Str("t".into()));
+        assert_eq!(s.layer_of("project"), Some(Layer::Local));
+        assert_eq!(s.global_states()[0].value, Value::Str("g".into()));
+        // 탭 값을 글로벌로 올리면 글로벌이 바뀐다.
+        assert!(s.set_layer("project", Layer::Global));
+        assert_eq!(s.global_states()[0].value, Value::Str("t".into()));
+        assert!(s.local_states().is_empty());
+        assert!(s.set_layer("project", Layer::Shared));
+        assert_eq!(s.layer_of("project"), Some(Layer::Shared));
+        assert!(!s.set_layer("nope", Layer::Global), "없는 이름");
+        assert!(
+            !s.set_layer("project", Layer::Fixed),
+            "프로필 층으로는 못 옮긴다"
+        );
+        assert!(s.remove("project").is_some());
+    }
 
     /// 보존·내보내기 왕복: 선언·타입·값이 돌아오고 비밀·커서·여러 줄은 값이 빠진다 · 결과는 실행 가능한 스크립트다.
     #[test]
