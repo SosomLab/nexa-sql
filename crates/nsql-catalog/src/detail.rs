@@ -195,17 +195,17 @@ pub fn render_table(headers: &[String], rows: &[Vec<String>]) -> String {
         widths[i] = widths[i].max(h.chars().count());
     }
     for r in rows {
-        for i in 0..ncol {
-            widths[i] = widths[i].max(cell(r, i).chars().count());
+        for (i, w) in widths.iter_mut().enumerate() {
+            *w = (*w).max(cell(r, i).chars().count());
         }
     }
     let line = |r: &[String]| -> String {
         let mut s = String::new();
-        for i in 0..ncol {
+        for (i, w) in widths.iter().enumerate() {
             let c = cell(r, i);
             s.push_str(c);
             if i + 1 < ncol {
-                let pad = widths[i].saturating_sub(c.chars().count()) + 2;
+                let pad = w.saturating_sub(c.chars().count()) + 2;
                 s.extend(std::iter::repeat_n(' ', pad));
             }
         }
