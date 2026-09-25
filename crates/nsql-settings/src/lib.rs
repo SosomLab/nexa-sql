@@ -1392,6 +1392,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "meta.warm_comments",
+        cat: Msg::CatExplorer,
+        label: Msg::LblWarmComments,
+        desc: Msg::DescWarmComments,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "gen.qualified",
         cat: Msg::CatExplorer,
         label: Msg::GenOptQualified,

@@ -77,6 +77,8 @@ pub(crate) struct IndexCfg {
     pub cols_ttl_secs: u64,
     /// ★ L1 디스크 캐시(85 §9 · `meta.disk_cache`): 접속마다 이름 층을 파일에 남기고 다음 실행 첫 검색·완성을 즉시.
     pub disk_cache: bool,
+    /// ★ L2 코멘트 워머(86 §5 · `meta.warm_comments`): 관계 폴더를 읽은 스키마의 테이블·컬럼 코멘트를 뒤에서 채운다.
+    pub warm_comments: bool,
 }
 
 impl Default for IndexCfg {
@@ -93,6 +95,7 @@ impl Default for IndexCfg {
             detail_ttl_secs: 300,
             cols_ttl_secs: 600,
             disk_cache: true,
+            warm_comments: true,
         }
     }
 }
@@ -215,6 +218,11 @@ enum Req {
     Comments {
         gen: u64,
         owner: ObjectInfo,
+    },
+    /// ★ 스키마 전체 코멘트(86 §5 · L2 워머 · 백그라운드 세션 · 질의 2) → 메타 저장소 `set_schema_comments`.
+    SchemaComments {
+        gen: u64,
+        schema: String,
     },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
     ColumnsMeta {
@@ -528,6 +536,12 @@ enum Resp {
         table: Option<String>,
         cols: Vec<(String, Option<String>)>,
     },
+    SchemaComments {
+        gen: u64,
+        schema: String,
+        tables: Vec<(String, Option<String>)>,
+        cols: Vec<(String, String, Option<String>)>,
+    },
     ColumnsMeta {
         gen: u64,
         schema: String,
@@ -634,6 +648,10 @@ pub(crate) enum ExplorerAction {
         table: Option<String>,
         cols: Vec<(String, Option<String>)>,
     },
+    /// 스키마 코멘트가 메타에 들어왔다(86 §5) — 패널이 그 스키마 대상이면 메타에서 다시 읽는다.
+    CommentsLoaded {
+        schema: String,
+    },
     /// ★ Generate SQL 결과(83 §3) → 호스트가 SQL Preview 모달을 연다(`server` = 이 칸의 서버 · `ExplorerSet`이 채운다).
     Preview {
         spec: GenSpec,
@@ -716,6 +734,9 @@ pub(crate) struct Explorer {
     warm_inflight: Option<nsql_run::meta::ObjId>,
     warm_last: Option<Instant>,
     warm_sent: usize,
+    /// ★ L2 코멘트 워머(86 §5): 관계 폴더가 읽힌 스키마를 하나씩 · 진행 중 하나.
+    comment_q: VecDeque<String>,
+    comment_inflight: Option<String>,
     /// L1 디스크 캐시 파일(접속 자격 열쇠의 해시 · 85 §9) · 이번 접속에 저장했는가.
     cache_path: Option<std::path::PathBuf>,
     cache_saved: bool,
@@ -946,7 +967,7 @@ fn req_prio(r: &Req) -> u8 {
         | Req::NamesSeed { .. } => 1,
         Req::Index { .. } => 2,
         Req::ColumnsMeta { urgent: false, .. } => 3,
-        Req::ObjectsMeta { .. } => 4,
+        Req::ObjectsMeta { .. } | Req::SchemaComments { .. } => 4,
         Req::DictMeta { .. } => 5,
         _ => 2,
     }
@@ -1244,6 +1265,21 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     None => nsql_catalog::object_details(s, &owner, opts).map_err(err_s),
                 });
                 Resp::Details { gen, owner, col, r }
+            }
+            Req::SchemaComments { gen, schema } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let (tables, cols) = with_session(&mut session, |s| {
+                    Ok(nsql_catalog::schema_comments_raw(s, &schema))
+                })
+                .unwrap_or_default();
+                Resp::SchemaComments {
+                    gen,
+                    schema,
+                    tables,
+                    cols,
+                }
             }
             Req::Comments { gen, owner } => {
                 if gen != cur_gen {
@@ -1652,6 +1688,8 @@ impl Explorer {
             warm_inflight: None,
             warm_last: None,
             warm_sent: 0,
+            comment_q: VecDeque::new(),
+            comment_inflight: None,
             cache_path: None,
             cache_saved: false,
             complete_q: VecDeque::new(),
@@ -1678,6 +1716,8 @@ impl Explorer {
         self.warm_q.clear();
         self.warm_inflight = None;
         self.warm_sent = 0;
+        self.comment_q.clear();
+        self.comment_inflight = None;
         self.fresh.clear();
         self.missing_at.clear();
         self.watermarks.clear();
@@ -2701,6 +2741,22 @@ impl Explorer {
                     self.actions
                         .push(ExplorerAction::Comments { owner, table, cols });
                 }
+                Resp::SchemaComments {
+                    gen,
+                    schema,
+                    tables,
+                    cols,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    if self.comment_inflight.as_deref() == Some(schema.as_str()) {
+                        self.comment_inflight = None;
+                        self.warm_last = Some(Instant::now());
+                    }
+                    self.meta.set_schema_comments(&schema, &tables, &cols);
+                    self.actions.push(ExplorerAction::CommentsLoaded { schema });
+                }
                 Resp::Hits { gen, rev, hits } => {
                     if gen != self.gen || rev != self.filter_rev || self.filter.is_none() {
                         continue;
@@ -2741,6 +2797,10 @@ impl Explorer {
                                     self.meta_load_objects(&s, k, &list);
                                     self.intel_buckets
                                         .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
+                                    // ★ 86 §5: 관계 폴더가 읽히면 그 스키마 코멘트를 뒤에서(기본 목록 뒤 · 순서대로).
+                                    if k.is_relation() {
+                                        self.enqueue_schema_comments(&s);
+                                    }
                                     // 스레드의 이름 사본도 전체 목록으로(84 §6).
                                     if self.index_done.contains(&s) {
                                         let _ = self.tx_bg.send(Req::NamesUpdate {
@@ -3989,7 +4049,11 @@ impl Explorer {
                     .schema_names()
                     .iter()
                     .any(|s| !self.index_done.contains(s)));
-        l1 || !self.warm_q.is_empty() || self.warm_inflight.is_some() || self.search_busy()
+        l1 || !self.warm_q.is_empty()
+            || self.warm_inflight.is_some()
+            || !self.comment_q.is_empty()
+            || self.comment_inflight.is_some()
+            || self.search_busy()
     }
 
     /// 진단 한 줄(기동 명령 `explorer.stat` · 09-25): 스키마 수 · L1 완료 수 · 진행 중 · 큐 · 완성 · 일치 · 검색 중.
@@ -4089,8 +4153,52 @@ impl Explorer {
         }
     }
 
+    /// 스키마 코멘트를 큐에(이미 읽었거나 대기 중이면 0 · `meta.warm_comments`).
+    fn enqueue_schema_comments(&mut self, schema: &str) {
+        if !self.index_cfg.warm_comments
+            || self.meta.has_schema_comments(schema)
+            || self.comment_inflight.as_deref() == Some(schema)
+            || self.comment_q.iter().any(|s| s == schema)
+        {
+            return;
+        }
+        self.comment_q.push_back(schema.to_string());
+    }
+
+    /// 스키마 코멘트 한 걸음(86 §5): 진행 중 없고 간격이 지났으면 큐 앞 스키마를 백그라운드 세션으로.
+    fn comment_step(&mut self, now: Instant) -> bool {
+        if self.offline || self.comment_inflight.is_some() || self.comment_q.is_empty() {
+            return false;
+        }
+        if self.warm_last.is_some_and(|t| {
+            now.duration_since(t).as_millis() < u128::from(self.index_cfg.warm_idle_ms)
+        }) {
+            return false;
+        }
+        while let Some(sc) = self.comment_q.pop_front() {
+            if self.meta.has_schema_comments(&sc) {
+                continue;
+            }
+            self.comment_inflight = Some(sc.clone());
+            let _ = self.tx_bg.send(Req::SchemaComments {
+                gen: self.gen,
+                schema: sc,
+            });
+            return true;
+        }
+        false
+    }
+
+    /// 객체(관계)의 코멘트 그대로 — 메타에 스키마 코멘트가 있을 때만(86 §5 · 왕복 0).
+    pub(crate) fn comments_of(&self, owner: &ObjectInfo) -> Option<nsql_run::meta::CommentsOf> {
+        self.meta.comments_of(&owner.schema, &owner.name)
+    }
+
     /// L2 한 걸음: 간격이 지났고 진행 중이 없으면 큐 앞의 컬럼 하나를 백그라운드 세션으로.
     fn warm_step(&mut self, now: Instant) -> bool {
+        if self.comment_step(now) {
+            return true;
+        }
         if self.offline || self.warm_inflight.is_some() || self.warm_q.is_empty() {
             return false;
         }

@@ -1265,6 +1265,14 @@ impl ExplorerSet {
             .unwrap_or_default()
     }
 
+    /// 메타에 있는 코멘트(스키마 단위로 읽어 둔 것만 · 왕복 0).
+    pub(crate) fn comments_of(
+        &self,
+        owner: &nsql_catalog::ObjectInfo,
+    ) -> Option<nsql_run::meta::CommentsOf> {
+        self.panes.get(self.shown)?.ex.comments_of(owner)
+    }
+
     pub(crate) fn request_comments(&mut self, owner: nsql_catalog::ObjectInfo) {
         if let Some(p) = self.panes.get_mut(self.shown) {
             p.ex.request_comments(owner);

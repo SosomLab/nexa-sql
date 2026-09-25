@@ -213,6 +213,11 @@ pub struct Bucket {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ObjId(pub u32);
 
+/// 객체 하나의 컬럼 코멘트 그대로(컬럼 심볼, 코멘트 심볼 · NULL = None).
+pub type ColComments = Arc<Vec<(Sym, Option<Sym>)>>;
+/// 객체의 코멘트 묶음(테이블 코멘트, [(컬럼, 코멘트)]) — 값은 문자열로 풀어서.
+pub type CommentsOf = (Option<String>, Vec<(String, Option<String>)>);
+
 /// 컬럼 채움 상태.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColState {
@@ -232,6 +237,10 @@ pub struct Snapshot {
     pub cols: Vec<ColState>,
     /// 테이블 상세(제약·인덱스) — 요청한 것만(09-24).
     pub details: HashMap<ObjId, DetailState>,
+    /// ★ 컬럼 코멘트 그대로(86 §5 · L2 워머가 스키마 단위로 채움): 객체 → [(컬럼, 코멘트 · NULL = None)].
+    pub col_comments: HashMap<ObjId, ColComments>,
+    /// 코멘트를 읽어 둔 스키마(여기 있으면 "코멘트 없음"도 알고 있음 = NULL).
+    pub comment_schemas: std::collections::HashSet<Sym>,
     pub buckets: HashMap<(Sym, ObjectKind), Arc<Bucket>>,
     /// (스키마, 소문자 이름) → 객체(같은 이름이 종류별로 있으면 첫 것 · 종류 지정 조회는 버킷으로).
     exact: HashMap<(Sym, Sym), ObjId>,
@@ -428,6 +437,88 @@ impl MetaStore {
         s.by_name = OnceLock::new();
         self.commit(s);
         added
+    }
+
+    /// ★ 스키마 전체 코멘트 채움(86 §5 · L2): 테이블 코멘트 → `ObjEntry.comment`(관계 전부 · NULL = None) · 컬럼 코멘트 → `col_comments` ·
+    /// 스키마를 `comment_schemas`에 표시(없음도 앎). 이름이 목록에 없는 테이블은 건너뛴다.
+    pub fn set_schema_comments(
+        &mut self,
+        schema: &str,
+        tables: &[(String, Option<String>)],
+        cols: &[(String, String, Option<String>)],
+    ) {
+        let Some(sc) = self.names.find(schema) else {
+            return;
+        };
+        let snap = self.snapshot();
+        // 관계 객체 id(이름 → id · 소문자 키).
+        let mut ids: HashMap<String, ObjId> = HashMap::new();
+        for b in snap.buckets.values() {
+            if b.schema != sc || !b.kind.is_relation() {
+                continue;
+            }
+            for id in &b.objs {
+                ids.insert(
+                    self.names.lower(snap.objs[id.0 as usize].name).to_string(),
+                    *id,
+                );
+            }
+        }
+        let mut s = self.edit();
+        for (t, c) in tables {
+            if let Some(id) = ids.get(&t.to_lowercase()) {
+                s.objs[id.0 as usize].comment = c.as_deref().map(|c| self.names.intern(c));
+            }
+        }
+        let mut by_table: HashMap<ObjId, Vec<(Sym, Option<Sym>)>> = HashMap::new();
+        for (t, c, cm) in cols {
+            if let Some(id) = ids.get(&t.to_lowercase()) {
+                let col = self.names.intern(c);
+                let cm = cm.as_deref().map(|x| self.names.intern(x));
+                by_table.entry(*id).or_default().push((col, cm));
+            }
+        }
+        for (id, v) in by_table {
+            s.col_comments.insert(id, Arc::new(v));
+        }
+        s.comment_schemas.insert(sc);
+        self.commit(s);
+    }
+
+    /// 스키마의 코멘트를 읽어 두었는가.
+    #[must_use]
+    pub fn has_schema_comments(&self, schema: &str) -> bool {
+        self.names
+            .find(schema)
+            .is_some_and(|sc| self.snap.comment_schemas.contains(&sc))
+    }
+
+    /// 객체(관계)의 코멘트 그대로 — 스키마를 읽어 둔 경우만 Some((테이블 코멘트, 컬럼 코멘트)).
+    #[must_use]
+    pub fn comments_of(&self, schema: &str, table: &str) -> Option<CommentsOf> {
+        let sc = self.names.find(schema)?;
+        if !self.snap.comment_schemas.contains(&sc) {
+            return None;
+        }
+        let id = self.snap.lookup(&self.names, Some(schema), table)?;
+        let o = self.snap.objs.get(id.0 as usize)?;
+        let tc = o.comment.map(|c| self.names.get(c).to_string());
+        let cols = self
+            .snap
+            .col_comments
+            .get(&id)
+            .map(|v| {
+                v.iter()
+                    .map(|(c, cm)| {
+                        (
+                            self.names.get(*c).to_string(),
+                            cm.map(|x| self.names.get(x).to_string()),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some((tc, cols))
     }
 
     /// ★ L3 회수(85 §4 · "불필요시 최대한 빠르게"): 상세(제약·인덱스)는 `detail_ttl`을 넘긴 것과 `detail_max`를 넘는 오래된 것부터 ·

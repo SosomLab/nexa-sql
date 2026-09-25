@@ -1077,6 +1077,58 @@ pub fn comments_raw(
     (tc, cc)
 }
 
+/// ★ 스키마 전체의 테이블·컬럼 코멘트 **그대로**(86 §5 · 09-26 "기본 목록 뒤 백그라운드에서 설명을 순서대로 채운다") — 질의 2(관계 전부 ·
+/// NULL = None · 공백 = Some("")). 반환 = (테이블별, 컬럼별(테이블, 컬럼, 코멘트)). 코멘트 기능이 없는 DB(SQLite·ODBC) = 빈 목록.
+pub type SchemaComments = (
+    Vec<(String, Option<String>)>,
+    Vec<(String, String, Option<String>)>,
+);
+
+pub fn schema_comments_raw(s: &mut dyn Session, schema: &str) -> SchemaComments {
+    let dialect = s.dialect();
+    let (tsql, csql): (Option<String>, Option<String>) = match dialect {
+        Dialect::Oracle => (
+            Some(format!("SELECT table_name, comments FROM all_tab_comments WHERE owner = {}", lit(schema))),
+            Some(format!("SELECT table_name, column_name, comments FROM all_col_comments WHERE owner = {}", lit(schema))),
+        ),
+        Dialect::Mssql => (
+            Some(format!("SELECT o.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id LEFT JOIN sys.extended_properties ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description' WHERE s.name = {} AND o.type IN ('U','V')", lit(schema))),
+            Some(format!("SELECT o.name, c.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.columns c JOIN sys.objects o ON o.object_id = c.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id LEFT JOIN sys.extended_properties ep ON ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description' WHERE s.name = {} AND o.type IN ('U','V')", lit(schema))),
+        ),
+        Dialect::Postgres => (
+            Some(format!("SELECT c.relname, obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('r','p','v','m','f')", lit(schema))),
+            Some(format!("SELECT c.relname, a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('r','p','v','m','f') AND a.attnum > 0 AND NOT a.attisdropped", lit(schema))),
+        ),
+        Dialect::Mysql => (
+            Some(format!("SELECT table_name, table_comment FROM information_schema.tables WHERE table_schema = {}", lit(schema))),
+            Some(format!("SELECT table_name, column_name, column_comment FROM information_schema.columns WHERE table_schema = {}", lit(schema))),
+        ),
+        Dialect::Sqlite | Dialect::Odbc => (None, None),
+    };
+    let val = |v: Option<&Value>| v.filter(|v| !matches!(v, Value::Null)).map(cell_str);
+    let tables = tsql
+        .and_then(|q| query(s, &q).ok())
+        .map(|rs| {
+            rs.rows
+                .iter()
+                .map(|r| (col(r, 0), val(r.get(1))))
+                .filter(|(n, _)| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let cols = csql
+        .and_then(|q| query(s, &q).ok())
+        .map(|rs| {
+            rs.rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), val(r.get(2))))
+                .filter(|(t, c, _)| !t.is_empty() && !c.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    (tables, cols)
+}
+
 /// 테이블·컬럼 코멘트(Description · 사용자 09-24) — 실패는 없음으로(코멘트 기능이 없는 DB · 권한) · 비거나 NULL은 뺀다(DDL·카드용).
 pub fn comments(
     s: &mut dyn Session,

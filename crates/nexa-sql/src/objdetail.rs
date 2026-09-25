@@ -109,14 +109,19 @@ impl DetailPanel {
         )
     }
 
-    /// 대상 테이블의 코멘트(캐시 우선 · 없으면 상세의 속성 행) — 값 그대로.
-    fn table_comment(&self) -> Option<String> {
-        if let Some(DetailTarget::Object(o)) = &self.target {
-            if let Some((tc, _)) = self.comments.get(&Self::owner_key(o)) {
-                return tc.clone();
-            }
+    /// 대상 객체의 코멘트 상태: None = 아직 모름 · Some(None) = NULL/코멘트 없는 종류 · Some(Some(값)) = 그대로.
+    fn table_comment(&self) -> Option<Option<String>> {
+        let Some(DetailTarget::Object(o)) = &self.target else {
+            return None;
+        };
+        if let Some((tc, _)) = self.comments.get(&Self::owner_key(o)) {
+            return Some(tc.clone());
         }
-        self.comment_row()
+        if let Some(c) = self.comment_row() {
+            return Some(Some(c));
+        }
+        // 관계가 아닌 종류(프로시저·시퀀스 …)는 코멘트 자체가 없다 = NULL.
+        (!o.kind.is_relation()).then_some(None)
     }
 
     /// 스키마 대상 = 종류별 객체 수(86 §3).
@@ -288,7 +293,8 @@ impl DetailPanel {
     /// 설명(Description · 사용자 09-25) = 테이블·객체 = 코멘트, 없으면 이름 · 스키마 = 이름 · 컬럼 = 코멘트, 없으면 컬럼 이름 · 잎 = 부가, 없으면 이름.
     fn description(&self) -> String {
         match &self.target {
-            Some(DetailTarget::Object(o)) => self.table_comment().unwrap_or_else(|| o.name.clone()),
+            // 객체 = 코멘트 그대로(공백 포함) · NULL·아직 모름 = 빈 글(머리 줄은 NULL을 흐리게 · 사용자 09-26 "없으면 NULL 혹은 공백").
+            Some(DetailTarget::Object(_)) => self.table_comment().flatten().unwrap_or_default(),
             // 컬럼 = 조회된 값 그대로(공백 포함) · NULL·아직 모름 = 빈 글(머리 줄은 NULL을 흐리게).
             Some(DetailTarget::Column { .. }) => {
                 self.column_comment().flatten().unwrap_or_default()
@@ -591,7 +597,9 @@ impl DetailPanel {
             // 종류 칩 옆 = **설명만**(사용자 09-25) · 컬럼 코멘트가 NULL임을 알면 흐린 회색 NULL · 공백은 공백 그대로.
             let desc = self.description();
             let clip = Rect::new(x, head.y, (right - x).max(0), hh);
-            if matches!(self.column_comment(), Some(None)) {
+            let known_null = matches!(self.column_comment(), Some(None))
+                || matches!(self.table_comment(), Some(None));
+            if known_null {
                 dc.text(x, ty, clip, "NULL", th.text_dim);
             } else {
                 dc.text(x, ty, clip, &desc, th.text);

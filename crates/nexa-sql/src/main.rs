@@ -5927,7 +5927,8 @@ impl App {
             | "meta.detail_max"
             | "meta.detail_ttl_secs"
             | "meta.cols_ttl_secs"
-            | "meta.disk_cache" => {
+            | "meta.disk_cache"
+            | "meta.warm_comments" => {
                 self.explorer.set_index_cfg(index_cfg_from(&self.settings));
             }
             "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk" => {
@@ -12565,16 +12566,15 @@ impl App {
         match &t {
             Some(explorer::DetailTarget::Object(o)) => {
                 self.explorer.request_details(o.clone(), None);
-                // 테이블을 고르면 코멘트도 테이블 단위로 미리(그 컬럼들을 누를 때 즉시 · 86 §4).
-                if o.kind.is_relation() && !self.objdetail.knows_comments(o) {
-                    self.explorer.request_comments(o.clone());
+                // 테이블 코멘트 = 메타(스키마 단위 워머)에 있으면 즉시 · 없으면 테이블 단위로 한 번(그 컬럼들도 즉시 · 86 §4~5).
+                if o.kind.is_relation() {
+                    self.feed_comments(o);
                 }
             }
-            // 컬럼 = 탐색기 값은 즉시 · 코멘트는 테이블 단위 캐시(모르면 한 번 읽는다 · 상세 왕복 없음).
-            Some(explorer::DetailTarget::Column { owner, .. })
-                if !self.objdetail.knows_comments(owner) =>
-            {
-                self.explorer.request_comments(owner.clone());
+            // 컬럼 = 탐색기 값은 즉시 · 코멘트는 메타/캐시 · 모르면 한 번 읽는다(상세 왕복 없음).
+            Some(explorer::DetailTarget::Column { owner, .. }) => {
+                let o = owner.clone();
+                self.feed_comments(&o);
             }
             _ => {}
         }
@@ -12588,6 +12588,18 @@ impl App {
             self.objdetail.set_schema_counts(counts);
         }
         self.redraw();
+    }
+
+    /// 코멘트를 패널에: 메타(스키마 워머)에 있으면 즉시 · 패널 캐시에 없으면 테이블 단위로 요청(86 §4~5).
+    fn feed_comments(&mut self, o: &nsql_catalog::ObjectInfo) {
+        if self.objdetail.knows_comments(o) {
+            return;
+        }
+        if let Some((tc, cols)) = self.explorer.comments_of(o) {
+            self.objdetail.set_comments(o, tc, cols);
+        } else {
+            self.explorer.request_comments(o.clone());
+        }
     }
 
     /// 객체 상세 패널의 동작(복사 · 축소/확장).
@@ -12666,6 +12678,21 @@ impl App {
                 }
                 ExplorerAction::Comments { owner, table, cols } => {
                     self.objdetail.set_comments(&owner, table, cols);
+                }
+                // 스키마 코멘트가 메타에 들어왔다 → 지금 대상이 그 스키마면 메타에서 채운다(패널 캐시 없을 때).
+                ExplorerAction::CommentsLoaded { schema } => {
+                    let owner = match self.explorer.selected_target() {
+                        Some(explorer::DetailTarget::Object(o)) if o.schema == schema => Some(o),
+                        Some(explorer::DetailTarget::Column { owner, .. })
+                            if owner.schema == schema =>
+                        {
+                            Some(owner)
+                        }
+                        _ => None,
+                    };
+                    if let Some(o) = owner {
+                        self.feed_comments(&o);
+                    }
                 }
                 // Generate SQL 결과(83 §3) — 창은 `el`이 있는 자리에서 연다(이미 열려 있으면 바로 본문 교체).
                 ExplorerAction::Preview { spec, r, server } => {
@@ -18072,6 +18099,7 @@ fn index_cfg_from(settings: &Settings) -> explorer::IndexCfg {
         detail_ttl_secs: settings.int("meta.detail_ttl_secs").max(0) as u64,
         cols_ttl_secs: settings.int("meta.cols_ttl_secs").max(0) as u64,
         disk_cache: settings.flag("meta.disk_cache"),
+        warm_comments: settings.flag("meta.warm_comments"),
     }
 }
 

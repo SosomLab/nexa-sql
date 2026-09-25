@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-26 (100차 후반 · mac · 23)** — §212 L2 코멘트 워머(스키마 단위 · 메타 저장 · `meta.warm_comments`) · 테이블 설명 NULL 규칙 · CI 7b396f1 ✓.
 - **2026-09-26 (100차 후반 · mac · 22)** — §211 컬럼 설명 즉시·NULL 흐림(`comments_raw` · `Req::Comments` · 캐시) · CLI `cat comments` · CI 기록.
 - **2026-09-25 (100차 후반 · mac · 21)** — §210 🔧 상세 본문 폰트 겹침 = 텍스트박스 배율 미전달(`set_scale`).
 - **2026-09-25 (100차 후반 · mac · 20)** — §209 객체 상세 범위 축소·설명 규칙·▼/▲·`preview_box`(`column_details`) · CI 기록 cea6d6d·fee09dd ✓.

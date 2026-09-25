@@ -126,7 +126,18 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
             // ★ 코멘트 그대로(86 §4): `comments <table>` — 테이블·컬럼 코멘트(NULL/공백 구분 · 객체 상세 패널과 같은 함수).
             "comments" => {
                 let Some(obj) = o.positional.get(1) else {
-                    return Ok(usage());
+                    // 객체 없이 = 스키마 전체(워머와 같은 함수) 요약.
+                    let t0 = std::time::Instant::now();
+                    let (tables, cols) = nsql_catalog::schema_comments_raw(s, &schema);
+                    let tn = tables.iter().filter(|(_, c)| c.is_some()).count();
+                    let cn = cols.iter().filter(|(_, _, c)| c.is_some()).count();
+                    println!(
+                        "schema {schema}: tables {} (with comment {tn}) · columns {} (with comment {cn}) · {} ms",
+                        tables.len(),
+                        cols.len(),
+                        t0.elapsed().as_millis()
+                    );
+                    return Ok(0);
                 };
                 let (sc, name) = split_name(obj, &schema);
                 let (tc, cols) = nsql_catalog::comments_raw(s, &sc, &name);
