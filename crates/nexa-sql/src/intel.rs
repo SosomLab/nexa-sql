@@ -784,16 +784,13 @@ impl Intel {
                 }
                 // 사전 객체(`ALL_TABLES` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_class`) — ★ 접속 뒤에는 서버에서 읽은
                 //   **권한 반영** 버킷(`DICT_SCHEMA` · 사용자 09-23 "권한에 맞춰 ALL_/DBA_") · 그 전(또는 아직 못 읽음)에는 정적 표(T-178).
-                let dict_loaded = meta.and_then(dict_sym).is_some_and(|(m, ds)| {
-                    matches!(
-                        m.snap.coverage(ds, ObjectKind::View),
-                        Coverage::Loaded { .. } | Coverage::Stale { .. }
-                    )
-                });
+                let dict_loaded = meta
+                    .and_then(dict_sym)
+                    .is_some_and(|(m, ds)| m.snap.coverage(ds, ObjectKind::View).has_list());
                 if let Some((m, ds)) = meta.and_then(dict_sym) {
                     let cov = m.snap.coverage(ds, ObjectKind::View);
                     // 읽은 것(낡았어도)은 후보로 · 없거나 낡았으면 (다시) 읽기 청함.
-                    if matches!(cov, Coverage::Loaded { .. } | Coverage::Stale { .. }) {
+                    if cov.has_list() {
                         for h in m.snap.prefix(m.names, ds, ObjectKind::View, "", usize::MAX) {
                             cands.push(Cand {
                                 text: m.names.get(h.name).to_string(),
@@ -1434,6 +1431,8 @@ impl Intel {
             }
             // 낡음(명시 갱신 뒤 · 79 §3): 목록은 그대로 후보로 내고 다시 읽기만 청한다(깜빡임 0).
             Coverage::Stale { .. } => push_need(&mut self.need_objects, m.names.get(schema)),
+            // ★ L1 이름 층(85 §2): 이름만으로 즉시 후보 · 상태(유효성·부가)는 L2 승격이 뒤에서 채운다 — 완성은 청하지 않는다.
+            Coverage::Names { .. } => {}
             _ => {}
         }
     }

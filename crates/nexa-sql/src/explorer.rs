@@ -64,10 +64,17 @@ pub(crate) struct IndexCfg {
     pub max: usize,
     /// 한 필터에 트리로 올리는 일치 상한.
     pub hits_max: usize,
-    /// ★ 유휴 선적재(84 §7): 접속 뒤 검색이 없어도 스키마 하나씩 아주 느리게 인덱스를 채운다(백그라운드 메타 세션).
+    /// ★ L1 접속 직후 채움(85 §2): 검색이 없어도 스키마 하나씩 이름 인덱스를 채운다(백그라운드 메타 세션 · 다 읽으면 0).
     pub prefetch: bool,
-    /// 선적재 간격(ms · 스키마 하나마다).
+    /// L1 스키마 사이 간격(ms).
     pub idle_ms: u64,
+    /// ★ L2 워머(85 §3): 현재 스키마 관계의 컬럼을 뒤에서 미리 읽는 상한(0 = 끔) · 간격(ms).
+    pub warm_columns_max: usize,
+    pub warm_idle_ms: u64,
+    /// ★ L3 회수(85 §4): 상세 상한 · 상세 TTL(s) · 현재 스키마 밖 컬럼 TTL(s) — 0 = 끔.
+    pub detail_max: usize,
+    pub detail_ttl_secs: u64,
+    pub cols_ttl_secs: u64,
 }
 
 impl Default for IndexCfg {
@@ -77,7 +84,12 @@ impl Default for IndexCfg {
             max: 200_000,
             hits_max: 2000,
             prefetch: true,
-            idle_ms: 5000,
+            idle_ms: 250,
+            warm_columns_max: 200,
+            warm_idle_ms: 300,
+            detail_max: 64,
+            detail_ttl_secs: 300,
+            cols_ttl_secs: 600,
         }
     }
 }
@@ -145,6 +157,24 @@ enum Req {
         gen: u64,
         schema: String,
         max: usize,
+    },
+    /// ★ 검색 매칭을 스레드로(85 §6 · 사용자 09-25 "검색과 애니메이션이 엮이지 않게 상태만 교환"): 백그라운드 메타 스레드가 자기가 읽은
+    /// L1 이름 사본에 대해 판정하고 일치만 `Resp::Hits`로 — UI 스레드는 스캔 0 · 노드 삽입만.
+    Search {
+        gen: u64,
+        rev: u64,
+        matcher: crate::filterbar::Matcher,
+        limit: usize,
+    },
+    SearchStop {
+        gen: u64,
+    },
+    /// 트리가 읽은 전체 목록으로 스레드의 이름 사본을 맞춘다(84 §6 · 인덱스와 트리가 어긋나지 않게).
+    NamesUpdate {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+        names: Vec<String>,
     },
     Columns {
         gen: u64,
@@ -442,6 +472,12 @@ enum Resp {
         schema: String,
         r: Result<(Vec<nsql_catalog::NameEntry>, bool), String>,
     },
+    /// 검색 일치(스레드 판정 · `rev` = 보낸 검색어 세대 · 스키마 하나 분 또는 전부).
+    Hits {
+        gen: u64,
+        rev: u64,
+        hits: Vec<(String, ObjectKind, String)>,
+    },
     Columns {
         gen: u64,
         node: usize,
@@ -588,20 +624,27 @@ pub(crate) struct Explorer {
     filter: Option<crate::filterbar::Matcher>,
     /// 필터가 **대신 펼친** 노드(사용자가 펼친 적 없음) — 필터를 지우면 다시 접는다(사용자 09-25 "UI가 복잡해진다").
     filter_expanded: std::collections::HashSet<usize>,
-    /// ★ 이름 인덱스(84 §2): 스키마 단위로 순차 채움(현재 스키마 먼저 · 한 번에 하나 · 검색 중일 때만) — `index_done`의 스키마는 항목이 다 있다.
-    index: Vec<nsql_catalog::NameEntry>,
+    /// ★ L1 이름 층 빌더(84 §2 · 85 §2): 스키마 단위로 순차(현재 스키마 먼저 · 한 번에 하나) — 항목은 `MetaStore`(`Coverage::Names`)에 산다(단일 원천) ·
+    /// 검색 판정용 사본은 백그라운드 메타 스레드가 든다(85 §6) · `index_done`의 스키마는 다 들어갔다.
     index_done: HashSet<String>,
     index_q: VecDeque<String>,
     index_inflight: Option<String>,
     index_truncated: bool,
     index_cfg: IndexCfg,
-    /// 마지막 인덱스 응답 시각(유휴 선적재의 간격 기준).
+    /// 마지막 인덱스 응답 시각(L1 간격 기준).
     index_last_at: Option<Instant>,
+    /// ★ L2 워머(85 §3): 현재 스키마 관계의 컬럼을 뒤에서 하나씩(간격 · 상한) — 첫 완성·카드가 즉시 나오게.
+    warm_q: VecDeque<nsql_run::meta::ObjId>,
+    warm_inflight: Option<nsql_run::meta::ObjId>,
+    warm_last: Option<Instant>,
+    warm_sent: usize,
     /// ★ 부분 폴더 완성 큐(84 §4) — 인덱스가 올린 폴더의 전체 목록을 보이는 순서로 하나씩.
     complete_q: VecDeque<usize>,
     completing: Option<usize>,
     /// 한 묶음으로 노드를 여럿 만드는 동안 `refilter`를 미룬다(끝에 한 번).
     batching: bool,
+    /// 검색어 세대(스레드 판정 응답 `Resp::Hits`의 짝 맞추기).
+    filter_rev: u64,
     /// Generate SQL 옵션(설정 `gen.*` · 호스트가 준다).
     gen_opts: GenOpts,
     /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
@@ -776,6 +819,9 @@ fn req_label(r: &Req) -> String {
         Req::Schemas { .. } => "schemas".into(),
         Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
         Req::Index { schema, .. } => format!("index {schema}"),
+        Req::Search { .. } => "search".into(),
+        Req::SearchStop { .. } => "search-stop".into(),
+        Req::NamesUpdate { schema, kind, .. } => format!("names-update {schema} {kind:?}"),
         Req::SubItems { owner, sub, .. } => format!("sub {} {sub:?}", owner.name),
         Req::GenSql { spec, .. } => format!("gen {}", spec.title()),
         Req::Columns { schema, table, .. } => format!("columns {schema}.{table}"),
@@ -807,7 +853,8 @@ fn req_prio(r: &Req) -> u8 {
         | Req::GenSql { .. }
         | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
-        // 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞 — 검색은 사용자가 기다리는 일이다.
+        // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
+        Req::Search { .. } | Req::SearchStop { .. } | Req::NamesUpdate { .. } => 1,
         Req::Index { .. } => 2,
         Req::ColumnsMeta { urgent: false, .. } => 3,
         Req::ObjectsMeta { .. } => 4,
@@ -825,6 +872,9 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
     //   가운데 **급한 것부터**(접속/닫기 → 트리·팝업이 기다리는 컬럼 → 폴링 → 선적재 컬럼 → 스키마 미리 읽기 → 사전) 꺼낸다.
     //   같은 급은 도착 순. 실행 중인 질의는 끊지 않는다(그래서 느린 질의는 잘게 — `nsql_catalog::dictionary`).
     let mut pending: std::collections::VecDeque<Req> = std::collections::VecDeque::new();
+    // ★ 검색 스레드 몫(85 §6): 이 스레드가 읽은 L1 이름 사본(스키마별) + 살아 있는 검색어 — 판정은 여기서, UI는 일치만 받는다.
+    let mut l1_names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::new();
+    let mut search: Option<(u64, crate::filterbar::Matcher, usize)> = None;
     loop {
         if pending.is_empty() {
             match rx.recv() {
@@ -917,6 +967,48 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 session = None;
                 cur_gen = gen;
                 resume = Some(spec);
+                l1_names.clear();
+                search = None;
+                continue;
+            }
+            Req::Search {
+                gen,
+                rev,
+                matcher,
+                limit,
+            } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let hits = search_hits(&l1_names, &matcher, limit);
+                search = Some((rev, matcher, limit));
+                let _ = tx.send(Resp::Hits { gen, rev, hits });
+                wake();
+                continue;
+            }
+            Req::SearchStop { gen } => {
+                if gen == cur_gen {
+                    search = None;
+                }
+                continue;
+            }
+            Req::NamesUpdate {
+                gen,
+                schema,
+                kind,
+                names,
+            } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                if let Some(v) = l1_names.get_mut(&schema) {
+                    v.retain(|e| e.kind != kind);
+                    v.extend(names.into_iter().map(|name| nsql_catalog::NameEntry {
+                        schema: schema.clone(),
+                        kind,
+                        name,
+                    }));
+                }
                 continue;
             }
             Req::Close => {
@@ -974,6 +1066,22 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::name_index(s, std::slice::from_ref(&schema), max).map_err(err_s)
                 });
+                // 사본 갱신 + 살아 있는 검색어가 있으면 이 스키마 분 일치를 바로(UI는 스캔 없이 삽입만).
+                if let Ok((list, _)) = &r {
+                    l1_names.insert(schema.clone(), list.clone());
+                    if let Some((rev, m, limit)) = &search {
+                        let one: HashMap<String, Vec<nsql_catalog::NameEntry>> =
+                            HashMap::from([(schema.clone(), list.clone())]);
+                        let hits = search_hits(&one, m, *limit);
+                        if !hits.is_empty() {
+                            let _ = tx.send(Resp::Hits {
+                                gen,
+                                rev: *rev,
+                                hits,
+                            });
+                        }
+                    }
+                }
                 Resp::Index { gen, schema, r }
             }
             Req::Columns {
@@ -1132,6 +1240,28 @@ fn reachable(spec: &ConnectSpec) -> bool {
         }
         _ => true,
     }
+}
+
+/// ★ 검색 판정(스레드 · 85 §6): 스키마 사본 전부에서 이름이 매처에 맞는 것(상한 `limit`) — 순수 함수(시험).
+fn search_hits(
+    names: &HashMap<String, Vec<nsql_catalog::NameEntry>>,
+    m: &crate::filterbar::Matcher,
+    limit: usize,
+) -> Vec<(String, ObjectKind, String)> {
+    let mut out = Vec::new();
+    let mut schemas: Vec<&String> = names.keys().collect();
+    schemas.sort();
+    'outer: for sc in schemas {
+        for e in &names[sc] {
+            if m.matches(&e.name) {
+                out.push((e.schema.clone(), e.kind, e.name.clone()));
+                if out.len() >= limit {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    out
 }
 
 fn with_session<T>(
@@ -1368,16 +1498,20 @@ impl Explorer {
             scroll_x: 0,
             content_w: 0,
             soft: HashSet::new(),
-            index: Vec::new(),
             index_done: HashSet::new(),
             index_q: VecDeque::new(),
             index_inflight: None,
             index_truncated: false,
             index_cfg: IndexCfg::default(),
             index_last_at: None,
+            warm_q: VecDeque::new(),
+            warm_inflight: None,
+            warm_last: None,
+            warm_sent: 0,
             complete_q: VecDeque::new(),
             completing: None,
             batching: false,
+            filter_rev: 0,
             fresh: Vec::new(),
             highlight_ms: 2000,
             missing_at: HashMap::new(),
@@ -1393,6 +1527,9 @@ impl Explorer {
         self.index_reset();
         self.complete_q.clear();
         self.completing = None;
+        self.warm_q.clear();
+        self.warm_inflight = None;
+        self.warm_sent = 0;
         self.fresh.clear();
         self.missing_at.clear();
         self.watermarks.clear();
@@ -2005,7 +2142,12 @@ impl Explorer {
             }
             if !matches!(
                 cov(&self.meta.names, &snap, schema, kind),
-                nsql_run::meta::Coverage::Missing | nsql_run::meta::Coverage::Stale { .. }
+                nsql_run::meta::Coverage::Missing
+                    | nsql_run::meta::Coverage::Stale { .. }
+                    | nsql_run::meta::Coverage::Names {
+                        upgrading: false,
+                        ..
+                    }
             ) {
                 continue;
             }
@@ -2350,14 +2492,22 @@ impl Explorer {
                     self.index_last_at = Some(Instant::now());
                     match r {
                         Ok((list, trunc)) => {
-                            self.index.retain(|e| e.schema != schema);
-                            self.index.extend(list);
+                            // ★ L1 = MetaStore 한 곳(85 §2): 스키마의 모든 종류를 한 번에(빈 종류 = 부정 캐시) · 완성·검색이 같은 표를 읽는다 ·
+                            //   일치는 스레드가 `Resp::Hits`로 따로 준다(UI 스캔 0).
+                            if let Some(d) = self.dialect {
+                                let names: Vec<(ObjectKind, String)> =
+                                    list.into_iter().map(|e| (e.kind, e.name)).collect();
+                                self.meta.load_names(
+                                    &schema,
+                                    nsql_catalog::kinds_for(d),
+                                    &names,
+                                    Self::now_secs(),
+                                );
+                            }
                             self.index_truncated |= trunc;
                             self.index_done.insert(schema);
-                            if self.filter.is_some() {
-                                self.materialize();
-                                self.refilter();
-                                self.pump_complete();
+                            if self.l1_complete() {
+                                self.arm_warm();
                             }
                         }
                         // 실패한 스키마 = 트리에 읽힌 것만 검색 대상(다음 무효화 때 다시).
@@ -2367,7 +2517,18 @@ impl Explorer {
                     }
                     if self.filter.is_some() {
                         self.pump_index();
+                    } else {
+                        // L1은 검색이 없어도 이어 간다(간격은 `l1_step`이).
+                        self.index_last_at = Some(Instant::now());
                     }
+                }
+                Resp::Hits { gen, rev, hits } => {
+                    if gen != self.gen || rev != self.filter_rev || self.filter.is_none() {
+                        continue;
+                    }
+                    self.materialize_hits(&hits);
+                    self.refilter();
+                    self.pump_complete();
                 }
                 Resp::Objects { gen, node, r } => {
                     if gen != self.gen {
@@ -2385,16 +2546,14 @@ impl Explorer {
                                     self.meta_load_objects(&s, k, &list);
                                     self.intel_buckets
                                         .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
-                                    // 전체 목록이 왔으면 인덱스의 그 버킷도 새 값으로(DDL 뒤 갱신과 같은 길 · 84 §6).
+                                    // 스레드의 이름 사본도 전체 목록으로(84 §6).
                                     if self.index_done.contains(&s) {
-                                        self.index.retain(|e| !(e.schema == s && e.kind == k));
-                                        self.index.extend(list.iter().map(|o| {
-                                            nsql_catalog::NameEntry {
-                                                schema: s.clone(),
-                                                kind: k,
-                                                name: o.name.clone(),
-                                            }
-                                        }));
+                                        let _ = self.tx_bg.send(Req::NamesUpdate {
+                                            gen: self.gen,
+                                            schema: s.clone(),
+                                            kind: k,
+                                            names: list.iter().map(|o| o.name.clone()).collect(),
+                                        });
                                     }
                                 }
                             }
@@ -2513,6 +2672,17 @@ impl Explorer {
                     if gen != self.gen {
                         continue;
                     }
+                    if let Some(w) = self.warm_inflight {
+                        let done =
+                            self.meta
+                                .snapshot()
+                                .lookup(&self.meta.names, Some(&key.0), &key.1)
+                                == Some(w);
+                        if done {
+                            self.warm_inflight = None;
+                            self.warm_last = Some(Instant::now());
+                        }
+                    }
                     match r {
                         Ok(list) => self.meta_set_columns(&key.0, &key.1, &list),
                         Err(e) => {
@@ -2538,7 +2708,18 @@ impl Explorer {
                         continue;
                     }
                     match r {
-                        Ok(list) => self.meta_load_objects(&schema, kind, &list),
+                        Ok(list) => {
+                            self.meta_load_objects(&schema, kind, &list);
+                            // ★ L2(85 §3): 현재 스키마의 관계 목록이 오면 그 컬럼을 뒤에서 미리 읽는 큐에.
+                            if kind.is_relation()
+                                && self
+                                    .server_schema
+                                    .as_deref()
+                                    .is_some_and(|c| c.eq_ignore_ascii_case(&schema))
+                            {
+                                self.enqueue_warm_columns(&schema, kind);
+                            }
+                        }
                         Err(e) => self.meta.mark_error(&schema, kind, &e, Self::now_secs()),
                     }
                 }
@@ -3460,14 +3641,22 @@ impl Explorer {
     /// `ExplorerSet`이 늘 그린다 · 일치 0이면 헤더에 "일치 0"). 일치 자손을 품은 읽어 둔 노드는 펼친다.
     pub(crate) fn apply_filter(&mut self, m: Option<crate::filterbar::Matcher>) {
         self.filter = m.filter(|m| !m.is_empty());
-        if self.filter.is_some() {
+        self.filter_rev += 1;
+        if let Some(m) = self.filter.clone() {
             // ★ 84 §1 세 단계: ① 선별(인덱스 · 스키마 순차) → ② 일치를 부분 노드로 즉시 → ③ 그 폴더들을 순차 완성.
+            //   판정은 스레드가(85 §6 · `Req::Search` → `Resp::Hits`) — UI는 일치만 받아 노드로 올린다.
             self.ensure_index();
-            self.materialize();
+            let _ = self.tx_bg.send(Req::Search {
+                gen: self.gen,
+                rev: self.filter_rev,
+                matcher: m,
+                limit: self.index_cfg.hits_max,
+            });
         } else {
             // 검색이 끝나면 완성 큐·인덱스 읽기는 멈춘다(미사용 즉시 회수 · 진행 중인 하나는 응답을 그대로 받는다).
             self.complete_q.clear();
             self.index_q.clear();
+            let _ = self.tx_bg.send(Req::SearchStop { gen: self.gen });
         }
         self.refilter();
         self.pump_complete();
@@ -3508,6 +3697,93 @@ impl Explorer {
     /// ★ 유휴 선적재 한 걸음(84 §7 · 호스트가 주기적으로 부른다): 검색이 없고 · 인덱스가 켜져 있고 · 온라인이며 · 마지막 응답 뒤 `idle_ms`가 지났으면
     /// 아직 없는 스키마 하나를 **백그라운드 메타 세션**으로 읽는다(사용자 클릭 세션을 막지 않는다). 다 읽으면 트래픽 0.
     pub(crate) fn prefetch_step(&mut self, now: Instant) -> bool {
+        let l1 = self.l1_step(now);
+        let l2 = self.warm_step(now);
+        l1 || l2
+    }
+
+    /// L1 완성 여부(스키마 전부 들어갔는가).
+    fn l1_complete(&self) -> bool {
+        let names = self.schema_names();
+        !names.is_empty() && names.iter().all(|s| self.index_done.contains(s))
+    }
+
+    /// ★ L2 워머 준비(85 §3): L1이 끝나면 현재 스키마의 관계 목록(상태 포함)을 승격하고 사전을 읽는다 — 컬럼 큐는 그 응답에서 채운다.
+    fn arm_warm(&mut self) {
+        if self.offline || !self.preload {
+            return;
+        }
+        if let Some(cur) = self.server_schema.clone() {
+            self.request_objects(&cur);
+        }
+        self.request_objects(nsql_catalog::DICT_SCHEMA);
+    }
+
+    /// 현재 스키마 `kind` 관계 가운데 컬럼이 없는 것을 큐에(상한 `warm_columns_max` · 이름순 = 목록 순).
+    fn enqueue_warm_columns(&mut self, schema: &str, kind: ObjectKind) {
+        let cap = self.index_cfg.warm_columns_max;
+        if cap == 0 {
+            return;
+        }
+        let snap = self.meta.snapshot();
+        let Some(sc) = self.meta.names.find(schema) else {
+            return;
+        };
+        for h in snap.prefix(&self.meta.names, sc, kind, "", usize::MAX) {
+            if self.warm_sent + self.warm_q.len() >= cap {
+                break;
+            }
+            if matches!(snap.columns(h.id), nsql_run::meta::ColState::Unknown)
+                && !self.warm_q.contains(&h.id)
+            {
+                self.warm_q.push_back(h.id);
+            }
+        }
+    }
+
+    /// L2 한 걸음: 간격이 지났고 진행 중이 없으면 큐 앞의 컬럼 하나를 백그라운드 세션으로.
+    fn warm_step(&mut self, now: Instant) -> bool {
+        if self.offline || self.warm_inflight.is_some() || self.warm_q.is_empty() {
+            return false;
+        }
+        if self.warm_last.is_some_and(|t| {
+            now.duration_since(t).as_millis() < u128::from(self.index_cfg.warm_idle_ms)
+        }) {
+            return false;
+        }
+        while let Some(id) = self.warm_q.pop_front() {
+            if !matches!(
+                self.meta.snapshot().columns(id),
+                nsql_run::meta::ColState::Unknown
+            ) {
+                continue;
+            }
+            self.warm_inflight = Some(id);
+            self.warm_sent += 1;
+            self.request_columns_for(id, false);
+            return true;
+        }
+        false
+    }
+
+    /// ★ L3 회수(85 §4 · 호스트 유휴 틱): 상세 TTL/상한 · 현재 스키마 밖 컬럼 TTL. 반환 = (상세, 컬럼) 비운 수.
+    pub(crate) fn reclaim_meta(&mut self) -> (usize, usize) {
+        let c = self.index_cfg;
+        let keep = self
+            .server_schema
+            .as_deref()
+            .and_then(|s| self.meta.names.find(s));
+        self.meta.reclaim(
+            Self::now_secs(),
+            keep,
+            c.detail_max,
+            c.detail_ttl_secs,
+            c.cols_ttl_secs,
+        )
+    }
+
+    /// L1 한 걸음(85 §2): 접속 직후부터 스키마 하나씩(간격 `idle_ms`) — 검색 중이면 `pump_index`가 대신 돈다.
+    fn l1_step(&mut self, now: Instant) -> bool {
         let c = self.index_cfg;
         if !c.on
             || !c.prefetch
@@ -3542,7 +3818,6 @@ impl Explorer {
     }
 
     fn index_reset(&mut self) {
-        self.index.clear();
         self.index_done.clear();
         self.index_q.clear();
         self.index_inflight = None;
@@ -3607,7 +3882,8 @@ impl Explorer {
             }
             self.last_used = Instant::now();
             self.suspended = false;
-            let _ = self.tx.send(Req::Index {
+            // 인덱스는 늘 백그라운드 세션(이름 사본이 한 스레드에 모이게 · 사용자 클릭 세션을 막지 않게).
+            let _ = self.tx_bg.send(Req::Index {
                 gen: self.gen,
                 schema: s.clone(),
                 max: self.index_cfg.max,
@@ -3645,10 +3921,12 @@ impl Explorer {
 
     /// ② 일치를 트리로: 인덱스에서 필터에 맞는 항목을 그 (스키마, 종류) 폴더의 **부분** 자식으로 올린다(이미 전체가 읽힌/읽는 중인 폴더는 건너뜀 ·
     /// 상한 `hits_max`) · 올라간 폴더는 완성 큐에.
-    fn materialize(&mut self) {
-        let Some(m) = self.filter.clone() else { return };
+    fn materialize_hits(&mut self, hits: &[(String, ObjectKind, String)]) {
+        if self.filter.is_none() {
+            return;
+        }
         let Some(d) = self.dialect else { return };
-        if self.index.is_empty() {
+        if hits.is_empty() {
             return;
         }
         let schema_node: HashMap<String, usize> = self.nodes[0]
@@ -3659,13 +3937,7 @@ impl Explorer {
                 _ => None,
             })
             .collect();
-        let picked: Vec<(String, ObjectKind, String)> = self
-            .index
-            .iter()
-            .filter(|e| m.matches(&e.name))
-            .take(self.index_cfg.hits_max)
-            .map(|e| (e.schema.clone(), e.kind, e.name.clone()))
-            .collect();
+        let picked: Vec<(String, ObjectKind, String)> = hits.to_vec();
         if picked.is_empty() {
             return;
         }
@@ -5061,18 +5333,26 @@ mod refresh_tests {
         let (mut ex, schema, tables) = sample();
         let views = ex.nodes[schema].children[1];
         assert_eq!(ex.nodes[views].state, LoadState::Idle);
-        let e = |kind: ObjectKind, name: &str| nsql_catalog::NameEntry {
-            schema: "HR".into(),
-            kind,
-            name: name.into(),
-        };
-        ex.index = vec![
-            e(ObjectKind::View, "V_B1"),
-            e(ObjectKind::View, "V_A"),
-            e(ObjectKind::Table, "B"),
-        ];
+        // L1 = MetaStore(85 §2): 이름 층으로 뷰 둘 · 테이블 하나(테이블 폴더는 트리에 이미 읽혔다).
+        ex.meta.load_names(
+            "HR",
+            &[ObjectKind::Table, ObjectKind::View],
+            &[
+                (ObjectKind::View, "V_B1".into()),
+                (ObjectKind::View, "V_A".into()),
+                (ObjectKind::Table, "B".into()),
+            ],
+            1,
+        );
         ex.index_done.insert("HR".into());
         ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
+        // 판정은 스레드(85 §6) — 시험은 그 응답(일치)을 직접 넣는다.
+        ex.materialize_hits(&[
+            ("HR".into(), ObjectKind::View, "V_B1".into()),
+            ("HR".into(), ObjectKind::Table, "B".into()),
+        ]);
+        ex.refilter();
+        ex.pump_complete();
         assert_eq!(
             ex.nodes[views].state,
             LoadState::Partial,
@@ -5471,5 +5751,37 @@ mod refresh_tests {
             None,
             "빈 이름은 무시"
         );
+    }
+}
+
+#[cfg(test)]
+mod search_thread_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// 스레드 판정 = 순수 함수: 스키마 정렬 순 · 상한 · 대소문자 무시(plain 매처).
+    #[test]
+    fn search_hits_matches_across_schemas_with_limit() {
+        let e = |s: &str, k: ObjectKind, n: &str| nsql_catalog::NameEntry {
+            schema: s.into(),
+            kind: k,
+            name: n.into(),
+        };
+        let names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::from([
+            (
+                "HR".to_string(),
+                vec![
+                    e("HR", ObjectKind::Table, "EMP"),
+                    e("HR", ObjectKind::View, "V_EMP"),
+                ],
+            ),
+            ("B".to_string(), vec![e("B", ObjectKind::Table, "employee")]),
+        ]);
+        let m = crate::filterbar::Matcher::plain("emp");
+        let all = search_hits(&names, &m, 10);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].0, "B", "스키마 이름순");
+        assert_eq!(search_hits(&names, &m, 2).len(), 2, "상한");
+        assert!(search_hits(&names, &crate::filterbar::Matcher::plain("zzz"), 10).is_empty());
     }
 }

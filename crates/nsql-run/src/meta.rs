@@ -8,7 +8,7 @@
 
 use nsql_catalog::ObjectKind;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// 인터닝된 이름(원문 보존).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -176,10 +176,28 @@ pub enum Coverage {
         at: u64,
         n: usize,
     },
+    /// ★ L1 이름 층(85 §2): 이름 인덱스가 채운 이름만(상태·부가 없음) — 소비자(완성·검색)는 `Loaded`처럼 후보를 내고,
+    /// 상태가 필요한 곳(카드·트리)이 L2 승격(`upgrading`)을 청한다. 빈 버킷도 `n = 0`으로 남는다(부정 캐시 = 다시 묻지 않음).
+    Names {
+        at: u64,
+        n: usize,
+        upgrading: bool,
+    },
     Error {
         message: String,
         at: u64,
     },
+}
+
+impl Coverage {
+    /// 후보를 낼 수 있는 상태(목록이 있다) — Loaded · Stale · Names.
+    #[must_use]
+    pub fn has_list(&self) -> bool {
+        matches!(
+            self,
+            Coverage::Loaded { .. } | Coverage::Stale { .. } | Coverage::Names { .. }
+        )
+    }
 }
 
 /// 버킷 — 객체 id 목록은 **소문자 이름 정렬**(접두 이진 탐색).
@@ -217,8 +235,9 @@ pub struct Snapshot {
     pub buckets: HashMap<(Sym, ObjectKind), Arc<Bucket>>,
     /// (스키마, 소문자 이름) → 객체(같은 이름이 종류별로 있으면 첫 것 · 종류 지정 조회는 버킷으로).
     exact: HashMap<(Sym, Sym), ObjId>,
-    /// 전 스키마 소문자 이름 정렬(스키마 모를 때 접두).
-    by_name: Vec<(Sym, ObjId)>,
+    /// 전 스키마 소문자 이름 정렬(스키마 모를 때 접두) — ★ **지연 계산**(85 §6 · 09-25 프레임 끊김): 버킷이 바뀔 때 비우고
+    /// `prefix_any`가 처음 부를 때 만든다(L1이 스키마 30개를 채우는 동안 20k 정렬을 30번 하지 않게).
+    by_name: OnceLock<Vec<(Sym, ObjId)>>,
 }
 
 /// 메타 저장소 — 쓰기는 이 구조체, 읽기는 [`MetaStore::snapshot`].
@@ -289,12 +308,188 @@ impl MetaStore {
                 objs: Vec::new(),
             })
         });
-        if !matches!(b.coverage, Coverage::Loaded { .. }) {
-            let mut nb = (**b).clone();
-            nb.coverage = Coverage::Loading;
-            *b = Arc::new(nb);
+        match b.coverage {
+            Coverage::Loaded { .. } => {}
+            // L1 이름 층은 승격 중에도 후보를 계속 낸다(깜빡임 0).
+            Coverage::Names { at, n, .. } => {
+                let mut nb = (**b).clone();
+                nb.coverage = Coverage::Names {
+                    at,
+                    n,
+                    upgrading: true,
+                };
+                *b = Arc::new(nb);
+            }
+            _ => {
+                let mut nb = (**b).clone();
+                nb.coverage = Coverage::Loading;
+                *b = Arc::new(nb);
+            }
         }
         self.commit(s);
+    }
+
+    /// ★ L1 이름 층 채움(85 §2): 스키마 하나의 (종류, 이름) 전부를 **한 번의 편집**으로 — `kinds`의 모든 종류에 버킷을 만들고
+    /// (없는 종류 = 빈 버킷 `Names{n:0}` = 부정 캐시), 이미 `Loaded`/`Stale`/`Loading`인 버킷은 건드리지 않는다(내려가지 않음).
+    /// 같은 이름의 기존 객체는 id를 유지(컬럼 그대로). 반환 = 새로 만든 객체 수.
+    pub fn load_names(
+        &mut self,
+        schema: &str,
+        kinds: &[ObjectKind],
+        names: &[(ObjectKind, String)],
+        at: u64,
+    ) -> usize {
+        let sc = self.names.intern(schema);
+        let mut s = self.edit();
+        let mut added = 0usize;
+        for &kind in kinds {
+            let keep = s.buckets.get(&(sc, kind)).is_some_and(|b| {
+                matches!(
+                    b.coverage,
+                    Coverage::Loaded { .. } | Coverage::Stale { .. } | Coverage::Loading
+                )
+            });
+            if keep {
+                continue;
+            }
+            let old: Vec<ObjId> = s
+                .buckets
+                .get(&(sc, kind))
+                .map(|b| b.objs.clone())
+                .unwrap_or_default();
+            let mut old_by_lower: HashMap<Sym, ObjId> = HashMap::with_capacity(old.len());
+            for id in &old {
+                let n = s.objs[id.0 as usize].name;
+                old_by_lower.insert(self.names.intern_lower(n), *id);
+            }
+            let mut objs: Vec<ObjId> = Vec::new();
+            let mut seen: std::collections::HashSet<ObjId> = std::collections::HashSet::new();
+            for (k, n) in names.iter().filter(|(k, _)| *k == kind) {
+                let name = self.names.intern(n);
+                let lower = self.names.intern_lower(name);
+                let id = match old_by_lower.get(&lower) {
+                    Some(&id) => id,
+                    None => {
+                        added += 1;
+                        let id = ObjId(s.objs.len() as u32);
+                        s.objs.push(ObjEntry {
+                            schema: sc,
+                            name,
+                            kind: *k,
+                            status: ObjStatus::Unknown,
+                            modified: None,
+                            comment: None,
+                            extra: None,
+                        });
+                        s.cols.push(ColState::Unknown);
+                        id
+                    }
+                };
+                if seen.insert(id) {
+                    objs.push(id);
+                }
+            }
+            for id in &old {
+                if !seen.contains(id) {
+                    let key = self.names.lower_key(s.objs[id.0 as usize].name);
+                    if s.exact.get(&(sc, key)) == Some(id) {
+                        s.exact.remove(&(sc, key));
+                    }
+                }
+            }
+            {
+                let names = &self.names;
+                let objs_ref = &s.objs;
+                objs.sort_by(|a, b| {
+                    names
+                        .lower(objs_ref[a.0 as usize].name)
+                        .cmp(names.lower(objs_ref[b.0 as usize].name))
+                });
+            }
+            for id in &objs {
+                let lower = self.names.lower_key(s.objs[id.0 as usize].name);
+                s.exact.entry((sc, lower)).or_insert(*id);
+            }
+            s.buckets.insert(
+                (sc, kind),
+                Arc::new(Bucket {
+                    schema: sc,
+                    kind,
+                    coverage: Coverage::Names {
+                        at,
+                        n: objs.len(),
+                        upgrading: false,
+                    },
+                    objs,
+                }),
+            );
+        }
+        // 전역 이름 정렬은 지연(다음 `prefix_any`가 만든다).
+        s.by_name = OnceLock::new();
+        self.commit(s);
+        added
+    }
+
+    /// ★ L3 회수(85 §4 · "불필요시 최대한 빠르게"): 상세(제약·인덱스)는 `detail_ttl`을 넘긴 것과 `detail_max`를 넘는 오래된 것부터 ·
+    /// 컬럼은 현재 스키마(`keep`) 밖에서 `cols_ttl`을 넘긴 것을 `Unknown`으로(목록은 그대로 · 다음 요청 때 다시). 반환 = (상세, 컬럼) 비운 수.
+    pub fn reclaim(
+        &mut self,
+        now: u64,
+        keep: Option<Sym>,
+        detail_max: usize,
+        detail_ttl: u64,
+        cols_ttl: u64,
+    ) -> (usize, usize) {
+        let snap = &self.snap;
+        let mut loaded: Vec<(ObjId, u64)> = snap
+            .details
+            .iter()
+            .filter_map(|(id, d)| match d {
+                DetailState::Loaded { at, .. } => Some((*id, *at)),
+                _ => None,
+            })
+            .collect();
+        loaded.sort_by_key(|(_, at)| *at);
+        let mut drop_details: Vec<ObjId> = loaded
+            .iter()
+            .filter(|(_, at)| detail_ttl > 0 && now.saturating_sub(*at) > detail_ttl)
+            .map(|(id, _)| *id)
+            .collect();
+        let remaining = loaded.len().saturating_sub(drop_details.len());
+        if detail_max > 0 && remaining > detail_max {
+            let survivors: Vec<ObjId> = loaded
+                .iter()
+                .filter(|(id, _)| !drop_details.contains(id))
+                .map(|(id, _)| *id)
+                .collect();
+            let extra = survivors.len() - detail_max;
+            drop_details.extend(survivors.into_iter().take(extra));
+        }
+        let drop_cols: Vec<usize> = if cols_ttl == 0 {
+            Vec::new()
+        } else {
+            snap.cols
+                .iter()
+                .enumerate()
+                .filter(|(i, c)| {
+                    matches!(c, ColState::Loaded { at, .. } if now.saturating_sub(*at) > cols_ttl)
+                        && keep.is_none_or(|k| snap.objs[*i].schema != k)
+                })
+                .map(|(i, _)| i)
+                .collect()
+        };
+        if drop_details.is_empty() && drop_cols.is_empty() {
+            return (0, 0);
+        }
+        let mut s = self.edit();
+        for id in &drop_details {
+            s.details.remove(id);
+        }
+        for i in &drop_cols {
+            s.cols[*i] = ColState::Unknown;
+        }
+        self.commit(s);
+        (drop_details.len(), drop_cols.len())
     }
 
     /// 버킷 오류.
@@ -409,18 +604,8 @@ impl MetaStore {
                 objs,
             }),
         );
-        // 전역 이름 정렬은 버킷마다 다시 만든다(비용 O(N log N) · 버킷 갱신은 드묾).
-        let mut by_name: Vec<(Sym, ObjId)> = s
-            .buckets
-            .values()
-            .flat_map(|b| b.objs.iter().copied())
-            .map(|id| (self.names.lower_key(s.objs[id.0 as usize].name), id))
-            .collect();
-        {
-            let names = &self.names;
-            by_name.sort_by(|a, b| names.get(a.0).cmp(names.get(b.0)));
-        }
-        s.by_name = by_name;
+        // 전역 이름 정렬은 지연(다음 `prefix_any`가 만든다).
+        s.by_name = OnceLock::new();
         self.commit(s);
         (added, changed, removed)
     }
@@ -566,11 +751,55 @@ impl MetaStore {
                 _ => 0,
             })
             .sum();
+        let details: usize = s
+            .details
+            .values()
+            .map(|d| match d {
+                DetailState::Loaded { detail, .. } => {
+                    64 + detail.keys.len() * 48
+                        + detail.indexes.len() * 40
+                        + detail.col_comments.len() * 16
+                }
+                _ => 8,
+            })
+            .sum();
         self.names.approx_bytes()
             + s.objs.len() * 40
             + cols
-            + s.by_name.len() * 12
+            + details
+            + s.by_name.get().map_or(0, Vec::len) * 12
             + s.exact.len() * 24
+    }
+
+    /// 층별 대략 메모리(85 §5 · 메모리 창): (L1 이름·목록, L2 컬럼, L3 상세) 바이트.
+    #[must_use]
+    pub fn layer_bytes(&self) -> (usize, usize, usize) {
+        let s = &self.snap;
+        let l2: usize = s
+            .cols
+            .iter()
+            .map(|c| match c {
+                ColState::Loaded { cols, .. } => cols.len() * 32,
+                _ => 0,
+            })
+            .sum();
+        let l3: usize = s
+            .details
+            .values()
+            .map(|d| match d {
+                DetailState::Loaded { detail, .. } => {
+                    64 + detail.keys.len() * 48
+                        + detail.indexes.len() * 40
+                        + detail.col_comments.len() * 16
+                }
+                _ => 8,
+            })
+            .sum();
+        let l1 = self.names.approx_bytes()
+            + s.objs.len() * 40
+            + s.by_name.get().map_or(0, Vec::len) * 12
+            + s.exact.len() * 24;
+        (l1, l2, l3)
     }
 
     /// ★ 버킷 해제(미사용 판정 즉시 회수 · 사용자 09-23): 그 (스키마, 종류)의 객체 목록·정확 조회 열쇠·전역 이름 정렬·컬럼을
@@ -584,7 +813,6 @@ impl MetaStore {
             return false;
         };
         let mut s = self.edit();
-        let drop: std::collections::HashSet<ObjId> = b.objs.iter().copied().collect();
         for id in &b.objs {
             let key = self.names.lower_key(s.objs[id.0 as usize].name);
             if s.exact.get(&(sc, key)) == Some(id) {
@@ -594,7 +822,7 @@ impl MetaStore {
             s.details.remove(id);
         }
         s.buckets.remove(&(sc, kind));
-        s.by_name.retain(|(_, id)| !drop.contains(id));
+        s.by_name = OnceLock::new();
         self.commit(s);
         true
     }
@@ -708,10 +936,9 @@ impl Snapshot {
                     }
                 }
                 // 전 스키마: 정렬 배열 이진 탐색.
-                let i = self
-                    .by_name
-                    .partition_point(|(s, _)| names.lower(*s) < lname.as_str());
-                self.by_name
+                let by_name = self.by_name_sorted(names);
+                let i = by_name.partition_point(|(s, _)| names.lower(*s) < lname.as_str());
+                by_name
                     .get(i)
                     .filter(|(s, _)| names.lower(*s) == lname)
                     .map(|(_, id)| *id)
@@ -754,12 +981,25 @@ impl Snapshot {
 
     /// 전 스키마 접두 조회(스키마를 모를 때).
     #[must_use]
+    /// 전 스키마 소문자 이름 정렬(지연 · 처음 부를 때 한 번 · 85 §6).
+    fn by_name_sorted(&self, names: &Interner) -> &Vec<(Sym, ObjId)> {
+        self.by_name.get_or_init(|| {
+            let mut v: Vec<(Sym, ObjId)> = self
+                .buckets
+                .values()
+                .flat_map(|b| b.objs.iter().copied())
+                .map(|id| (names.lower_key(self.objs[id.0 as usize].name), id))
+                .collect();
+            v.sort_by(|a, b| names.get(a.0).cmp(names.get(b.0)));
+            v
+        })
+    }
+
     pub fn prefix_any(&self, names: &Interner, prefix: &str, limit: usize) -> Vec<Hit> {
         let p = prefix.to_lowercase();
-        let lo = self
-            .by_name
-            .partition_point(|(s, _)| names.lower(*s) < p.as_str());
-        self.by_name[lo..]
+        let by_name = self.by_name_sorted(names);
+        let lo = by_name.partition_point(|(s, _)| names.lower(*s) < p.as_str());
+        by_name[lo..]
             .iter()
             .take_while(|(s, _)| names.lower(*s).starts_with(&p))
             .take(limit)
@@ -1076,5 +1316,122 @@ mod tests {
             s.lookup(&m.names, None, "ALL_TABLES").is_some(),
             "전 스키마 조회에도 든다"
         );
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn kinds() -> Vec<ObjectKind> {
+        vec![ObjectKind::Table, ObjectKind::View]
+    }
+
+    /// L1: 이름만으로 버킷(빈 종류도 `Names{n:0}`) · 소비자는 `has_list` · L2 승격(`load_bucket`)은 같은 이름의 id를 유지 ·
+    /// 이미 Loaded인 버킷은 L1이 내리지 않는다.
+    #[test]
+    fn names_layer_then_upgrade_keeps_ids() {
+        let mut m = MetaStore::new(1 << 20);
+        let names = vec![
+            (ObjectKind::Table, "EMP".to_string()),
+            (ObjectKind::Table, "DEPT".to_string()),
+        ];
+        assert_eq!(m.load_names("HR", &kinds(), &names, 10), 2);
+        let snap = m.snapshot();
+        let hr = m.names.find("HR").unwrap();
+        assert!(snap.coverage(hr, ObjectKind::Table).has_list());
+        assert!(
+            matches!(
+                snap.coverage(hr, ObjectKind::View),
+                Coverage::Names { n: 0, .. }
+            ),
+            "빈 종류 = 부정 캐시"
+        );
+        let emp = snap.lookup(&m.names, Some("HR"), "emp").unwrap();
+        // 승격 중에도 목록은 산다.
+        m.mark_loading("HR", ObjectKind::Table);
+        assert!(matches!(
+            m.snapshot().coverage(hr, ObjectKind::Table),
+            Coverage::Names {
+                upgrading: true,
+                ..
+            }
+        ));
+        let objs = vec![
+            NewObj {
+                name: "EMP".into(),
+                status: ObjStatus::Valid,
+                ..Default::default()
+            },
+            NewObj {
+                name: "DEPT".into(),
+                status: ObjStatus::Valid,
+                ..Default::default()
+            },
+            NewObj {
+                name: "NEW_T".into(),
+                status: ObjStatus::Valid,
+                ..Default::default()
+            },
+        ];
+        let (added, _, removed) = m.load_bucket("HR", ObjectKind::Table, &objs, 20);
+        assert_eq!((added, removed), (1, 0));
+        let snap = m.snapshot();
+        assert_eq!(
+            snap.lookup(&m.names, Some("HR"), "emp"),
+            Some(emp),
+            "id 유지"
+        );
+        assert!(matches!(
+            snap.coverage(hr, ObjectKind::Table),
+            Coverage::Loaded { n: 3, .. }
+        ));
+        // L1을 다시 채워도 Loaded는 그대로.
+        m.load_names("HR", &kinds(), &names, 30);
+        assert!(matches!(
+            m.snapshot().coverage(hr, ObjectKind::Table),
+            Coverage::Loaded { n: 3, .. }
+        ));
+    }
+
+    /// L3 회수: 상세는 TTL·상한(오래된 것부터) · 컬럼은 현재 스키마 밖 + TTL.
+    #[test]
+    fn reclaim_details_by_ttl_and_cap_and_cold_columns() {
+        let mut m = MetaStore::new(1 << 20);
+        let t = |n: &str| NewObj {
+            name: n.into(),
+            ..Default::default()
+        };
+        m.load_bucket("HR", ObjectKind::Table, &[t("A"), t("B"), t("C")], 1);
+        m.load_bucket("SALES", ObjectKind::Table, &[t("S1")], 1);
+        let snap = m.snapshot();
+        let ids: Vec<ObjId> = ["A", "B", "C"]
+            .iter()
+            .map(|n| snap.lookup(&m.names, Some("HR"), n).unwrap())
+            .collect();
+        let s1 = snap.lookup(&m.names, Some("SALES"), "S1").unwrap();
+        let col = NewCol {
+            name: "X".into(),
+            data_type: "INT".into(),
+            ..Default::default()
+        };
+        for (i, id) in ids.iter().enumerate() {
+            m.set_detail(*id, &NewDetail::default(), 100 + i as u64 * 10);
+            m.set_columns(*id, &[col.clone()], 100);
+        }
+        m.set_columns(s1, &[col.clone()], 100);
+        let hr = m.names.find("HR");
+        // TTL 25 → at 100·110 만료(now 140) · 상한 1 → 남은 120 중 하나만 → 셋 다? 아니: 만료 둘 + 상한 안 = 셋 중 둘 비움.
+        let (d, c) = m.reclaim(140, hr, 1, 25, 30);
+        assert_eq!(d, 2, "TTL 만료 둘 · 남은 하나는 상한 1 안");
+        assert_eq!(c, 1, "현재 스키마(HR) 컬럼은 남고 SALES만 비움");
+        assert!(matches!(m.snapshot().columns(s1), ColState::Unknown));
+        assert!(matches!(
+            m.snapshot().columns(ids[0]),
+            ColState::Loaded { .. }
+        ));
+        // 상한만(TTL 0) → 남은 상세 1개는 상한 1 안 → 0.
+        assert_eq!(m.reclaim(1000, None, 1, 0, 0), (0, 0));
     }
 }

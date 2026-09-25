@@ -5856,7 +5856,12 @@ impl App {
             | "explorer.index_max"
             | "explorer.index_hits_max"
             | "explorer.index_prefetch"
-            | "explorer.index_idle_ms" => {
+            | "explorer.index_idle_ms"
+            | "meta.warm_columns_max"
+            | "meta.warm_idle_ms"
+            | "meta.detail_max"
+            | "meta.detail_ttl_secs"
+            | "meta.cols_ttl_secs" => {
                 self.explorer.set_index_cfg(index_cfg_from(&self.settings));
             }
             "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk" => {
@@ -17759,7 +17764,12 @@ fn index_cfg_from(settings: &Settings) -> explorer::IndexCfg {
         max: settings.int("explorer.index_max").max(0) as usize,
         hits_max: settings.int("explorer.index_hits_max").max(1) as usize,
         prefetch: settings.flag("explorer.index_prefetch"),
-        idle_ms: settings.int("explorer.index_idle_ms").max(500) as u64,
+        idle_ms: settings.int("explorer.index_idle_ms").max(0) as u64,
+        warm_columns_max: settings.int("meta.warm_columns_max").max(0) as usize,
+        warm_idle_ms: settings.int("meta.warm_idle_ms").max(0) as u64,
+        detail_max: settings.int("meta.detail_max").max(0) as usize,
+        detail_ttl_secs: settings.int("meta.detail_ttl_secs").max(0) as u64,
+        cols_ttl_secs: settings.int("meta.cols_ttl_secs").max(0) as u64,
     }
 }
 

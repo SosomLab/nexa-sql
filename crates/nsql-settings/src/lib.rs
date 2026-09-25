@@ -1322,10 +1322,66 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblIndexIdleMs,
         desc: Msg::DescIndexIdleMs,
         kind: SettingKind::Int {
-            min: 500,
+            min: 0,
             max: 600_000,
         },
-        default: "5000",
+        default: "250",
+    },
+    // ★ 메타 3층(docs/85 · 09-25): L2 워머(현재 스키마 컬럼 미리 읽기) · L3 회수(상세·컬럼 TTL/상한).
+    Entry {
+        key: "meta.warm_columns_max",
+        cat: Msg::CatExplorer,
+        label: Msg::LblWarmColumnsMax,
+        desc: Msg::DescWarmColumnsMax,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 100_000,
+        },
+        default: "200",
+    },
+    Entry {
+        key: "meta.warm_idle_ms",
+        cat: Msg::CatExplorer,
+        label: Msg::LblWarmIdleMs,
+        desc: Msg::DescWarmIdleMs,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 600_000,
+        },
+        default: "300",
+    },
+    Entry {
+        key: "meta.detail_max",
+        cat: Msg::CatExplorer,
+        label: Msg::LblDetailMax,
+        desc: Msg::DescDetailMax,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 100_000,
+        },
+        default: "64",
+    },
+    Entry {
+        key: "meta.detail_ttl_secs",
+        cat: Msg::CatExplorer,
+        label: Msg::LblDetailTtl,
+        desc: Msg::DescDetailTtl,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "300",
+    },
+    Entry {
+        key: "meta.cols_ttl_secs",
+        cat: Msg::CatExplorer,
+        label: Msg::LblColsTtl,
+        desc: Msg::DescColsTtl,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "600",
     },
     Entry {
         key: "gen.qualified",

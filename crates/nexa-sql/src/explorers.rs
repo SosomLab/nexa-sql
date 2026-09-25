@@ -499,6 +499,8 @@ impl ExplorerSet {
     pub(crate) fn idle_tick(&mut self, limit_secs: u64) {
         for p in &mut self.panes {
             p.ex.suspend_if_idle(limit_secs);
+            // ★ L3 회수(85 §4) — 30초 주기.
+            let _ = p.ex.reclaim_meta();
         }
     }
 
