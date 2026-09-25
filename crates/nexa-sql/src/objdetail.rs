@@ -134,6 +134,8 @@ impl DetailPanel {
         let mut inv = Invalidations::default();
         let hh = Self::head_h(scale);
         let body = Rect::new(b.x, b.y + hh, b.w, (b.h - hh).max(0));
+        // ★ 배율(09-25 캡처 "폰트 겹침"): 텍스트박스 줄 높이 = `s(20)` — 배율을 안 넘기면 레티나에서 절반이라 글자가 겹친다(편집기 탭은 `make_box`가 넘김).
+        self.tb.set_scale(scale);
         self.tb.set_bounds(body, &mut inv);
         let px = |v: f32| (v * scale).round() as i32;
         let bh = hh - px(6.0);

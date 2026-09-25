@@ -112,6 +112,8 @@
 | **화면 내보내기는 `present.rs` 한 곳** | 모든 창은 `present::Presenter`로 픽셀을 낸다(`softbuffer::Context/Surface`를 창 코드에 직접 두지 않는다) · macOS IOSurface 경로는 **기본 끔**(`gfx.mac_present`) — 화면·입력 실험은 기본 끔 + 실패 시 조용한 폴백 · 사용자가 병행 테스트하는 `target/` 빌드를 실험 상태로 두지 않는다 | [62 §2-1](62-macos-input-and-present.md) |
 | 맥 한글 입력 | 한글 입력 소스일 때만 앱 조합(`input.hangul_compose=auto` · nexa-ctl `TextBox` 전역 스위치) — **새 창을 만들면 `set_ime_allowed(input::system_ime())` + `sync_hangul_mode`의 창 목록에 등록** | [62 §1](62-macos-input-and-present.md) |
 
+- ★ **컨트롤 배선 체크(09-25 §210)**: nexa-ctl 컨트롤(TextBox 등)을 패널이 직접 놓을 때는 `set_bounds`와 함께 **`set_scale(scale)`** 을 꼭 부른다 — 줄 높이·여백이 `s(...)`로 배율을 곱하므로 빠지면 레티나에서 글자가 겹친다(객체 상세 패널 결함).
+
 ## 3. OS별로 다른 것
 
 | | Windows | macOS | Linux(09-22 · Ubuntu 26.04 · Wayland) |
