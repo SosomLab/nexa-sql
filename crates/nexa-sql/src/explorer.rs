@@ -203,6 +203,12 @@ enum Req {
         gen: u64,
         spec: GenSpec,
     },
+    /// 객체 상세(86) — `nsql_catalog::object_details`(급한 세션 · 사용자가 보고 있다).
+    Details {
+        gen: u64,
+        owner: ObjectInfo,
+        opts: GenOpts,
+    },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
     ColumnsMeta {
         gen: u64,
@@ -503,6 +509,11 @@ enum Resp {
         spec: GenSpec,
         r: Result<String, String>,
     },
+    Details {
+        gen: u64,
+        owner: ObjectInfo,
+        r: Result<Vec<nsql_catalog::DetailSection>, String>,
+    },
     ColumnsMeta {
         gen: u64,
         schema: String,
@@ -546,6 +557,38 @@ enum Resp {
 }
 
 /// 호스트가 처리할 요청.
+/// ★ 객체 상세 패널의 대상(docs/86 · T-223): 트리 선택에서 뽑는다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DetailTarget {
+    Object(ObjectInfo),
+    Column {
+        owner: ObjectInfo,
+        col: ColumnInfo,
+    },
+    Item {
+        owner: ObjectInfo,
+        sub: SubKind,
+        item: SubItem,
+    },
+    Schema(String),
+}
+
+impl DetailTarget {
+    /// 같은 대상 판정용 열쇠.
+    pub(crate) fn key(&self) -> String {
+        match self {
+            DetailTarget::Object(o) => format!("o:{}.{}:{:?}", o.schema, o.name, o.kind),
+            DetailTarget::Column { owner, col } => {
+                format!("c:{}.{}.{}", owner.schema, owner.name, col.name)
+            }
+            DetailTarget::Item { owner, sub, item } => {
+                format!("i:{}.{}:{:?}:{}", owner.schema, owner.name, sub, item.name)
+            }
+            DetailTarget::Schema(s) => format!("s:{s}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExplorerAction {
     /// 새 편집기 탭에 텍스트(SELECT 템플릿 · 소스).
@@ -565,6 +608,11 @@ pub(crate) enum ExplorerAction {
     DisconnectServer(Option<ConnectSpec>),
     ConnectServer(Option<ConnectSpec>),
     NewTabHere(Option<ConnectSpec>),
+    /// ★ 객체 상세(86 · T-223) — 상세 패널이 받는다.
+    Details {
+        owner: ObjectInfo,
+        r: Result<Vec<nsql_catalog::DetailSection>, String>,
+    },
     /// ★ Generate SQL 결과(83 §3) → 호스트가 SQL Preview 모달을 연다(`server` = 이 칸의 서버 · `ExplorerSet`이 채운다).
     Preview {
         spec: GenSpec,
@@ -866,6 +914,7 @@ fn req_prio(r: &Req) -> u8 {
         | Req::Columns { .. }
         | Req::SubItems { .. }
         | Req::GenSql { .. }
+        | Req::Details { .. }
         | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
@@ -1159,6 +1208,15 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 });
                 Resp::GenSql { gen, spec, r }
             }
+            Req::Details { gen, owner, opts } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::object_details(s, &owner, opts).map_err(err_s)
+                });
+                Resp::Details { gen, owner, r }
+            }
             Req::ColumnsMeta {
                 gen,
                 schema,
@@ -1348,7 +1406,7 @@ fn folder_label(dialect: Option<Dialect>, kind: ObjectKind) -> String {
 }
 
 /// 하위 폴더 라벨(i18n · DBMS 용어라 영어 그대로).
-fn sub_msg(sub: SubKind) -> Msg {
+pub(crate) fn sub_msg(sub: SubKind) -> Msg {
     match sub {
         SubKind::Columns => Msg::SubColumns,
         SubKind::Constraints => Msg::SubConstraints,
@@ -2582,6 +2640,12 @@ impl Explorer {
                         self.index_last_at = Some(Instant::now());
                     }
                 }
+                Resp::Details { gen, owner, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    self.actions.push(ExplorerAction::Details { owner, r });
+                }
                 Resp::Hits { gen, rev, hits } => {
                     if gen != self.gen || rev != self.filter_rev || self.filter.is_none() {
                         continue;
@@ -3639,6 +3703,73 @@ impl Explorer {
         let _ = self.tx_bg.send(Req::Prepare {
             gen: self.gen,
             spec: spec.clone(),
+        });
+    }
+
+    /// 자체 시험(86): `row`번째 보이는 행을 선택한다(클릭과 같은 결과 · 펼치지 않음).
+    pub(crate) fn capture_select(&mut self, row: usize) -> bool {
+        let rows = self.visible_rows();
+        let Some(&i) = rows.get(row) else {
+            return false;
+        };
+        self.selected = Some(i);
+        true
+    }
+
+    /// ★ 객체 상세 패널의 대상(86): 선택 노드 → 객체/컬럼(주인 포함)/잎(주인·하위 폴더 포함)/스키마.
+    pub(crate) fn selected_target(&self) -> Option<DetailTarget> {
+        let i = self.selected?;
+        let n = self.nodes.get(i)?;
+        match &n.kind {
+            NodeKind::Object(o) => Some(DetailTarget::Object(o.clone())),
+            NodeKind::Schema(s) => Some(DetailTarget::Schema(s.clone())),
+            NodeKind::Column(c) => {
+                let mut cur = self.parent_of(i);
+                while let Some(p) = cur {
+                    match &self.nodes[p].kind {
+                        NodeKind::Object(o) => {
+                            return Some(DetailTarget::Column {
+                                owner: o.clone(),
+                                col: c.clone(),
+                            })
+                        }
+                        NodeKind::Sub { owner, .. } => {
+                            return Some(DetailTarget::Column {
+                                owner: (**owner).clone(),
+                                col: c.clone(),
+                            })
+                        }
+                        _ => cur = self.parent_of(p),
+                    }
+                }
+                None
+            }
+            NodeKind::Item(it) => {
+                let p = self.parent_of(i)?;
+                match &self.nodes[p].kind {
+                    NodeKind::Sub { owner, sub } => Some(DetailTarget::Item {
+                        owner: (**owner).clone(),
+                        sub: *sub,
+                        item: it.clone(),
+                    }),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// 객체 상세 요청(86 · L3 = 즉시 · 급한 세션).
+    pub(crate) fn request_details(&mut self, owner: ObjectInfo) {
+        if self.dialect.is_none() {
+            return;
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
+        let _ = self.tx.send(Req::Details {
+            gen: self.gen,
+            owner,
+            opts: self.gen_opts,
         });
     }
 

@@ -53,6 +53,10 @@ impl CopyBtn {
         self.feedback = Duration::from_millis(ms.clamp(300, 10_000) as u64);
     }
 
+    pub(crate) fn set_rect(&mut self, r: Rect) {
+        self.rect = r;
+    }
+
     pub(crate) fn hit(&self, p: Point) -> bool {
         self.rect.contains(p)
     }

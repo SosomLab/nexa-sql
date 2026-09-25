@@ -1242,6 +1242,25 @@ impl ExplorerSet {
         self.panes.iter().any(|p| p.ex.background_pending())
     }
 
+    /// ★ 객체 상세 패널(86): 마지막으로 누른 칸의 선택 대상 · 상세 요청.
+    pub(crate) fn selected_target(&self) -> Option<crate::explorer::DetailTarget> {
+        self.panes.get(self.shown)?.ex.selected_target()
+    }
+
+    /// 자체 시험: 첫 칸의 `row`번째 행 선택(`explorer.select<row>`).
+    pub(crate) fn capture_select(&mut self, row: usize) -> bool {
+        self.shown = 0;
+        self.panes
+            .first_mut()
+            .is_some_and(|p| p.ex.capture_select(row))
+    }
+
+    pub(crate) fn request_details(&mut self, owner: nsql_catalog::ObjectInfo) {
+        if let Some(p) = self.panes.get_mut(self.shown) {
+            p.ex.request_details(owner);
+        }
+    }
+
     /// 진단(기동 명령 `explorer.stat:<파일>`): 칸마다 한 줄.
     pub(crate) fn stat_text(&self) -> String {
         self.panes

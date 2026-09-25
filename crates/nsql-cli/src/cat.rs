@@ -84,6 +84,45 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     &rs(&["Schema"], list.into_iter().map(|n| vec![n]).collect()),
                 );
             }
+            // ★ 객체 상세(86 · T-223): `detail <object> [kind]` — 탐색기 아래 객체 상세 패널과 같은 함수.
+            "detail" | "info" => {
+                let Some(obj) = o.positional.get(1) else {
+                    return Ok(usage());
+                };
+                let (sc, name) = split_name(obj, &schema);
+                let kind = o
+                    .positional
+                    .get(2)
+                    .and_then(|k| {
+                        nsql_catalog::ObjectKind::ALL
+                            .iter()
+                            .copied()
+                            .find(|x| x.code() == k.to_lowercase())
+                    })
+                    .unwrap_or(nsql_catalog::ObjectKind::Table);
+                let owner = nsql_catalog::ObjectInfo {
+                    schema: sc,
+                    name,
+                    kind,
+                    status: String::new(),
+                    modified: String::new(),
+                    extra: String::new(),
+                };
+                let secs =
+                    nsql_catalog::object_details(s, &owner, nsql_catalog::GenOpts::default())?;
+                for sec in secs {
+                    println!("== {:?} ==", sec.id);
+                    match sec.text {
+                        Some(t) => println!("{t}"),
+                        None => {
+                            let heads: Vec<String> =
+                                sec.headers.iter().map(|h| format!("{h:?}")).collect();
+                            print!("{}", nsql_catalog::render_table(&heads, &sec.rows));
+                        }
+                    }
+                    println!();
+                }
+            }
             // ★ 이름 인덱스(84 §2): `index [max]` — 탐색기 검색이 쓰는 서버 전체 (스키마, 종류, 이름) 한 번에.
             "index" => {
                 let max = o

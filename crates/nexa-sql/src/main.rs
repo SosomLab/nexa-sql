@@ -52,6 +52,7 @@ mod mem_win;
 mod memstat;
 mod memtrim;
 mod metacache;
+mod objdetail;
 mod outline_panel;
 mod palette;
 mod parwalk;
@@ -153,6 +154,8 @@ enum Focus {
     Project,
     /// 북마크 패널(docs/69 · 사용자 09-22).
     Bookmarks,
+    /// 객체 상세 패널(docs/86 · 09-25).
+    Details,
     /// 아웃라인 패널(docs/76 · 사용자 09-23).
     Outline,
 }
@@ -375,6 +378,10 @@ struct App {
     grid_tab: u64,
     /// ★ 오브젝트 탐색기(사용자 09-15 · docs/28) — 메타 세션은 자기 스레드.
     explorer: explorers::ExplorerSet,
+    /// ★ 객체 상세 패널(docs/86 · T-223) — 탐색기 아래 독립 영역 · 스플리터 `split_d`.
+    objdetail: objdetail::DetailPanel,
+    split_d: Splitter,
+    detail_key: Option<String>,
     /// 파일 검색 패널(활동 막대 두 번째 · T-81a · docs/36).
     search: SearchPanel,
     /// 프로젝트 탐색기(docs/67 §4) · 열린 프로젝트(없으면 기본 워크스페이스).
@@ -860,15 +867,43 @@ impl App {
         } else {
             0
         };
+        // ★ 객체 상세(docs/86): 탐색기 아래 독립 영역 — 탐색기 높이를 그만큼 줄인다(스크롤 영역이 겹치지 않게).
+        let details_on = self.explorer.is_visible() && self.settings.flag("explorer.details");
+        self.objdetail.set_visible(details_on);
+        let grip = px(SPLIT_GRIP, s);
+        let dh = if details_on {
+            if self.objdetail.is_collapsed() {
+                objdetail::DetailPanel::head_h(s)
+            } else {
+                px(self.settings.int("explorer.details_h") as f32, s)
+                    .clamp(px(80.0, s), (body_h * 3 / 4).max(px(80.0, s)))
+            }
+        } else {
+            0
+        };
+        let exp_h = if details_on {
+            (body_h - dh - grip).max(0)
+        } else {
+            body_h
+        };
         self.explorer.set_bounds(
             Rect::new(
                 act_w,
                 body_top,
                 if self.explorer.is_visible() { exp_w } else { 0 },
-                body_h,
+                exp_h,
             ),
             s,
         );
+        if details_on {
+            self.split_d
+                .set_rect(Rect::new(act_w, body_top + exp_h, exp_w, grip));
+            self.objdetail
+                .set_bounds(Rect::new(act_w, body_top + exp_h + grip, exp_w, dh), s);
+        } else {
+            self.split_d.set_rect(Rect::default());
+            self.objdetail.set_bounds(Rect::default(), s);
+        }
         self.explorer.set_menu_area(Rect::new(0, 0, w, h));
         self.search.set_bounds(
             Rect::new(
@@ -985,6 +1020,29 @@ impl App {
                 return true;
             }
         }
+        // ★ 객체 상세 스플리터(docs/86): 띠 y → 패널 높이(논리 px) → `explorer.details_h`.
+        match self.split_d.on_event(ev) {
+            SplitEvent::None => {}
+            SplitEvent::Hover => self.redraw(),
+            SplitEvent::Start => return true,
+            SplitEvent::Drag(y) => {
+                let grip = px(SPLIT_GRIP, s);
+                let b = self.explorer.bounds();
+                let bottom = b.y + b.h + grip + self.objdetail.bounds().h;
+                let h = ((bottom - (y + grip)) as f32 / s).round() as i64;
+                let _ = self
+                    .settings
+                    .set("explorer.details_h", &h.clamp(80, 1200).to_string());
+                self.layout();
+                self.redraw();
+                return true;
+            }
+            SplitEvent::End => {
+                self.persist_settings();
+                self.redraw();
+                return true;
+            }
+        }
         match self.split_h.on_event(ev) {
             SplitEvent::None => false,
             SplitEvent::Hover => {
@@ -1019,6 +1077,7 @@ impl App {
         self.focus = f;
         self.ed_mut().set_focused(f == Focus::Editor);
         self.explorer.set_focused(f == Focus::Explorer);
+        self.objdetail.set_focused(f == Focus::Details);
         self.find.set_focused(f == Focus::Find);
         self.search.set_focused(f == Focus::Search);
         self.project_panel.set_focused(f == Focus::Project);
@@ -1098,7 +1157,7 @@ impl App {
             Focus::Bookmarks => self.bm_panel.focused_textbox(),
             Focus::Outline => self.outline_panel.focused_textbox(),
             Focus::Explorer => self.explorer.focused_textbox(),
-            Focus::Grid => None,
+            Focus::Grid | Focus::Details => None,
         }
     }
 
@@ -5849,6 +5908,11 @@ impl App {
                 .explorer
                 .set_filter_scope(self.settings.get(key).unwrap_or("all")),
             "explorer.share_catalog" => self.explorer.set_share_catalog(self.settings.flag(key)),
+            "explorer.details" | "explorer.details_h" | "explorer.details_collapsed" => {
+                self.objdetail
+                    .set_collapsed(self.settings.flag("explorer.details_collapsed"));
+                self.layout();
+            }
             "explorer.show_system_schemas" | "explorer.hide_empty_schemas" => {
                 self.explorer
                     .set_schema_opts(schema_opts_from(&self.settings));
@@ -7027,6 +7091,14 @@ impl App {
                 }
             }
             "edit.cut" => self.clip_action(EditCtxAction::Cut),
+            // ★ 객체 상세 패널에 포커스 = 선택 글 복사(docs/86).
+            "edit.copy" if self.focus == Focus::Details => {
+                if let Some(sel) = self.objdetail.copy_selection() {
+                    if !clipboard::write_text(&sel) {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                }
+            }
             "edit.copy" => self.clip_action(EditCtxAction::Copy),
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
             "edit.select_all" => {
@@ -7219,6 +7291,20 @@ impl App {
             }
             x if x.starts_with("bookmark.") => self.bookmark_cmd(x),
             // 아웃라인 패널(docs/76): 켜면 활성 탭 심볼 동기 + 필터 포커스 · 다른 좌측 패널은 닫힌다.
+            "view.object_details" => {
+                let on = !self.settings.flag("explorer.details");
+                let _ = self
+                    .settings
+                    .set("explorer.details", if on { "on" } else { "off" });
+                self.persist_settings();
+                if on && !self.explorer.is_visible() {
+                    self.side_panel_close_others("view.explorer");
+                    self.explorer.set_visible(true);
+                }
+                self.layout();
+                self.sync_detail_target(true);
+                self.redraw();
+            }
             "view.outline" => {
                 let on = !self.outline_panel.is_visible();
                 if on {
@@ -8231,6 +8317,18 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("explorer.dump:") {
             let _ = std::fs::write(path, self.explorer.dump_rows());
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("explorer.select") {
+            if let Ok(row) = rest.parse::<usize>() {
+                self.explorer.capture_select(row);
+                self.explorer_actions();
+                self.redraw();
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("details.dump:") {
+            let _ = std::fs::write(path, self.objdetail.text());
             return;
         }
         if let Some(path) = id.strip_prefix("explorer.stat:") {
@@ -10017,6 +10115,7 @@ impl App {
                     item("view.palette", Msg::MnCommandPalette),
                     item("view.goto_anything", Msg::MnGotoAnything),
                     item("view.explorer", Msg::MnExplorer),
+                    item("view.object_details", Msg::MnObjectDetails),
                     item("view.search", Msg::MnSearchPanel),
                     item("view.project", Msg::MnProjectPanel),
                     item("view.log", Msg::MnLogWindow),
@@ -10347,6 +10446,7 @@ impl App {
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
         cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
+        cmds.push(m("view.object_details", Msg::MnView, Msg::MnObjectDetails));
         cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
         cmds.push(m("view.project", Msg::MnView, Msg::MnProjectPanel));
         cmds.push(m("project.new", Msg::MnProject, Msg::MnProjectNew));
@@ -12451,7 +12551,48 @@ impl App {
     /// 탐색기가 부탁한 동작(우클릭 메뉴 · 더블클릭 — SQL 열기 · 이름 복사 · 서버 연결/해제 · 새 탭)을 **바로** 처리한다.
     /// ★ 종전에는 워커 응답을 걷는 `drain_events` 안에서만 걷어서, 메뉴로 고른 연결 해제·이름 복사가 **다음 워커 응답이 올 때까지**
     ///   실행되지 않았다(응답이 없으면 끝내 안 됨 · 사용자 09-21). 입력을 탐색기에 준 직후에도 부른다.
+    /// ★ 객체 상세 패널(docs/86): 탐색기 선택이 바뀌었으면 대상을 바꾸고 객체면 상세를 청한다(`force` = 켜는 순간).
+    fn sync_detail_target(&mut self, force: bool) {
+        if !self.objdetail.is_visible() {
+            return;
+        }
+        let t = self.explorer.selected_target();
+        let key = t.as_ref().map(explorer::DetailTarget::key);
+        if !force && key == self.detail_key {
+            return;
+        }
+        self.detail_key = key;
+        if let Some(explorer::DetailTarget::Object(o)) = &t {
+            self.explorer.request_details(o.clone());
+        }
+        self.objdetail.set_target(t);
+        self.redraw();
+    }
+
+    /// 객체 상세 패널의 동작(복사 · 축소/확장).
+    fn detail_actions(&mut self) {
+        for a in self.objdetail.take_actions() {
+            match a {
+                objdetail::DetailAction::Copy(s) => {
+                    if !clipboard::write_text(&s) {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                    self.redraw();
+                }
+                objdetail::DetailAction::Collapsed(on) => {
+                    let _ = self
+                        .settings
+                        .set("explorer.details_collapsed", if on { "on" } else { "off" });
+                    self.persist_settings();
+                    self.layout();
+                    self.redraw();
+                }
+            }
+        }
+    }
+
     fn explorer_actions(&mut self) -> bool {
+        self.sync_detail_target(false);
         let mut changed = false;
         for a in self.explorer.take_actions() {
             changed = true;
@@ -12492,6 +12633,9 @@ impl App {
                     if !clipboard::write_text(&s) {
                         self.sess.status = t(Msg::ErrClipboard).into();
                     }
+                }
+                ExplorerAction::Details { owner, r } => {
+                    self.objdetail.set_sections(&owner, r);
                 }
                 // Generate SQL 결과(83 §3) — 창은 `el`이 있는 자리에서 연다(이미 열려 있으면 바로 본문 교체).
                 ExplorerAction::Preview { spec, r, server } => {
@@ -13967,6 +14111,19 @@ impl App {
                     }
                 }
             }
+            // ★ 객체 상세 본문(고정폭 · 읽기 전용 텍스트박스 · docs/86).
+            if self.objdetail.is_visible() && !self.objdetail.is_collapsed() {
+                let prefs = FontPrefs {
+                    base: SlotFont {
+                        size: mono_px,
+                        bold: false,
+                        italic: false,
+                    },
+                    ..FontPrefs::default()
+                };
+                let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s).with_fonts(prefs);
+                self.objdetail.paint_body(&mut dc, &th);
+            }
             mark(&mut t_sec, &mut marks); // 1 = 편집기
                                           // ── 결과 그리드(고정폭 · 자체 글꼴 크기 `grid.font_size`)
             {
@@ -14069,6 +14226,10 @@ impl App {
                 self.act_bar.paint(&mut dc, &th);
                 self.explorer.set_font_px(exp_px);
                 self.explorer.paint(&mut dc, &th);
+                if self.objdetail.is_visible() {
+                    self.split_d.paint(&mut dc, &th);
+                    self.objdetail.paint_header(&mut dc, &th, Instant::now());
+                }
                 self.search.paint(&mut dc, &th);
                 self.project_panel.paint(&mut dc, &th);
                 self.bm_panel.paint(&mut dc, &th);
@@ -15270,6 +15431,37 @@ impl App {
                 return;
             }
         }
+        // ★ 객체 상세 패널(docs/86): 마우스 = 패널 안 · 키 = 포커스일 때 — 탐색기보다 먼저(독립 영역).
+        if self.objdetail.is_visible() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let in_det = self.objdetail.bounds().contains(cur);
+            let key_ev = matches!(
+                ev,
+                InputEvent::Key { .. } | InputEvent::Char { .. } | InputEvent::SelectAll
+            );
+            if (is_ptr && in_det)
+                || (is_wheel_ev(&ev) && in_det)
+                || (key_ev && self.focus == Focus::Details)
+            {
+                if matches!(ev, InputEvent::MouseDown { .. }) {
+                    self.set_focus(Focus::Details);
+                }
+                if self.objdetail.on_event(&ev, Instant::now()) {
+                    self.redraw();
+                }
+                self.detail_actions();
+                if !matches!(ev, InputEvent::MouseMove { .. }) {
+                    return;
+                }
+            } else if matches!(ev, InputEvent::MouseMove { .. })
+                && self.objdetail.on_event(&ev, Instant::now())
+            {
+                self.redraw();
+            }
+        }
         // ★ 오브젝트 탐색기 — 열린 메뉴는 먼저 · 마우스는 커서 아래 · 키는 포커스일 때.
         if self.explorer.is_visible() {
             let cur = Point {
@@ -15437,7 +15629,8 @@ impl App {
                 | Focus::Ext
                 | Focus::Project
                 | Focus::Bookmarks
-                | Focus::Outline => {}
+                | Focus::Outline
+                | Focus::Details => {}
             }
             // 편집 컨텍스트 요청(우클릭 메뉴 복사·붙여넣기) — 호스트가 OS 클립보드를 잇는다.
             let pending = self.ed_mut().take_edit_ctx();
@@ -15898,6 +16091,7 @@ impl ApplicationHandler<Wake> for App {
             || self.file_win.animating()
             || self.explorer.bars_visible()
             || self.explorer.background_pending()
+            || self.objdetail.is_animating(Instant::now())
             || self.find.animating()
             || self.search.animating()
             || self.project_panel.animating()
@@ -17510,6 +17704,9 @@ fn main() {
         mem_last_tabs: 0,
         split_v: Splitter::new(SplitAxis::Vertical),
         split_h: Splitter::new(SplitAxis::Horizontal),
+        objdetail: objdetail::DetailPanel::new(),
+        split_d: Splitter::new(SplitAxis::Horizontal),
+        detail_key: None,
         tx_after: None,
         status_tx_rect: Rect::new(0, 0, 0, 0),
         json_watch: None,
@@ -17682,6 +17879,9 @@ fn main() {
     input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
     // 화면 내보내기 방식(T-147) — 첫 창이 만들어지기 전에.
     present::set_mode(app.settings.get("gfx.mac_present").unwrap_or("softbuffer"));
+    // 객체 상세 패널 축소 상태(docs/86 · 설정 기억).
+    app.objdetail
+        .set_collapsed(app.settings.flag("explorer.details_collapsed"));
     // 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로").
     app.conn_win.set_tuning(conn_tuning(&app.settings));
     nexa_ctl::tokens::set_intent_ms(app.settings.int("ui.hover_intent_ms").clamp(0, 500) as u64);

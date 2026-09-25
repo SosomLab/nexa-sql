@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 18)** — §207 ★ T-223 객체 상세 패널(`objdetail.rs` · `nsql_catalog::detail` · CLI `cat detail` · 설정 3키) · 🔧 clippy 2건(CI).
 - **2026-09-25 (100차 후반 · mac · 17)** — §206 🔧 검색 중 새 서버 접속(`send_search` 재요청) · 기동 명령 `connect:`.
 - **2026-09-25 (100차 후반 · mac · 16)** — §205 🔧 변수 입력 창 자식 창 부착(`SELECT :Top` 멈춤).
 - **2026-09-25 (100차 후반 · mac · 15)** — §203 🔧 검색 입력 지연(`toolicons/exp_icons::prewarm` · refilter 부모 표 O(n) · `lower_labels` · `matches_cached`) · §204 🔧 북마크 니모닉(`migrate_target` · `bm.stat`).

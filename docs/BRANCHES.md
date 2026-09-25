@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/object-details-panel | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-223 객체 상세 패널(86 · objdetail.rs · nsql-catalog detail.rs · CLI cat detail · 설정 3키 · §207) |
 | fix/search-new-server-resend | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 검색 중 새 서버 접속 무반응(index_invalidate → send_search) · 기동 명령 connect:(§206) |
 | fix/input-win-attach-child | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 변수 입력 창 자식 창 부착·모달 동기화(SQL Server SELECT :Top 멈춤 · §205) |
 | fix/search-input-lag-and-bm-key | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 검색 입력 지연(아이콘 선굽기 · refilter O(n) · 라벨 캐시) · 🔧 북마크 스크래치→파일 열쇠 이전(§203~204) |

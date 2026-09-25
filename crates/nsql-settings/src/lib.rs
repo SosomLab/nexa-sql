@@ -1730,6 +1730,31 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 객체 상세 패널(docs/86 · T-223 · 09-25): View ▸ Object Details · 높이(스플리터 자동 기억) · 축소 상태.
+    Entry {
+        key: "explorer.details",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerDetails,
+        desc: Msg::DescExplorerDetails,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "explorer.details_h",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerDetailsH,
+        desc: Msg::DescExplorerDetailsH,
+        kind: SettingKind::Int { min: 80, max: 1200 },
+        default: "240",
+    },
+    Entry {
+        key: "explorer.details_collapsed",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerDetailsCollapsed,
+        desc: Msg::DescExplorerDetailsCollapsed,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "explorer.width",
         cat: Msg::CatExplorer,

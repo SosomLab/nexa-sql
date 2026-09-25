@@ -268,7 +268,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "cat",
-        usage: "nsql cat -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | sub <object> <sub-kind> [kind] | gen <what> <object> [kind] [sub-kind sub-name] | source <kind> <name> | errors <name>",
+        usage: "nsql cat -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | sub <object> <sub-kind> [kind] | detail <object> [kind] | gen <what> <object> [kind] [sub-kind sub-name] | source <kind> <name> | errors <name>",
         brief: Msg::HlpCmdCat,
         detail: Msg::HlpCmdCatDetail,
         args: &[
@@ -278,7 +278,8 @@ const CMDS: &[Cmd] = &[
             ("columns <object>", Msg::HlpArgCatColumns),
             ("sub <object> <sub-kind> [kind]", Msg::HlpArgCatSub),
             ("gen <what> <object> [kind] [sub-kind sub-name]", Msg::HlpArgCatGen),
-            ("source <kind> <name>", Msg::HlpArgCatSource),
+            ("detail <object> [kind]", Msg::HelpCatDetail),
+        ("source <kind> <name>", Msg::HlpArgCatSource),
             ("errors <name>", Msg::HlpArgCatErrors),
         ],
         opts: &["-c", "-d", "-s", "-f", "--width", "--max-col-width", "--overflow", "-x"],
