@@ -1418,9 +1418,9 @@ mod layer_tests {
         };
         for (i, id) in ids.iter().enumerate() {
             m.set_detail(*id, &NewDetail::default(), 100 + i as u64 * 10);
-            m.set_columns(*id, &[col.clone()], 100);
+            m.set_columns(*id, std::slice::from_ref(&col), 100);
         }
-        m.set_columns(s1, &[col.clone()], 100);
+        m.set_columns(s1, std::slice::from_ref(&col), 100);
         let hr = m.names.find("HR");
         // TTL 25 → at 100·110 만료(now 140) · 상한 1 → 남은 120 중 하나만 → 셋 다? 아니: 만료 둘 + 상한 안 = 셋 중 둘 비움.
         let (d, c) = m.reclaim(140, hr, 1, 25, 30);
