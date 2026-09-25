@@ -16,6 +16,10 @@ use std::time::Instant;
 /// 머리 줄 높이(논리 px).
 const HEAD_H: f32 = 26.0;
 
+/// 테이블 단위 코멘트 캐시: `스키마.테이블` → (테이블 코멘트, [(컬럼, 코멘트 그대로 · NULL = None)]).
+type CommentCache =
+    std::collections::HashMap<String, (Option<String>, Vec<(String, Option<String>)>)>;
+
 pub(crate) enum DetailAction {
     /// 클립보드로.
     Copy(String),
@@ -42,6 +46,8 @@ pub(crate) struct DetailPanel {
     hover_toggle: bool,
     /// 스키마 대상의 종류별 객체 수(호스트가 메타에서 채움 · 서버 왕복 0).
     schema_counts: Vec<(nsql_catalog::ObjectKind, usize)>,
+    /// ★ 테이블 단위 코멘트 캐시(`스키마.테이블` → (테이블 코멘트, 컬럼 코멘트 **그대로** · NULL = None)) — 한 번 읽으면 그 테이블의 모든 컬럼은 즉시(사용자 09-25).
+    comments: CommentCache,
     last_head_click: Option<Instant>,
 }
 
@@ -65,8 +71,52 @@ impl DetailPanel {
             actions: Vec::new(),
             hover_toggle: false,
             schema_counts: Vec::new(),
+            comments: CommentCache::new(),
             last_head_click: None,
         }
+    }
+
+    fn owner_key(o: &nsql_catalog::ObjectInfo) -> String {
+        format!("{}.{}", o.schema, o.name)
+    }
+
+    /// 이 테이블의 코멘트를 이미 아는가(캐시).
+    pub(crate) fn knows_comments(&self, owner: &nsql_catalog::ObjectInfo) -> bool {
+        self.comments.contains_key(&Self::owner_key(owner))
+    }
+
+    /// 코멘트 도착(NULL·공백도 그대로 기억) — 다시 그린다.
+    pub(crate) fn set_comments(
+        &mut self,
+        owner: &nsql_catalog::ObjectInfo,
+        table: Option<String>,
+        cols: Vec<(String, Option<String>)>,
+    ) {
+        self.comments.insert(Self::owner_key(owner), (table, cols));
+        self.render();
+    }
+
+    /// 대상 컬럼의 코멘트: None = 아직 모름 · Some(None) = NULL(알고 있음) · Some(Some(값)) = 조회된 값 그대로(공백 포함).
+    fn column_comment(&self) -> Option<Option<String>> {
+        let Some(DetailTarget::Column { owner, col }) = &self.target else {
+            return None;
+        };
+        let (_, cols) = self.comments.get(&Self::owner_key(owner))?;
+        Some(
+            cols.iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(&col.name))
+                .and_then(|(_, c)| c.clone()),
+        )
+    }
+
+    /// 대상 테이블의 코멘트(캐시 우선 · 없으면 상세의 속성 행) — 값 그대로.
+    fn table_comment(&self) -> Option<String> {
+        if let Some(DetailTarget::Object(o)) = &self.target {
+            if let Some((tc, _)) = self.comments.get(&Self::owner_key(o)) {
+                return tc.clone();
+            }
+        }
+        self.comment_row()
     }
 
     /// 스키마 대상 = 종류별 객체 수(86 §3).
@@ -238,9 +288,10 @@ impl DetailPanel {
     /// 설명(Description · 사용자 09-25) = 테이블·객체 = 코멘트, 없으면 이름 · 스키마 = 이름 · 컬럼 = 코멘트, 없으면 컬럼 이름 · 잎 = 부가, 없으면 이름.
     fn description(&self) -> String {
         match &self.target {
-            Some(DetailTarget::Object(o)) => self.comment_row().unwrap_or_else(|| o.name.clone()),
-            Some(DetailTarget::Column { col, .. }) => {
-                self.comment_row().unwrap_or_else(|| col.name.clone())
+            Some(DetailTarget::Object(o)) => self.table_comment().unwrap_or_else(|| o.name.clone()),
+            // 컬럼 = 조회된 값 그대로(공백 포함) · NULL·아직 모름 = 빈 글(머리 줄은 NULL을 흐리게).
+            Some(DetailTarget::Column { .. }) => {
+                self.column_comment().flatten().unwrap_or_default()
             }
             Some(DetailTarget::Item { item, .. }) => {
                 if item.detail.is_empty() {
@@ -320,20 +371,26 @@ impl DetailPanel {
                 let secs: Vec<DetailSection> = if self.sections.is_empty() {
                     // 서버 몫 전 = 탐색기가 이미 아는 것(왕복 0 · 사용자 09-25 "로딩 메시지를 볼 일은 거의 없다").
                     let rows: Vec<Vec<String>> = match &self.target {
-                        Some(DetailTarget::Column { col, .. }) => vec![
-                            vec!["name".into(), col.name.clone()],
-                            vec!["type".into(), col.data_type.clone()],
-                            vec![
+                        Some(DetailTarget::Column { col, .. }) => {
+                            let mut r = vec![vec!["name".into(), col.name.clone()]];
+                            match self.column_comment() {
+                                Some(Some(c)) => r.push(vec!["comment".into(), c]),
+                                Some(None) => r.push(vec!["comment".into(), "NULL".into()]),
+                                None => {}
+                            }
+                            r.push(vec!["type".into(), col.data_type.clone()]);
+                            r.push(vec![
                                 "nullable".into(),
                                 if col.nullable {
                                     "NULL".into()
                                 } else {
                                     "NOT NULL".into()
                                 },
-                            ],
-                            vec!["default".into(), col.default.clone()],
-                            vec!["table".into(), format!("{}.{}", o.schema, o.name)],
-                        ],
+                            ]);
+                            r.push(vec!["default".into(), col.default.clone()]);
+                            r.push(vec!["table".into(), format!("{}.{}", o.schema, o.name)]);
+                            r
+                        }
                         _ => {
                             let mut r =
                                 vec![vec!["name".into(), format!("{}.{}", o.schema, o.name)]];
@@ -531,15 +588,14 @@ impl DetailPanel {
                 dc.text(chip.x + px(5.0), cy, chip, &kind, th.window_bg);
                 x += cw + px(8.0);
             }
-            // 종류 칩 옆 = **설명만**(사용자 09-25 · 코멘트가 없으면 이름이 그 자리에).
+            // 종류 칩 옆 = **설명만**(사용자 09-25) · 컬럼 코멘트가 NULL임을 알면 흐린 회색 NULL · 공백은 공백 그대로.
             let desc = self.description();
-            dc.text(
-                x,
-                ty,
-                Rect::new(x, head.y, (right - x).max(0), hh),
-                &desc,
-                th.text,
-            );
+            let clip = Rect::new(x, head.y, (right - x).max(0), hh);
+            if matches!(self.column_comment(), Some(None)) {
+                dc.text(x, ty, clip, "NULL", th.text_dim);
+            } else {
+                dc.text(x, ty, clip, &desc, th.text);
+            }
         }
         // ▾(펼침 상태 = 축소) / ▴(축소 상태 = 확장) — 글꼴 글리프 대신 도형(3-OS 동일).
         if self.hover_toggle {

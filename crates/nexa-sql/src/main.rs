@@ -12565,10 +12565,16 @@ impl App {
         match &t {
             Some(explorer::DetailTarget::Object(o)) => {
                 self.explorer.request_details(o.clone(), None);
+                // 테이블을 고르면 코멘트도 테이블 단위로 미리(그 컬럼들을 누를 때 즉시 · 86 §4).
+                if o.kind.is_relation() && !self.objdetail.knows_comments(o) {
+                    self.explorer.request_comments(o.clone());
+                }
             }
-            Some(explorer::DetailTarget::Column { owner, col }) => {
-                self.explorer
-                    .request_details(owner.clone(), Some(col.clone()));
+            // 컬럼 = 탐색기 값은 즉시 · 코멘트는 테이블 단위 캐시(모르면 한 번 읽는다 · 상세 왕복 없음).
+            Some(explorer::DetailTarget::Column { owner, .. })
+                if !self.objdetail.knows_comments(owner) =>
+            {
+                self.explorer.request_comments(owner.clone());
             }
             _ => {}
         }
@@ -12657,6 +12663,9 @@ impl App {
                 }
                 ExplorerAction::Details { owner, col, r } => {
                     self.objdetail.set_sections(&owner, col.as_ref(), r);
+                }
+                ExplorerAction::Comments { owner, table, cols } => {
+                    self.objdetail.set_comments(&owner, table, cols);
                 }
                 // Generate SQL 결과(83 §3) — 창은 `el`이 있는 자리에서 연다(이미 열려 있으면 바로 본문 교체).
                 ExplorerAction::Preview { spec, r, server } => {

@@ -123,6 +123,23 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     println!();
                 }
             }
+            // ★ 코멘트 그대로(86 §4): `comments <table>` — 테이블·컬럼 코멘트(NULL/공백 구분 · 객체 상세 패널과 같은 함수).
+            "comments" => {
+                let Some(obj) = o.positional.get(1) else {
+                    return Ok(usage());
+                };
+                let (sc, name) = split_name(obj, &schema);
+                let (tc, cols) = nsql_catalog::comments_raw(s, &sc, &name);
+                println!(
+                    "table: {}",
+                    tc.map_or("NULL".to_string(), |c| format!("{c:?}"))
+                );
+                let rows = cols
+                    .into_iter()
+                    .map(|(n, c)| vec![n, c.map_or("NULL".to_string(), |c| format!("{c:?}"))])
+                    .collect();
+                print_rs(o, dialect, &rs(&["Column", "Comment"], rows));
+            }
             // ★ 이름 인덱스(84 §2): `index [max]` — 탐색기 검색이 쓰는 서버 전체 (스키마, 종류, 이름) 한 번에.
             "index" => {
                 let max = o

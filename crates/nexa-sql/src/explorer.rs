@@ -211,6 +211,11 @@ enum Req {
         col: Option<ColumnInfo>,
         opts: GenOpts,
     },
+    /// ★ 테이블·컬럼 코멘트 한 번에(86 §4 · 사용자 09-25 "컬럼 설명을 이미 알면 바로") — 패널이 테이블 단위로 캐시 · 값은 그대로(NULL/공백).
+    Comments {
+        gen: u64,
+        owner: ObjectInfo,
+    },
     /// 메타 저장소용 컬럼(자동 완성 즉시 채움 · docs/47 §4 · 트리 노드 없이).
     ColumnsMeta {
         gen: u64,
@@ -517,6 +522,12 @@ enum Resp {
         col: Option<ColumnInfo>,
         r: Result<Vec<nsql_catalog::DetailSection>, String>,
     },
+    Comments {
+        gen: u64,
+        owner: ObjectInfo,
+        table: Option<String>,
+        cols: Vec<(String, Option<String>)>,
+    },
     ColumnsMeta {
         gen: u64,
         schema: String,
@@ -616,6 +627,12 @@ pub(crate) enum ExplorerAction {
         owner: ObjectInfo,
         col: Option<ColumnInfo>,
         r: Result<Vec<nsql_catalog::DetailSection>, String>,
+    },
+    /// 테이블·컬럼 코멘트 그대로(86 §4) — 패널 캐시(NULL = None · 공백 = Some("")).
+    Comments {
+        owner: ObjectInfo,
+        table: Option<String>,
+        cols: Vec<(String, Option<String>)>,
     },
     /// ★ Generate SQL 결과(83 §3) → 호스트가 SQL Preview 모달을 연다(`server` = 이 칸의 서버 · `ExplorerSet`이 채운다).
     Preview {
@@ -919,6 +936,7 @@ fn req_prio(r: &Req) -> u8 {
         | Req::SubItems { .. }
         | Req::GenSql { .. }
         | Req::Details { .. }
+        | Req::Comments { .. }
         | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
@@ -1226,6 +1244,21 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     None => nsql_catalog::object_details(s, &owner, opts).map_err(err_s),
                 });
                 Resp::Details { gen, owner, col, r }
+            }
+            Req::Comments { gen, owner } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let (table, cols) = with_session(&mut session, |s| {
+                    Ok(nsql_catalog::comments_raw(s, &owner.schema, &owner.name))
+                })
+                .unwrap_or((None, Vec::new()));
+                Resp::Comments {
+                    gen,
+                    owner,
+                    table,
+                    cols,
+                }
             }
             Req::ColumnsMeta {
                 gen,
@@ -2656,6 +2689,18 @@ impl Explorer {
                     }
                     self.actions.push(ExplorerAction::Details { owner, col, r });
                 }
+                Resp::Comments {
+                    gen,
+                    owner,
+                    table,
+                    cols,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    self.actions
+                        .push(ExplorerAction::Comments { owner, table, cols });
+                }
                 Resp::Hits { gen, rev, hits } => {
                     if gen != self.gen || rev != self.filter_rev || self.filter.is_none() {
                         continue;
@@ -3787,6 +3832,19 @@ impl Explorer {
                 _ => None,
             })
             .collect()
+    }
+
+    /// 테이블·컬럼 코멘트 요청(86 §4 · 급한 세션 · 테이블 단위 1~2 질의 · 값 그대로).
+    pub(crate) fn request_comments(&mut self, owner: ObjectInfo) {
+        if self.dialect.is_none() || self.offline {
+            return;
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
+        let _ = self.tx.send(Req::Comments {
+            gen: self.gen,
+            owner,
+        });
     }
 
     /// 객체 상세 요청(86 · L3 = 즉시 · 급한 세션).

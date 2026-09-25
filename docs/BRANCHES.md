@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/column-comment-cache | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 컬럼 설명 즉시(테이블 단위 코멘트 캐시 · comments_raw · NULL 흐림 · 값 그대로) · CLI cat comments(§211) |
 | fix/details-scope-and-font | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 객체 상세 = 탐색기 범위(PK·인덱스·컬럼·인자·의존) · 설명만 · ▼/▲ · preview_box 상자(줄 겹침 수정) · column_details(§209) |
 | feat/details-followups-flash | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | T-225 ①~④(코멘트 설명 · 스키마 개수 · 더블클릭 열기 · 도형 ▾/▴) · 검색 완료 플래시(§208) |
 | feat/object-details-panel | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-223 객체 상세 패널(86 · objdetail.rs · nsql-catalog detail.rs · CLI cat detail · 설정 3키 · §207) |

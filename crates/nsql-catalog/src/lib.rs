@@ -1006,7 +1006,78 @@ pub struct TableDetail {
     pub col_comments: Vec<(String, String)>,
 }
 
-/// 테이블·컬럼 코멘트(Description · 사용자 09-24) — 실패는 없음으로(코멘트 기능이 없는 DB · 권한).
+/// 코멘트 질의 SQL(테이블, 컬럼) — `raw` = NULL·공백도 그대로 돌려주는 판(객체 상세 패널 · 사용자 09-25 "조회되는 데이터 그대로").
+fn comment_sqls(
+    dialect: Dialect,
+    schema: &str,
+    table: &str,
+    raw: bool,
+) -> (Option<String>, Option<String>) {
+    let f = |cond: &str| {
+        if raw {
+            String::new()
+        } else {
+            format!(" AND {cond}")
+        }
+    };
+    match dialect {
+        Dialect::Oracle => (
+            Some(format!("SELECT comments FROM all_tab_comments WHERE owner = {} AND table_name = {}", lit(schema), lit(table))),
+            Some(format!("SELECT column_name, comments FROM all_col_comments WHERE owner = {} AND table_name = {}{}", lit(schema), lit(table), f("comments IS NOT NULL"))),
+        ),
+        Dialect::Mssql => {
+            let obj = lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)));
+            (
+                Some(format!("SELECT CAST(value AS NVARCHAR(4000)) FROM sys.extended_properties WHERE major_id = OBJECT_ID({obj}) AND minor_id = 0 AND name = 'MS_Description'")),
+                Some(format!("SELECT c.name, CAST(ep.value AS NVARCHAR(4000)) FROM sys.extended_properties ep JOIN sys.columns c ON c.object_id = ep.major_id AND c.column_id = ep.minor_id WHERE ep.major_id = OBJECT_ID({obj}) AND ep.name = 'MS_Description'")),
+            )
+        }
+        Dialect::Postgres => (
+            Some(format!("SELECT obj_description(c.oid, 'pg_class') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}", lit(schema), lit(table))),
+            Some(format!("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {} AND a.attnum > 0 AND NOT a.attisdropped{}", lit(schema), lit(table), f("col_description(a.attrelid, a.attnum) IS NOT NULL"))),
+        ),
+        Dialect::Mysql | Dialect::Odbc => (
+            Some(format!("SELECT table_comment FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", lit(schema), lit(table))),
+            Some(format!("SELECT column_name, column_comment FROM information_schema.columns WHERE table_schema = {} AND table_name = {}{}", lit(schema), lit(table), f("column_comment <> ''"))),
+        ),
+        Dialect::Sqlite => (None, None),
+    }
+}
+
+/// ★ 코멘트 **그대로**(객체 상세 · 09-25): 테이블 = 행이 있고 NULL이 아니면 그 값(공백 포함) · 컬럼 = (이름, NULL이면 None · 아니면 그대로) — 컬럼 행이 없는 것(SQL Server 확장 속성 없음)은 목록에 없다 = NULL로 본다.
+pub fn comments_raw(
+    s: &mut dyn Session,
+    schema: &str,
+    table: &str,
+) -> (Option<String>, Vec<(String, Option<String>)>) {
+    let (tsql, csql) = comment_sqls(s.dialect(), schema, table, true);
+    let tc = tsql
+        .and_then(|q| query(s, &q).ok())
+        .and_then(|rs| rs.rows.first().and_then(|r| r.first()).cloned())
+        .and_then(|v| {
+            if matches!(v, Value::Null) {
+                None
+            } else {
+                Some(cell_str(&v))
+            }
+        });
+    let cc = csql
+        .and_then(|q| query(s, &q).ok())
+        .map(|rs| {
+            rs.rows
+                .iter()
+                .map(|r| {
+                    let c = r.get(1).filter(|v| !matches!(v, Value::Null)).map(cell_str);
+                    (col(r, 0), c)
+                })
+                .filter(|(n, _)| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    (tc, cc)
+}
+
+/// 테이블·컬럼 코멘트(Description · 사용자 09-24) — 실패는 없음으로(코멘트 기능이 없는 DB · 권한) · 비거나 NULL은 뺀다(DDL·카드용).
 pub fn comments(
     s: &mut dyn Session,
     schema: &str,
