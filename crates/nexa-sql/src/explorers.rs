@@ -1488,12 +1488,24 @@ impl ExplorerSet {
             return;
         }
         // 트리가 펼쳐지거나 접히면 칸 높이가 달라진다 → 그릴 때마다 다시 놓는다(칸 수만큼의 덧셈).
+        let t0 = std::time::Instant::now();
         self.relayout();
+        let t1 = std::time::Instant::now();
         dc.fill_rect(self.area, th.panel_bg);
         self.filter.paint(dc, th, true);
+        let t2 = std::time::Instant::now();
         let laid = self.laid();
         for &i in &laid {
             self.panes[i].ex.paint(dc, th);
+        }
+        let ms = t0.elapsed().as_millis();
+        if ms >= 100 {
+            eprintln!(
+                "[explorer] paint {ms} ms (relayout {} · filter {} · panes {})",
+                (t1 - t0).as_millis(),
+                (t2 - t1).as_millis(),
+                t2.elapsed().as_millis()
+            );
         }
         // ★ 서버 헤더(docs/54 §9): 그룹 첫 칸이 자기 글꼴·아이콘으로 그린다 · 부가 = 연결 수.
         let heads = self.headers.clone();

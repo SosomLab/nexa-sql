@@ -661,13 +661,14 @@ impl Bookmarks {
         let (epoch, seq_now) = (buf.epoch(), buf.change_seq());
         let doc = Self::doc_key(ed, i);
         // 이름 없는 탭 → 파일로 저장(C-21): 열쇠를 옮긴다(복사 아님).
-        if let (Some(DocKey::Scratch { tab: t }), DocKey::File { path }) =
-            (self.docs.get(&tab), &doc)
-        {
-            if *t == tab {
-                let p = std::path::PathBuf::from(path);
-                self.scratch_saved(tab, &p);
-            }
+        //   ★ 09-25 결함: 저장 순간의 `docs` 기록에만 의존해, 재시작·복원 뒤(기록 없음) 파일 탭이 된 스크래치 북마크가 `Scratch{tab}`에
+        //   남아 패널엔 보이되 거터(니모닉)엔 안 걸렸다 → 지금 열쇠가 파일이고 저장소에 이 탭의 스크래치 열쇠가 남아 있으면 늘 옮긴다.
+        let has_scratch = !self
+            .store
+            .for_doc(&DocKey::Scratch { tab }, CASE_INSENSITIVE)
+            .is_empty();
+        if let Some(p) = migrate_target(&doc, self.docs.get(&tab), tab, has_scratch) {
+            self.scratch_saved(tab, &p);
         }
         self.docs.insert(tab, doc.clone());
         if self.store.for_doc(&doc, CASE_INSENSITIVE).is_empty() {
@@ -820,6 +821,21 @@ impl Bookmarks {
     }
 }
 
+/// 스크래치 → 파일 열쇠 이전 판정(순수 · 09-25): 지금 열쇠가 파일이고, ① 직전 기록이 이 탭의 스크래치였거나 ② 저장소에 이 탭의
+/// 스크래치 북마크가 남아 있으면(재시작·복원 뒤 = 기록 없음) 옮길 경로를 준다.
+fn migrate_target(
+    doc: &DocKey,
+    prev: Option<&DocKey>,
+    tab: u64,
+    has_scratch: bool,
+) -> Option<std::path::PathBuf> {
+    let DocKey::File { path } = doc else {
+        return None;
+    };
+    let prev_scratch = matches!(prev, Some(DocKey::Scratch { tab: t }) if *t == tab);
+    (prev_scratch || has_scratch).then(|| std::path::PathBuf::from(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,6 +886,34 @@ mod tests {
     }
 
     /// 이름 없는 탭 북마크의 옛 id → 새 id 재매핑(사용자 09-23 검토): 표에 있는 것만 바뀌고 · 파일 열쇠는 그대로.
+    #[test]
+    /// ★ 09-25: 파일 탭에 이 탭의 스크래치 북마크가 남아 있으면(복원 뒤 기록 없음) 옮긴다 · 직전 기록이 스크래치여도 옮긴다 ·
+    /// 스크래치 탭·남은 것 없음 = 안 옮긴다.
+    #[test]
+    fn scratch_bookmarks_migrate_to_file_key_after_restore() {
+        let file = DocKey::File {
+            path: "/tmp/s.sql".into(),
+        };
+        let scratch = DocKey::Scratch { tab: 7 };
+        assert!(
+            migrate_target(&file, None, 7, true).is_some(),
+            "복원 뒤 = 기록 없음 + 남은 스크래치"
+        );
+        assert!(
+            migrate_target(&file, Some(&scratch), 7, false).is_some(),
+            "저장 순간(C-21)"
+        );
+        assert!(migrate_target(&file, None, 7, false).is_none());
+        assert!(
+            migrate_target(&scratch, None, 7, true).is_none(),
+            "아직 스크래치"
+        );
+        assert!(
+            migrate_target(&file, Some(&DocKey::Scratch { tab: 8 }), 7, false).is_none(),
+            "다른 탭 기록"
+        );
+    }
+
     #[test]
     fn remap_scratch_ids_after_restore() {
         let mut bm = Bookmarks::new();

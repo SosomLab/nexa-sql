@@ -8237,6 +8237,33 @@ impl App {
             let _ = std::fs::write(path, self.explorer.stat_text());
             return;
         }
+        // 진단(09-25 "북마크 니모닉 표시가 안 된다"): 탭마다 문서 열쇠 · 저장소 표식/라벨 수 · 텍스트박스에 걸린 수 · 설정.
+        if let Some(path) = id.strip_prefix("bm.stat:") {
+            let mut out = format!(
+                "enabled={} gutter={} tabs={} store_docs={}\n",
+                self.bookmarks.enabled,
+                self.settings.flag("bookmark.gutter"),
+                self.editors.len(),
+                self.bookmarks.store.doc_keys_debug()
+            );
+            let (c, d) = (self.theme.accent, self.theme.text_dim);
+            for i in 0..self.editors.len() {
+                let key = bookmarks::Bookmarks::doc_key(&self.editors, i);
+                let marks = self.bookmarks.marks_for(&self.editors, i, c, d).len();
+                let labels = self.bookmarks.labels_for(&self.editors, i).len();
+                let tb = self
+                    .editors
+                    .tab_box(i)
+                    .map(|t| t.gutter_stat())
+                    .unwrap_or((0, 0, false));
+                out.push_str(&format!(
+                    "{i}: title={:?} key={key:?} marks={marks} labels={labels} tb={tb:?}\n",
+                    self.editors.tab_titles().get(i)
+                ));
+            }
+            let _ = std::fs::write(path, out);
+            return;
+        }
         if let Some(path) = id.strip_prefix("sqlprev.dump:") {
             let text = if self.sqlprev_win.is_open() {
                 format!(
@@ -17190,6 +17217,13 @@ fn main() {
     mark(&mut marks, "keymap");
     let explorer = {
         let proxy = std::sync::Mutex::new(wake_proxy.clone());
+        // ★ 아이콘 마스크 선굽기(09-25 §203): 첫 표시 때 UI 스레드가 래스터화로 멎지 않게(Debug 1.26 s) — 별 스레드 · 결과는 전역 캐시.
+        let _ = std::thread::Builder::new()
+            .name("nsql-icons".into())
+            .spawn(|| {
+                toolicons::prewarm();
+                exp_icons::prewarm();
+            });
         let mut e = explorers::ExplorerSet::new(
             std::sync::Arc::new(move || {
                 if let Ok(p) = proxy.lock() {

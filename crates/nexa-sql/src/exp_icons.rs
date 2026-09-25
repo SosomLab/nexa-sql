@@ -426,3 +426,31 @@ mod tests {
         }
     }
 }
+
+/// ★ 시작 때 백그라운드에서 종류 아이콘 마스크 전부를 미리 굽는다(09-25 · 첫 표시 지연 0 · `OnceLock`이라 스레드 안전).
+pub(crate) fn prewarm() {
+    let _ = mask(IconKind::Dbms);
+    let _ = mask(IconKind::Schema);
+    let _ = mask(IconKind::Folder);
+    let _ = mask(IconKind::Table);
+    let _ = mask(IconKind::View);
+    let _ = mask(IconKind::MatView);
+    let _ = mask(IconKind::Procedure);
+    let _ = mask(IconKind::Function);
+    let _ = mask(IconKind::Package);
+    let _ = mask(IconKind::PackageBody);
+    let _ = mask(IconKind::Sequence);
+    let _ = mask(IconKind::Trigger);
+    let _ = mask(IconKind::Index);
+    let _ = mask(IconKind::Synonym);
+    let _ = mask(IconKind::Type);
+    let _ = mask(IconKind::Column);
+    let _ = mask(IconKind::Constraint);
+    let _ = mask(IconKind::Partition);
+    let _ = mask(IconKind::Property);
+    let _ = mask(IconKind::Rule);
+    let _ = mask(IconKind::Queue);
+    let _ = mask(IconKind::Link);
+    let _ = mask(IconKind::Job);
+    let _ = mask(IconKind::Java);
+}

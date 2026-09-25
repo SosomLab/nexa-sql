@@ -43,9 +43,21 @@ pub(crate) struct Matcher {
     rx: Option<fancy_regex::Regex>,
     err: bool,
     text: String,
+    /// 낱말(소문자 · 한글이면 자모열) — 노드마다 다시 자르지 않게 한 번 계산(09-25 refilter 92 ms → 캐시).
+    tokens: Vec<(String, Option<Vec<char>>)>,
 }
 
 impl Matcher {
+    fn tokens_of(text: &str) -> Vec<(String, Option<Vec<char>>)> {
+        text.split_whitespace()
+            .map(|t| {
+                let jamo =
+                    nsql_core::hangul::has_hangul(t).then(|| nsql_core::hangul::decompose(t, true));
+                (t.to_lowercase(), jamo)
+            })
+            .collect()
+    }
+
     /// 옵션 없는 글 필터(공백으로 나눈 낱말 전부 포함 · 대소문자 무시) — 시험·기동 명령용.
     #[allow(dead_code)]
     pub(crate) fn plain(text: &str) -> Self {
@@ -53,6 +65,27 @@ impl Matcher {
             rx: None,
             err: false,
             text: text.to_string(),
+            tokens: Self::tokens_of(text),
+        }
+    }
+
+    /// ★ 캐시 판정(85 §6 · 입력 지연): 호출자가 보관한 **소문자 라벨**로 낱말 포함을 보고, 원문이 필요한 길(정규식 · 한글 자모)만
+    /// `orig`를 부른다 — 노드마다 `to_lowercase`·분할 0.
+    pub(crate) fn matches_cached(&self, lower: &str, orig: impl Fn() -> String) -> bool {
+        if self.err {
+            return false;
+        }
+        match &self.rx {
+            Some(r) => r.is_match(&orig()).unwrap_or(false),
+            None => {
+                if self.tokens.is_empty() {
+                    return true;
+                }
+                self.tokens.iter().all(|(t, jamo)| match jamo {
+                    Some(q) => nsql_core::hangul::contains_jamo(&orig(), q, true),
+                    None => lower.contains(t.as_str()),
+                })
+            }
         }
     }
 
@@ -572,6 +605,7 @@ impl FilterBar {
     /// 지금 글·옵션의 **복제 가능한 판정기**(탐색기처럼 구조가 바뀔 때마다 스스로 다시 걸러야 하는 쪽이 들고 있는다 · 09-25).
     pub(crate) fn matcher(&self) -> Matcher {
         Matcher {
+            tokens: Matcher::tokens_of(&self.text),
             rx: self.matcher.clone(),
             err: self.regex_err,
             text: self.text.clone(),
@@ -671,7 +705,9 @@ impl FilterBar {
             dc.text(fb.x + px(6.0), ty, fb, &self.placeholder, th.text_dim);
             return;
         }
+        let t_tb = std::time::Instant::now();
         self.tb.paint(dc, th);
+        let tb_ms = t_tb.elapsed().as_millis();
         let tbb = self.tb.bounds();
         if tbb.w > 0 {
             // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다(둥근 모서리 안쪽만 · 찾기 막대 `paint_frame`과 같다).
@@ -683,9 +719,21 @@ impl FilterBar {
         if self.tb.is_focused() {
             dc.stroke_round_rect(fb, r, th.accent, 1.0);
         }
+        let t_s = std::time::Instant::now();
         self.paint_search(dc, th, fb, r);
+        let s_ms = t_s.elapsed().as_millis();
+        let t_b = std::time::Instant::now();
+        let mut per: Vec<u128> = Vec::new();
         for b in &self.btns {
+            let t = std::time::Instant::now();
             b.paint(dc, th, s);
+            per.push(t.elapsed().as_millis());
+        }
+        let b_ms = t_b.elapsed().as_millis();
+        if tb_ms + s_ms + b_ms >= 100 {
+            eprintln!(
+                "[filterbar] paint textbox {tb_ms} ms · search {s_ms} ms · btns {b_ms} ms {per:?}"
+            );
         }
     }
 

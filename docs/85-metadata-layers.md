@@ -72,7 +72,7 @@
   - 스레드 → UI: `Resp::Hits{rev, hits}` — 검색어를 받으면 사본 전부에서 한 번 · 그 뒤 인덱스 스키마가 도착할 때마다 **그 스키마 분만**(점증).
   - UI = `rev`가 지금 검색어와 같을 때만 `materialize_hits`(일치 ≤ `hits_max` 삽입) + `refilter` → 스캔 0 · 매처 실행 0 · 정렬 0.
   - 애니메이션(84 §8-1)은 `tick`에서 상태만 읽어 그린다(`SearchState`) — 검색 작업과 공유 데이터 없음(메시지만).
-- 남은 UI 몫 = `load_names`(스키마당 1 편집) · 노드 삽입 · 재필터(노드 수 O(n) · 수천) — Debug에서 ms 단위.
+- 남은 UI 몫 = `load_names`(스키마당 1 편집) · 노드 삽입 · 재필터 — §203: 재필터는 부모 표 O(n) + 소문자 라벨 캐시(`lower_labels`) + `Matcher::matches_cached`로 2,230 노드 92 → <20 ms · 아이콘 마스크는 시작 때 선굽기(`nsql-icons`).
 - 시험 = `search_thread_tests::search_hits_matches_across_schemas_with_limit`(순수 함수) · 탐색기 `index_materializes_hits_into_unloaded_folders_and_completes`(응답 주입) · GUI 격리 덤프(§10).
 
 ## 7. 설정(카테고리 Explorer)

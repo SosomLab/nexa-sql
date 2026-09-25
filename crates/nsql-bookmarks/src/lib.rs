@@ -462,6 +462,19 @@ pub struct Store {
 pub const DEFAULT_GROUP: u32 = 1;
 
 impl Store {
+    /// 진단: 저장소에 있는 문서 열쇠와 각 건수(`bm.stat` · 09-25).
+    #[must_use]
+    pub fn doc_keys_debug(&self) -> String {
+        let mut m: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for b in &self.items {
+            *m.entry(format!("{:?}", b.doc)).or_insert(0) += 1;
+        }
+        m.into_iter()
+            .map(|(k, n)| format!("{k}×{n}"))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Store {

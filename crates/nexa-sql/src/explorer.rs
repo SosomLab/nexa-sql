@@ -657,6 +657,8 @@ pub(crate) struct Explorer {
     batching: bool,
     /// 검색어 세대(스레드 판정 응답 `Resp::Hits`의 짝 맞추기).
     filter_rev: u64,
+    /// ★ 노드별 소문자 라벨 캐시(refilter용 · 09-25 92 ms → ms): 노드 인덱스 → 소문자 라벨 · 종류가 바뀌면 비운다.
+    lower_labels: Vec<Option<Box<str>>>,
     /// Generate SQL 옵션(설정 `gen.*` · 호스트가 준다).
     gen_opts: GenOpts,
     /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
@@ -1555,6 +1557,7 @@ impl Explorer {
             completing: None,
             batching: false,
             filter_rev: 0,
+            lower_labels: Vec::new(),
             fresh: Vec::new(),
             highlight_ms: 2000,
             missing_at: HashMap::new(),
@@ -1567,6 +1570,7 @@ impl Explorer {
 
     fn reset_tree(&mut self) {
         self.soft.clear();
+        self.lower_labels.clear();
         self.index_reset();
         self.complete_q.clear();
         self.completing = None;
@@ -2582,9 +2586,25 @@ impl Explorer {
                     if gen != self.gen || rev != self.filter_rev || self.filter.is_none() {
                         continue;
                     }
-                    self.materialize_hits(&hits);
-                    self.refilter();
+                    let t0 = Instant::now();
+                    let n = hits.len();
+                    let added = self.materialize_hits(&hits);
+                    let t1 = Instant::now();
+                    // 새 노드가 없으면 다시 거를 것도 없다(입력마다 두 번 걸리던 refilter 하나 절감).
+                    if added > 0 {
+                        self.refilter();
+                    }
+                    let t2 = Instant::now();
                     self.pump_complete();
+                    let ms = t0.elapsed().as_millis();
+                    if ms >= 20 {
+                        eprintln!(
+                            "[explorer] hits {n} took {ms} ms (materialize {} · refilter {} · nodes {})",
+                            (t1 - t0).as_millis(),
+                            (t2 - t1).as_millis(),
+                            self.nodes.len()
+                        );
+                    }
                 }
                 Resp::Objects { gen, node, r } => {
                     if gen != self.gen {
@@ -2947,6 +2967,9 @@ impl Explorer {
                 Some(i) => {
                     // 같은 객체 — 표시 정보(상태·형식)만 새 값으로 · 구조는 보존.
                     self.nodes[i].kind = k.kind;
+                    if let Some(c) = self.lower_labels.get_mut(i) {
+                        *c = None;
+                    }
                     ids.push(i);
                 }
                 None => {
@@ -3696,6 +3719,7 @@ impl Explorer {
     /// 안은 전부) — 그 밖(미일치 · 아직 안 읽은 폴더 포함)은 전부 숨긴다. **최소 표시 레벨 = 루트(연결 행)**(서버 헤더는
     /// `ExplorerSet`이 늘 그린다 · 일치 0이면 헤더에 "일치 0"). 일치 자손을 품은 읽어 둔 노드는 펼친다.
     pub(crate) fn apply_filter(&mut self, m: Option<crate::filterbar::Matcher>) {
+        let t0 = Instant::now();
         self.filter = m.filter(|m| !m.is_empty());
         self.filter_rev += 1;
         if let Some(m) = self.filter.clone() {
@@ -3714,8 +3738,19 @@ impl Explorer {
             self.index_q.clear();
             let _ = self.tx_bg.send(Req::SearchStop { gen: self.gen });
         }
+        let t1 = Instant::now();
         self.refilter();
+        let t2 = Instant::now();
         self.pump_complete();
+        let ms = t0.elapsed().as_millis();
+        if ms >= 20 {
+            eprintln!(
+                "[explorer] apply_filter {ms} ms (prepare {} · refilter {} · nodes {})",
+                (t1 - t0).as_millis(),
+                (t2 - t1).as_millis(),
+                self.nodes.len()
+            );
+        }
     }
 
     pub(crate) fn set_index_cfg(&mut self, c: IndexCfg) {
@@ -4087,14 +4122,15 @@ impl Explorer {
 
     /// ② 일치를 트리로: 인덱스에서 필터에 맞는 항목을 그 (스키마, 종류) 폴더의 **부분** 자식으로 올린다(이미 전체가 읽힌/읽는 중인 폴더는 건너뜀 ·
     /// 상한 `hits_max`) · 올라간 폴더는 완성 큐에.
-    fn materialize_hits(&mut self, hits: &[(String, ObjectKind, String)]) {
+    fn materialize_hits(&mut self, hits: &[(String, ObjectKind, String)]) -> usize {
         if self.filter.is_none() {
-            return;
+            return 0;
         }
-        let Some(d) = self.dialect else { return };
+        let Some(d) = self.dialect else { return 0 };
         if hits.is_empty() {
-            return;
+            return 0;
         }
+        let mut added = 0usize;
         let schema_node: HashMap<String, usize> = self.nodes[0]
             .children
             .iter()
@@ -4105,7 +4141,7 @@ impl Explorer {
             .collect();
         let picked: Vec<(String, ObjectKind, String)> = hits.to_vec();
         if picked.is_empty() {
-            return;
+            return 0;
         }
         let mut names: HashMap<usize, HashSet<String>> = HashMap::new();
         self.batching = true;
@@ -4156,6 +4192,7 @@ impl Explorer {
             });
             let id = self.nodes.len() - 1;
             self.nodes[fi].children.push(id);
+            added += 1;
             if self.nodes[fi].state == LoadState::Idle {
                 self.nodes[fi].state = LoadState::Partial;
             }
@@ -4181,6 +4218,7 @@ impl Explorer {
             self.nodes[fi].children = kids;
         }
         self.clamp_scroll();
+        added
     }
 
     /// ③ 완성: 큐의 부분 폴더를 하나씩(보이는 순서 = 넣은 순서) 전체 목록으로 — 검색 중일 때만.
@@ -4248,18 +4286,50 @@ impl Explorer {
         let n = self.nodes.len();
         let mut strong = vec![false; n];
         let mut hit = vec![false; n];
+        // 부모 표를 한 번에(종전 `parent_of` = 노드마다 전체 스캔 = O(n²) · 09-25 실측 2,230 노드 67 ms → ms).
+        let mut parents: Vec<Option<usize>> = vec![None; n];
+        for (p, node) in self.nodes.iter().enumerate() {
+            for &c in &node.children {
+                if let Some(slot) = parents.get_mut(c) {
+                    *slot = Some(p);
+                }
+            }
+        }
         // 자식이 부모보다 뒤에 만들어진다(인덱스 증가) → 뒤에서 앞으로 한 번에.
         for i in (0..n).rev() {
             let node = &self.nodes[i];
-            let attached = i == 0 || self.parent_of(i).is_some();
+            let attached = i == 0 || parents[i].is_some();
             if !attached {
                 continue;
             }
             // 검색 대상 = 객체·컬럼·잎·스키마 이름(폴더·하위 폴더 라벨은 대상이 아니다 — "Tables"가 "b"에 걸리지 않게).
-            let direct = !matches!(
+            let searchable = !matches!(
                 node.kind,
                 NodeKind::Root | NodeKind::Folder { .. } | NodeKind::Sub { .. }
-            ) && m.matches(&self.label(i).0);
+            );
+            let direct = searchable && {
+                if self.lower_labels.len() <= i {
+                    self.lower_labels.resize(i + 1, None);
+                }
+                if self.lower_labels[i].is_none() {
+                    // 이름은 종류에서 바로(라벨 조립 = 할당 여럿 · 09-25 실측 39 µs/노드) · 그 밖은 라벨.
+                    let name: &str = match &self.nodes[i].kind {
+                        NodeKind::Schema(s) => s.as_str(),
+                        NodeKind::Object(o) => o.name.as_str(),
+                        NodeKind::Column(c) => c.name.as_str(),
+                        NodeKind::Item(it) => it.name.as_str(),
+                        _ => "",
+                    };
+                    let lower = if name.is_empty() {
+                        self.label(i).0.to_lowercase()
+                    } else {
+                        name.to_lowercase()
+                    };
+                    self.lower_labels[i] = Some(lower.into_boxed_str());
+                }
+                let lower = self.lower_labels[i].clone().unwrap_or_default();
+                m.matches_cached(&lower, || self.label(i).0)
+            };
             let child_strong = node.children.iter().any(|&c| strong[c]);
             hit[i] = direct;
             strong[i] = direct || child_strong;
@@ -4268,7 +4338,7 @@ impl Explorer {
         let mut under = vec![false; n];
         let mut keep = vec![false; n];
         for i in 0..n {
-            let parent = if i == 0 { None } else { self.parent_of(i) };
+            let parent = if i == 0 { None } else { parents[i] };
             if i != 0 && parent.is_none() {
                 continue;
             }
@@ -5513,7 +5583,7 @@ mod refresh_tests {
         ex.index_done.insert("HR".into());
         ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
         // 판정은 스레드(85 §6) — 시험은 그 응답(일치)을 직접 넣는다.
-        ex.materialize_hits(&[
+        let _ = ex.materialize_hits(&[
             ("HR".into(), ObjectKind::View, "V_B1".into()),
             ("HR".into(), ObjectKind::Table, "B".into()),
         ]);

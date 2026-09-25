@@ -1355,3 +1355,56 @@ mod svg_tests {
         assert!((polys[0][0].1 - 940.0).abs() < 0.01, "y + 960 보정");
     }
 }
+
+/// ★ 시작 때 백그라운드에서 모든 툴·메뉴 아이콘 마스크를 미리 굽는다(09-25 실측: 필터 토글 Aa·ab·(.*) 첫 표시 = Debug 1.26 s 프레임 정지 —
+/// `memo`는 전역 Mutex 캐시라 다른 스레드에서 채워도 UI가 그대로 쓴다). 호스트가 `std::thread::spawn` 안에서 부른다.
+pub(crate) fn prewarm() {
+    let _ = new_script();
+    let _ = open_file();
+    let _ = save_file();
+    let _ = save_as();
+    let _ = run_statement();
+    let _ = run_all();
+    let _ = connect();
+    let _ = log();
+    let _ = view_mode();
+    let _ = refresh();
+    let _ = fetch_all();
+    let _ = fetch_stop();
+    let _ = disconnect();
+    let _ = commit();
+    let _ = tx_log();
+    let _ = sessions();
+    let _ = rollback();
+    let _ = mi_files();
+    let _ = mi_extensions();
+    let _ = mi_gear();
+    let _ = mi_project();
+    let _ = mi_bookmark();
+    let _ = mi_outline();
+    let _ = mi_copy();
+    let _ = mi_check();
+    let _ = mi_cut();
+    let _ = mi_paste();
+    let _ = mi_select_all();
+    let _ = mi_table();
+    let _ = mi_braces();
+    let _ = mi_db();
+    // SVG(material/codicon) 아이콘 — 매크로 정의(thread_local 셀 + 전역 memo).
+    let _ = mi_match_case();
+    let _ = mi_match_word();
+    let _ = mi_regex();
+    let _ = mi_visibility();
+    let _ = mi_dot_file();
+    let _ = mi_path_match();
+    let _ = mi_arrow_up();
+    let _ = mi_arrow_down();
+    let _ = mi_close();
+    let _ = mi_chevron_right();
+    let _ = mi_chevron_down();
+    let _ = mi_find_replace();
+    let _ = mi_replace_all();
+    let _ = mi_preserve_case();
+    let _ = mi_search();
+    let _ = mi_in_selection();
+}
