@@ -38,6 +38,7 @@ mod filterbar;
 mod findbar;
 mod gitstat;
 mod grid;
+mod gridedit_sql;
 mod icon;
 mod imehint;
 mod imestate;
@@ -212,6 +213,8 @@ struct App {
         Result<String, String>,
         Option<ConnectSpec>,
     )>,
+    /// ★ 읽기 전용 글 창 요청(그리드 편집 SQL 미리보기 · 셀 값 보기 · docs/87): (제목, 본문).
+    sqlprev_plain: Option<(String, String)>,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
     /// 워커가 비밀번호를 묻는다(세션 id · 가린 접속 문자열) — 입력 창은 이벤트 루프에서 연다.
     pw_pending: Option<(u64, String, bool)>,
@@ -1456,12 +1459,71 @@ impl App {
                 ConnOutcome::Keys(table, info) => {
                     self.sess.aux_done();
                     self.sess.key_cache.insert(table, info.clone());
+                    if let Some(tab) = self.sess.edit_wait.take() {
+                        if let Some(g) = self.grid_for(tab) {
+                            g.set_keys(info.as_ref());
+                        }
+                        self.redraw();
+                    }
                     if let Some(kind) = self.sess.sql_wait.take() {
                         self.finish_sql_copy(kind, info.as_ref());
                     }
                     if let Some(kind) = self.sess.view_wait.take() {
                         self.finish_view_sql(kind, info.as_ref());
                     }
+                }
+                ConnOutcome::Applied { key, rep } => {
+                    self.sess.aux_done();
+                    self.sess.edit_apply = None;
+                    let requery = self.settings.get("grid.edit_refresh") != Some("local");
+                    let msg = match &rep.error {
+                        None if rep.tx_left_open => {
+                            tf(Msg::StGeAppliedTx, &[&rep.done.to_string()])
+                        }
+                        None => tf(Msg::StGeApplied, &[&rep.done.to_string()]),
+                        Some((i, m)) => {
+                            let mut s = tf(Msg::StGeApplyFailed, &[&(i + 1).to_string(), m]);
+                            if rep.rolled_back {
+                                s.push(' ');
+                                s.push_str(t(Msg::StGeRolledBack));
+                            }
+                            s
+                        }
+                    };
+                    self.log_win.push(LogEntry::new(
+                        if rep.error.is_some() {
+                            LogKind::Error
+                        } else {
+                            LogKind::Info
+                        },
+                        msg.clone(),
+                    ));
+                    if rep.error.is_some() {
+                        self.toasts
+                            .push(toast::ToastKind::Error, t(Msg::MnGeApply), msg.clone());
+                    }
+                    self.sess.status = msg;
+                    if let Some(g) = self.grid_for(key) {
+                        g.apply_done(rep.done, rep.error.clone());
+                    }
+                    if rep.tx_left_open {
+                        // 수동 모드: 커밋/롤백 표식(34 UX) — 트랜잭션 로그의 한 줄로.
+                        let stamp = nsql_log::now_local().stamp();
+                        self.sess.tx_pending.push(TxItem {
+                            editor: self.sess.run_editor,
+                            at: Instant::now(),
+                            when: stamp.get(11..16).unwrap_or("").to_string(),
+                            summary: t(Msg::MnGeApply).to_string(),
+                            class: nsql_core::TxClass::Update,
+                        });
+                        self.sess.tx_dirty = true;
+                        self.sess.tx_stale_logged = false;
+                        self.sync_tx_ui();
+                    }
+                    if rep.error.is_none() && rep.done > 0 && requery && key == self.grid_tab {
+                        self.refresh_result();
+                    }
+                    self.redraw();
                 }
                 ConnOutcome::Requery { key, offset, limit } => {
                     // 커서가 없어 서버에 새 SQL(OFFSET 재질의/재실행)이 간다 — 직접 실행처럼 카드(이미 켜져 있으면 로그만).
@@ -6022,6 +6084,11 @@ impl App {
                 self.all_grids().for_each(|g| g.set_null_text(&text));
             }
             "grid.row_focus" | "grid.row_focus_color" => self.apply_grid_row_focus(),
+            "grid.edit"
+            | "grid.edit_empty"
+            | "grid.edit_strict"
+            | "grid.edit_refresh"
+            | "grid.paste_max_rows" => self.apply_grid_edit_cfg(),
             k if k.starts_with("bookmark.") => {
                 self.bookmarks.apply_settings(&self.settings);
                 let on = self.bookmarks.enabled;
@@ -6296,6 +6363,118 @@ impl App {
         if let Some(kind) = self.grid.take_pending_view() {
             self.begin_view_sql(kind);
         }
+        // ★ 그리드 편집(docs/87): 키 조회 · 적용 · 미리보기 · 상태.
+        for req in self.grid.take_edit_requests() {
+            match req {
+                grid::EditRequest::Status(s) => {
+                    self.sess.status = s;
+                    self.redraw();
+                }
+                grid::EditRequest::Preview { title, text } => {
+                    self.sqlprev_plain = Some((title, text));
+                }
+                grid::EditRequest::NeedKeys { table } => self.grid_edit_keys(table),
+                grid::EditRequest::Apply {
+                    table,
+                    stmts,
+                    preview,
+                } => self.grid_edit_apply(&table, stmts, &preview),
+            }
+        }
+    }
+
+    /// 편집 열 명세 = 메타 저장소(카탈로그 컬럼 · 길이·NOT NULL·기본값 · 79 단일 원천)에서 즉시 — 없으면 결과 타입 이름만으로(그리드가 이미 넣음).
+    fn grid_edit_specs(&mut self, table: &str) {
+        let dialect = self.sess.dialect;
+        let (schema, name) = nsql_io::split_table(dialect, table);
+        let specs: Vec<nexa_ctl::gridedit::CellSpec> = {
+            let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
+            let Some(id) = snap.lookup(names, schema.as_deref(), &name) else {
+                return;
+            };
+            match snap.columns(id) {
+                nsql_run::meta::ColState::Loaded { cols, .. } => cols
+                    .iter()
+                    .map(|c| {
+                        let ty = names.get(c.data_type);
+                        let mut kind = nexa_ctl::gridedit::CellKind::from_type_name(ty);
+                        if dialect == Dialect::Oracle && kind == nexa_ctl::gridedit::CellKind::Date
+                        {
+                            kind = nexa_ctl::gridedit::CellKind::DateTime; // Oracle DATE = 시각 포함
+                        }
+                        let mut sp =
+                            nexa_ctl::gridedit::CellSpec::new(names.get(c.name).to_string(), kind);
+                        sp.max_len = nexa_ctl::gridedit::CellSpec::max_len_from_type_name(ty);
+                        sp.nullable = c.nullable.unwrap_or(true);
+                        sp.default = c
+                            .default
+                            .map(|d| names.get(d).to_string())
+                            .filter(|d| !d.trim().is_empty());
+                        sp
+                    })
+                    .collect(),
+                _ => return,
+            }
+        };
+        self.grid.set_col_specs(&specs);
+    }
+
+    /// 편집 키(PK/UK): 키 캐시 → 없으면 `Cmd::Keys`(SQL 복사와 같은 길 · 41 D-66).
+    fn grid_edit_keys(&mut self, table: String) {
+        self.grid_edit_specs(&table);
+        if let Some(info) = self.sess.key_cache.get(&table) {
+            let info = info.clone();
+            self.grid.set_keys(info.as_ref());
+            return;
+        }
+        if self.sess.blocked() || self.sess.edit_wait.is_some() {
+            // 세션이 바쁘면(실행이 막 끝나는 중) 요청을 되돌려 두고 다음 깨어남에 다시(`about_to_wait`).
+            self.grid.requeue_keys(table);
+            return;
+        }
+        let (schema, tname) = nsql_io::split_table(self.sess.dialect, &table);
+        self.sess.edit_wait = Some(self.grid_tab);
+        self.sess.aux += 1;
+        self.sess.worker.send(worker::Cmd::Keys {
+            key: table,
+            schema,
+            table: tname,
+        });
+    }
+
+    /// 변경 적용 → 워커 `Cmd::Apply`(gate · 한 트랜잭션 · 결과는 `ConnOutcome::Applied`).
+    fn grid_edit_apply(&mut self, table: &str, stmts: Vec<nsql_core::ExecRequest>, preview: &str) {
+        if !self.gate_open() {
+            self.grid
+                .apply_done(0, Some((0, t(Msg::StRunning).to_string())));
+            return;
+        }
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            format!("{} {} · {}", t(Msg::MnGeApply), table, stmts.len()),
+        ));
+        self.log_win
+            .push(LogEntry::new(LogKind::Send, preview.to_string()));
+        let strict = self.settings.flag("grid.edit_strict");
+        self.sess.edit_apply = Some(self.grid_tab);
+        self.sess.aux += 1;
+        self.sess.status = t(Msg::StRunning).into();
+        self.sess.worker.send(worker::Cmd::Apply {
+            key: self.grid_tab,
+            stmts,
+            strict,
+        });
+        self.redraw();
+    }
+
+    /// 편집 설정 → 전 그리드(docs/87 §8).
+    fn apply_grid_edit_cfg(&mut self) {
+        let cfg = grid::EditCfg {
+            on: self.settings.flag("grid.edit"),
+            empty_as_null: self.settings.get("grid.edit_empty") != Some("empty"),
+            paste_max: self.settings.int("grid.paste_max_rows").max(1) as usize,
+        };
+        self.all_grids().for_each(|g| g.set_edit_cfg(cfg.clone()));
     }
 
     /// 캐럿을 다음/이전 문장(`;` 분리 · [`nsql_script::split_script`]) 시작으로(Alt+↓/↑ · 실행 뒤 자동 이동).
@@ -8348,6 +8527,41 @@ impl App {
             let _ = std::fs::write(path, self.explorer.stat_text());
             return;
         }
+        // ★ 자체 시험(그리드 편집 · docs/87 §9 E-3 · 키 주입 0): `grid.edit.set:<행>,<열>,<글>` · `grid.edit.cmd:<id>` · `grid.dump:<파일>`.
+        if let Some(rest) = id.strip_prefix("grid.edit.set:") {
+            // 기동 명령 목록이 쉼표로 나뉘므로 여기 구분자는 `;` — `grid.edit.set:<행>;<열>;<글>`.
+            let mut it = rest.splitn(3, ';');
+            let r = it.next().and_then(|v| v.trim().parse::<usize>().ok());
+            let c = it.next().and_then(|v| v.trim().parse::<usize>().ok());
+            let text = it.next().unwrap_or("");
+            if let (Some(r), Some(c)) = (r, c) {
+                let ok = self.grid.set_cell_for_test(r, c, text);
+                self.sess.status = format!("grid.edit.set {r},{c} ok={ok}");
+                self.after_grid_event();
+                self.redraw();
+            }
+            return;
+        }
+        if let Some(cmd) = id.strip_prefix("grid.edit.cmd:") {
+            let ok = self.grid.edit_command(cmd);
+            self.sess.status = format!("grid.edit.cmd {cmd} ok={ok}");
+            self.after_grid_event();
+            self.redraw();
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("grid.select:") {
+            if let Some((r, c)) = rest.split_once(';') {
+                if let (Ok(r), Ok(c)) = (r.trim().parse::<usize>(), c.trim().parse::<usize>()) {
+                    self.grid.select_cell_for_test(r, c);
+                    self.redraw();
+                }
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("grid.dump:") {
+            let _ = std::fs::write(path, self.grid.dump_edit());
+            return;
+        }
         // 자체 시험(09-26 성능 전수): 메모리 계측 표본을 파일로 — 총량·anon·부품 원장(L1 Meta · L2 MetaCols · L3 MetaDetail …).
         if let Some(path) = id.strip_prefix("mem.dump:") {
             let smp = self.mem_sample();
@@ -10337,6 +10551,16 @@ impl App {
                     .and_then(|tb| tb.cut_selection(&mut inv))
                 {
                     failed = !clipboard::write_text(&text);
+                }
+            }
+            // ★ 그리드 붙여넣기(docs/87 §6): 앵커 셀부터 행렬 · 아래로 부족하면 행 자동 추가.
+            EditCtxAction::Paste if self.focus == Focus::Grid && !self.grid.editing_cell() => {
+                match clipboard::read_text() {
+                    Some(text) => {
+                        self.grid.paste_text(&text);
+                        self.after_grid_event();
+                    }
+                    None => failed = true,
                 }
             }
             EditCtxAction::Paste => match clipboard::read_text() {
@@ -12903,6 +13127,10 @@ impl App {
                             g.set_result_origin(s, is_query);
                         }
                     }
+                    // ★ 편집 준비(키 조회·열 명세)는 결과가 온 직후에(그리드 사건을 기다리지 않는다 · docs/87).
+                    if k == self.grid_tab {
+                        self.after_grid_event();
+                    }
                     self.tx_on_read(index);
                     self.retitle_result(k);
                     if let Some(name) = label {
@@ -13291,6 +13519,8 @@ impl App {
 
     /// 지금 세션(`self.sess`)의 결과 그리드에 방언을 알린다 — 전용 세션 = 주인 탭의 패널 · 공유 세션 = 전용 탭이 아닌 패널 전부.
     fn set_dialect_for_sess_grids(&mut self, dialect: Dialect) {
+        let prod =
+            self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
         let owner = self.sess.owner;
         let private_tabs: Vec<u64> = self.all_sess().filter_map(|s| s.owner).collect();
         let mine = |tab: u64| match owner {
@@ -13299,14 +13529,17 @@ impl App {
         };
         if mine(self.panel_editor) {
             self.grid.set_dialect(dialect);
+            self.grid.set_prod(prod);
             for t in &mut self.panel.tabs {
                 t.grid.set_dialect(dialect);
+                t.grid.set_prod(prod);
             }
         }
         for (tab, p) in &mut self.panels {
             if mine(*tab) {
                 for t in &mut p.tabs {
                     t.grid.set_dialect(dialect);
+                    t.grid.set_prod(prod);
                 }
             }
         }
@@ -15980,6 +16213,27 @@ impl ApplicationHandler<Wake> for App {
             self.open_file_window(el, mode);
             self.sync_modal();
         }
+        // ★ 그리드 편집: SQL 미리보기 · 셀 값 보기(읽기 전용 글 창 · docs/87).
+        if let Some((title, text)) = self.sqlprev_plain.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("preview.sql");
+            let tb = self.editors.preview_box("", &syntax);
+            let was_open = self.sqlprev_win.is_open();
+            self.sqlprev_win.open_plain(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                title,
+                text,
+                tb,
+            );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
         // Generate SQL 결과 → SQL Preview 모달(docs/83 §4).
         if let Some((spec, r, server)) = self.sqlprev_pending.take() {
             let owner = self.window.clone();
@@ -16282,6 +16536,10 @@ impl ApplicationHandler<Wake> for App {
         }
         self.file_loads_poll();
         self.multi_load_poll();
+        // ★ 그리드 편집 요청이 세션 바쁨으로 미뤄졌으면 한가해진 뒤 여기서(docs/87 · 키 조회).
+        if self.grid.has_edit_requests() && !self.sess.blocked() {
+            self.after_grid_event();
+        }
         // 명령·IME로 온 편집이 거대 편집 확인에 막혔으면 알린다(키 입력은 `route`가 바로 알린다).
         self.giant_notice();
         self.regions_cap_notice();
@@ -17685,6 +17943,7 @@ fn main() {
         mem_win: mem_win::MemWin::new(),
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
+        sqlprev_plain: None,
         input_win,
         input_pending: None,
         pw_pending: None,
@@ -17927,6 +18186,7 @@ fn main() {
         .to_string();
     app.grid.set_null_text(&null_text);
     app.apply_grid_row_focus();
+    app.apply_grid_edit_cfg();
     app.bookmarks.apply_settings(&app.settings);
     let bm_on = app.bookmarks.enabled;
     app.act_bar.set_item_visible("view.bookmarks", bm_on);

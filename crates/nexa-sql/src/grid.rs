@@ -2,10 +2,15 @@
 //! 호버 두껍게 · 자동 숨김 — nexa-ctl `ScrollBars` 공용) · 컬럼 폭은 앞 200행 실측 · 메시지 모드.
 //! `nexa-grid` 크레이트(U-3 · nexa-ui 21)가 오면 교체한다. 고정폭 층에서 그려진다.
 
+use crate::gridedit_sql::{self, ColMeta, EditTarget, GenInput, KeyKind, ReadOnly};
 use crate::toolicons;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
+use nexa_ctl::gridedit::{
+    self, CellKind, CellSpec, ChangeSet, EditAction, EditStart, LiveEditor, LiveEvent, Move,
+    PasteAnchor, PasteOpts, RowRef, RowStatus,
+};
 use nexa_ctl::theme::Theme;
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{
@@ -13,7 +18,7 @@ use nexa_ctl::{
     Widget,
 };
 use nsql_core::{fmt_bytes, Dialect, ResultData, ResultSet, RowSource, Value, View};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
@@ -142,6 +147,64 @@ struct HdrDrag {
     grab_dx: i32,
     /// 시작 때 `col_order`(Esc 복원).
     orig: Vec<usize>,
+}
+
+/// ★ 그리드 편집 설정(호스트가 설정 레지스트리에서 주입 · docs/87 §8).
+#[derive(Clone, Debug)]
+pub(crate) struct EditCfg {
+    pub on: bool,
+    pub empty_as_null: bool,
+    pub paste_max: usize,
+}
+
+impl Default for EditCfg {
+    fn default() -> Self {
+        EditCfg {
+            on: true,
+            empty_as_null: true,
+            paste_max: 10_000,
+        }
+    }
+}
+
+/// 그리드가 호스트에 부탁하는 편집 관련 일(1회성 · `take_edit_requests`).
+pub(crate) enum EditRequest {
+    /// 테이블 키(PK/UK) 조회(키 캐시 → 없으면 `Cmd::Keys`) — 답은 `set_keys`.
+    NeedKeys {
+        table: String,
+    },
+    /// 변경 적용(바인드 문장 묶음 · 한 트랜잭션) — 답은 `apply_done`.
+    Apply {
+        table: String,
+        stmts: Vec<nsql_core::ExecRequest>,
+        preview: String,
+    },
+    /// 읽기 전용 미리보기 창(SQL 미리보기 · 값 보기).
+    Preview {
+        title: String,
+        text: String,
+    },
+    Status(String),
+}
+
+/// 편집 세션 상태(결과 하나에 하나 · 결과가 바뀌면 버린다).
+struct GridEdit {
+    target: EditTarget,
+    /// 원본 열마다 이름 + 명세(`set_col_specs`로 메타에서 보강).
+    cols: Vec<ColMeta>,
+    key_cols: Vec<usize>,
+    key_kind: KeyKind,
+    keys_ready: bool,
+    cs: ChangeSet,
+    live: LiveEditor,
+    /// 편집 중인 셀의 표시 좌표(행·열 위치) — 페인트가 상자 자리를 맞춘다.
+    live_at: Option<(usize, usize)>,
+    last_click: Option<((usize, usize), std::time::Instant)>,
+    applying: bool,
+    /// 적용에 실패한 문장의 행(붉은 표시).
+    error_row: Option<RowRef>,
+    /// 보낸 문장의 행(실패 index → 행).
+    sent_rows: Vec<RowRef>,
 }
 
 pub(crate) struct Grid {
@@ -300,6 +363,16 @@ pub(crate) struct Grid {
     text_gutter_anchor: Option<usize>,
     /// 도구줄 상태 글자와 그 영역 — UI 글꼴 패스(상태줄과 같은 얼굴·크기)에서 호스트가 그린다(사용자 09-16).
     footer_info: Option<(String, Rect)>,
+    // ── ★ 데이터 편집(docs/87 · T-182)
+    edit_cfg: EditCfg,
+    edit: Option<GridEdit>,
+    /// 편집 불가 이유(결과가 있을 때 · 없으면 편집 가능 또는 결과 없음).
+    read_only: Option<ReadOnly>,
+    edit_reqs: Vec<EditRequest>,
+    /// 운영(PROD) 접속 — 편집 불가.
+    prod: bool,
+    /// 마지막 on_event/paint 배율(편집 상자 배율).
+    live_scale: f32,
 }
 
 impl Default for Grid {
@@ -418,6 +491,12 @@ impl Default for Grid {
             text_hit: Vec::new(),
             text_gutter_anchor: None,
             footer_info: None,
+            edit_cfg: EditCfg::default(),
+            edit: None,
+            read_only: None,
+            edit_reqs: Vec::new(),
+            prod: false,
+            live_scale: 1.0,
         };
         // 도구줄의 처음 상태도 판정 함수로(`.disabled()` 표기에 기대지 않는다) — Σ가 `.disabled()` 없이 만들어져
         // 결과가 오기 전까지 켜진 것처럼 보였다(동기화는 상태가 바뀔 때만 돈다 · mac 09-21).
@@ -470,6 +549,8 @@ impl Grid {
             page_rows: self.default_page_rows,
             default_page_rows: self.default_page_rows,
             auto_fetch: self.auto_fetch,
+            edit_cfg: self.edit_cfg.clone(),
+            prod: self.prod,
             ..Grid::default()
         }
     }
@@ -653,6 +734,900 @@ impl Grid {
         self.set_source_sql(stmt);
         self.countable = is_query;
         self.sync_fetch_tools();
+        self.edit_prepare(stmt, is_query);
+    }
+
+    // ───────────────────────── ★ 데이터 편집(docs/87 · T-182) ─────────────────────────
+
+    /// 결과 출처가 정해질 때 편집 가능 판정 → 편집 상태 준비(키는 호스트에 부탁).
+    fn edit_prepare(&mut self, stmt: &str, is_query: bool) {
+        self.edit = None;
+        self.read_only = None;
+        let Some(rs) = self.rs.as_ref() else { return };
+        if !self.edit_cfg.on {
+            self.read_only = Some(ReadOnly::Disabled);
+        } else if self.prod {
+            self.read_only = Some(ReadOnly::Prod);
+        } else if !is_query {
+            self.read_only = Some(ReadOnly::NotQuery);
+        } else {
+            match gridedit_sql::analyze(stmt) {
+                Ok(target) => {
+                    let cols: Vec<ColMeta> = rs
+                        .columns()
+                        .iter()
+                        .map(|c| {
+                            let mut kind = CellKind::from_type_name(&c.type_name);
+                            if self.dialect == Dialect::Oracle && kind == CellKind::Date {
+                                kind = CellKind::DateTime; // Oracle DATE = 시각 포함
+                            }
+                            let mut spec = CellSpec::new(c.name.clone(), kind);
+                            spec.max_len = CellSpec::max_len_from_type_name(&c.type_name);
+                            ColMeta {
+                                name: c.name.clone(),
+                                spec,
+                            }
+                        })
+                        .collect();
+                    let mut live = LiveEditor::new();
+                    live.empty_as_null = self.edit_cfg.empty_as_null;
+                    let table = target.table.clone();
+                    self.edit = Some(GridEdit {
+                        target,
+                        cs: ChangeSet::new(cols.len()),
+                        cols,
+                        key_cols: Vec::new(),
+                        key_kind: KeyKind::AllColumns,
+                        keys_ready: false,
+                        live,
+                        live_at: None,
+                        last_click: None,
+                        applying: false,
+                        error_row: None,
+                        sent_rows: Vec::new(),
+                    });
+                    self.edit_reqs.push(EditRequest::NeedKeys { table });
+                }
+                Err(r) => self.read_only = Some(r),
+            }
+        }
+        self.sync_edit_tools();
+    }
+
+    /// 호스트 주입: 편집 설정.
+    pub(crate) fn set_edit_cfg(&mut self, cfg: EditCfg) {
+        if let Some(e) = self.edit.as_mut() {
+            e.live.empty_as_null = cfg.empty_as_null;
+        }
+        self.edit_cfg = cfg;
+    }
+
+    /// 호스트 주입: 운영 접속 여부(편집 불가).
+    pub(crate) fn set_prod(&mut self, on: bool) {
+        self.prod = on;
+    }
+
+    /// 호스트 주입: 테이블 키(`Cmd::Keys` 답 · 41 규칙) → 결과에 **모든 키 열이 있는** PK → 첫 유니크 → 전체 열(D-198).
+    pub(crate) fn set_keys(&mut self, info: Option<&nsql_core::KeyInfo>) {
+        let Some(e) = self.edit.as_mut() else { return };
+        let names: Vec<String> = e.cols.iter().map(|c| c.name.to_ascii_uppercase()).collect();
+        let find = |cols: &[String]| -> Option<Vec<usize>> {
+            cols.iter()
+                .map(|k| names.iter().position(|n| n.eq_ignore_ascii_case(k)))
+                .collect()
+        };
+        let mut chosen: Option<Vec<usize>> = None;
+        if let Some(i) = info {
+            if !i.pk.is_empty() {
+                chosen = find(&i.pk);
+            }
+            if chosen.is_none() {
+                for (_, cols) in &i.unique {
+                    if let Some(v) = find(cols) {
+                        chosen = Some(v);
+                        break;
+                    }
+                }
+            }
+        }
+        match chosen {
+            Some(v) if !v.is_empty() => {
+                e.key_cols = v;
+                e.key_kind = KeyKind::Constraint;
+            }
+            _ => {
+                e.key_cols = e
+                    .cols
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.spec.kind != CellKind::Binary)
+                    .map(|(i, _)| i)
+                    .collect();
+                e.key_kind = KeyKind::AllColumns;
+            }
+        }
+        // 키 열은 읽기 전용이 아니다(값을 고치면 WHERE는 원본 값으로) · 이진 열은 인라인 편집 없음.
+        e.keys_ready = true;
+        self.sync_edit_tools();
+    }
+
+    /// 호스트 주입: 메타(카탈로그)에서 온 열 명세 — 이름으로 맞춘다(길이 · NOT NULL · 기본값 · 종류).
+    pub(crate) fn set_col_specs(&mut self, specs: &[CellSpec]) {
+        let Some(e) = self.edit.as_mut() else { return };
+        for c in &mut e.cols {
+            if let Some(sp) = specs.iter().find(|s| s.name.eq_ignore_ascii_case(&c.name)) {
+                let mut sp = sp.clone();
+                sp.name = c.name.clone();
+                c.spec = sp;
+            }
+        }
+    }
+
+    pub(crate) fn take_edit_requests(&mut self) -> Vec<EditRequest> {
+        std::mem::take(&mut self.edit_reqs)
+    }
+
+    pub(crate) fn has_edit_requests(&self) -> bool {
+        !self.edit_reqs.is_empty()
+    }
+
+    /// 호스트가 지금 키를 조회할 수 없을 때(세션 바쁨) 요청을 되돌려 놓는다 — 다음 기회에 다시.
+    pub(crate) fn requeue_keys(&mut self, table: String) {
+        if self.edit.as_ref().is_some_and(|e| !e.keys_ready) {
+            self.edit_reqs.push(EditRequest::NeedKeys { table });
+        }
+    }
+
+    pub(crate) fn edit_dirty(&self) -> bool {
+        self.edit.as_ref().is_some_and(|e| e.cs.is_dirty())
+    }
+
+    pub(crate) fn editing_cell(&self) -> bool {
+        self.edit.as_ref().is_some_and(|e| e.live.is_open())
+    }
+
+    /// 상태줄/푸터용 편집 상태 한 줄(편집 가능 · 읽기 전용 이유 · 변경 수).
+    pub(crate) fn edit_status_text(&self) -> Option<String> {
+        if let Some(e) = self.edit.as_ref() {
+            let (m, i, d) = e.cs.counts();
+            if m + i + d > 0 {
+                return Some(tf(
+                    Msg::StGeDirty,
+                    &[&m.to_string(), &i.to_string(), &d.to_string()],
+                ));
+            }
+            return None;
+        }
+        self.read_only
+            .as_ref()
+            .filter(|_| self.rs.is_some())
+            .map(|r| tf(Msg::StGeReadOnly, &[&r.text()]))
+    }
+
+    fn status(&mut self, s: String) {
+        self.edit_reqs.push(EditRequest::Status(s));
+    }
+
+    /// 편집 툴바 활성(추가/삭제/복제 = 편집 가능 · 적용/취소 = 변경 있음).
+    fn sync_edit_tools(&mut self) {
+        let mut inv = Invalidations::default();
+        let (editable, dirty, applying, ready) = match self.edit.as_ref() {
+            Some(e) => (true, e.cs.is_dirty(), e.applying, e.keys_ready),
+            None => (false, false, false, false),
+        };
+        let can = editable && !applying && self.rs.is_some();
+        self.tb_edit.set_item_enabled("row.add", can, &mut inv);
+        self.tb_edit
+            .set_item_enabled("row.dup", can && self.sel_cur.is_some(), &mut inv);
+        self.tb_edit
+            .set_item_enabled("row.del", can && self.sel_cur.is_some(), &mut inv);
+        self.tb_edit.set_item_enabled(
+            "row.save",
+            can && dirty && ready && self.session_open(),
+            &mut inv,
+        );
+        self.tb_edit
+            .set_item_enabled("row.cancel", can && dirty, &mut inv);
+    }
+
+    /// 원본 셀 값(문자열 · NULL = None) — 편집 상자·키 비교·붙여넣기 Clean 판정.
+    fn src_text(&self, row: usize, col: usize) -> Option<String> {
+        self.rs
+            .as_ref()
+            .and_then(|rs| rs.row(row))
+            .and_then(|r| r.get(col))
+            .and_then(gridedit_sql::value_text)
+    }
+
+    /// 셀의 지금 값(덧그림 우선) — 표시·복사·편집 진입용.
+    fn cur_text(&self, rref: RowRef, col: usize) -> Option<String> {
+        if let Some(e) = self.edit.as_ref() {
+            if let Some(v) = e.cs.cell(rref, col) {
+                return v.clone();
+            }
+        }
+        match rref {
+            RowRef::Existing(r) => self.src_text(r, col),
+            RowRef::Inserted(_) => None,
+        }
+    }
+
+    /// 표시 순서 재구성: 원본 행 순서는 그대로 두고, 추가 행을 그 `after` 원본 행 바로 아래(없으면 끝)에 끼운다.
+    fn rebuild_row_order(&mut self) {
+        let n = self.src_len();
+        let Some(e) = self.edit.as_ref() else {
+            self.row_order.retain(|&ri| ri < n);
+            return;
+        };
+        let existing: Vec<usize> = self
+            .row_order
+            .iter()
+            .copied()
+            .filter(|&ri| ri < n)
+            .collect();
+        let mut out = Vec::with_capacity(existing.len() + 8);
+        let mut tail = Vec::new();
+        let mut by_after: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (k, ir) in e.cs.inserted_rows() {
+            match ir.after.filter(|a| *a < n) {
+                Some(a) => by_after.entry(a).or_default().push(n + k),
+                None => tail.push(n + k),
+            }
+        }
+        for ri in existing {
+            out.push(ri);
+            if let Some(v) = by_after.remove(&ri) {
+                out.extend(v);
+            }
+        }
+        out.extend(tail);
+        self.row_order = out;
+        let rows = self.rows();
+        if let Some((r, c)) = self.sel_cur {
+            if r >= rows {
+                self.sel_cur = rows.checked_sub(1).map(|last| (last, c));
+            }
+        }
+        self.regions.retain(|&(r0, _, _, _)| r0 < rows);
+        for reg in &mut self.regions {
+            reg.1 = reg.1.min(rows.saturating_sub(1));
+        }
+    }
+
+    /// 셀 사각형(표시 좌표 · 창 좌표) — 보이지 않으면 None.
+    fn cell_rect(&self, di: usize, pos: usize) -> Option<Rect> {
+        let ci = *self.col_order.get(pos)?;
+        let cw = self.col_w.get(ci).copied().unwrap_or(80);
+        let x = self.col_x(pos);
+        let y = self.bounds.y + self.header_h + di as i32 * self.row_h - self.view_y();
+        let body = Rect::new(
+            self.bounds.x + self.gutter_w,
+            self.bounds.y + self.header_h,
+            (self.bounds.w - self.gutter_w).max(0),
+            self.body_h(),
+        );
+        let r = Rect::new(x, y, cw - 1, self.row_h).intersection(&body);
+        (r.w > 0 && r.h > 0).then_some(r)
+    }
+
+    /// 편집 진입(현재 포커스 셀) — `replace` = 타이핑한 첫 글자.
+    fn begin_edit(&mut self, replace: Option<char>, select_all: bool) {
+        let Some((di, pos)) = self.sel_cur else {
+            return;
+        };
+        if self.edit.is_none() {
+            if let Some(r) = self.read_only.clone() {
+                self.status(tf(Msg::StGeReadOnly, &[&r.text()]));
+            }
+            return;
+        }
+        let Some(rref) = self.rref_at(di) else { return };
+        let Some(&ci) = self.col_order.get(pos) else {
+            return;
+        };
+        let text = self.cur_text(rref, ci).unwrap_or_default();
+        let Some(rect) = self.cell_rect(di, pos) else {
+            return;
+        };
+        let scale = self.menu_scale();
+        let e = self.edit.as_mut().expect("checked");
+        if e.applying || e.cs.is_deleted(rref) {
+            return;
+        }
+        let spec = e.cols.get(ci).map(|c| c.spec.clone()).unwrap_or_default();
+        if spec.read_only || !spec.kind.inline_editable() {
+            let why = if spec.read_only {
+                gridedit::EditError::ReadOnly
+            } else {
+                gridedit::EditError::Binary
+            };
+            self.status(why.message());
+            return;
+        }
+        e.live_at = Some((di, pos));
+        e.live.begin(EditStart {
+            cell: (rref, ci),
+            spec,
+            text: &text,
+            rect,
+            scale,
+            replace,
+            select_all,
+        });
+    }
+
+    fn menu_scale(&self) -> f32 {
+        // 행 높이는 글꼴 높이 × 배율 — 상자 배율은 호스트가 on_event로 넘기는 값과 같아야 하나, 여기서는 페인트 때 재설정된다.
+        self.live_scale
+    }
+
+    /// 편집기가 확정한 값을 변경 집합에 놓는다.
+    fn commit_cell(&mut self, cell: (RowRef, usize), value: Option<String>) {
+        let orig = match cell.0 {
+            RowRef::Existing(r) => Some(self.src_text(r, cell.1)),
+            RowRef::Inserted(_) => None,
+        };
+        if let Some(e) = self.edit.as_mut() {
+            e.cs.set_cell(cell.0, cell.1, value, orig.as_ref());
+            e.live_at = None;
+            e.error_row = None;
+        }
+        self.sync_edit_tools();
+    }
+
+    fn move_after_commit(&mut self, mv: Move) {
+        match mv {
+            Move::Down => self.move_sel(1, 0, false, false),
+            Move::Up => self.move_sel(-1, 0, false, false),
+            Move::Right => self.move_sel(0, 1, false, false),
+            Move::Left => self.move_sel(0, -1, false, false),
+            Move::None => {}
+        }
+    }
+
+    /// 선택 셀 전부 비움(NULL 또는 빈 문자열 · 설정) — 되돌리기 한 묶음.
+    fn clear_selected_cells(&mut self, force_null: bool) {
+        if self.edit.is_none() || self.regions.is_empty() {
+            return;
+        }
+        let cells: Vec<(RowRef, usize)> = {
+            let mut v = Vec::new();
+            for &reg in &self.regions {
+                let (r0, r1, c0, c1) = reg;
+                for di in r0..=r1.min(self.rows().saturating_sub(1)) {
+                    let Some(rref) = self.rref_at(di) else {
+                        continue;
+                    };
+                    for pos in c0..=c1.min(self.last_col()) {
+                        if let Some(&ci) = self.col_order.get(pos) {
+                            v.push((rref, ci));
+                        }
+                    }
+                }
+            }
+            v
+        };
+        let empty_as_null = self.edit_cfg.empty_as_null;
+        let mut rejected = 0;
+        let origs: Vec<Option<Option<String>>> = cells
+            .iter()
+            .map(|(r, c)| match r {
+                RowRef::Existing(i) => Some(self.src_text(*i, *c)),
+                RowRef::Inserted(_) => None,
+            })
+            .collect();
+        if let Some(e) = self.edit.as_mut() {
+            e.cs.begin_group();
+            for ((rref, ci), orig) in cells.iter().zip(origs.iter()) {
+                let spec = e.cols.get(*ci).map(|c| &c.spec);
+                let value: Option<String> = if force_null || empty_as_null {
+                    None
+                } else {
+                    Some(String::new())
+                };
+                let ok = spec.is_none_or(|sp| sp.validate(value.as_deref()).is_ok());
+                if !ok {
+                    rejected += 1;
+                    continue;
+                }
+                e.cs.set_cell(*rref, *ci, value, orig.as_ref());
+            }
+            e.cs.end_group();
+        }
+        if rejected > 0 {
+            self.status(gridedit::EditError::NotNull.message());
+        }
+        self.sync_edit_tools();
+    }
+
+    /// 새 행(선택 행 아래 · 없으면 끝).
+    fn insert_row_here(&mut self) {
+        let after = self.sel_cur.and_then(|(di, _)| match self.rref_at(di) {
+            Some(RowRef::Existing(r)) => Some(r),
+            _ => None,
+        });
+        let Some(e) = self.edit.as_mut() else { return };
+        if e.applying {
+            return;
+        }
+        let k = e.cs.insert_row(after, vec![]);
+        self.rebuild_row_order();
+        self.focus_inserted(k);
+    }
+
+    /// 선택 행 복제(키 열은 비운다 · D-211).
+    fn duplicate_row_here(&mut self) {
+        let Some((di, _)) = self.sel_cur else { return };
+        let Some(src) = self.rref_at(di) else { return };
+        let ncols = self
+            .col_order
+            .len()
+            .max(self.edit.as_ref().map_or(0, |e| e.cols.len()));
+        let mut cells: Vec<Option<String>> = (0..ncols).map(|c| self.cur_text(src, c)).collect();
+        let Some(e) = self.edit.as_mut() else { return };
+        if e.applying || e.cs.is_deleted(src) {
+            return;
+        }
+        if e.key_kind == KeyKind::Constraint {
+            for &k in &e.key_cols {
+                if let Some(c) = cells.get_mut(k) {
+                    *c = None;
+                }
+            }
+        }
+        for (i, c) in e.cols.iter().enumerate() {
+            if c.spec.kind == CellKind::Binary || c.spec.read_only {
+                if let Some(v) = cells.get_mut(i) {
+                    *v = None;
+                }
+            }
+        }
+        let k = e.cs.duplicate_row(src, cells);
+        self.rebuild_row_order();
+        self.focus_inserted(k);
+    }
+
+    fn focus_inserted(&mut self, k: usize) {
+        let n = self.src_len();
+        if let Some(di) = self.row_order.iter().position(|&ri| ri == n + k) {
+            let pos = self.sel_cur.map_or(0, |c| c.1);
+            self.select_only((di, pos));
+            self.ensure_cell_visible(di, pos);
+        }
+        self.sync_edit_tools();
+    }
+
+    /// 선택 행 삭제 표식 토글(추가 행은 제거).
+    fn delete_rows_here(&mut self) {
+        let rows: Vec<usize> = if self.regions.is_empty() {
+            self.sel_cur.map(|c| c.0).into_iter().collect()
+        } else {
+            let mut v: Vec<usize> = self
+                .regions
+                .iter()
+                .flat_map(|&(r0, r1, _, _)| r0..=r1)
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        let refs: Vec<RowRef> = rows.iter().filter_map(|&di| self.rref_at(di)).collect();
+        let Some(e) = self.edit.as_mut() else { return };
+        if e.applying {
+            return;
+        }
+        e.cs.begin_group();
+        for r in refs {
+            e.cs.toggle_delete(r);
+        }
+        e.cs.end_group();
+        self.rebuild_row_order();
+        self.sync_edit_tools();
+    }
+
+    fn edit_undo(&mut self, redo: bool) {
+        if let Some(e) = self.edit.as_mut() {
+            if e.live.is_open() {
+                return;
+            }
+            let ok = if redo { e.cs.redo() } else { e.cs.undo() };
+            if !ok {
+                return;
+            }
+        }
+        self.rebuild_row_order();
+        self.sync_edit_tools();
+    }
+
+    /// 전부 되돌림(✗).
+    fn revert_edits(&mut self) {
+        if let Some(e) = self.edit.as_mut() {
+            e.live.close();
+            e.live_at = None;
+            e.cs.clear();
+            e.error_row = None;
+        }
+        self.rebuild_row_order();
+        self.sync_edit_tools();
+    }
+
+    /// 변경 집합 → 문장(호스트가 실행).
+    fn generated(&self) -> Result<(Vec<gridedit_sql::EditStmt>, String, String), String> {
+        let e = self.edit.as_ref().ok_or_else(String::new)?;
+        let inp = GenInput {
+            dialect: self.dialect,
+            table: &e.target.table,
+            cols: &e.cols,
+            key_cols: &e.key_cols,
+        };
+        let orig = |r: usize, c: usize| -> Value {
+            self.rs
+                .as_ref()
+                .and_then(|rs| rs.row(r))
+                .and_then(|row| row.get(c))
+                .cloned()
+                .unwrap_or(Value::Null)
+        };
+        let stmts = gridedit_sql::generate(&inp, &e.cs, &orig)?;
+        let preview = gridedit_sql::preview_text(&stmts, &e.target.table, e.key_kind);
+        Ok((stmts, preview, e.target.table.clone()))
+    }
+
+    fn request_preview(&mut self) {
+        if !self.edit_dirty() {
+            let s = t(Msg::StGeNothing).to_string();
+            self.status(s);
+            return;
+        }
+        match self.generated() {
+            Ok((_, preview, _)) => self.edit_reqs.push(EditRequest::Preview {
+                title: t(Msg::WinGePreview).to_string(),
+                text: preview,
+            }),
+            Err(m) => self.status(m),
+        }
+    }
+
+    fn request_apply(&mut self) {
+        if let Some(e) = self.edit.as_mut() {
+            if e.live.is_open() {
+                if let LiveEvent::Invalid(err) = e.live.try_commit(Move::None) {
+                    self.status(err.message());
+                    return;
+                }
+            }
+        }
+        if !self.edit_dirty() {
+            let s = t(Msg::StGeNothing).to_string();
+            self.status(s);
+            return;
+        }
+        let ready = self
+            .edit
+            .as_ref()
+            .is_some_and(|e| e.keys_ready && !e.applying);
+        if !ready {
+            let s = t(Msg::StGeKeyWait).to_string();
+            self.status(s);
+            return;
+        }
+        match self.generated() {
+            Ok((stmts, preview, table)) => {
+                if let Some(e) = self.edit.as_mut() {
+                    e.applying = true;
+                    e.error_row = None;
+                    e.sent_rows = stmts.iter().map(|s| s.row).collect();
+                }
+                let reqs: Vec<nsql_core::ExecRequest> = stmts.into_iter().map(|s| s.req).collect();
+                self.edit_reqs.push(EditRequest::Apply {
+                    table,
+                    stmts: reqs,
+                    preview,
+                });
+                self.sync_edit_tools();
+            }
+            Err(m) => self.status(m),
+        }
+    }
+
+    /// 적용 결과(호스트) — 성공 = 변경 집합 비움(재조회는 호스트) · 실패 = 그 문장의 행 표시.
+    pub(crate) fn apply_done(&mut self, done: usize, error: Option<(usize, String)>) {
+        let Some(e) = self.edit.as_mut() else { return };
+        e.applying = false;
+        match error {
+            None => {
+                e.cs.clear();
+                e.error_row = None;
+                self.rebuild_row_order();
+            }
+            Some((i, _)) => {
+                e.error_row = e.sent_rows.get(i).copied();
+                if done > 0 && e.error_row.is_none() {
+                    // 수동 모드에서 일부가 들어갔다 — 변경 집합은 그대로(사용자가 커밋/롤백 뒤 정리).
+                }
+            }
+        }
+        self.sync_edit_tools();
+    }
+
+    /// 붙여넣기(호스트 클립보드 → 앵커 셀부터 · 자동 확장).
+    pub(crate) fn paste_text(&mut self, text: &str) {
+        if self.edit.is_none() {
+            if let Some(r) = self.read_only.clone() {
+                self.status(tf(Msg::StGeReadOnly, &[&r.text()]));
+            }
+            return;
+        }
+        let Some((di, pos)) = self.sel_cur else {
+            return;
+        };
+        let Some(&ci) = self.col_order.get(pos) else {
+            return;
+        };
+        let matrix = gridedit::parse_matrix(text);
+        if matrix.is_empty() {
+            return;
+        }
+        // 표시 순서를 행 참조 배열로(앵커 표시 행부터).
+        let layout: Vec<RowRef> = (0..self.rows()).filter_map(|d| self.rref_at(d)).collect();
+        // 열 매핑: 표시 열 순서(`col_order`)를 따라 앵커부터 — 부품은 연속 열을 가정하므로 표시 순서가 원본과 다르면 원본 순서로 붙인다.
+        let opts = PasteOpts {
+            null_token: Some(self.null_text.clone()),
+            empty_as_null: self.edit_cfg.empty_as_null,
+            auto_extend: true,
+            max_rows: self.edit_cfg.paste_max,
+        };
+        let specs: Vec<CellSpec> = self
+            .edit
+            .as_ref()
+            .map(|e| e.cols.iter().map(|c| c.spec.clone()).collect())
+            .unwrap_or_default();
+        let rs = self.rs.clone();
+        let orig = move |r: usize, c: usize| -> Option<String> {
+            rs.as_ref()
+                .and_then(|rs| rs.row(r))
+                .and_then(|row| row.get(c))
+                .and_then(gridedit_sql::value_text)
+        };
+        let rep = {
+            let Some(e) = self.edit.as_mut() else { return };
+            gridedit::paste_apply(
+                &mut e.cs,
+                PasteAnchor {
+                    layout: &layout,
+                    row: di,
+                    col: ci,
+                },
+                &matrix,
+                &specs,
+                &orig,
+                &opts,
+            )
+        };
+        self.rebuild_row_order();
+        self.status(tf(
+            Msg::StGePasted,
+            &[
+                &rep.set.to_string(),
+                &rep.added_rows.to_string(),
+                &rep.rejected.len().to_string(),
+            ],
+        ));
+        self.sync_edit_tools();
+    }
+
+    /// 값 보기(긴 텍스트 · 이진 = 16진수 덤프) — 읽기 전용 창.
+    fn request_view_value(&mut self) {
+        let Some((di, pos)) = self.sel_cur else {
+            return;
+        };
+        let Some(rref) = self.rref_at(di) else { return };
+        let Some(&ci) = self.col_order.get(pos) else {
+            return;
+        };
+        let name = self
+            .rs
+            .as_ref()
+            .and_then(|rs| rs.columns().get(ci))
+            .map_or_else(String::new, |c| c.name.clone());
+        let text = match rref {
+            RowRef::Existing(r) => match self
+                .rs
+                .as_ref()
+                .and_then(|rs| rs.row(r))
+                .and_then(|row| row.get(ci))
+            {
+                Some(Value::Bytes(b)) => hex_dump(b),
+                Some(v) => {
+                    let over = self
+                        .edit
+                        .as_ref()
+                        .and_then(|e| e.cs.cell(rref, ci).cloned());
+                    match over {
+                        Some(Some(s)) => s,
+                        Some(None) => self.null_text.clone(),
+                        None => cell_text(v, &self.null_text),
+                    }
+                }
+                None => String::new(),
+            },
+            RowRef::Inserted(_) => self.cur_text(rref, ci).unwrap_or_default(),
+        };
+        self.edit_reqs.push(EditRequest::Preview {
+            title: format!("{} — {}", t(Msg::WinGeValue), name),
+            text,
+        });
+    }
+
+    /// 편집 동작 실행(키·메뉴·툴바 공통).
+    fn edit_action(&mut self, a: EditAction) {
+        match a {
+            EditAction::BeginEdit => self.begin_edit(None, true),
+            EditAction::BeginEditWith(c) => self.begin_edit(Some(c), false),
+            EditAction::ClearCells => self.clear_selected_cells(false),
+            EditAction::SetNull => self.clear_selected_cells(true),
+            EditAction::DuplicateRow => self.duplicate_row_here(),
+            EditAction::InsertRow => self.insert_row_here(),
+            EditAction::DeleteRow => self.delete_rows_here(),
+            EditAction::Undo => self.edit_undo(false),
+            EditAction::Redo => self.edit_undo(true),
+            EditAction::Apply => self.request_apply(),
+            EditAction::Revert => self.revert_edits(),
+            EditAction::ViewValue => self.request_view_value(),
+            EditAction::PreviewSql => self.request_preview(),
+            EditAction::Copy | EditAction::Paste => {}
+        }
+    }
+
+    /// 자체 시험(기동 명령 `grid.edit.set:<행>,<열>,<글>` · 키 주입 0): 표시 좌표의 셀에 값을 놓는다(`NULL` 토큰 = NULL).
+    pub(crate) fn set_cell_for_test(&mut self, di: usize, pos: usize, text: &str) -> bool {
+        if self.edit.is_none() || di >= self.rows() {
+            return false;
+        }
+        let Some(&ci) = self.col_order.get(pos) else {
+            return false;
+        };
+        let Some(rref) = self.rref_at(di) else {
+            return false;
+        };
+        let value = if text == self.null_text || text == "NULL" {
+            None
+        } else {
+            Some(text.to_string())
+        };
+        let checked = match self.edit.as_ref().and_then(|e| e.cols.get(ci)) {
+            Some(c) => match c.spec.validate(value.as_deref()) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.status(e.message());
+                    return false;
+                }
+            },
+            None => value,
+        };
+        self.select_only((di, pos));
+        self.commit_cell((rref, ci), checked);
+        true
+    }
+
+    /// 자체 시험: 셀 선택(표시 좌표).
+    pub(crate) fn select_cell_for_test(&mut self, di: usize, pos: usize) {
+        if di < self.rows() && pos < self.col_order.len() {
+            self.select_only((di, pos));
+        }
+    }
+
+    /// 자체 시험 덤프: 표시 행마다 `상태|셀…`(덧그림 반영) + 편집 상태 줄.
+    pub(crate) fn dump_edit(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "rows={} src={} editable={} dirty={} status={}\n",
+            self.rows(),
+            self.src_len(),
+            self.edit.is_some(),
+            self.edit_dirty(),
+            self.edit_status_text().unwrap_or_default()
+        ));
+        if let Some(e) = self.edit.as_ref() {
+            out.push_str(&format!(
+                "table={} key={:?} kind={:?} ready={} cols={}\n",
+                e.target.table,
+                e.key_cols,
+                e.key_kind,
+                e.keys_ready,
+                e.cols
+                    .iter()
+                    .map(|c| format!("{}:{:?}", c.name, c.spec.kind))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        for di in 0..self.rows().min(200) {
+            let Some(rref) = self.rref_at(di) else {
+                continue;
+            };
+            let st = self
+                .edit
+                .as_ref()
+                .map_or(RowStatus::Clean, |e| e.cs.status(rref));
+            let cells: Vec<String> = self
+                .col_order
+                .iter()
+                .map(|&ci| self.cur_text(rref, ci).unwrap_or_else(|| "NULL".into()))
+                .collect();
+            out.push_str(&format!("{di}|{st:?}|{}\n", cells.join("|")));
+        }
+        out
+    }
+
+    /// 호스트 명령 id(팔레트·키맵 · `grid.edit.*` · 툴바 id) → 편집 동작.
+    pub(crate) fn edit_command(&mut self, id: &str) -> bool {
+        match gridedit::action_for_command(id) {
+            Some(a) => {
+                self.edit_action(a);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 살아 있는 편집기가 사건을 먹었는가(열려 있을 때만).
+    fn live_event(&mut self, ev: &InputEvent) -> bool {
+        let Some(e) = self.edit.as_mut() else {
+            return false;
+        };
+        if !e.live.is_open() {
+            return false;
+        }
+        let mut inv = Invalidations::default();
+        let inside = match *ev {
+            InputEvent::MouseDown { x, y, .. }
+            | InputEvent::RightDown { x, y }
+            | InputEvent::MouseMove { x, y } => e.live.rect().contains(Point { x, y }),
+            InputEvent::MouseUp { .. } => true,
+            _ => false,
+        };
+        let r = match *ev {
+            InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. } => {
+                e.live.textbox_mut().on_event(ev, &mut inv);
+                return inside;
+            }
+            InputEvent::MouseDown { .. } | InputEvent::RightDown { .. } => {
+                if inside {
+                    e.live.textbox_mut().on_event(ev, &mut inv);
+                    return true;
+                }
+                // 바깥 클릭 = 커밋 시도 · 실패면 클릭을 막는다(상자에 붉은 띠).
+                e.live.try_commit(Move::None)
+            }
+            InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => return false,
+            _ => e.live.on_event(ev, false, &mut inv),
+        };
+        let cell = e.live.cell();
+        match r {
+            LiveEvent::Commit { value, mv } => {
+                if let Some(cell) = cell {
+                    self.commit_cell(cell, value);
+                }
+                self.move_after_commit(mv);
+                !matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                )
+            }
+            LiveEvent::Cancel => {
+                if let Some(e) = self.edit.as_mut() {
+                    e.live_at = None;
+                }
+                true
+            }
+            LiveEvent::Invalid(err) => {
+                self.status(err.message());
+                true
+            }
+            LiveEvent::None => true,
+        }
     }
 
     /// 세션 통제 상태(호스트 · docs/52 §3) — 바뀔 때만 도구줄을 다시 맞춘다.
@@ -714,6 +1689,7 @@ impl Grid {
             .is_some_and(|r| r.columns().len() == rs.columns.len());
         let n = rs.rows.len();
         self.rs = Some(ResultData::new(rs));
+        self.edit = None;
         self.row_order = (0..n).collect();
         if !same_cols {
             self.col_order = (0..self.rs.as_ref().map_or(0, |r| r.columns().len())).collect();
@@ -1044,7 +2020,10 @@ impl Grid {
                 for (tb, ids) in [
                     (&mut self.tb_view, &["view"][..]),
                     (&mut self.tb_refresh, &["refresh"][..]),
-                    (&mut self.tb_edit, &[][..]),
+                    (
+                        &mut self.tb_edit,
+                        &["row.add", "row.del", "row.dup", "row.save", "row.cancel"][..],
+                    ),
                     (
                         &mut self.tb_fetch,
                         &["fetch.all", "fetch.stop", "count"][..],
@@ -1066,6 +2045,9 @@ impl Grid {
                         self.open_view_menu(r.x, r.y, scale);
                     }
                     Some("refresh") if self.can_refresh() => self.want_refresh = true,
+                    Some(id @ ("row.add" | "row.del" | "row.dup" | "row.save" | "row.cancel")) => {
+                        self.edit_command(id);
+                    }
                     // 전체 조회 = 나머지 이어 받기(자동 페치가 나가 있으면 큐).
                     Some("fetch.all") => self.request_fetch_all(),
                     Some("fetch.stop") => self.request_cancel(),
@@ -1524,6 +2506,8 @@ impl Grid {
         self.hdr_resize = None;
         // 한 세트(DR-33): 덩어리를 이동해 첫 세그먼트로(복사 0). 옛 데이터는 여기서 drop(변환 스레드가 쥔 세그먼트는 그쪽이 끝나면).
         self.rs = Some(ResultData::new(rs));
+        self.edit = None;
+        self.read_only = None;
         self.text_lines = Vec::new();
         self.text_bytes = 0;
         self.messages.clear();
@@ -1812,7 +2796,59 @@ impl Grid {
         if rows.is_empty() || cols.is_empty() {
             return None;
         }
+        // ★ 편집 중이면 덧그린 값·추가 행을 포함한 **작은 스냅숏**을 만들어 같은 렌더러로(선택 크기만큼만 · DR-33 세트는 그대로).
+        let n_src = rs.len();
+        let overlay: Option<ResultSet> = if self.edit_dirty() || rows.iter().any(|&r| r >= n_src) {
+            let columns: Vec<nsql_core::Column> = cols
+                .iter()
+                .filter_map(|&c| rs.columns().get(c).cloned())
+                .collect();
+            let data: Vec<Vec<Value>> = rows
+                .iter()
+                .map(|&ri| {
+                    let rref = if ri < n_src {
+                        RowRef::Existing(ri)
+                    } else {
+                        RowRef::Inserted(ri - n_src)
+                    };
+                    cols.iter()
+                        .map(
+                            |&c| match self.edit.as_ref().and_then(|e| e.cs.cell(rref, c)) {
+                                Some(Some(s)) => Value::Str(s.clone()),
+                                Some(None) => Value::Null,
+                                None => rs
+                                    .row(ri)
+                                    .and_then(|row| row.get(c))
+                                    .cloned()
+                                    .unwrap_or(Value::Null),
+                            },
+                        )
+                        .collect()
+                })
+                .collect();
+            Some(ResultSet {
+                columns,
+                rows: data,
+            })
+        } else {
+            None
+        };
+        if let Some(snap) = overlay.as_ref() {
+            let view = View::new(snap);
+            return self.render_copy(kind, &view, rows.len(), first);
+        }
         let view = View::new(rs).rows(&rows).cols(&cols);
+        self.render_copy(kind, &view, rows.len(), first)
+    }
+
+    fn render_copy<S: nsql_core::RowSource + ?Sized>(
+        &self,
+        kind: CopyKind,
+        view: &S,
+        nrows: usize,
+        first: bool,
+    ) -> Option<(String, usize)> {
+        let rows_len = nrows;
         let opts = GridOpts {
             max_col: 0, // 복사는 자르지 않는다.
             null: self.null_text.clone(),
@@ -1828,13 +2864,13 @@ impl Grid {
             // 구간마다 배열 하나(여러 구간이면 배열이 여러 개 — 각각 독립 문서).
             CopyKind::Json => (Format::Json, true),
         };
-        let layout = nsql_io::block_layout(&view, &opts);
+        let layout = nsql_io::block_layout(view, &opts);
         let out = nsql_io::render_block(
-            &view,
+            view,
             &fmt,
             self.dialect,
             &layout,
-            0..rows.len(),
+            0..rows_len,
             header,
             true,
             "T",
@@ -1843,7 +2879,7 @@ impl Grid {
         // ★ 복사에는 끝 줄바꿈을 붙이지 않는다(사용자 09-17): 렌더러는 블록(줄마다 `\n`)이라 마지막 행 뒤에도 `\n`이 남는데,
         //   단일 셀/행을 붙여넣을 때 줄바꿈이 따라오면 안 된다 · 여러 행은 행 사이 줄바꿈만.
         let out = out.trim_end_matches(['\n', '\r']).to_string();
-        Some((out, rows.len() * cols.len()))
+        Some((out, rows_len * view.ncols()))
     }
 
     /// 마우스 아래 셀(표시 행 · 표시 컬럼 위치). 행번호 열 위면 컬럼 0.
@@ -1955,7 +2991,7 @@ impl Grid {
         if let CtxItem::Item { enabled, .. } = &mut adv_item {
             *enabled = has;
         }
-        let items = vec![
+        let mut items = vec![
             CtxItem::maybe("copy", t(Msg::MnCopy), has)
                 .with_icon(Some(toolicons::mi_copy()))
                 .with_shortcut(self.sc_copy.clone()),
@@ -1967,6 +3003,63 @@ impl Grid {
                 .with_icon(Some(toolicons::mi_select_all()))
                 .with_shortcut(self.sc_all.clone()),
         ];
+        // ★ 편집(docs/87 §6): 편집 가능한 결과에만 · 값 보기는 늘.
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::maybe(
+            "grid.edit.view_value",
+            t(Msg::MnGeViewValue),
+            has,
+        ));
+        if let Some(e) = self.edit.as_ref() {
+            let can = !e.applying;
+            let dirty = e.cs.is_dirty();
+            items.push(CtxItem::maybe(
+                "grid.edit.set_null",
+                t(Msg::MnGeSetNull),
+                can && has,
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.dup_row",
+                t(Msg::MnGeDupRow),
+                can && has,
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.insert_row",
+                t(Msg::MnGeInsertRow),
+                can,
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.delete_row",
+                t(Msg::MnGeDeleteRow),
+                can && has,
+            ));
+            items.push(CtxItem::Separator);
+            items.push(CtxItem::maybe(
+                "grid.edit.undo",
+                t(Msg::MnGeUndo),
+                can && e.cs.can_undo(),
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.redo",
+                t(Msg::MnGeRedo),
+                can && e.cs.can_redo(),
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.preview_sql",
+                t(Msg::MnGePreview),
+                dirty,
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.apply",
+                t(Msg::MnGeApply),
+                can && dirty && e.keys_ready && self.session_open(),
+            ));
+            items.push(CtxItem::maybe(
+                "grid.edit.revert",
+                t(Msg::MnGeRevert),
+                can && dirty,
+            ));
+        }
         let text_w = (self.row_h * 10).max(180);
         self.menu.open_at(x, y, items, self.bounds, text_w);
     }
@@ -1993,6 +3086,10 @@ impl Grid {
             self.pending_sql = Some(k);
             return;
         }
+        if id.starts_with("grid.edit.") {
+            self.edit_command(id);
+            return;
+        }
         let kind = match id {
             "copy" => CopyKind::Tsv,
             "copy_h" => CopyKind::TsvWithHeaders,
@@ -2011,6 +3108,10 @@ impl Grid {
 
     /// 결합 정렬 적용(인덱스 벡터만 재배열 · 안정 정렬이라 같은 값은 원본 순서).
     fn apply_sort(&mut self) {
+        // 편집 중(변경 집합이 비어 있지 않음)에는 정렬하지 않는다 — 추가 행의 자리를 잃는다(87 §3).
+        if self.edit_dirty() {
+            return;
+        }
         let Some(rs) = self.rs.as_ref() else { return };
         let mut order: Vec<usize> = (0..rs.len()).collect();
         if !self.sort_keys.is_empty() {
@@ -2171,6 +3272,8 @@ impl Grid {
 
     pub(crate) fn clear_result(&mut self) {
         self.rs = None;
+        self.edit = None;
+        self.read_only = None;
         self.col_order.clear();
         self.row_order.clear();
         self.sort_keys.clear();
@@ -2193,8 +3296,25 @@ impl Grid {
         self.sync_fetch_tools();
     }
 
+    /// 표시 행 수 = `row_order`(원본 행 + 편집으로 추가된 행) — 원본만 세려면 [`Self::src_len`].
     fn rows(&self) -> usize {
+        self.row_order.len()
+    }
+
+    /// 원본 결과 행 수(추가 행 제외).
+    fn src_len(&self) -> usize {
         self.rs.as_ref().map_or(0, |r| r.len())
+    }
+
+    /// 표시 행 index → 행 참조(원본 index 또는 추가 행).
+    fn rref_at(&self, di: usize) -> Option<RowRef> {
+        let ri = *self.row_order.get(di)?;
+        let n = self.src_len();
+        Some(if ri < n {
+            RowRef::Existing(ri)
+        } else {
+            RowRef::Inserted(ri - n)
+        })
     }
 
     /// 행 영역 높이(헤더·푸터 제외).
@@ -2308,6 +3428,27 @@ impl Grid {
             self.text_view_event(ev, scale);
             return;
         }
+        self.live_scale = scale;
+        // ★ 살아 있는 셀 편집기(docs/87 §6): 열려 있으면 키·문자·안쪽 마우스는 상자로 · 바깥 클릭 = 커밋 뒤 통과.
+        if self.live_event(ev) {
+            return;
+        }
+        // 편집 동작(편집기가 닫혀 있을 때): Enter/타이핑 = 진입 · Delete/Backspace = 비움 · Undo/Redo.
+        if self.edit.is_some() && self.sel_cur.is_some() && self.rs.is_some() {
+            if let Some(a) = gridedit::action_for_event(ev, false) {
+                self.edit_action(a);
+                return;
+            }
+        } else if self.rs.is_some() && self.sel_cur.is_some() && self.read_only.is_some() {
+            if let Some(EditAction::BeginEdit | EditAction::BeginEditWith(_)) =
+                gridedit::action_for_event(ev, false)
+            {
+                if let Some(r) = self.read_only.clone() {
+                    self.status(tf(Msg::StGeReadOnly, &[&r.text()]));
+                }
+                return;
+            }
+        }
         // ★ 스크롤바가 **선택보다 먼저**(휠 = 픽셀 · 썸/트랙 클릭 · 드래그 · 호버). 소비되면 셀 선택·키 처리로 흘리지 않는다
         //   (09-16: 가로 바 트랙을 눌렀는데 뒤의 셀이 선택됐다 — 선택 판정이 먼저 return했다).
         if self.row_h > 0 && self.rs.is_some() {
@@ -2389,6 +3530,22 @@ impl Grid {
                     primary,
                 } if !hdr.contains(Point { x, y }) => {
                     if let Some(cell) = self.cell_at_point(x, y) {
+                        // 더블클릭(400 ms · 같은 셀 · 수식키 없음) = 편집 진입(엑셀 · 87 §6).
+                        if !shift && !primary && self.edit.is_some() {
+                            let now = std::time::Instant::now();
+                            let dbl = self.edit.as_ref().and_then(|e| e.last_click).is_some_and(
+                                |(c, t0)| c == cell && now.duration_since(t0).as_millis() < 400,
+                            );
+                            if let Some(e) = self.edit.as_mut() {
+                                e.last_click = Some((cell, now));
+                            }
+                            if dbl {
+                                self.select_only(cell);
+                                self.drag_sel = None;
+                                self.begin_edit(None, true);
+                                return;
+                            }
+                        }
                         if shift {
                             if self.sel_anchor.is_none() {
                                 self.sel_anchor = Some(cell);
@@ -2804,17 +3961,37 @@ impl Grid {
         let sub = vy % self.row_h.max(1);
         let mut y = body.y - sub;
         let mut last = first;
-        let n = rs.len();
+        let n_src = rs.len();
+        let n = self.rows();
+        let edit = self.edit.as_ref();
+        let band = (3.0 * s).round().max(2.0) as i32;
         for di in first..n {
             if y >= body.bottom() {
                 break;
             }
             let ri = self.row_order.get(di).copied().unwrap_or(di);
-            let Some(row) = rs.row(ri) else { break };
+            // ★ 편집(docs/87): 원본 행은 세트에서 · 추가 행(`ri >= n_src`)은 변경 집합에서 · 덧그림(수정 셀 색 · 새 행 띠 · 삭제 취선).
+            let rref = if ri < n_src {
+                RowRef::Existing(ri)
+            } else {
+                RowRef::Inserted(ri - n_src)
+            };
+            let row: Option<&[Value]> = if ri < n_src { rs.row(ri) } else { None };
+            if row.is_none() && edit.is_none_or(|e| e.cs.inserted(ri - n_src).is_none()) {
+                continue;
+            }
+            let status = edit.map_or(RowStatus::Clean, |e| e.cs.status(rref));
+            let err_row = edit.is_some_and(|e| e.error_row == Some(rref));
             last = di + 1;
             let rr = Rect::new(b.x, y, b.w, self.row_h).intersection(&body);
             if di % 2 == 1 {
                 dc.fill_rect(rr, th.panel_bg_alt);
+            }
+            if status == RowStatus::Inserted {
+                dc.fill_rect_alpha(rr, th.ok, 0.08);
+            }
+            if err_row {
+                dc.fill_rect_alpha(rr, th.danger, 0.15);
             }
             // 호버 강조 — 색을 새로 만들지 않고 전경색을 알파로 덮는다(진행도 × 토큰 알파 · 서서히).
             let ha = hover_alpha(false, self.hover.value(di));
@@ -2829,9 +4006,16 @@ impl Grid {
             let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
             let mut x = gx0 - self.scroll_x;
             for (pos, &ci) in self.col_order.iter().enumerate() {
-                let Some(v) = row.get(ci) else { continue };
+                let over: Option<&Option<String>> = edit.and_then(|e| e.cs.cell(rref, ci));
+                let v_src: Option<&Value> = row.and_then(|r| r.get(ci));
+                if over.is_none() && v_src.is_none() {
+                    continue;
+                }
                 let cw = self.col_w.get(ci).copied().unwrap_or(80);
                 let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&cells);
+                if clip.w > 0 && over.is_some() && status == RowStatus::Modified {
+                    dc.fill_rect_alpha(clip, th.accent, 0.14);
+                }
                 if clip.w > 0
                     && self.in_sel(di, pos)
                     && !(self.row_focus && self.row_fully_selected(di))
@@ -2842,11 +4026,29 @@ impl Grid {
                     dc.stroke_round_rect(clip, 0, th.accent, 1.0);
                 }
                 if clip.w > 0 && clip.h > 0 {
-                    let txt = cell_text(v, &null);
-                    let numeric = matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_));
-                    // NULL은 흐린 글자보다 **더 흐리게**(배경 쪽으로 45 % · 사용자 09-22).
-                    let color = if matches!(v, Value::Null) {
+                    let (txt, numeric, is_null) = match (over, v_src) {
+                        (Some(Some(sv)), _) => (
+                            sv.clone(),
+                            edit.is_some_and(|e| {
+                                e.cols
+                                    .get(ci)
+                                    .is_some_and(|c| c.spec.kind == CellKind::Number)
+                            }),
+                            false,
+                        ),
+                        (Some(None), _) => (null.clone(), false, true),
+                        (None, Some(v)) => (
+                            cell_text(v, &null),
+                            matches!(v, Value::Int(_) | Value::Float(_) | Value::Decimal(_)),
+                            matches!(v, Value::Null),
+                        ),
+                        (None, None) => (String::new(), false, true),
+                    };
+                    // NULL은 흐린 글자보다 **더 흐리게**(배경 쪽으로 45 % · 사용자 09-22) · 삭제 행은 전체 흐림.
+                    let color = if is_null {
                         th.text_dim.lerp(th.panel_bg, 0.45)
+                    } else if status == RowStatus::Deleted {
+                        th.text_dim
                     } else {
                         th.text
                     };
@@ -2860,6 +4062,20 @@ impl Grid {
                     }
                 }
                 x += cw;
+            }
+            // 편집 상태 표식: 삭제 = 취선 · 새 행 = 왼쪽 초록 띠(87 §6).
+            if status == RowStatus::Deleted {
+                let mid = y + self.row_h / 2;
+                dc.fill_rect(
+                    Rect::new(gx0, mid, (b.right() - gx0).max(0), 1).intersection(&body),
+                    th.danger,
+                );
+            }
+            if status == RowStatus::Inserted {
+                dc.fill_rect(
+                    Rect::new(gx0, y, band, self.row_h).intersection(&body),
+                    th.ok,
+                );
             }
             // 행번호(고정 열 · 우측 정렬 · 흐리게 · 선택 행은 선택색으로 표시).
             if self.gutter_w > 0 {
@@ -2915,6 +4131,22 @@ impl Grid {
         }
         if self.gutter_w > 0 {
             dc.fill_rect(Rect::new(gx0 - 1, body.y, 1, body.h), th.border);
+        }
+        // ★ 살아 있는 셀 편집기(편집 중인 셀 한 곳 · 스크롤·열 폭을 따라간다).
+        let live_rect = self
+            .edit
+            .as_ref()
+            .filter(|e| e.live.is_open())
+            .and_then(|e| e.live_at)
+            .and_then(|(di, pos)| self.cell_rect(di, pos));
+        self.live_scale = s;
+        if let Some(e) = self.edit.as_mut() {
+            if e.live.is_open() {
+                if let Some(r) = live_rect {
+                    e.live.set_rect(r);
+                    e.live.paint(dc, th);
+                }
+            }
         }
         // ── 헤더(행 위에 덮어 그린다 — 부분 스크롤된 첫 행이 헤더 아래로 들어간다)
         dc.fill_rect(header, th.chrome_bg);
@@ -3106,6 +4338,9 @@ impl Grid {
             }
         }
         info.push_str(&format!(" · ~{}", fmt_bytes(self.approx_bytes())));
+        if let Some(st) = self.edit_status_text() {
+            info.push_str(&format!(" · {st}"));
+        }
         if let Some(at) = &self.last_run_at {
             info.push_str(&format!(" · {at}"));
         }
@@ -3275,6 +4510,41 @@ impl Grid {
 }
 
 /// 그리드 셀 글자 — NULL은 설정 글자(`grid.null_text` · 텍스트 보기·복사와 같은 값) · 바이트는 길이만(셀 폭 보호 · 텍스트 계열은 nsql-io가 16진).
+/// 16진수 덤프(오프셋 · 16바이트/줄 · 문자 열) — 값 보기 창.
+fn hex_dump(b: &[u8]) -> String {
+    let mut out = String::with_capacity(b.len() * 4 + 64);
+    out.push_str(&format!("-- {} bytes\n", b.len()));
+    for (i, chunk) in b.chunks(16).enumerate() {
+        out.push_str(&format!("{:08x}  ", i * 16));
+        for (j, byte) in chunk.iter().enumerate() {
+            out.push_str(&format!("{byte:02x} "));
+            if j == 7 {
+                out.push(' ');
+            }
+        }
+        for _ in chunk.len()..16 {
+            out.push_str("   ");
+        }
+        if chunk.len() <= 8 {
+            out.push(' ');
+        }
+        out.push_str(" |");
+        for &byte in chunk {
+            out.push(if (0x20..0x7f).contains(&byte) {
+                byte as char
+            } else {
+                '.'
+            });
+        }
+        out.push_str("|\n");
+        if i >= 65_535 {
+            out.push_str("…\n");
+            break;
+        }
+    }
+    out
+}
+
 fn cell_text(v: &Value, null: &str) -> String {
     match v {
         Value::Null => null.to_string(),

@@ -181,6 +181,8 @@
 - 기동 구간: `NSQL_TRACE_FRAMES=1` → `[startup] settings · fonts · event_loop · … · app`(누적 ms) + `[frames] … first paint … at +N ms`(09-22 · 39 §2 S-14).
 - 기준 수치(Release · 09-20 · 이 Windows PC): 65 MB 파일 상주 87 MB · 피크 106 MB · 70만 줄 입력 3~4 ms · 그리기 2 ms · 4만 줄 전 기능 입력 8 ms. 맥에서 크게 다르면 원인을 본다.
 
+- ★ **예약 기동 명령의 여유(09-26 §217)**: `NSQL_NO_ACTIVATE=1`로 띄운(비활성) 앱은 macOS App Nap 때문에 `@after` 타이머가 수 초 늦게 깰 수 있다 → 자체 시험은 **마지막 `@after` + 5 s** 뒤에 프로세스를 끝낸다(안 그러면 마지막 덤프가 빈다 · 기능 결함이 아니다). 인자에 쉼표가 필요한 명령(`grid.edit.set`)은 `;`로 나눈다.
+
 ## 5. 로컬 메모리에서 저장소로 올린 것(이 PC의 `memory/` → 여기)
 
 | 로컬 메모리 | 이제 있는 곳 |

@@ -48,6 +48,7 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
+| **gridedit**(편집 가능한 그리드 핵심 · 09-26) | nexa-ctl `gridedit` | 어느 그리드든 편집: 셀 명세 검증(`CellSpec`) · 변경 집합 덧그리기+되돌리기(`ChangeSet` · 원본 불변) · 붙여넣기 행렬/자동 확장(`paste`) · 날짜 24형식(`datetime`) · 살아 있는 편집기 1개(`LiveEditor`) · 키맵 — 값은 `Option<String>` · DBMS·그리기 의존 0 | nexa-sql 결과 그리드(87) · 후보 = 설정 표·접속 목록·파일 이름 바꾸기 |
 | **TypeAhead + hangul::Composer** | nexa-ctl `typeahead` · `hangul` | 목록/트리 앞글자 점프(nexa-beep 이식): 버퍼+조합+타임아웃은 부품 · 매칭은 라벨 함수 · 필터·HUD 위치 설정 · Windows 한/영은 호스트가 토글해 `jamo_from_qwerty` | 오브젝트 탐색기(09-19) · (후보) 파일 대화상자 트리 · 설정 창 트리 · 팔레트 |
 | **contrast_order** | nexa-ctl `theme` | 순환 팔레트를 이웃끼리 가장 잘 구별되게 배열(보색·색 온도·밝기 · 첫 색 고정) — 깊이 색·차트 계열색처럼 "차례로 쓰는 색 목록"에 재사용 · `Theme.rainbow`는 이미 이 순서 | Rainbow Pairs(`rainbowpair.contrast_order`) |
 | **merge3 + replace_all_undoable** | nexa-ctl `merge3` · `TextBox` | 줄 단위 3-way 병합(의존 0 · 겹침 수·가져온 줄 범위) + 본문 전체를 되돌리기 한 단계로 바꾸기(캐럿 유지) — 외부 변경 반영 · 포매터 결과 적용 같은 "밖에서 온 새 본문"에 재사용 | 외부 파일 변경(58) |

@@ -252,6 +252,9 @@ const MINIMAP_CLICK_OPTS: &[(&str, Msg)] = &[
     ("text", Msg::ValMinimapClickText),
 ];
 
+const GE_EMPTY_OPTS: &[(&str, Msg)] = &[("null", Msg::OptGeNull), ("empty", Msg::OptGeEmpty)];
+const GE_REFRESH_OPTS: &[(&str, Msg)] =
+    &[("requery", Msg::OptGeRequery), ("local", Msg::OptGeLocal)];
 const REFETCH_OPTS: &[(&str, Msg)] = &[
     ("strict", Msg::ValRefetchStrict),
     ("strict_all", Msg::ValRefetchStrictAll),
@@ -1025,6 +1028,50 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescNullText,
         kind: SettingKind::Text,
         default: "NULL",
+    },
+    // ★ 그리드 데이터 편집(docs/87 · T-182 · 사용자 09-26): 편집 허용 · 빈 값 = NULL/빈 문자열(D-210) · 문장당 1행 검사 · 적용 뒤 재조회(D-212) · 붙여넣기 상한.
+    Entry {
+        key: "grid.edit",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEdit,
+        desc: Msg::DescGridEdit,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.edit_empty",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditEmpty,
+        desc: Msg::DescGridEditEmpty,
+        kind: SettingKind::Choice(GE_EMPTY_OPTS),
+        default: "null",
+    },
+    Entry {
+        key: "grid.edit_strict",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditStrict,
+        desc: Msg::DescGridEditStrict,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.edit_refresh",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditRefresh,
+        desc: Msg::DescGridEditRefresh,
+        kind: SettingKind::Choice(GE_REFRESH_OPTS),
+        default: "requery",
+    },
+    Entry {
+        key: "grid.paste_max_rows",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridPasteMax,
+        desc: Msg::DescGridPasteMax,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 1_000_000,
+        },
+        default: "10000",
     },
     // ★ 행 포커스 배경(사용자 09-22): 셀을 골라도 그 행 전체에 연한 배경 · 색은 `#RRGGBB[AA]`(비면 선택색 35 %).
     Entry {

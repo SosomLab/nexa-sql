@@ -177,6 +177,61 @@ impl SqlPrevWin {
         self.redraw();
     }
 
+    /// ★ 생성 사양 없는 **읽기 전용 글 창**(그리드 편집 SQL 미리보기 · 셀 값 보기 · docs/87) — 새로고침은 아무것도 안 한다.
+    pub(crate) fn open_plain(
+        &mut self,
+        el: &ActiveEventLoop,
+        theme: Option<winit::window::Theme>,
+        owner: Option<&Window>,
+        title: String,
+        text: String,
+        tb: TextBox,
+    ) {
+        self.title = title;
+        self.spec = None;
+        self.server = None;
+        self.tb = tb;
+        self.tb.set_read_only(true);
+        self.tb.set_popup_deferred(true);
+        self.tb.set_minimap(false);
+        self.set_result(Ok(text));
+        self.tb.goto_line(1);
+        self.tb.set_focused(true);
+        if let Some(w) = &self.window {
+            w.set_title(&format!("Nexa SQL — {}", self.title));
+            crate::winfocus::focus(w);
+            self.redraw();
+            return;
+        }
+        let size = self.desired_size();
+        let attrs = Window::default_attributes()
+            .with_title(format!("Nexa SQL — {}", self.title))
+            .with_theme(theme)
+            .with_resizable(true)
+            .with_inner_size(size);
+        let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
+        if let Some(o) = owner {
+            if let Ok(p) = o.outer_position() {
+                let s = o.outer_size();
+                attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(
+                    p.x + s.width as i32 / 2
+                        - (size.width * f64::from(o.scale_factor() as f32) / 2.0) as i32,
+                    p.y + s.height as i32 / 4,
+                ));
+            }
+        }
+        let Ok(win) = el.create_window(attrs) else {
+            return;
+        };
+        let win = Rc::new(win);
+        self.scale = win.scale_factor() as f32;
+        self.surface = crate::present::Presenter::new(win.clone()).ok();
+        win.set_ime_allowed(crate::input::system_ime());
+        crate::winfocus::focus(&win);
+        self.window = Some(win);
+        self.redraw();
+    }
+
     /// 생성 결과 반영(새로고침 응답도 여기로) — 오류면 본문은 두고 안내 줄에 빨갛게.
     pub(crate) fn set_result(&mut self, r: Result<String, String>) {
         match r {

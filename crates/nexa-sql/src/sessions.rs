@@ -151,6 +151,9 @@ pub(crate) struct Sess {
     pub key_cache: HashMap<String, Option<nsql_core::KeyInfo>>,
     pub sql_wait: Option<nsql_io::SqlKind>,
     pub view_wait: Option<nsql_io::SqlKind>,
+    /// ★ 그리드 편집(docs/87): 키 조회를 기다리는 결과 탭 · 적용 중인 결과 탭.
+    pub edit_wait: Option<u64>,
+    pub edit_apply: Option<u64>,
 }
 
 impl Sess {
@@ -223,6 +226,8 @@ impl Sess {
             key_cache: HashMap::new(),
             sql_wait: None,
             view_wait: None,
+            edit_wait: None,
+            edit_apply: None,
         }
     }
 

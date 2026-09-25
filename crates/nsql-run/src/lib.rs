@@ -32,6 +32,22 @@ use std::time::{Duration, Instant};
 const MAX_SCRIPT_DEPTH: usize = 32;
 
 /// 호스트로 흘러가는 이벤트.
+/// [`Runner::apply_changes`] 결과.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApplyReport {
+    pub total: usize,
+    /// 성공한 문장 수(자동 모드 롤백 뒤에는 0).
+    pub done: usize,
+    /// 문장마다 영향 행 수(실패 문장 전까지).
+    pub affected: Vec<u64>,
+    /// (문장 index, 메시지).
+    pub error: Option<(usize, String)>,
+    pub committed: bool,
+    pub rolled_back: bool,
+    /// 수동 모드 — 트랜잭션이 열린 채 남았다(커밋/롤백은 사용자).
+    pub tx_left_open: bool,
+}
+
 #[derive(Debug)]
 pub enum RunEvent {
     /// 항목 실행 시작(줄 · 종류 요약). `server` = 이 항목이 서버로 가는가([`goes_to_server`]) — 클라이언트 명령(`PRINT` ·
@@ -987,6 +1003,83 @@ impl Runner {
         self.tx_changed = false;
         self.tx_user = false;
         self.tx_open = false;
+    }
+
+    /// 기본 자동 커밋 모드인가(설정 · 스크립트 `SET AUTOCOMMIT` 반영).
+    #[must_use]
+    pub fn autocommit(&self) -> bool {
+        self.engine.settings.autocommit
+    }
+
+    /// 러너가 연 트랜잭션이 살아 있는가(수동 모드).
+    #[must_use]
+    pub fn tx_open(&self) -> bool {
+        self.tx_open
+    }
+
+    /// ★ 그리드 편집 적용(nexa-sql 87 §7 · T-182): 바인드 문장 묶음을 **한 트랜잭션**으로 순서대로 실행한다.
+    /// 자동 커밋 모드 = 시작문(능력표 `tx_begin`) → 전부 → 커밋 · 하나라도 실패하면 롤백(부분 적용 0).
+    /// 수동 모드 = 열린 트랜잭션에 이어 붙이고 **열어 둔다**(커밋/롤백은 사용자 · 실패해도 롤백하지 않는다 — 앞선 작업을 잃지 않게).
+    /// `strict` = 문장마다 영향 행 수가 정확히 1이어야 한다(0/2+ = 그 문장에서 중단 · `grid.edit_strict`).
+    pub fn apply_changes(&mut self, stmts: &[ExecRequest], strict: bool) -> ApplyReport {
+        let mut rep = ApplyReport {
+            total: stmts.len(),
+            ..ApplyReport::default()
+        };
+        let auto = self.engine.settings.autocommit;
+        let begin = self.engine.caps.tx_begin;
+        let Some(sess) = self.session.as_mut() else {
+            rep.error = Some((0, "no session".into()));
+            return rep;
+        };
+        // 시작문: 자동 모드는 늘(원자성) · 수동 모드는 아직 열린 트랜잭션이 없을 때만.
+        if let Some(b) = begin {
+            if auto || !self.tx_open {
+                if let Err(e) = sess.execute(&ExecRequest {
+                    sql: b.to_string(),
+                    params: Vec::new(),
+                }) {
+                    rep.error = Some((0, e.message));
+                    return rep;
+                }
+            }
+        }
+        for (i, st) in stmts.iter().enumerate() {
+            match sess.execute(st) {
+                Ok(r) => {
+                    let n = r.rows_affected.unwrap_or(0);
+                    rep.affected.push(n);
+                    if strict && n != 1 {
+                        rep.error = Some((i, format!("affected {n} rows (expected 1)")));
+                        break;
+                    }
+                    rep.done += 1;
+                }
+                Err(e) => {
+                    rep.error = Some((i, e.message));
+                    break;
+                }
+            }
+        }
+        if auto {
+            if rep.error.is_none() {
+                match sess.commit() {
+                    Ok(()) => rep.committed = true,
+                    Err(e) => rep.error = Some((rep.done, format!("commit: {}", e.message))),
+                }
+            }
+            if rep.error.is_some() {
+                let _ = sess.rollback();
+                rep.rolled_back = true;
+                rep.done = 0;
+            }
+            self.note_tx_ended();
+        } else if rep.done > 0 || rep.error.is_some() {
+            self.tx_open = true;
+            self.tx_changed = true;
+            rep.tx_left_open = true;
+        }
+        rep
     }
 
     /// 이 문장 뒤 열린 트랜잭션을 끝내도 되는가(수동 모드 전용 · docs/56 L1). 문장의 흔적을 상태에 반영하고, 변경·사용자 통제가

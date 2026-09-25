@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/grid-editing | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-182 그리드 데이터 편집 1차(gridedit_sql · grid 통합 · Cmd::Apply/apply_changes · 값 보기 창 · 설정 5 · i18n 55 · 자체 시험 명령 · §217) |
 | perf/mac-100-late | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ 맥 성능 전수 4차(26 §7-12 · 71 §11 · 규정 시나리오 8~12 + 누수 2종 · mac-perf-all.sh Oracle 게이트 · mem.dump 기동 명령 · 39 §3-7 4행 · 65 맥 열 · 81 §3 · §216) |
 | docs/grid-editing-design | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 📐 87 그리드 데이터 편집 설계(nexa-ctl gridedit 부품 + nexa-sql 어댑터 · E-1~E-6 · D-210~213 · §215) |
 | feat/readonly-preview-details | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | PL/SQL DDL `/`+빈 줄 · SQL Preview 선택 복사·메뉴 누출 · 상세 우클릭 메뉴·한글 조합 차단·세로 스플리터 최소 · Open source BOF(§214) |

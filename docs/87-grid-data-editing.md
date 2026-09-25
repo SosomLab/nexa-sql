@@ -2,7 +2,7 @@
 
 > **요청**(사용자 09-26 · Mac 100차): *"그리드에서 데이터를 편집하는 기능 — 데이터 타입·길이·Not Null·Default · 날짜/시간 입력 방법 · LOB/BLOB/CLOB 등 DBMS별 대량 타입(보기) · 한 줄 복제 · 셀/줄/여러 줄 복사·붙여넣기(자동 확장) · 엑셀과 유사하게 직접 설정. 이번 개선으로 그리드의 완성도가 꽤 올라갈 것 — **다른 프로그램에서도 사용할 수 있도록 편집 가능한 그리드를 잘 개선**."*
 > **선행 설계**: [77 §2-3 `ChangeSet`](77-data-workbench-architecture.md)(편집 가능 판정 · 덧그리기 · `SqlGen` · 적용 · 안전) · nexa-ui [21 §3-2 셀 안의 컨트롤 · LiveEditor](../../nexa-ui/docs/21-grid-family.md) · [41 SQL 복사 키 규칙](41-sql-copy-key-rules.md) · [43 페치 모델](43-fetch-model-and-result-tabs.md) · [52 세션 통제](52-session-modes.md) · [34 트랜잭션 UX](34-transaction-ux.md) · [56 잠금 방지](56-manual-commit-lock-prevention.md).
-> **상태**: 📐 설계(09-26) → 구현 단계 E-1~E-6(§9).
+> **상태**: 📐 설계(09-26) → ★ **E-1~E-4 구현 · E-5 최소판(09-26 · §10)** → 남은 것 §11.
 
 ---
 
@@ -168,3 +168,25 @@
 | **E-6** 문서·확인표 | 87 갱신 · 위키 사용법 · U-* · 성능(편집 모드 페인트 예산 26 §5) | `win-func-check` 시나리오 |
 
 결정 대기: **D-210** 빈 문자열 커밋의 기본 = NULL(`grid.edit_empty`) · **D-211** 복제 행의 키 열 = 비움(DEFAULT/자동 증가) vs 원본 값 복사 후 사용자 수정 · **D-212** 적용 뒤 기본 = 재조회(정확) vs 로컬 반영(빠름) · **D-213** LOB 인라인 편집 허용 범위(CLOB 텍스트만 · BLOB은 파일 넣기).
+
+---
+
+## 10. 구현 1차(09-26 · journal §217)
+
+| 단계 | 들어간 것 | 위치 |
+|---|---|---|
+| E-1 | `nexa_ctl::gridedit`(spec · datetime · changeset · paste · keymap · live) · 시험 20 | nexa-ui 77차 `45be503` · docs/21 §3-2 |
+| E-2 | `gridedit_sql.rs` = 단일 테이블 판정 `analyze`(주석·문자열 제거 골격 · JOIN/GROUP/DISTINCT/집합/서브쿼리/식 거부) · `generate`(DELETE→UPDATE→INSERT · 방언 자리 표시 `Caps.marker` · 날짜 `VarType::Date/Timestamp` 바인드 · `now`/`today` = 방언 식 · 기본값 있는 NULL 열 = 생략) · `preview_text`(리터럴 · 날짜는 `TO_DATE`/`TIMESTAMP ''`/ISO) · 시험 4 | nexa-sql |
+| E-3 | `grid.rs`: `EditCfg` · `GridEdit`(ChangeSet + LiveEditor) · 행 모델 = `row_order`에 가상 index(`≥ src_len` = 추가 행) · `rebuild_row_order`(추가 행 = 원본 아래) · 페인트 덧그림(수정 셀 강조색 14 % · 새 행 초록 띠 · 삭제 취선·흐림 · 실패 행 붉은 배경) · 편집기 오버레이(`cell_rect` 추종) · Enter/타이핑/더블클릭 진입 · Delete/Backspace 비움 · Esc · Tab/Enter/↑↓ 커밋 이동 · 우클릭 메뉴 10항목 · 툴바 `row.*` 5 배선 · 붙여넣기(호스트 ⌘V → `paste_text` · 행 자동 추가) · 복사 = 덧그림 스냅숏 · 정렬은 편집 중 잠금 · 푸터에 `수정 n · 추가 m · 삭제 k` | `grid.rs` |
+| E-4 | 워커 `Cmd::Apply{key, stmts, strict}` → `Runner::apply_changes`(자동 커밋 = 시작문→전부→커밋 · 실패 롤백 · 수동 = 열어 둠 + 커밋/롤백 표식) → `ConnOutcome::Applied{rep}` → 성공 = 재조회(`grid.edit_refresh`) · 실패 = 토스트 + 행 표시 · 키 = `Cmd::Keys` 캐시(41 D-66 · 결과에 모든 키 열이 있는 PK → 유니크 → 전체 열 D-198) · 세션 바쁨 = 재요청 루프 · 열 명세 = `MetaStore` 컬럼(길이·NOT NULL·기본값 · Oracle DATE = 시각) | `main.rs` `worker.rs` `nsql-run` |
+| E-5 | 값 보기 = 읽기 전용 글 창(`SqlPrevWin::open_plain` · 텍스트 · 이진 = 16진수 덤프 `hex_dump`) · SQL 미리보기 = 같은 창 | `sqlprev_win.rs` |
+| 설정 | `grid.edit`(on) · `grid.edit_empty`(null/empty) · `grid.edit_strict`(on) · `grid.edit_refresh`(requery/local) · `grid.paste_max_rows`(10,000) | nsql-settings |
+| 자체 시험 | 기동 명령 `grid.edit.set:<행>;<열>;<글>` · `grid.edit.cmd:<id>`(`row.dup/del/save/cancel` · `grid.edit.*`) · `grid.select:<행>;<열>` · `grid.dump:<파일>`(행 상태·덧그림·키·명세) — SQLite 격리 E2E(§217): 수정 3·복제·NULL·미리보기·적용·재조회·삭제·되돌리기/다시 하기·적용 전부 서버 값 일치 | `main.rs` |
+
+## 11. 남은 것(T-182 후속)
+
+- 물리 키(Oracle `ROWID` · PG `ctid` · SQLite `rowid` · MSSQL `%%physloc%%`) 숨은 열 재조회 — 지금은 PK/UK → 전체 열(D-198).
+- 값 보기 창 = 이미지 미리보기 · 파일로 저장/넣기 · CLOB 편집 → 커밋(§5 2차) · `grid.lob_view_max_mb`.
+- `grid.edit_refresh=local`(재조회 없이 반영) — 지금은 requery와 같다.
+- 편집기 안 Shift+Tab(← 이동) · F2(북마크와 충돌 → 포커스별 키맵) · ⌘D 복제 키.
+- 실서버 4방언 시험(Oracle DATE 바인드 · SQL Server `@p` · PG `$n` · NULL 키) · 편집 모드 페인트 예산(26 §5) · 위키 사용법 · 확인표 U-*.

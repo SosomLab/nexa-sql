@@ -45,6 +45,14 @@ pub(crate) enum Cmd {
         schema: Option<String>,
         table: String,
     },
+    /// ★ 그리드 편집 적용(docs/87 §7 · T-182): 바인드 문장 묶음을 한 트랜잭션으로(`Runner::apply_changes`) — 답 `Applied`.
+    Apply {
+        /// 결과 탭 키.
+        key: u64,
+        stmts: Vec<nsql_core::ExecRequest>,
+        /// 문장마다 영향 행 수 = 1 검사(`grid.edit_strict`).
+        strict: bool,
+    },
     /// 연결 공유 층의 변수를 통째로 바꾼다(변수 창이 고쳤다 · D-135) — DB로 가는 것은 없다.
     SharedVars(Vec<nsql_script::VarState>),
     /// 앱 전역 층(docs/63 §11)을 통째로 바꾼다(시작 · 변수 창 · 다른 세션의 `VAR x GLOBAL`).
@@ -105,6 +113,11 @@ pub(crate) enum ConnOutcome {
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
     Keys(String, Option<nsql_core::KeyInfo>),
+    /// `Cmd::Apply` 결과.
+    Applied {
+        key: u64,
+        rep: nsql_run::ApplyReport,
+    },
     /// `Cmd::FetchPage` 결과 — `offset`부터 **이어 붙임**(전체 조회도 나머지를 이어 붙인다 · 09-17 위치 유지) ·
     /// `offset` 0은 교체. `all` = 전체 조회 결과(늦은 세그먼트와 구별) · `stop` = 전체 조회가 멈춘 이유(예산·취소).
     Page {
@@ -1102,6 +1115,31 @@ pub(crate) fn spawn(
                             nsql_catalog::keys(s.as_mut(), &schema, &table).ok()
                         });
                         let _ = ctx_tx.send(ConnOutcome::Keys(key, info));
+                        wake_now();
+                        true
+                    }
+                    Cmd::Apply { key, stmts, strict } => {
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let rep = match alive {
+                            Ok(()) => runner.apply_changes(&stmts, strict),
+                            Err(m) => nsql_run::ApplyReport {
+                                total: stmts.len(),
+                                error: Some((0, m)),
+                                ..Default::default()
+                            },
+                        };
+                        let _ = ctx_tx.send(ConnOutcome::Applied { key, rep });
                         wake_now();
                         true
                     }
