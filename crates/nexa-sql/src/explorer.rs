@@ -14,7 +14,9 @@ use nexa_ctl::theme::{Color, Theme};
 use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key as CtlKey, ScrollBars};
 use nexa_gfx::IconImage;
-use nsql_catalog::{ColumnInfo, GenSpec, ObjectInfo, ObjectKind, SubIcon, SubItem, SubKind};
+use nsql_catalog::{
+    ColumnInfo, GenOpts, GenSpec, ObjectInfo, ObjectKind, SchemaOpts, SubIcon, SubItem, SubKind,
+};
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
@@ -102,6 +104,7 @@ enum Req {
     Schemas {
         gen: u64,
         node: usize,
+        opts: SchemaOpts,
     },
     Objects {
         gen: u64,
@@ -541,6 +544,18 @@ pub(crate) struct Explorer {
     filter_keep: Option<std::collections::HashSet<usize>>,
     filter_hits: usize,
     filter_tokens: Vec<String>,
+    /// 보관한 판정기 — 자식이 생기거나 빠질 때마다 `refilter`(⑩ 09-25: 동기 생성 자식이 keep 집합에 없어 숨던 결함).
+    filter: Option<crate::filterbar::Matcher>,
+    /// 필터가 **대신 펼친** 노드(사용자가 펼친 적 없음) — 필터를 지우면 다시 접는다(사용자 09-25 "UI가 복잡해진다").
+    filter_expanded: std::collections::HashSet<usize>,
+    /// Generate SQL 옵션(설정 `gen.*` · 호스트가 준다).
+    gen_opts: GenOpts,
+    /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
+    schema_opts: SchemaOpts,
+    /// ★ 카탈로그 공유(docs/54 §10): 이 칸에 붙은 연결들의 계정(루트 행 라벨) — `ExplorerSet`이 준다.
+    users: Vec<String>,
+    /// 자격만 바꾸는 재접속 중(`rebind`) — 열림 응답에서 트리를 건드리지 않는다.
+    rebinding: bool,
     menu: CtxMenu,
     actions: Vec<ExplorerAction>,
     last_click: Option<(usize, Instant)>,
@@ -860,11 +875,13 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 }
                 continue;
             }
-            Req::Schemas { gen, node } => {
+            Req::Schemas { gen, node, opts } => {
                 if gen != cur_gen {
                     continue;
                 }
-                let r = with_session(&mut session, |s| nsql_catalog::schemas(s).map_err(err_s));
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::schemas_opt(s, opts).map_err(err_s)
+                });
                 // 현재 스키마는 서버가 안다(SQL Server `SCHEMA_NAME()` = dbo · PG `current_schema()` · Oracle CURRENT_SCHEMA) —
                 //   계정 이름과 같은 스키마를 찾던 종전 규칙은 SQL Server·PG에서 비어 완성에 테이블이 0이었다(사용자 09-23).
                 let current = with_session(&mut session, |s| {
@@ -1263,6 +1280,12 @@ impl Explorer {
             filter_keep: None,
             filter_hits: 0,
             filter_tokens: Vec::new(),
+            filter: None,
+            filter_expanded: std::collections::HashSet::new(),
+            gen_opts: GenOpts::default(),
+            schema_opts: SchemaOpts::default(),
+            users: Vec::new(),
+            rebinding: false,
             typeahead: nexa_ctl::TypeAhead::default(),
             ta_cfg: TypeAheadCfg::default(),
             now_hint: 0,
@@ -1443,6 +1466,17 @@ impl Explorer {
             dc.select_font(FontSlot::Base, false);
         }
         rs
+    }
+
+    /// 폴더 개수 글자: 필터 중이면 "일치/전체"(사용자 09-25) · 아니면 전체.
+    fn count_label(&self, n: &Node) -> String {
+        match &self.filter_keep {
+            Some(keep) if self.filter.is_some() => {
+                let kept = n.children.iter().filter(|c| keep.contains(c)).count();
+                format!("{kept}/{}", n.children.len())
+            }
+            _ => n.children.len().to_string(),
+        }
     }
 
     fn base_depth(&self) -> usize {
@@ -2148,6 +2182,10 @@ impl Explorer {
                         Ok((d, desc)) => {
                             self.dialect = Some(d);
                             self.conn_desc = desc;
+                            if std::mem::take(&mut self.rebinding) {
+                                // 자격만 바뀐 재접속(카탈로그 공유 · docs/54 §10) — 트리·메타는 그대로.
+                                continue;
+                            }
                             let root = &mut self.nodes[0];
                             root.expandable = true;
                             root.state = LoadState::Idle;
@@ -2517,6 +2555,9 @@ impl Explorer {
         self.nodes[node].state = LoadState::Loaded;
         self.nodes[node].expanded = true;
         self.clamp_scroll();
+        if self.filter.is_some() {
+            self.refilter();
+        }
     }
 
     /// **디프 반영**(docs/57 §2-2): 새 목록과 옛 자식을 열쇠(이름+종류)로 맞춘다 — 남는 노드는 **그대로**(펼침·자식·선택 보존) ·
@@ -2560,6 +2601,9 @@ impl Explorer {
         self.nodes[node].children = ids;
         self.nodes[node].state = LoadState::Loaded;
         self.clamp_scroll();
+        if self.filter.is_some() {
+            self.refilter();
+        }
     }
 
     /// `i`가 `anc`의 자손인가(깊이가 얕아 재귀로 충분).
@@ -2577,7 +2621,11 @@ impl Explorer {
         }
         let gen = self.gen;
         let req = match self.nodes[i].kind.clone() {
-            NodeKind::Root => Req::Schemas { gen, node: i },
+            NodeKind::Root => Req::Schemas {
+                gen,
+                node: i,
+                opts: self.schema_opts,
+            },
             NodeKind::Folder { schema, kind } => Req::Objects {
                 gen,
                 node: i,
@@ -2978,6 +3026,8 @@ impl Explorer {
 
     /// 펼침/접힘 · 처음 펼치면 로드 요청.
     fn toggle(&mut self, i: usize) {
+        // 사용자가 직접 접거나 펼친 노드 = 필터가 대신 펼친 기록에서 뺀다(필터 해제 때 건드리지 않는다).
+        self.filter_expanded.remove(&i);
         if !self.nodes[i].expandable {
             return;
         }
@@ -3009,7 +3059,11 @@ impl Explorer {
         match self.nodes[i].kind.clone() {
             NodeKind::Root => {
                 self.nodes[i].state = LoadState::Loading;
-                let _ = self.tx.send(Req::Schemas { gen, node: i });
+                let _ = self.tx.send(Req::Schemas {
+                    gen,
+                    node: i,
+                    opts: self.schema_opts,
+                });
             }
             NodeKind::Schema(schema) => {
                 let Some(d) = self.dialect else { return };
@@ -3131,6 +3185,7 @@ impl Explorer {
                 owner: o.clone(),
                 what,
                 sub: None,
+                opts: self.gen_opts,
             },
             NodeKind::Item(it) => {
                 let Some(p) = self.parent_of(i) else { return };
@@ -3141,11 +3196,64 @@ impl Explorer {
                     owner: (**owner).clone(),
                     what,
                     sub: Some((*sub, it.name.clone())),
+                    opts: self.gen_opts,
                 }
             }
             _ => return,
         };
         self.gen_sql(spec);
+    }
+
+    pub(crate) fn set_gen_opts(&mut self, opts: GenOpts) {
+        self.gen_opts = opts;
+    }
+
+    pub(crate) fn set_schema_opts(&mut self, opts: SchemaOpts) {
+        self.schema_opts = opts;
+    }
+
+    /// 스키마 목록을 조용히 다시(설정 변경 · 읽어 둔 루트만).
+    pub(crate) fn reload_schemas(&mut self) {
+        if self.nodes[0].state == LoadState::Loaded && !self.offline {
+            self.soft_refresh(0);
+        }
+    }
+
+    pub(crate) fn set_users(&mut self, users: Vec<String>) {
+        self.users = users;
+    }
+
+    pub(crate) fn bound_user(&self) -> String {
+        self.conn_user.clone()
+    }
+
+    /// ★ 자격만 바꾸는 재접속(docs/54 §10): 메타 세션을 지금 붙어 있는 다른 연결의 자격으로 다시 연다 — 트리·메타 저장소는 그대로.
+    /// 진행 중이던 요청은 세대가 바뀌어 버려지므로 읽는 중이던 노드는 `Idle`로(다시 펼치면 읽는다).
+    pub(crate) fn rebind(&mut self, spec: &ConnectSpec) {
+        self.gen += 1;
+        self.rebinding = true;
+        self.offline = false;
+        self.suspended = false;
+        self.one_time = false;
+        self.last_used = Instant::now();
+        self.conn_desc = spec.redacted();
+        self.conn_user = spec.user.clone().unwrap_or_default();
+        for n in &mut self.nodes {
+            if n.state == LoadState::Loading {
+                n.state = LoadState::Idle;
+            }
+        }
+        self.soft.clear();
+        self.source_pending = false;
+        let _ = self.tx.send(Req::Open {
+            gen: self.gen,
+            spec: spec.clone(),
+            once: false,
+        });
+        let _ = self.tx_bg.send(Req::Prepare {
+            gen: self.gen,
+            spec: spec.clone(),
+        });
     }
 
     /// Generate SQL 요청(새로고침도 같은 길) — 메타 세션에서 만든 뒤 `ExplorerAction::Preview`.
@@ -3220,24 +3328,39 @@ impl Explorer {
         out
     }
 
-    /// ★ 검색창 필터(docs/28 §7): `q`가 비면 해제 · 아니면 노드 = 라벨 일치 **또는** 걸러진 자손이 있음 **또는** 아직 안 읽은 펼침
-    /// 가능 노드(내용을 모름 — 펼치면 그 안을 거른다). 걸러진 자손이 있는 읽어 둔 노드는 펼친다(일치가 보이게). 루트는 늘 남는다.
-    pub(crate) fn apply_filter(&mut self, q: &str, pred: &dyn Fn(&str) -> bool) {
-        let q = q.trim();
-        self.filter_tokens = q.split_whitespace().map(|t| t.to_lowercase()).collect();
-        if q.is_empty() {
+    /// ★ 검색창 필터(docs/28 §7 · 사용자 09-25 "노드 자체 일치 · 자식 일치 두 조건으로 미일치와 그 부모를 모두 제거 · 최소 레벨은
+    /// 유지"): 판정기를 보관하고 거른다(비면 해제). 남는 노드 = ① 라벨 일치 ② 일치 자손이 있음(조상) ③ 일치 노드의 자손(펼치면 그
+    /// 안은 전부) — 그 밖(미일치 · 아직 안 읽은 폴더 포함)은 전부 숨긴다. **최소 표시 레벨 = 루트(연결 행)**(서버 헤더는
+    /// `ExplorerSet`이 늘 그린다 · 일치 0이면 헤더에 "일치 0"). 일치 자손을 품은 읽어 둔 노드는 펼친다.
+    pub(crate) fn apply_filter(&mut self, m: Option<crate::filterbar::Matcher>) {
+        self.filter = m.filter(|m| !m.is_empty());
+        self.refilter();
+    }
+
+    /// 보관한 판정기로 다시 거른다 — 자식이 생기거나 빠질 때(`set_children`·`diff_children`·`detach`)마다.
+    fn refilter(&mut self) {
+        let Some(m) = self.filter.clone() else {
+            // 필터 해제: 필터가 대신 펼쳤던 노드는 다시 접는다(사용자가 그 사이 직접 누른 것은 `toggle`에서 빠졌다).
+            for i in std::mem::take(&mut self.filter_expanded) {
+                if let Some(n) = self.nodes.get_mut(i) {
+                    n.expanded = false;
+                }
+            }
             if self.filter_keep.take().is_some() {
                 self.rows_cache = self.screen_rows();
                 self.clamp_scroll();
             }
             self.filter_hits = 0;
+            self.filter_tokens.clear();
             return;
-        }
+        };
+        self.filter_tokens = m
+            .text()
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .collect();
         let n = self.nodes.len();
-        // strong = 자기 일치 또는 일치 자손(조상을 살리고 펼치는 힘) · keep = strong 또는 **내용을 모르는 폴더**(안 읽은 컨테이너 —
-        // 펼치면 그 안을 거른다 · 객체·잎은 이름이 곧 내용이라 안 읽었어도 숨긴다).
         let mut strong = vec![false; n];
-        let mut keep = vec![false; n];
         let mut hit = vec![false; n];
         // 자식이 부모보다 뒤에 만들어진다(인덱스 증가) → 뒤에서 앞으로 한 번에.
         for i in (0..n).rev() {
@@ -3250,26 +3373,30 @@ impl Explorer {
             let direct = !matches!(
                 node.kind,
                 NodeKind::Root | NodeKind::Folder { .. } | NodeKind::Sub { .. }
-            ) && pred(&self.label(i).0);
+            ) && m.matches(&self.label(i).0);
             let child_strong = node.children.iter().any(|&c| strong[c]);
-            let container = matches!(
-                node.kind,
-                NodeKind::Root
-                    | NodeKind::Schema(_)
-                    | NodeKind::Folder { .. }
-                    | NodeKind::Sub { .. }
-            );
-            let unknown = container && node.expandable && node.state != LoadState::Loaded;
             hit[i] = direct;
             strong[i] = direct || child_strong;
-            keep[i] = i == 0 || strong[i] || unknown;
+        }
+        // 앞에서 뒤로: 일치 노드의 자손은 전부(`under`) · 루트는 늘(최소 표시 레벨).
+        let mut under = vec![false; n];
+        let mut keep = vec![false; n];
+        for i in 0..n {
+            let parent = if i == 0 { None } else { self.parent_of(i) };
+            if i != 0 && parent.is_none() {
+                continue;
+            }
+            under[i] = parent.is_some_and(|p| hit[p] || under[p]);
+            keep[i] = i == 0 || strong[i] || under[i];
         }
         for i in 0..n {
             if strong[i]
                 && self.nodes[i].state == LoadState::Loaded
                 && self.nodes[i].children.iter().any(|&c| strong[c])
+                && !self.nodes[i].expanded
             {
                 self.nodes[i].expanded = true;
+                self.filter_expanded.insert(i);
             }
         }
         self.filter_hits = hit.iter().filter(|h| **h).count();
@@ -3981,7 +4108,9 @@ impl Explorer {
                     self.conn_db.clone()
                 };
                 let mut dim: Vec<String> = Vec::new();
-                if !self.conn_user.is_empty() {
+                if !self.users.is_empty() {
+                    dim.push(self.users.join(", "));
+                } else if !self.conn_user.is_empty() {
                     dim.push(self.conn_user.clone());
                 }
                 if !self.profile_name.is_empty() && self.profile_name != main {
@@ -4017,7 +4146,7 @@ impl Explorer {
             NodeKind::Folder { kind, .. } => {
                 let base = folder_label(self.dialect, *kind);
                 if n.state == LoadState::Loaded {
-                    (format!("{base} ({})", n.children.len()), String::new())
+                    (format!("{base} ({})", self.count_label(n)), String::new())
                 } else {
                     (base, String::new())
                 }
@@ -4043,7 +4172,7 @@ impl Explorer {
             NodeKind::Sub { sub, .. } => {
                 let base = t(sub_msg(*sub)).to_string();
                 if n.state == LoadState::Loaded {
-                    (format!("{base} ({})", n.children.len()), String::new())
+                    (format!("{base} ({})", self.count_label(n)), String::new())
                 } else {
                     (base, String::new())
                 }
@@ -4438,23 +4567,41 @@ mod refresh_tests {
         let (mut ex, schema, tables) = sample();
         let b = ex.nodes[tables].children[1];
         ex.nodes[tables].expanded = false;
-        let pred = |hay: &str| hay.to_lowercase().contains('b');
-        ex.apply_filter("b", &pred);
+        ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
         let rows = ex.visible_rows();
         assert!(rows.contains(&b), "일치 노드");
+        assert_eq!(ex.label(tables).0, "Tables (1/3)", "폴더 개수 = 일치/전체");
         assert!(rows.contains(&tables) && rows.contains(&schema), "조상");
         assert!(ex.nodes[tables].expanded, "일치를 품은 폴더는 펼쳐진다");
         let a = ex.nodes[tables].children[0];
         assert!(!rows.contains(&a), "불일치 노드는 숨는다");
         let views = ex.nodes[schema].children[1];
         assert!(
-            rows.contains(&views),
-            "안 읽은 폴더는 남는다(펼치면 그 안을 거른다)"
+            !rows.contains(&views),
+            "일치가 있으면 안 읽은 다른 폴더는 숨는다(09-25 규칙)"
         );
+        // 일치 노드 아래 자식은 전부 보인다(펼침) · 자식이 생기면 스스로 다시 거른다(⑩ 결함).
+        ex.set_children(b, vec![sub_of(&ex, b, SubKind::Columns)]);
+        let sub_b = ex.nodes[b].children[0];
+        assert!(
+            ex.visible_rows().contains(&sub_b),
+            "일치 노드의 자손은 필터와 무관하게 보인다"
+        );
+        // 일치가 없는 트리 = 루트(연결 행)만 남는다(최소 표시 레벨 · 사용자 09-25).
+        ex.apply_filter(Some(crate::filterbar::Matcher::plain("zzz")));
+        assert_eq!(ex.visible_rows(), vec![0]);
+        assert_eq!(ex.filter_hits(), 0);
+        ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
         assert_eq!(ex.filter_hits(), 1);
         assert!(ex.select_next_hit(true));
         assert_eq!(ex.selected, Some(b));
-        ex.apply_filter("", &pred);
+        ex.apply_filter(None);
+        assert!(
+            !ex.nodes[tables].expanded,
+            "필터가 대신 펼친 폴더는 해제 때 다시 접힌다"
+        );
+        assert_eq!(ex.label(tables).0, "Tables (3)");
+        ex.nodes[tables].expanded = true;
         assert!(ex.visible_rows().contains(&a), "빈 글 = 해제");
         assert_eq!(ex.filter_hits(), 0);
     }

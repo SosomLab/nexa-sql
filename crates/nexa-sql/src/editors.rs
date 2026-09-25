@@ -302,6 +302,17 @@ impl Editors {
         self.registry.for_title(title)
     }
 
+    /// ★ 미리보기용 편집 상자(SQL Preview · 사용자 09-25 "편집기 탭과 동일하게 · 미니맵·북마크 등은 제외"): 편집기 탭과 같은 설정
+    /// (글꼴 크기는 호스트가 편집기 글꼴로 그린다) · 미니맵·거터 표식·우클릭 부가 항목만 끈다.
+    pub(crate) fn preview_box(&self, text: &str, syntax: &Rc<SyntaxSpec>) -> TextBox {
+        let mut tb = self.make_box(text, syntax);
+        tb.set_minimap(false);
+        tb.set_gutter_marks(false);
+        tb.set_menu_extras(Vec::new());
+        tb.set_popup_deferred(false);
+        tb
+    }
+
     fn make_box(&self, text: &str, syntax: &Rc<SyntaxSpec>) -> TextBox {
         // 기본 편집기 placeholder 없음(사용자 09-22).
         let mut tb = TextBox::new("").with_multiline().with_text(text);

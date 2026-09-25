@@ -72,7 +72,12 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
     let res: Result<i32, nsql_core::DbError> = (|| {
         match sub {
             "schemas" => {
-                let list = nsql_catalog::schemas(s)?;
+                // `schemas all` = 시스템 스키마까지 · `nonempty` = 빈 스키마 숨김(GUI 설정과 같은 규칙).
+                let opts = nsql_catalog::SchemaOpts {
+                    show_system: o.positional.iter().any(|t| t == "all"),
+                    hide_empty: o.positional.iter().any(|t| t == "nonempty"),
+                };
+                let list = nsql_catalog::schemas_opt(s, opts)?;
                 print_rs(
                     o,
                     dialect,
@@ -151,12 +156,19 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     return Ok(2);
                 };
                 let (sc, name) = split_name(obj, &schema);
-                let kind = o
+                // `k=v` 토큰 = 옵션(qualified · compact · full · fk) · 나머지 = 종류 · 하위 종류 · 하위 이름.
+                let (opt_tokens, rest): (Vec<String>, Vec<String>) = o
                     .positional
-                    .get(3)
+                    .iter()
+                    .skip(3)
+                    .cloned()
+                    .partition(|t| t.contains('='));
+                let opts = nsql_catalog::GenOpts::default().with_tokens(&opt_tokens);
+                let kind = rest
+                    .first()
                     .and_then(|k| ObjectKind::parse(k))
                     .unwrap_or(ObjectKind::Table);
-                let sub = match (o.positional.get(4), o.positional.get(5)) {
+                let sub = match (rest.get(1), rest.get(2)) {
                     (Some(sk), Some(sn)) => match nsql_catalog::SubKind::parse(sk) {
                         Some(sk) => Some((sk, sn.clone())),
                         None => {
@@ -187,6 +199,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     },
                     what,
                     sub,
+                    opts,
                 };
                 let text = nsql_catalog::generate(s, &spec)?;
                 print!("{text}");

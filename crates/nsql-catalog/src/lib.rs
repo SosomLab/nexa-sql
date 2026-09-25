@@ -329,7 +329,7 @@ pub fn db_kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
 pub mod tree;
 pub use tree::{sub_items, sub_kinds, SubIcon, SubItem, SubKind};
 pub mod gen;
-pub use gen::{gen_whats, generate, GenSpec, GenWhat};
+pub use gen::{gen_whats, generate, GenOpts, GenSpec, GenWhat};
 
 // ───────────────────────────────────────────── 공통 도우미
 
@@ -410,13 +410,119 @@ fn truthy(s: &str) -> bool {
 
 /// 스키마(소유자) 목록.
 pub fn schemas(s: &mut dyn Session) -> Result<Vec<String>, DbError> {
+    schemas_opt(s, SchemaOpts::default())
+}
+
+/// 스키마 목록 옵션(사용자 09-25 · DBeaver 대조): 시스템 스키마 표시(기본 숨김) · 빈 스키마 숨김(기본 표시 = DBeaver 기본).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SchemaOpts {
+    /// Oracle `SYSTEM_SCHEMAS`(DBeaver `OracleConstants`) · SQL Server `sys`/`INFORMATION_SCHEMA`/`guest` · PG `pg_*`/`information_schema` ·
+    /// MySQL `mysql`/`sys`/`information_schema`/`performance_schema`.
+    pub show_system: bool,
+    /// 객체가 하나도 없는 스키마를 뺀다(DBeaver "Hide empty schemas" · Oracle `OWNER FROM ALL_OBJECTS`).
+    pub hide_empty: bool,
+}
+
+/// DBeaver `OracleConstants.SYSTEM_SCHEMAS`(09-25 원격 대조) — 기본 숨김.
+pub const ORACLE_SYSTEM_SCHEMAS: &[&str] = &[
+    "CTXSYS",
+    "DBSNMP",
+    "DMSYS",
+    "EXFSYS",
+    "IX",
+    "MDDATA",
+    "MDSYS",
+    "MGMT_VIEW",
+    "OLAPSYS",
+    "ORDPLUGINS",
+    "ORDSYS",
+    "ORDDATA",
+    "SI_INFORMTN_SCHEMA",
+    "OWBSYS",
+    "OWBSYS_AUDIT",
+    "OUTLN",
+    "ORACLE_OCM",
+    "SYS",
+    "SYSMAN",
+    "SYSTEM",
+    "TSMSYS",
+    "WMSYS",
+    "XDB",
+];
+
+pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, DbError> {
     let sql = match s.dialect() {
-        Dialect::Oracle => "SELECT username FROM all_users ORDER BY username".to_string(),
-        Dialect::Mssql => "SELECT name FROM sys.schemas WHERE schema_id < 16384 AND name NOT IN ('sys','INFORMATION_SCHEMA','guest') ORDER BY name".to_string(),
-        Dialect::Postgres => "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY nspname".to_string(),
-        Dialect::Mysql => "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name".to_string(),
+        Dialect::Oracle => {
+            let mut w: Vec<String> = Vec::new();
+            if !o.show_system {
+                let list: Vec<String> = ORACLE_SYSTEM_SCHEMAS.iter().map(|n| lit(n)).collect();
+                w.push(format!("username NOT IN ({})", list.join(",")));
+            }
+            if o.hide_empty {
+                w.push("username IN (SELECT DISTINCT owner FROM all_objects)".into());
+            }
+            let wh = if w.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", w.join(" AND "))
+            };
+            format!("SELECT username FROM all_users{wh} ORDER BY username")
+        }
+        Dialect::Mssql => {
+            let mut w: Vec<String> = vec!["s.schema_id < 16384".into()];
+            if !o.show_system {
+                w.push("s.name NOT IN ('sys','INFORMATION_SCHEMA','guest')".into());
+            }
+            if o.hide_empty {
+                w.push(
+                    "EXISTS (SELECT 1 FROM sys.objects ob WHERE ob.schema_id = s.schema_id)".into(),
+                );
+            }
+            format!(
+                "SELECT s.name FROM sys.schemas s WHERE {} ORDER BY s.name",
+                w.join(" AND ")
+            )
+        }
+        Dialect::Postgres => {
+            let mut w: Vec<String> = Vec::new();
+            if !o.show_system {
+                w.push("n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'".into());
+            }
+            if o.hide_empty {
+                w.push("EXISTS (SELECT 1 FROM pg_class c WHERE c.relnamespace = n.oid)".into());
+            }
+            let wh = if w.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", w.join(" AND "))
+            };
+            format!("SELECT n.nspname FROM pg_namespace n{wh} ORDER BY n.nspname")
+        }
+        Dialect::Mysql => {
+            let mut w: Vec<String> = Vec::new();
+            if !o.show_system {
+                w.push(
+                    "schema_name NOT IN ('mysql','sys','information_schema','performance_schema')"
+                        .into(),
+                );
+            }
+            if o.hide_empty {
+                w.push(
+                    "schema_name IN (SELECT DISTINCT table_schema FROM information_schema.tables)"
+                        .into(),
+                );
+            }
+            let wh = if w.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", w.join(" AND "))
+            };
+            format!("SELECT schema_name FROM information_schema.schemata{wh} ORDER BY schema_name")
+        }
         Dialect::Sqlite => return Ok(vec!["main".into()]),
-        Dialect::Odbc => "SELECT DISTINCT table_schema FROM information_schema.tables ORDER BY 1".to_string(),
+        Dialect::Odbc => {
+            "SELECT DISTINCT table_schema FROM information_schema.tables ORDER BY 1".to_string()
+        }
     };
     let rs = query(s, &sql)?;
     Ok(rs.rows.iter().map(|r| col(r, 0)).collect())

@@ -158,6 +158,12 @@ pub(crate) fn same_host(a: &ConnectSpec, b: &ConnectSpec) -> bool {
     a.dialect == b.dialect && a.host == b.host && a.port == b.port
 }
 
+/// 같은 **카탈로그**(방언·호스트·포트·DB/서비스 — 계정 무관) — 탐색기 칸·메타 저장소의 단위(docs/54 §10 · 09-25 사용자
+/// "인텔리센스는 서버 단위로 하나"): 같은 카탈로그의 연결들은 트리·메타를 공유하고 자격만 빌려 준다.
+pub(crate) fn same_catalog(a: &ConnectSpec, b: &ConnectSpec) -> bool {
+    a.dialect == b.dialect && a.host == b.host && a.port == b.port && a.database == b.database
+}
+
 pub(crate) fn same_server(a: &ConnectSpec, b: &ConnectSpec) -> bool {
     a.dialect == b.dialect
         && a.host == b.host

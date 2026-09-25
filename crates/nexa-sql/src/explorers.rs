@@ -14,7 +14,7 @@
 use crate::explorer::{Explorer, ExplorerAction, LiveReq, LiveResult};
 use crate::filterbar::{FilterBar, FilterEvent, GAP_Y, INPUT_H};
 use crate::search_history::SharedHistory;
-use crate::worker::{same_host, same_server};
+use crate::worker::{same_catalog, same_host, same_server};
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::{Point, Rect};
@@ -74,8 +74,10 @@ pub(crate) fn disc_menu(mode: DiscPick, n: usize) -> DiscMenu {
 }
 
 struct Pane {
-    /// 서버 키(방언·호스트·포트·DB·계정 · `None` = 아직 아무 서버도 아닌 빈 자리).
+    /// 카탈로그 키(방언·호스트·포트·DB — 첫 연결의 스펙 · 비밀번호 없음 · `None` = 빈 자리). 같은 카탈로그의 연결은 이 칸을 공유한다.
     key: Option<ConnectSpec>,
+    /// 이 칸에 붙어 있는 연결들(계정별 · 비밀번호 없음) — 헤더 메뉴 "연결별 해제" · 루트 라벨 계정 목록 · 메타 세션 자격 후보.
+    conns: Vec<ConnectSpec>,
     ex: Explorer,
 }
 
@@ -188,6 +190,8 @@ pub(crate) struct ExplorerSet {
     disconnect_pick: DiscPick,
     /// 세션이 0이 된 연결을 오프라인 행으로 남길 것인가(끔 = 트리에서 뺀다 · 사용자 09-25).
     keep_offline: bool,
+    gen_opts: nsql_catalog::GenOpts,
+    schema_opts: nsql_catalog::SchemaOpts,
     /// ★ 검색창(docs/28 §7 · 09-25): 패널 맨 위 필터 틀(Aa·ab·(.*) · 이력) — 전 서버 트리를 거른다(범위 설정).
     filter: FilterBar,
     filter_scope: FilterScope,
@@ -222,6 +226,8 @@ impl ExplorerSet {
             pending: Vec::new(),
             disconnect_pick: DiscPick::Auto,
             keep_offline: false,
+            gen_opts: nsql_catalog::GenOpts::default(),
+            schema_opts: nsql_catalog::SchemaOpts::default(),
             filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
             filter_scope: FilterScope::All,
             area: Rect::default(),
@@ -240,7 +246,13 @@ impl ExplorerSet {
         ex.set_preload(self.preload);
         ex.set_routines(self.routines);
         ex.set_highlight_ms(self.highlight_ms);
-        Pane { key, ex }
+        ex.set_gen_opts(self.gen_opts);
+        ex.set_schema_opts(self.schema_opts);
+        Pane {
+            key,
+            conns: Vec::new(),
+            ex,
+        }
     }
 
     fn cur_mut(&mut self) -> &mut Explorer {
@@ -250,7 +262,7 @@ impl ExplorerSet {
     fn find(&self, spec: &ConnectSpec) -> Option<usize> {
         self.panes
             .iter()
-            .position(|p| p.key.as_ref().is_some_and(|k| same_server(k, spec)))
+            .position(|p| p.key.as_ref().is_some_and(|k| same_catalog(k, spec)))
     }
 
     // ── 서버 관리
@@ -259,11 +271,18 @@ impl ExplorerSet {
     /// `show` = 이 서버의 트리를 앞으로(활성 탭의 세션일 때).
     /// `once` = `spec`의 비밀번호가 일회성(입력 창으로 받은 것)이다 — 메타 세션이 접속에만 쓰고 지운다.
     pub(crate) fn connect(&mut self, spec: &ConnectSpec, name: &str, show: bool, once: bool) {
+        let mut conn = spec.clone();
+        conn.password = None;
         let i = match self.find(spec) {
             Some(i) => {
                 if self.panes[i].ex.is_offline() {
                     self.panes[i].ex.connect(spec, name, once);
                 }
+                // 같은 카탈로그의 새 계정 = 이 칸에 연결만 하나 더(트리·메타 공유 · docs/54 §10).
+                if !self.panes[i].conns.iter().any(|c| same_server(c, &conn)) {
+                    self.panes[i].conns.push(conn);
+                }
+                self.sync_users(i);
                 i
             }
             None => {
@@ -275,15 +294,19 @@ impl ExplorerSet {
                         self.panes.len() - 1
                     }
                 };
-                let mut key = spec.clone();
-                key.password = None;
-                self.panes[i].key = Some(key);
+                self.panes[i].key = Some(conn.clone());
+                self.panes[i].conns = vec![conn];
                 self.panes[i].ex.connect(spec, name, once);
+                self.sync_users(i);
                 i
             }
         };
         if show {
             self.show(i);
+        }
+        // 필터 중에 붙은 새 칸도 같은 판정기로(⑩ 09-25).
+        if self.filter_on() {
+            self.apply_filter();
         }
     }
 
@@ -310,10 +333,29 @@ impl ExplorerSet {
         let mut changed = false;
         let mut gone: Vec<usize> = Vec::new();
         for (i, p) in self.panes.iter_mut().enumerate() {
-            let n = p
-                .key
-                .as_ref()
-                .map_or(0, |k| live.iter().filter(|s| same_server(k, s)).count());
+            let Some(k) = p.key.clone() else { continue };
+            let alive: Vec<&ConnectSpec> = live.iter().filter(|s| same_catalog(&k, s)).collect();
+            // 연결 목록 = 살아 있는 것만(사라진 계정은 뺀다).
+            let before = p.conns.len();
+            p.conns.retain(|c| alive.iter().any(|l| same_server(c, l)));
+            if p.conns.len() != before {
+                changed = true;
+                let users: Vec<String> = p.conns.iter().filter_map(|c| c.user.clone()).collect();
+                p.ex.set_users(users);
+            }
+            let n = alive.len();
+            // ★ 메타 세션의 자격이 사라졌는데 다른 연결이 남았으면 그 자격으로 다시 연다(트리 유지 · docs/54 §10).
+            if n > 0 && !p.ex.is_offline() {
+                let bound = p.ex.bound_user();
+                let still = alive
+                    .iter()
+                    .any(|l| l.user.clone().unwrap_or_default() == bound);
+                if !still {
+                    let next = (*alive[0]).clone();
+                    p.ex.rebind(&next);
+                    changed = true;
+                }
+            }
             if pane_move(p.key.is_some(), p.ex.is_offline(), n) == PaneMove::GoOffline {
                 p.ex.go_offline();
                 changed = true;
@@ -335,6 +377,45 @@ impl ExplorerSet {
 
     pub(crate) fn set_keep_offline(&mut self, on: bool) {
         self.keep_offline = on;
+    }
+
+    pub(crate) fn set_gen_opts(&mut self, opts: nsql_catalog::GenOpts) {
+        self.gen_opts = opts;
+        for p in &mut self.panes {
+            p.ex.set_gen_opts(opts);
+        }
+    }
+
+    /// 스키마 목록 옵션(설정) — 읽어 둔 루트는 조용히 다시 읽는다.
+    pub(crate) fn set_schema_opts(&mut self, opts: nsql_catalog::SchemaOpts) {
+        let changed = self.schema_opts != opts;
+        self.schema_opts = opts;
+        for p in &mut self.panes {
+            p.ex.set_schema_opts(opts);
+            if changed {
+                p.ex.reload_schemas();
+            }
+        }
+    }
+
+    fn sync_users(&mut self, i: usize) {
+        let users: Vec<String> = self.panes[i]
+            .conns
+            .iter()
+            .filter_map(|c| c.user.clone())
+            .collect();
+        self.panes[i].ex.set_users(users);
+    }
+
+    /// 그룹의 살아 있는 연결 전부 = (칸, 연결 인덱스).
+    fn group_conns(&self, first: usize) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for i in self.group_online(first) {
+            for j in 0..self.panes[i].conns.len() {
+                out.push((i, j));
+            }
+        }
+        out
     }
 
     /// ★ 서버 묶음(docs/54 §9): 서버 칸을 같은 호스트(방언·호스트·포트)끼리 접속 순으로 묶는다 — 파일 방언(호스트 없음)은 혼자 ·
@@ -378,7 +459,7 @@ impl ExplorerSet {
         }
         self.panes[i].ex.disconnect();
         // 목록에서 뺀 서버 = 이번 실행에서 입력한 비밀번호도 잊는다(세션 자격 금고).
-        if let Some(key) = &self.panes[i].key {
+        for key in self.panes[i].conns.iter().chain(self.panes[i].key.iter()) {
             nsql_vault::session::forget(&crate::worker::cred_id(key, nsql_core::Dialect::Oracle));
         }
         if self.panes.len() > 1 {
@@ -481,17 +562,17 @@ impl ExplorerSet {
         self.bounds
     }
 
-    /// 서버 헤더 메뉴(연결 해제) — 항목 = `disc_menu(mode, n)`.
+    /// 서버 헤더 메뉴(연결 해제) — 항목 = `disc_menu(mode, n)` · n = 그룹의 살아 있는 **연결(계정)** 수(docs/54 §10).
     fn open_header_menu(&mut self, first: usize, p: Point) {
-        let online = self.group_online(first);
-        let n = online.len();
+        let conns = self.group_conns(first);
+        let n = conns.len();
         if n == 0 {
             return;
         }
-        let conn_label = |ex_i: usize| -> String {
-            let k = self.panes[ex_i].key.as_ref();
-            let db = k.and_then(|k| k.database.clone()).unwrap_or_default();
-            let user = k.and_then(|k| k.user.clone()).unwrap_or_default();
+        let conn_label = |(i, j): (usize, usize)| -> String {
+            let k = &self.panes[i].conns[j];
+            let db = k.database.clone().unwrap_or_default();
+            let user = k.user.clone().unwrap_or_default();
             match (db.is_empty(), user.is_empty()) {
                 (false, false) => format!("{db} · {user}"),
                 (false, true) => db,
@@ -501,8 +582,8 @@ impl ExplorerSet {
         };
         let items = match disc_menu(self.disconnect_pick, n) {
             DiscMenu::Direct => vec![CtxItem::item(
-                format!("disc:{}", online[0]),
-                tf(Msg::ExpDisconnectOne, &[&conn_label(online[0])]),
+                format!("disc:{}:{}", conns[0].0, conns[0].1),
+                tf(Msg::ExpDisconnectOne, &[&conn_label(conns[0])]),
             )],
             DiscMenu::AllOnly => vec![CtxItem::item(
                 "disc:all",
@@ -513,8 +594,11 @@ impl ExplorerSet {
                     CtxItem::item("disc:all", tf(Msg::ExpDisconnectAllN, &[&n.to_string()])),
                     CtxItem::Separator,
                 ];
-                for i in &online {
-                    kids.push(CtxItem::item(format!("disc:{i}"), conn_label(*i)));
+                for c in &conns {
+                    kids.push(CtxItem::item(
+                        format!("disc:{}:{}", c.0, c.1),
+                        conn_label(*c),
+                    ));
                 }
                 vec![CtxItem::submenu("disc", t(Msg::ExpDisconnectPick), kids)]
             }
@@ -542,13 +626,21 @@ impl ExplorerSet {
         let Some(rest) = id.strip_prefix("disc:") else {
             return;
         };
-        let targets: Vec<usize> = if rest == "all" {
-            self.group_online(first)
+        let targets: Vec<(usize, usize)> = if rest == "all" {
+            self.group_conns(first)
         } else {
-            rest.parse::<usize>().ok().into_iter().collect()
+            match rest.split_once(':') {
+                Some((a, b)) => a
+                    .parse::<usize>()
+                    .ok()
+                    .zip(b.parse::<usize>().ok())
+                    .into_iter()
+                    .collect(),
+                None => Vec::new(),
+            }
         };
-        for i in targets {
-            if let Some(k) = self.panes.get(i).and_then(|p| p.key.clone()) {
+        for (i, j) in targets {
+            if let Some(k) = self.panes.get(i).and_then(|p| p.conns.get(j).cloned()) {
                 self.pending.push(ExplorerAction::DisconnectServer(Some(k)));
             }
         }
@@ -672,19 +764,13 @@ impl ExplorerSet {
 
     /// 필터 글·옵션을 서버 트리에 반영(범위 = 전 서버 / 키보드 대상 서버).
     fn apply_filter(&mut self) {
-        let q = self.filter.display_text();
-        let f = &self.filter;
-        let pred = |hay: &str| f.matches(hay);
+        let m = self.filter_on().then(|| self.filter.matcher());
         for (i, p) in self.panes.iter_mut().enumerate() {
             let on = match self.filter_scope {
                 FilterScope::All => true,
                 FilterScope::Shown => i == self.shown,
             };
-            if on {
-                p.ex.apply_filter(&q, &pred);
-            } else {
-                p.ex.apply_filter("", &pred);
-            }
+            p.ex.apply_filter(if on { m.clone() } else { None });
         }
         self.relayout();
     }
@@ -903,8 +989,14 @@ impl ExplorerSet {
                 match a {
                     ExplorerAction::RemoveServer => remove = Some(i),
                     // 루트 메뉴의 서버 동작 = 이 칸의 서버 스펙을 채워 호스트로.
+                    // 루트(연결 행) 메뉴 = 이 카탈로그에 붙은 연결 전부(계정마다 하나씩 · docs/54 §10).
                     ExplorerAction::DisconnectServer(_) => {
-                        out.push(ExplorerAction::DisconnectServer(p.key.clone()));
+                        if p.conns.is_empty() {
+                            out.push(ExplorerAction::DisconnectServer(p.key.clone()));
+                        }
+                        for c in &p.conns {
+                            out.push(ExplorerAction::DisconnectServer(Some(c.clone())));
+                        }
                     }
                     ExplorerAction::ConnectServer(_) => {
                         out.push(ExplorerAction::ConnectServer(p.key.clone()));
@@ -956,10 +1048,6 @@ impl ExplorerSet {
         let mut changed = false;
         for p in &mut self.panes {
             changed |= p.ex.drain();
-        }
-        if changed && self.filter_on() {
-            // 새로 읽힌 자식도 같은 필터로(펼치면 그 안을 거른다).
-            self.apply_filter();
         }
         if changed {
             if let Some((pane, node, inner)) = anchor {
@@ -1318,7 +1406,7 @@ impl ExplorerSet {
             if vis.h <= 0 {
                 continue;
             }
-            let n = self.group_online(first).len();
+            let n = self.group_conns(first).len();
             let mut sub = tf(Msg::ExpServerConns, &[&n.to_string()]);
             if self.filter_on() {
                 let hits: usize = self
@@ -1410,12 +1498,23 @@ mod tests {
             spec("s1", "D1", "u"),
             spec("s2", "X", "u"),
             spec("s1", "D2", "u"),
+            spec("s1", "D1", "u2"),
         ] {
             set.connect(&sp, "p", false, false);
         }
         let g = set.groups();
         assert_eq!(g.len(), 2, "호스트 둘 = 그룹 둘");
-        assert_eq!(g[0].0.len(), 2, "s1의 D1·D2가 한 그룹");
+        assert_eq!(
+            g[0].0.len(),
+            2,
+            "s1의 D1·D2가 한 그룹(카탈로그 단위 · D1의 계정 둘은 한 칸)"
+        );
+        assert_eq!(set.panes[g[0].0[0]].conns.len(), 2, "D1 칸에 연결(계정) 둘");
+        assert_eq!(
+            set.group_conns(g[0].0[0]).len(),
+            3,
+            "헤더 연결 수 = 계정 셋"
+        );
         assert!(g[0].1 && g[1].1, "호스트 있는 서버 = 헤더");
         let laid = set.laid();
         assert_eq!(laid.len(), 3);
@@ -1423,10 +1522,19 @@ mod tests {
         assert_eq!(laid[1], g[0].0[1], "같은 서버의 연결은 인접");
         set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
         assert_eq!(set.headers.len(), 2, "그룹마다 헤더 행 하나");
-        // D2 세션이 0 → 기본은 트리에서 빠진다.
+        // D1의 계정 u2만 끊김 → 칸은 남고 연결만 하나 준다 · D2 세션이 0 → 기본은 트리에서 빠진다.
         let live = [spec("s1", "D1", "u"), spec("s2", "X", "u")];
         set.sync_refs(&live);
-        assert_eq!(set.groups()[0].0.len(), 1, "해제된 연결 행이 사라진다");
+        assert_eq!(
+            set.groups()[0].0.len(),
+            1,
+            "해제된 카탈로그(D2) 칸이 사라진다"
+        );
+        assert_eq!(
+            set.panes[set.groups()[0].0[0]].conns.len(),
+            1,
+            "D1 칸은 남은 계정 하나"
+        );
         // keep_offline 켬 = 남는다(오프라인).
         set.set_keep_offline(true);
         set.connect(&spec("s1", "D2", "u"), "p", false, false);

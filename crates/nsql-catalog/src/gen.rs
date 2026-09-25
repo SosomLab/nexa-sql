@@ -74,13 +74,74 @@ impl GenWhat {
     }
 }
 
-/// 무엇을 만들 것인가 — 주인 객체 + 종류 + (하위 항목이면) 그 폴더·이름.
+/// ★ 생성 옵션(DBeaver "Generated SQL" 체크박스 · 사용자 09-25 · docs/83 §3-1): 정규화 이름 · 간결 · 전체 DDL · FK 분리.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GenOpts {
+    /// 이름을 정규화(스키마 · SQL Server는 DB까지)해서 쓴다 · 끄면 객체 이름만.
+    pub qualified: bool,
+    /// 빈 줄·주석 줄을 빼고 들여쓰기를 줄인다.
+    pub compact: bool,
+    /// 전체 DDL = 인덱스까지 · Oracle은 저장 절(SEGMENT/STORAGE/TABLESPACE)까지.
+    pub full_ddl: bool,
+    /// 외래 키를 `ALTER TABLE … ADD CONSTRAINT`로 따로(끄면 CREATE TABLE 안에 인라인).
+    pub separate_fk: bool,
+}
+
+impl Default for GenOpts {
+    fn default() -> Self {
+        GenOpts {
+            qualified: true,
+            compact: false,
+            full_ddl: false,
+            separate_fk: true,
+        }
+    }
+}
+
+impl GenOpts {
+    /// CLI 토큰(`qualified=0` · `compact=1` · `full=1` · `fk=0`)을 기본값 위에 얹는다.
+    #[must_use]
+    pub fn with_tokens(mut self, tokens: &[String]) -> Self {
+        for t in tokens {
+            let Some((k, v)) = t.split_once('=') else {
+                continue;
+            };
+            let on = matches!(v.trim(), "1" | "on" | "true" | "yes");
+            match k.trim() {
+                "qualified" | "q" => self.qualified = on,
+                "compact" | "c" => self.compact = on,
+                "full" | "full_ddl" | "f" => self.full_ddl = on,
+                "fk" | "separate_fk" => self.separate_fk = on,
+                _ => {}
+            }
+        }
+        self
+    }
+}
+
+/// 무엇을 만들 것인가 — 주인 객체 + 종류 + (하위 항목이면) 그 폴더·이름 + 옵션.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GenSpec {
     pub owner: ObjectInfo,
     pub what: GenWhat,
     /// 하위 항목(제약·인덱스·트리거)의 DDL이면 `(폴더, 이름)`.
     pub sub: Option<(SubKind, String)>,
+    pub opts: GenOpts,
+}
+
+/// 생성 중 이름 조립 문맥(스레드 지역 · `generate`가 넣는다): 옵션 + SQL Server DB 이름(정규화 3부 이름).
+#[derive(Clone, Debug, Default)]
+struct Cx {
+    opts: GenOpts,
+    db: Option<String>,
+}
+
+thread_local! {
+    static CX: std::cell::RefCell<Cx> = std::cell::RefCell::new(Cx { opts: GenOpts::default(), db: None });
+}
+
+fn cx() -> Cx {
+    CX.with(|c| c.borrow().clone())
 }
 
 impl GenSpec {
@@ -162,21 +223,120 @@ fn is_key(name: &str, keys: &[String]) -> bool {
 pub fn generate(s: &mut dyn Session, spec: &GenSpec) -> Result<String, DbError> {
     let d = s.dialect();
     let o = &spec.owner;
-    if let Some((sk, name)) = &spec.sub {
-        return sub_ddl(s, d, o, *sk, name);
-    }
-    match spec.what {
-        GenWhat::Select => select_sql(s, d, o),
-        GenWhat::Insert | GenWhat::Update | GenWhat::Delete | GenWhat::Merge => {
-            dml_sql(s, d, o, spec.what)
+    // 이름 조립 문맥: SQL Server 정규화 = DB.스키마.객체(DB 이름은 세션에서).
+    let db = if d == Dialect::Mssql {
+        query(s, "SELECT DB_NAME()")
+            .ok()
+            .and_then(|rs| rs.rows.first().map(|r| col(r, 0)))
+            .filter(|n| !n.is_empty())
+    } else {
+        None
+    };
+    CX.with(|c| {
+        *c.borrow_mut() = Cx {
+            opts: spec.opts,
+            db,
+        };
+    });
+    let out = if let Some((sk, name)) = &spec.sub {
+        sub_ddl(s, d, o, *sk, name)
+    } else {
+        match spec.what {
+            GenWhat::Select => select_sql(s, d, o),
+            GenWhat::Insert | GenWhat::Update | GenWhat::Delete | GenWhat::Merge => {
+                dml_sql(s, d, o, spec.what)
+            }
+            GenWhat::Call => call_sql(s, d, o),
+            GenWhat::Ddl => object_ddl(s, d, o),
         }
-        GenWhat::Call => call_sql(s, d, o),
-        GenWhat::Ddl => object_ddl(s, d, o),
+    };
+    let out = out?;
+    Ok(if spec.opts.compact {
+        compact_sql(&out)
+    } else {
+        out
+    })
+}
+
+/// 간결한 SQL(옵션 `compact`): 빈 줄·주석 줄을 빼고 들여쓰기는 탭 하나로.
+fn compact_sql(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with("--") {
+            continue;
+        }
+        if line.len() != t.len() {
+            out.push('\t');
+        }
+        out.push_str(t.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+/// 출력용 객체 이름(옵션 반영): 정규화 = [DB.]스키마.이름 · 아니면 이름만.
+fn q(d: Dialect, o: &ObjectInfo) -> String {
+    qout(d, &o.schema, &o.name)
+}
+
+fn qout(d: Dialect, schema: &str, name: &str) -> String {
+    let c = cx();
+    if !c.opts.qualified || schema.is_empty() {
+        return ident(d, name);
+    }
+    match (&c.db, d) {
+        (Some(db), Dialect::Mssql) => {
+            format!("{}.{}.{}", ident(d, db), ident(d, schema), ident(d, name))
+        }
+        _ => qual(d, schema, name),
     }
 }
 
-fn q(d: Dialect, o: &ObjectInfo) -> String {
+/// 사전 조회용 정규 이름(늘 스키마.이름 · 옵션 무관).
+fn qfull(d: Dialect, o: &ObjectInfo) -> String {
     qual(d, &o.schema, &o.name)
+}
+
+/// 헤더 주석(DBeaver 모양 · 사용자 09-25 샘플): `-- DB.스키마.테이블 definition` + 빈 줄.
+fn header(d: Dialect, o: &ObjectInfo) -> String {
+    let c = cx();
+    let full = match (&c.db, d) {
+        (Some(db), Dialect::Mssql) => format!("{db}.{}.{}", o.schema, o.name),
+        _ if o.schema.is_empty() => o.name.clone(),
+        _ => format!("{}.{}", o.schema, o.name),
+    };
+    format!("-- {full} definition\n\n")
+}
+
+/// 결과를 쓰지 않는 문장(PL/SQL 블록 등) — 실패는 무시(선택 사항).
+fn exec_ignore(s: &mut dyn Session, sql: &str) {
+    let _ = query(s, sql);
+}
+
+/// `('Y')` · `(getdate())`처럼 통째로 감싼 괄호 한 겹을 벗긴다(SQL Server 기본값 표기).
+fn strip_parens(v: &str) -> String {
+    let t = v.trim();
+    if t.starts_with('(') && t.ends_with(')') {
+        let inner = &t[1..t.len() - 1];
+        let mut depth = 0i32;
+        let balanced = inner.chars().all(|ch| {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            depth >= 0
+        }) && depth == 0;
+        if balanced {
+            return inner.to_string();
+        }
+    }
+    t.to_string()
+}
+
+fn sql_str(v: &str) -> String {
+    v.replace('\'', "''")
 }
 
 /// 식별자 — **단순 이름**(글자·숫자·`_`·`$`·`#` · 방언 기본 대소문자 = Oracle 대문자 · PG 소문자)은 인용하지 않고, 그 밖은 방언 인용
@@ -657,13 +817,14 @@ fn oracle_get_ddl(
 fn object_ddl(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String, DbError> {
     match d {
         Dialect::Oracle => match oracle_meta_type(o.kind) {
+            Some("TABLE") => oracle_table_ddl(s, o),
             Some(ty) => oracle_get_ddl(s, ty, &o.name, &o.schema),
             None => source(s, &o.schema, o.kind, &o.name),
         },
         Dialect::Postgres => match o.kind {
-            ObjectKind::Table | ObjectKind::ForeignTable => table_with_keys(s, d, o),
+            ObjectKind::Table | ObjectKind::ForeignTable => pg_table_ddl(s, o),
             ObjectKind::Index => {
-                let sql = format!("SELECT pg_get_indexdef({}::regclass)", lit(&q(d, o)));
+                let sql = format!("SELECT pg_get_indexdef({}::regclass)", lit(&qfull(d, o)));
                 let rs = query(s, &sql)?;
                 Ok(format!(
                     "{};\n",
@@ -713,7 +874,7 @@ fn object_ddl(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String,
             _ => source(s, &o.schema, o.kind, &o.name),
         },
         Dialect::Mssql => match o.kind {
-            ObjectKind::Table | ObjectKind::ExternalTable => table_with_keys(s, d, o),
+            ObjectKind::Table | ObjectKind::ExternalTable => mssql_table_ddl(s, o),
             ObjectKind::Index => {
                 // 부가 = "테이블 · UNIQUE · PK" — 테이블 이름은 첫 조각.
                 let table = o.extra.split(" · ").next().unwrap_or("").trim().to_string();
@@ -746,7 +907,8 @@ fn object_ddl(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String,
             if body.is_empty() {
                 return Err(no_ddl(o));
             }
-            let mut out = body.trim().to_string();
+            let mut out = header(d, o);
+            out.push_str(body.trim());
             if !out.ends_with(';') {
                 out.push(';');
             }
@@ -763,6 +925,7 @@ fn object_ddl(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String,
             }
             Ok(out)
         }
+        _ if o.kind == ObjectKind::Table => table_with_keys(s, d, o),
         _ => source(s, &o.schema, o.kind, &o.name),
     }
 }
@@ -778,7 +941,261 @@ fn no_ddl(o: &ObjectInfo) -> DbError {
     }
 }
 
-/// 테이블 DDL 한 벌(PG · SQL Server): CREATE TABLE + 제약 ALTER + 인덱스 CREATE.
+/// ★ SQL Server 테이블 DDL(DBeaver 모양 · 사용자 09-25 샘플): 헤더 주석 · `-- DROP TABLE` · CREATE TABLE(탭 들여쓰기 · COLLATE ·
+/// DEFAULT · NULL/NOT NULL 명시 · 인라인 CONSTRAINT(PK·UNIQUE·CHECK · FK는 옵션)) · FK 분리(ALTER) · 인덱스(전체 DDL) ·
+/// 확장 속성(`sp_addextendedproperty` 테이블·컬럼 설명).
+fn mssql_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> {
+    let d = Dialect::Mssql;
+    let c = cx();
+    let cols = columns(s, &o.schema, &o.name)?;
+    if cols.is_empty() {
+        return Err(no_ddl(o));
+    }
+    let det = table_detail(s, &o.schema, &o.name)?;
+    let coll: std::collections::HashMap<String, String> = query(
+        s,
+        &format!(
+            "SELECT c.name, ISNULL(c.collation_name, '') FROM sys.columns c WHERE c.object_id = OBJECT_ID({})",
+            lit(&qfull(d, o))
+        ),
+    )
+    .map(|rs| rs.rows.iter().map(|r| (col(r, 0), col(r, 1))).collect())
+    .unwrap_or_default();
+    let qn = q(d, o);
+    let mut out = header(d, o);
+    out.push_str(&format!("-- Drop table\n\n-- DROP TABLE {qn};\n\n"));
+    out.push_str(&format!("CREATE TABLE {qn} (\n"));
+    let mut lines: Vec<String> = Vec::new();
+    for cdef in &cols {
+        let mut l = format!("\t{} {}", ident(d, &cdef.name), cdef.data_type);
+        if let Some(cl) = coll.get(&cdef.name).filter(|v| !v.is_empty()) {
+            l.push_str(&format!(" COLLATE {cl}"));
+        }
+        if !cdef.default.is_empty() {
+            l.push_str(&format!(" DEFAULT {}", strip_parens(&cdef.default)));
+        }
+        l.push_str(if cdef.nullable { " NULL" } else { " NOT NULL" });
+        lines.push(l);
+    }
+    let mut fks: Vec<String> = Vec::new();
+    for k in &det.keys {
+        if let Some(line) = constraint_line(s, d, o, k)? {
+            let item = format!("CONSTRAINT {} {line}", ident(d, &k.name));
+            if k.kind == 'R' && c.opts.separate_fk {
+                fks.push(item);
+            } else {
+                lines.push(format!("\t{item}"));
+            }
+        }
+    }
+    out.push_str(&lines.join(",\n"));
+    out.push_str("\n);\n");
+    for fk in &fks {
+        out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
+    }
+    if c.opts.full_ddl {
+        let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
+        for i in &det.indexes {
+            if key_names.iter().any(|k| k.eq_ignore_ascii_case(&i.name)) {
+                continue;
+            }
+            if let Ok(t) = mssql_index_ddl(s, &o.schema, &o.name, &i.name) {
+                out.push_str(&t);
+            }
+        }
+    }
+    // 확장 속성(테이블·컬럼 설명) — DBeaver 모양.
+    let ep = |tbl: &str, val: &str, col_name: Option<&str>| -> String {
+        let proc_ = match (&c.db, c.opts.qualified) {
+            (Some(db), true) => format!("{}.sys.sp_addextendedproperty", ident(d, db)),
+            _ => "sys.sp_addextendedproperty".to_string(),
+        };
+        let mut t = format!(
+            "EXEC {proc_} @name=N'MS_Description', @value=N'{}', @level0type=N'Schema', @level0name=N'{}', @level1type=N'Table', @level1name=N'{tbl}'",
+            sql_str(val),
+            sql_str(&o.schema)
+        );
+        if let Some(cn) = col_name {
+            t.push_str(&format!(
+                ", @level2type=N'Column', @level2name=N'{}'",
+                sql_str(cn)
+            ));
+        }
+        t.push_str(";\n");
+        t
+    };
+    if det.comment.is_some() || !det.col_comments.is_empty() {
+        out.push_str("\n-- Extended properties\n\n");
+        if let Some(cm) = &det.comment {
+            out.push_str(&ep(&o.name, cm, None));
+        }
+        for (cn, cm) in &det.col_comments {
+            out.push_str(&ep(&o.name, cm, Some(cn)));
+        }
+    }
+    Ok(out)
+}
+
+/// ★ Oracle 테이블 DDL: 헤더 주석 + `DBMS_METADATA.GET_DDL`(세션 변환 = EMIT_SCHEMA(정규화) · PRETTY(간결 아님) · SQLTERMINATOR ·
+/// SEGMENT_ATTRIBUTES/STORAGE(전체 DDL) · REF_CONSTRAINTS(FK 인라인 = 분리 아님)) + FK 분리(`GET_DEPENDENT_DDL('REF_CONSTRAINT')`) +
+/// 인덱스(전체 DDL) + `COMMENT ON TABLE/COLUMN`.
+fn oracle_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> {
+    let d = Dialect::Oracle;
+    let c = cx();
+    let set = |s: &mut dyn Session, name: &str, on: bool| {
+        exec_ignore(
+            s,
+            &format!(
+                "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, '{name}', {}); END;",
+                if on { "TRUE" } else { "FALSE" }
+            ),
+        );
+    };
+    set(s, "EMIT_SCHEMA", c.opts.qualified);
+    set(s, "PRETTY", !c.opts.compact);
+    set(s, "SQLTERMINATOR", true);
+    set(s, "CONSTRAINTS", true);
+    set(s, "REF_CONSTRAINTS", !c.opts.separate_fk);
+    set(s, "SEGMENT_ATTRIBUTES", c.opts.full_ddl);
+    set(s, "STORAGE", c.opts.full_ddl);
+    let body = oracle_get_ddl(s, "TABLE", &o.name, &o.schema);
+    let mut out = header(d, o);
+    let mut extra = String::new();
+    if let Ok(b) = &body {
+        if c.opts.separate_fk {
+            let sql = format!(
+                "SELECT DBMS_METADATA.GET_DEPENDENT_DDL('REF_CONSTRAINT', {}, {}) FROM dual",
+                lit(&o.name),
+                lit(&o.schema)
+            );
+            if let Ok(rs) = query(s, &sql) {
+                let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                if !t.trim().is_empty() {
+                    extra.push_str(t.trim());
+                    extra.push('\n');
+                }
+            }
+        }
+        if c.opts.full_ddl {
+            let sql = format!(
+                "SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', {}, {}) FROM dual",
+                lit(&o.name),
+                lit(&o.schema)
+            );
+            if let Ok(rs) = query(s, &sql) {
+                let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                if !t.trim().is_empty() {
+                    extra.push_str(t.trim());
+                    extra.push('\n');
+                }
+            }
+        }
+        let _ = b;
+    }
+    exec_ignore(
+        s,
+        "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'DEFAULT'); END;",
+    );
+    let body = body?;
+    out.push_str(body.trim());
+    out.push('\n');
+    if !extra.is_empty() {
+        out.push('\n');
+        out.push_str(&extra);
+    }
+    // 코멘트(테이블 · 컬럼) — 샘플 모양.
+    let det = table_detail(s, &o.schema, &o.name)?;
+    let qn = q(d, o);
+    if det.comment.is_some() || !det.col_comments.is_empty() {
+        out.push('\n');
+        if let Some(cm) = &det.comment {
+            out.push_str(&format!("COMMENT ON TABLE {qn} IS '{}';\n", sql_str(cm)));
+        }
+        for (cn, cm) in &det.col_comments {
+            out.push_str(&format!(
+                "COMMENT ON COLUMN {qn}.{} IS '{}';\n",
+                ident(d, cn),
+                sql_str(cm)
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// ★ PostgreSQL 테이블 DDL: 헤더 주석 · CREATE TABLE(탭 들여쓰기 · DEFAULT · NOT NULL · 인라인 CONSTRAINT · FK 옵션) · FK 분리 ·
+/// 인덱스(전체 DDL) · `COMMENT ON`.
+fn pg_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> {
+    let d = Dialect::Postgres;
+    let c = cx();
+    let cols = columns(s, &o.schema, &o.name)?;
+    if cols.is_empty() {
+        return Err(no_ddl(o));
+    }
+    let det = table_detail(s, &o.schema, &o.name)?;
+    let qn = q(d, o);
+    let mut out = header(d, o);
+    out.push_str(&format!("-- Drop table\n\n-- DROP TABLE {qn};\n\n"));
+    out.push_str(&format!("CREATE TABLE {qn} (\n"));
+    let mut lines: Vec<String> = Vec::new();
+    for cdef in &cols {
+        let mut l = format!("\t{} {}", ident(d, &cdef.name), cdef.data_type);
+        if !cdef.default.is_empty() {
+            l.push_str(&format!(" DEFAULT {}", cdef.default));
+        }
+        l.push_str(if cdef.nullable { " NULL" } else { " NOT NULL" });
+        lines.push(l);
+    }
+    let mut fks: Vec<String> = Vec::new();
+    for k in &det.keys {
+        if let Some(line) = constraint_line(s, d, o, k)? {
+            let item = format!("CONSTRAINT {} {line}", ident(d, &k.name));
+            if k.kind == 'R' && c.opts.separate_fk {
+                fks.push(item);
+            } else {
+                lines.push(format!("\t{item}"));
+            }
+        }
+    }
+    out.push_str(&lines.join(",\n"));
+    out.push_str("\n);\n");
+    for fk in &fks {
+        out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
+    }
+    if c.opts.full_ddl {
+        let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
+        for i in &det.indexes {
+            if key_names.iter().any(|k| k.eq_ignore_ascii_case(&i.name)) {
+                continue;
+            }
+            let sql = format!(
+                "SELECT pg_get_indexdef({}::regclass)",
+                lit(&qual(d, &o.schema, &i.name))
+            );
+            if let Ok(rs) = query(s, &sql) {
+                let t = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                if !t.is_empty() {
+                    out.push_str(&format!("{t};\n"));
+                }
+            }
+        }
+    }
+    if det.comment.is_some() || !det.col_comments.is_empty() {
+        out.push('\n');
+        if let Some(cm) = &det.comment {
+            out.push_str(&format!("COMMENT ON TABLE {qn} IS '{}';\n", sql_str(cm)));
+        }
+        for (cn, cm) in &det.col_comments {
+            out.push_str(&format!(
+                "COMMENT ON COLUMN {qn}.{} IS '{}';\n",
+                ident(d, cn),
+                sql_str(cm)
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// 테이블 DDL 한 벌(일반 방언): CREATE TABLE + 제약 ALTER + 인덱스 CREATE.
 fn table_with_keys(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<String, DbError> {
     let mut out = table_ddl(s, &o.schema, &o.name)?;
     let det = table_detail(s, &o.schema, &o.name)?;
@@ -818,7 +1235,7 @@ fn constraint_line(
         let sql = format!(
             "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint WHERE conname = {} AND conrelid = {}::regclass",
             lit(&k.name),
-            lit(&q(d, o))
+            lit(&qfull(d, o))
         );
         let rs = query(s, &sql)?;
         return Ok(rs.rows.first().map(|r| col(r, 0)).filter(|t| !t.is_empty()));
@@ -833,7 +1250,7 @@ fn constraint_line(
                 let sql = format!(
                     "SELECT SCHEMA_NAME(ro.schema_id) + '.' + ro.name, STUFF((SELECT ', ' + QUOTENAME(rc.name) FROM sys.foreign_key_columns fkc JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id WHERE fkc.constraint_object_id = fk.object_id ORDER BY fkc.constraint_column_id FOR XML PATH('')), 1, 2, '') FROM sys.foreign_keys fk JOIN sys.objects ro ON ro.object_id = fk.referenced_object_id WHERE fk.name = {} AND fk.parent_object_id = OBJECT_ID({})",
                     lit(&k.name),
-                    lit(&q(d, o))
+                    lit(&qfull(d, o))
                 );
                 let rs = query(s, &sql)?;
                 match rs.rows.first() {
@@ -857,7 +1274,7 @@ fn constraint_line(
                 let sql = format!(
                     "SELECT definition FROM sys.check_constraints WHERE name = {} AND parent_object_id = OBJECT_ID({})",
                     lit(&k.name),
-                    lit(&q(d, o))
+                    lit(&qfull(d, o))
                 );
                 let rs = query(s, &sql)?;
                 let def = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
@@ -917,7 +1334,7 @@ fn mssql_index_ddl(
         if unique { "UNIQUE " } else { "" },
         ty.to_ascii_uppercase(),
         ident(d, index),
-        qual(d, schema, table),
+        qout(d, schema, table),
         keys.join(", ")
     );
     if !incl.is_empty() {
@@ -967,7 +1384,7 @@ fn sub_ddl(
             let sql = format!(
                 "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint WHERE conname = {} AND conrelid = {}::regclass",
                 lit(name),
-                lit(&q(d, o))
+                lit(&qfull(d, o))
             );
             let rs = query(s, &sql)?;
             let def = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
@@ -1143,13 +1560,15 @@ mod tests {
             owner: info(ObjectKind::Table),
             what: GenWhat::Ddl,
             sub: Some((SubKind::Indexes, "EMP_PK".into())),
+            opts: GenOpts::default(),
         };
         assert_eq!(sp.title(), "EMP.EMP_PK_ddl");
         assert_eq!(
             GenSpec {
                 owner: info(ObjectKind::Table),
                 what: GenWhat::Select,
-                sub: None
+                sub: None,
+                opts: GenOpts::default(),
             }
             .title(),
             "EMP_select"
@@ -1161,6 +1580,16 @@ mod tests {
         assert_eq!(ident(Dialect::Postgres, "Emp"), "\"Emp\"");
         assert_eq!(ident(Dialect::Mssql, "Order Date"), "[Order Date]");
         assert_eq!(qual(Dialect::Oracle, "HR", "EMP"), "HR.EMP");
+        assert_eq!(strip_parens("('Y')"), "'Y'");
+        assert_eq!(strip_parens("(getdate())"), "getdate()");
+        assert_eq!(strip_parens("(a)+(b)"), "(a)+(b)");
+        let o =
+            GenOpts::default().with_tokens(&["qualified=0".into(), "fk=0".into(), "full=1".into()]);
+        assert!(!o.qualified && !o.separate_fk && o.full_ddl && !o.compact);
+        assert_eq!(
+            compact_sql("-- x\n\nCREATE TABLE t (\n    a int,\n    b int\n);\n"),
+            "CREATE TABLE t (\n\ta int,\n\tb int\n);\n"
+        );
         assert_eq!(oracle_var_type("REF CURSOR"), "REFCURSOR");
         assert_eq!(oracle_var_type("NUMBER"), "NUMBER");
         assert_eq!(oracle_var_type("DATE"), "VARCHAR2(4000)");

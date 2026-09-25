@@ -5826,6 +5826,14 @@ impl App {
             "explorer.filter_scope" => self
                 .explorer
                 .set_filter_scope(self.settings.get(key).unwrap_or("all")),
+            "explorer.show_system_schemas" | "explorer.hide_empty_schemas" => {
+                self.explorer
+                    .set_schema_opts(schema_opts_from(&self.settings));
+            }
+            "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk" => {
+                let o = gen_opts_from(&self.settings);
+                self.explorer.set_gen_opts(o);
+            }
             "meta.refresh_highlight_ms" => self
                 .explorer
                 .set_highlight_ms(self.settings.int(key).max(0) as u64),
@@ -15517,6 +15525,7 @@ impl ApplicationHandler<Wake> for App {
         if let Some((spec, r, server)) = self.sqlprev_pending.take() {
             let owner = self.window.clone();
             let syntax = self.editors.syntax_for_title("preview.sql");
+            let tb = self.editors.preview_box("", &syntax);
             let was_open = self.sqlprev_win.is_open();
             self.sqlprev_win.open(
                 el,
@@ -15525,7 +15534,7 @@ impl ApplicationHandler<Wake> for App {
                 spec,
                 server,
                 r,
-                syntax,
+                tb,
             );
             // ★ 맥 자식 창(비밀번호 창과 같은 길 · 사용자 09-25 "DDL 팝업이 메인 뒤로 숨는다"): 메인의 자식으로 붙여 늘 위에.
             if !was_open {
@@ -16272,9 +16281,31 @@ impl ApplicationHandler<Wake> for App {
             match self.sqlprev_win.handle(&event) {
                 sqlprev_win::SqlPrevAction::Paint => {
                     let ui_px = self.settings.font_px("ui.font_size");
-                    self.sqlprev_win.paint(&self.ui_font, &self.theme, ui_px);
+                    let mono_px = self.settings.font_px("editor.font_size");
+                    self.sqlprev_win.paint(
+                        &self.ui_font,
+                        &self.mono_font,
+                        &self.theme,
+                        ui_px,
+                        mono_px,
+                    );
                 }
                 sqlprev_win::SqlPrevAction::Refresh => {
+                    // 체크박스로 바꾼 옵션은 설정(`gen.*`)에도 남기고 탐색기의 다음 생성에도 쓴다.
+                    let o = self.sqlprev_win.opts();
+                    for (k, v) in [
+                        ("gen.qualified", o.qualified),
+                        ("gen.compact", o.compact),
+                        ("gen.full_ddl", o.full_ddl),
+                        ("gen.separate_fk", o.separate_fk),
+                    ] {
+                        let cur = self.settings.flag(k);
+                        if cur != v {
+                            let _ = self.settings.set(k, if v { "on" } else { "off" });
+                        }
+                    }
+                    self.persist_settings();
+                    self.explorer.set_gen_opts(o);
                     if let Some(spec) = self.sqlprev_win.spec.clone() {
                         let server = self.sqlprev_win.server.clone();
                         self.sqlprev_win
@@ -17069,6 +17100,8 @@ fn main() {
         e.set_disconnect_pick(settings.get("explorer.disconnect_pick").unwrap_or("auto"));
         e.set_keep_offline(settings.flag("explorer.keep_offline"));
         e.set_filter_scope(settings.get("explorer.filter_scope").unwrap_or("all"));
+        e.set_gen_opts(gen_opts_from(&settings));
+        e.set_schema_opts(schema_opts_from(&settings));
         e.set_tooltip_delay(settings.int("ui.tooltip_delay_ms").max(0) as u128);
         // ★ 문법 참조 플러그인(nsql-script `grammar` · 09-24): 설정 폴더 `grammar/*.sqlg`가 내장 방언을 대신하거나 새 방언을 더한다.
         if let Some(dir) = nsql_settings::config_dir() {
@@ -17609,6 +17642,24 @@ impl FrameTrace {
 }
 
 /// 탐색기 타입어헤드 설정 한 벌(`explorer.typeahead*`).
+/// 스키마 목록 옵션(설정 → `SchemaOpts` · 시스템 스키마 기본 숨김 · DBeaver 대조 09-25).
+fn schema_opts_from(settings: &Settings) -> nsql_catalog::SchemaOpts {
+    nsql_catalog::SchemaOpts {
+        show_system: settings.flag("explorer.show_system_schemas"),
+        hide_empty: settings.flag("explorer.hide_empty_schemas"),
+    }
+}
+
+/// Generate SQL 옵션(설정 `gen.*` → `GenOpts` · docs/83 §3-1).
+fn gen_opts_from(settings: &Settings) -> nsql_catalog::GenOpts {
+    nsql_catalog::GenOpts {
+        qualified: settings.flag("gen.qualified"),
+        compact: settings.flag("gen.compact"),
+        full_ddl: settings.flag("gen.full_ddl"),
+        separate_fk: settings.flag("gen.separate_fk"),
+    }
+}
+
 fn typeahead_cfg(s: &Settings) -> explorer::TypeAheadCfg {
     explorer::TypeAheadCfg {
         enabled: s.flag("explorer.typeahead"),

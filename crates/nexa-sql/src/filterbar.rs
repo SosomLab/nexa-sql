@@ -37,6 +37,62 @@ pub(crate) enum FilterEvent {
     LeaveDown,
 }
 
+/// 필터 판정기(부품과 같은 규칙 · 복제 가능 · 부품 없이도 만든다).
+#[derive(Clone, Debug)]
+pub(crate) struct Matcher {
+    rx: Option<fancy_regex::Regex>,
+    err: bool,
+    text: String,
+}
+
+impl Matcher {
+    /// 옵션 없는 글 필터(공백으로 나눈 낱말 전부 포함 · 대소문자 무시) — 시험·기동 명령용.
+    #[allow(dead_code)]
+    pub(crate) fn plain(text: &str) -> Self {
+        Matcher {
+            rx: None,
+            err: false,
+            text: text.to_string(),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.rx.is_none() && self.text.trim().is_empty()
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub(crate) fn matches(&self, hay: &str) -> bool {
+        if self.err {
+            return false;
+        }
+        match &self.rx {
+            Some(r) => r.is_match(hay).unwrap_or(false),
+            None => {
+                let q = self.text.trim();
+                if q.is_empty() {
+                    return true;
+                }
+                let h = hay.to_lowercase();
+                // 한글 토큰 = 자모열 비교(조합 중 "ㄱ"·"기"도 걸린다 · nsql-core `hangul` · 사용자 09-23).
+                q.split_whitespace().all(|t| {
+                    if nsql_core::hangul::has_hangul(t) {
+                        nsql_core::hangul::contains_jamo(
+                            hay,
+                            &nsql_core::hangul::decompose(t, true),
+                            true,
+                        )
+                    } else {
+                        h.contains(&t.to_lowercase())
+                    }
+                })
+            }
+        }
+    }
+}
+
 pub(crate) struct FilterBar {
     tb: TextBox,
     /// 틀(텍스트박스 + 안쪽 토글) · `area` = 틀 + 오른쪽 부가 토글(히트 영역).
@@ -357,30 +413,15 @@ impl FilterBar {
 
     /// 이 글이 필터에 걸리는가(빈 필터 = 전부).
     pub(crate) fn matches(&self, hay: &str) -> bool {
-        if self.regex_err {
-            return false;
-        }
-        match &self.matcher {
-            Some(r) => r.is_match(hay).unwrap_or(false),
-            None => {
-                let q = self.text.trim();
-                if q.is_empty() {
-                    return true;
-                }
-                let h = hay.to_lowercase();
-                // 한글 토큰 = 자모열 비교(조합 중 "ㄱ"·"기"도 걸린다 · nsql-core `hangul` · 사용자 09-23).
-                q.split_whitespace().all(|t| {
-                    if nsql_core::hangul::has_hangul(t) {
-                        nsql_core::hangul::contains_jamo(
-                            hay,
-                            &nsql_core::hangul::decompose(t, true),
-                            true,
-                        )
-                    } else {
-                        h.contains(&t.to_lowercase())
-                    }
-                })
-            }
+        self.matcher().matches(hay)
+    }
+
+    /// 지금 글·옵션의 **복제 가능한 판정기**(탐색기처럼 구조가 바뀔 때마다 스스로 다시 걸러야 하는 쪽이 들고 있는다 · 09-25).
+    pub(crate) fn matcher(&self) -> Matcher {
+        Matcher {
+            rx: self.matcher.clone(),
+            err: self.regex_err,
+            text: self.text.clone(),
         }
     }
 

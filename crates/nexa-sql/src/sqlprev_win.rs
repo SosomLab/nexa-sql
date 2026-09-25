@@ -9,9 +9,11 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
+use nexa_ctl::{
+    Button, Checkbox, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
+};
 use nexa_gfx::{Font, Surface};
-use nsql_catalog::GenSpec;
+use nsql_catalog::{GenOpts, GenSpec};
 use nsql_i18n::{t, Msg};
 use nsql_script::ConnectSpec;
 use std::num::NonZeroU32;
@@ -36,6 +38,12 @@ pub(crate) enum SqlPrevAction {
 }
 
 const BTN_N: usize = 5;
+const CB_MSGS: [Msg; 4] = [
+    Msg::GenOptQualified,
+    Msg::GenOptCompact,
+    Msg::GenOptFull,
+    Msg::GenOptSepFk,
+];
 const BTN_MSGS: [Msg; BTN_N] = [
     Msg::SpBtnRefresh,
     Msg::SpBtnSave,
@@ -55,6 +63,9 @@ pub(crate) struct SqlPrevWin {
     /// 새로고침 · 파일로 저장 · 편집기에서 열기 · 복사 · 닫기(사용자 순서).
     btns: Vec<Button>,
     labels: Vec<String>,
+    /// ★ 생성 옵션 체크박스(DBeaver "Settings" · 사용자 09-25): 정규화 이름 · 간결 · 전체 DDL · FK 분리 — 바꾸면 다시 생성.
+    cbs: Vec<Checkbox>,
+    cb_labels: Vec<String>,
     /// 지금 보이는 문장의 생성 사양(새로고침용) · 어느 서버 칸에서 왔는가.
     pub(crate) spec: Option<GenSpec>,
     pub(crate) server: Option<ConnectSpec>,
@@ -78,6 +89,11 @@ impl SqlPrevWin {
             tb,
             btns: BTN_MSGS.iter().map(|m| Button::new(t(*m))).collect(),
             labels: BTN_MSGS.iter().map(|m| t(*m).to_string()).collect(),
+            cbs: CB_MSGS
+                .iter()
+                .map(|m| Checkbox::new(t(*m), false))
+                .collect(),
+            cb_labels: CB_MSGS.iter().map(|m| t(*m).to_string()).collect(),
             spec: None,
             server: None,
             title: String::new(),
@@ -86,7 +102,19 @@ impl SqlPrevWin {
     }
 
     fn desired_size(&self) -> winit::dpi::LogicalSize<f64> {
-        winit::dpi::LogicalSize::new(760.0, 520.0)
+        winit::dpi::LogicalSize::new(820.0, 560.0)
+    }
+
+    /// 체크박스 ↔ 옵션.
+    fn cbs_from_opts(&mut self, o: GenOpts) {
+        let vals = [o.qualified, o.compact, o.full_ddl, o.separate_fk];
+        for (cb, v) in self.cbs.iter_mut().zip(vals) {
+            cb.set_checked(v);
+        }
+    }
+
+    pub(crate) fn opts(&self) -> GenOpts {
+        self.spec.as_ref().map_or_else(GenOpts::default, |s| s.opts)
     }
 
     /// 열기(이미 열려 있으면 본문·제목만 바꾼다).
@@ -99,12 +127,15 @@ impl SqlPrevWin {
         spec: GenSpec,
         server: Option<ConnectSpec>,
         text: Result<String, String>,
-        syntax: Rc<nexa_ctl::SyntaxSpec>,
+        tb: TextBox,
     ) {
         self.title = format!("{} — {}", t(Msg::WinSqlPreview), spec.title());
+        self.cbs_from_opts(spec.opts);
         self.spec = Some(spec);
         self.server = server;
-        self.tb.set_highlighter(Some(syntax));
+        // ★ 편집기 탭과 같은 상자(`Editors::preview_box` · 미니맵·거터 표식만 끔 · 사용자 09-25).
+        self.tb = tb;
+        self.tb.set_minimap(false);
         self.set_result(text);
         self.tb.set_focused(true);
         if let Some(w) = &self.window {
@@ -287,6 +318,9 @@ impl SqlPrevWin {
                 for b in &mut self.btns {
                     b.on_event(&mv, &mut inv);
                 }
+                for cb in &mut self.cbs {
+                    cb.on_event(&mv, &mut inv);
+                }
                 if !inv.is_empty() {
                     self.redraw();
                 }
@@ -323,8 +357,31 @@ impl SqlPrevWin {
                     // 포커스 링은 본문 하나(포커스 규칙).
                     b.set_focused(false);
                 }
+                let mut toggled = false;
+                for cb in &mut self.cbs {
+                    if up || cb.bounds().contains(p) {
+                        cb.on_event(&e, &mut inv);
+                    }
+                    cb.set_focused(false);
+                    if cb.take_toggled().is_some() {
+                        toggled = true;
+                    }
+                }
                 self.tb.set_focused(true);
                 self.redraw();
+                if toggled {
+                    // 옵션 → 사양에 반영하고 다시 생성.
+                    let vals: Vec<bool> = self.cbs.iter().map(|c| c.is_checked()).collect();
+                    if let Some(sp) = self.spec.as_mut() {
+                        sp.opts = GenOpts {
+                            qualified: vals[0],
+                            compact: vals[1],
+                            full_ddl: vals[2],
+                            separate_fk: vals[3],
+                        };
+                    }
+                    return SqlPrevAction::Refresh;
+                }
                 let clicked = (0..BTN_N).find(|&i| self.btns[i].take_clicked());
                 match clicked {
                     Some(0) => return SqlPrevAction::Refresh,
@@ -405,7 +462,14 @@ impl SqlPrevWin {
         SqlPrevAction::None
     }
 
-    pub(crate) fn paint(&mut self, font: &Font, th: &Theme, ui_px: f32) {
+    pub(crate) fn paint(
+        &mut self,
+        font: &Font,
+        mono_font: &Font,
+        th: &Theme,
+        ui_px: f32,
+        mono_px: f32,
+    ) {
         let Some(win) = self.window.clone() else {
             return;
         };
@@ -462,19 +526,27 @@ impl SqlPrevWin {
             );
             let btn_h = th_txt + px(14.0);
             let btn_y = hi - pad - btn_h;
+            let cb_h = th_txt + px(8.0);
+            let cb_y = btn_y - px(8.0) - cb_h;
             let top = pad + th_txt + px(8.0);
             let inv = &mut Invalidations::default();
-            self.tb.set_scale(s);
-            self.tb.set_bounds(
-                Rect::new(
-                    pad,
-                    top,
-                    wi - pad * 2,
-                    (btn_y - px(10.0) - top).max(px(40.0)),
-                ),
-                inv,
+            let tb_rect = Rect::new(
+                pad,
+                top,
+                wi - pad * 2,
+                (cb_y - px(10.0) - top).max(px(40.0)),
             );
-            self.tb.paint(&mut dc, th);
+            self.tb.set_scale(s);
+            self.tb.set_bounds(tb_rect, inv);
+            // 체크박스 행(왼쪽 정렬 · DBeaver "Settings").
+            let mut cx = pad;
+            for (cb, label) in self.cbs.iter_mut().zip(self.cb_labels.iter()) {
+                cb.set_scale(s);
+                let w = px(24.0) + dc.text_width(label) + px(12.0);
+                cb.set_bounds(Rect::new(cx, cb_y, w, cb_h), inv);
+                cb.paint(&mut dc, th);
+                cx += w + px(10.0);
+            }
             // 버튼(왼쪽 정렬 · 사용자 순서 = 새로고침 · 파일로 저장 · 편집기에서 열기 · 복사 · 닫기).
             let mut bx = pad;
             for (b, label) in self.btns.iter_mut().zip(self.labels.iter()) {
@@ -484,6 +556,20 @@ impl SqlPrevWin {
                 b.paint(&mut dc, th);
                 bx += bw + px(8.0);
             }
+        }
+        {
+            // ★ 본문 = 편집기와 같은 글꼴·크기(`mono_font` · `editor.font_size`)로 따로 그린다(사용자 09-25 "편집기 탭과 동일하게").
+            let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+            let prefs = FontPrefs {
+                base: SlotFont {
+                    size: mono_px,
+                    bold: false,
+                    italic: false,
+                },
+                ..FontPrefs::default()
+            };
+            let mut dc = RasterCtx::new(&mut gfx, mono_font, s).with_fonts(prefs);
+            self.tb.paint(&mut dc, th);
         }
         let _ = buf.present();
         self.surface = Some(surface);

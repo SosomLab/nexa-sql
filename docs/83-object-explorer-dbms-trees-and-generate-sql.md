@@ -56,6 +56,17 @@ Package Bodies 폴더는 뗀다(DBeaver와 같이 패키지 노드 아래 멤버
 
 메뉴 id = `gen:<what>` · 요청 = `Req::GenSql{spec}`(메타 스레드 · 우선순위 1) · 응답 = `ExplorerAction::Preview{title, text, spec}` → 호스트가 SQL Preview를 연다(이미 열려 있으면 본문 교체 · "새로고침" = 같은 `spec` 재요청).
 
+### 3-1. 생성 옵션(DBeaver "Settings" · 사용자 09-25 · 구현 ✅ §193)
+
+| 옵션(설정 키) | 기본 | 뜻 |
+|---|---|---|
+| 정규화 이름 사용 `gen.qualified` | 켬 | `스키마.객체`(SQL Server = `DB.스키마.객체` · 확장 속성 `DB.sys.sp_addextendedproperty`) · 끄면 객체 이름만 |
+| 간결한 SQL `gen.compact` | 끔 | 빈 줄·주석 줄 제거 · 들여쓰기 = 탭 하나(Oracle = `PRETTY false`) |
+| 전체 DDL `gen.full_ddl` | 끔 | 인덱스까지 · Oracle은 저장 절(SEGMENT_ATTRIBUTES · STORAGE · TABLESPACE)까지 |
+| 외래 키 분리 `gen.separate_fk` | 켬 | FK = `ALTER TABLE … ADD CONSTRAINT`로 따로(끄면 CREATE TABLE 안 인라인 · Oracle `REF_CONSTRAINTS`) |
+
+"Format SQL"은 포매터가 아직 없어 뺐다(T-215). 미리보기 창 체크박스를 바꾸면 설정에 남고 즉시 재생성 · CLI = `gen … qualified=0 compact=1 full=1 fk=0`. 테이블 DDL 모양 = 사용자 샘플(헤더 주석 · `-- DROP TABLE` · COLLATE · NULL 명시 · 인라인 CONSTRAINT · 확장 속성/`COMMENT ON`).
+
 ## 4. SQL Preview 창(2단계)
 
 모달(`App::sync_modal` 목록 · 입력 창과 같은 골격) · 제목 "SQL Preview — {객체} · {종류}" · 본문 = `TextBox` 다중 줄 · SQL 하이라이트 · 미니맵 끔 · 편집 가능 · 하단 버튼 왼→오 = 새로고침 · 파일로 저장… · 편집기에서 열기 · 복사 · 닫기. 키 = Esc 닫기 · ⌘/Ctrl+C = 선택/전체 복사(TextBox). 파일로 저장 = 파일 창 `PickerMode::Save` + `FilePurpose::SqlPreview(text)` · 기본 이름 = `{객체}_{what}.sql`. 편집기에서 열기 = 새 탭(제목 같음) + 창 닫기. 창 크기 = 720×480 기본 · `window.sqlprev_size` 기억(2차).

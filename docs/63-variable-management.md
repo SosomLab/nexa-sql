@@ -214,3 +214,25 @@ SELECT :V2 FROM DUAL;   -- 대입 시 확장 = 7 · 사용 시 확장 = 10
 - 설정 `vars.intrinsic`(Session · on) — 끄면 빈 표(= 층 없음). `vars.brace_subst`가 꺼져 있으면 `${…}` 자체가 돌지 않는다(기존 규칙).
 - 시험: `intrinsic::tests` 3 + 엔진 `intrinsic_layer_between_defines_and_env`(DEFINE 우선 · 폴더 이름 · config · `:q` · env 별칭 · 모르는 이름 그대로). 사용자 문서 = [위키 Variables](wiki/Variables.md).
 - 다음 후보: 프로젝트 파일 경로 앵커([73](73-project-path-portability.md) `${project}`·`${folder:이름}`)를 이 표와 **같은 이름**으로 맞춘다(`${workspaceFolder:이름}` = 73의 `${folder:이름}`) — T-172 P2에서 한 이름으로 통일.
+
+## 11. 글로벌 변수 — 개념 정리·설계(사용자 09-25 · 변수 창 "Layer = tab · Declared = auto" 캡처)
+
+### 11-1. 지금의 층(D-135 ③ · 구현 ✅)
+| 층(`Layer`) | 변수 창 표시 | 주인 · 수명 | 넣는 법 | 보존 |
+|---|---|---|---|---|
+| **tab**(`Local`) | `tab` | 편집기 탭 하나 · 탭이 닫히면 끝 | 실행 중 대입·`VAR`·입력 창·변수 창 편집 | 파일 탭 = `vars/<경로 해시>.sql`(D-136 · `vars.persist`) |
+| **shared**(`Shared`) | `shared` | **연결(세션)** — 같은 공유 세션에 묶인 탭 전부 · 재접속을 넘어 살고 커서만 무효 | `VAR x SHARE` · 변수 창 ↑ | 없음(세션과 함께) |
+| **fixed**(`Fixed`) | (읽기 전용) | 접속 프로필의 고정 값 | 프로필 | 프로필 |
+
+`Declared` 열: `decl` = `VAR`로 선언(타입 고정) · `auto` = 대입·OUT으로 암묵 생성(타입 추론). 우선순위 = tab > shared > fixed(같은 이름이면 앞 층이 이긴다).
+
+### 11-2. 빠진 개념 = "글로벌"
+- 요구: 어느 서버·어느 탭에서나 같은 값(예 `:PROJECT_CD` · `:V_USER`) · 앱을 다시 켜도 남음. 지금은 탭마다/연결마다 다시 넣거나 스크립트(`vars.script`)로 옮겨야 한다.
+- 타 도구: SQL Workbench/J = 작업공간 변수(`WbVarDef` · 파일 저장) · DBeaver = 전역 변수 파일(서버끼리 섞임이 단점 · 63 §1) · cbq/usql = 세션 한정.
+
+### 11-3. 설계(T-211 · 구현 = 이어서)
+- 층 하나 추가: **global**(`Layer::Global`) — 앱 전역(모든 서버·세션·탭) · 우선순위 **tab > shared > global > fixed**(글로벌은 "기본값" 성격 · 탭/연결이 덮어쓴다) · 보존 = `NSQL_HOME/vars/global.sql`(`vars_to_script` 형식 · 실행 가능한 스크립트 · 비밀·커서 값 제외 · 바뀔 때 저장 · 시작 때 읽음).
+- 넣는 법: `VAR x GLOBAL`(↔ `VAR x SHARE` · `VAR x LOCAL`) · 변수 창 Layer 열을 **드롭다운**(tab/shared/global)으로 · 우클릭 "글로벌로 올리기/내리기".
+- 흐름: GUI `App.global_vars`(단일 원천) → 세션이 생기거나 값이 바뀔 때 워커 `Cmd::GlobalVars` → 러너 `VarStore.set_global` · 러너가 스크립트에서 `VAR x GLOBAL`로 올리면 `RunEvent::Vars{global}`로 되돌아와 앱이 갱신·저장 · 다른 세션에도 즉시 전파(브로드캐스트).
+- 서버 간 오염 방지(DBeaver 단점): 글로벌은 **명시적으로 올린 값만**(자동 생성 금지) · 변수 창에 `global` 표시 · 로그 "변수 X 글로벌".
+- 결정: **D-206** 우선순위(권장 tab > shared > global > fixed) · **D-207** 자동 저장(권장 켬 · `vars.global_persist`).
