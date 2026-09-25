@@ -326,6 +326,211 @@ pub fn db_kinds_for(dialect: Dialect) -> &'static [ObjectKind] {
     }
 }
 
+/// ★ 이름 인덱스 한 줄(84 §2) — 탐색기 검색의 **선별** 단계 입력: 서버 전체 객체의 (스키마, 종류, 이름)만(상태·시각은 없다 · 가볍게).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameEntry {
+    pub schema: String,
+    pub kind: ObjectKind,
+    pub name: String,
+}
+
+/// ★ 서버 전체 이름 인덱스(84 §2 · 09-25) — `schemas`(보이는 스키마 · 비면 전부)의 트리 폴더 종류를 **왕복 한 번**으로 읽는다.
+/// 반환 = (항목, 잘림) · `max` 줄에서 끊는다(0 = 무제한). 검색 판정(대소문자·단어·정규식)은 클라이언트가 하므로 여기는 LIKE가 없다.
+pub fn name_index(
+    s: &mut dyn Session,
+    schemas: &[String],
+    max: usize,
+) -> Result<(Vec<NameEntry>, bool), DbError> {
+    let dialect = s.dialect();
+    let lim = if max == 0 { usize::MAX } else { max + 1 };
+    let in_list = |col: &str| -> String {
+        if schemas.is_empty() {
+            String::new()
+        } else {
+            let l: Vec<String> = schemas.iter().map(|x| lit(x)).collect();
+            format!(" AND {col} IN ({})", l.join(","))
+        }
+    };
+    // 종류 문자 → ObjectKind(방언별 · 모르는 것은 버린다).
+    let kinds = kinds_for(dialect);
+    let rows: Vec<(String, String, String)> = match dialect {
+        Dialect::Oracle => {
+            let types: Vec<String> = kinds
+                .iter()
+                .map(|k| oracle_type(*k))
+                .filter(|t| !t.is_empty())
+                .map(lit)
+                .collect();
+            let top = if lim == usize::MAX {
+                String::new()
+            } else {
+                format!(" AND ROWNUM <= {lim}")
+            };
+            let sql = format!(
+                "SELECT owner, object_type, object_name FROM all_objects WHERE object_type IN ({}) AND object_name NOT LIKE 'BIN$%'{}{top}",
+                types.join(","),
+                in_list("owner")
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .collect()
+        }
+        Dialect::Mssql => {
+            let top = if lim == usize::MAX {
+                String::new()
+            } else {
+                format!("TOP ({lim}) ")
+            };
+            let sql = format!(
+                "SELECT {top}* FROM (SELECT s.name AS sc, o.type AS ty, o.name AS nm FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE o.type IN ('U','V','P','PC','FN','IF','TF','AF','FS','FT','TR','TA','SO','SN'){sch} \
+                 UNION ALL SELECT s.name, 'IX', i.name FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE i.index_id > 0 AND i.is_hypothetical = 0 AND i.name IS NOT NULL AND o.type IN ('U','V'){sch} \
+                 UNION ALL SELECT s.name, 'TY', t.name FROM sys.types t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE t.is_user_defined = 1{sch}) x",
+                sch = in_list("s.name")
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1).trim().to_string(), col(r, 2)))
+                .collect()
+        }
+        Dialect::Postgres => {
+            let top = if lim == usize::MAX {
+                String::new()
+            } else {
+                format!(" LIMIT {lim}")
+            };
+            let sql = format!(
+                "SELECT n.nspname, c.relkind::text, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r','p','f','v','m','S','i','I'){sch} \
+                 UNION ALL SELECT n.nspname, 'proc:' || p.prokind::text, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.prokind IN ('p','f','a'){sch} \
+                 UNION ALL SELECT n.nspname, 'type', t.typname FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE t.typtype IN ('c','e','d','r') AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.reltype = t.oid AND c.relkind <> 'c'){sch}{top}",
+                sch = in_list("n.nspname")
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .collect()
+        }
+        Dialect::Mysql => {
+            let top = if lim == usize::MAX {
+                String::new()
+            } else {
+                format!(" LIMIT {lim}")
+            };
+            let sql = format!(
+                "SELECT table_schema, table_type, table_name FROM information_schema.tables WHERE table_type IN ('BASE TABLE','VIEW'){a} \
+                 UNION ALL SELECT routine_schema, routine_type, routine_name FROM information_schema.routines WHERE routine_type IN ('PROCEDURE','FUNCTION'){b} \
+                 UNION ALL SELECT trigger_schema, 'TRIGGER', trigger_name FROM information_schema.triggers WHERE 1 = 1{c}{top}",
+                a = in_list("table_schema"),
+                b = in_list("routine_schema"),
+                c = in_list("trigger_schema")
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .collect()
+        }
+        Dialect::Sqlite => {
+            let top = if lim == usize::MAX {
+                String::new()
+            } else {
+                format!(" LIMIT {lim}")
+            };
+            let sql = format!(
+                "SELECT 'main', type, name FROM sqlite_master WHERE type IN ('table','view','index','trigger') AND name NOT LIKE 'sqlite_%'{top}"
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .collect()
+        }
+        Dialect::Odbc => {
+            let sql = format!(
+                "SELECT table_schema, table_type, table_name FROM information_schema.tables WHERE table_type IN ('BASE TABLE','VIEW'){}",
+                in_list("table_schema")
+            );
+            query(s, &sql)?
+                .rows
+                .iter()
+                .take(lim)
+                .map(|r| (col(r, 0), col(r, 1), col(r, 2)))
+                .collect()
+        }
+    };
+    let truncated = rows.len() >= lim && lim != usize::MAX;
+    let mut out = Vec::with_capacity(rows.len().min(max.max(1)));
+    for (schema, ty, name) in rows
+        .into_iter()
+        .take(if truncated { max } else { usize::MAX })
+    {
+        let Some(kind) = index_kind(dialect, &ty) else {
+            continue;
+        };
+        if !kinds.contains(&kind) {
+            continue;
+        }
+        out.push(NameEntry { schema, kind, name });
+    }
+    Ok((out, truncated))
+}
+
+/// 인덱스 질의의 종류 문자 → 트리 폴더 종류(방언별 · `objects()`와 같은 판정).
+fn index_kind(dialect: Dialect, ty: &str) -> Option<ObjectKind> {
+    use ObjectKind::*;
+    Some(match dialect {
+        Dialect::Oracle => *kinds_for(dialect).iter().find(|k| oracle_type(**k) == ty)?,
+        Dialect::Mssql => match ty {
+            "U" => Table,
+            "V" => View,
+            "P" | "PC" => Procedure,
+            "FN" | "IF" | "TF" | "AF" | "FS" | "FT" => Function,
+            "TR" | "TA" => Trigger,
+            "SO" => Sequence,
+            "SN" => Synonym,
+            "IX" => Index,
+            "TY" => Type,
+            _ => return None,
+        },
+        Dialect::Postgres => match ty {
+            "r" | "p" => Table,
+            "f" => ForeignTable,
+            "v" => View,
+            "m" => MaterializedView,
+            "S" => Sequence,
+            "i" | "I" => Index,
+            "proc:p" => Procedure,
+            "proc:f" => Function,
+            "proc:a" => Aggregate,
+            "type" => Type,
+            _ => return None,
+        },
+        Dialect::Mysql => match ty {
+            "BASE TABLE" => Table,
+            "VIEW" => View,
+            "PROCEDURE" => Procedure,
+            "FUNCTION" => Function,
+            "TRIGGER" => Trigger,
+            _ => return None,
+        },
+        Dialect::Sqlite => match ty {
+            "table" => Table,
+            "view" => View,
+            "index" => Index,
+            "trigger" => Trigger,
+            _ => return None,
+        },
+        Dialect::Odbc => match ty {
+            "BASE TABLE" => Table,
+            "VIEW" => View,
+            _ => return None,
+        },
+    })
+}
+
 pub mod tree;
 pub use tree::{sub_items, sub_kinds, SubIcon, SubItem, SubKind};
 pub mod gen;

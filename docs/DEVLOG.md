@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 7)** — §197 ★ T-219 탐색기 검색 인덱스([84](84-explorer-search-index.md) · `name_index` 스키마 순차 · `Partial` 폴더 · 완성 큐 · 헤더 인덱싱 표시 · 유휴 선적재 · 설정 5키 · CLI `cat index`) · 🔧 검색 이력 드롭다운 클릭 선택·바깥 좌/우클릭 감춤(nexa-ui `TextBox::popup_bounds`).
 - **2026-09-25 (100차 후반 · mac · 6)** — §196 🔧 미리보기 토글 시 탐색기 스크롤 밀림(`pane_top`) · DDL 기본(테이블·제약·인덱스)/전체(+설명·저장 절) 정정 · PK 인덱스 중복 제거(T-218).
 - **2026-09-25 (100차 후반 · mac · 5)** — push 537e160 **ci ✓ integration ✓** · §195 CONNECT 동일성 판정 점검 + 재접속 사유 로그(T-217) · Release 빌드 교체.
 - **2026-09-25 (100차 후반 · mac · 4)** — push a049080 **ci ✓ integration ✓** · ★ §194 T-211 글로벌 변수 층(`Layer::Global` · `VAR x GLOBAL` · `vars/global.sql` · 변수 창 층 순환 · 전 세션 전파) · ⑧ 원복(연결별 칸 = 기본 · `explorer.share_catalog`) · 헤더 정렬 · U-150~151.

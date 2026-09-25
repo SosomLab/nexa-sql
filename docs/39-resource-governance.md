@@ -113,6 +113,7 @@
 | 드라이버 확장 다운로드(T-27) | 사용자 클릭 | `net.updates`(신설 · manual/notify) | notify | manual | manual | T-27 |
 | 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |
+| ★ 탐색기 검색 인덱스([84](84-explorer-search-index.md)) | 검색 중 스키마당 1 질의(순차) · 유휴 선적재 `explorer.index_idle_ms`(5 s)마다 1 | `explorer.search_index` · `explorer.index_prefetch` · `explorer.index_max` | on | on | prefetch off | T-219 |
 
 ### 3-3. CPU(+ 디스크)
 

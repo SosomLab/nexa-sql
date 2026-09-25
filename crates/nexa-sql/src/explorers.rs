@@ -192,6 +192,8 @@ pub(crate) struct ExplorerSet {
     keep_offline: bool,
     gen_opts: nsql_catalog::GenOpts,
     schema_opts: nsql_catalog::SchemaOpts,
+    /// ★ 검색 인덱스 설정(84 §5 · 새 칸에도 준다).
+    index_cfg: crate::explorer::IndexCfg,
     /// ★ 칸 단위(사용자 09-25 원복): 끔(기본) = **연결(계정)마다 칸·인텔리센스 분리**(권한이 달라 보이는 객체가 다르다) ·
     /// 켬 = 같은 카탈로그(방언·호스트·포트·DB)의 연결들이 칸을 공유(docs/54 §10 · 설정 `explorer.share_catalog`).
     share_catalog: bool,
@@ -231,6 +233,7 @@ impl ExplorerSet {
             keep_offline: false,
             gen_opts: nsql_catalog::GenOpts::default(),
             schema_opts: nsql_catalog::SchemaOpts::default(),
+            index_cfg: crate::explorer::IndexCfg::default(),
             share_catalog: false,
             filter: FilterBar::new(t(Msg::PhExplorerFilter), &[]),
             filter_scope: FilterScope::All,
@@ -252,6 +255,7 @@ impl ExplorerSet {
         ex.set_highlight_ms(self.highlight_ms);
         ex.set_gen_opts(self.gen_opts);
         ex.set_schema_opts(self.schema_opts);
+        ex.set_index_cfg(self.index_cfg);
         Pane {
             key,
             conns: Vec::new(),
@@ -410,6 +414,21 @@ impl ExplorerSet {
         self.gen_opts = opts;
         for p in &mut self.panes {
             p.ex.set_gen_opts(opts);
+        }
+    }
+
+    /// 검색 인덱스 설정(84 §5) — 전 칸에.
+    pub(crate) fn set_index_cfg(&mut self, c: crate::explorer::IndexCfg) {
+        self.index_cfg = c;
+        for p in &mut self.panes {
+            p.ex.set_index_cfg(c);
+        }
+    }
+
+    /// ★ 유휴 선적재 틱(84 §7 · 호스트 주기 호출) — 칸마다 한 걸음.
+    pub(crate) fn prefetch_tick(&mut self, now: std::time::Instant) {
+        for p in &mut self.panes {
+            p.ex.prefetch_step(now);
         }
     }
 
@@ -693,6 +712,9 @@ impl ExplorerSet {
     pub(crate) fn menu_bounds(&self) -> Rect {
         if self.menu.is_open() {
             return self.menu.bounds();
+        }
+        if self.filter.popup_open() {
+            return self.filter.popup_bounds();
         }
         self.panes
             .iter()
@@ -1456,6 +1478,28 @@ impl ExplorerSet {
                     .map(|(g, _)| g.iter().map(|&i| self.panes[i].ex.filter_hits()).sum())
                     .unwrap_or(0);
                 sub = format!("{sub} · {}", tf(Msg::ExpFilterHits, &[&hits.to_string()]));
+                // ★ 검색 중 표시(84 §1 · 사용자 09-25): 인덱스가 아직 다 안 읽혔으면 "인덱싱 n/N" · 상한에 잘렸으면 안내.
+                let members: Vec<usize> = self
+                    .groups()
+                    .into_iter()
+                    .find(|(g, _)| g.first() == Some(&first))
+                    .map(|(g, _)| g)
+                    .unwrap_or_default();
+                let prog = members
+                    .iter()
+                    .filter_map(|&i| self.panes[i].ex.index_progress())
+                    .fold(None::<(usize, usize)>, |acc, (d, t)| {
+                        Some(acc.map_or((d, t), |(ad, at)| (ad + d, at + t)))
+                    });
+                if let Some((d, t)) = prog {
+                    sub = format!(
+                        "{sub} · {}",
+                        tf(Msg::ExpIndexing, &[&d.to_string(), &t.to_string()])
+                    );
+                }
+                if members.iter().any(|&i| self.panes[i].ex.index_truncated()) {
+                    sub = format!("{sub} · {}", t(Msg::ExpIndexCapped));
+                }
             }
             self.panes[first].ex.paint_server_header(dc, th, vis, &sub);
         }

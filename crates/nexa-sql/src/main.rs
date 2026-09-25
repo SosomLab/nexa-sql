@@ -5852,6 +5852,13 @@ impl App {
                 self.explorer
                     .set_schema_opts(schema_opts_from(&self.settings));
             }
+            "explorer.search_index"
+            | "explorer.index_max"
+            | "explorer.index_hits_max"
+            | "explorer.index_prefetch"
+            | "explorer.index_idle_ms" => {
+                self.explorer.set_index_cfg(index_cfg_from(&self.settings));
+            }
             "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk" => {
                 let o = gen_opts_from(&self.settings);
                 self.explorer.set_gen_opts(o);
@@ -15709,6 +15716,8 @@ impl ApplicationHandler<Wake> for App {
         let now_ms = self.started.elapsed().as_millis() as u64;
         self.tx_tick();
         self.idle_tick(now);
+        // ★ 유휴 인덱스 선적재(docs/84 §7) — 칸마다 간격 판정은 안에서.
+        self.explorer.prefetch_tick(now);
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
         redraw |= self.git.poll();
@@ -17186,6 +17195,7 @@ fn main() {
         e.set_filter_scope(settings.get("explorer.filter_scope").unwrap_or("all"));
         e.set_gen_opts(gen_opts_from(&settings));
         e.set_schema_opts(schema_opts_from(&settings));
+        e.set_index_cfg(index_cfg_from(&settings));
         e.set_share_catalog(settings.flag("explorer.share_catalog"));
         e.set_tooltip_delay(settings.int("ui.tooltip_delay_ms").max(0) as u128);
         // ★ 문법 참조 플러그인(nsql-script `grammar` · 09-24): 설정 폴더 `grammar/*.sqlg`가 내장 방언을 대신하거나 새 방언을 더한다.
@@ -17739,6 +17749,17 @@ fn schema_opts_from(settings: &Settings) -> nsql_catalog::SchemaOpts {
     nsql_catalog::SchemaOpts {
         show_system: settings.flag("explorer.show_system_schemas"),
         hide_empty: settings.flag("explorer.hide_empty_schemas"),
+    }
+}
+
+/// 검색 인덱스 설정(`explorer.search_index` · `index_max` · `index_hits_max` · `index_prefetch` · `index_idle_ms` · docs/84 §5).
+fn index_cfg_from(settings: &Settings) -> explorer::IndexCfg {
+    explorer::IndexCfg {
+        on: settings.flag("explorer.search_index"),
+        max: settings.int("explorer.index_max").max(0) as usize,
+        hits_max: settings.int("explorer.index_hits_max").max(1) as usize,
+        prefetch: settings.flag("explorer.index_prefetch"),
+        idle_ms: settings.int("explorer.index_idle_ms").max(500) as u64,
     }
 }
 

@@ -185,6 +185,23 @@ impl FilterBar {
         self.tb.bounds()
     }
 
+    fn history_open(&self) -> bool {
+        self.history.as_ref().is_some_and(|(_, r)| r.is_open())
+    }
+
+    /// 열린 팝업의 영역(이력 드롭다운 · 텍스트박스 편집 메뉴) — 호스트의 `menu_bounds`에 합쳐 바깥 클릭 판정이 맞게(같은 클릭을 두 번 보내지 않게).
+    pub(crate) fn popup_bounds(&self) -> Rect {
+        if let Some((_, r)) = &self.history {
+            if r.is_open() {
+                return r.bounds();
+            }
+        }
+        if self.tb.popup_open() {
+            return self.tb.popup_bounds();
+        }
+        Rect::default()
+    }
+
     /// 팝업(텍스트박스 편집 메뉴 · 이력 드롭다운)이 열려 있는가 — 패널의 `menu_open`에 합친다.
     pub(crate) fn popup_open(&self) -> bool {
         self.tb.popup_open() || self.history.as_ref().is_some_and(|(_, r)| r.is_open())
@@ -324,8 +341,13 @@ impl FilterBar {
                 } else if self.tb.bounds().contains(p) {
                     self.tb.set_focused(true);
                     to_tb = true;
+                } else if self.history_open() {
+                    // ★ 열린 이력 드롭다운(상자 아래) 클릭 = 항목 고르기 · 그 밖 = 닫기(사용자 09-25 "클릭으로는 선택이 안 된다").
+                    to_tb = true;
                 }
             }
+            // 우클릭 = 드롭다운이 열려 있으면 닫힘 판정을 받게(바깥 우클릭 = 즉시 감춤 · 사용자 09-25).
+            InputEvent::RightDown { .. } => to_tb = self.history_open(),
             InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. } => to_tb = true,
             InputEvent::Key { .. }
             | InputEvent::Char { .. }

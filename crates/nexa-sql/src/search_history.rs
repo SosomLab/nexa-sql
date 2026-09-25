@@ -287,6 +287,11 @@ impl Recall {
         self.menu.bounds()
     }
 
+    #[cfg(test)]
+    pub(crate) fn shown_for_test(&self) -> &[String] {
+        &self.shown
+    }
+
     /// 드롭다운을 그린다(팝업 층 · 담는 쪽의 `paint_popup` 끝에).
     pub(crate) fn paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         if self.menu.is_open() {
@@ -486,6 +491,11 @@ impl Recall {
                     return self.apply_pick(tb, h, inv);
                 }
                 // 바깥 클릭 = 닫고 그 클릭은 그대로 진행(팝업 UX 규칙).
+                self.menu.close();
+                RecallEvent::Pass
+            }
+            // 우클릭 = 어디든 닫고 그 클릭은 그대로(사용자 09-25 "다른 영역의 좌/우 클릭으로 유효성이 상실되면 바로 감춰").
+            InputEvent::RightDown { .. } => {
                 self.menu.close();
                 RecallEvent::Pass
             }
@@ -751,6 +761,35 @@ mod tests {
             RecallEvent::Pass
         );
         assert!(!r.is_open());
+        // ★ 행 클릭 = 고르기(09-25 결함: 상자 밖이라 사건이 닿지 않았다) · 우클릭 = 어디든 닫고 Pass.
+        tb.set_text("");
+        r.on_click(&tb, &h, host, 1.0);
+        assert!(r.is_open());
+        let row1 = r.menu.row_rect_of(1).expect("둘째 행 영역");
+        let click = InputEvent::MouseDown {
+            x: row1.x + 5,
+            y: row1.y + row1.h / 2,
+            shift: false,
+            primary: false,
+        };
+        assert_eq!(
+            r.on_event(&click, &mut tb, &h, &mut inv),
+            RecallEvent::Changed
+        );
+        assert_eq!(tb.text(), r.shown_for_test()[1], "클릭한 행의 글");
+        assert!(!r.is_open());
+        r.on_click(&tb, &h, host, 1.0);
+        assert!(r.is_open());
+        assert_eq!(
+            r.on_event(
+                &InputEvent::RightDown { x: 700, y: 500 },
+                &mut tb,
+                &h,
+                &mut inv
+            ),
+            RecallEvent::Pass
+        );
+        assert!(!r.is_open(), "우클릭 = 즉시 감춤");
         // Flat 모드로 바꾸면 클릭해도 안 열린다.
         h.borrow_mut().set_view(HistoryView::Flat);
         r.on_click(&tb, &h, host, 1.0);

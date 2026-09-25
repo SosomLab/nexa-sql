@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/explorer-search-index | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-219 탐색기 검색 인덱스(84 · 스키마 순차 → 부분 폴더 → 순차 완성 · 유휴 선적재 · 설정 5키 · CLI cat index) · 🔧 이력 드롭다운 클릭/우클릭(§197) |
 | fix/preview-toggle-scroll-ddl-scope | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | 🔧 미리보기 토글 시 탐색기 스크롤 밀림(헤더 높이 앵커) · DDL 기본/전체 범위 정정 · PK 인덱스 중복 제거(T-218 · §196) |
 | fix/connect-retarget-reason | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | CONNECT 동일성 판정 점검 + 재접속 사유 로그(T-217 · §195) |
 | feat/global-vars-layer | 2026-09-25 | 2026-09-25 → main(삭제) | 1 | ★ T-211 글로벌 변수 층([63 §11](63-variable-management.md)) · ⑧ 원복(연결별 칸 기본 · `explorer.share_catalog`) · 서버 헤더 정렬 · 100차 후반 |

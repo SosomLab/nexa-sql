@@ -20,7 +20,7 @@ use nsql_catalog::{
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{t, tf, Msg};
 use nsql_script::ConnectSpec;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
@@ -51,7 +51,35 @@ enum LoadState {
     Idle,
     Loading,
     Loaded,
+    /// ★ 부분(84 §3): 검색 인덱스가 올린 일치 객체만 든 폴더 — 전체 목록은 순차 완성 큐가(또는 사용자가 펼치면) 채운다.
+    Partial,
     Error(String),
+}
+
+/// ★ 검색 인덱스 설정 한 벌(`explorer.search_index` · `explorer.index_max` · `explorer.index_hits_max` · 84 §5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct IndexCfg {
+    pub on: bool,
+    /// 스키마 하나의 인덱스 상한(0 = 무제한).
+    pub max: usize,
+    /// 한 필터에 트리로 올리는 일치 상한.
+    pub hits_max: usize,
+    /// ★ 유휴 선적재(84 §7): 접속 뒤 검색이 없어도 스키마 하나씩 아주 느리게 인덱스를 채운다(백그라운드 메타 세션).
+    pub prefetch: bool,
+    /// 선적재 간격(ms · 스키마 하나마다).
+    pub idle_ms: u64,
+}
+
+impl Default for IndexCfg {
+    fn default() -> Self {
+        Self {
+            on: true,
+            max: 200_000,
+            hits_max: 2000,
+            prefetch: true,
+            idle_ms: 5000,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +139,12 @@ enum Req {
         node: usize,
         schema: String,
         kind: ObjectKind,
+    },
+    /// ★ 이름 인덱스(84 §2) — 스키마 하나의 (종류, 이름) 전부 · 검색 중일 때만 · 한 번에 하나.
+    Index {
+        gen: u64,
+        schema: String,
+        max: usize,
     },
     Columns {
         gen: u64,
@@ -402,6 +436,12 @@ enum Resp {
         node: usize,
         r: Result<Vec<ObjectInfo>, String>,
     },
+    /// 이름 인덱스 한 스키마 분(84 §2) — (항목, 잘림).
+    Index {
+        gen: u64,
+        schema: String,
+        r: Result<(Vec<nsql_catalog::NameEntry>, bool), String>,
+    },
     Columns {
         gen: u64,
         node: usize,
@@ -548,6 +588,20 @@ pub(crate) struct Explorer {
     filter: Option<crate::filterbar::Matcher>,
     /// 필터가 **대신 펼친** 노드(사용자가 펼친 적 없음) — 필터를 지우면 다시 접는다(사용자 09-25 "UI가 복잡해진다").
     filter_expanded: std::collections::HashSet<usize>,
+    /// ★ 이름 인덱스(84 §2): 스키마 단위로 순차 채움(현재 스키마 먼저 · 한 번에 하나 · 검색 중일 때만) — `index_done`의 스키마는 항목이 다 있다.
+    index: Vec<nsql_catalog::NameEntry>,
+    index_done: HashSet<String>,
+    index_q: VecDeque<String>,
+    index_inflight: Option<String>,
+    index_truncated: bool,
+    index_cfg: IndexCfg,
+    /// 마지막 인덱스 응답 시각(유휴 선적재의 간격 기준).
+    index_last_at: Option<Instant>,
+    /// ★ 부분 폴더 완성 큐(84 §4) — 인덱스가 올린 폴더의 전체 목록을 보이는 순서로 하나씩.
+    complete_q: VecDeque<usize>,
+    completing: Option<usize>,
+    /// 한 묶음으로 노드를 여럿 만드는 동안 `refilter`를 미룬다(끝에 한 번).
+    batching: bool,
     /// Generate SQL 옵션(설정 `gen.*` · 호스트가 준다).
     gen_opts: GenOpts,
     /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
@@ -721,6 +775,7 @@ fn req_label(r: &Req) -> String {
         Req::Suspend => "suspend".into(),
         Req::Schemas { .. } => "schemas".into(),
         Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
+        Req::Index { schema, .. } => format!("index {schema}"),
         Req::SubItems { owner, sub, .. } => format!("sub {} {sub:?}", owner.name),
         Req::GenSql { spec, .. } => format!("gen {}", spec.title()),
         Req::Columns { schema, table, .. } => format!("columns {schema}.{table}"),
@@ -752,6 +807,8 @@ fn req_prio(r: &Req) -> u8 {
         | Req::GenSql { .. }
         | Req::Source { .. } => 1,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
+        // 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞 — 검색은 사용자가 기다리는 일이다.
+        Req::Index { .. } => 2,
         Req::ColumnsMeta { urgent: false, .. } => 3,
         Req::ObjectsMeta { .. } => 4,
         Req::DictMeta { .. } => 5,
@@ -909,6 +966,15 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     nsql_catalog::objects(s, &schema, kind).map_err(err_s)
                 });
                 Resp::Objects { gen, node, r }
+            }
+            Req::Index { gen, schema, max } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::name_index(s, std::slice::from_ref(&schema), max).map_err(err_s)
+                });
+                Resp::Index { gen, schema, r }
             }
             Req::Columns {
                 gen,
@@ -1302,6 +1368,16 @@ impl Explorer {
             scroll_x: 0,
             content_w: 0,
             soft: HashSet::new(),
+            index: Vec::new(),
+            index_done: HashSet::new(),
+            index_q: VecDeque::new(),
+            index_inflight: None,
+            index_truncated: false,
+            index_cfg: IndexCfg::default(),
+            index_last_at: None,
+            complete_q: VecDeque::new(),
+            completing: None,
+            batching: false,
             fresh: Vec::new(),
             highlight_ms: 2000,
             missing_at: HashMap::new(),
@@ -1314,6 +1390,9 @@ impl Explorer {
 
     fn reset_tree(&mut self) {
         self.soft.clear();
+        self.index_reset();
+        self.complete_q.clear();
+        self.completing = None;
         self.fresh.clear();
         self.missing_at.clear();
         self.watermarks.clear();
@@ -1470,12 +1549,18 @@ impl Explorer {
 
     /// 폴더 개수 글자: 필터 중이면 "일치/전체"(사용자 09-25) · 아니면 전체.
     fn count_label(&self, n: &Node) -> String {
+        // 부분 폴더(84 §3) = 전체 수를 아직 모른다 → "일치/?".
+        let total = if n.state == LoadState::Partial {
+            "?".to_string()
+        } else {
+            n.children.len().to_string()
+        };
         match &self.filter_keep {
             Some(keep) if self.filter.is_some() => {
                 let kept = n.children.iter().filter(|c| keep.contains(c)).count();
-                format!("{kept}/{}", n.children.len())
+                format!("{kept}/{total}")
             }
-            _ => n.children.len().to_string(),
+            _ => total,
         }
     }
 
@@ -2243,6 +2328,8 @@ impl Explorer {
                                 self.set_children(node, kids);
                                 self.select_current_schema();
                                 self.preload_meta();
+                                // 스키마 목록이 새로 왔다 = 인덱스는 처음부터(검색 중이면 바로 다시 채움 — 필터 중 새 접속 · 사용자 09-25 1번 이미지).
+                                self.index_invalidate();
                             }
                         }
                         // 조용한 갱신의 실패는 옛 트리를 그대로 둔다(오류 행으로 바꾸지 않는다).
@@ -2253,9 +2340,42 @@ impl Explorer {
                         }
                     }
                 }
+                Resp::Index { gen, schema, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    if self.index_inflight.as_deref() == Some(schema.as_str()) {
+                        self.index_inflight = None;
+                    }
+                    self.index_last_at = Some(Instant::now());
+                    match r {
+                        Ok((list, trunc)) => {
+                            self.index.retain(|e| e.schema != schema);
+                            self.index.extend(list);
+                            self.index_truncated |= trunc;
+                            self.index_done.insert(schema);
+                            if self.filter.is_some() {
+                                self.materialize();
+                                self.refilter();
+                                self.pump_complete();
+                            }
+                        }
+                        // 실패한 스키마 = 트리에 읽힌 것만 검색 대상(다음 무효화 때 다시).
+                        Err(_) => {
+                            self.index_done.insert(schema);
+                        }
+                    }
+                    if self.filter.is_some() {
+                        self.pump_index();
+                    }
+                }
                 Resp::Objects { gen, node, r } => {
                     if gen != self.gen {
                         continue;
+                    }
+                    let was_completing = self.completing == Some(node);
+                    if was_completing {
+                        self.completing = None;
                     }
                     match r {
                         Ok(list) => {
@@ -2265,6 +2385,17 @@ impl Explorer {
                                     self.meta_load_objects(&s, k, &list);
                                     self.intel_buckets
                                         .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
+                                    // 전체 목록이 왔으면 인덱스의 그 버킷도 새 값으로(DDL 뒤 갱신과 같은 길 · 84 §6).
+                                    if self.index_done.contains(&s) {
+                                        self.index.retain(|e| !(e.schema == s && e.kind == k));
+                                        self.index.extend(list.iter().map(|o| {
+                                            nsql_catalog::NameEntry {
+                                                schema: s.clone(),
+                                                kind: k,
+                                                name: o.name.clone(),
+                                            }
+                                        }));
+                                    }
                                 }
                             }
                             let depth = self.nodes[node].depth + 1;
@@ -2294,6 +2425,9 @@ impl Explorer {
                                 self.set_error(node, e);
                             }
                         }
+                    }
+                    if was_completing {
+                        self.pump_complete();
                     }
                 }
                 Resp::Columns { gen, node, r } => {
@@ -2556,7 +2690,7 @@ impl Explorer {
         self.nodes[node].state = LoadState::Loaded;
         self.nodes[node].expanded = true;
         self.clamp_scroll();
-        if self.filter.is_some() {
+        if self.filter.is_some() && !self.batching {
             self.refilter();
         }
     }
@@ -2602,7 +2736,7 @@ impl Explorer {
         self.nodes[node].children = ids;
         self.nodes[node].state = LoadState::Loaded;
         self.clamp_scroll();
-        if self.filter.is_some() {
+        if self.filter.is_some() && !self.batching {
             self.refilter();
         }
     }
@@ -2692,6 +2826,7 @@ impl Explorer {
     pub(crate) fn refresh_meta(&mut self, schema: Option<&str>) -> (usize, usize) {
         let buckets = self.meta.mark_stale(schema);
         let objs = self.meta.mark_columns_unknown(schema);
+        self.index_invalidate();
         match schema {
             Some(s) => self.request_objects(s),
             None => {
@@ -3041,6 +3176,11 @@ impl Explorer {
         if self.nodes[i].state == LoadState::Loaded {
             return;
         }
+        if self.nodes[i].state == LoadState::Partial {
+            // 부분 폴더를 직접 펼침 = 전체를 조용히 채운다(있는 항목은 그대로 · 84 §4).
+            self.request_complete(i);
+            return;
+        }
         self.load(i);
     }
 
@@ -3066,24 +3206,9 @@ impl Explorer {
                     opts: self.schema_opts,
                 });
             }
-            NodeKind::Schema(schema) => {
-                let Some(d) = self.dialect else { return };
-                let depth = self.nodes[i].depth + 1;
-                let kids: Vec<Node> = nsql_catalog::kinds_for(d)
-                    .iter()
-                    .map(|k| Node {
-                        kind: NodeKind::Folder {
-                            schema: schema.clone(),
-                            kind: *k,
-                        },
-                        depth,
-                        children: Vec::new(),
-                        expanded: false,
-                        expandable: true,
-                        state: LoadState::Idle,
-                    })
-                    .collect();
-                self.set_children(i, kids);
+            NodeKind::Schema(_) => {
+                self.make_folders(i);
+                self.nodes[i].expanded = true;
             }
             NodeKind::Folder { schema, kind } => {
                 self.nodes[i].state = LoadState::Loading;
@@ -3335,7 +3460,319 @@ impl Explorer {
     /// `ExplorerSet`이 늘 그린다 · 일치 0이면 헤더에 "일치 0"). 일치 자손을 품은 읽어 둔 노드는 펼친다.
     pub(crate) fn apply_filter(&mut self, m: Option<crate::filterbar::Matcher>) {
         self.filter = m.filter(|m| !m.is_empty());
+        if self.filter.is_some() {
+            // ★ 84 §1 세 단계: ① 선별(인덱스 · 스키마 순차) → ② 일치를 부분 노드로 즉시 → ③ 그 폴더들을 순차 완성.
+            self.ensure_index();
+            self.materialize();
+        } else {
+            // 검색이 끝나면 완성 큐·인덱스 읽기는 멈춘다(미사용 즉시 회수 · 진행 중인 하나는 응답을 그대로 받는다).
+            self.complete_q.clear();
+            self.index_q.clear();
+        }
         self.refilter();
+        self.pump_complete();
+    }
+
+    pub(crate) fn set_index_cfg(&mut self, c: IndexCfg) {
+        if self.index_cfg != c {
+            self.index_cfg = c;
+            self.index_invalidate();
+        }
+    }
+
+    /// 인덱스가 상한에서 잘렸는가(헤더 안내용).
+    pub(crate) fn index_truncated(&self) -> bool {
+        self.index_truncated
+    }
+
+    /// 인덱스 진행(읽은 스키마, 전체) — 헤더 "인덱싱 n/N"용 · 검색 중이 아니거나 다 읽었으면 None.
+    pub(crate) fn index_progress(&self) -> Option<(usize, usize)> {
+        if self.filter.is_none() || !self.index_cfg.on || self.offline {
+            return None;
+        }
+        let total = self.schema_names().len();
+        let done = self.index_done.len().min(total);
+        (done < total).then_some((done, total))
+    }
+
+    /// ★ 유휴 선적재 한 걸음(84 §7 · 호스트가 주기적으로 부른다): 검색이 없고 · 인덱스가 켜져 있고 · 온라인이며 · 마지막 응답 뒤 `idle_ms`가 지났으면
+    /// 아직 없는 스키마 하나를 **백그라운드 메타 세션**으로 읽는다(사용자 클릭 세션을 막지 않는다). 다 읽으면 트래픽 0.
+    pub(crate) fn prefetch_step(&mut self, now: Instant) -> bool {
+        let c = self.index_cfg;
+        if !c.on
+            || !c.prefetch
+            || self.offline
+            || self.dialect.is_none()
+            || self.filter.is_some()
+            || self.index_inflight.is_some()
+            || self.nodes[0].state != LoadState::Loaded
+        {
+            return false;
+        }
+        if self
+            .index_last_at
+            .is_some_and(|t| now.duration_since(t).as_millis() < u128::from(c.idle_ms))
+        {
+            return false;
+        }
+        let Some(next) = self
+            .schema_names()
+            .into_iter()
+            .find(|s| !self.index_done.contains(s))
+        else {
+            return false;
+        };
+        let _ = self.tx_bg.send(Req::Index {
+            gen: self.gen,
+            schema: next.clone(),
+            max: c.max,
+        });
+        self.index_inflight = Some(next);
+        true
+    }
+
+    fn index_reset(&mut self) {
+        self.index.clear();
+        self.index_done.clear();
+        self.index_q.clear();
+        self.index_inflight = None;
+        self.index_truncated = false;
+    }
+
+    /// 인덱스 무효화(스키마 목록·메타 갱신·설정 변경 뒤) — 검색 중이면 바로 다시 채우기 시작한다.
+    fn index_invalidate(&mut self) {
+        self.index_reset();
+        if self.filter.is_some() {
+            self.ensure_index();
+        }
+    }
+
+    /// 트리의 스키마 이름(현재 스키마 먼저 · 그다음 트리 순서).
+    fn schema_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.nodes[0]
+            .children
+            .iter()
+            .filter_map(|&c| match &self.nodes[c].kind {
+                NodeKind::Schema(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        if let Some(cur) = &self.server_schema {
+            if let Some(p) = v.iter().position(|s| s.eq_ignore_ascii_case(cur)) {
+                let c = v.remove(p);
+                v.insert(0, c);
+            }
+        }
+        v
+    }
+
+    /// ① 선별 준비: 아직 안 읽은 스키마를 큐에 넣고(현재 스키마 먼저) 하나를 보낸다.
+    fn ensure_index(&mut self) {
+        if !self.index_cfg.on
+            || self.offline
+            || self.dialect.is_none()
+            || self.nodes[0].state != LoadState::Loaded
+        {
+            return;
+        }
+        if self.index_q.is_empty() {
+            let names = self.schema_names();
+            self.index_q = names
+                .into_iter()
+                .filter(|s| {
+                    !self.index_done.contains(s) && self.index_inflight.as_deref() != Some(s)
+                })
+                .collect();
+        }
+        self.pump_index();
+    }
+
+    fn pump_index(&mut self) {
+        if self.index_inflight.is_some() || self.offline {
+            return;
+        }
+        while let Some(s) = self.index_q.pop_front() {
+            if self.index_done.contains(&s) {
+                continue;
+            }
+            self.last_used = Instant::now();
+            self.suspended = false;
+            let _ = self.tx.send(Req::Index {
+                gen: self.gen,
+                schema: s.clone(),
+                max: self.index_cfg.max,
+            });
+            self.index_inflight = Some(s);
+            return;
+        }
+    }
+
+    /// 스키마 노드의 종류 폴더를 만든다(서버 왕복 0 · 펼침 상태는 그대로).
+    fn make_folders(&mut self, i: usize) {
+        let NodeKind::Schema(schema) = self.nodes[i].kind.clone() else {
+            return;
+        };
+        let Some(d) = self.dialect else { return };
+        let was = self.nodes[i].expanded;
+        let depth = self.nodes[i].depth + 1;
+        let kids: Vec<Node> = nsql_catalog::kinds_for(d)
+            .iter()
+            .map(|k| Node {
+                kind: NodeKind::Folder {
+                    schema: schema.clone(),
+                    kind: *k,
+                },
+                depth,
+                children: Vec::new(),
+                expanded: false,
+                expandable: true,
+                state: LoadState::Idle,
+            })
+            .collect();
+        self.set_children(i, kids);
+        self.nodes[i].expanded = was;
+    }
+
+    /// ② 일치를 트리로: 인덱스에서 필터에 맞는 항목을 그 (스키마, 종류) 폴더의 **부분** 자식으로 올린다(이미 전체가 읽힌/읽는 중인 폴더는 건너뜀 ·
+    /// 상한 `hits_max`) · 올라간 폴더는 완성 큐에.
+    fn materialize(&mut self) {
+        let Some(m) = self.filter.clone() else { return };
+        let Some(d) = self.dialect else { return };
+        if self.index.is_empty() {
+            return;
+        }
+        let schema_node: HashMap<String, usize> = self.nodes[0]
+            .children
+            .iter()
+            .filter_map(|&c| match &self.nodes[c].kind {
+                NodeKind::Schema(s) => Some((s.clone(), c)),
+                _ => None,
+            })
+            .collect();
+        let picked: Vec<(String, ObjectKind, String)> = self
+            .index
+            .iter()
+            .filter(|e| m.matches(&e.name))
+            .take(self.index_cfg.hits_max)
+            .map(|e| (e.schema.clone(), e.kind, e.name.clone()))
+            .collect();
+        if picked.is_empty() {
+            return;
+        }
+        let mut names: HashMap<usize, HashSet<String>> = HashMap::new();
+        self.batching = true;
+        for (schema, kind, name) in picked {
+            let Some(&sn) = schema_node.get(&schema) else {
+                continue;
+            };
+            if self.nodes[sn].children.is_empty() {
+                self.make_folders(sn);
+            }
+            let Some(fi) = self.nodes[sn].children.iter().copied().find(
+                |&c| matches!(&self.nodes[c].kind, NodeKind::Folder { kind: k, .. } if *k == kind),
+            ) else {
+                continue;
+            };
+            if !matches!(self.nodes[fi].state, LoadState::Idle | LoadState::Partial) {
+                continue;
+            }
+            let set = names.entry(fi).or_insert_with(|| {
+                self.nodes[fi]
+                    .children
+                    .iter()
+                    .filter_map(|&c| match &self.nodes[c].kind {
+                        NodeKind::Object(o) => Some(o.name.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            if !set.insert(name.clone()) {
+                continue;
+            }
+            let depth = self.nodes[fi].depth + 1;
+            let o = ObjectInfo {
+                schema: schema.clone(),
+                name,
+                kind,
+                status: String::new(),
+                modified: String::new(),
+                extra: String::new(),
+            };
+            self.nodes.push(Node {
+                expandable: !nsql_catalog::sub_kinds(d, kind).is_empty(),
+                kind: NodeKind::Object(o),
+                depth,
+                children: Vec::new(),
+                expanded: false,
+                state: LoadState::Idle,
+            });
+            let id = self.nodes.len() - 1;
+            self.nodes[fi].children.push(id);
+            if self.nodes[fi].state == LoadState::Idle {
+                self.nodes[fi].state = LoadState::Partial;
+            }
+            if !self.complete_q.contains(&fi) && self.completing != Some(fi) {
+                self.complete_q.push_back(fi);
+            }
+        }
+        self.batching = false;
+        // 부분 폴더의 자식은 이름순(전체 목록이 오면 그 순서로 바뀐다).
+        for &fi in names.keys() {
+            let mut kids = std::mem::take(&mut self.nodes[fi].children);
+            kids.sort_by(|&a, &b| {
+                let na = match &self.nodes[a].kind {
+                    NodeKind::Object(o) => o.name.as_str(),
+                    _ => "",
+                };
+                let nb = match &self.nodes[b].kind {
+                    NodeKind::Object(o) => o.name.as_str(),
+                    _ => "",
+                };
+                na.cmp(nb)
+            });
+            self.nodes[fi].children = kids;
+        }
+        self.clamp_scroll();
+    }
+
+    /// ③ 완성: 큐의 부분 폴더를 하나씩(보이는 순서 = 넣은 순서) 전체 목록으로 — 검색 중일 때만.
+    fn pump_complete(&mut self) {
+        if self.completing.is_some() || self.filter.is_none() || self.offline {
+            return;
+        }
+        while let Some(f) = self.complete_q.pop_front() {
+            if self
+                .nodes
+                .get(f)
+                .is_none_or(|n| n.state != LoadState::Partial)
+            {
+                continue;
+            }
+            self.request_complete(f);
+            return;
+        }
+    }
+
+    /// 부분 폴더 하나의 전체 목록을 조용히(있는 노드 유지 · 디프) 요청한다.
+    fn request_complete(&mut self, f: usize) {
+        let NodeKind::Folder { schema, kind } = self.nodes[f].kind.clone() else {
+            return;
+        };
+        if self.soft.contains(&f) {
+            return;
+        }
+        self.last_used = Instant::now();
+        self.suspended = false;
+        self.soft.insert(f);
+        let _ = self.tx.send(Req::Objects {
+            gen: self.gen,
+            node: f,
+            schema,
+            kind,
+        });
+        if self.completing.is_none() {
+            self.completing = Some(f);
+        }
     }
 
     /// 보관한 판정기로 다시 거른다 — 자식이 생기거나 빠질 때(`set_children`·`diff_children`·`detach`)마다.
@@ -3392,7 +3829,7 @@ impl Explorer {
         }
         for i in 0..n {
             if strong[i]
-                && self.nodes[i].state == LoadState::Loaded
+                && matches!(self.nodes[i].state, LoadState::Loaded | LoadState::Partial)
                 && self.nodes[i].children.iter().any(|&c| strong[c])
                 && !self.nodes[i].expanded
             {
@@ -4146,7 +4583,7 @@ impl Explorer {
             NodeKind::Schema(s) => (s.clone(), String::new()),
             NodeKind::Folder { kind, .. } => {
                 let base = folder_label(self.dialect, *kind);
-                if n.state == LoadState::Loaded {
+                if matches!(n.state, LoadState::Loaded | LoadState::Partial) {
                     (format!("{base} ({})", self.count_label(n)), String::new())
                 } else {
                     (base, String::new())
@@ -4172,7 +4609,7 @@ impl Explorer {
             }
             NodeKind::Sub { sub, .. } => {
                 let base = t(sub_msg(*sub)).to_string();
-                if n.state == LoadState::Loaded {
+                if matches!(n.state, LoadState::Loaded | LoadState::Partial) {
                     (format!("{base} ({})", self.count_label(n)), String::new())
                 } else {
                     (base, String::new())
@@ -4605,6 +5042,67 @@ mod refresh_tests {
         ex.nodes[tables].expanded = true;
         assert!(ex.visible_rows().contains(&a), "빈 글 = 해제");
         assert_eq!(ex.filter_hits(), 0);
+    }
+
+    /// ★ 검색 인덱스(84 §3~4): 인덱스에 있는 **안 읽은 폴더**의 객체가 필터에 맞으면 부분 폴더("n/?")로 즉시 올라오고 완성 큐에 들어간다 ·
+    /// 완성 응답(디프)은 있던 노드를 유지하며 전체 수로 · 이미 읽은 폴더의 항목은 건너뛴다 · 필터 해제 = 접힘 + 큐 비움.
+    #[test]
+    fn index_materializes_hits_into_unloaded_folders_and_completes() {
+        let (mut ex, schema, tables) = sample();
+        let views = ex.nodes[schema].children[1];
+        assert_eq!(ex.nodes[views].state, LoadState::Idle);
+        let e = |kind: ObjectKind, name: &str| nsql_catalog::NameEntry {
+            schema: "HR".into(),
+            kind,
+            name: name.into(),
+        };
+        ex.index = vec![
+            e(ObjectKind::View, "V_B1"),
+            e(ObjectKind::View, "V_A"),
+            e(ObjectKind::Table, "B"),
+        ];
+        ex.index_done.insert("HR".into());
+        ex.apply_filter(Some(crate::filterbar::Matcher::plain("b")));
+        assert_eq!(
+            ex.nodes[views].state,
+            LoadState::Partial,
+            "안 읽은 폴더 = 부분"
+        );
+        assert_eq!(ex.label(views).0, "Views (1/?)", "전체 수는 아직 모른다");
+        assert_eq!(
+            ex.nodes[tables].children.len(),
+            3,
+            "이미 읽은 폴더에는 인덱스가 끼어들지 않는다"
+        );
+        let rows = ex.visible_rows();
+        assert!(rows.contains(&views), "부분 폴더가 보인다");
+        let vb = ex.nodes[views].children[0];
+        assert!(rows.contains(&vb), "일치 객체가 펼쳐져 보인다");
+        assert_eq!(ex.filter_hits(), 2, "B(테이블) + V_B1");
+        assert!(ex.soft.contains(&views), "완성 요청은 조용히(디프)");
+        assert_eq!(ex.completing, Some(views));
+        // 완성 응답: 있던 노드 유지 · Loaded · 일치/전체.
+        ex.soft.remove(&views);
+        ex.completing = None;
+        let v = |name: &str| {
+            let mut n = node(obj(name), 3);
+            if let NodeKind::Object(o) = &mut n.kind {
+                o.kind = ObjectKind::View;
+            }
+            n
+        };
+        ex.diff_children(views, vec![v("V_A"), v("V_B1"), v("V_B2")]);
+        assert_eq!(ex.nodes[views].state, LoadState::Loaded);
+        assert_eq!(ex.label(views).0, "Views (2/3)");
+        assert!(
+            ex.nodes[views].children.contains(&vb),
+            "부분 노드는 그대로 남는다"
+        );
+        // 해제 = 필터가 펼친 폴더 접힘 · 큐 비움.
+        ex.apply_filter(None);
+        assert!(!ex.nodes[views].expanded);
+        assert!(ex.complete_q.is_empty());
+        assert_eq!(ex.label(views).0, "Views (3)");
     }
 
     /// 실행한 DDL → 그 폴더만: 읽어 둔 폴더 = 요청 1 · 안 읽은 폴더 = 0(펼칠 때 새로 읽는다) · ALTER = 읽어 둔 객체의 컬럼만 ·

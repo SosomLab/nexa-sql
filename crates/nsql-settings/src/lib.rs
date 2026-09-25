@@ -1277,6 +1277,56 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "off",
     },
+    // ★ 검색 인덱스(docs/84 · 09-25): 필터 = 서버 전체 객체 대상(스키마 순차 인덱스 · 부분 폴더 · 순차 완성 · 유휴 선적재).
+    Entry {
+        key: "explorer.search_index",
+        cat: Msg::CatExplorer,
+        label: Msg::LblSearchIndex,
+        desc: Msg::DescSearchIndex,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "explorer.index_max",
+        cat: Msg::CatExplorer,
+        label: Msg::LblIndexMax,
+        desc: Msg::DescIndexMax,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000_000,
+        },
+        default: "200000",
+    },
+    Entry {
+        key: "explorer.index_hits_max",
+        cat: Msg::CatExplorer,
+        label: Msg::LblIndexHitsMax,
+        desc: Msg::DescIndexHitsMax,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 100_000,
+        },
+        default: "2000",
+    },
+    Entry {
+        key: "explorer.index_prefetch",
+        cat: Msg::CatExplorer,
+        label: Msg::LblIndexPrefetch,
+        desc: Msg::DescIndexPrefetch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "explorer.index_idle_ms",
+        cat: Msg::CatExplorer,
+        label: Msg::LblIndexIdleMs,
+        desc: Msg::DescIndexIdleMs,
+        kind: SettingKind::Int {
+            min: 500,
+            max: 600_000,
+        },
+        default: "5000",
+    },
     Entry {
         key: "gen.qualified",
         cat: Msg::CatExplorer,

@@ -84,6 +84,32 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     &rs(&["Schema"], list.into_iter().map(|n| vec![n]).collect()),
                 );
             }
+            // ★ 이름 인덱스(84 §2): `index [max]` — 탐색기 검색이 쓰는 서버 전체 (스키마, 종류, 이름) 한 번에.
+            "index" => {
+                let max = o
+                    .positional
+                    .get(1)
+                    .and_then(|t| t.parse::<usize>().ok())
+                    .unwrap_or(0);
+                // 범위 = `-s 스키마` 하나 · 없으면 GUI 탐색기와 같은 보이는 스키마 목록(시스템 스키마 제외) — 전체(ALL_OBJECTS 무제한)는 느리다.
+                let scope: Vec<String> = match &o.schema {
+                    Some(sc) => vec![sc.clone()],
+                    None => nsql_catalog::schemas_opt(s, nsql_catalog::SchemaOpts::default())?,
+                };
+                let t0 = std::time::Instant::now();
+                let (list, truncated) = nsql_catalog::name_index(s, &scope, max)?;
+                let n = list.len();
+                let rows = list
+                    .into_iter()
+                    .map(|e| vec![e.schema, e.kind.code().to_string(), e.name])
+                    .collect();
+                print_rs(o, dialect, &rs(&["Schema", "Kind", "Name"], rows));
+                eprintln!(
+                    "-- index: {n} entries · {} ms{}",
+                    t0.elapsed().as_millis(),
+                    if truncated { " · truncated" } else { "" }
+                );
+            }
             "kinds" => {
                 let rows = nsql_catalog::kinds_for(dialect)
                     .iter()
