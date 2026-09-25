@@ -15676,6 +15676,7 @@ impl ApplicationHandler<Wake> for App {
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
         if let Some((sid, needs)) = self.input_pending.take() {
             let owner = self.window.clone();
+            let was_open = self.input_win.is_open();
             self.input_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
@@ -15683,6 +15684,14 @@ impl ApplicationHandler<Wake> for App {
                 needs,
                 sid,
             );
+            // ★ 09-25 결함(사용자 "SELECT :Top 실행이 끝나지 않는다"): 비밀번호 길과 달리 자식 창으로 붙이지 않아 맥에서 메인 뒤로
+            //   숨었고, 워커는 답을 기다리며 멎었다(중지로만 풀림) → 같은 길(자식 창 + 모달 동기화).
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.input_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
         }
         // 저장하지 않은 탭을 닫으려 했다(X · 단축키 · 탭 메뉴 · 모두 닫기 — 어느 길이든 여기서 걷는다).
         if let Some(i) = self.editors.take_save_close_request() {

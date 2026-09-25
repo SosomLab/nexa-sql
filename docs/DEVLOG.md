@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-25 (100차 후반 · mac · 16)** — §205 🔧 변수 입력 창 자식 창 부착(`SELECT :Top` 멈춤).
 - **2026-09-25 (100차 후반 · mac · 15)** — §203 🔧 검색 입력 지연(`toolicons/exp_icons::prewarm` · refilter 부모 표 O(n) · `lower_labels` · `matches_cached`) · §204 🔧 북마크 니모닉(`migrate_target` · `bm.stat`).
 - **2026-09-25 (100차 후반 · mac · 14)** — §202 🔧 검색 미종료(유휴 타이머 정지 → `background_pending` 타이머 유지 · 감시 · `explorer.stat` 진단 · 인덱스 로그).
 - **2026-09-25 (100차 후반 · mac · 13)** — §201 T-222 ① L1 디스크 캐시(`metacache.rs`) · ② 메모리 창 메타 L1/L2/L3.
