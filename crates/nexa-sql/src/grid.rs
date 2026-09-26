@@ -4224,8 +4224,10 @@ impl Grid {
                 }
                 let cw = self.col_w.get(ci).copied().unwrap_or(80);
                 let clip = Rect::new(x, y, cw - 1, self.row_h).intersection(&cells);
-                if clip.w > 0 && over.is_some() && status == RowStatus::Modified {
-                    dc.fill_rect_alpha(clip, th.accent, 0.14);
+                // 변경 셀 = 배경은 아주 옅게 · 식별은 **글자색(경고색) + 굵게**(사용자 09-26 "배경색은 잘 안 보인다 · 폰트색으로").
+                let changed = over.is_some() && status == RowStatus::Modified;
+                if clip.w > 0 && changed {
+                    dc.fill_rect_alpha(clip, th.warn, 0.06);
                 }
                 if clip.w > 0
                     && self.in_sel(di, pos)
@@ -4256,13 +4258,18 @@ impl Grid {
                         (None, None) => (String::new(), false, true),
                     };
                     // NULL은 흐린 글자보다 **더 흐리게**(배경 쪽으로 45 % · 사용자 09-22) · 삭제 행은 전체 흐림.
-                    let color = if is_null {
+                    let color = if changed {
+                        th.warn
+                    } else if is_null {
                         th.text_dim.lerp(th.panel_bg, 0.45)
                     } else if status == RowStatus::Deleted {
                         th.text_dim
                     } else {
                         th.text
                     };
+                    if changed {
+                        dc.select_font(FontSlot::Base, true);
+                    }
                     if numeric {
                         let tw = dc.text_width(&txt);
                         let ty = dc.text_center_y(y, self.row_h);
@@ -4270,6 +4277,9 @@ impl Grid {
                     } else {
                         let ty = dc.text_center_y(y, self.row_h);
                         dc.text(x + pad, ty, clip, &txt, color);
+                    }
+                    if changed {
+                        dc.select_font(FontSlot::Base, false);
                     }
                 }
                 x += cw;
@@ -5438,7 +5448,11 @@ mod edit_key_path_tests {
         g.on_event(&key(Key::Enter), 1.0);
         assert!(!g.edit_dirty(), "x → y → x = 변경 아님");
         assert_eq!(
-            g.edit.as_ref().expect("editable").cs.cell(RowRef::Existing(0), 1),
+            g.edit
+                .as_ref()
+                .expect("editable")
+                .cs
+                .cell(RowRef::Existing(0), 1),
             None
         );
         // Esc = 취소 · 기록 없음.
