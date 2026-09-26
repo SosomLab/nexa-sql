@@ -3066,4 +3066,3 @@ mod tests {
         assert_eq!(it.take_accept().expect("a").text, "EMPNO", "Alt = 컬럼만");
     }
 }
-
