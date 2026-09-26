@@ -129,6 +129,10 @@ expect_grep "적용 뒤 깨끗" "$d10e" "dirty=false"
 expect_grep "서버: BLOB 70 bytes · 머리 424D(BMP)" "$v" "70  424D"
 expect_grep "서버: 글 5,000자(CLOB 길)" "$v" " 5000 "
 expect_grep "다시 연 값 창 = BMP 2x2" "$d10d" "kind=BMP bytes=70 image=2x2"
+echo "=== SQLite ⑪ 편집 툴바 활성(사용자 09-26): 조회 직후 복제/삭제 = 비활성 → 셀 클릭(선택) = 활성 · 편집 동작 없이도"
+run_gui 12 Local "open:$D/sel.sql,@after:2500:run.all,@after:5500:grid.dump:$O/t0.txt,@after:6000:grid.select:0;1,@after:7000:grid.dump:$O/t1.txt"
+expect_grep "선택 전 = add 활성 · dup/del 비활성" "$(cat "$O/t0.txt" 2>/dev/null)" "tools add=true dup=false del=false"
+expect_grep "셀 선택 뒤 = dup/del 활성(편집 동작 없이)" "$(cat "$O/t1.txt" 2>/dev/null)" "tools add=true dup=true del=true"
 # ── 실서버 스위트(방언 공통 4 시나리오 · 임시 표 NSQLT_GE(PK)·NSQLT_GE2(키 없음) 생성 → 시험 → DROP · 61 §2-4 ⑤)
 #   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql> <라벨>
 dbms_suite() {

@@ -334,6 +334,8 @@ pub(crate) struct Grid {
     sel_anchor: Option<(usize, usize)>,
     /// 포커스 셀(테두리 · 키 이동 기준). 선택과 별개로 움직일 수 있다(Ctrl+방향키).
     sel_cur: Option<(usize, usize)>,
+    /// 편집 툴바를 마지막으로 맞출 때의 "선택 있음" — 선택이 생기거나 사라지면 그리는 시점에 다시 맞춘다(사용자 09-26 복제 버튼 비활성).
+    tools_has_sel: bool,
     /// 드래그 중(셀 범위 / 행번호 열 = 행 범위).
     drag_sel: Option<DragSel>,
     /// 우클릭 메뉴(복사 형식 · 전체 선택).
@@ -483,6 +485,7 @@ impl Default for Grid {
             regions: Vec::new(),
             sel_anchor: None,
             sel_cur: None,
+            tools_has_sel: false,
             drag_sel: None,
             menu: CtxMenu::new(),
             pending_copy: None,
@@ -1082,6 +1085,7 @@ impl Grid {
             None => (false, false, false, false),
         };
         let can = editable && !applying && self.rs.is_some();
+        self.tools_has_sel = self.sel_cur.is_some();
         self.tb_edit.set_item_enabled("row.add", can, &mut inv);
         self.tb_edit
             .set_item_enabled("row.dup", can && self.sel_cur.is_some(), &mut inv);
@@ -2091,6 +2095,15 @@ impl Grid {
             self.edit.is_some(),
             self.edit_dirty(),
             self.edit_status_text().unwrap_or_default()
+        ));
+        out.push_str(&format!(
+            "tools add={} dup={} del={} save={} cancel={} sel={:?}\n",
+            self.tb_edit.item_enabled("row.add"),
+            self.tb_edit.item_enabled("row.dup"),
+            self.tb_edit.item_enabled("row.del"),
+            self.tb_edit.item_enabled("row.save"),
+            self.tb_edit.item_enabled("row.cancel"),
+            self.sel_cur
         ));
         if let Some(e) = self.edit.as_ref() {
             out.push_str(&format!(
@@ -4519,6 +4532,11 @@ impl Grid {
         let stamp = self.perf_report
             && nsql_log::wants(nsql_log::LogLayer::Render, nsql_log::LogLevel::Timing);
         let started = stamp.then(|| nsql_log::now_local().stamp());
+        // 선택 유무가 바뀌면(클릭 · 키 이동 · 전체 선택) 복제/삭제 버튼 활성을 여기서 한 번 맞춘다 — 선택 경로마다 부르지 않고
+        // 그리기 직전 한 곳에서(사용자 09-26 "우클릭 메뉴는 되는데 버튼은 비활성").
+        if self.tools_has_sel != self.sel_cur.is_some() {
+            self.sync_edit_tools();
+        }
         self.paint_inner(dc, th, s);
         self.render = t_render.elapsed();
         if let Some(st) = started {
