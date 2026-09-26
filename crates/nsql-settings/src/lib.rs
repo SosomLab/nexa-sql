@@ -252,6 +252,16 @@ const MINIMAP_CLICK_OPTS: &[(&str, Msg)] = &[
     ("text", Msg::ValMinimapClickText),
 ];
 
+const CLICK_DBL_OPTS: &[(&str, Msg)] = &[
+    ("word", Msg::OptClickWord),
+    ("line", Msg::OptClickLine),
+    ("none", Msg::OptClickNone),
+];
+const CLICK_TRIPLE_OPTS: &[(&str, Msg)] = &[
+    ("line", Msg::OptClickLine),
+    ("all", Msg::OptClickAll),
+    ("none", Msg::OptClickNone),
+];
 const GE_EMPTY_OPTS: &[(&str, Msg)] = &[("null", Msg::OptGeNull), ("empty", Msg::OptGeEmpty)];
 const GE_REFRESH_OPTS: &[(&str, Msg)] =
     &[("requery", Msg::OptGeRequery), ("local", Msg::OptGeLocal)];
@@ -1028,6 +1038,31 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescNullText,
         kind: SettingKind::Text,
         default: "NULL",
+    },
+    // ★ 연속 클릭 정책(사용자 09-26 · nexa-ctl `set_click_policy` · 편집기·셀 편집기·패널 공통 · CatEditor).
+    Entry {
+        key: "editor.dblclick",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorDblClick,
+        desc: Msg::DescEditorDblClick,
+        kind: SettingKind::Choice(CLICK_DBL_OPTS),
+        default: "word",
+    },
+    Entry {
+        key: "editor.triple_click",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTripleClick,
+        desc: Msg::DescEditorTripleClick,
+        kind: SettingKind::Choice(CLICK_TRIPLE_OPTS),
+        default: "line",
+    },
+    Entry {
+        key: "editor.dblclick_underscore",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorDblUnderscore,
+        desc: Msg::DescEditorDblUnderscore,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     // ★ 그리드 데이터 편집(docs/87 · T-182 · 사용자 09-26): 편집 허용 · 빈 값 = NULL/빈 문자열(D-210) · 문장당 1행 검사 · 적용 뒤 재조회(D-212) · 붙여넣기 상한.
     Entry {

@@ -6089,6 +6089,9 @@ impl App {
             | "grid.edit_strict"
             | "grid.edit_refresh"
             | "grid.paste_max_rows" => self.apply_grid_edit_cfg(),
+            "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
+                self.apply_click_policy();
+            }
             k if k.starts_with("bookmark.") => {
                 self.bookmarks.apply_settings(&self.settings);
                 let on = self.bookmarks.enabled;
@@ -6473,6 +6476,22 @@ impl App {
             strict,
         });
         self.redraw();
+    }
+
+    /// 연속 클릭 정책 → nexa-ctl 전역(편집기·셀 편집기·패널 상자 공통 · 사용자 09-26).
+    fn apply_click_policy(&mut self) {
+        let dbl =
+            nexa_ctl::ClickAction::parse(self.settings.get("editor.dblclick").unwrap_or("word"))
+                .unwrap_or(nexa_ctl::ClickAction::Word);
+        let triple = nexa_ctl::ClickAction::parse(
+            self.settings.get("editor.triple_click").unwrap_or("line"),
+        )
+        .unwrap_or(nexa_ctl::ClickAction::Line);
+        nexa_ctl::set_click_policy(
+            dbl,
+            triple,
+            self.settings.flag("editor.dblclick_underscore"),
+        );
     }
 
     /// 편집 설정 → 전 그리드(docs/87 §8).
@@ -18256,6 +18275,7 @@ fn main() {
     app.grid.set_null_text(&null_text);
     app.apply_grid_row_focus();
     app.apply_grid_edit_cfg();
+    app.apply_click_policy();
     app.bookmarks.apply_settings(&app.settings);
     let bm_on = app.bookmarks.enabled;
     app.act_bar.set_item_visible("view.bookmarks", bm_on);
