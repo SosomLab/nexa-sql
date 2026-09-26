@@ -2,7 +2,14 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-09-27 인계](journal/2026-09-27.md)** — 미커밋 3저장소 · 툴체인 급한 문제 · 라이선스 진행 상태 · 순서.
+> ★ **다음 세션 시작점 = [journal 2026-09-27 인계](journal/2026-09-27.md)** — §5 순서(라이선스 결정 D-41~D-47 · L-1~L-8 → keys → 발급기) · §8 102차 win CI 수정.
+
+## 2026-09-27 (102차 · **win**) — 세 저장소 최신화·분석 · 🔧 CI 빨강 둘 수정
+
+- 당김: nexa-ui 5b2b049(`TextBox::commit_composition`) · nexa-license a6f7ce8(verify·request·machine·date·ed25519·keys + `rust-toolchain.toml`) · nexa-sql 4ecbd88(101차 Linux 일괄). Windows 회귀 없음(clippy `-D warnings` ✓ · 테스트 610 통과 · 실패 0(1 ignored) · Release 빌드 ✓ · nexa-license 19/19).
+- 🔧 **CI**: `ci` macOS·Windows = `settings_clip_native` dead_code(Linux 전용 호출) → `cfg_attr(allow)` · `integration` = `it-mssql.sql`의 `from dual`(d1a68b1 문서 커밋 · paths 밖이라 그때 안 돎) → FROM 제거. [journal 09-27 §8](journal/2026-09-27.md).
+- 📐 nexa-license `machine.rs` Windows = `reg` 프로세스 → GUI에서 콘솔 창 깜빡임 → 앱 층 배선 때 `CREATE_NO_WINDOW`/레지스트리 직접.
+- 남은 것 = 101차 후반 2와 같음(D-41~D-47 · L-1~L-8 · `keys.rs` · T-163 ⑦~⑫).
 
 ## 2026-09-27 (101차 후반 2 · **Linux**) — nexa-license 검증 ✅ · 세 저장소 push(사용자 요청)
 
