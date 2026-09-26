@@ -57,6 +57,8 @@ SHOW ERRORS
 -- ── 사용 예(SQL*Plus 관용 그대로 · 세션 변수는 클라이언트에 산다 DR-8)
 VARIABLE rc REFCURSOR
 EXEC :V_NAME := 'EMP'
+EXEC :V_NAME := 'I002040'
+EXEC :V_NAME := 'M'
 
 -- ① 프로시저: OUT 커서를 바인드 변수로 받는다.
 EXEC NSQL_DEMO_PKG.FIND_OBJECTS(:V_NAME, :rc)
@@ -68,4 +70,9 @@ PRINT rc
 
 -- ③ 함수: 대입 한 줄.
 EXEC :rc := NSQL_DEMO_PKG.OBJECTS_LIKE('V$SESS', 20)
+PRINT rc
+
+
+-- ③ 함수: 대입 한 줄.
+EXEC :rc := NSQL_DEMO_PKG.OBJECTS_LIKE('V$', 500)
 PRINT rc

@@ -11,3 +11,7 @@ SELECT :V_PRG_NM AS prg, :V_CNT AS cnt, :V_MAX AS mx;
 :setvar Top 3
 SELECT TOP &Top name FROM sys.objects ORDER BY name
 GO
+
+SELECT :Top from dual;
+
+SHOW VARIABLES
