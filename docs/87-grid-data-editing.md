@@ -255,3 +255,55 @@
 1. **P1 행 단위 재조회**(§12-4 · `refresh=rows` 기본 · 폴백 판정 순수 함수 + MC/DC · `Caps.returning`) 2. **P1 정렬/필터 중 ChangeSet 보존**(잠금 해제 · pending 미반영 명시) 3. **P2 동시성 `key_old` + 충돌 3택** 4. **P2 전 열 키 경고 배지 + 사전 COUNT 검사** 5. **P2 Set DEFAULT · NULL/`''` 구분 · 범위 채움 · SERIAL 건너뛰기** 6. **P3 실패 행 마커 + 그 행만 재시도 · SAVEPOINT** 7. **P3 키보드 표준(Ctrl+Enter · Ctrl+0 · Ctrl+D 그리드 한정)** 8. **P3 ROWID/ctid/rowid 키 3안**.
 
 출처: DBeaver Data-Editor/Virtual-Keys/Data-Editor-preferences · DataGrip submitting-and-reverting-changes/data-editor-and-viewer/rows · MS Learn work-with-data-in-the-results-pane · troubleshoot error-use-ssms-update-row-table · ADS #6638 #9083 · TablePlus docs/이슈 #266 #3504 · pgAdmin editgrid/query_tool · HeidiSQL help/#2600 · Beekeeper editing-data/#1532 · DbGate 7.2.0 · Sequel Ace #1935 #2616 · AG Grid undo-redo-edits/cell-editing-batch · Handsontable undo-redo · Glide editing.
+
+---
+
+## 13. 수정 행 식별 기준 · 허용 범위 검토(사용자 09-26 · D-214~D-218)
+
+### 13-1. 식별 등급(허용 범위)
+
+| 등급 | 조건 | 판정 | WHERE | 비고 |
+|---|---|---|---|---|
+| **1급 · 바로 편집** | PK 또는 UNIQUE(NOT NULL) 제약이 있고 **그 열이 결과에 전부** 있다 | 편집 가능 · 경고 없음 | 키 열 = 원본 값 | 사용자 의견과 같다. UNIQUE에 NULL 허용 열이 섞이면 `IS NULL` 비교 = 여러 행일 수 있어 **NOT NULL 유니크만** 1급(NULL 허용 유니크는 3급 규칙 적용) |
+| **1급-보완** | PK/UK는 있는데 결과에 키 열이 빠졌다(`SELECT a, b FROM t`) | 두 길 — ⓐ **숨은 키 열 자동 주입**(단일 테이블 문장이라 `SELECT <키 열들>, a, b FROM t …`로 재조회 · 화면에는 숨김) ⓑ 읽기 전용 + 이유 "키 열이 결과에 없음" | 키 열 | DBeaver = 읽기 전용/가상 키 · 우리는 ⓐ를 기본 후보(`grid.edit_hidden_keys` · D-214) |
+| **2급 · 물리 행 식별자** | 키가 없지만 DBMS가 행 주소를 준다 | 편집 가능 · 배지 "ROWID" | `<alias>.ROWID = :p`(등) | §13-3 표 · 문장에 `<alias>.ROWID AS "__nsql_rid"`를 주입해 재조회(단일 테이블·별칭 판정이 이미 있다) |
+| **3급 · 전 열 비교** | 키도 행 식별자도 없다(MySQL 힙 · SQL Server 힙 등) | 편집 가능하되 **경고 배지 + 사전 건수 검사**(`SELECT COUNT(*) … WHERE 전 열`이 1인 행만) + 영향 1행 엄격(지금 `grid.edit_strict`) | 비교 가능한 모든 열 = 원본 값(NULL = `IS NULL`) | §13-4 제약 · 검사 왕복 1회 추가(행 수만큼 IN 묶음) |
+| **읽기 전용** | 조인·집계·DISTINCT·집합·식/별칭 열 · 뷰(갱신 가능 뷰는 후속) · PROD · 설정 끔 · 3급인데 비교 불가 열만 남음 | 상태줄 이유 | — | 지금과 같음 |
+
+### 13-2. 키 값을 수정할 때(유일성 위반)
+
+- WHERE는 **원본 키 값**으로 가므로 UPDATE 자체는 가능하다(지금 구현). 위반은 **서버 제약**에서 난다(ORA-00001 · PG 23505 · SQL Server 2627/2601 · SQLite 19 · MySQL 1062) → 우리는 한 트랜잭션이라 **전부 롤백 + 실패 문장의 행 표시**(자동 커밋 모드) · 수동 모드는 부분 적용 상태를 사용자가 커밋/롤백.
+- 클라이언트가 **막을 수는 없다**(다른 세션·화면 밖 행을 모른다). 할 수 있는 것 = ① **사전 검사(권장 · D-215)**: 변경 집합 안에서 같은 키가 둘 이상이 되면 적용 전 거부("키 중복 A=1이 2행") · 화면에 있는 행과의 충돌도 함께 · 서버 검사 옵션 = `SELECT 키 FROM t WHERE 키 IN (새 값들)`로 이미 있는 값 미리 확인(왕복 1). ② **순서**: 키를 비우거나 바꾸는 행을 먼저(DELETE → 키 변경 UPDATE → 나머지 UPDATE → INSERT)로 "옮겨 간 자리에 새 값이 들어오는" 흔한 경우를 통과시킨다. ③ **맞교환(A↔B)**: 임시 값 경유(2단계 UPDATE)는 도메인 밖 값이 필요해 일반해가 없다 → **지연 제약**이 있는 DBMS(Oracle `DEFERRABLE INITIALLY DEFERRED` · PG `SET CONSTRAINTS ALL DEFERRED` — 제약이 DEFERRABLE로 만들어졌을 때만 · SQL Server/MySQL/SQLite 없음)에서만 자동 처리 가능 · 그 밖은 "키 맞교환은 두 번에 나눠 적용" 안내.
+- 정리: **키 열 편집은 허용**(DBeaver·DataGrip 동일) · 사전 중복 검사 + 순서 규칙 + 서버 오류의 행 표시가 대안이다.
+
+### 13-3. DBMS별 행 식별자(확보 가능성)
+
+| DBMS | 식별자 | 얻는 법(단일 테이블 문장 주입) | 안정성 | 판정 |
+|---|---|---|---|---|
+| Oracle · Tibero | `ROWID`(IOT = `UROWID`) | `SELECT a.ROWID AS "__nsql_rid", … FROM t a` | 행 이동(`ENABLE ROW MOVEMENT` 파티션 이동 · `SHRINK`) · 테이블 재생성 전까지 안정 · 세션 간 동일 | **2급 채택**(Toad·SQL Developer 방식) |
+| PostgreSQL | `ctid` (+ `xmin`) | `SELECT a.ctid, a.xmin, …` | **UPDATE마다 바뀐다**(MVCC 새 튜플) · VACUUM FULL/CLUSTER로도 변경 → 같은 스냅숏 안에서만 유효 · 적용 뒤 **반드시 재조회**(§12-4 rows) · `xmin` 비교 = 낙관적 동시성 검사 무료 | **2급 채택(조건부)** — 한 번 적용하면 그 행의 ctid는 폐기하고 재조회 값으로 교체 · 실패(0행) = "다른 세션이 바꿈" |
+| SQLite | `rowid` | `SELECT a.rowid AS "__nsql_rid", …` | `INTEGER PRIMARY KEY` 없는 표는 `VACUUM`에 바뀔 수 있음 · `WITHOUT ROWID` 표는 없음(그 표는 PK 필수라 1급) | **2급 채택** |
+| SQL Server | `%%physloc%%`(비문서 · file:page:slot) | `SELECT a.%%physloc%%, …` | 페이지 분할·갱신·재구성에 변함 · 힙 전달 레코드 · 문서화 안 됨 | **비권장** → 힙은 3급 또는 읽기 전용(SSMS도 전 열 WHERE) · 클러스터 키/유니크 인덱스가 있으면 1급 |
+| MySQL · MariaDB | InnoDB 숨은 `DB_ROW_ID`(접근 불가) · `_rowid`는 정수 유니크 NOT NULL 열의 별칭일 뿐 | — | — | **없음** → 3급 |
+| DB2 | `RID()` · `RID_BIT()` | 함수 열 주입 | REORG 전까지 | 확장 드라이버 후속 |
+| ODBC 폴백 | 뒤의 DBMS를 모름 | — | — | 1급/3급만 |
+
+### 13-4. 전 열 비교가 "해결"이 되는가(기술 검토)
+
+- 성립 조건 = 결과의 모든 열이 **비교 가능**하고 그 조합이 **행마다 유일**할 때만. 깨지는 경우: ① 완전 중복 행(로그·집계 원천 테이블) → 영향 2행 → 엄격 검사가 막는다(수정 불가로 안내) ② 결과가 열 부분집합(`SELECT a, b`)이라 유일하지 않음 ③ **비교 불가 열**: Oracle CLOB/BLOB/LONG(ORA-00932) · SQL Server text/ntext/image·`xml`·`geometry`(= 비교 불가 · SSMS KB 925719의 `%_[` 문제) · PG json(`jsonb`만 비교 가능)·xml · 실수(`FLOAT`/`BINARY_DOUBLE` 표시 반올림 ≠ 저장값) · 시각(표시 정밀도 · 시간대) · `CHAR` 뒤 공백(패딩 의미) · 대소문자 무시 정렬(SQL Server 기본 CI 조합 = 더 많은 행 일치) · 트레일링 공백 무시(MySQL PAD SPACE).
+- 규칙(D-216): 비교 열에서 LOB/실수/긴 문자(>4000)/xml/json/공간형은 **제외**하고, 제외 뒤 남은 열로 **사전 건수 검사**(행마다 `COUNT(*)=1`)를 통과한 행만 적용 · 하나라도 2+면 그 행은 "식별 불가"로 적용 제외(다른 행은 진행) · 값은 **원본 `Value`를 그대로 바인드**(문자열로 되돌리지 않는다 · 정밀도 손실 회피).
+- 결론: 전 열 비교는 **마지막 폴백**이지 해결책이 아니다 — 사용자 요구대로 "가능한 모든 컬럼"을 쓰되 위 제외·검사와 함께라야 안전하다.
+
+### 13-5. 낙관적 동시성(같은 자리에서)
+
+`grid.edit_concurrency = key(기본) | key_old(변경 열의 옛 값 추가 · 권장 후보) | all_old` — PG는 `xmin`, Oracle은 `ORA_ROWSCN`(행 수준 `ROWDEPENDENCIES` 표만 정확), SQL Server는 `rowversion` 열이 있을 때 자동 채택. 영향 0행 = "다른 세션이 수정/삭제" 충돌 3택(§12-3 5).
+
+### 13-6. 결정 대기
+
+- **D-214** 키 열이 결과에 없을 때 = 숨은 키 열 자동 주입(재조회 1회) vs 읽기 전용 — 권장 = 주입(설정 `grid.edit_hidden_keys` on).
+- **D-215** 키 값 수정 = 허용 + 변경 집합 안 중복 사전 검사(+ 서버 사전 검사 옵션) + 순서 규칙(키 변경 UPDATE 먼저).
+- **D-216** 전 열 비교의 제외 열 규칙과 사전 건수 검사 기본 on.
+- **D-217** PG ctid 채택 시 적용 뒤 행 재조회 필수(§12-4 rows와 묶음) · xmin 동시성 기본 on.
+- **D-218** SQL Server 힙 = `%%physloc%%` 미사용(3급/읽기 전용).
+
+구현 순서(T-231): 1급-보완(숨은 키 주입) → 2급(Oracle ROWID · SQLite rowid · PG ctid+xmin) → 3급 제외 규칙+사전 검사 → 키 중복 사전 검사·순서 → 동시성 옵션. 판정 = 순수 함수(`editable::classify`) + MC/DC 시험.
