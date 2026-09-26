@@ -6,6 +6,7 @@
 |---|---|---|---|---|
 | feat/bulk-tds-jsonl | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-4 일부: SQL Server TDS bulk 싱크(`TdsSink` · `MsKind` · 트랜잭션) · JSONL 원료(`nsql_io::jsonl`) · 드라이버 실패 뒤 다중 행 이어 가기 · E2E 22/22(§239) |
 | feat/bulk-import | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-1·B-2 대량 적재(nsql-core `bulk` 포트 · nsql-io `delim` 스트리밍 · nsql-run `bulk_load` · CLI `nsql import` · PG COPY 싱크 · Oracle 배열 DML 싱크 · 설정 `bulk.*` · E2E `mac-bulk-e2e.sh` · 89 §3-4-a · §238) |
+| docs/status-refresh-wiki | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 📚 §244 문서·위키 최신화(DEVLOG §214~243 · MILESTONES M2 100차 · 위키 [파일로 넣기·내보내기](Bulk-Import-Export.md) 신설 + Home/Data-Editing · `nsql import` 도움말 jsonl · CLAUDE.md 현 단계) |
 | feat/lob-jpeg-adam7 | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-237 기저 JPEG 미리보기 + PNG Adam7(nexa-ui 83차 nexa-gfx) · 설정 설명/위키/87 갱신 · E2E ⑫ · 📐 88 §4-1-c + T-239(§242~243) |
 | fix/grid-tools-sel-sync | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 🔧 결과 도구줄 복제/삭제 버튼 = 선택 유무 바뀌면 paint 직전 `sync_edit_tools` · dump `tools` 줄 · E2E ⑪(§241) |
 | feat/bulk-b3-import-win | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-3 PG `COPY TO`(`nsql export --fast`) · GUI Import 창 · `Runner::import_file` 단일 원천 · 취소 깃발 · E2E ⑤ GUI(§240) |

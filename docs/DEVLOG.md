@@ -2,6 +2,20 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-26 (100차 후반 · mac · 38)** — §241 🔧 결과 도구줄 복제/삭제 버튼 = 선택 유무로 그리기 직전 동기화(E2E ⑪) · §242 ★ T-237 기저 JPEG 미리보기 + PNG Adam7(nexa-ui 83차 `jpeg.rs` · 외부 crate 0 · E2E ⑫) · §243 📐 88 §4-1-c 남은 대조(Esc ✓ · Tab 순환 없음 → T-239).
+- **2026-09-26 (100차 후반 · mac · 37)** — §240 ★ T-236 B-3 = PG `COPY TO`(`nsql export --fast`) + **GUI Import 창**(`import_win.rs` · 탐색기 표 ▸ Import Data… · 미리보기·옵션·진행·취소) · `Runner::import_file` = CLI·GUI 단일 원천 · E2E 28/28.
+- **2026-09-26 (100차 후반 · mac · 36)** — §239 ★ T-236 B-4 일부 = SQL Server TDS bulk(`MsKind` 16종 · 배치마다 `bulk_insert` · 5.2k→13.9k행/s) + JSON Lines 원료.
+- **2026-09-26 (100차 후반 · mac · 35)** — §238 ★ T-236 대량 적재 B-1·B-2([89](89-bulk-io-review.md) · `Caps.bulk_load`/`BulkSink` 포트 · `Runner::bulk_load` · CLI `nsql import` · PG COPY · Oracle 배열 DML · E2E `scripts/mac-bulk-e2e.sh`).
+- **2026-09-26 (100차 후반 · mac · 34)** — §237 ★ 미저장 탭 일괄 처리(모두 저장 · 모두 취소 · 닫기 = 진행 취소) + 탭 메뉴 미저장 강조(nexa-ui 82차 `MenuEntry::Emph`).
+- **2026-09-26 (100차 후반 · mac · 33)** — §234 🔧 수동 커밋 + 그리드 적용 = 트랜잭션 로그 문장별·pending·Oracle `tx_left_open` · §235 ★ 4-DBMS 그리드 편집 E2E(`-P`/`-d` 실서버 3종 · 84/84) · §236 ★ LOB 값 창(Text/Hex/Image · nexa-gfx 디코더 · 파일 넣기/저장).
+- **2026-09-26 (100차 후반 · mac · 32)** — §229 그리드 Tab/Shift+Tab · 위키 Data-Editing · §230 📐 T-229 UI/UX 표준 대조 1차 · §231 T-232 비활성 선택색 · T-233 우클릭 1단 · §232 🔧 T-228 CLI wall = 측정 하네스였다 · §233 T-234 CLI = GUI 프레임워크 0.
+- **2026-09-26 (100차 후반 · mac · 31)** — §227 ★ T-231 행 식별 등급(`editable::classify` · 숨은 키 열·ROWID/rowid/ctid 주입) · §228 ★ T-230 P1 적용 뒤 **행 단위 재조회**(`grid.edit_refresh=rows`).
+- **2026-09-26 (100차 후반 · mac · 30)** — §224 ★ 연속 클릭 정책 설정 3키 · §225 ★ **데이터 보호 불변식**([87 §14](87-grid-data-editing.md) · 사전 검사 · 영향 1행 · 되돌림) · §226 🔧 Oracle ORA-01008 + ★ 그리드 편집 E2E 자동 시험.
+- **2026-09-26 (100차 후반 · mac · 29)** — §221 🔧 그리드 편집 실기 결함 일괄 · §222 📐 편집기 15종 비교 · §223 📐 수정 행 식별 기준 검토(87 §12~13).
+- **2026-09-26 (100차 후반 · mac · 28)** — §219 ★ 객체 상세 캐시 + 새로 고침 무효화 · §220 📐 UI/UX·디자인 국제 표준 조사([88](88-ui-ux-standards-survey.md) · 점검표 30).
+- **2026-09-26 (100차 후반 · mac · 27)** — §217 ★ T-182 그리드 데이터 편집 1차(nexa-ctl `gridedit` + `gridedit_sql` + `Runner::apply_changes`) · §218 🔧 편집·팝업 UX 기본 6칙.
+- **2026-09-26 (100차 후반 · mac · 26)** — §215 📐 그리드 데이터 편집 설계([87](87-grid-data-editing.md)) · §216 ★ 맥 성능 전수 4차(회귀 0 · 기동 −31 % · [26 §7-12](26-performance-architecture.md)).
+- **2026-09-26 (100차 후반 · mac · 25)** — §214 ★ 읽기 전용 미리보기·상세 창 일괄(PL/SQL DDL `/` 종결 · SQL Preview 선택 복사 · 읽기 전용 상자 조합 차단).
 - **2026-09-26 (100차 후반 · mac · 24)** — §213 패키지 본문 열기(우클릭 Open body · `open_body`).
 - **2026-09-26 (100차 후반 · mac · 23)** — §212 L2 코멘트 워머(스키마 단위 · 메타 저장 · `meta.warm_comments`) · 테이블 설명 NULL 규칙 · CI 7b396f1 ✓.
 - **2026-09-26 (100차 후반 · mac · 22)** — §211 컬럼 설명 즉시·NULL 흐림(`comments_raw` · `Req::Comments` · 캐시) · CLI `cat comments` · CI 기록.

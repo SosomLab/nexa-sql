@@ -3481,7 +3481,7 @@ impl Msg {
             Msg::HlpOptCommitEvery => ["import: commit every N rows (0 = once at the end)", "import: N행마다 커밋(0 = 끝에 한 번)"],
             Msg::HlpOptMode => ["import: load path (auto = driver fast path when available)", "import: 적재 경로(auto = 드라이버 최속 경로가 있으면 그것)"],
             Msg::HlpOptEmptyNull => ["import: empty field = NULL (on) or empty string (off)", "import: 빈 필드 = NULL(on) / 빈 문자열(off)"],
-            Msg::HlpCmdImport => ["Bulk-load a csv/tsv file into a table (driver fast path or multi-row INSERT)", "csv/tsv 파일을 표에 대량 적재(드라이버 최속 경로 또는 다중 행 INSERT)"],
+            Msg::HlpCmdImport => ["Bulk-load a csv/tsv/jsonl file into a table (driver fast path or multi-row INSERT)", "csv/tsv/jsonl 파일을 표에 대량 적재(드라이버 최속 경로 또는 다중 행 INSERT)"],
             Msg::HlpCmdImportDetail => ["INSERT only. First record is the header (column names) unless --no-header; --cols names the source columns; --map renames src=dst. Rows are sent in batches (--batch) and committed every N rows (--commit-every, 0 = once at the end). A failed batch is replayed row by row to report the failing row and line; rows already committed stay. Defaults come from settings bulk.*.", "INSERT 전용. 첫 레코드 = 헤더(열 이름) · --no-header면 표 열 순서 · --cols로 원료 열 이름 지정 · --map src=dst로 바꿔 넣기. 행은 배치(--batch)로 보내고 N행마다 커밋(--commit-every · 0 = 끝에 한 번). 실패한 배치는 한 행씩 다시 넣어 문제 행·줄을 알리며 이미 커밋된 행은 남는다. 기본값 = 설정 bulk.*."],
             Msg::CliImportNeedTable => ["-t <table> is required", "-t <table>가 필요합니다"],
             Msg::CliImportNeedFile => ["a file path (or - for stdin) is required", "파일 경로(또는 stdin = -)가 필요합니다"],

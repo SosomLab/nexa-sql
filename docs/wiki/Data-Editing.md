@@ -31,7 +31,7 @@
 | 취소 | Esc |
 | 셀 비우기 / NULL | Delete · Backspace(빈 값 = NULL은 `grid.edit_empty`) · 우클릭 ▸ Set NULL |
 | 셀 이동(편집기 밖) | 화살표 · Tab / Shift+Tab |
-| 행 추가 · 복제 · 삭제 | 툴바 `+ ⧉ −` · 우클릭 메뉴(삭제는 표시만 · 적용 때 DELETE) |
+| 행 추가 · 복제 · 삭제 | 툴바 `+ ⧉ −` · 우클릭 메뉴(삭제는 표시만 · 적용 때 DELETE) — 복제·삭제는 **셀을 하나 고른 뒤** 켜집니다(행 추가는 언제나) |
 | 붙여넣기 | ⌘V/Ctrl+V — 탭·줄 구분 행렬을 선택 셀부터 채움(행이 모자라면 자동 추가 · 상한 `grid.paste_max_rows`) |
 | 되돌리기 / 다시 하기 | ⌘Z/Ctrl+Z · ⌘⇧Z/Ctrl+Y(그리드 편집 전용 이력) |
 | 변경 목록 · SQL 미리보기 | 우클릭 ▸ Changes / Preview SQL(보낼 문장을 리터럴로) |
@@ -86,6 +86,8 @@
 | 프로그레시브 JPEG/WebP | 형식은 알려 주지만 미리보기는 없음 | 파일로 저장해서 봅니다 |
 
 상한 `grid.lob_view_max_mb`(16)를 넘는 값은 풀지 않고 16진수 앞부분만 보이며, `grid.lob_image_preview`를 끄면 이진은 늘 16진수입니다. 4,000자를 넘는 글과 이진은 CLOB/BLOB 타입으로 바인드해 저장합니다(Oracle VARCHAR2 4000 · SQL Server NVARCHAR(4000) 상한 회피).
+
+여러 행을 파일에서 한꺼번에 넣으려면 [파일로 넣기·내보내기](Bulk-Import-Export.md)를 보세요(그리드 편집은 한 행씩 안전하게, 대량 적재는 INSERT 전용입니다).
 
 ## 관련 설정
 
