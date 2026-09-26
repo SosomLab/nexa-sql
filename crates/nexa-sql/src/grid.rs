@@ -174,8 +174,8 @@ impl Default for EditCfg {
             on: true,
             empty_as_null: true,
             paste_max: 10_000,
-            hidden_keys: true,
-            rowid: true,
+            hidden_keys: false, // 09-27 D-225
+            rowid: false,       // 09-27 D-225
             all_cols: true,
             concurrency: Concurrency::Key,
         }
@@ -518,6 +518,10 @@ impl Default for Grid {
                     .disabled(),
                 ToolItem::new("row.cancel", ToolIcon::Glyph("✕".into()))
                     .tip(t(Msg::TipRowCancel))
+                    .disabled(),
+                // 09-27 D-225: 행 식별 열 가져오기(재조회 1회) — 재조회는 기본 안 하므로 사용자가 이 결과에 한해 켠다.
+                ToolItem::new("row.identify", ToolIcon::Glyph("⚿".into()))
+                    .tip(t(Msg::TipRowIdentify))
                     .disabled(),
             ]),
             tb_fetch: Self::bar(vec![
@@ -928,13 +932,43 @@ impl Grid {
 
     /// ★ 행 식별 등급 판정 → 행동(87 §13 · T-231): 1급/2급/3급 = 키 열 확정 · 주입 필요 = 재조회 요청 · 불가 = 읽기 전용.
     fn classify_apply(&mut self, injected: bool) {
-        let Some(e) = self.edit.as_mut() else { return };
         let policy = Policy {
             hidden_keys: self.edit_cfg.hidden_keys,
             rowid: self.edit_cfg.rowid,
             all_cols: self.edit_cfg.all_cols,
         };
+        self.classify_apply_with(injected, policy);
+    }
+
+    /// ★ 온디맨드 행 식별 재조회(09-27 사용자 결정 D-225): 기본 정책이 재조회를 막았어도 **이 결과에 한해** 1급-보완/2급
+    /// 재조회를 한 번 시도한다(우클릭 ▸ 행 식별 열 가져오기 · 자체 시험 `grid.edit.cmd:grid.edit.identify`). 이미 시도했으면 false.
+    pub(crate) fn edit_identify(&mut self) -> bool {
+        if self.edit.is_none() || self.inject.is_some() || self.inject_tried.is_some() {
+            return false;
+        }
+        let before = self.edit_reqs.len();
+        self.classify_apply_with(false, Policy::eager());
+        self.edit_reqs.len() > before
+    }
+
+    /// 재조회 없이 3급으로 판정됐지만 올릴 길(카탈로그 키 · 물리 식별자)이 있는가 — 상태줄 힌트·메뉴 활성의 기준.
+    pub(crate) fn can_identify(&self) -> bool {
+        let Some(e) = self.edit.as_ref() else {
+            return false;
+        };
+        e.keys_ready
+            && e.key_kind == KeyKind::AllColumns
+            && self.inject.is_none()
+            && self.inject_tried.is_none()
+            && !e.applying
+            && (e.keys.is_some() || !gridedit_sql::physical_cols(self.dialect).is_empty())
+    }
+
+    fn classify_apply_with(&mut self, injected: bool, policy: Policy) {
+        let Some(e) = self.edit.as_mut() else { return };
         let tier = editable::classify(self.dialect, &e.cols, e.keys.as_ref(), &policy, injected);
+        // 3급인데 정책이 재조회를 막은 것이면 상태줄로 알린다(09-27 D-225 · 사용자가 판단해 우클릭 ▸ 행 식별 열 가져오기).
+        let hint = matches!(tier, Tier::AllColumns(_)) && (!policy.hidden_keys || !policy.rowid);
         match tier {
             Tier::Constraint(v) => {
                 e.key_cols = v;
@@ -969,6 +1003,10 @@ impl Grid {
             }
         }
         // 키 열은 읽기 전용이 아니다(값을 고치면 WHERE는 원본 값으로) · 이진 열은 인라인 편집 없음.
+        if hint && self.can_identify() {
+            let s = t(Msg::StGeIdentityHint).to_string();
+            self.status(s);
+        }
         self.sync_edit_tools();
     }
 
@@ -1098,6 +1136,9 @@ impl Grid {
         );
         self.tb_edit
             .set_item_enabled("row.cancel", can && dirty, &mut inv);
+        let ident = self.can_identify();
+        self.tb_edit
+            .set_item_enabled("row.identify", ident, &mut inv);
     }
 
     /// 원본 셀 값(문자열 · NULL = None) — 편집 상자·키 비교·붙여넣기 Clean 판정.
@@ -2089,11 +2130,12 @@ impl Grid {
     pub(crate) fn dump_edit(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "rows={} src={} editable={} dirty={} status={}\n",
+            "rows={} src={} editable={} dirty={} identify={} status={}\n",
             self.rows(),
             self.src_len(),
             self.edit.is_some(),
             self.edit_dirty(),
+            self.can_identify(),
             self.edit_status_text().unwrap_or_default()
         ));
         out.push_str(&format!(
@@ -2143,6 +2185,9 @@ impl Grid {
 
     /// 호스트 명령 id(팔레트·키맵 · `grid.edit.*` · 툴바 id) → 편집 동작.
     pub(crate) fn edit_command(&mut self, id: &str) -> bool {
+        if id == "grid.edit.identify" || id == "row.identify" {
+            return self.edit_identify();
+        }
         match gridedit::action_for_command(id) {
             Some(a) => {
                 self.edit_action(a);
@@ -2707,7 +2752,14 @@ impl Grid {
                     (&mut self.tb_refresh, &["refresh"][..]),
                     (
                         &mut self.tb_edit,
-                        &["row.add", "row.del", "row.dup", "row.save", "row.cancel"][..],
+                        &[
+                            "row.add",
+                            "row.del",
+                            "row.dup",
+                            "row.save",
+                            "row.cancel",
+                            "row.identify",
+                        ][..],
                     ),
                     (
                         &mut self.tb_fetch,
@@ -2734,6 +2786,9 @@ impl Grid {
                         self.edit_command(id);
                     }
                     // 전체 조회 = 나머지 이어 받기(자동 페치가 나가 있으면 큐).
+                    Some("row.identify") => {
+                        self.edit_identify();
+                    }
                     Some("fetch.all") => self.request_fetch_all(),
                     Some("fetch.stop") => self.request_cancel(),
                     Some("count") if self.can_count() => {
@@ -5961,6 +6016,11 @@ mod edit_key_path_tests {
     #[test]
     fn physical_inject_requery_then_hidden_column() {
         let mut g = Grid::default(); // Oracle
+        g.set_edit_cfg(EditCfg {
+            rowid: true,
+            hidden_keys: true,
+            ..EditCfg::default()
+        }); // 09-27 기본 off → 명시
         g.set_result(rs_cols(
             &["C0", "C1"],
             vec![Value::Null, Value::Str("x".into())],
@@ -6020,10 +6080,43 @@ mod edit_key_path_tests {
     }
 
     /// 재조회 실패(WITHOUT ROWID 표 · 게이트 닫힘) → 원문 복귀 + 주입 없이 3급 · 같은 문장에 다시 주입하지 않는다.
+    /// 09-27 D-225: 기본 설정은 재조회를 요구하지 않는다(3급 + 상태줄 힌트 · identify=true) → 우클릭 ▸ 행 식별 열 가져오기가
+    /// 이 결과에 한해 ROWID 재조회를 한 번 요청한다 → 그 뒤 identify=false.
+    #[test]
+    fn default_cfg_no_requery_then_identify_on_demand() {
+        let mut g = Grid::default(); // Oracle
+        g.set_result(rs_cols(
+            &["C0", "C1"],
+            vec![Value::Null, Value::Str("x".into())],
+        ));
+        g.set_result_origin("select C0, C1 from T", true);
+        g.set_keys(None);
+        assert_eq!(requery_of(&mut g), None, "기본 = 재조회 없음");
+        let d = g.dump_edit();
+        assert!(
+            d.contains("kind=AllColumns") && d.contains("identify=true"),
+            "{d}"
+        );
+        assert!(g.can_identify());
+        assert!(g.edit_command("grid.edit.identify"));
+        assert_eq!(
+            requery_of(&mut g).as_deref(),
+            Some("select C0, C1, ROWID from T"),
+            "온디맨드 재조회 1회"
+        );
+        assert!(!g.can_identify(), "두 번째는 없다");
+        assert!(!g.edit_command("grid.edit.identify"));
+    }
+
     #[test]
     fn requery_failed_falls_back_to_all_columns() {
         let mut g = Grid::default();
         g.set_dialect(Dialect::Sqlite);
+        g.set_edit_cfg(EditCfg {
+            rowid: true,
+            hidden_keys: true,
+            ..EditCfg::default()
+        }); // 09-27 기본 off → 명시
         g.set_result(rs_cols(
             &["A", "B"],
             vec![Value::Str("k".into()), Value::Str("v".into())],
@@ -6075,6 +6168,11 @@ mod edit_key_path_tests {
     #[test]
     fn hidden_key_inject_when_pk_missing() {
         let mut g = Grid::default();
+        g.set_edit_cfg(EditCfg {
+            rowid: true,
+            hidden_keys: true,
+            ..EditCfg::default()
+        }); // 09-27 기본 off → 명시
         g.set_result(rs_cols(
             &["NAME", "SAL"],
             vec![Value::Str("kim".into()), Value::Int(1)],

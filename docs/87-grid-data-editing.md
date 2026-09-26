@@ -356,3 +356,27 @@
 | 트랜잭션 로그·수동 모드(§234 · 09-26) | 실행한 문장마다 트랜잭션 로그 한 줄(`ApplyReport.log` · 사전 검사 = Util · 실행문 = User · 수동 모드에서 실제로 남은 문장만 열린 트랜잭션에 붙임 = pending 수) · **시작문 없는 방언(Oracle)도 쓴 문장이 있으면 `tx_left_open`**(커밋/롤백 버튼·대기 표식 · 종전엔 미커밋 변경이 표시 없이 남았다) | `apply_changes` 마무리 · 호스트 `txlog.begin/done/attach_tx` · 덤프 `txlog.dump:` · E2E ⑨ |
 
 원칙: 프로그램의 판단 미스·버그로 데이터가 훼손되는 일은 없어야 한다 — 앞으로의 자동 DML(행 단위 재조회의 RETURNING 등 포함)도 같은 세 겹을 지난다(CLAUDE.md §3 · 61 §1-7).
+
+## 15. 09-27 결정 D-225 · 설계 "수정용 실행(1회)"(사용자 요청 · **지금은 아님** — 요청 시점에 개발)
+
+### 15-1. D-225(사용자 결정 09-27 · 성능 우선) — 재조회는 기본 안 함
+
+- 배경: 키 없는 표를 `SELECT *`로 조회하면 2급 재조회가 **실행마다** 한 번 더 붙어(로그·카드 2장) 사용자 "성능을 너무 깎아먹는 설정".
+- 결정: `grid.edit_hidden_keys` · `grid.edit_rowid` **기본 off**(`Policy::default()`도 같게). 편집은 유지 — 결과에 PK/UK가 있으면 1급, 아니면 **3급**(비교 가능한 전 열 · 사전 검사가 1행을 보증).
+- 사용자가 판단해 켠다: 그리드 편집 툴바 **⚿ 행 식별 열 가져오기(재조회 1회)** = `grid.edit.identify`(3급이고 올릴 길이 있을 때만 활성 · `Grid::edit_identify` = 이 결과에 한해 `Policy::eager()`) · 3급 판정 때 상태줄 힌트(`StGeIdentityHint`) · 자체 시험 `grid.edit.cmd:grid.edit.identify` · 덤프 `identify=`.
+- 시험 · E2E: 주입 경로를 시험하는 시나리오는 두 키를 **명시적으로 켠다**(`mac-grid-edit-e2e.sh` ⑧ · 실서버 ⑤⑨⑩).
+
+### 15-2. 설계 — "수정용 실행"(Run for edit · 1회 실행으로 편집 환경까지)
+
+**목표**: 사용자가 "향후 수정을 위한 쿼리 실행"을 고르면, 내부적으로 재조회가 필요하더라도 **표면상 1회**로 보이고, 가능하면 **처음부터 키/ROWID를 실어 1회로 끝낸다**.
+
+| 단계 | 내용 | 이미 있는 기반 | 남은 일 |
+|---|---|---|---|
+| ① 사전 분석 | 실행 **전에** 문장이 단일 표 SELECT인지 · 대상 표(스키마·별칭) · 최종 열 목록을 얻는다 | `gridedit_sql::analyze` → `EditTarget{table, alias}` · `select_end`/`find_top_from`/`code_span`(주석·문자열 인식) | `SELECT *`/`A.*`의 열 전개(카탈로그 L2 컬럼) · DISTINCT/GROUP BY/UNION/집계 = 대상 아님 판정 |
+| ② 키 결정 | 카탈로그 PK/UK(`sess.key_cache` · `nsql_catalog` 키 조회)와 최종 열을 대조 → 1급이면 그대로 · 빠진 키 열 있으면 그 열 · 키 없으면 물리 식별자 | `editable::classify`(결과 열 대신 **예상 열**로) · `physical_cols(dialect)` | 키 메타가 아직 없으면(L2 미적재) **먼저 한 번 조회**(작고 캐시됨) 또는 as-is 실행으로 폴백 |
+| ③ 문장 재작성 | `inject()`로 숨은 열을 **첫 실행 문장에** 붙인다 = 실행 1회 | `gridedit_sql::inject`(09-27 주석 안전) | 감싸기(`SELECT q.*, … FROM (원문) q`)는 Oracle ROWID·ctid가 서브쿼리 밖으로 안 나오므로 **재작성(주입)이 정답** · ORDER BY·FETCH FIRST 뒤에 오는 주입 위치 검증 |
+| ④ 표면 | 카드 1장 · 로그 1줄(원문 + "수정용 열 N 추가" 꼬리표) · 결과 탭 제목은 원문 기준 · 숨은 열은 화면·복사에서 제외(지금과 같음) | 실행 Facade(43 §11) · `set_result_origin` | Facade에 `RunKind::ForEdit` 추가 · 카드 라벨 · `Copy SQL`은 원문 |
+| ⑤ 진입 | Run ▸ "수정용 실행"(툴바 버튼 · 키맵 `run.for_edit` · 팔레트) | 키맵 122 항목 구조 | 명령·아이콘·i18n · 프로필 유형 PROD 확인(`run.prod_confirm`)과 결합 |
+| ⑥ 폴백 | ①②가 실패(대상 못 정함 · 메타 없음)하면 as-is 실행 + 온디맨드 `identify` 안내 | D-225 경로 | — |
+
+**기반 자료(요청 시점에 바로 쓰도록)**: 이 절 + `analyze`/`inject`/`classify` 시험 · 4-DBMS 물리 식별자 표(§13-3) · 메타 3층([85](85-metadata-layers.md) L2 컬럼 워머) · 사전 검사 비용 실측(journal 09-26 §8).

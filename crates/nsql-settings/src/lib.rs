@@ -1109,7 +1109,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblGridEditHiddenKeys,
         desc: Msg::DescGridEditHiddenKeys,
         kind: SettingKind::Bool,
-        default: "on",
+        // 09-27 사용자 결정(D-225 · 성능 우선): 재조회는 기본 안 함 — 편집 툴바 ⚿ 행 식별 열 가져오기(`grid.edit.identify`)로 그 결과에만.
+        default: "off",
     },
     Entry {
         key: "grid.edit_rowid",
@@ -1117,7 +1118,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblGridEditRowid,
         desc: Msg::DescGridEditRowid,
         kind: SettingKind::Bool,
-        default: "on",
+        // 09-27 사용자 결정(D-225 · 성능 우선): 재조회는 기본 안 함 — 편집 툴바 ⚿ 행 식별 열 가져오기(`grid.edit.identify`)로 그 결과에만.
+        default: "off",
     },
     Entry {
         key: "grid.edit_all_cols",
@@ -3678,6 +3680,15 @@ pub const REGISTRY: &[Entry] = &[
         // 기본 = X11(XWayland): winit 0.30의 Wayland 경로는 부모 창·창 활성화를 지원하지 않아 모달(접속·파일·비밀번호 창)이
         // 메인 뒤로 숨는다(사용자 09-22). Wayland 네이티브는 선택.
         default: "x11",
+    },
+    Entry {
+        key: "clipboard.x11_native",
+        cat: Msg::CatPerformance,
+        label: Msg::LblClipX11Native,
+        desc: Msg::DescClipX11Native,
+        kind: SettingKind::Bool,
+        // 기본 = 켬: Linux 클립보드를 X11 selection으로 **앱이 직접**(외부 wl-copy/xclip 없이 · 09-26). 끄면 종전 CLI 경로.
+        default: "on",
     },
     Entry {
         key: "gfx.mac_present",

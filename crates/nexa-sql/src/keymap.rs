@@ -1376,6 +1376,137 @@ mod tests {
         assert_eq!(ch("、", KeyCode::Comma), ",");
     }
 
+    /// ★ IME 한글 **전수**(사용자 09-27 "IME가 한글일 때도 단축키가 정상으로 동작하는지 · 맥/윈도우 포함"): 모든 명령 × win/mac/linux
+    /// 프리셋 × `|` 대안 × 2단 시퀀스의 **글자 키 전부**에 두벌식 자모(Shift 변형 ㅃㅉㄸㄲㅆㅒㅖ 포함)를 논리 키로 흘려 넣어도
+    /// 같은 코드로 풀려야 한다. macOS는 winit이 ⌘/⌃+키의 논리 키를 `charactersIgnoringModifiers`(= 입력 소스의 자모)로 만들므로
+    /// 이 경로가 실제다(winit 0.30 `macos/event.rs` `get_logical_key_char`). Windows(`ToUnicodeEx` = 배열의 라틴 글자)·X11(xkb
+    /// 키심 = 라틴)은 자모가 안 오지만 같은 코드가 도니 함께 보증된다.
+    #[test]
+    fn ime_hangul_every_letter_binding_resolves_same() {
+        use winit::keyboard::SmolStr;
+        fn jamo(c: char, shift: bool) -> &'static str {
+            match (c, shift) {
+                ('q', false) => "ㅂ",
+                ('q', true) => "ㅃ",
+                ('w', false) => "ㅈ",
+                ('w', true) => "ㅉ",
+                ('e', false) => "ㄷ",
+                ('e', true) => "ㄸ",
+                ('r', false) => "ㄱ",
+                ('r', true) => "ㄲ",
+                ('t', false) => "ㅅ",
+                ('t', true) => "ㅆ",
+                ('y', _) => "ㅛ",
+                ('u', _) => "ㅕ",
+                ('i', _) => "ㅑ",
+                ('o', false) => "ㅐ",
+                ('o', true) => "ㅒ",
+                ('p', false) => "ㅔ",
+                ('p', true) => "ㅖ",
+                ('a', _) => "ㅁ",
+                ('s', _) => "ㄴ",
+                ('d', _) => "ㅇ",
+                ('f', _) => "ㄹ",
+                ('g', _) => "ㅎ",
+                ('h', _) => "ㅗ",
+                ('j', _) => "ㅓ",
+                ('k', _) => "ㅏ",
+                ('l', _) => "ㅣ",
+                ('z', _) => "ㅋ",
+                ('x', _) => "ㅌ",
+                ('c', _) => "ㅊ",
+                ('v', _) => "ㅍ",
+                ('b', _) => "ㅠ",
+                ('n', _) => "ㅜ",
+                ('m', _) => "ㅡ",
+                _ => unreachable!(),
+            }
+        }
+        fn code_of(c: char) -> KeyCode {
+            match c {
+                'a' => KeyCode::KeyA,
+                'b' => KeyCode::KeyB,
+                'c' => KeyCode::KeyC,
+                'd' => KeyCode::KeyD,
+                'e' => KeyCode::KeyE,
+                'f' => KeyCode::KeyF,
+                'g' => KeyCode::KeyG,
+                'h' => KeyCode::KeyH,
+                'i' => KeyCode::KeyI,
+                'j' => KeyCode::KeyJ,
+                'k' => KeyCode::KeyK,
+                'l' => KeyCode::KeyL,
+                'm' => KeyCode::KeyM,
+                'n' => KeyCode::KeyN,
+                'o' => KeyCode::KeyO,
+                'p' => KeyCode::KeyP,
+                'q' => KeyCode::KeyQ,
+                'r' => KeyCode::KeyR,
+                's' => KeyCode::KeyS,
+                't' => KeyCode::KeyT,
+                'u' => KeyCode::KeyU,
+                'v' => KeyCode::KeyV,
+                'w' => KeyCode::KeyW,
+                'x' => KeyCode::KeyX,
+                'y' => KeyCode::KeyY,
+                'z' => KeyCode::KeyZ,
+                _ => unreachable!(),
+            }
+        }
+        let (mut letters, mut others, mut cmds) = (0usize, 0usize, 0usize);
+        for c in COMMANDS {
+            cmds += 1;
+            for p in [Preset::Windows, Preset::Macos, Preset::Linux] {
+                for alt in preset_default(c, p)
+                    .split('|')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    // 시퀀스 구분은 앱과 같은 규칙(`split_seq` · `+` 뒤의 `,`는 쉼표 **키** — `ctrl+alt+,`).
+                    let mut parts = Vec::new();
+                    let mut rest = alt;
+                    while let Some((a, b)) = split_seq(rest) {
+                        parts.push(a);
+                        rest = b;
+                    }
+                    parts.push(rest);
+                    for part in parts {
+                        let ch = Chord::parse(part)
+                            .unwrap_or_else(|| panic!("{}: parse {part:?}", c.id));
+                        let mut k = ch.key.chars();
+                        match (k.next(), k.next()) {
+                            (Some(l), None) if l.is_ascii_lowercase() => {
+                                letters += 1;
+                                let v = Chord::from_winit(
+                                    &Key::Character(SmolStr::new(jamo(l, ch.shift))),
+                                    &PhysicalKey::Code(code_of(l)),
+                                    ch.primary,
+                                    ch.shift,
+                                    ch.alt,
+                                    ch.ctrl,
+                                )
+                                .unwrap_or_else(|| panic!("{}: {part} 자모 변형이 None", c.id));
+                                assert_eq!(
+                                    v.code(),
+                                    ch.code(),
+                                    "{}: {part} — 한글 IME 자모 {}로 오면 다른 코드",
+                                    c.id,
+                                    jamo(l, ch.shift)
+                                );
+                            }
+                            _ => others += 1,
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("[ime-audit] commands={cmds} letter_chords={letters} other_chords={others}");
+        assert!(
+            cmds >= 100 && letters >= 150,
+            "전수가 아니다: 명령 {cmds} · 글자 조합 {letters} · 그 밖 {others}"
+        );
+    }
+
     /// 2단 코드(`ctrl+k,ctrl+u`)와 macOS Control 단독(`control+g`) — 09-16.
     #[test]
     fn two_key_sequences_and_mac_control_only() {

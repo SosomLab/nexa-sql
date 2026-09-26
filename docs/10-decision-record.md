@@ -138,7 +138,7 @@
 |---|---|---|---|---|
 | `ab_glyph` | ④ nexa-gfx | 계승 | Apache-2.0 | ✅ |
 | `fancy-regex` 0.14(+ `regex` 1) | ① nexa-sql `rx.rs`(찾기/바꾸기 · 파일 찾기 · 패턴 기능 공용) | **D-76** — 선형 시간 코어 + lookaround/역참조만 백트래킹 · 순수 Rust(DR-3 예외) · 자체 NFA(T-59) 대체 | MIT | ✅ 09-16 |
-| `x11rb` 0.13(winit의 기존 의존 · RustConnection · 기본 기능만) | ① nexa-sql `winfocus.rs`(Linux X11 `WM_TRANSIENT_FOR` + `_NET_WM_STATE_MODAL` — 모달을 메인에 붙임) | 09-22 91차 — winit 0.30 Wayland/X11 API가 부모 창·창 올리기를 못 준다 · 새 코드 0바이트(이미 링크됨) · Linux 전용 target 의존 | MIT/Apache | ✅ 09-22 |
+| `x11rb` 0.13(winit의 기존 의존 · RustConnection · 기본 기능만) | ① nexa-sql `winfocus.rs`(Linux X11 `WM_TRANSIENT_FOR` + `_NET_WM_STATE_MODAL` — 모달을 메인에 붙임) · ② `clipboard_x11.rs`(09-26 101차 · `CLIPBOARD` selection을 앱이 직접 소유/조회 — 종전 `wl-copy`/`xclip`/`xsel` 외부 프로그램 의존을 걷어냄 · INCR · 설정 `clipboard.x11_native`) | 09-22 91차 — winit 0.30 Wayland/X11 API가 부모 창·창 올리기를 못 준다 · 새 코드 0바이트(이미 링크됨) · Linux 전용 target 의존 | MIT/Apache | ✅ 09-22 |
 | `encoding_rs` 0.8 | ① nexa-sql(파일 인코딩 · EUC-KR·Shift_JIS·EUC-JP·GB18030·Big5·CP1252) | DR-3 예외 — 순수 Rust · Firefox 코덱 · 표를 직접 만들 이유 없음(09-16) | Apache-2.0/MIT | ✅ 09-16 |
 | `oracle` 0.6 | ① driver-oracle | DP-3 | UPL/Apache | ☐ M1 |
 | `tiberius-ng` | ① driver-mssql | DP-4 | MIT/Apache | ☐ M1 |

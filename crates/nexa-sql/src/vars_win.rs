@@ -393,7 +393,9 @@ impl VarsWin {
                         self.redraw();
                         return VarsWinAction::None;
                     }
-                    Key::Character(c) if self.primary && c.eq_ignore_ascii_case("v") => {
+                    Key::Character(_)
+                        if self.primary && crate::input::shortcut_letter(kev) == Some('v') =>
+                    {
                         if let Some(text) = crate::clipboard::read_text() {
                             let line = text.lines().next().unwrap_or("").to_string();
                             self.edit.paste(&line, &mut inv);

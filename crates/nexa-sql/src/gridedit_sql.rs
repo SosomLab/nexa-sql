@@ -373,16 +373,18 @@ pub(crate) fn inject(
     if from <= se {
         return None;
     }
-    let list = sql[se..from].trim();
-    if list.is_empty() {
-        return None;
-    }
+    // 🔧 09-26(사용자 Linux 실기 · ORA-00923): 목록을 `trim()`해 통째로 쓰고 뒤에 `, ROWID FROM`을 공백으로 이으면,
+    //   목록이 `--` 줄 주석으로 끝날 때 주입문과 FROM이 그 주석 줄에 붙어 삼켜진다. 주입은 **마지막 코드 문자 바로 뒤**
+    //   (뒤따르는 주석 앞)에 넣고 원문의 공백·줄바꿈·주석은 한 바이트도 버리지 않는다. `*` 판정도 주석을 뺀 코드로.
+    let raw = &sql[se..from];
+    let (cs, ce) = code_span(raw)?;
     let qual = target.alias.clone().unwrap_or_else(|| target.table.clone());
-    let list = if list == "*" {
-        format!("{qual}.*")
+    let head = if raw[cs..ce].trim() == "*" {
+        format!("{}{}{qual}.*", &sql[..se], &raw[..cs])
     } else {
-        list.to_string()
+        format!("{}{}", &sql[..se], &raw[..ce])
     };
+    let tail = format!("{}{}", &raw[ce..], &sql[from..]);
     let exprs: Vec<String> = hidden
         .iter()
         .map(|h| match h {
@@ -393,13 +395,45 @@ pub(crate) fn inject(
             },
         })
         .collect();
-    Some(format!(
-        "{} {}, {} {}",
-        &sql[..se],
-        list,
-        exprs.join(", "),
-        &sql[from..]
-    ))
+    Some(format!("{head}, {}{tail}", exprs.join(", ")))
+}
+
+/// select 목록 안에서 **코드**(주석·앞뒤 공백을 뺀 부분)의 바이트 구간 `[start, end)` — 없으면 None.
+/// 문자열·인용 식별자 안은 코드로 본다(`'--'`가 주석이 아니게). 스캐너는 `find_top_from`과 같은 규칙.
+fn code_span(list: &str) -> Option<(usize, usize)> {
+    let b = list.as_bytes();
+    let (mut i, mut start, mut end) = (0usize, None, 0usize);
+    while i < b.len() {
+        let c = b[i];
+        if c == b'-' && b.get(i + 1) == Some(&b'-') {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        if c.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        start.get_or_insert(i);
+        if matches!(c, b'\'' | b'"' | b'`') {
+            i += 1;
+            while i < b.len() && b[i] != c {
+                i += 1;
+            }
+        }
+        i += 1;
+        end = i.min(b.len());
+    }
+    start.map(|s| (s, end))
 }
 
 /// 열 하나의 편집 메타(결과 열 이름 + 명세).
@@ -1264,6 +1298,40 @@ mod tests {
             Some("Q".into())
         );
         assert_eq!(analyze("select * from t \"Q\"").expect("ok").alias, None);
+    }
+
+    /// 🔧 09-26(사용자 Linux 실기 · ORA-00923): select 목록이 `--` 줄 주석으로 끝나면 주입문이 주석 줄 끝에 붙고 `FROM`까지 삼켜졌다.
+    /// 주입은 **마지막 코드 문자 바로 뒤**(뒤따르는 주석 앞)에 · 원문 공백·줄바꿈 보존 · `*` 판정은 주석을 뺀 코드로.
+    #[test]
+    fn inject_keeps_trailing_line_comment_out_of_the_way() {
+        let rid = physical_cols(Dialect::Oracle);
+        // 사용자 원문 그대로(탭 · 두 줄 주석 · 조건 주석).
+        let src = "--\t샘플 생성\nSELECT\n\t*\n--\tSELECT DISTINCT A.MP_VRSN_ID\nFROM\n\tDEMO_BSY A\nWHERE 1=1\n-- AND A.MP_VRSN_ID\t=\t'MP_202606_PW26_V01'\nAND A.MP_VRSN_ID\t=\t'MP_202607_W27_V06'\nAND\tA.TIME_INDEX\t=\t1\nAND\tA.IN_ITEM_CD\t=\t'PCC31395@SEBANG'";
+        let tg = analyze(src).expect("ok");
+        let got = inject(src, &tg, Dialect::Oracle, &rid).expect("inject");
+        assert_eq!(
+            got,
+            "--\t샘플 생성\nSELECT\n\tA.*, A.ROWID\n--\tSELECT DISTINCT A.MP_VRSN_ID\nFROM\n\tDEMO_BSY A\nWHERE 1=1\n-- AND A.MP_VRSN_ID\t=\t'MP_202606_PW26_V01'\nAND A.MP_VRSN_ID\t=\t'MP_202607_W27_V06'\nAND\tA.TIME_INDEX\t=\t1\nAND\tA.IN_ITEM_CD\t=\t'PCC31395@SEBANG'"
+        );
+        // 별 아닌 목록이 주석으로 끝나는 경우 · 블록 주석 · 주석 뒤 줄바꿈 없이 FROM이 오는 경우.
+        let src = "SELECT a -- c\nFROM t";
+        let tg = analyze(src).expect("ok");
+        assert_eq!(
+            inject(src, &tg, Dialect::Oracle, &rid).as_deref(),
+            Some("SELECT a, ROWID -- c\nFROM t")
+        );
+        let src = "SELECT a /* c */ FROM t";
+        let tg = analyze(src).expect("ok");
+        assert_eq!(
+            inject(src, &tg, Dialect::Oracle, &rid).as_deref(),
+            Some("SELECT a, ROWID /* c */ FROM t")
+        );
+        let src = "SELECT * /* all */\nFROM emp e";
+        let tg = analyze(src).expect("ok");
+        assert_eq!(
+            inject(src, &tg, Dialect::Oracle, &rid).as_deref(),
+            Some("SELECT E.*, E.ROWID /* all */\nFROM emp e")
+        );
     }
 
     /// 숨은 열 주입(87 §13 · T-231): 원본 열 뒤에 덧붙임 · `*`는 Oracle 규칙으로 `<별칭|테이블>.*` · 주석·문자열 안 FROM 무시 · PG = ctid+xmin.

@@ -602,6 +602,21 @@ pub(crate) fn extra_result_slot(
 
 /// 오류 코드 표기에 쓸 방언 — 접속돼 있으면 세션의 방언 · **아직 아니면 붙으려던 대상의 방언**.
 /// 접속 실패는 `Connected`보다 먼저 오므로 세션 방언(기본 Oracle · 또는 직전 서버)으로 분류하면 SQLite 실패가
+/// 사용자가 편집기에서 **직접 실행한** 트랜잭션 종료문인가(09-27 사용자 실기 "ROLLBACK을 쿼리로 실행하면 툴바·pending·로그가 안 바뀐다").
+/// `Some(true)` = 커밋 계열(`COMMIT` · `END`) · `Some(false)` = 되돌림 계열(`ROLLBACK` · `ABORT`) · `None` = 종료문 아님
+/// (`ROLLBACK TO SAVEPOINT …`는 트랜잭션을 끝내지 않으므로 None — `TxControl::of_sql`이 가른다).
+pub(crate) fn user_tx_end(stmt: &str) -> Option<bool> {
+    if nsql_core::TxControl::of_sql(stmt) != nsql_core::TxControl::End {
+        return None;
+    }
+    let first = stmt
+        .split(|c: char| c.is_whitespace() || c == ';')
+        .find(|w| !w.is_empty())
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    Some(!matches!(first.as_str(), "ROLLBACK" | "ABORT"))
+}
+
 /// `[ORA-00014]`로 보인다(86차 mac 점검 · T-148).
 pub(crate) fn error_dialect(connected: bool, session: Dialect, target: Option<Dialect>) -> Dialect {
     match target {
@@ -1491,6 +1506,26 @@ pub(crate) fn fetch_card_policy(all: bool, count: bool, via_cursor: bool) -> boo
 
 #[cfg(test)]
 mod fetch_card_tests {
+    /// 09-27: 직접 실행한 COMMIT/ROLLBACK 판정 — 조건 둘(종료문 여부 · 되돌림 계열)이 각각 결과를 바꾼다.
+    #[test]
+    fn user_tx_end_mcdc() {
+        use super::user_tx_end as f;
+        assert_eq!(f("COMMIT;"), Some(true));
+        assert_eq!(f("commit work"), Some(true));
+        assert_eq!(f("  END TRANSACTION"), Some(true));
+        assert_eq!(f("ROLLBACK;"), Some(false));
+        assert_eq!(f("rollback"), Some(false));
+        assert_eq!(f("ABORT"), Some(false));
+        assert_eq!(
+            f("ROLLBACK TO SAVEPOINT s1"),
+            None,
+            "세이브포인트 복귀는 트랜잭션을 끝내지 않는다"
+        );
+        assert_eq!(f("SAVEPOINT s1"), None);
+        assert_eq!(f("UPDATE t SET a = 1"), None);
+        assert_eq!(f("BEGIN"), None);
+    }
+
     use super::fetch_card_policy;
 
     /// MC/DC: 전체 조회(커서여도 참) · 건수(참) · 다음 페이지 = 커서면 거짓 · 재질의면 참.

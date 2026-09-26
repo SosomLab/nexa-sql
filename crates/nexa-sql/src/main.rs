@@ -15,6 +15,17 @@ mod backups;
 mod bookmarks;
 mod bookmarks_panel;
 mod clipboard;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod clipboard_x11;
+
+/// 설정 `clipboard.x11_native`의 사본 — 클립보드 함수는 `&self` 없이 불리므로 전역에 둔다(input.rs `NATURAL`과 같은 꼴).
+static CLIP_NATIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+pub(crate) fn settings_clip_native() -> bool {
+    CLIP_NATIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+fn set_clip_native(on: bool) {
+    CLIP_NATIVE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
 mod colors_win;
 mod conn_win;
 mod connect;
@@ -1682,6 +1693,7 @@ impl App {
                                     tf(Msg::StRefetchReplaced, &[&n]),
                                 ));
                             }
+                            let dial = self.sess.dialect; // 이 페치를 돌려준 세션의 방언(결과의 속성 · 09-26)
                             let total = match self.grid_for(key) {
                                 Some(g) => {
                                     if replace {
@@ -1691,6 +1703,7 @@ impl App {
                                         g.append_all(rs, more);
                                     } else if offset == 0 {
                                         g.set_result(rs);
+                                        g.set_dialect(dial);
                                         g.set_more(more);
                                     } else {
                                         g.append_page(rs, more);
@@ -2564,6 +2577,61 @@ impl App {
     }
 
     /// 툴바 초기화(View 메뉴 · 우클릭 · 사용자 09-17) — 그룹 전부 도크 · 정의 순서 · 숨긴 버튼 복원.
+    /// ★ 레이아웃 초기화(사용자 09-27 · 팔레트/보기 메뉴): 보조 창 전부 닫기 · 패널 = 처음 실행 상태(탐색기만) · 툴바 초기화 ·
+    /// 항상 위 끔 · 창 크기/위치·탐색기 폭 저장값 제거(다음 기동부터 기본 크기). 설정 자체(테마·언어·글꼴)는 건드리지 않는다.
+    fn reset_layout(&mut self) {
+        self.reset_toolbar();
+        self.log_win.close();
+        self.txlog_win.close();
+        self.sessions_win.close();
+        self.mem_win.close();
+        self.vars_win.close();
+        self.colors_win.close();
+        self.keys_win.close();
+        self.prefs_win.close();
+        for (id, on) in [
+            ("view.search", self.search.is_visible()),
+            ("view.project", self.project_panel.is_visible()),
+            ("view.bookmarks", self.bm_panel.is_visible()),
+            ("view.outline", self.outline_panel.is_visible()),
+            ("view.extensions", self.ext_panel.is_visible()),
+            (
+                "view.object_details",
+                self.settings.flag("explorer.details"),
+            ),
+            ("view.on_top", self.settings.flag("window.always_on_top")),
+        ] {
+            if on {
+                self.menu_action(id);
+            }
+        }
+        if !self.explorer.is_visible() {
+            self.menu_action("view.explorer");
+        }
+        for k in [
+            "explorer.width",
+            "window.main_size",
+            "window.main_pos",
+            "window.login_size",
+            "window.login_pos",
+            "window.log_size",
+            "window.log_pos",
+            "window.sessions_size",
+            "window.sessions_pos",
+            "window.txlog_size",
+            "window.txlog_pos",
+            "window.prefs_size",
+            "window.prefs_pos",
+            "window.monitor",
+        ] {
+            let _ = self.settings.reset(k);
+        }
+        self.persist_settings();
+        self.layout();
+        self.sess.status = t(Msg::StLayoutReset).into();
+        self.redraw();
+    }
+
     fn reset_toolbar(&mut self) {
         for f in &mut self.tool_floats {
             f.close();
@@ -6205,6 +6273,9 @@ impl App {
             "input.scroll_natural" => {
                 input::set_natural_scroll(self.settings.flag(key));
             }
+            "clipboard.x11_native" => {
+                set_clip_native(self.settings.flag(key));
+            }
             "input.hangul_compose" => {
                 self.hangul_app = None;
                 self.sync_hangul_mode();
@@ -7558,6 +7629,14 @@ impl App {
 
     /// 메뉴·툴바 액션(id = 메뉴 항목 값 · 툴바 항목 id — 같은 어휘).
     fn menu_action(&mut self, id: &str) {
+        // ★ 한글 앱 조합 중이면 명령 앞에서 음절을 확정한다(09-27 IME 전수 조사 — 종전에는 ⌘S/⌘R이 조합 중 음절을 빼고
+        //   저장·실행했다). 조합 중이 아니면 비용 0 · 시스템 IME(Windows·Linux)는 OS가 같은 일을 한다.
+        if let Some(tb) = self.focused_textbox() {
+            let mut inv = Invalidations::default();
+            if tb.commit_composition(&mut inv) {
+                self.redraw();
+            }
+        }
         // 적재 취소(Esc와 같은 길 · 팔레트/자동화용) — 활성 탭의 적재만.
         if id == "file.load_cancel" {
             self.file_load_cancel_active();
@@ -7808,6 +7887,7 @@ impl App {
             }
             "view.log" => self.toggle_log = true,
             "view.toolbar_reset" => self.reset_toolbar(),
+            "view.layout_reset" => self.reset_layout(),
             "view.colors" => self.open_colors = true,
             "view.keys" => self.open_keys = true,
             "view.extensions" => {
@@ -8153,6 +8233,20 @@ impl App {
     /// 자동 모드 + `tx.smart_commit` = 첫 DML 뒤 수동으로 전환.
     fn tx_on_done(&mut self, index: usize, stmt: &str, rows_affected: Option<u64>) {
         let auto = self.settings.flag("session.autocommit");
+        // ★ 사용자가 직접 실행한 COMMIT/ROLLBACK(09-27 사용자 실기): 서버는 끝냈는데 툴바·"N pending"·트랜잭션 로그는
+        //   툴바 버튼 경로(`tx_close`)만 알아 그대로 남았다 → 같은 경로로 닫는다(러너의 `TxControl::End`와 같은 판정).
+        if let Some(commit) = sessions::user_tx_end(stmt) {
+            let open = !self.sess.tx_pending.is_empty() || self.sess.tx_dirty || self.sess.tx_read;
+            if open {
+                self.tx_close(if commit {
+                    TxOutcome::Committed
+                } else {
+                    TxOutcome::RolledBack
+                });
+                self.sync_tx_ui();
+            }
+            return;
+        }
         if implicit_commit(self.sess.dialect, stmt) {
             if !self.sess.tx_pending.is_empty() {
                 let w = first_word(stmt);
@@ -10878,6 +10972,7 @@ impl App {
                     item("vars.script", Msg::MnVariablesScript),
                     item("view.on_top", Msg::MnAlwaysOnTop),
                     item("view.toolbar_reset", Msg::MnResetToolbar),
+                    item("view.layout_reset", Msg::MnResetLayout),
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
                     item("view.keys", Msg::MnKeys),
@@ -11031,8 +11126,13 @@ impl App {
                 }
             }
             EditCtxAction::Cut if self.focus == Focus::Grid && self.grid.editing_cell() => {
-                if let Some(t) = self.grid.live_cut() {
-                    failed = !clipboard::write_text(&t);
+                // 셀 편집도 같은 순서 — 클립보드가 받아 준 뒤에만 지운다(09-26).
+                if let Some(t) = self.grid.live_copy() {
+                    if clipboard::write_text(&t) {
+                        self.grid.live_cut();
+                    } else {
+                        failed = true;
+                    }
                 }
             }
             EditCtxAction::Paste if self.focus == Focus::Grid && self.grid.editing_cell() => {
@@ -11054,7 +11154,16 @@ impl App {
             EditCtxAction::Copy | EditCtxAction::Cut
                 if self.focus == Focus::Editor && self.copy_confirm_pending() => {}
             EditCtxAction::Copy => {
-                if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
+                let sel = self.focused_textbox().and_then(|tb| tb.copy_selection());
+                if std::env::var_os("NSQL_TRACE_CLIP").is_some() {
+                    eprintln!(
+                        "[clip] copy: focus={:?} selection={}",
+                        self.focus,
+                        sel.as_ref()
+                            .map_or("None".into(), |t| format!("{} bytes", t.len()))
+                    );
+                }
+                if let Some(text) = sel {
                     let rich =
                         self.focus == Focus::Editor && self.settings.flag("editor.copy_rich");
                     let hl = self.editors.cur().highlighter().cloned();
@@ -11075,11 +11184,16 @@ impl App {
                 }
             }
             EditCtxAction::Cut => {
-                if let Some(text) = self
-                    .focused_textbox()
-                    .and_then(|tb| tb.cut_selection(&mut inv))
-                {
-                    failed = !clipboard::write_text(&text);
+                // ★ 클립보드에 **올라간 것을 확인한 뒤에만** 지운다(사용자 09-26 Linux — 클립보드 도구가 없는 환경에서
+                //   종전에는 글자가 먼저 사라지고 클립보드는 비어 있었다: 어디에도 없는 상태 · 데이터 보호 불변식 61 §1-7).
+                if let Some(text) = self.focused_textbox().and_then(|tb| tb.copy_selection()) {
+                    if clipboard::write_text(&text) {
+                        if let Some(tb) = self.focused_textbox() {
+                            tb.cut_selection(&mut inv);
+                        }
+                    } else {
+                        failed = true;
+                    }
                 }
             }
             // ★ 그리드 붙여넣기(docs/87 §6): 앵커 셀부터 행렬 · 아래로 부족하면 행 자동 추가.
@@ -11221,17 +11335,75 @@ impl App {
         cmds.push(m("edit.redo", Msg::MnEdit, Msg::MnRedo));
         cmds.push(m("edit.soft_undo", Msg::MnEdit, Msg::MnSoftUndo));
         cmds.push(m("edit.soft_redo", Msg::MnEdit, Msg::MnSoftRedo));
-        cmds.push(m("view.log", Msg::MnView, Msg::MnLogWindow));
-        cmds.push(m("view.txlog", Msg::MnView, Msg::MnTxLogWindow));
-        cmds.push(m("view.sessions", Msg::MnView, Msg::MnSessManager));
-        cmds.push(m("view.memory", Msg::MnView, Msg::MnMemoryWindow));
-        cmds.push(m("view.toolbar_reset", Msg::MnView, Msg::MnResetToolbar));
+        // ★ 보기 메뉴의 켜고 끄는 항목은 **지금 상태 기준 한 줄**(사용자 09-27 "켜져 있으면 숨기기, 꺼져 있으면 보이기 —
+        //   2줄씩 보이지 않게"): 팔레트를 여는 순간 상태를 읽어 라벨만 정한다(평소 비용 0 · 열 때 한 번).
+        let tv = |id: &str, item: Msg, on: bool| {
+            let label = t(item).to_string();
+            let verb = tf(if on { Msg::PalHide } else { Msg::PalShow }, &[&label]);
+            (id.to_string(), format!("{}: {}", t(Msg::MnView), verb))
+        };
+        cmds.push(tv(
+            "view.explorer",
+            Msg::MnExplorer,
+            self.explorer.is_visible(),
+        ));
+        cmds.push(tv(
+            "view.object_details",
+            Msg::MnObjectDetails,
+            self.settings.flag("explorer.details"),
+        ));
+        cmds.push(tv(
+            "view.search",
+            Msg::MnSearchPanel,
+            self.search.is_visible(),
+        ));
+        cmds.push(tv(
+            "view.project",
+            Msg::MnProjectPanel,
+            self.project_panel.is_visible(),
+        ));
+        cmds.push(tv(
+            "view.bookmarks",
+            Msg::MnBookmarksPanel,
+            self.bm_panel.is_visible(),
+        ));
+        cmds.push(tv(
+            "view.outline",
+            Msg::MnOutlinePanel,
+            self.outline_panel.is_visible(),
+        ));
+        cmds.push(tv("view.log", Msg::MnLogWindow, self.log_win.is_open()));
+        cmds.push(tv(
+            "view.txlog",
+            Msg::MnTxLogWindow,
+            self.txlog_win.is_open(),
+        ));
+        cmds.push(tv(
+            "view.sessions",
+            Msg::MnSessManager,
+            self.sessions_win.is_open(),
+        ));
+        cmds.push(tv(
+            "view.memory",
+            Msg::MnMemoryWindow,
+            self.mem_win.is_open(),
+        ));
+        cmds.push(tv(
+            "view.variables",
+            Msg::MnVariables,
+            self.vars_win.is_open(),
+        ));
+        cmds.push(tv(
+            "view.on_top",
+            Msg::MnAlwaysOnTop,
+            self.settings.flag("window.always_on_top"),
+        ));
         cmds.push(m("view.colors", Msg::MnView, Msg::MnColors));
         cmds.push(m("view.keys", Msg::MnView, Msg::MnKeys));
-        cmds.push(m("view.explorer", Msg::MnView, Msg::MnExplorer));
-        cmds.push(m("view.object_details", Msg::MnView, Msg::MnObjectDetails));
-        cmds.push(m("view.search", Msg::MnView, Msg::MnSearchPanel));
-        cmds.push(m("view.project", Msg::MnView, Msg::MnProjectPanel));
+        cmds.push(m("view.theme", Msg::MnView, Msg::MnTheme));
+        cmds.push(m("view.lang", Msg::MnView, Msg::MnLanguage));
+        cmds.push(m("view.toolbar_reset", Msg::MnView, Msg::MnResetToolbar));
+        cmds.push(m("view.layout_reset", Msg::MnView, Msg::MnResetLayout));
         cmds.push(m("project.new", Msg::MnProject, Msg::MnProjectNew));
         cmds.push(m("project.open", Msg::MnProject, Msg::MnProjectOpen));
         cmds.push(m("project.switch", Msg::MnProject, Msg::MnProjectSwitch));
@@ -13690,8 +13862,13 @@ impl App {
                     };
                     // 이름 있는 결과(커서 변수)나 같은 문장의 추가 결과는 조회 문장 하나로 다시 만들 수 없다 → 건수·재질의 불가.
                     let is_query = is_query && !(same_stmt && slot.is_some()) && label.is_none();
+                    // ★ 방언은 **그 결과를 만든 세션의 것**으로 같이 싣는다(사용자 09-26 Linux — 종전에는 접속 성공 시점에만
+                    //   일괄로 넣어, 뒤이어 다른 방언으로 `CONNECT`하면 옛 결과 그리드의 방언까지 덮어써졌다 → Oracle 결과에
+                    //   SQL Server 문법(`[열]`)으로 UPDATE를 만들어 ORA-00936. 결과의 방언은 결과의 속성이다 · DR-33).
+                    let dial = self.sess.dialect;
                     if let Some(g) = self.grid_for(k) {
                         g.set_result(rs);
+                        g.set_dialect(dial);
                         g.set_more(more);
                         if let Some(s) = stmt.as_deref() {
                             g.set_result_origin(s, is_query);
@@ -18090,6 +18267,26 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::Ime(ime) => {
                 let mut inv = Invalidations::default();
+                // ★ 열린 팔레트가 먼저(09-27 사용자 Linux 실기 "팔레트에서 한글이 안 들어간다"): 팔레트는 `Focus` 변형이 아니라
+                //   종전에는 조합·확정 글자가 `focused_textbox()`(편집기)로 새고 팔레트에는 영문(KeyboardInput)만 닿았다.
+                //   확정 글자는 키 입력과 같은 길(`route_inner` → `palette.on_event`)로 흘려 필터·선택이 같이 돈다.
+                if self.palette.is_open() {
+                    match ime {
+                        Ime::Preedit(t, _) => self.palette.set_preedit(t, &mut inv),
+                        Ime::Commit(t) => {
+                            self.palette.set_preedit("", &mut inv);
+                            for c in t.chars().filter(|c| !c.is_control()) {
+                                self.route_inner(
+                                    InputEvent::Char { c, now_ms: 0 },
+                                    Invalidations::default(),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.redraw();
+                    return;
+                }
                 if let Some(tb) = self.focused_textbox() {
                     match ime {
                         Ime::Preedit(t, _) => tb.set_preedit(t, &mut inv),
@@ -19000,6 +19197,7 @@ fn main() {
     // 호버 행 페이드 진입 시간(ms) — 전역이라 버튼·콤보·그리드·목록에 함께 적용(사용자 09-14).
     // 스크롤 방향(맥식 자연스러운 스크롤) — 창 세 개 공통.
     input::set_natural_scroll(app.settings.flag("input.scroll_natural"));
+    set_clip_native(app.settings.flag("clipboard.x11_native"));
     // 화면 내보내기 방식(T-147) — 첫 창이 만들어지기 전에.
     present::set_mode(app.settings.get("gfx.mac_present").unwrap_or("softbuffer"));
     // 객체 상세 패널(docs/86): 편집기 탭과 같은 상자(글꼴 지표·줄 간격 일치 · 09-25 캡처의 줄 겹침·하단 미표시) + 축소 상태(설정 기억).

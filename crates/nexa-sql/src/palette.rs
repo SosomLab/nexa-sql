@@ -110,6 +110,17 @@ impl Palette {
         self.refilter(true);
     }
 
+    /// IME 조합 중 글자(preedit)를 입력 상자에 보인다 — 팔레트는 `Focus` 변형이 아니라 호스트가 IME 사건을 여기로 넘긴다(09-27 한글 버그).
+    pub(crate) fn set_preedit(&mut self, text: &str, inv: &mut Invalidations) {
+        self.input.set_preedit(text, inv);
+    }
+
+    /// 지금 검색어(시험).
+    #[cfg(test)]
+    pub(crate) fn query(&self) -> String {
+        self.input.text()
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.open
     }
@@ -475,6 +486,28 @@ pub(crate) fn fuzzy_score(query: &str, label: &str) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    /// 09-27(사용자 Linux 실기): 팔레트 열림 중 IME 확정 글자(`Ime::Commit`)가 편집기로 새고 팔레트엔 안 들어갔다 → 호스트가
+    /// `Char` 사건으로 팔레트에 넘긴다. 여기서는 팔레트가 한글 글자를 검색어로 받고 그 글자로 거르는지 본다.
+    #[test]
+    fn hangul_chars_reach_the_query_and_filter() {
+        let mut p = Palette::new();
+        p.set_commands(vec![
+            ("view.log".into(), "보기: 로그 창".into()),
+            ("file.new".into(), "새 편집기".into()),
+        ]);
+        p.open("");
+        let mut inv = Invalidations::default();
+        for c in "로그".chars() {
+            p.on_event(&InputEvent::Char { c, now_ms: 0 }, &mut inv);
+        }
+        assert_eq!(p.query(), "로그");
+        assert_eq!(p.matches.len(), 1, "'로그'로 거른 결과 = 로그 창 하나");
+        assert_eq!(p.cmds[p.matches[0]].0, "view.log");
+        p.set_preedit("ㅊ", &mut inv);
+        assert_eq!(p.query(), "로그", "조합 중 글자는 본문이 아니다");
+    }
+
     use super::fuzzy_score;
 
     #[test]

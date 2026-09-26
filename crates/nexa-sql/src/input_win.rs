@@ -478,7 +478,9 @@ impl InputWin {
                         self.redraw();
                         return InputWinAction::None;
                     }
-                    Key::Character(c) if self.primary && c.eq_ignore_ascii_case("v") => {
+                    Key::Character(_)
+                        if self.primary && crate::input::shortcut_letter(kev) == Some('v') =>
+                    {
                         let secret = self.password_for.is_some();
                         if let (Some(mut text), Some(r)) =
                             (crate::clipboard::read_text(), self.rows.get_mut(self.focus))

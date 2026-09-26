@@ -319,7 +319,8 @@ impl FileWin {
                         }
                         // 주 수식키 + 글자 = 단축키(Ctrl+A 전체 선택) — 글자로 넣지 않는다.
                         if self.primary {
-                            return (c.eq_ignore_ascii_case(&'a')).then_some(InputEvent::SelectAll);
+                            return (crate::input::shortcut_letter(kev) == Some('a'))
+                                .then_some(InputEvent::SelectAll);
                         }
                         InputEvent::Char { c, now_ms: 0 }
                     }

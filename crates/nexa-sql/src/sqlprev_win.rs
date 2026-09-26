@@ -817,8 +817,11 @@ impl SqlPrevWin {
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) => return SqlPrevAction::Close,
-                    Key::Character(c) if self.primary => {
-                        let lower = c.to_ascii_lowercase();
+                    Key::Character(_) if self.primary => {
+                        // IME 한글(⌘+자모)에도 물리 키로 맞춘다(09-27).
+                        let lower = crate::input::shortcut_letter(kev)
+                            .map(|c| c.to_string())
+                            .unwrap_or_default();
                         match lower.as_str() {
                             // ⌘/Ctrl+C = 선택 복사 · 선택이 없으면 전체(사용자 09-26).
                             "c" => {

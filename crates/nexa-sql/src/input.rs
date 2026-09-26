@@ -43,13 +43,21 @@ pub(crate) fn natural_scroll() -> bool {
 /// 단축키용 **영문 글자**(소문자) — 논리 키가 ASCII면 그것, 아니면(한글·일본어 입력 소스에서 ⌘C가 "ㅊ"으로 온다 · 사용자 09-19
 /// "복사 단축키가 동작하지 않아") **물리 키**(`KeyCode::KeyA..Z`)로. 메인 창 키맵(`Chord::from_winit`)과 같은 규칙.
 pub(crate) fn shortcut_letter(kev: &winit::event::KeyEvent) -> Option<char> {
+    shortcut_letter_of(&kev.logical_key, &kev.physical_key)
+}
+
+/// `shortcut_letter`의 순수 판정(시험용 · 09-27 IME 전수 조사): 논리 키가 ASCII 알파벳이면 그것, 아니면 물리 `KeyA..Z`.
+pub(crate) fn shortcut_letter_of(
+    logical: &winit::keyboard::Key,
+    physical: &winit::keyboard::PhysicalKey,
+) -> Option<char> {
     use winit::keyboard::{Key, KeyCode, PhysicalKey};
-    if let Key::Character(t) = kev.logical_key.as_ref() {
+    if let Key::Character(t) = logical.as_ref() {
         if let Some(c) = t.chars().next().filter(char::is_ascii_alphabetic) {
             return Some(c.to_ascii_lowercase());
         }
     }
-    let PhysicalKey::Code(code) = kev.physical_key else {
+    let PhysicalKey::Code(code) = *physical else {
         return None;
     };
     let c = match code {
@@ -260,5 +268,89 @@ mod hangul_mode_tests {
         assert!(!hangul_app_mode("system", true, Some(true)));
         // 모르는 값 = auto.
         assert!(hangul_app_mode("whatever", true, Some(true)));
+    }
+}
+
+#[cfg(test)]
+mod ime_tests {
+    //! 보조 창(변수·입력·SQL Preview·설정·가져오기·파일 창)의 ⌘/Ctrl+글자는 전부 `shortcut_letter`를 거친다(09-27) —
+    //! 두벌식 자모 26자(+Shift 변형)가 논리 키로 와도 물리 키로 글자를 돌려준다. 글자 아닌 키는 None.
+    use super::shortcut_letter_of;
+    use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey, SmolStr};
+
+    #[test]
+    fn hangul_jamo_falls_back_to_physical_letter() {
+        let rows: [(&str, KeyCode, char); 26] = [
+            ("ㅂ", KeyCode::KeyQ, 'q'),
+            ("ㅈ", KeyCode::KeyW, 'w'),
+            ("ㄷ", KeyCode::KeyE, 'e'),
+            ("ㄱ", KeyCode::KeyR, 'r'),
+            ("ㅅ", KeyCode::KeyT, 't'),
+            ("ㅛ", KeyCode::KeyY, 'y'),
+            ("ㅕ", KeyCode::KeyU, 'u'),
+            ("ㅑ", KeyCode::KeyI, 'i'),
+            ("ㅐ", KeyCode::KeyO, 'o'),
+            ("ㅔ", KeyCode::KeyP, 'p'),
+            ("ㅁ", KeyCode::KeyA, 'a'),
+            ("ㄴ", KeyCode::KeyS, 's'),
+            ("ㅇ", KeyCode::KeyD, 'd'),
+            ("ㄹ", KeyCode::KeyF, 'f'),
+            ("ㅎ", KeyCode::KeyG, 'g'),
+            ("ㅗ", KeyCode::KeyH, 'h'),
+            ("ㅓ", KeyCode::KeyJ, 'j'),
+            ("ㅏ", KeyCode::KeyK, 'k'),
+            ("ㅣ", KeyCode::KeyL, 'l'),
+            ("ㅋ", KeyCode::KeyZ, 'z'),
+            ("ㅌ", KeyCode::KeyX, 'x'),
+            ("ㅊ", KeyCode::KeyC, 'c'),
+            ("ㅍ", KeyCode::KeyV, 'v'),
+            ("ㅠ", KeyCode::KeyB, 'b'),
+            ("ㅜ", KeyCode::KeyN, 'n'),
+            ("ㅡ", KeyCode::KeyM, 'm'),
+        ];
+        for (j, code, want) in rows {
+            assert_eq!(
+                shortcut_letter_of(&Key::Character(SmolStr::new(j)), &PhysicalKey::Code(code)),
+                Some(want),
+                "{j}"
+            );
+        }
+        for (j, code, want) in [
+            ("ㅃ", KeyCode::KeyQ, 'q'),
+            ("ㅉ", KeyCode::KeyW, 'w'),
+            ("ㄸ", KeyCode::KeyE, 'e'),
+            ("ㄲ", KeyCode::KeyR, 'r'),
+            ("ㅆ", KeyCode::KeyT, 't'),
+            ("ㅒ", KeyCode::KeyO, 'o'),
+            ("ㅖ", KeyCode::KeyP, 'p'),
+        ] {
+            assert_eq!(
+                shortcut_letter_of(&Key::Character(SmolStr::new(j)), &PhysicalKey::Code(code)),
+                Some(want),
+                "shift {j}"
+            );
+        }
+        // ASCII 논리 키는 그대로(대문자도 소문자로) · 글자 아닌 키는 None.
+        assert_eq!(
+            shortcut_letter_of(
+                &Key::Character(SmolStr::new("V")),
+                &PhysicalKey::Code(KeyCode::KeyV)
+            ),
+            Some('v')
+        );
+        assert_eq!(
+            shortcut_letter_of(
+                &Key::Named(NamedKey::Enter),
+                &PhysicalKey::Code(KeyCode::Enter)
+            ),
+            None
+        );
+        assert_eq!(
+            shortcut_letter_of(
+                &Key::Character(SmolStr::new("ㅊ")),
+                &PhysicalKey::Code(KeyCode::Digit1)
+            ),
+            None
+        );
     }
 }

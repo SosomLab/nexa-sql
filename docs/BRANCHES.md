@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/linux-101-full-check-and-license-lib | 2026-09-26 | 2026-09-27 → main(삭제) | 1 | 101차(linux) — 전수 검사 도구 넷(`linux-func-check/dbms-e2e/inventory/mem-reclaim.sh`) · 저녁 결함 일괄(그리드 방언 오염 ORA-00936 · Ctrl+X 손실 · ★ X11 클립보드 직접 `clipboard_x11.rs` · ROWID `--` 주석 ORA-00923 · IME 단축키 3-OS `commit_composition` · D-225 · 팔레트 한글 · `user_tx_end` · 팔레트 보기 토글·레이아웃 초기화) · 라이선스 설계(25 §12·§13 · [91](91-license-root-key-operations.md)) · journal 09-26·09-27 |
 | feat/bulk-tds-jsonl | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-4 일부: SQL Server TDS bulk 싱크(`TdsSink` · `MsKind` · 트랜잭션) · JSONL 원료(`nsql_io::jsonl`) · 드라이버 실패 뒤 다중 행 이어 가기 · E2E 22/22(§239) |
 | feat/bulk-import | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-1·B-2 대량 적재(nsql-core `bulk` 포트 · nsql-io `delim` 스트리밍 · nsql-run `bulk_load` · CLI `nsql import` · PG COPY 싱크 · Oracle 배열 DML 싱크 · 설정 `bulk.*` · E2E `mac-bulk-e2e.sh` · 89 §3-4-a · §238) |
 | docs/status-refresh-wiki | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 📚 §244 문서·위키 최신화(DEVLOG §214~243 · MILESTONES M2 100차 · 위키 [파일로 넣기·내보내기](Bulk-Import-Export.md) 신설 + Home/Data-Editing · `nsql import` 도움말 jsonl · CLAUDE.md 현 단계) |

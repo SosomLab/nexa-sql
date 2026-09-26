@@ -18,7 +18,19 @@ pub(crate) struct Policy {
 }
 
 impl Default for Policy {
+    /// 설정 기본과 같다(09-27 사용자 결정 D-225 · 성능 우선): 재조회 없이 1급 아니면 3급.
     fn default() -> Self {
+        Policy {
+            hidden_keys: false,
+            rowid: false,
+            all_cols: true,
+        }
+    }
+}
+
+impl Policy {
+    /// 재조회를 다 허용하는 정책 — 온디맨드 `grid.edit.identify`와 시험이 쓴다.
+    pub(crate) fn eager() -> Self {
         Policy {
             hidden_keys: true,
             rowid: true,
@@ -205,29 +217,34 @@ mod tests {
     }
 
     // ── MC/DC: 1급 조건 = (키 있음) ∧ (열 전부 있음) — 각 조건이 독립적으로 결과를 바꾼다.
+    /// 09-27 D-225: 기본 정책은 재조회(1급-보완·2급)를 **요구하지 않는다** — 키가 결과에 없으면 곧장 3급.
+    #[test]
+    fn default_policy_never_requeries() {
+        let p = Policy::default();
+        assert!(!p.hidden_keys && !p.rowid && p.all_cols);
+        assert_eq!(
+            classify(Dialect::Oracle, &cols3(), None, &p, false),
+            Tier::AllColumns(vec![0, 1])
+        );
+        let ki = keys(&["SEQ"], &[]); // 결과에 없는 키(cols3에 ID는 있다 → 그건 1급이 맞다)
+        assert_eq!(
+            classify(Dialect::Oracle, &cols3(), Some(&ki), &p, false),
+            Tier::AllColumns(vec![0, 1]),
+            "PK가 결과에 없어도 재조회 대신 3급"
+        );
+    }
+
     #[test]
     fn tier1_pk_present() {
         let k = keys(&["ID"], &[]);
         assert_eq!(
-            classify(
-                Dialect::Oracle,
-                &cols3(),
-                Some(&k),
-                &Policy::default(),
-                false
-            ),
+            classify(Dialect::Oracle, &cols3(), Some(&k), &Policy::eager(), false),
             Tier::Constraint(vec![0])
         );
         // 대소문자 무시.
         let k = keys(&["id"], &[]);
         assert_eq!(
-            classify(
-                Dialect::Oracle,
-                &cols3(),
-                Some(&k),
-                &Policy::default(),
-                false
-            ),
+            classify(Dialect::Oracle, &cols3(), Some(&k), &Policy::eager(), false),
             Tier::Constraint(vec![0])
         );
     }
@@ -237,13 +254,7 @@ mod tests {
         // PK 열은 빠졌고 UK 열은 있다 → UK가 1급(주입보다 먼저).
         let k = keys(&["SEQ"], &[&["NAME"]]);
         assert_eq!(
-            classify(
-                Dialect::Oracle,
-                &cols3(),
-                Some(&k),
-                &Policy::default(),
-                false
-            ),
+            classify(Dialect::Oracle, &cols3(), Some(&k), &Policy::eager(), false),
             Tier::Constraint(vec![1])
         );
     }
@@ -253,30 +264,18 @@ mod tests {
         let k = keys(&["ID", "SEQ"], &[]);
         // ID는 있고 SEQ만 빠졌다 → 빠진 것만.
         assert_eq!(
-            classify(
-                Dialect::Oracle,
-                &cols3(),
-                Some(&k),
-                &Policy::default(),
-                false
-            ),
+            classify(Dialect::Oracle, &cols3(), Some(&k), &Policy::eager(), false),
             Tier::NeedHiddenKeys(vec!["SEQ".into()])
         );
         // 이미 주입(실패)했다 → 다시 주입하지 않고 3급으로(Oracle이라도 물리 식별자 재시도 없음).
         assert_eq!(
-            classify(
-                Dialect::Oracle,
-                &cols3(),
-                Some(&k),
-                &Policy::default(),
-                true
-            ),
+            classify(Dialect::Oracle, &cols3(), Some(&k), &Policy::eager(), true),
             Tier::AllColumns(vec![0, 1])
         );
         // 정책 끔 → 물리 식별자로.
         let p = Policy {
             hidden_keys: false,
-            ..Policy::default()
+            ..Policy::eager()
         };
         assert_eq!(
             classify(Dialect::Oracle, &cols3(), Some(&k), &p, false),
@@ -289,21 +288,21 @@ mod tests {
         // 키 없음 · Oracle/SQLite/PG = 주입 · SQL Server/MySQL = 3급.
         for d in [Dialect::Oracle, Dialect::Sqlite, Dialect::Postgres] {
             assert_eq!(
-                classify(d, &cols3(), None, &Policy::default(), false),
+                classify(d, &cols3(), None, &Policy::eager(), false),
                 Tier::NeedPhysical,
                 "{d:?}"
             );
         }
         for d in [Dialect::Mssql, Dialect::Mysql, Dialect::Odbc] {
             assert_eq!(
-                classify(d, &cols3(), None, &Policy::default(), false),
+                classify(d, &cols3(), None, &Policy::eager(), false),
                 Tier::AllColumns(vec![0, 1]),
                 "{d:?}"
             );
         }
         let p = Policy {
             rowid: false,
-            ..Policy::default()
+            ..Policy::eager()
         };
         assert_eq!(
             classify(Dialect::Oracle, &cols3(), None, &p, false),
@@ -316,13 +315,13 @@ mod tests {
         rid.where_expr = Some("ROWID".into());
         cs.push(rid);
         assert_eq!(
-            classify(Dialect::Oracle, &cs, None, &Policy::default(), true),
+            classify(Dialect::Oracle, &cs, None, &Policy::eager(), true),
             Tier::Physical(vec![3])
         );
         // 키가 있으면 물리 열보다 키.
         let k = keys(&["ID"], &[]);
         assert_eq!(
-            classify(Dialect::Oracle, &cs, Some(&k), &Policy::default(), true),
+            classify(Dialect::Oracle, &cs, Some(&k), &Policy::eager(), true),
             Tier::Constraint(vec![0])
         );
     }
@@ -332,12 +331,12 @@ mod tests {
         // 비교 불가 열만 남으면 읽기 전용.
         let only_lob = vec![col("MEMO", "CLOB"), col("F", "BINARY_DOUBLE")];
         assert_eq!(
-            classify(Dialect::Mssql, &only_lob, None, &Policy::default(), false),
+            classify(Dialect::Mssql, &only_lob, None, &Policy::eager(), false),
             Tier::None
         );
         let p = Policy {
             all_cols: false,
-            ..Policy::default()
+            ..Policy::eager()
         };
         assert_eq!(
             classify(Dialect::Mssql, &cols3(), None, &p, false),

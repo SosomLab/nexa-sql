@@ -63,6 +63,39 @@ say "=== leak: run 100k rows ×8"; bash "$SC/linux-leak.sh" -H "$H" -n 8 -p 7000
 NSQL_HOME=$H "$NSQL" config set grid.max_rows 200 >/dev/null 2>&1
 say "=== leak: log window toggle ×10"; bash "$SC/linux-leak.sh" -H "$H" -n 10 -p 2000 -C "view.log;view.log" -a "$PROF" -t leak.log | tee -a "$R"
 say "=== leak: 2 MB tab open/close ×8"; bash "$SC/linux-leak.sh" -H "$H" -n 8 -p 4000 -C "open:$D/mid2m.sql;file.close_tab" -a "$PROF" -t leak.mid | tee -a "$R"
+
+# ── 09-26 신설 시나리오 8~12(docs/71 §3-C · 탐색기 검색 인덱스 · 메타 3층 · 객체 상세 · SQL Preview · L3 회수) ──
+#    실서버 프로필이 있을 때만 돈다(NSQL_PERF_ORACLE). Linux 첫 측정(91차에는 이 기능들이 없었다).
+if [ -n "${NSQL_PERF_ORACLE:-}" ]; then
+  OP="$NSQL_PERF_ORACLE"
+  export NSQL_TRACE_FRAMES=1
+  say "=== scenario s8.meta (탐색기 검색 인덱스 + 메타 3층 워머 · 84 · 85)"
+  bash "$SC/linux-probe.sh" -H "$H" -s 26 -t s8.meta -c "@after:22000:explorer.stat:$OUT/s8.stat.txt,@after:23000:mem.dump:$OUT/s8.mem.txt" -a "$OP" | tail -4 | tee -a "$R"
+  [ -f "$OUT/s8.stat.txt" ] && head -6 "$OUT/s8.stat.txt" | sed 's/^/    /' | tee -a "$R"
+  [ -f "$OUT/s8.mem.txt" ] && grep -iE 'meta|total' "$OUT/s8.mem.txt" | head -6 | sed 's/^/    /' | tee -a "$R"
+  say "=== scenario s9b.meta.off (A/B — 인덱스·워머 끔)"
+  NSQL_HOME=$H "$NSQL" config set explorer.search_index off >/dev/null 2>&1
+  NSQL_HOME=$H "$NSQL" config set meta.warm_comments off >/dev/null 2>&1
+  NSQL_HOME=$H "$NSQL" config set meta.warm_columns_max 0 >/dev/null 2>&1
+  bash "$SC/linux-probe.sh" -H "$H" -s 26 -t s9b.meta.off -c "@after:23000:mem.dump:$OUT/s9b.mem.txt" -a "$OP" | tail -4 | tee -a "$R"
+  NSQL_HOME=$H "$NSQL" config set explorer.search_index on >/dev/null 2>&1
+  NSQL_HOME=$H "$NSQL" config set meta.warm_comments on >/dev/null 2>&1
+  say "=== scenario s9.search (탐색기 검색 진행 애니메이션 · 84 §4)"
+  bash "$SC/linux-probe.sh" -H "$H" -s 14 -t s9.search -c "@after:5000:explorer.filter:1171" -a "$OP" | tail -4 | tee -a "$R"
+  grep -E '^\[frames\] n=' "$H/s9.search.stderr" | tail -2 | sed 's/^/    /' | tee -a "$R"
+  say "=== scenario s10.details (객체 상세 패널 · 86)"
+  bash "$SC/linux-probe.sh" -H "$H" -s 20 -t s10.details -c "@after:4000:view.object_details,@after:6000:explorer.expand:1,@after:8000:explorer.expand:2,@after:10000:explorer.select:3,@after:12000:explorer.select:4,@after:14000:details.dump:$OUT/s10.det.txt" -a "$OP" | tail -4 | tee -a "$R"
+  say "=== scenario s11.sqlprev (SQL Preview 모달 · 83 §4)"
+  bash "$SC/linux-probe.sh" -H "$H" -s 20 -t s11.sqlprev -c "@after:6000:explorer.expand:1,@after:8000:explorer.expand:2,@after:10000:explorer.menu:3,@after:12000:explorer.pick:gen:ddl,@after:15000:sqlprev.dump:$OUT/s11.prev.txt" -a "$OP" | tail -4 | tee -a "$R"
+  say "=== scenario s12.l3ttl (L3 TTL 회수 · 85 §4)"
+  NSQL_HOME=$H "$NSQL" config set meta.detail_ttl_secs 15 >/dev/null 2>&1
+  NSQL_HOME=$H "$NSQL" config set meta.cols_ttl_secs 15 >/dev/null 2>&1
+  bash "$SC/linux-probe.sh" -H "$H" -s 62 -t s12.l3ttl -c "@after:6000:view.object_details,@after:8000:explorer.expand:1,@after:10000:explorer.expand:2,@after:12000:explorer.select:3,@after:18000:mem.dump:$OUT/s12.m18.txt,@after:58000:mem.dump:$OUT/s12.m58.txt" -a "$OP" | tail -4 | tee -a "$R"
+  for f in "$OUT/s12.m18.txt" "$OUT/s12.m58.txt"; do [ -f "$f" ] && say "    $(basename "$f"): $(grep -iE 'MetaDetail|MetaCols' "$f" | tr '\n' ' ')"; done
+  NSQL_HOME=$H "$NSQL" config set meta.detail_ttl_secs 300 >/dev/null 2>&1
+  NSQL_HOME=$H "$NSQL" config set meta.cols_ttl_secs 300 >/dev/null 2>&1
+  unset NSQL_TRACE_FRAMES
+fi
 say "=== CLI timing (3 runs each)"
 cli() { local tag=$1 prof=$2 f=$3 home=${4:-}; for i in 1 2 3; do local t0=$(date +%s%N); local line; line=$( { [ -n "$home" ] && export NSQL_HOME=$home; "$NSQL" run -c "$prof" "$f" --timing 2>&1; } | grep -E '^⏱' | tail -1); say "$tag run$i wall=$(( ($(date +%s%N)-t0)/1000000 ))ms $line"; done; }
 cli cli.sqlite.100k "$PROF" "$D/rows100k.sql" "$H"

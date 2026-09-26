@@ -785,11 +785,12 @@ impl PrefsWin {
                     && self.primary
                     && matches!(kev.logical_key.as_ref(), Key::Character(_)) =>
             {
-                let Key::Character(c) = kev.logical_key.as_ref() else {
-                    return PrefsAction::None;
-                };
+                // IME 한글(⌘+자모)에도 물리 키로 맞춘다(09-27).
+                let c = crate::input::shortcut_letter(kev)
+                    .map(|c| c.to_string())
+                    .unwrap_or_default();
                 let mut inv = Invalidations::default();
-                match c.to_ascii_lowercase().as_str() {
+                match c.as_str() {
                     "c" => return self.clip(EditCtxAction::Copy),
                     "x" => return self.clip(EditCtxAction::Cut),
                     "v" => return self.clip(EditCtxAction::Paste),

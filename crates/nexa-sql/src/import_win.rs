@@ -527,8 +527,8 @@ impl ImportWin {
                         ImportAction::Close
                     };
                 }
-                if let Key::Character(c) = kev.logical_key.as_ref() {
-                    if self.primary && c.eq_ignore_ascii_case("a") {
+                if let Key::Character(_) = kev.logical_key.as_ref() {
+                    if self.primary && crate::input::shortcut_letter(kev) == Some('a') {
                         if let Some(tb) = self.focused_box() {
                             tb.on_event(&InputEvent::SelectAll, &mut inv);
                         }

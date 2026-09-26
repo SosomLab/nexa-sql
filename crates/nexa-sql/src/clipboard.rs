@@ -225,6 +225,13 @@ mod imp {
     ];
 
     pub(super) fn read() -> Option<String> {
+        // ★ Linux = X11 selection **직접**(외부 프로그램 없이 · 09-26). 실패하면 아래 CLI 경로로 폴백.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if crate::settings_clip_native() {
+            if let Some(s) = crate::clipboard_x11::read() {
+                return Some(s);
+            }
+        }
         for (cmd, args) in READERS {
             if let Ok(out) = Command::new(cmd).args(*args).output() {
                 if out.status.success() {
@@ -258,6 +265,16 @@ mod imp {
     }
 
     pub(super) fn write(text: &str) -> bool {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let native = crate::settings_clip_native();
+            if std::env::var_os("NSQL_TRACE_CLIP").is_some() {
+                eprintln!("[clip] write: {} bytes · x11_native={native}", text.len());
+            }
+            if native && crate::clipboard_x11::write(text) {
+                return true;
+            }
+        }
         for (cmd, args) in WRITERS {
             let Ok(mut child) = Command::new(cmd)
                 .args(*args)

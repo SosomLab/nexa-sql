@@ -86,6 +86,8 @@ expect_grep "적용 뒤 깨끗" "$d7" "dirty=false"
 expect_grep "rowid 행 제자리 재조회" "$d7" "patched=1/0/0"
 expect_grep "서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"
 expect_grep "서버: 나머지 중복 행 v1 유지" "$(echo "$v" | grep -c v1)" "^1$"
+# 09-27: 기본값 = 재조회 안 함(grid.edit_hidden_keys/rowid off · D-225) → 주입 경로 시나리오는 명시적으로 켠다.
+NSQL_HOME="$H" "$NSQL" config set grid.edit_hidden_keys on >/dev/null
 echo "=== SQLite ⑧ PK 열이 빠진 결과 = 숨은 키 열 주입(1급-보완) → 적용"
 printf 'SELECT name, salary FROM ge_emp ORDER BY name;\n' > "$D/selnk.sql"
 run_gui 18 Local "open:$D/selnk.sql,@after:2500:run.all,@after:6500:grid.dump:$O/s8a.txt,@after:7000:grid.edit.set:0;1;777,@after:7500:grid.edit.cmd:row.save,@after:12500:grid.dump:$O/s8.txt"
@@ -94,6 +96,7 @@ expect_grep "재조회 뒤 = 숨은 키 열 · 1급" "$d8a" "kind=Constraint"
 expect_grep "숨은 열 1 · 키 = 숨은 열" "$d8a" "hidden=1"
 expect_grep "적용 뒤 깨끗" "$d8" "dirty=false"
 expect_grep "서버: salary 777" "$v" "777"
+NSQL_HOME="$H" "$NSQL" config set grid.edit_hidden_keys off >/dev/null
 echo "=== SQLite ⑨ 수동 커밋: 한 행을 3번 적용 = 트랜잭션 로그 UPDATE 3줄(pending) · 사전 검사 Util 3 · 열린 트랜잭션 갱신 3 · 종료 = 미커밋(롤백)"
 NSQL_HOME="$H" "$NSQL" config set session.autocommit off >/dev/null
 run_gui 24 Local "open:$D/sel.sql,@after:2500:run.all,@after:6000:grid.edit.set:0;1;M1,@after:6500:grid.edit.cmd:row.save,@after:10500:grid.edit.set:0;1;M2,@after:11000:grid.edit.cmd:row.save,@after:15000:grid.edit.set:0;1;M3,@after:15500:grid.edit.cmd:row.save,@after:19000:txlog.dump:$O/s9tx.txt,@after:19500:grid.dump:$O/s9.txt"
@@ -192,6 +195,8 @@ SQL
   cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1; cli "$T" "$D/${tag}_setup.sql" >/dev/null 2>&1
   local v; v=$(cli "$T" "$D/${tag}_sel.sql")
   if ! echo "$v" | grep -q "kim"; then bad "$tag 준비(임시 표 생성·접속)"; echo "$v" | head -4 | sed 's/^/      /'; return; fi
+  # 09-27: 실서버 ⑤⑨⑩은 주입 경로(2급·1급-보완)를 시험한다 → 명시적으로 켠다(기본 off · D-225).
+  NSQL_HOME="$H" "$NSQL" config set grid.edit_rowid on >/dev/null; NSQL_HOME="$H" "$NSQL" config set grid.edit_hidden_keys on >/dev/null
   echo "=== $tag ⑤ 키 없는 표(DATE 포함 · $kind) 저장"
   run_gui 22 "$T" "open:$D/${tag}_sel2.sql,@after:4000:run.all,@after:8000:grid.edit.set:0;2;M1,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/${tag}1.txt"
   local d; d=$(cat "$O/${tag}1.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_sel2.sql")

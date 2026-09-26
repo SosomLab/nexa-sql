@@ -94,3 +94,9 @@
 `grid.edit` · `grid.edit_empty` · `grid.edit_refresh` · `grid.edit_hidden_keys` · `grid.edit_rowid` · `grid.edit_all_cols` · `grid.edit_concurrency` · `grid.paste_max_rows` · `grid.lob_view_max_mb` · `grid.lob_image_preview` · `tx.prod_*`(운영 접속은 편집 불가).
 
 > 기술 문서: 저장소 `docs/87-grid-data-editing.md`(설계 · 행 식별 등급 · 데이터 보호 불변식).
+
+## 행 식별 재조회는 기본으로 하지 않습니다 (2026-09-27)
+
+키가 없는 표를 조회하면 예전에는 편집 준비를 위해 자동으로 한 번 더 조회(ROWID/빠진 키 열 주입)했습니다. 이제 **기본은 재조회 없음**입니다 — 결과에 PK/UNIQUE 열이 있으면 그대로 편집되고, 없으면 *모든 컬럼 값*으로 행을 맞춰 편집합니다(문장마다 정확히 1행인지 사전 검사).
+
+더 정확한 행 식별(ROWID·키 열)이 필요하면 결과 그리드에서 **편집 툴바 ⚿ 행 식별 열 가져오기(재조회 1회)** 를 고르세요 — 그 결과에만 적용됩니다. 항상 켜려면 설정 `grid.edit_rowid` / `grid.edit_hidden_keys`를 on으로.
