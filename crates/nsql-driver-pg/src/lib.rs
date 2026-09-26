@@ -67,6 +67,96 @@ pub struct PgSession {
     next_cursor: u32,
 }
 
+/// ★ `COPY … FROM STDIN`(text) 싱크(docs/89 §1-2 · T-236): 한 COPY 문장 = 원자 적재(중간 커밋 없음 · `commit` = false) ·
+/// 필드 = 탭 구분 · NULL = `\N` · `\`·탭·줄바꿈 이스케이프 · 실패 = 서버가 COPY 전체를 되돌린다(러너가 단건 재실행으로 지목).
+struct CopySink<'a> {
+    writer: Option<postgres::CopyInWriter<'a>>,
+    buf: Vec<u8>,
+    rows: u64,
+}
+
+impl CopySink<'_> {
+    fn escape_into(out: &mut Vec<u8>, s: &str) {
+        for b in s.bytes() {
+            match b {
+                b'\\' => out.extend_from_slice(b"\\\\"),
+                b'\t' => out.extend_from_slice(b"\\t"),
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                _ => out.push(b),
+            }
+        }
+    }
+
+    fn send_buf(&mut self) -> Result<(), DbError> {
+        use std::io::Write;
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        let Some(w) = self.writer.as_mut() else {
+            return Err(DbError {
+                code: None,
+                message: "COPY already finished".into(),
+                position: None,
+            });
+        };
+        w.write_all(&self.buf).map_err(|e| DbError {
+            code: None,
+            message: format!("COPY write: {e}"),
+            position: None,
+        })?;
+        self.buf.clear();
+        Ok(())
+    }
+}
+
+impl nsql_core::BulkSink for CopySink<'_> {
+    fn push(&mut self, row: &[Value]) -> Result<(), DbError> {
+        for (i, v) in row.iter().enumerate() {
+            if i > 0 {
+                self.buf.push(b'\t');
+            }
+            match v {
+                Value::Null | Value::Cursor(_) => self.buf.extend_from_slice(b"\\N"),
+                Value::Bytes(b) => {
+                    // bytea hex 표기(`\x…`).
+                    self.buf.extend_from_slice(b"\\\\x");
+                    for x in b {
+                        self.buf.extend_from_slice(format!("{x:02x}").as_bytes());
+                    }
+                }
+                other => Self::escape_into(&mut self.buf, &other.display()),
+            }
+        }
+        self.buf.push(b'\n');
+        self.rows += 1;
+        if self.buf.len() >= 1 << 16 {
+            self.send_buf()?;
+        }
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<u64, DbError> {
+        self.send_buf()?;
+        Ok(self.rows)
+    }
+    fn commit(&mut self) -> Result<bool, DbError> {
+        Ok(false)
+    }
+    fn rollback(&mut self) -> Result<(), DbError> {
+        // 마치지 않고 버리면 서버가 COPY를 중단한다.
+        self.writer = None;
+        self.buf.clear();
+        Ok(())
+    }
+    fn finish(mut self: Box<Self>) -> Result<u64, DbError> {
+        self.send_buf()?;
+        match self.writer.take() {
+            Some(w) => w.finish().map_err(err),
+            None => Ok(0),
+        }
+    }
+}
+
 fn err(e: postgres::Error) -> DbError {
     let (code, message, position) = match e.as_db_error() {
         Some(db) => {
@@ -621,6 +711,26 @@ impl nsql_core::CancelHandle for PgCancel {
 }
 
 impl Session for PgSession {
+    fn bulk_begin<'a>(
+        &'a mut self,
+        table: &str,
+        cols: &[String],
+        _types: &[String],
+        _opts: &nsql_core::BulkOpts,
+    ) -> Result<Box<dyn nsql_core::BulkSink + 'a>, DbError> {
+        let list = cols
+            .iter()
+            .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("COPY {table} ({list}) FROM STDIN");
+        let writer = self.client.copy_in(sql.as_str()).map_err(err)?;
+        Ok(Box::new(CopySink {
+            writer: Some(writer),
+            buf: Vec::with_capacity(1 << 16),
+            rows: 0,
+        }))
+    }
     /// 소켓이 닫힌 것을 클라이언트가 알았는가(왕복 0 · keepalive가 끊김을 잡으면 여기서 드러난다).
     fn is_alive(&self) -> bool {
         !self.client.is_closed()

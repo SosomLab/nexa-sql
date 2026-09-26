@@ -131,6 +131,18 @@ nsql-io
 | B-3 | PG `copy_out` 추출 · GUI Import 창(열 매핑 · 진행 카드) · 취소 | E2E 기동 명령 `import.run:` · 캡처 |
 | B-4 | 옵션(APPEND · PRAGMA · FIRE_TRIGGERS) · TVP/파이프라이닝 검토 · 확장 드라이버(MySQL LOAD DATA · ODBC 배열) | |
 
+### 3-4-a. 구현 상태(09-26 · journal §238)
+
+| 단계 | 상태 | 내용 |
+|---|---|---|
+| B-1 | ✅ | nsql-core `bulk.rs`(`BulkLoad` 능력표 · `BulkOpts` · `BulkSink` 포트 · `Session::bulk_begin`) · nsql-io `delim::DelimReader`(스트리밍 CSV/TSV · 따옴표 안 줄바꿈 · BOM · 레코드 시작 줄 번호) · nsql-run `bulk.rs`(`Runner::bulk_load` = 타입 변환 `coerce` · 드라이버 싱크 `drive_sink` / 다중 행 폴백 `multirow_sql`(Oracle `INSERT ALL`) · 배치·커밋 간격 · 실패 배치 단건 재실행 = 문제 행·줄 지목 + 성공 앞부분 다시 넣어 커밋 · Timeline) · CLI `nsql import`(헤더/--no-header/--cols/--map/--batch/--commit-every/--mode/--empty-null · 진행·요약·--timing · 열 메타 = 빈 조회 → 없으면 카탈로그) · 설정 `bulk.*` 7키 |
+| B-2 | ✅(3/4) | PG `COPY … FROM STDIN` text 싱크(문장 하나 = 원자 · 중간 커밋 없음 = `commit → false`) · Oracle 배열 DML 싱크(`Connection::batch` · 열 타입별 명시 바인드 `Typed`: NUMBER/Timestamp(ISO)/CLOB/BLOB/Varchar2 · 중간 커밋 진짜) · SQLite = 다중 행(500행/문장 · 트랜잭션) · **SQL Server = 다중 행 폴백**(파라미터 상한 2000 = 500행/문장 · TDS bulk는 B-4) |
+| 실측(Debug · 5,000행 · 4열 · 원격 192.168.x) | | Oracle 배열 DML **13~14k행/s**(0.35 s) · PG COPY **15~18k행/s**(0.29 s) · SQLite 다중 행 **57k행/s**(1,000행 18 ms) · SQL Server 다중 행 **1.1~1.7k행/s**(3~4.5 s · `DECLARE` 감싸기 비용 → TDS bulk 필요) |
+| 시험 | | nsql-run `bulk` 5(변환·문장·배치/커밋·실패 지목·열 수) · nsql-io 1 · E2E `scripts/mac-bulk-e2e.sh`(SQLite ①~③ 10 검사 + `-P/-d` 실서버 3종 임시 표 `NSQLT_BULK` 5,000행) |
+| 결정 | | D-220 INSERT 전용 ✅ · D-221 `bulk.check_constraints` on/`fire_triggers` off(옵션만 · TDS bulk 때 적용) · D-222 **PG COPY = text**(binary는 후속 · text가 서버 풀이라 타입 안전) · D-223 커밋 간격 10,000(COPY는 문장 원자) · D-224 위험 옵션 기본 끔(`bulk.append_hint`) — 한 줄 고지로 진행 |
+
+남음(B-3·B-4) = PG `COPY TO` 추출 · GUI Import 창(열 매핑·진행 카드·취소) · SQL Server TDS bulk(`tiberius::bulk_insert` · 열 메타 접근) · TVP · 파이프라이닝 · MySQL `LOAD DATA`/ODBC 배열 · JSONL 원료.
+
 ### 3-5. 결정 대기
 
 - **D-220** 벌크 적재 = INSERT 전용(UPDATE/DELETE는 87 §14 규칙 유지) — 권장 ✅.

@@ -263,6 +263,12 @@ const CLICK_TRIPLE_OPTS: &[(&str, Msg)] = &[
     ("none", Msg::OptClickNone),
 ];
 const GE_EMPTY_OPTS: &[(&str, Msg)] = &[("null", Msg::OptGeNull), ("empty", Msg::OptGeEmpty)];
+const BULK_MODE_OPTS: &[(&str, Msg)] = &[
+    ("auto", Msg::OptBulkAuto),
+    ("driver", Msg::OptBulkDriver),
+    ("multirow", Msg::OptBulkMultiRow),
+    ("single", Msg::OptBulkSingle),
+];
 const GE_CONC_OPTS: &[(&str, Msg)] = &[
     ("key", Msg::OptGeConcKey),
     ("key_old", Msg::OptGeConcKeyOld),
@@ -1144,6 +1150,68 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescGridLobImage,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    Entry {
+        key: "bulk.batch_rows",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkBatch,
+        desc: Msg::DescBulkBatch,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 100_000,
+        },
+        default: "1000",
+    },
+    Entry {
+        key: "bulk.commit_every",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkCommit,
+        desc: Msg::DescBulkCommit,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000_000,
+        },
+        default: "10000",
+    },
+    Entry {
+        key: "bulk.mode",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkMode,
+        desc: Msg::DescBulkMode,
+        kind: SettingKind::Choice(BULK_MODE_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "bulk.empty_null",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkEmptyNull,
+        desc: Msg::DescBulkEmptyNull,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "bulk.check_constraints",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkCheck,
+        desc: Msg::DescBulkCheck,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "bulk.fire_triggers",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkTriggers,
+        desc: Msg::DescBulkTriggers,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "bulk.append_hint",
+        cat: Msg::CatCli,
+        label: Msg::LblBulkAppend,
+        desc: Msg::DescBulkAppend,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     Entry {
         key: "grid.paste_max_rows",

@@ -150,6 +150,150 @@ pub struct OracleSession {
     description: String,
 }
 
+/// ★ 배열 바인드 DML 싱크(docs/89 §1-1 · T-236): `INSERT INTO t (…) VALUES (:1, …)`를 `Connection::batch`로 — 열 타입은
+/// 결과 타입 이름에서 정한다(NUMBER → `Number` · DATE/TIMESTAMP → `Timestamp`(ISO 파싱) · CLOB → `CLOB` · 그 밖 `Varchar2(4000)`)
+/// · 중간 커밋 = `conn.commit()`(진짜) · 실패 배치는 러너가 단건으로 지목한다.
+struct ArraySink<'a> {
+    conn: &'a Connection,
+    batch: oracle::Batch<'a>,
+    kinds: Vec<ColKind>,
+    pending: usize,
+    rows: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColKind {
+    Number,
+    Time,
+    Clob,
+    Blob,
+    Text,
+}
+
+impl ArraySink<'_> {
+    fn kind_of(ty: &str) -> ColKind {
+        let u = ty.to_ascii_uppercase();
+        if u.contains("CLOB") {
+            ColKind::Clob
+        } else if u.contains("BLOB") || u.contains("RAW") {
+            ColKind::Blob
+        } else if u.contains("DATE") || u.contains("TIMESTAMP") {
+            ColKind::Time
+        } else if u.contains("NUMBER")
+            || u.contains("INT")
+            || u.contains("FLOAT")
+            || u.contains("DECIMAL")
+        {
+            ColKind::Number
+        } else {
+            ColKind::Text
+        }
+    }
+}
+
+/// 소유 값 + 명시 Oracle 타입(배열 바인드는 열마다 타입이 고정이라 NULL 첫 행이어도 타입을 알린다).
+enum Owned {
+    S(Option<String>),
+    T(Option<Timestamp>),
+    B(Option<Vec<u8>>),
+}
+struct Typed {
+    val: Owned,
+    ty: OracleType,
+}
+impl oracle::sql_type::ToSql for Typed {
+    fn oratype(&self, _conn: &Connection) -> oracle::Result<OracleType> {
+        Ok(self.ty.clone())
+    }
+    fn to_sql(&self, val: &mut oracle::SqlValue) -> oracle::Result<()> {
+        match &self.val {
+            Owned::S(s) => s.to_sql(val),
+            Owned::T(t) => t.to_sql(val),
+            Owned::B(b) => b.to_sql(val),
+        }
+    }
+}
+
+/// 식별자 인용(드라이버 안 · nsql-catalog 의존 없이).
+fn qi(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+impl nsql_core::BulkSink for ArraySink<'_> {
+    fn push(&mut self, row: &[Value]) -> Result<(), DbError> {
+        use oracle::sql_type::ToSql;
+        let mut owned: Vec<Typed> = Vec::with_capacity(row.len());
+        for (i, v) in row.iter().enumerate() {
+            let k = self.kinds.get(i).copied().unwrap_or(ColKind::Text);
+            let text: Option<String> = match v {
+                Value::Null => None,
+                other => Some(other.display()),
+            };
+            let t = match k {
+                ColKind::Number => Typed {
+                    val: Owned::S(text),
+                    ty: OracleType::Number(0, 0),
+                },
+                ColKind::Time => {
+                    let ts: Option<Timestamp> = match text.as_deref() {
+                        None => None,
+                        Some(s) => Some(parse_iso_timestamp(s).ok_or_else(|| DbError {
+                            code: None,
+                            message: format!("not an ISO date/time: {s}"),
+                            position: None,
+                        })?),
+                    };
+                    Typed {
+                        val: Owned::T(ts),
+                        ty: OracleType::Timestamp(9),
+                    }
+                }
+                ColKind::Clob => Typed {
+                    val: Owned::S(text),
+                    ty: OracleType::CLOB,
+                },
+                ColKind::Blob => Typed {
+                    val: Owned::B(match v {
+                        Value::Bytes(b) => Some(b.clone()),
+                        Value::Null => None,
+                        other => Some(other.display().into_bytes()),
+                    }),
+                    ty: OracleType::BLOB,
+                },
+                ColKind::Text => Typed {
+                    val: Owned::S(text),
+                    ty: OracleType::Varchar2(4000),
+                },
+            };
+            owned.push(t);
+        }
+        let refs: Vec<&dyn ToSql> = owned.iter().map(|b| b as &dyn ToSql).collect();
+        self.batch.append_row(&refs).map_err(|e| err(&e))?;
+        self.pending += 1;
+        self.rows += 1;
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<u64, DbError> {
+        if self.pending > 0 {
+            self.batch.execute().map_err(|e| err(&e))?;
+            self.pending = 0;
+        }
+        Ok(self.rows)
+    }
+    fn commit(&mut self) -> Result<bool, DbError> {
+        self.conn.commit().map_err(|e| err(&e))?;
+        Ok(true)
+    }
+    fn rollback(&mut self) -> Result<(), DbError> {
+        self.conn.rollback().map_err(|e| err(&e))
+    }
+    fn finish(mut self: Box<Self>) -> Result<u64, DbError> {
+        self.flush()?;
+        self.conn.commit().map_err(|e| err(&e))?;
+        Ok(self.rows)
+    }
+}
+
 fn err(e: &oracle::Error) -> DbError {
     let (code, position) = match e.db_error() {
         Some(d) => (
@@ -391,6 +535,37 @@ impl nsql_core::CancelHandle for OracleCancel {
 }
 
 impl Session for OracleSession {
+    fn bulk_begin<'a>(
+        &'a mut self,
+        table: &str,
+        cols: &[String],
+        types: &[String],
+        opts: &nsql_core::BulkOpts,
+    ) -> Result<Box<dyn nsql_core::BulkSink + 'a>, DbError> {
+        let list = cols.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
+        let ph = (1..=cols.len())
+            .map(|i| format!(":{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let hint = if opts.append_hint {
+            "/*+ APPEND */ "
+        } else {
+            ""
+        };
+        let sql = format!("INSERT {hint}INTO {table} ({list}) VALUES ({ph})");
+        let conn: &'a Connection = &self.conn;
+        let batch = conn
+            .batch(&sql, opts.batch_rows.max(1) * 2)
+            .build()
+            .map_err(|e| err(&e))?;
+        Ok(Box::new(ArraySink {
+            conn,
+            batch,
+            kinds: types.iter().map(|t| ArraySink::kind_of(t)).collect(),
+            pending: 0,
+            rows: 0,
+        }))
+    }
     /// OCI 서버 핸들 상태(왕복 0 · `OCI_ATTR_SERVER_STATUS`): 마지막 네트워크 결과·FIN/RST를 반영한다.
     fn is_alive(&self) -> bool {
         !matches!(self.conn.status(), Ok(oracle::ConnStatus::NotConnected))

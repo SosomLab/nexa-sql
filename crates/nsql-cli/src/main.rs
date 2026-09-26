@@ -42,6 +42,14 @@ struct Opts {
     /// `-v 이름=값`(여러 번) — 스크립트가 돌기 전에 치환 변수(`&이름`)를 정의한다(T-153 · `DEFINE`과 같은 저장소).
     defines: Vec<(String, String)>,
     /// `--timing` — 항목마다 단계별 소요(docs/26)를 stderr에.
+    /// `import`: 헤더 없음 · 열 매핑(`src=dst,…`) · 열 이름(헤더 없을 때) · 배치/커밋 간격/경로/빈 값(설정 `bulk.*` 위에 덮음).
+    no_header: bool,
+    map: Option<String>,
+    cols: Option<String>,
+    batch: Option<usize>,
+    commit_every: Option<usize>,
+    mode: Option<String>,
+    empty_null: Option<bool>,
     timing: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
     log: bool,
@@ -105,6 +113,13 @@ fn parse_opts() -> Opts {
         no_prompt: false,
         password_stdin: false,
         defines: Vec::new(),
+        no_header: false,
+        map: None,
+        cols: None,
+        batch: None,
+        commit_every: None,
+        mode: None,
+        empty_null: None,
         timing: false,
         log: false,
         password: None,
@@ -167,6 +182,13 @@ fn parse_opts() -> Opts {
             "-t" | "--table" => o.table = Some(val("-t")),
             "-o" | "--out" => o.out = Some(val("-o")),
             "-s" | "--schema" => o.schema = Some(val("-s")),
+            "--no-header" => o.no_header = true,
+            "--map" => o.map = Some(val("--map")),
+            "--cols" => o.cols = Some(val("--cols")),
+            "--batch" => o.batch = val("--batch").parse().ok(),
+            "--commit-every" => o.commit_every = val("--commit-every").parse().ok(),
+            "--mode" => o.mode = Some(val("--mode")),
+            "--empty-null" => o.empty_null = Some(val("--empty-null") != "off"),
             "--max-rows" => {
                 let v = val("--max-rows");
                 o.max_rows = v.parse().unwrap_or_else(|_| {
@@ -1386,6 +1408,224 @@ fn cmd_run(o: &Opts) -> i32 {
     }
 }
 
+/// ★ `nsql import -c <target> -t <table> [-f csv|tsv] [--no-header] [--cols a,b] [--map src=dst,…] [--batch N] [--commit-every N]
+/// [--mode auto|driver|multirow|single] [--empty-null on|off] <file|->` — 대량 적재(docs/89 §3-3 · T-236 · INSERT 전용 D-220).
+fn cmd_import(o: &Opts) -> i32 {
+    use nsql_i18n::{t, tf, Msg};
+    let Some(target) = &o.target else {
+        eprintln!("-c <target>가 필요합니다");
+        return 2;
+    };
+    let Some(table) = &o.table else {
+        eprintln!("{}", t(Msg::CliImportNeedTable));
+        return 2;
+    };
+    let Some(path) = o.positional.first() else {
+        eprintln!("{}", t(Msg::CliImportNeedFile));
+        return 2;
+    };
+    let delim = match &o.format {
+        Format::Tsv => b'\t',
+        Format::Csv => b',',
+        _ => {
+            if path.to_ascii_lowercase().ends_with(".tsv")
+                || path.to_ascii_lowercase().ends_with(".tab")
+            {
+                b'\t'
+            } else {
+                b','
+            }
+        }
+    };
+    let reader: Box<dyn io::BufRead> = if path == "-" {
+        Box::new(io::BufReader::new(io::stdin()))
+    } else {
+        match std::fs::File::open(path) {
+            Ok(f) => Box::new(io::BufReader::with_capacity(1 << 16, f)),
+            Err(e) => {
+                eprintln!("{path}: {e}");
+                return 2;
+            }
+        }
+    };
+    let mut rd = nsql_io::delim::DelimReader::new(reader, delim);
+    // 설정 기본값(`bulk.*`) 위에 플래그.
+    let st = settings_cached().ok();
+    let int = |k: &str, d: usize| st.map_or(d, |s| s.int(k).max(0) as usize);
+    let batch_rows = o
+        .batch
+        .unwrap_or_else(|| int("bulk.batch_rows", 1000))
+        .max(1);
+    let commit_every = o
+        .commit_every
+        .unwrap_or_else(|| int("bulk.commit_every", 10_000));
+    let mode = o
+        .mode
+        .as_deref()
+        .or_else(|| st.and_then(|s| s.get("bulk.mode")))
+        .and_then(nsql_run::bulk::BulkMode::parse)
+        .unwrap_or_default();
+    let empty_null = o
+        .empty_null
+        .unwrap_or_else(|| st.is_none_or(|s| s.flag("bulk.empty_null")));
+    let opts = nsql_core::BulkOpts {
+        batch_rows,
+        check_constraints: st.is_none_or(|s| s.flag("bulk.check_constraints")),
+        fire_triggers: st.is_some_and(|s| s.flag("bulk.fire_triggers")),
+        append_hint: st.is_some_and(|s| s.flag("bulk.append_hint")),
+    };
+    let mut printer = Printer::new(o, Format::Grid, false);
+    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_max_rows(1)
+        .with_keep_cursor(false)
+        .with_message_sink(stdout_sink(printer.spool.clone()))
+        .with_resolver(resolver());
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
+    // 대상 열·타입 = 빈 조회의 메타(`SELECT * … WHERE 1=0` · 모든 방언).
+    let mut table_cols: Vec<(String, String)> =
+        match runner.query_once(&format!("SELECT * FROM {table} WHERE 1=0"), 1) {
+            Ok((rs, _, _)) => rs
+                .columns
+                .iter()
+                .map(|c| (c.name.clone(), c.type_name.clone()))
+                .collect(),
+            Err(e) => {
+                eprintln!("ERROR: {e}");
+                return 1;
+            }
+        };
+    if table_cols.is_empty() {
+        // 빈 결과에 열 메타가 없는 드라이버(SQL Server) → 카탈로그에서.
+        let dialect = runner.engine.dialect;
+        let (schema, name) = nsql_io::split_table(dialect, table);
+        if let Some(sess) = runner.session.as_deref_mut() {
+            if let Ok(cols) = nsql_catalog::columns(sess, schema.as_deref().unwrap_or(""), &name) {
+                table_cols = cols.into_iter().map(|c| (c.name, c.data_type)).collect();
+            }
+        }
+    }
+    // 원료 열 이름: 헤더(기본) · `--cols` · 없으면 표 열 순서.
+    let src_names: Vec<String> = if let Some(c) = &o.cols {
+        c.split(',').map(|s| s.trim().to_string()).collect()
+    } else if o.no_header {
+        table_cols.iter().map(|(n, _)| n.clone()).collect()
+    } else {
+        match rd.next_record() {
+            Ok(Some(h)) => h.iter().map(|s| s.trim().to_string()).collect(),
+            Ok(None) => {
+                eprintln!("{}", t(Msg::CliImportEmpty));
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("{path}: {e}");
+                return 1;
+            }
+        }
+    };
+    let map: Vec<(String, String)> = o
+        .map
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter_map(|kv| {
+            kv.split_once('=')
+                .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()))
+        })
+        .collect();
+    let mut cols = Vec::new();
+    let mut types = Vec::new();
+    for n in &src_names {
+        let dst = map
+            .iter()
+            .find(|(a, _)| a.eq_ignore_ascii_case(n))
+            .map_or(n.as_str(), |(_, b)| b.as_str());
+        match table_cols.iter().find(|(c, _)| c.eq_ignore_ascii_case(dst)) {
+            Some((c, ty)) => {
+                cols.push(c.clone());
+                types.push(ty.clone());
+            }
+            None => {
+                eprintln!("{}", tf(Msg::CliImportUnknownCol, &[dst, table]));
+                return 2;
+            }
+        }
+    }
+    let p = nsql_run::bulk::BulkParams {
+        table: table.clone(),
+        cols,
+        types,
+        batch_rows,
+        commit_every,
+        mode,
+        empty_null,
+        opts,
+    };
+    let mut next = || -> Result<Option<nsql_run::bulk::SourceRow>, String> {
+        match rd.next_record() {
+            Ok(Some(r)) => Ok(Some((r, rd.line_no))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    };
+    let mut last_print = std::time::Instant::now();
+    let mut progress = |rows: u64, el: std::time::Duration| {
+        if last_print.elapsed().as_millis() >= 500 {
+            last_print = std::time::Instant::now();
+            let rate = rows as f64 / el.as_secs_f64().max(1e-6);
+            eprintln!(
+                "{}",
+                tf(
+                    Msg::CliImportProgress,
+                    &[&rows.to_string(), &format!("{rate:.0}")]
+                )
+            );
+        }
+    };
+    let rep = runner.bulk_load(&mut next, &p, &mut progress);
+    let rate = rep.rows as f64 / rep.elapsed.as_secs_f64().max(1e-6);
+    match &rep.failure {
+        None => {
+            println!(
+                "{}",
+                tf(
+                    Msg::CliImportDone,
+                    &[
+                        &rep.rows.to_string(),
+                        table,
+                        &format!("{:.3}", rep.elapsed.as_secs_f64()),
+                        &format!("{rate:.0}"),
+                        &rep.path,
+                        &rep.batches.to_string(),
+                    ],
+                )
+            );
+        }
+        Some(f) => {
+            eprintln!(
+                "{}",
+                tf(
+                    Msg::CliImportFailed,
+                    &[
+                        &f.row.to_string(),
+                        &f.line.to_string(),
+                        &f.message,
+                        &rep.rows.to_string()
+                    ],
+                )
+            );
+        }
+    }
+    if o.timing {
+        eprintln!("⏱ {}", rep.timeline.summary());
+    }
+    close_spool(&printer.spool);
+    if rep.failure.is_some() {
+        1
+    } else {
+        0
+    }
+}
+
 /// 실행 끝 — 열린 스풀을 닫는다(플러시 · SQL*Plus EXIT과 동일).
 fn close_spool(spool: &SpoolHandle) {
     if let Ok(mut sp) = spool.lock() {
@@ -1699,6 +1939,7 @@ fn main() {
         "run" => cmd_run(&o),
         "shell" => cmd_shell(&o),
         "export" => cmd_export(&o),
+        "import" => cmd_import(&o),
         "explain" => cmd_explain(&o),
         "conn" => conn::cmd_conn(&o),
         "bookmark" | "bm" => bookmark::cmd_bookmark(&o),

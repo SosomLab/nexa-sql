@@ -722,6 +722,7 @@ A/B(접속 상태 · 9초 · 7~9초 표본 · 설정 하나씩):
 | ★ 메타 3층 L2 워머([85 §3](85-metadata-layers.md)) | 백그라운드 메타 세션에 현재 스키마 관계 컬럼 질의 ≤ `meta.warm_columns_max`(200) · **스키마 코멘트 질의 2/스키마**(§212 · 관계 폴더를 읽은 스키마만) | L1 완성 뒤 · `meta.warm_idle_ms`(300 ms) 간격 · 한 번에 하나 · 큐 소진 = 0 | 없음(실패 = 상태 되돌림) · 끄기 = `meta.warm_columns_max=0` · `meta.warm_comments` | `Explorer::arm_warm`/`enqueue_warm_columns`/`warm_step`/`comment_step` |
 | ★ 그리드 편집 적용 뒤 행 단위 재조회([87 §12-4-a](87-grid-data-editing.md) · 09-26) | 활성 세션에 바뀐 행마다 `SELECT … WHERE 키` 1(상한 2행 · 적용 성공 뒤 같은 왕복 묶음) | **사용자가 ✓ 적용할 때만** · `grid.edit_refresh=rows`(기본) · 못 만들면 전체 재조회 1 · `requery` = 전체 1 · `local` = 0 | 없음 | `Cmd::Apply.refetch` · `Runner::query_req_once` |
 | ★ 그리드 편집 숨은 열 주입 재조회([87 §13-7](87-grid-data-editing.md) · 09-26) | 결과 문장 재실행 1(키 열/ROWID 덧붙임) | 편집 가능 결과가 오고 키 열이 빠졌거나 키가 없을 때 **한 번만**(실패·같은 문장 재시도 없음) · `grid.edit_hidden_keys`/`grid.edit_rowid` 끄면 0 | 없음(실패 = 원문 복귀) | `EditRequest::Requery` · `Grid::requery_failed` |
+| ★ 대량 적재 `nsql import`([89 §3-4-a](89-bulk-io-review.md) · 09-26) | 배치마다 왕복 1(`bulk.batch_rows` 1,000 · SQL Server 500) · COPY는 스트림 1 · 커밋 간격마다 COMMIT 1 · 실패 배치 = 단건 재실행 ≤ 배치 행 수 | **사용자가 `nsql import`를 실행할 때만** · 상한 = 파일 행 수 | 없음(실패 = 지목 후 중단) | `Runner::bulk_load` · `BulkSink` |
 
 **검토 체크리스트**(네트워크를 만드는 코드를 추가·변경할 때):
 1. 사용자 행동 없이 시작되는 요청인가? → 주기·백오프 상한과 "창이 열려 있을 때만" 조건이 있는가.

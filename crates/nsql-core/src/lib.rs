@@ -1180,8 +1180,23 @@ pub trait Session {
     fn is_alive(&self) -> bool {
         true
     }
+
+    /// ★ 대량 적재 싱크(docs/89 · T-236): `table`의 `cols`(이름 · `types` = 결과 타입 이름 · 같은 길이)에 행을 넣을 드라이버 최속 경로.
+    /// 기본 = 없음(`Err`) → 러너는 다중 행 `INSERT` 폴백. 싱크는 이 세션을 빌리고 트랜잭션도 스스로 다룬다.
+    fn bulk_begin<'a>(
+        &'a mut self,
+        table: &str,
+        cols: &[String],
+        types: &[String],
+        opts: &bulk::BulkOpts,
+    ) -> Result<Box<dyn bulk::BulkSink + 'a>, DbError> {
+        let _ = (table, cols, types, opts);
+        Err(bulk::unsupported())
+    }
 }
 
+pub mod bulk;
+pub use bulk::{BulkLoad, BulkOpts, BulkSink};
 pub mod caps;
 pub mod hangul;
 pub mod secret;

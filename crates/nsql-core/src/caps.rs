@@ -95,6 +95,8 @@ pub struct Caps {
     /// 저장 코드 컴파일 오류를 카탈로그에서 읽을 수 있는가(`SHOW ERRORS` · Oracle `ALL_ERRORS`).
     pub compile_errors: bool,
     pub ident_fold: IdentFold,
+    /// ★ 대량 적재 경로(docs/89 §3-1 · T-236).
+    pub bulk_load: crate::bulk::BulkLoad,
 }
 
 const ORACLE: Caps = Caps {
@@ -111,6 +113,7 @@ const ORACLE: Caps = Caps {
     ),
     compile_errors: true,
     ident_fold: IdentFold::Upper,
+    bulk_load: crate::bulk::BulkLoad::ArrayDml,
 };
 
 const MSSQL: Caps = Caps {
@@ -127,6 +130,8 @@ const MSSQL: Caps = Caps {
     ),
     compile_errors: false,
     ident_fold: IdentFold::Keep,
+    // sp_executesql 자체 매개변수 둘을 빼야 한다(2100 한도 · 4-DBMS 벌크 시험 09-26: 2100 = 실패 · 2000 ✓).
+    bulk_load: crate::bulk::BulkLoad::MultiRow { max_rows: 1000, max_params: 2000 },
 };
 
 const POSTGRES: Caps = Caps {
@@ -143,6 +148,7 @@ const POSTGRES: Caps = Caps {
     ),
     compile_errors: false,
     ident_fold: IdentFold::Lower,
+    bulk_load: crate::bulk::BulkLoad::CopyIn,
 };
 
 /// `?` 자리 바인드 · 1행 결과로 값을 받는 DBMS의 공통 틀(MySQL · SQLite · ODBC가 여기서 갈라진다).
@@ -158,6 +164,10 @@ const QUESTION: Caps = Caps {
     strict_probe: None,
     compile_errors: false,
     ident_fold: IdentFold::Keep,
+    bulk_load: crate::bulk::BulkLoad::MultiRow {
+        max_rows: 500,
+        max_params: 32000,
+    },
 };
 
 const MYSQL: Caps = Caps {
