@@ -184,6 +184,8 @@ pub(crate) enum EditRequest {
         title: String,
         text: String,
     },
+    /// 셀 편집기 우클릭 메뉴의 붙여넣기 — 호스트가 클립보드를 읽어 `live_paste`.
+    ClipboardPaste,
     Status(String),
 }
 
@@ -1054,6 +1056,8 @@ impl Grid {
             scale,
             replace,
             select_all,
+            // 셀 글자 여백(페인트의 `pad = 6 × 배율`)과 같게 — 편집에 들어가도 글자가 제자리(사용자 09-26).
+            pad: Some((6.0 * scale).round() as i32),
         });
     }
 
@@ -1572,6 +1576,49 @@ impl Grid {
         }
     }
 
+    /// 편집 상자의 메뉴/단축키가 남긴 클립보드 요청 — 복사·잘라내기는 그리드의 복사 통로(`pending_copy`)로 · 붙여넣기는 호스트에.
+    fn live_edit_ctx(&mut self) {
+        let Some(e) = self.edit.as_mut() else { return };
+        let Some(act) = e.live.textbox_mut().take_edit_ctx() else {
+            return;
+        };
+        let mut inv = Invalidations::default();
+        match act {
+            nexa_ctl::EditCtxAction::Copy => {
+                if let Some(t) = e.live.textbox().copy_selection() {
+                    let n = t.chars().count();
+                    self.pending_copy = Some((t, n));
+                }
+            }
+            nexa_ctl::EditCtxAction::Cut => {
+                if let Some(t) = e.live.textbox_mut().cut_selection(&mut inv) {
+                    let n = t.chars().count();
+                    self.pending_copy = Some((t, n));
+                }
+            }
+            nexa_ctl::EditCtxAction::Paste => self.edit_reqs.push(EditRequest::ClipboardPaste),
+            nexa_ctl::EditCtxAction::Custom(_) => {}
+        }
+    }
+
+    /// 편집 상자의 열린 우클릭 메뉴 영역(호스트 라우팅용 · 닫혀 있으면 빈 Rect).
+    pub(crate) fn live_popup_bounds(&self) -> Rect {
+        self.edit
+            .as_ref()
+            .filter(|e| e.live.is_open())
+            .map_or(Rect::default(), |e| e.live.textbox().popup_bounds())
+    }
+
+    /// 호스트가 읽은 클립보드 글을 편집 상자에(메뉴 붙여넣기).
+    pub(crate) fn live_paste(&mut self, text: &str) {
+        if let Some(e) = self.edit.as_mut() {
+            if e.live.is_open() {
+                let mut inv = Invalidations::default();
+                e.live.textbox_mut().paste(text, &mut inv);
+            }
+        }
+    }
+
     /// 살아 있는 편집기가 사건을 먹었는가(열려 있을 때만).
     fn live_event(&mut self, ev: &InputEvent) -> bool {
         let Some(e) = self.edit.as_mut() else {
@@ -1581,6 +1628,12 @@ impl Grid {
             return false;
         }
         let mut inv = Invalidations::default();
+        // ★ 편집 상자의 우클릭 메뉴가 열려 있으면 **모든 사건이 그 상자로**(항목 클릭 = 기능만 · 아래 셀로 새지 않는다 · 사용자 09-26).
+        if e.live.textbox().popup_open() {
+            e.live.textbox_mut().on_event(ev, &mut inv);
+            self.live_edit_ctx();
+            return true;
+        }
         let inside = match *ev {
             InputEvent::MouseDown { x, y, .. }
             | InputEvent::RightDown { x, y }
@@ -1596,6 +1649,7 @@ impl Grid {
             InputEvent::MouseDown { .. } | InputEvent::RightDown { .. } => {
                 if inside {
                     e.live.textbox_mut().on_event(ev, &mut inv);
+                    self.live_edit_ctx();
                     return true;
                 }
                 // 바깥 클릭 = 커밋 시도 · 실패면 클릭을 막는다(상자에 붉은 띠).
@@ -1977,6 +2031,10 @@ impl Grid {
             tb.paint_tooltip(dc, th);
         }
         self.menu.paint(dc, th);
+        // 셀 편집기의 우클릭 메뉴 = 최상위(편집 테두리·이웃 셀 위 · UX 규칙 09-26).
+        if let Some(e) = self.edit.as_ref() {
+            e.live.paint_popup(dc, th);
+        }
     }
 
     fn footer_rect(&self) -> Rect {

@@ -6373,6 +6373,14 @@ impl App {
                 grid::EditRequest::Preview { title, text } => {
                     self.sqlprev_plain = Some((title, text));
                 }
+                grid::EditRequest::ClipboardPaste => {
+                    if let Some(text) = clipboard::read_text() {
+                        self.grid.live_paste(&text);
+                    } else {
+                        self.sess.status = t(Msg::ErrClipboard).into();
+                    }
+                    self.redraw();
+                }
                 grid::EditRequest::NeedKeys { table } => self.grid_edit_keys(table),
                 grid::EditRequest::Apply {
                     table,
@@ -15908,6 +15916,34 @@ impl App {
         }
         // ★ 좌클릭·우클릭 모두 커서 아래 컨트롤에 포커스(마우스 라우팅 규칙 · CLAUDE.md §3) — 우클릭이 빠져 있어
         //   편집기에 포커스가 있으면 그리드 우클릭이 편집기로 가서 메뉴가 안 떴다(사용자 09-16 · 좌클릭 뒤에야 동작).
+        // ★ 편집기 우클릭 메뉴가 열려 있으면 마우스 사건은 **그 편집기에만**(항목 클릭 = 기능만 · 포커스/칸 활성/캐럿 이동으로
+        //   새지 않는다 · 사용자 09-26 "우클릭 후 클릭은 모두 같은 동작"). 바깥 클릭은 상자가 스스로 닫고 통과시킨다.
+        //   팝업은 편집기 영역 밖(그리드·탐색기 위)까지 펼쳐지므로 **팝업 사각형 안**의 사건은 커서 아래 영역이 아니라 편집기가 받는다.
+        {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let popup_at = |b: Rect| !b.is_empty() && b.contains(cur);
+            let ed_popup =
+                self.editors.cur().popup_open() && popup_at(self.editors.cur().popup_bounds());
+            let grid_popup = self.grid.editing_cell() && popup_at(self.grid.live_popup_bounds());
+            if (ed_popup || grid_popup) && (is_mouse || matches!(ev, InputEvent::RightDown { .. }))
+            {
+                if ed_popup {
+                    self.ed_mut().on_event(&ev, &mut inv);
+                    let pending = self.ed_mut().take_edit_ctx();
+                    if let Some(act) = pending {
+                        self.clip_action(act);
+                    }
+                } else {
+                    self.grid.on_event(&ev, self.scale);
+                    self.after_grid_event();
+                }
+                self.redraw();
+                return;
+            }
+        }
         if let InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
             if self.editors.editor_bounds().contains(p) {
