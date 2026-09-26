@@ -12,6 +12,6 @@ SELECT :V_PRG_NM AS prg, :V_CNT AS cnt, :V_MAX AS mx;
 SELECT TOP &Top name FROM sys.objects ORDER BY name
 GO
 
-SELECT :Top from dual;
+SELECT :Top AS top_val;  -- SQL Server에는 dual이 없다(CI integration 09-26 실패 · 09-27)
 
 SHOW VARIABLES

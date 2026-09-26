@@ -20,6 +20,8 @@ mod clipboard_x11;
 
 /// 설정 `clipboard.x11_native`의 사본 — 클립보드 함수는 `&self` 없이 불리므로 전역에 둔다(input.rs `NATURAL`과 같은 꼴).
 static CLIP_NATIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+// 읽는 쪽은 Linux X11 경로(`clipboard.rs`)뿐 — macOS·Windows에서는 dead_code(CI `-D warnings` · 09-27 102차).
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub(crate) fn settings_clip_native() -> bool {
     CLIP_NATIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
