@@ -308,6 +308,19 @@
 
 구현 순서(T-231): 1급-보완(숨은 키 주입) → 2급(Oracle ROWID · SQLite rowid · PG ctid+xmin) → 3급 제외 규칙+사전 검사 → 키 중복 사전 검사·순서 → 동시성 옵션. 판정 = 순수 함수(`editable::classify`) + MC/DC 시험.
 
+### 13-7. 구현(T-231 · 09-26 · journal §227)
+
+| 조각 | 자리 | 내용 |
+|---|---|---|
+| 등급 판정 | `editable.rs`(순수 함수) | `classify(dialect, cols, keys, policy, injected) -> Tier { Constraint · NeedHiddenKeys · NeedPhysical · Physical · AllColumns · None }` — 순서 = PK 전부 → UK 전부 → (미주입·정책) 빠진 키 열 주입 → 주입된 물리 열 → (미주입·정책·방언) 물리 식별자 주입 → 비교 가능한 전 열 → 없음. `comparable(dialect, col)` = D-216 제외 규칙(LOB·LONG·실수·xml/json(jsonb 제외)·공간형·SQL Server text/ntext/`MAX`·> 4000 문자·이진·숨은 열). MC/DC 시험 5(`tier1_*` · `tier1b_*` · `tier2_*` · `tier3_*`) |
+| 문장 주입 | `gridedit_sql::inject` | 원문의 최상위 `FROM`(주석·문자열·인용·괄호 밖 · `find_top_from`) 앞에 `, 숨은 열…`을 덧붙인다 — **원본 열 index 유지**(숨은 열은 뒤). `SELECT *`는 Oracle이 `*` 뒤 열을 허용하지 않아 `<별칭|테이블>.*`. 별칭은 `analyze`가 포착(`EditTarget.alias` · `AS` 처리 · 인용 별칭 = None → 주입 없이 3급). 물리 식별자 = `physical_cols(d)`: Oracle `ROWID` · SQLite `rowid` · PG `ctid`+`xmin`(바인드 = 문자열 → `($n::text)::tid`/`::xid` · 드라이버 디코더 TID/XID 추가) · SQL Server/MySQL 없음(D-218) |
+| 그리드 | `grid.rs` `InjectPlan{orig, sql, hidden}` | `set_keys` → `classify_apply` → 주입 필요 = `EditRequest::Requery{sql}` + 상태 "행 식별 열을 가져오는 중…" · 결과가 계획의 문장으로 돌아오면(`same_stmt`) 판정은 원문으로 · 뒤쪽 n열 = `ColMeta::mark_hidden`(읽기 전용 · `where_expr`/`bind_cast`) · **`col_order`에서 제외 = 화면·복사·텍스트 보기·⌘A·붙여넣기 전부 자동 제외** · 적용 뒤 재조회도 같은 문장이라 계획이 산다 · 다른 문장 = 계획 폐기. 실패(`requery_failed` — 오류·게이트 닫힘 · WITHOUT ROWID 표 등) = 원문 복귀 + `inject_tried`(같은 문장에 다시 시도 안 함) + 주입 없이 재판정(3급/읽기 전용 `NoKey`) · `replace_rows`(엄격 교체) 뒤 편집 상태 재준비 |
+| 생성 | `gridedit_sql::generate` | WHERE = `where_expr`(물리 식별자 · 인용 없음) 또는 인용 열 이름 · 숨은 열은 SET/INSERT에 없다(read_only) · **키 열을 바꾸는 UPDATE 먼저**(D-215 ② `rows.sort_by_key(!key_edit)`) · 동시성(§13-5) `GenInput.concurrency` = `Key`/`KeyOld`(그 행에서 수정한 비교 가능 열의 옛 값)/`AllOld`(비교 가능한 모든 열 · DELETE에도) → 사전 검사문도 같은 WHERE(다른 세션이 바꿨으면 0행 = 쓰기 0) · `KeyKind::Physical` 미리보기 머리 주석 |
+| 설정 | `grid.edit_hidden_keys`(on) · `grid.edit_rowid`(on) · `grid.edit_all_cols`(on) · `grid.edit_concurrency`(key/key_old/all_old · 기본 key) | 끄면 그 등급을 건너뛴다(rowid 끔 = 3급 · all_cols 끔 = 읽기 전용) |
+| 시험 | 단위 = editable 5 · gridedit_sql +4(`analyze_alias` · `inject_hidden_columns` · `generate_physical_where_and_cast` · `key_edit_first_and_concurrency`) · grid +3(`physical_inject_requery_then_hidden_column` · `requery_failed_falls_back_to_all_columns` · `hidden_key_inject_when_pk_missing`) · E2E `scripts/mac-grid-edit-e2e.sh` ⑦ SQLite rowid = 완전 중복 행도 정확히 1행 ⑧ PK 빠진 결과 = 숨은 키 주입 · Oracle ⑨ 숨은 ID ⑩ 중복 행 ROWID(임시 표) | PG는 서버가 없어 단위 시험만(ctid/xmin 캐스트 문장 · 디코더) — Codespaces에서 실증 남음 |
+
+남음: PG 실서버 실증 · 적용 뒤 **행 단위 재조회**(§12-4 rows · PG ctid는 UPDATE마다 바뀌므로 지금은 전체 재조회 `grid.edit_refresh=requery`가 값을 새로 받는다) · 서버 사전 검사 옵션(`SELECT 키 FROM t WHERE 키 IN (새 값들)`) · 지연 제약 맞교환 · 상태줄/헤더 배지 "ROWID"(지금은 미리보기 머리 주석 + 변경 목록 키 라벨).
+
 ---
 
 ## 14. 데이터 보호 불변식(사용자 09-26 핵심 규칙 · 구현 완료)

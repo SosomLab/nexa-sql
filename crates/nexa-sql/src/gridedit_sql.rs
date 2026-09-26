@@ -25,6 +25,8 @@ pub(crate) enum ReadOnly {
     Disabled,
     /// 운영(PROD) 접속 — `tx.prod_*` 규칙.
     Prod,
+    /// 행을 식별할 길이 없다(키 없음 · 물리 식별자 없음 · 비교 가능한 열 없음 · 87 §13).
+    NoKey,
 }
 
 impl ReadOnly {
@@ -40,6 +42,7 @@ impl ReadOnly {
             ReadOnly::Expression => Msg::GeRoExpression,
             ReadOnly::Disabled => Msg::GeRoDisabled,
             ReadOnly::Prod => Msg::GeRoProd,
+            ReadOnly::NoKey => Msg::GeRoNoKey,
         };
         t(m).to_string()
     }
@@ -51,6 +54,8 @@ pub(crate) struct EditTarget {
     pub table: String,
     pub star: bool,
     pub cols: Vec<String>,
+    /// FROM 절의 테이블 별칭(대문자 · 인용 별칭은 None) — 숨은 열 주입의 한정자(87 §13 · T-231).
+    pub alias: Option<String>,
 }
 
 /// 주석·문자열을 공백으로 지운 대문자 사본(구조 판정용 · 길이 유지 안 함).
@@ -168,6 +173,7 @@ pub(crate) fn analyze(sql: &str) -> Result<EditTarget, ReadOnly> {
         return Err(ReadOnly::MultiTable);
     }
     let mut j = 1;
+    let mut alias: Option<String> = None;
     // 별칭(키워드가 아니면).
     if let Some(a) = after.get(j) {
         if !matches!(
@@ -179,6 +185,18 @@ pub(crate) fn analyze(sql: &str) -> Result<EditTarget, ReadOnly> {
             }
             if !is_ident(a) {
                 return Err(ReadOnly::Subquery);
+            }
+            // `AS 별칭`이면 다음 토큰이 별칭.
+            let mut a = *a;
+            if a == "AS" {
+                j += 1;
+                match after.get(j) {
+                    Some(n) if is_ident(n) && !n.contains(',') => a = n,
+                    _ => return Err(ReadOnly::Subquery),
+                }
+            }
+            if !a.contains(['"', '[', '`']) {
+                alias = Some(a.to_string());
             }
             j += 1;
         }
@@ -198,7 +216,190 @@ pub(crate) fn analyze(sql: &str) -> Result<EditTarget, ReadOnly> {
         table: raw_table,
         star,
         cols,
+        alias,
     })
+}
+
+/// 원문에서 최상위(괄호 깊이 0 · 주석·문자열·인용 밖) `FROM` 키워드의 바이트 위치.
+fn find_top_from(sql: &str) -> Option<usize> {
+    let b = sql.as_bytes();
+    let mut i = 0;
+    let mut depth = 0i32;
+    while i < b.len() {
+        let c = b[i];
+        match c {
+            b'-' if b.get(i + 1) == Some(&b'-') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+            b'\'' | b'"' | b'`' => {
+                i += 1;
+                while i < b.len() && b[i] != c {
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            b'[' => {
+                while i < b.len() && b[i] != b']' {
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0
+            && (c == b'F' || c == b'f')
+            && sql[i..].len() >= 4
+            && sql[i..i + 4].eq_ignore_ascii_case("from")
+            && (i == 0 || !is_word_byte(b[i - 1]))
+            && b.get(i + 4).is_none_or(|n| !is_word_byte(*n))
+        {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn is_word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c == b'#'
+}
+
+/// 원문 첫 `SELECT` 키워드의 끝 위치(앞 공백·주석은 건너뜀).
+fn select_end(sql: &str) -> Option<usize> {
+    let b = sql.as_bytes();
+    let mut i = 0;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if b.get(i) == Some(&b'-') && b.get(i + 1) == Some(&b'-') {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if b.get(i) == Some(&b'/') && b.get(i + 1) == Some(&b'*') {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        break;
+    }
+    if sql.len() >= i + 6 && sql[i..i + 6].eq_ignore_ascii_case("select") {
+        Some(i + 6)
+    } else {
+        None
+    }
+}
+
+/// 결과 출처 문장과 우리가 보낸 재조회 문장이 같은가(러너가 끝 `;`·공백을 다듬는다).
+pub(crate) fn same_stmt(a: &str, b: &str) -> bool {
+    let n = |s: &str| s.trim().trim_end_matches(';').trim().to_string();
+    n(a) == n(b)
+}
+
+/// 숨은 열(재조회 주입 · 87 §13-1) — 키 열은 카탈로그 이름(인용) · 물리 식별자는 방언 표현 그대로.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HiddenCol {
+    Key(String),
+    /// `expr` = 문장에 넣는 식(`ROWID` · `ctid`) · `name` = 결과 열 이름 · `cast` = PG처럼 바인드를 문자열로 받아 캐스트해야 할 타입.
+    Physical {
+        expr: &'static str,
+        name: &'static str,
+        cast: Option<&'static str>,
+    },
+}
+
+/// 방언별 물리 행 식별자(87 §13-3 · D-217 PG = ctid+xmin · D-218 SQL Server 없음).
+pub(crate) fn physical_cols(d: Dialect) -> Vec<HiddenCol> {
+    match d {
+        Dialect::Oracle => vec![HiddenCol::Physical {
+            expr: "ROWID",
+            name: "ROWID",
+            cast: None,
+        }],
+        Dialect::Sqlite => vec![HiddenCol::Physical {
+            expr: "rowid",
+            name: "rowid",
+            cast: None,
+        }],
+        Dialect::Postgres => vec![
+            HiddenCol::Physical {
+                expr: "ctid",
+                name: "ctid",
+                cast: Some("tid"),
+            },
+            HiddenCol::Physical {
+                expr: "xmin",
+                name: "xmin",
+                cast: Some("xid"),
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// 단일 테이블 조회 문장 끝에 숨은 열을 덧붙인 재조회 문장(원본 열 index는 그대로 · 숨은 열은 뒤에).
+/// `SELECT *`는 Oracle이 `*` 뒤에 열을 허용하지 않아 `<별칭|테이블>.*`로 바꾼다. 인용 별칭·구조를 못 찾으면 None(→ 3급/읽기 전용).
+pub(crate) fn inject(
+    sql: &str,
+    target: &EditTarget,
+    d: Dialect,
+    hidden: &[HiddenCol],
+) -> Option<String> {
+    if hidden.is_empty() {
+        return None;
+    }
+    let se = select_end(sql)?;
+    let from = find_top_from(sql)?;
+    if from <= se {
+        return None;
+    }
+    let list = sql[se..from].trim();
+    if list.is_empty() {
+        return None;
+    }
+    let qual = target.alias.clone().unwrap_or_else(|| target.table.clone());
+    let list = if list == "*" {
+        format!("{qual}.*")
+    } else {
+        list.to_string()
+    };
+    let exprs: Vec<String> = hidden
+        .iter()
+        .map(|h| match h {
+            HiddenCol::Key(n) => q(d, n),
+            HiddenCol::Physical { expr, .. } => match &target.alias {
+                Some(a) => format!("{a}.{expr}"),
+                None => expr.to_string(),
+            },
+        })
+        .collect();
+    Some(format!(
+        "{} {}, {} {}",
+        &sql[..se],
+        list,
+        exprs.join(", "),
+        &sql[from..]
+    ))
 }
 
 /// 열 하나의 편집 메타(결과 열 이름 + 명세).
@@ -206,10 +407,59 @@ pub(crate) fn analyze(sql: &str) -> Result<EditTarget, ReadOnly> {
 pub(crate) struct ColMeta {
     pub name: String,
     pub spec: CellSpec,
+    /// 드라이버 타입 이름(3급 비교 가능 판정 · `editable::comparable`).
+    pub type_name: String,
+    /// 숨은 열(재조회로 주입 · 화면·복사·SET·INSERT 제외 · WHERE에만).
+    pub hidden: bool,
+    /// WHERE에 쓸 식(물리 식별자 · 인용하지 않음) — None이면 열 이름을 인용.
+    pub where_expr: Option<String>,
+    /// 바인드 캐스트(PG `($1::text)::tid`).
+    pub bind_cast: Option<&'static str>,
+}
+
+impl ColMeta {
+    pub(crate) fn new(
+        name: impl Into<String>,
+        spec: CellSpec,
+        type_name: impl Into<String>,
+    ) -> Self {
+        ColMeta {
+            name: name.into(),
+            spec,
+            type_name: type_name.into(),
+            hidden: false,
+            where_expr: None,
+            bind_cast: None,
+        }
+    }
+
+    /// 주입된 숨은 열로 표시(읽기 전용 · 물리 식별자면 WHERE 식·캐스트).
+    pub(crate) fn mark_hidden(&mut self, h: &HiddenCol) {
+        self.hidden = true;
+        self.spec.read_only = true;
+        if let HiddenCol::Physical { expr, cast, .. } = h {
+            self.where_expr = Some((*expr).to_string());
+            self.bind_cast = *cast;
+        }
+    }
+}
+
+/// 낙관적 동시성(87 §13-5 · `grid.edit_concurrency`): WHERE에 키 외에 무엇을 더 비교하나.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum Concurrency {
+    /// 키만.
+    #[default]
+    Key,
+    /// 수정한 열의 옛 값도(같은 셀을 다른 세션이 바꿨으면 0행).
+    KeyOld,
+    /// 비교 가능한 모든 열의 옛 값.
+    AllOld,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KeyKind {
+    /// DBMS 물리 행 식별자(Oracle ROWID · SQLite rowid · PG ctid+xmin · 숨은 열 · 87 §13-3).
+    Physical,
     /// PK 또는 유니크 제약(모든 키 열이 결과에 있다).
     Constraint,
     /// 키가 없어 **전체 열 = 값**(D-198 · 엄격 1행 검사).
@@ -222,6 +472,8 @@ pub(crate) struct GenInput<'a> {
     pub cols: &'a [ColMeta],
     /// 키 열(열 index).
     pub key_cols: &'a [usize],
+    /// 낙관적 동시성(키 외 비교 열).
+    pub concurrency: Concurrency,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -368,6 +620,10 @@ impl Sink {
         self.preview.push_str(s);
     }
     fn value(&mut self, b: Bound) {
+        self.value_cast(b, None);
+    }
+    /// 값 자리 표시(+ 캐스트: PG 물리 식별자는 문자열로 보내 `($1::text)::tid`).
+    fn value_cast(&mut self, b: Bound, cast: Option<&str>) {
         match b {
             Bound::Expr(e) => self.text(&e),
             Bound::Val(v, ty) => {
@@ -381,9 +637,17 @@ impl Sink {
                     Marker::DollarN => format!("${n}"),
                     Marker::Question => "?".into(),
                 };
-                self.sql.push_str(&ph);
-                self.preview
-                    .push_str(&literal(&v, ty.clone(), self.dialect));
+                let lit = literal(&v, ty.clone(), self.dialect);
+                match cast {
+                    Some(c) => {
+                        self.sql.push_str(&format!("({ph}::text)::{c}"));
+                        self.preview.push_str(&format!("({lit}::text)::{c}"));
+                    }
+                    None => {
+                        self.sql.push_str(&ph);
+                        self.preview.push_str(&lit);
+                    }
+                }
                 self.params.push(BindParam {
                     name,
                     value: v,
@@ -394,12 +658,12 @@ impl Sink {
         }
     }
     /// `col = 값` 또는 `col IS NULL`(키 비교).
-    fn key_eq(&mut self, col: &str, b: Bound) {
+    fn key_eq(&mut self, col: &str, b: Bound, cast: Option<&str>) {
         match b {
             Bound::Val(Value::Null, _) => self.text(&format!("{col} IS NULL")),
             other => {
                 self.text(&format!("{col} = "));
-                self.value(other);
+                self.value_cast(other, cast);
             }
         }
     }
@@ -457,9 +721,33 @@ pub(crate) fn generate(
             return Err(t(Msg::GeBinaryKey).to_string());
         }
     }
-    let key_where = |sink: &mut Sink, row: usize| {
+    // 동시성 비교 열(키 밖 · 비교 가능한 열만 · 87 §13-5): KeyOld = 그 행에서 수정한 열 · AllOld = 전부.
+    let extra_cols = |row: usize| -> Vec<usize> {
+        match inp.concurrency {
+            Concurrency::Key => Vec::new(),
+            Concurrency::KeyOld => {
+                let mut v: Vec<usize> = cs
+                    .edits()
+                    .filter(|((r, c), _)| *r == row && *c < ncols)
+                    .map(|((_, c), _)| *c)
+                    .filter(|c| {
+                        !inp.key_cols.contains(c) && crate::editable::comparable(d, &inp.cols[*c])
+                    })
+                    .collect();
+                v.sort_unstable();
+                v.dedup();
+                v
+            }
+            Concurrency::AllOld => (0..ncols)
+                .filter(|c| {
+                    !inp.key_cols.contains(c) && crate::editable::comparable(d, &inp.cols[*c])
+                })
+                .collect(),
+        }
+    };
+    let key_where = |sink: &mut Sink, row: usize, extra: &[usize]| {
         sink.text(" WHERE ");
-        for (i, &k) in inp.key_cols.iter().enumerate() {
+        for (i, &k) in inp.key_cols.iter().chain(extra.iter()).enumerate() {
             if i > 0 {
                 sink.text(" AND ");
             }
@@ -477,7 +765,8 @@ pub(crate) fn generate(
                     Bound::Val(v.clone(), ty)
                 }
             };
-            sink.key_eq(&q(d, &c.name), b);
+            let lhs = c.where_expr.clone().unwrap_or_else(|| q(d, &c.name));
+            sink.key_eq(&lhs, b, c.bind_cast);
         }
     };
     // 보고용 라벨: `UPDATE #행 (키=값, …)`.
@@ -490,10 +779,10 @@ pub(crate) fn generate(
             .join(", ")
     };
     // ★ 사전 검사문 = 같은 WHERE의 COUNT(*)(대상 행 수 = 1 · 87 §14).
-    let guard_of = |row: usize| -> ExecRequest {
+    let guard_of = |row: usize, extra: &[usize]| -> ExecRequest {
         let mut g = Sink::new(d);
         g.text(&format!("SELECT COUNT(*) FROM {}", inp.table));
-        key_where(&mut g, row);
+        key_where(&mut g, row, extra);
         ExecRequest {
             sql: g.sql,
             params: g.params,
@@ -559,8 +848,13 @@ pub(crate) fn generate(
     // DELETE
     for row in cs.deleted_rows() {
         let mut s = Sink::new(d);
+        let extra = if inp.concurrency == Concurrency::AllOld {
+            extra_cols(row)
+        } else {
+            Vec::new()
+        };
         s.text(&format!("DELETE FROM {}", inp.table));
-        key_where(&mut s, row);
+        key_where(&mut s, row, &extra);
         let label = tf(
             Msg::GeGuardLabel,
             &["DELETE", &(row + 1).to_string(), &key_text(row)],
@@ -568,13 +862,18 @@ pub(crate) fn generate(
         out.push(s.finish(
             StmtKind::Delete,
             RowRef::Existing(row),
-            Some(guard_of(row)),
+            Some(guard_of(row, &extra)),
             label,
         ));
     }
-    // UPDATE(행별 · 수정된 열만).
+    // UPDATE(행별 · 수정된 열만) — ★ 키 열을 바꾸는 행을 먼저(D-215 ② · 옮겨 간 자리에 새 값이 들어오는 경우를 통과).
     let mut rows: Vec<usize> = cs.edits().map(|((r, _), _)| *r).collect();
     rows.dedup();
+    let key_edit = |row: usize| -> bool {
+        cs.edits()
+            .any(|((r, c), _)| *r == row && inp.key_cols.contains(c))
+    };
+    rows.sort_by_key(|&r| !key_edit(r));
     for row in rows {
         if cs.is_deleted(RowRef::Existing(row)) {
             continue;
@@ -600,7 +899,8 @@ pub(crate) fn generate(
         if first {
             continue;
         }
-        key_where(&mut s, row);
+        let extra = extra_cols(row);
+        key_where(&mut s, row, &extra);
         let label = tf(
             Msg::GeGuardLabel,
             &["UPDATE", &(row + 1).to_string(), &key_text(row)],
@@ -608,7 +908,7 @@ pub(crate) fn generate(
         out.push(s.finish(
             StmtKind::Update,
             RowRef::Existing(row),
-            Some(guard_of(row)),
+            Some(guard_of(row, &extra)),
             label,
         ));
     }
@@ -664,6 +964,8 @@ pub(crate) fn preview_text(stmts: &[EditStmt], table: &str, key_kind: KeyKind) -
     );
     if key_kind == KeyKind::AllColumns {
         out.push_str(&format!("-- {}\n", t(Msg::GePreviewAllKey)));
+    } else if key_kind == KeyKind::Physical {
+        out.push_str(&format!("-- {}\n", t(Msg::GePreviewRowid)));
     }
     for s in stmts {
         out.push_str(&s.preview);
@@ -717,22 +1019,18 @@ mod tests {
 
     fn cols() -> Vec<ColMeta> {
         vec![
-            ColMeta {
-                name: "ID".into(),
-                spec: CellSpec::new("ID", CellKind::Number).not_null(),
-            },
-            ColMeta {
-                name: "NAME".into(),
-                spec: CellSpec::text("NAME").max_len(10),
-            },
-            ColMeta {
-                name: "DT".into(),
-                spec: CellSpec::new("DT", CellKind::DateTime),
-            },
-            ColMeta {
-                name: "MEMO".into(),
-                spec: CellSpec::text("MEMO").default_expr("'x'"),
-            },
+            ColMeta::new(
+                "ID",
+                CellSpec::new("ID", CellKind::Number).not_null(),
+                "NUMBER",
+            ),
+            ColMeta::new("NAME", CellSpec::text("NAME").max_len(10), "VARCHAR2(10)"),
+            ColMeta::new("DT", CellSpec::new("DT", CellKind::DateTime), "DATE"),
+            ColMeta::new(
+                "MEMO",
+                CellSpec::text("MEMO").default_expr("'x'"),
+                "VARCHAR2(100)",
+            ),
         ]
     }
 
@@ -776,6 +1074,7 @@ mod tests {
             table: "EMP",
             cols: &cols,
             key_cols: &[0],
+            concurrency: Concurrency::Key,
         };
         let st = generate(&inp, &cs, &orig).expect("generate");
         assert_eq!(st.len(), 3);
@@ -821,6 +1120,7 @@ mod tests {
             table: "t",
             cols: &cols,
             key_cols: &[0],
+            concurrency: Concurrency::Key,
         };
         let mut cs = ChangeSet::new(4);
         // 행 0(ID=1)의 키를 2로 → 행 1(ID=2)과 충돌(행 1도 손댔을 때 비교 대상에 든다).
@@ -845,6 +1145,228 @@ mod tests {
         assert!(generate(&inp, &cs3, &orig).is_ok());
     }
 
+    /// 별칭 포착(주입 한정자) · 인용 별칭은 None.
+    #[test]
+    fn analyze_alias() {
+        assert_eq!(
+            analyze("select a, b from t x where x.a = 1")
+                .expect("ok")
+                .alias,
+            Some("X".into())
+        );
+        assert_eq!(analyze("select * from t").expect("ok").alias, None);
+        assert_eq!(
+            analyze("select * from t as q").expect("ok").alias,
+            Some("Q".into())
+        );
+        assert_eq!(analyze("select * from t \"Q\"").expect("ok").alias, None);
+    }
+
+    /// 숨은 열 주입(87 §13 · T-231): 원본 열 뒤에 덧붙임 · `*`는 Oracle 규칙으로 `<별칭|테이블>.*` · 주석·문자열 안 FROM 무시 · PG = ctid+xmin.
+    #[test]
+    fn inject_hidden_columns() {
+        let rid = physical_cols(Dialect::Oracle);
+        let tg = analyze("select a, b from t").expect("ok");
+        assert_eq!(
+            inject(
+                "select a, b from t",
+                &tg,
+                Dialect::Oracle,
+                &[HiddenCol::Key("ID".into())]
+            )
+            .as_deref(),
+            Some("select a, b, \"ID\" from t")
+        );
+        let tg = analyze("SELECT * FROM emp e WHERE x = 1").expect("ok");
+        assert_eq!(
+            inject(
+                "SELECT * FROM emp e WHERE x = 1",
+                &tg,
+                Dialect::Oracle,
+                &rid
+            )
+            .as_deref(),
+            Some("SELECT E.*, E.ROWID FROM emp e WHERE x = 1")
+        );
+        let tg = analyze("select * from s.t").expect("ok");
+        assert_eq!(
+            inject("select * from s.t", &tg, Dialect::Oracle, &rid).as_deref(),
+            Some("select s.t.*, ROWID from s.t")
+        );
+        let src =
+            "/* c */ select a from t -- from x\n where n = 'x from y' and b in (select 1 from u)";
+        let tg = analyze(src).expect("ok");
+        assert_eq!(
+            inject(src, &tg, Dialect::Oracle, &rid).as_deref(),
+            Some("/* c */ select a, ROWID from t -- from x\n where n = 'x from y' and b in (select 1 from u)")
+        );
+        let tg = analyze("select a from t").expect("ok");
+        assert_eq!(
+            inject(
+                "select a from t",
+                &tg,
+                Dialect::Postgres,
+                &physical_cols(Dialect::Postgres)
+            )
+            .as_deref(),
+            Some("select a, ctid, xmin from t")
+        );
+        assert_eq!(
+            inject(
+                "select a from t",
+                &tg,
+                Dialect::Sqlite,
+                &physical_cols(Dialect::Sqlite)
+            )
+            .as_deref(),
+            Some("select a, rowid from t")
+        );
+        assert!(physical_cols(Dialect::Mssql).is_empty(), "D-218");
+        assert!(inject("select a from t", &tg, Dialect::Oracle, &[]).is_none());
+        assert!(same_stmt(
+            "select a, rowid from t;\n",
+            " select a, rowid from t"
+        ));
+    }
+
+    /// 물리 식별자 WHERE = 인용 없는 식 · PG는 문자열 바인드 + 캐스트 · 숨은 열은 SET/INSERT에 없다 · 사전 검사도 같은 WHERE.
+    #[test]
+    fn generate_physical_where_and_cast() {
+        let mut cols = cols();
+        let mut rid = ColMeta::new("ROWID", CellSpec::text("ROWID"), "ROWID");
+        rid.mark_hidden(&physical_cols(Dialect::Oracle)[0]);
+        cols.push(rid);
+        let orig5 = |r: usize, c: usize| -> Value {
+            if c == 4 {
+                Value::Str("AAAB".into())
+            } else {
+                orig(r, c)
+            }
+        };
+        let mut cs = ChangeSet::new(5);
+        cs.set_cell(RowRef::Existing(0), 1, Some("kim".into()), None);
+        cs.insert_row(
+            None,
+            vec![
+                Some("9".into()),
+                Some("n".into()),
+                None,
+                None,
+                Some("ZZ".into()),
+            ],
+        );
+        let inp = GenInput {
+            dialect: Dialect::Oracle,
+            table: "EMP",
+            cols: &cols,
+            key_cols: &[4],
+            concurrency: Concurrency::Key,
+        };
+        let st = generate(&inp, &cs, &orig5).expect("generate");
+        assert_eq!(
+            st[0].req.sql,
+            "UPDATE EMP SET \"NAME\" = :P1 WHERE ROWID = :P2"
+        );
+        assert_eq!(st[0].req.params[1].value, Value::Str("AAAB".into()));
+        assert_eq!(
+            st[0].guard.as_ref().map(|g| g.sql.as_str()),
+            Some("SELECT COUNT(*) FROM EMP WHERE ROWID = :P1")
+        );
+        assert!(st[0].label.contains("ROWID=AAAB"));
+        assert!(
+            !st[1].req.sql.contains("ROWID"),
+            "숨은 열은 INSERT에 없다: {}",
+            st[1].req.sql
+        );
+        // PG: ctid + xmin · 캐스트.
+        let mut pcols = self::tests::cols();
+        for h in physical_cols(Dialect::Postgres) {
+            let HiddenCol::Physical { name, .. } = &h else {
+                unreachable!()
+            };
+            let mut c = ColMeta::new(*name, CellSpec::text(*name), *name);
+            c.mark_hidden(&h);
+            pcols.push(c);
+        }
+        let porig = |r: usize, c: usize| -> Value {
+            match c {
+                4 => Value::Str("(0,1)".into()),
+                5 => Value::Int(777),
+                _ => orig(r, c),
+            }
+        };
+        let mut cs = ChangeSet::new(6);
+        cs.set_cell(RowRef::Existing(0), 1, Some("kim".into()), None);
+        let inp = GenInput {
+            dialect: Dialect::Postgres,
+            table: "emp",
+            cols: &pcols,
+            key_cols: &[4, 5],
+            concurrency: Concurrency::Key,
+        };
+        let st = generate(&inp, &cs, &porig).expect("generate");
+        assert_eq!(
+            st[0].req.sql,
+            "UPDATE emp SET \"NAME\" = $1 WHERE ctid = ($2::text)::tid AND xmin = ($3::text)::xid"
+        );
+        assert_eq!(
+            st[0].preview,
+            "UPDATE emp SET \"NAME\" = 'kim' WHERE ctid = ('(0,1)'::text)::tid AND xmin = (777::text)::xid"
+        );
+        let pv = preview_text(&st, "emp", KeyKind::Physical);
+        assert!(pv.contains(&t(Msg::GePreviewRowid).to_string()));
+    }
+
+    /// D-215 ②: 키 열을 바꾸는 UPDATE가 먼저 · 동시성 = 수정 열/전 열의 옛 값을 WHERE에.
+    #[test]
+    fn key_edit_first_and_concurrency() {
+        let cols = cols();
+        let mut cs = ChangeSet::new(4);
+        cs.set_cell(RowRef::Existing(0), 1, Some("a".into()), None); // 행 0 = 이름만
+        cs.set_cell(RowRef::Existing(1), 0, Some("7".into()), None); // 행 1 = 키 변경
+        let inp = GenInput {
+            dialect: Dialect::Oracle,
+            table: "EMP",
+            cols: &cols,
+            key_cols: &[0],
+            concurrency: Concurrency::Key,
+        };
+        let st = generate(&inp, &cs, &orig).expect("generate");
+        assert_eq!(st[0].row, RowRef::Existing(1), "키 변경 행 먼저");
+        assert_eq!(st[1].row, RowRef::Existing(0));
+        // KeyOld: 수정한 열(NAME)의 옛 값 추가 · 키 열 자체는 중복하지 않음.
+        let inp = GenInput {
+            concurrency: Concurrency::KeyOld,
+            ..inp
+        };
+        let st = generate(&inp, &cs, &orig).expect("generate");
+        assert_eq!(
+            st[1].req.sql,
+            "UPDATE EMP SET \"NAME\" = :P1 WHERE \"ID\" = :P2 AND \"NAME\" = :P3"
+        );
+        assert_eq!(st[1].req.params[2].value, Value::Str("n0".into()));
+        assert_eq!(
+            st[0].req.sql,
+            "UPDATE EMP SET \"ID\" = :P1 WHERE \"ID\" = :P2"
+        );
+        assert_eq!(
+            st[1].guard.as_ref().map(|g| g.sql.as_str()),
+            Some("SELECT COUNT(*) FROM EMP WHERE \"ID\" = :P1 AND \"NAME\" = :P2")
+        );
+        // AllOld: 비교 가능한 모든 열(NULL = IS NULL) · DELETE에도.
+        let inp = GenInput {
+            concurrency: Concurrency::AllOld,
+            ..inp
+        };
+        let mut cs2 = ChangeSet::new(4);
+        cs2.toggle_delete(RowRef::Existing(0));
+        let st = generate(&inp, &cs2, &orig).expect("generate");
+        assert_eq!(
+            st[0].req.sql,
+            "DELETE FROM EMP WHERE \"ID\" = :P1 AND \"NAME\" = :P2 AND \"DT\" = :P3 AND \"MEMO\" IS NULL"
+        );
+    }
+
     #[test]
     fn generate_markers_and_null_key() {
         let cols = cols();
@@ -861,6 +1383,7 @@ mod tests {
                 table: "t",
                 cols: &cols,
                 key_cols: &key_all,
+                concurrency: Concurrency::Key,
             };
             let st = generate(&inp, &cs, &orig).expect("generate");
             assert_eq!(st[0].req.sql, want, "{d:?}");

@@ -2,7 +2,10 @@
 //! 호버 두껍게 · 자동 숨김 — nexa-ctl `ScrollBars` 공용) · 컬럼 폭은 앞 200행 실측 · 메시지 모드.
 //! `nexa-grid` 크레이트(U-3 · nexa-ui 21)가 오면 교체한다. 고정폭 층에서 그려진다.
 
-use crate::gridedit_sql::{self, ColMeta, EditTarget, GenInput, KeyKind, ReadOnly};
+use crate::editable::{self, Policy, Tier};
+use crate::gridedit_sql::{
+    self, ColMeta, Concurrency, EditTarget, GenInput, HiddenCol, KeyKind, ReadOnly,
+};
 use crate::toolicons;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -155,6 +158,14 @@ pub(crate) struct EditCfg {
     pub on: bool,
     pub empty_as_null: bool,
     pub paste_max: usize,
+    /// 키 열이 결과에 없으면 숨은 키 열을 주입해 재조회(D-214 · `grid.edit_hidden_keys`).
+    pub hidden_keys: bool,
+    /// 키가 없으면 물리 행 식별자(ROWID 등)를 주입해 재조회(`grid.edit_rowid`).
+    pub rowid: bool,
+    /// 마지막 폴백 = 비교 가능한 전 열(D-216 · `grid.edit_all_cols`).
+    pub all_cols: bool,
+    /// 낙관적 동시성(`grid.edit_concurrency`).
+    pub concurrency: Concurrency,
 }
 
 impl Default for EditCfg {
@@ -163,6 +174,10 @@ impl Default for EditCfg {
             on: true,
             empty_as_null: true,
             paste_max: 10_000,
+            hidden_keys: true,
+            rowid: true,
+            all_cols: true,
+            concurrency: Concurrency::Key,
         }
     }
 }
@@ -186,7 +201,21 @@ pub(crate) enum EditRequest {
     },
     /// 셀 편집기 우클릭 메뉴의 붙여넣기 — 호스트가 클립보드를 읽어 `live_paste`.
     ClipboardPaste,
+    /// ★ 숨은 열 주입 재조회(87 §13 · T-231) — 호스트는 출처 문장을 이것으로 바꿔 다시 실행한다(실패 = `requery_failed`).
+    Requery {
+        sql: String,
+    },
     Status(String),
+}
+
+/// 주입 재조회 계획 — 결과가 이 문장으로 돌아오면 뒤쪽 `hidden.len()` 열은 숨은 열.
+#[derive(Clone, Debug)]
+struct InjectPlan {
+    /// 사용자의 원래 문장(편집 판정·복귀용).
+    orig: String,
+    /// 주입한 문장(= 새 출처 문장).
+    sql: String,
+    hidden: Vec<HiddenCol>,
 }
 
 /// 편집 세션 상태(결과 하나에 하나 · 결과가 바뀌면 버린다).
@@ -197,6 +226,10 @@ struct GridEdit {
     key_cols: Vec<usize>,
     key_kind: KeyKind,
     keys_ready: bool,
+    /// 카탈로그 키(재조회 실패 뒤 다시 판정할 때).
+    keys: Option<nsql_core::KeyInfo>,
+    /// 뒤쪽 숨은 열 수(화면·복사에서 제외 · `col_order`에 없다).
+    hidden: usize,
     cs: ChangeSet,
     live: LiveEditor,
     /// 편집 중인 셀의 표시 좌표(행·열 위치) — 페인트가 상자 자리를 맞춘다.
@@ -371,6 +404,10 @@ pub(crate) struct Grid {
     /// 편집 불가 이유(결과가 있을 때 · 없으면 편집 가능 또는 결과 없음).
     read_only: Option<ReadOnly>,
     edit_reqs: Vec<EditRequest>,
+    /// 숨은 열 주입 재조회 계획(출처 문장이 이 계획의 문장이면 살아 있다).
+    inject: Option<InjectPlan>,
+    /// 주입을 시도했다가 실패한 원문(같은 문장에 다시 시도하지 않는다).
+    inject_tried: Option<String>,
     /// 운영(PROD) 접속 — 편집 불가.
     prod: bool,
     /// 마지막 on_event/paint 배율(편집 상자 배율).
@@ -497,6 +534,8 @@ impl Default for Grid {
             edit: None,
             read_only: None,
             edit_reqs: Vec::new(),
+            inject: None,
+            inject_tried: None,
             prod: false,
             live_scale: 1.0,
         };
@@ -745,6 +784,22 @@ impl Grid {
     fn edit_prepare(&mut self, stmt: &str, is_query: bool) {
         self.edit = None;
         self.read_only = None;
+        // 주입 계획: 결과가 우리 재조회 문장이면 판정은 원문으로 · 뒤쪽 열은 숨은 열. 다른 문장이 오면 계획·시도 기록을 버린다.
+        let plan = match self.inject.as_ref() {
+            Some(p) if gridedit_sql::same_stmt(&p.sql, stmt) => Some(p.clone()),
+            _ => {
+                self.inject = None;
+                if self
+                    .inject_tried
+                    .as_deref()
+                    .is_some_and(|o| !gridedit_sql::same_stmt(o, stmt))
+                {
+                    self.inject_tried = None;
+                }
+                None
+            }
+        };
+        let analyze_src = plan.as_ref().map_or(stmt, |p| p.orig.as_str());
         let Some(rs) = self.rs.as_ref() else { return };
         if !self.edit_cfg.on {
             self.read_only = Some(ReadOnly::Disabled);
@@ -753,9 +808,9 @@ impl Grid {
         } else if !is_query {
             self.read_only = Some(ReadOnly::NotQuery);
         } else {
-            match gridedit_sql::analyze(stmt) {
+            match gridedit_sql::analyze(analyze_src) {
                 Ok(target) => {
-                    let cols: Vec<ColMeta> = rs
+                    let mut cols: Vec<ColMeta> = rs
                         .columns()
                         .iter()
                         .map(|c| {
@@ -765,12 +820,22 @@ impl Grid {
                             }
                             let mut spec = CellSpec::new(c.name.clone(), kind);
                             spec.max_len = CellSpec::max_len_from_type_name(&c.type_name);
-                            ColMeta {
-                                name: c.name.clone(),
-                                spec,
-                            }
+                            ColMeta::new(c.name.clone(), spec, c.type_name.clone())
                         })
                         .collect();
+                    // 숨은 열 = 뒤쪽 n개(주입 순서 그대로) — 화면 열 순서에서 뺀다.
+                    let mut hidden = 0;
+                    if let Some(p) = plan.as_ref() {
+                        let n = p.hidden.len();
+                        if cols.len() > n {
+                            let first = cols.len() - n;
+                            for (i, h) in p.hidden.iter().enumerate() {
+                                cols[first + i].mark_hidden(h);
+                            }
+                            hidden = n;
+                            self.col_order.retain(|&c| c < first);
+                        }
+                    }
                     let mut live = LiveEditor::new();
                     live.empty_as_null = self.edit_cfg.empty_as_null;
                     let table = target.table.clone();
@@ -781,6 +846,8 @@ impl Grid {
                         key_cols: Vec::new(),
                         key_kind: KeyKind::AllColumns,
                         keys_ready: false,
+                        keys: None,
+                        hidden,
                         live,
                         live_at: None,
                         last_click: None,
@@ -812,45 +879,100 @@ impl Grid {
     /// 호스트 주입: 테이블 키(`Cmd::Keys` 답 · 41 규칙) → 결과에 **모든 키 열이 있는** PK → 첫 유니크 → 전체 열(D-198).
     pub(crate) fn set_keys(&mut self, info: Option<&nsql_core::KeyInfo>) {
         let Some(e) = self.edit.as_mut() else { return };
-        let names: Vec<String> = e.cols.iter().map(|c| c.name.to_ascii_uppercase()).collect();
-        let find = |cols: &[String]| -> Option<Vec<usize>> {
-            cols.iter()
-                .map(|k| names.iter().position(|n| n.eq_ignore_ascii_case(k)))
-                .collect()
+        e.keys = info.cloned();
+        let injected = self.inject.is_some() || self.inject_tried.is_some();
+        self.classify_apply(injected);
+    }
+
+    /// ★ 행 식별 등급 판정 → 행동(87 §13 · T-231): 1급/2급/3급 = 키 열 확정 · 주입 필요 = 재조회 요청 · 불가 = 읽기 전용.
+    fn classify_apply(&mut self, injected: bool) {
+        let Some(e) = self.edit.as_mut() else { return };
+        let policy = Policy {
+            hidden_keys: self.edit_cfg.hidden_keys,
+            rowid: self.edit_cfg.rowid,
+            all_cols: self.edit_cfg.all_cols,
         };
-        let mut chosen: Option<Vec<usize>> = None;
-        if let Some(i) = info {
-            if !i.pk.is_empty() {
-                chosen = find(&i.pk);
-            }
-            if chosen.is_none() {
-                for (_, cols) in &i.unique {
-                    if let Some(v) = find(cols) {
-                        chosen = Some(v);
-                        break;
-                    }
-                }
-            }
-        }
-        match chosen {
-            Some(v) if !v.is_empty() => {
+        let tier = editable::classify(self.dialect, &e.cols, e.keys.as_ref(), &policy, injected);
+        match tier {
+            Tier::Constraint(v) => {
                 e.key_cols = v;
                 e.key_kind = KeyKind::Constraint;
+                e.keys_ready = true;
             }
-            _ => {
-                e.key_cols = e
-                    .cols
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| c.spec.kind != CellKind::Binary)
-                    .map(|(i, _)| i)
-                    .collect();
+            Tier::Physical(v) => {
+                e.key_cols = v;
+                e.key_kind = KeyKind::Physical;
+                e.keys_ready = true;
+            }
+            Tier::AllColumns(v) => {
+                e.key_cols = v;
                 e.key_kind = KeyKind::AllColumns;
+                e.keys_ready = true;
+            }
+            Tier::NeedHiddenKeys(names) => {
+                let hidden: Vec<HiddenCol> = names.into_iter().map(HiddenCol::Key).collect();
+                self.begin_inject(hidden);
+                return;
+            }
+            Tier::NeedPhysical => {
+                let hidden = gridedit_sql::physical_cols(self.dialect);
+                self.begin_inject(hidden);
+                return;
+            }
+            Tier::None => {
+                self.edit = None;
+                self.read_only = Some(ReadOnly::NoKey);
+                let s = tf(Msg::StGeReadOnly, &[&ReadOnly::NoKey.text()]);
+                self.status(s);
             }
         }
         // 키 열은 읽기 전용이 아니다(값을 고치면 WHERE는 원본 값으로) · 이진 열은 인라인 편집 없음.
-        e.keys_ready = true;
         self.sync_edit_tools();
+    }
+
+    /// 숨은 열 주입 재조회 시작 — 문장을 만들 수 없으면(인용 별칭 · 구조 못 찾음) 주입 없이 다시 판정(3급/읽기 전용).
+    fn begin_inject(&mut self, hidden: Vec<HiddenCol>) {
+        let Some(e) = self.edit.as_ref() else { return };
+        let orig = self
+            .inject
+            .as_ref()
+            .map_or_else(|| self.source_sql.clone(), |p| p.orig.clone());
+        match gridedit_sql::inject(&orig, &e.target, self.dialect, &hidden) {
+            Some(sql) => {
+                self.inject = Some(InjectPlan {
+                    orig,
+                    sql: sql.clone(),
+                    hidden,
+                });
+                self.edit_reqs.push(EditRequest::Requery { sql });
+                let s = t(Msg::StGeRequery).to_string();
+                self.status(s);
+                self.sync_edit_tools();
+            }
+            None => {
+                self.inject_tried = Some(orig);
+                self.classify_apply(true);
+            }
+        }
+    }
+
+    /// 호스트: 주입 재조회가 실패했다(오류 · 게이트 닫힘) → 원문으로 되돌리고 주입 없이 다시 판정.
+    pub(crate) fn requery_failed(&mut self) {
+        let Some(p) = self.inject.take() else { return };
+        self.source_table = guess_table(&p.orig);
+        self.source_sql = p.orig.clone();
+        self.inject_tried = Some(p.orig);
+        let s = t(Msg::StGeRequeryFailed).to_string();
+        self.status(s);
+        if self.edit.as_ref().is_some_and(|e| !e.keys_ready) {
+            self.classify_apply(true);
+        }
+    }
+
+    /// 주입 재조회가 나가 있는가(시험용).
+    #[cfg(test)]
+    pub(crate) fn inject_pending(&self) -> bool {
+        self.inject.is_some() && self.edit.as_ref().is_none_or(|e| !e.keys_ready)
     }
 
     /// 호스트 주입: 메타(카탈로그)에서 온 열 명세 — 이름으로 맞춘다(길이 · NOT NULL · 기본값 · 종류).
@@ -860,6 +982,9 @@ impl Grid {
             if let Some(sp) = specs.iter().find(|s| s.name.eq_ignore_ascii_case(&c.name)) {
                 let mut sp = sp.clone();
                 sp.name = c.name.clone();
+                if c.hidden {
+                    sp.read_only = true; // 숨은 키 열은 카탈로그 명세가 와도 편집·INSERT 대상이 아니다
+                }
                 c.spec = sp;
             }
         }
@@ -1264,6 +1389,7 @@ impl Grid {
             table: &e.target.table,
             cols: &e.cols,
             key_cols: &e.key_cols,
+            concurrency: self.edit_cfg.concurrency,
         };
         let orig = |r: usize, c: usize| -> Value {
             self.rs
@@ -1308,10 +1434,10 @@ impl Grid {
             .filter_map(|&k| e.cols.get(k))
             .map(|c| c.name.clone())
             .collect();
-        let key_label = if e.key_kind == KeyKind::Constraint {
-            key_names.join(", ")
-        } else {
+        let key_label = if e.key_kind == KeyKind::AllColumns {
             "*".to_string()
+        } else {
+            key_names.join(", ")
         };
         let mut out = format!(
             "-- {}\n",
@@ -1643,11 +1769,13 @@ impl Grid {
         ));
         if let Some(e) = self.edit.as_ref() {
             out.push_str(&format!(
-                "table={} key={:?} kind={:?} ready={} cols={}\n",
+                "table={} key={:?} kind={:?} ready={} hidden={} inject={} cols={}\n",
                 e.target.table,
                 e.key_cols,
                 e.key_kind,
                 e.keys_ready,
+                e.hidden,
+                self.inject.is_some(),
                 e.cols
                     .iter()
                     .map(|c| format!("{}:{:?}", c.name, c.spec.kind))
@@ -1905,6 +2033,10 @@ impl Grid {
             self.col_w.clear();
             self.sort_keys.clear();
         }
+        // 편집 상태를 다시 준비(숨은 열·키 판정은 `edit_prepare`가 계획에서 복원 · 키는 호스트 캐시에서 즉시).
+        let src = self.source_sql.clone();
+        let countable = self.countable;
+        self.edit_prepare(&src, countable);
         if !self.sort_keys.is_empty() {
             self.apply_sort();
         }
@@ -5409,6 +5541,10 @@ mod edit_key_path_tests {
         g.header_h = 21;
         g.gutter_w = 30;
         g.col_w = vec![100, 100];
+        g.set_edit_cfg(EditCfg {
+            rowid: false,
+            ..EditCfg::default()
+        });
         g.set_result_origin("select C0, C1 from T", true);
         g.set_keys(None);
         g
@@ -5420,6 +5556,200 @@ mod edit_key_path_tests {
             shift: false,
             primary: false,
         }
+    }
+
+    fn rs_cols(names: &[&str], row: Vec<Value>) -> ResultSet {
+        ResultSet {
+            columns: names
+                .iter()
+                .map(|n| Column {
+                    name: (*n).into(),
+                    type_name: "VARCHAR2(10)".into(),
+                })
+                .collect(),
+            rows: vec![row],
+        }
+    }
+
+    fn requery_of(g: &mut Grid) -> Option<String> {
+        g.take_edit_requests().into_iter().find_map(|r| match r {
+            EditRequest::Requery { sql } => Some(sql),
+            _ => None,
+        })
+    }
+
+    /// ★ 2급(87 §13 · T-231): 키 없음 → ROWID 주입 재조회 요청 → 재조회 결과의 뒤쪽 열 = 숨은 열(화면 제외) → 키 = ROWID → WHERE ROWID.
+    #[test]
+    fn physical_inject_requery_then_hidden_column() {
+        let mut g = Grid::default(); // Oracle
+        g.set_result(rs_cols(
+            &["C0", "C1"],
+            vec![Value::Null, Value::Str("x".into())],
+        ));
+        g.set_result_origin("select C0, C1 from T", true);
+        g.set_keys(None);
+        assert_eq!(
+            requery_of(&mut g).as_deref(),
+            Some("select C0, C1, ROWID from T")
+        );
+        assert!(g.inject_pending());
+        assert!(g.dump_edit().contains("ready=false"));
+        assert!(!g.edit.as_ref().is_some_and(|e| e.keys_ready));
+        // 호스트가 출처를 바꿔 재실행 → 결과 도착(3열).
+        g.set_source_sql("select C0, C1, ROWID from T");
+        g.set_result(rs_cols(
+            &["C0", "C1", "ROWID"],
+            vec![
+                Value::Null,
+                Value::Str("x".into()),
+                Value::Str("AAAB".into()),
+            ],
+        ));
+        g.set_result_origin("select C0, C1, ROWID from T;", true);
+        assert!(g
+            .take_edit_requests()
+            .iter()
+            .any(|r| matches!(r, EditRequest::NeedKeys { .. })));
+        g.set_keys(None);
+        let d = g.dump_edit();
+        assert!(
+            d.contains("kind=Physical") && d.contains("key=[2]") && d.contains("hidden=1"),
+            "{d}"
+        );
+        assert_eq!(g.col_order, vec![0, 1], "숨은 열은 화면 열 순서에 없다");
+        assert!(!g.inject_pending());
+        assert!(g.set_cell_for_test(0, 1, "y"));
+        let (st, _, _) = g.generated().expect("generate");
+        assert_eq!(st[0].req.sql, "UPDATE T SET \"C1\" = :P1 WHERE ROWID = :P2");
+        assert_eq!(st[0].req.params[1].value, Value::Str("AAAB".into()));
+        // 재조회(적용 뒤 requery)로 같은 문장이 다시 와도 계획은 살아 있다.
+        g.set_result(rs_cols(
+            &["C0", "C1", "ROWID"],
+            vec![
+                Value::Null,
+                Value::Str("y".into()),
+                Value::Str("AAAB".into()),
+            ],
+        ));
+        g.set_result_origin("select C0, C1, ROWID from T", true);
+        g.set_keys(None);
+        assert!(g.dump_edit().contains("kind=Physical"));
+        // 다른 문장이 오면 계획을 버린다.
+        g.set_result(rs_cols(&["Z"], vec![Value::Null]));
+        g.set_result_origin("select Z from T2", true);
+        assert!(g.inject.is_none());
+    }
+
+    /// 재조회 실패(WITHOUT ROWID 표 · 게이트 닫힘) → 원문 복귀 + 주입 없이 3급 · 같은 문장에 다시 주입하지 않는다.
+    #[test]
+    fn requery_failed_falls_back_to_all_columns() {
+        let mut g = Grid::default();
+        g.set_dialect(Dialect::Sqlite);
+        g.set_result(rs_cols(
+            &["A", "B"],
+            vec![Value::Str("k".into()), Value::Str("v".into())],
+        ));
+        g.set_result_origin("select a, b from t", true);
+        g.set_keys(None);
+        assert_eq!(
+            requery_of(&mut g).as_deref(),
+            Some("select a, b, rowid from t")
+        );
+        g.set_source_sql("select a, b, rowid from t");
+        g.requery_failed();
+        assert_eq!(g.source_sql(), "select a, b from t", "원문 복귀");
+        let d = g.dump_edit();
+        assert!(
+            d.contains("kind=AllColumns") && d.contains("ready=true") && d.contains("key=[0, 1]"),
+            "{d}"
+        );
+        assert!(g
+            .take_edit_requests()
+            .iter()
+            .all(|r| !matches!(r, EditRequest::Requery { .. })));
+        // 같은 문장을 다시 실행해 결과가 와도 주입을 다시 시도하지 않는다.
+        g.set_result(rs_cols(
+            &["A", "B"],
+            vec![Value::Str("k".into()), Value::Str("v".into())],
+        ));
+        g.set_result_origin("select a, b from t", true);
+        g.set_keys(None);
+        assert!(requery_of(&mut g).is_none());
+        assert!(g.dump_edit().contains("kind=AllColumns"));
+        // 정책 끔(rowid=false · all_cols=false) = 읽기 전용 NoKey.
+        g.set_edit_cfg(EditCfg {
+            rowid: false,
+            all_cols: false,
+            ..EditCfg::default()
+        });
+        g.set_result(rs_cols(
+            &["A", "B"],
+            vec![Value::Str("k".into()), Value::Str("v".into())],
+        ));
+        g.set_result_origin("select a, b from t2", true);
+        g.set_keys(None);
+        assert!(g.edit.is_none());
+        assert_eq!(g.read_only, Some(ReadOnly::NoKey));
+    }
+
+    /// 1급-보완(D-214): PK는 있는데 결과에 없다 → 키 열 주입 → 재조회 결과에서 1급 · 숨은 키 열은 명세가 와도 읽기 전용.
+    #[test]
+    fn hidden_key_inject_when_pk_missing() {
+        let mut g = Grid::default();
+        g.set_result(rs_cols(
+            &["NAME", "SAL"],
+            vec![Value::Str("kim".into()), Value::Int(1)],
+        ));
+        g.set_result_origin("select name, sal from emp", true);
+        let keys = nsql_core::KeyInfo {
+            pk: vec!["ID".into()],
+            unique: vec![],
+        };
+        g.set_keys(Some(&keys));
+        assert_eq!(
+            requery_of(&mut g).as_deref(),
+            Some("select name, sal, \"ID\" from emp")
+        );
+        g.set_source_sql("select name, sal, \"ID\" from emp");
+        g.set_result(rs_cols(
+            &["NAME", "SAL", "ID"],
+            vec![Value::Str("kim".into()), Value::Int(1), Value::Int(5)],
+        ));
+        g.set_result_origin("select name, sal, \"ID\" from emp", true);
+        g.set_col_specs(&[CellSpec::new("ID", CellKind::Number).not_null()]);
+        g.set_keys(Some(&keys));
+        let d = g.dump_edit();
+        assert!(
+            d.contains("kind=Constraint") && d.contains("key=[2]") && d.contains("hidden=1"),
+            "{d}"
+        );
+        assert!(g
+            .edit
+            .as_ref()
+            .is_some_and(|e| e.cols[2].hidden && e.cols[2].spec.read_only));
+        assert_eq!(g.col_order, vec![0, 1]);
+        assert!(g.set_cell_for_test(0, 0, "lee"));
+        let (st, _, _) = g.generated().expect("generate");
+        assert_eq!(
+            st[0].req.sql,
+            "UPDATE emp SET \"NAME\" = :P1 WHERE \"ID\" = :P2"
+        );
+        assert_eq!(st[0].req.params[1].value, Value::Int(5));
+        // 정책 끔이면 주입 없이 3급.
+        let mut g2 = Grid::default();
+        g2.set_edit_cfg(EditCfg {
+            hidden_keys: false,
+            rowid: false,
+            ..EditCfg::default()
+        });
+        g2.set_result(rs_cols(
+            &["NAME", "SAL"],
+            vec![Value::Str("kim".into()), Value::Int(1)],
+        ));
+        g2.set_result_origin("select name, sal from emp", true);
+        g2.set_keys(Some(&keys));
+        assert!(requery_of(&mut g2).is_none());
+        assert!(g2.dump_edit().contains("kind=AllColumns"));
     }
 
     /// 실제 키 경로(사용자 09-26 "값 넣고 Enter/다른 셀 클릭에도 반영 안 됨"): 타이핑 진입 → 글자 → Enter = 변경 집합에 값.

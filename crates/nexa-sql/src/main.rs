@@ -20,6 +20,7 @@ mod conn_win;
 mod connect;
 mod copybtn;
 mod dbms_icons;
+mod editable;
 mod editors;
 mod enc;
 mod eol;
@@ -6401,6 +6402,16 @@ impl App {
                     self.redraw();
                 }
                 grid::EditRequest::NeedKeys { table } => self.grid_edit_keys(table),
+                grid::EditRequest::Requery { sql } => {
+                    // ★ 숨은 열 주입 재조회(87 §13 · T-231): 출처 문장을 바꿔 같은 탭에서 다시 실행 — 게이트가 닫혀 있으면 주입 없이 판정.
+                    if self.gate_open() {
+                        self.log_win.push(LogEntry::new(LogKind::Info, sql.clone()));
+                        self.grid.set_source_sql(&sql);
+                        self.refresh_result();
+                    } else {
+                        self.grid.requery_failed();
+                    }
+                }
                 grid::EditRequest::Apply {
                     table,
                     stmts,
@@ -6514,6 +6525,14 @@ impl App {
             on: self.settings.flag("grid.edit"),
             empty_as_null: self.settings.get("grid.edit_empty") != Some("empty"),
             paste_max: self.settings.int("grid.paste_max_rows").max(1) as usize,
+            hidden_keys: self.settings.flag("grid.edit_hidden_keys"),
+            rowid: self.settings.flag("grid.edit_rowid"),
+            all_cols: self.settings.flag("grid.edit_all_cols"),
+            concurrency: match self.settings.get("grid.edit_concurrency") {
+                Some("key_old") => gridedit_sql::Concurrency::KeyOld,
+                Some("all_old") => gridedit_sql::Concurrency::AllOld,
+                _ => gridedit_sql::Concurrency::Key,
+            },
         };
         self.all_grids().for_each(|g| g.set_edit_cfg(cfg.clone()));
     }
@@ -13414,6 +13433,10 @@ impl App {
                     self.sess.status = format!("{} · ⏱ {}", self.sess.status, timeline.summary());
                 }
                 RunEvent::Error { index, line, error } => {
+                    // 주입 재조회가 실패했으면 그리드를 원문으로 되돌리고 주입 없이 다시 판정(87 §13 · WITHOUT ROWID 표 등).
+                    if let Some(g) = self.run_grid() {
+                        g.requery_failed();
+                    }
                     self.txlog.select_session(self.sess.id).error(
                         index,
                         error.code,

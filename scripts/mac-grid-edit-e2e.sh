@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # mac-grid-edit-e2e.sh — 그리드 데이터 편집 E2E 자동 시험(docs/87 §10 · 키 주입 0 · 기동 명령만 · 사용자 09-26 "기능 동작은 테스트 자동화").
 #   SQLite(격리 홈 Local 프로필)로 ① 수정 3 + 복제 + NULL → 적용 → 재조회 값 ② 삭제 + NULL + 되돌리기/다시 하기 → 적용
-#   ③ 키 없는 중복 행 편집 = 사전 검사 차단(값 불변) ④ 유일 행 편집 = 적용 · NSQL_E2E_ORACLE=<접속 문자열>이면 Oracle 임시 표 NSQLT_GE/NSQLT_GE2
-#   (PK 표 · 키 없는 표 · DATE 열)로 ⑤⑥ 저장 실증 뒤 DROP(실서버 임시 객체 · 61 §2-4 ⑤).
+#   ③ 키 없는 중복 행 편집(rowid 끔) = 사전 검사 차단(값 불변) ④ 유일 행 편집 = 적용 ⑦ rowid 켬 = 중복 행도 정확히 1행 수정(87 §13 2급)
+#   ⑧ PK 열이 빠진 결과 = 숨은 키 열 주입 재조회 뒤 적용(1급-보완) · NSQL_E2E_ORACLE=<접속 문자열>이면 Oracle 임시 표 NSQLT_GE/NSQLT_GE2
+#   (PK 표 · 키 없는 표 · DATE 열)로 ⑤⑥⑨⑩ 저장 실증 뒤 DROP(실서버 임시 객체 · 61 §2-4 ⑤).
 #   결과 = 표준 출력 PASS/FAIL 줄 + 종료 코드. 앱은 비활성(NSQL_NO_ACTIVATE)으로 띄우고 마지막 명령 + 5 s 여유(App Nap · 61 §4).
 # 사용: scripts/mac-grid-edit-e2e.sh [-e target/debug/nexa-sql] [-n target/debug/nsql] [-H <home>]
 set -u
@@ -56,7 +57,8 @@ d3=$(cat "$O/s3.txt" 2>/dev/null); d4=$(cat "$O/s4.txt" 2>/dev/null); v=$(cli Lo
 expect_grep "적용 전 = 삭제 1 · 수정 1" "$d3" "deleted 1"
 expect_grep "적용 뒤 = 행 3" "$d4" "rows=3 src=3"
 expect_absent "서버: id 9 삭제됨" "$v" "^ *9 "
-echo "=== SQLite ③ 키 없는 중복 행 편집 = 사전 검사 차단(값 불변) ④ 유일 행 = 적용"
+echo "=== SQLite ③ 키 없는 중복 행 편집(rowid 끔 = 3급) = 사전 검사 차단(값 불변) ④ 유일 행 = 적용"
+NSQL_HOME="$H" "$NSQL" config set grid.edit_rowid off >/dev/null
 run_gui 17 Local "open:$D/seldup.sql,@after:2500:run.all,@after:5500:grid.edit.set:0;1;CHANGED,@after:6500:grid.edit.cmd:row.save,@after:11500:grid.dump:$O/s5.txt"
 d5=$(cat "$O/s5.txt" 2>/dev/null); v=$(cli Local "$D/seldup.sql")
 expect_grep "중복 행 = 변경 집합 유지(적용 안 됨)" "$d5" "dirty=true"
@@ -65,6 +67,25 @@ run_gui 17 Local "open:$D/seldup.sql,@after:2500:run.all,@after:5500:grid.edit.s
 d6=$(cat "$O/s6.txt" 2>/dev/null); v=$(cli Local "$D/seldup.sql")
 expect_grep "유일 행 = 적용됨" "$d6" "dirty=false"
 expect_grep "서버: z OK" "$v" "OK"
+expect_grep "3급 = 전 열 비교" "$d6" "kind=AllColumns"
+echo "=== SQLite ⑦ rowid 켬(2급) = 중복 행 편집이 정확히 1행에만 · 숨은 열은 화면에 없음"
+NSQL_HOME="$H" "$NSQL" config set grid.edit_rowid on >/dev/null
+run_gui 18 Local "open:$D/seldup.sql,@after:2500:run.all,@after:6500:grid.dump:$O/s7a.txt,@after:7000:grid.edit.set:0;1;ONE,@after:7500:grid.edit.cmd:row.save,@after:12500:grid.dump:$O/s7.txt"
+d7a=$(cat "$O/s7a.txt" 2>/dev/null); d7=$(cat "$O/s7.txt" 2>/dev/null); v=$(cli Local "$D/seldup.sql")
+expect_grep "재조회 뒤 = rowid 숨은 열 1 · 물리 식별" "$d7a" "kind=Physical"
+expect_grep "숨은 열 = 뒤쪽 1개" "$d7a" "hidden=1"
+expect_grep "덤프 행 = 화면 열 2개만(숨은 rowid 제외)" "$d7a" "^0|[A-Za-z]*|k|v1$"
+expect_grep "적용 뒤 깨끗" "$d7" "dirty=false"
+expect_grep "서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"
+expect_grep "서버: 나머지 중복 행 v1 유지" "$(echo "$v" | grep -c v1)" "^1$"
+echo "=== SQLite ⑧ PK 열이 빠진 결과 = 숨은 키 열 주입(1급-보완) → 적용"
+printf 'SELECT name, salary FROM ge_emp ORDER BY name;\n' > "$D/selnk.sql"
+run_gui 18 Local "open:$D/selnk.sql,@after:2500:run.all,@after:6500:grid.dump:$O/s8a.txt,@after:7000:grid.edit.set:0;1;777,@after:7500:grid.edit.cmd:row.save,@after:12500:grid.dump:$O/s8.txt"
+d8a=$(cat "$O/s8a.txt" 2>/dev/null); d8=$(cat "$O/s8.txt" 2>/dev/null); v=$(cli Local "$D/sel.sql")
+expect_grep "재조회 뒤 = 숨은 키 열 · 1급" "$d8a" "kind=Constraint"
+expect_grep "숨은 열 1 · 키 = 숨은 열" "$d8a" "hidden=1"
+expect_grep "적용 뒤 깨끗" "$d8" "dirty=false"
+expect_grep "서버: salary 777" "$v" "777"
 # ── Oracle(선택)
 if [ -n "${NSQL_E2E_ORACLE:-}" ]; then
   ORA="$NSQL_E2E_ORACLE"
@@ -85,11 +106,22 @@ SQL
   echo "=== Oracle ⑤ 키 없는 표(DATE 포함 전 열 WHERE · 바인드 이름 대문자) 저장"
   run_gui 22 "$ORA" "open:$D/ora_sel2.sql,@after:4000:run.all,@after:8000:grid.edit.set:0;2;M1,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/o1.txt"
   d=$(cat "$O/o1.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel2.sql")
-  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: M1" "$v" "M1"
+  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: M1" "$v" "M1"; expect_grep "키 없는 표 = ROWID(2급)" "$d" "kind=Physical"
   echo "=== Oracle ⑥ PK 표 문자·DATE 값 수정 저장"
   run_gui 22 "$ORA" "open:$D/ora_sel.sql,@after:4000:run.all,@after:8000:grid.edit.set:1;1;LEE2,@after:8500:grid.edit.set:1;2;2026-09-26 10:11:12,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/o2.txt"
   d=$(cat "$O/o2.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel.sql")
   expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: LEE2" "$v" "LEE2"; expect_grep "서버: DATE 2026-09-26 10:11:12" "$v" "2026-09-26 10:11:12"
+  echo "=== Oracle ⑨ PK 열이 빠진 결과 = 숨은 키 열(ID) 주입 → 적용"
+  printf 'SELECT NAME, MEMO FROM NSQLT_GE ORDER BY NAME;\n' > "$D/ora_selnk.sql"
+  run_gui 24 "$ORA" "open:$D/ora_selnk.sql,@after:4000:run.all,@after:10000:grid.dump:$O/o3a.txt,@after:10500:grid.edit.set:0;1;HK,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/o3.txt"
+  da=$(cat "$O/o3a.txt" 2>/dev/null); d=$(cat "$O/o3.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel.sql")
+  expect_grep "숨은 키 열 · 1급" "$da" "kind=Constraint"; expect_grep "숨은 열 1" "$da" "hidden=1"
+  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: MEMO HK" "$v" "HK"
+  echo "=== Oracle ⑩ 키 없는 표의 완전 중복 행 = ROWID로 정확히 1행"
+  printf "INSERT INTO NSQLT_GE2 SELECT * FROM NSQLT_GE2 WHERE A = 'z';\nCOMMIT;\n" > "$D/ora_dup.sql"; cli ORA "$D/ora_dup.sql" >/dev/null 2>&1
+  run_gui 24 "$ORA" "open:$D/ora_sel2.sql,@after:4000:run.all,@after:10000:grid.edit.set:1;2;ONE,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/o4.txt"
+  d=$(cat "$O/o4.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel2.sql")
+  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"; expect_grep "서버: 원래 x 1행 남음" "$(echo "$v" | grep -c ' x')" "^1$"
   cli ORA "$D/ora_drop.sql" >/dev/null 2>&1
 fi
 echo "=== 결과: PASS $pass · FAIL $fail (출력 $O)"

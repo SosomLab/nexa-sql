@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/grid-edit-row-identity | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-231 행 식별 등급(`editable::classify` · 숨은 키 열/ROWID·rowid·ctid 주입 재조회 · 3급 제외 규칙 · 키 변경 UPDATE 먼저 · 동시성 옵션 · E2E ⑦~⑩ · 87 §13-7 · §227) |
 | fix/oracle-bind-names | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 🔧 Oracle ORA-01008(바인드 이름 대문자 P1…) · ★ 그리드 편집 E2E 자동 시험 scripts/mac-grid-edit-e2e.sh 18/18(§226) |
 | feat/data-protection | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ 데이터 보호 불변식(사전 검사 COUNT=1 · 영향 1행 강제 · 자동 롤백/수동 세이브포인트 · 상세 원인 · 키 중복 사전 검사 · §225) |
 | feat/click-policy | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ 연속 클릭 정책 설정 3키(editor.dblclick/triple_click/dblclick_underscore · nexa-ui 79차 · §224) |

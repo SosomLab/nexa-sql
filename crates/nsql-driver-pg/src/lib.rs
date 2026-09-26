@@ -231,6 +231,16 @@ impl<'a> FromSql<'a> for Any {
             Type::TIMESTAMPTZ => Value::Str(decode_timestamp(raw, true)),
             Type::TIME => Value::Str(decode_time(raw)),
             Type::UUID => Value::Str(decode_uuid(raw)),
+            // 물리 행 식별자(그리드 편집 87 §13-3): ctid = (블록,오프셋) · xmin = 트랜잭션 id — 문자열로 돌려주고 바인드는
+            //   `($1::text)::tid`로 받는다.
+            Type::TID if raw.len() == 6 => Value::Str(format!(
+                "({},{})",
+                u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]),
+                u16::from_be_bytes([raw[4], raw[5]])
+            )),
+            Type::XID if raw.len() == 4 => Value::Int(i64::from(u32::from_be_bytes([
+                raw[0], raw[1], raw[2], raw[3],
+            ]))),
             _ => Value::Str(format!(
                 "{}:{}",
                 ty.name(),

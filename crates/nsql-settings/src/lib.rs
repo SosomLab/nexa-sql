@@ -263,6 +263,11 @@ const CLICK_TRIPLE_OPTS: &[(&str, Msg)] = &[
     ("none", Msg::OptClickNone),
 ];
 const GE_EMPTY_OPTS: &[(&str, Msg)] = &[("null", Msg::OptGeNull), ("empty", Msg::OptGeEmpty)];
+const GE_CONC_OPTS: &[(&str, Msg)] = &[
+    ("key", Msg::OptGeConcKey),
+    ("key_old", Msg::OptGeConcKeyOld),
+    ("all_old", Msg::OptGeConcAllOld),
+];
 const GE_REFRESH_OPTS: &[(&str, Msg)] =
     &[("requery", Msg::OptGeRequery), ("local", Msg::OptGeLocal)];
 const REFETCH_OPTS: &[(&str, Msg)] = &[
@@ -1088,6 +1093,38 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescGridEditRefresh,
         kind: SettingKind::Choice(GE_REFRESH_OPTS),
         default: "requery",
+    },
+    Entry {
+        key: "grid.edit_hidden_keys",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditHiddenKeys,
+        desc: Msg::DescGridEditHiddenKeys,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.edit_rowid",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditRowid,
+        desc: Msg::DescGridEditRowid,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.edit_all_cols",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditAllCols,
+        desc: Msg::DescGridEditAllCols,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "grid.edit_concurrency",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridEditConcurrency,
+        desc: Msg::DescGridEditConcurrency,
+        kind: SettingKind::Choice(GE_CONC_OPTS),
+        default: "key",
     },
     Entry {
         key: "grid.paste_max_rows",
