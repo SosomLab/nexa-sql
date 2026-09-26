@@ -181,7 +181,7 @@
 | E-4 | 워커 `Cmd::Apply{key, stmts, strict}` → `Runner::apply_changes`(자동 커밋 = 시작문→전부→커밋 · 실패 롤백 · 수동 = 열어 둠 + 커밋/롤백 표식) → `ConnOutcome::Applied{rep}` → 성공 = 재조회(`grid.edit_refresh`) · 실패 = 토스트 + 행 표시 · 키 = `Cmd::Keys` 캐시(41 D-66 · 결과에 모든 키 열이 있는 PK → 유니크 → 전체 열 D-198) · 세션 바쁨 = 재요청 루프 · 열 명세 = `MetaStore` 컬럼(길이·NOT NULL·기본값 · Oracle DATE = 시각) | `main.rs` `worker.rs` `nsql-run` |
 | E-5 | 값 보기 = 읽기 전용 글 창(`SqlPrevWin::open_plain` · 텍스트 · 이진 = 16진수 덤프 `hex_dump`) · SQL 미리보기 = 같은 창 | `sqlprev_win.rs` |
 | 설정 | `grid.edit`(on) · `grid.edit_empty`(null/empty) · `grid.edit_strict`(on) · `grid.edit_refresh`(requery/local) · `grid.paste_max_rows`(10,000) | nsql-settings |
-| 자체 시험 | 기동 명령 `grid.edit.set:<행>;<열>;<글>` · `grid.edit.cmd:<id>`(`row.dup/del/save/cancel` · `grid.edit.*`) · `grid.select:<행>;<열>` · `grid.dump:<파일>`(행 상태·덧그림·키·명세) — SQLite 격리 E2E(§217): 수정 3·복제·NULL·미리보기·적용·재조회·삭제·되돌리기/다시 하기·적용 전부 서버 값 일치 | `main.rs` |
+| 자체 시험 | 기동 명령 `grid.edit.set:<행>;<열>;<글>` · `grid.edit.cmd:<id>` · `grid.select:<행>;<열>` · `grid.dump:<파일>` — ★ **자동 E2E `scripts/mac-grid-edit-e2e.sh`**(§226 · SQLite 4 + Oracle 임시 표 2 · 18 검사 · 사전 검사 차단 포함) | `main.rs` · `scripts/` |
 
 ### 10-1. 실기 결함 수정(§221)
 

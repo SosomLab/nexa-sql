@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/oracle-bind-names | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 🔧 Oracle ORA-01008(바인드 이름 대문자 P1…) · ★ 그리드 편집 E2E 자동 시험 scripts/mac-grid-edit-e2e.sh 18/18(§226) |
 | feat/data-protection | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ 데이터 보호 불변식(사전 검사 COUNT=1 · 영향 1행 강제 · 자동 롤백/수동 세이브포인트 · 상세 원인 · 키 중복 사전 검사 · §225) |
 | feat/click-policy | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ 연속 클릭 정책 설정 3키(editor.dblclick/triple_click/dblclick_underscore · nexa-ui 79차 · §224) |
 | fix/grid-edit-commit | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 🔧 그리드 편집 실기 결함(커밋 셀 선독 · ⌘X/C/V/A 편집 한정 · 변경 목록 · 행 띠 · 새 객체 컬럼 재요청 · §221) |

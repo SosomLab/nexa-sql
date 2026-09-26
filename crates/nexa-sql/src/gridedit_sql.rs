@@ -372,7 +372,9 @@ impl Sink {
             Bound::Expr(e) => self.text(&e),
             Bound::Val(v, ty) => {
                 let n = self.params.len() + 1;
-                let name = format!("p{n}");
+                // ★ 이름은 대문자(`P1`): Oracle 드라이버가 SQL의 자리 표시 이름을 대문자로 모아 `p.name`과 비교한다 — 소문자면
+                //   "없는 이름"으로 건너뛰어 바인드 0개 → ORA-01008(사용자 09-26 실서버 로그).
+                let name = format!("P{n}");
                 let ph = match self.marker {
                     Marker::Named => format!(":{name}"),
                     Marker::AtName => format!("@{name}"),
@@ -778,11 +780,11 @@ mod tests {
         let st = generate(&inp, &cs, &orig).expect("generate");
         assert_eq!(st.len(), 3);
         assert_eq!(st[0].kind, StmtKind::Delete);
-        assert_eq!(st[0].req.sql, "DELETE FROM EMP WHERE \"ID\" = :p1");
+        assert_eq!(st[0].req.sql, "DELETE FROM EMP WHERE \"ID\" = :P1");
         assert_eq!(st[0].preview, "DELETE FROM EMP WHERE \"ID\" = 3");
         assert_eq!(
             st[0].guard.as_ref().map(|g| g.sql.as_str()),
-            Some("SELECT COUNT(*) FROM EMP WHERE \"ID\" = :p1"),
+            Some("SELECT COUNT(*) FROM EMP WHERE \"ID\" = :P1"),
             "사전 검사문 = 같은 WHERE의 COUNT"
         );
         assert_eq!(st[0].guard.as_ref().map(|g| g.params.len()), Some(1));
@@ -790,7 +792,7 @@ mod tests {
         assert_eq!(st[1].kind, StmtKind::Update);
         assert_eq!(
             st[1].req.sql,
-            "UPDATE EMP SET \"NAME\" = :p1, \"DT\" = :p2 WHERE \"ID\" = :p3"
+            "UPDATE EMP SET \"NAME\" = :P1, \"DT\" = :P2 WHERE \"ID\" = :P3"
         );
         assert_eq!(st[1].req.params.len(), 3);
         assert_eq!(st[1].req.params[1].ty, VarType::Date);
@@ -803,7 +805,7 @@ mod tests {
         // MEMO = NULL + 기본값 있음 → 열 생략 · DT = now → SYSDATE 식(바인드 아님).
         assert_eq!(
             st[2].req.sql,
-            "INSERT INTO EMP (\"ID\", \"NAME\", \"DT\") VALUES (:p1, :p2, SYSDATE)"
+            "INSERT INTO EMP (\"ID\", \"NAME\", \"DT\") VALUES (:P1, :P2, SYSDATE)"
         );
         assert_eq!(st[2].req.params.len(), 2);
         assert_eq!(st[2].req.params[0].value, Value::Int(9));
@@ -851,7 +853,7 @@ mod tests {
         let key_all = [0usize, 1, 2, 3];
         for (d, want) in [
             (Dialect::Postgres, "UPDATE t SET \"MEMO\" = $1 WHERE \"ID\" = $2 AND \"NAME\" = $3 AND \"DT\" = $4 AND \"MEMO\" IS NULL"),
-            (Dialect::Mssql, "UPDATE t SET [MEMO] = @p1 WHERE [ID] = @p2 AND [NAME] = @p3 AND [DT] = @p4 AND [MEMO] IS NULL"),
+            (Dialect::Mssql, "UPDATE t SET [MEMO] = @P1 WHERE [ID] = @P2 AND [NAME] = @P3 AND [DT] = @P4 AND [MEMO] IS NULL"),
             (Dialect::Sqlite, "UPDATE t SET \"MEMO\" = ? WHERE \"ID\" = ? AND \"NAME\" = ? AND \"DT\" = ? AND \"MEMO\" IS NULL"),
         ] {
             let inp = GenInput {
