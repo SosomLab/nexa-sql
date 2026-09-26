@@ -1193,6 +1193,18 @@ pub trait Session {
         let _ = (table, cols, types, opts);
         Err(bulk::unsupported())
     }
+
+    /// ★ 서버 형식화 추출(docs/89 §1-2 · B-3): `sql`의 결과를 서버가 CSV(`csv` = 헤더 포함) 또는 탭 텍스트로 만들어 `out`에
+    /// 그대로 흘린다(PG `COPY … TO STDOUT`). 돌려주는 값 = 행 수. 기본 = 없음(`Err`) → 호출자는 일반 페치+렌더로.
+    fn copy_out(
+        &mut self,
+        sql: &str,
+        csv: bool,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64, DbError> {
+        let _ = (sql, csv, out);
+        Err(bulk::unsupported())
+    }
 }
 
 pub mod bulk;

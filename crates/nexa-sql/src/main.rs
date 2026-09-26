@@ -43,6 +43,7 @@ mod gridedit_sql;
 mod icon;
 mod imehint;
 mod imestate;
+mod import_win;
 mod input;
 mod input_win;
 mod intel;
@@ -216,6 +217,12 @@ struct App {
     )>,
     /// ★ 읽기 전용 글 창 요청(그리드 편집 SQL 미리보기 · 셀 값 보기 · docs/87): (제목, 본문).
     sqlprev_plain: Option<(String, String)>,
+    /// ★ Import 창(89 §3-3 · T-236 B-3): 대상 (표 표기 · 파일 · 탐색기 칸의 서버) · 열 차례 · 취소 깃발 · 요청 번호.
+    import_win: import_win::ImportWin,
+    import_ctx: Option<(String, PathBuf, Option<ConnectSpec>)>,
+    import_pending: bool,
+    import_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    import_key: u64,
     /// 값 보기 창 열기 요청(그리드 → 다음 틱에 값 모드로 · 87 §5).
     sqlprev_value: Option<grid::ValueReq>,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
@@ -1157,6 +1164,7 @@ impl App {
             self.txlog_win.window(),
             self.input_win.window(),
             self.sqlprev_win.window(),
+            self.import_win.window(),
             self.vars_win.window(),
         ]
         .into_iter()
@@ -1475,6 +1483,18 @@ impl App {
                     }
                     if let Some(kind) = self.sess.view_wait.take() {
                         self.finish_view_sql(kind, info.as_ref());
+                    }
+                }
+                ConnOutcome::ImportProgress { key, rows, secs } => {
+                    if key == self.import_key {
+                        self.import_win.set_progress(rows, secs);
+                    }
+                }
+                ConnOutcome::ImportDone { key, result } => {
+                    self.sess.aux_done();
+                    if key == self.import_key {
+                        self.import_cancel = None;
+                        self.import_done(result);
                     }
                 }
                 ConnOutcome::Applied {
@@ -2170,6 +2190,7 @@ impl App {
             .window()
             .or_else(|| self.conn_win.window())
             .or_else(|| self.sqlprev_win.window())
+            .or_else(|| self.import_win.window())
     }
 
     fn modal_open(&self) -> bool {
@@ -2177,6 +2198,7 @@ impl App {
             || self.file_win.is_open()
             || self.input_win.is_modal()
             || self.sqlprev_win.is_open()
+            || self.import_win.is_open()
     }
 
     /// 모달 창(접속 · 파일 · 비밀번호 입력) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
@@ -2202,6 +2224,7 @@ impl App {
                 self.file_win.window(),
                 self.input_win.window(),
                 self.sqlprev_win.window(),
+                self.import_win.window(),
             ]
             .into_iter()
             .flatten()
@@ -5248,6 +5271,118 @@ impl App {
     }
 
     /// 실행 계열 진입점의 공통 문지기 — 막혔으면 상태줄에 알리고 false.
+    /// ★ Import 창 "시작"(89 §3-3): 탐색기 칸의 서버 = 활성 세션의 서버여야 한다 · gate · `Cmd::Import`(aux · 끝 = `ImportDone`).
+    fn import_start(&mut self, mut spec: nsql_run::bulk::ImportSpec) {
+        let Some((table, path, server)) = self.import_ctx.clone() else {
+            return;
+        };
+        if self.import_win.is_running() {
+            return;
+        }
+        if let Some(sv) = &server {
+            self.sync_sess();
+            let same = self
+                .sess
+                .spec
+                .as_ref()
+                .is_some_and(|have| worker::same_server(have, sv));
+            if !same {
+                let msg = tf(
+                    Msg::StImportOtherServer,
+                    &[sv.host.as_deref().unwrap_or_default()],
+                );
+                self.sess.status = msg.clone();
+                self.import_win.set_result(msg, true, "other-server".into());
+                return;
+            }
+        }
+        if !self.gate_open() {
+            self.import_win
+                .set_result(t(Msg::StRunning).to_string(), true, "blocked".into());
+            return;
+        }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        spec.cancel = Some(cancel.clone());
+        spec.table = table.clone();
+        self.import_cancel = Some(cancel);
+        self.import_key += 1;
+        self.sess.aux += 1;
+        self.sess.status = tf(Msg::StImportStarted, &[&path.to_string_lossy(), &table]);
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+        self.import_win.set_running();
+        self.sess.worker.send(worker::Cmd::Import {
+            key: self.import_key,
+            path,
+            spec,
+        });
+        self.redraw();
+    }
+
+    /// Import 취소 = 깃발만(워커가 다음 배치 경계에서 멈추고 `ImportDone`으로 답한다).
+    fn import_cancel(&mut self) {
+        if let Some(c) = &self.import_cancel {
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.sess.status = t(Msg::ImpBtnCancel).into();
+        }
+    }
+
+    /// `ImportDone` → 창 결과 줄 · 상태줄 · 로그(실패 = 행·줄 지목 · 취소 = 커밋 행).
+    fn import_done(&mut self, result: Result<nsql_run::bulk::BulkReport, String>) {
+        let (text, bad, report) = match result {
+            Err(m) => (m.clone(), true, format!("err {m}")),
+            Ok(rep) => {
+                let rows = rep.rows.to_string();
+                match &rep.failure {
+                    None => {
+                        let secs = rep.elapsed.as_secs_f64();
+                        let rate = rep.rows as f64 / secs.max(1e-6);
+                        (
+                            tf(
+                                Msg::ImpDone,
+                                &[
+                                    &rows,
+                                    &format!("{secs:.2}"),
+                                    &format!("{rate:.0}"),
+                                    &rep.path,
+                                    &rep.batches.to_string(),
+                                ],
+                            ),
+                            false,
+                            format!(
+                                "ok rows={} path={} batches={}",
+                                rep.rows, rep.path, rep.batches
+                            ),
+                        )
+                    }
+                    Some(f) if f.message == nsql_run::bulk::CANCELLED => (
+                        tf(Msg::ImpCancelled, &[&rows]),
+                        true,
+                        format!("cancelled rows={}", rep.rows),
+                    ),
+                    Some(f) => (
+                        tf(
+                            Msg::ImpFailed,
+                            &[&f.row.to_string(), &f.line.to_string(), &f.message, &rows],
+                        ),
+                        true,
+                        format!(
+                            "failed row={} line={} rows={} msg={}",
+                            f.row, f.line, rep.rows, f.message
+                        ),
+                    ),
+                }
+            }
+        };
+        self.sess.status = text.clone();
+        self.log_win.push(LogEntry::new(
+            if bad { LogKind::Error } else { LogKind::Info },
+            text.clone(),
+        ));
+        self.import_win.set_result(text, bad, report);
+        self.redraw();
+    }
+
     fn gate_open(&mut self) -> bool {
         self.sync_sess();
         if self.sess.blocked() {
@@ -8924,6 +9059,32 @@ impl App {
             let _ = std::fs::write(path, out);
             return;
         }
+        // 자체 시험(89 §3-3): Import 창 `import.open:<표>;<파일>` · `import.start` · `import.cancel` · `import.dump:<파일>`.
+        if let Some(rest) = id.strip_prefix("import.open:") {
+            if let Some((table, file)) = rest.split_once(';') {
+                self.import_ctx = Some((table.to_string(), PathBuf::from(file), None));
+                self.import_pending = true;
+            }
+            return;
+        }
+        if id == "import.start" {
+            let spec = self.import_win.start_spec();
+            self.import_start(spec);
+            return;
+        }
+        if id == "import.cancel" {
+            self.import_cancel();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("import.dump:") {
+            let text = if self.import_win.is_open() {
+                self.import_win.dump()
+            } else {
+                "closed\n".to_string()
+            };
+            let _ = std::fs::write(path, text);
+            return;
+        }
         if let Some(path) = id.strip_prefix("sqlprev.dump:") {
             let text = if self.sqlprev_win.is_open() {
                 format!(
@@ -11178,6 +11339,8 @@ impl App {
                 wins.push(w);
             } else if let Some(w) = self.sqlprev_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
+            } else if let Some(w) = self.import_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
             }
         }
         // ★ 보조 창(메모리 창 등)을 골라도 메인·다른 창이 함께 앞으로(사용자 09-24) — 맥은 `orderFront:` · 고른 창이 맨 위.
@@ -11290,7 +11453,8 @@ impl App {
             (PickerMode::Save, FilePurpose::SqlPreview | FilePurpose::CellValue) => {
                 self.sqlprev_win.file_name()
             }
-            (PickerMode::Open | PickerMode::Folder, _) => String::new(),
+            (PickerMode::Open | PickerMode::Folder, _)
+            | (PickerMode::Save, FilePurpose::Import) => String::new(),
         };
         // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
         let (start, owner, over) = if mode == PickerMode::Folder {
@@ -13358,6 +13522,18 @@ impl App {
                     } else {
                         self.sqlprev_pending = Some((spec, r, server));
                     }
+                    changed = true;
+                }
+                // ★ Import Data…(89 §3-3): 표 표기를 정하고 파일 창(열기) → 고르면 Import 창.
+                ExplorerAction::Import { owner, server } => {
+                    let dialect = server
+                        .as_ref()
+                        .and_then(|s| s.dialect)
+                        .unwrap_or(self.sess.dialect);
+                    let table = nsql_catalog::qualified(dialect, &owner.schema, &owner.name);
+                    self.import_ctx = Some((table, PathBuf::new(), server));
+                    self.file_purpose = FilePurpose::Import;
+                    self.open_file_dlg = Some(PickerMode::Open);
                     changed = true;
                 }
             }
@@ -16713,6 +16889,36 @@ impl ApplicationHandler<Wake> for App {
             }
             self.sync_modal();
         }
+        // ★ Import 창(89 §3-3): 파일 창 결과(또는 기동 명령 `import.open:`) → 미리보기 6줄 + 설정 `bulk.*` 기본값으로 연다.
+        if std::mem::take(&mut self.import_pending) {
+            if let Some((table, path, _)) = self.import_ctx.clone() {
+                let owner = self.window.clone();
+                let was_open = self.import_win.is_open();
+                let preview = nsql_run::bulk::preview_head(&path, 6, 64 * 1024);
+                let batch = self.settings.int("bulk.batch_rows").max(1) as usize;
+                let commit = self.settings.int("bulk.commit_every").max(0) as usize;
+                let mode = self
+                    .settings
+                    .get("bulk.mode")
+                    .and_then(nsql_run::bulk::BulkMode::parse)
+                    .unwrap_or_default();
+                self.import_win.open(
+                    el,
+                    theme::window_theme(self.settings.theme_mode()),
+                    owner.as_deref(),
+                    table,
+                    path,
+                    preview,
+                    (batch, commit, mode),
+                );
+                if !was_open {
+                    if let (Some(o), Some(c)) = (owner.as_deref(), self.import_win.window()) {
+                        winfocus::attach_child(o, c);
+                    }
+                }
+                self.sync_modal();
+            }
+        }
         // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
         if let Some((sid, needs)) = self.input_pending.take() {
             let owner = self.window.clone();
@@ -17158,6 +17364,7 @@ impl ApplicationHandler<Wake> for App {
         let is_modal_win = self.conn_win.is(id)
             || self.file_win.is(id)
             || self.sqlprev_win.is(id)
+            || self.import_win.is(id)
             || (self.input_win.is_modal() && self.input_win.is(id));
         if modal_open
             && !is_modal_win
@@ -17226,6 +17433,12 @@ impl ApplicationHandler<Wake> for App {
                         }
                         (PickerMode::Open, FilePurpose::CellValue) => {
                             self.cell_load_file(&path);
+                        }
+                        (PickerMode::Open, FilePurpose::Import) => {
+                            if let Some(c) = self.import_ctx.as_mut() {
+                                c.1 = path.to_path_buf();
+                                self.import_pending = true;
+                            }
                         }
                         (PickerMode::Save, FilePurpose::SqlPreview) => {
                             let text = self.sqlprev_win.text();
@@ -17479,6 +17692,31 @@ impl ApplicationHandler<Wake> for App {
                         .paint(&rows, &self.ui_font, &self.theme, ui_px);
                 }
                 other => self.vars_apply(other),
+            }
+            return;
+        }
+        if self.import_win.is(id) {
+            match self.import_win.handle(&event) {
+                import_win::ImportAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let mono_px = self.settings.font_px("editor.font_size");
+                    self.import_win.paint(
+                        &self.ui_font,
+                        &self.mono_font,
+                        &self.theme,
+                        ui_px,
+                        mono_px,
+                    );
+                }
+                import_win::ImportAction::Start(spec) => self.import_start(spec),
+                import_win::ImportAction::Cancel => self.import_cancel(),
+                import_win::ImportAction::Close => {
+                    self.import_win.close();
+                    self.import_ctx = None;
+                    self.sync_modal();
+                    self.redraw();
+                }
+                import_win::ImportAction::None => {}
             }
             return;
         }
@@ -18438,6 +18676,11 @@ fn main() {
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
         sqlprev_plain: None,
+        import_win: import_win::ImportWin::new(),
+        import_ctx: None,
+        import_pending: false,
+        import_cancel: None,
+        import_key: 0,
         sqlprev_value: None,
         input_win,
         input_pending: None,
@@ -19000,6 +19243,8 @@ enum FilePurpose {
     SqlPreview,
     /// 값 보기 창: 셀 값을 파일로 저장 / 파일에서 넣기(docs/87 §5).
     CellValue,
+    /// ★ Import 창의 원료 파일 고르기(docs/89 §3-3).
+    Import,
 }
 
 /// 파일에서 셀에 넣은 결과 = (이진 바이트, 글, 바이트 수).

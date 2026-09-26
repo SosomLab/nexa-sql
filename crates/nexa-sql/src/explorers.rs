@@ -1067,6 +1067,12 @@ impl ExplorerSet {
                             server: p.key.clone(),
                         });
                     }
+                    ExplorerAction::Import { owner, .. } => {
+                        out.push(ExplorerAction::Import {
+                            owner,
+                            server: p.key.clone(),
+                        });
+                    }
                     a => out.push(a),
                 }
             }

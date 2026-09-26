@@ -694,6 +694,11 @@ pub(crate) enum ExplorerAction {
         r: Result<String, String>,
         server: Option<ConnectSpec>,
     },
+    /// ★ 표 우클릭 ▸ Import Data…(89 §3-3 · 09-26) → 호스트가 파일 창 → Import 창(`server` = 이 칸의 서버 · `ExplorerSet`이 채운다).
+    Import {
+        owner: ObjectInfo,
+        server: Option<ConnectSpec>,
+    },
 }
 
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
@@ -5173,6 +5178,10 @@ impl Explorer {
                         if o.kind.is_relation() {
                             items.push(CtxItem::item("select", t(Msg::ExpSelectRows)));
                         }
+                        // ★ 파일 → 표 적재(89 §3-3): 표만(뷰·MV는 제외).
+                        if o.kind == ObjectKind::Table {
+                            items.push(CtxItem::item("import", t(Msg::MnImportData)));
+                        }
                         if o.kind.has_source() {
                             items.push(CtxItem::item("source", t(Msg::ExpOpenSource)));
                         }
@@ -5573,6 +5582,14 @@ impl Explorer {
             "body" => {
                 if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
                     self.open_body(&o);
+                }
+            }
+            "import" => {
+                if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
+                    self.actions.push(ExplorerAction::Import {
+                        owner: o,
+                        server: None,
+                    });
                 }
             }
             // 읽어 둔 노드 = 디프로 조용히(펼침·선택 보존 · docs/57 T3) · 오류/미로딩 = 새로 읽기.

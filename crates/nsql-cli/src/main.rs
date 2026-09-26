@@ -50,6 +50,8 @@ struct Opts {
     commit_every: Option<usize>,
     mode: Option<String>,
     empty_null: Option<bool>,
+    /// `export --fast`: 서버 형식화 추출(PG `COPY TO`) — 안 되면 일반 경로.
+    fast: bool,
     timing: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
     log: bool,
@@ -120,6 +122,7 @@ fn parse_opts() -> Opts {
         commit_every: None,
         mode: None,
         empty_null: None,
+        fast: false,
         timing: false,
         log: false,
         password: None,
@@ -240,6 +243,7 @@ fn parse_opts() -> Opts {
                 }
             }
             "--timing" => o.timing = true,
+            "--fast" => o.fast = true,
             "--log" => o.log = true,
             _ => o.positional.push(a),
         }
@@ -1424,46 +1428,11 @@ fn cmd_import(o: &Opts) -> i32 {
         eprintln!("{}", t(Msg::CliImportNeedFile));
         return 2;
     };
-    let lower = path.to_ascii_lowercase();
-    let jsonl = matches!(o.format, Format::JsonLines)
-        || (matches!(o.format, Format::Grid)
-            && (lower.ends_with(".jsonl") || lower.ends_with(".ndjson")));
-    let delim = match &o.format {
-        Format::Tsv => b'\t',
-        Format::Csv => b',',
-        _ => {
-            if lower.ends_with(".tsv") || lower.ends_with(".tab") {
-                b'\t'
-            } else {
-                b','
-            }
-        }
-    };
-    let reader: Box<dyn io::BufRead> = if path == "-" {
-        Box::new(io::BufReader::new(io::stdin()))
-    } else {
-        match std::fs::File::open(path) {
-            Ok(f) => Box::new(io::BufReader::with_capacity(1 << 16, f)),
-            Err(e) => {
-                eprintln!("{path}: {e}");
-                return 2;
-            }
-        }
-    };
-    // 원료 = 구분자 텍스트(csv/tsv) 또는 JSON Lines(키 → 열 이름 · 첫 객체의 키 순서가 헤더 · 빠진 키 = NULL).
-    #[allow(clippy::type_complexity)]
-    enum Src {
-        Delim(nsql_io::delim::DelimReader<Box<dyn io::BufRead>>),
-        Jsonl(
-            nsql_io::jsonl::JsonlReader<Box<dyn io::BufRead>>,
-            Vec<String>,
-            Option<Vec<(String, Option<String>)>>,
-        ),
-    }
-    let mut src = if jsonl {
-        Src::Jsonl(nsql_io::jsonl::JsonlReader::new(reader), Vec::new(), None)
-    } else {
-        Src::Delim(nsql_io::delim::DelimReader::new(reader, delim))
+    let format = match &o.format {
+        Format::JsonLines => nsql_run::bulk::ImportFormat::Jsonl,
+        Format::Tsv => nsql_run::bulk::ImportFormat::Tsv,
+        Format::Csv => nsql_run::bulk::ImportFormat::Csv,
+        _ => nsql_run::bulk::ImportFormat::Auto,
     };
     // 설정 기본값(`bulk.*`) 위에 플래그.
     let st = settings_cached().ok();
@@ -1490,77 +1459,6 @@ fn cmd_import(o: &Opts) -> i32 {
         fire_triggers: st.is_some_and(|s| s.flag("bulk.fire_triggers")),
         append_hint: st.is_some_and(|s| s.flag("bulk.append_hint")),
     };
-    let mut printer = Printer::new(o, Format::Grid, false);
-    let mut runner = Runner::new(o.dialect, opener(o.dialect))
-        .with_max_rows(1)
-        .with_keep_cursor(false)
-        .with_message_sink(stdout_sink(printer.spool.clone()))
-        .with_resolver(resolver());
-    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
-    // 대상 열·타입 = 빈 조회의 메타(`SELECT * … WHERE 1=0` · 모든 방언).
-    let mut table_cols: Vec<(String, String)> =
-        match runner.query_once(&format!("SELECT * FROM {table} WHERE 1=0"), 1) {
-            Ok((rs, _, _)) => rs
-                .columns
-                .iter()
-                .map(|c| (c.name.clone(), c.type_name.clone()))
-                .collect(),
-            Err(e) => {
-                eprintln!("ERROR: {e}");
-                return 1;
-            }
-        };
-    if table_cols.is_empty() {
-        // 빈 결과에 열 메타가 없는 드라이버(SQL Server) → 카탈로그에서.
-        let dialect = runner.engine.dialect;
-        let (schema, name) = nsql_io::split_table(dialect, table);
-        if let Some(sess) = runner.session.as_deref_mut() {
-            if let Ok(cols) = nsql_catalog::columns(sess, schema.as_deref().unwrap_or(""), &name) {
-                table_cols = cols.into_iter().map(|c| (c.name, c.data_type)).collect();
-            }
-        }
-    }
-    // 원료 열 이름: 헤더(기본) · `--cols` · 없으면 표 열 순서.
-    let src_names: Vec<String> = if let Some(c) = &o.cols {
-        c.split(',').map(|s| s.trim().to_string()).collect()
-    } else if o.no_header && !jsonl {
-        table_cols.iter().map(|(n, _)| n.clone()).collect()
-    } else {
-        match &mut src {
-            Src::Delim(rd) => match rd.next_record() {
-                Ok(Some(h)) => h.iter().map(|s| s.trim().to_string()).collect(),
-                Ok(None) => {
-                    eprintln!("{}", t(Msg::CliImportEmpty));
-                    return 1;
-                }
-                Err(e) => {
-                    eprintln!("{path}: {e}");
-                    return 1;
-                }
-            },
-            // JSONL: 첫 객체의 키가 열 이름 · 그 객체는 첫 행으로 다시 쓴다.
-            Src::Jsonl(rd, keys, first) => match rd.next_object() {
-                Ok(Some(o)) => {
-                    *keys = o.iter().map(|(k, _)| k.clone()).collect();
-                    *first = Some(o);
-                    keys.clone()
-                }
-                Ok(None) => {
-                    eprintln!("{}", t(Msg::CliImportEmpty));
-                    return 1;
-                }
-                Err(e) => {
-                    eprintln!("{path}: {e}");
-                    return 1;
-                }
-            },
-        }
-    };
-    if let Src::Jsonl(_, keys, _) = &mut src {
-        if keys.is_empty() {
-            *keys = src_names.clone();
-        }
-    }
     let map: Vec<(String, String)> = o
         .map
         .as_deref()
@@ -1571,61 +1469,29 @@ fn cmd_import(o: &Opts) -> i32 {
                 .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()))
         })
         .collect();
-    let mut cols = Vec::new();
-    let mut types = Vec::new();
-    for n in &src_names {
-        let dst = map
-            .iter()
-            .find(|(a, _)| a.eq_ignore_ascii_case(n))
-            .map_or(n.as_str(), |(_, b)| b.as_str());
-        match table_cols.iter().find(|(c, _)| c.eq_ignore_ascii_case(dst)) {
-            Some((c, ty)) => {
-                cols.push(c.clone());
-                types.push(ty.clone());
-            }
-            None => {
-                eprintln!("{}", tf(Msg::CliImportUnknownCol, &[dst, table]));
-                return 2;
-            }
-        }
-    }
-    let p = nsql_run::bulk::BulkParams {
+    let spec = nsql_run::bulk::ImportSpec {
         table: table.clone(),
-        cols,
-        types,
+        format,
+        header: !o.no_header,
+        cols: o
+            .cols
+            .as_ref()
+            .map(|c| c.split(',').map(|s| s.trim().to_string()).collect()),
+        map,
         batch_rows,
         commit_every,
         mode,
         empty_null,
         opts,
+        cancel: None,
     };
-    let mut next = || -> Result<Option<nsql_run::bulk::SourceRow>, String> {
-        match &mut src {
-            Src::Delim(rd) => match rd.next_record() {
-                Ok(Some(r)) => Ok(Some((r, rd.line_no))),
-                Ok(None) => Ok(None),
-                Err(e) => Err(e.to_string()),
-            },
-            Src::Jsonl(rd, keys, first) => {
-                let obj = match first.take() {
-                    Some(o) => Some(o),
-                    None => rd.next_object().map_err(|e| e.to_string())?,
-                };
-                Ok(obj.map(|o| {
-                    let row: Vec<String> = keys
-                        .iter()
-                        .map(|k| {
-                            o.iter()
-                                .find(|(kk, _)| kk == k)
-                                .and_then(|(_, v)| v.clone())
-                                .unwrap_or_default()
-                        })
-                        .collect();
-                    (row, rd.line_no)
-                }))
-            }
-        }
-    };
+    let mut printer = Printer::new(o, Format::Grid, false);
+    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+        .with_max_rows(1)
+        .with_keep_cursor(false)
+        .with_message_sink(stdout_sink(printer.spool.clone()))
+        .with_resolver(resolver());
+    connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
     let mut last_print = std::time::Instant::now();
     let mut progress = |rows: u64, el: std::time::Duration| {
         if last_print.elapsed().as_millis() >= 500 {
@@ -1640,7 +1506,15 @@ fn cmd_import(o: &Opts) -> i32 {
             );
         }
     };
-    let rep = runner.bulk_load(&mut next, &p, &mut progress);
+    // 준비 오류(파일 · 빈 원료 · 없는 열)는 러너가 안내문으로 돌려준다(GUI Import 창과 같은 길).
+    let rep = match runner.import_file(path, &spec, &mut progress) {
+        Ok(r) => r,
+        Err(m) => {
+            eprintln!("{m}");
+            close_spool(&printer.spool);
+            return 2;
+        }
+    };
     let rate = rep.rows as f64 / rep.elapsed.as_secs_f64().max(1e-6);
     match &rep.failure {
         None => {
@@ -1871,6 +1745,31 @@ fn cmd_export(o: &Opts) -> i32 {
         })),
         None => Box::new(io::stdout()),
     };
+    // ★ `--fast`(docs/89 B-3): csv/tsv면 서버가 형식화해 흘리는 `COPY TO`(PG) — 지원하지 않는 세션이면 일반 경로로.
+    if o.fast && matches!(format, Format::Csv | Format::Tsv) {
+        if let Some(s) = runner.session.as_deref_mut() {
+            match s.copy_out(&sql, matches!(format, Format::Csv), &mut out) {
+                Ok(bytes) => {
+                    let _ = out.flush();
+                    eprintln!(
+                        "{}",
+                        nsql_i18n::tf(
+                            nsql_i18n::Msg::CliExportFast,
+                            &[&bytes.to_string(), o.out.as_deref().unwrap_or("-")]
+                        )
+                    );
+                    return 0;
+                }
+                Err(e) if e.message.contains("not supported") => {
+                    eprintln!("{}", nsql_i18n::t(nsql_i18n::Msg::CliExportFastFallback));
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {e}");
+                    return 1;
+                }
+            }
+        }
+    }
     let items = split_script(&format!("{sql};"));
     let mut errors = 0;
     let mut rows = 0usize;

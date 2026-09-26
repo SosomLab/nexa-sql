@@ -5,9 +5,9 @@
 # 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NSQL="$ROOT/target/debug/nsql"; H="${TMPDIR:-/tmp}/nsql-bulk-e2e"; PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
-while getopts "n:H:P:d:" o; do case $o in n) NSQL=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
-D="$H/data"; rm -rf "$H"; mkdir -p "$D"
+NSQL="$ROOT/target/debug/nsql"; APP="$ROOT/target/debug/nexa-sql"; H="${TMPDIR:-/tmp}/nsql-bulk-e2e"; PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
+while getopts "n:e:H:P:d:" o; do case $o in n) NSQL=$OPTARG;; e) APP=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
+D="$H/data"; O="$H/out"; rm -rf "$H"; mkdir -p "$D" "$O"
 if [ -n "$PROF" ] && [ -d "$PROF/profiles" ]; then cp -R "$PROF/profiles" "$H/"; cp "$PROF/device.key" "$H/" 2>/dev/null; fi
 fail=0; pass=0
 ok() { echo "PASS  $1"; pass=$((pass+1)); }
@@ -15,6 +15,11 @@ bad() { echo "FAIL  $1"; fail=$((fail+1)); }
 cli() { NSQL_HOME="$H" "$NSQL" run -c "$1" "$2" --no-prompt 2>&1; }
 imp() { NSQL_HOME="$H" "$NSQL" import -c "$@" --no-prompt 2>&1; }
 expect_grep() { if echo "$2" | grep -q -- "$3"; then ok "$1"; else bad "$1 (기대 '$3')"; echo "$2" | head -6 | sed 's/^/      /'; fi; }
+run_gui() { # <초> <인자> <기동 명령> — GUI Import 창(89 §3-3 · 키 주입 0 · NSQL_NO_ACTIVATE)
+  local secs=$1 arg=$2 cmd=$3
+  NSQL_HOME="$H" NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="$cmd" "$APP" "$arg" >/dev/null 2>>"$O/stderr.txt" &
+  local p=$!; sleep "$secs"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
+}
 # ── SQLite
 NSQL_HOME="$H" "$NSQL" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
 python3 - "$D" <<'PY'
@@ -60,6 +65,30 @@ printf '{"id": 8001, "name": "j\\u0031", "amt": 2.5, "dt": "2026-02-02 02:02:02"
 o=$(imp Local -t bulk_t "$D/rows.jsonl"); expect_grep "jsonl 2행" "$o" "2 rows imported"
 printf "SELECT name, amt IS NULL AS an FROM bulk_t WHERE id IN (8001, 8002) ORDER BY id;\n" > "$D/chkj.sql"; v=$(cli Local "$D/chkj.sql")
 expect_grep "jsonl 유니코드 이스케이프 j1" "$v" "j1"; expect_grep "jsonl 빠진 키/null = NULL" "$v" " 1$"
+echo "=== SQLite ⑤ GUI Import 창(import.open → start → dump · 성공 · 실패 지목 · 89 §3-3)"
+if [ -x "$APP" ]; then
+  python3 - "$D" <<'PYG'
+import sys, os
+d=sys.argv[1]
+with open(os.path.join(d,'gui.csv'),'w') as f:
+    f.write('id,name,amt,dt\n')
+    for i in range(1,301): f.write(f'{9000+i},g{i},{i},2026-03-01 00:00:00\n')
+with open(os.path.join(d,'guidup.csv'),'w') as f:
+    f.write('id,name,amt,dt\n')
+    for i in range(1,21): f.write(f'{(9001 if i==15 else 9500+i)},d{i},1,2026-03-01 00:00:00\n')
+PYG
+  run_gui 14 Local "import.open:bulk_t;$D/gui.csv,@after:2500:import.start,@after:8000:import.dump:$O/imp1.txt"
+  d1=$(cat "$O/imp1.txt" 2>/dev/null)
+  expect_grep "창 상태 = 끝(running=false) · 성공 300행" "$d1" "running=false.*report=ok rows=300"
+  printf 'SELECT COUNT(*) AS n FROM bulk_t WHERE id BETWEEN 9001 AND 9300;\n' > "$D/chkgui.sql"
+  expect_grep "서버 건수 300" "$(cli Local "$D/chkgui.sql")" "300"
+  run_gui 14 Local "import.open:bulk_t;$D/guidup.csv,@after:2500:import.start,@after:8000:import.dump:$O/imp2.txt"
+  d2=$(cat "$O/imp2.txt" 2>/dev/null)
+  expect_grep "중복 PK = 행 15(줄 16) 지목 · 앞 14행 커밋" "$d2" "report=failed row=15 line=16 rows=14"
+  expect_grep "결과 줄 = 오류 표시(err:)" "$d2" "result=Some(\"err:"
+else
+  echo "SKIP  GUI 바이너리 없음($APP)"
+fi
 # ── 실서버
 bulk_suite() {
   local P=$1 dl=$2 ddl
@@ -81,6 +110,11 @@ with open('$D/${P}_5k.csv','w') as f:
   expect_grep "$P 적재 보고 5000행" "$o" "5000 rows imported"; echo "      $(echo "$o" | grep 'rows imported')"
   case $dl in mssql) expect_grep "$P 경로 = TDS bulk" "$o" "driver:tdsbulk";; postgres) expect_grep "$P 경로 = COPY" "$o" "driver:copyin";; oracle) expect_grep "$P 경로 = 배열 DML" "$o" "driver:arraydml";; esac
   expect_grep "$P 서버 건수 5000" "$v" "5000"
+  if [ "$dl" = postgres ]; then
+    NSQL_HOME="$H" "$NSQL" export -c "$P" -t NSQLT_BULK -f csv --fast -o "$D/${P}_out.csv" --no-prompt >/dev/null 2>&1
+    expect_grep "$P export --fast(COPY TO) = 헤더 + 5,000줄" "$(wc -l < "$D/${P}_out.csv" | tr -d ' ')" "^5001$"
+    expect_grep "$P export --fast 헤더" "$(head -1 "$D/${P}_out.csv")" "id,name,amt,dt"
+  fi
   cli "$P" "$D/${P}_drop.sql" >/dev/null 2>&1
 }
 if [ -n "$DBMS" ]; then IFS=',' read -ra PAIRS <<< "$DBMS"; for pr in "${PAIRS[@]}"; do bulk_suite "${pr%%:*}" "${pr##*:}"; done; fi

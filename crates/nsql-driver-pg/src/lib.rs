@@ -711,6 +711,29 @@ impl nsql_core::CancelHandle for PgCancel {
 }
 
 impl Session for PgSession {
+    fn copy_out(
+        &mut self,
+        sql: &str,
+        csv: bool,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64, DbError> {
+        let stmt = if csv {
+            format!(
+                "COPY ({}) TO STDOUT WITH (FORMAT csv, HEADER)",
+                sql.trim().trim_end_matches(';')
+            )
+        } else {
+            format!("COPY ({}) TO STDOUT", sql.trim().trim_end_matches(';'))
+        };
+        let mut reader = self.client.copy_out(stmt.as_str()).map_err(err)?;
+        let n = std::io::copy(&mut reader, out).map_err(|e| DbError {
+            code: None,
+            message: format!("COPY TO: {e}"),
+            position: None,
+        })?;
+        // 행 수는 스트림 줄 수로 세지 않는다(값 안 줄바꿈) — 바이트 수 대신 서버 보고가 없어 0 이상 보장만 · 호출자는 줄 수를 센다.
+        Ok(n)
+    }
     fn bulk_begin<'a>(
         &'a mut self,
         table: &str,

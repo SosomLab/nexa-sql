@@ -83,6 +83,12 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--fast",
+        arg: "",
+        desc: Msg::HlpOptFast,
+        setting: None,
+    },
+    Opt {
         flags: "--no-header",
         arg: "",
         desc: Msg::HlpOptNoHeader,
@@ -262,7 +268,7 @@ const CMDS: &[Cmd] = &[
         brief: Msg::HlpCmdExport,
         detail: Msg::HlpCmdExportDetail,
         args: &[],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q", "-t", "-f", "-o", "--max-rows"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q", "-t", "-f", "-o", "--max-rows", "--fast"],
         notes: &[("-f, --format", Msg::HlpExportFmtDefault)],
         examples: &["nsql export -c prod -t EMP -f csv -o emp.csv", "nsql export -c prod -q \"SELECT * FROM emp WHERE deptno=10\" -f insert:EMP"],
     },

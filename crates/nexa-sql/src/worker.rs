@@ -54,6 +54,13 @@ pub(crate) enum Cmd {
         /// ★ 적용이 성공하면 같은 세션에서 바로 돌릴 행 단위 재조회(87 §12-4 · T-230 · 비어 있으면 없음).
         refetch: Vec<nsql_core::ExecRequest>,
     },
+    /// ★ 파일 → 표 대량 적재(docs/89 §3-3 · Import 창 · 09-26): `Runner::import_file` · 진행은 `ImportProgress`(간격 제한) ·
+    ///   끝 = `ImportDone`. 취소는 `spec.cancel` 깃발(배치 경계에서 멈춤).
+    Import {
+        key: u64,
+        path: std::path::PathBuf,
+        spec: nsql_run::bulk::ImportSpec,
+    },
     /// 연결 공유 층의 변수를 통째로 바꾼다(변수 창이 고쳤다 · D-135) — DB로 가는 것은 없다.
     SharedVars(Vec<nsql_script::VarState>),
     /// 앱 전역 층(docs/63 §11)을 통째로 바꾼다(시작 · 변수 창 · 다른 세션의 `VAR x GLOBAL`).
@@ -119,6 +126,17 @@ pub(crate) enum ConnOutcome {
         key: u64,
         rep: nsql_run::ApplyReport,
         refetched: Vec<Result<nsql_core::ResultSet, String>>,
+    },
+    /// `Cmd::Import` 진행(커밋 행 · 경과 초 · 200 ms 간격).
+    ImportProgress {
+        key: u64,
+        rows: u64,
+        secs: f64,
+    },
+    /// `Cmd::Import` 끝 — 준비 오류(파일·열) = `Err(안내)` · 그 밖은 보고(실패 지목은 `failure`).
+    ImportDone {
+        key: u64,
+        result: Result<nsql_run::bulk::BulkReport, String>,
     },
     /// `Cmd::FetchPage` 결과 — `offset`부터 **이어 붙임**(전체 조회도 나머지를 이어 붙인다 · 09-17 위치 유지) ·
     /// `offset` 0은 교체. `all` = 전체 조회 결과(늦은 세그먼트와 구별) · `stop` = 전체 조회가 멈춘 이유(예산·취소).
@@ -1169,6 +1187,43 @@ pub(crate) fn spawn(
                             rep,
                             refetched,
                         });
+                        wake_now();
+                        true
+                    }
+                    Cmd::Import { key, path, spec } => {
+                        let alive = ensure_alive(
+                            &mut runner,
+                            &active_spec,
+                            &active_ep,
+                            &mut suspect,
+                            &mut last_ok,
+                            &mut broken_told,
+                            None,
+                            true,
+                            &ctx_tx,
+                            &mut emit,
+                        );
+                        let result = match alive {
+                            Err(m) => Err(m),
+                            Ok(()) => {
+                                let mut last = std::time::Instant::now() - Duration::from_secs(1);
+                                let tx2 = ctx_tx.clone();
+                                let mut progress = |rows: u64, el: Duration| {
+                                    if last.elapsed() >= Duration::from_millis(200) {
+                                        last = std::time::Instant::now();
+                                        let _ = tx2.send(ConnOutcome::ImportProgress {
+                                            key,
+                                            rows,
+                                            secs: el.as_secs_f64(),
+                                        });
+                                        wake_now();
+                                    }
+                                };
+                                runner.close_cursor();
+                                runner.import_file(&path.to_string_lossy(), &spec, &mut progress)
+                            }
+                        };
+                        let _ = ctx_tx.send(ConnOutcome::ImportDone { key, result });
                         wake_now();
                         true
                     }

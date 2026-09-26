@@ -9,6 +9,8 @@ use nsql_core::{
     BindParam, BulkLoad, BulkOpts, Dialect, Direction, ExecRequest, Marker, Stage, Timeline, Value,
     VarType,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// 적재 경로 선택.
@@ -54,6 +56,28 @@ pub struct BulkParams {
     /// 빈 문자열 = NULL.
     pub empty_null: bool,
     pub opts: BulkOpts,
+    /// ★ 취소 깃발(GUI Import 창 · 09-26): 배치 경계마다 본다 — 켜져 있으면 지금 트랜잭션(커밋 안 된 배치)을 되돌리고
+    ///   `failure.message = "cancelled"`로 끝낸다(커밋된 앞부분은 남는다 · `rows`에 보고).
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+impl BulkParams {
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+}
+
+/// 취소로 끝났을 때의 실패 메시지(호스트가 구별한다).
+pub const CANCELLED: &str = "cancelled";
+
+fn cancelled_failure(row: u64) -> BulkFailure {
+    BulkFailure {
+        row,
+        line: 0,
+        message: CANCELLED.into(),
+    }
 }
 
 /// 실패 지목.
@@ -391,6 +415,15 @@ impl Runner {
                 let Some(session) = self.session.as_mut() else {
                     break;
                 };
+                if p.cancelled() {
+                    // 취소: 이 트랜잭션의 커밋 안 된 배치를 되돌린다(커밋된 것은 남는다).
+                    if in_tx {
+                        let _ = session.rollback();
+                        in_tx = false;
+                    }
+                    rep.failure = Some(cancelled_failure(row_no));
+                    break;
+                }
                 if !in_tx {
                     if let Err(m) = begin(session) {
                         rep.failure = Some(BulkFailure {
@@ -533,6 +566,10 @@ impl Runner {
                     continue;
                 }
             } else if batch.is_empty() {
+                break;
+            }
+            if p.cancelled() {
+                end = SinkEnd::Failed(Vec::new(), Some(cancelled_failure(0)));
                 break;
             }
             let te = Instant::now();
@@ -697,6 +734,247 @@ impl Runner {
     }
 }
 
+/// 원료 형식(GUI·CLI 공용 · 확장자로 짐작 = `Auto`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ImportFormat {
+    #[default]
+    Auto,
+    Csv,
+    Tsv,
+    Jsonl,
+}
+
+impl ImportFormat {
+    /// 확장자로 결정(`.tsv`/`.tab` · `.jsonl`/`.ndjson` · 그 밖 = csv).
+    pub fn resolve(self, path: &str) -> ImportFormat {
+        if self != ImportFormat::Auto {
+            return self;
+        }
+        let lower = path.to_ascii_lowercase();
+        if lower.ends_with(".jsonl") || lower.ends_with(".ndjson") {
+            ImportFormat::Jsonl
+        } else if lower.ends_with(".tsv") || lower.ends_with(".tab") {
+            ImportFormat::Tsv
+        } else {
+            ImportFormat::Csv
+        }
+    }
+}
+
+/// ★ 파일 적재 사양(89 §3-3 · CLI `nsql import`와 GUI Import 창이 같은 것을 만든다 · 09-26).
+#[derive(Clone, Debug)]
+pub struct ImportSpec {
+    /// 대상 표(사용자 표기 그대로 · 방언 인용 포함 가능).
+    pub table: String,
+    pub format: ImportFormat,
+    /// 첫 줄 = 열 이름(구분자 파일만 · JSONL은 키가 열).
+    pub header: bool,
+    /// 원료 열 이름 직접 지정(헤더 대신).
+    pub cols: Option<Vec<String>>,
+    /// 원료 열 → 표 열 이름 바꿔 붙이기.
+    pub map: Vec<(String, String)>,
+    pub batch_rows: usize,
+    pub commit_every: usize,
+    pub mode: BulkMode,
+    pub empty_null: bool,
+    pub opts: BulkOpts,
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+impl Default for ImportSpec {
+    fn default() -> Self {
+        ImportSpec {
+            table: String::new(),
+            format: ImportFormat::Auto,
+            header: true,
+            cols: None,
+            map: Vec::new(),
+            batch_rows: 1000,
+            commit_every: 10_000,
+            mode: BulkMode::Auto,
+            empty_null: true,
+            opts: BulkOpts::default(),
+            cancel: None,
+        }
+    }
+}
+
+/// 원료 공급자(구분자 텍스트 · JSON Lines).
+#[allow(clippy::type_complexity)]
+enum Src {
+    Delim(nsql_io::delim::DelimReader<Box<dyn std::io::BufRead>>),
+    Jsonl(
+        nsql_io::jsonl::JsonlReader<Box<dyn std::io::BufRead>>,
+        Vec<String>,
+        Option<Vec<(String, Option<String>)>>,
+    ),
+}
+
+/// 파일 앞부분(미리보기 · 최대 `lines`줄 · `max_bytes`) — Import 창의 미리보기 상자.
+pub fn preview_head(path: &std::path::Path, lines: usize, max_bytes: usize) -> String {
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let mut buf = Vec::with_capacity(max_bytes.min(1 << 20));
+    let _ = f.take(max_bytes as u64).read_to_end(&mut buf);
+    let text = String::from_utf8_lossy(&buf);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut out = String::new();
+    for (i, l) in text.lines().enumerate() {
+        if i >= lines {
+            out.push_str("\n…");
+            break;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(l);
+    }
+    out
+}
+
+impl Runner {
+    /// ★ 파일 → 표 적재 한 벌(원료 열기 · 헤더/열 · 표 열·타입 메타 · 매핑 · [`Runner::bulk_load`]) — CLI `nsql import`와
+    /// GUI Import 창의 단일 원천. `path` `-` = stdin. 준비 단계 오류(파일 · 빈 원료 · 없는 열)는 `Err(안내)`.
+    pub fn import_file(
+        &mut self,
+        path: &str,
+        spec: &ImportSpec,
+        progress: &mut dyn FnMut(u64, Duration),
+    ) -> Result<BulkReport, String> {
+        use nsql_i18n::{t, tf, Msg};
+        let fmt = spec.format.resolve(path);
+        let reader: Box<dyn std::io::BufRead> = if path == "-" {
+            Box::new(std::io::BufReader::new(std::io::stdin()))
+        } else {
+            match std::fs::File::open(path) {
+                Ok(f) => Box::new(std::io::BufReader::with_capacity(1 << 16, f)),
+                Err(e) => return Err(format!("{path}: {e}")),
+            }
+        };
+        let jsonl = fmt == ImportFormat::Jsonl;
+        let mut src = if jsonl {
+            Src::Jsonl(nsql_io::jsonl::JsonlReader::new(reader), Vec::new(), None)
+        } else {
+            let delim = if fmt == ImportFormat::Tsv {
+                b'\t'
+            } else {
+                b','
+            };
+            Src::Delim(nsql_io::delim::DelimReader::new(reader, delim))
+        };
+        // 대상 열·타입 = 빈 조회의 메타(`SELECT * … WHERE 1=0` · 모든 방언) · 빈 메타(SQL Server) = 카탈로그.
+        let table = &spec.table;
+        let mut table_cols: Vec<(String, String)> =
+            match self.query_once(&format!("SELECT * FROM {table} WHERE 1=0"), 1) {
+                Ok((rs, _, _)) => rs
+                    .columns
+                    .iter()
+                    .map(|c| (c.name.clone(), c.type_name.clone()))
+                    .collect(),
+                Err(e) => return Err(e.message),
+            };
+        if table_cols.is_empty() {
+            let dialect = self.engine.dialect;
+            let (schema, name) = nsql_io::split_table(dialect, table);
+            if let Some(sess) = self.session.as_deref_mut() {
+                if let Ok(cols) =
+                    nsql_catalog::columns(sess, schema.as_deref().unwrap_or(""), &name)
+                {
+                    table_cols = cols.into_iter().map(|c| (c.name, c.data_type)).collect();
+                }
+            }
+        }
+        // 원료 열 이름: 지정 · 헤더 없음 = 표 열 순서 · 헤더(첫 레코드) · JSONL = 첫 객체의 키.
+        let src_names: Vec<String> = if let Some(c) = &spec.cols {
+            c.clone()
+        } else if !spec.header && !jsonl {
+            table_cols.iter().map(|(n, _)| n.clone()).collect()
+        } else {
+            match &mut src {
+                Src::Delim(rd) => match rd.next_record() {
+                    Ok(Some(h)) => h.iter().map(|s| s.trim().to_string()).collect(),
+                    Ok(None) => return Err(t(Msg::CliImportEmpty).to_string()),
+                    Err(e) => return Err(format!("{path}: {e}")),
+                },
+                Src::Jsonl(rd, keys, first) => match rd.next_object() {
+                    Ok(Some(o)) => {
+                        *keys = o.iter().map(|(k, _)| k.clone()).collect();
+                        *first = Some(o);
+                        keys.clone()
+                    }
+                    Ok(None) => return Err(t(Msg::CliImportEmpty).to_string()),
+                    Err(e) => return Err(format!("{path}: {e}")),
+                },
+            }
+        };
+        if let Src::Jsonl(_, keys, _) = &mut src {
+            if keys.is_empty() {
+                *keys = src_names.clone();
+            }
+        }
+        let mut cols = Vec::new();
+        let mut types = Vec::new();
+        for n in &src_names {
+            let dst = spec
+                .map
+                .iter()
+                .find(|(a, _)| a.eq_ignore_ascii_case(n))
+                .map_or(n.as_str(), |(_, b)| b.as_str());
+            match table_cols.iter().find(|(c, _)| c.eq_ignore_ascii_case(dst)) {
+                Some((c, ty)) => {
+                    cols.push(c.clone());
+                    types.push(ty.clone());
+                }
+                None => return Err(tf(Msg::CliImportUnknownCol, &[dst, table])),
+            }
+        }
+        let p = BulkParams {
+            table: table.clone(),
+            cols,
+            types,
+            batch_rows: spec.batch_rows.max(1),
+            commit_every: spec.commit_every,
+            mode: spec.mode,
+            empty_null: spec.empty_null,
+            opts: BulkOpts {
+                batch_rows: spec.batch_rows.max(1),
+                ..spec.opts.clone()
+            },
+            cancel: spec.cancel.clone(),
+        };
+        let mut next = || -> Result<Option<SourceRow>, String> {
+            match &mut src {
+                Src::Delim(rd) => match rd.next_record() {
+                    Ok(Some(r)) => Ok(Some((r, rd.line_no))),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(e.to_string()),
+                },
+                Src::Jsonl(rd, keys, first) => {
+                    let obj = match first.take() {
+                        Some(o) => Some(o),
+                        None => rd.next_object().map_err(|e| e.to_string())?,
+                    };
+                    Ok(obj.map(|o| {
+                        let row: Vec<String> = keys
+                            .iter()
+                            .map(|k| {
+                                o.iter()
+                                    .find(|(kk, _)| kk == k)
+                                    .and_then(|(_, v)| v.clone())
+                                    .unwrap_or_default()
+                            })
+                            .collect();
+                        (row, rd.line_no)
+                    }))
+                }
+            }
+        };
+        Ok(self.bulk_load(&mut next, &p, progress))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -778,6 +1056,7 @@ mod tests {
             mode: BulkMode::Auto,
             empty_null: true,
             opts: BulkOpts::default(),
+            cancel: None,
         }
     }
 
@@ -931,5 +1210,51 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn cancel_flag_stops_at_batch_boundary_and_keeps_committed_rows() {
+        let (mut r, _log) = runner(Dialect::Sqlite, None);
+        let flag = Arc::new(AtomicBool::new(false));
+        let f2 = flag.clone();
+        let mut n = 0;
+        let mut src = move || -> Result<Option<SourceRow>, String> {
+            n += 1;
+            if n == 7 {
+                // 두 번째 배치(4~6) 커밋 뒤 · 세 번째 배치를 채우는 중 취소.
+                f2.store(true, Ordering::Relaxed);
+            }
+            if n > 12 {
+                return Ok(None);
+            }
+            Ok(Some((vec![n.to_string(), "x".into()], n as u64)))
+        };
+        let mut p = params(Dialect::Sqlite, 3, 3);
+        p.cancel = Some(flag);
+        let rep = r.bulk_load(&mut src, &p, &mut |_, _| {});
+        assert_eq!(rep.rows, 6, "커밋된 두 배치만 남는다: {rep:?}");
+        assert_eq!(
+            rep.failure.as_ref().map(|f| f.message.as_str()),
+            Some(CANCELLED)
+        );
+    }
+
+    #[test]
+    fn import_format_resolves_by_extension() {
+        assert_eq!(ImportFormat::Auto.resolve("a.CSV"), ImportFormat::Csv);
+        assert_eq!(ImportFormat::Auto.resolve("a.tsv"), ImportFormat::Tsv);
+        assert_eq!(ImportFormat::Auto.resolve("a.ndjson"), ImportFormat::Jsonl);
+        assert_eq!(ImportFormat::Tsv.resolve("a.csv"), ImportFormat::Tsv);
+    }
+
+    #[test]
+    fn preview_head_limits_lines_and_strips_bom() {
+        let d = std::env::temp_dir().join(format!("nsql-bulk-prev-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("p.csv");
+        std::fs::write(&f, "\u{feff}a,b\n1,2\n3,4\n5,6\n").unwrap();
+        let s = preview_head(&f, 2, 1 << 16);
+        assert_eq!(s, "a,b\n1,2\n…");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
