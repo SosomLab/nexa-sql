@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/cli-startup-timing | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | T-228 CLI 기동: `nsql --timing` 기동 구간 · `settings_cached`(13 → 1회) · wall 측정 하네스 교정 `scripts/cli-wall.py` + `mac-perf-all.sh cli()` · T-234 후보(§232) |
 | fix/grid-focus-menu-ux | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | T-232 그리드 비활성 선택색(`Grid::set_focused` · `sel_alphas`) · T-233 우클릭 메뉴 서브메뉴 1단(Copy SQL ▸ 승격) · 26 §8 네트워크 표 2행 · 39 §3-7 그리드 편집 원장(§231) |
 | feat/grid-edit-row-refresh | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-230 P1 행 단위 재조회(`refetch_stmt` · `Cmd::Apply.refetch` · `ResultData::set_row/push_row/remove_rows` · `apply_done_rows`/`apply_done_local` · `grid.edit_refresh=rows` 기본 D-219 · 87 §12-4-a · §228) · 그리드 Tab/Shift+Tab · 상세 패널 코멘트 캐시 무효화 연동 · 위키 Data-Editing(§229) · 88 §4-1 대조 1차 + T-232/T-233(§230) |
 | feat/grid-edit-row-identity | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-231 행 식별 등급(`editable::classify` · 숨은 키 열/ROWID·rowid·ctid 주입 재조회 · 3급 제외 규칙 · 키 변경 UPDATE 먼저 · 동시성 옵션 · E2E ⑦~⑩ · 87 §13-7 · §227) |

@@ -86,7 +86,8 @@ NSQL_HOME=$H "$NSQL" config set grid.max_rows 200 >/dev/null 2>&1
 say "=== leak: log window toggle ×10"; bash "$SC/mac-leak.sh" -H "$H" -n 10 -p 2000 -C "view.log;view.log" -a "$PROF" -t leak.log | tee -a "$R"
 say "=== leak: 2 MB tab open/close ×8"; bash "$SC/mac-leak.sh" -H "$H" -n 8 -p 4000 -C "open:$D/mid2m.sql;file.close_tab" -a "$PROF" -t leak.mid | tee -a "$R"
 say "=== CLI timing (3 runs each)"
-cli() { local tag=$1 prof=$2 f=$3 home=${4:-}; for i in 1 2 3; do local t0=$(python3 -c 'import time;print(int(time.time()*1000))'); local line; line=$( { [ -n "$home" ] && export NSQL_HOME=$home; "$NSQL" run -c "$prof" "$f" --timing 2>&1; } | grep -E '^⏱' | tail -1); say "$tag run$i wall=$(( $(python3 -c 'import time;print(int(time.time()*1000))')-t0 ))ms $line"; done; }
+# ★ wall = scripts/cli-wall.py(프로세스 12회 · 예열 2 · min/med · T-228 09-26: 종전 python3 두 번 띄우기가 실행마다 +150 ms를 얹어 12 ms 실행이 156~210 ms로 보였다).
+cli() { local tag=$1 prof=$2 f=$3 home=${4:-}; local wall line; wall=$( { [ -n "$home" ] && export NSQL_HOME=$home; python3 "$ROOT/scripts/cli-wall.py" -- "$NSQL" run -c "$prof" "$f"; } ); line=$( { [ -n "$home" ] && export NSQL_HOME=$home; "$NSQL" run -c "$prof" "$f" --timing 2>&1; } | grep -E '^⏱' | tr '\n' ' '); say "$tag $wall $line"; }
 cli cli.sqlite.100k "$PROF" "$D/rows100k.sql" "$H"
 cli cli.sqlite.200  "$PROF" "$D/rows200.sql" "$H"
 if [ -n "${NSQL_PERF_ORACLE:-}" ]; then printf "SELECT LEVEL AS n, RPAD('x', 900, 'y') AS pad FROM dual CONNECT BY LEVEL <= 200;\n" > "$D/q_ora.sql"; printf 'SELECT COUNT(*) FROM user_objects;\n' > "$D/q_ora_cnt.sql"; cli cli.oracle.200 "$NSQL_PERF_ORACLE" "$D/q_ora.sql"; cli cli.oracle.cnt "$NSQL_PERF_ORACLE" "$D/q_ora_cnt.sql"; fi

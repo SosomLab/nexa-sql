@@ -93,7 +93,7 @@ fn parse_opts() -> Opts {
         println!("nsql {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
-    let default_format = nsql_settings::Settings::open_default()
+    let default_format = settings_cached()
         .ok()
         .and_then(|s| s.get("cli.format").and_then(Format::parse))
         .unwrap_or(Format::Grid);
@@ -324,7 +324,7 @@ fn err_head(c: &nsql_core::Classified) -> String {
 
 /// 설정 `sql.key_mode`(pk 기본 · all).
 fn key_mode_setting() -> KeyMode {
-    nsql_settings::Settings::open_default()
+    settings_cached()
         .ok()
         .and_then(|s| s.get("sql.key_mode").and_then(KeyMode::parse))
         .unwrap_or(KeyMode::Pk)
@@ -332,7 +332,7 @@ fn key_mode_setting() -> KeyMode {
 
 /// 설정 `vars.signature_lookup` · `pg.refcursor_expand`(부하원 스위치 · 39 §3)를 러너에 넣는다.
 fn apply_load_switches(runner: &mut Runner) {
-    if let Ok(s) = nsql_settings::Settings::open_default() {
+    if let Ok(s) = settings_cached() {
         // Oracle 클라이언트(설정 ▸ DBMS ▸ Oracle) — GUI와 같은 값을 CLI도 쓴다(첫 접속 전).
         nsql_drivers::set_oracle_client(
             s.get("oracle.client_mode") == Some("manual"),
@@ -348,26 +348,24 @@ fn apply_load_switches(runner: &mut Runner) {
 
 /// 설정 `vars.brace_subst` · `vars.max_value_kb`(T-153) — (켬, KB).
 fn var_limits_setting() -> (bool, usize) {
-    nsql_settings::Settings::open_default()
-        .ok()
-        .map_or((true, 1024), |s| {
-            (
-                s.get("vars.brace_subst").is_none_or(|v| v == "on"),
-                s.int("vars.max_value_kb").max(0) as usize,
-            )
-        })
+    settings_cached().ok().map_or((true, 1024), |s| {
+        (
+            s.get("vars.brace_subst").is_none_or(|v| v == "on"),
+            s.int("vars.max_value_kb").max(0) as usize,
+        )
+    })
 }
 
 /// 설정 `vars.into_policy`(D-139) — `first`면 `SELECT … INTO`의 여러 행에서 첫 행을 쓴다.
 fn into_first_setting() -> bool {
-    nsql_settings::Settings::open_default()
+    settings_cached()
         .ok()
         .is_some_and(|s| s.get("vars.into_policy") == Some("first"))
 }
 
 /// 설정 `run.cursor_autoshow` — 실행 뒤 돌아온 REF CURSOR를 바로 결과로(기본 켬 · 끄면 `PRINT rc`).
 fn cursor_autoshow_setting() -> bool {
-    nsql_settings::Settings::open_default()
+    settings_cached()
         .ok()
         .and_then(|s| s.get("run.cursor_autoshow").map(|v| v == "on"))
         .unwrap_or(true)
@@ -375,7 +373,7 @@ fn cursor_autoshow_setting() -> bool {
 
 /// 설정 `script.strict`(HIDDEN · T-9) — 미정의 `&var`·선언 없는 `:bind`를 오류로.
 fn strict_setting() -> bool {
-    nsql_settings::Settings::open_default()
+    settings_cached()
         .ok()
         .and_then(|s| s.get("script.strict").map(|v| v == "on"))
         .unwrap_or(false)
@@ -497,7 +495,7 @@ fn run_fetch_cmd(cmd: FetchCmd, p: &mut Printer, runner: &mut Runner) {
 /// 내장 변수 표(GUI `run_intrinsic`와 같은 규칙 · 설정 `vars.intrinsic` 끔 = 빈 표): 스크립트 경로(절대) · cwd · 홈 · 설정 폴더 ·
 /// 실행 파일 · 방언 · 설정 값 전부(`config:키`). 프로젝트는 CLI에 없으므로 `${workspaceFolder}`는 만들지 않는다.
 fn intrinsic_vars(path: &str, dialect: Dialect) -> std::collections::BTreeMap<String, String> {
-    let s = nsql_settings::Settings::open_default().ok();
+    let s = settings_cached().ok();
     if s.as_ref().is_some_and(|s| !s.flag("vars.intrinsic")) {
         return std::collections::BTreeMap::new();
     }
@@ -533,7 +531,7 @@ fn intrinsic_vars(path: &str, dialect: Dialect) -> std::collections::BTreeMap<St
 }
 
 fn fetch_settings() -> (usize, bool, u64) {
-    match nsql_settings::Settings::open_default() {
+    match settings_cached() {
         Ok(s) => (
             s.int("db.fetch_size").max(0) as usize,
             s.get("grid.fetch_mode").unwrap_or("cursor") == "cursor",
@@ -589,7 +587,7 @@ fn print_shell_help() {
 /// 줄 폭 0 = 터미널이면 콘솔 폭 · 파이프/파일이면 무제한.
 fn grid_opts(o: &Opts) -> GridOpts {
     let mut g = GridOpts::default();
-    if let Ok(s) = nsql_settings::Settings::open_default() {
+    if let Ok(s) = settings_cached() {
         // NULL 글자(`cli.null_text` · 기본 빈 칸) — 표·Markdown·CSV/TSV가 한 값을 쓴다(GUI는 `grid.null_text`).
         g.null = s.get("cli.null_text").unwrap_or("").to_string();
         g.line_width = s.int("cli.width").max(0) as usize;
@@ -1097,7 +1095,7 @@ fn log_hub(o: &Opts) -> Option<nsql_log::LogHub> {
         return None;
     }
     // 형식 어댑터(설정 `log.format` · 템플릿 · 컬럼) + 파일 싱크(`log.file` · 형식 `log.file_format` · 회전 `log.file_max_kb`).
-    let st = nsql_settings::Settings::open_default().ok();
+    let st = settings_cached().ok();
     let get = |k: &str, d: &str| st.as_ref().and_then(|s| s.get(k)).unwrap_or(d).to_string();
     let name = get("log.format", "raw");
     let tpl = get("log.template", nsql_log::DEFAULT_TEMPLATE);
@@ -1360,7 +1358,14 @@ fn cmd_run(o: &Opts) -> i32 {
     apply_load_switches(&mut runner);
     // 내장 변수 층(`${workspaceFolder}`는 프로젝트 없음 → 없음 · `${file}` = 스크립트 · `${cwd}` · `${nsqlHome}` · `${config:키}` · 사용자 09-23).
     runner.engine.settings.intrinsic = std::sync::Arc::new(intrinsic_vars(path, o.dialect));
+    let t_runner = std::time::Instant::now();
     connect_or_exit(&mut runner, target, o.dialect, &mut printer, o.no_prompt);
+    if o.timing {
+        let mut marks = STARTUP_MARKS.get().cloned().unwrap_or_default();
+        marks.push(("runner", t_runner));
+        marks.push(("connect", std::time::Instant::now()));
+        printer.err(&startup_line(&marks));
+    }
     runner.engine.set_args(&o.positional[1..]);
     for (n, v) in &o.defines {
         runner.engine.define(n, v);
@@ -1396,7 +1401,7 @@ fn cmd_shell(o: &Opts) -> i32 {
     let mut printer = Printer::new(o, o.format.clone(), true);
     // 셸만 상한(D-68): 설정 `cli.max_rows`(200) · `--max-rows`가 있으면 그 값 · 세션 중 `set max_rows`.
     printer.shell = true;
-    let st = nsql_settings::Settings::open_default().ok();
+    let st = settings_cached().ok();
     printer.max_rows = if o.max_rows > 0 {
         o.max_rows
     } else {
@@ -1404,7 +1409,6 @@ fn cmd_shell(o: &Opts) -> i32 {
             .map_or(200, |s| s.int("cli.max_rows").max(0) as usize)
     };
     printer.auto_more = st.as_ref().is_some_and(|s| s.flag("cli.auto_more"));
-    drop(st);
     let (fetch_size, keep_cursor, idle) = fetch_settings();
     let mut runner = Runner::new(o.dialect, opener(o.dialect))
         .with_max_rows(printer.shell_limit())
@@ -1627,12 +1631,55 @@ fn cmd_export(o: &Opts) -> i32 {
     }
 }
 
+/// 프로세스 시작 시각(`--timing` 기동 구간 · T-228).
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+/// main이 남긴 앞 구간 표식(설정 · 인자).
+static STARTUP_MARKS: std::sync::OnceLock<Vec<(&'static str, std::time::Instant)>> =
+    std::sync::OnceLock::new();
+
+/// ★ 설정을 프로세스에서 **한 번만** 읽는다(T-228 · 09-26): 기동 중 13곳이 저마다 `Settings::open_default()`로 파일을 열고
+/// 레지스트리(475 키)를 풀어 200행 조회의 wall이 +50 ms였다. 읽기 전용 자리만 이 길을 쓴다(`config set`은 제 손으로 열어 저장).
+fn settings_cached() -> io::Result<&'static nsql_settings::Settings> {
+    static CELL: std::sync::OnceLock<io::Result<nsql_settings::Settings>> =
+        std::sync::OnceLock::new();
+    CELL.get_or_init(nsql_settings::Settings::open_default)
+        .as_ref()
+        .map_err(|e| io::Error::new(e.kind(), e.to_string()))
+}
+
+/// `--timing` 기동 구간 한 줄(process 시작 → 설정 → 인자 → 러너 준비 → 접속).
+fn startup_line(marks: &[(&str, std::time::Instant)]) -> String {
+    let start = *START.get_or_init(std::time::Instant::now);
+    let mut prev = start;
+    let mut parts = Vec::new();
+    for (name, at) in marks {
+        parts.push(format!(
+            "{name} {:.1}ms",
+            at.duration_since(prev).as_secs_f64() * 1000.0
+        ));
+        prev = *at;
+    }
+    format!(
+        "⏱ startup {} · total {:.1}ms",
+        parts.join(" · "),
+        prev.duration_since(start).as_secs_f64() * 1000.0
+    )
+}
+
 fn main() {
+    START.get_or_init(std::time::Instant::now);
     // 언어는 설정 파일(ui.lang · 기본 영어)에서 — 폴더를 모르면 기본값(T-37).
-    if let Ok(s) = nsql_settings::Settings::open_default() {
+    if let Ok(s) = settings_cached() {
         nsql_i18n::set_lang(s.lang());
     }
+    let t_settings = std::time::Instant::now();
     let o = parse_opts();
+    let t_opts = std::time::Instant::now();
+    if o.timing {
+        STARTUP_MARKS
+            .set(vec![("settings", t_settings), ("opts", t_opts)])
+            .ok();
+    }
     // `--password-stdin`(T-132 ③): 표준 입력의 첫 줄 = 비밀번호. 스크립트를 표준 입력(`-`)에서 읽는 실행과는 함께 쓸 수 없다.
     if o.password_stdin
         && (o.positional.first().is_some_and(|p| p == "-") || !term::read_password_from_stdin())
