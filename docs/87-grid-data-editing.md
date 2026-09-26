@@ -194,3 +194,64 @@
 - `grid.edit_refresh=local`(재조회 없이 반영) — 지금은 requery와 같다.
 - 편집기 안 Shift+Tab(← 이동) · F2(북마크와 충돌 → 포커스별 키맵) · ⌘D 복제 키.
 - 실서버 4방언 시험(Oracle DATE 바인드 · SQL Server `@p` · PG `$n` · NULL 키) · 편집 모드 페인트 예산(26 §5) · 위키 사용법 · 확인표 U-*.
+
+---
+
+## 12. 다른 그리드 편집기 비교 · 최신 구조 제안(T-230 · 사용자 09-26 "변경 추적 · 수정 반영 · 필요할 때만 다시 읽기 · 행 단위 업데이트")
+
+> 조사 09-26(공식 문서 우선 · ⚠ = 2차 출처). 도구 = DBeaver · DataGrip · SSMS · Azure Data Studio · TablePlus · Toad · SQL Developer · pgAdmin · HeidiSQL · Navicat · Beekeeper Studio · DbGate · Sequel Ace · Excel/Sheets · AG Grid/Handsontable/Glide.
+
+### 12-1. 비교표
+
+| 도구 | 변경 추적 | 전송 시점 | 트랜잭션 | 키 없음 | 저장 뒤 | 동시성 | UX 특징 | 알려진 결함 |
+|---|---|---|---|---|---|---|---|---|
+| DBeaver | 행 상태 3(Normal/Added/Removed) + 열별 diff(원본 보존 · 같아지면 변경 아님 ⚠) | Save/Cancel + Generate Script | 연결의 Auto/Smart commit | 오류 다이얼로그 → **전 열 키 / 가상 키**(프로필 저장) · ROWID류 가상 열 | 설정 `Refresh after update` = **편집된 행만 재조회**(PG RETURNING ⚠) | WHERE = 키만 · 배치 부분 성공 가능 | 삭제 빨강 · Set NULL/default · Advanced Paste(다중 행·NULL) · 상태 `PRIMARY KEY x`/`VIRTUAL` | 주석·다중 결과셋에서 "unique key 없음"(#37459) |
+| DataGrip | 로컬 복사본 · 행 색 3종 · **선택 범위 Revert** | Submit(Ctrl+Enter) + Preview Pending Changes | Tx Auto/Manual(수동 = Submit 뒤 Commit/Rollback) | 읽기 전용 → "Select columns for row identification"(가상 키) | Reload Page 별도 | **update count ≠ 1 = 실패** · 병합 다이얼로그 | Set NULL/DEFAULT 단축키 · Clone Ctrl+D · CSV 줄 붙여넣기 | 메타 오래됨 → count 오류 |
+| SSMS(Edit Top 200) | 행 스냅숏 | **행을 떠날 때 즉시 커밋** | 행별 자동 · 실패 행 마커 | 편집 가능하되 **전 열 WHERE**(text에 `%_[` = 잘못된 문장 KB 925719) | 그 행 재조회 · Ctrl+R 전체 | **옛 값 WHERE** → "Data has changed" 3택(덮어쓰기/서버값/취소) | NULL 타이핑 · Ctrl+0 · 조인/집계/식 열 읽기 전용 | 이진 열 편집 불가 |
+| Azure Data Studio | SSMS식 | 행 이동 커밋 | 행별 | PK | 행 재조회(identity/getdate 미반영 결함 #6638) | — | 행 Revert 메뉴 | Esc 회귀 #9083 |
+| TablePlus | 미커밋 강조(노랑/주황 ⚠) | ⌘S Commit + ⌘⇧P 코드 리뷰 · ⌘⇧⌫ Discard | 단일 커밋 · Safe Mode 5단계 | PG `ctid` · SQLite rowid 미지원(#3504) | 미명시 | — | ⌘I 삽입 · **⌘D 복제** | commit 혼동(#818) |
+| Toad for Oracle ⚠ | 행별 Post | Post → Commit 2단계 | 수동/자동 | **ROWID 필수**(`EDIT emp`) | 재조회 | — | Show ROWID 옵션 | — |
+| SQL Developer | 대기 변경 | Commit/Rollback 버튼 | Oracle 트랜잭션 | ROWID | Refresh | — | Single Record View · `…` 편집기 | — |
+| pgAdmin 4 | 스테이징 | Save Data Changes(F6) 일괄 | **실패 = SAVEPOINT 롤백** · Auto commit/rollback 옵션 | **PK/OID 전부 선택**해야 편집 · 뷰 불가 | 재조회 | — | 빈칸 = NULL · `''` 입력 · Paste 행 = 새 행(SERIAL 보존 변형) · JSON 편집기 | — |
+| HeidiSQL | 행 | **행을 떠나면 즉시 UPDATE**(끌 수 없음) | 자동 | 키 없으면 차단 · 선택 열에 키 없어도 차단(#2600) | — | — | Insert value ▸ NULL/함수 | 확인 없음 |
+| Navicat ⚠ | 행 | 이동 시 저장 · 18 = Batch Apply/Discard | — | — | — | — | NULL vs 빈 문자열 구분 | — |
+| Beekeeper Studio | **초록/빨강/주황** 3색 | Apply/Reset + Copy To Sql | 단일 트랜잭션 | PK 필수(SQLite rowid) | — | — | Backspace = NULL · 다중 행 붙여넣기 | **정렬/필터하면 스테이징 폐기** |
+| DbGate 7.2 | 편집 가능 쿼리 결과(Premium) | SQL 미리보기 | — | PK 식별 | — | — | — | 세부 미문서 |
+| Sequel Ace | 없음 | **셀 확정마다 즉시 UPDATE** | 자동 | PK | — | — | — | 식 기본값 INSERT 불가 · ENUM 무음 폐기 |
+| Excel/Sheets | — | — | — | — | — | — | Enter 모드 vs Edit(F2) · Enter/Tab/Shift 이동 · **Ctrl+Enter 제자리** · 붙여넣기 = 앵커 확장 · 단일 값 → 범위 채움 | — |
+| AG Grid | `undoRedoCellEditing` 10단계(정렬/필터/외부 갱신 시 초기화) · **Batch Editing**(pending = 렌더/복사에만 · 정렬·집계 미반영 · commit = undo 1단계) | — | — | — | — | — | `cellValueChanged`(commit 시) | — |
+| Handsontable / Glide | UndoRedo 플러그인(`loadData` = 비움) / 상태는 호스트(`onCellsEdited` 일괄 · `onPaste` 탭/줄바꿈) | — | — | — | — | — | `afterChange(source)` | — |
+
+### 12-2. 우리 현재 위치
+
+이미 있음 = ChangeSet 오버레이 + 원복 감지(A→B→A 미변경) · 한 트랜잭션 + 문장당 affected=1 엄격 · PK→UK→전 열 · 적용 뒤 전체 재조회 · NULL 메뉴/Delete · 복제/삽입/삭제 · TSV 붙여넣기 행 확장 · 읽기 전용 사유 · SQL 미리보기 · 변경 목록 창 · 행 식별 띠(초록/강조/빨강). 도구 중 **DataGrip + Beekeeper + DBeaver의 합집합**에 가깝고, 없는 것은 행 단위 재조회 · 동시성 옵션 · 가상 키 · 충돌 UX · 정렬 중 보존 검증.
+
+### 12-3. 제안 구조(2025~26 · 채택)
+
+1. **변경 집합** = 지금 모델 유지(행 상태 {Clean, Modified{열 → (원본, 새 값)}, Inserted, Deleted} · 같아지면 제거) + **행 식별자 고정**(원본 행 index/키) → 정렬·필터는 뷰 투영이라 ChangeSet이 살아남는다(Beekeeper의 "정렬 = 폐기" 회피 · 지금은 편집 중 정렬 잠금 → **정렬 허용 + 보존**으로 바꾼다 · pending 값은 정렬·Σ에 미반영을 명시 = AG Grid).
+2. **적용 파이프라인**(지금과 같음 · 보강) = 검증 → `SqlGen`(변경 열만 SET · 키 WHERE) → 미리보기 → `gate_open` → 한 트랜잭션(수동 커밋 = 열린 트랜잭션에 참여 · **SAVEPOINT**로 부분 실패 격리 = pgAdmin) → affected≠1 = 롤백 + 실패 행 마커 → 커밋 → **재조회 전략 §12-4**.
+3. **행 단위 재조회(P1)** — 아래.
+4. **낙관적 동시성 옵션** `grid.edit_concurrency = key | key_old | all_old`: `key`(기본 · DBeaver/DataGrip) · `key_old` = 변경한 열의 **옛 값만** WHERE에 추가(충돌 감지 ↔ LOB 회피의 균형 · 권장 기본 후보) · `all_old` = SSMS식(LOB/float/text 제외 규칙 필수). affected=0 = "다른 사용자가 수정/삭제" 충돌.
+5. **충돌 UX** = 행 단위 3택(SSMS): 덮어쓰기 / 서버값 다시 읽기(내 변경은 diff로 유지) / 계속 편집 — 전체 취소가 아니라 그 행만.
+6. **되돌리기 층** = L1 셀 편집기(Esc = 원값) · L2 ChangeSet 연산 로그(셀·붙여넣기 묶음·행 삽입/삭제 = 1단계 · 지금 있음) · L3 적용 뒤 = "역 ChangeSet 만들기" 제안만(자동 실행 금지) · **선택 범위 Revert**(DataGrip).
+7. **키보드 표준** = Enter/F2/더블클릭 편집 · Enter 확정+↓ · Tab 확정+→ · **Ctrl+Enter 제자리 확정** · Esc 취소 · Ctrl+0/Delete = NULL · Ctrl+D 복제(그리드 포커스 한정) · Ctrl+S 적용 · Ctrl+Shift+P 미리보기.
+8. **키 없음 3안** `grid.edit_no_key = readonly | all_columns | rowid`(Oracle ROWID · PG ctid(VACUUM 뒤 무효 → 재조회 시 재확인) · SQLite rowid · MSSQL %%physloc%%) + **전 열 키 경고 배지 + 사전 `SELECT COUNT(*)` 검사 옵션**(DBeaver 경고 · SSMS 다중 행 방지).
+9. **Set DEFAULT**(기본값 괄호 표시) · NULL vs `''` 구분 표시 · 단일 값 → 선택 범위 채움 · SERIAL/IDENTITY 열 건너뛰기 옵션(pgAdmin).
+
+### 12-4. 행 단위 재조회(사용자 "필요한 경우만 다시 읽기 · 행 단위 업데이트")
+
+| 단계 | 규칙 |
+|---|---|
+| 기본 | 적용 성공 뒤 **변경·추가된 행만** `SELECT <원 select 목록> FROM t WHERE 키 IN (…)`(키가 하나면 `IN` · 복합이면 `OR (k1=… AND k2=…)` 묶음 · 100행 단위)로 다시 읽어 그 행만 교체 · 삭제 행은 로컬 제거 · 다른 행·스크롤·선택·정렬은 그대로 |
+| 왕복 0 후보 | PG/SQLite `RETURNING *` · MSSQL `OUTPUT INSERTED.*` · Oracle `RETURNING … INTO`(열 지정) — `Caps` 포트에 `returning: None/Clause/Output` 추가 시 UPDATE/INSERT 응답에서 바로 |
+| 추가 행의 키 | INSERT 뒤 키를 모르면(시퀀스/IDENTITY) `RETURNING`으로 받거나 → 없으면 그 행만 **전체 재조회 폴백** |
+| 전체 재조회 폴백(순수 판정 + MC/DC) | 키 없음(전 열 키) · 원 문장이 ORDER BY로 순서가 바뀔 수 있고 사용자가 "정렬 반영"을 켬 · 트리거/생성 열이 있다고 메타가 말함(다른 행도 바뀔 수 있음) · Σ 건수/페이지 상한(`more`) 상태 · 서버 페이지 이어 받기 중(커서) · 설정 `grid.edit_refresh = full` |
+| 로컬 반영(`local`) | 재조회 없이 ChangeSet 값을 세트에 굳힘(서버 기본값·트리거 결과는 모른다는 배지) — 오프라인/느린 망용 |
+| 구현 | `ResultData`는 `Arc` 세그먼트(불변) → 행 교체 = **덧그림 층 2(committed overlay)** 또는 세그먼트 `Arc::make_mut`(변환 스레드 공유 시 복사) — 덧그림 층이 DR-33에 맞다(세트 불변 · 뷰는 그대로) |
+| 설정 | `grid.edit_refresh = rows(기본) | full | local` |
+
+### 12-5. 우선순위(TODO 등재)
+
+1. **P1 행 단위 재조회**(§12-4 · `refresh=rows` 기본 · 폴백 판정 순수 함수 + MC/DC · `Caps.returning`) 2. **P1 정렬/필터 중 ChangeSet 보존**(잠금 해제 · pending 미반영 명시) 3. **P2 동시성 `key_old` + 충돌 3택** 4. **P2 전 열 키 경고 배지 + 사전 COUNT 검사** 5. **P2 Set DEFAULT · NULL/`''` 구분 · 범위 채움 · SERIAL 건너뛰기** 6. **P3 실패 행 마커 + 그 행만 재시도 · SAVEPOINT** 7. **P3 키보드 표준(Ctrl+Enter · Ctrl+0 · Ctrl+D 그리드 한정)** 8. **P3 ROWID/ctid/rowid 키 3안**.
+
+출처: DBeaver Data-Editor/Virtual-Keys/Data-Editor-preferences · DataGrip submitting-and-reverting-changes/data-editor-and-viewer/rows · MS Learn work-with-data-in-the-results-pane · troubleshoot error-use-ssms-update-row-table · ADS #6638 #9083 · TablePlus docs/이슈 #266 #3504 · pgAdmin editgrid/query_tool · HeidiSQL help/#2600 · Beekeeper editing-data/#1532 · DbGate 7.2.0 · Sequel Ace #1935 #2616 · AG Grid undo-redo-edits/cell-editing-batch · Handsontable undo-redo · Glide editing.

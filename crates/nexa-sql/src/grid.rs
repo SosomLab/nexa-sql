@@ -5416,7 +5416,7 @@ mod edit_key_path_tests {
         g.on_event(&InputEvent::Char { c: 'B', now_ms: 0 }, 1.0);
         g.on_event(&key(Key::Enter), 1.0);
         assert!(!g.editing_cell(), "Enter = 커밋 · 닫힘");
-        let e = g.edit.as_ref().unwrap();
+        let e = g.edit.as_ref().expect("editable");
         assert_eq!(e.cs.cell(RowRef::Existing(0), 0), Some(&Some("AB".into())));
         assert!(e.cs.is_dirty());
     }
@@ -5438,7 +5438,7 @@ mod edit_key_path_tests {
         g.on_event(&key(Key::Enter), 1.0);
         assert!(!g.edit_dirty(), "x → y → x = 변경 아님");
         assert_eq!(
-            g.edit.as_ref().unwrap().cs.cell(RowRef::Existing(0), 1),
+            g.edit.as_ref().expect("editable").cs.cell(RowRef::Existing(0), 1),
             None
         );
         // Esc = 취소 · 기록 없음.
@@ -5496,7 +5496,7 @@ mod edit_key_path_tests {
             1.0,
         );
         assert!(!g.editing_cell(), "바깥 클릭 = 커밋");
-        let e = g.edit.as_ref().unwrap();
+        let e = g.edit.as_ref().expect("editable");
         assert_eq!(e.cs.cell(RowRef::Existing(0), 0), Some(&Some("Z".into())));
         assert_eq!(g.sel_cur, Some((0, 1)), "그 클릭은 선택으로 이어진다");
     }
