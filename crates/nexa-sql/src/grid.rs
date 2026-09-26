@@ -1293,14 +1293,101 @@ impl Grid {
         }
     }
 
-    fn request_apply(&mut self) {
-        if let Some(e) = self.edit.as_mut() {
-            if e.live.is_open() {
-                if let LiveEvent::Invalid(err) = e.live.try_commit(Move::None) {
-                    self.status(err.message());
-                    return;
-                }
+    /// 변경 목록(사용자 09-26 "컬럼·변경값을 따로 · 원본과의 차이 확인 · 전체 건수 = 트랜잭션 범위"): 행 키 · 열 · 원본 → 새 값 · 추가/삭제 행.
+    fn request_changes(&mut self) {
+        let Some(e) = self.edit.as_ref() else { return };
+        let (m, i, d) = e.cs.counts();
+        if m + i + d == 0 {
+            let s = t(Msg::GeChangesNone).to_string();
+            self.status(s);
+            return;
+        }
+        let key_names: Vec<String> = e
+            .key_cols
+            .iter()
+            .filter_map(|&k| e.cols.get(k))
+            .map(|c| c.name.clone())
+            .collect();
+        let key_label = if e.key_kind == KeyKind::Constraint {
+            key_names.join(", ")
+        } else {
+            "*".to_string()
+        };
+        let mut out = format!(
+            "-- {}\n",
+            tf(
+                Msg::GeChangesHead,
+                &[
+                    &m.to_string(),
+                    &i.to_string(),
+                    &d.to_string(),
+                    &e.target.table,
+                    &key_label
+                ]
+            )
+        );
+        let key_of = |row: usize| -> String {
+            e.key_cols
+                .iter()
+                .filter_map(|&k| e.cols.get(k).map(|c| (c, k)))
+                .map(|(c, k)| {
+                    format!(
+                        "{}={}",
+                        c.name,
+                        self.src_text(row, k).unwrap_or_else(|| "NULL".into())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let show = |v: &Option<String>| -> String { v.clone().unwrap_or_else(|| "NULL".into()) };
+        for row in e.cs.deleted_rows() {
+            out.push_str(&format!("DELETE  #{} ({})\n", row + 1, key_of(row)));
+        }
+        let mut last: Option<usize> = None;
+        for ((row, col), v) in e.cs.edits() {
+            if last != Some(*row) {
+                out.push_str(&format!("UPDATE  #{} ({})\n", row + 1, key_of(*row)));
+                last = Some(*row);
             }
+            let name = e
+                .cols
+                .get(*col)
+                .map_or_else(|| col.to_string(), |c| c.name.clone());
+            out.push_str(&format!(
+                "        {name}: {} → {}\n",
+                show(&self.src_text(*row, *col)),
+                show(v)
+            ));
+        }
+        for (k, ir) in e.cs.inserted_rows() {
+            let vals: Vec<String> = ir
+                .cells
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v.is_some())
+                .map(|(c, v)| {
+                    format!(
+                        "{}={}",
+                        e.cols
+                            .get(c)
+                            .map_or_else(|| c.to_string(), |cc| cc.name.clone()),
+                        show(v)
+                    )
+                })
+                .collect();
+            out.push_str(&format!("INSERT  +{} ({})\n", k + 1, vals.join(", ")));
+        }
+        self.edit_reqs.push(EditRequest::Preview {
+            title: t(Msg::WinGeChanges).to_string(),
+            text: out,
+        });
+    }
+
+    fn request_apply(&mut self) {
+        // 편집 중이던 셀 = 먼저 커밋(값을 잃지 않게) · 검증 실패면 적용하지 않는다.
+        if !self.commit_live(Move::None) {
+            return;
         }
         if !self.edit_dirty() {
             let s = t(Msg::StGeNothing).to_string();
@@ -1466,6 +1553,19 @@ impl Grid {
 
     /// 편집 동작 실행(키·메뉴·툴바 공통).
     fn edit_action(&mut self, a: EditAction) {
+        // 행 단위 동작·적용 전에는 열린 셀 편집을 먼저 커밋한다(값을 잃지 않게).
+        if matches!(
+            a,
+            EditAction::DuplicateRow
+                | EditAction::InsertRow
+                | EditAction::DeleteRow
+                | EditAction::Apply
+                | EditAction::PreviewSql
+                | EditAction::ShowChanges
+        ) && !self.commit_live(Move::None)
+        {
+            return;
+        }
         match a {
             EditAction::BeginEdit => self.begin_edit(None, true),
             EditAction::BeginEditWith(c) => self.begin_edit(Some(c), false),
@@ -1480,6 +1580,7 @@ impl Grid {
             EditAction::Revert => self.revert_edits(),
             EditAction::ViewValue => self.request_view_value(),
             EditAction::PreviewSql => self.request_preview(),
+            EditAction::ShowChanges => self.request_changes(),
             EditAction::Copy | EditAction::Paste => {}
         }
     }
@@ -1619,6 +1720,52 @@ impl Grid {
         }
     }
 
+    /// 열린 편집 상자를 커밋한다(적용·툴바·명령 전) — 닫혀 있으면 true · 검증 실패 = false(상태줄 안내).
+    fn commit_live(&mut self, mv: Move) -> bool {
+        let Some(e) = self.edit.as_mut() else {
+            return true;
+        };
+        if !e.live.is_open() {
+            return true;
+        }
+        let cell = e.live.cell();
+        match e.live.try_commit(mv) {
+            LiveEvent::Commit { value, mv } => {
+                if let Some(cell) = cell {
+                    self.commit_cell(cell, value);
+                }
+                self.move_after_commit(mv);
+                true
+            }
+            LiveEvent::Invalid(err) => {
+                self.status(err.message());
+                false
+            }
+            _ => true,
+        }
+    }
+
+    /// 편집 상자 안 클립보드/전체 선택(호스트 ⌘X/C/V/A · 편집 중에는 그리드가 아니라 상자에 한정 · 09-26).
+    pub(crate) fn live_copy(&mut self) -> Option<String> {
+        self.edit.as_ref()?.live.textbox().copy_selection()
+    }
+    pub(crate) fn live_cut(&mut self) -> Option<String> {
+        let mut inv = Invalidations::default();
+        self.edit
+            .as_mut()?
+            .live
+            .textbox_mut()
+            .cut_selection(&mut inv)
+    }
+    pub(crate) fn live_select_all(&mut self) {
+        if let Some(e) = self.edit.as_mut() {
+            let mut inv = Invalidations::default();
+            e.live
+                .textbox_mut()
+                .on_event(&InputEvent::SelectAll, &mut inv);
+        }
+    }
+
     /// 살아 있는 편집기가 사건을 먹었는가(열려 있을 때만).
     fn live_event(&mut self, ev: &InputEvent) -> bool {
         let Some(e) = self.edit.as_mut() else {
@@ -1634,6 +1781,8 @@ impl Grid {
             self.live_edit_ctx();
             return true;
         }
+        // ★ 커밋 대상 셀은 사건 **전에** 읽는다 — `try_commit`이 상자를 닫으면서 셀을 지우므로(09-26 "값이 반영 안 됨" 원인).
+        let cell = e.live.cell();
         let inside = match *ev {
             InputEvent::MouseDown { x, y, .. }
             | InputEvent::RightDown { x, y }
@@ -1658,7 +1807,6 @@ impl Grid {
             InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => return false,
             _ => e.live.on_event(ev, false, &mut inv),
         };
-        let cell = e.live.cell();
         match r {
             LiveEvent::Commit { value, mv } => {
                 if let Some(cell) = cell {
@@ -3103,6 +3251,11 @@ impl Grid {
                 can && e.cs.can_redo(),
             ));
             items.push(CtxItem::maybe(
+                "grid.edit.changes",
+                t(Msg::MnGeChanges),
+                dirty,
+            ));
+            items.push(CtxItem::maybe(
                 "grid.edit.preview_sql",
                 t(Msg::MnGePreview),
                 dirty,
@@ -4129,11 +4282,15 @@ impl Grid {
                     th.danger,
                 );
             }
-            if status == RowStatus::Inserted {
-                dc.fill_rect(
-                    Rect::new(gx0, y, band, self.row_h).intersection(&body),
-                    th.ok,
-                );
+            // 행 식별 띠(사용자 09-26): 새 행 = 초록 · 수정 행 = 강조색 · 삭제 행 = 빨강 — 행번호 칸 바로 오른쪽.
+            let band_color = match status {
+                RowStatus::Inserted => Some(th.ok),
+                RowStatus::Modified => Some(th.accent),
+                RowStatus::Deleted => Some(th.danger),
+                RowStatus::Clean => None,
+            };
+            if let Some(c) = band_color {
+                dc.fill_rect(Rect::new(gx0, y, band, self.row_h).intersection(&body), c);
             }
             // 행번호(고정 열 · 우측 정렬 · 흐리게 · 선택 행은 선택색으로 표시).
             if self.gutter_w > 0 {
@@ -5210,5 +5367,137 @@ mod tests {
         assert_eq!(g.sort_keys, vec![(0, false), (1, true)]);
         click(&mut g, 80, false);
         assert_eq!(g.sort_keys, vec![(0, true)], "일반 클릭 = 단일 키로");
+    }
+}
+
+#[cfg(test)]
+mod edit_key_path_tests {
+    use super::*;
+    use nsql_core::{Column, ResultSet};
+
+    fn editable_grid() -> Grid {
+        let mut g = Grid::default();
+        let rs = ResultSet {
+            columns: (0..2)
+                .map(|i| Column {
+                    name: format!("C{i}"),
+                    type_name: "VARCHAR2(10)".into(),
+                })
+                .collect(),
+            rows: vec![vec![Value::Null, Value::Str("x".into())]],
+        };
+        g.set_result(rs);
+        g.bounds = Rect::new(0, 0, 400, 300);
+        g.row_h = 20;
+        g.header_h = 21;
+        g.gutter_w = 30;
+        g.col_w = vec![100, 100];
+        g.set_result_origin("select C0, C1 from T", true);
+        g.set_keys(None);
+        g
+    }
+
+    fn key(k: Key) -> InputEvent {
+        InputEvent::Key {
+            key: k,
+            shift: false,
+            primary: false,
+        }
+    }
+
+    /// 실제 키 경로(사용자 09-26 "값 넣고 Enter/다른 셀 클릭에도 반영 안 됨"): 타이핑 진입 → 글자 → Enter = 변경 집합에 값.
+    #[test]
+    fn typing_then_enter_commits() {
+        let mut g = editable_grid();
+        assert!(g.edit.is_some(), "편집 가능");
+        g.select_cell_for_test(0, 0);
+        g.on_event(&InputEvent::Char { c: 'A', now_ms: 0 }, 1.0);
+        assert!(g.editing_cell(), "타이핑 = 편집 진입");
+        g.on_event(&InputEvent::Char { c: 'B', now_ms: 0 }, 1.0);
+        g.on_event(&key(Key::Enter), 1.0);
+        assert!(!g.editing_cell(), "Enter = 커밋 · 닫힘");
+        let e = g.edit.as_ref().unwrap();
+        assert_eq!(e.cs.cell(RowRef::Existing(0), 0), Some(&Some("AB".into())));
+        assert!(e.cs.is_dirty());
+    }
+
+    /// 최종 값이 원본과 같으면 변경이 아니다(사용자 09-26): x → y(수정) → x(제외) · Esc 취소 = 기록 없음.
+    #[test]
+    fn same_as_original_is_not_a_change() {
+        let mut g = editable_grid();
+        g.select_cell_for_test(0, 1); // 원본 "x"
+        g.on_event(&InputEvent::Char { c: 'y', now_ms: 0 }, 1.0);
+        g.on_event(&key(Key::Enter), 1.0);
+        assert!(g.edit_dirty());
+        assert_eq!(
+            g.edit_status_text().as_deref().map(|s| s.contains('1')),
+            Some(true)
+        );
+        g.select_cell_for_test(0, 1);
+        g.on_event(&InputEvent::Char { c: 'x', now_ms: 0 }, 1.0);
+        g.on_event(&key(Key::Enter), 1.0);
+        assert!(!g.edit_dirty(), "x → y → x = 변경 아님");
+        assert_eq!(
+            g.edit.as_ref().unwrap().cs.cell(RowRef::Existing(0), 1),
+            None
+        );
+        // Esc = 취소 · 기록 없음.
+        g.select_cell_for_test(0, 1);
+        g.on_event(&InputEvent::Char { c: 'q', now_ms: 0 }, 1.0);
+        g.on_event(&key(Key::Escape), 1.0);
+        assert!(!g.editing_cell());
+        assert!(!g.edit_dirty());
+    }
+
+    /// 편집 상자 안 더블클릭 = 단어 · 트리플 = 전체(줄) 선택(사용자 09-26).
+    #[test]
+    fn double_and_triple_click_inside_editor() {
+        let mut g = editable_grid();
+        g.select_cell_for_test(0, 1);
+        g.on_event(&InputEvent::Char { c: 'a', now_ms: 0 }, 1.0);
+        for c in "b cd".chars() {
+            g.on_event(&InputEvent::Char { c, now_ms: 0 }, 1.0);
+        }
+        // 상자 = 셀 (0,1) 사각형 · x 30+100+5 · y 21+10
+        let down = |x: i32| InputEvent::MouseDown {
+            x,
+            y: 31,
+            shift: false,
+            primary: false,
+        };
+        g.on_event(&down(140), 1.0);
+        g.on_event(&InputEvent::MouseUp { x: 140, y: 31 }, 1.0);
+        g.on_event(&down(140), 1.0);
+        let sel = g.live_copy();
+        assert!(
+            sel.is_some_and(|s| !s.is_empty() && !s.contains(' ')),
+            "더블 = 단어"
+        );
+        g.on_event(&InputEvent::MouseUp { x: 140, y: 31 }, 1.0);
+        g.on_event(&down(140), 1.0);
+        assert_eq!(g.live_copy().as_deref(), Some("ab cd"), "트리플 = 전체");
+    }
+
+    /// 다른 셀 클릭 = 커밋 뒤 그 셀 선택.
+    #[test]
+    fn click_elsewhere_commits() {
+        let mut g = editable_grid();
+        g.select_cell_for_test(0, 0);
+        g.on_event(&InputEvent::Char { c: 'Z', now_ms: 0 }, 1.0);
+        assert!(g.editing_cell());
+        // (0,1) 셀 = x 130+50 · y 21+10
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: 180,
+                y: 31,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert!(!g.editing_cell(), "바깥 클릭 = 커밋");
+        let e = g.edit.as_ref().unwrap();
+        assert_eq!(e.cs.cell(RowRef::Existing(0), 0), Some(&Some("Z".into())));
+        assert_eq!(g.sel_cur, Some((0, 1)), "그 클릭은 선택으로 이어진다");
     }
 }

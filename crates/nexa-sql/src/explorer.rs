@@ -736,6 +736,10 @@ pub(crate) struct Explorer {
     /// 자동 완성이 `스키마.`로 읽어 온 버킷(트리가 펼친 것·현재 스키마·사전은 제외) — 열린 문서가 그 이름을 더 이상 쓰지 않으면
     /// 즉시 해제한다(`reclaim_intel_buckets` · 사용자 09-23 "미사용 판정 즉시 회수").
     intel_buckets: Vec<(String, ObjectKind)>,
+    /// ★ 메타에 없는 객체의 컬럼 요청(이번 세션에 만든 테이블 = L1/디스크 캐시에 없음 · 사용자 09-26 `DEMO_BSY A.` 완성 안 됨):
+    ///   그 스키마 관계 목록을 다시 읽은 뒤 다시 요청 · 같은 이름은 한 번만(없는 이름을 키마다 되묻지 않게).
+    pending_cols: Vec<(String, String, bool)>,
+    missing_cols: HashSet<String>,
     /// `intel.from_routines` — 자동 완성 채움에 함수·패키지·프로시저 버킷도(09-24).
     routines: bool,
     /// 접속 직후 현재 스키마·사전 미리 읽기(`intel.preload`).
@@ -1671,6 +1675,8 @@ impl Explorer {
             conn_desc: String::new(),
             server_schema: None,
             intel_buckets: Vec::new(),
+            pending_cols: Vec::new(),
+            missing_cols: HashSet::new(),
             routines: true,
             preload: true,
             profile_name: String::new(),
@@ -2152,6 +2158,8 @@ impl Explorer {
         self.suspended = false;
         self.gen += 1;
         self.detail_cache.clear();
+        self.pending_cols.clear();
+        self.missing_cols.clear();
         let _ = self.tx.send(Req::Close);
         let _ = self.tx_bg.send(Req::Close);
         let (tx, tx_bg, rx) = Self::spawn_meta(&self.wake);
@@ -2192,6 +2200,8 @@ impl Explorer {
         self.last_used = Instant::now();
         self.gen += 1;
         self.detail_cache.clear();
+        self.pending_cols.clear();
+        self.missing_cols.clear();
         self.dialect = None;
         self.conn_desc = spec.redacted();
         self.profile_name = profile_name.to_string();
@@ -2240,6 +2250,8 @@ impl Explorer {
         self.suspended = false;
         self.gen += 1;
         self.detail_cache.clear();
+        self.pending_cols.clear();
+        self.missing_cols.clear();
         self.dialect = None;
         self.conn_desc.clear();
         self.profile_name.clear();
@@ -2520,7 +2532,21 @@ impl Explorer {
                     &dict_name,
                 ) {
                     Some(id) => id,
-                    None => return,
+                    None => {
+                        // 메타에 없는 이름 = 이번 세션에 생겼거나(L1 이름·디스크 캐시 이전) 아직 안 읽은 스키마 → 관계 목록을 다시 읽고 도착하면 재요청(1회).
+                        let key =
+                            format!("{}.{}", schema_name.to_lowercase(), table.to_lowercase());
+                        if self.missing_cols.insert(key) {
+                            self.meta.mark_stale(Some(&schema_name));
+                            self.pending_cols.push((
+                                schema_name.clone(),
+                                table.to_string(),
+                                urgent,
+                            ));
+                            self.request_objects(&schema_name);
+                        }
+                        return;
+                    }
                 }
             }
         };
@@ -3030,6 +3056,7 @@ impl Explorer {
                     match r {
                         Ok(list) => {
                             self.meta_load_objects(&schema, kind, &list);
+                            self.retry_pending_cols(&schema);
                             // ★ L2(85 §3): 현재 스키마의 관계 목록이 오면 그 컬럼을 뒤에서 미리 읽는 큐에.
                             if kind.is_relation()
                                 && self
@@ -3870,6 +3897,8 @@ impl Explorer {
     pub(crate) fn rebind(&mut self, spec: &ConnectSpec) {
         self.gen += 1;
         self.detail_cache.clear();
+        self.pending_cols.clear();
+        self.missing_cols.clear();
         self.rebinding = true;
         self.offline = false;
         self.suspended = false;
@@ -3994,6 +4023,28 @@ impl Explorer {
             col,
             opts: self.gen_opts,
         });
+    }
+
+    /// 관계 목록이 새로 왔다 → 그 스키마에서 기다리던 컬럼 요청을 다시(이제는 객체가 있다 · 없으면 `missing_cols`가 되묻지 않게 막는다).
+    fn retry_pending_cols(&mut self, schema: &str) {
+        let mine: Vec<(String, String, bool)> = {
+            let (a, b): (Vec<_>, Vec<_>) = self
+                .pending_cols
+                .drain(..)
+                .partition(|(sc, _, _)| sc.eq_ignore_ascii_case(schema));
+            self.pending_cols = b;
+            a
+        };
+        for (sc, table, urgent) in mine {
+            if self
+                .meta
+                .snapshot()
+                .lookup(&self.meta.names, Some(&sc), &table)
+                .is_some()
+            {
+                self.request_columns(Some(&sc), &table, urgent);
+            }
+        }
     }
 
     /// 캐시된 상세(있으면 즉시 표시용 사본 · `true` = 새로 고침 범위였거나 TTL이 지나 **다시 읽어 교체**해야 한다).

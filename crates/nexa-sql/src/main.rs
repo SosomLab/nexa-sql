@@ -7302,7 +7302,10 @@ impl App {
             "edit.copy" => self.clip_action(EditCtxAction::Copy),
             "edit.paste" => self.clip_action(EditCtxAction::Paste),
             "edit.select_all" => {
-                if self.focus == Focus::Grid {
+                if self.focus == Focus::Grid && self.grid.editing_cell() {
+                    self.grid.live_select_all();
+                    self.redraw();
+                } else if self.focus == Focus::Grid {
                     self.grid.select_all();
                 } else {
                     self.route(InputEvent::SelectAll);
@@ -10520,6 +10523,23 @@ impl App {
         let mut inv = Invalidations::default();
         let mut failed = false;
         match act {
+            // ★ 셀 편집 중 = 클립보드 동작은 편집 상자에 한정(사용자 09-26 ⌘X/⌘A 지적).
+            EditCtxAction::Copy if self.focus == Focus::Grid && self.grid.editing_cell() => {
+                if let Some(t) = self.grid.live_copy() {
+                    failed = !clipboard::write_text(&t);
+                }
+            }
+            EditCtxAction::Cut if self.focus == Focus::Grid && self.grid.editing_cell() => {
+                if let Some(t) = self.grid.live_cut() {
+                    failed = !clipboard::write_text(&t);
+                }
+            }
+            EditCtxAction::Paste if self.focus == Focus::Grid && self.grid.editing_cell() => {
+                match clipboard::read_text() {
+                    Some(text) => self.grid.live_paste(&text),
+                    None => failed = true,
+                }
+            }
             EditCtxAction::Copy if self.focus == Focus::Grid => {
                 if let Some((text, n)) = self.grid.copy_selection(grid::CopyKind::Tsv) {
                     failed = !clipboard::write_text(&text);

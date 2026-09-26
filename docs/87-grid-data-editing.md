@@ -183,6 +183,10 @@
 | 설정 | `grid.edit`(on) · `grid.edit_empty`(null/empty) · `grid.edit_strict`(on) · `grid.edit_refresh`(requery/local) · `grid.paste_max_rows`(10,000) | nsql-settings |
 | 자체 시험 | 기동 명령 `grid.edit.set:<행>;<열>;<글>` · `grid.edit.cmd:<id>`(`row.dup/del/save/cancel` · `grid.edit.*`) · `grid.select:<행>;<열>` · `grid.dump:<파일>`(행 상태·덧그림·키·명세) — SQLite 격리 E2E(§217): 수정 3·복제·NULL·미리보기·적용·재조회·삭제·되돌리기/다시 하기·적용 전부 서버 값 일치 | `main.rs` |
 
+### 10-1. 실기 결함 수정(§221)
+
+값 미반영(커밋 셀 선독 · `commit_live` 선행) · 클립보드/전체 선택 편집 한정 · 변경 목록 창(`grid.edit.changes`) · 행 식별 띠(초록/강조/빨강) · 실제 키 경로 시험 4 · 메타에 없는 객체 컬럼 재요청. **변경 판정 규칙** = 셀마다 (열, 새 값)을 원본과 따로 들고, 최종 값이 원본과 같으면 항목을 지운다(A→B→A = 미변경 · Esc = 기록 없음) — `ChangeSet::set_cell(original)`.
+
 ## 11. 남은 것(T-182 후속)
 
 - 물리 키(Oracle `ROWID` · PG `ctid` · SQLite `rowid` · MSSQL `%%physloc%%`) 숨은 열 재조회 — 지금은 PK/UK → 전체 열(D-198).
