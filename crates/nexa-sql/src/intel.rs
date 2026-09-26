@@ -1839,12 +1839,6 @@ mod tests {
     use super::*;
     use nsql_run::meta::{MetaStore, NewCol, NewObj};
 
-    pub(super) fn cfg_pub() -> IntelCfg {
-        cfg()
-    }
-    pub(super) fn store_pub() -> MetaStore {
-        store()
-    }
     fn cfg() -> IntelCfg {
         IntelCfg {
             enabled: true,
@@ -3073,38 +3067,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod probe_where_0926 {
-    use super::tests::{cfg_pub, store_pub};
-    use super::*;
-    #[test]
-    fn where_alias_member_after_comments() {
-        let m = store_pub();
-        let snap = m.snapshot();
-        let view = MetaView {
-            names: &m.names,
-            snap,
-        };
-        let mut it = Intel::new(cfg_pub());
-        let host = Rect::new(0, 0, 800, 600);
-        let doc = "--\t샘플 생성\nSELECT\n\t*\n--\tSELECT DISTINCT A.EMPNO\nFROM\n\tEMP A\nWHERE 1=1\n-- AND A.EMPNO\t=\t'X'\nAND A.EMPNO\t=\t'MP_202607_W27_V06'\nAND\tA.\n;\t\n";
-        let caret = doc.find("AND\tA.").unwrap() + "AND\tA.".len();
-        let opened = it.request(
-            1,
-            1,
-            doc,
-            caret,
-            Some(Dialect::Oracle),
-            Some(&view),
-            Some(Point { x: 0, y: 0 }),
-            host,
-            1.0,
-            &|_| None,
-        );
-        let texts: Vec<String> = it.cands.iter().map(|c| c.text.clone()).collect();
-        let loading = it.loading;
-        let needs = it.take_needs();
-        eprintln!("OPENED={opened} loading={loading} cands={texts:?} needs={needs:?}");
-        panic!("probe");
-    }
-}
