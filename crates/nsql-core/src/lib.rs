@@ -960,6 +960,54 @@ impl ResultData {
     pub fn rows(&self) -> impl Iterator<Item = &[Value]> + '_ {
         self.segs.iter().flat_map(|s| s.iter().map(Vec::as_slice))
     }
+
+    /// ★ 행 하나 교체(그리드 편집 적용 뒤 **행 단위 재조회** · docs/87 §12-4 · T-230) — 그 세그먼트를 다른 쪽(변환 스레드)이
+    /// 쥐고 있으면 그 세그먼트만 복사한다(`Arc::make_mut` · 나머지 세그먼트는 그대로 · 복사 0).
+    pub fn set_row(&mut self, r: usize, row: Vec<Value>) -> bool {
+        let Some((i, off)) = self.locate(r) else {
+            return false;
+        };
+        let seg = Arc::make_mut(&mut self.segs[i]);
+        let Some(slot) = seg.get_mut(off) else {
+            return false;
+        };
+        let old = rows_approx_bytes(std::slice::from_ref(slot));
+        let new = rows_approx_bytes(std::slice::from_ref(&row));
+        *slot = row;
+        self.bytes = self.bytes.saturating_sub(old) + new;
+        true
+    }
+
+    /// 행 하나 덧붙이기(새 세그먼트) — 돌려주는 값 = 그 행의 번호.
+    pub fn push_row(&mut self, row: Vec<Value>) -> usize {
+        let idx = self.len;
+        self.push_rows(vec![row]);
+        idx
+    }
+
+    /// 행 제거(번호 목록 · 순서 무관 · 중복 무시) — 세그먼트를 한 덩어리로 다시 짠다(삭제는 드물어 한 번 복사로 충분).
+    pub fn remove_rows(&mut self, rows: &[usize]) {
+        if rows.is_empty() {
+            return;
+        }
+        let mut del: Vec<usize> = rows.to_vec();
+        del.sort_unstable();
+        del.dedup();
+        let mut kept: Vec<Vec<Value>> = Vec::with_capacity(self.len.saturating_sub(del.len()));
+        let mut di = 0;
+        for (r, row) in self.rows().enumerate() {
+            if di < del.len() && del[di] == r {
+                di += 1;
+                continue;
+            }
+            kept.push(row.to_vec());
+        }
+        self.segs.clear();
+        self.starts.clear();
+        self.len = 0;
+        self.bytes = 0;
+        self.push_rows(kept);
+    }
 }
 
 impl RowSource for ResultData {
@@ -1143,6 +1191,42 @@ pub use ddl::{ddl_target, DdlKind, DdlTarget, DdlVerb};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 행 단위 교체·추가·제거(87 §12-4 · T-230) — 세그먼트 경계를 넘어 번호가 맞고, 공유 세그먼트는 그쪽만 복사된다.
+    #[test]
+    fn result_data_set_push_remove_rows() {
+        let col = |n: &str| Column {
+            name: n.into(),
+            type_name: String::new(),
+        };
+        let mut d = ResultData::new(ResultSet {
+            columns: vec![col("a")],
+            rows: vec![vec![Value::Int(0)], vec![Value::Int(1)]],
+        });
+        d.push(ResultSet {
+            columns: vec![],
+            rows: vec![vec![Value::Int(2)], vec![Value::Int(3)]],
+        });
+        let shared = Arc::clone(&d.segs[1]);
+        assert!(d.set_row(2, vec![Value::Int(20)]));
+        assert_eq!(d.row(2), Some(&[Value::Int(20)][..]));
+        assert_eq!(
+            shared[0],
+            vec![Value::Int(2)],
+            "공유 중이던 세그먼트는 옛 값 그대로(복사됨)"
+        );
+        assert!(!d.set_row(9, vec![Value::Null]));
+        assert_eq!(d.push_row(vec![Value::Int(4)]), 4);
+        assert_eq!(d.len(), 5);
+        d.remove_rows(&[3, 0, 3]);
+        assert_eq!(
+            d.rows().map(|r| r[0].clone()).collect::<Vec<_>>(),
+            vec![Value::Int(1), Value::Int(20), Value::Int(4)]
+        );
+        assert_eq!(d.segments(), 1);
+        assert_eq!(d.len(), 3);
+        assert!(d.approx_bytes() > 0);
+    }
 
     /// docs/44 §5: 분류 · 주석 건너뜀 · 심각도 순서 · TRUNCATE/DDL 방언 규칙.
     #[test]

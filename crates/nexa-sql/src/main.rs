@@ -1473,10 +1473,30 @@ impl App {
                         self.finish_view_sql(kind, info.as_ref());
                     }
                 }
-                ConnOutcome::Applied { key, rep } => {
+                ConnOutcome::Applied {
+                    key,
+                    rep,
+                    refetched,
+                } => {
                     self.sess.aux_done();
                     self.sess.edit_apply = None;
-                    let requery = self.settings.get("grid.edit_refresh") != Some("local");
+                    let mode = self
+                        .settings
+                        .get("grid.edit_refresh")
+                        .unwrap_or("rows")
+                        .to_string();
+                    // ★ 행 단위 재조회(87 §12-4 · T-230): 성공 + 결과가 행마다 1행이면 제자리 교체 → 전체 재조회 없음.
+                    let mut patched = false;
+                    if rep.error.is_none() && rep.done > 0 {
+                        if let Some(g) = self.grid_for(key) {
+                            patched = match mode.as_str() {
+                                "rows" => g.apply_done_rows(refetched),
+                                "local" => g.apply_done_local(),
+                                _ => false,
+                            };
+                        }
+                    }
+                    let requery = mode != "local" && !patched;
                     // ★ 87 §14 데이터 보호 불변식: 실패 원인을 단계·문장·키·행 수까지 상세히 + 되돌림 상태(자동 롤백 / 세이브포인트 / ROLLBACK 필요).
                     let msg = match &rep.error {
                         None if rep.tx_left_open => {
@@ -1517,7 +1537,12 @@ impl App {
                             .push(toast::ToastKind::Error, t(Msg::MnGeApply), msg.clone());
                     }
                     self.sess.status = msg;
-                    if let Some(g) = self.grid_for(key) {
+                    if patched {
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            t(Msg::StGeRowsPatched).to_string(),
+                        ));
+                    } else if let Some(g) = self.grid_for(key) {
                         g.apply_done(
                             rep.done,
                             rep.error.as_ref().map(|e| (e.index, e.message.clone())),
@@ -6416,7 +6441,8 @@ impl App {
                     table,
                     stmts,
                     preview,
-                } => self.grid_edit_apply(&table, stmts, &preview),
+                    refetch,
+                } => self.grid_edit_apply(&table, stmts, &preview, refetch),
             }
         }
     }
@@ -6481,7 +6507,13 @@ impl App {
     }
 
     /// 변경 적용 → 워커 `Cmd::Apply`(gate · 한 트랜잭션 · 결과는 `ConnOutcome::Applied`).
-    fn grid_edit_apply(&mut self, table: &str, stmts: Vec<nsql_run::ApplyStmt>, preview: &str) {
+    fn grid_edit_apply(
+        &mut self,
+        table: &str,
+        stmts: Vec<nsql_run::ApplyStmt>,
+        preview: &str,
+        refetch: Vec<nsql_core::ExecRequest>,
+    ) {
         if !self.gate_open() {
             self.grid
                 .apply_done(0, Some((0, t(Msg::StRunning).to_string())));
@@ -6496,9 +6528,16 @@ impl App {
         self.sess.edit_apply = Some(self.grid_tab);
         self.sess.aux += 1;
         self.sess.status = t(Msg::StRunning).into();
+        // 행 단위 재조회는 설정이 rows일 때만 보낸다(requery/local = 전체 재조회/그대로).
+        let refetch = if self.settings.get("grid.edit_refresh") == Some("rows") {
+            refetch
+        } else {
+            Vec::new()
+        };
         self.sess.worker.send(worker::Cmd::Apply {
             key: self.grid_tab,
             stmts,
+            refetch,
         });
         self.redraw();
     }
@@ -12978,6 +13017,17 @@ impl App {
     }
 
     fn explorer_actions(&mut self) -> bool {
+        // 새로 고침 범위 → 상세 패널 코멘트 캐시도 같은 범위로 버리고 보이는 대상은 다시 채운다(T-227 후속 · 사용자 09-26 "변경 요청 누락 없이").
+        let inv = self.explorer.take_detail_invalidations();
+        if !inv.is_empty() {
+            let mut n = 0;
+            for (sc, nm) in &inv {
+                n += self.objdetail.forget_comments(sc.as_deref(), nm.as_deref());
+            }
+            if n > 0 {
+                self.sync_detail_target(true);
+            }
+        }
         self.sync_detail_target(false);
         let mut changed = false;
         for a in self.explorer.take_actions() {
@@ -15526,6 +15576,7 @@ impl App {
         }
         // 결과 그리드 우클릭 메뉴가 열려 있으면 그리드가 먼저(바깥 클릭 = 닫고 통과).
         if self.grid.menu_open() {
+            self.grid.set_shift(self.shift);
             self.grid.on_event(&ev, self.scale);
             self.after_grid_event();
             // 항목을 골랐거나 메뉴 안을 눌렀으면 그 클릭은 끝(아래 셀 선택으로 전파 금지 · 사용자 09-15) · 바깥 **좌/우** 클릭만 통과
@@ -16026,6 +16077,7 @@ impl App {
                         self.clip_action(act);
                     }
                 } else {
+                    self.grid.set_shift(self.shift);
                     self.grid.on_event(&ev, self.scale);
                     self.after_grid_event();
                 }
@@ -16052,6 +16104,7 @@ impl App {
                 y: self.cursor.1,
             };
             if self.grid.bounds.contains(cur) && self.focus != Focus::Grid {
+                self.grid.set_shift(self.shift);
                 self.grid.on_event(&ev, self.scale);
                 // 포커스가 없어도 스크롤바 드래그가 끝에 닿으면 자동 페치 요청이 생긴다(09-16).
                 self.after_grid_event();
@@ -16073,6 +16126,7 @@ impl App {
             y: self.cursor.1,
         };
         if is_wheel && self.grid.bounds.contains(cur) {
+            self.grid.set_shift(self.shift);
             self.grid.on_event(&ev, self.scale);
             // ★ 휠은 포커스와 무관하게 오므로 여기서도 요청(스크롤 끝 자동 페치 · 09-16: 휠로는 안 됐다).
             self.after_grid_event();
@@ -16095,6 +16149,7 @@ impl App {
                     self.intel_after_event(&ev);
                 }
                 Focus::Grid => {
+                    self.grid.set_shift(self.shift);
                     self.grid.on_event(&ev, self.scale);
                     self.after_grid_event();
                     inv.push(self.grid.bounds);

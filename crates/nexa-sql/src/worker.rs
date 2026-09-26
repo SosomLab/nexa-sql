@@ -51,6 +51,8 @@ pub(crate) enum Cmd {
         key: u64,
         /// 실행문 + 사전 검사문(87 §14 데이터 보호 불변식 · 영향 1행은 늘 강제).
         stmts: Vec<nsql_run::ApplyStmt>,
+        /// ★ 적용이 성공하면 같은 세션에서 바로 돌릴 행 단위 재조회(87 §12-4 · T-230 · 비어 있으면 없음).
+        refetch: Vec<nsql_core::ExecRequest>,
     },
     /// 연결 공유 층의 변수를 통째로 바꾼다(변수 창이 고쳤다 · D-135) — DB로 가는 것은 없다.
     SharedVars(Vec<nsql_script::VarState>),
@@ -112,10 +114,11 @@ pub(crate) enum ConnOutcome {
     SessionId(String),
     /// `Cmd::Keys` 결과 — (요청한 테이블 표기, 키 정보 · 조회 실패/세션 없음 = None).
     Keys(String, Option<nsql_core::KeyInfo>),
-    /// `Cmd::Apply` 결과.
+    /// `Cmd::Apply` 결과(+ 행 단위 재조회 결과 · 요청 순서 그대로 · 적용 실패면 비어 있음).
     Applied {
         key: u64,
         rep: nsql_run::ApplyReport,
+        refetched: Vec<Result<nsql_core::ResultSet, String>>,
     },
     /// `Cmd::FetchPage` 결과 — `offset`부터 **이어 붙임**(전체 조회도 나머지를 이어 붙인다 · 09-17 위치 유지) ·
     /// `offset` 0은 교체. `all` = 전체 조회 결과(늦은 세그먼트와 구별) · `stop` = 전체 조회가 멈춘 이유(예산·취소).
@@ -1117,7 +1120,11 @@ pub(crate) fn spawn(
                         wake_now();
                         true
                     }
-                    Cmd::Apply { key, stmts } => {
+                    Cmd::Apply {
+                        key,
+                        stmts,
+                        refetch,
+                    } => {
                         let alive = ensure_alive(
                             &mut runner,
                             &active_spec,
@@ -1143,7 +1150,25 @@ pub(crate) fn spawn(
                                 ..Default::default()
                             },
                         };
-                        let _ = ctx_tx.send(ConnOutcome::Applied { key, rep });
+                        let refetched: Vec<Result<nsql_core::ResultSet, String>> =
+                            if rep.error.is_none() && rep.done > 0 {
+                                refetch
+                                    .iter()
+                                    .map(|req| {
+                                        runner
+                                            .query_req_once(req, 2)
+                                            .map(|(rs, _, _)| rs)
+                                            .map_err(|e| e.message)
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                        let _ = ctx_tx.send(ConnOutcome::Applied {
+                            key,
+                            rep,
+                            refetched,
+                        });
                         wake_now();
                         true
                     }

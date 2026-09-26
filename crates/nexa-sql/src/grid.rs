@@ -188,11 +188,13 @@ pub(crate) enum EditRequest {
     NeedKeys {
         table: String,
     },
-    /// 변경 적용(바인드 문장 묶음 + 사전 검사문 · 한 트랜잭션) — 답은 `apply_done`.
+    /// 변경 적용(바인드 문장 묶음 + 사전 검사문 · 한 트랜잭션) — 답은 `apply_done_rows`(행 단위 재조회) 또는 `apply_done`.
     Apply {
         table: String,
         stmts: Vec<nsql_run::ApplyStmt>,
         preview: String,
+        /// 적용 성공 뒤 같은 세션에서 돌릴 행 단위 재조회(수정·추가 행마다 하나 · 비어 있으면 전체 재조회 · 87 §12-4).
+        refetch: Vec<nsql_core::ExecRequest>,
     },
     /// 읽기 전용 미리보기 창(SQL 미리보기 · 값 보기).
     Preview {
@@ -240,6 +242,12 @@ struct GridEdit {
     error_row: Option<RowRef>,
     /// 보낸 문장의 행(실패 index → 행).
     sent_rows: Vec<RowRef>,
+    /// 행 단위 재조회를 부탁한 행(요청 순서 · `apply_done_rows`가 결과를 맞춘다).
+    sent_refetch: Vec<RowRef>,
+    /// 수정·추가 행 전부의 재조회 문장을 만들 수 있었다(false = 전체 재조회 필요).
+    sent_refetch_ok: bool,
+    /// 마지막 제자리 갱신(수정·추가·삭제 행 수 · 덤프용).
+    last_patch: Option<(usize, usize, usize)>,
 }
 
 pub(crate) struct Grid {
@@ -410,6 +418,8 @@ pub(crate) struct Grid {
     inject_tried: Option<String>,
     /// 운영(PROD) 접속 — 편집 불가.
     prod: bool,
+    /// 호스트가 알려 주는 Shift 상태(Tab 방향 · `Char('\t')`에는 수식키가 없다).
+    shift: bool,
     /// 마지막 on_event/paint 배율(편집 상자 배율).
     live_scale: f32,
 }
@@ -537,6 +547,7 @@ impl Default for Grid {
             inject: None,
             inject_tried: None,
             prod: false,
+            shift: false,
             live_scale: 1.0,
         };
         // 도구줄의 처음 상태도 판정 함수로(`.disabled()` 표기에 기대지 않는다) — Σ가 `.disabled()` 없이 만들어져
@@ -854,6 +865,9 @@ impl Grid {
                         applying: false,
                         error_row: None,
                         sent_rows: Vec::new(),
+                        sent_refetch: Vec::new(),
+                        sent_refetch_ok: false,
+                        last_patch: None,
                     });
                     self.edit_reqs.push(EditRequest::NeedKeys { table });
                 }
@@ -1531,10 +1545,50 @@ impl Grid {
         }
         match self.generated() {
             Ok((stmts, preview, table)) => {
+                // ★ 행 단위 재조회(87 §12-4 · T-230): 수정·추가 행마다 키로 다시 읽는 문장 — 하나라도 못 만들면 전부 비움(전체 재조회).
+                let mut refetch_rows: Vec<RowRef> = Vec::new();
+                let mut refetch: Vec<nsql_core::ExecRequest> = Vec::new();
+                let mut refetch_ok = true;
+                if let Some(e) = self.edit.as_ref() {
+                    let inp = GenInput {
+                        dialect: self.dialect,
+                        table: &e.target.table,
+                        cols: &e.cols,
+                        key_cols: &e.key_cols,
+                        concurrency: self.edit_cfg.concurrency,
+                    };
+                    let orig = |r: usize, c: usize| -> Value {
+                        self.rs
+                            .as_ref()
+                            .and_then(|rs| rs.row(r))
+                            .and_then(|row| row.get(c))
+                            .cloned()
+                            .unwrap_or(Value::Null)
+                    };
+                    for s in &stmts {
+                        if s.kind == gridedit_sql::StmtKind::Delete {
+                            continue;
+                        }
+                        match gridedit_sql::refetch_stmt(&inp, &e.cs, &orig, s.row) {
+                            Some(req) => {
+                                refetch_rows.push(s.row);
+                                refetch.push(req);
+                            }
+                            None => {
+                                refetch_rows.clear();
+                                refetch.clear();
+                                refetch_ok = false;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if let Some(e) = self.edit.as_mut() {
                     e.applying = true;
                     e.error_row = None;
                     e.sent_rows = stmts.iter().map(|s| s.row).collect();
+                    e.sent_refetch = refetch_rows;
+                    e.sent_refetch_ok = refetch_ok;
                 }
                 let reqs: Vec<nsql_run::ApplyStmt> = stmts
                     .into_iter()
@@ -1548,11 +1602,154 @@ impl Grid {
                     table,
                     stmts: reqs,
                     preview,
+                    refetch,
                 });
                 self.sync_edit_tools();
             }
             Err(m) => self.status(m),
         }
+    }
+
+    /// ★ 적용 성공 + 행 단위 재조회 결과(87 §12-4 · T-230 · `grid.edit_refresh=rows`) — 수정 행은 **제자리 교체**, 추가 행은
+    /// 실제 행으로 덧붙임(자리 유지), 삭제 행은 제거 · 스크롤·정렬·열 폭·선택은 그대로. 결과가 하나라도 1행이 아니면(다른 세션
+    /// 삭제 · PG ctid 변경 · 키 모호) false → 호스트가 전체 재조회로 내려간다. 삭제만 있었으면 재조회 없이 제거한다.
+    pub(crate) fn apply_done_rows(&mut self, refetched: Vec<Result<ResultSet, String>>) -> bool {
+        let Some(e) = self.edit.as_ref() else {
+            return false;
+        };
+        let ncols = self.rs.as_ref().map_or(0, |rs| rs.columns().len());
+        if !e.sent_refetch_ok || refetched.len() != e.sent_refetch.len() {
+            return false;
+        }
+        let mut updates: Vec<(usize, Vec<Value>)> = Vec::new();
+        let mut inserts: Vec<(usize, Vec<Value>)> = Vec::new();
+        for (rref, res) in e.sent_refetch.iter().zip(refetched) {
+            let Ok(rs) = res else {
+                return false;
+            };
+            if rs.rows.len() != 1 || rs.columns.len() != ncols {
+                return false;
+            }
+            let row = rs.rows.into_iter().next().unwrap_or_default();
+            match *rref {
+                RowRef::Existing(r) => updates.push((r, row)),
+                RowRef::Inserted(k) => inserts.push((k, row)),
+            }
+        }
+        let deleted: Vec<usize> = e.cs.deleted_rows().collect();
+        self.patch_rows(updates, inserts, deleted)
+    }
+
+    /// `grid.edit_refresh=local`: 서버를 다시 읽지 않고 **편집한 값을 세트에 굳힌다**(종류대로 값 변환 · 서버 기본값·트리거 결과는 모른다).
+    pub(crate) fn apply_done_local(&mut self) -> bool {
+        let Some(e) = self.edit.as_ref() else {
+            return false;
+        };
+        let Some(rs) = self.rs.as_ref() else {
+            return false;
+        };
+        let ncols = e.cols.len();
+        let typed = |text: &Option<String>, c: usize| -> Value {
+            match gridedit_sql::bound_of(text, e.cols[c].spec.kind, self.dialect) {
+                gridedit_sql::Bound::Val(v, _) => v,
+                gridedit_sql::Bound::Expr(_) => text.clone().map_or(Value::Null, Value::Str),
+            }
+        };
+        let mut rows: Vec<usize> = e.cs.edits().map(|((r, _), _)| *r).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let mut updates: Vec<(usize, Vec<Value>)> = Vec::new();
+        for r in rows {
+            if e.cs.is_deleted(RowRef::Existing(r)) {
+                continue;
+            }
+            let Some(orig) = rs.row(r) else {
+                continue;
+            };
+            let row: Vec<Value> = (0..ncols)
+                .map(|c| match e.cs.cell(RowRef::Existing(r), c) {
+                    Some(t) => typed(t, c),
+                    None => orig.get(c).cloned().unwrap_or(Value::Null),
+                })
+                .collect();
+            updates.push((r, row));
+        }
+        let inserts: Vec<(usize, Vec<Value>)> =
+            e.cs.inserted_rows()
+                .map(|(k, ir)| {
+                    (
+                        k,
+                        (0..ncols)
+                            .map(|c| typed(&ir.cells.get(c).cloned().unwrap_or(None), c))
+                            .collect(),
+                    )
+                })
+                .collect();
+        let deleted: Vec<usize> = e.cs.deleted_rows().collect();
+        self.patch_rows(updates, inserts, deleted)
+    }
+
+    /// 제자리 갱신의 공통 몸통 — 데이터 교체·추가·제거 · `row_order` 재매김(자리 유지) · Σ 보정 · 변경 집합 비움.
+    fn patch_rows(
+        &mut self,
+        updates: Vec<(usize, Vec<Value>)>,
+        inserts: Vec<(usize, Vec<Value>)>,
+        deleted: Vec<usize>,
+    ) -> bool {
+        let n_src = self.src_len();
+        let Some(rs) = self.rs.as_mut() else {
+            return false;
+        };
+        for (r, row) in &updates {
+            if !rs.set_row(*r, row.clone()) {
+                return false;
+            }
+        }
+        // 추가 행 = 실제 행으로(가상 index n+k → 새 번호).
+        let mut new_idx: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (k, row) in inserts.iter() {
+            new_idx.insert(*k, rs.push_row(row.clone()));
+        }
+        // 표시 순서를 지금 자리 그대로 다시 매긴다(삭제 행은 빼고 · 뒤 번호는 삭제 수만큼 당김).
+        let mut del_sorted = deleted;
+        del_sorted.sort_unstable();
+        del_sorted.dedup();
+        let shift = |ri: usize| ri - del_sorted.partition_point(|&d| d < ri);
+        let order: Vec<usize> = self
+            .row_order
+            .iter()
+            .filter_map(|&ri| {
+                if ri < n_src {
+                    (!del_sorted.contains(&ri)).then(|| shift(ri))
+                } else {
+                    new_idx.get(&(ri - n_src)).map(|&ni| shift(ni))
+                }
+            })
+            .collect();
+        rs.remove_rows(&del_sorted);
+        self.row_order = order;
+        if let Some(t) = self.total.as_mut() {
+            *t = (*t + inserts.len() as u64).saturating_sub(del_sorted.len() as u64);
+        }
+        if let Some(e) = self.edit.as_mut() {
+            e.applying = false;
+            e.error_row = None;
+            e.sent_refetch.clear();
+            e.last_patch = Some((updates.len(), inserts.len(), del_sorted.len()));
+            e.cs = ChangeSet::new(e.cols.len());
+        }
+        self.text_lines = Vec::new();
+        self.text_bytes = 0;
+        self.regions.clear();
+        if !self.sort_keys.is_empty() {
+            self.apply_sort();
+        }
+        if self.view != ResultView::Grid {
+            self.text_keep_scroll = true;
+            self.refresh_text_view();
+        }
+        self.sync_edit_tools();
+        true
     }
 
     /// 적용 결과(호스트) — 성공 = 변경 집합 비움(재조회는 호스트) · 실패 = 그 문장의 행 표시.
@@ -1769,13 +1966,15 @@ impl Grid {
         ));
         if let Some(e) = self.edit.as_ref() {
             out.push_str(&format!(
-                "table={} key={:?} kind={:?} ready={} hidden={} inject={} cols={}\n",
+                "table={} key={:?} kind={:?} ready={} hidden={} inject={} patched={} cols={}\n",
                 e.target.table,
                 e.key_cols,
                 e.key_kind,
                 e.keys_ready,
                 e.hidden,
                 self.inject.is_some(),
+                e.last_patch
+                    .map_or("-".to_string(), |(u, i, d)| format!("{u}/{i}/{d}")),
                 e.cols
                     .iter()
                     .map(|c| format!("{}:{:?}", c.name, c.spec.kind))
@@ -1940,7 +2139,7 @@ impl Grid {
                 e.live.try_commit(Move::None)
             }
             InputEvent::Wheel { .. } | InputEvent::HWheel { .. } => return false,
-            _ => e.live.on_event(ev, false, &mut inv),
+            _ => e.live.on_event(ev, self.shift, &mut inv),
         };
         match r {
             LiveEvent::Commit { value, mv } => {
@@ -2888,6 +3087,11 @@ impl Grid {
         self.sync_fetch_tools();
     }
 
+    /// 호스트 주입: Shift 눌림(Tab = 오른쪽 · Shift+Tab = 왼쪽 · 셀 편집기 안팎 공통 · 87 §11).
+    pub(crate) fn set_shift(&mut self, on: bool) {
+        self.shift = on;
+    }
+
     pub(crate) fn set_dialect(&mut self, d: Dialect) {
         self.dialect = d;
     }
@@ -3781,6 +3985,15 @@ impl Grid {
         self.live_scale = scale;
         // ★ 살아 있는 셀 편집기(docs/87 §6): 열려 있으면 키·문자·안쪽 마우스는 상자로 · 바깥 클릭 = 커밋 뒤 통과.
         if self.live_event(ev) {
+            return;
+        }
+        // Tab / Shift+Tab = 다음/이전 셀(엑셀·DBeaver 관례 · 편집기 밖 · 87 §11).
+        if matches!(ev, InputEvent::Char { c: '\t', .. })
+            && self.sel_cur.is_some()
+            && self.rs.is_some()
+        {
+            let dx = if self.shift { -1 } else { 1 };
+            self.move_sel(0, dx, false, false);
             return;
         }
         // 편집 동작(편집기가 닫혀 있을 때): Enter/타이핑 = 진입 · Delete/Backspace = 비움 · Undo/Redo.
@@ -5750,6 +5963,204 @@ mod edit_key_path_tests {
         g2.set_keys(Some(&keys));
         assert!(requery_of(&mut g2).is_none());
         assert!(g2.dump_edit().contains("kind=AllColumns"));
+    }
+
+    /// ★ 행 단위 재조회 적용(87 §12-4 · T-230): 수정 행 제자리 교체 · 추가 행 = 실제 행(자리 유지) · 삭제 행 제거 · Σ 보정 · 1행 아니면 false.
+    #[test]
+    fn apply_done_rows_patches_in_place() {
+        let mut g = Grid::default();
+        g.set_edit_cfg(EditCfg {
+            rowid: false,
+            ..EditCfg::default()
+        });
+        let row = |a: i64, b: &str| vec![Value::Int(a), Value::Str(b.into())];
+        g.set_result(ResultSet {
+            columns: vec![
+                Column {
+                    name: "ID".into(),
+                    type_name: "NUMBER".into(),
+                },
+                Column {
+                    name: "NAME".into(),
+                    type_name: "VARCHAR2(10)".into(),
+                },
+            ],
+            rows: vec![row(1, "a"), row(2, "b"), row(3, "c")],
+        });
+        g.set_result_origin("select id, name from t", true);
+        let keys = nsql_core::KeyInfo {
+            pk: vec!["ID".into()],
+            unique: vec![],
+        };
+        g.set_keys(Some(&keys));
+        g.set_total(3);
+        // 행 1 수정 · 행 0 뒤에 추가(키 9) · 행 2 삭제.
+        assert!(g.set_cell_for_test(1, 1, "B2"));
+        g.select_cell_for_test(0, 0);
+        g.edit_command("row.add");
+        let order_before = g.row_order.clone(); // [0, 3(가상), 1, 2]
+        assert_eq!(order_before, vec![0, 3, 1, 2]);
+        assert!(g.set_cell_for_test(1, 0, "9"));
+        assert!(g.set_cell_for_test(1, 1, "new"));
+        g.select_cell_for_test(3, 0);
+        g.edit_command("row.del");
+        g.request_apply();
+        let (refetch, sent) = {
+            let reqs = g.take_edit_requests();
+            let r = reqs
+                .into_iter()
+                .find_map(|r| match r {
+                    EditRequest::Apply { refetch, .. } => Some(refetch),
+                    _ => None,
+                })
+                .expect("apply");
+            (
+                r,
+                g.edit
+                    .as_ref()
+                    .map(|e| e.sent_refetch.clone())
+                    .unwrap_or_default(),
+            )
+        };
+        assert_eq!(refetch.len(), 2, "수정 1 + 추가 1(삭제는 재조회 없음)");
+        assert_eq!(sent.len(), 2);
+        let rs_of = |r: Vec<Value>| -> Result<ResultSet, String> {
+            Ok(ResultSet {
+                columns: vec![
+                    Column {
+                        name: "ID".into(),
+                        type_name: "NUMBER".into(),
+                    },
+                    Column {
+                        name: "NAME".into(),
+                        type_name: "VARCHAR2(10)".into(),
+                    },
+                ],
+                rows: vec![r],
+            })
+        };
+        // 순서 = sent_refetch 순서(UPDATE 행 1 → INSERT).
+        let results: Vec<Result<ResultSet, String>> = sent
+            .iter()
+            .map(|rr| match rr {
+                RowRef::Existing(1) => rs_of(row(2, "B2*")),
+                RowRef::Inserted(_) => rs_of(row(9, "new*")),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert!(g.apply_done_rows(results));
+        let d = g.dump_edit();
+        assert!(
+            d.contains("dirty=false") && d.contains("patched=1/1/1"),
+            "{d}"
+        );
+        // 데이터: 행 2(c) 제거 · 행 1 = 서버 값 B2* · 추가 행 = 9/new* 가 행 0 뒤 자리.
+        let names: Vec<String> = g
+            .row_order
+            .iter()
+            .map(|&ri| {
+                g.rs.as_ref()
+                    .and_then(|rs| rs.row(ri))
+                    .map(|r| r[1].display())
+                    .expect("row")
+            })
+            .collect();
+        assert_eq!(names, vec!["a", "new*", "B2*"]);
+        assert_eq!(g.total, Some(3), "Σ = 3 + 1 − 1");
+        assert_eq!(g.src_len(), 3);
+        // 결과가 1행이 아니면(다른 세션이 지움) false → 호스트가 전체 재조회.
+        assert!(g.set_cell_for_test(0, 1, "z"));
+        g.request_apply();
+        let _ = g.take_edit_requests();
+        let empty = Ok(ResultSet {
+            columns: vec![],
+            rows: vec![],
+        });
+        assert!(!g.apply_done_rows(vec![empty]));
+    }
+
+    /// 삭제만 있으면 재조회 없이 제거 · `local` = 편집한 값을 종류대로 세트에 굳힘(재조회 0).
+    #[test]
+    fn delete_only_and_local_bake() {
+        let mut g = Grid::default();
+        g.set_edit_cfg(EditCfg {
+            rowid: false,
+            ..EditCfg::default()
+        });
+        let row = |a: i64, b: &str| vec![Value::Int(a), Value::Str(b.into())];
+        let cols = vec![
+            Column {
+                name: "ID".into(),
+                type_name: "NUMBER".into(),
+            },
+            Column {
+                name: "NAME".into(),
+                type_name: "VARCHAR2(10)".into(),
+            },
+        ];
+        g.set_result(ResultSet {
+            columns: cols,
+            rows: vec![row(1, "a"), row(2, "b"), row(3, "c")],
+        });
+        g.set_result_origin("select id, name from t", true);
+        let keys = nsql_core::KeyInfo {
+            pk: vec!["ID".into()],
+            unique: vec![],
+        };
+        g.set_keys(Some(&keys));
+        // 삭제만 → 재조회 문장 0 · 결과 0으로도 제자리 제거.
+        g.select_cell_for_test(1, 0);
+        g.edit_command("row.del");
+        g.request_apply();
+        let _ = g.take_edit_requests();
+        assert!(g.apply_done_rows(Vec::new()));
+        assert_eq!(g.src_len(), 2);
+        assert!(g.dump_edit().contains("patched=0/0/1"));
+        // local: 숫자 열은 숫자로 굳힌다 · 추가 행도.
+        assert!(g.set_cell_for_test(0, 0, "10"));
+        assert!(g.set_cell_for_test(1, 1, "C2"));
+        g.edit_command("row.add");
+        let last = g.rows() - 1;
+        assert!(g.set_cell_for_test(last, 0, "77"));
+        g.request_apply();
+        let _ = g.take_edit_requests();
+        assert!(g.apply_done_local());
+        let rs = g.rs.as_ref().expect("rs");
+        assert_eq!(rs.row(0).map(|r| r[0].clone()), Some(Value::Int(10)));
+        assert_eq!(
+            rs.row(1).map(|r| r[1].clone()),
+            Some(Value::Str("C2".into()))
+        );
+        assert_eq!(rs.row(2).map(|r| r[0].clone()), Some(Value::Int(77)));
+        assert!(g.dump_edit().contains("patched=2/1/0"));
+        assert!(!g.edit_dirty());
+    }
+
+    /// Tab / Shift+Tab: 편집기 밖 = 다음/이전 셀 · 편집기 안 = 커밋 뒤 오른쪽/왼쪽(87 §11).
+    #[test]
+    fn tab_moves_selection_and_commits() {
+        let mut g = editable_grid();
+        g.select_cell_for_test(0, 0);
+        g.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }, 1.0);
+        assert_eq!(g.sel_cur, Some((0, 1)));
+        g.set_shift(true);
+        g.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }, 1.0);
+        assert_eq!(g.sel_cur, Some((0, 0)));
+        g.set_shift(false);
+        // 편집기 안: 타이핑 → Tab = 커밋 + 오른쪽.
+        g.on_event(&InputEvent::Char { c: 'Q', now_ms: 0 }, 1.0);
+        assert!(g.editing_cell());
+        g.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }, 1.0);
+        assert!(!g.editing_cell());
+        assert_eq!(g.sel_cur, Some((0, 1)));
+        let e = g.edit.as_ref().expect("editable");
+        assert_eq!(e.cs.cell(RowRef::Existing(0), 0), Some(&Some("Q".into())));
+        // Shift+Tab = 커밋 + 왼쪽.
+        g.on_event(&InputEvent::Char { c: 'W', now_ms: 0 }, 1.0);
+        g.set_shift(true);
+        g.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }, 1.0);
+        assert!(!g.editing_cell());
+        assert_eq!(g.sel_cur, Some((0, 0)));
     }
 
     /// 실제 키 경로(사용자 09-26 "값 넣고 Enter/다른 셀 클릭에도 반영 안 됨"): 타이핑 진입 → 글자 → Enter = 변경 집합에 값.

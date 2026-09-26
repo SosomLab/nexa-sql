@@ -1297,6 +1297,14 @@ impl ExplorerSet {
         self.panes.get_mut(self.shown)?.ex.cached_details(key)
     }
 
+    /// 모든 칸의 상세 무효화 범위(1회성 · T-227 후속).
+    pub(crate) fn take_detail_invalidations(&mut self) -> Vec<(Option<String>, Option<String>)> {
+        self.panes
+            .iter_mut()
+            .flat_map(|p| p.ex.take_detail_invalidations())
+            .collect()
+    }
+
     /// 진단(기동 명령 `explorer.stat:<파일>`): 칸마다 한 줄.
     pub(crate) fn stat_text(&self) -> String {
         self.panes

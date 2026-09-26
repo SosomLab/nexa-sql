@@ -808,6 +808,8 @@ pub(crate) struct Explorer {
     /// ★ 객체 상세 캐시(사용자 09-26 "이미 본 대상은 깜빡임 없이 · 상한/미사용 회수 · 새로 고침 범위는 무효화") —
     ///   열쇠 = `DetailTarget::key` · 값 = 섹션 · `dirty` = 새로 고침(수동·DDL·워터마크)이 닿아 다음 클릭에 다시 읽는다(보이는 건 즉시 · 도착하면 교체).
     detail_cache: HashMap<String, DetailEntry>,
+    /// 새로 고침 범위 전파 기록(스키마, 객체) — 호스트가 가져가 상세 패널의 코멘트 캐시도 버린다(T-227 후속 · 09-26).
+    detail_invalidated: Vec<(Option<String>, Option<String>)>,
     /// 루트 브랜드 아이콘 캐시(이름 · 색 · 크기 → 그림 · dbms_icons · 사용자 09-22).
     brand_cache: BrandCache,
     /// 마지막 페인트의 화면 행(노드 index · 부모) — `row_at`(MouseMove마다)이 다시 펼치지 않게(09-15 C).
@@ -1689,6 +1691,7 @@ impl Explorer {
             icons_on: true,
             icon_cache: HashMap::new(),
             detail_cache: HashMap::new(),
+            detail_invalidated: Vec::new(),
             brand_cache: HashMap::new(),
             rows_cache: Vec::new(),
             meta: nsql_run::meta::MetaStore::new(64 << 20),
@@ -4063,6 +4066,13 @@ impl Explorer {
                 e.dirty = true;
             }
         }
+        self.detail_invalidated
+            .push((schema.map(str::to_string), name.map(str::to_string)));
+    }
+
+    /// 호스트가 가져가는 무효화 범위(1회성) — 상세 패널의 테이블 코멘트 캐시를 같은 범위로 버리게.
+    pub(crate) fn take_detail_invalidations(&mut self) -> Vec<(Option<String>, Option<String>)> {
+        std::mem::take(&mut self.detail_invalidated)
     }
 
     /// 노드 기준 무효화(수동 새로 고침) — 루트 = 전부 · 스키마/폴더 = 그 스키마 · 객체/하위/컬럼 = 그 객체.

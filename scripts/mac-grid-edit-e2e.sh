@@ -47,6 +47,8 @@ run_gui 20 Local "open:$D/sel.sql,@after:2500:run.all,@after:5500:grid.edit.set:
 d1=$(cat "$O/s1.txt" 2>/dev/null); d2=$(cat "$O/s2.txt" 2>/dev/null); v=$(cli Local "$D/sel.sql")
 expect_grep "적용 전 = 수정 3 · 추가 1" "$d1" "dirty=true"
 expect_grep "적용 뒤 = 깨끗" "$d2" "dirty=false"
+expect_grep "행 단위 재조회 = 수정 3 · 추가 1 제자리(전체 재조회 없음)" "$d2" "patched=3/1/0"
+expect_grep "제자리 값 = KIM2" "$d2" "|KIM2|"
 expect_grep "서버: name KIM2" "$v" "KIM2"
 expect_grep "서버: salary 250.5" "$v" "250.5"
 expect_grep "서버: 복제 행 id 9" "$v" "^ *9 "
@@ -56,6 +58,7 @@ run_gui 20 Local "open:$D/sel.sql,@after:2500:run.all,@after:5000:grid.select:3;
 d3=$(cat "$O/s3.txt" 2>/dev/null); d4=$(cat "$O/s4.txt" 2>/dev/null); v=$(cli Local "$D/sel.sql")
 expect_grep "적용 전 = 삭제 1 · 수정 1" "$d3" "deleted 1"
 expect_grep "적용 뒤 = 행 3" "$d4" "rows=3 src=3"
+expect_grep "행 단위 재조회 = 수정 1 · 삭제 1" "$d4" "patched=1/0/1"
 expect_absent "서버: id 9 삭제됨" "$v" "^ *9 "
 echo "=== SQLite ③ 키 없는 중복 행 편집(rowid 끔 = 3급) = 사전 검사 차단(값 불변) ④ 유일 행 = 적용"
 NSQL_HOME="$H" "$NSQL" config set grid.edit_rowid off >/dev/null
@@ -76,6 +79,7 @@ expect_grep "재조회 뒤 = rowid 숨은 열 1 · 물리 식별" "$d7a" "kind=P
 expect_grep "숨은 열 = 뒤쪽 1개" "$d7a" "hidden=1"
 expect_grep "덤프 행 = 화면 열 2개만(숨은 rowid 제외)" "$d7a" "^0|[A-Za-z]*|k|v1$"
 expect_grep "적용 뒤 깨끗" "$d7" "dirty=false"
+expect_grep "rowid 행 제자리 재조회" "$d7" "patched=1/0/0"
 expect_grep "서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"
 expect_grep "서버: 나머지 중복 행 v1 유지" "$(echo "$v" | grep -c v1)" "^1$"
 echo "=== SQLite ⑧ PK 열이 빠진 결과 = 숨은 키 열 주입(1급-보완) → 적용"
@@ -111,6 +115,7 @@ SQL
   run_gui 22 "$ORA" "open:$D/ora_sel.sql,@after:4000:run.all,@after:8000:grid.edit.set:1;1;LEE2,@after:8500:grid.edit.set:1;2;2026-09-26 10:11:12,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/o2.txt"
   d=$(cat "$O/o2.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel.sql")
   expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: LEE2" "$v" "LEE2"; expect_grep "서버: DATE 2026-09-26 10:11:12" "$v" "2026-09-26 10:11:12"
+  expect_grep "Oracle 행 단위 재조회 제자리" "$d" "patched=1/0/0"
   echo "=== Oracle ⑨ PK 열이 빠진 결과 = 숨은 키 열(ID) 주입 → 적용"
   printf 'SELECT NAME, MEMO FROM NSQLT_GE ORDER BY NAME;\n' > "$D/ora_selnk.sql"
   run_gui 24 "$ORA" "open:$D/ora_selnk.sql,@after:4000:run.all,@after:10000:grid.dump:$O/o3a.txt,@after:10500:grid.edit.set:0;1;HK,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/o3.txt"

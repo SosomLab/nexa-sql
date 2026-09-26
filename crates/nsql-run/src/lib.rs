@@ -755,16 +755,27 @@ impl Runner {
         sql: &str,
         max_rows: usize,
     ) -> Result<(ResultSet, bool, Duration), DbError> {
+        self.query_req_once(
+            &ExecRequest {
+                sql: sql.to_string(),
+                params: Vec::new(),
+            },
+            max_rows,
+        )
+    }
+
+    /// [`Self::query_once`]의 바인드 문장판(그리드 편집 적용 뒤 행 단위 재조회 · 87 §12-4).
+    pub fn query_req_once(
+        &mut self,
+        req: &ExecRequest,
+        max_rows: usize,
+    ) -> Result<(ResultSet, bool, Duration), DbError> {
         let prev = self.max_rows;
         self.set_max_rows(0);
         let r = match self.session.as_mut() {
             Some(s) => {
                 let t = Instant::now();
-                s.execute(&ExecRequest {
-                    sql: sql.to_string(),
-                    params: Vec::new(),
-                })
-                .map(|res| {
+                s.execute(req).map(|res| {
                     if let Some(h) = res.pending {
                         let _ = s.close_cursor(h);
                     }

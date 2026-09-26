@@ -268,8 +268,11 @@ const GE_CONC_OPTS: &[(&str, Msg)] = &[
     ("key_old", Msg::OptGeConcKeyOld),
     ("all_old", Msg::OptGeConcAllOld),
 ];
-const GE_REFRESH_OPTS: &[(&str, Msg)] =
-    &[("requery", Msg::OptGeRequery), ("local", Msg::OptGeLocal)];
+const GE_REFRESH_OPTS: &[(&str, Msg)] = &[
+    ("rows", Msg::OptGeRows),
+    ("requery", Msg::OptGeRequery),
+    ("local", Msg::OptGeLocal),
+];
 const REFETCH_OPTS: &[(&str, Msg)] = &[
     ("strict", Msg::ValRefetchStrict),
     ("strict_all", Msg::ValRefetchStrictAll),
@@ -1092,7 +1095,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblGridEditRefresh,
         desc: Msg::DescGridEditRefresh,
         kind: SettingKind::Choice(GE_REFRESH_OPTS),
-        default: "requery",
+        default: "rows",
     },
     Entry {
         key: "grid.edit_hidden_keys",

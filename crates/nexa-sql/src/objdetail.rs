@@ -80,6 +80,23 @@ impl DetailPanel {
         format!("{}.{}", o.schema, o.name)
     }
 
+    /// 새로 고침 범위의 코멘트 캐시 버리기(스키마 None = 전부 · 객체 None = 그 스키마 · 둘 다 = 그 테이블) — 다음 표시에 다시 읽는다(T-227 후속).
+    /// 돌려주는 값 = 지운 항목 수.
+    pub(crate) fn forget_comments(&mut self, schema: Option<&str>, name: Option<&str>) -> usize {
+        let before = self.comments.len();
+        match (schema, name) {
+            (None, _) => self.comments.clear(),
+            (Some(sc), None) => {
+                let prefix = format!("{sc}.");
+                self.comments.retain(|k, _| !k.starts_with(&prefix));
+            }
+            (Some(sc), Some(nm)) => {
+                self.comments.remove(&format!("{sc}.{nm}"));
+            }
+        }
+        before - self.comments.len()
+    }
+
     /// 이 테이블의 코멘트를 이미 아는가(캐시).
     pub(crate) fn knows_comments(&self, owner: &nsql_catalog::ObjectInfo) -> bool {
         self.comments.contains_key(&Self::owner_key(owner))
@@ -704,5 +721,38 @@ impl DetailPanel {
         }
         dc.fill_rect(body, th.field_bg);
         self.tb.paint(dc, th);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obj(schema: &str, name: &str) -> nsql_catalog::ObjectInfo {
+        nsql_catalog::ObjectInfo {
+            schema: schema.into(),
+            name: name.into(),
+            kind: nsql_catalog::ObjectKind::Table,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        }
+    }
+
+    /// 새로 고침 범위 전파(T-227 후속): 테이블 하나 · 스키마 · 전부 — 지운 만큼 돌려주고 나머지는 남는다.
+    #[test]
+    fn forget_comments_by_scope() {
+        let mut p = DetailPanel::new();
+        p.set_comments(&obj("A", "T1"), Some("t1".into()), vec![]);
+        p.set_comments(&obj("A", "T2"), None, vec![]);
+        p.set_comments(&obj("B", "T1"), None, vec![]);
+        assert_eq!(p.forget_comments(Some("A"), Some("T1")), 1);
+        assert!(!p.knows_comments(&obj("A", "T1")));
+        assert!(p.knows_comments(&obj("A", "T2")));
+        assert_eq!(p.forget_comments(Some("A"), None), 1);
+        assert!(p.knows_comments(&obj("B", "T1")));
+        assert_eq!(p.forget_comments(Some("Z"), None), 0);
+        assert_eq!(p.forget_comments(None, None), 1);
+        assert!(!p.knows_comments(&obj("B", "T1")));
     }
 }

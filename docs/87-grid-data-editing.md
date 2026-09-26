@@ -189,11 +189,10 @@
 
 ## 11. 남은 것(T-182 후속)
 
-- 물리 키(Oracle `ROWID` · PG `ctid` · SQLite `rowid` · MSSQL `%%physloc%%`) 숨은 열 재조회 — 지금은 PK/UK → 전체 열(D-198).
+- ✅ 물리 키 숨은 열 재조회 = §13-7(T-231 · 09-26) · ✅ `grid.edit_refresh=local`/`rows` = §12-4-a(T-230 P1) · ✅ Shift+Tab(편집기 안 = 커밋 뒤 왼쪽 · 밖 = 이전 셀 · `Grid::set_shift` · §229) · ✅ 위키 [Data-Editing](wiki/Data-Editing.md).
 - 값 보기 창 = 이미지 미리보기 · 파일로 저장/넣기 · CLOB 편집 → 커밋(§5 2차) · `grid.lob_view_max_mb`.
-- `grid.edit_refresh=local`(재조회 없이 반영) — 지금은 requery와 같다.
-- 편집기 안 Shift+Tab(← 이동) · F2(북마크와 충돌 → 포커스별 키맵) · ⌘D 복제 키.
-- 실서버 4방언 시험(Oracle DATE 바인드 · SQL Server `@p` · PG `$n` · NULL 키) · 편집 모드 페인트 예산(26 §5) · 위키 사용법 · 확인표 U-*.
+- F2(북마크와 충돌 → 포커스별 키맵) · ⌘D 복제 키(그리드 포커스 한정).
+- 실서버 4방언 시험(SQL Server `@p` · PG `$n`·ctid/xmin · NULL 키 — Oracle·SQLite는 E2E ✓) · 편집 모드 페인트 예산(26 §5) · 확인표 U-* · `Caps.returning`.
 
 ---
 
@@ -249,6 +248,16 @@
 | 로컬 반영(`local`) | 재조회 없이 ChangeSet 값을 세트에 굳힘(서버 기본값·트리거 결과는 모른다는 배지) — 오프라인/느린 망용 |
 | 구현 | `ResultData`는 `Arc` 세그먼트(불변) → 행 교체 = **덧그림 층 2(committed overlay)** 또는 세그먼트 `Arc::make_mut`(변환 스레드 공유 시 복사) — 덧그림 층이 DR-33에 맞다(세트 불변 · 뷰는 그대로) |
 | 설정 | `grid.edit_refresh = rows(기본) | full | local` |
+
+#### 12-4-a. 구현(T-230 P1 · 09-26 · journal §228 · **D-219 기본값 `rows`** 한 줄 고지)
+
+| 조각 | 자리 | 내용 |
+|---|---|---|
+| 재조회 문장 | `gridedit_sql::refetch_stmt(inp, cs, original, row) -> Option<ExecRequest>` | `SELECT <결과 열 그대로 · 숨은 열 = where_expr> FROM t WHERE 키`(행마다 하나 · 100행 `IN` 묶음은 후속) · 기존 행 = 키 원본 값(그 행에서 **키를 고쳤으면 새 값**) · 추가 행 = 입력한 키 · **None(→ 전체 재조회)** = 추가 행 키 비었음(시퀀스/IDENTITY) · 물리 식별자 행 추가(rowid 모름) · 키 값이 식(`now`) · 키 없음 |
+| 실행 | `Cmd::Apply { stmts, refetch }` → 워커가 `apply_changes` **성공 뒤 같은 세션**에서 `Runner::query_req_once`(바인드 단문 · 상한 2행) → `ConnOutcome::Applied { rep, refetched }` | 수동 커밋이면 열린 트랜잭션 안에서 읽는다(자기 변경이 보임) · 적용 실패면 재조회 0 |
+| 제자리 갱신 | `Grid::apply_done_rows(refetched) -> bool` | 결과가 **행마다 정확히 1행**이고 열 수가 같을 때만: 수정 행 = `ResultData::set_row`(`Arc::make_mut` — 변환 스레드가 쥔 세그먼트만 복사) · 추가 행 = `push_row`(가상 index n+k → 새 번호 · **표시 자리 유지**) · 삭제 행 = `remove_rows`(한 번 다시 짬) · `row_order` 재매김 · Σ = +추가 −삭제 · 정렬 유지(`apply_sort`) · 텍스트 보기 캐시 비움 · 덤프 `patched=u/i/d`. false(다른 세션 삭제 · PG ctid 변경 · 키 모호 · 오류) → 호스트가 **전체 재조회** |
+| 호스트 | `ConnOutcome::Applied` | `grid.edit_refresh`: `rows`(기본 · D-219) = 제자리 갱신 시도(삭제만이면 재조회 0으로 제거) → 실패 시 전체 재조회 · `requery` = 늘 전체 · `local` = `apply_done_local` — 편집한 값을 **종류대로 변환해 세트에 굳힘**(`bound_of` · 서버 기본값·트리거 결과는 모른다) · 로그 "바뀐 행만 제자리에서 다시 읽었습니다" · 공통 몸통 `patch_rows` |
+| 시험 | nsql-core `result_data_set_push_remove_rows`(세그먼트 경계 · 공유 세그먼트 복사) · gridedit_sql `refetch_stmt_cases` · grid `apply_done_rows_patches_in_place`(수정 1·추가 1·삭제 1 → `patched=1/1/1` · 자리 유지 · Σ 보정 · 1행 아니면 false) · E2E `patched=3/1/0`(①) `1/0/1`(②) `1/0/0`(⑦ rowid · Oracle ⑥) | PG ctid = UPDATE 뒤 바뀌어 재조회 0행 → 전체 재조회 폴백(정확 · D-217) — `RETURNING`(`Caps.returning`)은 후속 |
 
 ### 12-5. 우선순위(TODO 등재)
 

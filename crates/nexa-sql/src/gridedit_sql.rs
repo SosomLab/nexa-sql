@@ -497,12 +497,12 @@ pub(crate) struct EditStmt {
 }
 
 /// 문자열 셀 → 바인드 값. `Expr` = 바인드 대신 SQL 식(`now`/`today` 토큰).
-enum Bound {
+pub(crate) enum Bound {
     Val(Value, VarType),
     Expr(String),
 }
 
-fn bound_of(v: &Option<String>, kind: CellKind, dialect: Dialect) -> Bound {
+pub(crate) fn bound_of(v: &Option<String>, kind: CellKind, dialect: Dialect) -> Bound {
     let Some(s) = v else {
         let ty = match kind {
             CellKind::Date => VarType::Date,
@@ -949,6 +949,71 @@ pub(crate) fn generate(
     Ok(out)
 }
 
+/// ★ 적용 뒤 **행 단위 재조회** 문장(87 §12-4 · T-230 P1): 결과 열을 그대로(숨은 열 = `where_expr`) · WHERE = 키 열
+/// (그 행에서 키 열을 고쳤으면 **새 값** · 3급은 비교 가능한 전 열). 만들 수 없으면 None → 호스트는 전체 재조회로 내려간다:
+/// 추가 행의 키가 비었다(서버 생성) · 물리 식별자 행 추가(rowid 모름) · 키 값이 식(`now`)이다.
+pub(crate) fn refetch_stmt(
+    inp: &GenInput<'_>,
+    cs: &ChangeSet,
+    original: &dyn Fn(usize, usize) -> Value,
+    row: RowRef,
+) -> Option<ExecRequest> {
+    let d = inp.dialect;
+    if inp.key_cols.is_empty() {
+        return None;
+    }
+    let mut s = Sink::new(d);
+    let list: Vec<String> = inp
+        .cols
+        .iter()
+        .map(|c| c.where_expr.clone().unwrap_or_else(|| q(d, &c.name)))
+        .collect();
+    s.text(&format!(
+        "SELECT {} FROM {} WHERE ",
+        list.join(", "),
+        inp.table
+    ));
+    for (i, &k) in inp.key_cols.iter().enumerate() {
+        let c = inp.cols.get(k)?;
+        let b = match row {
+            RowRef::Existing(r) => match cs.cell(row, k) {
+                Some(new) => bound_of(new, c.spec.kind, d),
+                None => {
+                    let v = original(r, k);
+                    let ty = match c.spec.kind {
+                        CellKind::Date => VarType::Date,
+                        CellKind::DateTime => VarType::Timestamp,
+                        _ => VarType::Auto,
+                    };
+                    Bound::Val(v, ty)
+                }
+            },
+            RowRef::Inserted(n) => {
+                if c.where_expr.is_some() {
+                    return None; // 물리 식별자는 추가 행에 없다
+                }
+                let (_, ir) = cs.inserted_rows().find(|(i, _)| *i == n)?;
+                let cell = ir.cells.get(k).cloned().unwrap_or(None);
+                // 키가 비었다(서버 기본값/시퀀스) → 전체 재조회.
+                cell.as_ref()?;
+                bound_of(&cell, c.spec.kind, d)
+            }
+        };
+        if matches!(b, Bound::Expr(_)) {
+            return None;
+        }
+        if i > 0 {
+            s.text(" AND ");
+        }
+        let lhs = c.where_expr.clone().unwrap_or_else(|| q(d, &c.name));
+        s.key_eq(&lhs, b, c.bind_cast);
+    }
+    Some(ExecRequest {
+        sql: s.sql,
+        params: s.params,
+    })
+}
+
 /// 미리보기 본문(문장마다 `;` 줄 · 머리 주석).
 pub(crate) fn preview_text(stmts: &[EditStmt], table: &str, key_kind: KeyKind) -> String {
     let n = |k: StmtKind| stmts.iter().filter(|s| s.kind == k).count();
@@ -1365,6 +1430,71 @@ mod tests {
             st[0].req.sql,
             "DELETE FROM EMP WHERE \"ID\" = :P1 AND \"NAME\" = :P2 AND \"DT\" = :P3 AND \"MEMO\" IS NULL"
         );
+    }
+
+    /// 행 단위 재조회 문장(87 §12-4): 기존 행 = 키 원본 값(키를 고쳤으면 새 값) · 추가 행 = 입력한 키 · 키 비었으면/물리 식별자 추가 행/식이면 None.
+    #[test]
+    fn refetch_stmt_cases() {
+        let cols = cols();
+        let mut cs = ChangeSet::new(4);
+        cs.set_cell(RowRef::Existing(0), 1, Some("kim".into()), None);
+        cs.set_cell(RowRef::Existing(1), 0, Some("7".into()), None); // 키 변경
+        let k = cs.insert_row(None, vec![Some("9".into()), Some("n".into()), None, None]);
+        let k2 = cs.insert_row(None, vec![None, Some("n".into()), None, None]);
+        let inp = GenInput {
+            dialect: Dialect::Oracle,
+            table: "EMP",
+            cols: &cols,
+            key_cols: &[0],
+            concurrency: Concurrency::Key,
+        };
+        let r0 = refetch_stmt(&inp, &cs, &orig, RowRef::Existing(0)).expect("row 0");
+        assert_eq!(
+            r0.sql,
+            "SELECT \"ID\", \"NAME\", \"DT\", \"MEMO\" FROM EMP WHERE \"ID\" = :P1"
+        );
+        assert_eq!(r0.params[0].value, Value::Int(1));
+        let r1 = refetch_stmt(&inp, &cs, &orig, RowRef::Existing(1)).expect("row 1");
+        assert_eq!(r1.params[0].value, Value::Int(7), "고친 키 = 새 값");
+        let ri = refetch_stmt(&inp, &cs, &orig, RowRef::Inserted(k)).expect("inserted");
+        assert_eq!(ri.params[0].value, Value::Int(9));
+        assert!(
+            refetch_stmt(&inp, &cs, &orig, RowRef::Inserted(k2)).is_none(),
+            "키 비었음"
+        );
+        // 물리 식별자: 기존 행 = ROWID · 추가 행 = None · NULL 키 = IS NULL.
+        let mut pc = self::tests::cols();
+        let mut rid = ColMeta::new("ROWID", CellSpec::text("ROWID"), "ROWID");
+        rid.mark_hidden(&physical_cols(Dialect::Oracle)[0]);
+        pc.push(rid);
+        let inp = GenInput {
+            cols: &pc,
+            key_cols: &[4],
+            ..inp
+        };
+        let o5 = |r: usize, c: usize| {
+            if c == 4 {
+                Value::Str("AAAB".into())
+            } else {
+                orig(r, c)
+            }
+        };
+        let cs5 = ChangeSet::new(5);
+        let r = refetch_stmt(&inp, &cs5, &o5, RowRef::Existing(0)).expect("rowid");
+        assert_eq!(
+            r.sql,
+            "SELECT \"ID\", \"NAME\", \"DT\", \"MEMO\", ROWID FROM EMP WHERE ROWID = :P1"
+        );
+        let mut cs6 = ChangeSet::new(5);
+        let k = cs6.insert_row(None, vec![Some("1".into()), None, None, None, None]);
+        assert!(refetch_stmt(&inp, &cs6, &o5, RowRef::Inserted(k)).is_none());
+        let inp = GenInput {
+            cols: &cols,
+            key_cols: &[3],
+            ..inp
+        };
+        let r = refetch_stmt(&inp, &cs5, &orig, RowRef::Existing(0)).expect("null key");
+        assert!(r.sql.ends_with("WHERE \"MEMO\" IS NULL"), "{}", r.sql);
     }
 
     #[test]
