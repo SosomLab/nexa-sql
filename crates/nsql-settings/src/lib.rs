@@ -1130,6 +1130,22 @@ pub const REGISTRY: &[Entry] = &[
         default: "key",
     },
     Entry {
+        key: "grid.lob_view_max_mb",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridLobMax,
+        desc: Msg::DescGridLobMax,
+        kind: SettingKind::Int { min: 1, max: 1024 },
+        default: "16",
+    },
+    Entry {
+        key: "grid.lob_image_preview",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridLobImage,
+        desc: Msg::DescGridLobImage,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "grid.paste_max_rows",
         cat: Msg::CatGrid,
         label: Msg::LblGridPasteMax,

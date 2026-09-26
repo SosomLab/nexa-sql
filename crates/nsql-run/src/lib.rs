@@ -535,6 +535,7 @@ fn var_type_label(ty: &nsql_core::VarType) -> String {
         T::Date => "DATE".into(),
         T::Timestamp => "TIMESTAMP".into(),
         T::Boolean => "BOOLEAN".into(),
+        T::Blob => "BLOB".into(),
         T::Auto => "auto".into(),
     }
 }

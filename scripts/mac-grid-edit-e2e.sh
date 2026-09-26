@@ -5,12 +5,16 @@
 #   ⑧ PK 열이 빠진 결과 = 숨은 키 열 주입 재조회 뒤 적용(1급-보완) · NSQL_E2E_ORACLE=<접속 문자열>이면 Oracle 임시 표 NSQLT_GE/NSQLT_GE2
 #   (PK 표 · 키 없는 표 · DATE 열)로 ⑤⑥⑨⑩ 저장 실증 뒤 DROP(실서버 임시 객체 · 61 §2-4 ⑤).
 #   결과 = 표준 출력 PASS/FAIL 줄 + 종료 코드. 앱은 비활성(NSQL_NO_ACTIVATE)으로 띄우고 마지막 명령 + 5 s 여유(App Nap · 61 §4).
-# 사용: scripts/mac-grid-edit-e2e.sh [-e target/debug/nexa-sql] [-n target/debug/nsql] [-H <home>]
+# 사용: scripts/mac-grid-edit-e2e.sh [-e target/debug/nexa-sql] [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d 프로필:방언,…]
+#   4-DBMS 실서버: -P "$HOME/Library/Application Support/nexa-sql" -d BISCM:oracle,Repository:postgres,M4PLAN:mssql (사용자 09-26)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/target/debug/nexa-sql"; NSQL="$ROOT/target/debug/nsql"; H="${TMPDIR:-/tmp}/nsql-ge-e2e"
-while getopts "e:n:H:" o; do case $o in e) APP=$OPTARG;; n) NSQL=$OPTARG;; H) H=$OPTARG;; esac; done
+PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
+while getopts "e:n:H:P:d:" o; do case $o in e) APP=$OPTARG;; n) NSQL=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
 D="$H/data"; O="$H/out"; rm -rf "$H"; mkdir -p "$D" "$O"
+# -P <실제 설정 폴더>: 프로필·기기 키를 격리 홈으로 **복사**(실제 폴더는 건드리지 않음) → 이름 접속(BISCM · M4PLAN · Repository)으로 실서버 스위트.
+if [ -n "$PROF" ] && [ -d "$PROF/profiles" ]; then cp -R "$PROF/profiles" "$H/"; cp "$PROF/device.key" "$H/" 2>/dev/null; fi
 fail=0; pass=0
 ok() { echo "PASS  $1"; pass=$((pass+1)); }
 bad() { echo "FAIL  $1"; fail=$((fail+1)); }
@@ -101,11 +105,37 @@ expect_grep "열린 트랜잭션 갱신 수 3" "$t9" "^open_updates=3$"
 expect_grep "그리드 = 제자리 갱신 M3" "$d9" "|M3|"
 expect_grep "종료 = 커밋 안 됨(서버 값 그대로 KIM2)" "$v" "KIM2"
 expect_absent "종료 = M3 미커밋" "$v" "M3"
-# ── Oracle(선택)
-if [ -n "${NSQL_E2E_ORACLE:-}" ]; then
-  ORA="$NSQL_E2E_ORACLE"
-  NSQL_HOME="$H" "$NSQL" conn add ORA "$ORA" -d oracle --no-prompt >/dev/null 2>&1
-  cat > "$D/ora_setup.sql" <<'SQL'
+echo "=== SQLite ⑩ LOB(87 §5): 값 창 이미지 미리보기(PNG) · 파일로 저장 = 원본 동일 · 16진수 · 파일에서 넣기(BMP → 셀 · 5,000자 글 → 셀) → 적용 → 서버 검증"
+python3 - "$D" <<'PYLOB'
+import sys, os
+d=sys.argv[1]
+png=bytes([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0x0d,0x49,0x48,0x44,0x52,0,0,0,3,0,0,0,2,8,2,0,0,0,0x12,0x16,0xf1,0x4d,0,0,0,0x11,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0xe4,0x12,0x91,0x83,0,0x26,0x46,0x18,0,0,0x0e,0x0b,0,0xfd,0x03,0x25,0xe5,0x33,0,0,0,0,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82])
+bmp=bytes([0x42,0x4d,0x46,0,0,0,0,0,0,0,0x36,0,0,0,0x28,0,0,0,2,0,0,0,2,0,0,0,1,0,0x18,0,0,0,0,0,0x10,0,0,0,0x13,0x0b,0,0,0x13,0x0b,0,0,0,0,0,0,0,0,0,0,0xff,0,0,0xff,0xff,0xff,0,0,0,0,0xff,0,0xff,0,0,0])
+open(os.path.join(d,'px.png'),'wb').write(png); open(os.path.join(d,'px.bmp'),'wb').write(bmp)
+open(os.path.join(d,'note.txt'),'w').write('x'*5000)
+open(os.path.join(d,'lob_setup.sql'),'w').write("DROP TABLE IF EXISTS ge_blob;\nCREATE TABLE ge_blob (id INTEGER PRIMARY KEY, name TEXT, data BLOB);\nINSERT INTO ge_blob VALUES (1, 'a', X'%s');\n" % png.hex())
+open(os.path.join(d,'lob_sel.sql'),'w').write("SELECT id, name, data FROM ge_blob ORDER BY id;\n")
+open(os.path.join(d,'lob_chk.sql'),'w').write("SELECT id, length(name) AS nlen, length(data) AS dlen, hex(substr(data,1,2)) AS head FROM ge_blob ORDER BY id;\n")
+PYLOB
+cli Local "$D/lob_setup.sql" >/dev/null
+run_gui 26 Local "open:$D/lob_sel.sql,@after:2500:run.all,@after:5500:cellview.open:0;2,@after:7000:cellview.dump:$O/s10a.txt,@after:7500:cellview.save:$O/s10.png,@after:8000:cellview.mode:hex,@after:8500:cellview.dump:$O/s10b.txt,@after:9000:grid.edit.load:0;2;$D/px.bmp,@after:9500:grid.edit.load:0;1;$D/note.txt,@after:10000:grid.dump:$O/s10c.txt,@after:10500:grid.edit.cmd:row.save,@after:15500:cellview.open:0;2,@after:17000:cellview.dump:$O/s10d.txt,@after:17500:grid.dump:$O/s10e.txt"
+d10a=$(cat "$O/s10a.txt" 2>/dev/null); d10b=$(cat "$O/s10b.txt" 2>/dev/null); d10c=$(cat "$O/s10c.txt" 2>/dev/null); d10d=$(cat "$O/s10d.txt" 2>/dev/null); d10e=$(cat "$O/s10e.txt" 2>/dev/null); v=$(cli Local "$D/lob_chk.sql")
+expect_grep "값 창 = PNG 이미지 3x2 미리보기" "$d10a" "mode=Image kind=PNG bytes=74 image=3x2"
+if cmp -s "$O/s10.png" "$D/px.png"; then ok "파일로 저장 = 원본과 동일"; else bad "파일로 저장 = 원본과 동일"; fi
+expect_grep "16진수 보기 전환" "$d10b" "mode=Hex"
+expect_grep "파일에서 넣기 = 셀 라벨 <px.bmp · 70 bytes>" "$d10c" "px.bmp · 70 bytes"
+expect_grep "5,000자 글 넣기 = 변경 집합" "$d10c" "dirty=true"
+expect_grep "적용 뒤 깨끗" "$d10e" "dirty=false"
+expect_grep "서버: BLOB 70 bytes · 머리 424D(BMP)" "$v" "70  424D"
+expect_grep "서버: 글 5,000자(CLOB 길)" "$v" " 5000 "
+expect_grep "다시 연 값 창 = BMP 2x2" "$d10d" "kind=BMP bytes=70 image=2x2"
+# ── 실서버 스위트(방언 공통 4 시나리오 · 임시 표 NSQLT_GE(PK)·NSQLT_GE2(키 없음) 생성 → 시험 → DROP · 61 §2-4 ⑤)
+#   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql> <라벨>
+dbms_suite() {
+  local T=$1 dl=$2 tag=$3 pk kind
+  case $dl in
+    oracle)
+      cat > "$D/${tag}_setup.sql" <<'SQL'
 CREATE TABLE NSQLT_GE (ID NUMBER PRIMARY KEY, NAME VARCHAR2(20), DT DATE, MEMO VARCHAR2(50));
 INSERT INTO NSQLT_GE VALUES (1, 'kim', TO_DATE('2026-07-01 18:45:00','YYYY-MM-DD HH24:MI:SS'), NULL);
 INSERT INTO NSQLT_GE VALUES (2, 'lee', TO_DATE('2026-07-02 09:00:00','YYYY-MM-DD HH24:MI:SS'), 'x');
@@ -114,31 +144,65 @@ INSERT INTO NSQLT_GE2 VALUES ('k', TO_DATE('2026-07-01 18:45:00','YYYY-MM-DD HH2
 INSERT INTO NSQLT_GE2 VALUES ('z', TO_DATE('2026-07-02 09:00:00','YYYY-MM-DD HH24:MI:SS'), 'x');
 COMMIT;
 SQL
-  printf 'DROP TABLE NSQLT_GE;\nDROP TABLE NSQLT_GE2;\n' > "$D/ora_drop.sql"
-  printf 'SELECT ID, NAME, DT, MEMO FROM NSQLT_GE ORDER BY ID;\n' > "$D/ora_sel.sql"
-  printf 'SELECT A, DT, MEMO FROM NSQLT_GE2 ORDER BY A;\n' > "$D/ora_sel2.sql"
-  cli ORA "$D/ora_drop.sql" >/dev/null 2>&1; cli ORA "$D/ora_setup.sql" >/dev/null 2>&1
-  echo "=== Oracle ⑤ 키 없는 표(DATE 포함 전 열 WHERE · 바인드 이름 대문자) 저장"
-  run_gui 22 "$ORA" "open:$D/ora_sel2.sql,@after:4000:run.all,@after:8000:grid.edit.set:0;2;M1,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/o1.txt"
-  d=$(cat "$O/o1.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel2.sql")
-  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: M1" "$v" "M1"; expect_grep "키 없는 표 = ROWID(2급)" "$d" "kind=Physical"
-  echo "=== Oracle ⑥ PK 표 문자·DATE 값 수정 저장"
-  run_gui 22 "$ORA" "open:$D/ora_sel.sql,@after:4000:run.all,@after:8000:grid.edit.set:1;1;LEE2,@after:8500:grid.edit.set:1;2;2026-09-26 10:11:12,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/o2.txt"
-  d=$(cat "$O/o2.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel.sql")
-  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: LEE2" "$v" "LEE2"; expect_grep "서버: DATE 2026-09-26 10:11:12" "$v" "2026-09-26 10:11:12"
-  expect_grep "Oracle 행 단위 재조회 제자리" "$d" "patched=1/0/0"
-  echo "=== Oracle ⑨ PK 열이 빠진 결과 = 숨은 키 열(ID) 주입 → 적용"
-  printf 'SELECT NAME, MEMO FROM NSQLT_GE ORDER BY NAME;\n' > "$D/ora_selnk.sql"
-  run_gui 24 "$ORA" "open:$D/ora_selnk.sql,@after:4000:run.all,@after:10000:grid.dump:$O/o3a.txt,@after:10500:grid.edit.set:0;1;HK,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/o3.txt"
-  da=$(cat "$O/o3a.txt" 2>/dev/null); d=$(cat "$O/o3.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel.sql")
-  expect_grep "숨은 키 열 · 1급" "$da" "kind=Constraint"; expect_grep "숨은 열 1" "$da" "hidden=1"
-  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: MEMO HK" "$v" "HK"
-  echo "=== Oracle ⑩ 키 없는 표의 완전 중복 행 = ROWID로 정확히 1행"
-  printf "INSERT INTO NSQLT_GE2 SELECT * FROM NSQLT_GE2 WHERE A = 'z';\nCOMMIT;\n" > "$D/ora_dup.sql"; cli ORA "$D/ora_dup.sql" >/dev/null 2>&1
-  run_gui 24 "$ORA" "open:$D/ora_sel2.sql,@after:4000:run.all,@after:10000:grid.edit.set:1;2;ONE,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/o4.txt"
-  d=$(cat "$O/o4.txt" 2>/dev/null); v=$(cli ORA "$D/ora_sel2.sql")
-  expect_grep "적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"; expect_grep "서버: 원래 x 1행 남음" "$(echo "$v" | grep -c ' x')" "^1$"
-  cli ORA "$D/ora_drop.sql" >/dev/null 2>&1
+      printf "INSERT INTO NSQLT_GE2 SELECT * FROM NSQLT_GE2 WHERE A = 'z';\nCOMMIT;\n" > "$D/${tag}_dup.sql"; kind=Physical;;
+    postgres)
+      cat > "$D/${tag}_setup.sql" <<'SQL'
+CREATE TABLE nsqlt_ge (id integer PRIMARY KEY, name varchar(20), dt timestamp, memo varchar(50));
+INSERT INTO nsqlt_ge VALUES (1, 'kim', '2026-07-01 18:45:00', NULL);
+INSERT INTO nsqlt_ge VALUES (2, 'lee', '2026-07-02 09:00:00', 'x');
+CREATE TABLE nsqlt_ge2 (a varchar(10), dt timestamp, memo varchar(50));
+INSERT INTO nsqlt_ge2 VALUES ('k', '2026-07-01 18:45:00', NULL);
+INSERT INTO nsqlt_ge2 VALUES ('z', '2026-07-02 09:00:00', 'x');
+SQL
+      printf "INSERT INTO nsqlt_ge2 SELECT * FROM nsqlt_ge2 WHERE a = 'z';\n" > "$D/${tag}_dup.sql"; kind=Physical;;
+    mssql)
+      cat > "$D/${tag}_setup.sql" <<'SQL'
+CREATE TABLE NSQLT_GE (ID int PRIMARY KEY, NAME nvarchar(20), DT datetime2(0), MEMO nvarchar(50));
+INSERT INTO NSQLT_GE VALUES (1, 'kim', '2026-07-01 18:45:00', NULL);
+INSERT INTO NSQLT_GE VALUES (2, 'lee', '2026-07-02 09:00:00', 'x');
+CREATE TABLE NSQLT_GE2 (A nvarchar(10), DT datetime2(0), MEMO nvarchar(50));
+INSERT INTO NSQLT_GE2 VALUES ('k', '2026-07-01 18:45:00', NULL);
+INSERT INTO NSQLT_GE2 VALUES ('z', '2026-07-02 09:00:00', 'x');
+SQL
+      printf "INSERT INTO NSQLT_GE2 SELECT * FROM NSQLT_GE2 WHERE A = 'z';\n" > "$D/${tag}_dup.sql"; kind=AllColumns;;
+  esac
+  printf 'DROP TABLE NSQLT_GE;\nDROP TABLE NSQLT_GE2;\n' > "$D/${tag}_drop.sql"
+  printf 'SELECT ID, NAME, DT, MEMO FROM NSQLT_GE ORDER BY ID;\n' > "$D/${tag}_sel.sql"
+  printf 'SELECT A, DT, MEMO FROM NSQLT_GE2 ORDER BY A;\n' > "$D/${tag}_sel2.sql"
+  printf 'SELECT NAME, MEMO FROM NSQLT_GE ORDER BY NAME;\n' > "$D/${tag}_selnk.sql"
+  cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1; cli "$T" "$D/${tag}_setup.sql" >/dev/null 2>&1
+  local v; v=$(cli "$T" "$D/${tag}_sel.sql")
+  if ! echo "$v" | grep -q "kim"; then bad "$tag 준비(임시 표 생성·접속)"; echo "$v" | head -4 | sed 's/^/      /'; return; fi
+  echo "=== $tag ⑤ 키 없는 표(DATE 포함 · $kind) 저장"
+  run_gui 22 "$T" "open:$D/${tag}_sel2.sql,@after:4000:run.all,@after:8000:grid.edit.set:0;2;M1,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/${tag}1.txt"
+  local d; d=$(cat "$O/${tag}1.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_sel2.sql")
+  expect_grep "$tag 적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "$tag 서버: M1" "$v" "M1"; expect_grep "$tag 키 없는 표 = $kind" "$d" "kind=$kind"
+  echo "=== $tag ⑥ PK 표 문자·DATE 값 수정 저장(행 단위 재조회)"
+  run_gui 22 "$T" "open:$D/${tag}_sel.sql,@after:4000:run.all,@after:8000:grid.edit.set:1;1;LEE2,@after:8500:grid.edit.set:1;2;2026-09-26 10:11:12,@after:9000:grid.edit.cmd:row.save,@after:15000:grid.dump:$O/${tag}2.txt"
+  d=$(cat "$O/${tag}2.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_sel.sql")
+  expect_grep "$tag 적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "$tag 서버: LEE2" "$v" "LEE2"; expect_grep "$tag 서버: DATE 2026-09-26 10:11:12" "$v" "2026-09-26 10:11:12"
+  expect_grep "$tag 행 단위 재조회 제자리" "$d" "patched=1/0/0"
+  echo "=== $tag ⑨ PK 열이 빠진 결과 = 숨은 키 열 주입 → 적용"
+  run_gui 24 "$T" "open:$D/${tag}_selnk.sql,@after:4000:run.all,@after:10000:grid.dump:$O/${tag}3a.txt,@after:10500:grid.edit.set:0;1;HK,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/${tag}3.txt"
+  local da; da=$(cat "$O/${tag}3a.txt" 2>/dev/null); d=$(cat "$O/${tag}3.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_sel.sql")
+  expect_grep "$tag 숨은 키 열 · 1급" "$da" "kind=Constraint"; expect_grep "$tag 숨은 열 1" "$da" "hidden=1"
+  expect_grep "$tag 적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "$tag 서버: MEMO HK" "$v" "HK"
+  echo "=== $tag ⑩ 키 없는 표의 완전 중복 행 = 물리 식별자면 정확히 1행 · 전 열 비교면 차단"
+  cli "$T" "$D/${tag}_dup.sql" >/dev/null 2>&1
+  run_gui 24 "$T" "open:$D/${tag}_sel2.sql,@after:4000:run.all,@after:10000:grid.edit.set:1;2;ONE,@after:11000:grid.edit.cmd:row.save,@after:17000:grid.dump:$O/${tag}4.txt"
+  d=$(cat "$O/${tag}4.txt" 2>/dev/null); v=$(cli "$T" "$D/${tag}_sel2.sql")
+  if [ "$kind" = Physical ]; then
+    expect_grep "$tag 적용 뒤 깨끗" "$d" "dirty=false"; expect_grep "$tag 서버: ONE 1행" "$(echo "$v" | grep -c ONE)" "^1$"; expect_grep "$tag 서버: 원래 x 1행 남음" "$(echo "$v" | grep -c ' x')" "^1$"
+  else
+    expect_grep "$tag 중복 행 = 사전 검사 차단(변경 집합 유지)" "$d" "dirty=true"; expect_absent "$tag 서버: ONE 없음" "$v" "ONE"
+  fi
+  cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1
+}
+if [ -n "${NSQL_E2E_ORACLE:-}" ]; then NSQL_HOME="$H" "$NSQL" conn add ORA "$NSQL_E2E_ORACLE" -d oracle --no-prompt >/dev/null 2>&1; dbms_suite ORA oracle Oracle; fi
+# -d "BISCM:oracle,Repository:postgres,M4PLAN:mssql"(또는 NSQL_E2E_DBMS) = 격리 홈으로 복사한 프로필 이름으로 실서버 스위트.
+if [ -n "$DBMS" ]; then
+  IFS=',' read -ra PAIRS <<< "$DBMS"
+  for pr in "${PAIRS[@]}"; do dbms_suite "${pr%%:*}" "${pr##*:}" "${pr%%:*}"; done
 fi
 echo "=== 결과: PASS $pass · FAIL $fail (출력 $O)"
 [ "$fail" -eq 0 ]

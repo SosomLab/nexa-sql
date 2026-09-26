@@ -494,6 +494,7 @@ fn type_token(ty: &VarType) -> Option<String> {
         VarType::Date => "DATE".into(),
         VarType::Timestamp => "TIMESTAMP".into(),
         VarType::Boolean => "BOOLEAN".into(),
+        VarType::Blob => "BLOB".into(),
         VarType::Auto => return None,
     })
 }

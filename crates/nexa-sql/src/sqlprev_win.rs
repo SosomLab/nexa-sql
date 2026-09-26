@@ -5,13 +5,17 @@
 //! 본문 = nexa-ctl `TextBox`(다중 줄 · SQL 하이라이트 · 줄 번호 · **미니맵 끔** · 편집 가능). "새로고침"은 호스트가 같은 `GenSpec`을
 //! 메타 세션에 다시 보내 본문을 바꾼다 · 파일로 저장은 파일 창(`FilePurpose::SqlPreview`) · 편집기에서 열기 = 새 탭 + 이 창 닫기.
 
+use crate::grid::ValueReq;
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
+use nexa_ctl::gridedit::RowRef;
 use nexa_ctl::raster::RasterCtx;
+use nexa_ctl::theme::IconImage;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{
     Button, Checkbox, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
 };
+use nexa_gfx::image::{self as gfx_image, ImageKind};
 use nexa_gfx::{Font, Surface};
 use nsql_catalog::{GenOpts, GenSpec};
 use nsql_i18n::{t, tf, Msg};
@@ -23,9 +27,22 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SqlPrevAction {
     None,
     Paint,
+    /// 값 모드: 본문(글)을 그 셀에 반영(87 §5 · CLOB 편집 → 커밋은 그리드 적용).
+    ApplyCell {
+        row: RowRef,
+        col: usize,
+        text: String,
+    },
+    /// 값 모드: 파일에서 넣기(호스트가 열기 창 · `FilePurpose::CellValue`).
+    LoadFile,
+    /// 값 모드: 파일로 저장(바이트 그대로 · `FilePurpose::CellValue`).
+    SaveValue,
+    /// 값 모드 보기 전환(창 안에서 처리).
+    Mode(ValueMode),
     /// 같은 spec으로 다시 생성(호스트 → 탐색기 → 메타 세션).
     Refresh,
     /// 파일 창(저장)을 연다.
@@ -37,19 +54,45 @@ pub(crate) enum SqlPrevAction {
     Close,
 }
 
-const BTN_N: usize = 5;
+/// 값 모드의 보기.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ValueMode {
+    Text,
+    Hex,
+    Image,
+}
+
+/// 값 모드 상태(87 §5): 셀 하나 · 보기 · 풀어 둔 이미지.
+struct ValueState {
+    v: ValueReq,
+    mode: ValueMode,
+    kind: ImageKind,
+    img: Option<IconImage>,
+    img_err: Option<String>,
+    /// 표시 상한(`grid.lob_view_max_mb`) — 넘으면 앞부분만 16진수로.
+    max_bytes: usize,
+    image_on: bool,
+}
+
 const CB_MSGS: [Msg; 4] = [
     Msg::GenOptQualified,
     Msg::GenOptCompact,
     Msg::GenOptFull,
     Msg::GenOptSepFk,
 ];
-const BTN_MSGS: [Msg; BTN_N] = [
+const BTN_MSGS: [Msg; 5] = [
     Msg::SpBtnRefresh,
     Msg::SpBtnSave,
     Msg::SpBtnOpen,
     Msg::SpBtnCopy,
     Msg::SpBtnClose,
+];
+const BTN_ACTS: [SqlPrevAction; 5] = [
+    SqlPrevAction::Refresh,
+    SqlPrevAction::Save,
+    SqlPrevAction::OpenEditor,
+    SqlPrevAction::Copy,
+    SqlPrevAction::Close,
 ];
 
 pub(crate) struct SqlPrevWin {
@@ -60,9 +103,13 @@ pub(crate) struct SqlPrevWin {
     shift: bool,
     primary: bool,
     tb: TextBox,
-    /// 새로고침 · 파일로 저장 · 편집기에서 열기 · 복사 · 닫기(사용자 순서).
+    /// 새로고침 · 파일로 저장 · 편집기에서 열기 · 복사 · 닫기(사용자 순서) — 값 모드는 다른 묶음(`set_buttons`).
     btns: Vec<Button>,
     labels: Vec<String>,
+    /// 버튼마다 동작(라벨과 나란히).
+    acts: Vec<SqlPrevAction>,
+    /// 값 모드(없으면 SQL 미리보기/일반 글).
+    value: Option<ValueState>,
     /// ★ 생성 옵션 체크박스(DBeaver "Settings" · 사용자 09-25): 정규화 이름 · 간결 · 전체 DDL · FK 분리 — 바꾸면 다시 생성.
     cbs: Vec<Checkbox>,
     cb_labels: Vec<String>,
@@ -89,6 +136,8 @@ impl SqlPrevWin {
             tb,
             btns: BTN_MSGS.iter().map(|m| Button::new(t(*m))).collect(),
             labels: BTN_MSGS.iter().map(|m| t(*m).to_string()).collect(),
+            acts: BTN_ACTS.to_vec(),
+            value: None,
             cbs: CB_MSGS
                 .iter()
                 .map(|m| Checkbox::new(t(*m), false))
@@ -190,6 +239,8 @@ impl SqlPrevWin {
         self.title = title;
         self.spec = None;
         self.server = None;
+        self.value = None;
+        self.set_buttons(&BTN_MSGS, &BTN_ACTS);
         self.tb = tb;
         self.tb.set_read_only(true);
         self.tb.set_popup_deferred(true);
@@ -197,6 +248,72 @@ impl SqlPrevWin {
         self.set_result(Ok(text));
         self.tb.goto_line(1);
         self.tb.set_focused(true);
+        self.ensure_window(el, theme, owner);
+    }
+
+    /// 버튼 묶음 교체(라벨 + 동작 나란히).
+    fn set_buttons(&mut self, msgs: &[Msg], acts: &[SqlPrevAction]) {
+        self.btns = msgs.iter().map(|m| Button::new(t(*m))).collect();
+        self.labels = msgs.iter().map(|m| t(*m).to_string()).collect();
+        self.acts = acts.to_vec();
+    }
+
+    /// ★ 값 보기 창(87 §5 · LOB): 글은 편집 가능(편집 가능 셀) · 이진은 16진수/이미지(PNG·BMP·GIF 미리보기) · 파일로 저장/넣기.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_value(
+        &mut self,
+        el: &ActiveEventLoop,
+        theme: Option<winit::window::Theme>,
+        owner: Option<&Window>,
+        tb: TextBox,
+        v: ValueReq,
+        max_mb: usize,
+        image_on: bool,
+    ) {
+        self.title = format!("{} — {}", t(Msg::WinGeValue), v.name);
+        self.spec = None;
+        self.server = None;
+        self.tb = tb;
+        self.tb.set_popup_deferred(true);
+        self.tb.set_minimap(false);
+        self.tb.set_line_numbers(true);
+        let max_bytes = max_mb.max(1).saturating_mul(1024 * 1024);
+        let kind = v
+            .bytes
+            .as_deref()
+            .map_or(ImageKind::Unknown, gfx_image::sniff);
+        let mode = if v.bytes.is_some() {
+            if image_on && kind.decodable() {
+                ValueMode::Image
+            } else {
+                ValueMode::Hex
+            }
+        } else {
+            ValueMode::Text
+        };
+        self.value = Some(ValueState {
+            v,
+            mode,
+            kind,
+            img: None,
+            img_err: None,
+            max_bytes,
+            image_on,
+        });
+        self.decode_image();
+        self.refresh_value_view();
+        self.tb.goto_line(1);
+        self.tb.set_focused(true);
+        self.ensure_window(el, theme, owner);
+    }
+
+    /// 창 만들기/올리기(일반·값 모드 공통).
+    fn ensure_window(
+        &mut self,
+        el: &ActiveEventLoop,
+        theme: Option<winit::window::Theme>,
+        owner: Option<&Window>,
+    ) {
         if let Some(w) = &self.window {
             w.set_title(&format!("Nexa SQL — {}", self.title));
             crate::winfocus::focus(w);
@@ -260,6 +377,18 @@ impl SqlPrevWin {
 
     /// 저장·탭 기본 이름(`OBJ_select.sql`).
     pub(crate) fn file_name(&self) -> String {
+        if let Some(s) = &self.value {
+            let ext = if s.v.bytes.is_some() {
+                s.kind.ext()
+            } else {
+                "txt"
+            };
+            let row = match s.v.row {
+                RowRef::Existing(r) => format!("{}", r + 1),
+                RowRef::Inserted(k) => format!("new{}", k + 1),
+            };
+            return format!("{}_{row}.{ext}", s.v.name);
+        }
         match &self.spec {
             Some(sp) => format!("{}.sql", sp.title()),
             None => "preview.sql".into(),
@@ -281,6 +410,7 @@ impl SqlPrevWin {
     pub(crate) fn close(&mut self) {
         self.surface = None;
         self.window = None;
+        self.value = None;
         self.tb.set_focused(false);
         for b in &mut self.btns {
             b.clear_transient();
@@ -302,6 +432,175 @@ impl SqlPrevWin {
     pub(crate) fn redraw(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+    }
+
+    /// 값 모드의 셀(호스트가 파일에서 넣기 결과를 돌려줄 때).
+    pub(crate) fn value_cell(&self) -> Option<(RowRef, usize, bool)> {
+        self.value.as_ref().map(|s| (s.v.row, s.v.col, s.v.binary))
+    }
+
+    /// 파일로 저장할 바이트(이진이면 그대로 · 글이면 UTF-8).
+    pub(crate) fn value_bytes(&self) -> Vec<u8> {
+        match self.value.as_ref() {
+            Some(s) => match &s.v.bytes {
+                Some(b) => b.clone(),
+                None => self.tb.text().into_bytes(),
+            },
+            None => self.tb.text().into_bytes(),
+        }
+    }
+
+    /// 파일에서 넣은 값을 창에도 반영(그리드는 호스트가 따로).
+    pub(crate) fn replace_value(&mut self, bytes: Option<Vec<u8>>, text: Option<String>) {
+        let Some(s) = self.value.as_mut() else { return };
+        s.v.bytes = bytes;
+        if let Some(t) = text {
+            s.v.text = t;
+        }
+        s.kind =
+            s.v.bytes
+                .as_deref()
+                .map_or(ImageKind::Unknown, gfx_image::sniff);
+        s.mode = if s.v.bytes.is_some() {
+            if s.image_on && s.kind.decodable() {
+                ValueMode::Image
+            } else {
+                ValueMode::Hex
+            }
+        } else {
+            ValueMode::Text
+        };
+        self.decode_image();
+        self.refresh_value_view();
+    }
+
+    fn decode_image(&mut self) {
+        let Some(s) = self.value.as_mut() else { return };
+        s.img = None;
+        s.img_err = None;
+        if let Some(b) = &s.v.bytes {
+            if s.image_on && s.kind.decodable() {
+                if b.len() > s.max_bytes {
+                    s.img_err = Some(tf(
+                        Msg::LobTooBig,
+                        &[&b.len().to_string(), &s.max_bytes.to_string()],
+                    ));
+                } else {
+                    match gfx_image::decode(b, 64 * 1024 * 1024) {
+                        Ok(i) => s.img = Some(i),
+                        Err(e) => s.img_err = Some(e),
+                    }
+                }
+            }
+        }
+    }
+
+    /// 보기(글/16진수/이미지)에 맞춰 본문·버튼·안내 줄을 다시 놓는다.
+    fn refresh_value_view(&mut self) {
+        let Some(s) = self.value.as_ref() else { return };
+        let editable_text = s.v.editable && !s.v.binary && s.mode == ValueMode::Text;
+        let (text, note) = match s.mode {
+            ValueMode::Text => (s.v.text.clone(), String::new()),
+            ValueMode::Hex => {
+                let b = s.v.bytes.as_deref().unwrap_or(&[]);
+                let shown = &b[..b.len().min(s.max_bytes)];
+                let mut t = crate::grid::hex_dump(shown);
+                let note = if b.len() > s.max_bytes {
+                    t.push_str("…\n");
+                    tf(
+                        Msg::LobTruncated,
+                        &[&s.max_bytes.to_string(), &b.len().to_string()],
+                    )
+                } else {
+                    String::new()
+                };
+                (t, note)
+            }
+            ValueMode::Image => (
+                String::new(),
+                match (&s.img, &s.img_err) {
+                    (Some(i), _) => tf(
+                        Msg::LobImageInfo,
+                        &[
+                            s.kind.name(),
+                            &i.w.to_string(),
+                            &i.h.to_string(),
+                            &s.v.bytes.as_ref().map_or(0, Vec::len).to_string(),
+                        ],
+                    ),
+                    (None, Some(e)) => e.clone(),
+                    _ => String::new(),
+                },
+            ),
+        };
+        let has_bytes = s.v.bytes.is_some();
+        let can_image = has_bytes && s.image_on && s.kind.decodable();
+        let editable = s.v.editable;
+        let mode = s.mode;
+        let mut msgs: Vec<Msg> = Vec::new();
+        let mut acts: Vec<SqlPrevAction> = Vec::new();
+        if has_bytes {
+            msgs.push(Msg::SpBtnHex);
+            acts.push(SqlPrevAction::Mode(ValueMode::Hex));
+            if can_image {
+                msgs.push(Msg::SpBtnImage);
+                acts.push(SqlPrevAction::Mode(ValueMode::Image));
+            }
+        }
+        if editable_text {
+            msgs.push(Msg::SpBtnApplyCell);
+            acts.push(SqlPrevAction::ApplyCell {
+                row: s.v.row,
+                col: s.v.col,
+                text: String::new(),
+            });
+        }
+        if editable {
+            msgs.push(Msg::SpBtnLoadFile);
+            acts.push(SqlPrevAction::LoadFile);
+        }
+        msgs.push(Msg::SpBtnSaveFile);
+        acts.push(SqlPrevAction::SaveValue);
+        msgs.push(Msg::SpBtnCopy);
+        acts.push(SqlPrevAction::Copy);
+        msgs.push(Msg::SpBtnClose);
+        acts.push(SqlPrevAction::Close);
+        self.set_buttons(&msgs, &acts);
+        self.cbs.clear();
+        self.tb.set_read_only(!editable_text);
+        self.tb.set_text(&text);
+        self.note = (note, false);
+        let _ = mode;
+        self.redraw();
+    }
+
+    /// 값 모드 자체 시험 덤프: `mode=… kind=… bytes=… image=WxH|err editable=… note=…`.
+    pub(crate) fn dump_value(&self) -> String {
+        match self.value.as_ref() {
+            Some(s) => format!(
+                "mode={:?} kind={} bytes={} image={} editable={} binary={} note={}\n",
+                s.mode,
+                s.kind.name(),
+                s.v.bytes.as_ref().map_or(0, Vec::len),
+                match (&s.img, &s.img_err) {
+                    (Some(i), _) => format!("{}x{}", i.w, i.h),
+                    (None, Some(e)) => format!("err:{e}"),
+                    _ => "-".into(),
+                },
+                s.v.editable,
+                s.v.binary,
+                self.note.0
+            ),
+            None => "mode=none\n".into(),
+        }
+    }
+
+    /// 값 모드 보기 전환(기동 명령 `cellview.mode:`).
+    pub(crate) fn set_mode(&mut self, m: ValueMode) {
+        if let Some(s) = self.value.as_mut() {
+            s.mode = m;
+            self.refresh_value_view();
         }
     }
 
@@ -475,14 +774,23 @@ impl SqlPrevWin {
                     }
                     return SqlPrevAction::Refresh;
                 }
-                let clicked = (0..BTN_N).find(|&i| self.btns[i].take_clicked());
-                match clicked {
-                    Some(0) => return SqlPrevAction::Refresh,
-                    Some(1) => return SqlPrevAction::Save,
-                    Some(2) => return SqlPrevAction::OpenEditor,
-                    Some(3) => return SqlPrevAction::Copy,
-                    Some(4) => return SqlPrevAction::Close,
-                    _ => {}
+                let clicked = (0..self.btns.len()).find(|&i| self.btns[i].take_clicked());
+                if let Some(i) = clicked {
+                    match self.acts.get(i).cloned() {
+                        Some(SqlPrevAction::Mode(m)) => {
+                            self.set_mode(m);
+                            return SqlPrevAction::None;
+                        }
+                        Some(SqlPrevAction::ApplyCell { row, col, .. }) => {
+                            return SqlPrevAction::ApplyCell {
+                                row,
+                                col,
+                                text: self.tb.text(),
+                            };
+                        }
+                        Some(a) => return a,
+                        None => {}
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. }
@@ -523,8 +831,10 @@ impl SqlPrevWin {
                                 self.redraw();
                                 return SqlPrevAction::None;
                             }
-                            // 읽기 전용: 잘라내기·붙여넣기·실행 취소는 없음.
-                            "x" | "v" | "z" | "y" => return SqlPrevAction::None,
+                            // 읽기 전용: 잘라내기·붙여넣기·실행 취소는 없음(값 모드의 편집 가능한 글은 상자에 맡긴다).
+                            "x" | "v" | "z" | "y" if self.tb.is_read_only() => {
+                                return SqlPrevAction::None
+                            }
                             _ => {}
                         }
                     }
@@ -635,7 +945,27 @@ impl SqlPrevWin {
                 bx += bw + px(8.0);
             }
         }
-        {
+        let image_mode = self
+            .value
+            .as_ref()
+            .is_some_and(|s| s.mode == ValueMode::Image);
+        if image_mode {
+            // ★ 이미지 보기(87 §5): 본문 자리에 비율 유지로 맞춰 그린다(작으면 원본 크기 · 크면 축소) · 실패는 안내 줄.
+            let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+            let mut dc = RasterCtx::new(&mut gfx, font, s);
+            let r = self.tb.bounds();
+            dc.fill_rect(r, th.field_bg);
+            if let Some(img) = self.value.as_ref().and_then(|v| v.img.as_ref()) {
+                let (iw, ih) = (img.w as i32, img.h as i32);
+                let scale_fit = (f64::from(r.w) / f64::from(iw.max(1)))
+                    .min(f64::from(r.h) / f64::from(ih.max(1)))
+                    .min(1.0);
+                let dw = ((f64::from(iw) * scale_fit) as i32).max(1);
+                let dh = ((f64::from(ih) * scale_fit) as i32).max(1);
+                let dst = Rect::new(r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2, dw, dh);
+                dc.image_scaled(dst, img, r);
+            }
+        } else {
             // ★ 본문 = 편집기와 같은 글꼴·크기(`mono_font` · `editor.font_size`)로 따로 그린다(사용자 09-25 "편집기 탭과 동일하게").
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
             let prefs = FontPrefs {

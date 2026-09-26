@@ -4,7 +4,7 @@
 
 use crate::editable::{self, Policy, Tier};
 use crate::gridedit_sql::{
-    self, ColMeta, Concurrency, EditTarget, GenInput, HiddenCol, KeyKind, ReadOnly,
+    self, BlobMap, ColMeta, Concurrency, EditTarget, GenInput, HiddenCol, KeyKind, ReadOnly,
 };
 use crate::toolicons;
 use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
@@ -196,11 +196,13 @@ pub(crate) enum EditRequest {
         /// 적용 성공 뒤 같은 세션에서 돌릴 행 단위 재조회(수정·추가 행마다 하나 · 비어 있으면 전체 재조회 · 87 §12-4).
         refetch: Vec<nsql_core::ExecRequest>,
     },
-    /// 읽기 전용 미리보기 창(SQL 미리보기 · 값 보기).
+    /// 읽기 전용 미리보기 창(SQL 미리보기).
     Preview {
         title: String,
         text: String,
     },
+    /// ★ 값 보기 창(87 §5 · LOB): 글/이진 · 편집 가능 여부 — 호스트가 값 창(`sqlprev_win` 값 모드)을 연다.
+    ViewCell(ValueReq),
     /// 셀 편집기 우클릭 메뉴의 붙여넣기 — 호스트가 클립보드를 읽어 `live_paste`.
     ClipboardPaste,
     /// ★ 숨은 열 주입 재조회(87 §13 · T-231) — 호스트는 출처 문장을 이것으로 바꿔 다시 실행한다(실패 = `requery_failed`).
@@ -208,6 +210,23 @@ pub(crate) enum EditRequest {
         sql: String,
     },
     Status(String),
+}
+
+/// 값 보기 창에 넘기는 셀 하나(87 §5).
+#[derive(Clone, Debug)]
+pub(crate) struct ValueReq {
+    pub row: RowRef,
+    pub col: usize,
+    /// 열 이름(창 제목 · 저장 파일 이름).
+    pub name: String,
+    /// 글 값(이진이면 빈 문자열).
+    pub text: String,
+    /// 이진 값(원본 또는 파일에서 넣은 것).
+    pub bytes: Option<Vec<u8>>,
+    /// 편집 가능(편집 상태 · 읽기 전용/숨은 열 아님 · 적용 중 아님).
+    pub editable: bool,
+    /// 이진 열(파일에서 넣기 = 늘 바이트).
+    pub binary: bool,
 }
 
 /// 주입 재조회 계획 — 결과가 이 문장으로 돌아오면 뒤쪽 `hidden.len()` 열은 숨은 열.
@@ -248,6 +267,8 @@ struct GridEdit {
     sent_refetch_ok: bool,
     /// 마지막 제자리 갱신(수정·추가·삭제 행 수 · 덤프용).
     last_patch: Option<(usize, usize, usize)>,
+    /// 파일에서 넣은 이진 값(셀 → (라벨, 바이트) · 87 §5).
+    blobs: BlobMap,
 }
 
 pub(crate) struct Grid {
@@ -871,6 +892,7 @@ impl Grid {
                         sent_refetch: Vec::new(),
                         sent_refetch_ok: false,
                         last_patch: None,
+                        blobs: BlobMap::new(),
                     });
                     self.edit_reqs.push(EditRequest::NeedKeys { table });
                 }
@@ -1392,6 +1414,7 @@ impl Grid {
             e.live.close();
             e.live_at = None;
             e.cs.clear();
+            e.blobs.clear();
             e.error_row = None;
         }
         self.rebuild_row_order();
@@ -1407,6 +1430,7 @@ impl Grid {
             cols: &e.cols,
             key_cols: &e.key_cols,
             concurrency: self.edit_cfg.concurrency,
+            blobs: Some(&e.blobs),
         };
         let orig = |r: usize, c: usize| -> Value {
             self.rs
@@ -1559,6 +1583,7 @@ impl Grid {
                         cols: &e.cols,
                         key_cols: &e.key_cols,
                         concurrency: self.edit_cfg.concurrency,
+                        blobs: Some(&e.blobs),
                     };
                     let orig = |r: usize, c: usize| -> Value {
                         self.rs
@@ -1653,6 +1678,12 @@ impl Grid {
         };
         let ncols = e.cols.len();
         let typed = |text: &Option<String>, c: usize| -> Value {
+            if let Some((label, b)) = e.blobs.iter().find_map(|((_, cc), v)| {
+                (*cc == c && text.as_deref() == Some(v.0.as_str())).then_some(v)
+            }) {
+                let _ = label;
+                return Value::Bytes(b.clone());
+            }
             match gridedit_sql::bound_of(text, e.cols[c].spec.kind, self.dialect) {
                 gridedit_sql::Bound::Val(v, _) => v,
                 gridedit_sql::Bound::Expr(_) => text.clone().map_or(Value::Null, Value::Str),
@@ -1740,6 +1771,7 @@ impl Grid {
             e.sent_refetch.clear();
             e.last_patch = Some((updates.len(), inserts.len(), del_sorted.len()));
             e.cs = ChangeSet::new(e.cols.len());
+            e.blobs.clear();
         }
         self.text_lines = Vec::new();
         self.text_bytes = 0;
@@ -1762,6 +1794,8 @@ impl Grid {
         match error {
             None => {
                 e.cs.clear();
+                e.blobs.clear();
+                e.blobs.clear();
                 e.error_row = None;
                 self.rebuild_row_order();
             }
@@ -1855,33 +1889,112 @@ impl Grid {
             .as_ref()
             .and_then(|rs| rs.columns().get(ci))
             .map_or_else(String::new, |c| c.name.clone());
-        let text = match rref {
-            RowRef::Existing(r) => match self
+        // 파일에서 넣은 이진이 있으면 그것 · 아니면 원본 이진 · 아니면 글(덧그림 우선).
+        let pending_blob = self.edit.as_ref().and_then(|e| {
+            let (label, b) = e.blobs.get(&(rref, ci))?;
+            (e.cs.cell(rref, ci).and_then(|c| c.as_deref()) == Some(label.as_str()))
+                .then(|| b.clone())
+        });
+        let orig = match rref {
+            RowRef::Existing(r) => self
                 .rs
                 .as_ref()
                 .and_then(|rs| rs.row(r))
                 .and_then(|row| row.get(ci))
-            {
-                Some(Value::Bytes(b)) => hex_dump(b),
-                Some(v) => {
-                    let over = self
-                        .edit
-                        .as_ref()
-                        .and_then(|e| e.cs.cell(rref, ci).cloned());
-                    match over {
-                        Some(Some(s)) => s,
-                        Some(None) => self.null_text.clone(),
-                        None => cell_text(v, &self.null_text),
-                    }
-                }
-                None => String::new(),
-            },
-            RowRef::Inserted(_) => self.cur_text(rref, ci).unwrap_or_default(),
+                .cloned(),
+            RowRef::Inserted(_) => None,
         };
-        self.edit_reqs.push(EditRequest::Preview {
-            title: format!("{} — {}", t(Msg::WinGeValue), name),
+        let over = self
+            .edit
+            .as_ref()
+            .and_then(|e| e.cs.cell(rref, ci).cloned());
+        let (text, bytes) = match (pending_blob, &orig, over) {
+            (Some(b), _, _) => (String::new(), Some(b)),
+            (None, Some(Value::Bytes(b)), None) => (String::new(), Some(b.clone())),
+            (None, _, Some(Some(s))) => (s, None),
+            (None, _, Some(None)) => (String::new(), None),
+            (None, Some(v), None) => (cell_text(v, &self.null_text), None),
+            (None, None, None) => (self.cur_text(rref, ci).unwrap_or_default(), None),
+        };
+        let (editable, binary) = match self.edit.as_ref() {
+            Some(e) => {
+                let c = e.cols.get(ci);
+                (
+                    !e.applying && c.is_some_and(|c| !c.spec.read_only && !c.hidden),
+                    c.is_some_and(|c| c.spec.kind == CellKind::Binary) || bytes.is_some(),
+                )
+            }
+            None => (false, bytes.is_some()),
+        };
+        self.edit_reqs.push(EditRequest::ViewCell(ValueReq {
+            row: rref,
+            col: ci,
+            name,
             text,
-        });
+            bytes,
+            editable,
+            binary,
+        }));
+    }
+
+    /// 값 창·자체 시험: 셀에 글 값을 넣는다(명세 검증 · NULL = None). 이진 열은 [`Self::set_cell_bytes`].
+    pub(crate) fn set_cell_value(
+        &mut self,
+        rref: RowRef,
+        col: usize,
+        value: Option<String>,
+    ) -> Result<(), String> {
+        let Some(e) = self.edit.as_ref() else {
+            return Err(self
+                .read_only
+                .as_ref()
+                .map_or_else(String::new, |r| tf(Msg::StGeReadOnly, &[&r.text()])));
+        };
+        let Some(c) = e.cols.get(col) else {
+            return Err(String::new());
+        };
+        if c.spec.read_only || c.hidden || e.applying {
+            return Err(t(Msg::GeCellReadOnly).to_string());
+        }
+        let checked = c.spec.validate(value.as_deref()).map_err(|e| e.message())?;
+        if let Some(e) = self.edit.as_mut() {
+            e.blobs.remove(&(rref, col));
+        }
+        self.commit_cell((rref, col), checked);
+        Ok(())
+    }
+
+    /// 파일에서 넣기(87 §5): 이진 값을 셀에 — 표시는 `<라벨 · n bytes>` · 적용 때 `Value::Bytes`(BLOB) 바인드.
+    pub(crate) fn set_cell_bytes(
+        &mut self,
+        rref: RowRef,
+        col: usize,
+        bytes: Vec<u8>,
+        label: &str,
+    ) -> Result<(), String> {
+        let Some(e) = self.edit.as_ref() else {
+            return Err(t(Msg::GeCellReadOnly).to_string());
+        };
+        let Some(c) = e.cols.get(col) else {
+            return Err(String::new());
+        };
+        if c.spec.read_only || c.hidden || e.applying {
+            return Err(t(Msg::GeCellReadOnly).to_string());
+        }
+        let text = gridedit_sql::blob_label(label, bytes.len());
+        if let Some(e) = self.edit.as_mut() {
+            e.blobs.insert((rref, col), (text.clone(), bytes));
+        }
+        self.commit_cell((rref, col), Some(text));
+        Ok(())
+    }
+
+    /// 셀의 지금 이진 값(파일에서 넣은 것 우선 · 시험·덤프용).
+    #[cfg(test)]
+    pub(crate) fn cell_bytes(&self, rref: RowRef, col: usize) -> Option<Vec<u8>> {
+        self.edit
+            .as_ref()
+            .and_then(|e| e.blobs.get(&(rref, col)).map(|(_, b)| b.clone()))
     }
 
     /// 편집 동작 실행(키·메뉴·툴바 공통).
@@ -1947,6 +2060,18 @@ impl Grid {
         self.select_only((di, pos));
         self.commit_cell((rref, ci), checked);
         true
+    }
+
+    /// 자체 시험: 표시 좌표 → (행 참조, 원본 열, 이진 열인가).
+    pub(crate) fn cell_at_for_test(&self, di: usize, pos: usize) -> Option<(RowRef, usize, bool)> {
+        let rref = self.rref_at(di)?;
+        let &ci = self.col_order.get(pos)?;
+        let binary = self
+            .edit
+            .as_ref()
+            .and_then(|e| e.cols.get(ci))
+            .is_some_and(|c| c.spec.kind == CellKind::Binary);
+        Some((rref, ci, binary))
     }
 
     /// 자체 시험: 셀 선택(표시 좌표).
@@ -5111,7 +5236,7 @@ impl Grid {
 
 /// 그리드 셀 글자 — NULL은 설정 글자(`grid.null_text` · 텍스트 보기·복사와 같은 값) · 바이트는 길이만(셀 폭 보호 · 텍스트 계열은 nsql-io가 16진).
 /// 16진수 덤프(오프셋 · 16바이트/줄 · 문자 열) — 값 보기 창.
-fn hex_dump(b: &[u8]) -> String {
+pub(crate) fn hex_dump(b: &[u8]) -> String {
     let mut out = String::with_capacity(b.len() * 4 + 64);
     out.push_str(&format!("-- {} bytes\n", b.len()));
     for (i, chunk) in b.chunks(16).enumerate() {
@@ -6157,6 +6282,41 @@ mod edit_key_path_tests {
         assert_eq!(rs.row(2).map(|r| r[0].clone()), Some(Value::Int(77)));
         assert!(g.dump_edit().contains("patched=2/1/0"));
         assert!(!g.edit_dirty());
+    }
+
+    /// LOB(87 §5): 파일에서 넣은 이진 = 셀 라벨 + 적용 문장 `Value::Bytes`(BLOB) 바인드 · 글로 덮어쓰면 이진은 버린다.
+    #[test]
+    fn blob_cell_binds_bytes_and_text_replaces_it() {
+        let mut g = editable_grid();
+        let bytes = vec![0x42u8, 0x4d, 0, 1, 2];
+        g.set_cell_bytes(RowRef::Existing(0), 1, bytes.clone(), "px.bmp")
+            .expect("bytes");
+        assert_eq!(g.cell_bytes(RowRef::Existing(0), 1), Some(bytes.clone()));
+        assert_eq!(
+            g.cur_text(RowRef::Existing(0), 1).as_deref(),
+            Some("<px.bmp · 5 bytes>")
+        );
+        let (st, _, _) = g.generated().expect("generate");
+        assert_eq!(st[0].req.params[0].value, Value::Bytes(bytes));
+        assert_eq!(st[0].req.params[0].ty, nsql_core::VarType::Blob);
+        // 글로 덮어쓰기 = 이진 폐기 · 5,000자는 CLOB 타입(길이 상한 없는 명세로).
+        g.set_col_specs(&[CellSpec::text("C1")]);
+        let long = "x".repeat(5000);
+        g.set_cell_value(RowRef::Existing(0), 1, Some(long.clone()))
+            .expect("text");
+        assert!(g.cell_bytes(RowRef::Existing(0), 1).is_none());
+        let (st, _, _) = g.generated().expect("generate");
+        assert_eq!(st[0].req.params[0].ty, nsql_core::VarType::Clob);
+        assert_eq!(st[0].req.params[0].value, Value::Str(long));
+        // 값 보기 요청 = 편집 가능 · 이진 아님.
+        g.select_cell_for_test(0, 1);
+        g.edit_command("grid.edit.view_value");
+        let req = g.take_edit_requests().into_iter().find_map(|r| match r {
+            EditRequest::ViewCell(v) => Some(v),
+            _ => None,
+        });
+        let v = req.expect("view");
+        assert!(v.editable && !v.binary && v.bytes.is_none() && v.text.len() == 5000);
     }
 
     /// 88 §3 15(T-233): 그리드 우클릭 메뉴의 서브메뉴는 1단 · 상위 항목 ≤ 16.

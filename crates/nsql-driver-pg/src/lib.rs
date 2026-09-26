@@ -184,7 +184,13 @@ impl ToSql for Param<'_> {
                 Type::FLOAT8 => f.to_sql(ty, out),
                 _ => f.to_string().to_sql(ty, out),
             },
-            Value::Decimal(d) | Value::Str(d) => d.to_sql(ty, out),
+            // ★ 문자열 값은 **텍스트 형식**으로 보낸다(`encode_format`) — 서버가 매개변수 타입(timestamp · date · numeric · uuid …)에
+            //   맞춰 스스로 풀이한다. 종전엔 이진 형식으로 글자 바이트를 그대로 넣어 `"DT" = $2`(timestamp)에 '2026-09-26 10:11:12'를
+            //   바인드하면 서버가 이진 timestamp로 읽다 실패했다(그리드 편집 E2E ⑥ · 09-26).
+            Value::Decimal(d) | Value::Str(d) => {
+                out.extend_from_slice(d.as_bytes());
+                Ok(IsNull::No)
+            }
             Value::Bool(b) => match *ty {
                 Type::BOOL => b.to_sql(ty, out),
                 _ => b.to_string().to_sql(ty, out),
@@ -198,7 +204,40 @@ impl ToSql for Param<'_> {
         true
     }
 
+    /// 문자열·정밀 숫자 = 텍스트 형식(서버 풀이) · 그 밖(정수·실수·불·이진) = 이진 형식.
+    fn encode_format(&self, _ty: &Type) -> postgres::types::Format {
+        match self.0 {
+            Value::Decimal(_) | Value::Str(_) => postgres::types::Format::Text,
+            _ => postgres::types::Format::Binary,
+        }
+    }
+
     postgres::types::to_sql_checked!();
+}
+
+#[cfg(test)]
+mod param_format_tests {
+    use super::*;
+
+    /// 문자열은 텍스트 형식 + 원문 바이트 그대로(서버가 타입에 맞춰 풀이) · 정수는 이진.
+    #[test]
+    fn str_params_go_as_text() {
+        let v = Value::Str("2026-09-26 10:11:12".into());
+        assert!(matches!(
+            Param(&v).encode_format(&Type::TIMESTAMP),
+            postgres::types::Format::Text
+        ));
+        let mut out = postgres::types::private::BytesMut::new();
+        assert!(matches!(
+            Param(&v).to_sql(&Type::TIMESTAMP, &mut out),
+            Ok(IsNull::No)
+        ));
+        assert_eq!(&out[..], b"2026-09-26 10:11:12");
+        assert!(matches!(
+            Param(&Value::Int(3)).encode_format(&Type::INT4),
+            postgres::types::Format::Binary
+        ));
+    }
 }
 
 /// 어떤 컬럼이든 받는 디코더 — 자주 쓰는 타입은 값으로 · 모르는 타입은 16진 문자열(타입 이름과 함께 표시).

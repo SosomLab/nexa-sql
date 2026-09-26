@@ -236,14 +236,17 @@ pub enum Route {
 }
 
 pub fn route(sql: &str, has_params: bool, has_outs: bool) -> Route {
-    if has_params || has_outs {
+    if has_outs {
         return Route::Rpc;
     }
     let up = sql.trim_start().to_ascii_uppercase();
     let first: String = up.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
     match first.as_str() {
-        "SELECT" | "WITH" => Route::Rpc,
+        // ★ DML은 파라미터가 있어도 `execute`(영향 행 수 = DONE 합계) — `query`로 보내면 영향 행 수가 없어(None) 그리드 편집의
+        //   "영향 1행" 검사가 0으로 보고 되돌렸다(4-DBMS E2E · 09-26).
         "INSERT" | "UPDATE" | "DELETE" | "MERGE" => Route::Execute,
+        "SELECT" | "WITH" => Route::Rpc,
+        _ if has_params => Route::Rpc,
         _ => Route::Batch,
     }
 }
@@ -662,7 +665,13 @@ impl MssqlSession {
                 let n = self
                     .rt
                     .block_on(async { client.execute(sql.as_str(), &refs).await.map_err(err) })?;
-                result.rows_affected = Some(n.total());
+                // ★ 파라미터 배치는 `DECLARE @x … = @P1;`마다 DONE 1행이 붙어 `total()`이 부풀린다(3 파라미터 + UPDATE 1행 = 4 ·
+                //   4-DBMS E2E 09-26) → 마지막 문장(실제 DML)의 수만.
+                result.rows_affected = Some(if values.is_empty() {
+                    n.total()
+                } else {
+                    n.rows_affected().last().copied().unwrap_or(0)
+                });
             }
             Route::Batch => {
                 // SQL 배치(sp_executesql 아님) — `#temp`·SET·USE 같은 세션 상태가 남는다. 파라미터 없음.
@@ -736,7 +745,24 @@ mod tests {
             Route::Batch
         );
         assert_eq!(route("SET NOCOUNT ON", false, false), Route::Batch);
-        assert_eq!(route("INSERT INTO t VALUES (@V)", true, false), Route::Rpc);
+        // 파라미터 있는 DML = execute(영향 행 수 필요 · 그리드 편집 87 §14).
+        assert_eq!(
+            route("UPDATE t SET a = @GE1 WHERE b = @GE2", true, false),
+            Route::Execute
+        );
+        assert_eq!(
+            route("SELECT COUNT(*) FROM t WHERE b = @GE1", true, false),
+            Route::Rpc
+        );
+        assert_eq!(
+            route("UPDATE t SET a = @V", true, true),
+            Route::Rpc,
+            "OUT 트레일러는 RPC"
+        );
+        assert_eq!(
+            route("INSERT INTO t VALUES (@V)", true, false),
+            Route::Execute
+        );
     }
 
     /// 돌아온 DECIMAL의 꼬리 0: 정수면 Int · 소수는 필요한 자리만 · 아주 큰 수·다른 값은 그대로.

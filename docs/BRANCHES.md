@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/lob-value-window | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ §235 4-DBMS E2E(PG 텍스트 매개변수 · MSSQL GE{n}/execute/마지막 DONE · 시각 바인드 방언) + ★ §236 LOB 값 창(값 모드 · BLOB/CLOB 바인드 · 파일 넣기/저장 · nexa-ui 81차 디코더) + 📐 89 대량 I/O 검토 |
 | fix/grid-apply-txlog | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | 🔧 수동 커밋 + 그리드 적용: `ApplyReport.log` → 트랜잭션 로그 문장별(Util/User · pending) · Oracle 등 시작문 없는 방언 `tx_left_open` · `txlog.dump:` · E2E ⑨(§234) |
 | fix/cli-no-gui-frameworks | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | T-234 CLI = GUI 프레임워크 링크 0(워크스페이스 nexa-sys `default-features = false` · GUI만 `gui` · nexa-ui 80차 · §233) |
 | fix/cli-startup-timing | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | T-228 CLI 기동: `nsql --timing` 기동 구간 · `settings_cached`(13 → 1회) · wall 측정 하네스 교정 `scripts/cli-wall.py` + `mac-perf-all.sh cli()` · T-234 후보(§232) |

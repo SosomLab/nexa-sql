@@ -74,8 +74,20 @@
 
 다른 세션이 먼저 바꿨으면 사전 검사가 0행을 보고 아무것도 쓰지 않습니다.
 
+## 큰 값(LOB) — 값 보기 창
+
+셀을 고르고 우클릭 ▸ **View value**(또는 Enter로 편집 대신 값 창)를 열면 값을 따로 봅니다.
+
+| 값 | 창 | 할 수 있는 것 |
+|---|---|---|
+| 글(CLOB · TEXT · 긴 문자열) | Text(편집 가능 셀이면 그대로 편집) | **셀에 반영**(저장은 ✓ 적용) · 파일에서 넣기 · 파일로 저장 · 복사 |
+| 이진(BLOB · BYTEA · varbinary) | Hex(16진수 덤프) / Image(PNG·BMP·GIF 미리보기) | 파일에서 넣기(파일 그대로 셀에 · 라벨 `<파일 · n bytes>`) · 파일로 저장(바이트 그대로) |
+| JPEG/WebP | 형식은 알려 주지만 미리보기는 아직 없음 | 파일로 저장해서 봅니다 |
+
+상한 `grid.lob_view_max_mb`(16)를 넘는 값은 풀지 않고 16진수 앞부분만 보이며, `grid.lob_image_preview`를 끄면 이진은 늘 16진수입니다. 4,000자를 넘는 글과 이진은 CLOB/BLOB 타입으로 바인드해 저장합니다(Oracle VARCHAR2 4000 · SQL Server NVARCHAR(4000) 상한 회피).
+
 ## 관련 설정
 
-`grid.edit` · `grid.edit_empty` · `grid.edit_refresh` · `grid.edit_hidden_keys` · `grid.edit_rowid` · `grid.edit_all_cols` · `grid.edit_concurrency` · `grid.paste_max_rows` · `tx.prod_*`(운영 접속은 편집 불가).
+`grid.edit` · `grid.edit_empty` · `grid.edit_refresh` · `grid.edit_hidden_keys` · `grid.edit_rowid` · `grid.edit_all_cols` · `grid.edit_concurrency` · `grid.paste_max_rows` · `grid.lob_view_max_mb` · `grid.lob_image_preview` · `tx.prod_*`(운영 접속은 편집 불가).
 
 > 기술 문서: 저장소 `docs/87-grid-data-editing.md`(설계 · 행 식별 등급 · 데이터 보호 불변식).

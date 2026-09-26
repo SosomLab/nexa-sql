@@ -216,6 +216,8 @@ struct App {
     )>,
     /// ★ 읽기 전용 글 창 요청(그리드 편집 SQL 미리보기 · 셀 값 보기 · docs/87): (제목, 본문).
     sqlprev_plain: Option<(String, String)>,
+    /// 값 보기 창 열기 요청(그리드 → 다음 틱에 값 모드로 · 87 §5).
+    sqlprev_value: Option<grid::ValueReq>,
     input_pending: Option<(u64, Vec<nsql_script::InputNeed>)>,
     /// 워커가 비밀번호를 묻는다(세션 id · 가린 접속 문자열) — 입력 창은 이벤트 루프에서 연다.
     pw_pending: Option<(u64, String, bool)>,
@@ -6446,6 +6448,9 @@ impl App {
                 grid::EditRequest::Preview { title, text } => {
                     self.sqlprev_plain = Some((title, text));
                 }
+                grid::EditRequest::ViewCell(v) => {
+                    self.sqlprev_value = Some(v);
+                }
                 grid::EditRequest::ClipboardPaste => {
                     if let Some(text) = clipboard::read_text() {
                         self.grid.live_paste(&text);
@@ -6568,6 +6573,65 @@ impl App {
             refetch,
         });
         self.redraw();
+    }
+
+    /// 값 보기 창의 "파일에서 넣기"(87 §5): 이진 열이거나 UTF-8이 아니면 바이트 · 아니면 글 — 그리드 셀 + 창 둘 다 갱신.
+    fn cell_load_file(&mut self, path: &std::path::Path) {
+        let Some((row, col, binary)) = self.sqlprev_win.value_cell() else {
+            return;
+        };
+        match self.cell_load_into(row, col, binary, path) {
+            Ok((bytes, text, n)) => {
+                self.sqlprev_win.replace_value(bytes, text);
+                self.sess.status = tf(
+                    Msg::StCellLoaded,
+                    &[&path.to_string_lossy(), &n.to_string()],
+                );
+                self.sqlprev_win.set_note(self.sess.status.clone());
+                self.after_grid_event();
+            }
+            Err(m) => self.sqlprev_win.set_note(m),
+        }
+        self.redraw();
+    }
+
+    /// 자체 시험 길: 표시 좌표의 셀에 파일을 넣는다(값 창 없이).
+    fn cell_load_file_at(&mut self, di: usize, pos: usize, path: &std::path::Path) {
+        let Some((row, col, binary)) = self.grid.cell_at_for_test(di, pos) else {
+            return;
+        };
+        match self.cell_load_into(row, col, binary, path) {
+            Ok((_, _, n)) => {
+                self.sess.status = tf(
+                    Msg::StCellLoaded,
+                    &[&path.to_string_lossy(), &n.to_string()],
+                );
+            }
+            Err(m) => self.sess.status = m,
+        }
+    }
+
+    /// 파일 → 셀(공통): (이진, 글, 바이트 수).
+    fn cell_load_into(
+        &mut self,
+        row: nexa_ctl::gridedit::RowRef,
+        col: usize,
+        binary: bool,
+        path: &std::path::Path,
+    ) -> Result<CellLoad, String> {
+        let data = std::fs::read(path).map_err(|e| tf(Msg::ErrLogFile, &[&e.to_string()]))?;
+        let n = data.len();
+        let label = path
+            .file_name()
+            .map_or_else(|| "file".to_string(), |f| f.to_string_lossy().into_owned());
+        if !binary {
+            if let Ok(text) = String::from_utf8(data.clone()) {
+                self.grid.set_cell_value(row, col, Some(text.clone()))?;
+                return Ok((None, Some(text), n));
+            }
+        }
+        self.grid.set_cell_bytes(row, col, data.clone(), &label)?;
+        Ok((Some(data), None, n))
     }
 
     /// 연속 클릭 정책 → nexa-ctl 전역(편집기·셀 편집기·패널 상자 공통 · 사용자 09-26).
@@ -8677,6 +8741,49 @@ impl App {
             self.sess.status = format!("grid.edit.cmd {cmd} ok={ok}");
             self.after_grid_event();
             self.redraw();
+            return;
+        }
+        // 자체 시험(87 §5): 파일에서 셀에 넣기 `grid.edit.load:<행>;<열>;<파일>` · 값 창 `cellview.open:<행>;<열>` ·
+        //   `cellview.mode:<text|hex|image>` · `cellview.dump:<파일>` · `cellview.save:<파일>`.
+        if let Some(rest) = id.strip_prefix("grid.edit.load:") {
+            let parts: Vec<&str> = rest.splitn(3, ';').collect();
+            if let (Some(r), Some(c), Some(f)) = (
+                parts.first().and_then(|s| s.parse::<usize>().ok()),
+                parts.get(1).and_then(|s| s.parse::<usize>().ok()),
+                parts.get(2),
+            ) {
+                self.grid.select_cell_for_test(r, c);
+                self.cell_load_file_at(r, c, std::path::Path::new(f));
+                self.after_grid_event();
+                self.redraw();
+            }
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("cellview.open:") {
+            let mut it = rest.split(';').filter_map(|s| s.parse::<usize>().ok());
+            if let (Some(r), Some(c)) = (it.next(), it.next()) {
+                self.grid.select_cell_for_test(r, c);
+                self.grid.edit_command("grid.edit.view_value");
+                self.after_grid_event();
+                self.redraw();
+            }
+            return;
+        }
+        if let Some(m) = id.strip_prefix("cellview.mode:") {
+            let mode = match m {
+                "hex" => sqlprev_win::ValueMode::Hex,
+                "image" => sqlprev_win::ValueMode::Image,
+                _ => sqlprev_win::ValueMode::Text,
+            };
+            self.sqlprev_win.set_mode(mode);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("cellview.dump:") {
+            let _ = std::fs::write(path, self.sqlprev_win.dump_value());
+            return;
+        }
+        if let Some(path) = id.strip_prefix("cellview.save:") {
+            let _ = std::fs::write(path, self.sqlprev_win.value_bytes());
             return;
         }
         if let Some(rest) = id.strip_prefix("grid.select:") {
@@ -11091,7 +11198,9 @@ impl App {
                 self.project.name().unwrap_or_else(|| "untitled".into()),
                 project::EXT
             ),
-            (PickerMode::Save, FilePurpose::SqlPreview) => self.sqlprev_win.file_name(),
+            (PickerMode::Save, FilePurpose::SqlPreview | FilePurpose::CellValue) => {
+                self.sqlprev_win.file_name()
+            }
             (PickerMode::Open | PickerMode::Folder, _) => String::new(),
         };
         // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
@@ -16468,6 +16577,30 @@ impl ApplicationHandler<Wake> for App {
             }
             self.sync_modal();
         }
+        // ★ 값 보기 창(87 §5): 글은 Plain Text 상자(편집 가능 셀이면 편집) · 이진은 16진수/이미지.
+        if let Some(v) = self.sqlprev_value.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("value.txt");
+            let tb = self.editors.preview_box("", &syntax);
+            let was_open = self.sqlprev_win.is_open();
+            let max_mb = self.settings.int("grid.lob_view_max_mb").max(1) as usize;
+            let image_on = self.settings.flag("grid.lob_image_preview");
+            self.sqlprev_win.open_value(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                tb,
+                v,
+                max_mb,
+                image_on,
+            );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
         // Generate SQL 결과 → SQL Preview 모달(docs/83 §4).
         if let Some((spec, r, server)) = self.sqlprev_pending.take() {
             let owner = self.window.clone();
@@ -16991,6 +17124,20 @@ impl ApplicationHandler<Wake> for App {
                             }
                             self.prefs_win.redraw();
                         }
+                        (PickerMode::Save, FilePurpose::CellValue) => {
+                            let bytes = self.sqlprev_win.value_bytes();
+                            let n = bytes.len();
+                            self.sess.status = match std::fs::write(&path, bytes) {
+                                Ok(()) => {
+                                    tf(Msg::StCellSaved, &[&path.to_string_lossy(), &n.to_string()])
+                                }
+                                Err(e) => tf(Msg::ErrLogFile, &[&e.to_string()]),
+                            };
+                            self.sqlprev_win.set_note(self.sess.status.clone());
+                        }
+                        (PickerMode::Open, FilePurpose::CellValue) => {
+                            self.cell_load_file(&path);
+                        }
                         (PickerMode::Save, FilePurpose::SqlPreview) => {
                             let text = self.sqlprev_win.text();
                             self.sess.status = match std::fs::write(&path, text) {
@@ -17281,6 +17428,25 @@ impl ApplicationHandler<Wake> for App {
                     self.file_purpose = FilePurpose::SqlPreview;
                     self.open_file_dlg = Some(PickerMode::Save);
                 }
+                sqlprev_win::SqlPrevAction::SaveValue => {
+                    self.file_purpose = FilePurpose::CellValue;
+                    self.open_file_dlg = Some(PickerMode::Save);
+                }
+                sqlprev_win::SqlPrevAction::LoadFile => {
+                    self.file_purpose = FilePurpose::CellValue;
+                    self.open_file_dlg = Some(PickerMode::Open);
+                }
+                sqlprev_win::SqlPrevAction::ApplyCell { row, col, text } => {
+                    match self.grid.set_cell_value(row, col, Some(text)) {
+                        Ok(()) => {
+                            self.sqlprev_win.set_note(t(Msg::StCellApplied).to_string());
+                            self.after_grid_event();
+                        }
+                        Err(m) => self.sqlprev_win.set_note(m),
+                    }
+                    self.redraw();
+                }
+                sqlprev_win::SqlPrevAction::Mode(_) => {}
                 sqlprev_win::SqlPrevAction::OpenEditor => {
                     let title = self.sqlprev_win.file_name();
                     let text = self.sqlprev_win.text();
@@ -18178,6 +18344,7 @@ fn main() {
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
         sqlprev_plain: None,
+        sqlprev_value: None,
         input_win,
         input_pending: None,
         pw_pending: None,
@@ -18736,7 +18903,12 @@ enum FilePurpose {
     Project,
     /// SQL Preview 본문을 파일로(docs/83 §4).
     SqlPreview,
+    /// 값 보기 창: 셀 값을 파일로 저장 / 파일에서 넣기(docs/87 §5).
+    CellValue,
 }
+
+/// 파일에서 셀에 넣은 결과 = (이진 바이트, 글, 바이트 수).
+type CellLoad = (Option<Vec<u8>>, Option<String>, usize);
 
 /// 읽은 파일을 어떻게 쓸 것인가.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

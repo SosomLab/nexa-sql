@@ -165,6 +165,8 @@ pub enum VarType {
     Boolean,
     /// 선언 없이 대입으로 생긴 변수 — 값에서 타입을 따라간다(Golden 관용 · docs/08 §3-2).
     Auto,
+    /// 이진 대량(그리드 편집 "파일에서 넣기" · 87 §5) — Oracle `BLOB` 바인드 · SQL Server `VARBINARY(MAX)`.
+    Blob,
 }
 
 impl VarType {
@@ -227,6 +229,7 @@ impl VarType {
             VarType::Timestamp => "TIMESTAMP".into(),
             VarType::Boolean => "BOOLEAN".into(),
             VarType::Auto => "auto".into(),
+            VarType::Blob => "BLOB".into(),
         }
     }
 
@@ -252,6 +255,7 @@ impl VarType {
             VarType::Boolean => "BIT".into(),
             // Auto = 값에서 추론 전 — NVARCHAR로 받고 클라이언트가 다시 추론한다(SQL_VARIANT는 드라이버 회수가 불안정).
             VarType::Auto => "NVARCHAR(4000)".into(),
+            VarType::Blob => "VARBINARY(MAX)".into(),
         }
     }
 }

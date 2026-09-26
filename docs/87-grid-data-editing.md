@@ -113,6 +113,18 @@
 
 값 보기 창은 모델리스(메모리 창 규칙 · 80) · 편집기 탭과 같은 고정폭 상자(`preview_box`) · 읽기 전용이면 §214 규칙(잘라내기/붙여넣기 흐림 · 조합 차단).
 
+### 5-1. 구현(09-26 · journal §236 · 사용자 "LOB 관련 기능 개발 전체")
+
+| 조각 | 자리 | 내용 |
+|---|---|---|
+| 값 창 | `sqlprev_win.rs` **값 모드**(`open_value` · SQL Preview 창 골격 재사용 = 창 코드 복사 0) | 제목 `Value — 열` · 보기 = **Text**(편집 가능 셀이면 편집 · "셀에 반영" = `Grid::set_cell_value` → ChangeSet · 저장은 ✓ 적용) / **Hex**(`grid::hex_dump` · `grid.lob_view_max_mb` 넘으면 앞부분만 + 안내) / **Image**(PNG·BMP·GIF = nexa-gfx `image::decode` · 비율 유지 맞춤 · 안내 줄 `PNG 640×480 · n bytes` · JPEG/WebP = 판별만 + "파일로 저장해 보세요") · 버튼 = Hex · Image · 셀에 반영 · 파일에서 넣기… · 파일로 저장… · 복사 · 닫기(상황별) · 기본 파일 이름 `열_행.확장자`(형식 판별) |
+| 그리드 | `EditRequest::ViewCell(ValueReq{row, col, name, text, bytes, editable, binary})` · `set_cell_value(row, col, Option<String>)`(명세 검증) · `set_cell_bytes(row, col, bytes, label)` | 이진 값은 `GridEdit.blobs`(셀 → (라벨, 바이트)) · 셀 글 = `<파일 · n bytes>` 라벨 · 적용/되돌리기/제자리 갱신 때 비움 · 값 창은 파일에서 넣은 이진을 우선 보여 준다 |
+| 생성 | `GenInput.blobs` · `blob_of`(셀 글이 라벨과 같을 때만 → `Value::Bytes` + **`VarType::Blob`**) · 4,000자 넘는 글 = **`VarType::Clob`** | 드라이버: Oracle `BLOB`/`CLOB` 바인드(`OracleType::BLOB`) · SQL Server `VARBINARY(MAX)`/`NVARCHAR(MAX)` 선언 · PG bytea 이진 · SQLite Blob |
+| 호스트 | `FilePurpose::CellValue` — 저장 = `value_bytes()`(이진 그대로 · 글은 UTF-8) · 열기 = `cell_load_file`(이진 열/UTF-8 아님 = 바이트 · 아니면 글) → 그리드 + 창 둘 다 갱신 | 설정 `grid.lob_view_max_mb`(16) · `grid.lob_image_preview`(on) · 기동 명령 `cellview.open:<행>;<열>` · `cellview.mode:` · `cellview.dump:` · `cellview.save:` · `grid.edit.load:<행>;<열>;<파일>` |
+| 시험 | nexa-gfx 디코더 10(inflate 4 · image 6) · grid `blob_cell_binds_bytes_and_text_replaces_it` · gridedit_sql `datetime_bind_type_by_dialect` · **E2E ⑩**(PNG 값 창 `mode=Image kind=PNG 3x2` · 저장 = 원본 동일 · Hex 전환 · BMP 파일 넣기 → 서버 BLOB 70 bytes `424D` · 5,000자 글 → 서버 5000) | 페치 규칙의 "잘라 온 LOB 재조회"는 우리 드라이버가 본문 전체를 가져와 해당 없음(상한은 창 표시에만) |
+
+남음 = JPEG 미리보기(기저 디코더 ~600줄 · 가치 대비 보류 · OS 디코더 FFI 검토) · PNG Adam7 · CLOB 편집 상자의 큰 파일 모드(59) · 이미지 확대/축소·저장 형식 변환.
+
 ---
 
 ## 6. 엑셀식 상호작용(키 · 마우스 · 클립보드)

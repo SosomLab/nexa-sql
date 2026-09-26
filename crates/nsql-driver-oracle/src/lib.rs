@@ -498,6 +498,13 @@ impl Session for OracleSession {
             }
             match (&p.ty, &p.direction) {
                 (VarType::RefCursor, _) => stmt.bind(name, &OracleType::RefCursor),
+                (VarType::Blob, _) => {
+                    let init: Option<Vec<u8>> = match &p.value {
+                        Value::Bytes(b) => Some(b.clone()),
+                        _ => None,
+                    };
+                    stmt.bind(name, &(&init, &OracleType::BLOB))
+                }
                 (VarType::Clob, _) => {
                     let init: Option<String> = match &p.value {
                         Value::Null => None,

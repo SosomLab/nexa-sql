@@ -474,6 +474,27 @@ pub(crate) struct GenInput<'a> {
     pub key_cols: &'a [usize],
     /// 낙관적 동시성(키 외 비교 열).
     pub concurrency: Concurrency,
+    /// 파일에서 넣은 이진 값(셀 → (표시 라벨, 바이트)) — 셀 글이 라벨과 같을 때만 쓴다(되돌린 뒤 남은 항목 무시 · 87 §5).
+    pub blobs: Option<&'a BlobMap>,
+}
+
+/// 셀별 이진 값 보관(`Grid` 편집 상태 소유).
+pub(crate) type BlobMap = std::collections::HashMap<(RowRef, usize), (String, Vec<u8>)>;
+
+/// 이진 셀의 표시 라벨(`<name · n bytes>`).
+pub(crate) fn blob_label(name: &str, n: usize) -> String {
+    format!("<{name} · {n} bytes>")
+}
+
+/// 이 셀의 값이 파일에서 넣은 이진이면 그 바이트(라벨이 일치할 때만).
+fn blob_of<'a>(
+    blobs: Option<&'a BlobMap>,
+    row: RowRef,
+    col: usize,
+    text: &Option<String>,
+) -> Option<&'a Vec<u8>> {
+    let (label, bytes) = blobs?.get(&(row, col))?;
+    (text.as_deref() == Some(label.as_str())).then_some(bytes)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -533,13 +554,15 @@ pub(crate) fn bound_of(v: &Option<String>, kind: CellKind, dialect: Dialect) -> 
             "today" => Bound::Expr(now_expr(dialect, true)),
             "" => Bound::Val(Value::Null, VarType::Auto),
             _ => {
+                // ★ 시각 열: Oracle은 DATE에 시각이 있어 소수 초가 없으면 DATE 바인드(§151 진짜 바인드) · 그 밖(SQL Server
+                //   `DECLARE @p DATE` = 시각 절단 · PG date)은 늘 TIMESTAMP(4-DBMS E2E 09-26: LEE2 2026-09-26 00:00:00).
                 let ty = match kind {
                     CellKind::Date => VarType::Date,
                     CellKind::DateTime => {
-                        if s.contains('.') {
-                            VarType::Timestamp
-                        } else {
+                        if dialect == Dialect::Oracle && !s.contains('.') {
                             VarType::Date
+                        } else {
+                            VarType::Timestamp
                         }
                     }
                     _ => VarType::Auto,
@@ -547,6 +570,8 @@ pub(crate) fn bound_of(v: &Option<String>, kind: CellKind, dialect: Dialect) -> 
                 Bound::Val(Value::Str(s.clone()), ty)
             }
         },
+        // 긴 글(> 4000자)은 CLOB/NVARCHAR(MAX)로(Oracle VARCHAR2 4000 · SQL Server NVARCHAR(4000) 상한 · 87 §5).
+        _ if s.chars().count() > 4000 => Bound::Val(Value::Str(s.clone()), VarType::Clob),
         _ => Bound::Val(Value::Str(s.clone()), VarType::Auto),
     }
 }
@@ -630,7 +655,13 @@ impl Sink {
                 let n = self.params.len() + 1;
                 // ★ 이름은 대문자(`P1`): Oracle 드라이버가 SQL의 자리 표시 이름을 대문자로 모아 `p.name`과 비교한다 — 소문자면
                 //   "없는 이름"으로 건너뛰어 바인드 0개 → ORA-01008(사용자 09-26 실서버 로그).
-                let name = format!("P{n}");
+                // ★ SQL Server는 `GE{n}`: 드라이버가 이름 파라미터를 `DECLARE @이름 … = @P{n};`로 감싸므로 이름이 `P{n}`이면
+                //   `DECLARE @P1 … = @P1` = "이미 선언된 변수"(4-DBMS E2E · 09-26).
+                let name = if self.marker == Marker::AtName {
+                    format!("GE{n}")
+                } else {
+                    format!("P{n}")
+                };
                 let ph = match self.marker {
                     Marker::Named => format!(":{name}"),
                     Marker::AtName => format!("@{name}"),
@@ -894,7 +925,10 @@ pub(crate) fn generate(
             }
             first = false;
             s.text(&format!("{} = ", q(d, &col.name)));
-            s.value(bound_of(v, col.spec.kind, d));
+            match blob_of(inp.blobs, RowRef::Existing(row), *c, v) {
+                Some(b) => s.value(Bound::Val(Value::Bytes(b.clone()), VarType::Blob)),
+                None => s.value(bound_of(v, col.spec.kind, d)),
+            }
         }
         if first {
             continue;
@@ -926,7 +960,10 @@ pub(crate) fn generate(
                 continue; // 서버 기본값
             }
             names.push(q(d, &col.name));
-            vals.push(bound_of(&cell, col.spec.kind, d));
+            match blob_of(inp.blobs, RowRef::Inserted(k), c, &cell) {
+                Some(b) => vals.push(Bound::Val(Value::Bytes(b.clone()), VarType::Blob)),
+                None => vals.push(bound_of(&cell, col.spec.kind, d)),
+            }
         }
         if names.is_empty() {
             continue;
@@ -1140,6 +1177,7 @@ mod tests {
             cols: &cols,
             key_cols: &[0],
             concurrency: Concurrency::Key,
+            blobs: None,
         };
         let st = generate(&inp, &cs, &orig).expect("generate");
         assert_eq!(st.len(), 3);
@@ -1186,6 +1224,7 @@ mod tests {
             cols: &cols,
             key_cols: &[0],
             concurrency: Concurrency::Key,
+            blobs: None,
         };
         let mut cs = ChangeSet::new(4);
         // 행 0(ID=1)의 키를 2로 → 행 1(ID=2)과 충돌(행 1도 손댔을 때 비교 대상에 든다).
@@ -1326,6 +1365,7 @@ mod tests {
             cols: &cols,
             key_cols: &[4],
             concurrency: Concurrency::Key,
+            blobs: None,
         };
         let st = generate(&inp, &cs, &orig5).expect("generate");
         assert_eq!(
@@ -1368,6 +1408,7 @@ mod tests {
             cols: &pcols,
             key_cols: &[4, 5],
             concurrency: Concurrency::Key,
+            blobs: None,
         };
         let st = generate(&inp, &cs, &porig).expect("generate");
         assert_eq!(
@@ -1395,6 +1436,7 @@ mod tests {
             cols: &cols,
             key_cols: &[0],
             concurrency: Concurrency::Key,
+            blobs: None,
         };
         let st = generate(&inp, &cs, &orig).expect("generate");
         assert_eq!(st[0].row, RowRef::Existing(1), "키 변경 행 먼저");
@@ -1447,6 +1489,7 @@ mod tests {
             cols: &cols,
             key_cols: &[0],
             concurrency: Concurrency::Key,
+            blobs: None,
         };
         let r0 = refetch_stmt(&inp, &cs, &orig, RowRef::Existing(0)).expect("row 0");
         assert_eq!(
@@ -1497,6 +1540,29 @@ mod tests {
         assert!(r.sql.ends_with("WHERE \"MEMO\" IS NULL"), "{}", r.sql);
     }
 
+    /// 시각 바인드 타입: Oracle = DATE(소수 초 없을 때) · SQL Server/PG = TIMESTAMP(DATE로 선언하면 시각이 잘린다 · 09-26).
+    #[test]
+    fn datetime_bind_type_by_dialect() {
+        let v = Some("2026-09-26 10:11:12".to_string());
+        let ty = |d: Dialect| match bound_of(&v, CellKind::DateTime, d) {
+            Bound::Val(_, t) => t,
+            Bound::Expr(_) => VarType::Auto,
+        };
+        assert_eq!(ty(Dialect::Oracle), VarType::Date);
+        assert_eq!(ty(Dialect::Mssql), VarType::Timestamp);
+        assert_eq!(ty(Dialect::Postgres), VarType::Timestamp);
+        assert_eq!(ty(Dialect::Sqlite), VarType::Timestamp);
+        let f = Some("2026-09-26 10:11:12.5".to_string());
+        assert!(matches!(
+            bound_of(&f, CellKind::DateTime, Dialect::Oracle),
+            Bound::Val(_, VarType::Timestamp)
+        ));
+        assert!(matches!(
+            bound_of(&v, CellKind::Date, Dialect::Mssql),
+            Bound::Val(_, VarType::Date)
+        ));
+    }
+
     #[test]
     fn generate_markers_and_null_key() {
         let cols = cols();
@@ -1505,7 +1571,7 @@ mod tests {
         let key_all = [0usize, 1, 2, 3];
         for (d, want) in [
             (Dialect::Postgres, "UPDATE t SET \"MEMO\" = $1 WHERE \"ID\" = $2 AND \"NAME\" = $3 AND \"DT\" = $4 AND \"MEMO\" IS NULL"),
-            (Dialect::Mssql, "UPDATE t SET [MEMO] = @P1 WHERE [ID] = @P2 AND [NAME] = @P3 AND [DT] = @P4 AND [MEMO] IS NULL"),
+            (Dialect::Mssql, "UPDATE t SET [MEMO] = @GE1 WHERE [ID] = @GE2 AND [NAME] = @GE3 AND [DT] = @GE4 AND [MEMO] IS NULL"),
             (Dialect::Sqlite, "UPDATE t SET \"MEMO\" = ? WHERE \"ID\" = ? AND \"NAME\" = ? AND \"DT\" = ? AND \"MEMO\" IS NULL"),
         ] {
             let inp = GenInput {
@@ -1514,6 +1580,7 @@ mod tests {
                 cols: &cols,
                 key_cols: &key_all,
                 concurrency: Concurrency::Key,
+                blobs: None,
             };
             let st = generate(&inp, &cs, &orig).expect("generate");
             assert_eq!(st[0].req.sql, want, "{d:?}");
