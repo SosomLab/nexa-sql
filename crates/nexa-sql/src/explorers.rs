@@ -1289,6 +1289,14 @@ impl ExplorerSet {
         }
     }
 
+    /// 상세 캐시(보이는 칸) — 있으면 즉시 표시용 · `true` = 다시 읽어 교체.
+    pub(crate) fn cached_details(
+        &mut self,
+        key: &str,
+    ) -> Option<(Vec<nsql_catalog::DetailSection>, bool)> {
+        self.panes.get_mut(self.shown)?.ex.cached_details(key)
+    }
+
     /// 진단(기동 명령 `explorer.stat:<파일>`): 칸마다 한 줄.
     pub(crate) fn stat_text(&self) -> String {
         self.panes

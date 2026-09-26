@@ -12824,9 +12824,19 @@ impl App {
             return;
         }
         self.detail_key = key;
+        // ★ 상세 캐시(86 §5 · 사용자 09-26): 이미 본 대상은 깜빡임 없이 즉시 · 새로 고침 범위/TTL 지난 것만 다시 읽어 교체.
+        let cached = match &t {
+            Some(explorer::DetailTarget::Object(_)) => t
+                .as_ref()
+                .map(explorer::DetailTarget::key)
+                .and_then(|k| self.explorer.cached_details(&k)),
+            _ => None,
+        };
         match &t {
             Some(explorer::DetailTarget::Object(o)) => {
-                self.explorer.request_details(o.clone(), None);
+                if cached.as_ref().is_none_or(|(_, stale)| *stale) {
+                    self.explorer.request_details(o.clone(), None);
+                }
                 // 테이블 코멘트 = 메타(스키마 단위 워머)에 있으면 즉시 · 없으면 테이블 단위로 한 번(그 컬럼들도 즉시 · 86 §4~5).
                 if o.kind.is_relation() {
                     self.feed_comments(o);
@@ -12843,7 +12853,10 @@ impl App {
             Some(explorer::DetailTarget::Schema(s)) => Some(s.clone()),
             _ => None,
         };
-        self.objdetail.set_target(t);
+        self.objdetail.set_target(t.clone());
+        if let (Some(explorer::DetailTarget::Object(o)), Some((secs, _))) = (&t, cached) {
+            self.objdetail.set_sections(o, None, Ok(secs));
+        }
         if let Some(sc) = schema {
             let counts = self.explorer.schema_kind_counts(&sc);
             self.objdetail.set_schema_counts(counts);

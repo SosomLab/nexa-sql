@@ -15,7 +15,8 @@ use nexa_ctl::tokens::{hover_alpha, FadeSpeed, IntentFade};
 use nexa_ctl::{InputEvent, Key as CtlKey, ScrollBars};
 use nexa_gfx::IconImage;
 use nsql_catalog::{
-    ColumnInfo, GenOpts, GenSpec, ObjectInfo, ObjectKind, SchemaOpts, SubIcon, SubItem, SubKind,
+    ColumnInfo, DetailSection, GenOpts, GenSpec, ObjectInfo, ObjectKind, SchemaOpts, SubIcon,
+    SubItem, SubKind,
 };
 use nsql_core::{DbError, Dialect, Session};
 use nsql_i18n::{t, tf, Msg};
@@ -617,6 +618,41 @@ impl DetailTarget {
     }
 }
 
+/// 상세 캐시 항목(86 §5 · L3).
+struct DetailEntry {
+    sections: Vec<DetailSection>,
+    /// 마지막으로 보인 시각(미사용 회수의 시계).
+    used: Instant,
+    bytes: usize,
+    /// 새로 고침 범위에 들어 다음 클릭에 다시 읽어야 한다(보이는 건 캐시 · 도착하면 교체).
+    dirty: bool,
+}
+
+/// 상세 캐시 열쇠(`DetailTarget::key` · `o:스키마.이름:종류` · `c:스키마.테이블.컬럼` · `i:…`)가 무효화 범위에 드는가(순수).
+fn detail_key_hit(key: &str, schema: Option<&str>, name: Option<&str>) -> bool {
+    let body = key.get(2..).unwrap_or("");
+    match (schema, name) {
+        (None, _) => true,
+        (Some(sc), None) => body.starts_with(&format!("{sc}.")),
+        (Some(sc), Some(n)) => {
+            body.starts_with(&format!("{sc}.{n}:")) || body.starts_with(&format!("{sc}.{n}."))
+        }
+    }
+}
+
+fn detail_bytes(secs: &[DetailSection]) -> usize {
+    secs.iter()
+        .map(|s| {
+            s.rows
+                .iter()
+                .map(|r| r.iter().map(String::len).sum::<usize>() + 24)
+                .sum::<usize>()
+                + s.text.as_ref().map_or(0, String::len)
+                + 64
+        })
+        .sum()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExplorerAction {
     /// 새 편집기 탭에 텍스트(SELECT 템플릿 · 소스).
@@ -765,6 +801,9 @@ pub(crate) struct Explorer {
     /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
     icons_on: bool,
     icon_cache: IconCache,
+    /// ★ 객체 상세 캐시(사용자 09-26 "이미 본 대상은 깜빡임 없이 · 상한/미사용 회수 · 새로 고침 범위는 무효화") —
+    ///   열쇠 = `DetailTarget::key` · 값 = 섹션 · `dirty` = 새로 고침(수동·DDL·워터마크)이 닿아 다음 클릭에 다시 읽는다(보이는 건 즉시 · 도착하면 교체).
+    detail_cache: HashMap<String, DetailEntry>,
     /// 루트 브랜드 아이콘 캐시(이름 · 색 · 크기 → 그림 · dbms_icons · 사용자 09-22).
     brand_cache: BrandCache,
     /// 마지막 페인트의 화면 행(노드 index · 부모) — `row_at`(MouseMove마다)이 다시 펼치지 않게(09-15 C).
@@ -1643,6 +1682,7 @@ impl Explorer {
             focused: false,
             icons_on: true,
             icon_cache: HashMap::new(),
+            detail_cache: HashMap::new(),
             brand_cache: HashMap::new(),
             rows_cache: Vec::new(),
             meta: nsql_run::meta::MetaStore::new(64 << 20),
@@ -2111,6 +2151,7 @@ impl Explorer {
         self.offline = true;
         self.suspended = false;
         self.gen += 1;
+        self.detail_cache.clear();
         let _ = self.tx.send(Req::Close);
         let _ = self.tx_bg.send(Req::Close);
         let (tx, tx_bg, rx) = Self::spawn_meta(&self.wake);
@@ -2150,6 +2191,7 @@ impl Explorer {
         self.suspended = false;
         self.last_used = Instant::now();
         self.gen += 1;
+        self.detail_cache.clear();
         self.dialect = None;
         self.conn_desc = spec.redacted();
         self.profile_name = profile_name.to_string();
@@ -2197,6 +2239,7 @@ impl Explorer {
         self.offline = false;
         self.suspended = false;
         self.gen += 1;
+        self.detail_cache.clear();
         self.dialect = None;
         self.conn_desc.clear();
         self.profile_name.clear();
@@ -2270,7 +2313,10 @@ impl Explorer {
         let (l1, l2, l3) = self.meta.layer_bytes();
         acc.add(Cat::Meta, l1 as u64);
         acc.add(Cat::MetaCols, l2 as u64);
-        acc.add(Cat::MetaDetail, l3 as u64);
+        acc.add(
+            Cat::MetaDetail,
+            (l3 + self.detail_cache.values().map(|e| e.bytes).sum::<usize>()) as u64,
+        );
         let icons: usize = self
             .icon_cache
             .values()
@@ -2726,6 +2772,25 @@ impl Explorer {
                 Resp::Details { gen, owner, col, r } => {
                     if gen != self.gen {
                         continue;
+                    }
+                    if let Ok(secs) = &r {
+                        let key = match &col {
+                            Some(c) => DetailTarget::Column {
+                                owner: owner.clone(),
+                                col: c.clone(),
+                            }
+                            .key(),
+                            None => DetailTarget::Object(owner.clone()).key(),
+                        };
+                        self.detail_cache.insert(
+                            key,
+                            DetailEntry {
+                                bytes: detail_bytes(secs),
+                                sections: secs.clone(),
+                                used: Instant::now(),
+                                dirty: false,
+                            },
+                        );
                     }
                     self.actions.push(ExplorerAction::Details { owner, col, r });
                 }
@@ -3263,6 +3328,7 @@ impl Explorer {
     /// ★ 명시 메타 갱신(79 §4 · T-188): `schema`(None = 이 서버 전부 + 사전)를 `Stale`/`Unknown`으로 표시하고 그 스키마(전부면
     /// 현재 스키마·사전)는 바로 다시 읽는다(백그라운드 세션 · 미리 읽기와 같은 길). 반환 = (표시한 버킷, 비운 객체).
     pub(crate) fn refresh_meta(&mut self, schema: Option<&str>) -> (usize, usize) {
+        self.invalidate_details(schema, None);
         let buckets = self.meta.mark_stale(schema);
         let objs = self.meta.mark_columns_unknown(schema);
         self.index_invalidate();
@@ -3431,6 +3497,12 @@ impl Explorer {
         default_schema: Option<&str>,
     ) -> usize {
         use nsql_core::{DdlKind, DdlVerb};
+        // 상세 캐시 무효화(DDL이 닿은 객체 · 스키마 없으면 기본 스키마) — 다음 클릭에 다시 읽는다.
+        let sc_owned = t
+            .schema
+            .clone()
+            .or_else(|| default_schema.map(str::to_string));
+        self.invalidate_details(sc_owned.as_deref(), Some(&t.name));
         let Some(kind) = folder_kind(t.kind) else {
             // 스키마/사용자 = 루트의 스키마 목록.
             return usize::from(self.soft_refresh(0));
@@ -3708,6 +3780,7 @@ impl Explorer {
     }
 
     fn refresh(&mut self, i: usize) {
+        self.invalidate_details_at(i);
         let old: Vec<usize> = std::mem::take(&mut self.nodes[i].children);
         for o in old {
             self.detach(o);
@@ -3796,6 +3869,7 @@ impl Explorer {
     /// 진행 중이던 요청은 세대가 바뀌어 버려지므로 읽는 중이던 노드는 `Idle`로(다시 펼치면 읽는다).
     pub(crate) fn rebind(&mut self, spec: &ConnectSpec) {
         self.gen += 1;
+        self.detail_cache.clear();
         self.rebinding = true;
         self.offline = false;
         self.suspended = false;
@@ -3920,6 +3994,73 @@ impl Explorer {
             col,
             opts: self.gen_opts,
         });
+    }
+
+    /// 캐시된 상세(있으면 즉시 표시용 사본 · `true` = 새로 고침 범위였거나 TTL이 지나 **다시 읽어 교체**해야 한다).
+    pub(crate) fn cached_details(&mut self, key: &str) -> Option<(Vec<DetailSection>, bool)> {
+        let ttl = Duration::from_secs(self.index_cfg.detail_ttl_secs.max(1));
+        let e = self.detail_cache.get_mut(key)?;
+        let stale = e.dirty || e.used.elapsed() > ttl;
+        e.used = Instant::now();
+        Some((e.sections.clone(), stale))
+    }
+
+    /// 새로 고침 범위 전파: 스키마(`name` 없음) 또는 객체 하나의 상세를 무효화(다음 클릭에 다시 읽는다).
+    fn invalidate_details(&mut self, schema: Option<&str>, name: Option<&str>) {
+        for (k, e) in &mut self.detail_cache {
+            if detail_key_hit(k, schema, name) {
+                e.dirty = true;
+            }
+        }
+    }
+
+    /// 노드 기준 무효화(수동 새로 고침) — 루트 = 전부 · 스키마/폴더 = 그 스키마 · 객체/하위/컬럼 = 그 객체.
+    fn invalidate_details_at(&mut self, i: usize) {
+        let mut cur = Some(i);
+        while let Some(n) = cur {
+            match &self.nodes[n].kind {
+                NodeKind::Root => {
+                    self.invalidate_details(None, None);
+                    return;
+                }
+                NodeKind::Schema(sc) | NodeKind::Folder { schema: sc, .. } => {
+                    let sc = sc.clone();
+                    self.invalidate_details(Some(&sc), None);
+                    return;
+                }
+                NodeKind::Object(o) => {
+                    let (sc, nm) = (o.schema.clone(), o.name.clone());
+                    self.invalidate_details(Some(&sc), Some(&nm));
+                    return;
+                }
+                NodeKind::Sub { owner, .. } => {
+                    let (sc, nm) = (owner.schema.clone(), owner.name.clone());
+                    self.invalidate_details(Some(&sc), Some(&nm));
+                    return;
+                }
+                _ => cur = self.parent_of(n),
+            }
+        }
+    }
+
+    /// 상세 캐시 회수(85 §4 · 유휴 30초 틱): TTL 지난 미사용 항목 제거 · 개수 상한(`meta.detail_max`)은 오래된 것부터.
+    fn reclaim_details(&mut self) -> usize {
+        let ttl = Duration::from_secs(self.index_cfg.detail_ttl_secs.max(1));
+        let before = self.detail_cache.len();
+        self.detail_cache.retain(|_, e| e.used.elapsed() <= ttl);
+        let max = self.index_cfg.detail_max.max(1);
+        if self.detail_cache.len() > max {
+            let mut by_age: Vec<(Instant, String)> = self
+                .detail_cache
+                .iter()
+                .map(|(k, e)| (e.used, k.clone()))
+                .collect();
+            by_age.sort();
+            for (_, k) in by_age.into_iter().take(self.detail_cache.len() - max) {
+                self.detail_cache.remove(&k);
+            }
+        }
+        before - self.detail_cache.len()
     }
 
     /// Generate SQL 요청(새로고침도 같은 길) — 메타 세션에서 만든 뒤 `ExplorerAction::Preview`.
@@ -4069,7 +4210,7 @@ impl Explorer {
     /// 진단 한 줄(기동 명령 `explorer.stat` · 09-25): 스키마 수 · L1 완료 수 · 진행 중 · 큐 · 완성 · 일치 · 검색 중.
     pub(crate) fn stat_line(&self) -> String {
         format!(
-            "schemas={} l1_done={} inflight={:?} index_q={} completing={:?} complete_q={} hits={} busy={} warm_q={} warm_inflight={:?} offline={} root={:?} filter={}",
+            "schemas={} l1_done={} inflight={:?} index_q={} completing={:?} complete_q={} hits={} busy={} warm_q={} warm_inflight={:?} offline={} root={:?} filter={} details={}",
             self.schema_names().len(),
             self.index_done.len(),
             self.index_inflight,
@@ -4082,7 +4223,8 @@ impl Explorer {
             self.warm_inflight,
             self.offline,
             self.nodes[0].state,
-            self.filter.is_some()
+            self.filter.is_some(),
+            self.detail_cache.len()
         )
     }
 
@@ -4239,6 +4381,7 @@ impl Explorer {
             .server_schema
             .as_deref()
             .and_then(|s| self.meta.names.find(s));
+        let _ = self.reclaim_details();
         self.meta.reclaim(
             Self::now_secs(),
             keep,
@@ -6374,5 +6517,34 @@ mod search_thread_tests {
         assert_eq!(all[0].0, "B", "스키마 이름순");
         assert_eq!(search_hits(&names, &m, 2).len(), 2, "상한");
         assert!(search_hits(&names, &crate::filterbar::Matcher::plain("zzz"), 10).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod detail_cache_tests {
+    use super::detail_key_hit;
+
+    /// 상세 캐시 무효화 범위(09-26): 전부 · 스키마 · 객체(하위/컬럼 포함) — 이름이 접두사인 다른 객체는 건드리지 않는다.
+    #[test]
+    fn detail_cache_invalidation_scope() {
+        let o = "o:BISCM.EMP:Table";
+        let c = "c:BISCM.EMP.NAME";
+        let i = "i:BISCM.EMP:Indexes:EMP_PK";
+        let other = "o:BISCM.EMP2:Table";
+        let other_schema = "o:HR.EMP:Table";
+        for k in [o, c, i, other, other_schema] {
+            assert!(detail_key_hit(k, None, None));
+        }
+        assert!(detail_key_hit(o, Some("BISCM"), None));
+        assert!(!detail_key_hit(other_schema, Some("BISCM"), None));
+        assert!(detail_key_hit(o, Some("BISCM"), Some("EMP")));
+        assert!(detail_key_hit(c, Some("BISCM"), Some("EMP")));
+        assert!(detail_key_hit(i, Some("BISCM"), Some("EMP")));
+        assert!(
+            !detail_key_hit(other, Some("BISCM"), Some("EMP")),
+            "EMP2는 EMP가 아니다"
+        );
+        assert!(!detail_key_hit(other_schema, Some("BISCM"), Some("EMP")));
+        assert!(!detail_key_hit("x", Some("A"), None));
     }
 }
