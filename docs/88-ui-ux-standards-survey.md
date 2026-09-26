@@ -99,14 +99,14 @@
 
 | § | 항목 | 지금 | 판정 | 조치 |
 |---|---|---|---|---|
-| 2 | 포커스 잃은 표 = 비활성 선택색 | `Grid`에 포커스 상태가 없다 — 편집기로 포커스가 가도 셀 선택색·행 포커스 띠가 활성 그대로 | **위반 후보** | **T-232** 그리드 `focused` 주입(호스트 `Focus::Grid`) → 비활성이면 선택색 알파 절반·캐럿 테두리 생략 |
+| 2 | 포커스 잃은 표 = 비활성 선택색 | `Grid`에 포커스 상태가 없다 — 편집기로 포커스가 가도 셀 선택색·행 포커스 띠가 활성 그대로 | ✅ §231 | **T-232** ✅ 호스트가 페인트 직전 `Grid::set_focused(focus == Grid)` → 비활성 = 행 포커스 띠·셀 선택 알파 절반(`sel_alphas` 순수 함수 · 시험) |
 | 4 | 포커스 링 2 px · 3:1 | nexa-ctl `draw_focus_ring` = 2 px · **알파 0.5**(사용자 확정 헤일로) | 두께 ✓ · 대비는 테마별 실측 필요 | 대비 실측(라이트/다크 `focus_ring`) → 3:1 미달이면 알파 상향 · 61 §2-2-b |
 | 7 | 타깃 ≥ 24 px | 툴바 아이콘 32 px(`DEFAULT_ICON`) · 그리드 행 높이 ≈ 20~22 px(글꼴 종속) | 툴바 ✓ · 행은 표 예외(인라인) | — |
 | 8·9·10 | 팝업 창 안 · 선택 안 가림 · 최상위 | `geom::place_popup` · 셀 편집 메뉴 = 셀 아래 · `paint_overlays` 지연 그리기(§218) | ✓ | — |
 | 11 | 항목 클릭 비전파 · 바깥 클릭 = 닫고 진행(파괴적 제외) | 셀 편집기·편집기·DDL 창 §218 수정 ✓ · 바깥 클릭 통과는 CLAUDE.md §3 규칙 | ✓ · **파괴적 대상 통과 금지**는 명문만(탭 × · 행 삭제 버튼 위 바깥 클릭) | 점검 항목으로 남김(실기 U) |
 | 12·13 | Esc 취소(원값) · Enter 확정 | 셀 편집기 Esc = 원값 · Enter = 확정 + 아래 · Tab/Shift+Tab(§229) | ✓ | — |
 | 14 | 팝업 안 ↑/↓ 순환 · 표는 순환 금지 | `ContextMenu::move_hover` = 순환(비활성·구분선 건너뜀) · 그리드 `move_sel`은 끝에서 멈춤 | ✓ | — |
-| 15 | 컨텍스트 메뉴 ≤ 15 · 그룹 ≤ 7 · **서브메뉴 1단** | 그리드 편집 가능 상태 = 상위 16항목(Copy · Copy with headers · Select All · Advanced ▸ · View value · Set NULL · Duplicate · Insert · Delete · Undo · Redo · Changes · Preview SQL · Apply · Revert …) · **Advanced ▸ Copy SQL ▸ = 2단** | **위반 후보 둘** | **T-233** 메뉴 재편: Copy SQL을 Advanced와 같은 층으로(1단) · Undo/Redo·Changes/Preview는 툴바·키로 이미 있으니 메뉴에서 묶기(≤ 15) |
+| 15 | 컨텍스트 메뉴 ≤ 15 · 그룹 ≤ 7 · **서브메뉴 1단** | 그리드 편집 가능 상태 = 상위 16항목(Copy · Copy with headers · Select All · Advanced ▸ · View value · Set NULL · Duplicate · Insert · Delete · Undo · Redo · Changes · Preview SQL · Apply · Revert …) · **Advanced ▸ Copy SQL ▸ = 2단** | 2단 ✅ §231 · 16항목 = 예외 기록 | **T-233** ✅ Copy SQL ▸ 을 Advanced ▸ 와 같은 층으로(1단 · 시험 `context_menu_is_one_level_deep`) · 상위 16(Copy·헤더·Advanced·Copy SQL·Select All + 값·행 4·되돌리기 2·목록/미리보기·적용/되돌리기)은 데이터 도구 관례로 허용(≤ 16 단언) |
 | 16 | 무관 항목 = 비활성 유지(Cut/Copy/Paste/Delete) | `CtxItem::maybe` = 선택 없으면 Copy 비활성 ✓ · 읽기 전용 결과에는 편집 항목을 **제거**(Apple식) | ✓(두 관례 중 하나) | — |
 | 17 | 순서 = 주 명령 → 보조 → Cut/Copy/Paste → 설정 → Delete → Properties | 그리드는 **Copy가 맨 위**(데이터 도구 관례 = DBeaver·DataGrip도 Copy 우선) | 도구 관례 우선 · 예외 기록 | T-233에서 편집 항목 순서만 정돈(주 명령 = View value/Set NULL → 행 → Undo/Redo → Apply/Revert) |
 | 18·19 | 표준 키 재정의 금지 · APG grid 키 | ⌘Z/X/C/V/A/F 표준 · 화살표·Home/End·⌘A ✓ · **Shift+Space 행 · ⌃Space 열 선택 없음** · F2 = 북마크(편집은 Enter) | 부분 | 후속(포커스별 키맵 F2 · 행/열 선택 키) |

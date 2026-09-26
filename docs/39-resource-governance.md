@@ -214,6 +214,7 @@
 | **수동 커밋 잠금 방지**(79차) | 없음(메타 세션 1문장) | 없음 | — | — | — | `tx.block_poll_secs` | ✅ `0` |
 | **상태줄 git**(33차) | `nsql-git` + `git` 자식 2 | 없음 | — | 폴더 바뀜·저장·15 s | — | `statusbar.git` | ✅ `off` |
 | **북마크**(09-22 · 69) | 스레드 0 · 틱마다 활성 탭의 줄 변경 기록만 소비(O(변경 수)) · 열 때 재탐색 O(줄 수 · `bookmark.relocate_max_lines` 상한) · 저장 = 디바운스 1초/최대 5초 임시 파일 → rename | `bookmark.enabled`(전부 끔) · `bookmark.persist`(저장 끔) · `bookmark.search_lines`/`relocate_max_lines` — 읽는 곳 `bookmarks.rs apply_settings` · 표시 셋 `bookmark.gutter`/`minimap`/`inline_label`(끄면 그 표시 계산 0 · `bm_refresh_tab`) | `bookmarks.rs` `sync_tab`/`tick_save` |
+| **그리드 데이터 편집**(09-26 · 87) | 스레드 0(워커 세션에서 적용·재조회) · 변경 집합 = 바뀐 셀만(`ChangeSet`) · 제자리 갱신 = `Arc::make_mut` 세그먼트 1개 복사(공유 시) · 재조회 = 바뀐 행 수만큼 단문 | `grid.edit`(전부 끔) · `grid.edit_refresh`(rows/requery/local) · `grid.edit_hidden_keys`/`grid.edit_rowid`/`grid.edit_all_cols` · `grid.paste_max_rows` | 없음 | 적용 뒤 변경 집합 비움 | (편집 중) | 26 §8 두 행 |
 | **텍스트 보기 변환**(29차 · DR-33) | `nsql-textview`(변환 중만) | 없음 | **결과 복제 0**(Arc 공유) · 파생 `text_lines`만 예산에 | — | 보기를 그리드로 되돌리면 | (보기 모드) | — |
 | **파일 검색**(T-81) | `nsql-search` ≤ `search.threads` | 없음 | 스트리밍(파일 전체를 들지 않는다) | 폴더 걷기 | 검색 끝 | `search.threads` · `search.max_file_kb` | — |
 | **신호등**(프로브) | `nsql-probe-collect` ≤ `probe.max_inflight` | 없음 | — | 소켓 SYN | — | `probe.enabled` · `probe.interval` | ✅ 300 s · 동시 1 · ICMP off |

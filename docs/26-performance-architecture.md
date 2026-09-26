@@ -720,6 +720,8 @@ A/B(접속 상태 · 9초 · 7~9초 표본 · 설정 하나씩):
 | ★ L1 디스크 캐시([85 §9](85-metadata-layers.md)) | 네트워크 0 · 파일 읽기 1(접속 때) · 쓰기 1(L1 완성 때 · ≤1 MB · 별 스레드) | `meta.disk_cache`(on) · 접속 자격마다 파일 하나 | — | `metacache.rs` · `Explorer::seed_from_cache`/`save_cache` |
 | ★ 객체 상세 패널([86 §5](86-object-details-panel.md) · 09-25) | 급한 메타 세션에 선택한 객체당 카탈로그 질의 ≈ 1(컬럼) + 하위 종류 수 + 1(소스/DDL) | 패널이 켜져 있고(`explorer.details`) 탐색기에서 **객체**를 고를 때만(컬럼·잎·스키마 = 0) · 진행 중 1 | 없음 · 끄기 = 패널 끔 | `Explorer::request_details` · `nsql_catalog::object_details` |
 | ★ 메타 3층 L2 워머([85 §3](85-metadata-layers.md)) | 백그라운드 메타 세션에 현재 스키마 관계 컬럼 질의 ≤ `meta.warm_columns_max`(200) · **스키마 코멘트 질의 2/스키마**(§212 · 관계 폴더를 읽은 스키마만) | L1 완성 뒤 · `meta.warm_idle_ms`(300 ms) 간격 · 한 번에 하나 · 큐 소진 = 0 | 없음(실패 = 상태 되돌림) · 끄기 = `meta.warm_columns_max=0` · `meta.warm_comments` | `Explorer::arm_warm`/`enqueue_warm_columns`/`warm_step`/`comment_step` |
+| ★ 그리드 편집 적용 뒤 행 단위 재조회([87 §12-4-a](87-grid-data-editing.md) · 09-26) | 활성 세션에 바뀐 행마다 `SELECT … WHERE 키` 1(상한 2행 · 적용 성공 뒤 같은 왕복 묶음) | **사용자가 ✓ 적용할 때만** · `grid.edit_refresh=rows`(기본) · 못 만들면 전체 재조회 1 · `requery` = 전체 1 · `local` = 0 | 없음 | `Cmd::Apply.refetch` · `Runner::query_req_once` |
+| ★ 그리드 편집 숨은 열 주입 재조회([87 §13-7](87-grid-data-editing.md) · 09-26) | 결과 문장 재실행 1(키 열/ROWID 덧붙임) | 편집 가능 결과가 오고 키 열이 빠졌거나 키가 없을 때 **한 번만**(실패·같은 문장 재시도 없음) · `grid.edit_hidden_keys`/`grid.edit_rowid` 끄면 0 | 없음(실패 = 원문 복귀) | `EditRequest::Requery` · `Grid::requery_failed` |
 
 **검토 체크리스트**(네트워크를 만드는 코드를 추가·변경할 때):
 1. 사용자 행동 없이 시작되는 요청인가? → 주기·백오프 상한과 "창이 열려 있을 때만" 조건이 있는가.

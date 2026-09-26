@@ -14614,6 +14614,7 @@ impl App {
                 // 결과 탭 줄이 바로 위면 그리드의 위 경계선을 끈다(탭 줄 아래선 1px만 · 사용자 09-22).
                 let bar = self.panel.bar_visible();
                 self.grid.set_top_border(!bar);
+                self.grid.set_focused(self.focus == Focus::Grid);
                 self.grid.paint(&mut dc, &th, s);
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드

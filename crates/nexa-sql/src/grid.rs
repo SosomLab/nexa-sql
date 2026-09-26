@@ -420,6 +420,8 @@ pub(crate) struct Grid {
     prod: bool,
     /// 호스트가 알려 주는 Shift 상태(Tab 방향 · `Char('\t')`에는 수식키가 없다).
     shift: bool,
+    /// 호스트가 알려 주는 키보드 포커스(그리드 = 활성 선택색 · 다른 곳 = 비활성 선택색 · 88 §3 2 · T-232).
+    focused: bool,
     /// 마지막 on_event/paint 배율(편집 상자 배율).
     live_scale: f32,
 }
@@ -548,6 +550,7 @@ impl Default for Grid {
             inject_tried: None,
             prod: false,
             shift: false,
+            focused: true,
             live_scale: 1.0,
         };
         // 도구줄의 처음 상태도 판정 함수로(`.disabled()` 표기에 기대지 않는다) — Σ가 `.disabled()` 없이 만들어져
@@ -3092,6 +3095,20 @@ impl Grid {
         self.shift = on;
     }
 
+    /// 호스트 주입: 키보드 포커스가 그리드에 있는가 — 없으면 선택색을 비활성(절반 알파)으로(WinUI·IntelliJ·KDE · 88 §3 2).
+    pub(crate) fn set_focused(&mut self, on: bool) {
+        self.focused = on;
+    }
+
+    /// 선택 배경 알파(행 포커스 띠 · 셀 선택) — 포커스 밖이면 절반(순수 함수 · 시험용).
+    pub(crate) fn sel_alphas(focused: bool, row_alpha: f32) -> (f32, f32) {
+        if focused {
+            (row_alpha, 0.85)
+        } else {
+            (row_alpha * 0.5, 0.45)
+        }
+    }
+
     pub(crate) fn set_dialect(&mut self, d: Dialect) {
         self.dialect = d;
     }
@@ -3528,16 +3545,20 @@ impl Grid {
             CtxItem::item("sql_delete", t(Msg::MnCopySqlDelete)),
             CtxItem::item("sql_merge", t(Msg::MnCopySqlMerge)),
         ];
+        // ★ 서브메뉴는 1단(88 §3 15 · T-233): Copy SQL ▸ 은 Advanced ▸ 안이 아니라 같은 층에.
         let adv = vec![
             CtxItem::item("copy_csv", t(Msg::MnCopyCsv)).with_icon(Some(toolicons::mi_table())),
             CtxItem::item("copy_txt", t(Msg::MnCopyText)).with_icon(Some(toolicons::mi_table())),
             CtxItem::item("copy_md", t(Msg::MnCopyMarkdown)).with_icon(Some(toolicons::mi_table())),
             CtxItem::item("copy_json", t(Msg::MnCopyJson)).with_icon(Some(toolicons::mi_braces())),
-            CtxItem::submenu("copy_sql", t(Msg::MnCopySql), sql)
-                .with_icon(Some(toolicons::mi_db())),
         ];
         let mut adv_item = CtxItem::submenu("adv", t(Msg::MnAdvancedCopy), adv);
         if let CtxItem::Item { enabled, .. } = &mut adv_item {
+            *enabled = has;
+        }
+        let mut sql_item = CtxItem::submenu("copy_sql", t(Msg::MnCopySql), sql)
+            .with_icon(Some(toolicons::mi_db()));
+        if let CtxItem::Item { enabled, .. } = &mut sql_item {
             *enabled = has;
         }
         let mut items = vec![
@@ -3547,6 +3568,7 @@ impl Grid {
             CtxItem::maybe("copy_h", t(Msg::MnCopyWithHeaders), has)
                 .with_icon(Some(toolicons::mi_copy())),
             adv_item,
+            sql_item,
             CtxItem::Separator,
             CtxItem::item("all", t(Msg::MnSelectAll))
                 .with_icon(Some(toolicons::mi_select_all()))
@@ -4564,7 +4586,8 @@ impl Grid {
             // ★ 행 포커스 배경(사용자 09-22): 선택에 걸린 행 전체(다중 행 선택도 같은 규칙) = 셀 선택색보다 연하게.
             if self.row_focus && self.row_in_sel(di) {
                 let (c, a) = self.row_focus_color;
-                dc.fill_rect_alpha(rr, c.unwrap_or(th.sel_bg), a.unwrap_or(0.35));
+                let (ra, _) = Self::sel_alphas(self.focused, a.unwrap_or(0.35));
+                dc.fill_rect_alpha(rr, c.unwrap_or(th.sel_bg), ra);
             }
             let cells = Rect::new(gx0, body.y, (b.right() - gx0).max(0), body.h);
             let mut x = gx0 - self.scroll_x;
@@ -4585,7 +4608,7 @@ impl Grid {
                     && self.in_sel(di, pos)
                     && !(self.row_focus && self.row_fully_selected(di))
                 {
-                    dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
+                    dc.fill_rect_alpha(clip, th.sel_bg, Self::sel_alphas(self.focused, 0.0).1);
                 }
                 if clip.w > 0 && self.sel_cur == Some((di, pos)) {
                     dc.stroke_round_rect(clip, 0, th.accent, 1.0);
@@ -4663,7 +4686,7 @@ impl Grid {
                 dc.fill_rect(gclip, th.chrome_bg);
                 let selected_row = self.row_in_sel(di);
                 if selected_row {
-                    dc.fill_rect_alpha(gclip, th.sel_bg, 0.85);
+                    dc.fill_rect_alpha(gclip, th.sel_bg, Self::sel_alphas(self.focused, 0.0).1);
                 }
                 let ny = dc.text_center_y(y, self.row_h);
                 dc.text(
@@ -4751,7 +4774,7 @@ impl Grid {
                 continue;
             } else if self.col_in_sel(pos) {
                 // 선택에 걸린 컬럼 헤더 = 행번호 강조와 **같은 색**(사용자 09-22 · n×m 선택이면 걸린 열 전부).
-                dc.fill_rect_alpha(clip, th.sel_bg, 0.85);
+                dc.fill_rect_alpha(clip, th.sel_bg, Self::sel_alphas(self.focused, 0.0).1);
             }
             // 정렬 배지: ▲/▼ + 결합 순번(키가 2개 이상일 때)
             let badge = self.sort_keys.iter().position(|(k, _)| *k == ci).map(|i| {
@@ -6134,6 +6157,43 @@ mod edit_key_path_tests {
         assert_eq!(rs.row(2).map(|r| r[0].clone()), Some(Value::Int(77)));
         assert!(g.dump_edit().contains("patched=2/1/0"));
         assert!(!g.edit_dirty());
+    }
+
+    /// 88 §3 15(T-233): 그리드 우클릭 메뉴의 서브메뉴는 1단 · 상위 항목 ≤ 16.
+    #[test]
+    fn context_menu_is_one_level_deep() {
+        let mut g = editable_grid();
+        g.select_cell_for_test(0, 0);
+        g.open_menu(10, 30, 1.0);
+        let items = g.menu.items_for_test();
+        let depth = |it: &CtxItem| -> usize {
+            fn d(it: &CtxItem) -> usize {
+                match it {
+                    CtxItem::Item { children, .. } if !children.is_empty() => {
+                        1 + children.iter().map(d).max().unwrap_or(0)
+                    }
+                    _ => 0,
+                }
+            }
+            d(it)
+        };
+        assert!(items.iter().all(|it| depth(it) <= 1), "서브메뉴 2단 없음");
+        assert!(items
+            .iter()
+            .any(|it| matches!(it, CtxItem::Item { id, .. } if id == "copy_sql")));
+        let n = items
+            .iter()
+            .filter(|it| matches!(it, CtxItem::Item { .. }))
+            .count();
+        assert!(n <= 16, "상위 항목 {n}");
+    }
+
+    /// 88 §3 2(T-232): 포커스 밖 = 비활성 선택색(알파 절반).
+    #[test]
+    fn selection_alpha_halves_without_focus() {
+        assert_eq!(Grid::sel_alphas(true, 0.35), (0.35, 0.85));
+        let (r, c) = Grid::sel_alphas(false, 0.35);
+        assert!((r - 0.175).abs() < 1e-6 && (c - 0.45).abs() < 1e-6);
     }
 
     /// Tab / Shift+Tab: 편집기 밖 = 다음/이전 셀 · 편집기 안 = 커밋 뒤 오른쪽/왼쪽(87 §11).
