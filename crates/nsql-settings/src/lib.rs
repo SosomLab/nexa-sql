@@ -1062,7 +1062,7 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblEditorDblUnderscore,
         desc: Msg::DescEditorDblUnderscore,
         kind: SettingKind::Bool,
-        default: "on",
+        default: "off",
     },
     // ★ 그리드 데이터 편집(docs/87 · T-182 · 사용자 09-26): 편집 허용 · 빈 값 = NULL/빈 문자열(D-210) · 문장당 1행 검사 · 적용 뒤 재조회(D-212) · 붙여넣기 상한.
     Entry {
