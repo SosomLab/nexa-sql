@@ -125,7 +125,26 @@
 | 편집기 본문(nexa-ctl `editmenu`) | 5(Undo · Cut · Copy · Paste · Select All) | — | 없음 | ✓ · 16(Cut/Copy/Paste 비활성 유지 · `EditMenuCaps`) ✓ |
 | 결과 그리드 | 16(§231 뒤 1단) | 3 / 4 | 1단 | 16 = 도구 관례 예외 |
 
-남은 대조 = 접속 창·설정 창(포커스·Tab 순환·Esc)·탐색기 노드별 실제 항목 수(실기 캡처).
+#### 4-1-c. 접속 창 · 설정 창 · 탐색기 노드별 항목 수(코드 사실 · 09-26 §243)
+
+| 창 | Esc | Tab 순환 | 초기 포커스 | 판정 · 조치 |
+|---|---|---|---|---|
+| 접속 창(`conn_win.rs`) | 팝업 열림 = 팝업 · 아니면 **단계적**(삭제 무장 해제 → 상세 닫기 → 창 닫기) | 없음(Tab = 텍스트박스 탭 글자) | 목록/폼 | Esc ✓(Fluent "일시 UI·진행 중 동작 취소") · Tab ✗ → **T-239** |
+| 설정 창(`prefs_win.rs`) | 콤보 열림 = 콤보 · 아니면 창 닫기 | 없음 | 검색 상자 | Esc ✓ · Tab ✗ → T-239 |
+| SQL Preview / 값 창 · Import 창 · 변수 입력 창 · 키/변수 창 | 닫기(Import = 진행 중이면 취소) | 없음 | 본문/첫 입력란 | Esc ✓ · Tab ✗ → T-239 |
+| 파일 창(nexa-dlg) | 닫기 | 없음 | 목록 | Esc ✓ · Tab ✗ → T-239(nexa-ui) |
+
+| 탐색기 노드 | 항목(코드) | 그룹 | 서브 | 판정 |
+|---|---|---|---|---|
+| 서버 루트 | New tab here · Refresh · Refresh metadata · ─ · Disconnect(오프라인 = Connect · Remove = 2) | 2 | — | ✓ |
+| 스키마 | Copy name · ─ · Refresh · Refresh metadata | 2 | — | ✓ |
+| 종류 폴더 · 하위 폴더 | Refresh | 1 | — | ✓ |
+| 표 | Select rows · **Import Data…**(§240) · Generate SQL ▸ · Copy name · ─ · Refresh = 6 | 2 | 1단(DML 유형 · ─ · DDL) | ✓ |
+| 뷰/MV | Select rows · Generate SQL ▸ · Copy name · ─ · Refresh = 5 | 2 | 1단 | ✓ |
+| 루틴/패키지 | Open source · (Open body) · Generate SQL ▸ · Copy name · ─ · Refresh = 5~6 | 2 | 1단 | ✓ |
+| 컬럼 · 잎(제약·인덱스·트리거) | (Generate SQL ▸) · Copy name · ─ · Refresh = 2~3 | 2 | 1단 | ✓ |
+
+남은 대조 = 실기 캡처(고대비·큰 글자 잘림) · 포커스 링 대비 실측 · T-239 뒤 Tab 순환 재점검.
 
 ## 5. 원천별 상세(조사 원문 정리 · 09-26)
 

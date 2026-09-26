@@ -3526,7 +3526,7 @@ impl Msg {
             Msg::LblGridLobMax => ["Grid: LOB preview limit (MB)", "그리드: LOB 미리보기 상한(MB)"],
             Msg::DescGridLobMax => ["Value window: bytes beyond this are not decoded or dumped (hex shows the head only).", "값 창: 이 크기를 넘는 값은 풀지 않고 16진수도 앞부분만 보입니다."],
             Msg::LblGridLobImage => ["Grid: image preview for binary values", "그리드: 이진 값 이미지 미리보기"],
-            Msg::DescGridLobImage => ["Decode PNG/BMP/GIF binary values in the value window (JPEG/WebP: save to file to view).", "값 창에서 PNG/BMP/GIF 이진 값을 풀어 보여 줍니다(JPEG/WebP는 파일로 저장해 봅니다)."],
+            Msg::DescGridLobImage => ["Decode PNG/JPEG/BMP/GIF binary values in the value window (progressive JPEG · WebP: save to file to view).", "값 창에서 PNG/JPEG/BMP/GIF 이진 값을 풀어 보여 줍니다(프로그레시브 JPEG · WebP는 파일로 저장해 봅니다)."],
             Msg::OptGeRows => ["re-read changed rows only", "바뀐 행만 다시 읽기"],
             Msg::StGeRowsPatched => ["Changed rows re-read in place (scroll, sort and selection kept)", "바뀐 행만 제자리에서 다시 읽었습니다(스크롤·정렬·선택 유지)"],
             Msg::GeRoNoKey => ["no key, row id or comparable column to identify rows", "행을 식별할 키·행 식별자·비교 가능한 열이 없습니다"],

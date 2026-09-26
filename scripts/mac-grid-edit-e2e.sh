@@ -133,6 +133,21 @@ echo "=== SQLite ⑪ 편집 툴바 활성(사용자 09-26): 조회 직후 복제
 run_gui 12 Local "open:$D/sel.sql,@after:2500:run.all,@after:5500:grid.dump:$O/t0.txt,@after:6000:grid.select:0;1,@after:7000:grid.dump:$O/t1.txt"
 expect_grep "선택 전 = add 활성 · dup/del 비활성" "$(cat "$O/t0.txt" 2>/dev/null)" "tools add=true dup=false del=false"
 expect_grep "셀 선택 뒤 = dup/del 활성(편집 동작 없이)" "$(cat "$O/t1.txt" 2>/dev/null)" "tools add=true dup=true del=true"
+echo "=== SQLite ⑫ LOB JPEG(T-237 · §242): 값 창 = 기저 JPEG 16×16 미리보기(nexa-gfx jpeg.rs · 시험 벡터 = nexa-ui tests/quad.hex)"
+JPGHEX="$ROOT/../nexa-ui/crates/nexa-gfx/tests/quad.hex"
+if [ -f "$JPGHEX" ]; then
+  python3 - "$D" "$JPGHEX" <<'PYJPG'
+import sys, os
+d, hx = sys.argv[1], open(sys.argv[2]).read().strip()
+open(os.path.join(d,'jpg_setup.sql'),'w').write("DROP TABLE IF EXISTS ge_jpg;\nCREATE TABLE ge_jpg (id INTEGER PRIMARY KEY, data BLOB);\nINSERT INTO ge_jpg VALUES (1, X'%s');\n" % hx)
+open(os.path.join(d,'jpg_sel.sql'),'w').write("SELECT id, data FROM ge_jpg;\n")
+PYJPG
+  cli Local "$D/jpg_setup.sql" >/dev/null
+  run_gui 12 Local "open:$D/jpg_sel.sql,@after:2500:run.all,@after:5500:cellview.open:0;1,@after:7500:cellview.dump:$O/s12.txt"
+  expect_grep "값 창 = JPEG 16x16 미리보기(856 bytes)" "$(cat "$O/s12.txt" 2>/dev/null)" "mode=Image kind=JPEG bytes=856 image=16x16"
+else
+  echo "SKIP  nexa-ui 시험 벡터 없음($JPGHEX)"
+fi
 # ── 실서버 스위트(방언 공통 4 시나리오 · 임시 표 NSQLT_GE(PK)·NSQLT_GE2(키 없음) 생성 → 시험 → DROP · 61 §2-4 ⑤)
 #   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql> <라벨>
 dbms_suite() {
