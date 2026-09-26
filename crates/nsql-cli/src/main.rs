@@ -1424,13 +1424,15 @@ fn cmd_import(o: &Opts) -> i32 {
         eprintln!("{}", t(Msg::CliImportNeedFile));
         return 2;
     };
+    let lower = path.to_ascii_lowercase();
+    let jsonl = matches!(o.format, Format::JsonLines)
+        || (matches!(o.format, Format::Grid)
+            && (lower.ends_with(".jsonl") || lower.ends_with(".ndjson")));
     let delim = match &o.format {
         Format::Tsv => b'\t',
         Format::Csv => b',',
         _ => {
-            if path.to_ascii_lowercase().ends_with(".tsv")
-                || path.to_ascii_lowercase().ends_with(".tab")
-            {
+            if lower.ends_with(".tsv") || lower.ends_with(".tab") {
                 b'\t'
             } else {
                 b','
@@ -1448,7 +1450,21 @@ fn cmd_import(o: &Opts) -> i32 {
             }
         }
     };
-    let mut rd = nsql_io::delim::DelimReader::new(reader, delim);
+    // 원료 = 구분자 텍스트(csv/tsv) 또는 JSON Lines(키 → 열 이름 · 첫 객체의 키 순서가 헤더 · 빠진 키 = NULL).
+    #[allow(clippy::type_complexity)]
+    enum Src {
+        Delim(nsql_io::delim::DelimReader<Box<dyn io::BufRead>>),
+        Jsonl(
+            nsql_io::jsonl::JsonlReader<Box<dyn io::BufRead>>,
+            Vec<String>,
+            Option<Vec<(String, Option<String>)>>,
+        ),
+    }
+    let mut src = if jsonl {
+        Src::Jsonl(nsql_io::jsonl::JsonlReader::new(reader), Vec::new(), None)
+    } else {
+        Src::Delim(nsql_io::delim::DelimReader::new(reader, delim))
+    };
     // 설정 기본값(`bulk.*`) 위에 플래그.
     let st = settings_cached().ok();
     let int = |k: &str, d: usize| st.map_or(d, |s| s.int(k).max(0) as usize);
@@ -1507,21 +1523,44 @@ fn cmd_import(o: &Opts) -> i32 {
     // 원료 열 이름: 헤더(기본) · `--cols` · 없으면 표 열 순서.
     let src_names: Vec<String> = if let Some(c) = &o.cols {
         c.split(',').map(|s| s.trim().to_string()).collect()
-    } else if o.no_header {
+    } else if o.no_header && !jsonl {
         table_cols.iter().map(|(n, _)| n.clone()).collect()
     } else {
-        match rd.next_record() {
-            Ok(Some(h)) => h.iter().map(|s| s.trim().to_string()).collect(),
-            Ok(None) => {
-                eprintln!("{}", t(Msg::CliImportEmpty));
-                return 1;
-            }
-            Err(e) => {
-                eprintln!("{path}: {e}");
-                return 1;
-            }
+        match &mut src {
+            Src::Delim(rd) => match rd.next_record() {
+                Ok(Some(h)) => h.iter().map(|s| s.trim().to_string()).collect(),
+                Ok(None) => {
+                    eprintln!("{}", t(Msg::CliImportEmpty));
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("{path}: {e}");
+                    return 1;
+                }
+            },
+            // JSONL: 첫 객체의 키가 열 이름 · 그 객체는 첫 행으로 다시 쓴다.
+            Src::Jsonl(rd, keys, first) => match rd.next_object() {
+                Ok(Some(o)) => {
+                    *keys = o.iter().map(|(k, _)| k.clone()).collect();
+                    *first = Some(o);
+                    keys.clone()
+                }
+                Ok(None) => {
+                    eprintln!("{}", t(Msg::CliImportEmpty));
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!("{path}: {e}");
+                    return 1;
+                }
+            },
         }
     };
+    if let Src::Jsonl(_, keys, _) = &mut src {
+        if keys.is_empty() {
+            *keys = src_names.clone();
+        }
+    }
     let map: Vec<(String, String)> = o
         .map
         .as_deref()
@@ -1561,10 +1600,30 @@ fn cmd_import(o: &Opts) -> i32 {
         opts,
     };
     let mut next = || -> Result<Option<nsql_run::bulk::SourceRow>, String> {
-        match rd.next_record() {
-            Ok(Some(r)) => Ok(Some((r, rd.line_no))),
-            Ok(None) => Ok(None),
-            Err(e) => Err(e.to_string()),
+        match &mut src {
+            Src::Delim(rd) => match rd.next_record() {
+                Ok(Some(r)) => Ok(Some((r, rd.line_no))),
+                Ok(None) => Ok(None),
+                Err(e) => Err(e.to_string()),
+            },
+            Src::Jsonl(rd, keys, first) => {
+                let obj = match first.take() {
+                    Some(o) => Some(o),
+                    None => rd.next_object().map_err(|e| e.to_string())?,
+                };
+                Ok(obj.map(|o| {
+                    let row: Vec<String> = keys
+                        .iter()
+                        .map(|k| {
+                            o.iter()
+                                .find(|(kk, _)| kk == k)
+                                .and_then(|(_, v)| v.clone())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    (row, rd.line_no)
+                }))
+            }
         }
     };
     let mut last_print = std::time::Instant::now();

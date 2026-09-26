@@ -5,6 +5,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod delim;
+pub mod jsonl;
 pub mod paging;
 pub mod sqlgen;
 pub use sqlgen::{

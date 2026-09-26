@@ -130,8 +130,8 @@ const MSSQL: Caps = Caps {
     ),
     compile_errors: false,
     ident_fold: IdentFold::Keep,
-    // sp_executesql 자체 매개변수 둘을 빼야 한다(2100 한도 · 4-DBMS 벌크 시험 09-26: 2100 = 실패 · 2000 ✓).
-    bulk_load: crate::bulk::BulkLoad::MultiRow { max_rows: 1000, max_params: 2000 },
+    // TDS BULK INSERT(89 §1-3 · B-4) · 다중 행 폴백은 sp_executesql 매개변수 둘을 뺀 2000(2100 = 실패 · 09-26).
+    bulk_load: crate::bulk::BulkLoad::TdsBulk,
 };
 
 const POSTGRES: Caps = Caps {

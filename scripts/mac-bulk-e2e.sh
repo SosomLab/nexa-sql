@@ -55,6 +55,11 @@ o=$(imp Local -t bulk_t -f tsv --no-header "$D/nohdr.tsv"); expect_grep "tsv 헤
 o=$(imp Local -t bulk_t --map code=id,label=name --empty-null on "$D/mapped.csv"); expect_grep "--map 2행" "$o" "2 rows imported"
 printf "SELECT name IS NULL AS nn FROM bulk_t WHERE id = 7002;\n" > "$D/chknull.sql"; expect_grep "빈 필드 = NULL" "$(cli Local "$D/chknull.sql")" "^1$\|^ *1$"
 o=$(imp Local -t bulk_t --map code=id,label=nope "$D/mapped.csv"); expect_grep "없는 열 = 안내" "$o" "not found"
+echo "=== SQLite ④ JSON Lines(키 → 열 · 빠진 키 = NULL · 유니코드)"
+printf '{"id": 8001, "name": "j\\u0031", "amt": 2.5, "dt": "2026-02-02 02:02:02"}\n{"id": 8002, "amt": null}\n' > "$D/rows.jsonl"
+o=$(imp Local -t bulk_t "$D/rows.jsonl"); expect_grep "jsonl 2행" "$o" "2 rows imported"
+printf "SELECT name, amt IS NULL AS an FROM bulk_t WHERE id IN (8001, 8002) ORDER BY id;\n" > "$D/chkj.sql"; v=$(cli Local "$D/chkj.sql")
+expect_grep "jsonl 유니코드 이스케이프 j1" "$v" "j1"; expect_grep "jsonl 빠진 키/null = NULL" "$v" " 1$"
 # ── 실서버
 bulk_suite() {
   local P=$1 dl=$2 ddl
@@ -74,6 +79,7 @@ with open('$D/${P}_5k.csv','w') as f:
   echo "=== $P($dl) 5,000행 적재"
   local o v; o=$(imp "$P" -t NSQLT_BULK "$D/${P}_5k.csv"); v=$(cli "$P" "$D/${P}_chk.sql")
   expect_grep "$P 적재 보고 5000행" "$o" "5000 rows imported"; echo "      $(echo "$o" | grep 'rows imported')"
+  case $dl in mssql) expect_grep "$P 경로 = TDS bulk" "$o" "driver:tdsbulk";; postgres) expect_grep "$P 경로 = COPY" "$o" "driver:copyin";; oracle) expect_grep "$P 경로 = 배열 DML" "$o" "driver:arraydml";; esac
   expect_grep "$P 서버 건수 5000" "$v" "5000"
   cli "$P" "$D/${P}_drop.sql" >/dev/null 2>&1
 }

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/bulk-tds-jsonl | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-4 일부: SQL Server TDS bulk 싱크(`TdsSink` · `MsKind` · 트랜잭션) · JSONL 원료(`nsql_io::jsonl`) · 드라이버 실패 뒤 다중 행 이어 가기 · E2E 22/22(§239) |
 | feat/bulk-import | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-1·B-2 대량 적재(nsql-core `bulk` 포트 · nsql-io `delim` 스트리밍 · nsql-run `bulk_load` · CLI `nsql import` · PG COPY 싱크 · Oracle 배열 DML 싱크 · 설정 `bulk.*` · E2E `mac-bulk-e2e.sh` · 89 §3-4-a · §238) |
 | feat/save-all-unsaved | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ 미저장 탭 일괄 처리(닫기/종료 물음에 모두 저장 · 모두 취소 · 닫기 = 진행 취소 · `save_all_step` 순차 저장/저장 창 이어 가기) + 탭 메뉴 미저장 항목 강조색(nexa-ui 82차 `MenuEntry::Emph`)(§237) |
 | feat/lob-value-window | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ §235 4-DBMS E2E(PG 텍스트 매개변수 · MSSQL GE{n}/execute/마지막 DONE · 시각 바인드 방언) + ★ §236 LOB 값 창(값 모드 · BLOB/CLOB 바인드 · 파일 넣기/저장 · nexa-ui 81차 디코더) + 📐 89 대량 I/O 검토 |

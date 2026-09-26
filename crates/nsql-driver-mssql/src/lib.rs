@@ -198,6 +198,338 @@ pub struct MssqlSession {
     description: String,
     /// 서버 메시지 실시간 싱크(없으면 실행 뒤 `messages`).
     sink: Option<MessageSink>,
+    /// 대량 적재 대상 표(싱크가 `&'a str`로 빌린다 · 89 §1-3).
+    bulk_table: String,
+}
+
+/// ★ TDS BULK INSERT 싱크(docs/89 §1-3 · T-236 B-4): 배치마다 `Client::bulk_insert`(열 메타 조회 → 행 스트림 → finalize)를 한 번씩
+/// — 요청이 세션을 빌리는 동안 다른 문장을 보낼 수 없어 요청은 `flush` 안에서만 산다 · 트랜잭션은 싱크가 `BEGIN/COMMIT/ROLLBACK TRAN`
+/// (D-221: 제약 검사는 서버 기본 · 트리거는 bcp처럼 건너뜀 — tiberius 0.12는 옵션 API가 없다).
+struct TdsSink<'a> {
+    rt: &'a Runtime,
+    client: &'a mut Tds,
+    table: &'a str,
+    kinds: Vec<MsKind>,
+    buf: Vec<Vec<ColumnData<'static>>>,
+    rows: u64,
+}
+
+/// 열 타입(카탈로그 `data_type`) → 보낼 `ColumnData` 종류(TDS는 열 메타와 값 종류가 정확히 맞아야 한다).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MsKind {
+    U8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
+    Bit,
+    Numeric(u8),
+    Str,
+    Bin,
+    Date,
+    Time,
+    DateTime2,
+    DateTime,
+    SmallDateTime,
+    Guid,
+}
+
+impl MsKind {
+    fn of(ty: &str) -> MsKind {
+        let t = ty.trim().to_ascii_lowercase();
+        // 숫자까지 포함해 자른다(`datetime2(0)` → `datetime2` · `datetime` 과 구별 · 09-26 TDS bulk 시험).
+        let base: String = t
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect();
+        let scale = || -> u8 {
+            t.split_once(',')
+                .and_then(|(_, s)| s.trim_end_matches(')').trim().parse().ok())
+                .unwrap_or(0)
+        };
+        match base.as_str() {
+            "tinyint" => MsKind::U8,
+            "smallint" => MsKind::I16,
+            "int" => MsKind::I32,
+            "bigint" => MsKind::I64,
+            "real" => MsKind::F32,
+            "float" => MsKind::F64,
+            "bit" => MsKind::Bit,
+            "decimal" | "numeric" => MsKind::Numeric(scale()),
+            "money" | "smallmoney" => MsKind::Numeric(4),
+            "datetime" => MsKind::DateTime,
+            "datetime2" | "datetimeoffset" => MsKind::DateTime2,
+            "smalldatetime" => MsKind::SmallDateTime,
+            "date" => MsKind::Date,
+            "time" => MsKind::Time,
+            "uniqueidentifier" => MsKind::Guid,
+            "binary" | "varbinary" | "image" => MsKind::Bin,
+            _ => MsKind::Str,
+        }
+    }
+}
+
+fn bulk_err(m: String) -> DbError {
+    DbError {
+        code: None,
+        message: m,
+        position: None,
+    }
+}
+
+/// 소수 문자열 → 지정 자릿수의 i128(반올림 없이 자름 · 부호 · 정수부만도 허용).
+fn scaled_i128(s: &str, scale: u8) -> Option<i128> {
+    let s = s.trim();
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
+    if int.is_empty() && frac.is_empty()
+        || !int.chars().all(|c| c.is_ascii_digit())
+        || !frac.chars().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut digits = String::from(if int.is_empty() { "0" } else { int });
+    let mut f: String = frac.chars().take(scale as usize).collect();
+    while f.len() < scale as usize {
+        f.push('0');
+    }
+    digits.push_str(&f);
+    let v: i128 = digits.parse().ok()?;
+    Some(if neg { -v } else { v })
+}
+
+fn parse_naive_dt(s: &str) -> Option<chrono::NaiveDateTime> {
+    let s = s.trim();
+    for f in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    ] {
+        if let Ok(v) = chrono::NaiveDateTime::parse_from_str(s, f) {
+            return Some(v);
+        }
+    }
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+}
+
+/// `Value` → 열 종류에 맞는 `ColumnData`(값이 종류에 안 맞으면 오류 = 러너가 단건 재실행으로 지목).
+fn column_data(kind: MsKind, v: &Value) -> Result<ColumnData<'static>, DbError> {
+    use chrono::Timelike;
+    use std::borrow::Cow;
+    if matches!(v, Value::Null | Value::Cursor(_)) {
+        return Ok(match kind {
+            MsKind::U8 => ColumnData::U8(None),
+            MsKind::I16 => ColumnData::I16(None),
+            MsKind::I32 => ColumnData::I32(None),
+            MsKind::I64 => ColumnData::I64(None),
+            MsKind::F32 => ColumnData::F32(None),
+            MsKind::F64 => ColumnData::F64(None),
+            MsKind::Bit => ColumnData::Bit(None),
+            MsKind::Numeric(_) => ColumnData::Numeric(None),
+            MsKind::Str => ColumnData::String(None),
+            MsKind::Bin => ColumnData::Binary(None),
+            MsKind::Date => ColumnData::Date(None),
+            MsKind::Time => ColumnData::Time(None),
+            MsKind::DateTime2 => ColumnData::DateTime2(None),
+            MsKind::DateTime => ColumnData::DateTime(None),
+            MsKind::SmallDateTime => ColumnData::SmallDateTime(None),
+            MsKind::Guid => ColumnData::Guid(None),
+        });
+    }
+    let text = v.display();
+    let bad = || bulk_err(format!("value {text:?} does not fit column type {kind:?}"));
+    Ok(match kind {
+        MsKind::U8 => ColumnData::U8(Some(text.trim().parse().map_err(|_| bad())?)),
+        MsKind::I16 => ColumnData::I16(Some(text.trim().parse().map_err(|_| bad())?)),
+        MsKind::I32 => ColumnData::I32(Some(text.trim().parse().map_err(|_| bad())?)),
+        MsKind::I64 => ColumnData::I64(Some(text.trim().parse().map_err(|_| bad())?)),
+        MsKind::F32 => ColumnData::F32(Some(text.trim().parse().map_err(|_| bad())?)),
+        MsKind::F64 => ColumnData::F64(Some(text.trim().parse().map_err(|_| bad())?)),
+        MsKind::Bit => ColumnData::Bit(Some(match v {
+            Value::Bool(b) => *b,
+            _ => matches!(
+                text.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "t" | "y" | "yes" | "on"
+            ),
+        })),
+        MsKind::Numeric(scale) => {
+            ColumnData::Numeric(Some(tiberius::numeric::Numeric::new_with_scale(
+                scaled_i128(&text, scale).ok_or_else(bad)?,
+                scale,
+            )))
+        }
+        MsKind::Str => ColumnData::String(Some(Cow::Owned(text))),
+        MsKind::Bin => ColumnData::Binary(Some(Cow::Owned(match v {
+            Value::Bytes(b) => b.clone(),
+            _ => text.into_bytes(),
+        }))),
+        MsKind::Date => {
+            let d =
+                chrono::NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d").map_err(|_| bad())?;
+            let days = d
+                .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1, 1, 1).ok_or_else(bad)?)
+                .num_days();
+            ColumnData::Date(Some(tiberius::time::Date::new(days as u32)))
+        }
+        MsKind::Time => {
+            let t = chrono::NaiveTime::parse_from_str(text.trim(), "%H:%M:%S%.f")
+                .or_else(|_| chrono::NaiveTime::parse_from_str(text.trim(), "%H:%M:%S"))
+                .map_err(|_| bad())?;
+            let nanos = u64::from(t.num_seconds_from_midnight()) * 1_000_000_000
+                + u64::from(t.nanosecond());
+            ColumnData::Time(Some(tiberius::time::Time::new(nanos / 100, 7)))
+        }
+        MsKind::DateTime2 => {
+            let dt = parse_naive_dt(&text).ok_or_else(bad)?;
+            dt.to_sql().into_owned_cd()
+        }
+        MsKind::DateTime => {
+            let dt = parse_naive_dt(&text).ok_or_else(bad)?;
+            let days = dt
+                .date()
+                .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1900, 1, 1).ok_or_else(bad)?)
+                .num_days();
+            let frag = u64::from(dt.time().num_seconds_from_midnight()) * 300
+                + u64::from(dt.time().nanosecond()) * 300 / 1_000_000_000;
+            ColumnData::DateTime(Some(tiberius::time::DateTime::new(
+                days as i32,
+                frag as u32,
+            )))
+        }
+        MsKind::SmallDateTime => {
+            let dt = parse_naive_dt(&text).ok_or_else(bad)?;
+            let days = dt
+                .date()
+                .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1900, 1, 1).ok_or_else(bad)?)
+                .num_days();
+            let mins = dt.time().num_seconds_from_midnight() / 60;
+            ColumnData::SmallDateTime(Some(tiberius::time::SmallDateTime::new(
+                days as u16,
+                mins as u16,
+            )))
+        }
+        MsKind::Guid => ColumnData::Guid(Some(
+            tiberius::Uuid::parse_str(text.trim()).map_err(|_| bad())?,
+        )),
+    })
+}
+
+/// `ColumnData<'_>` → 소유(`'static`) — chrono `to_sql`이 빌린 수명을 돌려주는 것을 풀어 준다.
+trait IntoOwnedCd {
+    fn into_owned_cd(self) -> ColumnData<'static>;
+}
+impl IntoOwnedCd for ColumnData<'_> {
+    fn into_owned_cd(self) -> ColumnData<'static> {
+        use std::borrow::Cow;
+        match self {
+            ColumnData::String(s) => ColumnData::String(s.map(|c| Cow::Owned(c.into_owned()))),
+            ColumnData::Binary(b) => ColumnData::Binary(b.map(|c| Cow::Owned(c.into_owned()))),
+            ColumnData::U8(v) => ColumnData::U8(v),
+            ColumnData::I16(v) => ColumnData::I16(v),
+            ColumnData::I32(v) => ColumnData::I32(v),
+            ColumnData::I64(v) => ColumnData::I64(v),
+            ColumnData::F32(v) => ColumnData::F32(v),
+            ColumnData::F64(v) => ColumnData::F64(v),
+            ColumnData::Bit(v) => ColumnData::Bit(v),
+            ColumnData::Guid(v) => ColumnData::Guid(v),
+            ColumnData::Numeric(v) => ColumnData::Numeric(v),
+            ColumnData::DateTime(v) => ColumnData::DateTime(v),
+            ColumnData::SmallDateTime(v) => ColumnData::SmallDateTime(v),
+            ColumnData::Time(v) => ColumnData::Time(v),
+            ColumnData::Date(v) => ColumnData::Date(v),
+            ColumnData::DateTime2(v) => ColumnData::DateTime2(v),
+            ColumnData::DateTimeOffset(v) => ColumnData::DateTimeOffset(v),
+            ColumnData::Xml(_) => ColumnData::String(None),
+        }
+    }
+}
+
+impl TdsSink<'_> {
+    fn tran(&mut self, sql: &str) -> Result<(), DbError> {
+        let client = &mut *self.client;
+        self.rt.block_on(async {
+            client
+                .simple_query(sql)
+                .await
+                .map_err(err)?
+                .into_results()
+                .await
+                .map_err(err)
+        })?;
+        Ok(())
+    }
+}
+
+impl nsql_core::BulkSink for TdsSink<'_> {
+    fn push(&mut self, row: &[Value]) -> Result<(), DbError> {
+        let mut out = Vec::with_capacity(row.len());
+        for (i, v) in row.iter().enumerate() {
+            out.push(column_data(
+                self.kinds.get(i).copied().unwrap_or(MsKind::Str),
+                v,
+            )?);
+        }
+        self.buf.push(out);
+        self.rows += 1;
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<u64, DbError> {
+        if self.buf.is_empty() {
+            return Ok(self.rows);
+        }
+        let rows = std::mem::take(&mut self.buf);
+        let client = &mut *self.client;
+        let table = self.table;
+        self.rt.block_on(async move {
+            let mut req = client.bulk_insert(table).await.map_err(err)?;
+            let mut first_err: Option<DbError> = None;
+            for r in rows {
+                let mut tr = tiberius::TokenRow::with_capacity(r.len());
+                for cd in r {
+                    tr.push(cd);
+                }
+                if let Err(e) = req.send(tr).await {
+                    first_err = Some(err(e));
+                    break;
+                }
+            }
+            // 오류가 나도 finalize로 BULK 흐름을 끝내야 접속이 정상으로 돌아온다(행은 트랜잭션 롤백으로 버린다).
+            match req.finalize().await {
+                Ok(_) => {}
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(err(e));
+                    }
+                }
+            }
+            match first_err {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
+        })?;
+        Ok(self.rows)
+    }
+    fn commit(&mut self) -> Result<bool, DbError> {
+        self.tran("IF @@TRANCOUNT > 0 COMMIT TRAN; BEGIN TRAN")?;
+        Ok(true)
+    }
+    fn rollback(&mut self) -> Result<(), DbError> {
+        self.buf.clear();
+        self.tran("IF @@TRANCOUNT > 0 ROLLBACK TRAN")
+    }
+    fn finish(mut self: Box<Self>) -> Result<u64, DbError> {
+        self.flush()?;
+        self.tran("IF @@TRANCOUNT > 0 COMMIT TRAN")?;
+        Ok(self.rows)
+    }
 }
 
 fn err(e: tiberius::error::Error) -> DbError {
@@ -494,6 +826,7 @@ impl MssqlSession {
             attention_ok: login_only,
             description: format!("{} · {encrypt_note}", spec.redacted()),
             sink: None,
+            bulk_table: String::new(),
         })
     }
 }
@@ -535,6 +868,32 @@ impl nsql_core::CancelHandle for MssqlCancel {
 }
 
 impl Session for MssqlSession {
+    fn bulk_begin<'a>(
+        &'a mut self,
+        table: &str,
+        _cols: &[String],
+        types: &[String],
+        _opts: &nsql_core::BulkOpts,
+    ) -> Result<Box<dyn nsql_core::BulkSink + 'a>, DbError> {
+        self.bulk_table = table.to_string();
+        let MssqlSession {
+            rt,
+            client,
+            bulk_table,
+            ..
+        } = self;
+        let kinds: Vec<MsKind> = types.iter().map(|t| MsKind::of(t)).collect();
+        let mut sink = TdsSink {
+            rt,
+            client,
+            table: bulk_table.as_str(),
+            kinds,
+            buf: Vec::new(),
+            rows: 0,
+        };
+        sink.tran("IF @@TRANCOUNT = 0 BEGIN TRAN")?;
+        Ok(Box::new(sink))
+    }
     fn cancel_handle(&self) -> Option<std::sync::Arc<dyn nsql_core::CancelHandle>> {
         // Attention은 로그인만 암호화된 접속에서만 · 설정이 소켓 종료면 항상 소켓 종료.
         Some(std::sync::Arc::new(MssqlCancel {

@@ -244,8 +244,11 @@ impl Runner {
                 max_rows,
                 max_params,
             } => (max_rows, max_params),
+            // SQL Server 폴백(다중 행)은 sp_executesql 매개변수 상한.
+            BulkLoad::TdsBulk => (1000, 2000),
             _ => (p.batch_rows, usize::MAX),
         };
+        // 다중 행 폴백은 문장·파라미터 상한 안 · 드라이버 싱크는 설정 배치 크기 그대로(상한 없음).
         let rows_per_stmt = match p.mode {
             BulkMode::Single => 1,
             _ => p
@@ -254,6 +257,7 @@ impl Runner {
                 .min((max_params / ncols).max(1))
                 .max(1),
         };
+        let driver_rows = p.batch_rows.max(1);
         let driver_kind = matches!(
             caps.bulk_load,
             BulkLoad::ArrayDml | BulkLoad::CopyIn | BulkLoad::TdsBulk
@@ -302,7 +306,7 @@ impl Runner {
         let mut exec_total = Duration::ZERO;
         // ── 드라이버 싱크(세션 차용은 `drive_sink` 안에서 끝난다 → 실패 배치 재실행은 밖에서)
         if want_driver {
-            match self.drive_sink(next, p, rows_per_stmt, &mut convert, &mut rep, progress, t0) {
+            match self.drive_sink(next, p, driver_rows, &mut convert, &mut rep, progress, t0) {
                 SinkEnd::Unsupported if p.mode != BulkMode::Driver => {}
                 SinkEnd::Unsupported => {
                     rep.failure = Some(BulkFailure {
@@ -318,26 +322,40 @@ impl Runner {
                     return rep;
                 }
                 SinkEnd::Failed(rows, err) => {
+                    // 실패 배치를 단건으로 다시 넣어 지목 — 전부 성공하면(드라이버 경로의 변환 문제 등) 나머지는 다중 행 폴백으로 잇는다.
+                    let mut go_on = false;
                     if !rows.is_empty() {
                         let (n_ok, f) =
                             self.replay_single(&rows, p, dialect, caps.marker, caps.tx_begin);
                         rep.rows += n_ok;
-                        rep.failure = f;
+                        match f {
+                            Some(f) => rep.failure = Some(f),
+                            None => go_on = true,
+                        }
                     }
-                    if rep.failure.is_none() {
-                        rep.failure = err;
+                    if !go_on {
+                        if rep.failure.is_none() {
+                            rep.failure = err;
+                        }
+                        rep.elapsed = t0.elapsed();
+                        return rep;
                     }
-                    rep.elapsed = t0.elapsed();
-                    return rep;
+                    rep.path = format!(
+                        "{} → multirow ({})",
+                        rep.path,
+                        err.map_or(String::new(), |e| e.message)
+                    );
                 }
             }
         }
         // ── 다중 행 INSERT 폴백(단건 모드 포함)
-        rep.path = if rows_per_stmt == 1 {
-            "single".into()
-        } else {
-            "multirow".into()
-        };
+        if rep.path.is_empty() {
+            rep.path = if rows_per_stmt == 1 {
+                "single".into()
+            } else {
+                "multirow".into()
+            };
+        }
         let mut batch: Vec<Item> = Vec::new();
         let mut since_commit: u64 = 0;
         let mut in_tx = false;
