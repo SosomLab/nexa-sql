@@ -26,6 +26,7 @@ nsql-bookmarks.workspace = true
 nsql-i18n.workspace = true
 nsql-settings.workspace = true
 nsql-log.workspace = true
+nsql-license.workspace = true
 nexa-gfx.workspace = true
 nexa-ctl.workspace = true
 nexa-font.workspace = true

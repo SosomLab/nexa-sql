@@ -63,6 +63,7 @@ pub enum Feature {
     MultiTabs,
     LargeEdit,
     MultiWindow,
+    ResultTabs,
     // ── Org 전용
     AuditExport,
     CentralProfiles,
@@ -89,6 +90,7 @@ impl Feature {
         Feature::MultiTabs,
         Feature::LargeEdit,
         Feature::MultiWindow,
+        Feature::ResultTabs,
         Feature::AuditExport,
         Feature::CentralProfiles,
         Feature::ProdPolicy,
@@ -115,6 +117,7 @@ impl Feature {
             Feature::MultiTabs => "multi-tabs",
             Feature::LargeEdit => "large-edit",
             Feature::MultiWindow => "multi-window",
+            Feature::ResultTabs => "result-tabs",
             Feature::AuditExport => "audit-export",
             Feature::CentralProfiles => "central-profiles",
             Feature::ProdPolicy => "prod-policy",

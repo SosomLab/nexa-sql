@@ -38,6 +38,8 @@ pub(crate) struct IntelCfg {
     pub key_passthrough: bool,
     /// 상세 카드(팝업 옆 · 같은 높이 · 09-24) · 배경 투명도 % · 글자 투명도 %.
     pub detail_card: bool,
+    /// ★ 문법 참조 완성(.sqlg 절별 · docs/82) — 라이선스 게이트(T-36 · 호스트가 `check(GrammarCompletion)`으로 정한다 · 기본 참).
+    pub grammar: bool,
     pub detail_bg_alpha: u8,
     pub detail_text_alpha: u8,
     /// 접두 없이 고른 컬럼에 alias를 붙여 넣기(Alt = 반대 · 09-24).
@@ -90,6 +92,7 @@ impl IntelCfg {
             popup_max_w: s.int("intel.popup_max_width").clamp(240, 2000) as i32,
             key_passthrough: s.flag("intel.key_passthrough"),
             detail_card: s.flag("intel.detail_card"),
+            grammar: true,
             detail_bg_alpha: s.int("intel.detail_bg_alpha").clamp(0, 100) as u8,
             detail_text_alpha: s.int("intel.detail_text_alpha").clamp(0, 100) as u8,
             qualify_columns: s.flag("intel.qualify_columns"),
@@ -1105,6 +1108,9 @@ impl Intel {
                     //   그 절의 `next`만 · 모르는 자리(함수 괄호 안 · 낯선 절) = 공통 + 방언 키워드 전체.
                     let g = nsql_script::grammar::for_dialect(dialect);
                     let kws: Vec<String> = match (&ctx.kind, ctx.clause.as_deref()) {
+                        _ if !self.cfg.grammar => {
+                            intel::keywords_for(dialect).map(String::from).collect()
+                        }
                         (CtxKind::Start, _) => g.start().to_vec(),
                         (_, Some(cl)) => match g.next(cl) {
                             Some(n) => n.to_vec(),
@@ -1853,6 +1859,7 @@ mod tests {
             popup_max_w: 560,
             key_passthrough: true,
             detail_card: true,
+            grammar: true,
             detail_bg_alpha: 20,
             detail_text_alpha: 50,
             qualify_columns: true,

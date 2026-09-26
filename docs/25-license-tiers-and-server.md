@@ -382,7 +382,7 @@ nexa-license (lib · 의존 기본 0 · features)
 
 | | 결정 |
 |---|---|
-| 저장소 | **비공개 `SosomLab/nexa-license-server`** `crates/nexa-license-tool`(§9-1 · 서버와 같은 저장소 · 이 기기엔 아직 clone 없음) |
+| 저장소 | ~~비공개 `nexa-license-server`~~ → **09-27 결정(사용자 "라이선스 서버는 보류")**: 서버 저장소 없이 **공개 `nexa-license` 워크스페이스 `crates/nexa-license-tool`**(feature `issuer` = `sign`·`envelope`). 안전의 근거는 코드가 아니라 루트 비밀키 보관([91 §0](91-license-root-key-operations.md)) · 서버를 만들 때 옮겨도 코드는 같다 |
 | 의존 | `nexa-license`(공개 · path `../nexa-license/crates/nexa-license` · `features = ["issuer"]`) — 서명·키 생성 코드는 **issuer feature 뒤에만**(공개 저장소 규칙 "검증 전용") |
 | 형태 | 단일 바이너리 CLI(Rust · 외부 crate = `ed25519-dalek`·`sha2`·`getrandom`만) · 대화식 프롬프트 없음(스크립트 가능) · 종료 코드로 결과 |
 | 실행 기기 | SosomLab 발급 PC 1대(오프라인 가능) · 비밀키는 그 PC 밖으로 안 나간다(D-27) |
@@ -441,7 +441,7 @@ nexa-license (lib · 의존 기본 0 · features)
 | ⓑ OS 키체인(Windows DPAPI · macOS Keychain) | `nsql-vault`식 기기 봉투 | 그 PC에 묶임 · 백업은 ⓐ로 |
 | 백업 | 봉투 파일 + 암호를 **오프라인 2곳** | 키 분실 = 재발급 불가 → V2 회전 |
 
-### 12-7. 확정 필요 항목(순서대로 답하면 일괄 개발)
+### 12-7. 확정 항목(09-27 사용자 "키 발급 기능 전부 개발 · 서버 보류 · 진행" → 권장안으로 확정 · L-7 = 서버 보류로 대체)
 
 | # | 항목 | 권장 |
 |---|---|---|
@@ -453,7 +453,7 @@ nexa-license (lib · 의존 기본 0 · features)
 | **L-6** | 재발급 정책(D-35 연 5회 · 기기 교체 시 옛 기기 제거) | 권장안 |
 | **L-7** | `nexa-license-server` 저장소 생성 시점(지금 · 비공개) 및 이 기기 clone | 지금 |
 
-### 12-8. 개발 범위(확정 뒤 일괄 · T-241)
+### 12-8. 개발 범위 — ✅ 09-27 구현됨(nexa-license `5be5ac6` · [journal 09-27 §10](journal/2026-09-27.md))
 
 1. `nexa-license`: `sign`(issuer feature · dalek 2.x) · `request` encode/decode · `keys.rs`(ROOT_V1 자리) · `verify`(D-40 뒤 · 앱과 발급기가 같은 코드) · 테스트 픽스처 키쌍.
 2. `nexa-license-tool`: `keygen` · `issue` · `reissue` · `verify` · `decode-request` · `ledger` · 봉투(§12-6) · 시험 = 23 §5 전부(발급→설치→check · 변조 · 다른 기기 · CRLF · 동시 설치).
@@ -537,7 +537,7 @@ nexa-license (lib · 의존 기본 0 · features)
 
 정직한 한계: 오프라인 앱이라 노출 측정·과금은 없다(테스트 목적이므로 문제없음) · 실제 노출을 하려면 26 §8 네트워크 규칙과 개인정보 검토가 먼저다.
 
-### 13-6. 확정 필요(D-41~D-47)
+### 13-6. 확정(D-41~D-47 · 09-27 사용자 "진행" = 권장안 채택 · 게이트 배선 T-36 ✅ · 번호는 이 문서 안의 것 — docs/10의 D-41~D-48과 다르다)
 
 | # | 결정 | 권장 |
 |---|---|---|

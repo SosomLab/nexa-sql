@@ -326,7 +326,7 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "license",
-        usage: "nsql license status | request [<name> [<email>]] | install <file> | remove | path",
+        usage: "nsql license status | request [<name> [<email>]] | install <file> | remove | path | export <file> | import <file>",
         brief: Msg::HlpCmdLicense,
         detail: Msg::HlpCmdLicenseDetail,
         args: &[
@@ -335,6 +335,7 @@ const CMDS: &[Cmd] = &[
             ("install <file>", Msg::HlpArgLicenseInstall),
             ("remove", Msg::HlpArgLicenseRemove),
             ("path", Msg::HlpArgLicensePath),
+            ("export <file>", Msg::HlpArgLicenseExport),
         ],
         opts: &[],
         notes: &[],

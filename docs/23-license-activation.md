@@ -247,6 +247,6 @@ impl Licensing {
 |---|---|---|
 | **T-32** | `nsql-license` — 형식 파서·정규화·Ed25519 검증·`Feature`·`check` · 3-OS 기기 ID · 테스트 §5 — **09-27 앱 층 ✅**(라이브러리 몫은 `nexa-license` · 남음 = ROOT_KEYS) | D-24 D-26 |
 | **T-33** | `nsql license request/status/install/remove` CLI · 종료 코드 4 — **09-27 ✅**(+`path` · 종료 코드 4는 게이트 입구 T-36) | T-32 |
-| **T-34** | GUI 설정 라이선스 탭 · 상태줄 배지 · Denied 대화상자(요청 코드 복사) · i18n `license.*` | T-32 · 설정 창 |
-| **T-35** | `nsql-license-tool`(비공개) — 키 생성·발급·대장 · 공개키 내장 절차(`build.rs`) · 키 회전 | T-32 D-27 |
-| **T-36** | 게이트 배선 — D-23 목록의 각 기능 진입점 1곳씩 · 확장 manifest `requires` | T-32 D-23 |
+| **T-34** | GUI 라이선스 창·상태줄 배지·Denied 안내 · i18n — **09-27 ✅**(`license_win.rs` · 배지 클릭/Help ▸ License… · 요청 코드 복사 · 파일 열기 · 제거 · Denied = 상태줄 + 창 안내) | T-32 · 설정 창 |
+| **T-35** | `nexa-license-tool` — **09-27 ✅**(nexa-license 워크스페이스 · keygen/keys-rs/issue/reissue/verify/decode-request/ledger · 봉투 `nxk1`) | T-32 D-27 |
+| **T-36** | 게이트 배선 — **09-27 ✅ 1차**(25 §13-3 표 12곳 · `lic_gate`/`entitled`/`cap` · Debug = `license.gates_dev` · 남음 = 확장 manifest `requires` · xlsx/SSH/비교는 기능 자체가 아직 없음) | T-32 D-23 |

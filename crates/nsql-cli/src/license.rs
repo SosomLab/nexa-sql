@@ -6,6 +6,7 @@
 //! nsql license install <file>              # 검증 통과(Licensed)만 복사 · 원본 보존 · 무효면 쓰지 않음(종료 1)
 //! nsql license remove                      # 사용자 폴더 파일 삭제(기기 공용 파일은 남는다)
 //! nsql license path                        # 설치 자리
+//! nsql license export <file>               # 설치된 라이선스를 파일로 복사(백업 · docs/25 §11-3 · T-46) · import = install
 //! ```
 //! 종료 코드: 0 · 1(실패·거부) · 2(사용법). 기능 게이트의 4는 각 명령 입구가 낸다(23 §4-2 · D-41 뒤).
 
@@ -35,6 +36,14 @@ pub(crate) fn cmd_license(o: &Opts) -> i32 {
             None => usage(),
         },
         "remove" | "rm" => remove(),
+        "export" | "backup" => match o.positional.get(1) {
+            Some(f) => export(Path::new(f)),
+            None => usage(),
+        },
+        "import" | "restore" => match o.positional.get(1) {
+            Some(f) => install(Path::new(f)),
+            None => usage(),
+        },
         "path" => {
             let l = Licensing::open_default();
             match l.primary_path() {
@@ -169,6 +178,29 @@ fn remove() -> i32 {
         }
         Err(e) => {
             eprintln!("삭제할 수 없습니다: {e}");
+            1
+        }
+    }
+}
+
+/// 백업(T-46 · 25 §11-3): 판정에 쓴 파일을 그대로 복사(서명 파일이라 복사 = 백업 · 다른 PC에서는 기기 ID로 거부).
+fn export(dest: &Path) -> i32 {
+    let l = Licensing::open_default();
+    let Some(src) = l.path() else {
+        eprintln!("설치된 라이선스가 없습니다");
+        return 1;
+    };
+    match std::fs::copy(src, dest) {
+        Ok(n) => {
+            println!(
+                "exported       {} ({n} bytes) · state {}",
+                dest.display(),
+                state_label(l.state())
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("복사할 수 없습니다: {e}");
             1
         }
     }

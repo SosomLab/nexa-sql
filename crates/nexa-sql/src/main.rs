@@ -63,6 +63,7 @@ mod intel;
 mod intel_card;
 mod keymap;
 mod keys_win;
+mod license_win;
 mod log_win;
 mod mem_win;
 mod memstat;
@@ -110,6 +111,7 @@ use file_win::{FileWin, FileWinAction};
 use findbar::{FindAction, FindBar};
 use keymap::{Chord, Keymap};
 use keys_win::{KeysAction, KeysWin};
+use license_win::{LicAction, LicView, LicenseWin};
 use log_win::{LogWin, LogWinAction};
 use nexa_ctl::controls::{SplitAxis, SplitEvent, Splitter};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
@@ -216,6 +218,11 @@ struct App {
     txlog_win: TxLogWin,
     /// 세션 창(서버별 전체 세션 · 사용자 09-18) — 트랜잭션 로그 창과 같은 골격.
     sessions_win: SessionsWin,
+    /// ★ 라이선스 창(docs/23 §4-4 · T-34) + 판정 문맥(단일 원천 · `check(Feature)`는 여기만).
+    license_win: LicenseWin,
+    licensing: nsql_license::Licensing,
+    open_license: bool,
+    status_lic_rect: Rect,
     /// 메모리 맵 창(docs/80 · 모델리스 · 닫혀 있으면 비용 0).
     mem_win: mem_win::MemWin,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
@@ -2230,6 +2237,7 @@ impl App {
                 self.log_win.window(),
                 self.txlog_win.window(),
                 self.sessions_win.window(),
+                self.license_win.window(),
                 self.vars_win.window(),
                 self.mem_win.window(),
                 self.colors_win.window(),
@@ -2586,6 +2594,7 @@ impl App {
         self.log_win.close();
         self.txlog_win.close();
         self.sessions_win.close();
+        self.license_win.close();
         self.mem_win.close();
         self.vars_win.close();
         self.colors_win.close();
@@ -3166,6 +3175,9 @@ impl App {
             Some(p) => p,
             None => return,
         };
+        if verb == "install" && !self.lic_gate(nsql_license::Feature::DriverExtensions) {
+            return;
+        }
         // 확장 관리자가 꺼져 있으면 고르기도 막는다(명령 쪽 `ext_command`와 같은 문).
         if !self.settings.flag("extensions.enabled") {
             self.sess.status = t(Msg::StExtManagerOff).into();
@@ -4141,7 +4153,7 @@ impl App {
 
     /// 자동 저장의 다음 마감 시각(틱 스케줄러 깨움용 · 사용자 09-23): 사건 디바운스면 `touch + 2초` · 아니면 `마지막 저장 + 주기`.
     fn project_autosave_next(&self, now: Instant) -> Option<Instant> {
-        if !self.project.is_open() || !self.settings.flag("project.autosave") {
+        if !self.project.is_open() || !self.project_autosave_on() {
             return None;
         }
         let secs = self.settings.int("project.autosave_secs").max(5) as u64;
@@ -4153,7 +4165,7 @@ impl App {
     /// ★ 종료 직전 마지막 저장(사용자 09-23 "프로그램 종료 시 꼭 저장"): 프로젝트(자동 저장이 켜져 있을 때 · 꺼져 있으면
     /// `request_exit`의 물음이 이미 처리) + **북마크 워크스페이스**(디바운스를 기다리지 않고 지금). 창 닫기·File ▸ Exit 두 길 모두.
     fn flush_on_exit(&mut self) {
-        if self.project.is_open() && self.settings.flag("project.autosave") {
+        if self.project.is_open() && self.project_autosave_on() {
             let _ = self.project_save();
         }
         self.bookmarks.save_now();
@@ -4161,7 +4173,7 @@ impl App {
 
     /// 주기 자동 저장(설정 `project.autosave` · `project.autosave_secs`) — 바뀐 것이 있을 때만 쓴다.
     fn project_autosave_tick(&mut self) {
-        if !self.project.is_open() || !self.settings.flag("project.autosave") {
+        if !self.project.is_open() || !self.project_autosave_on() {
             return;
         }
         let secs = self.settings.int("project.autosave_secs").max(5) as u64;
@@ -4283,7 +4295,8 @@ impl App {
             self.arg_project.as_deref(),
             !self.arg_files.is_empty(),
             self.first_instance,
-            self.settings.flag("project.restore_last"),
+            self.settings.flag("project.restore_last")
+                && self.entitled(nsql_license::Feature::ProjectRestore),
             self.settings.get("project.last").unwrap_or(""),
         );
         let Some((path, from_arg)) = plan else {
@@ -4813,7 +4826,11 @@ impl App {
                 bound_tabs: self.bound_tabs(s.id),
             })
             .collect();
-        let max = self.settings.int("session.max_shared").max(1) as usize;
+        let max = self.cap(
+            nsql_license::Feature::MultiConnection,
+            self.settings.int("session.max_shared").max(1) as usize,
+            2,
+        );
         match sessions::login_plan(&views, max) {
             sessions::LoginPlan::Use(id) | sessions::LoginPlan::Recycle(id) => Some(id),
             sessions::LoginPlan::New => Some(self.new_shared()),
@@ -5035,7 +5052,11 @@ impl App {
             .all_sess()
             .filter(|s| s.is_private() && !s.closing)
             .count()
-            < self.settings.int("session.max_private").max(0) as usize;
+            < self.cap(
+                nsql_license::Feature::MultiConnection,
+                self.settings.int("session.max_private").max(0) as usize,
+                2,
+            );
         if room
             && self.session_mode() == SessionMode::PerEditor
             && !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing)
@@ -5108,7 +5129,11 @@ impl App {
 
     /// 탭 전용 세션 하나(워커 스레드 하나) — 상한 `session.max_private`(기본 사상: 1 인스턴스 · 1 서버 · 1 계정이라 예외는 아껴 쓴다).
     fn new_private(&mut self, tab: u64) -> Option<u64> {
-        let max = self.settings.int("session.max_private").max(0) as usize;
+        let max = self.cap(
+            nsql_license::Feature::MultiConnection,
+            self.settings.int("session.max_private").max(0) as usize,
+            2,
+        );
         let n = self
             .all_sess()
             .filter(|s| s.is_private() && !s.closing)
@@ -5989,6 +6014,9 @@ impl App {
         } else {
             None
         };
+        if !self.tab_room() {
+            return;
+        }
         self.editors.new_tab(None);
         self.set_focus(Focus::Editor);
         let tab = self.editors.active_id();
@@ -6436,8 +6464,7 @@ impl App {
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
             "editor.line_numbers" => self.editors.set_line_numbers(self.settings.flag(key)),
             k if k.starts_with("intel.") => {
-                self.intel
-                    .set_cfg(intel::IntelCfg::from_settings(&self.settings));
+                self.intel.set_cfg(self.intel_cfg());
                 self.explorer
                     .set_preload(self.settings.flag("intel.preload"));
                 self.explorer
@@ -6822,6 +6849,9 @@ impl App {
 
     /// 값 보기 창의 "파일에서 넣기"(87 §5): 이진 열이거나 UTF-8이 아니면 바이트 · 아니면 글 — 그리드 셀 + 창 둘 다 갱신.
     fn cell_load_file(&mut self, path: &std::path::Path) {
+        if !self.lic_gate(nsql_license::Feature::LobImage) {
+            return;
+        }
         let Some((row, col, binary)) = self.sqlprev_win.value_cell() else {
             return;
         };
@@ -7039,7 +7069,11 @@ impl App {
             child_of: None,
         };
         self.panel.push(tab);
-        let max = self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize;
+        let max = self.cap(
+            nsql_license::Feature::ResultTabs,
+            self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize,
+            2,
+        );
         if self.panel.tabs.len() > max && self.settings.flag("grid.result_tab_evict") {
             if let Some(v) = self.panel.evict_candidate() {
                 let gone = self.panel.remove(v).map(|t| t.title).unwrap_or_default();
@@ -7061,7 +7095,11 @@ impl App {
     /// `parent` 탭에 딸린 `ord`번째 결과 탭의 id — 있으면 재사용, 없으면 같은 패널 끝에 만든다(활성 탭은 바꾸지 않는다 ·
     /// 상한 `grid.result_tabs_max`를 넘으면 가장 오래된 비고정 탭을 걷는다). 패널을 못 찾으면 `parent`(덮어쓰기 = 종전).
     fn child_result_tab(&mut self, parent: u64, ord: u32) -> u64 {
-        let max = self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize;
+        let max = self.cap(
+            nsql_license::Feature::ResultTabs,
+            self.settings.int("grid.result_tabs_max").clamp(1, 64) as usize,
+            2,
+        );
         let evict = self.settings.flag("grid.result_tab_evict");
         let Some(fresh) = self.grid_for(parent).map(|g| g.fresh_like()) else {
             return parent;
@@ -7658,9 +7696,11 @@ impl App {
         }
         match id {
             "file.new" => {
-                self.editors.new_tab(None);
-                self.set_focus(Focus::Editor);
-                self.on_new_tab();
+                if self.tab_room() {
+                    self.editors.new_tab(None);
+                    self.set_focus(Focus::Editor);
+                    self.on_new_tab();
+                }
             }
             "file.exit" => self.request_exit(),
             // ★ 파일 열기/저장(T-74) — 자체 대화상자(nexa-dlg) · 네이티브 0.
@@ -8059,10 +8099,12 @@ impl App {
                 all.extend(self.sess.shared_vars.iter().cloned());
                 all.extend(self.global_vars.iter().cloned());
                 let text = nsql_script::vars_to_script(&all);
-                self.editors.new_tab(None);
-                self.editors.cur_mut().set_text(&text);
-                self.set_focus(Focus::Editor);
-                self.redraw();
+                if self.tab_room() {
+                    self.editors.new_tab(None);
+                    self.editors.cur_mut().set_text(&text);
+                    self.set_focus(Focus::Editor);
+                    self.redraw();
+                }
             }
             // 이 탭의 변수 표를 새 결과 탭으로(`SHOW VARIABLES` — 러너가 탭 층 + 공유 층 + 프로필 층을 한 표로 낸다 · docs/63 V2).
             "vars.show" => {
@@ -8130,6 +8172,14 @@ impl App {
                 }
             }
             "view.memory" => self.toggle_mem_window(),
+            "help.license" => {
+                if self.license_win.is_open() {
+                    self.license_win.close();
+                } else {
+                    self.open_license = true;
+                    self.redraw();
+                }
+            }
             "conn.sessions" | "view.sessions" => {
                 if self.sessions_win.is_open() {
                     self.sessions_win.close();
@@ -9093,6 +9143,21 @@ impl App {
             return;
         }
         // 자체 시험(09-26 성능 전수): 메모리 계측 표본을 파일로 — 총량·anon·부품 원장(L1 Meta · L2 MetaCols · L3 MetaDetail …).
+        // 자체 시험(T-34): 라이선스 창 상태 덤프 · 파일 설치(파일 창과 같은 길).
+        if let Some(path) = id.strip_prefix("license.dump:") {
+            let view = self.license_view();
+            let mut out = format!("badge={} warn={}\n", view.state, view.warn);
+            for (k, v) in &view.rows {
+                out.push_str(&format!("{k}={v}\n"));
+            }
+            out.push_str(&self.license_win.dump());
+            let _ = std::fs::write(path, out);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("license.install:") {
+            self.license_install(Path::new(path));
+            return;
+        }
         if let Some(path) = id.strip_prefix("mem.dump:") {
             let smp = self.mem_sample();
             let mut out = format!(
@@ -10310,7 +10375,7 @@ impl App {
         // ★ 종료 흐름(사용자 09-23): ① 프로젝트 — 자동 저장이면 저장 · 아니면 묻기 ② 미저장 **파일** 탭마다 묻기(스크립트 탭은
         //   프로젝트에 본문이 보존되므로 프로젝트가 있으면 묻지 않는다 · 없으면 전부 묻는다) ③ 트랜잭션 확인 → 종료.
         if self.project.is_open() {
-            if self.settings.flag("project.autosave") {
+            if self.project_autosave_on() {
                 let _ = self.project_save();
             } else if !self.exit_project_asked {
                 self.exit_pending = true;
@@ -11029,6 +11094,7 @@ impl App {
                         item("help.demo", Msg::MnDemoCreate)
                     },
                     MenuEntry::Separator,
+                    item("help.license", Msg::MnLicense),
                     item("help.about", Msg::MnAbout),
                 ],
             ),
@@ -11166,8 +11232,14 @@ impl App {
                     );
                 }
                 if let Some(text) = sel {
-                    let rich =
+                    let rich_wanted =
                         self.focus == Focus::Editor && self.settings.flag("editor.copy_rich");
+                    let rich = rich_wanted && self.entitled(nsql_license::Feature::RichCopy);
+                    if rich_wanted && !rich {
+                        // 서식 복사는 Pro — 텍스트로 복사하고 상태줄로 안내(복사 흐름을 창으로 끊지 않는다).
+                        self.sess.status =
+                            self.license_denied_text(nsql_license::Feature::RichCopy);
+                    }
                     let hl = self.editors.cur().highlighter().cloned();
                     failed = match (rich, hl) {
                         (true, Some(h)) => {
@@ -11469,6 +11541,7 @@ impl App {
         cmds.push(m("view.goto_anything", Msg::MnView, Msg::MnGotoAnything));
         cmds.push(m("edit.prefs", Msg::MnEdit, Msg::MnPreferences));
         cmds.push(m("edit.settings_json", Msg::MnEdit, Msg::MnSettingsJson));
+        cmds.push(m("help.license", Msg::MnHelp, Msg::MnLicense));
         cmds.push(m("help.about", Msg::MnHelp, Msg::MnAbout));
         for name in self.syntax.names() {
             cmds.push((
@@ -11500,6 +11573,8 @@ impl App {
             } else if let Some(w) = self.txlog_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
             } else if let Some(w) = self.sessions_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
+            } else if let Some(w) = self.license_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
             } else if let Some(w) = self.vars_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
@@ -11628,7 +11703,7 @@ impl App {
                 self.sqlprev_win.file_name()
             }
             (PickerMode::Open | PickerMode::Folder, _)
-            | (PickerMode::Save, FilePurpose::Import) => String::new(),
+            | (PickerMode::Save, FilePurpose::Import | FilePurpose::License) => String::new(),
         };
         // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
         let (start, owner, over) = if mode == PickerMode::Folder {
@@ -11698,6 +11773,12 @@ impl App {
     /// 파일 → 탭(인코딩 지정). 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
     fn open_file_enc(&mut self, path: &Path, enc: &str) {
         let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        // ★ 무료판 편집 용량(D-46 · 25 §13-3): 2 MB 이상은 **읽기 전용**으로 연다(실행·조회는 그대로 · 큰 파일 모드 L2와 같은 길).
+        if !self.entitled(nsql_license::Feature::LargeEdit) && size >= (2u64 << 20) {
+            self.license_limit_note(nsql_license::Feature::LargeEdit);
+            self.load_file(path, enc, LoadMode::ReadOnly);
+            return;
+        }
         let ask = (self.settings.int("file.large_ask_mb").max(0) as u64) << 20;
         // ★ 큰 파일(docs/59 §4 3단계): 기준을 넘으면 **먼저 묻는다** — 열기 / 읽기 전용 / 앞부분만 / 열지 않고 실행.
         if ask > 0 && size >= ask {
@@ -12880,6 +12961,250 @@ impl App {
         );
     }
 
+    fn open_license_window(&mut self, el: &ActiveEventLoop) {
+        self.licensing.refresh();
+        let owner = self.window.clone();
+        self.license_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            owner.as_deref(),
+        );
+    }
+
+    /// 상태줄 배지 글(docs/23 §4-4): `Free · non-commercial use only` / `Pro · ACME` / `⚠ …`.
+    fn license_badge(&self) -> String {
+        Self::license_badge_of(&self.licensing)
+    }
+
+    /// 필드만 빌린다(상태줄 paint 중 `surface`가 가변 빌림 상태라 `&self`를 못 쓴다).
+    fn license_badge_of(lic: &nsql_license::Licensing) -> String {
+        use nsql_license::{LicenseState, Tier};
+        match lic.state() {
+            LicenseState::Free => t(Msg::StLicFree).to_string(),
+            LicenseState::Licensed(l) => {
+                let tier = match Tier::parse(&l.tier) {
+                    Tier::Trial => t(Msg::LicTierTrial),
+                    Tier::Org => t(Msg::LicTierOrg),
+                    Tier::Pro | Tier::Free => t(Msg::LicTierPro),
+                };
+                tf(Msg::StLicLicensed, &[tier, &l.licensee])
+            }
+            LicenseState::Invalid(i) => {
+                tf(Msg::StLicInvalid, &[&format!("{i:?}").to_ascii_lowercase()])
+            }
+            LicenseState::Outdated(_) => t(Msg::StLicOutdated).to_string(),
+            LicenseState::Expired(l) => tf(Msg::StLicExpired, &[&l.expires]),
+        }
+    }
+
+    /// 라이선스 창 보기(표 · 요청 코드) — 그릴 때마다 만든다(값 몇 줄).
+    fn license_view(&self) -> LicView {
+        use nsql_license::LicenseState;
+        let st = self.licensing.state();
+        let warn = !matches!(st, LicenseState::Licensed(_));
+        let dash = || "-".to_string();
+        let mut rows: Vec<(String, String)> = vec![
+            (t(Msg::LicLblState).into(), st.name().to_string()),
+            (
+                t(Msg::LicLblFile).into(),
+                self.licensing
+                    .path()
+                    .map_or_else(dash, |p| p.display().to_string()),
+            ),
+        ];
+        if let Some(l) = st.license() {
+            let feats = if l.features.contains("*") {
+                "*".to_string()
+            } else {
+                nsql_license::features_of(l)
+                    .into_iter()
+                    .map(|f| f.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            rows.push((t(Msg::LicLblId).into(), l.id.clone()));
+            rows.push((t(Msg::LicLblLicensee).into(), l.licensee.clone()));
+            rows.push((
+                t(Msg::LicLblKind).into(),
+                format!("{} / {}", l.kind, l.tier),
+            ));
+            rows.push((t(Msg::LicLblFeatures).into(), feats));
+            rows.push((t(Msg::LicLblIssued).into(), l.issued.clone()));
+            rows.push((t(Msg::LicLblUntil).into(), l.updates_until.clone()));
+            rows.push((
+                t(Msg::LicLblExpires).into(),
+                if l.expires.is_empty() {
+                    dash()
+                } else {
+                    l.expires.clone()
+                },
+            ));
+        }
+        rows.push((
+            t(Msg::LicLblBuild).into(),
+            nsql_license::PRODUCT.build_date.to_string(),
+        ));
+        rows.push((
+            t(Msg::LicLblMachine).into(),
+            nsql_license::Licensing::machine_code().unwrap_or_else(dash),
+        ));
+        rows.push((
+            t(Msg::LicLblInstallTo).into(),
+            self.licensing
+                .primary_path()
+                .map_or_else(dash, |p| p.display().to_string()),
+        ));
+        LicView {
+            state: self.license_badge(),
+            warn,
+            rows,
+            request: nsql_license::Licensing::request_code(&nsql_license::RequestMeta::default()),
+        }
+    }
+
+    /// 파일 창/기동 명령 → 설치(검증 통과만 씀 · 원본 보존) → 창 안내 + 상태줄 + 배지 갱신.
+    fn license_install(&mut self, path: &Path) {
+        use nsql_license::InstallError;
+        let (note, warn) = match self.licensing.install(path) {
+            Ok(l) => (tf(Msg::LicNoteInstalled, &[&l.id]), false),
+            Err(InstallError::Rejected(s)) => (tf(Msg::LicNoteRejected, &[s.name()]), true),
+            Err(InstallError::Io(e)) => (tf(Msg::LicNoteIo, &[&e.to_string()]), true),
+        };
+        self.sess.status = note.clone();
+        self.license_win.set_note(note, warn);
+        self.redraw();
+    }
+
+    fn license_remove(&mut self) {
+        let (note, warn) = match self.licensing.remove() {
+            Ok(true) => (t(Msg::LicNoteRemoved).to_string(), false),
+            Ok(false) => (t(Msg::LicNoteNothing).to_string(), true),
+            Err(e) => (tf(Msg::LicNoteIo, &[&e.to_string()]), true),
+        };
+        self.sess.status = note.clone();
+        self.license_win.set_note(note, warn);
+        self.redraw();
+    }
+
+    fn license_copy_request(&mut self, name: &str, email: &str) {
+        let meta = nsql_license::RequestMeta {
+            name: name.to_string(),
+            email: email.to_string(),
+        };
+        let (note, warn) = match nsql_license::Licensing::request_code(&meta) {
+            Some(code) if clipboard::write_text(&code) => {
+                (t(Msg::LicNoteCopied).to_string(), false)
+            }
+            Some(_) => (t(Msg::LicNoteCopyFailed).to_string(), true),
+            None => (t(Msg::LicNoMachine).to_string(), true),
+        };
+        self.license_win.set_note(note, warn);
+    }
+
+    // ── ★ 라이선스 게이트(docs/23 §4-2 · 25 §13-3 · T-36 · D-41/D-43/D-46 권장안 확정 09-27)
+    //   규칙: 기능당 **정확히 한 곳**(UI 행위 진입점) · 깊은 곳 중복 검사 없음 · Release = 늘 켬 · Debug = `license.gates_dev`.
+
+    /// 게이트가 켜져 있는가 — Release 빌드는 늘 · Debug는 HIDDEN 설정(개발·자동 시험 기본 off).
+    fn gates_on(&self) -> bool {
+        !cfg!(debug_assertions) || self.settings.flag("license.gates_dev")
+    }
+
+    /// 순수 판정(안내 없음) — 상한식·조용한 폴백용.
+    fn entitled(&self, f: nsql_license::Feature) -> bool {
+        !self.gates_on() || self.licensing.check(f).is_allowed()
+    }
+
+    /// ★ 행위 게이트: 허용이면 true · 거부면 상태줄 안내 + 라이선스 창(요청 코드 복사)으로 안내(D-43 · 기능은 숨기지 않는다).
+    fn lic_gate(&mut self, f: nsql_license::Feature) -> bool {
+        if self.entitled(f) {
+            return true;
+        }
+        let msg = self.license_denied_text(f);
+        self.sess.status = msg.clone();
+        self.license_win.set_note(msg, true);
+        self.open_license = true;
+        self.redraw();
+        false
+    }
+
+    /// 상한식(D-46 · TablePlus식): 무료면 `cap`까지 · 막지 않고 값만 줄인다.
+    fn cap(&self, f: nsql_license::Feature, n: usize, cap: usize) -> usize {
+        if self.entitled(f) {
+            n
+        } else {
+            n.min(cap)
+        }
+    }
+
+    /// 상한에 닿았을 때 한 줄(상태줄만 · 창 없음).
+    fn license_limit_note(&mut self, f: nsql_license::Feature) {
+        let (label, alt) = Self::feature_texts(f);
+        self.sess.status = tf(Msg::LicLimit, &[label, alt]);
+    }
+
+    fn license_denied_text(&self, f: nsql_license::Feature) -> String {
+        let (label, alt) = Self::feature_texts(f);
+        tf(Msg::LicDenied, &[label, alt])
+    }
+
+    /// 기능 이름 · 무료 대체 경로(25 §13-3 "대체" 열 = 비면 게이트 후보에서 뺀다).
+    fn feature_texts(f: nsql_license::Feature) -> (&'static str, &'static str) {
+        use nsql_license::Feature as F;
+        match f {
+            F::ImportGui => (t(Msg::LicFeatImportGui), t(Msg::LicAltImportGui)),
+            F::DriverExtensions => (
+                t(Msg::LicFeatDriverExtensions),
+                t(Msg::LicAltDriverExtensions),
+            ),
+            F::ProjectRestore => (t(Msg::LicFeatProjectRestore), t(Msg::LicAltProjectRestore)),
+            F::BookmarkGroups => (t(Msg::LicFeatBookmarkGroups), t(Msg::LicAltBookmarkGroups)),
+            F::GrammarCompletion => (
+                t(Msg::LicFeatGrammarCompletion),
+                t(Msg::LicAltGrammarCompletion),
+            ),
+            F::LobImage => (t(Msg::LicFeatLobImage), t(Msg::LicAltLobImage)),
+            F::RichCopy => (t(Msg::LicFeatRichCopy), t(Msg::LicAltRichCopy)),
+            F::LogExport => (t(Msg::LicFeatLogExport), t(Msg::LicAltLogExport)),
+            F::MultiConnection => (
+                t(Msg::LicFeatMultiConnection),
+                t(Msg::LicAltMultiConnection),
+            ),
+            F::MultiTabs => (t(Msg::LicFeatMultiTabs), t(Msg::LicAltMultiTabs)),
+            F::LargeEdit => (t(Msg::LicFeatLargeEdit), t(Msg::LicAltLargeEdit)),
+            F::ResultTabs => (t(Msg::LicFeatResultTabs), t(Msg::LicAltResultTabs)),
+            // 아직 기능 자체가 없는 것(T-8 xlsx · T-3 SSH · 19 비교 · Org 운영 기능) — 게이트 자리도 없다.
+            _ => (f.as_str(), ""),
+        }
+    }
+
+    /// 편집 탭 상한(D-46 무료 5): 자리가 있으면 true · 없으면 상태줄 안내(막는다 = TablePlus식).
+    fn tab_room(&mut self) -> bool {
+        const FREE_TABS: usize = 5;
+        if self.entitled(nsql_license::Feature::MultiTabs)
+            || self.editors.tab_titles().len() < FREE_TABS
+        {
+            return true;
+        }
+        self.license_limit_note(nsql_license::Feature::MultiTabs);
+        self.redraw();
+        false
+    }
+
+    /// 인텔리센스 설정 + 라이선스(절별 완성·상세 카드 = Pro · 기본 완성은 무료).
+    fn intel_cfg(&self) -> intel::IntelCfg {
+        let mut c = intel::IntelCfg::from_settings(&self.settings);
+        let ok = self.entitled(nsql_license::Feature::GrammarCompletion);
+        c.grammar = ok;
+        c.detail_card = c.detail_card && ok;
+        c
+    }
+
+    /// 프로젝트 자동 저장·복원은 Pro(25 §13-3) — 설정이 켜져 있어도 무료면 꺼진 것으로.
+    fn project_autosave_on(&self) -> bool {
+        self.settings.flag("project.autosave")
+            && self.entitled(nsql_license::Feature::ProjectRestore)
+    }
+
     /// 세션 창의 표 줄 — 세션 상태의 단일 원천(`Sess`)에서 그릴 때마다 만든다(복사는 줄 수만큼 · 세션은 몇 개뿐).
     fn session_rows(&self) -> Vec<SessRow> {
         let titles: HashMap<u64, String> = self
@@ -13586,13 +13911,14 @@ impl App {
                     }
                     self.redraw();
                 }
-                objdetail::DetailAction::OpenInEditor(title, text) => {
+                objdetail::DetailAction::OpenInEditor(title, text) if self.tab_room() => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
                     self.editors.cur_mut().goto_line(1);
                     self.set_focus(Focus::Editor);
                     self.redraw();
                 }
+                objdetail::DetailAction::OpenInEditor(..) => {}
                 objdetail::DetailAction::Collapsed(on) => {
                     let _ = self
                         .settings
@@ -13622,13 +13948,14 @@ impl App {
         for a in self.explorer.take_actions() {
             changed = true;
             match a {
-                ExplorerAction::OpenSql { title, text } => {
+                ExplorerAction::OpenSql { title, text } if self.tab_room() => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
                     // 캐럿 = 문서 처음(BOF · 사용자 09-26 "Open source 뒤 EOF가 아니라 BOF").
                     self.editors.cur_mut().goto_line(1);
                     self.set_focus(Focus::Editor);
                 }
+                ExplorerAction::OpenSql { .. } => {}
                 ExplorerAction::Status(s) => self.sess.status = s,
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
                 ExplorerAction::Notice(s) => {
@@ -13700,6 +14027,10 @@ impl App {
                 }
                 // ★ Import Data…(89 §3-3): 표 표기를 정하고 파일 창(열기) → 고르면 Import 창.
                 ExplorerAction::Import { owner, server } => {
+                    if !self.lic_gate(nsql_license::Feature::ImportGui) {
+                        changed = true;
+                        continue;
+                    }
                     let dialect = server
                         .as_ref()
                         .and_then(|s| s.dialect)
@@ -14391,6 +14722,9 @@ impl App {
                     }
                 }
                 bookmarks_panel::BmAction::NewGroup => {
+                    if !self.lic_gate(nsql_license::Feature::BookmarkGroups) {
+                        continue;
+                    }
                     let base = t(Msg::BmNewGroupName).to_string();
                     let gid = self.bookmarks.new_group(&base);
                     self.bm_panel.sync(&self.bookmarks.store);
@@ -15038,6 +15372,9 @@ impl App {
                 } else {
                     tf(Msg::StTabSize, &[&ts])
                 };
+                // ★ 라이선스 배지(docs/23 §4-4 · D-44: 무료 = "non-commercial use only" 상시) — 클릭 = 라이선스 창.
+                let lic_idx = segs.len();
+                segs.push((Self::license_badge_of(&self.licensing), false));
                 // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
                 if self.settings.flag("statusbar.git") {
                     let dir = self
@@ -15064,6 +15401,7 @@ impl App {
                 self.status_enc_rect = Rect::new(0, 0, 0, 0);
                 self.status_tx_rect = Rect::new(0, 0, 0, 0);
                 self.status_mem_rect = Rect::new(0, 0, 0, 0);
+                self.status_lic_rect = Rect::new(0, 0, 0, 0);
                 let last = segs.len() - 1;
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
@@ -15071,6 +15409,9 @@ impl App {
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
                     if idx == tx_idx {
                         self.status_tx_rect = r;
+                    }
+                    if idx == lic_idx {
+                        self.status_lic_rect = r;
                     }
                     if Some(idx) == mem_idx {
                         self.status_mem_rect = r;
@@ -16098,6 +16439,11 @@ impl App {
                 self.redraw();
                 return;
             }
+            if self.status_lic_rect.contains(Point { x, y }) {
+                self.open_license = true;
+                self.redraw();
+                return;
+            }
             if self.status_tx_rect.contains(Point { x, y }) {
                 self.open_tx_menu();
                 self.redraw();
@@ -16989,6 +17335,9 @@ impl ApplicationHandler<Wake> for App {
         if std::mem::take(&mut self.open_sessions) {
             self.open_sessions_window(el);
         }
+        if std::mem::take(&mut self.open_license) {
+            self.open_license_window(el);
+        }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
         }
@@ -17515,6 +17864,10 @@ impl ApplicationHandler<Wake> for App {
         }
         if matches!(event, WindowEvent::Focused(true)) {
             self.on_window_focused(id);
+            // 라이선스 파일이 밖에서(CLI `nsql license install`) 바뀌었으면 배지·창을 다시(변경 서명만 봄 · 파일은 안 읽음).
+            if self.licensing.refresh() {
+                self.license_win.redraw();
+            }
             // 다른 앱에서 입력 소스를 바꾸고 돌아왔을 수 있다.
             self.sync_hangul_mode();
         }
@@ -17613,6 +17966,7 @@ impl ApplicationHandler<Wake> for App {
                         (PickerMode::Open, FilePurpose::CellValue) => {
                             self.cell_load_file(&path);
                         }
+                        (PickerMode::Open, FilePurpose::License) => self.license_install(&path),
                         (PickerMode::Open, FilePurpose::Import) => {
                             if let Some(c) = self.import_ctx.as_mut() {
                                 c.1 = path.to_path_buf();
@@ -17957,14 +18311,23 @@ impl ApplicationHandler<Wake> for App {
                     }
                     self.redraw();
                 }
-                sqlprev_win::SqlPrevAction::Mode(_) => {}
+                sqlprev_win::SqlPrevAction::Mode(m) => {
+                    // 이미지 모드는 Pro(25 §13-3) — 창이 먼저 바꿨으면 Hex로 되돌리고 안내.
+                    if m == sqlprev_win::ValueMode::Image
+                        && !self.lic_gate(nsql_license::Feature::LobImage)
+                    {
+                        self.sqlprev_win.set_mode(sqlprev_win::ValueMode::Hex);
+                    }
+                }
                 sqlprev_win::SqlPrevAction::OpenEditor => {
                     let title = self.sqlprev_win.file_name();
                     let text = self.sqlprev_win.text();
                     self.sqlprev_win.close();
-                    self.editors.new_tab(Some(title));
-                    self.editors.cur_mut().set_text(&text);
-                    self.set_focus(Focus::Editor);
+                    if self.tab_room() {
+                        self.editors.new_tab(Some(title));
+                        self.editors.cur_mut().set_text(&text);
+                        self.set_focus(Focus::Editor);
+                    }
                     self.sync_modal();
                 }
                 sqlprev_win::SqlPrevAction::Copy => {
@@ -18059,6 +18422,29 @@ impl ApplicationHandler<Wake> for App {
             }
             return;
         }
+        if self.license_win.is(id) {
+            match self.license_win.handle(&event) {
+                LicAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let view = self.license_view();
+                    self.license_win
+                        .paint(view, &self.ui_font, &self.theme, ui_px);
+                }
+                LicAction::Close => {
+                    self.license_win.close();
+                    self.redraw();
+                }
+                LicAction::OpenFile => {
+                    self.file_purpose = FilePurpose::License;
+                    self.open_file_dlg = Some(PickerMode::Open);
+                    self.redraw();
+                }
+                LicAction::Remove => self.license_remove(),
+                LicAction::CopyRequest(name, email) => self.license_copy_request(&name, &email),
+                LicAction::None => {}
+            }
+            return;
+        }
         if self.sessions_win.is(id) {
             // ★ 그린 직후에 다시 그리기를 요청하면 끝없이 돈다(세션 창을 열어 두면 유휴 CPU 90% · 09-19 메모리 점검에서 발견).
             let action = self.sessions_win.handle(&event);
@@ -18105,7 +18491,8 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
                 TxLogAction::OpenSql(eid) => {
-                    if let Some(text) = self.txlog.entry(eid).map(|e| e.text.clone()) {
+                    let text = self.txlog.entry(eid).map(|e| e.text.clone());
+                    if let Some(text) = text.filter(|_| self.tab_room()) {
                         self.editors.new_tab(None);
                         self.editors.cur_mut().set_text(&text);
                         self.set_focus(Focus::Editor);
@@ -18143,6 +18530,7 @@ impl ApplicationHandler<Wake> for App {
                         self.apply_detail_mask();
                     }
                 }
+                LogWinAction::SaveAs if !self.lic_gate(nsql_license::Feature::LogExport) => {}
                 LogWinAction::SaveAs => {
                     self.file_purpose = FilePurpose::LogExport;
                     self.open_file_window(el, PickerMode::Save);
@@ -18432,6 +18820,9 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_sessions) {
             self.open_sessions_window(el);
+        }
+        if std::mem::take(&mut self.open_license) {
+            self.open_license_window(el);
         }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
@@ -18871,6 +19262,10 @@ fn main() {
         log_win,
         txlog_win,
         sessions_win,
+        license_win: LicenseWin::new(),
+        licensing: nsql_license::Licensing::open_default(),
+        open_license: false,
+        status_lic_rect: Rect::new(0, 0, 0, 0),
         mem_win: mem_win::MemWin::new(),
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
@@ -19445,6 +19840,8 @@ enum FilePurpose {
     CellValue,
     /// ★ Import 창의 원료 파일 고르기(docs/89 §3-3).
     Import,
+    /// ★ 라이선스 파일 열기(docs/23 §1-3 · 라이선스 창).
+    License,
 }
 
 /// 파일에서 셀에 넣은 결과 = (이진 바이트, 글, 바이트 수).

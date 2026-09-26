@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/license-issuer-gui-gates | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | ★ T-34 GUI 라이선스 창·상태줄 배지 · ★ T-36 게이트 12곳(`lic_gate`/`entitled`/`cap` · `license.gates_dev`) · `Feature::ResultTabs` · `nsql license export/import` · func-check L13~L16 · 위키 License · 91/25/23 문서 · (nexa-license 5be5ac6 = issuer + nexa-license-tool) |
 | feat/license-app-layer-and-ci-fix | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📐 [92](92-digital-asset-protection.md) 디지털 자산 보호 · ★ 라이선스 앱 층 `crates/nsql-license`(T-32') + CLI `nsql license`(T-33) · nexa-license `fs` 의존 · 🔧 CI 4ecbd88(clippy cfg · `it-mssql.sql` dual) · 워크플로 nexa-license 체크아웃 |
 | feat/linux-101-full-check-and-license-lib | 2026-09-26 | 2026-09-27 → main(삭제) | 1 | 101차(linux) — 전수 검사 도구 넷(`linux-func-check/dbms-e2e/inventory/mem-reclaim.sh`) · 저녁 결함 일괄(그리드 방언 오염 ORA-00936 · Ctrl+X 손실 · ★ X11 클립보드 직접 `clipboard_x11.rs` · ROWID `--` 주석 ORA-00923 · IME 단축키 3-OS `commit_composition` · D-225 · 팔레트 한글 · `user_tx_end` · 팔레트 보기 토글·레이아웃 초기화) · 라이선스 설계(25 §12·§13 · [91](91-license-root-key-operations.md)) · journal 09-26·09-27 |
 | feat/bulk-tds-jsonl | 2026-09-26 | 2026-09-26 → main(삭제) | 1 | ★ T-236 B-4 일부: SQL Server TDS bulk 싱크(`TdsSink` · `MsKind` · 트랜잭션) · JSONL 원료(`nsql_io::jsonl`) · 드라이버 실패 뒤 다중 행 이어 가기 · E2E 22/22(§239) |

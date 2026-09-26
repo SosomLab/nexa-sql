@@ -14,18 +14,19 @@
 ## 1. 기준 정보 생성(최초 1회 · 발급 PC)
 
 1. 발급 PC 준비: 운영자 1인만 쓰는 계정 · 디스크 암호화(BitLocker/FileVault/LUKS) · 클라우드 동기화 폴더 **밖**의 작업 폴더(예 `~/nexa-issuer/`).
-2. `nexa-license-tool keygen --out ~/nexa-issuer/root-v1.key` — 암호 두 번 입력(환경 변수 `NEXA_LICENSE_KEY_PASS`도 허용 · 인자로는 못 준다).
-   - 산출 = **봉투 파일** `root-v1.key`(PBKDF2-HMAC-SHA256 60만 회 → 키 · XOR-스트림 + HMAC 태그 · 외부 crate 0) + **공개키** `root-v1.pub`(base32) + 지문(SHA-256 앞 8바이트).
-3. 공개키를 라이브러리에 박는다: `nexa-license/crates/nexa-license/src/keys.rs`의 `ROOT_KEYS`에 `RootKey { id: "root-v1", alg: Ed25519, public: &[…] }` — **공개 저장소에 올라가도 된다**. 커밋 메시지에 지문을 적는다.
-4. 앱을 다시 빌드·배포한다(공개키가 바이너리에 들어간다). `nsql license status`에 "root-v1 (지문)"이 보이면 끝.
+2. `nexa-license-tool keygen --out ~/nexa-issuer/root-v1.key --id root-v1` — 암호 두 번 입력(`--pass-env NEXA_LICENSE_KEY_PASS`도 허용 · 인자로는 못 준다 · 같은 경로가 있으면 덮어쓰지 않는다).
+   - 산출 = **봉투 파일** `root-v1.key`(형식 `nxk1` · PBKDF2-HMAC-SHA256 60만 회 → 키 · HMAC 스트림 XOR + MAC · 유닉스 0600 · 외부 crate 0) + **공개키** `root-v1.key.pub`(형식 `nxp1` · base32).
+3. 공개키를 라이브러리에 박는다: `nexa-license-tool keys-rs ~/nexa-issuer/root-v1.key.pub --out <nexa-license>/crates/nexa-license/src/keys.rs`(회전 때는 `.pub` 둘을 나란히) — **공개 저장소에 올라가도 된다**. 커밋 메시지에 공개키 base32 앞 8자를 적는다.
+4. 앱을 다시 빌드·배포한다(공개키가 바이너리에 들어간다). 발급 뒤 `nsql license status`의 `state licensed`가 확인이다.
 5. **곧바로 백업**(§3)을 만든 뒤에야 첫 발급을 한다.
 
-⚠ 09-27 초기 버전의 첫 키는 개발 Linux VM에서 만들었다(`journal 09-26 §11`). **정식 발급 전에 발급 PC에서 새로 만든 키로 회전(§5)한다** — 개발 VM의 봉투는 회전 뒤 파기.
+⚠ 09-27 현재 `ROOT_KEYS`는 **비어 있다**(키를 아직 만들지 않았다 — 발급 PC에서 만드는 것이 원칙). 개발 시험은 시험 전용 키를 코드 안에서 만들어 쓴다(`with_roots` · 실 키와 무관).
 
 ## 2. 사용(발급 때마다)
 
 - 발급은 **발급 PC에서만**. `issue`는 봉투를 메모리에서 풀고 서명 뒤 즉시 지운다(디스크에 평문 비밀키를 쓰지 않는다).
-- 암호는 프롬프트 또는 `NEXA_LICENSE_KEY_PASS`(셸 히스토리에 안 남게 `read -s`로 넣는다) — 스크립트 파일에 적지 않는다.
+- 암호는 프롬프트 또는 `--pass-env NEXA_LICENSE_KEY_PASS`(셸 히스토리에 안 남게 `read -s`로 넣는다) — 스크립트 파일에 적지 않는다.
+- 발급 = `nexa-license-tool issue --key root-v1.key --request <코드> --kind user --licensee "<이름>" --tier pro [--email …] [--note 주문번호]` → `./issued/<ID>/nexa-sql.license` + `mail.txt` · 기기 추가 = `reissue --id <ID> --add-request <코드>`(옛 판은 `.v<N>`으로 보존).
 - 대장 `ledger.tsv`는 발급 PC 로컬(§3 백업에 포함) — 기기 ID는 접두 8자만 적는다(요청 코드 원문 보관 불필요).
 - 발급한 파일은 `verify`로 자기 검증 뒤 전달한다(같은 검증 코드 = 앱과 동일 판정).
 

@@ -3456,6 +3456,16 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // ── 스크립트 엔진 엄격 모드(T-9 · 09-16) — 배치에서 미정의 &var·암묵 :bind를 오류로. 자주 안 바꾸므로 HIDDEN(`nsql config list all`).
+    // ★ 라이선스 게이트(docs/23 §4-2 · T-36 · 09-27): **Debug 빌드 전용** 스위치 — 개발·자동 시험은 게이트 없이 도는 것이 기본(off) ·
+    //   게이트 시험은 격리 홈에서 on. Release 빌드는 이 키를 무시하고 늘 켠다(D-44 감지 없음 · 전화홈 0). HIDDEN.
+    Entry {
+        key: "license.gates_dev",
+        cat: Msg::CatSession,
+        label: Msg::LblLicenseGatesDev,
+        desc: Msg::DescLicenseGatesDev,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "script.strict",
         cat: Msg::CatSession,
@@ -4982,6 +4992,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "license.gates_dev",
     "ui.toast_fade_to",
     "ui.toast_bar_spent",
     "dev.start_demo",

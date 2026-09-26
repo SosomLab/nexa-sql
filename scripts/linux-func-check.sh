@@ -219,6 +219,13 @@ run_s L09 "명령 팔레트"                                 "@after:1200:view.p
 run_s L10 "찾기 바 + 정규식(docs/29)"                   "open:$Q5,@after:1200:edit.find" Local 3.5
 run_s L11 "미니맵 켬(T-97)"                             "open:$QL,@after:1500:ui.click:400/141" Local 4 $'editor.minimap=on\n'
 run_s L12 "큰 파일 모드 L1/L2(docs/59)"                 "open:$SKIP/big.sql" Local 8 $'bigfile.confirm=off\n'
+# ★ 라이선스(docs/23 §4-4 · 25 §13-3 · T-34/T-36 · 09-27): 창·덤프 · 무효 파일 거부 · 탭 상한(게이트 = Debug HIDDEN `license.gates_dev`).
+echo "hello" > "$D/bad.license"
+SIX="file.new,@after:200:file.new,@after:400:file.new,@after:600:file.new,@after:800:file.new,@after:1000:file.new"
+run_s L13 "라이선스 창 + 덤프(T-34)"                     "@after:1200:help.license,@after:2500:license.dump:$OUT/L13.txt" Local 4 "" "L13.txt:open=true L13.txt:badge=Free"
+run_s L14 "무효 라이선스 파일 = 설치 거부(쓰지 않음)"   "@after:1200:license.install:$D/bad.license,@after:2500:license.dump:$OUT/L14.txt" Local 4 "" "L14.txt:note=warn !L14.txt:State=licensed"
+run_s L15 "편집 탭 상한 5(게이트 on · D-46)"            "@after:1200:$SIX,@after:3200:bm.stat:$OUT/L15.txt" Local 4.5 $'license.gates_dev=on\n' "L15.txt:^4:.title !L15.txt:^5:.title"
+run_s L16 "게이트 off(기본 · 개발) = 탭 제한 없음"       "@after:1200:$SIX,@after:3200:bm.stat:$OUT/L16.txt" Local 4.5 "" "L16.txt:^6:.title"
 
 say ""
 say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%T'))"

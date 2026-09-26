@@ -12,6 +12,7 @@ Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windo
 | [탐색기와 필터](Explorers-and-Filters.md) | 필터 토글(Aa · ab · 정규식 · 경로) · 선택 규칙(빈 곳 클릭) · DBMS 아이콘 · 탭 유형 색 |
 | [코드 완성과 아웃라인](Code-Completion-and-Outline.md) | 완성 팝업(트리거 · 문맥별 후보 · 일치/순서 규칙 · 설정) · 아웃라인 패널 · Goto Symbol(Ctrl+R) |
 | [결과 그리드에서 데이터 편집](Data-Editing.md) | 편집 가능 조건 · 행 식별 등급(키 · 숨은 키 열 · ROWID · 전 열) · 키 · 표시 · 적용의 안전 규칙(사전 검사 · 1행 · 롤백) · 적용 뒤 갱신 · 동시성 · 설정 |
+| [라이선스](License.md) | 무료로 쓸 수 있는 것 · Pro가 여는 것과 무료 대체 경로 · 요청 코드 → 이메일 → 설치 3단계 · PC 추가/교체(재발급) · 백업·제거 · 상태가 이상할 때 |
 | [파일로 넣기·내보내기(대량 적재)](Bulk-Import-Export.md) | CSV/TSV/JSON Lines를 표에 넣기(GUI Import 창 · CLI `nsql import`) · 빠른 내보내기(`--fast`) · 속도와 경로 · 실패했을 때 · 설정 `bulk.*` |
 | [큰 파일과 기능 제한](Large-Files-and-Limits.md) | 파일 크기·줄 수에 따라 무엇이 꺼지고(L1/L2) 어떤 상한이 늘 걸리는지 · 바꾸는 설정 |
 

@@ -18,6 +18,7 @@
 - 📐 **[92 디지털 자산 보호 설계](92-digital-asset-protection.md)** — 자산 8 · 공격자 4 · 보호 층(암호학·서버·로컬 보강 R1~R4) · **분석 지연 기법 효과 검토 표(난독화·안티디버깅·자기 무결성 = 하지 않음 · 근거 23 §2-3·DR-1)** · D-227~D-230.
 - ★ **라이선스 앱 층 구현(사용자 "바로 구현")** — nexa-license `fs`(원자적 설치 · 동시 설치 시험) · **신규 크레이트 `nsql-license`**(`Feature` 20 · `LicenseState` · `check` 순수 판정 · 빌드일 `build.rs` · `refresh` 변경 서명 · 요청 코드 · 시험 8 = 23 §5 전부) · **CLI `nsql license status|request|install|remove|path`**(T-33 · i18n 7) · 게이트 배선·GUI는 D-41·D-44 뒤. [journal §9](journal/2026-09-27.md).
 - 🔧 **CI 4ecbd88 빨강 둘** — mac·win clippy(`settings_clip_native` cfg) · integration(`it-mssql.sql` `from dual` 제거 · 사용자 09-27) · 워크플로 3개에 nexa-license 체크아웃.
+- ★ **T-241 발급기 · T-34 GUI · T-36 게이트 완료**(사용자 "키 발급 기능 전부 · 서버 보류 · 진행" · [journal §10](journal/2026-09-27.md)) — nexa-license `issuer`(`sign` · 봉투 `nxk1` RFC 벡터) + **`nexa-license-tool`**(keygen/keys-rs/issue/reissue/verify/ledger · E2E) · GUI 라이선스 창 `license_win.rs` + 상태줄 배지(`Free · non-commercial use only`) + Help ▸ License… · **게이트 12곳**(25 §13-3 권장안 확정 · Release 늘 켬 · Debug `license.gates_dev`) · `nsql license export` · func-check L13~L16 · 위키 [License](wiki/License.md). ⚠ `ROOT_KEYS` 비어 있음 → 발급 PC keygen → `keys-rs` → 재빌드 선행.
 - ✅ CI 초록(nexa-sql 018014f ci·integration · nexa-license e1f1dc7·8c556e8 `machine.rs` CREATE_NO_WINDOW · nexa-ui 5b2b049) · 102차 win 5265dcc·697bd85와 rebase 합류([journal §9-6](journal/2026-09-27.md)).
 - 남은 것 = D-41~D-47 · D-227~D-230 · L-1~L-8 확정 · `keys.rs`(발급 PC keygen) · T-34 GUI · T-36 게이트 · T-163 실기 ⑦~⑫.
 
