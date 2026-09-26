@@ -304,6 +304,8 @@ struct App {
     project_touch_at: Option<Instant>,
     /// 종료 흐름(사용자 09-23): 프로젝트 저장 물음 → 미저장 파일 탭마다 물음 → 종료.
     exit_pending: bool,
+    /// "모두 저장"(닫기/종료 물음) 진행 중 — 이름 없는 탭의 저장 창이 끝나면 다음 미저장 탭으로 이어 간다(사용자 09-26).
+    save_all_pending: bool,
     exit_project_asked: bool,
     /// 마지막으로 탐색기와 맞춘 활성 탭(바뀌면 `project_sync_active` · 사용자 09-22).
     last_synced_tab: u64,
@@ -2575,12 +2577,25 @@ impl App {
             .map(|(_, t, _)| t)
             .unwrap_or_default();
         self.sess.status = tf(Msg::StUnsavedAsk, &[&title]);
-        let items = vec![
+        let mut items = vec![
             CtxItem::item("close.save", t(Msg::MnCloseSave)),
             CtxItem::item("close.discard", t(Msg::MnCloseDiscard)),
-            CtxItem::Separator,
-            CtxItem::item("close.cancel", t(Msg::MnCloseCancel)),
         ];
+        // ★ 미저장 탭이 둘 이상이면 일괄 처리(사용자 09-26): 모두 저장 · 모두 취소(변경 버리고 닫기) · 닫기 = 그대로 진행 취소.
+        let n_dirty = self.dirty_tabs().len();
+        if n_dirty >= 2 {
+            items.push(CtxItem::Separator);
+            items.push(CtxItem::item(
+                "close.save_all",
+                tf(Msg::MnCloseSaveAll, &[&n_dirty.to_string()]),
+            ));
+            items.push(CtxItem::item(
+                "close.discard_all",
+                tf(Msg::MnCloseDiscardAll, &[&n_dirty.to_string()]),
+            ));
+        }
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item("close.cancel", t(Msg::MnCloseCancel)));
         let r = self
             .editors
             .tab_rect(i)
@@ -2608,6 +2623,23 @@ impl App {
             "close.cancel" => {
                 self.exit_pending = false;
                 self.exit_project_asked = false;
+                self.save_all_pending = false;
+            }
+            "close.save_all" => {
+                self.save_all_pending = true;
+                self.save_all_step();
+            }
+            "close.discard_all" => {
+                for i in self.dirty_tabs().into_iter().rev() {
+                    if let Some(p) = self.editors.path_of(i) {
+                        backups::remove(&p);
+                    }
+                    self.editors.close_tab_forced(i);
+                }
+                self.sync_grid_tab();
+                if self.exit_pending {
+                    self.request_exit();
+                }
             }
             "close.save" => {
                 self.close_after_save = Some(tab);
@@ -2630,6 +2662,11 @@ impl App {
         let Some(tab) = self.close_after_save.take() else {
             return;
         };
+        if self.save_all_pending {
+            // 모두 저장: 저장이 끝난 탭은 그대로 두고(종료 중이면 종료 흐름이 닫는다) 다음 미저장 탭으로.
+            self.save_all_step();
+            return;
+        }
         if let Some(i) = self.editors.index_of_id(tab) {
             if !self.editors.is_dirty(i) {
                 self.editors.close_tab_forced(i);
@@ -10056,6 +10093,53 @@ impl App {
         self.redraw();
     }
 
+    /// 물어야 할 미저장 탭(index · 종료 중이고 프로젝트가 열려 있으면 스크립트 탭은 프로젝트가 보존하므로 제외).
+    fn dirty_tabs(&self) -> Vec<usize> {
+        let keep_scratch = self.exit_pending && self.project.is_open();
+        (0..self.editors.tab_count())
+            .filter(|&i| {
+                self.editors.is_dirty(i) && !(keep_scratch && self.editors.path_of(i).is_none())
+            })
+            .collect()
+    }
+
+    /// ★ 모두 저장(사용자 09-26): 미저장 탭을 앞에서부터 하나씩 — 경로가 있으면 바로 저장 · 이름 없는 탭은 저장 창(끝나면
+    /// `finish_close_after_save`가 여기로 돌아온다) · 전부 저장되면 종료 중이면 종료 흐름을 잇는다 · 저장 실패/취소 = 멈춤.
+    fn save_all_step(&mut self) {
+        loop {
+            let Some(i) = self.dirty_tabs().first().copied() else {
+                self.save_all_pending = false;
+                self.sess.status = t(Msg::StSavedAll).into();
+                if self.exit_pending {
+                    self.request_exit();
+                }
+                self.redraw();
+                return;
+            };
+            self.editors.switch(i);
+            self.sync_grid_tab();
+            let tab = self.editors.active_id();
+            match self.editors.active_path() {
+                Some(p) => {
+                    self.save_to(&p);
+                    if self.editors.is_dirty(i) {
+                        // 저장 실패(오류·외부 변경 확인 대기) — 멈추고 사용자에게(상태줄은 save_to가 썼다).
+                        self.save_all_pending = false;
+                        self.exit_pending = false;
+                        self.redraw();
+                        return;
+                    }
+                }
+                None => {
+                    self.close_after_save = Some(tab);
+                    self.open_file_dlg = Some(PickerMode::Save);
+                    self.redraw();
+                    return;
+                }
+            }
+        }
+    }
+
     /// 편집기 편집 명령 — 편집기 포커스일 때만 · 바뀌면 찾기 표시 갱신 + 상태줄 선택 수.
     fn editor_cmd(&mut self, cmd: EditCommand) {
         if self.focus != Focus::Editor {
@@ -10454,7 +10538,7 @@ impl App {
     /// `blocked` = 지금 탭의 세션이 작업 중(docs/52 §3 통제) — Run 메뉴의 실행 계열은 비활성으로(툴바와 같은 판정 · 09-19).
     fn build_menus_with(
         recent: &[PathBuf],
-        tabs: &[(u64, String, bool)],
+        tabs: &[(u64, String, bool, bool)],
         demo_ready: bool,
         blocked: bool,
         project: Vec<MenuEntry>,
@@ -10659,12 +10743,17 @@ impl App {
             MenuDef::new(t(Msg::MnTabs), {
                 let mut v: Vec<MenuEntry> = tabs
                     .iter()
-                    .map(|(id, title, active)| {
+                    .map(|(id, title, active, dirty)| {
                         let mut ci = ComboItem::new(format!("tab:{id}"), title.clone());
                         if *active {
                             ci.icon = Some("✓".into());
                         }
-                        MenuEntry::Item(ci)
+                        // ★ 미저장 탭 = 강조색(사용자 09-26 "저장되지 않은 탭의 메뉴 색을 더 강조").
+                        if *dirty {
+                            MenuEntry::Emph(ci)
+                        } else {
+                            MenuEntry::Item(ci)
+                        }
                     })
                     .collect();
                 // 탭 찾기(Goto Anything · T-96 추천안 A).
@@ -10693,10 +10782,10 @@ impl App {
         if self.menubar.is_open() {
             return;
         }
-        let tabs = self.editors.tab_list();
+        let tabs = self.editors.tab_list_dirty();
         let sig = tabs
             .iter()
-            .map(|(id, t, a)| format!("{id}:{t}:{a}"))
+            .map(|(id, t, a, d)| format!("{id}:{t}:{a}:{d}"))
             .collect::<Vec<_>>()
             .join("|");
         if sig != self.tabs_menu_sig {
@@ -11122,7 +11211,7 @@ impl App {
             .join("|");
         let _ = self.settings.set("file.recent", &joined);
         self.persist_settings();
-        let tabs = self.editors.tab_list();
+        let tabs = self.editors.tab_list_dirty();
         self.menubar.set_menus(App::build_menus_with(
             &v,
             &tabs,
@@ -12677,7 +12766,7 @@ impl App {
     fn rebuild_menus(&mut self) {
         self.menubar
             .set_max_label_width(self.settings.int("ui.menu_max_width") as i32);
-        let tabs = self.editors.tab_list();
+        let tabs = self.editors.tab_list_dirty();
         self.menubar.set_menus(App::build_menus_with(
             &self.recent_files(),
             &tabs,
@@ -12781,7 +12870,7 @@ impl App {
 
     /// 언어가 바뀌면 컨트롤 문자열을 다시 만든다. TextBox는 placeholder 교체 API가 없어 본문을 보존해 재생성.
     fn relabel(&mut self) {
-        let tabs = self.editors.tab_list();
+        let tabs = self.editors.tab_list_dirty();
         self.menubar.set_menus(App::build_menus_with(
             &self.recent_files(),
             &tabs,
@@ -17171,8 +17260,13 @@ impl ApplicationHandler<Wake> for App {
                     self.sync_modal();
                 }
                 FileWinAction::Cancel => {
-                    // 저장 창을 취소했다 = "저장하고 닫기"도 없던 일(탭은 그대로).
+                    // 저장 창을 취소했다 = "저장하고 닫기"·"모두 저장"도 없던 일(탭은 그대로 · 종료 흐름 취소).
                     self.close_after_save = None;
+                    if self.save_all_pending {
+                        self.save_all_pending = false;
+                        self.exit_pending = false;
+                        self.exit_project_asked = false;
+                    }
                     self.file_purpose = FilePurpose::Editor;
                     self.remember_file_dialog(None);
                     self.sync_modal();
@@ -18349,6 +18443,7 @@ fn main() {
         input_pending: None,
         pw_pending: None,
         close_after_save: None,
+        save_all_pending: false,
         key_guard: None,
         pw_once: None,
         vars_win,

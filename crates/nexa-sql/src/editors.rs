@@ -1719,6 +1719,22 @@ impl Editors {
             .collect()
     }
 
+    /// (id, 제목, 활성, **미저장**) — 탭 메뉴가 미저장 탭을 강조색으로 그린다(사용자 09-26).
+    pub(crate) fn tab_list_dirty(&self) -> Vec<(u64, String, bool, bool)> {
+        self.titles
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                (
+                    self.tab_id(i),
+                    t.clone(),
+                    i == self.active,
+                    self.is_dirty(i),
+                )
+            })
+            .collect()
+    }
+
     /// 안정 id로 탭 전환(탭 메뉴 · 없으면 무시).
     pub(crate) fn switch_to_id(&mut self, id: u64) {
         if let Some(i) = self.ids.iter().position(|x| *x == id) {
