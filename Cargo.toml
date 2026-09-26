@@ -78,7 +78,8 @@ nexa-conf = { path = "../nexa-ui/crates/nexa-conf" }
 nexa-font = { path = "../nexa-ui/crates/nexa-font" }
 nexa-fs = { path = "../nexa-ui/crates/nexa-fs" }
 nexa-dlg = { path = "../nexa-ui/crates/nexa-dlg" }
-nexa-sys = { path = "../nexa-ui/crates/nexa-sys" }
+# 기본 = 신호(`Signals`)만(GUI 프레임워크 링크 없음 · CLI용) · GUI 크레이트가 `features = ["gui"]`를 켠다(T-234 · 09-26).
+nexa-sys = { path = "../nexa-ui/crates/nexa-sys", default-features = false }
 
 [profile.release]
 opt-level = 3
