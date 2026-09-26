@@ -341,5 +341,6 @@
 | ③ 되돌림 | 자동 커밋 = 우리가 연 트랜잭션 전체 롤백 · 수동 커밋 = `SAVEPOINT nsql_edit`(방언별: Oracle/PG/SQLite/MySQL `SAVEPOINT` · SQL Server `SAVE TRANSACTION`) → 실패 시 `ROLLBACK TO` · 성공 시 `RELEASE`(PG/SQLite/MySQL) · 되돌리기 실패 = `rollback_needed` | `ApplyReport { rolled_back, rollback_needed, tx_left_open }` · 호스트 문구 `StGeAutoRolledBack` / `StGeSavepointBack` / `StGeRollbackNeeded`(토스트 + 상태줄 + 로그) |
 | 유일성 | 적용 대기 변경 안에서 키 튜플 중복(수정된 키 · 추가 행 · 손댄 기존 행) = 적용 전 거부 `StGeDupKey`(NULL 키 제외) · 서버 제약 위반은 ②·③ | `generate` 앞부분 · 시험 `duplicate_key_among_pending_is_rejected` |
 | 보고 | 원인 상세 = 단계 · 문장 번호 · 라벨(종류 #행 (키=값)) · 메시지/행 수 · 되돌림 상태 | `ConnOutcome::Applied` 처리 |
+| 트랜잭션 로그·수동 모드(§234 · 09-26) | 실행한 문장마다 트랜잭션 로그 한 줄(`ApplyReport.log` · 사전 검사 = Util · 실행문 = User · 수동 모드에서 실제로 남은 문장만 열린 트랜잭션에 붙임 = pending 수) · **시작문 없는 방언(Oracle)도 쓴 문장이 있으면 `tx_left_open`**(커밋/롤백 버튼·대기 표식 · 종전엔 미커밋 변경이 표시 없이 남았다) | `apply_changes` 마무리 · 호스트 `txlog.begin/done/attach_tx` · 덤프 `txlog.dump:` · E2E ⑨ |
 
 원칙: 프로그램의 판단 미스·버그로 데이터가 훼손되는 일은 없어야 한다 — 앞으로의 자동 DML(행 단위 재조회의 RETURNING 등 포함)도 같은 세 겹을 지난다(CLAUDE.md §3 · 61 §1-7).

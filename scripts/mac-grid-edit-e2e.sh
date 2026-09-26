@@ -90,6 +90,17 @@ expect_grep "재조회 뒤 = 숨은 키 열 · 1급" "$d8a" "kind=Constraint"
 expect_grep "숨은 열 1 · 키 = 숨은 열" "$d8a" "hidden=1"
 expect_grep "적용 뒤 깨끗" "$d8" "dirty=false"
 expect_grep "서버: salary 777" "$v" "777"
+echo "=== SQLite ⑨ 수동 커밋: 한 행을 3번 적용 = 트랜잭션 로그 UPDATE 3줄(pending) · 사전 검사 Util 3 · 열린 트랜잭션 갱신 3 · 종료 = 미커밋(롤백)"
+NSQL_HOME="$H" "$NSQL" config set session.autocommit off >/dev/null
+run_gui 24 Local "open:$D/sel.sql,@after:2500:run.all,@after:6000:grid.edit.set:0;1;M1,@after:6500:grid.edit.cmd:row.save,@after:10500:grid.edit.set:0;1;M2,@after:11000:grid.edit.cmd:row.save,@after:15000:grid.edit.set:0;1;M3,@after:15500:grid.edit.cmd:row.save,@after:19000:txlog.dump:$O/s9tx.txt,@after:19500:grid.dump:$O/s9.txt"
+NSQL_HOME="$H" "$NSQL" config set session.autocommit on >/dev/null
+t9=$(cat "$O/s9tx.txt" 2>/dev/null); d9=$(cat "$O/s9.txt" 2>/dev/null); v=$(cli Local "$D/sel.sql")
+expect_grep "적용 3회 = UPDATE 3줄 · 전부 pending" "$(echo "$t9" | grep -c '^User|UPDATE.*|1|Ok|Pending')" "^3$"
+expect_grep "사전 검사 = Util 3줄(대상 1행)" "$(echo "$t9" | grep -c '^Util|SELECT COUNT.*|1|Ok|')" "^3$"
+expect_grep "열린 트랜잭션 갱신 수 3" "$t9" "^open_updates=3$"
+expect_grep "그리드 = 제자리 갱신 M3" "$d9" "|M3|"
+expect_grep "종료 = 커밋 안 됨(서버 값 그대로 KIM2)" "$v" "KIM2"
+expect_absent "종료 = M3 미커밋" "$v" "M3"
 # ── Oracle(선택)
 if [ -n "${NSQL_E2E_ORACLE:-}" ]; then
   ORA="$NSQL_E2E_ORACLE"

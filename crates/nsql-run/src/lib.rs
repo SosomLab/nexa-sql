@@ -74,6 +74,20 @@ pub struct ApplyReport {
     pub rollback_needed: bool,
     /// 수동 모드 — 트랜잭션이 열린 채 남았다(커밋/롤백은 사용자).
     pub tx_left_open: bool,
+    /// ★ 실행한 문장마다 한 줄(사전 검사 포함 · 순서대로) — 호스트가 트랜잭션 로그(44)에 싣는다(사용자 09-26 "로그 창에 안 보임").
+    pub log: Vec<ApplyLogItem>,
+}
+
+/// 적용 중 실행한 문장 하나의 기록(트랜잭션 로그용).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ApplyLogItem {
+    pub sql: String,
+    /// 사전 검사문(`SELECT COUNT(*)`)인가 — 로그 창에서는 Util(전체 보기에서만).
+    pub guard: bool,
+    pub elapsed: Duration,
+    /// 영향 행 수(사전 검사 = 대상 행 수).
+    pub rows: Option<u64>,
+    pub error: Option<String>,
 }
 
 /// 방언별 세이브포인트 문장 (설정 · 되돌리기 · 해제).
@@ -1151,9 +1165,17 @@ impl Runner {
         // ① 사전 검사 — 쓰기 전에 대상 행 수 전부 확인.
         for (i, st) in stmts.iter().enumerate() {
             let Some(g) = st.guard.as_ref() else { continue };
+            let t0 = Instant::now();
             let n = match sess.execute(g) {
                 Ok(r) => count_of(&r),
                 Err(e) => {
+                    rep.log.push(ApplyLogItem {
+                        sql: g.sql.clone(),
+                        guard: true,
+                        elapsed: t0.elapsed(),
+                        rows: None,
+                        error: Some(e.message.clone()),
+                    });
                     rep.error = Some(ApplyError {
                         index: i,
                         phase: ApplyPhase::PreCheck,
@@ -1163,6 +1185,13 @@ impl Runner {
                     break;
                 }
             };
+            rep.log.push(ApplyLogItem {
+                sql: g.sql.clone(),
+                guard: true,
+                elapsed: t0.elapsed(),
+                rows: n,
+                error: None,
+            });
             if n != Some(1) {
                 rep.error = Some(ApplyError {
                     index: i,
@@ -1179,10 +1208,19 @@ impl Runner {
         // ② 실행 — 문장마다 영향 행 수 1.
         if rep.error.is_none() {
             for (i, st) in stmts.iter().enumerate() {
+                let t0 = Instant::now();
                 match sess.execute(&st.req) {
                     Ok(r) => {
                         let n = r.rows_affected.unwrap_or(0);
                         rep.affected.push(n);
+                        rep.log.push(ApplyLogItem {
+                            sql: st.req.sql.clone(),
+                            guard: false,
+                            elapsed: t0.elapsed(),
+                            rows: Some(n),
+                            error: (n != 1)
+                                .then(|| format!("affected {n} rows (must be exactly 1)")),
+                        });
                         if n != 1 {
                             rep.error = Some(ApplyError {
                                 index: i,
@@ -1195,6 +1233,13 @@ impl Runner {
                         rep.done += 1;
                     }
                     Err(e) => {
+                        rep.log.push(ApplyLogItem {
+                            sql: st.req.sql.clone(),
+                            guard: false,
+                            elapsed: t0.elapsed(),
+                            rows: None,
+                            error: Some(e.message.clone()),
+                        });
                         rep.error = Some(ApplyError {
                             index: i,
                             phase: ApplyPhase::Execute,
@@ -1243,8 +1288,10 @@ impl Runner {
                     let _ = run(sess, sql);
                 }
             }
-            // 수동 모드 = 우리가 열었든 이미 열려 있었든 트랜잭션은 열린 채(커밋/롤백은 사용자) · 변경 흔적은 실제로 남았을 때만.
-            if began || self.tx_open {
+            // 수동 모드 = 우리가 열었든 이미 열려 있었든 트랜잭션은 열린 채(커밋/롤백은 사용자). ★ 시작문이 없는 방언(Oracle ·
+            //   암묵 트랜잭션)에서는 `began`이 늘 false라 첫 적용 뒤 "열림"을 알리지 못했다 → 커밋/롤백 버튼·대기 표식이 안 켜지고
+            //   서버에는 미커밋 변경이 남는 위험(사용자 09-26 실서버) — 실제로 쓴 문장이 있으면(또는 되돌리지 못했으면) 열린 것이다.
+            if began || self.tx_open || rep.done > 0 || rep.rollback_needed {
                 self.tx_open = true;
                 rep.tx_left_open = true;
             }
@@ -4312,11 +4359,12 @@ mod apply_changes_tests {
         count: u64,
         affected: Vec<u64>,
         pos: usize,
+        dialect: Dialect,
     }
 
     impl Session for Guard {
         fn dialect(&self) -> Dialect {
-            Dialect::Postgres
+            self.dialect
         }
         fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
             self.log.lock().expect("log").push(req.sql.clone());
@@ -4364,6 +4412,15 @@ mod apply_changes_tests {
         affected: Vec<u64>,
         autocommit: bool,
     ) -> (Runner, Arc<Mutex<Vec<String>>>) {
+        runner_of(Dialect::Postgres, count, affected, autocommit)
+    }
+
+    fn runner_of(
+        dialect: Dialect,
+        count: u64,
+        affected: Vec<u64>,
+        autocommit: bool,
+    ) -> (Runner, Arc<Mutex<Vec<String>>>) {
         let log = Arc::new(Mutex::new(Vec::new()));
         let opener: Opener = Box::new(|_: &ConnectSpec| {
             Err(DbError {
@@ -4372,18 +4429,52 @@ mod apply_changes_tests {
                 position: None,
             })
         });
-        let r = Runner::new(Dialect::Postgres, opener)
+        let r = Runner::new(dialect, opener)
             .with_session(
                 Box::new(Guard {
                     log: Arc::clone(&log),
                     count,
                     affected,
                     pos: 0,
+                    dialect,
                 }),
-                "fake pg",
+                "fake",
             )
             .with_autocommit(autocommit);
         (r, log)
+    }
+
+    /// ★ 시작문이 없는 방언(Oracle)의 수동 모드: 적용이 성공하면 트랜잭션이 열린 것(`tx_left_open`) · 문장 기록은 사전 검사+실행문 순서.
+    #[test]
+    fn manual_oracle_marks_tx_open_and_logs_statements() {
+        let (mut r, _log) = runner_of(Dialect::Oracle, 1, vec![1, 1], false);
+        assert!(r.engine.caps.tx_begin.is_none(), "Oracle = 암묵 트랜잭션");
+        assert!(!r.tx_open());
+        let rep = r.apply_changes(&[
+            stmt("UPDATE t SET a=1", true),
+            stmt("UPDATE t SET a=2", true),
+        ]);
+        assert!(rep.error.is_none() && rep.done == 2);
+        assert!(rep.tx_left_open, "수동 모드 · 쓴 문장 있음 = 열림");
+        assert!(r.tx_open());
+        let kinds: Vec<(bool, Option<u64>)> = rep.log.iter().map(|l| (l.guard, l.rows)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (true, Some(1)),
+                (true, Some(1)),
+                (false, Some(1)),
+                (false, Some(1))
+            ]
+        );
+        assert!(rep.log.iter().all(|l| l.error.is_none()));
+        // 사전 검사 실패 = 쓴 문장 0 · 열린 것으로 표시하지 않는다.
+        let (mut r2, _) = runner_of(Dialect::Oracle, 2, vec![1], false);
+        let rep2 = r2.apply_changes(&[stmt("UPDATE t SET a=1", true)]);
+        assert!(rep2.error.is_some() && rep2.done == 0);
+        assert!(!rep2.tx_left_open && !r2.tx_open());
+        assert_eq!(rep2.log.len(), 1);
+        assert!(rep2.log[0].guard && rep2.log[0].rows == Some(2));
     }
 
     fn stmt(sql: &str, guard: bool) -> ApplyStmt {

@@ -1537,6 +1537,34 @@ impl App {
                             .push(toast::ToastKind::Error, t(Msg::MnGeApply), msg.clone());
                     }
                     self.sess.status = msg;
+                    // ★ 트랜잭션 로그(44 · 사용자 09-26 "적용해도 로그 창에 안 보임 · 3번이 1줄"): 실행한 문장마다 한 줄 —
+                    //   사전 검사 = Util(전체 보기에서만) · 실행문 = User · 수동 모드에서 실제로 남은 것만 열린 트랜잭션에 붙인다(pending 수).
+                    {
+                        let attach =
+                            rep.tx_left_open && (rep.error.is_none() || rep.rollback_needed);
+                        let editor = self.sess.run_editor;
+                        let log = self.txlog.select_session(self.sess.id);
+                        log.begin_batch();
+                        for (i, it) in rep.log.iter().enumerate() {
+                            let stamp = nsql_log::now_local().stamp();
+                            let purpose = if it.guard {
+                                TxPurpose::Util
+                            } else {
+                                TxPurpose::User
+                            };
+                            log.begin(stamp.clone(), editor, purpose, i, &it.sql);
+                            match &it.error {
+                                Some(m) => log.error(i, None, m),
+                                None => {
+                                    log.done(i, it.rows, it.elapsed);
+                                    if attach && !it.guard {
+                                        log.attach_tx(i, stamp, true);
+                                    }
+                                }
+                            }
+                        }
+                        self.txlog_win.redraw();
+                    }
                     if patched {
                         self.log_win.push(LogEntry::new(
                             LogKind::Info,
@@ -8662,6 +8690,31 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("grid.dump:") {
             let _ = std::fs::write(path, self.grid.dump_edit());
+            return;
+        }
+        // 자체 시험(09-26): 트랜잭션 로그 덤프 — 전 세션 · 전 목적 · 닫힌 것 포함 · 한 줄 = `목적|본문|행|결과|tx` + 열린 트랜잭션 갱신 수.
+        if let Some(path) = id.strip_prefix("txlog.dump:") {
+            let f = nsql_run::txlog::TxFilter {
+                all_purposes: true,
+                previous: true,
+                ..Default::default()
+            };
+            let mut out = String::new();
+            for e in self.txlog.entries(&f) {
+                out.push_str(&format!(
+                    "{:?}|{}|{}|{:?}|{:?}\n",
+                    e.purpose,
+                    nsql_run::txlog::one_line(&e.text, 80),
+                    e.rows.map_or("-".to_string(), |r| r.to_string()),
+                    e.result,
+                    self.txlog.outcome_of(e)
+                ));
+            }
+            out.push_str(&format!(
+                "open_updates={}\n",
+                self.txlog.open_record().map_or(0, |r| r.updates)
+            ));
+            let _ = std::fs::write(path, out);
             return;
         }
         // 자체 시험(09-26 성능 전수): 메모리 계측 표본을 파일로 — 총량·anon·부품 원장(L1 Meta · L2 MetaCols · L3 MetaDetail …).
