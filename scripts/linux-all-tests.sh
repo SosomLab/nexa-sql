@@ -7,7 +7,7 @@
 #        (Oracle 수동 지정 테스트는 NSQL_ORACLE_CLIENT_DIR_TEST — 없으면 $ORACLE_IC_HOME · 둘 다 없으면 건너뜀)
 #        IT=0 이면 실서버 단계를 건너뛴다. ⚠ 통합 테스트는 실서버에 임시 객체(`nexa_it` · `nsql_it_*` · `#…` · `pg_temp`)를 만들고 지운다.
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"; UI="$ROOT/../nexa-ui"; OUT=""
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; UI="$ROOT/../nexa-ui"; LIC="$ROOT/../nexa-license"; OUT=""
 while getopts "o:u:" o; do case $o in o) OUT=$OPTARG;; u) UI=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-u <nexa-ui dir>]"; exit 2; }
 mkdir -p "$OUT"; SUM="$OUT/summary.txt"; : > "$SUM"
@@ -19,6 +19,12 @@ step() { local name=$1 dir=$2; shift 2; local log="$OUT/$name.log" t0=$(date +%s
 step ui.fmt       "$UI"   cargo fmt --all -- --check
 step ui.clippy    "$UI"   cargo clippy --workspace --all-targets -- -D warnings
 step ui.test      "$UI"   cargo test --workspace
+# 형제 저장소 둘째 = nexa-license(09-27 · nsql-license가 path 의존 · 검증 전용).
+if [ -d "$LIC" ]; then
+  step lic.fmt    "$LIC"  cargo fmt --all -- --check
+  step lic.clippy "$LIC"  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  step lic.test   "$LIC"  cargo test --workspace --all-features
+fi
 step sql.fmt      "$ROOT" cargo fmt --all -- --check
 step sql.clippy   "$ROOT" cargo clippy --workspace --all-targets -- -D warnings
 step sql.test     "$ROOT" cargo test --workspace
@@ -34,4 +40,5 @@ step cli.plan.mssql  "$ROOT" "$NSQL" plan -d mssql  examples/golden-session-vars
 step cli.run.sqlite  "$ROOT" "$NSQL" run -c sqlite::memory: -d sqlite examples/variables/sqlite.sql
 step cli.run.demo    "$ROOT" "$NSQL" run -c sqlite::memory: -d sqlite examples/demo.sql
 step cli.config.list "$ROOT" "$NSQL" config list all
+NSQL_HOME="$OUT/lic-home" step cli.license.status "$ROOT" "$NSQL" license status
 echo "--- done $(date) ---" | tee -a "$SUM"

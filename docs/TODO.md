@@ -58,8 +58,8 @@
 ## 3-3. 정품 인증 · 기능 게이트([23](23-license-activation.md) · 티어·서버·저장소 분리 [25](25-license-tiers-and-server.md) · 사용자 09-14) — 코드는 D-23·24·32·33 답 뒤 · **라이브러리 저장소(T-45)부터**
 | ID | 우선 | 규모 | 항목 | 의존 | 상태 |
 |---|:--:|:--:|---|---|:--:|
-| **T-32** | P1 | 중 | `nsql-license` — 파일 형식 파서·정규화·Ed25519 검증·`Feature`/`check` · 3-OS 기기 ID · 테스트([23 §5](23-license-activation.md)) | D-24 D-26 | ☐ |
-| **T-33** | P1 | 소 | `nsql license request/status/install/remove` · 종료 코드 4 | T-32 | ☐ |
+| **T-32** | P1 | 중 | `nsql-license` — 파일 형식 파서·정규화·Ed25519 검증·`Feature`/`check` · 3-OS 기기 ID · 테스트([23 §5](23-license-activation.md)) | D-24 D-26 | 🚧 09-27 앱 층 ✅(`crates/nsql-license` · Feature 20 · check 순수 · 빌드일 · refresh · 시험 8 = §5 전부 · [journal §9](journal/2026-09-27.md)) · 남음 = ROOT_KEYS 채우기(발급 PC) |
+| **T-33** | P1 | 소 | `nsql license request/status/install/remove` · 종료 코드 4 | T-32 | ✅ 09-27(`license.rs` · +path · i18n 7 · 종료 코드 4는 게이트 입구 몫 = T-36) |
 | **T-34** | P1 | 중 | GUI 설정 라이선스 탭 · 상태줄 배지 · Denied 대화상자(요청 코드 복사) · i18n `license.*` | T-32 T-37 | ☐ |
 | ~~T-35~~ | | | → **T-41**(`nexa-license-tool`은 서버 비공개 저장소의 두 번째 bin · [25 §9-1](25-license-tiers-and-server.md)) | | |
 | **T-36** | P1 | 소 | 게이트 배선 — D-23 목록의 진입점 1곳씩 · 확장 manifest `requires` | T-32 D-23 | ☐ |
@@ -221,6 +221,7 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-239 보조 창 Tab 포커스 순환**(§243 · [88 §4-1-c](88-ui-ux-standards-survey.md) · WCAG 2.1.1/2.4.3) | P2 | 중 | 접속·설정·SQL Preview/값·Import·입력·파일 창 전부 Tab 없음 → 창별 포커스 순서 표 + nexa-ctl 공용 `FocusRing` 부품(Tab/Shift+Tab · 링 ≤ 1 규칙 유지) | 88 | ☐ |
 | **T-241 오프라인 발급기 CLI `nexa-license-tool`**(사용자 09-27 · 확정 L-1~L-7 뒤 일괄) | P1 | 대 | [25 §12](25-license-tiers-and-server.md): `nexa-license` sign/request/keys/verify + 발급기 keygen/issue/reissue/verify/ledger + 봉투 + 23 §5 시험 → 이어서 T-32' 앱 층 | 25 §12 · D-27 · D-41 | 📐 확정 대기 |
 | **T-242 라이선스 차별점 확정**(사용자 09-27) | P1 | 소 | [25 §13](25-license-tiers-and-server.md) D-41~D-45(게이트 표 · Org 전용 순서 · 잠긴 UX · 배지 · 체험 범위) | 23 §4-3 | 📐 확정 대기 |
+| **T-243 디지털 자산 보호 후속**(사용자 09-27) | P2 | 소 | [92](92-digital-asset-protection.md) D-227~D-230 확정 → T-34/T-36에 §2-3 R1~R4·§4 로그 규칙 체크리스트 · R2 빌드일·R4 원자적 자리·R1 순수 판정은 ✅ 09-27 구현됨(nsql-license) | 92 · T-32 | 🚧 문서 ✅ · 코드 R1·R2·R4 ✅ · R3 = keys.rs 채울 때 |
 | **T-240 수정용 실행(1회)**(사용자 09-27 · **지금은 아님 — 요청 시 개발**) | P2 | 중 | 실행 전 대상 표·최종 열 분석 → 카탈로그 키와 대조 → 키/ROWID를 첫 문장에 주입 = 1회 실행으로 편집 환경 · 카드 1장 · Run ▸ 수정용 실행 · 폴백 = as-is + `identify` — 설계·기반 = [87 §15-2](87-grid-data-editing.md) | 87 §15 · D-225 | 📐 대기 |
 | **T-237 LOB 값 창 후속**(§236 · [87 §5-1](87-grid-data-editing.md)) | P3 | 중 | ✅ **§242 기저 JPEG 미리보기(nexa-gfx 83차 `jpeg.rs` · 외부 crate 0) · PNG Adam7** · 남음 = 프로그레시브 JPEG · CLOB 큰 파일 모드 · 이미지 확대/축소 | 87 | ◐ |
 | **T-235 🔧 수동 커밋 + 그리드 적용 = 트랜잭션 로그 미기록 · Oracle 열림 미표시**(사용자 09-26 실서버) | P1 | 소 | ✅ §234 `ApplyReport.log` → 트랜잭션 로그 문장별(Util/User · pending) · `tx_left_open = began ∨ tx_open ∨ done>0 ∨ rollback_needed` · `txlog.dump:` · 시험 `manual_oracle_marks_tx_open_and_logs_statements` · E2E ⑨(수동 모드 3회 적용 = UPDATE 3 pending · 종료 = 미커밋) | 87 44 | ✅ |

@@ -15,7 +15,10 @@
 
 - ✅ **툴체인** — `nexa-license/rust-toolchain.toml`(stable · 저장소 내부라 확인 불필요 · ⓑ `rustup default`는 전역이라 제외) → 시험 **19/19** · fmt ✓ · clippy `-D warnings` ✓(CI에 걸릴 fmt 차이·`unwrap_used` 5건 선제 수정) · MSRV 1.82 충분(dalek 1.81). README 상태표 갱신. [journal 09-27 §7](journal/2026-09-27.md).
 - 📐 **결정 대기 L-8** — 서명 코드 위치(25 §11-1 "검증 전용" vs §12-1 `issuer` feature) 어긋남 → L-1~L-7과 함께 답 필요(권장 = §11-1 유지).
-- 남은 것 = D-41~D-47 · L-1~L-8 확정 · `keys.rs`(발급 PC keygen) · T-163 실기 ⑦~⑫ · 디지털 자산 보호 설계 문서.
+- 📐 **[92 디지털 자산 보호 설계](92-digital-asset-protection.md)** — 자산 8 · 공격자 4 · 보호 층(암호학·서버·로컬 보강 R1~R4) · **분석 지연 기법 효과 검토 표(난독화·안티디버깅·자기 무결성 = 하지 않음 · 근거 23 §2-3·DR-1)** · D-227~D-230.
+- ★ **라이선스 앱 층 구현(사용자 "바로 구현")** — nexa-license `fs`(원자적 설치 · 동시 설치 시험) · **신규 크레이트 `nsql-license`**(`Feature` 20 · `LicenseState` · `check` 순수 판정 · 빌드일 `build.rs` · `refresh` 변경 서명 · 요청 코드 · 시험 8 = 23 §5 전부) · **CLI `nsql license status|request|install|remove|path`**(T-33 · i18n 7) · 게이트 배선·GUI는 D-41·D-44 뒤. [journal §9](journal/2026-09-27.md).
+- 🔧 **CI 4ecbd88 빨강 둘** — mac·win clippy(`settings_clip_native` cfg) · integration(`it-mssql.sql` `from dual` 제거 · 사용자 09-27) · 워크플로 3개에 nexa-license 체크아웃.
+- 남은 것 = D-41~D-47 · D-227~D-230 · L-1~L-8 확정 · `keys.rs`(발급 PC keygen) · T-34 GUI · T-36 게이트 · T-163 실기 ⑦~⑫.
 
 ## 2026-09-26 (101차 · **Linux**) — ★ **전수 검사**(사용자 "전체 개발 기능 리눅스 동작 전수 · 4종 DB DDL·DML·DCL · 성능 꼼꼼히")
 

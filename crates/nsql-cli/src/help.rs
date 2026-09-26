@@ -325,6 +325,26 @@ const CMDS: &[Cmd] = &[
         ],
     },
     Cmd {
+        name: "license",
+        usage: "nsql license status | request [<name> [<email>]] | install <file> | remove | path",
+        brief: Msg::HlpCmdLicense,
+        detail: Msg::HlpCmdLicenseDetail,
+        args: &[
+            ("status", Msg::HlpArgLicenseStatus),
+            ("request [<name> [<email>]]", Msg::HlpArgLicenseRequest),
+            ("install <file>", Msg::HlpArgLicenseInstall),
+            ("remove", Msg::HlpArgLicenseRemove),
+            ("path", Msg::HlpArgLicensePath),
+        ],
+        opts: &[],
+        notes: &[],
+        examples: &[
+            "nsql license request \"Hong Gildong\" hong@example.com   # paste the line into the e-mail",
+            "nsql license install ~/Downloads/nexa-sql.license",
+            "nsql license status",
+        ],
+    },
+    Cmd {
         name: "cat",
         usage: "nsql cat -c <target> [-s schema] [-f fmt] schemas | kinds | <kind> | columns <object> | sub <object> <sub-kind> [kind] | detail <object> [kind] | gen <what> <object> [kind] [sub-kind sub-name] | source <kind> <name> | errors <name>",
         brief: Msg::HlpCmdCat,

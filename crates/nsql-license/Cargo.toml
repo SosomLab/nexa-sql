@@ -1,0 +1,22 @@
+[package]
+name = "nsql-license"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nexa SQL 라이선스 앱 층(T-32') — nexa-license 위의 얇은 층: Feature 열거 · LicenseState · check(Feature) 순수 판정 · 빌드일 · 요청 코드 · 설치/삭제(docs/23 §4-1 · docs/92 §2-3)"
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+nexa-license = { workspace = true, features = ["ed25519", "machine-id", "fs"] }
+nsql-settings.workspace = true
+
+[dev-dependencies]
+# 시험 전용 키쌍 생성·서명(발급 코드가 아니다 · #[cfg(test)]) — nexa-license verify 시험과 같은 판.
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }

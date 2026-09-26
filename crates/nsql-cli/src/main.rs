@@ -17,6 +17,7 @@ mod config;
 mod conn;
 mod grep;
 mod help;
+mod license;
 mod plan;
 mod term;
 
@@ -1904,6 +1905,7 @@ fn main() {
         "cat" | "catalog" | "obj" => cat::cmd_cat(&o),
         "config" | "settings" => config::cmd_config(&o),
         "grep" => grep::cmd_grep(&o.positional),
+        "license" | "lic" => license::cmd_license(&o),
         other => {
             eprintln!("알 수 없는 명령: {other}\n");
             usage()

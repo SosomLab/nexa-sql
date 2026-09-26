@@ -90,6 +90,10 @@ jobs:
         with:
           repository: SosomLab/nexa-ui
           path: nexa-ui
+      - uses: actions/checkout@v4 # 형제 저장소 ../nexa-license(공개 · 검증 전용 · DR-25) — nsql-license가 path 의존
+        with:
+          repository: SosomLab/nexa-license
+          path: nexa-license
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

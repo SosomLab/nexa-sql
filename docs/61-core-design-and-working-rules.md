@@ -1,7 +1,7 @@
 # 61 · 핵심 설계와 작업 규칙 — 다른 PC(맥)에서 그대로 이어 가기 (사용자 요청 09-20)
 
 > **왜 이 문서인가**: 세션이 기억하는 규칙 가운데 일부는 **그 PC의 로컬 메모리 폴더**(`~/.claude/projects/…/memory/`)에만 있었다 — 다른 PC에서는 보이지 않는다. 저장소에 들어 있는 것만 따라온다. 이 문서는 ① 로컬에만 있던 규칙을 저장소로 올리고 ② 09-19~20에 굳어진 핵심 설계(편집 버퍼 · 되돌리기 · 큰 파일 · 적재)의 **불변식과 금지 사항**을 한곳에 모으고 ③ Windows와 macOS에서 다르게 해야 하는 것을 가른다.
-> **읽는 순서(새 PC · 새 세션)**: [CLAUDE.md](../CLAUDE.md) → 이 문서 → [STATUS](STATUS.md) → [TODO](TODO.md). 형제 저장소 nexa-ui도 같은 순서(`../nexa-ui/CLAUDE.md` §3-1에 요약).
+> **읽는 순서(새 PC · 새 세션)**: [CLAUDE.md](../CLAUDE.md) → 이 문서 → [STATUS](STATUS.md) → [TODO](TODO.md). 형제 저장소 nexa-ui도 같은 순서(`../nexa-ui/CLAUDE.md` §3-1에 요약). ★ 09-27부터 **형제 저장소는 둘** — `../nexa-ui`(UI) · `../nexa-license`(라이선스 라이브러리 · 공개 · 검증 전용 · `crates/nsql-license`가 path 의존 · 없으면 빌드가 안 된다 → `git clone git@kiros33.github.com:SosomLab/nexa-license.git ../nexa-license`).
 > 규칙의 원문이 따로 있는 것은 링크만 단다(이중 관리 금지) — 여기서 원문인 것은 §1의 "규칙" 줄과 §2-3 · §2-4 · §3이다.
 
 ## 1. 핵심 설계 — 불변식과 금지 사항
