@@ -1082,14 +1082,6 @@ pub const REGISTRY: &[Entry] = &[
         default: "null",
     },
     Entry {
-        key: "grid.edit_strict",
-        cat: Msg::CatGrid,
-        label: Msg::LblGridEditStrict,
-        desc: Msg::DescGridEditStrict,
-        kind: SettingKind::Bool,
-        default: "on",
-    },
-    Entry {
         key: "grid.edit_refresh",
         cat: Msg::CatGrid,
         label: Msg::LblGridEditRefresh,

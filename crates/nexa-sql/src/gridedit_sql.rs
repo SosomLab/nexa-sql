@@ -6,7 +6,7 @@
 
 use nexa_ctl::gridedit::{CellKind, CellSpec, ChangeSet, RowRef};
 use nsql_core::{BindParam, Caps, Dialect, Direction, ExecRequest, Marker, Value, VarType};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 
 /// 읽기 전용인 이유(상태줄 안내 · 87 §7).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,6 +238,10 @@ pub(crate) struct EditStmt {
     pub req: ExecRequest,
     /// 사람이 읽는 미리보기(바인드 → 리터럴).
     pub preview: String,
+    /// ★ 사전 검사문(UPDATE/DELETE = 같은 WHERE의 `SELECT COUNT(*)` · 87 §14 데이터 보호 불변식) — INSERT는 None.
+    pub guard: Option<ExecRequest>,
+    /// 보고용 라벨(`UPDATE #3 (ID=5)`).
+    pub label: String,
 }
 
 /// 문자열 셀 → 바인드 값. `Expr` = 바인드 대신 SQL 식(`now`/`today` 토큰).
@@ -397,7 +401,13 @@ impl Sink {
             }
         }
     }
-    fn finish(self, kind: StmtKind, row: RowRef) -> EditStmt {
+    fn finish(
+        self,
+        kind: StmtKind,
+        row: RowRef,
+        guard: Option<ExecRequest>,
+        label: String,
+    ) -> EditStmt {
         EditStmt {
             kind,
             row,
@@ -406,6 +416,8 @@ impl Sink {
                 params: self.params,
             },
             preview: self.preview,
+            guard,
+            label,
         }
     }
 }
@@ -466,13 +478,97 @@ pub(crate) fn generate(
             sink.key_eq(&q(d, &c.name), b);
         }
     };
+    // 보고용 라벨: `UPDATE #행 (키=값, …)`.
+    let key_text = |row: usize| -> String {
+        inp.key_cols
+            .iter()
+            .filter_map(|&k| inp.cols.get(k).map(|c| (c, k)))
+            .map(|(c, k)| format!("{}={}", c.name, original(row, k).display()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    // ★ 사전 검사문 = 같은 WHERE의 COUNT(*)(대상 행 수 = 1 · 87 §14).
+    let guard_of = |row: usize| -> ExecRequest {
+        let mut g = Sink::new(d);
+        g.text(&format!("SELECT COUNT(*) FROM {}", inp.table));
+        key_where(&mut g, row);
+        ExecRequest {
+            sql: g.sql,
+            params: g.params,
+        }
+    };
+    // ★ 유일성 사전 검사(D-215): 적용 대기 변경 안에서 키 튜플이 겹치면 거부(수정된 키 값 · 추가 행 · 그대로인 행).
+    if !inp.key_cols.is_empty() {
+        let key_tuple = |vals: &[Option<String>]| -> String {
+            vals.iter()
+                .map(|v| v.clone().unwrap_or_else(|| "\u{0}NULL".into()))
+                .collect::<Vec<_>>()
+                .join("\u{1}")
+        };
+        let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut check = |tuple: String, who: String| -> Result<(), String> {
+            if tuple.contains("\u{0}NULL") {
+                return Ok(()); // NULL 키는 유일성 비교 대상이 아니다(DBMS도 NULL ≠ NULL).
+            }
+            if let Some(prev) = seen.insert(tuple, who.clone()) {
+                return Err(tf(Msg::StGeDupKey, &[&format!("{prev} ↔ {who}")]));
+            }
+            Ok(())
+        };
+        // 기존 행 = 수정된 키 값 반영(삭제 행 제외).
+        let mut touched: Vec<usize> = cs.edits().map(|((r, _), _)| *r).collect();
+        touched.dedup();
+        let mut any_key_edit = false;
+        for row in touched {
+            if cs.is_deleted(RowRef::Existing(row)) {
+                continue;
+            }
+            let vals: Vec<Option<String>> = inp
+                .key_cols
+                .iter()
+                .map(|&k| match cs.cell(RowRef::Existing(row), k) {
+                    Some(v) => {
+                        any_key_edit = true;
+                        v.clone()
+                    }
+                    None => value_text(&original(row, k)),
+                })
+                .collect();
+            check(key_tuple(&vals), format!("#{}", row + 1))?;
+        }
+        let inserted: Vec<(usize, Vec<Option<String>>)> = cs
+            .inserted_rows()
+            .map(|(k, ir)| {
+                (
+                    k,
+                    inp.key_cols
+                        .iter()
+                        .map(|&c| ir.cells.get(c).cloned().unwrap_or(None))
+                        .collect(),
+                )
+            })
+            .collect();
+        for (k, vals) in &inserted {
+            check(key_tuple(vals), format!("+{}", k + 1))?;
+        }
+        let _ = any_key_edit;
+    }
     let mut out = Vec::new();
     // DELETE
     for row in cs.deleted_rows() {
         let mut s = Sink::new(d);
         s.text(&format!("DELETE FROM {}", inp.table));
         key_where(&mut s, row);
-        out.push(s.finish(StmtKind::Delete, RowRef::Existing(row)));
+        let label = tf(
+            Msg::GeGuardLabel,
+            &["DELETE", &(row + 1).to_string(), &key_text(row)],
+        );
+        out.push(s.finish(
+            StmtKind::Delete,
+            RowRef::Existing(row),
+            Some(guard_of(row)),
+            label,
+        ));
     }
     // UPDATE(행별 · 수정된 열만).
     let mut rows: Vec<usize> = cs.edits().map(|((r, _), _)| *r).collect();
@@ -503,7 +599,16 @@ pub(crate) fn generate(
             continue;
         }
         key_where(&mut s, row);
-        out.push(s.finish(StmtKind::Update, RowRef::Existing(row)));
+        let label = tf(
+            Msg::GeGuardLabel,
+            &["UPDATE", &(row + 1).to_string(), &key_text(row)],
+        );
+        out.push(s.finish(
+            StmtKind::Update,
+            RowRef::Existing(row),
+            Some(guard_of(row)),
+            label,
+        ));
     }
     // INSERT(살아 있는 추가 행 · 값 있는 열 + 기본값 없는 NULL 열).
     for (k, ir) in cs.inserted_rows() {
@@ -536,7 +641,8 @@ pub(crate) fn generate(
             s.value(b);
         }
         s.text(")");
-        out.push(s.finish(StmtKind::Insert, RowRef::Inserted(k)));
+        let label = tf(Msg::GeGuardLabel, &["INSERT", &format!("+{}", k + 1), ""]);
+        out.push(s.finish(StmtKind::Insert, RowRef::Inserted(k), None, label));
     }
     Ok(out)
 }
@@ -674,6 +780,13 @@ mod tests {
         assert_eq!(st[0].kind, StmtKind::Delete);
         assert_eq!(st[0].req.sql, "DELETE FROM EMP WHERE \"ID\" = :p1");
         assert_eq!(st[0].preview, "DELETE FROM EMP WHERE \"ID\" = 3");
+        assert_eq!(
+            st[0].guard.as_ref().map(|g| g.sql.as_str()),
+            Some("SELECT COUNT(*) FROM EMP WHERE \"ID\" = :p1"),
+            "사전 검사문 = 같은 WHERE의 COUNT"
+        );
+        assert_eq!(st[0].guard.as_ref().map(|g| g.params.len()), Some(1));
+        assert!(st[0].label.starts_with("DELETE #3"));
         assert_eq!(st[1].kind, StmtKind::Update);
         assert_eq!(
             st[1].req.sql,
@@ -694,6 +807,40 @@ mod tests {
         );
         assert_eq!(st[2].req.params.len(), 2);
         assert_eq!(st[2].req.params[0].value, Value::Int(9));
+        assert!(st[2].guard.is_none(), "INSERT는 사전 검사 없음");
+    }
+
+    /// 유일성 사전 검사(D-215): 키 값을 이미 있는 다른 행의 키로 바꾸면 적용 전에 거부 · NULL 키는 비교 제외.
+    #[test]
+    fn duplicate_key_among_pending_is_rejected() {
+        let cols = cols();
+        let inp = GenInput {
+            dialect: Dialect::Sqlite,
+            table: "t",
+            cols: &cols,
+            key_cols: &[0],
+        };
+        let mut cs = ChangeSet::new(4);
+        // 행 0(ID=1)의 키를 2로 → 행 1(ID=2)과 충돌(행 1도 손댔을 때 비교 대상에 든다).
+        cs.set_cell(
+            RowRef::Existing(0),
+            0,
+            Some("2".into()),
+            Some(&Some("1".into())),
+        );
+        cs.set_cell(RowRef::Existing(1), 1, Some("zz".into()), None);
+        let err = generate(&inp, &cs, &orig).expect_err("dup");
+        assert!(err.contains("#1") && err.contains("#2"), "{err}");
+        // 추가 행이 기존 행 키와 같아도 거부.
+        let mut cs2 = ChangeSet::new(4);
+        cs2.set_cell(RowRef::Existing(2), 1, Some("q".into()), None);
+        cs2.insert_row(None, vec![Some("3".into()), Some("n".into()), None, None]);
+        assert!(generate(&inp, &cs2, &orig).is_err());
+        // NULL 키는 비교 제외.
+        let mut cs3 = ChangeSet::new(4);
+        cs3.insert_row(None, vec![None, Some("a".into()), None, None]);
+        cs3.insert_row(None, vec![None, Some("b".into()), None, None]);
+        assert!(generate(&inp, &cs3, &orig).is_ok());
     }
 
     #[test]

@@ -307,3 +307,17 @@
 - **D-218** SQL Server 힙 = `%%physloc%%` 미사용(3급/읽기 전용).
 
 구현 순서(T-231): 1급-보완(숨은 키 주입) → 2급(Oracle ROWID · SQLite rowid · PG ctid+xmin) → 3급 제외 규칙+사전 검사 → 키 중복 사전 검사·순서 → 동시성 옵션. 판정 = 순수 함수(`editable::classify`) + MC/DC 시험.
+
+---
+
+## 14. 데이터 보호 불변식(사용자 09-26 핵심 규칙 · 구현 완료)
+
+| 겹 | 규칙 | 구현 |
+|---|---|---|
+| ① 사전 검사 | UPDATE/DELETE마다 같은 WHERE의 `SELECT COUNT(*)`를 **쓰기 전에** 전부 실행 · 하나라도 ≠ 1이면 **아무것도 쓰지 않는다** | `EditStmt.guard`(`gridedit_sql::generate`) → `Runner::apply_changes` 1단계 · 오류 = `ApplyPhase::PreCheck` + 라벨 `UPDATE #3 (ID=5)` + "target rows = n" |
+| ② 영향 행 수 | 실행 문장마다 affected = 1(INSERT 포함) · 아니면 즉시 중단 · **설정으로 끌 수 없음**(`grid.edit_strict` 폐기) | `apply_changes` 2단계 · `ApplyPhase::Execute` |
+| ③ 되돌림 | 자동 커밋 = 우리가 연 트랜잭션 전체 롤백 · 수동 커밋 = `SAVEPOINT nsql_edit`(방언별: Oracle/PG/SQLite/MySQL `SAVEPOINT` · SQL Server `SAVE TRANSACTION`) → 실패 시 `ROLLBACK TO` · 성공 시 `RELEASE`(PG/SQLite/MySQL) · 되돌리기 실패 = `rollback_needed` | `ApplyReport { rolled_back, rollback_needed, tx_left_open }` · 호스트 문구 `StGeAutoRolledBack` / `StGeSavepointBack` / `StGeRollbackNeeded`(토스트 + 상태줄 + 로그) |
+| 유일성 | 적용 대기 변경 안에서 키 튜플 중복(수정된 키 · 추가 행 · 손댄 기존 행) = 적용 전 거부 `StGeDupKey`(NULL 키 제외) · 서버 제약 위반은 ②·③ | `generate` 앞부분 · 시험 `duplicate_key_among_pending_is_rejected` |
+| 보고 | 원인 상세 = 단계 · 문장 번호 · 라벨(종류 #행 (키=값)) · 메시지/행 수 · 되돌림 상태 | `ConnOutcome::Applied` 처리 |
+
+원칙: 프로그램의 판단 미스·버그로 데이터가 훼손되는 일은 없어야 한다 — 앞으로의 자동 DML(행 단위 재조회의 RETURNING 등 포함)도 같은 세 겹을 지난다(CLAUDE.md §3 · 61 §1-7).

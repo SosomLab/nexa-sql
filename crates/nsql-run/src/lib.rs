@@ -32,20 +32,87 @@ use std::time::{Duration, Instant};
 const MAX_SCRIPT_DEPTH: usize = 32;
 
 /// 호스트로 흘러가는 이벤트.
+/// [`Runner::apply_changes`] 입력 한 문장 — 실행문 + (UPDATE/DELETE) 사전 검사문 + 사람이 읽는 라벨(보고용).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplyStmt {
+    pub req: ExecRequest,
+    /// 같은 WHERE의 `SELECT COUNT(*)`(대상 행 수 = 1 검사) — INSERT는 None.
+    pub guard: Option<ExecRequest>,
+    pub label: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyPhase {
+    Begin,
+    /// 쓰기 전 대상 행 수 검사 — 아무것도 바뀌지 않았다.
+    PreCheck,
+    Execute,
+    Commit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplyError {
+    pub index: usize,
+    pub phase: ApplyPhase,
+    pub message: String,
+    pub label: String,
+}
+
 /// [`Runner::apply_changes`] 결과.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ApplyReport {
     pub total: usize,
-    /// 성공한 문장 수(자동 모드 롤백 뒤에는 0).
+    /// 성공한 문장 수(롤백 뒤에는 0).
     pub done: usize,
     /// 문장마다 영향 행 수(실패 문장 전까지).
     pub affected: Vec<u64>,
-    /// (문장 index, 메시지).
-    pub error: Option<(usize, String)>,
+    pub error: Option<ApplyError>,
     pub committed: bool,
+    /// 자동 = 전체 롤백 · 수동 = 세이브포인트로 우리 부분만 되돌림.
     pub rolled_back: bool,
+    /// ★ 되돌리지 못했다 — 사용자가 ROLLBACK 해야 한다(수동 모드 · 세이브포인트 실패 등).
+    pub rollback_needed: bool,
     /// 수동 모드 — 트랜잭션이 열린 채 남았다(커밋/롤백은 사용자).
     pub tx_left_open: bool,
+}
+
+/// 방언별 세이브포인트 문장 (설정 · 되돌리기 · 해제).
+fn savepoint_sql(
+    dialect: Dialect,
+) -> (
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+) {
+    match dialect {
+        Dialect::Mssql => (
+            Some("SAVE TRANSACTION nsql_edit"),
+            Some("ROLLBACK TRANSACTION nsql_edit"),
+            None,
+        ),
+        Dialect::Oracle => (
+            Some("SAVEPOINT nsql_edit"),
+            Some("ROLLBACK TO nsql_edit"),
+            None,
+        ),
+        Dialect::Odbc => (None, None, None),
+        _ => (
+            Some("SAVEPOINT nsql_edit"),
+            Some("ROLLBACK TO SAVEPOINT nsql_edit"),
+            Some("RELEASE SAVEPOINT nsql_edit"),
+        ),
+    }
+}
+
+/// `SELECT COUNT(*)` 결과의 수.
+fn count_of(r: &ExecResult) -> Option<u64> {
+    let v = r.result_sets.first()?.rows.first()?.first()?;
+    match v {
+        nsql_core::Value::Int(i) => u64::try_from(*i).ok(),
+        nsql_core::Value::Float(f) => Some(*f as u64),
+        nsql_core::Value::Decimal(d) | nsql_core::Value::Str(d) => d.trim().parse().ok(),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -1017,67 +1084,162 @@ impl Runner {
         self.tx_open
     }
 
-    /// ★ 그리드 편집 적용(nexa-sql 87 §7 · T-182): 바인드 문장 묶음을 **한 트랜잭션**으로 순서대로 실행한다.
-    /// 자동 커밋 모드 = 시작문(능력표 `tx_begin`) → 전부 → 커밋 · 하나라도 실패하면 롤백(부분 적용 0).
-    /// 수동 모드 = 열린 트랜잭션에 이어 붙이고 **열어 둔다**(커밋/롤백은 사용자 · 실패해도 롤백하지 않는다 — 앞선 작업을 잃지 않게).
-    /// `strict` = 문장마다 영향 행 수가 정확히 1이어야 한다(0/2+ = 그 문장에서 중단 · `grid.edit_strict`).
-    pub fn apply_changes(&mut self, stmts: &[ExecRequest], strict: bool) -> ApplyReport {
+    /// ★ 그리드 편집 적용(nexa-sql 87 §7·§14 · T-182) — **데이터 보호 불변식**(사용자 09-26): 셀 편집이 만든 UPDATE/DELETE는
+    /// 정확히 **1행**만 바꿔야 한다. ① 사전 검사 = 쓰기 전에 `guard`(같은 WHERE의 `COUNT(*)`)로 대상 행 수가 1인지 전부 확인(하나라도 아니면
+    /// 아무것도 바꾸지 않는다) ② 실행 = 문장마다 영향 행 수 = 1(아니면 그 자리에서 멈춘다) ③ 실패 = 자동 커밋 모드 → 전체 롤백 ·
+    /// 수동 모드 → **세이브포인트**로 우리 부분만 되돌린다(사용자의 앞선 작업은 열린 채) · 되돌리기까지 실패하면 "ROLLBACK 필요"를 보고.
+    /// ④ 성공 = 자동 커밋 모드만 커밋 · 수동은 열어 둔다. 원인은 `ApplyReport.error`(문장 index · 단계 · 상세)로.
+    pub fn apply_changes(&mut self, stmts: &[ApplyStmt]) -> ApplyReport {
         let mut rep = ApplyReport {
             total: stmts.len(),
             ..ApplyReport::default()
         };
         let auto = self.engine.settings.autocommit;
         let begin = self.engine.caps.tx_begin;
+        let dialect = self.engine.dialect;
         let Some(sess) = self.session.as_mut() else {
-            rep.error = Some((0, "no session".into()));
+            rep.error = Some(ApplyError {
+                index: 0,
+                phase: ApplyPhase::PreCheck,
+                message: "no session".into(),
+                label: String::new(),
+            });
             return rep;
         };
-        // 시작문: 자동 모드는 늘(원자성) · 수동 모드는 아직 열린 트랜잭션이 없을 때만.
+        let run = |sess: &mut Box<dyn Session>, sql: &str| -> Result<(), String> {
+            sess.execute(&ExecRequest {
+                sql: sql.to_string(),
+                params: Vec::new(),
+            })
+            .map(|_| ())
+            .map_err(|e| e.message)
+        };
+        // 시작문(자동 = 원자성 · 수동 = 열린 트랜잭션이 없을 때만) + 수동 모드 세이브포인트.
+        let mut began = false;
         if let Some(b) = begin {
             if auto || !self.tx_open {
-                if let Err(e) = sess.execute(&ExecRequest {
-                    sql: b.to_string(),
-                    params: Vec::new(),
-                }) {
-                    rep.error = Some((0, e.message));
+                began = true;
+                if let Err(m) = run(sess, b) {
+                    rep.error = Some(ApplyError {
+                        index: 0,
+                        phase: ApplyPhase::Begin,
+                        message: m,
+                        label: String::new(),
+                    });
                     return rep;
                 }
             }
         }
+        let (sp_set, sp_back, sp_release) = savepoint_sql(dialect);
+        let mut savepoint = false;
+        if !auto {
+            if let Some(sql) = sp_set {
+                savepoint = run(sess, sql).is_ok();
+            }
+        }
+        // ① 사전 검사 — 쓰기 전에 대상 행 수 전부 확인.
         for (i, st) in stmts.iter().enumerate() {
-            match sess.execute(st) {
-                Ok(r) => {
-                    let n = r.rows_affected.unwrap_or(0);
-                    rep.affected.push(n);
-                    if strict && n != 1 {
-                        rep.error = Some((i, format!("affected {n} rows (expected 1)")));
+            let Some(g) = st.guard.as_ref() else { continue };
+            let n = match sess.execute(g) {
+                Ok(r) => count_of(&r),
+                Err(e) => {
+                    rep.error = Some(ApplyError {
+                        index: i,
+                        phase: ApplyPhase::PreCheck,
+                        message: e.message,
+                        label: st.label.clone(),
+                    });
+                    break;
+                }
+            };
+            if n != Some(1) {
+                rep.error = Some(ApplyError {
+                    index: i,
+                    phase: ApplyPhase::PreCheck,
+                    message: format!(
+                        "target rows = {} (must be exactly 1)",
+                        n.map_or_else(|| "?".to_string(), |v| v.to_string())
+                    ),
+                    label: st.label.clone(),
+                });
+                break;
+            }
+        }
+        // ② 실행 — 문장마다 영향 행 수 1.
+        if rep.error.is_none() {
+            for (i, st) in stmts.iter().enumerate() {
+                match sess.execute(&st.req) {
+                    Ok(r) => {
+                        let n = r.rows_affected.unwrap_or(0);
+                        rep.affected.push(n);
+                        if n != 1 {
+                            rep.error = Some(ApplyError {
+                                index: i,
+                                phase: ApplyPhase::Execute,
+                                message: format!("affected {n} rows (must be exactly 1)"),
+                                label: st.label.clone(),
+                            });
+                            break;
+                        }
+                        rep.done += 1;
+                    }
+                    Err(e) => {
+                        rep.error = Some(ApplyError {
+                            index: i,
+                            phase: ApplyPhase::Execute,
+                            message: e.message,
+                            label: st.label.clone(),
+                        });
                         break;
                     }
-                    rep.done += 1;
-                }
-                Err(e) => {
-                    rep.error = Some((i, e.message));
-                    break;
                 }
             }
         }
+        // ③ 마무리.
         if auto {
             if rep.error.is_none() {
                 match sess.commit() {
                     Ok(()) => rep.committed = true,
-                    Err(e) => rep.error = Some((rep.done, format!("commit: {}", e.message))),
+                    Err(e) => {
+                        rep.error = Some(ApplyError {
+                            index: rep.done,
+                            phase: ApplyPhase::Commit,
+                            message: e.message,
+                            label: String::new(),
+                        });
+                    }
                 }
             }
             if rep.error.is_some() {
-                let _ = sess.rollback();
-                rep.rolled_back = true;
+                rep.rolled_back = sess.rollback().is_ok();
+                rep.rollback_needed = !rep.rolled_back;
                 rep.done = 0;
             }
             self.note_tx_ended();
-        } else if rep.done > 0 || rep.error.is_some() {
-            self.tx_open = true;
-            self.tx_changed = true;
-            rep.tx_left_open = true;
+        } else {
+            if rep.error.is_some() {
+                if savepoint {
+                    if let Some(sql) = sp_back {
+                        rep.rolled_back = run(sess, sql).is_ok();
+                    }
+                }
+                rep.rollback_needed = !rep.rolled_back;
+                if rep.rolled_back {
+                    rep.done = 0;
+                }
+            } else if savepoint {
+                if let Some(sql) = sp_release {
+                    let _ = run(sess, sql);
+                }
+            }
+            // 수동 모드 = 우리가 열었든 이미 열려 있었든 트랜잭션은 열린 채(커밋/롤백은 사용자) · 변경 흔적은 실제로 남았을 때만.
+            if began || self.tx_open {
+                self.tx_open = true;
+                rep.tx_left_open = true;
+            }
+            if rep.done > 0 || rep.rollback_needed {
+                self.tx_changed = true;
+            }
         }
         rep
     }
@@ -4125,5 +4287,182 @@ SELECT &v_mx + 1 AS nxt, '&_DIALECT' AS d, length('&_DATE') AS dl;
         assert!(!Runner::requery_ok("EXEC P(:rc)"));
         assert!(!Runner::requery_ok("BEGIN p(:rc); END;"));
         assert!(!Runner::requery_ok("PRINT rc"));
+    }
+}
+
+#[cfg(test)]
+mod apply_changes_tests {
+    //! ★ 데이터 보호 불변식(nexa-sql 87 §14 · 사용자 09-26): 사전 검사 ≠ 1 = 쓰기 0 · 실행 영향 ≠ 1 = 되돌림(자동 롤백 / 수동 세이브포인트).
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct Guard {
+        log: Arc<Mutex<Vec<String>>>,
+        count: u64,
+        affected: Vec<u64>,
+        pos: usize,
+    }
+
+    impl Session for Guard {
+        fn dialect(&self) -> Dialect {
+            Dialect::Postgres
+        }
+        fn execute(&mut self, req: &ExecRequest) -> Result<ExecResult, DbError> {
+            self.log.lock().expect("log").push(req.sql.clone());
+            let mut r = ExecResult::default();
+            if req.sql.starts_with("SELECT COUNT") {
+                r.result_sets.push(ResultSet {
+                    columns: vec![Column {
+                        name: "N".into(),
+                        type_name: "int8".into(),
+                    }],
+                    rows: vec![vec![Value::Int(self.count as i64)]],
+                });
+            } else if req.sql.starts_with("UPDATE")
+                || req.sql.starts_with("DELETE")
+                || req.sql.starts_with("INSERT")
+            {
+                let n = self.affected.get(self.pos).copied().unwrap_or(1);
+                self.pos += 1;
+                r.rows_affected = Some(n);
+            }
+            Ok(r)
+        }
+        fn fetch_cursor(&mut self, _c: nsql_core::CursorId) -> Result<ResultSet, DbError> {
+            Ok(ResultSet::default())
+        }
+        fn fetch_cursor_page(
+            &mut self,
+            _c: nsql_core::CursorId,
+            _max: usize,
+        ) -> Result<(ResultSet, Option<CursorHandle>), DbError> {
+            Ok((ResultSet::default(), None))
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            self.log.lock().expect("log").push("COMMIT".into());
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            self.log.lock().expect("log").push("ROLLBACK".into());
+            Ok(())
+        }
+    }
+
+    fn runner(
+        count: u64,
+        affected: Vec<u64>,
+        autocommit: bool,
+    ) -> (Runner, Arc<Mutex<Vec<String>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let opener: Opener = Box::new(|_: &ConnectSpec| {
+            Err(DbError {
+                code: None,
+                message: "no".into(),
+                position: None,
+            })
+        });
+        let r = Runner::new(Dialect::Postgres, opener)
+            .with_session(
+                Box::new(Guard {
+                    log: Arc::clone(&log),
+                    count,
+                    affected,
+                    pos: 0,
+                }),
+                "fake pg",
+            )
+            .with_autocommit(autocommit);
+        (r, log)
+    }
+
+    fn stmt(sql: &str, guard: bool) -> ApplyStmt {
+        ApplyStmt {
+            req: ExecRequest {
+                sql: sql.into(),
+                params: Vec::new(),
+            },
+            guard: guard.then(|| ExecRequest {
+                sql: format!("SELECT COUNT(*) FROM t WHERE ({sql})"),
+                params: Vec::new(),
+            }),
+            label: format!("L:{sql}"),
+        }
+    }
+
+    #[test]
+    fn precheck_mismatch_writes_nothing_and_rolls_back() {
+        let (mut r, log) = runner(2, vec![1, 1], true);
+        let rep = r.apply_changes(&[stmt("UPDATE t SET a=1", true), stmt("DELETE FROM t", true)]);
+        let e = rep.error.expect("error");
+        assert_eq!(e.phase, ApplyPhase::PreCheck);
+        assert_eq!(e.index, 0);
+        assert_eq!(e.label, "L:UPDATE t SET a=1");
+        assert!(e.message.contains("target rows = 2"));
+        let l = log.lock().expect("log").clone();
+        assert!(
+            l.iter()
+                .all(|s| !s.starts_with("UPDATE") && !s.starts_with("DELETE")),
+            "쓰기 0: {l:?}"
+        );
+        assert!(l.contains(&"ROLLBACK".to_string()));
+        assert!(rep.rolled_back && !rep.committed && rep.done == 0 && !rep.rollback_needed);
+    }
+
+    #[test]
+    fn success_auto_commit_runs_guards_first() {
+        let (mut r, log) = runner(1, vec![1, 1, 1], true);
+        let rep = r.apply_changes(&[
+            stmt("DELETE FROM t", true),
+            stmt("UPDATE t SET a=1", true),
+            stmt("INSERT INTO t VALUES (1)", false),
+        ]);
+        assert!(rep.error.is_none(), "{rep:?}");
+        assert!(rep.committed && rep.done == 3);
+        let l = log.lock().expect("log").clone();
+        let first_write = l
+            .iter()
+            .position(|s| s.starts_with("DELETE"))
+            .expect("delete");
+        let last_guard = l
+            .iter()
+            .rposition(|s| s.starts_with("SELECT COUNT"))
+            .expect("guard");
+        assert!(last_guard < first_write, "사전 검사가 전부 먼저: {l:?}");
+        assert_eq!(l.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(l.last().map(String::as_str), Some("COMMIT"));
+    }
+
+    #[test]
+    fn execute_mismatch_in_manual_mode_rolls_back_to_savepoint() {
+        let (mut r, log) = runner(1, vec![1, 2], false);
+        let rep = r.apply_changes(&[
+            stmt("UPDATE t SET a=1", true),
+            stmt("UPDATE t SET b=2", true),
+        ]);
+        let e = rep.error.expect("error");
+        assert_eq!((e.phase, e.index), (ApplyPhase::Execute, 1));
+        assert!(e.message.contains("affected 2 rows"));
+        let l = log.lock().expect("log").clone();
+        assert!(l.contains(&"SAVEPOINT nsql_edit".to_string()), "{l:?}");
+        assert!(
+            l.contains(&"ROLLBACK TO SAVEPOINT nsql_edit".to_string()),
+            "{l:?}"
+        );
+        assert!(!l.contains(&"COMMIT".to_string()) && !l.contains(&"ROLLBACK".to_string()));
+        assert!(rep.rolled_back && !rep.rollback_needed && rep.tx_left_open && rep.done == 0);
+        assert!(r.tx_open());
+    }
+
+    #[test]
+    fn success_manual_mode_releases_savepoint_and_keeps_tx_open() {
+        let (mut r, log) = runner(1, vec![1], false);
+        let rep = r.apply_changes(&[stmt("UPDATE t SET a=1", true)]);
+        assert!(rep.error.is_none() && rep.tx_left_open && !rep.committed && rep.done == 1);
+        let l = log.lock().expect("log").clone();
+        assert!(
+            l.contains(&"RELEASE SAVEPOINT nsql_edit".to_string()),
+            "{l:?}"
+        );
+        assert!(!l.contains(&"COMMIT".to_string()));
     }
 }

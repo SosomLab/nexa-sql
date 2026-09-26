@@ -49,9 +49,8 @@ pub(crate) enum Cmd {
     Apply {
         /// 결과 탭 키.
         key: u64,
-        stmts: Vec<nsql_core::ExecRequest>,
-        /// 문장마다 영향 행 수 = 1 검사(`grid.edit_strict`).
-        strict: bool,
+        /// 실행문 + 사전 검사문(87 §14 데이터 보호 불변식 · 영향 1행은 늘 강제).
+        stmts: Vec<nsql_run::ApplyStmt>,
     },
     /// 연결 공유 층의 변수를 통째로 바꾼다(변수 창이 고쳤다 · D-135) — DB로 가는 것은 없다.
     SharedVars(Vec<nsql_script::VarState>),
@@ -1118,7 +1117,7 @@ pub(crate) fn spawn(
                         wake_now();
                         true
                     }
-                    Cmd::Apply { key, stmts, strict } => {
+                    Cmd::Apply { key, stmts } => {
                         let alive = ensure_alive(
                             &mut runner,
                             &active_spec,
@@ -1132,10 +1131,15 @@ pub(crate) fn spawn(
                             &mut emit,
                         );
                         let rep = match alive {
-                            Ok(()) => runner.apply_changes(&stmts, strict),
+                            Ok(()) => runner.apply_changes(&stmts),
                             Err(m) => nsql_run::ApplyReport {
                                 total: stmts.len(),
-                                error: Some((0, m)),
+                                error: Some(nsql_run::ApplyError {
+                                    index: 0,
+                                    phase: nsql_run::ApplyPhase::Begin,
+                                    message: m,
+                                    label: String::new(),
+                                }),
                                 ..Default::default()
                             },
                         };

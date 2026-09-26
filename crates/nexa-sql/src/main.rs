@@ -1476,16 +1476,29 @@ impl App {
                     self.sess.aux_done();
                     self.sess.edit_apply = None;
                     let requery = self.settings.get("grid.edit_refresh") != Some("local");
+                    // ★ 87 §14 데이터 보호 불변식: 실패 원인을 단계·문장·키·행 수까지 상세히 + 되돌림 상태(자동 롤백 / 세이브포인트 / ROLLBACK 필요).
                     let msg = match &rep.error {
                         None if rep.tx_left_open => {
                             tf(Msg::StGeAppliedTx, &[&rep.done.to_string()])
                         }
                         None => tf(Msg::StGeApplied, &[&rep.done.to_string()]),
-                        Some((i, m)) => {
-                            let mut s = tf(Msg::StGeApplyFailed, &[&(i + 1).to_string(), m]);
-                            if rep.rolled_back {
-                                s.push(' ');
-                                s.push_str(t(Msg::StGeRolledBack));
+                        Some(e) => {
+                            let n = (e.index + 1).to_string();
+                            let mut s = match e.phase {
+                                nsql_run::ApplyPhase::PreCheck => {
+                                    tf(Msg::StGePreCheck, &[&n, &e.label, &e.message])
+                                }
+                                _ => tf(Msg::StGeExecFail, &[&n, &e.label, &e.message]),
+                            };
+                            s.push(' ');
+                            if rep.rollback_needed {
+                                s.push_str(t(Msg::StGeRollbackNeeded));
+                            } else if rep.rolled_back && rep.tx_left_open {
+                                s.push_str(t(Msg::StGeSavepointBack));
+                            } else if rep.rolled_back {
+                                s.push_str(t(Msg::StGeAutoRolledBack));
+                            } else if e.phase == nsql_run::ApplyPhase::PreCheck {
+                                // 사전 검사 단계 = 아직 아무것도 쓰지 않았다(문구에 포함).
                             }
                             s
                         }
@@ -1504,7 +1517,10 @@ impl App {
                     }
                     self.sess.status = msg;
                     if let Some(g) = self.grid_for(key) {
-                        g.apply_done(rep.done, rep.error.clone());
+                        g.apply_done(
+                            rep.done,
+                            rep.error.as_ref().map(|e| (e.index, e.message.clone())),
+                        );
                     }
                     if rep.tx_left_open {
                         // 수동 모드: 커밋/롤백 표식(34 UX) — 트랜잭션 로그의 한 줄로.
@@ -6454,7 +6470,7 @@ impl App {
     }
 
     /// 변경 적용 → 워커 `Cmd::Apply`(gate · 한 트랜잭션 · 결과는 `ConnOutcome::Applied`).
-    fn grid_edit_apply(&mut self, table: &str, stmts: Vec<nsql_core::ExecRequest>, preview: &str) {
+    fn grid_edit_apply(&mut self, table: &str, stmts: Vec<nsql_run::ApplyStmt>, preview: &str) {
         if !self.gate_open() {
             self.grid
                 .apply_done(0, Some((0, t(Msg::StRunning).to_string())));
@@ -6466,14 +6482,12 @@ impl App {
         ));
         self.log_win
             .push(LogEntry::new(LogKind::Send, preview.to_string()));
-        let strict = self.settings.flag("grid.edit_strict");
         self.sess.edit_apply = Some(self.grid_tab);
         self.sess.aux += 1;
         self.sess.status = t(Msg::StRunning).into();
         self.sess.worker.send(worker::Cmd::Apply {
             key: self.grid_tab,
             stmts,
-            strict,
         });
         self.redraw();
     }

@@ -173,10 +173,10 @@ pub(crate) enum EditRequest {
     NeedKeys {
         table: String,
     },
-    /// 변경 적용(바인드 문장 묶음 · 한 트랜잭션) — 답은 `apply_done`.
+    /// 변경 적용(바인드 문장 묶음 + 사전 검사문 · 한 트랜잭션) — 답은 `apply_done`.
     Apply {
         table: String,
-        stmts: Vec<nsql_core::ExecRequest>,
+        stmts: Vec<nsql_run::ApplyStmt>,
         preview: String,
     },
     /// 읽기 전용 미리보기 창(SQL 미리보기 · 값 보기).
@@ -1410,7 +1410,14 @@ impl Grid {
                     e.error_row = None;
                     e.sent_rows = stmts.iter().map(|s| s.row).collect();
                 }
-                let reqs: Vec<nsql_core::ExecRequest> = stmts.into_iter().map(|s| s.req).collect();
+                let reqs: Vec<nsql_run::ApplyStmt> = stmts
+                    .into_iter()
+                    .map(|s| nsql_run::ApplyStmt {
+                        req: s.req,
+                        guard: s.guard,
+                        label: s.label,
+                    })
+                    .collect();
                 self.edit_reqs.push(EditRequest::Apply {
                     table,
                     stmts: reqs,
