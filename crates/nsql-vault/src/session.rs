@@ -17,6 +17,13 @@ use std::sync::{Mutex, OnceLock};
 
 use nsql_core::Secret;
 
+/// 추적(`NSQL_TRACE_VAULT=1` · 진단용 · 값은 안 적는다).
+fn trace(what: &str, id: &str) {
+    if std::env::var_os("NSQL_TRACE_VAULT").is_some() {
+        eprintln!("[vault:mem] {what} · {id}");
+    }
+}
+
 struct MemVault {
     key: [u8; 32],
     items: HashMap<String, Vec<u8>>,
@@ -41,8 +48,12 @@ fn vault() -> Option<&'static Mutex<MemVault>> {
 pub fn remember(id: &str, secret: &Secret) {
     let Some(v) = vault() else { return };
     let Ok(mut g) = v.lock() else { return };
-    if let Ok(sealed) = crate::sealed::seal(id.as_bytes(), &g.key, secret.expose().as_bytes()) {
-        g.items.insert(id.to_string(), sealed);
+    match crate::sealed::seal(id.as_bytes(), &g.key, secret.expose().as_bytes()) {
+        Ok(sealed) => {
+            g.items.insert(id.to_string(), sealed);
+            trace("stored", id);
+        }
+        Err(_) => trace("seal failed", id),
     }
 }
 
@@ -50,7 +61,14 @@ pub fn remember(id: &str, secret: &Secret) {
 #[must_use]
 pub fn recall(id: &str) -> Option<Secret> {
     let g = vault()?.lock().ok()?;
-    let plain = crate::sealed::open(id.as_bytes(), &g.key, g.items.get(id)?)?;
+    let Some(sealed) = g.items.get(id) else {
+        trace("no entry", id);
+        return None;
+    };
+    let Some(plain) = crate::sealed::open(id.as_bytes(), &g.key, sealed) else {
+        trace("open failed(key/domain)", id);
+        return None;
+    };
     // 바이트열을 **옮겨** 담는다(사본 없음).
     String::from_utf8(plain).ok().map(Secret::new)
 }
@@ -64,12 +82,15 @@ pub fn matches(id: &str, candidate: &str) -> bool {
 /// 그 자리를 잊는다(틀린 비밀번호였다 · 서버를 목록에서 뺐다).
 pub fn forget(id: &str) {
     if let Some(Ok(mut g)) = vault().map(Mutex::lock) {
-        g.items.remove(id);
+        if g.items.remove(id).is_some() {
+            trace("removed", id);
+        }
     }
 }
 
 /// 전부 잊는다(설정을 껐다) — 봉투 바이트도 0으로 덮고 버린다.
 pub fn clear() {
+    trace("clear(all)", "*");
     if let Some(Ok(mut g)) = vault().map(Mutex::lock) {
         for sealed in g.items.values_mut() {
             sealed.fill(0);
@@ -82,6 +103,7 @@ pub fn clear() {
 /// **프로그램 종료**(사용자 09-21): 봉투를 전부 덮어써 버리고 **키도 0으로** 덮는다 → 이 뒤로는 어떤 봉투도 열리지 않는다.
 /// (프로세스가 끝나면 메모리는 어차피 사라지지만, 종료 직전의 덤프·스왑에도 키가 남지 않게 명시적으로 지운다.)
 pub fn shutdown() {
+    trace("shutdown", "*");
     clear();
     if let Some(Ok(mut g)) = vault().map(Mutex::lock) {
         g.key.fill(0);

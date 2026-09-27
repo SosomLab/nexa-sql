@@ -39,6 +39,8 @@ if [ -n "$IC" ] && [ -d "$IC" ]; then
     export TNS_ADMIN="$IC/network/admin"
     export NLS_LANG="${NLS_LANG:-AMERICAN_AMERICA.AL32UTF8}"
 fi
+# 앞선 로그는 지우지 않고 회전해 둔다(재현 기록 보존 · 09-27).
+[ -f "$LOG" ] && mv -f "$LOG" "$LOG.1"
 nohup target/debug/nexa-sql > "$LOG" 2>&1 &
 NEW=$!
 echo "PID=$NEW" > "$PIDF"

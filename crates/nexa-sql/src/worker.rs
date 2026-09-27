@@ -496,6 +496,14 @@ pub(crate) fn spawn(
                 Box::new(
                     move |spec: &ConnectSpec| -> Result<Box<dyn Session>, DbError> {
                         let dialect = spec.dialect.unwrap_or(default_dialect);
+                        vault_trace(
+                            match spec.password.as_deref() {
+                                Some("") => "open(spec · password = explicit empty)",
+                                Some(_) => "open(spec · password = explicit)",
+                                None => "open(spec · password = none)",
+                            },
+                            &cred_id(spec, default_dialect),
+                        );
                         // ★ **명시한 비밀번호**(`user:pw@host` · 빈 값 `user:@host` 포함 · 저장된 프로필): 그 서버·계정의 자격 자리를
                         //   이 값으로 **바꿔 든다**(자리는 하나) → 거부되면 자리를 비운다 = 앞서 입력해 둔 값도 다시 쓰이지 않고,
                         //   다음 `user@host` 접속은 다시 묻는다(사용자 09-21).

@@ -13,6 +13,15 @@
 /// 0 = 모름 · 1 = 라틴 · 2 = 본연. 엔진 이름이 바뀌면 다시 모름.
 static LAST_INPUT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
+/// 한/영 **토글 키**가 앱에 도달했다(Linux · `HangulMode`/`Shift+Space`/오른쪽 Alt — 입력기가 삼키지 않은 경우만 온다) → 지금 상태를 뒤집는다.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+pub(crate) fn note_toggle(currently_latin: bool) {
+    LAST_INPUT.store(
+        if currently_latin { 2 } else { 1 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// 가린 칸에 입력이 들어왔다 — `latin` = 일반 키 글자(영문) · false = IME 조합/확정(한글 등).
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 pub(crate) fn note_input(latin: bool) {

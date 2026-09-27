@@ -9144,6 +9144,25 @@ impl App {
         }
         // 자체 시험(09-26 성능 전수): 메모리 계측 표본을 파일로 — 총량·anon·부품 원장(L1 Meta · L2 MetaCols · L3 MetaDetail …).
         // 자체 시험(T-34): 라이선스 창 상태 덤프 · 파일 설치(파일 창과 같은 길).
+        // 자체 시험(09-27 · 세션 자격 금고 재현): 열려 있는 비밀번호 창에 **저장된 프로필의 비밀번호**로 답한다(키 주입 없이 프롬프트 경로를
+        //   그대로 지난다 · 값은 로그에 남지 않는다). `pw.answer_from_profile:<프로필>` · 창이 없으면 아무것도 안 함.
+        if let Some(name) = id.strip_prefix("pw.answer_from_profile:") {
+            if self.input_win.is_password() {
+                let pw = Vault::open_default()
+                    .ok()
+                    .and_then(|v| v.resolve(name).ok().flatten())
+                    .and_then(|spec| spec.password);
+                match pw {
+                    Some(p) => {
+                        self.password_reply(worker::PwReply::Value(nsql_core::Secret::new(p)))
+                    }
+                    None => {
+                        self.sess.status = format!("pw.answer_from_profile: no password in {name}")
+                    }
+                }
+            }
+            return;
+        }
         if let Some(path) = id.strip_prefix("about.dump:") {
             let _ = std::fs::write(path, self.about_win.dump());
             return;

@@ -447,6 +447,9 @@ impl InputWin {
                 self.redraw();
             }
             WindowEvent::Ime(Ime::Preedit(text, _)) => {
+                if crate::input::trace_ime() {
+                    eprintln!("[ime] pw-win preedit={text:?}");
+                }
                 if let Some(r) = self.rows.get_mut(self.focus) {
                     r.tb.set_preedit(text, &mut inv);
                 }
@@ -457,6 +460,26 @@ impl InputWin {
                 self.redraw();
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
+                // 진단(`NSQL_TRACE_IME=1` · 09-27 Linux 한/영 토글 키가 이 창에 오는지): 논리 키·물리 키·글자.
+                if crate::input::trace_ime() {
+                    eprintln!(
+                        "[ime] pw-win key logical={:?} physical={:?} text={:?}",
+                        kev.logical_key, kev.physical_key, kev.text
+                    );
+                }
+                // Linux 한/영 토글 키(입력기가 삼키지 않고 넘겨준 경우): 즉시 안내를 뒤집는다(사용자 09-27 "전환 즉시").
+                let toggle = matches!(
+                    kev.logical_key.as_ref(),
+                    Key::Named(NamedKey::HangulMode) | Key::Named(NamedKey::AltGraph)
+                ) || (self.shift
+                    && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Space)));
+                if toggle && cfg!(all(unix, not(target_os = "macos"))) {
+                    let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
+                    crate::imestate::note_toggle(latin_now);
+                    self.note_hidden_input();
+                    self.redraw();
+                    return InputWinAction::None;
+                }
                 match kev.logical_key.as_ref() {
                     Key::Named(NamedKey::Escape) => return InputWinAction::Cancel,
                     Key::Named(NamedKey::Enter) => return self.submit(),

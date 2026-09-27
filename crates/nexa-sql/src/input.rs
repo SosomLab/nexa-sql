@@ -105,6 +105,12 @@ pub(crate) fn hangul_app_mode(setting: &str, macos: bool, korean_source: Option<
 /// 시스템 IME를 붙여도 되는가(창들이 만들 때·모드가 바뀔 때 본다) — 앱 조합 중이면 IME를 끊는다(raw 자모를 받으려고).
 static SYSTEM_IME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// `NSQL_TRACE_IME=1`(기동 때 한 번 읽음 · 보조 창의 키/IME 진단).
+pub(crate) fn trace_ime() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NSQL_TRACE_IME").is_some())
+}
+
 pub(crate) fn system_ime() -> bool {
     SYSTEM_IME.load(std::sync::atomic::Ordering::Relaxed)
 }
