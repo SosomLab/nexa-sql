@@ -478,7 +478,27 @@ impl Engine {
                 vec![Action::Nothing(format!("setvar {name}"))]
             }
             Command::Describe { object } => vec![Action::Describe(object.clone())],
-            Command::Show { what } => vec![Action::Show(what.clone())],
+            Command::Show { what } => {
+                // 사용 시 모드(D-184): 변수 표를 보는 것도 "사용"이다 — stale 수식을 먼저 재계산(서버) → 재계획(사용자 09-27).
+                let w = what
+                    .trim()
+                    .trim_end_matches(';')
+                    .trim()
+                    .to_ascii_uppercase();
+                if self.settings.expand_at_use && matches!(w.as_str(), "VARIABLES" | "VAR" | "VARS")
+                {
+                    let stale = self.vars.take_all_stale_formulas();
+                    if !stale.is_empty() {
+                        let mut acts = Vec::new();
+                        for (name, formula) in stale {
+                            acts.extend(self.plan_exec(&format!("EXEC :{name} := {formula}")));
+                        }
+                        acts.push(Action::Replan);
+                        return acts;
+                    }
+                }
+                vec![Action::Show(what.clone())]
+            }
             Command::Spool { target } => vec![Action::Spool(target.clone())],
             // 치환 뒤 본문(`PROMPT hello &1` — SQL*Plus처럼 &var가 풀린다 · T-9 09-16). 명령어 뒤 첫 공백 하나만 뗀다.
             Command::Prompt { .. } => vec![Action::Prompt(after_command_word(text))],
@@ -1332,6 +1352,25 @@ mod tests {
         e.vars.assign("V2", Value::Int(10));
         let acts = e.plan(&item("SELECT :V2 FROM dual"));
         assert_eq!(acts.len(), 1);
+        // ★ 서버 OUT 흡수는 안 바뀐 의존(:V1)도 다시 대입한다 — 값이 같으면 stale이 되면 안 된다(사용자 09-27 Linux loop 오류).
+        e.vars.assign("V1", Value::Int(5));
+        assert!(
+            !e.vars.formula_of("V2").unwrap().stale,
+            "같은 값 대입 = stale 아님"
+        );
+        let acts = e.plan(&item("SELECT :V1, :V2 FROM dual"));
+        assert_eq!(acts.len(), 1, "재계획 없이 실행 하나");
+        // ★ SHOW VARIABLES도 사용 시점: 의존이 바뀌면 재계산 → Replan · 흡수 뒤엔 Show 하나.
+        e.plan(&item("EXEC :V1 := 9"));
+        let acts = e.plan(&item("SHOW VARIABLES"));
+        assert!(matches!(acts.last(), Some(Action::Replan)), "{acts:?}");
+        let Action::Execute { prepared, .. } = &acts[0] else {
+            panic!()
+        };
+        assert!(prepared.sql.contains(":V2 := :V1 + 5"));
+        e.vars.assign("V2", Value::Int(14));
+        let acts = e.plan(&item("SHOW VARIABLES"));
+        assert!(matches!(acts.as_slice(), [Action::Show(_)]), "{acts:?}");
         // 대입 시 모드(기본)에서는 수식을 기억하지 않는다.
         let mut e2 = Engine::new(Dialect::Oracle);
         e2.plan(&item("EXEC :V2 := :V1 + 5"));

@@ -149,11 +149,14 @@ impl VarStore {
                 if v.ty == VarType::Auto {
                     v.ty = VarType::infer(&value);
                 }
-                if v.value != value {
+                // ★ 값이 **실제로 바뀔 때만** 의존 수식을 stale로(사용자 09-27 Linux: 재계산 EXEC의 OUT 흡수가 안 바뀐 `:A`까지
+                //   대입해 `:B` 수식을 매번 다시 stale로 만들어 재계획이 64회 돌았다 = "Substitution variable loop").
+                let changed = v.value != value;
+                if changed {
                     v.value = value;
                     self.dirty.insert(key.clone());
                 }
-                self.note_assigned(&key);
+                self.note_assigned(&key, changed);
             }
             None => {
                 let ty = VarType::infer(&value);
@@ -167,20 +170,32 @@ impl VarStore {
                 }
                 self.vars.insert(key.clone(), var);
                 self.dirty.insert(key.clone());
-                self.note_assigned(&key);
+                self.note_assigned(&key, true);
             }
         }
     }
 
-    /// 대입 뒤: 이 이름을 의존하는 수식은 stale · 이 이름 자신의 수식은 방금 계산됐으니 fresh.
-    fn note_assigned(&mut self, key: &str) {
+    /// 대입 뒤: 이 이름 자신의 수식은 방금 계산됐으니 fresh · 값이 바뀌었으면 이 이름을 의존하는 수식은 stale.
+    fn note_assigned(&mut self, key: &str, changed: bool) {
         for (name, f) in self.formulas.iter_mut() {
             if name == key {
                 f.stale = false;
-            } else if f.deps.iter().any(|d| d == key) {
+            } else if changed && f.deps.iter().any(|d| d == key) {
                 f.stale = true;
             }
         }
+    }
+
+    /// stale인 수식 **전부**(`SHOW VARIABLES`처럼 모든 값을 보는 자리 = 사용 시점 · 사용자 09-27). 돌려주면서 stale을 내린다.
+    pub fn take_all_stale_formulas(&mut self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (name, f) in self.formulas.iter_mut() {
+            if f.stale {
+                f.stale = false;
+                out.push((name.clone(), f.text.clone()));
+            }
+        }
+        out
     }
 
     /// 수식 등록(`EXEC :V := 식` · 사용 시 모드) — 같은 수식이면 그대로.
