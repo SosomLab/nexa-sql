@@ -199,18 +199,24 @@ mod tests {
         assert_eq!(errs, 1, "없는 루트 = 실패 1");
         assert_eq!(seen.len(), 1 + 6 + 24 + 1);
         assert_eq!(done, Some(seen.len()));
-        // 취소: 플래그를 먼저 켜면 루트도 읽지 않고 Done.
-        let (rx, c) = spawn(
+        // 취소: 플래그를 먼저 켜면 루트도 읽지 않고 Done 하나.
+        // `spawn` 뒤에 켜면 워커가 이미 몇 폴더를 읽는 경주가 있어(빠른 CI 러너 간헐 실패 · 09-27 ubuntu) `run`에 켜진 플래그를 넘긴다.
+        let (tx, rx) = mpsc::channel::<DirMsg>();
+        run(
             vec![dir.clone()],
             ListOpts {
                 show_hidden: false,
                 show_dot: true,
             },
             2,
+            tx,
+            Arc::new(AtomicBool::new(true)),
         );
-        c.store(true, Ordering::Relaxed);
         let msgs: Vec<DirMsg> = rx.iter().collect();
-        assert!(msgs.iter().all(|m| matches!(m, DirMsg::Done { .. })) || msgs.len() <= 3);
+        assert!(
+            matches!(msgs.as_slice(), [DirMsg::Done { dirs: 0 }]),
+            "취소 = 읽지 않고 Done(0) 하나"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
