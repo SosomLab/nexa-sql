@@ -4,6 +4,12 @@
 >
 > ★ **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md) + [§14-3](journal/2026-09-27.md)** — 라이선스 체계 코드 완성 · ✅ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c) · 다음 = **첫 발급 실기**(절차 [91 §2-1](91-license-root-key-operations.md)) → T-244 · T-163 실기.
 
+## 2026-09-27 (104차 · **Linux**) — 공개키 반영 빌드·재시작 · 첫 발급 설치 확인 · 🔧 라이선스 창 겹침 · 운영 Q&A 넷
+
+- nexa-license 1bc033c 당김 → Debug·Release 재빌드 → `key=root-v1` 가짜 서명 = `invalid(signature)`(키 반영) · 첫 발급 `NSL-2026-000001` 설치 → 창 **`Pro · linux`**.
+- 🔧 라이선스 창 겹침(정식 상태 표 13행) → 높이 580 · 최소 520×420 · 하단 floor([journal §15](journal/2026-09-27.md)) · `scripts/linux-restart-debug.sh`(빌드 및 재시작).
+- Q&A → 규칙([journal §16](journal/2026-09-27.md)): 요청 코드 = 기기 코드만 판정(이름·이메일은 메타) · 기기 5대 = 한 ID에 등록(`reissue`) · 조직 = 서버 보류라 **team-seat** 권장 · ⚠ Org 파일 직접 설치는 지금 사이트 라이선스 → **D-231**(거부+안내 권장) · T-245(발급기 조직 좌석 카운트).
+
 ## 2026-09-27 (103차 · **mac**) — 최신화·분석 · ★ 루트 공개키 `root-v1` 등재 · 발급 절차 정리
 
 - 당김: nexa-sql +8(a12a8d7) · **nexa-license +5**(92d0292 · path 의존이라 필수) · nexa-ui 최신. 맥 시험 **620 ✓ · 실패 0**.
