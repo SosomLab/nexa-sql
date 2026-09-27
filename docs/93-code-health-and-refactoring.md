@@ -108,6 +108,9 @@ python scripts/code-health.py --baseline target/code-health/baseline.json   # �
 | 손으로 조립한 설정 값 | **Factory(연관 함수)** | `FontPrefs::with_base(_status)` · `SlotFont::plain` |
 | 명령 문자열 분배(`menu_action` · `startup_cmd`) | **Command 분배표** — 지금은 `match` 한 곳(명령 id = 키맵·메뉴·팔레트·기동 명령 공용) | 유지(분배는 한 파일 · §7 후보) |
 | 백엔드 선택(softbuffer/IOSurface) | **Strategy** | 기존 `Presenter` 그대로 |
+| 입력을 먼저 받을 쪽 고르기(`route_inner` 1,053줄) | **Chain of Responsibility** — 고리마다 메서드 · `true` = 가져감 | `route_<패널>` 15개 |
+| 세 곳에 복사된 도형 판정 식 | **공용 모듈(Extract Module)** — 가장 아래 층(nexa-ctl)에 | `nexa_ctl::shape` |
+| 같은 모양 DDL 생성 조각 | **Extract Function** | `gen::close_table_body` |
 | DB 접근 통제 | **Gatekeeper/Facade**(`gate_open`) | 기존 그대로(DR-34 불변식) |
 
 ---
@@ -118,8 +121,8 @@ python scripts/code-health.py --baseline target/code-health/baseline.json   # �
 
 | 파일 | 담당 | 대표 메서드 |
 |---|---|---|
-| `event_loop.rs` | winit 사건 처리기(`ApplicationHandler`) | `window_event` · `about_to_wait` |
-| `input.rs` | 키·마우스 라우팅 · 포커스 · IME | `route` · `route_inner` · `set_focus` |
+| `event_loop.rs` | winit 사건 처리기(`ApplicationHandler`) — `window_event` = 앞 판정 → 보조 창 분배 → 메인 창 → 쌓인 창 요청 | `window_event` · `aux_window_event` · `open_requested_windows` · `about_to_wait` |
+| `input.rs` | 키·마우스 라우팅(책임 연쇄 — 고리 = `route_<패널>` 15개 · 순서는 `route_inner`) · 포커스 · IME | `route` · `route_inner` · `route_palette` · `route_explorer` · `set_focus` |
 | `paint.rs` | 프레임 합성 | `paint` |
 | `events.rs` | 백그라운드 사건 소화(워커·접속·가져오기) | `drain_events` · `drain_conn` |
 | `menus.rs` | 풀다운·우클릭·팔레트 · 명령 분배 | `menu_action` · `key_command` · `build_menus` |
@@ -149,10 +152,38 @@ main.rs에 남은 것: `App` 구조체와 생성 · `layout` · `redraw`/`tmark`
 
 ---
 
-## 6. 이번 실행 기록(09-27 · Windows 102차)
+## 6. 이번 실행 기록(09-27~28 · Windows 102차)
 
-| 항목 | 착수 전(태그) | 뒤 |
-|---|---|---|
+같은 도구(`code-health.py`)를 원복 태그의 워크트리(`../_cmp/…` · 끝나고 지움)와 결과에 각각 돌린 값이다.
+
+| 항목 | 착수 전(태그) | 뒤 | 한 일 |
+|---|---|---|---|
+| 무조건 `allow(dead_code/unused)` | 17 | **0** | 삭제 7 · `cfg(test)` 5 · 낡은 표시 제거 |
+| 참조 0 `pub`(예외 표 밖) | 6 | **0** | 고립 6 삭제(nsql-core 2 · nsql-script 3 · nexa-ctl `chars_vec`) · 공용 API 45 = 예외 표 |
+| 안 쓰는 `Msg` | 62 | **0** | 문구 62(256줄) |
+| 효과 없는 설정 키 | 4 | **0** | `explorer.timeout`·`explorer.tooltip`·`db.statement_timeout`·`probe.dns_cache_secs` |
+| 임시 기능 | 1 | **0** | `dev.start_demo`(Debug 시작 시 Demo 자동 접속) |
+| main.rs 줄 수 | 20,722 | **2,758** | `app/` 27 파일(기능 26 + mod) |
+| 3000줄 넘는 파일 | 10 | 9 | main.rs 빠짐 |
+| 150줄 넘는 함수 | 90 | 89 | `window_event` 1,151 → 388 · `route_inner` 1,053 → 474(고리 15개 메서드) |
+| 중복 블록 묶음 | 35 | **28** | 키 변환 6벌 · 표면 준비 11벌 · 글꼴 설정 27곳 · 창 가운데 6곳 · 도형 판정 3벌 · DDL 표 본문 2벌 |
+| 전체 줄(nexa-sql / nexa-ui) | 152,171 / 49,288 | 151,649 / 49,462 | nexa-ui 증가 = 공용 부품(`shape` · `FontPrefs` 생성)과 시험 |
+| 시험(nexa-sql / nexa-ui) | 620 / 431 | 622 / 432 | + 키 변환 2 · + 도형 판정 1 |
+| clippy `-D warnings` | ✓ | ✓ | |
+| 기능 점검(Windows · Release · 78 시나리오) | — | 78/78 auto-ok ×2 | 분할 직후 1회 · 최종 1회 |
+| 커버리지(nexa-sql 줄) | 46.5 % | — | 라이브러리 크레이트 80~99 % · GUI 크레이트가 평균을 낮춤(정상 · §3 H) |
+
+**손대지 않은 것과 이유**
+
+- `menu_action`(544줄): 이미 명령 id → 동작의 평평한 분배표. 길이 = 명령 수 · 쪼개면 명령 찾는 자리만 는다.
+- `worker::spawn`(1,040줄): DB 작업 스레드 · 지역 상태를 분기들이 공유 · 데이터 보호 불변식(87 §14)이 지나는 길. `WorkerState` 구조체 + 명령별 처리 메서드가 맞는 모양이나, **CI integration(실서버 4종) 초록을 보며** 할 일(§8).
+- 위젯 트레이트 상용구(`bounds`/`set_bounds` — 라디오·스위치·트리): 매크로로 감추면 읽기 어려워진다.
+- OS별 판(`coretext.rs` ↔ `gdi.rs`)·층 경계를 넘는 판(nsql-core `hangul` ↔ nexa-ctl `hangul` — nsql-core 의존 0 규칙)은 의도된 복제.
+- 목적 있는 시험 자산: `scripts/` 탐침·E2E·누수 주기(입력 주입을 쓰는 옛 탐침 `win-badge-probe.ps1`·`memcycle.ps1` 포함 — 사용자 부재 때만), 자체 시험 기동 명령, 지난 기능 점검 결과 폴더.
+
+**청소한 생성물**: `target/llvm-cov-target`(커버리지 빌드 3 GB · 재생성 가능) · `packaging/windows/__pycache__`.
+
+---|---|---|
 | 무조건 `allow(dead_code)` | 16 | 0 |
 | 참조 0 `pub`(세 저장소) | 51 | 45(전부 공용 API · 예외 표) |
 | 안 쓰는 `Msg` | 62 | 0 |
@@ -163,8 +194,6 @@ main.rs에 남은 것: `App` 구조체와 생성 · `layout` · `redraw`/`tmark`
 | 중복 블록 묶음(10줄 창) | 35 | (§6 끝 수치 참조) |
 | 시험 | 620 | 622(+ 키 변환 2) |
 | 커버리지(nexa-sql 줄) | 46.5 % | (같은 시험 · 코드 감소분만큼 변동) |
-
-세부 = [journal 2026-09-27 §23](journal/2026-09-27.md).
 
 ---
 
@@ -200,8 +229,9 @@ main.rs에 남은 것: `App` 구조체와 생성 · `layout` · `redraw`/`tmark`
 
 ## 8. 남은 후보(다음 실행)
 
-- 긴 함수: `window_event` · `route_inner` · `worker::spawn` · `intel::request` · `main` · `paint` — 한 함수 = 한 사건 분기표가 되도록 사건별 도움 함수로(행동 보존 · 기능 점검 필수).
+- `worker::spawn` → `WorkerState`(러너·현재 접속·끊김 의심·알림 상태를 필드로) + `Cmd`별 처리 메서드(Command 패턴) — 전제 = CI integration 초록 · `mac-grid-edit-e2e.sh`/`linux-dbms-e2e.sh` 통과.
+- 긴 함수: `intel::request`(856) · `main`(697) · `paint`(597) · `drain_events`(554) · `about_to_wait`(497) · `apply_setting`(494) · `drain_conn`(485) — 한 함수 = 한 흐름이 되도록 단계별 도움 함수로(행동 보존 · 기능 점검 필수).
 - 큰 파일: `explorer.rs` · `grid.rs` · `conn_win.rs` — `app/`와 같은 방식(상태 한 곳 · 동작 기능별)으로.
-- 남은 중복(도구 G 상위): 보조 창 `paint` 머리(배경·글꼴·안내 줄) · 설정/키/파일 창 목록 그리기 · 로그/메모리/세션 창 머리.
+- 남은 중복(도구 G 상위 28): 보조 창 열기 꼬리(생성 → 자리 복원 → 화면 안 → 표면 · 로그/메모리/세션 창) · 표 창 그리기 머리(세션/트랜잭션 로그/변수) — 창 공통 호스트(`WinHost` · 30 T-65)로 올리면 함께 사라진다.
 - `menu_action`·`startup_cmd`의 문자열 `match`를 명령 표(Command 레지스트리)로 — 키맵·팔레트·메뉴가 같은 표를 쓰게(효과 = 명령 추가가 한 자리).
 - 번역 표 `nsql-i18n::row`(3천 줄 `match`)는 생성 표(정적 배열)로 바꿀지 측정 뒤 판단(컴파일 시간·바이너리 크기).

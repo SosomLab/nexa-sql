@@ -66,7 +66,7 @@
 |---|---|---|---|---|---|---|
 | 결과 페치 행 수 | 200 | `grid.max_rows` | 200 | 200 | 100 | `Runner::with_max_rows` |
 | 페치 배열 크기(왕복당 행) | 드라이버 기본 | `db.fetch_size`(신설 · HIDDEN) | 500 | 500 | 200 | 드라이버 어댑터 |
-| 문장 타임아웃 | 없음(드라이버 무한) | `db.statement_timeout`(신설 · 초 · 0 = 없음) | 0 | 0 | 60 | 워커 `Cmd::Run` · 드라이버 cancel 포트 |
+| 문장 타임아웃 | 없음(드라이버 무한) | `db.statement_timeout`(신설 · 초 · 0 = 없음 ·⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6)) | 0 | 0 | 60 | 워커 `Cmd::Run` · 드라이버 cancel 포트 |
 | 접속 시 추가 왕복(Oracle SID) | 1 | `oracle.live.source`(none이면 생략) | — | — | none | 워커 `ConnectSpec` |
 | 실행 중 라이브 로그 폴링(Oracle) | `oracle.live.interval_ms` · 실행 중만 | `oracle.live.interval_ms` | 1000 | 2000 | 끔 | `live_tick` |
 | 탐색기 메타 세션(접속마다 세션 1) | 1 | `explorer.visible`(숨김 = 세션 안 엶 · 신설 규칙) | 켬 | 켬 | 숨김 | `Explorer::connect` |
@@ -110,7 +110,7 @@
 | 프로브 타임아웃 | `probe.timeout` | `probe.timeout` | — | — | — | `probe_once` |
 | ICMP(TCP 실패 뒤) | 1 | `probe.icmp`(신설 · HIDDEN) | 켬 | 켬 | 끔 | `probe::ping` |
 | 접속 테스트·접속 동시 | 4 · FIFO | `connect.max_concurrent` | 4 | 2 | 1 | `dispatch_attempts` |
-| DNS 재풀이 | 프로브마다 | `probe.dns_cache_secs`(신설 · HIDDEN) | 0 | 300 | 3600 | T-63 잔여 |
+| DNS 재풀이 | 프로브마다 | `probe.dns_cache_secs`(신설 · HIDDEN ·⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6)) | 0 | 300 | 3600 | T-63 잔여 |
 | 드라이버 확장 다운로드(T-27) | 사용자 클릭 | `net.updates`(신설 · manual/notify) | notify | manual | manual | T-27 |
 | 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |
@@ -145,7 +145,7 @@
 | 캐럿 깜빡임 | 500 ms | `editor.caret_blink`(신설) | 켬 | 켬 | 끔 | `next_blink` |
 | 드래그 자동 스크롤(T-158 · 09-21) | 50 ms · 걸음당 1~12줄 | `ui.max_fps`(프레임 상한) | 켬 | 켬 | 켬 — **드래그 선택 중 + 포인터가 편집기 위/아래 밖일 때만** 돈다(새 타이머·스레드 0 · 놓으면 0) | nexa-ctl `TextBox::tick` · `drag_autoscroll_active` |
 | 로딩 점 애니메이션 | 300 ms | `ui.animations` | — | — | off(고정 "Loading…") | `explorer` · `FilePicker` |
-| 툴팁 | `ui.tooltip_delay_ms` · `tabs.tooltip` · `explorer.tooltip` | 기존 | — | — | — | — |
+| 툴팁 | `ui.tooltip_delay_ms` · `tabs.tooltip` · `explorer.tooltip` ⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6) | 기존 | — | — | — | — |
 | 슬라이드(패널) | `ui.slide_ms` | `ui.animations` | — | — | 0 | `conn_win` |
 | ★ **플래시 메시지**(09-27 · nexa-ctl `Flash` · 클릭 복사 "복사됨" 등 · 유지 + 페이드 동안 **프레임마다** 그 창만 다시 그림 · 타이머 0) | 끝나면 0 | `ui.flash_hold_ms`(2000) · `ui.flash_ms`(3000) | 2000/3000 | 1000/1500 | **300/200** | `license_win.rs` · nexa-ctl `controls/flash.rs` |
 | 토스트 남은 시간 표시(왼쪽 상태 막대가 위에서부터 옅어짐 + 카드 진척 페이드 · 09-22) | 카드가 떠 있는 동안 30ms 틱(실행 카드는 끝난 뒤 카운트다운 동안만 · 새 타이머 0) | `ui.toast_progress`(신설) · `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) | 켬 | 켬 | **끔**(향상 모드 = 종전 마지막 300ms 페이드만) | `toast` · `runtoast` |

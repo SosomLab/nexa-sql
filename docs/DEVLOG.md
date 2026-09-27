@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-28 (102차 후반 · win)** — 🧹 코드 건강 점검·전체 리팩터링([93](93-code-health-and-refactoring.md)): 원복 태그 `baseline/pre-refactor-2026-09-27` · 미사용 정리(`allow(dead_code)` 17→0 · `pub` 6 · `Msg` 62 · 설정 4 · `dev.start_demo`) · main.rs 20,722→2,758(`app/` 26 모듈 · 가시성 89 축소) · `window_event`/`route_inner` 분해(책임 연쇄) · 공통 부품 6(`text_key_event` · `Presenter::frame` · `FontPrefs::with_base` · `centered_over` · nexa-ctl `shape` · `close_table_body`) · 도구 `scripts/code-health.py` · 시험 622/432 · 기능 점검 78/78 · [journal](journal/2026-09-28.md).
 - **2026-09-27 (107차 · Linux)** — 🔧 세션 자격 금고(탐색기 칸 자동 제거의 forget 삭제 · 빈 비밀번호 명시 = 초기화 · E2E `linux-vault-e2e.sh`) · ★ Linux IME 안내 = ibus 패널 감시 `imewatch.rs`(즉시 반영 · 소유자 토큰 · 키보드 = 폴백 · 감시 수명 = 창 · 엔진 재조회 경주 제거) · 플래시 유지·페이드 · 향상 모드 등재 · [journal 09-27 §22](journal/2026-09-27.md).
 - **2026-09-27 (106차 · mac)** — 세 저장소 최신화·분석(맥 시험 ✓ · 빌드·재기동) · 🔧 유효기간 미반영 = 발급기 옛 판 + 정책 전 발급 + 재발급 통로 없음 → ★ nexa-license 4f02524 `reissue --renew`·개별 재지정·기존 ID `issue` 거부(E2E) · 발급 설명서 NSL-2026-000001 재발행 절차 · [journal 09-27 §21](journal/2026-09-27.md).
 - **2026-09-27 (104차 후반 2 · Linux)** — 🔧 수식 변수 loop·SHOW 재계산(실서버 ✓) · 라이선스·About 모달 · ★ 플래시 메시지 부품(nexa-ctl `Flash` · 배경 · 앵커 우상단 · Z-order · `ui.flash_ms`) · 이메일 링크 복사 · ★ 유효기간 3년·`max_major`·`max_version`(nexa-license 3968c26) · [journal 09-27 §17~§20](journal/2026-09-27.md).

@@ -4,6 +4,16 @@
 >
 > ★ (105차 mac = 라이선스 창 포커스 복귀 · journal §18) **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md) + [§14-3](journal/2026-09-27.md)** — 라이선스 체계 코드 완성 · ✅ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c) · 다음 = **첫 발급 실기**(절차 [91 §2-1](91-license-root-key-operations.md)) → T-244 · T-163 실기.
 
+## 2026-09-28 (102차 후반 · **win**) — 🧹 코드 건강 점검 · 전체 리팩터링([93](93-code-health-and-refactoring.md) · [journal](journal/2026-09-28.md))
+
+- **원복 기준점** = 세 저장소 태그 `baseline/pre-refactor-2026-09-27` · 작업 브랜치 `refactor/dead-code-cleanup`(nexa-sql · nexa-ui).
+- 🧹 **미사용·임시**: 무조건 `allow(dead_code)` 17 → 0 · 고립 `pub` 6 · 안 쓰는 `Msg` 62 · 효과 없는 설정 4(계획 기능 → 설계 문서 ⏸ · T-249) · 임시 `dev.start_demo` 제거 · 시험 목적 자산은 유지.
+- 🏗 **구조**: main.rs 20,722 → 2,758줄(`app/` 26 기능 모듈 · 상태 = `App` 한 곳) · 가시성 89 비공개로 · `window_event` = 흐름만(보조 창 분배 · 쌓인 요청) · `route_inner` 1,053 → 474(책임 연쇄 고리 15 메서드).
+- ♻ **공통화**: `input::text_key_event`(6벌) · `Presenter::frame`(11) · nexa-ctl `FontPrefs::with_base(_status)`(27) · `wingeom::centered_over`(6) · nexa-ctl `shape`(도형 판정 3벌) · DDL `close_table_body` — 30 §2 등재.
+- 🧰 **재실행 도구·문서**: `scripts/code-health.py`(미사용 `pub`·`Msg`·설정 키·의존·크기·중복·커버리지 · 기준선 비교) · 구조 이관 `split-app-impl.py`·`narrow-app-visibility.py` · 📐 [93](93-code-health-and-refactoring.md)(순서 P0~P8 · 판정 규칙 · 구조 지도 · 차용 체크리스트 = Rust API Guidelines · Clippy · Fowler 냄새 · Google 리뷰 · cargo-llvm-cov).
+- 검증: clippy -D warnings ✓ · 시험 nexa-sql 622 · nexa-ui 432 · 기능 점검 Windows 78/78(분할 직후) · 최종 78/78 auto-ok(창 가운데 배치 · `window_event`·`route_inner` 분해 · 도형 공통화까지 포함한 최종 Release · GUI 14.6 MB · CLI 7.8 MB) · 커버리지 nexa-sql 46.5 %(라이브러리 80~99 %).
+- 남은 것 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · push(사용자 요청 때).
+
 ## 2026-09-27 (107차 · **Linux**) — 🔧 세션 자격 금고 · ★ Linux IME 안내 = ibus 패널 감시(즉시 반영) · 플래시 유지·페이드 · 향상 모드 등재
 
 - 🔧 **세션 자격 금고**(사용자 "연결1 → 전용 연결2 → 연결1 = 다시 묻는다"): 원인 = 세션 0이 된 서버의 탐색기 칸 자동 제거가 `session::forget`까지 실행 → 제거(초기화 = 빈 비밀번호 명시 · 서버 거부뿐) · `user:@host` 빈 비밀번호 명시 = 자리 초기화 · 보관 설정 문구 분기 · `NSQL_TRACE_VAULT=1` 추적 · E2E `scripts/linux-vault-e2e.sh`(홈 복사본 · `pw.answer_from_profile` · 2/2)([journal §22](journal/2026-09-27.md)).

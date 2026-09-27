@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| refactor/dead-code-cleanup | 2026-09-27 | 2026-09-28 → main(삭제) | 4 | 102차(win) 🧹 코드 건강 점검·전체 리팩터링([93](93-code-health-and-refactoring.md)) — 미사용·임시 정리 · main.rs `app/` 분할 · 가시성 축소 · 공통 부품 6 · `window_event`/`route_inner` 분해 · `scripts/code-health.py` · 원복 태그 `baseline/pre-refactor-2026-09-27` |
 | fix/ci-imehint-token | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 🔧 CI mac·win = `ImeHint.token` dead_code → `cfg_attr(allow)`(42c7413 · ci 3-OS ✓) |
 | fix/linux-vault-ime-107 | 2026-09-27 | 2026-09-27 → main(삭제) | 10 | 107차(Linux) — 🔧 세션 자격 금고(탐색기 자동 제거 forget) · ★ Linux IME 감시(ibus 패널 · 소유자 토큰 · 폴백 전용 · 창 수명 · 경주 제거) · 플래시 유지·페이드 · 향상 모드 등재 · journal §22 |
 | docs/session-106-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 106차(mac) — 최신화·분석 · 유효기간 미반영 원인 · nexa-license 4f02524 `reissue --renew` 기록 · 25 §12 · 91 §2 · journal §21 · STATUS/DEVLOG/TODO/CLAUDE.md |

@@ -48,6 +48,12 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
+| **점-도형 판정 `shape`**(09-28 · docs/93) | nexa-ctl `shape.rs` | 아이콘 래스터의 "점이 도형 안인가": `seg_dist`·`stroke`·`rect`·`rrect`·`disc`·`ring`·`ellipse`·`tri`·`poly`·`polys_evenodd/nonzero` — 세 곳에 복사돼 있던 식을 한 벌로 | nexa-ctl 글리프 · nexa-sql 탐색기 아이콘(`exp_icons`) · 툴바 아이콘(`toolicons`) |
+| **한 크기 글꼴 설정 `FontPrefs::with_base(_status)`**(09-28) | nexa-ctl `theme.rs` | 창마다 `SlotFont{size,bold:false,italic:false}`를 손으로 조립하던 것 → 생성 함수(Factory) · `SlotFont::plain` | nexa-sql 보조 창·패널 27곳 |
+| **보조 창 입력 변환 `input::text_key_event`**(09-28) | nexa-sql `input.rs` | winit 키 → 컨트롤 입력(Adapter) · 묶음 `TextKeys::{Line, Multi, MultiTab}` · 판정 본체 `text_key_of`(순수 · 시험) | 입력·라이선스·트랜잭션 로그·변수·가져오기·SQL 미리보기 창 |
+| **프레임 버퍼 `Presenter::frame(size)`**(09-28) | nexa-sql `present.rs` | 크기 0 거르기 → resize → buffer_mut 상용구를 한 호출로(`None` = 이번 프레임 건너뜀) | 보조 창 11곳 |
+| **보조 창 가운데 배치 `wingeom::centered_over`**(09-28) | nexa-sql `wingeom.rs` | 주인 창 위 가로 가운데 · 세로 1/k 지점(주인 배율로 폭 환산) | About·가져오기·입력·라이선스·SQL 미리보기 창 |
+| **App 기능 모듈 `app/`**(09-28 · docs/93 §5) | nexa-sql `app/*.rs` | 거대 객체 분할: 상태 = `App` 한 곳(main.rs) · 동작 = 기능 파일 26 · 입력 라우팅 = 책임 연쇄 고리 메서드 `route_<패널>` · 창 사건 = `aux_window_event` 분배 | 새 동작은 해당 기능 파일에 |
 | **플래시 메시지 `Flash`**(09-27) | nexa-ctl `controls/flash.rs` | 클릭 복사 "복사됨" 같은 짧은 알림: `show(text, tone, hold_ms, fade_ms)` → 앵커(가리면 안 되는 사각형)의 **우상단이 메시지의 좌하단**(오른쪽 모자라면 왼쪽으로 · 위 모자라면 아래 · 호스트 안 · 앵커 안 덮음) · 배경 상자(색조 + 테두리) · **유지 시간 뒤 배경색으로 녹아 사라짐**(제곱 감속) · 창 맨 마지막에 그려 최상위 Z-order · 타이머·큐 0 = `paint`가 `true`인 동안 호스트가 다시 그림 · 시간 = 설정 `ui.flash_hold_ms`(2000) · `ui.flash_ms`(페이드 3000) | 라이선스 창 이메일 링크(T-34) · 앞으로 링크·복사 버튼 전부 |
 | **gridedit**(편집 가능한 그리드 핵심 · 09-26) | nexa-ctl `gridedit` | 어느 그리드든 편집: 셀 명세 검증(`CellSpec`) · 변경 집합 덧그리기+되돌리기(`ChangeSet` · 원본 불변) · 붙여넣기 행렬/자동 확장(`paste`) · 날짜 24형식(`datetime`) · 살아 있는 편집기 1개(`LiveEditor`) · 키맵 — 값은 `Option<String>` · DBMS·그리기 의존 0 | nexa-sql 결과 그리드(87) · 후보 = 설정 표·접속 목록·파일 이름 바꾸기 |
 | **TypeAhead + hangul::Composer** | nexa-ctl `typeahead` · `hangul` | 목록/트리 앞글자 점프(nexa-beep 이식): 버퍼+조합+타임아웃은 부품 · 매칭은 라벨 함수 · 필터·HUD 위치 설정 · Windows 한/영은 호스트가 토글해 `jamo_from_qwerty` | 오브젝트 탐색기(09-19) · (후보) 파일 대화상자 트리 · 설정 창 트리 · 팔레트 |

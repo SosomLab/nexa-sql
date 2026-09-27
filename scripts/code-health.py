@@ -101,7 +101,7 @@ WORD_CACHE: dict[str, int] = {}
 def rs_files(repo: Path) -> list[Path]:
     out = []
     for p in repo.rglob("*.rs"):
-        parts = set(p.parts)
+        parts = set(p.relative_to(repo).parts)  # 저장소 기준(워크트리가 `_cmp/` 아래여도 잰다)
         if "target" in parts or ".git" in parts or "_cmp" in parts:
             continue
         out.append(p)
