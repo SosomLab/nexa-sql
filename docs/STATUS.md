@@ -2,16 +2,16 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-09-27 인계](journal/2026-09-27.md)** — §5 순서(라이선스 결정 D-41~D-47 · L-1~L-8 → keys → 발급기) · §8 102차 win CI 수정.
+> ★ **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md)** — 라이선스 체계 코드 완성(라이브러리·발급기·앱 층·CLI·GUI·게이트) · 다음 = **발급 PC keygen → keys.rs → 재빌드**(사용자) → 첫 발급 실기 → T-163 실기.
 
 ## 2026-09-27 (102차 · **win**) — 세 저장소 최신화·분석 · 🔧 CI 빨강 둘 수정
 
 - 당김: nexa-ui 5b2b049(`TextBox::commit_composition`) · nexa-license a6f7ce8(verify·request·machine·date·ed25519·keys + `rust-toolchain.toml`) · nexa-sql 4ecbd88(101차 Linux 일괄). Windows 회귀 없음(clippy `-D warnings` ✓ · 테스트 610 통과 · 실패 0(1 ignored) · Release 빌드 ✓ · nexa-license 19/19).
 - 🔧 **CI**: `ci` macOS·Windows = `settings_clip_native` dead_code(Linux 전용 호출) → `cfg_attr(allow)` · `integration` = `it-mssql.sql`의 `from dual`(d1a68b1 문서 커밋 · paths 밖이라 그때 안 돎) → FROM 제거. [journal 09-27 §8](journal/2026-09-27.md).
 - 📐 nexa-license `machine.rs` Windows = `reg` 프로세스 → GUI에서 콘솔 창 깜빡임 → 앱 층 배선 때 `CREATE_NO_WINDOW`/레지스트리 직접.
-- 남은 것 = 101차 후반 2와 같음(D-41~D-47 · L-1~L-8 · `keys.rs` · T-163 ⑦~⑫).
+- 남은 것 = [journal §11](journal/2026-09-27.md)(keygen → keys.rs → 재빌드 · 첫 발급 실기 · T-163).
 
-## 2026-09-27 (101차 후반 2 · **Linux**) — nexa-license 검증 ✅ · 세 저장소 push(사용자 요청)
+## 2026-09-27 (101차 후반 2·3 · **Linux**) — ★ 라이선스 체계 코드 완성(라이브러리 · 발급기 · 앱 층 · CLI · GUI · 게이트) · 📐 92 디지털 자산 보호
 
 - ✅ **툴체인** — `nexa-license/rust-toolchain.toml`(stable · 저장소 내부라 확인 불필요 · ⓑ `rustup default`는 전역이라 제외) → 시험 **19/19** · fmt ✓ · clippy `-D warnings` ✓(CI에 걸릴 fmt 차이·`unwrap_used` 5건 선제 수정) · MSRV 1.82 충분(dalek 1.81). README 상태표 갱신. [journal 09-27 §7](journal/2026-09-27.md).
 - 📐 **결정 대기 L-8** — 서명 코드 위치(25 §11-1 "검증 전용" vs §12-1 `issuer` feature) 어긋남 → L-1~L-7과 함께 답 필요(권장 = §11-1 유지).
@@ -20,7 +20,7 @@
 - 🔧 **CI 4ecbd88 빨강 둘** — mac·win clippy(`settings_clip_native` cfg) · integration(`it-mssql.sql` `from dual` 제거 · 사용자 09-27) · 워크플로 3개에 nexa-license 체크아웃.
 - ★ **T-241 발급기 · T-34 GUI · T-36 게이트 완료**(사용자 "키 발급 기능 전부 · 서버 보류 · 진행" · [journal §10](journal/2026-09-27.md)) — nexa-license `issuer`(`sign` · 봉투 `nxk1` RFC 벡터) + **`nexa-license-tool`**(keygen/keys-rs/issue/reissue/verify/ledger · E2E) · GUI 라이선스 창 `license_win.rs` + 상태줄 배지(`Free · non-commercial use only`) + Help ▸ License… · **게이트 12곳**(25 §13-3 권장안 확정 · Release 늘 켬 · Debug `license.gates_dev`) · `nsql license export` · func-check L13~L16 · 위키 [License](wiki/License.md). ⚠ `ROOT_KEYS` 비어 있음 → 발급 PC keygen → `keys-rs` → 재빌드 선행.
 - ✅ CI 초록(nexa-sql 018014f ci·integration · nexa-license e1f1dc7·8c556e8 `machine.rs` CREATE_NO_WINDOW · nexa-ui 5b2b049) · 102차 win 5265dcc·697bd85와 rebase 합류([journal §9-6](journal/2026-09-27.md)).
-- 남은 것 = D-41~D-47 · D-227~D-230 · L-1~L-8 확정 · `keys.rs`(발급 PC keygen) · T-34 GUI · T-36 게이트 · T-163 실기 ⑦~⑫.
+- 결정 D-41~D-48(25 §13-6) · D-227~D-230(92 §5) · L-1~L-7(25 §12-7) = 사용자 "진행"으로 권장안 확정. 남은 것 = [journal §11](journal/2026-09-27.md).
 
 ## 2026-09-26 (101차 · **Linux**) — ★ **전수 검사**(사용자 "전체 개발 기능 리눅스 동작 전수 · 4종 DB DDL·DML·DCL · 성능 꼼꼼히")
 
