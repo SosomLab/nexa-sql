@@ -6,6 +6,7 @@
 |---|---|---|---|---|
 | docs/session-103-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 103차(mac) 정리 — journal §13 CI·§14(최신화·분석 · 발급 절차 · 다음) · 91 §2-1 발급 실행 순서 · STATUS/DEVLOG/TODO(T-244)/CLAUDE.md 현 단계 |
 | docs/root-v1-key | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 루트 공개키 `root-v1` 등재 기록(nexa-license 1bc033c · keys-rs fmt 안정화) · journal §13 · 91 §1 ⚠ 갱신 |
+| fix/license-picker-return-focus | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 105차(mac) — 라이선스 창 ▸ 파일 열기 뒤 창이 메인 뒤로 숨던 결함(파일 창 호스트 = 띄운 창 · `picker_return` 포커스 복귀 · `all_windows()` 단일 목록) |
 | fix/license-win-layout2-about · fix/license-win-3 | 2026-09-27 | 2026-09-27 → main(삭제) | 2 | 104차 후반(linux) — 라이선스 창 배치 2·3차(버튼 맨 아래 · 안내 오른쪽 · 높이 자동 · `.license` 필터) · ★ About 창 `about_win.rs` · 연락처 `LICENSE_CONTACT` |
 | fix/license-win-overlap · feat/linux-restart-script | 2026-09-27 | 2026-09-27 → main(삭제) | 2 | 104차(linux) — 라이선스 창 겹침(높이 580 · 하단 floor) · `scripts/linux-restart-debug.sh`(빌드 및 재시작) · 61 §3 ⓪ |
 | feat/license-issuer-gui-gates | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | ★ T-34 GUI 라이선스 창·상태줄 배지 · ★ T-36 게이트 12곳(`lic_gate`/`entitled`/`cap` · `license.gates_dev`) · `Feature::ResultTabs` · `nsql license export/import` · func-check L13~L16 · 위키 License · 91/25/23 문서 · (nexa-license 5be5ac6 = issuer + nexa-license-tool) |

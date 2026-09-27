@@ -326,6 +326,8 @@ struct App {
     /// 파일 열기/저장 창(T-74 · 모달) + 열 요청(모드).
     file_win: FileWin,
     open_file_dlg: Option<PickerMode>,
+    /// 파일 창을 띄운 보조 창(라이선스 창 · 설정 창) — 닫히면 **그 창으로** 포커스를 돌린다(없으면 메인 · 09-27).
+    picker_return: Option<WindowId>,
     /// 탭별 치환 변수(`DEFINE` · 이름 · 원문 · 표시값) — 변수 창 행 + 다음 실행에 전달(09-23).
     tab_defines: HashMap<u64, Vec<(String, String, String)>>,
     /// 프로젝트 자동 저장(사용자 09-23): 마지막 저장 시각 · 마지막으로 쓴 JSON(같으면 안 쓴다).
@@ -2237,28 +2239,7 @@ impl App {
         self.conn_modal = open;
         if !open {
             // 닫힌 모달 창의 WindowId는 z-order 목록에서 걷어낸다(열 때마다 새 id → 남겨 두면 한 칸씩 자란다 · 09-15 누수 점검).
-            let live: Vec<WindowId> = [
-                self.window.as_deref(),
-                self.log_win.window(),
-                self.txlog_win.window(),
-                self.sessions_win.window(),
-                self.license_win.window(),
-                self.about_win.window(),
-                self.vars_win.window(),
-                self.mem_win.window(),
-                self.colors_win.window(),
-                self.keys_win.window(),
-                self.prefs_win.window(),
-                self.conn_win.window(),
-                self.file_win.window(),
-                self.input_win.window(),
-                self.sqlprev_win.window(),
-                self.import_win.window(),
-            ]
-            .into_iter()
-            .flatten()
-            .map(Window::id)
-            .collect();
+            let live: Vec<WindowId> = self.all_windows().into_iter().map(Window::id).collect();
             self.z_order.retain(|id| live.contains(id));
         }
         // 메인 창 + 그 일부로 보는 보조 창 전부(로그 · 색 · 단축키 · 설정).
@@ -2276,7 +2257,9 @@ impl App {
             winfocus::set_enabled(w, !open);
         }
         if !open {
-            if let Some(w) = &self.window {
+            // 파일 창을 띄운 보조 창(라이선스 창 · 설정 창)이 살아 있으면 거기로 · 아니면 메인으로(09-27).
+            let back = self.picker_return.take().and_then(|id| self.aux_window(id));
+            if let Some(w) = back.or(self.window.as_deref()) {
                 w.focus_window();
             }
         }
@@ -11569,6 +11552,36 @@ impl App {
         self.redraw();
     }
 
+    /// 앱의 모든 창(메인 + 보조 + 모달 · 열린 것만) — z-order 정리 · id → 창 조회의 단일 원천(09-27).
+    fn all_windows(&self) -> Vec<&Window> {
+        [
+            self.window.as_deref(),
+            self.log_win.window(),
+            self.txlog_win.window(),
+            self.sessions_win.window(),
+            self.license_win.window(),
+            self.about_win.window(),
+            self.vars_win.window(),
+            self.mem_win.window(),
+            self.colors_win.window(),
+            self.keys_win.window(),
+            self.prefs_win.window(),
+            self.conn_win.window(),
+            self.file_win.window(),
+            self.input_win.window(),
+            self.sqlprev_win.window(),
+            self.import_win.window(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    /// 창 id → 창(닫혔으면 `None`).
+    fn aux_window(&self, id: WindowId) -> Option<&Window> {
+        self.all_windows().into_iter().find(|w| w.id() == id)
+    }
+
     /// 창이 포커스를 받았다 — z-order 갱신 · `window.focus = group`이면 나머지 창을 활성화 없이 같이 올린다.
     fn on_window_focused(&mut self, id: WindowId) {
         self.z_order.retain(|w| *w != id);
@@ -11576,38 +11589,11 @@ impl App {
         if self.settings.get("window.focus") == Some("single") {
             return;
         }
-        let mut wins: Vec<&Window> = Vec::new();
-        for wid in &self.z_order {
-            if let Some(w) = self.window.as_deref().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.log_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.conn_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.txlog_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.sessions_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.license_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.about_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.vars_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.mem_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.prefs_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.colors_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.keys_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.sqlprev_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            } else if let Some(w) = self.import_win.window().filter(|w| w.id() == *wid) {
-                wins.push(w);
-            }
-        }
+        let wins: Vec<&Window> = self
+            .z_order
+            .iter()
+            .filter_map(|wid| self.aux_window(*wid))
+            .collect();
         // ★ 보조 창(메모리 창 등)을 골라도 메인·다른 창이 함께 앞으로(사용자 09-24) — 맥은 `orderFront:` · 고른 창이 맨 위.
         winfocus::raise_group(&wins);
     }
@@ -11721,22 +11707,27 @@ impl App {
             (PickerMode::Open | PickerMode::Folder, _)
             | (PickerMode::Save, FilePurpose::Import | FilePurpose::License) => String::new(),
         };
-        // 폴더 고르기: 시작 = 그 설정의 지금 값 · 주인 = 설정 창(그 위에 뜬다).
-        let (start, owner, over) = if mode == PickerMode::Folder {
-            let pw = self.prefs_win.window_rc();
-            let over2 = pw.as_ref().and_then(|w| {
-                let p = w.outer_position().ok()?;
-                let sz = w.outer_size();
-                Some((p.x, p.y, sz.width, sz.height))
-            });
-            (
-                self.folder_start.take().or(start),
-                pw.or(owner),
-                over2.or(over),
-            )
-        } else {
-            (start, owner, over)
+        // ★ 파일 창의 호스트 창(그 위에 뜨고 · 닫히면 **그 창으로** 포커스가 돌아간다): 설정 폴더 = 설정 창 · 라이선스 = 라이선스 창.
+        //   메인으로 돌아가면 z-order가 바뀌어 호스트 창이 메인 뒤로 숨는다(사용자 09-27 "라이선스 파일을 고르면 창이 뒤로").
+        let host: Option<Rc<Window>> = match (mode, self.file_purpose) {
+            (PickerMode::Folder, _) => self.prefs_win.window_rc(),
+            (_, FilePurpose::License) => self.license_win.window_rc(),
+            _ => None,
         };
+        let over2 = host.as_ref().and_then(|w| {
+            let p = w.outer_position().ok()?;
+            let sz = w.outer_size();
+            Some((p.x, p.y, sz.width, sz.height))
+        });
+        self.picker_return = host.as_ref().map(|w| w.id());
+        // 폴더 고르기: 시작 = 그 설정의 지금 값.
+        let start = if mode == PickerMode::Folder {
+            self.folder_start.take().or(start)
+        } else {
+            start
+        };
+        let owner = host.or(owner);
+        let over = over2.or(over);
         let recent_dirs: Vec<PathBuf> = self
             .recent_files()
             .iter()
@@ -19414,6 +19405,7 @@ fn main() {
         act_bar,
         file_win,
         open_file_dlg: None,
+        picker_return: None,
         tab_defines: HashMap::new(),
         project_autosave_at: Instant::now(),
         project_last_json: Vec::new(),

@@ -171,6 +171,11 @@ impl LicenseWin {
         self.window.as_deref()
     }
 
+    /// 파일 창의 호스트로 넘길 때(그 위에 뜨고 · 닫히면 이 창으로 포커스가 돌아온다 · `prefs_win`과 같은 꼴).
+    pub(crate) fn window_rc(&self) -> Option<Rc<Window>> {
+        self.window.clone()
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.window.is_some()
     }
