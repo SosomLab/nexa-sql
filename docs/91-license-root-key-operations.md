@@ -28,6 +28,7 @@
 - 암호는 프롬프트 또는 `--pass-env NEXA_LICENSE_KEY_PASS`(셸 히스토리에 안 남게 `read -s`로 넣는다) — 스크립트 파일에 적지 않는다.
 - 발급 = `nexa-license-tool issue --key root-v1.key --request <코드> --kind user --licensee "<이름>" --tier pro [--email …] [--note 주문번호]` → `./issued/<ID>/nexa-sql.license` + `mail.txt` · 기기 추가 = `reissue --id <ID> --add-request <코드>`(옛 판은 `.v<N>`으로 보존).
 - 대장 `ledger.tsv`는 발급 PC 로컬(§3 백업에 포함) — 기기 ID는 접두 8자만 적는다(요청 코드 원문 보관 불필요).
+- **암호 파일을 봉투 옆에 두지 않는다**(봉투 + 암호 = 비밀키 그 자체 · 사용자 질문 09-27 [journal §12-1](journal/2026-09-27.md)). **발급 PC는 1대**: 두 PC 병행은 대장 ID 충돌(`NSL-2026-000001`부터 양쪽)·`reissue` 불가·유출 지점 2배라 비권장 — 꼭 필요하면 봉투만 오프라인 매체로 옮기고 암호는 사람이 입력(`rekey`로 PC별 암호) · `--id-prefix`를 PC별로 다르게 · 회전 때 둘 다 교체.
 - 발급한 파일은 `verify`로 자기 검증 뒤 전달한다(같은 검증 코드 = 앱과 동일 판정).
 
 ## 3. 보관·백업
