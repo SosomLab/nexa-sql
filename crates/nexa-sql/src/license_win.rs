@@ -58,6 +58,8 @@ pub(crate) struct LicenseWin {
     note: Option<(String, bool)>,
     /// 마지막 페인트의 보기(자체 시험 덤프용).
     last: LicView,
+    /// 다음 페인트에서 창 높이를 내용에 맞춘다(열 때 · 상태가 바뀔 때 — 무료 5행/정식 13행 · 사용자 09-27 "공간이 남는다").
+    fit: bool,
 }
 
 impl LicenseWin {
@@ -77,6 +79,7 @@ impl LicenseWin {
             btn_close: Button::new(t(Msg::LicBtnClose)),
             note: None,
             last: LicView::default(),
+            fit: true,
         }
     }
 
@@ -120,12 +123,14 @@ impl LicenseWin {
         crate::winfocus::focus(&win);
         self.window = Some(win);
         self.note = None;
+        self.fit = true;
         self.redraw();
     }
 
     /// 호스트: 설치/제거/복사 결과 한 줄.
     pub(crate) fn set_note(&mut self, text: String, warn: bool) {
         self.note = Some((text, warn));
+        self.fit = true;
         self.redraw();
     }
 
@@ -478,17 +483,28 @@ impl LicenseWin {
                 .as_deref()
                 .map_or_else(|| t(Msg::LicNoMachine).to_string(), str::to_string);
             let code_line = nexa_ctl::draw::ellipsize_middle(&mut dc, &code_line, wi - pad * 2);
-            // 버튼 행은 **흐름대로**(설명 줄 바로 아래) · 창이 내용보다 낮으면 바닥에 붙고 위 내용은 온전한 줄만 그린다(반쯤 잘린 글 없음).
+            // 버튼 행은 **창 맨 아래 고정**(사용자 09-27) · 위 내용은 온전한 줄만 그린다(반쯤 잘린 글 없음).
             let btn_h = th_txt + px(14.0);
-            let btn_y_flow = y + (th_txt + px(6.0)) * 2 + px(10.0);
-            let btn_y = btn_y_flow.min(hi - pad - btn_h);
-            let floor = btn_y - px(6.0);
+            let btn_y = hi - pad - btn_h;
+            let floor = btn_y - px(10.0);
             if y + th_txt <= floor {
                 dc.text(pad, y, clip, &code_line, th.text_dim);
             }
             y += th_txt + px(6.0);
             if y + th_txt <= floor {
                 dc.text(pad, y, clip, t(Msg::LicHint), th.text_dim);
+            }
+            y += th_txt;
+            // 창 높이 = 내용 끝 + 버튼 행(열 때·상태 변화 때 한 번 · 사용자가 늘린 뒤엔 건드리지 않는다).
+            if self.fit {
+                self.fit = false;
+                let need = y + px(12.0) + btn_h + pad;
+                if need != hi {
+                    let _ = win.request_inner_size(winit::dpi::PhysicalSize::new(
+                        size.width,
+                        need.max(px(200.0)) as u32,
+                    ));
+                }
             }
             let mut bx = pad;
             for (b, label) in [

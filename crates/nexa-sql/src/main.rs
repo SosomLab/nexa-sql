@@ -11753,6 +11753,9 @@ impl App {
             PickerMode::Open | PickerMode::Folder => "auto".to_string(),
             PickerMode::Save => self.editors.active_encoding(),
         };
+        self.file_win.set_next_filters(
+            matches!(self.file_purpose, FilePurpose::License).then(file_win::license_filters),
+        );
         self.file_win
             .set_overwrite_confirm_ms(self.settings.int("file.overwrite_confirm_ms").max(0) as u64);
         self.file_win.open(

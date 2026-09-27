@@ -45,6 +45,8 @@ pub(crate) struct FileWin {
     mode: PickerMode,
     /// 덮어쓰기 무장 시간(ms · 호스트가 설정에서 넣는다).
     overwrite_confirm_ms: u64,
+    /// 다음 `open` 한 번에만 쓰는 필터(용도별 · 없으면 SQL 필터).
+    next_filters: Option<Vec<FileFilter>>,
 }
 
 /// 앱 문자열 → 선택기 라벨(i18n 규칙: 리터럴은 여기 없다).
@@ -90,6 +92,14 @@ pub(crate) fn labels() -> PickerLabels {
     }
 }
 
+/// 라이선스 파일 필터(사용자 09-27 "Open 버튼을 누르면 sql이 기본이라 라이선스가 안 보임") — `.license` 기본 · 전체.
+pub(crate) fn license_filters() -> Vec<FileFilter> {
+    vec![
+        FileFilter::new(t(Msg::FilterLicense), &["license"]),
+        FileFilter::new(t(Msg::FilterAll), &[]),
+    ]
+}
+
 /// SQL 편집기용 필터(SQL · 텍스트 · 전체).
 pub(crate) fn sql_filters() -> Vec<FileFilter> {
     vec![
@@ -114,6 +124,7 @@ impl FileWin {
             picker: None,
             mode: PickerMode::Open,
             overwrite_confirm_ms: 5000,
+            next_filters: None,
         }
     }
 
@@ -157,6 +168,11 @@ impl FileWin {
         self.picker.as_ref().map(FilePicker::show_hidden)
     }
 
+    /// 다음 열기 한 번의 필터(용도별 · 예: 라이선스 = `.license` 기본).
+    pub(crate) fn set_next_filters(&mut self, f: Option<Vec<FileFilter>>) {
+        self.next_filters = f;
+    }
+
     pub(crate) fn show_dot(&self) -> Option<bool> {
         self.picker.as_ref().map(FilePicker::show_dot)
     }
@@ -186,6 +202,8 @@ impl FileWin {
         // 폴더 고르기 = 파일 필터가 뜻이 없다(목록에 폴더만) → "폴더" 한 줄.
         let filters = if mode == PickerMode::Folder {
             vec![nexa_dlg::FileFilter::new(t(Msg::FilterFolders), &[])]
+        } else if let Some(f) = self.next_filters.take() {
+            f
         } else {
             sql_filters()
         };
