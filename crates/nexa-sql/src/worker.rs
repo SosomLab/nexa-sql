@@ -275,6 +275,13 @@ pub(crate) fn credential_changed(spec: &ConnectSpec, default_dialect: Dialect) -
     }
 }
 
+/// 세션 자격 금고 추적(`NSQL_TRACE_VAULT=1` · 사용자 09-27 "저장된 비밀번호를 안 쓴다" 진단): 자리(비밀번호 없는 접속 문자열)와 동작만 · 값은 절대 안 적는다.
+pub(crate) fn vault_trace(what: &str, slot: &str) {
+    if std::env::var_os("NSQL_TRACE_VAULT").is_some() {
+        eprintln!("[vault] {what} · {slot}");
+    }
+}
+
 /// 설정 `connect.remember_session_password`(기본 켬) — 입력한 비밀번호를 이번 실행 동안 메모리 봉투로 재사용하는가.
 pub(crate) fn remember_session_password() -> bool {
     nsql_settings::Settings::open_default()
@@ -498,14 +505,22 @@ pub(crate) fn spawn(
                         ) {
                             let slot = cred_id(spec, default_dialect);
                             if remember_session_password() {
-                                nsql_vault::session::remember(
-                                    &slot,
-                                    &nsql_core::Secret::new(p.clone()),
-                                );
+                                // ★ 빈 비밀번호를 **명시**(`user:@host`)한 것은 "그 자리를 비워라"(사용자 09-27) — 빈 값을 기억하지 않는다.
+                                if p.is_empty() {
+                                    vault_trace("forget(explicit empty)", &slot);
+                                    nsql_vault::session::forget(&slot);
+                                } else {
+                                    vault_trace("remember(explicit)", &slot);
+                                    nsql_vault::session::remember(
+                                        &slot,
+                                        &nsql_core::Secret::new(p.clone()),
+                                    );
+                                }
                             }
                             let r = nsql_drivers::open(spec, default_dialect);
                             if let Err(e) = &r {
                                 if stale_password(dialect, e) {
+                                    vault_trace("forget(rejected explicit)", &slot);
                                     nsql_vault::session::forget(&slot);
                                 }
                             }
@@ -521,8 +536,10 @@ pub(crate) fn spawn(
                         let remember = remember_session_password();
                         let mut rejected = false;
                         if !remember {
+                            vault_trace("forget(setting off)", &vault_id);
                             nsql_vault::session::forget(&vault_id);
                         } else if let Some(secret) = nsql_vault::session::recall(&vault_id) {
+                            vault_trace("recall(hit)", &vault_id);
                             let mut once = spec.clone();
                             once.password = Some(secret.expose().to_string());
                             drop(secret);
@@ -537,11 +554,14 @@ pub(crate) fn spawn(
                                         &e,
                                     ) =>
                                 {
+                                    vault_trace("forget(rejected recalled)", &vault_id);
                                     nsql_vault::session::forget(&vault_id);
                                     rejected = true;
                                 }
                                 other => return other,
                             }
+                        } else {
+                            vault_trace("recall(miss) → ask", &vault_id);
                         }
                         // 밀린 답(앞선 물음의 늦은 답)은 버린다 — `Secret`이라 버려지면서 지워진다.
                         while pw_rx.try_recv().is_ok() {}
@@ -569,6 +589,7 @@ pub(crate) fn spawn(
                         nsql_core::secret::wipe_opt(&mut once.password);
                         // 접속에 **성공한** 값만 금고에 든다(봉투 · 평문 아님).
                         if r.is_ok() && remember {
+                            vault_trace("remember(asked)", &vault_id);
                             nsql_vault::session::remember(&vault_id, &secret);
                         }
                         drop(secret);

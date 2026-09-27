@@ -158,9 +158,78 @@ pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
     }
 }
 
+/// Linux(09-27 사용자 "리눅스에서 안 보인다"): 입력기 프레임워크에 **지금 엔진 이름**을 묻는다 — ibus = `ibus engine`(`hangul` → 가 ·
+/// `anthy`/`mozc`/`kkc` → あ · `pinyin`/`libpinyin`/`chewing`/`rime` → 中 · `xkb:…` 배열 = 라틴) · fcitx5 = `fcitx5-remote -n`.
+/// 프로세스 하나를 띄우는 조회라 **500 ms 캐시**(가린 칸에 포커스가 있을 때만 불린다 · 39 §3) · 프레임워크가 없으면 `None`.
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
-    None
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Option<ImeState>)>> = Mutex::new(None);
+    if let Ok(g) = CACHE.lock() {
+        if let Some((at, st)) = g.as_ref() {
+            if at.elapsed() < Duration::from_millis(500) {
+                return st.clone();
+            }
+        }
+    }
+    let st = linux_probe();
+    if let Ok(mut g) = CACHE.lock() {
+        *g = Some((Instant::now(), st.clone()));
+    }
+    st
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn linux_probe() -> Option<ImeState> {
+    let xmod = std::env::var("XMODIFIERS").unwrap_or_default();
+    let qt = std::env::var("QT_IM_MODULE").unwrap_or_default();
+    let gtk = std::env::var("GTK_IM_MODULE").unwrap_or_default();
+    let all = format!("{xmod} {qt} {gtk}");
+    let engine = if all.contains("ibus") {
+        run_quiet("ibus", &["engine"])
+    } else if all.contains("fcitx") {
+        run_quiet("fcitx5-remote", &["-n"]).or_else(|| run_quiet("fcitx-remote", &["-n"]))
+    } else {
+        None
+    }?;
+    Some(engine_state(&engine))
+}
+
+/// 엔진 이름 → 상태(순수 · 시험).
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn engine_state(engine: &str) -> ImeState {
+    let e = engine.trim().to_ascii_lowercase();
+    let (primary, native) = if e.contains("hangul") || e.contains("korean") {
+        (0x12, true)
+    } else if e.contains("anthy") || e.contains("mozc") || e.contains("kkc") || e.contains("skk") {
+        (0x11, true)
+    } else if e.contains("pinyin")
+        || e.contains("chewing")
+        || e.contains("rime")
+        || e.contains("cangjie")
+        || e.contains("wubi")
+    {
+        (0x04, true)
+    } else {
+        // `xkb:us::eng` · `xkb:kr::kor`(한글 배열 = 영문 모드) · `keyboard-us` — 라틴.
+        (0x09, false)
+    };
+    classify(primary, native)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn run_quiet(cmd: &str, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new(cmd)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
 }
 
 #[cfg(test)]
@@ -187,5 +256,18 @@ mod tests {
         assert_eq!((ru.glyph, ru.latin), ("RUS", false));
         let unknown = classify(0x03ff, false);
         assert!(!unknown.latin, "모르는 언어는 안내한다");
+    }
+
+    #[test]
+    fn linux_engine_names_map_to_states() {
+        assert_eq!(engine_state("hangul").glyph, "가");
+        assert!(!engine_state("hangul").latin);
+        assert_eq!(engine_state("mozc-jp").glyph, "あ");
+        assert_eq!(engine_state("libpinyin").glyph, "中");
+        assert!(engine_state("xkb:us::eng").latin);
+        assert!(
+            engine_state("xkb:kr::kor").latin,
+            "한글 배열(IME 아님) = 영문"
+        );
     }
 }

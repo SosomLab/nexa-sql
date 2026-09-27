@@ -942,6 +942,14 @@ fn open_meta(spec: &ConnectSpec, default: Dialect) -> Result<Box<dyn Session>, D
     let lent = crate::worker::remember_session_password()
         .then(|| nsql_vault::session::recall(&crate::worker::cred_id(spec, default)))
         .flatten();
+    crate::worker::vault_trace(
+        if lent.is_some() {
+            "meta recall(hit)"
+        } else {
+            "meta recall(miss)"
+        },
+        &crate::worker::cred_id(spec, default),
+    );
     let Some(secret) = lent else {
         return Err(DbError {
             code: None,
@@ -957,6 +965,10 @@ fn open_meta(spec: &ConnectSpec, default: Dialect) -> Result<Box<dyn Session>, D
     // 서버가 거부한 값은 폐기한다(메타 스레드는 묻지 않는다 — 다음 접속 때 워커가 다시 묻는다).
     if let Err(e) = &r {
         if crate::worker::stale_password(spec.dialect.unwrap_or(default), e) {
+            crate::worker::vault_trace(
+                "meta forget(rejected)",
+                &crate::worker::cred_id(spec, default),
+            );
             nsql_vault::session::forget(&crate::worker::cred_id(spec, default));
         }
     }
