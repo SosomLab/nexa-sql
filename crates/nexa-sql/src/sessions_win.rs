@@ -8,11 +8,10 @@ use nexa_ctl::controls::ctxmenu::{ContextMenu, CtxItem};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::InputEvent;
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -338,15 +337,7 @@ impl SessionsWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };
@@ -355,16 +346,7 @@ impl SessionsWin {
         let px = |v: f32| (v * s).round() as i32;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let slot = |size: f32| SlotFont {
-                size,
-                bold: false,
-                italic: false,
-            };
-            let prefs = FontPrefs {
-                base: slot(ui_px),
-                status: slot(ui_px),
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base_status(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);

@@ -7,14 +7,11 @@
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{
-    Button, Checkbox, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
-};
+use nexa_ctl::theme::{FontPrefs, Theme};
+use nexa_ctl::{Button, Checkbox, Control, InputEvent, Invalidations, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use nsql_run::bulk::{BulkMode, ImportSpec};
-use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::rc::Rc;
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
@@ -141,16 +138,7 @@ impl ImportWin {
             .with_resizable(true)
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        if let Some(o) = owner {
-            if let Ok(p) = o.outer_position() {
-                let s = o.outer_size();
-                attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(
-                    p.x + s.width as i32 / 2
-                        - (size.width * f64::from(o.scale_factor() as f32) / 2.0) as i32,
-                    p.y + s.height as i32 / 4,
-                ));
-            }
-        }
+        attrs = crate::wingeom::centered_over(attrs, owner, size.width, 4);
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
@@ -293,42 +281,6 @@ impl ImportWin {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
-    }
-
-    fn key_event(&self, kev: &winit::event::KeyEvent) -> Option<InputEvent> {
-        let key = |k: CtlKey| InputEvent::Key {
-            key: k,
-            shift: self.shift,
-            primary: self.primary,
-        };
-        Some(match kev.logical_key.as_ref() {
-            Key::Named(NamedKey::Enter) => key(CtlKey::Enter),
-            Key::Named(NamedKey::ArrowUp) => key(CtlKey::Up),
-            Key::Named(NamedKey::ArrowDown) => key(CtlKey::Down),
-            Key::Named(NamedKey::ArrowLeft) => key(CtlKey::Left),
-            Key::Named(NamedKey::ArrowRight) => key(CtlKey::Right),
-            Key::Named(NamedKey::Home) => key(CtlKey::Home),
-            Key::Named(NamedKey::End) => key(CtlKey::End),
-            Key::Named(NamedKey::PageUp) => key(CtlKey::PageUp),
-            Key::Named(NamedKey::PageDown) => key(CtlKey::PageDown),
-            Key::Named(NamedKey::Delete) => key(CtlKey::Delete),
-            Key::Named(NamedKey::Backspace) => InputEvent::Char {
-                c: '\u{8}',
-                now_ms: 0,
-            },
-            Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
-            Key::Character(t) => {
-                if self.primary {
-                    return None;
-                }
-                let c = t.chars().next()?;
-                if c.is_control() {
-                    return None;
-                }
-                InputEvent::Char { c, now_ms: 0 }
-            }
-            _ => return None,
-        })
     }
 
     /// 포커스 링은 하나: 텍스트박스 셋 + 미리보기 중 하나만.
@@ -536,7 +488,12 @@ impl ImportWin {
                         return ImportAction::None;
                     }
                 }
-                if let Some(e) = self.key_event(kev) {
+                if let Some(e) = crate::input::text_key_event(
+                    kev,
+                    self.shift,
+                    self.primary,
+                    crate::input::TextKeys::Multi,
+                ) {
                     if let Some(tb) = self.focused_box() {
                         tb.on_event(&e, &mut inv);
                     }
@@ -563,15 +520,7 @@ impl ImportWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };
@@ -581,16 +530,7 @@ impl ImportWin {
         let inv = &mut Invalidations::default();
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let slot = |size: f32| SlotFont {
-                size,
-                bold: false,
-                italic: false,
-            };
-            let prefs = FontPrefs {
-                base: slot(ui_px),
-                status: slot(ui_px),
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base_status(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);
@@ -678,28 +618,14 @@ impl ImportWin {
         }
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let prefs = FontPrefs {
-                base: SlotFont {
-                    size: mono_px,
-                    bold: false,
-                    italic: false,
-                },
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base(mono_px);
             let mut dc = RasterCtx::new(&mut gfx, mono_font, s).with_fonts(prefs);
             self.preview.paint(&mut dc, th);
         }
         for tb in [&self.tb_map, &self.tb_batch, &self.tb_commit, &self.preview] {
             if tb.popup_open() {
                 let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-                let prefs = FontPrefs {
-                    base: SlotFont {
-                        size: ui_px,
-                        bold: false,
-                        italic: false,
-                    },
-                    ..FontPrefs::default()
-                };
+                let prefs = FontPrefs::with_base(ui_px);
                 let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
                 tb.paint_popup(&mut dc, th);
             }

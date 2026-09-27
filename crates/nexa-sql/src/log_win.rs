@@ -17,7 +17,6 @@ use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
 use nsql_log::{Columns, LogBuffer, LogEntry, LogFormat, LogKind};
 use std::collections::VecDeque;
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::Instant;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -1205,15 +1204,7 @@ impl LogWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };

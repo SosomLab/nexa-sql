@@ -8,7 +8,7 @@ use crate::keymap::{self, Chord, Keymap, COMMANDS};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::{Button, Control, InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
@@ -477,14 +477,7 @@ impl KeysWin {
         let chord_w = (CHORD_W * s).round() as i32;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let prefs = FontPrefs {
-                base: SlotFont {
-                    size: font_px,
-                    bold: false,
-                    italic: false,
-                },
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base(font_px);
             let mut dc = RasterCtx::new(&mut gfx, ui, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
             dc.select_font(FontSlot::Base, false);

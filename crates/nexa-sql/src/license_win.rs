@@ -7,13 +7,10 @@
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{
-    Button, Control, Flash, FlashTone, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
-};
+use nexa_ctl::theme::{FontPrefs, Theme};
+use nexa_ctl::{Button, Control, Flash, FlashTone, InputEvent, Invalidations, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -116,16 +113,7 @@ impl LicenseWin {
             .with_min_inner_size(winit::dpi::LogicalSize::new(520.0, 380.0))
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        if let Some(o) = owner {
-            if let Ok(p) = o.outer_position() {
-                let s = o.outer_size();
-                attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(
-                    p.x + s.width as i32 / 2
-                        - (size.width * f64::from(o.scale_factor() as f32) / 2.0) as i32,
-                    p.y + s.height as i32 / 4,
-                ));
-            }
-        }
+        attrs = crate::wingeom::centered_over(attrs, owner, size.width, 4);
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
@@ -212,37 +200,6 @@ impl LicenseWin {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
-    }
-
-    fn key_event(&self, kev: &winit::event::KeyEvent) -> Option<InputEvent> {
-        let key = |k: CtlKey| InputEvent::Key {
-            key: k,
-            shift: self.shift,
-            primary: self.primary,
-        };
-        Some(match kev.logical_key.as_ref() {
-            Key::Named(NamedKey::ArrowLeft) => key(CtlKey::Left),
-            Key::Named(NamedKey::ArrowRight) => key(CtlKey::Right),
-            Key::Named(NamedKey::Home) => key(CtlKey::Home),
-            Key::Named(NamedKey::End) => key(CtlKey::End),
-            Key::Named(NamedKey::Delete) => key(CtlKey::Delete),
-            Key::Named(NamedKey::Backspace) => InputEvent::Char {
-                c: '\u{8}',
-                now_ms: 0,
-            },
-            Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
-            Key::Character(t) => {
-                if self.primary {
-                    return None;
-                }
-                let c = t.chars().next()?;
-                if c.is_control() {
-                    return None;
-                }
-                InputEvent::Char { c, now_ms: 0 }
-            }
-            _ => return None,
-        })
     }
 
     fn focused_box(&mut self) -> Option<&mut TextBox> {
@@ -418,7 +375,12 @@ impl LicenseWin {
                         return LicAction::None;
                     }
                 }
-                if let Some(e) = self.key_event(kev) {
+                if let Some(e) = crate::input::text_key_event(
+                    kev,
+                    self.shift,
+                    self.primary,
+                    crate::input::TextKeys::Line,
+                ) {
                     if let Some(tb) = self.focused_box() {
                         tb.on_event(&e, &mut inv);
                     }
@@ -438,15 +400,7 @@ impl LicenseWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };
@@ -456,16 +410,7 @@ impl LicenseWin {
         let inv = &mut Invalidations::default();
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let slot = |size: f32| SlotFont {
-                size,
-                bold: false,
-                italic: false,
-            };
-            let prefs = FontPrefs {
-                base: slot(ui_px),
-                status: slot(ui_px),
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base_status(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);
@@ -595,14 +540,7 @@ impl LicenseWin {
         for tb in [&self.tb_name, &self.tb_email] {
             if tb.popup_open() {
                 let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-                let prefs = FontPrefs {
-                    base: SlotFont {
-                        size: ui_px,
-                        bold: false,
-                        italic: false,
-                    },
-                    ..FontPrefs::default()
-                };
+                let prefs = FontPrefs::with_base(ui_px);
                 let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
                 tb.paint_popup(&mut dc, th);
             }
@@ -610,14 +548,7 @@ impl LicenseWin {
         // ★ 플래시 메시지 = 창의 **맨 마지막**에 그린다(다른 컨트롤·팝업이 덮지 않음 · 최상위 Z-order · 사용자 09-27) · 진행 중이면 다시 그린다.
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let prefs = FontPrefs {
-                base: SlotFont {
-                    size: ui_px,
-                    bold: false,
-                    italic: false,
-                },
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.select_font(FontSlot::Base, false);
             if self

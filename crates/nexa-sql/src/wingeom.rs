@@ -143,6 +143,27 @@ pub(crate) fn logical(x: i32, y: i32) -> winit::dpi::LogicalPosition<f64> {
     winit::dpi::LogicalPosition::new(f64::from(x), f64::from(y))
 }
 
+/// 새 보조 창을 주인 창 위 **가로 가운데 · 세로 1/`y_div` 지점**에 놓는다(docs/93 §4 — 창 다섯 곳의 같은 계산을 한 곳으로).
+/// `width` = 새 창의 논리 폭(주인의 배율로 물리 폭 환산). 주인이 없거나 위치를 모르면 속성 그대로(OS 기본 자리).
+pub(crate) fn centered_over(
+    attrs: winit::window::WindowAttributes,
+    owner: Option<&Window>,
+    width: f64,
+    y_div: i32,
+) -> winit::window::WindowAttributes {
+    let Some(o) = owner else {
+        return attrs;
+    };
+    let Ok(p) = o.outer_position() else {
+        return attrs;
+    };
+    let s = o.outer_size();
+    attrs.with_position(winit::dpi::PhysicalPosition::new(
+        p.x + s.width as i32 / 2 - (width * f64::from(o.scale_factor() as f32) / 2.0) as i32,
+        p.y + s.height as i32 / y_div,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

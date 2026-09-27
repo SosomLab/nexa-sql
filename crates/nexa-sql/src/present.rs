@@ -93,6 +93,14 @@ impl Presenter {
         }
     }
 
+    /// 이번 프레임 버퍼 — 창 크기에 표면을 맞춘 뒤 준다. 크기 0(최소화)·실패 = `None`(docs/93 §4: 보조 창 11곳의
+    /// "크기 확인 → resize → buffer_mut" 상용구를 한 곳으로).
+    pub(crate) fn frame(&mut self, size: winit::dpi::PhysicalSize<u32>) -> Option<Buffer<'_>> {
+        let (w, h) = (NonZeroU32::new(size.width)?, NonZeroU32::new(size.height)?);
+        self.resize(w, h).ok()?;
+        self.buffer_mut().ok()
+    }
+
     /// 진단용 이름(`NSQL_TRACE_FRAMES`).
     pub(crate) fn backend(&self) -> &'static str {
         match self.kind {

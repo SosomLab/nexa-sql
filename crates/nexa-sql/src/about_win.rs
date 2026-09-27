@@ -4,11 +4,10 @@
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::{Button, Control, InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, Msg};
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -73,16 +72,7 @@ impl AboutWin {
             .with_resizable(false)
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        if let Some(o) = owner {
-            if let Ok(p) = o.outer_position() {
-                let s = o.outer_size();
-                attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(
-                    p.x + s.width as i32 / 2
-                        - (size.width * f64::from(o.scale_factor() as f32) / 2.0) as i32,
-                    p.y + s.height as i32 / 3,
-                ));
-            }
-        }
+        attrs = crate::wingeom::centered_over(attrs, owner, size.width, 3);
         let Ok(win) = el.create_window(attrs) else {
             return;
         };
@@ -248,15 +238,7 @@ impl AboutWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };
@@ -266,16 +248,7 @@ impl AboutWin {
         let inv = &mut Invalidations::default();
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let slot = |size: f32| SlotFont {
-                size,
-                bold: false,
-                italic: false,
-            };
-            let prefs = FontPrefs {
-                base: slot(ui_px),
-                status: slot(ui_px),
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base_status(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);

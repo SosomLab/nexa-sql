@@ -119,6 +119,75 @@ pub(crate) fn set_system_ime(on: bool) {
     SYSTEM_IME.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// 보조 창 입력란이 받는 키 묶음(docs/93 §4 — 창마다 복사하던 `key_event` 여섯 벌을 하나로).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TextKeys {
+    /// 한 줄 입력란: ←/→ · Home/End · Delete · Backspace · Space · 글자.
+    Line,
+    /// 여러 줄·목록: `Line` + Enter · ↑/↓ · PageUp/PageDown.
+    Multi,
+    /// `Multi` + Tab을 글자로(편집기형 본문).
+    MultiTab,
+}
+
+/// winit 키 사건 → 컨트롤 입력(보조 창 공용). 명령 조합(⌘/Ctrl+글자)은 `None` — 호스트가 단축키로 처리한다.
+pub(crate) fn text_key_event(
+    kev: &winit::event::KeyEvent,
+    shift: bool,
+    primary: bool,
+    keys: TextKeys,
+) -> Option<InputEvent> {
+    text_key_of(&kev.logical_key, shift, primary, keys)
+}
+
+/// `text_key_event`의 순수 판정(시험용).
+pub(crate) fn text_key_of(
+    logical: &winit::keyboard::Key,
+    shift: bool,
+    primary: bool,
+    keys: TextKeys,
+) -> Option<InputEvent> {
+    use nexa_ctl::Key as CtlKey;
+    use winit::keyboard::{Key, NamedKey};
+    let key = |k: CtlKey| InputEvent::Key {
+        key: k,
+        shift,
+        primary,
+    };
+    let multi = keys != TextKeys::Line;
+    Some(match logical.as_ref() {
+        Key::Named(NamedKey::ArrowLeft) => key(CtlKey::Left),
+        Key::Named(NamedKey::ArrowRight) => key(CtlKey::Right),
+        Key::Named(NamedKey::Home) => key(CtlKey::Home),
+        Key::Named(NamedKey::End) => key(CtlKey::End),
+        Key::Named(NamedKey::Delete) => key(CtlKey::Delete),
+        Key::Named(NamedKey::Enter) if multi => key(CtlKey::Enter),
+        Key::Named(NamedKey::ArrowUp) if multi => key(CtlKey::Up),
+        Key::Named(NamedKey::ArrowDown) if multi => key(CtlKey::Down),
+        Key::Named(NamedKey::PageUp) if multi => key(CtlKey::PageUp),
+        Key::Named(NamedKey::PageDown) if multi => key(CtlKey::PageDown),
+        Key::Named(NamedKey::Tab) if keys == TextKeys::MultiTab => {
+            InputEvent::Char { c: '\t', now_ms: 0 }
+        }
+        Key::Named(NamedKey::Backspace) => InputEvent::Char {
+            c: '\u{8}',
+            now_ms: 0,
+        },
+        Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
+        Key::Character(t) => {
+            if primary {
+                return None;
+            }
+            let c = t.chars().next()?;
+            if c.is_control() {
+                return None;
+            }
+            InputEvent::Char { c, now_ms: 0 }
+        }
+        _ => return None,
+    })
+}
+
 pub(crate) fn wheel_event(delta: &MouseScrollDelta, shift: bool) -> InputEvent {
     // ★ 픽셀 delta(macOS 트랙패드 · Linux libinput)는 **1:1**로(사용자 09-16 "DBeaver처럼 부드럽게 · 점진 가속"):
     //   소비자가 전부 `delta/3` px로 쓰므로 ×3 해 둔다. OS가 이미 가속·관성(손을 뗀 뒤 감쇠하는 사건)을 넣어 주므로
@@ -357,6 +426,77 @@ mod ime_tests {
                 &PhysicalKey::Code(KeyCode::Digit1)
             ),
             None
+        );
+    }
+}
+
+#[cfg(test)]
+mod text_key_tests {
+    use super::{text_key_of, TextKeys};
+    use nexa_ctl::{InputEvent, Key as CtlKey};
+    use winit::keyboard::{Key, NamedKey, SmolStr};
+
+    fn named(k: NamedKey, keys: TextKeys) -> Option<InputEvent> {
+        text_key_of(&Key::Named(k), false, false, keys)
+    }
+
+    /// 묶음마다 받는 키가 다르다 — 종전 창별 복사본과 같은 표(docs/93 §4).
+    #[test]
+    fn key_sets_match_former_per_window_copies() {
+        for keys in [TextKeys::Line, TextKeys::Multi, TextKeys::MultiTab] {
+            assert!(matches!(
+                named(NamedKey::ArrowLeft, keys),
+                Some(InputEvent::Key {
+                    key: CtlKey::Left,
+                    ..
+                })
+            ));
+            assert!(matches!(
+                named(NamedKey::Backspace, keys),
+                Some(InputEvent::Char { c: '\u{8}', .. })
+            ));
+            assert!(matches!(
+                named(NamedKey::Space, keys),
+                Some(InputEvent::Char { c: ' ', .. })
+            ));
+        }
+        assert!(
+            named(NamedKey::Enter, TextKeys::Line).is_none(),
+            "한 줄 = Enter는 호스트가(확정)"
+        );
+        assert!(matches!(
+            named(NamedKey::Enter, TextKeys::Multi),
+            Some(InputEvent::Key {
+                key: CtlKey::Enter,
+                ..
+            })
+        ));
+        assert!(named(NamedKey::PageDown, TextKeys::Line).is_none());
+        assert!(
+            named(NamedKey::Tab, TextKeys::Multi).is_none(),
+            "Tab 글자 = 편집기형만"
+        );
+        assert!(matches!(
+            named(NamedKey::Tab, TextKeys::MultiTab),
+            Some(InputEvent::Char { c: '\t', .. })
+        ));
+    }
+
+    #[test]
+    fn primary_letter_is_left_to_the_host() {
+        let a = Key::Character(SmolStr::new("a"));
+        assert!(
+            text_key_of(&a, false, true, TextKeys::Line).is_none(),
+            "Ctrl/⌘+글자 = 단축키"
+        );
+        assert!(matches!(
+            text_key_of(&a, false, false, TextKeys::Line),
+            Some(InputEvent::Char { c: 'a', .. })
+        ));
+        let ctl = Key::Character(SmolStr::new("\u{1}"));
+        assert!(
+            text_key_of(&ctl, false, false, TextKeys::Line).is_none(),
+            "제어 문자 무시"
         );
     }
 }

@@ -36,7 +36,53 @@ OUT = ROOT / "target" / "code-health"
 
 # ── 확인한 예외(이유 필수) ─────────────────────────────────────────────
 # 참조 0이어도 남기는 `pub` 항목: "크레이트/이름": 이유
-ALLOW_PUB: dict[str, str] = {}
+ALLOW_PUB: dict[str, str] = {
+    "nexa-ctl/CONTROL": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/LABEL": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/MONO": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/PANEL": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/PANEL_MS": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/PILL": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/begin_undo_group": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/can_soft_redo": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/control_size_mult_from_code": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/draw_builtin": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/editing_popup_open": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/generation": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/image_front": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/is_modified_cell": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/is_picking": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/open_char": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/overflows": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/overlay_color": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/row_height": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/selected_label": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/set_background": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/set_image_front": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/set_metrics": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/set_show_remaining": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/slot_px": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/wants_keys": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_choose_icon": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_empty_label": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_fade_speed": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_font": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_label": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_tone": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-ctl/with_two_line": "공용 UI 라이브러리 API 짝(빌더 with_*·getter/setter·토큰)",
+    "nexa-dlg/marked_files": "공용 파일 대화상자 API",
+    "nexa-ext-sdk/as_arr": "확장 SDK 공개 API(확장 작성자용 JSON 접근자)",
+    "nexa-ext-sdk/as_bool": "확장 SDK 공개 API(확장 작성자용 JSON 접근자)",
+    "nexa-ext-sdk/as_f64": "확장 SDK 공개 API(확장 작성자용 JSON 접근자)",
+    "nexa-gfx/glyph_cache_len": "공용 그리기 라이브러리 API(글꼴 폴백·진단 카운터)",
+    "nexa-gfx/push_fallback_font": "공용 그리기 라이브러리 API(글꼴 폴백·진단 카운터)",
+    "nexa-license/LEASE_DOMAIN": "라이선스 프로토콜 상수(서버 요청·리스 — 서버 단계용 · docs/25)",
+    "nexa-license/SERVER_REQUEST_PREFIX": "라이선스 프로토콜 상수(서버 요청·리스 — 서버 단계용 · docs/25)",
+    "nexa-sys/pool_len": "공용 OS 층 진단 API",
+    "nsql-log/detail_mask": "공용 로그 API 짝(set_detail_mask ↔ detail_mask)",
+    "nsql-search/is_cancelled": "검색 핸들 API 짝(cancel ↔ is_cancelled)",
+    "nsql-settings/is_preset": "성능 모드 판정 API 짝(is_preset)",
+}
 # 코드에서 문자열로 안 보이지만 쓰이는 설정 키 접두(조립 키 · 설정 창 전용 등)
 ALLOW_SETTING_PREFIX: dict[str, str] = {
     "key.": "단축키 = 명령 id로 조립(`keymap.rs` format!(\"key.{id}\"))",
@@ -71,8 +117,10 @@ def read(p: Path) -> str:
 
 def crate_of(repo: Path, p: Path) -> str:
     rel = p.relative_to(repo).parts
-    if len(rel) >= 2 and rel[0] in ("crates", "extensions"):
-        return rel[1]
+    # 크레이트 = `src`(또는 tests·examples·benches) 바로 위 폴더 — crates/<c>/src · extensions/sdk/<c>/src 모두.
+    for k in range(len(rel) - 1, 0, -1):
+        if rel[k] in ("src", "tests", "examples", "benches"):
+            return rel[k - 1]
     return rel[0]
 
 
@@ -83,7 +131,8 @@ def strip_line_comment(line: str) -> str:
 
 # ── A. 허용 표시 ───────────────────────────────────────────────────────
 def check_allow(files: dict[Path, str]) -> list[dict]:
-    rx = re.compile(r"#\[(allow|expect)\(([^)]*\b(dead_code|unused[a-z_]*)\b[^)]*)\)\]")
+    # rustc 린트만(`clippy::unused_self` 같은 clippy 린트는 코드 스타일 판단이라 대상 아님).
+    rx = re.compile(r"#\[(allow|expect)\(([^)]*(?<!::)\b(dead_code|unused[a-z_]*)\b[^)]*)\)\]")
     out = []
     for p, text in files.items():
         for i, line in enumerate(text.splitlines(), 1):

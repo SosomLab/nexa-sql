@@ -12,7 +12,7 @@ use nexa_ctl::controls::ctxmenu::{ContextMenu as CtxMenu, CtxItem};
 use nexa_ctl::draw::{draw_tooltip, DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{Color, FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{Color, FontPrefs, Theme};
 
 /// 신호등 '불가'(빨강) — 테마 `danger`(어두운 빨강)가 아니라 밝은 순빨강 `#FF0000`(사용자 09-15).
 const LIGHT_RED: Color = Color(0x00FF_0000);
@@ -2645,14 +2645,7 @@ impl ConnWin {
         let row_h = self.row_h;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let prefs = FontPrefs {
-                base: SlotFont {
-                    size: font_px,
-                    bold: false,
-                    italic: false,
-                },
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base(font_px);
             let mut dc = RasterCtx::new(&mut gfx, ui, s)
                 .with_fonts(prefs)
                 .with_caret_on(caret_on);

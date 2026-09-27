@@ -11,7 +11,6 @@ use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::Theme;
 use nexa_ctl::{Control, InputEvent, Invalidations, Toolbar, Widget};
 use nexa_gfx::{Font, Surface};
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -167,15 +166,7 @@ impl ToolFloatWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };

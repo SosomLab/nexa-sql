@@ -9,12 +9,11 @@ use nexa_ctl::controls::{LabelSide, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{Color, FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{Color, FontPrefs, Theme};
 use nexa_ctl::{Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use nsql_run::txlog::{one_line, ExecOutcome, Purpose, TxFilter, TxLog, TxOutcome};
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -234,37 +233,6 @@ impl TxLogWin {
         self.filter.editor = self.sw_tab.is_on().then_some(self.active_editor);
     }
 
-    fn key_event(&self, kev: &winit::event::KeyEvent) -> Option<InputEvent> {
-        let key = |k: CtlKey| InputEvent::Key {
-            key: k,
-            shift: self.shift,
-            primary: self.primary,
-        };
-        Some(match kev.logical_key.as_ref() {
-            Key::Named(NamedKey::ArrowLeft) => key(CtlKey::Left),
-            Key::Named(NamedKey::ArrowRight) => key(CtlKey::Right),
-            Key::Named(NamedKey::Home) => key(CtlKey::Home),
-            Key::Named(NamedKey::End) => key(CtlKey::End),
-            Key::Named(NamedKey::Delete) => key(CtlKey::Delete),
-            Key::Named(NamedKey::Backspace) => InputEvent::Char {
-                c: '\u{8}',
-                now_ms: 0,
-            },
-            Key::Named(NamedKey::Space) => InputEvent::Char { c: ' ', now_ms: 0 },
-            Key::Character(t) => {
-                if self.primary {
-                    return None;
-                }
-                let c = t.chars().next()?;
-                if c.is_control() {
-                    return None;
-                }
-                InputEvent::Char { c, now_ms: 0 }
-            }
-            _ => return None,
-        })
-    }
-
     /// winit 사건 → 호스트 동작(Paint만 · 나머지는 창이 스스로).
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> TxLogAction {
         let mut inv = Invalidations::default();
@@ -446,7 +414,12 @@ impl TxLogWin {
                     self.close();
                     return TxLogAction::None;
                 }
-                if let Some(e) = self.key_event(kev) {
+                if let Some(e) = crate::input::text_key_event(
+                    kev,
+                    self.shift,
+                    self.primary,
+                    crate::input::TextKeys::Line,
+                ) {
                     self.search.on_event(&e, &mut inv);
                     self.scroll = 0;
                     self.sync_filter();
@@ -467,15 +440,7 @@ impl TxLogWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };
@@ -484,16 +449,7 @@ impl TxLogWin {
         let px = |v: f32| (v * s).round() as i32;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let slot = |size: f32| SlotFont {
-                size,
-                bold: false,
-                italic: false,
-            };
-            let prefs = FontPrefs {
-                base: slot(ui_px),
-                status: slot(ui_px),
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base_status(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);

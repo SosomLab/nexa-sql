@@ -7,12 +7,11 @@ use nexa_ctl::controls::{Button, LabelSide, Switch};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
-use nexa_ctl::theme::{Color, FontPrefs, SlotFont, Theme};
+use nexa_ctl::theme::{Color, FontPrefs, Theme};
 use nexa_ctl::{InputEvent, Invalidations, Widget};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use std::collections::VecDeque;
-use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -267,15 +266,7 @@ impl MemWin {
             return;
         };
         let size = win.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
-            self.surface = Some(surface);
-            return;
-        };
-        if surface.resize(w, h).is_err() {
-            self.surface = Some(surface);
-            return;
-        }
-        let Ok(mut buf) = surface.buffer_mut() else {
+        let Some(mut buf) = surface.frame(size) else {
             self.surface = Some(surface);
             return;
         };
@@ -284,16 +275,7 @@ impl MemWin {
         let px = |v: f32| (v * s).round() as i32;
         {
             let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
-            let slot = |size: f32, bold: bool| SlotFont {
-                size,
-                bold,
-                italic: false,
-            };
-            let prefs = FontPrefs {
-                base: slot(ui_px, false),
-                status: slot(ui_px, false),
-                ..FontPrefs::default()
-            };
+            let prefs = FontPrefs::with_base_status(ui_px);
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             let pad = px(12.0);
