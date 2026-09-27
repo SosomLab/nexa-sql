@@ -9,7 +9,7 @@
 - 당김: nexa-ui 5b2b049(`TextBox::commit_composition`) · nexa-license a6f7ce8(verify·request·machine·date·ed25519·keys + `rust-toolchain.toml`) · nexa-sql 4ecbd88(101차 Linux 일괄). Windows 회귀 없음(clippy `-D warnings` ✓ · 테스트 610 통과 · 실패 0(1 ignored) · Release 빌드 ✓ · nexa-license 19/19).
 - 🔧 **CI**: `ci` macOS·Windows = `settings_clip_native` dead_code(Linux 전용 호출) → `cfg_attr(allow)` · `integration` = `it-mssql.sql`의 `from dual`(d1a68b1 문서 커밋 · paths 밖이라 그때 안 돎) → FROM 제거. [journal 09-27 §8](journal/2026-09-27.md).
 - 📐 nexa-license `machine.rs` Windows = `reg` 프로세스 → GUI에서 콘솔 창 깜빡임 → 앱 층 배선 때 `CREATE_NO_WINDOW`/레지스트리 직접.
-- 남은 것 = [journal §11](journal/2026-09-27.md)(keygen → keys.rs → 재빌드 · 첫 발급 실기 · T-163).
+- 남은 것 = [journal §11](journal/2026-09-27.md)(keygen → keys.rs → 재빌드 · 첫 발급 실기 · T-163). **keygen은 사용자 손**([§12](journal/2026-09-27.md) · 하네스가 비밀키 생성을 막음 = 91 §0 원칙) · 발급기 `rekey` 추가.
 
 ## 2026-09-27 (101차 후반 2·3 · **Linux**) — ★ 라이선스 체계 코드 완성(라이브러리 · 발급기 · 앱 층 · CLI · GUI · 게이트) · 📐 92 디지털 자산 보호
 
