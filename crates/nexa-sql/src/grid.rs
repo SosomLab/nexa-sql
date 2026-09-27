@@ -4027,11 +4027,6 @@ impl Grid {
         self.hdr_drag.as_ref().is_some_and(|d| d.active)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn set_messages(&mut self, m: Vec<String>) {
-        self.messages = m;
-    }
-
     /// 결과 비우기 — 오류가 나도 결과 영역은 **기본 형태**(행번호 1 · `** No Records **`)를 유지한다(사용자 09-17).
     /// 오류·메시지 본문은 로그 창으로만 간다.
     /// 전체 조회가 진행 중인가(툴바/카드 ■ 활성 판정).

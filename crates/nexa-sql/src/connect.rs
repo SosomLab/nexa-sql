@@ -543,11 +543,6 @@ impl ConnectPanel {
         self.name.text().trim().to_string()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn is_connected(&self) -> bool {
-        self.connected
-    }
-
     pub(crate) fn state_ref(&self) -> &ConnState {
         &self.state
     }

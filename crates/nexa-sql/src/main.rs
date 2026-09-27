@@ -43,7 +43,6 @@ mod explorer;
 mod explorers;
 mod ext_panel;
 mod ext_view;
-#[allow(dead_code)]
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
 mod extfile;
@@ -1451,7 +1450,7 @@ impl App {
                     self.default_spec = self.sess.last_spec.clone();
                     self.sess.spec = self.sess.last_spec.clone();
                     // 이미 붙어 있던 연결을 다시 고른 경우(워커가 세션을 유지 = Connected 이벤트 없음) 탐색기를 이쪽으로 돌린다.
-                    // ★ 또한 `RunEvent::Connected`가 이 결과보다 **먼저** 처리되면(두 채널의 경주 · 시작 인자/`dev.start_demo`
+                    // ★ 또한 `RunEvent::Connected`가 이 결과보다 **먼저** 처리되면(두 채널의 경주 · 시작 인자
                     //   접속에서 재현 · 사용자 09-19 "sqlite는 접속이 안 되었다" = 탐색기에 Demo 루트가 없음) 그때는 `spec`이
                     //   비어 있어 탐색기를 못 붙였다 → 지금 spec이 채워졌으니 이 서버의 탐색기가 없으면 여기서 붙인다.
                     let missing = !self.explorer.has_server(self.sess.spec.as_ref());
@@ -19152,7 +19151,6 @@ enum Attempt {
         spec: ConnectSpec,
     },
     Connect {
-        #[allow(dead_code)]
         name: String,
         spec: ConnectSpec,
         reconnect_same: bool,
@@ -19228,16 +19226,6 @@ fn main() {
     let instance_lock = instance_lock();
     let first_instance = instance_lock.is_some();
     let (arg_target, arg_fill_only) = parse_gui_args(&args);
-    // ★ 임시(사용자 09-19 · 추후 제거): `dev.start_demo`가 켜져 있고 인자로 대상을 주지 않았으면 Demo 프로필에 자동 접속 +
-    //   로그인 창 생략(`-c Demo`와 같은 경로).
-    //   ★ 릴리즈에는 절대 들어가지 않는다(사용자 09-19): Debug 빌드(`debug_assertions`)에서만 유효 — Release는 설정이 켜져 있어도 무시.
-    let dev_demo =
-        cfg!(debug_assertions) && settings.flag("dev.start_demo") && arg_target.is_none();
-    let arg_target = if dev_demo {
-        Some("Demo".to_string())
-    } else {
-        arg_target
-    };
     // Linux(09-22): 창 백엔드 = 설정 `gfx.linux_backend`(기본 X11 — 모달 창을 메인의 transient로 붙이려면 · Wayland 경로는 winit 0.30이
     // 부모 창·활성화를 지원하지 않는다). 고른 백엔드로 못 만들면(예: XWayland 없음) winit 기본으로 한 번 더.
     let built = {
@@ -19531,7 +19519,7 @@ fn main() {
         copy_armed_until: None,
         project_new_fresh: false,
         conn_win,
-        // 시작 시 로그인 창 — 인자로 접속 대상을 줬거나 임시 Demo 자동 접속이면 띄우지 않는다.
+        // 시작 시 로그인 창 — 인자로 접속 대상을 줬으면 띄우지 않는다.
         open_conn: initial_target.is_none() || arg_fill_only,
         find,
         find_scope: None,

@@ -179,6 +179,7 @@ impl Registry {
     }
 
     /// 로드된 WASM 확장 id 목록.
+    #[cfg(test)]
     pub(crate) fn wasm_ids(&self) -> Vec<String> {
         self.extensions
             .iter()

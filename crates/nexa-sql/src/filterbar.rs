@@ -59,7 +59,7 @@ impl Matcher {
     }
 
     /// 옵션 없는 글 필터(공백으로 나눈 낱말 전부 포함 · 대소문자 무시) — 시험·기동 명령용.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn plain(text: &str) -> Self {
         Matcher {
             rx: None,

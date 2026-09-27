@@ -173,7 +173,6 @@ pub(crate) struct Meta {
     pub(crate) author: String,
     pub(crate) license: String,
     pub(crate) homepage: String,
-    pub(crate) min_app: String,
     pub(crate) platforms: Vec<String>,
     pub(crate) requires: Vec<String>,
     pub(crate) settings_prefix: String,
@@ -227,11 +226,6 @@ impl Source {
             Source::Dir(p) => nexa_fs::path::display(p),
             Source::Url(u) => u.clone(),
         }
-    }
-
-    /// 루트 기준 상대 경로의 바이트를 읽는다(추적 없이).
-    pub(crate) fn read(&self, rel: &str) -> Result<Vec<u8>, String> {
-        self.read_traced(rel, &mut Trace::default())
     }
 
     /// 읽기 + 추적 줄 — **파일 하나에 한 줄**(사용자 09-19 "어느 원격 경로에서 · 파일 단위 크기·전송 속도"):
@@ -486,7 +480,6 @@ pub(crate) fn parse_meta(text_in: &str) -> Result<Meta, String> {
         author: text(obj, "author"),
         license: text(obj, "license"),
         homepage: text(obj, "homepage"),
-        min_app: text(obj, "min_app"),
         platforms: list(obj, "platforms"),
         requires: list(obj, "requires"),
         settings_prefix: text(obj, "settings_prefix"),
@@ -617,6 +610,7 @@ pub(crate) fn installed() -> Vec<Installed> {
 
 /// 설치 — 메타를 읽고 파일마다 sha256을 확인해 `<root>/<id>/<version>/`에 보관하고 `dest`에 배치한다.
 /// `config` = 설정 폴더(`dest` 기준) · `root` = 설치 루트. 반환 = 메타(안내문 표시용).
+#[cfg(test)]
 pub(crate) fn install_into(
     src: &Source,
     sum: &Summary,
@@ -751,6 +745,7 @@ pub(crate) fn install(src: &Source, sum: &Summary, tr: &mut Trace) -> Result<Met
 }
 
 /// 삭제 — 배치한 파일을 되감고 `<root>/<id>` 폴더를 지운다.
+#[cfg(test)]
 pub(crate) fn remove_from(id: &str, root: &Path, config: &Path) -> Result<(), String> {
     remove_traced(id, root, config, &mut Trace::default())
 }

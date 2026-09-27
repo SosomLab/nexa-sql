@@ -158,16 +158,6 @@ impl SearchHistory {
         true
     }
 
-    /// 한 상자 비우기(메뉴용 · 저장).
-    #[allow(dead_code)]
-    pub(crate) fn clear(&mut self, key: &str) {
-        let before = self.boxes.len();
-        self.boxes.retain(|(k, _)| k != key);
-        if self.boxes.len() != before {
-            self.save();
-        }
-    }
-
     fn save(&self) {
         let Some(p) = &self.path else {
             return;
@@ -282,7 +272,6 @@ impl Recall {
     }
 
     /// 드롭다운 영역(닫혀 있으면 빈 rect).
-    #[allow(dead_code)]
     pub(crate) fn bounds(&self) -> Rect {
         self.menu.bounds()
     }

@@ -29,7 +29,6 @@ pub(crate) fn write_rich(text: &str, html: &str) -> bool {
 }
 
 /// CF_HTML 컨테이너(헤더 오프셋은 UTF-8 바이트 · 10자리 고정).
-#[allow(dead_code)]
 pub(crate) fn cf_html(fragment: &str) -> Vec<u8> {
     let head_len = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n".len();
     let pre = "<html><body><!--StartFragment-->";

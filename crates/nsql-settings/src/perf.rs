@@ -181,7 +181,6 @@ const fn b(
 pub const PERF: &[(&str, PerfBinding)] = &[
     // ── DB(§3-1)
     ("grid.max_rows", b(Domain::Db, "200", "200", "100")),
-    ("db.statement_timeout", b(Domain::Db, "0", "0", "60")),
     (
         "oracle.live.source",
         b(Domain::Db, "session", "session", "off"),
@@ -200,7 +199,6 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("probe.max_inflight", b(Domain::Net, "16", "8", "2")),
     ("probe.icmp", b(Domain::Net, "on", "on", "off")),
     ("connect.max_concurrent", b(Domain::Net, "4", "2", "1")),
-    ("probe.dns_cache_secs", b(Domain::Net, "0", "300", "3600")),
     // ── CPU(§3-3)
     // `editor.highlight_max_kb`는 09-22 폐기(미배선 — 구문 강조 컷오프는 큰 파일 단계 L2 `file.large_syntax_level` · docs/72 §5).
     (
@@ -232,7 +230,7 @@ pub const PERF: &[(&str, PerfBinding)] = &[
 /// 목표(사용자 09-17): ① 처음 실행 속도 ② 쿼리·네트워크 실행 속도 ③ 백그라운드·편의 기능 스레드 최소화 ④ 메모리 최소화·빠른 회수 ⑤ 체감 속도.
 /// 원칙: 실제 동작(결과·트랜잭션·접속)에는 영향이 없고 **UI 구성·부가 표시·폴링·I/O에만** 영향을 주는 키만 넣는다. 저장값은 건드리지 않으므로
 /// 끄면 그대로 돌아온다. 분류·제외 근거 = docs/39 §4-6. 등재 키는 전부 레지스트리에 있고 **배선이 있어야** 한다(강제해도 효과 0인 키는
-/// 넣지 않는다: `explorer.tooltip`·`probe.dns_cache_secs`·`settings.watch_ms`는 기능 미구현이라 제외 · 테스트).
+/// 넣지 않는다: `settings.watch_ms`는 기능 미구현이라 제외 · 테스트).
 pub const BOOST: &[(&str, &str)] = &[
     // ── 렌더링·애니메이션(GFX): 프레임·페이드·깜빡임 = 다시 그리기 횟수
     ("ui.animations", "off"),

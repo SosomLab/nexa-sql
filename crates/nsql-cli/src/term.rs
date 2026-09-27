@@ -141,7 +141,7 @@ pub(crate) fn read_password(prompt: &str) -> Option<String> {
 }
 
 /// 에코 복원 가드.
-struct EchoGuard(#[allow(dead_code)] u32);
+struct EchoGuard(u32);
 
 #[cfg(windows)]
 fn echo_off() -> Option<EchoGuard> {

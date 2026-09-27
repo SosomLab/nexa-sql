@@ -516,7 +516,6 @@ impl Editors {
     }
 
     /// 설정 화면(T-39)에서 바꿀 때 — 지금은 부팅 값만.
-    #[allow(dead_code)]
     pub(crate) fn set_line_numbers(&mut self, on: bool) {
         self.line_numbers = on;
         for b in &mut self.bufs {
@@ -746,7 +745,6 @@ impl Editors {
         self.cur_mut().convert_indent(to_spaces);
     }
 
-    #[allow(dead_code)]
     /// 설정 `tabs.rows`(single/multi) 즉시 반영(사용자 09-16: 바꿔도 반영이 안 됐다 — 시작 때만 읽었다).
     pub(crate) fn set_multiline_tabs(&mut self, on: bool) {
         self.tabs.set_multiline(on);

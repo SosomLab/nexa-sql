@@ -346,12 +346,6 @@ pub fn load_dir(dir: &std::path::Path) -> Vec<(String, Result<String, String>)> 
     out
 }
 
-/// 시험·진단: 내장 방언 이름들.
-#[must_use]
-pub fn builtin_names() -> Vec<&'static str> {
-    BUILTIN.iter().map(|(n, _)| *n).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

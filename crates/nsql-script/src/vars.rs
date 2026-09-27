@@ -465,13 +465,6 @@ impl VarStore {
             .collect()
     }
 
-    /// 공유 층의 값 하나를 호스트가 고친다(패널 편집) — 없으면 만든다.
-    pub fn put_shared(&mut self, s: VarState) {
-        let key = norm(&s.name);
-        self.shared.extend(Self::from_states(vec![s]));
-        self.dirty.insert(key);
-    }
-
     /// 마지막으로 걷은 뒤 바뀐 이름(보여 줄 표기 · 사라진 이름은 대문자 키)을 걷는다.
     pub fn take_dirty(&mut self) -> Vec<String> {
         let keys = std::mem::take(&mut self.dirty);

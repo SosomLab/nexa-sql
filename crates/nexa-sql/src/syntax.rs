@@ -3,7 +3,7 @@
 //! - 기본 선택 = 탭 제목의 확장자(`.sql`·`.txt` …) · 확장자 없는 새 스크립트(`Script_N`)는 SQL.
 //! - 사용자 변경 = 명령 팔레트 `Set Syntax: <이름>` · 상태줄 구문 이름 클릭.
 //! - 플러그인 = `<설정 폴더>/Packages/<패키지>/<이름>.nexa-syntax`(Sublime 패키지 배치 · DR-5).
-//!   같은 이름이면 나중 것(사용자 패키지)이 내장을 덮는다. 파싱 실패는 stderr + [`SyntaxRegistry::errors`].
+//!   같은 이름이면 나중 것(사용자 패키지)이 내장을 덮는다. 파싱 실패는 stderr.
 
 use nexa_ctl::SyntaxSpec;
 use std::path::PathBuf;
@@ -11,7 +11,6 @@ use std::rc::Rc;
 
 pub(crate) struct SyntaxRegistry {
     specs: Vec<Rc<SyntaxSpec>>,
-    errors: Vec<String>,
 }
 
 impl SyntaxRegistry {
@@ -19,7 +18,6 @@ impl SyntaxRegistry {
     pub(crate) fn load() -> Self {
         let mut r = SyntaxRegistry {
             specs: vec![Rc::new(SyntaxSpec::sql()), Rc::new(SyntaxSpec::plain())],
-            errors: Vec::new(),
         };
         if let Some(dir) = Self::packages_dir() {
             r.scan(&dir);
@@ -59,9 +57,7 @@ impl SyntaxRegistry {
                 {
                     Ok(spec) => self.add(spec),
                     Err(e) => {
-                        let msg = format!("{}: {e}", f.display());
-                        eprintln!("syntax: {msg}");
-                        self.errors.push(msg);
+                        eprintln!("syntax: {}: {e}", f.display());
                     }
                 }
             }
@@ -81,11 +77,6 @@ impl SyntaxRegistry {
 
     pub(crate) fn get(&self, name: &str) -> Option<Rc<SyntaxSpec>> {
         self.specs.iter().find(|s| s.name == name).cloned()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn errors(&self) -> &[String] {
-        &self.errors
     }
 
     /// 탭 제목(파일명)에서 기본 구문 — 확장자 매칭 · 없으면 SQL.

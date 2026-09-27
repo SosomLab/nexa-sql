@@ -775,7 +775,7 @@ impl LogWin {
     }
 
     /// 현재 줄 상한.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn max_lines(&self) -> usize {
         self.buf.cap()
     }

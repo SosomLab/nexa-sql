@@ -614,15 +614,6 @@ pub fn wrap_exec_with(caps: &Caps, body: &str) -> String {
     }
 }
 
-/// 실행 후 이름별 OUT 값을 저장소 키로 정규화해 돌려준다(위치 바인드 방언 대비).
-pub fn out_type_hint(ty: &VarType) -> &'static str {
-    match ty {
-        VarType::RefCursor => "cursor",
-        VarType::Number | VarType::BinaryFloat | VarType::BinaryDouble => "number",
-        _ => "text",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

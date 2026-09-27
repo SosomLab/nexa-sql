@@ -1804,11 +1804,6 @@ impl Explorer {
         self.scroll = 0;
     }
 
-    #[allow(dead_code)] // 호스트는 `ExplorerSet`을 거친다
-    pub(crate) fn is_visible(&self) -> bool {
-        self.visible
-    }
-
     /// 트리 글꼴 크기(논리 px) — 아이콘 = 16 × (글꼴/17) × 배율.
     pub(crate) fn set_font_px(&mut self, px: f32) {
         self.font_px = px.max(1.0);
@@ -2051,11 +2046,6 @@ impl Explorer {
         if !on {
             self.menu.close();
         }
-    }
-
-    #[allow(dead_code)] // 호스트는 `ExplorerSet`을 거친다
-    pub(crate) fn bounds(&self) -> Rect {
-        self.bounds
     }
 
     /// 우클릭 메뉴 닫기(풀다운과 배타 · 09-22).

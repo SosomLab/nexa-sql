@@ -18,9 +18,7 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToastKind {
     Error,
-    #[allow(dead_code)]
     Warn,
-    #[allow(dead_code)]
     Info,
 }
 

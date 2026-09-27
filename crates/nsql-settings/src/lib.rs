@@ -1437,14 +1437,6 @@ pub const REGISTRY: &[Entry] = &[
         default: "2000",
     },
     Entry {
-        key: "explorer.timeout",
-        cat: Msg::CatExplorer,
-        label: Msg::LblExplorerTimeout,
-        desc: Msg::DescExplorerTimeout,
-        kind: SettingKind::Int { min: 1, max: 600 },
-        default: "15",
-    },
-    Entry {
         key: "explorer.font_size",
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerFontSize,
@@ -1670,14 +1662,6 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExplorerKeepOffline,
         kind: SettingKind::Bool,
         default: "off",
-    },
-    Entry {
-        key: "explorer.tooltip",
-        cat: Msg::CatExplorer,
-        label: Msg::LblExplorerTooltip,
-        desc: Msg::DescExplorerTooltip,
-        kind: SettingKind::Bool,
-        default: "on",
     },
     // 탐색기 타입어헤드(nexa-beep 이식 · 사용자 09-19): 글자를 치면 접두 항목으로 · 한글 직접 조합 · ↑/↓ 매치 순환 · HUD.
     Entry {
@@ -3522,16 +3506,6 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(SESSION_MODE_OPTS),
         default: "shared",
     },
-    // ★ 임시(사용자 09-19 · 특정 시점에 제거): 시작하면 Demo 프로필에 자동 접속하고 로그인 창을 띄우지 않는다(개발 편의 ·
-    //   `window.monitor`와 함께 · HIDDEN · `nsql config set dev.start_demo on`).
-    Entry {
-        key: "dev.start_demo",
-        cat: Msg::CatLog,
-        label: Msg::LblDevStartDemo,
-        desc: Msg::DescDevStartDemo,
-        kind: SettingKind::Bool,
-        default: "off",
-    },
     // 데모(사용자 09-17): 최초 실행 1회 "샘플 데이터(Demo) 만들까요?" 팝업을 띄웠는가(자동 기억 · HIDDEN).
     Entry {
         key: "demo.prompted",
@@ -3765,18 +3739,6 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescClipboardProbe,
         kind: SettingKind::Bool,
         default: "on",
-    },
-    Entry {
-        key: "db.statement_timeout",
-        cat: Msg::CatSession,
-        label: Msg::LblStatementTimeout,
-        desc: Msg::DescStatementTimeout,
-        kind: SettingKind::Int {
-            min: 0,
-            max: 86_400,
-        },
-        // 0 = 없음(DBeaver 동일 · D-61).
-        default: "0",
     },
     Entry {
         key: "log.max_lines",
@@ -4667,17 +4629,6 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "probe.dns_cache_secs",
-        cat: Msg::CatConnection,
-        label: Msg::LblDnsCacheSecs,
-        desc: Msg::DescDnsCacheSecs,
-        kind: SettingKind::Int {
-            min: 0,
-            max: 86_400,
-        },
-        default: "0",
-    },
-    Entry {
         key: "probe.icmp",
         cat: Msg::CatConnection,
         label: Msg::LblProbeIcmp,
@@ -5027,7 +4978,6 @@ pub const HIDDEN: &[&str] = &[
     "license.gates_dev",
     "ui.toast_fade_to",
     "ui.toast_bar_spent",
-    "dev.start_demo",
     "window.main_size",
     "window.login_size",
     "window.log_size",
@@ -5086,7 +5036,6 @@ pub const HIDDEN: &[&str] = &[
     "ui.glyph_cache",
     "file.icon_cache",
     "editor.max_occurrences",
-    "probe.dns_cache_secs",
     "probe.icmp",
     "db.fetch_size",
     "db.cursor_idle_secs",

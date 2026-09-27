@@ -106,21 +106,6 @@ impl Dialect {
     pub fn is_file_based(self) -> bool {
         matches!(self, Dialect::Sqlite | Dialect::Odbc)
     }
-
-    /// 방언의 바인드 플레이스홀더 문법.
-    pub fn bind_style(self) -> BindStyle {
-        match self {
-            Dialect::Oracle => BindStyle::NamedColon,
-            Dialect::Mssql => BindStyle::NamedAt,
-            Dialect::Postgres => BindStyle::Dollar,
-            Dialect::Mysql | Dialect::Sqlite | Dialect::Odbc => BindStyle::Question,
-        }
-    }
-
-    /// 배치 구분자(`GO`)가 있는 방언인가 — T-SQL만.
-    pub fn has_batch_separator(self) -> bool {
-        matches!(self, Dialect::Mssql)
-    }
 }
 
 impl fmt::Display for Dialect {
@@ -134,19 +119,6 @@ impl fmt::Display for Dialect {
             Dialect::Odbc => "odbc",
         })
     }
-}
-
-/// 드라이버가 받는 플레이스홀더 모양.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BindStyle {
-    /// `:NAME` — Oracle(이름 바인드).
-    NamedColon,
-    /// `@NAME` — SQL Server(`sp_executesql` 파라미터).
-    NamedAt,
-    /// `$1 $2` — PostgreSQL(위치).
-    Dollar,
-    /// `?` — MySQL · SQLite · ODBC(위치).
-    Question,
 }
 
 /// 세션 변수 타입 — SQL*Plus `VARIABLE` 타입의 부분집합 + [`VarType::Auto`](docs/04 §8.1).
