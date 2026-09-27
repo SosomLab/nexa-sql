@@ -189,7 +189,7 @@ pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     /// (조회 시각, (엔진 이름, 상태)) — 프레임워크가 없으면 안쪽 None.
-    type Probe = Option<(String, ImeState)>;
+    type Probe = Option<(String, ImeState, bool)>;
     static CACHE: Mutex<Option<(Instant, Probe)>> = Mutex::new(None);
     let cached = CACHE.lock().ok().and_then(|g| {
         g.as_ref()
@@ -204,8 +204,8 @@ pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
                 // 엔진이 바뀌었으면 입력 종류 기억은 버린다.
                 let prev = g
                     .as_ref()
-                    .and_then(|(_, s)| s.as_ref().map(|(e, _)| e.clone()));
-                if prev != now.as_ref().map(|(e, _)| e.clone()) {
+                    .and_then(|(_, s)| s.as_ref().map(|(e, _, _)| e.clone()));
+                if prev != now.as_ref().map(|(e, _, _)| e.clone()) {
                     LAST_INPUT.store(0, std::sync::atomic::Ordering::Relaxed);
                 }
                 *g = Some((Instant::now(), now.clone()));
@@ -213,17 +213,24 @@ pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
             now
         }
     };
-    let (engine, st) = probed?;
-    // 엔진이 본연(한글 등)이라도 마지막 실제 입력이 일반 키였으면 = 엔진 안에서 영문으로 토글된 상태.
-    if !st.latin && LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed) == 1 {
-        let _ = engine;
-        return Some(classify(0x0409, false));
+    let (engine, st, initial_native) = probed?;
+    let _ = engine;
+    if !st.latin {
+        // 엔진 안 한/영 상태(ibus-hangul · 사용자 09-27): 토글 키·실제 입력으로 알게 된 값 → 없으면 엔진의 초기 모드 설정(`initial-input-mode`).
+        let native = match LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => initial_native,
+        };
+        if !native {
+            return Some(classify(0x0409, false));
+        }
     }
     Some(st)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn linux_probe() -> Option<(String, ImeState)> {
+fn linux_probe() -> Option<(String, ImeState, bool)> {
     let xmod = std::env::var("XMODIFIERS").unwrap_or_default();
     let qt = std::env::var("QT_IM_MODULE").unwrap_or_default();
     let gtk = std::env::var("GTK_IM_MODULE").unwrap_or_default();
@@ -236,7 +243,18 @@ fn linux_probe() -> Option<(String, ImeState)> {
         None
     }?;
     let st = engine_state(&engine);
-    Some((engine, st))
+    // ibus-hangul의 초기 모드(`initial-input-mode` · 기본 latin) — 토글·입력을 보기 전의 상태.
+    let initial_native = st.glyph == "가"
+        && run_quiet(
+            "gsettings",
+            &[
+                "get",
+                "org.freedesktop.ibus.engine.hangul",
+                "initial-input-mode",
+            ],
+        )
+        .is_some_and(|v| v.contains("hangul"));
+    Some((engine, st, initial_native))
 }
 
 /// 엔진 이름 → 상태(순수 · 시험).
@@ -299,6 +317,21 @@ mod tests {
         assert_eq!((ru.glyph, ru.latin), ("RUS", false));
         let unknown = classify(0x03ff, false);
         assert!(!unknown.latin, "모르는 언어는 안내한다");
+    }
+
+    /// 이 PC의 실제 입력기 상태(ibus/fcitx 필요 · `cargo test -p nexa-sql imestate -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn linux_live_probe() {
+        let st = current(None);
+        eprintln!("live probe = {st:?}");
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            note_input(false);
+            eprintln!("after native input = {:?}", current(None));
+            note_toggle(false);
+            eprintln!("after toggle(from native) = {:?}", current(None));
+        }
     }
 
     #[test]

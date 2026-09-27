@@ -76,7 +76,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 /// 창이 호스트에 요청하는 것.
@@ -1848,6 +1848,21 @@ impl ConnWin {
                 }
             }
             WindowEvent::KeyboardInput { event: kev, .. } if kev.state == ElementState::Pressed => {
+                // Linux 한/영 토글 키(ibus-hangul switch-keys · AltRight/HangulMode/Shift+Space) → 비밀번호 칸 IME 안내 즉시 뒤집기(09-27).
+                let toggle = matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::HangulMode))
+                    || matches!(kev.physical_key, PhysicalKey::Code(KeyCode::AltRight))
+                    || (self.shift
+                        && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Space)));
+                if toggle
+                    && cfg!(all(unix, not(target_os = "macos")))
+                    && self.hidden_box().is_some()
+                {
+                    let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
+                    crate::imestate::note_toggle(latin_now);
+                    self.note_hidden_input();
+                    self.redraw();
+                    return Vec::new();
+                }
                 // ⌘/Ctrl+글자는 입력 소스와 무관하게 물리 키로(한글 자판 ⌘C = "ㅊ" 결함 · 09-19).
                 let letter = if self.primary {
                     crate::input::shortcut_letter(kev)

@@ -16,7 +16,7 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 pub(crate) enum InputWinAction {
@@ -468,11 +468,11 @@ impl InputWin {
                     );
                 }
                 // Linux 한/영 토글 키(입력기가 삼키지 않고 넘겨준 경우): 즉시 안내를 뒤집는다(사용자 09-27 "전환 즉시").
-                let toggle = matches!(
-                    kev.logical_key.as_ref(),
-                    Key::Named(NamedKey::HangulMode) | Key::Named(NamedKey::AltGraph)
-                ) || (self.shift
-                    && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Space)));
+                // ibus-hangul `switch-keys` = Hangul(이 자판에서는 물리 AltRight · 논리 Alt) · Shift+space(실측 09-27).
+                let toggle = matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::HangulMode))
+                    || matches!(kev.physical_key, PhysicalKey::Code(KeyCode::AltRight))
+                    || (self.shift
+                        && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Space)));
                 if toggle && cfg!(all(unix, not(target_os = "macos"))) {
                     let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
                     crate::imestate::note_toggle(latin_now);
