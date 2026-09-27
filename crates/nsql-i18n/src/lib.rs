@@ -3271,12 +3271,12 @@ impl Msg {
             Msg::WinPassword => ["Password", "비밀번호 입력"],
             // 비밀번호 창 안내 2행(사용자 09-22 "설명은 간략하게" — 1행 = 접속 문자열 · 2행 = 아래 셋 중 하나).
             Msg::PasswordHintSession => [
-                "Kept encrypted in memory until exit · not saved to disk",
-                "종료할 때까지 암호화해 기억 · 파일에 저장 안 함",
+                "Kept until the program exits (encrypted in memory · never written to disk)",
+                "프로그램 종료 시까지 보관(메모리 암호화 · 파일에 저장 안 함)",
             ],
             Msg::PasswordHintOnce => [
-                "Used for this connection only · not saved",
-                "이번 접속에만 사용 · 저장 안 함",
+                "Not kept — used for this connection only",
+                "보관하지 않음 — 이번 접속에만 사용",
             ],
             Msg::PasswordHintRejected => [
                 "Rejected by the server — enter it again",
@@ -4511,12 +4511,12 @@ impl Msg {
             Msg::ValOverflowExpanded => ["Expanded (record view)", "레코드 보기"],
             Msg::ValOverflowNone => ["None", "없음"],
             Msg::LblRememberSessionPw => [
-                "Reuse an entered password until the app exits",
-                "입력한 비밀번호를 앱을 끝낼 때까지 재사용",
+                "Keep entered passwords until the program exits",
+                "입력한 비밀번호를 프로그램 종료 시까지 보관",
             ],
             Msg::DescRememberSessionPw => [
-                "A password typed into the password window is kept encrypted in memory (key = random, this run only; never written to disk) and reused for more connections to the same server and account: new tab on this connection, reconnect after a drop, the object explorer. Off = asked every time. A wrong password is forgotten at once",
-                "비밀번호 창에 입력한 값을 메모리에 암호화해 들고 있다가(키 = 이번 실행에서만 쓰는 난수 · 디스크에 쓰지 않음) 같은 서버·계정의 다음 접속에 다시 씁니다: 이 연결로 새 탭 · 끊긴 뒤 재접속 · 객체 탐색기. 끄면 매번 묻습니다. 틀린 비밀번호는 바로 잊습니다",
+                "A password typed into the password window is kept encrypted in memory (key = random, this run only; never written to disk) and reused for more connections to the same server and account: new tab on this connection, reconnect after a drop, the object explorer. Off = not kept, asked every time. The kept password is cleared when the server rejects it or when you connect with an explicitly empty password (user:@host)",
+                "비밀번호 창에 입력한 값을 메모리에 암호화해 들고 있다가(키 = 이번 실행에서만 쓰는 난수 · 디스크에 쓰지 않음) 같은 서버·계정의 다음 접속에 다시 씁니다: 이 연결로 새 탭 · 끊긴 뒤 재접속 · 객체 탐색기. 끄면 보관하지 않고 매번 묻습니다. 보관한 값은 서버가 거부했을 때와 빈 비밀번호를 명시해(user:@host) 접속했을 때 초기화됩니다",
             ],
             Msg::LblReconnectSame => ["Reconnect to the same server", "동일 서버 재접속"],
             Msg::LblMaxConcurrent => ["Max concurrent attempts", "동시 시도 상한"],
