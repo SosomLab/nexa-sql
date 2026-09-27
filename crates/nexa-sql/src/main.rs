@@ -2220,6 +2220,9 @@ impl App {
             .or_else(|| self.conn_win.window())
             .or_else(|| self.sqlprev_win.window())
             .or_else(|| self.import_win.window())
+            // 라이선스·About 창 = 모달(열려 있는 동안 메인 잠금 · 사용자 09-27).
+            .or_else(|| self.license_win.window())
+            .or_else(|| self.about_win.window())
     }
 
     fn modal_open(&self) -> bool {
@@ -2228,6 +2231,8 @@ impl App {
             || self.input_win.is_modal()
             || self.sqlprev_win.is_open()
             || self.import_win.is_open()
+            || self.license_win.is_open()
+            || self.about_win.is_open()
     }
 
     /// 모달 창(접속 · 파일 · 비밀번호 입력) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
@@ -8165,6 +8170,7 @@ impl App {
             "help.license" => {
                 if self.license_win.is_open() {
                     self.license_win.close();
+                    self.sync_modal();
                 } else {
                     self.open_license = true;
                     self.redraw();
@@ -8191,6 +8197,7 @@ impl App {
                 // About 창(종전 = 상태줄 한 줄뿐이라 "미동작"으로 보였다 · 사용자 09-27).
                 if self.about_win.is_open() {
                     self.about_win.close();
+                    self.sync_modal();
                 } else {
                     self.open_about = true;
                     self.redraw();
@@ -12974,11 +12981,18 @@ impl App {
     fn open_license_window(&mut self, el: &ActiveEventLoop) {
         self.licensing.refresh();
         let owner = self.window.clone();
+        let was_open = self.license_win.is_open();
         self.license_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),
             owner.as_deref(),
         );
+        if !was_open {
+            if let (Some(o), Some(c)) = (owner.as_deref(), self.license_win.window()) {
+                winfocus::attach_child(o, c);
+            }
+        }
+        self.sync_modal();
     }
 
     /// About 창 줄들(제품 · 버전 · 빌드일 · 시스템 · 라이선스 · 저작권 · 조건 · 저장소).
@@ -17379,11 +17393,18 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_about) {
             let owner = self.window.clone();
+            let was_open = self.about_win.is_open();
             self.about_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 owner.as_deref(),
             );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.about_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
         }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
@@ -17944,6 +17965,8 @@ impl ApplicationHandler<Wake> for App {
             || self.file_win.is(id)
             || self.sqlprev_win.is(id)
             || self.import_win.is(id)
+            || self.license_win.is(id)
+            || self.about_win.is(id)
             || (self.input_win.is_modal() && self.input_win.is(id));
         if modal_open
             && !is_modal_win
@@ -18479,6 +18502,7 @@ impl ApplicationHandler<Wake> for App {
                 }
                 AboutAction::Close => {
                     self.about_win.close();
+                    self.sync_modal();
                     self.redraw();
                 }
                 AboutAction::Copy => {
@@ -18505,6 +18529,7 @@ impl ApplicationHandler<Wake> for App {
                 }
                 LicAction::Close => {
                     self.license_win.close();
+                    self.sync_modal();
                     self.redraw();
                 }
                 LicAction::OpenFile => {
@@ -18899,11 +18924,18 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_about) {
             let owner = self.window.clone();
+            let was_open = self.about_win.is_open();
             self.about_win.open(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 owner.as_deref(),
             );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.about_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
         }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);

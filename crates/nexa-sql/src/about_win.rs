@@ -35,6 +35,8 @@ pub(crate) struct AboutWin {
     btn_close: Button,
     note: Option<String>,
     last_lines: Vec<(String, String)>,
+    /// 다음 페인트에서 창 높이를 내용에 맞춘다(열 때 · 사용자 09-27 "중간 공백 필요 없음").
+    fit: bool,
 }
 
 impl AboutWin {
@@ -49,6 +51,7 @@ impl AboutWin {
             btn_close: Button::new(t(Msg::LicBtnClose)),
             note: None,
             last_lines: Vec::new(),
+            fit: true,
         }
     }
 
@@ -89,6 +92,7 @@ impl AboutWin {
         crate::winfocus::focus(&win);
         self.window = Some(win);
         self.note = None;
+        self.fit = true;
         self.redraw();
     }
 
@@ -305,8 +309,19 @@ impl AboutWin {
                 }
                 y += row_h;
             }
+            // 버튼 = 창 바닥 · 창 높이 = 내용 끝 + 버튼 행(열 때 한 번 맞춘다 · 사용자 09-27).
             let btn_h = th_txt + px(14.0);
-            let btn_y = (y + px(12.0)).min(hi - pad - btn_h);
+            let btn_y = hi - pad - btn_h;
+            if self.fit {
+                self.fit = false;
+                let need = y + px(12.0) + btn_h + pad;
+                if need != hi {
+                    let _ = win.request_inner_size(winit::dpi::PhysicalSize::new(
+                        size.width,
+                        need.max(px(160.0)) as u32,
+                    ));
+                }
+            }
             let mut bx = pad;
             for (b, label) in [
                 (&mut self.btn_copy, Msg::AboutBtnCopy),
