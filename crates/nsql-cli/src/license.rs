@@ -129,6 +129,7 @@ fn request(name: Option<&str>, email: Option<&str>) -> i32 {
     match Licensing::request_code(&meta) {
         Some(code) => {
             println!("{code}");
+            eprintln!("→ {}", nsql_license::LICENSE_CONTACT);
             0
         }
         None => {

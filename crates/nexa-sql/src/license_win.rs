@@ -10,7 +10,7 @@ use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
 use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
 use nexa_gfx::{Font, Surface};
-use nsql_i18n::{t, Msg};
+use nsql_i18n::{t, tf, Msg};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::event::{ElementState, Ime, MouseButton, WindowEvent};
@@ -91,13 +91,13 @@ impl LicenseWin {
             self.redraw();
             return;
         }
-        // 높이 = 정식 상태의 표(13행) + 요청 코드 구역 + 하단(안내 줄 · 버튼)이 겹치지 않는 값(사용자 09-27 겹침 보고).
-        let size = winit::dpi::LogicalSize::new(640.0, 580.0);
+        // 높이 = 정식 상태의 표(13행) + 요청 코드 구역 + 버튼 행이 흐름대로 들어가는 값(사용자 09-27 "여백 줄이고 설명 밑에 버튼").
+        let size = winit::dpi::LogicalSize::new(640.0, 540.0);
         let attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLicense)))
             .with_theme(theme)
             .with_resizable(true)
-            .with_min_inner_size(winit::dpi::LogicalSize::new(520.0, 420.0))
+            .with_min_inner_size(winit::dpi::LogicalSize::new(520.0, 380.0))
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         if let Some(o) = owner {
@@ -451,7 +451,8 @@ impl LicenseWin {
             dc.fill_rect(Rect::new(pad, y, wi - pad * 2, 1), th.border);
             y += px(10.0);
             // 요청 코드 구역.
-            dc.text(pad, y, clip, t(Msg::LicReqTitle), th.text);
+            let title = tf(Msg::LicReqTitle, &[nsql_license::LICENSE_CONTACT]);
+            dc.text(pad, y, clip, &title, th.text);
             y += th_txt + px(8.0);
             let fh = th_txt + px(12.0);
             let mut x = pad;
@@ -477,24 +478,17 @@ impl LicenseWin {
                 .as_deref()
                 .map_or_else(|| t(Msg::LicNoMachine).to_string(), str::to_string);
             let code_line = nexa_ctl::draw::ellipsize_middle(&mut dc, &code_line, wi - pad * 2);
-            let btn_h_tmp = th_txt + px(14.0);
-            let floor_tmp = hi - pad - btn_h_tmp - px(8.0) - th_txt - px(6.0);
-            dc.text(
-                pad,
-                y,
-                Rect::new(0, 0, wi, floor_tmp),
-                &code_line,
-                th.text_dim,
-            );
-            y += th_txt + px(6.0);
-            // 버튼 행(아래) + 안내 줄(그 위) — 위에서 내려온 내용은 이 선 위에서 멈춘다(겹침 방지 · 창이 낮으면 힌트부터 생략).
+            // 버튼 행은 **흐름대로**(설명 줄 바로 아래) · 창이 내용보다 낮으면 바닥에 붙고 위 내용은 온전한 줄만 그린다(반쯤 잘린 글 없음).
             let btn_h = th_txt + px(14.0);
-            let btn_y = hi - pad - btn_h;
-            let note_y = btn_y - px(8.0) - th_txt;
-            let floor = note_y - px(6.0);
+            let btn_y_flow = y + (th_txt + px(6.0)) * 2 + px(10.0);
+            let btn_y = btn_y_flow.min(hi - pad - btn_h);
+            let floor = btn_y - px(6.0);
             if y + th_txt <= floor {
-                let hint = t(Msg::LicHint);
-                dc.text(pad, y, Rect::new(0, 0, wi, floor), hint, th.text_dim);
+                dc.text(pad, y, clip, &code_line, th.text_dim);
+            }
+            y += th_txt + px(6.0);
+            if y + th_txt <= floor {
+                dc.text(pad, y, clip, t(Msg::LicHint), th.text_dim);
             }
             let mut bx = pad;
             for (b, label) in [
@@ -508,9 +502,18 @@ impl LicenseWin {
                 b.paint(&mut dc, th);
                 bx += bw + px(8.0);
             }
+            // 결과 안내(설치됨 · 거부 · 복사됨)는 버튼 **오른쪽** 같은 줄 — 세로 공간을 쓰지 않는다.
             if let Some((n, warn)) = &self.note {
-                let n = nexa_ctl::draw::ellipsize_middle(&mut dc, n, wi - pad * 2);
-                dc.text(pad, note_y, clip, &n, if *warn { th.danger } else { th.ok });
+                let nx = bx + px(4.0);
+                let n = nexa_ctl::draw::ellipsize_middle(&mut dc, n, (wi - pad - nx).max(0));
+                let r = Rect::new(nx, btn_y, (wi - pad - nx).max(0), btn_h);
+                dc.text(
+                    nx,
+                    btn_y + (btn_h - th_txt) / 2,
+                    r,
+                    &n,
+                    if *warn { th.danger } else { th.ok },
+                );
             }
         }
         for tb in [&self.tb_name, &self.tb_email] {

@@ -28,6 +28,7 @@ pub(crate) fn settings_clip_native() -> bool {
 fn set_clip_native(on: bool) {
     CLIP_NATIVE.store(on, std::sync::atomic::Ordering::Relaxed);
 }
+mod about_win;
 mod colors_win;
 mod conn_win;
 mod connect;
@@ -100,6 +101,7 @@ mod winfocus;
 mod wingeom;
 mod worker;
 
+use about_win::{AboutAction, AboutWin};
 use activity::ActivityBar;
 use colors_win::{ColorTarget, ColorsAction, ColorsWin};
 use conn_win::{ConnWin, ConnWinAction, ConnectMark, TestMark};
@@ -222,6 +224,9 @@ struct App {
     license_win: LicenseWin,
     licensing: nsql_license::Licensing,
     open_license: bool,
+    /// ★ About 창(Help ▸ About · 09-27).
+    about_win: AboutWin,
+    open_about: bool,
     status_lic_rect: Rect,
     /// 메모리 맵 창(docs/80 · 모델리스 · 닫혀 있으면 비용 0).
     mem_win: mem_win::MemWin,
@@ -2238,6 +2243,7 @@ impl App {
                 self.txlog_win.window(),
                 self.sessions_win.window(),
                 self.license_win.window(),
+                self.about_win.window(),
                 self.vars_win.window(),
                 self.mem_win.window(),
                 self.colors_win.window(),
@@ -2595,6 +2601,7 @@ impl App {
         self.txlog_win.close();
         self.sessions_win.close();
         self.license_win.close();
+        self.about_win.close();
         self.mem_win.close();
         self.vars_win.close();
         self.colors_win.close();
@@ -8198,10 +8205,13 @@ impl App {
             "edit.settings_json" => self.edit_settings_json(),
             "help.demo" => self.start_demo_create(),
             "help.about" => {
-                self.sess.status = format!(
-                    "Nexa SQL {} · SosomLab · PolyForm NC 1.0.0",
-                    env!("CARGO_PKG_VERSION")
-                );
+                // About 창(종전 = 상태줄 한 줄뿐이라 "미동작"으로 보였다 · 사용자 09-27).
+                if self.about_win.is_open() {
+                    self.about_win.close();
+                } else {
+                    self.open_about = true;
+                    self.redraw();
+                }
             }
             _ => {}
         }
@@ -9144,6 +9154,10 @@ impl App {
         }
         // 자체 시험(09-26 성능 전수): 메모리 계측 표본을 파일로 — 총량·anon·부품 원장(L1 Meta · L2 MetaCols · L3 MetaDetail …).
         // 자체 시험(T-34): 라이선스 창 상태 덤프 · 파일 설치(파일 창과 같은 길).
+        if let Some(path) = id.strip_prefix("about.dump:") {
+            let _ = std::fs::write(path, self.about_win.dump());
+            return;
+        }
         if let Some(path) = id.strip_prefix("license.dump:") {
             let view = self.license_view();
             let mut out = format!("badge={} warn={}\n", view.state, view.warn);
@@ -11576,6 +11590,8 @@ impl App {
                 wins.push(w);
             } else if let Some(w) = self.license_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
+            } else if let Some(w) = self.about_win.window().filter(|w| w.id() == *wid) {
+                wins.push(w);
             } else if let Some(w) = self.vars_win.window().filter(|w| w.id() == *wid) {
                 wins.push(w);
             } else if let Some(w) = self.mem_win.window().filter(|w| w.id() == *wid) {
@@ -12969,6 +12985,35 @@ impl App {
             theme::window_theme(self.settings.theme_mode()),
             owner.as_deref(),
         );
+    }
+
+    /// About 창 줄들(제품 · 버전 · 빌드일 · 시스템 · 라이선스 · 저작권 · 조건 · 저장소).
+    fn about_lines(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                String::new(),
+                format!("Nexa SQL {}", env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                t(Msg::AboutVersion).into(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+            (
+                t(Msg::AboutBuild).into(),
+                nsql_license::PRODUCT.build_date.to_string(),
+            ),
+            (
+                t(Msg::AboutSystem).into(),
+                format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+            ),
+            (t(Msg::AboutLicenseState).into(), self.license_badge()),
+            (
+                t(Msg::AboutRepo).into(),
+                "https://github.com/SosomLab/nexa-sql".to_string(),
+            ),
+            (String::new(), t(Msg::AboutCopyright).to_string()),
+            (String::new(), t(Msg::AboutTerms).to_string()),
+        ]
     }
 
     /// 상태줄 배지 글(docs/23 §4-4): `Free · non-commercial use only` / `Pro · ACME` / `⚠ …`.
@@ -17338,6 +17383,14 @@ impl ApplicationHandler<Wake> for App {
         if std::mem::take(&mut self.open_license) {
             self.open_license_window(el);
         }
+        if std::mem::take(&mut self.open_about) {
+            let owner = self.window.clone();
+            self.about_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+            );
+        }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
         }
@@ -18422,6 +18475,32 @@ impl ApplicationHandler<Wake> for App {
             }
             return;
         }
+        if self.about_win.is(id) {
+            match self.about_win.handle(&event) {
+                AboutAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    let lines = self.about_lines();
+                    self.about_win
+                        .paint(lines, &self.ui_font, &self.theme, ui_px);
+                }
+                AboutAction::Close => {
+                    self.about_win.close();
+                    self.redraw();
+                }
+                AboutAction::Copy => {
+                    let text = self.about_win.info_text();
+                    if clipboard::write_text(&text) {
+                        self.about_win.set_note(t(Msg::AboutCopied).to_string());
+                    }
+                }
+                AboutAction::OpenLicense => {
+                    self.open_license = true;
+                    self.redraw();
+                }
+                AboutAction::None => {}
+            }
+            return;
+        }
         if self.license_win.is(id) {
             match self.license_win.handle(&event) {
                 LicAction::Paint => {
@@ -18823,6 +18902,14 @@ impl ApplicationHandler<Wake> for App {
         }
         if std::mem::take(&mut self.open_license) {
             self.open_license_window(el);
+        }
+        if std::mem::take(&mut self.open_about) {
+            let owner = self.window.clone();
+            self.about_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+            );
         }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
@@ -19263,6 +19350,8 @@ fn main() {
         txlog_win,
         sessions_win,
         license_win: LicenseWin::new(),
+        about_win: AboutWin::new(),
+        open_about: false,
         licensing: nsql_license::Licensing::open_default(),
         open_license: false,
         status_lic_rect: Rect::new(0, 0, 0, 0),

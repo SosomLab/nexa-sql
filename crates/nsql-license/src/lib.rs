@@ -40,6 +40,9 @@ pub const PRODUCT: Product = Product {
 /// 라이선스 폴더 이름(`<설정 폴더>/license/`).
 pub const LICENSE_SUBDIR: &str = "license";
 
+/// 요청 코드를 보내는 곳(사용자 09-27 "어느 이메일로 보내는지 정보가 없다") — 창·CLI·위키가 이 한 곳을 쓴다.
+pub const LICENSE_CONTACT: &str = "kiros33@sosomlab.com";
+
 // ─────────────────────────────────────────────────────────────── Feature
 
 /// 게이트 대상 기능 — **코드에 열거**(23 §4-1 · 문자열 아님). 파일의 `features=` 이름과의 매핑은 [`Feature::as_str`] 한 곳.
