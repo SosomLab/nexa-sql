@@ -1112,7 +1112,10 @@ impl ConnWin {
         self.last_monitor = monitor;
         // 메인 창의 소유 창 — 작업표시줄 항목 하나 · 항상 메인 위(사용자 09-14).
         let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
+        // Linux IME 감시 = 이 창의 수명 동안(비밀번호 칸 포커스와 무관) — 창보다 **먼저** 띄워 첫 포커스의 모드 통지를 초기값으로 받는다.
+        self.ime_hint.window_opened();
         let Ok(win) = el.create_window(attrs) else {
+            self.ime_hint.window_closed();
             return;
         };
         // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
@@ -1215,6 +1218,7 @@ impl ConnWin {
         self.surface = None;
         self.window = None;
         self.panel.set_focused(false);
+        self.ime_hint.window_closed();
     }
 
     /// 기억된 기하(설정 `window.<name>_pos`/`_size`) — 열 때 같은 모니터면 그대로 쓴다.

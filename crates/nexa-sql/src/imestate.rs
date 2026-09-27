@@ -4,7 +4,8 @@
 //! - Windows: 전경(또는 넘겨받은) 창의 스레드 키보드 배열(`GetKeyboardLayout` → LANGID) + IME 언어(한·일·중)는 기본 IME 창에
 //!   `WM_IME_CONTROL/IMC_GETCONVERSIONMODE`로 변환 모드(`IME_CMODE_NATIVE`)를 물어 **가/A · あ/A · 中/英**. IME가 아닌 비라틴 배열
 //!   (러시아어 · 태국어 · 아랍어 …)은 언어 코드 셋 글자(`RUS` …). 라틴 배열(영어 · 독일어 …)은 `latin = true`(안내 없음).
-//! - macOS: 입력 소스가 한국어면 `가`(nexa-sys `input_source`) · 그 밖은 판정 없음. Linux: 판정 없음(`None`).
+//! - macOS: 입력 소스가 한국어면 `가`(nexa-sys `input_source`) · 그 밖은 판정 없음. Linux: 엔진 이름(`ibus engine`) + 엔진 안 한/영 =
+//!   ibus 패널 감시([`crate::imewatch`] · 유일한 원천) · 감시가 없으면 폴백(토글 키 · 입력 종류 · `initial-input-mode`).
 //!
 //! 안내를 띄우는 쪽은 [`crate::imehint`] — 이 모듈은 상태만 읽는다(창 핸들은 있으면 넘긴다 · 없으면 전경 창).
 
@@ -12,6 +13,29 @@
 /// 토글해 `ibus engine`은 계속 `hangul`이다 → 가린 칸에 글자가 **일반 키**로 오면(영문) 라틴, IME 조합·확정으로 오면(한글) 본연으로 본다.
 /// 0 = 모름 · 1 = 라틴 · 2 = 본연. 엔진 이름이 바뀌면 다시 모름.
 static LAST_INPUT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Linux 감시(ibus 패널 엿듣기 · [`crate::imewatch`])가 살아 있는가 — 살아 있으면 한/영의 **유일한 원천**: 키보드 판정은 무시하고
+/// 엔진 이름이 바뀌어도 감시가 준 값을 버리지 않는다(사용자 09-27 "다른 창에서 바꾸고 돌아올 때도 정확하게" — 돌아오는 순간 ibus가
+/// `RegisterProperties`로 지금 모드를 다시 보내는데, 같은 때 `ibus engine` 재조회가 "엔진 바뀜"으로 그 값을 0으로 되돌리던 경주).
+static WATCH_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+pub(crate) fn set_watch_active(on: bool) {
+    WATCH_ACTIVE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+pub(crate) fn watch_active() -> bool {
+    WATCH_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 엔진 이름이 바뀌었을 때의 입력 종류 기억 처리 — 폴백(감시 없음)일 때만 "모름"으로 되돌린다.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn on_engine_change(changed: bool) {
+    if changed && !watch_active() {
+        LAST_INPUT.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 /// 한/영 **토글 키**가 앱에 도달했다(Linux · `HangulMode`/`Shift+Space`/오른쪽 Alt — 입력기가 삼키지 않은 경우만 온다) → 지금 상태를 뒤집는다.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
@@ -22,9 +46,22 @@ pub(crate) fn note_toggle(currently_latin: bool) {
     );
 }
 
+/// 감시(ibus 패널)가 준 확정 상태 — 폴백 가드를 거치지 않는다.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+pub(crate) fn set_from_watch(native: bool) {
+    LAST_INPUT.store(
+        if native { 2 } else { 1 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// 가린 칸에 입력이 들어왔다 — `latin` = 일반 키 글자(영문) · false = IME 조합/확정(한글 등).
+/// ★ **폴백 전용**(사용자 09-27 "키보드 감시와 ibus 감시가 중복 아닌가"): Linux 감시(ibus 패널 엿듣기)가 돌면 그것이 유일한 원천 — 무시.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 pub(crate) fn note_input(latin: bool) {
+    if watch_active() {
+        return;
+    }
     LAST_INPUT.store(
         if latin { 1 } else { 2 },
         std::sync::atomic::Ordering::Relaxed,
@@ -205,9 +242,7 @@ pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
                 let prev = g
                     .as_ref()
                     .and_then(|(_, s)| s.as_ref().map(|(e, _, _)| e.clone()));
-                if prev != now.as_ref().map(|(e, _, _)| e.clone()) {
-                    LAST_INPUT.store(0, std::sync::atomic::Ordering::Relaxed);
-                }
+                on_engine_change(prev != now.as_ref().map(|(e, _, _)| e.clone()));
                 *g = Some((Instant::now(), now.clone()));
             }
             now
@@ -318,6 +353,33 @@ mod tests {
         let unknown = classify(0x03ff, false);
         assert!(!unknown.latin, "모르는 언어는 안내한다");
     }
+
+    /// 감시가 살아 있으면 엔진 이름이 바뀌어도(다른 창에서 바꾸고 돌아옴 · 500 ms 재조회) 감시가 준 값이 남고 · 폴백이면 "모름"으로.
+    #[test]
+    fn watch_value_survives_engine_change() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        set_watch_active(true);
+        set_from_watch(true);
+        on_engine_change(true);
+        assert_eq!(LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed), 2);
+        note_input(true);
+        assert_eq!(
+            LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "감시 중 키보드 판정은 무시"
+        );
+        set_watch_active(false);
+        on_engine_change(false);
+        assert_eq!(LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed), 2);
+        on_engine_change(true);
+        assert_eq!(LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed), 0);
+        note_input(true);
+        assert_eq!(LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed), 1);
+        LAST_INPUT.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// 전역 상태를 만지는 시험은 하나씩.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// 이 PC의 실제 입력기 상태(ibus/fcitx 필요 · `cargo test -p nexa-sql imestate -- --ignored --nocapture`).
     #[test]

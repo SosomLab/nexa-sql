@@ -79,7 +79,7 @@
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
 | IME 안내 조회(journal 09-22 §34 · 가린 칸에 포커스가 있는 동안 150 ms마다 `GetKeyboardLayout`+`WM_IME_CONTROL` 둘 · 아니면 0) | 포커스 동안만 · 새 타이머 없음(창 tick) | `ui.ime_hint`(끄면 0) | on | on | off | `imehint.rs` · `conn_win`/`input_win` `tick` |
-| ★ **Linux IME 감시**(09-27 · 가린 칸 포커스 동안 `dbus-monitor --address $(ibus address)` 자식 1 + 읽기 스레드 1 · ibus 패널 `InputMode` symbol 한/EN → 전환 즉시) · Linux 엔진 조회(`ibus engine`/`gsettings` 프로세스 · 500 ms 캐시 · 포커스 동안만) | 포커스가 떠나면 kill·wait = 0 · ibus/dbus-monitor 없으면 0(폴백 = 엔진 이름·토글 키·입력 종류) | `ui.ime_hint_watch` · `ui.ime_hint` | on | on | **off** | `imewatch.rs` · `imestate.rs` |
+| ★ **Linux IME 감시**(09-27 · **가린 칸이 있는 창(로그인·입력 창)이 열려 있는 동안** `dbus-monitor --address $(ibus address)` 자식 1 + 읽기 스레드 1 · ibus 패널 `InputMode` symbol 한/EN → 전환 즉시 · 창보다 먼저 띄워 첫 포커스 재전송 = 초기값) · Linux 엔진 조회(`ibus engine`/`gsettings` 프로세스 · 500 ms 캐시 · 가린 칸 포커스 동안만) | 창이 닫히면 kill·wait = 0 · ibus/dbus-monitor 없으면 0(폴백 = 엔진 이름·토글 키·입력 종류) | `ui.ime_hint_watch` · `ui.ime_hint` | on | on | **off** | `imewatch.rs` · `imestate.rs` |
 | ★ 다중 열기 스레드 `multi-open`(journal 09-22 §30 · 열기 창에서 여러 파일 → **스레드 하나**가 고른 순서대로 읽어 자리 탭마다 결과) | 요청당 1개 · 파일 수 ≤ `file.open_max` · 끝나면 종료 · 동시 N개 없음 | `file.open_max`(1~50 · 기본 10) | 10 | 10 | 10 | `main.rs multi_open_start/multi_load_poll` |
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
 | 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
@@ -211,7 +211,7 @@
 | **★ 다중 인스턴스 시작 모드**(93차) | 없음 | 기동 때 1회 `try_lock` | 잠금 파일 핸들 1개를 프로세스가 보유 | `instance.lock`(0 바이트 · 설정 폴더) | 프로세스 종료 | `project.restore_last`(기본 끔 — 둘째 인스턴스가 프로젝트를 복원하지 않는다) | 미등재(비용 0) |
 | **★ 토스트 진행 막대**(93차) | 없음 | 카드가 떠 있는 동안 30 ms 틱(새 타이머 0) | — | — | 카드가 사라지면 0 | `ui.toast_progress` | ✅ `off` |
 | **★ IME 안내**(93차) | 없음 | 가린 칸에 포커스가 있는 동안 150 ms마다 조회 2 | — | — | 포커스가 떠나면 0 | `ui.ime_hint` | 미등재(포커스 조건부라 상시 비용 0 · low 프리셋에서 off) |
-| **★ Linux IME 감시**(104차 후반) | 없음 | 포커스 동안 자식 프로세스 1 + 스레드 1(메시지 때만 깨어남) | ~2 MB(dbus-monitor) | — | 포커스가 떠나면 kill = 0 | `ui.ime_hint_watch` | ✅ `off` |
+| **★ Linux IME 감시**(104차 후반) | 없음 | 가린 칸이 있는 창이 열린 동안 자식 프로세스 1 + 스레드 1(메시지 때만 깨어남) | ~2 MB(dbus-monitor) | — | 창이 닫히면 kill = 0 | `ui.ime_hint_watch` | ✅ `off` |
 | **★ 플래시 메시지**(104차 후반) | 없음 | 유지+페이드(기본 5 s) 동안 그 창 프레임마다 재그리기 | — | — | 끝나면 0 | `ui.flash_hold_ms`·`ui.flash_ms` | ✅ `300`/`200` |
 | **확장 패널**(79차) | `ext-index` 1(사용자 동작 때만) + `curl` 자식 | 없음 | 목록 JSON 1벌 | `extensions/` · `index.json` | 패널 닫힘 | `extensions.enabled` | — |
 | **탐색기 갱신**(80차) | 메타 스레드(서버별 `nsql-explorer`) | 없음 | 폴더별 디프 갱신(트리 전체 재구축 0) | — | — | `meta.refresh_*` | `meta.refresh_secs=0` · `meta.refresh_highlight_ms=0` |

@@ -25,12 +25,16 @@ pub(crate) struct ImeHint {
     last_poll: Option<Instant>,
     /// 캡처용 `show`의 만료(상태와 무관하게 잠깐 보인다).
     pin_until: Option<Instant>,
+    /// Linux 감시 소유자 토큰(안내 인스턴스마다 고유).
+    token: usize,
 }
 
 impl ImeHint {
     pub(crate) fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
         ImeHint {
             enabled: true,
+            token: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             ..Self::default()
         }
     }
@@ -41,8 +45,25 @@ impl ImeHint {
             self.shown = false;
             self.pin_until = None;
             #[cfg(all(unix, not(target_os = "macos")))]
-            crate::imewatch::stop();
+            crate::imewatch::stop(self.token);
         }
+    }
+
+    /// 가린 칸이 있는 창이 열린다(창을 만들기 **전**에 부른다) — Linux 감시를 창 수명 동안 돌린다: 창이 처음 포커스를 받을 때 ibus가
+    /// `RegisterProperties`로 지금 모드를 보내므로 그보다 먼저 듣고 있어야 **초기값**이 생기고, 다른 창에서 바꾸는 동안·돌아올 때도
+    /// 끊김 없이 받는다(사용자 09-27 "외부 창에서 바꾸고 포커스를 다시 받을 때도 정확하게").
+    pub(crate) fn window_opened(&self) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if self.enabled {
+            crate::imewatch::start(self.token);
+        }
+    }
+
+    /// 창이 닫힌다 → 감시 종료(소유자만).
+    pub(crate) fn window_closed(&mut self) {
+        self.shown = false;
+        #[cfg(all(unix, not(target_os = "macos")))]
+        crate::imewatch::stop(self.token);
     }
 
     /// 지금 상태를 읽어 반영한다 — `bx` = 포커스인 가린 칸(없으면 숨김) · `force` = 스로틀 무시(글자 사건 직후).
@@ -59,14 +80,12 @@ impl ImeHint {
         }
         self.pin_until = None;
         let Some(bx) = bx.filter(|_| self.enabled) else {
-            // 가린 칸 포커스가 없다 → Linux 감시(ibus 패널 엿듣기)도 끝낸다.
-            #[cfg(all(unix, not(target_os = "macos")))]
-            crate::imewatch::stop();
+            // 가린 칸 포커스가 없다 → 숨김만(Linux 감시는 창 수명 — `window_closed`에서 끝난다).
             return self.hide();
         };
-        // 가린 칸에 포커스 → Linux는 ibus 패널 속성을 구독해 한/영 전환을 **즉시** 받는다(이미 돌면 비용 0).
+        // 가린 칸에 포커스 → Linux는 ibus 패널 속성을 구독해 한/영 전환을 **즉시** 받는다(이미 돌면 비용 0 · 창 열 때 못 띄웠으면 여기서).
         #[cfg(all(unix, not(target_os = "macos")))]
-        crate::imewatch::start();
+        crate::imewatch::start(self.token);
         if !force && self.last_poll.is_some_and(|t| now.duration_since(t) < POLL) {
             return false;
         }

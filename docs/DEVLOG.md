@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-27 (107차 · Linux)** — 🔧 세션 자격 금고(탐색기 칸 자동 제거의 forget 삭제 · 빈 비밀번호 명시 = 초기화 · E2E `linux-vault-e2e.sh`) · ★ Linux IME 안내 = ibus 패널 감시 `imewatch.rs`(즉시 반영 · 소유자 토큰 · 키보드 = 폴백 · 감시 수명 = 창 · 엔진 재조회 경주 제거) · 플래시 유지·페이드 · 향상 모드 등재 · [journal 09-27 §22](journal/2026-09-27.md).
 - **2026-09-27 (106차 · mac)** — 세 저장소 최신화·분석(맥 시험 ✓ · 빌드·재기동) · 🔧 유효기간 미반영 = 발급기 옛 판 + 정책 전 발급 + 재발급 통로 없음 → ★ nexa-license 4f02524 `reissue --renew`·개별 재지정·기존 ID `issue` 거부(E2E) · 발급 설명서 NSL-2026-000001 재발행 절차 · [journal 09-27 §21](journal/2026-09-27.md).
 - **2026-09-27 (104차 후반 2 · Linux)** — 🔧 수식 변수 loop·SHOW 재계산(실서버 ✓) · 라이선스·About 모달 · ★ 플래시 메시지 부품(nexa-ctl `Flash` · 배경 · 앵커 우상단 · Z-order · `ui.flash_ms`) · 이메일 링크 복사 · ★ 유효기간 3년·`max_major`·`max_version`(nexa-license 3968c26) · [journal 09-27 §17~§20](journal/2026-09-27.md).
 - **2026-09-27 (105차 · mac)** — 🔧 라이선스 창 파일 선택 뒤 창이 메인 뒤로(파일 창 호스트 = 띄운 창 · 닫히면 그 창으로 포커스 `picker_return` · 창 목록 단일 원천 `all_windows()`) · 발급 설명서 `~/nexa-issuer/README.md` · 🔧 CI ubuntu 간헐 `parwalk` 취소 시험 경주 제거(48aa233) · 시험 620 ✓ · CI 3-OS·integration ✓ · [journal 09-27 §18](journal/2026-09-27.md).

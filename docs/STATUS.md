@@ -4,6 +4,13 @@
 >
 > ★ (105차 mac = 라이선스 창 포커스 복귀 · journal §18) **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md) + [§14-3](journal/2026-09-27.md)** — 라이선스 체계 코드 완성 · ✅ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c) · 다음 = **첫 발급 실기**(절차 [91 §2-1](91-license-root-key-operations.md)) → T-244 · T-163 실기.
 
+## 2026-09-27 (107차 · **Linux**) — 🔧 세션 자격 금고 · ★ Linux IME 안내 = ibus 패널 감시(즉시 반영) · 플래시 유지·페이드 · 향상 모드 등재
+
+- 🔧 **세션 자격 금고**(사용자 "연결1 → 전용 연결2 → 연결1 = 다시 묻는다"): 원인 = 세션 0이 된 서버의 탐색기 칸 자동 제거가 `session::forget`까지 실행 → 제거(초기화 = 빈 비밀번호 명시 · 서버 거부뿐) · `user:@host` 빈 비밀번호 명시 = 자리 초기화 · 보관 설정 문구 분기 · `NSQL_TRACE_VAULT=1` 추적 · E2E `scripts/linux-vault-e2e.sh`(홈 복사본 · `pw.answer_from_profile` · 2/2)([journal §22](journal/2026-09-27.md)).
+- ★ **Linux IME 안내**(맥처럼 한/영 전환 즉시): 엔진 이름(`ibus engine`) → 입력 종류 보정 → 토글 키 → ★ **ibus 패널 감시** `imewatch.rs`(`dbus-monitor` 자식 · `InputMode` symbol 한/EN · 상단 바와 같은 원천) → 🔧 소유자 토큰(로그인 창 tick이 감시를 죽이던 것) · 키보드 판정 = 폴백 전용 · 🔧 **감시 수명 = 가린 칸이 있는 창의 수명 + 창보다 먼저 시작**(ibus-hangul 모드 = 전역 · FocusIn마다 재전송 실측 → 외부 창에서 바꾸고 돌아와도 정확) · 엔진 재조회 경주 제거(`WATCH_ACTIVE`) · 설정 `ui.ime_hint_watch`(향상 모드 off) · 자체 시험 `ime.fake/ime.dump` · `scratchpad/ibus_toggle.py`(키 주입 없이 실제 토글).
+- 플래시 메시지 = 유지(`ui.flash_hold_ms` 2000) 뒤 페이드(`ui.flash_ms` 3000) · 오늘 부하원 PERF/BOOST 등재(39 §3).
+- 사용자 몫: 비밀번호 창·로그인 창에서 한/영 전환(창 안 · 다른 창에서 바꾸고 복귀) 눈 검사 · 금고 실기(연결1 → 연결2 → 연결1 = 안 묻기).
+
 ## 2026-09-27 (106차 · **mac**) — 최신화·분석 · 🔧 재발급으로 새 정책 입히기 `reissue --renew`
 
 - 최신화(nexa-ui 3cfa17a · nexa-license 3968c26 · nexa-sql 104차 후반 2) · 맥 시험 ✓ · Debug·Release 빌드 · Debug 재기동.

@@ -9171,7 +9171,7 @@ impl App {
         }
         // 자체 시험(09-27 · Linux IME 안내): `ime.fake:native|latin` = 감시가 준 것처럼 상태를 넣고 즉시 재판정 · `ime.dump:<파일>` = 안내 보임 여부.
         if let Some(mode) = id.strip_prefix("ime.fake:") {
-            imestate::note_input(mode != "native");
+            imestate::set_from_watch(mode == "native");
             self.input_win.ime_repoll();
             return;
         }

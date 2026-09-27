@@ -201,7 +201,12 @@ impl InputWin {
                 ));
             }
         }
+        // 가린 칸이 있으면 Linux IME 감시를 창보다 먼저(첫 포커스의 모드 통지를 받아 초기값으로).
+        if self.rows.iter().any(|r| r.need.hide) {
+            self.ime_hint.window_opened();
+        }
         let Ok(win) = el.create_window(attrs) else {
+            self.ime_hint.window_closed();
             return;
         };
         let win = Rc::new(win);
@@ -238,6 +243,7 @@ impl InputWin {
 
     pub(crate) fn close(&mut self) {
         self.wipe_if_password();
+        self.ime_hint.window_closed();
         self.surface = None;
         self.window = None;
         for r in &mut self.rows {

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/linux-vault-ime-107 | 2026-09-27 | 2026-09-27 → main(삭제) | 10 | 107차(Linux) — 🔧 세션 자격 금고(탐색기 자동 제거 forget) · ★ Linux IME 감시(ibus 패널 · 소유자 토큰 · 폴백 전용 · 창 수명 · 경주 제거) · 플래시 유지·페이드 · 향상 모드 등재 · journal §22 |
 | docs/session-106-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 106차(mac) — 최신화·분석 · 유효기간 미반영 원인 · nexa-license 4f02524 `reissue --renew` 기록 · 25 §12 · 91 §2 · journal §21 · STATUS/DEVLOG/TODO/CLAUDE.md |
 | docs/session-103-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 103차(mac) 정리 — journal §13 CI·§14(최신화·분석 · 발급 절차 · 다음) · 91 §2-1 발급 실행 순서 · STATUS/DEVLOG/TODO(T-244)/CLAUDE.md 현 단계 |
 | docs/root-v1-key | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 루트 공개키 `root-v1` 등재 기록(nexa-license 1bc033c · keys-rs fmt 안정화) · journal §13 · 91 §1 ⚠ 갱신 |
