@@ -18552,14 +18552,15 @@ impl ApplicationHandler<Wake> for App {
                 LicAction::Remove => self.license_remove(),
                 LicAction::CopyRequest(name, email) => self.license_copy_request(&name, &email),
                 LicAction::CopyText(text) => {
-                    let ms = self.settings.int("ui.flash_ms").clamp(200, 10_000) as u64;
+                    let hold = self.settings.int("ui.flash_hold_ms").clamp(0, 30_000) as u64;
+                    let fade = self.settings.int("ui.flash_ms").clamp(200, 30_000) as u64;
                     let ok = clipboard::write_text(&text);
                     let msg = if ok {
                         t(Msg::LicNoteCopied).to_string()
                     } else {
                         t(Msg::LicNoteCopyFailed).to_string()
                     };
-                    self.license_win.set_flash(msg, !ok, ms);
+                    self.license_win.set_flash(msg, !ok, hold, fade);
                 }
                 LicAction::None => {}
             }

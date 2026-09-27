@@ -141,9 +141,13 @@ impl LicenseWin {
     }
 
     /// 순간 메시지(링크 옆 · `ms` 동안 서서히 사라짐 · 링크를 가리지 않는다 · nexa-ctl `Flash`).
-    pub(crate) fn set_flash(&mut self, text: String, warn: bool, ms: u64) {
-        self.flash
-            .show(text, if warn { FlashTone::Warn } else { FlashTone::Ok }, ms);
+    pub(crate) fn set_flash(&mut self, text: String, warn: bool, hold_ms: u64, fade_ms: u64) {
+        self.flash.show(
+            text,
+            if warn { FlashTone::Warn } else { FlashTone::Ok },
+            hold_ms,
+            fade_ms,
+        );
         self.redraw();
     }
 

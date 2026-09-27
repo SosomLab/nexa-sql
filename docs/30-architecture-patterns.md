@@ -48,7 +48,7 @@
 
 | 부품 | 위치 | 문제 → 기법 | 쓰는 곳 |
 |---|---|---|---|
-| **플래시 메시지 `Flash`**(09-27) | nexa-ctl `controls/flash.rs` | 클릭 복사 "복사됨" 같은 짧은 알림: `show(text, tone, ms)` → 앵커(가리면 안 되는 사각형) **옆**(오른쪽 → 아래 → 위 · 호스트 안)에 띄우고 배경색으로 녹아 사라짐(제곱 감속) · 타이머·큐 0 = `paint`가 `true`인 동안 호스트가 다시 그림 · 시간 = 설정 `ui.flash_ms`(1500) | 라이선스 창 이메일 링크(T-34) · 앞으로 링크·복사 버튼 전부 |
+| **플래시 메시지 `Flash`**(09-27) | nexa-ctl `controls/flash.rs` | 클릭 복사 "복사됨" 같은 짧은 알림: `show(text, tone, hold_ms, fade_ms)` → 앵커(가리면 안 되는 사각형)의 **우상단이 메시지의 좌하단**(오른쪽 모자라면 왼쪽으로 · 위 모자라면 아래 · 호스트 안 · 앵커 안 덮음) · 배경 상자(색조 + 테두리) · **유지 시간 뒤 배경색으로 녹아 사라짐**(제곱 감속) · 창 맨 마지막에 그려 최상위 Z-order · 타이머·큐 0 = `paint`가 `true`인 동안 호스트가 다시 그림 · 시간 = 설정 `ui.flash_hold_ms`(2000) · `ui.flash_ms`(페이드 3000) | 라이선스 창 이메일 링크(T-34) · 앞으로 링크·복사 버튼 전부 |
 | **gridedit**(편집 가능한 그리드 핵심 · 09-26) | nexa-ctl `gridedit` | 어느 그리드든 편집: 셀 명세 검증(`CellSpec`) · 변경 집합 덧그리기+되돌리기(`ChangeSet` · 원본 불변) · 붙여넣기 행렬/자동 확장(`paste`) · 날짜 24형식(`datetime`) · 살아 있는 편집기 1개(`LiveEditor`) · 키맵 — 값은 `Option<String>` · DBMS·그리기 의존 0 | nexa-sql 결과 그리드(87) · 후보 = 설정 표·접속 목록·파일 이름 바꾸기 |
 | **TypeAhead + hangul::Composer** | nexa-ctl `typeahead` · `hangul` | 목록/트리 앞글자 점프(nexa-beep 이식): 버퍼+조합+타임아웃은 부품 · 매칭은 라벨 함수 · 필터·HUD 위치 설정 · Windows 한/영은 호스트가 토글해 `jamo_from_qwerty` | 오브젝트 탐색기(09-19) · (후보) 파일 대화상자 트리 · 설정 창 트리 · 팔레트 |
 | **contrast_order** | nexa-ctl `theme` | 순환 팔레트를 이웃끼리 가장 잘 구별되게 배열(보색·색 온도·밝기 · 첫 색 고정) — 깊이 색·차트 계열색처럼 "차례로 쓰는 색 목록"에 재사용 · `Theme.rainbow`는 이미 이 순서 | Rainbow Pairs(`rainbowpair.contrast_order`) |
