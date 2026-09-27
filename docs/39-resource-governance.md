@@ -79,6 +79,7 @@
 | 편집기 그리기 캐시(본문 UTF-8 사본 + 행당 28 B · 세대 열쇠) | 탭당 ≈ 파일 크기 + 1 MB/4만 줄 · 보이지 않는 탭은 회수 때 해제 | (회수 설정과 같음) | — | — | — | nexa-ctl `TextBox::release_caches` |
 | 외부 파일 변경 감시 스레드 `file-watch`(58 · stat 서명 + 달라졌을 때만 읽기) | 활성 창의 보이는 탭 2s · 비활성 0 | `file.external_change`(off) · `file.external_check`(focus) · `file.external_poll_ms`(0 · 향상 모드 0) | 2000 | 2000 | 0 | `App::ext_tick` · `nexa_fs::watch` |
 | IME 안내 조회(journal 09-22 §34 · 가린 칸에 포커스가 있는 동안 150 ms마다 `GetKeyboardLayout`+`WM_IME_CONTROL` 둘 · 아니면 0) | 포커스 동안만 · 새 타이머 없음(창 tick) | `ui.ime_hint`(끄면 0) | on | on | off | `imehint.rs` · `conn_win`/`input_win` `tick` |
+| ★ **Linux IME 감시**(09-27 · 가린 칸 포커스 동안 `dbus-monitor --address $(ibus address)` 자식 1 + 읽기 스레드 1 · ibus 패널 `InputMode` symbol 한/EN → 전환 즉시) · Linux 엔진 조회(`ibus engine`/`gsettings` 프로세스 · 500 ms 캐시 · 포커스 동안만) | 포커스가 떠나면 kill·wait = 0 · ibus/dbus-monitor 없으면 0(폴백 = 엔진 이름·토글 키·입력 종류) | `ui.ime_hint_watch` · `ui.ime_hint` | on | on | **off** | `imewatch.rs` · `imestate.rs` |
 | ★ 다중 열기 스레드 `multi-open`(journal 09-22 §30 · 열기 창에서 여러 파일 → **스레드 하나**가 고른 순서대로 읽어 자리 탭마다 결과) | 요청당 1개 · 파일 수 ≤ `file.open_max` · 끝나면 종료 · 동시 N개 없음 | `file.open_max`(1~50 · 기본 10) | 10 | 10 | 10 | `main.rs multi_open_start/multi_load_poll` |
 | 파일 적재 스레드 `file-load`(59 §5-2 · 8 MB 이상 파일마다 1개 · 읽기 1 MB 덩어리 → 풀이 → 본문 준비) | 파일당 1회 · 끝나면 종료 · 피크 ≈ 파일 × (1 + 글자당 4 B) · 막이 보이는 동안만 프레임 생성 | `file.async_load_mb`(기준) · `file.load_progress_ms` · 취소 = Esc/탭 닫기 | — | — | — | `fileload.rs` · `main.rs load_file` |
 | 되돌리기 히스토리(60 · 탭당) | 글자 = 지운 것만 + 연산 48 B · 묶음 96 B · 예산 넘으면 오래된 것부터 | `editor.undo_budget_mb`(64 · 0 = 무제한) · `editor.undo_max` | — | — | — | nexa-ctl `EditState::evict` |
@@ -146,6 +147,7 @@
 | 로딩 점 애니메이션 | 300 ms | `ui.animations` | — | — | off(고정 "Loading…") | `explorer` · `FilePicker` |
 | 툴팁 | `ui.tooltip_delay_ms` · `tabs.tooltip` · `explorer.tooltip` | 기존 | — | — | — | — |
 | 슬라이드(패널) | `ui.slide_ms` | `ui.animations` | — | — | 0 | `conn_win` |
+| ★ **플래시 메시지**(09-27 · nexa-ctl `Flash` · 클릭 복사 "복사됨" 등 · 유지 + 페이드 동안 **프레임마다** 그 창만 다시 그림 · 타이머 0) | 끝나면 0 | `ui.flash_hold_ms`(2000) · `ui.flash_ms`(3000) | 2000/3000 | 1000/1500 | **300/200** | `license_win.rs` · nexa-ctl `controls/flash.rs` |
 | 토스트 남은 시간 표시(왼쪽 상태 막대가 위에서부터 옅어짐 + 카드 진척 페이드 · 09-22) | 카드가 떠 있는 동안 30ms 틱(실행 카드는 끝난 뒤 카운트다운 동안만 · 새 타이머 0) | `ui.toast_progress`(신설) · `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) | 켬 | 켬 | **끔**(향상 모드 = 종전 마지막 300ms 페이드만) | `toast` · `runtoast` |
 | 다시 그리기 단위 | 창 전체 | (구조 · 더티 영역 = T-90f 후보) | — | — | — | `paint` |
 | 글리프 서브픽셀(1/3 px) | 켬 | `ui.text_subpixel`(신설 · HIDDEN) | 켬 | 켬 | 끔(캐시 1/3) | nexa-gfx `GlyphKey.sub` |
@@ -209,6 +211,8 @@
 | **★ 다중 인스턴스 시작 모드**(93차) | 없음 | 기동 때 1회 `try_lock` | 잠금 파일 핸들 1개를 프로세스가 보유 | `instance.lock`(0 바이트 · 설정 폴더) | 프로세스 종료 | `project.restore_last`(기본 끔 — 둘째 인스턴스가 프로젝트를 복원하지 않는다) | 미등재(비용 0) |
 | **★ 토스트 진행 막대**(93차) | 없음 | 카드가 떠 있는 동안 30 ms 틱(새 타이머 0) | — | — | 카드가 사라지면 0 | `ui.toast_progress` | ✅ `off` |
 | **★ IME 안내**(93차) | 없음 | 가린 칸에 포커스가 있는 동안 150 ms마다 조회 2 | — | — | 포커스가 떠나면 0 | `ui.ime_hint` | 미등재(포커스 조건부라 상시 비용 0 · low 프리셋에서 off) |
+| **★ Linux IME 감시**(104차 후반) | 없음 | 포커스 동안 자식 프로세스 1 + 스레드 1(메시지 때만 깨어남) | ~2 MB(dbus-monitor) | — | 포커스가 떠나면 kill = 0 | `ui.ime_hint_watch` | ✅ `off` |
+| **★ 플래시 메시지**(104차 후반) | 없음 | 유지+페이드(기본 5 s) 동안 그 창 프레임마다 재그리기 | — | — | 끝나면 0 | `ui.flash_hold_ms`·`ui.flash_ms` | ✅ `300`/`200` |
 | **확장 패널**(79차) | `ext-index` 1(사용자 동작 때만) + `curl` 자식 | 없음 | 목록 JSON 1벌 | `extensions/` · `index.json` | 패널 닫힘 | `extensions.enabled` | — |
 | **탐색기 갱신**(80차) | 메타 스레드(서버별 `nsql-explorer`) | 없음 | 폴더별 디프 갱신(트리 전체 재구축 0) | — | — | `meta.refresh_*` | `meta.refresh_secs=0` · `meta.refresh_highlight_ms=0` |
 | **수동 커밋 잠금 방지**(79차) | 없음(메타 세션 1문장) | 없음 | — | — | — | `tx.block_poll_secs` | ✅ `0` |
@@ -299,7 +303,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 | 구분 | 키 → 강제값 | 사용자 예시와의 대응 | 비고 |
 |---|---|---|---|
-| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
+| 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off · **`ui.flash_hold_ms` 300 · `ui.flash_ms` 200 · `ui.ime_hint_watch` off**(09-27) | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
 | 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(신설 · 우클릭 메뉴 아이콘)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
 | 코드 완성(09-24 §187) | `intel.auto_activation` off · `intel.icons` off · `intel.detail_card` off · `intel.document_words` off · `intel.preload` off · `intel.from_routines` off | 팝업은 ⌃Space로만 · 아이콘 래스터·카드 조립·문서 훑기·접속 직후 카탈로그 질의(관계 4 + 함수 3 + 사전 1) 없음 · 수동 완성·시그니처 도움·`intel.match`·상한은 그대로(결과에 닿음) | 72 "코드 완성과 문서 크기" |
 | I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |

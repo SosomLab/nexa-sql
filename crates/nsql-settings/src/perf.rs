@@ -212,10 +212,15 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("project.icons", b(Domain::Cpu, "on", "on", "off")),
     // 코드 완성 자동 활성화(docs/76 · 타이핑마다 후보 계산 · 수동 Ctrl+Space는 남는다)
     ("intel.auto_activation", b(Domain::Cpu, "on", "on", "off")),
+    // Linux IME 감시(09-27 · 가린 칸 포커스 동안 dbus-monitor 자식 + 스레드 · low = 끔 → 엔진 이름·토글 키 폴백)
+    ("ui.ime_hint_watch", b(Domain::Cpu, "on", "on", "off")),
     // ── GFX(§3-4)
     ("ui.max_fps", b(Domain::Gfx, "60", "30", "15")),
     ("ui.animations", b(Domain::Gfx, "auto", "auto", "off")),
     ("editor.caret_blink", b(Domain::Gfx, "on", "on", "off")),
+    // 플래시 메시지(09-27 · 유지+페이드 동안 프레임마다 다시 그림 · low = 짧게)
+    ("ui.flash_hold_ms", b(Domain::Gfx, "2000", "1000", "300")),
+    ("ui.flash_ms", b(Domain::Gfx, "3000", "1500", "200")),
     // ── MEM(§3-6)
     ("log.max_lines", b(Domain::Mem, "10000", "5000", "1000")),
     ("editor.undo_max", b(Domain::Mem, "1000", "500", "100")),
@@ -240,6 +245,11 @@ pub const BOOST: &[(&str, &str)] = &[
     ("ui.hover_intent_ms", "120"),
     // 토스트 남은 시간 막대 + 진척 페이드(09-22) — 카드가 떠 있는 동안 30ms마다 다시 그린다 · 끄면 종전(마지막 300ms만).
     ("ui.toast_progress", "off"),
+    // 플래시 메시지(09-27) — 유지 0.3초 · 페이드 0.2초(최소) = 다시 그리기 ~0.5초로.
+    ("ui.flash_hold_ms", "300"),
+    ("ui.flash_ms", "200"),
+    // Linux IME 감시(09-27) — 자식 프로세스·스레드 0(엔진 이름·토글 키·입력 종류 폴백).
+    ("ui.ime_hint_watch", "off"),
     ("run.toast_tick_ms", "1000"),
     ("run.toast_max", "8"),
     // ── 아이콘·부가 표시(메모리·래스터): 트리 아이콘 · OS 파일 아이콘 · 우클릭 메뉴 아이콘 · 툴팁 · 미니맵 · 선택어 강조

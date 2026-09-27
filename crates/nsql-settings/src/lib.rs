@@ -1308,6 +1308,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "500",
     },
     // ★ 플래시 메시지(클릭 복사 "복사됨" 등 · nexa-ctl `Flash`): 유지 시간 뒤 페이드아웃(사용자 09-27 · 기본 유지 2초 · 페이드 3초).
+    // ★ Linux IME 감시(09-27): 가린 칸 포커스 동안 ibus 패널 속성을 엿듣는 `dbus-monitor` 자식 + 스레드(한/영 전환 즉시 반영) — 향상 모드 off.
+    Entry {
+        key: "ui.ime_hint_watch",
+        cat: Msg::CatInput,
+        label: Msg::LblImeHintWatch,
+        desc: Msg::DescImeHintWatch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "ui.flash_hold_ms",
         cat: Msg::CatAppearance,

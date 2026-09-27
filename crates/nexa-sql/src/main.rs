@@ -57,6 +57,8 @@ mod gridedit_sql;
 mod icon;
 mod imehint;
 mod imestate;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod imewatch;
 mod import_win;
 mod input;
 mod input_win;
@@ -6240,6 +6242,10 @@ impl App {
                 self.apply_run_toast();
             }
             "ui.menu_max_width" => self.rebuild_menus(),
+            "ui.ime_hint_watch" => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                imewatch::set_enabled(self.settings.flag("ui.ime_hint_watch"));
+            }
             "ui.ime_hint" => {
                 let on = self.settings.flag("ui.ime_hint");
                 self.conn_win.set_ime_hint(on);
@@ -19703,6 +19709,8 @@ fn main() {
         let on = app.settings.flag("ui.ime_hint");
         app.conn_win.set_ime_hint(on);
         app.input_win.set_ime_hint(on);
+        #[cfg(all(unix, not(target_os = "macos")))]
+        imewatch::set_enabled(app.settings.flag("ui.ime_hint_watch"));
     }
     app.apply_text_render();
     app.apply_toolbar_visibility();

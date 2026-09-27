@@ -40,6 +40,8 @@ impl ImeHint {
         if !on {
             self.shown = false;
             self.pin_until = None;
+            #[cfg(all(unix, not(target_os = "macos")))]
+            crate::imewatch::stop();
         }
     }
 
@@ -57,8 +59,14 @@ impl ImeHint {
         }
         self.pin_until = None;
         let Some(bx) = bx.filter(|_| self.enabled) else {
+            // 가린 칸 포커스가 없다 → Linux 감시(ibus 패널 엿듣기)도 끝낸다.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            crate::imewatch::stop();
             return self.hide();
         };
+        // 가린 칸에 포커스 → Linux는 ibus 패널 속성을 구독해 한/영 전환을 **즉시** 받는다(이미 돌면 비용 0).
+        #[cfg(all(unix, not(target_os = "macos")))]
+        crate::imewatch::start();
         if !force && self.last_poll.is_some_and(|t| now.duration_since(t) < POLL) {
             return false;
         }
