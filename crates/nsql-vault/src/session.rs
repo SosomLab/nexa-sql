@@ -79,7 +79,7 @@ pub fn matches(id: &str, candidate: &str) -> bool {
     recall(id).is_some_and(|s| s.expose() == candidate)
 }
 
-/// 그 자리를 잊는다(틀린 비밀번호였다 · 서버를 목록에서 뺐다).
+/// 그 자리를 잊는다 — 서버가 거부했다 · 빈 비밀번호를 명시했다(09-27 규칙 · 탐색기에서 서버를 빼는 것은 잊지 않는다).
 pub fn forget(id: &str) {
     if let Some(Ok(mut g)) = vault().map(Mutex::lock) {
         if g.items.remove(id).is_some() {

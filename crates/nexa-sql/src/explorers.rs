@@ -504,16 +504,14 @@ impl ExplorerSet {
         }
     }
 
-    /// 오프라인 서버 제거(루트 우클릭 "탐색기에서 제거") — 붙은 세션이 있는 서버는 지울 수 없다(메뉴에 나오지 않는다).
+    /// 오프라인 서버 제거(루트 우클릭 "탐색기에서 제거" · 세션 0 = 자동 제거) — 붙은 세션이 있는 서버는 지울 수 없다(메뉴에 나오지 않는다).
+    /// ★ 세션 자격 금고는 건드리지 않는다(사용자 09-27 실기: DISCONNECT·전용 세션 전환으로 세션이 0이 되면 이 길을 타 비밀번호가
+    ///   지워져 다음 `CONNECT user@host`가 다시 물었다 — 금고 초기화는 **빈 비밀번호 명시 · 서버 거부**뿐 · 21 §7).
     fn remove(&mut self, i: usize) {
         if i >= self.panes.len() || !self.panes[i].ex.is_offline() {
             return;
         }
         self.panes[i].ex.disconnect();
-        // 목록에서 뺀 서버 = 이번 실행에서 입력한 비밀번호도 잊는다(세션 자격 금고).
-        for key in self.panes[i].conns.iter().chain(self.panes[i].key.iter()) {
-            nsql_vault::session::forget(&crate::worker::cred_id(key, nsql_core::Dialect::Oracle));
-        }
         if self.panes.len() > 1 {
             self.panes.remove(i);
         } else {
