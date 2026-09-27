@@ -2,7 +2,13 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md)** — 라이선스 체계 코드 완성(라이브러리·발급기·앱 층·CLI·GUI·게이트) · 다음 = **발급 PC keygen → keys.rs → 재빌드**(사용자) → 첫 발급 실기 → T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md) + [§14-3](journal/2026-09-27.md)** — 라이선스 체계 코드 완성 · ✅ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c) · 다음 = **첫 발급 실기**(절차 [91 §2-1](91-license-root-key-operations.md)) → T-244 · T-163 실기.
+
+## 2026-09-27 (103차 · **mac**) — 최신화·분석 · ★ 루트 공개키 `root-v1` 등재 · 발급 절차 정리
+
+- 당김: nexa-sql +8(a12a8d7) · **nexa-license +5**(92d0292 · path 의존이라 필수) · nexa-ui 최신. 맥 시험 **620 ✓ · 실패 0**.
+- ★ 사용자가 발급 PC(이 맥)에서 keygen → `keys.rs` → **nexa-license 1bc033c**(공개키 `44W1RFJH…` · 비밀 파일 저장소 밖 확인). 🔧 `keys-rs` 출력이 rustfmt 모양과 달라 CI fmt 빨강 예정 → `#[rustfmt::skip]`+줄 끝 공백 제거 · 시험 2 · 재생성 바이트 동일. CI 3-OS ✓(nexa-license 1bc033c · nexa-sql ab92fb0).
+- 📐 발급 절차 = [91 §2-1](91-license-root-key-operations.md) 실행 순서 · ⚠ Release 성능 스크립트(`mac-perf-all.sh` 등)는 무료판이면 2 MB+ 파일이 읽기 전용 → **T-244**. [journal §13·§14](journal/2026-09-27.md).
 
 ## 2026-09-27 (102차 · **win**) — 세 저장소 최신화·분석 · 🔧 CI 빨강 둘 수정
 

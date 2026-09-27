@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/session-103-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 103차(mac) 정리 — journal §13 CI·§14(최신화·분석 · 발급 절차 · 다음) · 91 §2-1 발급 실행 순서 · STATUS/DEVLOG/TODO(T-244)/CLAUDE.md 현 단계 |
 | docs/root-v1-key | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 루트 공개키 `root-v1` 등재 기록(nexa-license 1bc033c · keys-rs fmt 안정화) · journal §13 · 91 §1 ⚠ 갱신 |
 | feat/license-issuer-gui-gates | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | ★ T-34 GUI 라이선스 창·상태줄 배지 · ★ T-36 게이트 12곳(`lic_gate`/`entitled`/`cap` · `license.gates_dev`) · `Feature::ResultTabs` · `nsql license export/import` · func-check L13~L16 · 위키 License · 91/25/23 문서 · (nexa-license 5be5ac6 = issuer + nexa-license-tool) |
 | feat/license-app-layer-and-ci-fix | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📐 [92](92-digital-asset-protection.md) 디지털 자산 보호 · ★ 라이선스 앱 층 `crates/nsql-license`(T-32') + CLI `nsql license`(T-33) · nexa-license `fs` 의존 · 🔧 CI 4ecbd88(clippy cfg · `it-mssql.sql` dual) · 워크플로 nexa-license 체크아웃 |

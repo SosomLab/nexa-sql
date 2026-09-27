@@ -31,6 +31,29 @@
 - **암호 파일을 봉투 옆에 두지 않는다**(봉투 + 암호 = 비밀키 그 자체 · 사용자 질문 09-27 [journal §12-1](journal/2026-09-27.md)). **발급 PC는 1대**: 두 PC 병행은 대장 ID 충돌(`NSL-2026-000001`부터 양쪽)·`reissue` 불가·유출 지점 2배라 비권장 — 꼭 필요하면 봉투만 오프라인 매체로 옮기고 암호는 사람이 입력(`rekey`로 PC별 암호) · `--id-prefix`를 PC별로 다르게 · 회전 때 둘 다 교체.
 - 발급한 파일은 `verify`로 자기 검증 뒤 전달한다(같은 검증 코드 = 앱과 동일 판정).
 
+### 2-1. 실행 순서(요청 코드 한 줄 → 파일 · 103차 정리)
+
+```bash
+T=~/Projects/kiros33/nexa-license/target/release/nexa-license-tool
+cd ~/nexa-issuer                                   # 기본 --out ./issued · 대장 ./issued/ledger.tsv 가 여기 쌓인다
+read -s NEXA_LICENSE_KEY_PASS && export NEXA_LICENSE_KEY_PASS
+$T decode-request 'NEXAREQ1.…'                     # 기기·OS·이름·이메일 확인(종료 3 = 코드 불량)
+$T issue --key root-v1.key --pass-env NEXA_LICENSE_KEY_PASS --request 'NEXAREQ1.…' \
+   --kind user --tier pro --licensee "이름" [--email …] [--note 주문번호]
+$T verify issued/<ID>/nexa-sql.license --pub root-v1.key.pub [--machine <기기코드>]
+unset NEXA_LICENSE_KEY_PASS
+```
+
+| `--kind` | 기기 | 비고 |
+|---|---|---|
+| `device` | 1 | |
+| `user` · `team-seat` | ≤ 5 | `--request` 여러 번 |
+| `org` | 무제한 | `--seats N` 필수 · `--seat-mode named\|device\|concurrent` |
+
+- `--tier pro|org` = `features=*`(D-48) · `trial` = `*` + 14일 만료 · 낱개 = `--features a,b`. `--updates-until` 기본 = 오늘 + 1년(**빌드일** 기준 판정) · `--expires` 기본 없음.
+- 종료 코드 0 성공 · 1 실패 · 2 인자 · 3 요청 코드 · 4 봉투(암호/손상). 파일은 자기 검증 통과분만 쓰인다.
+- 전달 = `nexa-sql.license` + `mail.txt` 본문(파일은 서명·기기 묶임이라 비밀이 아니다) → 고객 `nsql license install <파일>` → `status` = `licensed`.
+
 ## 3. 보관·백업
 
 | 사본 | 어디 | 무엇 |

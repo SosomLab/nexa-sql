@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-27 (103차 · mac)** — 세 저장소 최신화(nexa-license +5 필수 · 맥 시험 620 ✓) · ★ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c · 🔧 `keys-rs` 출력 fmt 안정화 `#[rustfmt::skip]`) · 발급 절차 [91 §2-1](91-license-root-key-operations.md) · T-244(Release 성능 스크립트 × 무료판 2 MB 게이트) · CI 3-OS ✓ · [journal §13·§14](journal/2026-09-27.md).
 - **2026-09-27 (102차 · win)** — 세 저장소 최신화(nexa-ui 84차 · nexa-license T-45 2차 · nexa-sql 101차) · 🔧 CI 빨강 둘(`settings_clip_native` OS별 dead_code → `cfg_attr(allow)` · `it-mssql.sql` `dual` → FROM 없이) · Windows 검증(clippy ✓ · nexa-license 19/19 · nexa-sql 610 통과 · 실패 0(1 ignored)) · 📐 `machine.rs` Windows `reg` 콘솔 창 주의 · [journal 09-27 §8](journal/2026-09-27.md).
 - **2026-09-27 (101차 후반 4 · Linux)** — 발급기 `rekey`(봉투 암호 변경 · nexa-license 9dc2186) · keygen은 사용자 손(하네스 비밀키 생성 차단 = 91 §0) · 암호 파일 병행 사용 비권장 규칙(91 §2) · T-163 실기 점검표([journal §12](journal/2026-09-27.md)).
 - **2026-09-27 (101차 후반 3 · Linux)** — ★ T-241 발급기(nexa-license `issuer` sign·봉투 `nxk1` + `nexa-license-tool` 7 명령 · E2E) · ★ T-34 GUI(라이선스 창 · 상태줄 배지 · Help ▸ License…) · ★ T-36 게이트 12곳(25 §13-3 권장안 확정 · Debug `license.gates_dev`) · `nsql license export` · func-check L13~L16 · 위키 License · [journal 09-27 §10](journal/2026-09-27.md).
