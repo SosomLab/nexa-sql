@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-09-27 (104차 후반 · Linux)** — 🔧 라이선스 창 2·3차(버튼 맨 아래 · 안내 = 버튼 오른쪽 · 높이 자동 맞춤 · `.license` 파일 필터) · ★ About 창 · 요청 코드 연락처 `LICENSE_CONTACT` · [journal 09-27 §17](journal/2026-09-27.md).
 - **2026-09-27 (104차 · Linux)** — 공개키 반영 빌드·재시작(`linux-restart-debug.sh`) · 첫 발급 설치 `Pro · linux` · 🔧 라이선스 창 겹침(높이 580 · floor) · 운영 Q&A 넷 → D-231(Org 단독 설치 거부 권장) · T-245(조직 좌석 카운트) · [journal 09-27 §15~§16](journal/2026-09-27.md).
 - **2026-09-27 (103차 · mac)** — 세 저장소 최신화(nexa-license +5 필수 · 맥 시험 620 ✓) · ★ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c · 🔧 `keys-rs` 출력 fmt 안정화 `#[rustfmt::skip]`) · 발급 절차 [91 §2-1](91-license-root-key-operations.md) · T-244(Release 성능 스크립트 × 무료판 2 MB 게이트) · CI 3-OS ✓ · [journal §13·§14](journal/2026-09-27.md).
 - **2026-09-27 (102차 · win)** — 세 저장소 최신화(nexa-ui 84차 · nexa-license T-45 2차 · nexa-sql 101차) · 🔧 CI 빨강 둘(`settings_clip_native` OS별 dead_code → `cfg_attr(allow)` · `it-mssql.sql` `dual` → FROM 없이) · Windows 검증(clippy ✓ · nexa-license 19/19 · nexa-sql 610 통과 · 실패 0(1 ignored)) · 📐 `machine.rs` Windows `reg` 콘솔 창 주의 · [journal 09-27 §8](journal/2026-09-27.md).

@@ -8,6 +8,7 @@
 
 - nexa-license 1bc033c 당김 → Debug·Release 재빌드 → `key=root-v1` 가짜 서명 = `invalid(signature)`(키 반영) · 첫 발급 `NSL-2026-000001` 설치 → 창 **`Pro · linux`**.
 - 🔧 라이선스 창 겹침(정식 상태 표 13행) → 높이 580 · 최소 520×420 · 하단 floor([journal §15](journal/2026-09-27.md)) · `scripts/linux-restart-debug.sh`(빌드 및 재시작).
+- 🔧 **라이선스 창 2·3차**([journal §17](journal/2026-09-27.md)): 버튼 줄 = 창 맨 아래 고정 · 결과 안내 = 버튼 오른쪽 · 창 높이 = 내용에 자동 맞춤(정식 549/무료 467 px) · 파일 열기 필터 **`.license` 기본** · ★ **About 창**(`about_win.rs` · 버전/빌드일/시스템/라이선스/저작권 · 정보 복사 · License…) — 종전 About = 상태줄 한 줄이라 "미동작" · 요청 코드 **연락처** `nsql_license::LICENSE_CONTACT`(`kiros33@sosomlab.com` · 창·CLI·위키).
 - Q&A → 규칙([journal §16](journal/2026-09-27.md)): 요청 코드 = 기기 코드만 판정(이름·이메일은 메타) · 기기 5대 = 한 ID에 등록(`reissue`) · 조직 = 서버 보류라 **team-seat** 권장 · ⚠ Org 파일 직접 설치는 지금 사이트 라이선스 → **D-231**(거부+안내 권장) · T-245(발급기 조직 좌석 카운트).
 
 ## 2026-09-27 (103차 · **mac**) — 최신화·분석 · ★ 루트 공개키 `root-v1` 등재 · 발급 절차 정리
