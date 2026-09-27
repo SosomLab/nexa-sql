@@ -440,6 +440,9 @@ impl InputWin {
                         r.tb.on_event(&InputEvent::Char { c, now_ms: 0 }, &mut inv);
                     }
                 }
+                if !text.is_empty() {
+                    crate::imestate::note_input(false);
+                }
                 self.note_hidden_input();
                 self.redraw();
             }
@@ -448,6 +451,7 @@ impl InputWin {
                     r.tb.set_preedit(text, &mut inv);
                 }
                 if !text.is_empty() {
+                    crate::imestate::note_input(false);
                     self.note_hidden_input();
                 }
                 self.redraw();
@@ -500,11 +504,13 @@ impl InputWin {
                     _ => {}
                 }
                 if let Some(e) = self.key_event(kev) {
-                    let typed = matches!(e, InputEvent::Char { .. });
+                    let typed = matches!(e, InputEvent::Char { c, .. } if !c.is_control());
                     if let Some(r) = self.rows.get_mut(self.focus) {
                         r.tb.on_event(&e, &mut inv);
                     }
                     if typed {
+                        // 일반 키 글자 = 영문 모드(엔진 안 한/영 토글 보정 · Linux).
+                        crate::imestate::note_input(true);
                         self.note_hidden_input();
                     }
                     self.redraw();

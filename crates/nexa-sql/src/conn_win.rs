@@ -1821,6 +1821,7 @@ impl ConnWin {
                 if matches!(ime, Ime::Preedit(t, _) if !t.is_empty())
                     || matches!(ime, Ime::Commit(_))
                 {
+                    crate::imestate::note_input(false);
                     self.note_hidden_input();
                 }
                 let mut inv = Invalidations::default();
@@ -2025,7 +2026,8 @@ impl ConnWin {
         let typed = matches!(ev, InputEvent::Char { c, .. } if !c.is_control());
         self.route_inner(ev, out);
         if typed {
-            // 가린 칸(비밀번호)에 글자가 들어갔으면 입력 언어 안내(IME 조합은 `Ime` 사건 쪽에서).
+            // 가린 칸(비밀번호)에 글자가 들어갔으면 입력 언어 안내(IME 조합은 `Ime` 사건 쪽에서) · 일반 키 = 영문(Linux 보정).
+            crate::imestate::note_input(true);
             self.note_hidden_input();
         }
         self.sync_enabled();

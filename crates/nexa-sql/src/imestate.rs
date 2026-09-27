@@ -8,6 +8,20 @@
 //!
 //! 안내를 띄우는 쪽은 [`crate::imehint`] — 이 모듈은 상태만 읽는다(창 핸들은 있으면 넘긴다 · 없으면 전경 창).
 
+/// ★ 마지막 실제 입력의 종류(Linux 보정 · 사용자 09-27 "영어로 바꿔도 안내가 바로 안 사라진다"): ibus-hangul은 한/영을 **엔진 안에서**
+/// 토글해 `ibus engine`은 계속 `hangul`이다 → 가린 칸에 글자가 **일반 키**로 오면(영문) 라틴, IME 조합·확정으로 오면(한글) 본연으로 본다.
+/// 0 = 모름 · 1 = 라틴 · 2 = 본연. 엔진 이름이 바뀌면 다시 모름.
+static LAST_INPUT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// 가린 칸에 입력이 들어왔다 — `latin` = 일반 키 글자(영문) · false = IME 조합/확정(한글 등).
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+pub(crate) fn note_input(latin: bool) {
+    LAST_INPUT.store(
+        if latin { 1 } else { 2 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// 지금 입력 상태.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImeState {
@@ -165,23 +179,42 @@ pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
 pub(crate) fn current(_hwnd: Option<isize>) -> Option<ImeState> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    static CACHE: Mutex<Option<(Instant, Option<ImeState>)>> = Mutex::new(None);
-    if let Ok(g) = CACHE.lock() {
-        if let Some((at, st)) = g.as_ref() {
-            if at.elapsed() < Duration::from_millis(500) {
-                return st.clone();
+    /// (조회 시각, (엔진 이름, 상태)) — 프레임워크가 없으면 안쪽 None.
+    type Probe = Option<(String, ImeState)>;
+    static CACHE: Mutex<Option<(Instant, Probe)>> = Mutex::new(None);
+    let cached = CACHE.lock().ok().and_then(|g| {
+        g.as_ref()
+            .filter(|(at, _)| at.elapsed() < Duration::from_millis(500))
+            .map(|(_, st)| st.clone())
+    });
+    let probed = match cached {
+        Some(c) => c,
+        None => {
+            let now = linux_probe();
+            if let Ok(mut g) = CACHE.lock() {
+                // 엔진이 바뀌었으면 입력 종류 기억은 버린다.
+                let prev = g
+                    .as_ref()
+                    .and_then(|(_, s)| s.as_ref().map(|(e, _)| e.clone()));
+                if prev != now.as_ref().map(|(e, _)| e.clone()) {
+                    LAST_INPUT.store(0, std::sync::atomic::Ordering::Relaxed);
+                }
+                *g = Some((Instant::now(), now.clone()));
             }
+            now
         }
+    };
+    let (engine, st) = probed?;
+    // 엔진이 본연(한글 등)이라도 마지막 실제 입력이 일반 키였으면 = 엔진 안에서 영문으로 토글된 상태.
+    if !st.latin && LAST_INPUT.load(std::sync::atomic::Ordering::Relaxed) == 1 {
+        let _ = engine;
+        return Some(classify(0x0409, false));
     }
-    let st = linux_probe();
-    if let Ok(mut g) = CACHE.lock() {
-        *g = Some((Instant::now(), st.clone()));
-    }
-    st
+    Some(st)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn linux_probe() -> Option<ImeState> {
+fn linux_probe() -> Option<(String, ImeState)> {
     let xmod = std::env::var("XMODIFIERS").unwrap_or_default();
     let qt = std::env::var("QT_IM_MODULE").unwrap_or_default();
     let gtk = std::env::var("GTK_IM_MODULE").unwrap_or_default();
@@ -193,7 +226,8 @@ fn linux_probe() -> Option<ImeState> {
     } else {
         None
     }?;
-    Some(engine_state(&engine))
+    let st = engine_state(&engine);
+    Some((engine, st))
 }
 
 /// 엔진 이름 → 상태(순수 · 시험).
