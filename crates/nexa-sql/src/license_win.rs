@@ -8,7 +8,9 @@ use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, SlotFont, Theme};
-use nexa_ctl::{Button, Control, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget};
+use nexa_ctl::{
+    Button, Control, Flash, FlashTone, InputEvent, Invalidations, Key as CtlKey, TextBox, Widget,
+};
 use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use std::num::NonZeroU32;
@@ -28,6 +30,8 @@ pub(crate) struct LicView {
     pub rows: Vec<(String, String)>,
     /// 요청 코드(기기 ID 없으면 None).
     pub request: Option<String>,
+    /// 요청 코드를 보내는 이메일(링크 · 클릭 = 복사).
+    pub contact: String,
 }
 
 pub(crate) enum LicAction {
@@ -39,6 +43,8 @@ pub(crate) enum LicAction {
     Remove,
     /// 요청 코드를 클립보드로(이름 · 이메일 = 메타).
     CopyRequest(String, String),
+    /// 링크 글자(이메일)를 클립보드로.
+    CopyText(String),
 }
 
 pub(crate) struct LicenseWin {
@@ -60,6 +66,10 @@ pub(crate) struct LicenseWin {
     last: LicView,
     /// 다음 페인트에서 창 높이를 내용에 맞춘다(열 때 · 상태가 바뀔 때 — 무료 5행/정식 13행 · 사용자 09-27 "공간이 남는다").
     fit: bool,
+    /// 이메일 링크 자리(마지막 페인트) · hover · 순간 메시지(nexa-ctl `Flash` 부품 · 링크 옆 · 서서히 사라짐).
+    link_rect: Rect,
+    link_hover: bool,
+    flash: Flash,
 }
 
 impl LicenseWin {
@@ -80,6 +90,9 @@ impl LicenseWin {
             note: None,
             last: LicView::default(),
             fit: true,
+            link_rect: Rect::default(),
+            link_hover: false,
+            flash: Flash::new(),
         }
     }
 
@@ -124,6 +137,13 @@ impl LicenseWin {
         self.window = Some(win);
         self.note = None;
         self.fit = true;
+        self.redraw();
+    }
+
+    /// 순간 메시지(링크 옆 · `ms` 동안 서서히 사라짐 · 링크를 가리지 않는다 · nexa-ctl `Flash`).
+    pub(crate) fn set_flash(&mut self, text: String, warn: bool, ms: u64) {
+        self.flash
+            .show(text, if warn { FlashTone::Warn } else { FlashTone::Ok }, ms);
         self.redraw();
     }
 
@@ -284,6 +304,18 @@ impl LicenseWin {
                 for tb in [&mut self.tb_name, &mut self.tb_email] {
                     tb.on_event(&mv, &mut inv);
                 }
+                let over = self.link_rect.contains(Point { x, y });
+                if over != self.link_hover {
+                    self.link_hover = over;
+                    if let Some(w) = &self.window {
+                        w.set_cursor(if over {
+                            winit::window::CursorIcon::Pointer
+                        } else {
+                            winit::window::CursorIcon::Default
+                        });
+                    }
+                    self.redraw();
+                }
                 if !inv.is_empty() {
                     self.redraw();
                 }
@@ -303,6 +335,10 @@ impl LicenseWin {
                 let up = matches!(e, InputEvent::MouseUp { .. });
                 if !up {
                     self.own_focus(p);
+                    // 이메일 링크 클릭 = 주소 복사(사용자 09-27).
+                    if self.link_rect.contains(p) && !self.last.contact.is_empty() {
+                        return LicAction::CopyText(self.last.contact.clone());
+                    }
                 }
                 // 마우스 라우팅 규칙: 누름은 커서 아래 컨트롤에만 · 뗌은 전부.
                 for tb in [&mut self.tb_name, &mut self.tb_email] {
@@ -461,8 +497,30 @@ impl LicenseWin {
             dc.fill_rect(Rect::new(pad, y, wi - pad * 2, 1), th.border);
             y += px(10.0);
             // 요청 코드 구역.
-            let title = tf(Msg::LicReqTitle, &[nsql_license::LICENSE_CONTACT]);
-            dc.text(pad, y, clip, &title, th.text);
+            // 제목 줄: 이메일은 **링크**(강조색 + 밑줄 · hover = 손 모양 · 클릭 = 복사) · 순간 메시지는 링크 오른쪽 같은 줄.
+            let tpl = tf(Msg::LicReqTitle, &["\u{1}"]);
+            let (pre, post) = tpl.split_once('\u{1}').unwrap_or((tpl.as_str(), ""));
+            let mut tx = pad;
+            dc.text(tx, y, clip, pre, th.text);
+            tx += dc.text_width(pre);
+            let lw = dc.text_width(&view.contact);
+            let link_c = if self.link_hover {
+                th.accent
+            } else {
+                th.accent.lerp(th.text, 0.25)
+            };
+            dc.text(tx, y, clip, &view.contact, link_c);
+            dc.fill_rect(Rect::new(tx, y + th_txt - px(2.0), lw, 1), link_c);
+            self.link_rect = Rect::new(tx, y, lw, th_txt + px(2.0));
+            tx += lw;
+            dc.text(tx, y, clip, post, th.text);
+            // 순간 메시지 = 링크 옆(가리지 않음) · 진행 중이면 다시 그린다(부품 규칙: 타이머 없이 페인트 주도).
+            if self
+                .flash
+                .paint(&mut dc, th, self.link_rect, Rect::new(0, 0, wi, hi))
+            {
+                win.request_redraw();
+            }
             y += th_txt + px(8.0);
             let fh = th_txt + px(12.0);
             let mut x = pad;

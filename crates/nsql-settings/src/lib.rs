@@ -1307,6 +1307,18 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 5000 },
         default: "500",
     },
+    // ★ 플래시 메시지(클릭 복사 "복사됨" 등 · nexa-ctl `Flash`)가 서서히 사라지는 시간(ms · 사용자 09-27 라이선스 창 이메일 링크).
+    Entry {
+        key: "ui.flash_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblFlashMs,
+        desc: Msg::DescFlashMs,
+        kind: SettingKind::Int {
+            min: 200,
+            max: 10_000,
+        },
+        default: "1500",
+    },
     Entry {
         key: "ui.fade_slow",
         cat: Msg::CatAppearance,
