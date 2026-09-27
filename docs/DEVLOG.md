@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
-- **2026-09-27 (105차 · mac)** — 🔧 라이선스 창 파일 선택 뒤 창이 메인 뒤로(파일 창 호스트 = 띄운 창 · 닫히면 그 창으로 포커스 `picker_return` · 창 목록 단일 원천 `all_windows()`) · 발급 설명서 `~/nexa-issuer/README.md` · 시험 620 ✓ · [journal 09-27 §18](journal/2026-09-27.md).
+- **2026-09-27 (105차 · mac)** — 🔧 라이선스 창 파일 선택 뒤 창이 메인 뒤로(파일 창 호스트 = 띄운 창 · 닫히면 그 창으로 포커스 `picker_return` · 창 목록 단일 원천 `all_windows()`) · 발급 설명서 `~/nexa-issuer/README.md` · 🔧 CI ubuntu 간헐 `parwalk` 취소 시험 경주 제거(48aa233) · 시험 620 ✓ · CI 3-OS·integration ✓ · [journal 09-27 §18](journal/2026-09-27.md).
 - **2026-09-27 (104차 후반 · Linux)** — 🔧 라이선스 창 2·3차(버튼 맨 아래 · 안내 = 버튼 오른쪽 · 높이 자동 맞춤 · `.license` 파일 필터) · ★ About 창 · 요청 코드 연락처 `LICENSE_CONTACT` · [journal 09-27 §17](journal/2026-09-27.md).
 - **2026-09-27 (104차 · Linux)** — 공개키 반영 빌드·재시작(`linux-restart-debug.sh`) · 첫 발급 설치 `Pro · linux` · 🔧 라이선스 창 겹침(높이 580 · floor) · 운영 Q&A 넷 → D-231(Org 단독 설치 거부 권장) · T-245(조직 좌석 카운트) · [journal 09-27 §15~§16](journal/2026-09-27.md).
 - **2026-09-27 (103차 · mac)** — 세 저장소 최신화(nexa-license +5 필수 · 맥 시험 620 ✓) · ★ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c · 🔧 `keys-rs` 출력 fmt 안정화 `#[rustfmt::skip]`) · 발급 절차 [91 §2-1](91-license-root-key-operations.md) · T-244(Release 성능 스크립트 × 무료판 2 MB 게이트) · CI 3-OS ✓ · [journal §13·§14](journal/2026-09-27.md).
