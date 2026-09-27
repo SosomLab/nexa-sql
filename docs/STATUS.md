@@ -11,6 +11,13 @@
 - 🔧 CI ubuntu 간헐 = `parwalk` 취소 시험 경주(09-23부터 · `spawn` 뒤 플래그) → 켜진 플래그로 `run` 직접 호출 · `[Done { dirs: 0 }]` 단언(48aa233 · ci 3-OS·integration ✓).
 - 사용자 몫: 라이선스 창·설정 폴더 고르기 포커스 눈 검사 · About 창 버튼 맨 아래(104차 후반 반영분) 맥 확인 · 맥 예제 발급(`~/nexa-issuer/README.md` 실기 기록).
 
+## 2026-09-27 (104차 후반 2 · **Linux**) — 🔧 수식 변수 loop · 모달 창 · ★ 플래시 메시지 부품 · ★ 유효기간 3년·버전 조항
+
+- 🔧 **사용 시 수식 변수 loop**(`EXEC :B := :A + 10` 뒤 `:A` 재대입 → SELECT에서 재계산 64회) = OUT 흡수가 안 바뀐 `:A`까지 대입해 stale → **값이 바뀔 때만** stale · `SHOW VARIABLES`도 사용 시점(stale 수식 재계산 → Replan). 실서버 Oracle 검증 ✓([journal §19](journal/2026-09-27.md)).
+- 라이선스·About 창 = **모달**(메인 잠금) · About 높이 자동 · 이메일 **하이퍼링크**(클릭 = 복사) · ★ **플래시 메시지 부품** nexa-ctl `Flash`(3cfa17a · 배경 상자 · 좌하단 = 앵커 우상단 · 최상위 Z-order · 설정 `ui.flash_ms` 1500 · [30 §2](30-architecture-patterns.md)) · 이름 = "플래시 메시지".
+- ★ **라이선스 정책**(nexa-license 3968c26 · [journal §20](journal/2026-09-27.md)): **유효기간 기본 3년**(`expires` · `updates_until` = 같음 · `--expires none` = 영구) · **Major 바뀌면 무효**(`max_major` 기본 = 요청 앱 Major) · **특정 버전부터 무효** `--max-version` · 판정 = `Product.version` · 창/CLI 표시 · 23 §1-4 · 25 §12-3 · 위키. 지금 설치된 NSL-2026-000001은 정책 전 발급(조항 없음).
+- 105차(mac) 당김: 라이선스 창에서 파일 창 뒤로 숨음 수정(호스트 = 띄운 창) · parwalk 시험 경주 · Linux 회귀 없음.
+
 ## 2026-09-27 (104차 · **Linux**) — 공개키 반영 빌드·재시작 · 첫 발급 설치 확인 · 🔧 라이선스 창 겹침 · 운영 Q&A 넷
 
 - nexa-license 1bc033c 당김 → Debug·Release 재빌드 → `key=root-v1` 가짜 서명 = `invalid(signature)`(키 반영) · 첫 발급 `NSL-2026-000001` 설치 → 창 **`Pro · linux`**.

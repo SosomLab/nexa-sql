@@ -278,7 +278,7 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-111** | P3 | 소 | 색 설정 알파 통합(09-17): `editor.ruler_alpha`·`editor.whitespace_alpha`를 `#RRGGBBAA`로 흡수(마이그레이션 = 6자리 값 + alpha → 8자리) 뒤 키 제거 · 색 창 키 모드에서 최근 색 공유 확인 | 24 | ☐ |
 | **T-109** | P2 | 소 | UI 글꼴 GDI 경로에서 가운뎃점 `·`(U+00B7)이 2×1px·전진 2px로 나옴(설정 창 `·→$`가 `→$`로 보임 · nexa-font 덤프 09-17) — 폴백 face 선택/전진 폭 점검 | nexa-font | ☐ |
 | **T-101** | P2 | 소 | ✅ 09-16 48차 확인 — `--overflow` 기본값은 설정에서 읽어 `none`으로 찍힘(이미 수정돼 있었음 · `help.rs` 8행) | — | ✅ |
-| **T-171** | P2 | — | ✅ 09-23 최소판(journal §90 ⑥): `VarStore.formulas` + `Action::Replan` · 남음 = 변수 창에 수식 표시 · 재계산 로그 한 줄 | 63 §9 |
+| **T-171** | P2 | — | ✅ 09-23 최소판(journal §90 ⑥): `VarStore.formulas` + `Action::Replan` · 남음 = 변수 창에 수식 표시 · 재계산 로그 한 줄 | 63 §9 · 🔧 09-27 사용 시 수식 loop(값 변화 때만 stale · SHOW 재계산 · [journal §19](journal/2026-09-27.md)) |
 | **T-98** | P1 | 중 | ✅ 09-16 48차 — nexa-ui `EditCommand` 14종(줄 복제/삭제/합치기/이동 · 주석 토글 · 들여쓰기 ±·여러 줄 Tab · 줄 선택/나누기 · 캐럿 추가 ↑/↓ · 대소문자) + 키맵 2단 코드(`ctrl+k,ctrl+u`) + macOS `control+…` + `Ctrl+G` · 메뉴/팔레트 등재. 잔여 = `Ctrl+K,Ctrl+D` 건너뛰기 · `Ctrl+U` 소프트 되돌리기 · 캡처 창의 2단 코드 입력 | T-58 [29](29-editor-syntax-palette-statusbar.md) | ✅ |
 | **T-97** | P2 | 중 | ✅ 09-16 49차 — nexa-ui `TextBox::set_minimap`(줄당 2px · 토큰 색 · 뷰포트 상자 · 창 한정 캐시 비트맵 · 클릭/드래그 · 테스트 5) + `editor.minimap`(off)/`editor.minimap_width`(80). 한계 = wrap 모드는 소프트 행 기준 | 32차 | ✅ |
 | **T-96** | P2 | 소 | ✅ 09-16 48차 — `Ctrl+P`/⌘P Goto Anything(팔레트 재사용 · 열린 탭 ✓/`*`/경로 + 최근 파일 · 퍼지 · `:숫자` 줄 이동 · Tabs ▸ 탭 찾기…). 잔여 = 접속 표시 · (C) 탭바 ▾ 넘침 드롭다운 | 팔레트 | ✅ |
