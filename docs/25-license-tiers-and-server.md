@@ -418,7 +418,7 @@ nexa-license (lib · 의존 기본 0 · features)
 | `--ledger <tsv>` | 선택 | 기본 `./issued/ledger.tsv` |
 | `--note` | 선택 | 대장 비고(주문 번호 등) |
 
-다른 명령: `keygen --out <봉투>`(루트 키쌍 생성 · 공개키 `.pub` 출력 → 라이브러리 `keys.rs`에 박는다) · `verify <파일>`(발급기에서 자기 검증 · 앱과 같은 코드) · `decode-request <코드>`(메타 보기) · `reissue --id … --add-request …`(기기 추가 · 대장에 같은 id 새 판) · `ledger list|find`.
+다른 명령: `keygen --out <봉투>`(루트 키쌍 생성 · 공개키 `.pub` 출력 → 라이브러리 `keys.rs`에 박는다) · `verify <파일>`(발급기에서 자기 검증 · 앱과 같은 코드) · `decode-request <코드>`(메타 보기) · `reissue --id … --add-request …`(기기 추가 · 대장에 같은 id 새 판 · `--renew` = 기간·조항을 오늘 기준 기본값으로 다시 · 개별 `--expires/--updates-until/--max-major/--max-version` · 기존 ID로 `issue` = 거부 · 09-27) · `ledger list|find`.
 
 ### 12-4. 출력값 정의
 

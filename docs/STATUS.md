@@ -4,7 +4,13 @@
 >
 > ★ (105차 mac = 라이선스 창 포커스 복귀 · journal §18) **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md) + [§14-3](journal/2026-09-27.md)** — 라이선스 체계 코드 완성 · ✅ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c) · 다음 = **첫 발급 실기**(절차 [91 §2-1](91-license-root-key-operations.md)) → T-244 · T-163 실기.
 
-## 2026-09-27 (105차 · **mac**) — 🔧 라이선스 창에서 파일을 고르면 창이 메인 뒤로 숨음
+## 2026-09-27 (106차 · **mac**) — 최신화·분석 · 🔧 재발급으로 새 정책 입히기 `reissue --renew`
+
+- 최신화(nexa-ui 3cfa17a · nexa-license 3968c26 · nexa-sql 104차 후반 2) · 맥 시험 ✓ · Debug·Release 빌드 · Debug 재기동.
+- 🔧 "대장에 유효기간이 안 보임" = 발급기 옛 바이너리 + 000001 정책 전 발급 + 같은 ID 재발급 통로 없음 → nexa-license 4f02524 **`reissue --renew`**(오늘+3년 · Major = 대장 요청 앱) · 개별 재지정 · 기존 ID `issue` 거부 · E2E ✓([journal §21](journal/2026-09-27.md)).
+- `~/nexa-issuer/README.md` = 재빌드 확인 · 조항 표 · `--machine` 필수 · **NSL-2026-000001 재발행 절차**. 사용자 몫 = 재발행 실행(봉투 암호) → linux 설치 → `nsql license status`.
+- ⚠ 0.x 발급분 `max_major=0` → 1.0.0 출시 때 전부 Outdated(재발급 계획).
+ — 🔧 라이선스 창에서 파일을 고르면 창이 메인 뒤로 숨음
 
 - 원인 = 파일 창이 메인 소유로 뜨고 닫힐 때 메인에 포커스 → z-order 맨 위 = 메인. 수정 = 파일 창 **호스트 창**(설정 폴더 → 설정 창 · 라이선스 → 라이선스 창) 위에 띄우고 닫히면 **그 창으로 포커스 복귀**(`picker_return`) · 창 목록 단일 원천 `all_windows()`/`aux_window()`(z-order 정리 · 그룹 올리기 공통 · 빠져 있던 파일·입력 창 포함). 시험 620 ✓ · 눈 검사 = 사용자([journal §18](journal/2026-09-27.md)).
 - 발급 PC 설명서 `~/nexa-issuer/README.md`(복붙용) · 맥 요청 코드 준비(발급 = 사용자 셸).

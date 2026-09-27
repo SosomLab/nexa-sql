@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/session-106-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 106차(mac) — 최신화·분석 · 유효기간 미반영 원인 · nexa-license 4f02524 `reissue --renew` 기록 · 25 §12 · 91 §2 · journal §21 · STATUS/DEVLOG/TODO/CLAUDE.md |
 | docs/session-103-mac | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 📚 103차(mac) 정리 — journal §13 CI·§14(최신화·분석 · 발급 절차 · 다음) · 91 §2-1 발급 실행 순서 · STATUS/DEVLOG/TODO(T-244)/CLAUDE.md 현 단계 |
 | docs/root-v1-key | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 루트 공개키 `root-v1` 등재 기록(nexa-license 1bc033c · keys-rs fmt 안정화) · journal §13 · 91 §1 ⚠ 갱신 |
 | fix/license-picker-return-focus · fix/parwalk-cancel-test-race | 2026-09-27 | 2026-09-27 → main(삭제) | 2 | 105차(mac) — 라이선스 창 ▸ 파일 열기 뒤 창이 메인 뒤로 숨던 결함(파일 창 호스트 = 띄운 창 · `picker_return` 포커스 복귀 · `all_windows()` 단일 목록) · 🔧 `parwalk` 취소 시험 경주(CI ubuntu 간헐) |
