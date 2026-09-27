@@ -1857,8 +1857,12 @@ impl ConnWin {
                     && cfg!(all(unix, not(target_os = "macos")))
                     && self.hidden_box().is_some()
                 {
-                    let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
-                    crate::imestate::note_toggle(latin_now);
+                    // 감시(ibus 패널 엿듣기)가 돌면 그것이 원천 — 키로 뒤집으면 두 번 뒤집혀 원상복구(09-27 실기).
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    if !crate::imewatch::running() {
+                        let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
+                        crate::imestate::note_toggle(latin_now);
+                    }
                     self.note_hidden_input();
                     self.redraw();
                     return Vec::new();

@@ -60,6 +60,14 @@ pub(crate) fn start() {
     *g = Some(child);
 }
 
+/// 감시가 살아 있는가(있으면 한/영 상태의 원천은 감시뿐 — 토글 키로 뒤집지 않는다 · 사용자 09-27 "Shift+Space가 들쭉날쭉").
+pub(crate) fn running() -> bool {
+    CHILD
+        .lock()
+        .ok()
+        .is_some_and(|mut g| g.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))))
+}
+
 /// 감시 종료(가린 칸 포커스가 떠남 · 창 닫힘).
 pub(crate) fn stop() {
     let Ok(mut g) = CHILD.lock() else { return };

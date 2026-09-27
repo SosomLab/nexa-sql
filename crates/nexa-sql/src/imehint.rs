@@ -104,6 +104,11 @@ impl ImeHint {
         self.shown
     }
 
+    /// 자체 시험 덤프용(`ime.dump`).
+    pub(crate) fn is_shown(&self) -> bool {
+        self.shown
+    }
+
     /// 틱 — 가린 칸이 포커스면 주기 조회 · 아니면 숨김. 돌려주는 값 = (바뀜, 다음 깨울 시각).
     pub(crate) fn tick(
         &mut self,

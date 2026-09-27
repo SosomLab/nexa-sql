@@ -306,6 +306,16 @@ impl InputWin {
         next
     }
 
+    /// 자체 시험(09-27): IME 안내가 지금 보이는가(`ime.dump`).
+    pub(crate) fn ime_hint_visible(&self) -> bool {
+        self.ime_hint.is_shown()
+    }
+
+    /// 자체 시험: 안내를 즉시 다시 판정(`ime.fake` 뒤).
+    pub(crate) fn ime_repoll(&mut self) {
+        self.note_hidden_input();
+    }
+
     /// 가린 칸에 글자가 들어왔다 → IME 안내 즉시 갱신.
     fn note_hidden_input(&mut self) {
         let bx = self.hidden_box();
@@ -474,8 +484,12 @@ impl InputWin {
                     || (self.shift
                         && matches!(kev.logical_key.as_ref(), Key::Named(NamedKey::Space)));
                 if toggle && cfg!(all(unix, not(target_os = "macos"))) {
-                    let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
-                    crate::imestate::note_toggle(latin_now);
+                    // 감시(ibus 패널 엿듣기)가 돌면 그것이 원천 — 키로 뒤집으면 두 번 뒤집혀 원상복구된다(09-27 실기).
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    if !crate::imewatch::running() {
+                        let latin_now = crate::imestate::current(None).is_none_or(|s| s.latin);
+                        crate::imestate::note_toggle(latin_now);
+                    }
                     self.note_hidden_input();
                     self.redraw();
                     return InputWinAction::None;
