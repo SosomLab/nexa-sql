@@ -5,41 +5,12 @@
 //! 마스크는 **모양마다 프로세스에서 한 번만** 래스터해 `Box::leak`(`memo` · 툴바가 `&'static`을 요구) — 09-22 Linux 기동 계측: 메모 없이
 //! 호출마다 다시 래스터하면 SVG 경로 아이콘이 개당 ≈15 ms(64×64×16 표본 × 다각형 전체 검사)라 찾기 막대 11개 = 166 ms · 결과 탭마다 20개.
 
+use nexa_ctl::shape::{poly, polys_evenodd, polys_nonzero, rrect, stroke, tri};
 use nexa_ctl::{MenuIcon, ToolIcon};
 
 /// 마스크 한 변(px) — 툴바 슬롯(≈24~32px)에 contain 맞춤이라 64면 어떤 배율에서도 충분하다.
 const SIDE: u32 = 64;
 const SS: u32 = 4;
-
-/// 점–선분 거리(둥근 끝 획).
-fn seg_dist(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    let (vx, vy) = (bx - ax, by - ay);
-    let (wx, wy) = (x - ax, y - ay);
-    let t = ((wx * vx + wy * vy) / (vx * vx + vy * vy)).clamp(0.0, 1.0);
-    let (px, py) = (ax + t * vx, ay + t * vy);
-    ((x - px) * (x - px) + (y - py) * (y - py)).sqrt()
-}
-
-fn stroke(x: f32, y: f32, a: (f32, f32), b: (f32, f32), w: f32) -> bool {
-    seg_dist(x, y, a.0, a.1, b.0, b.1) <= w / 2.0
-}
-
-fn in_rounded_rect(x: f32, y: f32, x0: f32, y0: f32, w: f32, h: f32, r: f32) -> bool {
-    if x < x0 || y < y0 || x > x0 + w || y > y0 + h {
-        return false;
-    }
-    let cx = x.clamp(x0 + r, x0 + w - r);
-    let cy = y.clamp(y0 + r, y0 + h - r);
-    (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r
-}
-
-fn in_triangle(x: f32, y: f32, a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
-    let s = |p: (f32, f32), q: (f32, f32)| (x - q.0) * (p.1 - q.1) - (p.0 - q.0) * (y - q.1);
-    let (d1, d2, d3) = (s(a, b), s(b, c), s(c, a));
-    let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-    let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-    !(neg && pos)
-}
 
 /// 삼각형을 무게중심 쪽으로 `k`배 축소(외곽선용 안쪽 삼각형).
 fn shrink(a: (f32, f32), b: (f32, f32), c: (f32, f32), k: f32) -> [(f32, f32); 3] {
@@ -54,28 +25,11 @@ fn shrink(a: (f32, f32), b: (f32, f32), c: (f32, f32), k: f32) -> [(f32, f32); 3
 /// Material 좌표(viewBox 960) → 이 도형 좌표(256).
 const M: f32 = 256.0 / 960.0;
 
-/// 점이 다각형 안인가(짝홀 규칙 · 오목 다각형 가능) — Material SVG의 직선 경로를 좌표 그대로 옮길 때.
-fn in_poly(x: f32, y: f32, pts: &[(f32, f32)]) -> bool {
-    let mut inside = false;
-    let n = pts.len();
-    let mut j = n - 1;
-    for i in 0..n {
-        let (xi, yi) = pts[i];
-        let (xj, yj) = pts[j];
-        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
-}
-
 fn shape_new(x: f32, y: f32) -> bool {
     // Material `note_add`계(사용자 SVG 09-16): 둥근 사각 틀(두께 80 · 오른쪽 위가 열림) + 오른쪽 위 십자.
     let (x, y) = (x / M, y / M); // 960 좌표계에서 판정
     let rect = |x0: f32, y0: f32, x1: f32, y1: f32| x >= x0 && x <= x1 && y >= y0 && y <= y1;
-    let frame = in_rounded_rect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0)
-        && !rect(200.0, 200.0, 760.0, 760.0);
+    let frame = rrect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0) && !rect(200.0, 200.0, 760.0, 760.0);
     let notch = (x > 440.0 && y < 200.0) || (x > 760.0 && y < 600.0);
     let plus = rect(680.0, 320.0, 760.0, 560.0) || rect(520.0, 400.0, 920.0, 480.0);
     (frame && !notch) || plus
@@ -85,7 +39,7 @@ fn shape_new(x: f32, y: f32) -> bool {
 fn shape_open(x: f32, y: f32) -> bool {
     // Material `file_open`(사용자 SVG 09-16): 접힌 귀 문서 외곽선(왼쪽 모서리 r80) + 오른쪽 아래 ↘ 내보내기 화살표.
     let (x, y) = (x / M, y / M);
-    let doc = in_poly(
+    let doc = poly(
         x,
         y,
         &[
@@ -103,8 +57,8 @@ fn shape_open(x: f32, y: f32) -> bool {
             (600.0, 800.0),
             (600.0, 880.0),
         ],
-    ) && in_rounded_rect(x, y, 160.0, 80.0, 640.0, 800.0, 80.0);
-    let arrow = in_poly(
+    ) && rrect(x, y, 160.0, 80.0, 640.0, 800.0, 80.0);
+    let arrow = poly(
         x,
         y,
         &[
@@ -126,8 +80,8 @@ fn shape_open(x: f32, y: f32) -> bool {
 fn shape_save(x: f32, y: f32) -> bool {
     // Material `save`(사용자 SVG 09-16 재변경): 플로피 — 둥근 틀(오른쪽 위 모서리 사선) + 라벨 + 원판.
     let (x, y) = (x / M, y / M);
-    let frame = in_rounded_rect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0) && x - y <= 560.0;
-    let hole = in_poly(
+    let frame = rrect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0) && x - y <= 560.0;
+    let hole = poly(
         x,
         y,
         &[
@@ -146,7 +100,7 @@ fn shape_save(x: f32, y: f32) -> bool {
 fn shape_save_as(x: f32, y: f32) -> bool {
     // Material `save_as`(사용자 SVG 09-16): 플로피(오른쪽 아래 비움) + 라벨 + 원판(사선 절단) + 연필 외곽선.
     let (x, y) = (x / M, y / M);
-    let frame = in_poly(
+    let frame = poly(
         x,
         y,
         &[
@@ -163,11 +117,11 @@ fn shape_save_as(x: f32, y: f32) -> bool {
             (440.0, 760.0),
             (440.0, 840.0),
         ],
-    ) && in_rounded_rect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0);
+    ) && rrect(x, y, 120.0, 120.0, 720.0, 720.0, 80.0);
     let label = (240.0..=600.0).contains(&x) && (240.0..=400.0).contains(&y);
     let disc =
         (x - 480.0) * (x - 480.0) + (y - 600.0) * (y - 600.0) <= 120.0 * 120.0 && x + y <= 1204.0;
-    let pencil = in_poly(
+    let pencil = poly(
         x,
         y,
         &[
@@ -179,7 +133,7 @@ fn shape_save_as(x: f32, y: f32) -> bool {
             (863.0, 700.0),
             (643.0, 920.0),
         ],
-    ) && !in_poly(
+    ) && !poly(
         x,
         y,
         &[
@@ -199,13 +153,13 @@ const TRI: [(f32, f32); 3] = [(76.0, 44.0), (212.0, 128.0), (76.0, 212.0)];
 fn shape_run_statement(x: f32, y: f32) -> bool {
     let [a, b, c] = TRI;
     let [ia, ib, ic] = shrink(a, b, c, 0.62);
-    in_triangle(x, y, a, b, c) && !in_triangle(x, y, ia, ib, ic)
+    tri(x, y, a, b, c) && !tri(x, y, ia, ib, ic)
 }
 
 /// ▶ — 전체 실행(채움).
 fn shape_run_all(x: f32, y: f32) -> bool {
     let [a, b, c] = TRI;
-    in_triangle(x, y, a, b, c)
+    tri(x, y, a, b, c)
 }
 
 /// 둥근 모서리 깎기 — 모서리 사각 영역 안이면서 원 밖이면 제외(Material q 곡선 근사 · r80).
@@ -219,7 +173,7 @@ fn corner_ok(x: f32, y: f32, cx: f32, cy: f32, quad_x: bool, quad_y: bool) -> bo
 fn shape_connect(x: f32, y: f32) -> bool {
     // Material `power`(사용자 SVG 09-16): 플러그 몸통 외곽선(위 모서리 r80) + 핀 2개 − 안쪽 구멍.
     let (x, y) = (x / M, y / M);
-    let body = in_poly(
+    let body = poly(
         x,
         y,
         &[
@@ -236,7 +190,7 @@ fn shape_connect(x: f32, y: f32) -> bool {
         && corner_ok(x, y, 640.0, 360.0, true, false);
     let pins = ((320.0..=400.0).contains(&x) || (560.0..=640.0).contains(&x))
         && (120.0..=280.0).contains(&y);
-    let hole = in_poly(
+    let hole = poly(
         x,
         y,
         &[
@@ -257,7 +211,7 @@ fn shape_connect(x: f32, y: f32) -> bool {
 fn shape_disconnect(x: f32, y: f32) -> bool {
     let (x, y) = (x / M, y / M);
     // 아래 조각 + 사선(한 다각형 · SVG 꼭짓점 그대로 · 왼쪽 위 모서리 곡선은 (283,283) 꼭짓점으로 근사).
-    let lower = in_poly(
+    let lower = poly(
         x,
         y,
         &[
@@ -284,7 +238,7 @@ fn shape_disconnect(x: f32, y: f32) -> bool {
         ],
     );
     // 위 조각(핀 둘 + 오른쪽 위 몸통 · 오른쪽 위 모서리 r80).
-    let upper = in_poly(
+    let upper = poly(
         x,
         y,
         &[
@@ -314,7 +268,7 @@ fn shape_disconnect(x: f32, y: f32) -> bool {
 fn shape_view_mode(x: f32, y: f32) -> bool {
     // SVG: 외곽 (80,160)-(880,800) r≈80 · 칸 x 160..280 / 360..800 · y 240..347 / 427..534 / 613..720 (y = svg + 960).
     let (sx, sy) = (x / M, y / M);
-    if !in_rounded_rect(sx, sy, 80.0, 160.0, 800.0, 640.0, 80.0) {
+    if !rrect(sx, sy, 80.0, 160.0, 800.0, 640.0, 80.0) {
         return false;
     }
     let rows = [(240.0, 347.0), (427.0, 534.0), (613.0, 720.0)];
@@ -340,7 +294,7 @@ fn shape_refresh(x: f32, y: f32) -> bool {
     let gap = (-90.0..0.0).contains(&ang);
     let arc = ring && !gap;
     // 화살촉: 원호 끝(0° 지점 · 오른쪽)에서 위쪽으로.
-    let tip = in_triangle(
+    let tip = tri(
         x,
         y,
         (cx + 76.0, cy - 40.0),
@@ -396,11 +350,11 @@ fn shape_log(x: f32, y: f32) -> bool {
 
 /// 복사 — 겹친 사각형 두 장(외곽선).
 fn shape_copy(x: f32, y: f32) -> bool {
-    let back = in_rounded_rect(x, y, 48.0, 40.0, 120.0, 140.0, 12.0)
-        && !in_rounded_rect(x, y, 70.0, 62.0, 76.0, 96.0, 6.0)
-        && !in_rounded_rect(x, y, 96.0, 84.0, 120.0, 140.0, 12.0);
-    let front = in_rounded_rect(x, y, 96.0, 84.0, 120.0, 140.0, 12.0)
-        && !in_rounded_rect(x, y, 118.0, 106.0, 76.0, 96.0, 6.0);
+    let back = rrect(x, y, 48.0, 40.0, 120.0, 140.0, 12.0)
+        && !rrect(x, y, 70.0, 62.0, 76.0, 96.0, 6.0)
+        && !rrect(x, y, 96.0, 84.0, 120.0, 140.0, 12.0);
+    let front =
+        rrect(x, y, 96.0, 84.0, 120.0, 140.0, 12.0) && !rrect(x, y, 118.0, 106.0, 76.0, 96.0, 6.0);
     back || front
 }
 
@@ -418,17 +372,17 @@ fn shape_cut(x: f32, y: f32) -> bool {
 
 /// 붙여넣기 — 클립보드(판 + 집게).
 fn shape_paste(x: f32, y: f32) -> bool {
-    let board = in_rounded_rect(x, y, 56.0, 60.0, 144.0, 156.0, 14.0)
-        && !in_rounded_rect(x, y, 78.0, 82.0, 100.0, 112.0, 6.0);
-    let clip = in_rounded_rect(x, y, 96.0, 40.0, 64.0, 40.0, 10.0)
-        && !in_rounded_rect(x, y, 112.0, 52.0, 32.0, 16.0, 4.0);
+    let board =
+        rrect(x, y, 56.0, 60.0, 144.0, 156.0, 14.0) && !rrect(x, y, 78.0, 82.0, 100.0, 112.0, 6.0);
+    let clip =
+        rrect(x, y, 96.0, 40.0, 64.0, 40.0, 10.0) && !rrect(x, y, 112.0, 52.0, 32.0, 16.0, 4.0);
     board || clip
 }
 
 /// 전체 선택 — 점선 사각형(모서리 4개 + 변 중앙 점).
 fn shape_select_all(x: f32, y: f32) -> bool {
-    let corner = |cx: f32, cy: f32| in_rounded_rect(x, y, cx - 18.0, cy - 18.0, 36.0, 36.0, 4.0);
-    let dot = |cx: f32, cy: f32| in_rounded_rect(x, y, cx - 11.0, cy - 11.0, 22.0, 22.0, 4.0);
+    let corner = |cx: f32, cy: f32| rrect(x, y, cx - 18.0, cy - 18.0, 36.0, 36.0, 4.0);
+    let dot = |cx: f32, cy: f32| rrect(x, y, cx - 11.0, cy - 11.0, 22.0, 22.0, 4.0);
     corner(48.0, 48.0)
         || corner(208.0, 48.0)
         || corner(48.0, 208.0)
@@ -441,8 +395,8 @@ fn shape_select_all(x: f32, y: f32) -> bool {
 
 /// 표(CSV·텍스트·Markdown) — 격자.
 fn shape_table(x: f32, y: f32) -> bool {
-    let frame = in_rounded_rect(x, y, 40.0, 48.0, 176.0, 160.0, 12.0)
-        && !in_rounded_rect(x, y, 60.0, 68.0, 136.0, 120.0, 4.0);
+    let frame =
+        rrect(x, y, 40.0, 48.0, 176.0, 160.0, 12.0) && !rrect(x, y, 60.0, 68.0, 136.0, 120.0, 4.0);
     frame
         || stroke(x, y, (40.0, 104.0), (216.0, 104.0), 18.0)
         || stroke(x, y, (40.0, 152.0), (216.0, 152.0), 18.0)
@@ -492,11 +446,11 @@ fn shape_db(x: f32, y: f32) -> bool {
 
 /// 활동 막대 — 탐색기(겹친 문서 두 장 · VS Code Explorer 느낌).
 fn shape_files(x: f32, y: f32) -> bool {
-    let back = in_rounded_rect(x, y, 44.0, 36.0, 120.0, 150.0, 10.0)
-        && !in_rounded_rect(x, y, 62.0, 54.0, 84.0, 114.0, 6.0)
-        && !in_rounded_rect(x, y, 92.0, 76.0, 124.0, 150.0, 10.0);
-    let front = in_rounded_rect(x, y, 92.0, 76.0, 124.0, 150.0, 10.0)
-        && !in_rounded_rect(x, y, 110.0, 94.0, 88.0, 114.0, 6.0);
+    let back = rrect(x, y, 44.0, 36.0, 120.0, 150.0, 10.0)
+        && !rrect(x, y, 62.0, 54.0, 84.0, 114.0, 6.0)
+        && !rrect(x, y, 92.0, 76.0, 124.0, 150.0, 10.0);
+    let front =
+        rrect(x, y, 92.0, 76.0, 124.0, 150.0, 10.0) && !rrect(x, y, 110.0, 94.0, 88.0, 114.0, 6.0);
     let lines = stroke(x, y, (128.0, 130.0), (188.0, 130.0), 12.0)
         || stroke(x, y, (128.0, 160.0), (188.0, 160.0), 12.0)
         || stroke(x, y, (128.0, 190.0), (170.0, 190.0), 12.0);
@@ -505,9 +459,9 @@ fn shape_files(x: f32, y: f32) -> bool {
 
 /// 활동 막대 — 프로젝트 탐색기(폴더 + 안의 트리 가지 · docs/67 §4 · 사용자 09-22).
 fn shape_project(x: f32, y: f32) -> bool {
-    let tab = in_rounded_rect(x, y, 36.0, 52.0, 80.0, 26.0, 6.0);
-    let body = in_rounded_rect(x, y, 36.0, 68.0, 184.0, 122.0, 10.0)
-        && !in_rounded_rect(x, y, 50.0, 82.0, 156.0, 94.0, 6.0);
+    let tab = rrect(x, y, 36.0, 52.0, 80.0, 26.0, 6.0);
+    let body =
+        rrect(x, y, 36.0, 68.0, 184.0, 122.0, 10.0) && !rrect(x, y, 50.0, 82.0, 156.0, 94.0, 6.0);
     let trunk = stroke(x, y, (86.0, 104.0), (86.0, 158.0), 10.0);
     let b1 = stroke(x, y, (86.0, 124.0), (130.0, 124.0), 10.0);
     let b2 = stroke(x, y, (86.0, 154.0), (150.0, 154.0), 10.0);
@@ -516,8 +470,8 @@ fn shape_project(x: f32, y: f32) -> bool {
 
 /// 활동 막대 — 북마크 리본: 위가 둥근 세로 띠, 아래는 V자로 파임(테두리만 · 안은 비움).
 fn shape_bookmark(x: f32, y: f32) -> bool {
-    let outer = in_rounded_rect(x, y, 56.0, 28.0, 112.0, 172.0, 12.0);
-    let inner = in_rounded_rect(x, y, 72.0, 44.0, 80.0, 156.0, 8.0);
+    let outer = rrect(x, y, 56.0, 28.0, 112.0, 172.0, 12.0);
+    let inner = rrect(x, y, 72.0, 44.0, 80.0, 156.0, 8.0);
     // 아래 V 파임(바깥·안쪽 같은 각도).
     let notch = |cx: f32, top: f32, half: f32| -> bool {
         let dy = y - top;
@@ -531,8 +485,7 @@ fn shape_bookmark(x: f32, y: f32) -> bool {
 /// 활동 막대 — 확장(붙은 네모 셋 + 떨어진 네모 하나 · VS Code Extensions 느낌 · 사용자 09-19).
 fn shape_extensions(x: f32, y: f32) -> bool {
     let sq = |x0: f32, y0: f32| {
-        in_rounded_rect(x, y, x0, y0, 70.0, 70.0, 8.0)
-            && !in_rounded_rect(x, y, x0 + 13.0, y0 + 13.0, 44.0, 44.0, 4.0)
+        rrect(x, y, x0, y0, 70.0, 70.0, 8.0) && !rrect(x, y, x0 + 13.0, y0 + 13.0, 44.0, 44.0, 4.0)
     };
     sq(40.0, 88.0) || sq(40.0, 146.0) || sq(98.0, 146.0) || sq(128.0, 44.0)
 }
@@ -795,15 +748,12 @@ mod tests {
         let polys = svg_polys_vb(d, VB_CODICON);
         let k = 960.0 / 16.0;
         assert!(
-            in_polys_evenodd(3.5 * k, 11.0 * k, &polys),
+            polys_evenodd(3.5 * k, 11.0 * k, &polys),
             "왼쪽 테두리(x 3~4)"
         );
+        assert!(!polys_evenodd(7.5 * k, 11.0 * k, &polys), "상자 속은 구멍");
         assert!(
-            !in_polys_evenodd(7.5 * k, 11.0 * k, &polys),
-            "상자 속은 구멍"
-        );
-        assert!(
-            in_polys_evenodd(5.4 * k, 3.5 * k, &polys),
+            polys_evenodd(5.4 * k, 3.5 * k, &polys),
             "호로 이어진 세로획(x 5~6)"
         );
         let icon = svg_glyph_vb(d, VB_CODICON, true);
@@ -1131,48 +1081,6 @@ fn svg_polys_vb(d: &str, vb: [f32; 4]) -> Vec<Vec<(f32, f32)>> {
     polys
 }
 
-/// 짝홀(even-odd) — `fill-rule="evenodd"` 경로(codicon)용.
-fn in_polys_evenodd(x: f32, y: f32, polys: &[Vec<(f32, f32)>]) -> bool {
-    let mut inside = false;
-    for p in polys {
-        let n = p.len();
-        if n < 3 {
-            continue;
-        }
-        for i in 0..n {
-            let (x0, y0) = p[i];
-            let (x1, y1) = p[(i + 1) % n];
-            if (y0 > y) != (y1 > y) && x < x0 + (y - y0) * (x1 - x0) / (y1 - y0) {
-                inside = !inside;
-            }
-        }
-    }
-    inside
-}
-
-/// 비영 winding — 점이 다각형 집합 안인가.
-fn in_polys_nonzero(x: f32, y: f32, polys: &[Vec<(f32, f32)>]) -> bool {
-    let mut wn = 0i32;
-    for p in polys {
-        let n = p.len();
-        if n < 3 {
-            continue;
-        }
-        for i in 0..n {
-            let (x0, y0) = p[i];
-            let (x1, y1) = p[(i + 1) % n];
-            if y0 <= y {
-                if y1 > y && (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0) > 0.0 {
-                    wn += 1;
-                }
-            } else if y1 <= y && (x1 - x0) * (y - y0) - (x - x0) * (y1 - y0) < 0.0 {
-                wn -= 1;
-            }
-        }
-    }
-    wn != 0
-}
-
 /// 클로저 도형 → 커버리지(4×4 슈퍼샘플링).
 fn rasterize_dyn(shape: &dyn Fn(f32, f32) -> bool) -> Vec<u8> {
     let unit = 256.0 / SIDE as f32;
@@ -1199,7 +1107,7 @@ fn rasterize_dyn(shape: &dyn Fn(f32, f32) -> bool) -> Vec<u8> {
 pub(crate) fn svg_glyph(d: &str) -> MenuIcon {
     let alpha = memo((d.as_ptr() as usize, d.len(), 1), || {
         let polys = svg_polys(d);
-        rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+        rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
     });
     MenuIcon::from_alpha(SIDE, SIDE, alpha)
 }
@@ -1214,9 +1122,9 @@ pub(crate) fn svg_glyph_vb(d: &str, vb: [f32; 4], evenodd: bool) -> MenuIcon {
         || {
             let polys = svg_polys_vb(d, vb);
             if evenodd {
-                rasterize_dyn(&|x, y| in_polys_evenodd(x / M, y / M, &polys))
+                rasterize_dyn(&|x, y| polys_evenodd(x / M, y / M, &polys))
             } else {
-                rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+                rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
             }
         },
     );
@@ -1300,7 +1208,7 @@ material!(/// `segment` — 선택 범위에서 찾기(≡).
 fn svg_tool(d: &str) -> ToolIcon {
     let alpha = memo((d.as_ptr() as usize, d.len(), 4), || {
         let polys = svg_polys(d);
-        rasterize_dyn(&|x, y| in_polys_nonzero(x / M, y / M, &polys))
+        rasterize_dyn(&|x, y| polys_nonzero(x / M, y / M, &polys))
     });
     ToolIcon::Mask {
         w: SIDE,

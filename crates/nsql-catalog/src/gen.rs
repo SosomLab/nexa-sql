@@ -994,6 +994,37 @@ fn no_ddl(o: &ObjectInfo) -> DbError {
 /// ★ SQL Server 테이블 DDL(DBeaver 모양 · 사용자 09-25 샘플): 헤더 주석 · `-- DROP TABLE` · CREATE TABLE(탭 들여쓰기 · COLLATE ·
 /// DEFAULT · NULL/NOT NULL 명시 · 인라인 CONSTRAINT(PK·UNIQUE·CHECK · FK는 옵션)) · FK 분리(ALTER) · 인덱스(전체 DDL) ·
 /// 확장 속성(`sp_addextendedproperty` 테이블·컬럼 설명).
+/// 표 본문 마무리(MSSQL·PG 공통 · docs/93 §4): 키 제약 줄을 본문에 붙이고 닫은 뒤, FK 분리 옵션이면 표 뒤에 `ALTER TABLE … ADD`로.
+#[allow(clippy::too_many_arguments)]
+fn close_table_body(
+    s: &mut dyn Session,
+    d: Dialect,
+    o: &ObjectInfo,
+    det: &crate::TableDetail,
+    separate_fk: bool,
+    qn: &str,
+    mut lines: Vec<String>,
+    out: &mut String,
+) -> Result<(), DbError> {
+    let mut fks: Vec<String> = Vec::new();
+    for k in &det.keys {
+        if let Some(line) = constraint_line(s, d, o, k)? {
+            let item = format!("CONSTRAINT {} {line}", ident(d, &k.name));
+            if k.kind == 'R' && separate_fk {
+                fks.push(item);
+            } else {
+                lines.push(format!("\t{item}"));
+            }
+        }
+    }
+    out.push_str(&lines.join(",\n"));
+    out.push_str("\n);\n");
+    for fk in &fks {
+        out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
+    }
+    Ok(())
+}
+
 fn mssql_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> {
     let d = Dialect::Mssql;
     let c = cx();
@@ -1027,22 +1058,7 @@ fn mssql_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErro
         l.push_str(if cdef.nullable { " NULL" } else { " NOT NULL" });
         lines.push(l);
     }
-    let mut fks: Vec<String> = Vec::new();
-    for k in &det.keys {
-        if let Some(line) = constraint_line(s, d, o, k)? {
-            let item = format!("CONSTRAINT {} {line}", ident(d, &k.name));
-            if k.kind == 'R' && c.opts.separate_fk {
-                fks.push(item);
-            } else {
-                lines.push(format!("\t{item}"));
-            }
-        }
-    }
-    out.push_str(&lines.join(",\n"));
-    out.push_str("\n);\n");
-    for fk in &fks {
-        out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
-    }
+    close_table_body(s, d, o, &det, c.opts.separate_fk, &qn, lines, &mut out)?;
     // 인덱스 = 기본 범위(키가 만든 인덱스는 제약 줄이 대신한다).
     let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
     for i in &det.indexes {
@@ -1203,22 +1219,7 @@ fn pg_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> 
         l.push_str(if cdef.nullable { " NULL" } else { " NOT NULL" });
         lines.push(l);
     }
-    let mut fks: Vec<String> = Vec::new();
-    for k in &det.keys {
-        if let Some(line) = constraint_line(s, d, o, k)? {
-            let item = format!("CONSTRAINT {} {line}", ident(d, &k.name));
-            if k.kind == 'R' && c.opts.separate_fk {
-                fks.push(item);
-            } else {
-                lines.push(format!("\t{item}"));
-            }
-        }
-    }
-    out.push_str(&lines.join(",\n"));
-    out.push_str("\n);\n");
-    for fk in &fks {
-        out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
-    }
+    close_table_body(s, d, o, &det, c.opts.separate_fk, &qn, lines, &mut out)?;
     // 인덱스 = 기본 범위.
     let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
     for i in &det.indexes {
