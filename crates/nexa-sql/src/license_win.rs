@@ -514,13 +514,6 @@ impl LicenseWin {
             self.link_rect = Rect::new(tx, y, lw, th_txt + px(2.0));
             tx += lw;
             dc.text(tx, y, clip, post, th.text);
-            // 순간 메시지 = 링크 옆(가리지 않음) · 진행 중이면 다시 그린다(부품 규칙: 타이머 없이 페인트 주도).
-            if self
-                .flash
-                .paint(&mut dc, th, self.link_rect, Rect::new(0, 0, wi, hi))
-            {
-                win.request_redraw();
-            }
             y += th_txt + px(8.0);
             let fh = th_txt + px(12.0);
             let mut x = pad;
@@ -608,6 +601,26 @@ impl LicenseWin {
                 };
                 let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
                 tb.paint_popup(&mut dc, th);
+            }
+        }
+        // ★ 플래시 메시지 = 창의 **맨 마지막**에 그린다(다른 컨트롤·팝업이 덮지 않음 · 최상위 Z-order · 사용자 09-27) · 진행 중이면 다시 그린다.
+        {
+            let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+            let prefs = FontPrefs {
+                base: SlotFont {
+                    size: ui_px,
+                    bold: false,
+                    italic: false,
+                },
+                ..FontPrefs::default()
+            };
+            let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
+            dc.select_font(FontSlot::Base, false);
+            if self
+                .flash
+                .paint(&mut dc, th, self.link_rect, Rect::new(0, 0, wi, hi))
+            {
+                win.request_redraw();
             }
         }
         let _ = buf.present();

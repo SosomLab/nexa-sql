@@ -35,6 +35,8 @@ pub use nexa_license::{
 pub const PRODUCT: Product = Product {
     id: "nexa-sql",
     build_date: env!("NSQL_BUILD_DATE"),
+    // `max_major`(Major 바뀌면 무효) · `max_version`(그 버전부터 무효) 판정 기준(09-27).
+    version: env!("CARGO_PKG_VERSION"),
 };
 
 /// 라이선스 폴더 이름(`<설정 폴더>/license/`).
@@ -591,6 +593,7 @@ mod tests {
             ("features", "export-xlsx,ssh-tunnel,unknown-future"),
             ("issued", "2026-09-27"),
             ("updates_until", "2999-12-31"),
+            ("max_major", "0"),
             ("note", "unknown key is ignored"),
         ] {
             d.set(k, v);
@@ -738,6 +741,11 @@ mod tests {
         assert_eq!(s.tier(), Tier::Free, "features ∅ = 표시도 Free");
         let s = l.judge_text(&signed(&sk, &[("expires", "2000-01-01")]));
         assert!(matches!(s, LicenseState::Expired(_)), "{s:?}");
+        // 버전 조항: 앱 0.0.1 · max_version 0.0.1 = 그 버전부터 무효 · max_major 없음(none) = 정식.
+        let s = l.judge_text(&signed(&sk, &[("max_version", "0.0.1")]));
+        assert!(matches!(s, LicenseState::Outdated(_)), "{s:?}");
+        let s = l.judge_text(&signed(&sk, &[("max_version", "9.0.0")]));
+        assert!(matches!(s, LicenseState::Licensed(_)), "{s:?}");
         match l.judge_text(&signed(&sk, &[("product", "nexa-clip")])) {
             LicenseState::Invalid(Invalid::Product) => {}
             other => panic!("{other:?}"),

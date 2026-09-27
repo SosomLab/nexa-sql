@@ -408,9 +408,10 @@ nexa-license (lib · 의존 기본 0 · features)
 | `--licensee "<이름 또는 조직>"` · `--email` | ✅ · 선택 | 파일 `licensee=` · 대장 |
 | `--tier free|pro|org` **또는** `--features a,b,c` | ✅(택1) | tier = 프리셋 → 낱개 features로 풀어 기록(23 §2-1 "등급이 아니라 낱개") · 프리셋 표 = §13-3(D-41 확정 뒤 고정) |
 | `--seats N` · `--seat-mode named|concurrent` | Team/Org | §4-2 |
-| `--updates-until YYYY-MM-DD` | 선택 | 기본 = 발급일 + 1년(D-25 영구+업데이트) |
-| `--expires YYYY-MM-DD` | 체험/Org 구독만 | 비우면 영구 |
-| `--max-major N` | 선택 | 비우면 제한 없음 |
+| `--expires YYYY-MM-DD\|none` | 선택 | **기본 = 발급일 + 3년**(유효기간 · 사용자 09-27 · 체험 14일) · `none` = 영구 |
+| `--updates-until YYYY-MM-DD\|none` | 선택 | 기본 = `expires`(없으면 발급일 + 3년) |
+| `--max-major N\|none` | 선택 | **기본 = 요청 코드의 앱 Major**(Major가 바뀌면 무효 · 사용자 09-27) · 요청이 없으면 명시 · `none` = 제한 없음 |
+| `--max-version X.Y.Z` | 선택 | 그 버전부터 무효(Major 무관 · "특정 버전 이후" 조항 · 사용자 09-27) · 비우면 없음 |
 | `--id` | 선택 | 기본 자동 `NSL-<연도>-<6자리 순번>`(대장에서 채번) |
 | `--key <봉투 파일>` · `--key-pass-env NAME` | ✅ | 비밀키 봉투(§12-6) · 암호는 환경 변수/프롬프트(인자 금지) |
 | `--out <폴더|파일>` | 선택 | 기본 `./issued/<id>/nexa-sql.license` |

@@ -13092,7 +13092,18 @@ impl App {
                     l.expires.clone()
                 },
             ));
+            rows.push((
+                t(Msg::LicLblMaxMajor).into(),
+                l.max_major.map_or_else(dash, |m| format!("{m}.x")),
+            ));
+            if !l.max_version.is_empty() {
+                rows.push((t(Msg::LicLblMaxVersion).into(), l.max_version.clone()));
+            }
         }
+        rows.push((
+            t(Msg::LicLblVersion).into(),
+            nsql_license::PRODUCT.version.to_string(),
+        ));
         rows.push((
             t(Msg::LicLblBuild).into(),
             nsql_license::PRODUCT.build_date.to_string(),

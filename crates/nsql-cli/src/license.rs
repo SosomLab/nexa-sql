@@ -95,6 +95,13 @@ fn print_license(l: &nsql_license::License) {
             &l.expires
         }
     );
+    println!(
+        "max_major      {}",
+        l.max_major.map_or("-".to_string(), |m| format!("{m}.x"))
+    );
+    if !l.max_version.is_empty() {
+        println!("max_version    {}", l.max_version);
+    }
 }
 
 fn status() -> i32 {
@@ -109,6 +116,7 @@ fn status() -> i32 {
         print_license(lic);
     }
     println!("build_date     {}", PRODUCT.build_date);
+    println!("app_version    {}", PRODUCT.version);
     println!(
         "machine        {}",
         Licensing::machine_code().unwrap_or_else(|| "-".to_string())

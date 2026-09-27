@@ -39,7 +39,8 @@ Nexa SQL은 **오프라인 라이선스 파일** 하나로 정품을 확인합�
 
 - 백업: `nsql license export <파일>`(설치 파일 복사) · 복원: `nsql license import <파일>`(= install).
 - 제거: 라이선스 창 ▸ 제거 또는 `nsql license remove`(사용자 폴더 파일만 지웁니다).
-- 영구 라이선스는 `updates_until`(보통 발급 + 1년)까지 나온 판을 계속 씁니다. 그 뒤 판은 기한 지남(`outdated`)으로 무료 수준이 됩니다 — 이전 판은 그대로 정식입니다.
+- **유효기간**은 기본 **발급일 + 3년**(파일의 `expires` · 창의 Expires)입니다. 만료 뒤에는 무료 수준이 되며 재발급으로 갱신합니다.
+- **버전 범위**: 라이선스는 발급 당시의 **메이저 버전**(창의 "Valid up to major" · 예 `0.x`)까지 유효하고, 메이저가 바뀐 판에서는 새 라이선스가 필요합니다. 특정 버전부터 새 라이선스가 필요한 경우 "Invalid from version"에 그 버전이 적힙니다. 범위 밖 판에서는 `outdated`(무료 수준)이 되고 **이전 판은 그대로 정식**입니다.
 
 ## 상태가 이상할 때
 
@@ -48,7 +49,7 @@ Nexa SQL은 **오프라인 라이선스 파일** 하나로 정품을 확인합�
 | `⚠ License invalid (signature)` | 파일이 손상·변조됨 | 받은 파일을 다시 설치 |
 | `⚠ License invalid (machine)` | 다른 PC의 파일 | 이 PC의 요청 코드로 재발급 |
 | `⚠ License invalid (norootkey)` | 앱이 아직 공개키를 모르는 판(내부 빌드) | 정식 배포판 사용 |
-| `⚠ License outdated` | 이 판이 `updates_until` 뒤에 나옴 | 갱신 또는 이전 판 |
+| `⚠ License does not cover this version` | 이 판이 `updates_until` 뒤 · 메이저가 바뀜 · `max_version` 이후 | 재발급 또는 이전 판 |
 | `⚠ License expired` | 체험·구독 만료 | 재발급 |
 
 개발자용: Debug 빌드는 게이트가 기본 꺼져 있습니다(`license.gates_dev` · `nsql config set license.gates_dev on`으로 켜 시험). Release 빌드는 항상 켜집니다.

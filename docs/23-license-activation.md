@@ -74,6 +74,8 @@ load()  ──▶ 파일 없음 ────────────────
         ──▶ product ≠ "nexa-sql" ──────────────▶ Invalid(Product)
         ──▶ machine ≠ 이 PC ───────────────────▶ Invalid(Machine)     ← "다른 PC의 라이선스"
         ──▶ 빌드일 > updates_until ────────────▶ Outdated             ← 영구 모델: 기한 전 판만 정식(§3)
+        ──▶ 앱 Major > max_major ──────────────▶ Outdated             ← 09-27: Major가 바뀌면 무효(기본 = 발급 때 요청 앱의 Major)
+        ──▶ 앱 버전 ≥ max_version ─────────────▶ Outdated             ← 09-27: 특정 버전부터 무효(Major 무관 · 선택 조항)
         ──▶ 만료형이고 now > expires ──────────▶ Expired
         ──▶ 그 외 ─────────────────────────────▶ Licensed{tier, features, licensee, until}
 ```
