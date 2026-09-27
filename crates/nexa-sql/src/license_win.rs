@@ -91,11 +91,13 @@ impl LicenseWin {
             self.redraw();
             return;
         }
-        let size = winit::dpi::LogicalSize::new(640.0, 460.0);
+        // 높이 = 정식 상태의 표(13행) + 요청 코드 구역 + 하단(안내 줄 · 버튼)이 겹치지 않는 값(사용자 09-27 겹침 보고).
+        let size = winit::dpi::LogicalSize::new(640.0, 580.0);
         let attrs = Window::default_attributes()
             .with_title(format!("Nexa SQL — {}", t(Msg::WinLicense)))
             .with_theme(theme)
             .with_resizable(true)
+            .with_min_inner_size(winit::dpi::LogicalSize::new(520.0, 420.0))
             .with_inner_size(size);
         let mut attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
         if let Some(o) = owner {
@@ -475,14 +477,25 @@ impl LicenseWin {
                 .as_deref()
                 .map_or_else(|| t(Msg::LicNoMachine).to_string(), str::to_string);
             let code_line = nexa_ctl::draw::ellipsize_middle(&mut dc, &code_line, wi - pad * 2);
-            dc.text(pad, y, clip, &code_line, th.text_dim);
+            let btn_h_tmp = th_txt + px(14.0);
+            let floor_tmp = hi - pad - btn_h_tmp - px(8.0) - th_txt - px(6.0);
+            dc.text(
+                pad,
+                y,
+                Rect::new(0, 0, wi, floor_tmp),
+                &code_line,
+                th.text_dim,
+            );
             y += th_txt + px(6.0);
-            let hint = t(Msg::LicHint);
-            dc.text(pad, y, clip, hint, th.text_dim);
-            // 버튼 행(아래) + 안내 줄(그 위).
+            // 버튼 행(아래) + 안내 줄(그 위) — 위에서 내려온 내용은 이 선 위에서 멈춘다(겹침 방지 · 창이 낮으면 힌트부터 생략).
             let btn_h = th_txt + px(14.0);
             let btn_y = hi - pad - btn_h;
             let note_y = btn_y - px(8.0) - th_txt;
+            let floor = note_y - px(6.0);
+            if y + th_txt <= floor {
+                let hint = t(Msg::LicHint);
+                dc.text(pad, y, Rect::new(0, 0, wi, floor), hint, th.text_dim);
+            }
             let mut bx = pad;
             for (b, label) in [
                 (&mut self.btn_open, Msg::LicBtnOpen),
