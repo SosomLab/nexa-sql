@@ -25,7 +25,8 @@ pub(crate) struct ImeHint {
     last_poll: Option<Instant>,
     /// 캡처용 `show`의 만료(상태와 무관하게 잠깐 보인다).
     pin_until: Option<Instant>,
-    /// Linux 감시 소유자 토큰(안내 인스턴스마다 고유).
+    /// Linux 감시 소유자 토큰(안내 인스턴스마다 고유 · 다른 OS에서는 읽지 않는다).
+    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
     token: usize,
 }
 
