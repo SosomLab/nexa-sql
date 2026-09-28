@@ -141,7 +141,8 @@ pub(crate) fn read_password(prompt: &str) -> Option<String> {
 }
 
 /// 에코 복원 가드.
-struct EchoGuard(u32);
+// 값은 Windows 콘솔 모드 복원에만 쓴다(Unix = stty로 복원 · 자리만) — OS별 dead_code 허용(docs/93 §4-1).
+struct EchoGuard(#[cfg_attr(not(windows), allow(dead_code))] u32);
 
 #[cfg(windows)]
 fn echo_off() -> Option<EchoGuard> {
