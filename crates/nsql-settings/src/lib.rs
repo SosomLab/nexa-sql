@@ -312,6 +312,11 @@ const REFETCH_OPTS: &[(&str, Msg)] = &[
 const FILTER_SCOPE_OPTS: &[(&str, Msg)] =
     &[("all", Msg::ValFilterAll), ("shown", Msg::ValFilterShown)];
 
+/// 탭 닫기 상자 표시(`editor.tab_close_show`).
+const TAB_CLOSE_SHOW_OPTS: &[(&str, Msg)] = &[
+    ("always", Msg::ValTabCloseAlways),
+    ("hover", Msg::ValTabCloseHover),
+];
 /// 생성 SQL 바인드 목록 주석 위치(`gen.bind_note`).
 const BIND_NOTE_OPTS: &[(&str, Msg)] = &[
     ("both", Msg::ValBindNoteBoth),
@@ -1790,6 +1795,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescEditorTabUnsavedText,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // ★ 탭 닫기 상자 표시(사용자 09-28): 기본 = 늘 보임 · hover = 탭 클릭(활성)·마우스 오버·미저장 탭에서만. 편집기 탭·결과 탭 공통.
+    Entry {
+        key: "editor.tab_close_show",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabCloseShow,
+        desc: Msg::DescEditorTabCloseShow,
+        kind: SettingKind::Choice(TAB_CLOSE_SHOW_OPTS),
+        default: "always",
     },
     Entry {
         key: "editor.tab_unsaved_color",

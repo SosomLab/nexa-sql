@@ -297,7 +297,8 @@ impl App {
             | "editor.tab_line_file"
             | "editor.tab_line_preview"
             | "editor.tab_unsaved_text"
-            | "editor.tab_unsaved_color" => self.apply_tab_line_colors(),
+            | "editor.tab_unsaved_color"
+            | "editor.tab_close_show" => self.apply_tab_line_colors(),
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
             "ui.toast_secs" | "ui.toast_alpha" => {
                 self.toasts.configure(
@@ -754,6 +755,13 @@ impl App {
             ),
         ];
         self.editors.set_tab_line_colors(c);
+        // 닫기 상자 표시(09-28): always(기본) / hover — 편집기 탭 + 지금·잠든 결과 탭 바 전부.
+        let close_always = self.settings.get("editor.tab_close_show") != Some("hover");
+        self.editors.set_close_always(close_always);
+        self.panel.set_close_always(close_always);
+        for p in self.panels.values_mut() {
+            p.set_close_always(close_always);
+        }
         // ★ 미저장 탭 이름 색(사용자 09-28): 켬/끔 + 색(빈 값 = 미저장 줄 색).
         self.editors.set_tab_unsaved(
             self.settings.flag("editor.tab_unsaved_text"),

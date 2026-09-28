@@ -42,8 +42,7 @@ pub(crate) struct OpenFile {
     pub color: Option<nexa_ctl::Color>,
 }
 
-/// OPEN FILES 섹션의 최대 높이 = 패널 높이의 이 비율(넘치면 섹션 안에서 휠 스크롤 · 09-28 "탭 바처럼 전부").
-const OPEN_FILES_MAX_FRAC: f32 = 0.5;
+// (열린 파일은 목록의 앞부분으로 한 스크롤에 든다 — 사용자 09-28 "열린 파일부터 그 아래 모두 스크롤 대상".)
 /// 아이콘 조회가 다 끝난 뒤 이만큼 유휴면 셸 아이콘 워커를 거둔다(ms).
 const ICON_WORKER_IDLE_MS: u64 = 5_000;
 
@@ -163,9 +162,7 @@ pub(crate) struct ProjectPanel {
     open_rows: Vec<Rect>,
     /// OPEN FILES에서 머문 행(× 닫기 표시).
     open_hover: Option<usize>,
-    /// OPEN FILES 스크롤(첫 보이는 항목 순번 · 섹션 높이 상한을 넘을 때만) · 커서가 섹션 위인가(휠 라우팅).
-    open_scroll: usize,
-    open_over: bool,
+
     /// 활성 탭과 맞춘 선택 경로(사용자 09-22 "탭을 고르면 탐색기에도 선택 표시") — 접혀 있으면 행이 없어 보이지 않다가
     /// 사용자가 직접 펼치면(`rebuild_rows`) 그 행이 선택된 채 나타난다. 자동 확장(`project.auto_reveal`)은 `reveal`.
     sel_path: Option<PathBuf>,
@@ -241,8 +238,7 @@ impl ProjectPanel {
             open_rect: Rect::default(),
             open_rows: Vec::new(),
             open_hover: None,
-            open_scroll: 0,
-            open_over: false,
+
             typeahead: nexa_ctl::TypeAhead::default(),
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
             now_hint: 0,
@@ -382,50 +378,49 @@ impl ProjectPanel {
         )
     }
 
-    /// OPEN FILES에 한 번에 보이는 항목 수(패널 높이의 절반 안 · 최소 3) — 나머지는 섹션 스크롤.
-    fn open_visible_rows(&self) -> usize {
-        let rh = self.row_h.max(1);
-        let cap = ((self.bounds.h as f32 * OPEN_FILES_MAX_FRAC) as i32 / rh - 1).max(3) as usize;
-        self.open_files.len().min(cap)
-    }
-
-    /// OPEN FILES 섹션 높이(헤더 1줄 + 보이는 항목 줄) — **프로젝트가 없어도** 보인다(사용자 09-23) · 탭 전부(09-28 · 넘치면 스크롤).
-    fn open_files_h(&self, rh: i32) -> i32 {
+    /// 열린 파일 블록의 행 수(제목 1 + 항목 · 없으면 0) — 목록 스크롤의 **앞부분**(사용자 09-28 "열린 파일부터 아래 전부 한 스크롤").
+    fn open_block_rows(&self) -> usize {
         if self.open_files.is_empty() {
-            return 0;
+            0
+        } else {
+            1 + self.open_files.len()
         }
-        rh * (1 + self.open_visible_rows() as i32)
     }
 
-    /// OPEN FILES 항목 `k`가 보이게 섹션 스크롤을 맞춘다.
-    fn open_ensure_visible(&mut self, k: usize) {
-        let vis = self.open_visible_rows().max(1);
-        if k < self.open_scroll {
-            self.open_scroll = k;
-        } else if k >= self.open_scroll + vis {
-            self.open_scroll = k + 1 - vis;
+    /// 목록 좌표(위에서 `top` px)가 보이게 스크롤.
+    fn scroll_to_show(&mut self, top: i32) {
+        if top < self.scroll_y {
+            self.scroll_y = top;
+        } else if top + self.row_h > self.scroll_y + self.list_rect.h {
+            self.scroll_y = top + self.row_h - self.list_rect.h;
         }
+        self.clamp_scroll();
         self.relayout_open_rows();
     }
 
-    /// 섹션 스크롤·개수가 바뀐 뒤 항목 rect 다시(보이는 창 밖 = 빈 rect · 히트 없음).
+    /// 열린 파일 항목 `k`가 보이게(제목 줄 다음이 0번).
+    fn open_ensure_visible(&mut self, k: usize) {
+        self.scroll_to_show((1 + k as i32) * self.row_h);
+    }
+
+    /// 스크롤이 반영된 열린 파일 rect(제목 줄 영역 `open_rect` · 항목 줄 `open_rows` · 목록 밖 = 빈 rect · 히트 없음).
     fn relayout_open_rows(&mut self) {
+        let lr = self.list_rect;
+        let rh = self.row_h;
         let n = self.open_files.len();
-        let vis = self.open_visible_rows();
-        self.open_scroll = self.open_scroll.min(n.saturating_sub(vis));
-        let (x, y0, w, rh) = (
-            self.open_rect.x,
-            self.open_rect.y,
-            self.open_rect.w,
-            self.row_h,
-        );
-        let scroll = self.open_scroll;
+        let y0 = lr.y - self.scroll_y;
+        self.open_rect = if n == 0 {
+            Rect::new(0, 0, 0, 0)
+        } else {
+            Rect::new(lr.x, y0, lr.w, rh * (1 + n as i32))
+        };
         self.open_rows = (0..n)
             .map(|i| {
-                if i < scroll || i >= scroll + vis {
+                let r = Rect::new(lr.x, y0 + rh * (1 + i as i32), lr.w, rh);
+                if r.bottom() <= lr.y || r.y >= lr.bottom() {
                     Rect::new(0, 0, 0, 0)
                 } else {
-                    Rect::new(x, y0 + rh * (1 + (i - scroll) as i32), w, rh)
+                    r
                 }
             })
             .collect();
@@ -753,12 +748,9 @@ impl ProjectPanel {
         let ih = px(INPUT_H);
         self.row_h = px(ROW_H);
         self.header_rect = Rect::new(b.x, b.y + px(4.0), b.w, self.row_h);
-        // OPEN FILES(헤더 + 항목 줄) — 파일 필터 위(사용자 09-23).
-        let oh = self.open_files_h(self.row_h);
-        self.open_rect = Rect::new(b.x, self.header_rect.bottom() + px(2.0), b.w, oh);
-        self.relayout_open_rows();
+        // ★ 배치(사용자 09-28): 프로젝트 이름 → **파일 필터** → 목록[열린 파일 + 항목 · 폴더들 + 항목] 한 스크롤.
         // 필터 위·아래 여백 = 부품 상수(네 패널 공통 · 사용자 09-22).
-        let y1 = self.open_rect.bottom() + px(GAP_Y);
+        let y1 = self.header_rect.bottom() + px(GAP_Y);
         self.filter.set_bounds(
             Rect::new(b.x + pad, y1, (b.w - pad * 2).max(px(80.0)), ih),
             scale,
@@ -766,6 +758,7 @@ impl ProjectPanel {
         let list_top = y1 + ih + px(GAP_Y);
         self.list_rect = Rect::new(b.x, list_top, b.w, (b.bottom() - list_top).max(0));
         self.clamp_scroll();
+        self.relayout_open_rows();
     }
 
     pub(crate) fn take_open(&mut self) -> Option<OpenReq> {
@@ -1150,7 +1143,7 @@ impl ProjectPanel {
 
     fn content_h(&self) -> i32 {
         let extra = if self.scan_capped { 1 } else { 0 };
-        (self.rows.len() as i32 + extra) * self.row_h
+        (self.open_block_rows() as i32 + self.rows.len() as i32 + extra) * self.row_h
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
@@ -1198,6 +1191,12 @@ impl ProjectPanel {
             return None;
         }
         let i = ((p.y - self.list_rect.y + self.scroll_y) / self.row_h) as usize;
+        // 앞부분 = 열린 파일 블록(따로 `open_rows`로 판정).
+        let ob = self.open_block_rows();
+        if i < ob {
+            return None;
+        }
+        let i = i - ob;
         (i < self.rows.len()).then_some(i)
     }
 
@@ -1221,13 +1220,8 @@ impl ProjectPanel {
     }
 
     fn ensure_visible(&mut self, r: usize) {
-        let top = r as i32 * self.row_h;
-        if top < self.scroll_y {
-            self.scroll_y = top;
-        } else if top + self.row_h > self.scroll_y + self.list_rect.h {
-            self.scroll_y = top + self.row_h - self.list_rect.h;
-        }
-        self.clamp_scroll();
+        let top = (self.open_block_rows() + r) as i32 * self.row_h;
+        self.scroll_to_show(top);
     }
 
     /// 이벤트(마우스 = 패널 안 · 키 = 포커스일 때) — 다시 그려야 하면 `true`.
@@ -1247,18 +1241,8 @@ impl ProjectPanel {
                 return true;
             }
         }
-        // OPEN FILES 위의 휠 = 섹션 스크롤(항목이 상한을 넘을 때만 · 09-28).
-        if let InputEvent::Wheel { delta } = *ev {
-            if self.open_over && self.open_files.len() > self.open_visible_rows() {
-                let step = (-delta / 120).clamp(-3, 3);
-                let next = (self.open_scroll as i64 + step as i64).max(0) as usize;
-                if next != self.open_scroll {
-                    self.open_scroll = next;
-                    self.relayout_open_rows();
-                }
-                return true;
-            }
-        }
+        // 열린 파일 rect = 지금 스크롤 기준(목록과 한 스크롤).
+        self.relayout_open_rows();
         if self.name.is_some() {
             let (nx, ny, consumed) = self.bars.on_event(
                 ev,
@@ -1435,7 +1419,6 @@ impl ProjectPanel {
                 }
             }
             InputEvent::MouseMove { x, y } => {
-                self.open_over = self.open_rect.h > 0 && self.open_rect.contains(Point { x, y });
                 let oh = self
                     .open_rows
                     .iter()
@@ -1527,65 +1510,69 @@ impl ProjectPanel {
             None => dc.text(hr.x + pad, hy, hr, t(Msg::ProjNone), th.text_dim),
         }
         dc.select_font(FontSlot::Base, false);
-        // OPEN FILES(사용자 09-23): 제목 줄 + 탭들(활성 = 선택 배경 · 동시 편집 칸 = 외곽선 · 미저장 = ● 앞).
-        if self.open_rect.h > 0 {
-            let hr = Rect::new(
-                self.open_rect.x,
-                self.open_rect.y,
-                self.open_rect.w,
-                self.row_h,
-            );
-            dc.select_font(FontSlot::Base, true);
-            let hy = dc.text_center_y(hr.y, hr.h);
-            dc.text(hr.x + pad, hy, hr, t(Msg::ProjOpenFiles), th.text_dim);
-            dc.select_font(FontSlot::Base, false);
-            for (k, f) in self.open_files.iter().enumerate() {
-                let Some(rr) = self.open_rows.get(k).copied().filter(|r| r.h > 0) else {
-                    continue;
-                };
-                if f.active {
-                    dc.fill_rect(rr, th.sel_bg);
-                } else if f.grouped {
-                    dc.stroke_round_rect(rr, 0, th.accent, 1.0);
-                }
-                // 키보드 선택(타입어헤드·↑/↓) = 테두리(캐럿 행과 같은 표시).
-                if self.open_sel == Some(k) {
-                    dc.stroke_round_rect(rr, 0, th.accent, 1.0);
-                    dc.fill_rect_alpha(rr, th.accent, 0.10);
-                }
-                let ty = dc.text_center_y(rr.y, rr.h);
-                // 미저장 표시(사용자 09-23 정정): 점 자리를 **예약**(폭 = 작은 점 5px + 여백 · 시작 x = 머리글 "열린 파일"의 시작 x)해
-                // 파일명이 늘 같은 x에 서고, 미저장이면 그 자리 가운데에 **작은 점**(글자 ●보다 작게 · 5px 원)을 그린다.
-                let dot_x = hr.x + pad; // 머리글 글자와 같은 시작
-                let dot_d = px(5.0);
-                let dot_w = dot_d + px(6.0);
-                if f.dirty {
-                    // 점 색 = 탭 구분색(새 탭 경고색 · 파일 강조색 · 탭 바의 점과 같다 · 09-28).
-                    dc.fill_ellipse(
-                        Rect::new(dot_x, rr.y + (rr.h - dot_d) / 2, dot_d, dot_d),
-                        f.color.unwrap_or(th.text),
-                    );
-                }
-                let label = f.title.clone();
-                let cr = self.open_close_rect(rr);
-                let tx = dot_x + dot_w;
-                let clip = Rect::new(tx, rr.y, (cr.x - tx).max(0), rr.h);
-                dc.text(tx, ty, clip, &label, th.text);
-                // 머문 행 = × 닫기(오른쪽).
-                if self.open_hover == Some(k) {
-                    let xw = dc.text_width("\u{00d7}");
-                    dc.text(cr.x + (cr.w - xw) / 2, ty, cr, "\u{00d7}", th.text_dim);
-                }
-            }
-        }
         // 필터 틀(부품 · 프로젝트 없으면 흐린 자리 표시).
         self.filter.paint(dc, th, self.name.is_some());
         let lr = self.list_rect;
         let rh = self.row_h.max(1);
         self.links.clear();
+        self.relayout_open_rows();
+        // ── 열린 파일 블록(목록 앞부분 · 스크롤에 따라 위로 밀린다 · 목록 영역으로 클립 · 사용자 09-23/09-28).
+        let base = self.open_block_rows() as i32 * rh;
+        if base > 0 {
+            let hr = Rect::new(lr.x, lr.y - self.scroll_y, lr.w, rh);
+            let hclip = hr.intersection(&lr);
+            if hclip.h > 0 {
+                dc.select_font(FontSlot::Base, true);
+                let hy = dc.text_center_y(hr.y, hr.h);
+                dc.text(hr.x + pad, hy, hclip, t(Msg::ProjOpenFiles), th.text_dim);
+                dc.select_font(FontSlot::Base, false);
+            }
+            for (k, f) in self.open_files.iter().enumerate() {
+                let Some(rr) = self.open_rows.get(k).copied().filter(|r| r.h > 0) else {
+                    continue;
+                };
+                let clip = rr.intersection(&lr);
+                if clip.h <= 0 {
+                    continue;
+                }
+                let whole = clip == rr;
+                if f.active {
+                    dc.fill_rect(clip, th.sel_bg);
+                } else if f.grouped && whole {
+                    dc.stroke_round_rect(rr, 0, th.accent, 1.0);
+                }
+                // 키보드 선택(타입어헤드·↑/↓) = 테두리(캐럿 행과 같은 표시).
+                if self.open_sel == Some(k) {
+                    if whole {
+                        dc.stroke_round_rect(rr, 0, th.accent, 1.0);
+                    }
+                    dc.fill_rect_alpha(clip, th.accent, 0.10);
+                }
+                let ty = dc.text_center_y(rr.y, rr.h);
+                // 미저장 표시: 점 자리를 예약(머리글 글자와 같은 시작 x) · 점 색 = 탭 구분색(09-28).
+                let dot_x = lr.x + pad;
+                let dot_d = px(5.0);
+                let dot_w = dot_d + px(6.0);
+                if f.dirty && whole {
+                    dc.fill_ellipse(
+                        Rect::new(dot_x, rr.y + (rr.h - dot_d) / 2, dot_d, dot_d),
+                        f.color.unwrap_or(th.text),
+                    );
+                }
+                let cr = self.open_close_rect(rr);
+                let tx = dot_x + dot_w;
+                let tclip = Rect::new(tx, rr.y, (cr.x - tx).max(0), rr.h).intersection(&lr);
+                dc.text(tx, ty, tclip, &f.title, th.text);
+                // 머문 행 = × 닫기(오른쪽).
+                if self.open_hover == Some(k) && whole {
+                    let xw = dc.text_width("\u{00d7}");
+                    dc.text(cr.x + (cr.w - xw) / 2, ty, cr, "\u{00d7}", th.text_dim);
+                }
+            }
+        }
         if self.name.is_none() {
-            // 빈 상태: 안내 두 줄 + 링크 행 둘(클릭 = 명령).
-            let mut y = lr.y + px(6.0);
+            // 빈 상태: 안내 두 줄 + 링크 행 둘(클릭 = 명령) — 열린 파일 블록 아래.
+            let mut y = lr.y + base - self.scroll_y + px(6.0);
             dc.select_font(FontSlot::Status, false);
             for line in t(Msg::ProjEmptyHint).split('\n') {
                 let ty = dc.text_center_y(y, rh);
@@ -1616,8 +1603,10 @@ impl ProjectPanel {
             }
             return;
         }
-        let first = (self.scroll_y / rh) as usize;
-        let mut y = lr.y - self.scroll_y % rh;
+        // 트리 행은 열린 파일 블록(`base`) 다음부터 — 같은 스크롤.
+        let rel = (self.scroll_y - base).max(0);
+        let first = (rel / rh) as usize;
+        let mut y = lr.y + base - self.scroll_y + first as i32 * rh;
         let hover_row = self.hover.map(|(r, _)| r);
         // 셰브론·아이콘 = 글꼴 높이(객체 탐색기와 같은 규칙 · 사용자 09-22 "객체 탐색기와 동일하게").
         let cw = dc.text_height().max(10);

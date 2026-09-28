@@ -1126,6 +1126,8 @@ impl App {
             });
             let mut next = next;
             next.set_numbered(self.settings.get("grid.result_tab_title") != Some("table"));
+            // 닫기 상자 표시 규칙도 새 결과 탭 바에(설정 `editor.tab_close_show` · 09-28).
+            next.set_close_always(self.settings.get("editor.tab_close_show") != Some("hover"));
             let old = std::mem::replace(&mut self.panel, next);
             if self.panel_editor != 0 {
                 self.panels.insert(self.panel_editor, old);

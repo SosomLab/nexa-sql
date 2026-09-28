@@ -236,6 +236,12 @@ impl ResultPanel {
         self.tabs.get(self.active).map_or(0, |t| t.id)
     }
 
+    /// 닫기 상자 표시 규칙(설정 `editor.tab_close_show` · 편집기 탭과 같이 · 09-28).
+    pub(crate) fn set_close_always(&mut self, on: bool) {
+        let mut inv = Invalidations::default();
+        self.bar.set_close_always(on, &mut inv);
+    }
+
     pub(crate) fn index_of(&self, id: u64) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
     }

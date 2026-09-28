@@ -2084,6 +2084,12 @@ impl Editors {
     }
 
     /// 유형별 활성 줄 색(호스트가 설정·테마로 계산해 준다).
+    /// 닫기 상자 표시 규칙(설정 `editor.tab_close_show` · 09-28).
+    pub(crate) fn set_close_always(&mut self, on: bool) {
+        let mut inv = Invalidations::default();
+        self.tabs.set_close_always(on, &mut inv);
+    }
+
     pub(crate) fn set_tab_line_colors(&mut self, c: [Option<nexa_ctl::Color>; 3]) {
         self.tab_line = c;
         // 바 공통 색만이 아니라 **탭별 색 벡터**도 같이(설정·테마가 바뀌면 묶인 탭의 줄도 바로 따라가야 한다).
