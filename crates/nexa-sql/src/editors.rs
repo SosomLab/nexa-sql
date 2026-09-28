@@ -30,7 +30,7 @@ pub(crate) enum TabKind {
     Scratch = 0,
     /// 파일을 연 정식 탭.
     File = 1,
-    /// 미리보기 탭(◦ · 클릭마다 바뀜).
+    /// 미리보기 탭(미리보기색 · 클릭마다 바뀜).
     Preview = 2,
 }
 
@@ -100,7 +100,7 @@ pub(crate) struct Editors {
     loading: std::collections::HashSet<u64>,
     /// ★ **미리보기 탭**(Sublime 차용 · 사용자 09-22 · docs/67 §4): 프로젝트 탐색기에서 한 번 클릭한 파일이 들어오는 탭 —
     /// 한 개만 두고 다음 클릭은 그 탭의 본문을 **바꿔 넣는다**(앞 파일의 버퍼는 버린다) · 본문을 고치면 정식 탭으로 승격(표식 제거 ·
-    /// 다음 클릭은 새 미리보기 탭). 제목 앞 `◦`. 닫히면 없는 것.
+    /// 다음 클릭은 새 미리보기 탭). 표시 = 탭 색(줄·닫기 표시 · 제목 접두 없음 · 09-28). 닫히면 없는 것.
     preview: Option<u64>,
     line_numbers: bool,
     tooltip_on: bool,
@@ -1625,13 +1625,8 @@ impl Editors {
 
     fn shown_title(&self, i: usize) -> String {
         // 미저장 표시는 닫기 자리의 **점**(Sublime식 · 09-28) — 제목 앞 `*`는 더 붙이지 않는다(사용자 09-28).
+        // 미리보기 탭도 제목은 그대로 — 표시는 **색**(상단 줄·닫기 표시 = 미리보기색 · 09-28 사용자 "색으로 대체했으니 앞 표시 제거").
         let base = self.titles[i].clone();
-        // 미리보기 탭 = 제목 앞 ◦(Sublime의 기울임 대신 · 사용자 09-22).
-        let base = if self.preview == Some(self.tab_id(i)) {
-            format!("◦ {base}")
-        } else {
-            base
-        };
         // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기).
         let base = if self.loading.contains(&self.tab_id(i)) {
             format!("{base} …")
@@ -2484,7 +2479,11 @@ mod load_tab_tests {
         assert_eq!(ed.len(), base + 1);
         assert_eq!(ed.tab_id(j), id_a);
         assert_eq!(ed.path_of(j), Some(b.clone()));
-        assert!(ed.shown_title(j).starts_with("◦ "));
+        assert!(
+            ed.is_preview(j),
+            "미리보기 표시 = 색(제목 접두 없음 · 09-28)"
+        );
+        assert_eq!(ed.shown_title(j), "b.sql");
         // 편집 → 승격(표식 사라짐).
         ed.cur_mut().set_text("B changed");
         assert!(ed.poll_preview());
