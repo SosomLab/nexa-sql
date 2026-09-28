@@ -213,6 +213,9 @@ impl App {
                     self.primary_sess = self.sess.id;
                     if !self.sess.is_private() {
                         self.default_shared = self.sess.id;
+                        // ★ 접속 창으로 붙인 연결은 **지금 탭**에 바로(사용자 09-28) — 다른 탭은 묶인 대로(모든 탭은 만들어질 때 묶인다).
+                        let sid = self.sess.id;
+                        self.bind_active_tab_to(sid);
                     }
                     self.default_spec = self.sess.last_spec.clone();
                     self.sess.spec = self.sess.last_spec.clone();

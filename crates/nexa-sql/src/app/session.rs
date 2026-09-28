@@ -85,6 +85,20 @@ impl App {
         sessions::route_tab(private, bound, alive, self.default_shared)
     }
 
+    /// ★ 지금 활성 탭을 공유 세션 `id`에 묶는다(전용 세션이 있는 탭은 그대로) — 접속 창으로 새 연결을 붙였을 때·"이 연결 사용"
+    ///   (사용자 09-28 "새 서버에 연결하면 현재 탭에 자동 적용" · 다른 탭은 건드리지 않는다). 바뀌면 그 탭의 결과 탭을 얼린다.
+    pub(crate) fn bind_active_tab_to(&mut self, id: u64) {
+        let tab = self.editors.active_id();
+        if self.all_sess().any(|s| s.owner == Some(tab) && !s.closing) {
+            return;
+        }
+        if self.tab_bind.get(&tab) != Some(&id) {
+            self.tab_bind.insert(tab, id);
+            self.freeze_results_of(tab);
+            self.sess_ui_dirty = true;
+        }
+    }
+
     /// 공유 세션을 **실제로 쓰는** 탭 수(해제 버튼 배지·툴팁 · 해제 물음 · 세션 창).
     /// 🔧 09-28(사용자 "편집기 탭은 3개보다 많은데 배지가 3"): 묶임 표(`tab_bind`)는 탭이 **활성화될 때** 늦게 채워져 프로젝트
     ///   복원 직후 아직 열어 보지 않은 탭을 빼먹었다 → 탭마다 라우팅(`sess_id_for_tab` = 전용 → 묶임 → 기본 공유)으로 센다.
@@ -108,8 +122,9 @@ impl App {
         id
     }
 
-    /// 공유 연결 활성화 — 묶이지 않은 탭과 탐색기·접속 창 표시가 이 연결을 따른다.
+    /// 공유 연결 활성화 — **지금 탭**과 새 탭·탐색기·접속 창 표시가 이 연결을 따른다(다른 탭은 묶인 대로 · 09-28).
     pub(crate) fn activate_shared(&mut self, id: u64) {
+        self.bind_active_tab_to(id);
         let Some((spec, profile, desc, connected)) =
             self.sess_by_id(id).filter(|s| !s.is_private()).map(|s| {
                 (
@@ -279,15 +294,24 @@ impl App {
                 }
             }
         }
-        let want = self.sess_id_for_tab(tab);
-        // 공유 모드의 새 탭 = **그때의 활성 공유 연결**에 바로 묶인다(사용자 09-18) — 뒤에 활성 연결을 바꿔도 이 탭은 그대로.
-        if !self.all_sess().any(|s| s.owner == Some(tab) && !s.closing)
-            && !self.tab_bind.contains_key(&tab)
-        {
-            self.tab_bind.insert(tab, want);
+        // ★ 공유 모드의 탭은 **만들어질 때(복원 포함) 그때의 활성 공유 연결**에 바로 묶인다(사용자 09-18) — 뒤에 활성 연결을 바꿔도
+        //   이 탭은 그대로. 🔧 09-28(사용자 실기 "탭 하나의 연결만 바꿨는데 모든 탭이 바뀜"): 종전엔 **활성 탭만** 묶어, 아직 열어
+        //   보지 않은 탭들이 떠다니다가 새 접속(활성 공유 연결 교체)에 한꺼번에 옮겨 갔다 → 전용 세션이 없는 탭 전부를 지금 묶는다.
+        let default = self.default_shared;
+        let mut bound_any = false;
+        for t in self.editors.tab_ids() {
+            if !self.tab_bind.contains_key(&t)
+                && !self.all_sess().any(|s| s.owner == Some(t) && !s.closing)
+            {
+                self.tab_bind.insert(t, default);
+                bound_any = true;
+            }
+        }
+        if bound_any {
             // 함께 쓰는 탭 수가 바뀌었다 → 해제 버튼 배지·툴팁을 바로(사용자 09-19 "탭이 추가돼도 숫자가 안 는다").
             self.sess_ui_dirty = true;
         }
+        let want = self.sess_id_for_tab(tab);
         if self.sess.id != want {
             if let Some(i) = self.parked.iter().position(|s| s.id == want) {
                 std::mem::swap(&mut self.sess, &mut self.parked[i]);
