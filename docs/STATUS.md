@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ (105차 mac = 라이선스 창 포커스 복귀 · journal §18) **다음 세션 시작점 = [journal 2026-09-27 §11 인계](journal/2026-09-27.md) + [§14-3](journal/2026-09-27.md)** — 라이선스 체계 코드 완성 · ✅ 루트 공개키 `root-v1` 등재(nexa-license 1bc033c) · 다음 = **첫 발급 실기**(절차 [91 §2-1](91-license-root-key-operations.md)) → T-244 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-09-28](journal/2026-09-28.md)**(102차 후반 win = 코드 건강 점검·리팩터링 · 절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
 
 ## 2026-09-28 (102차 후반 · **win**) — 🧹 코드 건강 점검 · 전체 리팩터링([93](93-code-health-and-refactoring.md) · [journal](journal/2026-09-28.md))
 
