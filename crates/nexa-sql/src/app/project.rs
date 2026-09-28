@@ -813,15 +813,24 @@ impl App {
         tb.goto_line(line + 1);
     }
 
-    /// 자동 저장의 다음 마감 시각(틱 스케줄러 깨움용 · 사용자 09-23): 사건 디바운스면 `touch + 2초` · 아니면 `마지막 저장 + 주기`.
+    /// 자동 저장의 다음 마감 시각(틱 스케줄러 깨움용 · 사용자 09-23): `min(최초 변경 + change_secs, 마지막 저장·점검 + secs)`.
     pub(crate) fn project_autosave_next(&self, now: Instant) -> Option<Instant> {
         if !self.project.is_open() || !self.project_autosave_on() {
             return None;
         }
-        let secs = self.settings.int("project.autosave_secs").max(5) as u64;
+        let (secs, quick) = self.project_autosave_secs();
         let periodic = self.project_autosave_at + Duration::from_secs(secs);
-        let touched = self.project_touch_at.map(|t| t + Duration::from_secs(2));
-        Some(touched.map_or(periodic, |t| t.min(periodic)).max(now))
+        let changed = self
+            .project_touch_at
+            .map(|t| t + Duration::from_secs(quick));
+        Some(changed.map_or(periodic, |t| t.min(periodic)).max(now))
+    }
+
+    /// (주기 점검 초 `project.autosave_secs` ≥ 5, 변경 뒤 저장 초 `project.autosave_change_secs` ≥ 1 · 주기보다 크지 않게).
+    fn project_autosave_secs(&self) -> (u64, u64) {
+        let secs = self.settings.int("project.autosave_secs").max(5) as u64;
+        let quick = (self.settings.int("project.autosave_change_secs").max(1) as u64).min(secs);
+        (secs, quick)
     }
 
     /// ★ 종료 직전 마지막 저장(사용자 09-23 "프로그램 종료 시 꼭 저장"): 프로젝트(자동 저장이 켜져 있을 때 · 꺼져 있으면
@@ -833,23 +842,36 @@ impl App {
         self.bookmarks.save_now();
     }
 
-    /// 주기 자동 저장(설정 `project.autosave` · `project.autosave_secs`) — 바뀐 것이 있을 때만 쓴다.
+    /// ★ 자동 저장 틱(사용자 09-28 정의 · [70 §7](../../../docs/70-autosave-and-restore.md)):
+    ///   ① **감시된 변경**(변경 세대 = 탭 집합·순서·본문 세대·활성 탭 · `project_touch` = 폴더·탐색기 선택)은 **최초 변경 시점 +
+    ///      `project.autosave_change_secs`(10초)** 에 1회 저장 — 그 안의 추가 변경은 타이머를 옮기지 않는다(최초 트리거 기준).
+    ///   ② **감시되지 않는 변경**(캐럿 · 북마크 · 탐색기 펼침 · 패널 표시 · 검색어 · 프로필 표식)은 **마지막 저장·점검 +
+    ///      `project.autosave_secs`(30초)** 주기 점검으로 — 문서를 만들어 이전 저장본과 같으면 쓰지 않는다.
+    ///   ③ 어느 길이든 저장·점검하면 두 타이머를 모두 초기화한다(저장 횟수 최소화) · 변경이 없으면 쓰지 않는다.
     pub(crate) fn project_autosave_tick(&mut self) {
         if !self.project.is_open() || !self.project_autosave_on() {
             return;
         }
-        let secs = self.settings.int("project.autosave_secs").max(5) as u64;
-        let touched = self
+        let (secs, quick) = self.project_autosave_secs();
+        // 최초 변경 시각(감시된 변경) — 이미 잡혀 있으면 옮기지 않는다.
+        if self.project_touch_at.is_none() && self.project_autosave_dirty() {
+            self.project_touch_at = Some(Instant::now());
+        }
+        let changed_due = self
             .project_touch_at
-            .is_some_and(|t| t.elapsed() >= Duration::from_secs(2));
-        if !touched && self.project_autosave_at.elapsed().as_secs() < secs {
+            .is_some_and(|t| t.elapsed() >= Duration::from_secs(quick));
+        let periodic_due = self.project_autosave_at.elapsed().as_secs() >= secs;
+        if !changed_due && !periodic_due {
             return;
         }
         self.project_touch_at = None;
         self.project_autosave_at = Instant::now();
         self.project_capture_state();
         let js = self.project.to_document();
-        if js != self.project_last_json && self.project.save().is_ok() {
+        if js == self.project_last_json {
+            // 🔧 쓸 것이 없어도 "저장됨"이다 — 세대만 다르고 문서가 같으면 `*`가 영원히 남던 결함(사용자 09-28).
+            self.project_mark_saved_gen();
+        } else if self.project.save().is_ok() {
             self.project_last_json = js;
             self.project_mark_saved_gen();
         }
@@ -884,7 +906,10 @@ impl App {
     /// 작업 환경이 바뀌었다(탭 · 폴더) → 2초 뒤 저장(자동 저장 켬 · 프로젝트 열림).
     fn project_touch(&mut self) {
         if self.project.is_open() {
-            self.project_touch_at = Some(Instant::now());
+            // 최초 변경 시각은 옮기지 않는다(사용자 09-28 "최초 트리거 + N초에 저장").
+            if self.project_touch_at.is_none() {
+                self.project_touch_at = Some(Instant::now());
+            }
             self.project_touch_seq = self.project_touch_seq.wrapping_add(1);
         }
     }
@@ -1012,6 +1037,10 @@ impl App {
                         &self.project.folders,
                         self.project.last_selected.clone().as_deref(),
                     );
+                    // 🔧 편집기에도 폴더 목록을(사용자 09-28 "처음 열면 '프로젝트 탐색기에서 보기'가 비활성 · 패널을 다녀오면
+                    //   활성") — 이 길은 `project_changed`를 타지 않아 탭 메뉴의 `in_project` 판정이 빈 목록을 보고 있었다.
+                    self.editors
+                        .set_project_folders(self.project.folders.clone());
                 }
             }
             Err(e) => {

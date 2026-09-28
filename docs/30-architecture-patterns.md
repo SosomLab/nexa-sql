@@ -97,6 +97,8 @@
 | **RowSource 포트 · ResultData(Arc 세그먼트) · View(인덱스 투영)** | `nsql-core` · `nsql-io` | 결과 **한 세트** · 형식별 사본 0 · 렌더러 하나(`render_block`/`generate_src`) · NULL 글자 설정 1 | 그리드 · 텍스트 보기 7종 · 복사 · SQL 복사 · CLI(DR-33) |
 | **ToolDock · ToolGroup · DockLayout · ToolItem::separator + ToolFloatWin** | nexa-ctl `tooldock` · `toolfloat.rs` | 목적별 그룹(아이콘·구분자 계층) · 그립 드래그 순서 · 떼어 내기 = 액션만(창은 호스트) · 배치 문자열 1키 · 툴바 소유 한 곳 | 상단 툴바(09-17) · 결과 도구줄 후보 |
 
+| **타이밍 두 벌 — 트레일링 스로틀 / 트레일링 디바운스**(사용자 09-28 용어 확정) | `app/project.rs` `project_autosave_tick`(스로틀 + 주기 안전망) · `persist_settings`·저장 큐(디바운스 · [70 §3](70-autosave-and-restore.md)) | 잦은 요청을 1회로 접기 — **스로틀** = 창의 기준이 **첫** 사건 · 창이 닫힐 때 쌓인 것을 한 번에(코얼레싱·배치 · 프로젝트/파일 저장) · **디바운스** = 창의 기준이 **마지막** 사건 · 마지막 값이 전체를 대변(latest-wins · 설정 저장 · 잦은 호출) · 새 타이머를 만들 때 둘 중 무엇인지 먼저 정한다([70 §7-1](70-autosave-and-restore.md)) | 프로젝트 자동 저장 · 설정 저장 · 저장 큐 |
+
 규칙: 같은 문제를 두 번째 만나면 **부품으로 올린다**(nexa-ui면 공용). 창마다 복사한 코드는 이 표의 후보다.
 
 ## 3. 관리 범위 — 지금 코드에서 벗어나 있는 것(개선 로드맵)

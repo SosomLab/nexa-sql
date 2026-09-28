@@ -1624,11 +1624,8 @@ impl Editors {
     }
 
     fn shown_title(&self, i: usize) -> String {
-        let base = if self.is_dirty(i) {
-            format!("*{}", self.titles[i])
-        } else {
-            self.titles[i].clone()
-        };
+        // 미저장 표시는 닫기 자리의 **점**(Sublime식 · 09-28) — 제목 앞 `*`는 더 붙이지 않는다(사용자 09-28).
+        let base = self.titles[i].clone();
         // 미리보기 탭 = 제목 앞 ◦(Sublime의 기울임 대신 · 사용자 09-22).
         let base = if self.preview == Some(self.tab_id(i)) {
             format!("◦ {base}")

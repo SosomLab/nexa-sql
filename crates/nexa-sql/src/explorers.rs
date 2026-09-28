@@ -672,11 +672,18 @@ impl ExplorerSet {
         } else {
             self.bounds
         };
+        // 기준 행 = 클릭한 그 헤더(★ 고정 헤더를 눌렀으면 고정 자리 — 원래 헤더 rect는 스크롤로 영역 위에 있어 메뉴가 툴바
+        //   위로 올라갔다 · 사용자 09-28) · 둘 다 아니면 클릭 점.
         let row = self
-            .headers
-            .iter()
-            .find(|(f, _)| *f == first)
-            .map_or(Rect::new(p.x, p.y, 1, 1), |(_, r)| *r);
+            .pinned
+            .filter(|(f, r)| *f == first && r.contains(p))
+            .or_else(|| {
+                self.headers
+                    .iter()
+                    .find(|(f, r)| *f == first && r.contains(p))
+                    .copied()
+            })
+            .map_or(Rect::new(p.x, p.y, 1, 1), |(_, r)| r);
         self.menu.set_scale(self.scale);
         self.menu_group = Some(first);
         let text_w = (160.0 * self.scale).round() as i32;

@@ -2167,6 +2167,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 5, max: 3600 },
         default: "30",
     },
+    // ★ 감시된 변경(탭·본문·활성 탭·폴더·선택)은 최초 변경 + 이 초에 1회 저장(사용자 09-28 · 70 §7).
+    Entry {
+        key: "project.autosave_change_secs",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectAutosaveChangeSecs,
+        desc: Msg::DescProjectAutosaveChangeSecs,
+        kind: SettingKind::Int { min: 1, max: 3600 },
+        default: "10",
+    },
     Entry {
         key: "project.scan_max",
         cat: Msg::CatProject,
