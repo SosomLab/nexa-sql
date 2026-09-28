@@ -7,6 +7,7 @@
 | release/v0.1.0 · fix/release-toolchain-components · fix/tpn-utf8 · fix/release-wix-rustup · fix/release-smoke | 2026-09-28 | 2026-09-28 → main(삭제) | 5 | 🚀 v0.1.0 — 버전·brew 채널·정적 CRT·CLI 버전 정보 · 첫 릴리스 실행 결함 4회 수정 |
 | fix/ci-echoguard-unix · fix/ci-cf-html-unix | 2026-09-28 | 2026-09-28 → main(삭제) | 2 | 🔧 OS별 `allow(dead_code)` 복구(macOS·Linux CI) |
 | docs/code-health-wrapup | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 102차 후반 진행사항 최신화 |
+| feat/lang-follows-os | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 🌐 기본 언어 = OS 표시 언어(지원 밖 = 영어) · 사용자 선택 유지 |
 | refactor/dead-code-cleanup | 2026-09-27 | 2026-09-28 → main(삭제) | 4 | 102차(win) 🧹 코드 건강 점검·전체 리팩터링([93](93-code-health-and-refactoring.md)) — 미사용·임시 정리 · main.rs `app/` 분할 · 가시성 축소 · 공통 부품 6 · `window_event`/`route_inner` 분해 · `scripts/code-health.py` · 원복 태그 `baseline/pre-refactor-2026-09-27` |
 | fix/ci-imehint-token | 2026-09-27 | 2026-09-27 → main(삭제) | 1 | 🔧 CI mac·win = `ImeHint.token` dead_code → `cfg_attr(allow)`(42c7413 · ci 3-OS ✓) |
 | fix/linux-vault-ime-107 | 2026-09-27 | 2026-09-27 → main(삭제) | 10 | 107차(Linux) — 🔧 세션 자격 금고(탐색기 자동 제거 forget) · ★ Linux IME 감시(ibus 패널 · 소유자 토큰 · 폴백 전용 · 창 수명 · 경주 제거) · 플래시 유지·페이드 · 향상 모드 등재 · journal §22 |
