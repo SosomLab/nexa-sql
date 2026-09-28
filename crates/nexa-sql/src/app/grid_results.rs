@@ -390,6 +390,37 @@ impl App {
         self.set_focus(Focus::Grid);
     }
 
+    /// 실행용 새 결과 탭(설정 `grid.result_tabs`일 때만) — 만들었으면 그 전 활성 탭 id.
+    pub(crate) fn fresh_result_tab_for_run(&mut self) -> Option<u64> {
+        if !self.settings.flag("grid.result_tabs") {
+            return None;
+        }
+        let prev = self.panel.tabs.get(self.panel.active).map(|t| t.id);
+        self.new_result_tab();
+        prev
+    }
+
+    /// 실행이 실제로 시작됐으면 "새 탭으로 시작함"을 세션에 적는다(시작 못 했으면 = 막힘 · 곧바로 걷는다).
+    pub(crate) fn mark_fresh_run_tab(&mut self, prev: Option<u64>) {
+        let Some(prev) = prev else { return };
+        if self.sess.run_tracking {
+            self.sess.run_fresh_prev = Some(prev);
+        } else {
+            let fresh = self.panel.tabs.get(self.panel.active).map(|t| t.id);
+            self.drop_fresh_result_tab(fresh, prev);
+        }
+    }
+
+    /// ★ 결과 없이 끝난 실행의 새 결과 탭을 거두고 그 전 탭으로(사용자 09-28 "실행 오류면 결과 탭을 추가할 필요 없다").
+    pub(crate) fn drop_fresh_result_tab(&mut self, fresh: Option<u64>, prev: u64) {
+        if let Some(i) = fresh.and_then(|id| self.panel.index_of(id)) {
+            self.close_result_tab(i);
+        }
+        if let Some(j) = self.panel.index_of(prev) {
+            self.activate_result(j);
+        }
+    }
+
     /// 새 결과 탭(Ctrl+\ · D-71): 현재 설정을 물려받은 빈 그리드 · 상한을 넘으면 가장 오래된 비고정 탭 정리.
     pub(crate) fn new_result_tab(&mut self) {
         let a = self.panel.active;

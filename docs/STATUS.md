@@ -2,7 +2,7 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-09-28 §8](journal/2026-09-28.md)**(102차 끝 3 win = 사용자 요구 18건 · D-145 게이트 기본 끔 · 설정 UX · 트랜잭션 로그 3계층 · 실기 T-252 · D-146 → T-250) · 102차 후반 = 코드 건강 점검·리팩터링(절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-09-28 §8](journal/2026-09-28.md)**(102차 끝 3 win = 사용자 요구 18건 + 실기 후속 · D-145 게이트 기본 끔 · ★ 지연 로딩 = 설계 기본 [61 §1-8](61-core-design-and-working-rules.md) · 설정 UX · 트랜잭션 로그 3계층 · 실기 T-252 · D-146 → T-250) · 102차 후반 = 코드 건강 점검·리팩터링(절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
 
 ## 2026-09-28 (102차 끝 3 · **win**) — ★ 사용자 요구 18건 일괄([journal §8](journal/2026-09-28.md)) · ★ **D-145 라이선스 게이트 기본 끔**(개인 사용 = 전 기능) · 설정 UX · 트랜잭션 로그 3계층
 
@@ -10,6 +10,7 @@
 - ★ 설정 창: 정렬 = 그룹 → 카테고리 → **키 접두 묶음** → 등재 순(`display_order`) · 키 옆 **복사 버튼**(✓ 원복 · Shift/Ctrl+클릭 = 보이는 설정 전부) · **고급** `ADVANCED`/`is_advanced`(HIDDEN ∪ DBMS ∪ 표 · Advanced 라벨 오른쪽 · 꺼짐 = 숨김 + "N개 숨김" · 켜짐 = 키 강조색) · **큰 파일 카테고리** · ★ **키 이름 바꿈 부품** `RENAMED`/`canonical_key`(1차 4키) · 📐 [94 설정 키 이름 체계](94-settings-key-naming-and-location.md)(2레벨 유지·강화 권장 · D-146 2차 rename 대기 · T-250).
 - ★ 트랜잭션 로그 **3계층**([44 §9](44-transaction-log.md)): `RunEvent::Binds`(실행 직전 매핑) · `TxEntry.binds` · `bound_sql`(값 치환 · 클라이언트 읽기용) · 창 행 클릭 = 상세(① 보낸 문장 ② 바인드 표 ③ 값 치환) · 메뉴 "값 적용 문장 복사/새 탭".
 - 실기 후속([journal §8-4](journal/2026-09-28.md)): 🔧 패널 타입어헤드 **한글** = 객체 탐색기 방식(`typeahead_target` → IME 끊음 + 한/영 자판→자모) · ★ 아웃라인 타입어헤드 · 🔧 확장 관리자 끄기 = 확장 뷰 탭 전부 닫기 · ★ 확장 보기 탭 = 결과 영역 없음(`view_layout`).
+- 실기 후속 2([journal §8-4 뒷부분](journal/2026-09-28.md)): ★ **지연 로딩 = 설계 기본**([61 §1-8](61-core-design-and-working-rules.md) · CLAUDE.md §3 · 첫 적용 = 객체 상세 접힘 = 설명만 · ▲ 펼침 때 상세 · 캐시 즉시 배정 [86 §5-2](86-object-details-panel.md)) · 상태줄 자동 저장 = 설정 값 표시 + 메뉴(프로젝트 폴더/일반 파일 자동 저장 위치를 파일 선택한 채 열기 `reveal_in_os` · 자동 저장 설정…) · 클릭되는 상태줄 항목 hover 선택색 · 상태줄 메뉴 폭 = 언어별 문구 실측(최소 80px · 단축키 열 확보) · 필터 틀 모서리 호 제거 · 🔧 휠 시험 병렬 경합(Linux CI) 직렬화 · 커밋 a511b27 · 7ffb6b6 · 0fa2fe4 · 82c1114 · ae49995 · CI ✓.
 - 그 밖: 연결 해제 기본 = 항상 고르기(D-144) · SQL 생성 바인드 목록 주석(`gen.bind_note`) · 객체 상세 = 탐색기 글꼴 · 프로젝트(OPEN FILES 포함)·북마크 **타입어헤드** · IME 두 키 = Input(`input.ime_hint` ▸ 구독 Linux) · **미저장 탭 이름 색**(nexa-ui 87차 `set_title_colors` · `editor.tab_unsaved_*` · 식별선 미저장/저장된 파일/미리보기) · 상태줄 **자동 저장 표식**(클릭 = 폴더) · `search.max_file_kb` 8192(SSD)/향상 2048(HDD · 72 §4-1) · 시험 전부 초록 · 실기 = T-252.
 
 ## 2026-09-28 (102차 끝 2 · **win**) — 🌐 기본 언어 = OS 표시 언어(지원 밖 = 영어 · [journal §7](journal/2026-09-28.md))

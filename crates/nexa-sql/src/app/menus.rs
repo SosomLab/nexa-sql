@@ -792,17 +792,19 @@ impl App {
             // 이 탭의 변수 표를 새 결과 탭으로(`SHOW VARIABLES` — 러너가 탭 층 + 공유 층 + 프로필 층을 한 표로 낸다 · docs/63 V2).
             "vars.show" => {
                 if !self.sess.busy && self.gate_open() {
-                    if self.settings.flag("grid.result_tabs") {
-                        self.new_result_tab();
-                    }
+                    let prev = self.fresh_result_tab_for_run();
                     self.run_text("SHOW VARIABLES".to_string(), 0, true);
+                    self.mark_fresh_run_tab(prev);
                 }
             }
             "run.statement_new_tab" => {
-                if self.settings.flag("grid.result_tabs") && !self.sess.busy {
-                    self.new_result_tab();
-                }
+                let prev = if self.sess.busy {
+                    None
+                } else {
+                    self.fresh_result_tab_for_run()
+                };
                 self.run_sql(false);
+                self.mark_fresh_run_tab(prev);
             }
             "result.tab.close" => {
                 let i = self.panel.active;

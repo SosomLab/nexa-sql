@@ -492,13 +492,29 @@ impl TxLogWin {
             // 스위치(아래)
             let sw_h = th_txt + px(8.0);
             let sw_y = hi - pad - sw_h;
-            let mut sx = pad;
-            for sw in [&mut self.sw_all, &mut self.sw_prev, &mut self.sw_tab] {
+            // 스위치 = 글 폭에 맞춘 너비 + 사이 구분선(로그 창 푸터와 같은 모양 · 사용자 09-28 "좌우 여백 최소화").
+            let mut sx = pad / 2;
+            let track_w = px(34.0);
+            for (i, (sw, msg)) in [
+                (&mut self.sw_all, Msg::TxSwAll),
+                (&mut self.sw_prev, Msg::TxSwPrev),
+                (&mut self.sw_tab, Msg::TxSwThisTab),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if i > 0 {
+                    dc.fill_rect(
+                        Rect::new(sx + pad / 2, sw_y + px(3.0), 1, sw_h - px(6.0)),
+                        th.border,
+                    );
+                    sx += pad;
+                }
                 sw.set_scale(s);
-                let w = px(230.0);
+                let w = track_w + dc.text_width(t(msg)) + px(6.0);
                 sw.set_bounds(Rect::new(sx, sw_y, w, sw_h), &mut Invalidations::default());
                 sw.paint(&mut dc, th);
-                sx += w + pad;
+                sx += w;
             }
             // "차단 중" 띠(검색 상자와 표 사이 · 최대 3줄 + 나머지 개수) — 위험색 왼쪽 막대 + 옅은 바탕.
             let mut top = pad + sh + pad;

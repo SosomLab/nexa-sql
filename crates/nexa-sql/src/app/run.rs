@@ -175,6 +175,7 @@ impl App {
         self.sess.run_line_base = line_base;
         self.grid.set_source_sql(&src);
         self.sess.run_tab = self.grid_tab;
+        self.sess.run_fresh_prev = None;
         self.sess.run_set_stmt = None;
         self.sess.run_children = 0;
         self.sess.run_tracking = true;

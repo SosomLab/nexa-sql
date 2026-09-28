@@ -130,6 +130,9 @@ pub(crate) struct Sess {
     pub run_children: u32,
     /// 지금 끝나기를 기다리는 작업이 **스크립트 실행**인가(접속·커밋의 완료 신호와 구별).
     pub run_tracking: bool,
+    /// ★ 이번 실행을 위해 **새로 만든** 결과 탭이면 그 전 활성 탭의 id — 결과 없이 오류로 끝나면 새 탭을 거두고 그 탭으로 돌아간다
+    ///   (사용자 09-28 "실행 오류면 결과 탭을 추가할 필요 없다").
+    pub run_fresh_prev: Option<u64>,
     pub last_run_items: Vec<String>,
     pub run_line_base: usize,
     pub single_run: bool,
@@ -207,6 +210,7 @@ impl Sess {
             run_tab: 0,
             shared_vars: Vec::new(),
             run_set_stmt: None,
+            run_fresh_prev: None,
             run_children: 0,
             run_tracking: false,
             last_run_items: Vec::new(),
