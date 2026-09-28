@@ -1077,24 +1077,48 @@ impl App {
         self.redraw();
     }
 
-    /// ★ 상태줄 자동 저장 표식 클릭(사용자 09-28): 자동 저장 폴더를 OS 탐색기로 — 프로젝트 모드 = 프로젝트 파일의 폴더 ·
-    ///   폴더 모드 = `<폴더>/.nsql` · 파일 모드 = 전역 설정 폴더(백업·워크스페이스가 거기 있다). 없으면 상태줄 안내.
-    pub(crate) fn open_autosave_folder(&mut self) {
-        let mode = project::WorkMode::of(self.project.path.as_deref(), self.arg_folder.as_deref());
-        let dir = match &mode {
-            project::WorkMode::Project(p) => p.parent().map(std::path::Path::to_path_buf),
-            other => other.local_dir(),
-        };
-        let Some(dir) = dir.filter(|d| d.is_dir()) else {
-            self.sess.status = t(Msg::StAutosaveNone).into();
-            return;
-        };
-        match crate::open_external(&dir) {
-            Ok(()) => {
-                self.sess.status = tf(Msg::StAutosaveOpened, &[&dir.display().to_string()]);
+    /// ★ 상태줄 자동 저장 메뉴의 답(사용자 09-28): `project` = 프로젝트 파일을 선택한 채 그 폴더를 OS 탐색기로 ·
+    ///   `backups` = 일반 파일 자동 저장 위치(`backups/files`)를 이 탭의 최신 스냅숏을 선택한 채(없으면 폴더만) · `settings` = 설정 창.
+    pub(crate) fn autosave_pick(&mut self, what: &str) {
+        match what {
+            "project" => {
+                let Some(p) = self.project.path.clone() else {
+                    self.sess.status = t(Msg::StAutosaveNone).into();
+                    return;
+                };
+                self.sess.status = match crate::reveal_in_os(&p) {
+                    Ok(()) => tf(Msg::StAutosaveOpened, &[&p.display().to_string()]),
+                    Err(e) => e,
+                };
             }
-            Err(e) => self.sess.status = e,
+            "backups" => {
+                let Some(dir) = crate::backups::snapshot_dir() else {
+                    self.sess.status = t(Msg::StAutosaveNone).into();
+                    return;
+                };
+                let _ = std::fs::create_dir_all(&dir);
+                let snap = self
+                    .editors
+                    .active_path()
+                    .and_then(|p| crate::backups::snapshot_file(&p));
+                self.sess.status = match snap {
+                    Some(f) => match crate::reveal_in_os(&f) {
+                        Ok(()) => tf(Msg::StAutosaveOpened, &[&f.display().to_string()]),
+                        Err(e) => e,
+                    },
+                    None => match crate::open_external(&dir) {
+                        Ok(()) => tf(Msg::StAutosaveNoSnapshot, &[&dir.display().to_string()]),
+                        Err(e) => e,
+                    },
+                };
+            }
+            "settings" => {
+                self.prefs_query = Some("project.autosave".into());
+                self.open_prefs = true;
+            }
+            _ => {}
         }
+        self.redraw();
     }
 
     /// 지금 작업 환경을 담은 프로젝트 문서가 마지막 저장본과 다른가(종료 물음 · 자동 저장 틱과 같은 비교 · 09-28).

@@ -59,6 +59,34 @@ impl App {
     }
 
     /// 상태줄 줄끝 팝업(LF/CRLF · 현재 = ✓) — 고르면 활성 탭 줄끝 변경(저장 때 반영 · docs/38).
+    /// ★ 상태줄 자동 저장 항목 클릭 = 메뉴(사용자 09-28): 프로젝트 폴더 열기(프로젝트 파일 선택 · 프로젝트일 때) · 일반 파일 자동 저장
+    /// 위치 열기(이 탭의 최신 스냅숏 선택) · 자동 저장 설정(설정 창을 `project.autosave`로).
+    pub(crate) fn open_autosave_menu(&mut self) {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let mut items = Vec::new();
+        if self.project.is_open() {
+            items.push(CtxItem::item("autosave.project", t(Msg::MnAutosaveProject)));
+        }
+        items.push(CtxItem::item("autosave.backups", t(Msg::MnAutosaveBackups)));
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::item(
+            "autosave.settings",
+            t(Msg::MnAutosaveSettings),
+        ));
+        let r = self.status_autosave_rect;
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(r);
+        self.status_menu.set_scale(self.scale);
+        self.status_menu
+            .open_at(r.x, r.y, items, host, px(320.0, self.scale));
+    }
+
     pub(crate) fn open_eol_menu(&mut self) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
         // Sublime식 3종(사용자 09-16 캡처): Windows CRLF · Unix LF · Mac OS 9 CR · 현재 = ✓ + 강조색.
@@ -151,6 +179,11 @@ impl App {
     pub(crate) fn indent_pick(&mut self, id: &str) {
         if id.starts_with("close.") {
             self.close_pick(id);
+            return;
+        }
+        // 상태줄 자동 저장 메뉴의 답(사용자 09-28).
+        if let Some(rest) = id.strip_prefix("autosave.") {
+            self.autosave_pick(rest);
             return;
         }
         // 거터(북마크/니모닉 영역) 우클릭 메뉴의 답(사용자 09-23).

@@ -110,7 +110,10 @@ impl App {
         };
         match &t {
             Some(explorer::DetailTarget::Object(o)) => {
-                if cached.as_ref().is_none_or(|(_, stale)| *stale) {
+                // ★ 지연 로딩(사용자 09-28 · 61 §1-8): 접힌 한 줄 모드는 **설명(코멘트)만** 필요하다 → 상세는 청하지 않는다.
+                //   펼치는 순간 `detail_actions`가 `sync_detail_target(true)`로 다시 와서 캐시가 있으면 즉시 배정 · 없으면 그때 읽는다.
+                if !self.objdetail.is_collapsed() && cached.as_ref().is_none_or(|(_, stale)| *stale)
+                {
                     self.explorer.request_details(o.clone(), None);
                 }
                 // 테이블 코멘트 = 메타(스키마 단위 워머)에 있으면 즉시 · 없으면 테이블 단위로 한 번(그 컬럼들도 즉시 · 86 §4~5).
@@ -176,6 +179,10 @@ impl App {
                         .set("explorer.details_collapsed", if on { "on" } else { "off" });
                     self.persist_settings();
                     self.layout();
+                    // ★ 펼치는 순간에 상세를 채운다(지연 로딩 · 캐시가 있으면 즉시 배정 · 없으면 그때 조회 · 사용자 09-28).
+                    if !on {
+                        self.sync_detail_target(true);
+                    }
                     self.redraw();
                 }
             }

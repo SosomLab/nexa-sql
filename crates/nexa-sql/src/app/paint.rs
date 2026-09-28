@@ -208,8 +208,8 @@ impl App {
                 // ★ 프로젝트 자동 저장 표식(사용자 09-28 · `statusbar.autosave`): 켜짐(주기) / 꺼짐 · 클릭 = 자동 저장 폴더.
                 let autosave_seg = self.settings.flag("statusbar.autosave");
                 // (`project_autosave_on`과 같은 판정 — 여기서는 `surface` 차용 때문에 필드 단위로 푼다.)
-                let autosave_on = self.project.is_open()
-                    && self.settings.flag("project.autosave")
+                // 표시 = **설정 값**(프로젝트가 없어도 · 사용자 09-28 "30초 설정인데 끔으로 보인다").
+                let autosave_on = self.settings.flag("project.autosave")
                     && (!self.settings.flag("license.gates")
                         || self
                             .licensing
@@ -270,27 +270,24 @@ impl App {
                     }
                     if Some(idx) == autosave_idx {
                         self.status_autosave_rect = r;
-                        // 클릭 효과 = 상태 레이어(hover · pressed · 메모리 세그먼트와 같은 부품).
-                        let st = if self.autosave_pressed {
-                            nexa_ctl::tokens::State::Pressed
-                        } else if self.pointer.is_some_and(|p| r.contains(p)) {
-                            nexa_ctl::tokens::State::Hover
-                        } else {
-                            nexa_ctl::tokens::State::Rest
-                        };
-                        dc.state_layer(r, th.text, st);
                     }
                     if Some(idx) == mem_idx {
                         self.status_mem_rect = r;
-                        // 클릭 효과 = 상태 레이어(hover · pressed · 버튼과 같은 부품).
-                        let st = if self.mem_pressed {
-                            nexa_ctl::tokens::State::Pressed
+                    }
+                    // ★ 클릭되는 항목 전부 = 버튼처럼(사용자 09-28): hover = 선택색 · 누름 = 상태 레이어.
+                    let clickable = *is_syntax
+                        || idx == tx_idx
+                        || idx == lic_idx
+                        || Some(idx) == mem_idx
+                        || Some(idx) == autosave_idx;
+                    if clickable {
+                        let pressed = (Some(idx) == mem_idx && self.mem_pressed)
+                            || (Some(idx) == autosave_idx && self.autosave_pressed);
+                        if pressed {
+                            dc.state_layer(r, th.text, nexa_ctl::tokens::State::Pressed);
                         } else if self.pointer.is_some_and(|p| r.contains(p)) {
-                            nexa_ctl::tokens::State::Hover
-                        } else {
-                            nexa_ctl::tokens::State::Rest
-                        };
-                        dc.state_layer(r, th.text, st);
+                            dc.fill_rect_alpha(r, th.sel_bg, 0.6);
+                        }
                     }
                     let ty = dc.text_center_y(sy, px(24.0, s));
                     dc.text(

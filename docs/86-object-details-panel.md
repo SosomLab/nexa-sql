@@ -95,6 +95,16 @@
 
 | 코멘트 캐시 연동(§229 · T-227 후속) | 같은 무효화 범위를 `Explorer::take_detail_invalidations`로 호스트가 가져가 상세 패널의 테이블 코멘트 캐시(`DetailPanel::forget_comments` · 전부/스키마/테이블)를 버리고 보이는 대상은 다시 채운다(`sync_detail_target(true)`) — 새로 고침 뒤 옛 코멘트가 남던 틈 제거 |
 
+### 5-2. 지연 로딩(09-28 · 사용자 "1줄 모드면 Description만 필요 — 펼치는 시점에 조회" · [61 §1-8](61-core-design-and-working-rules.md))
+
+| 상태 | 읽는 것 | 안 읽는 것 |
+|---|---|---|
+| 접힘(한 줄) | 머리 줄 = 종류 칩 + **설명**(코멘트 · 메타 L2 워머/패널 캐시 · 없으면 테이블 단위 한 번) | 상세 섹션(`object_details` 왕복 없음) |
+| ▲ 펼침 | `DetailAction::Collapsed(false)` → `sync_detail_target(true)` → 캐시(§5-1)에 있으면 **즉시 배정**(왕복 0) · 없거나 TTL/`dirty`면 그때 청한다 | — |
+| 펼친 채 선택 이동 | 종전대로(캐시 즉시 · 아니면 청함) | — |
+
+`sync_detail_target`이 접힘이면 `request_details`를 건너뛴다 — 목록을 빠르게 훑는 동안 상세 왕복이 0이 되어 메타 세션 부하가 줄고, 펼침 첫 화면은 캐시 적중이면 종전과 같이 즉시다.
+
 ## 6. 설정
 
 | 키 | 기본 | 뜻 |

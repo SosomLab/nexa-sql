@@ -30,6 +30,16 @@ fn file_of(path: &Path) -> Option<PathBuf> {
     Some(dir()?.join(format!("{}.txt", key(path))))
 }
 
+/// 스냅숏 폴더(상태줄 자동 저장 메뉴 "일반 파일 자동 저장 위치" · 09-28).
+pub(crate) fn snapshot_dir() -> Option<PathBuf> {
+    dir()
+}
+
+/// 그 파일 탭의 스냅숏 경로(있을 때만).
+pub(crate) fn snapshot_file(path: &Path) -> Option<PathBuf> {
+    file_of(path).filter(|f| f.is_file())
+}
+
 /// 디스크 본문의 해시(없으면 0).
 pub(crate) fn disk_hash(path: &Path) -> u64 {
     std::fs::read(path).map(|b| fnv64(&b)).unwrap_or(0)

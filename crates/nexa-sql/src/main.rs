@@ -494,6 +494,8 @@ struct App {
     mem_pressed: bool,
     /// 상태줄 자동 저장 세그먼트 눌림(클릭 효과 · 09-28).
     autosave_pressed: bool,
+    /// 커서가 클릭되는 상태줄 항목 위에 있는가(들어오고 나갈 때 다시 그림 · hover 선택색 · 09-28).
+    status_hover: bool,
     /// 메인 창에 마지막으로 쓴 IME 허용 값(`ime_refresh` · 바뀔 때만 OS 호출).
     ime_last: Option<bool>,
     /// 창이 열려 있을 때 다음 표본 시각.
@@ -1146,6 +1148,25 @@ impl App {
     // ───────────── 북마크(docs/69 · T-167) ─────────────
 }
 
+/// OS 파일 탐색기에서 **그 파일을 선택한 채** 폴더 열기(외부 crate 0 · 3-OS · 09-28): Windows `explorer /select,` · macOS `open -R` ·
+/// Linux = 폴더만(`xdg-open` · 선택은 데스크톱마다 달라 생략).
+fn reveal_in_os(path: &std::path::Path) -> Result<(), String> {
+    let p = path.display().to_string();
+    let r = if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{p}"))
+            .spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").args(["-R", &p]).spawn()
+    } else {
+        let dir = path
+            .parent()
+            .map_or_else(|| p.clone(), |d| d.display().to_string());
+        std::process::Command::new("xdg-open").arg(&dir).spawn()
+    };
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// OS 연결 프로그램으로 파일 열기(외부 crate 0 · 3-OS).
 fn open_external(path: &std::path::Path) -> Result<(), String> {
     let p = path.display().to_string();
@@ -1699,6 +1720,7 @@ fn main() {
         mem_status: (0, None),
         mem_pressed: false,
         autosave_pressed: false,
+        status_hover: false,
         ime_last: None,
         view_layout: false,
         mem_next: Instant::now(),

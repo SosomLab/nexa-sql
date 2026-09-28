@@ -327,9 +327,16 @@ impl App {
         }
         if let InputEvent::MouseMove { x, y } = ev {
             self.pointer = Some(Point { x, y });
+            // 클릭되는 상태줄 항목 위 = hover 선택색(들어오고 나갈 때만 다시 그림 · 사용자 09-28 "버튼처럼").
+            let over = self.status_clickable_at(Point { x, y });
+            if over != self.status_hover {
+                self.status_hover = over;
+                self.redraw();
+            }
         }
-        if matches!(ev, InputEvent::MouseUp { .. }) && self.mem_pressed {
+        if matches!(ev, InputEvent::MouseUp { .. }) && (self.mem_pressed || self.autosave_pressed) {
             self.mem_pressed = false;
+            self.autosave_pressed = false;
             self.redraw();
         }
         self.route_inner(ev, Invalidations::default());
@@ -575,7 +582,7 @@ impl App {
             }
             if self.status_autosave_rect.contains(Point { x, y }) {
                 self.autosave_pressed = true;
-                self.open_autosave_folder();
+                self.open_autosave_menu();
                 self.redraw();
                 return;
             }
@@ -1028,6 +1035,22 @@ impl App {
     }
 
     /// 상태줄 팝업 메뉴. 가져갔으면 `true`(연쇄 끝).
+    /// 클릭되는 상태줄 항목(구문 · 들여쓰기 · 줄끝 · 인코딩 · 트랜잭션 · 라이선스 · 메모리 · 자동 저장) 위인가.
+    pub(crate) fn status_clickable_at(&self, p: Point) -> bool {
+        [
+            self.status_syntax_rect,
+            self.status_tab_rect,
+            self.status_eol_rect,
+            self.status_enc_rect,
+            self.status_tx_rect,
+            self.status_lic_rect,
+            self.status_mem_rect,
+            self.status_autosave_rect,
+        ]
+        .iter()
+        .any(|r| r.w > 0 && r.contains(p))
+    }
+
     fn route_status_menu(&mut self, ev: InputEvent) -> bool {
         if self.status_menu.is_open() {
             let consumed = self.status_menu.on_event(&ev);

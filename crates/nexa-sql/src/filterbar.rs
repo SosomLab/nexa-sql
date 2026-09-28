@@ -712,9 +712,20 @@ impl FilterBar {
         let tb_ms = t_tb.elapsed().as_millis();
         let tbb = self.tb.bounds();
         if tbb.w > 0 {
-            // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다(둥근 모서리 안쪽만 · 찾기 막대 `paint_frame`과 같다).
+            // 텍스트박스 오른쪽 테두리를 틀 배경으로 덮는다(찾기 막대 `paint_frame`과 같다). ★ 곧은 부분만 덮으면 반지름(6px)
+            //   안의 **모서리 호**가 희미한 회색으로 남아 토글 앞에 세로 선처럼 보였다(사용자 09-28) → 위·아래 모서리 사각형도 덮는다
+            //   (틀의 위·아래 테두리 줄은 남기고 그 안쪽만).
             dc.fill_rect(
-                Rect::new(tbb.right() - 2, tbb.y + r, 3, (tbb.h - r * 2).max(0)),
+                Rect::new(tbb.right() - 2, tbb.y + 1, 3, (tbb.h - 2).max(0)),
+                th.field_bg,
+            );
+            let cw = r + 3;
+            dc.fill_rect(
+                Rect::new(tbb.right() - r - 1, tbb.y + 1, cw, r),
+                th.field_bg,
+            );
+            dc.fill_rect(
+                Rect::new(tbb.right() - r - 1, tbb.bottom() - r - 1, cw, r),
                 th.field_bg,
             );
         }
