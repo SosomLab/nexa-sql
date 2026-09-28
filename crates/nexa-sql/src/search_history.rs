@@ -483,6 +483,11 @@ impl Recall {
                 self.menu.close();
                 RecallEvent::Pass
             }
+            // 확정은 MouseUp(nexa-ui 92차 · 09-28) — 누른 뒤 놓은 자리의 행 · 밖에서 놓으면 메뉴가 닫힌다.
+            InputEvent::MouseUp { .. } => {
+                let _ = self.menu.on_event(ev);
+                self.apply_pick(tb, h, inv)
+            }
             // 우클릭 = 어디든 닫고 그 클릭은 그대로(사용자 09-25 "다른 영역의 좌/우 클릭으로 유효성이 상실되면 바로 감춰").
             InputEvent::RightDown { .. } => {
                 self.menu.close();
@@ -755,14 +760,21 @@ mod tests {
         r.on_click(&tb, &h, host, 1.0);
         assert!(r.is_open());
         let row1 = r.menu.row_rect_of(1).expect("둘째 행 영역");
-        let click = InputEvent::MouseDown {
-            x: row1.x + 5,
-            y: row1.y + row1.h / 2,
+        let (cx, cy) = (row1.x + 5, row1.y + row1.h / 2);
+        let down = InputEvent::MouseDown {
+            x: cx,
+            y: cy,
             shift: false,
             primary: false,
         };
+        // 확정은 MouseUp(nexa-ui 92차 · 09-28) — Down은 누름만.
         assert_eq!(
-            r.on_event(&click, &mut tb, &h, &mut inv),
+            r.on_event(&down, &mut tb, &h, &mut inv),
+            RecallEvent::Consumed
+        );
+        assert!(r.is_open());
+        assert_eq!(
+            r.on_event(&InputEvent::MouseUp { x: cx, y: cy }, &mut tb, &h, &mut inv),
             RecallEvent::Changed
         );
         assert_eq!(tb.text(), r.shown_for_test()[1], "클릭한 행의 글");

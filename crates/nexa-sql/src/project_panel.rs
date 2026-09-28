@@ -387,12 +387,76 @@ impl ProjectPanel {
         }
     }
 
-    /// 목록 좌표(위에서 `top` px)가 보이게 스크롤.
+    /// "프로젝트 폴더" 머리글 행(프로젝트가 열려 있으면 1 · 사용자 09-28 "열린 파일과 같은 스타일의 영역 머리글").
+    fn tree_header_rows(&self) -> usize {
+        usize::from(self.name.is_some())
+    }
+
+    /// 트리 행 앞에 오는 행 수 = 열린 파일 블록 + 폴더 머리글.
+    fn prefix_rows(&self) -> usize {
+        self.open_block_rows() + self.tree_header_rows()
+    }
+
+    /// ★ 고정 머리글(사용자 09-28 · 객체 탐색기의 서버 헤더와 같은 규칙): 스크롤로 머리글이 위로 나간 영역의 내용이 아직 보이면
+    ///   그 머리글을 목록 맨 위에 붙이고, 다음 영역 머리글이 올라오면 그만큼 밀려 나간다. (행 영역, 글)
+    fn pinned_header(&self) -> Option<(Rect, Msg)> {
+        let lr = self.list_rect;
+        let rh = self.row_h.max(1);
+        let y0 = lr.y - self.scroll_y;
+        let ob = self.open_block_rows() as i32;
+        let extra = i32::from(self.scan_capped);
+        let mut spans: Vec<(i32, i32, Msg)> = Vec::new();
+        if ob > 0 {
+            spans.push((y0, y0 + ob * rh, Msg::ProjOpenFiles));
+        }
+        if self.tree_header_rows() > 0 {
+            let hy = y0 + ob * rh;
+            let rows = 1 + self.rows.len() as i32 + extra;
+            spans.push((hy, hy + rows * rh, Msg::ProjFolders));
+        }
+        let k = spans
+            .iter()
+            .position(|(hy, end, _)| *hy < lr.y && *end > lr.y)?;
+        let (_, _, m) = spans[k];
+        let mut y = lr.y;
+        if let Some((nhy, _, _)) = spans.get(k + 1) {
+            y = y.min(nhy - rh);
+        }
+        let r = Rect::new(lr.x, y, lr.w, rh);
+        (r.bottom() > lr.y).then_some((r, m))
+    }
+
+    /// 영역 머리글 한 줄(열린 파일 · 프로젝트 폴더 공통 모양 — 굵은 흐린 글 · 바탕 = 패널색 · 고정이면 아래 구분선).
+    fn paint_section_header(
+        &self,
+        dc: &mut dyn DrawCtx,
+        th: &Theme,
+        r: Rect,
+        clip: Rect,
+        text: &str,
+        pinned: bool,
+    ) {
+        if clip.h <= 0 {
+            return;
+        }
+        let pad = (PAD * self.scale).round() as i32;
+        dc.fill_rect(clip, th.panel_bg);
+        dc.select_font(FontSlot::Base, true);
+        let hy = dc.text_center_y(r.y, r.h);
+        dc.text(r.x + pad, hy, clip, text, th.text_dim);
+        dc.select_font(FontSlot::Base, false);
+        if pinned {
+            dc.fill_rect(Rect::new(clip.x, clip.bottom() - 1, clip.w, 1), th.border);
+        }
+    }
+
+    /// 목록 좌표(위에서 `top` px)가 보이게 스크롤 — 위로 갈 때는 고정 머리글 한 줄 아래에 오게.
     fn scroll_to_show(&mut self, top: i32) {
-        if top < self.scroll_y {
-            self.scroll_y = top;
-        } else if top + self.row_h > self.scroll_y + self.list_rect.h {
-            self.scroll_y = top + self.row_h - self.list_rect.h;
+        let rh = self.row_h;
+        if top - rh < self.scroll_y {
+            self.scroll_y = (top - rh).max(0);
+        } else if top + rh > self.scroll_y + self.list_rect.h {
+            self.scroll_y = top + rh - self.list_rect.h;
         }
         self.clamp_scroll();
         self.relayout_open_rows();
@@ -1143,7 +1207,7 @@ impl ProjectPanel {
 
     fn content_h(&self) -> i32 {
         let extra = if self.scan_capped { 1 } else { 0 };
-        (self.open_block_rows() as i32 + self.rows.len() as i32 + extra) * self.row_h
+        (self.prefix_rows() as i32 + self.rows.len() as i32 + extra) * self.row_h
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
@@ -1190,9 +1254,13 @@ impl ProjectPanel {
         if !self.list_rect.contains(p) || self.row_h <= 0 {
             return None;
         }
+        // 고정 머리글이 덮는 자리는 행이 아니다.
+        if self.pinned_header().is_some_and(|(r, _)| r.contains(p)) {
+            return None;
+        }
         let i = ((p.y - self.list_rect.y + self.scroll_y) / self.row_h) as usize;
-        // 앞부분 = 열린 파일 블록(따로 `open_rows`로 판정).
-        let ob = self.open_block_rows();
+        // 앞부분 = 열린 파일 블록(따로 `open_rows`로 판정) + 폴더 머리글.
+        let ob = self.prefix_rows();
         if i < ob {
             return None;
         }
@@ -1220,7 +1288,7 @@ impl ProjectPanel {
     }
 
     fn ensure_visible(&mut self, r: usize) {
-        let top = (self.open_block_rows() + r) as i32 * self.row_h;
+        let top = (self.prefix_rows() + r) as i32 * self.row_h;
         self.scroll_to_show(top);
     }
 
@@ -1353,6 +1421,10 @@ impl ProjectPanel {
                 let p = Point { x, y };
                 self.open_sel = None;
                 self.typeahead.clear();
+                // 고정 머리글 위 클릭 = 아무것도 안 함(그 아래 가려진 행에 닿지 않게).
+                if self.pinned_header().is_some_and(|(r, _)| r.contains(p)) {
+                    return true;
+                }
                 // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23) — 프로젝트가 없어도(빈 상태 분기보다 먼저).
                 if let Some(k) = self.open_rows.iter().position(|r| r.contains(p)) {
                     if let Some(f) = self.open_files.get(k) {
@@ -1419,10 +1491,16 @@ impl ProjectPanel {
                 }
             }
             InputEvent::MouseMove { x, y } => {
-                let oh = self
-                    .open_rows
-                    .iter()
-                    .position(|r| r.contains(Point { x, y }));
+                let over_pin = self
+                    .pinned_header()
+                    .is_some_and(|(r, _)| r.contains(Point { x, y }));
+                let oh = if over_pin {
+                    None
+                } else {
+                    self.open_rows
+                        .iter()
+                        .position(|r| r.contains(Point { x, y }))
+                };
                 if oh != self.open_hover {
                     self.open_hover = oh;
                 }
@@ -1520,13 +1598,14 @@ impl ProjectPanel {
         let base = self.open_block_rows() as i32 * rh;
         if base > 0 {
             let hr = Rect::new(lr.x, lr.y - self.scroll_y, lr.w, rh);
-            let hclip = hr.intersection(&lr);
-            if hclip.h > 0 {
-                dc.select_font(FontSlot::Base, true);
-                let hy = dc.text_center_y(hr.y, hr.h);
-                dc.text(hr.x + pad, hy, hclip, t(Msg::ProjOpenFiles), th.text_dim);
-                dc.select_font(FontSlot::Base, false);
-            }
+            self.paint_section_header(
+                dc,
+                th,
+                hr,
+                hr.intersection(&lr),
+                t(Msg::ProjOpenFiles),
+                false,
+            );
             for (k, f) in self.open_files.iter().enumerate() {
                 let Some(rr) = self.open_rows.get(k).copied().filter(|r| r.h > 0) else {
                     continue;
@@ -1603,7 +1682,13 @@ impl ProjectPanel {
             }
             return;
         }
-        // 트리 행은 열린 파일 블록(`base`) 다음부터 — 같은 스크롤.
+        // "프로젝트 폴더" 머리글(열린 파일 블록 다음 · 같은 모양 · 사용자 09-28).
+        if self.tree_header_rows() > 0 {
+            let hr = Rect::new(lr.x, lr.y + base - self.scroll_y, lr.w, rh);
+            self.paint_section_header(dc, th, hr, hr.intersection(&lr), t(Msg::ProjFolders), false);
+        }
+        // 트리 행은 열린 파일 블록 + 폴더 머리글(`base`) 다음부터 — 같은 스크롤.
+        let base = self.prefix_rows() as i32 * rh;
         let rel = (self.scroll_y - base).max(0);
         let first = (rel / rh) as usize;
         let mut y = lr.y + base - self.scroll_y + first as i32 * rh;
@@ -1741,6 +1826,10 @@ impl ProjectPanel {
                 my += rh;
             }
             dc.select_font(FontSlot::Base, false);
+        }
+        // ★ 고정 머리글(사용자 09-28 · 객체 탐색기와 같은 규칙) — 행·안내 글 위에 맨 나중에.
+        if let Some((r, m)) = self.pinned_header() {
+            self.paint_section_header(dc, th, r, r.intersection(&lr), t(m), true);
         }
         // 타입어헤드 HUD(입력 중 접두 · 패널 영역 기준 3×3 위치 · 객체 탐색기와 같은 부품).
         let ta_text = self.typeahead_text();
