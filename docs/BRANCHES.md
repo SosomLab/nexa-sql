@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/disconnect-badge-count | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 해제 버튼 배지 = 실제 라우팅 탭 수 · 툴팁 "(재조회)"까지만 |
 | fix/autocommit-all-sessions-identify | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 자동 커밋 전환 = 전 세션 워커 명령 · 행 식별 열 가져오기 (재조회) 이름·활성 결함 · 선택어 외곽선 = 글자 칸 |
 | docs/status-0928-4 | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 진행사항 최신화(102차 끝 4 · journal §10 · DEVLOG · STATUS · TODO T-253/T-254 · CLAUDE.md) |
 | fix/ci-menu-up-project-headers | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | CI 빨강(메뉴 Up 확정 시험) · 검색어 이력 MouseUp · 프로젝트 탐색기 "프로젝트 폴더" 머리글 · 고정 머리글 |
