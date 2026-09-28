@@ -183,6 +183,9 @@ pub(crate) struct ExplorerSet {
     bars: nexa_ctl::controls::ScrollBars,
     /// ★ 서버 헤더(docs/54 §9 · 09-25): (그룹 첫 칸, 행 영역) — 배치 때 계산.
     headers: Vec<(usize, Rect)>,
+    /// ★ 고정 헤더(사용자 09-28 "스크롤해도 서버 정보는 필터 아래 유지"): 스크롤로 헤더가 위로 나간 그룹의 내용이 아직 보이면
+    ///   그 헤더를 영역 맨 위에 붙인다 · 다음 그룹 헤더가 올라오면 그만큼 밀려 나간다(VS Code 고정 스크롤과 같다). (그룹 첫 칸, 행 영역)
+    pinned: Option<(usize, Rect)>,
     /// 서버 헤더 우클릭 메뉴(연결 해제 = 모두/개별).
     menu: CtxMenu,
     menu_group: Option<usize>,
@@ -227,6 +230,7 @@ impl ExplorerSet {
             scroll_x: 0,
             bars: nexa_ctl::controls::ScrollBars::new(),
             headers: Vec::new(),
+            pinned: None,
             menu: CtxMenu::new(),
             menu_group: None,
             pending: Vec::new(),
@@ -469,28 +473,28 @@ impl ExplorerSet {
         out
     }
 
-    /// ★ 서버 묶음(docs/54 §9): 서버 칸을 같은 호스트(방언·호스트·포트)끼리 접속 순으로 묶는다 — 파일 방언(호스트 없음)은 혼자 ·
-    /// 헤더 없음. 돌려주는 값 = (칸 목록, 헤더 있음).
+    /// ★ 서버 묶음(docs/54 §9): 서버 칸을 같은 호스트(방언·호스트·포트)끼리 접속 순으로 묶는다.
+    /// **파일 방언(SQLite · 호스트 없음) = 파일 하나가 서버 하나이고 거기에 연결 하나가 붙는다**(사용자 09-28 "묶음이 아니라
+    /// 파일별로 서버 1개에 연결된다는 기준 · 표시 구조를 다른 서버와 동일하게") → 헤더(파일 이름) + 연결 행. 같은 파일을 다시
+    /// 열면 같은 서버(`same_catalog`). 돌려주는 값 = (칸 목록, 헤더 있음) — 키 있는 칸은 늘 헤더 있음.
     fn groups(&self) -> Vec<(Vec<usize>, bool)> {
         let mut out: Vec<(Vec<usize>, bool)> = Vec::new();
         for i in 0..self.panes.len() {
             let Some(k) = &self.panes[i].key else {
                 continue;
             };
-            let hosted = k.host.is_some();
-            let found = hosted
-                .then(|| {
-                    out.iter().position(|(g, h)| {
-                        *h && self.panes[g[0]]
-                            .key
-                            .as_ref()
-                            .is_some_and(|k0| same_host(k0, k))
-                    })
+            let found = out.iter().position(|(g, h)| {
+                *h && self.panes[g[0]].key.as_ref().is_some_and(|k0| {
+                    if k.host.is_some() {
+                        same_host(k0, k)
+                    } else {
+                        same_catalog(k0, k)
+                    }
                 })
-                .flatten();
+            });
             match found {
                 Some(gi) => out[gi].0.push(i),
-                None => out.push((vec![i], hosted)),
+                None => out.push((vec![i], true)),
             }
         }
         out
@@ -541,9 +545,18 @@ impl ExplorerSet {
     }
 
     fn header_at(&self, p: Point) -> Option<usize> {
+        if !self.bounds.contains(p) {
+            return None;
+        }
+        // 고정 헤더가 먼저(그 아래 가려진 행보다 위 층).
+        if let Some((first, r)) = self.pinned {
+            if r.contains(p) {
+                return Some(first);
+            }
+        }
         self.headers
             .iter()
-            .find(|(_, r)| r.contains(p) && self.bounds.contains(p))
+            .find(|(_, r)| r.contains(p))
             .map(|(first, _)| *first)
     }
 
@@ -872,10 +885,15 @@ impl ExplorerSet {
         } else {
             b
         };
+        // (그룹 첫 칸, 헤더 rect, 그룹 끝 y) — 고정 헤더 판정용.
+        let mut spans: Vec<(usize, Rect, i32)> = Vec::new();
         for (g, hosted) in self.groups() {
+            let mut head = None;
             if hosted {
                 let hh = self.header_h(g[0]);
-                headers.push((g[0], Rect::new(b.x, y, b.w, hh)));
+                let r = Rect::new(b.x, y, b.w, hh);
+                headers.push((g[0], r));
+                head = Some(r);
                 y += hh;
             }
             for &i in &g {
@@ -888,8 +906,12 @@ impl ExplorerSet {
                 ex.set_scroll_x(self.scroll_x);
                 y += h;
             }
+            if let Some(r) = head {
+                spans.push((g[0], r, y));
+            }
         }
         self.headers = headers;
+        self.pinned = Self::pinned_header(&spans, b);
         let _ = &laid;
         // 놓이지 않은 칸(빈 자리)은 영역 0.
         for i in 0..self.panes.len() {
@@ -899,12 +921,65 @@ impl ExplorerSet {
         }
     }
 
-    /// 키보드로 옮긴 선택이 보이도록 공용 스크롤을 맞춘다.
+    /// ★ 고정 헤더 판정(순수 · 사용자 09-28): `spans` = 그룹마다 (첫 칸, 헤더 rect(스크롤 반영), 그룹 끝 y) 위→아래 순.
+    /// 헤더가 영역 위로 나갔고(`r.y < b.y`) 그 그룹의 내용이 아직 영역에 걸려 있으면(`end > b.y`) 그 헤더를 `b.y`에 붙인다 ·
+    /// 다음 그룹의 헤더가 고정 자리와 겹치면 그만큼 위로 밀린다(`min(b.y, next.y - h)`). 헤더가 아직 제자리에 보이면 None.
+    fn pinned_header(spans: &[(usize, Rect, i32)], b: Rect) -> Option<(usize, Rect)> {
+        let k = spans
+            .iter()
+            .position(|(_, r, end)| r.y < b.y && *end > b.y)?;
+        let (first, r, _) = spans[k];
+        let mut y = b.y;
+        if let Some((_, next, _)) = spans.get(k + 1) {
+            y = y.min(next.y - r.h);
+        }
+        let r = Rect::new(b.x, y, b.w, r.h);
+        (r.bottom() > b.y).then_some((first, r))
+    }
+
+    /// 서버 헤더의 흐린 부가 글: 연결 수 · (필터 중) 일치 수 · 인덱싱 진행 · 상한 안내.
+    fn header_sub(&self, first: usize) -> String {
+        let n = self.group_conns(first).len();
+        let mut sub = tf(Msg::ExpServerConns, &[&n.to_string()]);
+        if self.filter_on() {
+            let members: Vec<usize> = self
+                .groups()
+                .into_iter()
+                .find(|(g, _)| g.first() == Some(&first))
+                .map(|(g, _)| g)
+                .unwrap_or_default();
+            let hits: usize = members
+                .iter()
+                .map(|&i| self.panes[i].ex.filter_hits())
+                .sum();
+            sub = format!("{sub} · {}", tf(Msg::ExpFilterHits, &[&hits.to_string()]));
+            // ★ 검색 중 표시(84 §1 · 사용자 09-25): 인덱스가 아직 다 안 읽혔으면 "인덱싱 n/N" · 상한에 잘렸으면 안내.
+            let prog = members
+                .iter()
+                .filter_map(|&i| self.panes[i].ex.index_progress())
+                .fold(None::<(usize, usize)>, |acc, (d, t)| {
+                    Some(acc.map_or((d, t), |(ad, at)| (ad + d, at + t)))
+                });
+            if let Some((d, t)) = prog {
+                sub = format!(
+                    "{sub} · {}",
+                    tf(Msg::ExpIndexing, &[&d.to_string(), &t.to_string()])
+                );
+            }
+            if members.iter().any(|&i| self.panes[i].ex.index_truncated()) {
+                sub = format!("{sub} · {}", t(Msg::ExpIndexCapped));
+            }
+        }
+        sub
+    }
+
+    /// 키보드로 옮긴 선택이 보이도록 공용 스크롤을 맞춘다 — 고정 헤더 아래로(가려지지 않게).
     fn reveal_selection(&mut self) {
         let b = self.bounds;
         if let Some((y, h)) = self.panes[self.shown].ex.selected_span() {
-            if y < b.y {
-                self.scroll -= b.y - y;
+            let top = b.y + self.pinned.map_or(0, |(_, r)| r.h);
+            if y < top {
+                self.scroll -= top - y;
             } else if y + h > b.bottom() {
                 self.scroll += y + h - b.bottom();
             }
@@ -1582,40 +1657,17 @@ impl ExplorerSet {
             if vis.h <= 0 {
                 continue;
             }
-            let n = self.group_conns(first).len();
-            let mut sub = tf(Msg::ExpServerConns, &[&n.to_string()]);
-            if self.filter_on() {
-                let hits: usize = self
-                    .groups()
-                    .into_iter()
-                    .find(|(g, _)| g.first() == Some(&first))
-                    .map(|(g, _)| g.iter().map(|&i| self.panes[i].ex.filter_hits()).sum())
-                    .unwrap_or(0);
-                sub = format!("{sub} · {}", tf(Msg::ExpFilterHits, &[&hits.to_string()]));
-                // ★ 검색 중 표시(84 §1 · 사용자 09-25): 인덱스가 아직 다 안 읽혔으면 "인덱싱 n/N" · 상한에 잘렸으면 안내.
-                let members: Vec<usize> = self
-                    .groups()
-                    .into_iter()
-                    .find(|(g, _)| g.first() == Some(&first))
-                    .map(|(g, _)| g)
-                    .unwrap_or_default();
-                let prog = members
-                    .iter()
-                    .filter_map(|&i| self.panes[i].ex.index_progress())
-                    .fold(None::<(usize, usize)>, |acc, (d, t)| {
-                        Some(acc.map_or((d, t), |(ad, at)| (ad + d, at + t)))
-                    });
-                if let Some((d, t)) = prog {
-                    sub = format!(
-                        "{sub} · {}",
-                        tf(Msg::ExpIndexing, &[&d.to_string(), &t.to_string()])
-                    );
-                }
-                if members.iter().any(|&i| self.panes[i].ex.index_truncated()) {
-                    sub = format!("{sub} · {}", t(Msg::ExpIndexCapped));
-                }
-            }
+            let sub = self.header_sub(first);
             self.panes[first].ex.paint_server_header(dc, th, vis, &sub);
+        }
+        // ★ 고정 헤더(사용자 09-28): 위로 나간 그룹의 헤더를 영역 맨 위(필터 아래)에 — 다음 그룹 헤더에 밀려 나간다 · 아래 구분선.
+        if let Some((first, r)) = self.pinned {
+            let vis = r.intersection(&self.bounds);
+            if vis.h > 0 {
+                let sub = self.header_sub(first);
+                self.panes[first].ex.paint_server_header(dc, th, vis, &sub);
+                dc.fill_rect(Rect::new(vis.x, vis.bottom() - 1, vis.w, 1), th.border);
+            }
         }
         let b = self.bounds;
         dc.fill_rect(Rect::new(b.right() - 1, b.y, 1, b.h), th.border);
@@ -1754,6 +1806,70 @@ mod tests {
         set.sync_refs(&live);
         assert_eq!(set.groups()[0].0.len(), 2, "오프라인 행으로 남는다");
         assert_eq!(set.group_online(set.groups()[0].0[0]).len(), 1);
+    }
+
+    /// ★ 고정 헤더 판정(사용자 09-28): 제자리면 None · 위로 나가고 내용이 걸리면 영역 맨 위 · 다음 헤더가 다가오면 밀림 ·
+    /// 그룹이 다 지나가면 다음 그룹 차례.
+    #[test]
+    fn pinned_header_follows_scroll_and_is_pushed_by_next() {
+        let b = Rect::new(0, 100, 200, 300);
+        let hh = 20;
+        let sp = |y0: i32| {
+            vec![
+                (0usize, Rect::new(0, y0, 200, hh), y0 + 200),
+                (1usize, Rect::new(0, y0 + 200, 200, hh), y0 + 400),
+            ]
+        };
+        assert_eq!(
+            ExplorerSet::pinned_header(&sp(100), b),
+            None,
+            "헤더가 제자리"
+        );
+        let p = ExplorerSet::pinned_header(&sp(50), b).expect("pinned");
+        assert_eq!((p.0, p.1.y), (0, 100), "첫 그룹 헤더가 맨 위에 붙는다");
+        // 다음 헤더 y = -85+200 = 115 → 고정 헤더는 115-20 = 95로 밀린다(5px 위로 나감).
+        let p = ExplorerSet::pinned_header(&sp(-85), b).expect("pinned");
+        assert_eq!((p.0, p.1.y), (0, 95), "다음 그룹 헤더에 밀린다");
+        // 첫 그룹 끝(y0+200 = 100)이 영역 위와 같으면 첫 그룹은 지났다 · 둘째 헤더는 제자리(100) → None.
+        assert_eq!(ExplorerSet::pinned_header(&sp(-100), b), None);
+        let p = ExplorerSet::pinned_header(&sp(-150), b).expect("pinned");
+        assert_eq!(p.0, 1, "둘째 그룹 차례");
+        assert_eq!(p.1.y, 100);
+    }
+
+    /// ★ 파일 방언(SQLite) = 파일마다 서버 하나 + 연결 행(사용자 09-28 · 다른 서버와 같은 구조): 파일 둘 = 서버 둘 · 헤더 둘.
+    #[test]
+    fn sqlite_files_get_server_headers() {
+        let sq = |db: &str| ConnectSpec {
+            user: None,
+            password: None,
+            host: None,
+            port: None,
+            database: Some(db.into()),
+            role: None,
+            dialect: Some(nsql_core::Dialect::Sqlite),
+            schema: None,
+            env: Default::default(),
+        };
+        // 파일은 임시 폴더 아래에만(접속이 파일을 만든다 · 61 §2 "실제 폴더에 쓰지 않는다").
+        let dir = std::env::temp_dir().join(format!("nsql-exp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let a = dir.join("a.sqlite").to_string_lossy().into_owned();
+        let bf = dir.join("b.sqlite").to_string_lossy().into_owned();
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.connect(&sq(&a), "A", false, false);
+        set.connect(&sq(&bf), "B", false, false);
+        let g = set.groups();
+        assert_eq!(g.len(), 2, "파일 둘 = 서버 둘");
+        assert!(g.iter().all(|(_, h)| *h), "파일 서버도 헤더 있음");
+        set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        assert_eq!(set.headers.len(), 2);
+        assert!(
+            set.panes[g[0].0[0]].ex.is_grouped(),
+            "칸은 묶음 모드(연결 행)"
+        );
+        drop(set);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// D11 MC/DC: 서버 키 있음 · 온라인 · 세션 0 — 셋 다 참일 때만 오프라인으로. 각각 하나만 뒤집어 Keep.

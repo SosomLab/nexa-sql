@@ -1955,6 +1955,11 @@ impl Explorer {
     }
 
     /// 묶음 모드(docs/54 §9): 참이면 루트 행이 연결(DB · 계정) 행이 되고 트리는 한 단 들여쓴다 — 서버 헤더는 `ExplorerSet`이 그린다.
+    #[cfg(test)]
+    pub(crate) fn is_grouped(&self) -> bool {
+        self.grouped
+    }
+
     pub(crate) fn set_grouped(&mut self, on: bool) {
         if self.grouped != on {
             self.grouped = on;
@@ -5636,19 +5641,35 @@ impl Explorer {
         match &n.kind {
             NodeKind::Root if self.grouped && !self.conn_desc.is_empty() => {
                 // 묶음 모드(docs/54 §9): 연결 행 = DB(서비스) · 흐리게 = 계정 · 프로필(· 오프라인).
-                let main = if self.conn_db.is_empty() {
+                // ★ 파일 방언(SQLite · 사용자 09-28 "파일 = 서버 1 · 연결 1 · 다른 서버와 같은 구조"): 헤더 = 파일 이름(서버) ·
+                //   연결 행 = 파일 이름(DB) · 흐리게 = 프로필 · 폴더(계정 자리에 폴더 — 전체 경로는 접속 창·툴팁에도 있다).
+                let file_dialect = self.dialect.is_some_and(|d| d.is_file_based());
+                let main = if file_dialect || self.conn_db.is_empty() {
                     self.endpoint.clone()
                 } else {
                     self.conn_db.clone()
                 };
                 let mut dim: Vec<String> = Vec::new();
-                if !self.users.is_empty() {
+                if file_dialect {
+                    if let Some(dir) = std::path::Path::new(&self.conn_db)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .filter(|d| !d.is_empty())
+                    {
+                        dim.push(dir);
+                    }
+                } else if !self.users.is_empty() {
                     dim.push(self.users.join(", "));
                 } else if !self.conn_user.is_empty() {
                     dim.push(self.conn_user.clone());
                 }
                 if !self.profile_name.is_empty() && self.profile_name != main {
-                    dim.push(self.profile_name.clone());
+                    // 프로필은 파일 방언에서 앞(폴더보다 먼저 읽히게).
+                    if file_dialect {
+                        dim.insert(0, self.profile_name.clone());
+                    } else {
+                        dim.push(self.profile_name.clone());
+                    }
                 }
                 if self.offline {
                     dim.push(t(Msg::ExpOffline).to_string());
