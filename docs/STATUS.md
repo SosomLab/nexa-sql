@@ -4,6 +4,13 @@
 >
 > ★ **다음 세션 시작점 = [journal 2026-09-28](journal/2026-09-28.md)**(102차 후반 win = 코드 건강 점검·리팩터링 · 절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
 
+## 2026-09-28 (102차 끝 · **win**) — 🚀 **v0.1.0 첫 공개 릴리스** · 🍺 brew만([journal §6](journal/2026-09-28.md))
+
+- 릴리스 <https://github.com/SosomLab/nexa-sql/releases/tag/v0.1.0> — MSI · pkg/dmg(Universal) · deb/rpm · sha256sums · **`brew install --cask kiros33/tap/nexa-sql`**(탭 자동 반영 + 러너 실설치 검증 ✓) · winget·choco 없음(사용자 09-28).
+- 빌드 구성 보강(형제 저장소 winget·choco 교훈 [33 §5](33-distribution-and-packaging.md)): 정적 CRT + 임포트 게이트 · CLI 버전 정보(`nsql.rc` · 공용 `winres.rs`) · WiX 5.0.2 고정 · pkg 재배치 끔 · MSI 폴더 제거.
+- 🔧 코드 건강 여파 CI 두 번(OS별 `allow(dead_code)` — `EchoGuard`·`cf_html`) → 수정 · main CI 3-OS 초록.
+- 남은 것 = Windows Oracle 실서버 확인(정적 CRT) · 서명(DR-20) · T-246~249.
+
 ## 2026-09-28 (102차 후반 · **win**) — 🧹 코드 건강 점검 · 전체 리팩터링([93](93-code-health-and-refactoring.md) · [journal](journal/2026-09-28.md))
 
 - **원복 기준점** = 세 저장소 태그 `baseline/pre-refactor-2026-09-27` · 작업 브랜치 `refactor/dead-code-cleanup`(nexa-sql · nexa-ui).

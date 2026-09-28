@@ -86,7 +86,7 @@ python scripts/code-health.py --baseline target/code-health/baseline.json   # �
 |---|---|
 | 운영 경로·시험 어디에서도 안 부름 | **지운다**(문서·주석의 언급도 함께) |
 | 시험에서만 부름 | `#[cfg(test)]`로 옮긴다(운영 바이너리에서 빠짐 · 시험은 유지) |
-| OS별 경로에서만 부름 | `#[cfg_attr(not(<그 OS>), allow(dead_code))]` + 한 줄 이유([61 §3](61-core-design-and-working-rules.md)) |
+| OS별 경로에서만 부름 | `#[cfg_attr(not(<그 OS>), allow(dead_code))]` + 한 줄 이유([61 §3](61-core-design-and-working-rules.md)) — ★ **허용 표시를 뗄 때는 3-OS에서 컴파일로 판정**(한 OS 판정만으로 뗐다가 macOS·Linux CI가 깨진 사례 둘 = `EchoGuard`·`cf_html` · 09-28) — 이 PC에서 교차 검사가 안 되면 push 뒤 CI를 보고 바로 고친다 |
 | 공용 라이브러리의 API 짝 | 유지 + 도구 예외 표에 이유 |
 | 설정 창에 보이는데 앱이 안 읽는 설정 | **지운다**(성능 프리셋 표 · 비노출 목록 · `Msg` 라벨/설명까지) — 기능이 생기면 그때 다시 등록 |
 | "임시 · 추후 제거"라고 적힌 기능 | 지운다 — 단 **목적 있는 시험 자산은 제외**(§0-5) |
