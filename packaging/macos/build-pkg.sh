@@ -24,7 +24,12 @@ FINAL="$OUT/nexa-sql-$VERSION-macos-universal.pkg"
 step "component pkg (pkgbuild)"
 cp -R "$APP" "$WORK/root/"
 chmod 0755 "$ROOT/packaging/macos/scripts/postinstall"
+# ★ 번들 재배치 끄기(v0.1.0 첫 릴리스 스모크): pkgbuild 기본 = BundleIsRelocatable true → 같은 번들 ID의 앱이 다른 곳(빌드 폴더 ·
+#   사용자가 옮겨 둔 사본)에 있으면 설치기가 /Applications 대신 **그 자리**를 갱신한다 → postinstall이 앱을 못 찾아 CLI 링크 생략.
+pkgbuild --analyze --root "$WORK/root" "$WORK/component.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$WORK/component.plist"
 pkgbuild --root "$WORK/root" \
+         --component-plist "$WORK/component.plist" \
          --install-location /Applications \
          --identifier "$BUNDLE_ID" \
          --version "$VERSION" \

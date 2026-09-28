@@ -93,6 +93,8 @@
         <RegistryValue Root="HKLM" Key="Software\SosomLab\Nexa SQL" Name="Version" Type="string" Value="$(var.Version)" />
         <!-- 시작 메뉴 폴더는 파일 키패스가 없으므로 여기서 지운다. -->
         <RemoveFolder Id="RemoveAppMenuFolder" Directory="AppMenuFolder" On="uninstall" />
+        <!-- 설치 폴더 자체도 제거 목록에 명시(v0.1.0 첫 릴리스 스모크 = 제거 뒤 `%ProgramFiles%\Nexa SQL` 잔여). 비어 있을 때만 지워진다. -->
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
       </Component>
     </ComponentGroup>
 
