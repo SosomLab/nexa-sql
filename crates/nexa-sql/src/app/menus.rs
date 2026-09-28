@@ -55,7 +55,7 @@ impl App {
         // 배율 전달(빠져 있어 맥 2x에서 항목 간격이 절반이었다 · 09-16).
         self.status_menu.set_scale(self.scale);
         self.status_menu
-            .open_at(r.x, r.y, items, host, px(240.0, self.scale));
+            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     /// 상태줄 줄끝 팝업(LF/CRLF · 현재 = ✓) — 고르면 활성 탭 줄끝 변경(저장 때 반영 · docs/38).
@@ -83,8 +83,9 @@ impl App {
             })
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
+        // 폭 인자 = **최소 폭**(그릴 때 실측 글 폭이 더 크면 늘어난다) → 작게 주어 언어별 문구 길이에 맞춘다(사용자 09-28).
         self.status_menu
-            .open_at(r.x, r.y, items, host, px(320.0, self.scale));
+            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     pub(crate) fn open_eol_menu(&mut self) {
@@ -117,7 +118,7 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         self.status_menu
-            .open_at(r.x, r.y, items, host, px(260.0, self.scale));
+            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     /// 상태줄 인코딩 팝업(사용자 09-16 · Sublime 두 메뉴를 한 팝업에): 위 = "다른 인코딩으로 다시 열기 ▸"(파일 탭일 때만 ·
@@ -173,7 +174,7 @@ impl App {
             .unwrap_or(r);
         self.status_menu.set_scale(self.scale);
         self.status_menu
-            .open_at(r.x, r.y, items, host, px(280.0, self.scale));
+            .open_at(r.x, r.y, items, host, px(80.0, self.scale));
     }
 
     pub(crate) fn indent_pick(&mut self, id: &str) {
@@ -900,7 +901,7 @@ impl App {
         r: Rect,
         items: Vec<nexa_ctl::controls::ctxmenu::CtxItem>,
     ) {
-        self.open_status_popup_w(r, items, 300.0);
+        self.open_status_popup_w(r, items, 80.0);
     }
 
     /// 폭을 지정하는 판 — 거터 북마크 메뉴처럼 짧은 항목만 있는 팝업은 좁게(사용자 09-23 "메뉴 폭이 너무 넓어").
