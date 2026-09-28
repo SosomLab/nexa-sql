@@ -40,6 +40,10 @@ pub(crate) struct OutlinePanel {
     focused: bool,
     clamp_w: i32,
     open: Option<usize>,
+    /// ★ 타입어헤드(사용자 09-28 "아웃라인에도") — nexa-ctl 부품 · 설정 `explorer.typeahead*` 공유.
+    typeahead: nexa_ctl::TypeAhead,
+    ta_cfg: crate::explorer::TypeAheadCfg,
+    now_hint: u64,
 }
 
 const ROW_H: f32 = 22.0;
@@ -57,6 +61,9 @@ impl OutlinePanel {
             filter_text: String::new(),
             all: Vec::new(),
             rows: Vec::new(),
+            typeahead: nexa_ctl::TypeAhead::default(),
+            ta_cfg: crate::explorer::TypeAheadCfg::default(),
+            now_hint: 0,
             key: None,
             scroll_y: 0,
             bars: ScrollBars::new(),
@@ -103,6 +110,11 @@ impl OutlinePanel {
 
     pub(crate) fn focus_filter(&mut self) {
         self.filter.set_focused(true);
+    }
+
+    /// 글 입력 상자(필터)가 포커스인가 — 호스트의 IME 허용 판정(아니면 패널 = 타입어헤드 대상 · IME 끊음 · 09-28).
+    pub(crate) fn wants_ime(&self) -> bool {
+        self.filter.is_focused()
     }
 
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
@@ -251,7 +263,65 @@ impl OutlinePanel {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.filter.tick(now_ms) | self.bars.tick(now_ms)
+        self.now_hint = now_ms;
+        self.filter.tick(now_ms) | self.bars.tick(now_ms) | self.typeahead.tick(now_ms)
+    }
+
+    /// 타입어헤드 설정(호스트 · 객체 탐색기와 같은 한 벌).
+    pub(crate) fn set_typeahead(&mut self, cfg: crate::explorer::TypeAheadCfg) {
+        self.ta_cfg = cfg;
+        self.typeahead.set_timeout(cfg.timeout_ms);
+        if !cfg.enabled {
+            self.typeahead.clear();
+        }
+    }
+
+    fn row_label(&self, r: usize) -> String {
+        self.rows.get(r).map(|x| x.name.clone()).unwrap_or_default()
+    }
+
+    /// 타입어헤드 글자(객체 탐색기와 같은 규칙: 접두 확장 = 지금 행부터 · 새 접두 = 다음 행부터).
+    fn typeahead_char(&mut self, c: char) -> bool {
+        if !self.ta_cfg.enabled || !self.ta_cfg.filter.accepts(c) {
+            return false;
+        }
+        let q = self.typeahead.push(c, self.now_hint);
+        let n = self.rows.len();
+        if n == 0 {
+            return true;
+        }
+        let from = self
+            .sel
+            .map_or(0, |p| if q.include_caret { p } else { (p + 1) % n });
+        if let Some(k) = nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| self.row_label(k))
+        {
+            self.sel = Some(k);
+            self.reveal(k);
+        }
+        true
+    }
+
+    /// 타입어헤드 활성 중 ↑/↓ = 접두 매치 안에서 순환.
+    fn ta_step(&mut self, down: bool) -> bool {
+        let ta = self.typeahead.composing();
+        let n = self.rows.len();
+        if ta.is_empty() || n == 0 {
+            return false;
+        }
+        self.typeahead.touch(self.now_hint);
+        let from = self
+            .sel
+            .map_or(0, |p| if down { (p + 1) % n } else { (p + n - 1) % n });
+        let hit = if down {
+            nexa_ctl::typeahead::find_prefix(n, from, &ta, |k| self.row_label(k))
+        } else {
+            nexa_ctl::typeahead::find_prefix_rev(n, from, &ta, |k| self.row_label(k))
+        };
+        if let Some(k) = hit {
+            self.sel = Some(k);
+            self.reveal(k);
+        }
+        true
     }
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {
@@ -321,8 +391,43 @@ impl OutlinePanel {
                 self.filter_feed(ev);
                 true
             }
+            // ★ 글자 = 타입어헤드(필터 포커스가 아닐 때 · 09-28) · Backspace = 접두 한 글자 지우기.
+            InputEvent::Char { c, .. } => {
+                if c == '\u{8}' {
+                    if self.typeahead.is_active() {
+                        if let Some(q) = self.typeahead.backspace(self.now_hint) {
+                            let n = self.rows.len();
+                            let from = self.sel.unwrap_or(0);
+                            if let Some(k) =
+                                nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| {
+                                    self.row_label(k)
+                                })
+                            {
+                                self.sel = Some(k);
+                                self.reveal(k);
+                            }
+                        }
+                        return true;
+                    }
+                    return false;
+                }
+                if c == '\t' || c == '\n' || c == '\r' {
+                    return false;
+                }
+                self.typeahead_char(c)
+            }
             InputEvent::Key { key, .. } => {
                 let n = self.rows.len();
+                if !self.filter.is_focused() {
+                    if matches!(key, CtlKey::Down | CtlKey::Up) && self.ta_step(key == CtlKey::Down)
+                    {
+                        return true;
+                    }
+                    if matches!(key, CtlKey::Escape) && self.typeahead.is_active() {
+                        self.typeahead.clear();
+                        return true;
+                    }
+                }
                 // 필터에 포커스면 이동 키는 이력(드롭다운/Flat)이 먼저 — 손대지 않으면(None) 종전대로 목록 이동.
                 if self.filter.is_focused()
                     && matches!(
@@ -470,6 +575,18 @@ impl OutlinePanel {
             dc.text(lr.right() - pad - dw, ty, row_rect, &detail, th.text_dim);
             dc.select_font(FontSlot::Base, false);
             y += rh;
+        }
+        // 타입어헤드 HUD(입력 중 접두 · 패널 영역 기준 3×3 위치 · 객체 탐색기와 같은 부품).
+        let ta_text = self.typeahead.composing();
+        if !ta_text.is_empty() {
+            nexa_ctl::typeahead::paint_hud(
+                dc,
+                self.bounds,
+                self.scale,
+                self.ta_cfg.pos,
+                &ta_text,
+                th,
+            );
         }
         self.bars.paint(
             dc,

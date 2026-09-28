@@ -136,6 +136,11 @@ impl App {
             };
             self.log_win
                 .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+            // 끄면 확장 상세 뷰 탭(`ext:*`)도 전부 닫는다(사용자 09-28 — 관리자가 꺼진 채 상세 탭만 남아 있었다).
+            if !on {
+                self.editors.close_view_tabs("ext:");
+                self.ext_details.clear();
+            }
             // 켬/끔 = 확장 효과 전체 재적용(끄면 전부 정지) + 활동 막대 아이콘·패널(layout).
             self.apply_extensions(None);
             self.layout();

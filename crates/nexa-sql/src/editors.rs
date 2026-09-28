@@ -1454,6 +1454,26 @@ impl Editors {
     }
 
     /// 활성 탭이 뷰 탭이면 그 열쇠.
+    /// ★ 열쇠 접두가 맞는 뷰 탭 전부 **강제** 닫기(사용자 09-28 "확장 관리자를 끄면 확장 관련 탭 모두 닫기") — 뷰 탭은 본문이 없어 물을 것이 없다.
+    /// 반환 = 닫은 수.
+    pub(crate) fn close_view_tabs(&mut self, key_prefix: &str) -> usize {
+        let ids: Vec<u64> = self
+            .view_tabs
+            .iter()
+            .filter(|(_, k)| k.starts_with(key_prefix))
+            .map(|(id, _)| *id)
+            .collect();
+        let mut n = 0;
+        for id in ids {
+            if let Some(i) = self.index_of_id(id) {
+                self.close_tab_forced(i);
+                n += 1;
+            }
+            self.view_tabs.remove(&id);
+        }
+        n
+    }
+
     pub(crate) fn active_view(&self) -> Option<&str> {
         self.view_tabs.get(&self.active_id()).map(String::as_str)
     }

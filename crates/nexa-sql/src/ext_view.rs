@@ -35,6 +35,8 @@ pub(crate) struct ExtView {
     scroll: i32,
     content_h: i32,
     hover: Option<usize>,
+    /// 누르고 있는 버튼(MouseDown ~ MouseUp · 사용자 09-28 "클릭 효과 없이 동작") — 동작은 **같은 버튼 위에서 뗄 때**(nexa-ctl `Button`과 같은 규칙).
+    pressed: Option<usize>,
     /// 그릴 때 잡은 버튼 영역(동작 · 자리).
     buttons: Vec<(ExtViewAction, Rect)>,
     actions: Vec<ExtViewAction>,
@@ -75,8 +77,18 @@ impl ExtView {
             }
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
-                if let Some((a, _)) = self.buttons.iter().find(|(_, r)| r.contains(p)) {
-                    self.actions.push(a.clone());
+                self.pressed = self.buttons.iter().position(|(_, r)| r.contains(p));
+                true
+            }
+            InputEvent::MouseUp { x, y } => {
+                let p = Point { x, y };
+                let Some(i) = self.pressed.take() else {
+                    return false;
+                };
+                if let Some((a, r)) = self.buttons.get(i) {
+                    if r.contains(p) {
+                        self.actions.push(a.clone());
+                    }
                 }
                 true
             }
@@ -170,12 +182,13 @@ impl ExtView {
             let bw = dc.text_width(&label) + self.s(28.0);
             let r = Rect::new(bx, y, bw, btn_h);
             let hot = self.hover == Some(i);
-            let ty = dc.text_center_y(r.y, r.h);
+            let down = self.pressed == Some(i);
+            // 상태 레이어(hover 8 % · 눌림 12 % · 버튼 부품과 같은 토큰) + 눌림 = 글자 1px 아래(안으로 들어가는 느낌).
+            let st = nexa_ctl::tokens::State::of(false, hot, down, true);
+            let ty = dc.text_center_y(r.y, r.h) + if down { self.s(1.0) } else { 0 };
             if primary {
                 dc.fill_round_rect(r, self.s(5.0), th.accent);
-                if hot {
-                    dc.fill_round_rect_alpha(r, self.s(5.0), th.text, 0.15);
-                }
+                dc.state_layer(r, th.text, st);
                 dc.text(
                     r.x + self.s(14.0),
                     ty,
@@ -185,7 +198,13 @@ impl ExtView {
                 );
             } else {
                 dc.fill_round_rect(r, self.s(5.0), th.panel_bg_alt);
-                dc.stroke_round_rect(r, self.s(5.0), if hot { th.accent } else { th.border }, 1.0);
+                dc.state_layer(r, th.text, st);
+                dc.stroke_round_rect(
+                    r,
+                    self.s(5.0),
+                    if hot || down { th.accent } else { th.border },
+                    1.0,
+                );
                 dc.text(r.x + self.s(14.0), ty, clip, &label, th.text);
             }
             // 영역 밖으로 스크롤된 버튼은 누를 수 없다.
@@ -290,9 +309,13 @@ mod tests {
             shift: false,
             primary: false,
         };
+        // 버튼 = 누름 + 같은 자리에서 뗌(09-28 클릭 효과) · 밖에서 떼면 동작 없음.
+        for (x, y) in [(130, 160), (220, 160), (500, 250)] {
+            v.on_event(&down(x, y));
+            v.on_event(&InputEvent::MouseUp { x, y });
+        }
         v.on_event(&down(130, 160));
-        v.on_event(&down(220, 160));
-        v.on_event(&down(500, 250));
+        v.on_event(&InputEvent::MouseUp { x: 5, y: 5 });
         assert_eq!(
             v.take_actions(),
             vec![

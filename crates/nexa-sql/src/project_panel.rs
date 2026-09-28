@@ -683,6 +683,11 @@ impl ProjectPanel {
         }
     }
 
+    /// 글 입력 상자(필터)가 포커스인가 — 호스트의 IME 허용 판정(아니면 패널 = 타입어헤드 대상 · IME 끊음 · 09-28).
+    pub(crate) fn wants_ime(&self) -> bool {
+        self.filter.is_focused()
+    }
+
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         if self.filter.is_focused() {
             Some(self.filter.tb_mut())

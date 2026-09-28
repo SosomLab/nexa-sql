@@ -99,24 +99,39 @@ impl App {
         self.ime_refresh();
     }
 
+    /// ★ 지금 키 입력이 **타입어헤드**로 가는 상태인가(사용자 09-28 "객체 탐색기 방식을 프로젝트·북마크·아웃라인에도"):
+    /// 객체 탐색기 포커스 · 또는 프로젝트/북마크/아웃라인 패널 포커스인데 그 패널의 글 입력 상자(필터 · 이름 편집)가 포커스가 아닐 때.
+    /// 이 상태에서는 IME를 끊고(조합 글자가 새지 않게) Windows 한/영 모드는 앱이 자판→자모로 바꾼다.
+    pub(crate) fn typeahead_target(&self) -> bool {
+        match self.focus {
+            Focus::Explorer => true,
+            Focus::Project => !self.project_panel.wants_ime(),
+            Focus::Bookmarks => !self.bm_panel.wants_ime(),
+            Focus::Outline => !self.outline_panel.wants_ime(),
+            _ => false,
+        }
+    }
+
     /// 메인 창 IME 허용 = 글 입력 포커스이거나 **팔레트가 열려 있을 때**(사용자 09-22 "팔레트에 한글 입력이 안 됨" — 포커스가
     /// 그리드/탐색기인 채 팔레트를 열면 IME가 꺼져 한글이 새고 있었다). 앱 조합 모드(T-139)면 늘 끔.
+    /// 패널(프로젝트·북마크·아웃라인)은 **글 입력 상자가 포커스일 때만** 허용 — 목록 포커스 = 타입어헤드(09-28). 값이 바뀔 때만 창에 쓴다.
     pub(crate) fn ime_refresh(&mut self) {
         let f = self.focus;
         let palette = self.palette.is_open();
+        let allow = input::system_ime()
+            && (palette
+                || f == Focus::Editor
+                || f == Focus::Find
+                || f == Focus::Search
+                || f == Focus::Ext
+                || (matches!(f, Focus::Project | Focus::Bookmarks | Focus::Outline)
+                    && !self.typeahead_target()));
+        if self.ime_last == Some(allow) {
+            return;
+        }
         if let Some(w) = &self.window {
-            // 앱 조합 모드(T-139)면 어느 포커스든 IME를 끊는다(raw 자모 → 상자가 조합) · 아니면 글 입력 포커스에서만 붙인다.
-            w.set_ime_allowed(
-                input::system_ime()
-                    && (palette
-                        || f == Focus::Editor
-                        || f == Focus::Find
-                        || f == Focus::Search
-                        || f == Focus::Ext
-                        || f == Focus::Project
-                        || f == Focus::Bookmarks
-                        || f == Focus::Outline),
-            );
+            w.set_ime_allowed(allow);
+            self.ime_last = Some(allow);
         }
     }
 
@@ -275,13 +290,13 @@ impl App {
                             return None;
                         }
                         // Windows 탐색기 한글 모드: IME가 없어 라틴이 온다 → 두벌식 자모로(대문자 = 시프트 · 숫자·기호는 그대로).
-                        let c =
-                            if cfg!(windows) && self.focus == Focus::Explorer && self.hangul_mode {
-                                nexa_ctl::hangul::jamo_from_qwerty(c, c.is_ascii_uppercase())
-                                    .unwrap_or(c)
-                            } else {
-                                c
-                            };
+                        // 프로젝트·북마크·아웃라인 목록 포커스도 같은 길(09-28 · `typeahead_target`).
+                        let c = if cfg!(windows) && self.typeahead_target() && self.hangul_mode {
+                            nexa_ctl::hangul::jamo_from_qwerty(c, c.is_ascii_uppercase())
+                                .unwrap_or(c)
+                        } else {
+                            c
+                        };
                         InputEvent::Char { c, now_ms: 0 }
                     }
                     _ => return None,
@@ -1176,6 +1191,7 @@ impl App {
                 if self.bm_panel.on_event(&ev) {
                     self.redraw();
                 }
+                self.ime_refresh();
                 self.bm_pump();
                 if !matches!(ev, InputEvent::MouseMove { .. }) {
                     return true;
@@ -1191,6 +1207,7 @@ impl App {
                 )
             {
                 let handled = self.bm_panel.on_event(&ev);
+                self.ime_refresh();
                 if !handled
                     && matches!(
                         ev,
@@ -1232,6 +1249,7 @@ impl App {
                 if self.outline_panel.on_event(&ev) {
                     self.redraw();
                 }
+                self.ime_refresh();
                 self.outline_pump();
                 if !matches!(ev, InputEvent::MouseMove { .. }) {
                     return true;
@@ -1247,6 +1265,7 @@ impl App {
                 )
             {
                 let handled = self.outline_panel.on_event(&ev);
+                self.ime_refresh();
                 if !handled
                     && matches!(
                         ev,
@@ -1311,6 +1330,7 @@ impl App {
                 if self.project_panel.on_event(&ev) {
                     self.redraw();
                 }
+                self.ime_refresh();
                 self.project_pump();
                 if !matches!(ev, InputEvent::MouseMove { .. }) {
                     return true;
@@ -1339,6 +1359,7 @@ impl App {
                 if self.project_panel.on_event(&ev) {
                     self.redraw();
                 }
+                self.ime_refresh();
                 self.project_pump();
                 return true;
             }

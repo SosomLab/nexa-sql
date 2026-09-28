@@ -411,6 +411,7 @@ impl App {
                 self.explorer.set_typeahead(cfg);
                 self.project_panel.set_typeahead(cfg);
                 self.bm_panel.set_typeahead(cfg);
+                self.outline_panel.set_typeahead(cfg);
             }
             "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" | "ui.text_weight" => {
                 self.apply_text_render();

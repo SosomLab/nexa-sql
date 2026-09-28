@@ -973,7 +973,7 @@ impl ApplicationHandler<Wake> for App {
                 // 한/영 키(Windows · 탐색기 포커스 전용 — nexa-beep docs/27 §8): 탐색기는 IME를 끊어 OS 전환이 무력하므로
                 //   앱이 모드를 토글한다. VK_HANGUL은 키보드 드라이버 수준이라 IME 없이도 온다(논리 HangulMode · 물리 Lang1).
                 if cfg!(windows)
-                    && self.focus == Focus::Explorer
+                    && self.typeahead_target()
                     && (kev.logical_key == Key::Named(NamedKey::HangulMode)
                         || kev.physical_key
                             == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Lang1))

@@ -943,6 +943,7 @@ impl App {
         let ta = crate::typeahead_cfg(&self.settings);
         self.project_panel.set_typeahead(ta);
         self.bm_panel.set_typeahead(ta);
+        self.outline_panel.set_typeahead(ta);
     }
 
     /// 기동 시작 모드(사용자 09-22 · [`startup_project_plan`]): 기본 = **파일 모드**(프로젝트 없음) · 인자 `.nsql-project` =

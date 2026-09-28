@@ -245,6 +245,11 @@ impl BookmarksPanel {
     pub(crate) fn focus_filter(&mut self) {
         self.filter.set_focused(true);
     }
+    /// 글 입력 상자(필터 · 이름 편집)가 포커스인가 — 호스트의 IME 허용 판정(아니면 패널 = 타입어헤드 대상 · IME 끊음 · 09-28).
+    pub(crate) fn wants_ime(&self) -> bool {
+        self.rename.is_some() || self.filter.is_focused()
+    }
+
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         if let Some((_, tb, _)) = self.rename.as_mut() {
             return Some(tb);

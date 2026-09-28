@@ -25,6 +25,11 @@ impl App {
         };
         let mut t_sec = Instant::now();
         self.sync_grid_tab();
+        // 뷰 탭(확장 상세) ↔ 편집기 탭 전환 = 결과 영역 유무가 바뀐다 → 배치 다시(09-28).
+        if self.editors.active_view().is_some() != self.view_layout {
+            self.layout();
+        }
+        let view_mode = self.view_layout;
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -58,7 +63,9 @@ impl App {
                     .with_caret_on(caret_on);
                 dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
                 self.editors.paint_tabs(&mut dc, &th);
-                self.panel.paint_bar(&mut dc, &th);
+                if !view_mode {
+                    self.panel.paint_bar(&mut dc, &th);
+                }
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.tool_dock.bounds(), th.chrome_bg);
                 self.tool_dock.paint(&mut dc, &th);
@@ -406,7 +413,9 @@ impl App {
                 let bar = self.panel.bar_visible();
                 self.grid.set_top_border(!bar);
                 self.grid.set_focused(self.focus == Focus::Grid);
-                self.grid.paint(&mut dc, &th, s);
+                if !view_mode {
+                    self.grid.paint(&mut dc, &th, s);
+                }
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
             if let Some((lines, dur)) = self.grid.take_text_report() {
@@ -459,7 +468,9 @@ impl App {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.find.paint(&mut dc, &th);
                 // 결과 도구줄 상태 글자 = 상태줄과 같은 UI 글꼴·크기(사용자 09-16).
-                self.grid.paint_footer_text(&mut dc, &th);
+                if !view_mode {
+                    self.grid.paint_footer_text(&mut dc, &th);
+                }
                 self.editors.paint_tooltip(&mut dc, &th, wi);
             }
             // ── 오브젝트 탐색기(자체 글꼴 크기 `explorer.font_size` · 기본 = 메뉴 글꼴 · 사용자 09-15)
@@ -490,7 +501,9 @@ impl App {
             {
                 let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s);
                 self.split_v.paint(&mut dc, &th);
-                self.split_h.paint(&mut dc, &th);
+                if !view_mode {
+                    self.split_h.paint(&mut dc, &th);
+                }
             }
             // ── 툴바 툴팁(UI 글꼴) — 툴바 패스에서 그리면 그 뒤에 칠하는 탐색기·편집기가 덮어 툴바 아래 2~3px 띠만
             //    남았다(09-16 Windows 캡처). nexa-ctl `Toolbar::paint_tooltip` 규약대로 팝업 층에서.
@@ -548,8 +561,10 @@ impl App {
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
                 // 토스트·카드가 바꾼 글꼴 슬롯(Status·굵게)을 되돌린다 — 팝업은 호출자의 글꼴을 쓴다(09-22 메뉴 글자 커짐).
                 dc.select_font(FontSlot::Base, false);
-                self.grid.paint_overlays(&mut dc, &th);
-                self.panel.paint_popups(&mut dc, &th);
+                if !view_mode {
+                    self.grid.paint_overlays(&mut dc, &th);
+                    self.panel.paint_popups(&mut dc, &th);
+                }
                 self.editors.paint_popups(&mut dc, &th);
                 self.explorer.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);

@@ -65,6 +65,11 @@ pub(crate) struct ExtPanel {
     scroll: i32,
     content_h: i32,
     hover: Option<(usize, Option<Btn>)>,
+    /// 누르고 있는 행 버튼(MouseDown ~ MouseUp · 09-28) — 동작은 같은 버튼 위에서 뗄 때. 행 자체 클릭(열기)은 종전대로 누름에서.
+    pressed: Option<(usize, Btn)>,
+    /// 새로 고침 아이콘 hover · 누름.
+    refresh_hover: bool,
+    refresh_pressed: bool,
     selected: Option<String>,
     refresh_rect: Rect,
     /// 그릴 때 잡은 히트 영역: (필터된 행 인덱스 → rows 인덱스, 행 rect, 버튼들).
@@ -85,6 +90,9 @@ impl ExtPanel {
             scroll: 0,
             content_h: 0,
             hover: None,
+            pressed: None,
+            refresh_hover: false,
+            refresh_pressed: false,
             selected: None,
             refresh_rect: Rect::default(),
             hits: Vec::new(),
@@ -216,11 +224,11 @@ impl ExtPanel {
                             btns.iter().find(|(_, r)| r.contains(p)).map(|(b, _)| *b),
                         )
                     });
-                if h != self.hover {
-                    self.hover = h;
-                    return true;
-                }
-                false
+                let rh = self.refresh_rect.contains(p);
+                let changed = h != self.hover || rh != self.refresh_hover;
+                self.hover = h;
+                self.refresh_hover = rh;
+                changed
             }
             InputEvent::Wheel { delta } => {
                 if !self.bounds.contains(Point {
@@ -236,7 +244,7 @@ impl ExtPanel {
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
                 if self.refresh_rect.contains(p) {
-                    self.actions.push(ExtPanelAction::Refresh);
+                    self.refresh_pressed = true;
                     return true;
                 }
                 if self.search.bounds().contains(p) {
@@ -261,21 +269,48 @@ impl ExtPanel {
                         return false;
                     };
                     self.selected = Some(row.id.clone());
-                    self.actions.push(match btn {
-                        Some(Btn::Install) => match row.catalog {
-                            Some(n) => ExtPanelAction::Install(n),
-                            None => ExtPanelAction::Open(row),
-                        },
-                        Some(Btn::Remove) => ExtPanelAction::Remove(row.id),
-                        Some(Btn::Toggle) if row.enabled => ExtPanelAction::Disable(row.id),
-                        Some(Btn::Toggle) => ExtPanelAction::Enable(row.id),
-                        None => ExtPanelAction::Open(row),
-                    });
+                    match btn {
+                        // 버튼 = 누름 표시만 · 동작은 같은 버튼 위에서 뗄 때(사용자 09-28 "클릭 효과").
+                        Some(b) => self.pressed = Some((i, b)),
+                        None => self.actions.push(ExtPanelAction::Open(row)),
+                    }
                     return true;
                 }
                 false
             }
-            InputEvent::MouseUp { .. } => {
+            InputEvent::MouseUp { x, y } => {
+                let p = Point { x, y };
+                if self.refresh_pressed {
+                    self.refresh_pressed = false;
+                    if self.refresh_rect.contains(p) {
+                        self.actions.push(ExtPanelAction::Refresh);
+                    }
+                    return true;
+                }
+                if let Some((i, b)) = self.pressed.take() {
+                    let same = self
+                        .hits
+                        .iter()
+                        .find(|(k, _, _)| *k == i)
+                        .and_then(|(_, _, btns)| {
+                            btns.iter().find(|(kind, r)| *kind == b && r.contains(p))
+                        })
+                        .is_some();
+                    if same {
+                        if let Some(row) = self.rows.get(i).cloned() {
+                            self.actions.push(match b {
+                                Btn::Install => match row.catalog {
+                                    Some(n) => ExtPanelAction::Install(n),
+                                    None => ExtPanelAction::Open(row),
+                                },
+                                Btn::Remove => ExtPanelAction::Remove(row.id),
+                                Btn::Toggle if row.enabled => ExtPanelAction::Disable(row.id),
+                                Btn::Toggle => ExtPanelAction::Enable(row.id),
+                            });
+                        }
+                    }
+                    return true;
+                }
                 // 토글 hover·클릭(뗌에서 확정) — 옵션이 바뀌면 다시 거른다.
                 if self.search.on_event(ev, &mut inv) == FilterEvent::Changed {
                     self.scroll = 0;
@@ -345,9 +380,15 @@ impl ExtPanel {
             rw,
             head_h - self.s(8.0),
         );
+        // 새로 고침 아이콘 = hover/눌림 상태 레이어(09-28).
+        dc.state_layer(
+            self.refresh_rect,
+            th.text,
+            nexa_ctl::tokens::State::of(false, self.refresh_hover, self.refresh_pressed, true),
+        );
         dc.text(
             self.refresh_rect.x + self.s(6.0),
-            b.y + (head_h - lh) / 2,
+            b.y + (head_h - lh) / 2 + if self.refresh_pressed { self.s(1.0) } else { 0 },
             self.refresh_rect,
             "⟳",
             th.text,
@@ -449,21 +490,23 @@ impl ExtPanel {
                     bx -= bw;
                     let br = Rect::new(bx, y2 - self.s(1.0), bw, lh + self.s(4.0));
                     let bhot = self.hover == Some((i, Some(*kind)));
+                    let bdown = self.pressed == Some((i, *kind));
+                    let st = nexa_ctl::tokens::State::of(false, bhot, bdown, true);
+                    let ly = y2 + self.s(1.0) + if bdown { self.s(1.0) } else { 0 };
                     if *kind == Btn::Install {
                         dc.fill_round_rect(br, self.s(4.0), th.accent);
-                        if bhot {
-                            dc.fill_round_rect_alpha(br, self.s(4.0), th.text, 0.15);
-                        }
-                        dc.text(br.x + self.s(7.0), y2 + self.s(1.0), br, label, th.panel_bg);
+                        dc.state_layer(br, th.text, st);
+                        dc.text(br.x + self.s(7.0), ly, br, label, th.panel_bg);
                     } else {
                         dc.fill_round_rect(br, self.s(4.0), th.field_bg);
+                        dc.state_layer(br, th.text, st);
                         dc.stroke_round_rect(
                             br,
                             self.s(4.0),
-                            if bhot { th.accent } else { th.border },
+                            if bhot || bdown { th.accent } else { th.border },
                             1.0,
                         );
-                        dc.text(br.x + self.s(7.0), y2 + self.s(1.0), br, label, th.text);
+                        dc.text(br.x + self.s(7.0), ly, br, label, th.text);
                     }
                     btns.push((*kind, br));
                     bx -= self.s(6.0);
@@ -562,10 +605,16 @@ mod tests {
             shift: false,
             primary: false,
         };
+        // 버튼은 누름 + 같은 자리에서 뗌(09-28 클릭 효과) · 행 클릭(열기)은 누름에서.
         for (x, y) in [(60, 125), (210, 145), (270, 145), (210, 185), (270, 265)] {
             p.on_event(&down(x, y));
+            p.on_event(&InputEvent::MouseUp { x, y });
         }
+        // 눌렀다가 다른 자리에서 떼면 동작 없음.
+        p.on_event(&down(210, 145));
+        p.on_event(&InputEvent::MouseUp { x: 5, y: 5 });
         let got = p.take_actions();
+        assert_eq!(got.len(), 5, "버튼 밖에서 뗀 것은 동작 없음");
         assert!(matches!(&got[0], ExtPanelAction::Open(r) if r.id == "rainbow-pairs"));
         assert_eq!(got[1], ExtPanelAction::Disable("rainbow-pairs".into()));
         assert_eq!(got[2], ExtPanelAction::Remove("rainbow-pairs".into()));

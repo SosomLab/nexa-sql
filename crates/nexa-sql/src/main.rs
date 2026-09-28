@@ -402,6 +402,9 @@ struct App {
     next_result_id: u64,
     /// 결과 영역(탭 바 + 그리드) — 재배치 근거.
     result_area: Rect,
+    /// ★ 뷰 탭(확장 상세) 배치였는가 — 뷰 탭은 결과 영역이 없다(사용자 09-28 "Extension 보기에서는 결과 탭 보기가 필요 없음") · 활성 탭이
+    /// 바뀌어 상태가 달라지면 `paint`가 `layout`을 다시 부른다.
+    view_layout: bool,
     /// 프레임 계측(`NSQL_TRACE_FRAMES=1` · docs/39 §6 `--trace-frames`) — 60프레임마다 stderr에 구간별 평균/최대(ms).
     frame_trace: Option<FrameTrace>,
     /// `NSQL_TRACE_IME=1` — 키·IME 사건을 stderr로(T-139 진단).
@@ -491,6 +494,8 @@ struct App {
     mem_pressed: bool,
     /// 상태줄 자동 저장 세그먼트 눌림(클릭 효과 · 09-28).
     autosave_pressed: bool,
+    /// 메인 창에 마지막으로 쓴 IME 허용 값(`ime_refresh` · 바뀔 때만 OS 호출).
+    ime_last: Option<bool>,
     /// 창이 열려 있을 때 다음 표본 시각.
     mem_next: Instant,
     /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
@@ -1036,17 +1041,31 @@ impl App {
             Rect::new(0, 0, 0, 0)
         });
         // 편집기/결과 상하 비율 = `layout.editor_split_pct`(스플리터 ② 드래그가 갱신 · 자동 기억).
+        // ★ 뷰 탭(확장 상세)이 활성이면 결과 영역 없이 편집기 자리가 전체 높이(09-28).
+        let view_mode = self.editors.active_view().is_some();
+        self.view_layout = view_mode;
         let pct = self.settings.int("layout.editor_split_pct").clamp(10, 90) as f32 / 100.0;
-        let editor_h = (body_h as f32 * pct) as i32;
+        let editor_h = if view_mode {
+            body_h
+        } else {
+            (body_h as f32 * pct) as i32
+        };
         self.editors
             .set_bounds(Rect::new(rx, body_top, rw, editor_h - pad), s);
         // 찾기/바꾸기는 편집기 위에 떠 있는 패널(VS Code식 · 사용자 09-15) — 본문 배치 뒤에 그 위치를 잡는다.
         self.find.set_bounds(self.editors.editor_bounds(), s);
         self.find.set_clamp_width(w);
         // 스플리터 ② 편집기|결과 — 띠 = 편집기 아래 여백(pad) 자리.
-        self.split_h
-            .set_rect(Rect::new(rx, body_top + editor_h - pad, rw, pad.max(grip)));
-        let gb = Rect::new(rx, body_top + editor_h, rw, body_h - editor_h - pad);
+        self.split_h.set_rect(if view_mode {
+            Rect::new(0, 0, 0, 0)
+        } else {
+            Rect::new(rx, body_top + editor_h - pad, rw, pad.max(grip))
+        });
+        let gb = if view_mode {
+            Rect::new(0, 0, 0, 0)
+        } else {
+            Rect::new(rx, body_top + editor_h, rw, body_h - editor_h - pad)
+        };
         // 결과 영역 = 결과 탭 바(보일 때만) + 그리드(T-93).
         self.result_area = gb;
         let grid_rect = self.panel.set_bounds(gb, s);
@@ -1680,6 +1699,8 @@ fn main() {
         mem_status: (0, None),
         mem_pressed: false,
         autosave_pressed: false,
+        ime_last: None,
+        view_layout: false,
         mem_next: Instant::now(),
         col_right_drag: false,
         ctrl_raw: false,
