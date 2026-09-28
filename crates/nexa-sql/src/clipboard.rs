@@ -28,7 +28,8 @@ pub(crate) fn write_rich(text: &str, html: &str) -> bool {
     imp::write_rich(text, html)
 }
 
-/// CF_HTML 컨테이너(헤더 오프셋은 UTF-8 바이트 · 10자리 고정).
+/// CF_HTML 컨테이너(헤더 오프셋은 UTF-8 바이트 · 10자리 고정). 부르는 쪽 = Windows `imp`뿐(macOS·Linux는 HTML 클립보드 없음).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn cf_html(fragment: &str) -> Vec<u8> {
     let head_len = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n".len();
     let pre = "<html><body><!--StartFragment-->";
