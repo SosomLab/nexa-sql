@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/status-0928-4 | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 진행사항 최신화(102차 끝 4 · journal §10 · DEVLOG · STATUS · TODO T-253/T-254 · CLAUDE.md) |
 | fix/ci-menu-up-project-headers | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | CI 빨강(메뉴 Up 확정 시험) · 검색어 이력 MouseUp · 프로젝트 탐색기 "프로젝트 폴더" 머리글 · 고정 머리글 |
 | fix/explorer-menu-autosave-model | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 고정 헤더 메뉴 위치 · 우클릭 메뉴 MouseUp 확정 · 탭 메뉴 프로젝트 보기 활성 · 자동 저장 = 최초 변경 + 10초 스로틀 + 30초 주기 · 탭 `*` 제거 |
 | feat/explorer-sticky-header | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 객체 탐색기 SQLite = 파일 하나가 서버 하나(헤더 + 연결 행) · 스크롤 시 서버 헤더 고정(pinned_header · 다음 서버 헤더에 밀림) |
