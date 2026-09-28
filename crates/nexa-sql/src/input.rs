@@ -232,9 +232,22 @@ pub(crate) fn wheel_event(delta: &MouseScrollDelta, shift: bool) -> InputEvent {
 mod tests {
     use super::*;
 
+    /// ★ 휠 시험 셋은 전역(`NATURAL` · `WHEEL_REM`)을 공유한다 — 병렬로 돌면 한 시험이 natural을 켠 사이 다른 시험이 읽어
+    ///   Linux CI에서 간헐 실패(09-28 · 36396338111). 잠금으로 직렬화하고 시작 때 초기화한다.
+    static WHEEL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn wheel_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        let g = WHEEL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        set_natural_scroll(false);
+        let mut rem = WHEEL_REM.lock().unwrap_or_else(|e| e.into_inner());
+        *rem = (0.0, 0.0);
+        drop(rem);
+        g
+    }
+
     #[test]
     fn natural_flips_both_axes_and_shift_makes_horizontal() {
-        set_natural_scroll(false);
+        let _g = wheel_test_guard();
         assert!(matches!(
             wheel_event(&MouseScrollDelta::LineDelta(0.0, -1.0), false),
             InputEvent::Wheel { delta: -120 }
@@ -281,11 +294,7 @@ mod tests {
     /// 픽셀 delta는 1:1(소비자의 /3에 맞춰 ×3) — 트랙패드 2.5px → 7.5 → 6 나가고 1.5 이월(09-16).
     #[test]
     fn pixel_delta_maps_one_to_one() {
-        set_natural_scroll(false);
-        {
-            let mut rem = WHEEL_REM.lock().unwrap_or_else(|e| e.into_inner());
-            *rem = (0.0, 0.0);
-        }
+        let _g = wheel_test_guard();
         let p = winit::dpi::PhysicalPosition::new(0.0, -10.0);
         assert!(matches!(
             wheel_event(&MouseScrollDelta::PixelDelta(p), false),
@@ -314,7 +323,7 @@ mod tests {
     /// macOS 가로 부호 보정(09-16): natural off에서 AppKit 양수(왼쪽)가 `HWheel` 음수(왼쪽)로.
     #[test]
     fn horizontal_sign_matches_windows_convention() {
-        set_natural_scroll(false);
+        let _g = wheel_test_guard();
         let expect = if cfg!(target_os = "macos") { -120 } else { 120 };
         assert!(matches!(
             wheel_event(&MouseScrollDelta::LineDelta(1.0, 0.0), false),
