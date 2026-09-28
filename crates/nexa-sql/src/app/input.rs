@@ -878,6 +878,7 @@ impl App {
                     self.palette.close();
                     if let Some(i) = id.strip_prefix("tab.rename:").and_then(|n| n.parse().ok()) {
                         self.editors.rename_tab(i, &text);
+                        self.folder_title_remember(i);
                     } else if let Some(rid) = id
                         .strip_prefix("result.rename:")
                         .and_then(|n| n.parse::<u64>().ok())

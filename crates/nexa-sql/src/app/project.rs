@@ -661,6 +661,11 @@ impl App {
                                 }
                             }
                             self.restore_caret(i, t, &opts);
+                            // 사용자가 바꾼 이름(파일 이름과 다르면) = 복원(사용자 09-28 · 프로젝트 모드 보존).
+                            let fname = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                            if !t.title.is_empty() && fname.as_deref() != Some(t.title.as_str()) {
+                                self.editors.rename_tab(i, &t.title);
+                            }
                             Some(self.editors.tab_id(i))
                         } else {
                             None
@@ -989,7 +994,19 @@ impl App {
     /// 탐색기가 낸 요청 거두기(열기 · 링크 명령).
     pub(crate) fn project_pump(&mut self) {
         if let Some(id) = self.project_panel.take_command() {
-            self.project_cmd(&id);
+            // 우클릭 ▸ 이름/경로 복사 · 파일 위치 열기(폴더·파일 공통 · 사용자 09-28).
+            if let Some(p) = id.strip_prefix("path.copy_name:") {
+                self.copy_path_text(Path::new(p), false);
+            } else if let Some(p) = id.strip_prefix("path.copy_full:") {
+                self.copy_path_text(Path::new(p), true);
+            } else if let Some(p) = id.strip_prefix("path.reveal:") {
+                if let Err(e) = nexa_fs::shell::reveal_in_file_manager(Path::new(p)) {
+                    self.sess.status = tf(Msg::StRevealFailed, &[&e.to_string()]);
+                }
+            } else {
+                self.project_cmd(&id);
+            }
+            self.redraw();
         }
         if let Some(req) = self.project_panel.take_open() {
             self.project_open_req(req);
@@ -1086,10 +1103,11 @@ impl App {
                     self.sess.status = t(Msg::StAutosaveNone).into();
                     return;
                 };
-                self.sess.status = match crate::reveal_in_os(&p) {
-                    Ok(()) => tf(Msg::StAutosaveOpened, &[&p.display().to_string()]),
-                    Err(e) => e,
-                };
+                self.sess.status =
+                    match nexa_fs::shell::reveal_in_file_manager(&p).map_err(|e| e.to_string()) {
+                        Ok(()) => tf(Msg::StAutosaveOpened, &[&p.display().to_string()]),
+                        Err(e) => e,
+                    };
             }
             "backups" => {
                 let Some(dir) = crate::backups::snapshot_dir() else {
@@ -1102,7 +1120,9 @@ impl App {
                     .active_path()
                     .and_then(|p| crate::backups::snapshot_file(&p));
                 self.sess.status = match snap {
-                    Some(f) => match crate::reveal_in_os(&f) {
+                    Some(f) => match nexa_fs::shell::reveal_in_file_manager(&f)
+                        .map_err(|e| e.to_string())
+                    {
                         Ok(()) => tf(Msg::StAutosaveOpened, &[&f.display().to_string()]),
                         Err(e) => e,
                     },
@@ -1119,6 +1139,90 @@ impl App {
             _ => {}
         }
         self.redraw();
+    }
+
+    /// 파일 이름(`name.ext`) 또는 전체 경로를 클립보드로 + 상태줄 안내(탭 메뉴 · 프로젝트 탐색기 · 09-28).
+    pub(crate) fn copy_path_text(&mut self, path: &Path, full: bool) {
+        let text = if full {
+            nexa_fs::shell::explorer_path(path)
+        } else {
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned())
+        };
+        let text = if cfg!(windows) {
+            text
+        } else if full {
+            path.to_string_lossy().into_owned()
+        } else {
+            text
+        };
+        self.sess.status = if clipboard::write_text(&text) {
+            tf(Msg::StCopiedText, &[&text])
+        } else {
+            t(Msg::ErrClipboard).into()
+        };
+    }
+
+    /// ★ 폴더 모드의 탭 이름 보존 파일(`<폴더>/.nsql/tab-titles.tsv` · 줄 = `경로\t이름` · 사용자 09-28) — 폴더 모드가 아니면 None.
+    fn folder_titles_file(&self) -> Option<PathBuf> {
+        match project::WorkMode::of(self.project.path.as_deref(), self.arg_folder.as_deref()) {
+            project::WorkMode::Folder(_) => project::WorkMode::of(None, self.arg_folder.as_deref())
+                .local_dir()
+                .map(|d| d.join("tab-titles.tsv")),
+            _ => None,
+        }
+    }
+
+    fn folder_titles_read(&self) -> Vec<(String, String)> {
+        let Some(f) = self.folder_titles_file() else {
+            return Vec::new();
+        };
+        std::fs::read_to_string(f)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(p, t)| (p.to_string(), t.to_string()))
+            .collect()
+    }
+
+    /// 폴더 모드: 탭 이름을 바꾸면 그 파일의 이름을 기록(파일 이름으로 되돌리면 지움) — 파일 탭만(이름 없는 탭은 폴더 모드에서 복원되지 않는다).
+    pub(crate) fn folder_title_remember(&mut self, i: usize) {
+        let (Some(f), Some(path)) = (self.folder_titles_file(), self.editors.path_of(i)) else {
+            return;
+        };
+        let key = path.to_string_lossy().into_owned();
+        let mut rows: Vec<(String, String)> = self
+            .folder_titles_read()
+            .into_iter()
+            .filter(|(p, _)| *p != key)
+            .collect();
+        if self.editors.is_custom_title(i) {
+            rows.push((key, self.editors.title_of(i)));
+        }
+        if let Some(d) = f.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let body: String = rows.iter().map(|(p, t)| format!("{p}\t{t}\n")).collect();
+        let _ = std::fs::write(f, body);
+    }
+
+    /// 폴더 모드: 연 파일에 기록된 이름이 있으면 그 이름으로.
+    pub(crate) fn folder_title_apply(&mut self, path: &Path) {
+        if self.folder_titles_file().is_none() {
+            return;
+        }
+        let key = path.to_string_lossy().into_owned();
+        if let Some((_, t)) = self
+            .folder_titles_read()
+            .into_iter()
+            .find(|(p, _)| *p == key)
+        {
+            if self.editors.active_path().as_deref() == Some(path) {
+                let i = self.editors.active();
+                self.editors.rename_tab(i, &t);
+            }
+        }
     }
 
     /// 지금 작업 환경을 담은 프로젝트 문서가 마지막 저장본과 다른가(종료 물음 · 자동 저장 틱과 같은 비교 · 09-28).

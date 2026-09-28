@@ -966,6 +966,12 @@ impl App {
                     }
                 }
             }
+            TabMenuReq::CopyName(i) | TabMenuReq::CopyPath(i) => {
+                if let Some(path) = self.editors.path_of(i) {
+                    let full = matches!(req, TabMenuReq::CopyPath(_));
+                    self.copy_path_text(&path, full);
+                }
+            }
             TabMenuReq::KeepOpen(i) => {
                 self.editors.promote_tab(i);
             }

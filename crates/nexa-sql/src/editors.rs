@@ -42,6 +42,9 @@ pub(crate) enum TabMenuReq {
     CloseRight(usize),
     CloseAll,
     Reveal(usize),
+    /// 파일 이름(`name.ext`) · 전체 경로를 클립보드로(사용자 09-28).
+    CopyName(usize),
+    CopyPath(usize),
     /// 미리보기 탭을 정식 탭으로(탭 메뉴 · 미리보기 탭에서만 · 09-22).
     KeepOpen(usize),
     /// 프로젝트 탐색기에서 그 파일 보기(프로젝트 폴더 안 파일만 · 사용자 09-22).
@@ -81,6 +84,8 @@ pub(crate) struct Editors {
     /// **뷰 탭**(본문이 글 편집기가 아니라 호스트가 그리는 전용 뷰 — 확장 상세 등): 탭 id → 뷰 열쇠(예 `ext:<id>`).
     /// 탭 줄·전환·닫기는 보통 탭과 같고, 본문 그리기·입력만 호스트의 뷰가 맡는다.
     view_tabs: std::collections::HashMap<u64, String>,
+    /// ★ 사용자가 이름을 바꾼 탭(id) — 저장해도 파일 이름으로 되돌리지 않는다 · 프로젝트/폴더 모드는 이 이름을 보존(사용자 09-28).
+    custom_titles: std::collections::HashSet<u64>,
     /// **큰 파일 모드**(docs/59 §4 1단계): 탭 id → (단계 1·2, 사용자가 "기능 강제로 켜기"를 눌렀는가). 단계는 읽을 때·저장할 때 정한다.
     large: std::collections::HashMap<u64, (u8, bool)>,
     /// 단계 기준: [(바이트, 줄 수); L1, L2] — 둘 중 하나라도 넘으면 그 단계(설정 `file.large_*`).
@@ -230,6 +235,7 @@ impl Editors {
             split_max: 3,
             body: Rect::new(0, 0, 0, 0),
             view_tabs: std::collections::HashMap::new(),
+            custom_titles: std::collections::HashSet::new(),
             large: std::collections::HashMap::new(),
             large_cfg: [(5 << 20, 100_000), (20 << 20, 300_000)],
             large_feature_levels: (1, 2),
@@ -1568,8 +1574,12 @@ impl Editors {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
+        // 사용자가 바꾼 이름은 저장해도 유지(구문은 파일 이름으로 다시 판정 · 09-28).
+        let keep = self.custom_titles.contains(&self.tab_id(i));
         if self.titles[i] != name {
-            self.titles[i] = name.clone();
+            if !keep {
+                self.titles[i] = name.clone();
+            }
             let syntax = self.registry.for_title(&name);
             self.cur_mut().set_highlighter(Some(syntax.clone()));
             self.syntax[i] = syntax;
@@ -2123,6 +2133,8 @@ impl Editors {
                     "close_all" => Some(TabMenuReq::CloseAll),
                     "reveal" => Some(TabMenuReq::Reveal(i)),
                     "reveal_project" => Some(TabMenuReq::RevealProject(i)),
+                    "copy_name" => Some(TabMenuReq::CopyName(i)),
+                    "copy_path" => Some(TabMenuReq::CopyPath(i)),
                     "keep_open" => Some(TabMenuReq::KeepOpen(i)),
                     _ => None,
                 };
@@ -2250,11 +2262,18 @@ impl Editors {
             .get(i)
             .and_then(|p| p.as_ref())
             .is_some_and(|p| self.in_project(p));
-        // ★ 탭 유형이 메뉴의 기준 데이터(사용자 09-22): 미리보기 = "계속 열어 두기" · 이름 바꾸기 = 스크립트만(파일 탭 제목 = 파일 이름).
+        // ★ 탭 유형이 메뉴의 기준 데이터(사용자 09-22): 미리보기 = "계속 열어 두기" · 이름 바꾸기 = 편집기 탭 전부(미리보기·확장 보기 제외 ·
+        //   사용자 09-28 — 종전엔 스크립트만).
         let kind = self.tab_kind(i);
+        let is_view = self.view_tabs.contains_key(&self.tab_id(i));
+        let has_path = self.paths.get(i).and_then(|p| p.as_ref()).is_some();
         let items = vec![
             CtxItem::maybe("keep_open", t(Msg::MnTabKeepOpen), kind == TabKind::Preview),
-            CtxItem::maybe("rename", t(Msg::MnTabRename), kind == TabKind::Scratch),
+            CtxItem::maybe(
+                "rename",
+                t(Msg::MnTabRename),
+                kind != TabKind::Preview && !is_view,
+            ),
             CtxItem::Separator,
             CtxItem::item("close", t(Msg::MnCloseTab)),
             CtxItem::maybe("close_left", t(Msg::MnTabCloseLeft), i > 0),
@@ -2263,6 +2282,9 @@ impl Editors {
             CtxItem::Separator,
             CtxItem::maybe("reveal", t(Msg::MnTabReveal), has_file),
             CtxItem::maybe("reveal_project", t(Msg::MnTabRevealProject), in_project),
+            CtxItem::Separator,
+            CtxItem::maybe("copy_name", t(Msg::MnCopyFileName), has_path),
+            CtxItem::maybe("copy_path", t(Msg::MnCopyFilePath), has_path),
         ];
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;
@@ -2304,7 +2326,25 @@ impl Editors {
             return;
         }
         self.titles[i] = name.to_string();
+        let id = self.tab_id(i);
+        // 파일 이름과 같게 되돌렸으면 사용자 이름 표시를 뗀다.
+        let file_name = self
+            .paths
+            .get(i)
+            .and_then(|p| p.as_ref())
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        if file_name.as_deref() == Some(name) {
+            self.custom_titles.remove(&id);
+        } else {
+            self.custom_titles.insert(id);
+        }
         self.sync_tabs();
+    }
+
+    /// 사용자가 이름을 바꾼 탭인가.
+    pub(crate) fn is_custom_title(&self, i: usize) -> bool {
+        self.custom_titles.contains(&self.tab_id(i))
     }
 
     pub(crate) fn tab_count(&self) -> usize {

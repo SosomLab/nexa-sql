@@ -1148,25 +1148,6 @@ impl App {
     // ───────────── 북마크(docs/69 · T-167) ─────────────
 }
 
-/// OS 파일 탐색기에서 **그 파일을 선택한 채** 폴더 열기(외부 crate 0 · 3-OS · 09-28): Windows `explorer /select,` · macOS `open -R` ·
-/// Linux = 폴더만(`xdg-open` · 선택은 데스크톱마다 달라 생략).
-fn reveal_in_os(path: &std::path::Path) -> Result<(), String> {
-    let p = path.display().to_string();
-    let r = if cfg!(target_os = "windows") {
-        std::process::Command::new("explorer.exe")
-            .arg(format!("/select,{p}"))
-            .spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").args(["-R", &p]).spawn()
-    } else {
-        let dir = path
-            .parent()
-            .map_or_else(|| p.clone(), |d| d.display().to_string());
-        std::process::Command::new("xdg-open").arg(&dir).spawn()
-    };
-    r.map(|_| ()).map_err(|e| e.to_string())
-}
-
 /// OS 연결 프로그램으로 파일 열기(외부 crate 0 · 3-OS).
 fn open_external(path: &std::path::Path) -> Result<(), String> {
     let p = path.display().to_string();

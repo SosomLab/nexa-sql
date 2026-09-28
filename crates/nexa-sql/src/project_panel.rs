@@ -762,16 +762,24 @@ impl ProjectPanel {
             self.sel = Some(r);
         }
         self.menu_row = row;
-        let is_root = row
-            .and_then(|r| self.rows.get(r))
-            .is_some_and(|&n| self.nodes[n].parent.is_none());
-        if !is_root {
+        let Some(node) = row.and_then(|r| self.rows.get(r)).copied() else {
             return;
+        };
+        let is_root = self.nodes[node].parent.is_none();
+        // 폴더·파일 공통(사용자 09-28): 이름 복사 · 경로 복사 · 파일 위치 열기 · (루트) 프로젝트에서 폴더 제거.
+        let mut items = vec![
+            CtxItem::item("copy_name", t(Msg::MnCopyName)),
+            CtxItem::item("copy_path", t(Msg::MnCopyPath)),
+            CtxItem::Separator,
+            CtxItem::item("reveal", t(Msg::MnRevealFile)),
+        ];
+        if is_root {
+            items.push(CtxItem::Separator);
+            items.push(CtxItem::item(
+                "remove_folder",
+                t(Msg::MnProjectRemoveFolder),
+            ));
         }
-        let items = vec![CtxItem::item(
-            "remove_folder",
-            t(Msg::MnProjectRemoveFolder),
-        )];
         let text_w = (self.row_h * 10).max(180);
         // host = 아는 한 창 전체(팝업 배치 규칙 ③) — 패널은 창 높이를 모르므로 폭만 clamp · 세로는 그리는 시점의 표면 크기 안전망.
         let host = Rect::new(0, 0, self.clamp_w, i32::MAX / 4);
@@ -779,6 +787,20 @@ impl ProjectPanel {
     }
 
     fn menu_pick(&mut self, id: &str) {
+        let path = self
+            .menu_row
+            .and_then(|r| self.rows.get(r).copied())
+            .map(|n| self.nodes[n].path.to_string_lossy().into_owned());
+        let prefix = match id {
+            "copy_name" => Some("path.copy_name:"),
+            "copy_path" => Some("path.copy_full:"),
+            "reveal" => Some("path.reveal:"),
+            _ => None,
+        };
+        if let (Some(pre), Some(p)) = (prefix, path) {
+            self.command = Some(format!("{pre}{p}"));
+            return;
+        }
         if id != "remove_folder" {
             return;
         }

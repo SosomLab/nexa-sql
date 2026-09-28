@@ -448,6 +448,7 @@ impl App {
     /// 파일 → 탭(자동 감지: BOM으로 UTF-8/UTF-16 판별 · 없으면 UTF-8).
     pub(crate) fn open_file(&mut self, path: &Path) {
         self.open_file_enc(path, "auto");
+        self.folder_title_apply(path);
     }
 
     /// 바이트 → 문자열(인코딩 지정 · `auto` = BOM 감지). 돌려주는 값 = (본문, 대체 문자 발생, 실제 인코딩).
