@@ -17,6 +17,10 @@ from collections import OrderedDict
 
 
 def main() -> int:
+    # 콘솔 인코딩과 무관하게 UTF-8로 찍는다 — Windows 러너 기본 cp1252가 한글 요약 줄에서 UnicodeEncodeError(v0.1.0 첫 릴리스 실행).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
