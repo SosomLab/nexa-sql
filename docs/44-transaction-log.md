@@ -195,3 +195,19 @@ pub struct TxRecord {
 - **Attention이 성립하는 조건** = 로그인 뒤 TDS 패킷이 **평문**일 것. 성립 = 클라이언트 `Off`(로그인만) **그리고** 서버 정책 `ENCRYPT_OFF`/`NOT_SUP`. 깨지는 조합 = ① 우리 설정 `required`(클라이언트가 전 구간 요청) ② 서버 `Force Encryption=Yes`(`ENCRYPT_REQ` 응답 · tiberius `negotiated_encryption`이 `Off`를 조용히 `On`으로 올림). **이유**: 전 구간 암호화면 로그인 뒤 모든 바이트가 tiberius 안의 rustls 세션(키·시퀀스·MAC)을 통과한다. 우리가 소켓 복제본에 쓰는 8바이트는 TLS 레코드가 아니라 평문이라 서버 TLS 계층에서 복호화·MAC 검증에 실패 → 서버가 접속을 끊는다(= 의도치 않은 소켓 종료). 평문 구간이라야 Attention 패킷이 그대로 TDS 패킷으로 읽힌다.
 - **접속 전 판단(구현)**: `probe_server_encryption` — 별도 TCP로 PRELOGIN(ENCRYPTION=OFF)을 보내 서버의 ENCRYPTION 바이트만 읽고 닫는다(1 RTT · 로그인 없음 · 타임아웃 3s). `OFF`/`NOT_SUP` → 이 접속은 `login`(Attention 가능) · `REQ`/`ON`/실패 → **이 접속만 `required`로 임시 적용**(설정은 그대로) · 결과는 접속 설명에 `encrypt=login(Attention)` / `encrypt=required(server forces · Attention off)`로 붙어 상태줄·로그에 보인다. 접속 직후 판단은 tiberius가 협상 결과를 노출하지 않아 불가 → 탐침이 답.
 - 미채택: future drop/타임아웃(클라이언트 대기만 끊고 읽다 만 토큰 스트림이 남아 재사용 불가 · 서버는 다음 전송까지 계속) · `KILL spid`(`ALTER ANY CONNECTION` 권한 필요 · 옵션 후보).
+
+## 9. 3계층 표시 — 바인드 원문 · 매핑 · 값 치환(사용자 09-28)
+
+> 사용자: *"트랜잭션 로그에 문장이 기록되는데 실제 매핑된 Bind variables 정보가 없어 대상 확인이 정확하게 되지 않는다 · 바인드 변수를 따로 확인할 수도 있고 최종 값이 적용된 쿼리도 확인할 수 있게 · 1) 바인드 변수가 포함된 1차 쿼리 2) 바인드 변수 매핑 이름/값 3) 값으로 대체된 실제 쿼리(DBMS에 따라 바인드로 넘어가므로 실제 쿼리는 변수로 생성해 보여 줄 수도)"*.
+
+| 계층 | 무엇 | 원천 | 표시 |
+|---|---|---|---|
+| ① 보낸 문장 | 러너가 드라이버에 준 SQL(`:이름` 바인드 형태 · DR-8) | `TxEntry.text`(종전) | 상세 첫 절 · 표의 "문장" 열(한 줄) |
+| ② 매핑 | 이름 · 타입(`VarType`) · 값(표시) · 방언 리터럴 · OUT 여부 | **`RunEvent::Binds`** — 러너가 `session.execute(&request)` **직전**에 `request.params`로 만든다(`TxBind::from_params(params, dialect)`) · 그리드 적용은 `ApplyLogItem.binds`(사전 검사문도) | 상세 둘째 절 = 정렬된 표(이름 폭·타입 폭 맞춤 · `(OUT)`) |
+| ③ 값 치환 문장 | `bound_sql(text, binds)` = ①의 `:이름` 자리에 ②의 리터럴 — **클라이언트가 읽기용으로 만든 것**(서버가 받은 문장이 아니다 · 실행에 쓰지 않는다) | 표시 시점에 계산(저장 0) | 상세 셋째 절 + 한 줄 주의 · 우클릭 "값 적용 문장 복사 / 새 탭으로" |
+
+치환 규칙(`nsql_run::txlog::bound_sql` · 시험): 문자열 리터럴(`'…'` · `''` 이스케이프) · 인용 식별자(`"…"` · `` `…` `` · `[…]`) · 주석(`--` · `/* */`) 안은 건드리지 않음 · `::`(PG 캐스트) 제외 · 이름 비교 대소문자 무시 · OUT/IN OUT 바인드와 목록에 없는 이름은 `:이름` 그대로. 리터럴 = `Value::to_sql_literal(dialect)`(문자열 `'` 이스케이프 · Bytes 16진 · 커서 NULL).
+
+창: 행 **클릭** = 선택(같은 행 다시 = 해제 · 빈 곳 = 해제) → 표 아래 상세 영역(남은 높이의 2/5 · 120~360 px · 휠 = 상세 스크롤) · 선택 행 = 선택색. 바인드가 없는 문장은 ②에 "(바인드 변수 없음)" · ③ = ①과 같다.
+
+남은 것: CLI `nsql run --log`에 ②③ 옵션(`--binds`) · 로그 창 검색이 ②③ 값도 찾기 · 값이 매우 길면(CLOB) 상세에서 잘라 보이기(`grid.lob_view_max_mb` 재사용) — T-251.

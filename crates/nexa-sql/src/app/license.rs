@@ -194,8 +194,10 @@ impl App {
     }
 
     /// 게이트가 켜져 있는가 — Release 빌드는 늘 · Debug는 HIDDEN 설정(개발·자동 시험 기본 off).
+    /// ★ D-145(사용자 09-28 "개인 사용인 경우 모든 기능 오픈"): 게이트는 **기본 끔** — 숨은 설정 `license.gates`를 켤 때만(Debug·Release 동일).
+    ///   종전(09-27)에는 Release가 늘 켜서, 라이선스 없는 PC에서 탭 5개 상한·프로젝트 복원/자동 저장 끔이 조용히 걸렸다(사용자 09-28 실기).
     fn gates_on(&self) -> bool {
-        !cfg!(debug_assertions) || self.settings.flag("license.gates_dev")
+        self.settings.flag("license.gates")
     }
 
     /// 순수 판정(안내 없음) — 상한식·조용한 폴백용.

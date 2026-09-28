@@ -105,6 +105,10 @@ pub(crate) struct BookmarksPanel {
     focused: bool,
     /// 선택 행의 **이름 글자 시작 x**(마지막 그리기 실측 · 니모닉·줄번호 다음) — 이름 편집 상자를 그 자리에만(사용자 09-23).
     label_x: std::cell::Cell<Option<(usize, i32)>>,
+    /// ★ 타입어헤드(사용자 09-28 "북마크 탐색기에도") — nexa-ctl 부품 · 설정 `explorer.typeahead*` 공유.
+    typeahead: nexa_ctl::TypeAhead,
+    ta_cfg: crate::explorer::TypeAheadCfg,
+    now_hint: u64,
 }
 
 const ROW_H: f32 = 22.0;
@@ -145,7 +149,70 @@ impl BookmarksPanel {
             clamp_w: i32::MAX / 2,
             focused: false,
             label_x: std::cell::Cell::new(None),
+            typeahead: nexa_ctl::TypeAhead::default(),
+            ta_cfg: crate::explorer::TypeAheadCfg::default(),
+            now_hint: 0,
         }
+    }
+
+    /// 타입어헤드 설정(호스트 · 객체 탐색기와 같은 한 벌).
+    pub(crate) fn set_typeahead(&mut self, cfg: crate::explorer::TypeAheadCfg) {
+        self.ta_cfg = cfg;
+        self.typeahead.set_timeout(cfg.timeout_ms);
+        if !cfg.enabled {
+            self.typeahead.clear();
+        }
+    }
+
+    /// 행의 접두 매치용 라벨(그룹 이름 · 문서 이름 · 북마크 표시 이름).
+    fn row_label(&self, r: usize) -> String {
+        match self.rows.get(r) {
+            Some(Row::Group { name, .. }) | Some(Row::Doc { name, .. }) => name.clone(),
+            Some(Row::Item { id, .. }) => self.item(*id).map(|b| b.display()).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
+    /// 타입어헤드 글자(객체 탐색기와 같은 규칙).
+    fn typeahead_char(&mut self, c: char) -> bool {
+        if !self.ta_cfg.enabled || !self.ta_cfg.filter.accepts(c) {
+            return false;
+        }
+        let q = self.typeahead.push(c, self.now_hint);
+        let n = self.rows.len();
+        if n == 0 {
+            return true;
+        }
+        let pos = self.sel.or(self.caret);
+        let from = pos.map_or(0, |p| if q.include_caret { p } else { (p + 1) % n });
+        if let Some(k) = nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| self.row_label(k))
+        {
+            self.sel = Some(k);
+            self.reveal(k);
+        }
+        true
+    }
+
+    /// 타입어헤드 활성 중의 ↑/↓ = 접두 매치 안에서 순환(처리했으면 true).
+    fn ta_step(&mut self, down: bool) -> bool {
+        let ta = self.typeahead.composing();
+        let n = self.rows.len();
+        if ta.is_empty() || n == 0 {
+            return false;
+        }
+        self.typeahead.touch(self.now_hint);
+        let pos = self.sel.or(self.caret);
+        let from = pos.map_or(0, |p| if down { (p + 1) % n } else { (p + n - 1) % n });
+        let hit = if down {
+            nexa_ctl::typeahead::find_prefix(n, from, &ta, |k| self.row_label(k))
+        } else {
+            nexa_ctl::typeahead::find_prefix_rev(n, from, &ta, |k| self.row_label(k))
+        };
+        if let Some(k) = hit {
+            self.sel = Some(k);
+            self.reveal(k);
+        }
+        true
     }
 
     pub(crate) fn is_visible(&self) -> bool {
@@ -647,7 +714,8 @@ impl BookmarksPanel {
         if !self.visible {
             return false;
         }
-        let mut r = self.filter.tick(now_ms) | self.bars.tick(now_ms);
+        self.now_hint = now_ms;
+        let mut r = self.filter.tick(now_ms) | self.bars.tick(now_ms) | self.typeahead.tick(now_ms);
         if let Some((_, tb, _)) = self.rename.as_mut() {
             r |= tb.tick(now_ms);
         }
@@ -792,6 +860,31 @@ impl BookmarksPanel {
                 self.filter_feed(ev);
                 true
             }
+            // ★ 글자 = 타입어헤드(필터 포커스가 아닐 때 · 사용자 09-28) · Backspace = 접두 한 글자 지우기.
+            InputEvent::Char { c, .. } => {
+                if c == '\u{8}' {
+                    if self.typeahead.is_active() {
+                        if let Some(q) = self.typeahead.backspace(self.now_hint) {
+                            let n = self.rows.len();
+                            let from = self.sel.or(self.caret).unwrap_or(0);
+                            if let Some(k) =
+                                nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| {
+                                    self.row_label(k)
+                                })
+                            {
+                                self.sel = Some(k);
+                                self.reveal(k);
+                            }
+                        }
+                        return true;
+                    }
+                    return false;
+                }
+                if c == '\t' || c == '\n' || c == '\r' {
+                    return false;
+                }
+                self.typeahead_char(c)
+            }
             InputEvent::Key { key, primary, .. } => {
                 if self.filter.is_focused() {
                     match key {
@@ -829,6 +922,13 @@ impl BookmarksPanel {
                     }
                 }
                 let n = self.rows.len();
+                if matches!(key, CtlKey::Down | CtlKey::Up) && self.ta_step(key == CtlKey::Down) {
+                    return true;
+                }
+                if matches!(key, CtlKey::Escape) && self.typeahead.is_active() {
+                    self.typeahead.clear();
+                    return true;
+                }
                 match key {
                     CtlKey::Down if n > 0 => {
                         let r = self.sel.or(self.caret).map_or(0, |s| (s + 1).min(n - 1));
@@ -1221,6 +1321,18 @@ impl BookmarksPanel {
                 }
             }
             y += rh;
+        }
+        // 타입어헤드 HUD(입력 중 접두 · 패널 영역 기준 3×3 위치 · 객체 탐색기와 같은 부품).
+        let ta_text = self.typeahead.composing();
+        if !ta_text.is_empty() {
+            nexa_ctl::typeahead::paint_hud(
+                dc,
+                self.bounds,
+                self.scale,
+                self.ta_cfg.pos,
+                &ta_text,
+                th,
+            );
         }
         self.bars.paint(
             dc,

@@ -88,6 +88,8 @@ struct Card {
     error: Option<String>,
     /// 기본값 글자가 컨트롤 줄에 안 들어가면(긴 URL) 설명 아래 한 줄로(사용자 09-17).
     default_below: bool,
+    /// ★ 키 이름 옆 복사 버튼(사용자 09-28 · 글꼴 높이 크기 · 클릭 = 키 복사 → ✓ → 원복 · Shift/Ctrl+클릭 = 보이는 설정 전부 복사).
+    copy: crate::copybtn::CopyBtn,
 }
 
 /// 스냅샷 한 줄.
@@ -137,6 +139,10 @@ pub(crate) struct PrefsWin {
     bars: ScrollBars,
     /// 스냅샷(전체 · 비노출 포함) — `refresh`로 갱신.
     snap: Vec<Snap>,
+    /// 지금 선택/검색에서 Advanced가 꺼져 숨긴 고급 설정 수(목록 위 한 줄 안내).
+    adv_hidden: usize,
+    /// 복사 버튼 ✓ 유지 시간(설정 `ui.copy_feedback_ms`).
+    copy_feedback_ms: i64,
     /// 현재 선택(그룹 index, 카테고리 index) · 검색어.
     sel: (usize, Option<usize>),
     last_tree_row: usize,
@@ -232,7 +238,8 @@ impl PrefsWin {
             search: TextBox::new(t(Msg::PhSearchSettings)).with_clearable(),
             history: None,
             tree: TreeView::new(model),
-            advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Left),
+            // 라벨은 스위치 **오른쪽**(사용자 09-28).
+            advanced: Switch::new(t(Msg::LblAdvanced), false).with_label_side(LabelSide::Right),
             json_btn: Button::new(t(Msg::BtnEditJson)),
             close_btn: Button::new(t(Msg::BtnClose)),
             cards: Vec::new(),
@@ -241,6 +248,8 @@ impl PrefsWin {
             content_h: 0,
             bars: ScrollBars::new(),
             snap: Vec::new(),
+            adv_hidden: 0,
+            copy_feedback_ms: crate::copybtn::DEFAULT_FEEDBACK_MS as i64,
             sel: (0, Some(0)),
             last_tree_row: 1,
             query: String::new(),
@@ -291,6 +300,14 @@ impl PrefsWin {
                 modified: m,
             })
             .collect();
+        if let Some(ms) = self
+            .snap
+            .iter()
+            .find(|x| x.entry.key == "ui.copy_feedback_ms")
+            .and_then(|x| x.value.trim().parse::<i64>().ok())
+        {
+            self.copy_feedback_ms = ms;
+        }
         if self.cards.is_empty() {
             self.rebuild_cards();
             return;
@@ -338,11 +355,9 @@ impl PrefsWin {
         //   "조합 중 글자 즉시 반영"(IME 경로 `display_text`) 위에 얹는다.
         let qj = nsql_core::hangul::has_hangul(&q).then(|| nsql_core::hangul::decompose(&q, true));
         let mut chosen: Vec<Snap> = Vec::new();
+        let mut adv_hidden = 0usize;
         if !q.is_empty() {
             for sn in &self.snap {
-                if !adv && nsql_settings::is_hidden(sn.entry.key) {
-                    continue;
-                }
                 if self.hidden.contains(&sn.entry.cat) {
                     continue;
                 }
@@ -359,10 +374,14 @@ impl PrefsWin {
                     None => hay.contains(&q),
                 };
                 if hit {
+                    // 고급(`is_advanced`)은 Advanced가 꺼져 있으면 숨기고 수만 센다.
+                    if !adv && nsql_settings::is_advanced(sn.entry.key) {
+                        adv_hidden += 1;
+                        continue;
+                    }
                     chosen.push(sn.clone());
                 }
             }
-            chosen.sort_by_key(|s| nsql_settings::tree_order(s.entry.cat));
         } else {
             let (gi, ci) = self.sel;
             let cats: Vec<Msg> = match self.vtree.get(gi) {
@@ -373,12 +392,19 @@ impl PrefsWin {
                 None => Vec::new(),
             };
             for sn in &self.snap {
-                if cats.contains(&sn.entry.cat) && (adv || !nsql_settings::is_hidden(sn.entry.key))
-                {
-                    chosen.push(sn.clone());
+                if !cats.contains(&sn.entry.cat) {
+                    continue;
                 }
+                if !adv && nsql_settings::is_advanced(sn.entry.key) {
+                    adv_hidden += 1;
+                    continue;
+                }
+                chosen.push(sn.clone());
             }
         }
+        // ★ 표시 순서 = 그룹 → 카테고리 → 키 접두 묶음 → 등재 순(사용자 09-28 "세션 관련 설정이 흩어지지 않게") — 검색 결과도 같은 순.
+        chosen.sort_by_key(|s| nsql_settings::display_order(s.entry.key));
+        self.adv_hidden = adv_hidden;
         let show_cat = !q.is_empty() || self.sel.1.is_none();
         self.cards = chosen
             .into_iter()
@@ -438,6 +464,7 @@ impl PrefsWin {
                     error: None,
                     locked: false,
                     default_below: false,
+                    copy: crate::copybtn::CopyBtn::new(),
                 }
             })
             .collect();
@@ -504,8 +531,10 @@ impl PrefsWin {
             | self.search.tick(now_ms)
             | self.close_btn.tick(now_ms)
             | self.json_btn.tick(now_ms);
+        let now = std::time::Instant::now();
         for c in &mut self.cards {
             any |= c.reset.tick(now_ms);
+            any |= c.copy.next_tick(now).is_some();
             if let Some(b) = &mut c.aux {
                 any |= b.tick(now_ms);
             }
@@ -528,6 +557,7 @@ impl PrefsWin {
                 || self.json_btn.is_animating()
                 || self.cards.iter().any(|c| {
                     c.reset.is_animating()
+                        || c.copy.next_tick(std::time::Instant::now()).is_some()
                         || c.aux.as_ref().is_some_and(|b| b.is_animating())
                         || match &c.ctl {
                             CardCtl::Bool(_) => false,
@@ -1155,9 +1185,55 @@ impl PrefsWin {
                 }
             }
         }
+        // ★ 키 복사 버튼(사용자 09-28): hover 갱신 · 클릭 = 키 이름 복사 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부.
+        match ie {
+            InputEvent::MouseMove { .. } => {
+                for c in &mut self.cards {
+                    c.copy.set_hover(c.rect.h > 0 && c.copy.hit(p));
+                }
+            }
+            InputEvent::MouseDown { shift, .. } if self.list.contains(p) => {
+                let all = shift || self.primary;
+                if let Some(i) = self
+                    .cards
+                    .iter()
+                    .position(|c| c.rect.h > 0 && c.copy.hit(p))
+                {
+                    let text = if all {
+                        self.shown_as_text()
+                    } else {
+                        self.cards[i].entry.key.to_string()
+                    };
+                    if crate::clipboard::write_text(&text) {
+                        let ms = self.copy_feedback_ms;
+                        let b = &mut self.cards[i].copy;
+                        b.set_feedback_ms(ms);
+                        b.press(std::time::Instant::now());
+                    }
+                    self.redraw();
+                    return PrefsAction::None;
+                }
+            }
+            _ => {}
+        }
         let a = self.collect_changes();
         self.redraw();
         a
+    }
+
+    /// 지금 보이는 설정 전부를 글로(`# 카테고리 › 라벨` 줄 + `키=값` 줄 · settings.conf와 같은 형식이라 그대로 붙여 넣을 수 있다).
+    fn shown_as_text(&self) -> String {
+        let mut out = String::new();
+        for c in &self.cards {
+            out.push_str(&format!(
+                "# {} › {}\n{}={}\n",
+                t(c.entry.cat),
+                t(c.entry.label),
+                c.entry.key,
+                c.value
+            ));
+        }
+        out
     }
 
     fn after_edit(&mut self) -> PrefsAction {
@@ -1350,6 +1426,11 @@ impl PrefsWin {
             let gap = (CARD_GAP * s).round() as i32;
             let text_w = card_w - inner_pad * 2 - (120.0 * s).round() as i32;
             let mut y = list.y + gap - self.scroll;
+            // 고급 설정 숨김 안내 한 줄(Advanced 꺼짐 · 숨긴 것이 있을 때) — 카드 위.
+            let note_y = y;
+            if self.adv_hidden > 0 {
+                y += th_txt + gap;
+            }
             let mut inv = Invalidations::default();
             let mut desc_lines: Vec<Vec<String>> = Vec::with_capacity(self.cards.len());
             let boost_on = self
@@ -1413,6 +1494,19 @@ impl PrefsWin {
                     + ctl_h
                     + extra;
                 c.rect = Rect::new(list.x, y, card_w, ch);
+                // 키 이름 옆 복사 버튼 = 글꼴 높이 정사각형(카드 오른쪽 위 · 목록 안에 온전히 보일 때만 히트).
+                let cb = Rect::new(
+                    list.x + card_w - inner_pad - th_txt,
+                    y + inner_pad,
+                    th_txt,
+                    th_txt,
+                );
+                c.copy
+                    .set_rect(if y + inner_pad >= list.y && cb.bottom() <= list.bottom() {
+                        cb
+                    } else {
+                        Rect::default()
+                    });
                 // 컨트롤 줄(카드 아래쪽): [컨트롤][보조][초기화]
                 let cy = y + ch - inner_pad - ctl_h;
                 let mut cx = list.x + inner_pad;
@@ -1508,6 +1602,19 @@ impl PrefsWin {
                 dc.fill_rect_alpha(Rect::new(cx - 1, sr.y, 3, sr.h), th.accent, a.max(0.15));
             }
             dc.fill_rect(list, th.window_bg);
+            if self.adv_hidden > 0 {
+                let nr = Rect::new(list.x, note_y, card_w, th_txt).intersection(&list);
+                if nr.h > 0 {
+                    dc.text(
+                        list.x + inner_pad,
+                        note_y,
+                        nr,
+                        &tf(Msg::PrefsAdvancedHidden, &[&self.adv_hidden.to_string()]),
+                        th.text_dim,
+                    );
+                }
+            }
+            let now = std::time::Instant::now();
             for (c, lines) in self.cards.iter().zip(desc_lines.iter()) {
                 if c.rect.h == 0 {
                     continue;
@@ -1535,14 +1642,16 @@ impl PrefsWin {
                 };
                 dc.text(tx, ty, clip, &label, th.text);
                 dc.select_font(FontSlot::Base, false);
+                // 키 이름: 고급 설정은 다른 글자색(강조색 · 사용자 09-28) · 오른쪽에 복사 버튼.
                 let key_w = dc.text_width(c.entry.key);
-                dc.text(
-                    r.right() - inner_pad - key_w,
-                    ty,
-                    clip,
-                    c.entry.key,
-                    th.text_dim,
-                );
+                let key_color = if nsql_settings::is_advanced(c.entry.key) {
+                    th.accent
+                } else {
+                    th.text_dim
+                };
+                let kx = r.right() - inner_pad - th_txt - (6.0 * s).round() as i32 - key_w;
+                dc.text(kx, ty, clip, c.entry.key, key_color);
+                c.copy.paint(&mut dc, th, 1.0, s, now);
                 ty += th_txt + (4.0 * s).round() as i32;
                 for l in lines {
                     dc.text(tx, ty, clip, l, th.text_dim);
@@ -1693,6 +1802,8 @@ mod tests {
                 "C:/detected/instantclient/oci.dll".into(),
             ),
         ]);
+        // DBMS 종속 키는 고급(09-28) — Advanced를 켜야 카드가 보인다.
+        w.advanced.set_on(true);
         w.refresh(&s);
         w.preset_query("oracle.");
         let ro = |w: &PrefsWin, key: &str| -> (bool, String) {

@@ -4,7 +4,7 @@
 //!
 //! 제한 운용(39 §3 부하원): **가린 칸(비밀번호)이 있는 창(로그인 · 입력 창)이 열려 있는 동안만** `dbus-monitor` 자식 하나 + 읽기
 //! 스레드 하나 · 창이 닫히면 즉시 죽인다(처음엔 칸 포커스 동안만이었으나 — 시작 순간엔 값이 없고(ibus는 포커스 변화 때만 보낸다)
-//! 다른 창에서 바꾸는 동안 꺼져 있으면 돌아올 때 틀렸다 · 09-27) · `ui.ime_hint`/`ui.ime_hint_watch` 끔 = 안 띄움 ·
+//! 다른 창에서 바꾸는 동안 꺼져 있으면 돌아올 때 틀렸다 · 09-27) · `input.ime_hint`/`input.ime_hint_watch` 끔 = 안 띄움 ·
 //! `dbus-monitor`/ibus가 없으면 조용히 폴백(엔진 이름 + 토글 키 + 입력 종류).
 //! 실측(09-27 `scratchpad/ibus_focus_test.py`): ibus-hangul의 한/영 모드는 **전역**(다른 컨텍스트에서 바꾼 값이 돌아온 컨텍스트에도) ·
 //! 컨텍스트 FocusIn마다 `RegisterProperties`로 지금 모드를 다시 보낸다 → 창보다 먼저 듣기 시작하면 초기값·재포커스 값이 생긴다.
@@ -23,7 +23,7 @@ fn trace(msg: &str) {
         eprintln!("[ime] watch {msg}");
     }
 }
-/// 설정 `ui.ime_hint_watch`(향상 모드 = off) — 끄면 `start`가 아무것도 안 한다(돌던 것은 `stop`).
+/// 설정 `input.ime_hint_watch`(향상 모드 = off) — 끄면 `start`가 아무것도 안 한다(돌던 것은 `stop`).
 static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 pub(crate) fn set_enabled(on: bool) {

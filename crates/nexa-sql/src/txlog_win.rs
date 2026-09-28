@@ -27,6 +27,9 @@ pub(crate) enum TxLogAction {
     CopySql(u64),
     /// 우클릭 메뉴: 새 편집기 탭으로(entry id).
     OpenSql(u64),
+    /// ★ 값 치환 쿼리(3계층 ③ · docs/44 §9) 복사 / 새 탭으로.
+    CopyBoundSql(u64),
+    OpenBoundSql(u64),
 }
 
 pub(crate) struct TxLogWin {
@@ -60,6 +63,11 @@ pub(crate) struct TxLogWin {
     menu_row: Option<u64>,
     /// "차단 중" 띠의 줄(호스트가 준다 · 비면 띠 없음).
     blocking: Vec<String>,
+    /// ★ 선택한 문장(entry id) → 표 아래 **3계층 상세**(① 바인드 원문 ② 이름/타입/값 매핑 ③ 값 치환 쿼리 · 사용자 09-28 · docs/44 §9).
+    sel: Option<u64>,
+    /// 마지막 페인트의 상세 영역(휠 라우팅) · 상세 스크롤.
+    detail: Rect,
+    detail_scroll: i32,
 }
 
 /// 열 폭(논리 px · 문장 열은 나머지 전부).
@@ -106,6 +114,9 @@ impl TxLogWin {
             row_ids: Vec::new(),
             menu_row: None,
             blocking: Vec::new(),
+            sel: None,
+            detail: Rect::new(0, 0, 0, 0),
+            detail_scroll: 0,
         }
     }
 
@@ -283,6 +294,8 @@ impl TxLogWin {
                     return match (id.as_str(), row) {
                         ("copy", Some(r)) => TxLogAction::CopySql(r),
                         ("open", Some(r)) => TxLogAction::OpenSql(r),
+                        ("copy_bound", Some(r)) => TxLogAction::CopyBoundSql(r),
+                        ("open_bound", Some(r)) => TxLogAction::OpenBoundSql(r),
                         _ => TxLogAction::None,
                     };
                 }
@@ -312,6 +325,8 @@ impl TxLogWin {
                             vec![
                                 CtxItem::item("copy", t(Msg::MnTxCopySql)),
                                 CtxItem::item("open", t(Msg::MnTxOpenSql)),
+                                CtxItem::item("copy_bound", t(Msg::MnTxCopyBoundSql)),
+                                CtxItem::item("open_bound", t(Msg::MnTxOpenBoundSql)),
                             ],
                             host,
                             (220.0 * self.scale) as i32,
@@ -336,7 +351,12 @@ impl TxLogWin {
             WindowEvent::MouseWheel { delta, .. } => {
                 let e = crate::input::wheel_event(delta, self.shift);
                 if let InputEvent::Wheel { delta: px } = e {
-                    self.scroll = (self.scroll - px / 3).max(0);
+                    let (x, y) = self.cursor;
+                    if self.detail.contains(Point { x, y }) {
+                        self.detail_scroll = (self.detail_scroll - px / 3).max(0);
+                    } else {
+                        self.scroll = (self.scroll - px / 3).max(0);
+                    }
                     self.redraw();
                 }
             }
@@ -378,6 +398,12 @@ impl TxLogWin {
                 if matches!(e, InputEvent::MouseDown { .. }) {
                     // 포커스 ≤ 1: 검색 상자는 클릭했을 때만.
                     self.search.set_focused(self.search.bounds().contains(p));
+                    // 행 클릭 = 선택(3계층 상세) · 같은 행 다시 = 해제 · 빈 곳 = 해제.
+                    if self.table.contains(p) {
+                        let picked = self.hover.and_then(|r| self.row_ids.get(r).copied());
+                        self.sel = if picked == self.sel { None } else { picked };
+                        self.detail_scroll = 0;
+                    }
                 }
                 if up || self.search.bounds().contains(p) {
                     self.search.on_event(&e, &mut inv);
@@ -510,7 +536,24 @@ impl TxLogWin {
                 }
                 top = band.bottom() + pad;
             }
-            let table = Rect::new(pad, top, wi - pad * 2, (sw_y - pad - top).max(0));
+            // ★ 3계층 상세(선택 행이 있고 기록에 남아 있을 때): 남은 높이의 2/5(120~360 px) — 표는 그만큼 줄어든다.
+            let sel_entry = self.sel.and_then(|id| log.entry(id).cloned());
+            let detail_h = if sel_entry.is_some() {
+                ((sw_y - pad - top) * 2 / 5).clamp(px(120.0), px(360.0))
+            } else {
+                0
+            };
+            let table = Rect::new(
+                pad,
+                top,
+                wi - pad * 2,
+                (sw_y - pad - top - if detail_h > 0 { detail_h + pad } else { 0 }).max(0),
+            );
+            self.detail = if detail_h > 0 {
+                Rect::new(pad, table.bottom() + pad, wi - pad * 2, detail_h)
+            } else {
+                Rect::new(0, 0, 0, 0)
+            };
             dc.fill_rect(table, th.field_bg);
             dc.fill_rect(Rect::new(table.x, table.y, table.w, 1), th.border);
             dc.fill_rect(
@@ -589,6 +632,9 @@ impl TxLogWin {
                 }
                 if let Some(c) = tint {
                     dc.fill_rect_alpha(r, c, alpha);
+                }
+                if self.sel == Some(e.id) {
+                    dc.fill_rect_alpha(r, th.sel_bg, 0.55);
                 }
                 if self.hover == Some(ri) {
                     dc.fill_rect_alpha(r, th.text, 0.06);
@@ -677,6 +723,73 @@ impl TxLogWin {
                     t(Msg::TxEmpty),
                     th.text_dim,
                 );
+            }
+            // ── 3계층 상세: ① 바인드 원문 ② 이름 · 타입 · 값 ③ 값 치환 쿼리(클라이언트 표시용 · 서버가 받은 문장이 아님).
+            if let Some(e) = sel_entry.as_ref().filter(|_| detail_h > 0) {
+                let d = self.detail;
+                dc.fill_rect(d, th.field_bg);
+                dc.fill_rect(Rect::new(d.x, d.y, d.w, 1), th.border);
+                dc.fill_rect(Rect::new(d.x, d.bottom() - 1, d.w, 1), th.border);
+                dc.fill_rect(Rect::new(d.x, d.y, 1, d.h), th.border);
+                dc.fill_rect(Rect::new(d.right() - 1, d.y, 1, d.h), th.border);
+                // 줄 목록(굵게 · 글 · 색).
+                let mut lines: Vec<(bool, String, Color)> = Vec::new();
+                lines.push((true, format!("① {}", t(Msg::TxDetailSql)), th.text));
+                for l in e.text.lines() {
+                    lines.push((false, l.to_string(), th.text));
+                }
+                lines.push((
+                    true,
+                    format!(
+                        "② {}",
+                        tf(Msg::TxDetailBinds, &[&e.binds.len().to_string()])
+                    ),
+                    th.text,
+                ));
+                if e.binds.is_empty() {
+                    lines.push((false, t(Msg::TxDetailNoBinds).to_string(), th.text_dim));
+                } else {
+                    let nw = e
+                        .binds
+                        .iter()
+                        .map(|b| b.name.chars().count())
+                        .max()
+                        .unwrap_or(0)
+                        + 1;
+                    let tw = e
+                        .binds
+                        .iter()
+                        .map(|b| b.ty.chars().count())
+                        .max()
+                        .unwrap_or(0);
+                    for b in &e.binds {
+                        let dir = if b.out { "  (OUT)" } else { "" };
+                        lines.push((
+                            false,
+                            format!(":{:<nw$} {:<tw$}  {}{dir}", b.name, b.ty, b.value),
+                            th.text,
+                        ));
+                    }
+                }
+                lines.push((true, format!("③ {}", t(Msg::TxDetailBound)), th.text));
+                lines.push((false, t(Msg::TxDetailBoundNote).to_string(), th.text_dim));
+                for l in e.bound_sql().lines() {
+                    lines.push((false, l.to_string(), th.text));
+                }
+                let lh = th_txt + px(2.0);
+                let content_h = lines.len() as i32 * lh + px(8.0);
+                let max_scroll = (content_h - d.h).max(0);
+                self.detail_scroll = self.detail_scroll.clamp(0, max_scroll);
+                let inner = Rect::new(d.x + 1, d.y + 1, d.w - 2, d.h - 2);
+                let mut y = inner.y + px(4.0) - self.detail_scroll;
+                for (bold, text, color) in &lines {
+                    if y + lh > inner.y && y < inner.bottom() {
+                        dc.select_font(FontSlot::Base, *bold);
+                        dc.text(inner.x + px(8.0), y, inner, text, *color);
+                    }
+                    y += lh;
+                }
+                dc.select_font(FontSlot::Base, false);
             }
             // 푸터 오른쪽: 건수 · 열린 트랜잭션
             let open = log.open_record();

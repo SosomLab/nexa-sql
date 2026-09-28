@@ -9,7 +9,7 @@
 
 - **독립 패널** `objdetail.rs`(`DetailPanel`): 탐색기 칸 **아래**, 호스트(`main.rs`)가 배치 — 탐색기 높이를 그만큼 줄이고 사이에 스플리터(`split_d` · 끌면 `explorer.details_h` 기억). 탐색기 스크롤 영역과 겹치지 않는다.
 - **머리 줄**(UI 글꼴 · 1줄) = 종류 칩 · **설명**(§209 · 코멘트 없으면 이름) · **▼**(펼침 상태 = 축소) / **▲**(축소 상태 = 확장 · 채운 삼각형) · **복사 버튼**(맨 끝). 축소 = 머리 줄만(설정 `explorer.details_collapsed` 기억).
-- **본문**(고정폭 · 편집기 글꼴 · `Editors::preview_box`와 같은 설정 = 글꼴 지표·줄 간격 일치 · §209) = **읽기 전용 텍스트박스**(nexa-ctl `TextBox`) → 선택 · ⌘/Ctrl+C 복사(`edit.copy`) · 상하/좌우 스크롤(줄바꿈 없음) · 유형별 섹션 글.
+- **본문**(★ 09-28 사용자 "객체 탐색기와 일치" → **UI 글꼴 · `explorer.font_size`**(폴백 메뉴 글꼴) · 종전 = 편집기 고정폭 · 상자 설정은 `Editors::preview_box` 그대로) = **읽기 전용 텍스트박스**(nexa-ctl `TextBox`) → 선택 · ⌘/Ctrl+C 복사(`edit.copy`) · 상하/좌우 스크롤(줄바꿈 없음) · 유형별 섹션 글.
 - **복사 버튼** = 클릭 → 설명(Description · 없으면 이름) · **Shift+클릭** → `종류 - 이름 - 설명` · 복사됨 효과 = `CopyBtn`(1 s 체크 표시 · 다른 복사 버튼과 같은 부품). 조합키 = **Shift**(마우스 사건이 Shift·⌘/Ctrl만 싣고 ⌥/Alt는 없다 · Shift = "더 넓게" 관례).
 - **데이터** = `nsql_catalog::object_details(session, &ObjectInfo, GenOpts)` → 섹션 목록(§3) · 탐색기 메타 스레드 `Req::Details`(급한 세션 · 사용자가 보고 있다) → `ExplorerAction::Details` → 패널. CLI `nsql cat detail <객체> [종류]`가 같은 함수(실서버 점검).
 

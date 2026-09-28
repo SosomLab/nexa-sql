@@ -198,6 +198,30 @@ impl App {
                 // ★ 라이선스 배지(docs/23 §4-4 · D-44: 무료 = "non-commercial use only" 상시) — 클릭 = 라이선스 창.
                 let lic_idx = segs.len();
                 segs.push((Self::license_badge_of(&self.licensing), false));
+                // ★ 프로젝트 자동 저장 표식(사용자 09-28 · `statusbar.autosave`): 켜짐(주기) / 꺼짐 · 클릭 = 자동 저장 폴더.
+                let autosave_seg = self.settings.flag("statusbar.autosave");
+                // (`project_autosave_on`과 같은 판정 — 여기서는 `surface` 차용 때문에 필드 단위로 푼다.)
+                let autosave_on = self.project.is_open()
+                    && self.settings.flag("project.autosave")
+                    && (!self.settings.flag("license.gates")
+                        || self
+                            .licensing
+                            .check(nsql_license::Feature::ProjectRestore)
+                            .is_allowed());
+                let autosave_secs = self
+                    .settings
+                    .int("project.autosave_secs")
+                    .max(5)
+                    .to_string();
+                let autosave_idx = autosave_seg.then(|| {
+                    let txt = if autosave_on {
+                        tf(Msg::StAutosaveOn, &[&autosave_secs])
+                    } else {
+                        t(Msg::StAutosaveOff).to_string()
+                    };
+                    segs.push((txt, false));
+                    segs.len() - 1
+                });
                 // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
                 if self.settings.flag("statusbar.git") {
                     let dir = self
@@ -225,6 +249,7 @@ impl App {
                 self.status_tx_rect = Rect::new(0, 0, 0, 0);
                 self.status_mem_rect = Rect::new(0, 0, 0, 0);
                 self.status_lic_rect = Rect::new(0, 0, 0, 0);
+                self.status_autosave_rect = Rect::new(0, 0, 0, 0);
                 let last = segs.len() - 1;
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
                     let tw = dc.text_width(text);
@@ -235,6 +260,18 @@ impl App {
                     }
                     if idx == lic_idx {
                         self.status_lic_rect = r;
+                    }
+                    if Some(idx) == autosave_idx {
+                        self.status_autosave_rect = r;
+                        // 클릭 효과 = 상태 레이어(hover · pressed · 메모리 세그먼트와 같은 부품).
+                        let st = if self.autosave_pressed {
+                            nexa_ctl::tokens::State::Pressed
+                        } else if self.pointer.is_some_and(|p| r.contains(p)) {
+                            nexa_ctl::tokens::State::Hover
+                        } else {
+                            nexa_ctl::tokens::State::Rest
+                        };
+                        dc.state_layer(r, th.text, st);
                     }
                     if Some(idx) == mem_idx {
                         self.status_mem_rect = r;
@@ -343,10 +380,15 @@ impl App {
                     }
                 }
             }
-            // ★ 객체 상세 본문(고정폭 · 읽기 전용 텍스트박스 · docs/86).
+            // ★ 객체 상세 본문(읽기 전용 텍스트박스 · docs/86) — 글꼴·크기 = **객체 탐색기와 같게**(UI 글꼴 · `explorer.font_size` ·
+            //   사용자 09-28 "객체 상세 패널의 글꼴/크기를 객체 탐색기와 일치시켜" · 종전 = 편집기 고정폭).
             if self.objdetail.is_visible() && !self.objdetail.is_collapsed() {
-                let prefs = FontPrefs::with_base(mono_px);
-                let mut dc = RasterCtx::new(&mut gfx, &self.mono_font, s).with_fonts(prefs);
+                let exp_px = match self.settings.font_px("explorer.font_size") {
+                    e if e <= 0.0 => self.settings.font_px("ui.menu_font_size"),
+                    e => e,
+                };
+                let prefs = FontPrefs::with_base(exp_px);
+                let mut dc = RasterCtx::new(&mut gfx, &self.ui_font, s).with_fonts(prefs);
                 self.objdetail.paint_body(&mut dc, &th);
             }
             mark(&mut t_sec, &mut marks); // 1 = 편집기

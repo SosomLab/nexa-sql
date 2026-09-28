@@ -558,6 +558,12 @@ impl App {
                 self.redraw();
                 return;
             }
+            if self.status_autosave_rect.contains(Point { x, y }) {
+                self.autosave_pressed = true;
+                self.open_autosave_folder();
+                self.redraw();
+                return;
+            }
             if self.status_tx_rect.contains(Point { x, y }) {
                 self.open_tx_menu();
                 self.redraw();

@@ -1693,22 +1693,32 @@ impl App {
             return true;
         }
         if self.txlog_win.is(id) {
-            match self.txlog_win.handle(event) {
+            let act = self.txlog_win.handle(event);
+            match act {
                 TxLogAction::Paint => {
                     let ui_px = self.settings.font_px("ui.font_size");
                     self.txlog_win.set_active_editor(self.editors.active_id());
                     self.txlog_win
                         .paint(&self.txlog, &self.ui_font, &self.theme, ui_px);
                 }
-                TxLogAction::CopySql(eid) => {
+                TxLogAction::CopySql(eid) | TxLogAction::CopyBoundSql(eid) => {
+                    let bound = matches!(act, TxLogAction::CopyBoundSql(_));
                     if let Some(e) = self.txlog.entry(eid) {
-                        if !clipboard::write_text(&e.text) {
+                        let text = if bound { e.bound_sql() } else { e.text.clone() };
+                        if !clipboard::write_text(&text) {
                             self.sess.status = t(Msg::ErrClipboard).into();
                         }
                     }
                 }
-                TxLogAction::OpenSql(eid) => {
-                    let text = self.txlog.entry(eid).map(|e| e.text.clone());
+                TxLogAction::OpenSql(eid) | TxLogAction::OpenBoundSql(eid) => {
+                    let bound = matches!(act, TxLogAction::OpenBoundSql(_));
+                    let text = self.txlog.entry(eid).map(|e| {
+                        if bound {
+                            e.bound_sql()
+                        } else {
+                            e.text.clone()
+                        }
+                    });
                     if let Some(text) = text.filter(|_| self.tab_room()) {
                         self.editors.new_tab(None);
                         self.editors.cur_mut().set_text(&text);

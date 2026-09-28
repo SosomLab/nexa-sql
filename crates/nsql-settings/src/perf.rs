@@ -208,10 +208,12 @@ pub const PERF: &[(&str, PerfBinding)] = &[
     ("file.probe_chevrons", b(Domain::Cpu, "on", "on", "off")),
     ("file.os_icons", b(Domain::Cpu, "on", "on", "off")),
     ("project.icons", b(Domain::Cpu, "on", "on", "off")),
+    // 파일 검색 한 파일 상한(docs/72 §4-1 · 09-28): full = SSD 8 MB · balanced = 4 MB · low = HDD 2 MB(디스크 읽기 시간 = CPU 도메인에 둔다).
+    ("search.max_file_kb", b(Domain::Cpu, "8192", "4096", "2048")),
     // 코드 완성 자동 활성화(docs/76 · 타이핑마다 후보 계산 · 수동 Ctrl+Space는 남는다)
     ("intel.auto_activation", b(Domain::Cpu, "on", "on", "off")),
     // Linux IME 감시(09-27 · 가린 칸 포커스 동안 dbus-monitor 자식 + 스레드 · low = 끔 → 엔진 이름·토글 키 폴백)
-    ("ui.ime_hint_watch", b(Domain::Cpu, "on", "on", "off")),
+    ("input.ime_hint_watch", b(Domain::Cpu, "on", "on", "off")),
     // ── GFX(§3-4)
     ("ui.max_fps", b(Domain::Gfx, "60", "30", "15")),
     ("ui.animations", b(Domain::Gfx, "auto", "auto", "off")),
@@ -247,7 +249,9 @@ pub const BOOST: &[(&str, &str)] = &[
     ("ui.flash_hold_ms", "300"),
     ("ui.flash_ms", "200"),
     // Linux IME 감시(09-27) — 자식 프로세스·스레드 0(엔진 이름·토글 키·입력 종류 폴백).
-    ("ui.ime_hint_watch", "off"),
+    ("input.ime_hint_watch", "off"),
+    // 파일 검색 한 파일 상한 = HDD 기준 2 MB(사용자 09-28 "성능 향상 모드에서는 HDD 기준" · docs/72 §4-1).
+    ("search.max_file_kb", "2048"),
     ("run.toast_tick_ms", "1000"),
     ("run.toast_max", "8"),
     // ── 아이콘·부가 표시(메모리·래스터): 트리 아이콘 · OS 파일 아이콘 · 우클릭 메뉴 아이콘 · 툴팁 · 미니맵 · 선택어 강조

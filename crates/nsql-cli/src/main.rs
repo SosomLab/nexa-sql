@@ -1272,8 +1272,10 @@ impl Printer {
                 let _ = writeln!(out, "Disconnected");
             }
             // 변수 표 사건은 GUI용(패널·탭 표) — CLI는 `PRINT`/`SHOW VARIABLES`로 본다.
-            RunEvent::ReadTxEnded { .. } | RunEvent::Vars { .. } | RunEvent::InputNeeded { .. } => {
-            }
+            RunEvent::ReadTxEnded { .. }
+            | RunEvent::Vars { .. }
+            | RunEvent::InputNeeded { .. }
+            | RunEvent::Binds { .. } => {}
             RunEvent::Timing { timeline, .. } => {
                 if self.timing {
                     self.err(&format!("⏱ {}", timeline.summary()));

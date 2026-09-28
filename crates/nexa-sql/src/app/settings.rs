@@ -277,12 +277,12 @@ impl App {
                 self.apply_run_toast();
             }
             "ui.menu_max_width" => self.rebuild_menus(),
-            "ui.ime_hint_watch" => {
+            "input.ime_hint_watch" => {
                 #[cfg(all(unix, not(target_os = "macos")))]
-                imewatch::set_enabled(self.settings.flag("ui.ime_hint_watch"));
+                imewatch::set_enabled(self.settings.flag("input.ime_hint_watch"));
             }
-            "ui.ime_hint" => {
-                let on = self.settings.flag("ui.ime_hint");
+            "input.ime_hint" => {
+                let on = self.settings.flag("input.ime_hint");
                 self.conn_win.set_ime_hint(on);
                 self.input_win.set_ime_hint(on);
             }
@@ -293,9 +293,11 @@ impl App {
             }
             "file.os_icons" => nexa_fs::shell::set_os_icons(self.settings.flag(key)),
             "project.icons" => self.project_panel.set_icons(self.settings.flag(key)),
-            "editor.tab_line_scratch" | "editor.tab_line_file" | "editor.tab_line_preview" => {
-                self.apply_tab_line_colors()
-            }
+            "editor.tab_line_unsaved"
+            | "editor.tab_line_file"
+            | "editor.tab_line_preview"
+            | "editor.tab_unsaved_text"
+            | "editor.tab_unsaved_color" => self.apply_tab_line_colors(),
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
             "ui.toast_secs" | "ui.toast_alpha" => {
                 self.toasts.configure(
@@ -386,7 +388,8 @@ impl App {
             | "meta.warm_comments" => {
                 self.explorer.set_index_cfg(index_cfg_from(&self.settings));
             }
-            "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk" => {
+            "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk"
+            | "gen.bind_note" => {
                 let o = gen_opts_from(&self.settings);
                 self.explorer.set_gen_opts(o);
             }
@@ -404,7 +407,10 @@ impl App {
             | "explorer.typeahead_space"
             | "explorer.typeahead_special"
             | "explorer.typeahead_pos" => {
-                self.explorer.set_typeahead(typeahead_cfg(&self.settings))
+                let cfg = typeahead_cfg(&self.settings);
+                self.explorer.set_typeahead(cfg);
+                self.project_panel.set_typeahead(cfg);
+                self.bm_panel.set_typeahead(cfg);
             }
             "ui.text_contrast" | "ui.text_snap" | "ui.text_hint" | "ui.text_weight" => {
                 self.apply_text_render();
@@ -729,7 +735,7 @@ impl App {
         let c = [
             pick(
                 &self.settings,
-                "editor.tab_line_scratch",
+                "editor.tab_line_unsaved",
                 Some(self.theme.warn),
             ),
             // ★ 파일 탭은 테마 강조색을 **명시**한다 — `None`은 탭 바에서 "바 공통 accent"(= 활성 탭의 유형 색)로 떨어져
@@ -746,6 +752,11 @@ impl App {
             ),
         ];
         self.editors.set_tab_line_colors(c);
+        // ★ 미저장 탭 이름 색(사용자 09-28): 켬/끔 + 색(빈 값 = 미저장 줄 색).
+        self.editors.set_tab_unsaved(
+            self.settings.flag("editor.tab_unsaved_text"),
+            color_alpha_setting(&self.settings, "editor.tab_unsaved_color").0,
+        );
     }
 
     /// 개발자 모드 마스크(`log.dev_mode` × `log.dev_layers` · 향상 모드는 dev_mode를 끈다) → nsql-log 전역 게이트.

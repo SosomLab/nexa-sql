@@ -229,6 +229,8 @@ struct App {
     about_win: AboutWin,
     open_about: bool,
     status_lic_rect: Rect,
+    /// 상태줄 자동 저장 표식(클릭 = 자동 저장 폴더 · `statusbar.autosave` · 09-28).
+    status_autosave_rect: Rect,
     /// 메모리 맵 창(docs/80 · 모델리스 · 닫혀 있으면 비용 0).
     mem_win: mem_win::MemWin,
     /// 변수 값 입력 창(D-137) · 열기를 기다리는 요청(세션 id, 빠진 입력) — 창은 이벤트 루프가 있을 때(`about_to_wait`) 만든다.
@@ -487,6 +489,8 @@ struct App {
     mem_status: (u64, Option<Instant>),
     /// 세그먼트 눌림 표시(MouseDown~MouseUp).
     mem_pressed: bool,
+    /// 상태줄 자동 저장 세그먼트 눌림(클릭 효과 · 09-28).
+    autosave_pressed: bool,
     /// 창이 열려 있을 때 다음 표본 시각.
     mem_next: Instant,
     /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
@@ -1116,7 +1120,7 @@ impl App {
     // ───────────────────────── 파일 열기/저장(T-74) ─────────────────────────
 
     // ── ★ 라이선스 게이트(docs/23 §4-2 · 25 §13-3 · T-36 · D-41/D-43/D-46 권장안 확정 09-27)
-    //   규칙: 기능당 **정확히 한 곳**(UI 행위 진입점) · 깊은 곳 중복 검사 없음 · Release = 늘 켬 · Debug = `license.gates_dev`.
+    //   규칙: 기능당 **정확히 한 곳**(UI 행위 진입점) · 깊은 곳 중복 검사 없음 · 기본 끔(D-145 개인 사용 = 전 기능) · 숨은 `license.gates`를 켤 때만 적용.
 
     // ── 데모 프로필·샘플 데이터(사용자 09-17 · docs/21 §5)
 
@@ -1483,6 +1487,7 @@ fn main() {
         licensing: nsql_license::Licensing::open_default(),
         open_license: false,
         status_lic_rect: Rect::new(0, 0, 0, 0),
+        status_autosave_rect: Rect::new(0, 0, 0, 0),
         mem_win: mem_win::MemWin::new(),
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
@@ -1674,6 +1679,7 @@ fn main() {
         status_mem_rect: Rect::new(0, 0, 0, 0),
         mem_status: (0, None),
         mem_pressed: false,
+        autosave_pressed: false,
         mem_next: Instant::now(),
         col_right_drag: false,
         ctrl_raw: false,
@@ -1760,11 +1766,11 @@ fn main() {
         app.settings.int("ui.toast_bar_spent"),
     );
     {
-        let on = app.settings.flag("ui.ime_hint");
+        let on = app.settings.flag("input.ime_hint");
         app.conn_win.set_ime_hint(on);
         app.input_win.set_ime_hint(on);
         #[cfg(all(unix, not(target_os = "macos")))]
-        imewatch::set_enabled(app.settings.flag("ui.ime_hint_watch"));
+        imewatch::set_enabled(app.settings.flag("input.ime_hint_watch"));
     }
     app.apply_text_render();
     app.apply_toolbar_visibility();
@@ -1991,6 +1997,7 @@ fn gen_opts_from(settings: &Settings) -> nsql_catalog::GenOpts {
         compact: settings.flag("gen.compact"),
         full_ddl: settings.flag("gen.full_ddl"),
         separate_fk: settings.flag("gen.separate_fk"),
+        bind_note: nsql_catalog::BindNote::parse(settings.get("gen.bind_note").unwrap_or("both")),
     }
 }
 

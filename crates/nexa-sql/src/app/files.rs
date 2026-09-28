@@ -193,7 +193,8 @@ impl App {
         if self.project.is_open() {
             if self.project_autosave_on() {
                 let _ = self.project_save();
-            } else if !self.exit_project_asked {
+            } else if !self.exit_project_asked && self.project_unsaved() {
+                // 🔧 저장할 것이 있을 때만 묻는다(사용자 09-28 "방금 저장했어도 창이 계속 뜬다") — 자동 저장 틱과 같은 비교(문서 = 마지막 저장본).
                 self.exit_pending = true;
                 self.ask_project_exit();
                 return;

@@ -39,9 +39,10 @@ pub(crate) enum DiscPick {
 impl DiscPick {
     pub(crate) fn parse(s: &str) -> Self {
         match s {
+            "auto" => DiscPick::Auto,
             "always" => DiscPick::Always,
             "all" => DiscPick::All,
-            _ => DiscPick::Auto,
+            _ => DiscPick::Always,
         }
     }
 }
@@ -229,7 +230,7 @@ impl ExplorerSet {
             menu: CtxMenu::new(),
             menu_group: None,
             pending: Vec::new(),
-            disconnect_pick: DiscPick::Auto,
+            disconnect_pick: DiscPick::Always,
             keep_offline: false,
             gen_opts: nsql_catalog::GenOpts::default(),
             schema_opts: nsql_catalog::SchemaOpts::default(),
@@ -1669,7 +1670,11 @@ mod tests {
         assert_eq!(disc_menu(DiscPick::All, 3), DiscMenu::AllOnly);
         assert_eq!(disc_menu(DiscPick::All, 1), DiscMenu::AllOnly);
         assert_eq!(DiscPick::parse("always"), DiscPick::Always);
-        assert_eq!(DiscPick::parse("nope"), DiscPick::Auto);
+        assert_eq!(
+            DiscPick::parse("nope"),
+            DiscPick::Always,
+            "기본 = 항상 고르기(D-144)"
+        );
     }
 
     fn spec(host: &str, db: &str, user: &str) -> ConnectSpec {

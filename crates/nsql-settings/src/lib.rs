@@ -28,7 +28,31 @@ pub const FILE_NAME: &str = "settings.conf";
 
 /// 기본값이 바뀐 키의 **옛 기본값** — 설정 창이 저장해 둔 옛 기본값은 사용자가 고른 값이 아니므로 새 기본값을 따른다.
 /// (미니맵 폭 80 → 160 · 사용자 09-17 "지금의 2배")
-const OLD_DEFAULTS: &[(&str, &str)] = &[("editor.minimap_width", "80")];
+const OLD_DEFAULTS: &[(&str, &str)] = &[
+    ("editor.minimap_width", "80"),
+    // 09-28(사용자): 서버 노드 연결 해제 = 항상 고르기 · 파일 검색 상한 = SSD 기준 8 MB(docs/72 §4-1).
+    ("explorer.disconnect_pick", "auto"),
+    ("search.max_file_kb", "1024"),
+];
+
+/// ★ **키 이름 바꿈 표**(09-28 · docs/94 §6): `(옛 키, 새 키)`. 파일의 옛 줄은 읽을 때 새 키로 옮기고(새 키를 이미 정했으면 옛 값은
+/// 버린다) 다음 저장 때 사라진다. `nsql config get/set 옛키`도 새 키로 통한다([`canonical_key`]). 새 키의 접두 = 설정 창 카테고리
+/// (키 이름만 보고 어디 있는지 알게 · 사용자 09-28 "변수 이름이 설정 위치와 연결되지 않아 찾기 어렵다").
+pub const RENAMED: &[(&str, &str)] = &[
+    ("license.gates_dev", "license.gates"),
+    ("ui.ime_hint", "input.ime_hint"),
+    ("ui.ime_hint_watch", "input.ime_hint_watch"),
+    ("editor.tab_line_scratch", "editor.tab_line_unsaved"),
+];
+
+/// 옛 키면 새 키를, 아니면 그대로.
+#[must_use]
+pub fn canonical_key(key: &str) -> &str {
+    RENAMED
+        .iter()
+        .find(|(old, _)| *old == key)
+        .map_or(key, |(_, new)| *new)
+}
 
 pub mod json;
 pub mod projfile;
@@ -288,6 +312,13 @@ const REFETCH_OPTS: &[(&str, Msg)] = &[
 const FILTER_SCOPE_OPTS: &[(&str, Msg)] =
     &[("all", Msg::ValFilterAll), ("shown", Msg::ValFilterShown)];
 
+/// 생성 SQL 바인드 목록 주석 위치(`gen.bind_note`).
+const BIND_NOTE_OPTS: &[(&str, Msg)] = &[
+    ("both", Msg::ValBindNoteBoth),
+    ("header", Msg::ValBindNoteHeader),
+    ("tail", Msg::ValBindNoteTail),
+    ("off", Msg::ValBindNoteOff),
+];
 const DISC_PICK_OPTS: &[(&str, Msg)] = &[
     ("auto", Msg::ValDiscAuto),
     ("always", Msg::ValDiscAlways),
@@ -1308,15 +1339,6 @@ pub const REGISTRY: &[Entry] = &[
         default: "500",
     },
     // ★ 플래시 메시지(클릭 복사 "복사됨" 등 · nexa-ctl `Flash`): 유지 시간 뒤 페이드아웃(사용자 09-27 · 기본 유지 2초 · 페이드 3초).
-    // ★ Linux IME 감시(09-27): 가린 칸 포커스 동안 ibus 패널 속성을 엿듣는 `dbus-monitor` 자식 + 스레드(한/영 전환 즉시 반영) — 향상 모드 off.
-    Entry {
-        key: "ui.ime_hint_watch",
-        cat: Msg::CatInput,
-        label: Msg::LblImeHintWatch,
-        desc: Msg::DescImeHintWatch,
-        kind: SettingKind::Bool,
-        default: "on",
-    },
     Entry {
         key: "ui.flash_hold_ms",
         cat: Msg::CatAppearance,
@@ -1467,7 +1489,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblExplorerDisconnectPick,
         desc: Msg::DescExplorerDisconnectPick,
         kind: SettingKind::Choice(DISC_PICK_OPTS),
-        default: "auto",
+        // 기본 = 항상 고르기(사용자 09-28 · D-144) — 연결이 하나여도 "모두/이 연결"을 확인하고 끊는다.
+        default: "always",
     },
     Entry {
         key: "explorer.filter_scope",
@@ -1655,6 +1678,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 생성 SQL의 바인드 변수 목록을 머리/꼬리 주석으로(사용자 09-28 "변수들을 직관적으로 식별 가능하게 header/tail에 표시").
+    Entry {
+        key: "gen.bind_note",
+        cat: Msg::CatExplorer,
+        label: Msg::LblGenBindNote,
+        desc: Msg::DescGenBindNote,
+        kind: SettingKind::Choice(BIND_NOTE_OPTS),
+        default: "both",
+    },
     Entry {
         key: "explorer.keep_offline",
         cat: Msg::CatExplorer,
@@ -1724,12 +1756,13 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
-    // 탭 유형별 활성 상단 줄 색(09-22 · 빈 값 = 기본: 스크립트 warn · 파일 accent · 미리보기 text_dim).
+    // 탭 구분별 활성 상단 줄 색(09-22 · 09-28 사용자 "저장된/미저장/미리보기 구분별 식별선" · 빈 값 = 기본: 미저장 warn · 저장된 파일
+    //   accent · 미리보기 text_dim). 미저장 = 파일이 아닌 스크립트 탭 + 저장 뒤 바뀐 파일 탭.
     Entry {
-        key: "editor.tab_line_scratch",
+        key: "editor.tab_line_unsaved",
         cat: Msg::CatEditor,
-        label: Msg::LblEditorTabLineScratch,
-        desc: Msg::DescEditorTabLineScratch,
+        label: Msg::LblEditorTabLineUnsaved,
+        desc: Msg::DescEditorTabLineUnsaved,
         kind: SettingKind::Text,
         default: "",
     },
@@ -1746,6 +1779,23 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatEditor,
         label: Msg::LblEditorTabLinePreview,
         desc: Msg::DescEditorTabLinePreview,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    // ★ 미저장 탭 = 탭 **이름 글자**에도 색(사용자 09-28 "포커스가 없을 때는 상단 줄로 구분이 안 된다") · 기본 켬 · 색은 빈 값 = 줄 색.
+    Entry {
+        key: "editor.tab_unsaved_text",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabUnsavedText,
+        desc: Msg::DescEditorTabUnsavedText,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "editor.tab_unsaved_color",
+        cat: Msg::CatEditor,
+        label: Msg::LblEditorTabUnsavedColor,
+        desc: Msg::DescEditorTabUnsavedColor,
         kind: SettingKind::Text,
         default: "",
     },
@@ -2151,7 +2201,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 큰 파일(docs/59 §4 · T-141 · T-143).
     Entry {
         key: "file.large_l1_mb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeL1Mb,
         desc: Msg::DescLargeL1,
         kind: SettingKind::Int { min: 0, max: 4096 },
@@ -2159,7 +2209,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.large_l1_lines",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeL1Lines,
         desc: Msg::DescLargeL1,
         kind: SettingKind::Int {
@@ -2170,7 +2220,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.large_l2_mb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeL2Mb,
         desc: Msg::DescLargeL2,
         kind: SettingKind::Int { min: 0, max: 4096 },
@@ -2178,7 +2228,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.large_l2_lines",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeL2Lines,
         desc: Msg::DescLargeL2,
         kind: SettingKind::Int {
@@ -2190,7 +2240,7 @@ pub const REGISTRY: &[Entry] = &[
     // 큰 파일 단계별 기능 제한(사용자 09-21): 확장 효과(괄호 색·짝 표 등 — Rainbow Pairs)와 구문 강조를 끄기 시작하는 단계.
     Entry {
         key: "file.large_ext_level",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeExtLevel,
         desc: Msg::DescLargeExtLevel,
         kind: SettingKind::Choice(LARGE_LEVEL_OPTS),
@@ -2198,7 +2248,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.large_syntax_level",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeSyntaxLevel,
         desc: Msg::DescLargeSyntaxLevel,
         kind: SettingKind::Choice(LARGE_LEVEL_OPTS),
@@ -2206,7 +2256,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.large_ask_mb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeAskMb,
         desc: Msg::DescLargeAskMb,
         kind: SettingKind::Int { min: 0, max: 65536 },
@@ -2214,7 +2264,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.large_head_mb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLargeHeadMb,
         desc: Msg::DescLargeHeadMb,
         kind: SettingKind::Int { min: 1, max: 1024 },
@@ -2231,7 +2281,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.async_load_mb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblAsyncLoadMb,
         desc: Msg::DescAsyncLoadMb,
         kind: SettingKind::Int { min: 1, max: 4096 },
@@ -2239,7 +2289,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.load_progress_ms",
-        cat: Msg::CatFiles,
+        cat: Msg::CatLargeFiles,
         label: Msg::LblLoadProgressMs,
         desc: Msg::DescLoadProgressMs,
         kind: SettingKind::Int { min: 0, max: 10000 },
@@ -2481,6 +2531,24 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ 가린 입력란(비밀번호) 입력 언어 안내(3-OS · `imehint.rs`) + Linux 전용 종속 = ibus 패널 구독(`imewatch.rs` · 09-27).
+    //   Windows/macOS는 OS 키보드 레이아웃 API로 바로 판정하므로 구독 설정이 없다(사용자 09-28 "이름과 설명 확인").
+    Entry {
+        key: "input.ime_hint",
+        cat: Msg::CatInput,
+        label: Msg::LblImeHint,
+        desc: Msg::DescImeHint,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "input.ime_hint_watch",
+        cat: Msg::CatInput,
+        label: Msg::LblImeHintWatch,
+        desc: Msg::DescImeHintWatch,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "input.scroll_natural",
         cat: Msg::CatInput,
@@ -2502,6 +2570,15 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatWindow,
         label: Msg::LblStatusGit,
         desc: Msg::DescStatusGit,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 프로젝트 자동 저장 표식(사용자 09-28): 켜짐/꺼짐 · 클릭 = 자동 저장 폴더(프로젝트 파일 폴더 · 폴더 모드 = `.nsql`)를 OS 탐색기로.
+    Entry {
+        key: "statusbar.autosave",
+        cat: Msg::CatWindow,
+        label: Msg::LblStatusAutosave,
+        desc: Msg::DescStatusAutosave,
         kind: SettingKind::Bool,
         default: "on",
     },
@@ -2793,14 +2870,6 @@ pub const REGISTRY: &[Entry] = &[
             max: 2000,
         },
         default: "480",
-    },
-    Entry {
-        key: "ui.ime_hint",
-        cat: Msg::CatAppearance,
-        label: Msg::LblImeHint,
-        desc: Msg::DescImeHint,
-        kind: SettingKind::Bool,
-        default: "on",
     },
     Entry {
         key: "ui.copy_feedback_ms",
@@ -3174,7 +3243,8 @@ pub const REGISTRY: &[Entry] = &[
             min: 0,
             max: 1_048_576,
         },
-        default: "1024",
+        // 기본 = SSD 기준 8 MB(한 파일 읽기 ≈ 16 ms @ 500 MB/s) · 향상 모드 = HDD 기준 2 MB(≈ 17 ms @ 120 MB/s + 탐색) — docs/72 §4-1(09-28).
+        default: "8192",
     },
     Entry {
         key: "search.threads",
@@ -3472,10 +3542,11 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // ── 스크립트 엔진 엄격 모드(T-9 · 09-16) — 배치에서 미정의 &var·암묵 :bind를 오류로. 자주 안 바꾸므로 HIDDEN(`nsql config list all`).
-    // ★ 라이선스 게이트(docs/23 §4-2 · T-36 · 09-27): **Debug 빌드 전용** 스위치 — 개발·자동 시험은 게이트 없이 도는 것이 기본(off) ·
-    //   게이트 시험은 격리 홈에서 on. Release 빌드는 이 키를 무시하고 늘 켠다(D-44 감지 없음 · 전화홈 0). HIDDEN.
+    // ★ 라이선스 게이트(docs/23 §4-2 · T-36 · 09-27 · ★ D-145 09-28): **기본 끔** — 개인 사용은 라이선스 없이 전 기능(사용자 09-28
+    //   "개인 사용인 경우 모든 기능 오픈 · 차후 일부 제한으로 바뀔 수 있다"). 켜면 Debug·Release 모두 Pro/Org 게이트 12곳 적용(게이트 시험 =
+    //   격리 홈에서 on). 종전 `license.gates_dev`(Debug 전용 · Release 늘 켬)에서 이름·뜻이 바뀌었다(RENAMED). HIDDEN.
     Entry {
-        key: "license.gates_dev",
+        key: "license.gates",
         cat: Msg::CatSession,
         label: Msg::LblLicenseGatesDev,
         desc: Msg::DescLicenseGatesDev,
@@ -4728,6 +4799,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatEditor,
             Msg::CatIntel,
             Msg::CatFiles,
+            // 큰 파일 처리(docs/59 · 사용자 09-28 "별도 설정 그룹으로") — 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재.
+            Msg::CatLargeFiles,
             Msg::CatProject,
         ],
     ),
@@ -4887,6 +4960,12 @@ const LARGE_LEVEL_OPTS: &[(&str, Msg)] = &[
 
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("meta.refresh_on_commit", "meta.refresh_on_ddl", Dep::On),
+    ("input.ime_hint_watch", "input.ime_hint", Dep::On),
+    (
+        "editor.tab_unsaved_color",
+        "editor.tab_unsaved_text",
+        Dep::On,
+    ),
     (
         "file.external_merge",
         "file.external_change",
@@ -4985,7 +5064,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
-    "license.gates_dev",
+    "license.gates",
     "ui.toast_fade_to",
     "ui.toast_bar_spent",
     "window.main_size",
@@ -5055,6 +5134,154 @@ pub const HIDDEN: &[&str] = &[
 #[must_use]
 pub fn is_hidden(key: &str) -> bool {
     HIDDEN.contains(&key)
+}
+
+/// ★ **고급 설정**(사용자 09-28 "자주 수정할 만한 설정만 기본 표시 · DBMS 종속·드물게 바꾸는 설정은 Advanced로") — 설정 창의
+/// Advanced 토글이 꺼져 있으면 숨기고, 켜면 키 이름을 다른 글자색으로 보인다. `nsql config list`에는 늘 나온다(비노출 [`HIDDEN`]과 다르다).
+/// 판정 = ① [`HIDDEN`] ② DBMS 그룹의 카테고리 전부 ③ 이 표. 표의 기준 = 구현 상수(ms · 예산 · 상한 · 스레드 수 · 캐시 · 폴링 주기 · 재시도)와
+/// 한 번 정하면 거의 손대지 않는 값. 글꼴·색·모드·켜기/끄기·초 단위 습관값(자동 저장 주기 · 유휴 초)은 기본 표시로 남긴다.
+/// 표에 없는 키를 적으면 시험 `advanced_keys_exist`가 잡는다.
+pub const ADVANCED: &[&str] = &[
+    // 시간 상수(ms)
+    "ui.fade_slow",
+    "ui.fade_fast",
+    "ui.flash_ms",
+    "ui.flash_hold_ms",
+    "ui.copy_feedback_ms",
+    "run.toast_tick_ms",
+    "run.toast_hide_secs",
+    "meta.warm_idle_ms",
+    "explorer.index_idle_ms",
+    "explorer.typeahead_timeout",
+    "intel.delay_ms",
+    "intel.budget_ms",
+    "intel.card_settle_ms",
+    "file.external_poll_ms",
+    "tx.idle_countdown_secs",
+    "tx.block_poll_secs",
+    "probe.retry_delay",
+    "probe.timeout",
+    "probe.stale_secs",
+    "session.call_timeout_secs",
+    "net.keepalive_secs",
+    "mem.trim_secs",
+    "meta.detail_ttl_secs",
+    "meta.cols_ttl_secs",
+    // 예산·상한·개수
+    "grid.memory_budget_mb",
+    "grid.result_tabs_max",
+    "grid.col_min_width",
+    "editor.undo_budget_mb",
+    "editor.split_max",
+    "editor.copy_confirm_mb",
+    "run.toast_max",
+    "log.max_lines",
+    "log.file_max_kb",
+    "txlog.max_entries",
+    "vars.max_value_kb",
+    "vars.persist_days",
+    "intel.max_items",
+    "intel.max_doc_kb",
+    "intel.popup_rows",
+    "intel.popup_max_width",
+    "explorer.index_max",
+    "explorer.index_hits_max",
+    "meta.warm_columns_max",
+    "meta.detail_max",
+    "search.history_max",
+    "search.history_rows",
+    "file.open_max",
+    "file.external_backup_keep",
+    "project.backup_days",
+    "project.scan_max",
+    "session.max_shared",
+    "session.max_private",
+    "probe.max_retries",
+    "connect.max_concurrent",
+    // 스레드·캐시·프로세스
+    "search.threads",
+    "project.scan_threads",
+    "search.gitignore",
+    "search.excludes",
+    "input.ime_hint_watch",
+    "ui.clipboard_probe",
+    "meta.disk_cache",
+    "meta.warm_comments",
+    "explorer.index_prefetch",
+    "intel.preload",
+    "ui.text_hint",
+    "ui.text_snap",
+    "ui.text_weight",
+    "ui.text_contrast",
+    "ui.text_gdi",
+    // 자체 계측·개발·드물게 손대는 동작 규칙
+    "log.dev_layers",
+    "log.switch_scale",
+    "log.template",
+    "log.file_format",
+    "gen.bind_note",
+    "grid.edit_concurrency",
+    "grid.edit_hidden_keys",
+    "grid.edit_rowid",
+    "grid.edit_all_cols",
+    "grid.offset_warn",
+    "grid.result_tab_evict",
+    "grid.row_height_pct",
+    "grid.col_max_chars",
+    "grid.lob_view_max_mb",
+    "db.fetch_all_size",
+    "vars.expand_at",
+    "vars.intrinsic",
+    "vars.env_subst",
+    "vars.signature_lookup",
+    "bookmark.anchor_context",
+    "explorer.search_index",
+    "meta.refresh_idle_secs",
+    "meta.refresh_on_missing",
+    "tx.lock_wait_timeout_secs",
+    "tx.server_idle_timeout_secs",
+    "file.large_ext_level",
+    "file.large_syntax_level",
+    "file.large_head_mb",
+    "file.async_load_mb",
+    "file.load_progress_ms",
+    "file.external_settle_ms",
+    "file.external_merge_max_kb",
+    "editor.undo_group_ms",
+    "editor.undo_giant_mb",
+    "editor.undo_persist_mb",
+    "editor.undo_persist_days",
+    "editor.max_occurrences",
+    "editor.minimap_width",
+    "ui.glyph_cache",
+    "file.icon_cache",
+    "cli.width",
+];
+
+/// 고급 설정인가(설정 창 Advanced 토글 대상) — 비노출 · DBMS 종속 카테고리 · [`ADVANCED`].
+#[must_use]
+pub fn is_advanced(key: &str) -> bool {
+    if is_hidden(key) || ADVANCED.contains(&key) {
+        return true;
+    }
+    entry(key).is_some_and(|e| group_of(e.cat) == Some(Msg::GrpDbms))
+}
+
+/// ★ 카테고리 안 표시 순서(사용자 09-28 "그룹별 · 항목별 순서로 · 세션 관련 설정이 흩어지지 않게"): (트리 순서, 키 접두의 첫 등재 순, 등재 순).
+/// 같은 카테고리에 여러 접두(`session.` `tx.` `vars.` `run.` `db.`)가 섞여 있어도 접두끼리 모인다 · 접두 묶음의 순서 = 그 접두가 처음 나온 자리.
+#[must_use]
+pub fn display_order(key: &str) -> (usize, usize, usize, usize) {
+    let Some(idx) = REGISTRY.iter().position(|e| e.key == key) else {
+        return (usize::MAX, usize::MAX, usize::MAX, usize::MAX);
+    };
+    let e = &REGISTRY[idx];
+    let (g, c) = tree_order(e.cat);
+    let prefix = key.split('.').next().unwrap_or(key);
+    let first = REGISTRY
+        .iter()
+        .position(|x| x.cat == e.cat && x.key.split('.').next().unwrap_or(x.key) == prefix)
+        .unwrap_or(idx);
+    (g, c, first, idx)
 }
 
 /// 허용 값 설명(오류 메시지·`config list`용).
@@ -5213,9 +5440,11 @@ impl Settings {
             values: BTreeMap::new(),
             unknown: Vec::new(),
         };
+        let mut seen: Vec<String> = Vec::new();
         for (k, v) in doc.pairs {
             match entry(&k) {
                 Some(e) => {
+                    seen.push(k.clone());
                     if let Some(n) = normalize(e.kind, &v) {
                         // 옛 기본값 그대로 저장돼 있던 값은 "기본값 유지"로 본다(기본값이 바뀌면 따라간다).
                         let old_default =
@@ -5233,7 +5462,29 @@ impl Settings {
         }
         s.migrate_explorer_refresh();
         s.migrate_result_tabbar();
+        s.migrate_renamed(&seen);
         s
+    }
+
+    /// [`RENAMED`] 표대로 옛 키의 값을 새 키로 옮긴다(새 키를 이미 정했으면 옛 값은 버림 · 옛 줄은 다음 저장 때 사라진다).
+    fn migrate_renamed(&mut self, seen: &[String]) {
+        for (old, new) in RENAMED {
+            let Some(pos) = self.unknown.iter().position(|(k, _)| k == old) else {
+                continue;
+            };
+            let (_, v) = self.unknown.remove(pos);
+            let Some(e) = entry(new) else { continue };
+            // 새 키가 파일에 있으면(기본값과 같아 values에 없어도) 사용자가 이미 정한 것 — 옛 값은 버린다.
+            if self.values.contains_key(*new) || seen.iter().any(|k| k == new) {
+                continue;
+            }
+            if let Some(n) = normalize(e.kind, &v) {
+                let def = default_of(e.key).unwrap_or(e.default);
+                if n != def {
+                    self.values.insert((*new).to_string(), n);
+                }
+            }
+        }
     }
 
     /// 옛 `grid.result_tabbar = always`(선택 상자) → `grid.result_tabbar_single = on`(스위치 · 사용자 09-21). `auto`는 새 기본값(off)과
@@ -5286,6 +5537,7 @@ impl Settings {
     /// 현재 값(사용자 값 → 기본값). 모르는 키는 `None`.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
+        let key = canonical_key(key);
         let e = entry(key)?;
         let def = default_of(e.key).unwrap_or(e.default);
         Some(self.values.get(key).map_or(def, String::as_str))
@@ -5294,11 +5546,13 @@ impl Settings {
     /// 사용자가 바꾼 값인가(기본값과 다른가) — VS Code의 "Modified" 표시에 해당.
     #[must_use]
     pub fn is_modified(&self, key: &str) -> bool {
+        let key = canonical_key(key);
         self.values.contains_key(key)
     }
 
     /// 검증 후 설정(메모리). 기본값과 같으면 사용자 값을 지운다.
     pub fn set(&mut self, key: &str, raw: &str) -> Result<String, SetError> {
+        let key = canonical_key(key);
         let e = entry(key).ok_or_else(|| SetError::UnknownKey(key.to_string()))?;
         if is_info(key) {
             // 읽기 전용 정보 — 저장하지 않는다.
@@ -5323,6 +5577,7 @@ impl Settings {
 
     /// 기본값으로(메모리).
     pub fn reset(&mut self, key: &str) -> Result<&'static str, SetError> {
+        let key = canonical_key(key);
         let e = entry(key).ok_or_else(|| SetError::UnknownKey(key.to_string()))?;
         self.values.remove(key);
         Ok(default_of(e.key).unwrap_or(e.default))
@@ -5409,6 +5664,128 @@ impl Settings {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// 키 이름 바꿈(09-28 · docs/94 §6): 옛 줄 → 새 키(기본값이면 값 없음) · 새 키가 있으면 옛 값은 버림 · 옛 줄은 unknown에 남지 않는다 · `canonical_key`.
+    #[test]
+    fn renamed_keys_migrate_from_old_lines() {
+        let s = Settings::from_text(
+            tmp("renamed"),
+            "ui.ime_hint=off\nui.ime_hint_watch=off\neditor.tab_line_scratch=#112233\nlicense.gates_dev=on\n",
+        );
+        assert_eq!(s.get("input.ime_hint"), Some("off"));
+        assert_eq!(s.get("input.ime_hint_watch"), Some("off"));
+        assert_eq!(s.get("editor.tab_line_unsaved"), Some("#112233"));
+        assert_eq!(s.get("license.gates"), Some("on"));
+        assert!(
+            s.unknown.is_empty(),
+            "옛 줄은 옮기고 지운다: {:?}",
+            s.unknown
+        );
+        // 새 키를 이미 정했으면 옛 값은 버린다.
+        let s = Settings::from_text(tmp("renamed2"), "ui.ime_hint=off\ninput.ime_hint=on\n");
+        assert_eq!(s.get("input.ime_hint"), Some("on"));
+        assert_eq!(canonical_key("ui.ime_hint"), "input.ime_hint");
+        assert_eq!(
+            s.get("ui.ime_hint"),
+            Some("on"),
+            "옛 키로 읽어도 새 키(CLI 호환)"
+        );
+        assert!(
+            !s.is_modified("ui.ime_hint"),
+            "기본값과 같으면 변경 아님(옛 키도 새 키로 판정)"
+        );
+        assert_eq!(canonical_key("ui.lang"), "ui.lang");
+        for (old, new) in RENAMED {
+            assert!(
+                entry(old).is_none(),
+                "옛 키가 레지스트리에 남아 있다: {old}"
+            );
+            assert!(entry(new).is_some(), "새 키가 레지스트리에 없다: {new}");
+        }
+    }
+
+    /// 고급 설정 표(09-28): 전부 존재하는 키 · 중복 없음 · DBMS 그룹은 표 없이도 고급 · 자주 쓰는 키는 기본 표시.
+    #[test]
+    fn advanced_keys_exist() {
+        for k in ADVANCED {
+            assert!(entry(k).is_some(), "ADVANCED에 없는 키: {k}");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for k in ADVANCED {
+            assert!(seen.insert(*k), "ADVANCED 중복: {k}");
+        }
+        assert!(is_advanced("oracle.client_mode"), "DBMS 종속 = 고급");
+        assert!(is_advanced("window.main_size"), "HIDDEN = 고급");
+        assert!(is_advanced("search.threads"));
+        for k in [
+            "ui.lang",
+            "ui.theme",
+            "editor.font_size",
+            "grid.max_rows",
+            "project.autosave",
+            "project.autosave_secs",
+            "session.autocommit",
+            "session.idle_secs",
+            "explorer.typeahead",
+        ] {
+            assert!(!is_advanced(k), "기본 표시여야 한다: {k}");
+        }
+    }
+
+    /// 표시 순서(09-28 "세션 관련 설정이 흩어지지 않게"): 같은 카테고리 안에서 키 접두끼리 모이고 · 카테고리는 트리 순 · 모르는 키는 맨 뒤.
+    #[test]
+    fn display_order_groups_by_category_then_prefix() {
+        let mut keys: Vec<&str> = REGISTRY
+            .iter()
+            .filter(|e| e.cat == Msg::CatSession)
+            .map(|e| e.key)
+            .collect();
+        keys.sort_by_key(|k| display_order(k));
+        // 접두가 한 번 바뀌면 다시 돌아오지 않는다(= 접두 묶음이 연속).
+        let mut seen: Vec<&str> = Vec::new();
+        for k in &keys {
+            let p = k.split('.').next().unwrap_or(k);
+            if seen.last() != Some(&p) {
+                assert!(!seen.contains(&p), "접두 {p}가 흩어졌다: {keys:?}");
+                seen.push(p);
+            }
+        }
+        assert!(
+            display_order("log.max_lines") < display_order("session.autocommit"),
+            "General 그룹 안 트리 순"
+        );
+        assert!(
+            display_order("session.autocommit") < display_order("editor.font_size"),
+            "그룹 순"
+        );
+        assert_eq!(display_order("nope").0, usize::MAX);
+    }
+
+    /// 09-28 기본값: 서버 노드 연결 해제 = 항상 고르기(D-144) · 파일 검색 상한 = SSD 8 MB · 향상 모드 = HDD 2 MB · 옛 기본값이 파일에 있으면 새 기본값.
+    #[test]
+    fn defaults_disconnect_pick_and_search_limit() {
+        let s = Settings::from_text(
+            tmp("d0928"),
+            "explorer.disconnect_pick=auto\nsearch.max_file_kb=1024\n",
+        );
+        assert_eq!(s.get("explorer.disconnect_pick"), Some("always"));
+        assert_eq!(s.get("search.max_file_kb"), Some("8192"));
+        assert!(!s.is_modified("search.max_file_kb"));
+        assert_eq!(perf::boost_value("search.max_file_kb"), Some("2048"));
+        assert_eq!(
+            default_of("license.gates"),
+            Some("off"),
+            "D-145 개인 사용 = 전 기능"
+        );
+        assert!(dependency("input.ime_hint_watch").is_some_and(|(p, _)| p == "input.ime_hint"));
+        assert!(CATEGORY_TREE
+            .iter()
+            .any(|(_, cats)| cats.contains(&Msg::CatLargeFiles)));
+        assert_eq!(
+            entry("file.large_l1_mb").map(|e| e.cat),
+            Some(Msg::CatLargeFiles)
+        );
+    }
 
     #[test]
     fn size_units() {

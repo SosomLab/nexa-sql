@@ -74,6 +74,115 @@ impl GenWhat {
     }
 }
 
+/// ★ 바인드 변수 목록 주석의 위치(설정 `gen.bind_note` · 사용자 09-28 "변수들을 직관적으로 식별 가능하게 header/tail에 표시").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BindNote {
+    Off,
+    Header,
+    Tail,
+    #[default]
+    Both,
+}
+
+impl BindNote {
+    #[must_use]
+    pub fn parse(s: &str) -> BindNote {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "0" => BindNote::Off,
+            "header" | "head" | "h" => BindNote::Header,
+            "tail" | "t" => BindNote::Tail,
+            _ => BindNote::Both,
+        }
+    }
+}
+
+/// 문장 안의 `:이름` 바인드(등장 순 · 대소문자 무시 중복 제거 · 문자열/인용 식별자/주석 밖만 · `::` 캐스트 제외).
+#[must_use]
+pub fn bind_names(sql: &str) -> Vec<String> {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' || c == '"' || c == '`' {
+            i += 1;
+            while i < chars.len() && chars[i] != c {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '-' && chars.get(i + 1) == Some(&'-') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        if c == ':'
+            && (i == 0 || chars[i - 1] != ':')
+            && chars
+                .get(i + 1)
+                .is_some_and(|n| n.is_alphabetic() || *n == '_')
+        {
+            let start = i + 1;
+            let mut j = start;
+            while j < chars.len()
+                && (chars[j].is_alphanumeric() || matches!(chars[j], '_' | '$' | '#'))
+            {
+                j += 1;
+            }
+            let name: String = chars[start..j].iter().collect();
+            if !out.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+                out.push(name);
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// 바인드 목록 주석을 머리/꼬리에 붙인다(없으면 그대로). 주석은 SQL 코드의 일부라 번역하지 않는다.
+#[must_use]
+pub fn with_bind_note(sql: &str, mode: BindNote) -> String {
+    if mode == BindNote::Off {
+        return sql.to_string();
+    }
+    let names = bind_names(sql);
+    if names.is_empty() {
+        return sql.to_string();
+    }
+    let list = names
+        .iter()
+        .map(|n| format!(":{n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let n = names.len();
+    let mut out = String::with_capacity(sql.len() + list.len() * 2 + 96);
+    if matches!(mode, BindNote::Header | BindNote::Both) {
+        out.push_str(&format!("-- Bind variables ({n}): {list}\n"));
+    }
+    out.push_str(sql);
+    if matches!(mode, BindNote::Tail | BindNote::Both) {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "-- End of statement · bind variables ({n}): {list}\n"
+        ));
+    }
+    out
+}
+
 /// ★ 생성 옵션(DBeaver "Generated SQL" 체크박스 · 사용자 09-25 · docs/83 §3-1): 정규화 이름 · 간결 · 전체 DDL · FK 분리.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GenOpts {
@@ -86,6 +195,8 @@ pub struct GenOpts {
     pub full_ddl: bool,
     /// 외래 키를 `ALTER TABLE … ADD CONSTRAINT`로 따로(끄면 CREATE TABLE 안에 인라인).
     pub separate_fk: bool,
+    /// 바인드 변수 목록 주석(머리/꼬리 · 설정 `gen.bind_note` · 09-28).
+    pub bind_note: BindNote,
 }
 
 impl Default for GenOpts {
@@ -95,6 +206,7 @@ impl Default for GenOpts {
             compact: false,
             full_ddl: false,
             separate_fk: true,
+            bind_note: BindNote::Both,
         }
     }
 }
@@ -113,6 +225,7 @@ impl GenOpts {
                 "compact" | "c" => self.compact = on,
                 "full" | "full_ddl" | "f" => self.full_ddl = on,
                 "fk" | "separate_fk" => self.separate_fk = on,
+                "note" | "bind_note" => self.bind_note = BindNote::parse(v),
                 _ => {}
             }
         }
@@ -252,11 +365,13 @@ pub fn generate(s: &mut dyn Session, spec: &GenSpec) -> Result<String, DbError> 
         }
     };
     let out = out?;
-    Ok(if spec.opts.compact {
+    let out = if spec.opts.compact {
         compact_sql(&out)
     } else {
         out
-    })
+    };
+    // 바인드 목록 주석은 간결화 **뒤**에(간결화가 주석 줄을 지운다).
+    Ok(with_bind_note(&out, spec.opts.bind_note))
 }
 
 /// 간결한 SQL(옵션 `compact`): 빈 줄·주석 줄을 빼고 들여쓰기는 탭 하나로.
@@ -1531,6 +1646,23 @@ fn sub_ddl(
 
 #[cfg(test)]
 mod tests {
+    /// 바인드 목록 주석(09-28): 등장 순 · 중복 제거 · 문자열/주석/`::` 제외 · 머리/꼬리/둘 다/끔.
+    #[test]
+    fn bind_note_lists_binds_in_order() {
+        use super::{bind_names, with_bind_note, BindNote};
+        let sql = "UPDATE t SET a = :A, b = ':X' WHERE id = :ID AND a = :a -- :C\n AND x::int = :B";
+        assert_eq!(bind_names(sql), vec!["A", "ID", "B"]);
+        let both = with_bind_note(sql, BindNote::Both);
+        assert!(both.starts_with("-- Bind variables (3): :A, :ID, :B\n"));
+        assert!(both.ends_with("-- End of statement · bind variables (3): :A, :ID, :B\n"));
+        assert!(with_bind_note(sql, BindNote::Header).ends_with(":B"));
+        assert!(!with_bind_note(sql, BindNote::Tail).starts_with("--"));
+        assert_eq!(with_bind_note(sql, BindNote::Off), sql);
+        assert_eq!(with_bind_note("SELECT 1", BindNote::Both), "SELECT 1");
+        assert_eq!(BindNote::parse("header"), BindNote::Header);
+        assert_eq!(BindNote::parse("weird"), BindNote::Both);
+    }
+
     use super::*;
 
     #[test]

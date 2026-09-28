@@ -939,6 +939,10 @@ impl App {
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.search
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
+        // 타입어헤드 한 벌(객체 탐색기와 같은 설정 · 09-28) — 기동 때와 설정 변경 때.
+        let ta = crate::typeahead_cfg(&self.settings);
+        self.project_panel.set_typeahead(ta);
+        self.bm_panel.set_typeahead(ta);
     }
 
     /// 기동 시작 모드(사용자 09-22 · [`startup_project_plan`]): 기본 = **파일 모드**(프로젝트 없음) · 인자 `.nsql-project` =
@@ -1072,7 +1076,36 @@ impl App {
         self.redraw();
     }
 
-    /// 프로젝트 자동 저장·복원은 Pro(25 §13-3) — 설정이 켜져 있어도 무료면 꺼진 것으로.
+    /// ★ 상태줄 자동 저장 표식 클릭(사용자 09-28): 자동 저장 폴더를 OS 탐색기로 — 프로젝트 모드 = 프로젝트 파일의 폴더 ·
+    ///   폴더 모드 = `<폴더>/.nsql` · 파일 모드 = 전역 설정 폴더(백업·워크스페이스가 거기 있다). 없으면 상태줄 안내.
+    pub(crate) fn open_autosave_folder(&mut self) {
+        let mode = project::WorkMode::of(self.project.path.as_deref(), self.arg_folder.as_deref());
+        let dir = match &mode {
+            project::WorkMode::Project(p) => p.parent().map(std::path::Path::to_path_buf),
+            other => other.local_dir(),
+        };
+        let Some(dir) = dir.filter(|d| d.is_dir()) else {
+            self.sess.status = t(Msg::StAutosaveNone).into();
+            return;
+        };
+        match crate::open_external(&dir) {
+            Ok(()) => {
+                self.sess.status = tf(Msg::StAutosaveOpened, &[&dir.display().to_string()]);
+            }
+            Err(e) => self.sess.status = e,
+        }
+    }
+
+    /// 지금 작업 환경을 담은 프로젝트 문서가 마지막 저장본과 다른가(종료 물음 · 자동 저장 틱과 같은 비교 · 09-28).
+    pub(crate) fn project_unsaved(&mut self) -> bool {
+        if !self.project.is_open() {
+            return false;
+        }
+        self.project_capture_state();
+        self.project.to_document() != self.project_last_json
+    }
+
+    /// 프로젝트 자동 저장·복원은 Pro(25 §13-3) — 설정이 켜져 있어도 게이트가 켜진 무료면 꺼진 것으로(기본은 게이트 끔 · D-145).
     pub(crate) fn project_autosave_on(&self) -> bool {
         self.settings.flag("project.autosave")
             && self.entitled(nsql_license::Feature::ProjectRestore)

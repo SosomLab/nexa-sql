@@ -164,6 +164,12 @@ pub(crate) struct ProjectPanel {
     /// 활성 탭과 맞춘 선택 경로(사용자 09-22 "탭을 고르면 탐색기에도 선택 표시") — 접혀 있으면 행이 없어 보이지 않다가
     /// 사용자가 직접 펼치면(`rebuild_rows`) 그 행이 선택된 채 나타난다. 자동 확장(`project.auto_reveal`)은 `reveal`.
     sel_path: Option<PathBuf>,
+    /// ★ 타입어헤드(사용자 09-28 "프로젝트 탐색기에도 · 열린 파일 목록도 포함해 키보드 이동") — nexa-ctl 부품 · 설정 `explorer.typeahead*` 공유.
+    typeahead: nexa_ctl::TypeAhead,
+    ta_cfg: crate::explorer::TypeAheadCfg,
+    now_hint: u64,
+    /// OPEN FILES 안의 키보드 선택(있으면 트리 선택보다 앞 · ↓로 트리 첫 행에 이어진다).
+    open_sel: Option<usize>,
 }
 
 const ROW_H: f32 = 22.0;
@@ -230,7 +236,117 @@ impl ProjectPanel {
             open_rect: Rect::default(),
             open_rows: Vec::new(),
             open_hover: None,
+            typeahead: nexa_ctl::TypeAhead::default(),
+            ta_cfg: crate::explorer::TypeAheadCfg::default(),
+            now_hint: 0,
+            open_sel: None,
         }
+    }
+
+    /// 타입어헤드 설정(호스트 · 객체 탐색기와 같은 한 벌).
+    pub(crate) fn set_typeahead(&mut self, cfg: crate::explorer::TypeAheadCfg) {
+        self.ta_cfg = cfg;
+        self.typeahead.set_timeout(cfg.timeout_ms);
+        if !cfg.enabled {
+            self.typeahead.clear();
+        }
+    }
+
+    /// 키보드 목록 = OPEN FILES(보이는 줄) + 트리 행 — 가상 순번 `k`의 라벨(접두 매치용).
+    fn ta_len(&self) -> usize {
+        self.open_files.len().min(OPEN_FILES_MAX) + self.rows.len()
+    }
+
+    fn ta_label(&self, k: usize) -> String {
+        let on = self.open_files.len().min(OPEN_FILES_MAX);
+        if k < on {
+            self.open_files[k].title.clone()
+        } else {
+            self.rows
+                .get(k - on)
+                .map(|&n| self.nodes[n].name.clone())
+                .unwrap_or_default()
+        }
+    }
+
+    /// 지금 키보드 위치(가상 순번).
+    fn ta_pos(&self) -> Option<usize> {
+        let on = self.open_files.len().min(OPEN_FILES_MAX);
+        match (self.open_sel, self.sel.or(self.caret)) {
+            (Some(k), _) => Some(k),
+            (None, Some(r)) => Some(on + r),
+            (None, None) => None,
+        }
+    }
+
+    /// 가상 순번 → 선택 반영(OPEN FILES 또는 트리 행).
+    fn ta_select(&mut self, k: usize) {
+        let on = self.open_files.len().min(OPEN_FILES_MAX);
+        if k < on {
+            self.open_sel = Some(k);
+        } else {
+            self.open_sel = None;
+            let r = k - on;
+            if r < self.rows.len() {
+                self.sel = Some(r);
+                self.ensure_visible(r);
+            }
+        }
+    }
+
+    /// 타입어헤드 글자(접두 확장 = 지금 자리부터 · 새 접두 = 다음 자리부터 · 객체 탐색기와 같은 규칙).
+    fn typeahead_char(&mut self, c: char) -> bool {
+        if !self.ta_cfg.enabled || !self.ta_cfg.filter.accepts(c) {
+            return false;
+        }
+        let q = self.typeahead.push(c, self.now_hint);
+        let n = self.ta_len();
+        if n == 0 {
+            return true;
+        }
+        let from = self
+            .ta_pos()
+            .map_or(0, |p| if q.include_caret { p } else { (p + 1) % n });
+        if let Some(k) = nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| self.ta_label(k))
+        {
+            self.ta_select(k);
+        }
+        true
+    }
+
+    /// ↑/↓ — 타입어헤드 활성이면 접두 매치 안에서 순환 · 아니면 OPEN FILES ↔ 트리를 한 목록처럼.
+    fn ta_step(&mut self, down: bool) -> bool {
+        let n = self.ta_len();
+        if n == 0 {
+            return false;
+        }
+        let ta = self.typeahead.composing();
+        let pos = self.ta_pos();
+        if !ta.is_empty() {
+            self.typeahead.touch(self.now_hint);
+            let from = pos.map_or(0, |p| if down { (p + 1) % n } else { (p + n - 1) % n });
+            let hit = if down {
+                nexa_ctl::typeahead::find_prefix(n, from, &ta, |k| self.ta_label(k))
+            } else {
+                nexa_ctl::typeahead::find_prefix_rev(n, from, &ta, |k| self.ta_label(k))
+            };
+            if let Some(k) = hit {
+                self.ta_select(k);
+            }
+            return true;
+        }
+        let next = match pos {
+            None => 0,
+            Some(p) if down => (p + 1).min(n - 1),
+            Some(p) => p.saturating_sub(1),
+        };
+        self.ta_select(next);
+        true
+    }
+
+    /// 입력 중인 접두(HUD) · 위치.
+    fn typeahead_text(&self) -> String {
+        self.typeahead.composing()
     }
 
     /// OPEN FILES 갱신(바뀔 때만 · 줄 수가 바뀌면 다시 배치).
@@ -974,7 +1090,9 @@ impl ProjectPanel {
         if !self.visible {
             return false;
         }
-        let mut changed = self.filter.tick(now_ms) | self.bars.tick(now_ms);
+        self.now_hint = now_ms;
+        let mut changed =
+            self.filter.tick(now_ms) | self.bars.tick(now_ms) | self.typeahead.tick(now_ms);
         // 필터 열거 워커의 결과 합치기(시간 예산 안 · 남은 것은 다음 틱).
         if self.scan_pump() {
             self.rebuild_rows();
@@ -1088,20 +1206,27 @@ impl ProjectPanel {
                     let fe = self.filter.on_event(ev, &mut inv);
                     self.on_filter_event(fe);
                     return true;
-                } else if let Some(cur) = self.sel.or(self.caret) {
-                    let n = self.rows.len();
-                    match key {
-                        // 선택이 없으면 캐럿 행(테두리)에서부터 움직인다.
-                        CtlKey::Down | CtlKey::Up if n > 0 => {
-                            let next = if key == CtlKey::Down {
-                                (cur + 1).min(n - 1)
-                            } else {
-                                cur.saturating_sub(1)
-                            };
-                            self.sel = Some(next);
-                            self.ensure_visible(next);
-                            return true;
+                }
+                // ★ ↑/↓ = OPEN FILES + 트리를 한 목록으로(타입어헤드 활성이면 매치 안에서 순환 · 사용자 09-28).
+                if matches!(key, CtlKey::Down | CtlKey::Up) {
+                    return self.ta_step(key == CtlKey::Down);
+                }
+                if matches!(key, CtlKey::Escape) && self.typeahead.is_active() {
+                    self.typeahead.clear();
+                    return true;
+                }
+                if let Some(k) = self.open_sel {
+                    // OPEN FILES 안: Enter/Space = 그 탭으로 · 그 밖 키는 트리 쪽 처리 없음.
+                    if matches!(key, CtlKey::Enter | CtlKey::Space) {
+                        if let Some(f) = self.open_files.get(k) {
+                            self.command = Some(format!("editor.switch:{}", f.id));
                         }
+                        return true;
+                    }
+                    return false;
+                }
+                if let Some(cur) = self.sel.or(self.caret) {
+                    match key {
                         CtlKey::Right => {
                             if let Some(&node) = self.rows.get(cur) {
                                 if self.nodes[node].is_dir && !self.nodes[node].expanded {
@@ -1138,8 +1263,33 @@ impl ProjectPanel {
                     }
                 }
             }
+            InputEvent::Char { c, .. } if !self.filter.is_focused() => {
+                if c == '\u{8}' {
+                    if self.typeahead.is_active() {
+                        if let Some(q) = self.typeahead.backspace(self.now_hint) {
+                            let n = self.ta_len();
+                            let from = self.ta_pos().unwrap_or(0);
+                            if let Some(k) =
+                                nexa_ctl::typeahead::find_prefix(n, from, &q.prefix, |k| {
+                                    self.ta_label(k)
+                                })
+                            {
+                                self.ta_select(k);
+                            }
+                        }
+                        return true;
+                    }
+                    return false;
+                }
+                if c == '\t' || c == '\n' || c == '\r' {
+                    return false;
+                }
+                return self.typeahead_char(c);
+            }
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
+                self.open_sel = None;
+                self.typeahead.clear();
                 // OPEN FILES 항목 클릭 = 그 탭으로(사용자 09-23) — 프로젝트가 없어도(빈 상태 분기보다 먼저).
                 if let Some(k) = self.open_rows.iter().position(|r| r.contains(p)) {
                     if let Some(f) = self.open_files.get(k) {
@@ -1317,6 +1467,11 @@ impl ProjectPanel {
                     dc.fill_rect(rr, th.sel_bg);
                 } else if f.grouped {
                     dc.stroke_round_rect(rr, 0, th.accent, 1.0);
+                }
+                // 키보드 선택(타입어헤드·↑/↓) = 테두리(캐럿 행과 같은 표시).
+                if self.open_sel == Some(k) {
+                    dc.stroke_round_rect(rr, 0, th.accent, 1.0);
+                    dc.fill_rect_alpha(rr, th.accent, 0.10);
                 }
                 let ty = dc.text_center_y(rr.y, rr.h);
                 // 미저장 표시(사용자 09-23 정정): 점 자리를 **예약**(폭 = 작은 점 5px + 여백 · 시작 x = 머리글 "열린 파일"의 시작 x)해
@@ -1522,6 +1677,11 @@ impl ProjectPanel {
                 my += rh;
             }
             dc.select_font(FontSlot::Base, false);
+        }
+        // 타입어헤드 HUD(입력 중 접두 · 패널 영역 기준 3×3 위치 · 객체 탐색기와 같은 부품).
+        let ta_text = self.typeahead_text();
+        if !ta_text.is_empty() {
+            nexa_ctl::typeahead::paint_hud(dc, b, s, self.ta_cfg.pos, &ta_text, th);
         }
         self.bars.paint(
             dc,

@@ -57,6 +57,125 @@ pub enum TxOutcome {
     AutoCommitted(u64),
 }
 
+/// ★ 문장에 실제로 매핑된 바인드 변수 하나(사용자 09-28 "트랜잭션 로그에 바인드 정보가 없어 대상 확인이 안 된다" · docs/44 §9).
+/// `literal` = 방언 SQL 리터럴(값 치환 쿼리용 · 문자열은 `'` 이스케이프) · `value` = 표시용 원문.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxBind {
+    /// 이름(저장소 키 · 대문자 · `:` 없음).
+    pub name: String,
+    /// 타입 표시(`Varchar2(4000)` · `Number` · `Date` …).
+    pub ty: String,
+    pub value: String,
+    pub literal: String,
+    /// OUT/IN OUT 방향(값 치환 때 리터럴 대신 `:이름`을 남긴다).
+    pub out: bool,
+}
+
+impl TxBind {
+    /// 실행 요청의 바인드 목록 → 로그용(러너가 실행 직전에 만든다 · UI 무의존).
+    #[must_use]
+    pub fn from_params(
+        params: &[nsql_core::BindParam],
+        dialect: nsql_core::Dialect,
+    ) -> Vec<TxBind> {
+        params
+            .iter()
+            .map(|p| TxBind {
+                name: p.name.clone(),
+                ty: format!("{:?}", p.ty),
+                value: p.value.display(),
+                literal: p.value.to_sql_literal(dialect),
+                out: !matches!(p.direction, nsql_core::Direction::In),
+            })
+            .collect()
+    }
+}
+
+/// ★ 값 치환 쿼리(3계층의 ③ · 사용자 09-28): 원문의 `:이름` 자리에 리터럴을 넣는다 — **클라이언트가 만든 표시용**이지 서버가 받은
+/// 문장이 아니다(서버는 바인드로 받는다 · DR-8). 문자열/식별자 인용부호와 주석 안은 건드리지 않는다 · 이름 비교는 대소문자 무시 ·
+/// OUT 바인드는 `:이름` 그대로 · 목록에 없는 `:이름`도 그대로.
+#[must_use]
+pub fn bound_sql(text: &str, binds: &[TxBind]) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 64);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // 문자열 리터럴 · 인용 식별자 · 주석은 통째로 복사.
+        if c == '\'' || c == '"' || c == '`' || (c == '[' && !out.ends_with(':')) {
+            let close = if c == '[' { ']' } else { c };
+            out.push(c);
+            i += 1;
+            while i < chars.len() {
+                out.push(chars[i]);
+                if chars[i] == close {
+                    if close == '\'' && chars.get(i + 1) == Some(&'\'') {
+                        out.push('\'');
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if c == '-' && chars.get(i + 1) == Some(&'-') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'*') {
+            out.push_str("/*");
+            i += 2;
+            while i < chars.len() {
+                if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    out.push_str("*/");
+                    i += 2;
+                    break;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        // `:이름`(앞 글자가 `:`가 아니어야 `::` 캐스트를 피한다).
+        if c == ':'
+            && !out.ends_with(':')
+            && chars
+                .get(i + 1)
+                .is_some_and(|n| n.is_alphabetic() || *n == '_')
+        {
+            let start = i + 1;
+            let mut j = start;
+            while j < chars.len()
+                && (chars[j].is_alphanumeric()
+                    || chars[j] == '_'
+                    || chars[j] == '$'
+                    || chars[j] == '#')
+            {
+                j += 1;
+            }
+            let name: String = chars[start..j].iter().collect();
+            match binds.iter().find(|b| b.name.eq_ignore_ascii_case(&name)) {
+                Some(b) if !b.out => out.push_str(&b.literal),
+                _ => {
+                    out.push(':');
+                    out.push_str(&name);
+                }
+            }
+            i = j;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 /// 문장 실행 하나.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxEntry {
@@ -78,6 +197,16 @@ pub struct TxEntry {
     pub tx: Option<u64>,
     /// 같은 실행 배치 안의 문장 번호(호스트의 `RunEvent.index`).
     pub index: usize,
+    /// 실제로 매핑된 바인드 변수(실행 직전 러너가 준다 · 없으면 빈 목록 · docs/44 §9).
+    pub binds: Vec<TxBind>,
+}
+
+impl TxEntry {
+    /// 값 치환 쿼리(③ · [`bound_sql`]).
+    #[must_use]
+    pub fn bound_sql(&self) -> String {
+        bound_sql(&self.text, &self.binds)
+    }
 }
 
 /// 수동 커밋 구간.
@@ -237,6 +366,7 @@ impl TxLog {
             result: ExecOutcome::Running,
             tx: None,
             index,
+            binds: Vec::new(),
         });
         let cur = self.cur;
         self.current.retain(|(s, i, _)| !(*s == cur && *i == index));
@@ -252,6 +382,13 @@ impl TxLog {
             .find(|(s, i, _)| *s == self.cur && *i == index)
             .map(|(_, _, id)| *id)?;
         self.entries.iter_mut().rev().find(|e| e.id == id)
+    }
+
+    /// 실행 직전의 바인드 매핑(러너 `RunEvent::Binds` · 적용 보고 항목).
+    pub fn set_binds(&mut self, index: usize, binds: Vec<TxBind>) {
+        if let Some(e) = self.entry_mut(index) {
+            e.binds = binds;
+        }
     }
 
     /// 조회 결과(첫 세그먼트) 도착.
@@ -448,6 +585,30 @@ pub fn one_line(text: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// 값 치환(③): `:이름` → 리터럴 · 문자열/주석/인용 식별자 안은 그대로 · `::` 캐스트 · OUT · 모르는 이름 · 대소문자.
+    #[test]
+    fn bound_sql_substitutes_outside_quotes_and_comments() {
+        use super::{bound_sql, TxBind};
+        let b = |n: &str, lit: &str, out: bool| TxBind {
+            name: n.into(),
+            ty: "T".into(),
+            value: lit.into(),
+            literal: lit.into(),
+            out,
+        };
+        let binds = vec![
+            b("P1", "'ab''c'", false),
+            b("P2", "42", false),
+            b("O", "'x'", true),
+        ];
+        let sql = "UPDATE t SET a = :P1, \"b:P2\" = ':P2' WHERE id = :p2 AND c = :P3 /* :P1 */ -- :P2\n AND d = :O AND e::int = :P2";
+        assert_eq!(
+            bound_sql(sql, &binds),
+            "UPDATE t SET a = 'ab''c', \"b:P2\" = ':P2' WHERE id = 42 AND c = :P3 /* :P1 */ -- :P2\n AND d = :O AND e::int = 42"
+        );
+        assert_eq!(bound_sql("SELECT 1", &[]), "SELECT 1");
+    }
+
     use super::*;
 
     fn at(n: u32) -> String {

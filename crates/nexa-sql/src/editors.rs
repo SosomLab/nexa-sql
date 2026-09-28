@@ -58,6 +58,9 @@ pub(crate) struct Editors {
     project_folders: Vec<PathBuf>,
     /// 탭 유형별 활성 상단 줄 색([`TabKind`] 순서 · None = 테마 accent · 설정 `editor.tab_line_*` · 사용자 09-22).
     tab_line: [Option<nexa_ctl::Color>; 3],
+    /// ★ 미저장 탭 이름 글자 색(사용자 09-28 · `editor.tab_unsaved_text`/`_color` · None = 미저장 줄 색).
+    tab_unsaved_text: bool,
+    tab_unsaved_color: Option<nexa_ctl::Color>,
     bufs: Vec<TextBox>,
     titles: Vec<String>,
     active: usize,
@@ -214,6 +217,8 @@ impl Editors {
             tab_menu_req: None,
             project_folders: Vec::new(),
             tab_line: [None; 3],
+            tab_unsaved_text: true,
+            tab_unsaved_color: None,
             bufs: Vec::new(),
             titles: Vec::new(),
             active: 0,
@@ -633,11 +638,48 @@ impl Editors {
             .map(|i| self.split.len() > 1 && self.split.contains(&i))
             .collect();
         self.tabs.set_group(group, &mut inv);
-        // 탭별 줄 색 = 유형별(묶인 탭도 자기 색 · 사용자 09-23).
+        // 탭별 줄 색 = 구분별(미저장 · 저장된 파일 · 미리보기 · 묶인 탭도 자기 색 · 사용자 09-23/09-28).
         let colors: Vec<Option<nexa_ctl::Color>> = (0..self.titles.len())
-            .map(|i| self.tab_line[self.tab_kind(i) as usize])
+            .map(|i| self.line_color_of(i))
             .collect();
         self.tabs.set_tab_colors(colors, &mut inv);
+        // ★ 미저장 탭 = 이름 글자에도 색(활성이 아니어도 · 포커스가 없어도 · 사용자 09-28).
+        let titles: Vec<Option<nexa_ctl::Color>> = (0..self.titles.len())
+            .map(|i| {
+                (self.tab_unsaved_text && self.is_unsaved(i))
+                    .then(|| {
+                        self.tab_unsaved_color
+                            .or(self.tab_line[TabKind::Scratch as usize])
+                    })
+                    .flatten()
+            })
+            .collect();
+        self.tabs.set_title_colors(titles, &mut inv);
+    }
+
+    /// 미저장 탭인가 = 파일이 아닌 스크립트 탭 또는 저장본과 다른 파일 탭(미리보기 탭 제외).
+    pub(crate) fn is_unsaved(&self, i: usize) -> bool {
+        match self.tab_kind(i) {
+            TabKind::Preview => false,
+            TabKind::Scratch => true,
+            TabKind::File => self.is_dirty(i),
+        }
+    }
+
+    /// 탭 `i`의 상단 줄 색(구분: 미저장 = `tab_line[0]` · 저장된 파일 = `[1]` · 미리보기 = `[2]`).
+    fn line_color_of(&self, i: usize) -> Option<nexa_ctl::Color> {
+        match self.tab_kind(i) {
+            TabKind::Preview => self.tab_line[TabKind::Preview as usize],
+            _ if self.is_unsaved(i) => self.tab_line[TabKind::Scratch as usize],
+            _ => self.tab_line[TabKind::File as usize],
+        }
+    }
+
+    /// 미저장 탭 이름 색 설정(호스트).
+    pub(crate) fn set_tab_unsaved(&mut self, text_on: bool, color: Option<nexa_ctl::Color>) {
+        self.tab_unsaved_text = text_on;
+        self.tab_unsaved_color = color;
+        self.sync_badges();
     }
 
     /// 표식 클릭/우클릭 요청(탭 index · 1회성).
@@ -1533,6 +1575,8 @@ impl Editors {
             return false;
         }
         self.sync_tabs();
+        // 더러움이 바뀌면 줄 색·이름 색도(미저장 ↔ 저장됨 · 09-28).
+        self.sync_badges();
         true
     }
 
@@ -2005,8 +2049,8 @@ impl Editors {
 
     /// 활성 탭의 유형에 맞는 줄 색을 탭 바에 반영(전환·동기화·설정 변경 때).
     fn sync_tab_line(&mut self) {
-        let k = self.tab_kind(self.active());
-        self.tabs.set_accent(self.tab_line[k as usize]);
+        let c = self.line_color_of(self.active());
+        self.tabs.set_accent(c);
     }
 
     /// 동시 편집 칸에 든 탭 index들(OPEN FILES 표시용).

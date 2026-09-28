@@ -586,7 +586,7 @@ pub use detail::{
 pub mod tree;
 pub use tree::{sub_items, sub_kinds, SubIcon, SubItem, SubKind};
 pub mod gen;
-pub use gen::{gen_whats, generate, GenOpts, GenSpec, GenWhat};
+pub use gen::{gen_whats, generate, BindNote, GenOpts, GenSpec, GenWhat};
 
 // ───────────────────────────────────────────── 공통 도우미
 

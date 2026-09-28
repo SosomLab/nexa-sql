@@ -372,6 +372,7 @@ impl App {
                                 TxPurpose::User
                             };
                             log.begin(stamp.clone(), editor, purpose, i, &it.sql);
+                            log.set_binds(i, it.binds.clone());
                             match &it.error {
                                 Some(m) => log.error(i, None, m),
                                 None => {
@@ -1007,6 +1008,13 @@ impl App {
                             tf(Msg::LogVarsChanged, &[&line]),
                         ));
                     }
+                }
+                RunEvent::Binds { index, binds } => {
+                    // 실행 직전의 바인드 매핑 → 그 문장 행(3계층 · docs/44 §9).
+                    self.txlog
+                        .select_session(self.sess.id)
+                        .set_binds(index, binds);
+                    self.txlog_win.redraw();
                 }
                 RunEvent::Warning(m) => {
                     // 눈에 띄게(T-202): 상태줄 + 로그(`log_entries`가 이미 넣었다).

@@ -2,7 +2,14 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
-> ★ **다음 세션 시작점 = [journal 2026-09-28](journal/2026-09-28.md)**(102차 후반 win = 코드 건강 점검·리팩터링 · 절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+> ★ **다음 세션 시작점 = [journal 2026-09-28 §8](journal/2026-09-28.md)**(102차 끝 3 win = 사용자 요구 18건 · D-145 게이트 기본 끔 · 설정 UX · 트랜잭션 로그 3계층 · 실기 T-252 · D-146 → T-250) · 102차 후반 = 코드 건강 점검·리팩터링(절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
+
+## 2026-09-28 (102차 끝 3 · **win**) — ★ 사용자 요구 18건 일괄([journal §8](journal/2026-09-28.md)) · ★ **D-145 라이선스 게이트 기본 끔**(개인 사용 = 전 기능) · 설정 UX · 트랜잭션 로그 3계층
+
+- 🔧 **한 뿌리 셋** = 라이선스 게이트(이 PC 무료판 · Release 늘 켬): Ctrl+T 5탭 상한 · 마지막 프로젝트 복원/자동 저장 끔 · 종료 때마다 "저장할까요?" → **D-145** 게이트 기본 끔(숨은 `license.gates`) + 종료 물음은 저장할 것이 있을 때만(`project_unsaved`).
+- ★ 설정 창: 정렬 = 그룹 → 카테고리 → **키 접두 묶음** → 등재 순(`display_order`) · 키 옆 **복사 버튼**(✓ 원복 · Shift/Ctrl+클릭 = 보이는 설정 전부) · **고급** `ADVANCED`/`is_advanced`(HIDDEN ∪ DBMS ∪ 표 · Advanced 라벨 오른쪽 · 꺼짐 = 숨김 + "N개 숨김" · 켜짐 = 키 강조색) · **큰 파일 카테고리** · ★ **키 이름 바꿈 부품** `RENAMED`/`canonical_key`(1차 4키) · 📐 [94 설정 키 이름 체계](94-settings-key-naming-and-location.md)(2레벨 유지·강화 권장 · D-146 2차 rename 대기 · T-250).
+- ★ 트랜잭션 로그 **3계층**([44 §9](44-transaction-log.md)): `RunEvent::Binds`(실행 직전 매핑) · `TxEntry.binds` · `bound_sql`(값 치환 · 클라이언트 읽기용) · 창 행 클릭 = 상세(① 보낸 문장 ② 바인드 표 ③ 값 치환) · 메뉴 "값 적용 문장 복사/새 탭".
+- 그 밖: 연결 해제 기본 = 항상 고르기(D-144) · SQL 생성 바인드 목록 주석(`gen.bind_note`) · 객체 상세 = 탐색기 글꼴 · 프로젝트(OPEN FILES 포함)·북마크 **타입어헤드** · IME 두 키 = Input(`input.ime_hint` ▸ 구독 Linux) · **미저장 탭 이름 색**(nexa-ui 87차 `set_title_colors` · `editor.tab_unsaved_*` · 식별선 미저장/저장된 파일/미리보기) · 상태줄 **자동 저장 표식**(클릭 = 폴더) · `search.max_file_kb` 8192(SSD)/향상 2048(HDD · 72 §4-1) · 시험 전부 초록 · 실기 = T-252.
 
 ## 2026-09-28 (102차 끝 2 · **win**) — 🌐 기본 언어 = OS 표시 언어(지원 밖 = 영어 · [journal §7](journal/2026-09-28.md))
 

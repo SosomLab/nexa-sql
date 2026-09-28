@@ -3,6 +3,7 @@
 > **요청**(사용자 09-14): *"로컬(PC에 대한 인증) 인증 정보를 전송하고 라이선스 파일을 받아 적용하는 방식으로 정식 버전임을 증명하고, 정식 버전인 경우만 사용할 수 있는 기능을 설정"*. 절차·기술·적용 기준·기능 판정 방법을 설계하고 사용자 결정이 필요한 항목을 **D-23~D-31**로 뽑는다.
 > **선행**: [13 라이선스](13-licensing.md) §3(집행 — nexa-dir 17 재사용 방침 · Ed25519 · 오프라인 1차) · DR-2(PolyForm NC) · DR-22(`nsql-vault` 기기 키 · DPAPI) · nexa-beep `ed25519-dalek` 원장 선례(09-06). `../nexa-dir` 원본은 이 기기에 없어 **원칙만 계승**하고 형식은 이 문서가 SSOT.
 > **상태**: 📐 설계. 코드는 D-23·D-24·D-25 답 뒤 T-32~T-35.
+> ★ **D-145(09-28 · 사용자 "라이선스가 없어도 모든 기능이 동작하는 것이 기본 · 개인 사용은 전 기능 오픈 · 차후 일부 제한 가능")**: 기능 게이트는 **기본 끔** — 숨은 설정 `license.gates`(옛 `license.gates_dev`)를 켤 때만 Debug·Release 동일 적용. 아래 §4의 게이트·상한(D-43~46)은 "켰을 때"의 규칙이며 12곳 배선은 그대로 둔다([journal 09-28 §8-1](journal/2026-09-28.md)).
 > **후속(09-14 2차)**: 라이선스 종류 4단(Device·User 5대·Team·Organization) · 사내 인증 서버 · **공유 라이브러리 `nexa-license`(형제 저장소) + 서버 비공개 저장소 분리** = [25](25-license-tiers-and-server.md). 이 문서의 `nsql-license`는 25 §9-1의 얇은 앱 층이 된다.
 
 ---
@@ -251,4 +252,4 @@ impl Licensing {
 | **T-33** | `nsql license request/status/install/remove` CLI · 종료 코드 4 — **09-27 ✅**(+`path` · 종료 코드 4는 게이트 입구 T-36) | T-32 |
 | **T-34** | GUI 라이선스 창·상태줄 배지·Denied 안내 · i18n — **09-27 ✅**(`license_win.rs` · 배지 클릭/Help ▸ License… · 요청 코드 복사 · 파일 열기 · 제거 · Denied = 상태줄 + 창 안내) | T-32 · 설정 창 |
 | **T-35** | `nexa-license-tool` — **09-27 ✅**(nexa-license 워크스페이스 · keygen/keys-rs/issue/reissue/verify/decode-request/ledger · 봉투 `nxk1`) | T-32 D-27 |
-| **T-36** | 게이트 배선 — **09-27 ✅ 1차**(25 §13-3 표 12곳 · `lic_gate`/`entitled`/`cap` · Debug = `license.gates_dev` · 남음 = 확장 manifest `requires` · xlsx/SSH/비교는 기능 자체가 아직 없음) | T-32 D-23 |
+| **T-36** | 게이트 배선 — **09-27 ✅ 1차**(25 §13-3 표 12곳 · `lic_gate`/`entitled`/`cap` · 게이트 기본 끔 D-145 · 숨은 `license.gates` · 남음 = 확장 manifest `requires` · xlsx/SSH/비교는 기능 자체가 아직 없음) | T-32 D-23 |

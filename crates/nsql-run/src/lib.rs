@@ -83,6 +83,8 @@ pub struct ApplyReport {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct ApplyLogItem {
     pub sql: String,
+    /// 이 문장에 매핑된 바인드(로그 3계층 · docs/44 §9).
+    pub binds: Vec<txlog::TxBind>,
     /// 사전 검사문(`SELECT COUNT(*)`)인가 — 로그 창에서는 Util(전체 보기에서만).
     pub guard: bool,
     pub elapsed: Duration,
@@ -208,6 +210,12 @@ pub enum RunEvent {
         index: usize,
         timeline: Timeline,
     },
+    /// ★ 실행 **직전**의 바인드 매핑(이름·타입·값 · 리터럴) — 트랜잭션 로그의 3계층(원문 · 매핑 · 값 치환 쿼리 · docs/44 §9 · 09-28).
+    /// 바인드가 없는 문장은 내지 않는다.
+    Binds {
+        index: usize,
+        binds: Vec<txlog::TxBind>,
+    },
 }
 
 /// 이벤트 → 로그 엔트리(GUI 로그 창 · CLI `--log` 공용 매핑 · docs/26 §3). 타임스탬프는 엔트리 생성 시각.
@@ -254,9 +262,10 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             vec![LogEntry::new(LogKind::Disconnect, "")]
         }
         // 읽기 트랜잭션 자동 종료는 호스트가 개발자 층(tx)으로만 남긴다(평소 로그를 어지럽히지 않는다).
-        RunEvent::ReadTxEnded { .. } | RunEvent::Vars { .. } | RunEvent::InputNeeded { .. } => {
-            Vec::new()
-        }
+        RunEvent::ReadTxEnded { .. }
+        | RunEvent::Vars { .. }
+        | RunEvent::InputNeeded { .. }
+        | RunEvent::Binds { .. } => Vec::new(),
         RunEvent::Error { line, error, .. } => vec![LogEntry::new(
             LogKind::Error,
             tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]),
@@ -1173,6 +1182,7 @@ impl Runner {
                 Err(e) => {
                     rep.log.push(ApplyLogItem {
                         sql: g.sql.clone(),
+                        binds: txlog::TxBind::from_params(&g.params, dialect),
                         guard: true,
                         elapsed: t0.elapsed(),
                         rows: None,
@@ -1189,6 +1199,7 @@ impl Runner {
             };
             rep.log.push(ApplyLogItem {
                 sql: g.sql.clone(),
+                binds: txlog::TxBind::from_params(&g.params, dialect),
                 guard: true,
                 elapsed: t0.elapsed(),
                 rows: n,
@@ -1217,6 +1228,7 @@ impl Runner {
                         rep.affected.push(n);
                         rep.log.push(ApplyLogItem {
                             sql: st.req.sql.clone(),
+                            binds: txlog::TxBind::from_params(&st.req.params, dialect),
                             guard: false,
                             elapsed: t0.elapsed(),
                             rows: Some(n),
@@ -1237,6 +1249,7 @@ impl Runner {
                     Err(e) => {
                         rep.log.push(ApplyLogItem {
                             sql: st.req.sql.clone(),
+                            binds: txlog::TxBind::from_params(&st.req.params, dialect),
                             guard: false,
                             elapsed: t0.elapsed(),
                             rows: None,
@@ -2278,6 +2291,12 @@ impl Runner {
         let line_offset = prepared.line_offset;
         let started = Instant::now();
         let request = prepared.into_request();
+        if !request.params.is_empty() {
+            emit(RunEvent::Binds {
+                index,
+                binds: txlog::TxBind::from_params(&request.params, session.dialect()),
+            });
+        }
         match session.execute(&request) {
             Ok(mut result) => {
                 let elapsed = started.elapsed();

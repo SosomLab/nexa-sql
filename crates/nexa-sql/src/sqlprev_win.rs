@@ -712,6 +712,7 @@ impl SqlPrevWin {
                             compact: vals[1],
                             full_ddl: vals[2],
                             separate_fk: vals[3],
+                            ..sp.opts
                         };
                     }
                     return SqlPrevAction::Refresh;

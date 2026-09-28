@@ -38,7 +38,7 @@
 | **복사/잘라내기**(Ctrl+C/X · 큰 선택) | ⭘ | ⭘ | ⭘ | `editor.copy_confirm_mb` **32** MB(0 = 안 물음) | 문자열 사본 + Windows UTF-16 변환 = 선택의 2~3배 순간 할당 → 첫 누름은 안내 · 3초 안 되풀이 = 실행(문자열을 만들기 전 바이트 수로 판정) | `main.rs copy_confirm_pending` |
 | **다중 선택 구간 수**(Ctrl+D · Alt+F3 · Ctrl+K,Ctrl+D · Ctrl+클릭 캐럿 · Split into Lines · 열 선택) | ⭘ | ⭘ | ⭘ | `editor.max_occurrences` **10,000**(모든 입구 공통 · 넘으면 상태줄 안내) | 구간마다 캐럿·편집이 곱해진다 | nexa-ctl `EditState::max_regions`(`add_selection`·`toggle_caret`·`set_regions`) · `main.rs regions_cap_notice` · ★ 09-22 전까지 **키만 있고 미배선**(§5) |
 | 찾기/바꾸기(찾기 막대) | ⭘ | ⭘ | ⭘ | 제한 없음(줄 단위 검색 · 본문 사본 없음) | 65 MB에서 실측 [59 §6-2](59-large-file-handling.md) | `find_in_chars` |
-| 파일 검색(Find in Files) | — | — | — | `search.max_file_kb` **1,024** KB 넘는 파일은 건너뜀 · 결과 상한 | 디스크·메모리 | `nsql-search` |
+| 파일 검색(Find in Files) | — | — | — | `search.max_file_kb` **8,192** KB(SSD 기준 · 향상 모드 2,048 = HDD · §4-1) 넘는 파일은 건너뜀 · 결과 상한 | 디스크·메모리 | `nsql-search` |
 | 다중 캐럿·열 선택 | ⭘ | ⭘ | ⭘ | 구간 수 = 위 `editor.max_occurrences`(열 선택·줄 나누기는 앞에서부터 상한 개만) | — | |
 | 자동 들여쓰기 · 괄호 자동 닫기 | ⭘ | ⭘ | ⭘ | 제한 없음(줄 단위) | | |
 | 동시 편집(칸 나누기) | ⭘ | ⭘ | ⭘ | `editor.split_max` **3** | 칸마다 그리기 | |
@@ -58,7 +58,7 @@
 | 변수 값 크기 | `vars.max_value_kb` **1,024** | 잘라 저장 + 안내 |
 | 로그 창 · 트랜잭션 로그 | `log.max_lines` **10,000** · `txlog.max_entries` **10,000** · 파일 `log.file_max_kb` | 오래된 줄부터 버림 / 회전 |
 | 프로젝트 트리 열거 | `project.scan_max` **0 = 무제한**(99차 · 워커 열거 · > 0이면 트리 항목 수 메모리 보호 상한) | 상한에 닿으면 "N개에서 열거를 멈췄습니다" · 읽지 못한 폴더는 로그 |
-| 파일 검색 제외 로그 | `search.max_file_kb` 1,024 · 이진(첫 8KB NUL) · 읽기 실패 · UTF-8 아닌 이름 | 검색 패널 아래 "제외됨(N)" 접이식 목록(경로 — 이유) · 상태줄 "· 제외 N" · CLI `nsql grep` 요약(`NSQL_GREP_LOG=1` = 목록) |
+| 파일 검색 제외 로그 | `search.max_file_kb` 8,192(향상 모드 2,048) · 이진(첫 8KB NUL) · 읽기 실패 · UTF-8 아닌 이름 | 검색 패널 아래 "제외됨(N)" 접이식 목록(경로 — 이유) · 상태줄 "· 제외 N" · CLI `nsql grep` 요약(`NSQL_GREP_LOG=1` = 목록) |
 | 파일 열기 다중 선택 | `file.open_max` **10** | 초과분 제외 표시 |
 | 되돌리기 기록 파일 | `editor.undo_persist_mb` **4** | 저장 안 함 |
 | 세션 수 | `session.max_shared` **8** · `session.max_private` **8** | 접속 거부 + 안내 |
@@ -72,7 +72,14 @@
 - 65 MB(L2 · 100만 줄): 상주 87 MB(버퍼 교체 뒤) · 입력 3 ms · 첫 페인트 55 ms · 회수 시험 R3 = 닫으면 기준선 +0.2 MB([59 §6-2](59-large-file-handling.md) · 26 §7-9 C-2).
 - 70만 줄 벤치 **전 기능**(미니맵·강조·선택어·괄호 다 켬): 편집마다 **85 ms** · 첫 페인트 1.2~1.4 s → 이것이 L1/L2에서 부가 기능을 끄는 근거다([26 §7-9 F](26-performance-architecture.md)).
 
-## 5. 이번 조사(09-22)에서 드러난 불일치와 조치
+### 4-1. 파일 검색 한 파일 상한 `search.max_file_kb` — SSD/HDD 기준(사용자 09-28 "각각 조금 더 관대한 기준을 계산 · SSD 기준을 초기 설정 · 성능 향상 모드는 HDD 기준")
+
+- 비용 모델: 파일 검색은 한 파일을 **통째로 읽고**(nsql-search · 이진 판정 첫 8 KB) 줄 단위로 훑는다 → 파일당 시간 ≈ 크기 ÷ 순차 읽기 처리량 + 탐색 지연. 사용자 체감 기준 = **파일 하나에 ≈ 20 ms 안**(수천 파일 × 20 ms가 스레드 N으로 나뉘어 수 초 안에 끝나는 선).
+- SATA SSD 순차 ≈ 500 MB/s(NVMe는 그 이상 · 탐색 ≈ 0.1 ms): 8 MB ≈ 16 ms → **8,192 KB**.
+- HDD 순차 ≈ 120 MB/s · 탐색 ≈ 10 ms: 2 MB ≈ 17 ms + 탐색 → **2,048 KB**(종전 1,024 KB보다 관대하되 HDD에서도 20 ms 선).
+- 적용: 기본값 8192(SSD) · `perf.boost` 강제값 2048(HDD) · `perf.mode` 프리셋 full 8192 / balanced 4096 / low 2048 · 옛 기본 1024가 파일에 남아 있으면 새 기본으로(`OLD_DEFAULTS`). 디스크 종류 자동 감지는 하지 않는다(향상 모드가 그 스위치).
+
+
 
 | 발견 | 조치 |
 |---|---|
