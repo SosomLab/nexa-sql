@@ -439,6 +439,9 @@ pub(crate) struct Grid {
     inject: Option<InjectPlan>,
     /// 주입을 시도했다가 실패한 원문(같은 문장에 다시 시도하지 않는다).
     inject_tried: Option<String>,
+    /// ★ 주입 재조회가 **나가 있다**(요청을 밀었고 결과·실패·중단이 아직 안 왔다 · 09-28) — 실행 오류를 "재조회 실패"로 볼지의 기준.
+    ///   (종전 판정 `inject.is_some() && !keys_ready`는 이미 3급 판정이 끝난 뒤의 **수동** 재조회를 놓쳤다.)
+    inject_sent: bool,
     /// 운영(PROD) 접속 — 편집 불가.
     prod: bool,
     /// 호스트가 알려 주는 Shift 상태(Tab 방향 · `Char('\t')`에는 수식키가 없다).
@@ -576,6 +579,7 @@ impl Default for Grid {
             edit_reqs: Vec::new(),
             inject: None,
             inject_tried: None,
+            inject_sent: false,
             prod: false,
             shift: false,
             focused: true,
@@ -826,6 +830,8 @@ impl Grid {
     fn edit_prepare(&mut self, stmt: &str, is_query: bool) {
         self.edit = None;
         self.read_only = None;
+        // 결과가 왔다 = 나가 있던 재조회는 끝났다(주입 결과든 원문 재실행이든).
+        self.inject_sent = false;
         // 주입 계획: 결과가 우리 재조회 문장이면 판정은 원문으로 · 뒤쪽 열은 숨은 열. 다른 문장이 오면 계획·시도 기록을 버린다.
         let plan = match self.inject.as_ref() {
             Some(p) if gridedit_sql::same_stmt(&p.sql, stmt) => Some(p.clone()),
@@ -943,9 +949,12 @@ impl Grid {
     /// ★ 온디맨드 행 식별 재조회(09-27 사용자 결정 D-225): 기본 정책이 재조회를 막았어도 **이 결과에 한해** 1급-보완/2급
     /// 재조회를 한 번 시도한다(우클릭 ▸ 행 식별 열 가져오기 · 자체 시험 `grid.edit.cmd:grid.edit.identify`). 이미 시도했으면 false.
     pub(crate) fn edit_identify(&mut self) -> bool {
-        if self.edit.is_none() || self.inject.is_some() || self.inject_tried.is_some() {
+        if self.edit.is_none() || self.inject.is_some() {
             return false;
         }
+        // 🔧 수동 시도는 앞선 실패 표식을 지운다(사용자 09-28 "SELECT해도 버튼이 안 켜짐" — 자동 정책의 재주입 방지 표식이
+        //   사용자의 버튼까지 영영 껐다): 실패하면 다시 표식이 붙고, 다음 누름에서 또 시도한다(사용자 행동 1회당 1번).
+        self.inject_tried = None;
         let before = self.edit_reqs.len();
         self.classify_apply_with(false, Policy::eager());
         self.edit_reqs.len() > before
@@ -956,10 +965,10 @@ impl Grid {
         let Some(e) = self.edit.as_ref() else {
             return false;
         };
+        // (`inject_tried`는 보지 않는다 — 자동 재주입 방지 표식일 뿐, 사용자의 수동 시도는 늘 열려 있다 · 09-28.)
         e.keys_ready
             && e.key_kind == KeyKind::AllColumns
             && self.inject.is_none()
-            && self.inject_tried.is_none()
             && !e.applying
             && (e.keys.is_some() || !gridedit_sql::physical_cols(self.dialect).is_empty())
     }
@@ -1024,6 +1033,7 @@ impl Grid {
                     sql: sql.clone(),
                     hidden,
                 });
+                self.inject_sent = true;
                 self.edit_reqs.push(EditRequest::Requery { sql });
                 let s = t(Msg::StGeRequery).to_string();
                 self.status(s);
@@ -1038,6 +1048,7 @@ impl Grid {
 
     /// 호스트: 주입 재조회가 실패했다(오류 · 게이트 닫힘) → 원문으로 되돌리고 주입 없이 다시 판정.
     pub(crate) fn requery_failed(&mut self) {
+        self.inject_sent = false;
         let Some(p) = self.inject.take() else { return };
         self.source_table = guess_table(&p.orig);
         self.source_sql = p.orig.clone();
@@ -1049,10 +1060,21 @@ impl Grid {
         }
     }
 
-    /// 주입 재조회가 나가 있는가(시험용).
-    #[cfg(test)]
+    /// 주입 재조회가 나가 있는가(호스트 오류 분기·시험) — 이 값이 참일 때만 실행 오류를 "재조회 실패"로 본다(09-28).
     pub(crate) fn inject_pending(&self) -> bool {
-        self.inject.is_some() && self.edit.as_ref().is_none_or(|e| !e.keys_ready)
+        self.inject_sent
+    }
+
+    /// 호스트: 주입 재조회를 **보내지 못했다**(세션 바쁨 · 게이트 닫힘) → 원문으로 되돌리되 실패 표식은 남기지 않는다(다시 누르면
+    /// 다시 시도 · 09-28). 판정은 그대로(3급 · 키 준비됨)라 버튼이 다시 켜진다.
+    pub(crate) fn requery_aborted(&mut self) {
+        self.inject_sent = false;
+        let Some(p) = self.inject.take() else { return };
+        self.source_table = guess_table(&p.orig);
+        self.source_sql = p.orig;
+        let s = t(Msg::StGeRequeryBusy).to_string();
+        self.status(s);
+        self.sync_edit_tools();
     }
 
     /// 호스트 주입: 메타(카탈로그)에서 온 열 명세 — 이름으로 맞춘다(길이 · NOT NULL · 기본값 · 종류).
@@ -6143,6 +6165,19 @@ mod edit_key_path_tests {
         g.set_keys(None);
         assert!(requery_of(&mut g).is_none());
         assert!(g.dump_edit().contains("kind=AllColumns"));
+        // ★ 09-28: 자동 재주입은 막혀도 **수동 버튼**은 켜져 있고, 누르면 실패 표식을 지우고 다시 시도한다(사용자 실기 "SELECT해도 버튼이
+        //   안 켜짐" = 표식이 버튼까지 껐다).
+        assert!(g.can_identify(), "실패 뒤 새 결과 = 버튼 켜짐");
+        assert!(g.edit_identify(), "누르면 다시 재조회 요청");
+        assert_eq!(
+            requery_of(&mut g).as_deref(),
+            Some("select a, b, rowid from t")
+        );
+        assert!(g.inject_pending());
+        // 보내지 못한 경우(세션 바쁨) = 표식 없이 되돌림 → 버튼 그대로 켜짐.
+        g.requery_aborted();
+        assert!(!g.inject_pending() && g.can_identify());
+        assert_eq!(g.source_sql(), "select a, b from t");
         // 정책 끔(rowid=false · all_cols=false) = 읽기 전용 NoKey.
         g.set_edit_cfg(EditCfg {
             rowid: false,

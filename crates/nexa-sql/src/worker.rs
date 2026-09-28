@@ -68,6 +68,8 @@ pub(crate) enum Cmd {
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
+    /// ★ 자동 커밋 모드 전환(설정 토글 · 호스트가 **모든 세션**에 보낸다 · 09-28) — 큐 순서대로 러너 설정만 바꾼다(DB로 가는 것 없음).
+    Autocommit(bool),
     Run {
         src: String,
         /// `Some(timeout)` = 실행 전 호스트:포트 빠른 판정(신호등이 초록이 아닐 때 UI가 켠다).
@@ -1305,6 +1307,10 @@ pub(crate) fn spawn(
                         }
                         let _ = dtx.send(None);
                         wake_now();
+                        true
+                    }
+                    Cmd::Autocommit(on) => {
+                        runner.set_autocommit(on);
                         true
                     }
                     Cmd::Disconnect => {

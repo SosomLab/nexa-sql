@@ -741,8 +741,10 @@ impl App {
         self.set_autocommit_now(on);
     }
 
-    /// 설정 + 살아 있는 세션(스크립트 `SET AUTOCOMMIT` · 워커 큐 순서 보장). 세션이 작업 중이면 문지기가 거부(설정도 그대로 —
-    /// 설정과 세션이 어긋나지 않게 · 09-19 검토).
+    /// 설정 + **살아 있는 모든 세션**(워커 명령 `Cmd::Autocommit` · 큐 순서 보장 · 09-28). 세션이 작업 중이면 문지기가 거부(설정도
+    /// 그대로 — 설정과 세션이 어긋나지 않게 · 09-19 검토).
+    /// 🔧 09-28(사용자 실기 "자동 커밋인데 커밋/롤백 버튼 활성"): 종전엔 `SET AUTOCOMMIT` 스크립트를 **활성 세션 하나**에만, 그것도
+    ///   한가할 때만 보냈다 → 다른 연결·탭 전용 세션·잠든 세션의 러너는 옛 모드로 남아 그리드 적용이 `tx_left_open`을 보고했다.
     fn set_autocommit_now(&mut self, on: bool) {
         if !self.gate_open() {
             return;
@@ -751,23 +753,17 @@ impl App {
             .settings
             .set("session.autocommit", if on { "on" } else { "off" });
         self.persist_settings();
-        if !self.sess.busy {
-            let src = if on {
-                "SET AUTOCOMMIT ON"
-            } else {
-                "SET AUTOCOMMIT OFF"
-            };
-            self.sess.last_run_items = split_items(src, self.sess.dialect);
-            self.sess.busy = true;
-            self.sess.worker.send(worker::Cmd::Run {
-                src: src.to_string(),
-                preflight: None,
-                max_rows: self.grid.page_rows(),
-                vars: self.run_vars(),
-                defines: self.run_defines(),
-                intrinsic: Some(self.run_intrinsic()),
-            });
+        for s in self.all_sess() {
+            s.worker.send(worker::Cmd::Autocommit(on));
         }
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            if on {
+                "SET AUTOCOMMIT ON".to_string()
+            } else {
+                "SET AUTOCOMMIT OFF".to_string()
+            },
+        ));
         if on {
             self.tx_close(TxOutcome::Switched);
         }

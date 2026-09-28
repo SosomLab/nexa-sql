@@ -739,6 +739,14 @@ impl Runner {
         self
     }
 
+    /// ★ 자동 커밋 전환(호스트 설정 토글 · **모든 세션의 러너에** · nexa-sql 09-28): 종전에는 `SET AUTOCOMMIT` 스크립트가 토글
+    ///   시점의 활성 세션 한 곳에만 갔고, 다른 연결·탭 전용 세션의 러너는 수동으로 남아 그리드 적용이 "트랜잭션 열림"을
+    ///   보고했다(자동 커밋인데 커밋/롤백 버튼 활성). 열려 있던 트랜잭션은 그대로 — 자동 모드의 다음 문장 뒤 규칙
+    ///   (`autocommit_needs_commit`)이 끝낸다.
+    pub fn set_autocommit(&mut self, on: bool) {
+        self.engine.settings.autocommit = on;
+    }
+
     /// 페치 상한 장착(체이닝 · 0 = 무제한) — 세션이 이미 있으면 바로 알린다.
     #[must_use]
     pub fn with_max_rows(mut self, n: usize) -> Self {

@@ -1149,8 +1149,12 @@ impl App {
                 }
                 RunEvent::Error { index, line, error } => {
                     // 주입 재조회가 실패했으면 그리드를 원문으로 되돌리고 주입 없이 다시 판정(87 §13 · WITHOUT ROWID 표 등).
+                    // 🔧 09-28: **재조회가 나가 있을 때만** — 사용자의 다른 문장(예: 자동 커밋 모드의 COMMIT/ROLLBACK 오류)이
+                    //   같은 탭에서 실패하면 성공해 둔 주입 계획을 "실패"로 지우고 버튼을 영영 껐다.
                     if let Some(g) = self.run_grid() {
-                        g.requery_failed();
+                        if g.inject_pending() {
+                            g.requery_failed();
+                        }
                     }
                     self.txlog.select_session(self.sess.id).error(
                         index,

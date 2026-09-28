@@ -79,7 +79,8 @@ impl App {
                         self.grid.set_source_sql(&sql);
                         self.refresh_result();
                     } else {
-                        self.grid.requery_failed();
+                        // 🔧 보내지 못한 것은 실패가 아니다(09-28): 표식 없이 되돌려 버튼이 다시 켜지게.
+                        self.grid.requery_aborted();
                     }
                 }
                 grid::EditRequest::Apply {
