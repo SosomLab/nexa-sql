@@ -4,6 +4,10 @@
 >
 > ★ **다음 세션 시작점 = [journal 2026-09-28](journal/2026-09-28.md)**(102차 후반 win = 코드 건강 점검·리팩터링 · 절차 [93](93-code-health-and-refactoring.md) · `App` 새 동작은 `app/<기능>.rs`에) + 라이선스 쪽 [journal 2026-09-27 §11·§14-3](journal/2026-09-27.md) · 남은 = T-246 워커 `WorkerState` · T-247 `WinHost` · T-248 긴 함수 · T-249 미구현 설정 재등록 · T-163 실기.
 
+## 2026-09-28 (102차 끝 2 · **win**) — 🌐 기본 언어 = OS 표시 언어(지원 밖 = 영어 · [journal §7](journal/2026-09-28.md))
+
+- `ui.lang` 기본값이 OS를 따른다(`nsql-i18n::system_lang` · Windows/macOS OS API · Linux 로캘 환경 변수) · 사용자가 고르면 저장돼 이긴다 · `reset` = 다시 OS · 시험 627 · 설치본 반영 = 다음 릴리스(v0.1.1).
+
 ## 2026-09-28 (102차 끝 · **win**) — 🚀 **v0.1.0 첫 공개 릴리스** · 🍺 brew만([journal §6](journal/2026-09-28.md))
 
 - 릴리스 <https://github.com/SosomLab/nexa-sql/releases/tag/v0.1.0> — MSI · pkg/dmg(Universal) · deb/rpm · sha256sums · **`brew install --cask kiros33/tap/nexa-sql`**(탭 자동 반영 + 러너 실설치 검증 ✓) · winget·choco 없음(사용자 09-28).

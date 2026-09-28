@@ -11,6 +11,9 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+mod syslang;
+pub use syslang::{lang_from_env, lang_from_langid, lang_from_locale, system_lang};
+
 /// 지원 언어 — 첫 항목이 기본(영어 · 사용자 09-14).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -3269,8 +3272,8 @@ impl Msg {
             Msg::CatEditor => ["Editor", "편집기"],
             Msg::LblLang => ["Language", "언어"],
             Msg::DescLang => [
-                "Language of the user interface (applies immediately)",
-                "화면 언어(즉시 적용)",
+                "Language of the user interface (applies immediately). Default = the OS display language if supported, otherwise English",
+                "화면 언어(즉시 적용). 기본값 = OS 표시 언어(지원하는 언어일 때) · 그 밖은 영어",
             ],
             Msg::LblTheme => ["Theme", "테마"],
             Msg::DescTheme => [

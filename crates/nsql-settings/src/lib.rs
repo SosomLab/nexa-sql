@@ -4772,8 +4772,18 @@ pub const OS_DEFAULTS: &[(&str, &str, &str)] = &[
 
 /// 이 OS의 기본값 — [`OS_DEFAULTS`]에 있으면 그것 · 아니면 레지스트리 `default`.
 #[must_use]
+/// 기본값이 실행 환경(OS 언어)을 따르는 키 — 사용자가 고르면 기본값과 같아도 저장한다(`Settings::set`).
+fn follows_os_default(key: &str) -> bool {
+    key == "ui.lang"
+}
+
 pub fn default_of(key: &str) -> Option<&'static str> {
     let e = entry(key)?;
+    // 화면 언어 기본값 = OS 표시 언어(지원 언어일 때) · 그 밖은 영어(사용자 09-28 "설치 시 해당 언어로 · 없으면 영어").
+    //   설치기(MSI·pkg·deb·rpm·brew)마다 쓰지 않고 여기 한 곳 — 사용자가 고른 값은 저장돼 이긴다 · `reset` = 다시 OS 언어.
+    if key == "ui.lang" {
+        return Some(nsql_i18n::system_lang().code());
+    }
     let os = OS_DEFAULTS
         .iter()
         .find(|(k, _, _)| *k == key)
@@ -5211,7 +5221,8 @@ impl Settings {
                         let old_default =
                             OLD_DEFAULTS.iter().any(|(key, old)| *key == k && *old == n);
                         let def = default_of(e.key).unwrap_or(e.default);
-                        if n != def && !old_default {
+                        // OS를 따르는 기본값(`ui.lang`)은 파일에 있으면 = 사용자가 고른 것 — 기본값과 같아도 유지.
+                        if (n != def || follows_os_default(&k)) && !old_default {
                             s.values.insert(k, n);
                         }
                     }
@@ -5300,7 +5311,9 @@ impl Settings {
         let n = normalize(e.kind, raw).ok_or_else(|| {
             SetError::InvalidValue(key.to_string(), raw.to_string(), allowed(e.kind))
         })?;
-        if n == default_of(e.key).unwrap_or(e.default) {
+        // 기본값과 같으면 줄을 지운다 — 단 **OS를 따르는 기본값**(`ui.lang`)은 사용자가 고른 순간 저장한다: 한국어 OS에서
+        // 한국어를 고른 사람이 나중에 OS 언어를 바꿔도 앱은 고른 언어로 남아야 한다(사용자 선택이 이긴다 · `reset` = 다시 OS 따라감).
+        if n == default_of(e.key).unwrap_or(e.default) && !follows_os_default(key) {
             self.values.remove(key);
         } else {
             self.values.insert(key.to_string(), n.clone());
@@ -5419,7 +5432,9 @@ mod tests {
     #[test]
     fn defaults_english_and_system() {
         let s = Settings::open(tmp("defaults"));
-        assert_eq!(s.lang(), Lang::En);
+        // 언어 기본값 = OS 표시 언어(지원 언어일 때) · 그 밖은 영어(09-28) — 시험 기기에 따라 en/ko.
+        assert_eq!(s.lang(), nsql_i18n::system_lang());
+        assert_eq!(s.get("ui.lang"), Some(nsql_i18n::system_lang().code()));
         assert_eq!(s.theme_mode(), ThemeMode::System);
         assert_eq!(s.int("ui.font_size"), 15);
         assert!(!s.is_modified("ui.lang"));
@@ -5451,6 +5466,28 @@ mod tests {
         assert_eq!(r.lang(), Lang::Ko);
         assert_eq!(r.theme_mode(), ThemeMode::System);
         assert!(r.is_modified("ui.lang"));
+    }
+
+    /// 09-28: 언어는 OS를 따르되, 사용자가 고르면(기본값과 같아도) 저장돼 이긴다 · reset = 다시 OS 따라감.
+    #[test]
+    fn lang_follows_os_until_user_picks() {
+        let p = tmp("lang_os");
+        let mut s = Settings::open(p.clone());
+        let os = nsql_i18n::system_lang();
+        assert!(
+            !s.is_modified("ui.lang"),
+            "처음 = OS를 따른다(저장된 값 없음)"
+        );
+        assert_eq!(s.set("ui.lang", os.code()).unwrap(), os.code());
+        assert!(
+            s.is_modified("ui.lang"),
+            "OS와 같은 언어라도 고른 값은 저장"
+        );
+        s.save().unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains(&format!("ui.lang={}", os.code())), "{text}");
+        assert_eq!(s.reset("ui.lang").unwrap(), os.code());
+        assert!(!s.is_modified("ui.lang"), "reset = 다시 OS를 따른다");
     }
 
     #[test]
