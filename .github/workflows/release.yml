@@ -94,7 +94,11 @@ jobs:
         with:
           repository: SosomLab/nexa-license
           path: nexa-license
+      # rust-toolchain.toml이 요구하는 구성 요소(rustfmt·clippy)를 여기서 미리 채운다 — 빠지면 첫 cargo 호출 때 rustup이 다시 설치하다
+      # 러너에 깔린 rust-src와 충돌한다(`detected conflict: lib/rustlib/src/rust/library/.cargo/config.toml` · v0.1.0 첫 실행 linux·macos · ci.yml과 같게).
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: nexa-sql
