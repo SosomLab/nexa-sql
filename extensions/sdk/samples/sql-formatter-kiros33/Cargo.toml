@@ -1,0 +1,16 @@
+[package]
+name = "sql-formatter-kiros33"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "SQL Formatter for kiros33 — Nexa SQL 포맷터 확장(스킬 ansi-sql-format 규칙 · Basic 공통 옵션 위에 탭 정렬 · 1=1 · 집합 연산 구분행)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nexa-ext-sdk.workspace = true
+# 앱과 같은 포맷 핵심(렉서 · 레이아웃 IR · 공통 옵션) — Basic을 준용한다(사용자 09-28).
+nsql-format = { path = "../../../../crates/nsql-format" }

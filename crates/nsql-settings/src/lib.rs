@@ -317,6 +317,35 @@ const TAB_CLOSE_SHOW_OPTS: &[(&str, Msg)] = &[
     ("always", Msg::ValTabCloseAlways),
     ("hover", Msg::ValTabCloseHover),
 ];
+// ★ SQL 포맷 공통 옵션(docs/95 · nsql-format `Options::from_pairs`와 같은 값 어휘).
+const FMT_INDENT_OPTS: &[(&str, Msg)] = &[("tab", Msg::ValFmtTab), ("space", Msg::ValFmtSpace)];
+const FMT_CASE_OPTS: &[(&str, Msg)] = &[
+    ("keep", Msg::ValFmtKeep),
+    ("upper", Msg::ValFmtUpper),
+    ("lower", Msg::ValFmtLower),
+];
+const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
+    ("leading", Msg::ValFmtLeading),
+    ("trailing", Msg::ValFmtTrailing),
+];
+const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+const FMT_LOGICAL_OPTS: &[(&str, Msg)] =
+    &[("before", Msg::ValFmtBefore), ("after", Msg::ValFmtAfter)];
+const FMT_LIST_OPTS: &[(&str, Msg)] = &[
+    ("multi", Msg::ValFmtMulti),
+    ("single", Msg::ValFmtSingle),
+    ("auto", Msg::ValFmtAuto),
+];
+const FMT_ALIAS_AS_OPTS: &[(&str, Msg)] = &[
+    ("keep", Msg::ValFmtKeep),
+    ("add", Msg::ValFmtAdd),
+    ("remove", Msg::ValFmtRemove),
+];
+const FMT_NEWLINE_OPTS: &[(&str, Msg)] = &[
+    ("keep", Msg::ValFmtKeep),
+    ("lf", Msg::ValFmtLf),
+    ("crlf", Msg::ValFmtCrLf),
+];
 /// 생성 SQL 바인드 목록 주석 위치(`gen.bind_note`).
 const BIND_NOTE_OPTS: &[(&str, Msg)] = &[
     ("both", Msg::ValBindNoteBoth),
@@ -865,6 +894,256 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExtDisabled,
         kind: SettingKind::Text,
         default: "",
+    },
+    // ★ SQL 포맷(docs/95 · 사용자 09-28): 기본 포맷터 + Basic·확장 공용 옵션(`format.*`).
+    Entry {
+        key: "format.default",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtDefault,
+        desc: Msg::DescFmtDefault,
+        kind: SettingKind::Text,
+        default: "basic",
+    },
+    Entry {
+        key: "format.indent",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtIndent,
+        desc: Msg::DescFmtIndent,
+        kind: SettingKind::Choice(FMT_INDENT_OPTS),
+        default: "tab",
+    },
+    Entry {
+        key: "format.indent_width",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtIndentWidth,
+        desc: Msg::DescFmtIndentWidth,
+        kind: SettingKind::Int { min: 1, max: 16 },
+        default: "4",
+    },
+    Entry {
+        key: "format.keyword_case",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtKeywordCase,
+        desc: Msg::DescFmtKeywordCase,
+        kind: SettingKind::Choice(FMT_CASE_OPTS),
+        default: "upper",
+    },
+    Entry {
+        key: "format.identifier_case",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtIdentifierCase,
+        desc: Msg::DescFmtIdentifierCase,
+        kind: SettingKind::Choice(FMT_CASE_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "format.function_case",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtFunctionCase,
+        desc: Msg::DescFmtFunctionCase,
+        kind: SettingKind::Choice(FMT_CASE_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "format.comma",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtComma,
+        desc: Msg::DescFmtComma,
+        kind: SettingKind::Choice(FMT_COMMA_OPTS),
+        default: "leading",
+    },
+    Entry {
+        key: "format.comma_gap",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtCommaGap,
+        desc: Msg::DescFmtCommaGap,
+        kind: SettingKind::Choice(FMT_GAP_OPTS),
+        default: "space",
+    },
+    Entry {
+        key: "format.logical_newline",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtLogicalNewline,
+        desc: Msg::DescFmtLogicalNewline,
+        kind: SettingKind::Choice(FMT_LOGICAL_OPTS),
+        default: "before",
+    },
+    Entry {
+        key: "format.where_seed",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtWhereSeed,
+        desc: Msg::DescFmtWhereSeed,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "format.list_style",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtListStyle,
+        desc: Msg::DescFmtListStyle,
+        kind: SettingKind::Choice(FMT_LIST_OPTS),
+        default: "multi",
+    },
+    Entry {
+        key: "format.line_width",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtLineWidth,
+        desc: Msg::DescFmtLineWidth,
+        kind: SettingKind::Int { min: 40, max: 400 },
+        default: "120",
+    },
+    Entry {
+        key: "format.case_inline_max",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtCaseInlineMax,
+        desc: Msg::DescFmtCaseInlineMax,
+        kind: SettingKind::Int { min: 20, max: 400 },
+        default: "120",
+    },
+    Entry {
+        key: "format.operator_spaces",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtOperatorSpaces,
+        desc: Msg::DescFmtOperatorSpaces,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "format.column_alias_all",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtColumnAliasAll,
+        desc: Msg::DescFmtColumnAliasAll,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "format.column_as",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtColumnAs,
+        desc: Msg::DescFmtColumnAs,
+        kind: SettingKind::Choice(FMT_ALIAS_AS_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "format.table_as",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtTableAs,
+        desc: Msg::DescFmtTableAs,
+        kind: SettingKind::Choice(FMT_ALIAS_AS_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "format.join_indent",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtJoinIndent,
+        desc: Msg::DescFmtJoinIndent,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "format.keep_oneliners",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtKeepOneliners,
+        desc: Msg::DescFmtKeepOneliners,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "format.stmt_blank_lines",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtStmtBlankLines,
+        desc: Msg::DescFmtStmtBlankLines,
+        kind: SettingKind::Int { min: 0, max: 5 },
+        default: "1",
+    },
+    Entry {
+        key: "format.max_blank_lines",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtMaxBlankLines,
+        desc: Msg::DescFmtMaxBlankLines,
+        kind: SettingKind::Int { min: 0, max: 10 },
+        default: "2",
+    },
+    Entry {
+        key: "format.newline",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtNewline,
+        desc: Msg::DescFmtNewline,
+        kind: SettingKind::Choice(FMT_NEWLINE_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "format.final_newline",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtFinalNewline,
+        desc: Msg::DescFmtFinalNewline,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "format.semicolon_newline",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtSemicolonNewline,
+        desc: Msg::DescFmtSemicolonNewline,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // ★ 확장 "SQL Formatter for kiros33"(`sqlfmt.*` · docs/95 §4): Basic이 못 다루는 규칙만.
+    Entry {
+        key: "sqlfmt.strict",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtStrict,
+        desc: Msg::DescSqlfmtStrict,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "sqlfmt.align_as",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtAlignAs,
+        desc: Msg::DescSqlfmtAlignAs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "sqlfmt.align_ops",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtAlignOps,
+        desc: Msg::DescSqlfmtAlignOps,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "sqlfmt.align_order",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtAlignOrder,
+        desc: Msg::DescSqlfmtAlignOrder,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "sqlfmt.outlier_chars",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtOutlierChars,
+        desc: Msg::DescSqlfmtOutlierChars,
+        kind: SettingKind::Int { min: 16, max: 400 },
+        default: "48",
+    },
+    Entry {
+        key: "sqlfmt.and_same_level",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtAndSameLevel,
+        desc: Msg::DescSqlfmtAndSameLevel,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "sqlfmt.set_op_dashes",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtSetOpDashes,
+        desc: Msg::DescSqlfmtSetOpDashes,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     // 레인보우 괄호 플러그인(사용자 09-17 · docs/51 · D-92~95): 첫 in-process 확장 `extensions/rainbow_pairs.rs`(Rainbow Pairs)가 읽는다. 향상 모드는 색을 끈다.
     Entry {
@@ -4824,6 +5103,7 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatFiles,
             // 큰 파일 처리(docs/59 · 사용자 09-28 "별도 설정 그룹으로") — 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재.
             Msg::CatLargeFiles,
+            Msg::CatFormat,
             Msg::CatProject,
         ],
     ),
@@ -4850,7 +5130,11 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     ),
     (
         Msg::GrpExtensions,
-        &[Msg::CatExtManager, Msg::CatExtRainbowPairs],
+        &[
+            Msg::CatExtManager,
+            Msg::CatExtRainbowPairs,
+            Msg::CatExtSqlFormatter,
+        ],
     ),
 ];
 
@@ -4897,7 +5181,10 @@ pub fn default_of(key: &str) -> Option<&'static str> {
 
 /// 확장이 소유한 설정 분류 ↔ 확장 id(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다") — 설정 창이 끈/미설치
 /// 확장의 분류를 숨긴다. 새 확장은 여기 한 줄 + `CATEGORY_TREE`의 Extensions 그룹에 분류 하나.
-pub const EXTENSION_CATEGORIES: &[(Msg, &str)] = &[(Msg::CatExtRainbowPairs, "rainbow-pairs")];
+pub const EXTENSION_CATEGORIES: &[(Msg, &str)] = &[
+    (Msg::CatExtRainbowPairs, "rainbow-pairs"),
+    (Msg::CatExtSqlFormatter, "sql-formatter-kiros33"),
+];
 
 /// 카테고리의 트리 순서(그룹 index, 카테고리 index) — 없으면 맨 뒤.
 #[must_use]

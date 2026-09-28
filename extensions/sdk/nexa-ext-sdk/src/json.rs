@@ -231,10 +231,9 @@ impl<'a> P<'a> {
             Some(c) if c == b'-' || c.is_ascii_digit() => {
                 let st = self.i;
                 self.i += 1;
-                while self
-                    .peek()
-                    .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-'))
-                {
+                while self.peek().is_some_and(|c| {
+                    c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-')
+                }) {
                     self.i += 1;
                 }
                 let txt = std::str::from_utf8(&self.s[st..self.i]).map_err(|e| e.to_string())?;
@@ -328,7 +327,14 @@ mod tests {
         let s = dump(&v);
         assert_eq!(s, r#"{"id":"x","on":true,"n":3,"list":["a\"b",null]}"#);
         assert_eq!(parse(&s).expect("parse"), v);
-        assert_eq!(parse(" [1, 2.5, \"\\u00e9한\"] ").expect("p"), Json::Arr(vec![Json::Num(1.0), Json::Num(2.5), Json::Str("é한".into())]));
+        assert_eq!(
+            parse(" [1, 2.5, \"\\u00e9한\"] ").expect("p"),
+            Json::Arr(vec![
+                Json::Num(1.0),
+                Json::Num(2.5),
+                Json::Str("é한".into())
+            ])
+        );
         assert!(parse("{").is_err());
     }
 }

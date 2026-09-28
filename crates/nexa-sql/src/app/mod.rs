@@ -11,6 +11,7 @@ mod events;
 mod extensions;
 mod files;
 mod find;
+mod format;
 mod grid_results;
 mod input;
 mod license;

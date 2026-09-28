@@ -90,6 +90,14 @@ pub(crate) trait Extension {
     fn as_wasm(&self) -> Option<&wasm::WasmExtension> {
         None
     }
+    /// ★ SQL 포맷터 제공(ABI v1.1 · docs/95): (표시 이름, 미리보기 예시 SQL) — 없으면 None.
+    fn formatter(&self) -> Option<(Label, String)> {
+        None
+    }
+    /// 포맷 호출(입력 JSON `{"text","dialect","options","settings","preview"}` → 출력 JSON `{"text"}`/`{"error"}`).
+    fn format(&self, _input_json: &str) -> Result<String, String> {
+        Err("no formatter".to_string())
+    }
 }
 
 /// 설정 반영 결과(호스트가 편집기 전 탭에 적용).
@@ -309,6 +317,64 @@ impl Registry {
         self.extensions[i].run(cmd, ed)
     }
 
+    /// ★ 켜진 확장 중 포맷터를 내는 것들: (id, 이름, 예시 SQL).
+    pub(crate) fn formatters(&self, disabled: &[String]) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for i in self.active_indices() {
+            let p = &self.extensions[i];
+            if disabled.iter().any(|d| d == p.id()) {
+                continue;
+            }
+            if let Some((label, sample)) = p.formatter() {
+                out.push((p.id().to_string(), label.text(), sample));
+            }
+        }
+        out
+    }
+
+    /// ★ 확장 포맷터로 포맷(docs/95): 공통 옵션 `format.*` 쌍 + 그 확장의 접두 설정을 JSON으로 넘기고 본문을 받는다.
+    pub(crate) fn format_with(
+        &self,
+        id: &str,
+        text: &str,
+        dialect: &str,
+        options: &[(String, String)],
+        settings: &Settings,
+        preview: bool,
+    ) -> Result<String, String> {
+        use nsql_settings::json::{self, Json};
+        let i = self
+            .active_indices()
+            .into_iter()
+            .find(|&i| self.extensions[i].id() == id && self.extensions[i].formatter().is_some())
+            .ok_or_else(|| format!("formatter not available: {id}"))?;
+        let p = &self.extensions[i];
+        let own = json::parse(&wasm::settings_json(settings, p.settings_prefix()))
+            .unwrap_or(Json::Obj(Vec::new()));
+        let opts = Json::Obj(
+            options
+                .iter()
+                .map(|(k, v)| (k.clone(), Json::Str(v.clone())))
+                .collect(),
+        );
+        let req = Json::Obj(vec![
+            ("text".to_string(), Json::Str(text.to_string())),
+            ("dialect".to_string(), Json::Str(dialect.to_string())),
+            ("options".to_string(), opts),
+            ("settings".to_string(), own),
+            ("preview".to_string(), Json::Bool(preview)),
+        ]);
+        let out = p.format(&json::dump(&req))?;
+        let v = json::parse(&out).map_err(|e| format!("format json: {e}"))?;
+        if let Some(e) = wasm::jget(&v, "error").and_then(wasm::jstr) {
+            return Err(e.to_string());
+        }
+        wasm::jget(&v, "text")
+            .and_then(wasm::jstr)
+            .map(str::to_string)
+            .ok_or_else(|| "format: no text".to_string())
+    }
+
     /// WASM 확장이 남긴 로그·오류를 거둔다(호스트가 로그 창에).
     pub(crate) fn take_wasm_notes(&mut self) -> Vec<String> {
         let mut out = Vec::new();
@@ -376,5 +442,50 @@ mod wasm_registry_tests {
         manager::remove_from("rainbow-pairs", &root, &config).expect("remove");
         assert!(manager::installed_in(&root).is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// ★ 포맷터 확장(ABI v1.1 · docs/95): 공식 패키지 폴더의 `sql_formatter_kiros33.wasm`을 로드 → 포맷터로 등록 →
+    /// `format_with`가 공통 옵션 + 접두 설정을 넘겨 탭 정렬 결과를 받는다.
+    #[test]
+    fn wasm_formatter_extension_formats_through_registry() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../extensions/sql-formatter-kiros33/sql_formatter_kiros33.wasm");
+        let mut reg = Registry::builtin();
+        let notes = reg.sync_wasm(&[("sql-formatter-kiros33".into(), path)]);
+        assert!(notes.iter().any(|n| n.contains("loaded")), "{notes:?}");
+        let fmts = reg.formatters(&[]);
+        assert_eq!(fmts.len(), 1, "{fmts:?}");
+        assert_eq!(fmts[0].0, "sql-formatter-kiros33");
+        assert!(fmts[0].1.contains("kiros33"));
+        assert!(!fmts[0].2.is_empty(), "예시 SQL");
+        let settings = Settings::from_text(PathBuf::from("x"), "");
+        let options = vec![("format.comma".to_string(), "leading".to_string())];
+        let out = reg
+            .format_with(
+                "sql-formatter-kiros33",
+                "select a.x as x1, a.long_column_name as y from t a where a.k = 1 and a.z > 2",
+                "oracle",
+                &options,
+                &settings,
+                false,
+            )
+            .expect("format");
+        // 정렬 열 = 가장 긴 항목(`\ta.long_column_name` = 22칸) 다음 탭 스톱(24) · 짧은 항목은 탭을 더 넣어 맞춘다.
+        assert!(
+            out.contains("\ta.x\t\t\t\t\tAS\tx1\n,\ta.long_column_name\tAS\ty\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("WHERE 1=1\nAND\ta.k\t=\t1\nAND\ta.z\t>\t2\n"),
+            "{out}"
+        );
+        // 끈 확장은 목록에서 빠진다.
+        assert!(reg
+            .formatters(&["sql-formatter-kiros33".to_string()])
+            .is_empty());
+        // 포맷터가 없는 id는 오류.
+        assert!(reg
+            .format_with("rainbow-pairs", "select 1", "", &[], &settings, false)
+            .is_err());
     }
 }

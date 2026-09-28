@@ -4733,12 +4733,11 @@ impl Grid {
         let header = Rect::new(b.x, b.y + 1, b.w, self.row_h + 2);
         self.header_h = header.h + 1;
         // 행번호 열 폭(자릿수 × 숫자 폭 + 여백) — 가로 스크롤과 무관한 고정 열.
+        // 🔧 글꼴 = 본문 셀과 같은 그리드 글꼴(`FontSlot::Base` · 사용자 09-29 "순번 글꼴·크기가 그리드와 다르다" — 종전 Mono).
         self.gutter_w = if self.row_numbers {
             let digits = rs.len().max(1).to_string().len().max(2) as i32;
-            dc.select_font(FontSlot::Mono, false);
-            let w = digits * dc.text_width("0") + pad * 2;
             dc.select_font(FontSlot::Base, false);
-            w
+            digits * dc.text_width("0") + pad * 2
         } else {
             0
         };
@@ -4892,10 +4891,10 @@ impl Grid {
             if let Some(c) = band_color {
                 dc.fill_rect(Rect::new(gx0, y, band, self.row_h).intersection(&body), c);
             }
-            // 행번호(고정 열 · 우측 정렬 · 흐리게 · 선택 행은 선택색으로 표시).
+            // 행번호(고정 열 · 우측 정렬 · 흐리게 · 선택 행은 선택색으로 표시 · 글꼴 = 본문 셀과 같음).
             if self.gutter_w > 0 {
                 let num = (di + 1).to_string();
-                dc.select_font(FontSlot::Mono, false);
+                dc.select_font(FontSlot::Base, false);
                 let nw = dc.text_width(&num);
                 let gclip = Rect::new(b.x, y, self.gutter_w, self.row_h).intersection(&body);
                 dc.fill_rect(gclip, th.chrome_bg);
@@ -4937,10 +4936,9 @@ impl Grid {
             if self.gutter_w > 0 {
                 let gclip = Rect::new(b.x, body.y, self.gutter_w, self.row_h).intersection(&body);
                 dc.fill_rect(gclip, th.chrome_bg);
-                dc.select_font(FontSlot::Mono, false);
+                dc.select_font(FontSlot::Base, false);
                 let nw = dc.text_width("1");
                 dc.text(gx0 - pad - nw, cy, gclip, "1", th.text_dim);
-                dc.select_font(FontSlot::Base, false);
             }
             dc.fill_rect(Rect::new(b.x, rr.bottom() - 1, b.w, 1), th.border);
         }

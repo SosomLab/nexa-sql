@@ -1410,6 +1410,7 @@ dependencies = [
  "nsql-catalog",
  "nsql-core",
  "nsql-drivers",
+ "nsql-format",
  "nsql-i18n",
  "nsql-io",
  "nsql-license",
@@ -1522,6 +1523,10 @@ dependencies = [
  "nsql-script",
  "nsql-vault",
 ]
+
+[[package]]
+name = "nsql-format"
+version = "0.1.1"
 
 [[package]]
 name = "nsql-i18n"

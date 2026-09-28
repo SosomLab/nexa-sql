@@ -23,6 +23,9 @@ const FUEL: u64 = 50_000_000;
 const MEM_CAP: usize = 16 * 1024 * 1024;
 /// 호출당 벽시계 상한(UI 스레드).
 const CALL_TIMEOUT_MS: u64 = 200;
+/// ★ 포맷 호출(ABI v1.1 `nx_ext_format`)은 문서 크기에 비례해 일한다 — 연료·시간 상한을 따로 둔다(1 MB 문서 기준).
+const FORMAT_FUEL: u64 = 2_000_000_000;
+const FORMAT_TIMEOUT_MS: u64 = 5_000;
 /// 반환 버퍼 상한.
 const OUT_CAP: usize = 1 << 20;
 /// 모듈 크기 상한.
@@ -40,9 +43,7 @@ struct HostCtx {
 
 fn host_guard(caller: &mut Caller<'_, HostCtx>, cost: u64) -> Result<(), wasmi::Error> {
     if Instant::now() >= caller.data().deadline {
-        return Err(wasmi::Error::new(format!(
-            "call exceeded {CALL_TIMEOUT_MS} ms"
-        )));
+        return Err(wasmi::Error::new("call exceeded its time limit"));
     }
     let fuel = caller.get_fuel()?;
     if fuel < cost {
@@ -104,6 +105,8 @@ pub(crate) struct WasmExtension {
     prefix: String,
     commands: Vec<Command>,
     menus: Vec<MenuContribution>,
+    /// 포맷터 선언(메타 `formatter` · ABI v1.1): (이름, 예시 SQL).
+    formatter: Option<(Label, String)>,
     engine: Engine,
     module: Module,
     /// 연속 실패 수(브레이커).
@@ -118,13 +121,13 @@ impl std::fmt::Debug for WasmExtension {
     }
 }
 
-fn jget<'a>(v: &'a Json, key: &str) -> Option<&'a Json> {
+pub(crate) fn jget<'a>(v: &'a Json, key: &str) -> Option<&'a Json> {
     match v {
         Json::Obj(items) => items.iter().find(|(k, _)| k == key).map(|(_, v)| v),
         _ => None,
     }
 }
-fn jstr(v: &Json) -> Option<&str> {
+pub(crate) fn jstr(v: &Json) -> Option<&str> {
     match v {
         Json::Str(s) => Some(s),
         _ => None,
@@ -221,6 +224,7 @@ impl WasmExtension {
             prefix: String::new(),
             commands: Vec::new(),
             menus: Vec::new(),
+            formatter: None,
             engine,
             module,
             failures: Cell::new(0),
@@ -257,6 +261,12 @@ impl WasmExtension {
                 })
             })
             .collect();
+        ext.formatter = jget(&v, "formatter").map(|f| {
+            (
+                label_of(jget(f, "label")),
+                jget(f, "sample").and_then(jstr).unwrap_or("").to_string(),
+            )
+        });
         ext.menus = jget(&v, "menus")
             .map(jarr)
             .unwrap_or(&[])
@@ -302,13 +312,24 @@ impl WasmExtension {
         input: Option<&str>,
         returns_buf: bool,
     ) -> Result<(String, Vec<(i32, bool)>), String> {
+        self.call_limited(f, input, returns_buf, FUEL, CALL_TIMEOUT_MS)
+    }
+
+    fn call_limited(
+        &self,
+        f: &str,
+        input: Option<&str>,
+        returns_buf: bool,
+        fuel: u64,
+        timeout_ms: u64,
+    ) -> Result<(String, Vec<(i32, bool)>), String> {
         if self.tripped() {
             return Err(format!(
                 "{}: disabled after {} failures",
                 self.id, BREAKER_LIMIT
             ));
         }
-        let r = self.call_inner(f, input, returns_buf);
+        let r = self.call_inner(f, input, returns_buf, fuel, timeout_ms);
         match &r {
             Ok(_) => self.failures.set(0),
             Err(e) => {
@@ -324,16 +345,18 @@ impl WasmExtension {
         f: &str,
         input: Option<&str>,
         returns_buf: bool,
+        fuel: u64,
+        timeout_ms: u64,
     ) -> Result<(String, Vec<(i32, bool)>), String> {
         let ctx = HostCtx {
             limits: StoreLimitsBuilder::new().memory_size(MEM_CAP).build(),
-            deadline: Instant::now() + Duration::from_millis(CALL_TIMEOUT_MS),
+            deadline: Instant::now() + Duration::from_millis(timeout_ms),
             ops: Vec::new(),
             logs: Vec::new(),
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|c| &mut c.limits);
-        store.set_fuel(FUEL).map_err(|e| e.to_string())?;
+        store.set_fuel(fuel).map_err(|e| e.to_string())?;
         let l = linker(&self.engine).map_err(|e| e.to_string())?;
         let instance = l
             .instantiate_and_start(&mut store, &self.module)
@@ -438,6 +461,22 @@ impl Extension for WasmExtension {
     }
     fn as_wasm(&self) -> Option<&WasmExtension> {
         Some(self)
+    }
+    fn formatter(&self) -> Option<(Label, String)> {
+        self.formatter.clone()
+    }
+    fn format(&self, input_json: &str) -> Result<String, String> {
+        if input_json.len() > OUT_CAP {
+            return Err(format!("text over {} KB", OUT_CAP >> 10));
+        }
+        let (out, _) = self.call_limited(
+            "nx_ext_format",
+            Some(input_json),
+            true,
+            FORMAT_FUEL,
+            FORMAT_TIMEOUT_MS,
+        )?;
+        Ok(out)
     }
 }
 

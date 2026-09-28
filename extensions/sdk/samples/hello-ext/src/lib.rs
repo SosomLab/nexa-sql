@@ -22,6 +22,7 @@ impl Extension for Hello {
                 label: Label::new("Hello", "헬로"),
                 items: vec!["hello.say".into()],
             }],
+            formatter: None,
         }
     }
 

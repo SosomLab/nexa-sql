@@ -1476,6 +1476,16 @@ impl Editors {
         }
     }
 
+    /// 활성 탭이 뷰 탭(확장 상세 등 · 본문 없음)인가.
+    pub(crate) fn is_view_tab_active(&self) -> bool {
+        self.view_tabs.contains_key(&self.active_id())
+    }
+
+    /// 이 제목의 안내 탭(경로 없음)이 열려 있는가(포맷 미리보기 갱신 판정 · docs/95).
+    pub(crate) fn has_info_tab(&self, title: &str) -> bool {
+        (0..self.titles.len()).any(|i| self.titles[i] == title && self.paths[i].is_none())
+    }
+
     /// 활성 탭이 뷰 탭이면 그 열쇠.
     /// ★ 열쇠 접두가 맞는 뷰 탭 전부 **강제** 닫기(사용자 09-28 "확장 관리자를 끄면 확장 관련 탭 모두 닫기") — 뷰 탭은 본문이 없어 물을 것이 없다.
     /// 반환 = 닫은 수.

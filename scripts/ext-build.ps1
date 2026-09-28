@@ -16,7 +16,8 @@ Write-Output ("build: {0:N0} ms" -f $sw.Elapsed.TotalMilliseconds)
 # (샘플 crate 이름 → 패키지 폴더 · 배치 파일 이름)
 $map = @(
     @{ crate = "rainbow_pairs_ext"; pkg = "rainbow-pairs"; file = "rainbow_pairs.wasm" },
-    @{ crate = "hello_ext";         pkg = "hello-ext";     file = "hello_ext.wasm" }
+    @{ crate = "hello_ext";         pkg = "hello-ext";     file = "hello_ext.wasm" },
+    @{ crate = "sql_formatter_kiros33"; pkg = "sql-formatter-kiros33"; file = "sql_formatter_kiros33.wasm" }
 )
 foreach ($m in $map) {
     if ($Only -and $Only -ne $m.pkg) { continue }

@@ -2,7 +2,9 @@
 //! 쌍 표·색칠·이동·자동 닫기는 앱 코어(nexa-ctl)가 하고, 이 확장은 "무엇을 켤지 · 어떤 색 · 어떤 명령/메뉴"만 정한다.
 //! 설정 키 = `rainbowpair.*`(앱 레지스트리에 있는 것 · 호스트가 접두 키만 넘겨 준다).
 
-use nexa_ext_sdk::{BracketEffect, Command, Editor, Effect, Extension, Label, Menu, Meta, Settings};
+use nexa_ext_sdk::{
+    BracketEffect, Command, Editor, Effect, Extension, Label, Menu, Meta, Settings,
+};
 
 struct RainbowPairs;
 
@@ -26,11 +28,23 @@ impl Extension for RainbowPairs {
     fn meta() -> Meta {
         let commands = vec![
             cmd("edit.goto_bracket", "Go to Matching Bracket", "짝 괄호로"),
-            cmd("edit.bracket_prev", "Previous Sibling Bracket", "이전 형제 괄호"),
-            cmd("edit.bracket_next", "Next Sibling Bracket", "다음 형제 괄호"),
+            cmd(
+                "edit.bracket_prev",
+                "Previous Sibling Bracket",
+                "이전 형제 괄호",
+            ),
+            cmd(
+                "edit.bracket_next",
+                "Next Sibling Bracket",
+                "다음 형제 괄호",
+            ),
             cmd("edit.bracket_parent", "Parent Bracket", "상위 괄호"),
             cmd("edit.bracket_child", "First Child Bracket", "하위 괄호"),
-            cmd("edit.expand_brackets", "Expand Selection to Brackets", "괄호까지 선택 확장"),
+            cmd(
+                "edit.expand_brackets",
+                "Expand Selection to Brackets",
+                "괄호까지 선택 확장",
+            ),
         ];
         let items = commands.iter().map(|c| c.id.clone()).collect();
         Meta {
@@ -43,6 +57,7 @@ impl Extension for RainbowPairs {
                 label: Label::new("Bracket Navigation", "괄호 이동"),
                 items,
             }],
+            formatter: None,
         }
     }
 
@@ -55,7 +70,11 @@ impl Extension for RainbowPairs {
                 rainbow: s.flag("rainbowpair.enabled"),
                 unmatched: s.flag("rainbowpair.unmatched"),
                 colors: parse_colors(s.get("rainbowpair.colors").unwrap_or("")),
-                max_chars: if kb <= 0 { 0 } else { (kb.max(64) as u64) * 1024 },
+                max_chars: if kb <= 0 {
+                    0
+                } else {
+                    (kb.max(64) as u64) * 1024
+                },
             }),
         }
     }
@@ -93,8 +112,13 @@ mod tests {
 
     #[test]
     fn colors_and_effect() {
-        assert_eq!(parse_colors("#ff0000, bad, 00FF00AA"), vec!["#FF0000", "#00FF00"]);
-        let s = Settings::from_json(r#"{"rainbowpair.enabled":"on","rainbowpair.unmatched":"off","rainbowpair.max_kb":"128"}"#);
+        assert_eq!(
+            parse_colors("#ff0000, bad, 00FF00AA"),
+            vec!["#FF0000", "#00FF00"]
+        );
+        let s = Settings::from_json(
+            r#"{"rainbowpair.enabled":"on","rainbowpair.unmatched":"off","rainbowpair.max_kb":"128"}"#,
+        );
         let e = RainbowPairs::on_settings(&s).bracket.expect("bracket");
         assert!(e.rainbow && !e.unmatched && e.max_chars == 128 * 1024);
         assert_eq!(RainbowPairs::meta().commands.len(), 6);

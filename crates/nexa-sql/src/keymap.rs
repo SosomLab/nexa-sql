@@ -697,6 +697,28 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+alt+/|cmd+shift+?",
         linux: "ctrl+shift+?",
     },
+    // ★ SQL 포맷(docs/95 · 사용자 09-28): 기본 포맷터 = Shift+Alt+F(VS Code 관례 · Ctrl+Shift+F는 파일 검색) · 고르기/미리보기는 팔레트.
+    Command {
+        id: "edit.format",
+        label: Msg::MnFormatSql,
+        win: "shift+alt+f",
+        mac: "shift+alt+f",
+        linux: "shift+alt+f",
+    },
+    Command {
+        id: "edit.format_with",
+        label: Msg::MnFormatWith,
+        win: "",
+        mac: "",
+        linux: "",
+    },
+    Command {
+        id: "edit.format_preview",
+        label: Msg::MnFormatPreview,
+        win: "",
+        mac: "",
+        linux: "",
+    },
     // 인텔리센스 캐시 새로 고침(79 §4 · SSMS Ctrl+Shift+R · 09-24 T-188) — 현재 스키마.
     Command {
         id: "intel.refresh",

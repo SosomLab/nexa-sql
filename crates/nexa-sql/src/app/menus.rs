@@ -566,6 +566,11 @@ impl App {
             "edit.swap_line_down" => self.editor_cmd(EditCommand::SwapLinesDown),
             "edit.toggle_comment" => self.editor_cmd(EditCommand::ToggleComment),
             "edit.toggle_block_comment" => self.editor_cmd(EditCommand::ToggleBlockComment),
+            // ★ SQL 포맷(docs/95 · 사용자 09-28): 기본 포맷터 / 고르기 / 미리보기 · 팔레트 항목 `format.<동사>:<엔진>`.
+            "edit.format" => self.format_sql_cmd(),
+            "edit.format_with" => self.format_with_cmd(),
+            "edit.format_preview" => self.format_preview_cmd(),
+            x if x.starts_with("format.") => self.format_pick(x),
             "intel.refresh" | "intel.refresh_server" | "intel.refresh_all" => {
                 self.intel_refresh(id)
             }
@@ -1121,6 +1126,10 @@ impl App {
                     ),
                     item("edit.toggle_comment", Msg::MnToggleComment),
                     item("edit.toggle_block_comment", Msg::MnToggleBlockComment),
+                    MenuEntry::Separator,
+                    item("edit.format", Msg::MnFormatSql),
+                    item("edit.format_with", Msg::MnFormatWith),
+                    item("edit.format_preview", Msg::MnFormatPreview),
                     MenuEntry::Separator,
                     // 인텔리센스 캐시 새로 고침(79 §4 · 현재 스키마 · 이 서버 · 전 서버).
                     item("intel.refresh", Msg::MnIntelRefresh),

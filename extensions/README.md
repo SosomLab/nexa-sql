@@ -54,6 +54,8 @@
 | `wasm` | **SDK로 만든 `.wasm` 코드 확장**([docs/75](../docs/75-extension-sdk-and-dynamic-loading.md) · ABI v1) | `files[]`의 `.wasm`을 sha256 검증 뒤 보관하고 `installed.json` 기록 → 앱이 즉시 `wasmi`로 로드(연료·메모리·시간 상한 · 재시작 없음) · **같은 id의 내장 확장을 대체**(로드 실패 = 내장 폴백) · 삭제 = 내림 + 내장 복귀 |
 | `process` | 프로세스 확장(docs/50 §2 · T-118 ④) | **아직 설치 불가**(거부 메시지) |
 
+**포맷터 확장**(ABI v1.1 · docs/95): `kind: "wasm"`이면서 메타에 `formatter`를 내면 앱의 SQL 포맷터 목록에 오른다(Shift+Alt+F 기본 포맷터로 지정 가능 · 미리보기). 예 = `sql-formatter-kiros33`.
+
 `files[].url`(선택 · `https://` 절대 URL): 있으면 패키지 폴더 대신 그 주소에서 받는다 — **GitHub Releases 자산**에 두는 큰 파일용(`path`는 보관 이름 · sha256은 그대로 필수).
 
 ## SDK로 확장 만들기(요약 · 자세히 = docs/75 §4)

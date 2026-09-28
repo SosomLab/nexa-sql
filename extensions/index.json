@@ -20,6 +20,14 @@
       "version": "0.1.0",
       "kind": "wasm",
       "summary": "SDK sample — one command that writes a log line (extensions/sdk/samples/hello-ext)"
+    },
+    {
+      "id": "sql-formatter-kiros33",
+      "dir": "sql-formatter-kiros33",
+      "name": "SQL Formatter for kiros33",
+      "version": "1.0.0",
+      "kind": "wasm",
+      "summary": "SQL formatter following the ansi-sql-format skill — tab-aligned AS/operators · WHERE 1=1 · set-operator dash lines (WASM)"
     }
   ]
 }

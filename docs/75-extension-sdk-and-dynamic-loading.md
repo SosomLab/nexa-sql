@@ -59,6 +59,10 @@
 - 편집기 조작을 **큐**로 한 이유: 호스트 상태(`&mut dyn EditorOps`)를 게스트 호출 안에 빌려주지 않는다(수명·재진입·unsafe 0). 정책 층 명령은 "이동 하나"라 큐로 충분하다.
 - 확장이 정하는 것은 **색 층뿐**(`rainbow`·`unmatched`·`colors`·`max_chars`). 쌍 종류·문자열 안·현재 쌍·자동 닫기는 편집 코어 설정(`editor.pair_*` · 51 §13) — 호스트가 덮어쓴다.
 
+### 3-1. ABI v1.1 — 포맷터(09-29 · [95 §5](95-sql-formatter.md))
+
+메타에 `"formatter":{"label":{en,ko?},"sample":"…"}`가 있으면 호스트가 그 확장을 SQL 포맷터로 등록한다(팔레트 · 기본 포맷터 지정 · 미리보기). export `nx_ext_format(ptr) -> ptr`: 입력 `{"text","dialect","options":{format.* 키:값},"settings":{접두 키:값},"preview":bool}` → 출력 `{"text"}` 또는 `{"error"}`. 상한 = 연료 2e9 · 5초 · 입력/반환 1 MB. v1 모듈(포맷터 없음)은 그대로 로드된다(`abi: 1` 유지 · 추가분).
+
 ## 4. SDK 구성(`extensions/sdk/`)
 
 ```

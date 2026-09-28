@@ -229,6 +229,10 @@ impl App {
         let i = |s: &Settings, k: &str| s.int(k);
         match key {
             "ui.theme" => self.apply_theme(),
+            // ★ 포맷 옵션(공통 `format.*` · 확장 `sqlfmt.*`) = 열려 있는 미리보기 탭을 다시 그린다(docs/95).
+            k if k.starts_with("format.") || k.starts_with("sqlfmt.") => {
+                self.format_preview_refresh();
+            }
             // 끄는 순간 들고 있던 비밀번호 봉투를 전부 버린다(세션 자격 금고 · 켜는 것은 다음 입력부터).
             "connect.remember_session_password" => {
                 if !self.settings.flag("connect.remember_session_password") {

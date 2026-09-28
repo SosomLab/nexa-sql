@@ -7,7 +7,7 @@ use crate::*;
 impl App {
     /// 설정 → 편집기 안내선(표시 · 색 · 투명도) + 동일 출현 외곽선(사용자 09-16).
     /// 끈 확장 id 목록(`extensions.disabled`).
-    fn ext_disabled(&self) -> Vec<String> {
+    pub(crate) fn ext_disabled(&self) -> Vec<String> {
         // 확장 관리자가 꺼져 있으면 **모든 확장이 꺼진 것**(설치 기록·개별 켬/끔과 무관 · 사용자 09-19).
         if !self.settings.flag("extensions.enabled") {
             return self

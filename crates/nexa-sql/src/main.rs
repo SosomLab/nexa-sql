@@ -457,6 +457,8 @@ struct App {
     ext_view: ext_view::ExtView,
     ext_details: HashMap<String, ext_view::ExtDetail>,
     ext_view_key: String,
+    /// ★ SQL 포맷 미리보기(엔진 id, 원본) — 미리보기 탭이 열려 있는 동안 설정 변경마다 다시 그린다(docs/95).
+    format_preview: Option<(String, String)>,
     /// 탐색기 유휴 워터마크의 다음 시각(docs/57 T2).
     meta_refresh_next: Option<Instant>,
     /// 외부 파일 변경(docs/58): 감시 스레드(처음 쓸 때 만든다) · 탭별 상태 · 확인 띠 · 다음 폴링 · 메인 창 활성 여부 ·
@@ -1647,6 +1649,7 @@ fn main() {
         ext_view: ext_view::ExtView::default(),
         ext_details: HashMap::new(),
         ext_view_key: String::new(),
+        format_preview: None,
         meta_refresh_next: None,
         ext_watch: None,
         ext_files: HashMap::new(),
