@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/typeahead-hangul-ext-tabs | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 패널 타입어헤드 한글(객체 탐색기 방식) · 아웃라인 타입어헤드 · 확장 관리자 끄기 = 뷰 탭 닫기 · 확장 보기 = 결과 영역 없음 · 확장 버튼 누름 효과(journal 09-28 §8-4) |
 | feat/settings-ux-batch-0928 | 2026-09-28 | 2026-09-28 → main(삭제) | 2 | 사용자 요구 18건(102차 끝 3): D-145 라이선스 게이트 기본 끔 · 설정 창 정렬/복사/고급/큰 파일 · `RENAMED` · [94](94-settings-key-naming-and-location.md) · 트랜잭션 로그 3계층([44 §9](44-transaction-log.md)) · 연결 해제 always · SQL 생성 바인드 주석 · 상세 패널 글꼴 · 타입어헤드 2패널 · IME 키 · 미저장 탭 이름 색 · 상태줄 자동 저장 · 검색 상한 SSD/HDD · 종료 물음 |
 | release/v0.1.0 · fix/release-toolchain-components · fix/tpn-utf8 · fix/release-wix-rustup · fix/release-smoke | 2026-09-28 | 2026-09-28 → main(삭제) | 5 | 🚀 v0.1.0 — 버전·brew 채널·정적 CRT·CLI 버전 정보 · 첫 릴리스 실행 결함 4회 수정 |
 | fix/ci-echoguard-unix · fix/ci-cf-html-unix | 2026-09-28 | 2026-09-28 → main(삭제) | 2 | 🔧 OS별 `allow(dead_code)` 복구(macOS·Linux CI) |
