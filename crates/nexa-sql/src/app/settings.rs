@@ -740,12 +740,17 @@ impl App {
                 "editor.tab_line_unsaved",
                 Some(self.theme.warn),
             ),
-            // ★ 파일 탭은 테마 강조색을 **명시**한다 — `None`은 탭 바에서 "바 공통 accent"(= 활성 탭의 유형 색)로 떨어져
-            //   미저장 탭이 활성인 채 파일 탭을 묶으면 파일 탭 줄까지 주황이 됐다(사용자 09-23 "각 탭의 색을 유지").
+            // ★ 파일 탭 색은 **명시**한다 — `None`은 탭 바에서 "바 공통 accent"(= 활성 탭의 유형 색)로 떨어져 미저장 탭이 활성인
+            //   채 파일 탭을 묶으면 파일 탭 줄까지 주황이 됐다(사용자 09-23 "각 탭의 색을 유지"). 기본 = **진한 회색**(사용자 09-28
+            //   "일반 파일은 진한 회색으로 구분선·닫음/수정 표시" · 다크 테마는 배경에 묻히지 않게 밝은 회색).
             pick(
                 &self.settings,
                 "editor.tab_line_file",
-                Some(self.theme.accent),
+                Some(if self.theme.is_dark {
+                    nexa_ctl::Color(0x009A_9A9A)
+                } else {
+                    nexa_ctl::Color(0x005A_5A5A)
+                }),
             ),
             pick(
                 &self.settings,

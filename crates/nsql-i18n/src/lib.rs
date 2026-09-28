@@ -5418,7 +5418,7 @@ impl Msg {
             Msg::LblEditorTabLineUnsaved => ["Tab line: unsaved tab", "탭 줄 색: 미저장 탭"],
             Msg::DescEditorTabLineUnsaved => ["Top line color for unsaved tabs — scripts without a file and files changed since the last save (#RRGGBB · empty = warning color)", "미저장 탭(파일이 아닌 스크립트 · 마지막 저장 뒤 바뀐 파일)의 상단 줄 색(#RRGGBB · 빈 값 = 경고색)"],
             Msg::LblEditorTabLineFile => ["Tab line: saved file tab", "탭 줄 색: 저장된 파일 탭"],
-            Msg::DescEditorTabLineFile => ["Top line color for file tabs whose content matches the saved file (#RRGGBB · empty = accent)", "저장본과 같은 파일 탭의 상단 줄 색(#RRGGBB · 빈 값 = 강조색)"],
+            Msg::DescEditorTabLineFile => ["Top line and close-mark color for file tabs whose content matches the saved file (#RRGGBB · empty = dark gray #5A5A5A · light gray on dark theme)", "저장본과 같은 파일 탭의 상단 줄·닫기 표시 색(#RRGGBB · 빈 값 = 진한 회색 #5A5A5A · 다크 테마는 밝은 회색)"],
             Msg::LblEditorTabLinePreview => ["Tab line: preview", "탭 줄 색: 미리보기"],
             Msg::DescEditorTabLinePreview => ["Top line and close-mark color for the preview tab (#RRGGBB · empty = violet #9B6BD6)", "미리보기 탭의 상단 줄·닫기 표시 색(#RRGGBB · 빈 값 = 보라 #9B6BD6)"],
             Msg::MnTabKeepOpen => ["Keep Open", "계속 열어 두기"],
