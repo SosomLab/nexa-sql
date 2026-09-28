@@ -749,7 +749,8 @@ impl App {
             pick(
                 &self.settings,
                 "editor.tab_line_preview",
-                Some(self.theme.text_dim),
+                // 미리보기 = 보라 계열(사용자 09-28 "흐린 색은 식별이 안 된다" → 추천색 #9B6BD6 · 라이트/다크 둘 다 보임).
+                Some(nexa_ctl::Color(0x009B_6BD6)),
             ),
         ];
         self.editors.set_tab_line_colors(c);

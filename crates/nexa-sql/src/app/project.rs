@@ -869,9 +869,11 @@ impl App {
             .map(|(i, (id, title, active))| project_panel::OpenFile {
                 id,
                 title,
-                dirty: self.editors.is_dirty(i),
+                // 미저장 = 탭 바의 점과 같은 판정(새 탭은 늘 · 파일은 저장본과 다를 때 · 09-28).
+                dirty: self.editors.is_unsaved(i),
                 active,
                 grouped: split.len() > 1 && split.contains(&i),
+                color: self.editors.line_color_of(i),
             })
             .collect();
         if self.project_panel.set_open_files(v) {

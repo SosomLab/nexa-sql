@@ -38,6 +38,8 @@ pub(crate) struct OpenFile {
     pub active: bool,
     /// 동시 편집 칸에 든 탭(다중 선택 표시).
     pub grouped: bool,
+    /// 탭 구분색(줄 색과 같음 · 점 색 · 09-28).
+    pub color: Option<nexa_ctl::Color>,
 }
 
 /// OPEN FILES 섹션의 최대 높이 = 패널 높이의 이 비율(넘치면 섹션 안에서 휠 스크롤 · 09-28 "탭 바처럼 전부").
@@ -1558,9 +1560,10 @@ impl ProjectPanel {
                 let dot_d = px(5.0);
                 let dot_w = dot_d + px(6.0);
                 if f.dirty {
+                    // 점 색 = 탭 구분색(새 탭 경고색 · 파일 강조색 · 탭 바의 점과 같다 · 09-28).
                     dc.fill_ellipse(
                         Rect::new(dot_x, rr.y + (rr.h - dot_d) / 2, dot_d, dot_d),
-                        th.text,
+                        f.color.unwrap_or(th.text),
                     );
                 }
                 let label = f.title.clone();

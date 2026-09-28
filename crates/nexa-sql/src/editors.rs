@@ -661,6 +661,9 @@ impl Editors {
             })
             .collect();
         self.tabs.set_title_colors(titles, &mut inv);
+        // 닫기 상자 자리의 미저장 점(Sublime식 · 09-28) — 새 탭은 늘 · 파일 탭은 저장본과 다를 때.
+        let dirty: Vec<bool> = (0..self.titles.len()).map(|i| self.is_unsaved(i)).collect();
+        self.tabs.set_dirty(dirty, &mut inv);
     }
 
     /// 미저장 탭인가 = 파일이 아닌 스크립트 탭 또는 저장본과 다른 파일 탭(미리보기 탭 제외).
@@ -673,7 +676,7 @@ impl Editors {
     }
 
     /// 탭 `i`의 상단 줄 색(구분: 미저장 = `tab_line[0]` · 저장된 파일 = `[1]` · 미리보기 = `[2]`).
-    fn line_color_of(&self, i: usize) -> Option<nexa_ctl::Color> {
+    pub(crate) fn line_color_of(&self, i: usize) -> Option<nexa_ctl::Color> {
         match self.tab_kind(i) {
             TabKind::Preview => self.tab_line[TabKind::Preview as usize],
             _ if self.is_unsaved(i) => self.tab_line[TabKind::Scratch as usize],

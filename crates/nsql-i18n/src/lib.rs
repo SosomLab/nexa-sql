@@ -5404,7 +5404,7 @@ impl Msg {
             Msg::LblEditorTabLineFile => ["Tab line: saved file tab", "탭 줄 색: 저장된 파일 탭"],
             Msg::DescEditorTabLineFile => ["Top line color for file tabs whose content matches the saved file (#RRGGBB · empty = accent)", "저장본과 같은 파일 탭의 상단 줄 색(#RRGGBB · 빈 값 = 강조색)"],
             Msg::LblEditorTabLinePreview => ["Tab line: preview", "탭 줄 색: 미리보기"],
-            Msg::DescEditorTabLinePreview => ["Active-tab top line color for the preview tab (#RRGGBB · empty = dim text color)", "미리보기 탭의 활성 상단 줄 색(#RRGGBB · 빈 값 = 흐린 글자색)"],
+            Msg::DescEditorTabLinePreview => ["Top line and close-mark color for the preview tab (#RRGGBB · empty = violet #9B6BD6)", "미리보기 탭의 상단 줄·닫기 표시 색(#RRGGBB · 빈 값 = 보라 #9B6BD6)"],
             Msg::MnTabKeepOpen => ["Keep Open", "계속 열어 두기"],
             Msg::LblEditorMinimapWidth => ["Minimap width (px)", "미니맵 폭(px)"],
             Msg::DescEditorMinimapWidth => ["Logical pixels · 20–400 · default 160", "논리 px · 20~400 · 기본 160"],
