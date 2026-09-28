@@ -77,6 +77,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       NSQL_VERSION: ${{ needs.meta.outputs.version }}
+      # rust-toolchain.toml(5 타깃 목록)을 rustc 프록시가 보고 자동 설치하다 러너의 rust-src와 충돌했다(v0.1.0 첫 실행 macOS ·
+      # `detected conflict: lib/rustlib/src/rust/library/.cargo/config.toml`) — 포장은 설치한 stable + 명시적으로 더한 타깃만 쓴다.
+      RUSTUP_TOOLCHAIN: stable
       # 서명 시크릿 — 비어 있으면 스크립트가 unsigned로 진행한다.
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
       MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}

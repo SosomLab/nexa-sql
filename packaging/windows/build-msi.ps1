@@ -56,16 +56,25 @@ $Arch = if ($Target -like "aarch64-*") { "arm64" } else { "x64" }
 $Slug = "windows-$Arch"
 
 # ── WiX v4 ──
-Step "WiX v4 도구"
-if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
-    if ($NoToolInstall) { throw "wix 없음 — dotnet tool install --global wix ; wix extension add --global WixToolset.UI.wixext" }
-    dotnet tool install --global wix | Out-Null
+Step "WiX 도구(v4 문법 · 판 고정)"
+# ★ 판 고정(v0.1.0 첫 릴리스 09-28): 버전 없이 `dotnet tool install wix`를 하면 러너가 최신(7.0 — v4 문법 전제와 다른 판 ·
+#   UI 확장 판 불일치 → `WIX0144 extension 'WixToolset.UI.wixext' could not be found`)을 받는다. WiX와 UI 확장은 **같은 판**이어야 한다.
+#   5.x = v4 스키마(`http://wixtoolset.org/schemas/v4/wxs`) 그대로 · EULA 절차 없음.
+$WixVersion = if ($env:NSQL_WIX_VERSION) { $env:NSQL_WIX_VERSION } else { "5.0.2" }
+$have = if (Get-Command wix -ErrorAction SilentlyContinue) { ((wix --version) -split '\+')[0] } else { "" }
+if ($have -ne $WixVersion) {
+    if ($NoToolInstall) { throw "wix $WixVersion 필요(지금 '$have') — dotnet tool install --global wix --version $WixVersion ; wix extension add --global WixToolset.UI.wixext/$WixVersion" }
+    if ($have) { dotnet tool uninstall --global wix | Out-Null }
+    dotnet tool install --global wix --version $WixVersion | Out-Null
     $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
 }
 Note ("wix " + (wix --version))
-# UI 확장(기능 트리·라이선스 화면). 이미 있으면 조용히 지나간다.
+# UI 확장(기능 트리·라이선스 화면) — WiX와 같은 판. 이미 있으면 조용히 지나간다.
 $exts = (wix extension list --global 2>$null) -join "`n"
-if ($exts -notmatch "WixToolset.UI.wixext") { wix extension add --global WixToolset.UI.wixext | Out-Null }
+if ($exts -notmatch "WixToolset.UI.wixext.*$([regex]::Escape($WixVersion))") {
+    wix extension add --global "WixToolset.UI.wixext/$WixVersion" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "wix extension add WixToolset.UI.wixext/$WixVersion 실패" }
+}
 
 # ── 빌드 ──
 Step "빌드 (release · $Target)"
