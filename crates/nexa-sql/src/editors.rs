@@ -649,9 +649,13 @@ impl Editors {
             .map(|i| self.line_color_of(i))
             .collect();
         self.tabs.set_tab_colors(colors, &mut inv);
-        // ★ 미저장 탭 = 이름 글자에도 색(활성이 아니어도 · 포커스가 없어도 · 사용자 09-28).
+        // ★ 이름 글자 색: 미리보기 탭 = 미리보기색(제목 접두 ◦ 대신 · 사용자 09-28 "글자색도") · 미저장 탭 = 미저장 색(활성이
+        //   아니어도 · 포커스가 없어도 · 사용자 09-28).
         let titles: Vec<Option<nexa_ctl::Color>> = (0..self.titles.len())
             .map(|i| {
+                if self.tab_kind(i) == TabKind::Preview {
+                    return self.tab_line[TabKind::Preview as usize];
+                }
                 (self.tab_unsaved_text && self.is_unsaved(i))
                     .then(|| {
                         self.tab_unsaved_color
