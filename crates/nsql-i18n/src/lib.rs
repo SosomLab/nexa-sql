@@ -3666,7 +3666,7 @@ impl Msg {
             Msg::OptClickLine => ["line", "줄"],
             Msg::OptClickAll => ["all", "전체"],
             Msg::OptClickNone => ["nothing", "없음"],
-            Msg::TipRowIdentify => ["Fetch row identity (requery) — requery once with the key / row id so edits target exactly one row", "행 식별 열 가져오기 (재조회) — 키/행 식별자를 붙여 한 번 재조회(편집이 정확히 한 행에)"],
+            Msg::TipRowIdentify => ["Fetch row identity (requery)", "행 식별 열 가져오기 (재조회)"],
             Msg::StGeIdentityHint => ["Editing matches rows by all column values — use ⚿ Fetch row identity (requery) on the edit toolbar to use the key / row id", "편집 = 전 열 값 비교 — 편집 툴바 ⚿ 행 식별 열 가져오기 (재조회)로 키/행 식별자 사용"],
             Msg::MnGeChanges => ["Show changes…", "변경 목록…"],
             Msg::WinGeChanges => ["Pending changes", "적용 대기 변경"],

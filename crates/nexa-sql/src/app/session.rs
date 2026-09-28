@@ -85,9 +85,15 @@ impl App {
         sessions::route_tab(private, bound, alive, self.default_shared)
     }
 
-    /// 공유 세션에 묶인 탭 수.
+    /// 공유 세션을 **실제로 쓰는** 탭 수(해제 버튼 배지·툴팁 · 해제 물음 · 세션 창).
+    /// 🔧 09-28(사용자 "편집기 탭은 3개보다 많은데 배지가 3"): 묶임 표(`tab_bind`)는 탭이 **활성화될 때** 늦게 채워져 프로젝트
+    ///   복원 직후 아직 열어 보지 않은 탭을 빼먹었다 → 탭마다 라우팅(`sess_id_for_tab` = 전용 → 묶임 → 기본 공유)으로 센다.
     pub(crate) fn bound_tabs(&self, id: u64) -> usize {
-        self.tab_bind.values().filter(|v| **v == id).count()
+        self.editors
+            .tab_ids()
+            .into_iter()
+            .filter(|&t| self.sess_id_for_tab(t) == id)
+            .count()
     }
 
     /// 공유 세션 하나 추가(워커 하나) — 기존 연결은 그대로 둔다(docs/52 §2-1).
