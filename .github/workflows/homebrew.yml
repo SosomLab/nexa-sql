@@ -1,0 +1,100 @@
+# homebrew — 공개된 릴리스의 macOS dmg로 Cask를 만들어 탭 저장소(kiros33/homebrew-tap)에 반영한다(docs/33 §3 · 사용자 09-28 "brew만").
+#
+# 이식 원천: nexa-clip `homebrew.yml`. 배포 채널은 **brew 하나**(winget·choco는 넣지 않는다 — 사용자 09-28).
+# 실행 시점 = 릴리스 **공개**(published) 때 자동 · 수동(workflow_dispatch)도 가능. 초안 단계에서는 돌지 않는다(자산 URL이 공개돼야 한다).
+# 내가 운영하는 탭이라 검수가 없고 되돌리기도 커밋 하나 — `TAP_TOKEN`이 없으면 Cask 파일만 아티팩트로 올리고 이유를 남긴다.
+# 반영 뒤 실제로 `brew install --cask`로 설치해 `nsql --version`을 확인하고 지운다(사용자 기기와 같은 길).
+name: homebrew
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "릴리스 태그(예: v0.1.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "탭에 push하지 않고 Cask만 만들어 확인"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  tap:
+    runs-on: macos-latest
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: dmg 내려받기 · 해시
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in *-*) echo "::notice::사전 릴리스($TAG)는 탭에 올리지 않는다"; echo "SKIP=1" >> "$GITHUB_ENV"; exit 0 ;; esac
+          V="${TAG#v}"
+          mkdir -p assets
+          gh release download "$TAG" --dir assets --pattern "nexa-sql-$V-macos-universal.dmg"
+          SHA=$(shasum -a 256 "assets/nexa-sql-$V-macos-universal.dmg" | cut -d' ' -f1)
+          echo "V=$V" >> "$GITHUB_ENV"; echo "SHA=$SHA" >> "$GITHUB_ENV"
+          echo "dmg sha256 = $SHA"
+
+      - name: Cask 생성 · 문법 검사
+        if: env.SKIP != '1'
+        run: |
+          set -euo pipefail
+          mkdir -p out/Casks
+          sed -e "s/@VERSION@/$V/" -e "s/@SHA_MAC_UNIVERSAL_DMG@/$SHA/" packaging/homebrew/nexa-sql.rb > out/Casks/nexa-sql.rb
+          if grep -q '@[A-Z_]*@' out/Casks/nexa-sql.rb; then echo "::error::채우지 않은 자리가 남았다"; exit 1; fi
+          ruby -c out/Casks/nexa-sql.rb
+          brew style --cask out/Casks/nexa-sql.rb || true
+          cat out/Casks/nexa-sql.rb
+
+      - uses: actions/upload-artifact@v4
+        if: env.SKIP != '1'
+        with:
+          name: homebrew-${{ env.TAG }}
+          path: out/Casks/nexa-sql.rb
+
+      - name: 탭에 반영
+        if: env.SKIP != '1' && env.DRY_RUN != 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::warning::시크릿 TAP_TOKEN이 없어 탭에 push하지 않았다 — 아티팩트 homebrew-$TAG의 Casks/nexa-sql.rb를 kiros33/homebrew-tap에 직접 커밋하면 된다."
+            echo "NO_PUSH=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/kiros33/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp out/Casks/nexa-sql.rb tap/Casks/
+          cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/nexa-sql.rb
+          if git diff --cached --quiet; then echo "변경 없음 — 이미 $V가 반영되어 있다."; exit 0; fi
+          git commit -m "nexa-sql $V"
+          git push
+          echo "탭 반영 완료 — brew install --cask kiros33/tap/nexa-sql"
+
+      - name: 설치 검증(brew install --cask → nsql --version → uninstall)
+        if: env.SKIP != '1' && env.DRY_RUN != 'true' && env.NO_PUSH != '1'
+        run: |
+          set -euo pipefail
+          brew tap kiros33/tap
+          brew update-reset "$(brew --repository kiros33/tap)" >/dev/null 2>&1 || true
+          brew install --cask kiros33/tap/nexa-sql
+          test -d "/Applications/Nexa SQL.app"
+          v=$(nsql --version); echo "$v"
+          [ "$v" = "nsql $V" ] || { echo "::error::버전 불일치: $v ≠ nsql $V"; exit 1; }
+          "/Applications/Nexa SQL.app/Contents/MacOS/nexa-sql" --smoke
+          brew uninstall --cask nexa-sql
+          test ! -e "/Applications/Nexa SQL.app"

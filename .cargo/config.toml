@@ -1,1 +1,13 @@
 # 작업공간 공통 cargo 설정 — 규칙은 여기 한 곳에만 둔다.
+
+# ★ Windows(MSVC) 정적 CRT — "외부 런타임 의존 0"(09-28 · 첫 릴리스 v0.1.0 전 · docs/33 §5).
+# 기본값(동적 CRT)으로 링크하면 exe가 `vcruntime140.dll`(VC++ 2015+ 재배포 · OS 인박스 아님)에 기대어 깨끗한 Windows에서
+# 실행되지 않는다(형제 저장소 nexa-beep·nexa-clip이 winget 자동 검증 `STATUS_DLL_NOT_FOUND` 0xC0000135로 실측 · 09-14~17).
+# CI 러너에는 런타임이 깔려 있어 스모크가 통과해 버린다 → `scripts/check-imports.ps1`(임포트 화이트리스트)가 릴리스에서 실측으로 막는다.
+# UCRT(`api-ms-win-crt-*`)는 Win10+ 인박스라 남아도 된다.
+# ⚠️ `RUSTFLAGS` 환경변수가 있으면 이 항목은 통째로 무시된다(cargo는 합치지 않는다) — 워크플로에 RUSTFLAGS를 두지 않는다.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

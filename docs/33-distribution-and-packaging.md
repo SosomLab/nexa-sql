@@ -70,7 +70,8 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | package ✅ | MSI(WiX v4 `nexa-sql.wxs` · UpgradeCode 고정 · PathEnv/SqlAssoc Feature) · pkg(pkgbuild+productbuild · postinstall 링크 = DR-32)+dmg · deb(dpkg-deb)/rpm(spec · 같은 스테이징) | 맥 실기 pkg/dmg · MSI/deb/rpm은 CI |
 | sign 📐 | 자리만 — `MACOS_SIGN_IDENTITY`/`MACOS_INSTALLER_IDENTITY`/`MACOS_NOTARY_PROFILE` · `WINDOWS_SIGN_PFX(_PASSWORD)`/`WINDOWS_SIGN_THUMBPRINT` 없으면 unsigned | DR-20 |
 | verify ✅(CI) | release.yml 스모크 = 실제 설치 → `nsql --version`·`nexa-sql --smoke` → 제거(uninstall.sh / msiexec /x / dpkg -r) → 잔여 0 · rpm은 목록만 | — |
-| publish ✅ 초안 | `sha256sums.txt` + GitHub Release **초안**(`gh release create --draft`) · 매니페스트(winget/choco/brew)는 후속 | [22 §4](22-driver-extensions.md) |
+| publish ✅ 초안 | `sha256sums.txt` + GitHub Release **초안**(`gh release create --draft`) → 확인 뒤 공개 | [22 §4](22-driver-extensions.md) |
+| homebrew ✅(09-28) | 릴리스 **공개**(published) 때 `homebrew.yml`: dmg 해시로 Cask(`packaging/homebrew/nexa-sql.rb`) 채움 → `kiros33/homebrew-tap` 반영(`TAP_TOKEN`) → macOS 러너에서 `brew install --cask` → `nsql --version`·`--smoke` → 제거 · 사전 릴리스(`-`)는 건너뜀 | 사용자 09-28 "brew만" — **winget·choco 채널은 두지 않는다**(다른 저장소의 오류·조치 기록 = §5) |
 
 ---
 
@@ -86,3 +87,43 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 |---|---|---|
 | **T-72** | 배포 파이프라인 — `packaging/{windows,macos,linux}` 스테이징·패키징 스크립트(nexa-clip 이식) · CI `release.yml`(태그 → 3-OS 산출물 · sha256) · `--smoke` 검증 · 제거 검증 | T-62 T-10 D-49 D-50 |
 | T-62 | 아이콘 배포(.rc · .icns · .desktop) | — |
+
+## 5. 형제 저장소의 winget·Chocolatey·Homebrew 오류·조치(09-28 수집 · 사용자 "빌드 구성·배포에 참고")
+
+대상 = nexa-beep · nexa-clip · sosomlab-nexa-viewer(마크다운 뷰어) · nexa-dir2 · nexa-shortcut · nexa-coffee (+ 보조 nexa-memkeeper). 출처는 각 저장소 `docs/journal`·`packaging/README.md`·워크플로. **지금 nexa-sql 채널 = brew만**(사용자 09-28) — winget·choco는 열 때 §5-3을 체크리스트로 쓴다. 이들 저장소에 **MSI를 winget·choco에 낸 사례는 없다**(NSIS·Inno·포터블) — MSI 항목은 일반 지식.
+
+### 5-1. v0.1.0 전에 이미 반영한 것
+
+| 교훈(증상 → 원인) | 출처 | nexa-sql 조치 |
+|---|---|---|
+| winget 자동 검증 `STATUS_DLL_NOT_FOUND`(0xC0000135) → Rust MSVC 기본 = 동적 CRT → `vcruntime140.dll`(인박스 아님) · CI 러너·개발 PC에는 있어서 안 보임 | beep 09-17 · clip 09-14 | `.cargo/config.toml` 두 MSVC 타깃 `+crt-static` · **임포트 게이트** `scripts/check-imports.ps1`(beep 원본 · PE 헤더 직접)를 `build-msi.ps1` 안에(로컬·CI 공통) · 실측 = GUI 16 · CLI 9 DLL 전부 인박스 |
+| env `RUSTFLAGS`가 config.toml의 target rustflags를 통째로 덮음 → CI 산출물만 동적 CRT | beep 09-17 · clip | 워크플로에 `RUSTFLAGS` 없음(유지) · 게이트가 실측으로 막음 |
+| **버전 정보 공란** → Defender ML 오탐(`Wacatac`·`Tecabans`) · winget 검증 실패 · 작업 관리자에 내부 이름 | dir2 08-24(Inno 설치형 파일 버전 공란) · coffee 09-17(VERSIONINFO 없음) · memkeeper(FileDescription) | CLI `nsql.exe`가 바로 그 상태였다(ProductName·FileVersion·Company 전부 공란) → `crates/nsql-cli/build.rs` + `packaging/windows/nsql.rc` 신설 · 리소스 삽입 본체 = `packaging/windows/winres.rs`(GUI·CLI 공용 `include!`) · 버전 단일 원천 = Cargo.toml |
+| 태그 ≠ Cargo 버전 → brew·설치 검증 실패 | beep 08-11 · clip meta 잡 | release.yml meta 잡이 대조(기존) · 워크스페이스 0.1.0 |
+| Cask `verified:` deprecated · `license` 스탠자 미지원 · `depends_on macos: :mojave` 거부 · `brew audit` 경로 인자 불가 → `brew style` | coffee 09-13 · viewer · beep 08-11 | `packaging/homebrew/nexa-sql.rb` = `>= :big_sur` · `verified:`/`license` 없음 · 검증 = `ruby -c` + `brew style` + 실제 `brew install --cask` |
+| 서명 없는 앱 + quarantine → SIGKILL(137)·앱 삭제(애드혹 서명으로도 못 넘음) | beep 08-11 · clip 08-11 | Cask `postflight` xattr 제거 + caveats에 공개(서명 = DR-20 별도) |
+| `release: published`는 **GITHUB_TOKEN으로 만든/공개한 릴리스**에서 다른 워크플로를 트리거하지 않는다 | viewer | 공개는 사람(또는 사용자 토큰 `gh release edit --draft=false`)이 한다 → `homebrew.yml` 자동 · 자동 공개로 바꾸면 `workflow_call`로 직접 호출(beep·clip 구조) |
+| 공개된 버전의 자산·태그를 다시 만들면 매니페스트 SHA가 깨진다 | beep · shortcut · dir2 · coffee | 규칙: **공개 뒤 고칠 것 = 새 버전**(v0.1.1 …) |
+
+### 5-2. 버전·메타데이터 점검표(릴리스마다 · 사용자 09-28 "버전 정보가 비었거나 메타 정보를 부족하게")
+
+| 자리 | 채울 것 | 지금 |
+|---|---|---|
+| Windows exe VERSIONINFO(모든 exe) | ProductName · ProductVersion · FileVersion · CompanyName · FileDescription · LegalCopyright · OriginalFilename(exe마다 다르게) · InternalName | ✅ `nexa-sql.rc` · `nsql.rc`(09-28) — 드라이버 프로세스 exe가 생기면 같은 `winres.rs`로 |
+| MSI(ARP) | Manufacturer · ProductVersion(숫자 3단) · ARPURLINFOABOUT · ARPHELPLINK · ARPPRODUCTICON · UpgradeCode 고정 | ✅ `nexa-sql.wxs` · (선택) ARPCONTACT·ARPURLUPDATEINFO |
+| macOS Info.plist | CFBundleVersion · CFBundleShortVersionString(빌드가 @VERSION@ 치환) · CFBundleIdentifier · NSHumanReadableCopyright · LSMinimumSystemVersion 11.0 | ✅ |
+| Cask | version · sha256(워크플로가 실제 dmg로) · desc(영문 한 줄) · homepage · zap | ✅ |
+| (열 때) winget 매니페스트 | ManifestVersion 세 파일 동일(1.12.0) + 스키마 헤더 · Publisher · License · ShortDescription · ReleaseNotesUrl · **DisplayVersion은 PackageVersion과 같으면 넣지 않는다**(dir2 반려) · MSI면 InstallerType `wix`·Scope `machine`·UpgradeCode | — |
+| (열 때) choco nuspec | 영문 summary·description(이메일 금지 — dir2 반려) · `<copyright>`(beep·coffee 반려) · iconUrl = jsDelivr 태그 고정(raw.githubusercontent 불가) · owners=kiros33 / authors=SosomLab · 다운로드형이면 VERIFICATION.txt 없음 · tags 남용 금지 · ps1 = 영문 + UTF-8 BOM + `${var}:` | — |
+
+### 5-3. winget·choco를 열 때(지금은 닫힘)
+
+- **winget**: 첫 등록 = `wingetcreate submit <렌더 폴더>`/komac(`update`·winget-releaser는 등록된 패키지만) · `kiros33/winget-pkgs` 포크 재사용 · PAT = classic `repo`+`workflow`(포크 동기화 422) · CLA 동의 코멘트 뒤 그 PR에 push 금지 · 판정은 체크 아이콘이 아니라 **라벨**(`Azure-Pipeline-Passed`·`Validation-Completed`) · `winget validate` exit 40 = 경고 처리 · 검수 중 새 버전 PR 금지(guard 잡 `gh pr list --author`) · 첫 등록 13~18일 · 후속 40분~2시간.
+- **choco**: 미승인 버전이 걸려 있으면 새 버전 push = **403** → 같은 버전으로 재제출만 가능 · 승인 판정 = OData `IsApproved=true`(미승인도 목록에 나온다) · 사람 검수 코멘트는 메일·페이지로만(API 없음) — 세션마다 `Reviewed:` 날짜 확인 · 재제출은 빌드 없이 자산 해시만으로(dir2 `resubmit-chocolatey.yml`) · MSI = `fileType='msi'` · `silentArgs='/qn /norestart'` · `validExitCodes=@(0,3010,1641)` · 첫 등록 27~44일.
+- **공통**: 스위치 = 변수(`WINGET_PUBLISH`/`CHOCO_PUSH` 기본 false) × 시크릿 이중 게이트 · 꺼져 있어도 매니페스트·nupkg는 만들어 아티팩트로 · 치환 지점 = `render-manifests.sh` 하나(남은 `@X@` = 실패) · 시크릿은 유무·스코프만 출력.
+- **복사할 원본**: nexa-coffee `publish-windows-packages.yml`(가장 성숙 — channels·force·IsApproved·exit 40·포크 동기화·재시도) + `packaging/winget/*.yaml` · nexa-beep `packaging/`(render · winget/choco 템플릿 · README) · nexa-dir2 `resubmit-chocolatey.yml`·`packaging/av-false-positive.md`(오탐 신고).
+
+### 5-4. 남은 확인
+
+- 정적 CRT로 링크한 Oracle 드라이버(ODPI-C · 런타임에 `oci.dll` 적재)의 **Windows 실서버 접속 확인** — SQLite·GUI 자체 점검(`--smoke`)은 ✓(09-28), 실서버는 사용자 PC에서.
+- 서명(DR-20)이 없어 SmartScreen·Gatekeeper 경고는 남는다 — 무료 근본 해결은 Store(MSIX)뿐(dir2·viewer 조사).

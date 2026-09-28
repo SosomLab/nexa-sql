@@ -210,7 +210,7 @@ jobs:
           path: nexa-sql/out/*
           if-no-files-found: error
 
-  # ── 릴리스 초안(사용자가 GitHub에서 'Publish release'로 공개 · 매니페스트(winget/choco/homebrew)는 후속) ──
+  # ── 릴리스 초안(사용자가 GitHub에서 'Publish release'로 공개 → 공개되면 homebrew.yml이 탭에 반영 · 채널 = brew만(winget·choco 없음 · 사용자 09-28)) ──
   publish:
     needs: [meta, package]
     runs-on: ubuntu-latest
@@ -243,6 +243,7 @@ jobs:
           | macOS (drag-to-Applications) | \`nexa-sql-$VERSION-macos-universal.dmg\` | 끌어 놓기 · CLI 링크는 dmg 안 안내문 |
           | Linux x86_64 (deb) | \`nexa-sql_${VERSION}_amd64.deb\` | \`sudo dpkg -i\` 또는 \`sudo apt install ./…deb\` |
           | Linux x86_64 (rpm) | \`nexa-sql-$VERSION-1.x86_64.rpm\` | \`sudo dnf install ./…rpm\` |
+          | macOS (Homebrew) | — | \`brew install --cask kiros33/tap/nexa-sql\`(공개 뒤 자동 반영 · \`nsql\`도 PATH에) |
 
           받은 파일은 \`sha256sums.txt\`로 확인하세요. 제거: Windows 프로그램 추가/제거 · macOS \`sudo "/Applications/Nexa SQL.app/Contents/Resources/uninstall.sh"\` · Linux \`dpkg -r nexa-sql\`/\`dnf remove nexa-sql\`.
           사용자 데이터(설정·연결 프로필)는 OS 사용자 폴더에 있으며 제거해도 보존됩니다.

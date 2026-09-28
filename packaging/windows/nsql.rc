@@ -1,5 +1,5 @@
-// nexa-sql.rc — Windows 실행 파일 리소스(아이콘 + 버전 정보 · T-62).
-// crates/nexa-sql/build.rs(본체 packaging/windows/winres.rs)가 rc.exe(MSVC) 또는 windres(GNU/mingw)로 컴파일해 링크한다 — 외부 crate 0.
+// nsql.rc — CLI `nsql.exe` 리소스(아이콘 + 버전 정보 · 09-28 · nexa-sql.rc와 같은 틀).
+// crates/nsql-cli/build.rs(본체 packaging/windows/winres.rs) 가 rc.exe(MSVC) 또는 windres(GNU/mingw)로 컴파일해 링크한다 — 외부 crate 0.
 // 도구가 없으면 build.rs가 조용히 건너뛴다(아이콘 없는 exe · 기능 동일).
 // 버전은 build.rs가 OUT_DIR에 만든 래퍼 .rc(#define NSQL_VER_* → #include 이 파일)로 넘긴다(CARGO_PKG_VERSION_* · 단일 원천 = Cargo.toml).
 // 이 파일을 rc/windres로 직접 컴파일하면 아래 기본값(0.0.0)이 쓰인다.
@@ -24,11 +24,11 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "CompanyName",      "SosomLab\0"
-      VALUE "FileDescription",  "Nexa SQL - cross-platform lightweight SQL client\0"
+      VALUE "FileDescription",  "nsql - Nexa SQL command-line client\0"
       VALUE "FileVersion",      NSQL_VER_STR "\0"
-      VALUE "InternalName",     "nexa-sql\0"
+      VALUE "InternalName",     "nsql\0"
       VALUE "LegalCopyright",   "Copyright (c) 2026 SosomLab - PolyForm Noncommercial 1.0.0\0"
-      VALUE "OriginalFilename", "nexa-sql.exe\0"
+      VALUE "OriginalFilename", "nsql.exe\0"
       VALUE "ProductName",      "Nexa SQL\0"
       VALUE "ProductVersion",   NSQL_VER_STR "\0"
     END

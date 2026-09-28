@@ -77,6 +77,11 @@ $BinDir = Join-Path $Root "target\$Target\release"
 foreach ($exe in "nexa-sql.exe", "nsql.exe") {
     if (-not (Test-Path (Join-Path $BinDir $exe))) { throw "산출물 없음: $BinDir\$exe" }
 }
+# ★ 외부 런타임 의존 0 게이트(09-28 · docs/33 §5): 임포트 테이블 = OS 인박스 DLL만. vcruntime140.dll 등 재배포 DLL이면 여기서 멈춘다
+#   (정적 CRT = .cargo/config.toml · 러너에는 VC++ 런타임이 깔려 있어 아래 스모크만으로는 못 잡는다 — 형제 저장소 winget 반려 실측).
+Step "임포트 게이트(OS 인박스 DLL만)"
+& pwsh -NoProfile -File (Join-Path $Root "scripts\check-imports.ps1") (Join-Path $BinDir "nexa-sql.exe") (Join-Path $BinDir "nsql.exe")
+if ($LASTEXITCODE -ne 0) { throw "임포트 게이트 실패 — 재배포 런타임 의존(정적 CRT 누락?) 또는 새 DLL(인박스면 scripts/check-imports.ps1 화이트리스트에 올린다)" }
 
 # ── 스테이징(docs/33 §2 레이아웃) ──
 Step "스테이징 → $Stage"
