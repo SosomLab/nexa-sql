@@ -291,13 +291,21 @@ impl App {
                 ToolItem::new("conn.sessions", toolicons::sessions()).tip(t(Msg::TipSessions)),
             ],
         );
+        // ★ 탭 연결정보(사용자 09-28): 지금 탭에 묶인 서버를 글로(프로필 이름 · 없으면 계정@호스트) · 클릭 = 탭 표식과 같은 메뉴로 바꾸기.
+        let tabconn = ToolGroup::new(
+            "tabconn",
+            t(Msg::TbGroupTabConn),
+            vec![ToolItem::text("sess.tab", "—")
+                .with_dropdown()
+                .tip(t(Msg::TipTabConn))],
+        );
         let view = ToolGroup::new(
             "view",
             t(Msg::MnView),
             vec![ToolItem::new("view.log", toolicons::log()).tip(t(Msg::TipLog))],
         )
         .align_right();
-        let mut dock = ToolDock::new(vec![file, run, conn, view]);
+        let mut dock = ToolDock::new(vec![file, run, conn, tabconn, view]);
         dock.set_icon_size(18);
         dock
     }

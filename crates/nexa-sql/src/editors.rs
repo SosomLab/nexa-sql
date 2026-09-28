@@ -706,6 +706,16 @@ impl Editors {
         self.menu.open_at(x, y, items, host, text_w);
     }
 
+    /// 표식 메뉴를 **다른 자리**(툴바 탭 연결정보 항목 아래)에 연다 — 고르기·닫기 흐름은 탭 표식 메뉴와 같다(09-28).
+    pub(crate) fn open_badge_menu_at(&mut self, i: usize, items: Vec<CtxItem>, anchor: Rect) {
+        self.menu_tab = Some(i);
+        self.menu_is_badge = true;
+        let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
+        let text_w = (260.0 * self.scale) as i32;
+        self.menu
+            .open_at(anchor.x, anchor.bottom(), items, host, text_w);
+    }
+
     /// 표식 메뉴에서 고른 항목(탭 id, 항목 id · 1회성).
     pub(crate) fn take_badge_pick(&mut self) -> Option<(u64, String)> {
         self.badge_pick.take()
@@ -2280,11 +2290,12 @@ impl Editors {
             CtxItem::maybe("close_right", t(Msg::MnTabCloseRight), i + 1 < n),
             CtxItem::item("close_all", t(Msg::MnTabCloseAll)),
             CtxItem::Separator,
-            CtxItem::maybe("reveal", t(Msg::MnTabReveal), has_file),
-            CtxItem::maybe("reveal_project", t(Msg::MnTabRevealProject), in_project),
-            CtxItem::Separator,
             CtxItem::maybe("copy_name", t(Msg::MnCopyFileName), has_path),
             CtxItem::maybe("copy_path", t(Msg::MnCopyFilePath), has_path),
+            CtxItem::Separator,
+            // 위치 열기는 복사 아래(사용자 09-28 "모든 팝업에서 위치 열기가 이름/경로 복사 아래로").
+            CtxItem::maybe("reveal", t(Msg::MnTabReveal), has_file),
+            CtxItem::maybe("reveal_project", t(Msg::MnTabRevealProject), in_project),
         ];
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
         let text_w = (200.0 * self.scale) as i32;

@@ -8,6 +8,8 @@ impl App {
     pub(crate) fn paint(&mut self) {
         // 상태줄 메모리 글은 그리기 빌림 전에(5 s에 한 번 OS 조회 · docs/80).
         let mem_txt = self.mem_status_text();
+        // 프로젝트 변경 표식(`*자동 저장` · 세대 비교 · 그리기 빌림 전에 · 사용자 09-28).
+        let autosave_dirty = self.project_autosave_dirty();
         // 찾기가 열린 동안 본문이 바뀌면 일치 표시도 따라간다(전체 스캔 · 열려 있을 때만 · T-73).
         if self.find.is_visible() {
             self.sync_find_marks();
@@ -134,19 +136,7 @@ impl App {
                     segs.push((txt, false));
                     segs.len() - 1
                 });
-                // 접속 세그먼트 = 프로필 이름만(URL은 툴팁 카드·접속 창에 · 사용자 09-15).
-                let conn = match self.conn_win.panel.state_ref() {
-                    ConnState::Connected(d) => {
-                        let name = self.conn_win.active_name();
-                        if name.is_empty() {
-                            d.clone()
-                        } else {
-                            name.to_string()
-                        }
-                    }
-                    _ => "—".to_string(),
-                };
-                segs.push((conn, false));
+                // (접속 이름 세그먼트는 09-28 사용자 요청으로 뺐다 — 접속은 툴바 플러그 배지·탭 표식·세션 창이 보여 준다.)
                 // 큰 파일 모드 · 읽기 전용 표식(docs/59) — 이 탭에서 일부 기능이 꺼져 있음을 늘 보이게.
                 let (large_level, large_forced) = self.editors.active_large();
                 if large_level > 0 && !large_forced {
@@ -203,8 +193,7 @@ impl App {
                     tf(Msg::StTabSize, &[&ts])
                 };
                 // ★ 라이선스 배지(docs/23 §4-4 · D-44: 무료 = "non-commercial use only" 상시) — 클릭 = 라이선스 창.
-                let lic_idx = segs.len();
-                segs.push((Self::license_badge_of(&self.licensing), false));
+                // (라이선스 배지는 맨 오른쪽 — 아래 구문 뒤에 넣는다 · 사용자 09-28.)
                 // ★ 프로젝트 자동 저장 표식(사용자 09-28 · `statusbar.autosave`): 켜짐(주기) / 꺼짐 · 클릭 = 자동 저장 폴더.
                 let autosave_seg = self.settings.flag("statusbar.autosave");
                 // (`project_autosave_on`과 같은 판정 — 여기서는 `surface` 차용 때문에 필드 단위로 푼다.)
@@ -220,11 +209,17 @@ impl App {
                     .int("project.autosave_secs")
                     .max(5)
                     .to_string();
+                // ★ 변경이 있으면 `*` 접두(저장되면 사라짐) — 폭은 늘 `*` 포함으로 재어 들락거리지 않는다(사용자 09-28).
+                let autosave_base = if autosave_on {
+                    tf(Msg::StAutosaveOn, &[&autosave_secs])
+                } else {
+                    t(Msg::StAutosaveOff).to_string()
+                };
                 let autosave_idx = autosave_seg.then(|| {
-                    let txt = if autosave_on {
-                        tf(Msg::StAutosaveOn, &[&autosave_secs])
+                    let txt = if autosave_dirty {
+                        format!("*{autosave_base}")
                     } else {
-                        t(Msg::StAutosaveOff).to_string()
+                        autosave_base.clone()
                     };
                     segs.push((txt, false));
                     segs.len() - 1
@@ -247,6 +242,8 @@ impl App {
                 segs.push((self.editors.active_eol().label().to_string(), true));
                 segs.push((indent_seg, true));
                 segs.push((self.editors.syntax_name(), true));
+                let lic_idx = segs.len();
+                segs.push((Self::license_badge_of(&self.licensing), false));
                 let gap = px(12.0, s);
                 let mut xr = wi - px(8.0, s);
                 self.status_syntax_rect = Rect::new(0, 0, 0, 0);
@@ -257,9 +254,17 @@ impl App {
                 self.status_mem_rect = Rect::new(0, 0, 0, 0);
                 self.status_lic_rect = Rect::new(0, 0, 0, 0);
                 self.status_autosave_rect = Rect::new(0, 0, 0, 0);
-                let last = segs.len() - 1;
+                // 오른쪽에서 몇 번째 **클릭 가능(구문 계열)** 항목인가(구문 · 들여쓰기 · 줄끝 · 인코딩) — 배지가 뒤에 와도 맞는다.
+                let mut syn_k = 0usize;
+                let star_w = dc.text_width("*");
                 for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
-                    let tw = dc.text_width(text);
+                    // 자동 저장 항목은 `*` 자리를 늘 확보(글이 없으면 그만큼 오른쪽에 붙여 그린다).
+                    let reserve = if Some(idx) == autosave_idx && !autosave_dirty {
+                        star_w
+                    } else {
+                        0
+                    };
+                    let tw = dc.text_width(text) + reserve;
                     xr -= tw;
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
                     if idx == tx_idx {
@@ -291,7 +296,7 @@ impl App {
                     }
                     let ty = dc.text_center_y(sy, px(24.0, s));
                     dc.text(
-                        xr,
+                        xr + reserve,
                         ty,
                         r,
                         text,
@@ -299,13 +304,14 @@ impl App {
                     );
                     // 오른쪽 끝부터: 구문 · 들여쓰기 · 줄끝 · 인코딩(클릭 가능한 4개 · 그 앞은 표시만).
                     if *is_syntax {
-                        match last - idx {
+                        match syn_k {
                             0 => self.status_syntax_rect = r,
                             1 => self.status_tab_rect = r,
                             2 => self.status_eol_rect = r,
                             3 => self.status_enc_rect = r,
                             _ => {}
                         }
+                        syn_k += 1;
                     }
                     xr -= gap;
                     dc.fill_rect(

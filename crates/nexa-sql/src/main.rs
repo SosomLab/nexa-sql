@@ -339,6 +339,9 @@ struct App {
     project_last_json: Vec<u8>,
     /// 사건(탭 열기/닫기/전환 · 폴더 변경) 뒤 2초 디바운스 저장(09-23).
     project_touch_at: Option<Instant>,
+    /// ★ 프로젝트 변경 추적(사용자 09-28 · 상태줄 `*자동 저장`): 구조 변경(탭 열기/닫기/이동 · 폴더) 카운터 + 마지막 저장 때의 세대.
+    project_touch_seq: u64,
+    project_gen_saved: u64,
     /// 종료 흐름(사용자 09-23): 프로젝트 저장 물음 → 미저장 파일 탭마다 물음 → 종료.
     exit_pending: bool,
     /// "모두 저장"(닫기/종료 물음) 진행 중 — 이름 없는 탭의 저장 창이 끝나면 다음 미저장 탭으로 이어 간다(사용자 09-26).
@@ -1570,6 +1573,8 @@ fn main() {
         project_autosave_at: Instant::now(),
         project_last_json: Vec::new(),
         project_touch_at: None,
+        project_touch_seq: 0,
+        project_gen_saved: 0,
         exit_pending: false,
         exit_project_asked: false,
         last_synced_tab: u64::MAX,

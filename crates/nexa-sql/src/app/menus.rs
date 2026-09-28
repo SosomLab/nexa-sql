@@ -866,6 +866,7 @@ impl App {
                     self.redraw();
                 }
             }
+            "sess.tab" => self.open_tab_conn_menu(),
             "conn.sessions" | "view.sessions" => {
                 if self.sessions_win.is_open() {
                     self.sessions_win.close();

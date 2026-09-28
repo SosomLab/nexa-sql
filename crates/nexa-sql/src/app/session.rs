@@ -533,6 +533,55 @@ impl App {
         // Disconnect = **지금 탭의 연결**이 있을 때만(종전 규칙).
         let cur = self.sess.connected || self.sess.busy;
         self.sync_disconnect_btn(cur);
+        self.sync_tab_conn_item(cur);
+    }
+
+    /// ★ 툴바 "탭 연결정보"(사용자 09-28): 지금 탭의 서버 = 프로필 이름 > 계정@호스트 · 미연결 = "연결 없음" · 색 = 연결됨 초록 · 끊김 빨강.
+    fn sync_tab_conn_item(&mut self, connected: bool) {
+        let mut inv = Invalidations::default();
+        let (label, tip, tone) = if connected {
+            (
+                sessions::tab_conn_label(
+                    &self.sess.profile,
+                    self.sess.spec.as_ref(),
+                    &self.sess.desc,
+                ),
+                self.sess.desc.clone(),
+                if self.sess.broken {
+                    nexa_ctl::ToolTone::Danger
+                } else {
+                    nexa_ctl::ToolTone::Ok
+                },
+            )
+        } else {
+            (
+                t(Msg::MnSessNoConnection).to_string(),
+                t(Msg::TipTabConn).to_string(),
+                nexa_ctl::ToolTone::Default,
+            )
+        };
+        self.tool_dock.set_item_label("sess.tab", &label, &mut inv);
+        self.tool_dock.set_item_tone("sess.tab", tone, &mut inv);
+        self.tool_dock.set_item_tip("sess.tab", &tip);
+        if !inv.is_empty() {
+            // 글 폭이 바뀌면 그룹 배치도 다시(다음 그리기에서 실측).
+            self.tool_layout_dirty = true;
+        }
+    }
+
+    /// 툴바 "탭 연결정보" 클릭 = 탭 표식 메뉴와 같은 목록을 그 항목 아래에(사용자 09-28).
+    pub(crate) fn open_tab_conn_menu(&mut self) {
+        let i = self.editors.active();
+        let Some(items) = self.badge_menu_items(i) else {
+            return;
+        };
+        let anchor = self.tool_dock.item_rect("sess.tab");
+        self.badge_menu_tab = Some(self.editors.tab_id(i));
+        match anchor {
+            Some(r) => self.editors.open_badge_menu_at(i, items, r),
+            None => self.editors.open_badge_menu(i, items),
+        }
+        self.redraw();
     }
 
     /// ★ 통제의 단일 출구(§3): 지금 세션이 막혔으면 실행 계열 진입점을 한꺼번에 끄고, 풀리면 한꺼번에 켠다.
@@ -712,11 +761,19 @@ impl App {
     /// 구분자 + 전용 연결 한 줄. **지금 이 탭이 쓰는 것 앞에만 ✓**(1탭 1연결 · 배타) · 체크 유무와 무관하게 글자는 같은 열.
     /// `No connection` = 이 탭은 어떤 서버에도 연결되지 않은 상태(전용 연결이 있으면 그 연결을 해제).
     pub(crate) fn open_badge_menu(&mut self, i: usize) {
-        use nexa_ctl::controls::ctxmenu::CtxItem;
-        let tab = self.editors.tab_id(i);
-        let Some(s) = self.sess_by_id(self.sess_id_for_tab(tab)) else {
+        let Some(items) = self.badge_menu_items(i) else {
             return;
         };
+        self.badge_menu_tab = Some(self.editors.tab_id(i));
+        self.editors.open_badge_menu(i, items);
+        self.redraw();
+    }
+
+    /// 표식 메뉴 항목(탭 표식 · 툴바 탭 연결정보가 같이 쓴다).
+    fn badge_menu_items(&self, i: usize) -> Option<Vec<nexa_ctl::controls::ctxmenu::CtxItem>> {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let tab = self.editors.tab_id(i);
+        let s = self.sess_by_id(self.sess_id_for_tab(tab))?;
         let cur = s.id;
         let private = s.is_private();
         // 이 탭의 세션이 접속돼 있지 않으면(시작 직후 · 해제 뒤 · 미연결 자리) `No connection`에 ✓ — 목록의 다른 줄은 접속된 것만이라 배타.
@@ -748,9 +805,7 @@ impl App {
             };
             items.push(CtxItem::item("sess.private", label).with_mark(true));
         }
-        self.badge_menu_tab = Some(tab);
-        self.editors.open_badge_menu(i, items);
-        self.redraw();
+        Some(items)
     }
 
     pub(crate) fn badge_pick(&mut self, tab: u64, id: &str) {

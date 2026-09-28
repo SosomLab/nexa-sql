@@ -495,6 +495,7 @@ impl App {
             }
             self.bm_sync_ui();
             self.project_last_json = self.project.to_document();
+            self.project_mark_saved_gen();
         }
     }
 
@@ -504,6 +505,7 @@ impl App {
         let r = self.project.save();
         if r.is_ok() {
             self.project_last_json = self.project.to_document();
+            self.project_mark_saved_gen();
         }
         r
     }
@@ -739,6 +741,7 @@ impl App {
                 .push(toast::ToastKind::Info, t(Msg::MnProject).to_string(), msg);
         }
         self.project_last_json = self.project.to_document();
+        self.project_mark_saved_gen();
         self.sync_open_files();
         self.layout();
         self.redraw();
@@ -848,6 +851,7 @@ impl App {
         let js = self.project.to_document();
         if js != self.project_last_json && self.project.save().is_ok() {
             self.project_last_json = js;
+            self.project_mark_saved_gen();
         }
     }
 
@@ -879,7 +883,35 @@ impl App {
     fn project_touch(&mut self) {
         if self.project.is_open() {
             self.project_touch_at = Some(Instant::now());
+            self.project_touch_seq = self.project_touch_seq.wrapping_add(1);
         }
+    }
+
+    /// ★ 프로젝트 변경 세대(값싸게 · 그리기마다): 탭마다 (id, 본문 세대) + 활성 탭 + 구조 변경 카운터를 접는다 —
+    ///   프로젝트 문서를 다시 만들지 않는다(그건 자동 저장 틱의 몫). 저장하면 `project_gen_saved`에 담고, 다르면 상태줄에 `*`.
+    pub(crate) fn project_change_gen(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut mix = |v: u64| {
+            h ^= v;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        };
+        mix(self.project_touch_seq);
+        mix(self.editors.active() as u64);
+        for i in 0..self.editors.tab_count() {
+            mix(self.editors.tab_id(i));
+            mix(self.editors.tab_box(i).map_or(0, |tb| tb.rev()));
+        }
+        h
+    }
+
+    /// 저장 직후 = 지금 세대를 저장 세대로.
+    fn project_mark_saved_gen(&mut self) {
+        self.project_gen_saved = self.project_change_gen();
+    }
+
+    /// 상태줄 표식: 프로젝트가 열려 있고 마지막 저장 뒤 바뀐 것이 있는가.
+    pub(crate) fn project_autosave_dirty(&self) -> bool {
+        self.project.is_open() && self.project_change_gen() != self.project_gen_saved
     }
 
     /// 종료 전 프로젝트 저장 물음(자동 저장이 꺼져 있을 때).

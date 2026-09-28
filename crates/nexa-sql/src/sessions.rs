@@ -458,6 +458,29 @@ pub(crate) fn placement(
 /// `CONNECT <프로필 이름>`의 스펙인가 — 해석기는 이름 하나를 `user`에만 담는다(호스트·DB·방언·비밀번호 없음). 그 이름을 돌려준다.
 /// 같은 서버 판정·탐색기 붙이기는 이 이름을 저장소에서 **완성한 스펙**으로 해야 한다(사용자 09-21: `CONNECT M4PLAN`을 되풀이하면
 /// 이름뿐인 스펙은 어떤 접속과도 "같은 서버"가 아니라서 매번 다시 접속했다).
+/// ★ 탭 연결정보 툴바 글(사용자 09-28): 저장된 **프로필 이름** 우선 · 없으면 `계정@호스트`(포트·DB 없이 최대한 짧게) · 호스트도 없으면 DB · 그것도 없으면 설명 원문.
+#[must_use]
+pub(crate) fn tab_conn_label(profile: &str, spec: Option<&ConnectSpec>, desc: &str) -> String {
+    let p = profile.trim();
+    if !p.is_empty() {
+        return p.to_string();
+    }
+    if let Some(sp) = spec {
+        let user = sp.user.as_deref().filter(|u| !u.is_empty());
+        let host = sp.host.as_deref().filter(|h| !h.is_empty());
+        match (user, host) {
+            (Some(u), Some(h)) => return format!("{u}@{h}"),
+            (None, Some(h)) => return h.to_string(),
+            (Some(u), None) => return u.to_string(),
+            (None, None) => {}
+        }
+        if let Some(db) = sp.database.as_deref().filter(|d| !d.is_empty()) {
+            return db.to_string();
+        }
+    }
+    desc.to_string()
+}
+
 pub(crate) fn bare_profile_name(spec: &nsql_script::ConnectSpec) -> Option<&str> {
     let bare = spec.host.is_none()
         && spec.password.is_none()
@@ -829,6 +852,44 @@ pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]
 /// 모두 참일 때만. 하나라도 거짓이면 실행이 끝난 직후 반영한다.
 pub(crate) fn ddl_waits_for_commit(transactional: bool, autocommit: bool, on_commit: bool) -> bool {
     transactional && !autocommit && on_commit
+}
+
+#[cfg(test)]
+mod tab_conn_label_tests {
+    use super::tab_conn_label;
+
+    fn spec(user: Option<&str>, host: Option<&str>, db: Option<&str>) -> nsql_script::ConnectSpec {
+        nsql_script::ConnectSpec {
+            user: user.map(str::to_string),
+            host: host.map(str::to_string),
+            database: db.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// 프로필 이름 > 계정@호스트 > 호스트 > 계정 > DB > 설명(09-28).
+    #[test]
+    fn label_priority() {
+        let s = spec(Some("BISCM"), Some("192.168.0.58"), Some("BISCM"));
+        assert_eq!(tab_conn_label("Repository", Some(&s), "x"), "Repository");
+        assert_eq!(tab_conn_label("  ", Some(&s), "x"), "BISCM@192.168.0.58");
+        assert_eq!(
+            tab_conn_label("", Some(&spec(None, Some("h"), None)), "x"),
+            "h"
+        );
+        assert_eq!(
+            tab_conn_label("", Some(&spec(Some("u"), None, None)), "x"),
+            "u"
+        );
+        assert_eq!(
+            tab_conn_label("", Some(&spec(None, None, Some("mem"))), "x"),
+            "mem"
+        );
+        assert_eq!(
+            tab_conn_label("", None, "sqlite://:memory:"),
+            "sqlite://:memory:"
+        );
+    }
 }
 
 #[cfg(test)]
