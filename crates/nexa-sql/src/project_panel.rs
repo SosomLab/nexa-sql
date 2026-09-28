@@ -40,8 +40,8 @@ pub(crate) struct OpenFile {
     pub grouped: bool,
 }
 
-/// OPEN FILES에 보이는 최대 줄 수(넘치면 "+n").
-const OPEN_FILES_MAX: usize = 8;
+/// OPEN FILES 섹션의 최대 높이 = 패널 높이의 이 비율(넘치면 섹션 안에서 휠 스크롤 · 09-28 "탭 바처럼 전부").
+const OPEN_FILES_MAX_FRAC: f32 = 0.5;
 /// 아이콘 조회가 다 끝난 뒤 이만큼 유휴면 셸 아이콘 워커를 거둔다(ms).
 const ICON_WORKER_IDLE_MS: u64 = 5_000;
 
@@ -161,6 +161,9 @@ pub(crate) struct ProjectPanel {
     open_rows: Vec<Rect>,
     /// OPEN FILES에서 머문 행(× 닫기 표시).
     open_hover: Option<usize>,
+    /// OPEN FILES 스크롤(첫 보이는 항목 순번 · 섹션 높이 상한을 넘을 때만) · 커서가 섹션 위인가(휠 라우팅).
+    open_scroll: usize,
+    open_over: bool,
     /// 활성 탭과 맞춘 선택 경로(사용자 09-22 "탭을 고르면 탐색기에도 선택 표시") — 접혀 있으면 행이 없어 보이지 않다가
     /// 사용자가 직접 펼치면(`rebuild_rows`) 그 행이 선택된 채 나타난다. 자동 확장(`project.auto_reveal`)은 `reveal`.
     sel_path: Option<PathBuf>,
@@ -236,6 +239,8 @@ impl ProjectPanel {
             open_rect: Rect::default(),
             open_rows: Vec::new(),
             open_hover: None,
+            open_scroll: 0,
+            open_over: false,
             typeahead: nexa_ctl::TypeAhead::default(),
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
             now_hint: 0,
@@ -254,11 +259,11 @@ impl ProjectPanel {
 
     /// 키보드 목록 = OPEN FILES(보이는 줄) + 트리 행 — 가상 순번 `k`의 라벨(접두 매치용).
     fn ta_len(&self) -> usize {
-        self.open_files.len().min(OPEN_FILES_MAX) + self.rows.len()
+        self.open_files.len() + self.rows.len()
     }
 
     fn ta_label(&self, k: usize) -> String {
-        let on = self.open_files.len().min(OPEN_FILES_MAX);
+        let on = self.open_files.len();
         if k < on {
             self.open_files[k].title.clone()
         } else {
@@ -271,7 +276,7 @@ impl ProjectPanel {
 
     /// 지금 키보드 위치(가상 순번).
     fn ta_pos(&self) -> Option<usize> {
-        let on = self.open_files.len().min(OPEN_FILES_MAX);
+        let on = self.open_files.len();
         match (self.open_sel, self.sel.or(self.caret)) {
             (Some(k), _) => Some(k),
             (None, Some(r)) => Some(on + r),
@@ -281,9 +286,10 @@ impl ProjectPanel {
 
     /// 가상 순번 → 선택 반영(OPEN FILES 또는 트리 행).
     fn ta_select(&mut self, k: usize) {
-        let on = self.open_files.len().min(OPEN_FILES_MAX);
+        let on = self.open_files.len();
         if k < on {
             self.open_sel = Some(k);
+            self.open_ensure_visible(k);
         } else {
             self.open_sel = None;
             let r = k - on;
@@ -374,12 +380,53 @@ impl ProjectPanel {
         )
     }
 
-    /// OPEN FILES 섹션 높이(헤더 1줄 + 항목 ≤ 8줄) — **프로젝트가 없어도** 보인다(사용자 09-23 "프로젝트 여부와 상관없이 열린 파일은 보여지도록").
+    /// OPEN FILES에 한 번에 보이는 항목 수(패널 높이의 절반 안 · 최소 3) — 나머지는 섹션 스크롤.
+    fn open_visible_rows(&self) -> usize {
+        let rh = self.row_h.max(1);
+        let cap = ((self.bounds.h as f32 * OPEN_FILES_MAX_FRAC) as i32 / rh - 1).max(3) as usize;
+        self.open_files.len().min(cap)
+    }
+
+    /// OPEN FILES 섹션 높이(헤더 1줄 + 보이는 항목 줄) — **프로젝트가 없어도** 보인다(사용자 09-23) · 탭 전부(09-28 · 넘치면 스크롤).
     fn open_files_h(&self, rh: i32) -> i32 {
         if self.open_files.is_empty() {
             return 0;
         }
-        rh * (1 + self.open_files.len().min(OPEN_FILES_MAX) as i32)
+        rh * (1 + self.open_visible_rows() as i32)
+    }
+
+    /// OPEN FILES 항목 `k`가 보이게 섹션 스크롤을 맞춘다.
+    fn open_ensure_visible(&mut self, k: usize) {
+        let vis = self.open_visible_rows().max(1);
+        if k < self.open_scroll {
+            self.open_scroll = k;
+        } else if k >= self.open_scroll + vis {
+            self.open_scroll = k + 1 - vis;
+        }
+        self.relayout_open_rows();
+    }
+
+    /// 섹션 스크롤·개수가 바뀐 뒤 항목 rect 다시(보이는 창 밖 = 빈 rect · 히트 없음).
+    fn relayout_open_rows(&mut self) {
+        let n = self.open_files.len();
+        let vis = self.open_visible_rows();
+        self.open_scroll = self.open_scroll.min(n.saturating_sub(vis));
+        let (x, y0, w, rh) = (
+            self.open_rect.x,
+            self.open_rect.y,
+            self.open_rect.w,
+            self.row_h,
+        );
+        let scroll = self.open_scroll;
+        self.open_rows = (0..n)
+            .map(|i| {
+                if i < scroll || i >= scroll + vis {
+                    Rect::new(0, 0, 0, 0)
+                } else {
+                    Rect::new(x, y0 + rh * (1 + (i - scroll) as i32), w, rh)
+                }
+            })
+            .collect();
     }
 
     /// 파일/폴더 아이콘 켬/끔(설정 `project.icons` · 끄면 캐시도 비운다 = 상주 0).
@@ -707,16 +754,7 @@ impl ProjectPanel {
         // OPEN FILES(헤더 + 항목 줄) — 파일 필터 위(사용자 09-23).
         let oh = self.open_files_h(self.row_h);
         self.open_rect = Rect::new(b.x, self.header_rect.bottom() + px(2.0), b.w, oh);
-        self.open_rows = (0..self.open_files.len().min(OPEN_FILES_MAX))
-            .map(|i| {
-                Rect::new(
-                    b.x,
-                    self.open_rect.y + self.row_h * (1 + i as i32),
-                    b.w,
-                    self.row_h,
-                )
-            })
-            .collect();
+        self.relayout_open_rows();
         // 필터 위·아래 여백 = 부품 상수(네 패널 공통 · 사용자 09-22).
         let y1 = self.open_rect.bottom() + px(GAP_Y);
         self.filter.set_bounds(
@@ -1207,6 +1245,18 @@ impl ProjectPanel {
                 return true;
             }
         }
+        // OPEN FILES 위의 휠 = 섹션 스크롤(항목이 상한을 넘을 때만 · 09-28).
+        if let InputEvent::Wheel { delta } = *ev {
+            if self.open_over && self.open_files.len() > self.open_visible_rows() {
+                let step = (-delta / 120).clamp(-3, 3);
+                let next = (self.open_scroll as i64 + step as i64).max(0) as usize;
+                if next != self.open_scroll {
+                    self.open_scroll = next;
+                    self.relayout_open_rows();
+                }
+                return true;
+            }
+        }
         if self.name.is_some() {
             let (nx, ny, consumed) = self.bars.on_event(
                 ev,
@@ -1383,6 +1433,7 @@ impl ProjectPanel {
                 }
             }
             InputEvent::MouseMove { x, y } => {
+                self.open_over = self.open_rect.h > 0 && self.open_rect.contains(Point { x, y });
                 let oh = self
                     .open_rows
                     .iter()
@@ -1486,9 +1537,9 @@ impl ProjectPanel {
             let hy = dc.text_center_y(hr.y, hr.h);
             dc.text(hr.x + pad, hy, hr, t(Msg::ProjOpenFiles), th.text_dim);
             dc.select_font(FontSlot::Base, false);
-            for (k, f) in self.open_files.iter().take(OPEN_FILES_MAX).enumerate() {
-                let Some(rr) = self.open_rows.get(k).copied() else {
-                    break;
+            for (k, f) in self.open_files.iter().enumerate() {
+                let Some(rr) = self.open_rows.get(k).copied().filter(|r| r.h > 0) else {
+                    continue;
                 };
                 if f.active {
                     dc.fill_rect(rr, th.sel_bg);
@@ -1513,12 +1564,6 @@ impl ProjectPanel {
                     );
                 }
                 let label = f.title.clone();
-                let more = self.open_files.len().saturating_sub(OPEN_FILES_MAX);
-                let label = if k + 1 == OPEN_FILES_MAX && more > 0 {
-                    format!("{label}  (+{more})")
-                } else {
-                    label
-                };
                 let cr = self.open_close_rect(rr);
                 let tx = dot_x + dot_w;
                 let clip = Rect::new(tx, rr.y, (cr.x - tx).max(0), rr.h);
