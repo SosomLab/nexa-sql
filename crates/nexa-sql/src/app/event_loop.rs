@@ -203,207 +203,7 @@ impl ApplicationHandler<Wake> for App {
             self.sync_hangul_mode();
         }
         self.persist_window_sizes(false);
-        // 기동 명령·타이머가 부탁한 변수 창(창 이벤트가 없어도 열리게).
-        // 창 열기 깃발은 이벤트가 없을 때도 본다(메뉴·기동 명령이 부탁한 창 — `window_event` 끝에서만 보면 늦게 열린다 · docs/61 §6 흠 ⑤).
-        if std::mem::take(&mut self.open_txlog) {
-            self.open_txlog_window(el);
-        }
-        if std::mem::take(&mut self.open_sessions) {
-            self.open_sessions_window(el);
-        }
-        if std::mem::take(&mut self.open_license) {
-            self.open_license_window(el);
-        }
-        if std::mem::take(&mut self.open_about) {
-            let owner = self.window.clone();
-            let was_open = self.about_win.is_open();
-            self.about_win.open(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                owner.as_deref(),
-            );
-            if !was_open {
-                if let (Some(o), Some(c)) = (owner.as_deref(), self.about_win.window()) {
-                    winfocus::attach_child(o, c);
-                }
-            }
-            self.sync_modal();
-        }
-        if std::mem::take(&mut self.open_mem) {
-            self.open_mem_window(el);
-        }
-        if std::mem::take(&mut self.open_vars) {
-            self.open_vars_window(el);
-        }
-        // 파일·폴더 대화상자도 같다(설정 창의 "찾아보기…" · 기동 명령 — 메인 창에 사건이 없으면 열리지 않았다).
-        if let Some(mode) = self.open_file_dlg.take() {
-            self.open_file_window(el, mode);
-            self.sync_modal();
-        }
-        // ★ 그리드 편집: SQL 미리보기 · 셀 값 보기(읽기 전용 글 창 · docs/87).
-        if let Some((title, text)) = self.sqlprev_plain.take() {
-            let owner = self.window.clone();
-            let syntax = self.editors.syntax_for_title("preview.sql");
-            let tb = self.editors.preview_box("", &syntax);
-            let was_open = self.sqlprev_win.is_open();
-            self.sqlprev_win.open_plain(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                owner.as_deref(),
-                title,
-                text,
-                tb,
-            );
-            if !was_open {
-                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
-                    winfocus::attach_child(o, c);
-                }
-            }
-            self.sync_modal();
-        }
-        // ★ 값 보기 창(87 §5): 글은 Plain Text 상자(편집 가능 셀이면 편집) · 이진은 16진수/이미지.
-        if let Some(v) = self.sqlprev_value.take() {
-            let owner = self.window.clone();
-            let syntax = self.editors.syntax_for_title("value.txt");
-            let tb = self.editors.preview_box("", &syntax);
-            let was_open = self.sqlprev_win.is_open();
-            let max_mb = self.settings.int("grid.lob_view_max_mb").max(1) as usize;
-            let image_on = self.settings.flag("grid.lob_image_preview");
-            self.sqlprev_win.open_value(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                owner.as_deref(),
-                tb,
-                v,
-                max_mb,
-                image_on,
-            );
-            if !was_open {
-                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
-                    winfocus::attach_child(o, c);
-                }
-            }
-            self.sync_modal();
-        }
-        // Generate SQL 결과 → SQL Preview 모달(docs/83 §4).
-        if let Some((spec, r, server)) = self.sqlprev_pending.take() {
-            let owner = self.window.clone();
-            let syntax = self.editors.syntax_for_title("preview.sql");
-            let tb = self.editors.preview_box("", &syntax);
-            let was_open = self.sqlprev_win.is_open();
-            self.sqlprev_win.open(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                owner.as_deref(),
-                spec,
-                server,
-                r,
-                tb,
-            );
-            // ★ 맥 자식 창(비밀번호 창과 같은 길 · 사용자 09-25 "DDL 팝업이 메인 뒤로 숨는다"): 메인의 자식으로 붙여 늘 위에.
-            if !was_open {
-                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
-                    winfocus::attach_child(o, c);
-                }
-            }
-            self.sync_modal();
-        }
-        // ★ Import 창(89 §3-3): 파일 창 결과(또는 기동 명령 `import.open:`) → 미리보기 6줄 + 설정 `bulk.*` 기본값으로 연다.
-        if std::mem::take(&mut self.import_pending) {
-            if let Some((table, path, _)) = self.import_ctx.clone() {
-                let owner = self.window.clone();
-                let was_open = self.import_win.is_open();
-                let preview = nsql_run::bulk::preview_head(&path, 6, 64 * 1024);
-                let batch = self.settings.int("bulk.batch_rows").max(1) as usize;
-                let commit = self.settings.int("bulk.commit_every").max(0) as usize;
-                let mode = self
-                    .settings
-                    .get("bulk.mode")
-                    .and_then(nsql_run::bulk::BulkMode::parse)
-                    .unwrap_or_default();
-                self.import_win.open(
-                    el,
-                    theme::window_theme(self.settings.theme_mode()),
-                    owner.as_deref(),
-                    table,
-                    path,
-                    preview,
-                    (batch, commit, mode),
-                );
-                if !was_open {
-                    if let (Some(o), Some(c)) = (owner.as_deref(), self.import_win.window()) {
-                        winfocus::attach_child(o, c);
-                    }
-                }
-                self.sync_modal();
-            }
-        }
-        // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
-        if let Some((sid, needs)) = self.input_pending.take() {
-            let owner = self.window.clone();
-            let was_open = self.input_win.is_open();
-            self.input_win.open(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                owner.as_deref(),
-                needs,
-                sid,
-            );
-            // ★ 09-25 결함(사용자 "SELECT :Top 실행이 끝나지 않는다"): 비밀번호 길과 달리 자식 창으로 붙이지 않아 맥에서 메인 뒤로
-            //   숨었고, 워커는 답을 기다리며 멎었다(중지로만 풀림) → 같은 길(자식 창 + 모달 동기화).
-            if !was_open {
-                if let (Some(o), Some(c)) = (owner.as_deref(), self.input_win.window()) {
-                    winfocus::attach_child(o, c);
-                }
-            }
-            self.sync_modal();
-        }
-        // 저장하지 않은 탭을 닫으려 했다(X · 단축키 · 탭 메뉴 · 모두 닫기 — 어느 길이든 여기서 걷는다).
-        if let Some(i) = self.editors.take_save_close_request() {
-            self.ask_save_close(i);
-        }
-        // 워커가 비밀번호를 묻는다 → 같은 입력 창의 비밀번호 모드(다른 물음이 떠 있으면 그 뒤에).
-        if self.pw_pending.is_some() && !self.input_win.is_open() {
-            if let Some((sid, target, rejected)) = self.pw_pending.take() {
-                let owner = self.window.clone();
-                self.input_win.open_password(
-                    el,
-                    theme::window_theme(self.settings.theme_mode()),
-                    owner.as_deref(),
-                    input_win::PasswordAsk {
-                        target,
-                        rejected,
-                        remember: self.settings.flag("connect.remember_session_password"),
-                    },
-                    sid,
-                );
-                // ★ 최상위 모달(사용자 mac 09-21): 맥은 자식 창(항상 메인 위 · 함께 이동) · 메인·보조 창 입력은 가드가 막고
-                //   Windows는 `EnableWindow(FALSE)`(`sync_modal`). 접속 창과 같은 길.
-                if let (Some(o), Some(c)) = (owner.as_deref(), self.input_win.window()) {
-                    winfocus::attach_child(o, c);
-                }
-                self.sync_modal();
-            }
-        }
-        if std::mem::take(&mut self.pending_demo_prompt) {
-            self.open_demo_prompt();
-        }
-        if let Some(rx) = self.demo_job.as_ref() {
-            if let Ok(r) = rx.try_recv() {
-                self.demo_job = None;
-                self.finish_demo(r);
-            }
-        }
-        // 툴바 떼어 내기 요청 → 플로팅 창(창 생성은 이벤트 루프 핸들이 있는 여기서) · 바뀐 배치는 한 번에 저장.
-        if !self.pending_float.is_empty() {
-            let reqs = std::mem::take(&mut self.pending_float);
-            for (gid, at) in reqs {
-                self.open_float(el, &gid, at);
-            }
-        }
-        if self.tool_layout_dirty {
-            self.save_tool_layout();
-        }
+        self.pump_window_requests(el);
         // 캐럿 깜빡임 — 0.5초 타이머가 **실제로 만료됐을 때만** 다시 그린다.
         // ★ 매 호출마다 request_redraw를 하면 그리기 → about_to_wait → 그리기의 무한 루프가 되어
         //   유휴 CPU 한 코어 100% · 키 입력이 프레임당 하나씩만 처리되는 지연(글자 14개에 3초 ·
@@ -1846,6 +1646,8 @@ impl App {
                 over,
                 owner.as_deref(),
             );
+            // ★ Format 분류의 미리보기 글(사용자 09-29) — 열 때 한 번 · 이후는 값이 바뀔 때마다.
+            self.prefs_format_preview_refresh();
         }
         if std::mem::take(&mut self.open_keys) {
             // 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
@@ -1876,6 +1678,215 @@ impl App {
         }
         if self.exit_requested {
             self.finish_exit(el);
+        }
+    }
+}
+
+impl App {
+    /// ★ 이벤트 없이도 열어야 하는 창·대화상자 요청(메뉴·기동 명령·워커의 물음 · 깃발 = `open_*`/`*_pending`) — `about_to_wait`
+    ///   의 앞 단계(T-248 · 09-29 분리 · 행동 보존): 보조 창 · 파일 대화상자 · SQL 미리보기/값 보기 · Import · 입력/비밀번호 창 ·
+    ///   저장 물음 · 데모 · 툴바 플로팅 · 툴바 배치 저장.
+    fn pump_window_requests(&mut self, el: &ActiveEventLoop) {
+        // 기동 명령·타이머가 부탁한 변수 창(창 이벤트가 없어도 열리게).
+        // 창 열기 깃발은 이벤트가 없을 때도 본다(메뉴·기동 명령이 부탁한 창 — `window_event` 끝에서만 보면 늦게 열린다 · docs/61 §6 흠 ⑤).
+        if std::mem::take(&mut self.open_txlog) {
+            self.open_txlog_window(el);
+        }
+        if std::mem::take(&mut self.open_sessions) {
+            self.open_sessions_window(el);
+        }
+        if std::mem::take(&mut self.open_license) {
+            self.open_license_window(el);
+        }
+        if std::mem::take(&mut self.open_about) {
+            let owner = self.window.clone();
+            let was_open = self.about_win.is_open();
+            self.about_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+            );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.about_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
+        if std::mem::take(&mut self.open_mem) {
+            self.open_mem_window(el);
+        }
+        if std::mem::take(&mut self.open_vars) {
+            self.open_vars_window(el);
+        }
+        // 파일·폴더 대화상자도 같다(설정 창의 "찾아보기…" · 기동 명령 — 메인 창에 사건이 없으면 열리지 않았다).
+        if let Some(mode) = self.open_file_dlg.take() {
+            self.open_file_window(el, mode);
+            self.sync_modal();
+        }
+        // ★ 그리드 편집: SQL 미리보기 · 셀 값 보기(읽기 전용 글 창 · docs/87).
+        if let Some((title, text)) = self.sqlprev_plain.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("preview.sql");
+            let tb = self.editors.preview_box("", &syntax);
+            let was_open = self.sqlprev_win.is_open();
+            self.sqlprev_win.open_plain(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                title,
+                text,
+                tb,
+            );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
+        // ★ 값 보기 창(87 §5): 글은 Plain Text 상자(편집 가능 셀이면 편집) · 이진은 16진수/이미지.
+        if let Some(v) = self.sqlprev_value.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("value.txt");
+            let tb = self.editors.preview_box("", &syntax);
+            let was_open = self.sqlprev_win.is_open();
+            let max_mb = self.settings.int("grid.lob_view_max_mb").max(1) as usize;
+            let image_on = self.settings.flag("grid.lob_image_preview");
+            self.sqlprev_win.open_value(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                tb,
+                v,
+                max_mb,
+                image_on,
+            );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
+        // Generate SQL 결과 → SQL Preview 모달(docs/83 §4).
+        if let Some((spec, r, server)) = self.sqlprev_pending.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("preview.sql");
+            let tb = self.editors.preview_box("", &syntax);
+            let was_open = self.sqlprev_win.is_open();
+            self.sqlprev_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                spec,
+                server,
+                r,
+                tb,
+            );
+            // ★ 맥 자식 창(비밀번호 창과 같은 길 · 사용자 09-25 "DDL 팝업이 메인 뒤로 숨는다"): 메인의 자식으로 붙여 늘 위에.
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
+        // ★ Import 창(89 §3-3): 파일 창 결과(또는 기동 명령 `import.open:`) → 미리보기 6줄 + 설정 `bulk.*` 기본값으로 연다.
+        if std::mem::take(&mut self.import_pending) {
+            if let Some((table, path, _)) = self.import_ctx.clone() {
+                let owner = self.window.clone();
+                let was_open = self.import_win.is_open();
+                let preview = nsql_run::bulk::preview_head(&path, 6, 64 * 1024);
+                let batch = self.settings.int("bulk.batch_rows").max(1) as usize;
+                let commit = self.settings.int("bulk.commit_every").max(0) as usize;
+                let mode = self
+                    .settings
+                    .get("bulk.mode")
+                    .and_then(nsql_run::bulk::BulkMode::parse)
+                    .unwrap_or_default();
+                self.import_win.open(
+                    el,
+                    theme::window_theme(self.settings.theme_mode()),
+                    owner.as_deref(),
+                    table,
+                    path,
+                    preview,
+                    (batch, commit, mode),
+                );
+                if !was_open {
+                    if let (Some(o), Some(c)) = (owner.as_deref(), self.import_win.window()) {
+                        winfocus::attach_child(o, c);
+                    }
+                }
+                self.sync_modal();
+            }
+        }
+        // 워커가 실행 전에 값을 묻는다(D-137) → 입력 창.
+        if let Some((sid, needs)) = self.input_pending.take() {
+            let owner = self.window.clone();
+            let was_open = self.input_win.is_open();
+            self.input_win.open(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                needs,
+                sid,
+            );
+            // ★ 09-25 결함(사용자 "SELECT :Top 실행이 끝나지 않는다"): 비밀번호 길과 달리 자식 창으로 붙이지 않아 맥에서 메인 뒤로
+            //   숨었고, 워커는 답을 기다리며 멎었다(중지로만 풀림) → 같은 길(자식 창 + 모달 동기화).
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.input_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
+        // 저장하지 않은 탭을 닫으려 했다(X · 단축키 · 탭 메뉴 · 모두 닫기 — 어느 길이든 여기서 걷는다).
+        if let Some(i) = self.editors.take_save_close_request() {
+            self.ask_save_close(i);
+        }
+        // 워커가 비밀번호를 묻는다 → 같은 입력 창의 비밀번호 모드(다른 물음이 떠 있으면 그 뒤에).
+        if self.pw_pending.is_some() && !self.input_win.is_open() {
+            if let Some((sid, target, rejected)) = self.pw_pending.take() {
+                let owner = self.window.clone();
+                self.input_win.open_password(
+                    el,
+                    theme::window_theme(self.settings.theme_mode()),
+                    owner.as_deref(),
+                    input_win::PasswordAsk {
+                        target,
+                        rejected,
+                        remember: self.settings.flag("connect.remember_session_password"),
+                    },
+                    sid,
+                );
+                // ★ 최상위 모달(사용자 mac 09-21): 맥은 자식 창(항상 메인 위 · 함께 이동) · 메인·보조 창 입력은 가드가 막고
+                //   Windows는 `EnableWindow(FALSE)`(`sync_modal`). 접속 창과 같은 길.
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.input_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+                self.sync_modal();
+            }
+        }
+        if std::mem::take(&mut self.pending_demo_prompt) {
+            self.open_demo_prompt();
+        }
+        if let Some(rx) = self.demo_job.as_ref() {
+            if let Ok(r) = rx.try_recv() {
+                self.demo_job = None;
+                self.finish_demo(r);
+            }
+        }
+        // 툴바 떼어 내기 요청 → 플로팅 창(창 생성은 이벤트 루프 핸들이 있는 여기서) · 바뀐 배치는 한 번에 저장.
+        if !self.pending_float.is_empty() {
+            let reqs = std::mem::take(&mut self.pending_float);
+            for (gid, at) in reqs {
+                self.open_float(el, &gid, at);
+            }
+        }
+        if self.tool_layout_dirty {
+            self.save_tool_layout();
         }
     }
 }

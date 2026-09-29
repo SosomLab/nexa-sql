@@ -312,6 +312,21 @@ pub(crate) struct Grid {
     row_order: Vec<usize>,
     /// 결합 정렬 키(원본 컬럼 · 오름차순) — 클릭 = 단일 키 3단(▲→▼→해제) · Shift+클릭 = 키 추가/토글(dir2 방식).
     sort_keys: Vec<(usize, bool)>,
+    /// ★ 필터 술어 AND 목록(T-181) — `apply_sort` 뒤 `row_order`를 거른다.
+    filters: Vec<Predicate>,
+    /// 우클릭한 셀 (원본 열, 글 · NULL = None) — 필터 메뉴의 대상.
+    menu_cell: Option<(usize, Option<String>)>,
+    /// "포함…" 입력 요청(열) — 호스트가 팔레트로 받아 `add_filter`.
+    pending_filter_prompt: Option<(usize, FilterOp, String)>,
+    /// 필터 오류(정규식 컴파일 실패 등 · 1회성).
+    pending_error: Option<String>,
+    /// ★ 헤더 빗금 표식 위 hover(열, 시작 ms) — 머물면 적용된 술어 툴팁(사용자 09-29 "표식 위에 올렸을 때만").
+    mark_hover: Option<(usize, u64)>,
+    /// 마지막 그리기에서 기록한 표식 사각형(열 원본 번호, 화면 좌표).
+    mark_rects: Vec<(usize, Rect)>,
+    /// ★ 추가 행의 표시 순서(추가 행 번호 k · 사용자 09-29 "추가 행에서 +도 그 바로 아래") — 같은 기존 행 아래의 추가 행끼리의 순서.
+    ins_order: Vec<usize>,
+    now_ms: u64,
     /// 헤더 드래그 — 컬럼 이동(고스트 · 라이브 미리보기 · Esc 취소 · 09-19).
     hdr_drag: Option<HdrDrag>,
     /// 헤더 경계 드래그 = 컬럼 폭 조절(원본 컬럼 · 시작 x · 시작 폭 — 사용자 09-14).
@@ -340,6 +355,8 @@ pub(crate) struct Grid {
     drag_sel: Option<DragSel>,
     /// 우클릭 메뉴(복사 형식 · 전체 선택).
     menu: CtxMenu,
+    /// ★ 우클릭 메뉴 배치 영역(창 전체 · 호스트가 배치 때 넣음 · 0 = 그리드 영역) — 메뉴가 그리드 밖으로 펼쳐지되 창은 안 넘는다(사용자 09-29).
+    menu_area: Rect,
     /// 호스트가 가져갈 복사 텍스트(셀 수와 함께).
     pending_copy: Option<(String, usize)>,
     /// 메뉴에서 고른 SQL 복사 종류(호스트가 키 정보를 받아 `copy_sql`로 완성 · docs/41).
@@ -371,6 +388,9 @@ pub(crate) struct Grid {
     default_page_rows: usize,
     /// 설정 `grid.auto_fetch` — 스크롤 끝에서 다음 세그먼트 자동 요청.
     auto_fetch: bool,
+    /// ★ 자동 페치 재발 방지(사용자 09-29 · 필터 뒤 재질의 반복): 마지막 자동 요청 때의 **원본** 행 수 — 그 뒤 원본이 늘지 않았으면
+    ///   같은 오프셋으로 다시 요청하지 않는다(서버가 같은 페이지를 되돌리거나 필터가 전부 거를 때의 무한 루프 차단).
+    auto_fetch_at: Option<usize>,
     /// 푸터(도구줄) 높이 — 페인트가 잰다.
     footer_h: i32,
     /// 서버에 행이 더 있다(마지막 페치가 상한에서 잘림).
@@ -478,6 +498,14 @@ impl Default for Grid {
             col_order: Vec::new(),
             row_order: Vec::new(),
             sort_keys: Vec::new(),
+            filters: Vec::new(),
+            menu_cell: None,
+            pending_filter_prompt: None,
+            pending_error: None,
+            mark_hover: None,
+            mark_rects: Vec::new(),
+            ins_order: Vec::new(),
+            now_ms: 0,
             hdr_drag: None,
             hdr_resize: None,
             edge_click: None,
@@ -491,6 +519,7 @@ impl Default for Grid {
             tools_has_sel: false,
             drag_sel: None,
             menu: CtxMenu::new(),
+            menu_area: Rect::default(),
             pending_copy: None,
             pending_sql: None,
             sc_copy: String::new(),
@@ -542,6 +571,7 @@ impl Default for Grid {
             page_rows: 200,
             default_page_rows: 200,
             auto_fetch: true,
+            auto_fetch_at: None,
             footer_h: 0,
             more: false,
             total: None,
@@ -1202,8 +1232,25 @@ impl Grid {
         let mut tail = Vec::new();
         let mut by_after: std::collections::HashMap<usize, Vec<usize>> =
             std::collections::HashMap::new();
-        for (k, ir) in e.cs.inserted_rows() {
-            match ir.after.filter(|a| *a < n) {
+        // 추가 행의 표시 순서 = `ins_order`(없는 k는 뒤에 · 사라진 k는 버림).
+        let live: Vec<usize> = e.cs.inserted_rows().map(|(k, _)| k).collect();
+        self.ins_order.retain(|k| live.contains(k));
+        for &k in &live {
+            if !self.ins_order.contains(&k) {
+                self.ins_order.push(k);
+            }
+        }
+        let rank = |k: usize| {
+            self.ins_order
+                .iter()
+                .position(|&x| x == k)
+                .unwrap_or(usize::MAX)
+        };
+        let mut ins: Vec<(usize, Option<usize>)> =
+            e.cs.inserted_rows().map(|(k, ir)| (k, ir.after)).collect();
+        ins.sort_by_key(|(k, _)| rank(*k));
+        for (k, after) in ins {
+            match after.filter(|a| *a < n) {
                 Some(a) => by_after.entry(a).or_default().push(n + k),
                 None => tail.push(n + k),
             }
@@ -1376,17 +1423,29 @@ impl Grid {
         self.sync_edit_tools();
     }
 
-    /// 새 행(선택 행 아래 · 없으면 끝).
+    /// 새 행(선택 행 아래 · 선택이 추가 행이어도 그 바로 아래 · 선택 없으면 끝 — 사용자 09-29).
     fn insert_row_here(&mut self) {
-        let after = self.sel_cur.and_then(|(di, _)| match self.rref_at(di) {
-            Some(RowRef::Existing(r)) => Some(r),
-            _ => None,
-        });
+        let sel = self.sel_cur.and_then(|(di, _)| self.rref_at(di));
         let Some(e) = self.edit.as_mut() else { return };
         if e.applying {
             return;
         }
+        let (after, below) = match sel {
+            Some(RowRef::Existing(r)) => (Some(r), None),
+            Some(RowRef::Inserted(k0)) => (
+                e.cs.inserted_rows()
+                    .find(|(k, _)| *k == k0)
+                    .and_then(|(_, ir)| ir.after),
+                Some(k0),
+            ),
+            None => (None, None),
+        };
         let k = e.cs.insert_row(after, vec![]);
+        self.ins_order.retain(|&x| x != k);
+        match below.and_then(|k0| self.ins_order.iter().position(|&x| x == k0)) {
+            Some(i) => self.ins_order.insert(i + 1, k),
+            None => self.ins_order.push(k),
+        }
         self.rebuild_row_order();
         self.focus_inserted(k);
     }
@@ -1843,7 +1902,8 @@ impl Grid {
         self.text_lines = Vec::new();
         self.text_bytes = 0;
         self.regions.clear();
-        if !self.sort_keys.is_empty() {
+        // 정렬 **또는 필터**가 있으면 새 행에 다시 투영(필터만 있을 때 새 페이지가 걸러지지 않던 결함 · 사용자 09-29).
+        if !self.sort_keys.is_empty() || !self.filters.is_empty() {
             self.apply_sort();
         }
         if self.view != ResultView::Grid {
@@ -2412,7 +2472,8 @@ impl Grid {
         rs.push(page);
         let end = rs.len();
         self.row_order.extend(start..end);
-        if !self.sort_keys.is_empty() {
+        // 정렬 **또는 필터**가 있으면 새 행에 다시 투영(필터만 있을 때 새 페이지가 걸러지지 않던 결함 · 사용자 09-29).
+        if !self.sort_keys.is_empty() || !self.filters.is_empty() {
             self.apply_sort();
         }
         self.perf_report = true;
@@ -2435,6 +2496,9 @@ impl Grid {
         self.rs = Some(ResultData::new(rs));
         self.edit = None;
         self.row_order = (0..n).collect();
+        // 같은 문장의 교체 = 정렬·필터 투영은 유지하되 새 행에 다시 적용.
+        self.auto_fetch_at = None;
+        self.apply_sort();
         if !same_cols {
             self.col_order = (0..self.rs.as_ref().map_or(0, |r| r.columns().len())).collect();
             self.col_w.clear();
@@ -2444,7 +2508,8 @@ impl Grid {
         let src = self.source_sql.clone();
         let countable = self.countable;
         self.edit_prepare(&src, countable);
-        if !self.sort_keys.is_empty() {
+        // 정렬 **또는 필터**가 있으면 새 행에 다시 투영(필터만 있을 때 새 페이지가 걸러지지 않던 결함 · 사용자 09-29).
+        if !self.sort_keys.is_empty() || !self.filters.is_empty() {
             self.apply_sort();
         }
         self.regions.clear();
@@ -2724,6 +2789,24 @@ impl Grid {
         ] {
             tb.paint_tooltip(dc, th);
         }
+        // ★ 필터 표식 툴팁(빗금 위에 머물렀을 때만 · 적용된 술어).
+        if let Some((ci, since)) = self.mark_hover {
+            if self.now_ms.saturating_sub(since) >= MARK_TIP_MS && !self.menu.is_open() {
+                if let (Some(text), Some(r)) = (self.filter_tip(ci), self.mark_rect_of(ci)) {
+                    let clamp = dc
+                        .surface_size()
+                        .map_or(self.bounds, |(w, h)| Rect::new(0, 0, w, h));
+                    nexa_ctl::draw::draw_tooltip_in(
+                        dc,
+                        th,
+                        r,
+                        (clamp.x, clamp.w),
+                        &text,
+                        self.live_scale,
+                    );
+                }
+            }
+        }
         self.menu.paint(dc, th);
         // 셀 편집기의 우클릭 메뉴 = 최상위(편집 테두리·이웃 셀 위 · UX 규칙 09-26).
         if let Some(e) = self.edit.as_ref() {
@@ -2902,7 +2985,7 @@ impl Grid {
                 .with_active(matches!(cur, ResultView::Sql(_))),
         ];
         let text_w = (self.row_h * 8).max(140);
-        self.menu.open_at(x, y, items, self.bounds, text_w);
+        self.menu.open_at(x, y, items, self.menu_host(), text_w);
     }
 
     /// 텍스트 계열 보기의 스크롤·키(그리드 대신).
@@ -3019,11 +3102,14 @@ impl Grid {
             && self.fetch_req.is_none()
             && self.text_job.is_none()
             && self.page_rows > 0
-            && my > 0
-            && self.text_scroll.1 >= my - self.row_h.max(1)
+            && ((my > 0 && self.text_scroll.1 >= my - self.row_h.max(1))
+                || (my == 0 && !self.filters.is_empty()))
+            && self.auto_fetch_at != Some(self.src_rows())
         {
+            let offset = self.src_rows();
+            self.auto_fetch_at = Some(offset);
             self.fetch_req = Some(FetchReq::Next {
-                offset: self.rows(),
+                offset,
                 limit: self.page_rows,
             });
         }
@@ -3264,6 +3350,10 @@ impl Grid {
         self.col_order = (0..rs.columns.len()).collect();
         self.row_order = (0..rs.rows.len()).collect();
         self.sort_keys.clear();
+        // 새 조회 = 필터도 초기화(사용자 09-29 "모든 컬럼이 초기화") · 자동 페치 잠금 해제.
+        self.filters.clear();
+        self.menu_cell = None;
+        self.auto_fetch_at = None;
         self.hdr_drag = None;
         self.hdr_resize = None;
         // 한 세트(DR-33): 덩어리를 이동해 첫 세그먼트로(복사 0). 옛 데이터는 여기서 drop(변환 스레드가 쥔 세그먼트는 그쪽이 끝나면).
@@ -3741,6 +3831,162 @@ impl Grid {
         self.gutter_w > 0 && x >= self.bounds.x && x < self.bounds.x + self.gutter_w
     }
 
+    /// 셀/행 드래그 선택 중인가 — 호스트가 어디서 놓든 MouseUp을 넘겨 준다(편집기와 같은 규칙 · 사용자 09-29).
+    pub(crate) fn dragging(&self) -> bool {
+        self.drag_sel.is_some()
+    }
+
+    /// 필터 항목(셀 메뉴의 하위 · 헤더 메뉴의 본문 공용): 값이 있으면 "이 값만/제외" · 포함… · NULL · 열/전체 지우기 · 조회 SQL 복사.
+    fn filter_menu_items(&self, ci: usize, val: Option<&str>) -> Vec<CtxItem> {
+        let short = |s: &str| {
+            let mut t: String = s.chars().take(24).collect();
+            if s.chars().count() > 24 {
+                t.push('…');
+            }
+            t
+        };
+        let has_col = self.filters.iter().any(|p| p.col == ci);
+        let any = !self.filters.is_empty();
+        let kind = self.col_kind(ci);
+        let mut f = Vec::new();
+        // 값 기준(우클릭한 셀) — 불리언은 참/거짓 항목이 대신한다.
+        if let Some(v) = val.filter(|_| kind != ColKind::Bool) {
+            f.push(CtxItem::item(
+                "filter.eq",
+                tf(Msg::MnFilterEq, &[&short(v)]),
+            ));
+            f.push(CtxItem::item(
+                "filter.ne",
+                tf(Msg::MnFilterNe, &[&short(v)]),
+            ));
+        }
+        match kind {
+            ColKind::Text => {
+                f.push(CtxItem::item("filter.contains", t(Msg::MnFilterContains)));
+                f.push(CtxItem::item("filter.starts", t(Msg::MnFilterStarts)));
+            }
+            ColKind::Number => {
+                f.push(CtxItem::item("filter.gt", t(Msg::MnFilterGt)));
+                f.push(CtxItem::item("filter.lt", t(Msg::MnFilterLt)));
+                f.push(CtxItem::item("filter.between", t(Msg::MnFilterBetween)));
+            }
+            ColKind::Date => {
+                f.push(CtxItem::item("filter.ge", t(Msg::MnFilterAfter)));
+                f.push(CtxItem::item("filter.le", t(Msg::MnFilterBefore)));
+                f.push(CtxItem::item("filter.between", t(Msg::MnFilterBetween)));
+            }
+            ColKind::Bool => {
+                f.push(CtxItem::item("filter.true", t(Msg::MnFilterTrue)));
+                f.push(CtxItem::item("filter.false", t(Msg::MnFilterFalse)));
+            }
+        }
+        if kind != ColKind::Bool {
+            f.push(CtxItem::item("filter.in", t(Msg::MnFilterIn)));
+        }
+        f.push(CtxItem::item("filter.regex", t(Msg::MnFilterRegex)));
+        f.push(CtxItem::item("filter.null", t(Msg::MnFilterNull)));
+        f.push(CtxItem::item("filter.notnull", t(Msg::MnFilterNotNull)));
+        f.push(CtxItem::Separator);
+        f.push(CtxItem::maybe(
+            "filter.clear_col",
+            t(Msg::MnFilterClearCol),
+            has_col,
+        ));
+        f.push(CtxItem::maybe(
+            "filter.clear",
+            t(Msg::MnFilterClearAll),
+            any,
+        ));
+        f.push(CtxItem::maybe(
+            "filter.copy_query",
+            t(Msg::MnFilterCopyQuery),
+            any && !self.source_sql().trim().is_empty(),
+        ));
+        f
+    }
+
+    /// ★ 헤더(컬럼명) 우클릭 = 그 열의 필터 메뉴(사용자 09-29): 값 항목 없이 포함…/NULL/지우기/조회 SQL 복사 + 정렬.
+    fn open_header_menu(&mut self, ci: usize, x: i32, y: i32, scale: f32) {
+        self.menu.set_scale(scale);
+        self.menu_cell = Some((ci, None));
+        let mut items = self.filter_menu_items(ci, None);
+        items.push(CtxItem::Separator);
+        let sorted = self
+            .sort_keys
+            .iter()
+            .find(|(c, _)| *c == ci)
+            .map(|(_, asc)| *asc);
+        items.push(CtxItem::item("sort.asc", t(Msg::MnSortAsc)).with_checked(sorted == Some(true)));
+        items.push(
+            CtxItem::item("sort.desc", t(Msg::MnSortDesc)).with_checked(sorted == Some(false)),
+        );
+        items.push(CtxItem::maybe(
+            "sort.clear",
+            t(Msg::MnSortClear),
+            !self.sort_keys.is_empty(),
+        ));
+        let text_w = (self.row_h * 10).max(180);
+        self.menu.open_at(x, y, items, self.menu_host(), text_w);
+    }
+
+    /// 헤더의 정렬/필터 표식 사각형(열 원본 번호 → 마지막 그리기의 화면 좌표 · 표식이 없으면 None).
+    fn mark_rect_of(&self, ci: usize) -> Option<Rect> {
+        self.mark_rects
+            .iter()
+            .find(|(c, _)| *c == ci)
+            .map(|(_, r)| *r)
+    }
+
+    /// 표식 툴팁 본문: 열 이름 + 적용된 술어 한 줄씩.
+    fn filter_tip(&self, ci: usize) -> Option<String> {
+        let rs = self.rs.as_ref()?;
+        let name = rs.columns().get(ci)?.name.clone();
+        let lines: Vec<String> = self
+            .filters
+            .iter()
+            .filter(|p| p.col == ci)
+            .map(|p| match p.op {
+                FilterOp::Eq => format!("= {}", p.value),
+                FilterOp::Ne => format!("≠ {}", p.value),
+                FilterOp::Gt => format!("> {}", p.value),
+                FilterOp::Ge => format!("≥ {}", p.value),
+                FilterOp::Lt => format!("< {}", p.value),
+                FilterOp::Le => format!("≤ {}", p.value),
+                FilterOp::Contains => tf(Msg::TipFilterContains, &[&p.value]),
+                FilterOp::StartsWith => tf(Msg::TipFilterStarts, &[&p.value]),
+                FilterOp::Between => tf(Msg::TipFilterBetween, &[&p.value]),
+                FilterOp::Regex => tf(Msg::TipFilterRegex, &[&p.value]),
+                FilterOp::In => tf(Msg::TipFilterIn, &[&p.value]),
+                FilterOp::IsTrue => t(Msg::MnFilterTrue).to_string(),
+                FilterOp::IsFalse => t(Msg::MnFilterFalse).to_string(),
+                FilterOp::IsNull => t(Msg::MnFilterNull).to_string(),
+                FilterOp::NotNull => t(Msg::MnFilterNotNull).to_string(),
+            })
+            .collect();
+        if lines.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "{}\n{}",
+            tf(Msg::TipFilterHead, &[&name]),
+            lines.join("\n")
+        ))
+    }
+
+    /// 메뉴 배치 영역(창 전체 · 없으면 그리드 영역).
+    fn menu_host(&self) -> Rect {
+        if self.menu_area.h > 0 {
+            self.menu_area
+        } else {
+            self.bounds
+        }
+    }
+
+    /// 우클릭 메뉴가 펼쳐질 수 있는 영역(창 전체 · 호스트가 배치 때).
+    pub(crate) fn set_menu_area(&mut self, r: Rect) {
+        self.menu_area = r;
+    }
+
     /// 단축키 문구(복사 · 전체 선택) — 호스트 키맵에서 주입(표시 전용).
     pub(crate) fn set_shortcuts(&mut self, copy: String, select_all: String) {
         self.sc_copy = copy;
@@ -3789,6 +4035,17 @@ impl Grid {
                 .with_icon(Some(toolicons::mi_select_all()))
                 .with_shortcut(self.sc_all.clone()),
         ];
+        // ★ 필터 ▸(T-181 · 77 §2-2): 우클릭한 셀의 열·값 기준 · 술어 AND 목록 · 조회용 SQL 복사.
+        if let Some((ci, val)) = self.menu_cell.clone() {
+            let any = !self.filters.is_empty();
+            let f = self.filter_menu_items(ci, val.as_deref());
+            items.push(CtxItem::Separator);
+            let mut fi = CtxItem::submenu("filter", t(Msg::MnFilter), f);
+            if let CtxItem::Item { emph, .. } = &mut fi {
+                *emph = any;
+            }
+            items.push(fi);
+        }
         // ★ 편집(docs/87 §6): 편집 가능한 결과에만 · 값 보기는 늘.
         items.push(CtxItem::Separator);
         items.push(CtxItem::maybe(
@@ -3852,7 +4109,7 @@ impl Grid {
             ));
         }
         let text_w = (self.row_h * 10).max(180);
-        self.menu.open_at(x, y, items, self.bounds, text_w);
+        self.menu.open_at(x, y, items, self.menu_host(), text_w);
     }
 
     fn menu_pick(&mut self, id: &str) {
@@ -3881,6 +4138,21 @@ impl Grid {
             self.edit_command(id);
             return;
         }
+        if let Some(rest) = id.strip_prefix("filter.") {
+            self.filter_pick(rest);
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("sort.") {
+            if let Some((ci, _)) = self.menu_cell {
+                match rest {
+                    "asc" => self.sort_keys = vec![(ci, true)],
+                    "desc" => self.sort_keys = vec![(ci, false)],
+                    _ => self.sort_keys.clear(),
+                }
+                self.apply_sort();
+            }
+            return;
+        }
         let kind = match id {
             "copy" => CopyKind::Tsv,
             "copy_h" => CopyKind::TsvWithHeaders,
@@ -3900,12 +4172,21 @@ impl Grid {
     /// 결합 정렬 적용(인덱스 벡터만 재배열 · 안정 정렬이라 같은 값은 원본 순서).
     fn apply_sort(&mut self) {
         // 편집 중(변경 집합이 비어 있지 않음)에는 정렬하지 않는다 — 추가 행의 자리를 잃는다(87 §3).
-        if self.edit_dirty() {
-            return;
-        }
+        //   필터는 기존 행에 그대로 건다(사용자 09-29 "정규식과 다른 행이 보인다" = 편집 중이라 투영을 건너뛰던 결함) ·
+        //   추가 행은 늘 보인다(`rebuild_row_order`).
+        let dirty = self.edit_dirty();
         let Some(rs) = self.rs.as_ref() else { return };
-        let mut order: Vec<usize> = (0..rs.len()).collect();
-        if !self.sort_keys.is_empty() {
+        let n = rs.len();
+        let mut order: Vec<usize> = if dirty {
+            self.row_order
+                .iter()
+                .copied()
+                .filter(|&ri| ri < n)
+                .collect()
+        } else {
+            (0..n).collect()
+        };
+        if !dirty && !self.sort_keys.is_empty() {
             let keys = self.sort_keys.clone();
             order.sort_by(|&a, &b| {
                 for (col, asc) in &keys {
@@ -3918,7 +4199,210 @@ impl Grid {
                 std::cmp::Ordering::Equal
             });
         }
+        // ★ 두 번째 투영 = 필터(T-181 · 77 §2-2): 세트는 그대로, 남길 행 번호만.
+        if !self.filters.is_empty() {
+            let ncol = rs.columns().len();
+            let filters = self.filters.clone();
+            order.retain(|&r| {
+                filters
+                    .iter()
+                    .all(|p| p.col >= ncol || p.pass_value(rs.cell(r, p.col)))
+            });
+        }
         self.row_order = order;
+        if dirty {
+            self.rebuild_row_order();
+        }
+    }
+
+    /// 우클릭한 셀 → (원본 열, 셀 글) — 필터 메뉴 대상(행번호 칸은 첫 열).
+    fn cell_filter_target(&self, cell: (usize, usize)) -> Option<(usize, Option<String>)> {
+        let ci = *self.col_order.get(cell.1)?;
+        let rs = self.rs.as_ref()?;
+        let r = *self.row_order.get(cell.0)?;
+        if ci >= rs.columns().len() {
+            return None;
+        }
+        Some((ci, cell_opt(rs.cell(r, ci))))
+    }
+
+    /// 필터 술어 추가(열마다 하나 · `=` 반복은 값 목록으로) → 재투영 · 맨 위로.
+    pub(crate) fn add_filter(&mut self, col: usize, op: FilterOp, value: String) {
+        if let Err(e) = self.try_add_filter(col, op, value) {
+            self.pending_error = Some(e);
+        }
+    }
+
+    /// 술어 추가(같은 열의 같은 연산은 교체 · `=`는 이미 `=`/목록이 있으면 **목록에 합침** · 참/거짓/NULL은 배타) → 재투영 · 맨 위로.
+    /// 정규식이 틀리면 `Err(메시지)`(필터는 걸지 않음).
+    pub(crate) fn try_add_filter(
+        &mut self,
+        col: usize,
+        op: FilterOp,
+        value: String,
+    ) -> Result<(), String> {
+        let kind = self.col_kind(col);
+        // "이 값만" 반복 = 값 목록으로(사용자 09-29 "1 → 3 → 8 골라 보기").
+        if op == FilterOp::Eq {
+            if let Some(p) = self
+                .filters
+                .iter_mut()
+                .find(|p| p.col == col && matches!(p.op, FilterOp::Eq | FilterOp::In))
+            {
+                let mut items = split_list(&p.value);
+                if p.op == FilterOp::Eq && items.is_empty() {
+                    items.push(p.value.clone());
+                }
+                if !items.iter().any(|x| x.eq_ignore_ascii_case(&value)) {
+                    items.push(value);
+                }
+                p.op = FilterOp::In;
+                p.value = items.join(", ");
+                self.apply_sort();
+                self.scroll_y = 0;
+                return Ok(());
+            }
+        }
+        // ★ 열마다 술어 하나(사용자 09-29 "다중 조건은 아직 — 항상 1개") — 다른 연산을 걸면 앞 것은 취소. AND/OR 결합은 뒤로.
+        let pred = Predicate::new(col, kind, op, value)?;
+        self.filters.retain(|p| p.col != col);
+        self.filters.push(pred);
+        self.apply_sort();
+        self.scroll_y = 0;
+        Ok(())
+    }
+
+    /// 그리드가 알릴 오류(정규식 오류 등 · 1회성 · 호스트가 상태줄로).
+    pub(crate) fn take_error(&mut self) -> Option<String> {
+        self.pending_error.take()
+    }
+
+    /// 열의 데이터 종류(드라이버 타입 이름 + 앞 200행 표본).
+    pub(crate) fn col_kind(&self, col: usize) -> ColKind {
+        let Some(rs) = self.rs.as_ref() else {
+            return ColKind::Text;
+        };
+        let Some(c) = rs.columns().get(col) else {
+            return ColKind::Text;
+        };
+        let n = rs.len().min(200);
+        ColKind::infer(&c.type_name, (0..n).map(|r| rs.cell(r, col).clone()))
+    }
+
+    /// 필터 전부 지우기(재투영).
+    pub(crate) fn clear_filters(&mut self) {
+        if !self.filters.is_empty() {
+            self.filters.clear();
+            self.apply_sort();
+        }
+    }
+
+    /// 상태줄 "n / N행" — 필터가 있을 때만 `Some((보이는 행, 전체 행))`.
+    pub(crate) fn filter_summary(&self) -> Option<(usize, usize)> {
+        if self.filters.is_empty() {
+            return None;
+        }
+        Some((
+            self.row_order.len(),
+            self.rs.as_ref().map_or(0, |r| r.len()),
+        ))
+    }
+
+    /// "포함…" 입력 요청(1회성 · 열) — 호스트가 팔레트를 연다.
+    pub(crate) fn take_filter_prompt(&mut self) -> Option<(usize, FilterOp, String)> {
+        self.pending_filter_prompt.take()
+    }
+
+    /// 조회용 Query(77 §2-2): 출처 문장을 서브쿼리로 감싸 술어를 `WHERE 1=1 AND …`로 — 출처가 없거나 필터가 없으면 None.
+    pub(crate) fn filter_query(&self) -> Option<String> {
+        let rs = self.rs.as_ref()?;
+        if self.filters.is_empty() {
+            return None;
+        }
+        let src = self.source_sql().trim().trim_end_matches(';').trim();
+        if src.is_empty() {
+            return None;
+        }
+        let mut notes: Vec<String> = Vec::new();
+        let mut preds: Vec<String> = Vec::new();
+        for p in &self.filters {
+            let Some(c) = rs.columns().get(p.col) else {
+                continue;
+            };
+            if p.op == FilterOp::Regex {
+                // ③단계 후보 = 지금 보이는(전 술어 통과) 행의 이 열 distinct 값.
+                let mut seen: Vec<String> = Vec::new();
+                for &r in &self.row_order {
+                    let v = cell_text(rs.cell(r, p.col), "");
+                    if !seen.contains(&v) {
+                        seen.push(v);
+                    }
+                }
+                let (sql, note) = p.regex_sql(&c.name, self.dialect, &seen);
+                preds.push(sql);
+                notes.push(note);
+            } else {
+                preds.push(p.to_sql(&c.name));
+            }
+        }
+        if preds.is_empty() {
+            return None;
+        }
+        let head = if notes.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", notes.join("\n"))
+        };
+        Some(format!(
+            "{head}SELECT *\nFROM (\n{src}\n) q\nWHERE 1=1\nAND {}\n",
+            preds.join("\nAND ")
+        ))
+    }
+
+    fn filter_pick(&mut self, what: &str) {
+        let target = self.menu_cell.clone();
+        match what {
+            "clear" => return self.clear_filters(),
+            "copy_query" => {
+                if let Some(sql) = self.filter_query() {
+                    self.pending_copy = Some((sql, 1));
+                }
+                return;
+            }
+            _ => {}
+        }
+        let Some((ci, val)) = target else { return };
+        if what == "clear_col" {
+            self.filters.retain(|p| p.col != ci);
+            self.apply_sort();
+            return;
+        }
+        let Some(op) = FilterOp::parse(what) else {
+            return;
+        };
+        if op.needs_prompt() {
+            // 값을 묻는 연산 = 팔레트 프롬프트(초기값 = 같은 열에 같은 연산이 걸려 있으면 **그 값**(수정 · 사용자 09-29) ·
+            //   아니면 우클릭한 셀의 값 · 문자 포함/시작/정규식은 빈 값).
+            let existing = self
+                .filters
+                .iter()
+                .find(|p| p.col == ci && p.op == op)
+                .map(|p| p.value.clone());
+            let initial = match (existing, op) {
+                (Some(v), _) => v,
+                (None, FilterOp::Contains | FilterOp::StartsWith | FilterOp::Regex) => {
+                    String::new()
+                }
+                (None, _) => val.unwrap_or_default(),
+            };
+            self.pending_filter_prompt = Some((ci, op, initial));
+            return;
+        }
+        let value = match op {
+            FilterOp::Eq | FilterOp::Ne => val.unwrap_or_default(),
+            _ => String::new(),
+        };
+        self.add_filter(ci, op, value);
     }
 
     /// 헤더 클릭 정렬. `additive`(Shift) = 결합 키 추가/토글 · 아니면 단일 키 3단(▲ → ▼ → 해제).
@@ -4063,6 +4547,8 @@ impl Grid {
         self.col_order.clear();
         self.row_order.clear();
         self.sort_keys.clear();
+        self.filters.clear();
+        self.menu_cell = None;
         self.text_lines = Vec::new();
         self.text_bytes = 0;
         self.messages.clear();
@@ -4073,6 +4559,7 @@ impl Grid {
         self.sel_anchor = None;
         self.sel_cur = None;
         self.drag_sel = None;
+        self.auto_fetch_at = None;
         self.more = false;
         self.total = None;
         self.fetching = false;
@@ -4085,6 +4572,11 @@ impl Grid {
     /// 표시 행 수 = `row_order`(원본 행 + 편집으로 추가된 행) — 원본만 세려면 [`Self::src_len`].
     fn rows(&self) -> usize {
         self.row_order.len()
+    }
+
+    /// 원본(세트) 행 수 — 페치 오프셋·"더 가져오기"의 기준(표시 행 수 `rows()`는 정렬·필터 투영이라 다를 수 있다).
+    fn src_rows(&self) -> usize {
+        self.rs.as_ref().map_or(0, |r| r.len())
     }
 
     /// 원본 결과 행 수(추가 행 제외).
@@ -4147,11 +4639,16 @@ impl Grid {
             && !self.fetching
             && self.fetch_req.is_none()
             && self.page_rows > 0
-            && my > 0
-            && self.scroll_y >= my - self.row_h.max(1)
+            // 끝에 닿았을 때 · 또는 필터로 걸러져 화면을 못 채울 때(스크롤 없음)도 이어서(사용자 09-29 "끝으로 가면 전부 로딩").
+            && ((my > 0 && self.scroll_y >= my - self.row_h.max(1))
+                || (my == 0 && !self.filters.is_empty()))
+            && self.auto_fetch_at != Some(self.src_rows())
         {
+            // ★ 오프셋은 **원본 행 수**(필터로 걸러진 표시 행 수가 아님 · 사용자 09-29 재질의 반복 결함).
+            let offset = self.src_rows();
+            self.auto_fetch_at = Some(offset);
             self.fetch_req = Some(FetchReq::Next {
-                offset: self.rows(),
+                offset,
                 limit: self.page_rows,
             });
         }
@@ -4159,7 +4656,12 @@ impl Grid {
 
     /// 페이드 타이머(스크롤바 · 호버 행) — 다시 그려야 하면 true.
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        let a = self.bars.tick(now_ms);
+        self.now_ms = now_ms;
+        // 표식 툴팁: 머무름 지연이 끝나는 순간 한 번 다시 그린다.
+        let tip = self
+            .mark_hover
+            .is_some_and(|(_, s)| now_ms.saturating_sub(s) < MARK_TIP_MS + 40);
+        let a = self.bars.tick(now_ms) | tip;
         let b = self.hover.tick(now_ms);
         let c = self.poll_text();
         a || b || c
@@ -4190,7 +4692,24 @@ impl Grid {
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent, scale: f32) {
         // 열린 우클릭 메뉴가 먼저(바깥 클릭 = 닫고 통과).
+        // ★ 필터 표식 hover(툴팁 대상) — 빗금 표식 사각형 안에서만.
+        if let InputEvent::MouseMove { x, y } = *ev {
+            let p = Point { x, y };
+            let hit = self
+                .filters
+                .iter()
+                .map(|f| f.col)
+                .find(|&ci| self.mark_rect_of(ci).is_some_and(|r| r.contains(p)));
+            match (hit, self.mark_hover) {
+                (Some(ci), Some((h, _))) if h == ci => {}
+                (Some(ci), _) => self.mark_hover = Some((ci, self.now_ms)),
+                (None, Some(_)) => self.mark_hover = None,
+                _ => {}
+            }
+        }
         if self.menu.is_open() {
+            // 메뉴가 떠 있는 동안 셀 드래그는 없다(메뉴가 MouseUp을 먹어 드래그가 남던 결함 · 사용자 09-29).
+            self.drag_sel = None;
             let consumed = self.menu.on_event(ev);
             if let Some(id) = self.menu.take_picked() {
                 // ★ 항목 선택 = 그 클릭은 메뉴가 먹었다 — 호스트가 아래(셀 선택)로 흘리지 않게 표시(사용자 09-15).
@@ -4382,10 +4901,26 @@ impl Grid {
                     self.drag_sel = None;
                 }
                 InputEvent::RightDown { x, y } => {
+                    self.drag_sel = None;
+                    // 헤더(컬럼명) 우클릭 = 그 열의 필터·정렬 메뉴(사용자 09-29).
+                    if self.rs.is_some()
+                        && y >= self.bounds.y
+                        && y < self.bounds.y + self.header_h
+                        && x >= self.bounds.x + self.gutter_w
+                    {
+                        if let Some(&ci) = self
+                            .header_pos_at(x)
+                            .and_then(|pos| self.col_order.get(pos))
+                        {
+                            self.open_header_menu(ci, x, y, scale);
+                            return;
+                        }
+                    }
                     if let Some(cell) = self.cell_at_point(x, y) {
                         if !self.in_sel(cell.0, cell.1) {
                             self.select_only(cell);
                         }
+                        self.menu_cell = self.cell_filter_target(cell);
                         self.open_menu(x, y, scale);
                         return;
                     }
@@ -4718,8 +5253,18 @@ impl Grid {
                 .collect();
         }
         if let Some(ci) = self.autofit.take() {
-            // 헤더 이름 + 전 행(최대 5,000행) 중 가장 넓은 값 → [최소, 최대].
+            // 헤더 이름(+ 정렬/필터 표식이 보이면 그 폭 · 사용자 09-29) + 전 행(최대 5,000행) 중 가장 넓은 값 → [최소, 최대].
             let mut w = rs.columns().get(ci).map_or(0, |c| dc.text_width(&c.name));
+            let sort_pos = self.sort_keys.iter().position(|(k, _)| *k == ci);
+            let filtered = self.filters.iter().any(|p| p.col == ci);
+            if sort_pos.is_some() || filtered {
+                let g = (self.row_h * 2 / 5).max(6);
+                let gap = (g / 3).max(2);
+                let nw = sort_pos
+                    .filter(|_| self.sort_keys.len() > 1)
+                    .map_or(0, |i| dc.text_width(&(i + 1).to_string()));
+                w += g + gap + nw + if nw > 0 { gap } else { 0 };
+            }
             for row in rs.rows().take(5000) {
                 if let Some(v) = row.get(ci) {
                     w = w.max(dc.text_width(&cell_text(v, &null)));
@@ -4965,6 +5510,7 @@ impl Grid {
         dc.fill_rect(header, th.chrome_bg);
         let hcells = Rect::new(gx0, header.y, (b.right() - gx0).max(0), header.h);
         let mut x = gx0 - self.scroll_x;
+        self.mark_rects.clear();
         let dragging = self.hdr_drag.as_ref().filter(|d| d.active);
         let mut ghost: Option<(Rect, String)> = None;
         for (pos, &ci) in self.col_order.iter().enumerate() {
@@ -4989,25 +5535,86 @@ impl Grid {
                 // 선택에 걸린 컬럼 헤더 = 행번호 강조와 **같은 색**(사용자 09-22 · n×m 선택이면 걸린 열 전부).
                 dc.fill_rect_alpha(clip, th.sel_bg, Self::sel_alphas(self.focused, 0.0).1);
             }
-            // 정렬 배지: ▲/▼ + 결합 순번(키가 2개 이상일 때)
-            let badge = self.sort_keys.iter().position(|(k, _)| *k == ci).map(|i| {
-                let arrow = if self.sort_keys[i].1 { "▲" } else { "▼" };
-                if self.sort_keys.len() > 1 {
-                    format!("{arrow}{}", i + 1)
-                } else {
-                    arrow.to_string()
+            // ★ 헤더 표식(사용자 09-29 "정렬과 필터를 한 표식에"): 정렬 = 채운 ▲/▼(+ 결합 순번) · 필터만 = 빗금 ▽ ·
+            //   정렬 + 필터 = 빗금 채운 화살표 · 필터가 걸린 열은 이름을 강조색으로. 도형으로 그린다(글꼴 글리프 X · 3-OS 동일).
+            let filtered_col = self.filters.iter().any(|p| p.col == ci);
+            let sort_pos = self.sort_keys.iter().position(|(k, _)| *k == ci);
+            let name_clip = if filtered_col || sort_pos.is_some() {
+                let g = (self.row_h * 2 / 5).max(6);
+                let gap = (g / 3).max(2);
+                let num = sort_pos
+                    .filter(|_| self.sort_keys.len() > 1)
+                    .map(|i| (i + 1).to_string());
+                let nw = num.as_ref().map_or(0, |n| dc.text_width(n));
+                let right = x + cw - pad;
+                if let Some(n) = &num {
+                    let hy = dc.text_center_y(header.y, header.h);
+                    dc.text(right - nw, hy, clip, n, th.accent);
                 }
-            });
-            let name_clip = if let Some(bd) = &badge {
-                let bw = dc.text_width(bd);
-                let hy = dc.text_center_y(header.y, header.h);
-                dc.text(x + cw - pad - bw, hy, clip, bd, th.accent);
-                Rect::new(x, header.y, (cw - bw - pad * 2).max(0), header.h).intersection(&hcells)
+                let gx = right - nw - if nw > 0 { gap } else { 0 } - g;
+                let cy = header.y + header.h / 2;
+                let (top, bottom) = (cy - g / 2, cy + g / 2);
+                // 픽셀 (px, py)가 도형 안이고 (px+py) % 3 == 0 → 바탕색으로 파냄 = 사선 빗금.
+                let hatch = |dc: &mut dyn DrawCtx, inside: &dyn Fn(f32, f32) -> bool| {
+                    for py in top..=bottom {
+                        for px in gx..=gx + g {
+                            if (px + py).rem_euclid(3) == 0
+                                && inside(px as f32 + 0.5, py as f32 + 0.5)
+                            {
+                                dc.fill_rect(Rect::new(px, py, 1, 1), th.panel_bg);
+                            }
+                        }
+                    }
+                };
+                match sort_pos {
+                    None => {
+                        // 필터만 = 빗금 동그라미(정렬된 것처럼 보이지 않게 · 사용자 09-29).
+                        dc.fill_ellipse(Rect::new(gx, top, g, g), th.accent);
+                        let (ccx, ccy, r) = (
+                            gx as f32 + g as f32 / 2.0,
+                            top as f32 + g as f32 / 2.0,
+                            g as f32 / 2.0,
+                        );
+                        hatch(dc, &|x, y| nexa_ctl::shape::disc(x, y, ccx, ccy, r));
+                    }
+                    Some(i) => {
+                        let asc = self.sort_keys[i].1;
+                        let (a, b, c) = if asc {
+                            ((gx + g / 2, top), (gx + g, bottom), (gx, bottom))
+                        } else {
+                            ((gx, top), (gx + g, top), (gx + g / 2, bottom))
+                        };
+                        dc.fill_triangle(a, b, c, th.accent);
+                        if filtered_col {
+                            let (af, bf, cf) = (
+                                (a.0 as f32 + 0.5, a.1 as f32 + 0.5),
+                                (b.0 as f32 + 0.5, b.1 as f32 + 0.5),
+                                (c.0 as f32 + 0.5, c.1 as f32 + 0.5),
+                            );
+                            hatch(dc, &|x, y| nexa_ctl::shape::tri(x, y, af, bf, cf));
+                        }
+                    }
+                }
+                let used = g + nw + if nw > 0 { gap } else { 0 };
+                if filtered_col {
+                    // 툴팁 대상 = 표식(+순번) 사각형 · 필터가 걸린 열만(사용자 09-29).
+                    let mr = Rect::new(right - used, header.y, used + pad, header.h)
+                        .intersection(&hcells);
+                    self.mark_rects.push((ci, mr));
+                }
+                Rect::new(x, header.y, (cw - pad - used - gap).max(0), header.h)
+                    .intersection(&hcells)
             } else {
                 clip
             };
             let hy = dc.text_center_y(header.y, header.h);
-            dc.text(x + pad, hy, name_clip, &c.name, th.text);
+            dc.text(
+                x + pad,
+                hy,
+                name_clip,
+                &c.name,
+                if filtered_col { th.accent } else { th.text },
+            );
             // 헤더 세로 경계선 강조(사용자 09-16 · 원복 요청 가능 = `th.border` 1px로 되돌리면 된다).
             dc.fill_rect_alpha(
                 Rect::new(x + cw - 1, header.y, 1, header.h),
@@ -5358,6 +5965,546 @@ pub(crate) fn hex_dump(b: &[u8]) -> String {
     out
 }
 
+/// 헤더 표식 툴팁 머무름(ms).
+const MARK_TIP_MS: u64 = 450;
+
+/// ★ 그리드 필터 연산(T-181 · 77 §2-2 · 타입별 확장 사용자 09-29).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FilterOp {
+    Eq,
+    Ne,
+    Contains,
+    StartsWith,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    /// 값 = `lo..hi`(또는 `lo ~ hi` · `lo, hi`) · 양끝 포함.
+    Between,
+    IsTrue,
+    IsFalse,
+    IsNull,
+    NotNull,
+    /// 정규식(가져온 행에 클라이언트 판정 · 기본 대소문자 무시 `(?i)` · 값 = 패턴).
+    Regex,
+    /// 값 목록(`a, b, c` · `|`도 구분자) — 하나라도 같으면 통과 · "이 값만"을 반복하면 여기로 모인다.
+    In,
+}
+
+impl FilterOp {
+    /// 팔레트 프롬프트 id 조각.
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            FilterOp::Eq => "eq",
+            FilterOp::Ne => "ne",
+            FilterOp::Contains => "contains",
+            FilterOp::StartsWith => "starts",
+            FilterOp::Gt => "gt",
+            FilterOp::Ge => "ge",
+            FilterOp::Lt => "lt",
+            FilterOp::Le => "le",
+            FilterOp::Between => "between",
+            FilterOp::IsTrue => "true",
+            FilterOp::IsFalse => "false",
+            FilterOp::IsNull => "null",
+            FilterOp::NotNull => "notnull",
+            FilterOp::Regex => "regex",
+            FilterOp::In => "in",
+        }
+    }
+    pub(crate) fn parse(s: &str) -> Option<FilterOp> {
+        Some(match s {
+            "eq" => FilterOp::Eq,
+            "ne" => FilterOp::Ne,
+            "contains" => FilterOp::Contains,
+            "starts" => FilterOp::StartsWith,
+            "gt" => FilterOp::Gt,
+            "ge" => FilterOp::Ge,
+            "lt" => FilterOp::Lt,
+            "le" => FilterOp::Le,
+            "between" => FilterOp::Between,
+            "true" => FilterOp::IsTrue,
+            "false" => FilterOp::IsFalse,
+            "null" => FilterOp::IsNull,
+            "notnull" => FilterOp::NotNull,
+            "regex" => FilterOp::Regex,
+            "in" => FilterOp::In,
+            _ => return None,
+        })
+    }
+    /// 값을 입력받아야 하는 연산(팔레트 프롬프트).
+    fn needs_prompt(self) -> bool {
+        matches!(
+            self,
+            FilterOp::Contains
+                | FilterOp::StartsWith
+                | FilterOp::Gt
+                | FilterOp::Ge
+                | FilterOp::Lt
+                | FilterOp::Le
+                | FilterOp::Between
+                | FilterOp::Regex
+                | FilterOp::In
+        )
+    }
+}
+
+/// 컬럼 데이터 종류(필터 메뉴·비교 방식 · 드라이버 타입 이름 + 값 표본으로 판정).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ColKind {
+    Text,
+    Number,
+    Date,
+    Bool,
+}
+
+impl ColKind {
+    /// 드라이버 타입 이름으로 먼저(NUMBER/INT/DECIMAL/… · DATE/TIME/TIMESTAMP · BOOL/BIT) · 모르면 값 표본.
+    pub(crate) fn infer(type_name: &str, sample: impl Iterator<Item = Value>) -> ColKind {
+        let tn = type_name.to_ascii_lowercase();
+        if tn.contains("bool") || tn == "bit" {
+            return ColKind::Bool;
+        }
+        if tn.contains("date") || tn.contains("time") {
+            return ColKind::Date;
+        }
+        if tn.contains("int")
+            || tn.contains("num")
+            || tn.contains("dec")
+            || tn.contains("float")
+            || tn.contains("double")
+            || tn.contains("real")
+            || tn.contains("money")
+        {
+            return ColKind::Number;
+        }
+        let (mut n, mut nums, mut bools, mut dates) = (0usize, 0usize, 0usize, 0usize);
+        for v in sample {
+            match &v {
+                Value::Null => continue,
+                Value::Int(_) | Value::Float(_) | Value::Decimal(_) => nums += 1,
+                Value::Bool(_) => bools += 1,
+                Value::Str(s) if looks_like_date(s) => dates += 1,
+                _ => {}
+            }
+            n += 1;
+        }
+        if n == 0 {
+            ColKind::Text
+        } else if nums == n {
+            ColKind::Number
+        } else if bools == n {
+            ColKind::Bool
+        } else if dates == n {
+            ColKind::Date
+        } else {
+            ColKind::Text
+        }
+    }
+}
+
+/// `YYYY-MM-DD…` / `YYYY/MM/DD…` / `YYYYMMDD` 꼴인가.
+fn looks_like_date(s: &str) -> bool {
+    let b = s.trim().as_bytes();
+    let digits = |r: &[u8]| !r.is_empty() && r.iter().all(u8::is_ascii_digit);
+    if b.len() >= 10
+        && digits(&b[..4])
+        && (b[4] == b'-' || b[4] == b'/')
+        && digits(&b[5..7])
+        && b[7] == b[4]
+        && digits(&b[8..10])
+    {
+        return true;
+    }
+    b.len() == 8 && digits(b) && (b.starts_with(b"19") || b.starts_with(b"20"))
+}
+
+/// 날짜 글 정규화(`/` → `-` · 앞뒤 공백 제거) — 사전순 비교가 시간순이 되게.
+fn norm_date(s: &str) -> String {
+    s.trim().replace('/', "-")
+}
+
+fn num_of(v: &Value) -> Option<f64> {
+    match v {
+        Value::Int(i) => Some(*i as f64),
+        Value::Float(f) => Some(*f),
+        Value::Decimal(d) => d.trim().parse().ok(),
+        Value::Str(s) => s.trim().replace(',', "").parse().ok(),
+        _ => None,
+    }
+}
+
+fn bool_of(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        Value::Int(i) => Some(*i != 0),
+        Value::Str(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "t" | "y" | "yes" | "1" => Some(true),
+            "false" | "f" | "n" | "no" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 필터 술어(AND 목록의 한 항 · 원본 열 번호 · 열 종류에 따라 비교). `rx` = 정규식 컴파일 캐시(비교에서는 제외).
+#[derive(Clone, Debug)]
+pub(crate) struct Predicate {
+    pub col: usize,
+    pub kind: ColKind,
+    pub op: FilterOp,
+    pub value: String,
+    pub rx: Option<regex::Regex>,
+}
+
+impl PartialEq for Predicate {
+    fn eq(&self, o: &Self) -> bool {
+        self.col == o.col && self.kind == o.kind && self.op == o.op && self.value == o.value
+    }
+}
+
+/// 값 목록 구분(`,` · `|` · 앞뒤 공백 제거 · 빈 항목 제외).
+fn split_list(v: &str) -> Vec<String> {
+    v.split([',', '|'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// 정규식 컴파일(사용자 패턴 · `(?`로 시작하지 않으면 `(?i)` 대소문자 무시).
+pub(crate) fn compile_regex(pat: &str) -> Result<regex::Regex, String> {
+    let p = if pat.starts_with("(?") {
+        pat.to_string()
+    } else {
+        format!("(?i){pat}")
+    };
+    regex::Regex::new(&p).map_err(|e| e.to_string())
+}
+
+impl Predicate {
+    pub(crate) fn new(
+        col: usize,
+        kind: ColKind,
+        op: FilterOp,
+        value: String,
+    ) -> Result<Predicate, String> {
+        let rx = if op == FilterOp::Regex {
+            Some(compile_regex(&value)?)
+        } else {
+            None
+        };
+        Ok(Predicate {
+            col,
+            kind,
+            op,
+            value,
+            rx,
+        })
+    }
+
+    /// 범위 값 `lo..hi` · `lo ~ hi` · `lo, hi`.
+    fn bounds(&self) -> Option<(String, String)> {
+        for sep in ["..", "~", ","] {
+            if let Some((a, b)) = self.value.split_once(sep) {
+                return Some((a.trim().to_string(), b.trim().to_string()));
+            }
+        }
+        None
+    }
+
+    /// 셀 값이 술어를 통과하는가 — 종류별: 숫자 = f64 · 날짜 = 정규화 글의 **경계 길이만큼** 사전순(`2026-09-29`로 `≤`면 그날 포함) ·
+    /// 문자 = 대소문자 무시 · 불리언 = true/false·1/0·Y/N.
+    pub(crate) fn pass_value(&self, v: &Value) -> bool {
+        use std::cmp::Ordering;
+        if matches!(self.op, FilterOp::IsNull) {
+            return matches!(v, Value::Null);
+        }
+        if matches!(self.op, FilterOp::NotNull) {
+            return !matches!(v, Value::Null);
+        }
+        if matches!(v, Value::Null) {
+            return matches!(self.op, FilterOp::Ne);
+        }
+        match self.op {
+            FilterOp::Regex => self
+                .rx
+                .as_ref()
+                .is_some_and(|rx| rx.is_match(&cell_text(v, ""))),
+            FilterOp::In => split_list(&self.value).into_iter().any(|one| {
+                Predicate {
+                    op: FilterOp::Eq,
+                    value: one,
+                    rx: None,
+                    ..self.clone()
+                }
+                .pass_value(v)
+            }),
+            FilterOp::IsTrue => bool_of(v) == Some(true),
+            FilterOp::IsFalse => bool_of(v) == Some(false),
+            FilterOp::Contains => cell_text(v, "")
+                .to_lowercase()
+                .contains(&self.value.to_lowercase()),
+            FilterOp::StartsWith => cell_text(v, "")
+                .to_lowercase()
+                .starts_with(&self.value.to_lowercase()),
+            FilterOp::Between => {
+                let Some((lo, hi)) = self.bounds() else {
+                    return true;
+                };
+                let ge = Predicate {
+                    op: FilterOp::Ge,
+                    value: lo,
+                    ..self.clone()
+                };
+                let le = Predicate {
+                    op: FilterOp::Le,
+                    value: hi,
+                    ..self.clone()
+                };
+                ge.pass_value(v) && le.pass_value(v)
+            }
+            FilterOp::Eq
+            | FilterOp::Ne
+            | FilterOp::Gt
+            | FilterOp::Ge
+            | FilterOp::Lt
+            | FilterOp::Le => {
+                let ord = match self.kind {
+                    ColKind::Number => match (
+                        num_of(v),
+                        self.value.trim().replace(',', "").parse::<f64>().ok(),
+                    ) {
+                        (Some(a), Some(b)) => a.partial_cmp(&b).unwrap_or(Ordering::Equal),
+                        _ => cell_text(v, "")
+                            .to_lowercase()
+                            .cmp(&self.value.to_lowercase()),
+                    },
+                    ColKind::Date => {
+                        let a = norm_date(&cell_text(v, ""));
+                        let b = norm_date(&self.value);
+                        let a: String = a.chars().take(b.chars().count()).collect();
+                        a.cmp(&b)
+                    }
+                    ColKind::Bool => bool_of(v).cmp(&bool_of(&Value::Str(self.value.clone()))),
+                    ColKind::Text => cell_text(v, "")
+                        .to_lowercase()
+                        .cmp(&self.value.to_lowercase()),
+                };
+                match self.op {
+                    FilterOp::Eq => ord == Ordering::Equal,
+                    FilterOp::Ne => ord != Ordering::Equal,
+                    FilterOp::Gt => ord == Ordering::Greater,
+                    FilterOp::Ge => ord != Ordering::Less,
+                    FilterOp::Lt => ord == Ordering::Less,
+                    _ => ord != Ordering::Greater,
+                }
+            }
+            FilterOp::IsNull | FilterOp::NotNull => unreachable!(),
+        }
+    }
+
+    /// 조회용 SQL 술어(`q."COL" = '…'` · 숫자 열의 숫자 값은 인용 없이 · 리터럴 `'` 두 배 · BETWEEN · LIKE).
+    pub(crate) fn to_sql(&self, col: &str) -> String {
+        let c = format!("q.\"{}\"", col.replace('"', "\"\""));
+        let lit = |v: &str| -> String {
+            if self.kind == ColKind::Number && v.trim().replace(',', "").parse::<f64>().is_ok() {
+                v.trim().replace(',', "")
+            } else {
+                format!("'{}'", v.replace('\'', "''"))
+            }
+        };
+        match self.op {
+            FilterOp::Eq => format!("{c} = {}", lit(&self.value)),
+            FilterOp::Ne => format!("{c} <> {}", lit(&self.value)),
+            FilterOp::Gt => format!("{c} > {}", lit(&self.value)),
+            FilterOp::Ge => format!("{c} >= {}", lit(&self.value)),
+            FilterOp::Lt => format!("{c} < {}", lit(&self.value)),
+            FilterOp::Le => format!("{c} <= {}", lit(&self.value)),
+            FilterOp::Between => match self.bounds() {
+                Some((a, b)) => format!("{c} BETWEEN {} AND {}", lit(&a), lit(&b)),
+                None => format!("{c} = {}", lit(&self.value)),
+            },
+            FilterOp::Contains => format!("{c} LIKE '%{}%'", self.value.replace('\'', "''")),
+            FilterOp::StartsWith => format!("{c} LIKE '{}%'", self.value.replace('\'', "''")),
+            FilterOp::IsTrue => format!("{c} = TRUE"),
+            FilterOp::IsFalse => format!("{c} = FALSE"),
+            FilterOp::IsNull => format!("{c} IS NULL"),
+            FilterOp::NotNull => format!("{c} IS NOT NULL"),
+            FilterOp::In => {
+                let items: Vec<String> = split_list(&self.value).iter().map(|s| lit(s)).collect();
+                if items.is_empty() {
+                    "1=1".to_string()
+                } else {
+                    format!("{c} IN ({})", items.join(", "))
+                }
+            }
+            // 정규식은 방언·값 목록이 필요해 [`Grid::regex_sql`]이 만든다.
+            FilterOp::Regex => format!("{c} IS NOT NULL"),
+        }
+    }
+
+    /// ★ 정규식 조회 SQL 3단계(사용자 09-29): ① 방언 정규식(Oracle `REGEXP_LIKE` · PostgreSQL `~*` · MySQL `REGEXP`) ②
+    /// 부분집합을 LIKE로 번역(`^`·`$`·리터럴·`.`·`.*`·최상위 `(a|b)`) ③ 그것도 안 되면 통과한 값 목록 `IN (…)`(최대 1,000).
+    /// 반환 = (술어, 설명 주석).
+    pub(crate) fn regex_sql(
+        &self,
+        col: &str,
+        dialect: Dialect,
+        matched: &[String],
+    ) -> (String, String) {
+        let c = format!("q.\"{}\"", col.replace('"', "\"\""));
+        let esc = |s: &str| s.replace('\'', "''");
+        let pat = self.value.as_str();
+        match dialect {
+            Dialect::Oracle => {
+                return (
+                    format!("REGEXP_LIKE({c}, '{}', 'i')", esc(pat)),
+                    format!("-- regex: {pat} → REGEXP_LIKE"),
+                )
+            }
+            Dialect::Postgres => {
+                return (
+                    format!("{c} ~* '{}'", esc(pat)),
+                    format!("-- regex: {pat} → ~*"),
+                )
+            }
+            Dialect::Mysql => {
+                return (
+                    format!("{c} REGEXP '{}'", esc(pat)),
+                    format!("-- regex: {pat} → REGEXP"),
+                )
+            }
+            _ => {}
+        }
+        if let Some(likes) = regex_to_like(pat) {
+            let parts: Vec<String> = likes
+                .iter()
+                .map(|l| format!("{c} LIKE '{}'", esc(l)))
+                .collect();
+            let sql = if parts.len() == 1 {
+                parts[0].clone()
+            } else {
+                format!("({})", parts.join(" OR "))
+            };
+            return (sql, format!("-- regex: {pat} → LIKE"));
+        }
+        const MAX: usize = 1000;
+        let items: Vec<String> = matched
+            .iter()
+            .take(MAX)
+            .map(|v| format!("'{}'", esc(v)))
+            .collect();
+        let note = if matched.len() > MAX {
+            format!(
+                "-- regex: {pat} → 값 목록 {}개로 제한(전체 {}개 · 가져온 행 기준)",
+                MAX,
+                matched.len()
+            )
+        } else {
+            format!(
+                "-- regex: {pat} → 값 목록 {}개(가져온 행 기준)",
+                matched.len()
+            )
+        };
+        if items.is_empty() {
+            (format!("{c} IN (NULL)"), note)
+        } else {
+            (format!("{c} IN ({})", items.join(", ")), note)
+        }
+    }
+}
+
+/// 정규식 부분집합 → LIKE 패턴들(대안마다 하나) — `^` `$` 앵커 · 리터럴 · `.`(→ `_`) · `.*`/`.+`(→ `%`/`_%`) · 최상위 `(a|b)` ·
+/// `\.` 같은 이스케이프 리터럴. 그 밖의 메타(`+ ? { } [ ]`·백슬래시 클래스 · `%`/`_` 리터럴)가 있으면 `None`.
+pub(crate) fn regex_to_like(pat: &str) -> Option<Vec<String>> {
+    let mut s = pat.strip_prefix("(?i)").unwrap_or(pat);
+    let anchored_start = s.starts_with('^');
+    if anchored_start {
+        s = &s[1..];
+    }
+    let anchored_end = s.ends_with('$') && !s.ends_with("\\$");
+    if anchored_end {
+        s = &s[..s.len() - 1];
+    }
+    // 그룹은 최상위 하나만(`접두(a|b)접미`) · 중첩·둘 이상은 포기.
+    let (pre, alts, post): (&str, Vec<&str>, &str) = match (s.find('('), s.find(')')) {
+        (None, None) => {
+            if s.contains('|') {
+                return None;
+            }
+            ("", vec![s], "")
+        }
+        (Some(a), Some(b)) if a < b => {
+            let inner = &s[a + 1..b];
+            let post = &s[b + 1..];
+            if inner.contains('(') || post.contains('(') || post.contains(')') {
+                return None;
+            }
+            (&s[..a], inner.split('|').collect(), post)
+        }
+        _ => return None,
+    };
+    let pre = lit_to_like(pre)?;
+    let post = lit_to_like(post)?;
+    let mut out = Vec::new();
+    for a in alts {
+        if a.contains('|') {
+            return None;
+        }
+        let mid = lit_to_like(a)?;
+        let mut like = format!("{pre}{mid}{post}");
+        if !anchored_start {
+            like.insert(0, '%');
+        }
+        if !anchored_end {
+            like.push('%');
+        }
+        out.push(like);
+    }
+    Some(out)
+}
+
+/// 정규식 리터럴 조각 → LIKE 조각(`.` `_` · `.*` `%` · `.+` `_%` · `\\x` 이스케이프 리터럴 · 그 밖의 메타·`%`/`_`는 `None`).
+fn lit_to_like(seg: &str) -> Option<String> {
+    let mut like = String::new();
+    let mut chars = seg.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                let n = chars.next()?;
+                if n.is_ascii_alphanumeric() || n == '%' || n == '_' {
+                    return None;
+                }
+                like.push(n);
+            }
+            '.' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    like.push('%');
+                } else if chars.peek() == Some(&'+') {
+                    chars.next();
+                    like.push_str("_%");
+                } else {
+                    like.push('_');
+                }
+            }
+            '*' | '+' | '?' | '{' | '}' | '[' | ']' | '^' | '$' | '(' | ')' | '|' => return None,
+            '%' | '_' => return None,
+            c => like.push(c),
+        }
+    }
+    Some(like)
+}
+
+/// 필터 판정용 셀 글(NULL = None · 이진 = `<n bytes>`).
+fn cell_opt(v: &Value) -> Option<String> {
+    match v {
+        Value::Null => None,
+        other => Some(cell_text(other, "")),
+    }
+}
+
 fn cell_text(v: &Value, null: &str) -> String {
     match v {
         Value::Null => null.to_string(),
@@ -5370,6 +6517,153 @@ fn cell_text(v: &Value, null: &str) -> String {
 mod tests {
     use super::*;
     use nsql_core::{Column, ResultSet};
+
+    /// T-181 필터 술어: 대소문자 무시 · NULL 판정 · 조회용 SQL(리터럴·식별자 인용).
+    #[test]
+    /// 정규식·값 목록·LIKE 번역·3단계 SQL(사용자 09-29).
+    fn filter_regex_and_list() {
+        let s = |x: &str| Value::Str(x.into());
+        let rx =
+            Predicate::new(0, ColKind::Text, FilterOp::Regex, "^(pcm|pcc)6".into()).expect("rx");
+        assert!(rx.pass_value(&s("PCM62620")) && !rx.pass_value(&s("pcc08868")));
+        assert!(Predicate::new(0, ColKind::Text, FilterOp::Regex, "(".into()).is_err());
+        let list = Predicate::new(0, ColKind::Number, FilterOp::In, "1, 3, 8".into()).expect("in");
+        assert!(list.pass_value(&Value::Int(3)) && !list.pass_value(&Value::Int(2)));
+        assert_eq!(list.to_sql("N"), "q.\"N\" IN (1, 3, 8)");
+        assert_eq!(
+            Predicate::new(0, ColKind::Text, FilterOp::In, "a|b".into())
+                .expect("in")
+                .to_sql("C"),
+            "q.\"C\" IN ('a', 'b')"
+        );
+        // LIKE 번역.
+        assert_eq!(regex_to_like("^abc"), Some(vec!["abc%".to_string()]));
+        assert_eq!(regex_to_like("abc$"), Some(vec!["%abc".to_string()]));
+        assert_eq!(
+            regex_to_like("^(A|B)"),
+            Some(vec!["A%".to_string(), "B%".to_string()])
+        );
+        assert_eq!(regex_to_like("a.c"), Some(vec!["%a_c%".to_string()]));
+        assert_eq!(regex_to_like("^a.*z$"), Some(vec!["a%z".to_string()]));
+        assert_eq!(regex_to_like("a\\.b"), Some(vec!["%a.b%".to_string()]));
+        assert_eq!(regex_to_like("^\\d+$"), None);
+        assert_eq!(regex_to_like("a[bc]"), None);
+        // 3단계 SQL.
+        let (o, _) = rx.regex_sql("C", Dialect::Oracle, &[]);
+        assert_eq!(o, "REGEXP_LIKE(q.\"C\", '^(pcm|pcc)6', 'i')");
+        let (pg, _) = rx.regex_sql("C", Dialect::Postgres, &[]);
+        assert_eq!(pg, "q.\"C\" ~* '^(pcm|pcc)6'");
+        let (ms, note) = rx.regex_sql("C", Dialect::Mssql, &[]);
+        assert_eq!(ms, "(q.\"C\" LIKE 'pcm6%' OR q.\"C\" LIKE 'pcc6%')");
+        assert!(note.contains("LIKE"), "{note}");
+        let hard =
+            Predicate::new(0, ColKind::Text, FilterOp::Regex, "^\\d{3}$".into()).expect("rx");
+        let (ms2, note2) = hard.regex_sql("C", Dialect::Mssql, &["123".into(), "456".into()]);
+        assert_eq!(ms2, "q.\"C\" IN ('123', '456')");
+        assert!(note2.contains("2"), "{note2}");
+    }
+
+    #[test]
+    fn filter_predicate_pass_and_sql() {
+        let mk = |kind: ColKind, op: FilterOp, value: &str| Predicate {
+            col: 0,
+            kind,
+            op,
+            value: value.into(),
+            rx: None,
+        };
+        let s = |x: &str| Value::Str(x.into());
+        // 문자: 대소문자 무시 · 포함 · 시작 · NULL.
+        let eq = mk(ColKind::Text, FilterOp::Eq, "abc");
+        assert!(
+            eq.pass_value(&s("ABC")) && !eq.pass_value(&s("abcd")) && !eq.pass_value(&Value::Null)
+        );
+        assert!(mk(ColKind::Text, FilterOp::Ne, "abc").pass_value(&Value::Null));
+        assert!(mk(ColKind::Text, FilterOp::Contains, "한").pass_value(&s("대한민국")));
+        assert!(mk(ColKind::Text, FilterOp::StartsWith, "PCM").pass_value(&s("pcm62620")));
+        assert!(mk(ColKind::Text, FilterOp::IsNull, "").pass_value(&Value::Null));
+        // 숫자: f64 비교 · 문자열 숫자도 · 범위.
+        let gt = mk(ColKind::Number, FilterOp::Gt, "100");
+        assert!(
+            gt.pass_value(&Value::Int(288))
+                && !gt.pass_value(&Value::Int(80))
+                && gt.pass_value(&s("1,728"))
+        );
+        assert!(mk(ColKind::Number, FilterOp::Between, "20..100").pass_value(&Value::Float(80.0)));
+        assert!(!mk(ColKind::Number, FilterOp::Between, "20 ~ 100").pass_value(&Value::Int(288)));
+        // 날짜: 경계 길이만큼 접두 비교 = 그날 포함.
+        let le = mk(ColKind::Date, FilterOp::Le, "2026-09-29");
+        assert!(le.pass_value(&s("2026-09-29 15:00:00")) && !le.pass_value(&s("2026/09/30")));
+        assert!(mk(ColKind::Date, FilterOp::Eq, "2026-09-29").pass_value(&s("2026-09-29 10:00")));
+        // 불리언.
+        assert!(mk(ColKind::Bool, FilterOp::IsTrue, "").pass_value(&Value::Bool(true)));
+        assert!(mk(ColKind::Bool, FilterOp::IsFalse, "").pass_value(&s("N")));
+        // 종류 추론.
+        assert_eq!(
+            ColKind::infer("NUMBER", std::iter::empty()),
+            ColKind::Number
+        );
+        assert_eq!(
+            ColKind::infer("timestamp", std::iter::empty()),
+            ColKind::Date
+        );
+        assert_eq!(
+            ColKind::infer("", [s("2026-09-29"), s("2026-09-30")].into_iter()),
+            ColKind::Date
+        );
+        assert_eq!(
+            ColKind::infer("", [Value::Int(1), Value::Null].into_iter()),
+            ColKind::Number
+        );
+        assert_eq!(
+            ColKind::infer("varchar2", [s("x")].into_iter()),
+            ColKind::Text
+        );
+        // SQL: 숫자 열은 인용 없이 · 문자 인용 · BETWEEN · LIKE.
+        assert_eq!(gt.to_sql("QTY"), "q.\"QTY\" > 100");
+        assert_eq!(eq.to_sql("ITEM_CD"), "q.\"ITEM_CD\" = 'abc'");
+        assert_eq!(
+            mk(ColKind::Date, FilterOp::Between, "2026-01-01..2026-12-31").to_sql("D"),
+            "q.\"D\" BETWEEN '2026-01-01' AND '2026-12-31'"
+        );
+        assert_eq!(
+            mk(ColKind::Text, FilterOp::Contains, "o'k").to_sql("A\"B"),
+            "q.\"A\"\"B\" LIKE '%o''k%'"
+        );
+    }
+
+    /// 열마다 술어 하나(사용자 09-29): 다른 연산 = 앞 것 취소 · `=` 반복 = 값 목록 · 같은 연산 재진입 초기값 = 걸린 값.
+    #[test]
+    fn one_filter_per_column_and_prompt_prefill() {
+        let mut g = Grid::default();
+        g.set_result(ResultSet {
+            columns: vec![Column {
+                name: "A".into(),
+                type_name: String::new(),
+            }],
+            rows: ["P52F00", "P5111F00", "x"]
+                .iter()
+                .map(|s| vec![Value::Str((*s).to_string())])
+                .collect(),
+        });
+        g.add_filter(0, FilterOp::Regex, "^P[5][23].*F00$".into());
+        assert_eq!(g.rows(), 1);
+        g.add_filter(0, FilterOp::IsNull, String::new());
+        assert_eq!(g.filters.len(), 1, "다른 연산 = 앞 것 취소");
+        assert_eq!(g.filters[0].op, FilterOp::IsNull);
+        g.add_filter(0, FilterOp::Eq, "x".into());
+        g.add_filter(0, FilterOp::Eq, "P52F00".into());
+        assert_eq!((g.filters.len(), g.filters[0].op), (1, FilterOp::In));
+        assert_eq!(g.rows(), 2);
+        // 같은 연산 재진입 = 프롬프트 초기값이 걸린 값.
+        g.add_filter(0, FilterOp::Regex, "^P5".into());
+        g.menu_cell = Some((0, Some("x".into())));
+        g.filter_pick("regex");
+        assert_eq!(
+            g.take_filter_prompt(),
+            Some((0, FilterOp::Regex, "^P5".to_string()))
+        );
+    }
 
     fn grid_with(cols: &[i32]) -> Grid {
         let mut g = Grid::default();

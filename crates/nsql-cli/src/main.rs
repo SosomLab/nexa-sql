@@ -53,6 +53,8 @@ struct Opts {
     empty_null: Option<bool>,
     /// `export --fast`: 서버 형식화 추출(PG `COPY TO`) — 안 되면 일반 경로.
     fast: bool,
+    /// `nsql format --in-place`(T-255).
+    in_place: bool,
     timing: bool,
     /// `--log` — 실행 로그(타임스탬프 첫 컬럼 · 설정 `log.format`)를 stderr에.
     log: bool,
@@ -124,6 +126,7 @@ fn parse_opts() -> Opts {
         mode: None,
         empty_null: None,
         fast: false,
+        in_place: false,
         timing: false,
         log: false,
         password: None,
@@ -245,6 +248,7 @@ fn parse_opts() -> Opts {
             }
             "--timing" => o.timing = true,
             "--fast" => o.fast = true,
+            "--in-place" => o.in_place = true,
             "--log" => o.log = true,
             _ => o.positional.push(a),
         }
@@ -353,7 +357,7 @@ fn err_head(c: &nsql_core::Classified) -> String {
 fn key_mode_setting() -> KeyMode {
     settings_cached()
         .ok()
-        .and_then(|s| s.get("sql.key_mode").and_then(KeyMode::parse))
+        .and_then(|s| s.get("grid.key_mode").and_then(KeyMode::parse))
         .unwrap_or(KeyMode::Pk)
 }
 
@@ -1713,6 +1717,48 @@ fn cmd_explain(o: &Opts) -> i32 {
     }
 }
 
+/// `nsql format [<file|->] [-o <file>] [--in-place]` — 내장 Basic 포맷터(설정 `format.*` · 앱과 같은 키)로 포맷(T-255 · 09-29).
+fn cmd_format(o: &Opts) -> i32 {
+    let path = o.positional.first().map_or("-", String::as_str);
+    let src = read_source(path);
+    let s = match settings_cached() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let pairs: Vec<(String, String)> = nsql_format::OPTION_KEYS
+        .iter()
+        .map(|k| {
+            let key = format!("format.{k}");
+            let v = s.get(&key).unwrap_or("").to_string();
+            (key, v)
+        })
+        .collect();
+    let opts =
+        nsql_format::Options::from_pairs(pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    let out = nsql_format::format_basic(&src, &opts);
+    let target = if o.in_place && path != "-" {
+        Some(path.to_string())
+    } else {
+        o.out.clone()
+    };
+    match target {
+        Some(p) => {
+            if let Err(e) = std::fs::write(&p, out.as_bytes()) {
+                eprintln!("{p}: {e}");
+                return 1;
+            }
+            0
+        }
+        None => {
+            print!("{out}");
+            0
+        }
+    }
+}
+
 fn cmd_export(o: &Opts) -> i32 {
     let Some(target) = &o.target else {
         eprintln!("-c <target>가 필요합니다");
@@ -1902,6 +1948,7 @@ fn main() {
         "export" => cmd_export(&o),
         "import" => cmd_import(&o),
         "explain" => cmd_explain(&o),
+        "format" | "fmt" => cmd_format(&o),
         "conn" => conn::cmd_conn(&o),
         "bookmark" | "bm" => bookmark::cmd_bookmark(&o),
         "cat" | "catalog" | "obj" => cat::cmd_cat(&o),

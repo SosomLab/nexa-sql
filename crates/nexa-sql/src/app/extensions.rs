@@ -80,11 +80,10 @@ impl App {
                 self.editors.set_bracket_opts(b);
             }
         }
-        let km = &self.keymap;
-        let extras = self
-            .extensions
-            .menu_extras(&disabled, &|id| km.display_of(id));
-        self.editors.set_menu_extras(extras);
+        self.refresh_menu_extras();
+        // 설정 창 `format.default` 콤보 = 지금 쓸 수 있는 포맷터(사용자 09-29).
+        let choices = self.format_default_choices();
+        self.prefs_win.set_dyn_choices("format.default", choices);
         // 설정 창: 끈/미설치 확장의 분류는 숨긴다(사용자 09-17 "설치되면 보이고 제거하면 사라진다").
         let hidden: Vec<Msg> = nsql_settings::EXTENSION_CATEGORIES
             .iter()

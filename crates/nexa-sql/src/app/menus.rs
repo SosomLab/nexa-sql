@@ -307,13 +307,17 @@ impl App {
     /// 설정 `sql.key_mode`.
     pub(crate) fn key_mode(&self) -> nsql_io::KeyMode {
         self.settings
-            .get("sql.key_mode")
+            .get("grid.key_mode")
             .and_then(nsql_io::KeyMode::parse)
             .unwrap_or(nsql_io::KeyMode::Pk)
     }
 
     /// 단축키로 온 명령 — 팔레트 토글·로그 창·접속 창처럼 이벤트 루프 핸들이 필요한 것만 여기서, 나머지는 [`Self::menu_action`].
     pub(crate) fn key_command(&mut self, id: &str, el: &ActiveEventLoop) {
+        // ★ 팔레트(프롬프트 포함)가 열려 있으면 편집 단축키는 그 입력란의 것(사용자 09-29 — Ctrl+A가 그리드 전체 선택으로 갔다).
+        if self.palette.is_open() && self.palette_edit_command(id) {
+            return;
+        }
         match id {
             "view.palette" => {
                 if self.palette.is_open() {
@@ -1280,6 +1284,30 @@ impl App {
     }
 
     /// 복사·잘라내기·붙여넣기·전체 선택 — 포커스 텍스트박스 ↔ OS 클립보드([`clipboard`]). 실패는 상태줄에.
+    /// 팔레트 입력란의 편집 명령(키맵 `edit.*` → 입력란) · 다른 명령이면 false.
+    fn palette_edit_command(&mut self, id: &str) -> bool {
+        let mut inv = Invalidations::default();
+        let ev = match id {
+            "edit.select_all" => InputEvent::SelectAll,
+            "edit.undo" => InputEvent::Undo,
+            "edit.redo" => InputEvent::Redo,
+            "edit.copy" | "edit.cut" | "edit.paste" => {
+                let act = match id {
+                    "edit.copy" => EditCtxAction::Copy,
+                    "edit.cut" => EditCtxAction::Cut,
+                    _ => EditCtxAction::Paste,
+                };
+                self.palette.clip(act, &mut inv);
+                self.redraw();
+                return true;
+            }
+            _ => return false,
+        };
+        let _ = self.palette.on_event(&ev, &mut inv);
+        self.redraw();
+        true
+    }
+
     pub(crate) fn clip_action(&mut self, act: EditCtxAction) {
         let mut inv = Invalidations::default();
         let mut failed = false;

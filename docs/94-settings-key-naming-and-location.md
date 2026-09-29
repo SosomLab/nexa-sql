@@ -93,7 +93,7 @@
 - 적용: `ui.ime_hint`→`input.ime_hint` · `ui.ime_hint_watch`→`input.ime_hint_watch`(둘 다 Input 카테고리 · 종속) · `editor.tab_line_scratch`→`editor.tab_line_unsaved`(뜻이 "미저장 탭"으로) · `license.gates_dev`→`license.gates`(D-145).
 - 설정 창: `display_order` 정렬 · 키 복사 버튼 · `ADVANCED`/`is_advanced` · 큰 파일 카테고리(`CatLargeFiles`).
 
-### 6-2. 2차 후보(D-146 결정 뒤 · T-250)
+### 6-2. 2차 후보(D-146 결정 뒤 · T-250) — ✅ 09-29 적용(아래 표 그대로 · `RENAMED` 11쌍 · 새 분류 Server status / Transaction safety / Script & variables / Run cards / Undo · 옛 키는 읽기 마이그레이션·CLI `config`에서 그대로 통함)
 | 옛 | 새 | 이유 |
 |---|---|---|
 | `conn.*`(7) | `login.*` | 로그인 창 UI임을 이름이 말하게 · `connect.`와 표기 충돌 해소 |

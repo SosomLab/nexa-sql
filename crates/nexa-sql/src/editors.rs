@@ -805,6 +805,22 @@ impl Editors {
         self.cur_mut().set_indent(tab_size, spaces);
     }
 
+    /// 탭 i의 들여쓰기 재정의(None = 설정 기본값) — 프로젝트 저장(사용자 09-29).
+    pub(crate) fn indent_of(&self, i: usize) -> Option<(u8, bool)> {
+        self.indents.get(i).copied().flatten()
+    }
+
+    /// 탭 i의 들여쓰기 재정의를 넣고 상자에도 적용(프로젝트 복원) — None = 기본값으로.
+    pub(crate) fn set_indent_of(&mut self, i: usize, v: Option<(u8, bool)>) {
+        if let Some(slot) = self.indents.get_mut(i) {
+            *slot = v;
+        }
+        let (ts, sp) = v.unwrap_or(self.indent);
+        if let Some(b) = self.bufs.get_mut(i) {
+            b.set_indent(ts, sp);
+        }
+    }
+
     /// 열(블록) 선택 모드 — 수식키 상태를 전 탭에 전달(활성 탭이 바뀌어도 일관).
     pub(crate) fn set_column_mode(&mut self, on: bool) {
         for b in &mut self.bufs {

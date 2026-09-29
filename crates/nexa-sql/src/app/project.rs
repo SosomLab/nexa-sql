@@ -4,6 +4,16 @@
 
 use crate::*;
 
+/// 글자열 FNV-1a(변경 세대 섞기용 · T-253).
+fn fnv_str(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
 impl App {
     /// 확인 팝업 — 개수·합계 크기 · 상한(`file.open_max`)까지의 목록 · 초과분 안내 · 열기/취소.
     pub(crate) fn multi_open_ask(&mut self, paths: Vec<PathBuf>, enc: String) {
@@ -534,6 +544,7 @@ impl App {
                 col,
                 preview: self.editors.preview_id() == Some(self.editors.tab_id(i)),
                 id: self.editors.tab_id(i),
+                indent: self.editors.indent_of(i),
                 ..project::TabState::default()
             };
             if buf.line_count() <= 100_000 {
@@ -663,6 +674,9 @@ impl App {
                                 }
                             }
                             self.restore_caret(i, t, &opts);
+                            if t.indent.is_some() {
+                                self.editors.set_indent_of(i, t.indent);
+                            }
                             // 사용자가 바꾼 이름(파일 이름과 다르면) = 복원(사용자 09-28 · 프로젝트 모드 보존).
                             let fname = p.file_name().map(|n| n.to_string_lossy().into_owned());
                             if !t.title.is_empty() && fname.as_deref() != Some(t.title.as_str()) {
@@ -683,6 +697,9 @@ impl App {
                         }
                     }
                     self.restore_caret(i, t, &opts);
+                    if t.indent.is_some() {
+                        self.editors.set_indent_of(i, t.indent);
+                    }
                     let new_id = self.editors.tab_id(i);
                     // 이름 없는 탭의 북마크(`Scratch { tab }`)는 옛 id → 새 id로 재매핑(사용자 09-23 검토 · 본문이 그대로라 줄이 맞는다).
                     if t.id != 0 {
@@ -927,8 +944,38 @@ impl App {
         for i in 0..self.editors.tab_count() {
             mix(self.editors.tab_id(i));
             mix(self.editors.tab_box(i).map_or(0, |tb| tb.rev()));
+            // ★ T-253(09-29): 캐럿 위치 · 탭별 들여쓰기 재정의도 감시(문서에 담기는 것은 전부 ①로).
+            mix(self.editors.tab_box(i).map_or(0, |tb| tb.caret() as u64));
+            if let Some((ts, sp)) = self.editors.indent_of(i) {
+                mix(u64::from(ts) | (u64::from(sp) << 8) | (1 << 16));
+            }
+        }
+        // 북마크 지문 · 탐색기 펼침 · 보이는 패널 · 검색어 · 북마크 그룹 접힘(T-253 · 70 §7-1).
+        mix(self.bookmarks.fingerprint());
+        for d in self.project_panel.expanded_dirs() {
+            mix(fnv_str(&d.to_string_lossy()));
+        }
+        mix(u64::from(self.project_panel_code()));
+        mix(fnv_str(&self.search.query_text()));
+        for g in self.bm_panel.collapsed_groups() {
+            mix(u64::from(g) | (1 << 32));
         }
         h
+    }
+
+    /// 보이는 좌측 패널 부호(0 없음 · 1 프로젝트 · 2 북마크 · 3 검색 · 4 확장) — 문서의 `panel`과 같은 판정.
+    fn project_panel_code(&self) -> u8 {
+        if self.project_panel.is_visible() {
+            1
+        } else if self.bm_panel.is_visible() {
+            2
+        } else if self.search.is_visible() {
+            3
+        } else if self.ext_panel.is_visible() {
+            4
+        } else {
+            0
+        }
     }
 
     /// 저장 직후 = 지금 세대를 저장 세대로.

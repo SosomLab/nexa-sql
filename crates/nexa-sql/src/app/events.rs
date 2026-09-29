@@ -299,125 +299,7 @@ impl App {
                     key,
                     rep,
                     refetched,
-                } => {
-                    self.sess.aux_done();
-                    self.sess.edit_apply = None;
-                    let mode = self
-                        .settings
-                        .get("grid.edit_refresh")
-                        .unwrap_or("rows")
-                        .to_string();
-                    // ★ 행 단위 재조회(87 §12-4 · T-230): 성공 + 결과가 행마다 1행이면 제자리 교체 → 전체 재조회 없음.
-                    let mut patched = false;
-                    if rep.error.is_none() && rep.done > 0 {
-                        if let Some(g) = self.grid_for(key) {
-                            patched = match mode.as_str() {
-                                "rows" => g.apply_done_rows(refetched),
-                                "local" => g.apply_done_local(),
-                                _ => false,
-                            };
-                        }
-                    }
-                    let requery = mode != "local" && !patched;
-                    // ★ 87 §14 데이터 보호 불변식: 실패 원인을 단계·문장·키·행 수까지 상세히 + 되돌림 상태(자동 롤백 / 세이브포인트 / ROLLBACK 필요).
-                    let msg = match &rep.error {
-                        None if rep.tx_left_open => {
-                            tf(Msg::StGeAppliedTx, &[&rep.done.to_string()])
-                        }
-                        None => tf(Msg::StGeApplied, &[&rep.done.to_string()]),
-                        Some(e) => {
-                            let n = (e.index + 1).to_string();
-                            let mut s = match e.phase {
-                                nsql_run::ApplyPhase::PreCheck => {
-                                    tf(Msg::StGePreCheck, &[&n, &e.label, &e.message])
-                                }
-                                _ => tf(Msg::StGeExecFail, &[&n, &e.label, &e.message]),
-                            };
-                            s.push(' ');
-                            if rep.rollback_needed {
-                                s.push_str(t(Msg::StGeRollbackNeeded));
-                            } else if rep.rolled_back && rep.tx_left_open {
-                                s.push_str(t(Msg::StGeSavepointBack));
-                            } else if rep.rolled_back {
-                                s.push_str(t(Msg::StGeAutoRolledBack));
-                            } else if e.phase == nsql_run::ApplyPhase::PreCheck {
-                                // 사전 검사 단계 = 아직 아무것도 쓰지 않았다(문구에 포함).
-                            }
-                            s
-                        }
-                    };
-                    self.log_win.push(LogEntry::new(
-                        if rep.error.is_some() {
-                            LogKind::Error
-                        } else {
-                            LogKind::Info
-                        },
-                        msg.clone(),
-                    ));
-                    if rep.error.is_some() {
-                        self.toasts
-                            .push(toast::ToastKind::Error, t(Msg::MnGeApply), msg.clone());
-                    }
-                    self.sess.status = msg;
-                    // ★ 트랜잭션 로그(44 · 사용자 09-26 "적용해도 로그 창에 안 보임 · 3번이 1줄"): 실행한 문장마다 한 줄 —
-                    //   사전 검사 = Util(전체 보기에서만) · 실행문 = User · 수동 모드에서 실제로 남은 것만 열린 트랜잭션에 붙인다(pending 수).
-                    {
-                        let attach =
-                            rep.tx_left_open && (rep.error.is_none() || rep.rollback_needed);
-                        let editor = self.sess.run_editor;
-                        let log = self.txlog.select_session(self.sess.id);
-                        log.begin_batch();
-                        for (i, it) in rep.log.iter().enumerate() {
-                            let stamp = nsql_log::now_local().stamp();
-                            let purpose = if it.guard {
-                                TxPurpose::Util
-                            } else {
-                                TxPurpose::User
-                            };
-                            log.begin(stamp.clone(), editor, purpose, i, &it.sql);
-                            log.set_binds(i, it.binds.clone());
-                            match &it.error {
-                                Some(m) => log.error(i, None, m),
-                                None => {
-                                    log.done(i, it.rows, it.elapsed);
-                                    if attach && !it.guard {
-                                        log.attach_tx(i, stamp, true);
-                                    }
-                                }
-                            }
-                        }
-                        self.txlog_win.redraw();
-                    }
-                    if patched {
-                        self.log_win.push(LogEntry::new(
-                            LogKind::Info,
-                            t(Msg::StGeRowsPatched).to_string(),
-                        ));
-                    } else if let Some(g) = self.grid_for(key) {
-                        g.apply_done(
-                            rep.done,
-                            rep.error.as_ref().map(|e| (e.index, e.message.clone())),
-                        );
-                    }
-                    if rep.tx_left_open {
-                        // 수동 모드: 커밋/롤백 표식(34 UX) — 트랜잭션 로그의 한 줄로.
-                        let stamp = nsql_log::now_local().stamp();
-                        self.sess.tx_pending.push(TxItem {
-                            editor: self.sess.run_editor,
-                            at: Instant::now(),
-                            when: stamp.get(11..16).unwrap_or("").to_string(),
-                            summary: t(Msg::MnGeApply).to_string(),
-                            class: nsql_core::TxClass::Update,
-                        });
-                        self.sess.tx_dirty = true;
-                        self.sess.tx_stale_logged = false;
-                        self.sync_tx_ui();
-                    }
-                    if rep.error.is_none() && rep.done > 0 && requery && key == self.grid_tab {
-                        self.refresh_result();
-                    }
-                    self.redraw();
-                }
+                } => self.on_conn_applied(key, rep, refetched),
                 ConnOutcome::Requery { key, offset, limit } => {
                     // 커서가 없어 서버에 새 SQL(OFFSET 재질의/재실행)이 간다 — 직접 실행처럼 카드(이미 켜져 있으면 로그만).
                     let line = tf(Msg::StRequery, &[&offset.to_string(), &limit.to_string()]);
@@ -459,127 +341,7 @@ impl App {
                     stop,
                     replace,
                     via_cursor,
-                } => {
-                    self.sess.aux_done();
-                    // 실행 Facade(docs/43 §11): 이 페치의 카드가 켜져 있으면 결과로 끝낸다(실패 = Error).
-                    let card = self.sess.fetch_card.is_some_and(|(k, _)| k == key);
-                    if card {
-                        if let Err(e) = &result {
-                            self.run_toast
-                                .finish(self.sess.run_card, runtoast::Phase::Error(e.clone()));
-                            self.sess.fetch_card = None;
-                        }
-                    }
-                    match result {
-                        Ok((rs, more, elapsed)) => {
-                            let n = rs.rows.len().to_string();
-                            let secs = format!("{:.3}", elapsed.as_secs_f64());
-                            if replace {
-                                // 엄격 일관성(docs/43 §9): 처음부터 다시 받아 교체했다 — 로그 1줄.
-                                self.log_win.push(LogEntry::new(
-                                    LogKind::Info,
-                                    tf(Msg::StRefetchReplaced, &[&n]),
-                                ));
-                            }
-                            let dial = self.sess.dialect; // 이 페치를 돌려준 세션의 방언(결과의 속성 · 09-26)
-                            let total = match self.grid_for(key) {
-                                Some(g) => {
-                                    if replace {
-                                        g.replace_rows(rs, more);
-                                    } else if all {
-                                        // 전체 조회 = 나머지 이어 붙이기(위치·정렬·텍스트 스크롤 유지 · 09-17).
-                                        g.append_all(rs, more);
-                                    } else if offset == 0 {
-                                        g.set_result(rs);
-                                        g.set_dialect(dial);
-                                        g.set_more(more);
-                                    } else {
-                                        g.append_page(rs, more);
-                                    }
-                                    g.row_count()
-                                }
-                                // (전체 조회가 예산에서 잘렸으면 아래에서 안내)
-                                None => 0,
-                            };
-                            self.sess.status =
-                                if !sessions::fetch_card_policy(all, false, via_cursor) {
-                                    tf(Msg::StFetchedCursor, &[&n, &secs, &total.to_string()])
-                                } else {
-                                    tf(Msg::StFetched, &[&n, &secs, &total.to_string()])
-                                };
-                            if !sessions::fetch_card_policy(all, false, via_cursor) {
-                                // 커서 이어 읽기 = 카드 없이 로그 한 줄(서버에 새 SQL 없음).
-                                self.log_win
-                                    .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
-                            }
-                            if all || card {
-                                self.sess.fetch_card = None;
-                                let phase = match stop {
-                                    Some(worker::FetchStop::Cancelled) => {
-                                        runtoast::Phase::Stopped { rows: total as u64 }
-                                    }
-                                    _ => runtoast::Phase::Done {
-                                        rows: Some(total as u64),
-                                        secs: elapsed.as_secs_f64(),
-                                        stages: String::new(),
-                                    },
-                                };
-                                self.run_toast.finish(self.sess.run_card, phase);
-                                dlog!(self, LogLayer::Fetch, LogLevel::Timing, {
-                                    let b = self.grid_for(key).map_or(0, |g| g.approx_bytes());
-                                    LogEntry::new(
-                                        LogKind::Fetch,
-                                        tf(
-                                            Msg::LogDetFetchAll,
-                                            &[&nsql_core::fmt_bytes(b), &speed_of(b, elapsed)],
-                                        ),
-                                    )
-                                    .rows(total as u64)
-                                    .elapsed(elapsed)
-                                });
-                            }
-                            match stop {
-                                Some(worker::FetchStop::CursorGone) => {
-                                    // 커서 결과의 커서가 닫혔다(T-202) — 그리드는 빈 페이지로 `more=false`가 됐다 · 안내 한 줄.
-                                    self.sess.status = t(Msg::StCursorGone).into();
-                                    self.log_win.push(LogEntry::new(
-                                        LogKind::Info,
-                                        self.sess.status.clone(),
-                                    ));
-                                }
-                                Some(worker::FetchStop::Budget) => {
-                                    // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
-                                    self.sess.status = tf(
-                                        Msg::StBudgetExceeded,
-                                        &[&self.settings.int("grid.memory_budget_mb").to_string()],
-                                    );
-                                    self.log_win.push(LogEntry::new(
-                                        LogKind::Info,
-                                        self.sess.status.clone(),
-                                    ));
-                                }
-                                Some(worker::FetchStop::Cancelled) => {
-                                    self.sess.status =
-                                        tf(Msg::StFetchCancelled, &[&total.to_string()]);
-                                    self.log_win.push(LogEntry::new(
-                                        LogKind::Info,
-                                        self.sess.status.clone(),
-                                    ));
-                                }
-                                None => {}
-                            }
-                        }
-                        Err(e) => {
-                            if let Some(g) = self.grid_for(key) {
-                                g.fetch_failed();
-                            }
-                            self.sess.status = tf(Msg::StFetchFailed, &[&e]);
-                            self.log_win
-                                .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
-                        }
-                    }
-                    self.redraw();
-                }
+                } => self.on_conn_page(key, offset, all, result, stop, replace, via_cursor),
                 ConnOutcome::Count { key, result } => {
                     self.sess.aux_done();
                     if let Some((k, t0)) = self.sess.fetch_card {
@@ -643,6 +405,256 @@ impl App {
             }
         }
         changed
+    }
+
+    /// `Cmd::Apply` 결과(그리드 편집 적용 · 87 §12·§14): 행 단위 재조회/제자리 교체 · 상태·로그·토스트 · 트랜잭션 로그 한 줄씩 ·
+    /// 수동 모드 표식 · 필요하면 전체 재조회 — `drain_conn`에서 분리(T-248 · 09-29 · 행동 보존).
+    fn on_conn_applied(
+        &mut self,
+        key: u64,
+        rep: nsql_run::ApplyReport,
+        refetched: Vec<Result<nsql_core::ResultSet, String>>,
+    ) {
+        self.sess.aux_done();
+        self.sess.edit_apply = None;
+        let mode = self
+            .settings
+            .get("grid.edit_refresh")
+            .unwrap_or("rows")
+            .to_string();
+        // ★ 행 단위 재조회(87 §12-4 · T-230): 성공 + 결과가 행마다 1행이면 제자리 교체 → 전체 재조회 없음.
+        let mut patched = false;
+        if rep.error.is_none() && rep.done > 0 {
+            if let Some(g) = self.grid_for(key) {
+                patched = match mode.as_str() {
+                    "rows" => g.apply_done_rows(refetched),
+                    "local" => g.apply_done_local(),
+                    _ => false,
+                };
+            }
+        }
+        let requery = mode != "local" && !patched;
+        // ★ 87 §14 데이터 보호 불변식: 실패 원인을 단계·문장·키·행 수까지 상세히 + 되돌림 상태(자동 롤백 / 세이브포인트 / ROLLBACK 필요).
+        let msg = match &rep.error {
+            None if rep.tx_left_open => tf(Msg::StGeAppliedTx, &[&rep.done.to_string()]),
+            None => tf(Msg::StGeApplied, &[&rep.done.to_string()]),
+            Some(e) => {
+                let n = (e.index + 1).to_string();
+                let mut s = match e.phase {
+                    nsql_run::ApplyPhase::PreCheck => {
+                        tf(Msg::StGePreCheck, &[&n, &e.label, &e.message])
+                    }
+                    _ => tf(Msg::StGeExecFail, &[&n, &e.label, &e.message]),
+                };
+                s.push(' ');
+                if rep.rollback_needed {
+                    s.push_str(t(Msg::StGeRollbackNeeded));
+                } else if rep.rolled_back && rep.tx_left_open {
+                    s.push_str(t(Msg::StGeSavepointBack));
+                } else if rep.rolled_back {
+                    s.push_str(t(Msg::StGeAutoRolledBack));
+                } else if e.phase == nsql_run::ApplyPhase::PreCheck {
+                    // 사전 검사 단계 = 아직 아무것도 쓰지 않았다(문구에 포함).
+                }
+                s
+            }
+        };
+        self.log_win.push(LogEntry::new(
+            if rep.error.is_some() {
+                LogKind::Error
+            } else {
+                LogKind::Info
+            },
+            msg.clone(),
+        ));
+        if rep.error.is_some() {
+            self.toasts
+                .push(toast::ToastKind::Error, t(Msg::MnGeApply), msg.clone());
+        }
+        self.sess.status = msg;
+        // ★ 트랜잭션 로그(44 · 사용자 09-26 "적용해도 로그 창에 안 보임 · 3번이 1줄"): 실행한 문장마다 한 줄 —
+        //   사전 검사 = Util(전체 보기에서만) · 실행문 = User · 수동 모드에서 실제로 남은 것만 열린 트랜잭션에 붙인다(pending 수).
+        {
+            let attach = rep.tx_left_open && (rep.error.is_none() || rep.rollback_needed);
+            let editor = self.sess.run_editor;
+            let log = self.txlog.select_session(self.sess.id);
+            log.begin_batch();
+            for (i, it) in rep.log.iter().enumerate() {
+                let stamp = nsql_log::now_local().stamp();
+                let purpose = if it.guard {
+                    TxPurpose::Util
+                } else {
+                    TxPurpose::User
+                };
+                log.begin(stamp.clone(), editor, purpose, i, &it.sql);
+                log.set_binds(i, it.binds.clone());
+                match &it.error {
+                    Some(m) => log.error(i, None, m),
+                    None => {
+                        log.done(i, it.rows, it.elapsed);
+                        if attach && !it.guard {
+                            log.attach_tx(i, stamp, true);
+                        }
+                    }
+                }
+            }
+            self.txlog_win.redraw();
+        }
+        if patched {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                t(Msg::StGeRowsPatched).to_string(),
+            ));
+        } else if let Some(g) = self.grid_for(key) {
+            g.apply_done(
+                rep.done,
+                rep.error.as_ref().map(|e| (e.index, e.message.clone())),
+            );
+        }
+        if rep.tx_left_open {
+            // 수동 모드: 커밋/롤백 표식(34 UX) — 트랜잭션 로그의 한 줄로.
+            let stamp = nsql_log::now_local().stamp();
+            self.sess.tx_pending.push(TxItem {
+                editor: self.sess.run_editor,
+                at: Instant::now(),
+                when: stamp.get(11..16).unwrap_or("").to_string(),
+                summary: t(Msg::MnGeApply).to_string(),
+                class: nsql_core::TxClass::Update,
+            });
+            self.sess.tx_dirty = true;
+            self.sess.tx_stale_logged = false;
+            self.sync_tx_ui();
+        }
+        if rep.error.is_none() && rep.done > 0 && requery && key == self.grid_tab {
+            self.refresh_result();
+        }
+        self.redraw();
+    }
+
+    /// `Cmd::FetchPage` 결과(docs/43): `offset`부터 이어 붙임(0 = 교체) · 전체 조회의 멈춤 사유 · 커서/OFFSET 구분 —
+    /// `drain_conn`에서 분리(T-248 · 09-29 · 행동 보존).
+    #[allow(clippy::too_many_arguments)] // `ConnOutcome::Page`의 페이로드 그대로(묶음 구조체는 워커 ABI 변경 = T-246 몫).
+    fn on_conn_page(
+        &mut self,
+        key: u64,
+        offset: usize,
+        all: bool,
+        result: Result<(nsql_core::ResultSet, bool, Duration), String>,
+        stop: Option<crate::worker::FetchStop>,
+        replace: bool,
+        via_cursor: bool,
+    ) {
+        self.sess.aux_done();
+        // 실행 Facade(docs/43 §11): 이 페치의 카드가 켜져 있으면 결과로 끝낸다(실패 = Error).
+        let card = self.sess.fetch_card.is_some_and(|(k, _)| k == key);
+        if card {
+            if let Err(e) = &result {
+                self.run_toast
+                    .finish(self.sess.run_card, runtoast::Phase::Error(e.clone()));
+                self.sess.fetch_card = None;
+            }
+        }
+        match result {
+            Ok((rs, more, elapsed)) => {
+                let n = rs.rows.len().to_string();
+                let secs = format!("{:.3}", elapsed.as_secs_f64());
+                if replace {
+                    // 엄격 일관성(docs/43 §9): 처음부터 다시 받아 교체했다 — 로그 1줄.
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        tf(Msg::StRefetchReplaced, &[&n]),
+                    ));
+                }
+                let dial = self.sess.dialect; // 이 페치를 돌려준 세션의 방언(결과의 속성 · 09-26)
+                let total = match self.grid_for(key) {
+                    Some(g) => {
+                        if replace {
+                            g.replace_rows(rs, more);
+                        } else if all {
+                            // 전체 조회 = 나머지 이어 붙이기(위치·정렬·텍스트 스크롤 유지 · 09-17).
+                            g.append_all(rs, more);
+                        } else if offset == 0 {
+                            g.set_result(rs);
+                            g.set_dialect(dial);
+                            g.set_more(more);
+                        } else {
+                            g.append_page(rs, more);
+                        }
+                        g.row_count()
+                    }
+                    // (전체 조회가 예산에서 잘렸으면 아래에서 안내)
+                    None => 0,
+                };
+                self.sess.status = if !sessions::fetch_card_policy(all, false, via_cursor) {
+                    tf(Msg::StFetchedCursor, &[&n, &secs, &total.to_string()])
+                } else {
+                    tf(Msg::StFetched, &[&n, &secs, &total.to_string()])
+                };
+                if !sessions::fetch_card_policy(all, false, via_cursor) {
+                    // 커서 이어 읽기 = 카드 없이 로그 한 줄(서버에 새 SQL 없음).
+                    self.log_win
+                        .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                }
+                if all || card {
+                    self.sess.fetch_card = None;
+                    let phase = match stop {
+                        Some(worker::FetchStop::Cancelled) => {
+                            runtoast::Phase::Stopped { rows: total as u64 }
+                        }
+                        _ => runtoast::Phase::Done {
+                            rows: Some(total as u64),
+                            secs: elapsed.as_secs_f64(),
+                            stages: String::new(),
+                        },
+                    };
+                    self.run_toast.finish(self.sess.run_card, phase);
+                    dlog!(self, LogLayer::Fetch, LogLevel::Timing, {
+                        let b = self.grid_for(key).map_or(0, |g| g.approx_bytes());
+                        LogEntry::new(
+                            LogKind::Fetch,
+                            tf(
+                                Msg::LogDetFetchAll,
+                                &[&nsql_core::fmt_bytes(b), &speed_of(b, elapsed)],
+                            ),
+                        )
+                        .rows(total as u64)
+                        .elapsed(elapsed)
+                    });
+                }
+                match stop {
+                    Some(worker::FetchStop::CursorGone) => {
+                        // 커서 결과의 커서가 닫혔다(T-202) — 그리드는 빈 페이지로 `more=false`가 됐다 · 안내 한 줄.
+                        self.sess.status = t(Msg::StCursorGone).into();
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                    }
+                    Some(worker::FetchStop::Budget) => {
+                        // 전체 조회가 메모리 예산(D-72)에서 멈췄다.
+                        self.sess.status = tf(
+                            Msg::StBudgetExceeded,
+                            &[&self.settings.int("grid.memory_budget_mb").to_string()],
+                        );
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                    }
+                    Some(worker::FetchStop::Cancelled) => {
+                        self.sess.status = tf(Msg::StFetchCancelled, &[&total.to_string()]);
+                        self.log_win
+                            .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
+                    }
+                    None => {}
+                }
+            }
+            Err(e) => {
+                if let Some(g) = self.grid_for(key) {
+                    g.fetch_failed();
+                }
+                self.sess.status = tf(Msg::StFetchFailed, &[&e]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+            }
+        }
+        self.redraw();
     }
 
     /// 실행 계열 진입점의 공통 문지기 — 막혔으면 상태줄에 알리고 false.

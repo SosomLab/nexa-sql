@@ -836,6 +836,30 @@ fn migrate_target(
     (prev_scratch || has_scratch).then(|| std::path::PathBuf::from(path))
 }
 
+impl Bookmarks {
+    /// 저장소 지문(값싸게 · T-253 자동 저장 감시): 항목 수 · 다음 id · 항목마다 (id, 줄, 그룹, 니모닉, 라벨/메모 길이, 상태) · 그룹 수.
+    pub(crate) fn fingerprint(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut mix = |v: u64| {
+            h ^= v;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        };
+        mix(self.store.items.len() as u64);
+        mix(self.store.next_id);
+        mix(self.store.groups.len() as u64);
+        for b in &self.store.items {
+            mix(b.id);
+            mix(u64::from(b.anchor.line));
+            mix(u64::from(b.group));
+            mix(b.mnemonic.map_or(0, |m| u64::from(m) + 1));
+            mix(b.label.as_ref().map_or(0, |s| s.len() as u64 + 1));
+            mix(b.note.as_ref().map_or(0, |s| s.len() as u64 + 1));
+            mix(u64::from(b.shared) | (u64::from(b.shifted) << 1));
+        }
+        h
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

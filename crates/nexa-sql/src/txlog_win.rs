@@ -136,37 +136,25 @@ impl TxLogWin {
             self.redraw();
             return;
         }
-        // 창 규칙(사용자 09-17): 같은 모니터면 기록 위치·크기 · 아니면 기본 크기로 메인 창 근처.
-        let same = self.memo.on_same_monitor(owner);
-        let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((960.0, 420.0));
-        let mut attrs = Window::default_attributes()
-            .with_title(self.title())
-            .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
-        if let Some(((x, y), _)) = same {
-            attrs = attrs.with_position(crate::wingeom::logical(x, y));
-        } else if let Some((x, y, w)) = near {
-            attrs =
-                attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y + 360));
-        }
-        let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        let Ok(win) = el.create_window(attrs) else {
+        // 창 열기 꼬리 = 공통 호스트(T-247 · winhost · 검색·값 입력란이 있어 IME 허용 · 사용자 09-19).
+        let Some(o) = crate::winhost::open_window(
+            el,
+            crate::winhost::OpenSpec {
+                title: self.title(),
+                theme,
+                near,
+                dy: 360,
+                owner,
+                memo: Some(&self.memo),
+                default_size: (960.0, 420.0),
+                ime: true,
+            },
+        ) else {
             return;
         };
-        // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
-        if let Some(((x, y), _)) = same {
-            crate::wingeom::place_outer(&win, Some((x, y)));
-        }
-        // 화면 밖으로 나가지 않게(메인 창 오른쪽 기본 위치 · 해상도가 바뀐 뒤의 기억 위치).
-        crate::wingeom::keep_on_screen(&win, owner);
-        let win = Rc::new(win);
-        self.scale = win.scale_factor() as f32;
-        self.surface = crate::present::Presenter::new(win.clone()).ok();
-        // ★ IME 허용 — 이 창에도 한글 입력란(검색·값)이 있다. winit 창은 기본으로 IME가 붙지 않아(Windows) 한글 조합이
-        //   안 됐다(사용자 09-19 "설정 검색에 한글 입력이 안 된다" · 접속 창·파일 창은 이미 켜 둔 것과 같은 규칙).
-        // 앱 조합 모드(T-139)면 IME를 붙이지 않는다 — raw 자모를 받아 상자가 직접 조합한다.
-        win.set_ime_allowed(crate::input::system_ime());
-        self.window = Some(win);
+        self.scale = o.scale;
+        self.surface = o.surface;
+        self.window = Some(o.window);
         self.search.set_focused(true);
         self.redraw();
     }
@@ -180,11 +168,7 @@ impl TxLogWin {
     }
 
     pub(crate) fn close(&mut self) {
-        if let Some(w) = &self.window {
-            if let Some(p) = crate::wingeom::outer_pos(w) {
-                self.last = Some((p, crate::wingeom::logical_size(w)));
-            }
-        }
+        self.last = self.window.as_deref().and_then(crate::winhost::last_geom);
         self.surface = None;
         self.window = None;
         self.search.set_focused(false);

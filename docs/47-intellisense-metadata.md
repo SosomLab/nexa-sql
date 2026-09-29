@@ -245,7 +245,7 @@ DBeaver 환경설정의 두 페이지를 그대로 카테고리로 쓴다: **편
 | | `meta.max_mb` | Int 16~1024 · **64** | — | 메모리 상한(초과 = 컬럼 LRU 내림) |
 | 부하 | `meta.chunk_rows` | Int 200~10000 · **2000** · HIDDEN | — | 벌크 청크 |
 | | `meta.chunk_ms` | Int 50~1000 · **200** · HIDDEN | — | 청크 시간 상한 |
-| | `meta.timeout` | Int 5~120 · **15** | (탐색기 `explorer.timeout` 통합 —⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6)) | |
+| | `meta.timeout` | Int 5~120 · **15** | (탐색기 `explorer.timeout` 통합 —✅ 09-29 T-249 구현·재등록) | |
 | | `meta.pause_while_running` | Bool · **on** · HIDDEN | — | 실행 중 S4 정지 |
 
 - 종속 잠금(설정 창 D-52 규칙): `intel.enabled=off` → `intel.*` 전부 잠김 · `intel.auto_activation=off` → `delay_ms/activate_on_typing/trigger_chars/min_chars` 잠김 · `intel.hover=off` → `hover_*` 잠김 · `meta.enabled=off` → `meta.*` 잠김 · `meta.refresh_secs=0` → `refresh_idle_secs/refresh_scope` 잠김 · `meta.disk_cache=off` → `disk_cache_max_mb` 잠김.

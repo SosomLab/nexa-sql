@@ -21,6 +21,7 @@
 use std::collections::HashSet;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,9 @@ pub(crate) const MAX_INFLIGHT: usize = 16;
 
 /// 프로브 허브 — 요청마다 **짧은 스레드 하나**(병렬) · 결과는 `wake` 뒤 [`ProbeHub::try_recv`]로 받는다.
 /// DB 워커와 채널·스레드를 공유하지 않는다(실행 중 쿼리·세션에 영향 0).
+/// 이름 풀이 캐시 TTL 기본(`probe.dns_cache_secs` 기본 300 · T-249).
+pub(crate) const DEFAULT_DNS_TTL: Duration = Duration::from_secs(300);
+
 pub(crate) struct ProbeHub {
     /// 프로브 스레드 → 수집 스레드(결과 전달 + UI 깨우기 · `wake`는 Sync가 아니어도 된다).
     tx_res: mpsc::Sender<ProbeResult>,
@@ -104,12 +108,19 @@ pub(crate) struct ProbeHub {
     max_inflight: usize,
     /// TCP 실패 뒤 ICMP 확인(`probe.icmp` · 향상 모드 끔).
     icmp: bool,
+    /// 이름 풀이 캐시 TTL(`probe.dns_cache_secs` · 0 = 캐시 없음 · T-249).
+    dns_ttl: Duration,
 }
 
 impl ProbeHub {
     /// 동시 스레드 상한 갱신(설정 변경 · 실행 속도 향상 즉시 반영).
     pub(crate) fn set_max_inflight(&mut self, n: usize) {
         self.max_inflight = n.max(1);
+    }
+
+    /// 이름 풀이 캐시 TTL(정책 교체 때 · T-249).
+    pub(crate) fn set_dns_ttl(&mut self, ttl: Duration) {
+        self.dns_ttl = ttl;
     }
 
     /// ICMP 확인 켜기/끄기(정책 교체 때).
@@ -143,6 +154,7 @@ impl ProbeHub {
                 max_inflight
             },
             icmp: true,
+            dns_ttl: DEFAULT_DNS_TTL,
         }
     }
 
@@ -155,11 +167,14 @@ impl ProbeHub {
         let tx = self.tx_res.clone();
         let inflight = Arc::clone(&self.inflight);
         let icmp = self.icmp;
+        let dns_ttl = self.dns_ttl;
         let spawned = std::thread::Builder::new()
             .name(format!("nsql-probe:{}", req.name))
             .spawn(move || {
                 let outcome = match &req.target {
-                    Target::Tcp { host, port } => probe_once(host, *port, req.timeout, icmp),
+                    Target::Tcp { host, port } => {
+                        probe_once(host, *port, req.timeout, icmp, dns_ttl)
+                    }
                     Target::File(path) => probe_file(path),
                 };
                 inflight.fetch_sub(1, Ordering::Relaxed);
@@ -182,11 +197,14 @@ impl ProbeHub {
 
 /// 이름 풀이(첫 주소) + `connect_timeout`. 성공 = Up(바로 닫음) · **연결 거부** = 호스트 살아 있음(PortClosed) ·
 /// 타임아웃/불가 = ICMP 에코 1회(Windows `IcmpSendEcho` · 관리자 권한 불필요)로 호스트 생존을 한 번 더 본다 → 응답이면 PortClosed, 아니면 Down.
-pub(crate) fn probe_once(host: &str, port: u16, timeout: Duration, icmp: bool) -> Outcome {
-    let Ok(mut addrs) = (host, port).to_socket_addrs() else {
-        return Outcome::Down;
-    };
-    let Some(addr) = addrs.next() else {
+pub(crate) fn probe_once(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    icmp: bool,
+    dns_ttl: Duration,
+) -> Outcome {
+    let Some(addr) = resolve_cached(host, port, dns_ttl) else {
         return Outcome::Down;
     };
     match TcpStream::connect_timeout(&addr, timeout) {
@@ -203,6 +221,31 @@ pub(crate) fn probe_once(host: &str, port: u16, timeout: Duration, icmp: bool) -
 }
 
 /// ICMP 에코(IPv4) — Windows는 iphlpapi `IcmpSendEcho`(raw 소켓·관리자 불필요). 다른 OS는 `ping` 1회(없으면 false).
+/// ★ 이름 풀이 캐시(`probe.dns_cache_secs` · T-249 · 39 §DNS 재풀이): 프로브마다 DNS를 다시 묻지 않는다 — TTL 안이면 지난 주소 ·
+/// 지났거나 0이면 다시 풀고 갱신. 풀이 실패는 캐시하지 않는다(다음 프로브가 다시 시도).
+fn resolve_cached(host: &str, port: u16, ttl: Duration) -> Option<std::net::SocketAddr> {
+    type Cache = std::collections::HashMap<(String, u16), (std::net::SocketAddr, Instant)>;
+    static CACHE: std::sync::OnceLock<Mutex<Cache>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Cache::new()));
+    let key = (host.to_string(), port);
+    if !ttl.is_zero() {
+        if let Ok(m) = cache.lock() {
+            if let Some((a, t)) = m.get(&key) {
+                if t.elapsed() < ttl {
+                    return Some(*a);
+                }
+            }
+        }
+    }
+    let addr = (host, port).to_socket_addrs().ok()?.next()?;
+    if !ttl.is_zero() {
+        if let Ok(mut m) = cache.lock() {
+            m.insert(key, (addr, Instant::now()));
+        }
+    }
+    Some(addr)
+}
+
 fn icmp_alive(ip: std::net::IpAddr, timeout: Duration) -> bool {
     let std::net::IpAddr::V4(v4) = ip else {
         return false;
@@ -292,6 +335,8 @@ pub(crate) struct ProbePolicy {
     pub interval: Duration,
     /// TCP 실패 뒤 ICMP 핑으로 "서버는 살아 있음"을 구별할지(`probe.icmp` · 끄면 Down으로).
     pub icmp: bool,
+    /// 이름 풀이 캐시 TTL(`probe.dns_cache_secs` · 0 = 캐시 없음 · T-249).
+    pub dns_cache: Duration,
 }
 
 impl Default for ProbePolicy {
@@ -303,6 +348,7 @@ impl Default for ProbePolicy {
             retry_delay: Duration::from_secs(10),
             interval: Duration::from_secs(60),
             icmp: true,
+            dns_cache: DEFAULT_DNS_TTL,
         }
     }
 }
@@ -483,6 +529,18 @@ mod tests {
         assert_eq!(backoff(3, S(10), S(30)).as_secs(), 30);
     }
 
+    /// T-249 DNS 캐시: TTL 안이면 같은 주소를 다시 풀지 않고 돌려준다 · 0이면 캐시 없이 매번 풀이(둘 다 loopback).
+    #[test]
+    fn dns_cache_returns_same_address_within_ttl() {
+        let a = resolve_cached("localhost", 7, Duration::from_secs(60)).expect("resolve");
+        let b = resolve_cached("localhost", 7, Duration::from_secs(60)).expect("cached");
+        assert_eq!(a, b);
+        assert!(a.ip().is_loopback());
+        let c = resolve_cached("localhost", 7, Duration::ZERO).expect("uncached");
+        assert!(c.ip().is_loopback());
+        assert!(resolve_cached("no-such-host.invalid", 7, Duration::from_secs(60)).is_none());
+    }
+
     #[test]
     fn entry_accumulates_and_interval_grows_exponentially() {
         let now = Instant::now();
@@ -566,7 +624,13 @@ mod tests {
         // 127.0.0.1:1 — 열려 있을 리 없는 포트 → 연결 거부(호스트는 살아 있다) = PortClosed.
         let t = Instant::now();
         assert_eq!(
-            probe_once("127.0.0.1", 1, Duration::from_millis(800), true),
+            probe_once(
+                "127.0.0.1",
+                1,
+                Duration::from_millis(800),
+                true,
+                Duration::ZERO
+            ),
             Outcome::PortClosed
         );
         assert!(t.elapsed() < Duration::from_secs(4));
@@ -577,7 +641,13 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = l.local_addr().expect("addr").port();
         assert_eq!(
-            probe_once("127.0.0.1", port, Duration::from_millis(800), true),
+            probe_once(
+                "127.0.0.1",
+                port,
+                Duration::from_millis(800),
+                true,
+                Duration::ZERO
+            ),
             Outcome::Up
         );
     }

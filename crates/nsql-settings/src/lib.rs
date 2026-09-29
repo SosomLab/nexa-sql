@@ -43,6 +43,21 @@ pub const RENAMED: &[(&str, &str)] = &[
     ("ui.ime_hint", "input.ime_hint"),
     ("ui.ime_hint_watch", "input.ime_hint_watch"),
     ("editor.tab_line_scratch", "editor.tab_line_unsaved"),
+    // 2차(09-29 · T-250 · 94 §6-2): 로그인 창 UI = login.* · 그리드 키 규칙은 grid. · 단위/색 접미.
+    ("conn.delete_confirm_ms", "login.delete_confirm_ms"),
+    (
+        "conn.close_after_connect_ms",
+        "login.close_after_connect_ms",
+    ),
+    ("conn.window_w", "login.window_w"),
+    ("conn.window_h", "login.window_h"),
+    ("conn.panel_w", "login.panel_w"),
+    ("conn.port_w", "login.port_w"),
+    ("conn.button_scale_pct", "login.button_scale_pct"),
+    ("sql.key_mode", "grid.key_mode"),
+    ("ui.fade_fast", "ui.fade_fast_ms"),
+    ("ui.fade_slow", "ui.fade_slow_ms"),
+    ("editor.tab_accent", "editor.tab_accent_color"),
 ];
 
 /// 옛 키면 새 키를, 아니면 그대로.
@@ -329,6 +344,18 @@ const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
     ("trailing", Msg::ValFmtTrailing),
 ];
 const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+/// 조건 줄(AND/OR) 위치(사용자 09-29): 한 단계 안 / WHERE와 같은 열.
+const FMT_COND_INDENT_OPTS: &[(&str, Msg)] = &[
+    ("indent", Msg::ValFmtCondIndent),
+    ("same", Msg::ValFmtCondSame),
+];
+/// 포맷 방언 치환 대상(T-255 · 스킬 §22).
+const FMT_DIALECT_OPTS: &[(&str, Msg)] = &[
+    ("none", Msg::ValFmtDialectNone),
+    ("ansi", Msg::ValFmtDialectAnsi),
+    ("oracle", Msg::ValFmtDialectOracle),
+    ("tsql", Msg::ValFmtDialectTsql),
+];
 /// Ctrl 객체 링크 밑줄 표시 방식(사용자 09-29 2차): 전부 · 마우스 아래만(기본) · 표시 안 함(동작만).
 const OBJLINK_DISPLAY_OPTS: &[(&str, Msg)] = &[
     ("all", Msg::ValObjLinkAll),
@@ -787,7 +814,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ── 생성 SQL(UPDATE/DELETE/MERGE 등)의 유일성 기준(docs/41 · 사용자 09-16) — GUI Copy SQL · CLI -f sql:* 공통.
     Entry {
-        key: "sql.key_mode",
+        key: "grid.key_mode",
         cat: Msg::CatGrid,
         label: Msg::LblSqlKeyMode,
         desc: Msg::DescSqlKeyMode,
@@ -835,7 +862,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
-        key: "editor.tab_accent",
+        key: "editor.tab_accent_color",
         cat: Msg::CatEditor,
         label: Msg::LblEditorTabAccent,
         desc: Msg::DescEditorTabAccent,
@@ -941,6 +968,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 1, max: 16 },
         default: "4",
     },
+    // 사용자 09-29: 들여쓰기를 설정값 대신 **활성 탭**(상태줄 탭 크기/공백)에서 가져올지 — 기본 끔(설정값 그대로 → 미리보기에 반영).
+    Entry {
+        key: "format.indent_from_tab",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtIndentFromTab,
+        desc: Msg::DescFmtIndentFromTab,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "format.keyword_case",
         cat: Msg::CatFormat,
@@ -971,7 +1007,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblFmtComma,
         desc: Msg::DescFmtComma,
         kind: SettingKind::Choice(FMT_COMMA_OPTS),
-        default: "leading",
+        // ★ Basic 기본 = DBeaver 일반형(콤마 뒤 · 사용자 09-29 "내 기준은 kiros33 포맷터에서").
+        default: "trailing",
     },
     Entry {
         key: "format.comma_gap",
@@ -996,6 +1033,23 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtWhereSeed,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // 사용자 09-29: 시드 구분(공백/탭) · 조건 줄 위치(한 단계 안 / 같은 열).
+    Entry {
+        key: "format.seed_gap",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtSeedGap,
+        desc: Msg::DescFmtSeedGap,
+        kind: SettingKind::Choice(FMT_GAP_OPTS),
+        default: "space",
+    },
+    Entry {
+        key: "format.cond_indent",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtCondIndent,
+        desc: Msg::DescFmtCondIndent,
+        kind: SettingKind::Choice(FMT_COND_INDENT_OPTS),
+        default: "indent",
     },
     Entry {
         key: "format.list_style",
@@ -1100,6 +1154,31 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtFinalNewline,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // T-255(09-29): 괄호 그룹 시드 · 별칭 자동 부여 · 방언 치환.
+    Entry {
+        key: "format.paren_seed",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtParenSeed,
+        desc: Msg::DescFmtParenSeed,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "format.auto_alias",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtAutoAlias,
+        desc: Msg::DescFmtAutoAlias,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    Entry {
+        key: "format.dialect_target",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtDialectTarget,
+        desc: Msg::DescFmtDialectTarget,
+        kind: SettingKind::Choice(FMT_DIALECT_OPTS),
+        default: "none",
     },
     Entry {
         key: "format.semicolon_newline",
@@ -1736,7 +1815,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
-        key: "ui.fade_fast",
+        key: "ui.fade_fast_ms",
         cat: Msg::CatAppearance,
         label: Msg::LblFadeFast,
         desc: Msg::DescFadeFast,
@@ -1767,7 +1846,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "3000",
     },
     Entry {
-        key: "ui.fade_slow",
+        key: "ui.fade_slow_ms",
         cat: Msg::CatAppearance,
         label: Msg::LblFadeSlow,
         desc: Msg::DescFadeSlow,
@@ -1887,6 +1966,23 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescExplorerIcons,
         kind: SettingKind::Bool,
         default: "on",
+    },
+    // T-249(09-29 · 93 §6에서 뺐던 4키 중 둘 — 기능과 함께 재등록): 노드 툴팁 · 노드 로드 타임아웃.
+    Entry {
+        key: "explorer.tooltip",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerTooltip,
+        desc: Msg::DescExplorerTooltip,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "explorer.timeout",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerTimeout,
+        desc: Msg::DescExplorerTimeout,
+        kind: SettingKind::Int { min: 0, max: 600 },
+        default: "15",
     },
     Entry {
         key: "explorer.disconnect_pick",
@@ -3136,7 +3232,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "probe.enabled",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeEnabled,
         desc: Msg::DescProbeEnabled,
         kind: SettingKind::Bool,
@@ -3144,7 +3240,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "probe.max_retries",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeMaxRetries,
         desc: Msg::DescProbeMaxRetries,
         kind: SettingKind::Int { min: 0, max: 20 },
@@ -3152,15 +3248,27 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "probe.timeout",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeTimeout,
         desc: Msg::DescProbeTimeout,
         kind: SettingKind::Int { min: 1, max: 30 },
         default: "2",
     },
+    // T-249: 이름 풀이 캐시(HIDDEN · 39 §DNS 재풀이).
+    Entry {
+        key: "probe.dns_cache_secs",
+        cat: Msg::CatServerStatus,
+        label: Msg::LblProbeDnsCache,
+        desc: Msg::DescProbeDnsCache,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "300",
+    },
     Entry {
         key: "probe.interval",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeInterval,
         desc: Msg::DescProbeInterval,
         kind: SettingKind::Int { min: 5, max: 3600 },
@@ -3168,7 +3276,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "probe.retry_delay",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeRetryDelay,
         desc: Msg::DescProbeRetryDelay,
         kind: SettingKind::Int { min: 5, max: 3600 },
@@ -3176,7 +3284,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ── 비노출 설정(사용자 09-14 "자주 바꾸지 않을 값은 비노출 설정으로") — 구현 상수의 설정화. `nsql config list all`로만 보인다.
     Entry {
-        key: "conn.delete_confirm_ms",
+        key: "login.delete_confirm_ms",
         cat: Msg::CatConnection,
         label: Msg::LblDeleteConfirmMs,
         desc: Msg::DescDeleteConfirmMs,
@@ -3187,7 +3295,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "5000",
     },
     Entry {
-        key: "conn.close_after_connect_ms",
+        key: "login.close_after_connect_ms",
         cat: Msg::CatConnection,
         label: Msg::LblCloseAfterConnectMs,
         desc: Msg::DescCloseAfterConnectMs,
@@ -3195,7 +3303,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "450",
     },
     Entry {
-        key: "conn.window_w",
+        key: "login.window_w",
         cat: Msg::CatConnection,
         label: Msg::LblConnWindowW,
         desc: Msg::DescConnWindowW,
@@ -3206,7 +3314,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "748",
     },
     Entry {
-        key: "conn.window_h",
+        key: "login.window_h",
         cat: Msg::CatConnection,
         label: Msg::LblConnWindowH,
         desc: Msg::DescConnWindowH,
@@ -3217,7 +3325,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "526",
     },
     Entry {
-        key: "conn.panel_w",
+        key: "login.panel_w",
         cat: Msg::CatConnection,
         label: Msg::LblConnPanelW,
         desc: Msg::DescConnPanelW,
@@ -3225,7 +3333,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "292",
     },
     Entry {
-        key: "conn.port_w",
+        key: "login.port_w",
         cat: Msg::CatConnection,
         label: Msg::LblConnPortW,
         desc: Msg::DescConnPortW,
@@ -3233,7 +3341,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "72",
     },
     Entry {
-        key: "conn.button_scale_pct",
+        key: "login.button_scale_pct",
         cat: Msg::CatConnection,
         label: Msg::LblConnButtonScale,
         desc: Msg::DescConnButtonScale,
@@ -3353,7 +3461,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "probe.max_inflight",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeMaxInflight,
         desc: Msg::DescProbeMaxInflight,
         kind: SettingKind::Int { min: 1, max: 64 },
@@ -3535,7 +3643,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "run.toast",
-        cat: Msg::CatSession,
+        cat: Msg::CatRunCards,
         label: Msg::LblRunToast,
         desc: Msg::DescRunToast,
         kind: SettingKind::Bool,
@@ -3543,7 +3651,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "run.toast_hide_secs",
-        cat: Msg::CatSession,
+        cat: Msg::CatRunCards,
         label: Msg::LblRunToastHide,
         desc: Msg::DescRunToastHide,
         kind: SettingKind::Int { min: 0, max: 600 },
@@ -3552,7 +3660,7 @@ pub const REGISTRY: &[Entry] = &[
     // ★ 실행 카드 갱신 주기(사용자 09-22): 경과 시간 `HH:MM:SS.mmm`·카운트다운을 이 주기로만 다시 그린다(향상 모드 = 1000).
     Entry {
         key: "run.toast_tick_ms",
-        cat: Msg::CatSession,
+        cat: Msg::CatRunCards,
         label: Msg::LblRunToastTick,
         desc: Msg::DescRunToastTick,
         kind: SettingKind::Int { min: 30, max: 5000 },
@@ -3560,7 +3668,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "run.toast_follow",
-        cat: Msg::CatSession,
+        cat: Msg::CatRunCards,
         label: Msg::LblRunToastFollow,
         desc: Msg::DescRunToastFollow,
         kind: SettingKind::Bool,
@@ -3568,7 +3676,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "run.toast_max",
-        cat: Msg::CatSession,
+        cat: Msg::CatRunCards,
         label: Msg::LblRunToastMax,
         desc: Msg::DescRunToastMax,
         kind: SettingKind::Int { min: 1, max: 500 },
@@ -3576,7 +3684,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "run.after_statement",
-        cat: Msg::CatSession,
+        cat: Msg::CatRunCards,
         label: Msg::LblRunAfter,
         desc: Msg::DescRunAfter,
         kind: SettingKind::Choice(RUN_AFTER_OPTS),
@@ -3634,7 +3742,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 접속 생존(docs/53): 동작 직전 빠른 판정 기준 · TCP keepalive · Oracle 호출 상한.
     Entry {
         key: "probe.stale_secs",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeStale,
         desc: Msg::DescProbeStale,
         kind: SettingKind::Int { min: 0, max: 86400 },
@@ -3642,7 +3750,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "net.keepalive_secs",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblNetKeepalive,
         desc: Msg::DescNetKeepalive,
         kind: SettingKind::Int { min: 0, max: 7200 },
@@ -3721,7 +3829,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 트랜잭션 UX(DR-30 · T-77 · docs/34 §2-5)
     Entry {
         key: "tx.stale_min",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxStaleMin,
         desc: Msg::DescTxStaleMin,
         kind: SettingKind::Int { min: 1, max: 1440 },
@@ -3731,7 +3839,7 @@ pub const REGISTRY: &[Entry] = &[
     //   L2 유휴 미커밋 경고/재알림/자동 동작/카운트다운 · L3 막힘 감지 주기 · L4 서버 안전망 세션 파라미터.
     Entry {
         key: "tx.read_end",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxReadEnd,
         desc: Msg::DescTxReadEnd,
         kind: SettingKind::Choice(TX_READ_END_OPTS),
@@ -3739,7 +3847,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.remind_min",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxRemind,
         desc: Msg::DescTxRemind,
         kind: SettingKind::Int { min: 0, max: 1440 },
@@ -3747,7 +3855,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.idle_action",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxIdleAction,
         desc: Msg::DescTxIdleAction,
         kind: SettingKind::Choice(TX_IDLE_ACTION_OPTS),
@@ -3755,7 +3863,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.idle_limit_min",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxIdleLimit,
         desc: Msg::DescTxIdleLimit,
         kind: SettingKind::Int { min: 1, max: 1440 },
@@ -3763,7 +3871,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.idle_countdown_secs",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxIdleCountdown,
         desc: Msg::DescTxIdleCountdown,
         kind: SettingKind::Int { min: 5, max: 600 },
@@ -3772,7 +3880,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 접속 유형(운영) 기준(docs/56 §4 2차) — 전역 값과 비교해 더 엄격한 쪽이 적용된다.
     Entry {
         key: "tx.prod_stale_min",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxProdStale,
         desc: Msg::DescTxProdStale,
         kind: SettingKind::Int { min: 1, max: 240 },
@@ -3780,7 +3888,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.prod_idle_limit_min",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxProdLimit,
         desc: Msg::DescTxProdLimit,
         kind: SettingKind::Int { min: 1, max: 600 },
@@ -3788,7 +3896,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "run.prod_confirm",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblRunProdConfirm,
         desc: Msg::DescRunProdConfirm,
         kind: SettingKind::Bool,
@@ -3796,7 +3904,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.block_poll_secs",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxBlockPoll,
         desc: Msg::DescTxBlockPoll,
         kind: SettingKind::Int { min: 0, max: 3600 },
@@ -3804,7 +3912,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.server_idle_timeout_secs",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxServerIdle,
         desc: Msg::DescTxServerIdle,
         kind: SettingKind::Int { min: 0, max: 86400 },
@@ -3812,7 +3920,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.lock_wait_timeout_secs",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxLockWait,
         desc: Msg::DescTxLockWait,
         kind: SettingKind::Int { min: 0, max: 3600 },
@@ -3828,7 +3936,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.close_action",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxCloseAction,
         desc: Msg::DescTxCloseAction,
         kind: SettingKind::Choice(TX_CLOSE_OPTS),
@@ -3836,7 +3944,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.badge",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxBadge,
         desc: Msg::DescTxBadge,
         kind: SettingKind::Choice(TX_BADGE_OPTS),
@@ -3844,7 +3952,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "tx.smart_commit",
-        cat: Msg::CatSession,
+        cat: Msg::CatTxSafety,
         label: Msg::LblTxSmartCommit,
         desc: Msg::DescTxSmartCommit,
         kind: SettingKind::Bool,
@@ -3853,7 +3961,7 @@ pub const REGISTRY: &[Entry] = &[
     // D-139: OUT 바인드가 없는 DBMS의 `EXEC SELECT … INTO` — 0행·여러 행 = 오류(oracle) / 첫 행(first).
     Entry {
         key: "vars.into_policy",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsIntoPolicy,
         desc: Msg::DescVarsIntoPolicy,
         kind: SettingKind::Choice(VARS_INTO_OPTS),
@@ -3863,7 +3971,7 @@ pub const REGISTRY: &[Entry] = &[
     // 둘 다 **결과에 영향을 주므로** 향상 모드(`perf::BOOST`)에는 넣지 않는다 — 끄는 것은 사용자의 선택.
     Entry {
         key: "vars.signature_lookup",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsSignatureLookup,
         desc: Msg::DescVarsSignatureLookup,
         kind: SettingKind::Bool,
@@ -3880,7 +3988,7 @@ pub const REGISTRY: &[Entry] = &[
     // T-153: `${이름:형식}` 치환 · 돌아온 값의 크기 상한(기본 1 MB — SQL*Plus VARCHAR2 32 KB · CLOB는 무제한 · DBeaver 상한 없음의 사이).
     Entry {
         key: "vars.brace_subst",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsBraceSubst,
         desc: Msg::DescVarsBraceSubst,
         kind: SettingKind::Bool,
@@ -3888,7 +3996,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "vars.env_subst",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsEnvSubst,
         desc: Msg::DescVarsEnvSubst,
         kind: SettingKind::Bool,
@@ -3896,7 +4004,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "vars.intrinsic",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsIntrinsic,
         desc: Msg::DescVarsIntrinsic,
         kind: SettingKind::Bool,
@@ -3904,7 +4012,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "vars.expand_at",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsExpandAt,
         desc: Msg::DescVarsExpandAt,
         kind: SettingKind::Choice(VARS_EXPAND_OPTS),
@@ -3912,7 +4020,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "vars.max_value_kb",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsMaxValueKb,
         desc: Msg::DescVarsMaxValueKb,
         kind: SettingKind::Int {
@@ -3924,7 +4032,7 @@ pub const REGISTRY: &[Entry] = &[
     // D-136: 파일별 변수 보존(`<설정 폴더>/vars/<경로 해시>.sql` — 실행 가능한 VAR/EXEC 스크립트 · 비밀·커서·여러 줄 제외).
     Entry {
         key: "vars.global_persist",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsGlobalPersist,
         desc: Msg::DescVarsGlobalPersist,
         kind: SettingKind::Bool,
@@ -3932,7 +4040,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "vars.persist",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsPersist,
         desc: Msg::DescVarsPersist,
         kind: SettingKind::Bool,
@@ -3940,7 +4048,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "vars.persist_days",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsPersistDays,
         desc: Msg::DescVarsPersistDays,
         kind: SettingKind::Int { min: 0, max: 3650 },
@@ -3949,7 +4057,7 @@ pub const REGISTRY: &[Entry] = &[
     // D-137: 값이 없는 채로 읽히는 바인드·미정의 `&` = 실행당 한 번 묻기(prompt) / 말없이 NULL·빈 글(auto · 종전) / 오류(error).
     Entry {
         key: "vars.undeclared",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblVarsUndeclared,
         desc: Msg::DescVarsUndeclared,
         kind: SettingKind::Choice(VARS_UNDECLARED_OPTS),
@@ -3958,7 +4066,7 @@ pub const REGISTRY: &[Entry] = &[
     // REF CURSOR 자동 표시(09-21): `VAR rc REFCURSOR` + `EXEC proc(:rc)` 뒤 커서를 바로 결과 탭으로(둘 이상이면 각각) · 끄면 `PRINT rc`.
     Entry {
         key: "run.cursor_autoshow",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblCursorAutoshow,
         desc: Msg::DescCursorAutoshow,
         kind: SettingKind::Bool,
@@ -3978,7 +4086,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "script.strict",
-        cat: Msg::CatSession,
+        cat: Msg::CatScriptVars,
         label: Msg::LblScriptStrict,
         desc: Msg::DescScriptStrict,
         kind: SettingKind::Bool,
@@ -4258,7 +4366,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_budget_mb",
-        cat: Msg::CatPerformance,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoBudget,
         desc: Msg::DescUndoBudget,
         kind: SettingKind::Int { min: 1, max: 4096 },
@@ -4266,7 +4374,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_group_ms",
-        cat: Msg::CatPerformance,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoGroupMs,
         desc: Msg::DescUndoGroupMs,
         kind: SettingKind::Int { min: 0, max: 60000 },
@@ -4274,7 +4382,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_persist",
-        cat: Msg::CatEditor,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoPersist,
         desc: Msg::DescUndoPersist,
         kind: SettingKind::Bool,
@@ -4282,7 +4390,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_persist_mb",
-        cat: Msg::CatPerformance,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoPersistMb,
         desc: Msg::DescUndoPersistMb,
         kind: SettingKind::Int { min: 1, max: 64 },
@@ -4290,7 +4398,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_persist_days",
-        cat: Msg::CatPerformance,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoPersistDays,
         desc: Msg::DescUndoPersistDays,
         kind: SettingKind::Int { min: 0, max: 3650 },
@@ -4298,7 +4406,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_giant_mb",
-        cat: Msg::CatPerformance,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoGiantMb,
         desc: Msg::DescUndoGiantMb,
         kind: SettingKind::Int { min: 0, max: 4096 },
@@ -5040,7 +5148,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "editor.undo_max",
-        cat: Msg::CatEditor,
+        cat: Msg::CatUndo,
         label: Msg::LblUndoMax,
         desc: Msg::DescUndoMax,
         kind: SettingKind::Int {
@@ -5124,7 +5232,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "probe.icmp",
-        cat: Msg::CatConnection,
+        cat: Msg::CatServerStatus,
         label: Msg::LblProbeIcmp,
         desc: Msg::DescProbeIcmp,
         kind: SettingKind::Bool,
@@ -5160,6 +5268,27 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFetchMode,
         kind: SettingKind::Choice(FETCH_MODE_OPTS),
         default: "cursor",
+    },
+    // T-255(09-29): 결과 탭 "Copy SQL"을 기본 포맷터로 정돈해 복사.
+    Entry {
+        key: "grid.copy_sql_format",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridCopySqlFormat,
+        desc: Msg::DescGridCopySqlFormat,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // T-249 / T-90b: 문장 타임아웃(D-61 기본 0 = 없음 · DBeaver 동일).
+    Entry {
+        key: "db.statement_timeout",
+        cat: Msg::CatSession,
+        label: Msg::LblStmtTimeout,
+        desc: Msg::DescStmtTimeout,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 86_400,
+        },
+        default: "0",
     },
     Entry {
         key: "db.cursor_idle_secs",
@@ -5204,7 +5333,13 @@ pub fn entry(key: &str) -> Option<&'static Entry> {
 pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
     (
         Msg::GrpGeneral,
-        &[Msg::CatLog, Msg::CatSession, Msg::CatPerformance],
+        &[
+            Msg::CatLog,
+            Msg::CatSession,
+            // 실행 카드(알림) — 78 §3-4 쪼갬(T-250 · 09-29).
+            Msg::CatRunCards,
+            Msg::CatPerformance,
+        ],
     ),
     (
         Msg::GrpUserInterface,
@@ -5220,6 +5355,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
         Msg::GrpEditors,
         &[
             Msg::CatEditor,
+            // 되돌리기(78 · T-250): 예산·묶음·기록 파일 — 종전 Performance/Editor에 흩어져 있던 `editor.undo_*`.
+            Msg::CatUndo,
             Msg::CatIntel,
             Msg::CatFiles,
             // 큰 파일 처리(docs/59 · 사용자 09-28 "별도 설정 그룹으로") — 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재.
@@ -5229,7 +5366,17 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatProject,
         ],
     ),
-    (Msg::GrpConnections, &[Msg::CatConnection, Msg::CatCli]),
+    // 접속 · 서버 상태(probe/net) · 트랜잭션 보호(tx) · 스크립트·변수(vars/script) · CLI — 78 §3-4(T-250 · 09-29).
+    (
+        Msg::GrpConnections,
+        &[
+            Msg::CatConnection,
+            Msg::CatServerStatus,
+            Msg::CatTxSafety,
+            Msg::CatScriptVars,
+            Msg::CatCli,
+        ],
+    ),
     (Msg::GrpDataEditor, &[Msg::CatGrid]),
     // DBMS별 종속 설정(사용자 09-21): 클라이언트 자동 탐지/직접 지정 + 읽기 전용 파생 정보 · 그 DBMS에만 뜻이 있는 키.
     (
@@ -5482,6 +5629,14 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("intel.detail_bg_alpha", "intel.detail_card", Dep::On),
     ("intel.detail_text_alpha", "intel.detail_card", Dep::On),
     ("intel.card_settle_ms", "intel.detail_card", Dep::On),
+    ("format.seed_gap", "format.where_seed", Dep::On),
+    // 탭 값을 쓰는 동안 단위·폭은 보이되 잠금(사용자 09-29).
+    ("format.indent", "format.indent_from_tab", Dep::Eq("off")),
+    (
+        "format.indent_width",
+        "format.indent_from_tab",
+        Dep::Eq("off"),
+    ),
     ("objlink.display", "objlink.enabled", Dep::On),
     ("objlink.tooltip", "objlink.enabled", Dep::On),
     ("objlink.tooltip_pos", "objlink.tooltip", Dep::On),
@@ -5507,6 +5662,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "probe.dns_cache_secs",
     "license.gates",
     "ui.toast_fade_to",
     "ui.toast_bar_spent",
@@ -5540,13 +5696,13 @@ pub const HIDDEN: &[&str] = &[
     "statusbar.git_secs",
     "log.switch_scale",
     "log.columns",
-    "conn.delete_confirm_ms",
-    "conn.close_after_connect_ms",
-    "conn.window_w",
-    "conn.window_h",
-    "conn.panel_w",
-    "conn.port_w",
-    "conn.button_scale_pct",
+    "login.delete_confirm_ms",
+    "login.close_after_connect_ms",
+    "login.window_w",
+    "login.window_h",
+    "login.panel_w",
+    "login.port_w",
+    "login.button_scale_pct",
     "ui.tooltip_delay_ms",
     "explorer.width",
     "layout.editor_split_pct",
@@ -5586,8 +5742,8 @@ pub fn is_hidden(key: &str) -> bool {
 /// 표에 없는 키를 적으면 시험 `advanced_keys_exist`가 잡는다.
 pub const ADVANCED: &[&str] = &[
     // 시간 상수(ms)
-    "ui.fade_slow",
-    "ui.fade_fast",
+    "ui.fade_slow_ms",
+    "ui.fade_fast_ms",
     "ui.flash_ms",
     "ui.flash_hold_ms",
     "ui.copy_feedback_ms",
@@ -6224,6 +6380,30 @@ mod tests {
         assert!(CATEGORY_TREE
             .iter()
             .any(|(_, cats)| cats.contains(&Msg::CatLargeFiles)));
+        // T-250(09-29): 2차 rename은 옛 키로 읽어도 새 키로 통한다 · 새 분류에 접두가 옮겨 갔다.
+        assert_eq!(canonical_key("conn.window_w"), "login.window_w");
+        assert_eq!(canonical_key("sql.key_mode"), "grid.key_mode");
+        assert_eq!(canonical_key("ui.fade_fast"), "ui.fade_fast_ms");
+        assert_eq!(
+            canonical_key("editor.tab_accent"),
+            "editor.tab_accent_color"
+        );
+        assert!(entry("conn.window_w").is_none() && entry("login.window_w").is_some());
+        assert_eq!(entry("tx.stale_min").map(|e| e.cat), Some(Msg::CatTxSafety));
+        assert_eq!(
+            entry("vars.persist").map(|e| e.cat),
+            Some(Msg::CatScriptVars)
+        );
+        assert_eq!(
+            entry("probe.enabled").map(|e| e.cat),
+            Some(Msg::CatServerStatus)
+        );
+        assert_eq!(entry("run.toast").map(|e| e.cat), Some(Msg::CatRunCards));
+        assert_eq!(
+            entry("editor.undo_budget_mb").map(|e| e.cat),
+            Some(Msg::CatUndo)
+        );
+        assert!(CATEGORY_TREE.iter().any(|(_, c)| c.contains(&Msg::CatUndo)));
         assert_eq!(
             entry("file.large_l1_mb").map(|e| e.cat),
             Some(Msg::CatLargeFiles)
@@ -6425,16 +6605,16 @@ mod tests {
             );
         }
         let mut s = Settings::open(tmp("boost"));
-        s.set("ui.fade_fast", "900").unwrap();
+        s.set("ui.fade_fast_ms", "900").unwrap();
         s.set("statusbar.git", "on").unwrap();
-        assert_eq!(s.effective("ui.fade_fast"), Some("900"));
-        assert!(!s.boost_locked("ui.fade_fast"));
+        assert_eq!(s.effective("ui.fade_fast_ms"), Some("900"));
+        assert!(!s.boost_locked("ui.fade_fast_ms"));
         s.set("perf.boost", "on").unwrap();
-        assert_eq!(s.effective("ui.fade_fast"), Some("0"), "강제값");
-        assert_eq!(s.int("ui.fade_fast"), 0);
+        assert_eq!(s.effective("ui.fade_fast_ms"), Some("0"), "강제값");
+        assert_eq!(s.int("ui.fade_fast_ms"), 0);
         assert!(!s.flag("statusbar.git"));
-        assert_eq!(s.get("ui.fade_fast"), Some("900"), "저장값은 그대로");
-        assert!(s.boost_locked("ui.fade_fast"));
+        assert_eq!(s.get("ui.fade_fast_ms"), Some("900"), "저장값은 그대로");
+        assert!(s.boost_locked("ui.fade_fast_ms"));
         assert!(
             !s.boost_locked("grid.max_rows"),
             "동작에 영향 있는 키는 강제하지 않는다"
@@ -6446,7 +6626,7 @@ mod tests {
             "향상 모드는 custom 표시와 무관"
         );
         s.set("perf.boost", "off").unwrap();
-        assert_eq!(s.effective("ui.fade_fast"), Some("900"));
+        assert_eq!(s.effective("ui.fade_fast_ms"), Some("900"));
         assert!(s.flag("statusbar.git"));
     }
 

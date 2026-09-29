@@ -77,40 +77,31 @@ impl MemWin {
             self.redraw();
             return;
         }
-        let same = self.memo.on_same_monitor(owner);
-        let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((620.0, 560.0));
-        let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinMemory)))
-            .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
-        if let Some(((x, y), _)) = same {
-            attrs = attrs.with_position(crate::wingeom::logical(x, y));
-        } else if let Some((x, y, w)) = near {
-            attrs =
-                attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y + 40));
-        }
-        let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        let Ok(win) = el.create_window(attrs) else {
+        // 창 열기 꼬리 = 공통 호스트(T-247 · winhost).
+        let Some(o) = crate::winhost::open_window(
+            el,
+            crate::winhost::OpenSpec {
+                title: format!("Nexa SQL — {}", t(Msg::WinMemory)),
+                theme,
+                near,
+                dy: 40,
+                owner,
+                memo: Some(&self.memo),
+                default_size: (620.0, 560.0),
+                ime: false,
+            },
+        ) else {
             return;
         };
-        if let Some(((x, y), _)) = same {
-            crate::wingeom::place_outer(&win, Some((x, y)));
-        }
-        crate::wingeom::keep_on_screen(&win, owner);
-        let win = Rc::new(win);
-        self.scale = win.scale_factor() as f32;
-        self.surface = crate::present::Presenter::new(win.clone()).ok();
-        self.window = Some(win);
+        self.scale = o.scale;
+        self.surface = o.surface;
+        self.window = Some(o.window);
         self.apply_level();
         self.redraw();
     }
 
     pub(crate) fn close(&mut self) {
-        if let Some(w) = &self.window {
-            if let Some(p) = crate::wingeom::outer_pos(w) {
-                self.last = Some((p, crate::wingeom::logical_size(w)));
-            }
-        }
+        self.last = self.window.as_deref().and_then(crate::winhost::last_geom);
         self.surface = None;
         self.window = None;
         // 표본·이력은 창과 함께 버린다(닫힌 뒤 상주 0 · docs/80 §5).

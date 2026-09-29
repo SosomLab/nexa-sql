@@ -122,8 +122,8 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 |---|---|---|
 | `explorer.auto_refresh` | **off** | on이면 **펼쳐진 노드**만 주기 재조회(접힌 노드·자식은 안 함) |
 | `explorer.refresh_secs` | 300 | 자동 갱신 주기(60~3600) · 앱이 유휴(입력·실행 없음 5s)일 때만 · 실행 중 세션과 분리돼 있어도 서버 부하를 위해 순차(동시 1) |
-| `explorer.timeout` | 15 | 노드 로드 타임아웃(초) ⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6) |
-| `explorer.tooltip` | on | 노드 툴팁 카드 ⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6) |
+| `explorer.timeout` | 15 | 노드 로드 타임아웃(초) ✅ 09-29 T-249 구현·재등록 |
+| `explorer.tooltip` | on | 노드 툴팁 카드 ✅ 09-29 T-249 구현·재등록 |
 | 수동 | — | 노드 F5 · 우클릭 "새로 고침(이 노드)" / "하위 전체 새로 고침" · 루트 ⟳ = 스키마 목록 |
 
 ---
@@ -135,6 +135,8 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 | 방언 | 루트 아래 | 스키마 폴더 |
 |---|---|---|
 | Oracle | Schemas(`ALL_USERS`) | Tables · Views · Materialized Views · Sequences · Procedures · Functions · Packages · Triggers · Indexes · Synonyms · Types · DB Links |
+
+> **패키지 멤버**(사용자 09-29): Packages ▸ 패키지 ▸ Procedures/Functions의 잎은 독립 프로시저처럼 펼쳐져 **Arguments** 폴더를 가진다(`member_sub_kinds`/`member_object` · 주인 `패키지.멤버` · `all_arguments.package_name`). 의존(Dependencies)은 패키지 단위라 멤버에는 없다.
 | SQL Server | Databases → Schemas | Tables · Views · Procedures · Functions · Triggers · Indexes · Types · Synonyms |
 | PostgreSQL | Databases → Schemas | Tables · Views · Materialized Views · Sequences · Functions · Types · Extensions |
 | MySQL | Databases(=Schemas) | Tables · Views · Procedures · Functions · Triggers · Events |

@@ -528,6 +528,8 @@ impl App {
 
     /// 세션 상태가 바뀌었을 때 화면의 세 층을 한 번에 맞춘다: 탭 표식·설명 · 통제(툴바) · 트랜잭션 · 해제 버튼.
     pub(crate) fn sync_sess_ui(&mut self) {
+        // 설정 창이 열려 있으면 활성 탭 덧말·미리보기도 따라온다(탭 전환 · 사용자 09-29).
+        self.prefs_format_preview_refresh();
         let mut info: HashMap<u64, (nexa_ctl::TabBadge, String)> = HashMap::new();
         // 공유 연결이 둘 이상이면 공유 탭에도 표식(어느 서버인지 · 표식 메뉴로 고른다).
         let multi = self

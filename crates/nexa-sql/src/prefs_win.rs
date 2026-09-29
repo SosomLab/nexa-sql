@@ -125,8 +125,12 @@ pub(crate) struct PrefsWin {
     tree: TreeView,
     /// 숨긴 분류(끈/미설치 확장) · 그로부터 만든 보이는 트리(선택 index의 기준).
     hidden: Vec<Msg>,
+    /// ★ 동적 후보(키 → (값, 라벨)) — `Text` 항목을 콤보로(예: `format.default` = 설치된 포맷터 · 사용자 09-29). 호스트가 넣는다.
+    dyn_choices: std::collections::HashMap<&'static str, Vec<(String, String)>>,
     /// 읽기 전용 정보 키의 값(`nsql_settings::INFO_KEYS` — 호스트가 채운다 · 저장되지 않는 계산 값 · 카드는 늘 잠긴다).
     info: std::collections::HashMap<String, String>,
+    /// ★ 카드 덧말(키 → 한 줄 · 강조색 · 호스트가 상황값을 넣는다 — 예: 활성 탭의 들여쓰기 · 사용자 09-29). `info`의 `#note`와 합친다.
+    notes: std::collections::HashMap<String, String>,
     vtree: Vec<(Msg, Vec<Msg>)>,
     advanced: Switch,
     json_btn: Button,
@@ -134,6 +138,12 @@ pub(crate) struct PrefsWin {
     cards: Vec<Card>,
     /// 카드 영역·스크롤.
     list: Rect,
+    /// ★ 포맷 미리보기(사용자 09-29): Format 분류를 볼 때 카드 아래에 기본 포맷터 결과(읽기 전용 SQL 상자 · 호스트가 만들어 줌) ·
+    ///   `format.*`/`sqlfmt.*`가 바뀌면 호스트가 `set_preview`로 새 글을 넣는다 → 변경점 = 설정 창 한 곳.
+    preview: Option<TextBox>,
+    preview_title: String,
+    preview_rect: Rect,
+    preview_on: bool,
     scroll: i32,
     content_h: i32,
     bars: ScrollBars,
@@ -197,6 +207,74 @@ impl PrefsWin {
         model
     }
 
+    /// 카드 덧말(강조색 한 줄 · `None` = 지움) — 바뀌면 다시 그린다.
+    pub(crate) fn set_note(&mut self, key: &str, note: Option<String>) {
+        let changed = match &note {
+            Some(n) => self.notes.get(key) != Some(n),
+            None => self.notes.contains_key(key),
+        };
+        match note {
+            Some(n) => {
+                self.notes.insert(key.to_string(), n);
+            }
+            None => {
+                self.notes.remove(key);
+            }
+        }
+        if changed {
+            self.redraw();
+        }
+    }
+
+    /// 미리보기 상자(호스트가 SQL 구문 강조가 붙은 읽기 전용 상자를 만들어 준다 · 기동 때 한 번).
+    pub(crate) fn set_preview_box(&mut self, mut tb: TextBox) {
+        tb.set_read_only(true);
+        self.preview = Some(tb);
+    }
+
+    /// 미리보기 글 갱신(제목 = 엔진 이름 · 글 = 포맷 결과) — 바뀐 것만 다시 그린다.
+    pub(crate) fn set_preview(&mut self, title: String, text: &str, tab_size: u8, spaces: bool) {
+        let mut changed = self.preview_title != title;
+        self.preview_title = title;
+        if let Some(tb) = self.preview.as_mut() {
+            // 상자의 탭 폭·공백 모드 = 포맷 설정(`format.indent_width`/`format.indent`) — 탭 들여쓰기가 설정 폭으로 보이게(사용자 09-29).
+            tb.set_indent(tab_size, spaces);
+            if tb.text() != text {
+                tb.set_text(text);
+                changed = true;
+            } else {
+                changed = true;
+            }
+        }
+        if changed {
+            self.redraw();
+        }
+    }
+
+    /// 지금 선택한 분류가 포맷 분류(내장 옵션 · 확장 포맷터)인가 — 미리보기를 보이는 조건.
+    fn preview_wanted(&self) -> bool {
+        if self.preview.is_none() || !self.query.trim().is_empty() {
+            return false;
+        }
+        let cat = self
+            .vtree
+            .get(self.sel.0)
+            .and_then(|(_, cats)| self.sel.1.and_then(|ci| cats.get(ci)))
+            .copied();
+        matches!(cat, Some(Msg::CatFormat | Msg::CatExtSqlFormatter))
+    }
+
+    /// 동적 후보 갱신(값, 라벨) — 바뀌었으면 카드를 다시 만든다(열려 있을 때 확장을 켜고 끄면 콤보 목록이 따라온다).
+    pub(crate) fn set_dyn_choices(&mut self, key: &'static str, items: Vec<(String, String)>) {
+        if self.dyn_choices.get(key) == Some(&items) {
+            return;
+        }
+        self.dyn_choices.insert(key, items);
+        if !self.cards.is_empty() {
+            self.rebuild_cards();
+        }
+    }
+
     /// 확장 분류 숨김 갱신(호스트가 확장 켜기/끄기/설치/제거 때) — 트리를 다시 만들고 선택을 보정한다.
     pub(crate) fn set_hidden_categories(&mut self, hidden: Vec<Msg>) {
         if self.hidden == hidden {
@@ -224,7 +302,9 @@ impl PrefsWin {
         let model = Self::build_model(&vtree);
         PrefsWin {
             hidden: Vec::new(),
+            dyn_choices: std::collections::HashMap::new(),
             info: std::collections::HashMap::new(),
+            notes: std::collections::HashMap::new(),
             vtree,
             window: None,
             memo: crate::wingeom::Memo::default(),
@@ -244,6 +324,10 @@ impl PrefsWin {
             close_btn: Button::new(t(Msg::BtnClose)),
             cards: Vec::new(),
             list: Rect::default(),
+            preview: None,
+            preview_title: String::new(),
+            preview_rect: Rect::default(),
+            preview_on: false,
             scroll: 0,
             content_h: 0,
             bars: ScrollBars::new(),
@@ -406,10 +490,22 @@ impl PrefsWin {
         chosen.sort_by_key(|s| nsql_settings::display_order(s.entry.key));
         self.adv_hidden = adv_hidden;
         let show_cat = !q.is_empty() || self.sel.1.is_none();
+        let dyn_choices = &self.dyn_choices;
         self.cards = chosen
             .into_iter()
             .map(|sn| {
+                let dyn_opts = dyn_choices.get(sn.entry.key);
                 let ctl = match sn.entry.kind {
+                    // ★ 호스트가 후보를 준 `Text` 항목 = 콤보(값이 후보에 없으면 첫 항목 · 저장값은 그대로).
+                    SettingKind::Text if dyn_opts.is_some_and(|o| !o.is_empty()) => {
+                        let opts = dyn_opts.expect("dyn");
+                        let items: Vec<ComboItem> = opts
+                            .iter()
+                            .map(|(v, l)| ComboItem::new(v.clone(), l.clone()))
+                            .collect();
+                        let idx = opts.iter().position(|(v, _)| *v == sn.value).unwrap_or(0);
+                        CardCtl::Choice(Box::new(Combo::new(items, idx)))
+                    }
                     SettingKind::Bool => CardCtl::Bool(
                         Switch::new("", sn.value == "on").with_label_side(LabelSide::None),
                     ),
@@ -531,6 +627,14 @@ impl PrefsWin {
             | self.search.tick(now_ms)
             | self.close_btn.tick(now_ms)
             | self.json_btn.tick(now_ms);
+        // 분류 선택이 바뀌어 미리보기 표시 여부가 달라졌으면 배치를 다시.
+        if self.preview_on != self.preview_wanted() {
+            self.layout();
+            any = true;
+        }
+        if let Some(tb) = self.preview.as_mut() {
+            any |= tb.tick(now_ms);
+        }
         let now = std::time::Instant::now();
         for c in &mut self.cards {
             any |= c.reset.tick(now_ms);
@@ -674,6 +778,30 @@ impl PrefsWin {
         self.split_rect = Rect::new(pad + lw, top, self.s(SPLIT_W), by - pad - top);
         let lx = self.split_rect.right() + pad / 2;
         self.list = Rect::new(lx, top, w - lx - pad, by - pad - top);
+        // ★ 포맷 분류 = 카드(위 55 %) + 미리보기(아래 · 제목 한 줄 + 읽기 전용 SQL 상자).
+        self.preview_on = self.preview_wanted();
+        if self.preview_on {
+            let total = self.list.h;
+            let cards_h = (total as f32 * 0.55).round() as i32;
+            let head_h = self.s(22.0);
+            self.list.h = cards_h;
+            let py = top + cards_h + self.s(6.0);
+            self.preview_rect = Rect::new(lx, py, self.list.w, (by - pad - py).max(0));
+            if let Some(tb) = self.preview.as_mut() {
+                tb.set_scale(s);
+                tb.set_bounds(
+                    Rect::new(
+                        self.preview_rect.x,
+                        self.preview_rect.y + head_h,
+                        self.preview_rect.w,
+                        (self.preview_rect.h - head_h).max(0),
+                    ),
+                    &mut inv,
+                );
+            }
+        } else {
+            self.preview_rect = Rect::default();
+        }
         // 아래 줄: 고급 스위치 · 닫기
         self.advanced.set_scale(s);
         self.advanced
@@ -1023,8 +1151,16 @@ impl PrefsWin {
                 }
             }
         }
-        // 카드 영역 스크롤(휠 · 바)
+        // ★ 포맷 미리보기 상자(읽기 전용 · 선택·복사·스크롤).
         let is_wheel = matches!(ie, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
+        if self.preview_on && (is_mouse || is_wheel) && self.preview_rect.contains(p) {
+            if let Some(tb) = self.preview.as_mut() {
+                tb.on_event(&ie, &mut inv);
+                self.redraw();
+                return PrefsAction::Paint;
+            }
+        }
+        // 카드 영역 스크롤(휠 · 바)
         if self.list.contains(p) || (!is_mouse && !is_wheel) {
             let (_, ny, consumed) = self.bars.on_event(
                 &ie,
@@ -1432,18 +1568,23 @@ impl PrefsWin {
                 y += th_txt + gap;
             }
             let mut inv = Invalidations::default();
-            let mut desc_lines: Vec<Vec<String>> = Vec::with_capacity(self.cards.len());
+            // (설명 줄들, 덧말이 시작하는 줄 index) — 덧말은 강조색으로 그린다.
+            let mut desc_lines: Vec<(Vec<String>, usize)> = Vec::with_capacity(self.cards.len());
             let boost_on = self
                 .snap
                 .iter()
                 .any(|s| s.entry.key == "perf.boost" && s.value == "on");
             for c in &mut self.cards {
                 // 설명 + (있으면) 호스트가 준 **한 줄 덧말**(`<키>#note` — 예: 이 값이 무엇으로 정해졌는지 · 사용자 09-21).
-                let note = self.info.get(&format!("{}#note", c.entry.key));
-                let lines = match note.filter(|n| !n.is_empty()) {
-                    Some(n) => Self::wrap(&mut dc, &format!("{}\n{n}", t(c.entry.desc)), text_w),
-                    None => Self::wrap(&mut dc, t(c.entry.desc), text_w),
-                };
+                let note = self
+                    .notes
+                    .get(c.entry.key)
+                    .or_else(|| self.info.get(&format!("{}#note", c.entry.key)));
+                let mut lines = Self::wrap(&mut dc, t(c.entry.desc), text_w);
+                let note_at = lines.len();
+                if let Some(n) = note.filter(|n| !n.is_empty()) {
+                    lines.extend(Self::wrap(&mut dc, n, text_w));
+                }
                 let boost_hint =
                     c.locked && boost_on && nsql_settings::perf::boost_value(c.entry.key).is_some();
                 let mut extra = if c.error.is_some() || boost_hint {
@@ -1586,7 +1727,7 @@ impl PrefsWin {
                 if !visible {
                     c.rect.h = 0;
                 }
-                desc_lines.push(lines);
+                desc_lines.push((lines, note_at));
                 y += ch + gap;
             }
             self.content_h = y + self.scroll - list.y;
@@ -1615,7 +1756,7 @@ impl PrefsWin {
                 }
             }
             let now = std::time::Instant::now();
-            for (c, lines) in self.cards.iter().zip(desc_lines.iter()) {
+            for (c, (lines, note_at)) in self.cards.iter().zip(desc_lines.iter()) {
                 if c.rect.h == 0 {
                     continue;
                 }
@@ -1653,8 +1794,14 @@ impl PrefsWin {
                 dc.text(kx, ty, clip, c.entry.key, key_color);
                 c.copy.paint(&mut dc, th, 1.0, s, now);
                 ty += th_txt + (4.0 * s).round() as i32;
-                for l in lines {
-                    dc.text(tx, ty, clip, l, th.text_dim);
+                for (li, l) in lines.iter().enumerate() {
+                    // 덧말(호스트 상황값)은 강조색 — 무엇이 실제로 적용되는지 한눈에(사용자 09-29).
+                    let col = if li >= *note_at {
+                        th.accent
+                    } else {
+                        th.text_dim
+                    };
+                    dc.text(tx, ty, clip, l, col);
                     ty += th_txt;
                 }
                 if let Some(e) = &c.error {
@@ -1732,21 +1879,24 @@ impl PrefsWin {
                     c.reset.paint(&mut dc, th);
                 }
             }
-            // 콤보는 드롭다운이 아래 카드를 덮어야 하므로 맨 뒤에.
-            for c in &self.cards {
-                if c.rect.h == 0 {
-                    continue;
-                }
-                match &c.ctl {
-                    CardCtl::Choice(cb) => {
-                        cb.paint(&mut dc, th);
-                        // 잠긴 콤보도 흐리게 — 콤보는 이 층에서 그려져 앞의 흐림이 덮였다(잠긴 것은 열리지 않으므로 드롭다운을 가리지 않는다).
-                        if c.locked {
-                            dc.fill_rect_alpha(cb.bounds(), th.panel_bg, 0.6);
-                        }
+            // 콤보는 드롭다운이 아래 카드를 덮어야 하므로 맨 뒤에 — 그리고 **열린 콤보는 그중에서도 맨 마지막**(닫힌 다음 카드의 콤보 상자가
+            //   열린 드롭다운 위에 그려지던 결함 · 사용자 09-29 캡처).
+            for open_pass in [false, true] {
+                for c in &self.cards {
+                    if c.rect.h == 0 {
+                        continue;
                     }
-                    CardCtl::Pos(pd) => pd.paint_popup(&mut dc, th),
-                    _ => {}
+                    match &c.ctl {
+                        CardCtl::Choice(cb) if cb.is_open() == open_pass => {
+                            cb.paint(&mut dc, th);
+                            // 잠긴 콤보도 흐리게 — 콤보는 이 층에서 그려져 앞의 흐림이 덮였다(잠긴 것은 열리지 않으므로 드롭다운을 가리지 않는다).
+                            if c.locked {
+                                dc.fill_rect_alpha(cb.bounds(), th.panel_bg, 0.6);
+                            }
+                        }
+                        CardCtl::Pos(pd) if !open_pass => pd.paint_popup(&mut dc, th),
+                        _ => {}
+                    }
                 }
             }
             self.bars.paint(
@@ -1759,6 +1909,27 @@ impl PrefsWin {
                 self.scroll,
                 s,
             );
+            // ★ 포맷 미리보기(제목 = "미리보기 — 엔진" · 상자).
+            if self.preview_on {
+                let pr = self.preview_rect;
+                dc.fill_rect(
+                    Rect::new(pr.x, pr.y - (3.0 * s).round() as i32, pr.w, 1),
+                    th.border,
+                );
+                dc.select_font(FontSlot::Status, false);
+                let hy = dc.text_center_y(pr.y, (22.0 * s).round() as i32);
+                dc.text(
+                    pr.x + (4.0 * s).round() as i32,
+                    hy,
+                    pr,
+                    &self.preview_title,
+                    th.text_dim,
+                );
+                dc.select_font(FontSlot::Base, false);
+                if let Some(tb) = self.preview.as_ref() {
+                    tb.paint(&mut dc, th);
+                }
+            }
             // 하단
             self.advanced.paint(&mut dc, th);
             self.close_btn.paint(&mut dc, th);

@@ -103,7 +103,7 @@ impl App {
     pub(crate) fn apply_tab_accent(&mut self) {
         let c = self
             .settings
-            .get("editor.tab_accent")
+            .get("editor.tab_accent_color")
             .and_then(nexa_ctl::theme::color_from_hex);
         self.editors.set_tab_accent(c);
     }
@@ -224,9 +224,26 @@ impl App {
         }
     }
 
-    /// 환경 설정 창에서 바뀐 값을 **즉시** 반영(가능한 것만 · 나머지는 다음 시작).
+    /// 환경 설정 창에서 바뀐 값을 **즉시** 반영(가능한 것만 · 나머지는 다음 시작). 키를 도메인 조각 다섯으로 나눠 차례로 묻는다
+    /// (T-248 · 09-29 · 순서 = 종전 match 그대로라 행동 보존) — 어느 조각도 모르면 `false`.
     pub(crate) fn apply_setting(&mut self, key: &str) -> bool {
-        let i = |s: &Settings, k: &str| s.int(k);
+        let hit = self.apply_setting_ui(key)
+            || self.apply_setting_conn(key)
+            || self.apply_setting_explorer(key)
+            || self.apply_setting_grid(key)
+            || self.apply_setting_editor(key)
+            || self.apply_setting_misc(key);
+        if !hit {
+            return false;
+        }
+        self.layout();
+        self.redraw();
+        self.conn_win.redraw();
+        true
+    }
+
+    /// 설정 즉시 반영 — 테마·언어·글꼴 래스터·애니메이션·입력·포맷·객체 링크(`ui.` · `input.` · `format.` · `objlink.`). 맞는 키가 없으면 `false`.
+    fn apply_setting_ui(&mut self, key: &str) -> bool {
         match key {
             "ui.theme" => self.apply_theme(),
             // ★ 포맷 옵션(공통 `format.*` · 확장 `sqlfmt.*`) = 열려 있는 미리보기 탭을 다시 그린다(docs/95).
@@ -255,19 +272,19 @@ impl App {
                     }
                 }
             }
-            "ui.fade_fast" => nexa_ctl::tokens::set_fade_ms(
+            "ui.fade_fast_ms" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Fast,
                 fade_ms(&self.settings, key, 5000),
             ),
-            "ui.fade_slow" => nexa_ctl::tokens::set_fade_ms(
+            "ui.fade_slow_ms" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Slow,
                 fade_ms(&self.settings, key, 5000),
             ),
             // 애니메이션 마스터(auto/on/off · 향상 모드 off) = 페이드·슬라이드 전부 0으로/복귀.
             "ui.animations" => {
                 for k in [
-                    "ui.fade_fast",
-                    "ui.fade_slow",
+                    "ui.fade_fast_ms",
+                    "ui.fade_slow_ms",
                     "ui.fade_out_ms",
                     "ui.slide_ms",
                 ] {
@@ -295,8 +312,23 @@ impl App {
                 self.conn_win.set_ime_hint(on);
                 self.input_win.set_ime_hint(on);
             }
-            "probe.interval" | "probe.max_retries" | "probe.max_inflight" | "probe.icmp"
-            | "probe.timeout" | "probe.retry_delay" | "probe.enabled" => {
+            _ => return false,
+        }
+        true
+    }
+
+    /// 설정 즉시 반영 — 접속·서버 상태·파일·프로젝트 아이콘·토스트·실행 카드·DBMS 클라이언트(`probe.` · `net.` · `mssql.` · `oracle.` · `gfx.`). 맞는 키가 없으면 `false`.
+    fn apply_setting_conn(&mut self, key: &str) -> bool {
+        let i = |s: &Settings, k: &str| s.int(k);
+        match key {
+            "probe.interval"
+            | "probe.max_retries"
+            | "probe.max_inflight"
+            | "probe.icmp"
+            | "probe.timeout"
+            | "probe.retry_delay"
+            | "probe.enabled"
+            | "probe.dns_cache_secs" => {
                 let n = self.settings.int("probe.max_inflight").clamp(1, 64) as usize;
                 self.conn_win.set_policy(probe_policy(&self.settings), n);
             }
@@ -362,11 +394,23 @@ impl App {
             "gfx.mac_present" => {
                 present::set_mode(self.settings.get(key).unwrap_or("softbuffer"));
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// 설정 즉시 반영 — 탐색기·메타·외부 파일 감시·글자 래스터·툴바·상태줄(`explorer.` · `gen.` · `meta.` · `file.external_*` · `toolbar.` · `statusbar.`). 맞는 키가 없으면 `false`.
+    fn apply_setting_explorer(&mut self, key: &str) -> bool {
+        match key {
             "explorer.visible" => {
                 self.explorer.set_visible(self.settings.flag(key));
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "explorer.tooltip" => self.explorer.set_tooltip(self.settings.flag(key)),
+            "explorer.timeout" => self
+                .explorer
+                .set_load_timeout(self.settings.int(key).clamp(0, 600) as u64),
             "explorer.disconnect_pick" => self
                 .explorer
                 .set_disconnect_pick(self.settings.get(key).unwrap_or("auto")),
@@ -442,6 +486,14 @@ impl App {
                     .set_interval(self.settings.int("statusbar.git_secs").max(2) as u64);
                 self.git.refresh(true);
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// 설정 즉시 반영 — 결과 그리드·편집기 클릭·북마크(`grid.` · `editor.dblclick*` · `bookmark.`). 맞는 키가 없으면 `false`.
+    fn apply_setting_grid(&mut self, key: &str) -> bool {
+        match key {
             "grid.font_face" => {
                 let pref = self.settings.get("editor.font_face").map(str::to_string);
                 self.grid_font =
@@ -500,6 +552,14 @@ impl App {
                 }
                 self.bm_sync_ui();
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// 설정 즉시 반영 — 창 최상위·로그·메모리·스크롤·줄 번호·인텔리센스(`window.` · `log.` · `mem.` · `editor.scroll` · `intel.`). 맞는 키가 없으면 `false`.
+    fn apply_setting_editor(&mut self, key: &str) -> bool {
+        match key {
             "window.always_on_top" => self.apply_on_top(),
             "log.always_on_top" => self.log_win.set_on_top(self.settings.flag(key)),
             "mem.always_on_top" => self.mem_win.set_on_top(self.settings.flag(key)),
@@ -523,6 +583,14 @@ impl App {
                 self.explorer
                     .set_routines(self.settings.flag("intel.from_routines"));
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// 설정 즉시 반영 — 편집기 표시·짝·큰 파일·되돌리기·프로젝트·검색·배치(`editor.` 나머지 · `file.large_*` · `project.` · `search.` · `layout.`). 맞는 키가 없으면 `false`.
+    fn apply_setting_misc(&mut self, key: &str) -> bool {
+        match key {
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
             // 자동 닫기(코어 설정) = 편집기 옵션 한 벌을 다시 계산해 적용(키 접두가 확장 것이 아니라 None으로).
             "editor.auto_close_pairs"
@@ -649,7 +717,7 @@ impl App {
             | "editor.ruler_alpha"
             | "editor.highlight_selection" => self.apply_ruler_style(),
             k if k.starts_with("editor.occurrence_") => self.apply_occurrence_style(),
-            "editor.tab_accent" => self.apply_tab_accent(),
+            "editor.tab_accent_color" => self.apply_tab_accent(),
             "ui.font_face" => {
                 let pref = self.settings.get(key).map(str::to_string);
                 if let Some(l) =
@@ -731,9 +799,6 @@ impl App {
             }
             _ => return false,
         }
-        self.layout();
-        self.redraw();
-        self.conn_win.redraw();
         true
     }
 

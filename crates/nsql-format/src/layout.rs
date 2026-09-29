@@ -5,7 +5,9 @@
 //! 블록별 탭 정렬·구분행 같은 규칙을 얹어 렌더한다.
 
 use crate::lexer::{lex, Kind, Token};
-use crate::{is_keyword, AliasAs, Comma, Indent, ListStyle, LogicalNewline, Newline, Options};
+use crate::{
+    is_keyword, AliasAs, Comma, DialectTarget, Indent, ListStyle, LogicalNewline, Newline, Options,
+};
 
 /// 줄의 역할(확장의 정렬 블록 판정 기준).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,7 +362,7 @@ pub fn blocks(lines: &[Line]) -> Vec<(usize, usize)> {
 /// 원문 → 줄 IR(문장별 · 통과 문장은 Raw 줄).
 #[must_use]
 pub fn layout(src: &str, opts: &Options) -> Vec<Line> {
-    let toks = lex(src);
+    let toks = substitute_dialect(lex(src), opts.dialect_target);
     let mut out: Vec<Line> = Vec::new();
     let mut i = 0usize;
     let mut first_stmt = true;
@@ -472,12 +474,20 @@ fn format_statement(out: &mut Vec<Line>, stmt: &[Token], src: &str, opts: &Optio
         push_raw(out, text, blank);
         return;
     }
+    let stmt_words: std::collections::HashSet<String> = body
+        .iter()
+        .filter(|t| t.kind == Kind::Word)
+        .map(Token::up)
+        .collect();
     let mut w = Walker {
         toks: body,
         i: 0,
         out,
         opts,
         cur: None,
+        in_from: false,
+        stmt_words,
+        alias_next: 0,
     };
     w.statement(0);
     w.flush();
@@ -545,6 +555,11 @@ struct Walker<'a> {
     out: &'a mut Vec<Line>,
     opts: &'a Options,
     cur: Option<Line>,
+    /// FROM/JOIN 목록을 걷는 중(별칭 자동 부여 대상 · T-255).
+    in_from: bool,
+    /// 이 문장에 나온 단어(대문자) + 만든 별칭 — 자동 별칭이 겹치지 않게.
+    stmt_words: std::collections::HashSet<String>,
+    alias_next: usize,
 }
 
 const JOIN_HEADS: &[&str] = &[
@@ -1013,8 +1028,15 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// FROM 목록: 콤마 항목 + JOIN 줄 + ON/USING.
+    /// FROM 목록: 콤마 항목 + JOIN 줄 + ON/USING(별칭 자동 부여 문맥 = 이 안).
     fn join_list(&mut self, indent: usize) {
+        let prev = self.in_from;
+        self.in_from = true;
+        self.join_list_inner(indent);
+        self.in_from = prev;
+    }
+
+    fn join_list_inner(&mut self, indent: usize) {
         let table_as = self.opts.table_as;
         self.list_items(indent + 1, Role::Item, move |w, ind| {
             w.expr_item(ind, ItemKind::Table { table_as });
@@ -1085,7 +1107,8 @@ impl<'a> Walker<'a> {
             self.emit(t);
         }
         let is_on = words == ["ON"];
-        let indent = if is_on {
+        // ★ 조건 줄 위치(사용자 09-29): 한 단계 안(기본) / 절 키워드와 같은 열(`cond_indent = same`) · ON은 늘 같은 열.
+        let indent = if is_on || !self.opts.cond_indent {
             clause_indent
         } else {
             clause_indent + 1
@@ -1106,10 +1129,10 @@ impl<'a> Walker<'a> {
             for _ in 0..3 {
                 self.next();
             }
-            self.word("1=1");
+            self.seed_word();
             cond_started = true;
         } else if self.opts.where_seed {
-            self.word("1=1");
+            self.seed_word();
             cond_started = true;
         }
         // 조건들.
@@ -1189,6 +1212,22 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// 시드 `1=1`을 절 줄에(`WHERE 1=1` · `ON 1=1`): 사이는 `seed_gap`(공백 하나 / 탭 · 사용자 09-29).
+    fn seed_word(&mut self) {
+        if self.opts.seed_gap == crate::Gap::Tab {
+            let line = self.cur_mut();
+            match line.parts.last_mut() {
+                Some(Part::Text(t)) if !t.is_empty() => {
+                    t.push('\t');
+                    t.push_str("1=1");
+                }
+                _ => line.parts.push(Part::Text("1=1".into())),
+            }
+        } else {
+            self.word("1=1");
+        }
+    }
+
     /// 조건 하나(다음 최상위 AND/OR · 절 · `)` 전까지) — 비교 연산자를 조각으로.
     fn cond_expr(&mut self, indent: usize, between: &mut u32) {
         let mut cmp_done = false;
@@ -1225,7 +1264,7 @@ impl<'a> Walker<'a> {
     }
 
     /// 표현식 토큰 하나(괄호·CASE·BETWEEN·주석 처리 공용).
-    fn emit_expr_token(&mut self, t: &'a Token, indent: usize, between: &mut u32, _ctx: ExprCtx) {
+    fn emit_expr_token(&mut self, t: &'a Token, indent: usize, between: &mut u32, ctx: ExprCtx) {
         if t.is_comment() {
             self.comment(t, indent);
             return;
@@ -1236,6 +1275,13 @@ impl<'a> Walker<'a> {
             return;
         }
         if t.is_punct("(") {
+            // ★ 괄호 AND/OR 그룹(스킬 §3 · T-255): 조건 문맥 + 옵션 + 안에 최상위 AND/OR → `(1=1`/`(1=0` 시드 블록.
+            if ctx == ExprCtx::Cond && self.opts.paren_seed {
+                if let Some(or_group) = self.paren_is_cond_group() {
+                    self.paren_group(indent, or_group);
+                    return;
+                }
+            }
             self.paren_open_at(indent);
             return;
         }
@@ -1244,6 +1290,195 @@ impl<'a> Walker<'a> {
             return;
         }
         self.emit(t);
+    }
+
+    /// `(`를 이미 소비한 상태에서 짝 `)`까지가 **조건 그룹**인가 — 서브쿼리가 아니고 최상위(괄호·CASE 밖)에 AND/OR가 있을 때
+    /// `Some(첫 연산자가 OR인가)`. BETWEEN … AND의 AND는 세지 않는다.
+    fn paren_is_cond_group(&self) -> Option<bool> {
+        if self.peek_is("SELECT") || self.peek_is("WITH") {
+            return None;
+        }
+        let mut depth = 0i32;
+        let mut case_depth = 0i32;
+        let mut between = 0u32;
+        let mut j = self.i;
+        while let Some(t) = self.toks.get(j) {
+            j += 1;
+            if t.is_punct("(") {
+                depth += 1;
+                continue;
+            }
+            if t.is_punct(")") {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+                continue;
+            }
+            if depth != 0 || t.kind != Kind::Word {
+                continue;
+            }
+            let up = t.up();
+            if up == "CASE" {
+                case_depth += 1;
+            } else if up == "END" && case_depth > 0 {
+                case_depth -= 1;
+            } else if case_depth == 0 {
+                if up == "BETWEEN" {
+                    between += 1;
+                } else if up == "AND" {
+                    if between > 0 {
+                        between -= 1;
+                    } else {
+                        return Some(false);
+                    }
+                } else if up == "OR" {
+                    return Some(true);
+                }
+            }
+        }
+        None
+    }
+
+    /// 괄호 AND/OR 그룹: 여는 줄에 `(1=1`(AND) / `(1=0`(OR) — 원문에 `1=1`/`1=0`이 있으면 그것 · 하위 조건은 한 단계 더 · `)`도 그 열.
+    fn paren_group(&mut self, indent: usize, or_group: bool) {
+        let src_seed = self
+            .peek_at(0)
+            .is_some_and(|a| a.kind == Kind::Number && a.text == "1")
+            && self
+                .peek_at(1)
+                .is_some_and(|b| b.kind == Kind::Op && b.text == "=")
+            && self
+                .peek_at(2)
+                .is_some_and(|c| c.kind == Kind::Number && (c.text == "1" || c.text == "0"));
+        let seed = if src_seed {
+            let c = self.peek_at(2).map(|c| c.text.clone()).unwrap_or_default();
+            for _ in 0..3 {
+                self.next();
+            }
+            format!("1={c}")
+        } else if or_group {
+            "1=0".to_string()
+        } else {
+            "1=1".to_string()
+        };
+        self.word(&format!("({seed}"));
+        let ind = indent + 1;
+        let mut between = 0u32;
+        let mut first = true;
+        loop {
+            let Some(t) = self.peek() else { return };
+            if t.is_punct(")") {
+                self.next();
+                self.open(ind, Role::Close);
+                self.word(")");
+                return;
+            }
+            if t.is_punct(";") {
+                return;
+            }
+            if t.is_comment() {
+                let t = self.next().expect("tok");
+                self.comment(t, ind);
+                continue;
+            }
+            let up = t.up();
+            if t.kind == Kind::Word && (up == "AND" || up == "OR") && between == 0 {
+                let t = self.next().expect("tok");
+                match self.opts.logical_newline {
+                    LogicalNewline::Before => {
+                        self.open(ind, Role::Cond);
+                        self.emit(t);
+                    }
+                    LogicalNewline::After => {
+                        self.emit(t);
+                        self.open(ind, Role::Cond);
+                    }
+                }
+                first = false;
+                self.cond_expr(ind, &mut between);
+                continue;
+            }
+            if first {
+                // 시드 뒤 첫 조건 = 그룹 연산자로 시작.
+                let op = self.kw(if or_group { "OR" } else { "AND" });
+                match self.opts.logical_newline {
+                    LogicalNewline::Before => {
+                        self.open(ind, Role::Cond);
+                        self.word(&op);
+                    }
+                    LogicalNewline::After => {
+                        self.word(&op);
+                        self.open(ind, Role::Cond);
+                    }
+                }
+                first = false;
+                self.cond_expr(ind, &mut between);
+                continue;
+            }
+            let t = self.next().expect("tok");
+            self.emit_expr_token(t, ind, &mut between, ExprCtx::Cond);
+        }
+    }
+
+    /// 자동 별칭(스킬 2-1): `A`…`Z`, `AA`… 중 이 문장에 없는 첫 이름.
+    fn next_auto_alias(&mut self) -> String {
+        loop {
+            let n = self.alias_next;
+            self.alias_next += 1;
+            let name = alias_name(n);
+            if self.stmt_words.insert(name.clone()) {
+                return name;
+            }
+        }
+    }
+
+    /// 테이블 설명 주석(스킬 2-2): 물리 테이블(`S.T`/`T` · 서브쿼리 제외)에 호스트가 준 설명이 있으면 줄 끝 `--\t설명`.
+    fn table_comment(&mut self, toks: &[&Token]) {
+        if self.opts.table_comments.is_empty() {
+            return;
+        }
+        let Some(first) = toks.first() else { return };
+        if first.kind != Kind::Word && first.kind != Kind::Quoted {
+            return;
+        }
+        let mut name = first
+            .text
+            .trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`')
+            .to_ascii_uppercase();
+        let mut k = 1;
+        while k + 1 < toks.len()
+            && toks[k].is_punct(".")
+            && (toks[k + 1].kind == Kind::Word || toks[k + 1].kind == Kind::Quoted)
+        {
+            name.push('.');
+            name.push_str(
+                &toks[k + 1]
+                    .text
+                    .trim_matches(|c| c == '"' || c == '[' || c == ']' || c == '`')
+                    .to_ascii_uppercase(),
+            );
+            k += 2;
+        }
+        let last = name.rsplit('.').next().unwrap_or(&name).to_string();
+        let found = self
+            .opts
+            .table_comments
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&name))
+            .or_else(|| {
+                self.opts
+                    .table_comments
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(&last))
+            })
+            .map(|(_, c)| c.clone());
+        if let Some(c) = found {
+            let c = c.trim();
+            if !c.is_empty() {
+                self.part(Part::Comment(format!("--\t{c}")));
+            }
+        }
     }
 
     /// `(`를 이미 소비한 상태: 서브쿼리면 블록, 아니면 인라인 괄호.
@@ -1497,37 +1732,49 @@ impl<'a> Walker<'a> {
                 .iter()
                 .any(|p| matches!(p, Part::As | Part::Alias(_)))
         });
-        if has_as_part || toks.is_empty() {
+        if toks.is_empty() {
             return;
         }
-        match kind {
-            ItemKind::Select { alias_all, col_as } => {
-                if let Some(alias) = implicit_alias(&toks) {
-                    if col_as == AliasAs::Add {
-                        // 마지막 Text 조각에서 별칭 단어를 떼어 AS + Alias로.
-                        if self.strip_last_word(&alias) {
+        if !has_as_part {
+            match kind {
+                ItemKind::Select { alias_all, col_as } => {
+                    if let Some(alias) = implicit_alias(&toks) {
+                        if col_as == AliasAs::Add {
+                            // 마지막 Text 조각에서 별칭 단어를 떼어 AS + Alias로.
+                            if self.strip_last_word(&alias) {
+                                self.part(Part::As);
+                                self.part(Part::Alias(self.opts.identifier_case.apply(&alias)));
+                            }
+                        }
+                    } else if alias_all {
+                        if let Some(col) = bare_column(&toks) {
+                            self.part(Part::As);
+                            self.part(Part::Alias(self.opts.identifier_case.apply(&col)));
+                        }
+                    }
+                }
+                ItemKind::Table { table_as } => {
+                    if let Some(alias) = implicit_alias(&toks) {
+                        if table_as == AliasAs::Add && self.strip_last_word(&alias) {
                             self.part(Part::As);
                             self.part(Part::Alias(self.opts.identifier_case.apply(&alias)));
                         }
-                    }
-                } else if alias_all {
-                    if let Some(col) = bare_column(&toks) {
-                        self.part(Part::As);
-                        self.part(Part::Alias(self.opts.identifier_case.apply(&col)));
-                    }
-                }
-            }
-            ItemKind::Table {
-                table_as: AliasAs::Add,
-            } => {
-                if let Some(alias) = implicit_alias(&toks) {
-                    if self.strip_last_word(&alias) {
-                        self.part(Part::As);
-                        self.part(Part::Alias(self.opts.identifier_case.apply(&alias)));
+                    } else if self.opts.auto_alias && self.in_from {
+                        // ★ 별칭 자동 부여(스킬 2-1 · T-255): FROM/JOIN의 별칭 없는 테이블·인라인뷰에 `A`, `B`, ….
+                        let name = self.next_auto_alias();
+                        if table_as == AliasAs::Add {
+                            self.part(Part::As);
+                        }
+                        self.part(Part::Alias(name));
                     }
                 }
+                _ => {}
             }
-            _ => {}
+        }
+        // ★ 테이블 설명 주석(스킬 2-2 · T-255) — 별칭 뒤 줄 끝. 원문 항목에 주석이 이미 있었으면(지난 포맷의 설명 포함) 안 붙인다(멱등).
+        let had_comment = self.toks[item_start..end].iter().any(Token::is_comment);
+        if matches!(kind, ItemKind::Table { .. }) && !had_comment {
+            self.table_comment(&toks);
         }
     }
 
@@ -1842,10 +2089,10 @@ impl<'a> Walker<'a> {
             for _ in 0..3 {
                 self.next();
             }
-            self.word("1=1");
+            self.seed_word();
             started = true;
         } else if self.opts.where_seed {
-            self.word("1=1");
+            self.seed_word();
             started = true;
         }
         let mut between = 0u32;
@@ -1899,10 +2146,104 @@ enum ItemKind {
     Set,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ExprCtx {
     Cond,
     Item,
+}
+
+/// 자동 별칭 이름: 0 → `A` … 25 → `Z` · 26 → `AA` · 27 → `AB` ….
+fn alias_name(n: usize) -> String {
+    let mut n = n;
+    let mut s = String::new();
+    loop {
+        s.insert(0, (b'A' + (n % 26) as u8) as char);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    s
+}
+
+/// ★ 방언 치환(스킬 §22 · T-255): 포맷은 그대로, **이름만** — `ISNULL/NVL/COALESCE` · `SUBSTRING/SUBSTR` · `LEN/LENGTH/CHAR_LENGTH` ·
+/// `GETDATE()/SYSDATE/CURRENT_TIMESTAMP` · `EXCEPT/MINUS`. 인자 순서가 다른 것(`CHARINDEX/INSTR`)·구조가 다른 것(`TOP`·`#TEMP`)은 안 건드린다.
+pub fn substitute_dialect(toks: Vec<Token>, target: DialectTarget) -> Vec<Token> {
+    if target == DialectTarget::None {
+        return toks;
+    }
+    let fn_name = |up: &str| -> Option<&'static str> {
+        let group: &[&str] = match up {
+            "ISNULL" | "NVL" | "COALESCE" => &["ISNULL", "NVL", "COALESCE"],
+            "SUBSTRING" | "SUBSTR" => &["SUBSTRING", "SUBSTR", "SUBSTRING"],
+            "LEN" | "LENGTH" | "CHAR_LENGTH" => &["LEN", "LENGTH", "CHAR_LENGTH"],
+            _ => return None,
+        };
+        Some(match target {
+            DialectTarget::Tsql => group[0],
+            DialectTarget::Oracle => group[1],
+            _ => group[2],
+        })
+    };
+    let now_name = match target {
+        DialectTarget::Tsql => "GETDATE",
+        DialectTarget::Oracle => "SYSDATE",
+        _ => "CURRENT_TIMESTAMP",
+    };
+    let setop = match target {
+        DialectTarget::Oracle => "MINUS",
+        _ => "EXCEPT",
+    };
+    let mk = |from: &Token, kind: Kind, text: &str, nl: u32| Token {
+        kind,
+        text: text.to_string(),
+        nl_before: nl,
+        span: from.span,
+    };
+    let mut out: Vec<Token> = Vec::with_capacity(toks.len());
+    let mut i = 0;
+    while i < toks.len() {
+        let t = &toks[i];
+        if t.kind == Kind::Word {
+            let up = t.up();
+            let next_paren = toks.get(i + 1).is_some_and(|n| n.is_punct("("));
+            if next_paren {
+                if let Some(new) = fn_name(&up) {
+                    out.push(mk(t, Kind::Word, new, t.nl_before));
+                    i += 1;
+                    continue;
+                }
+                // `GETDATE()` → 이름만 남거나(`SYSDATE`·`CURRENT_TIMESTAMP`) 그대로.
+                if up == "GETDATE" && toks.get(i + 2).is_some_and(|c| c.is_punct(")")) {
+                    if now_name == "GETDATE" {
+                        out.push(t.clone());
+                        i += 1;
+                    } else {
+                        out.push(mk(t, Kind::Word, now_name, t.nl_before));
+                        i += 3;
+                    }
+                    continue;
+                }
+            } else if up == "SYSDATE" || up == "CURRENT_TIMESTAMP" {
+                if now_name == "GETDATE" {
+                    out.push(mk(t, Kind::Word, "GETDATE", t.nl_before));
+                    out.push(mk(t, Kind::Punct, "(", 0));
+                    out.push(mk(t, Kind::Punct, ")", 0));
+                } else {
+                    out.push(mk(t, Kind::Word, now_name, t.nl_before));
+                }
+                i += 1;
+                continue;
+            } else if up == "EXCEPT" || up == "MINUS" {
+                out.push(mk(t, Kind::Word, setop, t.nl_before));
+                i += 1;
+                continue;
+            }
+        }
+        out.push(t.clone());
+        i += 1;
+    }
+    out
 }
 
 fn is_cmp(op: &str) -> bool {
@@ -2256,5 +2597,181 @@ mod tests {
             .any(|(s, e)| e - s == 2 && lines[*s].role == Role::Cond));
         assert_eq!(line_prefix(1, true, &o), ",\t");
         assert_eq!(line_prefix(2, false, &o), "\t\t");
+    }
+
+    /// 시드 구분(탭)과 조건 줄 위치(같은 열)(사용자 09-29): `WHERE\t1=1` · `ON\t1=1` · AND/OR가 WHERE 열에 · 멱등.
+    #[test]
+    fn seed_gap_and_cond_same_column() {
+        let o = Options {
+            where_seed: true,
+            seed_gap: crate::Gap::Tab,
+            cond_indent: false,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "select a from t inner join u on u.k = t.k where x = 1 or y = 2",
+            &o,
+        );
+        assert_eq!(
+            out,
+            "SELECT\n\ta\nFROM\n\tt\nINNER JOIN u\n\tON\t1=1\n\tAND u.k = t.k\nWHERE\t1=1\nAND x = 1\nOR y = 2\n"
+        );
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+        // 기본(공백 · 한 단계 안)은 종전 그대로.
+        let d = Options {
+            where_seed: true,
+            ..Options::default()
+        };
+        assert_eq!(
+            format_basic("select a from t where x = 1", &d),
+            "SELECT\n\ta\nFROM\n\tt\nWHERE 1=1\n\tAND x = 1\n"
+        );
+    }
+
+    /// T-255 괄호 AND/OR 그룹 시드(스킬 §3): `(1=0` + OR 줄 + `)` 한 단계 더 · 원문 시드 유지 · 멱등 · BETWEEN AND는 그룹이 아님.
+    #[test]
+    fn paren_group_seed() {
+        let o = Options {
+            where_seed: true,
+            paren_seed: true,
+            ..Options::default()
+        };
+        let out = format_basic("select a from t where x = 1 and (b > 0 or c > 0)", &o);
+        assert_eq!(
+            out,
+            "SELECT\n\ta\nFROM\n\tt\nWHERE 1=1\n\tAND x = 1\n\tAND (1=0\n\t\tOR b > 0\n\t\tOR c > 0\n\t\t)\n"
+        );
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+        // AND 그룹 = (1=1 · 원문에 1=1이 있으면 그대로.
+        let out2 = format_basic("select a from t where (1=1 and b = 1 and c = 2)", &o);
+        assert!(
+            out2.contains("\tAND (1=1\n\t\tAND b = 1\n\t\tAND c = 2\n\t\t)"),
+            "{out2}"
+        );
+        // BETWEEN … AND 만 있는 괄호는 인라인 · 서브쿼리 괄호는 블록 그대로.
+        let out3 = format_basic(
+            "select a from t where (x between 1 and 9) and exists (select 1 from u)",
+            &o,
+        );
+        assert!(out3.contains("AND (x BETWEEN 1 AND 9)"), "{out3}");
+        assert!(!out3.contains("(1=1\n\t\tAND x BETWEEN"), "{out3}");
+        // 옵션이 꺼져 있으면 종전대로 인라인.
+        let off = Options {
+            where_seed: true,
+            ..Options::default()
+        };
+        assert!(format_basic("select a from t where (b > 0 or c > 0)", &off)
+            .contains("AND (b > 0 OR c > 0)"));
+    }
+
+    /// T-255 방언 치환(스킬 §22): 이름만 바뀌고 배치는 같다.
+    #[test]
+    fn dialect_substitution() {
+        let o = Options {
+            dialect_target: DialectTarget::Oracle,
+            ..Options::default()
+        };
+        let out = format_basic("select isnull(a, 0), len(b), getdate() from t except select 1, 2, current_timestamp from u", &o);
+        assert!(
+            out.contains("NVL(a, 0)") && out.contains("LENGTH(b)") && out.contains("SYSDATE"),
+            "{out}"
+        );
+        assert!(
+            out.contains("MINUS") && !out.contains("EXCEPT") && !out.contains("CURRENT_TIMESTAMP"),
+            "{out}"
+        );
+        let t = Options {
+            dialect_target: DialectTarget::Tsql,
+            ..Options::default()
+        };
+        let out2 = format_basic(
+            "select nvl(a, 0), substr(b, 1, 2), sysdate from t minus select 1, 2, 3 from u",
+            &t,
+        );
+        assert!(
+            out2.contains("ISNULL(a, 0)")
+                && out2.contains("SUBSTRING(b, 1, 2)")
+                && out2.contains("GETDATE()"),
+            "{out2}"
+        );
+        assert!(out2.contains("EXCEPT"), "{out2}");
+        // ANSI.
+        let a = Options {
+            dialect_target: DialectTarget::Ansi,
+            ..Options::default()
+        };
+        let out3 = format_basic("select isnull(a, 0), len(b), sysdate from t", &a);
+        assert!(
+            out3.contains("COALESCE(a, 0)")
+                && out3.contains("CHAR_LENGTH(b)")
+                && out3.contains("CURRENT_TIMESTAMP"),
+            "{out3}"
+        );
+        // None = 그대로.
+        assert_tokens_kept(
+            "select isnull(a, 0), getdate() from t except select 1, 2 from u",
+            &Options::default(),
+        );
+    }
+
+    /// T-255 별칭 자동 부여(스킬 2-1): FROM/JOIN의 별칭 없는 테이블·인라인뷰 · 이미 있는 별칭은 유지 · 문장 안 단어와 안 겹침 · UPDATE 대상은 안 건드림.
+    #[test]
+    fn auto_alias_for_tables() {
+        let o = Options {
+            auto_alias: true,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "select x from tb_order inner join tb_item i on i.k = tb_order.k where a = 1",
+            &o,
+        );
+        // `A`는 WHERE의 단어 a와 겹쳐 건너뛴다 · 기존 별칭 i는 유지.
+        assert!(out.contains("\ttb_order B\n"), "{out}");
+        assert!(out.contains("INNER JOIN tb_item i\n"), "{out}");
+        assert!(!out.contains("tb_order A"), "{out}");
+        // 인라인뷰도 별칭(문장 전체에서 유일 — 안쪽 dual이 C를 쓰면 뷰는 D).
+        let out2 = format_basic(
+            "select x from tb_order, (select 1 from dual) where a = 1",
+            &o,
+        );
+        assert!(out2.contains("\ttb_order B\n"), "{out2}");
+        assert!(out2.contains("dual C\n"), "{out2}");
+        assert!(out2.contains(") D\n"), "{out2}");
+        assert_eq!(format_basic(&out2, &o), out2, "idempotent");
+        assert_eq!(alias_name(0), "A");
+        assert_eq!(alias_name(25), "Z");
+        assert_eq!(alias_name(26), "AA");
+        assert_eq!(alias_name(27), "AB");
+        let up = format_basic("update tb_order set qty = 0 where k = 1", &o);
+        assert!(
+            !up.contains("tb_order A") && !up.contains("tb_order B"),
+            "{up}"
+        );
+        // 꺼져 있으면 그대로(토큰 보존).
+        assert_tokens_kept(
+            "select x from tb_order, tb_item where a = 1",
+            &Options::default(),
+        );
+    }
+
+    /// T-255 테이블 설명 주석(스킬 2-2): 호스트가 준 설명이 있는 물리 테이블 줄 끝에 `--\t설명` · 없는 것·서브쿼리는 없음.
+    #[test]
+    fn table_description_comments() {
+        let o = Options {
+            comma_gap: crate::Gap::Tab,
+            table_comments: vec![
+                ("BISCM.TB_ORDER".into(), "주문".into()),
+                ("TB_ITEM".into(), "품목".into()),
+            ],
+            ..Options::default()
+        };
+        let out = format_basic("select 1 from biscm.tb_order a inner join tb_item b on b.k = a.k left join tb_none c on c.k = a.k, (select 1 from dual) d", &o);
+        assert!(out.contains("biscm.tb_order a\t--\t주문\n"), "{out}");
+        assert!(out.contains("INNER JOIN tb_item b\t--\t품목\n"), "{out}");
+        assert!(out.contains("LEFT JOIN tb_none c\n"), "{out}");
+        assert!(!out.contains("d\t--"), "{out}");
+        // 다시 포맷해도 주석이 두 번 붙지 않는다(원문 주석은 인라인 조각으로 유지 · 같은 글).
+        let again = format_basic(&out, &o);
+        assert_eq!(again.matches("--\t주문").count(), 1, "{again}");
     }
 }

@@ -180,7 +180,16 @@ impl App {
                 } else {
                     segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
                 }
-                if let Some(n) = self.sess.last_rows {
+                // 필터가 있으면 "n / N행"(T-181) · 아니면 마지막 실행 행 수.
+                if let Some((shown, total)) = self.grid.filter_summary() {
+                    segs.push((
+                        tf(
+                            Msg::StRowsFiltered,
+                            &[&shown.to_string(), &total.to_string()],
+                        ),
+                        false,
+                    ));
+                } else if let Some(n) = self.sess.last_rows {
                     segs.push((tf(Msg::StRowsShort, &[&n.to_string()]), false));
                 }
                 if let Some(secs) = self.sess.last_secs {

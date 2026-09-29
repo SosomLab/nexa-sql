@@ -685,17 +685,19 @@ impl DetailPanel {
         if self.hover_toggle {
             dc.fill_round_rect(self.toggle, px(3.0), th.panel_bg_alt);
         }
-        // 채운 삼각형(▼ = 펼침 상태에서 축소 · ▲ = 축소 상태에서 확장 · 사용자 09-25): 1px 가로 띠(DrawCtx에 삼각형 채움이 없다).
+        // 채운 삼각형(▼ = 펼침 상태에서 축소 · ▲ = 축소 상태에서 확장 · 사용자 09-25) — `fill_triangle`(AA · nexa-ctl raster ·
+        //   접속 창 ▶와 같은 길). 종전 1px 가로 띠는 행마다 폭을 반올림해 짝수/홀수 폭이 섞이며 좌우가 들쭉날쭉했다(사용자 09-29 캡처).
         let tw = px(9.0).max(3);
         let thh = px(5.0).max(2);
         let cx = self.toggle.x + self.toggle.w / 2;
         let cy = self.toggle.y + self.toggle.h / 2;
-        let top = cy - thh / 2;
-        for row in 0..thh {
-            let k = row as f32 / (thh - 1).max(1) as f32; // 0 = 위 · 1 = 아래
-            let frac = if self.collapsed { k } else { 1.0 - k };
-            let w = ((tw as f32) * frac).round().max(1.0) as i32;
-            dc.fill_rect(Rect::new(cx - w / 2, top + row, w, 1), th.text);
+        let (top, bottom) = (cy - thh / 2, cy - thh / 2 + thh);
+        // 꼭짓점 x = cx 기준 좌우 대칭(밑변 = cx ± tw/2 · 정수 좌표라 반 픽셀 치우침이 없게 짝수 폭).
+        let (l, r) = (cx - tw / 2, cx + tw / 2);
+        if self.collapsed {
+            dc.fill_triangle((cx, top), (r, bottom), (l, bottom), th.text);
+        } else {
+            dc.fill_triangle((l, top), (r, top), (cx, bottom), th.text);
         }
         let alpha = match self.copy.look(now) {
             Look::Idle => 0.8,

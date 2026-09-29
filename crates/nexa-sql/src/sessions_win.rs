@@ -107,41 +107,30 @@ impl SessionsWin {
             self.redraw();
             return;
         }
-        let same = self.memo.on_same_monitor(owner);
-        let (lw, lh) = same.and_then(|(_, s)| s).unwrap_or((860.0, 360.0));
-        let mut attrs = Window::default_attributes()
-            .with_title(format!("Nexa SQL — {}", t(Msg::WinSessions)))
-            .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(lw, lh));
-        if let Some(((x, y), _)) = same {
-            attrs = attrs.with_position(crate::wingeom::logical(x, y));
-        } else if let Some((x, y, w)) = near {
-            attrs =
-                attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y + 40));
-        }
-        let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        let Ok(win) = el.create_window(attrs) else {
+        // 창 열기 꼬리 = 공통 호스트(T-247 · winhost).
+        let Some(o) = crate::winhost::open_window(
+            el,
+            crate::winhost::OpenSpec {
+                title: format!("Nexa SQL — {}", t(Msg::WinSessions)),
+                theme,
+                near,
+                dy: 40,
+                owner,
+                memo: Some(&self.memo),
+                default_size: (860.0, 360.0),
+                ime: false,
+            },
+        ) else {
             return;
         };
-        // 기억한 위치는 프레임 기준으로 다시 놓는다(macOS 제목 표시줄 드리프트 방지 · wingeom::place_outer).
-        if let Some(((x, y), _)) = same {
-            crate::wingeom::place_outer(&win, Some((x, y)));
-        }
-        // 화면 밖으로 나가지 않게(메인 창 오른쪽 기본 위치 · 해상도가 바뀐 뒤의 기억 위치).
-        crate::wingeom::keep_on_screen(&win, owner);
-        let win = Rc::new(win);
-        self.scale = win.scale_factor() as f32;
-        self.surface = crate::present::Presenter::new(win.clone()).ok();
-        self.window = Some(win);
+        self.scale = o.scale;
+        self.surface = o.surface;
+        self.window = Some(o.window);
         self.redraw();
     }
 
     pub(crate) fn close(&mut self) {
-        if let Some(w) = &self.window {
-            if let Some(p) = crate::wingeom::outer_pos(w) {
-                self.last = Some((p, crate::wingeom::logical_size(w)));
-            }
-        }
+        self.last = self.window.as_deref().and_then(crate::winhost::last_geom);
         self.surface = None;
         self.window = None;
     }

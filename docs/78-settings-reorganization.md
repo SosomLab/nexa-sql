@@ -69,7 +69,7 @@
 - **결과 셋(Result sets)** — 페치 절: `grid.max_rows` · `grid.auto_fetch` ▸ `grid.offset_warn` · `grid.memory_budget_mb` · 탭 절: `grid.result_tabs` ▸ `grid.result_tabbar_single`·`grid.result_tabs_max`·`grid.result_per_statement`·`grid.result_tab_evict` · `grid.result_tab_title` · 표시 절: `grid.font_face`·`grid.font_size`·`grid.row_height_pct`·`grid.row_numbers`·`grid.null_text` · `grid.row_focus` ▸ `grid.row_focus_color` · 열 폭 절: `grid.col_min_width` · `grid.col_max_mode` ▸ `grid.col_max_chars`(=manual)
 
 ### 3-6. 오브젝트 탐색기(Object explorer)
-- 표시 절: `explorer.visible` ▸ `explorer.width` · `explorer.icons` · `explorer.tooltip` ⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6) · 타입어헤드 절: `explorer.typeahead` ▸ 4 · 갱신 절: `meta.refresh_on_ddl` ▸ `meta.refresh_on_commit` · `meta.refresh_on_missing` · `meta.refresh_secs`(0 = 끔) ▸ `meta.refresh_idle_secs` · `meta.refresh_highlight_ms` · `explorer.timeout` · `meta.cache_mb`
+- 표시 절: `explorer.visible` ▸ `explorer.width` · `explorer.icons` · `explorer.tooltip` ✅ 09-29 T-249 구현·재등록 · 타입어헤드 절: `explorer.typeahead` ▸ 4 · 갱신 절: `meta.refresh_on_ddl` ▸ `meta.refresh_on_commit` · `meta.refresh_on_missing` · `meta.refresh_secs`(0 = 끔) ▸ `meta.refresh_idle_secs` · `meta.refresh_highlight_ms` · `explorer.timeout` · `meta.cache_mb`
 
 ### 3-7. 로그·진단(Log & diagnostics)
 - 로그 창 절: `log.open_at_start` · `log.max_lines` · `log.newest_first`·`log.wrap`·`log.autoscroll`·`log.always_on_top`·`log.switch_scale` · `log.kinds`·`log.columns`(HIDDEN 후보) · 형식 절: `log.format` ▸ `log.template`(=template) · 파일 절: `log.file`(비어 있으면 끔) ▸ `log.file_format`·`log.file_max_kb` · 개발자 절: `log.dev_mode` ▸ `log.dev_layers` · 트랜잭션 로그 `txlog.max_entries` · (`dev.start_demo`·`demo.prompted` → HIDDEN)
@@ -103,7 +103,7 @@
 | `search.history_view`·`search.history_rows` | `search.history_max` | Gt(0) |
 | `session.idle_shared` | `session.idle_secs` | Gt(0) |
 | `tx.idle_countdown_secs` | `tx.idle_limit_min` | Gt(0) |
-| `probe.dns_cache_secs` ⏸(미구현 — 09-28 설정 레지스트리에서 뺌 · 구현할 때 다시 등록 · docs/93 §6)·`probe.icmp`·`probe.stale_secs` | `probe.enabled` | On |
+| `probe.dns_cache_secs` ✅ 09-29 T-249 구현·재등록·`probe.icmp`·`probe.stale_secs` | `probe.enabled` | On |
 | `explorer.width` | `explorer.visible` | On |
 | `meta.refresh_idle_secs` | `meta.refresh_secs` | Gt(0) |
 | `file.probe_chevrons` | `file.os_icons` | On |

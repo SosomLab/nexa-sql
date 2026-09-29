@@ -55,6 +55,9 @@ pub(crate) struct TabState {
     pub disk_hash: u64,
     /// 저장 당시의 탭 id(0 = 없음) — 이름 없는 탭의 북마크(`DocKey::Scratch { tab }`)를 복원 때 새 id로 **재매핑**(사용자 09-23 검토).
     pub id: u64,
+    /// ★ 탭별 들여쓰기 재정의(탭 폭, 공백 들여쓰기) — 상태줄 팝업으로 바꾼 값 · None = 설정 기본값(사용자 09-29 "폴더·프로젝트 모드에서는
+    ///   탭별 상태를 저장하고 다시 열 때 복원"). 파일 모드(프로젝트 없음)는 저장할 곳이 없어 늘 설정값으로 시작한다.
+    pub indent: Option<(u8, bool)>,
 }
 
 impl Project {
@@ -126,6 +129,14 @@ impl Project {
                                 // 64비트 해시는 JSON 숫자(f64)로는 정밀도가 깨진다 → 글자열.
                                 ("hash", Json::Str(s)) => t.disk_hash = s.parse().unwrap_or(0),
                                 ("id", Json::Num(n)) => t.id = (*n).max(0.0) as u64,
+                                ("tab_size", Json::Num(n)) => {
+                                    let sp = t.indent.is_some_and(|x| x.1);
+                                    t.indent = Some(((*n).clamp(1.0, 64.0) as u8, sp));
+                                }
+                                ("spaces", Json::Bool(b)) => {
+                                    let ts = t.indent.map_or(4, |x| x.0);
+                                    t.indent = Some((ts, *b));
+                                }
                                 _ => {}
                             }
                         }
@@ -287,6 +298,9 @@ impl Project {
                 }
                 if t.id != 0 {
                     out.push_str(&format!(", \"id\": {}", t.id));
+                }
+                if let Some((ts, sp)) = t.indent {
+                    out.push_str(&format!(", \"tab_size\": {ts}, \"spaces\": {sp}"));
                 }
                 out.push_str(" }");
             }
@@ -551,6 +565,8 @@ mod tests {
         p.tabs[0].id = 77;
         // 본문(payload)은 `id`로 탭에 되붙는다(`projfile` 블록 · 09-23) — 스크립트 탭도 id가 있어야 본문이 왕복한다.
         p.tabs[1].id = 78;
+        // 탭별 들여쓰기 재정의(사용자 09-29) — 있는 탭만 쓰고 그대로 돌아온다.
+        p.tabs[1].indent = Some((2, true));
         p.expanded = vec![dir.join("sql"), other.join("x")];
         p.panel = Some("bookmarks".into());
         p.search = Some("select \"q\"".into());
@@ -559,6 +575,7 @@ mod tests {
         p.save().unwrap();
         let text = p.to_json();
         assert!(text.contains("\"preview\": true"), "{text}");
+        assert!(text.contains("\"tab_size\": 2, \"spaces\": true"), "{text}");
         assert!(text.contains("\"expanded\": [\"sql\", "), "{text}");
         let back = Project::load(&file).unwrap();
         assert_eq!(back.tabs, p.tabs);

@@ -584,7 +584,7 @@ pub use detail::{
     column_details, object_details, render_table, DetailSection, HeaderId, SectionId,
 };
 pub mod tree;
-pub use tree::{sub_items, sub_kinds, SubIcon, SubItem, SubKind};
+pub use tree::{member_object, member_sub_kinds, sub_items, sub_kinds, SubIcon, SubItem, SubKind};
 pub mod gen;
 pub use gen::{gen_whats, generate, BindNote, GenOpts, GenSpec, GenWhat};
 

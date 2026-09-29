@@ -26,6 +26,11 @@ impl App {
 
     /// 그리드가 메뉴로 만든 복사 텍스트를 OS 클립보드로.
     pub(crate) fn after_grid_event(&mut self) {
+        if let Some(e) = self.grid.take_error() {
+            self.sess.status = tf(Msg::StFilterError, &[&e]);
+            self.log_win
+                .push(LogEntry::new(LogKind::Error, self.sess.status.clone()));
+        }
         if let Some((text, n)) = self.grid.take_copy() {
             if clipboard::write_text(&text) {
                 self.sess.status = tf(Msg::StCopied, &[&n.to_string()]);
@@ -35,6 +40,27 @@ impl App {
         }
         if let Some(kind) = self.grid.take_pending_sql() {
             self.begin_sql_copy(kind);
+        }
+        // ★ 그리드 필터 "포함…"(T-181): 팔레트 입력 → `grid.filter:<열>` → `Grid::add_filter`.
+        if let Some((col, op, initial)) = self.grid.take_filter_prompt() {
+            let anchor = Some(self.grid.bounds);
+            let placeholder = match op {
+                crate::grid::FilterOp::StartsWith => Msg::PalFilterStarts,
+                crate::grid::FilterOp::Gt | crate::grid::FilterOp::Ge => Msg::PalFilterGt,
+                crate::grid::FilterOp::Lt | crate::grid::FilterOp::Le => Msg::PalFilterLt,
+                crate::grid::FilterOp::Between => Msg::PalFilterBetween,
+                crate::grid::FilterOp::Regex => Msg::PalFilterRegex,
+                crate::grid::FilterOp::In => Msg::PalFilterIn,
+                _ => Msg::PalFilterContains,
+            };
+            self.palette.open_prompt_at(
+                &format!("grid.filter:{col}:{}", op.code()),
+                t(placeholder),
+                &initial,
+                anchor,
+            );
+            self.ime_refresh();
+            self.redraw();
         }
         // 결과 도구줄(docs/43 §4-2): 추가/전체/건수 · 새로고침 · SQL 보기.
         if let Some(req) = self.grid.take_fetch_request() {
@@ -685,6 +711,13 @@ impl App {
                         self.grid_for(id).map(|g| g.source_sql().to_string())
                     })
                     .unwrap_or_default();
+                // ★ T-255: `grid.copy_sql_format`이면 기본 포맷터로 정돈해 복사(실패하면 원문).
+                let sql = if self.settings.flag("grid.copy_sql_format") && !sql.trim().is_empty() {
+                    let engine = self.format_default_engine();
+                    self.format_run(&engine, &sql, false).unwrap_or(sql)
+                } else {
+                    sql
+                };
                 if sql.trim().is_empty() {
                     self.sess.status = t(Msg::StResultNoSql).to_string();
                 } else if clipboard::write_text(&sql) {

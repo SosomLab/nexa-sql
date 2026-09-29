@@ -241,6 +241,37 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
     }
 }
 
+/// ★ 패키지 멤버 잎(Procedures/Functions 폴더의 항목)이 가진 하위 폴더(사용자 09-29 "패키지의 프로시저도 개별 프로시저처럼").
+/// Oracle 패키지 멤버 = Arguments(의존은 패키지 단위라 뺀다) · 그 밖의 잎 = 없음.
+#[must_use]
+pub fn member_sub_kinds(dialect: Dialect, sub: SubKind) -> &'static [SubKind] {
+    match (dialect, sub) {
+        (Dialect::Oracle, SubKind::Procedures | SubKind::Functions) => &[SubKind::Arguments],
+        _ => &[],
+    }
+}
+
+/// 패키지 멤버 잎을 하위 폴더의 주인 객체로(이름 `패키지.멤버` · `routine_args`가 3부 이름을 패키지로 푼다).
+#[must_use]
+pub fn member_object(owner: &ObjectInfo, sub: SubKind, item: &SubItem) -> Option<ObjectInfo> {
+    let kind = match sub {
+        SubKind::Procedures => ObjectKind::Procedure,
+        SubKind::Functions => ObjectKind::Function,
+        _ => return None,
+    };
+    if owner.kind != ObjectKind::Package {
+        return None;
+    }
+    Some(ObjectInfo {
+        schema: owner.schema.clone(),
+        name: format!("{}.{}", owner.name, item.name),
+        kind,
+        status: item.status.clone(),
+        modified: String::new(),
+        extra: item.detail.clone(),
+    })
+}
+
 fn kind_char_label(k: char) -> &'static str {
     match k {
         'P' => "PRIMARY KEY",
@@ -651,6 +682,29 @@ mod tests {
         );
         assert!(sub_kinds(Dialect::Mssql, ObjectKind::Sequence).is_empty());
         assert!(sub_kinds(Dialect::Oracle, ObjectKind::Package).contains(&SubKind::Functions));
+        // 패키지 멤버 잎 = Arguments 폴더(Oracle만) · 주인은 `패키지.멤버`.
+        assert_eq!(
+            member_sub_kinds(Dialect::Oracle, SubKind::Procedures),
+            &[SubKind::Arguments]
+        );
+        assert!(member_sub_kinds(Dialect::Oracle, SubKind::Columns).is_empty());
+        assert!(member_sub_kinds(Dialect::Postgres, SubKind::Functions).is_empty());
+        let pkg = ObjectInfo {
+            schema: "S".into(),
+            name: "PKG".into(),
+            kind: ObjectKind::Package,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        let m = member_object(
+            &pkg,
+            SubKind::Functions,
+            &item("F", "FUNCTION", SubIcon::Function),
+        )
+        .expect("member");
+        assert_eq!((m.name.as_str(), m.kind), ("PKG.F", ObjectKind::Function));
+        assert!(member_object(&pkg, SubKind::Columns, &item("X", "", SubIcon::Column)).is_none());
         for k in SubKind::ALL {
             assert_eq!(SubKind::parse(k.code()), Some(k));
             assert_eq!(SubKind::parse(k.label()), Some(k));

@@ -37,10 +37,13 @@
 |---|---|---|---|
 | `format.default` | `basic` \| 확장 id | basic | Shift+Alt+F가 쓰는 포맷터 |
 | `format.indent` · `format.indent_width` | tab/space · 1~16 | tab · 4 | 들여쓰기 단위 · 폭(정렬 탭 스톱) |
+| `format.indent_from_tab` | bool | **on** | 문서 포맷 때 위 둘 대신 **그 탭**의 들여쓰기(상태줄 탭 크기/공백) · 켜져 있으면 단위·폭 카드는 보이되 잠김 · **미리보기는 늘 설정값**(사용자 09-29) |
 | `format.keyword_case` · `identifier_case` · `function_case` | keep/upper/lower | upper · keep · keep | 대소문자(인용 식별자는 불변) |
-| `format.comma` · `format.comma_gap` | leading/trailing · space/tab | leading · space | 콤마 위치 · 콤마 뒤 간격(정렬된 AS·연산자 뒤 포함) |
+| `format.comma` · `format.comma_gap` | leading/trailing · space/tab | **trailing** · space | 콤마 위치 · 콤마 뒤 간격(정렬된 AS·연산자 뒤 포함) — Basic 기본 = DBeaver 일반형(콤마 뒤 · 사용자 09-29 "내 기준은 kiros33에서") · `Options::default()`(라이브러리)는 leading 그대로 |
 | `format.logical_newline` | before/after | before | AND/OR 줄 앞/뒤 |
 | `format.where_seed` | bool | off | `WHERE/ON/HAVING 1=1` 시드(이미 있으면 그대로) |
+| `format.seed_gap` | space/tab | space | 시드 앞 구분 — `WHERE 1=1` / `WHERE\t1=1`(`ON`·`HAVING`도) · 사용자 09-29 |
+| `format.cond_indent` | indent/same | indent | WHERE/HAVING 뒤 AND/OR 줄 = 한 단계 안 / WHERE와 같은 열(ON은 늘 ON 열) · 사용자 09-29 |
 | `format.list_style` · `format.line_width` | multi/single/auto · 40~400 | multi · 120 | 목록 배치 · 줄 폭 |
 | `format.case_inline_max` | 20~400 | 120 | CASE 한 줄 상한 |
 | `format.operator_spaces` | bool | on | 연산자 양쪽 공백 |
@@ -88,4 +91,30 @@
 
 ## 7. 후속(T-255)
 
-강(river) 정렬 · 괄호 AND/OR 그룹 `(1=1`/`(1=0` 시드 · 별칭 자동 부여(2-1) · 테이블 설명 주석(2-2 · 메타 필요) · PL/SQL 블록(§21) · 방언 치환(§22) · 결과 그리드 "Copy SQL"과 포맷 연동 · CLI `nsql format`.
+✅ 09-29 1차(§9): 괄호 AND/OR 그룹 `(1=1`/`(1=0` 시드 · 별칭 자동 부여(2-1) · 테이블 설명 주석(2-2 · 메타) · 방언 치환(§22) · 결과 그리드 "Copy SQL" 포맷 연동 · CLI `nsql format`. **남음**: 강(river) 정렬(렌더 구조 변경 = 절 키워드 우측 정렬 + 첫 항목 같은 줄 · 별도 설계) · PL/SQL 블록(§21 · 통과 블록의 계단식 재들여쓰기 + 내부 단위 쿼리 포맷 · 별도 설계).
+
+## 8. 우클릭 Format 그룹 · 포맷 범위 · 기본 포맷터 콤보(사용자 09-29)
+
+- **우클릭 메뉴 Format 그룹**(SQL 구문 탭만 · `App::format_menu_items` · 우클릭 직전 `refresh_menu_extras`로 새로 만든다): `SQL Format (기본 포맷터)`가 첫 줄(단축키 표시) → 나머지 설치 포맷터가 `SQL Format (이름)`으로 → 구분자 → 대문자로 / 소문자로(**선택이 있을 때만 활성**). 이름 = `format_engine_short`(Basic = "Basic" · 확장 = 라벨에서 "SQL Formatter for " 접두 제거 → "kiros33"). 확장이 없으면 `SQL Format (Basic)` 한 줄 · kiros33 설치 + Basic 기본 = Basic, kiros33 순 · kiros33 기본 = kiros33, Basic 순.
+- **포맷 범위**(`format_target` · 메뉴·Shift+Alt+F 공통): 선택이 있으면 선택만 → 없으면 **캐럿의 문장**(`nsql_script::statement_at_in` = "문장 실행"과 같은 범위) → 문장이 없으면 문서 전체. `replace_range`라 **되돌리기 1단계** · 문장/선택 포맷 뒤에는 바뀐 구간을 선택해 둔다.
+- **`format.default` = 콤보**: 설정 창이 `Text` 항목에 호스트가 준 동적 후보(`PrefsWin::set_dyn_choices` · 확장 켜기/끄기 때 `apply_extensions`가 갱신)를 콤보로 그린다 · 후보 = `format_default_choices`(Basic · `라벨 (id)`).
+- **들여쓰기 = 활성 탭의 값**(사용자 09-29): `format.indent`/`format.indent_width` 설정 항목은 형태를 유지하되 지금은 `Editors::indent()`(탭별 재정의 > `editor.tab_size`/`editor.indent_spaces`)를 넣는다(`format_option_pairs`). 탭별 재정의는 상태줄 팝업으로 바꾸며 새 탭은 설정 기본값으로 시작 · **파일 모드**(프로젝트 없음)는 저장할 곳이 없어 늘 설정값(본문은 안 바꾼다 · 일괄 변환은 기존 기능) · **폴더/프로젝트 모드**는 `TabState.indent`(`tab_size`·`spaces`)로 탭별 저장 → 다시 열 때 복원(`set_indent_of`).
+- 🔧 설정 창 콤보 드롭다운이 **다음 카드의 콤보 상자 아래**로 그려지던 결함: 콤보 층에서 **열린 콤보를 맨 마지막**에 그린다(`prefs_win.rs` paint 두 번 지나기).
+
+## 8-1. 설정 창 안 미리보기(사용자 09-29 "포맷을 미리보면서 수정 · 변경점 1곳")
+
+설정 창에서 **Format**(또는 확장 SQL Formatter) 분류를 고르면 카드 영역이 위 55 %로 줄고 아래에 **미리보기**(제목 = `미리보기 — 엔진` · 읽기 전용 SQL 상자 · 선택·복사·스크롤 가능)가 붙는다. 원본 = 열려 있는 미리보기 탭의 원본 > 기본 포맷터의 예시 SQL · 값(`format.*`/`sqlfmt.*`)을 바꾸는 순간 `App::prefs_format_preview_refresh`가 기본 포맷터로 다시 포맷해 넣는다(`PrefsWin::set_preview`). 다른 분류로 가면 카드 영역이 원래대로. 별도 편집기 탭 미리보기(`edit.format_preview`)는 그대로 있다(자기 문서로 보고 싶을 때).
+
+## 9. T-255 1차(09-29) — 옵션 3 · 메타 주석 · Copy SQL · CLI
+
+| 항목 | 구현 | 설정 |
+|---|---|---|
+| 괄호 AND/OR 그룹 시드(스킬 §3) | 조건 문맥의 `(` 뒤에 서브쿼리가 아니고 최상위 AND/OR가 있으면(`paren_is_cond_group` · BETWEEN AND·CASE 안 제외) `(1=1`(AND) / `(1=0`(OR · 첫 연산자 기준) + 조건 한 단계 더 + `)` 같은 열(`paren_group`) · 원문 시드 유지 · 멱등 | `format.paren_seed`(off) |
+| 별칭 자동 부여(스킬 2-1) | FROM/JOIN(`in_from`)의 별칭 없는 테이블·인라인뷰에 `A`…`Z`, `AA`…(`alias_name`) · 문장 안 단어(`stmt_words`)와 안 겹치게 · 기존 별칭 유지 · UPDATE/MERGE 대상은 안 건드림 · 상관 서브쿼리 `S1`/`C1` 규칙과 컬럼 한정(`별칭.컬럼`)은 메타가 필요해 후속 | `format.auto_alias`(off) |
+| 테이블 설명 주석(스킬 2-2) | `Options.table_comments`(대문자 `S.T`/`T` → 설명)를 호스트가 채움(`App::format_table_comments` = 문서의 이름을 메타 스냅숏 `lookup` · 객체 코멘트 > 상세 코멘트) → 물리 테이블 항목 줄 끝 `--\t설명`(`table_comment`) · 없으면 없음 · 확장 포맷터에는 안 감 | (메타 있으면 자동) |
+| 방언 치환(스킬 §22) | 렉서 뒤 토큰 치환 `substitute_dialect`: ISNULL/NVL/COALESCE · SUBSTRING/SUBSTR · LEN/LENGTH/CHAR_LENGTH · GETDATE()/SYSDATE/CURRENT_TIMESTAMP · EXCEPT/MINUS · 인자 순서·구조가 다른 것(CHARINDEX/INSTR · TOP · #TEMP · `+` 결합)은 안 건드림 | `format.dialect_target`(none/ansi/oracle/tsql) |
+| Copy SQL 포맷 | 결과 탭 메뉴 ▸ Copy SQL 때 기본 포맷터로 정돈(실패 = 원문) | `grid.copy_sql_format`(off) |
+| CLI | `nsql format [<file|->] [-o <file>] [--in-place]` = 내장 Basic + 앱과 같은 `format.*` 설정(`settings_cached`) · 확장 포맷터는 CLI에 없음 | — |
+
+시험: nsql-format `paren_group_seed` · `dialect_substitution` · `auto_alias_for_tables` · `table_description_comments`(+ 기존 15) · nsql-settings/i18n 등재.
+

@@ -486,6 +486,8 @@ pub(crate) fn spawn(
     let cancel_run: Arc<Mutex<Option<Arc<dyn nsql_core::CancelHandle>>>> =
         Arc::new(Mutex::new(None));
     let cancel_slot = cancel_run.clone();
+    // ★ 실행 세대(문장 타임아웃 감시 스레드가 "아직 그 실행인가"를 본다 · T-249).
+    let run_seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
     std::thread::Builder::new()
         .name("nsql-worker".into())
         .spawn(move || {
@@ -683,7 +685,9 @@ pub(crate) fn spawn(
                 let timeout = preflight.unwrap_or(timeout);
                 if let (true, Some((host, port))) = (plan.probe, active_ep.as_ref()) {
                     let t = std::time::Instant::now();
-                    if probe::probe_once(host, *port, timeout, true) != probe::Outcome::Up {
+                    if probe::probe_once(host, *port, timeout, true, probe::DEFAULT_DNS_TTL)
+                        != probe::Outcome::Up
+                    {
                         let ep = format!("{host}:{port}");
                         let ms = t.elapsed().as_millis().to_string();
                         let m = tf(Msg::ErrServerUnreachable, &[&ep, &ms]);
@@ -753,8 +757,13 @@ pub(crate) fn spawn(
                         let reachable = match endpoint(&spec) {
                             Some((host, port)) => {
                                 let t = std::time::Instant::now();
-                                let up = probe::probe_once(&host, port, timeout, true)
-                                    == probe::Outcome::Up;
+                                let up = probe::probe_once(
+                                    &host,
+                                    port,
+                                    timeout,
+                                    true,
+                                    probe::DEFAULT_DNS_TTL,
+                                ) == probe::Outcome::Up;
                                 if !up {
                                     let ep = format!("{host}:{port}");
                                     let ms = t.elapsed().as_millis().to_string();
@@ -1335,8 +1344,13 @@ pub(crate) fn spawn(
                                 let reachable = match endpoint(&spec) {
                                     Some((host, port)) => {
                                         let t = std::time::Instant::now();
-                                        let up = probe::probe_once(&host, port, timeout, true)
-                                            == probe::Outcome::Up;
+                                        let up = probe::probe_once(
+                                            &host,
+                                            port,
+                                            timeout,
+                                            true,
+                                            probe::DEFAULT_DNS_TTL,
+                                        ) == probe::Outcome::Up;
                                         if !up {
                                             let ep = format!("{host}:{port}");
                                             let ms = t.elapsed().as_millis().to_string();
@@ -1436,12 +1450,33 @@ pub(crate) fn spawn(
                         if let Ok(mut g) = cancel_slot.lock() {
                             *g = runner.cancel_handle();
                         }
+                        // ★ 문장 타임아웃(`db.statement_timeout` · 초 · 0 = 없음 · T-90b/T-249 · 39 §S-7): 지나면 취소 핸들로 서버에
+                        //   취소(드라이버 cancel 포트 · Oracle OCIBreak · PG cancel · SQLite interrupt · MSSQL attention) → 실행은 취소
+                        //   오류로 끝난다. 감시 스레드는 실행 세대가 그대로일 때만 취소한다(다음 실행을 잘못 끊지 않게).
+                        let stmt_timeout = nsql_settings::Settings::open_default()
+                            .map(|s| s.int("db.statement_timeout").clamp(0, 86_400) as u64)
+                            .unwrap_or(0);
+                        let this_run = run_seq.fetch_add(1, Ordering::Relaxed) + 1;
+                        if stmt_timeout > 0 {
+                            if let Some(h) = runner.cancel_handle() {
+                                let seq = run_seq.clone();
+                                let _ = std::thread::Builder::new()
+                                    .name("nsql-stmt-timeout".into())
+                                    .spawn(move || {
+                                        std::thread::sleep(Duration::from_secs(stmt_timeout));
+                                        if seq.load(Ordering::Relaxed) == this_run {
+                                            let _ = h.cancel();
+                                        }
+                                    });
+                            }
+                        }
                         let errs = runner.run_script(&src, &mut prompt, &mut |e: RunEvent| {
                             if let RunEvent::Error { error, .. } = &e {
                                 conn_err |= probe::is_connection_error(error.code, &error.message);
                             }
                             emit(e);
                         });
+                        run_seq.fetch_add(1, Ordering::Relaxed);
                         suspect = conn_err;
                         if conn_err {
                             if !broken_told {

@@ -116,25 +116,25 @@ impl VarsWin {
             self.redraw();
             return;
         }
-        let mut attrs = Window::default_attributes()
-            .with_title(self.title())
-            .with_theme(theme)
-            .with_inner_size(winit::dpi::LogicalSize::new(560.0, 360.0));
-        if let Some((x, y, w)) = near {
-            attrs =
-                attrs.with_position(winit::dpi::PhysicalPosition::new(x + w as i32 + 8, y + 120));
-        }
-        let attrs = crate::winfocus::owned_by(crate::icon::with_icon(attrs), owner);
-        let Ok(win) = el.create_window(attrs) else {
+        // 창 열기 꼬리 = 공통 호스트(T-247 · winhost · 기억 자리 없음 · IME 허용).
+        let Some(o) = crate::winhost::open_window(
+            el,
+            crate::winhost::OpenSpec {
+                title: self.title(),
+                theme,
+                near,
+                dy: 120,
+                owner,
+                memo: None,
+                default_size: (560.0, 360.0),
+                ime: true,
+            },
+        ) else {
             return;
         };
-        // 화면 밖으로 나가지 않게(메인 창 오른쪽 기본 위치 · 해상도가 바뀐 뒤의 기억 위치).
-        crate::wingeom::keep_on_screen(&win, owner);
-        let win = Rc::new(win);
-        self.scale = win.scale_factor() as f32;
-        self.surface = crate::present::Presenter::new(win.clone()).ok();
-        win.set_ime_allowed(crate::input::system_ime());
-        self.window = Some(win);
+        self.scale = o.scale;
+        self.surface = o.surface;
+        self.window = Some(o.window);
         self.edit.set_focused(true);
         self.redraw();
     }

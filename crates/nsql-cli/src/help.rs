@@ -89,6 +89,12 @@ const OPTS: &[Opt] = &[
         setting: None,
     },
     Opt {
+        flags: "--in-place",
+        arg: "",
+        desc: Msg::HlpOptInPlace,
+        setting: None,
+    },
+    Opt {
         flags: "--no-header",
         arg: "",
         desc: Msg::HlpOptNoHeader,
@@ -281,6 +287,16 @@ const CMDS: &[Cmd] = &[
         opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-t", "-f", "--no-header", "--cols", "--map", "--batch", "--commit-every", "--mode", "--empty-null", "--timing"],
         notes: &[],
         examples: &["nsql import -c prod -t EMP emp.csv", "nsql import -c prod -t EMP -f tsv --map emp_no=EMPNO,name=ENAME --commit-every 5000 emp.tsv"],
+    },
+    Cmd {
+        name: "format",
+        usage: "nsql format [<file|->] [-o <file>] [--in-place]",
+        brief: Msg::HlpCmdFormat,
+        detail: Msg::HlpCmdFormatDetail,
+        args: &[("<file|->", Msg::HlpArgFormatFile)],
+        opts: &["-o", "--in-place"],
+        notes: &[],
+        examples: &["nsql format query.sql", "nsql format query.sql --in-place", "cat q.sql | nsql format - -o out.sql"],
     },
     Cmd {
         name: "explain",

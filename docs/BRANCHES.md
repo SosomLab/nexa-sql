@@ -5,6 +5,7 @@
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
 | feat/object-links | 2026-09-29 | 2026-09-29 → main(삭제) | 1 | ★ T-256 Ctrl 객체 하이퍼링크 + 설명 툴팁([96](96-object-links.md)) · 2차 = 표시 방식 hover/all/none · 정상/미확인 스타일 · 향상·큰 파일 모드 동작 유지 · 부분 분석 · show_schema · Ctrl+Shift `이름 - 설명` 복사 · 리부팅 손상 문서 복구 |
+| feat/grid-filter-2 | 2026-09-29 | 2026-09-29 → main(삭제) | 1 | ★ 그리드 필터 T-181 2~4차(타입별·정규식·값 목록·통합 표식·툴팁) · 우클릭 Format 그룹·`format.default` 콤보·들여쓰기 = 탭 값 · 설정 Format 미리보기 · T-247/249/250/253/254 · 팔레트 프롬프트 입력란 · 패키지 멤버 Arguments · 실기 5건([journal §12-1~12-2](journal/2026-09-28.md)) |
 | feat/sql-formatter | 2026-09-29 | 2026-09-29 → main(삭제) | 1 | ★ SQL 포맷터: nsql-format Basic + 미리보기 + ABI v1.1 + 확장 SQL Formatter for kiros33 · 그리드 행 번호 글꼴 |
 | fix/file-tab-gray | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 일반 파일 탭 줄·닫기 표시 기본색 = 진한 회색 |
 | fix/tab-bind-eager | 2026-09-28 | 2026-09-28 → main(삭제) | 1 | 탭 = 생성 시 활성 공유 연결에 즉시 묶임 · 새 접속/이 연결 사용 = 지금 탭만 · 52 규칙 |

@@ -492,6 +492,7 @@ impl ConnWin {
         if let Some(h) = self.hub.as_mut() {
             h.set_max_inflight(max_inflight);
             h.set_icmp(policy.icmp);
+            h.set_dns_ttl(policy.dns_cache);
         }
     }
 

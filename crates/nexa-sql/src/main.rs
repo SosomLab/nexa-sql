@@ -100,6 +100,7 @@ mod vars_win;
 mod varsfile;
 mod winfocus;
 mod wingeom;
+mod winhost;
 mod worker;
 
 use about_win::{AboutAction, AboutWin};
@@ -980,6 +981,9 @@ impl App {
             self.objdetail.set_bounds(Rect::default(), s);
         }
         self.explorer.set_menu_area(Rect::new(0, 0, w, h));
+        // 결과 그리드 우클릭 메뉴도 창 전체에 펼친다(사용자 09-29 "프로그램 영역을 넘어가도 창은 안 넘게").
+        self.all_grids()
+            .for_each(|g| g.set_menu_area(Rect::new(0, 0, w, h)));
         self.search.set_bounds(
             Rect::new(
                 act_w,
@@ -1406,6 +1410,8 @@ fn main() {
             settings.flag("explorer.visible"),
         );
         e.set_icons(settings.flag("explorer.icons"));
+        e.set_tooltip(settings.flag("explorer.tooltip"));
+        e.set_load_timeout(settings.int("explorer.timeout").clamp(0, 600) as u64);
         e.set_typeahead(typeahead_cfg(&settings));
         e.set_preload(settings.flag("intel.preload"));
         e.set_routines(settings.flag("intel.from_routines"));
@@ -1816,6 +1822,12 @@ fn main() {
     app.apply_ruler_style();
     app.apply_occurrence_style();
     app.apply_objlink_style();
+    // 설정 창 Format 분류의 미리보기 상자(SQL 구문 강조 · 읽기 전용 · 사용자 09-29).
+    {
+        let syntax = app.editors.syntax_for_title("preview.sql");
+        let tb = app.editors.preview_box("", &syntax);
+        app.prefs_win.set_preview_box(tb);
+    }
     app.apply_run_toast();
     app.apply_detail_mask();
     app.editors
@@ -1879,11 +1891,11 @@ fn main() {
     // 페이드 속도 속성 두 단(Fast/Slow)의 실제 ms — 컨트롤은 속도 이름만 알고 여기서 값이 연계된다(사용자 09-14).
     nexa_ctl::tokens::set_fade_ms(
         nexa_ctl::tokens::FadeSpeed::Fast,
-        fade_ms(&app.settings, "ui.fade_fast", 5000),
+        fade_ms(&app.settings, "ui.fade_fast_ms", 5000),
     );
     nexa_ctl::tokens::set_fade_ms(
         nexa_ctl::tokens::FadeSpeed::Slow,
-        fade_ms(&app.settings, "ui.fade_slow", 5000),
+        fade_ms(&app.settings, "ui.fade_slow_ms", 5000),
     );
     // ★ 실행 인자 접속(사용자 09-17): 프로필 이름이든 접속 문자열이든 스펙으로 풀어 **Connect 버튼과 같은 경로**(`last_spec` →
     //   접속 뒤 탐색기도 붙는다 · T-104 해결). 스펙으로 못 풀면 종전 `Cmd::Connect(문자열)`.
@@ -2444,6 +2456,9 @@ fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
         retry_delay: secs("probe.retry_delay", 1),
         interval: secs("probe.interval", 5),
         icmp: settings.flag("probe.icmp"),
+        dns_cache: std::time::Duration::from_secs(
+            settings.int("probe.dns_cache_secs").clamp(0, 86_400) as u64,
+        ),
     }
 }
 
@@ -2532,17 +2547,17 @@ mod bm_gutter_tests {
 fn conn_tuning(settings: &Settings) -> conn_win::ConnTuning {
     let i = |k: &str| settings.int(k);
     conn_win::ConnTuning {
-        delete_confirm_ms: i("conn.delete_confirm_ms").max(0) as u64,
-        close_after_ms: i("conn.close_after_connect_ms").max(0) as u64,
+        delete_confirm_ms: i("login.delete_confirm_ms").max(0) as u64,
+        close_after_ms: i("login.close_after_connect_ms").max(0) as u64,
         tooltip_ms: i("ui.tooltip_delay_ms").max(0) as u128,
         dblclick_ms: i("ui.dblclick_ms").max(0) as u128,
         copy_feedback_ms: i("ui.copy_feedback_ms"),
         slide_ms: fade_ms(settings, "ui.slide_ms", 1000) as f32,
-        window_w: i("conn.window_w").max(400) as f32,
-        window_h: i("conn.window_h").max(300) as f32,
-        panel_w: i("conn.panel_w").max(200) as f32,
-        button_scale: i("conn.button_scale_pct").clamp(100, 250) as f32 / 100.0,
-        port_w: i("conn.port_w").max(40) as f32,
+        window_w: i("login.window_w").max(400) as f32,
+        window_h: i("login.window_h").max(300) as f32,
+        panel_w: i("login.panel_w").max(200) as f32,
+        button_scale: i("login.button_scale_pct").clamp(100, 250) as f32 / 100.0,
+        port_w: i("login.port_w").max(40) as f32,
     }
 }
 

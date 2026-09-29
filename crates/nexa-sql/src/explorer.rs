@@ -834,6 +834,11 @@ pub(crate) struct Explorer {
     ta_cfg: TypeAheadCfg,
     /// 마지막 틱 시각(ms) — 키 사건에는 시각이 없어 틱이 준 값을 쓴다.
     now_hint: u64,
+    /// ★ 로드 시작 시각(ms · 노드별) — `explorer.timeout`(T-249) 판정용.
+    loading_since: HashMap<usize, u64>,
+    load_timeout_ms: u64,
+    /// 노드 툴팁 카드(`explorer.tooltip` · T-249).
+    tooltip: bool,
     /// 라이브 로그 응답(호스트가 가져간다) · 요청 진행 중 표시.
     live_results: Vec<LiveResult>,
     pub(crate) live_inflight: bool,
@@ -1477,7 +1482,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
 fn reachable(spec: &ConnectSpec) -> bool {
     match (&spec.host, spec.port) {
         (Some(h), Some(p)) => {
-            crate::probe::probe_once(h, p, Duration::from_secs(2), true)
+            crate::probe::probe_once(h, p, Duration::from_secs(2), true, Duration::ZERO)
                 == crate::probe::Outcome::Up
         }
         _ => true,
@@ -1731,6 +1736,9 @@ impl Explorer {
             typeahead: nexa_ctl::TypeAhead::default(),
             ta_cfg: TypeAheadCfg::default(),
             now_hint: 0,
+            loading_since: HashMap::new(),
+            load_timeout_ms: 15_000,
+            tooltip: true,
             live_results: Vec::new(),
             live_inflight: false,
             blockers_results: Vec::new(),
@@ -1814,6 +1822,74 @@ impl Explorer {
         if !on {
             self.icon_cache.clear();
         }
+    }
+
+    /// 노드 로드 타임아웃(초 · 0 = 없음 · `explorer.timeout` · T-249).
+    pub(crate) fn set_load_timeout(&mut self, secs: u64) {
+        self.load_timeout_ms = secs.saturating_mul(1000);
+    }
+
+    /// 노드 툴팁 카드(`explorer.tooltip` · T-249).
+    pub(crate) fn set_tooltip(&mut self, on: bool) {
+        self.tooltip = on;
+    }
+
+    /// 마우스 아래 노드의 툴팁(설정 `explorer.tooltip` · T-249 · 28 §툴팁 카드): (본문, 행 사각형) — 이름(부제) · 종류/경로 · 오류.
+    pub(crate) fn hover_tip(&self) -> Option<(String, Rect)> {
+        if !self.tooltip {
+            return None;
+        }
+        let i = self.hover?;
+        let rows = self.screen_rows();
+        let pos = rows.iter().position(|(n, _)| *n == Some(i))?;
+        let rh = self.row_h();
+        let rect = Rect::new(
+            self.bounds.x,
+            self.bounds.y + pos as i32 * rh - self.scroll,
+            self.bounds.w,
+            rh,
+        );
+        let (main, dim) = self.label(i);
+        let n = &self.nodes[i];
+        let kind = match &n.kind {
+            NodeKind::Root => t(Msg::TipExplorerServer).to_string(),
+            NodeKind::Schema(s) => format!("{} {s}", t(Msg::TipExplorerSchema)),
+            NodeKind::Folder { schema, kind } => format!("{kind:?} · {schema}"),
+            NodeKind::Object(o) => {
+                let mut s = format!("{:?} · {}.{}", o.kind, o.schema, o.name);
+                if !o.status.is_empty() {
+                    s.push_str(" · ");
+                    s.push_str(&o.status);
+                }
+                if !o.modified.is_empty() {
+                    s.push_str(" · ");
+                    s.push_str(&o.modified);
+                }
+                s
+            }
+            NodeKind::Column(c) => format!(
+                "{} · {}{}",
+                t(Msg::ObjKindColumn),
+                c.data_type,
+                if c.nullable { "" } else { " NOT NULL" }
+            ),
+            NodeKind::Sub { sub, owner } => format!("{sub:?} · {}.{}", owner.schema, owner.name),
+            NodeKind::Item(_) => String::new(),
+        };
+        let mut text = main;
+        if !dim.is_empty() {
+            text.push_str("  ");
+            text.push_str(&dim);
+        }
+        if !kind.is_empty() {
+            text.push('\n');
+            text.push_str(&kind);
+        }
+        if let LoadState::Error(e) = &n.state {
+            text.push('\n');
+            text.push_str(e);
+        }
+        Some((text, rect))
     }
 
     fn icon_for(&self, n: &Node) -> Option<(IconKind, (u8, u8, u8))> {
@@ -2241,6 +2317,7 @@ impl Explorer {
         };
         self.cache_saved = false;
         self.nodes[0].state = LoadState::Loading;
+        self.loading_since.insert(0, self.now_hint);
         let _ = self.tx.send(Req::Open {
             gen: self.gen,
             spec: spec.clone(),
@@ -2999,6 +3076,14 @@ impl Explorer {
                     match r {
                         Ok(list) => {
                             let depth = self.nodes[node].depth + 1;
+                            // ★ 패키지 멤버 잎(Procedures/Functions)은 Arguments 폴더를 가진다(사용자 09-29).
+                            let expandable = match (&self.nodes[node].kind, self.dialect) {
+                                (NodeKind::Sub { owner, sub }, Some(d)) => {
+                                    owner.kind == ObjectKind::Package
+                                        && !nsql_catalog::member_sub_kinds(d, *sub).is_empty()
+                                }
+                                _ => false,
+                            };
                             let kids: Vec<Node> = list
                                 .into_iter()
                                 .map(|it| Node {
@@ -3006,8 +3091,12 @@ impl Explorer {
                                     depth,
                                     children: Vec::new(),
                                     expanded: false,
-                                    expandable: false,
-                                    state: LoadState::Loaded,
+                                    expandable,
+                                    state: if expandable {
+                                        LoadState::Idle
+                                    } else {
+                                        LoadState::Loaded
+                                    },
                                 })
                                 .collect();
                             if self.soft.remove(&node) {
@@ -3408,7 +3497,8 @@ impl Explorer {
         let picked = self.selected.unwrap_or(0);
         // 자식이 없는 노드(프로시저 같은 객체 · 컬럼)는 자기가 속한 목록을 다시 읽는다.
         let leaf = match &self.nodes[picked].kind {
-            NodeKind::Column(_) | NodeKind::Item(_) => true,
+            NodeKind::Column(_) => true,
+            NodeKind::Item(_) => !self.nodes[picked].expandable,
             NodeKind::Object(o) => self
                 .dialect
                 .is_none_or(|d| nsql_catalog::sub_kinds(d, o.kind).is_empty()),
@@ -3753,6 +3843,7 @@ impl Explorer {
         match self.nodes[i].kind.clone() {
             NodeKind::Root => {
                 self.nodes[i].state = LoadState::Loading;
+                self.loading_since.insert(i, self.now_hint);
                 let _ = self.tx.send(Req::Schemas {
                     gen,
                     node: i,
@@ -3765,6 +3856,7 @@ impl Explorer {
             }
             NodeKind::Folder { schema, kind } => {
                 self.nodes[i].state = LoadState::Loading;
+                self.loading_since.insert(i, self.now_hint);
                 let _ = self.tx.send(Req::Objects {
                     gen,
                     node: i,
@@ -3799,6 +3891,7 @@ impl Explorer {
             }
             NodeKind::Sub { owner, sub } => {
                 self.nodes[i].state = LoadState::Loading;
+                self.loading_since.insert(i, self.now_hint);
                 let req = if sub == SubKind::Columns && owner.kind.is_relation() {
                     // 관계의 컬럼 = 메타 저장소와 공용 길(`Column` 노드 · 완성에 바로 쓰인다).
                     Req::Columns {
@@ -3816,6 +3909,38 @@ impl Explorer {
                     }
                 };
                 let _ = self.tx.send(req);
+            }
+            // ★ 패키지 멤버 잎 = 하위 폴더(Arguments) — 서버 왕복 없이 즉시 · 주인은 `패키지.멤버`.
+            NodeKind::Item(it) => {
+                let Some(d) = self.dialect else { return };
+                let Some(p) = self.parent_of(i) else { return };
+                let NodeKind::Sub { owner, sub } = &self.nodes[p].kind else {
+                    return;
+                };
+                let Some(member) = nsql_catalog::member_object(owner, *sub, &it) else {
+                    return;
+                };
+                let subs = nsql_catalog::member_sub_kinds(d, *sub);
+                if subs.is_empty() {
+                    return;
+                }
+                let depth = self.nodes[i].depth + 1;
+                let member = Box::new(member);
+                let kids: Vec<Node> = subs
+                    .iter()
+                    .map(|sub| Node {
+                        kind: NodeKind::Sub {
+                            owner: member.clone(),
+                            sub: *sub,
+                        },
+                        depth,
+                        children: Vec::new(),
+                        expanded: false,
+                        expandable: true,
+                        state: LoadState::Idle,
+                    })
+                    .collect();
+                self.set_children(i, kids);
             }
             _ => {}
         }
@@ -3844,6 +3969,7 @@ impl Explorer {
             }
             NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
             NodeKind::Column(c) => self.actions.push(ExplorerAction::Copy(c.name)),
+            NodeKind::Item(_) if self.nodes[i].expandable => self.toggle(i),
             NodeKind::Item(it) => self.actions.push(ExplorerAction::Copy(it.name)),
             _ => self.toggle(i),
         }
@@ -5064,10 +5190,38 @@ impl Explorer {
                 c = true;
             }
         }
+        // ★ 노드 로드 타임아웃(`explorer.timeout` · T-249 · 28 §오류 비확산): 지나면 **그 노드만** 오류로(요청 스레드는 그대로 두고 늦게
+        //   온 결과가 오면 덮는다 · 어댑터 호출은 동기라 끊지 못한다).
+        let mut d = false;
+        if self.load_timeout_ms > 0 && !self.loading_since.is_empty() {
+            let expired: Vec<usize> = self
+                .loading_since
+                .iter()
+                .filter(|(i, since)| {
+                    now_ms.saturating_sub(**since) > self.load_timeout_ms
+                        && self
+                            .nodes
+                            .get(**i)
+                            .is_some_and(|n| n.state == LoadState::Loading)
+                })
+                .map(|(i, _)| *i)
+                .collect();
+            for i in expired {
+                self.loading_since.remove(&i);
+                let secs = (self.load_timeout_ms / 1000).to_string();
+                self.set_error(i, tf(Msg::StExplorerTimeout, &[&secs]));
+                d = true;
+            }
+            self.loading_since.retain(|i, _| {
+                self.nodes
+                    .get(*i)
+                    .is_some_and(|n| n.state == LoadState::Loading)
+            });
+        }
         // 새 객체 강조 — 시간이 지나면 걷는다(남아 있는 동안은 서서히 옅어지므로 계속 그린다).
         let had = !self.fresh.is_empty();
         self.fresh.retain(|(_, until)| *until > now_ms);
-        a || b || c || had
+        a || b || c || d || had
     }
 
     fn is_loading(&self) -> bool {

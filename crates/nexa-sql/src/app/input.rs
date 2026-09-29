@@ -450,6 +450,8 @@ impl App {
         // 마우스 다운은 포커스를 옮긴다.
         // 우클릭 메뉴가 열리기 전에 "붙여넣기 가능" 여부를 넣어 준다.
         if matches!(ev, InputEvent::RightDown { .. }) {
+            // ★ 편집기 우클릭 메뉴의 Format 그룹은 선택 유무·기본 포맷터에 따라 달라진다 → 열리기 직전에 다시 만든다(사용자 09-29).
+            self.refresh_menu_extras();
             // 설정 `ui.clipboard_probe`(향상 모드는 끔): 끄면 클립보드를 읽지 않고 붙여넣기를 항상 활성으로.
             let has = !self.settings.flag("ui.clipboard_probe")
                 || clipboard::read_text().is_some_and(|s| !s.is_empty());
@@ -501,6 +503,11 @@ impl App {
         //   못 받아 다음 MouseMove가 선택을 바꾸던 결함(사용자 09-15). 중복 전달은 무해(dragging=false 멱등).
         if matches!(ev, InputEvent::MouseUp { .. }) {
             self.ed_mut().on_event(&ev, &mut inv);
+            // ★ 결과 그리드도 같다(사용자 09-29): 그리드 안에서 누르고 밖(메뉴·상태줄)에서 놓으면 드래그가 남아 이동마다
+            //   가로 스크롤이 일어났다 → 드래그 중이면 어디서 놓든 그리드에 MouseUp.
+            if self.grid.dragging() {
+                self.grid.on_event(&ev, self.scale);
+            }
         }
         // ★ 결과 그리드 컬럼 이동 중(09-19): Esc = 취소(포커스와 무관하게).
         if self.grid.col_dragging()
@@ -907,6 +914,14 @@ impl App {
                                     break;
                                 }
                             }
+                        }
+                    } else if let Some((c, op)) = id.strip_prefix("grid.filter:").and_then(|r| {
+                        let (n, o) = r.split_once(':')?;
+                        Some((n.parse::<usize>().ok()?, crate::grid::FilterOp::parse(o)?))
+                    }) {
+                        // 그리드 필터 값 입력(T-181 · 타입별) — 빈 글은 무시.
+                        if !text.trim().is_empty() {
+                            self.grid.add_filter(c, op, text.trim().to_string());
                         }
                     } else if id == "ext.repo_add" {
                         self.ext_repo_add(&text);

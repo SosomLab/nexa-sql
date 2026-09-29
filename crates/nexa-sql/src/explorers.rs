@@ -163,6 +163,12 @@ pub(crate) struct ExplorerSet {
     wake: Arc<dyn Fn() + Send + Sync>,
     visible: bool,
     icons: bool,
+    /// 노드 툴팁(`explorer.tooltip` · T-249): 마우스가 멈춘 뒤 `tip_delay_ms` 지나면 켠다 · 움직이면 끈다.
+    tooltip: bool,
+    tip_delay_ms: u64,
+    tip_moved: bool,
+    tip_since: Option<u64>,
+    tip_on: bool,
     font_px: f32,
     ta_cfg: crate::explorer::TypeAheadCfg,
     /// `intel.preload`(새 서버 칸에도 적용).
@@ -217,6 +223,11 @@ impl ExplorerSet {
             wake,
             visible,
             icons: true,
+            tooltip: true,
+            tip_delay_ms: 700,
+            tip_moved: false,
+            tip_since: None,
+            tip_on: false,
             font_px: 17.0,
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
             preload: true,
@@ -599,6 +610,22 @@ impl ExplorerSet {
         }
     }
 
+    /// 노드 툴팁 켜고 끔(`explorer.tooltip` · T-249 · 전 칸).
+    pub(crate) fn set_tooltip(&mut self, on: bool) {
+        self.tooltip = on;
+        self.tip_on = false;
+        for p in &mut self.panes {
+            p.ex.set_tooltip(on);
+        }
+    }
+
+    /// 노드 로드 타임아웃(`explorer.timeout` · 초 · 전 칸).
+    pub(crate) fn set_load_timeout(&mut self, secs: u64) {
+        for p in &mut self.panes {
+            p.ex.set_load_timeout(secs);
+        }
+    }
+
     /// 타입어헤드 설정(전 칸 · 새 칸에도).
     pub(crate) fn set_typeahead(&mut self, cfg: crate::explorer::TypeAheadCfg) {
         self.ta_cfg = cfg;
@@ -802,6 +829,8 @@ impl ExplorerSet {
     }
 
     pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
+        // 노드 툴팁(T-249)도 같은 지연.
+        self.tip_delay_ms = ms.min(u128::from(u64::MAX)) as u64;
         self.filter.set_tooltip_delay(ms);
     }
 
@@ -1314,6 +1343,22 @@ impl ExplorerSet {
         for p in &mut self.panes {
             any |= p.ex.tick(now_ms);
         }
+        // 툴팁: 움직임 뒤 지연이 지나면 켠다(켜지는 순간 한 번 다시 그림 · T-249).
+        if self.tooltip {
+            if self.tip_moved {
+                self.tip_moved = false;
+                self.tip_since = Some(now_ms);
+                if self.tip_on {
+                    self.tip_on = false;
+                    any = true;
+                }
+            } else if let Some(s) = self.tip_since {
+                if !self.tip_on && now_ms.saturating_sub(s) >= self.tip_delay_ms {
+                    self.tip_on = true;
+                    any = true;
+                }
+            }
+        }
         any
     }
 
@@ -1531,9 +1576,14 @@ impl ExplorerSet {
         match ev {
             InputEvent::MouseMove { x, y } => {
                 self.cursor = Point { x: *x, y: *y };
+                // ★ T-254(09-29): 고정 헤더가 덮는 자리에서는 그 아래 가려진 행에 hover를 주지 않는다(클릭은 `header_at`이 먼저 먹지만
+                //   MouseMove는 칸으로 흘러갔다) → 칸에는 영역 밖의 점을 준다(있던 hover도 걷힌다).
+                self.tip_moved = true;
+                let p = hover_point(self.pinned, Point { x: *x, y: *y });
+                let fwd = InputEvent::MouseMove { x: p.x, y: p.y };
                 let mut any = false;
                 for i in self.laid() {
-                    any |= self.panes[i].ex.on_event(ev);
+                    any |= self.panes[i].ex.on_event(&fwd);
                 }
                 any
             }
@@ -1631,6 +1681,19 @@ impl ExplorerSet {
         }
         self.menu.paint(dc, th);
         self.filter.paint_popup(dc, th);
+        // ★ 노드 툴팁 카드(`explorer.tooltip` · T-249) — 메뉴가 열려 있지 않을 때 · 창 안으로 맞춤(61 §2-2).
+        if self.tooltip && self.tip_on && !self.menu_open() {
+            if let Some((text, r)) = self
+                .laid()
+                .into_iter()
+                .find_map(|i| self.panes[i].ex.hover_tip())
+            {
+                let clamp = dc
+                    .surface_size()
+                    .map_or(self.area, |(w, h)| Rect::new(0, 0, w, h));
+                nexa_ctl::draw::draw_tooltip_in(dc, th, r, (clamp.x, clamp.w), &text, self.scale);
+            }
+        }
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
@@ -1716,8 +1779,35 @@ impl crate::memstat::MemSource for ExplorerSet {
     }
 }
 
+/// 고정 헤더가 덮는 자리의 마우스 점 → 칸에 닿지 않는 점(T-254 · 순수).
+pub(crate) fn hover_point(pinned: Option<(usize, Rect)>, p: Point) -> Point {
+    if pinned.is_some_and(|(_, r)| r.contains(p)) {
+        Point { x: -1, y: -1 }
+    } else {
+        p
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// T-254: 고정 헤더 안의 점은 칸에 닿지 않는 점으로 바뀐다(그 아래 가려진 행에 hover 없음).
+    #[test]
+    fn pinned_header_blocks_hover_underneath() {
+        let pinned = Some((0usize, Rect::new(0, 0, 200, 24)));
+        assert_eq!(
+            hover_point(pinned, Point { x: 10, y: 10 }),
+            Point { x: -1, y: -1 }
+        );
+        assert_eq!(
+            hover_point(pinned, Point { x: 10, y: 40 }),
+            Point { x: 10, y: 40 }
+        );
+        assert_eq!(
+            hover_point(None, Point { x: 10, y: 10 }),
+            Point { x: 10, y: 10 }
+        );
+    }
     use super::*;
 
     /// 서버 헤더 해제 메뉴(docs/54 §9 · MC/DC): auto = 1개 바로 · 2개 이상 고르기 · always = 1개여도 고르기 · all = 늘 전부.

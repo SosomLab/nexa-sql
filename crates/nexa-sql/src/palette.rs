@@ -262,6 +262,25 @@ impl Palette {
         if !self.open {
             return PaletteAction::None;
         }
+        // ★ 입력란의 우클릭 편집 메뉴가 떠 있으면 모든 사건은 입력란(메뉴)에게 — 메뉴가 상자 밖으로 펼쳐져도 팔레트가 닫히지 않는다
+        //   (사용자 09-29 "우클릭 표시가 밑으로 숨고 선택도 안 됨").
+        if self.input.popup_open() {
+            let outside = match *ev {
+                InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } => {
+                    let p = Point { x, y };
+                    !self.frame().contains(p) && !self.input.popup_bounds().contains(p)
+                }
+                _ => false,
+            };
+            if outside {
+                // 상자도 메뉴도 아닌 곳 = 메뉴를 닫고 바깥 클릭 규칙(취소)으로 흘린다.
+                self.input.close_menu();
+            } else {
+                self.input.on_event(ev, inv);
+                self.apply_edit_ctx(inv);
+                return PaletteAction::None;
+            }
+        }
         match *ev {
             InputEvent::Key {
                 key: Key::Escape, ..
@@ -317,12 +336,19 @@ impl Palette {
             // ★ 마우스(사용자 09-19): 목록 위에서 움직이면 그 행이 선택(키보드 선택과 같은 강조 하나) · 휠 = 목록 굴리기 ·
             //   클릭 = 실행. 같은 자리의 MouseMove는 무시한다(키보드로 옮긴 선택이 커서 아래 행으로 튀지 않게).
             InputEvent::MouseMove { x, y } => {
+                // 입력란이 먼저(드래그 선택 · hover) — 목록 hover는 그 다음(사용자 09-29 "드래그가 안 된다").
+                self.input.on_event(ev, inv);
                 if (x, y) != self.last_mouse {
                     self.last_mouse = (x, y);
                     if let Some(i) = self.row_at(Point { x, y }) {
                         self.sel = i;
                     }
                 }
+                return PaletteAction::None;
+            }
+            InputEvent::Wheel { .. } if self.prompt.is_some() => {
+                // 프롬프트 = 목록이 없다 → 휠은 입력란(가로 스크롤).
+                self.input.on_event(ev, inv);
                 return PaletteAction::None;
             }
             InputEvent::Wheel { delta } => {
@@ -360,14 +386,53 @@ impl Palette {
             _ => {}
         }
         self.input.on_event(ev, inv);
+        self.apply_edit_ctx(inv);
         self.refilter(false);
         PaletteAction::None
+    }
+
+    /// 입력란 편집 메뉴의 복사/잘라내기/붙여넣기(클립보드는 호스트 몫 · 설정 창 검색란과 같은 규칙).
+    fn apply_edit_ctx(&mut self, inv: &mut Invalidations) {
+        let Some(act) = self.input.take_edit_ctx() else {
+            return;
+        };
+        self.clip(act, inv);
+    }
+
+    /// 클립보드 동작(편집 메뉴 · Ctrl+C/X/V 키맵이 팔레트가 열려 있을 때 여기로 — 사용자 09-29 "Ctrl 단축키가 그리드로 간다").
+    pub(crate) fn clip(&mut self, act: nexa_ctl::controls::EditCtxAction, inv: &mut Invalidations) {
+        use nexa_ctl::controls::EditCtxAction;
+        match act {
+            EditCtxAction::Copy => {
+                if let Some(text) = self.input.copy_selection() {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Cut => {
+                if let Some(text) = self.input.cut_selection(inv) {
+                    let _ = crate::clipboard::write_text(&text);
+                }
+            }
+            EditCtxAction::Paste => {
+                if let Some(text) = crate::clipboard::read_text() {
+                    self.input.paste(&text, inv);
+                }
+            }
+            EditCtxAction::Custom(_) => {}
+        }
+        self.refilter(false);
     }
 
     pub(crate) fn paint(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         if !self.open {
             return;
         }
+        self.paint_body(dc, th);
+        // 입력란 편집 메뉴 = 맨 위 층(힌트·목록 위 · 프롬프트 모드도 같다 — 사용자 09-29 "그리기가 잘못 적용").
+        self.input.paint_popup(dc, th);
+    }
+
+    fn paint_body(&self, dc: &mut dyn DrawCtx, th: &Theme) {
         let b = self.frame();
         // 그림자 느낌의 테두리 2겹
         dc.fill_rect(Rect::new(b.x - 1, b.y - 1, b.w + 2, b.h + 2), th.border);

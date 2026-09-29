@@ -111,6 +111,28 @@ impl AliasAs {
 }
 
 /// ★ 공통 옵션(앱 설정 `format.*` · Basic과 확장이 같이 읽는다).
+/// 방언 치환 대상(스킬 §22 · T-255): 포맷은 그대로, **함수·문법 이름만** 치환(`None` = 안 함).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DialectTarget {
+    #[default]
+    None,
+    Ansi,
+    Oracle,
+    Tsql,
+}
+
+impl DialectTarget {
+    #[must_use]
+    pub fn parse(s: &str) -> DialectTarget {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ansi" => DialectTarget::Ansi,
+            "oracle" => DialectTarget::Oracle,
+            "tsql" | "mssql" | "sqlserver" => DialectTarget::Tsql,
+            _ => DialectTarget::None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
     pub indent: Indent,
@@ -121,6 +143,10 @@ pub struct Options {
     pub function_case: Case,
     pub comma: Comma,
     pub comma_gap: Gap,
+    /// ★ `WHERE`/`ON`/`HAVING`과 시드 `1=1` 사이(사용자 09-29): 공백 하나 또는 탭.
+    pub seed_gap: Gap,
+    /// ★ WHERE/HAVING의 조건 줄(AND/OR)을 절 키워드보다 한 단계 안에(true · 기본) / 같은 열에(false · 스킬 §3).
+    pub cond_indent: bool,
     pub logical_newline: LogicalNewline,
     /// `WHERE 1=1` · `ON 1=1` · `HAVING 1=1` 시드(조건은 다음 줄부터 AND/OR).
     pub where_seed: bool,
@@ -149,6 +175,14 @@ pub struct Options {
     pub final_newline: bool,
     /// `;`를 문장 끝 줄이 아니라 다음 줄에.
     pub semicolon_newline: bool,
+    /// ★ 괄호 AND/OR 그룹 시드(스킬 §3 · T-255): `(1=1` / `(1=0` + 하위 조건 한 단계 더 + `)` 줄.
+    pub paren_seed: bool,
+    /// ★ FROM/JOIN의 별칭 없는 테이블·인라인뷰에 `A`, `B`, … 자동 부여(스킬 2-1 · 문장 안 식별자와 안 겹치게).
+    pub auto_alias: bool,
+    /// ★ 방언 치환(스킬 §22).
+    pub dialect_target: DialectTarget,
+    /// ★ 테이블 설명 주석(스킬 2-2): (대문자 `SCHEMA.TABLE` 또는 `TABLE`, 설명) — 호스트가 메타에서 채운다 · FROM/JOIN 테이블 줄 끝에 `--\t설명`.
+    pub table_comments: Vec<(String, String)>,
 }
 
 impl Default for Options {
@@ -161,6 +195,8 @@ impl Default for Options {
             function_case: Case::Keep,
             comma: Comma::Leading,
             comma_gap: Gap::Space,
+            seed_gap: Gap::Space,
+            cond_indent: true,
             logical_newline: LogicalNewline::Before,
             where_seed: false,
             list_style: ListStyle::Multi,
@@ -177,6 +213,10 @@ impl Default for Options {
             newline: Newline::Keep,
             final_newline: true,
             semicolon_newline: false,
+            paren_seed: false,
+            auto_alias: false,
+            dialect_target: DialectTarget::None,
+            table_comments: Vec::new(),
         }
     }
 }
@@ -190,6 +230,8 @@ pub const OPTION_KEYS: &[&str] = &[
     "function_case",
     "comma",
     "comma_gap",
+    "seed_gap",
+    "cond_indent",
     "logical_newline",
     "where_seed",
     "list_style",
@@ -206,6 +248,9 @@ pub const OPTION_KEYS: &[&str] = &[
     "newline",
     "final_newline",
     "semicolon_newline",
+    "paren_seed",
+    "auto_alias",
+    "dialect_target",
 ];
 
 fn flag(v: &str) -> bool {
@@ -250,6 +295,8 @@ impl Options {
                     };
                 }
                 "comma_gap" => o.comma_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
+                "seed_gap" => o.seed_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
+                "cond_indent" => o.cond_indent = !(lv == "same" || lv == "off" || lv == "0"),
                 "logical_newline" => {
                     o.logical_newline = if lv == "after" {
                         LogicalNewline::After
@@ -258,6 +305,9 @@ impl Options {
                     };
                 }
                 "where_seed" => o.where_seed = flag(v),
+                "paren_seed" => o.paren_seed = flag(v),
+                "auto_alias" => o.auto_alias = flag(v),
+                "dialect_target" => o.dialect_target = DialectTarget::parse(&lv),
                 "list_style" => {
                     o.list_style = match lv.as_str() {
                         "single" => ListStyle::Single,
