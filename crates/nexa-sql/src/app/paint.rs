@@ -32,6 +32,8 @@ impl App {
             self.layout();
         }
         let view_mode = self.view_layout;
+        // ★ Ctrl 객체 링크 설명 툴팁(T-256) — 표면을 빌리기 전에 본문·자리를 셈해 둔다.
+        let objlink_tip = self.objlink_tip();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -527,6 +529,18 @@ impl App {
                 // ★ 팝업(상태줄 메뉴 · 결과 도구줄 툴팁/메뉴 · 팔레트)은 스플리터 **뒤**에 — 앞 층에서 그리면 편집기|결과
                 //   구분선이 팝업 위로 지나갔다(09-16 캡처 · 팝업 = 맨 마지막 층 규칙).
                 self.status_menu.paint(&mut dc, &th);
+                // ★ Ctrl 객체 링크 설명 툴팁 + 메뉴(T-256 · 팝업 층).
+                app::objlink::paint_tip(
+                    &mut dc,
+                    &th,
+                    objlink_tip.as_ref(),
+                    self.settings
+                        .get("objlink.tooltip_pos")
+                        .unwrap_or("top_right"),
+                    self.scale,
+                    Rect::new(0, 0, size.width as i32, size.height as i32),
+                );
+                self.objlink_menu.paint(&mut dc, &th);
                 // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76) + 상세 카드(옆 · 같은 높이 · 09-24).
                 self.intel.menu.paint(&mut dc, &th);
                 if self.intel.is_open() && self.intel.cfg().detail_card {

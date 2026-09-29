@@ -327,6 +327,8 @@ impl App {
         }
         if let InputEvent::MouseMove { x, y } = ev {
             self.pointer = Some(Point { x, y });
+            // ★ Ctrl 객체 링크 hover(T-256 · 켜져 있을 때만 셈).
+            self.objlink_hover(Point { x, y });
             // 클릭되는 상태줄 항목 위 = hover 선택색(들어오고 나갈 때만 다시 그림 · 사용자 09-28 "버튼처럼").
             let over = self.status_clickable_at(Point { x, y });
             if over != self.status_hover {
@@ -547,6 +549,21 @@ impl App {
         // 상태줄 들여쓰기 팝업(열려 있으면 모달 · 바깥 클릭은 닫고 통과).
         if self.route_status_menu(ev) {
             return;
+        }
+        // ★ Ctrl 객체 링크(T-256): 우클릭 메뉴가 열려 있으면 모달(바깥 클릭은 닫고 통과) · Ctrl 동안 링크 위 좌/우클릭은
+        //   편집기로 가지 않는다(좌 = 설명 복사 · 우 = 메뉴).
+        if self.route_objlink_menu(&ev) {
+            return;
+        }
+        if self.objlinks.active {
+            let hit = match ev {
+                InputEvent::MouseDown { x, y, .. } => self.objlink_click(Point { x, y }, false),
+                InputEvent::RightDown { x, y } => self.objlink_click(Point { x, y }, true),
+                _ => false,
+            };
+            if hit {
+                return;
+            }
         }
         // ★ 스플리터(탐색기|편집기 · 편집기|결과) — 마우스만 · 드래그 중이면 다른 컨트롤보다 먼저(사용자 09-16).
         if is_mouse && self.route_splitters(&ev) {

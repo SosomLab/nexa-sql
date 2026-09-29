@@ -19,6 +19,7 @@ mod live;
 mod memory;
 mod menus;
 mod meta;
+pub(crate) mod objlink;
 mod paint;
 mod project;
 mod run;

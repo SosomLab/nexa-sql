@@ -233,6 +233,11 @@ impl App {
             k if k.starts_with("format.") || k.starts_with("sqlfmt.") => {
                 self.format_preview_refresh();
             }
+            // ★ Ctrl 객체 링크(T-256): 밑줄 스타일을 다시 적용하고 켜고 끔·표시 방식·상한을 다시 판정.
+            k if k.starts_with("objlink.") => {
+                self.apply_objlink_style();
+                self.objlink_sync();
+            }
             // 끄는 순간 들고 있던 비밀번호 봉투를 전부 버린다(세션 자격 금고 · 켜는 것은 다음 입력부터).
             "connect.remember_session_password" => {
                 if !self.settings.flag("connect.remember_session_password") {

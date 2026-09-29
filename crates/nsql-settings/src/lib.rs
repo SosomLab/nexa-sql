@@ -329,6 +329,27 @@ const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
     ("trailing", Msg::ValFmtTrailing),
 ];
 const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+/// Ctrl 객체 링크 밑줄 표시 방식(사용자 09-29 2차): 전부 · 마우스 아래만(기본) · 표시 안 함(동작만).
+const OBJLINK_DISPLAY_OPTS: &[(&str, Msg)] = &[
+    ("all", Msg::ValObjLinkAll),
+    ("hover", Msg::ValObjLinkHover),
+    ("none", Msg::ValObjLinkNone),
+];
+/// 밑줄 모양(정상/미확인 공용).
+const OBJLINK_LINE_OPTS: &[(&str, Msg)] = &[
+    ("solid", Msg::ValLineSolid),
+    ("dashed", Msg::ValLineDashed),
+    ("dotted", Msg::ValLineDotted),
+    ("wavy", Msg::ValLineWavy),
+    ("wavy_dashed", Msg::ValLineWavyDashed),
+];
+/// Ctrl 객체 링크 툴팁 위치(T-256 · 기본 = 대상의 우상단).
+const OBJLINK_POS_OPTS: &[(&str, Msg)] = &[
+    ("top_right", Msg::ValPosTopRight),
+    ("top_left", Msg::ValPosTopLeft),
+    ("bottom_right", Msg::ValPosBottomRight),
+    ("bottom_left", Msg::ValPosBottomLeft),
+];
 const FMT_LOGICAL_OPTS: &[(&str, Msg)] =
     &[("before", Msg::ValFmtBefore), ("after", Msg::ValFmtAfter)];
 const FMT_LIST_OPTS: &[(&str, Msg)] = &[
@@ -1087,6 +1108,106 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtSemicolonNewline,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    // ★ Ctrl 객체 하이퍼링크 + 설명 툴팁(`objlink.*` · docs/96 · T-256 · 사용자 09-29): Ctrl(⌘)을 누르는 동안 SQL의
+    //   테이블·컬럼·루틴 참조를 링크로 · 커서 아래 링크의 코멘트 툴팁 · 좌클릭 = 설명 복사 · 우클릭 = 메뉴.
+    //   향상 모드(`perf::BOOST`)는 `objlink.enabled`를 끈다 · 큰 파일 모드(L1+)와 `objlink.max_kb` 초과는 자동 끔.
+    Entry {
+        key: "objlink.enabled",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkEnabled,
+        desc: Msg::DescObjLinkEnabled,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "objlink.display",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkDisplay,
+        desc: Msg::DescObjLinkDisplay,
+        kind: SettingKind::Choice(OBJLINK_DISPLAY_OPTS),
+        default: "hover",
+    },
+    Entry {
+        key: "objlink.tooltip",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkTooltip,
+        desc: Msg::DescObjLinkTooltip,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "objlink.tooltip_pos",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkTooltipPos,
+        desc: Msg::DescObjLinkTooltipPos,
+        kind: SettingKind::Choice(OBJLINK_POS_OPTS),
+        default: "top_right",
+    },
+    Entry {
+        key: "objlink.show_schema",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkShowSchema,
+        desc: Msg::DescObjLinkShowSchema,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
+    // 밑줄 스타일(정상 = 카탈로그에서 확인된 객체 · 미확인 = 현재 연결 메타에 없는 객체 · 사용자 09-29 "밝은 벽돌색").
+    Entry {
+        key: "objlink.line_color",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkLineColor,
+        desc: Msg::DescObjLinkLineColor,
+        kind: SettingKind::Text,
+        default: "",
+    },
+    Entry {
+        key: "objlink.line_width",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkLineWidth,
+        desc: Msg::DescObjLinkLineWidth,
+        kind: SettingKind::Int { min: 0, max: 4 },
+        default: "1",
+    },
+    Entry {
+        key: "objlink.line_style",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkLineStyle,
+        desc: Msg::DescObjLinkLineStyle,
+        kind: SettingKind::Choice(OBJLINK_LINE_OPTS),
+        default: "solid",
+    },
+    Entry {
+        key: "objlink.bad_color",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkBadColor,
+        desc: Msg::DescObjLinkBadColor,
+        kind: SettingKind::Text,
+        default: "#B7472A",
+    },
+    Entry {
+        key: "objlink.bad_width",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkBadWidth,
+        desc: Msg::DescObjLinkBadWidth,
+        kind: SettingKind::Int { min: 0, max: 4 },
+        default: "1",
+    },
+    Entry {
+        key: "objlink.bad_style",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkBadStyle,
+        desc: Msg::DescObjLinkBadStyle,
+        kind: SettingKind::Choice(OBJLINK_LINE_OPTS),
+        default: "wavy",
+    },
+    Entry {
+        key: "objlink.max_kb",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkMaxKb,
+        desc: Msg::DescObjLinkMaxKb,
+        kind: SettingKind::Int { min: 0, max: 65536 },
+        default: "512",
     },
     // ★ 확장 "SQL Formatter for kiros33"(`sqlfmt.*` · docs/95 §4): Basic이 못 다루는 규칙만.
     Entry {
@@ -5104,6 +5225,7 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             // 큰 파일 처리(docs/59 · 사용자 09-28 "별도 설정 그룹으로") — 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재.
             Msg::CatLargeFiles,
             Msg::CatFormat,
+            Msg::CatObjLink,
             Msg::CatProject,
         ],
     ),
@@ -5360,6 +5482,17 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("intel.detail_bg_alpha", "intel.detail_card", Dep::On),
     ("intel.detail_text_alpha", "intel.detail_card", Dep::On),
     ("intel.card_settle_ms", "intel.detail_card", Dep::On),
+    ("objlink.display", "objlink.enabled", Dep::On),
+    ("objlink.tooltip", "objlink.enabled", Dep::On),
+    ("objlink.tooltip_pos", "objlink.tooltip", Dep::On),
+    ("objlink.show_schema", "objlink.enabled", Dep::On),
+    ("objlink.line_color", "objlink.enabled", Dep::On),
+    ("objlink.line_width", "objlink.enabled", Dep::On),
+    ("objlink.line_style", "objlink.enabled", Dep::On),
+    ("objlink.bad_color", "objlink.enabled", Dep::On),
+    ("objlink.bad_width", "objlink.enabled", Dep::On),
+    ("objlink.bad_style", "objlink.enabled", Dep::On),
+    ("objlink.max_kb", "objlink.enabled", Dep::On),
     ("intel.star_layout", "intel.insert_columns", Dep::On),
     ("intel.star_comma_space", "intel.insert_columns", Dep::On),
 ];

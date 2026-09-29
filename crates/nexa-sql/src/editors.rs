@@ -118,6 +118,8 @@ pub(crate) struct Editors {
     ruler_alpha: f32,
     occurrence_hl: bool,
     occ_style: nexa_ctl::OccurrenceStyle,
+    /// 객체 링크 밑줄 스타일(정상, 미확인 · 설정 `objlink.line_*`/`bad_*` · 전 탭).
+    link_style: (nexa_ctl::LinkStyle, nexa_ctl::LinkStyle),
     auto_indent: (nexa_ctl::AutoIndent, nexa_ctl::IndentRules),
     /// 첫 글자 앞 여백(설정 `editor.text_pad_left`).
     text_inset: i32,
@@ -255,6 +257,10 @@ impl Editors {
             ruler_alpha: 0.25,
             occurrence_hl: true,
             occ_style: nexa_ctl::OccurrenceStyle::default(),
+            link_style: (
+                nexa_ctl::LinkStyle::default(),
+                nexa_ctl::LinkStyle::default(),
+            ),
             auto_indent: (
                 nexa_ctl::AutoIndent::default(),
                 nexa_ctl::IndentRules::sql(),
@@ -339,6 +345,7 @@ impl Editors {
         tb.set_ruler_style(self.ruler_color, self.ruler_alpha);
         tb.set_occurrence_highlight(self.occurrence_hl);
         tb.set_occurrence_style(self.occ_style);
+        tb.set_link_styles(self.link_style.0, self.link_style.1);
         tb.set_auto_indent(self.auto_indent.0, self.auto_indent.1.clone());
         tb.set_text_inset(self.text_inset);
         tb.set_whitespace(self.whitespace);
@@ -436,6 +443,20 @@ impl Editors {
             b.set_auto_indent(cfg, rules.clone());
         }
         self.auto_indent = (cfg, rules);
+    }
+
+    /// 객체 링크 밑줄 스타일(정상, 미확인 · 전 탭) — 바뀐 탭이 하나라도 있으면 true.
+    pub(crate) fn set_link_styles(
+        &mut self,
+        ok: nexa_ctl::LinkStyle,
+        bad: nexa_ctl::LinkStyle,
+    ) -> bool {
+        self.link_style = (ok, bad);
+        let mut changed = false;
+        for b in &mut self.bufs {
+            changed |= b.set_link_styles(ok, bad);
+        }
+        changed
     }
 
     /// 동일 출현 상자 스타일(설정 `editor.occurrence_*` · 전 탭).
@@ -845,6 +866,12 @@ impl Editors {
 
     pub(crate) fn cur_mut(&mut self) -> &mut TextBox {
         &mut self.bufs[self.active]
+    }
+
+    /// 탭 id의 편집기(없으면 None) — 활성이 아닌 탭에 남긴 표시를 걷을 때(객체 링크 T-256).
+    pub(crate) fn buf_mut_by_id(&mut self, id: u64) -> Option<&mut TextBox> {
+        let i = self.index_of_id(id)?;
+        self.bufs.get_mut(i)
     }
 
     pub(crate) fn editor_bounds(&self) -> Rect {

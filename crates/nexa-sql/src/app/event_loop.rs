@@ -868,6 +868,8 @@ impl ApplicationHandler<Wake> for App {
                 self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
                 self.ctrl_raw = m.state().control_key();
+                // ★ Ctrl(⌘)을 누르는 동안만 객체 링크(T-256) — 떼면 걷는다.
+                self.objlink_sync();
                 // ★ Alt를 누르는 동안 = 전체 경로 보기(메뉴·팔레트·검색 결과의 가운데 … 축약 해제 · 사용자 09-22).
                 if nexa_ctl::draw::set_show_full(self.alt) {
                     self.redraw();

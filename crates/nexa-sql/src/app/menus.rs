@@ -1728,6 +1728,9 @@ impl App {
         if self.objdetail.menu_open() {
             m |= 2048;
         }
+        if self.objlink_menu.is_open() {
+            m |= 4096;
+        }
         m
     }
 
@@ -1752,6 +1755,9 @@ impl App {
         }
         if bits & 2048 != 0 {
             self.objdetail.close_menu();
+        }
+        if bits & 4096 != 0 {
+            self.objlink_menu.close();
         }
         if bits & 128 != 0 {
             self.bm_panel.close_menu();

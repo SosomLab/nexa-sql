@@ -267,6 +267,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("editor.minimap", "off"),
     ("editor.highlight_selection", "off"),
     ("editor.diff_marks", "off"),
+    // Ctrl 객체 링크(T-256): 향상 모드에서는 **밑줄을 그리지 않는다**(다시 그리기 0 · 툴팁·클릭은 동작 · 사용자 09-29 2차).
+    ("objlink.display", "none"),
     ("rainbowpair.enabled", "off"),
     // 탐색기 갱신 뒤 새 객체 강조(docs/57) — 강조가 사라질 때까지 다시 그리기가 이어진다.
     ("meta.refresh_highlight_ms", "0"),

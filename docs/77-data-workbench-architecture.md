@@ -55,6 +55,7 @@
 | `obj.reveal` | 탐색기에서 펼쳐 보이기(project `auto_reveal`과 같은 규칙) | 편집기 · 그리드 열 |
 | `obj.copy_name` / `obj.copy_qualified` | 이름 / `schema.name` 복사 | 전부 |
 | `obj.goto_fk` | FK 대상 테이블 정보로 | 정보 탭 · 그리드 열 |
+| `obj.copy_desc` | 설명(코멘트) 복사 — ✅ 09-29 **T-256 Ctrl 객체 링크**([96](96-object-links.md) · `app/objlink.rs` · 편집기 마디의 첫 구현 = Ctrl 동안 링크 · 툴팁 · 좌클릭 복사 · 우클릭 메뉴 · 좌클릭은 뒤에 `obj.info`로 바뀔 예정 T-257) | 편집기 |
 
 레지스트리 = 포트(`ObjectAction` trait) + 목록 + 설정 선택(30 §1). **Ctrl+클릭**은 편집기에서 `resolver → obj.info`(설정 `intel.ctrl_click` = info/reveal/columns 중 선택) · 그리드 열 머리 Ctrl+클릭도 같은 길. **hover 카드**(설정 `intel.hover_ms`)는 `MetaStore` 요약 + 동작 버튼 두어 개(정보 · 데이터 · 탐색기) — nexa-ctl `draw_tooltip` 규칙(팝업 규칙 §2-2) 위에 버튼을 두려면 `HoverCard` 부품(30 §2) 하나를 만든다.
 
