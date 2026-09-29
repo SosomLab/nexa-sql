@@ -79,8 +79,8 @@ impl Line {
 
 // ───────────────────────── 렌더 ─────────────────────────
 
-/// 줄 접두 = 들여쓰기 + (줄 앞 콤마면) 콤마. 콤마 줄은 **한 단계 위 열에 `,`** 를 두고 간격 뒤에 항목이 원래 들여쓰기 열에
-/// 오게 한다(탭: `,\t` · 공백 n: `" "*(n-2) + ", "`). 확장도 이 규칙을 그대로 쓴다.
+/// 줄 접두 = 들여쓰기 + (줄 앞 콤마면) 콤마. 콤마 줄은 **한 단계 위 열에 `,`** 를 두고 `comma_gap` 뒤에 항목(탭 들여쓰기: 탭만 +
+/// `,` + 간격 · 공백 n + 공백 간격: `" "*(n-2) + ", "` · 탭 간격: `,\t`). 확장도 이 규칙을 그대로 쓴다.
 #[must_use]
 pub fn line_prefix(indent: usize, leading_comma: bool, opts: &Options) -> String {
     let unit = opts.indent_unit();
@@ -99,8 +99,17 @@ pub fn line_prefix(indent: usize, leading_comma: bool, opts: &Options) -> String
         s.push_str(opts.gap());
         return s;
     }
+    // 콤마 뒤 간격은 늘 `comma_gap`(사용자 09-29). 탭 들여쓰기 = 콤마 앞은 탭(정지점)만 · 공백 채움 없음(사용자 09-29 정정) ·
+    // 공백 들여쓰기 + 공백 간격 = (폭 - 2)칸 + `, `로 항목이 원래 열에.
     match (opts.indent, opts.comma_gap) {
-        (Indent::Tab, _) | (_, crate::Gap::Tab) => {
+        (Indent::Tab, gap) => {
+            s.push(',');
+            s.push_str(match gap {
+                crate::Gap::Tab => "\t",
+                crate::Gap::Space => " ",
+            });
+        }
+        (Indent::Spaces(_), crate::Gap::Tab) => {
             s.push(',');
             s.push('\t');
         }
@@ -122,8 +131,11 @@ pub type Pad<'a> = &'a dyn Fn(usize, &str) -> String;
 #[must_use]
 pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> String {
     let mut s = String::new();
+    // 연산자 공백 끔 = 연산자 **뒤** 조각도 붙여 쓴다(`a= 1`이 아니라 `a=1`).
+    let mut tight_next = false;
     for (i, p) in parts.iter().enumerate() {
-        let need_space = !s.is_empty() && !s.ends_with('\t') && !s.ends_with(' ');
+        let need_space = !tight_next && !s.is_empty() && !s.ends_with('\t') && !s.ends_with(' ');
+        tight_next = false;
         match p {
             Part::Comma => {
                 // 줄 앞 콤마는 접두가 그린다 · 줄 중간(한 줄 목록)은 `, `.
@@ -144,18 +156,19 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
             }
             // 정렬 채움(확장): 비어 있지 않으면 채움 + 탭 간격 · 비어 있으면(Basic) 보통 띄어쓰기.
             Part::As => {
+                // `AS` 앞뒤 = `as_gap`(공백/탭 · 사용자 09-29) · 정렬 채움(확장)이 있으면 앞은 채움.
+                let g = match opts.as_gap {
+                    crate::Gap::Tab => '\t',
+                    crate::Gap::Space => ' ',
+                };
                 let fill = pad.map(|f| f(i, &s)).unwrap_or_default();
                 if !fill.is_empty() {
                     s.push_str(&fill);
                 } else if need_space {
-                    s.push(' ');
+                    s.push(g);
                 }
                 s.push_str(&opts.keyword_case.apply("AS"));
-                if !fill.is_empty() && opts.comma_gap == crate::Gap::Tab {
-                    s.push('\t');
-                } else {
-                    s.push(' ');
-                }
+                s.push(g);
             }
             Part::Alias(a) => {
                 if !s.ends_with(' ') && !s.ends_with('\t') && !s.is_empty() {
@@ -166,21 +179,31 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
             Part::CmpOp(op) => {
                 let fill = pad.map(|f| f(i, &s)).unwrap_or_default();
                 if !fill.is_empty() {
+                    // 정렬된 연산자 뒤 = `operator_gap`(4자 이상은 공백 1개 · 확장의 탭 정렬과 공통 규칙).
                     s.push_str(&fill);
                     s.push_str(op);
-                    if opts.comma_gap == crate::Gap::Tab {
+                    let long = opts.operator_long_space && op.chars().count() >= 4;
+                    if opts.operator_gap == crate::Gap::Tab && !long {
                         s.push('\t');
                     } else {
                         s.push(' ');
                     }
                 } else if opts.operator_spaces {
+                    // 양쪽 공백의 글자 = `operator_gap`(공백/탭 · 사용자 09-29) · 4자 이상 연산자는 **오른쪽만** 공백 1개
+                    // (`operator_long_space` · 왼쪽은 설정대로 — 사용자 09-29 정정).
+                    let long = opts.operator_long_space && op.chars().count() >= 4;
+                    let g = match opts.operator_gap {
+                        crate::Gap::Tab => '\t',
+                        crate::Gap::Space => ' ',
+                    };
                     if need_space {
-                        s.push(' ');
+                        s.push(g);
                     }
                     s.push_str(op);
-                    s.push(' ');
+                    s.push(if long { ' ' } else { g });
                 } else {
                     s.push_str(op);
+                    tight_next = true;
                 }
             }
             Part::OrderDir(d) => {
@@ -631,6 +654,16 @@ impl<'a> Walker<'a> {
     }
     fn part(&mut self, p: Part) {
         self.cur_mut().parts.push(p);
+    }
+    /// ★ 줄 앞 AND/OR 뒤 간격(`logical_gap` · 사용자 09-29 "콤마처럼 AND/OR 뒤 공백/탭"): 탭이면 현재 글 조각 끝에 탭을 붙여 다음
+    /// 토큰이 그 뒤에 온다(공백은 `word`/`need_space`가 알아서).
+    fn logical_gap(&mut self) {
+        if self.opts.logical_gap != crate::Gap::Tab {
+            return;
+        }
+        if let Some(Part::Text(t)) = self.cur_mut().parts.last_mut() {
+            t.push('\t');
+        }
     }
     /// 토큰 하나를 대소문자 규칙대로 현재 줄에.
     fn emit(&mut self, t: &Token) {
@@ -1171,6 +1204,7 @@ impl<'a> Walker<'a> {
                     LogicalNewline::Before => {
                         self.open(indent, Role::Cond);
                         self.emit(t);
+                        self.logical_gap();
                     }
                     LogicalNewline::After => {
                         self.emit(t);
@@ -1190,6 +1224,7 @@ impl<'a> Walker<'a> {
                             self.open(indent, Role::Cond);
                             let and = self.kw("AND");
                             self.word(&and);
+                            self.logical_gap();
                         }
                         LogicalNewline::After => {
                             let and = self.kw("AND");
@@ -1251,6 +1286,26 @@ impl<'a> Walker<'a> {
                     || up == "UNPIVOT"
                 {
                     return;
+                }
+            }
+            // ★ 단어 비교 연산자(IN · IS · LIKE · NOT IN · NOT LIKE · IS NOT)도 연산자 조각(간격·정렬 규칙 공유 · 사용자 09-29).
+            if t.kind == Kind::Word && !cmp_done && *between == 0 {
+                let (words, n): (&str, usize) = match up.as_str() {
+                    "NOT" if self.peek_at(1).is_some_and(|x| x.is("IN")) => ("NOT IN", 2),
+                    "NOT" if self.peek_at(1).is_some_and(|x| x.is("LIKE")) => ("NOT LIKE", 2),
+                    "IS" if self.peek_at(1).is_some_and(|x| x.is("NOT")) => ("IS NOT", 2),
+                    "IN" => ("IN", 1),
+                    "IS" => ("IS", 1),
+                    "LIKE" => ("LIKE", 1),
+                    _ => ("", 0),
+                };
+                if n > 0 {
+                    for _ in 0..n {
+                        self.next();
+                    }
+                    cmp_done = true;
+                    self.part(Part::CmpOp(self.opts.keyword_case.apply(words)));
+                    continue;
                 }
             }
             let t = self.next().expect("tok");
@@ -1389,6 +1444,7 @@ impl<'a> Walker<'a> {
                     LogicalNewline::Before => {
                         self.open(ind, Role::Cond);
                         self.emit(t);
+                        self.logical_gap();
                     }
                     LogicalNewline::After => {
                         self.emit(t);
@@ -1406,6 +1462,7 @@ impl<'a> Walker<'a> {
                     LogicalNewline::Before => {
                         self.open(ind, Role::Cond);
                         self.word(&op);
+                        self.logical_gap();
                     }
                     LogicalNewline::After => {
                         self.word(&op);
@@ -2115,6 +2172,7 @@ impl<'a> Walker<'a> {
                 let t = self.next().expect("tok");
                 self.open(indent, Role::Cond);
                 self.emit(t);
+                self.logical_gap();
                 first = false;
                 self.cond_expr(indent, &mut between);
                 continue;
@@ -2124,6 +2182,7 @@ impl<'a> Walker<'a> {
                     self.open(indent, Role::Cond);
                     let and = self.kw("AND");
                     self.word(&and);
+                    self.logical_gap();
                 } else {
                     self.open(indent, Role::Cond);
                 }
@@ -2374,6 +2433,14 @@ mod tests {
     use super::*;
     use crate::{format_basic, Case};
 
+    /// 탭 들여쓰기 + 콤마 뒤 **탭** 간격(kiros33 배치 · 옛 기본 `,\t`를 기대하는 시험용).
+    fn tab_opts() -> Options {
+        Options {
+            comma_gap: crate::Gap::Tab,
+            ..Options::default()
+        }
+    }
+
     fn words(s: &str) -> Vec<String> {
         lex(s)
             .into_iter()
@@ -2392,7 +2459,7 @@ mod tests {
 
     #[test]
     fn basic_select_layout() {
-        let o = Options::default();
+        let o = tab_opts();
         let src = "select a.x, b.y as yy, count(*) cnt from t a inner join u b on a.id = b.id and b.k > 1 where a.x = 1 and b.y in ('p', 'q') group by a.x, b.y order by a.x desc;";
         let out = format_basic(src, &o);
         let want = concat!(
@@ -2434,7 +2501,7 @@ mod tests {
 
     #[test]
     fn subquery_case_and_comments_kept() {
-        let o = Options::default();
+        let o = tab_opts();
         let src = "-- head\nselect a.k, (select max(b.d) from t2 b where b.k = a.k) as last_d, /* c */ case when a.q > 100 then 'H' when a.q > 0 then 'L' else 'N' end grp -- tail\nfrom t1 a where a.k between 1 and 9 and exists (select 1 from t3 c where c.k = a.k)";
         assert_tokens_kept(src, &o);
         let out = format_basic(src, &o);
@@ -2447,7 +2514,8 @@ mod tests {
             out.contains(",\t/* c */ CASE WHEN a.q > 100 THEN 'H'"),
             "{out}"
         );
-        assert!(out.contains("END grp  -- tail\n"), "{out}");
+        // 줄 끝 주석 앞 간격도 `comma_gap`(탭 간격 = 탭).
+        assert!(out.contains("END grp\t-- tail\n"), "{out}");
         assert!(out.contains("\tAND EXISTS (\n\t\tSELECT\n"), "{out}");
         assert!(out.contains("\ta.k BETWEEN 1 AND 9\n"), "{out}");
     }
@@ -2470,7 +2538,7 @@ mod tests {
 
     #[test]
     fn dml_and_oneliners() {
-        let o = Options::default();
+        let o = tab_opts();
         let src = "insert into tb_code (cd, nm) values ('1', 'a');\n\nupdate tb_x a set a.q = 1, a.d = sysdate where a.k = 'x';\ndelete from tb_y where 1=1 and k = 2";
         let out = format_basic(src, &o);
         // 짧은 DML 한 줄은 그대로(빈 줄 규칙만).
@@ -2480,7 +2548,7 @@ mod tests {
         );
         let o2 = Options {
             keep_oneliners: false,
-            ..Options::default()
+            ..tab_opts()
         };
         let out2 = format_basic(
             "update tb_x a set a.q = 1, a.d = sysdate where a.k = 'x' and a.z is null;",
@@ -2495,7 +2563,7 @@ mod tests {
             semicolon_newline: true,
             identifier_case: Case::Upper,
             function_case: Case::Upper,
-            ..Options::default()
+            ..tab_opts()
         };
         let out3 = format_basic("update tb_x a set a.q = nvl(a.q, 0) where a.k = 'x';", &o3);
         assert_eq!(
@@ -2516,7 +2584,7 @@ mod tests {
 
     #[test]
     fn with_and_set_ops() {
-        let o = Options::default();
+        let o = tab_opts();
         let src = "with c1 as (select k from t1), c2 as (select k from t2) select a.k from c1 a union all select b.k from c2 b";
         assert_tokens_kept(src, &o);
         let out = format_basic(src, &o);
@@ -2535,7 +2603,7 @@ mod tests {
             column_alias_all: true,
             column_as: AliasAs::Add,
             table_as: AliasAs::Add,
-            ..Options::default()
+            ..tab_opts()
         };
         let out = format_basic("select a.x, a.y yy, sum(a.q) from t a", &o);
         assert_eq!(
@@ -2544,7 +2612,7 @@ mod tests {
         );
         let o2 = Options {
             column_as: AliasAs::Remove,
-            ..Options::default()
+            ..tab_opts()
         };
         let out2 = format_basic("select a.y as yy from t a", &o2);
         assert_eq!(out2, "SELECT\n\ta.y yy\nFROM\n\tt a\n");
@@ -2586,7 +2654,7 @@ mod tests {
         assert_eq!(display_width("ab\tc", 4), 5);
         assert_eq!(tabs_to(2, 8, 4), "\t\t");
         assert_eq!(tabs_to(4, 8, 4), "\t");
-        let o = Options::default();
+        let o = tab_opts();
         let lines = layout("select a, b from t where x = 1 and y = 2", &o);
         let b = blocks(&lines);
         assert!(b
@@ -2752,6 +2820,112 @@ mod tests {
             "select x from tb_order, tb_item where a = 1",
             &Options::default(),
         );
+    }
+
+    /// `AS` 앞뒤 간격 = `as_gap`(기본 공백 · 탭이면 `a\tAS\tx` · 테이블 별칭도 · 멱등).
+    #[test]
+    fn as_gap_tab_or_space() {
+        let o = Options::default();
+        let out = format_basic("select a.x as x from t as a", &o);
+        assert!(out.contains("a.x AS x") && out.contains("t AS a"), "{out}");
+        let o = Options {
+            as_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        let out = format_basic("select a.x as x from t as a", &o);
+        assert!(
+            out.contains("a.x\tAS\tx") && out.contains("t\tAS\ta"),
+            "{out}"
+        );
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    /// AND/OR 뒤 간격 = `logical_gap`(줄 앞 배치 · 탭이면 `AND\t조건` · 시드 AND도 · 멱등).
+    #[test]
+    fn logical_gap_tab() {
+        let o = Options {
+            logical_gap: crate::Gap::Tab,
+            where_seed: true,
+            ..Options::default()
+        };
+        let out = format_basic("select 1 from t where a = 1 and b = 2 or c = 3", &o);
+        assert!(out.contains("\tAND\ta = 1\n"), "{out}");
+        assert!(out.contains("\tOR\tc = 3\n"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+        let o2 = Options {
+            logical_gap: crate::Gap::Tab,
+            logical_newline: LogicalNewline::After,
+            ..Options::default()
+        };
+        let out = format_basic("select 1 from t where a = 1 and b = 2", &o2);
+        assert!(out.contains("a = 1 AND\n"), "{out}");
+    }
+
+    /// 연산자 양쪽 간격 = `operator_gap`(공백/탭 · 꺼져 있으면 붙여 쓴다).
+    #[test]
+    fn operator_gap_tab_or_space() {
+        let o = Options {
+            operator_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "select 1 from t where a = 1 and b > 2 and c in (1, 2) and d like 'x%' and e is not null and f not in (3)",
+            &o,
+        );
+        assert!(out.contains("a\t=\t1"), "{out}");
+        assert!(out.contains("b\t>\t2"), "{out}");
+        // 단어 연산자도 조각 · 4자 이상(LIKE · IS NOT · NOT IN)은 왼쪽 = 설정(탭) · 오른쪽 = 공백 1개(`operator_long_space` 기본 켬).
+        assert!(out.contains("c\tIN\t(1, 2)"), "{out}");
+        assert!(out.contains("d\tLIKE 'x%'"), "{out}");
+        assert!(out.contains("e\tIS NOT NULL"), "{out}");
+        assert!(out.contains("f\tNOT IN (3)"), "{out}");
+        let o3 = Options {
+            operator_gap: crate::Gap::Tab,
+            operator_long_space: false,
+            ..Options::default()
+        };
+        let out = format_basic("select 1 from t where d like 'x%'", &o3);
+        assert!(out.contains("d\tLIKE\t'x%'"), "{out}");
+        // 멱등.
+        let o4 = Options::default();
+        let src = "select 1 from t where c in (1, 2) and d not like 'x%' and e is null";
+        let once = format_basic(src, &o4);
+        assert_eq!(format_basic(&once, &o4), once, "{once}");
+        assert!(
+            once.contains("d NOT LIKE 'x%'") && once.contains("e IS NULL"),
+            "{once}"
+        );
+        let o = Options {
+            operator_spaces: false,
+            ..Options::default()
+        };
+        let out = format_basic("select 1 from t where a = 1", &o);
+        assert!(out.contains("a=1"), "{out}");
+    }
+
+    /// 줄 앞 콤마 + 탭 들여쓰기 + 간격 "공백"(사용자 09-29): 콤마 앞은 탭만(공백 채움 없음) · 뒤는 간격 설정.
+    #[test]
+    fn leading_comma_gap_follows_setting_in_tab_mode() {
+        let o = Options {
+            indent: Indent::Tab,
+            tab_width: 4,
+            comma_gap: crate::Gap::Space,
+            ..Options::default()
+        };
+        assert_eq!(line_prefix(1, true, &o), ", ");
+        assert_eq!(line_prefix(2, true, &o), "\t, ");
+        let o = Options {
+            indent: Indent::Tab,
+            comma_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        assert_eq!(line_prefix(1, true, &o), ",\t");
+        let o = Options {
+            indent: Indent::Spaces(2),
+            comma_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        assert_eq!(line_prefix(1, true, &o), ",\t");
     }
 
     /// T-255 테이블 설명 주석(스킬 2-2): 호스트가 준 설명이 있는 물리 테이블 줄 끝에 `--\t설명` · 없는 것·서브쿼리는 없음.

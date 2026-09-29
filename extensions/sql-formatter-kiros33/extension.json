@@ -2,10 +2,10 @@
   "format": 1,
   "id": "sql-formatter-kiros33",
   "name": "SQL Formatter for kiros33",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "kind": "wasm",
   "summary": "SQL formatter following the ansi-sql-format skill — tab-aligned AS/operators · WHERE 1=1 · dash lines around set operators (WASM · formatter extension)",
-  "description": "A SQL formatter extension (ABI v1.1 nx_ext_format). It reuses the app's Basic formatter core (nsql-format: lexer · layout · common options) and adds the kiros33 skill rules on top: vertical tab alignment of AS / comparison operators / ORDER BY direction (longest item → next tab stop · outliers get one tab), AND/OR at the WHERE column, dash comment lines around UNION / UNION ALL / INTERSECT / MINUS, WHERE 1=1 seed. Common options (indent, comma position and gap, keyword case, one-line/multi-line lists, AND/OR position …) come from Preferences ▸ Editor ▸ SQL Formatting; sqlfmt.strict (default on) forces the skill values (tab · width 4 · leading comma · \",\\t\" · 1=1 · UPPER · AND at line start). Extension-only rules live under Preferences ▸ Extensions ▸ SQL Formatter for kiros33. Use it once from the palette (Format With…), set it as the default formatter (Shift+Alt+F), or open Format Preview. Out of scope in v1 (kept as written): automatic table aliases, table comments, PL/SQL block layout, dialect translation.",
+  "description": "A SQL formatter extension (ABI v1.1 nx_ext_format). It reuses the app's Basic formatter core (nsql-format: lexer · layout · common options) and adds the kiros33 skill rules on top: vertical tab alignment of AS / comparison operators / ORDER BY direction (longest item → next tab stop · outliers get one tab), AND/OR at the WHERE column, dash comment lines around UNION / UNION ALL / INTERSECT / MINUS, WHERE 1=1 seed. Common options (indent, comma position and gap, keyword case, one-line/multi-line lists, AND/OR position …) come from Preferences ▸ Editor ▸ SQL Formatting; sqlfmt.strict (default on) forces the skill values (tab · width 4 · leading comma · \",\\t\" · 1=1 · UPPER · AND at line start). Extension-only rules live under Preferences ▸ Extensions ▸ SQL Formatter for kiros33. Use it once from the palette (Format With…), set it as the default formatter (Shift+Alt+F), or open Format Preview. 1.1.0: built on the Basic extension API (prepare → tweak → render), so every Basic option applies here too — automatic table aliases, table description comments, dialect translation, parenthesized AND/OR group seeds, gaps after AND/OR and around operators (4+ character operators get one space). PL/SQL block layout stays as written.",
   "author": "SosomLab",
   "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/sql-formatter-kiros33",
@@ -20,7 +20,7 @@
   "files": [
     {
       "path": "sql_formatter_kiros33.wasm",
-      "sha256": "e96239c93f6a5d85871d3cd2d48cb88c88b402c81eda9f0ef66f0f7ec86e0902",
+      "sha256": "97bc37561ffe8a45c875d405dbfb2250696b61b9b840c99b86ad44e66d2ee535",
       "dest": ""
     }
   ],

@@ -1027,6 +1027,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "before",
     },
     Entry {
+        key: "format.logical_gap",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtLogicalGap,
+        desc: Msg::DescFmtLogicalGap,
+        kind: SettingKind::Choice(FMT_GAP_OPTS),
+        default: "space",
+    },
+    Entry {
         key: "format.where_seed",
         cat: Msg::CatFormat,
         label: Msg::LblFmtWhereSeed,
@@ -1084,12 +1092,36 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
+        key: "format.operator_gap",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtOperatorGap,
+        desc: Msg::DescFmtOperatorGap,
+        kind: SettingKind::Choice(FMT_GAP_OPTS),
+        default: "space",
+    },
+    Entry {
+        key: "format.operator_long_space",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtOperatorLongSpace,
+        desc: Msg::DescFmtOperatorLongSpace,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
         key: "format.column_alias_all",
         cat: Msg::CatFormat,
         label: Msg::LblFmtColumnAliasAll,
         desc: Msg::DescFmtColumnAliasAll,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "format.as_gap",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtAsGap,
+        desc: Msg::DescFmtAsGap,
+        kind: SettingKind::Choice(FMT_GAP_OPTS),
+        default: "space",
     },
     Entry {
         key: "format.column_as",
@@ -5630,6 +5662,17 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("intel.detail_text_alpha", "intel.detail_card", Dep::On),
     ("intel.card_settle_ms", "intel.detail_card", Dep::On),
     ("format.seed_gap", "format.where_seed", Dep::On),
+    (
+        "format.logical_gap",
+        "format.logical_newline",
+        Dep::Eq("before"),
+    ),
+    ("format.operator_gap", "format.operator_spaces", Dep::On),
+    (
+        "format.operator_long_space",
+        "format.operator_spaces",
+        Dep::On,
+    ),
     // 탭 값을 쓰는 동안 단위·폭은 보이되 잠금(사용자 09-29).
     ("format.indent", "format.indent_from_tab", Dep::Eq("off")),
     (

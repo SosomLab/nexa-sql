@@ -144,6 +144,8 @@ pub(crate) struct PrefsWin {
     preview_title: String,
     preview_rect: Rect,
     preview_on: bool,
+    /// 미리보기 상자 안에서 누른 뒤(드래그 선택) — 놓을 때까지 MouseMove/Up은 밖에서도 상자에(사용자 09-29 "밖에서 놓아도 릴리즈").
+    preview_drag: bool,
     scroll: i32,
     content_h: i32,
     bars: ScrollBars,
@@ -240,11 +242,10 @@ impl PrefsWin {
             // 상자의 탭 폭·공백 모드 = 포맷 설정(`format.indent_width`/`format.indent`) — 탭 들여쓰기가 설정 폭으로 보이게(사용자 09-29).
             tb.set_indent(tab_size, spaces);
             if tb.text() != text {
-                tb.set_text(text);
-                changed = true;
-            } else {
-                changed = true;
+                // 캐럿 줄·스크롤 유지(사용자 09-29 "옵션 바꿀 때마다 맨 뒤로 가서 불편").
+                tb.set_text_keep_view(text);
             }
+            changed = true;
         }
         if changed {
             self.redraw();
@@ -328,6 +329,7 @@ impl PrefsWin {
             preview_title: String::new(),
             preview_rect: Rect::default(),
             preview_on: false,
+            preview_drag: false,
             scroll: 0,
             content_h: 0,
             bars: ScrollBars::new(),
@@ -1151,10 +1153,22 @@ impl PrefsWin {
                 }
             }
         }
-        // ★ 포맷 미리보기 상자(읽기 전용 · 선택·복사·스크롤).
+        // ★ 포맷 미리보기 상자(읽기 전용 · 선택·복사·스크롤). 안에서 누른 드래그는 **밖에서 놓아도** 상자가 받아 끝난다.
         let is_wheel = matches!(ie, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
-        if self.preview_on && (is_mouse || is_wheel) && self.preview_rect.contains(p) {
+        let captured = self.preview_drag
+            && matches!(
+                ie,
+                InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+            );
+        if self.preview_on
+            && (captured || ((is_mouse || is_wheel) && self.preview_rect.contains(p)))
+        {
             if let Some(tb) = self.preview.as_mut() {
+                match ie {
+                    InputEvent::MouseDown { .. } => self.preview_drag = true,
+                    InputEvent::MouseUp { .. } => self.preview_drag = false,
+                    _ => {}
+                }
                 tb.on_event(&ie, &mut inv);
                 self.redraw();
                 return PrefsAction::Paint;
@@ -1881,22 +1895,21 @@ impl PrefsWin {
             }
             // 콤보는 드롭다운이 아래 카드를 덮어야 하므로 맨 뒤에 — 그리고 **열린 콤보는 그중에서도 맨 마지막**(닫힌 다음 카드의 콤보 상자가
             //   열린 드롭다운 위에 그려지던 결함 · 사용자 09-29 캡처).
-            for open_pass in [false, true] {
-                for c in &self.cards {
-                    if c.rect.h == 0 {
-                        continue;
-                    }
-                    match &c.ctl {
-                        CardCtl::Choice(cb) if cb.is_open() == open_pass => {
-                            cb.paint(&mut dc, th);
-                            // 잠긴 콤보도 흐리게 — 콤보는 이 층에서 그려져 앞의 흐림이 덮였다(잠긴 것은 열리지 않으므로 드롭다운을 가리지 않는다).
-                            if c.locked {
-                                dc.fill_rect_alpha(cb.bounds(), th.panel_bg, 0.6);
-                            }
+            //   열린 콤보(드롭다운)는 **미리보기·하단 버튼 뒤**에 그린다(미리보기 영역 위로 펼쳐지면 가려지던 결함 · 사용자 09-29).
+            for c in &self.cards {
+                if c.rect.h == 0 {
+                    continue;
+                }
+                match &c.ctl {
+                    CardCtl::Choice(cb) if !cb.is_open() => {
+                        cb.paint(&mut dc, th);
+                        // 잠긴 콤보도 흐리게 — 콤보는 이 층에서 그려져 앞의 흐림이 덮였다(잠긴 것은 열리지 않으므로 드롭다운을 가리지 않는다).
+                        if c.locked {
+                            dc.fill_rect_alpha(cb.bounds(), th.panel_bg, 0.6);
                         }
-                        CardCtl::Pos(pd) if !open_pass => pd.paint_popup(&mut dc, th),
-                        _ => {}
                     }
+                    CardCtl::Pos(pd) => pd.paint_popup(&mut dc, th),
+                    _ => {}
                 }
             }
             self.bars.paint(
@@ -1935,6 +1948,14 @@ impl PrefsWin {
             self.close_btn.paint(&mut dc, th);
             self.json_btn.paint(&mut dc, th);
             let _ = pad;
+            // 열린 콤보 = 팝업 층(미리보기 위).
+            for c in &self.cards {
+                if let CardCtl::Choice(cb) = &c.ctl {
+                    if c.rect.h != 0 && cb.is_open() {
+                        cb.paint(&mut dc, th);
+                    }
+                }
+            }
             self.search.paint_popup(&mut dc, th);
             if let Some((_, r)) = &self.history {
                 r.paint_popup(&mut dc, th);

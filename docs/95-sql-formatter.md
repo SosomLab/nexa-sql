@@ -37,16 +37,20 @@
 |---|---|---|---|
 | `format.default` | `basic` \| 확장 id | basic | Shift+Alt+F가 쓰는 포맷터 |
 | `format.indent` · `format.indent_width` | tab/space · 1~16 | tab · 4 | 들여쓰기 단위 · 폭(정렬 탭 스톱) |
-| `format.indent_from_tab` | bool | **on** | 문서 포맷 때 위 둘 대신 **그 탭**의 들여쓰기(상태줄 탭 크기/공백) · 켜져 있으면 단위·폭 카드는 보이되 잠김 · **미리보기는 늘 설정값**(사용자 09-29) |
+| `format.indent_from_tab` | bool | **on** | 문서 포맷 때 위 둘 대신 **그 탭**의 들여쓰기(상태줄 탭 크기/공백) · 켜져 있으면 단위·폭 카드는 보이되 잠김 · **미리보기 = 실제 적용값**(켜짐 = 활성 탭 · 꺼짐 = 설정값 · 사용자 09-29 정정) |
 | `format.keyword_case` · `identifier_case` · `function_case` | keep/upper/lower | upper · keep · keep | 대소문자(인용 식별자는 불변) |
 | `format.comma` · `format.comma_gap` | leading/trailing · space/tab | **trailing** · space | 콤마 위치 · 콤마 뒤 간격(정렬된 AS·연산자 뒤 포함) — Basic 기본 = DBeaver 일반형(콤마 뒤 · 사용자 09-29 "내 기준은 kiros33에서") · `Options::default()`(라이브러리)는 leading 그대로 |
 | `format.logical_newline` | before/after | before | AND/OR 줄 앞/뒤 |
+| `format.logical_gap` | space/tab | space | 줄 앞 AND/OR와 조건 사이(공백/탭 · 줄 앞 배치일 때만 · 사용자 09-29) |
 | `format.where_seed` | bool | off | `WHERE/ON/HAVING 1=1` 시드(이미 있으면 그대로) |
 | `format.seed_gap` | space/tab | space | 시드 앞 구분 — `WHERE 1=1` / `WHERE\t1=1`(`ON`·`HAVING`도) · 사용자 09-29 |
 | `format.cond_indent` | indent/same | indent | WHERE/HAVING 뒤 AND/OR 줄 = 한 단계 안 / WHERE와 같은 열(ON은 늘 ON 열) · 사용자 09-29 |
 | `format.list_style` · `format.line_width` | multi/single/auto · 40~400 | multi · 120 | 목록 배치 · 줄 폭 |
 | `format.case_inline_max` | 20~400 | 120 | CASE 한 줄 상한 |
 | `format.operator_spaces` | bool | on | 연산자 양쪽 공백 |
+| `format.operator_gap` | space/tab | space | 그 공백의 글자(공백/탭 · 위가 켜졌을 때만 · 사용자 09-29) · 단어 연산자 `IN`·`IS`·`LIKE`·`NOT IN`·`NOT LIKE`·`IS NOT`도 연산자 조각 |
+| `format.operator_long_space` | bool | on | 4자 이상 연산자(`LIKE` · `NOT IN` · `IS NOT` …)는 왼쪽 = 간격 설정 · **오른쪽만 공백 1개**(사용자 09-29 정정) |
+| `format.as_gap` | space/tab | space | `AS` 앞뒤 간격(열·테이블 별칭 · 정렬 채움이 있으면 뒤만 · 사용자 09-29) |
 | `format.column_alias_all` · `column_as` · `table_as` | bool · keep/add/remove | off · keep · keep | 모든 열 별칭 · 명시적 AS |
 | `format.join_indent` | bool | off | JOIN 줄 한 단계 안 |
 | `format.keep_oneliners` | bool | on | 한 줄 짧은 DML 유지(§19 · SELECT는 늘 포맷) |
@@ -75,7 +79,7 @@
 | `sqlfmt.and_same_level` | on | WHERE/HAVING의 AND/OR = 절 키워드와 같은 열(§3) · `AND\t조건` |
 | `sqlfmt.set_op_dashes` | on | 집합 연산자 앞뒤 대시 구분행(§12 · 키워드 글자 수) |
 
-구현 = `nsql_format::layout::layout` → (같은 열 AND · 구분행) → `AlignPlan`(블록별 탭 스톱 · `line_prefix`/`display_width`/`tabs_to`) → `render_lines(pad)`.
+구현(1.1.0 · 09-29) = **Basic 확장 API**(§5-1): `strict_options`(공통 옵션 위 덮어쓰기 · `cond_indent` = `and_same_level`) → `nsql_format::prepare` → 구분행 손질 → `AlignPlan`(블록별 탭 스톱 · `line_prefix`/`display_width`/`tabs_to`) → `nsql_format::render(pad)`. 별칭 자동 부여 · 테이블 설명 · 방언 치환 · 괄호 그룹 시드 · AND/OR 뒤 간격 · 연산자 간격은 전부 Basic 몫(확장 코드 0) — 1.0.0의 `AND\t` 후처리·`same_level_conditions`는 지웠다.
 
 ## 5. ABI v1.1(포맷터) · SDK API
 
@@ -83,6 +87,19 @@
 - export `nx_ext_format(ptr) -> ptr`: 입력 `{"text","dialect","options":{"format.k":"v"…},"settings":{"sqlfmt.k":"v"…},"preview":bool}` → 출력 `{"text":"…"}` 또는 `{"error":"…"}`.
 - SDK: `Meta.formatter: Option<Formatter>` · `trait Extension::format(&FormatRequest) -> Result<String,String>`(기본 = 없음) · `FormatRequest::from_json` · `format_response` · 확장은 `nsql-format`(path 의존)으로 공통 옵션을 `Options::from_pairs`로 읽는다.
 - 호스트 상한: 포맷 호출 연료 2e9 · 5초 · 입력·반환 1 MB(넘으면 오류 · Basic으로 안내) · 실패 3회 = 세션 동안 정지(기존 브레이커).
+
+### 5-1. Basic 확장 API(사용자 09-29 "확장은 Basic 설정 위에 추가 기능을 얹는 형태")
+
+| 단계 | 함수(`nsql_format`) | 하는 일 |
+|---|---|---|
+| ① 준비 | `prepare(src, &Options) -> Vec<Line>` | Basic 전처리 전부 = 방언 치환 · 레이아웃 · 시드(`1=1` · 괄호 그룹) · 별칭 · 테이블 설명 · 조건 줄 자리 · 간격(콤마·AND/OR·연산자) |
+| ② 손질 | 확장 클로저 `FnOnce(&mut Vec<Line>, &Options)` | 줄 추가/역할/들여쓰기 바꾸기(예: 집합 연산자 구분행) |
+| ③ 렌더 | `render(&lines, &Options, src, Option<Pad>) -> String` | Basic 렌더 + `pad(줄, 조각, 지금까지 글)` = 조각 앞 채움(탭 정렬) |
+| 한 번에 | `format_with(src, &Options, tweak, pad)` | ①→②→③ · `format_basic` = `format_with(_, _, 없음, 없음)` |
+
+- 공통 옵션은 `Options::from_pairs(req.options)`로 받고 확장은 **필요한 값만 덮어쓴다**(`..base.clone()`) — Basic에 옵션이 늘면 확장은 그대로 따라온다.
+- 호스트 → 확장 부가 정보도 pair로: `table_comments`(줄마다 `이름<TAB>설명` · `table_comments_pair`) — 앱이 Basic과 같은 목록을 넘긴다.
+- 정렬된 연산자 뒤 간격 = `operator_gap`(4자 이상 = 공백 1개) — 확장의 채움(`pad`)과 Basic 규칙이 한 벌.
 
 ## 6. 시험 방법
 

@@ -5,11 +5,14 @@
 //! - `AS` · 비교 연산자 · ORDER BY 방향의 **탭 수직 정렬**(블록마다 가장 긴 항목 다음 탭 스톱 · 아웃라이어는 탭 1개).
 //! - WHERE/HAVING의 AND/OR = 절 키워드와 **같은 열**(§3).
 //! - 집합 연산자 앞뒤 **대시 구분행**(§12 · 키워드 글자 수만큼).
-//! - `sqlfmt.strict`(기본 켬) = 스킬 규정값(탭 · 폭 4 · 콤마 앞 · `,\t` · `1=1` · 대문자 · AND 앞)을 강제 · 끄면 `format.*`를 따른다.
-//! 원문 유지: 별칭 자동 부여(2-1) · 테이블 설명 주석(2-2) · PL/SQL 블록(§21) · 방언 치환(§22)은 v1 범위 밖(T-255).
+//! - `sqlfmt.strict`(기본 켬) = 스킬 규정값(탭 · 폭 4 · 콤마 앞 · `,\t` · `1=1` · `AND\t` · 연산자 탭 · 괄호 그룹 시드 · 대문자 · AND 앞)을
+//!   강제 · 끄면 `format.*`를 따른다.
+//! **1.1.0(09-29)**: Basic 확장 API(`nsql_format::format_with` = prepare → 손질 → render)로 얹는다 — 별칭 자동 부여 · 테이블 설명 주석 ·
+//! 방언 치환 · 괄호 AND/OR 그룹 시드 · 시드 간격 · 조건 줄 자리 · AND/OR 뒤 간격 · 연산자 간격(4자 이상 = 공백 1개)은 전부 Basic
+//! 공통 옵션이 하고, 이 확장은 정렬·구분행만 더한다(같은 열 AND = `cond_indent` · `AND\t` = `logical_gap`).
 
 use nexa_ext_sdk::{Editor, Effect, Extension, FormatRequest, Formatter, Label, Meta, Settings};
-use nsql_format::layout::{blocks, display_width, line_prefix, render_lines, tabs_to, Part, Role};
+use nsql_format::layout::{blocks, display_width, line_prefix, tabs_to, Part, Role};
 use nsql_format::{Case, Comma, Gap, Indent, Line, ListStyle, LogicalNewline, Options};
 
 pub struct Kiros33;
@@ -76,7 +79,7 @@ impl Cfg {
     }
 }
 
-/// 스킬 규정값(strict).
+/// 스킬 규정값(strict) — Basic 공통 옵션 위에 덮어쓰는 값만(나머지 = 앱 설정 그대로 · 테이블 설명·별칭·방언 등 포함).
 fn strict_options(base: &Options) -> Options {
     Options {
         indent: Indent::Tab,
@@ -84,39 +87,33 @@ fn strict_options(base: &Options) -> Options {
         keyword_case: Case::Upper,
         comma: Comma::Leading,
         comma_gap: Gap::Tab,
+        as_gap: Gap::Tab,
         logical_newline: LogicalNewline::Before,
+        logical_gap: Gap::Tab,
         where_seed: true,
+        paren_seed: true,
         list_style: ListStyle::Multi,
         operator_spaces: true,
+        operator_gap: Gap::Tab,
+        operator_long_space: true,
         case_inline_max: 120,
         ..base.clone()
     }
 }
 
-/// ★ 포맷 본체: 공통 옵션으로 레이아웃 → kiros33 규칙(같은 열 AND · 구분행 · 탭 정렬) → 렌더.
+/// ★ 포맷 본체 = Basic 확장 API: 공통 옵션(+strict 덮어쓰기 · 같은 열 AND) → `format_with`(Basic 준비 → 구분행 손질 → 렌더 + 탭 정렬 채움).
 pub fn format(src: &str, common: &Options, cfg: &Cfg) -> String {
-    let opts = if cfg.strict {
+    let mut opts = if cfg.strict {
         strict_options(common)
     } else {
         common.clone()
     };
-    let mut lines = nsql_format::layout::layout(src, &opts);
+    // 스킬 §3 같은 열 AND/OR = Basic의 `cond_indent`(확장 설정이 우선).
     if cfg.and_same_level {
-        same_level_conditions(&mut lines);
+        opts.cond_indent = false;
     }
-    if opts.comma_gap == Gap::Tab {
-        // 스킬 §3: `AND\t조건`(콤마 간격이 탭이면 AND/OR 뒤도 탭).
-        for l in lines.iter_mut().filter(|l| l.role == Role::Cond) {
-            if let Some(Part::Text(t)) = l.parts.first_mut() {
-                for kw in ["AND ", "OR ", "and ", "or "] {
-                    if let Some(rest) = t.strip_prefix(kw) {
-                        *t = format!("{}\t{rest}", kw.trim_end());
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    // ① 준비(Basic 전부) → ② 손질(구분행) — 정렬 계획은 손질 뒤 줄 번호 기준이므로 여기서 세운다.
+    let mut lines = nsql_format::prepare(src, &opts);
     if cfg.set_op_dashes {
         lines = with_set_op_dashes(lines, &opts);
     }
@@ -137,37 +134,8 @@ pub fn format(src: &str, common: &Options, cfg: &Cfg) -> String {
             tabs_to(cur, stop, tw)
         }
     };
-    render_lines(&lines, &opts, src, &pad)
-}
-
-/// WHERE/HAVING(및 START WITH · CONNECT BY 제외)의 조건 줄을 절 키워드 열로(§3).
-fn same_level_conditions(lines: &mut [Line]) {
-    let mut clause_indent: Option<usize> = None;
-    for l in lines.iter_mut() {
-        match l.role {
-            Role::Clause => {
-                let head = match l.parts.first() {
-                    Some(Part::Text(t)) => t.to_ascii_uppercase(),
-                    _ => String::new(),
-                };
-                clause_indent = if head.starts_with("WHERE")
-                    || head.starts_with("HAVING")
-                    || head.starts_with("QUALIFY")
-                {
-                    Some(l.indent)
-                } else {
-                    None
-                };
-            }
-            Role::Cond => {
-                if let Some(ci) = clause_indent {
-                    l.indent = ci;
-                }
-            }
-            Role::Comment => {}
-            _ => clause_indent = None,
-        }
-    }
+    // ③ 렌더(Basic + 채움).
+    nsql_format::render(&lines, &opts, src, Some(&pad))
 }
 
 /// 집합 연산자 앞뒤 대시 구분행(§12 · 키워드 글자 수 · 같은 들여쓰기).
@@ -343,6 +311,26 @@ mod tests {
             out.contains("WHERE 1=1\nAND\ta.x\t=\t1\n---------\nUNION ALL\n---------\nSELECT\n"),
             "{out}"
         );
+    }
+
+    /// 1.1.0: Basic 공통 옵션이 그대로 얹힌다 — 테이블 설명(pair) · 괄호 그룹 시드 · 단어 연산자(4자 이상 = 공백 1개) · 멱등.
+    #[test]
+    fn basic_options_layer_through() {
+        let list = vec![("TB_ORDER".to_string(), "주문".to_string())];
+        let pair = nsql_format::table_comments_pair(&list);
+        let common = Options::from_pairs([("table_comments", pair.as_str())]);
+        let out = format(
+            "select a.k from tb_order a where a.x = 1 and (a.y = 2 or a.z like 'q%')",
+            &common,
+            &Cfg::default(),
+        );
+        assert!(out.contains("tb_order a\t--\t주문\n"), "{out}");
+        assert!(out.contains("AND\t(1=0\n"), "{out}");
+        assert!(
+            out.contains("a.z LIKE 'q%'") || out.contains("a.z\tLIKE 'q%'"),
+            "{out}"
+        );
+        assert_eq!(format(&out, &common, &Cfg::default()), out, "idempotent");
     }
 
     #[test]

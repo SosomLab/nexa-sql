@@ -148,6 +148,8 @@ pub struct Options {
     /// ★ WHERE/HAVING의 조건 줄(AND/OR)을 절 키워드보다 한 단계 안에(true · 기본) / 같은 열에(false · 스킬 §3).
     pub cond_indent: bool,
     pub logical_newline: LogicalNewline,
+    /// ★ 줄 앞 AND/OR 뒤 간격(공백/탭 · 콤마 뒤 간격과 같은 꼴 · 사용자 09-29).
+    pub logical_gap: Gap,
     /// `WHERE 1=1` · `ON 1=1` · `HAVING 1=1` 시드(조건은 다음 줄부터 AND/OR).
     pub where_seed: bool,
     pub list_style: ListStyle,
@@ -155,6 +157,12 @@ pub struct Options {
     pub line_width: usize,
     /// 이항 연산자 양쪽 공백.
     pub operator_spaces: bool,
+    /// ★ 그 공백의 글자(공백 하나 또는 탭 · `operator_spaces`가 켜졌을 때만 · 사용자 09-29).
+    pub operator_gap: Gap,
+    /// ★ 연산자가 4자 이상(`LIKE` · `NOT IN` · `IS NOT` …)이면 간격과 무관하게 **공백 1개**(사용자 09-29 · 기본 켬).
+    pub operator_long_space: bool,
+    /// ★ `AS` 앞뒤 간격(공백/탭 · 기본 공백 · 사용자 09-29) — 정렬 채움이 있으면 앞은 채움, 뒤만 이 값.
+    pub as_gap: Gap,
     /// 모든 SELECT 열에 별칭(단순 열 참조 `A.COL` → `A.COL AS COL` · 식은 그대로).
     pub column_alias_all: bool,
     /// 열 별칭의 `AS` 키워드.
@@ -198,10 +206,14 @@ impl Default for Options {
             seed_gap: Gap::Space,
             cond_indent: true,
             logical_newline: LogicalNewline::Before,
+            logical_gap: Gap::Space,
             where_seed: false,
             list_style: ListStyle::Multi,
             line_width: 120,
             operator_spaces: true,
+            operator_gap: Gap::Space,
+            operator_long_space: true,
+            as_gap: Gap::Space,
             column_alias_all: false,
             column_as: AliasAs::Keep,
             table_as: AliasAs::Keep,
@@ -231,12 +243,16 @@ pub const OPTION_KEYS: &[&str] = &[
     "comma",
     "comma_gap",
     "seed_gap",
+    "logical_gap",
     "cond_indent",
     "logical_newline",
     "where_seed",
     "list_style",
     "line_width",
     "operator_spaces",
+    "operator_gap",
+    "operator_long_space",
+    "as_gap",
     "column_alias_all",
     "column_as",
     "table_as",
@@ -296,6 +312,7 @@ impl Options {
                 }
                 "comma_gap" => o.comma_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
                 "seed_gap" => o.seed_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
+                "logical_gap" => o.logical_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
                 "cond_indent" => o.cond_indent = !(lv == "same" || lv == "off" || lv == "0"),
                 "logical_newline" => {
                     o.logical_newline = if lv == "after" {
@@ -321,6 +338,20 @@ impl Options {
                     }
                 }
                 "operator_spaces" => o.operator_spaces = flag(v),
+                "operator_gap" => o.operator_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
+                "operator_long_space" => o.operator_long_space = flag(v),
+                "as_gap" => o.as_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
+                // 호스트가 넘기는 테이블 설명(줄마다 `이름<TAB>설명` · `table_comments_pair`).
+                "table_comments" => {
+                    o.table_comments = v
+                        .lines()
+                        .filter_map(|l| {
+                            let (k, c) = l.split_once('\t')?;
+                            (!k.trim().is_empty() && !c.trim().is_empty())
+                                .then(|| (k.trim().to_string(), c.trim().to_string()))
+                        })
+                        .collect();
+                }
                 "column_alias_all" => o.column_alias_all = flag(v),
                 "column_as" => o.column_as = AliasAs::parse(&lv),
                 "table_as" => o.table_as = AliasAs::parse(&lv),
@@ -508,12 +539,52 @@ pub fn is_keyword(w: &str) -> bool {
 /// ★ Basic 포맷터 — 레이아웃 + 공백 렌더(옵션대로).
 #[must_use]
 pub fn format_basic(src: &str, opts: &Options) -> String {
-    let lines = layout::layout(src, opts);
-    layout::render(&lines, opts, src)
+    format_with(src, opts, |_, _| {}, None)
+}
+
+/// ★ **확장 API**(사용자 09-29 "확장은 Basic의 설정 위에 추가 기능을 얹는 형태"): Basic 파이프라인을 세 단계로 연다.
+/// ① `prepare` = Basic이 하는 전처리 전부(방언 치환 · 레이아웃 · 시드 · 괄호 그룹 · 별칭 · 테이블 설명 · 조건 줄 자리 · 간격) →
+/// ② `tweak(&mut lines, opts)` = 확장의 손질(줄 추가·역할·들여쓰기 바꾸기) → ③ `render` = Basic 렌더(콤마·간격·개행) + `pad`(조각 앞 채움
+/// = 확장의 탭 정렬). 확장은 공통 옵션 `format.*`을 `Options::from_pairs`로 받아 필요한 값만 덮어쓴 뒤 이 함수를 부른다 —
+/// Basic에 새 옵션이 생기면 확장은 손대지 않아도 그대로 따라온다.
+pub fn format_with<F>(src: &str, opts: &Options, tweak: F, pad: Option<LinePad<'_>>) -> String
+where
+    F: FnOnce(&mut Vec<Line>, &Options),
+{
+    let mut lines = prepare(src, opts);
+    tweak(&mut lines, opts);
+    render(&lines, opts, src, pad)
+}
+
+/// 확장 API 채움 함수: (줄 index, 조각 index, 지금까지의 줄 글) → 그 조각 앞에 넣을 글(탭 정렬).
+pub type LinePad<'a> = &'a dyn Fn(usize, usize, &str) -> String;
+
+/// 확장 API ①: Basic의 전처리 결과(줄 IR).
+#[must_use]
+pub fn prepare(src: &str, opts: &Options) -> Vec<Line> {
+    layout::layout(src, opts)
+}
+
+/// 확장 API ③: Basic 렌더(`pad` = 조각 앞 채움 · 없으면 Basic 그대로).
+#[must_use]
+pub fn render(lines: &[Line], opts: &Options, src: &str, pad: Option<LinePad<'_>>) -> String {
+    match pad {
+        Some(p) => layout::render_lines(lines, opts, src, p),
+        None => layout::render(lines, opts, src),
+    }
+}
+
+/// 테이블 설명 목록 ↔ 공통 옵션 pair 값(`table_comments` · 줄마다 `이름<TAB>설명`) — 호스트가 확장에 넘길 때 쓴다.
+#[must_use]
+pub fn table_comments_pair(list: &[(String, String)]) -> String {
+    list.iter()
+        .map(|(k, v)| format!("{k}\t{}", v.replace(['\n', '\r', '\t'], " ")))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 미리보기용 예시 SQL(설정 창·미리보기 탭이 문서가 비었을 때 쓴다 · 확장은 메타 `formatter.sample`로 자기 예시를 줄 수 있다).
-pub const SAMPLE_SQL: &str = "with base as (select a.plant_cd, a.item_cd, sum(a.qty) qty from tb_demand a where a.yymm between '202601' and '202612' and a.del_yn is null group by a.plant_cd, a.item_cd)\nselect b.plant_cd, b.item_cd, b.qty, case when b.qty > 100 then 'HIGH' when b.qty > 0 then 'LOW' else 'NONE' end as qty_grp, (select max(c.yymm) from tb_demand c where c.item_cd = b.item_cd) last_yymm\nfrom base b inner join tb_item i on i.item_cd = b.item_cd left outer join tb_plant p on p.plant_cd = b.plant_cd\nwhere b.qty > 0 and p.use_yn = 'Y' and i.item_type_cd in ('FG', 'SF')\norder by b.plant_cd, b.qty desc;\n\nupdate tb_plan_result a set a.qty = 0, a.modify_date = sysdate where a.plant_cd = '1200';\n";
+pub const SAMPLE_SQL: &str = "with base as (select a.plant_cd, a.item_cd, sum(a.qty) qty from tb_demand a where a.yymm between '202601' and '202612' and a.del_yn is null group by a.plant_cd, a.item_cd)\nselect b.plant_cd, b.item_cd, b.qty, case when b.qty > 100 then 'HIGH' when b.qty > 0 then 'LOW' else 'NONE' end as qty_grp, (select max(c.yymm) from tb_demand c where c.item_cd = b.item_cd) last_yymm\nfrom base b inner join tb_item i on i.item_cd = b.item_cd left outer join tb_plant p on p.plant_cd = b.plant_cd left outer join tb_item_type on tb_item_type.item_type_cd = i.item_type_cd\nwhere b.qty > 0 and p.use_yn = 'Y' and i.item_type_cd in ('FG', 'SF') and i.item_nm like 'PCM%' and (p.region_cd = 'KR' or p.region_cd = 'JP')\norder by b.plant_cd, b.qty desc;\n\nupdate tb_plan_result a set a.qty = 0, a.modify_date = sysdate where a.plant_cd = '1200';\n";
 
 #[cfg(test)]
 mod tests {
@@ -526,6 +597,7 @@ mod tests {
             ("format.indent_width", "2"),
             ("format.comma", "trailing"),
             ("comma_gap", "tab"),
+            ("operator_gap", "tab"),
             ("where_seed", "on"),
             ("list_style", "auto"),
             ("line_width", "80"),
@@ -537,12 +609,37 @@ mod tests {
         assert_eq!(o.tab_width, 2);
         assert_eq!(o.comma, Comma::Trailing);
         assert_eq!(o.comma_gap, Gap::Tab);
+        assert_eq!(o.operator_gap, Gap::Tab);
         assert!(o.where_seed);
         assert_eq!(o.list_style, ListStyle::Auto);
         assert_eq!(o.line_width, 80);
         assert_eq!(o.column_as, AliasAs::Add);
         assert_eq!(o.newline, Newline::CrLf);
         assert_eq!(o.indent_unit(), "  ");
+    }
+
+    /// 확장 API: `format_with`의 손질·채움이 Basic 위에 얹힌다 · 테이블 설명 pair 왕복.
+    #[test]
+    fn extension_api_layers_on_basic() {
+        let o = Options::default();
+        let src = "select a from t where x = 1";
+        assert_eq!(format_basic(src, &o), format_with(src, &o, |_, _| {}, None));
+        // 손질: 모든 줄 들여쓰기 +1 · 채움: AS 앞에 탭.
+        let out = format_with(
+            src,
+            &o,
+            |lines, _| {
+                for l in lines.iter_mut() {
+                    l.indent += 1;
+                }
+            },
+            None,
+        );
+        assert!(out.starts_with("\tSELECT\n\t\ta\n"), "{out}");
+        let list = vec![("T".to_string(), "설명 한 줄".to_string())];
+        let pair = table_comments_pair(&list);
+        let o2 = Options::from_pairs([("table_comments", pair.as_str())]);
+        assert_eq!(o2.table_comments, list);
     }
 
     #[test]

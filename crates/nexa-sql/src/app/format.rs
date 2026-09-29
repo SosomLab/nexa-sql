@@ -46,9 +46,9 @@ pub(crate) fn short_engine_name(engine: &str, label: &str) -> String {
 impl App {
     /// 공통 옵션 쌍(`format.<키>` · 값 원문 · 레지스트리 기본값 포함). ★ 들여쓰기 단위·폭은 설정 항목을 그대로 두되 **지금은 활성
     /// 탭의 들여쓰기**(상태줄 팝업으로 바꾼 탭별 값 · 없으면 `editor.tab_size`/`editor.indent_spaces`)를 쓴다(사용자 09-29).
-    fn format_option_pairs(&self, preview: bool) -> Vec<(String, String)> {
-        // 미리보기는 늘 설정값(사용자 09-29) · 문서 포맷은 `format.indent_from_tab`이면 탭 값.
-        let from_tab = !preview && self.settings.flag("format.indent_from_tab");
+    fn format_option_pairs(&self) -> Vec<(String, String)> {
+        // `format.indent_from_tab`이면 탭 값 — 문서 포맷도 미리보기도 같다(사용자 09-29 "켜면 설명대로 탭 4가 보여야").
+        let from_tab = self.settings.flag("format.indent_from_tab");
         let (tab_size, spaces) = self.editors.indent();
         nsql_format::OPTION_KEYS
             .iter()
@@ -220,7 +220,7 @@ impl App {
         text: &str,
         preview: bool,
     ) -> Result<String, String> {
-        let pairs = self.format_option_pairs(preview);
+        let mut pairs = self.format_option_pairs();
         if engine == BASIC_ENGINE {
             let mut opts = nsql_format::Options::from_pairs(
                 pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
@@ -228,6 +228,14 @@ impl App {
             // ★ 테이블 설명 주석(스킬 2-2 · T-255): 현재 연결의 메타에 코멘트가 있는 테이블만(없으면 주석 없음).
             opts.table_comments = self.format_table_comments(text);
             return Ok(nsql_format::format_basic(text, &opts));
+        }
+        // 확장에도 같은 테이블 설명을(공통 옵션 pair `table_comments` · 확장은 `Options::from_pairs`로 그대로 받는다).
+        let comments = self.format_table_comments(text);
+        if !comments.is_empty() {
+            pairs.push((
+                "table_comments".to_string(),
+                nsql_format::table_comments_pair(&comments),
+            ));
         }
         let dialect = format!("{:?}", self.sess.dialect).to_ascii_lowercase();
         let r =
@@ -446,14 +454,20 @@ impl App {
             Msg::TitleFormatPreview,
             &[&self.format_engine_name(&engine)],
         );
-        let tab_size = self.settings.int("format.indent_width").clamp(1, 16) as u8;
-        let spaces = self
-            .settings
-            .get("format.indent")
-            .is_some_and(|v| v.starts_with('s'));
+        // ★ 미리보기 상자의 탭 폭/단위도 실제 적용값(켜짐 = 활성 탭 · 꺼짐 = 설정값).
+        let (ts, sp) = self.editors.indent();
+        let (tab_size, spaces) = if self.settings.flag("format.indent_from_tab") {
+            (ts.clamp(1, 16), sp)
+        } else {
+            (
+                self.settings.int("format.indent_width").clamp(1, 16) as u8,
+                self.settings
+                    .get("format.indent")
+                    .is_some_and(|v| v.starts_with('s')),
+            )
+        };
         self.prefs_win.set_preview(title, &out, tab_size, spaces);
         // ★ 카드 덧말(사용자 09-29): 지금 활성 탭의 실제 들여쓰기 = 포맷에 적용될 값(켜져 있을 때) — 강조색.
-        let (ts, sp) = self.editors.indent();
         let title = self.editors.title_of(self.editors.active());
         let unit = t(if sp { Msg::StSpaces } else { Msg::StTabSize });
         let unit = unit.split(':').next().unwrap_or("").trim().to_string();
