@@ -333,7 +333,20 @@ const TAB_CLOSE_SHOW_OPTS: &[(&str, Msg)] = &[
     ("hover", Msg::ValTabCloseHover),
 ];
 // ★ SQL 포맷 공통 옵션(docs/95 · nsql-format `Options::from_pairs`와 같은 값 어휘).
-const FMT_INDENT_OPTS: &[(&str, Msg)] = &[("tab", Msg::ValFmtTab), ("space", Msg::ValFmtSpace)];
+const FMT_INDENT_OPTS: &[(&str, Msg)] = &[
+    ("editor", Msg::ValActiveTab),
+    ("tab", Msg::ValFmtTab),
+    ("space", Msg::ValFmtSpace),
+];
+/// 들여쓰기 폭 = 활성 탭 설정 또는 고정 칸 수(사용자 09-29 "두 설정 모두 활성 탭 설정이 기본").
+const FMT_WIDTH_OPTS: &[(&str, Msg)] = &[
+    ("editor", Msg::ValActiveTab),
+    ("2", Msg::ValNum2),
+    ("3", Msg::ValNum3),
+    ("4", Msg::ValNum4),
+    ("6", Msg::ValNum6),
+    ("8", Msg::ValNum8),
+];
 const FMT_CASE_OPTS: &[(&str, Msg)] = &[
     ("keep", Msg::ValFmtKeep),
     ("upper", Msg::ValFmtUpper),
@@ -431,7 +444,13 @@ const INTEL_STAR_LAYOUT: &[(&str, Msg)] = &[
     ("inline", Msg::ValIntelStarInline),
     ("lines", Msg::ValIntelStarLines),
 ];
+/// 테이블 alias 삽입 방식(사용자 09-29): 약어(단어 첫 글자 · `sales_customer` → `sc`) 또는 A, B, C 순서.
+const INTEL_ALIAS_STYLE: &[(&str, Msg)] = &[
+    ("abbr", Msg::ValIntelAliasAbbr),
+    ("letters", Msg::ValIntelAliasLetters),
+];
 const INTEL_STAR_SPACE: &[(&str, Msg)] = &[
+    ("editor", Msg::ValIntelStarEditor),
     ("space", Msg::ValIntelStarSpace),
     ("tab", Msg::ValIntelStarTab),
 ];
@@ -958,24 +977,16 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblFmtIndent,
         desc: Msg::DescFmtIndent,
         kind: SettingKind::Choice(FMT_INDENT_OPTS),
-        default: "tab",
+        // ★ 기본 = 활성 탭 설정(상태줄 탭 크기/공백 · 사용자 09-29 · 옛 `format.indent_from_tab`은 이주로 흡수).
+        default: "editor",
     },
     Entry {
         key: "format.indent_width",
         cat: Msg::CatFormat,
         label: Msg::LblFmtIndentWidth,
         desc: Msg::DescFmtIndentWidth,
-        kind: SettingKind::Int { min: 1, max: 16 },
-        default: "4",
-    },
-    // 사용자 09-29: 들여쓰기를 설정값 대신 **활성 탭**(상태줄 탭 크기/공백)에서 가져올지 — 기본 끔(설정값 그대로 → 미리보기에 반영).
-    Entry {
-        key: "format.indent_from_tab",
-        cat: Msg::CatFormat,
-        label: Msg::LblFmtIndentFromTab,
-        desc: Msg::DescFmtIndentFromTab,
-        kind: SettingKind::Bool,
-        default: "on",
+        kind: SettingKind::Choice(FMT_WIDTH_OPTS),
+        default: "editor",
     },
     Entry {
         key: "format.keyword_case",
@@ -1865,6 +1876,15 @@ pub const REGISTRY: &[Entry] = &[
             max: 30_000,
         },
         default: "2000",
+    },
+    // ★ 설정 창 "고급" 스위치의 상태(사용자 09-29 "고급 보기 여부도 설정으로") — 창의 스위치가 바꾸고 다음에 열 때 복원 · HIDDEN.
+    Entry {
+        key: "ui.prefs_advanced",
+        cat: Msg::CatAppearance,
+        label: Msg::LblPrefsAdvanced,
+        desc: Msg::DescPrefsAdvanced,
+        kind: SettingKind::Bool,
+        default: "off",
     },
     Entry {
         key: "ui.flash_ms",
@@ -4644,7 +4664,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblIntelStarSpace,
         desc: Msg::DescIntelStarSpace,
         kind: SettingKind::Choice(INTEL_STAR_SPACE),
-        default: "space",
+        // ★ 기본 = 편집기(활성 탭)의 들여쓰기 단위를 그대로(사용자 09-29).
+        default: "editor",
     },
     // ★ 창 방식 문턱(09-24 §187): 이 크기(KB)를 넘는 문서는 완성 문맥을 캐럿 앞뒤 256 KB 창에서만 구하고 문서 낱말·아웃라인 캐시를 끈다.
     Entry {
@@ -4780,6 +4801,14 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescIntelInsertAlias,
         kind: SettingKind::Bool,
         default: "off",
+    },
+    Entry {
+        key: "intel.alias_style",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelAliasStyle,
+        desc: Msg::DescIntelAliasStyle,
+        kind: SettingKind::Choice(INTEL_ALIAS_STYLE),
+        default: "abbr",
     },
     Entry {
         key: "intel.insert_space",
@@ -5673,13 +5702,6 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         "format.operator_spaces",
         Dep::On,
     ),
-    // 탭 값을 쓰는 동안 단위·폭은 보이되 잠금(사용자 09-29).
-    ("format.indent", "format.indent_from_tab", Dep::Eq("off")),
-    (
-        "format.indent_width",
-        "format.indent_from_tab",
-        Dep::Eq("off"),
-    ),
     ("objlink.display", "objlink.enabled", Dep::On),
     ("objlink.tooltip", "objlink.enabled", Dep::On),
     ("objlink.tooltip_pos", "objlink.tooltip", Dep::On),
@@ -5693,6 +5715,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("objlink.max_kb", "objlink.enabled", Dep::On),
     ("intel.star_layout", "intel.insert_columns", Dep::On),
     ("intel.star_comma_space", "intel.insert_columns", Dep::On),
+    ("intel.alias_style", "intel.insert_alias", Dep::On),
 ];
 
 /// 자식 키의 (부모, 조건).
@@ -5705,6 +5728,7 @@ pub fn dependency(child: &str) -> Option<(&'static str, Dep)> {
 }
 
 pub const HIDDEN: &[&str] = &[
+    "ui.prefs_advanced",
     "probe.dns_cache_secs",
     "license.gates",
     "ui.toast_fade_to",
@@ -6104,8 +6128,33 @@ impl Settings {
         }
         s.migrate_explorer_refresh();
         s.migrate_result_tabbar();
+        s.migrate_indent_from_tab();
         s.migrate_renamed(&seen);
         s
+    }
+
+    /// 옛 `format.indent_from_tab`(09-29 폐기): **꺼져** 있었으면 설정값을 쓰던 사용자 — 단위·폭이 저장돼 있지 않으면 옛 기본
+    /// (`tab`·`4`)을 명시해 동작을 지킨다. 켜짐/없음 = 새 기본(활성 탭 설정)과 같다. 옛 줄은 다음 저장 때 사라진다.
+    fn migrate_indent_from_tab(&mut self) {
+        let old = self
+            .unknown
+            .iter()
+            .find(|(k, _)| k == "format.indent_from_tab")
+            .map(|(_, v)| v.clone());
+        self.unknown.retain(|(k, _)| k != "format.indent_from_tab");
+        if old.as_deref().is_some_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "off" | "false" | "0"
+            )
+        }) {
+            self.values
+                .entry("format.indent".into())
+                .or_insert_with(|| "tab".into());
+            self.values
+                .entry("format.indent_width".into())
+                .or_insert_with(|| "4".into());
+        }
     }
 
     /// [`RENAMED`] 표대로 옛 키의 값을 새 키로 옮긴다(새 키를 이미 정했으면 옛 값은 버림 · 옛 줄은 다음 저장 때 사라진다).
@@ -6306,6 +6355,25 @@ impl Settings {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// 옛 `format.indent_from_tab` 폐기(09-29): 꺼져 있던 사용자는 옛 기본(tab·4)을 명시 · 켜짐/없음 = 새 기본(활성 탭 설정) · 옛 줄은 사라진다.
+    #[test]
+    fn indent_from_tab_is_retired_with_migration() {
+        let s = Settings::from_text(tmp("ift-off"), "format.indent_from_tab=off\n");
+        assert_eq!(s.get("format.indent"), Some("tab"));
+        assert_eq!(s.get("format.indent_width"), Some("4"));
+        assert!(s.unknown.is_empty(), "{:?}", s.unknown);
+        let s = Settings::from_text(
+            tmp("ift-off2"),
+            "format.indent_from_tab=off\nformat.indent=space\nformat.indent_width=2\n",
+        );
+        assert_eq!(s.get("format.indent"), Some("space"));
+        assert_eq!(s.get("format.indent_width"), Some("2"));
+        let s = Settings::from_text(tmp("ift-on"), "format.indent_from_tab=on\n");
+        assert_eq!(s.get("format.indent"), Some("editor"));
+        assert_eq!(s.get("format.indent_width"), Some("editor"));
+        assert!(s.unknown.is_empty(), "{:?}", s.unknown);
+    }
 
     /// 키 이름 바꿈(09-28 · docs/94 §6): 옛 줄 → 새 키(기본값이면 값 없음) · 새 키가 있으면 옛 값은 버림 · 옛 줄은 unknown에 남지 않는다 · `canonical_key`.
     #[test]

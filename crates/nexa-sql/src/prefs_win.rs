@@ -684,6 +684,16 @@ impl PrefsWin {
         self.rebuild_cards();
     }
 
+    /// "고급" 스위치 상태(설정 `ui.prefs_advanced`) — 열기 전에 호스트가 넣는다 · 바뀌면 카드를 다시 만든다.
+    pub(crate) fn set_advanced(&mut self, on: bool) {
+        if self.advanced.is_on() != on {
+            self.advanced.set_on(on);
+            if !self.cards.is_empty() {
+                self.rebuild_cards();
+            }
+        }
+    }
+
     pub(crate) fn open(
         &mut self,
         el: &ActiveEventLoop,
@@ -1277,7 +1287,11 @@ impl PrefsWin {
         if self.advanced.take_toggled().is_some() {
             self.rebuild_cards();
             self.redraw();
-            return PrefsAction::None;
+            // 상태는 설정 `ui.prefs_advanced`로(사용자 09-29) — 호스트가 저장한다.
+            return PrefsAction::Changed {
+                key: "ui.prefs_advanced".into(),
+                value: if self.advanced.is_on() { "on" } else { "off" }.into(),
+            };
         }
         if self.close_btn.take_clicked() {
             self.close();

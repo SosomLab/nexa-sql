@@ -47,21 +47,37 @@ impl App {
     /// 공통 옵션 쌍(`format.<키>` · 값 원문 · 레지스트리 기본값 포함). ★ 들여쓰기 단위·폭은 설정 항목을 그대로 두되 **지금은 활성
     /// 탭의 들여쓰기**(상태줄 팝업으로 바꾼 탭별 값 · 없으면 `editor.tab_size`/`editor.indent_spaces`)를 쓴다(사용자 09-29).
     fn format_option_pairs(&self) -> Vec<(String, String)> {
-        // `format.indent_from_tab`이면 탭 값 — 문서 포맷도 미리보기도 같다(사용자 09-29 "켜면 설명대로 탭 4가 보여야").
-        let from_tab = self.settings.flag("format.indent_from_tab");
+        // 단위·폭이 "활성 탭 설정"(`editor`)이면 그 탭 값 — 문서 포맷도 미리보기도 같다(사용자 09-29).
         let (tab_size, spaces) = self.editors.indent();
+        let is_editor = |k: &str| self.settings.get(k).is_none_or(|v| v == "editor");
         nsql_format::OPTION_KEYS
             .iter()
             .map(|k| {
                 let key = format!("format.{k}");
                 let v = match *k {
-                    "indent" if from_tab => if spaces { "space" } else { "tab" }.to_string(),
-                    "indent_width" if from_tab => tab_size.max(1).to_string(),
+                    "indent" if is_editor(&key) => if spaces { "space" } else { "tab" }.to_string(),
+                    "indent_width" if is_editor(&key) => tab_size.max(1).to_string(),
                     _ => self.settings.get(&key).unwrap_or("").to_string(),
                 };
                 (key, v)
             })
             .collect()
+    }
+
+    /// 지금 포맷에 적용될 들여쓰기(탭 폭, 공백 모드) — 단위·폭 각각 "활성 탭 설정"이면 그 탭 값.
+    pub(crate) fn format_indent_applied(&self) -> (u8, bool) {
+        let (ts, sp) = self.editors.indent();
+        let unit = self.settings.get("format.indent").unwrap_or("editor");
+        let width = self.settings.get("format.indent_width").unwrap_or("editor");
+        let spaces = match unit {
+            "editor" => sp,
+            u => u.starts_with('s'),
+        };
+        let tab_size = match width {
+            "editor" => ts.clamp(1, 16),
+            w => w.trim().parse::<u8>().unwrap_or(4).clamp(1, 16),
+        };
+        (tab_size, spaces)
     }
 
     /// 쓸 수 있는 포맷터 (id, 이름, 예시 SQL) — Basic + 켜진 확장 포맷터.
@@ -454,34 +470,21 @@ impl App {
             Msg::TitleFormatPreview,
             &[&self.format_engine_name(&engine)],
         );
-        // ★ 미리보기 상자의 탭 폭/단위도 실제 적용값(켜짐 = 활성 탭 · 꺼짐 = 설정값).
-        let (ts, sp) = self.editors.indent();
-        let (tab_size, spaces) = if self.settings.flag("format.indent_from_tab") {
-            (ts.clamp(1, 16), sp)
-        } else {
-            (
-                self.settings.int("format.indent_width").clamp(1, 16) as u8,
-                self.settings
-                    .get("format.indent")
-                    .is_some_and(|v| v.starts_with('s')),
-            )
-        };
+        // ★ 미리보기 상자의 탭 폭/단위도 실제 적용값(단위·폭 각각 활성 탭 설정 또는 고정값).
+        let (tab_size, spaces) = self.format_indent_applied();
         self.prefs_win.set_preview(title, &out, tab_size, spaces);
-        // ★ 카드 덧말(사용자 09-29): 지금 활성 탭의 실제 들여쓰기 = 포맷에 적용될 값(켜져 있을 때) — 강조색.
+        // ★ 카드 덧말(사용자 09-29): 활성 탭의 실제 들여쓰기 — 단위·폭 카드에 강조색으로.
+        let (ts, sp) = self.editors.indent();
         let title = self.editors.title_of(self.editors.active());
         let unit = t(if sp { Msg::StSpaces } else { Msg::StTabSize });
         let unit = unit.split(':').next().unwrap_or("").trim().to_string();
-        let applied = self.settings.flag("format.indent_from_tab");
-        let note = tf(
-            if applied {
-                Msg::NoteIndentFromTabOn
-            } else {
-                Msg::NoteIndentFromTabOff
-            },
-            &[&title, &unit, &ts.to_string()],
-        );
+        let note = tf(Msg::NoteIndentActiveTab, &[&title, &unit, &ts.to_string()]);
+        self.prefs_win.set_note("format.indent", Some(note.clone()));
         self.prefs_win
-            .set_note("format.indent_from_tab", Some(note));
+            .set_note("format.indent_width", Some(note.clone()));
+        // `*` 펼치기의 쉼표 뒤 글자도 같은 "활성 탭 설정" — 같은 덧말(사용자 09-29).
+        self.prefs_win
+            .set_note("intel.star_comma_space", Some(note));
     }
 
     /// 설정이 바뀌었다(`format.*` · `sqlfmt.*`) → 열려 있는 미리보기 탭만 다시 그린다(닫혀 있으면 아무것도 안 함).

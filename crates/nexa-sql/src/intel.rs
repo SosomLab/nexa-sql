@@ -53,7 +53,8 @@ pub(crate) struct IntelCfg {
     /// `*` → 모든 컬럼 조각의 구분(사용자 09-24): `star_lines` = 줄바꿈 적용(다음 줄 들여쓰기 뒤 `, 이름` · 줄 앞 쉼표) · 아니면 한 줄
     /// (`intel.star_layout`) · `star_tab` = 쉼표 뒤 Tab(기본 Space · `intel.star_comma_space`).
     pub star_lines: bool,
-    pub star_tab: bool,
+    /// 쉼표 뒤 Tab/Space(`intel.star_comma_space` · `None` = 편집기 설정 따름 = 기본 · 사용자 09-29).
+    pub star_tab: Option<bool>,
     /// 한 세트로 드는 후보 상한(`intel.max_total` · 페이지 로딩 76 §13 · 그 위는 잘림).
     pub max_total: usize,
     /// 문서 전체 훑기 상한(KB · `intel.max_doc_kb` · 09-24 §187): 넘으면 캐럿 앞뒤 창(`WINDOW_BYTES`)만 · 문서 낱말·아웃라인 끔.
@@ -66,6 +67,8 @@ pub(crate) struct IntelCfg {
     pub functions: bool,
     pub insert_parens: bool,
     pub insert_alias: bool,
+    /// alias 방식(`intel.alias_style` · true = A, B, C 순서 · false = 약어 · 사용자 09-29).
+    pub alias_letters: bool,
     pub insert_space: bool,
     pub insert_columns: bool,
     pub signature_help: bool,
@@ -100,7 +103,11 @@ impl IntelCfg {
             icons: s.flag("intel.icons"),
             card_settle_ms: s.int("intel.card_settle_ms").clamp(0, 2000) as u64,
             star_lines: s.get("intel.star_layout").unwrap_or("inline") == "lines",
-            star_tab: s.get("intel.star_comma_space").unwrap_or("space") == "tab",
+            star_tab: match s.get("intel.star_comma_space").unwrap_or("editor") {
+                "tab" => Some(true),
+                "space" => Some(false),
+                _ => None,
+            },
             max_total: s.int("intel.max_total").clamp(500, 20_000) as usize,
             max_doc_kb: s.int("intel.max_doc_kb").clamp(64, 65_536) as usize,
             keywords: s.flag("intel.keywords"),
@@ -110,6 +117,7 @@ impl IntelCfg {
             functions: s.flag("intel.functions"),
             insert_parens: s.flag("intel.insert_parens"),
             insert_alias: s.flag("intel.insert_alias"),
+            alias_letters: s.get("intel.alias_style").unwrap_or("abbr") == "letters",
             insert_space: s.flag("intel.insert_space"),
             insert_columns: s.flag("intel.insert_columns"),
             signature_help: s.flag("intel.signature_help"),
@@ -153,6 +161,8 @@ struct DocCache {
 pub(crate) struct Intel {
     pub(crate) menu: ContextMenu,
     cfg: IntelCfg,
+    /// 활성 탭의 들여쓰기 단위(탭 = true · 호스트가 요청마다 넣음) — `star_tab`이 "편집기 설정"일 때.
+    editor_tab: bool,
     /// 종류 아이콘 캐시(탐색기 도형을 메뉴 아이콘으로 · 종류당 한 번 래스터).
     icons: HashMap<IconKind, MenuIcon>,
     /// ★ 페이지 로딩(76 §13 · T-196): `cands` = 한 세트(전체 랭킹 ≤ `max_total`) · 팝업 항목은 `cands[..shown]`만 조립 · 끝에 닿으면
@@ -203,6 +213,7 @@ impl Intel {
         Intel {
             menu: ContextMenu::new(),
             cfg,
+            editor_tab: false,
             icons: HashMap::new(),
             shown: 0,
             icon_kinds: Vec::new(),
@@ -228,6 +239,11 @@ impl Intel {
             dialect: None,
             last_anchor: None,
         }
+    }
+
+    /// 활성 탭의 들여쓰기 단위(탭 = true) — `star_tab`이 "편집기 설정"일 때 쉼표 뒤 글자(호스트가 요청마다 넣는다).
+    pub(crate) fn set_editor_tab(&mut self, tab: bool) {
+        self.editor_tab = tab;
     }
 
     pub(crate) fn set_cfg(&mut self, cfg: IntelCfg) {
@@ -903,7 +919,11 @@ impl Intel {
                         if ready && !parts.is_empty() {
                             // 구분 = 쉼표 + 공백(Space/Tab · `intel.star_comma_space`) · "여러 줄"이면 다음 줄 **맨 앞에 쉼표**(들여쓰기 없음 ·
                             //   사용자 09-24 "A / , B / , C") · 기본 = "한 줄"(`A, B, C`).
-                            let ws = if self.cfg.star_tab { "\t" } else { " " };
+                            let ws = if self.cfg.star_tab.unwrap_or(self.editor_tab) {
+                                "\t"
+                            } else {
+                                " "
+                            };
                             let sep = if self.cfg.star_lines {
                                 format!("\n,{ws}")
                             } else {
@@ -1188,6 +1208,17 @@ impl Intel {
         //   끝까지 스크롤하면 `extend`가 다음 페이지를 이어 붙인다(그리드 43 §5와 같은 사상).
         let mut ranked = intel::rank(cands, &prefix, self.cfg.mode, mru, usize::MAX);
         ranked.truncate(self.cfg.max_total);
+        // ★ 건너편 컬럼(사용자 09-29): `B.PROJECT_CD = A.|` · UPDATE/MERGE `SET T.X = S.|` · MERGE ON — 연산자 왼쪽 이름과 같은
+        //   컬럼이 있으면 1순위(없으면 평소대로 · 안정 정렬이라 나머지 순서는 그대로).
+        let mut peer_hit = false;
+        if matches!(ctx.kind, CtxKind::Member { .. } | CtxKind::Expr) {
+            if let Some(peer) = peer_column(doc, ctx.replace.start) {
+                let is_peer =
+                    |c: &Cand| c.kind == CandKind::Column && c.text.eq_ignore_ascii_case(&peer);
+                peer_hit = ranked.iter().any(is_peer);
+                ranked.sort_by_key(|c| !is_peer(c));
+            }
+        }
         // 조각(컬럼 목록)은 MRU와 무관하게 맨 위(안정 정렬).
         ranked.sort_by_key(|c| c.kind != CandKind::Snippet);
         if ranked.is_empty() && !self.loading && !self.loading_objects {
@@ -1235,6 +1266,15 @@ impl Intel {
         self.menu.set_click_selects(true);
         self.text_w = (280.0 * scale) as i32;
         self.menu.open_at(p.x, p.y, items, host, self.text_w);
+        // ★ 건너편 컬럼이 있으면 그 행을 **선택 상태**로(사용자 09-29 "순서만 말고 바로 선택") — Enter/Tab 한 번에 확정 · 카드도 그 항목.
+        if peer_hit {
+            let i = self
+                .cands
+                .iter()
+                .position(|c| c.kind == CandKind::Column)
+                .unwrap_or(0);
+            self.menu.select(i);
+        }
         self.due = None;
         let ms = t0.elapsed().as_millis();
         // 예산 비교는 Duration으로(정수 ms 비교는 1 ms 아래를 못 본다 · 예산 0 = 늘 초과).
@@ -1504,7 +1544,11 @@ impl Intel {
                     })
                     .map(|a| a.alias.as_str())
                     .collect();
-                let alias = gen_alias(&c.text, &taken);
+                let alias = if self.cfg.alias_letters {
+                    gen_alias_letter(&taken)
+                } else {
+                    gen_alias(&c.text, &taken)
+                };
                 text.push(' ');
                 text.push_str(&alias);
             }
@@ -1769,6 +1813,58 @@ fn key_marks(key: u8, nullable: Option<bool>) -> String {
 
 /// 테이블 이름 → 짧은 alias(`sales_customer` → `sc` · `emp` → `e` · `MyTable` → `mt`) · 문장 안 alias와 겹치면 숫자 붙임 ·
 /// 키워드 모양(`in`·`as`·`or` …)이면 `1`을 붙인다(`intel.insert_alias` · T-178).
+/// ★ 건너편 컬럼 이름(사용자 09-29 "`B.PROJECT_CD = A.` 이면 A에도 PROJECT_CD가 있을 때 1번 추천"): 접두 시작 `at` 앞에서
+/// 한정자(`A.`) → 공백 → 비교/대입 연산자(`=` `<>` `!=` `<` `>` `<=` `>=`) → 공백 → (한정) 식별자를 거꾸로 읽어 마지막 이름을
+/// 돌려준다. JOIN ON · WHERE · UPDATE/MERGE SET · MERGE ON 모두 같은 모양. 연산자가 없으면 `None`.
+fn peer_column(doc: &str, at: usize) -> Option<String> {
+    let b = doc.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | b'#' | b'"');
+    let mut i = at.min(b.len());
+    while i > 0 && (ident(b[i - 1]) || b[i - 1] == b'.') {
+        i -= 1;
+    }
+    while i > 0 && b[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    let op_end = i;
+    while i > 0 && matches!(b[i - 1], b'=' | b'<' | b'>' | b'!') {
+        i -= 1;
+    }
+    if !matches!(&doc[i..op_end], "=" | "<>" | "!=" | "<" | ">" | "<=" | ">=") {
+        return None;
+    }
+    while i > 0 && b[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    let end = i;
+    while i > 0 && (ident(b[i - 1]) || b[i - 1] == b'.') {
+        i -= 1;
+    }
+    let name = doc[i..end].rsplit('.').next()?.trim_matches('"');
+    let first = name.bytes().next()?;
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// A, B, C … 순서 alias(`intel.alias_style = letters` · 사용자 09-29): 문장 안에서 안 쓰인 첫 대문자 · Z까지 다 쓰였으면 `A2`, `B2` ….
+fn gen_alias_letter(taken: &[&str]) -> String {
+    for round in 0u32.. {
+        for ch in 'A'..='Z' {
+            let cand = if round == 0 {
+                ch.to_string()
+            } else {
+                format!("{ch}{}", round + 1)
+            };
+            if !taken.iter().any(|t| t.eq_ignore_ascii_case(&cand)) {
+                return cand;
+            }
+        }
+    }
+    "A".to_string()
+}
+
 fn gen_alias(name: &str, taken: &[&str]) -> String {
     let base = name.rsplit('.').next().unwrap_or(name);
     let mut a = String::new();
@@ -1867,7 +1963,7 @@ mod tests {
             icons: false,
             card_settle_ms: 0,
             star_lines: false,
-            star_tab: false,
+            star_tab: Some(false),
             max_total: 5000,
             max_doc_kb: 65_536,
             keywords: true,
@@ -1877,6 +1973,7 @@ mod tests {
             functions: true,
             insert_parens: true,
             insert_alias: true,
+            alias_letters: false,
             insert_space: true,
             insert_columns: true,
             signature_help: true,
@@ -1928,6 +2025,61 @@ mod tests {
             1,
         );
         m
+    }
+
+    /// ★ 건너편 컬럼 1순위(사용자 09-29): `d.ENAME = e.|` → e의 컬럼 중 ENAME이 맨 위(평소는 EMPNO 먼저) · UPDATE SET도 같다.
+    #[test]
+    fn peer_column_ranks_first_across_operator() {
+        let m = store();
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let mut it = Intel::new(cfg());
+        let host = Rect::new(0, 0, 800, 600);
+        for doc in [
+            "SELECT 1 FROM emp e JOIN dept d ON d.ENAME = e.",
+            "UPDATE emp e SET e.EMPNO = 1, e.ENAME = e.",
+            "MERGE INTO emp e USING dept d ON (d.ENAME = e.",
+        ] {
+            let caret = doc.len();
+            assert!(it.request(
+                1,
+                caret as u64,
+                doc,
+                caret,
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None
+            ));
+            let texts: Vec<&str> = it.cands.iter().map(|c| c.text.as_str()).collect();
+            assert_eq!(texts.first().copied(), Some("ENAME"), "{doc}: {texts:?}");
+            assert_eq!(it.menu.hovered(), Some(0), "선택 상태로 열린다: {doc}");
+            it.close();
+        }
+        // 건너편이 없으면 평소 순서(EMPNO 먼저).
+        let doc = "SELECT e. FROM emp e";
+        assert!(it.request(
+            1,
+            99,
+            doc,
+            9,
+            Some(Dialect::Oracle),
+            Some(&view),
+            Some(Point { x: 0, y: 0 }),
+            host,
+            1.0,
+            &|_| None
+        ));
+        assert_eq!(it.cands[0].text, "EMPNO");
+        assert_eq!(
+            it.menu.hovered(),
+            None,
+            "건너편이 없으면 선택 없음(평소대로)"
+        );
     }
 
     #[test]
@@ -2167,6 +2319,23 @@ mod tests {
         assert_eq!(gen_alias("MyTable", &[]), "mt");
         assert_eq!(gen_alias("orders", &[]), "o");
         assert_eq!(gen_alias("sch.item_set", &[]), "is1", "키워드 모양이면 1");
+        // 건너편 컬럼(사용자 09-29): 연산자 왼쪽의 (한정) 이름 · 없으면 None.
+        let d = "ON 1=1\n\tAND\tB.PROJECT_CD\t=\tA.";
+        assert_eq!(peer_column(d, d.len()).as_deref(), Some("PROJECT_CD"));
+        let d = "SET T.QTY = S.Q";
+        assert_eq!(peer_column(d, d.len() - 1).as_deref(), Some("QTY"));
+        let d = "WHERE a.x <> b.";
+        assert_eq!(peer_column(d, d.len()).as_deref(), Some("x"));
+        let d = "WHERE 1 = a.";
+        assert_eq!(peer_column(d, d.len()), None, "숫자는 컬럼이 아니다");
+        let d = "SELECT a.";
+        assert_eq!(peer_column(d, d.len()), None);
+        // A, B, C 방식(사용자 09-29): 쓰인 것을 건너뛰고 첫 빈 문자 · 26개 다 쓰이면 A2.
+        assert_eq!(gen_alias_letter(&[]), "A");
+        assert_eq!(gen_alias_letter(&["a", "B"]), "C");
+        let all: Vec<String> = ('A'..='Z').map(|c| c.to_string()).collect();
+        let all_ref: Vec<&str> = all.iter().map(String::as_str).collect();
+        assert_eq!(gen_alias_letter(&all_ref), "A2");
         assert!(it.take_over_budget().is_none());
     }
 
@@ -2480,11 +2649,21 @@ mod tests {
         req(&mut it, &m, doc, 14);
         assert_eq!(it.cands[0].text, "A.EMPNO\n, A.ENAME");
         let mut c = cfg();
-        c.star_tab = true;
+        c.star_tab = Some(true);
         let mut it = Intel::new(c);
         let doc = "SELECT A.* FROM EMP A";
         req(&mut it, &m, doc, 10);
         assert_eq!(it.cands[0].text, "A.EMPNO,\tA.ENAME");
+        // 편집기 설정 따름(기본): 호스트가 넣은 활성 탭 단위 — 탭이면 탭, 공백이면 공백.
+        let mut c = cfg();
+        c.star_tab = None;
+        let mut it = Intel::new(c);
+        it.set_editor_tab(true);
+        req(&mut it, &m, doc, 10);
+        assert_eq!(it.cands[0].text, "A.EMPNO,\tA.ENAME");
+        it.set_editor_tab(false);
+        req(&mut it, &m, doc, 10);
+        assert_eq!(it.cands[0].text, "A.EMPNO, A.ENAME");
     }
 
     /// ★ 패키지 멤버(09-24 검토 ①~③): `FROM hr.PKG.` = 테이블 함수(층 1) → 함수(층 2) · 프로시저 제외 · 확정 = `NAME()` ·

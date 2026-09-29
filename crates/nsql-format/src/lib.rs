@@ -285,6 +285,8 @@ impl Options {
             let key = k.strip_prefix("format.").unwrap_or(k);
             let lv = v.trim().to_ascii_lowercase();
             match key {
+                // "editor"(활성 탭 설정)는 호스트(앱)가 실제 값으로 바꿔 넘긴다 · CLI처럼 탭이 없으면 기본(탭 · 4).
+                "indent" | "indent_width" | "tab_width" if lv == "editor" => {}
                 "indent" => {
                     o.indent = if lv == "space" || lv == "spaces" {
                         Indent::Spaces(o.tab_width.clamp(1, 16) as u8)

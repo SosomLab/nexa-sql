@@ -1636,6 +1636,8 @@ impl App {
             });
             let owner = self.window.clone();
             self.prefs_win.set_info(dbms_info_values());
+            self.prefs_win
+                .set_advanced(self.settings.flag("ui.prefs_advanced"));
             self.prefs_win.refresh(&self.settings);
             if let Some(q) = self.prefs_query.take() {
                 self.prefs_win.preset_query(&q);

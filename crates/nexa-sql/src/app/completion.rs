@@ -125,6 +125,9 @@ impl App {
         let (names, snap) = self.explorer.meta_view(spec.as_ref());
         let view = intel::MetaView { names, snap };
         // 접두 시작 글자의 좌표(바이트 → 글자 인덱스 → 마지막 그리기의 줄 배치) — 팝업이 타이핑 중 제자리에 있게(09-23).
+        // `*` 펼치기의 쉼표 뒤 글자 = 활성 탭의 들여쓰기 단위(설정 "편집기 설정 따름" · 기본).
+        let (_, spaces) = self.editors.indent();
+        self.intel.set_editor_tab(!spaces);
         let ed = self.editors.cur();
         let point_of = |b: usize| ed.point_at(text[..b.min(text.len())].chars().count());
         let opened = self.intel.request(
