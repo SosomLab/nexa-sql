@@ -520,13 +520,16 @@ impl App {
         r
     }
 
-    /// 작업 환경을 프로젝트에 담는다(사용자 09-23): 탐색기 선택 · 탭 순서(파일 = 경로만 · 스크립트 = 본문 ≤ 1 MB) ·
+    /// 작업 환경을 프로젝트에 담는다(사용자 09-23): 탐색기 선택 · 탭 순서(파일 = 경로만 · 스크립트 = 본문 ≤ `project.unsaved_max_mb`) ·
     /// 캐럿 + fuzzy 앵커(북마크 `make_anchor` · 10만 줄 넘는 탭은 줄 번호만) · 활성 탭 · 북마크(JSON).
     fn project_capture_state(&mut self) {
         if let Some(p) = self.project_panel.selected_path() {
             self.project.last_selected = Some(p);
         }
         let opts = nsql_bookmarks::RelocateOpts::default();
+        // 미저장 본문 상한 = 탭 하나 기준(`project.unsaved_max_mb` · 0 = 무제한 · 사용자 09-30).
+        let max_bytes = (self.settings.int("project.unsaved_max_mb").max(0) as usize) << 20;
+        let mut over: Vec<(String, usize)> = Vec::new();
         let mut tabs = Vec::new();
         for i in 0..self.editors.tab_count() {
             let Some(tb) = self.editors.tab_box(i) else {
@@ -545,52 +548,97 @@ impl App {
                 preview: self.editors.preview_id() == Some(self.editors.tab_id(i)),
                 id: self.editors.tab_id(i),
                 indent: self.editors.indent_of(i),
+                view: self.editors.view_key_of(i),
                 ..project::TabState::default()
             };
+            // ★ 캡처 비용 = 바뀐 탭만(사용자 09-30 · 72 §3): 본문 세대(epoch · change_seq)·캐럿이 지난 캡처와 같으면 앵커를 다시
+            //   만들지 않는다 · 만들 때도 전체 줄 사본 없이 버퍼 줄 조회로(`make_anchor_by`).
+            let tab_id = self.editors.tab_id(i);
+            let body_key = (buf.epoch(), buf.change_seq());
+            let mark = self.capture_cache.entry(tab_id).or_default();
             if buf.line_count() <= 100_000 {
-                let lines: Vec<String> = (0..buf.line_count())
-                    .map(|l| buf.line_text(l).into_owned())
-                    .collect();
-                let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-                let a = nsql_bookmarks::make_anchor(
-                    &refs,
-                    line.min(refs.len().saturating_sub(1)),
-                    col as u32,
-                    &opts,
-                );
-                t.anchor_text = a.text;
-                t.before = a.before;
-                t.after = a.after;
+                if mark.anchor_key != Some((body_key.0, body_key.1, caret)) {
+                    let n = buf.line_count();
+                    let a = nsql_bookmarks::make_anchor_by(
+                        n,
+                        &|l| buf.line_text(l),
+                        line.min(n.saturating_sub(1)),
+                        col as u32,
+                        &opts,
+                    );
+                    mark.anchor = (a.text, a.before, a.after);
+                    mark.anchor_key = Some((body_key.0, body_key.1, caret));
+                }
+                t.anchor_text = mark.anchor.0.clone();
+                t.before = mark.anchor.1.clone();
+                t.after = mark.anchor.2.clone();
             }
             // 본문을 담는 탭 = 이름 없는 스크립트 **+ 미저장 편집이 있는 파일 탭**(사용자 09-23 "탭별로 프로젝트 파일에 · 로드 때 자동 복구 ·
-            // 백업은 백업용으로만") — 파일 탭은 그때의 디스크 해시도 같이(로드 때 밖에서 바뀌었는지 알리려고). 1 MB 상한은 같다.
+            // 백업은 백업용으로만") — 파일 탭은 그때의 디스크 해시도 같이(로드 때 밖에서 바뀌었는지 알리려고).
+            // ★ 상한 = **탭 하나 기준** `project.unsaved_max_mb`(사용자 09-30 "개별 편집 탭 기준의 용량만 문제없다면 정상 동작") · 판정은
+            //   복사 **전에** 버퍼 바이트 수로 · 넘는 탭은 조용히 버리지 않고 한 번 알린다(유실 위험 = 파일로 저장 안내).
             let dirty_file = path.is_some() && self.editors.is_dirty(i);
-            if path.is_none() || dirty_file {
-                let text = tb.text();
-                if text.len() <= 1 << 20 {
-                    t.text = Some(text);
-                    if let Some(p) = &path {
-                        t.disk_hash = backups::disk_hash(p);
-                    }
+            let wants_body = t.view.is_none() && (path.is_none() || dirty_file);
+            let fits = max_bytes == 0 || buf.len_bytes() <= max_bytes;
+            if wants_body && fits {
+                t.text = Some(tb.text());
+                if let Some(p) = &path {
+                    t.disk_hash = mark.disk_hash(p);
                 }
+            }
+            if wants_body && !fits && !buf.is_empty() {
+                if !mark.over_noticed {
+                    mark.over_noticed = true;
+                    over.push((self.editors.title_of(i), buf.len_bytes()));
+                }
+            } else {
+                mark.over_noticed = false;
             }
             tabs.push(t);
         }
+        // 닫힌 탭의 캐시는 버린다.
+        let live: std::collections::HashSet<u64> = (0..self.editors.tab_count())
+            .map(|i| self.editors.tab_id(i))
+            .collect();
+        self.capture_cache.retain(|id, _| live.contains(id));
         // 파일 탭의 미저장 본문 = 스냅숏(docs/70 §5 · 원본은 안 만진다) · clean이면 스냅숏 삭제.
+        // ★ 본문이 지난 스냅숏 뒤로 바뀐 탭만 쓴다(사용자 09-30 — 종전엔 캡처마다 최대 8 MB를 다시 썼다) · 상한은 위와 같은 탭 기준.
         for i in 0..self.editors.tab_count() {
             let Some(p) = self.editors.path_of(i) else {
                 continue;
             };
+            let tab_id = self.editors.tab_id(i);
             if self.editors.is_dirty(i) {
                 if let Some(tb) = self.editors.tab_box(i) {
-                    let text = tb.text();
-                    if text.len() <= 8 << 20 {
-                        backups::write(&p, &text);
+                    let buf = tb.buf();
+                    let key = (buf.epoch(), buf.change_seq());
+                    let fits = max_bytes == 0 || buf.len_bytes() <= max_bytes;
+                    let mark = self.capture_cache.entry(tab_id).or_default();
+                    if fits && mark.backup_key != Some(key) {
+                        let text = tb.text();
+                        if backups::write(&p, &text) {
+                            mark.backup_key = Some(key);
+                        }
                     }
                 }
             } else {
+                if let Some(mark) = self.capture_cache.get_mut(&tab_id) {
+                    mark.backup_key = None;
+                }
                 backups::remove(&p);
             }
+        }
+        for (title, bytes) in over {
+            let msg = tf(
+                Msg::StAutosaveTabTooLarge,
+                &[
+                    &title,
+                    &nsql_core::fmt_bytes(bytes as u64),
+                    &self.settings.int("project.unsaved_max_mb").to_string(),
+                ],
+            );
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.sess.status = msg;
         }
         self.project.tabs = tabs;
         self.project.active = self.editors.active();
@@ -686,6 +734,14 @@ impl App {
                         } else {
                             None
                         }
+                    }
+                }
+                // ★ 뷰 탭(확장 상세) = 열쇠로 같은 뷰를 다시 연다 · 확장이 없어졌으면 탭도 없음(사용자 09-30).
+                None if t.view.is_some() => {
+                    let key = t.view.clone().unwrap_or_default();
+                    match key.strip_prefix("ext:") {
+                        Some(id) if self.ext_reopen_view(id) => Some(self.editors.active_id()),
+                        _ => None,
                     }
                 }
                 None => {
@@ -1208,6 +1264,8 @@ impl App {
     ///   `backups` = 일반 파일 자동 저장 위치(`backups/files`)를 이 탭의 최신 스냅숏을 선택한 채(없으면 폴더만) · `settings` = 설정 창.
     pub(crate) fn autosave_pick(&mut self, what: &str) {
         match what {
+            // 풀다운 Project ▸ 저장과 동일(사용자 09-30 · 상태줄 메뉴 하단).
+            "save_project" => self.menu_action("project.save"),
             "project" => {
                 let Some(p) = self.project.path.clone() else {
                     self.sess.status = t(Msg::StAutosaveNone).into();

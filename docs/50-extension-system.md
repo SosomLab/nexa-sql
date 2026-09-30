@@ -155,7 +155,7 @@
 
 ## 10. 확장 저장소·패키지 메타 형식 v1 · 매니저 명령(사용자 09-17 · ✅ 1차 구현 · 맥 54차)
 
-> **용어**: 09-17부터 코드·설정·문서의 이름은 **extension(확장)** 이다(`plugins` → `extensions` · `Plugin` → `Extension` · `RainbowPlugin` → `RainbowPairs` · 설정 `rainbowpair.*` · 문서 파일 50/51). 이 문서 앞부분의 "플러그인"은 같은 뜻.
+> **용어**: 09-17부터 코드·설정·문서의 이름은 **extension(확장)** 이다(`plugins` → `extensions` · `Plugin` → `Extension` · `RainbowPlugin` → `RainbowPairs` · 설정 `ext.rainbow_pairs.*` · 문서 파일 50/51). 이 문서 앞부분의 "플러그인"은 같은 뜻.
 
 **구조**(명세 = [extensions/README.md](../extensions/README.md)): 저장소 루트 `index.json`(패키지 폴더 식별 · 요약 한 줄 = 팔레트 메뉴 한 줄) → 패키지 폴더 `extension.json`(설치에 필요한 것: `files[] {path, sha256, dest}` · `kind` · `platforms` · `settings_prefix` · `messages.install`). **기본 저장소 = 이 저장소의 `extensions/` 폴더**(소스 트리에서 실행) · 설치본은 같은 폴더의 GitHub raw URL. 사용자 저장소는 같은 구조의 폴더/URL(`extensions.repositories`).
 
@@ -163,7 +163,7 @@
 
 **팔레트 명령**(Sublime "Package Control: …" 표기 · 텍스트 메뉴 → 고르면 실행): `Extension Manager: Install Extension`(저장소 전부의 index를 읽어 미설치 목록) · `Remove Extension` · `List Extensions`(고르면 상태줄에 이름·버전·종류·상태) · `Enable/Disable Extension` · `Add Repository`(프롬프트에 URL/폴더 · index.json이 읽혀야 등록) · `List Repositories`(기본 + 사용자) · `Remove Repository`.
 
-**설정 창**: 그룹 **Extensions** 아래 `Manager`(저장소·끈 확장)와 **확장마다 분류 하나**(`Rainbow Pairs` = `rainbowpair.*`). `EXTENSION_CATEGORIES`(분류 ↔ 확장 id)로 **끈/미설치 확장의 분류는 트리·검색에서 사라진다**(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다"). 정직한 한계: 설정 레지스트리가 정적이라 **data/wasm 확장이 자기 설정을 가져오는 것(extension.json `settings[]` → 동적 등록)은 후속**(T-118 ②) — 지금은 builtin 확장의 설정만 분류로 있다.
+**설정 창**: 그룹 **Extensions** 아래 `Manager`(저장소·끈 확장)와 **확장마다 분류 하나**(`Rainbow Pairs` = `ext.rainbow_pairs.*`). `EXTENSION_CATEGORIES`(분류 ↔ 확장 id)로 **끈/미설치 확장의 분류는 트리·검색에서 사라진다**(사용자 09-17 "설치되면 보이고 끄거나 제거하면 사라진다"). 정직한 한계: 설정 레지스트리가 정적이라 **data/wasm 확장이 자기 설정을 가져오는 것(extension.json `settings[]` → 동적 등록)은 후속**(T-118 ②) — 지금은 builtin 확장의 설정만 분류로 있다.
 
 **활성화·기본 저장소(사용자 09-17)**: Package Control처럼 **`Extension Manager: Enable Extension Manager`** 1회(`extensions.enabled`) 뒤에만 목록/설치가 되고, 저장소는 명령을 실행할 때만 읽는다(26 §8). 기본 저장소 = `extensions.default_repository`(기본 raw 주소 · GitHub 주소 `github.com/O/R/extensions`·`tree/B/P`는 raw로 자동 변환 · 소스 트리에서는 체크아웃 폴더). **builtin 확장도 설치해야 켜진다**(설치 기록 = `installed.json` · 설치 → 효과 on + 설정 분류 표시 · 삭제 → off + 숨김) — 사용자의 "설치되면 보이고 제거하면 사라진다"를 내장 확장에도 그대로. 사용 순서 = [extensions/README.md §사용 순서](../extensions/README.md).
 
@@ -176,13 +176,13 @@
 | # | 기준 | 지금 구현 | 게이트(39 §6과 같은 방식) |
 |---|---|---|---|
 | P-1 | 키 입력·캐럿 이동·드래그 경로에 확장 호출 0 | `Extension` 트레이트에 `on_edit`/`on_paint` 훅이 **없다**(의도) · 이동 명령만 `run` | 새 훅을 넣으려면 30 §1 체크리스트 + 이 표에 행 추가 · 프레임 계측(`NSQL_TRACE_FRAMES=1`) 전후 비교 |
-| P-2 | 페인트 비용은 코어의 한 번 계산으로 | 쌍 표(`PairTable`)는 편집 뒤 `pairs_dirty`일 때만 재계산 · 결과는 뷰 안 범위만 페인트 · `rainbowpair.max_kb`(2 MB) 넘는 문서는 표 없음 | 155k행 표/2 MB 파일에서 프레임 ≤ 기존 + 1 ms · 초과 문서에서 0 ms |
+| P-2 | 페인트 비용은 코어의 한 번 계산으로 | 쌍 표(`PairTable`)는 편집 뒤 `pairs_dirty`일 때만 재계산 · 결과는 뷰 안 범위만 페인트 · `ext.rainbow_pairs.max_kb`(2 MB) 넘는 문서는 표 없음 | 155k행 표/2 MB 파일에서 프레임 ≤ 기존 + 1 ms · 초과 문서에서 0 ms |
 | P-3 | 메모리 = 문서 크기에 선형 · 상한 있음 | 쌍 표 = 쌍당 소형 항목 · `max_kb` 상한 · 탭마다 1개(잠든 탭도 유지 → 후속: 잠든 탭은 해제) | 확장 1개당 상주 메모리 ≤ 1 MB(문서 제외) · `perf.mode`/`boost`가 끌 수 있어야(39 §3 등재) |
 | P-4 | 명령 디스패치 O(#명령) | `Registry::owner_of` 선형 탐색(확장 수십 개 규모에서 무시) | 100개 확장 · 1000 명령에서 팔레트 열기 < 5 ms |
 | P-5 | 설정 반영은 바뀐 접두만 | `on_settings(changed_key)` = 접두가 맞는 확장만 · 전 탭 `set_bracket_opts`(옵션 비교 뒤 dirty) | 설정 1키 변경에 재계산은 해당 탭들만 |
 | P-6 | 메뉴 기여는 캐시 | 우클릭 서브메뉴는 `apply_extensions`에서 **한 번** 만들어 전 탭에 복제(`set_menu_extras`) · 프레임마다 만들지 않음 | 우클릭 열기 지연 없음 |
 | P-7 | 매니저는 사용자 동작 때만 | index/meta 읽기 = 팔레트 명령을 눌렀을 때 · 시작 시 네트워크 0 · 자동 갱신 없음(26 §8) | 시작 시간·유휴 CPU 변화 0 |
-| P-8 | 향상 모드(`perf.boost`)가 확장 효과를 끈다 | `rainbowpair.enabled=off` 강제(perf.rs BOOST) | 확장마다 boost 항목 1개 이상 |
+| P-8 | 향상 모드(`perf.boost`)가 확장 효과를 끈다 | `ext.rainbow_pairs.enabled=off` 강제(perf.rs BOOST) | 확장마다 boost 항목 1개 이상 |
 | P-9 | WASM/프로세스 확장(후속)은 격리 예산 | 스레드 없음 · 호스트 작업 큐 · 연료/메모리 상한 · 능력 승인(§2·§4) | 확장 1개 폭주가 UI 프레임을 못 막음(별도 스레드 + 타임아웃) |
 
 **점검 절차(확장 하나 추가할 때마다)**: ① 위 표 P-1~P-8에 "해당 없음/충족"을 적는다 ② `NSQL_TRACE_FRAMES=1`로 편집 60프레임 평균/최대 ms 전후 비교 ③ 155k행 조회·전체 조회 시간 전후 비교(45 벤치 표에 열 추가) ④ 메모리: 실행 직후 · 2 MB 파일 열고 닫은 뒤 회수(T-90e 항목) ⑤ 확장을 끈 상태(Disable)에서 ②~④가 확장 없을 때와 같은지.
@@ -248,7 +248,7 @@
 
 1. 같은 문장에서 괄호·인용부호가 **깊이별 색**(테마 6색 순환) · 짝 없는 괄호 = 빨강+밑줄 · 캐럿 옆 쌍 밑줄.
 2. 우클릭 ▸ "괄호 이동 ▸"(짝/이전 형제/다음 형제/상위/하위/확장) · Ctrl+Alt+, . [ ] · 편집 메뉴 항목.
-3. 설정 창 ▸ 확장 ▸ **Rainbow Pairs** 분류가 나타남 — `rainbowpair.enabled/quotes/angle/unmatched/match/colors`(+고급 `max_kb`) · 바꾸면 열린 모든 탭에 즉시.
+3. 설정 창 ▸ 확장 ▸ **Rainbow Pairs** 분류가 나타남 — `ext.rainbow_pairs.enabled/quotes/angle/unmatched/match/colors`(+고급 `max_kb`) · 바꾸면 열린 모든 탭에 즉시.
 4. 재시작 뒤에도 유지(`installed.json`이 근거).
 
 ### 13-5. 끄기 · 켜기 · 삭제 · 재설치

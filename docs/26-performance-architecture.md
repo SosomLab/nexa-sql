@@ -747,6 +747,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 
 | 경로 | 1회 비용 | 빈도·동시 상한 | 자동 재시도 | 근거 코드 |
 |---|---|---|---|---|
+| **객체 용량**(09-30) | 사전 질의 1(스키마·종류당 · `object_sizes`) | 테이블·MV·인덱스 폴더가 읽힐 때 한 번(백그라운드 메타 세션 · 우선순위 4) · `explorer.sizes` 끔 = 0 · 향상 모드 = 끔 | 없음(실패 = 표시 없음) | `explorer.rs` `Req::Sizes` · `nsql-catalog::object_sizes` |
 | 신호등 주기 확인 | TCP SYN 1(+ 실패 시 ICMP 1) | 접속 성공 프로필당 `probe.interval`(60s) · **창이 열려 있을 때만** · 동시 `MAX_INFLIGHT` 16 | 없음(주기) | `conn_win::tick` · `probe::ProbePolicy` |
 | 실패 뒤 재확인 | 동일 | `probe.retry_delay`(60s) × 2^(n−1) · `probe.max_retries`(5)번 뒤 상한 유지(32분) | 지수 백오프 | `ProbeEntry::apply` · `failure_wait` |
 | 실패 확인 즉시 재프로브 | 동일 | 프로필당 진행 중 1개(≤4초) · 대상 집합 밖 프로필은 **1회로 끝(재예약 금지)** | 없음 | `note_failure` · `drain_probes`(T-63) |

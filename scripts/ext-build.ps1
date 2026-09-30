@@ -17,7 +17,8 @@ Write-Output ("build: {0:N0} ms" -f $sw.Elapsed.TotalMilliseconds)
 $map = @(
     @{ crate = "rainbow_pairs_ext"; pkg = "rainbow-pairs"; file = "rainbow_pairs.wasm" },
     @{ crate = "hello_ext";         pkg = "hello-ext";     file = "hello_ext.wasm" },
-    @{ crate = "sql_formatter_kiros33"; pkg = "sql-formatter-kiros33"; file = "sql_formatter_kiros33.wasm" }
+    @{ crate = "sql_formatter_kiros33"; pkg = "sql-formatter-kiros33"; file = "sql_formatter_kiros33.wasm" },
+    @{ crate = "project_explorer_menus"; pkg = "project-explorer-menus"; file = "project_explorer_menus.wasm" }
 )
 foreach ($m in $map) {
     if ($Only -and $Only -ne $m.pkg) { continue }

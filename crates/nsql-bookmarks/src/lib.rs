@@ -259,6 +259,50 @@ pub fn make_anchor(lines: &[&str], line: usize, col: u32, opts: &RelocateOpts) -
     }
 }
 
+/// [`make_anchor`]와 같은 결과를 **줄 조회 함수**로 만든다 — 문서 전체 줄을 `Vec<String>`으로 뜨지 않는다(편집 버퍼의 줄 조회를
+/// 그대로 넘긴다 · 자동 저장 캡처 · 사용자 09-30). 해시는 줄을 하나씩 훑으며 같은 FNV-1a로.
+#[must_use]
+pub fn make_anchor_by<'a>(
+    n: usize,
+    line_at: &dyn Fn(usize) -> std::borrow::Cow<'a, str>,
+    line: usize,
+    col: u32,
+    opts: &RelocateOpts,
+) -> Anchor {
+    let get = |i: Option<usize>| -> String {
+        i.filter(|&i| i < n)
+            .map(|i| cut(&line_at(i), opts.anchor_chars))
+            .unwrap_or_default()
+    };
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for i in 0..n {
+        let l = line_at(i);
+        for b in l.trim_end_matches('\r').bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        h ^= 0x0a;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    Anchor {
+        line: line as u32,
+        col,
+        text: get(Some(line)),
+        before: if opts.context {
+            get(line.checked_sub(1))
+        } else {
+            String::new()
+        },
+        after: if opts.context {
+            get(Some(line + 1))
+        } else {
+            String::new()
+        },
+        doc_hash: h,
+        doc_lines: n as u32,
+    }
+}
+
 /// Sørensen–Dice 바이그램 유사도(0.0~1.0 · 짧은 문자열은 글자 단위).
 #[must_use]
 pub fn dice(a: &str, b: &str) -> f32 {
@@ -1046,6 +1090,25 @@ mod tests {
                     assert_eq!(shifted, inserted == 0);
                 }
             }
+        }
+    }
+
+    /// 줄 조회 앵커 = 슬라이스 앵커(사용자 09-30 · 자동 저장이 전체 줄 사본 없이 쓴다).
+    #[test]
+    fn anchor_by_line_lookup_matches_slice_anchor() {
+        let o = RelocateOpts::default();
+        let src = "SELECT 1\r\nFROM T\nWHERE A = 1\nAND B = 2\nORDER BY 1";
+        let ls = lines(src);
+        for line in 0..ls.len() {
+            let a = make_anchor(&ls, line, 3, &o);
+            let b = make_anchor_by(
+                ls.len(),
+                &|i| std::borrow::Cow::Borrowed(ls[i]),
+                line,
+                3,
+                &o,
+            );
+            assert_eq!(a, b, "line {line}");
         }
     }
 

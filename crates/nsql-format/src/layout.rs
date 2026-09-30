@@ -123,6 +123,33 @@ pub fn line_prefix(indent: usize, leading_comma: bool, opts: &Options) -> String
     s
 }
 
+/// 연산자 부류(사용자 09-30): 단항 후위 · 이항 · BETWEEN(특수).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OpKind {
+    /// `IS NULL` · `IS NOT NULL` — 왼쪽 피연산자만.
+    Unary,
+    /// `=` `<>` `<` `>` `<=` `>=` `IN` `IS` `LIKE` `NOT IN` `NOT LIKE` `IS NOT`.
+    Binary,
+    /// `BETWEEN` · `NOT BETWEEN` — 오른쪽에 `x AND y`.
+    Between,
+}
+
+/// 연산자 글 → 부류(대소문자 무시 · 순수).
+#[must_use]
+pub fn op_kind(op: &str) -> OpKind {
+    let up: String = op
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    match up.as_str() {
+        "IS NULL" | "IS NOT NULL" | "IS TRUE" | "IS NOT TRUE" | "IS FALSE" | "IS NOT FALSE"
+        | "IS UNKNOWN" | "IS NOT UNKNOWN" => OpKind::Unary,
+        "BETWEEN" | "NOT BETWEEN" => OpKind::Between,
+        _ => OpKind::Binary,
+    }
+}
+
 /// 정렬 채움 함수(확장용): (조각 index, 지금까지의 줄 글) → 그 조각 앞에 넣을 글.
 pub type Pad<'a> = &'a dyn Fn(usize, &str) -> String;
 
@@ -151,6 +178,11 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                     || t.starts_with('.');
                 if need_space && !s.ends_with('(') && !tight {
                     s.push(' ');
+                } else if tight {
+                    // 붙는 토큰(`;` `)` `,` `.`) 앞의 연산자 뒤 간격은 지운다(`IS NULL ;` 결함 · 09-30).
+                    while s.ends_with(' ') || s.ends_with('\t') {
+                        s.pop();
+                    }
                 }
                 s.push_str(t);
             }
@@ -162,6 +194,7 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                     crate::Gap::Space => ' ',
                 };
                 let fill = pad.map(|f| f(i, &s)).unwrap_or_default();
+                // 아웃라이어(채움 = 공백 하나)여도 AS 뒤는 `as_gap`(탭 1개 · 사용자 09-30 정정).
                 if !fill.is_empty() {
                     s.push_str(&fill);
                 } else if need_space {
@@ -177,21 +210,29 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                 s.push_str(a);
             }
             Part::CmpOp(op) => {
+                // ★ 연산자 부류(사용자 09-30): 단항 후위(`IS NULL` · `IS NOT NULL`) = 왼쪽 간격·정렬만, 오른쪽 없음 ·
+                //   이항(`=` `<>` `IN` `LIKE` …) = 좌우 간격(4자 이상은 오른쪽 공백 1개 · `operator_long_space`) ·
+                //   BETWEEN = 이항과 같되 오른쪽은 늘 공백 1개(`a BETWEEN x AND y` · 안의 AND는 공백 하나).
+                let kind = op_kind(op);
                 let fill = pad.map(|f| f(i, &s)).unwrap_or_default();
+                let long = opts.operator_long_space && op.chars().count() >= 4;
                 if !fill.is_empty() {
-                    // 정렬된 연산자 뒤 = `operator_gap`(4자 이상은 공백 1개 · 확장의 탭 정렬과 공통 규칙).
+                    // 정렬된 연산자(확장의 탭 채움) · 채움이 탭 없는 공백뿐이면(아웃라이어) 뒤도 공백 하나.
+                    let plain = !fill.contains('\t');
                     s.push_str(&fill);
                     s.push_str(op);
-                    let long = opts.operator_long_space && op.chars().count() >= 4;
-                    if opts.operator_gap == crate::Gap::Tab && !long {
-                        s.push('\t');
-                    } else {
-                        s.push(' ');
+                    match kind {
+                        OpKind::Unary => {}
+                        OpKind::Between => s.push(' '),
+                        OpKind::Binary => {
+                            if opts.operator_gap == crate::Gap::Tab && !long && !plain {
+                                s.push('\t');
+                            } else {
+                                s.push(' ');
+                            }
+                        }
                     }
                 } else if opts.operator_spaces {
-                    // 양쪽 공백의 글자 = `operator_gap`(공백/탭 · 사용자 09-29) · 4자 이상 연산자는 **오른쪽만** 공백 1개
-                    // (`operator_long_space` · 왼쪽은 설정대로 — 사용자 09-29 정정).
-                    let long = opts.operator_long_space && op.chars().count() >= 4;
                     let g = match opts.operator_gap {
                         crate::Gap::Tab => '\t',
                         crate::Gap::Space => ' ',
@@ -200,10 +241,25 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                         s.push(g);
                     }
                     s.push_str(op);
-                    s.push(if long { ' ' } else { g });
+                    match kind {
+                        OpKind::Unary => {}
+                        OpKind::Between => s.push(' '),
+                        OpKind::Binary => s.push(if long { ' ' } else { g }),
+                    }
                 } else {
+                    // 연산자 공백 끔 = 기호 연산자만 붙인다(`a=1`) · 낱말 연산자(`IS NULL` `IN` `BETWEEN`)는 붙일 수 없어 한 칸.
+                    let word = op.chars().next().is_some_and(|c| c.is_ascii_alphabetic());
+                    if word && need_space {
+                        s.push(' ');
+                    }
                     s.push_str(op);
-                    tight_next = true;
+                    // 단항 뒤에는 피연산자가 없다 · BETWEEN 뒤는 늘 한 칸.
+                    match kind {
+                        OpKind::Unary => {}
+                        OpKind::Between => s.push(' '),
+                        OpKind::Binary if word => s.push(' '),
+                        OpKind::Binary => tight_next = true,
+                    }
                 }
             }
             Part::OrderDir(d) => {
@@ -216,8 +272,9 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                 s.push_str(d);
             }
             Part::Comment(c) => {
-                if !s.is_empty() {
-                    if opts.comma_gap == crate::Gap::Tab {
+                // 인라인 주석 앞 간격 = `comment_space`/`comment_gap`(사용자 09-30 · 종전엔 콤마 간격을 빌려 썼다).
+                if !s.is_empty() && opts.comment_space {
+                    if opts.comment_gap == crate::Gap::Tab {
                         s.push('\t');
                     } else {
                         s.push_str("  ");
@@ -687,6 +744,13 @@ impl<'a> Walker<'a> {
     fn kw(&self, w: &str) -> String {
         self.opts.keyword_case.apply(w)
     }
+    /// 지금 자리의 주석 토큰들을 전부 처리(같은 줄 = 인라인 · 아니면 독립 줄) — 키워드를 엿보기 전에 부른다.
+    fn drain_comments(&mut self, indent: usize) {
+        while self.peek().is_some_and(|t| t.is_comment()) {
+            let t = self.next().expect("tok");
+            self.comment(t, indent);
+        }
+    }
     /// 주석 토큰 처리: 같은 줄이면 인라인 조각, 아니면 독립 줄(현재 들여쓰기).
     fn comment(&mut self, t: &Token, indent: usize) {
         if t.nl_before == 0 && self.cur.as_ref().is_some_and(|l| !l.parts.is_empty()) {
@@ -768,6 +832,9 @@ impl<'a> Walker<'a> {
 
     fn query(&mut self, indent: usize) {
         loop {
+            // ★ 독립 주석(집합 연산자 앞뒤 · 구분행)은 먼저 제 줄로 — `peek_at`은 주석을 건너뛰지만 `next`는 아니라서 주석 토큰이
+            //   SELECT 자리로 소비되어 목록이 한 줄로 무너졌다(kiros33 구분행 재포맷 · 09-30).
+            self.drain_comments(indent);
             let Some(t) = self.peek_at(0) else { return };
             if t.is_punct(")") || t.is_punct(";") {
                 return;
@@ -926,15 +993,12 @@ impl<'a> Walker<'a> {
         });
         // 절.
         loop {
+            // 절 사이 독립 주석(같은 결함 · 위 `query` 참조).
+            self.drain_comments(indent);
             let Some(t) = self.peek_at(0) else { return };
             let up = t.up();
             if t.is_punct(")") || t.is_punct(";") {
                 return;
-            }
-            if t.is_comment() {
-                let t = self.next().expect("tok");
-                self.comment(t, indent);
-                continue;
             }
             match up.as_str() {
                 "INTO" => {
@@ -1290,18 +1354,21 @@ impl<'a> Walker<'a> {
             }
             // ★ 단어 비교 연산자(IN · IS · LIKE · NOT IN · NOT LIKE · IS NOT)도 연산자 조각(간격·정렬 규칙 공유 · 사용자 09-29).
             if t.kind == Kind::Word && !cmp_done && *between == 0 {
-                let (words, n): (&str, usize) = match up.as_str() {
-                    "NOT" if self.peek_at(1).is_some_and(|x| x.is("IN")) => ("NOT IN", 2),
-                    "NOT" if self.peek_at(1).is_some_and(|x| x.is("LIKE")) => ("NOT LIKE", 2),
-                    "IS" if self.peek_at(1).is_some_and(|x| x.is("NOT")) => ("IS NOT", 2),
-                    "IN" => ("IN", 1),
-                    "IS" => ("IS", 1),
-                    "LIKE" => ("LIKE", 1),
-                    _ => ("", 0),
-                };
+                // BETWEEN도 연산자 조각(사용자 09-30 "BETWEEN 앞 공백 · 4자 이상 = 왼쪽 간격 유지 · 오른쪽 공백 1개") —
+                //   `BETWEEN a AND b`의 AND는 `between` 계수로 조건 연산어와 구분한다.
+                // 표 `WORD_OPS`(긴 구절 우선 · 사용자 09-30): 단항 후위 · 이항 · BETWEEN · 방언 확장(ILIKE · REGEXP · RLIKE · SIMILAR TO ·
+                //   IS [NOT] DISTINCT FROM). 함수 호출(`REGEXP_LIKE(...)`)·EXISTS·불리언 컬럼은 연산자가 없어 조각도 없다(정렬·간격 대상 아님).
+                let _ = &up;
+                let (words, n) = WORD_OPS
+                    .iter()
+                    .find(|(_, ws)| self.peek_phrase(ws))
+                    .map_or(("", 0), |(w, ws)| (*w, ws.len()));
                 if n > 0 {
                     for _ in 0..n {
                         self.next();
+                    }
+                    if words.ends_with("BETWEEN") {
+                        *between += 1;
                     }
                     cmp_done = true;
                     self.part(Part::CmpOp(self.opts.keyword_case.apply(words)));
@@ -1327,6 +1394,16 @@ impl<'a> Walker<'a> {
         if t.is("BETWEEN") {
             *between += 1;
             self.emit(t);
+            return;
+        }
+        // ★ 윈도우 함수 `OVER (…)`(사용자 09-30 · 스킬 §8): 길면 여러 줄(`window_break`) · 짧으면 한 줄(아래 일반 괄호).
+        if t.is("OVER") && self.peek().is_some_and(|n| n.is_punct("(")) {
+            self.emit(t);
+            if self.window_is_long() {
+                self.next();
+                self.window_clause(indent);
+                return;
+            }
             return;
         }
         if t.is_punct("(") {
@@ -1539,6 +1616,71 @@ impl<'a> Walker<'a> {
     }
 
     /// `(`를 이미 소비한 상태: 서브쿼리면 블록, 아니면 인라인 괄호.
+    /// `OVER` 다음 `(`가 peek 자리 — 짝 `)`까지의 원문 글자 수가 `window_break`를 넘는가(0 = 늘 한 줄).
+    fn window_is_long(&self) -> bool {
+        let limit = self.opts.window_break;
+        if limit == 0 {
+            return false;
+        }
+        let Some(open) = self.toks.get(self.i) else {
+            return false;
+        };
+        let mut depth = 0i32;
+        let mut j = self.i;
+        while let Some(t) = self.toks.get(j) {
+            if t.is_punct("(") {
+                depth += 1;
+            } else if t.is_punct(")") {
+                depth -= 1;
+                if depth == 0 {
+                    return t.span.0.saturating_sub(open.span.1) > limit;
+                }
+            }
+            j += 1;
+        }
+        false
+    }
+
+    /// `OVER (`를 소비한 뒤: PARTITION BY · ORDER BY · ROWS/RANGE/GROUPS 프레임을 각 줄(한 단계 안)에 · `)`는 항목 들여쓰기 줄에
+    /// (뒤에 AS 별칭이 이어진다 · 스킬 §8).
+    fn window_clause(&mut self, indent: usize) {
+        self.word("(");
+        let inner = indent + 1;
+        let mut opened = false;
+        loop {
+            let Some(t) = self.peek() else { return };
+            if t.is_punct(")") {
+                self.next();
+                self.open(indent, Role::Item);
+                self.word(")");
+                return;
+            }
+            let up = t.up();
+            let starts_clause = t.kind == Kind::Word
+                && (matches!(up.as_str(), "ROWS" | "RANGE" | "GROUPS")
+                    || (up == "PARTITION" && self.peek_phrase(&["PARTITION", "BY"]))
+                    || (up == "ORDER" && self.peek_phrase(&["ORDER", "BY"])));
+            if starts_clause {
+                self.open(inner, Role::Other);
+                opened = true;
+            } else if !opened {
+                // 절 키워드 없이 시작하는 내용(드묾) = 첫 줄로.
+                self.open(inner, Role::Other);
+                opened = true;
+            }
+            let t = self.next().expect("tok");
+            if t.is_comment() {
+                self.comment(t, inner);
+            } else if t.is_punct("(") {
+                self.paren_open_at(inner);
+            } else if t.is_punct(",") {
+                self.word(",");
+            } else {
+                self.emit(t);
+            }
+        }
+    }
+
     fn paren_open_at(&mut self, indent: usize) {
         self.word("(");
         if self.peek_is("SELECT") || self.peek_is("WITH") {
@@ -2306,8 +2448,44 @@ pub fn substitute_dialect(toks: Vec<Token>, target: DialectTarget) -> Vec<Token>
 }
 
 fn is_cmp(op: &str) -> bool {
-    matches!(op, "=" | "<>" | "!=" | "<" | ">" | "<=" | ">=")
+    // `<=>`(MySQL null-safe) · `^=`/`~=`(Oracle 부등)도 이항 비교(사용자 09-30 특수 연산자 정리).
+    matches!(
+        op,
+        "=" | "<>" | "!=" | "<" | ">" | "<=" | ">=" | "<=>" | "^=" | "~="
+    )
 }
+
+/// ★ 단어 비교 연산자 표(사용자 09-30 · 긴 구절이 먼저 — `IS NOT NULL`이 `IS NOT`보다 앞). (조각 글, 토큰 열).
+///   단항 후위 = `IS [NOT] NULL|TRUE|FALSE|UNKNOWN` · BETWEEN = `[NOT] BETWEEN` · 나머지 = 이항(`IS [NOT] DISTINCT FROM` · `[NOT] IN/LIKE/ILIKE/
+///   REGEXP/RLIKE/SIMILAR TO` · `IS [NOT]` · `IN` · `IS`). 함수 조건·EXISTS·불리언 컬럼은 여기 없다(연산자 없음).
+const WORD_OPS: &[(&str, &[&str])] = &[
+    ("IS NOT DISTINCT FROM", &["IS", "NOT", "DISTINCT", "FROM"]),
+    ("IS DISTINCT FROM", &["IS", "DISTINCT", "FROM"]),
+    ("IS NOT NULL", &["IS", "NOT", "NULL"]),
+    ("IS NOT TRUE", &["IS", "NOT", "TRUE"]),
+    ("IS NOT FALSE", &["IS", "NOT", "FALSE"]),
+    ("IS NOT UNKNOWN", &["IS", "NOT", "UNKNOWN"]),
+    ("IS NULL", &["IS", "NULL"]),
+    ("IS TRUE", &["IS", "TRUE"]),
+    ("IS FALSE", &["IS", "FALSE"]),
+    ("IS UNKNOWN", &["IS", "UNKNOWN"]),
+    ("NOT SIMILAR TO", &["NOT", "SIMILAR", "TO"]),
+    ("SIMILAR TO", &["SIMILAR", "TO"]),
+    ("NOT BETWEEN", &["NOT", "BETWEEN"]),
+    ("NOT IN", &["NOT", "IN"]),
+    ("NOT LIKE", &["NOT", "LIKE"]),
+    ("NOT ILIKE", &["NOT", "ILIKE"]),
+    ("NOT REGEXP", &["NOT", "REGEXP"]),
+    ("NOT RLIKE", &["NOT", "RLIKE"]),
+    ("IS NOT", &["IS", "NOT"]),
+    ("BETWEEN", &["BETWEEN"]),
+    ("IN", &["IN"]),
+    ("IS", &["IS"]),
+    ("LIKE", &["LIKE"]),
+    ("ILIKE", &["ILIKE"]),
+    ("REGEXP", &["REGEXP"]),
+    ("RLIKE", &["RLIKE"]),
+];
 
 /// 절을 시작하는 키워드(항목·조건이 끝나는 경계).
 fn is_clause_start(up: &str) -> bool {
@@ -2437,8 +2615,39 @@ mod tests {
     fn tab_opts() -> Options {
         Options {
             comma_gap: crate::Gap::Tab,
+            comment_gap: crate::Gap::Tab,
             ..Options::default()
         }
+    }
+
+    /// 인라인 주석 앞 간격(사용자 09-30): 켬 = 공백 두 칸/탭 · 끔 = 붙여 씀.
+    #[test]
+    fn inline_comment_gap_options() {
+        let src = "select a from t -- note\nwhere a = 1";
+        let o = Options::default();
+        assert!(
+            format_basic(src, &o).contains("\tt  -- note\n"),
+            "{}",
+            format_basic(src, &o)
+        );
+        let o = Options {
+            comment_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        assert!(
+            format_basic(src, &o).contains("\tt\t-- note\n"),
+            "{}",
+            format_basic(src, &o)
+        );
+        let o = Options {
+            comment_space: false,
+            ..Options::default()
+        };
+        assert!(
+            format_basic(src, &o).contains("\tt-- note\n"),
+            "{}",
+            format_basic(src, &o)
+        );
     }
 
     fn words(s: &str) -> Vec<String> {
@@ -2877,8 +3086,33 @@ mod tests {
         // 단어 연산자도 조각 · 4자 이상(LIKE · IS NOT · NOT IN)은 왼쪽 = 설정(탭) · 오른쪽 = 공백 1개(`operator_long_space` 기본 켬).
         assert!(out.contains("c\tIN\t(1, 2)"), "{out}");
         assert!(out.contains("d\tLIKE 'x%'"), "{out}");
-        assert!(out.contains("e\tIS NOT NULL"), "{out}");
+        assert!(
+            out.contains("e\tIS NOT NULL\n"),
+            "IS NOT NULL = 한 연산자: {out}"
+        );
+        let out2 = format_basic("select 1 from t where a.del_yn is null and b = 1", &o);
+        assert!(
+            out2.contains("a.del_yn\tIS NULL\n"),
+            "IS NULL = 한 연산자(오른쪽 공백): {out2}"
+        );
+        assert_eq!(format_basic(&out2, &o), out2, "idempotent");
         assert!(out.contains("f\tNOT IN (3)"), "{out}");
+        // BETWEEN = 연산자 조각: 왼쪽 탭 · 오른쪽 공백 1개(4자 이상) · 안의 AND는 조건 연산어가 아니다.
+        let ob = Options {
+            operator_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        let out = format_basic(
+            "select 1 from t where a.yymm between '202601' and '202612' and x not between 1 and 2 and y = 3",
+            &ob,
+        );
+        assert!(
+            out.contains("a.yymm\tBETWEEN '202601' AND '202612'\n"),
+            "{out}"
+        );
+        assert!(out.contains("x\tNOT BETWEEN 1 AND 2\n"), "{out}");
+        assert!(out.contains("y\t=\t3\n"), "{out}");
+        assert_eq!(format_basic(&out, &ob), out, "idempotent");
         let o3 = Options {
             operator_gap: crate::Gap::Tab,
             operator_long_space: false,
@@ -2901,6 +3135,118 @@ mod tests {
         };
         let out = format_basic("select 1 from t where a = 1", &o);
         assert!(out.contains("a=1"), "{out}");
+    }
+
+    /// 윈도우 함수(사용자 09-30 · 스킬 §8): 짧으면 한 줄 · `window_break`를 넘으면 `OVER (` + PARTITION BY/ORDER BY/프레임 각 줄 + `)` 줄 · 별칭은 `)` 뒤 · 멱등.
+    #[test]
+    fn window_over_breaks_when_long() {
+        let src = "select row_number() over (partition by a.k order by a.d) rn, sum(a.q) over (partition by a.k order by a.d rows between 2 preceding and current row) as mov3 from t a";
+        let o = Options::default();
+        let out = format_basic(src, &o);
+        assert!(
+            out.contains("OVER (PARTITION BY a.k ORDER BY a.d) rn\n"),
+            "0 = 늘 한 줄: {out}"
+        );
+        let o = Options {
+            window_break: 40,
+            ..Options::default()
+        };
+        let out = format_basic(src, &o);
+        assert!(
+            out.contains("row_number() OVER (PARTITION BY a.k ORDER BY a.d) rn\n"),
+            "짧은 것은 한 줄: {out}"
+        );
+        assert!(
+            out.contains("sum(a.q) OVER (\n\t\tPARTITION BY a.k\n\t\tORDER BY a.d\n\t\tROWS BETWEEN 2 PRECEDING AND CURRENT ROW\n\t) AS mov3\n"),
+            "{out}"
+        );
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+        assert_tokens_kept(src, &o);
+    }
+
+    /// 연산자 없는 조건 + 방언 특수 연산자(사용자 09-30): 함수 호출·EXISTS·불리언 컬럼은 조각 없음(정렬·간격 대상 아님) ·
+    /// `IS [NOT] DISTINCT FROM`·`ILIKE`·`REGEXP`·`SIMILAR TO`·`IS TRUE`·`<=>` — 표대로 · 멱등.
+    #[test]
+    fn function_conditions_and_dialect_operators() {
+        let tab = Options {
+            operator_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        let src = "select 1 from t a where regexp_like(a.nm, '^P') and exists (select 1 from d where d.k = a.k and d.x is null) and a.flag and not a.done and a.b is distinct from a.c and a.n ilike 'x%' and a.m similar to 'y' and a.t is true and a.q <=> 1";
+        let out = format_basic(src, &tab);
+        assert!(
+            out.contains("\tregexp_like(a.nm, '^P')\n"),
+            "함수 조건 = 연산자 없음: {out}"
+        );
+        assert!(out.contains("\tAND EXISTS (\n"), "{out}");
+        assert!(
+            out.contains("d.k\t=\ta.k\n") && out.contains("d.x\tIS NULL\n"),
+            "서브쿼리 안도 같은 규칙: {out}"
+        );
+        assert!(
+            out.contains("\tAND a.flag\n") && out.contains("\tAND NOT a.done\n"),
+            "불리언 컬럼: {out}"
+        );
+        assert!(out.contains("a.b\tIS DISTINCT FROM a.c\n"), "{out}");
+        assert!(out.contains("a.n\tILIKE 'x%'\n"), "{out}");
+        assert!(out.contains("a.m\tSIMILAR TO 'y'\n"), "{out}");
+        assert!(out.contains("a.t\tIS TRUE\n"), "단항: {out}");
+        assert!(
+            out.contains("a.q\t<=>\t1\n"),
+            "기호 3자 = 이항 좌우 탭: {out}"
+        );
+        assert_eq!(format_basic(&out, &tab), out, "idempotent");
+        assert_tokens_kept(src, &Options::default());
+    }
+
+    /// 연산자 부류(사용자 09-30): 단항 `IS NULL`은 왼쪽 간격만 · 이항은 좌우 · BETWEEN은 오른쪽 공백 1개 + 안의 AND 한 칸 ·
+    /// 간격 공백/탭 두 경우 · 연산자 공백 끔 · 멱등.
+    #[test]
+    fn operator_kinds_unary_binary_between() {
+        assert_eq!(op_kind("is null"), OpKind::Unary);
+        assert_eq!(op_kind("IS  NOT NULL"), OpKind::Unary);
+        assert_eq!(op_kind("not between"), OpKind::Between);
+        assert_eq!(op_kind("IS NOT"), OpKind::Binary);
+        let src = "select 1 from t where a is null and b is not null and c between 1 and 2 and d = 3 and e not in (4)";
+        let tab = Options {
+            operator_gap: crate::Gap::Tab,
+            ..Options::default()
+        };
+        let out = format_basic(src, &tab);
+        assert!(
+            out.contains("\ta\tIS NULL\n"),
+            "단항 = 왼쪽 탭 · 오른쪽 없음: {out}"
+        );
+        assert!(out.contains("b\tIS NOT NULL\n"), "{out}");
+        assert!(
+            out.contains("c\tBETWEEN 1 AND 2\n"),
+            "BETWEEN = 오른쪽 공백 1개 · AND 한 칸: {out}"
+        );
+        assert!(out.contains("d\t=\t3\n"), "이항 = 좌우 탭: {out}");
+        assert!(
+            out.contains("e\tNOT IN (4)\n"),
+            "4자 이상 이항 = 오른쪽 공백 1개: {out}"
+        );
+        assert_eq!(format_basic(&out, &tab), out, "idempotent");
+        let sp = Options::default();
+        let out = format_basic(src, &sp);
+        assert!(
+            out.contains("a IS NULL\n")
+                && out.contains("c BETWEEN 1 AND 2\n")
+                && out.contains("d = 3\n"),
+            "{out}"
+        );
+        let off = Options {
+            operator_spaces: false,
+            ..Options::default()
+        };
+        let out = format_basic(src, &off);
+        assert!(
+            out.contains("a IS NULL\n"),
+            "단항은 공백 끔과 무관(키워드 앞 한 칸): {out}"
+        );
+        assert!(out.contains("c BETWEEN 1 AND 2\n"), "{out}");
+        assert!(out.contains("d=3\n"), "{out}");
     }
 
     /// 줄 앞 콤마 + 탭 들여쓰기 + 간격 "공백"(사용자 09-29): 콤마 앞은 탭만(공백 채움 없음) · 뒤는 간격 설정.
@@ -2928,11 +3274,31 @@ mod tests {
         assert_eq!(line_prefix(1, true, &o), ",\t");
     }
 
+    /// 집합 연산자·절 사이의 독립 주석(구분행)이 있어도 다음 SELECT 목록은 여러 줄(09-30 · 종전엔 주석이 SELECT 자리로 소비됨) · 멱등.
+    #[test]
+    fn standalone_comment_between_set_op_and_select_keeps_layout() {
+        let o = Options::default();
+        for src in [
+            "select a, b from t1\n---------\nunion all\n---------\nselect c, d from t2",
+            "select a, b from t1\nunion all\n-- x\nselect c, d from t2",
+            "select a, b from t1\n-- before where\nwhere a = 1",
+        ] {
+            let out = format_basic(src, &o);
+            assert!(!out.contains("SELECT c, d"), "{src}\n{out}");
+            assert!(
+                out.contains("SELECT\n\tc\n, d\n") || !src.contains("select c"),
+                "{out}"
+            );
+            assert_eq!(format_basic(&out, &o), out, "idempotent: {out}");
+        }
+    }
+
     /// T-255 테이블 설명 주석(스킬 2-2): 호스트가 준 설명이 있는 물리 테이블 줄 끝에 `--\t설명` · 없는 것·서브쿼리는 없음.
     #[test]
     fn table_description_comments() {
         let o = Options {
             comma_gap: crate::Gap::Tab,
+            comment_gap: crate::Gap::Tab,
             table_comments: vec![
                 ("BISCM.TB_ORDER".into(), "주문".into()),
                 ("TB_ITEM".into(), "품목".into()),

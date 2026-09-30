@@ -2,7 +2,7 @@
 //!
 //! - 명령 `edit.format`(Shift+Alt+F) = **기본 포맷터**(`format.default` · 없으면 Basic)로 선택 또는 문서 전체.
 //! - `edit.format_with` = 팔레트에서 포맷터를 골라 한 번 쓰기 / 기본으로 지정.
-//! - `edit.format_preview` = **미리보기 탭**(원본 불변 · 설정 창에서 `format.*`/`sqlfmt.*`가 바뀌면 다시 그림 · 문서가 비면 예시 SQL).
+//! - `edit.format_preview` = **미리보기 탭**(원본 불변 · 설정 창에서 `format.*`/`ext.sqlfmt_kiros33.*`가 바뀌면 다시 그림 · 문서가 비면 예시 SQL).
 //! - 공통 옵션(`format.*`)은 Basic과 확장이 같이 읽는다(확장에는 `nx_ext_format` 입력 JSON `options`로).
 
 use crate::*;
@@ -43,6 +43,80 @@ pub(crate) fn short_engine_name(engine: &str, label: &str) -> String {
     }
 }
 
+/// ★ 설정 → 미리보기에서 그 설정이 **처음 드러나는 줄**을 찾는 조각(사용자 09-30 "몇 번째 줄에서 변화를 볼 수 있는지 · 하나면 충분").
+///   비교는 줄에서 공백·탭을 지우고 대문자로 바꾼 뒤 포함 여부 — 콤마 위치·간격·대소문자 옵션이 바뀌어도 같은 줄을 찾는다.
+///   **Basic(`format.*`)만** 여기 — 확장 설정의 조각은 그 확장 메타 `formatter.marks`가 낸다(사용자 09-30 "확장 것은 확장에" ·
+///   `Registry::formatter_marks`).
+const PREVIEW_MARKS: &[(&str, &str)] = &[
+    ("format.indent", "BASEAS("),
+    ("format.indent_width", "BASEAS("),
+    ("format.keyword_case", "WITH"),
+    ("format.identifier_case", "A.PLANT_CD"),
+    ("format.function_case", "SUM(A.QTY)"),
+    ("format.comma", "A.ITEM_CD"),
+    ("format.comma_gap", "A.ITEM_CD"),
+    ("format.as_gap", "ASQTY_GRP"),
+    ("format.window_break", "OVER(PARTITION"),
+    ("format.comment_space", "--BASECTE"),
+    ("format.comment_gap", "--BASECTE"),
+    ("format.column_as", "LAST_YYMM"),
+    ("format.column_alias_all", "LAST_YYMM"),
+    ("format.table_as", "TB_DEMANDA"),
+    ("format.auto_alias", "TB_ITEM_TYPE"),
+    ("format.where_seed", "WHERE"),
+    ("format.seed_gap", "WHERE"),
+    ("format.paren_seed", "P.REGION_CD"),
+    ("format.logical_newline", "A.YYMMBETWEEN"),
+    ("format.logical_gap", "A.YYMMBETWEEN"),
+    ("format.cond_indent", "A.YYMMBETWEEN"),
+    ("format.operator_spaces", "B.QTY>0"),
+    ("format.operator_gap", "B.QTY>0"),
+    ("format.operator_long_space", "I.ITEM_NMLIKE"),
+    ("format.list_style", "GROUPBY"),
+    ("format.line_width", "GROUPBY"),
+    ("format.case_inline_max", "CASEWHEN"),
+    ("format.join_indent", "INNERJOIN"),
+    ("format.dialect_target", "SYSDATE"),
+    ("format.keep_oneliners", "UPDATETB_PLAN_RESULT"),
+    ("format.stmt_blank_lines", "UPDATETB_PLAN_RESULT"),
+    ("format.max_blank_lines", "UPDATETB_PLAN_RESULT"),
+    ("format.semicolon_newline", "UPDATETB_PLAN_RESULT"),
+];
+
+/// ★ 확장 포맷터의 미리보기 토글 이니셜(사용자 09-30 "설치될 때 겹치지 않는 알파벳 한 글자 · K는 임의"): 이름의 마지막 낱말 첫 글자부터
+///   거슬러 후보 → A~Z · `B`(Basic)와 이미 쓰인 글자는 건너뛴다(순수 함수 · `SQL Formatter for kiros33` → `K`).
+pub(crate) fn formatter_initial(name: &str, taken: &[char]) -> char {
+    let used = |c: char| c == 'B' || taken.contains(&c);
+    let words: Vec<char> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .filter_map(|w| w.chars().next())
+        .filter(char::is_ascii_alphabetic)
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    words
+        .iter()
+        .rev()
+        .copied()
+        .find(|&c| !used(c))
+        .or_else(|| ('A'..='Z').find(|&c| !used(c)))
+        .unwrap_or('X')
+}
+
+/// 포맷 결과에서 조각이 처음 나오는 줄 번호(1 기준 · 공백 제거 + 대문자 비교) — 없으면 None(순수 함수).
+pub(crate) fn preview_line_of(out: &str, needle: &str) -> Option<usize> {
+    out.lines()
+        .position(|l| {
+            let norm: String = l
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .flat_map(char::to_uppercase)
+                .collect();
+            norm.contains(needle)
+        })
+        .map(|i| i + 1)
+}
+
 impl App {
     /// 공통 옵션 쌍(`format.<키>` · 값 원문 · 레지스트리 기본값 포함). ★ 들여쓰기 단위·폭은 설정 항목을 그대로 두되 **지금은 활성
     /// 탭의 들여쓰기**(상태줄 팝업으로 바꾼 탭별 값 · 없으면 `editor.tab_size`/`editor.indent_spaces`)를 쓴다(사용자 09-29).
@@ -57,6 +131,10 @@ impl App {
                 let v = match *k {
                     "indent" if is_editor(&key) => if spaces { "space" } else { "tab" }.to_string(),
                     "indent_width" if is_editor(&key) => tab_size.max(1).to_string(),
+                    // 인라인 주석 간격의 "활성 탭 설정" = 그 탭의 단위(사용자 09-30).
+                    "comment_gap" if is_editor(&key) => {
+                        if spaces { "space" } else { "tab" }.to_string()
+                    }
                     _ => self.settings.get(&key).unwrap_or("").to_string(),
                 };
                 (key, v)
@@ -131,14 +209,8 @@ impl App {
     pub(crate) fn format_default_choices(&self) -> Vec<(String, String)> {
         self.format_engines()
             .into_iter()
-            .map(|(id, name, _)| {
-                let label = if id == BASIC_ENGINE {
-                    name
-                } else {
-                    format!("{name} ({id})")
-                };
-                (id, label)
-            })
+            // 표시 = 이름만(`(id)` 꼬리 제거 · 사용자 09-30).
+            .map(|(id, name, _)| (id, name))
             .collect()
     }
 
@@ -203,30 +275,57 @@ impl App {
     }
 
     /// 포맷 대상: 선택 > **캐럿의 문장(문장 실행 범위 · `statement_at_in`)** > 문서 전체 — (from, to, 글, 전체 여부) 문자 인덱스.
-    fn format_target(&self) -> (usize, usize, String, bool) {
+    /// ★ 크기 상한(사용자 09-30 · 72 §2): 문서가 `format.max_kb`(0 = 무제한)를 넘거나 큰 파일 모드(L1 이상)면 **문서 전체 포맷은
+    ///   거절**하고, 캐럿 문장은 캐럿 앞뒤 창([`FORMAT_WINDOW_BYTES`] · 줄 경계)에서만 찾는다(인텔리센스 창 방식과 같은 생각) ·
+    ///   문장이 창 가장자리에 닿으면(창 밖으로 이어질 수 있음) 거절 · 선택·문장도 상한을 넘으면 거절. `Err` = 상태줄 안내 글.
+    fn format_target(&self) -> Result<(usize, usize, String, bool), String> {
         let tb = self.editors.cur();
-        let all = tb.text();
+        let buf = tb.buf();
+        let max_kb = self.settings.int("format.max_kb").max(0) as usize;
+        let limit = max_kb.saturating_mul(1024);
+        let large = self.editors.is_large(self.editors.active());
+        let limited = large || (limit > 0 && buf.len_bytes() > limit);
+        let too_large = |bytes: usize| {
+            tf(
+                Msg::StFormatTooLarge,
+                &[&nsql_core::fmt_bytes(bytes as u64), &max_kb.to_string()],
+            )
+        };
         if let Some((a, b)) = tb.selection() {
             if b > a {
-                let sel: String = all.chars().skip(a).take(b - a).collect();
-                return (a, b, sel, false);
+                let bytes = buf.byte_len(a, b);
+                if limit > 0 && bytes > limit {
+                    return Err(too_large(bytes));
+                }
+                return Ok((a, b, buf.slice_string(a, b), false));
             }
         }
-        let byte_pos = all
-            .char_indices()
-            .nth(tb.caret())
-            .map_or(all.len(), |(b, _)| b);
-        if let Some(it) = nsql_script::statement_at_in(&all, byte_pos, Some(self.sess.dialect)) {
+        let caret = tb.caret().min(buf.len());
+        let (wa, wb) = if limited {
+            format_window(buf, caret)
+        } else {
+            (0, buf.len())
+        };
+        let text = buf.slice_string(wa, wb);
+        let byte_pos = buf.byte_len(wa, caret);
+        if let Some(it) = nsql_script::statement_at_in(&text, byte_pos, Some(self.sess.dialect)) {
             let span = it.span;
-            let from = all[..span.start].chars().count();
-            let to = from + all[span.clone()].chars().count();
-            let text = all[span].to_string();
-            if !text.trim().is_empty() {
-                return (from, to, text, false);
+            let body = &text[span.clone()];
+            if !body.trim().is_empty() {
+                let cut_off =
+                    (span.start == 0 && wa > 0) || (span.end >= text.len() && wb < buf.len());
+                if limited && (cut_off || (limit > 0 && body.len() > limit)) {
+                    return Err(too_large(body.len()));
+                }
+                let from = wa + text[..span.start].chars().count();
+                let to = from + body.chars().count();
+                return Ok((from, to, body.to_string(), false));
             }
         }
-        let n = all.chars().count();
-        (0, n, all, true)
+        if limited {
+            return Err(too_large(buf.len_bytes()));
+        }
+        Ok((0, buf.len(), text, true))
     }
 
     /// 포맷 실행(엔진별) — Basic은 in-process · 확장은 WASM `nx_ext_format`(공통 옵션 + 접두 설정 전달).
@@ -236,7 +335,30 @@ impl App {
         text: &str,
         preview: bool,
     ) -> Result<String, String> {
-        let mut pairs = self.format_option_pairs();
+        let pairs = self.format_option_pairs();
+        self.format_run_pairs(engine, text, preview, pairs)
+    }
+
+    /// Basic 설정을 **쓰지 않은** 공통 옵션(레지스트리 기본값) — 미리보기 B 토글 끔(사용자 09-30 "Basic 기능이 모두 꺼진 상태").
+    fn format_default_pairs(&self) -> Vec<(String, String)> {
+        nsql_format::OPTION_KEYS
+            .iter()
+            .map(|k| {
+                let key = format!("format.{k}");
+                let v = nsql_settings::default_of(&key).unwrap_or("").to_string();
+                (key, v)
+            })
+            .collect()
+    }
+
+    /// 엔진 하나로 포맷(옵션 pair를 밖에서 받는다 — 미리보기 B 토글).
+    fn format_run_pairs(
+        &mut self,
+        engine: &str,
+        text: &str,
+        preview: bool,
+        mut pairs: Vec<(String, String)>,
+    ) -> Result<String, String> {
         if engine == BASIC_ENGINE {
             let mut opts = nsql_format::Options::from_pairs(
                 pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
@@ -320,7 +442,14 @@ impl App {
     /// 엔진 하나로 편집기 본문을 바꾼다 — 선택이 있으면 선택만 · 없으면 **캐럿의 문장**(문장 실행 범위 · 사용자 09-29) · 문장이 없으면
     /// 전체. `replace_range` = 되돌리기 1단계.
     fn format_apply(&mut self, engine: &str) {
-        let (from, to, text, whole) = self.format_target();
+        let (from, to, text, whole) = match self.format_target() {
+            Ok(t) => t,
+            Err(msg) => {
+                self.sess.status = msg;
+                self.redraw();
+                return;
+            }
+        };
         if text.trim().is_empty() {
             self.sess.status = t(Msg::StFormatNoChange).into();
             self.redraw();
@@ -445,12 +574,37 @@ impl App {
     }
 
     /// ★ 설정 창 안 미리보기(사용자 09-29 "포맷을 미리보면서 수정"): 기본 포맷터로 원본(열린 미리보기 탭의 원본 > 예시 SQL)을 포맷해
-    /// 설정 창에 넣는다 — `format.*`/`sqlfmt.*` 변경 · 설정 창 열 때.
+    /// 설정 창에 넣는다 — `format.*`/`ext.sqlfmt_kiros33.*` 변경 · 설정 창 열 때.
     pub(crate) fn prefs_format_preview_refresh(&mut self) {
         if self.prefs_win.window().is_none() {
             return;
         }
-        let engine = self.format_default_engine();
+        // ★ B/K 토글(사용자 09-30): K = kiros33(보고 있는 분류가 확장이면 기본 켬) · B = Basic 설정 적용(끄면 레지스트리 기본값) ·
+        //   둘 다 끔 = 원본 샘플. 확장 분류를 보고 있으면 그 확장으로(사용자 09-29) · 아니면 기본 포맷터.
+        // 확장 분류를 볼 때만 확장 토글이 있다(Basic 분류 = B만 · 사용자 09-30) · 그 글자 = 포맷터 이름의 이니셜(설치된 것끼리 겹치지 않게).
+        let engines = self.format_engines();
+        let ext_engine = self
+            .prefs_win
+            .selected_extension()
+            .filter(|id| engines.iter().any(|(e, _, _)| e == id))
+            .map(str::to_string);
+        if let Some(id) = &ext_engine {
+            let mut taken: Vec<char> = Vec::new();
+            let mut letter = 'K';
+            for (eid, name, _) in engines.iter().filter(|(e, _, _)| e != BASIC_ENGINE) {
+                let c = formatter_initial(name, &taken);
+                taken.push(c);
+                if eid == id {
+                    letter = c;
+                }
+            }
+            self.prefs_win.set_preview_k_letter(letter);
+        }
+        let (use_basic, use_k) = self.prefs_win.preview_flags();
+        let engine = match (use_k, ext_engine) {
+            (true, Some(id)) => id,
+            _ => BASIC_ENGINE.to_string(),
+        };
         let src = self
             .format_preview
             .as_ref()
@@ -462,13 +616,37 @@ impl App {
                     .map(|(_, _, s)| s)
                     .unwrap_or_else(|| nsql_format::SAMPLE_SQL.to_string())
             });
-        let out = match self.format_run(&engine, &src, true) {
-            Ok(o) => o,
-            Err(e) => format!("-- {}\n-- {e}\n", t(Msg::StFormatPreviewFailed)),
+        let out = if !use_basic && !use_k {
+            src.clone()
+        } else {
+            let pairs = if use_basic {
+                self.format_option_pairs()
+            } else {
+                self.format_default_pairs()
+            };
+            match self.format_run_pairs(&engine, &src, true, pairs) {
+                Ok(o) => o,
+                Err(e) => format!("-- {}\n-- {e}\n", t(Msg::StFormatPreviewFailed)),
+            }
         };
-        let title = tf(
-            Msg::TitleFormatPreview,
-            &[&self.format_engine_name(&engine)],
+        let state = if !use_basic && !use_k {
+            t(Msg::TitlePreviewRaw).to_string()
+        } else {
+            let mut s = String::new();
+            if use_basic {
+                s.push('B');
+            }
+            if use_k && engine != BASIC_ENGINE {
+                s.push(self.prefs_win.preview_k_letter());
+            }
+            s
+        };
+        let title = format!(
+            "{} · {state}",
+            tf(
+                Msg::TitleFormatPreview,
+                &[&self.format_engine_name(&engine)],
+            )
         );
         // ★ 미리보기 상자의 탭 폭/단위도 실제 적용값(단위·폭 각각 활성 탭 설정 또는 고정값).
         let (tab_size, spaces) = self.format_indent_applied();
@@ -479,15 +657,44 @@ impl App {
         let unit = t(if sp { Msg::StSpaces } else { Msg::StTabSize });
         let unit = unit.split(':').next().unwrap_or("").trim().to_string();
         let note = tf(Msg::NoteIndentActiveTab, &[&title, &unit, &ts.to_string()]);
-        self.prefs_win.set_note("format.indent", Some(note.clone()));
-        self.prefs_win
-            .set_note("format.indent_width", Some(note.clone()));
         // `*` 펼치기의 쉼표 뒤 글자도 같은 "활성 탭 설정" — 같은 덧말(사용자 09-29).
         self.prefs_win
-            .set_note("intel.star_comma_space", Some(note));
+            .set_note("intel.star_comma_space", Some(note.clone()));
+        // ★ 설정마다 "▶ 미리보기 n행"(사용자 09-30 · 처음 드러나는 줄 하나) — 들여쓰기 둘은 활성 탭 덧말 뒤에 같이.
+        for (key, needle) in PREVIEW_MARKS {
+            let line =
+                preview_line_of(&out, needle).map(|n| tf(Msg::NotePreviewLine, &[&n.to_string()]));
+            let text = if *key == "format.indent" || *key == "format.indent_width" {
+                Some(match line {
+                    Some(l) => format!("{note} · {l}"),
+                    None => note.clone(),
+                })
+            } else {
+                line
+            };
+            self.prefs_win.set_note(key, text);
+        }
+        // ★ 확장 설정의 표식 = 그 확장 메타(`formatter.marks`) — 지금 미리보기 엔진의 것만 줄 번호, 다른 확장은 비운다.
+        let ids: Vec<String> = self
+            .format_engines()
+            .into_iter()
+            .map(|(id, ..)| id)
+            .collect();
+        for id in ids.iter().filter(|id| id.as_str() != BASIC_ENGINE) {
+            let mine = *id == engine && use_k;
+            for (key, needle) in self.extensions.formatter_marks(id) {
+                let text = if mine {
+                    preview_line_of(&out, &needle)
+                        .map(|n| tf(Msg::NotePreviewLine, &[&n.to_string()]))
+                } else {
+                    None
+                };
+                self.prefs_win.set_note(&key, text);
+            }
+        }
     }
 
-    /// 설정이 바뀌었다(`format.*` · `sqlfmt.*`) → 열려 있는 미리보기 탭만 다시 그린다(닫혀 있으면 아무것도 안 함).
+    /// 설정이 바뀌었다(`format.*` · `ext.sqlfmt_kiros33.*`) → 열려 있는 미리보기 탭만 다시 그린다(닫혀 있으면 아무것도 안 함).
     pub(crate) fn format_preview_refresh(&mut self) {
         self.prefs_format_preview_refresh();
         if self.format_preview.is_none() {
@@ -540,8 +747,75 @@ impl App {
     }
 }
 
+/// 큰 문서의 캐럿 문장 탐색 창(바이트 · 캐럿 앞뒤 각각 · 사용자 09-30 · 인텔리센스 `intel.max_doc_kb` 창과 같은 폭).
+pub(crate) const FORMAT_WINDOW_BYTES: usize = 256 * 1024;
+
+/// 캐럿 앞뒤 [`FORMAT_WINDOW_BYTES`] 안에서 **줄 경계**로 자른 창 [a, b)(글자 인덱스). 문서 전체를 복사하지 않는다(버퍼 줄 표만). 순수.
+pub(crate) fn format_window(buf: &nexa_ctl::edit::TextBuf, caret: usize) -> (usize, usize) {
+    let n = buf.line_count();
+    if n == 0 {
+        return (0, 0);
+    }
+    let cl = buf.line_of(caret.min(buf.len()));
+    let mut top = cl;
+    while top > 0 && buf.byte_len(buf.line_start(top - 1), caret) <= FORMAT_WINDOW_BYTES {
+        top -= 1;
+    }
+    let mut bot = cl;
+    while bot + 1 < n && buf.byte_len(caret, buf.line_end(bot + 1)) <= FORMAT_WINDOW_BYTES {
+        bot += 1;
+    }
+    (buf.line_start(top), buf.line_end(bot))
+}
+
 #[cfg(test)]
 mod tests {
+    /// 창 방식(사용자 09-30): 줄 경계 · 캐럿 포함 · 작은 문서 = 전체 · 큰 문서 = 앞뒤 창 폭 안.
+    #[test]
+    fn format_window_is_line_bounded_around_caret() {
+        use super::{format_window, FORMAT_WINDOW_BYTES};
+        let small = nexa_ctl::edit::TextBuf::from_string("select 1;\nselect 2;\n".into());
+        assert_eq!(format_window(&small, 12), (0, small.len()));
+        let line = "select a, b from t where x = 1;\n";
+        let big: String = line.repeat(40_000); // ≈ 1.3 MB
+        let buf = nexa_ctl::edit::TextBuf::from_string(big);
+        let caret = buf.len() / 2;
+        let (a, b) = format_window(&buf, caret);
+        assert!(a <= caret && caret <= b);
+        assert_eq!(a, buf.line_start(buf.line_of(a)));
+        assert!(buf.byte_len(a, caret) <= FORMAT_WINDOW_BYTES + line.len());
+        assert!(buf.byte_len(caret, b) <= FORMAT_WINDOW_BYTES + line.len());
+        assert!(b - a < buf.len() / 2);
+    }
+
+    /// 확장 토글 이니셜(사용자 09-30): 마지막 낱말 첫 글자 · B 제외 · 겹치면 다음 후보.
+    #[test]
+    fn formatter_initial_picks_distinct_letter() {
+        use super::formatter_initial;
+        assert_eq!(formatter_initial("SQL Formatter for kiros33", &[]), 'K');
+        assert_eq!(formatter_initial("SQL Formatter for kiros33", &['K']), 'F');
+        assert_eq!(formatter_initial("Basic", &[]), 'A', "B는 Basic 몫");
+        assert_eq!(formatter_initial("", &[]), 'A');
+    }
+
+    /// 미리보기 줄 찾기(사용자 09-30): 공백·대소문자 무시 · Basic 조각은 전부 Basic 샘플 결과에 있다.
+    #[test]
+    fn preview_marks_all_present_in_basic_sample() {
+        use super::{preview_line_of, PREVIEW_MARKS};
+        assert_eq!(preview_line_of("a\n  B . Qty\t>\t0\n", "B.QTY>0"), Some(2));
+        assert_eq!(preview_line_of("a\n", "ZZZ"), None);
+        let out =
+            nsql_format::format_basic(nsql_format::SAMPLE_SQL, &nsql_format::Options::default());
+        for (key, needle) in PREVIEW_MARKS
+            .iter()
+            .filter(|(k, _)| k.starts_with("format."))
+        {
+            assert!(
+                preview_line_of(&out, needle).is_some(),
+                "{key} ({needle})\n{out}"
+            );
+        }
+    }
     use super::*;
 
     /// 우클릭 Format 그룹 순서(사용자 09-29): 확장 없음 = Basic 1줄 · Basic 기본 = Basic, kiros33 · kiros33 기본 = kiros33, Basic.

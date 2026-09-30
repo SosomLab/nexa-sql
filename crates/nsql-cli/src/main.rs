@@ -1268,6 +1268,7 @@ impl Printer {
             RunEvent::Connected {
                 description,
                 dialect,
+                schema: _,
             } => {
                 self.dialect = dialect;
                 let _ = writeln!(out, "Connected: {description} ({dialect})");

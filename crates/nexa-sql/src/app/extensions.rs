@@ -98,7 +98,16 @@ impl App {
     /// 확장 명령(짝/형제/상위/하위 이동 등) — 소유 확장에 위임 · 켜져 있을 때만.
     pub(crate) fn run_extension_cmd(&mut self, id: &str) {
         let disabled = self.ext_disabled();
-        if self.extensions.run(id, &disabled, self.editors.cur_mut()) {
+        // ★ 호스트 상황 = 활성 문서의 파일 경로(docs/97 · 확장이 `Editor::doc_path()`로 읽는다).
+        let doc = self
+            .editors
+            .active_path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if self
+            .extensions
+            .run_with(id, &disabled, self.editors.cur_mut(), &doc)
+        {
             self.redraw();
         }
         // WASM 확장의 `nx_log` 줄·오류를 로그 창에(docs/75 §6).
@@ -363,7 +372,12 @@ impl App {
                 let off = self.ext_disabled_list();
                 if let Some(r) = mgr::installed().into_iter().find(|r| r.id == key) {
                     let cat = self.ext_catalog.iter().position(|(_, p)| p.id == r.id);
+                    let latest = cat.and_then(|n| {
+                        let v = &self.ext_catalog[n].1.version;
+                        mgr::version_newer(v, &r.version).then(|| v.clone())
+                    });
                     let row = ExtRow {
+                        latest,
                         summary: cat
                             .map(|n| self.ext_catalog[n].1.summary.clone())
                             .unwrap_or_default(),
@@ -448,7 +462,10 @@ impl App {
     pub(crate) fn ext_view_actions(&mut self) {
         for a in self.ext_view.take_actions() {
             match a {
-                ext_view::ExtViewAction::Install(n) => self.ext_pick(&format!("ext.install:{n}")),
+                ext_view::ExtViewAction::Settings(id) => self.ext_open_settings(&id),
+                ext_view::ExtViewAction::Install(n) | ext_view::ExtViewAction::Update(n) => {
+                    self.ext_pick(&format!("ext.install:{n}"))
+                }
                 ext_view::ExtViewAction::Remove(id) => self.ext_pick(&format!("ext.remove:{id}")),
                 ext_view::ExtViewAction::Enable(id) => self.ext_pick(&format!("ext.enable:{id}")),
                 ext_view::ExtViewAction::Disable(id) => self.ext_pick(&format!("ext.disable:{id}")),
@@ -465,7 +482,12 @@ impl App {
             .iter()
             .map(|r| {
                 let cat = self.ext_catalog.iter().find(|(_, p)| p.id == r.id);
+                // ★ 카탈로그가 더 새 버전을 알면 업데이트 대상(사용자 09-30).
+                let latest = cat.and_then(|(_, p)| {
+                    mgr::version_newer(&p.version, &r.version).then(|| p.version.clone())
+                });
                 ExtRow {
+                    latest,
                     id: r.id.clone(),
                     name: r.name.clone(),
                     version: r.version.clone(),
@@ -492,6 +514,7 @@ impl App {
                 enabled: false,
                 catalog: Some(n),
                 source: src.display(),
+                latest: None,
             });
         }
         let note = if self.ext_fetch_rx.is_some() {
@@ -564,13 +587,56 @@ impl App {
         for a in self.ext_panel.take_actions() {
             match a {
                 ExtPanelAction::Refresh => self.ext_fetch_start(),
-                ExtPanelAction::Install(n) => self.ext_pick(&format!("ext.install:{n}")),
+                ExtPanelAction::Settings(id) => self.ext_open_settings(&id),
+                ExtPanelAction::Install(n) | ExtPanelAction::Update(n) => {
+                    self.ext_pick(&format!("ext.install:{n}"))
+                }
                 ExtPanelAction::Remove(id) => self.ext_pick(&format!("ext.remove:{id}")),
                 ExtPanelAction::Enable(id) => self.ext_pick(&format!("ext.enable:{id}")),
                 ExtPanelAction::Disable(id) => self.ext_pick(&format!("ext.disable:{id}")),
                 ExtPanelAction::Open(row) => self.ext_open_detail(&row),
             }
         }
+    }
+
+    /// ★ 설정 버튼(사용자 09-30): 그 확장의 설정 분류(`EXTENSION_CATEGORIES`)로 설정 창을 연다 · 분류가 없는 확장은 접두 검색.
+    pub(crate) fn ext_open_settings(&mut self, id: &str) {
+        let cat = nsql_settings::EXTENSION_CATEGORIES
+            .iter()
+            .find(|(_, i)| *i == id)
+            .map(|(c, _)| *c);
+        match cat {
+            Some(c) => self.prefs_category = Some(c),
+            None => {
+                use extensions::manager as mgr;
+                let prefix = mgr::installed()
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| mgr::installed_meta(id, &r.version))
+                    .map(|m| m.settings_prefix)
+                    .unwrap_or_else(|| format!("ext.{}.", id.replace('-', "_")));
+                self.prefs_query = Some(prefix);
+            }
+        }
+        self.open_prefs = true;
+    }
+
+    /// ★ 프로젝트 복원(사용자 09-30): `ext:<id>` 뷰 탭을 같은 뷰로 다시 연다 — 설치 목록에 있으면 true.
+    pub(crate) fn ext_reopen_view(&mut self, id: &str) -> bool {
+        if self.ext_panel.rows().is_empty() {
+            self.ext_panel_sync();
+        }
+        let Some(row) = self
+            .ext_panel
+            .rows()
+            .iter()
+            .find(|r| r.id == id && r.installed)
+            .cloned()
+        else {
+            return false;
+        };
+        self.ext_open_detail(&row);
+        true
     }
 
     /// 확장 상세 = 읽기용 안내 탭(설치본의 메타 사본 → 없으면 저장소에서 · 없으면 목록 정보만).
@@ -603,7 +669,13 @@ impl App {
             }
         };
         field(Msg::ExtDetState, state);
-        field(Msg::ExtDetVersion, &row.version);
+        // ★ 버전 칸 = 설치 버전 + (업데이트 가능: vN | 최신)(사용자 09-30).
+        let ver = match (&row.latest, row.installed, row.catalog) {
+            (Some(v), _, _) => format!("{} · {}", row.version, tf(Msg::ExtStUpdateAvail, &[v])),
+            (None, true, Some(_)) => format!("{} · {}", row.version, t(Msg::ExtStUpToDate)),
+            _ => row.version.clone(),
+        };
+        field(Msg::ExtDetVersion, &ver);
         field(Msg::ExtDetKind, &row.kind);
         field(Msg::ExtDetSource, &row.source);
         let mut description = String::new();

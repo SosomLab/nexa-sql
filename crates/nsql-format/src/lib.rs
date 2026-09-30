@@ -163,6 +163,13 @@ pub struct Options {
     pub operator_long_space: bool,
     /// ★ `AS` 앞뒤 간격(공백/탭 · 기본 공백 · 사용자 09-29) — 정렬 채움이 있으면 앞은 채움, 뒤만 이 값.
     pub as_gap: Gap,
+    /// ★ 윈도우 함수 `OVER (…)`(사용자 09-30 · 스킬 §8): 안의 글이 이 글자 수를 넘으면 `OVER (` 줄바꿈 + PARTITION BY/ORDER BY/프레임
+    ///   각 줄(한 단계 안) + `)` 줄 · 0 = 늘 한 줄. Basic 기본 0 · kiros33은 자기 설정(기본 40)으로 강제.
+    pub window_break: usize,
+    /// ★ 인라인(줄 끝) 주석 앞에 간격을 두는가(사용자 09-30 · 기본 켬).
+    pub comment_space: bool,
+    /// 그 간격의 글자(공백 = 두 칸 · 탭 · `editor`는 호스트가 활성 탭 단위로 바꿔 넘긴다).
+    pub comment_gap: Gap,
     /// 모든 SELECT 열에 별칭(단순 열 참조 `A.COL` → `A.COL AS COL` · 식은 그대로).
     pub column_alias_all: bool,
     /// 열 별칭의 `AS` 키워드.
@@ -214,6 +221,9 @@ impl Default for Options {
             operator_gap: Gap::Space,
             operator_long_space: true,
             as_gap: Gap::Space,
+            window_break: 0,
+            comment_space: true,
+            comment_gap: Gap::Space,
             column_alias_all: false,
             column_as: AliasAs::Keep,
             table_as: AliasAs::Keep,
@@ -253,6 +263,9 @@ pub const OPTION_KEYS: &[&str] = &[
     "operator_gap",
     "operator_long_space",
     "as_gap",
+    "comment_space",
+    "comment_gap",
+    "window_break",
     "column_alias_all",
     "column_as",
     "table_as",
@@ -343,6 +356,14 @@ impl Options {
                 "operator_gap" => o.operator_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
                 "operator_long_space" => o.operator_long_space = flag(v),
                 "as_gap" => o.as_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
+                "comment_space" => o.comment_space = flag(v),
+                "window_break" => {
+                    if let Ok(n) = lv.parse::<usize>() {
+                        o.window_break = n.min(400);
+                    }
+                }
+                "comment_gap" if lv == "editor" => {}
+                "comment_gap" => o.comment_gap = if lv == "tab" { Gap::Tab } else { Gap::Space },
                 // 호스트가 넘기는 테이블 설명(줄마다 `이름<TAB>설명` · `table_comments_pair`).
                 "table_comments" => {
                     o.table_comments = v
@@ -476,6 +497,11 @@ pub const KEYWORDS: &[&str] = &[
     "RECURSIVE",
     "OVER",
     "PARTITION",
+    // 윈도우 프레임(사용자 09-30 · 스킬 §8): `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW`.
+    "PRECEDING",
+    "FOLLOWING",
+    "CURRENT",
+    "UNBOUNDED",
     "ROLLUP",
     "CUBE",
     "GROUPING",
@@ -586,7 +612,7 @@ pub fn table_comments_pair(list: &[(String, String)]) -> String {
 }
 
 /// 미리보기용 예시 SQL(설정 창·미리보기 탭이 문서가 비었을 때 쓴다 · 확장은 메타 `formatter.sample`로 자기 예시를 줄 수 있다).
-pub const SAMPLE_SQL: &str = "with base as (select a.plant_cd, a.item_cd, sum(a.qty) qty from tb_demand a where a.yymm between '202601' and '202612' and a.del_yn is null group by a.plant_cd, a.item_cd)\nselect b.plant_cd, b.item_cd, b.qty, case when b.qty > 100 then 'HIGH' when b.qty > 0 then 'LOW' else 'NONE' end as qty_grp, (select max(c.yymm) from tb_demand c where c.item_cd = b.item_cd) last_yymm\nfrom base b inner join tb_item i on i.item_cd = b.item_cd left outer join tb_plant p on p.plant_cd = b.plant_cd left outer join tb_item_type on tb_item_type.item_type_cd = i.item_type_cd\nwhere b.qty > 0 and p.use_yn = 'Y' and i.item_type_cd in ('FG', 'SF') and i.item_nm like 'PCM%' and (p.region_cd = 'KR' or p.region_cd = 'JP')\norder by b.plant_cd, b.qty desc;\n\nupdate tb_plan_result a set a.qty = 0, a.modify_date = sysdate where a.plant_cd = '1200';\n";
+pub const SAMPLE_SQL: &str = "with base as (select a.plant_cd, a.item_cd, a.production_line_cd, sum(a.qty) qty from tb_demand a where a.yymm between '202601' and '202612' and a.del_yn is null group by a.plant_cd, a.item_cd, a.production_line_cd)\nselect b.plant_cd, b.item_cd, b.qty, case when b.qty > 100 then 'HIGH' when b.qty > 0 then 'LOW' else 'NONE' end as qty_grp, (select max(c.yymm) from tb_demand c where c.item_cd = b.item_cd) last_yymm, round(sum(b.qty) over (partition by b.plant_cd) / nullif(count(b.item_cd) over (partition by b.plant_cd), 0), 2) plant_avg_qty\nfrom base b -- base cte\ninner join tb_item i on i.item_cd = b.item_cd left outer join tb_plant p on p.plant_cd = b.plant_cd left outer join tb_item_type on tb_item_type.item_type_cd = i.item_type_cd\nwhere b.qty > 0 and p.use_yn = 'Y' and i.item_type_cd in ('FG', 'SF') and i.item_nm like 'PCM%' and (p.region_cd = 'KR' or p.region_cd = 'JP')\norder by b.plant_cd, b.qty desc;\n\nupdate tb_plan_result a set a.qty = 0, a.modify_date = sysdate where a.plant_cd = '1200';\n";
 
 #[cfg(test)]
 mod tests {

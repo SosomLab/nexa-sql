@@ -39,6 +39,24 @@ const OLD_DEFAULTS: &[(&str, &str)] = &[
 /// 버린다) 다음 저장 때 사라진다. `nsql config get/set 옛키`도 새 키로 통한다([`canonical_key`]). 새 키의 접두 = 설정 창 카테고리
 /// (키 이름만 보고 어디 있는지 알게 · 사용자 09-28 "변수 이름이 설정 위치와 연결되지 않아 찾기 어렵다").
 pub const RENAMED: &[(&str, &str)] = &[
+    // 3차(09-30 · 94 §6-4): 확장 설정 키 = `ext.<확장>.<키>`(사용자 "모든 확장 프로그램에 규칙 적용").
+    ("grid.fast_scroll", "scroll.fast"),
+    ("sqlfmt.strict", "ext.sqlfmt_kiros33.strict"),
+    ("sqlfmt.align_as", "ext.sqlfmt_kiros33.align_as"),
+    ("sqlfmt.align_ops", "ext.sqlfmt_kiros33.align_ops"),
+    ("sqlfmt.align_order", "ext.sqlfmt_kiros33.align_order"),
+    ("sqlfmt.outlier_chars", "ext.sqlfmt_kiros33.outlier_chars"),
+    ("sqlfmt.force_as", "ext.sqlfmt_kiros33.force_as"),
+    ("sqlfmt.and_same_level", "ext.sqlfmt_kiros33.and_same_level"),
+    ("sqlfmt.set_op_dashes", "ext.sqlfmt_kiros33.set_op_dashes"),
+    ("rainbowpair.enabled", "ext.rainbow_pairs.enabled"),
+    ("rainbowpair.colors", "ext.rainbow_pairs.colors"),
+    (
+        "rainbowpair.contrast_order",
+        "ext.rainbow_pairs.contrast_order",
+    ),
+    ("rainbowpair.unmatched", "ext.rainbow_pairs.unmatched"),
+    ("rainbowpair.max_kb", "ext.rainbow_pairs.max_kb"),
     ("license.gates_dev", "license.gates"),
     ("ui.ime_hint", "input.ime_hint"),
     ("ui.ime_hint_watch", "input.ime_hint_watch"),
@@ -333,6 +351,31 @@ const TAB_CLOSE_SHOW_OPTS: &[(&str, Msg)] = &[
     ("hover", Msg::ValTabCloseHover),
 ];
 // ★ SQL 포맷 공통 옵션(docs/95 · nsql-format `Options::from_pairs`와 같은 값 어휘).
+/// 고속 스크롤 속도(사용자 09-30): (연속 N번마다 +1, 상한) = slow (6, ×4) · normal (5, ×8) · fast (3, ×16) · turbo (2, ×32).
+pub const SCROLL_SPEED_OPTS: &[(&str, Msg)] = &[
+    ("slow", Msg::ValScrollSpeedSlow),
+    ("normal", Msg::ValScrollSpeedNormal),
+    ("fast", Msg::ValScrollSpeedFast),
+    ("turbo", Msg::ValScrollSpeedTurbo),
+];
+
+/// 속도 이름 → (연속 N번마다 배수 +1, 배수 상한). 순수.
+#[must_use]
+pub fn scroll_speed_params(name: &str) -> (u32, i32) {
+    match name.trim() {
+        "slow" => (6, 4),
+        "normal" => (5, 8),
+        "turbo" => (2, 32),
+        _ => (3, 16),
+    }
+}
+
+/// kiros33 중복 별칭 처리(사용자 09-30).
+const SQLFMT_DUP_OPTS: &[(&str, Msg)] = &[
+    ("numbered", Msg::ValSqlfmtDupNumbered),
+    ("qualified", Msg::ValSqlfmtDupQualified),
+    ("keep", Msg::ValSqlfmtDupKeep),
+];
 const FMT_INDENT_OPTS: &[(&str, Msg)] = &[
     ("editor", Msg::ValActiveTab),
     ("tab", Msg::ValFmtTab),
@@ -357,6 +400,12 @@ const FMT_COMMA_OPTS: &[(&str, Msg)] = &[
     ("trailing", Msg::ValFmtTrailing),
 ];
 const FMT_GAP_OPTS: &[(&str, Msg)] = &[("space", Msg::ValFmtSpace), ("tab", Msg::ValFmtTab)];
+/// 간격 3택 = 활성 탭 설정 / 공백 / 탭(사용자 09-30 · 인라인 주석 앞).
+const FMT_GAP3_OPTS: &[(&str, Msg)] = &[
+    ("editor", Msg::ValActiveTab),
+    ("space", Msg::ValFmtSpace),
+    ("tab", Msg::ValFmtTab),
+];
 /// 조건 줄(AND/OR) 위치(사용자 09-29): 한 단계 안 / WHERE와 같은 열.
 const FMT_COND_INDENT_OPTS: &[(&str, Msg)] = &[
     ("indent", Msg::ValFmtCondIndent),
@@ -770,7 +819,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // 괄호·인용부호 자동 닫기(사용자 09-19): **편집 코어 기능**이지 Rainbow Pairs 확장 기능이 아니다 — 확장 분류의 옛 키
-    //   `rainbowpair.auto_close`는 없앴다(그 분류는 확장이 꺼지면 숨고, 꺼진 상태 기본값이 켜짐이라 끌 방법이 없었다).
+    //   `ext.rainbow_pairs.auto_close`는 없앴다(그 분류는 확장이 꺼지면 숨고, 꺼진 상태 기본값이 켜짐이라 끌 방법이 없었다).
     Entry {
         key: "editor.auto_close_pairs",
         cat: Msg::CatEditor,
@@ -780,7 +829,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     // ── 쌍 강조(편집 코어 · 사용자 09-23 "Rainbow 확장이 아니라 기본 기능 설정으로 · 강조 대상을 지정해서"): 종류 목록 ·
-    //    문자열 안 · 현재 쌍 강조. Rainbow Pairs 확장은 색만 든다(`rainbowpair.*`). 자동 닫기도 같은 종류 목록을 따른다.
+    //    문자열 안 · 현재 쌍 강조. Rainbow Pairs 확장은 색만 든다(`ext.rainbow_pairs.*`). 자동 닫기도 같은 종류 목록을 따른다.
     Entry {
         key: "editor.pair_kinds",
         cat: Msg::CatEditor,
@@ -971,6 +1020,18 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "basic",
     },
+    // 문서 전체 포맷 상한(사용자 09-30 · 72 §2): 넘거나 큰 파일 모드 = 선택·캐럿 문장(앞뒤 256 KB 창)만 · 0 = 무제한.
+    Entry {
+        key: "format.max_kb",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtMaxKb,
+        desc: Msg::DescFmtMaxKb,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 1_048_576,
+        },
+        default: "1024",
+    },
     Entry {
         key: "format.indent",
         cat: Msg::CatFormat,
@@ -1133,6 +1194,30 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescFmtAsGap,
         kind: SettingKind::Choice(FMT_GAP_OPTS),
         default: "space",
+    },
+    Entry {
+        key: "format.window_break",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtWindowBreak,
+        desc: Msg::DescFmtWindowBreak,
+        kind: SettingKind::Int { min: 0, max: 400 },
+        default: "0",
+    },
+    Entry {
+        key: "format.comment_space",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtCommentSpace,
+        desc: Msg::DescFmtCommentSpace,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "format.comment_gap",
+        cat: Msg::CatFormat,
+        label: Msg::LblFmtCommentGap,
+        desc: Msg::DescFmtCommentGap,
+        kind: SettingKind::Choice(FMT_GAP3_OPTS),
+        default: "editor",
     },
     Entry {
         key: "format.column_as",
@@ -1331,9 +1416,9 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 65536 },
         default: "512",
     },
-    // ★ 확장 "SQL Formatter for kiros33"(`sqlfmt.*` · docs/95 §4): Basic이 못 다루는 규칙만.
+    // ★ 확장 "SQL Formatter for kiros33"(`ext.sqlfmt_kiros33.*` · docs/95 §4): Basic이 못 다루는 규칙만.
     Entry {
-        key: "sqlfmt.strict",
+        key: "ext.sqlfmt_kiros33.strict",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtStrict,
         desc: Msg::DescSqlfmtStrict,
@@ -1341,7 +1426,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "sqlfmt.align_as",
+        key: "ext.sqlfmt_kiros33.align_as",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtAlignAs,
         desc: Msg::DescSqlfmtAlignAs,
@@ -1349,7 +1434,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "sqlfmt.align_ops",
+        key: "ext.sqlfmt_kiros33.align_ops",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtAlignOps,
         desc: Msg::DescSqlfmtAlignOps,
@@ -1357,7 +1442,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "sqlfmt.align_order",
+        key: "ext.sqlfmt_kiros33.align_order",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtAlignOrder,
         desc: Msg::DescSqlfmtAlignOrder,
@@ -1365,15 +1450,39 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "sqlfmt.outlier_chars",
+        key: "ext.sqlfmt_kiros33.outlier_chars",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtOutlierChars,
         desc: Msg::DescSqlfmtOutlierChars,
         kind: SettingKind::Int { min: 16, max: 400 },
-        default: "48",
+        default: "40",
     },
     Entry {
-        key: "sqlfmt.and_same_level",
+        key: "ext.sqlfmt_kiros33.force_as",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtForceAs,
+        desc: Msg::DescSqlfmtForceAs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "ext.sqlfmt_kiros33.window_break",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtWindowBreak,
+        desc: Msg::DescSqlfmtWindowBreak,
+        kind: SettingKind::Int { min: 0, max: 400 },
+        default: "40",
+    },
+    Entry {
+        key: "ext.sqlfmt_kiros33.dup_alias",
+        cat: Msg::CatExtSqlFormatter,
+        label: Msg::LblSqlfmtDupAlias,
+        desc: Msg::DescSqlfmtDupAlias,
+        kind: SettingKind::Choice(SQLFMT_DUP_OPTS),
+        default: "numbered",
+    },
+    Entry {
+        key: "ext.sqlfmt_kiros33.and_same_level",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtAndSameLevel,
         desc: Msg::DescSqlfmtAndSameLevel,
@@ -1381,7 +1490,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "sqlfmt.set_op_dashes",
+        key: "ext.sqlfmt_kiros33.set_op_dashes",
         cat: Msg::CatExtSqlFormatter,
         label: Msg::LblSqlfmtSetOpDashes,
         desc: Msg::DescSqlfmtSetOpDashes,
@@ -1390,7 +1499,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     // 레인보우 괄호 플러그인(사용자 09-17 · docs/51 · D-92~95): 첫 in-process 확장 `extensions/rainbow_pairs.rs`(Rainbow Pairs)가 읽는다. 향상 모드는 색을 끈다.
     Entry {
-        key: "rainbowpair.enabled",
+        key: "ext.rainbow_pairs.enabled",
         cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbow,
         desc: Msg::DescRainbow,
@@ -1398,7 +1507,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "rainbowpair.unmatched",
+        key: "ext.rainbow_pairs.unmatched",
         cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowUnmatched,
         desc: Msg::DescRainbowUnmatched,
@@ -1406,7 +1515,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "rainbowpair.colors",
+        key: "ext.rainbow_pairs.colors",
         cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowColors,
         desc: Msg::DescRainbowColors,
@@ -1414,7 +1523,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "",
     },
     Entry {
-        key: "rainbowpair.contrast_order",
+        key: "ext.rainbow_pairs.contrast_order",
         cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowContrast,
         desc: Msg::DescRainbowContrast,
@@ -1422,7 +1531,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "rainbowpair.max_kb",
+        key: "ext.rainbow_pairs.max_kb",
         cat: Msg::CatExtRainbowPairs,
         label: Msg::LblRainbowMaxKb,
         desc: Msg::DescRainbowMaxKb,
@@ -1784,6 +1893,18 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "10000",
     },
+    // 정규식 필터 조회 SQL ③단계 값 목록 상한(사용자 09-30 · 72 §3 · 고유값 cap+1개에서 모으기 멈춤).
+    Entry {
+        key: "grid.filter_list_max",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFilterListMax,
+        desc: Msg::DescGridFilterListMax,
+        kind: SettingKind::Int {
+            min: 1,
+            max: 100_000,
+        },
+        default: "1000",
+    },
     // ★ 행 포커스 배경(사용자 09-22): 셀을 골라도 그 행 전체에 연한 배경 · 색은 `#RRGGBB[AA]`(비면 선택색 35 %).
     Entry {
         key: "grid.row_focus",
@@ -2016,6 +2137,15 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatExplorer,
         label: Msg::LblExplorerIcons,
         desc: Msg::DescExplorerIcons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 용량 표시(사용자 09-30 · DBeaver식): 테이블·MV·인덱스 폴더가 읽힐 때 스키마·종류당 질의 1 · 향상 모드 끔(perf::BOOST).
+    Entry {
+        key: "explorer.sizes",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerSizes,
+        desc: Msg::DescExplorerSizes,
         kind: SettingKind::Bool,
         default: "on",
     },
@@ -2299,6 +2429,79 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescGridScroll,
         kind: SettingKind::Choice(SCROLL_OPTS),
         default: "pixel",
+    },
+    // ★ 고속 스크롤(사용자 09-30 · 8영역 공통 = 편집기·결과·객체 탐색기·검색 결과·프로젝트·북마크·아웃라인·확장): 같은 방향의
+    //   ↑/↓ 자동 반복·휠 틱이 짧은 간격으로 이어지면 이동량 배수(nexa-ctl `FastScroll` 전역 + `ScrollAccel`/`SpeedHud` · 관성 없음).
+    Entry {
+        key: "scroll.fast",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFast,
+        desc: Msg::DescScrollFast,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "scroll.fast_speed",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastSpeed,
+        desc: Msg::DescScrollFastSpeed,
+        kind: SettingKind::Choice(SCROLL_SPEED_OPTS),
+        default: "fast",
+    },
+    Entry {
+        key: "scroll.fast_grid_extra",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastGridExtra,
+        desc: Msg::DescScrollFastGridExtra,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "scroll.fast_hud",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastHud,
+        desc: Msg::DescScrollFastHud,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "scroll.fast_hud_pos",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastHudPos,
+        desc: Msg::DescScrollFastHudPos,
+        kind: SettingKind::Position,
+        default: "top_right",
+    },
+    Entry {
+        key: "scroll.fast_hud_fade_ms",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastHudFadeMs,
+        desc: Msg::DescScrollFastHudFadeMs,
+        kind: SettingKind::Int {
+            min: 50,
+            max: 10_000,
+        },
+        default: "600",
+    },
+    // 비노출(HIDDEN · 구현 상수): HUD 유지 시간 · 연속 판정 간격.
+    Entry {
+        key: "scroll.fast_hud_hold_ms",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastHudHoldMs,
+        desc: Msg::DescScrollFastHudHoldMs,
+        kind: SettingKind::Int {
+            min: 0,
+            max: 10_000,
+        },
+        default: "250",
+    },
+    Entry {
+        key: "scroll.fast_window_ms",
+        cat: Msg::CatGrid,
+        label: Msg::LblScrollFastWindowMs,
+        desc: Msg::DescScrollFastWindowMs,
+        kind: SettingKind::Int { min: 20, max: 2000 },
+        default: "160",
     },
     // 미니맵(Sublime · T-97 · 09-16).
     Entry {
@@ -2723,6 +2926,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescProjectAutosaveChangeSecs,
         kind: SettingKind::Int { min: 1, max: 3600 },
         default: "10",
+    },
+    // 미저장 본문 보관 상한 = 탭 하나 기준(사용자 09-30 · 프로젝트 파일 본문 + 백업 스냅숏 공통 · 종전 상수 1 MB/8 MB) · 0 = 무제한.
+    Entry {
+        key: "project.unsaved_max_mb",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectUnsavedMaxMb,
+        desc: Msg::DescProjectUnsavedMaxMb,
+        kind: SettingKind::Int { min: 0, max: 4096 },
+        default: "8",
     },
     Entry {
         key: "project.scan_max",
@@ -5599,6 +5811,11 @@ const LARGE_LEVEL_OPTS: &[(&str, Msg)] = &[
 ];
 
 pub const DEPENDS: &[(&str, &str, Dep)] = &[
+    ("scroll.fast_speed", "scroll.fast", Dep::On),
+    ("scroll.fast_grid_extra", "scroll.fast", Dep::On),
+    ("scroll.fast_hud", "scroll.fast", Dep::On),
+    ("scroll.fast_hud_pos", "scroll.fast_hud", Dep::On),
+    ("scroll.fast_hud_fade_ms", "scroll.fast_hud", Dep::On),
     ("meta.refresh_on_commit", "meta.refresh_on_ddl", Dep::On),
     ("input.ime_hint_watch", "input.ime_hint", Dep::On),
     (
@@ -5697,6 +5914,12 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         Dep::Eq("before"),
     ),
     ("format.operator_gap", "format.operator_spaces", Dep::On),
+    ("format.comment_gap", "format.comment_space", Dep::On),
+    (
+        "ext.sqlfmt_kiros33.dup_alias",
+        "ext.sqlfmt_kiros33.force_as",
+        Dep::On,
+    ),
     (
         "format.operator_long_space",
         "format.operator_spaces",
@@ -5745,7 +5968,7 @@ pub const HIDDEN: &[&str] = &[
     "window.log_pos",
     "window.txlog_pos",
     "window.prefs_pos",
-    "rainbowpair.max_kb",
+    "ext.rainbow_pairs.max_kb",
     "meta.refresh_idle_secs",
     "file.external_merge_max_kb",
     "file.external_settle_ms",
@@ -5794,6 +6017,8 @@ pub const HIDDEN: &[&str] = &[
     "probe.icmp",
     "db.fetch_size",
     "db.cursor_idle_secs",
+    "scroll.fast_hud_hold_ms",
+    "scroll.fast_window_ms",
 ];
 
 /// 비노출 설정인가.

@@ -1111,12 +1111,31 @@ impl ProjectPanel {
 
     /// 이름이 필터에 걸리는가 — 옵션(Aa·ab·(.*))은 부품이 본다(`needle`은 종전 호출자 호환용 · 안 쓴다).
     fn matches(&self, i: usize, _needle: &str) -> bool {
-        if self.filter.is_on(BtnKind::PathMatch) {
+        let n = &self.nodes[i];
+        let text = if self.filter.is_on(BtnKind::PathMatch) {
             // 경로까지 검색(기본 끔): 루트 폴더 이름부터의 상대 경로(`/` 구분)에 일반/정규식 매칭.
-            self.filter.matches(&self.rel_path(i))
+            self.rel_path(i)
         } else {
-            self.filter.matches(&self.nodes[i].name)
-        }
+            n.name.clone()
+        };
+        // ★ 구조 질의(docs/98 · 사용자 09-30): `size>1M`(파일 크기 · 필요할 때만 metadata · 폴더 = 미상) · `type:file|folder` ·
+        //   `ext:sql` · `path:...`.
+        let size = (!n.is_dir && self.filter.query_has("size"))
+            .then(|| std::fs::metadata(&n.path).ok().map(|m| m.len()))
+            .flatten();
+        let ext = n
+            .path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let fields = [("ext", ext), ("path", self.rel_path(i))];
+        let facts = crate::filterbar::NodeFacts {
+            text: &text,
+            kind: Some(if n.is_dir { "folder" } else { "file" }),
+            size,
+            fields: &fields,
+        };
+        self.filter.matches_facts(&facts)
     }
 
     /// 루트 폴더 이름부터의 상대 경로(`root/a/b.sql`).

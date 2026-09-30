@@ -691,8 +691,12 @@ impl Editors {
         self.tabs.set_dirty(dirty, &mut inv);
     }
 
-    /// 미저장 탭인가 = 파일이 아닌 스크립트 탭 또는 저장본과 다른 파일 탭(미리보기 탭 제외).
+    /// 미저장 탭인가 = 파일이 아닌 스크립트 탭 또는 저장본과 다른 파일 탭(미리보기 탭 제외 · ★ 뷰 탭(확장 상세)은 저장할
+    /// 대상이 아니다 → 늘 false = 닫기 × · 사용자 09-30).
     pub(crate) fn is_unsaved(&self, i: usize) -> bool {
+        if self.is_view_tab(i) {
+            return false;
+        }
         match self.tab_kind(i) {
             TabKind::Preview => false,
             TabKind::Scratch => true,
@@ -702,6 +706,10 @@ impl Editors {
 
     /// 탭 `i`의 상단 줄 색(구분: 미저장 = `tab_line[0]` · 저장된 파일 = `[1]` · 미리보기 = `[2]`).
     pub(crate) fn line_color_of(&self, i: usize) -> Option<nexa_ctl::Color> {
+        if self.is_view_tab(i) {
+            // ★ 뷰 탭(확장 상세) = 저장된 파일 색(사용자 09-30).
+            return self.tab_line[TabKind::File as usize];
+        }
         match self.tab_kind(i) {
             TabKind::Preview => self.tab_line[TabKind::Preview as usize],
             _ if self.is_unsaved(i) => self.tab_line[TabKind::Scratch as usize],
@@ -1519,6 +1527,11 @@ impl Editors {
         }
     }
 
+    /// 탭 `i`가 뷰 탭이면 그 열쇠(`ext:<id>` …) — 프로젝트 파일에 저장해 다시 열 때 같은 뷰로 복원(사용자 09-30).
+    pub(crate) fn view_key_of(&self, i: usize) -> Option<String> {
+        self.view_tabs.get(&self.tab_id(i)).cloned()
+    }
+
     /// 활성 탭이 뷰 탭(확장 상세 등 · 본문 없음)인가.
     pub(crate) fn is_view_tab_active(&self) -> bool {
         self.view_tabs.contains_key(&self.active_id())
@@ -2119,6 +2132,13 @@ impl Editors {
         for tb in &mut self.bufs {
             tb.close_menu();
         }
+    }
+
+    /// 뷰 탭(확장 상세 등 · 글 본문이 없는 읽을거리)인가.
+    pub(crate) fn is_view_tab(&self, i: usize) -> bool {
+        self.ids
+            .get(i)
+            .is_some_and(|id| self.view_tabs.contains_key(id))
     }
 
     /// 탭 유형(미리보기 > 파일 > 스크립트).

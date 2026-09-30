@@ -1,6 +1,6 @@
 //! **첫 in-process 확장 — 레인보우 괄호 + 괄호 이동**(docs/51 · D-91~95 · 사용자 09-17).
 //!
-//! 설정 `rainbowpair.*` → 편집기 [`nexa_ctl::BracketOpts`] · 명령 4(형제 이전/다음 · 상위 · 하위 · 짝/확장은 편집 코어 명령을 재사용) ·
+//! 설정 `ext.rainbow_pairs.*` → 편집기 [`nexa_ctl::BracketOpts`] · 명령 4(형제 이전/다음 · 상위 · 하위 · 짝/확장은 편집 코어 명령을 재사용) ·
 //! 우클릭 편집 메뉴 "괄호 이동 ▸". 쌍 표·색·자동 닫기는 nexa-ctl 코어(같은 표) — 이 파일은 "옵션·명령·메뉴"만 든다.
 
 use super::{Command, EditorOps, Extension, ExtensionEffect, Label, MenuContribution};
@@ -11,7 +11,7 @@ use nsql_settings::Settings;
 /// **Rainbow Pairs** — 괄호·인용부호 쌍을 깊이별 색으로 구별하고 짝·형제·상위·하위로 이동하는 확장(사용자 09-17 명명).
 pub(crate) struct RainbowPairs;
 
-/// 설정 `rainbowpair.colors`(`#RRGGBB,...`) 파싱 — 잘못된 항목은 건너뜀.
+/// 설정 `ext.rainbow_pairs.colors`(`#RRGGBB,...`) 파싱 — 잘못된 항목은 건너뜀.
 fn parse_colors(spec: &str) -> Vec<nexa_ctl::Color> {
     spec.split(',')
         .map(|c| c.trim().trim_start_matches('#'))
@@ -25,7 +25,7 @@ impl Extension for RainbowPairs {
     }
 
     fn settings_prefix(&self) -> &str {
-        "rainbowpair."
+        "ext.rainbow_pairs."
     }
 
     fn name(&self) -> &str {
@@ -66,13 +66,13 @@ impl Extension for RainbowPairs {
 
     fn on_settings(&mut self, s: &Settings) -> ExtensionEffect {
         let opts = BracketOpts {
-            rainbow: s.flag("rainbowpair.enabled"),
-            unmatched: s.flag("rainbowpair.unmatched"),
+            rainbow: s.flag("ext.rainbow_pairs.enabled"),
+            unmatched: s.flag("ext.rainbow_pairs.unmatched"),
             // 사용자 색 목록 = 이웃 깊이가 잘 구별되게 다시 배열(보색·색 온도·밝기 · 사용자 09-19 · 끄면 적은 순서).
             //   비면 테마 팔레트(이미 같은 규칙으로 정렬돼 있다 · nexa-ctl `Theme.rainbow`).
             colors: {
-                let c = parse_colors(s.get("rainbowpair.colors").unwrap_or(""));
-                if s.flag("rainbowpair.contrast_order") {
+                let c = parse_colors(s.get("ext.rainbow_pairs.colors").unwrap_or(""));
+                if s.flag("ext.rainbow_pairs.contrast_order") {
                     nexa_ctl::contrast_order(&c)
                 } else {
                     c
@@ -84,7 +84,7 @@ impl Extension for RainbowPairs {
             auto_close: true,
             // 0 = 자체 상한 없음 — 편집기 큰 파일 단계(`file.large_ext_level` · docs/72 §2)가 끈다(09-22: 2 MB 자체 상한과 L1 5 MB가
             //   두 겹으로 관리되던 것을 정리 · 값을 주면 그 크기에서 확장만 먼저 멈춘다).
-            max_chars: match s.int("rainbowpair.max_kb") {
+            max_chars: match s.int("ext.rainbow_pairs.max_kb") {
                 kb if kb <= 0 => usize::MAX,
                 kb => (kb.max(64) as usize) * 1024,
             },

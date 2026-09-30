@@ -29,7 +29,7 @@
 | 선택어 강조(일치 항목 표시 · 같은 단어 상자) | ⭘(보이는 줄만 훑음) | ✕ | ✕ | 단계 고정 | 보이는 줄만이라 비용은 작지만 캐럿 이동마다 다시 훑음 | 같음 · `set_occurrence_highlight` |
 | 줄 변경 표시(거터 띠 · 저장본 대비) | ⭘(디프는 **1,500줄** 창 안에서만 LCS · `LCS_CAP`) | ✕ | ✕ | 단계 고정 | 저장본 사본(파일 크기)을 들고 있어야 한다 | `set_baseline(None)` |
 | 저장본 사본(더러움 판정 · 외부 변경 3-way 병합) | ⭘(병합 `file.external_merge_max_kb` **2,048** KB까지) | ✕ 사본 없음 → 더러움 = 저장 지점 O(1) · 외부 변경은 고치지 않은 탭이면 기준 = 버퍼, 고친 탭은 병합 없이 묻기 | ✕ | 단계 고정 | 메모리(파일 크기만큼) | `is_dirty` · `main.rs` 외부 변경 |
-| **확장 효과**(Rainbow Pairs — 괄호 깊이 색 · 짝 표 · 짝 없음 표시) | ⭘(확장 자체 상한 `rainbowpair.max_kb` 기본 **0 = 단계 따름** · 값을 주면 그 크기에서 확장만 먼저 멈춤) | ✕ | ✕ | `file.large_ext_level` **l1**(0/l1/l2) | 편집마다 본문 전체 쌍 표 · 09-22 전에는 2 MB 자체 상한과 L1이 두 겹이었다 | `large_bracket_opts` · `rainbow_pairs.rs` |
+| **확장 효과**(Rainbow Pairs — 괄호 깊이 색 · 짝 표 · 짝 없음 표시) | ⭘(확장 자체 상한 `ext.rainbow_pairs.max_kb` 기본 **0 = 단계 따름** · 값을 주면 그 크기에서 확장만 먼저 멈춤) | ✕ | ✕ | `file.large_ext_level` **l1**(0/l1/l2) | 편집마다 본문 전체 쌍 표 · 09-22 전에는 2 MB 자체 상한과 L1이 두 겹이었다 | `large_bracket_opts` · `rainbow_pairs.rs` |
 | **구문 강조** | ⭘ | ⭘ | ✕(Plain) | `file.large_syntax_level` **l2**(0/l1/l2) | 줄 단위 캐시라 L1까지는 버틴다(2 MB 실측 21 MB 상주) | `set_highlighter(None)` |
 | 되돌리기 **기록 파일**(재시작 뒤 되돌리기) | ⭘(`editor.undo_persist_mb` **4** MB · `editor.undo_persist`) | ✕ 저장 안 함 | ✕ | 단계 고정 | 기록이 파일 크기에 비례 | `undo_persist_save/load` |
 | 되돌리기 **메모리** | ⭘ | ⭘ | ⭘ | `editor.undo_budget_mb` **64** · `editor.undo_max` **1,000** 단계 · 선택 되돌리기 500 단계 | 예산을 넘으면 오래된 단계부터 버림 | nexa-ctl `EditState::evict` |
@@ -38,6 +38,8 @@
 | **복사/잘라내기**(Ctrl+C/X · 큰 선택) | ⭘ | ⭘ | ⭘ | `editor.copy_confirm_mb` **32** MB(0 = 안 물음) | 문자열 사본 + Windows UTF-16 변환 = 선택의 2~3배 순간 할당 → 첫 누름은 안내 · 3초 안 되풀이 = 실행(문자열을 만들기 전 바이트 수로 판정) | `main.rs copy_confirm_pending` |
 | **다중 선택 구간 수**(Ctrl+D · Alt+F3 · Ctrl+K,Ctrl+D · Ctrl+클릭 캐럿 · Split into Lines · 열 선택) | ⭘ | ⭘ | ⭘ | `editor.max_occurrences` **10,000**(모든 입구 공통 · 넘으면 상태줄 안내) | 구간마다 캐럿·편집이 곱해진다 | nexa-ctl `EditState::max_regions`(`add_selection`·`toggle_caret`·`set_regions`) · `main.rs regions_cap_notice` · ★ 09-22 전까지 **키만 있고 미배선**(§5) |
 | 찾기/바꾸기(찾기 막대) | ⭘ | ⭘ | ⭘ | 제한 없음(줄 단위 검색 · 본문 사본 없음) | 65 MB에서 실측 [59 §6-2](59-large-file-handling.md) | `find_in_chars` |
+| **SQL 포맷**(Shift+Alt+F · 우클릭 Format · 09-30) | ⭘(문서 ≤ `format.max_kb` **1,024** KB = 선택 > 캐럿 문장 > 문서 전체) | 선택·캐럿 문장만(캐럿 앞뒤 **256 KB** 창에서 줄 경계로 찾음 · 문장이 창 가장자리에 닿으면 거절) · 문서 전체 ✕ | 같음 | `format.max_kb`(0 = 무제한 · 선택·문장도 이 크기를 넘으면 거절) · 단계 L1 | UI 스레드에서 문서 전체 사본 + 문장 분할 + 포맷(확장은 WASM 인터프리터) — 종전엔 상한 없음 | `app/format.rs format_target`·`format_window` |
+| Ctrl 객체 링크(밑줄·설명 툴팁 · T-256) | ⭘(문서 ≤ `objlink.max_kb`) | 보이는 구간만 분석 · 표시 = none(동작은 유지) | 같음 | `objlink.max_kb`(0 = 무제한) · 향상 모드 `objlink.display`=none | 문서 전체 스캔 | `app/objlink.rs` · [96](96-object-links.md) |
 | 파일 검색(Find in Files) | — | — | — | `search.max_file_kb` **8,192** KB(SSD 기준 · 향상 모드 2,048 = HDD · §4-1) 넘는 파일은 건너뜀 · 결과 상한 | 디스크·메모리 | `nsql-search` |
 | 다중 캐럿·열 선택 | ⭘ | ⭘ | ⭘ | 구간 수 = 위 `editor.max_occurrences`(열 선택·줄 나누기는 앞에서부터 상한 개만) | — | |
 | 자동 들여쓰기 · 괄호 자동 닫기 | ⭘ | ⭘ | ⭘ | 제한 없음(줄 단위) | | |
@@ -60,6 +62,8 @@
 | 프로젝트 트리 열거 | `project.scan_max` **0 = 무제한**(99차 · 워커 열거 · > 0이면 트리 항목 수 메모리 보호 상한) | 상한에 닿으면 "N개에서 열거를 멈췄습니다" · 읽지 못한 폴더는 로그 |
 | 파일 검색 제외 로그 | `search.max_file_kb` 8,192(향상 모드 2,048) · 이진(첫 8KB NUL) · 읽기 실패 · UTF-8 아닌 이름 | 검색 패널 아래 "제외됨(N)" 접이식 목록(경로 — 이유) · 상태줄 "· 제외 N" · CLI `nsql grep` 요약(`NSQL_GREP_LOG=1` = 목록) |
 | 파일 열기 다중 선택 | `file.open_max` **10** | 초과분 제외 표시 |
+| 그리드 정규식 필터 조회 SQL(③단계 값 목록 · 09-30) | `grid.filter_list_max` **1,000** | 고유값이 상한+1개에 닿으면 모으기를 멈추고 목록은 상한까지 · 주석에 키 이름 · 방언 정규식(Oracle·PG·MySQL)·LIKE 번역이면 값 목록을 모으지 않음(종전 = 늘 전 행 O(n²) 중복 제거) |
+| 프로젝트 자동 저장의 미저장 본문(09-30) | `project.unsaved_max_mb` **8** — **탭 하나 기준**(합계 아님 · 프로젝트 파일 본문 + 백업 스냅숏 공통 · 종전 상수 1 MB/8 MB) | 그 탭만 보관하지 않고 상태줄·로그에 **한 번** 알림(파일로 저장 안내) · 판정은 복사 **전** 버퍼 바이트 수로 · 캡처는 바뀐 탭만(앵커·스냅숏·디스크 해시 = 본문 세대·캐럿이 같으면 재사용) |
 | 되돌리기 기록 파일 | `editor.undo_persist_mb` **4** | 저장 안 함 |
 | 세션 수 | `session.max_shared` **8** · `session.max_private` **8** | 접속 거부 + 안내 |
 | 접속 동시성 · 신호등 | `connect.max_concurrent` **4** · `probe.max_inflight` **16** | 큐 |
@@ -87,7 +91,7 @@
 | `editor.highlight_max_kb`(1,024 KB · "이보다 크면 평문")가 **미배선** — 실제 평문 전환은 L2(`file.large_syntax_level`)뿐이라 설명이 거짓이었다 | ★ 키 **폐기**(레지스트리·i18n·부하원 원장에서 제거 · 설정 파일에 남은 값은 무시) — 구문 강조 컷오프는 L2 하나 |
 | 59 §5-1은 "L1 = 미니맵·선택어·기준선, L2 = +구문"만 적고 확장·되돌리기 기록·병합·거대 편집·일치 수는 흩어져 있었다 | 이 문서 §2 표가 원장 · 59는 배경 |
 | 위키(사용자 설명)가 없었다(T-103 잔여) | [wiki/Large-Files-and-Limits](wiki/Large-Files-and-Limits.md) 첫 페이지 + [wiki/Home](wiki/Home.md) + `scripts/wiki-publish.sh`(T-169) |
-| Rainbow Pairs `rainbowpair.max_kb`(2 MB)와 L1(5 MB)이 **두 겹**(2~5 MB 구간은 확장 자체 상한이 먼저 끔 — `highlight_max_kb`와 같은 종류) | 기본 **0 = 단계 따름**(값을 주면 확장만 먼저) |
+| Rainbow Pairs `ext.rainbow_pairs.max_kb`(2 MB)와 L1(5 MB)이 **두 겹**(2~5 MB 구간은 확장 자체 상한이 먼저 끔 — `highlight_max_kb`와 같은 종류) | 기본 **0 = 단계 따름**(값을 주면 확장만 먼저) |
 | 복사/잘라내기에 상한이 없어 65 MB 전체 선택 뒤 Ctrl+C = 130 MB 순간 할당 | `editor.copy_confirm_mb` 32(거대 편집 확인과 같은 꼴) |
 | `editor.max_occurrences`가 Ctrl+D/Alt+F3만 막고 Split into Lines · 열 선택 · Ctrl+클릭은 못 막았다 | nexa-ctl `EditState::max_regions`로 **모든 입구 공통** · 라벨 "다중 선택 구간 상한" |
 

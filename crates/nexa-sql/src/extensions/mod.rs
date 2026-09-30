@@ -82,6 +82,12 @@ pub(crate) trait Extension {
     fn name(&self) -> &str;
     /// 명령 실행 — 편집기 조작은 [`EditorOps`]로.
     fn run(&mut self, id: &str, ed: &mut dyn EditorOps) -> bool;
+    /// ★ 명령 실행 + **호스트 상황**(09-30 · docs/97): `doc_path` = 활성 문서의 파일 경로(없으면 빈 글). WASM 확장은 이 값을
+    /// 게스트 import `nx_host_get(DOC_PATH)`로 돌려준다. 기본 = 상황 없이 [`Extension::run`].
+    fn run_with(&mut self, id: &str, ed: &mut dyn EditorOps, doc_path: &str) -> bool {
+        let _ = doc_path;
+        self.run(id, ed)
+    }
     /// 내려받은 WASM 모듈인가(내장 = false).
     fn is_wasm(&self) -> bool {
         false
@@ -93,6 +99,10 @@ pub(crate) trait Extension {
     /// ★ SQL 포맷터 제공(ABI v1.1 · docs/95): (표시 이름, 미리보기 예시 SQL) — 없으면 None.
     fn formatter(&self) -> Option<(Label, String)> {
         None
+    }
+    /// ★ 포맷터 미리보기 표식(메타 `formatter.marks` · 09-30): (설정 키, 조각) — 그 확장 설정 카드의 "▶ 미리보기 n행".
+    fn formatter_marks(&self) -> Vec<(String, String)> {
+        Vec::new()
     }
     /// 포맷 호출(입력 JSON `{"text","dialect","options","settings","preview"}` → 출력 JSON `{"text"}`/`{"error"}`).
     fn format(&self, _input_json: &str) -> Result<String, String> {
@@ -307,14 +317,21 @@ impl Registry {
     }
 
     /// 명령 실행(소유 확장에 위임) — 켜져 있을 때만.
-    pub(crate) fn run(&mut self, cmd: &str, disabled: &[String], ed: &mut dyn EditorOps) -> bool {
+    /// [`Registry::run`] + 호스트 상황(활성 문서 경로 · docs/97 §2).
+    pub(crate) fn run_with(
+        &mut self,
+        cmd: &str,
+        disabled: &[String],
+        ed: &mut dyn EditorOps,
+        doc_path: &str,
+    ) -> bool {
         let Some(i) = self.owner_of(cmd) else {
             return false;
         };
         if disabled.iter().any(|d| d == self.extensions[i].id()) {
             return false;
         }
-        self.extensions[i].run(cmd, ed)
+        self.extensions[i].run_with(cmd, ed, doc_path)
     }
 
     /// ★ 켜진 확장 중 포맷터를 내는 것들: (id, 이름, 예시 SQL).
@@ -330,6 +347,15 @@ impl Registry {
             }
         }
         out
+    }
+
+    /// 포맷터 확장 `id`의 미리보기 표식(없으면 빈 목록).
+    pub(crate) fn formatter_marks(&self, id: &str) -> Vec<(String, String)> {
+        self.extensions
+            .iter()
+            .find(|p| p.id() == id)
+            .map(|p| p.formatter_marks())
+            .unwrap_or_default()
     }
 
     /// ★ 확장 포맷터로 포맷(docs/95): 공통 옵션 `format.*` 쌍 + 그 확장의 접두 설정을 JSON으로 넘기고 본문을 받는다.

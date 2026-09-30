@@ -57,7 +57,7 @@
 | **플래시 메시지 `Flash`**(09-27) | nexa-ctl `controls/flash.rs` | 클릭 복사 "복사됨" 같은 짧은 알림: `show(text, tone, hold_ms, fade_ms)` → 앵커(가리면 안 되는 사각형)의 **우상단이 메시지의 좌하단**(오른쪽 모자라면 왼쪽으로 · 위 모자라면 아래 · 호스트 안 · 앵커 안 덮음) · 배경 상자(색조 + 테두리) · **유지 시간 뒤 배경색으로 녹아 사라짐**(제곱 감속) · 창 맨 마지막에 그려 최상위 Z-order · 타이머·큐 0 = `paint`가 `true`인 동안 호스트가 다시 그림 · 시간 = 설정 `ui.flash_hold_ms`(2000) · `ui.flash_ms`(페이드 3000) | 라이선스 창 이메일 링크(T-34) · 앞으로 링크·복사 버튼 전부 |
 | **gridedit**(편집 가능한 그리드 핵심 · 09-26) | nexa-ctl `gridedit` | 어느 그리드든 편집: 셀 명세 검증(`CellSpec`) · 변경 집합 덧그리기+되돌리기(`ChangeSet` · 원본 불변) · 붙여넣기 행렬/자동 확장(`paste`) · 날짜 24형식(`datetime`) · 살아 있는 편집기 1개(`LiveEditor`) · 키맵 — 값은 `Option<String>` · DBMS·그리기 의존 0 | nexa-sql 결과 그리드(87) · 후보 = 설정 표·접속 목록·파일 이름 바꾸기 |
 | **TypeAhead + hangul::Composer** | nexa-ctl `typeahead` · `hangul` | 목록/트리 앞글자 점프(nexa-beep 이식): 버퍼+조합+타임아웃은 부품 · 매칭은 라벨 함수 · 필터·HUD 위치 설정 · Windows 한/영은 호스트가 토글해 `jamo_from_qwerty` | 오브젝트 탐색기(09-19) · (후보) 파일 대화상자 트리 · 설정 창 트리 · 팔레트 |
-| **contrast_order** | nexa-ctl `theme` | 순환 팔레트를 이웃끼리 가장 잘 구별되게 배열(보색·색 온도·밝기 · 첫 색 고정) — 깊이 색·차트 계열색처럼 "차례로 쓰는 색 목록"에 재사용 · `Theme.rainbow`는 이미 이 순서 | Rainbow Pairs(`rainbowpair.contrast_order`) |
+| **contrast_order** | nexa-ctl `theme` | 순환 팔레트를 이웃끼리 가장 잘 구별되게 배열(보색·색 온도·밝기 · 첫 색 고정) — 깊이 색·차트 계열색처럼 "차례로 쓰는 색 목록"에 재사용 · `Theme.rainbow`는 이미 이 순서 | Rainbow Pairs(`ext.rainbow_pairs.contrast_order`) |
 | **merge3 + replace_all_undoable** | nexa-ctl `merge3` · `TextBox` | 줄 단위 3-way 병합(의존 0 · 겹침 수·가져온 줄 범위) + 본문 전체를 되돌리기 한 단계로 바꾸기(캐럿 유지) — 외부 변경 반영 · 포매터 결과 적용 같은 "밖에서 온 새 본문"에 재사용 | 외부 파일 변경(58) |
 | **StatWatch / FileSig** | nexa-fs `watch` | OS 와처 없는 파일 변경 감지(서명 비교 → 안정 대기 → 내용 해시) · 전용 스레드 · 요청 합침 — 언제 확인할지는 호스트가 정한다 | 외부 파일 변경(58) |
 | **memtrim** | nexa-sql `memtrim.rs` | 힙 → OS 정리(3-OS) + 사용량 읽기 — "큰 것을 놓은 뒤 1회 + 유휴 주기" 정책은 호스트 · 워킹셋 트림은 하지 않는다 | 메모리 회수(59 §2) |
@@ -83,7 +83,12 @@
 | **ellipsize_middle + show_full**(09-22) | nexa-ctl `draw` | 긴 경로·라벨의 가운데 `…` 축약(접두사 폭 표 · 앞 ≈ 뒤) + 전역 "전체 보기" 스위치(Alt 동안) — 풀다운·우클릭 메뉴·팔레트·검색 결과 공통 · 새로 경로를 보이는 곳은 이 부품을 쓴다 | journal 09-22 §38 |
 | **IntentFade / HoverFade / FadeSpeed** | nexa-ctl `tokens` | 지나가는 대상의 hover 비용 0 · 마지막 의도만 · 속도 속성 2단 | 그리드 행 · 목록 행 · 콤보 항목 · 버튼 · 텍스트박스 |
 | **hover/눌림 색 · 페이드 ms · 스크롤바 지연 전역 setter** | nexa-ctl `tokens` · `scroll` | "설정 한 번 = 전 컨트롤 즉시"(핫스왑) | `ui.*` 설정 |
-| **ScrollBars(축별)** | nexa-ctl `scroll` | 오버레이 · 축 독립 · 상태 상수 크기 | 편집기 · 그리드 · 로그 · 목록 · 상태 메시지 |
+| **ScrollBars(축별)** | nexa-ctl `scroll` | 오버레이 · 축 독립 · 상태 상수 크기 · `set_fast_scroll` | 편집기 · 그리드 · 로그 · 목록 · 상태 메시지 |
+| **FastScroll · ScrollAccel · SpeedHud**(09-30) | nexa-ctl `scroll` | 고속 스크롤 = 전역 설정(핫스왑 · `set_fast_scroll`) + 가속기(같은 방향 사건이 window 안에 이어지면 step번마다 배수 +1 · 상한 max · 사건마다 `factor` 하나 · 큐·타이머·관성 0) + 속도 HUD(×N 캡슐 · hold 뒤 fade · 9자리) · `ScrollBars`가 셋을 품는다(`note_fast` · `set_fast_override`) | 편집기 · 결과(모든 보기) · 객체 탐색기 · 검색 결과 · 프로젝트 · 북마크 · 아웃라인 · 확장 패널(직접) · 설정 `scroll.*` 7키 |
+| **FilterQuery**(09-30) | nsql-core `filterq` + nexa-sql `filterbar::Matcher.query`/`NodeFacts` | 필터 질의 언어(`키:값` 술어 · AND/OR/NOT · 괄호 · 따옴표 · 용량 단위) · `Facts` 포트로 이름·종류·용량 | 모든 필터 상자(객체 탐색기 size/type · 프로젝트 size/ext/path · 그 밖 이름) · docs/98 |
+| **LatestIntent<T>**(09-30) | nexa-ctl `tokens` | "마지막 사건만 뜻 있는" 지연 동작의 표준: 사건 = 목표 덮어쓰기(큐 0) · `tick`이 delay 동안 머문 목표만 확정 · 바뀌면 앞 의도 폐기 · 표시 때 목표 유효성 재확인 | 탐색기 노드 툴팁(확정 = (칸, 노드) · 커서 아래 재확인) · 후보 = 링크 툴팁 · 그리드 표식 툴팁 · 검색어 확정 · docs/99 |
+| **PointerCapture**(09-30) | nexa-sql `app/input.rs` `press_capture`/`area_at`/`dispatch_captured` | 누른 영역이 MouseUp까지 영역 밖 이동·놓임을 받는다(드래그 선택 컨트롤의 기본 처리 · 커서 아래 라우팅의 예외) | 편집기·그리드·탐색기·패널 7 · 찾기 · 상세 |
+| **DropClick**(09-30) | nexa-ctl `toolbar` | 드롭다운 항목 ▾ 클릭 동작 속성: `Same`(기본 · 본체와 같은 id) · `Separate`(`id#drop`) | 결과 보기 모드 버튼 · 탭 연결정보 |
 | **ContextMenu(id만) · EditMenu** | nexa-ctl | 실행은 호스트 몫 · 컨트롤은 무엇을 할지 모른다 | 목록 · 콤보 · 입력란 |
 | **TimeoutButton(경고 톤 · 두 줄 · 잔여 표시 옵션)** | nexa-ctl | 파괴적 2단 확인 · 시간 주입(결정적 테스트) | Delete |
 | **ColorPanel** | nexa-ctl | HSV+A · 프리셋 · 최근 · 실시간 보고 | 색 설정 창 |

@@ -26,7 +26,7 @@
 
 - **한 카테고리에 다른 일이 섞임**: Session에 실행 카드(`run.toast*`)·트랜잭션 보호(`tx.*`)·변수(`vars.*`)·페치(`db.*`)·스크립트(`script.strict`) — 다섯 가지 일. Files에 대화상자·큰 파일·외부 변경·파일 검색·OS 아이콘. Appearance에 글꼴·글자 래스터·색·토스트·툴바·애니메이션·클립보드. Performance에 되돌리기 예산 5개(편집기와 떨어짐)·메모리 회수·글리프 캐시. Window에 상태줄 git. Log에 데모 키 2개.
 - **선/후행이 뒤집힌 곳**: `editor.rulers`(값)가 `editor.rulers_show`(마스터) 앞 · `file.large_ask_mb`가 L1/L2 뒤 · `grid.result_tabbar_single`(종속)이 `result_tabs_max` 앞 · `intel.delay_ms`가 `auto_activation` 바로 아래지만 `trigger_chars`·`min_chars`는 "활성" 절과 떨어짐 · `bookmark.*` 종속 키 15개가 마스터와 다른 카테고리(Display·Anchor)에.
-- **종속이 빠진 마스터**(잠금 없음 · 값을 바꿔도 뜻이 없음): `intel.enabled`(하위 22) · `intel.auto_activation`(delay·trigger·min) · `project.autosave`(secs·backup_days) · `file.external_change`(poll·merge_max·settle·backup_keep) · `grid.result_tabs`(max·per_statement·evict) · `editor.undo_persist`(mb·days) · `editor.highlight_selection`(occurrence_*) · `editor.whitespace_chars`(color·alpha) · `rainbowpair.enabled`(4) · `search.history_max`(rows) · `session.idle_secs`(idle_shared) · `log.dev_mode`(dev_layers ✓ 있음) · `mem.trim_secs`·`mem.trim_on_release` · `probe.enabled`(dns_cache·icmp·stale) · `explorer.visible`(width) · `statusbar.git` ✓ · `ui.toast_secs`(progress·alpha ✓ 일부).
+- **종속이 빠진 마스터**(잠금 없음 · 값을 바꿔도 뜻이 없음): `intel.enabled`(하위 22) · `intel.auto_activation`(delay·trigger·min) · `project.autosave`(secs·backup_days) · `file.external_change`(poll·merge_max·settle·backup_keep) · `grid.result_tabs`(max·per_statement·evict) · `editor.undo_persist`(mb·days) · `editor.highlight_selection`(occurrence_*) · `editor.whitespace_chars`(color·alpha) · `ext.rainbow_pairs.enabled`(4) · `search.history_max`(rows) · `session.idle_secs`(idle_shared) · `log.dev_mode`(dev_layers ✓ 있음) · `mem.trim_secs`·`mem.trim_on_release` · `probe.enabled`(dns_cache·icmp·stale) · `explorer.visible`(width) · `statusbar.git` ✓ · `ui.toast_secs`(progress·alpha ✓ 일부).
 - **강제값이 필요한데 없는 곳**: `intel.enabled=off` → 자동 활성·시그니처·아웃라인 강제 off(지금은 각 기능이 따로 검사) · `file.external_change=off` → merge off · `session.autocommit=on` → `tx.smart_commit` 뜻 없음 · `grid.result_tabs=off` → `result_per_statement` off · `bookmark.enabled=off` → 표시 4 off · `perf.mode=low` → (PERF 프리셋이 이미 함).
 
 ## 3. 새 트리(그룹 → 카테고리 → 절) — 안
@@ -48,7 +48,7 @@
 - **미니맵(Minimap)** *(신설)* — `editor.minimap` ▸ `editor.minimap_width`·`_box_color`·`_border`·`_viewport`·`_click`·`_find`·`_errors` · `bookmark.minimap`(북마크 표시와 중복 등재 — 링크)
 - **코드 완성(Code completion)** — `intel.enabled` ▸ 활성 절: `intel.auto_activation` ▸▸ `intel.delay_ms`·`intel.trigger_chars`·`intel.min_chars` · ▸ 후보 절: `intel.match`·`intel.keywords`·`intel.document_words`·`intel.functions`·`intel.preload`·`intel.recent_boost`·`intel.max_items`·`intel.budget_ms` · ▸ 팝업 절: `intel.popup_rows`·`intel.popup_max_width`·`intel.show_types`·`intel.key_passthrough` · ▸ 삽입 절: `intel.insert_case`·`intel.insert_parens`·`intel.insert_alias`·`intel.insert_space`·`intel.insert_columns` · ▸ `intel.signature_help`
 - **북마크(Bookmarks)** *(그룹 → 카테고리 셋을 이 그룹 아래로)* — 동작·저장 / 표시 / 위치 추적·정리 그대로 · 전부 `bookmark.enabled` ▸
-- **확장(Extensions)** — 관리자 / Rainbow Pairs(`rainbowpair.enabled` ▸ 4)
+- **확장(Extensions)** — 관리자 / Rainbow Pairs(`ext.rainbow_pairs.enabled` ▸ 4)
 
 ### 3-3. 파일·프로젝트(Files & Project)
 - **파일(Files)** — 대화상자 절: `file.show_hidden`·`file.show_dot`·`file.open_max`·`file.os_icons` ▸ `file.probe_chevrons` · 저장 절: `file.eol_new`·`file.eol_save`·`file.overwrite_confirm_ms` · (`file.last_dir`·`file.recent` HIDDEN)
@@ -99,7 +99,7 @@
 | `editor.undo_persist_mb`·`editor.undo_persist_days` | `editor.undo_persist` | On |
 | `editor.occurrence_line_color`·`_line_width`·`_fill_color` | `editor.highlight_selection` | On |
 | `editor.whitespace_color`·`editor.whitespace_alpha` | `editor.whitespace_chars` | NotEmpty |
-| `rainbowpair.unmatched`·`colors`·`contrast_order`·`max_kb` | `rainbowpair.enabled` | On |
+| `ext.rainbow_pairs.unmatched`·`colors`·`contrast_order`·`max_kb` | `ext.rainbow_pairs.enabled` | On |
 | `search.history_view`·`search.history_rows` | `search.history_max` | Gt(0) |
 | `session.idle_shared` | `session.idle_secs` | Gt(0) |
 | `tx.idle_countdown_secs` | `tx.idle_limit_min` | Gt(0) |

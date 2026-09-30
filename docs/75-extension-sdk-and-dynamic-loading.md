@@ -42,6 +42,7 @@
   memory                               nx_editor_op(op: i32, flag: i32) -> i32   op = 1 goto_bracket · 2 expand · 3 sibling_prev ·
   nx_alloc(len) -> ptr                                                             4 sibling_next · 5 parent · 6 child
   nx_ext_meta() -> ptr                 nx_log(ptr)                                 로그 한 줄(호출당 32줄 · 512자)
+                                       nx_host_get(kind, ptr, cap) -> i32          ★ 호스트 상황(09-30 · docs/97): kind 1 = 활성 문서 경로 · 게스트 버퍼에 길이 접두+본문 · 반환 = 길이/-1
   nx_ext_settings(ptr) -> ptr
   nx_ext_disabled() -> ptr
   nx_ext_run(ptr) -> i32
@@ -62,6 +63,9 @@
 ### 3-1. ABI v1.1 — 포맷터(09-29 · [95 §5](95-sql-formatter.md))
 
 메타에 `"formatter":{"label":{en,ko?},"sample":"…"}`가 있으면 호스트가 그 확장을 SQL 포맷터로 등록한다(팔레트 · 기본 포맷터 지정 · 미리보기). export `nx_ext_format(ptr) -> ptr`: 입력 `{"text","dialect","options":{format.* 키:값},"settings":{접두 키:값},"preview":bool}` → 출력 `{"text"}` 또는 `{"error"}`. 상한 = 연료 2e9 · 5초 · 입력/반환 1 MB. v1 모듈(포맷터 없음)은 그대로 로드된다(`abi: 1` 유지 · 추가분).
+
+- ★ **미리보기 표식(09-30)**: `"formatter":{…,"marks":[{"key":"ext.<확장>.<키>","mark":"조각"}]}` — 호스트는 그 설정 카드에 "▶ 미리보기 n행"을 붙인다(조각 = 미리보기 결과에서 공백·탭을 지우고 대문자로 바꾼 뒤 처음 포함되는 줄 · `Registry::formatter_marks`). 호스트 내장 표(`app/format.rs PREVIEW_MARKS`)는 **Basic `format.*`만** — 확장 것은 확장이 낸다(사용자 09-30 "kiros33 것은 확장에").
+- ★ **버전 규칙(09-30)**: `.wasm`이 바뀌는 커밋마다 **`version`을 올린다** — 세 곳(`extensions/sdk/samples/<확장>/Cargo.toml` · `extensions/<확장>/extension.json` · `extensions/index.json`) → `pwsh scripts/ext-build.ps1 -Only <확장>`(wasm 재빌드 + sha256) → `pwsh scripts/ext-sync-installed.ps1`(이 PC 설치본). 버전이 그대로면 설치본은 "최신"으로 보여 업데이트 버튼이 뜨지 않는다(패널 판정 = `manager::version_newer`).
 
 ## 4. SDK 구성(`extensions/sdk/`)
 
@@ -86,7 +90,7 @@ extensions/sdk/
 
 ## 5. Rainbow Pairs를 SDK 위에 — 소스 · 산출물 · 업로드
 
-- 소스: [`extensions/sdk/samples/rainbow-pairs/src/lib.rs`](../extensions/sdk/samples/rainbow-pairs/src/lib.rs) — 앱의 [`rainbow_pairs.rs`](../crates/nexa-sql/src/extensions/rainbow_pairs.rs)와 1:1(메타 6명령 + 메뉴 · `on_settings` = `rainbowpair.enabled/unmatched/colors/max_kb` → 색 층 · `disabled` = 색 없음 · `run` = `Editor` op). 차이 하나 = 사용자 색 목록의 `contrast_order` 재배열은 앱(내장)만 한다(WASM 판은 적은 순서 · 필요하면 SDK에 옮긴다).
+- 소스: [`extensions/sdk/samples/rainbow-pairs/src/lib.rs`](../extensions/sdk/samples/rainbow-pairs/src/lib.rs) — 앱의 [`rainbow_pairs.rs`](../crates/nexa-sql/src/extensions/rainbow_pairs.rs)와 1:1(메타 6명령 + 메뉴 · `on_settings` = `ext.rainbow_pairs.enabled/unmatched/colors/max_kb` → 색 층 · `disabled` = 색 없음 · `run` = `Editor` op). 차이 하나 = 사용자 색 목록의 `contrast_order` 재배열은 앱(내장)만 한다(WASM 판은 적은 순서 · 필요하면 SDK에 옮긴다).
 - 산출물: `extensions/rainbow-pairs/rainbow_pairs.wasm` **76,228 B**(hello 64,244 B — std `fmt`가 대부분 · `wasm-opt -Oz`로 20~30 % 더 줄일 수 있다 · 후속).
 - 업로드(배포) 두 길:
   1. **저장소 폴더**(지금): `extensions/rainbow-pairs/extension.json`(kind `wasm` · 1.1.0 · sha256) + `index.json` → `main` 병합 = raw URL 배포. 앱이 소스 트리에서 돌면 그 폴더를 직접 읽는다(네트워크 0).
@@ -134,7 +138,7 @@ Run(명령) → Registry::run → owner(WASM 우선) → nx_ext_run → op 큐 �
 
 ## 9. 남은 것(후속 · T-118 갱신)
 
-1. **설정 스키마 동적 등록** — 지금 `rainbowpair.*`는 앱 레지스트리에 있어 되지만, 새 확장의 `foo.*` 키는 설정 창에 안 보인다(값은 `settings.conf`에 쓰면 게스트가 받는다). 메타 `settings:[{key,kind,default,label,desc}]` → 런타임 레지스트리 층 + 설정 창 분류.
+1. **설정 스키마 동적 등록** — 지금 `ext.rainbow_pairs.*`는 앱 레지스트리에 있어 되지만, 새 확장의 `foo.*` 키는 설정 창에 안 보인다(값은 `settings.conf`에 쓰면 게스트가 받는다). 메타 `settings:[{key,kind,default,label,desc}]` → 런타임 레지스트리 층 + 설정 창 분류.
 2. **동적 명령 라벨·키맵** — 앱 키맵 표(`COMMANDS`)에 없는 새 id는 팔레트에 라벨이 없다(우클릭 메뉴는 메타 라벨로 보임). 팔레트/키맵을 레지스트리 조회로.
 3. **개발 모드** — 설정 `extensions.dev_dir` 폴더의 `.wasm`을 매니저 없이 로드 · 파일 변경 감시 핫 리로드 · `nsql ext check <dir>`(메타·sha256·ABI 검사) · `nsql ext pack`.
 4. **서명(D-89) · 능력 승인(D-90)** — 인덱스 서명 · 매니페스트 `capabilities`(지금 표면은 편집기 이동뿐이라 승인 대상이 없다).

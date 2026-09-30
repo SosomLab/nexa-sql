@@ -1,6 +1,6 @@
 //! **Rainbow Pairs(WASM)** — 앱 안의 `rainbow_pairs.rs`(in-process · builtin)와 같은 정책 층을 SDK 위에 쓴 것.
 //! 쌍 표·색칠·이동·자동 닫기는 앱 코어(nexa-ctl)가 하고, 이 확장은 "무엇을 켤지 · 어떤 색 · 어떤 명령/메뉴"만 정한다.
-//! 설정 키 = `rainbowpair.*`(앱 레지스트리에 있는 것 · 호스트가 접두 키만 넘겨 준다).
+//! 설정 키 = `ext.rainbow_pairs.*`(앱 레지스트리에 있는 것 · 호스트가 접두 키만 넘겨 준다).
 
 use nexa_ext_sdk::{
     BracketEffect, Command, Editor, Effect, Extension, Label, Menu, Meta, Settings,
@@ -15,7 +15,7 @@ fn cmd(id: &str, en: &str, ko: &str) -> Command {
     }
 }
 
-/// `rainbowpair.colors` = `#RRGGBB, …` → 유효한 항목만(앱이 다시 검증한다).
+/// `ext.rainbow_pairs.colors` = `#RRGGBB, …` → 유효한 항목만(앱이 다시 검증한다).
 fn parse_colors(spec: &str) -> Vec<String> {
     spec.split(',')
         .map(|c| c.trim().trim_start_matches('#'))
@@ -50,7 +50,7 @@ impl Extension for RainbowPairs {
         Meta {
             id: "rainbow-pairs".into(),
             name: "Rainbow Pairs".into(),
-            settings_prefix: "rainbowpair.".into(),
+            settings_prefix: "ext.rainbow_pairs.".into(),
             commands,
             menus: vec![Menu {
                 id: "brackets".into(),
@@ -64,12 +64,12 @@ impl Extension for RainbowPairs {
     /// 확장이 정하는 것 = 색 층뿐(깊이 색 켬 · 짝 없음 색 · 색 목록 · 상한). 쌍 종류·문자열 안·현재 쌍·자동 닫기는
     /// 편집 코어 설정(`editor.pair_*`)이라 호스트가 넣는다.
     fn on_settings(s: &Settings) -> Effect {
-        let kb = s.int("rainbowpair.max_kb");
+        let kb = s.int("ext.rainbow_pairs.max_kb");
         Effect {
             bracket: Some(BracketEffect {
-                rainbow: s.flag("rainbowpair.enabled"),
-                unmatched: s.flag("rainbowpair.unmatched"),
-                colors: parse_colors(s.get("rainbowpair.colors").unwrap_or("")),
+                rainbow: s.flag("ext.rainbow_pairs.enabled"),
+                unmatched: s.flag("ext.rainbow_pairs.unmatched"),
+                colors: parse_colors(s.get("ext.rainbow_pairs.colors").unwrap_or("")),
                 max_chars: if kb <= 0 {
                     0
                 } else {
@@ -117,7 +117,7 @@ mod tests {
             vec!["#FF0000", "#00FF00"]
         );
         let s = Settings::from_json(
-            r#"{"rainbowpair.enabled":"on","rainbowpair.unmatched":"off","rainbowpair.max_kb":"128"}"#,
+            r#"{"ext.rainbow_pairs.enabled":"on","ext.rainbow_pairs.unmatched":"off","ext.rainbow_pairs.max_kb":"128"}"#,
         );
         let e = RainbowPairs::on_settings(&s).bracket.expect("bracket");
         assert!(e.rainbow && !e.unmatched && e.max_chars == 128 * 1024);

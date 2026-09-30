@@ -163,12 +163,11 @@ pub(crate) struct ExplorerSet {
     wake: Arc<dyn Fn() + Send + Sync>,
     visible: bool,
     icons: bool,
-    /// 노드 툴팁(`explorer.tooltip` · T-249): 마우스가 멈춘 뒤 `tip_delay_ms` 지나면 켠다 · 움직이면 끈다.
+    sizes: bool,
+    /// 노드 툴팁(`explorer.tooltip` · T-249): 커서 아래 노드가 **목표**(칸, 노드) — 머문 뒤에만 확정(nexa-ctl `LatestIntent` · 09-30
+    ///   "마지막 사건만 살아남는 큐잉") · 그릴 때 목표가 아직 커서 아래인지 한 번 더 확인.
     tooltip: bool,
-    tip_delay_ms: u64,
-    tip_moved: bool,
-    tip_since: Option<u64>,
-    tip_on: bool,
+    tip: nexa_ctl::LatestIntent<(usize, usize)>,
     font_px: f32,
     ta_cfg: crate::explorer::TypeAheadCfg,
     /// `intel.preload`(새 서버 칸에도 적용).
@@ -223,11 +222,9 @@ impl ExplorerSet {
             wake,
             visible,
             icons: true,
+            sizes: true,
             tooltip: true,
-            tip_delay_ms: 700,
-            tip_moved: false,
-            tip_since: None,
-            tip_on: false,
+            tip: nexa_ctl::LatestIntent::new(700),
             font_px: 17.0,
             ta_cfg: crate::explorer::TypeAheadCfg::default(),
             preload: true,
@@ -264,6 +261,7 @@ impl ExplorerSet {
         let w = Arc::clone(&self.wake);
         let mut ex = Explorer::new(Box::new(move || w()), self.visible);
         ex.set_icons(self.icons);
+        ex.set_sizes(self.sizes);
         ex.set_font_px(self.font_px);
         ex.set_typeahead(self.ta_cfg);
         ex.set_preload(self.preload);
@@ -610,10 +608,18 @@ impl ExplorerSet {
         }
     }
 
+    /// 용량 표시(설정 `explorer.sizes`) — 모든 칸 + 새 칸.
+    pub(crate) fn set_sizes(&mut self, on: bool) {
+        self.sizes = on;
+        for p in &mut self.panes {
+            p.ex.set_sizes(on);
+        }
+    }
+
     /// 노드 툴팁 켜고 끔(`explorer.tooltip` · T-249 · 전 칸).
     pub(crate) fn set_tooltip(&mut self, on: bool) {
         self.tooltip = on;
-        self.tip_on = false;
+        self.tip.clear();
         for p in &mut self.panes {
             p.ex.set_tooltip(on);
         }
@@ -651,6 +657,21 @@ impl ExplorerSet {
             return self.area;
         }
         self.bounds
+    }
+
+    /// ★ 포인터 캡처·hover 이탈 판정용 **전체 영역** = 필터 막대 + 트리(사용자 09-30 "검색 상자 드래그가 밖에서 안 놓인다" —
+    ///   `bounds()`는 트리만이라 필터 상자 누름이 캡처되지 않았다).
+    pub(crate) fn hit_bounds(&self) -> Rect {
+        let b = self.bounds();
+        let f = self.filter.bounds();
+        if f.w <= 0 || f.h <= 0 {
+            return b;
+        }
+        let x = b.x.min(f.x);
+        let y = b.y.min(f.y);
+        let r = b.right().max(f.right());
+        let bt = b.bottom().max(f.bottom());
+        Rect::new(x, y, r - x, bt - y)
     }
 
     /// 서버 헤더 메뉴(연결 해제) — 항목 = `disc_menu(mode, n)` · n = 그룹의 살아 있는 **연결(계정)** 수(docs/54 §10).
@@ -830,7 +851,7 @@ impl ExplorerSet {
 
     pub(crate) fn set_tooltip_delay(&mut self, ms: u128) {
         // 노드 툴팁(T-249)도 같은 지연.
-        self.tip_delay_ms = ms.min(u128::from(u64::MAX)) as u64;
+        self.tip.set_delay_ms(ms.min(u128::from(u64::MAX)) as u64);
         self.filter.set_tooltip_delay(ms);
     }
 
@@ -1055,6 +1076,24 @@ impl ExplorerSet {
             .iter_mut()
             .flat_map(|p| p.ex.take_live())
             .collect()
+    }
+
+    /// 툴팁 목표 = 커서 아래 (칸, 노드).
+    fn tip_target(&self) -> Option<(usize, usize)> {
+        let p = hover_point(self.pinned, self.cursor);
+        self.laid()
+            .into_iter()
+            .find_map(|i| self.panes[i].ex.node_at(p).map(|n| (i, n)))
+    }
+
+    /// ★ 그 칸의 **수집 계정**(메타 세션의 사용자 · 96 §6): 이름 풀이의 접근성 판정 — 세션 계정과 같을 때만 다른 스키마의 객체가 보인다.
+    pub(crate) fn meta_account(&self, spec: Option<&ConnectSpec>) -> Option<String> {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes
+            .get(i)
+            .and_then(|p| p.key.as_ref())
+            .and_then(|k| k.user.clone())
+            .filter(|u| !u.is_empty())
     }
 
     /// 자동 완성이 읽는 메타 스냅샷(docs/76): `spec`의 칸이 있으면 그 칸 · 없으면 보이는 칸.
@@ -1343,21 +1382,9 @@ impl ExplorerSet {
         for p in &mut self.panes {
             any |= p.ex.tick(now_ms);
         }
-        // 툴팁: 움직임 뒤 지연이 지나면 켠다(켜지는 순간 한 번 다시 그림 · T-249).
+        // 툴팁: 커서 아래 목표가 머문 뒤 확정(확정이 바뀌는 순간만 다시 그림 · T-249 · LatestIntent).
         if self.tooltip {
-            if self.tip_moved {
-                self.tip_moved = false;
-                self.tip_since = Some(now_ms);
-                if self.tip_on {
-                    self.tip_on = false;
-                    any = true;
-                }
-            } else if let Some(s) = self.tip_since {
-                if !self.tip_on && now_ms.saturating_sub(s) >= self.tip_delay_ms {
-                    self.tip_on = true;
-                    any = true;
-                }
-            }
+            any |= self.tip.tick(now_ms);
         }
         any
     }
@@ -1546,6 +1573,16 @@ impl ExplorerSet {
             self.scroll = ny;
             self.scroll_x = nx;
             self.relayout();
+            // ★ 스크롤로 행이 밀리면 hover를 **지금 커서 자리**에서 다시 판정하고 툴팁 목표를 다시 잡는다(사용자 09-30 "직전 대상의
+            //   툴팁이 남는다") — 목표가 바뀌면 앞 의도는 버려진다(LatestIntent).
+            let p = hover_point(self.pinned, self.cursor);
+            let fwd = InputEvent::MouseMove { x: p.x, y: p.y };
+            for i in self.laid() {
+                self.panes[i].ex.on_event(&fwd);
+            }
+            let target = self.tip_target();
+            self.tip.set(target);
+            self.tip.restart();
         }
         if consumed {
             return true;
@@ -1578,13 +1615,15 @@ impl ExplorerSet {
                 self.cursor = Point { x: *x, y: *y };
                 // ★ T-254(09-29): 고정 헤더가 덮는 자리에서는 그 아래 가려진 행에 hover를 주지 않는다(클릭은 `header_at`이 먼저 먹지만
                 //   MouseMove는 칸으로 흘러갔다) → 칸에는 영역 밖의 점을 준다(있던 hover도 걷힌다).
-                self.tip_moved = true;
                 let p = hover_point(self.pinned, Point { x: *x, y: *y });
                 let fwd = InputEvent::MouseMove { x: p.x, y: p.y };
                 let mut any = false;
                 for i in self.laid() {
                     any |= self.panes[i].ex.on_event(&fwd);
                 }
+                // 툴팁 목표 = 지금 커서 아래 노드(없으면 None → 대기 취소).
+                let target = self.tip_target();
+                self.tip.set(target);
                 any
             }
             // (휠은 위의 공용 스크롤이 처리한다.)
@@ -1682,11 +1721,17 @@ impl ExplorerSet {
         self.menu.paint(dc, th);
         self.filter.paint_popup(dc, th);
         // ★ 노드 툴팁 카드(`explorer.tooltip` · T-249) — 메뉴가 열려 있지 않을 때 · 창 안으로 맞춤(61 §2-2).
-        if self.tooltip && self.tip_on && !self.menu_open() {
-            if let Some((text, r)) = self
-                .laid()
-                .into_iter()
-                .find_map(|i| self.panes[i].ex.hover_tip())
+        if self.tooltip && !self.menu_open() {
+            // 툴팁 = 확정된 목표(머문 노드)가 **지금도 커서 아래**일 때만(스크롤·구조 변경으로 어긋났으면 안 보임 · 사용자 09-30).
+            let cur = hover_point(self.pinned, self.cursor);
+            let settled = self.tip.settled().copied();
+            if let Some((text, r)) = settled
+                .filter(|&(pi, node)| {
+                    self.panes
+                        .get(pi)
+                        .is_some_and(|p| p.ex.hover_under(cur) && p.ex.node_at(cur) == Some(node))
+                })
+                .and_then(|(pi, _)| self.panes[pi].ex.hover_tip())
             {
                 let clamp = dc
                     .surface_size()
@@ -2093,5 +2138,102 @@ mod tests {
             "서버 하나"
         );
         assert_eq!(cross_pane(Key::End, Some((0, 5)), 0, 1, pg), Stay);
+    }
+
+    /// ★ 필터 상자 드래그가 트리·바깥에서 놓여도 끝난다(사용자 09-30 "검색 내용에 마우스가 Release 되지 않는 경우").
+    #[test]
+    fn filter_drag_released_outside_ends() {
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        set.filter.set_text("abcdefghij");
+        let fb = set.filter.bounds();
+        assert!(fb.w > 0 && fb.h > 0, "필터 상자가 있어야 한다: {fb:?}");
+        let y = fb.y + fb.h / 2;
+        let down = |x: i32, y: i32| InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        };
+        set.on_event(&down(fb.x + 6, y));
+        assert!(set.filter.is_focused());
+        assert!(
+            set.focused_textbox().is_some_and(|tb| tb.is_dragging()),
+            "누르면 드래그 시작"
+        );
+        set.on_event(&InputEvent::MouseMove {
+            x: fb.x + 60,
+            y: y + 200,
+        });
+        assert!(set.focused_textbox().is_some_and(|tb| tb.is_dragging()));
+        // 트리 영역(상자 밖)에서 놓는다 → 드래그 끝.
+        set.on_event(&InputEvent::MouseUp {
+            x: fb.x + 60,
+            y: y + 200,
+        });
+        assert!(
+            set.focused_textbox().is_some_and(|tb| !tb.is_dragging()),
+            "밖에서 놓아도 드래그가 끝나야 한다"
+        );
+    }
+
+    /// ★ 상자 클릭으로 이력 드롭다운이 열린 채 드래그 → 밖에서 놓아도 드래그가 끝나고 드롭다운은 닫힌다(사용자 09-30 재현 경로).
+    #[test]
+    fn filter_drag_with_history_dropdown_ends() {
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        let mut h = crate::search_history::SearchHistory::new(20);
+        h.push("explorer", "old query");
+        set.filter.set_history(h.shared(), "explorer");
+        set.filter.set_text("abcdefghij");
+        let fb = set.filter.bounds();
+        let y = fb.y + fb.h / 2;
+        set.on_event(&InputEvent::MouseDown {
+            x: fb.x + 6,
+            y,
+            shift: false,
+            primary: false,
+        });
+        assert!(set.focused_textbox().is_some_and(|tb| tb.is_dragging()));
+        set.on_event(&InputEvent::MouseMove {
+            x: fb.x + 80,
+            y: y + 300,
+        });
+        set.on_event(&InputEvent::MouseUp {
+            x: fb.x + 80,
+            y: y + 300,
+        });
+        assert!(
+            set.focused_textbox().is_some_and(|tb| !tb.is_dragging()),
+            "드롭다운이 열려 있어도 놓임은 상자에 닿아야 한다"
+        );
+        assert!(
+            !set.filter.popup_open(),
+            "드래그를 끝낸 놓임은 드롭다운 선택이 아니다"
+        );
+    }
+
+    /// ★ 단순 클릭(누르고 같은 자리에서 놓음)은 이력 드롭다운을 연 채 둔다(사용자 09-30 "클릭하면 드롭박스가 잠깐 떴다 사라짐").
+    #[test]
+    fn filter_click_keeps_history_dropdown_open() {
+        let mut set = ExplorerSet::new(Arc::new(|| {}), true);
+        set.set_bounds(Rect::new(0, 0, 300, 600), 1.0);
+        let mut h = crate::search_history::SearchHistory::new(20);
+        h.push("explorer", "old query");
+        set.filter.set_history(h.shared(), "explorer");
+        // 빈 글 = 이력 전부가 드롭다운에(글이 있으면 그 글이 든 항목만).
+        set.filter.set_text("");
+        let fb = set.filter.bounds();
+        let (x, y) = (fb.x + 6, fb.y + fb.h / 2);
+        set.on_event(&InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        });
+        assert!(set.filter.popup_open(), "클릭 = 드롭다운 열림");
+        set.on_event(&InputEvent::MouseUp { x, y });
+        assert!(set.filter.popup_open(), "같은 자리 놓임에 닫히면 안 된다");
+        assert!(set.focused_textbox().is_some_and(|tb| !tb.is_dragging()));
     }
 }

@@ -1037,6 +1037,56 @@ impl Snapshot {
         }
     }
 
+    /// ★ **이름 풀이 규칙대로**(사용자 09-30 · ORA-00942인데 링크가 정상으로 보이던 결함): 스키마가 없는 이름은 **현재 스키마**와
+    /// `PUBLIC`(공용 시노님)에서만 찾는다 — 다른 스키마에만 있는 이름은 서버가 못 푸는 이름이므로 `None`. 현재 스키마를 아직 모르면
+    /// (접속 직후) [`Snapshot::lookup`]의 전 스키마 조회로 폴백한다(모름 = 가정하지 않고 넓게).
+    #[must_use]
+    pub fn lookup_resolvable(
+        &self,
+        names: &Interner,
+        schema: Option<&str>,
+        name: &str,
+    ) -> Option<ObjId> {
+        self.lookup_resolvable_from(names, schema, None, name)
+    }
+
+    /// [`Snapshot::lookup_resolvable`] + **호출자의 현재 스키마**(`cur` · 탭 세션의 접속 스키마 — 같은 서버의 두 연결(BISCM·SQLEDU)이
+    /// 한 메타를 공유할 때 스냅숏의 현재 스키마는 첫 연결의 것이라 틀린다 · 사용자 09-30). `cur` = None이면 스냅숏 값.
+    pub fn lookup_resolvable_from(
+        &self,
+        names: &Interner,
+        schema: Option<&str>,
+        cur: Option<&str>,
+        name: &str,
+    ) -> Option<ObjId> {
+        if schema.is_some() {
+            return self.lookup(names, schema, name);
+        }
+        let cur_sym = match cur {
+            Some(c) => {
+                let lc = c.to_lowercase();
+                self.schemas
+                    .iter()
+                    .copied()
+                    .find(|s| names.lower(*s) == lc)
+                    .or_else(|| names.find(&lc))
+            }
+            None => self.current_schema,
+        };
+        let Some(cur) = cur_sym else {
+            return self.lookup(names, None, name);
+        };
+        let lkey = names.find(&name.to_lowercase())?;
+        if let Some(id) = self.exact.get(&(cur, lkey)).copied() {
+            return Some(id);
+        }
+        self.schemas
+            .iter()
+            .copied()
+            .find(|s| names.lower(*s) == "public")
+            .and_then(|pub_sym| self.exact.get(&(pub_sym, lkey)).copied())
+    }
+
     /// 접두 조회(버킷 · 대소문자 무시 · `limit`) — O(log n + k).
     #[must_use]
     pub fn prefix(
@@ -1154,6 +1204,54 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 이름 풀이(사용자 09-30): 스키마 없는 이름은 호출자의 현재 스키마 → PUBLIC 순 · 다른 스키마에만 있으면 None(전 스키마 폴백 없음)
+    /// · 현재 스키마를 모르면(cur None · 스냅숏도 None) 전 스키마 폴백.
+    #[test]
+    fn lookup_resolvable_uses_caller_schema() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(
+            &["BISCM".into(), "SQLEDU".into(), "PUBLIC".into()],
+            Some("BISCM"),
+        );
+        m.load_bucket("SQLEDU", ObjectKind::Table, &[obj("TRX_DEMAND", 1)], 1);
+        m.load_bucket("BISCM", ObjectKind::Table, &[obj("TB_PLAN", 1)], 1);
+        m.load_bucket("PUBLIC", ObjectKind::Synonym, &[obj("DUAL", 1)], 1);
+        let s = m.snapshot();
+        let n = &m.names;
+        assert!(s
+            .lookup_resolvable_from(n, None, Some("SQLEDU"), "trx_demand")
+            .is_some());
+        assert!(
+            s.lookup_resolvable_from(n, None, Some("BISCM"), "trx_demand")
+                .is_none(),
+            "다른 스키마 = 없음"
+        );
+        assert!(
+            s.lookup_resolvable_from(n, None, None, "trx_demand")
+                .is_none(),
+            "스냅숏 현재(BISCM)"
+        );
+        assert!(
+            s.lookup_resolvable_from(n, None, Some("BISCM"), "dual")
+                .is_some(),
+            "PUBLIC 시노님"
+        );
+        assert!(
+            s.lookup_resolvable_from(n, Some("SQLEDU"), Some("BISCM"), "trx_demand")
+                .is_some(),
+            "명시 스키마"
+        );
+        let mut m2 = MetaStore::new(1 << 20);
+        m2.set_schemas(&["SQLEDU".into()], None);
+        m2.load_bucket("SQLEDU", ObjectKind::Table, &[obj("TRX_DEMAND", 1)], 1);
+        assert!(
+            m2.snapshot()
+                .lookup_resolvable_from(&m2.names, None, None, "trx_demand")
+                .is_some(),
+            "현재 스키마 미상 = 폴백"
+        );
+    }
 
     /// ★ 명시 갱신(79 §3 · T-187): `mark_stale`는 Loaded → Stale(목록·접두 조회는 그대로) · `mark_columns_unknown`은 컬럼·상세를 비움 ·
     /// 스키마를 주면 그 스키마만 · 모르는 스키마 = 0.

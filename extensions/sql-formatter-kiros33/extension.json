@@ -2,10 +2,10 @@
   "format": 1,
   "id": "sql-formatter-kiros33",
   "name": "SQL Formatter for kiros33",
-  "version": "1.1.0",
+  "version": "1.3.1",
   "kind": "wasm",
   "summary": "SQL formatter following the ansi-sql-format skill — tab-aligned AS/operators · WHERE 1=1 · dash lines around set operators (WASM · formatter extension)",
-  "description": "A SQL formatter extension (ABI v1.1 nx_ext_format). It reuses the app's Basic formatter core (nsql-format: lexer · layout · common options) and adds the kiros33 skill rules on top: vertical tab alignment of AS / comparison operators / ORDER BY direction (longest item → next tab stop · outliers get one tab), AND/OR at the WHERE column, dash comment lines around UNION / UNION ALL / INTERSECT / MINUS, WHERE 1=1 seed. Common options (indent, comma position and gap, keyword case, one-line/multi-line lists, AND/OR position …) come from Preferences ▸ Editor ▸ SQL Formatting; sqlfmt.strict (default on) forces the skill values (tab · width 4 · leading comma · \",\\t\" · 1=1 · UPPER · AND at line start). Extension-only rules live under Preferences ▸ Extensions ▸ SQL Formatter for kiros33. Use it once from the palette (Format With…), set it as the default formatter (Shift+Alt+F), or open Format Preview. 1.1.0: built on the Basic extension API (prepare → tweak → render), so every Basic option applies here too — automatic table aliases, table description comments, dialect translation, parenthesized AND/OR group seeds, gaps after AND/OR and around operators (4+ character operators get one space). PL/SQL block layout stays as written.",
+  "description": "A SQL formatter extension (ABI v1.1 nx_ext_format). It reuses the app's Basic formatter core (nsql-format: lexer · layout · common options) and adds the kiros33 skill rules on top: vertical tab alignment of AS / comparison operators / ORDER BY direction (longest item → next tab stop · outliers get one tab on each side), AND/OR at the WHERE column, dash comment lines around UNION / UNION ALL / INTERSECT / MINUS, WHERE 1=1 seed.\nCommon options (indent, comma position and gap, keyword case, one-line/multi-line lists, AND/OR position …) come from Preferences ▸ Editor ▸ SQL Formatting; ext.sqlfmt_kiros33.strict (default on) forces the skill values (tab · width 4 · leading comma · \",\t\" · 1=1 · UPPER · AND at line start · \";\" on its own line). Extension-only rules live under Preferences ▸ Extensions ▸ SQL Formatter for kiros33. Use it once from the palette (Format With…), set it as the default formatter (Shift+Alt+F), or open Format Preview.\n1.1.0: built on the Basic extension API (prepare → tweak → render), so every Basic option applies here too — automatic table aliases, table description comments, dialect translation, parenthesized AND/OR group seeds, gaps after AND/OR and around operators (4+ character operators get one space). PL/SQL block layout stays as written.\n1.2.0: column aliases always get AS (ext.sqlfmt_kiros33.force_as, default on); items longer than the alignment outlier limit are left out of the tab alignment.\n1.3.0: duplicate column names from joins get numbered / table-qualified / kept aliases (dup_alias); long window OVER (…) clauses break into PARTITION BY / ORDER BY / frame lines (window_break); the outlier limit (default 40) is measured from the first non-blank character and outliers get exactly one tab before and after AS / the operator; BETWEEN and IS [NOT] NULL are aligned as operators; ORDER BY direction alignment also covers items without a direction; the preview marks (▶ preview line n) for every extension setting now come from the extension itself.\n1.3.1: multi-line items (a window OVER (…) closing on its own line) join the AS alignment block, so the \")\" line gets the same AS column as its neighbours.",
   "author": "SosomLab",
   "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/sql-formatter-kiros33",
@@ -16,11 +16,11 @@
     "linux"
   ],
   "requires": [],
-  "settings_prefix": "sqlfmt.",
+  "settings_prefix": "ext.sqlfmt_kiros33.",
   "files": [
     {
       "path": "sql_formatter_kiros33.wasm",
-      "sha256": "97bc37561ffe8a45c875d405dbfb2250696b61b9b840c99b86ad44e66d2ee535",
+      "sha256": "634bfae5fd065997d4bd467f560d5550b885b6872b5b797c0e40ecd05ef5c256",
       "dest": ""
     }
   ],

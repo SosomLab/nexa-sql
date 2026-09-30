@@ -76,6 +76,9 @@ pub struct Menu {
 pub struct Formatter {
     pub label: Label,
     pub sample: String,
+    /// ★ 설정 → 미리보기 표식(09-30 "확장 것은 확장에"): `(설정 키, 조각)` — 호스트는 그 설정 카드에 "▶ 미리보기 n행"을
+    /// 붙인다(조각 = 미리보기 결과에서 공백·탭을 지우고 대문자로 바꾼 뒤 처음 포함되는 줄). 비면 표식 없음.
+    pub marks: Vec<(String, String)>,
 }
 
 /// 확장 메타(호스트가 `nx_ext_meta`로 한 번 읽는다).
@@ -83,7 +86,7 @@ pub struct Formatter {
 pub struct Meta {
     pub id: String,
     pub name: String,
-    /// 이 확장이 읽는 설정 키 접두(예 `rainbowpair.`) — 이 접두의 키가 바뀌면 `on_settings`가 불린다.
+    /// 이 확장이 읽는 설정 키 접두(예 `ext.rainbow_pairs.`) — 이 접두의 키가 바뀌면 `on_settings`가 불린다.
     pub settings_prefix: String,
     pub commands: Vec<Command>,
     pub menus: Vec<Menu>,
@@ -95,12 +98,19 @@ impl Meta {
     pub fn to_json(&self) -> Json {
         let mut o = Json::obj();
         if let Some(f) = &self.formatter {
-            o = o.with(
-                "formatter",
-                Json::obj()
-                    .with("label", f.label.to_json())
-                    .with("sample", f.sample.as_str()),
-            );
+            let mut fo = Json::obj()
+                .with("label", f.label.to_json())
+                .with("sample", f.sample.as_str());
+            if !f.marks.is_empty() {
+                fo = fo.with(
+                    "marks",
+                    f.marks
+                        .iter()
+                        .map(|(k, m)| Json::obj().with("key", k.as_str()).with("mark", m.as_str()))
+                        .collect::<Vec<_>>(),
+                );
+            }
+            o = o.with("formatter", fo);
         }
         o.with("abi", 1i64)
             .with("id", self.id.as_str())
@@ -253,6 +263,11 @@ impl Editor {
     pub fn goto_bracket_child(&mut self, shift: bool) -> bool {
         host::editor_op(op::CHILD, shift)
     }
+
+    /// ★ 활성 문서의 파일 경로(09-30 · docs/97) — 파일이 아닌 스크립트 탭이면 `None`.
+    pub fn doc_path(&self) -> Option<String> {
+        host::get(query::DOC_PATH).filter(|p| !p.is_empty())
+    }
 }
 
 /// 로그 한 줄(앱 로그 창 · 개발자 모드 `ext` 층).
@@ -338,6 +353,9 @@ pub mod host {
     extern "C" {
         fn nx_editor_op(op: i32, flag: i32) -> i32;
         fn nx_log(ptr: i32);
+        /// ★ 호스트 상황 조회(09-30 · docs/97 §2): `kind`(`query::*`) 값을 `ptr` 버퍼(길이 접두 · `cap` 본문 상한)에 써 준다 ·
+        /// 반환 = 쓴 길이(모르는 종류·안 맞음 = -1).
+        fn nx_host_get(kind: i32, ptr: i32, cap: i32) -> i32;
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -353,12 +371,40 @@ pub mod host {
         super::buf::free(buf);
     }
 
+    /// 호스트 상황 값 하나(문자열) — 없으면 None.
+    #[cfg(target_arch = "wasm32")]
+    pub fn get(kind: i32) -> Option<String> {
+        const CAP: usize = 4096;
+        let p = super::buf::alloc(CAP);
+        // SAFETY: 호스트가 링크한 import · 버퍼는 우리가 방금 마련했고 아래에서 회수한다.
+        let n = unsafe { nx_host_get(kind, p as i32, CAP as i32) };
+        let out = if n >= 0 {
+            // SAFETY: 호스트가 길이 접두 + 본문을 썼다(n ≤ CAP).
+            Some(unsafe { super::buf::read(p) })
+        } else {
+            None
+        };
+        // alloc(len)은 길이 접두 4바이트 자리를 비워 두므로 free가 읽는 길이는 호스트가 쓴 값(≤ CAP) — 못 썼으면 0.
+        super::buf::free(p);
+        out
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn editor_op(_op: i32, _flag: bool) -> bool {
         false
     }
     #[cfg(not(target_arch = "wasm32"))]
     pub fn log(_msg: &str) {}
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get(_kind: i32) -> Option<String> {
+        None
+    }
+}
+
+/// `nx_host_get`의 종류 번호(호스트와 같은 표 · docs/97 §2).
+pub mod query {
+    /// 활성 문서의 파일 경로(저장된 파일이 아니면 빈 글).
+    pub const DOC_PATH: i32 = 1;
 }
 
 /// 버퍼 규약(4바이트 LE 길이 + 본문) — export 매크로가 쓴다.
@@ -484,12 +530,12 @@ mod tests {
     #[test]
     fn format_request_and_response_json() {
         let r = FormatRequest::from_json(
-            r#"{"text":"select 1","dialect":"oracle","options":{"format.comma":"leading"},"settings":{"sqlfmt.strict":"on"},"preview":true}"#,
+            r#"{"text":"select 1","dialect":"oracle","options":{"format.comma":"leading"},"settings":{"ext.sqlfmt_kiros33.strict":"on"},"preview":true}"#,
         );
         assert_eq!(r.text, "select 1");
         assert_eq!(r.dialect, "oracle");
         assert_eq!(r.options.get("format.comma"), Some("leading"));
-        assert!(r.settings.flag("sqlfmt.strict") && r.preview);
+        assert!(r.settings.flag("ext.sqlfmt_kiros33.strict") && r.preview);
         assert_eq!(format_response(Ok("X".into())), r#"{"text":"X"}"#);
         assert_eq!(format_response(Err("bad".into())), r#"{"error":"bad"}"#);
         let m = Meta {
@@ -497,12 +543,31 @@ mod tests {
             formatter: Some(Formatter {
                 label: Label::en("F"),
                 sample: "select 1".into(),
+                marks: Vec::new(),
             }),
             ..Meta::default()
         };
         let j = json::dump(&m.to_json());
         assert!(
             j.contains(r#""formatter":{"label":{"en":"F"},"sample":"select 1"}"#),
+            "{j}"
+        );
+    }
+
+    /// 포맷터 미리보기 표식(09-30): 있을 때만 `marks` 배열.
+    #[test]
+    fn formatter_marks_json() {
+        let m = Meta {
+            formatter: Some(Formatter {
+                label: Label::en("F"),
+                sample: String::new(),
+                marks: vec![("ext.x.a".into(), "SELECT".into())],
+            }),
+            ..Meta::default()
+        };
+        let j = json::dump(&m.to_json());
+        assert!(
+            j.contains(r#""marks":[{"key":"ext.x.a","mark":"SELECT"}]"#),
             "{j}"
         );
     }

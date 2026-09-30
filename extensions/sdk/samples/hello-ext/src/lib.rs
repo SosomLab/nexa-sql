@@ -12,15 +12,15 @@ impl Extension for Hello {
         Meta {
             id: "hello-ext".into(),
             name: "Hello Extension".into(),
-            settings_prefix: "hello.".into(),
+            settings_prefix: "ext.hello.".into(),
             commands: vec![Command {
-                id: "hello.say".into(),
+                id: "ext.hello.say".into(),
                 label: Label::new("Hello: Say Hi", "Hello: 인사"),
             }],
             menus: vec![Menu {
                 id: "hello".into(),
                 label: Label::new("Hello", "헬로"),
-                items: vec!["hello.say".into()],
+                items: vec!["ext.hello.say".into()],
             }],
             formatter: None,
         }
@@ -32,7 +32,7 @@ impl Extension for Hello {
     }
 
     fn run(cmd: &str, _ed: &mut Editor) -> bool {
-        if cmd == "hello.say" {
+        if cmd == "ext.hello.say" {
             nexa_ext_sdk::log("hello from wasm");
             return true;
         }

@@ -327,6 +327,8 @@ struct App {
     open_prefs: bool,
     /// 기동 명령 `edit.prefs:<검색어>` — 설정 창을 열면서 넣을 검색어(자체 캡처용).
     prefs_query: Option<String>,
+    /// 설정 창을 이 분류로 열기(확장 "설정" 버튼 · 사용자 09-30).
+    prefs_category: Option<Msg>,
     prefs_win: PrefsWin,
     /// 좌측 활동 막대(VS Code식 · 사용자 09-15) — 패널 토글 + 동작 버튼.
     act_bar: ActivityBar,
@@ -341,6 +343,8 @@ struct App {
     project_autosave_at: Instant,
     /// 마지막으로 쓴/읽은 프로젝트 **문서 전체**(헤더 JSON + 탭 payload 블록 · `Project::to_document`) — 바뀜 비교용.
     project_last_json: Vec<u8>,
+    /// 자동 저장 캡처의 탭별 기억(탭 id → 앵커·스냅숏·디스크 해시 · 사용자 09-30).
+    capture_cache: std::collections::HashMap<u64, backups::CaptureMark>,
     /// 사건(탭 열기/닫기/전환 · 폴더 변경) 뒤 2초 디바운스 저장(09-23).
     project_touch_at: Option<Instant>,
     /// ★ 프로젝트 변경 추적(사용자 09-28 · 상태줄 `*자동 저장`): 구조 변경(탭 열기/닫기/이동 · 폴더) 카운터 + 마지막 저장 때의 세대.
@@ -461,6 +465,11 @@ struct App {
     ext_view: ext_view::ExtView,
     ext_details: HashMap<String, ext_view::ExtDetail>,
     ext_view_key: String,
+    /// ★ 포인터 캡처(사용자 09-30 "드래그 컨트롤은 영역 밖에서 놓아도 기본 처리"): 누른 영역 — MouseUp까지 그 영역이 이동·놓임을 받는다.
+    press_capture: Option<Focus>,
+    /// ★ hover 이탈 통지(사용자 09-30 "마우스가 없는데 탐색기 툴팁이 남는다"): 커서가 마지막으로 든 영역 — 떠나면 그 영역에
+    ///   영역 밖 MouseMove(-1,-1)를 한 번 보내 hover·툴팁을 걷는다(커서 아래 라우팅은 떠남을 알리지 못한다).
+    hover_area: Option<Focus>,
     /// ★ SQL 포맷 미리보기(엔진 id, 원본) — 미리보기 탭이 열려 있는 동안 설정 변경마다 다시 그린다(docs/95).
     format_preview: Option<(String, String)>,
     /// 탐색기 유휴 워터마크의 다음 시각(docs/57 T2).
@@ -1410,6 +1419,7 @@ fn main() {
             settings.flag("explorer.visible"),
         );
         e.set_icons(settings.flag("explorer.icons"));
+        e.set_sizes(settings.flag("explorer.sizes"));
         e.set_tooltip(settings.flag("explorer.tooltip"));
         e.set_load_timeout(settings.int("explorer.timeout").clamp(0, 600) as u64);
         e.set_typeahead(typeahead_cfg(&settings));
@@ -1577,6 +1587,7 @@ fn main() {
         keys_win,
         open_prefs: false,
         prefs_query: None,
+        prefs_category: None,
         prefs_win,
         act_bar,
         file_win,
@@ -1585,6 +1596,7 @@ fn main() {
         tab_defines: HashMap::new(),
         project_autosave_at: Instant::now(),
         project_last_json: Vec::new(),
+        capture_cache: std::collections::HashMap::new(),
         project_touch_at: None,
         project_touch_seq: 0,
         project_gen_saved: 0,
@@ -1660,6 +1672,8 @@ fn main() {
         ext_view: ext_view::ExtView::default(),
         ext_details: HashMap::new(),
         ext_view_key: String::new(),
+        press_capture: None,
+        hover_area: None,
         format_preview: None,
         meta_refresh_next: None,
         ext_watch: None,
@@ -1733,6 +1747,7 @@ fn main() {
         panel_results: HashMap::new(),
     };
     app.grid.set_row_snap(row_snap);
+    app.apply_fast_scroll();
     app.apply_result_tab_opts();
     // 검색어 이력(전역 한 벌)을 상자를 가진 곳마다 건넨다(찾기/바꾸기 · 파일 검색 · 프로젝트/북마크/아웃라인/확장 필터 · 설정 검색 · 사용자 09-23).
     {

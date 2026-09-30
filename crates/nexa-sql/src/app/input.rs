@@ -177,6 +177,10 @@ impl App {
     /// 포커스 텍스트 박스(IME·편집 컨텍스트 라우팅).
     pub(crate) fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         match self.focus {
+            // ★ 뷰 탭(확장 상세)이 활성이면 클립보드 동작(⌘/Ctrl+C·A)의 대상은 그 본문 상자(사용자 09-30).
+            Focus::Editor if self.editors.active_view().is_some() => {
+                Some(self.ext_view.textbox_mut())
+            }
             Focus::Editor => Some(self.editors.cur_mut()),
             Focus::Find => self.find.focused_textbox(),
             Focus::Search => self.search.focused_textbox(),
@@ -469,6 +473,46 @@ impl App {
         //   탐색기·툴바의 우클릭 분기가 처음부터 닿지 않는 코드였다(메뉴 코드는 있었지만 실제 입력으로는 열리지 않았다).
         //   우클릭 메뉴가 있는 영역은 `is_ptr`로 판정한다.
         let is_ptr = is_mouse || matches!(ev, InputEvent::RightDown { .. });
+        // ★ 포인터 캡처 부품(사용자 09-30 "글자 선택 드래그가 있는 컨트롤은 영역 밖에서 놓아도 기본 처리" · 61 §2-2-c): 누른
+        //   영역을 기억하고, 커서가 그 영역 밖으로 나간 **이동·놓임**은 커서 아래 컨트롤이 아니라 **누른 영역**에 준다(그 영역이
+        //   포커스일 때만 — 팝업·메뉴가 누름을 먹은 경우는 제외). 놓임으로 캡처가 끝난다. 개별 컨트롤마다 고치지 않는다.
+        if let InputEvent::MouseMove { x, y } = ev {
+            // ★ hover 이탈 통지: 영역이 바뀌면 이전 영역에 "밖" 이동을 한 번(툴팁·hover 정리). 지금은 hover 상태를 스스로 못 걷는
+            //   객체 탐색기·객체 상세만(다른 영역은 자기 MouseMove에서 걷는다) — 새 영역이 툴팁을 갖게 되면 여기 한 줄.
+            let now_area = self.area_at(Point { x, y });
+            if now_area != self.hover_area {
+                let out = InputEvent::MouseMove { x: -1, y: -1 };
+                let left = match self.hover_area {
+                    Some(Focus::Explorer) => self.explorer.on_event(&out),
+                    Some(Focus::Details) => self.objdetail.on_event(&out, Instant::now()),
+                    _ => false,
+                };
+                if left {
+                    self.redraw();
+                }
+                self.hover_area = now_area;
+            }
+        }
+        if let InputEvent::MouseDown { x, y, .. } = ev {
+            self.press_capture = self.area_at(Point { x, y });
+        } else if is_mouse {
+            if let Some(area) = self.press_capture {
+                let up = matches!(ev, InputEvent::MouseUp { .. });
+                let cur = Point {
+                    x: self.cursor.0,
+                    y: self.cursor.1,
+                };
+                let outside = !self.area_bounds(area).contains(cur);
+                if up {
+                    self.press_capture = None;
+                }
+                if outside && self.focus == area {
+                    self.dispatch_captured(area, ev, &mut inv);
+                    self.redraw();
+                    return;
+                }
+            }
+        }
         // ★ 탐색기 우클릭 메뉴는 **창 위에** 뜬다(탐색기 폭에 갇히지 않는다 · 09-21) → 열려 있는 동안은 다른 영역(분할선·탭 바·
         //   편집기)보다 **먼저** 사건을 받는다. 메뉴 안 = 메뉴가 먹는다 · 키·휠 = 메뉴가 먹는다 · 바깥 클릭 = 메뉴를 닫고 그 클릭은
         //   그대로 아래로 흘려 보낸다(CLAUDE.md §3 팝업 규칙 — 다음 동작이 한 번의 입력으로 이어지게).
@@ -1587,6 +1631,132 @@ impl App {
         false
     }
 
+    /// 포인터 캡처: 점 아래의 **영역**(보이는 것만 · 팝업·바·스플리터는 영역이 아니다).
+    fn area_at(&self, p: Point) -> Option<Focus> {
+        if self.editors.editor_bounds().contains(p) {
+            return Some(Focus::Editor);
+        }
+        if self.grid.area().contains(p) {
+            return Some(Focus::Grid);
+        }
+        let panels: [(Focus, bool, Rect); 8] = [
+            (
+                Focus::Explorer,
+                self.explorer.is_visible(),
+                self.explorer.hit_bounds(),
+            ),
+            (
+                Focus::Project,
+                self.project_panel.is_visible(),
+                self.project_panel.bounds(),
+            ),
+            (
+                Focus::Bookmarks,
+                self.bm_panel.is_visible(),
+                self.bm_panel.bounds(),
+            ),
+            (
+                Focus::Outline,
+                self.outline_panel.is_visible(),
+                self.outline_panel.bounds(),
+            ),
+            (
+                Focus::Ext,
+                self.ext_panel.is_visible(),
+                self.ext_panel.bounds(),
+            ),
+            (
+                Focus::Search,
+                self.search.is_visible(),
+                self.search.bounds(),
+            ),
+            (Focus::Find, self.find.is_visible(), self.find.bounds()),
+            (
+                Focus::Details,
+                self.objdetail.is_visible(),
+                self.objdetail.bounds(),
+            ),
+        ];
+        panels
+            .into_iter()
+            .find(|(_, vis, b)| *vis && b.contains(p))
+            .map(|(f, _, _)| f)
+    }
+
+    fn area_bounds(&self, area: Focus) -> Rect {
+        match area {
+            Focus::Editor => self.editors.editor_bounds(),
+            Focus::Grid => self.grid.area(),
+            Focus::Explorer => self.explorer.hit_bounds(),
+            Focus::Project => self.project_panel.bounds(),
+            Focus::Bookmarks => self.bm_panel.bounds(),
+            Focus::Outline => self.outline_panel.bounds(),
+            Focus::Ext => self.ext_panel.bounds(),
+            Focus::Search => self.search.bounds(),
+            Focus::Find => self.find.bounds(),
+            Focus::Details => self.objdetail.bounds(),
+        }
+    }
+
+    /// 캡처된 영역에 이동·놓임을 전달(그 영역의 평소 경로와 같은 후속 처리).
+    fn dispatch_captured(&mut self, area: Focus, ev: InputEvent, inv: &mut Invalidations) {
+        match area {
+            Focus::Editor => {
+                if self.editors.active_view().is_some() {
+                    self.ext_view.on_event(&ev);
+                    self.ext_view_actions();
+                } else {
+                    self.ed_mut().on_event(&ev, inv);
+                    if let Some(act) = self.ed_mut().take_edit_ctx() {
+                        self.clip_action(act);
+                    }
+                }
+            }
+            Focus::Grid => {
+                self.grid.set_shift(self.shift);
+                self.grid.on_event(&ev, self.scale);
+                self.after_grid_event();
+            }
+            Focus::Explorer => {
+                self.explorer.on_event(&ev);
+                self.explorer_actions();
+            }
+            Focus::Project => {
+                self.project_panel.on_event(&ev);
+                self.project_pump();
+            }
+            Focus::Bookmarks => {
+                self.bm_panel.on_event(&ev);
+                self.bm_pump();
+            }
+            Focus::Outline => {
+                self.outline_panel.on_event(&ev);
+                self.outline_pump();
+            }
+            Focus::Ext => {
+                self.ext_panel.on_event(&ev);
+                self.ext_panel_actions();
+            }
+            Focus::Search => {
+                self.search.on_event(&ev);
+                if self.search.take_request() {
+                    self.start_search();
+                }
+            }
+            Focus::Find => {
+                let a = self.find.on_event(&ev);
+                self.find_action(a);
+                if let Some(act) = self.find.take_edit_ctx() {
+                    self.clip_action(act);
+                }
+            }
+            Focus::Details => {
+                self.objdetail.on_event(&ev, Instant::now());
+                self.detail_actions();
+            }
+        }
+    }
+
     /// 뷰 탭(확장 상세). 가져갔으면 `true`(연쇄 끝).
     fn route_view_tab(&mut self, ev: InputEvent, is_mouse: bool) -> bool {
         if self.editors.active_view().is_some() {
@@ -1597,9 +1767,15 @@ impl App {
             let in_view = self.editors.editor_bounds().contains(cur);
             let pointer =
                 is_mouse || matches!(ev, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
-            if pointer && in_view {
-                if matches!(ev, InputEvent::MouseDown { .. }) {
+            // 우클릭 메뉴가 열려 있으면 포인터 사건은 전부 뷰로(항목 선택 · 바깥 클릭 = 닫기).
+            let popup = self.ext_view.popup_open();
+            if pointer && (in_view || popup) {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
                     self.set_focus(Focus::Editor);
+                    self.ext_view.set_focused(true);
                 }
                 if self.ext_view.on_event(&ev) {
                     self.redraw();
@@ -1608,6 +1784,10 @@ impl App {
                 return true;
             }
             if !pointer && self.focus == Focus::Editor {
+                // ★ 키·전체 선택 = 읽기 전용 본문 상자(캐럿·선택·스크롤 · 사용자 09-30) — 글은 바뀌지 않는다.
+                if self.ext_view.on_event(&ev) {
+                    self.redraw();
+                }
                 return true;
             }
         }

@@ -64,18 +64,21 @@
 > 1차(§2)는 **접속 0인 빈 창**만 봤다. 그 뒤 들어온 기능(큰 파일 모드 · 변수 관리 · 결과 다중 탭 · 확장 패널 · 프로젝트 탐색기 · 토스트 진행 막대)이 향상 모드에서 실제로 꺼지는지, 그리고 **사용자가 일하는 상태**(접속·큰 스크립트·10만 행 결과·패널)에서 얼마를 버는지가 이번 질문이다.
 > 방법: `scripts/win-perf-all.ps1 -Stages boost` — 규정 시나리오 7개([71 §3](71-performance-review-process.md))를 **off → on 번갈아** · Release · 격리 `NSQL_HOME` · 입력 주입 0 · 유휴 CPU는 6초 창. 원자료 `target/perf-win-2026-09-22/`.
 
-### 4-1. 강제 키 — 26개(09-17) → **36개**(09-22) → **37개**(09-22 후반 · `project.icons`) → **38개**(09-23 · `intel.auto_activation`)
+### 4-1. 강제 키 — 26개(09-17) → **36개**(09-22) → **37개**(09-22 후반 · `project.icons`) → **38개**(09-23 · `intel.auto_activation`) → **52개**(09-30 · 코드 기준 실측 · 아래 표는 09-17 이후 들어온 것 중 기록된 것)
 
 | 09-17 이후 들어온 강제 키 | 무엇을 끄나 | 넣은 근거 |
 |---|---|---|
 | `editor.diff_marks` · `log.dev_mode` | 편집마다 줄 디프 · 상세 로그 게이트 | 09-17 후반 |
-| `rainbowpair.enabled` | 괄호 색 대비 계산 | 09-19 |
+| `ext.rainbow_pairs.enabled` | 괄호 색 대비 계산 | 09-19 |
 | `tx.block_poll_secs`=0 · `meta.refresh_secs`=0 · `file.external_poll_ms`=0 | 막힘 감지 · 탐색기 워터마크 · 외부 변경 폴링 | 79~81차(데이터 안전 기능 L1·L2와 T1·T4는 **건드리지 않는다**) |
 | `meta.refresh_highlight_ms`=0 · `editor.undo_persist`=off | 갱신 강조의 잔여 프레임 · 되돌리기 기록 파일 I/O | 89차 |
 | `grid.result_tabs`=off | 동시에 들고 있는 결과 수 | 89차 끝(사용자 결정 — 메모리 억제가 목적) |
 | `ui.toast_progress`=off | 토스트가 떠 있는 동안 30 ms 틱 | 93차 |
 | `project.icons`=off | 프로젝트 탐색기의 OS 셸 아이콘 조회(워커 스레드 + COM · 셸 이미지 리스트) | 95차 후반 · **96차 실측** [26 §7-10](26-performance-architecture.md) = 패널 시나리오 11.79 → **9.77 MB · 핸들 281 → 225 · GDI 76 → 36** — 강제 키 하나로 되돌아가는 유일한 시나리오 차이 |
 | `intel.auto_activation`=off | 코드 완성 자동 팝업(타이핑마다 후보 계산 · 250 ms 디바운스 깨움) — 수동 Ctrl+Space·아웃라인은 그대로 | 98차([76](76-intellisense-and-outline.md) · 39 §3 등재) |
+| `objlink.display`=none | Ctrl 객체 링크 밑줄 다시 그리기(동작 = Ctrl+클릭·툴팁은 유지) | 102차 T-256([96](96-object-links.md)) · 09-30 이 표에 등재 |
+| `explorer.sizes`=off | 객체 탐색기 용량 표시(세그먼트 크기 질의 · 서버 왕복) | 09-30 |
+| `scroll.fast_hud`=off | 고속 스크롤 속도 HUD의 유지·페이드 프레임(가속 자체는 큐·타이머 0이라 그대로) | 09-30 |
 
 **넣지 않은 것**(결과가 바뀐다 → 개별 스위치로만): `vars.signature_lookup` · `pg.refcursor_expand` · `vars.persist` · `grid.result_per_statement` · 큰 파일 단계(`file.large_*`) · `project.*`(패널을 닫으면 0이라 강제할 이유가 없다) · `ui.ime_hint`(포커스 조건부 · low 프리셋에서만 off) · `gfx.mac_present`(macOS 전용 · D-133 대기).
 

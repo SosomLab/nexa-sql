@@ -1047,6 +1047,7 @@ impl App {
                 RunEvent::Connected {
                     description,
                     dialect,
+                    schema,
                 } => {
                     self.sess.disc_path = None;
                     self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
@@ -1056,6 +1057,7 @@ impl App {
                     }
                     self.sess.dialect = dialect;
                     self.sess.connected = true;
+                    self.sess.cur_schema = Some(schema).filter(|s| !s.is_empty());
                     self.sess.broken = false;
                     self.sess.user_disconnected = false;
                     self.sess.idle_closed = false;

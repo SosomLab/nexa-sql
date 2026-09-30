@@ -63,6 +63,8 @@ pub(crate) struct Sess {
     pub busy: bool,
     /// 진행 중인 보조 요청 수(추가 페치 · 전체 조회 · 건수 · 키 조회 — 각자의 응답으로 줄어든다).
     pub aux: u32,
+    /// ★ 서버가 답한 현재 스키마(접속 직후 · `RunEvent::Connected.schema` · 빈 값 = 모름) — Ctrl 링크 등 이름 풀이의 기준.
+    pub cur_schema: Option<String>,
     pub connected: bool,
     /// 접속 설명(비밀번호 가림) — 탭 툴팁·상태줄.
     pub desc: String,
@@ -175,6 +177,7 @@ impl Sess {
             events,
             busy: false,
             aux: 0,
+            cur_schema: None,
             connected: false,
             desc: String::new(),
             profile: String::new(),

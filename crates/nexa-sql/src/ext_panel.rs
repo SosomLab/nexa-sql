@@ -28,6 +28,8 @@ pub(crate) struct ExtRow {
     pub catalog: Option<usize>,
     /// 저장소 표시(설치 가능 행의 출처).
     pub source: String,
+    /// ★ 설치본보다 **새 카탈로그 버전**(업데이트 대상 · 사용자 09-30) — 설치됨 + 카탈로그가 더 새 버전을 알 때만 Some.
+    pub latest: Option<String>,
 }
 
 /// 패널이 호스트에 내는 동작.
@@ -35,9 +37,13 @@ pub(crate) struct ExtRow {
 pub(crate) enum ExtPanelAction {
     /// ⟳ — 저장소를 다시 읽는다.
     Refresh,
+    /// 설정 버튼 — 그 확장의 설정 분류로(사용자 09-30).
+    Settings(String),
     /// 행 클릭 — 상세를 연다.
     Open(ExtRow),
     Install(usize),
+    /// ★ 업데이트 = 카탈로그 `n`번을 설치본 위에(관리자가 옛 버전 폴더를 치운다).
+    Update(usize),
     Remove(String),
     Enable(String),
     Disable(String),
@@ -48,15 +54,22 @@ type RowHit = (usize, Rect, Vec<(Btn, Rect)>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Btn {
+    /// ★ 그 확장의 설정 분류로(설치된 것만 활성 · 사용자 09-30).
+    Settings,
     Toggle,
     Remove,
     Install,
+    /// ★ 업데이트(설치본보다 새 카탈로그 버전이 있을 때만 · 강조 버튼).
+    Update,
 }
 
 pub(crate) struct ExtPanel {
     visible: bool,
     focused: bool,
     bounds: Rect,
+    /// ★ 고속 스크롤(이 패널은 오버레이 막대가 없다 → 가속기·HUD를 직접 · 사용자 09-30).
+    accel: nexa_ctl::ScrollAccel,
+    hud: nexa_ctl::SpeedHud,
     scale: f32,
     search: FilterBar,
     rows: Vec<ExtRow>,
@@ -83,6 +96,8 @@ impl ExtPanel {
             visible: false,
             focused: false,
             bounds: Rect::default(),
+            accel: nexa_ctl::ScrollAccel::new(),
+            hud: nexa_ctl::SpeedHud::default(),
             scale: 1.0,
             search: FilterBar::new(t(Msg::PhExtSearch), &[]),
             rows: Vec::new(),
@@ -170,6 +185,11 @@ impl ExtPanel {
         !self.search.text().is_empty()
     }
 
+    /// 지금 목록의 행(호스트가 id로 찾을 때 · 확장 뷰 탭 복원).
+    pub(crate) fn rows(&self) -> &[ExtRow] {
+        &self.rows
+    }
+
     pub(crate) fn take_actions(&mut self) -> Vec<ExtPanelAction> {
         std::mem::take(&mut self.actions)
     }
@@ -237,7 +257,10 @@ impl ExtPanel {
                 }) {
                     return false;
                 }
-                self.scroll -= delta / 120 * self.s(48.0);
+                let cfg = nexa_ctl::fast_scroll();
+                let k = self.accel.factor_cfg(-delta, &cfg);
+                self.hud.note(k, &cfg);
+                self.scroll -= delta / 120 * self.s(48.0) * k;
                 self.clamp_scroll();
                 true
             }
@@ -303,9 +326,14 @@ impl ExtPanel {
                                     Some(n) => ExtPanelAction::Install(n),
                                     None => ExtPanelAction::Open(row),
                                 },
+                                Btn::Update => match row.catalog {
+                                    Some(n) => ExtPanelAction::Update(n),
+                                    None => ExtPanelAction::Open(row),
+                                },
                                 Btn::Remove => ExtPanelAction::Remove(row.id),
                                 Btn::Toggle if row.enabled => ExtPanelAction::Disable(row.id),
                                 Btn::Toggle => ExtPanelAction::Enable(row.id),
+                                Btn::Settings => ExtPanelAction::Settings(row.id),
                             });
                         }
                     }
@@ -350,7 +378,11 @@ impl ExtPanel {
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
-        self.visible && self.search.tick(now_ms)
+        self.visible
+            && (self.search.tick(now_ms)
+                | self
+                    .hud
+                    .tick(std::time::Instant::now(), &nexa_ctl::fast_scroll()))
     }
 
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
@@ -404,11 +436,21 @@ impl ExtPanel {
         let sec_h = lh + self.s(10.0);
         let mut y = list.y - self.scroll;
         self.hits.clear();
+        let updates = inst
+            .iter()
+            .filter(|&&i| self.rows[i].latest.is_some())
+            .count();
         let sections: [(Msg, &Vec<usize>, Msg); 2] = [
             (Msg::ExtPanelInstalled, &inst, Msg::ExtPanelNoneInstalled),
             (Msg::ExtPanelAvailable, &avail, Msg::ExtPanelNoneAvailable),
         ];
         for (title, items, empty) in sections {
+            // ★ 설치됨 제목 뒤 " · 업데이트 M"(대상이 있을 때만 · 사용자 09-30).
+            let extra = if title == Msg::ExtPanelInstalled && updates > 0 {
+                tf(Msg::ExtPanelUpdates, &[&updates.to_string()])
+            } else {
+                String::new()
+            };
             let sec = Rect::new(list.x, y, list.w, sec_h);
             if let Some(c) = clip(sec, list) {
                 dc.fill_rect(c, th.panel_bg_alt);
@@ -417,7 +459,7 @@ impl ExtPanel {
                     sec.x + pad,
                     sec.y + (sec_h - lh) / 2,
                     c,
-                    &tf(title, &[&items.len().to_string()]),
+                    &format!("{}{extra}", tf(title, &[&items.len().to_string()])),
                     th.text,
                 );
                 dc.select_font(FontSlot::Base, false);
@@ -455,20 +497,41 @@ impl ExtPanel {
                     th.text
                 };
                 dc.text(r.x + pad, r.y + self.s(5.0), c, &row.name, name_color);
+                let nw = dc.text_width(&row.name);
                 dc.select_font(FontSlot::Base, false);
-                let ver = format!("{} · {}", row.version, row.kind);
-                let vw = dc.text_width(&ver);
+                // ★ 버전은 이름 바로 옆 `v1.2.0`(사용자 09-30 "버전 확인이 어렵다") · 업데이트 대상이면 `→ v1.3.0` 강조색 ·
+                //   오른쪽 끝 = 종류(흐림).
+                let mut vx = r.x + pad + nw + self.s(8.0);
+                let ver = format!("v{}", row.version);
+                dc.text(vx, r.y + self.s(5.0), c, &ver, th.text_dim);
+                vx += dc.text_width(&ver) + self.s(6.0);
+                if let Some(nv) = &row.latest {
+                    let up = format!("→ v{nv}");
+                    dc.text(vx, r.y + self.s(5.0), c, &up, th.accent);
+                }
+                let kw = dc.text_width(&row.kind);
                 dc.text(
-                    r.right() - pad - vw,
+                    r.right() - pad - kw,
                     r.y + self.s(5.0),
                     c,
-                    &ver,
+                    &row.kind,
                     th.text_dim,
                 );
                 // 2줄: 설명(왼쪽) + 버튼(오른쪽).
                 let y2 = r.y + self.s(5.0) + lh + self.s(2.0);
-                let labels: Vec<(Btn, String)> = if row.installed {
-                    vec![
+                // 설정 버튼은 늘 맨 앞(끄기/설치 앞) · 설치된 것만 활성(사용자 09-30).
+                let settings = (
+                    Btn::Settings,
+                    t(Msg::ExtBtnSettings).to_string(),
+                    row.installed,
+                );
+                let labels: Vec<(Btn, String, bool)> = if row.installed {
+                    let mut v = Vec::new();
+                    if row.latest.is_some() && row.catalog.is_some() {
+                        v.push((Btn::Update, t(Msg::ExtBtnUpdate).to_string(), true));
+                    }
+                    v.extend([
+                        settings,
                         (
                             Btn::Toggle,
                             t(if row.enabled {
@@ -477,26 +540,41 @@ impl ExtPanel {
                                 Msg::ExtBtnEnable
                             })
                             .to_string(),
+                            true,
                         ),
-                        (Btn::Remove, t(Msg::ExtBtnRemove).to_string()),
-                    ]
+                        (Btn::Remove, t(Msg::ExtBtnRemove).to_string(), true),
+                    ]);
+                    v
                 } else {
-                    vec![(Btn::Install, t(Msg::ExtBtnInstall).to_string())]
+                    vec![
+                        settings,
+                        (Btn::Install, t(Msg::ExtBtnInstall).to_string(), true),
+                    ]
                 };
                 let mut bx = r.right() - pad;
                 let mut btns = Vec::new();
-                for (kind, label) in labels.iter().rev() {
-                    let bw = dc.text_width(label) + self.s(14.0);
+                // ★ 버튼 = 보조(Status) 글꼴 · 폭 = 그 언어의 글 폭 + 여백(사용자 09-30 "글자 작게 · i18n에 맞춰").
+                dc.select_font(FontSlot::Status, false);
+                let blh = dc.text_height();
+                for (kind, label, enabled) in labels.iter().rev() {
+                    let bw = dc.text_width(label) + self.s(10.0);
                     bx -= bw;
-                    let br = Rect::new(bx, y2 - self.s(1.0), bw, lh + self.s(4.0));
-                    let bhot = self.hover == Some((i, Some(*kind)));
-                    let bdown = self.pressed == Some((i, *kind));
+                    let br = Rect::new(bx, y2, bw, blh + self.s(3.0));
+                    let bhot = *enabled && self.hover == Some((i, Some(*kind)));
+                    let bdown = *enabled && self.pressed == Some((i, *kind));
                     let st = nexa_ctl::tokens::State::of(false, bhot, bdown, true);
                     let ly = y2 + self.s(1.0) + if bdown { self.s(1.0) } else { 0 };
-                    if *kind == Btn::Install {
+                    if !*enabled {
+                        // 비활성 = 흐린 테두리·글자 · 히트 없음.
+                        dc.stroke_round_rect(br, self.s(4.0), th.border, 1.0);
+                        dc.text(br.x + self.s(5.0), ly, br, label, th.text_dim);
+                        bx -= self.s(5.0);
+                        continue;
+                    }
+                    if matches!(kind, Btn::Install | Btn::Update) {
                         dc.fill_round_rect(br, self.s(4.0), th.accent);
                         dc.state_layer(br, th.text, st);
-                        dc.text(br.x + self.s(7.0), ly, br, label, th.panel_bg);
+                        dc.text(br.x + self.s(5.0), ly, br, label, th.panel_bg);
                     } else {
                         dc.fill_round_rect(br, self.s(4.0), th.field_bg);
                         dc.state_layer(br, th.text, st);
@@ -506,11 +584,12 @@ impl ExtPanel {
                             if bhot || bdown { th.accent } else { th.border },
                             1.0,
                         );
-                        dc.text(br.x + self.s(7.0), ly, br, label, th.text);
+                        dc.text(br.x + self.s(5.0), ly, br, label, th.text);
                     }
                     btns.push((*kind, br));
-                    bx -= self.s(6.0);
+                    bx -= self.s(5.0);
                 }
+                dc.select_font(FontSlot::Base, false);
                 let sum_clip = Rect::new(r.x + pad, y2, (bx - r.x - pad).max(0), lh + self.s(4.0));
                 if let Some(sc) = clip(sum_clip, list) {
                     dc.text(r.x + pad, y2 + self.s(1.0), sc, &row.summary, th.text_dim);
@@ -532,6 +611,9 @@ impl ExtPanel {
             y += sec_h + self.s(4.0);
         }
         self.content_h = y + self.scroll - list.y;
+        // 속도 HUD(목록 영역 · 설정 위치).
+        self.hud
+            .paint(dc, th, list, self.scale, &nexa_ctl::fast_scroll());
     }
 }
 
@@ -555,6 +637,7 @@ mod tests {
             enabled,
             catalog,
             source: String::new(),
+            latest: None,
         }
     }
 

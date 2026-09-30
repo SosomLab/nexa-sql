@@ -72,6 +72,38 @@ pub(crate) fn remove(path: &Path) {
 
 /// 스냅숏 읽기(검증용) — 지금 디스크 해시가 스냅숏의 것과 같으면 `Some(본문)` · 다르거나 없으면 None(`Err` = 밖에서 바뀜).
 /// ★ 복원에는 쓰지 않는다(사용자 09-23 "백업은 백업용으로만" — 복원 원천 = 프로젝트 파일 `tabs[].text`) → 시험에서만.
+/// 자동 저장 캡처의 탭별 기억(사용자 09-30 · 72 §3) — 바뀌지 않은 탭은 앵커·스냅숏·디스크 해시를 다시 만들지 않는다.
+#[derive(Default)]
+pub(crate) struct CaptureMark {
+    /// 앵커를 만든 때의 (epoch, change_seq, 캐럿).
+    pub(crate) anchor_key: Option<(u64, u64, usize)>,
+    /// (줄 원문, 앞 줄, 뒷 줄).
+    pub(crate) anchor: (String, String, String),
+    /// 마지막으로 쓴 스냅숏의 (epoch, change_seq).
+    pub(crate) backup_key: Option<(u64, u64)>,
+    /// 디스크 파일 (수정 시각, 길이) → 해시 — 원본이 그대로면 다시 읽지 않는다.
+    disk: Option<(std::time::SystemTime, u64, u64)>,
+    /// 상한 초과 안내를 이미 했다(다시 상한 안으로 들어오면 풀림).
+    pub(crate) over_noticed: bool,
+}
+
+impl CaptureMark {
+    /// 디스크 파일 해시(`backups::disk_hash`) — 수정 시각·길이가 지난번과 같으면 캐시.
+    pub(crate) fn disk_hash(&mut self, p: &std::path::Path) -> u64 {
+        let meta = std::fs::metadata(p)
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len())));
+        if let (Some((t, n)), Some((ct, cn, h))) = (meta, self.disk) {
+            if t == ct && n == cn {
+                return h;
+            }
+        }
+        let h = disk_hash(p);
+        self.disk = meta.map(|(t, n)| (t, n, h));
+        h
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn read_matching(path: &Path) -> Result<Option<String>, ()> {
     let Some(f) = file_of(path) else {

@@ -4,7 +4,7 @@
 
 use crate::gen::GenOpts;
 use crate::tree::{sub_items, sub_kinds, SubKind};
-use crate::{comments, table_detail, ColumnInfo, ObjectInfo, ObjectKind};
+use crate::{comments, object_size_detail, table_detail, ColumnInfo, ObjectInfo, ObjectKind};
 use nsql_core::{DbError, Session};
 
 /// 섹션 종류(라벨은 호스트가 i18n으로).
@@ -80,6 +80,26 @@ pub fn object_details(
         let (tcomment, _) = comments(s, &o.schema, &o.name);
         if let Some(c) = tcomment.filter(|c| !c.trim().is_empty()) {
             props.push(vec!["comment".into(), c]);
+        }
+    }
+    // ★ 용량(사용자 09-30): 테이블·MV·인덱스 = `1.9 GB · 2,043,543,552 bytes · 249,456 blocks × 8 KB`(블록은 DBMS가 줄 때만).
+    if matches!(
+        o.kind,
+        ObjectKind::Table | ObjectKind::MaterializedView | ObjectKind::Index
+    ) {
+        if let Some((bytes, blocks, bs)) = object_size_detail(s, &o.schema, &o.name, o.kind) {
+            let mut v = format!(
+                "{} · {} bytes",
+                nsql_core::fmt_size(bytes),
+                nsql_core::group_digits(bytes)
+            );
+            if let Some(n) = blocks {
+                v.push_str(&format!(" · {} blocks", nsql_core::group_digits(n)));
+                if let Some(b) = bs.filter(|b| *b > 0) {
+                    v.push_str(&format!(" × {}", nsql_core::fmt_size(b)));
+                }
+            }
+            props.push(vec!["size".into(), v]);
         }
     }
     if !o.kind.is_relation() && !is_routine(o.kind) {

@@ -516,6 +516,54 @@ pub fn fmt_dur(d: std::time::Duration) -> String {
     }
 }
 
+/// ★ 용량 표기(사용자 09-30 "정수만 · 단위 알파벳 1자 · 공백 없이" — 앞선 "1.1 GB" 규칙을 대체): 1024 단위로 값이 1 이상인
+/// 가장 큰 단위까지 승격 · **정수 반올림** · `400M` `2G` `576K` `999B` · 반올림이 1024가 되면 한 단위 위(`1G`). 순수 함수.
+#[must_use]
+pub fn fmt_size(b: u64) -> String {
+    let (v, k) = size_parts(b);
+    format!("{v}{}", SIZE_UNITS[k])
+}
+
+/// 단위 글자(0 = B · 1 = K · 2 = M · 3 = G · 4 = T · 5 = P).
+pub const SIZE_UNITS: [char; 6] = ['B', 'K', 'M', 'G', 'T', 'P'];
+
+/// (정수 값, 단위 번호) — [`fmt_size`]와 같은 규칙(단위별 색 등에).
+#[must_use]
+pub fn size_parts(b: u64) -> (u64, usize) {
+    let mut k = 0usize;
+    let mut v = b as f64;
+    while v >= 1024.0 && k + 1 < SIZE_UNITS.len() {
+        v /= 1024.0;
+        k += 1;
+    }
+    let mut r = v.round() as u64;
+    if r >= 1024 && k + 1 < SIZE_UNITS.len() {
+        r = 1;
+        k += 1;
+    }
+    (r, k)
+}
+
+/// [`fmt_size`]가 고르는 단위 번호.
+#[must_use]
+pub fn size_unit(b: u64) -> usize {
+    size_parts(b).1
+}
+
+/// 천 단위 구분(`2,043,543,552`).
+#[must_use]
+pub fn group_digits(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// `1.2 MB` / `345 KB` / `12 B`.
 pub fn fmt_bytes(b: u64) -> String {
     if b >= 1 << 20 {
@@ -1182,6 +1230,7 @@ pub trait Session {
 pub mod bulk;
 pub use bulk::{BulkLoad, BulkOpts, BulkSink};
 pub mod caps;
+pub mod filterq;
 pub mod hangul;
 pub mod secret;
 pub use caps::{CallSignature, Caps, CursorOut, ExecForm, IdentFold, Marker, OutValues};
@@ -1429,5 +1478,27 @@ mod tests {
         assert_eq!(VarType::Varchar2(30).tsql_type(), "NVARCHAR(30)");
         assert_eq!(VarType::Varchar2(8000).tsql_type(), "NVARCHAR(MAX)");
         assert_eq!(VarType::Number.tsql_type(), "DECIMAL(38,10)");
+    }
+
+    /// 단위 승격 · 10 미만 소수 1자리 · `.0` 제거 · 반올림 승격(사용자 09-30).
+    #[test]
+    fn fmt_size_escalates() {
+        use super::fmt_size;
+        assert_eq!(fmt_size(0), "0B");
+        assert_eq!(fmt_size(999), "999B");
+        assert_eq!(fmt_size(1536), "2K");
+        assert_eq!(fmt_size(10_243 << 20), "10G");
+        assert_eq!(fmt_size((1.1 * (1u64 << 30) as f64) as u64), "1G");
+        assert_eq!(fmt_size((1.9 * (1u64 << 30) as f64) as u64), "2G");
+        assert_eq!(fmt_size(1 << 30), "1G");
+        assert_eq!(fmt_size(123 << 20), "123M");
+        assert_eq!(fmt_size((1023.6 * (1u64 << 20) as f64) as u64), "1G");
+        assert_eq!(super::size_unit(999), 0);
+        assert_eq!(super::size_unit(1536), 1);
+        assert_eq!(super::size_unit(10_243 << 20), 3);
+        assert_eq!(super::size_unit((1023.6 * (1u64 << 20) as f64) as u64), 3);
+        assert_eq!(super::group_digits(0), "0");
+        assert_eq!(super::group_digits(999), "999");
+        assert_eq!(super::group_digits(2_043_543_552), "2,043,543,552");
     }
 }

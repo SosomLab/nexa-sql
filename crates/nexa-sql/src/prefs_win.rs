@@ -41,6 +41,10 @@ pub(crate) enum PrefsAction {
     /// 색 창 열기(어느 색 키를 고르는가).
     OpenColors(String),
     OpenKeys,
+    /// `format.default` 카드의 "설정" 바로가기 — 그 확장(id)의 설정 분류로(사용자 09-30).
+    OpenExtSettings(String),
+    /// 트리에서 분류를 바꿨다 — 호스트가 미리보기 엔진(확장 분류 = 그 확장)을 다시 정한다(사용자 09-29).
+    Category,
     /// 읽기 전용 정보(`INFO_KEYS` — 파일 있음/없음 · 별칭 수)를 다시 계산해 달라 — 이 창이 **다시 활성화될 때**(다른 프로그램에서
     /// `tnsnames.ora`를 고치고 돌아왔을 때). 갱신 버튼을 두지 않는 대신 돌아오는 순간 스스로 맞춘다(사용자 09-21).
     RefreshInfo,
@@ -139,9 +143,19 @@ pub(crate) struct PrefsWin {
     /// 카드 영역·스크롤.
     list: Rect,
     /// ★ 포맷 미리보기(사용자 09-29): Format 분류를 볼 때 카드 아래에 기본 포맷터 결과(읽기 전용 SQL 상자 · 호스트가 만들어 줌) ·
-    ///   `format.*`/`sqlfmt.*`가 바뀌면 호스트가 `set_preview`로 새 글을 넣는다 → 변경점 = 설정 창 한 곳.
+    ///   `format.*`/`ext.sqlfmt_kiros33.*`가 바뀌면 호스트가 `set_preview`로 새 글을 넣는다 → 변경점 = 설정 창 한 곳.
     preview: Option<TextBox>,
     preview_title: String,
+    /// 미리보기 제목 줄의 복사 버튼(전체 글 · 사용자 09-30) — 카드의 키 복사와 같은 부품.
+    preview_copy: crate::copybtn::CopyBtn,
+    /// ★ 미리보기 토글(사용자 09-30): B = Basic 설정 적용 · 확장 토글 = 그 확장 적용(**확장 분류를 볼 때만** 보인다 · 글자 = 호스트가
+    ///   정한 이니셜 · `None` = 켬) · 둘 다 끔 = 원본 · Basic 분류에서는 B만.
+    preview_b: bool,
+    preview_k: Option<bool>,
+    preview_k_letter: char,
+    preview_btn_b: Rect,
+    preview_btn_k: Rect,
+    preview_btn_hover: (bool, bool),
     preview_rect: Rect,
     preview_on: bool,
     /// 미리보기 상자 안에서 누른 뒤(드래그 선택) — 놓을 때까지 MouseMove/Up은 밖에서도 상자에(사용자 09-29 "밖에서 놓아도 릴리즈").
@@ -172,6 +186,11 @@ fn is_color_key(k: &str) -> bool {
 
 fn is_key_key(k: &str) -> bool {
     k.starts_with("key.")
+}
+
+/// 기본 포맷터 키(값이 확장 id면 "설정" 바로가기 · 사용자 09-30).
+fn is_default_formatter_key(k: &str) -> bool {
+    k == "format.default"
 }
 
 /// 값이 **폴더 경로**인 설정 — 입력란 옆에 "찾아보기…"(폴더 전용 대화상자 · 파일은 보이지 않는다)를 둔다.
@@ -252,6 +271,20 @@ impl PrefsWin {
         }
     }
 
+    /// 지금 보고 있는 분류가 **확장의 분류**이면 그 확장 id(`EXTENSION_CATEGORIES`) — 미리보기 엔진 선택(사용자 09-29
+    /// "kiros33 분류를 보고 있으면 그 포맷터로").
+    pub(crate) fn selected_extension(&self) -> Option<&'static str> {
+        let cat = self
+            .vtree
+            .get(self.sel.0)
+            .and_then(|(_, cats)| self.sel.1.and_then(|ci| cats.get(ci)))
+            .copied()?;
+        nsql_settings::EXTENSION_CATEGORIES
+            .iter()
+            .find(|(c, _)| *c == cat)
+            .map(|(_, id)| *id)
+    }
+
     /// 지금 선택한 분류가 포맷 분류(내장 옵션 · 확장 포맷터)인가 — 미리보기를 보이는 조건.
     fn preview_wanted(&self) -> bool {
         if self.preview.is_none() || !self.query.trim().is_empty() {
@@ -327,6 +360,13 @@ impl PrefsWin {
             list: Rect::default(),
             preview: None,
             preview_title: String::new(),
+            preview_copy: crate::copybtn::CopyBtn::new(),
+            preview_b: true,
+            preview_k: None,
+            preview_k_letter: 'K',
+            preview_btn_b: Rect::default(),
+            preview_btn_k: Rect::default(),
+            preview_btn_hover: (false, false),
             preview_rect: Rect::default(),
             preview_on: false,
             preview_drag: false,
@@ -406,6 +446,12 @@ impl PrefsWin {
             if c.value != sn.value {
                 c.value = sn.value.clone();
                 c.error = None;
+                if is_default_formatter_key(c.entry.key) {
+                    let want = c.value != "basic";
+                    if want != c.aux.is_some() {
+                        c.aux = want.then(|| Button::new(t(Msg::BtnExtSettings)));
+                    }
+                }
                 match &mut c.ctl {
                     CardCtl::Bool(sw) => sw.set_on(sn.value == "on"),
                     CardCtl::Choice(cb) => cb.select_value(&sn.value),
@@ -547,6 +593,9 @@ impl PrefsWin {
                     Some(Button::new(t(Msg::BtnCapture)))
                 } else if is_folder_key(sn.entry.key) {
                     Some(Button::new(t(Msg::BtnBrowseFolder)))
+                } else if is_default_formatter_key(sn.entry.key) && sn.value != "basic" {
+                    // 기본 포맷터가 확장이면 그 확장의 설정으로 가는 바로가기(사용자 09-30 · "확장 설정").
+                    Some(Button::new(t(Msg::BtnExtSettings)))
                 } else {
                     None
                 };
@@ -638,6 +687,7 @@ impl PrefsWin {
             any |= tb.tick(now_ms);
         }
         let now = std::time::Instant::now();
+        any |= self.preview_copy.next_tick(now).is_some();
         for c in &mut self.cards {
             any |= c.reset.tick(now_ms);
             any |= c.copy.next_tick(now).is_some();
@@ -661,6 +711,10 @@ impl PrefsWin {
                 || self.search.is_animating()
                 || self.close_btn.is_animating()
                 || self.json_btn.is_animating()
+                || self
+                    .preview_copy
+                    .next_tick(std::time::Instant::now())
+                    .is_some()
                 || self.cards.iter().any(|c| {
                     c.reset.is_animating()
                         || c.copy.next_tick(std::time::Instant::now()).is_some()
@@ -682,6 +736,53 @@ impl PrefsWin {
         // 열린 직후의 "트리 선택이 바뀌었다" 판정이 검색어를 지우지 않게 지금 선택을 기억해 둔다.
         self.last_tree_row = self.tree.selected_row();
         self.rebuild_cards();
+    }
+
+    /// ★ 분류 하나를 골라 연다(확장 "설정" 버튼 · 사용자 09-30): 그룹을 펼치고 트리 행을 선택 · 검색어는 비운다.
+    pub(crate) fn select_category(&mut self, cat: Msg) {
+        let Some((gi, ci)) = self
+            .vtree
+            .iter()
+            .enumerate()
+            .find_map(|(gi, (_, cats))| cats.iter().position(|c| *c == cat).map(|ci| (gi, ci)))
+        else {
+            return;
+        };
+        self.tree.model_mut().set_expanded(&[gi], true);
+        let rows = self.tree.model().flatten();
+        if let Some(row) = rows
+            .iter()
+            .position(|r| r.path.first() == Some(&gi) && r.path.get(1) == Some(&ci))
+        {
+            self.tree.set_selected_row(row);
+            self.last_tree_row = row;
+        }
+        self.sel = (gi, Some(ci));
+        self.preview_k = None;
+        self.query.clear();
+        self.search.set_text("");
+        let _ = self.search.take_changed();
+        self.rebuild_cards();
+        self.layout();
+    }
+
+    /// 미리보기 B/K 상태(B = Basic 설정 적용 · K = kiros33 적용 · K의 기본 = 확장 분류를 보고 있는가).
+    pub(crate) fn preview_flags(&self) -> (bool, bool) {
+        // 확장 토글은 확장 분류를 볼 때만 있다 — Basic 분류에서는 늘 끔(B만 · 사용자 09-30).
+        let k = self.selected_extension().is_some() && self.preview_k.unwrap_or(true);
+        (self.preview_b, k)
+    }
+
+    /// 확장 토글의 글자(호스트가 포맷터 이름에서 정한 이니셜 · B와 겹치지 않음).
+    pub(crate) fn set_preview_k_letter(&mut self, c: char) {
+        if self.preview_k_letter != c {
+            self.preview_k_letter = c;
+            self.redraw();
+        }
+    }
+
+    pub(crate) fn preview_k_letter(&self) -> char {
+        self.preview_k_letter
     }
 
     /// "고급" 스위치 상태(설정 `ui.prefs_advanced`) — 열기 전에 호스트가 넣는다 · 바뀌면 카드를 다시 만든다.
@@ -795,10 +896,24 @@ impl PrefsWin {
         if self.preview_on {
             let total = self.list.h;
             let cards_h = (total as f32 * 0.55).round() as i32;
-            let head_h = self.s(22.0);
+            // 제목 줄 = 버튼(18) + 위 2px + 아래 4px 여백 — B/K·복사 버튼 아래가 상자에 붙지 않게(사용자 09-30 "2px 더").
+            let head_h = (self.s(18.0) + self.s(6.0)).max(self.s(22.0));
             self.list.h = cards_h;
             let py = top + cards_h + self.s(6.0);
             self.preview_rect = Rect::new(lx, py, self.list.w, (by - pad - py).max(0));
+            let bs = self.s(18.0);
+            let by = self.preview_rect.y + self.s(2.0);
+            let cx = self.preview_rect.right() - bs - self.s(4.0);
+            self.preview_copy.set_rect(Rect::new(cx, by, bs, bs));
+            // B/K 토글 = 복사 버튼 왼쪽(K · B 순 · 사용자 09-30).
+            // 확장 토글은 확장 분류를 볼 때만 · Basic 분류는 B 하나가 복사 버튼 바로 왼쪽(사용자 09-30).
+            if self.selected_extension().is_some() {
+                self.preview_btn_k = Rect::new(cx - self.s(6.0) - bs, by, bs, bs);
+                self.preview_btn_b = Rect::new(self.preview_btn_k.x - self.s(4.0) - bs, by, bs, bs);
+            } else {
+                self.preview_btn_k = Rect::default();
+                self.preview_btn_b = Rect::new(cx - self.s(6.0) - bs, by, bs, bs);
+            }
             if let Some(tb) = self.preview.as_mut() {
                 tb.set_scale(s);
                 tb.set_bounds(
@@ -813,6 +928,9 @@ impl PrefsWin {
             }
         } else {
             self.preview_rect = Rect::default();
+            self.preview_copy.set_rect(Rect::default());
+            self.preview_btn_b = Rect::default();
+            self.preview_btn_k = Rect::default();
         }
         // 아래 줄: 고급 스위치 · 닫기
         self.advanced.set_scale(s);
@@ -902,6 +1020,13 @@ impl PrefsWin {
     fn focused_textbox(&mut self) -> Option<&mut TextBox> {
         if self.search.is_focused() {
             return Some(&mut self.search);
+        }
+        if self.preview_on {
+            if let Some(tb) = self.preview.as_mut() {
+                if tb.is_focused() {
+                    return Some(tb);
+                }
+            }
         }
         for c in &mut self.cards {
             if let CardCtl::Text(tb) = &mut c.ctl {
@@ -1163,19 +1288,51 @@ impl PrefsWin {
                 }
             }
         }
-        // ★ 포맷 미리보기 상자(읽기 전용 · 선택·복사·스크롤). 안에서 누른 드래그는 **밖에서 놓아도** 상자가 받아 끝난다.
+        // ★ 미리보기 B/K 토글(사용자 09-30): 누르면 뒤집고 호스트가 미리보기를 다시 만든다.
+        if self.preview_on && matches!(ie, InputEvent::MouseDown { .. }) {
+            if self.preview_btn_b.contains(p) {
+                self.preview_b = !self.preview_b;
+                self.redraw();
+                return PrefsAction::Category;
+            }
+            if self.preview_btn_k.contains(p) {
+                let cur = self.preview_k.unwrap_or(true);
+                self.preview_k = Some(!cur);
+                self.redraw();
+                return PrefsAction::Category;
+            }
+        }
+        // ★ 미리보기 복사 버튼(사용자 09-30): 전체 글을 클립보드로 · 카드 키 복사와 같은 되먹임(눌림 → ✓ → 복귀).
+        if self.preview_on && matches!(ie, InputEvent::MouseDown { .. }) && self.preview_copy.hit(p)
+        {
+            if let Some(text) = self.preview.as_ref().map(|tb| tb.text()) {
+                if crate::clipboard::write_text(&text) {
+                    let ms = self.copy_feedback_ms;
+                    self.preview_copy.set_feedback_ms(ms);
+                    self.preview_copy.press(std::time::Instant::now());
+                }
+            }
+            self.redraw();
+            return PrefsAction::None;
+        }
+        // ★ 포맷 미리보기 상자(읽기 전용 · 선택·복사·스크롤 · 우클릭 = 편집 메뉴(복사·전체 선택)). 안에서 누른 드래그는
+        //   **밖에서 놓아도** 상자가 받아 끝난다.
         let is_wheel = matches!(ie, InputEvent::Wheel { .. } | InputEvent::HWheel { .. });
+        let is_right = matches!(ie, InputEvent::RightDown { .. });
         let captured = self.preview_drag
             && matches!(
                 ie,
                 InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
             );
         if self.preview_on
-            && (captured || ((is_mouse || is_wheel) && self.preview_rect.contains(p)))
+            && (captured || ((is_mouse || is_wheel || is_right) && self.preview_rect.contains(p)))
         {
             if let Some(tb) = self.preview.as_mut() {
                 match ie {
-                    InputEvent::MouseDown { .. } => self.preview_drag = true,
+                    InputEvent::MouseDown { .. } => {
+                        self.preview_drag = true;
+                        tb.set_focused(true);
+                    }
                     InputEvent::MouseUp { .. } => self.preview_drag = false,
                     _ => {}
                 }
@@ -1309,13 +1466,16 @@ impl PrefsWin {
                 let gi = r.path.first().copied().unwrap_or(0);
                 let ci = r.path.get(1).copied();
                 self.sel = (gi, ci);
+                self.preview_k = None;
                 if !self.query.is_empty() {
                     self.query.clear();
                     self.search.set_text("");
                 }
                 self.rebuild_cards();
+                // 토글 자리(B만 / B+확장)는 분류에 달렸다 — 다시 배치(사용자 09-30 "K가 사라짐").
+                self.layout();
                 self.redraw();
-                return PrefsAction::None;
+                return PrefsAction::Category;
             }
         }
         // 카드 컨트롤(보이는 것만) — 포커스 텍스트박스는 목록 밖으로 끌어도 MouseMove/MouseUp을 받는다(드래그 선택 · 09-16).
@@ -1354,6 +1514,20 @@ impl PrefsWin {
             InputEvent::MouseMove { .. } => {
                 for c in &mut self.cards {
                     c.copy.set_hover(c.rect.h > 0 && c.copy.hit(p));
+                }
+                if self
+                    .preview_copy
+                    .set_hover(self.preview_on && self.preview_copy.hit(p))
+                {
+                    self.redraw();
+                }
+                let hv = (
+                    self.preview_on && self.preview_btn_b.contains(p),
+                    self.preview_on && self.preview_btn_k.contains(p),
+                );
+                if hv != self.preview_btn_hover {
+                    self.preview_btn_hover = hv;
+                    self.redraw();
                 }
             }
             InputEvent::MouseDown { shift, .. } if self.list.contains(p) => {
@@ -1443,6 +1617,13 @@ impl PrefsWin {
         if self.search.popup_open() {
             return Some(&mut self.search);
         }
+        if self.preview_on {
+            if let Some(tb) = self.preview.as_mut() {
+                if tb.popup_open() {
+                    return Some(tb);
+                }
+            }
+        }
         for c in &mut self.cards {
             if let CardCtl::Text(tb) = &mut c.ctl {
                 if tb.popup_open() {
@@ -1464,6 +1645,8 @@ impl PrefsWin {
                 if b.take_clicked() {
                     return if is_color_key(&key) {
                         PrefsAction::OpenColors(key)
+                    } else if is_default_formatter_key(&key) {
+                        PrefsAction::OpenExtSettings(c.value.clone())
                     } else if is_folder_key(&key) {
                         // 잠긴 카드(자동 탐지 방식)는 찾아보기도 막는다 — 값이 바뀌어도 쓰이지 않는다.
                         if c.locked {
@@ -1558,7 +1741,11 @@ impl PrefsWin {
         lines
     }
 
-    pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32) {
+    /// 그리기 — `ui`/`font_px` = UI 글꼴 · `mono`/`mono_px` = **편집기 고정폭 글꼴·크기**(포맷 미리보기 본문 · 포맷터의 칸 정렬은
+    /// 고정폭 전제라 UI 글꼴로 그리면 열이 어긋난다 · 사용자 09-30 "모든 OS에서 동일하게").
+    pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32, mono: &Font, mono_px: f32) {
+        // B/K 토글 상태는 표면을 빌리기 전에(불변 빌림 충돌).
+        let bk = self.preview_flags();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -1823,12 +2010,9 @@ impl PrefsWin {
                 c.copy.paint(&mut dc, th, 1.0, s, now);
                 ty += th_txt + (4.0 * s).round() as i32;
                 for (li, l) in lines.iter().enumerate() {
-                    // 덧말(호스트 상황값)은 강조색 — 무엇이 실제로 적용되는지 한눈에(사용자 09-29).
-                    let col = if li >= *note_at {
-                        th.accent
-                    } else {
-                        th.text_dim
-                    };
+                    // 덧말(호스트 상황값 · "▶ 미리보기 n행")은 **테마의 ok 색** — 고급 키 이름의 강조색과 같아 구별이 안 됐다
+                    //   (사용자 09-30) · 테마가 바뀌어도 그 테마의 토큰이라 늘 보인다.
+                    let col = if li >= *note_at { th.ok } else { th.text_dim };
                     dc.text(tx, ty, clip, l, col);
                     ty += th_txt;
                 }
@@ -1953,15 +2137,66 @@ impl PrefsWin {
                     th.text_dim,
                 );
                 dc.select_font(FontSlot::Base, false);
-                if let Some(tb) = self.preview.as_ref() {
-                    tb.paint(&mut dc, th);
+            }
+            let _ = pad;
+        }
+        // ★ 미리보기 본문 = 편집기와 같은 고정폭 문맥(글꼴·크기 · 탭 정지점이 칸 단위로 맞는다) — 3-OS 동일.
+        if self.preview_on {
+            if let Some(tb) = self.preview.as_ref() {
+                let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+                let mut dc = RasterCtx::new(&mut gfx, mono, s)
+                    .with_fonts(FontPrefs::with_base(mono_px))
+                    .with_caret_on(false);
+                tb.paint(&mut dc, th);
+            }
+        }
+        // 다시 UI 문맥: 미리보기 복사 버튼 · 하단 · 팝업 층.
+        {
+            let mut gfx = Surface::new(&mut buf, size.width as usize, size.height as usize);
+            let prefs = FontPrefs::with_base(font_px);
+            let mut dc = RasterCtx::new(&mut gfx, ui, s).with_fonts(prefs);
+            let now = std::time::Instant::now();
+            if self.preview_on {
+                self.preview_copy.paint(&mut dc, th, 1.0, s, now);
+                // B/K 토글 = 켬은 강조색 채움 + 밝은 글자 · 끔은 테두리 + 흐린 글자(사용자 09-30).
+                let (b_on, k_on) = bk;
+                let rr = (3.0 * s).round() as i32;
+                let k_label = self.preview_k_letter.to_string();
+                dc.select_font(FontSlot::Status, true);
+                for (r, on, hot, label) in [
+                    (self.preview_btn_b, b_on, self.preview_btn_hover.0, "B"),
+                    (
+                        self.preview_btn_k,
+                        k_on,
+                        self.preview_btn_hover.1,
+                        k_label.as_str(),
+                    ),
+                ] {
+                    if r.w <= 0 {
+                        continue;
+                    }
+                    if on {
+                        dc.fill_round_rect(r, rr, th.accent);
+                    } else {
+                        dc.fill_round_rect_alpha(r, rr, th.text, if hot { 0.16 } else { 0.06 });
+                    }
+                    dc.stroke_round_rect(r, rr, if on || hot { th.accent } else { th.border }, 1.0);
+                    let tw = dc.text_width(label);
+                    let ty = dc.text_center_y(r.y, r.h);
+                    dc.text(
+                        r.x + (r.w - tw) / 2,
+                        ty,
+                        r,
+                        label,
+                        if on { th.panel_bg } else { th.text_dim },
+                    );
                 }
+                dc.select_font(FontSlot::Base, false);
             }
             // 하단
             self.advanced.paint(&mut dc, th);
             self.close_btn.paint(&mut dc, th);
             self.json_btn.paint(&mut dc, th);
-            let _ = pad;
             // 열린 콤보 = 팝업 층(미리보기 위).
             for c in &self.cards {
                 if let CardCtl::Choice(cb) = &c.ctl {
@@ -1979,6 +2214,11 @@ impl PrefsWin {
                     tb.paint_popup(&mut dc, th);
                 }
             }
+            if self.preview_on {
+                if let Some(tb) = self.preview.as_ref() {
+                    tb.paint_popup(&mut dc, th);
+                }
+            }
         }
         let _ = buf.present();
     }
@@ -1987,6 +2227,41 @@ impl PrefsWin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 분류 이동(확장 "설정" 바로가기 · 사용자 09-30): 그룹 펼침 + 트리 행 선택 + 카드 = 그 분류만.
+    #[test]
+    fn select_category_moves_tree_and_cards() {
+        let path =
+            std::env::temp_dir().join(format!("nsql-prefs-selcat-{}.conf", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let s = Settings::open(path);
+        let mut w = PrefsWin::new();
+        w.refresh(&s);
+        w.select_category(Msg::CatExtSqlFormatter);
+        let (gi, ci) = w
+            .vtree
+            .iter()
+            .enumerate()
+            .find_map(|(gi, (_, cats))| {
+                cats.iter()
+                    .position(|c| *c == Msg::CatExtSqlFormatter)
+                    .map(|ci| (gi, ci))
+            })
+            .expect("category in tree");
+        assert_eq!(w.sel, (gi, Some(ci)));
+        let rows = w.tree.model().flatten();
+        let r = &rows[w.tree.selected_row()];
+        assert_eq!((r.path.first(), r.path.get(1)), (Some(&gi), Some(&ci)));
+        assert!(!w.cards.is_empty());
+        assert!(
+            w.cards
+                .iter()
+                .all(|c| c.entry.cat == Msg::CatExtSqlFormatter),
+            "{:?}",
+            w.cards.iter().map(|c| c.entry.key).collect::<Vec<_>>()
+        );
+        assert_eq!(w.selected_extension(), Some("sql-formatter-kiros33"));
+    }
 
     /// 잠금은 컨트롤에도 걸린다(사용자 09-21): 자동 탐지 방식 = 폴더·TNS_ADMIN 칸이 **읽기 전용** + 탐지 경로 표시(없으면 공백) ·
     /// 읽기 전용 정보 칸도 읽기 전용 · 직접 지정으로 바꾸면 **바로** 풀리고 저장값이 보인다 · 다시 자동이면 다시 잠긴다.

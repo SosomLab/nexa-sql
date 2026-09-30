@@ -1044,6 +1044,153 @@ fn comment_sqls(
     }
 }
 
+/// ★ 객체 용량(사용자 09-30 · DBeaver식 · 객체 탐색기 오른쪽): 한 스키마의 `kind`(Table · MaterializedView · Index) 객체별 바이트.
+///   Oracle = `dba_segments`(권한 없으면 자기 스키마만 `user_segments`) · PostgreSQL = `pg_total_relation_size`(인덱스는
+///   `pg_relation_size`) · SQL Server = `sys.allocation_units` 페이지 합 · MySQL = `information_schema.tables` · SQLite = `dbstat`
+///   (컴파일 안 됐으면 빈 목록) · ODBC = 빈 목록. 지연 로딩(폴더가 읽힐 때 한 번) · 설정 `explorer.sizes` · 향상 모드 끔.
+pub fn object_sizes(
+    s: &mut dyn Session,
+    schema: &str,
+    kind: ObjectKind,
+) -> Result<Vec<(String, u64)>, DbError> {
+    let dialect = s.dialect();
+    let sqls: Vec<String> = match (dialect, kind) {
+        (Dialect::Oracle, ObjectKind::Table | ObjectKind::MaterializedView) => {
+            // ★ MV의 컨테이너 테이블도 TABLE 세그먼트다 — 테이블 폴더는 MV를 빼고 · MV 폴더는 `all_mviews`에 있는 것만(사용자 09-30
+            //   "MV 0개인데 용량이 잡힌다" = 테이블 용량이 MV로 중복 집계).
+            let types = "('TABLE', 'TABLE PARTITION', 'TABLE SUBPARTITION', 'NESTED TABLE')";
+            let not = if kind == ObjectKind::MaterializedView { "" } else { "NOT " };
+            vec![
+                format!("SELECT s.segment_name, SUM(s.bytes) FROM dba_segments s WHERE s.owner = {sc} AND s.segment_type IN {types} AND s.segment_name {not}IN (SELECT m.mview_name FROM all_mviews m WHERE m.owner = {sc}) GROUP BY s.segment_name", sc = lit(schema)),
+                format!("SELECT s.segment_name, SUM(s.bytes) FROM user_segments s WHERE s.segment_type IN {types} AND USER = {sc} AND s.segment_name {not}IN (SELECT m.mview_name FROM user_mviews m) GROUP BY s.segment_name", sc = lit(schema)),
+            ]
+        }
+        (Dialect::Oracle, ObjectKind::Index) => vec![
+            format!("SELECT segment_name, SUM(bytes) FROM dba_segments WHERE owner = {} AND segment_type IN ('INDEX', 'INDEX PARTITION', 'INDEX SUBPARTITION', 'LOBINDEX') GROUP BY segment_name", lit(schema)),
+            format!("SELECT segment_name, SUM(bytes) FROM user_segments WHERE segment_type IN ('INDEX', 'INDEX PARTITION', 'INDEX SUBPARTITION', 'LOBINDEX') AND USER = {} GROUP BY segment_name", lit(schema)),
+        ],
+        (Dialect::Postgres, ObjectKind::Table) => vec![format!(
+            "SELECT c.relname, pg_total_relation_size(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('r', 'p')",
+            lit(schema)
+        )],
+        (Dialect::Postgres, ObjectKind::MaterializedView) => vec![format!(
+            "SELECT c.relname, pg_total_relation_size(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind = 'm'",
+            lit(schema)
+        )],
+        (Dialect::Postgres, ObjectKind::Index) => vec![format!(
+            "SELECT c.relname, pg_relation_size(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('i', 'I')",
+            lit(schema)
+        )],
+        (Dialect::Mssql, ObjectKind::Table) => vec![format!(
+            "SELECT t.name, SUM(a.total_pages) * 8 * 1024 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id JOIN sys.indexes i ON i.object_id = t.object_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE s.name = {} GROUP BY t.name",
+            lit(schema)
+        )],
+        (Dialect::Mssql, ObjectKind::Index) => vec![format!(
+            "SELECT i.name, SUM(a.total_pages) * 8 * 1024 FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE s.name = {} AND i.name IS NOT NULL GROUP BY i.name",
+            lit(schema)
+        )],
+        (Dialect::Mysql, ObjectKind::Table) => vec![format!(
+            "SELECT table_name, COALESCE(data_length, 0) + COALESCE(index_length, 0) FROM information_schema.tables WHERE table_schema = {} AND table_type = 'BASE TABLE'",
+            lit(schema)
+        )],
+        (Dialect::Sqlite, ObjectKind::Table | ObjectKind::Index) => vec![format!(
+            "SELECT name, SUM(pgsize) FROM dbstat WHERE name IN (SELECT name FROM sqlite_master WHERE type = {}) GROUP BY name",
+            if kind == ObjectKind::Index { "'index'" } else { "'table'" }
+        )],
+        _ => Vec::new(),
+    };
+    let mut last_err: Option<DbError> = None;
+    for sql in sqls {
+        match query(s, &sql) {
+            Ok(rs) => {
+                return Ok(rs
+                    .rows
+                    .iter()
+                    .filter_map(|r| {
+                        let name = col(r, 0);
+                        let bytes = r.get(1).and_then(value_u64)?;
+                        (!name.is_empty()).then_some((name, bytes))
+                    })
+                    .collect());
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    match last_err {
+        Some(e) => Err(e),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// ★ 객체 하나의 용량 상세(사용자 09-30 상세 패널): (바이트, 블록 수, 블록 크기) — 블록은 DBMS가 알려 줄 때만
+///   (Oracle `dba_segments.blocks` + `DB_BLOCK_SIZE` · PG `relpages`×8 KB · SQL Server 페이지 8 KB · SQLite `dbstat` 페이지 · MySQL 없음).
+pub fn object_size_detail(
+    s: &mut dyn Session,
+    schema: &str,
+    name: &str,
+    kind: ObjectKind,
+) -> Option<(u64, Option<u64>, Option<u64>)> {
+    let dialect = s.dialect();
+    // 각 질의 = (bytes, blocks, block_size) 세 열(없으면 NULL).
+    let sqls: Vec<String> = match (dialect, kind) {
+        (Dialect::Oracle, _) => vec![
+            format!("SELECT SUM(s.bytes), SUM(s.blocks), MAX(t.block_size) FROM dba_segments s JOIN dba_tablespaces t ON t.tablespace_name = s.tablespace_name WHERE s.owner = {} AND s.segment_name = {}", lit(schema), lit(name)),
+            format!("SELECT SUM(s.bytes), SUM(s.blocks), MAX(t.block_size) FROM user_segments s JOIN user_tablespaces t ON t.tablespace_name = s.tablespace_name WHERE s.segment_name = {} AND USER = {}", lit(name), lit(schema)),
+        ],
+        (Dialect::Postgres, ObjectKind::Index) => vec![format!(
+            "SELECT pg_relation_size(c.oid), c.relpages, current_setting('block_size')::bigint FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}",
+            lit(schema), lit(name)
+        )],
+        (Dialect::Postgres, _) => vec![format!(
+            "SELECT pg_total_relation_size(c.oid), c.relpages, current_setting('block_size')::bigint FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}",
+            lit(schema), lit(name)
+        )],
+        (Dialect::Mssql, ObjectKind::Index) => vec![format!(
+            "SELECT SUM(a.total_pages) * 8 * 1024, SUM(a.total_pages), 8192 FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE s.name = {} AND i.name = {}",
+            lit(schema), lit(name)
+        )],
+        (Dialect::Mssql, _) => vec![format!(
+            "SELECT SUM(a.total_pages) * 8 * 1024, SUM(a.total_pages), 8192 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id JOIN sys.indexes i ON i.object_id = t.object_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE s.name = {} AND t.name = {}",
+            lit(schema), lit(name)
+        )],
+        (Dialect::Mysql, _) => vec![format!(
+            "SELECT COALESCE(data_length, 0) + COALESCE(index_length, 0), NULL, NULL FROM information_schema.tables WHERE table_schema = {} AND table_name = {}",
+            lit(schema), lit(name)
+        )],
+        (Dialect::Sqlite, _) => vec![format!(
+            "SELECT SUM(pgsize), COUNT(*), MAX(pgsize) FROM dbstat WHERE name = {}",
+            lit(name)
+        )],
+        _ => Vec::new(),
+    };
+    for sql in sqls {
+        if let Ok(rs) = query(s, &sql) {
+            let Some(r) = rs.rows.first() else { continue };
+            let Some(bytes) = r.first().and_then(value_u64) else {
+                continue;
+            };
+            let blocks = r.get(1).and_then(value_u64);
+            let bs = r.get(2).and_then(value_u64);
+            return Some((bytes, blocks, bs));
+        }
+    }
+    None
+}
+
+/// 숫자 값 → u64(정수·실수·문자 숫자 · 음수/NULL = None).
+fn value_u64(v: &Value) -> Option<u64> {
+    match v {
+        Value::Int(i) => u64::try_from(*i).ok(),
+        Value::Float(f) if *f >= 0.0 => Some(f.round() as u64),
+        Value::Decimal(s) | Value::Str(s) => s
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|p| p.parse::<u64>().ok()),
+        _ => None,
+    }
+}
+
 /// ★ 코멘트 **그대로**(객체 상세 · 09-25): 테이블 = 행이 있고 NULL이 아니면 그 값(공백 포함) · 컬럼 = (이름, NULL이면 None · 아니면 그대로) — 컬럼 행이 없는 것(SQL Server 확장 속성 없음)은 목록에 없다 = NULL로 본다.
 pub fn comments_raw(
     s: &mut dyn Session,

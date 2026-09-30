@@ -45,6 +45,36 @@ pub(crate) struct Matcher {
     text: String,
     /// 낱말(소문자 · 한글이면 자모열) — 노드마다 다시 자르지 않게 한 번 계산(09-25 refilter 92 ms → 캐시).
     tokens: Vec<(String, Option<Vec<char>>)>,
+    /// ★ 구조 질의(docs/98 · 사용자 09-30): 연산자(`|` `!` 괄호 따옴표)·술어(`size>1G` `type:view`)가 있을 때만 Some —
+    ///   정규식 모드에서는 없음(정규식이 전부). 낱말만이면 None = 종전 빠른 길.
+    query: Option<nsql_core::filterq::Query>,
+}
+
+/// 구조 질의의 판정 대상(호스트가 이름·종류·용량을 준다 · nsql-core `filterq::Facts`).
+pub(crate) struct NodeFacts<'a> {
+    pub text: &'a str,
+    pub kind: Option<&'a str>,
+    pub size: Option<u64>,
+    /// 그 밖의 키(`ext` `path` …).
+    pub fields: &'a [(&'a str, String)],
+}
+
+impl nsql_core::filterq::Facts for NodeFacts<'_> {
+    fn text(&self) -> &str {
+        self.text
+    }
+    fn kind(&self) -> Option<&str> {
+        self.kind
+    }
+    fn size(&self) -> Option<u64> {
+        self.size
+    }
+    fn field(&self, key: &str) -> Option<String> {
+        self.fields
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.clone())
+    }
 }
 
 impl Matcher {
@@ -66,7 +96,31 @@ impl Matcher {
             err: false,
             text: text.to_string(),
             tokens: Self::tokens_of(text),
+            query: Self::query_of(text, false),
         }
+    }
+
+    fn query_of(text: &str, regex: bool) -> Option<nsql_core::filterq::Query> {
+        (!regex && nsql_core::filterq::is_structured(text)).then(|| nsql_core::filterq::parse(text))
+    }
+
+    /// 구조 질의(있으면) — 호스트가 "용량 술어가 있다"(`has_key("size")`) 등을 알 때.
+    pub(crate) fn query(&self) -> Option<&nsql_core::filterq::Query> {
+        self.query.as_ref()
+    }
+
+    /// ★ 사실 기반 판정(docs/98): 정규식 = 이름에 정규식 · 구조 질의 = 평가기 · 낱말 = 전부 포함.
+    pub(crate) fn matches_facts(&self, f: &dyn nsql_core::filterq::Facts) -> bool {
+        if self.err {
+            return false;
+        }
+        if let Some(r) = &self.rx {
+            return r.is_match(f.text()).unwrap_or(false);
+        }
+        if let Some(q) = &self.query {
+            return q.matches(f);
+        }
+        self.matches(f.text())
     }
 
     /// ★ 캐시 판정(85 §6 · 입력 지연): 호출자가 보관한 **소문자 라벨**로 낱말 포함을 보고, 원문이 필요한 길(정규식 · 한글 자모)만
@@ -74,6 +128,9 @@ impl Matcher {
     pub(crate) fn matches_cached(&self, lower: &str, orig: impl Fn() -> String) -> bool {
         if self.err {
             return false;
+        }
+        if let Some(q) = &self.query {
+            return q.matches(&nsql_core::filterq::TextFacts(&orig()));
         }
         match &self.rx {
             Some(r) => r.is_match(&orig()).unwrap_or(false),
@@ -100,6 +157,9 @@ impl Matcher {
     pub(crate) fn matches(&self, hay: &str) -> bool {
         if self.err {
             return false;
+        }
+        if let (None, Some(q)) = (&self.rx, &self.query) {
+            return q.matches(&nsql_core::filterq::TextFacts(hay));
         }
         match &self.rx {
             Some(r) => r.is_match(hay).unwrap_or(false),
@@ -254,6 +314,8 @@ pub(crate) struct FilterBar {
     placeholder: String,
     /// 검색어 이력(전역 · 상자 이름별 · ↑/↓ 되부르기 · Enter/포커스 잃음 = 기록 · 사용자 09-23) — 호스트가 `set_history`로 준다.
     history: Option<(SharedHistory, Recall)>,
+    /// 상자 드래그가 상자 밖으로 나갔는가(놓임 때 드롭다운을 닫을지 · 단순 클릭과 구별 · 09-30).
+    drag_out: bool,
     /// ★ 검색 진행 표시(84 §8 · 사용자 09-25 "진행 중인지 직관적으로"): 진행 = 테두리를 따라 도는 밝은 선 · 완료 = 두 번 깜빡인 뒤 완료 테두리.
     search: SearchState,
     /// 완료 깜빡임 시작 시각(ms · `tick`의 시계) — Running → Done 전환 뒤 첫 tick에 잡는다.
@@ -291,6 +353,7 @@ impl FilterBar {
             clamp_w: i32::MAX / 2,
             placeholder: placeholder.to_string(),
             history: None,
+            drag_out: false,
             search: SearchState::Idle,
             blink_start: None,
             blink_pending: false,
@@ -506,6 +569,7 @@ impl FilterBar {
                     self.tb.set_focused(false);
                 } else if self.tb.bounds().contains(p) {
                     self.tb.set_focused(true);
+                    self.drag_out = false;
                     to_tb = true;
                 } else if self.history_open() {
                     // ★ 열린 이력 드롭다운(상자 아래) 클릭 = 항목 고르기 · 그 밖 = 닫기(사용자 09-25 "클릭으로는 선택이 안 된다").
@@ -537,6 +601,35 @@ impl FilterBar {
             return FilterEvent::Side(k);
         }
         if to_tb {
+            // ★ 상자가 드래그 선택 중이면 이동·놓임은 **상자가 먼저**(사용자 09-30 "검색 상자에서 마우스가 놓이지 않는 경우") — 상자
+            //   클릭으로 열린 이력 드롭다운이 MouseMove/MouseUp을 먹어 상자가 놓임을 못 받고 드래그가 남았다. 단순 클릭(상자 밖으로
+            //   끌지 않음)은 종전대로 드롭다운에도 넘긴다(클릭으로 연 드롭다운이 그 클릭의 놓임에 닫히던 회귀 · 사용자 09-30).
+            let mut tb_done = false;
+            if matches!(
+                ev,
+                InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+            ) && self.tb.is_dragging()
+            {
+                if let InputEvent::MouseMove { x, y } = *ev {
+                    if !self.tb.bounds().contains(Point { x, y }) {
+                        self.drag_out = true;
+                    }
+                }
+                self.tb.on_event(ev, inv);
+                tb_done = true;
+                if self.drag_out {
+                    if let Some((_, r)) = &mut self.history {
+                        if r.is_open() && matches!(ev, InputEvent::MouseUp { .. }) {
+                            // 밖으로 끌어 놓은 것은 드롭다운 항목 선택이 아니다 — 닫는다.
+                            r.close();
+                        }
+                    }
+                    if matches!(ev, InputEvent::MouseUp { .. }) {
+                        self.drag_out = false;
+                    }
+                    return FilterEvent::Consumed;
+                }
+            }
             // 이력(드롭다운/Flat)이 먼저 — 열린 드롭다운의 이동/고르기 · 닫힌 채 ↑/↓ · 끝에서 ↓/Tab = 목록으로(사용자 09-23).
             let clicked_tb = matches!(ev, InputEvent::MouseDown { x, y, .. } if self.tb.bounds().contains(Point { x: *x, y: *y }));
             if let Some((h, r)) = &mut self.history {
@@ -553,7 +646,9 @@ impl FilterBar {
                     }
                 }
             }
-            self.tb.on_event(ev, inv);
+            if !tb_done {
+                self.tb.on_event(ev, inv);
+            }
             if self.tb.take_committed().is_some() {
                 self.history_commit();
             }
@@ -608,10 +703,21 @@ impl FilterBar {
     pub(crate) fn matcher(&self) -> Matcher {
         Matcher {
             tokens: Matcher::tokens_of(&self.text),
+            query: Matcher::query_of(&self.text, self.matcher.is_some()),
             rx: self.matcher.clone(),
             err: self.regex_err,
             text: self.text.clone(),
         }
+    }
+
+    /// 사실 기반 판정(구조 질의 · docs/98) — 패널이 종류·용량을 줄 때.
+    pub(crate) fn matches_facts(&self, f: &dyn nsql_core::filterq::Facts) -> bool {
+        self.matcher().matches_facts(f)
+    }
+
+    /// 지금 글의 구조 질의에 이 술어 키가 있는가(`size` 등 — 비싼 사실은 필요할 때만 모으게).
+    pub(crate) fn query_has(&self, key: &str) -> bool {
+        Matcher::query_of(&self.text, self.matcher.is_some()).is_some_and(|q| q.has_key(key))
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {

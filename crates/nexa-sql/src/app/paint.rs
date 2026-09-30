@@ -592,6 +592,7 @@ impl App {
                     self.panel.paint_popups(&mut dc, &th);
                 }
                 self.editors.paint_popups(&mut dc, &th);
+                self.ext_view.paint_popup(&mut dc, &th);
                 self.explorer.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 let eb = self.editors.editor_bounds();

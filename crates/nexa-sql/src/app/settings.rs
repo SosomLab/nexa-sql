@@ -246,8 +246,8 @@ impl App {
     fn apply_setting_ui(&mut self, key: &str) -> bool {
         match key {
             "ui.theme" => self.apply_theme(),
-            // ★ 포맷 옵션(공통 `format.*` · 확장 `sqlfmt.*`) = 열려 있는 미리보기 탭을 다시 그린다(docs/95).
-            k if k.starts_with("format.") || k.starts_with("sqlfmt.") => {
+            // ★ 포맷 옵션(공통 `format.*` · 확장 `ext.sqlfmt_kiros33.*`) = 열려 있는 미리보기 탭을 다시 그린다(docs/95).
+            k if k.starts_with("format.") || k.starts_with("ext.sqlfmt_kiros33.") => {
                 self.format_preview_refresh();
             }
             // ★ Ctrl 객체 링크(T-256): 밑줄 스타일을 다시 적용하고 켜고 끔·표시 방식·상한을 다시 판정.
@@ -407,6 +407,7 @@ impl App {
                 self.layout();
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
+            "explorer.sizes" => self.explorer.set_sizes(self.settings.flag(key)),
             "explorer.tooltip" => self.explorer.set_tooltip(self.settings.flag(key)),
             "explorer.timeout" => self
                 .explorer
@@ -538,7 +539,8 @@ impl App {
             | "grid.edit_empty"
             | "grid.edit_strict"
             | "grid.edit_refresh"
-            | "grid.paste_max_rows" => self.apply_grid_edit_cfg(),
+            | "grid.paste_max_rows"
+            | "grid.filter_list_max" => self.apply_grid_edit_cfg(),
             "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
                 self.apply_click_policy();
             }
@@ -572,6 +574,7 @@ impl App {
                 self.grid.set_row_snap(on);
                 self.log_win.set_row_snap(on);
             }
+            k if k.starts_with("scroll.fast") => self.apply_fast_scroll(),
             "editor.scroll" => self
                 .editors
                 .set_scroll_snap(self.settings.get(key) == Some("row")),
@@ -589,6 +592,45 @@ impl App {
     }
 
     /// 설정 즉시 반영 — 편집기 표시·짝·큰 파일·되돌리기·프로젝트·검색·배치(`editor.` 나머지 · `file.large_*` · `project.` · `search.` · `layout.`). 맞는 키가 없으면 `false`.
+    /// ★ 고속 스크롤 설정 → nexa-ctl 전역 [`nexa_ctl::set_fast_scroll`](8영역의 `ScrollBars`·가속기·HUD가 그때그때 읽는다) +
+    ///   결과 그리드 override(`scroll.fast_grid_extra` = 한 번 먼저 오르고 상한 두 배). 시작 때와 `scroll.*` 변경 때.
+    pub(crate) fn apply_fast_scroll(&mut self) {
+        let (step, max) = nsql_settings::scroll_speed_params(
+            self.settings.get("scroll.fast_speed").unwrap_or("fast"),
+        );
+        let cfg = nexa_ctl::FastScroll {
+            enabled: self.settings.flag("scroll.fast"),
+            step,
+            max,
+            window_ms: self.settings.int("scroll.fast_window_ms").clamp(20, 2000) as u64,
+            hud: self.settings.flag("scroll.fast_hud"),
+            hud_pos: nexa_ctl::HudPos::parse(
+                self.settings
+                    .get("scroll.fast_hud_pos")
+                    .unwrap_or("top_right"),
+            ),
+            hud_hold_ms: self
+                .settings
+                .int("scroll.fast_hud_hold_ms")
+                .clamp(0, 10_000) as u64,
+            hud_fade_ms: self
+                .settings
+                .int("scroll.fast_hud_fade_ms")
+                .clamp(50, 10_000) as u64,
+        };
+        nexa_ctl::set_fast_scroll(cfg);
+        let grid = self
+            .settings
+            .flag("scroll.fast_grid_extra")
+            .then(|| nexa_ctl::FastScroll {
+                step: step.saturating_sub(1).max(1),
+                max: max.saturating_mul(2),
+                ..cfg
+            });
+        self.grid.set_fast_override(grid);
+        self.redraw();
+    }
+
     fn apply_setting_misc(&mut self, key: &str) -> bool {
         match key {
             "editor.diff_marks" => self.editors.set_diff_marks(self.settings.flag(key)),
@@ -728,7 +770,7 @@ impl App {
                 self.layout();
             }
             "extensions.disabled" => self.apply_extensions(None),
-            k if k.starts_with("rainbowpair.") => self.apply_extensions(Some(k)),
+            k if k.starts_with("ext.rainbow_pairs.") => self.apply_extensions(Some(k)),
             "editor.text_pad_left" => self
                 .editors
                 .set_text_inset(self.settings.int(key).clamp(0, 32) as i32),

@@ -248,6 +248,8 @@ pub const BOOST: &[(&str, &str)] = &[
     // 플래시 메시지(09-27) — 유지 0.3초 · 페이드 0.2초(최소) = 다시 그리기 ~0.5초로.
     ("ui.flash_hold_ms", "300"),
     ("ui.flash_ms", "200"),
+    // 고속 스크롤 속도 HUD(09-30) — 멈춘 뒤 유지·페이드 동안 프레임을 그린다 · 가속 자체(큐·타이머 0)는 그대로 둔다.
+    ("scroll.fast_hud", "off"),
     // Linux IME 감시(09-27) — 자식 프로세스·스레드 0(엔진 이름·토글 키·입력 종류 폴백).
     ("input.ime_hint_watch", "off"),
     // 파일 검색 한 파일 상한 = HDD 기준 2 MB(사용자 09-28 "성능 향상 모드에서는 HDD 기준" · docs/72 §4-1).
@@ -256,6 +258,8 @@ pub const BOOST: &[(&str, &str)] = &[
     ("run.toast_max", "8"),
     // ── 아이콘·부가 표시(메모리·래스터): 트리 아이콘 · OS 파일 아이콘 · 우클릭 메뉴 아이콘 · 툴팁 · 미니맵 · 선택어 강조
     ("explorer.icons", "off"),
+    // 객체 용량(09-30) — 폴더마다 사전 질의 1 + 행마다 글자 하나 더 · 향상 모드에서는 끔.
+    ("explorer.sizes", "off"),
     ("file.os_icons", "off"),
     ("file.probe_chevrons", "off"),
     // 프로젝트 탐색기 파일/폴더 아이콘(09-22 · 셸 조회 워커 + 래스터 캐시 · 끄면 상주 0)
@@ -269,7 +273,7 @@ pub const BOOST: &[(&str, &str)] = &[
     ("editor.diff_marks", "off"),
     // Ctrl 객체 링크(T-256): 향상 모드에서는 **밑줄을 그리지 않는다**(다시 그리기 0 · 툴팁·클릭은 동작 · 사용자 09-29 2차).
     ("objlink.display", "none"),
-    ("rainbowpair.enabled", "off"),
+    ("ext.rainbow_pairs.enabled", "off"),
     // 탐색기 갱신 뒤 새 객체 강조(docs/57) — 강조가 사라질 때까지 다시 그리기가 이어진다.
     ("meta.refresh_highlight_ms", "0"),
     // ── I/O·기동(파일·프로세스·클립보드·둘째 창): git 프로세스 · 복사 시 HTML 생성 · 우클릭 클립보드 읽기 · 시작 시 로그 창

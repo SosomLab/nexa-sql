@@ -104,6 +104,7 @@
 
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
+| 객체 용량 질의(09-30) | 폴더 읽힐 때 1(스키마·종류당) | `explorer.sizes` | 켬 | 켬 | 끔(BOOST off) | `explorer.rs` `Req::Sizes` · `perf::BOOST` |
 | 신호등 주기 확인 | 60 s · 창 열림 · 시도한 프로필 | `probe.enabled` `probe.interval` | 켬 60 | 켬 120 | 끔 | `ProbePolicy` |
 | 실패 재확인 백오프 | 60 s × 2ⁿ · 5회 | `probe.retry_delay` `probe.max_retries` | — | — | — | `ProbeEntry` |
 | 프로브 동시 스레드 | 16 | `probe.max_inflight` | 16 | 8 | 2 | `ProbeHub` |
@@ -201,6 +202,9 @@
 | **외부 파일 변경**(81차) | `file-watch`(보이는 탭만) | 폴링 0(stat 서명) · 달라졌을 때만 읽기 | 저장본 사본 1(병합용 · 큰 파일은 안 만든다) | stat 2 s · 변경 시 읽기 | 탭 닫힘 | `file.external_change` · `file.external_poll_ms` | `file.external_poll_ms=0` |
 | **변수 관리**(88~89차) | 없음 | 문장 준비 1.2 µs | `VarStore` 계층(전역 ▸ 파일 ▸ 실행) · 값 상한 `vars.max_value_kb` · 서명 캐시는 **루틴당 1회**(세션 안) | 보존 파일 `vars/<해시>.sql`(실행당 ≤ 1회) | 재접속 때 서명 캐시 비움 | `vars.persist` · `vars.signature_lookup` | 제외(결과가 바뀐다 — §4-6) |
 | **검색어 이력**(99차 · journal §119) | 없음(UI 스레드) | 기록할 때(Enter/실행/필터 포커스 잃음) 한 번 · 되부르기 = 메모리 조회 | 상자 9 × ≤ `search.history_max`(20) 문자열 — 수 KB | 파일 1 `search-history.json`(바뀔 때만 통째로 씀 · 임시 파일 → rename) | 앱 수명 동안 메모리 | `search.history_max`(0 = 끔 · 기록·파일 쓰기 없음) | 등재 안 함(설정 파일 급 · 상주 0) |
+| **프로젝트 자동 저장 캡처**(09-30 · 72 §3) | 없음(UI 스레드 · 틱) | 바뀐 탭만 앵커 재계산(버퍼 줄 조회 · 전체 줄 사본 0) · 스냅숏·디스크 해시 = 본문 세대·파일 시각이 같으면 생략 | 탭별 기억 `capture_cache`(앵커 3줄 + 키) · 미저장 본문은 탭당 ≤ `project.unsaved_max_mb` | 스냅숏 = 바뀐 탭만 1회 · 프로젝트 파일 = 문서가 달라졌을 때만 | 탭 닫힘 = 기억 제거 | `project.autosave*` · `project.unsaved_max_mb` | — |
+| **SQL 포맷**(09-30 · 72 §2 · [95](95-sql-formatter.md)) | 없음(UI 스레드 · 명령 때만) | 상한 안 = 대상만 포맷 · 넘으면 캐럿 앞뒤 256 KB 창에서 문장만 | 대상 글 사본 1 | — | 즉시 | `format.max_kb` · 큰 파일 L1 | — |
+| **그리드 정규식 필터 조회 SQL**(09-30) | 없음 | 값 목록이 필요할 때만 해시 집합 O(n) · 상한+1에서 멈춤 | 고유값 ≤ `grid.filter_list_max`+1 | — | 즉시 | `grid.filter_list_max` | — |
 | **★ 프로젝트 탐색기**(93차 · [67 §4-1](67-project-workspace.md) · **99차 워커 열거** journal §120) | **필터 열거 워커 `nsql-parwalk` 코디네이터 1 + 워커 `project.scan_threads`(기본 4 · 0 = 코어/2 · 상한 16) — 필터를 칠 때만 뜨고 열거가 끝나거나 취소되면 전부 종료(상주 0)** | 펼칠 때 그 폴더 1회 열거 · **필터를 칠 때** 아직 안 읽은 폴더를 워커가 병렬로 훑고 UI 틱이 6 ms 예산 안에서 합친다 | 트리 노드 = 펼친 것 + 필터로 찾은 것만(**지연 열거**) · `project.scan_max` **0 = 무제한**(> 0 = 메모리 보호 상한에서 멈추고 안내) | 프로젝트 파일 JSON 1(열 때) · 폴더 `read_dir`(펼칠 때 · 필터 열거는 워커) | 패널을 닫아도 노드는 유지(다시 열 때 재사용) · 프로젝트를 닫으면 버림 · 필터를 비우면 열거 취소 | `project.scan_max`(상한) · `project.scan_threads`(워커 수) · 패널 토글 `view.project` · `project.icons`(OS 아이콘 조회·캐시 · 향상 모드 off) · `project.auto_reveal`(탭마다 펼침 · 기본 off) | **`project.icons`만 등재**(09-23 96차 실측 [26 §7-10](26-performance-architecture.md): 트리 자체는 접속 대비 +0.07 MB · 유휴 CPU 0이지만 **OS 셸 아이콘을 켜면 프로세스에 한 번 +2 MB · GDI +37**(셸 시스템 이미지 리스트 · OS 몫 · 회수 불가) + 워커 스레드·COM 아파트먼트(핸들 ≈ 26 · 스레드 1)는 **조회가 끝난 뒤 유휴 5초에 패널이 거둔다**(`ICON_WORKER_IDLE_MS` · 캐시는 남는다) → 향상 모드 강제 off([45 §4-1](45-perf-boost-benchmark.md)) · 사용자가 끄면 캐시도 비운다) |
 | **★ 미리보기 탭**(93차) | 없음 | 없음 | 미리보기 탭은 **한 번에 하나** — 다음 미리보기가 그 자리를 **재사용**(탭·버퍼 새로 만들지 않음) · 편집하면 정식 탭으로 승격 | 파일 읽기 1 | 자리 재사용이 곧 회수 | `project.preview_tab` | 미등재(끄면 탭이 늘어 **메모리가 더 든다**) |
 | **★ 파일 다중 열기**(93차) | `multi-open` **1개**(요청당 · 끝나면 종료) | 자리 탭을 먼저 다 만들고 순차 적재 · 창 안 막음 | 파일마다 자리 탭 → 준비본 이동(사본 0) | 파일 ≤ `file.open_max` 10 | 탭 닫힘 | `file.open_max` | 미등재(사용자 동작에만 딸림) |

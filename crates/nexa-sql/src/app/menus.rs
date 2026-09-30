@@ -73,6 +73,14 @@ impl App {
             "autosave.settings",
             t(Msg::MnAutosaveSettings),
         ));
+        // ★ 프로젝트 저장(사용자 09-30) — 풀다운 Project ▸ 저장과 같은 길(`project.save`).
+        if self.project.is_open() {
+            items.push(CtxItem::Separator);
+            items.push(CtxItem::item(
+                "autosave.save_project",
+                t(Msg::MnProjectSave),
+            ));
+        }
         let r = self.status_autosave_rect;
         let host = self
             .window

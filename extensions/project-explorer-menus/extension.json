@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "id": "project-explorer-menus",
+  "name": "Project Explorer Menus",
+  "version": "0.1.0",
+  "kind": "wasm",
+  "summary": "Adds commands to the right-click menu of the open file — starter skeleton built on the SDK (docs/97)",
+  "description": "A starter extension for growing the right-click menu of the open file.\nStep 1 (this version): a 'Project Explorer Menus' submenu in the editor context menu with one command, Show file path, which asks the host for the active document's path (nx_host_get / Editor::doc_path) and writes it to the app log (developer mode, ext layer).\nNext steps are listed in docs/97: attaching the menu to the Project Explorer OPEN FILES rows, file operations, and settings under ext.project_explorer_menus.*.",
+  "author": "SosomLab",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/project-explorer-menus",
+  "min_app": "0.1.1",
+  "platforms": [],
+  "requires": [],
+  "settings_prefix": "ext.project_explorer_menus.",
+  "files": [
+    {
+      "path": "project_explorer_menus.wasm",
+      "dest": "",
+      "sha256": "8564ea0835ca185a62a6ed3d166dc0b44b8561695e0caa17db45c344dabd15f6",
+      "url": ""
+    }
+  ],
+  "messages": {
+    "install": "Project Explorer Menus is on — right-click in an editor: Project Explorer Menus > Show file path (log window shows the path)."
+  },
+  "repository": "https://raw.githubusercontent.com/SosomLab/nexa-sql/main/extensions"
+}

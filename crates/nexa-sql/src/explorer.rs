@@ -159,6 +159,12 @@ enum Req {
         schema: String,
         kind: ObjectKind,
     },
+    /// ★ 객체 용량(사용자 09-30) — 한 스키마·종류의 객체별 바이트(백그라운드 메타 세션 · 폴더가 읽힐 때 한 번).
+    Sizes {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+    },
     /// ★ 이름 인덱스(84 §2) — 스키마 하나의 (종류, 이름) 전부 · 검색 중일 때만 · 한 번에 하나.
     Index {
         gen: u64,
@@ -503,6 +509,13 @@ enum Resp {
         schema: String,
         r: Result<(Vec<nsql_catalog::NameEntry>, bool), String>,
     },
+    /// 객체 용량 한 스키마·종류 분(사용자 09-30).
+    Sizes {
+        gen: u64,
+        schema: String,
+        kind: ObjectKind,
+        r: Result<Vec<(String, u64)>, String>,
+    },
     /// 검색 일치(스레드 판정 · `rev` = 보낸 검색어 세대 · 스키마 하나 분 또는 전부).
     Hits {
         gen: u64,
@@ -809,6 +822,12 @@ pub(crate) struct Explorer {
     focused: bool,
     /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
     icons_on: bool,
+    /// ★ 용량 표시(설정 `explorer.sizes` · 향상 모드 끔 · 사용자 09-30): 테이블·MV·인덱스 폴더가 읽히면 그 스키마·종류의
+    ///   용량을 백그라운드 메타 세션으로 한 번(지연 로딩) → 행 오른쪽 흐린 글자(`nsql_core::fmt_size`) · 스키마 행 = 테이블 합.
+    sizes_on: bool,
+    sizes: HashMap<(String, ObjectKind, String), u64>,
+    /// 용량을 **시도한** (스키마, 종류) — 빈 결과·실패도 포함(스키마 합의 `+` 판정 · MV 0개도 읽음).
+    sizes_loaded: HashSet<(String, ObjectKind)>,
     icon_cache: IconCache,
     /// ★ 객체 상세 캐시(사용자 09-26 "이미 본 대상은 깜빡임 없이 · 상한/미사용 회수 · 새로 고침 범위는 무효화") —
     ///   열쇠 = `DetailTarget::key` · 값 = 섹션 · `dirty` = 새로 고침(수동·DDL·워터마크)이 닿아 다음 클릭에 다시 읽는다(보이는 건 즉시 · 도착하면 교체).
@@ -990,6 +1009,7 @@ fn req_label(r: &Req) -> String {
         Req::Schemas { .. } => "schemas".into(),
         Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
         Req::Index { schema, .. } => format!("index {schema}"),
+        Req::Sizes { schema, kind, .. } => format!("sizes {schema} {kind:?}"),
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
         Req::NamesUpdate { schema, kind, .. } => format!("names-update {schema} {kind:?}"),
@@ -1034,7 +1054,7 @@ fn req_prio(r: &Req) -> u8 {
         | Req::NamesSeed { .. } => 1,
         Req::Index { .. } => 2,
         Req::ColumnsMeta { urgent: false, .. } => 3,
-        Req::ObjectsMeta { .. } | Req::SchemaComments { .. } => 4,
+        Req::ObjectsMeta { .. } | Req::SchemaComments { .. } | Req::Sizes { .. } => 4,
         Req::DictMeta { .. } => 5,
         _ => 2,
     }
@@ -1348,6 +1368,20 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     cols,
                 }
             }
+            Req::Sizes { gen, schema, kind } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::object_sizes(s, &schema, kind).map_err(err_s)
+                });
+                Resp::Sizes {
+                    gen,
+                    schema,
+                    kind,
+                    r,
+                }
+            }
             Req::Comments { gen, owner } => {
                 if gen != cur_gen {
                     continue;
@@ -1500,7 +1534,14 @@ fn search_hits(
     schemas.sort();
     'outer: for sc in schemas {
         for e in &names[sc] {
-            if m.matches(&e.name) {
+            let kind = format!("{:?}", e.kind).to_lowercase();
+            let facts = crate::filterbar::NodeFacts {
+                text: &e.name,
+                kind: Some(&kind),
+                size: None,
+                fields: &[],
+            };
+            if m.matches_facts(&facts) {
                 out.push((e.schema.clone(), e.kind, e.name.clone()));
                 if out.len() >= limit {
                     break 'outer;
@@ -1711,6 +1752,9 @@ impl Explorer {
             visible,
             focused: false,
             icons_on: true,
+            sizes_on: true,
+            sizes: HashMap::new(),
+            sizes_loaded: HashSet::new(),
             icon_cache: HashMap::new(),
             detail_cache: HashMap::new(),
             detail_invalidated: Vec::new(),
@@ -1792,6 +1836,8 @@ impl Explorer {
         self.warm_sent = 0;
         self.comment_q.clear();
         self.comment_inflight = None;
+        self.sizes.clear();
+        self.sizes_loaded.clear();
         self.fresh.clear();
         self.missing_at.clear();
         self.watermarks.clear();
@@ -1817,6 +1863,159 @@ impl Explorer {
         self.font_px = px.max(1.0);
     }
 
+    /// 용량 표시 켬/끔 — 끄면 읽어 둔 값도 비운다(다시 켜면 폴더를 읽을 때 다시 채운다).
+    pub(crate) fn set_sizes(&mut self, on: bool) {
+        self.sizes_on = on;
+        if !on {
+            self.sizes.clear();
+            self.sizes_loaded.clear();
+        }
+    }
+
+    /// 용량을 보일 종류(테이블 · MV · 인덱스).
+    fn sizeable(kind: ObjectKind) -> bool {
+        matches!(
+            kind,
+            ObjectKind::Table | ObjectKind::MaterializedView | ObjectKind::Index
+        )
+    }
+
+    /// ★ 단위별 색(사용자 09-30 재지정 · 도형 없이 **텍스트 색만**): B 연한 회색 · K 진한 회색 · M 검정 · G 연한 오렌지 ·
+    ///   T 진한 주황(벽돌색) · P(마지막) 완전 빨강. 어두운 테마는 회색 계열만 뒤집는다(검정 → 흰색). (09-30 재조정 "G 더 진하게 ·
+    ///   흐리멍텅": B 회색 600 · K 회색 800 · G 오렌지 700.)
+    fn size_color(unit: usize, th: &Theme) -> nexa_ctl::Color {
+        const LIGHT: [u32; 6] = [
+            0x0075_7575,
+            0x0042_4242,
+            0x0021_2121,
+            0x00EF_6C00,
+            0x00BF_360C,
+            0x00FF_0000,
+        ];
+        const DARK: [u32; 6] = [
+            0x009E_9E9E,
+            0x00E0_E0E0,
+            0x00FF_FFFF,
+            0x00FF_A726,
+            0x00FF_7043,
+            0x00FF_1744,
+        ];
+        let p = if th.is_dark { &DARK } else { &LIGHT };
+        nexa_ctl::Color(p[unit.min(5)])
+    }
+
+    /// 행 오른쪽에 보일 용량 글(없으면 None): 객체 = 자기 값 · 폴더 = 그 종류 합 · 스키마 = 읽힌 종류(테이블·MV·인덱스) 합. 순수.
+    fn size_text(&self, n: &Node, parent: usize) -> Option<(String, usize, bool)> {
+        let bytes = self.size_bytes(n, parent)?;
+        // ★ 부분 합 표시(사용자 09-30 "확인된 용량만 보여 주는 것을 표시"): 스키마 행 = 테이블·MV·인덱스 셋이 다 읽히지 않았으면
+        //   `27G+`(더 있을 수 있음 · 흐린 색) · 셋 다 읽히면 `27G`(단위 색). 미리 읽지 않는다.
+        let partial = match &n.kind {
+            NodeKind::Schema(schema) => {
+                // 읽음 = 용량을 시도했거나(빈 결과·실패 포함) · 그 종류 폴더를 읽었는데 객체가 0개(사용자 09-30 "+가 없어져야").
+                let loaded = |k: ObjectKind| {
+                    self.sizes_loaded.contains(&(schema.clone(), k))
+                        || self.nodes.iter().any(|f| {
+                            matches!(&f.kind, NodeKind::Folder { schema: s, kind: kk } if s == schema && *kk == k)
+                                && f.state == LoadState::Loaded
+                                && f.children.is_empty()
+                        })
+                };
+                !(loaded(ObjectKind::Table)
+                    && loaded(ObjectKind::MaterializedView)
+                    && loaded(ObjectKind::Index))
+            }
+            _ => false,
+        };
+        let mut s = nsql_core::fmt_size(bytes);
+        if partial {
+            s.push('+');
+        }
+        Some((s, nsql_core::size_unit(bytes), partial))
+    }
+
+    /// 노드의 용량(바이트 · 모르면 None) — 표시·필터 술어(`size>1G`) 공용.
+    fn size_bytes(&self, n: &Node, parent: usize) -> Option<u64> {
+        if !self.sizes_on || self.sizes.is_empty() {
+            return None;
+        }
+        let sum_of = |schema: &str, kind: ObjectKind| -> Option<u64> {
+            let mut any = false;
+            let sum: u64 = self
+                .sizes
+                .iter()
+                .filter(|((s, k, _), _)| s == schema && *k == kind)
+                .map(|(_, b)| {
+                    any = true;
+                    *b
+                })
+                .sum();
+            any.then_some(sum)
+        };
+        let bytes = match &n.kind {
+            NodeKind::Object(o) if Self::sizeable(o.kind) => {
+                *self
+                    .sizes
+                    .get(&(o.schema.clone(), o.kind, o.name.clone()))?
+            }
+            NodeKind::Folder { schema, kind } if Self::sizeable(*kind) => sum_of(schema, *kind)?,
+            // 스키마 = 읽힌 종류 전부의 합(테이블 + MV + 인덱스 · 사용자 09-30 "Tables 27G Indexes 18G면 BISCM이 27G인 게 맞아?").
+            NodeKind::Schema(schema) => {
+                let parts: Vec<u64> = [
+                    ObjectKind::Table,
+                    ObjectKind::MaterializedView,
+                    ObjectKind::Index,
+                ]
+                .into_iter()
+                .filter_map(|k| sum_of(schema, k))
+                .collect();
+                if parts.is_empty() {
+                    return None;
+                }
+                parts.iter().sum()
+            }
+            // ★ 테이블 아래 Indexes 하위 폴더의 항목(사용자 09-30 "인덱스에도 용량") — 스키마 인덱스 용량 표에서.
+            NodeKind::Item(it) => {
+                match &self.nodes.get(parent)?.kind {
+                    NodeKind::Sub { owner, sub } if *sub == SubKind::Indexes => *self
+                        .sizes
+                        .get(&(owner.schema.clone(), ObjectKind::Index, it.name.clone()))?,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        Some(bytes)
+    }
+
+    /// 노드 종류 이름(`type:` 술어 · 소문자 · 객체 = `table` `view` `materializedview` … · 스키마 = `schema`).
+    fn kind_name(n: &Node) -> Option<String> {
+        Some(match &n.kind {
+            NodeKind::Schema(_) => "schema".to_string(),
+            NodeKind::Object(o) => format!("{:?}", o.kind).to_lowercase(),
+            NodeKind::Column(_) => "column".to_string(),
+            NodeKind::Item(it) => format!("{:?}", it.icon).to_lowercase(),
+            _ => return None,
+        })
+    }
+
+    /// ★ 우클릭 "용량 확인"(사용자 09-30): 펼치지 않고 그 스키마의 테이블·MV·인덱스 용량을 읽는다.
+    fn request_sizes(&mut self, schema: &str) {
+        if !self.sizes_on {
+            return;
+        }
+        for kind in [
+            ObjectKind::Table,
+            ObjectKind::MaterializedView,
+            ObjectKind::Index,
+        ] {
+            let _ = self.tx_bg.send(Req::Sizes {
+                gen: self.gen,
+                schema: schema.to_string(),
+                kind,
+            });
+        }
+    }
+
     pub(crate) fn set_icons(&mut self, on: bool) {
         self.icons_on = on;
         if !on {
@@ -1835,6 +2034,16 @@ impl Explorer {
     }
 
     /// 마우스 아래 노드의 툴팁(설정 `explorer.tooltip` · T-249 · 28 §툴팁 카드): (본문, 행 사각형) — 이름(부제) · 종류/경로 · 오류.
+    /// 이 점 아래 노드(상태 행·빈 곳 = None).
+    pub(crate) fn node_at(&self, p: Point) -> Option<usize> {
+        self.row_at(p).and_then(|(n, _)| n)
+    }
+
+    /// 지금 이 점 아래 행이 hover 행인가(툴팁 표시 조건 · 스크롤로 밀렸으면 false).
+    pub(crate) fn hover_under(&self, p: Point) -> bool {
+        self.hover.is_some() && self.row_at(p).and_then(|(n, _)| n) == self.hover
+    }
+
     pub(crate) fn hover_tip(&self) -> Option<(String, Rect)> {
         if !self.tooltip {
             return None;
@@ -2924,6 +3133,23 @@ impl Explorer {
                     self.actions
                         .push(ExplorerAction::Comments { owner, table, cols });
                 }
+                Resp::Sizes {
+                    gen,
+                    schema,
+                    kind,
+                    r,
+                } => {
+                    if gen != self.gen || !self.sizes_on {
+                        continue;
+                    }
+                    if let Ok(list) = r {
+                        for (name, bytes) in list {
+                            self.sizes.insert((schema.clone(), kind, name), bytes);
+                        }
+                    }
+                    // 시도했으면 읽음(빈 결과·실패 포함) — 세 종류를 다 시도하면 스키마 합의 `+`가 사라진다.
+                    self.sizes_loaded.insert((schema, kind));
+                }
                 Resp::SchemaComments {
                     gen,
                     schema,
@@ -2983,6 +3209,14 @@ impl Explorer {
                                     // ★ 86 §5: 관계 폴더가 읽히면 그 스키마 코멘트를 뒤에서(기본 목록 뒤 · 순서대로).
                                     if k.is_relation() {
                                         self.enqueue_schema_comments(&s);
+                                    }
+                                    // ★ 용량(사용자 09-30 · 지연 로딩): 이 폴더의 종류가 용량 대상이면 백그라운드 메타 세션으로 한 번.
+                                    if self.sizes_on && Self::sizeable(k) {
+                                        let _ = self.tx_bg.send(Req::Sizes {
+                                            gen: self.gen,
+                                            schema: s.clone(),
+                                            kind: k,
+                                        });
                                     }
                                     // 스레드의 이름 사본도 전체 목록으로(84 §6).
                                     if self.index_done.contains(&s) {
@@ -3072,6 +3306,22 @@ impl Explorer {
                 Resp::SubItems { gen, node, r } => {
                     if gen != self.gen {
                         continue;
+                    }
+                    // ★ 테이블의 Indexes 하위 폴더 = 그 스키마의 인덱스 용량을 한 번(이미 있으면 생략 · 사용자 09-30).
+                    if let (true, NodeKind::Sub { owner, sub }) =
+                        (self.sizes_on, &self.nodes[node].kind)
+                    {
+                        if *sub == SubKind::Indexes
+                            && !self
+                                .sizes_loaded
+                                .contains(&(owner.schema.clone(), ObjectKind::Index))
+                        {
+                            let _ = self.tx_bg.send(Req::Sizes {
+                                gen: self.gen,
+                                schema: owner.schema.clone(),
+                                kind: ObjectKind::Index,
+                            });
+                        }
                     }
                     match r {
                         Ok(list) => {
@@ -4994,7 +5244,11 @@ impl Explorer {
             let searchable = !matches!(
                 node.kind,
                 NodeKind::Root | NodeKind::Folder { .. } | NodeKind::Sub { .. }
-            );
+            )
+                // ★ `size` 술어가 있으면 스키마 행(= 합계)은 일치가 아니다 — 스키마가 걸리면 그 아래가 전부 보여 64K 테이블까지
+                //   나왔다(사용자 09-30 "필터 확인" · 회귀 시험 `size_filter_keeps_only_big_objects`).
+                && !(matches!(node.kind, NodeKind::Schema(_))
+                    && m.query().is_some_and(|q| q.has_key("size")));
             let direct = searchable && {
                 if self.lower_labels.len() <= i {
                     self.lower_labels.resize(i + 1, None);
@@ -5016,7 +5270,20 @@ impl Explorer {
                     self.lower_labels[i] = Some(lower.into_boxed_str());
                 }
                 let lower = self.lower_labels[i].clone().unwrap_or_default();
-                m.matches_cached(&lower, || self.label(i).0)
+                if m.query().is_some() {
+                    // ★ 구조 질의(docs/98): 이름 + 종류 + 용량(읽힌 것만 · 모르면 술어 거짓).
+                    let text = self.label(i).0;
+                    let kind = Self::kind_name(&self.nodes[i]);
+                    let facts = crate::filterbar::NodeFacts {
+                        text: &text,
+                        kind: kind.as_deref(),
+                        size: self.size_bytes(&self.nodes[i], parents[i].unwrap_or(0)),
+                        fields: &[],
+                    };
+                    m.matches_facts(&facts)
+                } else {
+                    m.matches_cached(&lower, || self.label(i).0)
+                }
             };
             let child_strong = node.children.iter().any(|&c| strong[c]);
             hit[i] = direct;
@@ -5379,6 +5646,10 @@ impl Explorer {
                     }
                     NodeKind::Schema(_) => {
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        if self.sizes_on {
+                            // ★ 펼치지 않고 용량 읽기(사용자 09-30).
+                            items.push(CtxItem::item("sizes", t(Msg::ExpLoadSizes)));
+                        }
                         items.push(CtxItem::Separator);
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                         items.push(CtxItem::item("refresh_meta", t(Msg::ExpRefreshMeta)));
@@ -5758,6 +6029,11 @@ impl Explorer {
                 self.selected = Some(i);
                 self.refresh_selected(false);
             }
+            "sizes" => {
+                if let Some(s) = self.schema_of(i) {
+                    self.request_sizes(&s);
+                }
+            }
             // ★ 메타(완성 캐시)만 새로 고침(79 §4): 루트 = 이 서버 전부 · 스키마 = 그 스키마.
             "refresh_meta" => {
                 let scope = match &self.nodes[i].kind {
@@ -5966,6 +6242,8 @@ impl Explorer {
                 }
                 Some(i) => {
                     let n = &self.nodes[*i];
+                    // 용량 글(사용자 09-30) — 아래의 가변 차용(아이콘 캐시) 전에 미리.
+                    let size_txt = self.size_text(n, *parent);
                     if self.selected == Some(*i) {
                         dc.fill_rect(
                             rr,
@@ -6093,6 +6371,20 @@ impl Explorer {
                         let sx0 = x + lw + (8.0 * s).round() as i32;
                         dc.text(sx0, ty, rr, &sub, color);
                         right = sx0 + dc.text_width(&sub);
+                    }
+                    // ★ 용량(사용자 09-30 · DBeaver식): 행 오른쪽 끝에 흐리게 · 라벨과 겹치면 생략.
+                    if let Some((sz, unit, partial)) = size_txt {
+                        // 보조(Status) 글꼴보다 1pt(≈1.33px) 더 작게(사용자 09-30) · 단위별 색(텍스트 색만).
+                        dc.select_font_sized(FontSlot::Status, false, -(4.0 / 3.0) * s);
+                        let w = dc.text_width(&sz);
+                        let sx0 = rr.right() - (10.0 * s).round() as i32 - w;
+                        if sx0 > right + (12.0 * s).round() as i32 {
+                            let sty = dc.text_center_y(y, row_h);
+                            // 미확정(`+`)도 자기 단위 색(사용자 09-30).
+                            let _ = partial;
+                            dc.text(sx0, sty, rr, &sz, Self::size_color(unit, th));
+                        }
+                        dc.select_font(FontSlot::Base, false);
                     }
                     // 내용 폭 = 가장 긴 행의 오른쪽 끝(스크롤 되돌린 값) + 여백.
                     content_w = content_w.max(right + sx - b.x + (12.0 * s).round() as i32);
@@ -6223,6 +6515,49 @@ mod refresh_tests {
             vec![node(obj("A"), 3), node(obj("B"), 3), node(obj("C"), 3)],
         );
         (ex, schema, tables)
+    }
+
+    /// ★ `size>1G`(사용자 09-30 "필터 확인"): 큰 객체만 남고 · 작은 객체는 숨김 · 스키마/폴더 행은 조상으로만 남는다(합계로 일치 아님).
+    #[test]
+    fn size_filter_keeps_only_big_objects() {
+        let (mut ex, schema, tables) = sample();
+        let g = 1u64 << 30;
+        ex.sizes
+            .insert(("HR".into(), ObjectKind::Table, "A".into()), 2 * g);
+        ex.sizes
+            .insert(("HR".into(), ObjectKind::Table, "B".into()), 64 * 1024);
+        ex.sizes
+            .insert(("HR".into(), ObjectKind::Table, "C".into()), 64 * 1024);
+        ex.nodes[schema].state = LoadState::Loaded;
+        ex.nodes[tables].state = LoadState::Loaded;
+        let m = crate::filterbar::Matcher::plain("size>1G");
+        assert!(
+            m.query().is_some_and(|q| q.has_key("size")),
+            "구조 질의여야 한다"
+        );
+        ex.apply_filter(Some(m));
+        let keep = ex.filter_keep.clone().expect("keep-set");
+        let kids = ex.nodes[tables].children.clone();
+        let name = |i: usize| match &ex.nodes[i].kind {
+            NodeKind::Object(o) => o.name.clone(),
+            _ => String::new(),
+        };
+        let kept: Vec<String> = kids
+            .iter()
+            .filter(|c| keep.contains(c))
+            .map(|&c| name(c))
+            .collect();
+        assert_eq!(
+            kept,
+            vec!["A".to_string()],
+            "keep = {kept:?} · hits {}",
+            ex.filter_hits
+        );
+        assert_eq!(ex.filter_hits, 1);
+        assert!(
+            keep.contains(&schema) && keep.contains(&tables),
+            "조상은 남는다"
+        );
     }
 
     /// 디프: 남는 노드는 인덱스·펼침·자식 그대로 · 새 노드는 새 목록 자리 + 강조 · 사라진 노드의 선택은 부모로.

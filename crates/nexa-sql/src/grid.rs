@@ -293,10 +293,19 @@ pub(crate) struct Grid {
     bars: ScrollBars,
     /// 설정 `grid.scroll` = row 이면 세로 스크롤을 행 경계에 맞춘다(기본 pixel · 사용자 09-14).
     row_snap: bool,
+    /// ★ 고속 스크롤(설정 `scroll.*` · 사용자 09-30): 휠은 `bars`(nexa-ctl 전역 설정 + 결과 그리드 override) · ↑/↓ 키 자동 반복은
+    ///   이 가속기 — 그리드·텍스트 등 모든 보기 모드(같은 `bars`·같은 키 길) · HUD도 `bars`가 그린다.
+    key_accel: nexa_ctl::ScrollAccel,
+    /// 결과 도구줄 보기 모드 ▾ 메뉴가 열려 있는가(다른 우클릭 메뉴와 구별 · 사용자 09-30 "열린 상태에서 다시 누르면 닫힘").
+    menu_is_view: bool,
+    /// 보기 모드 버튼 위 MouseDown이 열린 메뉴를 닫았다 → 이어지는 클릭은 다시 열지 않는다(토글).
+    view_toggle_off: bool,
     /// 설정 `grid.row_numbers`(기본 켬) — 왼쪽 고정 행번호 열(가로 스크롤 무관).
     row_numbers: bool,
     /// 설정 `grid.null_text` — NULL 셀 글자(그리드·텍스트 보기·복사 **공통** · 기본 `NULL` · 사용자 09-17).
     null_text: String,
+    /// 설정 `grid.filter_list_max` — 정규식 필터 조회 SQL ③단계 값 목록 상한(기본 1,000 · 사용자 09-30).
+    filter_list_max: usize,
     /// ★ 행 포커스 배경(사용자 09-22 · 설정 `grid.row_focus`): 셀을 골라도 그 행 전체(다중 행 포함)에 셀 선택색보다 연한 배경.
     row_focus: bool,
     /// 위쪽 경계선을 그릴지 — 결과 탭 줄이 바로 위에 있으면 탭 줄의 아래선과 겹쳐 2px가 되므로 호스트가 끈다(사용자 09-22).
@@ -488,11 +497,15 @@ impl Default for Grid {
             header_h: 0,
             bars: ScrollBars::new(),
             row_snap: false,
+            key_accel: nexa_ctl::ScrollAccel::new(),
+            menu_is_view: false,
+            view_toggle_off: false,
             row_numbers: true,
             row_focus: true,
             top_border: true,
             row_focus_color: (None, None),
             null_text: "NULL".into(),
+            filter_list_max: 1000,
             row_pct: 150,
             gutter_w: 0,
             col_order: Vec::new(),
@@ -656,6 +669,7 @@ impl Grid {
             top_border: self.top_border,
             row_focus_color: self.row_focus_color,
             null_text: self.null_text.clone(),
+            filter_list_max: self.filter_list_max,
             row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
@@ -2845,6 +2859,8 @@ impl Grid {
             InputEvent::MouseDown { x, y, .. } | InputEvent::MouseUp { x, y } => {
                 let p = at(x, y);
                 let down = matches!(ev, InputEvent::MouseDown { .. });
+                // 이번 놓임이 "열린 보기 메뉴를 닫은 클릭"의 끝이면 다시 열지 않는다(토글).
+                let toggle_off = !down && std::mem::take(&mut self.view_toggle_off);
                 if down && !self.page_box.bounds().contains(p) {
                     self.page_box.set_focused(false);
                 }
@@ -2882,10 +2898,11 @@ impl Grid {
                     self.page_box.on_event(ev, &mut inv);
                 }
                 match clicked {
-                    Some("view") => {
+                    Some("view") if !toggle_off => {
                         let r = self.tb_view.bounds();
                         self.open_view_menu(r.x, r.y, scale);
                     }
+                    Some("view") => {}
                     Some("refresh") if self.can_refresh() => self.want_refresh = true,
                     Some(id @ ("row.add" | "row.del" | "row.dup" | "row.save" | "row.cancel")) => {
                         self.edit_command(id);
@@ -2985,6 +3002,7 @@ impl Grid {
                 .with_active(matches!(cur, ResultView::Sql(_))),
         ];
         let text_w = (self.row_h * 8).max(140);
+        self.menu_is_view = true;
         self.menu.open_at(x, y, items, self.menu_host(), text_w);
     }
 
@@ -3074,8 +3092,12 @@ impl Grid {
             } => self.text_scroll.1 -= page,
             InputEvent::Key { key: Key::Home, .. } => self.text_scroll.1 = 0,
             InputEvent::Key { key: Key::End, .. } => self.text_scroll.1 = i32::MAX / 2,
-            InputEvent::Key { key: Key::Down, .. } => self.text_scroll.1 += self.row_h,
-            InputEvent::Key { key: Key::Up, .. } => self.text_scroll.1 -= self.row_h,
+            InputEvent::Key { key: Key::Down, .. } => {
+                self.text_scroll.1 += self.row_h * self.key_step(1)
+            }
+            InputEvent::Key { key: Key::Up, .. } => {
+                self.text_scroll.1 -= self.row_h * self.key_step(-1)
+            }
             InputEvent::Key { key: Key::Left, .. } => self.text_scroll.0 -= self.row_h * 2,
             InputEvent::Key {
                 key: Key::Right, ..
@@ -3333,7 +3355,31 @@ impl Grid {
         }
     }
 
+    /// 정규식 필터 값 목록 상한(설정 `grid.filter_list_max`).
+    pub(crate) fn set_filter_list_max(&mut self, n: usize) {
+        self.filter_list_max = n.max(1);
+    }
+
     /// 스크롤 단위 — `true` = 항목(행) 단위 · `false` = 픽셀(기본).
+    /// 결과 그리드만의 고속 스크롤 설정(None = 전역 · `scroll.fast_grid_extra`).
+    pub(crate) fn set_fast_override(&mut self, cfg: Option<nexa_ctl::FastScroll>) {
+        self.bars.set_fast_override(cfg);
+        self.key_accel.reset();
+    }
+
+    /// 그리드 영역(포인터 캡처 판정).
+    pub(crate) fn area(&self) -> Rect {
+        self.bounds
+    }
+
+    /// ↑/↓ 한 번의 이동 배수(고속 스크롤이 켜져 있고 같은 방향이 빨리 이어질 때만 > 1) + 속도 HUD.
+    fn key_step(&mut self, dir: i32) -> i32 {
+        let cfg = self.bars.fast_cfg();
+        let k = self.key_accel.factor_cfg(dir, &cfg);
+        self.bars.note_fast(k);
+        k
+    }
+
     pub(crate) fn set_row_snap(&mut self, on: bool) {
         self.row_snap = on;
         self.clamp();
@@ -3926,6 +3972,7 @@ impl Grid {
             !self.sort_keys.is_empty(),
         ));
         let text_w = (self.row_h * 10).max(180);
+        self.menu_is_view = false;
         self.menu.open_at(x, y, items, self.menu_host(), text_w);
     }
 
@@ -4109,6 +4156,7 @@ impl Grid {
             ));
         }
         let text_w = (self.row_h * 10).max(180);
+        self.menu_is_view = false;
         self.menu.open_at(x, y, items, self.menu_host(), text_w);
     }
 
@@ -4330,15 +4378,19 @@ impl Grid {
                 continue;
             };
             if p.op == FilterOp::Regex {
-                // ③단계 후보 = 지금 보이는(전 술어 통과) 행의 이 열 distinct 값.
-                let mut seen: Vec<String> = Vec::new();
-                for &r in &self.row_order {
-                    let v = cell_text(rs.cell(r, p.col), "");
-                    if !seen.contains(&v) {
-                        seen.push(v);
-                    }
-                }
-                let (sql, note) = p.regex_sql(&c.name, self.dialect, &seen);
+                // ③단계 후보 = 지금 보이는(전 술어 통과) 행의 이 열 distinct 값 — **값 목록이 실제로 필요할 때만** 모은다
+                //   (①② 방언 정규식·LIKE 번역이면 0) · 해시 집합 O(n) · 상한+1개에서 멈춤(`grid.filter_list_max` · 사용자 09-30).
+                let seen = if p.needs_value_list(self.dialect) {
+                    distinct_capped(
+                        self.row_order
+                            .iter()
+                            .map(|&r| cell_text(rs.cell(r, p.col), "")),
+                        self.filter_list_max,
+                    )
+                } else {
+                    Vec::new()
+                };
+                let (sql, note) = p.regex_sql(&c.name, self.dialect, &seen, self.filter_list_max);
                 preds.push(sql);
                 notes.push(note);
             } else {
@@ -4710,6 +4762,15 @@ impl Grid {
         if self.menu.is_open() {
             // 메뉴가 떠 있는 동안 셀 드래그는 없다(메뉴가 MouseUp을 먹어 드래그가 남던 결함 · 사용자 09-29).
             self.drag_sel = None;
+            // ★ 보기 모드 ▾ 메뉴가 열린 채 그 버튼을 다시 누르면 = 닫기만(토글 · 사용자 09-30) — 바깥 클릭이 메뉴를 닫고
+            //   버튼 클릭으로 이어져 다시 열리던 것을 막는다.
+            if self.menu_is_view {
+                if let InputEvent::MouseDown { x, y, .. } = *ev {
+                    if self.tb_view.bounds().contains(Point { x, y }) {
+                        self.view_toggle_off = true;
+                    }
+                }
+            }
             let consumed = self.menu.on_event(ev);
             if let Some(id) = self.menu.take_picked() {
                 // ★ 항목 선택 = 그 클릭은 메뉴가 먹었다 — 호스트가 아래(셀 선택)로 흘리지 않게 표시(사용자 09-15).
@@ -4950,8 +5011,8 @@ impl Grid {
                     && matches!(key, Key::Up | Key::Down | Key::Left | Key::Right) =>
                 {
                     let (dr, dc) = match key {
-                        Key::Up => (-1, 0),
-                        Key::Down => (1, 0),
+                        Key::Up => (-self.key_step(-1), 0),
+                        Key::Down => (self.key_step(1), 0),
                         Key::Left => (0, -1),
                         _ => (0, 1),
                     };
@@ -5122,8 +5183,10 @@ impl Grid {
             } => self.scroll_y -= page,
             InputEvent::Key { key: Key::Home, .. } => self.scroll_y = 0,
             InputEvent::Key { key: Key::End, .. } => self.scroll_y = i32::MAX / 2,
-            InputEvent::Key { key: Key::Down, .. } => self.scroll_y += self.row_h,
-            InputEvent::Key { key: Key::Up, .. } => self.scroll_y -= self.row_h,
+            InputEvent::Key { key: Key::Down, .. } => {
+                self.scroll_y += self.row_h * self.key_step(1)
+            }
+            InputEvent::Key { key: Key::Up, .. } => self.scroll_y -= self.row_h * self.key_step(-1),
             InputEvent::Key { key: Key::Left, .. } => self.scroll_x -= self.row_h * 2,
             InputEvent::Key {
                 key: Key::Right, ..
@@ -6345,13 +6408,15 @@ impl Predicate {
     }
 
     /// ★ 정규식 조회 SQL 3단계(사용자 09-29): ① 방언 정규식(Oracle `REGEXP_LIKE` · PostgreSQL `~*` · MySQL `REGEXP`) ②
-    /// 부분집합을 LIKE로 번역(`^`·`$`·리터럴·`.`·`.*`·최상위 `(a|b)`) ③ 그것도 안 되면 통과한 값 목록 `IN (…)`(최대 1,000).
+    /// 부분집합을 LIKE로 번역(`^`·`$`·리터럴·`.`·`.*`·최상위 `(a|b)`) ③ 그것도 안 되면 통과한 값 목록 `IN (…)`(최대 `cap` =
+    /// `grid.filter_list_max`). `matched`가 `cap`보다 길면 "상한에서 멈춤"으로 본다([`distinct_capped`]는 cap+1개까지만 모은다).
     /// 반환 = (술어, 설명 주석).
     pub(crate) fn regex_sql(
         &self,
         col: &str,
         dialect: Dialect,
         matched: &[String],
+        cap: usize,
     ) -> (String, String) {
         let c = format!("q.\"{}\"", col.replace('"', "\"\""));
         let esc = |s: &str| s.replace('\'', "''");
@@ -6389,22 +6454,21 @@ impl Predicate {
             };
             return (sql, format!("-- regex: {pat} → LIKE"));
         }
-        const MAX: usize = 1000;
+        let cap = cap.max(1);
         let items: Vec<String> = matched
             .iter()
-            .take(MAX)
+            .take(cap)
             .map(|v| format!("'{}'", esc(v)))
             .collect();
-        let note = if matched.len() > MAX {
+        let note = if matched.len() > cap {
             format!(
-                "-- regex: {pat} → 값 목록 {}개로 제한(전체 {}개 · 가져온 행 기준)",
-                MAX,
-                matched.len()
+                "-- {}",
+                tf(Msg::FilterRegexListCapped, &[pat, &cap.to_string()])
             )
         } else {
             format!(
-                "-- regex: {pat} → 값 목록 {}개(가져온 행 기준)",
-                matched.len()
+                "-- {}",
+                tf(Msg::FilterRegexList, &[pat, &matched.len().to_string()])
             )
         };
         if items.is_empty() {
@@ -6413,6 +6477,32 @@ impl Predicate {
             (format!("{c} IN ({})", items.join(", ")), note)
         }
     }
+
+    /// ③단계 값 목록이 필요한가 — 정규식 술어이고, 방언 정규식(①)도 LIKE 번역(②)도 안 될 때만. 순수.
+    pub(crate) fn needs_value_list(&self, dialect: Dialect) -> bool {
+        self.op == FilterOp::Regex
+            && !matches!(
+                dialect,
+                Dialect::Oracle | Dialect::Postgres | Dialect::Mysql
+            )
+            && regex_to_like(&self.value).is_none()
+    }
+}
+
+/// 처음 나온 순서를 지키는 distinct — 해시 집합 O(n) · `cap`+1개가 모이면 멈춘다(상한 초과를 알 수 있게 · 사용자 09-30). 순수.
+pub(crate) fn distinct_capped(values: impl Iterator<Item = String>, cap: usize) -> Vec<String> {
+    let stop = cap.max(1).saturating_add(1);
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for v in values {
+        if seen.insert(v.clone()) {
+            out.push(v);
+            if out.len() >= stop {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// 정규식 부분집합 → LIKE 패턴들(대안마다 하나) — `^` `$` 앵커 · 리터럴 · `.`(→ `_`) · `.*`/`.+`(→ `%`/`_%`) · 최상위 `(a|b)` ·
@@ -6549,18 +6639,45 @@ mod tests {
         assert_eq!(regex_to_like("^\\d+$"), None);
         assert_eq!(regex_to_like("a[bc]"), None);
         // 3단계 SQL.
-        let (o, _) = rx.regex_sql("C", Dialect::Oracle, &[]);
+        let (o, _) = rx.regex_sql("C", Dialect::Oracle, &[], 1000);
         assert_eq!(o, "REGEXP_LIKE(q.\"C\", '^(pcm|pcc)6', 'i')");
-        let (pg, _) = rx.regex_sql("C", Dialect::Postgres, &[]);
+        let (pg, _) = rx.regex_sql("C", Dialect::Postgres, &[], 1000);
         assert_eq!(pg, "q.\"C\" ~* '^(pcm|pcc)6'");
-        let (ms, note) = rx.regex_sql("C", Dialect::Mssql, &[]);
+        let (ms, note) = rx.regex_sql("C", Dialect::Mssql, &[], 1000);
         assert_eq!(ms, "(q.\"C\" LIKE 'pcm6%' OR q.\"C\" LIKE 'pcc6%')");
         assert!(note.contains("LIKE"), "{note}");
         let hard =
             Predicate::new(0, ColKind::Text, FilterOp::Regex, "^\\d{3}$".into()).expect("rx");
-        let (ms2, note2) = hard.regex_sql("C", Dialect::Mssql, &["123".into(), "456".into()]);
+        let (ms2, note2) = hard.regex_sql("C", Dialect::Mssql, &["123".into(), "456".into()], 1000);
         assert_eq!(ms2, "q.\"C\" IN ('123', '456')");
         assert!(note2.contains("2"), "{note2}");
+        // 상한(사용자 09-30 · `grid.filter_list_max`): cap+1개 = 상한에서 멈춤 안내 · 목록은 cap개.
+        let (ms3, note3) = hard.regex_sql(
+            "C",
+            Dialect::Mssql,
+            &["1".into(), "2".into(), "3".into()],
+            2,
+        );
+        assert_eq!(ms3, "q.\"C\" IN ('1', '2')");
+        assert!(note3.contains("grid.filter_list_max"), "{note3}");
+        // 값 목록은 ③단계에서만 모은다.
+        assert!(!rx.needs_value_list(Dialect::Oracle));
+        assert!(!rx.needs_value_list(Dialect::Mssql)); // LIKE 번역 가능
+        assert!(hard.needs_value_list(Dialect::Mssql));
+        assert!(!hard.needs_value_list(Dialect::Postgres));
+    }
+
+    /// distinct 상한(사용자 09-30): 처음 나온 순서 · cap+1개에서 멈춤.
+    #[test]
+    fn distinct_capped_stops_after_cap_plus_one() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let it = ["a", "b", "a", "c", "d", "e"].iter().map(|x| x.to_string());
+        assert_eq!(distinct_capped(it, 2), v(&["a", "b", "c"]));
+        let it = ["a", "a", "b"].iter().map(|x| x.to_string());
+        assert_eq!(distinct_capped(it, 10), v(&["a", "b"]));
+        // 큰 입력도 O(n) — 20만 개 고유값에서 상한 1,000이면 1,001개.
+        let it = (0..200_000).map(|i| i.to_string());
+        assert_eq!(distinct_capped(it, 1000).len(), 1001);
     }
 
     #[test]
@@ -7128,6 +7245,42 @@ mod tests {
     }
 
     /// 느린 트랙패드 휠(사건당 -3 = 1px)이 누적된다 — 픽셀 모드는 1px씩, 행 모드는 저장값은 누적되되 표시는 행 경계(사용자 09-16).
+    /// ★ 고속 스크롤(09-30): ↓ 자동 반복이 빨리 이어지면 이동량이 배수 · 끄면 늘 한 행.
+    #[test]
+    fn fast_scroll_keys_accelerate() {
+        let mk = |fast: bool| {
+            let mut g = grid_with(&[100]);
+            g.set_fast_override(Some(nexa_ctl::FastScroll {
+                enabled: fast,
+                ..nexa_ctl::FastScroll::default()
+            }));
+            let rs = ResultSet {
+                columns: vec![Column {
+                    name: "c0".into(),
+                    type_name: String::new(),
+                }],
+                rows: (0..5000).map(|i| vec![Value::Int(i)]).collect(),
+            };
+            g.set_result(rs);
+            g.row_h = 20;
+            g.header_h = 21;
+            g.gutter_w = 30;
+            g.col_w = vec![100];
+            let down = InputEvent::Key {
+                key: Key::Down,
+                shift: false,
+                primary: false,
+            };
+            for _ in 0..40 {
+                g.on_event(&down, 1.0);
+            }
+            g.scroll_y
+        };
+        let (slow, fast) = (mk(false), mk(true));
+        assert!(slow > 0, "{slow}");
+        assert!(fast > slow, "fast {fast} > slow {slow}");
+    }
+
     #[test]
     fn slow_wheel_accumulates_in_both_scroll_modes() {
         let mut g = grid_with(&[100, 80]);

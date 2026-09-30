@@ -39,7 +39,12 @@ struct HostCtx {
     deadline: Instant,
     ops: Vec<(i32, bool)>,
     logs: Vec<String>,
+    /// ★ 호스트 상황(09-30 · docs/97): 활성 문서 경로 — `nx_host_get(DOC_PATH)`가 돌려준다.
+    doc_path: String,
 }
+
+/// `nx_host_get`의 종류 번호(SDK `query::*`와 같은 표).
+const HOST_GET_DOC_PATH: i32 = 1;
 
 fn host_guard(caller: &mut Caller<'_, HostCtx>, cost: u64) -> Result<(), wasmi::Error> {
     if Instant::now() >= caller.data().deadline {
@@ -76,6 +81,37 @@ fn linker(engine: &Engine) -> Result<Linker<HostCtx>, wasmi::Error> {
             Ok(1)
         },
     )?;
+    // ★ nx_host_get(kind, ptr, cap) -> i32 : 호스트 상황 값을 게스트 버퍼(길이 접두 · 게스트가 `nx_alloc`으로 마련 · `cap` =
+    //   본문 최대)에 써 준다 · 반환 = 쓴 길이(모르는 종류·안 맞으면 -1). 종류 1 = 활성 문서 경로(docs/97 §2).
+    l.func_wrap(
+        "env",
+        "nx_host_get",
+        |mut caller: Caller<'_, HostCtx>,
+         kind: i32,
+         ptr: i32,
+         cap: i32|
+         -> Result<i32, wasmi::Error> {
+            host_guard(&mut caller, 20_000)?;
+            let value = match kind {
+                HOST_GET_DOC_PATH => caller.data().doc_path.clone(),
+                _ => return Ok(-1),
+            };
+            let bytes = value.as_bytes();
+            if bytes.len() > cap.max(0) as usize {
+                return Ok(-1);
+            }
+            let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return Ok(-1);
+            };
+            let mut buf = Vec::with_capacity(bytes.len() + 4);
+            buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(bytes);
+            if mem.write(&mut caller, ptr as usize, &buf).is_err() {
+                return Ok(-1);
+            }
+            Ok(bytes.len() as i32)
+        },
+    )?;
     // nx_log(ptr) : 로그 한 줄(호출당 32줄까지).
     l.func_wrap(
         "env",
@@ -107,6 +143,10 @@ pub(crate) struct WasmExtension {
     menus: Vec<MenuContribution>,
     /// 포맷터 선언(메타 `formatter` · ABI v1.1): (이름, 예시 SQL).
     formatter: Option<(Label, String)>,
+    /// ★ 포맷터 미리보기 표식(메타 `formatter.marks` · 09-30): (설정 키, 조각) — 확장 것은 확장이 낸다.
+    formatter_marks: Vec<(String, String)>,
+    /// ★ 이번 `run_with` 호출의 호스트 상황(활성 문서 경로 · docs/97) — 호출 동안만.
+    doc_path: std::cell::RefCell<String>,
     engine: Engine,
     module: Module,
     /// 연속 실패 수(브레이커).
@@ -225,6 +265,8 @@ impl WasmExtension {
             commands: Vec::new(),
             menus: Vec::new(),
             formatter: None,
+            formatter_marks: Vec::new(),
+            doc_path: std::cell::RefCell::new(String::new()),
             engine,
             module,
             failures: Cell::new(0),
@@ -267,6 +309,17 @@ impl WasmExtension {
                 jget(f, "sample").and_then(jstr).unwrap_or("").to_string(),
             )
         });
+        ext.formatter_marks = jget(&v, "formatter")
+            .and_then(|f| jget(f, "marks"))
+            .map(jarr)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|m| {
+                let key = jget(m, "key").and_then(jstr)?.to_string();
+                let mark = jget(m, "mark").and_then(jstr)?.to_string();
+                Some((key, mark))
+            })
+            .collect();
         ext.menus = jget(&v, "menus")
             .map(jarr)
             .unwrap_or(&[])
@@ -353,6 +406,7 @@ impl WasmExtension {
             deadline: Instant::now() + Duration::from_millis(timeout_ms),
             ops: Vec::new(),
             logs: Vec::new(),
+            doc_path: self.doc_path.borrow().clone(),
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|c| &mut c.limits);
@@ -436,6 +490,12 @@ impl Extension for WasmExtension {
             .and_then(|t| effect_from_json(&t))
             .unwrap_or_default()
     }
+    fn run_with(&mut self, id: &str, ed: &mut dyn EditorOps, doc_path: &str) -> bool {
+        *self.doc_path.borrow_mut() = doc_path.to_string();
+        let r = self.run(id, ed);
+        self.doc_path.borrow_mut().clear();
+        r
+    }
     fn run(&mut self, id: &str, ed: &mut dyn EditorOps) -> bool {
         let Ok((ret, ops)) = self.call("nx_ext_run", Some(id), false) else {
             return false;
@@ -465,6 +525,9 @@ impl Extension for WasmExtension {
     fn formatter(&self) -> Option<(Label, String)> {
         self.formatter.clone()
     }
+    fn formatter_marks(&self) -> Vec<(String, String)> {
+        self.formatter_marks.clone()
+    }
     fn format(&self, input_json: &str) -> Result<String, String> {
         if input_json.len() > OUT_CAP {
             return Err(format!("text over {} KB", OUT_CAP >> 10));
@@ -491,14 +554,14 @@ mod tests {
             .join("../../extensions/rainbow-pairs/rainbow_pairs.wasm");
         let ext = WasmExtension::load_file(&path).expect("load wasm");
         assert_eq!(ext.id(), "rainbow-pairs");
-        assert_eq!(ext.settings_prefix(), "rainbowpair.");
+        assert_eq!(ext.settings_prefix(), "ext.rainbow_pairs.");
         assert_eq!(ext.commands().len(), 6);
         assert_eq!(ext.menus()[0].items.len(), 6);
         assert!(
             matches!(&ext.commands()[0].label, Label::Text(en, Some(ko)) if !en.is_empty() && !ko.is_empty())
         );
         // 설정 → 효과(색 층만).
-        let input = r##"{"rainbowpair.enabled":"on","rainbowpair.unmatched":"off","rainbowpair.colors":"#FF0000,#00FF00","rainbowpair.max_kb":"0"}"##;
+        let input = r##"{"ext.rainbow_pairs.enabled":"on","ext.rainbow_pairs.unmatched":"off","ext.rainbow_pairs.colors":"#FF0000,#00FF00","ext.rainbow_pairs.max_kb":"0"}"##;
         let out = ext
             .call_buf("nx_ext_settings", Some(input))
             .expect("settings call");
@@ -531,7 +594,7 @@ mod tests {
             .expect("b");
         assert!(e.rainbow && e.unmatched && e.max_chars == 100 && e.colors.len() == 1);
         let s = Settings::from_text(std::path::PathBuf::from("x"), "");
-        let j = settings_json(&s, "rainbowpair.");
-        assert!(j.contains("\"rainbowpair.enabled\"") && !j.contains("\"editor."));
+        let j = settings_json(&s, "ext.rainbow_pairs.");
+        assert!(j.contains("\"ext.rainbow_pairs.enabled\"") && !j.contains("\"editor."));
     }
 }

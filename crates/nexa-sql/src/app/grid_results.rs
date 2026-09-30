@@ -308,6 +308,10 @@ impl App {
             },
         };
         self.all_grids().for_each(|g| g.set_edit_cfg(cfg.clone()));
+        // 정규식 필터 값 목록 상한(사용자 09-30 · `grid.filter_list_max`) — 같은 적용 길에 얹는다(시작 · grid 편집 키 변경).
+        let list_max = self.settings.int("grid.filter_list_max").max(1) as usize;
+        self.all_grids()
+            .for_each(|g| g.set_filter_list_max(list_max));
     }
 
     /// 캐럿을 다음/이전 문장(`;` 분리 · [`nsql_script::split_script`]) 시작으로(Alt+↓/↑ · 실행 뒤 자동 이동).

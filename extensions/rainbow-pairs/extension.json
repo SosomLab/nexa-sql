@@ -2,10 +2,10 @@
   "format": 1,
   "id": "rainbow-pairs",
   "name": "Rainbow Pairs",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "kind": "wasm",
   "summary": "Bracket and quote pairs in depth colors · jump to pair / sibling / parent / child (WASM · replaces the built-in copy)",
-  "description": "Colors every bracket/quote pair by nesting depth so pairs can be told apart at a glance, marks unmatched ones, and adds navigation: matching pair (Ctrl+M), previous/next sibling (Ctrl+Alt+, / .), parent (Ctrl+Alt+[), first child (Ctrl+Alt+]), plus a 'Bracket Navigation' submenu in the editor context menu. This package is the WASM build of the extension made with the SDK in extensions/sdk (samples/rainbow-pairs): installing downloads rainbow_pairs.wasm, verifies its sha256 and loads it in the app's wasmi sandbox (fuel · memory · time limits); it replaces the built-in copy of the same id, which stays as a fallback if the module cannot be loaded. Pair kinds, pairs inside strings, the current-pair underline and auto-close are core editor settings (editor.pair_*); this extension only adds the depth colors (rainbowpair.*).",
+  "description": "Colors every bracket/quote pair by nesting depth so pairs can be told apart at a glance, marks unmatched ones, and adds navigation: matching pair (Ctrl+M), previous/next sibling (Ctrl+Alt+, / .), parent (Ctrl+Alt+[), first child (Ctrl+Alt+]), plus a 'Bracket Navigation' submenu in the editor context menu.\nThis package is the WASM build of the extension made with the SDK in extensions/sdk (samples/rainbow-pairs): installing downloads rainbow_pairs.wasm, verifies its sha256 and loads it in the app's wasmi sandbox (fuel · memory · time limits); it replaces the built-in copy of the same id, which stays as a fallback if the module cannot be loaded.\nPair kinds, pairs inside strings, the current-pair underline and auto-close are core editor settings (editor.pair_*); this extension only adds the depth colors (ext.rainbow_pairs.*).",
   "author": "SosomLab",
   "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SosomLab/nexa-sql/tree/main/extensions/rainbow-pairs",
@@ -16,9 +16,13 @@
     "linux"
   ],
   "requires": [],
-  "settings_prefix": "rainbowpair.",
+  "settings_prefix": "ext.rainbow_pairs.",
   "files": [
-    { "path": "rainbow_pairs.wasm", "sha256": "7da5bb5805f2487288d694e6baaf82a86231c4aa4fc6c5d91a35a5c0976a5ca3", "dest": "" }
+    {
+      "path": "rainbow_pairs.wasm",
+      "sha256": "02001e6a9c84e6ebfb1dc354bac165dd08016d40d31f933912f88834eb50590b",
+      "dest": ""
+    }
   ],
   "messages": {
     "install": "Rainbow Pairs (WASM) is on. Colors: Preferences ▸ Extensions ▸ Rainbow Pairs · pair kinds/strings/underline: Preferences ▸ Editor · Ctrl+M to jump between pairs."

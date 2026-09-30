@@ -608,6 +608,8 @@ impl ApplicationHandler<Wake> for App {
         }
         // 보조 창 사건 = 창마다 자기 처리기로(처리했으면 여기서 끝) — `aux_window_event`.
         if self.aux_window_event(el, id, &event) {
+            // 보조 창에서 낸 "창 열기" 요청(설정 창의 확장 설정 바로가기 · 사용자 09-30)도 같은 펌프를 지난다.
+            self.open_requested_windows(el);
             return;
         }
         match &event {
@@ -1017,7 +1019,16 @@ impl App {
         if self.prefs_win.is(id) {
             let ui_px = self.settings.font_px("ui.font_size");
             match self.prefs_win.handle(event) {
-                PrefsAction::Paint => self.prefs_win.paint(&self.ui_font, &self.theme, ui_px),
+                PrefsAction::Paint => {
+                    let mono_px = self.settings.font_px("editor.font_size");
+                    self.prefs_win.paint(
+                        &self.ui_font,
+                        &self.theme,
+                        ui_px,
+                        &self.mono_font,
+                        mono_px,
+                    );
+                }
                 PrefsAction::Changed { key, value } => {
                     let ok = if value.is_empty()
                         && nsql_settings::entry(&key).is_some_and(|e| e.default.is_empty())
@@ -1065,6 +1076,20 @@ impl App {
                     self.open_colors = true;
                 }
                 PrefsAction::OpenKeys => self.open_keys = true,
+                // 기본 포맷터 카드의 "설정" 바로가기 = 그 확장의 설정 분류로(사용자 09-30).
+                PrefsAction::OpenExtSettings(id) => self.ext_open_settings(&id),
+                // 분류 전환 = 미리보기 엔진이 바뀔 수 있다(확장 분류 ↔ Format 분류).
+                PrefsAction::Category => {
+                    self.prefs_format_preview_refresh();
+                    let mono_px = self.settings.font_px("editor.font_size");
+                    self.prefs_win.paint(
+                        &self.ui_font,
+                        &self.theme,
+                        ui_px,
+                        &self.mono_font,
+                        mono_px,
+                    );
+                }
                 // 설정 창이 다시 활성화됐다 → 파일 있음/없음·별칭 수를 다시 본다(파일 시스템만 · 네트워크 0 · 라이브러리 로드 0).
                 PrefsAction::RefreshInfo => {
                     self.prefs_win.set_info(dbms_info_values());
@@ -1641,6 +1666,10 @@ impl App {
             self.prefs_win.refresh(&self.settings);
             if let Some(q) = self.prefs_query.take() {
                 self.prefs_win.preset_query(&q);
+            }
+            // 확장 패널 "설정" 버튼 = 그 확장의 분류로(사용자 09-30).
+            if let Some(cat) = self.prefs_category.take() {
+                self.prefs_win.select_category(cat);
             }
             self.prefs_win.open(
                 el,

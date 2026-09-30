@@ -82,7 +82,7 @@ manifest(가상): id "rainbow-brackets" · capabilities [editor.read, editor.ove
 
 ## 6. 단계
 
-1. 쌍 표 + 오버레이 API(nexa-ctl) + 깊이 색 + 짝 없음 + 현재 쌍 강조 + `rainbowpair.*` 설정 + 향상 모드.
+1. 쌍 표 + 오버레이 API(nexa-ctl) + 깊이 색 + 짝 없음 + 현재 쌍 강조 + `ext.rainbow_pairs.*` 설정 + 향상 모드.
 2. 이동 메뉴 6항목(우클릭 서브메뉴 · 편집 메뉴 · 팔레트 · 키맵) + 테스트(형제/상위/하위).
 3. 자동 닫기·감싸기·건너뛰기(`editor.auto_close` · 49와 조율).
 4. 2순위: 종류 바꾸기/제거/감싸기 · 안내선 · 스코프 흐림 · SQL 키워드 쌍.
@@ -187,12 +187,12 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 **✅ 된 것(nexa-sql · 플러그인 층 · 컴파일만 · 배선 전)**
 - `plugins/mod.rs` — `Plugin` 트레이트(id · settings_prefix · commands · menus · on_settings → `PluginEffect` · run) · `EditorOps`(TextBox 구현) · `Registry::builtin()`/`owner_of`/`menu_extras`/`on_settings`.
 - `extensions/rainbow_pairs.rs` — `RainbowPlugin`(명령 6 · 서브메뉴 "괄호 이동" · 설정 → `BracketOpts`) · 테스트.
-- 설정 `rainbowpair.*` 8키(enabled · quotes · angle · unmatched · match off/near/always · colors · auto_close · max_kb HIDDEN) · BOOST `rainbow.enabled=off` · i18n 24 · `EditCtxAction::Custom` 가지 3곳(메인 = `menu_action(id)`).
+- 설정 `ext.rainbow_pairs.*` 8키(enabled · quotes · angle · unmatched · match off/near/always · colors · auto_close · max_kb HIDDEN) · BOOST `rainbow.enabled=off` · i18n 24 · `EditCtxAction::Custom` 가지 3곳(메인 = `menu_action(id)`).
 
-**✅ 배선 완료(09-17 맥 54차 · T-119)**: 이름 **Rainbow Pairs**(`rainbow-pairs`) · 설정 키 `rainbowpair.*`(설정 창 Extensions ▸ Rainbow Pairs · 끄면 분류 숨김) · `App.extensions` Registry · `apply_extensions`(설정 변경/켜기/끄기 → 전 탭 `set_bracket_opts` + 우클릭 서브메뉴) · 키맵 Ctrl+Alt+, . [ ] · 편집 메뉴 4항목 · 팔레트 · 명령은 `Registry::run`(끈 확장은 무시). 아래 목록은 기록용.
+**✅ 배선 완료(09-17 맥 54차 · T-119)**: 이름 **Rainbow Pairs**(`rainbow-pairs`) · 설정 키 `ext.rainbow_pairs.*`(설정 창 Extensions ▸ Rainbow Pairs · 끄면 분류 숨김) · `App.extensions` Registry · `apply_extensions`(설정 변경/켜기/끄기 → 전 탭 `set_bracket_opts` + 우클릭 서브메뉴) · 키맵 Ctrl+Alt+, . [ ] · 편집 메뉴 4항목 · 팔레트 · 명령은 `Registry::run`(끈 확장은 무시). 아래 목록은 기록용.
 
 **☐ 남은 배선(T-119 · Mac에서)**
-1. `App`에 `plugins: Registry` 두고 시작·설정 변경(`apply_setting` `rainbowpair.*`) 때 `on_settings` → `editors.set_bracket_opts`(전 탭 + `make_box`) · boost 뒤에도 재적용.
+1. `App`에 `plugins: Registry` 두고 시작·설정 변경(`apply_setting` `ext.rainbow_pairs.*`) 때 `on_settings` → `editors.set_bracket_opts`(전 탭 + `make_box`) · boost 뒤에도 재적용.
 2. 키맵 `edit.bracket_prev/next/parent/child`(Ctrl+Alt+, / . / [ / ] · D-93) · `menu_action`에서 `plugins.owner_of(id)` → `run(id, editor)` · 팔레트 등록(`cmds.push`).
 3. 편집 메뉴 "괄호 이동 ▸" 서브메뉴 + 편집기 우클릭 `set_menu_extras(plugins.menu_extras(display))`(단축키 표시는 `keymap::display`).
 4. 색 목록 설정 창 = 색 창(임의 `*_color` 키 모드 재사용 · 쉼표 목록은 T-119 뒤).
@@ -206,7 +206,7 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 - 두 색의 구별 점수 = 색상각 차이(보색 180° = 최대 · 채도가 낮으면 덜 반영) 0.6 + 색 온도가 다름(따뜻함 = 빨강·주황·노랑·자홍 ↔ 차가움 = 초록·청록·파랑·보라) 0.2 + 밝기 차이 0.2.
 - 첫 색은 그대로 두고, 이웃 쌍(마지막 → 처음 포함)의 **최소 점수가 가장 큰** 순서를 고른다(8색 이하 전수 · 그보다 많으면 "직전 색과 가장 다른 색" 탐욕).
 - 테마 기본 팔레트는 이 순서로 저장돼 있다(어두움: 금 → 파랑 → 자홍 → 초록 → 주황 → 보라 · 밝음: 겨자 → 파랑 → 자홍 → 청록 → 주홍 → 남보라) — 따뜻함과 차가움이 번갈아 온다 · 런타임 계산 0.
-- 사용자 색 목록(`rainbowpair.colors`)은 설정 **`rainbowpair.contrast_order`**(기본 켬)로 같은 정렬을 받는다. 끄면 적은 순서 그대로.
+- 사용자 색 목록(`ext.rainbow_pairs.colors`)은 설정 **`ext.rainbow_pairs.contrast_order`**(기본 켬)로 같은 정렬을 받는다. 끄면 적은 순서 그대로.
 
 일반 편집 모드(확장 꺼짐·미설치·확장 관리자 꺼짐)에서는 깊이 색과 짝 없음 빨강을 **그리지 않는다** — 캐럿 옆 쌍의 밑줄과 자동 닫기만 편집 코어 기능으로 남는다.
 
@@ -216,6 +216,6 @@ TextBox 페인트 = 구문 토큰 색(강조기) ─▶ 데코레이션(정렬 �
 | 층 | 무엇 | 설정 |
 |---|---|---|
 | **편집 코어(nexa-ctl `PairTable`/`PairOpts` · 늘 켜짐)** | 쌍 표 · 현재 쌍 밑줄 · 짝/형제/상위/하위 이동 · 자동 닫기 · **문자열 안 스캔**(열린 인용부호 = 바닥 · 안의 짝 없음은 조용히) | `editor.pair_kinds`(`() [] {} <> "" '' ``` 중 고름 · 기본 = `< >` 제외) · `editor.pair_in_strings`(켬 = 문자열 안의 모든 쌍 · 끔 = 그 문자열의 인용부호 쌍만) · `editor.pair_match`(off/near/always) · `editor.auto_close_pairs` |
-| **Rainbow Pairs 확장(색만)** | 깊이 색 · 짝 없음 danger 색 | `rainbowpair.enabled` · `unmatched` · `colors` · `contrast_order` · `max_kb` |
+| **Rainbow Pairs 확장(색만)** | 깊이 색 · 짝 없음 danger 색 | `ext.rainbow_pairs.enabled` · `unmatched` · `colors` · `contrast_order` · `max_kb` |
 
-옮긴 키 = `rainbowpair.quotes`·`angle` → `editor.pair_kinds` · `rainbowpair.match` → `editor.pair_match`(옛 키는 무시). 문자열 안 규칙 = 09-23 journal §112. **구문의 이스케이프**(journal §118): 구문 규격이 문자열 구분자를 정의하면(`SyntaxSpec` · SQL) 같은 인용부호로 열린 문자열 안의 **같은 인용부호 두 번**(`'O''Neil'` · `"a""b"`)은 이스케이프라 쌍의 시작/끝이 아니다(`Highlighter::doubled_quote_escapes()` · 설정 없음 = 구문의 성질 · 평문 모드는 `''` = 빈 쌍).
+옮긴 키 = `ext.rainbow_pairs.quotes`·`angle` → `editor.pair_kinds` · `ext.rainbow_pairs.match` → `editor.pair_match`(옛 키는 무시). 문자열 안 규칙 = 09-23 journal §112. **구문의 이스케이프**(journal §118): 구문 규격이 문자열 구분자를 정의하면(`SyntaxSpec` · SQL) 같은 인용부호로 열린 문자열 안의 **같은 인용부호 두 번**(`'O''Neil'` · `"a""b"`)은 이스케이프라 쌍의 시작/끝이 아니다(`Highlighter::doubled_quote_escapes()` · 설정 없음 = 구문의 성질 · 평문 모드는 `''` = 빈 쌍).

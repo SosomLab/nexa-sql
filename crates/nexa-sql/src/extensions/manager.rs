@@ -608,6 +608,44 @@ pub(crate) fn installed() -> Vec<Installed> {
     root_dir().map(|r| installed_in(&r)).unwrap_or_default()
 }
 
+/// ★ `candidate`가 `current`보다 새 버전인가(사용자 09-30 업데이트 대상 판정) — 점으로 나눈 조각을 앞에서부터 숫자로
+/// 비교(숫자가 아니면 글자 비교) · 조각 수가 다르면 없는 쪽을 0으로 · 같으면 false. 순수 함수.
+pub(crate) fn version_newer(candidate: &str, current: &str) -> bool {
+    fn parts(v: &str) -> Vec<(u64, String)> {
+        v.trim()
+            .trim_start_matches('v')
+            .split(['.', '-', '+'])
+            .map(|p| (p.parse::<u64>().unwrap_or(0), p.to_string()))
+            .collect()
+    }
+    let (a, b) = (parts(candidate), parts(current));
+    let n = a.len().max(b.len());
+    let zero = (0u64, String::new());
+    for i in 0..n {
+        let x = a.get(i).unwrap_or(&zero);
+        let y = b.get(i).unwrap_or(&zero);
+        let (xn, yn) = (x.1.parse::<u64>().is_ok(), y.1.parse::<u64>().is_ok());
+        let ord = if xn && yn {
+            x.0.cmp(&y.0)
+        } else if xn != yn {
+            // 숫자 조각 > 글자 조각(1.3.0 > 1.3.0-beta 는 여기서 안 다룬다 · 빈 조각 = 0).
+            if x.1.is_empty() || y.1.is_empty() {
+                x.0.cmp(&y.0)
+            } else {
+                xn.cmp(&yn)
+            }
+        } else {
+            x.1.cmp(&y.1)
+        };
+        match ord {
+            std::cmp::Ordering::Greater => return true,
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+    false
+}
+
 /// 설치 — 메타를 읽고 파일마다 sha256을 확인해 `<root>/<id>/<version>/`에 보관하고 `dest`에 배치한다.
 /// `config` = 설정 폴더(`dest` 기준) · `root` = 설치 루트. 반환 = 메타(안내문 표시용).
 #[cfg(test)]
@@ -664,6 +702,10 @@ pub(crate) fn install_traced(
     if meta.kind == Kind::Wasm && !meta.files.iter().any(|f| f.path.ends_with(".wasm")) {
         return Err(format!("{}: wasm package without a .wasm file", meta.id));
     }
+    // ★ 업데이트(사용자 09-30): 이전 설치 기록 — 성공 뒤 옛 버전 보관 폴더와 새 판에 없는 배치 파일을 치운다.
+    let prev = std::fs::read_to_string(installed_path(root, &meta.id))
+        .ok()
+        .and_then(|t| parse_installed(&t).ok());
     let keep = root.join(&meta.id).join(&meta.version);
     tr.push(format!(
         "store dir {} · place root {}",
@@ -716,6 +758,33 @@ pub(crate) fn install_traced(
             "meta copy → {}",
             nexa_fs::path::display(&keep.join("extension.json"))
         ));
+    }
+    if let Some(p) = &prev {
+        for d in &p.placed {
+            if !placed.contains(d) {
+                let path = config.join(d);
+                let ok = std::fs::remove_file(&path).is_ok();
+                tr.push(format!(
+                    "unplace old {} {}",
+                    nexa_fs::path::display(&path),
+                    if ok { "✓" } else { "(missing)" }
+                ));
+            }
+        }
+        if p.version != meta.version {
+            let old = root.join(&meta.id).join(&p.version);
+            let ok = std::fs::remove_dir_all(&old).is_ok();
+            tr.push(format!(
+                "prune {} → {} {}",
+                p.version,
+                meta.version,
+                if ok {
+                    nexa_fs::path::display(&old)
+                } else {
+                    "(no old dir)".to_string()
+                }
+            ));
+        }
     }
     write_installed(
         root,
@@ -932,5 +1001,19 @@ mod tests {
             Source::Url("https://raw.githubusercontent.com/SosomLab/nexa-sql/dev/ext".into())
         );
         assert_eq!(Source::parse(raw), Source::Url(raw.into()));
+    }
+
+    /// ★ 버전 비교(업데이트 대상 판정 · 09-30): 숫자 조각 · 길이 다름 · 같음 · v 접두.
+    #[test]
+    fn version_newer_rules() {
+        assert!(version_newer("1.3.0", "1.2.0"));
+        assert!(version_newer("1.10.0", "1.9.9"));
+        assert!(version_newer("2.0", "1.99.99"));
+        assert!(version_newer("1.2.1", "1.2"));
+        assert!(version_newer("v1.3.0", "1.2.0"));
+        assert!(!version_newer("1.2.0", "1.2.0"));
+        assert!(!version_newer("1.2.0", "1.3.0"));
+        assert!(!version_newer("1.2", "1.2.0"));
+        assert!(!version_newer("", "0.1.0"));
     }
 }

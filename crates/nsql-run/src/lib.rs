@@ -198,6 +198,9 @@ pub enum RunEvent {
     Connected {
         description: String,
         dialect: Dialect,
+        /// ★ 서버가 답한 **현재 스키마**(`nsql_catalog::current_schema` · 접속 직후 1회 · 모르면 빈 글) — 사용자 이름 ≠ 기본 스키마인
+        /// 계정(로그온 트리거·`?schema=`)에서 이름 풀이의 기준(사용자 09-30).
+        schema: String,
     },
     Disconnected,
     Error {
@@ -254,9 +257,14 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         RunEvent::Connected {
             description,
             dialect,
+            schema,
         } => vec![LogEntry::new(
             LogKind::Connect,
-            format!("{description} ({dialect})"),
+            if schema.is_empty() {
+                format!("{description} ({dialect})")
+            } else {
+                format!("{description} ({dialect}) · schema {schema}")
+            },
         )],
         RunEvent::Disconnected | RunEvent::ConnectionClosed => {
             vec![LogEntry::new(LogKind::Disconnect, "")]
@@ -1669,9 +1677,16 @@ impl Runner {
                 // 세션에 묶인 값(REF CURSOR 핸들)은 새 세션에서 죽은 핸들이다.
                 self.engine.vars.invalidate_cursors();
                 self.push_max_rows();
+                // 현재 스키마 1회(실패 = 빈 글 · 링크 판정은 사용자 이름으로 폴백).
+                let schema = self
+                    .session
+                    .as_mut()
+                    .and_then(|s| nsql_catalog::current_schema(s.as_mut()).ok())
+                    .unwrap_or_default();
                 emit(RunEvent::Connected {
                     description: spec.redacted(),
                     dialect,
+                    schema,
                 });
                 true
             }

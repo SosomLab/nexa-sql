@@ -81,7 +81,7 @@
 | 색 | `*_color` 통일(`editor.tab_accent`만 예외) | `editor.tab_accent` → `editor.tab_accent_color` 후보 |
 | 켜기/끄기 | `*.enabled` · `*.visible` · 접두만(`editor.minimap`) | 셋 다 뜻이 다르다(기능 켬 / 보임 / 표시 요소) → 유지 |
 | 글꼴 | `ui.font_face`·`editor.font_face`·`grid.font_face`·`explorer.font_size` | 대상별 · 중복 아님 |
-| 상한 KB | `search.max_file_kb` `rainbowpair.max_kb` `intel.max_doc_kb` `file.external_merge_max_kb` `log.file_max_kb` | 대상별 · [72](72-size-limits-and-large-file-constraints.md) 원장 |
+| 상한 KB | `search.max_file_kb` `ext.rainbow_pairs.max_kb` `intel.max_doc_kb` `file.external_merge_max_kb` `log.file_max_kb` | 대상별 · [72](72-size-limits-and-large-file-constraints.md) 원장 |
 | 스레드 | `search.threads` `project.scan_threads` | 대상별 |
 | 더블클릭 | `ui.dblclick_ms` 하나 | — |
 | IME | `ui.ime_hint` ↔ `ui.ime_hint_watch`(부모·자식) | 09-28 `input.`으로 · 종속 등재 |
@@ -103,6 +103,12 @@
 | `editor.tab_accent` | `editor.tab_accent_color` | 색 접미 |
 | `tx.*` `vars.*` `run.toast*` | 그대로 · 카테고리 쪼갬(78 §3-4) | 접두 = 일 |
 | `demo.prompted` `settings.*` `layout.*` | HIDDEN 유지 | 화면에 없음 |
+
+### 6-4. 확장 설정 키 규칙(09-30 · 사용자 "확장은 `ext.` 구분을 앞에")
+
+- **확장이 소유한 설정 키 = `ext.<확장>.<키>`** — `<확장>` = 확장을 식별하는 짧은 이름(snake_case · 예 `sqlfmt_kiros33` · `rainbow_pairs` · `hello`) · 매니페스트 `settings_prefix` = `ext.<확장>.` · 호스트는 접두로 그 확장의 설정만 넘긴다.
+- 3차 이름 바꿈(`RENAMED` 13쌍 · 옛 줄은 읽기 이주 · CLI `config`는 옛 키도 통함): `sqlfmt.*` → `ext.sqlfmt_kiros33.*` · `rainbowpair.*` → `ext.rainbow_pairs.*` · 샘플 `hello.say` → `ext.hello.say`.
+- 새 확장은 처음부터 이 규칙으로(30 §2 확장점 규칙 · 68 SDK 문서).
 
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.

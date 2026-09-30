@@ -12,9 +12,9 @@
 | 핵심 | 렉서 · 레이아웃 IR(`Line`/`Part`/`Role`) · **공통 옵션** `Options` · Basic 렌더 · 정렬 보조 | `crates/nsql-format`(의존 0) |
 | 앱 | 명령 `edit.format`(**Shift+Alt+F** = 기본 포맷터) · `edit.format_with`(팔레트: 한 번 쓰기 / 기본 지정 / 미리보기) · `edit.format_preview` · 미리보기 탭 · 설정 `format.*` | `app/format.rs` · `keymap.rs` · `menus.rs` · `nsql-settings` |
 | ABI | v1.1(추가분): 메타 `formatter{label,sample}` + export `nx_ext_format` | `extensions/wasm.rs` · `extensions/mod.rs` · SDK `lib.rs` |
-| 확장 | **SQL Formatter for kiros33** = 스킬 규칙(탭 정렬 · 같은 열 AND · 집합 구분행 · strict) · 설정 `sqlfmt.*` | `extensions/sdk/samples/sql-formatter-kiros33` → `extensions/sql-formatter-kiros33/` |
+| 확장 | **SQL Formatter for kiros33** = 스킬 규칙(탭 정렬 · 같은 열 AND · 집합 구분행 · strict) · 설정 `ext.sqlfmt_kiros33.*` | `extensions/sdk/samples/sql-formatter-kiros33` → `extensions/sql-formatter-kiros33/` |
 
-포맷 범위 = 선택이 있으면 선택만, 없으면 문서 전체(되돌리기 1단계). 원본을 바꾸지 않는 **미리보기 탭**은 `format.*`/`sqlfmt.*`가 바뀌면 다시
+포맷 범위 = 선택이 있으면 선택만, 없으면 문서 전체(되돌리기 1단계). 원본을 바꾸지 않는 **미리보기 탭**은 `format.*`/`ext.sqlfmt_kiros33.*`가 바뀌면 다시
 그린다(닫으면 다시 열지 않음 · 문서가 비면 엔진의 예시 SQL).
 
 ## 1. 다른 포맷터 조사(사용자 "상세 조사해서 반영")
@@ -48,7 +48,10 @@
 | `format.case_inline_max` | 20~400 | 120 | CASE 한 줄 상한 |
 | `format.operator_spaces` | bool | on | 연산자 양쪽 공백 |
 | `format.operator_gap` | space/tab | space | 그 공백의 글자(공백/탭 · 위가 켜졌을 때만 · 사용자 09-29) · 단어 연산자 `IN`·`IS`·`LIKE`·`NOT IN`·`NOT LIKE`·`IS NOT`도 연산자 조각 |
+| (연산자 부류) | — | — | **단항 후위** `IS [NOT] NULL/TRUE/FALSE/UNKNOWN` = 왼쪽 간격·정렬만(오른쪽 없음) · **이항** `=` `<>` `!=` `<` `>` `<=` `>=` `<=>` `^=` `~=` `IN` `IS` `LIKE` `ILIKE` `REGEXP` `RLIKE` `SIMILAR TO` `IS [NOT] DISTINCT FROM` + `NOT …` = 좌우 간격(4자 이상 오른쪽 공백 1개) · **BETWEEN**/`NOT BETWEEN` = 왼쪽 간격 + 오른쪽 공백 1개(`x AND y`의 AND는 공백 하나 · 조건 연산어 아님) · **연산자 없는 조건**(`REGEXP_LIKE(...)` 같은 함수 호출 · `[NOT] EXISTS (…)` · 불리언 컬럼 · `NOT 컬럼`) = 조각 없음 → 정렬·간격 대상 아님 — 표 `layout::WORD_OPS`(긴 구절 우선) · `op_kind`(사용자 09-30) |
 | `format.operator_long_space` | bool | on | 4자 이상 연산자(`LIKE` · `NOT IN` · `IS NOT` …)는 왼쪽 = 간격 설정 · **오른쪽만 공백 1개**(사용자 09-29 정정) |
+| `format.window_break` | 0~400 | 0 | 윈도우 `OVER (…)` 안이 이 글자 수를 넘으면 `OVER (` 줄바꿈 + PARTITION BY / ORDER BY / 프레임 각 줄(한 단계 안) + `)` 줄 · 0 = 늘 한 줄(사용자 09-30 · 스킬 §8) |
+| `format.comment_space` · `format.comment_gap` | bool · editor/space/tab | on · **editor** | 인라인(줄 끝) 주석 앞 간격 켬/끔 · 글자(활성 탭 단위 = 기본 · 공백 두 칸 · 탭 · 사용자 09-30) |
 | `format.as_gap` | space/tab | space | `AS` 앞뒤 간격(열·테이블 별칭 · 정렬 채움이 있으면 뒤만 · 사용자 09-29) |
 | `format.column_alias_all` · `column_as` · `table_as` | bool · keep/add/remove | off · keep · keep | 모든 열 별칭 · 명시적 AS |
 | `format.join_indent` | bool | off | JOIN 줄 한 단계 안 |
@@ -68,22 +71,28 @@
 - 주석: 같은 줄 `-- …`는 줄 끝 조각 · 같은 줄 `/* */`·힌트는 글의 일부 · 독립 주석은 독립 줄(빈 줄 유지).
 - **불변식 = 토큰 보존**(공백만 바꾼다 · 시드/AS 추가/대소문자는 명시적 옵션) · 멱등(다시 포맷해도 같다) — 시험 `assert_tokens_kept`.
 
-## 4. 확장 SQL Formatter for kiros33(`sqlfmt.*`)
+## 4. 확장 SQL Formatter for kiros33(`ext.sqlfmt_kiros33.*`)
 
 | 키 | 기본 | 뜻 |
 |---|---|---|
-| `sqlfmt.strict` | on | 스킬 규정값 강제(탭 · 폭 4 · 콤마 앞 · `,\t` · `1=1` · 대문자 · AND 앞 · CASE 120) — 끄면 `format.*` 그대로 |
-| `sqlfmt.align_as` · `align_ops` · `align_order` | on | AS · 비교 연산자 · ORDER BY 방향의 **탭 수직 정렬**(블록 = 같은 들여쓰기·같은 역할의 연속 줄 · 가장 긴 항목 다음 탭 스톱) |
-| `sqlfmt.outlier_chars` | 48 | 이보다 긴 항목은 정렬 제외 + 탭 1개(스킬 "아웃라이어") |
-| `sqlfmt.and_same_level` | on | WHERE/HAVING의 AND/OR = 절 키워드와 같은 열(§3) · `AND\t조건` |
-| `sqlfmt.set_op_dashes` | on | 집합 연산자 앞뒤 대시 구분행(§12 · 키워드 글자 수) |
+| `ext.sqlfmt_kiros33.strict` | on | 스킬 규정값 강제(탭 · 폭 4 · 콤마 앞 · `,\t` · `1=1` · 대문자 · AND 앞 · CASE 120 · **`;` 다음 줄 1칸**(사용자 09-30)) — 끄면 `format.*` 그대로 |
+| `ext.sqlfmt_kiros33.align_as` · `align_ops` · `align_order` | on | AS · 비교 연산자 · ORDER BY 방향의 **탭 수직 정렬**(블록 = 같은 들여쓰기·같은 역할의 연속 줄 · 가장 긴 항목 다음 탭 스톱) |
+| `ext.sqlfmt_kiros33.outlier_chars` | **40** | 이 길이(들여쓰기·앞 공백을 뺀 실제 글자부터)까지의 항목만 정렬 기준(가장 긴 항목 → 다음 탭 스톱 · 별칭/방향 없는 항목도 기준에 든다) · 더 긴 항목은 정렬 제외 + AS/연산자 **앞뒤 탭 1개씩**(공백 없음 · 사용자 09-30 재정정 · 스킬 "아웃라이어") |
+| (미리보기 예제) | — | 기본 샘플 + **확장 설정별 확인 문장** `KIROS33_SAMPLE`(사용자 09-30 · align_as/force_as/outlier · align_ops/and_same_level/strict · set_op_dashes(UNION ALL) · align_order) — 켜고 끄면 그 자리가 바뀐다 · 설정 카드의 "▶ 미리보기 n행" 조각은 **확장 메타 `formatter.marks`**(75 §3-1 · 호스트 표는 Basic만 · 09-30) |
+| `ext.sqlfmt_kiros33.force_as` | on | 열 별칭에 `AS` 강제(`sum(a.qty) qty` → `sum(a.qty) AS qty` · Basic `column_as = add`) + 순수 컬럼도 `AS 컬럼명`(`a.plant_cd AS plant_cd` · Basic `column_alias_all` · 사용자 09-30) |
+| `ext.sqlfmt_kiros33.window_break` | 40 | 스킬 §8 윈도우 배치: 짧은 `OVER(…)` 한 줄 · 넘으면 `OVER (` + 절마다 한 줄 + `)` 뒤 **탭 1개** AS(정렬 열과 무관) — Basic `window_break`에 강제(사용자 09-30) |
+| `ext.sqlfmt_kiros33.dup_alias` | numbered | JOIN으로 별칭이 겹칠 때(사용자 09-30 3택): `numbered` = 컬럼명1, 컬럼명2 · `qualified` = 컬럼명_테이블별칭(없으면 순번) · `keep` = 그대로 — SELECT 목록 단위 후처리 `dedup_aliases` |
+| `ext.sqlfmt_kiros33.and_same_level` | on | WHERE/HAVING의 AND/OR = 절 키워드와 같은 열(§3) · `AND\t조건` |
+| `ext.sqlfmt_kiros33.set_op_dashes` | on | 집합 연산자 앞뒤 대시 구분행(§12 · 키워드 글자 수) |
+
+버전 = **1.3.1**(09-30 · 1.3.0 = dup_alias · window_break · 아웃라이어 탭 · BETWEEN/IS NULL 정렬 · 방향 없는 항목 정렬 기준 · marks · **1.3.1 = 다중 행 항목(`OVER (…)`의 `)` 줄)도 AS 정렬 블록에 포함 `merged_blocks`**) — 규칙 = wasm이 바뀌는 커밋마다 세 곳 버전 올림(75 §3-1). 호스트에 남은 kiros33 전용 = 설정 키·라벨 정적 등록뿐(75 §9 ① 동적 등록 전까지).
 
 구현(1.1.0 · 09-29) = **Basic 확장 API**(§5-1): `strict_options`(공통 옵션 위 덮어쓰기 · `cond_indent` = `and_same_level`) → `nsql_format::prepare` → 구분행 손질 → `AlignPlan`(블록별 탭 스톱 · `line_prefix`/`display_width`/`tabs_to`) → `nsql_format::render(pad)`. 별칭 자동 부여 · 테이블 설명 · 방언 치환 · 괄호 그룹 시드 · AND/OR 뒤 간격 · 연산자 간격은 전부 Basic 몫(확장 코드 0) — 1.0.0의 `AND\t` 후처리·`same_level_conditions`는 지웠다.
 
 ## 5. ABI v1.1(포맷터) · SDK API
 
 - 메타: `"formatter": {"label": {"en","ko"}, "sample": "…"}` — 있으면 호스트가 포맷터로 등록(팔레트 · 기본 지정 · 미리보기 예시).
-- export `nx_ext_format(ptr) -> ptr`: 입력 `{"text","dialect","options":{"format.k":"v"…},"settings":{"sqlfmt.k":"v"…},"preview":bool}` → 출력 `{"text":"…"}` 또는 `{"error":"…"}`.
+- export `nx_ext_format(ptr) -> ptr`: 입력 `{"text","dialect","options":{"format.k":"v"…},"settings":{"ext.sqlfmt_kiros33.k":"v"…},"preview":bool}` → 출력 `{"text":"…"}` 또는 `{"error":"…"}`.
 - SDK: `Meta.formatter: Option<Formatter>` · `trait Extension::format(&FormatRequest) -> Result<String,String>`(기본 = 없음) · `FormatRequest::from_json` · `format_response` · 확장은 `nsql-format`(path 의존)으로 공통 옵션을 `Options::from_pairs`로 읽는다.
 - 호스트 상한: 포맷 호출 연료 2e9 · 5초 · 입력·반환 1 MB(넘으면 오류 · Basic으로 안내) · 실패 3회 = 세션 동안 정지(기존 브레이커).
 
@@ -103,7 +112,7 @@
 ## 6. 시험 방법
 
 - 단위: `cargo test -p nsql-format`(15 · 토큰 보존·멱등·옵션) · `cargo test --manifest-path extensions/sdk/Cargo.toml -p sql-formatter-kiros33 --target <host>`(정렬·구분행·비strict).
-- 실기: ① 편집기에 한 줄 SELECT → Shift+Alt+F → Basic 결과 · Ctrl+Z 되돌리기 ② 팔레트 "포맷터 골라 포맷…" ▸ kiros33으로 포맷 · 기본으로 지정 → Shift+Alt+F가 kiros33 ③ "포맷 미리보기" 탭 → 설정 창에서 `format.comma`·`sqlfmt.strict`를 바꾸면 탭이 즉시 갱신 ④ 확장 관리자에서 kiros33을 끄면 기본 포맷터가 Basic으로 되돌아감.
+- 실기: ① 편집기에 한 줄 SELECT → Shift+Alt+F → Basic 결과 · Ctrl+Z 되돌리기 ② 팔레트 "포맷터 골라 포맷…" ▸ kiros33으로 포맷 · 기본으로 지정 → Shift+Alt+F가 kiros33 ③ "포맷 미리보기" 탭 → 설정 창에서 `format.comma`·`ext.sqlfmt_kiros33.strict`를 바꾸면 탭이 즉시 갱신 ④ 확장 관리자에서 kiros33을 끄면 기본 포맷터가 Basic으로 되돌아감.
 
 ## 7. 후속(T-255)
 
@@ -119,7 +128,13 @@
 
 ## 8-1. 설정 창 안 미리보기(사용자 09-29 "포맷을 미리보면서 수정 · 변경점 1곳")
 
-설정 창에서 **Format**(또는 확장 SQL Formatter) 분류를 고르면 카드 영역이 위 55 %로 줄고 아래에 **미리보기**(제목 = `미리보기 — 엔진` · 읽기 전용 SQL 상자 · 선택·복사·스크롤 가능)가 붙는다. 원본 = 열려 있는 미리보기 탭의 원본 > 기본 포맷터의 예시 SQL · 값(`format.*`/`sqlfmt.*`)을 바꾸는 순간 `App::prefs_format_preview_refresh`가 기본 포맷터로 다시 포맷해 넣는다(`PrefsWin::set_preview`). 다른 분류로 가면 카드 영역이 원래대로. 별도 편집기 탭 미리보기(`edit.format_preview`)는 그대로 있다(자기 문서로 보고 싶을 때).
+- 미리보기 **토글**(복사 버튼 왼쪽 · 사용자 09-30): Basic 분류 = **B 하나**(Basic 설정 적용 · 끄면 원본) · 확장 포맷터 분류 = **B + 확장 이니셜**(예: kiros33 = `K` · `formatter_initial` = 이름 마지막 낱말 첫 글자 · B·기존 글자와 겹치지 않게 · 확장이 설치되어야 보인다) · 그때 미리보기 = 그 확장 · 둘 다 끔 = 원본 샘플 · 제목에 `· B` `· BK` `· K` `· 원본`.
+- 카드 덧말 **"▶ 미리보기 n행"**(사용자 09-30 · 처음 드러나는 줄 하나): `PREVIEW_MARKS`(설정 키 → 조각 · 공백 제거·대문자 비교)로 포맷 결과에서 매번 다시 찾는다 — 옵션을 바꿔 줄이 밀려도 맞다 · Basic 30키 · kiros33 8키.
+- 미리보기 본문은 **편집기와 같은 고정폭 글꼴·크기**(`mono_font` · `editor.font_size` · 별도 그리기 문맥)로 그린다 — 포맷터의 정렬은 칸 단위라 UI 글꼴(가변폭)로는 열이 어긋났다(사용자 09-30 · 3-OS 동일).
+- 미리보기 **복사**(사용자 09-30): 제목 줄 오른쪽 복사 버튼 = 전체 글(카드 키 복사와 같은 `copybtn` 되먹임) · 상자 안 드래그 선택 + 우클릭 메뉴/Ctrl+C = 선택 복사 — Basic·확장 분류 공통(같은 상자).
+- 미리보기 엔진 = **보고 있는 분류**: 확장 포맷터의 분류(예: SQL Formatter for kiros33)를 보면 그 확장으로, Format 분류면 기본 포맷터(`format.default`)로 · 분류 전환(`PrefsAction::Category`)·값 변경마다 다시 그림(사용자 09-29).
+
+설정 창에서 **Format**(또는 확장 SQL Formatter) 분류를 고르면 카드 영역이 위 55 %로 줄고 아래에 **미리보기**(제목 = `미리보기 — 엔진` · 읽기 전용 SQL 상자 · 선택·복사·스크롤 가능)가 붙는다. 원본 = 열려 있는 미리보기 탭의 원본 > 기본 포맷터의 예시 SQL · 값(`format.*`/`ext.sqlfmt_kiros33.*`)을 바꾸는 순간 `App::prefs_format_preview_refresh`가 기본 포맷터로 다시 포맷해 넣는다(`PrefsWin::set_preview`). 다른 분류로 가면 카드 영역이 원래대로. 별도 편집기 탭 미리보기(`edit.format_preview`)는 그대로 있다(자기 문서로 보고 싶을 때).
 
 ## 9. T-255 1차(09-29) — 옵션 3 · 메타 주석 · Copy SQL · CLI
 

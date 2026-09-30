@@ -13,7 +13,7 @@
 use crate::*;
 use nexa_ctl::controls::ctxmenu::CtxItem;
 use nexa_ctl::{LinkLine, LinkStyle};
-use nsql_run::meta::{ColState, DetailState, Interner, Snapshot};
+use nsql_run::meta::{ColState, DetailState, Interner, ObjId, Snapshot};
 use nsql_script::intel::{context_at, resolve_alias, Alias};
 
 /// 링크 종류.
@@ -423,6 +423,9 @@ pub(crate) struct ObjLinks {
     pub rev: u64,
     /// 분석에 쓴 메타 스냅숏 stamp — 메타가 채워지면(컬럼·상세 도착) 다시 판정한다.
     pub stamp: u64,
+    /// ★ 분석에 쓴 **세션 키**(세션 id · 현재 스키마 · 계정) — 탭의 연결이 바뀌면 다시 판정한다(사용자 09-30 "BISCM/SQLEDU 전환
+    ///   뒤 이전 세션의 판정이 남아 있었다").
+    pub sess_key: String,
     /// 분석한 문자 구간 — 전체면 `(0, len)` · 부분(큰 파일)이면 보이는 구간을 문장 경계까지 넓힌 것.
     pub region: (usize, usize),
     pub partial: bool,
@@ -441,11 +444,54 @@ struct SnapResolver<'a> {
     names: &'a Interner,
     snap: &'a Snapshot,
     needs: std::cell::RefCell<Vec<(Option<String>, String)>>,
+    /// 탭 세션의 현재 스키마(서버 답 → 접속 `?schema=` → 사용자) — 스냅숏의 현재 스키마 대신(같은 서버 다른 계정 · 사용자 09-30).
+    cur: Option<String>,
+    /// 접근성(96 §6): 세션 계정 · 이 서버 메타를 수집한 계정 — 다른 스키마의 객체는 둘이 같을 때만 "보인다".
+    session_user: Option<String>,
+    collector: Option<String>,
+}
+
+/// ★ 세션이 그 스키마의 객체에 닿을 수 있는가(96 §6 · 사용자 09-30 "권한 없는 행위·설명·접근이 허용되는 것처럼 보이면 안 된다"):
+/// 자기 현재 스키마 · PUBLIC · 그 서버 메타를 **자기 계정이 수집**했을 때(권한 필터가 이미 자기 것). 다른 계정이 수집한 다른 스키마는
+/// 메타에 있어도 없는 객체. 순수 함수.
+pub(crate) fn schema_visible(
+    obj_schema: &str,
+    cur: Option<&str>,
+    session_user: Option<&str>,
+    collector: Option<&str>,
+) -> bool {
+    if obj_schema.eq_ignore_ascii_case("public") {
+        return true;
+    }
+    if cur.is_some_and(|c| c.eq_ignore_ascii_case(obj_schema)) {
+        return true;
+    }
+    match (session_user, collector) {
+        (Some(u), Some(c)) => u.eq_ignore_ascii_case(c),
+        _ => false,
+    }
+}
+
+impl SnapResolver<'_> {
+    fn resolve(&self, schema: Option<&str>, name: &str) -> Option<ObjId> {
+        let id = self
+            .snap
+            .lookup_resolvable_from(self.names, schema, self.cur.as_deref(), name)?;
+        let o = self.snap.object(id)?;
+        schema_visible(
+            self.names.get(o.schema),
+            self.cur.as_deref(),
+            self.session_user.as_deref(),
+            self.collector.as_deref(),
+        )
+        .then_some(id)
+    }
 }
 
 impl Resolver for SnapResolver<'_> {
     fn object_class(&self, schema: Option<&str>, name: &str) -> Option<ObjClass> {
-        let id = self.snap.lookup(self.names, schema, name)?;
+        // 서버가 풀 수 있고 이 세션이 닿을 수 있는 이름만 정상(96 §6).
+        let id = self.resolve(schema, name)?;
         let o = self.snap.object(id)?;
         use nsql_catalog::ObjectKind as K;
         Some(match o.kind {
@@ -461,7 +507,7 @@ impl Resolver for SnapResolver<'_> {
         })
     }
     fn has_column(&self, schema: Option<&str>, table: &str, col: &str) -> Option<bool> {
-        let id = self.snap.lookup(self.names, schema, table)?;
+        let id = self.resolve(schema, table)?;
         match self.snap.columns(id) {
             ColState::Loaded { cols, .. } => Some(
                 cols.iter()
@@ -617,6 +663,9 @@ impl App {
         if stamp != o.stamp {
             return false;
         }
+        if self.objlink_sess_key() != o.sess_key {
+            return false;
+        }
         if o.partial != self.objlink_partial() {
             return false;
         }
@@ -680,10 +729,15 @@ impl App {
         let dialect = Some(self.sess.dialect);
         let (mut links, needs, stamp) = {
             let (names, snap) = self.explorer.meta_view(spec.as_ref());
+            // 탭 세션의 스키마 = 접속 `?schema=` → 사용자 이름(Oracle·PG·MSSQL 모두 기본 스키마의 근사 · 없으면 스냅숏 값).
+            let cur = self.objlink_cur_schema();
             let res = SnapResolver {
                 names,
                 snap: &snap,
                 needs: std::cell::RefCell::new(Vec::new()),
+                cur,
+                session_user: spec.as_ref().and_then(|s| s.user.clone()),
+                collector: self.explorer.meta_account(spec.as_ref()),
             };
             let links = scan(&text, dialect, &res);
             (links, res.needs.into_inner(), snap.stamp)
@@ -710,6 +764,7 @@ impl App {
             tab,
             rev,
             stamp,
+            sess_key: self.objlink_sess_key(),
             region,
             partial,
             display,
@@ -780,9 +835,10 @@ impl App {
             _ => (Some(link.name.clone()), link.schema.clone()),
         };
         let Some(table) = table else { return };
+        let cur = self.objlink_cur_schema();
         let id = {
             let (names, snap) = self.explorer.meta_view(spec.as_ref());
-            snap.lookup(names, schema.as_deref(), &table)
+            self.objlink_resolve(names, &snap, schema.as_deref(), cur.as_deref(), &table)
         };
         if let Some(id) = id {
             let need_detail = {
@@ -799,9 +855,61 @@ impl App {
         }
     }
 
+    /// 링크 판정의 세션 키(세션 id · 현재 스키마 · 계정 · 수집 계정) — 바뀌면 재판정.
+    fn objlink_sess_key(&self) -> String {
+        let spec = self.sess.spec.as_ref();
+        format!(
+            "{}|{}|{}|{}",
+            self.sess.id,
+            self.objlink_cur_schema().unwrap_or_default(),
+            spec.and_then(|s| s.user.clone()).unwrap_or_default(),
+            self.explorer.meta_account(spec).unwrap_or_default()
+        )
+    }
+
+    /// 탭 세션의 현재 스키마(접속 `?schema=` → 사용자) — 링크 판정·설명·선적재가 **같은 규칙**으로 이름을 푼다(사용자 09-30
+    /// "BISCM으로 접속했는데 SQLEDU 객체 설명이 보인다" = 설명 경로가 전 스키마 조회를 쓰고 있었다).
+    fn objlink_cur_schema(&self) -> Option<String> {
+        // 서버가 답한 현재 스키마(접속 직후) → 접속 `?schema=` → 사용자 이름.
+        self.sess
+            .cur_schema
+            .clone()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                self.sess
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.schema.clone().or_else(|| s.user.clone()))
+            })
+            .filter(|s| !s.is_empty())
+    }
+
+    /// 이름 → 객체 id(풀이 + 접근성 · 96 §6) — 판정·설명·선적재가 같은 규칙.
+    fn objlink_resolve(
+        &self,
+        names: &Interner,
+        snap: &Snapshot,
+        schema: Option<&str>,
+        cur: Option<&str>,
+        name: &str,
+    ) -> Option<ObjId> {
+        let spec = self.sess.spec.as_ref();
+        let id = snap.lookup_resolvable_from(names, schema, cur, name)?;
+        let o = snap.object(id)?;
+        let collector = self.explorer.meta_account(spec);
+        schema_visible(
+            names.get(o.schema),
+            cur,
+            spec.and_then(|s| s.user.as_deref()),
+            collector.as_deref(),
+        )
+        .then_some(id)
+    }
+
     /// 링크의 설명(코멘트) — (종류 라벨, 표시 이름, 설명 · 미확인 = None).
     fn objlink_describe(&self, k: usize) -> Option<(String, String, Option<String>)> {
         let link = self.objlinks.links.get(k)?;
+        let cur = self.objlink_cur_schema();
         let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
         let kind_label = t(match link.kind {
             LinkKind::Table => Msg::ObjKindTable,
@@ -812,7 +920,9 @@ impl App {
         let desc = match link.kind {
             LinkKind::Column => {
                 let table = link.owner.as_deref();
-                let id = table.and_then(|tb| snap.lookup(names, link.schema.as_deref(), tb));
+                let id = table.and_then(|tb| {
+                    self.objlink_resolve(names, &snap, link.schema.as_deref(), cur.as_deref(), tb)
+                });
                 let col = &link.name;
                 id.and_then(|id| {
                     let from_cols = match snap.columns(id) {
@@ -1150,5 +1260,51 @@ mod tests {
                 .known,
             "{w:?}"
         );
+    }
+
+    /// ★ 접근성(96 §6 · 사용자 09-30): 자기 현재 스키마 · PUBLIC = 보임 · 다른 스키마 = 수집 계정 == 세션 계정일 때만.
+    #[test]
+    fn schema_visible_rules() {
+        use super::schema_visible;
+        // SQLEDU 세션(수집 계정 BISCM): 자기 스키마 O · BISCM 것 X · PUBLIC O.
+        assert!(schema_visible(
+            "SQLEDU",
+            Some("SQLEDU"),
+            Some("SQLEDU"),
+            Some("BISCM")
+        ));
+        assert!(!schema_visible(
+            "BISCM",
+            Some("SQLEDU"),
+            Some("SQLEDU"),
+            Some("BISCM")
+        ));
+        assert!(schema_visible(
+            "PUBLIC",
+            Some("SQLEDU"),
+            Some("SQLEDU"),
+            Some("BISCM")
+        ));
+        // BISCM 세션(수집 계정 BISCM): SQLEDU 것도 O(권한이 있어 수집됐다) · 계정 모르면 X.
+        assert!(schema_visible(
+            "SQLEDU",
+            Some("BISCM"),
+            Some("BISCM"),
+            Some("BISCM")
+        ));
+        assert!(!schema_visible(
+            "SQLEDU",
+            Some("BISCM"),
+            None,
+            Some("BISCM")
+        ));
+        assert!(!schema_visible(
+            "SQLEDU",
+            Some("BISCM"),
+            Some("BISCM"),
+            None
+        ));
+        // 대소문자 무시.
+        assert!(schema_visible("sqledu", Some("SQLEDU"), None, None));
     }
 }

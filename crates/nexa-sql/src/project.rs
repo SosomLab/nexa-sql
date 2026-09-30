@@ -58,6 +58,8 @@ pub(crate) struct TabState {
     /// ★ 탭별 들여쓰기 재정의(탭 폭, 공백 들여쓰기) — 상태줄 팝업으로 바꾼 값 · None = 설정 기본값(사용자 09-29 "폴더·프로젝트 모드에서는
     ///   탭별 상태를 저장하고 다시 열 때 복원"). 파일 모드(프로젝트 없음)는 저장할 곳이 없어 늘 설정값으로 시작한다.
     pub indent: Option<(u8, bool)>,
+    /// ★ 뷰 탭 열쇠(`ext:<확장 id>` · 본문 없는 호스트 뷰) — 복원 때 같은 뷰를 다시 연다(사용자 09-30 "재시작하면 빈 편집 탭").
+    pub view: Option<String>,
 }
 
 impl Project {
@@ -129,6 +131,7 @@ impl Project {
                                 // 64비트 해시는 JSON 숫자(f64)로는 정밀도가 깨진다 → 글자열.
                                 ("hash", Json::Str(s)) => t.disk_hash = s.parse().unwrap_or(0),
                                 ("id", Json::Num(n)) => t.id = (*n).max(0.0) as u64,
+                                ("view", Json::Str(s)) => t.view = Some(s.clone()),
                                 ("tab_size", Json::Num(n)) => {
                                     let sp = t.indent.is_some_and(|x| x.1);
                                     t.indent = Some(((*n).clamp(1.0, 64.0) as u8, sp));
@@ -301,6 +304,9 @@ impl Project {
                 }
                 if let Some((ts, sp)) = t.indent {
                     out.push_str(&format!(", \"tab_size\": {ts}, \"spaces\": {sp}"));
+                }
+                if let Some(v) = &t.view {
+                    out.push_str(&format!(", \"view\": \"{}\"", escape(v)));
                 }
                 out.push_str(" }");
             }
@@ -567,6 +573,8 @@ mod tests {
         p.tabs[1].id = 78;
         // 탭별 들여쓰기 재정의(사용자 09-29) — 있는 탭만 쓰고 그대로 돌아온다.
         p.tabs[1].indent = Some((2, true));
+        // 뷰 탭 열쇠(사용자 09-30) — 있는 탭만 쓰고 그대로 돌아온다.
+        p.tabs[1].view = Some("ext:sql-formatter-kiros33".into());
         p.expanded = vec![dir.join("sql"), other.join("x")];
         p.panel = Some("bookmarks".into());
         p.search = Some("select \"q\"".into());
@@ -576,6 +584,10 @@ mod tests {
         let text = p.to_json();
         assert!(text.contains("\"preview\": true"), "{text}");
         assert!(text.contains("\"tab_size\": 2, \"spaces\": true"), "{text}");
+        assert!(
+            text.contains("\"view\": \"ext:sql-formatter-kiros33\""),
+            "{text}"
+        );
         assert!(text.contains("\"expanded\": [\"sql\", "), "{text}");
         let back = Project::load(&file).unwrap();
         assert_eq!(back.tabs, p.tabs);

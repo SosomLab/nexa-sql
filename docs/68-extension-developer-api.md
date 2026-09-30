@@ -46,7 +46,7 @@
 ```
 
 - **능력(capabilities)**: 매니페스트가 요구한 것만 링크(WASM import 실패 = 로드 거부 · 50 §4). Rainbow Pairs = `editor.read` · `editor.decorate` · `editor.caret` · `ui.menu` · `ui.command` · `settings`.
-- **장식 모델**(새로 필요한 것): 편집기에 **레이어별 스팬 목록**(`(from, to, style{fg, underline, bold})`)을 확장이 통째로 넘기고 편집기는 그리기 때 합성 — 편집기 내부(쌍 표 · 토큰)는 노출하지 않는다. 쌍 표 계산은 코어가 하고 `editor.pairs(range)`(읽기 전용 조회)로 확장에 준다 → Rainbow Pairs WASM = "쌍 표를 받아 색 스팬을 만든다"로 얇아진다(호출 비용 = 편집당 1회 · 상한 `rainbowpair.max_kb`).
+- **장식 모델**(새로 필요한 것): 편집기에 **레이어별 스팬 목록**(`(from, to, style{fg, underline, bold})`)을 확장이 통째로 넘기고 편집기는 그리기 때 합성 — 편집기 내부(쌍 표 · 토큰)는 노출하지 않는다. 쌍 표 계산은 코어가 하고 `editor.pairs(range)`(읽기 전용 조회)로 확장에 준다 → Rainbow Pairs WASM = "쌍 표를 받아 색 스팬을 만든다"로 얇아진다(호출 비용 = 편집당 1회 · 상한 `ext.rainbow_pairs.max_kb`).
 - **이벤트 배달·비용**: 편집 이벤트는 문서 버전 번호만 · 확장이 필요할 때 `text(range)`를 당긴다(복사 최소) · 호출당 연료(fuel)·시간 상한 · 초과 = 그 확장만 비활성 + 로그(50 §4).
 
 ---
@@ -93,10 +93,10 @@ struct Hello;
 
 impl Extension for Hello {
     fn activate(&mut self, api: &mut dyn Api) {
-        api.commands().register("hello.upper", "Hello: Uppercase Selection");
+        api.commands().register("ext.hello.upper", "Hello: Uppercase Selection");
     }
     fn on_command(&mut self, api: &mut dyn Api, id: &str) {
-        if id == "hello.upper" {
+        if id == "ext.hello.upper" {
             let sel = api.editor().selection();
             let text = api.editor().text(sel.clone());
             api.editor().replace(sel, &text.to_uppercase());
@@ -112,8 +112,8 @@ impl Extension for Hello {
   "module": "hello_command.wasm", "sha256": "…",
   "capabilities": ["editor.read", "editor.write", "ui.command", "ui.status"],
   "activation": ["onCommand:hello.upper"],
-  "contributes": { "commands": [{ "id": "hello.upper", "title": "Hello: Uppercase Selection" }],
-                   "menus": { "editor/context": [{ "command": "hello.upper" }] } } }
+  "contributes": { "commands": [{ "id": "ext.hello.upper", "title": "Hello: Uppercase Selection" }],
+                   "menus": { "editor/context": [{ "command": "ext.hello.upper" }] } } }
 ```
 
 Rainbow Pairs(실전 샘플) = 위 틀 + `activation: ["onLanguage:sql"]` + `on_edit`에서 `api.editor().pairs(visible)` → `decorations.set("rainbow", spans)`.
