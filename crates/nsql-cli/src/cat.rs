@@ -306,7 +306,19 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     return Ok(2);
                 };
                 let (sc, name) = split_name(name, &schema);
-                let text = nsql_catalog::source(s, &sc, kind, &name)?;
+                // `qualify=off` = 머리 줄 스키마 한정 끔(GUI `explorer.source_schema`와 같은 뜻 · 기본 켬 · 10-01).
+                let qualify = !o
+                    .positional
+                    .iter()
+                    .skip(3)
+                    .any(|t| t.eq_ignore_ascii_case("qualify=off"));
+                let text = nsql_catalog::source_with(
+                    s,
+                    &sc,
+                    kind,
+                    &name,
+                    nsql_catalog::SourceOpts { qualify },
+                )?;
                 print!("{text}");
             }
             "errors" | "err" => {

@@ -128,7 +128,7 @@
 
 순수 함수 넷 + 시험: `normalize_plsql_header`(11) · `qualify_on_table` · `qualify_tsql_header` · `qualify_mysql_header`(`conservative_qualification_helpers`). Oracle 전 유형 왕복 = `scripts/oracle-ddl-e2e.sh` 67/67(한정 형태 기대값 · `-s <OWNER>`).
 
-### 5-3. 남은 격차(T-268)
+### 5-3. 남은 격차(T-268) — ✅ 10-01 대부분 반영(SQL Server 트리거 `ON` · PG 함수 참조 · GET_DDL 폴백 · PG/MSSQL 왕복 E2E `scripts/dbms-source-e2e.sh` 33/33 · CLI `qualify=off`) · 남음 = MySQL 실서버 왕복(프로필 없음)
 - SQL Server 트리거의 `ON table` 한정(`sys.triggers.parent_id`로 부모 표 알기) · MSSQL 뷰의 컬럼 목록(저장 정의 그대로 = DBeaver와 같음 · 결과 보존은 됨).
 - PG `pg_get_triggerdef`의 함수 참조(`EXECUTE FUNCTION f()`)도 search_path 의존 → 한정.
 - DBeaver의 "Use DBMS_METADATA" 실패 시 자체 생성기 폴백(권한 없는 계정) — 우리는 GET_DDL 실패 = 오류 표시.

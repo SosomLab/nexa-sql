@@ -143,6 +143,23 @@ impl App {
                     crate::output::OutKind::Info,
                     &tf(Msg::OutRunObject, &[&kind, &name]),
                 );
+                // ★ 객체 스키마 ≠ 세션 현재 스키마(10-01 · T-267): 한정이 켜져 있으면 안내 · 꺼져 있으면 강한 경고(현재 스키마에 만들어진다).
+                if let Some(cs) = self.sess.cur_schema.clone() {
+                    if !cs.eq_ignore_ascii_case(&o.schema) {
+                        let qualified = self.settings.flag("explorer.source_schema");
+                        let msg = if qualified {
+                            tf(Msg::OutSchemaMismatch, &[&o.schema, &cs])
+                        } else {
+                            tf(Msg::OutSchemaMismatchUnqualified, &[&o.schema, &cs])
+                        };
+                        self.output_push(tab, crate::output::OutKind::Warn, &msg);
+                        self.toasts.push(
+                            toast::ToastKind::Warn,
+                            t(Msg::OutSchemaMismatchTitle).to_string(),
+                            msg,
+                        );
+                    }
+                }
                 self.run_text_whole(src);
                 if self.sess.busy {
                     self.sess.status = tf(Msg::StRunObject, &[&kind, &name]);

@@ -17,12 +17,50 @@ impl App {
     /// 편집기 탭의 Output 버퍼(없으면 만든다 · 그 탭의 결과 패널이 없으면 `None` = 실행한 적 없는 탭).
     fn output_view_mut(&mut self, ed: u64) -> Option<&mut OutputView> {
         let (max, ts) = self.output_limits();
+        let dbl = self.settings.int("ui.dblclick_ms").clamp(100, 1000) as u64;
         let panel = if ed == self.panel_editor {
             Some(&mut self.panel)
         } else {
             self.panels.get_mut(&ed)
         };
-        panel.map(|p| p.output.get_or_insert_with(|| OutputView::new(max, ts)))
+        panel.map(|p| {
+            let v = p.output.get_or_insert_with(|| OutputView::new(max, ts));
+            v.set_dblclick_ms(dbl);
+            v
+        })
+    }
+
+    /// ★ 탭 제목 배지(10-01 · T-266): Output 탭이 뒤에 있으면 `Output (N)` · 활성이면 `Output`(거둠).
+    pub(crate) fn output_sync_badge(&mut self) {
+        let Some(i) = self.panel.output_index() else {
+            return;
+        };
+        let active = self.panel.active == i;
+        let base = t(Msg::ResultTabOutput).to_string();
+        let title = match self.panel.output.as_mut() {
+            Some(v) if active => {
+                v.take_unread();
+                base
+            }
+            Some(v) if v.unread() > 0 => format!("{base} ({})", v.unread()),
+            _ => base,
+        };
+        if self.panel.tabs[i].title != title {
+            self.panel.tabs[i].title = title;
+            self.panel.sync_bar();
+        }
+    }
+
+    /// Output에서 두 번 클릭한 오류 줄 → 편집기 그 줄(호스트 · 입력 라우팅 뒤).
+    pub(crate) fn output_after_event(&mut self) {
+        let goto = self
+            .panel
+            .output_active_mut()
+            .and_then(OutputView::take_goto);
+        if let Some(n) = goto {
+            self.editors.cur_mut().goto_line(n);
+            self.set_focus(Focus::Editor);
+        }
     }
 
     /// 활성 패널의 Output 자리표시 탭 하나(그리드는 빈 것 · 고정 = 자동 회수 제외 · 이름 있음 = 번호 매기기 제외).
@@ -61,6 +99,7 @@ impl App {
         if show {
             self.output_ensure_tab(ed, kind);
         }
+        self.output_sync_badge();
     }
 
     /// 탭이 없으면 만들고, 전환 정책이면 그 탭으로(포커스는 그대로 — 편집 중인 캐럿을 뺏지 않는다).

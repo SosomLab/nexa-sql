@@ -2074,6 +2074,27 @@ pub fn qualify_on_table(body: &str, owner: &str, table: &str) -> String {
     body.to_string()
 }
 
+/// ★ PG 트리거의 `EXECUTE FUNCTION|PROCEDURE <이름>(`을 함수 스키마로 한정(10-01 · 순수 함수): 이름에 `.`이 없을 때만.
+#[must_use]
+pub fn qualify_exec_function(body: &str, owner: &str, fname: &str) -> String {
+    let up = body.to_ascii_uppercase();
+    for kw in ["EXECUTE FUNCTION ", "EXECUTE PROCEDURE "] {
+        if let Some(p) = up.find(kw) {
+            let start = p + kw.len();
+            let rest = &body[start..];
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '(')
+                .unwrap_or(rest.len());
+            let tok = &rest[..end];
+            if !tok.contains('.') && bare_ident(tok).eq_ignore_ascii_case(fname) {
+                return format!("{}{owner}.{}{}", &body[..start], tok, &body[start + end..]);
+            }
+            return body.to_string();
+        }
+    }
+    body.to_string()
+}
+
 /// ★ T-SQL 머리 줄 스키마 한정(09-30 · 순수 함수): 첫 `CREATE [OR ALTER] PROCEDURE|PROC|FUNCTION|VIEW|TRIGGER <이름>`의 이름에
 /// `.`이 없으면 `[schema].<이름>`. 주석·앞 문장은 건드리지 않는다.
 #[must_use]
@@ -2276,13 +2297,52 @@ pub fn source_with(
                     s,
                     "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'DEFAULT'); END;",
                 );
-                let rs = r?;
-                let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
-                let body = body.trim();
+                // ★ GET_DDL 실패(권한 없음 등 · 10-01 폴백): `ALL_VIEWS.TEXT` + 사전의 컬럼 목록(`ALL_TAB_COLUMNS`)으로 조립 —
+                //   컬럼 이름이 바뀌지 않게 목록은 붙인다(보수 원칙 · 100 §5).
+                let body = match r {
+                    Ok(rs) => rs.rows.first().map(|r| col(r, 0)).unwrap_or_default(),
+                    Err(_) => String::new(),
+                };
+                let body = body.trim().to_string();
                 if body.is_empty() {
-                    return Err(not_found(schema, name));
+                    let text = query(
+                        s,
+                        &format!(
+                            "SELECT text FROM all_views WHERE owner = {} AND view_name = {}",
+                            lit(schema),
+                            lit(name)
+                        ),
+                    )?;
+                    let sel = text.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                    if sel.trim().is_empty() {
+                        return Err(not_found(schema, name));
+                    }
+                    let cols = query(
+                        s,
+                        &format!(
+                            "SELECT column_name FROM all_tab_columns WHERE owner = {} AND table_name = {} ORDER BY column_id",
+                            lit(schema),
+                            lit(name)
+                        ),
+                    )
+                    .map(|rs| rs.rows.iter().map(|r| format!("\"{}\"", col(r, 0))).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                    let head = if opts.qualify {
+                        qualified(dialect, schema, name)
+                    } else {
+                        oracle_ident(name)
+                    };
+                    let list = if cols.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", cols.join(", "))
+                    };
+                    return Ok(format!(
+                        "CREATE OR REPLACE FORCE VIEW {head}{list} AS\n{};\n",
+                        sel.trim_end()
+                    ));
                 }
-                let mut out = body.to_string();
+                let mut out = body;
                 if !out.ends_with(';') {
                     out.push(';');
                 }
@@ -2320,11 +2380,32 @@ pub fn source_with(
                 // `CREATE PROC` → `CREATE OR ALTER PROC`(2016 SP1+) — 다시 실행하면 곧 수정.
                 // ★ 보수적 생성(09-30): 저장된 정의가 스키마 없이 `CREATE PROC p`면 기본 스키마(dbo)에 만들어진다 → `[schema].` 한정.
                 let body = to_create_or_alter(body.trim_end());
-                let body = if opts.qualify {
+                let mut body = if opts.qualify {
                     qualify_tsql_header(&body, schema)
                 } else {
                     body
                 };
+                // ★ 트리거의 `ON 표`도 부모 표의 스키마로 한정(`sys.triggers.parent_id` · 10-01 · T-268).
+                if opts.qualify && kind == ObjectKind::Trigger {
+                    let parent = query(
+                        s,
+                        &format!(
+                            "SELECT OBJECT_SCHEMA_NAME(parent_id), OBJECT_NAME(parent_id) FROM sys.triggers WHERE object_id = OBJECT_ID({})",
+                            lit(&format!(
+                                "{}.{}",
+                                quote_ident(dialect, schema),
+                                quote_ident(dialect, name)
+                            ))
+                        ),
+                    )
+                    .ok();
+                    if let Some(row) = parent.as_ref().and_then(|p| p.rows.first()) {
+                        let (ps, pt) = (col(row, 0), col(row, 1));
+                        if !ps.is_empty() && !pt.is_empty() {
+                            body = qualify_on_table(&body, &format!("[{ps}]"), &pt);
+                        }
+                    }
+                }
                 Ok(format!("{body}\nGO\n"))
             }
         },
@@ -2372,7 +2453,7 @@ pub fn source_with(
             ObjectKind::Trigger => {
                 // ★ 보수적 생성(09-30): `pg_get_triggerdef`는 search_path에 있는 표를 스키마 없이 찍는다 → `ON schema.table`로 한정.
                 let sql = format!(
-                    "SELECT pg_get_triggerdef(t.oid, true), c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND t.tgname = {} LIMIT 1",
+                    "SELECT pg_get_triggerdef(t.oid, true), c.relname, fn.nspname, f.proname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_proc f ON f.oid = t.tgfoid JOIN pg_namespace fn ON fn.oid = f.pronamespace WHERE n.nspname = {} AND t.tgname = {} LIMIT 1",
                     lit(schema),
                     lit(name)
                 );
@@ -2382,8 +2463,19 @@ pub fn source_with(
                 if body.trim().is_empty() {
                     return Err(not_found(schema, name));
                 }
+                let (fschema, fname) = rs
+                    .rows
+                    .first()
+                    .map(|r| (col(r, 2), col(r, 3)))
+                    .unwrap_or_default();
                 let body = if opts.qualify && !table.is_empty() {
-                    qualify_on_table(&body, &quote_ident(dialect, schema), &table)
+                    let b = qualify_on_table(&body, &quote_ident(dialect, schema), &table);
+                    // ★ `EXECUTE FUNCTION f()`도 search_path 의존 → 함수 스키마로 한정(10-01 · T-268).
+                    if fname.is_empty() {
+                        b
+                    } else {
+                        qualify_exec_function(&b, &quote_ident(dialect, &fschema), &fname)
+                    }
                 } else {
                     body
                 };
@@ -3011,6 +3103,26 @@ mod tests {
         assert_eq!(
             qualify_mysql_header("CREATE PROCEDURE `db`.`p`() BEGIN END", "db"),
             "CREATE PROCEDURE `db`.`p`() BEGIN END"
+        );
+        assert_eq!(
+            qualify_exec_function(
+                "CREATE TRIGGER t BEFORE INSERT ON public.tb FOR EACH ROW EXECUTE FUNCTION tf()",
+                "public",
+                "tf"
+            ),
+            "CREATE TRIGGER t BEFORE INSERT ON public.tb FOR EACH ROW EXECUTE FUNCTION public.tf()"
+        );
+        assert_eq!(
+            qualify_exec_function("… EXECUTE PROCEDURE app.tf()", "public", "tf"),
+            "… EXECUTE PROCEDURE app.tf()"
+        );
+        assert_eq!(
+            qualify_on_table(
+                "CREATE OR ALTER TRIGGER [dbo].trg ON tbl AFTER INSERT AS BEGIN END",
+                "[dbo]",
+                "tbl"
+            ),
+            "CREATE OR ALTER TRIGGER [dbo].trg ON [dbo].tbl AFTER INSERT AS BEGIN END"
         );
     }
 }

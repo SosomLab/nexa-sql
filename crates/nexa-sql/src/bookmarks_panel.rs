@@ -756,6 +756,9 @@ impl BookmarksPanel {
             if consumed {
                 return true;
             }
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                return false;
+            }
         }
         if let Some((_, tb, kind)) = self.rename.as_mut() {
             match ev {

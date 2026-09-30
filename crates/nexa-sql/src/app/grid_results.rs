@@ -419,6 +419,8 @@ impl App {
         self.grid.set_bounds(b);
         self.panel.sync_bar();
         self.set_focus(Focus::Grid);
+        // Output 탭을 보면 미읽음 배지를 거둔다(10-01).
+        self.output_sync_badge();
     }
 
     /// 실행용 새 결과 탭(설정 `grid.result_tabs`일 때만) — 만들었으면 그 전 활성 탭 id.

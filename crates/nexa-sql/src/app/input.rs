@@ -835,6 +835,7 @@ impl App {
                 if let Some(o) = self.panel.output_active_mut() {
                     o.on_event(&ev);
                 }
+                self.output_after_event();
                 self.redraw();
                 return;
             }
@@ -1777,6 +1778,7 @@ impl App {
             Focus::Grid => {
                 if let Some(o) = self.panel.output_active_mut() {
                     o.on_event(&ev);
+                    self.output_after_event();
                 } else {
                     self.grid.set_shift(self.shift);
                     self.grid.on_event(&ev, self.scale);

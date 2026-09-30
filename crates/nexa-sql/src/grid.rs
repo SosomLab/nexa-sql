@@ -4785,6 +4785,10 @@ impl Grid {
                 }
                 return;
             }
+            // 메뉴가 열려 있는 동안 마우스 이동은 메뉴 몫(셀·헤더·도구줄 hover 0 · 10-01).
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                return;
+            }
         }
         // 결과 도구줄(푸터)이 먼저 — 커서 아래 컨트롤에만(마우스 라우팅 규칙).
         if self.footer_event(ev, scale) {

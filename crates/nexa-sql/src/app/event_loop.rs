@@ -1337,6 +1337,18 @@ impl App {
                 sqlprev_win::SqlPrevAction::OpenEditor => {
                     let title = self.sqlprev_win.file_name();
                     let text = self.sqlprev_win.text();
+                    // ★ DDL 미리보기로 연 탭도 객체 탭(10-01): 종류가 소스 객체(뷰·루틴·트리거·타입)면 출처를 기억해 F5 = 한 단위.
+                    let origin = self.sqlprev_win.spec.as_ref().and_then(|sp| {
+                        (sp.what == nsql_catalog::GenWhat::Ddl
+                            && sp.sub.is_none()
+                            && sp.owner.kind.has_source())
+                        .then(|| explorer::ObjectOrigin {
+                            schema: sp.owner.schema.clone(),
+                            name: sp.owner.name.clone(),
+                            kind: sp.owner.kind,
+                            server: self.sqlprev_win.server.clone(),
+                        })
+                    });
                     self.sqlprev_win.close();
                     if self.tab_room() {
                         self.editors.new_tab(Some(title));
@@ -1344,6 +1356,15 @@ impl App {
                         // 캐럿 = 1행 1열(파일 열기와 같이 · 사용자 09-30).
                         self.editors.cur_mut().goto_line(1);
                         self.set_focus(Focus::Editor);
+                        if let Some(o) = origin {
+                            let tab = self.editors.active_id();
+                            if let Some(spec) = o.server.clone() {
+                                self.bind_tab_to_server(tab, &spec);
+                            }
+                            self.object_tabs.insert(tab, o);
+                            self.sync_sess();
+                            self.sync_sess_ui();
+                        }
                     }
                     self.sync_modal();
                 }

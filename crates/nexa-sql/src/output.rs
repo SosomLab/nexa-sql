@@ -15,6 +15,7 @@ use nexa_ctl::theme::Theme;
 use nexa_ctl::{Control, InputEvent, Invalidations, TextBox, Widget};
 use nsql_i18n::{t, Msg};
 use std::collections::VecDeque;
+use std::time::Instant;
 
 /// 줄 종류 — 표식·색은 글자로만(목록은 텍스트 색만 · 강조는 chip · 사용자 09-30 머티리얼 규칙).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +44,13 @@ pub(crate) struct OutputView {
     hover: Option<usize>,
     pressed: Option<usize>,
     head_bottom: i32,
+    /// 마지막으로 호스트가 거둔 뒤 추가된 메시지 수(탭 제목 배지 `Output (N)` · 10-01).
+    unread: usize,
+    /// 본문 마지막 MouseDown(시각 · y) — 두 번 클릭 판정.
+    last_down: Option<(Instant, i32)>,
+    dblclick_ms: u64,
+    /// 두 번 클릭한 줄이 `N행:`/`line N:`이면 그 줄 번호(호스트가 거둬 편집기로 이동).
+    goto: Option<usize>,
 }
 
 impl OutputView {
@@ -68,7 +76,37 @@ impl OutputView {
             hover: None,
             pressed: None,
             head_bottom: 0,
+            unread: 0,
+            last_down: None,
+            dblclick_ms: 400,
+            goto: None,
         }
+    }
+
+    /// 두 번 클릭 간격(설정 `ui.dblclick_ms`).
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u64) {
+        self.dblclick_ms = ms.max(100);
+    }
+
+    /// 거두지 않은 새 메시지 수(거두면 0).
+    pub(crate) fn take_unread(&mut self) -> usize {
+        std::mem::take(&mut self.unread)
+    }
+
+    pub(crate) fn unread(&self) -> usize {
+        self.unread
+    }
+
+    /// 두 번 클릭으로 고른 오류 줄(편집기 줄 번호 · 1부터).
+    pub(crate) fn take_goto(&mut self) -> Option<usize> {
+        self.goto.take()
+    }
+
+    /// 캐럿이 있는 줄의 본문.
+    fn caret_line_text(&self) -> String {
+        let b = self.body.buf();
+        let line = b.line_of(self.body.caret());
+        b.line_text(line).into_owned()
     }
 
     /// 설정이 바뀌면(`output.max_lines` · `output.timestamps`).
@@ -105,6 +143,7 @@ impl OutputView {
                 self.lines.push_back(format!("{indent}{l}"));
             }
         }
+        self.unread += 1;
         self.trim();
         self.dirty = true;
     }
@@ -190,6 +229,17 @@ impl OutputView {
                 if self.pressed.is_none() && y >= self.head_bottom {
                     self.body.set_focused(true);
                     self.body.on_event(ev, &mut inv);
+                    // ★ 두 번 클릭 = 오류 줄(`N행:`)이면 편집기 그 줄로(10-01 · T-266).
+                    let now = Instant::now();
+                    let dbl = self.last_down.is_some_and(|(t, ly)| {
+                        now.duration_since(t).as_millis() < u128::from(self.dblclick_ms)
+                            && (ly - y).abs() < 4
+                    });
+                    self.last_down = Some((now, y));
+                    if dbl {
+                        self.goto = parse_error_line(&self.caret_line_text());
+                        self.last_down = None;
+                    }
                 }
                 true
             }
@@ -297,6 +347,28 @@ impl OutputView {
     }
 }
 
+/// ★ Output 줄에서 편집기 줄 번호(10-01): `[hh:mm:ss] ✖ 3행: …` · `… line 3: …`(로그 요약 형식 `Msg::LogLineSummary` 두 언어) —
+/// 시각·표식 뒤 첫 숫자 묶음이 `행:` 또는 `line N:` 꼴일 때만. 순수 함수(시험 대상).
+#[must_use]
+pub(crate) fn parse_error_line(line: &str) -> Option<usize> {
+    let mut s = line.trim_start();
+    if s.starts_with('[') {
+        s = s.split_once("] ").map_or(s, |(_, r)| r);
+    }
+    let s = s.trim_start_matches(|c: char| c == '✖' || c == '⚠' || c.is_whitespace());
+    let s = s.strip_prefix("line ").unwrap_or(s);
+    let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let rest = &s[digits.len()..];
+    if rest.starts_with("행:") || rest.starts_with(':') {
+        digits.parse().ok().filter(|n: &usize| *n > 0)
+    } else {
+        None
+    }
+}
+
 /// `HH:MM:SS`(로컬).
 fn now_hms() -> String {
     let st = nsql_log::now_local().stamp();
@@ -325,6 +397,22 @@ mod tests {
         v.clear();
         assert!(v.is_empty());
         assert_eq!(v.text(), "");
+    }
+
+    #[test]
+    fn error_line_number_is_parsed() {
+        assert_eq!(parse_error_line("[12:00:00] ✖ 3행: Warning: x"), Some(3));
+        assert_eq!(
+            parse_error_line("[12:00:00] ✖ line 12: ORA-00942"),
+            Some(12)
+        );
+        assert_eq!(parse_error_line("✖ 7행: boom"), Some(7));
+        assert_eq!(
+            parse_error_line("[12:00:00] [1] 완료 · 0행 영향 · 12 ms"),
+            None
+        );
+        assert_eq!(parse_error_line("[12:00:00] hello 3행:"), None);
+        assert_eq!(parse_error_line(""), None);
     }
 
     #[test]

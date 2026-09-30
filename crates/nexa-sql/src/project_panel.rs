@@ -1327,6 +1327,10 @@ impl ProjectPanel {
             if consumed {
                 return true;
             }
+            // 메뉴가 열려 있는 동안 마우스 이동은 메뉴 몫(뒤 목록 hover 0 · 10-01 · 탐색기와 같은 규칙).
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                return false;
+            }
         }
         // 열린 파일 rect = 지금 스크롤 기준(목록과 한 스크롤).
         self.relayout_open_rows();

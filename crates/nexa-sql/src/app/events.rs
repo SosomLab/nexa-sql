@@ -1337,7 +1337,11 @@ impl App {
             let failed = done.is_some();
             // 새 결과 탭으로 시작한 실행이 **결과 하나 없이 오류**로 끝났으면 그 탭을 거두고 앞 탭으로(09-28).
             if let Some(prev) = self.sess.run_fresh_prev.take() {
-                if failed && self.sess.run_set_stmt.is_none() {
+                // ★ 결과 셋 없이 끝난 실행(컴파일 · DDL · PRINT)도 Output 탭이 있으면 빈 새 결과 탭을 거둔다(10-01 · T-266).
+                let only_output = !self.sess.run_had_rs
+                    && self.sess.run_set_stmt.is_none()
+                    && self.panel.output_index().is_some();
+                if (failed && self.sess.run_set_stmt.is_none()) || only_output {
                     let fresh = Some(self.sess.run_tab);
                     self.drop_fresh_result_tab(fresh, prev);
                 }
