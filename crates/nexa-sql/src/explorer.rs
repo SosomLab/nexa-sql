@@ -2796,6 +2796,11 @@ impl Explorer {
     }
 
     /// 자동 완성이 읽는 스냅샷(접속 전이면 빈 스냅샷).
+    /// 이 칸의 메타에 스키마 목록이 있는가(비어 있으면 같은 카탈로그의 다른 칸 메타를 쓴다 · `ExplorerSet::meta_pane`).
+    pub(crate) fn meta_has_schemas(&self) -> bool {
+        !self.meta.snapshot().schemas.is_empty()
+    }
+
     pub(crate) fn meta_view(
         &self,
     ) -> (

@@ -1631,6 +1631,34 @@ impl App {
         false
     }
 
+    /// ★ 포인터가 창을 떠났다 / 창이 비활성이 됐다(사용자 09-30 "툴팁이 남는다 · 비활성이면 마우스 상태 정리"): hover·툴팁·캡처처럼
+    ///   마우스가 있어야 뜻이 있는 상태를 전부 걷는다 — 영역마다 "밖" 이동을 한 번 주고 캡처·hover 영역·링크 hover를 비운다.
+    pub(crate) fn pointer_gone(&mut self) {
+        let out = InputEvent::MouseMove { x: -1, y: -1 };
+        let mut changed = false;
+        if self.explorer.is_visible() {
+            changed |= self.explorer.on_event(&out);
+        }
+        if self.objdetail.is_visible() {
+            changed |= self.objdetail.on_event(&out, Instant::now());
+        }
+        if self.editors.active_view().is_some() {
+            changed |= self.ext_view.on_event(&out);
+        }
+        self.grid.on_event(&out, self.scale);
+        self.hover_area = None;
+        self.press_capture = None;
+        self.cursor = (-1, -1);
+        if self.objlinks.hot.take().is_some() {
+            // 편집기의 링크 hover 밑줄도 걷는다.
+            let _ = self.editors.cur_mut().set_link_hot(None);
+            changed = true;
+        }
+        if changed {
+            self.redraw();
+        }
+    }
+
     /// 포인터 캡처: 점 아래의 **영역**(보이는 것만 · 팝업·바·스플리터는 영역이 아니다).
     fn area_at(&self, p: Point) -> Option<Focus> {
         if self.editors.editor_bounds().contains(p) {

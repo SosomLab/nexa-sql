@@ -1051,7 +1051,8 @@ impl Snapshot {
     }
 
     /// [`Snapshot::lookup_resolvable`] + **호출자의 현재 스키마**(`cur` · 탭 세션의 접속 스키마 — 같은 서버의 두 연결(BISCM·SQLEDU)이
-    /// 한 메타를 공유할 때 스냅숏의 현재 스키마는 첫 연결의 것이라 틀린다 · 사용자 09-30). `cur` = None이면 스냅숏 값.
+    /// 한 메타를 공유할 때 스냅숏의 현재 스키마는 첫 연결의 것이라 틀린다 · 사용자 09-30). `cur` = None이면 스냅숏 값 · 그것도 없으면
+    /// **없음**(전 스키마 폴백 없음).
     pub fn lookup_resolvable_from(
         &self,
         names: &Interner,
@@ -1073,9 +1074,8 @@ impl Snapshot {
             }
             None => self.current_schema,
         };
-        let Some(cur) = cur_sym else {
-            return self.lookup(names, None, name);
-        };
+        // ★ 현재 스키마를 모르면 **없음**(전 스키마 폴백 금지 · 사용자 09-30 "판단 기준은 엄격하게" — 스키마 생략 = 현재 스키마 뜻).
+        let cur = cur_sym?;
         let lkey = names.find(&name.to_lowercase())?;
         if let Some(id) = self.exact.get(&(cur, lkey)).copied() {
             return Some(id);
@@ -1206,7 +1206,7 @@ mod tests {
     use super::*;
 
     /// ★ 이름 풀이(사용자 09-30): 스키마 없는 이름은 호출자의 현재 스키마 → PUBLIC 순 · 다른 스키마에만 있으면 None(전 스키마 폴백 없음)
-    /// · 현재 스키마를 모르면(cur None · 스냅숏도 None) 전 스키마 폴백.
+    /// · 현재 스키마를 모르면(cur None · 스냅숏도 None) 없음(폴백 금지).
     #[test]
     fn lookup_resolvable_uses_caller_schema() {
         let mut m = MetaStore::new(1 << 20);
@@ -1248,8 +1248,8 @@ mod tests {
         assert!(
             m2.snapshot()
                 .lookup_resolvable_from(&m2.names, None, None, "trx_demand")
-                .is_some(),
-            "현재 스키마 미상 = 폴백"
+                .is_none(),
+            "현재 스키마 미상 = 없음(전 스키마 폴백 금지)"
         );
     }
 

@@ -294,6 +294,24 @@ impl ExplorerSet {
         }
     }
 
+    /// ★ **메타를 읽을 칸**(사용자 09-30 "메타는 서버별 1벌 · 칸은 연결별"): `spec`의 칸에 메타(스키마 목록)가 있으면 그 칸 ·
+    ///   비어 있으면(그 연결의 트리를 아직 안 펼침 — `explorer.share_catalog` 끔 = 계정마다 칸) **같은 카탈로그에서 메타를 가진 칸**
+    ///   (수집 계정 = 그 칸의 계정 · 96 §6) · 그것도 없으면 원래 칸. 링크 판정·완성·상세·컬럼 요청이 모두 이 칸을 본다.
+    fn meta_pane(&self, spec: Option<&ConnectSpec>) -> usize {
+        let own = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let has_meta = |i: usize| self.panes.get(i).is_some_and(|p| p.ex.meta_has_schemas());
+        if has_meta(own) {
+            return own;
+        }
+        let Some(s) = spec else { return own };
+        self.panes
+            .iter()
+            .position(|p| {
+                p.key.as_ref().is_some_and(|k| same_catalog(k, s)) && p.ex.meta_has_schemas()
+            })
+            .unwrap_or(own)
+    }
+
     fn find(&self, spec: &ConnectSpec) -> Option<usize> {
         self.panes
             .iter()
@@ -1088,7 +1106,7 @@ impl ExplorerSet {
 
     /// ★ 그 칸의 **수집 계정**(메타 세션의 사용자 · 96 §6): 이름 풀이의 접근성 판정 — 세션 계정과 같을 때만 다른 스키마의 객체가 보인다.
     pub(crate) fn meta_account(&self, spec: Option<&ConnectSpec>) -> Option<String> {
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         self.panes
             .get(i)
             .and_then(|p| p.key.as_ref())
@@ -1104,7 +1122,7 @@ impl ExplorerSet {
         &nsql_run::meta::Interner,
         std::sync::Arc<nsql_run::meta::Snapshot>,
     ) {
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         self.panes[i].ex.meta_view()
     }
 
@@ -1116,20 +1134,20 @@ impl ExplorerSet {
         table: &str,
         urgent: bool,
     ) {
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         self.panes[i].ex.request_columns(schema, table, urgent);
     }
 
     /// 완성 상세 카드(09-24): 테이블 상세·컬럼을 객체 id로 요청.
     pub(crate) fn request_detail(&mut self, spec: Option<&ConnectSpec>, id: nsql_run::meta::ObjId) {
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         self.panes[i].ex.request_detail(id);
         self.panes[i].ex.request_columns_by_id(id);
     }
 
     /// 자동 완성 즉시 채움 — 스키마(또는 사전)의 관계 객체(09-23).
     pub(crate) fn request_objects(&mut self, spec: Option<&ConnectSpec>, schema: &str) {
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         self.panes[i].ex.request_objects(schema);
     }
 
@@ -1149,7 +1167,7 @@ impl ExplorerSet {
             }
             return total;
         }
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         match self.panes.get_mut(i) {
             Some(p) => p.ex.refresh_meta(schema),
             None => (0, 0),
@@ -1158,7 +1176,7 @@ impl ExplorerSet {
 
     /// `spec` 서버의 현재 스키마(서버가 말한 값).
     pub(crate) fn current_schema(&self, spec: Option<&ConnectSpec>) -> Option<String> {
-        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        let i = self.meta_pane(spec);
         self.panes
             .get(i)
             .and_then(|p| p.ex.server_schema().map(str::to_string))

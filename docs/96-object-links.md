@@ -79,11 +79,13 @@
 **규칙(`schema_visible` · 순수)** = 객체 스키마가 ① 세션의 현재 스키마(서버 답 `current_schema` → 접속 `?schema=` → 사용자) ② `PUBLIC`
 ③ 그 서버 메타를 **세션 계정이 수집**했을 때(`ExplorerSet::meta_account` = 칸의 메타 세션 사용자 · 사전 뷰 `ALL_*`·`has_table_privilege`가 이미
 그 계정의 권한으로 걸러 준다) 중 하나. 판정(`scan`) · 설명(`objlink_describe`) · 선적재(`objlink_prefetch`)가 `objlink_resolve` 한 길.
-현재 스키마 = `RunEvent::Connected.schema`(`Sess.cur_schema`) — 사용자 이름 ≠ 기본 스키마인 계정(로그온 트리거)도 맞는다.
+현재 스키마 = `RunEvent::Connected.schema`(`Sess.cur_schema`) — 사용자 이름 ≠ 기본 스키마인 계정(로그온 트리거)도 맞는다. **현재 스키마를 모르면 스키마 생략 이름은 없음**(전 스키마 폴백 금지 · 09-30 "엄격하게").
 
 **DBMS별** — Oracle: 스키마 = 사용자 · `SYS_CONTEXT('USERENV','CURRENT_SCHEMA')` · PUBLIC 시노님 · 다른 스키마 객체는 GRANT/롤이 있어야(수집 계정
 기준으로 근사). SQL Server: 스키마 = `SCHEMA_NAME()`(기본 dbo) · DB 간은 `db.schema.obj`(지금은 같은 DB 안 스키마만). PostgreSQL: `current_schema()` +
 `search_path`(지금은 첫 스키마만 · 후속) · `public`. MySQL: 스키마 = 데이터베이스. SQLite: `main`.
+
+**칸 선택** — `explorer.share_catalog`가 꺼져 있으면(기본 · 사용자 "연결별 칸") 계정마다 탐색기 칸·메타가 따로다. 그 연결의 트리를 아직 안 펼쳐 메타가 비었으면 링크·완성·상세는 **같은 카탈로그에서 메타를 가진 칸**을 본다(`ExplorerSet::meta_pane` · 수집 계정 = 그 칸의 계정 · 09-30 진단 = SQLEDU 칸 `schemas=0`이 원인).
 
 **한계·후속(T-264)** — 한 서버 칸의 메타 세션은 **첫 연결 계정**으로 수집한다. 둘째 계정(예 SQLEDU)의 자기 스키마는 규칙 ①로 보이지만, 둘째 계정이
 권한을 가진 **다른** 스키마는 수집 계정이 달라 미확인으로 남는다(보수적 = 허용처럼 보이지 않음). 연결별 수집 계정 태그(버킷마다 `collected_by`) +

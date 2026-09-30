@@ -219,15 +219,8 @@ impl App {
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
-        // 세션 상태를 바꾸는 문장이 나가면 이 세션은 유휴로 닫지 않는다(닫으면 그 설정·임시 데이터를 잃는다 · docs/52 §6-4).
-        if self
-            .sess
-            .last_run_items
-            .iter()
-            .any(|s| sessions::alters_session_state(s))
-        {
-            self.sess.stateful = true;
-        }
+        // 세션 상태 표식(`stateful`)은 여기서 일괄로 켜지 않는다 — 문장이 **서버로 나가는 순간**(`RunEvent::Begin`) 그때의 세션에 켠다.
+        // (실행 전 일괄이면 `CONNECT` 뒤 문장의 상태가 **앞** 세션에 붙어 재접속 직후 헛경고가 났다 · 사용자 09-30.)
         let max_rows = self.grid.page_rows();
         self.sess.single_run = !all;
         self.sess.worker.send(worker::Cmd::Run {

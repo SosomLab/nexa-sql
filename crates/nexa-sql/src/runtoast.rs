@@ -615,7 +615,8 @@ impl RunToast {
             dc.select_font(FontSlot::Base, false);
         }
         // 일반 토스트는 종전대로 아래에서 위로 쌓인다(카드 스택은 위쪽 · 서로 다른 끝).
-        bottom
+        // ★ 다음 층(트랜잭션 경고·토스트)의 바닥 = 이 더미의 **위**(사용자 09-30 "경고가 카드와 같은 자리에 겹친다 → 스택으로").
+        (self.stack_rect.y - gap).max(top)
     }
 
     /// 카드 한 장 — 자리(hit-test)를 기록하고, hover면 툴팁 정보를 돌려준다.

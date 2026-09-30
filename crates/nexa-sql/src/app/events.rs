@@ -824,6 +824,17 @@ impl App {
                         .get(index)
                         .cloned()
                         .unwrap_or_default();
+                    // 세션 상태를 바꾸는 문장이 서버로 나가면 이 세션은 유휴로 닫지 않고, 재접속 때 한 번 알린다(docs/52 §6-4 · D-103).
+                    // 표식은 문장이 실제로 도는 세션에 붙는다(`CONNECT` 뒤 문장 = 새 세션). 켜지는 순간 원인 문장을 로그에 남긴다.
+                    if server && !self.sess.stateful && sessions::alters_session_state(&stmt) {
+                        self.sess.stateful = true;
+                        let head: String =
+                            stmt.lines().next().unwrap_or("").chars().take(80).collect();
+                        self.log_win.push(LogEntry::new(
+                            LogKind::Info,
+                            tf(Msg::StSessStateful, &[head.trim()]),
+                        ));
+                    }
                     // 전송 로그는 **서버로 가는 항목에만**(클라이언트 명령은 네트워크 0 · mac 09-21 `PRINT`/`VARIABLE`에 찍히던 것).
                     if server {
                         dlog!(self, LogLayer::Net, LogLevel::Timing, {
@@ -1069,8 +1080,9 @@ impl App {
                     if std::mem::take(&mut self.sess.stateful) {
                         let m = t(Msg::StSessStateLost).to_string();
                         self.log_win.push(LogEntry::new(LogKind::Info, m.clone()));
+                        // 안내지 오류가 아니다(사용자 09-30 "에러처럼 뜨는 토스트") — 경고 종류로.
                         self.toasts
-                            .push(toast::ToastKind::Error, description.clone(), m);
+                            .push(toast::ToastKind::Warn, description.clone(), m);
                     }
                     // 방언은 **이 세션의 결과 그리드**에만(Copy SQL 방언): 공유 세션 = 전용 탭을 뺀 전부 · 전용 세션 = 주인 탭의 것.
                     self.set_dialect_for_sess_grids(dialect);

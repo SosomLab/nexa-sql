@@ -391,6 +391,10 @@ pub(crate) fn alters_session_state(stmt: &str) -> bool {
     let mut words = up.split_whitespace();
     let first = words.next().unwrap_or("");
     let second = words.next().unwrap_or("");
+    // 접속 명령은 클라이언트 지시다 — 접속 문자열(비밀번호에 `#`·`:=`가 들어갈 수 있다)을 문장으로 보지 않는다(사용자 09-30 `Sql#Edu2026`).
+    if matches!(first, "CONNECT" | "DISCONNECT") {
+        return false;
+    }
     let by_verb = match first {
         "SET" | "USE" | "PRAGMA" | "ATTACH" | "DETACH" | "PREPARE" | "DEALLOCATE" | "LISTEN"
         | "UNLISTEN" | "LOCK" | "EXEC" | "EXECUTE" | "CALL" | "BEGIN" | "DECLARE" | "DO"
@@ -404,7 +408,7 @@ pub(crate) fn alters_session_state(stmt: &str) -> bool {
         _ => false,
     };
     by_verb
-        || up.contains('#')
+        || temp_table_hash(&up)
         || up.contains(":=")
         || [
             "SET_CONFIG(",
@@ -419,6 +423,19 @@ pub(crate) fn alters_session_state(stmt: &str) -> bool {
         ]
         .iter()
         .any(|k| up.contains(k))
+}
+
+/// SQL Server 임시 테이블 표기(`#t` · `##g`)가 **이름 자리**에 있는가 — `#`이 낱말 첫 글자일 때만(앞 = 시작·공백·구분 문자).
+/// `EMP#` 같은 컬럼 이름 · `Sql#Edu` 같은 문자열 안 글자는 아니다.
+fn temp_table_hash(up: &str) -> bool {
+    let b = up.as_bytes();
+    (0..b.len()).any(|i| {
+        b[i] == b'#'
+            && (i == 0
+                || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_' || b[i - 1] == b'#'))
+            && b.get(i + 1)
+                .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'#')
+    })
 }
 
 /// D3 실행 배치(§4).
@@ -1389,11 +1406,21 @@ mod tests {
             "SET @x = 1",
             "PRAGMA foreign_keys = ON",
             "ATTACH 'a.db' AS a",
+            "SELECT * INTO #tmp FROM emp",
+            "INSERT INTO ##g VALUES (1)",
+            "CREATE TABLE #t(a int)",
         ] {
             assert!(alters_session_state(s), "{s}");
         }
         for s in [
             "SELECT * FROM emp",
+            // 접속 명령 = 클라이언트 지시(비밀번호의 `#`·`:=`는 문장이 아니다 · 사용자 09-30).
+            "CONNECT oracle://SQLEDU:Sql#Edu2026@192.168.0.58:1521/BISCM",
+            "CONNECT mssql://u:a:=b@h:1433/db",
+            "DISCONNECT",
+            // `#`이 이름 첫 글자가 아니면 임시 테이블이 아니다.
+            "SELECT emp#, dept# FROM emp",
+            "SELECT 'a#b' FROM dual",
             "UPDATE emp SET sal = sal + 1",
             "INSERT INTO t VALUES (1)",
             "DELETE FROM t",

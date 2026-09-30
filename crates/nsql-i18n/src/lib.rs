@@ -116,6 +116,7 @@ pub enum Msg {
     DescSessMaxShared,
     StSessConnectFirst,
     StSessStateLost,
+    StSessStateful,
     ExpOffline,
     ExpOfflineRefresh,
     ExpRemoveServer,
@@ -3058,6 +3059,10 @@ impl Msg {
             Msg::StSessStateLost => [
                 "New server session — session settings, temporary tables and package state from the previous session are gone",
                 "새 서버 세션입니다 — 앞 세션의 세션 설정·임시 테이블·패키지 상태는 사라졌습니다",
+            ],
+            Msg::StSessStateful => [
+                "Session now holds state (settings · temp objects · package state) — it will not be closed when idle, and a reconnect will warn once. Cause: {0}",
+                "이 세션에 상태가 생겼습니다(세션 설정·임시 객체·패키지 상태) — 유휴로 닫지 않고, 재접속 때 한 번 알립니다. 원인 문장: {0}",
             ],
             Msg::ExpOfflineRefresh => [
                 "Disconnected — right-click the server ▸ Connect",
@@ -6381,6 +6386,7 @@ impl Msg {
         Msg::DescSessMaxShared,
         Msg::StSessConnectFirst,
         Msg::StSessStateLost,
+        Msg::StSessStateful,
         Msg::ExpOffline,
         Msg::ExpOfflineRefresh,
         Msg::ExpRemoveServer,

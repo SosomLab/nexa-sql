@@ -727,6 +727,7 @@ impl App {
         };
         let spec = self.sess.spec.clone();
         let dialect = Some(self.sess.dialect);
+        let mut trace_lines: Vec<String> = Vec::new();
         let (mut links, needs, stamp) = {
             let (names, snap) = self.explorer.meta_view(spec.as_ref());
             // 탭 세션의 스키마 = 접속 `?schema=` → 사용자 이름(Oracle·PG·MSSQL 모두 기본 스키마의 근사 · 없으면 스냅숏 값).
@@ -740,8 +741,54 @@ impl App {
                 collector: self.explorer.meta_account(spec.as_ref()),
             };
             let links = scan(&text, dialect, &res);
+            // ★ 진단(`NSQL_TRACE_OBJLINK` · 09-30): 판정에 쓰인 값 — 세션 · 현재 스키마 · 계정 · 수집 계정 · 스냅숏 현재 스키마 · 링크별 결과.
+            if std::env::var_os("NSQL_TRACE_OBJLINK").is_some() {
+                let snap_cur = snap
+                    .current_schema
+                    .map(|s| names.get(s).to_string())
+                    .unwrap_or_default();
+                let mut line = format!(
+                    "[objlink] sess={} cur={:?} sess_cur={:?} spec_user={:?} spec_schema={:?} collector={:?} snap_cur={snap_cur:?} schemas={} links:",
+                    self.sess.id,
+                    res.cur,
+                    self.sess.cur_schema,
+                    spec.as_ref().and_then(|s| s.user.clone()),
+                    spec.as_ref().and_then(|s| s.schema.clone()),
+                    res.collector,
+                    snap.schemas.len()
+                );
+                for l in &links {
+                    line.push_str(&format!(
+                        " {}{}={}",
+                        l.schema
+                            .as_deref()
+                            .map(|s| format!("{s}."))
+                            .unwrap_or_default(),
+                        l.name,
+                        if l.known { "ok" } else { "NO" }
+                    ));
+                }
+                trace_lines.push(line);
+            }
             (links, res.needs.into_inner(), snap.stamp)
         };
+        for line in trace_lines.drain(..) {
+            // 값이 "1"이 아니면 파일 경로로 보고 거기에도 덧붙인다(자체 관리 폴더 · 진단).
+            if let Some(path) = std::env::var_os("NSQL_TRACE_OBJLINK") {
+                let path = path.to_string_lossy().into_owned();
+                if path != "1" {
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                    {
+                        let _ = writeln!(f, "{line}");
+                    }
+                }
+            }
+            self.log_win.push(LogEntry::new(LogKind::Info, line));
+        }
         if region.0 > 0 {
             for l in &mut links {
                 l.range.0 += region.0;
@@ -952,8 +999,15 @@ impl App {
                         })
                 })
             }
-            _ => snap
-                .lookup(names, link.schema.as_deref(), &link.name)
+            // 테이블·루틴도 판정과 같은 길(세션 현재 스키마 + PUBLIC + 접근성 · 96 §6) — 전 스키마 조회 금지(사용자 09-30 "엄격하게").
+            _ => self
+                .objlink_resolve(
+                    names,
+                    &snap,
+                    link.schema.as_deref(),
+                    cur.as_deref(),
+                    &link.name,
+                )
                 .and_then(|id| {
                     snap.object(id)
                         .and_then(|o| o.comment)

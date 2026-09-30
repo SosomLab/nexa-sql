@@ -563,9 +563,19 @@ impl ApplicationHandler<Wake> for App {
             self.sync_hangul_mode();
         }
         // 메인 창 활성/비활성(docs/58 §2-5): 돌아오는 순간 열린 파일을 한 번에 확인 · 뒤에 있을 때는 아무것도 안 한다.
+        // ★ 커서가 창 밖으로 나감 = hover·툴팁 정리(빠르게 나가면 마지막 MouseMove가 영역 안이라 툴팁이 남았다 · 사용자 09-30).
+        if matches!(event, WindowEvent::CursorLeft { .. })
+            && self.window.as_ref().is_some_and(|w| w.id() == id)
+        {
+            self.pointer_gone();
+        }
         if let WindowEvent::Focused(on) = event {
             if self.window.as_ref().is_some_and(|w| w.id() == id) {
                 self.main_active = on;
+                if !on {
+                    // 비활성 = 마우스 상태(hover·툴팁·캡처·링크 hover) 정리(사용자 09-30).
+                    self.pointer_gone();
+                }
                 // 위상 초기화: 돌아오면 켜진 채로 깜빡임 재개 · 나가면 켜진 채 한 번 그리고 멈춘다(09-24).
                 self.blink_origin = Instant::now();
                 self.next_blink = self.blink_origin + Duration::from_millis(500);
