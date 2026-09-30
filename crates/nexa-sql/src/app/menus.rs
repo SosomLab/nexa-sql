@@ -671,6 +671,8 @@ impl App {
             }
             x if x.starts_with("bookmark.") => self.bookmark_cmd(x),
             // 아웃라인 패널(docs/76): 켜면 활성 탭 심볼 동기 + 필터 포커스 · 다른 좌측 패널은 닫힌다.
+            // ★ Output 탭 토글(09-30 · 활성 편집기 탭의 결과 패널).
+            "view.output" => self.output_toggle(),
             "view.object_details" => {
                 let on = !self.settings.flag("explorer.details");
                 let _ = self
@@ -1194,6 +1196,7 @@ impl App {
                     item("view.goto_anything", Msg::MnGotoAnything),
                     item("view.explorer", Msg::MnExplorer),
                     item("view.object_details", Msg::MnObjectDetails),
+                    item("view.output", Msg::MnOutput),
                     item("view.search", Msg::MnSearchPanel),
                     item("view.project", Msg::MnProjectPanel),
                     item("view.log", Msg::MnLogWindow),
@@ -1558,6 +1561,11 @@ impl App {
             "view.object_details",
             Msg::MnObjectDetails,
             self.settings.flag("explorer.details"),
+        ));
+        cmds.push(tv(
+            "view.output",
+            Msg::MnOutput,
+            self.panel.output_index().is_some(),
         ));
         cmds.push(tv(
             "view.search",

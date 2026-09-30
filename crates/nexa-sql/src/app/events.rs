@@ -8,6 +8,34 @@ impl App {
     pub(crate) fn handle_panel_action(&mut self, a: PanelAction) {
         match a {
             PanelAction::Connect(spec) => {
+                // ★ 접속 = [저장] 선수행(사용자 09-30 "접속은 되었지만 미저장 상태로 남는 버그"): 폼이 저장본과 다르면 저장 버튼과
+                //   같은 길(필수 항목 · 이름 규칙 · 이름 변경 · 비밀번호 저장 여부)을 먼저 지나고, 저장이 실패하면 접속하지 않는다.
+                //   저장할 이름이 없는 폼(필수 미충족)은 저장을 건너뛰고 종전처럼 접속만 한다.
+                if self.conn_win.panel.is_dirty() {
+                    match self.conn_win.panel.save_action() {
+                        Some(save) => {
+                            self.handle_panel_action(save);
+                            if matches!(self.conn_win.panel.state(), ConnState::Failed(_)) {
+                                // 저장 실패(파일 쓰기 등) = 접속하지 않고 안내(사용자 09-30 "저장을 먼저 하고 접속하라는 경고").
+                                self.sess.status = t(Msg::ConnSaveFirst).into();
+                                self.toasts.push(
+                                    toast::ToastKind::Warn,
+                                    t(Msg::ConnSaveFirstTitle).to_string(),
+                                    t(Msg::ConnSaveFirst).to_string(),
+                                );
+                                return;
+                            }
+                        }
+                        None => {
+                            // 저장 조건 미충족(필수 항목 · 이름 규칙) = 폼에 이미 표시됨 + 안내.
+                            self.sess.status = t(Msg::ConnSaveFirst).into();
+                            self.conn_win
+                                .panel
+                                .set_state(ConnState::Failed(t(Msg::ConnSaveFirst).into()));
+                            return;
+                        }
+                    }
+                }
                 let name = self.conn_win.panel.profile_name();
                 // 테스트 중인 프로필은 끝날 때까지 접속도 막는다(사용자 09-14).
                 if self.conn_win.is_testing(&name) {
@@ -806,6 +834,8 @@ impl App {
                     self.log_win.push(e);
                 }
             }
+            // ★ Output 탭(09-30): 사람이 읽는 메시지(PRINT · 서버 출력 · 컴파일 · 경고 · 오류 · 문장 완료)는 실행한 탭의 Output으로.
+            self.output_on_event(&ev);
             match ev {
                 RunEvent::Begin { index, server, .. } => {
                     if index == 0 {

@@ -312,3 +312,7 @@ cancel_all() ─▶ waiting.clear()(running 제외)
 - 워커: `Cmd::FetchPage` 처리에서 커서 경로가 아니면 **실행 직전** `ConnOutcome::Requery { key, offset, limit }` 송신 · `Page`에 `via_cursor` · `Count`는 요청 때 카드.
 - 호스트: `fetch_request`가 유일한 진입점(이미) → All/Count = 요청 때 `run_toast.start(라벨)` · Next = `Requery` 이벤트에서 시작 · `Page`/`Count` 도착 = `finish(Done{rows, secs})`(실패 = `Error`) · 커서 페치 = 상태줄 `StFetchedCursor` + 로그. 카드가 어느 페치의 것인지 = `Sess.fetch_card: Option<u64 key>`.
 - 결정(권장안 · 사용자 확인): **D-184** 전체 조회의 커서 경로도 카드 = ✅(길 수 있음) · **D-185** Count 카드 = ✅ · **D-186** 키 조회 카드 = ❌(로그만).
+
+## 12. Output 탭 · 객체 소스 탭 F5(09-30) → [100](100-object-source-run-and-output-tab.md)
+
+결과 영역의 **Output** 자리표시 탭(`ResultTab::is_output` · 버퍼 = `ResultPanel::output` · 편집기 탭마다) — 서버 메시지 · PRINT · 컴파일 결과 · 경고 · 오류 · 문장 완료 줄. 표시 정책 `output.show`/`output.activate`. 객체 소스 탭의 F5는 `Runner::run_whole`(한 항목).

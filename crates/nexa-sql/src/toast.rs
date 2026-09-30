@@ -1,6 +1,6 @@
 //! 토스트(우측 하단 · 쌓임 · 설정 시간 뒤 사라짐 · 반투명 — 사용자 09-16 "객체가 없어서 오류가 나면 유형과 대상 이름을 토스트로").
 //!
-//! 카드는 `ui.toast_alpha`(기본 85%)로 그려 아래 내용이 비친다 · 수명은 `ui.toast_secs`(기본 3초) · 마지막 300ms는 페이드 아웃 ·
+//! 카드는 `ui.toast_alpha`(기본 85%)로 그려 아래 내용이 비친다 · 수명은 `ui.toast_ms`(기본 3000 ms) · 마지막 300ms는 페이드 아웃 ·
 //! 클릭하면 바로 사라진다 · 최대 5장(오래된 것부터 밀려남). 그리기는 창의 맨 마지막 층(팝업 규칙).
 //!
 //! ★ 남은 시간 표시(사용자 09-22 "진척에 따라 더 투명해지며 사라지는 느낌" → "이미 있는 왼쪽 세로선을 그대로 활용 · 위에서 아래로" →
@@ -85,9 +85,9 @@ impl Toasts {
         }
     }
 
-    /// 설정 `ui.toast_secs` · `ui.toast_alpha`(%).
-    pub(crate) fn configure(&mut self, secs: i64, alpha_pct: i64) {
-        self.ttl = Duration::from_secs(secs.clamp(1, 60) as u64);
+    /// 설정 `ui.toast_ms`(09-30 ms 단위) · `ui.toast_alpha`(%).
+    pub(crate) fn configure(&mut self, ms: i64, alpha_pct: i64) {
+        self.ttl = Duration::from_millis(ms.clamp(100, 60_000) as u64);
         self.alpha = (alpha_pct.clamp(30, 100) as f32) / 100.0;
     }
 
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn toasts_expire_and_click_dismisses() {
         let mut ts = Toasts::new();
-        ts.configure(1, 85);
+        ts.configure(1000, 85);
         ts.push(ToastKind::Error, "a", "b");
         assert!(ts.animating());
         assert!(ts.tick(Instant::now()));

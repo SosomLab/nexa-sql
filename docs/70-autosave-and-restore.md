@@ -151,7 +151,7 @@ impl<P> SaveQueue<P> {
 
 | 길 | 트리거 | 저장 시각 | 설정 |
 |---|---|---|---|
-| ① 감시된 변경 | 세대가 저장 세대와 달라진 **최초** 시점(`project_touch_at` · 이미 잡혀 있으면 옮기지 않음) | 최초 + N초에 1회 | `project.autosave_change_secs` 10 |
+| ① 감시된 변경 | 세대가 저장 세대와 달라진 **최초** 시점(`project_touch_at` · 이미 잡혀 있으면 옮기지 않음) | 최초 + N초에 1회 | `project.autosave_change_ms` 10000 |
 | ② 감시 안 되는 변경 | 마지막 저장·점검 시각 | + M초마다 점검 · 문서(`to_document`)가 이전 저장본과 같으면 쓰지 않음 | `project.autosave_secs` 30 |
 | ③ 초기화 | ①·② 어느 쪽이든 저장·점검하면 두 타이머 모두 지금으로 | — | — |
 

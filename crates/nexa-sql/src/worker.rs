@@ -8,7 +8,7 @@
 //! - **패닉 격리** — 명령 하나가 드라이버 안에서 패닉해도 워커 스레드는 살아남는다(`catch_unwind`). 세션은 버리고(상태 불명)
 //!   오류 이벤트 + `Disconnected`를 내보내 UI가 `busy`에 갇히지 않는다.
 //! - **실행 전 빠른 판정**(`Cmd::Run.preflight`) — UI가 신호등이 초록이 아니라고 알리거나 직전 실행이 접속성 오류였으면,
-//!   쿼리를 드라이버에 넘기기 전에 호스트:포트 TCP 연결을 `probe.timeout` 안에 먼저 본다. 실패면 드라이버의 긴 타임아웃을
+//!   쿼리를 드라이버에 넘기기 전에 호스트:포트 TCP 연결을 `probe.timeout_ms` 안에 먼저 본다. 실패면 드라이버의 긴 타임아웃을
 //!   기다리지 않고 바로 오류를 낸다(쿼리는 보내지 않음).
 //!
 //! 추가 페치(T-48a · docs/43 §3): `Cmd::FetchPage`는 러너가 **같은 문장의 서버 커서**를 그 위치에 열어 두었으면 `fetch_next`,
@@ -83,6 +83,8 @@ pub(crate) enum Cmd {
         defines: Option<Vec<(String, String)>>,
         /// 내장 변수 층(`${workspaceFolder}` … · 호스트가 실행마다 스냅숏 · 사용자 09-23) — `None` = 엔진 것 그대로.
         intrinsic: Option<std::sync::Arc<std::collections::BTreeMap<String, String>>>,
+        /// ★ 본문 전체를 **한 항목**으로(객체 소스 탭 F5 · 09-30 · `Runner::run_whole`).
+        whole: bool,
     },
     /// 추가 페치(docs/43 §3-4 OFFSET 폴백): `limit` 0 = 전체 조회(래핑 없이 원문 · 상한 0).
     FetchPage {
@@ -296,7 +298,7 @@ fn liveness_settings() -> (Duration, Duration, bool) {
         return (Duration::from_secs(2), Duration::from_secs(60), true);
     };
     (
-        Duration::from_secs(s.int("probe.timeout").clamp(1, 60) as u64),
+        Duration::from_millis(s.int("probe.timeout_ms").clamp(100, 60_000) as u64),
         Duration::from_secs(s.int("probe.stale_secs").max(0) as u64),
         s.flag("connect.auto_reconnect"),
     )
@@ -637,6 +639,10 @@ pub(crate) fn spawn(
                     v.resolve(name).map_err(|e| e.to_string())
                 }));
             apply_fetch_settings(&mut runner);
+            // ★ Oracle DBMS_OUTPUT은 접속 때 켠다(설정 `output.serveroutput` · D-231 · 09-30) — 스크립트의 `SET SERVEROUTPUT`이 뒤집을 수 있다.
+            runner.engine.settings.serveroutput = nsql_settings::Settings::open_default()
+                .map(|s| s.flag("output.serveroutput"))
+                .unwrap_or(true);
             let mut emit = {
                 let etx = etx.clone();
                 let wake = wake_shared.clone();
@@ -656,7 +662,7 @@ pub(crate) fn spawn(
             let mut broken_told = false;
             let endpoint = |spec: &ConnectSpec| spec.host.clone().zip(spec.port);
             // ★ 동작 직전 생존 판정(docs/53 §3): ① UI가 요청했거나(신호등 ≠ 초록) ② 직전 접속성 오류 ③ 드라이버가 끊김을 안다(`is_alive`)
-            //   ④ 마지막 성공 뒤 `probe.stale_secs` 지남 → 호스트:포트 TCP 판정(SYN 1 · `probe.timeout`). 죽었으면 Broken + 오류(막힘 0).
+            //   ④ 마지막 성공 뒤 `probe.stale_secs` 지남 → 호스트:포트 TCP 판정(SYN 1 · `probe.timeout_ms`). 죽었으면 Broken + 오류(막힘 0).
             //   살아 있고 ②③이면(설정) 같은 스펙으로 재접속. 반환 = 진행해도 되는가.
             #[allow(clippy::too_many_arguments)]
             fn ensure_alive(
@@ -1380,6 +1386,7 @@ pub(crate) fn spawn(
                         vars,
                         defines,
                         intrinsic,
+                        whole,
                     } => {
                         if let Some(v) = vars {
                             runner.engine.vars.set_local(v);
@@ -1470,12 +1477,17 @@ pub(crate) fn spawn(
                                     });
                             }
                         }
-                        let errs = runner.run_script(&src, &mut prompt, &mut |e: RunEvent| {
+                        let mut on_ev = |e: RunEvent| {
                             if let RunEvent::Error { error, .. } = &e {
                                 conn_err |= probe::is_connection_error(error.code, &error.message);
                             }
                             emit(e);
-                        });
+                        };
+                        let errs = if whole {
+                            runner.run_whole(&src, &mut prompt, &mut on_ev)
+                        } else {
+                            runner.run_script(&src, &mut prompt, &mut on_ev)
+                        };
                         run_seq.fetch_add(1, Ordering::Relaxed);
                         suspect = conn_err;
                         if conn_err {
@@ -1651,7 +1663,7 @@ mod tests {
         assert!(password_required(&none, Dialect::Oracle));
     }
 
-    /// docs/53: 닿지 않는 서버(TEST-NET-1)에 접속 창 경로로 붙이면 드라이버 타임아웃 대신 **빠른 판정**이 `probe.timeout` 안에
+    /// docs/53: 닿지 않는 서버(TEST-NET-1)에 접속 창 경로로 붙이면 드라이버 타임아웃 대신 **빠른 판정**이 `probe.timeout_ms` 안에
     /// 실패를 내고 `Broken`을 알린다(막힘 0).
     #[test]
     fn unreachable_server_fails_fast_and_reports_broken() {

@@ -138,6 +138,8 @@ pub(crate) struct Sess {
     pub last_run_items: Vec<String>,
     pub run_line_base: usize,
     pub single_run: bool,
+    /// 이번 실행에 결과 셋이 하나라도 왔나(Output 탭 전환 정책 `no_results` · 09-30).
+    pub run_had_rs: bool,
     pub run_cancel_requested: bool,
     pub run_cancel_drops: bool,
     pub last_rows: Option<usize>,
@@ -219,6 +221,7 @@ impl Sess {
             last_run_items: Vec::new(),
             run_line_base: 0,
             single_run: false,
+            run_had_rs: false,
             run_cancel_requested: false,
             run_cancel_drops: false,
             last_rows: None,

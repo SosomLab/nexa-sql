@@ -1616,6 +1616,11 @@ pub fn objects(
                 | ObjectKind::Aggregate
                 | ObjectKind::Extension
                 | ObjectKind::EventTrigger => return Ok(Vec::new()),
+                // ★ 인덱스 = 부가에 **테이블 이름**(탐색기 라벨 `테이블.인덱스` · 사용자 09-30 · PG/MSSQL과 같게) · 유효성은 ALL_OBJECTS.
+                ObjectKind::Index => Some(format!(
+                    "SELECT i.index_name, NVL(o.status, ''), TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), i.table_name FROM all_indexes i LEFT JOIN all_objects o ON o.owner = i.owner AND o.object_name = i.index_name AND o.object_type = 'INDEX' WHERE i.owner = {} AND (i.index_name NOT LIKE 'BIN$%') ORDER BY i.index_name",
+                    lit(schema)
+                )),
                 _ => None,
             };
             // ★ 함수는 `ALL_PROCEDURES.PIPELINED`를 부가에(FROM 자리의 테이블 함수 판정 · 09-24 · 독립 함수 = procedure_name NULL).
@@ -1936,6 +1941,248 @@ pub fn source(
     kind: ObjectKind,
     name: &str,
 ) -> Result<String, DbError> {
+    source_with(s, schema, kind, name, SourceOpts::default())
+}
+
+/// 소스 열기 옵션(09-30).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceOpts {
+    /// ★ 머리 줄에 **소유 스키마를 붙인다**(`CREATE OR REPLACE PROCEDURE BISCM_SB.SP_X` · DBeaver와 같음 · 기본 켬 · 사용자 09-30):
+    /// 같은 이름이 여러 스키마에 있을 때 현재 스키마에 덮어쓰는 사고를 막는다. 끄면 `ALL_SOURCE` 이름 그대로.
+    pub qualify: bool,
+}
+
+impl Default for SourceOpts {
+    fn default() -> Self {
+        Self { qualify: true }
+    }
+}
+
+/// ★ Oracle PL/SQL 머리 줄 정규화(09-30 · 사용자 "중간 공백 없이 Space 1개 · 원본 스키마를 붙여서"): `ALL_SOURCE` 1행
+/// `PROCEDURE          SP_X(` → `PROCEDURE BISCM_SB.SP_X(`. 종류 단어(`PACKAGE BODY` · `TYPE BODY` 포함)와 이름 사이 공백 = 1칸 ·
+/// 이름 뒤는 원문 그대로(`(`가 붙어 있으면 붙인 채 · 공백이면 1칸). 이미 `A.B`로 한정돼 있으면 스키마를 덧붙이지 않는다 ·
+/// 순수 함수(시험 대상) — 나머지 줄은 손대지 않는다.
+#[must_use]
+pub fn normalize_plsql_header(body: &str, schema: &str, qualify: bool) -> String {
+    let (first, rest) = match body.split_once('\n') {
+        Some((f, r)) => (f, Some(r)),
+        None => (body, None),
+    };
+    let first = first.trim_end_matches('\r');
+    let t = first.trim_start();
+    // 종류 단어: 1개 또는 `PACKAGE BODY`/`TYPE BODY` 2개.
+    let mut words = t.split_whitespace();
+    let Some(k1) = words.next() else {
+        return body.to_string();
+    };
+    let k1u = k1.to_ascii_uppercase();
+    if !matches!(
+        k1u.as_str(),
+        "PROCEDURE" | "FUNCTION" | "PACKAGE" | "TRIGGER" | "TYPE"
+    ) {
+        return body.to_string();
+    }
+    let mut kind = k1.to_string();
+    let mut after = t[k1.len()..].trim_start();
+    if matches!(k1u.as_str(), "PACKAGE" | "TYPE") {
+        if let Some(w2) = after.split_whitespace().next() {
+            if w2.eq_ignore_ascii_case("BODY") {
+                kind.push(' ');
+                kind.push_str(w2);
+                after = after[w2.len()..].trim_start();
+            }
+        }
+    }
+    // 이름 = 공백·`(` 전까지(따옴표 이름 포함 · `A.B`도 한 토큰).
+    let name_end = after
+        .find(|c: char| c.is_whitespace() || c == '(')
+        .unwrap_or(after.len());
+    let name = &after[..name_end];
+    if name.is_empty() {
+        return body.to_string();
+    }
+    let tail = &after[name_end..];
+    let qualified = if qualify && !name.contains('.') && !schema.is_empty() {
+        let plain = schema
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '_' | '$' | '#'));
+        if plain {
+            format!("{schema}.{name}")
+        } else {
+            format!("\"{schema}\".{name}")
+        }
+    } else {
+        name.to_string()
+    };
+    let tail = if tail.starts_with('(') || tail.is_empty() {
+        tail.to_string()
+    } else {
+        format!(" {}", tail.trim_start())
+    };
+    let head = format!("{kind} {qualified}{tail}");
+    match rest {
+        Some(r) => format!("{head}\n{r}"),
+        None => head,
+    }
+}
+
+/// Oracle 식별자 표기: 대문자 식별자면 그대로 · 아니면 따옴표.
+fn oracle_ident(name: &str) -> String {
+    let plain = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '_' | '$' | '#'));
+    if plain {
+        name.to_string()
+    } else {
+        format!("\"{name}\"")
+    }
+}
+
+/// 따옴표·백틱·대괄호를 벗긴 맨 이름.
+fn bare_ident(tok: &str) -> &str {
+    tok.trim_matches(|c| matches!(c, '"' | '`' | '[' | ']'))
+}
+
+/// ★ 트리거 본문의 `ON <테이블>`을 소유 스키마로 한정(09-30 보수적 생성 · Oracle/PG/MySQL 공통 · 순수 함수): 첫 번째로 만나는
+/// 단어 `ON` 뒤의 이름이 `table`(대소문자 무시 · 따옴표 무시)이고 `.`이 없으면 `ON {owner}.{원래 표기}`. 그 밖은 그대로.
+#[must_use]
+pub fn qualify_on_table(body: &str, owner: &str, table: &str) -> String {
+    let up = body.to_ascii_uppercase();
+    let mut from = 0usize;
+    while let Some(p) = up[from..].find("ON") {
+        let at = from + p;
+        let before_ok = at == 0
+            || !up.as_bytes()[at - 1].is_ascii_alphanumeric() && up.as_bytes()[at - 1] != b'_';
+        let after = &body[at + 2..];
+        let ws = after.len() - after.trim_start().len();
+        if before_ok && ws > 0 {
+            let rest = after.trim_start();
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '(' || c == ';')
+                .unwrap_or(rest.len());
+            let tok = &rest[..end];
+            if !tok.contains('.') && bare_ident(tok).eq_ignore_ascii_case(table) {
+                let start = at + 2 + ws;
+                let stop = start + end;
+                return format!("{}{owner}.{}{}", &body[..start], tok, &body[stop..]);
+            }
+            // `ON` 뒤가 테이블이 아니면(`ON SCHEMA` · 조인 `ON a.b = c`) 다음 `ON`으로.
+        }
+        from = at + 2;
+    }
+    body.to_string()
+}
+
+/// ★ T-SQL 머리 줄 스키마 한정(09-30 · 순수 함수): 첫 `CREATE [OR ALTER] PROCEDURE|PROC|FUNCTION|VIEW|TRIGGER <이름>`의 이름에
+/// `.`이 없으면 `[schema].<이름>`. 주석·앞 문장은 건드리지 않는다.
+#[must_use]
+pub fn qualify_tsql_header(body: &str, schema: &str) -> String {
+    let up = body.to_ascii_uppercase();
+    let mut from = 0usize;
+    while let Some(p) = up[from..].find("CREATE") {
+        let at = from + p;
+        let before_ok = at == 0
+            || !(up.as_bytes()[at - 1].is_ascii_alphanumeric() || up.as_bytes()[at - 1] == b'_');
+        let mut pos = at + 6;
+        if before_ok {
+            let mut toks: Vec<(usize, usize)> = Vec::new();
+            // 최대 4 토큰(OR ALTER KIND NAME)
+            let mut cur = pos;
+            for _ in 0..4 {
+                let rest = &body[cur..];
+                let ws = rest.len() - rest.trim_start().len();
+                let t0 = cur + ws;
+                let rest = &body[t0..];
+                let end = rest
+                    .find(|c: char| c.is_whitespace() || c == '(')
+                    .unwrap_or(rest.len());
+                if end == 0 {
+                    break;
+                }
+                toks.push((t0, t0 + end));
+                cur = t0 + end;
+            }
+            let word = |i: usize| toks.get(i).map(|(a, b)| up[*a..*b].to_string());
+            let mut k = 0;
+            if word(0).as_deref() == Some("OR") && word(1).as_deref() == Some("ALTER") {
+                k = 2;
+            }
+            if let Some(kind) = word(k) {
+                if matches!(
+                    kind.as_str(),
+                    "PROCEDURE" | "PROC" | "FUNCTION" | "VIEW" | "TRIGGER"
+                ) {
+                    if let Some((a, b)) = toks.get(k + 1).copied() {
+                        let name = &body[a..b];
+                        if !name.contains('.') {
+                            return format!("{}[{schema}].{}{}", &body[..a], name, &body[b..]);
+                        }
+                        return body.to_string();
+                    }
+                }
+            }
+            pos = at + 6;
+        }
+        from = pos;
+    }
+    body.to_string()
+}
+
+/// ★ MySQL `SHOW CREATE PROCEDURE|FUNCTION|TRIGGER` 머리 줄 스키마 한정(09-30 · 순수 함수): `PROCEDURE \`p\`(` → `PROCEDURE \`db\`.\`p\`(` ·
+/// 트리거는 `ON \`t\``도 `ON \`db\`.\`t\``(다음 단어 `FOR` 앞까지의 이름).
+#[must_use]
+pub fn qualify_mysql_header(body: &str, schema: &str) -> String {
+    let up = body.to_ascii_uppercase();
+    let mut out = body.to_string();
+    for kw in ["PROCEDURE ", "FUNCTION ", "TRIGGER "] {
+        if let Some(p) = up.find(kw) {
+            let start = p + kw.len();
+            let rest = &body[start..];
+            let ws = rest.len() - rest.trim_start().len();
+            let t0 = start + ws;
+            let rest = &body[t0..];
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '(')
+                .unwrap_or(rest.len());
+            let name = &body[t0..t0 + end];
+            if !name.is_empty() && !name.contains('.') {
+                out = format!("{}`{schema}`.{}{}", &body[..t0], name, &body[t0 + end..]);
+            }
+            break;
+        }
+    }
+    if up.contains("TRIGGER ") {
+        // ON <table> — 트리거 본문의 첫 `ON`(FOR EACH ROW 앞).
+        let up2 = out.to_ascii_uppercase();
+        if let Some(p) = up2.find(" ON ") {
+            let start = p + 4;
+            let rest = &out[start..];
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '(')
+                .unwrap_or(rest.len());
+            let name = &out[start..start + end];
+            if !name.is_empty() && !name.contains('.') {
+                out = format!(
+                    "{}`{schema}`.{}{}",
+                    &out[..start],
+                    name,
+                    &out[start + end..]
+                );
+            }
+        }
+    }
+    out
+}
+
+/// [`source`] + 옵션.
+pub fn source_with(
+    s: &mut dyn Session,
+    schema: &str,
+    kind: ObjectKind,
+    name: &str,
+    opts: SourceOpts,
+) -> Result<String, DbError> {
     let dialect = s.dialect();
     match dialect {
         Dialect::Oracle => match kind {
@@ -1943,7 +2190,6 @@ pub fn source(
             | ObjectKind::Function
             | ObjectKind::Package
             | ObjectKind::PackageBody
-            | ObjectKind::Trigger
             | ObjectKind::Type => {
                 let sql = format!(
                     "SELECT text FROM all_source WHERE owner = {} AND name = {} AND type = {} ORDER BY line",
@@ -1956,25 +2202,92 @@ pub fn source(
                 if body.is_empty() {
                     return Err(not_found(schema, name));
                 }
-                let body = body.trim_end().to_string();
+                let body = normalize_plsql_header(body.trim_end(), schema, opts.qualify);
                 Ok(format!("CREATE OR REPLACE {body}\n/\n"))
             }
-            ObjectKind::View => {
+            // ★ 트리거(09-30 보수적 생성): `ALL_SOURCE` 본문 + 이름 한정 + **`ON 테이블`도 소유 스키마 한정**(`ALL_TRIGGERS.TABLE_OWNER`) —
+            //   Oracle은 `ON` 뒤 스키마가 없으면 **실행하는 사용자**의 스키마로 풀기 때문에 다른 세션에서 돌리면 엉뚱한 표에 붙는다.
+            //   DISABLED 트리거는 `ALTER TRIGGER … DISABLE;`을 덧붙여 상태를 보존한다(CREATE OR REPLACE = 기본 ENABLED).
+            ObjectKind::Trigger => {
                 let sql = format!(
-                    "SELECT text FROM all_views WHERE owner = {} AND view_name = {}",
+                    "SELECT text FROM all_source WHERE owner = {} AND name = {} AND type = 'TRIGGER' ORDER BY line",
                     lit(schema),
                     lit(name)
                 );
                 let rs = query(s, &sql)?;
-                let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                let body: String = rs.rows.iter().map(|r| col(r, 0)).collect();
                 if body.is_empty() {
                     return Err(not_found(schema, name));
                 }
-                Ok(format!(
-                    "CREATE OR REPLACE VIEW {} AS\n{}\n",
-                    qualified(dialect, schema, name),
-                    body.trim_end()
-                ))
+                let mut body = normalize_plsql_header(body.trim_end(), schema, opts.qualify);
+                let meta = query(
+                    s,
+                    &format!(
+                        "SELECT NVL(table_owner, ''), NVL(table_name, ''), status, base_object_type FROM all_triggers WHERE owner = {} AND trigger_name = {}",
+                        lit(schema),
+                        lit(name)
+                    ),
+                )
+                .ok();
+                let mut tail = String::new();
+                if let Some(m) = meta.as_ref().and_then(|m| m.rows.first()) {
+                    let (owner, table, status, base) = (col(m, 0), col(m, 1), col(m, 2), col(m, 3));
+                    if opts.qualify
+                        && !owner.is_empty()
+                        && !table.is_empty()
+                        && (base == "TABLE" || base == "VIEW")
+                    {
+                        body = qualify_on_table(&body, &oracle_ident(&owner), &table);
+                    }
+                    if status.eq_ignore_ascii_case("DISABLED") {
+                        let qn = if opts.qualify {
+                            format!("{}.{}", oracle_ident(schema), oracle_ident(name))
+                        } else {
+                            oracle_ident(name)
+                        };
+                        tail = format!("ALTER TRIGGER {qn} DISABLE;\n");
+                    }
+                }
+                Ok(format!("CREATE OR REPLACE {body}\n/\n{tail}"))
+            }
+            // ★ 뷰 = 사전 정의 `GET_DDL('VIEW')`(09-30 · DBeaver와 같음 · 사용자 "FORCE NONEDITIONABLE이 없다"): `ALL_VIEWS.TEXT`는
+            //   `AS` 뒤 SELECT만이라 **컬럼 목록·FORCE·NONEDITIONABLE**이 빠지고, 컬럼 목록을 주고 만든 뷰는 목록 없이 다시 만들면 컬럼
+            //   이름이 바뀐다. 스키마 한정은 옵션(`EMIT_SCHEMA`) · 종결자 `;`.
+            ObjectKind::View => {
+                let set = |s: &mut dyn Session, p: &str, on: bool| {
+                    gen::exec_ignore(
+                        s,
+                        &format!(
+                            "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, '{p}', {}); END;",
+                            if on { "TRUE" } else { "FALSE" }
+                        ),
+                    );
+                };
+                set(s, "EMIT_SCHEMA", opts.qualify);
+                set(s, "PRETTY", true);
+                set(s, "SQLTERMINATOR", true);
+                let sql = format!(
+                    "SELECT DBMS_METADATA.GET_DDL('VIEW', {}, {}) FROM dual",
+                    lit(name),
+                    lit(schema)
+                );
+                let r = query(s, &sql);
+                gen::exec_ignore(
+                    s,
+                    "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'DEFAULT'); END;",
+                );
+                let rs = r?;
+                let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                let body = body.trim();
+                if body.is_empty() {
+                    return Err(not_found(schema, name));
+                }
+                let mut out = body.to_string();
+                if !out.ends_with(';') {
+                    out.push(';');
+                }
+                out.push('\n');
+                Ok(out)
             }
             _ => {
                 let sql = format!(
@@ -2005,7 +2318,14 @@ pub fn source(
                     return Err(not_found(schema, name));
                 }
                 // `CREATE PROC` → `CREATE OR ALTER PROC`(2016 SP1+) — 다시 실행하면 곧 수정.
-                Ok(format!("{}\nGO\n", to_create_or_alter(body.trim_end())))
+                // ★ 보수적 생성(09-30): 저장된 정의가 스키마 없이 `CREATE PROC p`면 기본 스키마(dbo)에 만들어진다 → `[schema].` 한정.
+                let body = to_create_or_alter(body.trim_end());
+                let body = if opts.qualify {
+                    qualify_tsql_header(&body, schema)
+                } else {
+                    body
+                };
+                Ok(format!("{body}\nGO\n"))
             }
         },
         Dialect::Postgres => match kind {
@@ -2050,13 +2370,23 @@ pub fn source(
                 Ok(format!("{};\n", body.trim_end().trim_end_matches(';')))
             }
             ObjectKind::Trigger => {
+                // ★ 보수적 생성(09-30): `pg_get_triggerdef`는 search_path에 있는 표를 스키마 없이 찍는다 → `ON schema.table`로 한정.
                 let sql = format!(
-                    "SELECT pg_get_triggerdef(t.oid, true) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND t.tgname = {} LIMIT 1",
+                    "SELECT pg_get_triggerdef(t.oid, true), c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND t.tgname = {} LIMIT 1",
                     lit(schema),
                     lit(name)
                 );
                 let rs = query(s, &sql)?;
                 let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                let table = rs.rows.first().map(|r| col(r, 1)).unwrap_or_default();
+                if body.trim().is_empty() {
+                    return Err(not_found(schema, name));
+                }
+                let body = if opts.qualify && !table.is_empty() {
+                    qualify_on_table(&body, &quote_ident(dialect, schema), &table)
+                } else {
+                    body
+                };
                 Ok(format!("{};\n", body.trim_end()))
             }
             _ => Err(no_source(kind)),
@@ -2080,6 +2410,20 @@ pub fn source(
                 1
             };
             let body = rs.rows.first().map(|r| col(r, idx)).unwrap_or_default();
+            if body.trim().is_empty() {
+                return Err(not_found(schema, name));
+            }
+            // ★ 보수적 생성(09-30): `SHOW CREATE PROCEDURE/FUNCTION/TRIGGER`는 이름을 DB 없이 찍는다(현재 DB에 만들어짐) →
+            //   `\`db\`.\`name\`` 한정 · 트리거의 `ON \`table\``도 한정. 뷰·테이블은 이미 한정돼 나온다.
+            let body = if opts.qualify
+                && matches!(
+                    kind,
+                    ObjectKind::Procedure | ObjectKind::Function | ObjectKind::Trigger
+                ) {
+                qualify_mysql_header(&body, schema)
+            } else {
+                body
+            };
             Ok(format!("{};\n", body.trim_end()))
         }
         Dialect::Sqlite => {
@@ -2556,5 +2900,117 @@ mod tests {
             "CREATE OR ALTER PROC p AS SELECT 1"
         );
         assert!(select_template(Dialect::Postgres, "public", "t").ends_with("LIMIT 200;"));
+    }
+
+    /// ★ 소스 열기 머리 줄(09-30): 공백 1칸 · 스키마 한정 · `(` 붙은 이름 · PACKAGE BODY · 따옴표 · 이미 한정 · 끔 · 비대문자 스키마.
+    #[test]
+    fn plsql_header_is_normalized_and_qualified() {
+        let src = "PROCEDURE          SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;";
+        assert_eq!(
+            normalize_plsql_header(src, "BISCM_SB", true),
+            "PROCEDURE BISCM_SB.SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;"
+        );
+        assert_eq!(
+            normalize_plsql_header(src, "BISCM_SB", false),
+            "PROCEDURE SP_X\n(\n  A NUMBER\n) AS\nBEGIN NULL; END;"
+        );
+        assert_eq!(
+            normalize_plsql_header("FUNCTION   F1(P IN NUMBER) RETURN NUMBER IS", "S", true),
+            "FUNCTION S.F1(P IN NUMBER) RETURN NUMBER IS"
+        );
+        assert_eq!(
+            normalize_plsql_header("function f1   return number is", "S", true),
+            "function S.f1 return number is"
+        );
+        assert_eq!(
+            normalize_plsql_header("PACKAGE BODY   PKG AS\nEND;", "S", true),
+            "PACKAGE BODY S.PKG AS\nEND;"
+        );
+        assert_eq!(
+            normalize_plsql_header("TYPE  T1 AS OBJECT (ID NUMBER)", "S", true),
+            "TYPE S.T1 AS OBJECT (ID NUMBER)"
+        );
+        assert_eq!(
+            normalize_plsql_header("TRIGGER \"MyTrg\"\nBEFORE INSERT", "S", true),
+            "TRIGGER S.\"MyTrg\"\nBEFORE INSERT"
+        );
+        assert_eq!(
+            normalize_plsql_header("PROCEDURE OTHER.SP_X AS", "S", true),
+            "PROCEDURE OTHER.SP_X AS",
+            "이미 한정 = 그대로"
+        );
+        assert_eq!(
+            normalize_plsql_header("PROCEDURE SP_X AS", "my_schema", true),
+            "PROCEDURE \"my_schema\".SP_X AS",
+            "대문자 식별자가 아니면 따옴표"
+        );
+        assert_eq!(
+            normalize_plsql_header("-- 주석\nPROCEDURE X", "S", true),
+            "-- 주석\nPROCEDURE X",
+            "종류 단어가 아니면 그대로"
+        );
+        assert_eq!(normalize_plsql_header("", "S", true), "");
+    }
+
+    /// ★ 보수적 생성(09-30): 트리거 `ON 테이블` 한정(Oracle/PG/MySQL) · T-SQL 머리 줄 · MySQL 루틴/트리거.
+    #[test]
+    fn conservative_qualification_helpers() {
+        let trg = "TRIGGER BISCM.T1\nBEFORE INSERT ON NSQLT_T\nFOR EACH ROW\nBEGIN\n  NULL;\nEND;";
+        assert_eq!(
+            qualify_on_table(trg, "BISCM", "NSQLT_T"),
+            "TRIGGER BISCM.T1\nBEFORE INSERT ON BISCM.NSQLT_T\nFOR EACH ROW\nBEGIN\n  NULL;\nEND;"
+        );
+        // 이미 한정 · 다른 이름 · 조인 ON은 그대로 · 따옴표 이름 유지.
+        assert_eq!(
+            qualify_on_table("AFTER UPDATE ON S.T FOR EACH ROW", "S", "T"),
+            "AFTER UPDATE ON S.T FOR EACH ROW"
+        );
+        assert_eq!(
+            qualify_on_table("AFTER UPDATE ON OTHER FOR EACH ROW", "S", "T"),
+            "AFTER UPDATE ON OTHER FOR EACH ROW"
+        );
+        assert_eq!(
+            qualify_on_table("SELECT 1 FROM a JOIN b ON a.x = b.x", "S", "T"),
+            "SELECT 1 FROM a JOIN b ON a.x = b.x"
+        );
+        assert_eq!(
+            qualify_on_table("BEFORE INSERT ON \"MyT\"\nFOR EACH ROW", "S", "MyT"),
+            "BEFORE INSERT ON S.\"MyT\"\nFOR EACH ROW"
+        );
+        assert_eq!(
+            qualify_on_table("BEFORE INSERT ON t1 FOR EACH ROW", "\"public\"", "t1"),
+            "BEFORE INSERT ON \"public\".t1 FOR EACH ROW"
+        );
+        assert_eq!(
+            qualify_tsql_header("CREATE OR ALTER PROC p AS SELECT 1", "dbo"),
+            "CREATE OR ALTER PROC [dbo].p AS SELECT 1"
+        );
+        assert_eq!(
+            qualify_tsql_header("-- note\nCREATE PROCEDURE [p]\nAS BEGIN END", "s"),
+            "-- note\nCREATE PROCEDURE [s].[p]\nAS BEGIN END"
+        );
+        assert_eq!(
+            qualify_tsql_header("CREATE VIEW dbo.v AS SELECT 1", "dbo"),
+            "CREATE VIEW dbo.v AS SELECT 1"
+        );
+        assert_eq!(
+            qualify_tsql_header(
+                "CREATE FUNCTION f(@a int) RETURNS int AS BEGIN RETURN 1 END",
+                "x"
+            ),
+            "CREATE FUNCTION [x].f(@a int) RETURNS int AS BEGIN RETURN 1 END"
+        );
+        assert_eq!(
+            qualify_mysql_header(
+                "CREATE DEFINER=`u`@`%` PROCEDURE `p`(IN a INT)\nBEGIN END",
+                "db"
+            ),
+            "CREATE DEFINER=`u`@`%` PROCEDURE `db`.`p`(IN a INT)\nBEGIN END"
+        );
+        assert_eq!(qualify_mysql_header("CREATE DEFINER=`u`@`%` TRIGGER `t` BEFORE INSERT ON `tb` FOR EACH ROW SET NEW.a = 1", "db"), "CREATE DEFINER=`u`@`%` TRIGGER `db`.`t` BEFORE INSERT ON `db`.`tb` FOR EACH ROW SET NEW.a = 1");
+        assert_eq!(
+            qualify_mysql_header("CREATE PROCEDURE `db`.`p`() BEGIN END", "db"),
+            "CREATE PROCEDURE `db`.`p`() BEGIN END"
+        );
     }
 }

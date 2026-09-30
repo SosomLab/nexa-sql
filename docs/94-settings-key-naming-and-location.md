@@ -110,6 +110,13 @@
 - 3차 이름 바꿈(`RENAMED` 13쌍 · 옛 줄은 읽기 이주 · CLI `config`는 옛 키도 통함): `sqlfmt.*` → `ext.sqlfmt_kiros33.*` · `rainbowpair.*` → `ext.rainbow_pairs.*` · 샘플 `hello.say` → `ext.hello.say`.
 - 새 확장은 처음부터 이 규칙으로(30 §2 확장점 규칙 · 68 SDK 문서).
 
+### 6-5. ★ 시간 단위 규칙 + 단위 변환 이주(09-30 · 사용자 "10초를 초과하면 초 OK · 그 이하면 ms · 기존 설정 마이그레이션")
+
+- 규칙: **기본값이 10초 이하인 시간 설정 = ms(`_ms`)** · 10초 초과 = 초(`_secs`) · 분(`_min`) 그대로 · `0 = 끔`인 타임아웃류(`session.call_timeout_secs` · `tx.*_timeout_secs` · `db.statement_timeout` · `db.cursor_idle_secs`)는 보통 값이 수십 초 이상이라 초 유지.
+- 부품 **`nsql_settings::RESCALED`** `(옛 키, 새 키, 배수)` — `migrate_renamed`가 옛 줄을 새 키로 **곱해서** 옮긴다(옛 기본값 × 배수 = 새 기본값이라 줄이 남지 않음 · 새 키가 이미 있으면 옛 값 버림 · 소수 옛 값 허용) · `canonical_key`/`alias_scale` · `Settings::set(옛키)` = 옛 단위 해석(×배수) · `Settings::get_as(옛키)` = 옛 단위로 되돌려 답(CLI `config get`) · `get` = 늘 새 단위.
+- 적용(6 + 접미 1): `meta.refresh_idle_secs`→`meta.refresh_idle_ms` · `probe.timeout`→`probe.timeout_ms`(하한 100) · `probe.retry_delay`→`probe.retry_delay_ms`(하한 5000 = 26 §8) · `ui.toast_secs`→`ui.toast_ms` · `run.toast_hide_secs`→`run.toast_hide_ms` · `project.autosave_change_secs`→`project.autosave_change_ms` · `explorer.typeahead_timeout`→`explorer.typeahead_timeout_ms`(값 그대로 · RENAMED).
+- 새 시간 키는 처음부터 이 규칙으로 · 단위를 바꾸면 RESCALED 한 줄 + 라벨 `(ms)` + 사용처 `from_millis` + 문서 키 이름 + 시험 `rescaled_keys_migrate_with_unit`(배수 검산).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

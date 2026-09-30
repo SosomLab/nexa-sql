@@ -333,6 +333,8 @@ impl SqlPrevWin {
         match r {
             Ok(text) => {
                 self.tb.set_text(&text);
+                // 열리면 캐럿 1행 1열(사용자 09-30 "DDL 생성 · 소스 열기 · 바디 열기 등 열리고 나면 1:1").
+                self.tb.goto_line(1);
                 self.note = (String::new(), false);
             }
             Err(e) => self.note = (e, true),
@@ -549,6 +551,7 @@ impl SqlPrevWin {
         self.cbs.clear();
         self.tb.set_read_only(!editable_text);
         self.tb.set_text(&text);
+        self.tb.goto_line(1);
         self.note = (note, false);
         let _ = mode;
         self.redraw();

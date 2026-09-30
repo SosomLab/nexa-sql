@@ -160,6 +160,13 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "f5",
     },
     Command {
+        id: "view.output",
+        label: Msg::MnOutput,
+        win: "ctrl+shift+o",
+        mac: "cmd+shift+o",
+        linux: "ctrl+shift+o",
+    },
+    Command {
         id: "run.explain",
         label: Msg::MnExplain,
         win: "ctrl+shift+x",

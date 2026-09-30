@@ -426,7 +426,7 @@ fn header(d: Dialect, o: &ObjectInfo) -> String {
 }
 
 /// 결과를 쓰지 않는 문장(PL/SQL 블록 등) — 실패는 무시(선택 사항).
-fn exec_ignore(s: &mut dyn Session, sql: &str) {
+pub(crate) fn exec_ignore(s: &mut dyn Session, sql: &str) {
     let _ = query(s, sql);
 }
 
@@ -1219,6 +1219,26 @@ fn mssql_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErro
 /// ★ Oracle 테이블 DDL: 헤더 주석 + `DBMS_METADATA.GET_DDL`(세션 변환 = EMIT_SCHEMA(정규화) · PRETTY(간결 아님) · SQLTERMINATOR ·
 /// SEGMENT_ATTRIBUTES/STORAGE(전체 DDL) · REF_CONSTRAINTS(FK 인라인 = 분리 아님)) + FK 분리(`GET_DEPENDENT_DDL('REF_CONSTRAINT')`) +
 /// 인덱스(전체 DDL) + `COMMENT ON TABLE/COLUMN`.
+/// ★ 종속 인덱스 문장의 인덱스 이름이 테이블 DDL 본문에 이미 있나(09-30): `CREATE [UNIQUE] INDEX "O"."NAME" ON …`에서 이름을 뽑아
+/// 본문에서 `"NAME"`(따옴표) 또는 ` NAME `(맨 이름)을 찾는다. 순수 함수(시험 대상).
+#[must_use]
+pub fn index_already_in(table_ddl: &str, index_stmt: &str) -> bool {
+    let up = index_stmt.to_ascii_uppercase();
+    let Some(p) = up.find("INDEX ") else {
+        return false;
+    };
+    let rest = up[p + 6..].trim_start();
+    let end = rest.find(" ON").unwrap_or(rest.len());
+    let full = rest[..end].trim();
+    // `"O"."NAME"` · `O.NAME` · `NAME` → 마지막 조각.
+    let name = full.rsplit('.').next().unwrap_or(full).trim_matches('"');
+    if name.is_empty() {
+        return false;
+    }
+    let body = table_ddl.to_ascii_uppercase();
+    body.contains(&format!("\"{name}\"")) || body.contains(&format!(" {name} "))
+}
+
 fn oracle_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbError> {
     let d = Dialect::Oracle;
     let c = cx();
@@ -1273,9 +1293,13 @@ fn oracle_table_ddl(s: &mut dyn Session, o: &ObjectInfo) -> Result<String, DbErr
                 let dup = det_keys.iter().any(|k| {
                     up.contains(&format!("\"{k}\" ON")) || up.contains(&format!(" {k} ON"))
                 });
-                if !dup {
-                    extra.push_str(stmt.trim_end_matches(';'));
-                    extra.push_str(";\n");
+                // ★ 이름이 달라도 **테이블 본문에 이미 나온 인덱스**(PK/UK가 `USING INDEX "다른 이름"`으로 받침 · Oracle이 테이블
+                //   DDL 안에 CREATE UNIQUE INDEX를 함께 낸다)는 뺀다 — 09-30 DBeaver 대조(`ALCDCM_PG_MSTR_UK01` 두 번).
+                if !dup && !index_already_in(b, stmt) {
+                    // 종결자는 Oracle 원문 모양(` ;`)을 지킨다(DBeaver와 같은 글자).
+                    let body_stmt = stmt.trim_end_matches(';').trim_end();
+                    extra.push_str(body_stmt);
+                    extra.push_str(" ;\n");
                 }
             }
         }
@@ -1802,5 +1826,24 @@ mod tests {
         assert_eq!(oracle_var_type("REF CURSOR"), "REFCURSOR");
         assert_eq!(oracle_var_type("NUMBER"), "NUMBER");
         assert_eq!(oracle_var_type("DATE"), "VARCHAR2(4000)");
+    }
+
+    /// ★ 테이블 DDL 본문에 이미 나온 인덱스는 종속 인덱스에서 뺀다(09-30 · PK `USING INDEX "ALCDCM_PG_MSTR_UK01"`).
+    #[test]
+    fn dependent_index_already_in_table_ddl_is_skipped() {
+        let body = "CREATE TABLE \"BISCM\".\"T\" (\"A\" NUMBER) ;\n  CREATE UNIQUE INDEX \"BISCM\".\"T_UK01\" ON \"BISCM\".\"T\" (\"A\") ;\nALTER TABLE \"BISCM\".\"T\" ADD CONSTRAINT \"PK_T\" PRIMARY KEY (\"A\") USING INDEX \"BISCM\".\"T_UK01\" ENABLE;";
+        assert!(index_already_in(
+            body,
+            "CREATE UNIQUE INDEX \"BISCM\".\"T_UK01\" ON \"BISCM\".\"T\" (\"A\")"
+        ));
+        assert!(!index_already_in(
+            body,
+            "CREATE INDEX \"BISCM\".\"T_IDX01\" ON \"BISCM\".\"T\" (\"A\")"
+        ));
+        assert!(index_already_in(
+            "create table t (a number); create index t_ix on t (a);",
+            "CREATE INDEX T_IX ON T (A)"
+        ));
+        assert!(!index_already_in(body, "garbage"));
     }
 }

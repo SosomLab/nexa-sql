@@ -76,15 +76,73 @@ pub const RENAMED: &[(&str, &str)] = &[
     ("ui.fade_fast", "ui.fade_fast_ms"),
     ("ui.fade_slow", "ui.fade_slow_ms"),
     ("editor.tab_accent", "editor.tab_accent_color"),
+    // 4차(09-30 · 94 §6-5): 이미 ms인데 단위 접미가 없던 키 — 값은 그대로.
+    (
+        "explorer.typeahead_timeout",
+        "explorer.typeahead_timeout_ms",
+    ),
 ];
 
-/// 옛 키면 새 키를, 아니면 그대로.
+/// ★ **단위 변환 표**(09-30 · 사용자 "10초를 넘는 시간 설정은 초, 그 이하는 ms" · docs/94 §6-5): `(옛 키, 새 키, 배수)` —
+/// **새 값 = 옛 값 × 배수**. 읽을 때 옛 줄을 새 키로 옮기며 곱하고(새 키를 이미 정했으면 옛 값은 버림) · `nsql config get/set 옛키`는
+/// **옛 단위 그대로** 통한다([`Settings::get_as`] = 나누기 · [`Settings::set`] = 곱하기 · 소수 허용 `set ui.toast_secs 2.5`).
+/// 기준 = 기본값이 10초 이하인 시간 설정(0 = 끔인 타임아웃류는 제외 · 보통 값이 수십 초 이상).
+pub const RESCALED: &[(&str, &str, i64)] = &[
+    ("meta.refresh_idle_secs", "meta.refresh_idle_ms", 1000),
+    ("probe.timeout", "probe.timeout_ms", 1000),
+    ("probe.retry_delay", "probe.retry_delay_ms", 1000),
+    ("ui.toast_secs", "ui.toast_ms", 1000),
+    ("run.toast_hide_secs", "run.toast_hide_ms", 1000),
+    (
+        "project.autosave_change_secs",
+        "project.autosave_change_ms",
+        1000,
+    ),
+];
+
+/// 옛 키면 새 키를, 아니면 그대로([`RENAMED`] + [`RESCALED`]).
 #[must_use]
 pub fn canonical_key(key: &str) -> &str {
-    RENAMED
+    if let Some((_, new)) = RENAMED.iter().find(|(old, _)| *old == key) {
+        return new;
+    }
+    RESCALED
         .iter()
-        .find(|(old, _)| *old == key)
-        .map_or(key, |(_, new)| *new)
+        .find(|(old, _, _)| *old == key)
+        .map_or(key, |(_, new, _)| *new)
+}
+
+/// 단위가 바뀐 옛 키면 `(새 키, 배수)` — 옛 단위 값 × 배수 = 새 단위 값.
+#[must_use]
+pub fn alias_scale(key: &str) -> Option<(&'static str, i64)> {
+    RESCALED
+        .iter()
+        .find(|(old, _, _)| *old == key)
+        .map(|(_, new, k)| (*new, *k))
+}
+
+/// 옛 단위의 문자열(소수 허용 · `"2.5"`)을 새 단위 정수 문자열로(`"2500"`). 숫자가 아니면 그대로(검증은 `normalize`가 한다).
+fn scale_raw(raw: &str, k: i64) -> String {
+    let t = raw.trim();
+    match t.parse::<f64>() {
+        Ok(v) if v.is_finite() => format!("{}", (v * k as f64).round() as i64),
+        _ => t.to_string(),
+    }
+}
+
+/// 새 단위 정수 문자열을 옛 단위로(`"2500"` → `"2.5"` · 나누어떨어지면 `"3"`).
+fn unscale_value(v: &str, k: i64) -> String {
+    match v.trim().parse::<i64>() {
+        Ok(n) if k > 0 => {
+            if n % k == 0 {
+                (n / k).to_string()
+            } else {
+                let s = format!("{:.3}", n as f64 / k as f64);
+                s.trim_end_matches('0').trim_end_matches('.').to_string()
+            }
+        }
+        _ => v.to_string(),
+    }
 }
 
 pub mod json;
@@ -282,6 +340,10 @@ const TX_IDLE_ACTION_OPTS: &[(&str, Msg)] = &[
 /// 저장하지 않은 탭을 닫을 때.
 const CLOSE_UNSAVED_OPTS: &[(&str, Msg)] =
     &[("ask", Msg::ValCloseAsk), ("twice", Msg::ValCloseTwice)];
+const SELECT_ALL_OPTS: &[(&str, Msg)] = &[
+    ("keep", Msg::ValSelectAllKeep),
+    ("end", Msg::ValSelectAllEnd),
+];
 const TX_CLOSE_OPTS: &[(&str, Msg)] = &[
     ("ask", Msg::ValTxAsk),
     ("commit", Msg::ValTxCommit),
@@ -2100,12 +2162,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "changed",
     },
     Entry {
-        key: "meta.refresh_idle_secs",
+        key: "meta.refresh_idle_ms",
         cat: Msg::CatExplorer,
         label: Msg::LblMetaRefreshIdle,
         desc: Msg::DescMetaRefreshIdle,
-        kind: SettingKind::Int { min: 0, max: 600 },
-        default: "5",
+        kind: SettingKind::Int {
+            min: 0,
+            max: 600_000,
+        },
+        default: "5000",
     },
     Entry {
         key: "meta.refresh_highlight_ms",
@@ -2337,6 +2402,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 소스 열기 머리 줄에 소유 스키마(09-30 · 사용자 "원본의 스키마를 붙여서 생성하는 걸 기본값으로").
+    Entry {
+        key: "explorer.source_schema",
+        cat: Msg::CatExplorer,
+        label: Msg::LblSourceSchema,
+        desc: Msg::DescSourceSchema,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "gen.compact",
         cat: Msg::CatExplorer,
@@ -2388,7 +2462,7 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "explorer.typeahead_timeout",
+        key: "explorer.typeahead_timeout_ms",
         cat: Msg::CatExplorer,
         label: Msg::LblTypeaheadTimeout,
         desc: Msg::DescTypeaheadTimeout,
@@ -2918,14 +2992,17 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 5, max: 3600 },
         default: "30",
     },
-    // ★ 감시된 변경(탭·본문·활성 탭·폴더·선택)은 최초 변경 + 이 초에 1회 저장(사용자 09-28 · 70 §7).
+    // ★ 감시된 변경(탭·본문·활성 탭·폴더·선택)은 최초 변경 + 이 시간에 1회 저장(사용자 09-28 · 70 §7 · 09-30 ms 단위).
     Entry {
-        key: "project.autosave_change_secs",
+        key: "project.autosave_change_ms",
         cat: Msg::CatProject,
-        label: Msg::LblProjectAutosaveChangeSecs,
-        desc: Msg::DescProjectAutosaveChangeSecs,
-        kind: SettingKind::Int { min: 1, max: 3600 },
-        default: "10",
+        label: Msg::LblProjectAutosaveChangeMs,
+        desc: Msg::DescProjectAutosaveChangeMs,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 3_600_000,
+        },
+        default: "10000",
     },
     // 미저장 본문 보관 상한 = 탭 하나 기준(사용자 09-30 · 프로젝트 파일 본문 + 백업 스냅숏 공통 · 종전 상수 1 MB/8 MB) · 0 = 무제한.
     Entry {
@@ -3511,12 +3588,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "5",
     },
     Entry {
-        key: "probe.timeout",
+        key: "probe.timeout_ms",
         cat: Msg::CatServerStatus,
         label: Msg::LblProbeTimeout,
         desc: Msg::DescProbeTimeout,
-        kind: SettingKind::Int { min: 1, max: 30 },
-        default: "2",
+        kind: SettingKind::Int {
+            min: 100,
+            max: 30_000,
+        },
+        default: "2000",
     },
     // T-249: 이름 풀이 캐시(HIDDEN · 39 §DNS 재풀이).
     Entry {
@@ -3539,12 +3619,16 @@ pub const REGISTRY: &[Entry] = &[
         default: "60",
     },
     Entry {
-        key: "probe.retry_delay",
+        key: "probe.retry_delay_ms",
         cat: Msg::CatServerStatus,
         label: Msg::LblProbeRetryDelay,
         desc: Msg::DescProbeRetryDelay,
-        kind: SettingKind::Int { min: 5, max: 3600 },
-        default: "10",
+        // 하한 5초 유지 = 네트워크 부하 규칙(26 §8 · 빠른 재시도 없음).
+        kind: SettingKind::Int {
+            min: 5000,
+            max: 3_600_000,
+        },
+        default: "10000",
     },
     // ── 비노출 설정(사용자 09-14 "자주 바꾸지 않을 값은 비노출 설정으로") — 구현 상수의 설정화. `nsql config list all`로만 보인다.
     Entry {
@@ -3613,12 +3697,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "132",
     },
     Entry {
-        key: "ui.toast_secs",
+        key: "ui.toast_ms",
         cat: Msg::CatAppearance,
-        label: Msg::LblToastSecs,
-        desc: Msg::DescToastSecs,
-        kind: SettingKind::Int { min: 1, max: 60 },
-        default: "3",
+        label: Msg::LblToastMs,
+        desc: Msg::DescToastMs,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 60_000,
+        },
+        default: "3000",
     },
     Entry {
         key: "ui.toast_alpha",
@@ -3687,6 +3774,15 @@ pub const REGISTRY: &[Entry] = &[
             max: 5000,
         },
         default: "600",
+    },
+    // ★ 버튼 빠른 두 번 누름 차단(09-30 · 사용자): 같은 버튼·툴바 항목이 이 시간 안에 두 번 눌리면 한 번만. 0 = 끔.
+    Entry {
+        key: "ui.click_guard_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblClickGuardMs,
+        desc: Msg::DescClickGuardMs,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "350",
     },
     Entry {
         key: "ui.dblclick_ms",
@@ -3914,12 +4010,15 @@ pub const REGISTRY: &[Entry] = &[
         default: "on",
     },
     Entry {
-        key: "run.toast_hide_secs",
+        key: "run.toast_hide_ms",
         cat: Msg::CatRunCards,
         label: Msg::LblRunToastHide,
         desc: Msg::DescRunToastHide,
-        kind: SettingKind::Int { min: 0, max: 600 },
-        default: "5",
+        kind: SettingKind::Int {
+            min: 0,
+            max: 600_000,
+        },
+        default: "5000",
     },
     // ★ 실행 카드 갱신 주기(사용자 09-22): 경과 시간 `HH:MM:SS.mmm`·카운트다운을 이 주기로만 다시 그린다(향상 모드 = 1000).
     Entry {
@@ -3945,6 +4044,60 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescRunToastMax,
         kind: SettingKind::Int { min: 1, max: 500 },
         default: "30",
+    },
+    // ── ★ Output 탭(09-30 · 사용자 "Output 탭 개념 · 처음엔 없고 · 보기 설정 · 메시지 오면 자동"): 결과 영역의 메시지 탭.
+    //    서버 메시지(DBMS_OUTPUT · T-SQL PRINT · RAISE NOTICE) · SQL*Plus PRINT · 컴파일 결과 · 경고 · 오류 · 문장 완료 줄.
+    Entry {
+        key: "output.show",
+        cat: Msg::CatOutput,
+        label: Msg::LblOutputShow,
+        desc: Msg::DescOutputShow,
+        kind: SettingKind::Choice(OUTPUT_SHOW_OPTS),
+        default: "auto",
+    },
+    Entry {
+        key: "output.activate",
+        cat: Msg::CatOutput,
+        label: Msg::LblOutputActivate,
+        desc: Msg::DescOutputActivate,
+        kind: SettingKind::Choice(OUTPUT_ACT_OPTS),
+        default: "no_results",
+    },
+    Entry {
+        key: "output.done_lines",
+        cat: Msg::CatOutput,
+        label: Msg::LblOutputDoneLines,
+        desc: Msg::DescOutputDoneLines,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "output.timestamps",
+        cat: Msg::CatOutput,
+        label: Msg::LblOutputTimestamps,
+        desc: Msg::DescOutputTimestamps,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "output.max_lines",
+        cat: Msg::CatOutput,
+        label: Msg::LblOutputMaxLines,
+        desc: Msg::DescOutputMaxLines,
+        kind: SettingKind::Int {
+            min: 100,
+            max: 100_000,
+        },
+        default: "5000",
+    },
+    // D-231(09-30 · 권장안 적용 · 한 줄 고지): Oracle DBMS_OUTPUT은 접속 때 켠다(실행마다 GET_LINES 1회 · 39 §3 부하원 · 끌 수 있다).
+    Entry {
+        key: "output.serveroutput",
+        cat: Msg::CatOutput,
+        label: Msg::LblOutputServerOutput,
+        desc: Msg::DescOutputServerOutput,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     Entry {
         key: "run.after_statement",
@@ -4197,6 +4350,15 @@ pub const REGISTRY: &[Entry] = &[
         desc: Msg::DescCloseUnsaved,
         kind: SettingKind::Choice(CLOSE_UNSAVED_OPTS),
         default: "ask",
+    },
+    // ★ 전체 선택 뒤 화면 위치(09-30 · 사용자 "기본은 현재 위치 유지").
+    Entry {
+        key: "editor.select_all_view",
+        cat: Msg::CatEditor,
+        label: Msg::LblSelectAllView,
+        desc: Msg::DescSelectAllView,
+        kind: SettingKind::Choice(SELECT_ALL_OPTS),
+        default: "keep",
     },
     Entry {
         key: "tx.close_action",
@@ -5611,6 +5773,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatSession,
             // 실행 카드(알림) — 78 §3-4 쪼갬(T-250 · 09-29).
             Msg::CatRunCards,
+            // Output 탭(09-30).
+            Msg::CatOutput,
             Msg::CatPerformance,
         ],
     ),
@@ -5798,6 +5962,19 @@ pub fn is_info(key: &str) -> bool {
 }
 
 /// 결과 탭 이름 규칙.
+/// Output 탭 표시 시점(09-30).
+const OUTPUT_SHOW_OPTS: &[(&str, Msg)] = &[
+    ("off", Msg::ValOutputShowOff),
+    ("auto", Msg::ValOutputShowAuto),
+    ("errors", Msg::ValOutputShowErrors),
+    ("always", Msg::ValOutputShowAlways),
+];
+/// 메시지가 왔을 때 Output 탭으로 전환하는 규칙(09-30).
+const OUTPUT_ACT_OPTS: &[(&str, Msg)] = &[
+    ("never", Msg::ValOutputActNever),
+    ("no_results", Msg::ValOutputActNoResults),
+    ("always", Msg::ValOutputActAlways),
+];
 const RESULT_TITLE_OPTS: &[(&str, Msg)] = &[
     ("number", Msg::ValResultTitleNumber),
     ("table", Msg::ValResultTitleTable),
@@ -5828,11 +6005,15 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         "file.external_change",
         Dep::Eq("auto"),
     ),
-    ("explorer.typeahead_timeout", "explorer.typeahead", Dep::On),
+    (
+        "explorer.typeahead_timeout_ms",
+        "explorer.typeahead",
+        Dep::On,
+    ),
     ("explorer.typeahead_space", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_special", "explorer.typeahead", Dep::On),
     ("explorer.typeahead_pos", "explorer.typeahead", Dep::On),
-    ("run.toast_hide_secs", "run.toast", Dep::On),
+    ("run.toast_hide_ms", "run.toast", Dep::On),
     ("run.toast_tick_ms", "run.toast", Dep::On),
     ("run.toast_follow", "run.toast", Dep::On),
     ("run.toast_max", "run.toast", Dep::On),
@@ -5881,9 +6062,9 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("editor.ruler_color", "editor.rulers_show", Dep::On),
     ("editor.ruler_alpha", "editor.rulers_show", Dep::On),
     ("probe.max_retries", "probe.enabled", Dep::On),
-    ("probe.timeout", "probe.enabled", Dep::On),
+    ("probe.timeout_ms", "probe.enabled", Dep::On),
     ("probe.interval", "probe.enabled", Dep::On),
-    ("probe.retry_delay", "probe.enabled", Dep::On),
+    ("probe.retry_delay_ms", "probe.enabled", Dep::On),
     ("probe.max_inflight", "probe.enabled", Dep::On),
     ("log.file_format", "log.file", Dep::NotEmpty),
     ("log.file_max_kb", "log.file", Dep::NotEmpty),
@@ -5900,7 +6081,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
         "oracle.live.source",
         Dep::Eq("table"),
     ),
-    ("ui.toast_alpha", "ui.toast_secs", Dep::NotEmpty),
+    ("ui.toast_alpha", "ui.toast_ms", Dep::NotEmpty),
     ("ui.toast_fade_to", "ui.toast_progress", Dep::On),
     ("ui.toast_bar_spent", "ui.toast_progress", Dep::On),
     ("grid.col_max_chars", "grid.col_max_mode", Dep::Eq("manual")),
@@ -5969,7 +6150,7 @@ pub const HIDDEN: &[&str] = &[
     "window.txlog_pos",
     "window.prefs_pos",
     "ext.rainbow_pairs.max_kb",
-    "meta.refresh_idle_secs",
+    "meta.refresh_idle_ms",
     "file.external_merge_max_kb",
     "file.external_settle_ms",
     "file.external_backup_keep",
@@ -6040,18 +6221,18 @@ pub const ADVANCED: &[&str] = &[
     "ui.flash_hold_ms",
     "ui.copy_feedback_ms",
     "run.toast_tick_ms",
-    "run.toast_hide_secs",
+    "run.toast_hide_ms",
     "meta.warm_idle_ms",
     "explorer.index_idle_ms",
-    "explorer.typeahead_timeout",
+    "explorer.typeahead_timeout_ms",
     "intel.delay_ms",
     "intel.budget_ms",
     "intel.card_settle_ms",
     "file.external_poll_ms",
     "tx.idle_countdown_secs",
     "tx.block_poll_secs",
-    "probe.retry_delay",
-    "probe.timeout",
+    "probe.retry_delay_ms",
+    "probe.timeout_ms",
     "probe.stale_secs",
     "session.call_timeout_secs",
     "net.keepalive_secs",
@@ -6127,7 +6308,7 @@ pub const ADVANCED: &[&str] = &[
     "vars.signature_lookup",
     "bookmark.anchor_context",
     "explorer.search_index",
-    "meta.refresh_idle_secs",
+    "meta.refresh_idle_ms",
     "meta.refresh_on_missing",
     "tx.lock_wait_timeout_secs",
     "tx.server_idle_timeout_secs",
@@ -6383,21 +6564,25 @@ impl Settings {
     }
 
     /// [`RENAMED`] 표대로 옛 키의 값을 새 키로 옮긴다(새 키를 이미 정했으면 옛 값은 버림 · 옛 줄은 다음 저장 때 사라진다).
+    /// [`RESCALED`] 표의 키는 **배수를 곱해**(초 → ms) 옮긴다 — 옛 기본값(예 `ui.toast_secs=3`)은 새 기본값(`3000`)과 같아 줄이 남지 않는다.
     fn migrate_renamed(&mut self, seen: &[String]) {
-        for (old, new) in RENAMED {
-            let Some(pos) = self.unknown.iter().position(|(k, _)| k == old) else {
+        let renamed = RENAMED.iter().map(|(o, n)| (*o, *n, 1));
+        let rescaled = RESCALED.iter().copied();
+        for (old, new, k) in renamed.chain(rescaled) {
+            let Some(pos) = self.unknown.iter().position(|(key, _)| key == old) else {
                 continue;
             };
             let (_, v) = self.unknown.remove(pos);
             let Some(e) = entry(new) else { continue };
             // 새 키가 파일에 있으면(기본값과 같아 values에 없어도) 사용자가 이미 정한 것 — 옛 값은 버린다.
-            if self.values.contains_key(*new) || seen.iter().any(|k| k == new) {
+            if self.values.contains_key(new) || seen.iter().any(|key| key == new) {
                 continue;
             }
+            let v = if k == 1 { v } else { scale_raw(&v, k) };
             if let Some(n) = normalize(e.kind, &v) {
                 let def = default_of(e.key).unwrap_or(e.default);
                 if n != def {
-                    self.values.insert((*new).to_string(), n);
+                    self.values.insert(new.to_string(), n);
                 }
             }
         }
@@ -6459,6 +6644,17 @@ impl Settings {
         Some(self.values.get(key).map_or(def, String::as_str))
     }
 
+    /// 현재 값을 **물은 키의 단위로**: 단위가 바뀐 옛 키([`RESCALED`] · `ui.toast_secs`)면 새 값을 배수로 나눈 문자열(`"3000"` → `"3"` ·
+    /// `"2500"` → `"2.5"`) · 그 밖에는 [`Settings::get`]과 같다. CLI `config get`이 쓴다(옛 스크립트가 옛 단위로 읽어도 뜻이 같게).
+    #[must_use]
+    pub fn get_as(&self, key: &str) -> Option<String> {
+        let v = self.get(key)?;
+        Some(match alias_scale(key) {
+            Some((_, k)) => unscale_value(v, k),
+            None => v.to_string(),
+        })
+    }
+
     /// 사용자가 바꾼 값인가(기본값과 다른가) — VS Code의 "Modified" 표시에 해당.
     #[must_use]
     pub fn is_modified(&self, key: &str) -> bool {
@@ -6466,8 +6662,17 @@ impl Settings {
         self.values.contains_key(key)
     }
 
-    /// 검증 후 설정(메모리). 기본값과 같으면 사용자 값을 지운다.
+    /// 검증 후 설정(메모리). 기본값과 같으면 사용자 값을 지운다. 단위가 바뀐 옛 키([`RESCALED`])로 오면 **옛 단위로 해석**해
+    /// 배수를 곱한다(`set ui.toast_secs 2.5` = `ui.toast_ms 2500`).
     pub fn set(&mut self, key: &str, raw: &str) -> Result<String, SetError> {
+        let scaled;
+        let raw = match alias_scale(key) {
+            Some((_, k)) => {
+                scaled = scale_raw(raw, k);
+                scaled.as_str()
+            }
+            None => raw,
+        };
         let key = canonical_key(key);
         let e = entry(key).ok_or_else(|| SetError::UnknownKey(key.to_string()))?;
         if is_info(key) {
@@ -6630,13 +6835,93 @@ mod tests {
             "기본값과 같으면 변경 아님(옛 키도 새 키로 판정)"
         );
         assert_eq!(canonical_key("ui.lang"), "ui.lang");
-        for (old, new) in RENAMED {
+        let pairs = RENAMED
+            .iter()
+            .map(|(o, n)| (*o, *n))
+            .chain(RESCALED.iter().map(|(o, n, _)| (*o, *n)));
+        for (old, new) in pairs {
             assert!(
                 entry(old).is_none(),
                 "옛 키가 레지스트리에 남아 있다: {old}"
             );
             assert!(entry(new).is_some(), "새 키가 레지스트리에 없다: {new}");
+            assert_eq!(canonical_key(old), new);
         }
+    }
+
+    /// ★ 단위 변환 이주(09-30 · docs/94 §6-5): 옛 초 줄 → 새 ms 키(×배수) · 옛 기본값은 새 기본값과 같아 줄이 없어짐 · 새 키가 있으면
+    /// 옛 값 버림 · 소수 옛 값 · `get_as`/`set`은 옛 키를 옛 단위로 · 표의 배수는 새 기본값 = 옛 기본값 × 배수와 맞는지(회귀 방지).
+    #[test]
+    fn rescaled_keys_migrate_with_unit() {
+        let s = Settings::from_text(
+            tmp("rescaled1"),
+            "ui.toast_secs=5\nprobe.timeout=2.5\nrun.toast_hide_secs=5\nproject.autosave_change_secs=30\nmeta.refresh_idle_secs=0\nexplorer.typeahead_timeout=1500\n",
+        );
+        assert_eq!(s.get("ui.toast_ms"), Some("5000"));
+        assert_eq!(s.get("probe.timeout_ms"), Some("2500"), "소수 초도 ms로");
+        assert!(
+            !s.is_modified("run.toast_hide_ms"),
+            "옛 기본값 5초 = 새 기본값 5000 → 변경 아님"
+        );
+        assert_eq!(s.get("project.autosave_change_ms"), Some("30000"));
+        assert_eq!(s.get("meta.refresh_idle_ms"), Some("0"));
+        assert_eq!(
+            s.get("explorer.typeahead_timeout_ms"),
+            Some("1500"),
+            "접미만 붙은 키는 값 그대로"
+        );
+        assert!(
+            s.unknown.is_empty(),
+            "옛 줄은 옮기고 지운다: {:?}",
+            s.unknown
+        );
+        // 옛 키로 읽기 = 옛 단위 · 새 키로 읽기 = 새 단위.
+        assert_eq!(s.get_as("ui.toast_secs").as_deref(), Some("5"));
+        assert_eq!(s.get_as("probe.timeout").as_deref(), Some("2.5"));
+        assert_eq!(s.get_as("ui.toast_ms").as_deref(), Some("5000"));
+        assert_eq!(
+            s.get("ui.toast_secs"),
+            Some("5000"),
+            "`get`은 늘 새 단위(옛 키 = 별칭)"
+        );
+        // 새 키를 이미 정했으면 옛 값은 버린다.
+        let s = Settings::from_text(tmp("rescaled2"), "ui.toast_secs=5\nui.toast_ms=1200\n");
+        assert_eq!(s.get("ui.toast_ms"), Some("1200"));
+        // 옛 키로 set = 옛 단위 해석 · 범위 검증은 새 단위로.
+        let mut s = Settings::from_text(tmp("rescaled3"), "");
+        assert_eq!(s.set("ui.toast_secs", "2.5").unwrap(), "2500");
+        assert_eq!(s.get("ui.toast_ms"), Some("2500"));
+        assert_eq!(s.set("ui.toast_secs", "3").unwrap(), "3000");
+        assert!(
+            !s.is_modified("ui.toast_ms"),
+            "기본값(3초)으로 돌아오면 줄 없음"
+        );
+        assert!(s.set("ui.toast_secs", "0.01").is_err(), "10 ms < 하한 100");
+        assert_eq!(s.reset("probe.retry_delay").unwrap(), "10000");
+        // 표의 배수 = 새 기본값 / 옛 기본값 검산(옛 기본값은 문서 기준: 5·2·10·3·5·10초).
+        let old_defaults = [
+            ("meta.refresh_idle_secs", 5),
+            ("probe.timeout", 2),
+            ("probe.retry_delay", 10),
+            ("ui.toast_secs", 3),
+            ("run.toast_hide_secs", 5),
+            ("project.autosave_change_secs", 10),
+        ];
+        for (old, new, k) in RESCALED {
+            let od = old_defaults
+                .iter()
+                .find(|(o, _)| o == old)
+                .map(|(_, d)| *d)
+                .unwrap_or_else(|| panic!("RESCALED에 옛 기본값 표가 없는 키: {old}"));
+            let nd: i64 = entry(new).unwrap().default.parse().unwrap();
+            assert_eq!(nd, od * k, "{new} 기본값 = 옛 기본값 × 배수");
+            assert!(new.ends_with("_ms"), "새 키는 단위 접미: {new}");
+        }
+        assert_eq!(alias_scale("ui.toast_ms"), None);
+        assert_eq!(unscale_value("2500", 1000), "2.5");
+        assert_eq!(unscale_value("2", 1000), "0.002");
+        assert_eq!(scale_raw(" 1.2345 ", 1000), "1235");
+        assert_eq!(scale_raw("abc", 1000), "abc");
     }
 
     /// 고급 설정 표(09-28): 전부 존재하는 키 · 중복 없음 · DBMS 그룹은 표 없이도 고급 · 자주 쓰는 키는 기본 표시.

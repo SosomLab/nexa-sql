@@ -129,6 +129,27 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ 객체 소스 탭의 F5(09-30 · 사용자 "소스 열기 후 F5가 줄 단위로 돈다 → 객체 단위로"): 본문 전체를 **한 항목**으로
+        //   (분할 없음 · `Runner::run_whole`) — 프로시저·함수·패키지·트리거·타입은 컴파일 한 번 · 뷰는 CREATE 한 번. 결과·컴파일
+        //   메시지는 Output 탭으로.
+        if all {
+            let tab = self.editors.active_id();
+            if let Some(o) = self.object_tabs.get(&tab).cloned() {
+                let src = self.ed_mut().text();
+                let (kind, name) = o.label();
+                self.sess.run_had_rs = false;
+                self.output_push(
+                    tab,
+                    crate::output::OutKind::Info,
+                    &tf(Msg::OutRunObject, &[&kind, &name]),
+                );
+                self.run_text_whole(src);
+                if self.sess.busy {
+                    self.sess.status = tf(Msg::StRunObject, &[&kind, &name]);
+                }
+                return;
+            }
+        }
         // Ctrl/⌘+Enter = 선택 영역 → 없으면 **캐럿 위치의 한 문장**(`;` 종결 · 사용자 09-14) → F5 = 전체.
         let mut line_base = 0usize;
         let text = if all {
@@ -165,7 +186,16 @@ impl App {
     }
 
     /// 본문 실행의 공통 경로 — 편집기 실행(`run_sql`)과 **디스크에서 바로 실행**(docs/59 §4 3단계 · 편집기에 싣지 않는다)이 같이 쓴다.
-    pub(crate) fn run_text(&mut self, mut src: String, line_base: usize, all: bool) {
+    pub(crate) fn run_text(&mut self, src: String, line_base: usize, all: bool) {
+        self.run_text_in(src, line_base, all, false);
+    }
+
+    /// ★ 본문 전체를 한 항목으로(객체 소스 탭 F5 · 09-30).
+    pub(crate) fn run_text_whole(&mut self, src: String) {
+        self.run_text_in(src, 0, true, true);
+    }
+
+    fn run_text_in(&mut self, mut src: String, line_base: usize, all: bool, whole: bool) {
         // ★ 세션 배치(docs/52 §4): `CONNECT`면 이 탭의 전용 세션으로 · 전용 탭의 `DISCONNECT`면 해제하고 끝.
         if !self.place_run(&mut src) {
             return;
@@ -180,6 +210,7 @@ impl App {
         self.sess.run_children = 0;
         self.sess.run_tracking = true;
         self.sess.run_editor = self.editors.active_id();
+        self.sess.run_had_rs = false;
         if src.trim().is_empty() {
             self.sess.status = t(Msg::ErrNoSql).into();
             return;
@@ -218,7 +249,11 @@ impl App {
         let light = self.conn_win.status_of(self.conn_win.active_name());
         let preflight =
             (pol.enabled && light != Some(probe::ProbeStatus::Up)).then_some(pol.timeout);
-        self.sess.last_run_items = split_items(&src, self.sess.dialect);
+        self.sess.last_run_items = if whole {
+            vec![src.clone()]
+        } else {
+            split_items(&src, self.sess.dialect)
+        };
         // 세션 상태 표식(`stateful`)은 여기서 일괄로 켜지 않는다 — 문장이 **서버로 나가는 순간**(`RunEvent::Begin`) 그때의 세션에 켠다.
         // (실행 전 일괄이면 `CONNECT` 뒤 문장의 상태가 **앞** 세션에 붙어 재접속 직후 헛경고가 났다 · 사용자 09-30.)
         let max_rows = self.grid.page_rows();
@@ -230,6 +265,7 @@ impl App {
             vars: self.run_vars(),
             defines: self.run_defines(),
             intrinsic: Some(self.run_intrinsic()),
+            whole,
         });
         self.live_start();
         self.redraw();
@@ -266,6 +302,7 @@ impl App {
         self.sess.run_children = 0;
         self.sess.run_tracking = true;
         self.sess.run_editor = self.editors.active_id();
+        self.sess.run_had_rs = false;
         self.sess.busy = true;
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
@@ -277,6 +314,7 @@ impl App {
             vars: self.run_vars(),
             defines: self.run_defines(),
             intrinsic: Some(self.run_intrinsic()),
+            whole: false,
         });
         self.live_start();
         self.redraw();

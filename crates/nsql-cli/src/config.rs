@@ -210,7 +210,8 @@ pub(crate) fn cmd_config(o: &Opts) -> i32 {
                 Ok(s) => s,
                 Err(c) => return c,
             };
-            match s.get(key) {
+            // 단위가 바뀐 옛 키(`ui.toast_secs`)는 옛 단위로 답한다(`get_as` · docs/94 §6-5).
+            match s.get_as(key) {
                 Some(v) => {
                     println!("{v}");
                     0

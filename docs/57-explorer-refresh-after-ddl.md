@@ -62,7 +62,7 @@
 | `meta.refresh_on_ddl` | on | T1 — 실행한 DDL 뒤 그 폴더만 갱신 |
 | `meta.refresh_on_commit` | on | T1 — 트랜잭션 DDL 방언의 수동 커밋: 커밋 때 갱신(off = 문장 직후 시도) |
 | `meta.refresh_secs` | 300 | T2 — 유휴 워터마크 주기(0 = 끔 · 옛 `explorer.refresh_secs` 값을 옮김) |
-| `meta.refresh_idle_secs` | 5 · HIDDEN | T2 — 유휴 판정 |
+| `meta.refresh_idle_ms` | 5 · HIDDEN | T2 — 유휴 판정 |
 | `meta.refresh_scope` | changed | T2 — 바뀐 스키마만 / 펼쳐진 전부 |
 | `meta.refresh_on_missing` | on | T4 — 못 찾음 신호로 그 폴더 갱신 |
 | `meta.refresh_highlight_ms` | 2000 · HIDDEN | 새 객체 강조 시간(0 = 없음) |

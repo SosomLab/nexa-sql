@@ -64,6 +64,8 @@ pub(crate) struct Editors {
     /// ★ 미저장 탭 이름 글자 색(사용자 09-28 · `editor.tab_unsaved_text`/`_color` · None = 미저장 줄 색).
     tab_unsaved_text: bool,
     tab_unsaved_color: Option<nexa_ctl::Color>,
+    /// ★ 전체 선택 뒤 화면 유지(설정 `editor.select_all_view` = keep · 기본 · 사용자 09-30).
+    select_all_keep: bool,
     bufs: Vec<TextBox>,
     titles: Vec<String>,
     active: usize,
@@ -226,6 +228,7 @@ impl Editors {
             tab_line: [None; 3],
             tab_unsaved_text: true,
             tab_unsaved_color: None,
+            select_all_keep: true,
             bufs: Vec::new(),
             titles: Vec::new(),
             active: 0,
@@ -335,6 +338,7 @@ impl Editors {
         let mut tb = TextBox::new("").with_multiline().with_text(text);
         // 우클릭 편집 메뉴는 본문 패스가 아니라 팝업 층에서(`paint_popups` · 토스트 위 · UI 글꼴 · 사용자 09-22).
         tb.set_popup_deferred(true);
+        tb.set_select_all_keep_view(self.select_all_keep);
         tb.set_line_numbers(self.line_numbers);
         // Golden식 표시 띠(줄번호 오른쪽 4px · 색 막대 자리) + 첫 글자 앞 2px(사용자 09-16).
         tb.set_gutter_marks(true);
@@ -565,6 +569,14 @@ impl Editors {
     }
 
     /// 미니맵(설정 `editor.minimap`/`editor.minimap_width` · T-97) — 전 탭 + 새 탭.
+    /// 전체 선택 뒤 화면 유지/끝 이동(전 탭 · 09-30).
+    pub(crate) fn set_select_all_keep(&mut self, keep: bool) {
+        self.select_all_keep = keep;
+        for b in &mut self.bufs {
+            b.set_select_all_keep_view(keep);
+        }
+    }
+
     pub(crate) fn set_minimap(&mut self, on: bool, width: i32) {
         self.minimap = (on, width);
         for b in &mut self.bufs {

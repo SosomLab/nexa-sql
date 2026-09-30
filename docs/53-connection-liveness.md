@@ -74,7 +74,7 @@
 | Disconnected | 사용자가 해제 | 지금과 같음 |
 
 **감지 4경로**(전부 사용자 동작 시점 또는 무료):
-1. **빠른 판정을 늘 건다**: 지금은 신호등이 초록이 아닐 때만 → **마지막 성공 뒤 `probe.stale_secs`(기본 60초) 이상 지났으면** 실행·페치·펼침 전에 `probe_once`(TCP SYN 1 · `probe.timeout` 2초). 성공하면 시각 갱신. 비용 = 오랜만의 첫 동작에 SYN 1개.
+1. **빠른 판정을 늘 건다**: 지금은 신호등이 초록이 아닐 때만 → **마지막 성공 뒤 `probe.stale_secs`(기본 60초) 이상 지났으면** 실행·페치·펼침 전에 `probe_once`(TCP SYN 1 · `probe.timeout_ms` 2초). 성공하면 시각 갱신. 비용 = 오랜만의 첫 동작에 SYN 1개.
 2. **드라이버 0-왕복 상태**: Oracle `status()` · PG `is_closed()` — 실행 직전에 공짜로 본다. TCP keepalive를 켜 두면 끊긴 소켓이 여기서 잡힌다.
 3. **호출 타임아웃**: Oracle `set_call_timeout(session.call_timeout_secs)`(기본 0 = 끔 · 켜면 죽은 소켓이 N초 안에 `ORA-03136`) — 긴 질의와 구분이 안 되므로 기본은 끄고 **빠른 판정이 주 수단** · MSSQL `set_read_timeout`도 같은 키.
 4. **오류 분류**: 지금의 `is_connection_error` → Broken.
@@ -118,7 +118,7 @@
 
 | 항목 | 구현 |
 |---|---|
-| 동작 직전 판정(D-109) | 워커 `ensure_alive` — 순수 판정 `sessions::live_plan(preflight, suspect, dead_hint, stale, allow, auto)`(MC/DC D15) → 판정 = TCP SYN 1(`probe.timeout`) · **Run · FetchPage · Count · Keys · Commit/Rollback** 전부 · 커밋/롤백은 재접속 안 함 · `probe.stale_secs`(60 · 0 = 신호등 조건만) · 마지막 성공 시각 `last_ok`는 명령이 성공할 때마다 |
+| 동작 직전 판정(D-109) | 워커 `ensure_alive` — 순수 판정 `sessions::live_plan(preflight, suspect, dead_hint, stale, allow, auto)`(MC/DC D15) → 판정 = TCP SYN 1(`probe.timeout_ms`) · **Run · FetchPage · Count · Keys · Commit/Rollback** 전부 · 커밋/롤백은 재접속 안 함 · `probe.stale_secs`(60 · 0 = 신호등 조건만) · 마지막 성공 시각 `last_ok`는 명령이 성공할 때마다 |
 | 접속 자체도 판정 먼저 | 접속 창 Connect · 실행 인자 · 유휴 뒤 재접속 · 탐색기 메타 Open/재개 — 모두 SYN 1 뒤 드라이버 접속(끊긴 네트워크에서 드라이버 타임아웃 대기 0) · 테스트 `unreachable_server_fails_fast_and_reports_broken`(TEST-NET-1 · 4초) |
 | Broken 상태(D-114) | `ConnOutcome::Broken/Alive`(워커 → UI · 1회) · `Sess.broken` · 접속성 오류(`is_connection_error`)도 Broken · 표시 = 탭 표식 끊김 · 툴바 플러그 **빨강**(`ToolTone::Danger`) · Disconnect ▾ 줄 "· 끊김" · 상태줄 `[끊김]` · 로그 1줄 · 살아나면 "접속 회복" 1줄 |
 | 재접속(D-112) | 판정이 살아 있고(`suspect`/`dead_hint`) `connect.auto_reconnect`면 같은 스펙으로 · 성공 = Connected → `broken=false` · `stateful`이면 세션 상태 소실 안내(52 §6-4) · 열린 트랜잭션 = Lost |

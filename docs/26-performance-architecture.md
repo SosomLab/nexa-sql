@@ -749,7 +749,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 |---|---|---|---|---|
 | **객체 용량**(09-30) | 사전 질의 1(스키마·종류당 · `object_sizes`) | 테이블·MV·인덱스 폴더가 읽힐 때 한 번(백그라운드 메타 세션 · 우선순위 4) · `explorer.sizes` 끔 = 0 · 향상 모드 = 끔 | 없음(실패 = 표시 없음) | `explorer.rs` `Req::Sizes` · `nsql-catalog::object_sizes` |
 | 신호등 주기 확인 | TCP SYN 1(+ 실패 시 ICMP 1) | 접속 성공 프로필당 `probe.interval`(60s) · **창이 열려 있을 때만** · 동시 `MAX_INFLIGHT` 16 | 없음(주기) | `conn_win::tick` · `probe::ProbePolicy` |
-| 실패 뒤 재확인 | 동일 | `probe.retry_delay`(60s) × 2^(n−1) · `probe.max_retries`(5)번 뒤 상한 유지(32분) | 지수 백오프 | `ProbeEntry::apply` · `failure_wait` |
+| 실패 뒤 재확인 | 동일 | `probe.retry_delay_ms`(10 s) × 2^(n−1) · `probe.max_retries`(5)번 뒤 상한 유지(32분) | 지수 백오프 | `ProbeEntry::apply` · `failure_wait` |
 | 실패 확인 즉시 재프로브 | 동일 | 프로필당 진행 중 1개(≤4초) · 대상 집합 밖 프로필은 **1회로 끝(재예약 금지)** | 없음 | `note_failure` · `drain_probes`(T-63) |
 | 실행 전 빠른 판정 | SYN 1 | 사용자 실행 시 · 신호등이 초록이 아닐 때만 | 없음 | `worker::Cmd::Run.preflight` |
 | 접속 테스트 | DB 로그인 1 | 클릭당 1 · 같은 프로필 잠금 · **동시 `connect.max_concurrent`(4) · 초과 FIFO 큐** | 없음 | `App::start_test` · `dispatch_attempts` |
@@ -759,7 +759,7 @@ Debug에서 filterbar 첫 페인트가 **1,539 ms**(Release 119 ms)까지 오른
 | 전용 세션 `CONNECT` · 개별 모드 탭 접속 | DB 로그인 1 | 사용자 실행 1회당 1 · 개별 모드 = 탭이 **처음 활성화될 때** 1(안 본 탭은 0) · 상한 `session.max_private`(8) | 없음 | `App::place_run` · `sync_sess` · `connect_quietly` |
 | 유휴 닫기 뒤 재접속 | DB 로그인 1 | 닫힌 세션에서 **다음 실행/페치 1회당 1** · 주기 핑·keepalive 질의 **없음**(서버의 유휴 정책을 무력화하지 않는다) · 점검 타이머 30s는 로컬 판정만 | 없음 | `App::idle_tick` · `wake_if_idle` · `sessions::idle_action` |
 | 탐색기 메타 접속(서버당 1 · 52 §2-2) | DB 로그인 1 | **처음 보는 서버에 세션이 붙을 때 1** · 같은 서버의 추가 세션 = 0 · 유휴 회수 뒤에는 다음 펼침/소스 요청 1회당 1 · 오프라인(세션 0) 서버에는 **다시 붙지 않는다** · **비밀번호 자리가 없는 스펙으로는 로그인을 시도하지 않는다**(09-21 · 빈 비밀번호 시도가 쌓여 계정이 잠기는 것을 막는다) · 입력한 비밀번호는 세션 자격 금고에서 빌린다(금고 끔 = 일회성 → 그 칸은 유휴 회수 없음) · 금고 값이 거부되면 폐기하고 한 번 다시 묻는다 → **한 번의 접속 동작 = 로그인 시도 최대 2회**(같은 틀린 값으로 되풀이하지 않는다 · 잠김/만료에는 다시 묻지 않는다) | 없음 | `App::explorer_attach` · `explorer::meta_thread`(`resume`) |
-| 동작 직전 생존 판정([53](53-connection-liveness.md)) | TCP SYN 1(+ICMP 1) · `probe.timeout` 상한 | 실행·페치·건수·키·커밋 **직전**에, 마지막 성공 뒤 `probe.stale_secs`(60s) 지났거나 직전 오류·드라이버 끊김 힌트일 때만 · 접속 시도 전에는 항상 1 | 없음(실패 = 즉시 오류 · Broken) | `worker::ensure_alive` · `sessions::live_plan` |
+| 동작 직전 생존 판정([53](53-connection-liveness.md)) | TCP SYN 1(+ICMP 1) · `probe.timeout_ms` 상한 | 실행·페치·건수·키·커밋 **직전**에, 마지막 성공 뒤 `probe.stale_secs`(60s) 지났거나 직전 오류·드라이버 끊김 힌트일 때만 · 접속 시도 전에는 항상 1 | 없음(실패 = 즉시 오류 · Broken) | `worker::ensure_alive` · `sessions::live_plan` |
 | TCP keepalive(PG·SQL Server) | 빈 세그먼트 1(데이터 0) | 접속당 `net.keepalive_secs`(60s) 유휴마다 · 서버 유휴 세션 정책과 무관 · 0 = 끔 | OS(3회 뒤 소켓 오류) | `nsql_drivers::set_net_options` |
 | 막힘 감지(L3 · [56 §9](56-manual-commit-lock-prevention.md)) | 메타 세션에 1문장 | **미커밋이 있는 세션만** `tx.block_poll_secs`(30s · 0 = 끔) · 세션 식별자를 알 때 · 세션당 진행 중 1 | 없음(질의 오류 = 그 세션에서 기능 끔) | `App::tx_block_tick` · `explorer::blockers_sql` |
 | 탐색기 갱신 T1·T4([57](57-explorer-refresh-after-ddl.md)) | 메타 세션에 카탈로그 1질의/폴더 | **내가 실행한 DDL이 성공했을 때**(스크립트 = 끝난 뒤 폴더별 1회 · 트랜잭션 DDL 수동 커밋 = 커밋 때) · "객체 없음" 오류 = 폴더당 60초 1회 · 읽어 둔 폴더만 | 없음 | `App::meta_flush` · `Explorer::note_missing` |

@@ -891,19 +891,20 @@ impl App {
         if !self.project.is_open() || !self.project_autosave_on() {
             return None;
         }
-        let (secs, quick) = self.project_autosave_secs();
-        let periodic = self.project_autosave_at + Duration::from_secs(secs);
-        let changed = self
-            .project_touch_at
-            .map(|t| t + Duration::from_secs(quick));
+        let (periodic_wait, quick) = self.project_autosave_waits();
+        let periodic = self.project_autosave_at + periodic_wait;
+        let changed = self.project_touch_at.map(|t| t + quick);
         Some(changed.map_or(periodic, |t| t.min(periodic)).max(now))
     }
 
-    /// (주기 점검 초 `project.autosave_secs` ≥ 5, 변경 뒤 저장 초 `project.autosave_change_secs` ≥ 1 · 주기보다 크지 않게).
-    fn project_autosave_secs(&self) -> (u64, u64) {
-        let secs = self.settings.int("project.autosave_secs").max(5) as u64;
-        let quick = (self.settings.int("project.autosave_change_secs").max(1) as u64).min(secs);
-        (secs, quick)
+    /// (주기 점검 `project.autosave_secs` ≥ 5초, 변경 뒤 저장 `project.autosave_change_ms` ≥ 100 ms · 주기보다 크지 않게 · 09-30 ms 단위).
+    fn project_autosave_waits(&self) -> (Duration, Duration) {
+        let periodic =
+            Duration::from_secs(self.settings.int("project.autosave_secs").max(5) as u64);
+        let quick =
+            Duration::from_millis(self.settings.int("project.autosave_change_ms").max(100) as u64)
+                .min(periodic);
+        (periodic, quick)
     }
 
     /// ★ 종료 직전 마지막 저장(사용자 09-23 "프로그램 종료 시 꼭 저장"): 프로젝트(자동 저장이 켜져 있을 때 · 꺼져 있으면
@@ -917,7 +918,7 @@ impl App {
 
     /// ★ 자동 저장 틱(사용자 09-28 정의 · [70 §7](../../../docs/70-autosave-and-restore.md)):
     ///   ① **감시된 변경**(변경 세대 = 탭 집합·순서·본문 세대·활성 탭 · `project_touch` = 폴더·탐색기 선택)은 **최초 변경 시점 +
-    ///      `project.autosave_change_secs`(10초)** 에 1회 저장 — 그 안의 추가 변경은 타이머를 옮기지 않는다(최초 트리거 기준).
+    ///      `project.autosave_change_ms`(10초)** 에 1회 저장 — 그 안의 추가 변경은 타이머를 옮기지 않는다(최초 트리거 기준).
     ///   ② **감시되지 않는 변경**(캐럿 · 북마크 · 탐색기 펼침 · 패널 표시 · 검색어 · 프로필 표식)은 **마지막 저장·점검 +
     ///      `project.autosave_secs`(30초)** 주기 점검으로 — 문서를 만들어 이전 저장본과 같으면 쓰지 않는다.
     ///   ③ 어느 길이든 저장·점검하면 두 타이머를 모두 초기화한다(저장 횟수 최소화) · 변경이 없으면 쓰지 않는다.
@@ -925,15 +926,13 @@ impl App {
         if !self.project.is_open() || !self.project_autosave_on() {
             return;
         }
-        let (secs, quick) = self.project_autosave_secs();
+        let (periodic_wait, quick) = self.project_autosave_waits();
         // 최초 변경 시각(감시된 변경) — 이미 잡혀 있으면 옮기지 않는다.
         if self.project_touch_at.is_none() && self.project_autosave_dirty() {
             self.project_touch_at = Some(Instant::now());
         }
-        let changed_due = self
-            .project_touch_at
-            .is_some_and(|t| t.elapsed() >= Duration::from_secs(quick));
-        let periodic_due = self.project_autosave_at.elapsed().as_secs() >= secs;
+        let changed_due = self.project_touch_at.is_some_and(|t| t.elapsed() >= quick);
+        let periodic_due = self.project_autosave_at.elapsed() >= periodic_wait;
         if !changed_due && !periodic_due {
             return;
         }

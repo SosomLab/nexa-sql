@@ -24,6 +24,10 @@
 고급으로 분류되는 것:
 - DBMS 그룹(Oracle · SQL Server · PostgreSQL · SQLite)의 설정 전부
 - 구현 상수 — 밀리초 시간 · 예산 · 상한 · 스레드 수 · 캐시 크기 · 폴링 주기 · 재시도
+- **버튼 연타 무시**(`ui.click_guard_ms` · 기본 350 · 09-30): 같은 버튼·툴바 항목을 이 시간 안에 두 번 누르면 한 번만 처리합니다(실행·커밋·저장의 실수 이중 클릭 방지). 0 = 끔.
+- **소스 열기 스키마**(`explorer.source_schema` · 기본 켬 · 09-30): 객체 탐색기 "소스 열기"의 머리 줄을 `CREATE OR REPLACE PROCEDURE 스키마.이름`으로 만듭니다(DBeaver와 같음 · 종류 단어와 이름 사이 공백 1칸). 같은 이름이 여러 스키마에 있을 때 실행해도 현재 스키마의 객체를 덮어쓰지 않습니다. 끄면 저장된 이름 그대로.
+- **전체 선택 뒤 화면**(`editor.select_all_view` · 기본 **현재 위치 유지** · 09-30): Ctrl(⌘)+A 뒤 화면이 그 자리에 남습니다(캐럿은 끝). "선택 끝으로 이동"을 고르면 종전처럼 끝으로 스크롤.
+- **시간 단위**(09-30): 기본값이 10초 이하인 시간 설정은 ms(`_ms`), 넘으면 초(`_secs`)·분(`_min`). 단위가 바뀐 옛 키(`ui.toast_secs` · `probe.timeout` · `probe.retry_delay` · `run.toast_hide_secs` · `meta.refresh_idle_secs` · `project.autosave_change_secs`)는 파일에서 자동으로 옮겨지고(초 × 1000), `nsql config get/set 옛키`는 옛 단위(초 · 소수 가능)로 그대로 통합니다.
 - 한 번 정하면 거의 손대지 않는 동작 규칙(예: 그리드 편집의 행 식별 세부)
 
 글꼴 · 색 · 켜기/끄기 · 모드 · 자동 저장 주기처럼 자주 만지는 것은 기본으로 보입니다. CLI `nsql config list`에는 고급 설정도 나옵니다.

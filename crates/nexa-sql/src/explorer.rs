@@ -265,6 +265,10 @@ enum Req {
         kind: ObjectKind,
         name: String,
         title: String,
+        /// 탭 출처(객체 이름 그대로 · 종류 = 연 종류 · 서버는 `ExplorerSet`이 채운다 · 09-30).
+        origin: ObjectOrigin,
+        /// 머리 줄 스키마 한정(설정 `explorer.source_schema`).
+        qualify: bool,
     },
     /// 라이브 로그 폴링(T-71) — 메타 세션으로 V$SESSION 또는 로그 테이블을 읽는다.
     Live {
@@ -583,6 +587,7 @@ enum Resp {
         gen: u64,
         title: String,
         r: Result<String, String>,
+        origin: ObjectOrigin,
     },
     Live {
         gen: u64,
@@ -666,12 +671,36 @@ fn detail_bytes(secs: &[DetailSection]) -> usize {
         .sum()
 }
 
+/// ★ 소스 열기 탭의 **출처**(09-30 · 사용자 "객체 소스 탭 F5 = 객체 단위 실행"): 어느 서버의 어떤 객체를 연 탭인지 —
+/// F5는 본문을 나누지 않고 한 단위로 보내고, 탭은 그 서버의 세션에 묶인다(활성 공유 세션이 다른 서버여도).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObjectOrigin {
+    pub schema: String,
+    pub name: String,
+    /// 연 종류(패키지 **본문**은 `PackageBody`).
+    pub kind: ObjectKind,
+    /// 카탈로그의 접속 스펙(`ExplorerSet`이 채운다 · 없으면 활성 세션).
+    pub server: Option<ConnectSpec>,
+}
+
+impl ObjectOrigin {
+    /// `PROCEDURE BISCM.SP_X` 꼴(메시지 · 상태줄).
+    pub(crate) fn label(&self) -> (String, String) {
+        (
+            self.kind.code().to_ascii_uppercase(),
+            format!("{}.{}", self.schema, self.name),
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ExplorerAction {
     /// 새 편집기 탭에 텍스트(SELECT 템플릿 · 소스).
     OpenSql {
         title: String,
         text: String,
+        /// 객체 소스 탭이면 출처(SELECT 템플릿은 `None`).
+        origin: Option<ObjectOrigin>,
     },
     /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
     Notice(String),
@@ -809,6 +838,8 @@ pub(crate) struct Explorer {
     lower_labels: Vec<Option<Box<str>>>,
     /// Generate SQL 옵션(설정 `gen.*` · 호스트가 준다).
     gen_opts: GenOpts,
+    /// ★ 소스 열기 머리 줄에 소유 스키마(설정 `explorer.source_schema` · 기본 켬 · 09-30).
+    source_qualify: bool,
     /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
     schema_opts: SchemaOpts,
     /// ★ 카탈로그 공유(docs/54 §10): 이 칸에 붙은 연결들의 계정(루트 행 라벨) — `ExplorerSet`이 준다.
@@ -1464,14 +1495,28 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 kind,
                 name,
                 title,
+                origin,
+                qualify,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
                 let r = with_session(&mut session, |s| {
-                    nsql_catalog::source(s, &schema, kind, &name).map_err(err_s)
+                    nsql_catalog::source_with(
+                        s,
+                        &schema,
+                        kind,
+                        &name,
+                        nsql_catalog::SourceOpts { qualify },
+                    )
+                    .map_err(err_s)
                 });
-                Resp::Source { gen, title, r }
+                Resp::Source {
+                    gen,
+                    title,
+                    r,
+                    origin,
+                }
             }
             Req::Live { gen, req } => {
                 if gen != cur_gen {
@@ -1774,6 +1819,7 @@ impl Explorer {
             filter: None,
             filter_expanded: std::collections::HashSet::new(),
             gen_opts: GenOpts::default(),
+            source_qualify: true,
             schema_opts: SchemaOpts::default(),
             users: Vec::new(),
             rebinding: false,
@@ -3521,13 +3567,22 @@ impl Explorer {
                         server: None,
                     });
                 }
-                Resp::Source { gen, title, r } => {
+                Resp::Source {
+                    gen,
+                    title,
+                    r,
+                    origin,
+                } => {
                     self.source_pending = false;
                     if gen != self.gen {
                         continue;
                     }
                     match r {
-                        Ok(text) => self.actions.push(ExplorerAction::OpenSql { title, text }),
+                        Ok(text) => self.actions.push(ExplorerAction::OpenSql {
+                            title,
+                            text,
+                            origin: Some(origin),
+                        }),
                         Err(e) => self.actions.push(ExplorerAction::Status(e)),
                     }
                 }
@@ -4220,6 +4275,7 @@ impl Explorer {
                 self.actions.push(ExplorerAction::OpenSql {
                     title: format!("{}.sql", o.name),
                     text: nsql_catalog::select_template(d, &o.schema, &o.name),
+                    origin: None,
                 });
             }
             NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
@@ -4263,6 +4319,10 @@ impl Explorer {
             _ => return,
         };
         self.gen_sql(spec);
+    }
+
+    pub(crate) fn set_source_qualify(&mut self, on: bool) {
+        self.source_qualify = on;
     }
 
     pub(crate) fn set_gen_opts(&mut self, opts: GenOpts) {
@@ -4578,6 +4638,13 @@ impl Explorer {
             kind,
             name,
             title,
+            origin: ObjectOrigin {
+                schema: o.schema.clone(),
+                name: o.name.clone(),
+                kind,
+                server: None,
+            },
+            qualify: self.source_qualify,
         });
     }
 
@@ -5525,6 +5592,11 @@ impl Explorer {
             if consumed {
                 return true;
             }
+            // ★ 메뉴가 열려 있는 동안 마우스 이동은 메뉴 몫(사용자 09-30 "메뉴 이동과 트리 hover가 같이 일어난다") — 뒤 트리의
+            //   hover 판정·페이드·툴팁을 돌리지 않는다(중복 사건 0 = 성능). 닫힌 뒤 `rehover`가 커서 아래를 다시 판정한다.
+            if matches!(ev, InputEvent::MouseMove { .. }) {
+                return false;
+            }
         }
         let content_h = self.content_h();
         let (_, ny, consumed) = self.bars.on_event(
@@ -6015,7 +6087,12 @@ impl Explorer {
             return;
         }
         match id {
-            "select" | "source" => self.activate(i),
+            "select" => self.activate(i),
+            // 🔧 뷰의 "소스 열기"가 행 조회(SELECT 템플릿)로 가던 결함(09-30): 관계형이라도 메뉴가 소스면 소스.
+            "source" => match self.nodes[i].kind.clone() {
+                NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
+                _ => self.activate(i),
+            },
             "body" => {
                 if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
                     self.open_body(&o);
@@ -6151,6 +6228,15 @@ impl Explorer {
                 } else {
                     String::new()
                 };
+                // ★ 인덱스 = `테이블.인덱스`(사용자 09-30 · `extra` = 테이블 이름 · 필터·타입어헤드도 이 라벨로 맞는다).
+                if o.kind == ObjectKind::Index && !o.extra.is_empty() {
+                    let status = if o.status == "VALID" || o.status == "INVALID" {
+                        String::new()
+                    } else {
+                        o.status.clone()
+                    };
+                    return (format!("{}.{}", o.extra, o.name), status);
+                }
                 // 유효성은 아이콘 배지로(83 §2) — `VALID`/`INVALID` 글자는 뗀다 · 그 밖 상태(`DISABLED` …)는 흐린 글자.
                 let status = if o.status == "VALID" || o.status == "INVALID" {
                     String::new()

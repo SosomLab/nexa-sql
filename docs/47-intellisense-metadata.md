@@ -178,7 +178,7 @@ pub struct ParamEntry { name: Sym, data_type: Sym, mode: ParamMode /*In|Out|InOu
 | **D-79** 트리거 | 팝업이 언제 뜨는가 | ① 입력 즉시 자동 ② 자동 + 지연(250ms) ③ Ctrl+Space만 ④ ②+Ctrl+Space 즉시 | ✅ **④** — `.` 뒤는 즉시 · 식별자 2자+지연 · 수동키 항상 → `intel.auto_activation`/`intel.delay_ms`/`intel.trigger_chars`/`intel.activate_on_typing` |
 | **D-80** FROM 뒤 범위 | 스키마 없이 무엇을 보여주나 | ① 현재 스키마 관계만 ② 스키마 이름만(스키마 입력 뒤 객체) ③ 현재 스키마 관계 + 스키마 이름 + 시노님 ④ 접근 가능한 전 스키마 관계 | ✅ **③** → `intel.from_scope`(current_and_schemas) · ④ = `all` · ① = `current` · ② = `schemas_first` |
 | **D-81** 선반입 범위 | 접속 뒤 무엇을 미리 채우나 | ① 현재 스키마만(나머지 요청 시) ② ① + 탐색기에서 펼친/문장에 나온 스키마 ③ ② + 유휴 때 전 스키마 순차 | ✅ **②** → `meta.prefetch`(current_and_used) · ① = `current` · ③ = `all` |
-| **D-82** 갱신 방식 | 변경을 어떻게 아나 | ① 수동 새로고침만 ② ① + 실행한 DDL 감지 ③ ② + 워터마크 주기(기본 300s · 유휴) | ✅ **③** → `meta.refresh_on_ddl`(on) · `meta.refresh_secs`(300 · 0 = 끔) · `meta.refresh_idle_secs`(5) |
+| **D-82** 갱신 방식 | 변경을 어떻게 아나 | ① 수동 새로고침만 ② ① + 실행한 DDL 감지 ③ ② + 워터마크 주기(기본 300s · 유휴) | ✅ **③** → `meta.refresh_on_ddl`(on) · `meta.refresh_secs`(300 · 0 = 끔) · `meta.refresh_idle_ms`(5000) |
 | **D-83** 코멘트 | 테이블/컬럼 설명을 언제 받나 | ① 객체·컬럼 질의에 함께(항상) ② 툴팁 열 때만 지연 ③ 안 받음 | ✅ **①** → `meta.comments`(always) · ② = `on_demand` · ③ = `off` · 표시는 `intel.show_comments` |
 | **D-84** hover 툴팁 | 무엇에 띄우나 | ① 테이블/뷰만 ② 테이블/뷰/컬럼(alias 포함)/프로시저·함수 ③ 끔 | ✅ **②** → `intel.hover`(on) · `intel.hover_scope`(all) · ① = `relations` · `intel.hover_delay_ms`(300) |
 | **D-85** 디스크 캐시 | 재시작 뒤 즉시 서비스 | ① 메모리만 ② 프로필별 디스크 캐시 + 워터마크 검증 | ✅ **②** → `meta.disk_cache`(on) · `meta.disk_cache_max_mb`(64) · 프로필 삭제 시 파일도 삭제 |
@@ -238,7 +238,7 @@ DBeaver 환경설정의 두 페이지를 그대로 카테고리로 쓴다: **편
 | | `meta.separate_connection` | Bool · **on** | Open separate connection for metadata | 지금의 메타 세션(26 §8 상한 안) |
 | 갱신 | `meta.refresh_on_ddl` | Bool · **on** | — | D-82 |
 | | `meta.refresh_secs` | Int 0~3600 · **300** | (탐색기 `explorer.refresh_secs`와 통합 · 0 = 끔) | D-82 워터마크 |
-| | `meta.refresh_idle_secs` | Int 1~60 · **5** · HIDDEN | — | 유휴 판정 |
+| | `meta.refresh_idle_ms` | Int 1~60 · **5** · HIDDEN | — | 유휴 판정 |
 | | `meta.refresh_scope` | Choice **changed**/all | — | 워터마크가 바뀐 스키마만 / 전부 |
 | 캐시 | `meta.disk_cache` | Bool · **on** | Cache metadata | D-85 |
 | | `meta.disk_cache_max_mb` | Int 8~512 · **64** · HIDDEN | — | 프로필당 |
@@ -248,7 +248,7 @@ DBeaver 환경설정의 두 페이지를 그대로 카테고리로 쓴다: **편
 | | `meta.timeout` | Int 5~120 · **15** | (탐색기 `explorer.timeout` 통합 —✅ 09-29 T-249 구현·재등록) | |
 | | `meta.pause_while_running` | Bool · **on** · HIDDEN | — | 실행 중 S4 정지 |
 
-- 종속 잠금(설정 창 D-52 규칙): `intel.enabled=off` → `intel.*` 전부 잠김 · `intel.auto_activation=off` → `delay_ms/activate_on_typing/trigger_chars/min_chars` 잠김 · `intel.hover=off` → `hover_*` 잠김 · `meta.enabled=off` → `meta.*` 잠김 · `meta.refresh_secs=0` → `refresh_idle_secs/refresh_scope` 잠김 · `meta.disk_cache=off` → `disk_cache_max_mb` 잠김.
+- 종속 잠금(설정 창 D-52 규칙): `intel.enabled=off` → `intel.*` 전부 잠김 · `intel.auto_activation=off` → `delay_ms/activate_on_typing/trigger_chars/min_chars` 잠김 · `intel.hover=off` → `hover_*` 잠김 · `meta.enabled=off` → `meta.*` 잠김 · `meta.refresh_secs=0` → `refresh_idle_ms/refresh_scope` 잠김 · `meta.disk_cache=off` → `disk_cache_max_mb` 잠김.
 - 성능 모드(39 §4 `perf.mode`/`perf.boost`)와의 관계: `perf.boost`는 UI 전용 키만 강제하므로 `intel.*`/`meta.*`는 건드리지 않는다. 대신 `perf.mode=low`(저사양 프리셋)에서 `meta.prefetch=current` · `meta.prefetch_columns=off` · `intel.match=prefix`로 프리셋 값을 낮춘다(사용자가 개별 값을 두면 그 값이 우선 · 39 §4 우선순위).
 - 기존 `explorer.auto_refresh/refresh_secs/timeout`은 `meta.*`로 **통합**(탐색기와 인텔이 같은 저장소를 쓰므로 갱신 정책도 하나 · 마이그레이션 = 옛 키 값이 있으면 새 키로 옮기고 제거).
 - CLI: 같은 키가 `nsql shell` Tab 완성과 `DESC`에도 적용(스레드 없이 동기).

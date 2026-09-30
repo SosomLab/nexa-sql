@@ -43,6 +43,7 @@ mod explorer;
 mod explorers;
 mod ext_panel;
 mod ext_view;
+mod output;
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod extensions;
 mod extfile;
@@ -537,6 +538,10 @@ struct App {
     tab_bind: HashMap<u64, u64>,
     /// 묶이지 않은 탭이 쓰는 공유 세션.
     default_shared: u64,
+    /// ★ 객체 소스 탭의 출처(편집기 탭 id → 서버·스키마·객체·종류 · 09-30): F5 = 본문 전체를 한 단위로 · 세션 = 그 서버.
+    object_tabs: HashMap<u64, explorer::ObjectOrigin>,
+    /// `output.show=always` 갖춤을 탭 전환마다 한 번만(09-30).
+    output_last_editor: u64,
     /// 개별 모드에서 새 탭이 붙을 기본 접속 정보(접속 창에서 마지막으로 성공한 스펙 = 1 인스턴스 · 1 서버 · 1 계정).
     default_spec: Option<ConnectSpec>,
     /// 탐색기·접속 창 표시가 따라가는 세션(접속 창으로 마지막에 붙은 세션).
@@ -1429,6 +1434,7 @@ fn main() {
         e.set_keep_offline(settings.flag("explorer.keep_offline"));
         e.set_filter_scope(settings.get("explorer.filter_scope").unwrap_or("all"));
         e.set_gen_opts(gen_opts_from(&settings));
+        e.set_source_qualify(settings.flag("explorer.source_schema"));
         e.set_schema_opts(schema_opts_from(&settings));
         e.set_index_cfg(index_cfg_from(&settings));
         e.set_share_catalog(settings.flag("explorer.share_catalog"));
@@ -1639,6 +1645,7 @@ fn main() {
                 grid: grid::Grid::default(),
                 seq: 0,
                 child_of: None,
+                is_output: false,
             },
             true,
             false,
@@ -1711,6 +1718,8 @@ fn main() {
         parked: Vec::new(),
         next_sess_id: 1,
         tab_bind: HashMap::new(),
+        object_tabs: HashMap::new(),
+        output_last_editor: 0,
         default_shared: SHARED,
         default_spec: None,
         primary_sess: SHARED,
@@ -1815,7 +1824,7 @@ fn main() {
     app.editors.set_whitespace(ws_style);
     app.log_win.set_row_snap(row_snap);
     app.toasts.configure(
-        app.settings.int("ui.toast_secs"),
+        app.settings.int("ui.toast_ms"),
         app.settings.int("ui.toast_alpha"),
     );
     app.toasts.configure_progress(
@@ -1896,6 +1905,9 @@ fn main() {
     // 접속 창 조정값(비노출 설정 · 사용자 09-14 "구현 값은 설정으로").
     app.conn_win.set_tuning(conn_tuning(&app.settings));
     nexa_ctl::tokens::set_intent_ms(app.settings.int("ui.hover_intent_ms").clamp(0, 500) as u64);
+    nexa_ctl::set_default_click_guard_ms(
+        app.settings.int("ui.click_guard_ms").clamp(0, 2000) as u64
+    );
     nexa_ctl::tokens::set_fade_out_ms(fade_ms(&app.settings, "ui.fade_out_ms", 2000));
     nexa_fs::shell::set_os_icons(app.settings.flag("file.os_icons"));
     nexa_dlg::set_probe_chevrons(app.settings.flag("file.probe_chevrons"));
@@ -2069,7 +2081,7 @@ fn gen_opts_from(settings: &Settings) -> nsql_catalog::GenOpts {
 fn typeahead_cfg(s: &Settings) -> explorer::TypeAheadCfg {
     explorer::TypeAheadCfg {
         enabled: s.flag("explorer.typeahead"),
-        timeout_ms: s.int("explorer.typeahead_timeout").clamp(200, 60_000) as u64,
+        timeout_ms: s.int("explorer.typeahead_timeout_ms").clamp(200, 60_000) as u64,
         filter: nexa_ctl::TypeAheadFilter {
             space: s.flag("explorer.typeahead_space"),
             special: s.flag("explorer.typeahead_special"),
@@ -2464,11 +2476,13 @@ fn fade_ms(settings: &Settings, key: &str, max: i64) -> u32 {
 /// 신호등 정책(설정 `probe.*` · 실효 값 = 향상 모드 반영).
 fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
     let secs = |k: &str, min: i64| Duration::from_secs(settings.int(k).max(min) as u64);
+    let ms = |k: &str, min: i64| Duration::from_millis(settings.int(k).max(min) as u64);
     probe::ProbePolicy {
         enabled: settings.flag("probe.enabled"),
         max_retries: settings.int("probe.max_retries").max(0) as u32,
-        timeout: secs("probe.timeout", 1),
-        retry_delay: secs("probe.retry_delay", 1),
+        // 09-30 ms 단위(하한 = 레지스트리 · 재시도 대기 5초는 26 §8 부하 규칙).
+        timeout: ms("probe.timeout_ms", 100),
+        retry_delay: ms("probe.retry_delay_ms", 5000),
         interval: secs("probe.interval", 5),
         icmp: settings.flag("probe.icmp"),
         dns_cache: std::time::Duration::from_secs(

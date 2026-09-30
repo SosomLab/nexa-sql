@@ -184,6 +184,24 @@ impl App {
             let _ = std::fs::write(path, self.grid.dump_edit());
             return;
         }
+        // 자체 시험(09-30): 활성 편집기 탭의 Output 본문 덤프(`output.dump:<파일>` · 첫 줄 `보임|줄수`).
+        if let Some(path) = id.strip_prefix("output.dump:") {
+            let _ = std::fs::write(path, self.output_dump());
+            return;
+        }
+        // 자체 시험(09-30): 활성 편집 탭 덤프 — 첫 줄 `제목|탭 종류|읽기 전용` · 둘째 줄부터 본문(소스 열기·DDL 열기 결과를 파일로 대조).
+        if let Some(path) = id.strip_prefix("editor.dump:") {
+            let i = self.editors.active();
+            let head = format!(
+                "{}|{:?}|{}
+",
+                self.editors.title_of(i),
+                self.editors.tab_kind(i),
+                self.editors.active_read_only()
+            );
+            let _ = std::fs::write(path, head + &self.editors.cur().text());
+            return;
+        }
         // 자체 시험(09-26): 트랜잭션 로그 덤프 — 전 세션 · 전 목적 · 닫힌 것 포함 · 한 줄 = `목적|본문|행|결과|tx` + 열린 트랜잭션 갱신 수.
         if let Some(path) = id.strip_prefix("txlog.dump:") {
             let f = nsql_run::txlog::TxFilter {

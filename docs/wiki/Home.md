@@ -18,6 +18,7 @@ Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windo
 | [트랜잭션 로그](Transaction-Log.md) | 문장·트랜잭션 결과 · 행 클릭 = 보낸 문장 / 바인드 변수 / 값 치환 문장 세 층 · 거르기 |
 | [큰 파일과 기능 제한](Large-Files-and-Limits.md) | 파일 크기·줄 수에 따라 무엇이 꺼지고(L1/L2) 어떤 상한이 늘 걸리는지 · 바꾸는 설정 |
 | [SQL 포맷](SQL-Formatting.md) | Shift+Alt+F 기본 포맷 · 내장 Basic 공통 옵션(콤마 위치 · 공백/탭 · `WHERE 1=1` · 별칭) · 확장 포맷터(SQL Formatter for kiros33)를 기본으로 지정 · 미리보기 탭 |
+| [Output 탭](Output-Tab.md) | 서버 메시지(DBMS_OUTPUT · PRINT · RAISE NOTICE) · 컴파일 결과 · 오류 · 문장 완료 줄이 모이는 탭 · 언제 나타나는지(`output.show`/`output.activate`) · 객체 소스 탭의 F5 = 한 단위 실행 |
 | [Ctrl 객체 링크와 설명 툴팁](Object-Links.md) | Ctrl(⌘)을 누르는 동안 테이블·컬럼·루틴이 링크 · 코멘트 툴팁(우상단 · 위치 설정) · 좌클릭 = 설명 복사 · 우클릭 메뉴 · 향상 모드·큰 파일 자동 끔 |
 
 > 이 폴더(`docs/wiki/`)가 원본이고 `scripts/wiki-publish.sh`가 GitHub 위키 저장소로 복사합니다. 이미지는 `images/`(맥 캡처 = `scripts/mac-capture.sh`).

@@ -805,6 +805,40 @@ impl App {
         if self.route_view_tab(ev, is_mouse) {
             return;
         }
+        // ★ Output 탭 활성(09-30): 그리드 자리의 마우스·휠·우클릭은 Output이 받고, 그리드 포커스의 키도 Output으로(읽기 전용 상자 =
+        //   선택·복사·스크롤만). 그리드 코드는 건드리지 않는다(자리표시 탭의 그리드는 빈 것).
+        if self.panel.output_active() {
+            let cur = Point {
+                x: self.cursor.0,
+                y: self.cursor.1,
+            };
+            let in_area = self.grid.bounds.contains(cur);
+            let pointer = is_mouse
+                || matches!(
+                    ev,
+                    InputEvent::RightDown { .. }
+                        | InputEvent::Wheel { .. }
+                        | InputEvent::HWheel { .. }
+                );
+            let take = if pointer {
+                in_area
+            } else {
+                self.focus == Focus::Grid
+            };
+            if take {
+                if matches!(
+                    ev,
+                    InputEvent::MouseDown { .. } | InputEvent::RightDown { .. }
+                ) {
+                    self.set_focus(Focus::Grid);
+                }
+                if let Some(o) = self.panel.output_active_mut() {
+                    o.on_event(&ev);
+                }
+                self.redraw();
+                return;
+            }
+        }
         // ★ 좌클릭·우클릭 모두 커서 아래 컨트롤에 포커스(마우스 라우팅 규칙 · CLAUDE.md §3) — 우클릭이 빠져 있어
         //   편집기에 포커스가 있으면 그리드 우클릭이 편집기로 가서 메뉴가 안 떴다(사용자 09-16 · 좌클릭 뒤에야 동작).
         // ★ 편집기 우클릭 메뉴가 열려 있으면 마우스 사건은 **그 편집기에만**(항목 클릭 = 기능만 · 포커스/칸 활성/캐럿 이동으로
@@ -1741,9 +1775,13 @@ impl App {
                 }
             }
             Focus::Grid => {
-                self.grid.set_shift(self.shift);
-                self.grid.on_event(&ev, self.scale);
-                self.after_grid_event();
+                if let Some(o) = self.panel.output_active_mut() {
+                    o.on_event(&ev);
+                } else {
+                    self.grid.set_shift(self.shift);
+                    self.grid.on_event(&ev, self.scale);
+                    self.after_grid_event();
+                }
             }
             Focus::Explorer => {
                 self.explorer.on_event(&ev);

@@ -402,6 +402,7 @@ fn starts_block(first_line: &str) -> bool {
             matches!(
                 rest.first().copied(),
                 Some("PROCEDURE")
+                    | Some("PROC")
                     | Some("FUNCTION")
                     | Some("PACKAGE")
                     | Some("TRIGGER")

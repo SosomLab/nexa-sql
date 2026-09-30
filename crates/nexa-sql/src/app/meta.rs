@@ -59,7 +59,7 @@ impl App {
         }
     }
 
-    /// 유휴 워터마크(docs/57 T2): `meta.refresh_secs`마다 · 입력이 `meta.refresh_idle_secs` 동안 없고 실행 중인 세션이 없을 때만.
+    /// 유휴 워터마크(docs/57 T2): `meta.refresh_secs`마다 · 입력이 `meta.refresh_idle_ms` 동안 없고 실행 중인 세션이 없을 때만.
     pub(crate) fn meta_refresh_tick(&mut self, now: Instant) -> Option<Instant> {
         let secs = self.settings.int("meta.refresh_secs").max(0) as u64;
         if secs == 0 || !self.explorer.is_visible() {
@@ -71,7 +71,7 @@ impl App {
         if now < next {
             return Some(next);
         }
-        let idle = Duration::from_secs(self.settings.int("meta.refresh_idle_secs").max(0) as u64);
+        let idle = Duration::from_millis(self.settings.int("meta.refresh_idle_ms").max(0) as u64);
         let busy = self.all_sess().any(|s| s.busy);
         if busy || now.duration_since(self.blink_origin) < idle {
             // 바쁘면 조금 뒤에 다시 본다(주기를 통째로 미루지 않는다).
@@ -206,12 +206,27 @@ impl App {
         for a in self.explorer.take_actions() {
             changed = true;
             match a {
-                ExplorerAction::OpenSql { title, text } if self.tab_room() => {
+                ExplorerAction::OpenSql {
+                    title,
+                    text,
+                    origin,
+                } if self.tab_room() => {
                     self.editors.new_tab(Some(title));
                     self.editors.cur_mut().set_text(&text);
                     // 캐럿 = 문서 처음(BOF · 사용자 09-26 "Open source 뒤 EOF가 아니라 BOF").
                     self.editors.cur_mut().goto_line(1);
                     self.set_focus(Focus::Editor);
+                    // ★ 객체 소스 탭(09-30): 출처를 기억하고(F5 = 한 단위 실행) 그 객체의 서버 세션에 묶는다 —
+                    //   종전에는 활성 공유 세션(다른 서버일 수 있음)에 붙어 방언이 달라지면 분할이 어긋났다.
+                    if let Some(o) = origin {
+                        let tab = self.editors.active_id();
+                        if let Some(spec) = o.server.clone() {
+                            self.bind_tab_to_server(tab, &spec);
+                        }
+                        self.object_tabs.insert(tab, o);
+                        self.sync_sess();
+                        self.sync_sess_ui();
+                    }
                 }
                 ExplorerAction::OpenSql { .. } => {}
                 ExplorerAction::Status(s) => self.sess.status = s,

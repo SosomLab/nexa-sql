@@ -20,6 +20,7 @@ mod memory;
 mod menus;
 mod meta;
 pub(crate) mod objlink;
+mod output;
 mod paint;
 mod project;
 mod run;

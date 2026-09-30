@@ -150,6 +150,9 @@ impl App {
 
     /// 설정 → 미니맵(T-97).
     pub(crate) fn apply_minimap(&mut self) {
+        // 전체 선택 뒤 화면(09-30 · 기동 때 미니맵과 함께 적용).
+        self.editors
+            .set_select_all_keep(self.settings.get("editor.select_all_view") != Some("end"));
         let on = self.settings.flag("editor.minimap");
         let w = self.settings.int("editor.minimap_width").clamp(20, 400) as i32;
         self.editors.set_minimap(on, w);
@@ -272,6 +275,9 @@ impl App {
                     }
                 }
             }
+            "ui.click_guard_ms" => {
+                nexa_ctl::set_default_click_guard_ms(self.settings.int(key).clamp(0, 2000) as u64)
+            }
             "ui.fade_fast_ms" => nexa_ctl::tokens::set_fade_ms(
                 nexa_ctl::tokens::FadeSpeed::Fast,
                 fade_ms(&self.settings, key, 5000),
@@ -325,8 +331,8 @@ impl App {
             | "probe.max_retries"
             | "probe.max_inflight"
             | "probe.icmp"
-            | "probe.timeout"
-            | "probe.retry_delay"
+            | "probe.timeout_ms"
+            | "probe.retry_delay_ms"
             | "probe.enabled"
             | "probe.dns_cache_secs" => {
                 let n = self.settings.int("probe.max_inflight").clamp(1, 64) as usize;
@@ -341,9 +347,9 @@ impl App {
             | "editor.tab_unsaved_color"
             | "editor.tab_close_show" => self.apply_tab_line_colors(),
             "file.probe_chevrons" => nexa_dlg::set_probe_chevrons(self.settings.flag(key)),
-            "ui.toast_secs" | "ui.toast_alpha" => {
+            "ui.toast_ms" | "ui.toast_alpha" => {
                 self.toasts.configure(
-                    self.settings.int("ui.toast_secs"),
+                    self.settings.int("ui.toast_ms"),
                     self.settings.int("ui.toast_alpha"),
                 );
                 self.apply_run_toast();
@@ -356,10 +362,10 @@ impl App {
                 );
                 self.apply_run_toast();
             }
-            "run.toast"
-            | "run.toast_hide_secs"
-            | "run.toast_tick_ms"
-            | "run.toast_follow"
+            "output.max_lines" | "output.timestamps" | "output.show" => {
+                self.output_apply_settings();
+            }
+            "run.toast" | "run.toast_hide_ms" | "run.toast_tick_ms" | "run.toast_follow"
             | "run.toast_max" => self.apply_run_toast(),
             "net.keepalive_secs" | "session.call_timeout_secs" => self.apply_net_options(),
             "mssql.encrypt" => {
@@ -443,6 +449,12 @@ impl App {
             | "meta.warm_comments" => {
                 self.explorer.set_index_cfg(index_cfg_from(&self.settings));
             }
+            "explorer.source_schema" => self
+                .explorer
+                .set_source_qualify(self.settings.flag("explorer.source_schema")),
+            "editor.select_all_view" => self
+                .editors
+                .set_select_all_keep(self.settings.get("editor.select_all_view") != Some("end")),
             "gen.qualified" | "gen.compact" | "gen.full_ddl" | "gen.separate_fk"
             | "gen.bind_note" => {
                 let o = gen_opts_from(&self.settings);
@@ -458,7 +470,7 @@ impl App {
             // 안정 대기·크기 상한은 감시 스레드를 만들 때 넣는 값 → 다음 확인 때 새로 만든다.
             "file.external_settle_ms" | "file.external_merge_max_kb" => self.ext_watch = None,
             "explorer.typeahead"
-            | "explorer.typeahead_timeout"
+            | "explorer.typeahead_timeout_ms"
             | "explorer.typeahead_space"
             | "explorer.typeahead_special"
             | "explorer.typeahead_pos" => {
@@ -905,11 +917,11 @@ impl App {
         ));
     }
 
-    /// 실행 상태 카드 설정(`run.toast` · `run.toast_hide_secs` · 불투명도는 토스트와 공용 `ui.toast_alpha`).
+    /// 실행 상태 카드 설정(`run.toast` · `run.toast_hide_ms` · 불투명도는 토스트와 공용 `ui.toast_alpha`).
     pub(crate) fn apply_run_toast(&mut self) {
         let (on, hide, alpha) = (
             self.settings.flag("run.toast"),
-            self.settings.int("run.toast_hide_secs"),
+            self.settings.int("run.toast_hide_ms"),
             self.settings.int("ui.toast_alpha"),
         );
         let (prog, fade_to, spent) = (

@@ -34,6 +34,8 @@ pub(crate) struct ResultTab {
     /// ★ 한 문장이 결과를 둘 이상 냈을 때(REF CURSOR 여러 개 · 암묵 결과 · 다중 결과 집합)의 **딸린 탭**:
     /// `(실행을 시작한 탭 id, 몇 번째 추가 결과인가)` — 다시 실행하면 같은 자리를 재사용하고, 이번 실행에서 안 쓰인 것은 걷는다.
     pub child_of: Option<(u64, u32)>,
+    /// ★ Output 자리표시 탭(09-30): 그리드 대신 패널의 `output` 버퍼를 보여 준다.
+    pub is_output: bool,
 }
 
 /// 호스트가 처리할 패널 동작.
@@ -60,6 +62,8 @@ pub(crate) enum PanelAction {
 pub(crate) struct ResultPanel {
     pub tabs: Vec<ResultTab>,
     pub active: usize,
+    /// ★ 이 편집기 탭의 Output 버퍼(탭을 닫아도 남는다 · `app/output.rs`).
+    pub output: Option<crate::output::OutputView>,
     bar: TabBar,
     menu: CtxMenu,
     /// 탭 바 영역(보이지 않으면 높이 0).
@@ -88,6 +92,7 @@ impl ResultPanel {
         ResultPanel {
             tabs: vec![first],
             active: 0,
+            output: None,
             bar,
             menu: CtxMenu::new(),
             bar_rect: Rect::default(),
@@ -234,6 +239,33 @@ impl ResultPanel {
 
     pub(crate) fn active_id(&self) -> u64 {
         self.tabs.get(self.active).map_or(0, |t| t.id)
+    }
+
+    /// Output 자리표시 탭의 자리(없으면 `None`).
+    pub(crate) fn output_index(&self) -> Option<usize> {
+        self.tabs.iter().position(|t| t.is_output)
+    }
+
+    /// 활성 탭이 Output인가.
+    pub(crate) fn output_active(&self) -> bool {
+        self.tabs.get(self.active).is_some_and(|t| t.is_output)
+    }
+
+    /// 활성 탭이 Output이면 그 버퍼(그리기·입력의 대상).
+    pub(crate) fn output_active_mut(&mut self) -> Option<&mut crate::output::OutputView> {
+        if self.output_active() {
+            self.output.as_mut()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn output_paint_popup(&self, dc: &mut dyn DrawCtx, th: &Theme) {
+        if self.output_active() {
+            if let Some(o) = self.output.as_ref() {
+                o.paint_popup(dc, th);
+            }
+        }
     }
 
     /// 닫기 상자 표시 규칙(설정 `editor.tab_close_show` · 편집기 탭과 같이 · 09-28).
@@ -487,6 +519,7 @@ mod tests {
             grid: Grid::default(),
             seq,
             child_of: None,
+            is_output: false,
         }
     }
 

@@ -1341,6 +1341,8 @@ impl App {
                     if self.tab_room() {
                         self.editors.new_tab(Some(title));
                         self.editors.cur_mut().set_text(&text);
+                        // 캐럿 = 1행 1열(파일 열기와 같이 · 사용자 09-30).
+                        self.editors.cur_mut().goto_line(1);
                         self.set_focus(Focus::Editor);
                     }
                     self.sync_modal();

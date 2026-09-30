@@ -1039,6 +1039,20 @@ impl App {
 
     /// 이 연결로 새 탭(탐색기 루트 메뉴): 새 탭을 만들고 이 서버의 공유 세션에 묶는다(없으면 그냥 새 탭).
     pub(crate) fn new_tab_on(&mut self, spec: &ConnectSpec) {
+        if !self.tab_room() {
+            return;
+        }
+        self.editors.new_tab(None);
+        self.set_focus(Focus::Editor);
+        let tab = self.editors.active_id();
+        self.bind_tab_to_server(tab, spec);
+        self.sync_sess();
+        self.sync_sess_ui();
+        self.redraw();
+    }
+
+    /// ★ 탭을 이 서버의 세션에 묶는다(공유 연결 → 전용 세션만 있으면 같은 스펙으로 전용 하나 · 둘 다 없으면 그대로 · 09-30 부품화).
+    pub(crate) fn bind_tab_to_server(&mut self, tab: u64, spec: &ConnectSpec) {
         let shared = self
             .all_sess()
             .find(|s| {
@@ -1060,12 +1074,6 @@ impl App {
         } else {
             None
         };
-        if !self.tab_room() {
-            return;
-        }
-        self.editors.new_tab(None);
-        self.set_focus(Focus::Editor);
-        let tab = self.editors.active_id();
         if let Some(sid) = shared {
             self.tab_bind.insert(tab, sid);
         } else if let Some(pspec) = private_spec {
@@ -1073,9 +1081,6 @@ impl App {
                 self.with_sess(id, |a| a.connect_quietly(pspec, false));
             }
         }
-        self.sync_sess();
-        self.sync_sess_ui();
-        self.redraw();
     }
 
     /// 지금 탭의 연결 해제(전용 = 그 세션 · 공유 = 그 공유 연결 전체).

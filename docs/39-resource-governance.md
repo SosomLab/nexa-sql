@@ -65,13 +65,15 @@
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
 | 결과 페치 행 수 | 200 | `grid.max_rows` | 200 | 200 | 100 | `Runner::with_max_rows` |
+| Oracle DBMS_OUTPUT 회수(실행마다 GET_LINES 1회 · 09-30 D-231) | 켬 | `output.serveroutput`(끄면 스크립트 `SET SERVEROUTPUT ON`일 때만) | 켬 | 켬 | 켬 | `Runner::connect` → `set_option("serveroutput")` |
+| Output 탭 보관 줄(편집기 탭마다) | 5000 | `output.max_lines` | 5000 | 5000 | 5000 | `OutputView::trim` |
 | 페치 배열 크기(왕복당 행) | 드라이버 기본 | `db.fetch_size`(신설 · HIDDEN) | 500 | 500 | 200 | 드라이버 어댑터 |
 | 문장 타임아웃 | 없음(드라이버 무한) | `db.statement_timeout`(신설 · 초 · 0 = 없음 ·✅ 09-29 T-249 구현·재등록) | 0 | 0 | 60 | 워커 `Cmd::Run` · 드라이버 cancel 포트 |
 | 접속 시 추가 왕복(Oracle SID) | 1 | `oracle.live.source`(none이면 생략) | — | — | none | 워커 `ConnectSpec` |
 | 실행 중 라이브 로그 폴링(Oracle) | `oracle.live.interval_ms` · 실행 중만 | `oracle.live.interval_ms` | 1000 | 2000 | 끔 | `live_tick` |
 | 탐색기 메타 세션(접속마다 세션 1) | 1 | `explorer.visible`(숨김 = 세션 안 엶 · 신설 규칙) | 켬 | 켬 | 숨김 | `Explorer::connect` |
 | 탐색기 메타 세션 **서버당 1**(DR-34 · 52 §2-2 · 그 서버에 붙은 세션 ≥1이면 유지 · 0이면 접속만 닫고 트리 유지) | 서버 수 · 유휴 회수 | `session.idle_secs`(메타 세션 유휴 닫기 · 다음 요청 때 재개) · `explorer.visible` | — | — | — | `ExplorerSet::sync_refs` · `suspend_if_idle` |
-| 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout` | — | — | — | `worker::ensure_alive` |
+| 동작 직전 생존 판정(SYN 1 · 53) | 마지막 성공 뒤 60s | `probe.stale_secs`(0 = 신호등 조건만) · `probe.timeout_ms` | — | — | — | `worker::ensure_alive` |
 | TCP keepalive 빈 세그먼트(PG·MSSQL · 53) | 60s | `net.keepalive_secs`(0 = 끔) | — | — | — | 드라이버 `set_keepalive_secs` |
 | 메모리 회수(힙 → OS · 보이지 않는 탭의 그리기 캐시 해제 · 59 §2) | 큰 것을 놓은 1초 뒤 1회 + 유휴 300s(수 ms · UI 스레드) | `mem.trim_on_release` · `mem.trim_secs`(0 = 끔) · `mem.release_results_on_disconnect` | 300 | 300 | 300 | `App::mem_tick` · `memtrim.rs` |
 | 변수 표 보존 파일(`<설정 폴더>/vars/<경로 해시>.sql` · 실행이 그 탭의 변수를 바꿨을 때만 · 수백 바이트 · 63 V4) | 실행당 ≤ 1회 쓰기 · 파일 열 때 1회 읽기(≤ 4 MB) | `vars.persist`(off = 끔) · `vars.persist_days` | on | on | on | `varsfile.rs` |
@@ -106,9 +108,9 @@
 |---|---|---|---|---|---|---|
 | 객체 용량 질의(09-30) | 폴더 읽힐 때 1(스키마·종류당) | `explorer.sizes` | 켬 | 켬 | 끔(BOOST off) | `explorer.rs` `Req::Sizes` · `perf::BOOST` |
 | 신호등 주기 확인 | 60 s · 창 열림 · 시도한 프로필 | `probe.enabled` `probe.interval` | 켬 60 | 켬 120 | 끔 | `ProbePolicy` |
-| 실패 재확인 백오프 | 60 s × 2ⁿ · 5회 | `probe.retry_delay` `probe.max_retries` | — | — | — | `ProbeEntry` |
+| 실패 재확인 백오프 | 60 s × 2ⁿ · 5회 | `probe.retry_delay_ms` `probe.max_retries` | — | — | — | `ProbeEntry` |
 | 프로브 동시 스레드 | 16 | `probe.max_inflight` | 16 | 8 | 2 | `ProbeHub` |
-| 프로브 타임아웃 | `probe.timeout` | `probe.timeout` | — | — | — | `probe_once` |
+| 프로브 타임아웃 | `probe.timeout_ms` | `probe.timeout_ms` | — | — | — | `probe_once` |
 | ICMP(TCP 실패 뒤) | 1 | `probe.icmp`(신설 · HIDDEN) | 켬 | 켬 | 끔 | `probe::ping` |
 | 접속 테스트·접속 동시 | 4 · FIFO | `connect.max_concurrent` | 4 | 2 | 1 | `dispatch_attempts` |
 | DNS 재풀이 | 프로브마다 | `probe.dns_cache_secs`(신설 · HIDDEN ·✅ 09-29 T-249 구현·재등록) | 0 | 300 | 3600 | T-63 잔여 |

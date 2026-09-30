@@ -71,6 +71,10 @@
 권한이 없는 행위·설명·객체 접근이 허용되는 것처럼 보여서는 안 된다. 규칙 = [96 §6](96-object-links.md) `schema_visible`(현재 스키마 · PUBLIC · 자기 계정이 수집한 스키마).
 새 기능이 메타로 "있다/없다"를 답할 때는 이 규칙을 지난다.
 
+### 1-11. 시간 설정 단위 · 객체 소스 탭 · Output(사용자 09-30)
+
+기본값 10초 이하 = ms(`_ms`) · 초과 = 초 · 단위를 바꾸면 `RESCALED` 이주 + CLI 옛 단위 호환([94 §6-5](94-settings-key-naming-and-location.md)). **보수적 생성**(소스 열기·DDL = 결과가 달라질 수 있는 항목은 사전 정의 명시 · [100 §5](100-object-source-run-and-output-tab.md)). **버튼 연타 차단 기본**(`ui.click_guard_ms` · 연타 버튼만 `set_rapid`). 객체 소스 탭의 F5 = 한 단위 실행(`ObjectOrigin` · `Runner::run_whole`) · 사람이 읽는 메시지 = Output 탭([100](100-object-source-run-and-output-tab.md)).
+
 ## 2. 작업 규칙(OS 공통)
 
 ### 2-1. 사용자와의 약속
@@ -222,7 +226,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 > ★ **"성능 평가해줘"가 오면** — 도구를 고르기 전에 [71 성능 종합 점검 프로세스](71-performance-review-process.md)를 편다: 규정 대상 12차원 · 순서 A(인벤토리) → B(기동) → C(시나리오) → D(향상 모드 A/B) → E(누수) → F(벤치) → G(병목 추적) · 판정선 · 생략할 때는 **왜 생략했는지**를 보고에 적는다. 실행기 = Windows `scripts/win-perf-all.ps1` · Linux `scripts/linux-perf-all.sh`.
 
 
-- **기동 명령** `NSQL_STARTUP_CMD`(쉼표로 구분 · 3-OS 공통): `open:<경로>` · 명령 id(`edit.duplicate_line` · `file.save` · `view.log` …) · `@connected:<명령>`(첫 접속 뒤) · `@after:<ms>:<명령>`(시차) · `conn.edit:<프로필>` · `bigfile.open|readonly|head|run`(큰 파일 열기 선택) · `file.load_cancel`. 실행 인자로 프로필 이름(`Local`)을 주면 그 프로필로 접속한다.
+- **기동 명령** `NSQL_STARTUP_CMD`(쉼표로 구분 · 3-OS 공통): `open:<경로>` · 명령 id(`edit.duplicate_line` · `file.save` · `view.log` …) · `@connected:<명령>`(첫 접속 뒤) · `@after:<ms>:<명령>`(시차) · `explorer.filter:<글>`/`explorer.expand<row>`/`explorer.menu:<row>`/`explorer.pick:<id>`/`explorer.dump:<파일>` · `sqlprev.dump:` · `editor.dump:<파일>`(활성 탭 제목·종류·본문) · `output.dump:<파일>`(Output 탭) · `conn.edit:<프로필>` · `bigfile.open|readonly|head|run`(큰 파일 열기 선택) · `file.load_cancel`. 실행 인자로 프로필 이름(`Local`)을 주면 그 프로필로 접속한다.
 - **앱 안 마우스 사건**(09-21): `ui.move:x/y` · `ui.click:x/y` · `ui.rclick:x/y`(창 좌표 · 장치 픽셀 · 쉼표는 명령 구분자라 `/`) — OS 입력 주입이 아니라 앱이 스스로 `InputEvent`를 만들어 **실제 라우팅 경로(`route`)** 에 넣는다. 컨트롤을 직접 부르는 캡처 명령(`explorer.menu` …)은 라우팅 결함을 못 본다(탐색기 우클릭이 첫 커밋부터 닿지 않던 것을 이것으로 찾았다). Debug 첫 기동은 수 초 — `@after:`는 기동 뒤 기준이니 캡처 대기를 12초 이상.
 - 환경 변수: `NSQL_NO_ACTIVATE=1`(★ 자체 시험 인스턴스는 **반드시** — 창을 활성화하지 않고 띄운다 · 09-21에 캡처용 창이 전경을 가져가 사용자가 치던 글자를 받았다) · `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
 - 벤치(nexa-ui): `cargo run --release -p nexa-ctl --example bench_editor <줄 수> <기능>`(`hl,ln,base,mm,occ,br` 또는 `all` · `BENCH_ASCII=1` · `BENCH_PREPARED=1`) · `--example bench_undo`.

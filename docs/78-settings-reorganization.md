@@ -26,7 +26,7 @@
 
 - **한 카테고리에 다른 일이 섞임**: Session에 실행 카드(`run.toast*`)·트랜잭션 보호(`tx.*`)·변수(`vars.*`)·페치(`db.*`)·스크립트(`script.strict`) — 다섯 가지 일. Files에 대화상자·큰 파일·외부 변경·파일 검색·OS 아이콘. Appearance에 글꼴·글자 래스터·색·토스트·툴바·애니메이션·클립보드. Performance에 되돌리기 예산 5개(편집기와 떨어짐)·메모리 회수·글리프 캐시. Window에 상태줄 git. Log에 데모 키 2개.
 - **선/후행이 뒤집힌 곳**: `editor.rulers`(값)가 `editor.rulers_show`(마스터) 앞 · `file.large_ask_mb`가 L1/L2 뒤 · `grid.result_tabbar_single`(종속)이 `result_tabs_max` 앞 · `intel.delay_ms`가 `auto_activation` 바로 아래지만 `trigger_chars`·`min_chars`는 "활성" 절과 떨어짐 · `bookmark.*` 종속 키 15개가 마스터와 다른 카테고리(Display·Anchor)에.
-- **종속이 빠진 마스터**(잠금 없음 · 값을 바꿔도 뜻이 없음): `intel.enabled`(하위 22) · `intel.auto_activation`(delay·trigger·min) · `project.autosave`(secs·backup_days) · `file.external_change`(poll·merge_max·settle·backup_keep) · `grid.result_tabs`(max·per_statement·evict) · `editor.undo_persist`(mb·days) · `editor.highlight_selection`(occurrence_*) · `editor.whitespace_chars`(color·alpha) · `ext.rainbow_pairs.enabled`(4) · `search.history_max`(rows) · `session.idle_secs`(idle_shared) · `log.dev_mode`(dev_layers ✓ 있음) · `mem.trim_secs`·`mem.trim_on_release` · `probe.enabled`(dns_cache·icmp·stale) · `explorer.visible`(width) · `statusbar.git` ✓ · `ui.toast_secs`(progress·alpha ✓ 일부).
+- **종속이 빠진 마스터**(잠금 없음 · 값을 바꿔도 뜻이 없음): `intel.enabled`(하위 22) · `intel.auto_activation`(delay·trigger·min) · `project.autosave`(secs·backup_days) · `file.external_change`(poll·merge_max·settle·backup_keep) · `grid.result_tabs`(max·per_statement·evict) · `editor.undo_persist`(mb·days) · `editor.highlight_selection`(occurrence_*) · `editor.whitespace_chars`(color·alpha) · `ext.rainbow_pairs.enabled`(4) · `search.history_max`(rows) · `session.idle_secs`(idle_shared) · `log.dev_mode`(dev_layers ✓ 있음) · `mem.trim_secs`·`mem.trim_on_release` · `probe.enabled`(dns_cache·icmp·stale) · `explorer.visible`(width) · `statusbar.git` ✓ · `ui.toast_ms`(progress·alpha ✓ 일부).
 - **강제값이 필요한데 없는 곳**: `intel.enabled=off` → 자동 활성·시그니처·아웃라인 강제 off(지금은 각 기능이 따로 검사) · `file.external_change=off` → merge off · `session.autocommit=on` → `tx.smart_commit` 뜻 없음 · `grid.result_tabs=off` → `result_per_statement` off · `bookmark.enabled=off` → 표시 4 off · `perf.mode=low` → (PERF 프리셋이 이미 함).
 
 ## 3. 새 트리(그룹 → 카테고리 → 절) — 안
@@ -35,7 +35,7 @@
 
 ### 3-1. 일반(General)
 - **모양(Appearance)** — 언어 `ui.lang` · UI 글꼴 `ui.font_face`·`ui.menu_font_size` · 글자 래스터 절: `ui.text_gdi` ▸ `ui.text_hint` ▸ `ui.text_snap` · `ui.text_contrast`·`ui.text_weight` · 색 절: `ui.hover_color`·`ui.pressed_color`·`ui.color_recent`(HIDDEN) · 메뉴 절: `ui.menu_icons`·`ui.menu_max_width` · 툴바 `toolbar.layout`·`toolbar.hidden`(HIDDEN) · 탭 툴팁 `tabs.tooltip`
-- **알림·움직임(Feedback & Motion)** *(신설 · Appearance에서 분리)* — 토스트 절: `ui.toast_secs` ▸ `ui.toast_alpha` ▸ `ui.toast_progress` ▸▸ `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) · 실행 카드 절: `run.toast` ▸ `run.toast_hide_secs`·`run.toast_tick_ms`·`run.toast_follow`·`run.toast_max` *(Session에서 이동)* · 움직임 절: `ui.animations` ▸ `ui.fade_fast`·`ui.fade_slow`·`ui.fade_out_ms`·`ui.slide_ms`·`ui.hover_intent_ms` · `ui.max_fps` · 복사 확인 `ui.copy_feedback_ms` · 툴팁 `ui.tooltip_delay_ms`
+- **알림·움직임(Feedback & Motion)** *(신설 · Appearance에서 분리)* — 토스트 절: `ui.toast_ms` ▸ `ui.toast_alpha` ▸ `ui.toast_progress` ▸▸ `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) · 실행 카드 절: `run.toast` ▸ `run.toast_hide_ms`·`run.toast_tick_ms`·`run.toast_follow`·`run.toast_max` *(Session에서 이동)* · 움직임 절: `ui.animations` ▸ `ui.fade_fast`·`ui.fade_slow`·`ui.fade_out_ms`·`ui.slide_ms`·`ui.hover_intent_ms` · `ui.max_fps` · 복사 확인 `ui.copy_feedback_ms` · 툴팁 `ui.tooltip_delay_ms`
 - **입력(Input)** — `input.scroll_natural` · `ui.dblclick_ms` · `ui.ime_hint` · `ui.clipboard_probe` *(Appearance에서 이동)*
 - **창(Window)** — `window.monitor` · `window.always_on_top` · 상태줄 절: `statusbar.git` ▸ `statusbar.git_secs` · (`window.*_size/pos` = HIDDEN 그대로)
 - **단축키(Keys)** — 그대로(65 · 키맵 화면 T-53) · 순서 = 메뉴 순(File → Edit → View → Run → Tabs → Bookmarks)
@@ -59,7 +59,7 @@
 
 ### 3-4. 접속·세션(Connections)
 - **접속(Connection)** — `connect.max_concurrent` · `connect.auto_reconnect` · `connect.reconnect_same` · `connect.remember_session_password` · 로그인 창 절: `conn.close_after_connect_ms`·`conn.delete_confirm_ms` · (`conn.window_*`·`conn.panel_w`·`conn.port_w`·`conn.button_scale_pct` = HIDDEN 후보)
-- **서버 상태(Server status)** *(신설)* — `probe.enabled` ▸ `probe.interval`·`probe.timeout`·`probe.max_retries`·`probe.retry_delay`·`probe.max_inflight`·`probe.stale_secs`·`probe.dns_cache_secs`·`probe.icmp` · `net.keepalive_secs`
+- **서버 상태(Server status)** *(신설)* — `probe.enabled` ▸ `probe.interval`·`probe.timeout_ms`·`probe.max_retries`·`probe.retry_delay_ms`·`probe.max_inflight`·`probe.stale_secs`·`probe.dns_cache_secs`·`probe.icmp` · `net.keepalive_secs`
 - **세션(Session)** — `session.autocommit` · `session.private_connect` · `session.max_shared`·`session.max_private` · 유휴 절: `session.idle_secs`(0 = 끔) ▸ `session.idle_shared` · `session.call_timeout_secs` · 페치 절: `db.fetch_size`·`db.fetch_all_size`·`db.cursor_idle_secs` *(Grid와 중복 등재 — 링크)*
 - **트랜잭션 보호(Transaction safety)** *(신설 · [56](56-manual-commit-lock-prevention.md))* — `tx.stale_min`·`tx.remind_min` · `tx.idle_limit_min` ▸ `tx.idle_countdown_secs` · `tx.smart_commit` · `tx.block_poll_secs`(0 = 끔) · 서버 절: `tx.server_idle_timeout_secs`·`tx.lock_wait_timeout_secs` · 운영 절: `run.prod_confirm` · `tx.prod_stale_min`·`tx.prod_idle_limit_min`
 - **스크립트·변수(Script & variables)** *(신설)* — `script.strict` · `run.cursor_autoshow` · `vars.signature_lookup` · 치환 절: `vars.brace_subst` ▸ `vars.env_subst` · `vars.intrinsic` · `vars.expand_at` · `vars.max_value_kb` · 보존 절: `vars.persist` ▸ `vars.persist_days`
@@ -69,7 +69,7 @@
 - **결과 셋(Result sets)** — 페치 절: `grid.max_rows` · `grid.auto_fetch` ▸ `grid.offset_warn` · `grid.memory_budget_mb` · 탭 절: `grid.result_tabs` ▸ `grid.result_tabbar_single`·`grid.result_tabs_max`·`grid.result_per_statement`·`grid.result_tab_evict` · `grid.result_tab_title` · 표시 절: `grid.font_face`·`grid.font_size`·`grid.row_height_pct`·`grid.row_numbers`·`grid.null_text` · `grid.row_focus` ▸ `grid.row_focus_color` · 열 폭 절: `grid.col_min_width` · `grid.col_max_mode` ▸ `grid.col_max_chars`(=manual)
 
 ### 3-6. 오브젝트 탐색기(Object explorer)
-- 표시 절: `explorer.visible` ▸ `explorer.width` · `explorer.icons` · `explorer.tooltip` ✅ 09-29 T-249 구현·재등록 · 타입어헤드 절: `explorer.typeahead` ▸ 4 · 갱신 절: `meta.refresh_on_ddl` ▸ `meta.refresh_on_commit` · `meta.refresh_on_missing` · `meta.refresh_secs`(0 = 끔) ▸ `meta.refresh_idle_secs` · `meta.refresh_highlight_ms` · `explorer.timeout` · `meta.cache_mb`
+- 표시 절: `explorer.visible` ▸ `explorer.width` · `explorer.icons` · `explorer.tooltip` ✅ 09-29 T-249 구현·재등록 · 타입어헤드 절: `explorer.typeahead` ▸ 4 · 갱신 절: `meta.refresh_on_ddl` ▸ `meta.refresh_on_commit` · `meta.refresh_on_missing` · `meta.refresh_secs`(0 = 끔) ▸ `meta.refresh_idle_ms` · `meta.refresh_highlight_ms` · `explorer.timeout` · `meta.cache_mb`
 
 ### 3-7. 로그·진단(Log & diagnostics)
 - 로그 창 절: `log.open_at_start` · `log.max_lines` · `log.newest_first`·`log.wrap`·`log.autoscroll`·`log.always_on_top`·`log.switch_scale` · `log.kinds`·`log.columns`(HIDDEN 후보) · 형식 절: `log.format` ▸ `log.template`(=template) · 파일 절: `log.file`(비어 있으면 끔) ▸ `log.file_format`·`log.file_max_kb` · 개발자 절: `log.dev_mode` ▸ `log.dev_layers` · 트랜잭션 로그 `txlog.max_entries` · (`dev.start_demo`·`demo.prompted` → HIDDEN)
@@ -105,9 +105,9 @@
 | `tx.idle_countdown_secs` | `tx.idle_limit_min` | Gt(0) |
 | `probe.dns_cache_secs` ✅ 09-29 T-249 구현·재등록·`probe.icmp`·`probe.stale_secs` | `probe.enabled` | On |
 | `explorer.width` | `explorer.visible` | On |
-| `meta.refresh_idle_secs` | `meta.refresh_secs` | Gt(0) |
+| `meta.refresh_idle_ms` | `meta.refresh_secs` | Gt(0) |
 | `file.probe_chevrons` | `file.os_icons` | On |
-| `ui.toast_progress`·`ui.toast_alpha` | `ui.toast_secs` | Gt(0) |
+| `ui.toast_progress`·`ui.toast_alpha` | `ui.toast_ms` | Gt(0) |
 
 새 조건 종류: `Gt(i64)`(정수 키 · "0 = 끔") · `Not(&str)`.
 

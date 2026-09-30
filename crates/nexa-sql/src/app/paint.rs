@@ -428,7 +428,16 @@ impl App {
                 self.grid.set_top_border(!bar);
                 self.grid.set_focused(self.focus == Focus::Grid);
                 if !view_mode {
-                    self.grid.paint(&mut dc, &th, s);
+                    // ★ Output 탭이 활성이면 그 자리에 Output(그리드·결과 도구줄은 그리지 않는다 · 09-30).
+                    let gb = self.grid.bounds;
+                    let focused = self.focus == Focus::Grid;
+                    if let Some(o) = self.panel.output_active_mut() {
+                        o.set_bounds(gb, s);
+                        o.set_focused(focused);
+                        o.paint(&mut dc, &th);
+                    } else {
+                        self.grid.paint(&mut dc, &th, s);
+                    }
                 }
             }
             mark(&mut t_sec, &mut marks); // 2 = 그리드
@@ -593,6 +602,7 @@ impl App {
                 }
                 self.editors.paint_popups(&mut dc, &th);
                 self.ext_view.paint_popup(&mut dc, &th);
+                self.panel.output_paint_popup(&mut dc, &th);
                 self.explorer.paint_popups(&mut dc, &th);
                 self.palette.paint(&mut dc, &th);
                 let eb = self.editors.editor_bounds();

@@ -406,7 +406,7 @@ impl App {
 
     /// 결과 탭 전체의 행 바이트 합이 예산(`grid.memory_budget_mb`)을 넘는가(D-72).
     /// 활성 패널의 결과 탭 `i`를 활성으로(그리드 맞바꾸기 · D-71 "그리기는 활성 탭만").
-    fn activate_result(&mut self, i: usize) {
+    pub(crate) fn activate_result(&mut self, i: usize) {
         if i >= self.panel.tabs.len() || i == self.panel.active {
             return;
         }
@@ -469,6 +469,7 @@ impl App {
             grid: fresh,
             seq: id,
             child_of: None,
+            is_output: false,
         };
         self.panel.push(tab);
         let max = self.cap(
@@ -537,6 +538,7 @@ impl App {
             grid: fresh,
             seq: id,
             child_of: Some((parent, ord)),
+            is_output: false,
         });
         if panel.tabs.len() > max && evict {
             // 방금 만든 탭·부모·활성 탭은 걷지 않는다.
@@ -761,7 +763,7 @@ impl App {
     }
 
     /// 결과 탭 닫기 = rows·커서 즉시 해제(D-72). 활성 탭이면 이웃을 활성으로 · 마지막 하나면 빈 탭으로 교체.
-    fn close_result_tab(&mut self, i: usize) {
+    pub(crate) fn close_result_tab(&mut self, i: usize) {
         if i >= self.panel.tabs.len() {
             return;
         }
@@ -783,6 +785,7 @@ impl App {
                     grid: fresh,
                     seq: id,
                     child_of: None,
+                    is_output: false,
                 });
                 self.panel.active = 0;
             }
@@ -914,6 +917,7 @@ impl App {
             vars: self.run_vars(),
             defines: self.run_defines(),
             intrinsic: Some(self.run_intrinsic()),
+            whole: false,
         });
         self.live_start();
         self.redraw();
@@ -1157,6 +1161,7 @@ impl App {
                         grid: fresh,
                         seq: id,
                         child_of: None,
+                        is_output: false,
                     },
                     enabled,
                     always,
@@ -1185,5 +1190,10 @@ impl App {
         let alive = self.editors.tab_ids();
         self.panels.retain(|id, _| alive.contains(id));
         self.tab_vars.retain(|id, _| alive.contains(id));
+        self.object_tabs.retain(|id, _| alive.contains(id));
+        if cur != self.output_last_editor {
+            self.output_last_editor = cur;
+            self.output_on_tab_switch();
+        }
     }
 }

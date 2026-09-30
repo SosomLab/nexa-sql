@@ -1714,6 +1714,27 @@ impl Runner {
         self.run_script_in(src, None, prompt, emit)
     }
 
+    /// ★ **소스 전체를 한 단위로**(09-30 · 사용자 "객체 소스 탭 F5 = CREATE 한 번"): 객체 소스 탭(소스 열기 · DDL 열기)의
+    /// F5는 본문을 문장으로 나누지 않고 **한 항목**으로 보낸다 — 분할기가 방언·머리 줄 모양 때문에 잘못 나눠 "줄 단위 실행"이
+    /// 되는 일이 없다. 분할이 정확히 1항목이면 그대로(오늘과 같은 길) · 아니면 [`whole_item`]로 합친다(끝의 `/`·`GO`·`;` 제거).
+    /// 컴파일 검사·`RunEvent::Message`(compiled)는 보통 길과 같다.
+    pub fn run_whole(
+        &mut self,
+        src: &str,
+        prompt: Prompter<'_>,
+        emit: &mut dyn FnMut(RunEvent),
+    ) -> usize {
+        let items = nsql_script::split_script_in(src, self.dialect());
+        let item = match items.as_slice() {
+            [one] => one.clone(),
+            _ => whole_item(src),
+        };
+        self.run_depth += 1;
+        let ok = self.run_item(0, &item, prompt, emit);
+        self.run_depth -= 1;
+        usize::from(!ok)
+    }
+
     /// 스크립트 전체 실행 — `script_path`가 있으면 그 폴더가 안쪽 `@@path`·`:r path`의 기준이 된다(`nsql run file.sql`).
     pub fn run_script_in(
         &mut self,
@@ -2713,7 +2734,18 @@ impl Runner {
             name_up.clone(),
         ));
         match nsql_catalog::compile_errors(session.as_mut(), &owner, &name_up) {
-            Ok(errs) if !errs.is_empty() => {
+            // ★ 오류 없음 = "compiled" 한 줄(Output 탭 · 09-30 · SQL*Plus "Procedure created."에 해당).
+            Ok(errs) if errs.is_empty() => {
+                emit(RunEvent::Message(tf(
+                    Msg::OutCompiledOk,
+                    &[
+                        &kind.code().to_ascii_uppercase(),
+                        &format!("{owner}.{name_up}"),
+                    ],
+                )));
+                true
+            }
+            Ok(errs) => {
                 let mut msg = format!(
                     "Warning: {} {owner}.{name_up} created with compilation errors",
                     kind.code().to_ascii_uppercase()
@@ -3010,6 +3042,39 @@ fn msg_err(m: impl Into<String>) -> DbError {
     }
 }
 
+/// ★ 본문 전체를 **한 항목**으로(09-30 · [`Runner::run_whole`]): 끝의 종결 줄(`/` · `GO`)과 마지막 `;`(PL/SQL 블록은 `END;`의
+/// `;`를 남긴다 · 블록이 아니면 뗀다)을 정리하고 종류는 첫 단어로 판정한다. 순수 함수 — 시험 대상.
+#[must_use]
+pub fn whole_item(src: &str) -> Item {
+    let mut text = src.trim_end().to_string();
+    // 종결 줄(`/` · `GO`)은 여러 개라도 전부(빈 줄 사이에 있어도).
+    loop {
+        let t = text.trim_end();
+        let Some((head, last)) = t.rsplit_once('\n') else {
+            break;
+        };
+        let l = last.trim();
+        if l == "/" || l.eq_ignore_ascii_case("GO") {
+            text = head.to_string();
+        } else {
+            break;
+        }
+    }
+    let mut text = text.trim().to_string();
+    let kind = nsql_script::classify_sql(&text);
+    if !matches!(kind, SqlKind::Block) {
+        if let Some(t) = text.strip_suffix(';') {
+            text = t.trim_end().to_string();
+        }
+    }
+    Item {
+        kind: ItemKind::Sql(kind),
+        text,
+        span: 0..src.len(),
+        line: 1,
+    }
+}
+
 /// `PRINT` 한 줄 문구 `A = 1 · B = 'x'` — 비밀 이름(D-140)은 `******`. GUI 로그·CLI 공용.
 pub fn print_pairs_text(pairs: &[(String, Value)]) -> String {
     pairs
@@ -3068,6 +3133,30 @@ fn summary(item: &Item) -> String {
 mod tests {
     use super::*;
     use nsql_driver_sqlite::SqliteSession;
+
+    /// ★ 객체 단위 실행(09-30): 종결 줄 제거 · 블록은 `END;` 유지 · DDL/뷰는 끝 `;` 제거 · `GO`(T-SQL) · 여러 종결 줄.
+    #[test]
+    fn whole_item_strips_terminators_and_keeps_block() {
+        let src = "CREATE OR REPLACE PROCEDURE p AS\nBEGIN\n  NULL;\nEND p;\n/\n";
+        let it = whole_item(src);
+        assert!(matches!(it.kind, ItemKind::Sql(SqlKind::Block)));
+        assert_eq!(
+            it.text,
+            "CREATE OR REPLACE PROCEDURE p AS\nBEGIN\n  NULL;\nEND p;"
+        );
+        assert_eq!(it.line, 1);
+        let v = whole_item("CREATE OR REPLACE VIEW v AS\nSELECT 1 FROM dual;\n");
+        assert!(matches!(v.kind, ItemKind::Sql(SqlKind::Ddl)));
+        assert_eq!(v.text, "CREATE OR REPLACE VIEW v AS\nSELECT 1 FROM dual");
+        let g =
+            whole_item("CREATE OR ALTER PROCEDURE dbo.p AS\nBEGIN\n  SELECT 1;\nEND\nGO\n\nGO\n");
+        assert!(matches!(g.kind, ItemKind::Sql(SqlKind::Block)));
+        assert!(g.text.ends_with("END"), "{}", g.text);
+        // 패키지 스펙+본문처럼 `/`가 가운데 있으면 그대로(합치지 않는 게 아니라 호출자가 분할 1항목일 때만 이 길을 탄다).
+        let two =
+            "CREATE OR REPLACE PACKAGE a AS END;\n/\nCREATE OR REPLACE PACKAGE BODY a AS END;\n/\n";
+        assert!(whole_item(two).text.contains("\n/\n"));
+    }
 
     fn runner() -> Runner {
         let opener: Opener = Box::new(|spec: &ConnectSpec| {

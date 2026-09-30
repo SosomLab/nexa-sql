@@ -474,6 +474,11 @@ impl ConnectPanel {
         dirty_fields(&self.snap, &self.snapshot())
     }
 
+    /// 지금 상태(접속 전 저장 선수행의 실패 판정).
+    pub(crate) fn state(&self) -> &ConnState {
+        &self.state
+    }
+
     pub(crate) fn is_dirty(&self) -> bool {
         !self.dirty().is_empty()
     }

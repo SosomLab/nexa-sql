@@ -200,6 +200,8 @@ pub(crate) struct ExplorerSet {
     /// 세션이 0이 된 연결을 오프라인 행으로 남길 것인가(끔 = 트리에서 뺀다 · 사용자 09-25).
     keep_offline: bool,
     gen_opts: nsql_catalog::GenOpts,
+    /// 소스 열기 스키마 한정(09-30).
+    source_qualify: bool,
     schema_opts: nsql_catalog::SchemaOpts,
     /// ★ 검색 인덱스 설정(84 §5 · 새 칸에도 준다).
     index_cfg: crate::explorer::IndexCfg,
@@ -245,6 +247,7 @@ impl ExplorerSet {
             disconnect_pick: DiscPick::Always,
             keep_offline: false,
             gen_opts: nsql_catalog::GenOpts::default(),
+            source_qualify: true,
             schema_opts: nsql_catalog::SchemaOpts::default(),
             index_cfg: crate::explorer::IndexCfg::default(),
             share_catalog: false,
@@ -268,6 +271,7 @@ impl ExplorerSet {
         ex.set_routines(self.routines);
         ex.set_highlight_ms(self.highlight_ms);
         ex.set_gen_opts(self.gen_opts);
+        ex.set_source_qualify(self.source_qualify);
         ex.set_schema_opts(self.schema_opts);
         ex.set_index_cfg(self.index_cfg);
         // ★ 검색어가 있는 채로 서버가 추가되면 새 칸도 바로 검색 모드(사용자 09-25) — 스키마 목록이 오는 즉시 인덱스·부분 노드로 이어진다.
@@ -444,6 +448,13 @@ impl ExplorerSet {
 
     pub(crate) fn set_keep_offline(&mut self, on: bool) {
         self.keep_offline = on;
+    }
+
+    pub(crate) fn set_source_qualify(&mut self, on: bool) {
+        self.source_qualify = on;
+        for p in &mut self.panes {
+            p.ex.set_source_qualify(on);
+        }
     }
 
     pub(crate) fn set_gen_opts(&mut self, opts: nsql_catalog::GenOpts) {
@@ -1232,6 +1243,19 @@ impl ExplorerSet {
                             spec,
                             r,
                             server: p.key.clone(),
+                        });
+                    }
+                    // 소스 열기 탭의 출처에 이 카탈로그의 서버를 채운다(09-30).
+                    ExplorerAction::OpenSql {
+                        title,
+                        text,
+                        origin: Some(mut o),
+                    } => {
+                        o.server = p.key.clone();
+                        out.push(ExplorerAction::OpenSql {
+                            title,
+                            text,
+                            origin: Some(o),
                         });
                     }
                     ExplorerAction::Import { owner, .. } => {

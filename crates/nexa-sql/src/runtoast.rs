@@ -10,7 +10,7 @@
 //! 내림차순. 새 실행이 시작되거나 어떤 카드가 끝나면 그 카드가 맨 위로 온다(예: `3 실행 / 2 실행 / 1 실행`에서 2가 끝나면
 //! `2 완료 / 3 실행 / 1 실행` → 2가 숨겨지면 `3 실행 / 1 실행`). 편집기 본문 **아래에 고정되어 위로 자라고**(오래된 것이 바닥) 넘치면 **휠로 픽셀 스크롤**.
 //! `run.toast_follow`(기본 켬) = 새 카드가 오면 스크롤을 무시하고 맨 위로(끄면 사용자가 옮긴 자리 유지) · `run.toast_max` = 카드 상한
-//! (넘치면 가장 오래된 끝난 카드부터 버림 · 향상 모드는 더 작게). 끝난 카드는 각자 `run.toast_hide_secs` 뒤 사라진다(0 = 클릭으로 닫기).
+//! (넘치면 가장 오래된 끝난 카드부터 버림 · 향상 모드는 더 작게). 끝난 카드는 각자 `run.toast_hide_ms` 뒤 사라진다(0 = 클릭으로 닫기).
 //!
 //! 왼쪽 색 막대 = 상태(진행 accent · 완료 ok · 오류 danger · 중지 warn). 남은 시간 표시(사용자 09-22 · `ui.toast_progress`)는
 //! 일반 토스트와 같은 규칙 = [`crate::toast::life_alpha`] · [`crate::toast::bar_remaining`] — 막대가 남은 시간만큼 진하고 지나간
@@ -156,10 +156,10 @@ impl RunToast {
         }
     }
 
-    /// 설정 `run.toast` · `run.toast_hide_secs`(0 = 수동 닫기) · `ui.toast_alpha`.
-    pub(crate) fn configure(&mut self, enabled: bool, hide_secs: i64, alpha_pct: i64) {
+    /// 설정 `run.toast` · `run.toast_hide_ms`(0 = 수동 닫기 · 09-30 ms 단위) · `ui.toast_alpha`.
+    pub(crate) fn configure(&mut self, enabled: bool, hide_ms: i64, alpha_pct: i64) {
         self.enabled = enabled;
-        self.hide_after = Duration::from_secs(hide_secs.clamp(0, 600) as u64);
+        self.hide_after = Duration::from_millis(hide_ms.clamp(0, 600_000) as u64);
         self.alpha = (alpha_pct.clamp(30, 100) as f32) / 100.0;
         if !enabled {
             self.runs.clear();
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn copy_button_returns_sql_and_keeps_card() {
         let mut rt = RunToast::new();
-        rt.configure(true, 2, 90);
+        rt.configure(true, 2000, 90);
         let c = rt
             .start("SELECT 1;\nSELECT 2;", "t".into(), 2)
             .expect("card");
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn lifecycle_speed_and_hide() {
         let mut rt = RunToast::new();
-        rt.configure(true, 2, 90);
+        rt.configure(true, 2000, 90);
         let c = rt.start("SELECT *\n\tFROM t", "2026-09-17 10:00:00.000".into(), 1);
         assert_eq!(c, Some(1));
         assert!(rt.is_running());
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn stack_order_rules() {
         let mut rt = RunToast::new();
-        rt.configure(true, 3, 90);
+        rt.configure(true, 3000, 90);
         let c1 = rt.start("q1", "s".into(), 1); // id 1
         let c2 = rt.start("q2", "s".into(), 1); // id 2
         let c3 = rt.start("q3", "s".into(), 1); // id 3
@@ -887,7 +887,8 @@ mod tests {
     #[test]
     fn hide_progress_and_tick_cadence() {
         let mut rt = RunToast::new();
-        rt.configure(true, 4, 90);
+        // 숨김 시간 = 4초(09-30 ms 단위 → 4000).
+        rt.configure(true, 4000, 90);
         rt.configure_tick(30);
         let c = rt.start("x", "s".into(), 1);
         assert_eq!(
