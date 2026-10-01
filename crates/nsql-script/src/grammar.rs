@@ -236,6 +236,7 @@ const BUILTIN: &[(&str, &str)] = &[
     ("mssql", include_str!("../grammar/mssql.sqlg")),
     ("postgres", include_str!("../grammar/postgres.sqlg")),
     ("sqlite", include_str!("../grammar/sqlite.sqlg")),
+    ("mysql", include_str!("../grammar/mysql.sqlg")),
 ];
 
 struct Registry {

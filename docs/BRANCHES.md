@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/intel-want-contexts | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 자동완성 빈 곳 1차 — `CtxKind::Want`(USE DB · 스키마 · 루틴 · 종류) · `JOIN ON` 컬럼 · 별칭 보강(ALTER TABLE · MERGE USING · CREATE INDEX ON · OUTPUT INSERTED) · `mysql.sqlg` · `sp_*` · [82 §7](82-grammar-driven-completion.md) |
 | feat/mssql-ssms-explorer | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ T-270 SQL Server 탐색기 SSMS 골격([101](101-mssql-ssms-explorer-databases-layer.md) · Databases 층 · 현재 DB `USE` 추종 · 서버 헤더 버전·로그인 · 메타 세션 `USE` 전환 · `ObjectKind` +4 · `win-mssql-explorer-e2e.sh` 14) |
 | fix/prod-leave-confirm-form-db | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 운영 → 다른 유형 = 2단 확인(편집기 `CONNTYPE` · 팔레트·메뉴 `env_change_needs_confirm`) · 로그인 폼 SQL Server·MySQL Database 칸 = 기본 스키마 자리(`db_in_last_row`) · MSSQL `USE`/기본 DB 조사 · `conn-cmd-e2e.sh` 38 |
 | fix/run-needed-before-prod-confirm | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 실행 통제 순서 = 실행 필요 → 서버/클라이언트 → 운영 확인(같은 `CONNTYPE` = 무실행 "변경 없음" · 클라이언트 명령은 운영 2단 확인 제외 · [61 §1-12](61-core-design-and-working-rules.md) · `conn-cmd-e2e.sh` 33) |

@@ -645,6 +645,42 @@ pub fn signature(d: Option<Dialect>, name: &str) -> Option<&'static str> {
         .map(|b| b.sig)
 }
 
+/// ★ SQL Server 시스템 프로시저(자주 쓰는 것 · 10-01 ⑩ · `EXEC |` 자리) — 이름만(인자 안내는 2차).
+pub const MSSQL_SYSTEM_PROCS: &[&str] = &[
+    "sp_help",
+    "sp_helptext",
+    "sp_helpindex",
+    "sp_helpdb",
+    "sp_helpconstraint",
+    "sp_columns",
+    "sp_tables",
+    "sp_depends",
+    "sp_who",
+    "sp_who2",
+    "sp_lock",
+    "sp_spaceused",
+    "sp_rename",
+    "sp_recompile",
+    "sp_executesql",
+    "sp_configure",
+    "sp_addlinkedserver",
+    "sp_addlinkedsrvlogin",
+    "sp_serveroption",
+    "sp_dropserver",
+    "sp_catalogs",
+    "sp_tables_ex",
+    "sp_columns_ex",
+    "sp_linkedservers",
+    "sp_testlinkedserver",
+    "sp_monitor",
+    "sp_updatestats",
+    "sp_msforeachtable",
+    "sp_addextendedproperty",
+    "sp_updateextendedproperty",
+    "sp_dropextendedproperty",
+    "xp_cmdshell",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

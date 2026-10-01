@@ -85,3 +85,20 @@
 ## 아직 없는 것(예정 · T-178 후속)
 
 JOIN 조건 완성(FK 대상 정보가 메타에 들어온 뒤) · hover 카드(객체 정보 · T-179) · Ctrl+클릭 바로가기(T-180) · 후보 계산 워커(예산 초과가 실측되면) · 시그니처 도움을 상태줄 대신 캐럿 옆 카드로.
+
+## 종류 자리 완성(10-01)
+
+다음 자리에서는 키워드 대신 **그 종류의 객체만** 나옵니다.
+
+| 입력 | 나오는 것 |
+|---|---|
+| `USE ` (SQL Server) | 서버의 데이터베이스 목록 · MySQL은 스키마(=DB) |
+| `ALTER SESSION SET CURRENT_SCHEMA = ` (Oracle) · `SET search_path TO ` (PostgreSQL) | 스키마 |
+| `EXEC ` · `EXECUTE ` · `CALL ` | 현재 스키마의 프로시저·함수(Oracle은 패키지도) + 스키마 · SQL Server는 `sp_help` 같은 시스템 프로시저 |
+| `DROP VIEW ` · `DROP PROCEDURE IF EXISTS ` · `ALTER SEQUENCE ` 등 | 그 종류의 객체(`DROP TABLE`은 종전처럼 테이블) |
+
+- `JOIN t ON ` 뒤에는 이제 테이블이 아니라 **컬럼**이 나옵니다(`GRANT … ON` · `CREATE INDEX … ON` · `COMMENT ON`만 객체).
+- `ALTER TABLE t ` 뒤 · `MERGE … USING src s ON ` 뒤 · `CREATE INDEX ix ON t(` 안에서 그 테이블의 컬럼이 나옵니다.
+- SQL Server 변경 문장의 `OUTPUT INSERTED.` · `DELETED.` 뒤에는 대상 테이블의 컬럼이 나옵니다.
+- MySQL에 문법 파일이 생겨 `USE` · `SHOW TABLES` · `LIMIT` · `ON DUPLICATE KEY UPDATE` 같은 키워드가 제자리에 나옵니다.
+

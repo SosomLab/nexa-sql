@@ -731,6 +731,10 @@ impl Intel {
                     }
                 }
             }
+            // ★ 특정 종류만(10-01 ⑩): 키워드·문서 낱말 없이 메타의 그 종류 + 스키마.
+            CtxKind::Want(w) => {
+                self.want_cands(*w, meta, dialect, show_types, &mut cands);
+            }
             CtxKind::Relation => {
                 if let Some(m) = meta {
                     if let Some(cur) = m.snap.current_schema {
@@ -1468,6 +1472,115 @@ impl Intel {
     }
 
     /// (스키마, 종류) 버킷 상태를 이번 요청에 반영: 없으면 채움 요청 + "불러오는 중" · 읽는 중이면 "불러오는 중"만.
+    /// ★ `CtxKind::Want` 후보(10-01 ⑩): 데이터베이스(`""` 버킷 · Database) · 스키마 · 루틴(현재 스키마 프로시저·함수·패키지 + 스키마 +
+    /// SQL Server `sp_*`) · 한 종류(현재 스키마 + 스키마). 버킷이 없으면 호스트에 채움을 청하고 "불러오는 중".
+    fn want_cands(
+        &mut self,
+        w: intel::Want,
+        meta: Option<&MetaView<'_>>,
+        dialect: Option<Dialect>,
+        show_types: bool,
+        cands: &mut Vec<Cand>,
+    ) {
+        let Some(m) = meta else { return };
+        let schema_cand = |m: &MetaView<'_>, s: Sym| Cand {
+            text: m.names.get(s).to_string(),
+            kind: CandKind::Schema,
+            detail: if show_types {
+                "schema".into()
+            } else {
+                String::new()
+            },
+            source: 4,
+            tag: 0,
+            mark: String::new(),
+            order: 1,
+            qualifier: String::new(),
+            layer: 0,
+        };
+        let mut kinds: Vec<ObjectKind> = Vec::new();
+        let mut with_schemas = false;
+        let mut databases = false;
+        match w {
+            intel::Want::Database => {
+                if dialect == Some(Dialect::Mysql) {
+                    with_schemas = true;
+                } else {
+                    databases = true;
+                }
+            }
+            intel::Want::Schema => with_schemas = true,
+            intel::Want::Routine => {
+                kinds.extend([
+                    ObjectKind::Procedure,
+                    ObjectKind::Function,
+                    ObjectKind::Package,
+                ]);
+                with_schemas = true;
+                if dialect == Some(Dialect::Mssql) {
+                    for (i, p) in nsql_script::builtins::MSSQL_SYSTEM_PROCS.iter().enumerate() {
+                        cands.push(Cand {
+                            text: (*p).to_string(),
+                            kind: CandKind::Routine,
+                            detail: if show_types {
+                                "system procedure".into()
+                            } else {
+                                String::new()
+                            },
+                            source: 5,
+                            tag: 0,
+                            mark: String::new(),
+                            order: 10 + i as u32,
+                            qualifier: String::new(),
+                            layer: 3,
+                        });
+                    }
+                }
+            }
+            intel::Want::Kind(code) => match ObjectKind::parse(code) {
+                Some(ObjectKind::Database) => databases = true,
+                Some(k) => {
+                    kinds.push(k);
+                    with_schemas = true;
+                }
+                None => {}
+            },
+        }
+        if databases {
+            match m.names.find("") {
+                Some(empty) => {
+                    self.note_coverage(m, empty, ObjectKind::Database);
+                    for h in m
+                        .snap
+                        .prefix(m.names, empty, ObjectKind::Database, "", usize::MAX)
+                    {
+                        cands.push(obj_cand(m, &h, ObjectKind::Database, dialect, show_types));
+                    }
+                }
+                None => {
+                    self.loading_objects = true;
+                    push_need(&mut self.need_objects, "");
+                }
+            }
+        }
+        if let Some(cur) = m.snap.current_schema {
+            for kind in kinds {
+                if dialect.is_some_and(|d| !nsql_catalog::kinds_for(d).contains(&kind)) {
+                    continue;
+                }
+                self.note_coverage(m, cur, kind);
+                for h in m.snap.prefix(m.names, cur, kind, "", usize::MAX) {
+                    cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                }
+            }
+        }
+        if with_schemas {
+            for s in &m.snap.schemas {
+                cands.push(schema_cand(m, *s));
+            }
+        }
+    }
+
     fn note_coverage(&mut self, m: &MetaView<'_>, schema: Sym, kind: ObjectKind) {
         match m.snap.coverage(schema, kind) {
             Coverage::Loading => self.loading_objects = true,
@@ -1767,7 +1880,7 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
         CandKind::Sequence => IconKind::Sequence,
         CandKind::Package => IconKind::Package,
         CandKind::Routine | CandKind::Function => IconKind::Function,
-        CandKind::Schema => IconKind::Schema,
+        CandKind::Schema | CandKind::Database => IconKind::Schema,
         _ => return None,
     })
 }
@@ -1916,6 +2029,7 @@ fn cand_kind(k: ObjectKind) -> CandKind {
         ObjectKind::Sequence => CandKind::Sequence,
         ObjectKind::Package => CandKind::Package,
         ObjectKind::Procedure | ObjectKind::Function => CandKind::Routine,
+        ObjectKind::Database => CandKind::Database,
         _ => CandKind::Symbol,
     }
 }

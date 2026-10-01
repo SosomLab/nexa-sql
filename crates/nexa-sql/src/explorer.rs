@@ -2962,6 +2962,25 @@ impl Explorer {
                 .find(sc)
                 .map_or(nsql_run::meta::Coverage::Missing, |s| snap.coverage(s, k))
         }
+        // ★ 빈 스키마 = 데이터베이스 버킷(10-01 ⑩ · `USE |` 완성 · SQL Server `sys.databases` · 그 밖 방언은 없음).
+        if schema.is_empty() {
+            if d == Dialect::Mssql
+                && matches!(
+                    cov(&self.meta.names, &snap, schema, ObjectKind::Database),
+                    nsql_run::meta::Coverage::Missing | nsql_run::meta::Coverage::Stale { .. }
+                )
+            {
+                self.meta.mark_loading(schema, ObjectKind::Database);
+                self.last_used = Instant::now();
+                self.suspended = false;
+                let _ = self.tx_bg.send(Req::ObjectsMeta {
+                    gen: self.gen,
+                    schema: String::new(),
+                    kind: ObjectKind::Database,
+                });
+            }
+            return;
+        }
         if schema == nsql_catalog::DICT_SCHEMA {
             if !matches!(
                 cov(&self.meta.names, &snap, schema, ObjectKind::View),

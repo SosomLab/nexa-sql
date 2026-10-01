@@ -46,3 +46,9 @@ same = JOIN                 # 별칭
 
 ## 6. 남은 것(T-200 후속)
 - `objects`로 컬럼/테이블/함수 후보 켜고 끄기(지금은 예약어만 절 기반) · 절 안 위치(예: `SELECT` 뒤 첫 항목 = `DISTINCT`/`TOP`만) · `CASE … END` 같은 식 내부 상태 · MySQL 파일 · 방언 문서(공식 문법 다이어그램)와의 대조표.
+
+## 7. 10-01 보완 — `CtxKind::Want`(종류 자리) · `ON`/`USING` 문장별 · MySQL 문법([journal §16](journal/2026-09-30.md))
+- 문법 `objects =`는 여전히 읽지 않는다(§6). 대신 nsql-script `want_at`가 **종류 자리**를 판정한다: `USE |` · `ALTER SESSION SET CURRENT_SCHEMA = |` · `SET search_path TO |` · `EXEC|CALL |` · `DROP|ALTER <종류> |`. 호스트 `want_cands`가 그 종류만 낸다(키워드 없음).
+- `ON`·`USING`은 `RELATION_AFTER`에서 빼고 문장별로(`relation_after_special`) — `JOIN … ON |`은 식 자리(별칭 컬럼). `mysql.sqlg` 신설 · `MYSQL_KEYWORDS`.
+- 다음(T-274): `objects =`를 `Want`로 소비(문법에서 `[clause USE] objects = database`처럼 선언) — 지금은 코드 표(`WANT_KINDS`).
+

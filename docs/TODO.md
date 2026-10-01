@@ -245,6 +245,7 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-270 SQL Server 탐색기 SSMS 골격 1차**(10-01 · [101](101-mssql-ssms-explorer-databases-layer.md)) | P1 | 대 | ✅ Databases 층 · 현재 DB · 서버 헤더 · 메타 세션 `USE` 전환 · E2E 14/14 — 남음 = 상세 패널 DB 절 · 캡처(위키) | 101 | ☑ |
 | **T-271 연결된 서버**(101 §5) | P1 | 중 | 서버 개체 ▸ 연결된 서버 목록(`sys.servers`) · 상세(공급자·데이터 원본·카탈로그·옵션·로그인 매핑) · Open script(`sp_addlinkedserver`…) · Generate SQL · 삭제 모달 연동 · 카탈로그 펼침(2차) | 101 | ☐ |
 | **T-272 SSMS 골격 2차**(101 §7) | P2 | 중 | 3부 접두 완성 `DB.스키마.` · 스토리지(파일 그룹·파티션) · 서버 보안(로그인·역할) · 연결된 서버 카탈로그 ▸ 테이블 · 스냅샷 · DB 용량 · 메타 열쇠 `(db, 스키마)` | 101 | ☐ |
+| **T-274 자동완성 2차**(10-01 · [82 §7](82-grammar-driven-completion.md) · journal §16) | P2 | 중 | `GRANT … TO` 사용자·역할 버킷 · CTE/서브쿼리 컬럼 추론 · `#tmp` 컬럼 · `sp_*` 인자 안내 · 문법 `objects =` 소비(`Want`) · `ORDER BY x DESC |` 오판 · SELECT 별칭 → ORDER BY · 3·4부 이름(T-272) | 82 | ☐ |
 | **T-273 기동 직후 탐색기 paint 경고**(10-01) | P2 | 소 | `[explorer] paint 800~1300 ms (filter …)` 1회 — 접속 직후 필터/라벨 비용 · 원인·완화(39 §2 판정선) | 39 | ☐ |
 | **T-269 객체 삭제 후속**(10-01 · [28 §9](28-object-explorer.md)) | P2 | 소 | 결정 D-240~D-245 사용자 확인 · 창 캡처(위키) · 삭제 뒤 탐색기 선택 이동 · 여러 객체 일괄 삭제 · CASCADE 옵션 설정(끔 기본) · PG/MSSQL/MySQL 실서버 삭제 실기(지금은 Oracle만) · `win-func-check` 시나리오 | 28 | ☐ |
 | **T-268 보수적 생성 격차**(09-30 · [100 §5-3](100-object-source-run-and-output-tab.md)) | P3 | 소 | ✅ 10-01 = SQL Server 트리거 `ON` · PG 트리거 함수 참조 · Oracle 뷰 GET_DDL 폴백 · CLI `qualify=off` · PG/MSSQL 왕복 E2E `dbms-source-e2e.sh` 33/33 · 남음 = 연타 허용 버튼 지정(사용자 목록) · MySQL 실서버 왕복(프로필 없음) | 100 | 🚧 |

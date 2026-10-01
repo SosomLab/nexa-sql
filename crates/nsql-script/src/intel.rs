@@ -26,6 +26,22 @@ pub enum CtxKind {
     Start,
     /// 식(SELECT 목록·WHERE·ON·SET …) — 컬럼(alias 표)·함수·키워드·문서 심볼.
     Expr,
+    /// ★ 특정 종류의 객체만 고르는 자리(10-01 ⑩ · [`Want`]): `USE |` = 데이터베이스 · `ALTER SESSION SET CURRENT_SCHEMA = |`·
+    /// `SET search_path TO |` = 스키마 · `EXEC|CALL |` = 루틴 · `DROP VIEW |` 등 = 그 종류.
+    Want(Want),
+}
+
+/// ★ `CtxKind::Want`가 고르는 것(10-01 ⑩) — 호스트가 메타 저장소에서 그 종류만 낸다(키워드 없음).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Want {
+    /// 데이터베이스 목록(SQL Server `sys.databases` · MySQL = 스키마).
+    Database,
+    /// 스키마 목록.
+    Schema,
+    /// 프로시저·함수(·Oracle 패키지) + 스키마 · SQL Server `sp_*` 시스템 프로시저.
+    Routine,
+    /// 한 종류(`nsql_catalog::ObjectKind::parse`가 아는 코드 · `view`·`procedure`·`sequence` …).
+    Kind(&'static str),
 }
 
 /// alias 한 줄.
@@ -72,12 +88,115 @@ pub struct Star {
     pub qualifier: Option<String>,
 }
 
+/// 바로 앞 낱말이 이것이면 관계 자리. `ON`·`USING`은 문장에 따라(`GRANT … ON` · `CREATE INDEX … ON` · `MERGE … USING`만 — `JOIN … ON`은
+/// 컬럼 자리 · 10-01 ⑩) `relation_after_special`에서 본다.
 const RELATION_AFTER: &[&str] = &[
-    "FROM", "JOIN", "UPDATE", "INTO", "TABLE", "DESC", "DESCRIBE", "TRUNCATE", "USING", "ON",
+    "FROM", "JOIN", "UPDATE", "INTO", "TABLE", "DESC", "DESCRIBE", "TRUNCATE",
 ];
-const JOIN_WORDS: &[&str] = &[
-    "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "OUTER", "NATURAL", "LATERAL",
+
+/// `ON`·`USING`이 관계 자리인 문장(10-01 ⑩): `GRANT/REVOKE … ON 객체` · `CREATE INDEX … ON 테이블` · `COMMENT ON TABLE` · `MERGE … USING 원천`.
+fn relation_after_special(last: &Word<'_>, stmt_kind: Option<&str>) -> bool {
+    (is_word(last, "ON") && matches!(stmt_kind, Some("GRANT" | "REVOKE" | "CREATE" | "COMMENT")))
+        || (is_word(last, "USING") && stmt_kind == Some("MERGE"))
+}
+
+const WANT_KINDS: &[(&str, &str)] = &[
+    ("VIEW", "view"),
+    ("PROCEDURE", "procedure"),
+    ("PROC", "procedure"),
+    ("FUNCTION", "function"),
+    ("SEQUENCE", "sequence"),
+    ("SYNONYM", "synonym"),
+    ("INDEX", "index"),
+    ("TRIGGER", "trigger"),
+    ("TYPE", "type"),
+    ("PACKAGE", "package"),
 ];
+
+/// ★ 특정 종류만 고르는 자리인가(10-01 ⑩ · 순수): `before` = 접두 앞 낱말들.
+fn want_at(
+    before: &[&Word<'_>],
+    stmt_kind: Option<&str>,
+    dialect: Option<Dialect>,
+) -> Option<Want> {
+    let n = before.len();
+    let last = before[n - 1];
+    // `USE |`(SQL Server = 데이터베이스 · MySQL = 스키마(= DB)).
+    if n == 1 && is_word(last, "USE") {
+        return Some(match dialect {
+            Some(Dialect::Mysql) => Want::Schema,
+            _ => Want::Database,
+        });
+    }
+    // Oracle `ALTER SESSION SET CURRENT_SCHEMA = |`.
+    if n >= 2 && last.text == "=" && is_word(before[n - 2], "CURRENT_SCHEMA") {
+        return Some(Want::Schema);
+    }
+    // PostgreSQL `SET search_path TO a, |` · `SET search_path = |`.
+    if stmt_kind == Some("SET")
+        && before.iter().any(|w| is_word(w, "search_path"))
+        && (is_word(last, "TO") || last.text == "=" || last.text == ",")
+    {
+        return Some(Want::Schema);
+    }
+    // `EXEC |` · `EXECUTE |` · `CALL |`(SQL Server `EXEC @r = |`도).
+    if is_word(last, "EXEC") || is_word(last, "EXECUTE") || is_word(last, "CALL") {
+        return Some(Want::Routine);
+    }
+    if n >= 3 && last.text == "=" && is_word(before[n - 3], "EXEC") {
+        return Some(Want::Routine);
+    }
+    // `DROP <종류> [IF EXISTS] |` · `ALTER <종류> |`(TABLE은 관계 자리 그대로).
+    if matches!(stmt_kind, Some("DROP" | "ALTER")) {
+        let mut k = n;
+        if k >= 2 && is_word(before[k - 1], "EXISTS") && is_word(before[k - 2], "IF") {
+            k -= 2;
+        }
+        if k >= 2 && (k == 2 || (k == 3 && is_word(before[1], "MATERIALIZED"))) {
+            let kw = before[k - 1];
+            if is_word(kw, "VIEW") && k == 3 {
+                return Some(Want::Kind("mview"));
+            }
+            if is_word(kw, "DATABASE") {
+                return Some(Want::Database);
+            }
+            if is_word(kw, "SCHEMA") {
+                return Some(Want::Schema);
+            }
+            for (w, code) in WANT_KINDS {
+                if is_word(kw, w) {
+                    return Some(Want::Kind(code));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// ★ SQL Server `OUTPUT INSERTED.|`·`DELETED.|`(10-01 ⑩): 변경 문장의 대상 테이블을 가진 가짜 별칭 둘 — 컬럼 완성이 그 테이블로.
+fn add_output_pseudo(ws: &[Word<'_>], aliases: &mut Vec<Alias>) {
+    let Some(first) = ws.first() else { return };
+    if !(is_word(first, "INSERT")
+        || is_word(first, "UPDATE")
+        || is_word(first, "DELETE")
+        || is_word(first, "MERGE"))
+    {
+        return;
+    }
+    let Some(target) = aliases.iter().find(|a| !a.local).cloned() else {
+        return;
+    };
+    for name in ["INSERTED", "DELETED"] {
+        if !aliases.iter().any(|a| a.alias.eq_ignore_ascii_case(name)) {
+            aliases.push(Alias {
+                alias: name.to_string(),
+                schema: target.schema.clone(),
+                table: target.table.clone(),
+                local: false,
+            });
+        }
+    }
+}
 const NOT_ALIAS: &[&str] = &[
     "WHERE",
     "ON",
@@ -263,6 +382,60 @@ const POSTGRES_KEYWORDS: &[&str] = &[
     "UNNEST",
     "NOW()",
 ];
+/// MySQL(10-01 ⑩ — 종전에는 표가 없어 공통 표만).
+const MYSQL_KEYWORDS: &[&str] = &[
+    "USE",
+    "SHOW",
+    "SHOW TABLES",
+    "SHOW DATABASES",
+    "SHOW CREATE TABLE",
+    "DESCRIBE",
+    "EXPLAIN",
+    "LIMIT",
+    "OFFSET",
+    "REPLACE INTO",
+    "INSERT IGNORE INTO",
+    "ON DUPLICATE KEY UPDATE",
+    "STRAIGHT_JOIN",
+    "FOR UPDATE",
+    "LOCK IN SHARE MODE",
+    "AUTO_INCREMENT",
+    "ENGINE",
+    "CHARSET",
+    "COLLATE",
+    "IFNULL",
+    "NOW()",
+    "CURDATE()",
+    "CONCAT",
+    "CONCAT_WS",
+    "GROUP_CONCAT",
+    "DATE_FORMAT",
+    "STR_TO_DATE",
+    "DATE_ADD",
+    "DATE_SUB",
+    "DATEDIFF",
+    "TIMESTAMPDIFF",
+    "IF",
+    "CAST",
+    "CONVERT",
+    "JSON_EXTRACT",
+    "JSON_OBJECT",
+    "LAST_INSERT_ID()",
+    "FOUND_ROWS()",
+    "CALL",
+    "DELIMITER",
+    "START TRANSACTION",
+    "LOCK TABLES",
+    "UNLOCK TABLES",
+    "TRUNCATE TABLE",
+    "RENAME TABLE",
+    "ALTER TABLE",
+    "ADD COLUMN",
+    "DROP COLUMN",
+    "MODIFY COLUMN",
+    "CHANGE COLUMN",
+];
+
 const SQLITE_KEYWORDS: &[&str] = &[
     "PRAGMA",
     "AUTOINCREMENT",
@@ -282,6 +455,7 @@ pub fn keywords_for(d: Option<Dialect>) -> impl Iterator<Item = &'static str> {
         Some(Dialect::Mssql) => MSSQL_KEYWORDS,
         Some(Dialect::Postgres) => POSTGRES_KEYWORDS,
         Some(Dialect::Sqlite) => SQLITE_KEYWORDS,
+        Some(Dialect::Mysql) => MYSQL_KEYWORDS,
         _ => &[],
     };
     KEYWORDS
@@ -409,7 +583,10 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
         return none;
     }
     let ws = words(text, &classes);
-    let aliases = alias_table(&ws);
+    let mut aliases = alias_table(&ws);
+    if dialect == Some(Dialect::Mssql) {
+        add_output_pseudo(&ws, &mut aliases);
+    }
     // 접두 앞의 낱말들(접두 자체는 뺀다).
     let before: Vec<&Word<'_>> = ws.iter().filter(|w| w.end <= rel).collect();
     if before.is_empty() {
@@ -498,10 +675,26 @@ pub fn context_at(src: &str, caret: usize, dialect: Option<Dialect>) -> Context 
     } else {
         None
     };
-    // 관계 자리: 바로 앞 낱말이 FROM/JOIN/… 이거나, 콤마 앞 관계 목록이 이어지는 중.
+    // ★ 특정 종류만 고르는 자리(10-01 ⑩) — 관계 판정보다 먼저(`DROP VIEW |` · `USE |` · `EXEC |`).
+    if let Some(w) = want_at(&before, stmt_kind.as_deref(), dialect) {
+        return Context {
+            kind: CtxKind::Want(w),
+            prefix,
+            replace,
+            aliases,
+            statement: stmt,
+            paren_owner,
+            paren_into,
+            star: None,
+            from_chain: false,
+            clause,
+            stmt_kind,
+        };
+    }
+    // 관계 자리: 바로 앞 낱말이 FROM/JOIN/… 이거나, 콤마 앞 관계 목록이 이어지는 중 · `ON`/`USING`은 문장에 따라.
     let relation = RELATION_AFTER.iter().any(|k| is_word(last, k))
-        || (last.text == "," && in_from_list(&before))
-        || (JOIN_WORDS.iter().any(|k| is_word(last, k)) && false);
+        || relation_after_special(last, stmt_kind.as_deref())
+        || (last.text == "," && in_from_list(&before));
     if relation {
         return Context {
             kind: CtxKind::Relation,
@@ -685,8 +878,17 @@ pub fn alias_table(ws: &[Word<'_>]) -> Vec<Alias> {
     let mut i = 0;
     while i < ws.len() {
         let w = &ws[i];
-        let starts =
-            is_word(w, "FROM") || is_word(w, "JOIN") || is_word(w, "UPDATE") || is_word(w, "INTO");
+        // ★ 10-01 ⑩: `ALTER TABLE t`(그 뒤 컬럼) · `MERGE … USING s`(원천 별칭) · `CREATE INDEX i ON t(`(컬럼)도 별칭 표에.
+        let first_is = |kw: &str| ws.first().is_some_and(|f| is_word(f, kw));
+        let starts = is_word(w, "FROM")
+            || is_word(w, "JOIN")
+            || is_word(w, "UPDATE")
+            || is_word(w, "INTO")
+            || (is_word(w, "TABLE") && i > 0 && is_word(&ws[i - 1], "ALTER"))
+            || (is_word(w, "USING") && first_is("MERGE"))
+            || (is_word(w, "ON")
+                && first_is("CREATE")
+                && ws[..i].iter().any(|x| is_word(x, "INDEX")));
         if !starts {
             i += 1;
             continue;
@@ -972,6 +1174,8 @@ pub enum CandKind {
     Table,
     View,
     Schema,
+    /// 데이터베이스(10-01 ⑩ · `USE |`).
+    Database,
     Routine,
     Package,
     Sequence,
@@ -1621,5 +1825,112 @@ mod tests {
         assert_eq!(apply_case("employees", "EMP", "match"), "EMPLOYEES");
         assert_eq!(apply_case("employees", "Emp", "match"), "employees");
         assert_eq!(apply_case("employees", "x", "upper"), "EMPLOYEES");
+    }
+
+    /// ★ 10-01 ⑩: 종류 자리 — USE(DB/스키마) · CURRENT_SCHEMA · search_path · EXEC/CALL · DROP 종류(IF EXISTS·MATERIALIZED) ·
+    /// `JOIN … ON |`은 컬럼 자리(Expr) · `MERGE … USING |`은 관계 · ALTER TABLE/MERGE USING/CREATE INDEX ON 별칭 · OUTPUT 가짜 별칭.
+    #[test]
+    fn want_contexts() {
+        let k = |src: &str, d: Dialect| context_at(src, src.len(), Some(d)).kind;
+        assert_eq!(k("USE ", Dialect::Mssql), CtxKind::Want(Want::Database));
+        assert_eq!(
+            k("USE bi", Dialect::Mssql),
+            CtxKind::Want(Want::Database),
+            "접두 입력 중"
+        );
+        assert_eq!(k("use ", Dialect::Mysql), CtxKind::Want(Want::Schema));
+        assert_eq!(
+            k("ALTER SESSION SET CURRENT_SCHEMA = ", Dialect::Oracle),
+            CtxKind::Want(Want::Schema)
+        );
+        assert_eq!(
+            k("SET search_path TO ", Dialect::Postgres),
+            CtxKind::Want(Want::Schema)
+        );
+        assert_eq!(
+            k("SET search_path TO a, ", Dialect::Postgres),
+            CtxKind::Want(Want::Schema)
+        );
+        assert_eq!(k("EXEC ", Dialect::Oracle), CtxKind::Want(Want::Routine));
+        assert_eq!(k("CALL ", Dialect::Postgres), CtxKind::Want(Want::Routine));
+        assert_eq!(
+            k("EXEC @r = ", Dialect::Mssql),
+            CtxKind::Want(Want::Routine)
+        );
+        assert_eq!(
+            k("DROP VIEW ", Dialect::Mssql),
+            CtxKind::Want(Want::Kind("view"))
+        );
+        assert_eq!(
+            k("DROP PROCEDURE IF EXISTS ", Dialect::Postgres),
+            CtxKind::Want(Want::Kind("procedure"))
+        );
+        assert_eq!(
+            k("DROP MATERIALIZED VIEW ", Dialect::Oracle),
+            CtxKind::Want(Want::Kind("mview"))
+        );
+        assert_eq!(
+            k("ALTER SEQUENCE ", Dialect::Oracle),
+            CtxKind::Want(Want::Kind("sequence"))
+        );
+        assert_eq!(
+            k("DROP DATABASE ", Dialect::Mssql),
+            CtxKind::Want(Want::Database)
+        );
+        assert_eq!(
+            k("DROP TABLE ", Dialect::Mssql),
+            CtxKind::Relation,
+            "TABLE은 관계 자리 그대로"
+        );
+        assert_eq!(
+            k("SELECT 1 FROM a JOIN b ON ", Dialect::Oracle),
+            CtxKind::Expr,
+            "JOIN ON = 컬럼"
+        );
+        assert_eq!(k("GRANT SELECT ON ", Dialect::Oracle), CtxKind::Relation);
+        assert_eq!(
+            k("CREATE INDEX ix ON ", Dialect::Postgres),
+            CtxKind::Relation
+        );
+        assert_eq!(k("MERGE INTO t USING ", Dialect::Oracle), CtxKind::Relation);
+        let c = context_at("ALTER TABLE s.t ADD ", 20, Some(Dialect::Oracle));
+        assert!(
+            c.aliases
+                .iter()
+                .any(|a| a.table == "t" && a.schema.as_deref() == Some("s")),
+            "{:?}",
+            c.aliases
+        );
+        let c = context_at("MERGE INTO t USING src s ON ", 28, Some(Dialect::Oracle));
+        assert!(
+            c.aliases.iter().any(|a| a.alias == "s" && a.table == "src"),
+            "{:?}",
+            c.aliases
+        );
+        let c = context_at("CREATE INDEX ix ON t (", 22, Some(Dialect::Postgres));
+        assert!(c.aliases.iter().any(|a| a.table == "t"), "{:?}", c.aliases);
+        let c = context_at(
+            "UPDATE dbo.t SET a = 1 OUTPUT INSERTED.",
+            39,
+            Some(Dialect::Mssql),
+        );
+        assert!(matches!(&c.kind, CtxKind::Member { qualifier } if qualifier == "INSERTED"));
+        assert!(
+            c.aliases.iter().any(|a| a.alias == "INSERTED"
+                && a.table == "t"
+                && a.schema.as_deref() == Some("dbo")),
+            "{:?}",
+            c.aliases
+        );
+        let c = context_at(
+            "UPDATE dbo.t SET a = 1 OUTPUT INSERTED.",
+            39,
+            Some(Dialect::Oracle),
+        );
+        assert!(
+            !c.aliases.iter().any(|a| a.alias == "INSERTED"),
+            "SQL Server만"
+        );
+        assert!(keywords_for(Some(Dialect::Mysql)).any(|k| k == "ON DUPLICATE KEY UPDATE"));
     }
 }
