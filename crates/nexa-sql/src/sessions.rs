@@ -955,13 +955,10 @@ pub(crate) fn db_unit(
                 .unwrap_or_else(|| "—".into()),
             true,
         ),
+        // 파일 이름만(OS 무관 — `/`·`\` 둘 다 구분자 · CI mac/ubuntu에서 Windows 경로 시험이 깨졌다 10-01).
         Some(Dialect::Sqlite) => (
             spec_db
-                .map(|p| {
-                    std::path::Path::new(&p)
-                        .file_name()
-                        .map_or(p.clone(), |f| f.to_string_lossy().into_owned())
-                })
+                .map(|p| p.rsplit(['/', '\\']).next().unwrap_or(&p).to_string())
                 .unwrap_or_else(|| "—".into()),
             false,
         ),

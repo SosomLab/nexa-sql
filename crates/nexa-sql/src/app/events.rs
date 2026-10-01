@@ -1090,7 +1090,8 @@ impl App {
                 RunEvent::DbChanged(db) => {
                     self.sess.current_db = Some(db.clone());
                     // ★ 탭이 기억(⑯): 이 탭에서 바꾼 값 = 돌아올 때 다시 맞춘다.
-                    self.tab_unit.insert(self.editors.active_id(), db.clone());
+                    self.tab_unit
+                        .insert((self.editors.active_id(), self.sess.id), db.clone());
                     // Oracle `ALTER SESSION SET CURRENT_SCHEMA` · PG `SET search_path` = 현재 스키마가 바뀐 것(⑮).
                     if matches!(
                         self.sess.dialect,
@@ -1128,6 +1129,9 @@ impl App {
                         Some(schema.clone()).filter(|s| !s.is_empty())
                     };
                     self.sess.current_db = None;
+                    // 새 접속 = 이 세션에 대한 탭 기억은 전부 버린다(재접속 뒤 옛 스키마를 되밀지 않게 · ㉔).
+                    let sid = self.sess.id;
+                    self.tab_unit.retain(|(_, s), _| *s != sid);
                     self.sess.disc_path = None;
                     self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     self.startup_connected = true;

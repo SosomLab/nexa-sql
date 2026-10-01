@@ -653,7 +653,7 @@ impl App {
         };
         let tab = self.editors.active_id();
         let Some(want) = sessions::unit_to_apply(
-            self.tab_unit.get(&tab).map(String::as_str),
+            self.tab_unit.get(&(tab, self.sess.id)).map(String::as_str),
             self.sess.default_unit.as_deref(),
             have.as_deref(),
         ) else {
@@ -686,11 +686,11 @@ impl App {
         let items: Vec<CtxItem> = if list.is_empty() {
             // 목록이 아직 없다 = 채움을 청하고 안내(⑰ · 다음 클릭에 보인다).
             self.explorer.request_objects(spec.as_ref(), "");
-            vec![CtxItem::maybe("sess.use:", t(Msg::MnSessUseNoList), false)]
+            vec![CtxItem::maybe("sess.db:", t(Msg::MnSessUseNoList), false)]
         } else {
             list.iter()
                 .map(|d| {
-                    CtxItem::item(format!("sess.use:{d}"), d.clone())
+                    CtxItem::item(format!("sess.db:{d}"), d.clone())
                         .with_mark(d.eq_ignore_ascii_case(&cur))
                 })
                 .collect()
@@ -983,8 +983,10 @@ impl App {
             "sess.none" => self.make_unconnected(tab),
             "sess.info" => self.output_conn_info(),
             // ★ 작업 단위에서 고른 DB(10-01 ⑫) = 편집기 `USE`와 같은 길(세션 · 러너 `DbChanged` → 탐색기·툴바).
-            x if x.starts_with("sess.use:") => {
-                let db = &x["sess.use:".len()..];
+            //   접두는 `sess.db:` — `sess.use:<세션 번호>`(아래 · 공유 연결 고르기)와 달라야 한다(㉔ · 둘이 같아
+            //   연결 고르기가 `CURRENT_SCHEMA = "0"`으로 나갔다).
+            x if x.starts_with("sess.db:") => {
+                let db = &x["sess.db:".len()..];
                 if !db.is_empty() {
                     if let Some(sql) = sessions::use_sql(self.sess.dialect, db) {
                         self.run_text_whole(sql);
@@ -1034,6 +1036,8 @@ impl App {
                         // 다른 서버의 결과를 이어 받지 않게.
                         self.freeze_results_of(tab);
                         self.sync_sess();
+                        // 새 세션에서의 이 탭 단위(기억 없음 = 그 연결의 기본값)로 조용히 맞춘다(㉔).
+                        self.apply_tab_unit();
                         self.sync_sess_ui();
                     }
                 }

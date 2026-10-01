@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/tab-rebind-unit | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 CI mac/ubuntu `db_unit` SQLite 경로 OS 무관 · 🔧 ㉔ 탭 연결 바꾸기 `CURRENT_SCHEMA = "0"`(메뉴 접두 `sess.db:` · `tab_unit` 키 (탭, 세션) · 묶기 직후 적용 · 재접속 기억 비움) |
 | fix/toolbar-unit-combo | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 툴바 작업 단위 콤보 셋(⑲ 도크 재배치 nexa-ui 101차 · ⑳ Oracle 값 세션 사실 우선 + 워커 Schemas/Index switch_db · ㉓ 툴팁) · ㉑ Oracle 스키마 "(현재)" · 연결 행 "현재 스키마" |
 | feat/tab-work-unit | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 탭별 작업 단위(`tab_unit` · `Sess.default_unit` · `RunEvent::Connected.database` · `Cmd::SetUnit` 조용한 전환 · `unit_to_apply`) · `win-schema-switch-e2e.sh` ④ |
 | feat/intel-3part-names | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ SQL Server 3부 이름 완성(복합 열쇠 `DB.스키마` 버킷 · `ObjectKind::Schema` · 메타 세션 `USE` 추종) · 🔧 툴바 DB 메뉴 목록 버킷 보존 · 전환 속도 분석(T-275) · 기동 명령 `editor.caret`/`intel.probe`/`intel.dump` · `NSQL_TRACE_META` · `win-intel-3part-e2e.sh` 7 |
