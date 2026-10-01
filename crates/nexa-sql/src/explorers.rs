@@ -904,6 +904,22 @@ impl ExplorerSet {
         true
     }
 
+    /// ★ 탭의 연결이 다른 서버 칸으로 바뀌었다(10-01 ㉗-j · 사용자 "BISCM 추가 접속 뒤에는 탐색기가 BISCM 연결로 옮겨 가야"): 그 칸으로
+    ///   선택을 옮기고 현재 스키마 행이 보이게 스크롤. 칸이 없거나 아직 안 읽혔으면 false(다음 기회).
+    pub(crate) fn focus_server(&mut self, spec: Option<&ConnectSpec>) -> bool {
+        let Some(i) = spec.and_then(|s| self.find(s)) else {
+            return false;
+        };
+        if !self.panes[i].ex.focus_current() {
+            return false;
+        }
+        if i != self.shown {
+            self.switch_pane(i);
+        }
+        self.after_reveal();
+        true
+    }
+
     /// 찾기가 선택을 옮겼으면 공용 스크롤을 그 행에 맞춘다(`drain` 뒤 · 시작 직후).
     fn after_reveal(&mut self) {
         let Some(i) = (0..self.panes.len()).find(|&i| self.panes[i].ex.take_reveal_done()) else {

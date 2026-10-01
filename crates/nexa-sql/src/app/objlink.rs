@@ -767,6 +767,10 @@ impl App {
         if self.objlink_fresh() {
             return;
         }
+        // ★ 우클릭 메뉴가 열려 있는 동안은 재분석을 미룬다(㉗-k · 메뉴가 닫힌 뒤 다음 동기화에서) — 항목 번호가 흔들리지 않게.
+        if self.objlink_menu.is_open() && !self.objlink_menu_force_closed_for_resync {
+            return;
+        }
         let rev = self.editors.cur().rev();
         let partial = self.objlink_partial();
         let display = self.objlink_display();
@@ -866,6 +870,14 @@ impl App {
             .and_then(|k| self.objlinks.links.get(k))
             .map(|l| l.range);
         let hot = old_hot.and_then(|r| links.iter().position(|l| l.range == r));
+        // ★ 메뉴가 가리키던 링크도 구간으로 이어받는다(10-01 ㉗-k · 사용자 "메뉴 항목을 눌러도 아무 일도 없다": 메뉴를 연 뒤 항목으로
+        //   가는 동안 컬럼 선적재 응답으로 stamp가 바뀌어 재분석되면 `menu_link`가 None이 돼 클릭이 아무 동작도 하지 않았다).
+        let old_menu = self
+            .objlinks
+            .menu_link
+            .and_then(|k| self.objlinks.links.get(k))
+            .map(|l| l.range);
+        let menu_link = old_menu.and_then(|r| links.iter().position(|l| l.range == r));
         self.objlinks = ObjLinks {
             active: true,
             tab,
@@ -877,7 +889,7 @@ impl App {
             display,
             links,
             hot,
-            menu_link: None,
+            menu_link,
         };
         if self.objlink_apply_marks() || display != Display::None {
             self.redraw();
@@ -1117,38 +1129,7 @@ impl App {
             return false;
         };
         if right {
-            self.objlinks.menu_link = Some(k);
-            // 진단(㉗-g · 메뉴가 흐리던 보고): 판정 근거 한 줄을 로그 창에.
-            {
-                let spec = self.sess.spec.clone();
-                let (own, has, used) = self.explorer.meta_pane_info(spec.as_ref());
-                let l = &self.objlinks.links[k];
-                let line = format!(
-                    "[objlink] menu link={} kind={:?} known={} reveal={} cur={:?} own_pane={:?} own_meta={} used_pane={}",
-                    l.qualified(true),
-                    l.kind,
-                    l.known,
-                    self.objlink_reveal_target(k).is_some(),
-                    self.objlink_cur_schema(),
-                    own,
-                    has,
-                    used
-                );
-                self.log_win.push(LogEntry::new(LogKind::Info, line));
-            }
-            // ★ "객체 탐색기에서 보기"(10-01 ㉗) = 실제 객체로 풀릴 때만 활성(미확인 링크 = 흐림).
-            let can = self.objlink_reveal_target(k).is_some();
-            let items = vec![
-                CtxItem::item("objlink.copy_desc", t(Msg::MnObjLinkCopyDesc)),
-                CtxItem::item("objlink.copy_name_desc", t(Msg::MnObjLinkCopyNameDesc)),
-                CtxItem::Separator,
-                CtxItem::maybe("objlink.reveal", t(Msg::MnObjLinkReveal), can),
-            ];
-            let host = self.window_rect();
-            self.objlink_menu.set_scale(self.scale);
-            self.objlink_menu
-                .open_at(p.x, p.y, items, host, px(100.0, self.scale));
-            self.redraw();
+            self.objlink_open_menu(k, p);
         } else if self.shift {
             self.objlink_copy_name_desc(k);
         } else {
@@ -1281,6 +1262,42 @@ impl App {
         true
     }
 
+    /// ★ 링크 k의 우클릭 메뉴를 p에 연다(실제 우클릭 · 자체 시험 `objlink.menu:` 공용 · ㉗-k).
+    pub(crate) fn objlink_open_menu(&mut self, k: usize, p: Point) {
+        self.objlinks.menu_link = Some(k);
+        // 진단(㉗-g · 메뉴가 흐리던 보고): 판정 근거 한 줄을 로그 창에.
+        {
+            let spec = self.sess.spec.clone();
+            let (own, has, used) = self.explorer.meta_pane_info(spec.as_ref());
+            let l = &self.objlinks.links[k];
+            let line = format!(
+                "[objlink] menu link={} kind={:?} known={} reveal={} cur={:?} own_pane={:?} own_meta={} used_pane={}",
+                l.qualified(true),
+                l.kind,
+                l.known,
+                self.objlink_reveal_target(k).is_some(),
+                self.objlink_cur_schema(),
+                own,
+                has,
+                used
+            );
+            self.log_win.push(LogEntry::new(LogKind::Info, line));
+        }
+        // ★ "객체 탐색기에서 보기"(10-01 ㉗) = 실제 객체로 풀릴 때만 활성(미확인 링크 = 흐림).
+        let can = self.objlink_reveal_target(k).is_some();
+        let items = vec![
+            CtxItem::item("objlink.copy_desc", t(Msg::MnObjLinkCopyDesc)),
+            CtxItem::item("objlink.copy_name_desc", t(Msg::MnObjLinkCopyNameDesc)),
+            CtxItem::Separator,
+            CtxItem::maybe("objlink.reveal", t(Msg::MnObjLinkReveal), can),
+        ];
+        let host = self.window_rect();
+        self.objlink_menu.set_scale(self.scale);
+        self.objlink_menu
+            .open_at(p.x, p.y, items, host, px(100.0, self.scale));
+        self.redraw();
+    }
+
     /// `이름 - 설명` 복사(사용자 09-29): 테이블 = `테이블 - 설명` · 컬럼 = `테이블.컬럼 - 설명` · 스키마 접두는 `objlink.show_schema` ·
     /// 설명이 없으면 이름만 복사하고 상태줄에 알린다.
     fn objlink_copy_name_desc(&mut self, k: usize) {
@@ -1336,14 +1353,7 @@ impl App {
         let outside = self.objlink_menu.is_outside_click(ev);
         let consumed = self.objlink_menu.on_event(ev) && !outside;
         if let Some(id) = self.objlink_menu.take_picked() {
-            if let Some(k) = self.objlinks.menu_link.take() {
-                match id.as_str() {
-                    "objlink.copy_desc" => self.objlink_copy_desc(k),
-                    "objlink.copy_name_desc" => self.objlink_copy_name_desc(k),
-                    "objlink.reveal" => self.objlink_reveal(k),
-                    _ => {}
-                }
-            }
+            self.objlink_menu_pick(&id);
             self.redraw();
             return true;
         }
@@ -1352,6 +1362,107 @@ impl App {
             return true;
         }
         false
+    }
+
+    /// 메뉴 항목 확정(마우스 확정 · 자체 시험 `objlink.pick:<id>` 공용 · ㉗-k): 메뉴가 가리키던 링크로 동작 · 번호가 없으면 로그.
+    pub(crate) fn objlink_menu_pick(&mut self, id: &str) {
+        let Some(k) = self.objlinks.menu_link.take() else {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!(
+                    "[objlink] pick id={id} but menu_link=None (links={})",
+                    self.objlinks.links.len()
+                ),
+            ));
+            return;
+        };
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            format!("[objlink] pick id={id} link={k}"),
+        ));
+        match id {
+            "objlink.copy_desc" => self.objlink_copy_desc(k),
+            "objlink.copy_name_desc" => self.objlink_copy_name_desc(k),
+            "objlink.reveal" => self.objlink_reveal(k),
+            _ => {}
+        }
+    }
+
+    /// 자체 시험(㉗-k): 이름으로 링크를 찾아 **우클릭한 것처럼** 메뉴를 연다(Ctrl을 잠시 누른 것으로 치고 분석).
+    pub(crate) fn objlink_menu_named(&mut self, name: &str) -> bool {
+        let was = self.primary;
+        self.primary = true;
+        self.objlink_sync();
+        let found = self
+            .objlinks
+            .links
+            .iter()
+            .position(|l| l.qualified(false).eq_ignore_ascii_case(name));
+        // 링크 글자의 가운데(왼쪽 위 꼭짓점은 경계라 `index_at_point`가 앞 글자를 줄 수 있다).
+        let pt = found.and_then(|k| {
+            let tb = self.editors.cur();
+            let (a, e) = self.objlinks.links[k].range;
+            let p0 = tb.point_at(a)?;
+            let p1 = tb.point_at(e)?;
+            Some(Point {
+                x: (p0.x + p1.x) / 2,
+                y: p0.y + tb.line_h() / 2,
+            })
+        });
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            format!(
+                "[objlink] menu_named {name}: active={} links={} found={found:?} point={pt:?} suitable={} enabled={}",
+                self.objlinks.active,
+                self.objlinks.links.len(),
+                self.objlink_suitable(),
+                self.objlink_enabled()
+            ),
+        ));
+        let Some(p) = pt else {
+            self.primary = was;
+            return false;
+        };
+        let diag = {
+            let tb = self.editors.cur();
+            let k = found.unwrap_or(0);
+            let r = self.objlinks.links.get(k).map(|l| l.range);
+            format!(
+                "idx_at={:?} range={:?} end={:?} bounds={:?}",
+                tb.index_at_point(p),
+                r,
+                r.and_then(|(_, e)| tb.point_at(e)),
+                tb.bounds()
+            )
+        };
+        let ok = found.is_some();
+        if let Some(k) = found {
+            self.objlink_open_menu(k, p);
+        }
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            format!(
+                "[objlink] menu_named click ok={ok} open={} {diag}",
+                self.objlink_menu.is_open()
+            ),
+        ));
+        self.primary = was;
+        ok
+    }
+
+    /// 자체 시험(㉗-k): 메뉴가 열린 채 재분석을 **강제**(선적재 응답으로 stamp가 바뀐 상황 흉내) — 메뉴 링크가 살아남아야 한다.
+    pub(crate) fn objlink_resync_forced(&mut self) {
+        let was = self.primary;
+        self.primary = true;
+        self.objlinks.stamp = u64::MAX;
+        // 메뉴가 열려 있으면 미루는 규칙이 있으므로 여기서는 그 규칙을 지나쳐 재분석 본체만 돈다(최악 조건).
+        let menu_was_open = self.objlink_menu.is_open();
+        if menu_was_open {
+            self.objlink_menu_force_closed_for_resync = true;
+        }
+        self.objlink_sync();
+        self.objlink_menu_force_closed_for_resync = false;
+        self.primary = was;
     }
 
     /// 그릴 툴팁(커서 아래 링크의 설명 · 표시 설정 켜짐) — (본문, 링크 글자 사각형). 페인트가 표면을 빌리기 **전에** 셈한다.

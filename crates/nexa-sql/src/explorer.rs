@@ -4578,6 +4578,27 @@ impl Explorer {
         }
     }
 
+    /// ★ 이 칸의 현재 스키마(SSMS = 현재 DB) 노드를 선택하고 세트가 그 행으로 스크롤하게(`reveal_done` · 10-01 ㉗-j · 탭의 연결이 바뀌면 탐색기도 따라감).
+    pub(crate) fn focus_current(&mut self) -> bool {
+        let target = if self.ssms_mode() {
+            self.current_db_node()
+        } else {
+            let cur = self
+                .server_schema
+                .clone()
+                .or_else(|| self.users.first().cloned());
+            cur.and_then(|c| {
+                (0..self.nodes.len()).find(|&i| {
+                    matches!(&self.nodes[i].kind, NodeKind::Schema(s) if s.eq_ignore_ascii_case(&c))
+                })
+            })
+        };
+        let Some(i) = target else { return false };
+        self.selected = Some(i);
+        self.reveal_done = true;
+        true
+    }
+
     /// 접속 사용자의 스키마(= 접속 설명의 사용자)를 선택해 눈에 띄게.
     fn select_current_schema(&mut self) {
         if self.ssms_mode() {

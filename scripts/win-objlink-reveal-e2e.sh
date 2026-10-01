@@ -7,6 +7,7 @@
 #   ④ 두 연결(-s 두 번째 프로필 먼저 접속 + -p 추가) → 두 번째 칸에서 선택 + `visible=true`(세트 공용 스크롤 · ㉗-b)
 #   ⑥ SQLEDU 계정 · 소문자 trx_demand · 첫 시도 바로가기(㉗-f 사용자 요청)
 #   ⑦ BISCM_SB(-b) 접속 뒤 BISCM(-p) 추가 → 첫 시도 메뉴 활성(reveal=true)·바로가기(㉗-g 사용자 보고 재현)
+#   ⑧ 메뉴 경로(우클릭 → 재분석 → 확정 · ㉗-k) + 5) 시점 탐색기 추종(㉗-j)
 #   ⑤ 시스템 객체(㉙): `DBMS_XPLAN.DISPLAY_CURSOR` 루틴 링크 + 시그니처 · `all_tables` 사전 객체 · 모르는 패키지는 링크 아님(`objlink.dump`)
 #
 # 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-t 테이블(없으면 user_tables 첫 것)] [-s SQLEDU] [-b BISCM_SB] [-P <실제 설정 폴더>]
@@ -112,5 +113,20 @@ if [ -s "$L7" ] && [ -s "$S7" ]; then
   chk "⑦ 첫 시도에 선택 = $PROFILE 칸 Tables / $TABLE" "/ Tables( \([0-9]+\))? / $TABLE\$" "$s7"
   chk "⑦ 선택 행이 화면 안" "^visible=true$" "$s7"
 else bad "⑦ 덤프 없음(links $([ -s "$L7" ] && echo o || echo x) · sel $([ -s "$S7" ] && echo o || echo x))" "$(tail -3 "$OUT/gui7.stderr")"; fi
+# ⑧ 사용자 10-01 ㉗-k: **메뉴 경로** — SQLEDU 접속 → 새 편집창 → 붙여넣기 → 같은 탭에 BISCM 추가 → 우클릭 메뉴 열기(`objlink.menu`) →
+#    항목으로 가는 동안 선적재 응답으로 재분석되는 상황을 강제(`objlink.resync`) → 항목 확정(`objlink.pick:objlink.reveal`) = 첫 시도에 선택.
+#    (종전엔 재분석이 `menu_link`를 지워 항목을 눌러도 아무 동작도 하지 않았다 — 사용자 로그 `[objlink] menu … reveal=true` 뒤 `[reveal]` 없음)
+say "--- ⑧ 메뉴 경로(우클릭 → 재분석 → 확정) · $SECOND → $PROFILE 같은 탭 · 5) 시점 탐색기 추종"
+F8="$OUT/t8.sql"; cp "$F1" "$F8"; S8="$OUT/sel8.txt"; P8="$OUT/sel8_pre.txt"; L8="$OUT/log8.txt"; rm -f "$S8" "$P8" "$L8"; fw8=$(cygpath -w "$F8" 2>/dev/null || echo "$F8")
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:file.new,@after:4000:editor.paste:$fw8,@after:5000:connect:$PROFILE,@after:8000:explorer.selpath:$P8,@after:9000:objlink.menu:$TABLE,@after:9500:objlink.resync,@after:10000:objlink.pick:objlink.reveal,@after:14500:explorer.selpath:$S8,@after:15000:log.dump:$L8" \
+  timeout -s KILL 18 "$EXE" "$SECOND" > "$OUT/gui8.stdout" 2> "$OUT/gui8.stderr"
+if [ -s "$S8" ]; then
+  p8=$(cat "$P8" 2>/dev/null); s8=$(cat "$S8"); l8=$(cat "$L8" 2>/dev/null)
+  say "        > 5) $(echo "$p8" | head -1)"; say "        > 7) $(echo "$s8" | head -2 | tr '\n' ' ')"
+  chk "⑧ 5) BISCM 추가 접속 뒤 탐색기 = BISCM 칸 현재 스키마로 이동(㉗-j)" "^BISCM / BISCM$" "$(echo "$p8" | head -1)"
+  chk "⑧ 메뉴 확정이 동작에 닿음(로그 pick)" "\[objlink\] pick id=objlink.reveal link=" "$l8"
+  chk "⑧ 7) 첫 시도에 선택 = $PROFILE / Tables / $TABLE" "/ $PROFILE / Tables( \([0-9]+\))? / $TABLE\$" "$s8"
+  chk "⑧ 선택 행이 화면 안" "^visible=true$" "$s8"
+else bad "⑧ 선택 경로 없음" "$(tail -3 "$OUT/gui8.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

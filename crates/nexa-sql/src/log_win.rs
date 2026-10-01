@@ -768,6 +768,18 @@ impl LogWin {
         self.buf.cap()
     }
 
+    /// 자체 시험(`log.dump:<파일>` · 10-01 ㉗-k): 로그 본문 전부(한 줄 하나).
+    pub(crate) fn dump_text(&self) -> String {
+        self.buf
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            )
+    }
+
     pub(crate) fn push(&mut self, e: LogEntry) {
         let before = self.buf.len();
         self.buf.push(e);

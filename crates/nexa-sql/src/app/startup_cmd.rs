@@ -451,6 +451,30 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ 자체 시험(㉗-k · 메뉴 경로): `objlink.menu:<이름>`(우클릭처럼 열기) · `objlink.resync`(열린 채 재분석 강제) · `objlink.pick:<id>`(항목 확정).
+        if let Some(path) = id.strip_prefix("log.dump:") {
+            let _ = std::fs::write(path, self.log_win.dump_text());
+            return;
+        }
+        if let Some(name) = id.strip_prefix("objlink.menu:") {
+            let ok = self.objlink_menu_named(name);
+            self.sess.status = format!("objlink.menu {name} ok={ok}");
+            self.redraw();
+            return;
+        }
+        if id == "objlink.resync" {
+            self.objlink_resync_forced();
+            self.redraw();
+            return;
+        }
+        if let Some(item) = id.strip_prefix("objlink.pick:") {
+            if self.objlink_menu.is_open() {
+                self.objlink_menu.close();
+                self.objlink_menu_pick(item);
+            }
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("objlink.dump:") {
             let text = self.objlink_dump_text();
             let _ = std::fs::write(path, text);
@@ -458,6 +482,15 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("explorer.selpath:") {
             let _ = std::fs::write(path, self.explorer.selected_path());
+            return;
+        }
+        // ★ 자체 시험(10-01 ㉗-j): 활성 탭에 파일 내용을 붙여 넣는다(사용자 재현 순서 "새 편집창 → 쿼리 붙여넣기" · 키 주입 0).
+        if let Some(path) = id.strip_prefix("editor.paste:") {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                let mut inv = nexa_ctl::Invalidations::default();
+                self.editors.cur_mut().paste(&text, &mut inv);
+                self.redraw();
+            }
             return;
         }
         // ★ 자체 시험(10-01 ㉗-h): 활성 탭을 이미 열린 공유 연결로 묶는다(탭 표식 메뉴에서 연결을 고른 것과 같은 길 `sess.use:<세션>`).

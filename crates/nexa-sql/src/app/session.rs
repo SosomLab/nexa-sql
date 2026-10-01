@@ -531,6 +531,16 @@ impl App {
     pub(crate) fn sync_sess_ui(&mut self) {
         // 설정 창이 열려 있으면 활성 탭 덧말·미리보기도 따라온다(탭 전환 · 사용자 09-29).
         self.prefs_format_preview_refresh();
+        // ★ 활성 탭의 연결이 바뀌었다(접속 추가·표식 메뉴·탭 전환) → 탐색기를 그 서버 칸의 현재 스키마로 한 번(10-01 ㉗-j · 세션마다 한 번).
+        if self.sess.connected {
+            let key = (self.editors.active_id(), self.sess.id);
+            if self.explorer_focus_key != Some(key) {
+                let spec = self.sess.spec.clone();
+                if self.explorer.focus_server(spec.as_ref()) {
+                    self.explorer_focus_key = Some(key);
+                }
+            }
+        }
         let mut info: HashMap<u64, (nexa_ctl::TabBadge, String)> = HashMap::new();
         // 공유 연결이 둘 이상이면 공유 탭에도 표식(어느 서버인지 · 표식 메뉴로 고른다).
         let multi = self

@@ -542,6 +542,10 @@ struct App {
     next_sess_id: u64,
     /// 탭 → 공유 세션 선택(없으면 `default_shared`). 전용 세션은 `Sess::owner`가 우선한다.
     tab_bind: HashMap<u64, u64>,
+    /// ★ 마지막으로 탐색기를 맞춘 (탭, 세션)(10-01 ㉗-j · 탭의 연결이 바뀌면 그 서버 칸의 현재 스키마로 한 번 이동).
+    explorer_focus_key: Option<(u64, u64)>,
+    /// 자체 시험(㉗-k): 메뉴가 열린 채 재분석을 강제할 때만 true.
+    objlink_menu_force_closed_for_resync: bool,
     /// ★ 탭별 작업 단위(10-01 ⑯ · **(탭 id, 세션 id)** → 그 탭이 그 세션에서 마지막으로 쓴 DB/스키마 · 없으면 연결 기본값).
     ///   세션을 키에 넣는 까닭(10-01 ㉔): 탭의 연결을 다른 세션으로 바꾸면 전 세션의 스키마를 새 세션에 밀어 넣어
     ///   `ALTER SESSION SET CURRENT_SCHEMA = <남의 스키마>`가 나갔다 — 다른 세션 = 기억 없음 = 그 연결의 기본값.
@@ -1737,6 +1741,8 @@ fn main() {
         next_sess_id: 1,
         tab_bind: HashMap::new(),
         tab_unit: HashMap::new(),
+        explorer_focus_key: None,
+        objlink_menu_force_closed_for_resync: false,
         object_tabs: HashMap::new(),
         output_last_editor: 0,
         default_shared: SHARED,
