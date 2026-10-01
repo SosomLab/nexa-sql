@@ -208,6 +208,8 @@ pub enum RunEvent {
         /// ★ 서버가 답한 **현재 스키마**(`nsql_catalog::current_schema` · 접속 직후 1회 · 모르면 빈 글) — 사용자 이름 ≠ 기본 스키마인
         /// 계정(로그온 트리거·`?schema=`)에서 이름 풀이의 기준(사용자 09-30).
         schema: String,
+        /// ★ 접속 직후의 **현재 DB**(SQL Server `DB_NAME()` · MySQL `DATABASE()` · 그 밖 빈 글 · 10-01 ⑯) = 탭 작업 단위의 연결 기본값.
+        database: String,
     },
     Disconnected,
     Error {
@@ -271,6 +273,7 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             description,
             dialect,
             schema,
+            ..
         } => vec![LogEntry::new(
             LogKind::Connect,
             if schema.is_empty() {
@@ -1696,10 +1699,21 @@ impl Runner {
                     .as_mut()
                     .and_then(|s| nsql_catalog::current_schema(s.as_mut()).ok())
                     .unwrap_or_default();
+                // 현재 DB 1회(DB 전환이 있는 방언만 · 탭 작업 단위의 기본값 · ⑯).
+                let database = if matches!(dialect, Dialect::Mssql | Dialect::Mysql) {
+                    self.session
+                        .as_mut()
+                        .and_then(|s| nsql_catalog::server_info(s.as_mut()).ok())
+                        .map(|i| i.current_db)
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
                 emit(RunEvent::Connected {
                     description: spec.redacted(),
                     dialect,
                     schema,
+                    database,
                 });
                 true
             }

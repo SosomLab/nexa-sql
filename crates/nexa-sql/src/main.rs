@@ -542,6 +542,8 @@ struct App {
     next_sess_id: u64,
     /// 탭 → 공유 세션 선택(없으면 `default_shared`). 전용 세션은 `Sess::owner`가 우선한다.
     tab_bind: HashMap<u64, u64>,
+    /// ★ 탭별 작업 단위(10-01 ⑯ · 탭 id → 그 탭에서 마지막으로 쓴 DB/스키마 · 없으면 연결 기본값).
+    tab_unit: HashMap<u64, String>,
     /// 묶이지 않은 탭이 쓰는 공유 세션.
     default_shared: u64,
     /// ★ 객체 소스 탭의 출처(편집기 탭 id → 서버·스키마·객체·종류 · 09-30): F5 = 본문 전체를 한 단위로 · 세션 = 그 서버.
@@ -1732,6 +1734,7 @@ fn main() {
         parked: Vec::new(),
         next_sess_id: 1,
         tab_bind: HashMap::new(),
+        tab_unit: HashMap::new(),
         object_tabs: HashMap::new(),
         output_last_editor: 0,
         default_shared: SHARED,

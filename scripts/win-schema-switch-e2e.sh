@@ -37,5 +37,21 @@ if [ -s "$D" ]; then
   echo "$first" | grep -q "$OTHER" && bad "GUI: 전환 전 블록이 이미 $OTHER" "$first" || ok "GUI: 전환 전 블록 = 접속 기본 스키마($first)"
   n2=$(echo "$b" | grep -c "현재 스키마\|Current schema"); [ "$n2" -eq 2 ] && ok "GUI: 현재 스키마 줄 = 블록마다 하나(중복 없음)" || bad "GUI: 현재 스키마 줄 수 $n2" "$b"
 else bad "GUI Output 덤프 없음" "$(tail -3 "$OUT/gui.stderr")"; fi
+# ④ 탭별 작업 단위(⑯): 탭1에서 ALTER SESSION(= 탭1 단위 BISCM_SB) → 새 탭2 열림(= 연결 기본 BISCM으로 조용히 복귀) → 탭2 SHOW CONN = BISCM
+#    → 탭1로 돌아감(= BISCM_SB로 조용히 복귀) → 팔레트 session.info = BISCM_SB(실행 없이 세션 상태만).
+echo "--- ④ 탭별 작업 단위" | tee -a "$REPORT" >/dev/null
+F1="$OUT/t1.sql"; printf 'ALTER SESSION SET CURRENT_SCHEMA = %s;
+' "$OTHER" > "$F1"; F2="$OUT/t2.sql"; printf 'SHOW CONN
+' > "$F2"
+fw1=$(cygpath -w "$F1" 2>/dev/null || echo "$F1"); fw2=$(cygpath -w "$F2" 2>/dev/null || echo "$F2"); D2="$OUT/tab2.txt"; D1="$OUT/tab1.txt"; rm -f "$D1" "$D2"
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw1,@after:5000:run.all,@after:8000:open:$fw2,@after:10500:run.all,@after:12500:output.dump:$D2,@after:13000:tab.prev,@after:15500:session.info,@after:16500:output.dump:$D1"   timeout -s KILL 19 "$EXE" "$PROFILE" > "$OUT/gui4.stdout" 2> "$OUT/gui4.stderr"
+if [ -s "$D2" ] && [ -s "$D1" ]; then
+  b2=$(tail -n +2 "$D2"); b1=$(tail -n +2 "$D1")
+  echo "$b2" | grep "현재 스키마\|Current schema" | sed 's/^/        tab2> /' | tee -a "$REPORT" >/dev/null
+  echo "$b1" | grep "현재 스키마\|Current schema" | sed 's/^/        tab1> /' | tee -a "$REPORT" >/dev/null
+  cur=$(echo "$b2" | grep -m1 "현재 스키마\|Current schema" | sed 's/.*: *//')
+  [ -n "$cur" ] && [ "$cur" != "$OTHER" ] && ok "④ 새 탭(탭2) = 연결 기본 스키마($cur)로 조용히 복귀" || bad "④ 새 탭 스키마 = $cur(기본값이어야)" "$b2"
+  echo "$b1" | grep -q "현재 스키마: $OTHER\|Current schema: $OTHER" && ok "④ 탭1로 돌아가면 $OTHER로 조용히 복귀(실행 없이)" || bad "④ 탭1 복귀 스키마" "$b1"
+else bad "④ 덤프 없음(tab1 $([ -s "$D1" ] && echo o || echo x) · tab2 $([ -s "$D2" ] && echo o || echo x))" "$(tail -3 "$OUT/gui4.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

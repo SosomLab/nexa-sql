@@ -623,6 +623,37 @@ impl App {
         }
     }
 
+    /// ★ 탭 전환 때 세션을 **그 탭의 작업 단위**로 조용히 맞춘다(10-01 ⑯ · 사용자 "새 탭 = 연결 기본값 · 직접 바꾼 값은 탭이 기억"):
+    /// 탭 값 → 없으면 연결 기본값 → 지금 값과 다르면 `Cmd::SetUnit`(Output 없음 · 성공 = `DbChanged`). 바꿀 수 없는 방언·미연결·바쁨 = 건너뜀.
+    pub(crate) fn apply_tab_unit(&mut self) {
+        if !self.sess.connected || self.sess.busy || self.sess.blocked() {
+            return;
+        }
+        let d = self.sess.dialect;
+        let spec = self.sess.spec.clone();
+        let (_, editable) = sessions::db_unit(Some(d), spec.as_ref(), None, None);
+        if !editable {
+            return;
+        }
+        let have = match d {
+            nsql_core::Dialect::Mssql | nsql_core::Dialect::Mysql => self
+                .sess
+                .current_db
+                .clone()
+                .or_else(|| self.explorer.current_db(spec.as_ref())),
+            _ => self.sess.cur_schema.clone(),
+        };
+        let tab = self.editors.active_id();
+        let Some(want) = sessions::unit_to_apply(
+            self.tab_unit.get(&tab).map(String::as_str),
+            self.sess.default_unit.as_deref(),
+            have.as_deref(),
+        ) else {
+            return;
+        };
+        self.sess.worker.send(worker::Cmd::SetUnit(want));
+    }
+
     /// ★ 툴바 "작업 단위" 클릭(10-01 ⑫): SQL Server = 데이터베이스 목록 · MySQL = 스키마(DB) 목록 · 현재 ✓ · 고르면 `USE`(편집기 명령과 같은 길).
     pub(crate) fn open_tab_db_menu(&mut self) {
         if !self.sess.connected {

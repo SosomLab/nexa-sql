@@ -90,6 +90,8 @@ pub(crate) struct Sess {
     pub env_temp: bool,
     /// ★ 이 세션의 현재 DB(101 §3 · SQL Server/MySQL `USE` 뒤 · 러너 `RunEvent::DbChanged`) — 상태줄·`SHOW CONN`·탐색기 현재 DB.
     pub current_db: Option<String>,
+    /// ★ 연결 기본 작업 단위(10-01 ⑯ · 접속 직후 값 = SQL Server/MySQL 현재 DB · Oracle/PG 현재 스키마) — 새 탭은 이 값으로 시작.
+    pub default_unit: Option<String>,
     /// 닫는 중(공유 모드의 전용 세션이 해제됨) — 호스트가 다음 틱에 거둔다.
     pub closing: bool,
     /// 실행 앞에 끼워 보낸 재접속의 `done` 신호 수 — 그만큼은 busy를 풀지 않고 넘긴다(뒤따르는 실행이 아직 돈다).
@@ -197,6 +199,7 @@ impl Sess {
             broken: false,
             env_temp: false,
             current_db: None,
+            default_unit: None,
             closing: false,
             skip_done: 0,
             last_used: now,
@@ -965,6 +968,19 @@ pub(crate) fn db_unit(
     }
 }
 
+/// ★ 탭 전환 때 세션에 맞출 작업 단위(10-01 ⑯ · 순수): 탭이 기억한 값 → 없으면 연결 기본값 → 지금 값과 같으면 `None`(할 일 없음).
+pub(crate) fn unit_to_apply(
+    tab_unit: Option<&str>,
+    default_unit: Option<&str>,
+    have: Option<&str>,
+) -> Option<String> {
+    let want = tab_unit.or(default_unit)?;
+    if want.is_empty() || have.is_some_and(|h| h.eq_ignore_ascii_case(want)) {
+        return None;
+    }
+    Some(want.to_string())
+}
+
 /// 툴바 작업 단위에서 고른 DB로 바꾸는 문장(편집기 `USE`와 같은 길 · SQL Server `[x]` · MySQL `` `x` ``).
 pub(crate) fn use_sql(dialect: Dialect, db: &str) -> Option<String> {
     match dialect {
@@ -1170,6 +1186,34 @@ mod tests {
             ),
             "섞이면 확인"
         );
+    }
+
+    /// ★ 탭 전환 판정 MC/DC(10-01 ⑯): 탭 값 > 기본값 · 같으면 없음 · 둘 다 없으면 없음.
+    #[test]
+    fn unit_to_apply_rules() {
+        use super::unit_to_apply as f;
+        assert_eq!(
+            f(Some("A"), Some("D"), Some("D")).as_deref(),
+            Some("A"),
+            "탭이 기억한 값 우선"
+        );
+        assert_eq!(
+            f(None, Some("D"), Some("A")).as_deref(),
+            Some("D"),
+            "새 탭 = 기본값으로 되돌림"
+        );
+        assert_eq!(
+            f(None, Some("D"), Some("d")),
+            None,
+            "같으면(대소문자 무관) 없음"
+        );
+        assert_eq!(f(Some("A"), None, Some("A")), None);
+        assert_eq!(
+            f(None, None, Some("A")),
+            None,
+            "기본값 모르면 건드리지 않음"
+        );
+        assert_eq!(f(Some(""), Some("D"), Some("A")), None, "빈 값 = 없음");
     }
 
     /// ★ 툴바 작업 단위(10-01 ⑫): 방언별 값·편집 가능 여부 · USE 문장 인용.

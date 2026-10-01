@@ -68,6 +68,9 @@ pub(crate) enum Cmd {
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
+    /// ★ 탭 작업 단위로 세션을 **조용히** 맞춘다(10-01 ⑯ · 탭 전환 때) — 드라이버 `set_option("schema")`(SQL Server/MySQL `USE` ·
+    ///   Oracle `ALTER SESSION SET CURRENT_SCHEMA`) · Output·카드 없음 · 성공 = `RunEvent::DbChanged`.
+    SetUnit(String),
     /// ★ 자동 커밋 모드 전환(설정 토글 · 호스트가 **모든 세션**에 보낸다 · 09-28) — 큐 순서대로 러너 설정만 바꾼다(DB로 가는 것 없음).
     Autocommit(bool),
     Run {
@@ -1271,6 +1274,17 @@ pub(crate) fn spawn(
                         };
                         let _ = ctx_tx.send(ConnOutcome::ImportDone { key, result });
                         wake_now();
+                        true
+                    }
+                    Cmd::SetUnit(unit) => {
+                        if let Some(s) = runner.session.as_mut() {
+                            match s.set_option("schema", &unit) {
+                                Ok(()) => emit(RunEvent::DbChanged(unit)),
+                                Err(e) => {
+                                    emit(RunEvent::Warning(format!("⚠ {unit}: {}", e.message)));
+                                }
+                            }
+                        }
                         true
                     }
                     c @ (Cmd::Commit | Cmd::Rollback) => {

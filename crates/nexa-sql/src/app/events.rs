@@ -1089,6 +1089,8 @@ impl App {
                 // ★ `USE db` 성공(101 §3): 세션의 현재 DB → 탐색기(현재 DB 표시 · 메타 추종) · 상태줄.
                 RunEvent::DbChanged(db) => {
                     self.sess.current_db = Some(db.clone());
+                    // ★ 탭이 기억(⑯): 이 탭에서 바꾼 값 = 돌아올 때 다시 맞춘다.
+                    self.tab_unit.insert(self.editors.active_id(), db.clone());
                     // Oracle `ALTER SESSION SET CURRENT_SCHEMA` · PG `SET search_path` = 현재 스키마가 바뀐 것(⑮).
                     if matches!(
                         self.sess.dialect,
@@ -1114,7 +1116,18 @@ impl App {
                     description,
                     dialect,
                     schema,
+                    database,
                 } => {
+                    // ★ 연결 기본 작업 단위(⑯): DB 전환 방언 = 접속 직후 DB · 그 밖 = 현재 스키마.
+                    self.sess.default_unit = if matches!(
+                        dialect,
+                        nsql_core::Dialect::Mssql | nsql_core::Dialect::Mysql
+                    ) {
+                        Some(database.clone()).filter(|d| !d.is_empty())
+                    } else {
+                        Some(schema.clone()).filter(|s| !s.is_empty())
+                    };
+                    self.sess.current_db = None;
                     self.sess.disc_path = None;
                     self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
                     self.startup_connected = true;

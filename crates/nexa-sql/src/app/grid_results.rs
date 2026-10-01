@@ -1178,6 +1178,8 @@ impl App {
                 self.panels.insert(self.panel_editor, old);
             }
             self.panel_editor = cur;
+            // ★ 탭이 바뀌었다 → 세션 작업 단위를 이 탭의 것으로(⑯ · 조용히).
+            self.apply_tab_unit();
             let a = self
                 .panel
                 .active
