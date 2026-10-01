@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| docs/release-v0.1.3 | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | v0.1.3 릴리스 기록(journal §40 · DEVLOG · STATUS · CLAUDE · MILESTONES · 33 §3) |
+| release/v0.1.3 | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | 🚀 버전 0.1.2 → 0.1.3 · 태그 `v0.1.3` → release.yml ✓ → 공개 → homebrew.yml ✓(brew 0.1.3) · winget·choco 없음 |
 | fix/explorer-db-copy-name | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉞ SQL Server DB 노드 "이름 복사" 무동작(`copy_name_of` 한 자리 + 시험) · journal §39 |
 | fix/mssql-db-size-priority | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉝-b DB 노드 용량 우선순위 = 용량 확인 값 확정 > 하위 합계 `+`(`db_size_pick` + MC/DC) · E2E ⑦ 34/34 · journal §38 |
 | feat/mssql-db-node-used-sum | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉝ SQL Server DB 노드 = 읽힌 테이블+인덱스 합 `+`(없으면 파일 용량 · 툴팁 둘 다) · E2E ⑦ 33/33 · journal §38 |
