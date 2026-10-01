@@ -75,8 +75,13 @@ impl App {
         }
         // 자체 시험용(83 · 09-25): 줄 펼치기 · 트리 덤프 · SQL Preview 덤프(키 주입 없이 구조·생성 결과를 파일로 확인).
         if let Some(rest) = id.strip_prefix("explorer.expand") {
-            let row = rest.trim_start_matches(':').parse().unwrap_or(0);
-            let ok = self.explorer.capture_expand(row);
+            let arg = rest.trim_start_matches(':');
+            // 행 번호 또는 라벨 경로(`DB/Tables` · `Tables` · 101 E2E) — 보이는 행 기준.
+            let ok = match arg.parse::<usize>() {
+                Ok(row) => self.explorer.capture_expand(row),
+                Err(_) => self.explorer.capture_expand_label(arg),
+            };
+            let row = arg;
             self.sess.status = format!("explorer.expand row={row} ok={ok}");
             self.redraw();
             return;

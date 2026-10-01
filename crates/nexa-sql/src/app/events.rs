@@ -1086,6 +1086,14 @@ impl App {
                     self.set_session_env(env);
                 }
                 RunEvent::ShowConn => self.output_conn_info(),
+                // ★ `USE db` 성공(101 §3): 세션의 현재 DB → 탐색기(현재 DB 표시 · 메타 추종) · 상태줄.
+                RunEvent::DbChanged(db) => {
+                    self.sess.current_db = Some(db.clone());
+                    if let Some(spec) = self.sess.spec.clone() {
+                        self.explorer.set_current_db(&spec, &db);
+                    }
+                    self.sess_ui_dirty = true;
+                }
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) {
                         self.tx_close(TxOutcome::Committed);

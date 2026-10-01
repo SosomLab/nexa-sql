@@ -49,10 +49,19 @@ pub enum ObjectKind {
     Extension,
     /// PostgreSQL Event Trigger(DB 수준 · `pg_event_trigger`).
     EventTrigger,
+    // ── 101(10-01 · SSMS 골격 · SQL Server) — 서버·DB 수준 종류.
+    /// 데이터베이스(`sys.databases` · 완성 `USE` 뒤 · 탐색기 Databases 층) · `extra` = `SYSTEM`(database_id ≤ 4).
+    Database,
+    /// DB 사용자(`sys.database_principals` S/U/G/…) · `extra` = type_desc.
+    DbUser,
+    /// DB 역할(`sys.database_principals` R) · `status` = FIXED.
+    DbRole,
+    /// 연결된 서버(`sys.servers WHERE is_linked = 1`) · `extra` = 제품 · 데이터 원본.
+    LinkedServer,
 }
 
 impl ObjectKind {
-    pub const ALL: [ObjectKind; 24] = [
+    pub const ALL: [ObjectKind; 28] = [
         ObjectKind::Table,
         ObjectKind::View,
         ObjectKind::MaterializedView,
@@ -77,6 +86,10 @@ impl ObjectKind {
         ObjectKind::SchemaTrigger,
         ObjectKind::Extension,
         ObjectKind::EventTrigger,
+        ObjectKind::Database,
+        ObjectKind::DbUser,
+        ObjectKind::DbRole,
+        ObjectKind::LinkedServer,
     ];
 
     /// CLI 인자 · 설정용 코드.
@@ -107,6 +120,10 @@ impl ObjectKind {
             ObjectKind::SchemaTrigger => "schema_trigger",
             ObjectKind::Extension => "extension",
             ObjectKind::EventTrigger => "event_trigger",
+            ObjectKind::Database => "database",
+            ObjectKind::DbUser => "db_user",
+            ObjectKind::DbRole => "db_role",
+            ObjectKind::LinkedServer => "linked_server",
         }
     }
 
@@ -138,6 +155,10 @@ impl ObjectKind {
             ObjectKind::SchemaTrigger => "Schema Triggers",
             ObjectKind::Extension => "Extensions",
             ObjectKind::EventTrigger => "Event Triggers",
+            ObjectKind::Database => "Databases",
+            ObjectKind::DbUser => "Users",
+            ObjectKind::DbRole => "Roles",
+            ObjectKind::LinkedServer => "Linked Servers",
         }
     }
 
@@ -171,6 +192,10 @@ impl ObjectKind {
             "schema_trigger" | "schema_triggers" => ObjectKind::SchemaTrigger,
             "extension" | "extensions" | "ext" => ObjectKind::Extension,
             "event_trigger" | "event_triggers" => ObjectKind::EventTrigger,
+            "database" | "databases" | "db" | "dbs" => ObjectKind::Database,
+            "user" | "users" | "db_user" | "db_users" => ObjectKind::DbUser,
+            "role" | "roles" | "db_role" | "db_roles" => ObjectKind::DbRole,
+            "linked_server" | "linked_servers" | "linked" | "lnk" => ObjectKind::LinkedServer,
             _ => return None,
         })
     }
@@ -219,6 +244,8 @@ impl ObjectKind {
 /// 오브젝트 한 줄.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectInfo {
+    /// ★ 소속 데이터베이스(101 · SQL Server Databases 층) — 빈 문자열 = 연결의 현재 DB(다른 방언은 늘 빈 문자열).
+    pub db: String,
     pub schema: String,
     pub name: String,
     pub kind: ObjectKind,
@@ -785,6 +812,49 @@ pub fn schemas_opt(s: &mut dyn Session, o: SchemaOpts) -> Result<Vec<String>, Db
     Ok(rs.rows.iter().map(|r| col(r, 0)).collect())
 }
 
+/// ★ 서버 한 줄 정보(101 §2 · D-253 · 접속 직후 1회): 버전 · 로그인 · 현재 DB · 에디션(없으면 빈 문자열).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerInfo {
+    pub version: String,
+    pub login: String,
+    pub current_db: String,
+    pub edition: String,
+}
+
+pub fn server_info(s: &mut dyn Session) -> Result<ServerInfo, DbError> {
+    let sql = match s.dialect() {
+        Dialect::Mssql => "SELECT CONVERT(varchar(64), SERVERPROPERTY('ProductVersion')), SUSER_SNAME(), DB_NAME(), CONVERT(varchar(128), SERVERPROPERTY('Edition'))",
+        Dialect::Oracle => "SELECT (SELECT version FROM product_component_version WHERE product LIKE 'Oracle%' AND ROWNUM = 1), SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','DB_NAME'), '' FROM dual",
+        Dialect::Postgres => "SELECT current_setting('server_version'), current_user, current_database(), ''",
+        Dialect::Mysql => "SELECT VERSION(), CURRENT_USER(), IFNULL(DATABASE(), ''), ''",
+        Dialect::Sqlite => "SELECT sqlite_version(), '', 'main', ''",
+        Dialect::Odbc => return Ok(ServerInfo::default()),
+    };
+    let rs = query(s, sql)?;
+    let r = rs.rows.first();
+    Ok(ServerInfo {
+        version: r.map(|r| col(r, 0)).unwrap_or_default(),
+        login: r.map(|r| col(r, 1)).unwrap_or_default(),
+        current_db: r.map(|r| col(r, 2)).unwrap_or_default(),
+        edition: r.map(|r| col(r, 3)).unwrap_or_default(),
+    })
+}
+
+/// ★ `USE 이름` 문장의 DB 이름(SQL Server·MySQL · 101 §3 · 순수): `USE [x]` · `USE "x"` · `USE x;` · 뒤 `GO`는 무시 · 아니면 `None`.
+#[must_use]
+pub fn use_db_name(sql: &str) -> Option<String> {
+    let t = sql.trim_start().trim_start_matches('\u{feff}');
+    let mut it = t.split_whitespace();
+    if !it.next()?.eq_ignore_ascii_case("USE") {
+        return None;
+    }
+    let raw = it.next()?.trim_end_matches(';');
+    let name = raw
+        .trim_start_matches(['[', '"', '`'])
+        .trim_end_matches([']', '"', '`', ';']);
+    (!name.is_empty() && !name.eq_ignore_ascii_case("GO")).then(|| name.to_string())
+}
+
 /// 현재 스키마(접속 사용자의 기본).
 pub fn current_schema(s: &mut dyn Session) -> Result<String, DbError> {
     let sql = match s.dialect() {
@@ -814,6 +884,7 @@ pub const DICT_SCHEMA: &str = "$dict";
 /// 이름은 Oracle만 맨이름(`ALL_TABLES`) · 그 밖은 `스키마.이름`(FROM 뒤에 그대로 쓰는 꼴).
 pub fn dictionary(s: &mut dyn Session) -> Result<Vec<ObjectInfo>, DbError> {
     let mk = |name: String| ObjectInfo {
+        db: String::new(),
         schema: DICT_SCHEMA.into(),
         name,
         kind: ObjectKind::View,
@@ -1570,7 +1641,11 @@ fn oracle_type(kind: ObjectKind) -> &'static str {
         | ObjectKind::ForeignTable
         | ObjectKind::Aggregate
         | ObjectKind::Extension
-        | ObjectKind::EventTrigger => "",
+        | ObjectKind::EventTrigger
+        | ObjectKind::Database
+        | ObjectKind::DbUser
+        | ObjectKind::DbRole
+        | ObjectKind::LinkedServer => "",
     }
 }
 
@@ -1615,7 +1690,11 @@ pub fn objects(
                 | ObjectKind::ForeignTable
                 | ObjectKind::Aggregate
                 | ObjectKind::Extension
-                | ObjectKind::EventTrigger => return Ok(Vec::new()),
+                | ObjectKind::EventTrigger
+                | ObjectKind::Database
+                | ObjectKind::DbUser
+                | ObjectKind::DbRole
+                | ObjectKind::LinkedServer => return Ok(Vec::new()),
                 // ★ 인덱스 = 부가에 **테이블 이름**(탐색기 라벨 `테이블.인덱스` · 사용자 09-30 · PG/MSSQL과 같게) · 유효성은 ALL_OBJECTS.
                 ObjectKind::Index => Some(format!(
                     "SELECT i.index_name, NVL(o.status, ''), TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), i.table_name FROM all_indexes i LEFT JOIN all_objects o ON o.owner = i.owner AND o.object_name = i.index_name AND o.object_type = 'INDEX' WHERE i.owner = {} AND (i.index_name NOT LIKE 'BIN$%') ORDER BY i.index_name",
@@ -1645,93 +1724,61 @@ pub fn objects(
                 .collect()
         }
         Dialect::Mssql => {
-            let types: &str = match kind {
-                ObjectKind::Table => "'U'",
-                ObjectKind::View => "'V'",
-                ObjectKind::Procedure => "'P','PC'",
-                ObjectKind::Function => "'FN','IF','TF','AF','FS','FT'",
-                ObjectKind::Trigger => "'TR','TA'",
-                ObjectKind::Sequence => "'SO'",
-                ObjectKind::Synonym => "'SN'",
+            // ★ 101 §2(SSMS 골격): 스키마 "" = **모든 스키마**(객체의 schema는 행의 `s.name`) · 그 외 = 그 스키마만.
+            //   모든 질의가 5열(이름 · 상태 · 변경 시각 · 부가 · 스키마)로 끝나 한 길로 ObjectInfo가 된다.
+            let sch = if schema.is_empty() {
+                "1 = 1".to_string()
+            } else {
+                format!("s.name = {}", lit(schema))
+            };
+            let sql = match kind {
+                ObjectKind::Table | ObjectKind::View | ObjectKind::Procedure | ObjectKind::Function
+                | ObjectKind::Trigger | ObjectKind::Sequence | ObjectKind::Synonym => {
+                    let types: &str = match kind {
+                        ObjectKind::Table => "'U'",
+                        ObjectKind::View => "'V'",
+                        ObjectKind::Procedure => "'P','PC'",
+                        ObjectKind::Function => "'FN','IF','TF','AF','FS','FT'",
+                        ObjectKind::Trigger => "'TR','TA'",
+                        ObjectKind::Sequence => "'SO'",
+                        _ => "'SN'",
+                    };
+                    format!(
+                        "SELECT o.name, '', CONVERT(varchar(19), o.modify_date, 120), o.type, s.name FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE {sch} AND o.type IN ({types}) ORDER BY s.name, o.name"
+                    )
+                }
                 // 인덱스 = 테이블별이 아니라 스키마 전체(DBeaver Indexes 가상 폴더) · 부가 = 테이블 · 유니크.
-                ObjectKind::Index => {
-                    let sql = format!(
-                        "SELECT i.name, '', '', o.name + CASE WHEN i.is_unique = 1 THEN ' · UNIQUE' ELSE '' END + CASE WHEN i.is_primary_key = 1 THEN ' · PK' ELSE '' END FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE s.name = {} AND i.index_id > 0 AND i.is_hypothetical = 0 AND o.type IN ('U','V') ORDER BY i.name",
-                        lit(schema)
-                    );
-                    return Ok(query(s, &sql)?
-                        .rows
-                        .iter()
-                        .map(|r| {
-                            info(
-                                schema,
-                                kind,
-                                col(r, 0),
-                                String::new(),
-                                String::new(),
-                                col(r, 3),
-                            )
-                        })
-                        .collect());
-                }
-                ObjectKind::ExternalTable => {
-                    let sql = format!(
-                        "SELECT t.name, '', CONVERT(varchar(19), t.modify_date, 120), '' FROM sys.external_tables t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE s.name = {} ORDER BY t.name",
-                        lit(schema)
-                    );
-                    return Ok(query(s, &sql)?
-                        .rows
-                        .iter()
-                        .map(|r| {
-                            info(
-                                schema,
-                                kind,
-                                col(r, 0),
-                                String::new(),
-                                col(r, 2),
-                                String::new(),
-                            )
-                        })
-                        .collect());
-                }
-                ObjectKind::Type => {
-                    let sql = format!(
-                        "SELECT t.name, '', '', '' FROM sys.types t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE t.is_user_defined = 1 AND s.name = {} ORDER BY t.name",
-                        lit(schema)
-                    );
-                    return Ok(query(s, &sql)?
-                        .rows
-                        .iter()
-                        .map(|r| {
-                            info(
-                                schema,
-                                kind,
-                                col(r, 0),
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                            )
-                        })
-                        .collect());
-                }
+                ObjectKind::Index => format!(
+                    "SELECT i.name, '', '', o.name + CASE WHEN i.is_unique = 1 THEN ' · UNIQUE' ELSE '' END + CASE WHEN i.is_primary_key = 1 THEN ' · PK' ELSE '' END, s.name FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE {sch} AND i.index_id > 0 AND i.is_hypothetical = 0 AND o.type IN ('U','V') ORDER BY s.name, i.name"
+                ),
+                ObjectKind::ExternalTable => format!(
+                    "SELECT t.name, '', CONVERT(varchar(19), t.modify_date, 120), '', s.name FROM sys.external_tables t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE {sch} ORDER BY s.name, t.name"
+                ),
+                ObjectKind::Type => format!(
+                    "SELECT t.name, '', '', '', s.name FROM sys.types t JOIN sys.schemas s ON s.schema_id = t.schema_id WHERE t.is_user_defined = 1 AND {sch} ORDER BY s.name, t.name"
+                ),
+                // ★ 101: DDL(데이터베이스) 트리거 · 데이터베이스 · DB 사용자/역할 · 연결된 서버 — 스키마 없음(빈 문자열).
+                ObjectKind::SchemaTrigger => "SELECT t.name, CASE WHEN t.is_disabled = 1 THEN 'DISABLED' ELSE '' END, CONVERT(varchar(19), t.modify_date, 120), '', '' FROM sys.triggers t WHERE t.parent_class = 0 ORDER BY t.name".to_string(),
+                ObjectKind::Database => "SELECT d.name, d.state_desc, CONVERT(varchar(19), d.create_date, 120), CASE WHEN d.database_id <= 4 THEN 'SYSTEM' ELSE '' END, '' FROM sys.databases d ORDER BY d.name".to_string(),
+                ObjectKind::DbUser => "SELECT p.name, '', CONVERT(varchar(19), p.modify_date, 120), p.type_desc, '' FROM sys.database_principals p WHERE p.type IN ('S','U','G','C','K','E','X') AND p.name NOT IN ('sys','INFORMATION_SCHEMA') ORDER BY p.name".to_string(),
+                ObjectKind::DbRole => "SELECT p.name, CASE WHEN p.is_fixed_role = 1 THEN 'FIXED' ELSE '' END, CONVERT(varchar(19), p.modify_date, 120), '', '' FROM sys.database_principals p WHERE p.type = 'R' ORDER BY p.is_fixed_role, p.name".to_string(),
+                ObjectKind::LinkedServer => "SELECT v.name, '', CONVERT(varchar(19), v.modify_date, 120), ISNULL(v.product, '') + CASE WHEN v.data_source IS NOT NULL AND v.data_source <> '' THEN ' · ' + v.data_source ELSE '' END, '' FROM sys.servers v WHERE v.is_linked = 1 ORDER BY v.name".to_string(),
                 _ => return Ok(Vec::new()),
             };
-            let sql = format!(
-                "SELECT o.name, '', CONVERT(varchar(19), o.modify_date, 120), o.type FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE s.name = {} AND o.type IN ({types}) ORDER BY o.name",
-                lit(schema)
-            );
-            query(s, &sql)?
+            return Ok(query(s, &sql)?
                 .rows
                 .iter()
                 .map(|r| {
-                    (
+                    info(
+                        &col(r, 4),
+                        kind,
                         col(r, 0),
                         col(r, 1),
                         col(r, 2),
                         col(r, 3).trim().to_string(),
                     )
                 })
-                .collect()
+                .collect());
         }
         Dialect::Postgres => {
             let sql = match kind {
@@ -1823,6 +1870,7 @@ fn info(
     extra: String,
 ) -> ObjectInfo {
     ObjectInfo {
+        db: String::new(),
         schema: schema.to_string(),
         name,
         kind,
@@ -2428,14 +2476,23 @@ pub fn source_with(
         Dialect::Mssql => match kind {
             ObjectKind::Table => table_ddl(s, schema, name),
             _ => {
-                let sql = format!(
-                    "SELECT OBJECT_DEFINITION(OBJECT_ID({}))",
-                    lit(&format!(
-                        "{}.{}",
-                        quote_ident(dialect, schema),
-                        quote_ident(dialect, name)
-                    ))
-                );
+                // ★ DDL(데이터베이스) 트리거는 스키마가 없다(`sys.triggers.parent_class = 0` · 101 §2).
+                let oid = if kind == ObjectKind::SchemaTrigger {
+                    format!(
+                        "(SELECT TOP 1 object_id FROM sys.triggers WHERE parent_class = 0 AND name = {})",
+                        lit(name)
+                    )
+                } else {
+                    format!(
+                        "OBJECT_ID({})",
+                        lit(&format!(
+                            "{}.{}",
+                            quote_ident(dialect, schema),
+                            quote_ident(dialect, name)
+                        ))
+                    )
+                };
+                let sql = format!("SELECT OBJECT_DEFINITION({oid})");
                 let rs = query(s, &sql)?;
                 let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
                 if body.trim().is_empty() {
@@ -2444,7 +2501,7 @@ pub fn source_with(
                 // `CREATE PROC` → `CREATE OR ALTER PROC`(2016 SP1+) — 다시 실행하면 곧 수정.
                 // ★ 보수적 생성(09-30): 저장된 정의가 스키마 없이 `CREATE PROC p`면 기본 스키마(dbo)에 만들어진다 → `[schema].` 한정.
                 let body = to_create_or_alter(body.trim_end());
-                let mut body = if opts.qualify {
+                let mut body = if opts.qualify && kind != ObjectKind::SchemaTrigger {
                     qualify_tsql_header(&body, schema)
                 } else {
                     body
@@ -3194,6 +3251,7 @@ mod tests {
     #[test]
     fn drop_sql_per_kind_and_dialect() {
         let mk = |kind: ObjectKind, extra: &str| ObjectInfo {
+            db: String::new(),
             schema: "S".into(),
             name: "N".into(),
             kind,

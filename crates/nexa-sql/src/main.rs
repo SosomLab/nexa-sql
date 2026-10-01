@@ -1442,6 +1442,10 @@ fn main() {
         e.set_gen_opts(gen_opts_from(&settings));
         e.set_source_qualify(settings.flag("explorer.source_schema"));
         e.set_schema_opts(schema_opts_from(&settings));
+        e.set_mssql_tree(
+            settings.get("explorer.mssql_tree") != Some("schema"),
+            settings.flag("explorer.mssql_system_dbs"),
+        );
         e.set_index_cfg(index_cfg_from(&settings));
         e.set_share_catalog(settings.flag("explorer.share_catalog"));
         e.set_tooltip_delay(settings.int("ui.tooltip_delay_ms").max(0) as u128);

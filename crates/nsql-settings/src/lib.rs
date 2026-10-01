@@ -2420,6 +2420,23 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 101(10-01): SQL Server 탐색기 골격 = SSMS(Databases 층) · 시스템 DB 폴더.
+    Entry {
+        key: "explorer.mssql_tree",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMssqlTree,
+        desc: Msg::DescMssqlTree,
+        kind: SettingKind::Choice(MSSQL_TREE_OPTS),
+        default: "ssms",
+    },
+    Entry {
+        key: "explorer.mssql_system_dbs",
+        cat: Msg::CatExplorer,
+        label: Msg::LblMssqlSystemDbs,
+        desc: Msg::DescMssqlSystemDbs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "gen.compact",
         cat: Msg::CatExplorer,
@@ -5972,6 +5989,11 @@ pub fn is_info(key: &str) -> bool {
 
 /// 결과 탭 이름 규칙.
 /// Output 탭 표시 시점(09-30).
+const MSSQL_TREE_OPTS: &[(&str, Msg)] = &[
+    ("ssms", Msg::ValMssqlTreeSsms),
+    ("schema", Msg::ValMssqlTreeSchema),
+];
+
 const OUTPUT_SHOW_OPTS: &[(&str, Msg)] = &[
     ("off", Msg::ValOutputShowOff),
     ("auto", Msg::ValOutputShowAuto),

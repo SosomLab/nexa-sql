@@ -1709,6 +1709,7 @@ mod tests {
 
     fn info(kind: ObjectKind) -> ObjectInfo {
         ObjectInfo {
+            db: String::new(),
             schema: "HR".into(),
             name: "EMP".into(),
             kind,

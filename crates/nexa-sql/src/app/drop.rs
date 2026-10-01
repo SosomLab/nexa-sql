@@ -453,6 +453,9 @@ impl App {
                 env_line = format!("{env_line} ({})", tf(Msg::OutConnEnvTemp, &[&base]));
             }
             lines.push(format!("  {}: {}", t(Msg::OutConnEnv), env_line));
+            if let Some(db) = &s.current_db {
+                lines.push(format!("  {}: {}", t(Msg::OutConnCurrentDb), db));
+            }
             lines.push(format!(
                 "  {}: {}",
                 t(Msg::OutConnSchema),

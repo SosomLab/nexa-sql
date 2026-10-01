@@ -435,6 +435,12 @@ impl App {
                 self.explorer
                     .set_schema_opts(schema_opts_from(&self.settings));
             }
+            "explorer.mssql_tree" | "explorer.mssql_system_dbs" => {
+                self.explorer.set_mssql_tree(
+                    self.settings.get("explorer.mssql_tree") != Some("schema"),
+                    self.settings.flag("explorer.mssql_system_dbs"),
+                );
+            }
             "explorer.search_index"
             | "explorer.index_max"
             | "explorer.index_hits_max"

@@ -88,6 +88,8 @@ pub(crate) struct Sess {
     /// ★ 서버 유형을 이 세션에서 **임시로** 바꿨다(사용자 10-01 · 세션 메뉴·팔레트·편집기 `CONNTYPE`) — 프로필에는 저장하지 않는다.
     ///   새 대상으로 접속하면 풀린다 · 표시 = 칩 외곽선 + 접속 정보 "임시" · 프로필 편집의 변경은 이 세션을 덮지 않는다.
     pub env_temp: bool,
+    /// ★ 이 세션의 현재 DB(101 §3 · SQL Server/MySQL `USE` 뒤 · 러너 `RunEvent::DbChanged`) — 상태줄·`SHOW CONN`·탐색기 현재 DB.
+    pub current_db: Option<String>,
     /// 닫는 중(공유 모드의 전용 세션이 해제됨) — 호스트가 다음 틱에 거둔다.
     pub closing: bool,
     /// 실행 앞에 끼워 보낸 재접속의 `done` 신호 수 — 그만큼은 busy를 풀지 않고 넘긴다(뒤따르는 실행이 아직 돈다).
@@ -194,6 +196,7 @@ impl Sess {
             idle_closed: false,
             broken: false,
             env_temp: false,
+            current_db: None,
             closing: false,
             skip_done: 0,
             last_used: now,

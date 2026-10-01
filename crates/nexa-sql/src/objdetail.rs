@@ -732,6 +732,7 @@ mod tests {
 
     fn obj(schema: &str, name: &str) -> nsql_catalog::ObjectInfo {
         nsql_catalog::ObjectInfo {
+            db: String::new(),
             schema: schema.into(),
             name: name.into(),
             kind: nsql_catalog::ObjectKind::Table,

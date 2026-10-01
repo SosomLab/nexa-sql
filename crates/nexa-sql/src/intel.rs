@@ -1754,6 +1754,8 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
                 }
                 ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
                 ObjectKind::Extension => IconKind::Package,
+                ObjectKind::Database | ObjectKind::DbUser | ObjectKind::DbRole => IconKind::Schema,
+                ObjectKind::LinkedServer => IconKind::Link,
             });
         }
     }

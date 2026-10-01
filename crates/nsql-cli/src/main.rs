@@ -1276,6 +1276,9 @@ impl Printer {
                     nsql_script::ConnEnv::abbr_of(e).to_ascii_lowercase()
                 );
             }
+            RunEvent::DbChanged(db) => {
+                let _ = writeln!(out, "current database: {db}");
+            }
             RunEvent::ShowConn => {
                 let _ = writeln!(
                     out,

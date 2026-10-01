@@ -198,6 +198,8 @@ pub enum RunEvent {
     ConnType(String),
     /// ★ `SHOW CONN` — 호스트가 접속 정보를 쓴다(GUI = Output · CLI = 한 줄).
     ShowConn,
+    /// ★ `USE db`가 성공했다(10-01 · 101 §3): 이 세션의 현재 DB — 호스트는 탐색기 현재 DB 표시·메타 추종·상태줄에 반영(왕복 0).
+    DbChanged(String),
     /// ★ 눈에 띄어야 하는 안내(T-202 · 사용자 09-24 "강제 전체 조회를 눈에 띄게") — GUI 상태줄 + 로그 · CLI stderr. 텍스트에 ⚠.
     Warning(String),
     Connected {
@@ -260,6 +262,10 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         RunEvent::Message(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
         RunEvent::ConnType(v) => vec![LogEntry::new(LogKind::Info, format!("conntype → {v}"))],
         RunEvent::ShowConn => Vec::new(),
+        RunEvent::DbChanged(db) => vec![LogEntry::new(
+            LogKind::Info,
+            format!("current database → {db}"),
+        )],
         RunEvent::Warning(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
         RunEvent::Connected {
             description,
@@ -2470,6 +2476,12 @@ impl Runner {
                         rows_affected: result.rows_affected,
                         elapsed,
                     });
+                }
+                // ★ `USE db` 성공(10-01 · 101 §3): 세션의 현재 DB가 바뀌었다 — 호스트에 알린다(파싱만 · 왕복 0).
+                if matches!(self.dialect(), Some(Dialect::Mssql | Dialect::Mysql)) {
+                    if let Some(db) = nsql_catalog::use_db_name(&item.text) {
+                        emit(RunEvent::DbChanged(db));
+                    }
                 }
                 let printed = self.engine.absorb(&result);
                 self.flush_diagnostics(emit);

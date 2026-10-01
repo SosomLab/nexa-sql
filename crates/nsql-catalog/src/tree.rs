@@ -263,6 +263,7 @@ pub fn member_object(owner: &ObjectInfo, sub: SubKind, item: &SubItem) -> Option
         return None;
     }
     Some(ObjectInfo {
+        db: String::new(),
         schema: owner.schema.clone(),
         name: format!("{}.{}", owner.name, item.name),
         kind,
@@ -690,6 +691,7 @@ mod tests {
         assert!(member_sub_kinds(Dialect::Oracle, SubKind::Columns).is_empty());
         assert!(member_sub_kinds(Dialect::Postgres, SubKind::Functions).is_empty());
         let pkg = ObjectInfo {
+            db: String::new(),
             schema: "S".into(),
             name: "PKG".into(),
             kind: ObjectKind::Package,

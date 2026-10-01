@@ -495,6 +495,30 @@ impl ExplorerSet {
     }
 
     /// 스키마 목록 옵션(설정) — 읽어 둔 루트는 조용히 다시 읽는다.
+    /// ★ 세션의 현재 DB가 바뀌었다(`USE` · 101 §3) — 그 연결의 칸에.
+    pub(crate) fn set_current_db(&mut self, spec: &ConnectSpec, db: &str) {
+        if let Some(i) = self.find(spec) {
+            self.panes[i].ex.set_current_db(db);
+        }
+    }
+
+    /// 설정 `explorer.mssql_tree`(ssms|schema) · `explorer.mssql_system_dbs`.
+    pub(crate) fn set_mssql_tree(&mut self, ssms: bool, system: bool) {
+        for p in &mut self.panes {
+            p.ex.set_mssql_tree(ssms, system);
+        }
+    }
+
+    /// 자체 시험용(101 E2E · `explorer.expand:<DB>/<라벨>`) — 보이는 칸에.
+    pub(crate) fn capture_expand_label(&mut self, path: &str) -> bool {
+        let i = self.shown;
+        let ok = self.panes[i].ex.capture_expand_label(path);
+        if ok {
+            self.relayout();
+        }
+        ok
+    }
+
     pub(crate) fn set_schema_opts(&mut self, opts: nsql_catalog::SchemaOpts) {
         let changed = self.schema_opts != opts;
         self.schema_opts = opts;

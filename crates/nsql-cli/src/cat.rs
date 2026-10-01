@@ -101,6 +101,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     })
                     .unwrap_or(nsql_catalog::ObjectKind::Table);
                 let owner = nsql_catalog::ObjectInfo {
+                    db: String::new(),
                     schema: sc,
                     name,
                     kind,
@@ -225,6 +226,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                     .and_then(|k| ObjectKind::parse(k))
                     .unwrap_or(ObjectKind::Table);
                 let owner = nsql_catalog::ObjectInfo {
+                    db: String::new(),
                     schema: sc,
                     name,
                     kind,
@@ -283,6 +285,7 @@ pub(crate) fn cmd_cat(o: &Opts) -> i32 {
                 };
                 let spec = nsql_catalog::GenSpec {
                     owner: nsql_catalog::ObjectInfo {
+                        db: String::new(),
                         schema: sc,
                         name,
                         kind,

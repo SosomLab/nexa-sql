@@ -45,6 +45,125 @@ enum NodeKind {
     },
     /// 하위 폴더의 잎(제약·인덱스·트리거·인자 …).
     Item(SubItem),
+    /// ★ SQL Server Databases 층(101 §2 · SSMS 골격): 데이터베이스 노드 — 아래는 종류 폴더·묶음(스키마 층 없음 · 객체 = `스키마.이름`).
+    Database(String),
+    /// ★ SSMS 골격의 묶음 폴더(101 §2) — `db` = 소속 DB(서버 수준 묶음이면 None).
+    Group {
+        db: Option<String>,
+        group: GroupKind,
+    },
+}
+
+/// ★ SSMS 묶음 폴더 종류(101 §2) — 서버 수준(Databases · ServerObjects) · DB 수준(그 외).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GroupKind {
+    Databases,
+    SystemDbs,
+    ExternalResources,
+    Programmability,
+    Security,
+    /// 보안 ▸ 스키마(잎 목록 · `Req::Schemas`).
+    DbSchemas,
+    ServerObjects,
+}
+
+fn group_msg(g: GroupKind) -> Msg {
+    match g {
+        GroupKind::Databases => Msg::ExpDatabases,
+        GroupKind::SystemDbs => Msg::ExpSystemDbs,
+        GroupKind::ExternalResources => Msg::ExpExternalResources,
+        GroupKind::Programmability => Msg::ExpProgrammability,
+        GroupKind::Security => Msg::ExpSecurity,
+        GroupKind::DbSchemas => Msg::ExpDbSchemas,
+        GroupKind::ServerObjects => Msg::ExpServerObjects,
+    }
+}
+
+fn folder_node(db: Option<&str>, kind: ObjectKind, depth: usize) -> Node {
+    let _ = db;
+    Node {
+        kind: NodeKind::Folder {
+            schema: String::new(),
+            kind,
+        },
+        depth,
+        children: Vec::new(),
+        expanded: false,
+        expandable: true,
+        state: LoadState::Idle,
+    }
+}
+
+fn group_node(db: Option<&str>, group: GroupKind, depth: usize) -> Node {
+    Node {
+        kind: NodeKind::Group {
+            db: db.map(str::to_string),
+            group,
+        },
+        depth,
+        children: Vec::new(),
+        expanded: false,
+        expandable: true,
+        state: LoadState::Idle,
+    }
+}
+
+/// ★ SSMS 골격의 DB 노드 자식(101 §2 · 순수): 테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 보안 — 스토리지·다이어그램·Service Broker는 1차 생략(D-247).
+fn ssms_db_children(db: &str, depth: usize) -> Vec<Node> {
+    vec![
+        folder_node(Some(db), ObjectKind::Table, depth),
+        folder_node(Some(db), ObjectKind::View, depth),
+        group_node(Some(db), GroupKind::ExternalResources, depth),
+        folder_node(Some(db), ObjectKind::Synonym, depth),
+        group_node(Some(db), GroupKind::Programmability, depth),
+        group_node(Some(db), GroupKind::Security, depth),
+    ]
+}
+
+/// ★ SSMS 묶음 폴더의 자식(101 §2 · 순수) — 서버 왕복 0.
+fn ssms_group_children(db: Option<&str>, group: GroupKind, depth: usize) -> Vec<Node> {
+    match group {
+        GroupKind::ExternalResources => vec![folder_node(db, ObjectKind::ExternalTable, depth)],
+        GroupKind::Programmability => vec![
+            folder_node(db, ObjectKind::Procedure, depth),
+            folder_node(db, ObjectKind::Function, depth),
+            folder_node(db, ObjectKind::SchemaTrigger, depth),
+            folder_node(db, ObjectKind::Type, depth),
+            folder_node(db, ObjectKind::Sequence, depth),
+        ],
+        GroupKind::Security => vec![
+            folder_node(db, ObjectKind::DbUser, depth),
+            folder_node(db, ObjectKind::DbRole, depth),
+            group_node(db, GroupKind::DbSchemas, depth),
+        ],
+        GroupKind::ServerObjects => vec![folder_node(None, ObjectKind::LinkedServer, depth)],
+        GroupKind::Databases | GroupKind::SystemDbs | GroupKind::DbSchemas => Vec::new(),
+    }
+}
+
+fn db_node(name: &str, depth: usize) -> Node {
+    Node {
+        kind: NodeKind::Database(name.to_string()),
+        depth,
+        children: Vec::new(),
+        expanded: false,
+        expandable: true,
+        state: LoadState::Idle,
+    }
+}
+
+/// ★ 데이터베이스 목록 → (사용자 DB 노드들, 시스템 DB 노드들)(101 §2 · D-251 · 순수) — `extra == "SYSTEM"` = database_id ≤ 4.
+fn ssms_split_dbs(list: &[ObjectInfo], depth: usize) -> (Vec<Node>, Vec<Node>) {
+    let mut user = Vec::new();
+    let mut sys = Vec::new();
+    for o in list {
+        if o.extra == "SYSTEM" {
+            sys.push(db_node(&o.name, depth + 1));
+        } else {
+            user.push(db_node(&o.name, depth));
+        }
+    }
+    (user, sys)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,6 +277,18 @@ enum Req {
         node: usize,
         schema: String,
         kind: ObjectKind,
+        /// ★ 다른 DB(101 · SQL Server Databases 층 · None = 연결의 현재 DB) — 메타 세션이 `USE`로 따라간다.
+        db: Option<String>,
+    },
+    /// ★ 데이터베이스 목록(101 §2 · `sys.databases` · 루트 아래 Databases 층).
+    Databases {
+        gen: u64,
+        node: usize,
+    },
+    /// ★ 세션의 현재 DB가 바뀌었다(`USE` · 101 §3): 메타 세션의 기준 DB — 다음 요청부터 그 DB로.
+    UseDb {
+        gen: u64,
+        db: String,
     },
     /// ★ 객체 용량(사용자 09-30) — 한 스키마·종류의 객체별 바이트(백그라운드 메타 세션 · 폴더가 읽힐 때 한 번).
     Sizes {
@@ -200,6 +331,7 @@ enum Req {
         node: usize,
         schema: String,
         table: String,
+        db: Option<String>,
     },
     /// 하위 폴더의 잎(제약·인덱스·트리거·인자 … · 83 §1) — `nsql_catalog::sub_items`.
     SubItems {
@@ -269,6 +401,8 @@ enum Req {
         origin: ObjectOrigin,
         /// 머리 줄 스키마 한정(설정 `explorer.source_schema`).
         qualify: bool,
+        /// 다른 DB의 객체(101).
+        db: Option<String>,
     },
     /// 라이브 로그 폴링(T-71) — 메타 세션으로 V$SESSION 또는 로그 테이블을 읽는다.
     Live {
@@ -493,7 +627,14 @@ fn live_query(s: &mut dyn Session, req: &LiveReq) -> LiveResult {
 enum Resp {
     Opened {
         gen: u64,
-        r: Result<(Dialect, String), String>,
+        /// (방언 · 설명 · ★ 서버 정보 101 = 버전·로그인·현재 DB).
+        r: Result<(Dialect, String, nsql_catalog::ServerInfo), String>,
+    },
+    /// ★ 데이터베이스 목록(101 §2).
+    Databases {
+        gen: u64,
+        node: usize,
+        r: Result<Vec<ObjectInfo>, String>,
     },
     Schemas {
         gen: u64,
@@ -804,6 +945,13 @@ pub(crate) struct Explorer {
     /// 연결의 DB(서비스)·계정(묶음 모드 루트 행 라벨).
     conn_db: String,
     conn_user: String,
+    /// ★ 서버 정보(101 · 접속 직후 1회 · 헤더 `호스트:포트 (SQL Server 버전 - 로그인)`).
+    server_info: nsql_catalog::ServerInfo,
+    /// ★ 이 연결 세션의 **현재 DB**(101 §3 · 접속 직후 `DB_NAME()` · `USE` 뒤 호스트가 `set_current_db`) — DB 노드 "(현재)" · 메타 기준.
+    current_db: Option<String>,
+    /// ★ SQL Server 트리 = SSMS 골격(설정 `explorer.mssql_tree` · D-246) · 시스템 DB 폴더 표시(`explorer.mssql_system_dbs`).
+    ssms: bool,
+    show_system_dbs: bool,
     /// ★ 탐색기 검색창(docs/28 §7 · 09-25): 걸러진 노드 집합(None = 필터 없음) · 직접 일치 수 · 강조용 질의 낱말(소문자).
     filter_keep: Option<std::collections::HashSet<usize>>,
     filter_hits: usize,
@@ -985,6 +1133,8 @@ fn node_key(k: &NodeKind) -> String {
         NodeKind::Column(c) => format!("c:{}", c.name),
         NodeKind::Sub { owner, sub } => format!("sub:{}:{sub:?}", owner.name),
         NodeKind::Item(it) => format!("i:{:?}:{}", it.icon, it.name),
+        NodeKind::Database(d) => format!("d:{d}"),
+        NodeKind::Group { db, group } => format!("g:{}:{group:?}", db.as_deref().unwrap_or("")),
     }
 }
 
@@ -1099,6 +1249,9 @@ fn req_prio(r: &Req) -> u8 {
 fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn() + Send>) {
     let mut session: Option<Box<dyn Session>> = None;
     let mut cur_gen = 0u64;
+    // ★ 101 §4: 메타 세션의 DB 전환 — 기준 DB(연결의 현재 DB) · 메타 세션이 지금 서 있는 DB.
+    let mut base_db: Option<String> = None;
+    let mut meta_db: Option<String> = None;
     // 유휴로 닫힌 뒤 다시 열 스펙(`Suspend`는 남기고 `Close`는 지운다).
     let mut resume: Option<ConnectSpec> = None;
     // ★ 우선순위 큐(사용자 09-23 "컬럼 로딩이 너무 느리다 · alias 대상부터"): 한 세션이 한 번에 한 질의를 하므로, 쌓인 요청
@@ -1189,7 +1342,15 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                         let d = s.dialect();
                         let desc = s.describe();
                         session = Some(s);
-                        Ok((d, desc))
+                        // ★ 서버 정보 1회(101 · D-253): 버전·로그인·현재 DB — 실패는 빈 값(헤더는 호스트:포트만).
+                        let info = with_session(&mut session, |s| {
+                            nsql_catalog::server_info(s).map_err(err_s)
+                        })
+                        .unwrap_or_default();
+                        base_db = (d == Dialect::Mssql && !info.current_db.is_empty())
+                            .then(|| info.current_db.clone());
+                        meta_db = base_db.clone();
+                        Ok((d, desc, info))
                     }
                     Ok(Err(e)) => Err(e.message),
                     Err(_) => Err("internal: driver panicked".into()),
@@ -1303,14 +1464,33 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 node,
                 schema,
                 kind,
+                db,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::objects(s, &schema, kind).map_err(err_s)
                 });
                 Resp::Objects { gen, node, r }
+            }
+            Req::Databases { gen, node } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                switch_db(&mut session, &mut meta_db, &base_db, None);
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::objects(s, "", ObjectKind::Database).map_err(err_s)
+                });
+                Resp::Databases { gen, node, r }
+            }
+            Req::UseDb { gen, db } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                base_db = Some(db);
+                continue;
             }
             Req::Index { gen, schema, max } => {
                 if gen != cur_gen {
@@ -1342,10 +1522,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 node,
                 schema,
                 table,
+                db,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::columns(s, &schema, &table).map_err(err_s)
                 });
@@ -1360,6 +1542,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(
+                    &mut session,
+                    &mut meta_db,
+                    &base_db,
+                    Some(owner.db.as_str()),
+                );
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::sub_items(s, &owner, sub).map_err(err_s)
                 });
@@ -1383,6 +1571,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(
+                    &mut session,
+                    &mut meta_db,
+                    &base_db,
+                    Some(owner.db.as_str()),
+                );
                 let r = with_session(&mut session, |s| match &col {
                     Some(c) => nsql_catalog::column_details(s, &owner, c).map_err(err_s),
                     None => nsql_catalog::object_details(s, &owner, opts).map_err(err_s),
@@ -1422,6 +1616,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(
+                    &mut session,
+                    &mut meta_db,
+                    &base_db,
+                    Some(owner.db.as_str()),
+                );
                 let (table, cols) = with_session(&mut session, |s| {
                     Ok(nsql_catalog::comments_raw(s, &owner.schema, &owner.name))
                 })
@@ -1502,10 +1702,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 title,
                 origin,
                 qualify,
+                db,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::source_with(
                         s,
@@ -1602,6 +1804,34 @@ fn search_hits(
     out
 }
 
+/// ★ 메타 세션의 DB 전환(101 §4 · SQL Server만): 요청의 `db`(None/빈 = 연결의 기준 DB `base`)가 지금 메타 세션의 DB(`meta_db`)와
+/// 다르면 `USE`(드라이버 `set_option("schema")`) — 같으면 왕복 0. 기존 카탈로그 함수(`sys.*` · `OBJECT_DEFINITION`)가 그대로
+/// 다른 DB에서 동작한다(3부 이름 재작성 없음).
+fn switch_db(
+    session: &mut Option<Box<dyn Session>>,
+    meta_db: &mut Option<String>,
+    base: &Option<String>,
+    want: Option<&str>,
+) {
+    let Some(s) = session.as_mut() else { return };
+    if s.dialect() != Dialect::Mssql {
+        return;
+    }
+    let target = match want.filter(|d| !d.is_empty()) {
+        Some(d) => d.to_string(),
+        None => match base {
+            Some(b) => b.clone(),
+            None => return,
+        },
+    };
+    if meta_db.as_deref() == Some(target.as_str()) {
+        return;
+    }
+    if s.set_option("schema", &target).is_ok() {
+        *meta_db = Some(target);
+    }
+}
+
 fn with_session<T>(
     session: &mut Option<Box<dyn Session>>,
     f: impl FnOnce(&mut dyn Session) -> Result<T, String>,
@@ -1637,6 +1867,9 @@ fn folder_label(dialect: Option<Dialect>, kind: ObjectKind) -> String {
     let msg = match (dialect, kind) {
         (Some(Dialect::Oracle | Dialect::Mssql), ObjectKind::Trigger) => Msg::ExpTableTriggers,
         (Some(Dialect::Mssql | Dialect::Postgres), ObjectKind::Type) => Msg::ExpDataTypes,
+        // SSMS 용어(101 §2): 저장 프로시저 · 데이터베이스 트리거.
+        (Some(Dialect::Mssql), ObjectKind::Procedure) => Msg::ExpStoredProcedures,
+        (Some(Dialect::Mssql), ObjectKind::SchemaTrigger) => Msg::ExpDbTriggers,
         _ => folder_msg(kind),
     };
     t(msg).to_string()
@@ -1693,6 +1926,10 @@ fn folder_msg(kind: ObjectKind) -> Msg {
         ObjectKind::SchemaTrigger => Msg::ExpSchemaTriggers,
         ObjectKind::Extension => Msg::ExpExtensions,
         ObjectKind::EventTrigger => Msg::ExpEventTriggers,
+        ObjectKind::Database => Msg::ExpDatabases,
+        ObjectKind::DbUser => Msg::ExpDbUsers,
+        ObjectKind::DbRole => Msg::ExpDbRoles,
+        ObjectKind::LinkedServer => Msg::ExpLinkedServers,
     }
 }
 
@@ -1707,6 +1944,10 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
         | ObjectKind::PackageBody => th.syn_keyword,
         ObjectKind::Trigger | ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => th.warn,
         ObjectKind::ExternalTable | ObjectKind::ForeignTable => th.accent,
+        ObjectKind::Database
+        | ObjectKind::DbUser
+        | ObjectKind::DbRole
+        | ObjectKind::LinkedServer => th.text_dim,
         ObjectKind::Aggregate => th.syn_keyword,
         ObjectKind::Sequence
         | ObjectKind::Index
@@ -1817,6 +2058,10 @@ impl Explorer {
             dots_step: 0,
             grouped: false,
             conn_db: String::new(),
+            server_info: nsql_catalog::ServerInfo::default(),
+            current_db: None,
+            ssms: true,
+            show_system_dbs: true,
             conn_user: String::new(),
             filter_keep: None,
             filter_hits: 0,
@@ -2114,6 +2359,8 @@ impl Explorer {
         let kind = match &n.kind {
             NodeKind::Root => t(Msg::TipExplorerServer).to_string(),
             NodeKind::Schema(s) => format!("{} {s}", t(Msg::TipExplorerSchema)),
+            NodeKind::Database(d) => format!("{} {d}", t(Msg::ExpDatabases)),
+            NodeKind::Group { .. } => String::new(),
             NodeKind::Folder { schema, kind } => format!("{kind:?} · {schema}"),
             NodeKind::Object(o) => {
                 let mut s = format!("{:?} · {}.{}", o.kind, o.schema, o.name);
@@ -2161,6 +2408,8 @@ impl Explorer {
             ),
             NodeKind::Schema(_) => (IconKind::Schema, IconKind::Schema.color()),
             NodeKind::Folder { .. } => (IconKind::Folder, IconKind::Folder.color()),
+            NodeKind::Database(_) => (IconKind::Schema, IconKind::Schema.color()),
+            NodeKind::Group { .. } => (IconKind::Folder, IconKind::Folder.color()),
             NodeKind::Object(o) => {
                 let k = match o.kind {
                     ObjectKind::Table => IconKind::Table,
@@ -2185,6 +2434,9 @@ impl Explorer {
                     }
                     ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
                     ObjectKind::Extension => IconKind::Package,
+                    ObjectKind::Database => IconKind::Schema,
+                    ObjectKind::DbUser | ObjectKind::DbRole => IconKind::Schema,
+                    ObjectKind::LinkedServer => IconKind::Link,
                 };
                 (k, k.color())
             }
@@ -2333,11 +2585,7 @@ impl Explorer {
             x += adv + (6.0 * s).round() as i32;
         }
         dc.select_font(FontSlot::Base, false);
-        let label = if self.endpoint.is_empty() {
-            self.profile_name.clone()
-        } else {
-            self.endpoint.clone()
-        };
+        let label = self.server_label();
         dc.text(x, ty, r, &label, th.text);
         if !sub.is_empty() {
             let sx0 = x + dc.text_width(&label) + (8.0 * s).round() as i32;
@@ -2558,6 +2806,8 @@ impl Explorer {
         self.profile_name = profile_name.to_string();
         self.conn_db = spec.database.clone().unwrap_or_default();
         self.conn_user = spec.user.clone().unwrap_or_default();
+        self.server_info = nsql_catalog::ServerInfo::default();
+        self.current_db = None;
         self.endpoint = match (&spec.host, spec.port) {
             (Some(h), Some(p)) => format!("{h}:{p}"),
             (Some(h), None) => h.clone(),
@@ -3034,9 +3284,12 @@ impl Explorer {
                         continue;
                     }
                     match r {
-                        Ok((d, desc)) => {
+                        Ok((d, desc, info)) => {
                             self.dialect = Some(d);
                             self.conn_desc = desc;
+                            self.current_db =
+                                (!info.current_db.is_empty()).then(|| info.current_db.clone());
+                            self.server_info = info;
                             if std::mem::take(&mut self.rebinding) {
                                 // 자격만 바뀐 재접속(카탈로그 공유 · docs/54 §10) — 트리·메타는 그대로.
                                 continue;
@@ -3062,6 +3315,33 @@ impl Explorer {
                         continue;
                     }
                     match r {
+                        // ★ SSMS 골격(101): 루트의 스키마 목록 = 메타(완성·인덱스)만 · 보안 ▸ 스키마 묶음 = 잎 목록.
+                        Ok(list) if self.ssms_mode() => {
+                            if node == 0 {
+                                self.meta_set_schemas(&list, current.as_deref());
+                                self.preload_meta();
+                                self.index_invalidate();
+                                self.seed_from_cache();
+                            } else {
+                                let depth = self.nodes[node].depth + 1;
+                                let kids: Vec<Node> = list
+                                    .into_iter()
+                                    .map(|s| Node {
+                                        kind: NodeKind::Schema(s),
+                                        depth,
+                                        children: Vec::new(),
+                                        expanded: false,
+                                        expandable: false,
+                                        state: LoadState::Loaded,
+                                    })
+                                    .collect();
+                                if self.soft.remove(&node) {
+                                    self.diff_children(node, kids);
+                                } else {
+                                    self.set_children(node, kids);
+                                }
+                            }
+                        }
                         Ok(list) => {
                             self.meta_set_schemas(&list, current.as_deref());
                             let mut kids: Vec<Node> = list
@@ -3104,6 +3384,45 @@ impl Explorer {
                             }
                         }
                         // 조용한 갱신의 실패는 옛 트리를 그대로 둔다(오류 행으로 바꾸지 않는다).
+                        Err(e) => {
+                            if !self.soft.remove(&node) {
+                                self.set_error(node, e);
+                            }
+                        }
+                    }
+                }
+                // ★ 101 §2: 루트 = [데이터베이스 ▸ (시스템 DB ▸ …) · 사용자 DB …] + [서버 개체 ▸ 연결된 서버] · 현재 DB 자동 펼침.
+                Resp::Databases { gen, node, r } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    match r {
+                        Ok(list) => {
+                            // 완성(`USE` 뒤 · 10-01 ⑩)용 버킷 — 스키마 "" · 종류 Database.
+                            self.meta_load_objects("", ObjectKind::Database, &list);
+                            let soft = self.soft.remove(&node);
+                            let depth = self.nodes[node].depth + 1;
+                            let root_kids = vec![
+                                group_node(None, GroupKind::Databases, depth),
+                                group_node(None, GroupKind::ServerObjects, depth),
+                            ];
+                            self.diff_children(node, root_kids);
+                            let gi = self.nodes[node].children[0];
+                            let (user, sys) = ssms_split_dbs(&list, depth + 1);
+                            let mut kids = Vec::new();
+                            if self.show_system_dbs && !sys.is_empty() {
+                                kids.push(group_node(None, GroupKind::SystemDbs, depth + 1));
+                            }
+                            kids.extend(user);
+                            self.diff_children(gi, kids);
+                            if self.show_system_dbs && !sys.is_empty() {
+                                let si = self.nodes[gi].children[0];
+                                self.diff_children(si, sys);
+                            }
+                            if !soft {
+                                self.expand_current_db();
+                            }
+                        }
                         Err(e) => {
                             if !self.soft.remove(&node) {
                                 self.set_error(node, e);
@@ -3256,9 +3575,43 @@ impl Explorer {
                     }
                     match r {
                         Ok(list) => {
+                            // ★ 101: 다른 DB의 객체는 `db`를 달고(요청·소스·상세가 그 DB로) · 메타는 현재 DB 것만.
+                            let db = self.db_of(node);
+                            let is_cur = db.as_deref().is_none_or(|d| {
+                                self.current_db
+                                    .as_deref()
+                                    .is_some_and(|c| c.eq_ignore_ascii_case(d))
+                            });
+                            let list: Vec<ObjectInfo> = list
+                                .into_iter()
+                                .map(|mut o| {
+                                    if let Some(d) = &db {
+                                        o.db = d.clone();
+                                    }
+                                    o
+                                })
+                                .collect();
                             if let NodeKind::Folder { schema, kind } = &self.nodes[node].kind {
                                 let (s, k) = (schema.clone(), *kind);
-                                if !s.is_empty() {
+                                if s.is_empty() && is_cur && self.ssms_mode() {
+                                    // SSMS 골격 = 폴더가 모든 스키마 → 스키마별로 나눠 메타에(완성은 스키마 버킷).
+                                    let mut by: std::collections::BTreeMap<
+                                        String,
+                                        Vec<ObjectInfo>,
+                                    > = std::collections::BTreeMap::new();
+                                    for o in &list {
+                                        if !o.schema.is_empty() {
+                                            by.entry(o.schema.clone()).or_default().push(o.clone());
+                                        }
+                                    }
+                                    for (sc, objs) in by {
+                                        self.meta_load_objects(&sc, k, &objs);
+                                        self.intel_buckets.retain(|(a, b)| {
+                                            !(a.eq_ignore_ascii_case(&sc) && *b == k)
+                                        });
+                                    }
+                                }
+                                if !s.is_empty() && is_cur {
                                     self.meta_load_objects(&s, k, &list);
                                     self.intel_buckets
                                         .retain(|(a, b)| !(a.eq_ignore_ascii_case(&s) && *b == k));
@@ -3598,6 +3951,9 @@ impl Explorer {
 
     /// 접속 사용자의 스키마(= 접속 설명의 사용자)를 선택해 눈에 띄게.
     fn select_current_schema(&mut self) {
+        if self.ssms_mode() {
+            return;
+        }
         let user = self
             .conn_desc
             .split("://")
@@ -3716,6 +4072,7 @@ impl Explorer {
                 node: i,
                 schema,
                 kind,
+                db: self.db_of(i),
             },
             NodeKind::Sub { owner, sub } if sub == SubKind::Columns && owner.kind.is_relation() => {
                 Req::Columns {
@@ -3723,6 +4080,7 @@ impl Explorer {
                     node: i,
                     schema: owner.schema.clone(),
                     table: owner.name.clone(),
+                    db: (!owner.db.is_empty()).then(|| owner.db.clone()),
                 }
             }
             NodeKind::Sub { owner, sub } => Req::SubItems {
@@ -3754,6 +4112,188 @@ impl Explorer {
     /// 노드의 부모(노드는 부모를 들고 있지 않다 — 드문 동작이라 훑어 찾는다).
     fn parent_of(&self, i: usize) -> Option<usize> {
         self.nodes.iter().position(|n| n.children.contains(&i))
+    }
+
+    /// ★ SSMS 골격인가(101 · D-246): SQL Server + 설정 `explorer.mssql_tree = ssms`.
+    fn ssms_mode(&self) -> bool {
+        self.ssms && self.dialect == Some(Dialect::Mssql)
+    }
+
+    /// ★ 노드가 속한 데이터베이스(101 · Database 조상 · 서버 수준/다른 방언 = None = 연결의 현재 DB).
+    fn db_of(&self, i: usize) -> Option<String> {
+        let mut cur = Some(i);
+        while let Some(n) = cur {
+            match &self.nodes[n].kind {
+                NodeKind::Database(d) => return Some(d.clone()),
+                NodeKind::Group { db: Some(d), .. } => return Some(d.clone()),
+                NodeKind::Object(o) if !o.db.is_empty() => return Some(o.db.clone()),
+                NodeKind::Root => return None,
+                _ => {}
+            }
+            cur = self.parent_of(n);
+        }
+        None
+    }
+
+    /// Databases 묶음 안의 현재 DB 노드.
+    fn current_db_node(&self) -> Option<usize> {
+        let cur = self.current_db.as_deref()?;
+        let gi = self.nodes[0].children.iter().copied().find(|&c| {
+            matches!(
+                self.nodes[c].kind,
+                NodeKind::Group {
+                    group: GroupKind::Databases,
+                    ..
+                }
+            )
+        })?;
+        let mut stack = vec![gi];
+        while let Some(g) = stack.pop() {
+            for &c in &self.nodes[g].children {
+                match &self.nodes[c].kind {
+                    NodeKind::Database(d) if d.eq_ignore_ascii_case(cur) => return Some(c),
+                    NodeKind::Group {
+                        group: GroupKind::SystemDbs,
+                        ..
+                    } => stack.push(c),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    /// ★ 현재 DB의 종류 폴더(검색 일치 삽입 · 101) — 묶음(프로그래밍 기능 …) 안까지 · 없으면 만들어서.
+    fn ssms_folder(&mut self, kind: ObjectKind) -> Option<usize> {
+        let dbn = self.current_db_node()?;
+        if self.nodes[dbn].children.is_empty() {
+            let NodeKind::Database(d) = self.nodes[dbn].kind.clone() else {
+                return None;
+            };
+            let depth = self.nodes[dbn].depth + 1;
+            let kids = ssms_db_children(&d, depth);
+            self.set_children(dbn, kids);
+        }
+        let mut stack = vec![dbn];
+        while let Some(n) = stack.pop() {
+            for &c in &self.nodes[n].children.clone() {
+                match &self.nodes[c].kind {
+                    NodeKind::Folder { kind: k, .. } if *k == kind => return Some(c),
+                    NodeKind::Group { db, group } if *group != GroupKind::DbSchemas => {
+                        if self.nodes[c].children.is_empty() {
+                            let depth = self.nodes[c].depth + 1;
+                            let kids = ssms_group_children(db.as_deref(), *group, depth);
+                            self.set_children(c, kids);
+                        }
+                        stack.push(c);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    /// ★ Databases 묶음과 현재 DB 노드를 펼치고 선택(101 §2 · 접속 직후 · `USE` 뒤).
+    fn expand_current_db(&mut self) {
+        let Some(gi) = self.nodes[0].children.iter().copied().find(|&c| {
+            matches!(
+                self.nodes[c].kind,
+                NodeKind::Group {
+                    group: GroupKind::Databases,
+                    ..
+                }
+            )
+        }) else {
+            return;
+        };
+        self.nodes[gi].expanded = true;
+        if let Some(c) = self.current_db_node() {
+            // 조상 묶음(시스템 데이터베이스 …)도 펼친다 — 현재 DB가 master면 접힌 묶음 아래 숨는다(E2E 10-01).
+            let mut p = self.parent_of(c);
+            while let Some(a) = p {
+                if a == 0 {
+                    break;
+                }
+                self.nodes[a].expanded = true;
+                p = self.parent_of(a);
+            }
+            self.selected = Some(c);
+            if !self.nodes[c].expanded {
+                self.toggle(c);
+            }
+        }
+    }
+
+    /// ★ 세션의 현재 DB가 바뀌었다(`USE` · 101 §3): 표시 + 메타 세션 추종 + 메타는 현재 DB 기준으로 다시(D-250).
+    pub(crate) fn set_current_db(&mut self, db: &str) {
+        if db.is_empty()
+            || self
+                .current_db
+                .as_deref()
+                .is_some_and(|c| c.eq_ignore_ascii_case(db))
+        {
+            return;
+        }
+        self.current_db = Some(db.to_string());
+        self.lower_labels.clear();
+        for tx in [&self.tx, &self.tx_bg] {
+            let _ = tx.send(Req::UseDb {
+                gen: self.gen,
+                db: db.to_string(),
+            });
+        }
+        if self.dialect == Some(Dialect::Mssql) && !self.offline {
+            self.meta.clear();
+            self.server_schema = None;
+            self.intel_buckets.clear();
+            self.index_reset();
+            let _ = self.tx.send(Req::Schemas {
+                gen: self.gen,
+                node: 0,
+                opts: self.schema_opts,
+            });
+            if self.ssms_mode() {
+                self.expand_current_db();
+            }
+        }
+    }
+
+    /// ★ 서버 헤더 라벨(101 · D-253): `호스트:포트 (SQL Server 15.0.4375.4 - BISCM_MS)` · 버전을 모르면 종전대로.
+    pub(crate) fn server_label(&self) -> String {
+        let base = if self.endpoint.is_empty() {
+            self.profile_name.clone()
+        } else {
+            self.endpoint.clone()
+        };
+        if self.server_info.version.is_empty() {
+            return base;
+        }
+        let dbms = self.dialect.map_or("", Dialect::display_name);
+        let who = if self.users.len() > 1 {
+            tf(Msg::ExpLogins, &[&self.users.len().to_string()])
+        } else if !self.server_info.login.is_empty() {
+            self.server_info.login.clone()
+        } else {
+            self.conn_user.clone()
+        };
+        if who.is_empty() {
+            format!("{base} ({dbms} {})", self.server_info.version)
+        } else {
+            format!("{base} ({dbms} {} - {who})", self.server_info.version)
+        }
+    }
+
+    /// 설정 `explorer.mssql_tree` · `explorer.mssql_system_dbs`(바뀌면 SQL Server 트리를 다시).
+    pub(crate) fn set_mssql_tree(&mut self, ssms: bool, system: bool) {
+        let changed = self.ssms != ssms || self.show_system_dbs != system;
+        self.ssms = ssms;
+        self.show_system_dbs = system;
+        if changed && self.dialect == Some(Dialect::Mssql) && !self.conn_desc.is_empty() {
+            self.reset_tree();
+            self.nodes[0].expandable = true;
+            self.toggle(0);
+        }
     }
 
     /// 노드가 속한 스키마 이름(루트 = None) — 부모를 따라 올라간다.
@@ -4164,19 +4704,48 @@ impl Explorer {
                     node: i,
                     opts: self.schema_opts,
                 });
+                // ★ SSMS 골격(101): 스키마 목록은 메타(완성)용 · 트리는 Databases 층으로.
+                if self.ssms_mode() {
+                    let _ = self.tx.send(Req::Databases { gen, node: i });
+                }
             }
             NodeKind::Schema(_) => {
                 self.make_folders(i);
                 self.nodes[i].expanded = true;
             }
+            // ★ 101: DB 노드·묶음 폴더 = 자식을 로컬로(서버 왕복 0) · 보안 ▸ 스키마만 서버에 묻는다.
+            NodeKind::Database(d) => {
+                let depth = self.nodes[i].depth + 1;
+                let kids = ssms_db_children(&d, depth);
+                self.set_children(i, kids);
+                self.nodes[i].expanded = true;
+            }
+            NodeKind::Group { db, group } => {
+                if group == GroupKind::DbSchemas {
+                    self.nodes[i].state = LoadState::Loading;
+                    self.loading_since.insert(i, self.now_hint);
+                    let _ = self.tx.send(Req::Schemas {
+                        gen,
+                        node: i,
+                        opts: self.schema_opts,
+                    });
+                } else {
+                    let depth = self.nodes[i].depth + 1;
+                    let kids = ssms_group_children(db.as_deref(), group, depth);
+                    self.set_children(i, kids);
+                    self.nodes[i].expanded = true;
+                }
+            }
             NodeKind::Folder { schema, kind } => {
                 self.nodes[i].state = LoadState::Loading;
                 self.loading_since.insert(i, self.now_hint);
+                let db = self.db_of(i);
                 let _ = self.tx.send(Req::Objects {
                     gen,
                     node: i,
                     schema,
                     kind,
+                    db,
                 });
             }
             // 객체 = 하위 폴더(표 · 83 §1) — 서버 왕복 없이 즉시 · 잎은 폴더를 펼칠 때 읽는다.
@@ -4214,6 +4783,7 @@ impl Explorer {
                         node: i,
                         schema: owner.schema.clone(),
                         table: owner.name.clone(),
+                        db: (!owner.db.is_empty()).then(|| owner.db.clone()),
                     }
                 } else {
                     Req::SubItems {
@@ -4665,6 +5235,7 @@ impl Explorer {
                 server: None,
             },
             qualify: self.source_qualify,
+            db: (!o.db.is_empty()).then(|| o.db.clone()),
         });
     }
 
@@ -5174,18 +5745,28 @@ impl Explorer {
             return 0;
         }
         let mut names: HashMap<usize, HashSet<String>> = HashMap::new();
+        let ssms = self.ssms_mode();
         self.batching = true;
         for (schema, kind, name) in picked {
-            let Some(&sn) = schema_node.get(&schema) else {
-                continue;
-            };
-            if self.nodes[sn].children.is_empty() {
-                self.make_folders(sn);
-            }
-            let Some(fi) = self.nodes[sn].children.iter().copied().find(
-                |&c| matches!(&self.nodes[c].kind, NodeKind::Folder { kind: k, .. } if *k == kind),
-            ) else {
-                continue;
+            // ★ SSMS 골격(101): 일치는 현재 DB의 그 종류 폴더(모든 스키마)로.
+            let fi = if ssms {
+                match self.ssms_folder(kind) {
+                    Some(f) => f,
+                    None => continue,
+                }
+            } else {
+                let Some(&sn) = schema_node.get(&schema) else {
+                    continue;
+                };
+                if self.nodes[sn].children.is_empty() {
+                    self.make_folders(sn);
+                }
+                let Some(fi) = self.nodes[sn].children.iter().copied().find(
+                    |&c| matches!(&self.nodes[c].kind, NodeKind::Folder { kind: k, .. } if *k == kind),
+                ) else {
+                    continue;
+                };
+                fi
             };
             if !matches!(self.nodes[fi].state, LoadState::Idle | LoadState::Partial) {
                 continue;
@@ -5205,6 +5786,7 @@ impl Explorer {
             }
             let depth = self.nodes[fi].depth + 1;
             let o = ObjectInfo {
+                db: String::new(),
                 schema: schema.clone(),
                 name,
                 kind,
@@ -5280,11 +5862,13 @@ impl Explorer {
         self.last_used = Instant::now();
         self.suspended = false;
         self.soft.insert(f);
+        let db = self.db_of(f);
         let _ = self.tx.send(Req::Objects {
             gen: self.gen,
             node: f,
             schema,
             kind,
+            db,
         });
         if self.completing.is_none() {
             self.completing = Some(f);
@@ -6073,6 +6657,38 @@ impl Explorer {
         true
     }
 
+    /// 자체 시험용(기동 명령 `explorer.expand:<라벨>` 또는 `<DB>/<라벨>` · 101): 보이는 행 가운데 라벨이 같은 첫 노드를 펼친다 —
+    /// `DB/라벨`이면 그 데이터베이스 노드 아래(더 깊은 행)에서만 찾는다.
+    pub(crate) fn capture_expand_label(&mut self, path: &str) -> bool {
+        let (db, label) = match path.split_once('/') {
+            Some((d, l)) => (Some(d.trim()), l.trim()),
+            None => (None, path.trim()),
+        };
+        let rows = self.visible_rows();
+        let mut start = 0usize;
+        let mut min_depth = 0usize;
+        if let Some(d) = db {
+            let Some(pos) = rows.iter().position(
+                |&i| matches!(&self.nodes[i].kind, NodeKind::Database(n) if n.eq_ignore_ascii_case(d)),
+            ) else {
+                return false;
+            };
+            start = pos + 1;
+            min_depth = self.nodes[rows[pos]].depth + 1;
+        }
+        for (r, &i) in rows.iter().enumerate().skip(start) {
+            if db.is_some() && self.nodes[i].depth < min_depth {
+                break;
+            }
+            let (l, _) = self.label(i);
+            let base = l.split(" (").next().unwrap_or(&l);
+            if base.eq_ignore_ascii_case(label) {
+                return self.capture_expand(r);
+            }
+        }
+        false
+    }
+
     /// 자체 시험용(기동 명령 `explorer.dump:<파일>`): 보이는 줄을 `깊이|종류|라벨|부가|상태` 한 줄씩(트리 구조 자동 점검 · 83 §1).
     pub(crate) fn dump_rows(&self) -> String {
         let mut out = String::new();
@@ -6088,6 +6704,8 @@ impl Explorer {
                 NodeKind::Column(_) => "column".into(),
                 NodeKind::Sub { .. } => "sub".into(),
                 NodeKind::Item(it) => format!("item:{:?}", it.icon),
+                NodeKind::Database(_) => "database".into(),
+                NodeKind::Group { group, .. } => format!("group:{group:?}"),
             };
             let (label, sub) = self.label(i);
             out.push_str(&format!("{}|{tag}|{label}|{sub}|{:?}\n", n.depth, n.state));
@@ -6191,12 +6809,22 @@ impl Explorer {
                 // ★ 파일 방언(SQLite · 사용자 09-28 "파일 = 서버 1 · 연결 1 · 다른 서버와 같은 구조"): 헤더 = 파일 이름(서버) ·
                 //   연결 행 = 파일 이름(DB) · 흐리게 = 프로필 · 폴더(계정 자리에 폴더 — 전체 경로는 접속 창·툴팁에도 있다).
                 let file_dialect = self.dialect.is_some_and(|d| d.is_file_based());
-                let main = if file_dialect || self.conn_db.is_empty() {
+                // ★ 101 §3: 프로필 Database가 비어 있으면(로그인 기본 DB) 서버가 알려 준 현재 DB를 주 글자로.
+                let main = if file_dialect {
                     self.endpoint.clone()
-                } else {
+                } else if !self.conn_db.is_empty() {
                     self.conn_db.clone()
+                } else if let Some(cur) = &self.current_db {
+                    cur.clone()
+                } else {
+                    self.endpoint.clone()
                 };
                 let mut dim: Vec<String> = Vec::new();
+                if let Some(cur) = &self.current_db {
+                    if !file_dialect && !cur.eq_ignore_ascii_case(&main) {
+                        dim.push(tf(Msg::ExpCurrentDb, &[cur]));
+                    }
+                }
                 if file_dialect {
                     if let Some(dir) = std::path::Path::new(&self.conn_db)
                         .parent()
@@ -6245,6 +6873,22 @@ impl Explorer {
                 }
             }
             NodeKind::Schema(s) => (s.clone(), String::new()),
+            // ★ 101: DB 노드 = 이름 + "(현재)" · 묶음 = i18n 라벨.
+            NodeKind::Database(d) => {
+                let cur = self
+                    .current_db
+                    .as_deref()
+                    .is_some_and(|c| c.eq_ignore_ascii_case(d));
+                (
+                    d.clone(),
+                    if cur {
+                        t(Msg::ExpCurrentDbMark).to_string()
+                    } else {
+                        String::new()
+                    },
+                )
+            }
+            NodeKind::Group { group, .. } => (t(group_msg(*group)).to_string(), String::new()),
             NodeKind::Folder { kind, .. } => {
                 let base = folder_label(self.dialect, *kind);
                 if matches!(n.state, LoadState::Loaded | LoadState::Partial) {
@@ -6278,6 +6922,10 @@ impl Explorer {
                 } else {
                     o.status.clone()
                 };
+                // ★ SSMS 골격(101 §2): 폴더가 모든 스키마를 담으므로 객체 = `스키마.이름`.
+                if self.ssms_mode() && !o.schema.is_empty() {
+                    return (format!("{}.{}{extra}", o.schema, o.name), status);
+                }
                 (format!("{}{extra}", o.name), status)
             }
             NodeKind::Sub { sub, .. } => {
@@ -6584,6 +7232,7 @@ mod refresh_tests {
 
     fn obj(name: &str) -> NodeKind {
         NodeKind::Object(ObjectInfo {
+            db: String::new(),
             schema: "HR".into(),
             name: name.into(),
             kind: ObjectKind::Table,
@@ -7262,5 +7911,64 @@ mod detail_cache_tests {
         );
         assert!(!detail_key_hit(other_schema, Some("BISCM"), Some("EMP")));
         assert!(!detail_key_hit("x", Some("A"), None));
+    }
+
+    /// ★ 101 §2: SSMS 골격 = DB 노드 자식 6(테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 보안) · 프로그래밍 기능 5 · 보안 3 ·
+    /// 시스템 DB(`extra == SYSTEM`)는 따로 · 노드 열쇠에 DB 이름.
+    #[test]
+    fn ssms_tree_shapes() {
+        let kids = super::ssms_db_children("BISCM_MS", 3);
+        assert_eq!(kids.len(), 6);
+        assert!(matches!(
+            kids[0].kind,
+            super::NodeKind::Folder {
+                kind: nsql_catalog::ObjectKind::Table,
+                ..
+            }
+        ));
+        assert!(matches!(
+            kids[4].kind,
+            super::NodeKind::Group { group: super::GroupKind::Programmability, db: Some(ref d) } if d == "BISCM_MS"
+        ));
+        let prog =
+            super::ssms_group_children(Some("BISCM_MS"), super::GroupKind::Programmability, 4);
+        assert_eq!(prog.len(), 5);
+        assert!(matches!(
+            prog[2].kind,
+            super::NodeKind::Folder {
+                kind: nsql_catalog::ObjectKind::SchemaTrigger,
+                ..
+            }
+        ));
+        let sec = super::ssms_group_children(Some("BISCM_MS"), super::GroupKind::Security, 4);
+        assert_eq!(sec.len(), 3);
+        let mk = |n: &str, extra: &str| nsql_catalog::ObjectInfo {
+            db: String::new(),
+            schema: String::new(),
+            name: n.into(),
+            kind: nsql_catalog::ObjectKind::Database,
+            status: "ONLINE".into(),
+            modified: String::new(),
+            extra: extra.into(),
+        };
+        let (user, sys) = super::ssms_split_dbs(
+            &[
+                mk("master", "SYSTEM"),
+                mk("BISCM_MS", ""),
+                mk("tempdb", "SYSTEM"),
+            ],
+            2,
+        );
+        assert_eq!(user.len(), 1);
+        assert_eq!(sys.len(), 2);
+        assert_eq!(sys[0].depth, 3, "시스템 DB는 묶음 아래 한 단계 더");
+        assert_eq!(super::node_key(&user[0].kind), "d:BISCM_MS");
+        assert_eq!(
+            super::node_key(&super::NodeKind::Group {
+                db: Some("X".into()),
+                group: super::GroupKind::Security
+            }),
+            "g:X:Security"
+        );
     }
 }
