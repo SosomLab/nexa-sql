@@ -19,6 +19,8 @@ pub enum SectionId {
     Sub(SubKind),
     Source,
     Ddl,
+    /// ★ 연결된 서버의 로그인 매핑(101 §5 · 로컬 로그인 · 자기 자격 · 원격 사용자).
+    Logins,
 }
 
 /// 표 머리글 종류(라벨은 호스트가 i18n으로).
@@ -74,6 +76,63 @@ pub fn object_details(
 ) -> Result<Vec<DetailSection>, DbError> {
     let d = s.dialect();
     let mut out = Vec::new();
+    // ★ 연결된 서버(101 §5): 속성(제품 · 공급자 · 데이터 원본 · 카탈로그 · 옵션 …) + 로그인 매핑 표.
+    if o.kind == ObjectKind::LinkedServer {
+        let i = crate::linked_server(s, &o.name)?;
+        let mut props: Vec<Vec<String>> = vec![vec!["name".into(), i.name.clone()]];
+        for (k, v) in [
+            ("product", &i.product),
+            ("provider", &i.provider),
+            ("data source", &i.data_source),
+            ("location", &i.location),
+            ("provider string", &i.provider_string),
+            ("catalog", &i.catalog),
+        ] {
+            if !v.is_empty() {
+                props.push(vec![k.into(), v.clone()]);
+            }
+        }
+        for (k, v) in &i.options {
+            props.push(vec![k.clone(), v.clone()]);
+        }
+        if !i.modified.is_empty() {
+            props.push(vec!["modified".into(), i.modified.clone()]);
+        }
+        out.push(DetailSection::table(
+            SectionId::Properties,
+            vec![HeaderId::Property, HeaderId::Value],
+            props,
+        ));
+        if !i.logins.is_empty() {
+            out.push(DetailSection::table(
+                SectionId::Logins,
+                vec![HeaderId::Name, HeaderId::Detail, HeaderId::Status],
+                i.logins
+                    .iter()
+                    .map(|(local, self_cred, remote)| {
+                        vec![
+                            if local.is_empty() {
+                                "(all logins)".to_string()
+                            } else {
+                                local.clone()
+                            },
+                            if *self_cred {
+                                "impersonate".to_string()
+                            } else {
+                                remote.clone()
+                            },
+                            if *self_cred {
+                                String::new()
+                            } else {
+                                "mapped".to_string()
+                            },
+                        ]
+                    })
+                    .collect(),
+            ));
+        }
+        return Ok(out);
+    }
     let mut props: Vec<Vec<String>> = vec![vec!["name".into(), format!("{}.{}", o.schema, o.name)]];
     // 설명 = 코멘트(관계) — 실패·없음 = 빈.
     if o.kind.is_relation() {

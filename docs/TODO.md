@@ -243,7 +243,7 @@ syntect `.sublime-syntax`(T-17) · 컬러스킴/스니펫/완성(T-18) · `Defau
 | **T-265 LatestIntent 확산**(09-30 · [99 §4](99-latest-intent-coalescing.md)) | P3 | 소 | 링크 툴팁 · 그리드 표식 툴팁 · 필터 재거르기 · 상태줄 힌트 | 99 · 30 §2 | ☐ |
 | **T-266 Output 탭 후속**(09-30 · [100 §3-3](100-object-source-run-and-output-tab.md)) | P3 | 소 | ✅ 10-01 = 미읽음 배지 · 오류 줄 두 번 클릭 · 빈 결과1 거둠 · S79 · 남음 = 줄 색(nexa-ctl TextBox 줄 단위 색 부품 필요) · 찾기 · RAISERROR 심각도/RAISE 레벨 · 위키 캡처 | 100 | 🚧 |
 | **T-270 SQL Server 탐색기 SSMS 골격 1차**(10-01 · [101](101-mssql-ssms-explorer-databases-layer.md)) | P1 | 대 | ✅ Databases 층 · 현재 DB · 서버 헤더 · 메타 세션 `USE` 전환 · E2E 14/14 — 남음 = 상세 패널 DB 절 · 캡처(위키) | 101 | ☑ |
-| **T-271 연결된 서버**(101 §5) | P1 | 중 | 서버 개체 ▸ 연결된 서버 목록(`sys.servers`) · 상세(공급자·데이터 원본·카탈로그·옵션·로그인 매핑) · Open script(`sp_addlinkedserver`…) · Generate SQL · 삭제 모달 연동 · 카탈로그 펼침(2차) | 101 | ☐ |
+| **T-271 연결된 서버**(101 §5) | P1 | 중 | ✅ 10-01 목록 · 상세(옵션 · 로그인 매핑) · Open source = 재생성 스크립트 · DDL · 삭제 모달 · CLI — 남음 = 카탈로그 펼침(T-272) · 권한 있는 서버 실기 | 101 | ☑ |
 | **T-272 SSMS 골격 2차**(101 §7) | P2 | 중 | 3부 접두 완성 `DB.스키마.` · 스토리지(파일 그룹·파티션) · 서버 보안(로그인·역할) · 연결된 서버 카탈로그 ▸ 테이블 · 스냅샷 · DB 용량 · 메타 열쇠 `(db, 스키마)` | 101 | ☐ |
 | **T-274 자동완성 2차**(10-01 · [82 §7](82-grammar-driven-completion.md) · journal §16) | P2 | 중 | `GRANT … TO` 사용자·역할 버킷 · CTE/서브쿼리 컬럼 추론 · `#tmp` 컬럼 · `sp_*` 인자 안내 · 문법 `objects =` 소비(`Want`) · `ORDER BY x DESC |` 오판 · SELECT 별칭 → ORDER BY · 3·4부 이름(T-272) | 82 | ☐ |
 | **T-273 기동 직후 탐색기 paint 경고**(10-01) | P2 | 소 | `[explorer] paint 800~1300 ms (filter …)` 1회 — 접속 직후 필터/라벨 비용 · 원인·완화(39 §2 판정선) | 39 | ☐ |

@@ -411,6 +411,7 @@ impl DetailPanel {
             SectionId::Sub(sub) => t(sub_msg(sub)).to_string(),
             SectionId::Source => t(Msg::DetSecSource).to_string(),
             SectionId::Ddl => t(Msg::DetSecDdl).to_string(),
+            SectionId::Logins => t(Msg::DetSecLogins).to_string(),
         }
     }
 

@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/linked-servers | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ T-271 연결된 서버(101 §5) — `linked_server`/`linked_server_script` · 상세 로그인 매핑 · Open source · DDL · `sp_dropserver droplogins` · E2E ④(권한 없음 = 폴더 읽기) |
 | feat/intel-want-contexts | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 자동완성 빈 곳 1차 — `CtxKind::Want`(USE DB · 스키마 · 루틴 · 종류) · `JOIN ON` 컬럼 · 별칭 보강(ALTER TABLE · MERGE USING · CREATE INDEX ON · OUTPUT INSERTED) · `mysql.sqlg` · `sp_*` · [82 §7](82-grammar-driven-completion.md) |
 | feat/mssql-ssms-explorer | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ T-270 SQL Server 탐색기 SSMS 골격([101](101-mssql-ssms-explorer-databases-layer.md) · Databases 층 · 현재 DB `USE` 추종 · 서버 헤더 버전·로그인 · 메타 세션 `USE` 전환 · `ObjectKind` +4 · `win-mssql-explorer-e2e.sh` 14) |
 | fix/prod-leave-confirm-form-db | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 운영 → 다른 유형 = 2단 확인(편집기 `CONNTYPE` · 팔레트·메뉴 `env_change_needs_confirm`) · 로그인 폼 SQL Server·MySQL Database 칸 = 기본 스키마 자리(`db_in_last_row`) · MSSQL `USE`/기본 DB 조사 · `conn-cmd-e2e.sh` 38 |

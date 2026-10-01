@@ -215,6 +215,7 @@ impl ObjectKind {
                 | ObjectKind::Type
                 | ObjectKind::SchemaTrigger
                 | ObjectKind::EventTrigger
+                | ObjectKind::LinkedServer
         )
     }
 
@@ -2303,9 +2304,174 @@ pub fn drop_sql(dialect: Dialect, o: &ObjectInfo) -> Option<String> {
             Dialect::Sqlite => format!("DROP INDEX {qn}"),
             _ => format!("DROP INDEX {q}"),
         },
+        // ★ 연결된 서버(101 §5): 로그인 매핑까지(`droplogins`).
+        ObjectKind::LinkedServer if dialect == Dialect::Mssql => format!(
+            "EXEC master.dbo.sp_dropserver @server = N{}, @droplogins = 'droplogins'",
+            lit(&o.name)
+        ),
         _ => return None,
     };
     Some(sql)
+}
+
+/// ★ 연결된 서버 한 벌(101 §5 · T-271): `sys.servers` 행 + 옵션 + 로그인 매핑(`sys.linked_logins`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkedServerInfo {
+    pub name: String,
+    pub product: String,
+    pub provider: String,
+    pub data_source: String,
+    pub location: String,
+    pub provider_string: String,
+    pub catalog: String,
+    /// `sp_serveroption` 이름 · 값(`true`/`false`/숫자/문자열) — 서버가 준 순서.
+    pub options: Vec<(String, String)>,
+    /// (로컬 로그인 · 빈 = 모든 로그인, 자기 자격 사용, 원격 사용자).
+    pub logins: Vec<(String, bool, String)>,
+    pub modified: String,
+}
+
+/// 연결된 서버 읽기(SQL Server만 · 없으면 `not_found`).
+pub fn linked_server(s: &mut dyn Session, name: &str) -> Result<LinkedServerInfo, DbError> {
+    if s.dialect() != Dialect::Mssql {
+        return Err(not_found("", name));
+    }
+    let sql = format!(
+        "SELECT v.name, ISNULL(v.product, ''), ISNULL(v.provider, ''), ISNULL(v.data_source, ''), ISNULL(v.location, ''), ISNULL(v.provider_string, ''), ISNULL(v.catalog, ''), v.is_collation_compatible, v.is_data_access_enabled, v.is_remote_login_enabled, v.is_rpc_out_enabled, v.uses_remote_collation, ISNULL(v.collation_name, ''), v.connect_timeout, v.query_timeout, v.lazy_schema_validation, v.is_remote_proc_transaction_promotion_enabled, CONVERT(varchar(19), v.modify_date, 120) FROM sys.servers v WHERE v.is_linked = 1 AND v.name = {}",
+        lit(name)
+    );
+    let rs = query(s, &sql)?;
+    let Some(r) = rs.rows.first() else {
+        return Err(not_found("", name));
+    };
+    let b = |i: usize| matches!(col(r, i).as_str(), "1" | "true" | "True");
+    let tf = |v: bool| if v { "true" } else { "false" }.to_string();
+    let mut options = vec![
+        ("collation compatible".to_string(), tf(b(7))),
+        ("data access".to_string(), tf(b(8))),
+        ("rpc".to_string(), tf(b(9))),
+        ("rpc out".to_string(), tf(b(10))),
+        ("use remote collation".to_string(), tf(b(11))),
+    ];
+    let coll = col(r, 12);
+    if !coll.is_empty() {
+        options.push(("collation name".to_string(), coll));
+    }
+    options.push(("connect timeout".to_string(), col(r, 13)));
+    options.push(("query timeout".to_string(), col(r, 14)));
+    options.push(("lazy schema validation".to_string(), tf(b(15))));
+    options.push(("remote proc transaction promotion".to_string(), tf(b(16))));
+    let mut info = LinkedServerInfo {
+        name: col(r, 0),
+        product: col(r, 1),
+        provider: col(r, 2),
+        data_source: col(r, 3),
+        location: col(r, 4),
+        provider_string: col(r, 5),
+        catalog: col(r, 6),
+        options,
+        logins: Vec::new(),
+        modified: col(r, 17),
+    };
+    let sql = format!(
+        "SELECT ISNULL(p.name, ''), l.uses_self_credential, ISNULL(l.remote_name, '') FROM sys.linked_logins l LEFT JOIN sys.server_principals p ON p.principal_id = l.local_principal_id WHERE l.server_id = (SELECT TOP 1 server_id FROM sys.servers WHERE name = {}) ORDER BY l.local_principal_id",
+        lit(name)
+    );
+    if let Ok(rs) = query(s, &sql) {
+        info.logins = rs
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    col(r, 0),
+                    matches!(col(r, 1).as_str(), "1" | "true" | "True"),
+                    col(r, 2),
+                )
+            })
+            .collect();
+    }
+    Ok(info)
+}
+
+/// ★ 연결된 서버 재생성 스크립트(101 §5 · 순수 · 보수적 생성 100 §5): 그대로 실행하면 "이미 있음"으로 끝난다 — DROP 줄은 주석 ·
+/// 비밀번호는 서버가 주지 않으므로 `********` 자리표시. `@srvproduct = 'SQL Server'`면 데이터 원본은 이름과 같아야 하므로 생략.
+#[must_use]
+pub fn linked_server_script(i: &LinkedServerInfo) -> String {
+    let n = |s: &str| format!("N'{}'", s.replace('\'', "''"));
+    let mut out = format!(
+        "-- Linked server [{}] — {}{}\n",
+        i.name,
+        if i.product.is_empty() {
+            "?"
+        } else {
+            &i.product
+        },
+        if i.provider.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", i.provider)
+        }
+    );
+    out.push_str("-- Nexa SQL: sys.servers · sys.linked_logins 재생성 스크립트. 그대로 실행하면 \"이미 있음\"으로 끝난다(보수적 생성).\n");
+    out.push_str("-- 바꾸려면 ① 아래 DROP 줄의 주석을 풀고 ② @rmtpassword 자리(********)를 채운 뒤 실행한다(비밀번호는 서버가 주지 않는다).\n");
+    out.push_str("-- sp_serveroption은 트랜잭션 안에서 실행할 수 없다 — 수동 커밋 모드면 자동 커밋(SET AUTOCOMMIT ON)으로 실행한다.\n");
+    out.push_str(&format!(
+        "-- EXEC master.dbo.sp_dropserver @server = {}, @droplogins = 'droplogins';\n",
+        n(&i.name)
+    ));
+    let mut add = format!(
+        "EXEC master.dbo.sp_addlinkedserver @server = {}",
+        n(&i.name)
+    );
+    let native = i.product.eq_ignore_ascii_case("SQL Server")
+        && (i.data_source.is_empty() || i.data_source.eq_ignore_ascii_case(&i.name));
+    if native {
+        add.push_str(", @srvproduct = N'SQL Server'");
+    } else {
+        add.push_str(&format!(", @srvproduct = {}", n(&i.product)));
+        for (k, v) in [
+            ("@provider", &i.provider),
+            ("@datasrc", &i.data_source),
+            ("@location", &i.location),
+            ("@provstr", &i.provider_string),
+            ("@catalog", &i.catalog),
+        ] {
+            if !v.is_empty() {
+                add.push_str(&format!(", {k} = {}", n(v)));
+            }
+        }
+    }
+    out.push_str(&add);
+    out.push_str(";\n");
+    for (local, self_cred, remote) in &i.logins {
+        let ll = if local.is_empty() {
+            "NULL".to_string()
+        } else {
+            n(local)
+        };
+        if *self_cred {
+            out.push_str(&format!(
+                "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = {}, @useself = N'True', @locallogin = {ll};\n",
+                n(&i.name)
+            ));
+        } else {
+            out.push_str(&format!(
+                "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = {}, @useself = N'False', @locallogin = {ll}, @rmtuser = {}, @rmtpassword = N'********';\n",
+                n(&i.name),
+                n(remote)
+            ));
+        }
+    }
+    for (opt, val) in &i.options {
+        out.push_str(&format!(
+            "EXEC master.dbo.sp_serveroption @server = {}, @optname = {}, @optvalue = {};\n",
+            n(&i.name),
+            n(opt),
+            n(val)
+        ));
+    }
+    out.push_str("GO\n");
+    out
 }
 
 /// [`source`] + 옵션.
@@ -2475,6 +2641,8 @@ pub fn source_with(
         },
         Dialect::Mssql => match kind {
             ObjectKind::Table => table_ddl(s, schema, name),
+            // ★ 연결된 서버(101 §5 · T-271) = 재생성 스크립트(비밀번호 자리표시 · 그대로 실행하면 "이미 있음").
+            ObjectKind::LinkedServer => Ok(linked_server_script(&linked_server(s, name)?)),
             _ => {
                 // ★ DDL(데이터베이스) 트리거는 스키마가 없다(`sys.triggers.parent_class = 0` · 101 §2).
                 let oid = if kind == ObjectKind::SchemaTrigger {
@@ -3303,5 +3471,55 @@ mod tests {
             )
         );
         assert_eq!(drop_sql(Dialect::Oracle, &mk(ObjectKind::DbLink, "")), None);
+    }
+
+    /// ★ 101 §5: 연결된 서버 스크립트 = DROP 줄 주석 · SQL Server 제품은 @srvproduct만 · 자기 자격/원격 사용자 매핑 · 옵션마다 한 줄 · 비밀번호 자리표시.
+    #[test]
+    fn linked_server_script_shape() {
+        let mut i = LinkedServerInfo {
+            name: "LNK".into(),
+            product: "".into(),
+            provider: "MSOLEDBSQL".into(),
+            data_source: "10.0.0.5,1433".into(),
+            catalog: "Sales".into(),
+            options: vec![
+                ("rpc out".into(), "true".into()),
+                ("query timeout".into(), "0".into()),
+            ],
+            logins: vec![
+                (String::new(), true, String::new()),
+                ("app".into(), false, "ruser".into()),
+            ],
+            ..Default::default()
+        };
+        let sc = linked_server_script(&i);
+        assert!(sc.contains(
+            "-- EXEC master.dbo.sp_dropserver @server = N'LNK', @droplogins = 'droplogins';"
+        ));
+        assert!(sc.contains("sp_addlinkedserver @server = N'LNK', @srvproduct = N'', @provider = N'MSOLEDBSQL', @datasrc = N'10.0.0.5,1433', @catalog = N'Sales';"));
+        assert!(sc.contains("@useself = N'True', @locallogin = NULL;"));
+        assert!(sc.contains("@useself = N'False', @locallogin = N'app', @rmtuser = N'ruser', @rmtpassword = N'********';"));
+        assert!(sc.contains("@optname = N'rpc out', @optvalue = N'true';"));
+        assert!(sc.trim_end().ends_with("GO"));
+        i.product = "SQL Server".into();
+        i.data_source = "LNK".into();
+        let sc = linked_server_script(&i);
+        assert!(sc.contains("@srvproduct = N'SQL Server';"), "{sc}");
+        assert!(!sc.contains("@datasrc"));
+        let o = ObjectInfo {
+            db: String::new(),
+            schema: String::new(),
+            name: "L'NK".into(),
+            kind: ObjectKind::LinkedServer,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        assert_eq!(
+            drop_sql(Dialect::Mssql, &o).as_deref(),
+            Some("EXEC master.dbo.sp_dropserver @server = N'L''NK', @droplogins = 'droplogins'")
+        );
+        assert!(drop_sql(Dialect::Oracle, &o).is_none());
+        assert!(ObjectKind::LinkedServer.has_source());
     }
 }
