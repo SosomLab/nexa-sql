@@ -154,6 +154,17 @@ fn ssms_group_children(db: Option<&str>, group: GroupKind, depth: usize) -> Vec<
     }
 }
 
+/// ★ 탐색기에서 객체 찾기 대상(10-01 ㉗ · Ctrl 링크 우클릭 ▸ "객체 탐색기에서 보기"): 스키마·종류·이름 + 멤버(패키지 프로시저/함수 ·
+///   컬럼) · SQL Server는 DB(없으면 현재 DB). 찾기는 단계 기계(`step_reveal`) — 폴더 읽기가 비동기라 응답마다 한 단계씩 나아간다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RevealTarget {
+    pub db: Option<String>,
+    pub schema: String,
+    pub kind: ObjectKind,
+    pub name: String,
+    pub member: Option<String>,
+}
+
 fn db_node(name: &str, depth: usize) -> Node {
     Node {
         kind: NodeKind::Database(name.to_string()),
@@ -1043,6 +1054,10 @@ pub(crate) struct Explorer {
     sizes_loaded: HashSet<(String, ObjectKind)>,
     /// ★ 데이터베이스 용량(사용자 10-01 ㉕ · SQL Server Databases 층): DB 이름 → (데이터, 로그) 바이트 · 우클릭 "용량 확인"에서만 읽는다.
     db_sizes: HashMap<String, (u64, u64)>,
+    /// ★ 진행 중인 "탐색기에서 보기"(㉗) — 응답마다 `step_reveal`이 한 단계씩 · 끝나면 None.
+    reveal: Option<RevealTarget>,
+    /// 선택을 막 옮겼다(세트가 공용 스크롤을 맞추고 비운다).
+    reveal_done: bool,
     icon_cache: IconCache,
     /// ★ 객체 상세 캐시(사용자 09-26 "이미 본 대상은 깜빡임 없이 · 상한/미사용 회수 · 새로 고침 범위는 무효화") —
     ///   열쇠 = `DetailTarget::key` · 값 = 섹션 · `dirty` = 새로 고침(수동·DDL·워터마크)이 닿아 다음 클릭에 다시 읽는다(보이는 건 즉시 · 도착하면 교체).
@@ -2157,6 +2172,8 @@ impl Explorer {
             sizes: HashMap::new(),
             sizes_loaded: HashSet::new(),
             db_sizes: HashMap::new(),
+            reveal: None,
+            reveal_done: false,
             icon_cache: HashMap::new(),
             detail_cache: HashMap::new(),
             detail_invalidated: Vec::new(),
@@ -4208,7 +4225,199 @@ impl Explorer {
                 }
             }
         }
+        if changed && self.reveal.is_some() {
+            self.step_reveal();
+        }
         changed
+    }
+
+    // ── ★ 탐색기에서 객체 찾기(10-01 ㉗) ───────────────────────────────────────────────────────────────
+    /// 찾기 시작 — 바로 닿는 데까지 한 번 나아가고, 폴더 읽기가 필요하면 응답이 올 때 `drain`이 이어 간다.
+    pub(crate) fn reveal(&mut self, t: RevealTarget) {
+        self.reveal = Some(t);
+        self.step_reveal();
+    }
+
+    pub(crate) fn take_reveal_done(&mut self) -> bool {
+        std::mem::take(&mut self.reveal_done)
+    }
+
+    /// 선택 노드까지의 라벨 경로(`루트 / … / 객체` · 자체 시험 `explorer.selpath:<파일>`).
+    pub(crate) fn selected_path(&self) -> String {
+        let Some(mut i) = self.selected else {
+            return String::new();
+        };
+        let mut parts = vec![self.label(i).0];
+        while let Some(p) = self.parent_of(i) {
+            parts.push(self.label(p).0);
+            i = p;
+        }
+        parts.reverse();
+        parts.join(" / ")
+    }
+
+    /// 노드가 펼쳐져 자식을 쓸 수 있는가 — 안 펼쳐졌으면 펼친다(로컬 = 즉시 · 서버 = 읽기 요청) · 읽는 중 = false(다음 응답에서).
+    fn reveal_ready(&mut self, i: usize) -> Option<bool> {
+        if matches!(self.nodes[i].state, LoadState::Error(_)) {
+            return None;
+        }
+        if !self.nodes[i].expanded {
+            self.toggle(i);
+        }
+        if self.nodes[i].state == LoadState::Loading {
+            return Some(false);
+        }
+        // 부분 폴더(검색 인덱스가 올린 것만) = 전체를 채운 뒤 찾는다.
+        if self.nodes[i].state == LoadState::Partial {
+            self.request_complete(i);
+            return Some(false);
+        }
+        Some(true)
+    }
+
+    /// 앵커 아래에서 종류 폴더 — 묶음(Group)은 로컬이라 펼쳐 가며 본다(폴더 안으로는 안 들어간다).
+    fn reveal_find_folder(&mut self, anchor: usize, kind: ObjectKind) -> Option<usize> {
+        let mut stack = vec![anchor];
+        while let Some(n) = stack.pop() {
+            for &c in &self.nodes[n].children.clone() {
+                match &self.nodes[c].kind {
+                    NodeKind::Folder { kind: k, .. } if *k == kind => return Some(c),
+                    NodeKind::Group { .. } => {
+                        if self.nodes[c].children.is_empty() {
+                            self.toggle(c);
+                        }
+                        stack.push(c);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    fn reveal_fail(&mut self, t: &RevealTarget) {
+        self.reveal = None;
+        let name = match &t.member {
+            Some(m) => format!("{}.{m}", t.name),
+            None => t.name.clone(),
+        };
+        self.actions
+            .push(ExplorerAction::Status(tf(Msg::StRevealObjFailed, &[&name])));
+    }
+
+    fn reveal_select(&mut self, i: usize) {
+        // 조상 전부 펼침(자식이 있는 노드만 = 이미 읽힌 것).
+        let mut p = self.parent_of(i);
+        while let Some(a) = p {
+            self.nodes[a].expanded = true;
+            p = self.parent_of(a);
+        }
+        self.selected = Some(i);
+        self.ensure_visible(i);
+        self.reveal = None;
+        self.reveal_done = true;
+    }
+
+    /// 한 단계: 앵커(스키마 · SSMS = DB 노드) → 종류 폴더 → 객체 → (멤버 = 컬럼/패키지 멤버 하위 폴더 → 잎). 못 찾음 = 상태줄.
+    fn step_reveal(&mut self) {
+        let Some(t) = self.reveal.clone() else { return };
+        let anchor = if self.ssms_mode() {
+            let db = t.db.clone().or_else(|| self.current_db.clone());
+            db.and_then(|d| {
+                (0..self.nodes.len()).find(|&i| {
+                    matches!(&self.nodes[i].kind, NodeKind::Database(n) if n.eq_ignore_ascii_case(&d))
+                })
+            })
+        } else {
+            (0..self.nodes.len()).find(|&i| {
+                matches!(&self.nodes[i].kind, NodeKind::Schema(s) if s.eq_ignore_ascii_case(&t.schema))
+            })
+        };
+        let Some(a) = anchor else {
+            self.reveal_fail(&t);
+            return;
+        };
+        match self.reveal_ready(a) {
+            Some(true) => {}
+            Some(false) => return,
+            None => {
+                self.reveal_fail(&t);
+                return;
+            }
+        }
+        let Some(f) = self.reveal_find_folder(a, t.kind) else {
+            self.reveal_fail(&t);
+            return;
+        };
+        match self.reveal_ready(f) {
+            Some(true) => {}
+            Some(false) => return,
+            None => {
+                self.reveal_fail(&t);
+                return;
+            }
+        }
+        let obj = self.nodes[f].children.iter().copied().find(|&c| {
+            matches!(&self.nodes[c].kind, NodeKind::Object(o)
+                if o.name.eq_ignore_ascii_case(&t.name)
+                    && (t.schema.is_empty() || o.schema.eq_ignore_ascii_case(&t.schema)))
+        });
+        let Some(o) = obj else {
+            self.reveal_fail(&t);
+            return;
+        };
+        let Some(member) = t.member.clone() else {
+            self.reveal_select(o);
+            return;
+        };
+        // 멤버 = 객체의 하위 폴더(로컬) 가운데 컬럼/프로시저/함수 폴더를 읽어 잎을 찾는다.
+        if !self.nodes[o].expandable {
+            self.reveal_fail(&t);
+            return;
+        }
+        if self.nodes[o].children.is_empty() {
+            self.toggle(o);
+        }
+        let subs: Vec<usize> = self.nodes[o]
+            .children
+            .iter()
+            .copied()
+            .filter(|&c| {
+                matches!(&self.nodes[c].kind, NodeKind::Sub { sub, .. }
+                    if matches!(sub, SubKind::Columns | SubKind::Procedures | SubKind::Functions))
+            })
+            .collect();
+        if subs.is_empty() {
+            self.reveal_fail(&t);
+            return;
+        }
+        let mut waiting = false;
+        for s in subs {
+            match self.reveal_ready(s) {
+                Some(true) => {}
+                Some(false) => {
+                    waiting = true;
+                    continue;
+                }
+                None => continue,
+            }
+            let hit = self.nodes[s]
+                .children
+                .iter()
+                .copied()
+                .find(|&c| match &self.nodes[c].kind {
+                    NodeKind::Item(it) => it.name.eq_ignore_ascii_case(&member),
+                    NodeKind::Column(col) => col.name.eq_ignore_ascii_case(&member),
+                    _ => false,
+                });
+            if let Some(h) = hit {
+                self.reveal_select(h);
+                return;
+            }
+        }
+        if !waiting {
+            self.reveal_fail(&t);
+        }
     }
 
     /// 접속 사용자의 스키마(= 접속 설명의 사용자)를 선택해 눈에 띄게.

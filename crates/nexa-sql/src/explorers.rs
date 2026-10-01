@@ -864,6 +864,34 @@ impl ExplorerSet {
     }
 
     /// 자체 캡처용 — 첫 서버 칸의 `row`번째 줄에서 우클릭한 것과 같은 사건을 준다(전체 영역을 거쳐 = 실제 경로).
+    /// ★ 탐색기에서 객체 찾기(10-01 ㉗): 그 서버 칸으로 선택을 옮기고 단계 기계를 시작한다 — 칸이 없으면 false.
+    pub(crate) fn reveal(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        t: crate::explorer::RevealTarget,
+    ) -> bool {
+        let Some(i) = spec.and_then(|s| self.find(s)) else {
+            return false;
+        };
+        self.switch_pane(i);
+        self.panes[i].ex.reveal(t);
+        self.after_reveal();
+        true
+    }
+
+    /// 찾기가 선택을 옮겼으면 공용 스크롤을 그 행에 맞춘다(`drain` 뒤 · 시작 직후).
+    fn after_reveal(&mut self) {
+        if self.panes[self.shown].ex.take_reveal_done() {
+            self.relayout();
+            self.reveal_selection();
+        }
+    }
+
+    /// 선택 노드의 라벨 경로(자체 시험 `explorer.selpath:<파일>`).
+    pub(crate) fn selected_path(&self) -> String {
+        self.panes[self.shown].ex.selected_path()
+    }
+
     /// ★ DB 용량 요청(기동 명령 `explorer.dbsizes` · 10-01 ㉕) — 보이는 칸.
     pub(crate) fn request_db_sizes(&mut self) {
         let i = self.shown;
@@ -1377,6 +1405,7 @@ impl ExplorerSet {
             changed |= p.ex.drain();
         }
         if changed {
+            self.after_reveal();
             if let Some((pane, node, inner)) = anchor {
                 // ★ 서버 헤더 행 높이까지 더한 칸 시작 위치(09-25: 헤더를 빼고 더해 응답마다 한 행씩 위로 밀리던 결함).
                 let top = self.pane_top(pane);

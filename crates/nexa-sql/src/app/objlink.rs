@@ -1037,9 +1037,13 @@ impl App {
         };
         if right {
             self.objlinks.menu_link = Some(k);
+            // ★ "객체 탐색기에서 보기"(10-01 ㉗) = 실제 객체로 풀릴 때만 활성(미확인 링크 = 흐림).
+            let can = self.objlink_reveal_target(k).is_some();
             let items = vec![
                 CtxItem::item("objlink.copy_desc", t(Msg::MnObjLinkCopyDesc)),
                 CtxItem::item("objlink.copy_name_desc", t(Msg::MnObjLinkCopyNameDesc)),
+                CtxItem::Separator,
+                CtxItem::maybe("objlink.reveal", t(Msg::MnObjLinkReveal), can),
             ];
             let host = self.window_rect();
             self.objlink_menu.set_scale(self.scale);
@@ -1051,6 +1055,101 @@ impl App {
         } else {
             self.objlink_copy_desc(k);
         }
+        true
+    }
+
+    /// ★ 링크 → 탐색기 찾기 대상(10-01 ㉗): 판정과 같은 길(`objlink_resolve` · 세션 현재 스키마 · 접근성) — 테이블/뷰/루틴 = 그 객체 ·
+    ///   컬럼 = 소속 테이블 + 멤버(컬럼) · 패키지 멤버(`pkg.proc`) = 패키지 + 멤버. 못 풀면 None(메뉴 흐림).
+    pub(crate) fn objlink_reveal_target(&self, k: usize) -> Option<crate::explorer::RevealTarget> {
+        let link = self.objlinks.links.get(k)?;
+        let cur = self.objlink_cur_schema();
+        let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
+        let resolve = |name: &str| {
+            self.objlink_resolve(names, &snap, link.schema.as_deref(), cur.as_deref(), name)
+                .and_then(|id| snap.object(id))
+                .map(|o| {
+                    (
+                        names.get(o.schema).to_string(),
+                        o.kind,
+                        names.get(o.name).to_string(),
+                    )
+                })
+        };
+        let (schema, kind, name, member) = match link.kind {
+            LinkKind::Column => {
+                let (s, k, n) = resolve(link.owner.as_deref()?)?;
+                (s, k, n, Some(link.name.clone()))
+            }
+            LinkKind::Routine => match link.owner.as_deref().and_then(&resolve) {
+                Some((s, k, n)) if k == nsql_catalog::ObjectKind::Package => {
+                    (s, k, n, Some(link.name.clone()))
+                }
+                _ => {
+                    let (s, k, n) = resolve(&link.name)?;
+                    (s, k, n, None)
+                }
+            },
+            LinkKind::Table => {
+                let (s, k, n) = resolve(&link.name)?;
+                (s, k, n, None)
+            }
+        };
+        // SQL Server 다른 DB 객체 = 복합 열쇠 `DB.스키마`(⑭) → DB와 스키마로.
+        let (db, schema) = match (self.sess.dialect, schema.split_once('.')) {
+            (nsql_core::Dialect::Mssql, Some((d, s))) if !s.is_empty() => {
+                (Some(d.to_string()), s.to_string())
+            }
+            _ => (None, schema),
+        };
+        Some(crate::explorer::RevealTarget {
+            db,
+            schema,
+            kind,
+            name,
+            member,
+        })
+    }
+
+    /// 메뉴 "객체 탐색기에서 보기": 탐색기를 보이게 하고 그 서버 칸에서 찾아 선택(비동기 읽기는 응답마다 이어진다).
+    pub(crate) fn objlink_reveal(&mut self, k: usize) {
+        let Some(t) = self.objlink_reveal_target(k) else {
+            return;
+        };
+        if !self.explorer.is_visible() {
+            self.menu_action("view.explorer");
+        }
+        let spec = self.sess.spec.clone();
+        if self.explorer.reveal(spec.as_ref(), t) {
+            self.set_focus(Focus::Explorer);
+            self.explorer_actions();
+        }
+        self.redraw();
+    }
+
+    /// 자체 시험(기동 명령 `objlink.reveal:<이름>`): 분석된 링크 가운데 이름이 같은 첫 링크로 찾기.
+    pub(crate) fn objlink_reveal_named(&mut self, name: &str) -> bool {
+        // 링크는 Ctrl(⌘)을 누르는 동안만 분석된다 → 시험에서는 잠시 누른 것으로 치고 분석한 뒤 되돌린다.
+        let was = self.primary;
+        self.primary = true;
+        self.objlink_sync();
+        let ok = self.objlink_reveal_named_inner(name);
+        self.primary = was;
+        if !was {
+            self.objlink_sync();
+        }
+        ok
+    }
+
+    fn objlink_reveal_named_inner(&mut self, name: &str) -> bool {
+        let Some(k) = self
+            .objlinks
+            .links
+            .iter()
+            .position(|l| l.qualified(false).eq_ignore_ascii_case(name))
+        else {
+            return false;
+        };
+        self.objlink_reveal(k);
         true
     }
 
@@ -1113,6 +1212,7 @@ impl App {
                 match id.as_str() {
                     "objlink.copy_desc" => self.objlink_copy_desc(k),
                     "objlink.copy_name_desc" => self.objlink_copy_name_desc(k),
+                    "objlink.reveal" => self.objlink_reveal(k),
                     _ => {}
                 }
             }

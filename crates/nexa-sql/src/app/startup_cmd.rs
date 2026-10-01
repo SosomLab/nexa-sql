@@ -426,6 +426,17 @@ impl App {
             let _ = std::fs::write(path, text);
             return;
         }
+        // ★ 자체 시험(10-01 ㉗): 링크 이름으로 "객체 탐색기에서 보기" · 선택 경로 덤프(`explorer.select`와 접두가 겹치지 않게 `selpath`).
+        if let Some(name) = id.strip_prefix("objlink.reveal:") {
+            let ok = self.objlink_reveal_named(name);
+            self.sess.status = format!("objlink.reveal {name} ok={ok}");
+            self.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("explorer.selpath:") {
+            let _ = std::fs::write(path, self.explorer.selected_path());
+            return;
+        }
         // ★ 자체 시험(10-01 ㉕): DB 용량을 우클릭 없이 청한다(= 메뉴 "용량 확인"과 같은 길).
         if id == "explorer.dbsizes" {
             self.explorer.request_db_sizes();

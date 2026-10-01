@@ -91,8 +91,18 @@
 권한을 가진 **다른** 스키마는 수집 계정이 달라 미확인으로 남는다(보수적 = 허용처럼 보이지 않음). 연결별 수집 계정 태그(버킷마다 `collected_by`) +
 세션 계정으로 재수집이 다음 단계.
 
+## 7. 우클릭 ▸ 객체 탐색기에서 보기(10-01 ㉗)
+
+| 조각 | 자리 | 요지 |
+|---|---|---|
+| 메뉴 | `objlink_click`(우) | 설명 복사 · 이름 - 설명 복사 · ─ · **객체 탐색기에서 보기** = `objlink_reveal_target(k).is_some()`일 때만 활성(미확인 = 흐림) |
+| 대상 | `objlink_reveal_target` → `explorer::RevealTarget{db, schema, kind, name, member}` | 판정과 같은 해석(`objlink_resolve`) · 컬럼 = 테이블 + 멤버 · `pkg.proc` = 패키지 + 멤버 · SQL Server `DB.스키마` 열쇠 → db |
+| 찾기 | `Explorer::reveal` → `step_reveal`(단계 기계 · `drain` 끝마다) | 앵커(스키마/SSMS DB) → 종류 폴더(묶음 로컬 펼침) → 객체 → 멤버 하위 폴더(Columns/Procedures/Functions) → 선택(조상 펼침 · 보이게) · 못 찾음 = 상태줄 |
+| 세트 | `ExplorerSet::reveal`(칸 전환) · `after_reveal`(공용 스크롤) | 탐색기 숨김이면 `view.explorer` 켬 · 포커스 = 탐색기 |
+| 시험 | `objlink.reveal:<이름>` · `explorer.selpath:<파일>` · `scripts/win-objlink-reveal-e2e.sh` 4 | 명령은 `primary`(Ctrl)를 잠시 켜 분석 |
+
 ## 5. 후속(T-257)
 
 - 2차(09-29 · 사용자)에서 반영됨: 표시 방식 3택 · 정상/미확인 스타일 · 향상·큰 파일 모드에서 동작 유지(표시 none) · 부분 분석(보이는 줄만 — 아래 목록의 "보이는 줄만 스캔"은 큰 파일·상한 초과에 한해 끝남).
 
-- 좌클릭 동작 교체(사용자 예고 · 예 = `obj.info` 객체 정보 탭 · 77 §1-3) · 메뉴에 `obj.copy_name/qualified`·`obj.reveal`·`obj.data` 추가 · 컬럼 타입·NULL·기본값을 툴팁 둘째 줄에 · 프로시저 시그니처 · 문장이 큰 파일일 때 **보이는 줄만** 스캔 · 향상 모드 밖에서도 `intel_unsuitable`과 같은 판정 공유.
+- 좌클릭 동작 교체(사용자 예고 · 예 = `obj.info` 객체 정보 탭 · 77 §1-3) · 메뉴에 `obj.copy_name/qualified`·`obj.data` 추가(✅ `obj.reveal` = §7 10-01) · 컬럼 타입·NULL·기본값을 툴팁 둘째 줄에 · 프로시저 시그니처 · 문장이 큰 파일일 때 **보이는 줄만** 스캔 · 향상 모드 밖에서도 `intel_unsuitable`과 같은 판정 공유.
