@@ -1224,6 +1224,27 @@ impl ExplorerSet {
         }
     }
 
+    /// ★ `spec` 연결의 현재 DB(101 §3 · 툴바 작업 단위).
+    pub(crate) fn current_db(&self, spec: Option<&ConnectSpec>) -> Option<String> {
+        let i = spec.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        self.panes
+            .get(i)
+            .and_then(|p| p.ex.current_db().map(str::to_string))
+    }
+
+    /// 데이터베이스 목록(SQL Server · 메타 버킷) · 스키마 목록(MySQL = DB) — 툴바 작업 단위 드롭다운(10-01 ⑫).
+    pub(crate) fn databases(&self, spec: Option<&ConnectSpec>) -> Vec<String> {
+        let i = self.meta_pane(spec);
+        self.panes
+            .get(i)
+            .map_or_else(Vec::new, |p| p.ex.databases())
+    }
+
+    pub(crate) fn schemas(&self, spec: Option<&ConnectSpec>) -> Vec<String> {
+        let i = self.meta_pane(spec);
+        self.panes.get(i).map_or_else(Vec::new, |p| p.ex.schemas())
+    }
+
     /// `spec` 서버의 현재 스키마(서버가 말한 값).
     pub(crate) fn current_schema(&self, spec: Option<&ConnectSpec>) -> Option<String> {
         let i = self.meta_pane(spec);

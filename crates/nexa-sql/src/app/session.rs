@@ -596,10 +596,73 @@ impl App {
         self.tool_dock.set_item_label("sess.tab", &label, &mut inv);
         self.tool_dock.set_item_tone("sess.tab", tone, &mut inv);
         self.tool_dock.set_item_tip("sess.tab", &tip);
+        // ★ 작업 단위(10-01 ⑫): 값만 · 바꿀 수 있는 방언(SQL Server · MySQL)에서만 활성.
+        let (db_label, editable) = if connected {
+            let spec = self.sess.spec.clone();
+            sessions::db_unit(
+                Some(self.sess.dialect),
+                spec.as_ref(),
+                self.sess
+                    .current_db
+                    .clone()
+                    .or_else(|| self.explorer.current_db(spec.as_ref()))
+                    .as_deref(),
+                self.explorer.current_schema(spec.as_ref()).as_deref(),
+            )
+        } else {
+            ("—".to_string(), false)
+        };
+        self.tool_dock
+            .set_item_label("sess.db", &db_label, &mut inv);
+        self.tool_dock
+            .set_item_enabled("sess.db", connected && editable, &mut inv);
+        self.tool_dock.set_item_tip("sess.db", t(Msg::TipTabDb));
         if !inv.is_empty() {
             // 글 폭이 바뀌면 그룹 배치도 다시(다음 그리기에서 실측).
             self.tool_layout_dirty = true;
         }
+    }
+
+    /// ★ 툴바 "작업 단위" 클릭(10-01 ⑫): SQL Server = 데이터베이스 목록 · MySQL = 스키마(DB) 목록 · 현재 ✓ · 고르면 `USE`(편집기 명령과 같은 길).
+    pub(crate) fn open_tab_db_menu(&mut self) {
+        if !self.sess.connected {
+            return;
+        }
+        let spec = self.sess.spec.clone();
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let list = match self.sess.dialect {
+            nsql_core::Dialect::Mssql => self.explorer.databases(spec.as_ref()),
+            nsql_core::Dialect::Mysql => self.explorer.schemas(spec.as_ref()),
+            _ => return,
+        };
+        let (cur, _) = sessions::db_unit(
+            Some(self.sess.dialect),
+            spec.as_ref(),
+            self.sess
+                .current_db
+                .clone()
+                .or_else(|| self.explorer.current_db(spec.as_ref()))
+                .as_deref(),
+            self.explorer.current_schema(spec.as_ref()).as_deref(),
+        );
+        let items: Vec<CtxItem> = if list.is_empty() {
+            vec![CtxItem::maybe("sess.use:", t(Msg::MnSessUseNoList), false)]
+        } else {
+            list.iter()
+                .map(|d| {
+                    CtxItem::item(format!("sess.use:{d}"), d.clone())
+                        .with_mark(d.eq_ignore_ascii_case(&cur))
+                })
+                .collect()
+        };
+        let i = self.editors.active();
+        let anchor = self.tool_dock.item_rect("sess.db");
+        self.badge_menu_tab = Some(self.editors.tab_id(i));
+        match anchor {
+            Some(r) => self.editors.open_badge_menu_at(i, items, r),
+            None => self.editors.open_badge_menu(i, items),
+        }
+        self.redraw();
     }
 
     /// 툴바 "탭 연결정보" 클릭 = 탭 표식 메뉴와 같은 목록을 그 항목 아래에(사용자 09-28).
@@ -879,6 +942,15 @@ impl App {
             "sess.disconnect" => self.disconnect_private(tab),
             "sess.none" => self.make_unconnected(tab),
             "sess.info" => self.output_conn_info(),
+            // ★ 작업 단위에서 고른 DB(10-01 ⑫) = 편집기 `USE`와 같은 길(세션 · 러너 `DbChanged` → 탐색기·툴바).
+            x if x.starts_with("sess.use:") => {
+                let db = &x["sess.use:".len()..];
+                if !db.is_empty() {
+                    if let Some(sql) = sessions::use_sql(self.sess.dialect, db) {
+                        self.run_text_whole(sql);
+                    }
+                }
+            }
             x if x.starts_with("sess.env:") => {
                 self.set_session_env_guarded(nsql_script::ConnEnv::from_name(
                     &x["sess.env:".len()..],

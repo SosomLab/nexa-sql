@@ -903,6 +903,69 @@ pub(crate) fn is_conntype_cmd(sql: &str) -> bool {
     )
 }
 
+/// ★ 툴바 "작업 단위"(10-01 ⑫ · 사용자 "연결정보 옆에 데이터베이스 항목 · 라벨 없이 값만"): 방언별 (표시 값, 바꿀 수 있는가).
+/// Oracle = 로그인 계정의 현재 스키마 · **고정** · SQL Server = 현재 DB · 바꿈 = `USE` · MySQL = 현재 DB(`DATABASE()`) · 바꿈 = `USE` ·
+/// PostgreSQL = 접속 DB · 고정(전환은 재접속) · SQLite = 파일 이름 · 고정 · 미연결 = "—". 순수 판정.
+pub(crate) fn db_unit(
+    dialect: Option<Dialect>,
+    spec: Option<&ConnectSpec>,
+    current_db: Option<&str>,
+    current_schema: Option<&str>,
+) -> (String, bool) {
+    let nonempty = |s: Option<&str>| {
+        s.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let spec_db = spec.and_then(|s| nonempty(s.database.as_deref()));
+    match dialect {
+        Some(Dialect::Oracle) => (
+            nonempty(current_schema)
+                .or_else(|| spec.and_then(|s| nonempty(s.schema.as_deref())))
+                .or_else(|| {
+                    spec.and_then(|s| nonempty(s.user.as_deref()))
+                        .map(|u| u.to_ascii_uppercase())
+                })
+                .unwrap_or_else(|| "—".into()),
+            false,
+        ),
+        Some(Dialect::Mssql) => (
+            nonempty(current_db)
+                .or(spec_db)
+                .unwrap_or_else(|| "—".into()),
+            true,
+        ),
+        Some(Dialect::Mysql) => (
+            nonempty(current_db)
+                .or_else(|| nonempty(current_schema))
+                .or(spec_db)
+                .unwrap_or_else(|| "—".into()),
+            true,
+        ),
+        Some(Dialect::Sqlite) => (
+            spec_db
+                .map(|p| {
+                    std::path::Path::new(&p)
+                        .file_name()
+                        .map_or(p.clone(), |f| f.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "—".into()),
+            false,
+        ),
+        Some(Dialect::Postgres | Dialect::Odbc) => (spec_db.unwrap_or_else(|| "—".into()), false),
+        None => ("—".into(), false),
+    }
+}
+
+/// 툴바 작업 단위에서 고른 DB로 바꾸는 문장(편집기 `USE`와 같은 길 · SQL Server `[x]` · MySQL `` `x` ``).
+pub(crate) fn use_sql(dialect: Dialect, db: &str) -> Option<String> {
+    match dialect {
+        Dialect::Mssql => Some(format!("USE [{}]", db.replace(']', "]]"))),
+        Dialect::Mysql => Some(format!("USE `{}`", db.replace('`', "``"))),
+        _ => None,
+    }
+}
+
 /// ★ 유형 변경에 2단 확인이 필요한가(10-01 · 사용자 "운영에서 테스트로 바꿀 때 2번 실행 제약"): **운영에서 다른 유형으로 내릴 때**만
 /// (설정 `run.prod_confirm` 켬). 운영 → 운영은 변경 없음(앞 단계에서 걸러짐) · 운영이 아닌 유형 간 이동 · 운영으로 올리기 = 바로. 순수 판정.
 pub(crate) fn env_change_needs_confirm(
@@ -944,6 +1007,8 @@ pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]
                         | "DESCRIBE"
                         | "VALUES"
                         | "PRAGMA"
+                        // `USE db` = 세션 문맥 전환(데이터 변경 아님 · 10-01 ⑫ 툴바 작업 단위).
+                        | "USE"
                 )
         })
 }
@@ -1080,6 +1145,88 @@ mod tests {
             ),
             "섞이면 확인"
         );
+    }
+
+    /// ★ 툴바 작업 단위(10-01 ⑫): 방언별 값·편집 가능 여부 · USE 문장 인용.
+    #[test]
+    fn db_unit_by_dialect() {
+        use super::{db_unit, use_sql};
+        let sp =
+            |db: Option<&str>, schema: Option<&str>, user: Option<&str>| nsql_script::ConnectSpec {
+                database: db.map(str::to_string),
+                schema: schema.map(str::to_string),
+                user: user.map(str::to_string),
+                ..Default::default()
+            };
+        let o = sp(Some("BISCM"), None, Some("biscm"));
+        assert_eq!(
+            db_unit(Some(Dialect::Oracle), Some(&o), None, Some("BISCM_SB")),
+            ("BISCM_SB".into(), false),
+            "서버가 말한 스키마"
+        );
+        assert_eq!(
+            db_unit(Some(Dialect::Oracle), Some(&o), None, None),
+            ("BISCM".into(), false),
+            "없으면 계정 대문자"
+        );
+        let m = sp(Some("M4PLAN_MS"), None, Some("BISCM_MS"));
+        assert_eq!(
+            db_unit(Some(Dialect::Mssql), Some(&m), Some("BISCM_MS"), None),
+            ("BISCM_MS".into(), true),
+            "USE 뒤 현재 DB"
+        );
+        assert_eq!(
+            db_unit(Some(Dialect::Mssql), Some(&m), None, None),
+            ("M4PLAN_MS".into(), true),
+            "아직 모르면 프로필 DB"
+        );
+        assert_eq!(
+            db_unit(
+                Some(Dialect::Mssql),
+                Some(&sp(None, None, None)),
+                None,
+                None
+            ),
+            ("—".into(), true)
+        );
+        assert_eq!(
+            db_unit(
+                Some(Dialect::Mysql),
+                Some(&sp(Some("shop"), None, None)),
+                None,
+                Some("sales")
+            ),
+            ("sales".into(), true)
+        );
+        assert_eq!(
+            db_unit(
+                Some(Dialect::Postgres),
+                Some(&sp(Some("matrixdb2"), None, None)),
+                None,
+                Some("public")
+            ),
+            ("matrixdb2".into(), false),
+            "PG = DB 고정"
+        );
+        assert_eq!(
+            db_unit(
+                Some(Dialect::Sqlite),
+                Some(&sp(Some("C:\\x\\demo.sqlite"), None, None)),
+                None,
+                None
+            ),
+            ("demo.sqlite".into(), false)
+        );
+        assert_eq!(db_unit(None, None, None, None), ("—".into(), false));
+        assert_eq!(
+            use_sql(Dialect::Mssql, "a]b").as_deref(),
+            Some("USE [a]]b]")
+        );
+        assert_eq!(
+            use_sql(Dialect::Mysql, "a`b").as_deref(),
+            Some("USE `a``b`")
+        );
+        assert!(use_sql(Dialect::Oracle, "x").is_none());
     }
 
     /// ★ 유형 변경 2단 확인 MC/DC(10-01): 설정 · 지금 = 운영 · 새 값 ≠ 운영 셋이 모두 참일 때만.

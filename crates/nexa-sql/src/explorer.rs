@@ -847,6 +847,8 @@ pub(crate) enum ExplorerAction {
     Notice(String),
     /// 상태줄 한 줄.
     Status(String),
+    /// ★ 서버 정보·현재 스키마가 도착/갱신됐다(101 · 10-01 ⑫) — 호스트는 세션 UI(툴바 작업 단위 등)를 다시 맞춘다.
+    ServerInfo,
     /// 클립보드에 복사할 텍스트.
     Copy(String),
     /// 오프라인 서버를 탐색기에서 지운다(루트 우클릭 · `ExplorerSet`이 처리).
@@ -3309,6 +3311,7 @@ impl Explorer {
                             self.current_db =
                                 (!info.current_db.is_empty()).then(|| info.current_db.clone());
                             self.server_info = info;
+                            self.actions.push(ExplorerAction::ServerInfo);
                             if std::mem::take(&mut self.rebinding) {
                                 // 자격만 바뀐 재접속(카탈로그 공유 · docs/54 §10) — 트리·메타는 그대로.
                                 continue;
@@ -3338,6 +3341,7 @@ impl Explorer {
                         Ok(list) if self.ssms_mode() => {
                             if node == 0 {
                                 self.meta_set_schemas(&list, current.as_deref());
+                                self.actions.push(ExplorerAction::ServerInfo);
                                 self.preload_meta();
                                 self.index_invalidate();
                                 self.seed_from_cache();
@@ -3363,6 +3367,7 @@ impl Explorer {
                         }
                         Ok(list) => {
                             self.meta_set_schemas(&list, current.as_deref());
+                            self.actions.push(ExplorerAction::ServerInfo);
                             let mut kids: Vec<Node> = list
                                 .into_iter()
                                 .map(|s| Node {
@@ -4353,6 +4358,35 @@ impl Explorer {
     /// 서버가 말한 현재 스키마.
     pub(crate) fn server_schema(&self) -> Option<&str> {
         self.server_schema.as_deref()
+    }
+
+    /// ★ 이 연결 세션의 현재 DB(101 §3).
+    pub(crate) fn current_db(&self) -> Option<&str> {
+        self.current_db.as_deref()
+    }
+
+    /// ★ 메타의 데이터베이스 목록(`("", Database)` 버킷 · SQL Server · 이름순) — 툴바 작업 단위 드롭다운(10-01 ⑫).
+    pub(crate) fn databases(&self) -> Vec<String> {
+        let (names, snap) = self.meta_view();
+        let Some(empty) = names.find("") else {
+            return Vec::new();
+        };
+        let mut v: Vec<String> = snap
+            .prefix(names, empty, ObjectKind::Database, "", usize::MAX)
+            .into_iter()
+            .map(|h| names.get(h.name).to_string())
+            .collect();
+        v.sort_by_key(|a| a.to_lowercase());
+        v
+    }
+
+    /// 메타의 스키마 목록(MySQL = 데이터베이스).
+    pub(crate) fn schemas(&self) -> Vec<String> {
+        let (names, snap) = self.meta_view();
+        snap.schemas
+            .iter()
+            .map(|s| names.get(*s).to_string())
+            .collect()
     }
 
     /// **수동 새로 고침 = 계층형**(docs/57 T3 · 사용자 09-19 우클릭 메뉴 · F5): 고른 노드 **아래 전부**가 대상이다.
@@ -6828,9 +6862,18 @@ impl Explorer {
                 // ★ 파일 방언(SQLite · 사용자 09-28 "파일 = 서버 1 · 연결 1 · 다른 서버와 같은 구조"): 헤더 = 파일 이름(서버) ·
                 //   연결 행 = 파일 이름(DB) · 흐리게 = 프로필 · 폴더(계정 자리에 폴더 — 전체 경로는 접속 창·툴팁에도 있다).
                 let file_dialect = self.dialect.is_some_and(|d| d.is_file_based());
-                // ★ 101 §3: 프로필 Database가 비어 있으면(로그인 기본 DB) 서버가 알려 준 현재 DB를 주 글자로.
+                // ★ SQL Server(사용자 10-01 ⑬): 로그인 ID와 DB는 별개 개념 → 연결 행의 주 글자 = **로그인 계정**(칸 = 계정 단위 ·
+                //   같은 계정은 한 행 · 다른 계정은 두 행) · 현재 DB는 흐린 글("현재 DB: x")과 트리의 "(현재)"로.
+                let sql_server = self.dialect == Some(Dialect::Mssql);
+                let login = if !self.users.is_empty() {
+                    self.users.join(", ")
+                } else {
+                    self.conn_user.clone()
+                };
                 let main = if file_dialect {
                     self.endpoint.clone()
+                } else if sql_server && !login.is_empty() {
+                    login
                 } else if !self.conn_db.is_empty() {
                     self.conn_db.clone()
                 } else if let Some(cur) = &self.current_db {
@@ -6852,6 +6895,8 @@ impl Explorer {
                     {
                         dim.push(dir);
                     }
+                } else if sql_server {
+                    // 주 글자가 이미 계정 — 흐린 글에는 다시 넣지 않는다.
                 } else if !self.users.is_empty() {
                     dim.push(self.users.join(", "));
                 } else if !self.conn_user.is_empty() {

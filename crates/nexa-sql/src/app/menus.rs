@@ -892,6 +892,7 @@ impl App {
                 }
             }
             "sess.tab" | "sess.tab#drop" => self.open_tab_conn_menu(),
+            "sess.db" | "sess.db#drop" => self.open_tab_db_menu(),
             "conn.sessions" | "view.sessions" => {
                 if self.sessions_win.is_open() {
                     self.sessions_win.close();
