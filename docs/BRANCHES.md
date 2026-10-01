@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/explorer-db-copy-name | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉞ SQL Server DB 노드 "이름 복사" 무동작(`copy_name_of` 한 자리 + 시험) · journal §39 |
 | fix/mssql-db-size-priority | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉝-b DB 노드 용량 우선순위 = 용량 확인 값 확정 > 하위 합계 `+`(`db_size_pick` + MC/DC) · E2E ⑦ 34/34 · journal §38 |
 | feat/mssql-db-node-used-sum | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉝ SQL Server DB 노드 = 읽힌 테이블+인덱스 합 `+`(없으면 파일 용량 · 툴팁 둘 다) · E2E ⑦ 33/33 · journal §38 |
 | feat/mssql-routine-type-desc | 2026-10-02 | 2026-10-02 → main(삭제) | 2 | ㉛ SQL Server 루틴 세부 타입 = 상세·칩·툴팁(라벨은 이름만 · `type_desc`) · ㉜ 테이블 반환 함수 FROM 완성(L1 extra) · E2E ⑧⑨ 32/32 · journal §37 DB/테이블 용량 분석 |

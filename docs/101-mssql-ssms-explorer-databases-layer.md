@@ -78,6 +78,7 @@
 |---|---|---|---|
 | **보안**(`GroupKind::ServerSecurity`) | 로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양 | `sys.server_principals`(S/U/G/C/K · R) · `sys.credentials` · `sys.cryptographic_providers` · `sys.server_audits` · `sys.server_audit_specifications` | 상세 = `server_object_props`(뷰 열 전부 + 역할 소속/멤버/감사 파일/감사 동작) · 삭제 = `DROP LOGIN` … (감사는 `STATE = OFF` 먼저) |
 | **서버 개체**(`ServerObjects`) | 백업 디바이스 · 엔드포인트 · 연결된 서버(§5) · 트리거 | `sys.backup_devices` · `sys.endpoints` · `sys.servers` · `sys.server_triggers` | 트리거 소스 = `sys.server_sql_modules` · 삭제 `DROP TRIGGER x ON ALL SERVER` · `sp_dropdevice` · `DROP ENDPOINT` |
+| DB 노드 이름 복사(㉞ 10-02) | DB 노드 우클릭 ▸ 이름 복사 | 없음 | `copy_name_of` 한 자리(DB 포함) — 종전엔 처리에서 DB가 빠져 무동작 |
 | **데이터베이스** 용량(㉕) | DB 노드 · 묶음 우클릭 ▸ 용량 확인 | `sys.master_files`(권한 없으면 0행) → 접근 가능한 DB마다 `[db].sys.database_files` | 행 오른쪽 = 데이터 + 로그 · 묶음 = 합 · 툴팁 데이터/로그 · `size>` 필터 |
 
 - 서버 수준 종류 = `ObjectKind::is_server_level()`(연결된 서버 포함 · 스키마·DB 없음) — 완성·별칭 해석 제외 · 아이콘은 종류별(로그인/역할 = 사용자 · 자격/공급자/감사 = 속성 · 트리거 = 트리거).

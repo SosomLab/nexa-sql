@@ -7617,14 +7617,8 @@ impl Explorer {
             "connect" => self.actions.push(ExplorerAction::ConnectServer(None)),
             "newtab" => self.actions.push(ExplorerAction::NewTabHere(None)),
             "copy" => {
-                let name = match &self.nodes[i].kind {
-                    NodeKind::Schema(s) => s.clone(),
-                    NodeKind::Object(o) => o.name.clone(),
-                    NodeKind::Column(c) => c.name.clone(),
-                    NodeKind::Item(it) => it.name.clone(),
-                    _ => String::new(),
-                };
-                if !name.is_empty() {
+                // ㉞(사용자 10-02): 메뉴에 "이름 복사"가 있는 노드는 전부 여기서 이름이 나와야 한다(`copy_name_of` 한 자리).
+                if let Some(name) = copy_name_of(&self.nodes[i].kind) {
                     self.actions.push(ExplorerAction::Copy(name));
                 }
             }
@@ -8081,11 +8075,45 @@ mod blockers_tests {
     }
 }
 
+/// ★ 우클릭 ▸ "이름 복사"가 넣을 글자(㉞ · 10-02): 메뉴가 그 항목을 보이는 종류(스키마 · 객체 · 컬럼 · 잎 · **SQL Server DB**)는
+///   전부 Some — 종전엔 DB 노드가 빠져 빈 이름 = 무동작이었다. 묶음·폴더·루트는 None(메뉴에도 없음).
+fn copy_name_of(kind: &NodeKind) -> Option<String> {
+    match kind {
+        NodeKind::Schema(s) => Some(s.clone()),
+        NodeKind::Object(o) => Some(o.name.clone()),
+        NodeKind::Column(c) => Some(c.name.clone()),
+        NodeKind::Item(it) => Some(it.name.clone()),
+        NodeKind::Database(d) => Some(d.clone()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod refresh_tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use nsql_core::{DdlKind, DdlTarget, DdlVerb};
+
+    /// ㉞(사용자 10-02): SSMS DB 노드의 "이름 복사" = DB 이름 · 메뉴에 그 항목이 있는 종류는 전부 Some · 묶음·루트는 None.
+    #[test]
+    fn copy_name_covers_every_kind_that_shows_the_menu_item() {
+        assert_eq!(
+            copy_name_of(&NodeKind::Database("MAEIL_SNOP".into())).as_deref(),
+            Some("MAEIL_SNOP")
+        );
+        assert_eq!(
+            copy_name_of(&NodeKind::Schema("HR".into())).as_deref(),
+            Some("HR")
+        );
+        assert_eq!(copy_name_of(&NodeKind::Root), None);
+        assert_eq!(
+            copy_name_of(&NodeKind::Group {
+                group: GroupKind::Databases,
+                db: None
+            }),
+            None
+        );
+    }
 
     /// ㉝-b(사용자 10-02): DB 용량(용량 확인)이 하위 합계보다 우선 — MC/DC 네 짝.
     #[test]
