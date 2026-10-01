@@ -1160,7 +1160,7 @@ impl App {
                 let (s, k, n) = resolve(link.owner.as_deref()?)?;
                 (s, k, n, Some(link.name.clone()))
             }
-            LinkKind::Routine => match link.owner.as_deref().and_then(&resolve) {
+            LinkKind::Routine => match link.owner.as_deref().and_then(resolve) {
                 Some((s, k, n)) if k == nsql_catalog::ObjectKind::Package => {
                     (s, k, n, Some(link.name.clone()))
                 }

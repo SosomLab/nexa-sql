@@ -5205,7 +5205,7 @@ impl Explorer {
                     .unwrap_or("");
                 self.server_schema
                     .as_deref()
-                    .and_then(&find)
+                    .and_then(find)
                     .or_else(|| find(user))
                     .or_else(|| find("public"))
                     .or_else(|| find("dbo"))
