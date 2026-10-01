@@ -5,6 +5,10 @@
 > "기본 = 유형별 내용 · 상하/좌우 스크롤 · 선택·복사/붙여넣기 UI · 헤더 = 펼침 ▾ 축소 / 축소 ▴ 확장" · "탐색기와 분리된 독립 영역(스크롤 겹치지 않게)".
 > 원천 = [83](83-object-explorer-dbms-trees-and-generate-sql.md)(하위 폴더 표 · Generate SQL) · [85 §4](85-metadata-layers.md)(L3 즉시 채움·회수) · [77](77-data-workbench-architecture.md)(객체 척추).
 
+## 0-1. 루틴 세부 타입(10-02 ㉛)
+
+프로시저·함수의 `extra`(SQL Server = `type_desc` · PG = 오버로드 서명)는 속성 표의 `type`/`signature` 행과 머리줄 칩(`PROCEDURE · SQL_STORED_PROCEDURE`)에 보이고, 탐색기 라벨에는 SQL Server 것을 붙이지 않는다(PG 서명은 이름 구별이라 유지).
+
 ## 0. 결론
 
 - **독립 패널** `objdetail.rs`(`DetailPanel`): 탐색기 칸 **아래**, 호스트(`main.rs`)가 배치 — 탐색기 높이를 그만큼 줄이고 사이에 스플리터(`split_d` · 끌면 `explorer.details_h` 기억). 탐색기 스크롤 영역과 겹치지 않는다.
