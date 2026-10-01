@@ -452,6 +452,12 @@ impl ConnectPanel {
         matches!(self.selected_dialect(), Dialect::Oracle | Dialect::Postgres)
     }
 
+    /// ★ Database 칸이 **마지막 줄(서버 유형 왼쪽 · 기본 스키마 자리)** 로 가는가(사용자 10-01): 스키마 칸이 없는 네트워크 방언
+    /// (SQL Server · MySQL) — Database가 선택 칸이라 기본 스키마와 같은 성격. 파일 방언은 경로 칸이 줄 전체라 제자리.
+    fn db_in_last_row(&self) -> bool {
+        !self.schema_applies() && !self.file_based()
+    }
+
     /// 새 프로필 — 폼 비우기(DB 종류는 유지).
     pub(crate) fn clear(&mut self) {
         self.loaded_name = None;
@@ -665,7 +671,9 @@ impl ConnectPanel {
                 .set_bounds(Rect::new(x + w - port_w, y, port_w, field_h), &mut inv);
             y += field_h + gap;
         }
-        place(&mut self.database, &mut inv, &mut y, field_h);
+        if !self.db_in_last_row() {
+            place(&mut self.database, &mut inv, &mut y, field_h);
+        }
         place(&mut self.user, &mut inv, &mut y, field_h);
         // 비밀번호 + "저장" 체크박스 한 줄(사용자 10-01) — 체크 칸 폭 = 포트 칸과 같은 열(오른쪽 끝 정렬).
         {
@@ -681,15 +689,19 @@ impl ConnectPanel {
             y += field_h + gap;
         }
         // 기본 스키마(선택 칸 · 왼쪽) + 서버 유형 콤보(오른쪽) 한 줄 — 저장 버튼 바로 위(사용자 10-01).
-        //   스키마가 뜻이 없는 방언(SQL Server · 파일 방언)은 서버 유형이 줄 전체를 쓴다.
+        //   스키마 칸이 없는 네트워크 방언(SQL Server · MySQL)은 그 자리에 **Database**(선택 칸) · 파일 방언은 서버 유형이 줄 전체.
         {
             y += label_h;
+            let half = (w - gap) / 2;
+            let left = Rect::new(x, y, w - half - gap, field_h);
+            let right = Rect::new(x + w - half, y, half, field_h);
             if self.schema_applies() {
-                let half = (w - gap) / 2;
-                self.schema
-                    .set_bounds(Rect::new(x, y, w - half - gap, field_h), &mut inv);
-                self.env
-                    .set_bounds(Rect::new(x + w - half, y, half, field_h), &mut inv);
+                self.schema.set_bounds(left, &mut inv);
+                self.env.set_bounds(right, &mut inv);
+            } else if self.db_in_last_row() {
+                self.schema.set_bounds(off, &mut inv);
+                self.database.set_bounds(left, &mut inv);
+                self.env.set_bounds(right, &mut inv);
             } else {
                 self.schema.set_bounds(off, &mut inv);
                 self.env.set_bounds(Rect::new(x, y, w, field_h), &mut inv);
@@ -873,13 +885,19 @@ impl ConnectPanel {
         self.sync_focus();
     }
 
+    /// Tab 순서 = 폼 순서(10-01): Database가 마지막 줄로 간 방언은 Tab 순서도 비밀번호 뒤.
     fn visible_fields(&self) -> Vec<Field> {
-        FIELDS
+        let mut v: Vec<Field> = FIELDS
             .iter()
             .copied()
             .filter(|f| !(self.file_based() && matches!(f, Field::Host | Field::Port)))
             .filter(|f| !(matches!(f, Field::Schema) && !self.schema_applies()))
-            .collect()
+            .collect();
+        if self.db_in_last_row() {
+            v.retain(|f| *f != Field::Database);
+            v.push(Field::Database);
+        }
+        v
     }
 
     fn focus_next(&mut self, back: bool) {
@@ -1739,12 +1757,29 @@ mod dirty_tests {
         assert_eq!((sc.y, sc.h), (env.y, env.h));
         assert!(sc.w > 0 && env.x > sc.right(), "{sc:?} {env:?}");
         assert!(sc.y > pw.bottom() && btn.y > sc.bottom());
-        // SQL Server: 스키마 숨김 · 서버 유형이 줄 전체.
+        // SQL Server: 스키마 숨김 · 그 자리에 Database(왼쪽) + 서버 유형(오른쪽) 한 줄 · User는 호스트 바로 아래로 올라온다(사용자 10-01).
         p.dialect.select_value(&Dialect::Mssql.to_string());
         p.apply_dialect(Dialect::Mssql);
+        p.set_bounds(Rect::new(0, 0, 292, 600), 1.0);
+        let (db, env, pw) = (p.database.bounds(), p.env.bounds(), p.password.bounds());
         assert_eq!(p.schema.bounds().w, 0);
-        assert_eq!(p.env.bounds().x, p.user.bounds().x);
-        assert_eq!(p.env.bounds().w, p.user.bounds().w);
+        assert_eq!((db.y, db.h), (env.y, env.h), "{db:?} {env:?}");
+        assert!(db.w > 0 && env.x > db.right(), "{db:?} {env:?}");
+        assert!(db.y > pw.bottom() && p.save_btn.bounds().y > db.bottom());
+        assert!(p.user.bounds().y < pw.y && p.user.bounds().y > p.host.bounds().y);
+        // Tab 순서도 폼 순서: … → Password → Database(마지막).
+        let vis = p.visible_fields();
+        assert_eq!(vis.last().copied(), Some(Field::Database));
+        assert!(
+            vis.iter().position(|f| *f == Field::Password)
+                < vis.iter().position(|f| *f == Field::Database)
+        );
+        // SQLite(파일): 경로 칸은 제자리(줄 전체) · 서버 유형이 마지막 줄 전체.
+        let mut q = ConnectPanel::new(vec![Dialect::Sqlite]);
+        q.set_bounds(Rect::new(0, 0, 292, 600), 1.0);
+        assert_eq!(q.database.bounds().w, q.user.bounds().w);
+        assert!(q.database.bounds().y < q.user.bounds().y);
+        assert_eq!(q.env.bounds().w, q.user.bounds().w);
     }
 
     /// 서버 유형 콤보(사용자 10-01): 불러온 값 표시 · 바꾸면 바뀜 · Save 스펙에 실림 · 목록 메뉴(이미 저장)는 바뀜 아님.

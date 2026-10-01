@@ -880,7 +880,9 @@ impl App {
             "sess.none" => self.make_unconnected(tab),
             "sess.info" => self.output_conn_info(),
             x if x.starts_with("sess.env:") => {
-                self.set_session_env(nsql_script::ConnEnv::from_name(&x["sess.env:".len()..]));
+                self.set_session_env_guarded(nsql_script::ConnEnv::from_name(
+                    &x["sess.env:".len()..],
+                ));
             }
             // 전용 연결 줄 = 이미 이 탭의 것 — 끊겨 있으면 다시 접속, 아니면 아무것도 안 함.
             "sess.private" => {

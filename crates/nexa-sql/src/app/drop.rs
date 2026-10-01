@@ -375,6 +375,43 @@ impl App {
         self.redraw();
     }
 
+    /// ★ 팔레트·세션 메뉴에서 유형 변경(10-01 · 사용자): **운영 → 다른 유형**은 2단(3초 안에 같은 항목을 다시 고르면 진행 ·
+    /// 편집기 실행의 2단 확인 관례 · 토스트 + 상태줄 + Output 한 줄) · 그 밖은 바로. 판정 = `sessions::env_change_needs_confirm`.
+    pub(crate) fn set_session_env_guarded(&mut self, env: Option<nsql_script::ConnEnv>) {
+        let cur = self.sess.spec.as_ref().and_then(|sp| sp.env);
+        if crate::sessions::env_change_needs_confirm(
+            cur,
+            env,
+            self.settings.flag("run.prod_confirm"),
+        ) {
+            let key =
+                nexa_fs::watch::content_hash(format!("sess.env:{}", env_label(env)).as_bytes());
+            let armed = self
+                .sess
+                .prod_armed
+                .is_some_and(|(k, at)| k == key && at.elapsed() <= Duration::from_secs(3));
+            if !armed {
+                self.sess.prod_armed = Some((key, Instant::now()));
+                let line = tf(Msg::StProdEnvConfirm, &[&env_label(cur), &env_label(env)]);
+                self.sess.status = line.clone();
+                self.toasts.push(
+                    crate::toast::ToastKind::Error,
+                    t(Msg::StProdConfirmTitle),
+                    line.clone(),
+                );
+                self.output_push(
+                    self.editors.active_id(),
+                    crate::output::OutKind::Info,
+                    &line,
+                );
+                self.redraw();
+                return;
+            }
+            self.sess.prod_armed = None;
+        }
+        self.set_session_env(env);
+    }
+
     /// 현재 탭의 접속 정보를 Output에 쓴다.
     pub(crate) fn output_conn_info(&mut self) {
         let ed = self.editors.active_id();

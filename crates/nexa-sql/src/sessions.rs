@@ -892,6 +892,24 @@ pub(crate) fn is_noop_item(sql: &str, cur_env: Option<nsql_script::ConnEnv>) -> 
     }
 }
 
+/// `CONNTYPE x`/`SET CONNTYPE x` 명령인가(값 무관 · 순수 판정).
+pub(crate) fn is_conntype_cmd(sql: &str) -> bool {
+    matches!(
+        nsql_script::command::parse_command(sql),
+        Ok(Some(Command::Set(nsql_script::SetOption::Other { name, .. }))) if name.eq_ignore_ascii_case("CONNTYPE")
+    )
+}
+
+/// ★ 유형 변경에 2단 확인이 필요한가(10-01 · 사용자 "운영에서 테스트로 바꿀 때 2번 실행 제약"): **운영에서 다른 유형으로 내릴 때**만
+/// (설정 `run.prod_confirm` 켬). 운영 → 운영은 변경 없음(앞 단계에서 걸러짐) · 운영이 아닌 유형 간 이동 · 운영으로 올리기 = 바로. 순수 판정.
+pub(crate) fn env_change_needs_confirm(
+    cur: Option<nsql_script::ConnEnv>,
+    new: Option<nsql_script::ConnEnv>,
+    setting_on: bool,
+) -> bool {
+    setting_on && cur == Some(nsql_script::ConnEnv::Prod) && new != Some(nsql_script::ConnEnv::Prod)
+}
+
 /// 실행할 항목만 남긴다(변경 없는 항목 제외) — 운영 확인·실행은 이 결과로 판단한다.
 pub(crate) fn run_needed_items(
     items: &[String],
@@ -905,13 +923,14 @@ pub(crate) fn run_needed_items(
 }
 
 /// 운영 접속에서 **변경 문장**(DML·DDL·PL/SQL 블록 등 SELECT가 아닌 것 · 서버로 가는 것)을 실행하려 한다 → 한 번 더 확인할 것인가(순수 판정).
-/// 클라이언트 전용 명령(`is_client_only`)은 서버를 바꾸지 않으므로 세지 않는다(10-01).
+/// 클라이언트 전용 명령(`is_client_only`)은 서버를 바꾸지 않으므로 세지 않는다(10-01) — 단 **`CONNTYPE`는 센다**: 변경 없는 것은
+/// 앞 단계(`run_needed_items`)에서 빠졌으므로 여기 남은 `CONNTYPE`는 운영 유형을 **해제**하는 것 = 보호를 내리는 변경(사용자 10-01).
 pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]) -> bool {
     prod && setting_on
         && items.iter().any(|sql| {
             let k = nsql_core::first_keyword(sql);
             !k.is_empty()
-                && !is_client_only(sql)
+                && (!is_client_only(sql) || is_conntype_cmd(sql))
                 && !matches!(
                     k.as_str(),
                     "SELECT"
@@ -1027,7 +1046,6 @@ mod tests {
         assert!(!need(true, true, &ro), "조회만");
         // ★ 10-01: 클라이언트 전용 명령은 서버를 바꾸지 않는다 → 운영 확인 없음 · EXEC는 서버로 간다 → 확인.
         let client = vec![
-            "CONNTYPE tst".to_string(),
             "SET AUTOCOMMIT OFF".to_string(),
             "SHOW CONN".to_string(),
             "DEFINE x = 1".to_string(),
@@ -1038,6 +1056,19 @@ mod tests {
             need(true, true, &["EXEC p_run()".to_string()]),
             "EXEC = 서버"
         );
+        // 운영에서 유형을 내리는 `CONNTYPE`(같은 값은 앞 단계에서 빠진다) = 확인(사용자 10-01).
+        assert!(
+            need(true, true, &["CONNTYPE tst".to_string()]),
+            "운영 해제 = 확인"
+        );
+        assert!(
+            need(true, true, &["set conntype none".to_string()]),
+            "SET 형도"
+        );
+        assert!(
+            !need(false, true, &["CONNTYPE prd".to_string()]),
+            "운영 아닌 곳에서 올리기 = 바로"
+        );
         assert!(
             need(
                 true,
@@ -1045,6 +1076,22 @@ mod tests {
                 &["CONNTYPE tst".to_string(), "delete from t".to_string()]
             ),
             "섞이면 확인"
+        );
+    }
+
+    /// ★ 유형 변경 2단 확인 MC/DC(10-01): 설정 · 지금 = 운영 · 새 값 ≠ 운영 셋이 모두 참일 때만.
+    #[test]
+    fn env_change_confirm_mcdc() {
+        use super::env_change_needs_confirm as f;
+        use nsql_script::ConnEnv as E;
+        assert!(f(Some(E::Prod), Some(E::Test), true));
+        assert!(f(Some(E::Prod), None, true), "운영 → 없음");
+        assert!(!f(Some(E::Prod), Some(E::Test), false), "설정 끔");
+        assert!(!f(Some(E::Test), Some(E::Dev), true), "운영 아님");
+        assert!(!f(None, Some(E::Prod), true), "올리기");
+        assert!(
+            !f(Some(E::Prod), Some(E::Prod), true),
+            "같은 값(앞 단계에서 변경 없음)"
         );
     }
 

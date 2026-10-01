@@ -76,7 +76,7 @@
 기본값 10초 이하 = ms(`_ms`) · 초과 = 초 · 단위를 바꾸면 `RESCALED` 이주 + CLI 옛 단위 호환([94 §6-5](94-settings-key-naming-and-location.md)). **보수적 생성**(소스 열기·DDL = 결과가 달라질 수 있는 항목은 사전 정의 명시 · [100 §5](100-object-source-run-and-output-tab.md)). **버튼 연타 차단 기본**(`ui.click_guard_ms` · 연타 버튼만 `set_rapid`). 객체 소스 탭의 F5 = 한 단위 실행(`ObjectOrigin` · `Runner::run_whole`) · 사람이 읽는 메시지 = Output 탭([100](100-object-source-run-and-output-tab.md)).
 
 ### 1-12. 실행 통제의 순서(10-01 · 사용자)
-- **① 실행할 것이 있는가 → ② 어디로 가는가 → ③ 운영이면 확인.** 바꿀 것이 없는 항목(지금 유형과 같은 `CONNTYPE` 등 · `sessions::run_needed_items`)은 실행하지 않고 "변경 없음"만 알린다. 운영 2단 확인(`prod_confirm_needed`)은 **서버에 변경을 보내는 문장**에만 — 클라이언트 전용 명령(`is_client_only`)은 세지 않는다. 새 통제를 넣을 때 이 순서를 지킨다(판정은 `sessions.rs` 순수 함수 + 시험).
+- **① 실행할 것이 있는가 → ② 어디로 가는가 → ③ 운영이면 확인.** 바꿀 것이 없는 항목(지금 유형과 같은 `CONNTYPE` 등 · `sessions::run_needed_items`)은 실행하지 않고 "변경 없음"만 알린다. 운영 2단 확인(`prod_confirm_needed`)은 **서버에 변경을 보내는 문장**과 **운영 유형을 내리는 `CONNTYPE`**(보호를 푸는 변경 · 팔레트·메뉴도 `env_change_needs_confirm`)에 — 그 밖의 클라이언트 전용 명령(`is_client_only`)은 세지 않는다. 새 통제를 넣을 때 이 순서를 지킨다(판정은 `sessions.rs` 순수 함수 + 시험).
 
 ## 2. 작업 규칙(OS 공통)
 

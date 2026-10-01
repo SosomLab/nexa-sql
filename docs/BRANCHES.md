@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/prod-leave-confirm-form-db | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 운영 → 다른 유형 = 2단 확인(편집기 `CONNTYPE` · 팔레트·메뉴 `env_change_needs_confirm`) · 로그인 폼 SQL Server·MySQL Database 칸 = 기본 스키마 자리(`db_in_last_row`) · MSSQL `USE`/기본 DB 조사 · `conn-cmd-e2e.sh` 38 |
 | fix/run-needed-before-prod-confirm | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 실행 통제 순서 = 실행 필요 → 서버/클라이언트 → 운영 확인(같은 `CONNTYPE` = 무실행 "변경 없음" · 클라이언트 명령은 운영 2단 확인 제외 · [61 §1-12](61-core-design-and-working-rules.md) · `conn-cmd-e2e.sh` 33) |
 | feat/drop-object-server-type | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 10-01 — 객체 삭제(모달·2단 타임아웃·DDL 백업 후 삭제·운영 금지 · [28 §9](28-object-explorer.md) · D-240~245) · 서버 유형(정식+3자리 약어 · 영속/임시 `env_temp` · 로그인 폼 콤보·재배치 · 편집기 `CONNTYPE`/`SHOW CONN` · CLI `conn env`) · 붙여넣기 F5 E2E 13 · `conn-cmd-e2e.sh` 30 |
 | feat/remaining-108 | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 108차 잔여 일괄 — PG·MSSQL 소스 왕복 E2E 33/33 · 트리거 ON/함수 참조 한정 · GET_DDL 폴백 · CLI qualify=off · DDL 미리보기 탭 출처 · F5 스키마 경고 · hover 차단 확산 · Output 배지/두 번 클릭/빈 결과1 · S79 |

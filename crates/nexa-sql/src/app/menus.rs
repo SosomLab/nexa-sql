@@ -863,7 +863,9 @@ impl App {
             // 툴바 Disconnect = **지금 탭의 연결 해제**(종전과 같음 · 사용자 09-18 원복) · 세션 목록 버튼/View = 세션 창.
             "session.info" => self.output_conn_info(),
             x if x.starts_with("session.env:") => {
-                self.set_session_env(nsql_script::ConnEnv::from_name(&x["session.env:".len()..]));
+                self.set_session_env_guarded(nsql_script::ConnEnv::from_name(
+                    &x["session.env:".len()..],
+                ));
             }
             "conn.disconnect" => {
                 self.sess.disc_path = Some(sessions::DiscPath::Toolbar);

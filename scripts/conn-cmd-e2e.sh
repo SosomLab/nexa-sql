@@ -50,13 +50,22 @@ if [ -n "$EXE" ] && [ -x "$EXE" ]; then
   #   실행 필요 판단이 운영 2단 확인보다 먼저 = 확인 없이 "변경 없음(실행하지 않음)"(사용자 10-01).
   printf 'SHOW CONN\nCONNTYPE prd\nCONNTYPE prd\nSHOW CONN\nSET CONNTYPE stg\nSHOW CONNECTION\nCONNTYPE bogus\nCONNTYPE non\nCONNTYPE prd\n' > "$F"
   F2="$OUT/sess_noop.sql"; printf 'CONNTYPE prd\n' > "$F2"
-  fw=$(cygpath -w "$F" 2>/dev/null || echo "$F"); fw2=$(cygpath -w "$F2" 2>/dev/null || echo "$F2")
-  # Output은 편집기 탭별 → 두 번째 탭을 열기 전에 첫 탭의 Output을 먼저 덤프하고 둘을 이어 검사한다.
-  D="$OUT/gui_output.txt"; D2="$OUT/gui_output2.txt"; rm -f "$D" "$D2"
-  NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw,@after:5000:run.all,@after:8000:output.dump:$D,@after:8500:open:$fw2,@after:9500:run.all,@after:11000:session.env:dev,@after:11500:session.info,@after:13500:output.dump:$D2" \
-    timeout -s KILL 18 "$EXE" "$PROFILE" > "$OUT/gui.stdout" 2> "$OUT/gui.stderr"
-  if [ -s "$D" ] && [ -s "$D2" ]; then
-    body=$(tail -n +2 "$D"; echo "--- (두 번째 탭)"; tail -n +2 "$D2"); show "$body"
+  # 세 번째 탭 = 운영에서 `CONNTYPE tst` → 첫 F5는 2단 확인(막힘 · Output 없음) · 3초 안 두 번째 F5 = 진행(사용자 10-01).
+  F3="$OUT/sess_leave.sql"; printf 'CONNTYPE tst\n' > "$F3"
+  fw=$(cygpath -w "$F" 2>/dev/null || echo "$F"); fw2=$(cygpath -w "$F2" 2>/dev/null || echo "$F2"); fw3=$(cygpath -w "$F3" 2>/dev/null || echo "$F3")
+  # Output은 편집기 탭별 → 탭을 바꾸기 전에 그 탭의 Output을 덤프하고 이어 검사한다(D = 1탭 · D2 = 2탭 · D3 = 3탭 첫 F5 뒤 · D4 = 끝).
+  #   팔레트 경로 = 테스트 → 운영(올리기 · 바로) → 개발(운영 해제 · 첫 선택 막힘 + Output 안내 · 3초 안 재선택 진행).
+  D="$OUT/gui_output.txt"; D2="$OUT/gui_output2.txt"; D3="$OUT/gui_output3.txt"; D4="$OUT/gui_output4.txt"; rm -f "$D" "$D2" "$D3" "$D4"
+  NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw,@after:5000:run.all,@after:8000:output.dump:$D,@after:8500:open:$fw2,@after:9500:run.all,@after:10500:output.dump:$D2,@after:11000:open:$fw3,@after:11500:run.all,@after:12300:output.dump:$D3,@after:12600:run.all,@after:13600:session.env:prd,@after:14000:session.env:dev,@after:14800:session.env:dev,@after:15300:session.info,@after:16500:output.dump:$D4" \
+    timeout -s KILL 21 "$EXE" "$PROFILE" > "$OUT/gui.stdout" 2> "$OUT/gui.stderr"
+  if [ -s "$D" ] && [ -s "$D2" ] && [ -s "$D3" ] && [ -s "$D4" ]; then
+    body=$(tail -n +2 "$D"; echo "--- (두 번째 탭)"; tail -n +2 "$D2"; echo "--- (세 번째 탭 · 첫 F5 뒤)"; tail -n +2 "$D3"; echo "--- (세 번째 탭 · 끝)"; tail -n +2 "$D4"); show "$body"
+    b3=$(tail -n +2 "$D3"); b4=$(tail -n +2 "$D4")
+    if echo "$b3" | grep -q "테스트 (TST)\|Test (TST)"; then bad "운영에서 CONNTYPE tst 첫 F5 = 막혀야 함(바뀜)" "$b3"; else ok "운영에서 CONNTYPE tst 첫 F5 = 2단 확인(변경 없음)"; fi
+    chk "3초 안 두 번째 F5 = 테스트 (TST)로 변경" "서버 유형 = 테스트 \(TST\)|= Test \(TST\)" "$b4"
+    chk "팔레트 테스트 → 운영(올리기) = 바로" "서버 유형 = 운영 \(PRD\)|= Production \(PRD\)" "$b4"
+    chk "팔레트 운영 → 개발 첫 선택 = 2단 안내" "운영 유형을 해제합니다|Leaving the PRODUCTION type" "$b4"
+    chk "팔레트 3초 안 재선택 = 개발 (DEV)" "서버 유형 = 개발 \(DEV\)|= Development \(DEV\)" "$b4"
     chk "SHOW CONN(1) = 접속 정보 블록" "접속 정보|Connection info" "$body"
     chk "CONNTYPE prd → 운영 (PRD) · 이 세션만(임시)" "서버 유형 = 운영 \(PRD\) — 이 세션만|= Production \(PRD\) — this session only" "$body"
     chk "CONNTYPE prd 두 번째(같은 값) → 이미 운영 — 변경 없음" "서버 유형이 이미 운영 \(PRD\) — 변경 없음|already Production \(PRD\)" "$body"
