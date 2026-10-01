@@ -2352,6 +2352,13 @@ impl Explorer {
         // ★ 부분 합 표시(사용자 09-30 "확인된 용량만 보여 주는 것을 표시"): 스키마 행 = 테이블·MV·인덱스 셋이 다 읽히지 않았으면
         //   `27G+`(더 있을 수 있음 · 흐린 색) · 셋 다 읽히면 `27G`(단위 색). 미리 읽지 않는다.
         let partial = match &n.kind {
+            // SSMS DB 노드(㉝): 사용 합을 보이는 중이면 테이블·인덱스 둘 다 읽혔을 때만 `+` 없음.
+            NodeKind::Database(d) if self.db_used_sum(d).is_some() => {
+                let pre = format!("{d}.");
+                ![ObjectKind::Table, ObjectKind::Index]
+                    .iter()
+                    .all(|k| self.sizes_loaded.contains(&(pre.clone(), *k)))
+            }
             NodeKind::Schema(schema) => {
                 // 읽음 = 용량을 시도했거나(빈 결과·실패 포함) · 그 종류 폴더를 읽었는데 객체가 0개(사용자 09-30 "+가 없어져야").
                 let loaded = |k: ObjectKind| {
@@ -2453,11 +2460,15 @@ impl Explorer {
                 }
                 _ => return None,
             },
-            // ★ SQL Server DB 노드 = 데이터 + 로그 파일(사용자 10-01 ㉕) · 데이터베이스/시스템 DB 묶음 = 읽힌 자식 DB의 합.
-            NodeKind::Database(d) => {
-                let (data, log) = self.db_sizes.get(d)?;
-                data + log
-            }
+            // ★ SQL Server DB 노드(10-02 ㉝ · 사용자 "하위 연산이 시작되면 Oracle처럼 검증된 용량+"): 아래 폴더(테이블·인덱스) 용량이 하나라도
+            //   읽혔으면 **그 합**(둘 다 읽히기 전엔 `+` · `size_text`) · 아직 없으면 파일 용량(데이터 + 로그 · ㉕ "용량 확인"). 툴팁은 둘 다.
+            NodeKind::Database(d) => match self.db_used_sum(d) {
+                Some(sum) => sum,
+                None => {
+                    let (data, log) = self.db_sizes.get(d)?;
+                    data + log
+                }
+            },
             NodeKind::Group {
                 group: GroupKind::Databases | GroupKind::SystemDbs,
                 ..
@@ -2520,6 +2531,24 @@ impl Explorer {
         let _ = self.tx_bg.send(Req::DbSizes { gen: self.gen });
     }
 
+    /// ★ 그 DB 아래 읽힌 테이블·인덱스 용량의 합(㉝ · 키 `DB.스키마` 접두 · 하나도 없으면 None).
+    fn db_used_sum(&self, db: &str) -> Option<u64> {
+        let pre = format!("{db}.");
+        let mut any = false;
+        let sum: u64 = self
+            .sizes
+            .iter()
+            .filter(|((s, k, _), _)| {
+                matches!(k, ObjectKind::Table | ObjectKind::Index) && s.starts_with(&pre)
+            })
+            .map(|(_, b)| {
+                any = true;
+                *b
+            })
+            .sum();
+        any.then_some(sum)
+    }
+
     /// DB 노드의 용량 상세(데이터, 로그 · 툴팁·시험용 · 모르면 None).
     pub(crate) fn db_size_of(&self, db: &str) -> Option<(u64, u64)> {
         self.db_sizes.get(db).copied()
@@ -2573,17 +2602,33 @@ impl Explorer {
             NodeKind::Root => t(Msg::TipExplorerServer).to_string(),
             NodeKind::Schema(s) => format!("{} {s}", t(Msg::TipExplorerSchema)),
             // DB 노드 툴팁 = 이름 + (읽혔으면) 데이터·로그 파일 용량(10-01 ㉕).
-            NodeKind::Database(d) => match self.db_size_of(d) {
-                Some((data, log)) => format!(
-                    "{} {d} · {}",
-                    t(Msg::ExpDatabases),
-                    tf(
+            // DB 툴팁(㉝) = 파일(데이터·로그 · 빈 공간 포함) + 사용 합(테이블+인덱스 · 읽힌 것만 · `+`).
+            NodeKind::Database(d) => {
+                let mut s = format!("{} {d}", t(Msg::ExpDatabases));
+                if let Some((data, log)) = self.db_size_of(d) {
+                    s.push_str(" · ");
+                    s.push_str(&tf(
                         Msg::TipDbSize,
-                        &[&nsql_core::fmt_size(data), &nsql_core::fmt_size(log)]
-                    )
-                ),
-                None => format!("{} {d}", t(Msg::ExpDatabases)),
-            },
+                        &[&nsql_core::fmt_size(data), &nsql_core::fmt_size(log)],
+                    ));
+                }
+                if let Some(sum) = self.db_used_sum(d) {
+                    let pre = format!("{d}.");
+                    let full = [ObjectKind::Table, ObjectKind::Index]
+                        .iter()
+                        .all(|k| self.sizes_loaded.contains(&(pre.clone(), *k)));
+                    s.push_str(" · ");
+                    s.push_str(&tf(
+                        Msg::TipDbUsed,
+                        &[&format!(
+                            "{}{}",
+                            nsql_core::fmt_size(sum),
+                            if full { "" } else { "+" }
+                        )],
+                    ));
+                }
+                s
+            }
             NodeKind::Group { .. } => String::new(),
             NodeKind::Folder { schema, kind } => format!("{kind:?} · {schema}"),
             NodeKind::Object(o) => {

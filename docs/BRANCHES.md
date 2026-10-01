@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/mssql-db-node-used-sum | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉝ SQL Server DB 노드 = 읽힌 테이블+인덱스 합 `+`(없으면 파일 용량 · 툴팁 둘 다) · E2E ⑦ 33/33 · journal §38 |
 | feat/mssql-routine-type-desc | 2026-10-02 | 2026-10-02 → main(삭제) | 2 | ㉛ SQL Server 루틴 세부 타입 = 상세·칩·툴팁(라벨은 이름만 · `type_desc`) · ㉜ 테이블 반환 함수 FROM 완성(L1 extra) · E2E ⑧⑨ 32/32 · journal §37 DB/테이블 용량 분석 |
 | fix/objlink-menu-link-keep | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉗-k 첫 시도 실패 진짜 원인(재분석이 menu_link 지움 → 구간 보존 · 메뉴 열린 동안 미룸 · open_menu/menu_pick 공용) · ★ ㉗-j 탭 연결 바뀌면 탐색기 추종 · 메뉴 경로 기동 명령 · E2E ⑧ 21/21 |
 | feat/reveal-matrix-e2e | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ ㉗-i 탐색기에서 보기 조합 매트릭스 E2E(7조건 MC/DC · 27케이스 · 78 통과 · 0 실패 · 2 건너뜀(PG 함수 없음 · 원격 PRD SNOPDB_19c = 네트워크 미도달 ORA-12170 · 회귀 reveal 17 · output-result 5)) · 🔧 SQL Server 링크 해석 dbo 폴백 · ensure_meta 현재 스키마 이름 · session.bind 기동 명령 |

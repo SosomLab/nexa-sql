@@ -1785,6 +1785,8 @@ pub enum Msg {
     ExpServerTriggers,
     /// DB 노드 툴팁의 용량(데이터 파일 · 로그 파일 · 10-01 ㉕).
     TipDbSize,
+    /// DB 툴팁의 사용 합(테이블+인덱스 · 10-02 ㉝).
+    TipDbUsed,
     /// Ctrl 링크 우클릭 ▸ 객체 탐색기에서 보기(10-01 ㉗) · 못 찾음 상태줄.
     MnObjLinkReveal,
     StRevealObjFailed,
@@ -5222,7 +5224,8 @@ impl Msg {
             Msg::ExpBackupDevices => ["Backup Devices", "백업 디바이스"],
             Msg::ExpEndpoints => ["Endpoints", "엔드포인트"],
             Msg::ExpServerTriggers => ["Triggers", "트리거"],
-            Msg::TipDbSize => ["data {0} · log {1}", "데이터 {0} · 로그 {1}"],
+            Msg::TipDbSize => ["file: data {0} · log {1} (free space included)", "파일: 데이터 {0} · 로그 {1}(빈 공간 포함)"],
+            Msg::TipDbUsed => ["used: {0} (tables + indexes read so far)", "사용: {0}(읽힌 테이블+인덱스)"],
             Msg::MnObjLinkReveal => ["Reveal in Object Explorer", "객체 탐색기에서 보기"],
             Msg::StRevealObjFailed => ["Not found in Object Explorer: {0}", "객체 탐색기에서 찾지 못함: {0}"],
             Msg::ExpDbUsers => ["Users", "사용자"],
@@ -8306,6 +8309,7 @@ impl Msg {
         Msg::ExpEndpoints,
         Msg::ExpServerTriggers,
         Msg::TipDbSize,
+        Msg::TipDbUsed,
         Msg::MnObjLinkReveal,
         Msg::StRevealObjFailed,
         Msg::ExpDbUsers,

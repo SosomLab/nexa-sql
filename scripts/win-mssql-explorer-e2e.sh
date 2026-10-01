@@ -132,6 +132,7 @@ NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:7000:explorer.expand:$OTHER,@after:8
 if [ -s "$D7" ]; then
   t7=$(cat "$D7"); echo "$t7" | grep -E "\|object\|dbo\." | head -3 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "⑦ 현재 DB(master) 아닌 $OTHER 테이블 옆 용량" "\|object\|dbo\.[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t7"
+  chk "⑦ DB 노드 = 읽힌 테이블 합 + \"+\"(인덱스 미읽음 · ㉝)" "\|database\|$OTHER\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?\+$" "$t7"
 else bad "⑦ 트리 덤프 없음" "$(tail -3 "$OUT/gui7.stderr")"; fi
 # ⑧ 루틴 세부 타입(10-02 ㉛): 저장 프로시저 라벨 = `dbo.이름`(종전 `(P)` 없음) · CLI 상세 `type` 행 = `SQL_STORED_PROCEDURE`.
 say "--- ⑧ 루틴 세부 타입"
