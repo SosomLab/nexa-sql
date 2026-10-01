@@ -97,7 +97,7 @@
 |---|---|---|
 | 메뉴 | `objlink_click`(우) | 설명 복사 · 이름 - 설명 복사 · ─ · **객체 탐색기에서 보기** = `objlink_reveal_target(k).is_some()`일 때만 활성(미확인 = 흐림) |
 | 대상 | `objlink_reveal_target` → `explorer::RevealTarget{db, schema, kind, name, member}` | 판정과 같은 해석(`objlink_resolve`) · 컬럼 = 테이블 + 멤버 · `pkg.proc` = 패키지 + 멤버 · SQL Server `DB.스키마` 열쇠 → db |
-| 찾기 | `Explorer::reveal` → `step_reveal`(단계 기계 · `drain` 끝마다) | 앵커(스키마/SSMS DB) → 종류 폴더(묶음 로컬 펼침) → 객체 → 멤버 하위 폴더(Columns/Procedures/Functions) → 선택(조상 펼침 · 보이게) · 못 찾음 = 상태줄 |
+| 찾기 | `Explorer::reveal` → `step_reveal`(단계 기계 · `drain` 끝마다) | 루트가 아직 안 읽혔으면 루트부터(㉗-c) · 앵커(스키마/SSMS DB) → 종류 폴더(묶음 로컬 펼침) → 객체 → 멤버 하위 폴더(Columns/Procedures/Functions) → 선택(조상 펼침 · 보이게) · 못 찾음 = 상태줄 |
 | 세트 | `ExplorerSet::reveal`(칸 전환) · `after_reveal`(**어느 칸이든** `reveal_done` 소비 → 선택 행을 보이는 영역 1/3 지점에 · `drain`의 앵커 보정 **뒤**) | 탐색기 숨김이면 `view.explorer` 켬 · 포커스 = 탐색기 · 같은 서버 다른 계정 = 다른 칸(㉗-b) |
 | 시험 | `objlink.reveal:<이름>` · `explorer.selpath:<파일>` · `scripts/win-objlink-reveal-e2e.sh` 4 | 명령은 `primary`(Ctrl)를 잠시 켜 분석 |
 

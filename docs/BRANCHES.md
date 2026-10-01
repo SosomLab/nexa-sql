@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/mssql-bind-name-ssms-sizes | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉚ SQL Server `:p1`↔tiberius `@P1` 충돌(`@P1_`) · 🔧 ㉗-c 루트 미읽음 칸 찾기 · 🔧 ㉕-c SSMS 테이블 용량(키 DB.스키마) |
 | fix/output-result-reveal-scroll | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ ㉘ Output ↔ 결과 탭(결과 셋 = 결과 탭 전환 · Output 활성 중 실행 = 최근 결과 탭) · 🔧 ㉗-b 두 연결 칸 선택 행 화면 밖(앵커 보정 뒤 + 1/3 지점) · ★ ㉙ 시스템 객체 Ctrl 링크(builtin_class · 시그니처 · 패키지 +10) · E2E output-result 5 · reveal 11 |
 | feat/objlink-reveal | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ Ctrl 링크 우클릭 ▸ 객체 탐색기에서 보기(RevealTarget · step_reveal 단계 기계 · 패키지 멤버·컬럼 · 기동 명령 objlink.reveal/explorer.selpath · E2E 4/4) |
 | feat/mssql-server-security | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ SQL Server 서버 수준 보안·서버 개체(ObjectKind +9 · ServerSecurity 묶음 · 상세·소스·삭제) + DB 노드 용량 확인(database_sizes 권한 폴백 · 묶음 합 · 툴팁) · E2E 26/26 |

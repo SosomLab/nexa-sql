@@ -1287,6 +1287,13 @@ pub fn object_sizes(
             "SELECT c.relname, pg_relation_size(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('i', 'I')",
             lit(schema)
         )],
+        // ★ SQL Server(㉕-c · SSMS 트리): 스키마가 빈 값이면 **현재 DB 전 스키마**를 `스키마.이름`으로(호스트가 키를 `DB.스키마`로 쪼갠다).
+        (Dialect::Mssql, ObjectKind::Table) if schema.is_empty() => vec![
+            "SELECT s.name + '.' + t.name, SUM(a.total_pages) * 8 * 1024 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id JOIN sys.indexes i ON i.object_id = t.object_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id GROUP BY s.name, t.name".to_string(),
+        ],
+        (Dialect::Mssql, ObjectKind::Index) if schema.is_empty() => vec![
+            "SELECT s.name + '.' + i.name, SUM(a.total_pages) * 8 * 1024 FROM sys.indexes i JOIN sys.objects o ON o.object_id = i.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE i.name IS NOT NULL GROUP BY s.name, i.name".to_string(),
+        ],
         (Dialect::Mssql, ObjectKind::Table) => vec![format!(
             "SELECT t.name, SUM(a.total_pages) * 8 * 1024 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id JOIN sys.indexes i ON i.object_id = t.object_id JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE s.name = {} GROUP BY t.name",
             lit(schema)

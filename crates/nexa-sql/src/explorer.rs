@@ -319,6 +319,8 @@ enum Req {
         gen: u64,
         schema: String,
         kind: ObjectKind,
+        /// SSMS 트리(㉕-c): 그 DB로 `USE`한 뒤 전 스키마(`schema` 빈 값) — 키는 `DB.스키마`.
+        db: Option<String>,
     },
     /// ★ 데이터베이스 용량(사용자 10-01 ㉕ · SQL Server Databases 층) — 서버의 DB 전부 한 번(데이터·로그 파일 바이트).
     DbSizes {
@@ -692,6 +694,7 @@ enum Resp {
         gen: u64,
         schema: String,
         kind: ObjectKind,
+        db: Option<String>,
         r: Result<Vec<(String, u64)>, String>,
     },
     /// 데이터베이스 용량 전부(이름, 데이터, 로그 · 사용자 10-01 ㉕).
@@ -1241,7 +1244,9 @@ fn req_label(r: &Req) -> String {
         Req::Schemas { .. } => "schemas".into(),
         Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
         Req::Index { schema, .. } => format!("index {schema}"),
-        Req::Sizes { schema, kind, .. } => format!("sizes {schema} {kind:?}"),
+        Req::Sizes {
+            schema, kind, db, ..
+        } => format!("sizes {schema} {kind:?} {db:?}"),
         Req::DbSizes { .. } => "db-sizes".into(),
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
@@ -1651,10 +1656,17 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     cols,
                 }
             }
-            Req::Sizes { gen, schema, kind } => {
+            Req::Sizes {
+                gen,
+                schema,
+                kind,
+                db,
+            } => {
                 if gen != cur_gen {
                     continue;
                 }
+                // SSMS(㉕-c): 그 DB로 `USE`한 뒤(메타 세션 추종) 전 스키마 용량.
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::object_sizes(s, &schema, kind).map_err(err_s)
                 });
@@ -1662,6 +1674,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     gen,
                     schema,
                     kind,
+                    db,
                     r,
                 }
             }
@@ -2377,13 +2390,39 @@ impl Explorer {
                 .sum();
             any.then_some(sum)
         };
+        // SSMS(㉕-c): 키 스키마 = `DB.스키마`(객체) · 폴더 합 = `DB.` 접두 전부.
+        let ssms = self.ssms_mode();
+        let db_key =
+            |i: usize| -> Option<String> { self.db_of(i).or_else(|| self.current_db.clone()) };
+        let prefix_sum = |prefix: &str, kind: ObjectKind| -> Option<u64> {
+            let mut any = false;
+            let sum: u64 = self
+                .sizes
+                .iter()
+                .filter(|((s, k, _), _)| *k == kind && s.starts_with(prefix))
+                .map(|(_, b)| {
+                    any = true;
+                    *b
+                })
+                .sum();
+            any.then_some(sum)
+        };
         let bytes = match &n.kind {
             NodeKind::Object(o) if Self::sizeable(o.kind) => {
-                *self
-                    .sizes
-                    .get(&(o.schema.clone(), o.kind, o.name.clone()))?
+                let sk = if ssms {
+                    format!("{}.{}", db_key(parent)?, o.schema)
+                } else {
+                    o.schema.clone()
+                };
+                *self.sizes.get(&(sk, o.kind, o.name.clone()))?
             }
-            NodeKind::Folder { schema, kind } if Self::sizeable(*kind) => sum_of(schema, *kind)?,
+            NodeKind::Folder { schema, kind } if Self::sizeable(*kind) => {
+                if ssms && schema.is_empty() {
+                    prefix_sum(&format!("{}.", db_key(parent)?), *kind)?
+                } else {
+                    sum_of(schema, *kind)?
+                }
+            }
             // 스키마 = 읽힌 종류 전부의 합(테이블 + MV + 인덱스 · 사용자 09-30 "Tables 27G Indexes 18G면 BISCM이 27G인 게 맞아?").
             NodeKind::Schema(schema) => {
                 let parts: Vec<u64> = [
@@ -2400,14 +2439,17 @@ impl Explorer {
                 parts.iter().sum()
             }
             // ★ 테이블 아래 Indexes 하위 폴더의 항목(사용자 09-30 "인덱스에도 용량") — 스키마 인덱스 용량 표에서.
-            NodeKind::Item(it) => {
-                match &self.nodes.get(parent)?.kind {
-                    NodeKind::Sub { owner, sub } if *sub == SubKind::Indexes => *self
-                        .sizes
-                        .get(&(owner.schema.clone(), ObjectKind::Index, it.name.clone()))?,
-                    _ => return None,
+            NodeKind::Item(it) => match &self.nodes.get(parent)?.kind {
+                NodeKind::Sub { owner, sub } if *sub == SubKind::Indexes => {
+                    let sk = if ssms {
+                        format!("{}.{}", db_key(parent)?, owner.schema)
+                    } else {
+                        owner.schema.clone()
+                    };
+                    *self.sizes.get(&(sk, ObjectKind::Index, it.name.clone()))?
                 }
-            }
+                _ => return None,
+            },
             // ★ SQL Server DB 노드 = 데이터 + 로그 파일(사용자 10-01 ㉕) · 데이터베이스/시스템 DB 묶음 = 읽힌 자식 DB의 합.
             NodeKind::Database(d) => {
                 let (data, log) = self.db_sizes.get(d)?;
@@ -2462,6 +2504,7 @@ impl Explorer {
                 gen: self.gen,
                 schema: schema.to_string(),
                 kind,
+                db: None,
             });
         }
     }
@@ -3780,18 +3823,30 @@ impl Explorer {
                     gen,
                     schema,
                     kind,
+                    db,
                     r,
                 } => {
                     if gen != self.gen || !self.sizes_on {
                         continue;
                     }
+                    // SSMS(㉕-c): 이름이 `스키마.이름`으로 오고 키 스키마는 `DB.스키마` · 읽음 표식은 `DB.`(그 DB 전체).
                     if let Ok(list) = r {
                         for (name, bytes) in list {
-                            self.sizes.insert((schema.clone(), kind, name), bytes);
+                            let key = match (&db, name.split_once('.')) {
+                                (Some(d), Some((sc, nm))) => {
+                                    (format!("{d}.{sc}"), kind, nm.to_string())
+                                }
+                                _ => (schema.clone(), kind, name),
+                            };
+                            self.sizes.insert(key, bytes);
                         }
                     }
                     // 시도했으면 읽음(빈 결과·실패 포함) — 세 종류를 다 시도하면 스키마 합의 `+`가 사라진다.
-                    self.sizes_loaded.insert((schema, kind));
+                    let loaded_key = match &db {
+                        Some(d) => format!("{d}."),
+                        None => schema,
+                    };
+                    self.sizes_loaded.insert((loaded_key, kind));
                 }
                 Resp::DbSizes { gen, r } => {
                     if gen != self.gen || !self.sizes_on {
@@ -3890,6 +3945,23 @@ impl Explorer {
                                         });
                                     }
                                 }
+                                // ★ SSMS 폴더(스키마 빈 값 · ㉕-c "테이블 옆 용량이 안 보인다"): 그 DB 전 스키마 용량을 한 번(키 = `DB.스키마`).
+                                if s.is_empty()
+                                    && is_cur
+                                    && self.ssms_mode()
+                                    && self.sizes_on
+                                    && Self::sizeable(k)
+                                {
+                                    let db = self.db_of(node).or_else(|| self.current_db.clone());
+                                    if db.is_some() {
+                                        let _ = self.tx_bg.send(Req::Sizes {
+                                            gen: self.gen,
+                                            schema: String::new(),
+                                            kind: k,
+                                            db,
+                                        });
+                                    }
+                                }
                                 if !s.is_empty() && is_cur {
                                     self.meta_load_objects(&s, k, &list);
                                     self.intel_buckets
@@ -3904,6 +3976,7 @@ impl Explorer {
                                             gen: self.gen,
                                             schema: s.clone(),
                                             kind: k,
+                                            db: None,
                                         });
                                     }
                                     // 스레드의 이름 사본도 전체 목록으로(84 §6).
@@ -3999,15 +4072,29 @@ impl Explorer {
                     if let (true, NodeKind::Sub { owner, sub }) =
                         (self.sizes_on, &self.nodes[node].kind)
                     {
+                        // SSMS(㉕-c) = 그 DB 전체 인덱스 용량(키 `DB.`) · 그 밖 = 스키마.
+                        let ssms = self.ssms_mode();
+                        let db = if ssms {
+                            self.db_of(node).or_else(|| self.current_db.clone())
+                        } else {
+                            None
+                        };
+                        let loaded_key = match &db {
+                            Some(d) => format!("{d}."),
+                            None => owner.schema.clone(),
+                        };
                         if *sub == SubKind::Indexes
-                            && !self
-                                .sizes_loaded
-                                .contains(&(owner.schema.clone(), ObjectKind::Index))
+                            && !self.sizes_loaded.contains(&(loaded_key, ObjectKind::Index))
                         {
                             let _ = self.tx_bg.send(Req::Sizes {
                                 gen: self.gen,
-                                schema: owner.schema.clone(),
+                                schema: if ssms {
+                                    String::new()
+                                } else {
+                                    owner.schema.clone()
+                                },
                                 kind: ObjectKind::Index,
+                                db,
                             });
                         }
                     }
@@ -4338,9 +4425,22 @@ impl Explorer {
                 matches!(&self.nodes[i].kind, NodeKind::Schema(s) if s.eq_ignore_ascii_case(&t.schema))
             })
         };
-        let Some(a) = anchor else {
-            self.reveal_fail(&t);
-            return;
+        // ★ 앵커가 없고 루트가 아직 읽히지 않았으면(재시작 뒤 접힌 연결 칸 · 사용자 10-01 ㉗-c SQLEDU) 루트부터 읽고 다음 응답에서 잇는다.
+        let a = match anchor {
+            Some(a) => a,
+            None if !self.nodes.is_empty()
+                && matches!(self.nodes[0].state, LoadState::Idle | LoadState::Loading) =>
+            {
+                if self.reveal_ready(0) == Some(false) {
+                    return;
+                }
+                self.reveal_fail(&t);
+                return;
+            }
+            None => {
+                self.reveal_fail(&t);
+                return;
+            }
         };
         match self.reveal_ready(a) {
             Some(true) => {}

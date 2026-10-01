@@ -600,15 +600,62 @@ fn declared_type(p: &nsql_core::BindParam) -> String {
     p.ty.tsql_type()
 }
 
+/// ★ tiberius 위치 매개변수 이름(`@P1`…)과 겹치는 사용자 변수(`:p1` → `@P1` · 사용자 10-01 ㉚ "변수 이름 '@P1'이(가) 이미 선언되었습니다")는
+///   선언·본문에서 `@P1_`로 바꿔 보낸다 — 결과 트레일러의 열 이름은 사용자 이름 그대로.
+fn positional_like(n: &str) -> bool {
+    let b = n.as_bytes();
+    b.len() >= 2 && (b[0] == b'P' || b[0] == b'p') && b[1..].iter().all(u8::is_ascii_digit)
+}
+
+fn safe_var_name(n: &str) -> String {
+    if positional_like(n) {
+        format!("{n}_")
+    } else {
+        n.to_string()
+    }
+}
+
+/// `@from`을 `@to`로(단어 경계 · 대소문자 무시 · 바인드 재작성이 이미 리터럴을 비켜 갔으므로 본문 전체에).
+fn replace_var(sql: &str, from: &str, to: &str) -> String {
+    let b = sql.as_bytes();
+    let mut out = String::with_capacity(sql.len() + 8);
+    let mut i = 0;
+    let fl = from.len();
+    while i < b.len() {
+        let hit = b[i] == b'@'
+            && i + 1 + fl <= b.len()
+            && sql.is_char_boundary(i + 1 + fl)
+            && sql[i + 1..i + 1 + fl].eq_ignore_ascii_case(from)
+            && !b
+                .get(i + 1 + fl)
+                .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(*c, b'_' | b'$' | b'#'));
+        if hit {
+            out.push('@');
+            out.push_str(to);
+            i += 1 + fl;
+        } else {
+            let ch = sql[i..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
 /// 배치 렌더링 — 순수 함수(테스트 대상). `(배치 텍스트, 위치 파라미터, 트레일러 컬럼 이름들)`.
 pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
     let mut head = String::new();
     let mut params = Vec::new();
     let mut outs = Vec::new();
+    let mut body = req.sql.trim_end_matches(';').to_string();
     for (i, p) in req.params.iter().enumerate() {
+        let decl = safe_var_name(&p.name);
+        if decl != p.name {
+            body = replace_var(&body, &p.name, &decl);
+        }
         head.push_str(&format!(
             "DECLARE @{} {} = @P{};\n",
-            p.name,
+            decl,
             declared_type(p),
             i + 1
         ));
@@ -617,9 +664,12 @@ pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
             outs.push(p.name.clone());
         }
     }
-    let mut sql = format!("{head}{}", req.sql.trim_end_matches(';'));
+    let mut sql = format!("{head}{body}");
     if !outs.is_empty() {
-        let cols: Vec<String> = outs.iter().map(|n| format!("@{n} AS [{n}]")).collect();
+        let cols: Vec<String> = outs
+            .iter()
+            .map(|n| format!("@{} AS [{n}]", safe_var_name(n)))
+            .collect();
         sql.push_str(&format!(";\nSELECT {};", cols.join(", ")));
     }
     (sql, params, outs)
@@ -1165,5 +1215,43 @@ mod tests {
         let (sql, params, outs) = render_batch(&req);
         assert_eq!(sql, "SELECT 1");
         assert!(params.is_empty() && outs.is_empty());
+    }
+
+    /// ㉚ `:p1`·`:P2` 같은 이름은 tiberius `@P1…`과 겹친다 → `@P1_`로 선언·본문 치환 · 트레일러 열 이름은 원래 이름 · `@P10`은 `@P1`에 안 걸린다.
+    #[test]
+    fn positional_like_names_are_renamed() {
+        let mk = |n: &str, dir: Direction| nsql_core::BindParam {
+            name: n.into(),
+            ty: nsql_core::VarType::Auto,
+            value: Value::Str("x".into()),
+            direction: dir,
+        };
+        let req = ExecRequest {
+            sql: "SELECT @t AS t, @P1 AS a, @p10 AS b WHERE @P2 = 'x'".into(),
+            params: vec![
+                mk("T", Direction::In),
+                mk("P1", Direction::In),
+                mk("P10", Direction::In),
+                mk("P2", Direction::Out),
+            ],
+        };
+        let (sql, _, outs) = render_batch(&req);
+        assert!(
+            sql.starts_with(
+                "DECLARE @T NVARCHAR(4000) = @P1;
+DECLARE @P1_ NVARCHAR(4000) = @P2;
+DECLARE @P10_ NVARCHAR(4000) = @P3;
+DECLARE @P2_ NVARCHAR(4000) = @P4;
+"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("SELECT @t AS t, @P1_ AS a, @P10_ AS b WHERE @P2_ = 'x'"),
+            "{sql}"
+        );
+        assert!(sql.ends_with("SELECT @P2_ AS [P2];"), "{sql}");
+        assert_eq!(outs, vec!["P2".to_string()]);
+        assert!(positional_like("p7") && !positional_like("P") && !positional_like("PX1"));
     }
 }

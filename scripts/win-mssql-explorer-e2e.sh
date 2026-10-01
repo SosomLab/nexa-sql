@@ -53,6 +53,7 @@ if [ -s "$D3" ]; then
   t3=$(cat "$D3"); echo "--- ③" | tee -a "$REPORT" >/dev/null; echo "$t3" | grep -E "folder\|Tables|\|object\|" | head -8 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "③ 테이블 폴더 읽힘(Tables (n))" "\|folder\|Tables \([0-9]+\)\|" "$t3"
   chk "③ 객체 = 스키마.이름(SSMS)" "\|object\|[A-Za-z_]+\.[A-Za-z_]+\|" "$t3"
+  chk "③ 테이블 옆 용량(㉕-c · 끝 열)" "\|object\|dbo\.[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t3"
 else bad "③ 트리 덤프 없음" ""; fi
 if [ -s "$O1" ]; then
   o=$(tail -n +2 "$O1"); echo "$o" | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
