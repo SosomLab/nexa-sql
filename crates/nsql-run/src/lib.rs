@@ -2478,8 +2478,8 @@ impl Runner {
                     });
                 }
                 // ★ `USE db` 성공(10-01 · 101 §3): 세션의 현재 DB가 바뀌었다 — 호스트에 알린다(파싱만 · 왕복 0).
-                if matches!(self.dialect(), Some(Dialect::Mssql | Dialect::Mysql)) {
-                    if let Some(db) = nsql_catalog::use_db_name(&item.text) {
+                if let Some(d) = self.dialect() {
+                    if let Some(db) = nsql_catalog::context_switch_name(d, &item.text) {
                         emit(RunEvent::DbChanged(db));
                     }
                 }

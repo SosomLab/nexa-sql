@@ -1089,6 +1089,13 @@ impl App {
                 // ★ `USE db` 성공(101 §3): 세션의 현재 DB → 탐색기(현재 DB 표시 · 메타 추종) · 상태줄.
                 RunEvent::DbChanged(db) => {
                     self.sess.current_db = Some(db.clone());
+                    // Oracle `ALTER SESSION SET CURRENT_SCHEMA` · PG `SET search_path` = 현재 스키마가 바뀐 것(⑮).
+                    if matches!(
+                        self.sess.dialect,
+                        nsql_core::Dialect::Oracle | nsql_core::Dialect::Postgres
+                    ) {
+                        self.sess.cur_schema = Some(db.clone());
+                    }
                     if let Some(spec) = self.sess.spec.clone() {
                         self.explorer.set_current_db(&spec, &db);
                     }

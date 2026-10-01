@@ -856,6 +856,58 @@ pub fn use_db_name(sql: &str) -> Option<String> {
     (!name.is_empty() && !name.eq_ignore_ascii_case("GO")).then(|| name.to_string())
 }
 
+/// ★ 세션 작업 단위를 바꾸는 문장의 **대상 이름**(10-01 ⑮ · 순수): SQL Server·MySQL `USE x` · Oracle `ALTER SESSION SET CURRENT_SCHEMA = x` ·
+/// PostgreSQL `SET search_path TO x[, …]`(첫 스키마). 데이터 변경이 아니므로 운영 2단 확인 대상이 아니다. 아니면 `None`.
+#[must_use]
+pub fn context_switch_name(dialect: Dialect, sql: &str) -> Option<String> {
+    let unq = |raw: &str| {
+        raw.trim_end_matches(';')
+            .trim_start_matches(['[', '"', '`'])
+            .trim_end_matches([']', '"', '`', ';', ','])
+            .to_string()
+    };
+    let t = sql.trim_start().trim_start_matches('\u{feff}');
+    let w: Vec<&str> = t.split_whitespace().collect();
+    match dialect {
+        Dialect::Mssql | Dialect::Mysql => use_db_name(sql),
+        Dialect::Oracle => {
+            // ALTER SESSION SET CURRENT_SCHEMA = x  (`=`가 붙어 있을 수도)
+            if w.len() >= 4
+                && w[0].eq_ignore_ascii_case("ALTER")
+                && w[1].eq_ignore_ascii_case("SESSION")
+                && w[2].eq_ignore_ascii_case("SET")
+            {
+                let rest = w[3..].join(" ");
+                let (k, v) = rest.split_once('=')?;
+                if !k.trim().eq_ignore_ascii_case("CURRENT_SCHEMA") {
+                    return None;
+                }
+                let name = unq(v.split_whitespace().next()?);
+                return (!name.is_empty()).then_some(name);
+            }
+            None
+        }
+        Dialect::Postgres => {
+            if w.len() >= 3
+                && w[0].eq_ignore_ascii_case("SET")
+                && w[1].eq_ignore_ascii_case("search_path")
+            {
+                let rest = w[2..].join(" ");
+                let v = rest
+                    .trim_start_matches(|c: char| c.is_whitespace())
+                    .trim_start_matches("TO")
+                    .trim_start_matches("to")
+                    .trim_start_matches('=')
+                    .trim();
+                let name = unq(v.split([',', ' ']).next()?);
+                return (!name.is_empty()).then_some(name);
+            }
+            None
+        }
+        Dialect::Sqlite | Dialect::Odbc => None,
+    }
+}
+
 /// 현재 스키마(접속 사용자의 기본).
 pub fn current_schema(s: &mut dyn Session) -> Result<String, DbError> {
     let sql = match s.dialect() {
@@ -3521,5 +3573,45 @@ mod tests {
         );
         assert!(drop_sql(Dialect::Oracle, &o).is_none());
         assert!(ObjectKind::LinkedServer.has_source());
+    }
+
+    /// ★ 10-01 ⑮: 작업 단위 전환 문장의 대상 이름(방언별).
+    #[test]
+    fn context_switch_names() {
+        use super::context_switch_name as f;
+        assert_eq!(
+            f(Dialect::Mssql, "USE [BISCM_MS]").as_deref(),
+            Some("BISCM_MS")
+        );
+        assert_eq!(f(Dialect::Mysql, "use `shop`;").as_deref(), Some("shop"));
+        assert_eq!(
+            f(
+                Dialect::Oracle,
+                "ALTER SESSION SET CURRENT_SCHEMA = BISCM_SB"
+            )
+            .as_deref(),
+            Some("BISCM_SB")
+        );
+        assert_eq!(
+            f(Dialect::Oracle, "alter session set current_schema=\"Sb\";").as_deref(),
+            Some("Sb")
+        );
+        assert_eq!(
+            f(
+                Dialect::Oracle,
+                "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY'"
+            ),
+            None
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET search_path TO sales, public").as_deref(),
+            Some("sales")
+        );
+        assert_eq!(
+            f(Dialect::Postgres, "SET search_path = \"My\"").as_deref(),
+            Some("My")
+        );
+        assert_eq!(f(Dialect::Postgres, "SET statement_timeout = 0"), None);
+        assert_eq!(f(Dialect::Mssql, "SELECT 1"), None);
     }
 }

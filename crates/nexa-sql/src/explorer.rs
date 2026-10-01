@@ -1816,7 +1816,9 @@ fn switch_db(
     want: Option<&str>,
 ) {
     let Some(s) = session.as_mut() else { return };
-    if s.dialect() != Dialect::Mssql {
+    // SQL Server = DB(`USE`) · Oracle = 스키마(`ALTER SESSION SET CURRENT_SCHEMA`) · PG = search_path · MySQL = DB —
+    // 드라이버 `set_option("schema")`가 방언별로 안다(10-01 ⑮). 파일 방언은 없음.
+    if matches!(s.dialect(), Dialect::Sqlite | Dialect::Odbc) {
         return;
     }
     let target = match want.filter(|d| !d.is_empty()) {
@@ -3308,8 +3310,10 @@ impl Explorer {
                         Ok((d, desc, info)) => {
                             self.dialect = Some(d);
                             self.conn_desc = desc;
-                            self.current_db =
-                                (!info.current_db.is_empty()).then(|| info.current_db.clone());
+                            // 현재 DB는 DB 전환이 있는 방언만(SQL Server·MySQL) — Oracle의 `DB_NAME`은 스키마와 겹쳐(BISCM) 전환 판정을 흐린다(⑮).
+                            self.current_db = (matches!(d, Dialect::Mssql | Dialect::Mysql)
+                                && !info.current_db.is_empty())
+                            .then(|| info.current_db.clone());
                             self.server_info = info;
                             self.actions.push(ExplorerAction::ServerInfo);
                             if std::mem::take(&mut self.rebinding) {
@@ -4267,7 +4271,11 @@ impl Explorer {
                 db: db.to_string(),
             });
         }
-        if self.dialect == Some(Dialect::Mssql) && !self.offline {
+        if self.offline {
+            return;
+        }
+        if self.dialect == Some(Dialect::Mssql) {
+            // DB가 바뀜 = 객체 세계가 바뀜 → 메타 비우고 L1부터(D-250).
             self.meta.clear();
             self.server_schema = None;
             self.intel_buckets.clear();
@@ -4280,6 +4288,16 @@ impl Explorer {
             if self.ssms_mode() {
                 self.expand_current_db();
             }
+        } else {
+            // Oracle 현재 스키마·PG search_path·MySQL DB(= 스키마) = 같은 서버 안의 **기본 스키마**만 바뀜(⑮) → 스키마 목록(현재 표식)만 조용히
+            //   다시 읽는다(메타 세션은 `switch_db`가 같은 문장으로 따라가므로 서버가 말한 현재 스키마가 새 값).
+            self.server_schema = None;
+            self.soft.insert(0);
+            let _ = self.tx.send(Req::Schemas {
+                gen: self.gen,
+                node: 0,
+                opts: self.schema_opts,
+            });
         }
     }
 

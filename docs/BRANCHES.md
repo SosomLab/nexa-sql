@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/oracle-schema-switch | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ Oracle 툴바 전환(`ALTER SESSION SET CURRENT_SCHEMA`) · `context_switch_name` 방언 공통 · 메타 세션 추종 · 운영 확인 제외 · PG 고정 · `win-schema-switch-e2e.sh` 6 |
 | feat/toolbar-db-unit | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 툴바 작업 단위 `sess.db`(`db_unit` · `use_sql` · 드롭다운 = `USE` · `ExplorerAction::ServerInfo`) · SQL Server 연결 행 = 로그인 ID · `prod_confirm` USE 제외 |
 | feat/linked-servers | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ T-271 연결된 서버(101 §5) — `linked_server`/`linked_server_script` · 상세 로그인 매핑 · Open source · DDL · `sp_dropserver droplogins` · E2E ④(권한 없음 = 폴더 읽기) |
 | feat/intel-want-contexts | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 자동완성 빈 곳 1차 — `CtxKind::Want`(USE DB · 스키마 · 루틴 · 종류) · `JOIN ON` 컬럼 · 별칭 보강(ALTER TABLE · MERGE USING · CREATE INDEX ON · OUTPUT INSERTED) · `mysql.sqlg` · `sp_*` · [82 §7](82-grammar-driven-completion.md) |

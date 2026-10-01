@@ -903,6 +903,13 @@ pub(crate) fn is_conntype_cmd(sql: &str) -> bool {
     )
 }
 
+/// 작업 단위 전환 문장인가(방언 무관 · 순수): `USE` · `ALTER SESSION SET CURRENT_SCHEMA` · `SET search_path`.
+pub(crate) fn is_context_switch(sql: &str) -> bool {
+    [Dialect::Mssql, Dialect::Oracle, Dialect::Postgres]
+        .iter()
+        .any(|d| nsql_catalog::context_switch_name(*d, sql).is_some())
+}
+
 /// ★ 툴바 "작업 단위"(10-01 ⑫ · 사용자 "연결정보 옆에 데이터베이스 항목 · 라벨 없이 값만"): 방언별 (표시 값, 바꿀 수 있는가).
 /// Oracle = 로그인 계정의 현재 스키마 · **고정** · SQL Server = 현재 DB · 바꿈 = `USE` · MySQL = 현재 DB(`DATABASE()`) · 바꿈 = `USE` ·
 /// PostgreSQL = 접속 DB · 고정(전환은 재접속) · SQLite = 파일 이름 · 고정 · 미연결 = "—". 순수 판정.
@@ -927,7 +934,8 @@ pub(crate) fn db_unit(
                         .map(|u| u.to_ascii_uppercase())
                 })
                 .unwrap_or_else(|| "—".into()),
-            false,
+            // 바꿈 = `ALTER SESSION SET CURRENT_SCHEMA`(사용자 10-01 ⑮ · 처음의 "고정"을 뒤집음).
+            true,
         ),
         Some(Dialect::Mssql) => (
             nonempty(current_db)
@@ -962,6 +970,21 @@ pub(crate) fn use_sql(dialect: Dialect, db: &str) -> Option<String> {
     match dialect {
         Dialect::Mssql => Some(format!("USE [{}]", db.replace(']', "]]"))),
         Dialect::Mysql => Some(format!("USE `{}`", db.replace('`', "``"))),
+        // Oracle = 스키마(단순 대문자 식별자면 그대로 · 아니면 따옴표).
+        Dialect::Oracle => {
+            let simple = db.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && db.chars().all(|c| {
+                    c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '_' | '$' | '#')
+                });
+            Some(if simple {
+                format!("ALTER SESSION SET CURRENT_SCHEMA = {db}")
+            } else {
+                format!(
+                    "ALTER SESSION SET CURRENT_SCHEMA = \"{}\"",
+                    db.replace('"', "\"\"")
+                )
+            })
+        }
         _ => None,
     }
 }
@@ -997,6 +1020,8 @@ pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]
             let k = nsql_core::first_keyword(sql);
             !k.is_empty()
                 && (!is_client_only(sql) || is_conntype_cmd(sql))
+                // 작업 단위 전환(`ALTER SESSION SET CURRENT_SCHEMA` · `SET search_path`)은 데이터 변경이 아니다(10-01 ⑮).
+                && !is_context_switch(sql)
                 && !matches!(
                     k.as_str(),
                     "SELECT"
@@ -1161,14 +1186,26 @@ mod tests {
         let o = sp(Some("BISCM"), None, Some("biscm"));
         assert_eq!(
             db_unit(Some(Dialect::Oracle), Some(&o), None, Some("BISCM_SB")),
-            ("BISCM_SB".into(), false),
-            "서버가 말한 스키마"
+            ("BISCM_SB".into(), true),
+            "서버가 말한 스키마 · 바꿀 수 있음(⑮)"
         );
         assert_eq!(
             db_unit(Some(Dialect::Oracle), Some(&o), None, None),
-            ("BISCM".into(), false),
+            ("BISCM".into(), true),
             "없으면 계정 대문자"
         );
+        assert_eq!(
+            use_sql(Dialect::Oracle, "BISCM_SB").as_deref(),
+            Some("ALTER SESSION SET CURRENT_SCHEMA = BISCM_SB")
+        );
+        assert_eq!(
+            use_sql(Dialect::Oracle, "Sb").as_deref(),
+            Some("ALTER SESSION SET CURRENT_SCHEMA = \"Sb\"")
+        );
+        assert!(super::is_context_switch(
+            "ALTER SESSION SET CURRENT_SCHEMA = X"
+        ));
+        assert!(!super::is_context_switch("ALTER TABLE t ADD c INT"));
         let m = sp(Some("M4PLAN_MS"), None, Some("BISCM_MS"));
         assert_eq!(
             db_unit(Some(Dialect::Mssql), Some(&m), Some("BISCM_MS"), None),
@@ -1226,7 +1263,7 @@ mod tests {
             use_sql(Dialect::Mysql, "a`b").as_deref(),
             Some("USE `a``b`")
         );
-        assert!(use_sql(Dialect::Oracle, "x").is_none());
+        assert!(use_sql(Dialect::Postgres, "x").is_none());
     }
 
     /// ★ 유형 변경 2단 확인 MC/DC(10-01): 설정 · 지금 = 운영 · 새 값 ≠ 운영 셋이 모두 참일 때만.

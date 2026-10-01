@@ -632,7 +632,10 @@ impl App {
         use nexa_ctl::controls::ctxmenu::CtxItem;
         let list = match self.sess.dialect {
             nsql_core::Dialect::Mssql => self.explorer.databases(spec.as_ref()),
-            nsql_core::Dialect::Mysql => self.explorer.schemas(spec.as_ref()),
+            // Oracle(⑮) = 스키마 목록(`ALTER SESSION SET CURRENT_SCHEMA`) · MySQL = DB(= 스키마) 목록.
+            nsql_core::Dialect::Mysql | nsql_core::Dialect::Oracle => {
+                self.explorer.schemas(spec.as_ref())
+            }
             _ => return,
         };
         let (cur, _) = sessions::db_unit(

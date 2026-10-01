@@ -453,7 +453,10 @@ impl App {
                 env_line = format!("{env_line} ({})", tf(Msg::OutConnEnvTemp, &[&base]));
             }
             lines.push(format!("  {}: {}", t(Msg::OutConnEnv), env_line));
-            if let Some(db) = &s.current_db {
+            // 현재 DB(SQL Server·MySQL · `USE` 뒤). Oracle·PG의 스키마 전환(⑮)은 아래 "현재 스키마" 줄이 `cur_schema`로 보인다.
+            if let (Some(db), nsql_core::Dialect::Mssql | nsql_core::Dialect::Mysql) =
+                (&s.current_db, s.dialect)
+            {
                 lines.push(format!("  {}: {}", t(Msg::OutConnCurrentDb), db));
             }
             lines.push(format!(
