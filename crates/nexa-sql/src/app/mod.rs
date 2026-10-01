@@ -6,6 +6,7 @@ mod bookmarks;
 mod completion;
 mod connwin;
 mod demo;
+pub(crate) mod drop;
 mod event_loop;
 mod events;
 mod extensions;

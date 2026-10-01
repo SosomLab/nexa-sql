@@ -81,7 +81,7 @@
 | `output.done_lines` | on/off | on | 문장 완료 줄(SSMS Messages식) |
 | `output.timestamps` | on/off | on | `[HH:MM:SS]` |
 | `output.max_lines` | 100~100000 | 5000 | 편집기 탭마다 보관 줄 |
-| `output.serveroutput` | on/off | **on** | Oracle 새 세션마다 `SET SERVEROUTPUT ON`(D-231 · 실행마다 GET_LINES 1회 · 부하원 39 §3) |
+| `output.serveroutput` | on/off | **on** | Oracle 새 세션마다 `SET SERVEROUTPUT ON`(D-239 · 실행마다 GET_LINES 1회 · 부하원 39 §3) |
 
 - View ▸ **Output**(Ctrl+Shift+O · ⌘⇧O · DBeaver와 같은 키) = 활성 편집기 탭의 Output 탭 토글(닫아도 본문 유지) · 팔레트 "View: Show/Hide Output" · 탭 × 도 같다.
 - 자체 시험: 기동 명령 `output.dump:<파일>`(첫 줄 `보임|줄수`) · `editor.dump:<파일>`(첫 줄 `제목|종류|읽기전용`) · 단위 테스트 `output::tests` 3 · `whole_item` 1.

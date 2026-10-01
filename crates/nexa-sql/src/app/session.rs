@@ -502,6 +502,7 @@ impl App {
             None => (spec, self.sess.profile.clone()),
         };
         self.sess.spec = Some(full.clone());
+        self.sess.env_temp = false;
         let show = self.sess_id_for_tab(self.editors.active_id()) == self.sess.id;
         // ★ 일회성 비밀번호(입력 창으로 받은 것): 세션 스펙에는 **넣지 않는다**. 탐색기 메타 세션이 같은 자격으로 붙도록 이 호출에만
         //   빌려주고 바로 지운다(메타 스레드도 접속 뒤 지운다 · 유휴 회수 없음).
@@ -837,6 +838,39 @@ impl App {
             };
             items.push(CtxItem::item("sess.private", label).with_mark(true));
         }
+        // ★ 서버 유형(없음/개발/테스트/운영) 지정 + 접속 정보 → Output(10-01 · CONNECT 세션도 유형을 가질 수 있게) ·
+        //   여기서 바꾸면 **이 세션만 임시**(머리글로 알린다 · 영속 = 프로필 편집).
+        if s.connected {
+            items.push(CtxItem::Separator);
+            items.push(CtxItem::maybe(
+                "sess.env.hdr",
+                t(Msg::MnEnvSessionHdr),
+                false,
+            ));
+            let cur_env = s.spec.as_ref().and_then(|x| x.env);
+            for (id, label, env) in [
+                ("sess.env:none", Msg::MnEnvNone, None),
+                (
+                    "sess.env:dev",
+                    Msg::MnEnvDev,
+                    Some(nsql_script::ConnEnv::Dev),
+                ),
+                (
+                    "sess.env:test",
+                    Msg::MnEnvTest,
+                    Some(nsql_script::ConnEnv::Test),
+                ),
+                (
+                    "sess.env:prod",
+                    Msg::MnEnvProd,
+                    Some(nsql_script::ConnEnv::Prod),
+                ),
+            ] {
+                items.push(CtxItem::item(id, t(label)).with_mark(cur_env == env));
+            }
+            items.push(CtxItem::Separator);
+            items.push(CtxItem::item("sess.info", t(Msg::MnSessInfo)));
+        }
         Some(items)
     }
 
@@ -844,6 +878,10 @@ impl App {
         match id {
             "sess.disconnect" => self.disconnect_private(tab),
             "sess.none" => self.make_unconnected(tab),
+            "sess.info" => self.output_conn_info(),
+            x if x.starts_with("sess.env:") => {
+                self.set_session_env(nsql_script::ConnEnv::from_name(&x["sess.env:".len()..]));
+            }
             // 전용 연결 줄 = 이미 이 탭의 것 — 끊겨 있으면 다시 접속, 아니면 아무것도 안 함.
             "sess.private" => {
                 if self

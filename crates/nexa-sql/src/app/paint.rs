@@ -333,24 +333,30 @@ impl App {
                 // 왼쪽 상태 문구는 세그먼트 앞에서 잘라 겹치지 않게(09-16 캡처: 긴 타이밍 문구가 세그먼트 위로 지나갔다).
                 dc.select_font(FontSlot::Base, false);
                 let left_w = (xr - px(8.0, s) - px(4.0, s)).max(0);
-                // 접속 유형 표식(운영 = 위험색 · 시험 = 경고색 칩 · 상태줄 맨 앞) — 지금 탭의 세션이 붙어 있을 때만.
+                // 서버 유형 칩(상태줄 맨 앞 · 3자리 약어 · 운영 = 위험색 · 테스트 = 경고색) — 지금 탭의 세션이 붙어 있을 때만.
+                //   세션에서 임시로 바꾼 유형 = 외곽선 칩(프로필 값 = 채운 칩 · 사용자 10-01).
                 let env_chip = self
                     .sess
                     .connected
                     .then(|| self.sess.spec.as_ref().and_then(|sp| sp.env))
                     .flatten()
                     .and_then(|e| match e {
-                        nsql_script::ConnEnv::Prod => Some(("PROD", th.danger)),
-                        nsql_script::ConnEnv::Test => Some(("TEST", th.warn)),
+                        nsql_script::ConnEnv::Prod => Some((e.abbr(), th.danger)),
+                        nsql_script::ConnEnv::Test => Some((e.abbr(), th.warn)),
                         nsql_script::ConnEnv::Dev => None,
                     });
                 let mut lx = px(8.0, s);
                 if let Some((label, color)) = env_chip {
                     let cw = dc.text_width(label) + px(12.0, s);
                     let chip = Rect::new(lx, sy + px(4.0, s), cw, px(16.0, s));
-                    dc.fill_round_rect(chip, px(3.0, s), color);
                     let cy = dc.text_center_y(chip.y, chip.h);
-                    dc.text(chip.x + px(6.0, s), cy, chip, label, th.panel_bg);
+                    if self.sess.env_temp {
+                        dc.stroke_round_rect(chip, px(3.0, s), color, 1.0);
+                        dc.text(chip.x + px(6.0, s), cy, chip, label, color);
+                    } else {
+                        dc.fill_round_rect(chip, px(3.0, s), color);
+                        dc.text(chip.x + px(6.0, s), cy, chip, label, th.panel_bg);
+                    }
                     lx += cw + px(6.0, s);
                 }
                 dc.text(

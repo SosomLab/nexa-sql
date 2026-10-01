@@ -113,6 +113,7 @@ impl App {
                 if let Some(ConnectIntent::Connect(spec)) = intent {
                     self.sess.spec = Some(spec);
                     self.sess.profile.clear();
+                    self.sess.env_temp = false;
                 }
                 true
             }

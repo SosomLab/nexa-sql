@@ -18,6 +18,7 @@ impl App {
             // 라이선스·About 창 = 모달(열려 있는 동안 메인 잠금 · 사용자 09-27).
             .or_else(|| self.license_win.window())
             .or_else(|| self.about_win.window())
+            .or_else(|| self.drop_win.window())
     }
 
     pub(crate) fn modal_open(&self) -> bool {
@@ -28,6 +29,7 @@ impl App {
             || self.import_win.is_open()
             || self.license_win.is_open()
             || self.about_win.is_open()
+            || self.drop_win.is_open()
     }
 
     /// 모달 창(접속 · 파일 · 비밀번호 입력) 열림/닫힘 전환 → 메인 창 활성 상태 동기화(닫히면 메인으로 포커스).
@@ -152,6 +154,7 @@ impl App {
             self.sessions_win.window(),
             self.license_win.window(),
             self.about_win.window(),
+            self.drop_win.window(),
             self.vars_win.window(),
             self.mem_win.window(),
             self.colors_win.window(),

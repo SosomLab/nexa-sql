@@ -283,6 +283,14 @@ impl App {
                     }
                 }
                 // Generate SQL 결과(83 §3) — 창은 `el`이 있는 자리에서 연다(이미 열려 있으면 바로 본문 교체).
+                ExplorerAction::DropObject { owner, server } => {
+                    self.drop_request(owner, server);
+                    changed = true;
+                }
+                // DDL 결과가 삭제 백업용이면 미리보기 창 대신 백업 흐름으로(10-01).
+                ExplorerAction::Preview { spec, r, .. } if self.drop_take_backup(&spec, &r) => {
+                    changed = true;
+                }
                 ExplorerAction::Preview { spec, r, server } => {
                     if let Err(e) = &r {
                         self.sess.status = tf(Msg::StGenFailed, &[e]);

@@ -116,6 +116,8 @@ impl App {
                         a.sess.status = tf(Msg::StConnecting, &[&spec.redacted()]);
                         a.sess.last_spec = Some(spec.clone());
                         a.sess.spec = Some(spec.clone());
+                        // 접속 창으로 새로 붙는다 = 유형은 프로필(폼)의 값 — 임시 표식 해제.
+                        a.sess.env_temp = false;
                         a.sess.touch();
                         a.sess.worker.send(worker::Cmd::ConnectSpec {
                             spec,
@@ -180,7 +182,28 @@ impl App {
     /// 우클릭 Duplicate — `<이름>_Copied`(있으면 `_Copied2`…)로 저장(비밀번호 봉투 포함).
     /// 목록 우클릭 메뉴의 접속 유형 — 저장소의 그 프로필만 고친다(비밀번호 봉투 포함 그대로 다시 쓴다). 지금 붙어 있는 세션이
     /// 그 프로필이면 세션의 표식도 바로 바꾼다(다시 접속할 필요 없음).
-    fn set_profile_env(&mut self, name: &str, env: Option<nsql_script::ConnEnv>) {
+    /// 프로필 유형(영속)이 바뀌었다 — 그 프로필로 붙은 세션의 표식도 바로 맞춘다. 단 세션에서 **임시로** 바꾼 유형은
+    /// 사용자가 그 세션에 명시한 값이므로 덮지 않는다(사용자 10-01).
+    pub(crate) fn apply_profile_env(&mut self, name: &str, env: Option<nsql_script::ConnEnv>) {
+        let ids: Vec<u64> = self
+            .all_sess()
+            .filter(|s| s.profile == name && !s.env_temp)
+            .map(|s| s.id)
+            .collect();
+        for id in ids {
+            self.with_sess(id, |a| {
+                if let Some(sp) = a.sess.spec.as_mut() {
+                    sp.env = env;
+                }
+                if let Some(sp) = a.sess.last_spec.as_mut() {
+                    sp.env = env;
+                }
+            });
+        }
+        self.sess_ui_dirty = true;
+    }
+
+    pub(crate) fn set_profile_env(&mut self, name: &str, env: Option<nsql_script::ConnEnv>) {
         let r = Vault::open_default().and_then(|v| {
             let Some(mut spec) = v.get(name)? else {
                 return Ok(false);
@@ -191,26 +214,9 @@ impl App {
         });
         match r {
             Ok(true) => {
-                let label = match env {
-                    Some(nsql_script::ConnEnv::Prod) => t(Msg::MnEnvProd),
-                    Some(nsql_script::ConnEnv::Test) => t(Msg::MnEnvTest),
-                    Some(nsql_script::ConnEnv::Dev) => t(Msg::MnEnvDev),
-                    None => t(Msg::MnEnvNone),
-                };
-                self.sess.status = tf(Msg::StEnvSet, &[name, label]);
+                self.sess.status = tf(Msg::StEnvSet, &[name, t(super::drop::env_menu_msg(env))]);
                 self.conn_win.refresh_profiles(Some(name));
-                let ids: Vec<u64> = self
-                    .all_sess()
-                    .filter(|s| s.profile == name)
-                    .map(|s| s.id)
-                    .collect();
-                for id in ids {
-                    self.with_sess(id, |a| {
-                        if let Some(sp) = a.sess.spec.as_mut() {
-                            sp.env = env;
-                        }
-                    });
-                }
+                self.apply_profile_env(name, env);
             }
             Ok(false) => {}
             Err(e) => self.sess.status = e.to_string(),

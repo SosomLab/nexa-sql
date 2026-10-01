@@ -184,6 +184,20 @@ impl App {
             let _ = std::fs::write(path, self.grid.dump_edit());
             return;
         }
+        // 자체 시험(10-01): 삭제 창 덤프(`drop.dump:<파일>` · 단계·무장·정보 줄·DROP 문·백업 경로).
+        // 자체 시험(10-01): 삭제 창의 2단 확인을 거친 것과 같은 길(키·마우스 주입 없이 흐름 검증) — `drop.confirm` · `drop.confirm_nobackup`.
+        if id == "drop.confirm" {
+            self.drop_action(crate::drop_win::DropAction::Proceed);
+            return;
+        }
+        if id == "drop.confirm_nobackup" {
+            self.drop_action(crate::drop_win::DropAction::ProceedNoBackup);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("drop.dump:") {
+            let _ = std::fs::write(path, self.drop_dump());
+            return;
+        }
         // 자체 시험(09-30): 활성 편집기 탭의 Output 본문 덤프(`output.dump:<파일>` · 첫 줄 `보임|줄수`).
         if let Some(path) = id.strip_prefix("output.dump:") {
             let _ = std::fs::write(path, self.output_dump());

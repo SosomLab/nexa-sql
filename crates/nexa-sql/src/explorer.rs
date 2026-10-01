@@ -741,6 +741,11 @@ pub(crate) enum ExplorerAction {
         owner: ObjectInfo,
         server: Option<ConnectSpec>,
     },
+    /// ★ 객체 삭제 요청(10-01 · 탐색기 ▸ Delete… · 서버는 `ExplorerSet`이 채운다).
+    DropObject {
+        owner: ObjectInfo,
+        server: Option<ConnectSpec>,
+    },
 }
 
 /// 틴트 아이콘 캐시 — `(종류, rgb)` → 이미지.
@@ -4578,6 +4583,21 @@ impl Explorer {
     }
 
     /// Generate SQL 요청(새로고침도 같은 길) — 메타 세션에서 만든 뒤 `ExplorerAction::Preview`.
+    /// 객체 하나의 Generate SQL을 노드 없이 요청(삭제 백업용 DDL · 10-01).
+    pub(crate) fn gen_object(
+        &mut self,
+        owner: ObjectInfo,
+        what: nsql_catalog::GenWhat,
+        opts: GenOpts,
+    ) {
+        self.gen_sql(GenSpec {
+            owner,
+            what,
+            sub: None,
+            opts,
+        });
+    }
+
     pub(crate) fn gen_sql(&mut self, spec: GenSpec) {
         if self.offline {
             self.actions
@@ -5702,6 +5722,13 @@ impl Explorer {
                             }
                         }
                         items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        // ★ 객체 삭제(10-01 · 모달 확인 + 백업 · `app/drop.rs`) — 삭제 문을 만들 수 있는 종류만.
+                        if let Some(d) = self.dialect {
+                            if nsql_catalog::drop_sql(d, o).is_some() {
+                                items.push(CtxItem::Separator);
+                                items.push(CtxItem::item("drop", t(Msg::ExpDropObject)));
+                            }
+                        }
                         // ★ 새로 고침은 **계층형**(사용자 09-19): 서버 = 그 서버 전부 · 스키마 = 그 스키마 · 종류 폴더 = 그 종류의
                         //   객체 전부 · 테이블/뷰 = 그 객체의 정보(컬럼)만 · 그 밖의 객체·컬럼 = 자기가 속한 목록.
                         items.push(CtxItem::Separator);
@@ -6101,6 +6128,14 @@ impl Explorer {
             "import" => {
                 if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
                     self.actions.push(ExplorerAction::Import {
+                        owner: o,
+                        server: None,
+                    });
+                }
+            }
+            "drop" => {
+                if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
+                    self.actions.push(ExplorerAction::DropObject {
                         owner: o,
                         server: None,
                     });

@@ -639,7 +639,7 @@ pub(crate) fn spawn(
                     v.resolve(name).map_err(|e| e.to_string())
                 }));
             apply_fetch_settings(&mut runner);
-            // ★ Oracle DBMS_OUTPUT은 접속 때 켠다(설정 `output.serveroutput` · D-231 · 09-30) — 스크립트의 `SET SERVEROUTPUT`이 뒤집을 수 있다.
+            // ★ Oracle DBMS_OUTPUT은 접속 때 켠다(설정 `output.serveroutput` · D-239 · 09-30) — 스크립트의 `SET SERVEROUTPUT`이 뒤집을 수 있다.
             runner.engine.settings.serveroutput = nsql_settings::Settings::open_default()
                 .map(|s| s.flag("output.serveroutput"))
                 .unwrap_or(true);

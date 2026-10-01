@@ -65,7 +65,7 @@
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
 | 결과 페치 행 수 | 200 | `grid.max_rows` | 200 | 200 | 100 | `Runner::with_max_rows` |
-| Oracle DBMS_OUTPUT 회수(실행마다 GET_LINES 1회 · 09-30 D-231) | 켬 | `output.serveroutput`(끄면 스크립트 `SET SERVEROUTPUT ON`일 때만) | 켬 | 켬 | 켬 | `Runner::connect` → `set_option("serveroutput")` |
+| Oracle DBMS_OUTPUT 회수(실행마다 GET_LINES 1회 · 09-30 D-239) | 켬 | `output.serveroutput`(끄면 스크립트 `SET SERVEROUTPUT ON`일 때만) | 켬 | 켬 | 켬 | `Runner::connect` → `set_option("serveroutput")` |
 | Output 탭 보관 줄(편집기 탭마다) | 5000 | `output.max_lines` | 5000 | 5000 | 5000 | `OutputView::trim` |
 | 페치 배열 크기(왕복당 행) | 드라이버 기본 | `db.fetch_size`(신설 · HIDDEN) | 500 | 500 | 200 | 드라이버 어댑터 |
 | 문장 타임아웃 | 없음(드라이버 무한) | `db.statement_timeout`(신설 · 초 · 0 = 없음 ·✅ 09-29 T-249 구현·재등록) | 0 | 0 | 60 | 워커 `Cmd::Run` · 드라이버 cancel 포트 |

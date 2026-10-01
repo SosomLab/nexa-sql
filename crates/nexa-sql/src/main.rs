@@ -34,6 +34,7 @@ mod conn_win;
 mod connect;
 mod copybtn;
 mod dbms_icons;
+mod drop_win;
 mod editable;
 mod editors;
 mod enc;
@@ -229,6 +230,11 @@ struct App {
     open_license: bool,
     /// ★ About 창(Help ▸ About · 09-27).
     about_win: AboutWin,
+    /// ★ 객체 삭제 확인 창(모달 · 10-01 · `app/drop.rs`).
+    drop_win: drop_win::DropWin,
+    drop_req: Option<app::drop::DropReq>,
+    open_drop: bool,
+    drop_backup_wait: Option<nsql_catalog::ObjectInfo>,
     open_about: bool,
     status_lic_rect: Rect,
     /// 상태줄 자동 저장 표식(클릭 = 자동 저장 폴더 · `statusbar.autosave` · 09-28).
@@ -1534,6 +1540,10 @@ fn main() {
         sessions_win,
         license_win: LicenseWin::new(),
         about_win: AboutWin::new(),
+        drop_win: drop_win::DropWin::new(),
+        drop_req: None,
+        open_drop: false,
+        drop_backup_wait: None,
         open_about: false,
         licensing: nsql_license::Licensing::open_default(),
         open_license: false,
@@ -2068,7 +2078,7 @@ fn index_cfg_from(settings: &Settings) -> explorer::IndexCfg {
 }
 
 /// Generate SQL 옵션(설정 `gen.*` → `GenOpts` · docs/83 §3-1).
-fn gen_opts_from(settings: &Settings) -> nsql_catalog::GenOpts {
+pub(crate) fn gen_opts_from(settings: &Settings) -> nsql_catalog::GenOpts {
     nsql_catalog::GenOpts {
         qualified: settings.flag("gen.qualified"),
         compact: settings.flag("gen.compact"),

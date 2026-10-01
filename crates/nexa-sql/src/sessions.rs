@@ -85,6 +85,9 @@ pub(crate) struct Sess {
     /// ★ 끊김을 **확인**했다(docs/53 §3 Broken): 동작 직전 빠른 판정 실패 · 접속성 오류 · 드라이버가 끊김을 앎. 세션 객체·스펙은 그대로 —
     ///   다음 동작 때 판정 → 살아 있으면 재접속(설정) · 사용자가 VPN을 다시 켜면 그 자리에서 이어진다. 표식 = 끊김 · 플러그 = 빨강.
     pub broken: bool,
+    /// ★ 서버 유형을 이 세션에서 **임시로** 바꿨다(사용자 10-01 · 세션 메뉴·팔레트·편집기 `CONNTYPE`) — 프로필에는 저장하지 않는다.
+    ///   새 대상으로 접속하면 풀린다 · 표시 = 칩 외곽선 + 접속 정보 "임시" · 프로필 편집의 변경은 이 세션을 덮지 않는다.
+    pub env_temp: bool,
     /// 닫는 중(공유 모드의 전용 세션이 해제됨) — 호스트가 다음 틱에 거둔다.
     pub closing: bool,
     /// 실행 앞에 끼워 보낸 재접속의 `done` 신호 수 — 그만큼은 busy를 풀지 않고 넘긴다(뒤따르는 실행이 아직 돈다).
@@ -190,6 +193,7 @@ impl Sess {
             disc_path: None,
             idle_closed: false,
             broken: false,
+            env_temp: false,
             closing: false,
             skip_done: 0,
             last_used: now,

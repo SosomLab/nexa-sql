@@ -34,7 +34,7 @@ pub mod vars;
 pub use bind::{extract_binds, BindRef};
 pub use call::{call_shape, mark_output, tsql_call_shape, CallArg, CallShape};
 pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, SpoolMode};
-pub use connect::{ConnEnv, ConnectSpec};
+pub use connect::{ConnEnv, ConnectSpec, ENV_CHOICES};
 pub use dialect::{prepare, PrepareMode, Prepared};
 pub use engine::{Action, Diagnostic, Engine, SYSTEM_VARS};
 pub use inputs::{macro_refs, missing_inputs, InputKind, InputNeed};

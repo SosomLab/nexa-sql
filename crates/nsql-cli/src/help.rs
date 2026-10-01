@@ -320,13 +320,14 @@ const CMDS: &[Cmd] = &[
     },
     Cmd {
         name: "conn",
-        usage: "nsql conn list | add <name> [<target>] [conn options] | show <name> | rm <name> | test [<name>] [conn options] | path",
+        usage: "nsql conn list | add <name> [<target>] [conn options] | show <name> | env <name> [<type>] | rm <name> | test [<name>] [conn options] | path",
         brief: Msg::HlpCmdConn,
         detail: Msg::HlpCmdConnDetail,
         args: &[
             ("list", Msg::HlpArgConnList),
             ("add <name> [<target>]", Msg::HlpArgConnAdd),
             ("show <name>", Msg::HlpArgConnShow),
+            ("env <name> [<type>]", Msg::HlpArgConnEnv),
             ("rm <name>", Msg::HlpArgConnRm),
             ("test [<name>]", Msg::HlpArgConnTest),
             ("path", Msg::HlpArgConnPath),
@@ -337,6 +338,7 @@ const CMDS: &[Cmd] = &[
             "nsql conn add prod oracle://scott@db:1521/orcl        # asks for the password",
             "nsql conn add prod -d oracle --host db --port 1521 --db orcl --user scott",
             "nsql conn test prod",
+            "nsql conn env prod prod                                  # mark the saved profile as Production",
             "nsql conn test -d oracle --host db --port 1521 --db orcl --user scott",
         ],
     },

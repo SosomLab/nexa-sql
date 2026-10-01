@@ -77,9 +77,9 @@ const FIELDS: [Field; 7] = [
     Field::Host,
     Field::Port,
     Field::Database,
-    Field::Schema,
     Field::User,
     Field::Password,
+    Field::Schema,
 ];
 
 pub(crate) struct ConnectPanel {
@@ -103,8 +103,8 @@ pub(crate) struct ConnectPanel {
     name: TextBox,
     /// 목록에서 불러온 프로필 이름(New/clear면 None) — 저장 시 이름 변경 판정용(09-16).
     loaded_name: Option<String>,
-    /// 접속 유형(docs/56 §4 · 목록 우클릭 메뉴로 지정 · 폼은 값을 보존만 한다).
-    env: Option<nsql_script::ConnEnv>,
+    /// ★ 서버 유형 콤보(사용자 10-01 · 기본 스키마 줄 오른쪽) — 프로필 편집 = **영속**(Save로 저장) · 목록 우클릭과 같은 값.
+    env: Combo,
     save_pw: Checkbox,
     test_btn: Button,
     connect_btn: Button,
@@ -138,6 +138,8 @@ pub(crate) struct FormSnap {
     pub user: String,
     pub password: String,
     pub save_pw: bool,
+    /// 서버 유형 저장 값(`none`·`dev`·`test`·`prod`).
+    pub env: String,
 }
 
 /// 바뀐 칸(순수 판정 · MC/DC: 칸마다 독립).
@@ -152,6 +154,7 @@ pub(crate) enum Dirty {
     User,
     Password,
     SavePw,
+    Env,
 }
 
 /// 어느 동작의 필수 검사인가(22 §10): Save는 Password 대신 프로필 이름.
@@ -244,7 +247,27 @@ pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
     if base.save_pw != now.save_pw {
         out.push(Dirty::SavePw);
     }
+    if base.env != now.env {
+        out.push(Dirty::Env);
+    }
     out
+}
+
+/// 서버 유형 콤보 항목 — 값 = 저장 값 · 라벨 = 정식 용어 + 3자리 약어(사용자 10-01).
+fn env_items() -> Vec<ComboItem> {
+    std::iter::once(None)
+        .chain(nsql_script::ConnEnv::ALL.into_iter().map(Some))
+        .map(|e| {
+            ComboItem::new(
+                e.map_or("none", nsql_script::ConnEnv::as_str),
+                crate::app::drop::env_label(e),
+            )
+        })
+        .collect()
+}
+
+fn env_value(e: Option<nsql_script::ConnEnv>) -> &'static str {
+    e.map_or("none", nsql_script::ConnEnv::as_str)
 }
 
 fn digits_only(c: char) -> bool {
@@ -286,7 +309,7 @@ impl ConnectPanel {
             password: TextBox::new(t(Msg::PhPassword)),
             name: TextBox::new(t(Msg::PhProfileName)),
             loaded_name: None,
-            env: None,
+            env: Combo::new(env_items(), 0),
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
@@ -314,6 +337,10 @@ impl ConnectPanel {
     /// 언어 전환 — 라벨·placeholder 재생성(TextBox는 본문 보존 재생성).
     pub(crate) fn relabel(&mut self) {
         self.save_pw = Checkbox::new(t(Msg::LblSavePassword), self.save_pw.is_checked());
+        let ev = self.env.selected_value();
+        self.env = Combo::new(env_items(), 0);
+        self.env.select_value(&ev);
+        self.env.set_scale(self.scale);
         self.test_btn.set_label(t(Msg::BtnTest));
         self.save_btn.set_label(t(Msg::BtnSave));
         self.update_connect_label();
@@ -371,7 +398,7 @@ impl ConnectPanel {
     /// 저장소에서 읽은 스펙으로 폼을 채운다.
     pub(crate) fn fill(&mut self, name: &str, spec: &ConnectSpec) {
         self.loaded_name = Some(name.to_string());
-        self.env = spec.env;
+        self.env.select_value(env_value(spec.env));
         if let Some(d) = spec.dialect {
             self.dialect.select_value(&d.to_string());
             self.auto_port = d.default_port();
@@ -407,15 +434,16 @@ impl ConnectPanel {
         if self.schema_applies() && !sc.trim().is_empty() {
             spec.schema = Some(sc.trim().to_string());
         }
-        // 접속 유형은 폼에 칸이 없다(목록 우클릭 메뉴) — 불러온 값을 그대로 실어 저장·접속에서 잃지 않게 한다.
-        spec.env = self.env;
+        // 서버 유형 = 콤보(Save = 프로필에 영속 · 접속 = 이 값으로 붙는다).
+        spec.env = nsql_script::ConnEnv::from_name(&self.env.selected_value());
         Ok(spec)
     }
 
-    /// 목록 메뉴에서 유형을 바꿨다 — 그 프로필이 폼에 올라와 있으면 폼의 값도 맞춘다.
+    /// 목록 메뉴에서 유형을 바꿨다(이미 저장됨) — 그 프로필이 폼에 올라와 있으면 콤보와 저장본을 함께 맞춘다(바뀜 아님).
     pub(crate) fn set_env_if_loaded(&mut self, name: &str, env: Option<nsql_script::ConnEnv>) {
         if self.loaded_name.as_deref() == Some(name) {
-            self.env = env;
+            self.env.select_value(env_value(env));
+            self.snap.env = env_value(env).to_string();
         }
     }
 
@@ -427,7 +455,7 @@ impl ConnectPanel {
     /// 새 프로필 — 폼 비우기(DB 종류는 유지).
     pub(crate) fn clear(&mut self) {
         self.loaded_name = None;
-        self.env = None;
+        self.env.select_value("none");
         for tb in [
             &mut self.host,
             &mut self.port,
@@ -461,6 +489,7 @@ impl ConnectPanel {
             user: self.user.text(),
             password: self.password.text(),
             save_pw: self.save_pw.is_checked(),
+            env: self.env.selected_value(),
         }
     }
 
@@ -588,6 +617,7 @@ impl ConnectPanel {
             c.set_scale(scale);
         }
         self.dialect.set_scale(scale);
+        self.env.set_scale(scale);
         self.save_pw.set_scale(scale);
         self.test_btn.set_scale(scale);
         self.connect_btn.set_scale(scale);
@@ -636,16 +666,36 @@ impl ConnectPanel {
             y += field_h + gap;
         }
         place(&mut self.database, &mut inv, &mut y, field_h);
-        if self.schema_applies() {
-            place(&mut self.schema, &mut inv, &mut y, field_h);
-        } else {
-            self.schema.set_bounds(off, &mut inv);
-        }
         place(&mut self.user, &mut inv, &mut y, field_h);
-        place(&mut self.password, &mut inv, &mut y, field_h);
-        self.save_pw
-            .set_bounds(Rect::new(x, y, w, self.s(22.0)), &mut inv);
-        y += self.s(22.0) + gap;
+        // 비밀번호 + "저장" 체크박스 한 줄(사용자 10-01) — 체크 칸 폭 = 포트 칸과 같은 열(오른쪽 끝 정렬).
+        {
+            y += label_h;
+            let cw = self.s(self.port_w);
+            self.password
+                .set_bounds(Rect::new(x, y, w - cw - gap, field_h), &mut inv);
+            let ch = self.s(22.0);
+            self.save_pw.set_bounds(
+                Rect::new(x + w - cw, y + (field_h - ch) / 2, cw, ch),
+                &mut inv,
+            );
+            y += field_h + gap;
+        }
+        // 기본 스키마(선택 칸 · 왼쪽) + 서버 유형 콤보(오른쪽) 한 줄 — 저장 버튼 바로 위(사용자 10-01).
+        //   스키마가 뜻이 없는 방언(SQL Server · 파일 방언)은 서버 유형이 줄 전체를 쓴다.
+        {
+            y += label_h;
+            if self.schema_applies() {
+                let half = (w - gap) / 2;
+                self.schema
+                    .set_bounds(Rect::new(x, y, w - half - gap, field_h), &mut inv);
+                self.env
+                    .set_bounds(Rect::new(x + w - half, y, half, field_h), &mut inv);
+            } else {
+                self.schema.set_bounds(off, &mut inv);
+                self.env.set_bounds(Rect::new(x, y, w, field_h), &mut inv);
+            }
+            y += field_h + gap;
+        }
         // 버튼 3개 한 줄 — 동일 너비 · 동일 간격(나머지 px는 양끝에 나눠 중앙 정렬 · 사용자 09-14).
         let bw = (w - gap * 2) / 3;
         let bh = self.s(28.0);
@@ -734,6 +784,7 @@ impl ConnectPanel {
         set(&mut self.test_btn, hit == Some(2));
         set(&mut self.connect_btn, hit == Some(3));
         set(&mut self.save_btn, hit == Some(4));
+        set(&mut self.env, hit == Some(5));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -744,6 +795,7 @@ impl ConnectPanel {
             self.test_btn.bounds(),
             self.connect_btn.bounds(),
             self.save_btn.bounds(),
+            self.env.bounds(),
         ]
         .iter()
         .position(|b| b.contains(p))
@@ -774,7 +826,7 @@ impl ConnectPanel {
         let a = self.test_btn.tick(now_ms);
         let b = self.connect_btn.tick(now_ms);
         let c = self.save_btn.tick(now_ms);
-        let d = self.dialect.tick_hover(now_ms);
+        let d = self.dialect.tick_hover(now_ms) | self.env.tick_hover(now_ms);
         // 입력란 hover 페이드(회색 · Slow).
         let mut e = false;
         for f in FIELDS {
@@ -796,6 +848,7 @@ impl ConnectPanel {
             || self.connect_btn.is_animating()
             || self.save_btn.is_animating()
             || self.dialect.hover_animating()
+            || self.env.hover_animating()
             || self.copy.next_tick(std::time::Instant::now()).is_some()
             || FIELDS.iter().any(|&f| self.textbox_ref(f).is_animating())
             || self.status_bars_visible()
@@ -842,7 +895,7 @@ impl ConnectPanel {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.dialect.is_open()
+        self.dialect.is_open() || self.env.is_open()
     }
 
     /// Port 입력란 폭 지정(설정 주입).
@@ -935,6 +988,10 @@ impl ConnectPanel {
             self.dialect.on_event(ev, inv);
             return self.after_combo();
         }
+        if self.env.is_open() {
+            self.env.on_event(ev, inv);
+            return self.after_combo();
+        }
         // 상태 메시지 스크롤(휠 · 썸 드래그) — 넘칠 때만 소비.
         if matches!(
             ev,
@@ -1021,6 +1078,7 @@ impl ConnectPanel {
                 | InputEvent::MouseMove { .. }
         ) {
             self.dialect.on_event(ev, inv);
+            self.env.on_event(ev, inv);
             self.save_pw.on_event(ev, inv);
             self.test_btn.on_event(ev, inv);
             self.connect_btn.on_event(ev, inv);
@@ -1087,6 +1145,8 @@ impl ConnectPanel {
                 self.apply_dialect(d);
             }
         }
+        // 서버 유형은 값만 바뀐다(바뀜 표식 → Save로 영속).
+        let _ = self.env.take_changed();
         None
     }
 
@@ -1166,6 +1226,7 @@ impl ConnectPanel {
         self.password.set_text(&snap.password);
         self.name.set_text(&snap.name);
         self.save_pw.set_checked(snap.save_pw);
+        self.env.select_value(&snap.env);
         let d = self.selected_dialect();
         self.apply_dialect(d);
         self.snap = snap;
@@ -1373,6 +1434,29 @@ impl ConnectPanel {
         if is(Dirty::Dialect) {
             stripe(dc, self.dialect.bounds());
         }
+        // 서버 유형 라벨(콤보 = 늘 값이 있다 · `*` 없음) + 바뀜 원.
+        {
+            let r = self.env.bounds();
+            if r.w > 0 {
+                let y = r.y - label_h + self.s(1.0);
+                let text = t(Msg::LblServerType);
+                dc.text(r.x, y, b, text, th.text_dim);
+                if is(Dirty::Env) {
+                    let w = dc.text_width(text);
+                    let cy = y + dc.text_height() / 2 + self.s(1.0);
+                    mark_dot(
+                        dc,
+                        r.x + w + self.s(MARK_GAP),
+                        cy,
+                        self.s(MARK_D),
+                        th.accent,
+                    );
+                }
+            }
+        }
+        if is(Dirty::Env) {
+            stripe(dc, self.env.bounds());
+        }
         self.test_btn.paint(dc, th);
         self.connect_btn.paint(dc, th);
         // Save = 바뀐 칸이 있으면 강조 + `Save •`(`sync_dirty` · 툴바 Commit 배지와 같은 문법).
@@ -1444,7 +1528,13 @@ impl ConnectPanel {
         self.status_bars
             .paint(dc, th, sr, sr.w, content_h.max(sr.h), 0, scroll, self.scale);
         // 콤보는 팝업을 스스로 그린다 — 열린 것이 최상위가 되게 마지막에.
-        self.dialect.paint(dc, th);
+        if self.dialect.is_open() {
+            self.env.paint(dc, th);
+            self.dialect.paint(dc, th);
+        } else {
+            self.dialect.paint(dc, th);
+            self.env.paint(dc, th);
+        }
         // 입력란 팝업은 여기서 그리지 않는다 — 창이 맨 마지막에 `paint_popups`로(최상위).
     }
 }
@@ -1513,6 +1603,7 @@ mod dirty_tests {
             user: "u".into(),
             password: "p".into(),
             save_pw: true,
+            env: "none".into(),
         }
     }
 
@@ -1537,13 +1628,13 @@ mod dirty_tests {
         assert!(!p.is_dirty());
     }
 
-    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(9칸 독립) · 같으면 빈 목록.
+    /// MC/DC — 칸 하나만 바꾸면 그 칸만 나온다(10칸 독립) · 같으면 빈 목록.
     #[test]
     fn each_field_independently() {
         let b = base();
         assert!(dirty_fields(&b, &b).is_empty());
         type Mut = fn(&mut FormSnap);
-        let cases: [(Mut, Dirty); 9] = [
+        let cases: [(Mut, Dirty); 10] = [
             (|s| s.name = "B".into(), Dirty::Name),
             (|s| s.dialect = "pg".into(), Dirty::Dialect),
             (|s| s.host = "x".into(), Dirty::Host),
@@ -1553,6 +1644,7 @@ mod dirty_tests {
             (|s| s.user = "v".into(), Dirty::User),
             (|s| s.password = "q".into(), Dirty::Password),
             (|s| s.save_pw = false, Dirty::SavePw),
+            (|s| s.env = "prod".into(), Dirty::Env),
         ];
         for (f, want) in cases {
             let mut n = base();
@@ -1621,6 +1713,65 @@ mod dirty_tests {
             missing_fields(Dialect::Postgres, FormAction::Connect, &sparse),
             vec![Field::Host, Field::User]
         );
+    }
+
+    /// 폼 배치(사용자 10-01): 비밀번호 + "저장" 체크 한 줄 · 그 아래 기본 스키마(왼쪽) + 서버 유형(오른쪽) 한 줄 · 그 아래 버튼.
+    /// 스키마가 없는 방언(SQL Server)은 서버 유형이 줄 전체.
+    #[test]
+    fn form_layout_rows() {
+        let mut p = ConnectPanel::new(vec![Dialect::Oracle, Dialect::Mssql]);
+        p.set_bounds(Rect::new(0, 0, 292, 600), 1.0);
+        let (pw, chk, sc, env, btn) = (
+            p.password.bounds(),
+            p.save_pw.bounds(),
+            p.schema.bounds(),
+            p.env.bounds(),
+            p.save_btn.bounds(),
+        );
+        // 비밀번호 줄: 체크는 같은 줄 오른쪽 · 비밀번호는 그만큼 좁다.
+        assert!(
+            chk.y >= pw.y && chk.bottom() <= pw.bottom(),
+            "{pw:?} {chk:?}"
+        );
+        assert!(chk.x > pw.right(), "{pw:?} {chk:?}");
+        assert!(p.user.bounds().w > pw.w);
+        // 스키마 · 서버 유형 = 같은 줄 · 비밀번호 아래 · 버튼 위.
+        assert_eq!((sc.y, sc.h), (env.y, env.h));
+        assert!(sc.w > 0 && env.x > sc.right(), "{sc:?} {env:?}");
+        assert!(sc.y > pw.bottom() && btn.y > sc.bottom());
+        // SQL Server: 스키마 숨김 · 서버 유형이 줄 전체.
+        p.dialect.select_value(&Dialect::Mssql.to_string());
+        p.apply_dialect(Dialect::Mssql);
+        assert_eq!(p.schema.bounds().w, 0);
+        assert_eq!(p.env.bounds().x, p.user.bounds().x);
+        assert_eq!(p.env.bounds().w, p.user.bounds().w);
+    }
+
+    /// 서버 유형 콤보(사용자 10-01): 불러온 값 표시 · 바꾸면 바뀜 · Save 스펙에 실림 · 목록 메뉴(이미 저장)는 바뀜 아님.
+    #[test]
+    fn env_combo_roundtrip() {
+        let mut p = ConnectPanel::new(vec![Dialect::Oracle]);
+        let mut spec = ConnectSpec::from_parts(Dialect::Oracle, "h", Some(1521), "svc", "u", "pw")
+            .expect("spec");
+        spec.env = Some(nsql_script::ConnEnv::Test);
+        p.fill("A", &spec);
+        assert_eq!(p.env.selected_value(), "test");
+        assert!(!p.is_dirty());
+        p.env.select_value("prod");
+        assert_eq!(p.dirty(), vec![Dirty::Env]);
+        assert_eq!(
+            p.build_spec().expect("spec").env,
+            Some(nsql_script::ConnEnv::Prod)
+        );
+        p.env.select_value("none");
+        assert_eq!(p.build_spec().expect("spec").env, None);
+        p.discard_changes();
+        assert_eq!(p.env.selected_value(), "test");
+        p.set_env_if_loaded("A", Some(nsql_script::ConnEnv::Dev));
+        assert_eq!(p.env.selected_value(), "dev");
+        assert!(!p.is_dirty(), "목록 메뉴 = 이미 저장됨");
+        p.clear();
+        assert_eq!(p.env.selected_value(), "none");
     }
 
     /// 양끝 공백은 바뀜이 아니다 — 비밀번호만 공백도 값.

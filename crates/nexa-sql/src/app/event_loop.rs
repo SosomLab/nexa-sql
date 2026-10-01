@@ -133,7 +133,8 @@ impl ApplicationHandler<Wake> for App {
         // 데모(사용자 09-17): 'Demo' 프로필·파일이 있으면 메뉴 비활성 · 없고 아직 안 물었으면 최초 1회 팝업.
         self.demo_ready = Self::demo_exists();
         // 오래된 미저장 스냅숏 정리(docs/70 §5 · `project.backup_days`).
-        let pruned = backups::prune(self.settings.int("project.backup_days").max(1) as u64);
+        let pruned = backups::prune(self.settings.int("project.backup_days").max(1) as u64)
+            + backups::prune_drop(self.settings.int("project.backup_days").max(1) as u64);
         if pruned > 0 {
             self.log_win.push(LogEntry::new(
                 LogKind::Info,
@@ -368,6 +369,13 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.input_win.tick(now) {
             next = next.min(t);
         }
+        // 삭제 창의 타임아웃 버튼(무장 중 100ms 틱 · 10-01).
+        if self.drop_win.armed() {
+            if self.drop_win.tick() {
+                self.drop_win.redraw();
+            }
+            next = next.min(now + Duration::from_millis(100));
+        }
         self.sync_modal();
         // settings.json 감시(열어 둔 뒤 1초 폴링 · 저장 즉시 반영).
         if let Some(t) = self.json_tick(now) {
@@ -600,6 +608,7 @@ impl ApplicationHandler<Wake> for App {
             || self.import_win.is(id)
             || self.license_win.is(id)
             || self.about_win.is(id)
+            || self.drop_win.is(id)
             || (self.input_win.is_modal() && self.input_win.is(id));
         if modal_open
             && !is_modal_win
@@ -1460,6 +1469,11 @@ impl App {
             }
             return true;
         }
+        if self.drop_win.is(id) {
+            let a = self.drop_win.handle(event);
+            self.drop_action(a);
+            return true;
+        }
         if self.about_win.is(id) {
             match self.about_win.handle(event) {
                 AboutAction::Paint => {
@@ -1650,6 +1664,9 @@ impl App {
         if std::mem::take(&mut self.open_license) {
             self.open_license_window(el);
         }
+        if std::mem::take(&mut self.open_drop) {
+            self.open_drop_window(el);
+        }
         if std::mem::take(&mut self.open_about) {
             let owner = self.window.clone();
             let was_open = self.about_win.is_open();
@@ -1761,6 +1778,9 @@ impl App {
         }
         if std::mem::take(&mut self.open_license) {
             self.open_license_window(el);
+        }
+        if std::mem::take(&mut self.open_drop) {
+            self.open_drop_window(el);
         }
         if std::mem::take(&mut self.open_about) {
             let owner = self.window.clone();

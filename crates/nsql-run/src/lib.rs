@@ -193,6 +193,11 @@ pub enum RunEvent {
     },
     /// 서버 메시지(DBMS_OUTPUT · T-SQL PRINT) · 엔진 정보.
     Message(String),
+    /// ★ 서버 유형 지정(10-01 · `CONNTYPE prod`): 호스트(GUI)가 세션 유형을 **임시로** 바꾼다(프로필에 저장 안 함) ·
+    /// 값 = 정규화된 저장 값 `none`|`dev`|`test`|`prod`(입력은 정식·3자리 약어·별칭).
+    ConnType(String),
+    /// ★ `SHOW CONN` — 호스트가 접속 정보를 쓴다(GUI = Output · CLI = 한 줄).
+    ShowConn,
     /// ★ 눈에 띄어야 하는 안내(T-202 · 사용자 09-24 "강제 전체 조회를 눈에 띄게") — GUI 상태줄 + 로그 · CLI stderr. 텍스트에 ⚠.
     Warning(String),
     Connected {
@@ -253,6 +258,8 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
             tf(Msg::LogVarList, &[&var_list_text(vars)]),
         )],
         RunEvent::Message(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
+        RunEvent::ConnType(v) => vec![LogEntry::new(LogKind::Info, format!("conntype → {v}"))],
+        RunEvent::ShowConn => Vec::new(),
         RunEvent::Warning(m) => vec![LogEntry::new(LogKind::Info, m.clone())],
         RunEvent::Connected {
             description,
@@ -2058,6 +2065,11 @@ impl Runner {
             Action::Describe(o) => self.describe(index, item, &o, emit),
             Action::Show(w) => {
                 let w_up = w.trim().trim_end_matches(';').trim().to_ascii_uppercase();
+                // ★ `SHOW CONN|CONNECTION|CONNINFO`(10-01) — 접속 정보는 호스트가 안다(프로필·유형·세션).
+                if matches!(w_up.as_str(), "CONN" | "CONNECTION" | "CONNINFO") {
+                    emit(RunEvent::ShowConn);
+                    return true;
+                }
                 // `SHOW TABLES|VIEWS|<kind>` — 카탈로그 목록(T-52 · psql `\dt` · sqlite `.tables` 별칭의 종착).
                 if !matches!(w_up.as_str(), "USER" | "VARIABLES" | "VAR" | "VARS") {
                     if let Some(kind) = nsql_catalog::ObjectKind::parse(&w_up.to_ascii_lowercase())
@@ -2170,6 +2182,29 @@ impl Runner {
                 }
             }
             Action::SetOption { name, value } => {
+                // ★ 접속 유형(10-01): 서버 옵션이 아니라 호스트 세션 속성 — 값 검증 뒤 이벤트.
+                if name == "conntype" {
+                    // 정식 · 3자리 약어 · 별칭 → 저장 값(`none`·`dev`·`test`·`prod`)으로 정규화해 넘긴다(사용자 10-01).
+                    match nsql_script::ConnEnv::parse(&value) {
+                        Ok(env) => {
+                            emit(RunEvent::ConnType(
+                                env.map_or("none", nsql_script::ConnEnv::as_str).to_string(),
+                            ));
+                            return true;
+                        }
+                        Err(_) => {
+                            emit(RunEvent::Error {
+                                index,
+                                line: item.line,
+                                error: msg_err(format!(
+                                    "CONNTYPE {value}: {}",
+                                    nsql_script::ENV_CHOICES
+                                )),
+                            });
+                            return false;
+                        }
+                    }
+                }
                 if let Some(s) = self.session.as_mut() {
                     if let Err(e) = s.set_option(&name, &value) {
                         emit(RunEvent::Error {
@@ -3156,6 +3191,37 @@ mod tests {
         let two =
             "CREATE OR REPLACE PACKAGE a AS END;\n/\nCREATE OR REPLACE PACKAGE BODY a AS END;\n/\n";
         assert!(whole_item(two).text.contains("\n/\n"));
+    }
+
+    /// ★ `CONNTYPE`·`SHOW CONN`(10-01): 서버로 가지 않고 이벤트로 호스트에.
+    #[test]
+    fn conntype_and_show_conn_emit_events() {
+        let mut r = runner();
+        let mut evs = Vec::new();
+        let mut prompt = |_: &str| None;
+        r.run_script(
+            "CONNTYPE Production\nSHOW CONN\nSET CONNTYPE non\nCONNTYPE stg",
+            &mut prompt,
+            &mut |e| evs.push(e),
+        );
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, RunEvent::ConnType(v) if v == "prod")),
+            "{evs:?}"
+        );
+        assert!(evs
+            .iter()
+            .any(|e| matches!(e, RunEvent::ConnType(v) if v == "none")));
+        assert!(evs
+            .iter()
+            .any(|e| matches!(e, RunEvent::ConnType(v) if v == "test")));
+        assert!(evs.iter().any(|e| matches!(e, RunEvent::ShowConn)));
+        let mut evs2 = Vec::new();
+        r.run_script("CONNTYPE bogus", &mut prompt, &mut |e| evs2.push(e));
+        assert!(
+            evs2.iter().any(|e| matches!(e, RunEvent::Error { .. })),
+            "잘못된 값 = 오류"
+        );
     }
 
     fn runner() -> Runner {

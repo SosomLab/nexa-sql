@@ -2402,6 +2402,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 객체 삭제 전 DDL 파일 백업(10-01 · 사용자 "기본은 파일로 백업 후 삭제 켬 · 끄면 백업 로직 사용 안 함").
+    Entry {
+        key: "explorer.drop_backup",
+        cat: Msg::CatExplorer,
+        label: Msg::LblDropBackup,
+        desc: Msg::DescDropBackup,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // ★ 소스 열기 머리 줄에 소유 스키마(09-30 · 사용자 "원본의 스키마를 붙여서 생성하는 걸 기본값으로").
     Entry {
         key: "explorer.source_schema",
@@ -4090,7 +4099,7 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "5000",
     },
-    // D-231(09-30 · 권장안 적용 · 한 줄 고지): Oracle DBMS_OUTPUT은 접속 때 켠다(실행마다 GET_LINES 1회 · 39 §3 부하원 · 끌 수 있다).
+    // D-239(09-30 · 권장안 적용 · 한 줄 고지): Oracle DBMS_OUTPUT은 접속 때 켠다(실행마다 GET_LINES 1회 · 39 §3 부하원 · 끌 수 있다).
     Entry {
         key: "output.serveroutput",
         cat: Msg::CatOutput,

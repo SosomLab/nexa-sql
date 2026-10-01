@@ -1265,6 +1265,24 @@ impl Printer {
             RunEvent::Warning(m) => {
                 let _ = writeln!(out, "{m}");
             }
+            // 서버 유형은 GUI 세션의 임시 속성 — CLI는 알려만 준다(저장 프로필 = 영속 = `nsql conn env`).
+            RunEvent::ConnType(v) => {
+                let e = nsql_script::ConnEnv::from_name(&v);
+                let _ = writeln!(
+                    out,
+                    "conntype: {} ({}) — temporary attribute of the GUI editor session; to save it in a profile use `nsql conn env <name> {}`",
+                    nsql_script::ConnEnv::name_of(e),
+                    nsql_script::ConnEnv::abbr_of(e),
+                    nsql_script::ConnEnv::abbr_of(e).to_ascii_lowercase()
+                );
+            }
+            RunEvent::ShowConn => {
+                let _ = writeln!(
+                    out,
+                    "connection: dialect={} (see the `Connected:` line above for the target)",
+                    self.dialect
+                );
+            }
             RunEvent::Connected {
                 description,
                 dialect,

@@ -20,17 +20,42 @@ pub enum ConnEnv {
     Prod,
 }
 
+/// 서버 유형 용어(사용자 10-01): **정식 용어**(표시) + **3자리 약어**(칩·목록) 두 가지만 보인다 — 입력은 별칭도 받는다.
+/// 저장 값(`as_str`)은 종전 그대로(`dev`·`test`·`prod`) — 프로필 파일 호환.
+pub const ENV_NONE_NAME: &str = "None";
+pub const ENV_NONE_ABBR: &str = "NON";
+
+/// 명령 설명에 쓰는 값 목록(정식 · 3자리 약어 — 대소문자 무관).
+pub const ENV_CHOICES: &str = "none|non · development|dev · test|tst · production|prd";
+
 impl ConnEnv {
+    pub const ALL: [ConnEnv; 3] = [ConnEnv::Dev, ConnEnv::Test, ConnEnv::Prod];
+
+    /// 유형 이름(정식 · 3자리 약어 · 별칭 · 대소문자 무관) → 유형. "없음"은 `None` — [`ConnEnv::parse`]가 구별한다.
     #[must_use]
     pub fn from_name(s: &str) -> Option<ConnEnv> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "dev" | "development" => Some(ConnEnv::Dev),
-            "test" | "qa" | "stage" | "staging" => Some(ConnEnv::Test),
-            "prod" | "production" | "live" => Some(ConnEnv::Prod),
+            "dev" | "development" | "devel" | "local" | "sandbox" => Some(ConnEnv::Dev),
+            "test" | "tst" | "testing" | "qa" | "stage" | "stg" | "staging" | "uat" => {
+                Some(ConnEnv::Test)
+            }
+            "prod" | "prd" | "production" | "product" | "live" => Some(ConnEnv::Prod),
             _ => None,
         }
     }
 
+    /// "없음"까지 받는 해석: `Ok(None)` = 없음(`none`·`non`·`-`·빈 값) · `Ok(Some)` = 유형 · `Err` = 모르는 값.
+    pub fn parse(s: &str) -> Result<Option<ConnEnv>, String> {
+        let v = s.trim();
+        if v.is_empty() || v == "-" || ["none", "non"].iter().any(|n| v.eq_ignore_ascii_case(n)) {
+            return Ok(None);
+        }
+        ConnEnv::from_name(v)
+            .map(Some)
+            .ok_or_else(|| format!("{v}: {ENV_CHOICES}"))
+    }
+
+    /// 저장 값(프로필 `env=` · 접속 문자열 `?env=` · 메뉴 id).
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -38,6 +63,37 @@ impl ConnEnv {
             ConnEnv::Test => "test",
             ConnEnv::Prod => "prod",
         }
+    }
+
+    /// 정식 용어(영어 · CLI 표시) — GUI는 `nsql-i18n`의 같은 뜻 문구.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            ConnEnv::Dev => "Development",
+            ConnEnv::Test => "Test",
+            ConnEnv::Prod => "Production",
+        }
+    }
+
+    /// 3자리 약어(칩 · 목록 열).
+    #[must_use]
+    pub fn abbr(self) -> &'static str {
+        match self {
+            ConnEnv::Dev => "DEV",
+            ConnEnv::Test => "TST",
+            ConnEnv::Prod => "PRD",
+        }
+    }
+
+    /// `Option` 그대로 받는 정식 용어 · 약어(없음 = `None`·`NON`).
+    #[must_use]
+    pub fn name_of(e: Option<ConnEnv>) -> &'static str {
+        e.map_or(ENV_NONE_NAME, ConnEnv::name)
+    }
+
+    #[must_use]
+    pub fn abbr_of(e: Option<ConnEnv>) -> &'static str {
+        e.map_or(ENV_NONE_ABBR, ConnEnv::abbr)
     }
 }
 
@@ -445,6 +501,66 @@ mod tests {
         let c = ConnectSpec::parse("\"prod-db.1\"").unwrap();
         assert_eq!(c.user.as_deref(), Some("prod-db.1"));
         assert!(c.host.is_none() && c.password.is_none());
+    }
+
+    /// 서버 유형 용어(사용자 10-01): 정식·3자리 약어·별칭(대소문자 무관) → 유형 · 표시는 정식/약어 두 가지.
+    #[test]
+    fn conn_env_terms_and_aliases() {
+        for (inputs, want) in [
+            (&["None", "none", "non", "NON", "-", " "][..], None),
+            (
+                &["Development", "development", "Dev", "dev", "DEV"][..],
+                Some(ConnEnv::Dev),
+            ),
+            (
+                &[
+                    "Test", "test", "TST", "Stage", "stage", "Stg", "stg", "staging", "qa",
+                ][..],
+                Some(ConnEnv::Test),
+            ),
+            (
+                &[
+                    "Production",
+                    "Product",
+                    "product",
+                    "Prod",
+                    "prod",
+                    "Prd",
+                    "prd",
+                    "live",
+                ][..],
+                Some(ConnEnv::Prod),
+            ),
+        ] {
+            for s in inputs {
+                assert_eq!(ConnEnv::parse(s), Ok(want), "{s}");
+            }
+        }
+        assert!(ConnEnv::parse("bogus").is_err());
+        assert_eq!(ConnEnv::from_name("none"), None);
+        // 표시 = 정식 · 3자리 약어 · 저장 값은 종전 그대로.
+        let shown: Vec<_> = ConnEnv::ALL
+            .iter()
+            .map(|e| (e.name(), e.abbr(), e.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("Development", "DEV", "dev"),
+                ("Test", "TST", "test"),
+                ("Production", "PRD", "prod")
+            ]
+        );
+        assert_eq!(
+            (ConnEnv::name_of(None), ConnEnv::abbr_of(None)),
+            ("None", "NON")
+        );
+        // 저장 값·약어는 다시 읽어도 같은 유형(왕복).
+        for e in ConnEnv::ALL {
+            assert_eq!(ConnEnv::from_name(e.as_str()), Some(e));
+            assert_eq!(ConnEnv::from_name(e.abbr()), Some(e));
+            assert_eq!(ConnEnv::from_name(e.name()), Some(e));
+        }
     }
 
     /// 09-18: `?schema=` 기본 스키마 · 접속 문자열(우리 형식) 왕복.

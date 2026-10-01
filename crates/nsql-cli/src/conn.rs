@@ -70,8 +70,62 @@ pub(crate) fn cmd_conn(o: &Opts) -> i32 {
             rm(name)
         }
         "test" => test(o, name),
+        // ★ 저장 프로필의 서버 유형(10-01 · 영속): `nsql conn env <name>` = 보기 · `… <name> <유형>` = 지정
+        //   (정식 · 3자리 약어 · 별칭 모두 받음 · 표시 = 정식 + 3자리 약어).
+        "env" | "type" => {
+            let Some(name) = name else {
+                eprintln!("nsql conn env <name> [{}]", nsql_script::ENV_CHOICES);
+                return 2;
+            };
+            env(name, o.positional.get(2).map(String::as_str))
+        }
         _ => usage(),
     }
+}
+
+fn env(name: &str, value: Option<&str>) -> i32 {
+    let v = match open_vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    let Ok(Some(mut spec)) = v.get(name) else {
+        eprintln!("프로필 '{name}'이(가) 없습니다");
+        return 1;
+    };
+    let Some(value) = value else {
+        println!("{name}: {}", env_label(spec.env));
+        return 0;
+    };
+    let env = match nsql_script::ConnEnv::parse(value) {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!(
+                "알 수 없는 서버 유형: {value} ({})",
+                nsql_script::ENV_CHOICES
+            );
+            return 2;
+        }
+    };
+    spec.env = env;
+    match v.save(name, &spec) {
+        Ok(()) => {
+            println!("{name}: {}", env_label(env));
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
+}
+
+/// 서버 유형 표시 = 정식 용어 + 3자리 약어(사용자 10-01) — 예 `Production (PRD)`.
+fn env_label(e: Option<nsql_script::ConnEnv>) -> String {
+    format!(
+        "{} ({})",
+        nsql_script::ConnEnv::name_of(e),
+        nsql_script::ConnEnv::abbr_of(e)
+    )
 }
 
 fn list() -> i32 {
@@ -96,16 +150,23 @@ fn list() -> i32 {
     let w = list.iter().map(|p| p.name.len()).max().unwrap_or(4).max(4);
     let out = io::stdout();
     let mut out = out.lock();
-    let _ = writeln!(out, "{:<w$}  {:<7}  {:<3}  TARGET", "NAME", "DIALECT", "PW");
+    let _ = writeln!(
+        out,
+        "{:<w$}  {:<7}  {:<4}  {:<3}  TARGET",
+        "NAME", "DIALECT", "TYPE", "PW"
+    );
     for p in &list {
         let dialect = p.spec.dialect.map_or("-".to_string(), |d| d.to_string());
         let mut s = p.spec.clone();
         s.dialect = None;
+        // 유형 열 = 3자리 약어(없음 = `-` · 목록에서 눈에 띄는 것은 지정된 유형뿐).
+        s.env = None;
         let _ = writeln!(
             out,
-            "{:<w$}  {:<7}  {:<3}  {}",
+            "{:<w$}  {:<7}  {:<4}  {:<3}  {}",
             p.name,
             dialect,
+            p.spec.env.map_or("-", nsql_script::ConnEnv::abbr),
             if p.has_password { "✓" } else { "-" },
             s.redacted()
         );
@@ -182,6 +243,7 @@ fn show(name: &str) -> i32 {
     match v.peek(name) {
         Ok(Some(p)) => {
             println!("{name}: {}", p.describe());
+            println!("  유형: {}", env_label(p.spec.env));
             if let Ok(p) = v.path_of(name) {
                 println!("  파일: {}", p.display());
             }

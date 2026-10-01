@@ -861,6 +861,10 @@ impl App {
             // 접속 창 열기 — 연결 중이어도 끊지 않고 그냥 연다(사용자 09-14). 끊기는 폼의 Disconnect 버튼.
             "conn.toggle" => self.open_conn = true,
             // 툴바 Disconnect = **지금 탭의 연결 해제**(종전과 같음 · 사용자 09-18 원복) · 세션 목록 버튼/View = 세션 창.
+            "session.info" => self.output_conn_info(),
+            x if x.starts_with("session.env:") => {
+                self.set_session_env(nsql_script::ConnEnv::from_name(&x["session.env:".len()..]));
+            }
             "conn.disconnect" => {
                 self.sess.disc_path = Some(sessions::DiscPath::Toolbar);
                 self.disconnect_now();
@@ -1229,6 +1233,7 @@ impl App {
                     MenuEntry::Separator,
                     item("conn.toggle", Msg::MnConnect),
                     item("conn.disconnect", Msg::MnDisconnect),
+                    item("session.info", Msg::MnSessInfo),
                 ],
             ),
             // ★ 탭 메뉴(Golden Tabs · 사용자 09-16): 열린 탭 순서대로 · 활성 탭은 ✓ · 고르면 전환.
@@ -1653,6 +1658,11 @@ impl App {
         cmds.push(m("run.rollback", Msg::MnRun, Msg::MnRollback));
         cmds.push(m("conn.toggle", Msg::MnRun, Msg::MnConnect));
         cmds.push(m("conn.disconnect", Msg::MnRun, Msg::MnDisconnect));
+        cmds.push(m("session.info", Msg::MnRun, Msg::MnSessInfo));
+        cmds.push(m("session.env:none", Msg::MnRun, Msg::MnEnvNone));
+        cmds.push(m("session.env:dev", Msg::MnRun, Msg::MnEnvDev));
+        cmds.push(m("session.env:test", Msg::MnRun, Msg::MnEnvTest));
+        cmds.push(m("session.env:prod", Msg::MnRun, Msg::MnEnvProd));
         for (id, msg) in [
             ("edit.duplicate_line", Msg::MnDuplicateLine),
             ("edit.delete_line", Msg::MnDeleteLine),

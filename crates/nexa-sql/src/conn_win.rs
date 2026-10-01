@@ -2289,6 +2289,8 @@ impl ConnWin {
                             CtxItem::item("dup", t(Msg::MnDuplicate)),
                             CtxItem::item("copy_cs", t(Msg::MnCopyConnString)),
                             CtxItem::Separator,
+                            // 여기서 바꾸면 프로필에 저장(영속) — 세션 메뉴의 "이 세션만(임시)"과 구별(사용자 10-01).
+                            CtxItem::maybe("env:hdr", t(Msg::MnEnvProfileHdr), false),
                             CtxItem::item("env:none", t(Msg::MnEnvNone)).with_mark(cur.is_none()),
                             CtxItem::item("env:dev", t(Msg::MnEnvDev))
                                 .with_mark(cur == Some(E::Dev)),
@@ -2882,14 +2884,16 @@ impl ConnWin {
                             if ci == 0 && dirty_name.as_deref() == Some(p.name.as_str()) {
                                 txt.push('*');
                             }
-                            // 접속 유형 표식(이름 열): 운영 = 위험색 · 시험 = 경고색(개발·없음 = 표식 없음).
+                            // 서버 유형 표식(이름 열 · 3자리 약어): 운영 = 위험색 · 테스트 = 경고색(개발·없음 = 표식 없음).
                             let color = match (ci, p.spec.env) {
-                                (0, Some(nsql_script::ConnEnv::Prod)) => {
-                                    txt.push_str(" · PROD");
+                                (0, Some(e @ nsql_script::ConnEnv::Prod)) => {
+                                    txt.push_str(" · ");
+                                    txt.push_str(e.abbr());
                                     th.danger
                                 }
-                                (0, Some(nsql_script::ConnEnv::Test)) => {
-                                    txt.push_str(" · TEST");
+                                (0, Some(e @ nsql_script::ConnEnv::Test)) => {
+                                    txt.push_str(" · ");
+                                    txt.push_str(e.abbr());
                                     th.warn
                                 }
                                 _ => th.text,

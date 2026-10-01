@@ -457,6 +457,21 @@ impl ExplorerSet {
         }
     }
 
+    /// 그 서버 칸으로 객체 하나의 Generate SQL 요청(삭제 백업 DDL · 10-01) — 칸이 없으면 false.
+    pub(crate) fn gen_object_on(
+        &mut self,
+        server: &ConnectSpec,
+        owner: nsql_catalog::ObjectInfo,
+        what: nsql_catalog::GenWhat,
+        opts: nsql_catalog::GenOpts,
+    ) -> bool {
+        let Some(i) = self.find(server) else {
+            return false;
+        };
+        self.panes[i].ex.gen_object(owner, what, opts);
+        true
+    }
+
     pub(crate) fn set_gen_opts(&mut self, opts: nsql_catalog::GenOpts) {
         self.gen_opts = opts;
         for p in &mut self.panes {
@@ -1260,6 +1275,12 @@ impl ExplorerSet {
                     }
                     ExplorerAction::Import { owner, .. } => {
                         out.push(ExplorerAction::Import {
+                            owner,
+                            server: p.key.clone(),
+                        });
+                    }
+                    ExplorerAction::DropObject { owner, .. } => {
+                        out.push(ExplorerAction::DropObject {
                             owner,
                             server: p.key.clone(),
                         });

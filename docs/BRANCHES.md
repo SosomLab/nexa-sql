@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/drop-object-server-type | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 10-01 — 객체 삭제(모달·2단 타임아웃·DDL 백업 후 삭제·운영 금지 · [28 §9](28-object-explorer.md) · D-240~245) · 서버 유형(정식+3자리 약어 · 영속/임시 `env_temp` · 로그인 폼 콤보·재배치 · 편집기 `CONNTYPE`/`SHOW CONN` · CLI `conn env`) · 붙여넣기 F5 E2E 13 · `conn-cmd-e2e.sh` 30 |
 | feat/remaining-108 | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 108차 잔여 일괄 — PG·MSSQL 소스 왕복 E2E 33/33 · 트리거 ON/함수 참조 한정 · GET_DDL 폴백 · CLI qualify=off · DDL 미리보기 탭 출처 · F5 스키마 경고 · hover 차단 확산 · Output 배지/두 번 클릭/빈 결과1 · S79 |
 | feat/time-settings-ms | 2026-09-30 | 2026-09-30 → main(삭제) | 1 | ★ 108차 — 시간 설정 ms 규칙+`RESCALED` 이주 · 객체 소스 탭 F5 = 한 단위(`ObjectOrigin`·`run_whole`) · Output 탭(`output.*`) · Oracle DDL E2E 67/67 · 보수적 생성 원칙(100 §5 · 4-DBMS) · 전체 선택 화면 유지 · 인덱스 `테이블.인덱스` · 버튼 연타 차단 · 로그인 접속 = 저장 선수행 · 결함 5(뷰 소스·hover·DDL 인덱스 중복 등) — 사용자 09-30 |
 | fix/objlink-strict-session-stateful | 2026-09-30 | 2026-09-30 → main(삭제) | 1 | 🔧 102차 끝 11 — Ctrl 링크 6·7차(설명 엄격화 · `meta_pane`) · `pointer_gone` · 토스트 스택 · "새 서버 세션" 헛경고(비밀번호 `#` · `alters_session_state` 정정 · `Begin` 표식) |

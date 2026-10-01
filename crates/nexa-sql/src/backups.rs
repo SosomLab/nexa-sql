@@ -64,6 +64,103 @@ pub(crate) fn write(path: &Path, text: &str) -> bool {
 }
 
 /// 스냅숏 지우기(저장 · 버림).
+/// ★ 객체 삭제 전 DDL 백업 폴더(10-01 · D-233): `<설정 폴더>/backups/drop/`.
+pub(crate) fn drop_dir() -> Option<PathBuf> {
+    Some(nsql_settings::config_dir()?.join("backups").join("drop"))
+}
+
+fn safe_name(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '$' | '#') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// DDL을 `<프로필>_<SCHEMA>.<NAME>_<KIND>_<yyyymmdd-HHMMSS>.sql`로 쓴다(원자적 · 머리 주석 = 서버 · 객체 · 시각 · 방언).
+/// 실패 = 이유 문자열(호스트가 "백업 실패" 경로로).
+pub(crate) fn write_drop(
+    profile: &str,
+    o: &nsql_catalog::ObjectInfo,
+    dialect: &str,
+    ddl: &str,
+) -> Result<PathBuf, String> {
+    let dir = drop_dir().ok_or_else(|| "no config dir".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let now = nsql_log::now_local();
+    let stamp = now.stamp(); // YYYY-MM-DD HH:MM:SS.mmm
+    let ymd: String = stamp
+        .get(..10)
+        .unwrap_or("")
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let hms: String = stamp
+        .get(11..19)
+        .unwrap_or("")
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let prof = if profile.trim().is_empty() {
+        "conn".to_string()
+    } else {
+        safe_name(profile.trim())
+    };
+    let file = dir.join(format!(
+        "{prof}_{}.{}_{}_{ymd}-{hms}.sql",
+        safe_name(&o.schema),
+        safe_name(&o.name),
+        safe_name(&o.kind.code().to_ascii_uppercase())
+    ));
+    let body = format!(
+        "-- nexa-sql drop backup · {stamp}\n-- profile: {profile} · dialect: {dialect} · object: {}.{} ({})\n\n{}",
+        o.schema,
+        o.name,
+        o.kind.code().to_ascii_uppercase(),
+        ddl.trim_end()
+    );
+    let tmp = file.with_extension("sql.tmp");
+    std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &file).map_err(|e| format!("{}: {e}", file.display()))?;
+    // 쓴 것을 다시 읽어 비어 있지 않은지 확인(정상 생성이 확인된 경우에만 삭제가 이어진다).
+    let n = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+    if n == 0 {
+        return Err(format!("{}: empty", file.display()));
+    }
+    Ok(file)
+}
+
+/// 삭제 백업 보관(`project.backup_days` · 수정 시각 기준) — 지운 개수.
+pub(crate) fn prune_drop(days: u64) -> usize {
+    let Some(dir) = drop_dir() else {
+        return 0;
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let limit = std::time::Duration::from_secs(days.max(1) * 86_400);
+    let mut n = 0;
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().is_some_and(|x| x == "sql") {
+            let old = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > limit);
+            if old && std::fs::remove_file(&p).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 pub(crate) fn remove(path: &Path) {
     if let Some(f) = file_of(path) {
         let _ = std::fs::remove_file(f);

@@ -1076,6 +1076,16 @@ impl App {
                     // 눈에 띄게(T-202): 상태줄 + 로그(`log_entries`가 이미 넣었다).
                     self.sess.status = m;
                 }
+                // ★ 편집기 스크립트 명령(10-01): `CONNTYPE x` → 이 탭 세션의 유형 · `SHOW CONN` → 접속 정보 Output.
+                RunEvent::ConnType(v) => {
+                    let env = if v == "none" {
+                        None
+                    } else {
+                        nsql_script::ConnEnv::from_name(&v)
+                    };
+                    self.set_session_env(env);
+                }
+                RunEvent::ShowConn => self.output_conn_info(),
                 RunEvent::Message(m) => {
                     if m == t(Msg::StCommitted) {
                         self.tx_close(TxOutcome::Committed);

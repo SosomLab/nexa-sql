@@ -165,6 +165,7 @@ pub fn is_command_start(line: &str) -> bool {
             | "DESCRIBE"
             | "SHO"
             | "SHOW"
+            | "CONNTYPE"
             | "SPO"
             | "SPOOL"
             | "PROMPT"
@@ -289,6 +290,11 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
         "SHO" | "SHOW" => Command::Show {
             what: rest.to_string(),
         },
+        // ★ 접속 유형(10-01 · nexa-sql): `CONNTYPE prod` = `SET CONNTYPE prod` — 세션 속성(서버로 안 감).
+        "CONNTYPE" => Command::Set(SetOption::Other {
+            name: "CONNTYPE".into(),
+            value: rest.trim().to_string(),
+        }),
         "SPO" | "SPOOL" => Command::Spool {
             target: rest.to_string(),
         },
@@ -653,6 +659,10 @@ fn parse_set(rest: &str) -> Result<Option<Command>, String> {
                 .map_err(|_| format!("SET {name}: 숫자가 필요합니다"))?,
         ),
         "SQLFORMAT" => SetOption::SqlFormat(value.to_ascii_lowercase()),
+        "CONNTYPE" => SetOption::Other {
+            name: "CONNTYPE".into(),
+            value: value.to_string(),
+        },
         n if SQLPLUS_SET_NAMES.contains(&n) => SetOption::Other {
             name: name_up,
             value: value.to_string(),
@@ -1042,5 +1052,26 @@ mod tests {
         assert_eq!(parse_literal("NULL").unwrap(), Value::Null);
         assert!(parse_literal("'a' || 'b'").is_err());
         assert!(parse_literal("SYSDATE").is_err());
+    }
+
+    /// ★ 접속 유형 명령(10-01): `CONNTYPE x` = `SET CONNTYPE x` · `SHOW CONN`은 SHOW 명령.
+    #[test]
+    fn conntype_and_show_conn_parse() {
+        let c = parse_command("CONNTYPE prod").unwrap().unwrap();
+        assert!(
+            matches!(c, Command::Set(SetOption::Other { ref name, ref value }) if name == "CONNTYPE" && value == "prod"),
+            "{c:?}"
+        );
+        let c = parse_command("set conntype None;").unwrap().unwrap();
+        assert!(
+            matches!(c, Command::Set(SetOption::Other { ref name, ref value }) if name == "CONNTYPE" && value.eq_ignore_ascii_case("none")),
+            "{c:?}"
+        );
+        let c = parse_command("SHOW CONN").unwrap().unwrap();
+        assert!(
+            matches!(c, Command::Show { ref what } if what == "CONN"),
+            "{c:?}"
+        );
+        assert!(is_command_start("conntype dev"));
     }
 }

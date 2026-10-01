@@ -398,6 +398,13 @@ impl Engine {
                         name: "autocommit".into(),
                         value: b.to_string(),
                     }],
+                    // 접속 유형(10-01): 러너가 `RunEvent::ConnType`로 호스트에 넘긴다(서버 옵션 아님).
+                    SetOption::Other { name, value } if name == "CONNTYPE" => {
+                        vec![Action::SetOption {
+                            name: "conntype".into(),
+                            value: value.trim().to_ascii_lowercase(),
+                        }]
+                    }
                     _ => vec![Action::Nothing(format!("{opt:?}"))],
                 }
             }

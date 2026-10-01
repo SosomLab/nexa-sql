@@ -2196,6 +2196,70 @@ pub fn qualify_mysql_header(body: &str, schema: &str) -> String {
     out
 }
 
+/// ★ 객체 삭제 문(10-01 · 탐색기 ▸ Delete… · D-234 보수형 = CASCADE/PURGE 없음 · 종속이 있으면 서버 오류 그대로). 지원 안 하는
+/// 종류 = `None`. PG 트리거는 `ON 표`(`extra` = 표 이름) · SQL Server 인덱스는 `ON 표`(`extra` 첫 조각) · PG 루틴은 서명(`extra`)이 있으면 붙인다.
+#[must_use]
+pub fn drop_sql(dialect: Dialect, o: &ObjectInfo) -> Option<String> {
+    let q = qualified(dialect, &o.schema, &o.name);
+    let qn = quote_ident(dialect, &o.name);
+    let table_of_extra = || o.extra.split(" · ").next().unwrap_or("").trim().to_string();
+    let sql = match o.kind {
+        ObjectKind::Table | ObjectKind::ExternalTable | ObjectKind::ForeignTable => {
+            if o.kind == ObjectKind::ForeignTable {
+                format!("DROP FOREIGN TABLE {q}")
+            } else {
+                format!("DROP TABLE {q}")
+            }
+        }
+        ObjectKind::View => format!("DROP VIEW {q}"),
+        ObjectKind::MaterializedView => match dialect {
+            Dialect::Mssql => format!("DROP VIEW {q}"),
+            _ => format!("DROP MATERIALIZED VIEW {q}"),
+        },
+        ObjectKind::Procedure | ObjectKind::Function => {
+            let kw = if o.kind == ObjectKind::Procedure {
+                "PROCEDURE"
+            } else {
+                "FUNCTION"
+            };
+            if dialect == Dialect::Postgres && !o.extra.is_empty() && !o.extra.contains('.') {
+                format!("DROP {kw} {q}({})", o.extra)
+            } else {
+                format!("DROP {kw} {q}")
+            }
+        }
+        ObjectKind::Package => format!("DROP PACKAGE {q}"),
+        ObjectKind::PackageBody => format!("DROP PACKAGE BODY {q}"),
+        ObjectKind::Sequence => format!("DROP SEQUENCE {q}"),
+        ObjectKind::Synonym => format!("DROP SYNONYM {q}"),
+        ObjectKind::Type => format!("DROP TYPE {q}"),
+        ObjectKind::Trigger => match dialect {
+            Dialect::Postgres => {
+                let t = table_of_extra();
+                if t.is_empty() {
+                    return None;
+                }
+                format!("DROP TRIGGER {qn} ON {}", qualified(dialect, &o.schema, &t))
+            }
+            Dialect::Sqlite => format!("DROP TRIGGER {qn}"),
+            _ => format!("DROP TRIGGER {q}"),
+        },
+        ObjectKind::Index => match dialect {
+            Dialect::Mssql | Dialect::Mysql => {
+                let t = table_of_extra();
+                if t.is_empty() {
+                    return None;
+                }
+                format!("DROP INDEX {qn} ON {}", qualified(dialect, &o.schema, &t))
+            }
+            Dialect::Sqlite => format!("DROP INDEX {qn}"),
+            _ => format!("DROP INDEX {q}"),
+        },
+        _ => return None,
+    };
+    Some(sql)
+}
+
 /// [`source`] + 옵션.
 pub fn source_with(
     s: &mut dyn Session,
@@ -3124,5 +3188,62 @@ mod tests {
             ),
             "CREATE OR ALTER TRIGGER [dbo].trg ON [dbo].tbl AFTER INSERT AS BEGIN END"
         );
+    }
+
+    /// ★ 삭제 문(10-01): 종류·방언별 · PG 트리거 ON 표 · MSSQL 인덱스 ON 표 · PG 서명 · 미지원 None.
+    #[test]
+    fn drop_sql_per_kind_and_dialect() {
+        let mk = |kind: ObjectKind, extra: &str| ObjectInfo {
+            schema: "S".into(),
+            name: "N".into(),
+            kind,
+            status: String::new(),
+            modified: String::new(),
+            extra: extra.into(),
+        };
+        let o = mk(ObjectKind::Table, "");
+        assert!(drop_sql(Dialect::Oracle, &o)
+            .unwrap()
+            .starts_with("DROP TABLE "));
+        assert_eq!(
+            drop_sql(Dialect::Oracle, &mk(ObjectKind::PackageBody, "")).unwrap(),
+            format!("DROP PACKAGE BODY {}", qualified(Dialect::Oracle, "S", "N"))
+        );
+        assert_eq!(
+            drop_sql(Dialect::Mssql, &mk(ObjectKind::MaterializedView, "")).unwrap(),
+            format!("DROP VIEW {}", qualified(Dialect::Mssql, "S", "N"))
+        );
+        assert_eq!(
+            drop_sql(Dialect::Postgres, &mk(ObjectKind::Trigger, "tbl")).unwrap(),
+            format!(
+                "DROP TRIGGER {} ON {}",
+                quote_ident(Dialect::Postgres, "N"),
+                qualified(Dialect::Postgres, "S", "tbl")
+            )
+        );
+        assert_eq!(
+            drop_sql(Dialect::Postgres, &mk(ObjectKind::Trigger, "")),
+            None
+        );
+        assert_eq!(
+            drop_sql(Dialect::Mssql, &mk(ObjectKind::Index, "tbl · UNIQUE")).unwrap(),
+            format!(
+                "DROP INDEX {} ON {}",
+                quote_ident(Dialect::Mssql, "N"),
+                qualified(Dialect::Mssql, "S", "tbl")
+            )
+        );
+        assert_eq!(
+            drop_sql(
+                Dialect::Postgres,
+                &mk(ObjectKind::Function, "integer, text")
+            )
+            .unwrap(),
+            format!(
+                "DROP FUNCTION {}(integer, text)",
+                qualified(Dialect::Postgres, "S", "N")
+            )
+        );
+        assert_eq!(drop_sql(Dialect::Oracle, &mk(ObjectKind::DbLink, "")), None);
     }
 }
