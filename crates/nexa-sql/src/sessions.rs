@@ -929,8 +929,10 @@ pub(crate) fn db_unit(
     };
     let spec_db = spec.and_then(|s| nonempty(s.database.as_deref()));
     match dialect {
+        // 값 = 세션 사실(`current_db` = 이 세션이 전환한 스키마 · ⑳) → 서버 메타가 말한 현재 스키마 → 프로필 → 계정.
         Some(Dialect::Oracle) => (
-            nonempty(current_schema)
+            nonempty(current_db)
+                .or_else(|| nonempty(current_schema))
                 .or_else(|| spec.and_then(|s| nonempty(s.schema.as_deref())))
                 .or_else(|| {
                     spec.and_then(|s| nonempty(s.user.as_deref()))
@@ -1232,6 +1234,16 @@ mod tests {
             db_unit(Some(Dialect::Oracle), Some(&o), None, Some("BISCM_SB")),
             ("BISCM_SB".into(), true),
             "서버가 말한 스키마 · 바꿀 수 있음(⑮)"
+        );
+        assert_eq!(
+            db_unit(
+                Some(Dialect::Oracle),
+                Some(&o),
+                Some("SQLEDU"),
+                Some("BISCM_SB")
+            ),
+            ("SQLEDU".into(), true),
+            "세션이 전환한 값이 메타보다 먼저(⑳)"
         );
         assert_eq!(
             db_unit(Some(Dialect::Oracle), Some(&o), None, None),

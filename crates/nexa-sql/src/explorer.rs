@@ -1446,6 +1446,8 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if gen != cur_gen {
                     continue;
                 }
+                // 기준 DB/스키마로 먼저(⑳ · `UseDb` 뒤 첫 요청이 스키마 목록이면 여기서 따라가야 "현재 스키마"가 새 값).
+                switch_db(&mut session, &mut meta_db, &base_db, None);
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::schemas_opt(s, opts).map_err(err_s)
                 });
@@ -1500,6 +1502,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(&mut session, &mut meta_db, &base_db, None);
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::name_index(s, std::slice::from_ref(&schema), max).map_err(err_s)
                 });
@@ -7036,7 +7039,14 @@ impl Explorer {
                 let mut dim: Vec<String> = Vec::new();
                 if let Some(cur) = &self.current_db {
                     if !file_dialect && !cur.eq_ignore_ascii_case(&main) {
-                        dim.push(tf(Msg::ExpCurrentDb, &[cur]));
+                        // Oracle/PG는 스키마 전환(⑮·㉑) · SQL Server/MySQL은 DB.
+                        let m = if matches!(self.dialect, Some(Dialect::Oracle | Dialect::Postgres))
+                        {
+                            Msg::ExpCurrentSchema
+                        } else {
+                            Msg::ExpCurrentDb
+                        };
+                        dim.push(tf(m, &[cur]));
                     }
                 }
                 if file_dialect {
@@ -7088,7 +7098,22 @@ impl Explorer {
                     (self.profile_name.clone(), self.endpoint.clone())
                 }
             }
-            NodeKind::Schema(s) => (s.clone(), String::new()),
+            // ★ 스키마 노드 "(현재)"(사용자 10-01 ㉑ · Oracle/PG/MySQL): 세션이 전환한 스키마(`current_db` · 비-SQL Server) → 서버가 말한 현재 스키마.
+            NodeKind::Schema(s) => {
+                let cur = if self.dialect == Some(Dialect::Mssql) {
+                    None
+                } else {
+                    self.current_db.as_deref().or(self.server_schema.as_deref())
+                };
+                (
+                    s.clone(),
+                    if cur.is_some_and(|c| c.eq_ignore_ascii_case(s)) {
+                        t(Msg::ExpCurrentDbMark).to_string()
+                    } else {
+                        String::new()
+                    },
+                )
+            }
             // ★ 101: DB 노드 = 이름 + "(현재)" · 묶음 = i18n 라벨.
             NodeKind::Database(d) => {
                 let cur = self

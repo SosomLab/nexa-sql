@@ -73,6 +73,11 @@ impl App {
                 // 메뉴바·툴바(창 전폭) — 메뉴 드롭다운은 최상위라 맨 뒤에.
                 dc.fill_rect(self.tool_dock.bounds(), th.chrome_bg);
                 self.tool_dock.paint(&mut dc, &th);
+                // ★ 글자 항목(탭 연결·작업 단위)의 폭이 바뀌어 그룹 사각형이 낡았으면 다시 배치하고 한 번 더 그린다(⑲).
+                let mut dock_inv = Invalidations::default();
+                if self.tool_dock.relayout_if_stale(&mut dock_inv) {
+                    win.request_redraw();
+                }
                 // 툴바 툴팁은 탐색기·편집기가 덮지 못하게 최상위 층(메뉴바 직전)에서 그린다(09-16 사용자 캡처: 툴바 아래 검은 띠).
                 dc.fill_rect(self.menubar.bounds(), th.chrome_bg);
                 dc.fill_rect(

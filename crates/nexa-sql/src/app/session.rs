@@ -602,11 +602,7 @@ impl App {
             sessions::db_unit(
                 Some(self.sess.dialect),
                 spec.as_ref(),
-                self.sess
-                    .current_db
-                    .clone()
-                    .or_else(|| self.explorer.current_db(spec.as_ref()))
-                    .as_deref(),
+                self.sess_unit_value(spec.as_ref()).as_deref(),
                 self.explorer.current_schema(spec.as_ref()).as_deref(),
             )
         } else {
@@ -620,6 +616,18 @@ impl App {
         if !inv.is_empty() {
             // 글 폭이 바뀌면 그룹 배치도 다시(다음 그리기에서 실측).
             self.tool_layout_dirty = true;
+        }
+    }
+
+    /// 이 세션이 전환한 작업 단위(세션 사실 · ⑳): SQL Server/MySQL = 현재 DB(없으면 탐색기 서버 정보) · Oracle/PG = 현재 스키마(`cur_schema`).
+    fn sess_unit_value(&self, spec: Option<&ConnectSpec>) -> Option<String> {
+        match self.sess.dialect {
+            nsql_core::Dialect::Mssql | nsql_core::Dialect::Mysql => self
+                .sess
+                .current_db
+                .clone()
+                .or_else(|| self.explorer.current_db(spec)),
+            _ => self.sess.cur_schema.clone(),
         }
     }
 
@@ -672,11 +680,7 @@ impl App {
         let (cur, _) = sessions::db_unit(
             Some(self.sess.dialect),
             spec.as_ref(),
-            self.sess
-                .current_db
-                .clone()
-                .or_else(|| self.explorer.current_db(spec.as_ref()))
-                .as_deref(),
+            self.sess_unit_value(spec.as_ref()).as_deref(),
             self.explorer.current_schema(spec.as_ref()).as_deref(),
         );
         let items: Vec<CtxItem> = if list.is_empty() {
