@@ -2352,13 +2352,10 @@ impl Explorer {
         // ★ 부분 합 표시(사용자 09-30 "확인된 용량만 보여 주는 것을 표시"): 스키마 행 = 테이블·MV·인덱스 셋이 다 읽히지 않았으면
         //   `27G+`(더 있을 수 있음 · 흐린 색) · 셋 다 읽히면 `27G`(단위 색). 미리 읽지 않는다.
         let partial = match &n.kind {
-            // SSMS DB 노드(㉝): 사용 합을 보이는 중이면 테이블·인덱스 둘 다 읽혔을 때만 `+` 없음.
-            NodeKind::Database(d) if self.db_used_sum(d).is_some() => {
-                let pre = format!("{d}.");
-                ![ObjectKind::Table, ObjectKind::Index]
-                    .iter()
-                    .all(|k| self.sizes_loaded.contains(&(pre.clone(), *k)))
-            }
+            // SSMS DB 노드(㉝-b · 사용자 10-02 "DB 용량이 우선"): 용량 확인 값이 없어 하위 합계를 보이는 동안은 늘 `+`
+            //   (합계는 시스템 테이블·로그·빈 공간을 모르므로 DB 용량보다 작다) · 용량 확인 값이 있으면 그 값 = 확정(`+` 없음).
+            NodeKind::Database(d) => Self::db_size_pick(self.db_file_size(d), self.db_used_sum(d))
+                .is_some_and(|(_, plus)| plus),
             NodeKind::Schema(schema) => {
                 // 읽음 = 용량을 시도했거나(빈 결과·실패 포함) · 그 종류 폴더를 읽었는데 객체가 0개(사용자 09-30 "+가 없어져야").
                 let loaded = |k: ObjectKind| {
@@ -2460,15 +2457,12 @@ impl Explorer {
                 }
                 _ => return None,
             },
-            // ★ SQL Server DB 노드(10-02 ㉝ · 사용자 "하위 연산이 시작되면 Oracle처럼 검증된 용량+"): 아래 폴더(테이블·인덱스) 용량이 하나라도
-            //   읽혔으면 **그 합**(둘 다 읽히기 전엔 `+` · `size_text`) · 아직 없으면 파일 용량(데이터 + 로그 · ㉕ "용량 확인"). 툴팁은 둘 다.
-            NodeKind::Database(d) => match self.db_used_sum(d) {
-                Some(sum) => sum,
-                None => {
-                    let (data, log) = self.db_sizes.get(d)?;
-                    data + log
-                }
-            },
+            // ★ SQL Server DB 노드(10-02 ㉝ · ㉝-b 우선순위 = 사용자 10-02): ① "용량 확인" 값(데이터 + 로그 파일 · `db_sizes`)이 있으면
+            //   **그 값으로 확정** — 뒤에 하위 용량이 읽혀도 바뀌지 않고, 하위 합계를 보이던 중 용량 확인이 수행되면 덮어쓴다 ② 없을 때만
+            //   아래 폴더(테이블·인덱스)의 읽힌 합계를 `+`로(`size_text`). 툴팁은 둘 다.
+            NodeKind::Database(d) => {
+                Self::db_size_pick(self.db_file_size(d), self.db_used_sum(d))?.0
+            }
             NodeKind::Group {
                 group: GroupKind::Databases | GroupKind::SystemDbs,
                 ..
@@ -2531,6 +2525,11 @@ impl Explorer {
         let _ = self.tx_bg.send(Req::DbSizes { gen: self.gen });
     }
 
+    /// "용량 확인" 값(데이터 + 로그 파일 · ㉕ · 모르면 None).
+    fn db_file_size(&self, db: &str) -> Option<u64> {
+        self.db_sizes.get(db).map(|(data, log)| data + log)
+    }
+
     /// ★ 그 DB 아래 읽힌 테이블·인덱스 용량의 합(㉝ · 키 `DB.스키마` 접두 · 하나도 없으면 None).
     fn db_used_sum(&self, db: &str) -> Option<u64> {
         let pre = format!("{db}.");
@@ -2547,6 +2546,16 @@ impl Explorer {
             })
             .sum();
         any.then_some(sum)
+    }
+
+    /// ★ DB 노드 용량의 우선순위(㉝-b · 순수 규칙 · 시험용): (용량 확인 값, 하위 합계) → (표시 바이트, `+` 여부).
+    ///   용량 확인 값이 있으면 그 값 = 확정 · 없으면 하위 합계 `+` · 둘 다 없으면 None.
+    pub(crate) fn db_size_pick(file: Option<u64>, used: Option<u64>) -> Option<(u64, bool)> {
+        match (file, used) {
+            (Some(f), _) => Some((f, false)),
+            (None, Some(u)) => Some((u, true)),
+            (None, None) => None,
+        }
     }
 
     /// DB 노드의 용량 상세(데이터, 로그 · 툴팁·시험용 · 모르면 None).
@@ -2613,18 +2622,10 @@ impl Explorer {
                     ));
                 }
                 if let Some(sum) = self.db_used_sum(d) {
-                    let pre = format!("{d}.");
-                    let full = [ObjectKind::Table, ObjectKind::Index]
-                        .iter()
-                        .all(|k| self.sizes_loaded.contains(&(pre.clone(), *k)));
                     s.push_str(" · ");
                     s.push_str(&tf(
                         Msg::TipDbUsed,
-                        &[&format!(
-                            "{}{}",
-                            nsql_core::fmt_size(sum),
-                            if full { "" } else { "+" }
-                        )],
+                        &[&format!("{}+", nsql_core::fmt_size(sum))],
                     ));
                 }
                 s
@@ -8085,6 +8086,22 @@ mod refresh_tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use nsql_core::{DdlKind, DdlTarget, DdlVerb};
+
+    /// ㉝-b(사용자 10-02): DB 용량(용량 확인)이 하위 합계보다 우선 — MC/DC 네 짝.
+    #[test]
+    fn db_size_pick_prefers_file_size_over_used_sum() {
+        // 용량 확인 값만 → 확정(`+` 없음).
+        assert_eq!(Explorer::db_size_pick(Some(100), None), Some((100, false)));
+        // 둘 다 → 용량 확인 값(하위 합계가 더 커도 · 덮어쓰기).
+        assert_eq!(
+            Explorer::db_size_pick(Some(100), Some(999)),
+            Some((100, false))
+        );
+        // 하위 합계만 → 합계 `+`.
+        assert_eq!(Explorer::db_size_pick(None, Some(7)), Some((7, true)));
+        // 둘 다 없음 → 표시 없음.
+        assert_eq!(Explorer::db_size_pick(None, None), None);
+    }
 
     fn node(kind: NodeKind, depth: usize) -> Node {
         Node {

@@ -127,12 +127,16 @@ fi
 # ⑦ 현재 DB가 master인 채 다른 DB(BISCM_MS)의 Tables를 펼쳐도 용량(㉕-d · `is_cur` 조건 제거).
 say "--- ⑦ 현재 DB 아닌 DB의 테이블 용량"
 D7="$OUT/tree7.txt"; rm -f "$D7"
-NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:7000:explorer.expand:$OTHER,@after:8500:explorer.expand:$OTHER/Tables,@after:14000:explorer.dump:$D7" \
-  timeout -s KILL 17 "$EXE" "$PROFILE" > "$OUT/gui7.stdout" 2> "$OUT/gui7.stderr"
+D7B="$OUT/tree7b.txt"; rm -f "$D7B"
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:7000:explorer.expand:$OTHER,@after:8500:explorer.expand:$OTHER/Tables,@after:14000:explorer.dump:$D7,@after:14500:explorer.dbsizes,@after:19000:explorer.dump:$D7B" \
+  timeout -s KILL 22 "$EXE" "$PROFILE" > "$OUT/gui7.stdout" 2> "$OUT/gui7.stderr"
 if [ -s "$D7" ]; then
   t7=$(cat "$D7"); echo "$t7" | grep -E "\|object\|dbo\." | head -3 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "⑦ 현재 DB(master) 아닌 $OTHER 테이블 옆 용량" "\|object\|dbo\.[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t7"
-  chk "⑦ DB 노드 = 읽힌 테이블 합 + \"+\"(인덱스 미읽음 · ㉝)" "\|database\|$OTHER\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?\+$" "$t7"
+  chk "⑦ 용량 확인 전 DB 노드 = 읽힌 하위 합계 + \"+\"(㉝)" "\|database\|$OTHER\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?\+$" "$t7"
+  if [ -s "$D7B" ]; then t7b=$(cat "$D7B"); echo "$t7b" | grep -E "\|database\|$OTHER\|" | head -1 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+    chk "⑦ 용량 확인 뒤 DB 노드 = 파일 용량으로 덮어씀(\"+\" 없음 · ㉝-b 우선순위)" "\|database\|$OTHER\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t7b"
+  else bad "⑦ 용량 확인 뒤 덤프 없음" "$(tail -3 "$OUT/gui7.stderr")"; fi
 else bad "⑦ 트리 덤프 없음" "$(tail -3 "$OUT/gui7.stderr")"; fi
 # ⑧ 루틴 세부 타입(10-02 ㉛): 저장 프로시저 라벨 = `dbo.이름`(종전 `(P)` 없음) · CLI 상세 `type` 행 = `SQL_STORED_PROCEDURE`.
 say "--- ⑧ 루틴 세부 타입"
