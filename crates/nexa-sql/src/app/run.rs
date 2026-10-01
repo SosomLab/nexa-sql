@@ -233,14 +233,27 @@ impl App {
             self.sess.status = t(Msg::ErrNoSql).into();
             return;
         }
-        // 운영 접속 + 변경 문장 = 2단 실행(같은 본문을 3초 안에 다시 실행하면 진행 · 앱의 2단 확인 관례 · docs/56 §4).
-        let prod =
-            self.sess.spec.as_ref().and_then(|sp| sp.env) == Some(nsql_script::ConnEnv::Prod);
-        if sessions::prod_confirm_needed(
-            prod,
-            self.settings.flag("run.prod_confirm"),
-            &split_items(&src, self.sess.dialect),
-        ) {
+        // ★ 실행 필요 판단이 운영 판단보다 먼저(사용자 10-01): 지금 유형과 같은 `CONNTYPE`처럼 바꿀 것이 없는 항목만이면
+        //   실행하지 않고 "변경 없음"만 알린다(운영 2단 확인도 뜨지 않는다).
+        let cur_env = self.sess.spec.as_ref().and_then(|sp| sp.env);
+        let needed = sessions::run_needed_items(&split_items(&src, self.sess.dialect), cur_env);
+        if needed.is_empty() {
+            let line = tf(
+                Msg::OutSessEnvSame,
+                &[&self.sess.desc, &super::drop::env_label(cur_env)],
+            );
+            self.sess.status = line.clone();
+            self.output_push(
+                self.editors.active_id(),
+                crate::output::OutKind::Info,
+                &line,
+            );
+            self.redraw();
+            return;
+        }
+        // 운영 접속 + 변경 문장(서버로 가는 것) = 2단 실행(같은 본문을 3초 안에 다시 실행하면 진행 · 앱의 2단 확인 관례 · docs/56 §4).
+        let prod = cur_env == Some(nsql_script::ConnEnv::Prod);
+        if sessions::prod_confirm_needed(prod, self.settings.flag("run.prod_confirm"), &needed) {
             let key = nexa_fs::watch::content_hash(src.as_bytes());
             let armed = self
                 .sess

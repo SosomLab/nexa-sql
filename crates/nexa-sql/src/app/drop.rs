@@ -346,6 +346,18 @@ impl App {
             self.redraw();
             return;
         };
+        // 같은 값 = 변경 없음(임시 표식도 건드리지 않는다 · 사용자 10-01).
+        if spec.env == env {
+            let line = tf(Msg::OutSessEnvSame, &[&self.sess.desc, &env_label(env)]);
+            self.sess.status = line.clone();
+            self.output_push(
+                self.editors.active_id(),
+                crate::output::OutKind::Info,
+                &line,
+            );
+            self.redraw();
+            return;
+        }
         spec.env = env;
         if let Some(ls) = self.sess.last_spec.as_mut() {
             ls.env = env;

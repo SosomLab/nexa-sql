@@ -855,12 +855,63 @@ pub(crate) fn tx_limits_for(prod: bool, global: (u64, u64), prod_vals: (u64, u64
     }
 }
 
-/// 운영 접속에서 **변경 문장**(DML·DDL·PL/SQL 블록 등 SELECT가 아닌 것)을 실행하려 한다 → 한 번 더 확인할 것인가(순수 판정).
+/// ★ 서버에 **아무것도 보내지 않는** 클라이언트 명령인가(10-01 · 운영 2단 확인에서 제외): `SET`(`CONNTYPE` 포함) · `SHOW` ·
+/// `DEFINE`/`UNDEFINE` · `COLUMN` · `ACCEPT` · `PROMPT` · `SPOOL` · `PRINT` · `VARIABLE` · `DESCRIBE` · `REMARK`.
+/// `EXEC` · `@파일` · `CONNECT`는 **아니다**(서버로 간다). 순수 판정.
+pub(crate) fn is_client_only(sql: &str) -> bool {
+    matches!(
+        nsql_script::command::parse_command(sql),
+        Ok(Some(
+            Command::Set(_)
+                | Command::Show { .. }
+                | Command::Define { .. }
+                | Command::Undefine { .. }
+                | Command::Column { .. }
+                | Command::Accept { .. }
+                | Command::Prompt { .. }
+                | Command::Spool { .. }
+                | Command::Print { .. }
+                | Command::Variable { .. }
+                | Command::VarScope { .. }
+                | Command::Describe { .. }
+                | Command::Remark
+        ))
+    )
+}
+
+/// ★ 실행이 **필요 없는** 항목인가(10-01 · 사용자 "운영 여부보다 실행 필요 판단이 먼저"): `CONNTYPE x`/`SET CONNTYPE x`의
+/// 값이 지금 유형과 같으면 바꿀 것이 없다(모르는 값·다른 값은 실행해서 오류/변경을 낸다). 순수 판정.
+pub(crate) fn is_noop_item(sql: &str, cur_env: Option<nsql_script::ConnEnv>) -> bool {
+    match nsql_script::command::parse_command(sql) {
+        Ok(Some(Command::Set(nsql_script::SetOption::Other { name, value })))
+            if name.eq_ignore_ascii_case("CONNTYPE") =>
+        {
+            nsql_script::ConnEnv::parse(&value) == Ok(cur_env)
+        }
+        _ => false,
+    }
+}
+
+/// 실행할 항목만 남긴다(변경 없는 항목 제외) — 운영 확인·실행은 이 결과로 판단한다.
+pub(crate) fn run_needed_items(
+    items: &[String],
+    cur_env: Option<nsql_script::ConnEnv>,
+) -> Vec<String> {
+    items
+        .iter()
+        .filter(|s| !is_noop_item(s, cur_env))
+        .cloned()
+        .collect()
+}
+
+/// 운영 접속에서 **변경 문장**(DML·DDL·PL/SQL 블록 등 SELECT가 아닌 것 · 서버로 가는 것)을 실행하려 한다 → 한 번 더 확인할 것인가(순수 판정).
+/// 클라이언트 전용 명령(`is_client_only`)은 서버를 바꾸지 않으므로 세지 않는다(10-01).
 pub(crate) fn prod_confirm_needed(prod: bool, setting_on: bool, items: &[String]) -> bool {
     prod && setting_on
         && items.iter().any(|sql| {
             let k = nsql_core::first_keyword(sql);
             !k.is_empty()
+                && !is_client_only(sql)
                 && !matches!(
                     k.as_str(),
                     "SELECT"
@@ -974,6 +1025,64 @@ mod tests {
         assert!(!need(false, true, &dml), "운영 아님");
         assert!(!need(true, false, &dml), "설정 끔");
         assert!(!need(true, true, &ro), "조회만");
+        // ★ 10-01: 클라이언트 전용 명령은 서버를 바꾸지 않는다 → 운영 확인 없음 · EXEC는 서버로 간다 → 확인.
+        let client = vec![
+            "CONNTYPE tst".to_string(),
+            "SET AUTOCOMMIT OFF".to_string(),
+            "SHOW CONN".to_string(),
+            "DEFINE x = 1".to_string(),
+            "PROMPT hello".to_string(),
+        ];
+        assert!(!need(true, true, &client), "클라이언트 전용 명령");
+        assert!(
+            need(true, true, &["EXEC p_run()".to_string()]),
+            "EXEC = 서버"
+        );
+        assert!(
+            need(
+                true,
+                true,
+                &["CONNTYPE tst".to_string(), "delete from t".to_string()]
+            ),
+            "섞이면 확인"
+        );
+    }
+
+    /// ★ 실행 필요 판단(10-01): 지금 유형과 같은 `CONNTYPE`만 변경 없음 · 다른 값·모르는 값·SQL은 실행 대상.
+    #[test]
+    fn noop_items_rules() {
+        use super::{is_noop_item as noop, run_needed_items as needed};
+        use nsql_script::ConnEnv as E;
+        assert!(noop("CONNTYPE prd", Some(E::Prod)));
+        assert!(
+            noop("set conntype production;", Some(E::Prod)),
+            "SET 형 · 정식 용어 · 끝 세미콜론"
+        );
+        assert!(noop("CONNTYPE none", None));
+        assert!(noop("CONNTYPE -", None));
+        assert!(!noop("CONNTYPE tst", Some(E::Prod)), "다른 값 = 변경");
+        assert!(
+            !noop("CONNTYPE bogus", Some(E::Prod)),
+            "모르는 값 = 실행해서 오류를 낸다"
+        );
+        assert!(!noop("CONNTYPE prd", None), "없음 → 운영 = 변경");
+        assert!(!noop("SHOW CONN", Some(E::Prod)));
+        assert!(!noop("update t set a = 1", Some(E::Prod)));
+        let items = vec![
+            "CONNTYPE prd".to_string(),
+            "SHOW CONN".to_string(),
+            "SET CONNTYPE PRD".to_string(),
+        ];
+        assert_eq!(needed(&items, Some(E::Prod)), vec!["SHOW CONN".to_string()]);
+        assert!(
+            needed(&items[..1], Some(E::Prod)).is_empty(),
+            "전부 변경 없음 = 실행할 것 없음"
+        );
+        assert_eq!(
+            needed(&items, Some(E::Test)).len(),
+            3,
+            "유형이 다르면 전부 실행"
+        );
     }
 
     /// MC/DC: 세 조건 각각이 혼자서 결과를 뒤집는 쌍.

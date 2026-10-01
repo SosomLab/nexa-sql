@@ -75,6 +75,9 @@
 
 기본값 10초 이하 = ms(`_ms`) · 초과 = 초 · 단위를 바꾸면 `RESCALED` 이주 + CLI 옛 단위 호환([94 §6-5](94-settings-key-naming-and-location.md)). **보수적 생성**(소스 열기·DDL = 결과가 달라질 수 있는 항목은 사전 정의 명시 · [100 §5](100-object-source-run-and-output-tab.md)). **버튼 연타 차단 기본**(`ui.click_guard_ms` · 연타 버튼만 `set_rapid`). 객체 소스 탭의 F5 = 한 단위 실행(`ObjectOrigin` · `Runner::run_whole`) · 사람이 읽는 메시지 = Output 탭([100](100-object-source-run-and-output-tab.md)).
 
+### 1-12. 실행 통제의 순서(10-01 · 사용자)
+- **① 실행할 것이 있는가 → ② 어디로 가는가 → ③ 운영이면 확인.** 바꿀 것이 없는 항목(지금 유형과 같은 `CONNTYPE` 등 · `sessions::run_needed_items`)은 실행하지 않고 "변경 없음"만 알린다. 운영 2단 확인(`prod_confirm_needed`)은 **서버에 변경을 보내는 문장**에만 — 클라이언트 전용 명령(`is_client_only`)은 세지 않는다. 새 통제를 넣을 때 이 순서를 지킨다(판정은 `sessions.rs` 순수 함수 + 시험).
+
 ## 2. 작업 규칙(OS 공통)
 
 ### 2-1. 사용자와의 약속
@@ -231,7 +234,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 - 환경 변수: `NSQL_NO_ACTIVATE=1`(★ 자체 시험 인스턴스는 **반드시** — 창을 활성화하지 않고 띄운다 · 09-21에 캡처용 창이 전경을 가져가 사용자가 치던 글자를 받았다) · `NSQL_HOME`(격리) · `NSQL_TRACE_FRAMES=1`(프레임 구간 · `[load] fill … ms`) · `NSQL_TRACE_MEM=1`.
 - 벤치(nexa-ui): `cargo run --release -p nexa-ctl --example bench_editor <줄 수> <기능>`(`hl,ln,base,mm,occ,br` 또는 `all` · `BENCH_ASCII=1` · `BENCH_PREPARED=1`) · `--example bench_undo`.
 - 스크립트(맥 · 09-24): **`scripts/mac-perf-all.sh`**(성능 전수 실행기 = `linux-perf-all.sh` 이식 · `mac-startup.sh`/`mac-probe.sh`/`mac-leak.sh` + `mac-common.sh`(`ps -o time/rss` · `ps -M` 스레드 · `vmmap --summary` footprint · `lsof` fd) · 실서버 CLI 타이밍은 `NSQL_PERF_ORACLE/MSSQL/PG=<프로필>`)
-- 스크립트(3-OS · 10-01): **`scripts/oracle-ddl-e2e.sh`**(Oracle 전 유형 DDL·소스 왕복 67 · `-p 프로필 -s 스키마`) · **`scripts/dbms-source-e2e.sh`**(PG·SQL Server 소스 보수적 생성 왕복 33 · 임시 `nsqlt_*`) · **`scripts/win-paste-run-e2e.sh`**(가져온 소스를 새 탭에 붙여넣고 F5 = GUI 분할 경로 · 3-DBMS 13) · **`scripts/conn-cmd-e2e.sh`**(연결 명령 = `conn list/show/env/test` + 편집기 `CONNTYPE`/`SHOW CONN` + 팔레트 · 별칭·임시 유형 · 30 · `-g <exe>`) — 소스 열기·DDL·분할기를 고치면 셋 다 돌린다.
+- 스크립트(3-OS · 10-01): **`scripts/oracle-ddl-e2e.sh`**(Oracle 전 유형 DDL·소스 왕복 67 · `-p 프로필 -s 스키마`) · **`scripts/dbms-source-e2e.sh`**(PG·SQL Server 소스 보수적 생성 왕복 33 · 임시 `nsqlt_*`) · **`scripts/win-paste-run-e2e.sh`**(가져온 소스를 새 탭에 붙여넣고 F5 = GUI 분할 경로 · 3-DBMS 13) · **`scripts/conn-cmd-e2e.sh`**(연결 명령 = `conn list/show/env/test` + 편집기 `CONNTYPE`/`SHOW CONN` + 팔레트 · 별칭·임시 유형 · 변경 없음 = 무실행 · 33 · `-g <exe>`) — 소스 열기·DDL·분할기를 고치면 셋 다 돌린다.
 - 스크립트(3-OS · 09-24): **`scripts/func-block-comment.sh`**(기능 점검 자동화의 맥/Linux 첫 예 — 격리 홈 + 기동 명령 + 결과 파일 비교 · 키 주입 0 · 새 편집 명령을 넣으면 같은 틀로 한 경우를 더한다)
 - 스크립트: **`scripts/win-perf-all.ps1`(성능 전수 실행기 · `-Stages`/`-Only`)** · **`scripts/win-inventory.ps1`(용량·정적/동적 라이브러리·구성 파일·설정 키)** · **`scripts/win-mem-reclaim.ps1`(71 §C-2 회수 시험 R1~R6)** · ★ **`scripts/win-func-check.ps1`(기능 점검 자동화 — 시나리오 표 = 격리 홈 + 기동 명령 + 전 창 캡처 + 생존/패닉 자동 판정 · 새 기능을 넣으면 시나리오 한 줄을 더한다 · 09-22 §62 · S01~S35 = 09-22 요청 전부 + soft undo·상한·북마크)** · `scripts/win-capture.ps1` · `scripts/win-burst-capture.ps1` · `scripts/win-big-probe.ps1` · `scripts/win-leak-cycle.ps1` · `scripts/win-startup-probe.ps1` · `scripts/win-latency-probe.ps1` · `scripts/win-badge-probe.ps1` · `scripts/mac-capture.sh` · `scripts/check-3os.sh` · **Linux(09-22)**: `scripts/linux-startup.sh` · `linux-probe.sh` · `linux-leak.sh` · `linux-perf-all.sh`(전 시나리오 + 릭 + CLI) · `linux-all-tests.sh`(두 저장소 게이트 + 3-OS + 실서버 통합 + CLI 기능 · 결과 `summary.txt`) · `install-instantclient-linux.sh`.
 - 기동 구간: `NSQL_TRACE_FRAMES=1` → `[startup] settings · fonts · event_loop · … · app`(누적 ms) + `[frames] … first paint … at +N ms`(09-22 · 39 §2 S-14).

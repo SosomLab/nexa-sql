@@ -46,20 +46,27 @@ o=$("$NSQL" conn test "$PROFILE" 2>&1); show "$(echo "$o" | tail -2)"; chk "conn
 if [ -n "$EXE" ] && [ -x "$EXE" ]; then
   say "--- 4. GUI 편집기 스크립트 명령(한 탭에서 F5 한 번 · 기동 명령 · 키 주입 0)"
   F="$OUT/sess_cmds.sql"
-  printf 'SHOW CONN\nCONNTYPE prd\nSHOW CONN\nSET CONNTYPE stg\nSHOW CONNECTION\nCONNTYPE bogus\nCONNTYPE non\n' > "$F"
-  fw=$(cygpath -w "$F" 2>/dev/null || echo "$F")
-  D="$OUT/gui_output.txt"; rm -f "$D"
-  NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw,@after:5000:run.all,@after:9000:session.env:dev,@after:9500:session.info,@after:11500:output.dump:$D" \
-    timeout -s KILL 15 "$EXE" "$PROFILE" > "$OUT/gui.stdout" 2> "$OUT/gui.stderr"
-  if [ -s "$D" ]; then
-    body=$(tail -n +2 "$D"); show "$body"
+  # 두 번째 `CONNTYPE prd` = 같은 값 → "변경 없음"(러너 경로) · 끝에 다시 prd로 두고, 두 번째 탭(`CONNTYPE prd`만)을 운영 상태에서 F5 →
+  #   실행 필요 판단이 운영 2단 확인보다 먼저 = 확인 없이 "변경 없음(실행하지 않음)"(사용자 10-01).
+  printf 'SHOW CONN\nCONNTYPE prd\nCONNTYPE prd\nSHOW CONN\nSET CONNTYPE stg\nSHOW CONNECTION\nCONNTYPE bogus\nCONNTYPE non\nCONNTYPE prd\n' > "$F"
+  F2="$OUT/sess_noop.sql"; printf 'CONNTYPE prd\n' > "$F2"
+  fw=$(cygpath -w "$F" 2>/dev/null || echo "$F"); fw2=$(cygpath -w "$F2" 2>/dev/null || echo "$F2")
+  # Output은 편집기 탭별 → 두 번째 탭을 열기 전에 첫 탭의 Output을 먼저 덤프하고 둘을 이어 검사한다.
+  D="$OUT/gui_output.txt"; D2="$OUT/gui_output2.txt"; rm -f "$D" "$D2"
+  NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw,@after:5000:run.all,@after:8000:output.dump:$D,@after:8500:open:$fw2,@after:9500:run.all,@after:11000:session.env:dev,@after:11500:session.info,@after:13500:output.dump:$D2" \
+    timeout -s KILL 18 "$EXE" "$PROFILE" > "$OUT/gui.stdout" 2> "$OUT/gui.stderr"
+  if [ -s "$D" ] && [ -s "$D2" ]; then
+    body=$(tail -n +2 "$D"; echo "--- (두 번째 탭)"; tail -n +2 "$D2"); show "$body"
     chk "SHOW CONN(1) = 접속 정보 블록" "접속 정보|Connection info" "$body"
     chk "CONNTYPE prd → 운영 (PRD) · 이 세션만(임시)" "서버 유형 = 운영 \(PRD\) — 이 세션만|= Production \(PRD\) — this session only" "$body"
+    chk "CONNTYPE prd 두 번째(같은 값) → 이미 운영 — 변경 없음" "서버 유형이 이미 운영 \(PRD\) — 변경 없음|already Production \(PRD\)" "$body"
     chk "SHOW CONN(2) 유형 = 운영 (PRD) · 임시" "서버 유형: 운영 \(PRD\) \(임시|Server type: Production \(PRD\) \(temporary" "$body"
     chk "SET CONNTYPE stg → 테스트 (TST)" "서버 유형 = 테스트 \(TST\)|= Test \(TST\)" "$body"
     chk "SHOW CONNECTION 유형 = 테스트 (TST)" "서버 유형: 테스트 \(TST\)|Server type: Test \(TST\)" "$body"
     chk "CONNTYPE bogus = 오류 줄(정식·약어 목록)" "CONNTYPE bogus" "$body"
     chk "CONNTYPE non → 없음 (NON)" "서버 유형 = 없음 \(NON\)|= None \(NON\)" "$body"
+    chk "운영 상태 탭 `CONNTYPE prd`만 F5 = 2단 확인 없이 변경 없음(실행하지 않음)" "변경 없음\(실행하지 않음\)|nothing to change \(not executed\)" "$body"
+    n2=$(echo "$body" | grep -c "변경 없음\|nothing to change"); [ "$n2" -ge 2 ] && ok "변경 없음 줄 수 $n2 ≥ 2(러너 경로 + 무실행 경로)" || bad "변경 없음 줄 수 $n2 < 2" "$body"
     chk "팔레트 session.env:dev → 개발 (DEV)" "서버 유형 = 개발 \(DEV\)|= Development \(DEV\)" "$body"
     chk "팔레트 session.info 유형 = 개발 (DEV)" "서버 유형: 개발 \(DEV\)|Server type: Development \(DEV\)" "$body"
     n=$(echo "$body" | grep -c "접속 정보\|Connection info"); [ "$n" -ge 4 ] && ok "접속 정보 블록 수 $n ≥ 4" || bad "접속 정보 블록 수 $n < 4" "$body"
