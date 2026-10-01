@@ -4387,14 +4387,17 @@ impl Explorer {
         None
     }
 
-    fn reveal_fail(&mut self, t: &RevealTarget) {
+    /// 못 찾음 = 상태줄에 이름 + **단계**(어디서 멈췄는지 · 10-01 ㉗-d 사용자 보고를 바로 좁히려고).
+    fn reveal_fail(&mut self, t: &RevealTarget, stage: &str) {
         self.reveal = None;
         let name = match &t.member {
             Some(m) => format!("{}.{m}", t.name),
             None => t.name.clone(),
         };
-        self.actions
-            .push(ExplorerAction::Status(tf(Msg::StRevealObjFailed, &[&name])));
+        self.actions.push(ExplorerAction::Status(tf(
+            Msg::StRevealObjFailed,
+            &[&format!("{name} ({stage})")],
+        )));
     }
 
     fn reveal_select(&mut self, i: usize) {
@@ -4434,11 +4437,11 @@ impl Explorer {
                 if self.reveal_ready(0) == Some(false) {
                     return;
                 }
-                self.reveal_fail(&t);
+                self.reveal_fail(&t, "루트 읽기 실패");
                 return;
             }
             None => {
-                self.reveal_fail(&t);
+                self.reveal_fail(&t, "스키마/DB 노드 없음");
                 return;
             }
         };
@@ -4446,19 +4449,19 @@ impl Explorer {
             Some(true) => {}
             Some(false) => return,
             None => {
-                self.reveal_fail(&t);
+                self.reveal_fail(&t, "스키마 노드 읽기 오류");
                 return;
             }
         }
         let Some(f) = self.reveal_find_folder(a, t.kind) else {
-            self.reveal_fail(&t);
+            self.reveal_fail(&t, "종류 폴더 없음");
             return;
         };
         match self.reveal_ready(f) {
             Some(true) => {}
             Some(false) => return,
             None => {
-                self.reveal_fail(&t);
+                self.reveal_fail(&t, "폴더 읽기 오류");
                 return;
             }
         }
@@ -4468,7 +4471,7 @@ impl Explorer {
                     && (t.schema.is_empty() || o.schema.eq_ignore_ascii_case(&t.schema)))
         });
         let Some(o) = obj else {
-            self.reveal_fail(&t);
+            self.reveal_fail(&t, "폴더 목록에 없음");
             return;
         };
         let Some(member) = t.member.clone() else {
@@ -4477,7 +4480,7 @@ impl Explorer {
         };
         // 멤버 = 객체의 하위 폴더(로컬) 가운데 컬럼/프로시저/함수 폴더를 읽어 잎을 찾는다.
         if !self.nodes[o].expandable {
-            self.reveal_fail(&t);
+            self.reveal_fail(&t, "하위 폴더 없음");
             return;
         }
         if self.nodes[o].children.is_empty() {
@@ -4493,7 +4496,7 @@ impl Explorer {
             })
             .collect();
         if subs.is_empty() {
-            self.reveal_fail(&t);
+            self.reveal_fail(&t, "멤버 폴더 없음");
             return;
         }
         let mut waiting = false;
@@ -4521,7 +4524,7 @@ impl Explorer {
             }
         }
         if !waiting {
-            self.reveal_fail(&t);
+            self.reveal_fail(&t, "멤버 없음");
         }
     }
 
