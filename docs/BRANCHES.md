@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/objlink-menu-keep-ssms-sizes-anydb | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉗-e 메뉴 열린 동안 링크 유지(첫 클릭 실패) · 🔧 ㉕-d 현재 DB 아닌 DB 테이블 용량(is_cur 제거 · E2E ⑦) |
 | chore/reveal-fail-stage | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ㉗-d 찾기 실패 상태줄에 단계 · journal §32 구현 방식 vs 제안 대조 · CI 8dad8d1 기록 |
 | fix/mssql-bind-name-ssms-sizes | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉚ SQL Server `:p1`↔tiberius `@P1` 충돌(`@P1_`) · 🔧 ㉗-c 루트 미읽음 칸 찾기 · 🔧 ㉕-c SSMS 테이블 용량(키 DB.스키마) |
 | fix/output-result-reveal-scroll | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ ㉘ Output ↔ 결과 탭(결과 셋 = 결과 탭 전환 · Output 활성 중 실행 = 최근 결과 탭) · 🔧 ㉗-b 두 연결 칸 선택 행 화면 밖(앵커 보정 뒤 + 1/3 지점) · ★ ㉙ 시스템 객체 Ctrl 링크(builtin_class · 시그니처 · 패키지 +10) · E2E output-result 5 · reveal 11 |

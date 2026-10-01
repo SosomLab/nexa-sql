@@ -888,6 +888,8 @@ pub(crate) enum ExplorerAction {
     Notice(String),
     /// 상태줄 한 줄.
     Status(String),
+    /// 로그 창 한 줄(진단 · "탐색기에서 보기" 단계 ㉗-f).
+    Log(String),
     /// ★ 서버 정보·현재 스키마가 도착/갱신됐다(101 · 10-01 ⑫) — 호스트는 세션 UI(툴바 작업 단위 등)를 다시 맞춘다.
     ServerInfo,
     /// 클립보드에 복사할 텍스트.
@@ -3946,8 +3948,8 @@ impl Explorer {
                                     }
                                 }
                                 // ★ SSMS 폴더(스키마 빈 값 · ㉕-c "테이블 옆 용량이 안 보인다"): 그 DB 전 스키마 용량을 한 번(키 = `DB.스키마`).
+                                // 현재 DB가 아니어도(㉕-d · master인 채 BISCM_MS Tables) — DB는 `db_of`로 안다.
                                 if s.is_empty()
-                                    && is_cur
                                     && self.ssms_mode()
                                     && self.sizes_on
                                     && Self::sizeable(k)
@@ -4355,7 +4357,20 @@ impl Explorer {
         }
         if !self.nodes[i].expanded {
             self.toggle(i);
+        } else if self.nodes[i].children.is_empty()
+            && self.nodes[i].state == LoadState::Idle
+            && self.nodes[i].expandable
+        {
+            // 펼쳐졌다고 표시돼 있는데 자식이 없다(복원·갱신 뒤) = 다시 읽는다(㉗-f).
+            self.load(i);
         }
+        self.reveal_log(format!(
+            "ready node={i} {} expanded={} state={:?} children={}",
+            self.label(i).0,
+            self.nodes[i].expanded,
+            self.nodes[i].state,
+            self.nodes[i].children.len()
+        ));
         if self.nodes[i].state == LoadState::Loading {
             return Some(false);
         }
@@ -4387,8 +4402,15 @@ impl Explorer {
         None
     }
 
+    /// 찾기 단계 로그(로그 창 · F10 · 찾기가 진행 중일 때만 · ㉗-f).
+    fn reveal_log(&mut self, line: String) {
+        self.actions
+            .push(ExplorerAction::Log(format!("[reveal] {line}")));
+    }
+
     /// 못 찾음 = 상태줄에 이름 + **단계**(어디서 멈췄는지 · 10-01 ㉗-d 사용자 보고를 바로 좁히려고).
     fn reveal_fail(&mut self, t: &RevealTarget, stage: &str) {
+        self.reveal_log(format!("fail stage={stage} target={t:?}"));
         self.reveal = None;
         let name = match &t.member {
             Some(m) => format!("{}.{m}", t.name),
@@ -4401,6 +4423,7 @@ impl Explorer {
     }
 
     fn reveal_select(&mut self, i: usize) {
+        self.reveal_log(format!("select node={i} {}", self.label(i).0));
         // 조상 전부 펼침(자식이 있는 노드만 = 이미 읽힌 것).
         let mut p = self.parent_of(i);
         while let Some(a) = p {
@@ -4416,6 +4439,18 @@ impl Explorer {
     /// 한 단계: 앵커(스키마 · SSMS = DB 노드) → 종류 폴더 → 객체 → (멤버 = 컬럼/패키지 멤버 하위 폴더 → 잎). 못 찾음 = 상태줄.
     fn step_reveal(&mut self) {
         let Some(t) = self.reveal.clone() else { return };
+        self.reveal_log(format!(
+            "step target={}.{}{} ssms={} nodes={} root={:?}",
+            t.schema,
+            t.name,
+            t.member
+                .as_deref()
+                .map(|m| format!(".{m}"))
+                .unwrap_or_default(),
+            self.ssms_mode(),
+            self.nodes.len(),
+            self.nodes.first().map(|n| &n.state)
+        ));
         let anchor = if self.ssms_mode() {
             let db = t.db.clone().or_else(|| self.current_db.clone());
             db.and_then(|d| {
@@ -4465,6 +4500,11 @@ impl Explorer {
                 return;
             }
         }
+        self.reveal_log(format!(
+            "folder node={f} state={:?} children={}",
+            self.nodes[f].state,
+            self.nodes[f].children.len()
+        ));
         let obj = self.nodes[f].children.iter().copied().find(|&c| {
             matches!(&self.nodes[c].kind, NodeKind::Object(o)
                 if o.name.eq_ignore_ascii_case(&t.name)
@@ -7354,6 +7394,10 @@ impl Explorer {
                 break;
             }
             if server_only && self.nodes[i].depth != root_depth + 1 {
+                continue;
+            }
+            // 루트(연결 행 · 라벨 = 로그인/서비스 이름)는 라벨 펼침 대상이 아니다(SQL Server 로그인 `BISCM_MS` = DB 이름과 같아 DB 노드를 가렸다 · 10-01).
+            if matches!(self.nodes[i].kind, NodeKind::Root) {
                 continue;
             }
             let (l, _) = self.label(i);

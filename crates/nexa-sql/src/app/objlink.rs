@@ -732,6 +732,11 @@ impl App {
             self.redraw();
         }
         if !want {
+            // ★ 우클릭 메뉴가 열려 있는 동안은 링크를 비우지 않는다(10-01 ㉗-e · 사용자 "첫 번째는 실패, 두 번째는 성공" = 메뉴를 띄운 뒤
+            //   Ctrl을 떼면 목록이 비어 메뉴 항목이 가리키던 링크 번호가 무효가 됐다) — 메뉴가 닫힌 뒤 다음 동기화에서 걷는다.
+            if self.objlink_menu.is_open() {
+                return;
+            }
             if self.objlinks.active {
                 self.objlinks.active = false;
                 self.objlinks.hot = None;

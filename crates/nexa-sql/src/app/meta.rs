@@ -230,6 +230,7 @@ impl App {
                 }
                 ExplorerAction::OpenSql { .. } => {}
                 ExplorerAction::Status(s) => self.sess.status = s,
+                ExplorerAction::Log(s) => self.log_win.push(LogEntry::new(LogKind::Info, s)),
                 ExplorerAction::ServerInfo => self.sess_ui_dirty = true,
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
                 ExplorerAction::Notice(s) => {

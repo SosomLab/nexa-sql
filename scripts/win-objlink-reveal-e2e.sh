@@ -5,6 +5,7 @@
 #   ② 패키지 멤버(`pkg.proc` · 실서버의 첫 패키지 프로시저 · 없으면 SKIP) → 선택 경로 = `… / Packages / PKG / Procedures / PROC`
 #   ③ 없는 이름(`nsqlt_no_such_table`) = 링크가 미확인이라 reveal 안 됨(ok=false · 선택 없음)
 #   ④ 두 연결(-s 두 번째 프로필 먼저 접속 + -p 추가) → 두 번째 칸에서 선택 + `visible=true`(세트 공용 스크롤 · ㉗-b)
+#   ⑥ SQLEDU 계정 · 소문자 trx_demand · 첫 시도 바로가기(㉗-f 사용자 요청)
 #   ⑤ 시스템 객체(㉙): `DBMS_XPLAN.DISPLAY_CURSOR` 루틴 링크 + 시그니처 · `all_tables` 사전 객체 · 모르는 패키지는 링크 아님(`objlink.dump`)
 #
 # 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-t 테이블(없으면 user_tables 첫 것)] [-s SQLEDU] [-P <실제 설정 폴더>]
@@ -88,5 +89,16 @@ if [ -s "$L5" ]; then
   chk "⑤ all_tables = 사전 객체 링크(known)" "^Table\|all_tables\|true\|" "$l5"
   echo "$l5" | grep -qi "nsqlt_no_such_pkg" && bad "⑤ 없는 패키지가 링크가 됐다" "$l5" || ok "⑤ 모르는 패키지(nsqlt_no_such_pkg.foo · 호출 자리)는 링크 아님"
 else bad "⑤ 링크 덤프 없음" "$(tail -3 "$OUT/gui5.stderr")"; fi
+# ⑥ 사용자 10-01 ㉗-f: SQLEDU 계정으로 접속해 **소문자** `trx_demand`를 첫 시도에 바로가기(Tables 미확장 상태 · 재시도 없음).
+say "--- ⑥ $SECOND 계정 · 소문자 trx_demand · 첫 시도"
+F6="$OUT/t6.sql"; printf 'SELECT\n\t*\nFROM\n\ttrx_demand A\nWHERE 1=1\n;\n' > "$F6"; S6="$OUT/sel6.txt"; D6="$OUT/tree6.txt"; rm -f "$S6" "$D6"; fw6=$(cygpath -w "$F6" 2>/dev/null || echo "$F6")
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw6,@after:7000:objlink.reveal:trx_demand,@after:12500:explorer.selpath:$S6,@after:13000:explorer.dump:$D6" \
+  timeout -s KILL 16 "$EXE" "$SECOND" > "$OUT/gui6.stdout" 2> "$OUT/gui6.stderr"
+if [ -s "$S6" ]; then
+  s6=$(cat "$S6"); say "        > $(echo "$s6" | head -2 | tr '\n' ' ')"
+  chk "⑥ 첫 시도에 선택 = $SECOND / Tables / TRX_DEMAND" "/ $SECOND / Tables( \([0-9]+\))? / TRX_DEMAND\$" "$s6"
+  chk "⑥ 선택 행이 화면 안" "^visible=true$" "$s6"
+  t6=$(cat "$D6" 2>/dev/null); chk "⑥ 트리에 TRX_DEMAND 행(Tables 펼쳐짐)" "\|object\|TRX_DEMAND\|" "$t6"
+else bad "⑥ 선택 경로 없음" "$(tail -3 "$OUT/gui6.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

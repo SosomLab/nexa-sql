@@ -124,5 +124,14 @@ if [ -x "$NSQLCLI" ]; then
   o=$("$NSQLCLI" cat -c "$PROFILE" logins 2>&1); echo "$o" | head -4 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "⑤ CLI 목록 = 로그인(SQL_LOGIN)" "SQL_LOGIN|WINDOWS_LOGIN" "$o"
 fi
+# ⑦ 현재 DB가 master인 채 다른 DB(BISCM_MS)의 Tables를 펼쳐도 용량(㉕-d · `is_cur` 조건 제거).
+say "--- ⑦ 현재 DB 아닌 DB의 테이블 용량"
+D7="$OUT/tree7.txt"; rm -f "$D7"
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:7000:explorer.expand:$OTHER,@after:8500:explorer.expand:$OTHER/Tables,@after:14000:explorer.dump:$D7" \
+  timeout -s KILL 17 "$EXE" "$PROFILE" > "$OUT/gui7.stdout" 2> "$OUT/gui7.stderr"
+if [ -s "$D7" ]; then
+  t7=$(cat "$D7"); echo "$t7" | grep -E "\|object\|dbo\." | head -3 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+  chk "⑦ 현재 DB(master) 아닌 $OTHER 테이블 옆 용량" "\|object\|dbo\.[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t7"
+else bad "⑦ 트리 덤프 없음" "$(tail -3 "$OUT/gui7.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail
