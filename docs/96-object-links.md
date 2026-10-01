@@ -100,7 +100,8 @@
 | 찾기 | `Explorer::reveal` → `step_reveal`(단계 기계 · `drain` 끝마다) | 루트가 아직 안 읽혔으면 루트부터(㉗-c) · 앵커(스키마/SSMS DB) → 종류 폴더(묶음 로컬 펼침) → 객체 → 멤버 하위 폴더(Columns/Procedures/Functions) → 선택(조상 펼침 · 보이게) · 못 찾음 = 상태줄 |
 | 실패 | `reveal_fail(t, 단계)` → 상태줄 `찾지 못함: 이름 (단계)` | 단계 = 루트 읽기 실패 · 스키마/DB 노드 없음 · 스키마 노드 읽기 오류 · 종류 폴더 없음 · 폴더 읽기 오류 · 폴더 목록에 없음 · 하위 폴더 없음 · 멤버 폴더 없음 · 멤버 없음(㉗-d) |
 | 메뉴 | 열려 있는 동안 `objlink_sync`가 링크를 비우지 않는다(Ctrl을 떼도 · ㉗-e) | 번호 `menu_link`가 무효가 되던 첫 클릭 실패 |
-| 진단 | 찾기 중 로그 창 `[reveal] …`(단계·노드 상태 · `ExplorerAction::Log` · ㉗-f) · 펼쳐졌는데 자식 없음·Idle = 다시 읽기 | 재현 안 되는 "첫 번째 실패" 보고용 |
+| 진단 | 찾기 중 로그 창 `[reveal] …`(단계·노드 상태 · `ExplorerAction::Log` · ㉗-f) · 펼쳐졌는데 자식 없음·Idle = 다시 읽기 · 메뉴 열 때 `[objlink] menu … reveal= own_meta= used_pane=`(㉗-g) | 재현 안 되는 "첫 번째 실패" 보고용 |
+| 칸 메타 | 분석 전 `ExplorerSet::ensure_meta(spec)` = 자기 칸 메타가 비면 루트 읽기 시작(`kick_meta_load`) — 다른 칸 스냅숏(선적재 전엔 이 스키마 이름 없음)에 기대 메뉴가 흐리던 ㉗-g | journal §34 |
 | 동시성 | 요청 한 칸(`reveal: Option`) = 최신 우선 교체 · 읽기는 기존 메타 스레드 · UI는 응답마다 한 단계 | 사용자 제안(싱글 큐 · 별도 스레드)과 대조 = [journal §32](journal/2026-09-30.md) |
 | 세트 | `ExplorerSet::reveal`(칸 전환) · `after_reveal`(**어느 칸이든** `reveal_done` 소비 → 선택 행을 보이는 영역 1/3 지점에 · `drain`의 앵커 보정 **뒤**) | 탐색기 숨김이면 `view.explorer` 켬 · 포커스 = 탐색기 · 같은 서버 다른 계정 = 다른 칸(㉗-b) |
 | 시험 | `objlink.reveal:<이름>` · `explorer.selpath:<파일>` · `scripts/win-objlink-reveal-e2e.sh` 4 | 명령은 `primary`(Ctrl)를 잠시 켜 분석 |

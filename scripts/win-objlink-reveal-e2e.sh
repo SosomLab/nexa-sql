@@ -6,13 +6,14 @@
 #   ③ 없는 이름(`nsqlt_no_such_table`) = 링크가 미확인이라 reveal 안 됨(ok=false · 선택 없음)
 #   ④ 두 연결(-s 두 번째 프로필 먼저 접속 + -p 추가) → 두 번째 칸에서 선택 + `visible=true`(세트 공용 스크롤 · ㉗-b)
 #   ⑥ SQLEDU 계정 · 소문자 trx_demand · 첫 시도 바로가기(㉗-f 사용자 요청)
+#   ⑦ BISCM_SB(-b) 접속 뒤 BISCM(-p) 추가 → 첫 시도 메뉴 활성(reveal=true)·바로가기(㉗-g 사용자 보고 재현)
 #   ⑤ 시스템 객체(㉙): `DBMS_XPLAN.DISPLAY_CURSOR` 루틴 링크 + 시그니처 · `all_tables` 사전 객체 · 모르는 패키지는 링크 아님(`objlink.dump`)
 #
-# 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-t 테이블(없으면 user_tables 첫 것)] [-s SQLEDU] [-P <실제 설정 폴더>]
+# 사용: scripts/win-objlink-reveal-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-n target/debug/nsql.exe] [-p BISCM] [-t 테이블(없으면 user_tables 첫 것)] [-s SQLEDU] [-b BISCM_SB] [-P <실제 설정 폴더>]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="BISCM"; TABLE=""; SECOND="SQLEDU"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
-while getopts "o:g:n:p:t:s:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; t) TABLE=$OPTARG;; s) SECOND=$OPTARG;; P) PROF=$OPTARG;; esac; done
+OUT=""; EXE="$ROOT/target/debug/nexa-sql.exe"; NSQL="$ROOT/target/debug/nsql.exe"; PROFILE="BISCM"; TABLE=""; SECOND="SQLEDU"; THIRD="BISCM_SB"; PROF="${APPDATA:-$HOME/.config}/nexa-sql"
+while getopts "o:g:n:p:t:s:b:P:" o; do case $o in o) OUT=$OPTARG;; g) EXE=$OPTARG;; n) NSQL=$OPTARG;; p) PROFILE=$OPTARG;; t) TABLE=$OPTARG;; s) SECOND=$OPTARG;; b) THIRD=$OPTARG;; P) PROF=$OPTARG;; esac; done
 [ -n "$OUT" ] || { echo "usage: -o <out dir> [-g gui] [-n cli] [-p profile] [-t table] [-P real-config-dir]"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "$H"; mkdir -p "$H"
 [ -d "$PROF/profiles" ] && cp -R "$PROF/profiles" "$H/" && cp "$PROF/device.key" "$H/" 2>/dev/null
@@ -100,5 +101,16 @@ if [ -s "$S6" ]; then
   chk "⑥ 선택 행이 화면 안" "^visible=true$" "$s6"
   t6=$(cat "$D6" 2>/dev/null); chk "⑥ 트리에 TRX_DEMAND 행(Tables 펼쳐짐)" "\|object\|TRX_DEMAND\|" "$t6"
 else bad "⑥ 선택 경로 없음" "$(tail -3 "$OUT/gui6.stderr")"; fi
+# ⑦ 사용자 10-01 ㉗-g: BISCM_SB(-b) 접속 뒤 BISCM(-p) 추가 → 첫 시도에 "탐색기에서 보기" 활성(`reveal=true`) + 선택 + 화면 안.
+say "--- ⑦ $THIRD 접속 뒤 $PROFILE 추가 · 첫 시도 메뉴 활성·바로가기"
+F7="$OUT/t7.sql"; cp "$F1" "$F7"; S7="$OUT/sel7.txt"; L7="$OUT/links7.txt"; rm -f "$S7" "$L7"; fw7=$(cygpath -w "$F7" 2>/dev/null || echo "$F7")
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:connect:$PROFILE,@after:6000:open:$fw7,@after:7500:objlink.dump:$L7,@after:8000:objlink.reveal:$TABLE,@after:14000:explorer.selpath:$S7" \
+  timeout -s KILL 17 "$EXE" "$THIRD" > "$OUT/gui7.stdout" 2> "$OUT/gui7.stderr"
+if [ -s "$L7" ] && [ -s "$S7" ]; then
+  l7=$(cat "$L7"); s7=$(cat "$S7"); say "        > $(head -1 "$L7")"; say "        > $(echo "$s7" | head -2 | tr '\n' ' ')"
+  chk "⑦ 메뉴 판정 = 활성(reveal=true · 7.5초)" "^Table\|$TABLE\|true\|[^|]*\|reveal=true$" "$l7"
+  chk "⑦ 첫 시도에 선택 = $PROFILE 칸 Tables / $TABLE" "/ Tables( \([0-9]+\))? / $TABLE\$" "$s7"
+  chk "⑦ 선택 행이 화면 안" "^visible=true$" "$s7"
+else bad "⑦ 덤프 없음(links $([ -s "$L7" ] && echo o || echo x) · sel $([ -s "$S7" ] && echo o || echo x))" "$(tail -3 "$OUT/gui7.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

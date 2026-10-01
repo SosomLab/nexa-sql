@@ -3402,6 +3402,16 @@ impl Explorer {
         !self.meta.snapshot().schemas.is_empty()
     }
 
+    /// ★ 메타가 비었고 루트를 아직 안 읽었으면 루트 읽기를 시작한다(10-01 ㉗-g · 복원된 연결 칸의 루트가 접힌 채면 그 칸 메타가 비어
+    ///   같은 카탈로그의 다른 칸 스냅숏으로 대신 답했고, 거기엔 이 세션 스키마 이름이 유휴 선적재 전까지 없었다). 시작했으면 true.
+    pub(crate) fn kick_meta_load(&mut self) -> bool {
+        if self.offline || self.nodes.is_empty() || self.nodes[0].state != LoadState::Idle {
+            return false;
+        }
+        self.load(0);
+        true
+    }
+
     pub(crate) fn meta_view(
         &self,
     ) -> (

@@ -316,6 +316,27 @@ impl ExplorerSet {
             .unwrap_or(own)
     }
 
+    /// ★ 그 연결의 칸 메타가 비어 있으면 루트 읽기를 시작한다(㉗-g · 링크 분석·완성이 다른 칸 스냅숏에 기대지 않게). 시작했으면 true.
+    pub(crate) fn ensure_meta(&mut self, spec: Option<&ConnectSpec>) -> bool {
+        let Some(i) = spec.and_then(|s| self.find(s)) else {
+            return false;
+        };
+        if self.panes[i].ex.meta_has_schemas() {
+            return false;
+        }
+        self.panes[i].ex.kick_meta_load()
+    }
+
+    /// 진단(㉗-g): (자기 칸, 자기 칸 메타 유무, 실제로 쓴 칸).
+    pub(crate) fn meta_pane_info(
+        &self,
+        spec: Option<&ConnectSpec>,
+    ) -> (Option<usize>, bool, usize) {
+        let own = spec.and_then(|s| self.find(s));
+        let has = own.is_some_and(|i| self.panes[i].ex.meta_has_schemas());
+        (own, has, self.meta_pane(spec))
+    }
+
     fn find(&self, spec: &ConnectSpec) -> Option<usize> {
         self.panes
             .iter()

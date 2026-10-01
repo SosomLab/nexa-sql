@@ -769,6 +769,8 @@ impl App {
         };
         let spec = self.sess.spec.clone();
         let dialect = Some(self.sess.dialect);
+        // ★ 자기 칸 메타가 비었으면 루트 읽기부터(㉗-g) — 응답이 오면 stamp가 바뀌어 다시 분석된다.
+        self.explorer.ensure_meta(spec.as_ref());
         let mut trace_lines: Vec<String> = Vec::new();
         let (mut links, needs, stamp) = {
             let (names, snap) = self.explorer.meta_view(spec.as_ref());
@@ -1092,6 +1094,24 @@ impl App {
         };
         if right {
             self.objlinks.menu_link = Some(k);
+            // 진단(㉗-g · 메뉴가 흐리던 보고): 판정 근거 한 줄을 로그 창에.
+            {
+                let spec = self.sess.spec.clone();
+                let (own, has, used) = self.explorer.meta_pane_info(spec.as_ref());
+                let l = &self.objlinks.links[k];
+                let line = format!(
+                    "[objlink] menu link={} kind={:?} known={} reveal={} cur={:?} own_pane={:?} own_meta={} used_pane={}",
+                    l.qualified(true),
+                    l.kind,
+                    l.known,
+                    self.objlink_reveal_target(k).is_some(),
+                    self.objlink_cur_schema(),
+                    own,
+                    has,
+                    used
+                );
+                self.log_win.push(LogEntry::new(LogKind::Info, line));
+            }
             // ★ "객체 탐색기에서 보기"(10-01 ㉗) = 실제 객체로 풀릴 때만 활성(미확인 링크 = 흐림).
             let can = self.objlink_reveal_target(k).is_some();
             let items = vec![
@@ -1207,8 +1227,10 @@ impl App {
                 .objlink_describe(k)
                 .and_then(|(_, _, d)| d)
                 .unwrap_or_default();
+            // 다섯째 열 = "탐색기에서 보기" 활성 여부(㉗-g · 메뉴가 흐리던 보고).
+            let can = self.objlink_reveal_target(k).is_some();
             out.push_str(&format!(
-                "{:?}|{}|{}|{desc}
+                "{:?}|{}|{}|{desc}|reveal={can}
 ",
                 l.kind,
                 l.qualified(true),

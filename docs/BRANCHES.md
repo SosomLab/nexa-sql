@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/objlink-ensure-meta | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉗-g 복원 칸 메타 비면 루트 읽기(ensure_meta) · 메뉴 판정 로그 · objlink.dump reveal 열 · E2E ⑦ |
 | fix/objlink-menu-keep-ssms-sizes-anydb | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉗-e 메뉴 열린 동안 링크 유지(첫 클릭 실패) · 🔧 ㉕-d 현재 DB 아닌 DB 테이블 용량(is_cur 제거 · E2E ⑦) |
 | chore/reveal-fail-stage | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ㉗-d 찾기 실패 상태줄에 단계 · journal §32 구현 방식 vs 제안 대조 · CI 8dad8d1 기록 |
 | fix/mssql-bind-name-ssms-sizes | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉚ SQL Server `:p1`↔tiberius `@P1` 충돌(`@P1_`) · 🔧 ㉗-c 루트 미읽음 칸 찾기 · 🔧 ㉕-c SSMS 테이블 용량(키 DB.스키마) |
