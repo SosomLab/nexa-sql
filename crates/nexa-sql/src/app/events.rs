@@ -984,6 +984,30 @@ impl App {
                             g.set_result_origin(s, is_query);
                         }
                     }
+                    // ★ Output 탭을 보던 중이라도 결과 셋이 오면 **그 결과 탭으로**(사용자 10-01 ㉘ · `output.activate = always`만 예외 ·
+                    //   포커스는 그대로 — 편집 중인 캐럿을 뺏지 않는다). 다른 편집기의 패널이면 그 패널의 활성만 바꾼다.
+                    let policy = self
+                        .settings
+                        .get("output.activate")
+                        .unwrap_or("no_results")
+                        .to_string();
+                    let ed = self.sess.run_editor;
+                    if ed == self.panel_editor {
+                        if crate::results::switch_to_result(self.panel.output_active(), &policy) {
+                            if let Some(i) = self.panel.index_of(k) {
+                                let f = self.focus;
+                                self.activate_result(i);
+                                self.set_focus(f);
+                            }
+                        }
+                    } else if let Some(p) = self.panels.get_mut(&ed) {
+                        if crate::results::switch_to_result(p.output_active(), &policy) {
+                            if let Some(i) = p.index_of(k) {
+                                p.active = i;
+                                p.sync_bar();
+                            }
+                        }
+                    }
                     // ★ 편집 준비(키 조회·열 명세)는 결과가 온 직후에(그리드 사건을 기다리지 않는다 · docs/87).
                     if k == self.grid_tab {
                         self.after_grid_event();

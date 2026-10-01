@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/output-result-reveal-scroll | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ ㉘ Output ↔ 결과 탭(결과 셋 = 결과 탭 전환 · Output 활성 중 실행 = 최근 결과 탭) · 🔧 ㉗-b 두 연결 칸 선택 행 화면 밖(앵커 보정 뒤 + 1/3 지점) · ★ ㉙ 시스템 객체 Ctrl 링크(builtin_class · 시그니처 · 패키지 +10) · E2E output-result 5 · reveal 11 |
 | feat/objlink-reveal | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ Ctrl 링크 우클릭 ▸ 객체 탐색기에서 보기(RevealTarget · step_reveal 단계 기계 · 패키지 멤버·컬럼 · 기동 명령 objlink.reveal/explorer.selpath · E2E 4/4) |
 | feat/mssql-server-security | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ SQL Server 서버 수준 보안·서버 개체(ObjectKind +9 · ServerSecurity 묶음 · 상세·소스·삭제) + DB 노드 용량 확인(database_sizes 권한 폴백 · 묶음 합 · 툴팁) · E2E 26/26 |
 | fix/tab-rebind-unit | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 CI mac/ubuntu `db_unit` SQLite 경로 OS 무관 · 🔧 ㉔ 탭 연결 바꾸기 `CURRENT_SCHEMA = "0"`(메뉴 접두 `sess.db:` · `tab_unit` 키 (탭, 세션) · 묶기 직후 적용 · 재접속 기억 비움) |

@@ -425,6 +425,95 @@ pub const ORACLE_PACKAGES: &[SysPackage] = &[
             b!("CAST_TO_RAW", "UTL_RAW.CAST_TO_RAW(str)"),
         ],
     },
+    // ── 10-01 ㉙(Ctrl 링크 시스템 객체 · 사용자 `DBMS_XPLAN.DISPLAY_CURSOR`) — 자주 쓰는 패키지 더.
+    SysPackage {
+        name: "DBMS_XPLAN",
+        members: &[
+            b!("DISPLAY", "DBMS_XPLAN.DISPLAY(table_name => 'PLAN_TABLE', statement_id => NULL, format => 'TYPICAL')"),
+            b!("DISPLAY_CURSOR", "DBMS_XPLAN.DISPLAY_CURSOR(sql_id => NULL, cursor_child_no => NULL, format => 'TYPICAL')"),
+            b!("DISPLAY_AWR", "DBMS_XPLAN.DISPLAY_AWR(sql_id, plan_hash_value => NULL, db_id => NULL, format => 'TYPICAL')"),
+            b!("DISPLAY_SQL_PLAN_BASELINE", "DBMS_XPLAN.DISPLAY_SQL_PLAN_BASELINE(sql_handle => NULL, plan_name => NULL, format => 'TYPICAL')"),
+        ],
+    },
+    SysPackage {
+        name: "UTL_FILE",
+        members: &[
+            b!("FOPEN", "UTL_FILE.FOPEN(location, filename, open_mode, max_linesize => 1024)"),
+            b!("FCLOSE", "UTL_FILE.FCLOSE(file)"),
+            b!("GET_LINE", "UTL_FILE.GET_LINE(file, buffer, len => NULL)"),
+            b!("PUT_LINE", "UTL_FILE.PUT_LINE(file, buffer, autoflush => FALSE)"),
+            b!("FFLUSH", "UTL_FILE.FFLUSH(file)"),
+            b!("FREMOVE", "UTL_FILE.FREMOVE(location, filename)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_JOB",
+        members: &[
+            b!("SUBMIT", "DBMS_JOB.SUBMIT(job OUT, what, next_date => SYSDATE, interval => NULL)"),
+            b!("REMOVE", "DBMS_JOB.REMOVE(job)"),
+            b!("RUN", "DBMS_JOB.RUN(job)"),
+            b!("BROKEN", "DBMS_JOB.BROKEN(job, broken, next_date => SYSDATE)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_ALERT",
+        members: &[
+            b!("REGISTER", "DBMS_ALERT.REGISTER(name)"),
+            b!("SIGNAL", "DBMS_ALERT.SIGNAL(name, message)"),
+            b!("WAITONE", "DBMS_ALERT.WAITONE(name, message OUT, status OUT, timeout => MAXWAIT)"),
+            b!("REMOVE", "DBMS_ALERT.REMOVE(name)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_PIPE",
+        members: &[
+            b!("PACK_MESSAGE", "DBMS_PIPE.PACK_MESSAGE(item)"),
+            b!("SEND_MESSAGE", "DBMS_PIPE.SEND_MESSAGE(pipename, timeout => MAXWAIT)"),
+            b!("RECEIVE_MESSAGE", "DBMS_PIPE.RECEIVE_MESSAGE(pipename, timeout => MAXWAIT)"),
+            b!("UNPACK_MESSAGE", "DBMS_PIPE.UNPACK_MESSAGE(item OUT)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_CRYPTO",
+        members: &[
+            b!("HASH", "DBMS_CRYPTO.HASH(src, typ)"),
+            b!("ENCRYPT", "DBMS_CRYPTO.ENCRYPT(src, typ, key, iv => NULL)"),
+            b!("DECRYPT", "DBMS_CRYPTO.DECRYPT(src, typ, key, iv => NULL)"),
+            b!("RANDOMBYTES", "DBMS_CRYPTO.RANDOMBYTES(number_bytes)"),
+        ],
+    },
+    SysPackage {
+        name: "UTL_HTTP",
+        members: &[
+            b!("REQUEST", "UTL_HTTP.REQUEST(url, proxy => NULL, wallet_path => NULL, wallet_password => NULL)"),
+            b!("BEGIN_REQUEST", "UTL_HTTP.BEGIN_REQUEST(url, method => 'GET', http_version => NULL)"),
+            b!("GET_RESPONSE", "UTL_HTTP.GET_RESPONSE(r)"),
+            b!("READ_TEXT", "UTL_HTTP.READ_TEXT(r, data OUT, len => NULL)"),
+            b!("END_RESPONSE", "UTL_HTTP.END_RESPONSE(r)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_MVIEW",
+        members: &[
+            b!("REFRESH", "DBMS_MVIEW.REFRESH(list, method => NULL, atomic_refresh => TRUE)"),
+            b!("REFRESH_ALL_MVIEWS", "DBMS_MVIEW.REFRESH_ALL_MVIEWS(number_of_failures OUT, method => NULL)"),
+            b!("EXPLAIN_MVIEW", "DBMS_MVIEW.EXPLAIN_MVIEW(mv, statement_id => NULL)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_MONITOR",
+        members: &[
+            b!("SESSION_TRACE_ENABLE", "DBMS_MONITOR.SESSION_TRACE_ENABLE(session_id => NULL, serial_num => NULL, waits => TRUE, binds => FALSE)"),
+            b!("SESSION_TRACE_DISABLE", "DBMS_MONITOR.SESSION_TRACE_DISABLE(session_id => NULL, serial_num => NULL)"),
+        ],
+    },
+    SysPackage {
+        name: "DBMS_SPACE",
+        members: &[
+            b!("UNUSED_SPACE", "DBMS_SPACE.UNUSED_SPACE(segment_owner, segment_name, segment_type, total_blocks OUT, total_bytes OUT, unused_blocks OUT, unused_bytes OUT, …)"),
+            b!("SPACE_USAGE", "DBMS_SPACE.SPACE_USAGE(segment_owner, segment_name, segment_type, unformatted_blocks OUT, unformatted_bytes OUT, …)"),
+        ],
+    },
 ];
 
 /// 사전(카탈로그) 객체 — 관계 자리 후보 + `qualifier.` 뒤(`sys.` 등 점 앞 부분이 qualifier).

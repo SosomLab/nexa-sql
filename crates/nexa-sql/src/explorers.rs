@@ -881,15 +881,46 @@ impl ExplorerSet {
 
     /// 찾기가 선택을 옮겼으면 공용 스크롤을 그 행에 맞춘다(`drain` 뒤 · 시작 직후).
     fn after_reveal(&mut self) {
-        if self.panes[self.shown].ex.take_reveal_done() {
-            self.relayout();
-            self.reveal_selection();
-        }
+        let Some(i) = (0..self.panes.len()).find(|&i| self.panes[i].ex.take_reveal_done()) else {
+            return;
+        };
+        self.relayout();
+        // 선택 행을 **보이는 영역의 1/3 지점**에(사용자 10-01 "자동 이동하면 그 항목이 화면에 보여야") — 끝에 딱 맞추면 뒤이은 응답으로
+        // 행 높이·상태 행이 몇 px만 바뀌어도 다시 밖으로 나갔다(두 번째 연결 칸 · 16px 모자람). 위치 = 칸 시작 + 칸 안 행 y(스크롤 0 기준).
+        let Some(node) = self.panes[i].ex.selected_node() else {
+            return;
+        };
+        let Some(y) = self.panes[i].ex.row_top_of(node) else {
+            return;
+        };
+        let b = self.bounds;
+        let content_y = self.pane_top(i) + y;
+        self.scroll = (content_y - b.h / 3).max(0);
+        self.bars.show();
+        self.relayout();
     }
 
     /// 선택 노드의 라벨 경로(자체 시험 `explorer.selpath:<파일>`).
     pub(crate) fn selected_path(&self) -> String {
-        self.panes[self.shown].ex.selected_path()
+        // 둘째 줄 = 선택 행이 화면 안에 있는가(㉗-b · 두 번째 연결 칸의 선택이 화면 밖에 남던 결함의 판정).
+        let b = self.bounds;
+        let top = b.y + self.pinned.map_or(0, |(_, r)| r.h);
+        let vis = self.panes[self.shown]
+            .ex
+            .selected_span()
+            .is_some_and(|(y, h)| y >= top && y + h <= b.bottom());
+        // 셋째 줄 = 진단(칸 · 공용 스크롤 · 선택 행 y/h · 영역 · 고정 헤더).
+        format!(
+            "{}
+visible={vis}
+shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
+            self.panes[self.shown].ex.selected_path(),
+            self.shown,
+            self.scroll,
+            self.panes[self.shown].ex.selected_span(),
+            (b.y, b.h),
+            self.pinned.map(|(_, r)| r.h)
+        )
     }
 
     /// ★ DB 용량 요청(기동 명령 `explorer.dbsizes` · 10-01 ㉕) — 보이는 칸.
@@ -1405,7 +1436,6 @@ impl ExplorerSet {
             changed |= p.ex.drain();
         }
         if changed {
-            self.after_reveal();
             if let Some((pane, node, inner)) = anchor {
                 // ★ 서버 헤더 행 높이까지 더한 칸 시작 위치(09-25: 헤더를 빼고 더해 응답마다 한 행씩 위로 밀리던 결함).
                 let top = self.pane_top(pane);
@@ -1417,6 +1447,9 @@ impl ExplorerSet {
                     }
                 }
             }
+            // ★ "탐색기에서 보기"가 선택을 옮겼으면 **앵커 보정 뒤에** 그 행으로 스크롤(10-01 ㉗-b · 사용자 "자동 이동하면 그 항목이
+            //   화면에 보여야" — 앞에 두면 앵커 보정이 선택 행 스크롤을 도로 덮어 다른 서버 칸(두 번째 연결)의 선택이 화면 밖에 남았다).
+            self.after_reveal();
         }
         changed
     }

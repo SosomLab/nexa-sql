@@ -454,6 +454,25 @@ impl App {
         }
     }
 
+    /// ★ 실행 결과가 갈 탭(10-01 ㉘-b · 사용자 "2행 가져옴인데 결과 탭이 비어 있다"): 활성 탭이 Output이면 결과는 **가장 최근 결과 탭**
+    ///   (없으면 새 결과 탭)으로 — 종전에는 `grid_tab`(= Output 자리표시 그리드)에 써서 아무 데도 보이지 않았다.
+    pub(crate) fn run_target_tab(&mut self) -> u64 {
+        if !self.panel.output_active() {
+            return self.grid_tab;
+        }
+        if let Some(t) = self
+            .panel
+            .tabs
+            .iter()
+            .filter(|t| !t.is_output)
+            .max_by_key(|t| t.seq)
+        {
+            return t.id;
+        }
+        self.new_result_tab();
+        self.grid_tab
+    }
+
     /// 새 결과 탭(Ctrl+\ · D-71): 현재 설정을 물려받은 빈 그리드 · 상한을 넘으면 가장 오래된 비고정 탭 정리.
     pub(crate) fn new_result_tab(&mut self) {
         let a = self.panel.active;

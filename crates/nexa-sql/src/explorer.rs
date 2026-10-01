@@ -4238,6 +4238,11 @@ impl Explorer {
         self.step_reveal();
     }
 
+    /// 선택 노드 번호(세트가 "탐색기에서 보기" 스크롤에 쓴다).
+    pub(crate) fn selected_node(&self) -> Option<usize> {
+        self.selected
+    }
+
     pub(crate) fn take_reveal_done(&mut self) -> bool {
         std::mem::take(&mut self.reveal_done)
     }

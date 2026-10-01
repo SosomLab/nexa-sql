@@ -86,6 +86,12 @@
 - View ▸ **Output**(Ctrl+Shift+O · ⌘⇧O · DBeaver와 같은 키) = 활성 편집기 탭의 Output 탭 토글(닫아도 본문 유지) · 팔레트 "View: Show/Hide Output" · 탭 × 도 같다.
 - 자체 시험: 기동 명령 `output.dump:<파일>`(첫 줄 `보임|줄수`) · `editor.dump:<파일>`(첫 줄 `제목|종류|읽기전용`) · 단위 테스트 `output::tests` 3 · `whole_item` 1.
 
+### 3-2-a. 결과 탭과의 전환(10-01 ㉘ · 사용자)
+
+- **결과 셋이 오면 결과 탭으로**: Output을 보던 중이라도 `RunEvent::ResultSet`이 오면 그 결과 탭이 활성(`results::switch_to_result` · `output.activate = always`만 예외 · 포커스 유지).
+- **실행 시작 때 Output이 활성이면** 결과는 Output 자리표시가 아니라 **가장 최근 결과 탭**(없으면 새 결과 탭)으로(`run_target_tab` · ㉘-b "2행 가져옴인데 결과 탭이 비어 있다").
+- 자체 시험 `result.dump:<파일>` · E2E `scripts/win-output-result-e2e.sh`.
+
 ### 3-3. 남은 것(T-266 · T-267)
 - Output 줄 색(오류 = danger · 경고 = amber · 텍스트 색만) · 탭 라벨 미읽음 배지 · 줄 더블클릭 = 오류 줄로 이동 · 필터/찾기 · SQL Server `RAISERROR` 심각도 분류 ·
   PG `RAISE NOTICE` 레벨 표식 · Output만 있는 실행에서 "결과1" 빈 탭 안 만들기(`grid.result_tabs`와 조율) · 객체 탭 = 탭 줄 색/아이콘(`TabKind::Object`) ·

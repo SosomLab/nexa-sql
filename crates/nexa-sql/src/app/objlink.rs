@@ -439,10 +439,45 @@ pub(crate) struct ObjLinks {
 /// 부분 분석 때 보이는 구간 밖으로 문장 경계(`;`)를 찾는 최대 글자 수.
 const REGION_REACH: usize = 64 * 1024;
 
+/// ★ 시스템 객체 분류(10-01 ㉙ · 사용자 "`DBMS_XPLAN.DISPLAY_CURSOR` 같은 시스템 객체는 Ctrl 링크가 안 된다"): 메타(탐색기 스냅숏)에
+///   없는 이름을 nsql-script 내장 표로 — 시스템 패키지(`builtins::package` · Oracle `DBMS_*`/`UTL_*`) = Package · 사전 객체
+///   (`builtins::system_objects` · `ALL_TABLES` · `DUAL` · `sys.objects` …) = Relation. 스키마가 있으면 `SYS`/`PUBLIC`/`sys`만(그 밖은 사용자
+///   스키마 = 메타가 답할 일). 순수 함수.
+pub(crate) fn builtin_class(
+    dialect: Option<nsql_core::Dialect>,
+    schema: Option<&str>,
+    name: &str,
+) -> Option<ObjClass> {
+    use nsql_script::builtins;
+    if schema
+        .is_some_and(|s| !matches!(s.to_ascii_uppercase().as_str(), "SYS" | "PUBLIC" | "SYSTEM"))
+    {
+        // `sys.objects`(SQL Server)처럼 사전 객체 자체가 접두를 가진 것은 아래 전체 이름 비교로.
+        let full = format!("{}.{name}", schema.unwrap_or(""));
+        return builtins::system_objects(dialect)
+            .iter()
+            .any(|o| o.eq_ignore_ascii_case(&full))
+            .then_some(ObjClass::Relation);
+    }
+    if builtins::package(dialect, name).is_some() {
+        return Some(ObjClass::Package);
+    }
+    builtins::system_objects(dialect)
+        .iter()
+        .any(|o| {
+            o.eq_ignore_ascii_case(name)
+                || o.rsplit_once('.')
+                    .is_some_and(|(_, n)| n.eq_ignore_ascii_case(name))
+        })
+        .then_some(ObjClass::Relation)
+}
+
 /// 탐색기 스냅숏 위의 해석기 — 없는 컬럼은 `needs`에 모아 호스트가 요청한다(지연 로딩 · 61 §1-8).
 struct SnapResolver<'a> {
     names: &'a Interner,
     snap: &'a Snapshot,
+    /// 방언(시스템 객체 폴백 `builtin_class` · ㉙).
+    dialect: Option<nsql_core::Dialect>,
     needs: std::cell::RefCell<Vec<(Option<String>, String)>>,
     /// 탭 세션의 현재 스키마(서버 답 → 접속 `?schema=` → 사용자) — 스냅숏의 현재 스키마 대신(같은 서버 다른 계정 · 사용자 09-30).
     cur: Option<String>,
@@ -490,8 +525,10 @@ impl SnapResolver<'_> {
 
 impl Resolver for SnapResolver<'_> {
     fn object_class(&self, schema: Option<&str>, name: &str) -> Option<ObjClass> {
-        // 서버가 풀 수 있고 이 세션이 닿을 수 있는 이름만 정상(96 §6).
-        let id = self.resolve(schema, name)?;
+        // 서버가 풀 수 있고 이 세션이 닿을 수 있는 이름만 정상(96 §6) · 메타에 없으면 시스템 객체 표(㉙).
+        let Some(id) = self.resolve(schema, name) else {
+            return builtin_class(self.dialect, schema, name);
+        };
         let o = self.snap.object(id)?;
         use nsql_catalog::ObjectKind as K;
         Some(match o.kind {
@@ -735,6 +772,7 @@ impl App {
             let res = SnapResolver {
                 names,
                 snap: &snap,
+                dialect,
                 needs: std::cell::RefCell::new(Vec::new()),
                 cur,
                 session_user: spec.as_ref().and_then(|s| s.user.clone()),
@@ -999,6 +1037,18 @@ impl App {
                         })
                 })
             }
+            // ★ 시스템 패키지 멤버(㉙ · `DBMS_XPLAN.DISPLAY_CURSOR`) = 내장 표의 시그니처가 설명.
+            LinkKind::Routine
+                if link.owner.as_deref().is_some_and(|o| {
+                    nsql_script::builtins::package(Some(self.sess.dialect), o).is_some()
+                }) =>
+            {
+                nsql_script::builtins::signature(
+                    Some(self.sess.dialect),
+                    &format!("{}.{}", link.owner.as_deref().unwrap_or(""), link.name),
+                )
+                .map(str::to_string)
+            }
             // 테이블·루틴도 판정과 같은 길(세션 현재 스키마 + PUBLIC + 접근성 · 96 §6) — 전 스키마 조회 금지(사용자 09-30 "엄격하게").
             _ => self
                 .objlink_resolve(
@@ -1138,6 +1188,33 @@ impl App {
             self.objlink_sync();
         }
         ok
+    }
+
+    /// 자체 시험(기동 명령 `objlink.dump:<파일>` · ㉙): 분석된 링크 한 줄씩 `종류|이름|known|설명`(Ctrl을 잠시 누른 것으로 치고 분석).
+    pub(crate) fn objlink_dump_text(&mut self) -> String {
+        let was = self.primary;
+        self.primary = true;
+        self.objlink_sync();
+        let mut out = String::new();
+        for k in 0..self.objlinks.links.len() {
+            let l = &self.objlinks.links[k];
+            let desc = self
+                .objlink_describe(k)
+                .and_then(|(_, _, d)| d)
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "{:?}|{}|{}|{desc}
+",
+                l.kind,
+                l.qualified(true),
+                l.known
+            ));
+        }
+        self.primary = was;
+        if !was {
+            self.objlink_sync();
+        }
+        out
     }
 
     fn objlink_reveal_named_inner(&mut self, name: &str) -> bool {
@@ -1460,5 +1537,39 @@ mod tests {
         ));
         // 대소문자 무시.
         assert!(schema_visible("sqledu", Some("SQLEDU"), None, None));
+    }
+
+    /// ㉙ 시스템 객체 분류(순수): 패키지 · 사전 객체 · 접두 · 모르는 이름.
+    #[test]
+    fn builtin_class_rules() {
+        use nsql_core::Dialect;
+        assert_eq!(
+            builtin_class(Some(Dialect::Oracle), None, "DBMS_XPLAN"),
+            Some(ObjClass::Package)
+        );
+        assert_eq!(
+            builtin_class(Some(Dialect::Oracle), None, "dbms_output"),
+            Some(ObjClass::Package)
+        );
+        assert_eq!(
+            builtin_class(Some(Dialect::Oracle), None, "ALL_TABLES"),
+            Some(ObjClass::Relation)
+        );
+        assert_eq!(
+            builtin_class(Some(Dialect::Oracle), Some("SYS"), "all_tables"),
+            Some(ObjClass::Relation)
+        );
+        assert_eq!(
+            builtin_class(Some(Dialect::Oracle), Some("BISCM"), "ALL_TABLES"),
+            None
+        );
+        assert_eq!(
+            builtin_class(Some(Dialect::Oracle), None, "NO_SUCH_THING"),
+            None
+        );
+        assert_eq!(
+            builtin_class(Some(Dialect::Mssql), Some("sys"), "objects"),
+            Some(ObjClass::Relation)
+        );
     }
 }

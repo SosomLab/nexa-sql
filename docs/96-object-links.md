@@ -98,8 +98,15 @@
 | 메뉴 | `objlink_click`(우) | 설명 복사 · 이름 - 설명 복사 · ─ · **객체 탐색기에서 보기** = `objlink_reveal_target(k).is_some()`일 때만 활성(미확인 = 흐림) |
 | 대상 | `objlink_reveal_target` → `explorer::RevealTarget{db, schema, kind, name, member}` | 판정과 같은 해석(`objlink_resolve`) · 컬럼 = 테이블 + 멤버 · `pkg.proc` = 패키지 + 멤버 · SQL Server `DB.스키마` 열쇠 → db |
 | 찾기 | `Explorer::reveal` → `step_reveal`(단계 기계 · `drain` 끝마다) | 앵커(스키마/SSMS DB) → 종류 폴더(묶음 로컬 펼침) → 객체 → 멤버 하위 폴더(Columns/Procedures/Functions) → 선택(조상 펼침 · 보이게) · 못 찾음 = 상태줄 |
-| 세트 | `ExplorerSet::reveal`(칸 전환) · `after_reveal`(공용 스크롤) | 탐색기 숨김이면 `view.explorer` 켬 · 포커스 = 탐색기 |
+| 세트 | `ExplorerSet::reveal`(칸 전환) · `after_reveal`(**어느 칸이든** `reveal_done` 소비 → 선택 행을 보이는 영역 1/3 지점에 · `drain`의 앵커 보정 **뒤**) | 탐색기 숨김이면 `view.explorer` 켬 · 포커스 = 탐색기 · 같은 서버 다른 계정 = 다른 칸(㉗-b) |
 | 시험 | `objlink.reveal:<이름>` · `explorer.selpath:<파일>` · `scripts/win-objlink-reveal-e2e.sh` 4 | 명령은 `primary`(Ctrl)를 잠시 켜 분석 |
+
+## 8. 시스템 객체(10-01 ㉙)
+
+- 메타(탐색기 스냅숏)에 없는 이름은 `builtin_class(dialect, schema, name)`(순수)로 한 번 더 — 시스템 패키지(`builtins::package`) = Package · 사전 객체(`builtins::system_objects`) = Relation · 접두는 `SYS`/`PUBLIC`/`SYSTEM`만. `SnapResolver::object_class`의 폴백.
+- 툴팁: 시스템 패키지 멤버 = `builtins::signature`(예 `DBMS_XPLAN.DISPLAY_CURSOR(sql_id => NULL, …)`) · 사전 객체 = "(설명 없음)". "탐색기에서 보기"는 흐림(탐색기에 없다).
+- 표에 없는 SYS 패키지는 아직 링크가 아니다(후속 = 접속 뒤 유휴에 SYS 패키지 이름을 L1에 올리기).
+- 시험: `objlink.dump:<파일>` · E2E ⑤.
 
 ## 5. 후속(T-257)
 

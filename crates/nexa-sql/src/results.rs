@@ -505,6 +505,12 @@ pub(crate) fn title_from_sql(table: Option<&str>, sql: &str) -> String {
     }
 }
 
+/// ★ 결과 셋이 왔을 때 Output 탭에서 결과 탭으로 옮길까(10-01 ㉘ · 순수): Output을 보던 중이고 `output.activate`가 `always`가 아닐 때.
+///   `always` = 사용자가 메시지를 늘 앞에 두겠다는 뜻이라 결과가 와도 그대로(메시지가 오면 다시 Output으로 가므로 깜빡이지 않게).
+pub(crate) fn switch_to_result(output_active: bool, activate_policy: &str) -> bool {
+    output_active && activate_policy != "always"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,5 +642,14 @@ mod tests {
         p.push(tab(2, 2, false));
         assert_eq!(p.unique_title("EMP", 1), "EMP 2");
         assert_eq!(p.unique_title("DEPT", 1), "DEPT");
+    }
+
+    /// ㉘ Output에서 결과 탭으로: Output 활성 × 정책(MC/DC — 조건 둘).
+    #[test]
+    fn switch_to_result_rules() {
+        assert!(super::switch_to_result(true, "no_results"));
+        assert!(super::switch_to_result(true, "never"));
+        assert!(!super::switch_to_result(true, "always"));
+        assert!(!super::switch_to_result(false, "no_results"));
     }
 }

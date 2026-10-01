@@ -189,6 +189,24 @@ impl App {
             let _ = std::fs::write(path, self.grid.dump_edit());
             return;
         }
+        // 자체 시험(10-01 ㉘): 활성 패널의 결과 탭 상태 — 첫 줄 `active=<제목>|output=<Output 탭인가>|rows=<활성 그리드 행 수>` · 둘째 줄부터 탭 제목.
+        if let Some(path) = id.strip_prefix("result.dump:") {
+            let mut out = format!(
+                "active={}|output={}|rows={}\n",
+                self.panel
+                    .tabs
+                    .get(self.panel.active)
+                    .map(|t| t.title.as_str())
+                    .unwrap_or(""),
+                self.panel.output_active(),
+                self.grid.row_count()
+            );
+            for t in &self.panel.tabs {
+                out.push_str(&format!("{}|{}\n", t.title, t.is_output));
+            }
+            let _ = std::fs::write(path, out);
+            return;
+        }
         // 자체 시험(10-01): 삭제 창 덤프(`drop.dump:<파일>` · 단계·무장·정보 줄·DROP 문·백업 경로).
         // 자체 시험(10-01): 삭제 창의 2단 확인을 거친 것과 같은 길(키·마우스 주입 없이 흐름 검증) — `drop.confirm` · `drop.confirm_nobackup`.
         if id == "drop.confirm" {
@@ -431,6 +449,11 @@ impl App {
             let ok = self.objlink_reveal_named(name);
             self.sess.status = format!("objlink.reveal {name} ok={ok}");
             self.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("objlink.dump:") {
+            let text = self.objlink_dump_text();
+            let _ = std::fs::write(path, text);
             return;
         }
         if let Some(path) = id.strip_prefix("explorer.selpath:") {
