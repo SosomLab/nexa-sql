@@ -649,6 +649,8 @@ impl App {
             self.explorer.current_schema(spec.as_ref()).as_deref(),
         );
         let items: Vec<CtxItem> = if list.is_empty() {
+            // 목록이 아직 없다 = 채움을 청하고 안내(⑰ · 다음 클릭에 보인다).
+            self.explorer.request_objects(spec.as_ref(), "");
             vec![CtxItem::maybe("sess.use:", t(Msg::MnSessUseNoList), false)]
         } else {
             list.iter()

@@ -209,6 +209,28 @@ impl App {
             return;
         }
         // 자체 시험(09-30): 활성 편집 탭 덤프 — 첫 줄 `제목|탭 종류|읽기 전용` · 둘째 줄부터 본문(소스 열기·DDL 열기 결과를 파일로 대조).
+        // 자체 시험(10-01 ⑭ · 키 주입 0): 캐럿 이동(`editor.caret:<글자 인덱스|end>`) · 완성 호출(`intel.probe`) · 후보 덤프(`intel.dump:<파일>`).
+        if let Some(n) = id.strip_prefix("editor.caret:") {
+            let mut inv = Invalidations::default();
+            let ed = self.editors.cur_mut();
+            let idx = if n == "end" {
+                ed.text().chars().count()
+            } else {
+                n.parse().unwrap_or(0)
+            };
+            ed.select_range(idx, idx, &mut inv);
+            self.redraw();
+            return;
+        }
+        if id == "intel.probe" {
+            self.focus = Focus::Editor;
+            self.intel_request(true);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("intel.dump:") {
+            let _ = std::fs::write(path, self.intel.dump_cands());
+            return;
+        }
         if let Some(path) = id.strip_prefix("editor.dump:") {
             let i = self.editors.active();
             let head = format!(

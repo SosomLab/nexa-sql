@@ -922,18 +922,17 @@ pub fn alias_table(ws: &[Word<'_>]) -> Vec<Alias> {
                 else {
                     break;
                 };
-                // [schema.]table
-                let (schema, table, mut m) = if ws.get(k + 1).is_some_and(|w| w.text == ".")
-                    && ws.get(k + 2).is_some_and(is_name)
+                // [db.][schema.]table — 점 사슬 전부(SQL Server 3부 `DB.스키마.테이블` · 10-01 ⑭): 마지막 = 테이블 ·
+                //   앞 = 스키마 열쇠(`DB.스키마` = 메타의 복합 열쇠 버킷과 같은 글자).
+                let mut segs: Vec<String> = vec![first.text.to_string()];
+                let mut m = k + 1;
+                while ws.get(m).is_some_and(|w| w.text == ".") && ws.get(m + 1).is_some_and(is_name)
                 {
-                    (
-                        Some(first.text.to_string()),
-                        ws[k + 2].text.to_string(),
-                        k + 3,
-                    )
-                } else {
-                    (None, first.text.to_string(), k + 1)
-                };
+                    segs.push(ws[m + 1].text.to_string());
+                    m += 2;
+                }
+                let table = segs.pop().unwrap_or_default();
+                let schema = (!segs.is_empty()).then(|| segs.join("."));
                 if ws.get(m).is_some_and(|w| is_word(w, "AS")) {
                     m += 1;
                 }
@@ -1932,5 +1931,24 @@ mod tests {
             "SQL Server만"
         );
         assert!(keywords_for(Some(Dialect::Mysql)).any(|k| k == "ON DUPLICATE KEY UPDATE"));
+        // ★ 10-01 ⑭: 3부 이름 별칭 = 스키마 열쇠 `DB.스키마` · 테이블 = 마지막.
+        let c = context_at(
+            "SELECT t. FROM Database2.dbo.Tbl t",
+            9,
+            Some(Dialect::Mssql),
+        );
+        assert!(matches!(&c.kind, CtxKind::Member { qualifier } if qualifier == "t"));
+        let a = c.aliases.iter().find(|a| a.alias == "t").expect("alias t");
+        assert_eq!(
+            (a.schema.as_deref(), a.table.as_str()),
+            (Some("Database2.dbo"), "Tbl")
+        );
+        let c = context_at("SELECT * FROM s.t x", 20, Some(Dialect::Oracle));
+        let a = c.aliases.iter().find(|a| a.alias == "x").expect("alias x");
+        assert_eq!(
+            (a.schema.as_deref(), a.table.as_str()),
+            (Some("s"), "t"),
+            "2부는 종전 그대로"
+        );
     }
 }

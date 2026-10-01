@@ -258,6 +258,14 @@ impl Intel {
         &self.cfg
     }
 
+    /// 자체 시험용(기동 명령 `intel.dump:<파일>` · 10-01 ⑭): 지금 후보를 `종류|글|설명` 한 줄씩.
+    pub(crate) fn dump_cands(&self) -> String {
+        self.cands
+            .iter()
+            .map(|c| format!("{:?}|{}|{}\n", c.kind, c.text, c.detail))
+            .collect()
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.menu.is_open()
     }
@@ -448,6 +456,14 @@ impl Intel {
         }
         let ctx = ctx;
         let prefix_start = ctx.replace.start;
+        if std::env::var_os("NSQL_TRACE_META").is_some() {
+            eprintln!(
+                "[intel] ctx kind={:?} prefix={:?} aliases={}",
+                ctx.kind,
+                ctx.prefix,
+                ctx.aliases.len()
+            );
+        }
         if ctx.kind == CtxKind::None {
             self.close();
             return false;
@@ -539,6 +555,22 @@ impl Intel {
                     if a.local {
                     } else if let Some(m) = meta {
                         match m.snap.lookup(m.names, a.schema.as_deref(), &a.table) {
+                            // ★ 데이터베이스·스키마 같은 "컬럼 없는" 객체가 이름만 같을 때(`FROM BISCM_MS.` · 10-01 ⑭)는 별칭 해석이 아니다 —
+                            //   아래 3부 이름 분기로.
+                            Some(id)
+                                if m.snap.object(id).is_some_and(|o| {
+                                    matches!(
+                                        o.kind,
+                                        ObjectKind::Database
+                                            | ObjectKind::Schema
+                                            | ObjectKind::DbUser
+                                            | ObjectKind::DbRole
+                                            | ObjectKind::LinkedServer
+                                    )
+                                }) =>
+                            {
+                                resolved = false;
+                            }
                             Some(id) => match m.snap.columns(id) {
                                 ColState::Loaded { cols, .. } => {
                                     for c in cols.iter() {
@@ -572,16 +604,73 @@ impl Intel {
                         }
                     }
                 }
+                // ★ SQL Server 3부 이름(10-01 ⑭ · 사용자 "`Database2.dbo.Table`은 현재 DB의 `dbo.Table`과 다른 객체"):
+                //   `DB.` = 그 DB의 스키마 · `DB.스키마.` = 그 DB·스키마의 객체(복합 열쇠 `DB.스키마` 버킷 · 없으면 호스트가 `USE`로
+                //   따라가 읽음) · `DB.스키마.테이블.`은 아래 "테이블 이름 직접" 경로가 복합 열쇠로 컬럼을 찾는다.
+                let mut db_handled = false;
+                if let (Some(m), Some(Dialect::Mssql), false) = (meta, dialect, resolved) {
+                    let segs: Vec<&str> = qualifier.split('.').collect();
+                    let is_db = m.names.find("").is_some_and(|e| {
+                        m.snap
+                            .prefix(m.names, e, ObjectKind::Database, "", usize::MAX)
+                            .iter()
+                            .any(|h| m.names.get(h.name).eq_ignore_ascii_case(segs[0]))
+                    });
+                    if std::env::var_os("NSQL_TRACE_META").is_some() {
+                        eprintln!("[intel] member q={qualifier} segs={} is_db={is_db} resolved={resolved} dbs={}", segs.len(),
+                            m.names.find("").map_or(0, |e| m.snap.prefix(m.names, e, ObjectKind::Database, "", usize::MAX).len()));
+                    }
+                    if is_db && segs.len() <= 2 {
+                        db_handled = true;
+                        resolved = true;
+                        let key = segs.join(".");
+                        match m.names.find(&key) {
+                            Some(sc) if segs.len() == 1 => {
+                                self.note_coverage(m, sc, ObjectKind::Schema);
+                                for h in
+                                    m.snap
+                                        .prefix(m.names, sc, ObjectKind::Schema, "", usize::MAX)
+                                {
+                                    cands.push(obj_cand(
+                                        m,
+                                        &h,
+                                        ObjectKind::Schema,
+                                        dialect,
+                                        show_types,
+                                    ));
+                                }
+                            }
+                            Some(sc) => {
+                                for kind in from_kinds(dialect, self.cfg.routines) {
+                                    self.note_coverage(m, sc, kind);
+                                    for h in m.snap.prefix(m.names, sc, kind, "", usize::MAX) {
+                                        if ctx.from_chain && !from_ok(m, &h, kind, dialect) {
+                                            continue;
+                                        }
+                                        cands.push(obj_cand(m, &h, kind, dialect, show_types));
+                                    }
+                                }
+                            }
+                            None => {
+                                self.loading_objects = true;
+                                push_need(&mut self.need_objects, &key);
+                            }
+                        }
+                    }
+                }
                 // 2) 스키마 이름 → 그 스키마 객체.
                 if let Some(m) = meta {
                     let q = qualifier.rsplit('.').next().unwrap_or(qualifier);
-                    if let Some(sc) = m
-                        .snap
-                        .schemas
-                        .iter()
-                        .copied()
-                        .find(|s| m.names.get(*s).eq_ignore_ascii_case(q))
-                    {
+                    let sc_hit = if db_handled {
+                        None
+                    } else {
+                        m.snap
+                            .schemas
+                            .iter()
+                            .copied()
+                            .find(|s| m.names.get(*s).eq_ignore_ascii_case(q))
+                    };
+                    if let Some(sc) = sc_hit {
                         // ★ `스키마.`를 치는 순간 그 스키마를 읽어 캐시(사용자 09-23) — 종류는 FROM 자리와 같은 표(`from_kinds` · 뷰 = 테이블
                         //   레이어 · 함수·패키지·프로시저 = 낮은 레이어 · 09-24). 시퀀스는 트리가 채운 것만 보인다.
                         for kind in from_kinds(dialect, self.cfg.routines) {
@@ -1867,7 +1956,10 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
                 }
                 ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
                 ObjectKind::Extension => IconKind::Package,
-                ObjectKind::Database | ObjectKind::DbUser | ObjectKind::DbRole => IconKind::Schema,
+                ObjectKind::Database
+                | ObjectKind::DbUser
+                | ObjectKind::DbRole
+                | ObjectKind::Schema => IconKind::Schema,
                 ObjectKind::LinkedServer => IconKind::Link,
             });
         }
@@ -2030,6 +2122,7 @@ fn cand_kind(k: ObjectKind) -> CandKind {
         ObjectKind::Package => CandKind::Package,
         ObjectKind::Procedure | ObjectKind::Function => CandKind::Routine,
         ObjectKind::Database => CandKind::Database,
+        ObjectKind::Schema => CandKind::Schema,
         _ => CandKind::Symbol,
     }
 }

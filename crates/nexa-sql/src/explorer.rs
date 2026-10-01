@@ -62,8 +62,6 @@ enum GroupKind {
     ExternalResources,
     Programmability,
     Security,
-    /// 보안 ▸ 스키마(잎 목록 · `Req::Schemas`).
-    DbSchemas,
     ServerObjects,
 }
 
@@ -74,7 +72,6 @@ fn group_msg(g: GroupKind) -> Msg {
         GroupKind::ExternalResources => Msg::ExpExternalResources,
         GroupKind::Programmability => Msg::ExpProgrammability,
         GroupKind::Security => Msg::ExpSecurity,
-        GroupKind::DbSchemas => Msg::ExpDbSchemas,
         GroupKind::ServerObjects => Msg::ExpServerObjects,
     }
 }
@@ -134,10 +131,10 @@ fn ssms_group_children(db: Option<&str>, group: GroupKind, depth: usize) -> Vec<
         GroupKind::Security => vec![
             folder_node(db, ObjectKind::DbUser, depth),
             folder_node(db, ObjectKind::DbRole, depth),
-            group_node(db, GroupKind::DbSchemas, depth),
+            folder_node(db, ObjectKind::Schema, depth),
         ],
         GroupKind::ServerObjects => vec![folder_node(None, ObjectKind::LinkedServer, depth)],
-        GroupKind::Databases | GroupKind::SystemDbs | GroupKind::DbSchemas => Vec::new(),
+        GroupKind::Databases | GroupKind::SystemDbs => Vec::new(),
     }
 }
 
@@ -374,12 +371,17 @@ enum Req {
         key: (String, String),
         /// 패키지면 컬럼 대신 멤버(`nsql_catalog::package_members` · 09-24).
         pkg: bool,
+        /// 다른 DB(⑭ · SQL Server · 열쇠 `key.0`이 `DB.스키마`).
+        db: Option<String>,
     },
     /// 자동 완성 즉시 채움 — 스키마 한 종류의 객체 목록(트리 노드 없이 · 09-23 사용자 "`스키마.` 입력 시 그 시점에 캐싱").
+    /// ★ `db`(10-01 ⑭ · SQL Server 다른 DB) = 메타 세션이 `USE`로 따라간 뒤 `schema`를 읽는다 · 메타 버킷 열쇠는 `key`(`DB.스키마` 복합).
     ObjectsMeta {
         gen: u64,
         schema: String,
         kind: ObjectKind,
+        db: Option<String>,
+        key: String,
     },
     /// 권한 반영 사전 뷰(`nsql_catalog::dictionary` · 접속당 한 번).
     DictMeta {
@@ -1642,10 +1644,12 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                 urgent: _,
                 key,
                 pkg,
+                db,
             } => {
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     if pkg {
                         nsql_catalog::package_members(s, &schema, &table).map_err(err_s)
@@ -1661,16 +1665,24 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     key,
                 }
             }
-            Req::ObjectsMeta { gen, schema, kind } => {
+            Req::ObjectsMeta {
+                gen,
+                schema,
+                kind,
+                db,
+                key,
+            } => {
                 if gen != cur_gen {
                     continue;
                 }
+                switch_db(&mut session, &mut meta_db, &base_db, db.as_deref());
                 let r = with_session(&mut session, |s| {
                     nsql_catalog::objects(s, &schema, kind).map_err(err_s)
                 });
+                // 메타 버킷 열쇠 = `key`(다른 DB면 `DB.스키마` · 그 DB의 스키마 목록이면 `DB`).
                 Resp::ObjectsMeta {
                     gen,
-                    schema,
+                    schema: key,
                     kind,
                     r,
                 }
@@ -1752,12 +1764,22 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
         };
         let ms = t0.elapsed().as_millis();
         // 인덱스·검색은 늘 남긴다(스키마당 1줄 · 09-25 "검색이 끝나지 않는다" 진단).
-        if ms >= 300
+        // `NSQL_TRACE_META=1` = 전 요청(결과 상태 포함 · 10-01 ⑭ 진단).
+        let trace_all = std::env::var_os("NSQL_TRACE_META").is_some();
+        if trace_all
+            || ms >= 300
             || what.starts_with("columns")
             || what.starts_with("detail")
             || what.starts_with("index")
         {
-            eprintln!("[meta] {what} took {ms} ms");
+            eprintln!(
+                "[meta] {what} took {ms} ms{}",
+                if trace_all {
+                    resp_tag(&resp)
+                } else {
+                    String::new()
+                }
+            );
         }
         if tx.send(resp).is_err() {
             break;
@@ -1804,6 +1826,27 @@ fn search_hits(
         }
     }
     out
+}
+
+/// 진단용(`NSQL_TRACE_META`): 응답의 결과 상태 한 조각.
+fn resp_tag(r: &Resp) -> String {
+    match r {
+        Resp::ObjectsMeta {
+            r, schema, kind, ..
+        } => match r {
+            Ok(v) => format!(" → {schema} {kind:?} ok {}", v.len()),
+            Err(e) => format!(" → {schema} {kind:?} ERR {e}"),
+        },
+        Resp::ColumnsMeta { r, key, .. } => match r {
+            Ok(v) => format!(" → {}.{} ok {}", key.0, key.1, v.len()),
+            Err(e) => format!(" → {}.{} ERR {e}", key.0, key.1),
+        },
+        Resp::Objects { r, .. } => match r {
+            Ok(v) => format!(" ok {}", v.len()),
+            Err(e) => format!(" ERR {e}"),
+        },
+        _ => String::new(),
+    }
 }
 
 /// ★ 메타 세션의 DB 전환(101 §4 · SQL Server만): 요청의 `db`(None/빈 = 연결의 기준 DB `base`)가 지금 메타 세션의 DB(`meta_db`)와
@@ -1934,6 +1977,7 @@ fn folder_msg(kind: ObjectKind) -> Msg {
         ObjectKind::DbUser => Msg::ExpDbUsers,
         ObjectKind::DbRole => Msg::ExpDbRoles,
         ObjectKind::LinkedServer => Msg::ExpLinkedServers,
+        ObjectKind::Schema => Msg::ExpDbSchemas,
     }
 }
 
@@ -1951,7 +1995,8 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
         ObjectKind::Database
         | ObjectKind::DbUser
         | ObjectKind::DbRole
-        | ObjectKind::LinkedServer => th.text_dim,
+        | ObjectKind::LinkedServer
+        | ObjectKind::Schema => th.text_dim,
         ObjectKind::Aggregate => th.syn_keyword,
         ObjectKind::Sequence
         | ObjectKind::Index
@@ -2438,7 +2483,7 @@ impl Explorer {
                     }
                     ObjectKind::SchemaTrigger | ObjectKind::EventTrigger => IconKind::Trigger,
                     ObjectKind::Extension => IconKind::Package,
-                    ObjectKind::Database => IconKind::Schema,
+                    ObjectKind::Database | ObjectKind::Schema => IconKind::Schema,
                     ObjectKind::DbUser | ObjectKind::DbRole => IconKind::Schema,
                     ObjectKind::LinkedServer => IconKind::Link,
                 };
@@ -2966,6 +3011,53 @@ impl Explorer {
                 .find(sc)
                 .map_or(nsql_run::meta::Coverage::Missing, |s| snap.coverage(s, k))
         }
+        // ★ SQL Server 3부 이름(10-01 ⑭): `DB.스키마` = 그 DB·스키마의 관계 객체(복합 열쇠 버킷 · 메타 세션이 `USE`로 따라감) ·
+        //   `DB`(다른 DB 이름) = 그 DB의 스키마 목록(`(DB, Schema)` 버킷).
+        if d == Dialect::Mssql {
+            if let Some((db, sc)) = self.split_db_key(schema) {
+                let mut kinds = vec![ObjectKind::Table, ObjectKind::View, ObjectKind::Synonym];
+                if self.routines {
+                    kinds.extend([ObjectKind::Function, ObjectKind::Procedure]);
+                }
+                for kind in kinds {
+                    if !matches!(
+                        cov(&self.meta.names, &snap, schema, kind),
+                        nsql_run::meta::Coverage::Missing | nsql_run::meta::Coverage::Stale { .. }
+                    ) {
+                        continue;
+                    }
+                    self.meta.mark_loading(schema, kind);
+                    let _ = self.tx_bg.send(Req::ObjectsMeta {
+                        gen: self.gen,
+                        schema: sc.clone(),
+                        kind,
+                        db: Some(db.clone()),
+                        key: schema.to_string(),
+                    });
+                }
+                self.last_used = Instant::now();
+                self.suspended = false;
+                return;
+            }
+            if self.is_other_db(schema) {
+                if matches!(
+                    cov(&self.meta.names, &snap, schema, ObjectKind::Schema),
+                    nsql_run::meta::Coverage::Missing | nsql_run::meta::Coverage::Stale { .. }
+                ) {
+                    self.meta.mark_loading(schema, ObjectKind::Schema);
+                    let _ = self.tx_bg.send(Req::ObjectsMeta {
+                        gen: self.gen,
+                        schema: String::new(),
+                        kind: ObjectKind::Schema,
+                        db: Some(schema.to_string()),
+                        key: schema.to_string(),
+                    });
+                    self.last_used = Instant::now();
+                    self.suspended = false;
+                }
+                return;
+            }
+        }
         // ★ 빈 스키마 = 데이터베이스 버킷(10-01 ⑩ · `USE |` 완성 · SQL Server `sys.databases` · 그 밖 방언은 없음).
         if schema.is_empty() {
             if d == Dialect::Mssql
@@ -2981,6 +3073,8 @@ impl Explorer {
                     gen: self.gen,
                     schema: String::new(),
                     kind: ObjectKind::Database,
+                    db: None,
+                    key: String::new(),
                 });
             }
             return;
@@ -3037,6 +3131,8 @@ impl Explorer {
                 gen: self.gen,
                 schema: schema.to_string(),
                 kind,
+                db: None,
+                key: schema.to_string(),
             });
             sent = true;
             if !is_current
@@ -3203,6 +3299,11 @@ impl Explorer {
         } else {
             (key_schema.clone(), key_name.clone())
         };
+        // ★ 복합 열쇠 `DB.스키마`(⑭)면 그 DB로 `USE`한 뒤 `스키마`로 읽는다.
+        let (db, db_schema) = match self.split_db_key(&db_schema) {
+            Some((db, sc)) if key_schema != nsql_catalog::DICT_SCHEMA => (Some(db), sc),
+            _ => (None, db_schema),
+        };
         self.meta.mark_columns_loading(id);
         self.last_used = Instant::now();
         self.suspended = false;
@@ -3215,6 +3316,7 @@ impl Explorer {
             urgent,
             key: (key_schema, key_name),
             pkg: o.kind == ObjectKind::Package,
+            db,
         });
     }
 
@@ -4147,6 +4249,31 @@ impl Explorer {
         self.ssms && self.dialect == Some(Dialect::Mssql)
     }
 
+    /// ★ 복합 열쇠 `DB.스키마`(10-01 ⑭ · SQL Server): 앞부분이 메타의 데이터베이스 이름이면 `(DB, 스키마)`.
+    fn split_db_key(&self, key: &str) -> Option<(String, String)> {
+        if self.dialect != Some(Dialect::Mssql) {
+            return None;
+        }
+        let (db, sc) = key.split_once('.')?;
+        if sc.is_empty() || !self.databases().iter().any(|d| d.eq_ignore_ascii_case(db)) {
+            return None;
+        }
+        Some((db.to_string(), sc.to_string()))
+    }
+
+    /// 메타가 아는 **다른** 데이터베이스 이름인가(현재 DB는 제외 · SQL Server).
+    fn is_other_db(&self, name: &str) -> bool {
+        self.dialect == Some(Dialect::Mssql)
+            && !self
+                .current_db
+                .as_deref()
+                .is_some_and(|c| c.eq_ignore_ascii_case(name))
+            && self
+                .databases()
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(name))
+    }
+
     /// ★ 노드가 속한 데이터베이스(101 · Database 조상 · 서버 수준/다른 방언 = None = 연결의 현재 DB).
     fn db_of(&self, i: usize) -> Option<String> {
         let mut cur = Some(i);
@@ -4207,7 +4334,7 @@ impl Explorer {
             for &c in &self.nodes[n].children.clone() {
                 match &self.nodes[c].kind {
                     NodeKind::Folder { kind: k, .. } if *k == kind => return Some(c),
-                    NodeKind::Group { db, group } if *group != GroupKind::DbSchemas => {
+                    NodeKind::Group { db, group } => {
                         if self.nodes[c].children.is_empty() {
                             let depth = self.nodes[c].depth + 1;
                             let kids = ssms_group_children(db.as_deref(), *group, depth);
@@ -4275,8 +4402,25 @@ impl Explorer {
             return;
         }
         if self.dialect == Some(Dialect::Mssql) {
-            // DB가 바뀜 = 객체 세계가 바뀜 → 메타 비우고 L1부터(D-250).
+            // DB가 바뀜 = 객체 세계가 바뀜 → 메타 비우고 L1부터(D-250). ★ 데이터베이스 목록 버킷(`("", Database)`)은 서버 사실이라 보존
+            //   (10-01 ⑰ · 비우면 툴바 작업 단위 메뉴가 "목록 없음"이 되어 두 번째 전환이 안 됐다).
+            let dbs: Vec<ObjectInfo> = self
+                .databases()
+                .into_iter()
+                .map(|name| ObjectInfo {
+                    db: String::new(),
+                    schema: String::new(),
+                    name,
+                    kind: ObjectKind::Database,
+                    status: String::new(),
+                    modified: String::new(),
+                    extra: String::new(),
+                })
+                .collect();
             self.meta.clear();
+            if !dbs.is_empty() {
+                self.meta_load_objects("", ObjectKind::Database, &dbs);
+            }
             self.server_schema = None;
             self.intel_buckets.clear();
             self.index_reset();
@@ -4792,20 +4936,10 @@ impl Explorer {
                 self.nodes[i].expanded = true;
             }
             NodeKind::Group { db, group } => {
-                if group == GroupKind::DbSchemas {
-                    self.nodes[i].state = LoadState::Loading;
-                    self.loading_since.insert(i, self.now_hint);
-                    let _ = self.tx.send(Req::Schemas {
-                        gen,
-                        node: i,
-                        opts: self.schema_opts,
-                    });
-                } else {
-                    let depth = self.nodes[i].depth + 1;
-                    let kids = ssms_group_children(db.as_deref(), group, depth);
-                    self.set_children(i, kids);
-                    self.nodes[i].expanded = true;
-                }
+                let depth = self.nodes[i].depth + 1;
+                let kids = ssms_group_children(db.as_deref(), group, depth);
+                self.set_children(i, kids);
+                self.nodes[i].expanded = true;
             }
             NodeKind::Folder { schema, kind } => {
                 self.nodes[i].state = LoadState::Loading;

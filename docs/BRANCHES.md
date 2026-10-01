@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/intel-3part-names | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ SQL Server 3부 이름 완성(복합 열쇠 `DB.스키마` 버킷 · `ObjectKind::Schema` · 메타 세션 `USE` 추종) · 🔧 툴바 DB 메뉴 목록 버킷 보존 · 전환 속도 분석(T-275) · 기동 명령 `editor.caret`/`intel.probe`/`intel.dump` · `NSQL_TRACE_META` · `win-intel-3part-e2e.sh` 7 |
 | feat/oracle-schema-switch | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ Oracle 툴바 전환(`ALTER SESSION SET CURRENT_SCHEMA`) · `context_switch_name` 방언 공통 · 메타 세션 추종 · 운영 확인 제외 · PG 고정 · `win-schema-switch-e2e.sh` 6 |
 | feat/toolbar-db-unit | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ 툴바 작업 단위 `sess.db`(`db_unit` · `use_sql` · 드롭다운 = `USE` · `ExplorerAction::ServerInfo`) · SQL Server 연결 행 = 로그인 ID · `prod_confirm` USE 제외 |
 | feat/linked-servers | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ T-271 연결된 서버(101 §5) — `linked_server`/`linked_server_script` · 상세 로그인 매핑 · Open source · DDL · `sp_dropserver droplogins` · E2E ④(권한 없음 = 폴더 읽기) |

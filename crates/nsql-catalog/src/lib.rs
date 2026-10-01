@@ -58,10 +58,12 @@ pub enum ObjectKind {
     DbRole,
     /// 연결된 서버(`sys.servers WHERE is_linked = 1`) · `extra` = 제품 · 데이터 원본.
     LinkedServer,
+    /// 스키마(10-01 ⑭ · 완성 `DB.` 뒤 · SSMS 보안 ▸ 스키마 · SQL Server `sys.schemas`) — 다른 방언은 `schemas_opt`.
+    Schema,
 }
 
 impl ObjectKind {
-    pub const ALL: [ObjectKind; 28] = [
+    pub const ALL: [ObjectKind; 29] = [
         ObjectKind::Table,
         ObjectKind::View,
         ObjectKind::MaterializedView,
@@ -90,6 +92,7 @@ impl ObjectKind {
         ObjectKind::DbUser,
         ObjectKind::DbRole,
         ObjectKind::LinkedServer,
+        ObjectKind::Schema,
     ];
 
     /// CLI 인자 · 설정용 코드.
@@ -124,6 +127,7 @@ impl ObjectKind {
             ObjectKind::DbUser => "db_user",
             ObjectKind::DbRole => "db_role",
             ObjectKind::LinkedServer => "linked_server",
+            ObjectKind::Schema => "schema",
         }
     }
 
@@ -159,6 +163,7 @@ impl ObjectKind {
             ObjectKind::DbUser => "Users",
             ObjectKind::DbRole => "Roles",
             ObjectKind::LinkedServer => "Linked Servers",
+            ObjectKind::Schema => "Schemas",
         }
     }
 
@@ -196,6 +201,7 @@ impl ObjectKind {
             "user" | "users" | "db_user" | "db_users" => ObjectKind::DbUser,
             "role" | "roles" | "db_role" | "db_roles" => ObjectKind::DbRole,
             "linked_server" | "linked_servers" | "linked" | "lnk" => ObjectKind::LinkedServer,
+            "schema" | "schemas" => ObjectKind::Schema,
             _ => return None,
         })
     }
@@ -1698,7 +1704,8 @@ fn oracle_type(kind: ObjectKind) -> &'static str {
         | ObjectKind::Database
         | ObjectKind::DbUser
         | ObjectKind::DbRole
-        | ObjectKind::LinkedServer => "",
+        | ObjectKind::LinkedServer
+        | ObjectKind::Schema => "",
     }
 }
 
@@ -1747,7 +1754,8 @@ pub fn objects(
                 | ObjectKind::Database
                 | ObjectKind::DbUser
                 | ObjectKind::DbRole
-                | ObjectKind::LinkedServer => return Ok(Vec::new()),
+                | ObjectKind::LinkedServer
+                | ObjectKind::Schema => return Ok(Vec::new()),
                 // ★ 인덱스 = 부가에 **테이블 이름**(탐색기 라벨 `테이블.인덱스` · 사용자 09-30 · PG/MSSQL과 같게) · 유효성은 ALL_OBJECTS.
                 ObjectKind::Index => Some(format!(
                     "SELECT i.index_name, NVL(o.status, ''), TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), i.table_name FROM all_indexes i LEFT JOIN all_objects o ON o.owner = i.owner AND o.object_name = i.index_name AND o.object_type = 'INDEX' WHERE i.owner = {} AND (i.index_name NOT LIKE 'BIN$%') ORDER BY i.index_name",
@@ -1816,6 +1824,8 @@ pub fn objects(
                 ObjectKind::DbUser => "SELECT p.name, '', CONVERT(varchar(19), p.modify_date, 120), p.type_desc, '' FROM sys.database_principals p WHERE p.type IN ('S','U','G','C','K','E','X') AND p.name NOT IN ('sys','INFORMATION_SCHEMA') ORDER BY p.name".to_string(),
                 ObjectKind::DbRole => "SELECT p.name, CASE WHEN p.is_fixed_role = 1 THEN 'FIXED' ELSE '' END, CONVERT(varchar(19), p.modify_date, 120), '', '' FROM sys.database_principals p WHERE p.type = 'R' ORDER BY p.is_fixed_role, p.name".to_string(),
                 ObjectKind::LinkedServer => "SELECT v.name, '', CONVERT(varchar(19), v.modify_date, 120), ISNULL(v.product, '') + CASE WHEN v.data_source IS NOT NULL AND v.data_source <> '' THEN ' · ' + v.data_source ELSE '' END, '' FROM sys.servers v WHERE v.is_linked = 1 ORDER BY v.name".to_string(),
+                // 스키마 목록(⑭ · 완성 `DB.` 뒤 · 보안 ▸ 스키마) — 메타 세션이 그 DB로 `USE`한 뒤 읽는다.
+                ObjectKind::Schema => "SELECT s.name, '', '', '', '' FROM sys.schemas s WHERE s.schema_id < 16384 AND s.name NOT IN ('sys','INFORMATION_SCHEMA','guest') ORDER BY s.name".to_string(),
                 _ => return Ok(Vec::new()),
             };
             return Ok(query(s, &sql)?

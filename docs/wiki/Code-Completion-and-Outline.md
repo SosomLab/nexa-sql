@@ -102,3 +102,8 @@ JOIN 조건 완성(FK 대상 정보가 메타에 들어온 뒤) · hover 카드(
 - SQL Server 변경 문장의 `OUTPUT INSERTED.` · `DELETED.` 뒤에는 대상 테이블의 컬럼이 나옵니다.
 - MySQL에 문법 파일이 생겨 `USE` · `SHOW TABLES` · `LIMIT` · `ON DUPLICATE KEY UPDATE` 같은 키워드가 제자리에 나옵니다.
 
+### SQL Server 3부 이름(10-01)
+
+- 스키마 없는 이름은 **현재 DB의 현재 스키마**(보통 `dbo`)로 해석됩니다. `USE 다른DB`를 실행하면 그 기준이 바뀝니다.
+- `다른DB.` 뒤에는 그 DB의 스키마, `다른DB.dbo.` 뒤에는 그 DB·스키마의 테이블·뷰, `FROM 다른DB.dbo.T t` 뒤의 `t.`에는 그 테이블의 컬럼이 나옵니다 — 현재 DB의 같은 이름 객체와는 다른 객체로 다룹니다. 처음 한 번은 서버에서 읽어 오므로 "불러오는 중"이 잠깐 보일 수 있습니다.
+
