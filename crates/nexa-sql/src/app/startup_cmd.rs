@@ -460,6 +460,33 @@ impl App {
             let _ = std::fs::write(path, self.explorer.selected_path());
             return;
         }
+        // ★ 자체 시험(10-01 ㉗-h): 활성 탭을 이미 열린 공유 연결로 묶는다(탭 표식 메뉴에서 연결을 고른 것과 같은 길 `sess.use:<세션>`).
+        if let Some(name) = id.strip_prefix("session.bind:") {
+            let spec = Vault::open_default()
+                .ok()
+                .and_then(|v| v.get(name).ok().flatten());
+            let sid = spec.as_ref().and_then(|sp| {
+                self.all_sess()
+                    .find(|s| {
+                        !s.closing
+                            && !s.is_private()
+                            && s.spec
+                                .as_ref()
+                                .is_some_and(|h| crate::worker::same_server(h, sp))
+                    })
+                    .map(|s| s.id)
+            });
+            match sid {
+                Some(sid) => {
+                    let tab = self.editors.active_id();
+                    self.badge_pick(tab, &format!("sess.use:{sid}"));
+                    self.sess.status = format!("session.bind {name} → #{sid}");
+                }
+                None => self.sess.status = format!("session.bind {name}: no such shared session"),
+            }
+            self.redraw();
+            return;
+        }
         // ★ 자체 시험(10-01 ㉕): DB 용량을 우클릭 없이 청한다(= 메뉴 "용량 확인"과 같은 길).
         if id == "explorer.dbsizes" {
             self.explorer.request_db_sizes();

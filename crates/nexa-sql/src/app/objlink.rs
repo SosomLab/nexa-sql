@@ -509,9 +509,23 @@ pub(crate) fn schema_visible(
 
 impl SnapResolver<'_> {
     fn resolve(&self, schema: Option<&str>, name: &str) -> Option<ObjId> {
+        // ★ SQL Server(10-01 ㉗-i · 매트릭스 A9): 이름 해석은 현재 스키마(로그인 기본 · master에선 `guest`) → 없으면 **dbo**(서버 규칙).
         let id = self
             .snap
-            .lookup_resolvable_from(self.names, schema, self.cur.as_deref(), name)?;
+            .lookup_resolvable_from(self.names, schema, self.cur.as_deref(), name)
+            .or_else(|| {
+                (self.dialect == Some(nsql_core::Dialect::Mssql)
+                    && schema.is_none()
+                    && !self
+                        .cur
+                        .as_deref()
+                        .is_some_and(|c| c.eq_ignore_ascii_case("dbo")))
+                .then(|| {
+                    self.snap
+                        .lookup_resolvable_from(self.names, None, Some("dbo"), name)
+                })
+                .flatten()
+            })?;
         let o = self.snap.object(id)?;
         schema_visible(
             self.names.get(o.schema),
@@ -769,8 +783,9 @@ impl App {
         };
         let spec = self.sess.spec.clone();
         let dialect = Some(self.sess.dialect);
-        // ★ 자기 칸 메타가 비었으면 루트 읽기부터(㉗-g) — 응답이 오면 stamp가 바뀌어 다시 분석된다.
-        self.explorer.ensure_meta(spec.as_ref());
+        // ★ 자기 칸 메타가 비었으면 루트 읽기부터 · 현재 스키마 이름 버킷이 비었으면 그것부터(㉗-g·h) — 응답이 오면 stamp가 바뀌어 다시 분석된다.
+        let cur0 = self.objlink_cur_schema();
+        self.explorer.ensure_meta(spec.as_ref(), cur0.as_deref());
         let mut trace_lines: Vec<String> = Vec::new();
         let (mut links, needs, stamp) = {
             let (names, snap) = self.explorer.meta_view(spec.as_ref());
@@ -986,7 +1001,16 @@ impl App {
         name: &str,
     ) -> Option<ObjId> {
         let spec = self.sess.spec.as_ref();
-        let id = snap.lookup_resolvable_from(names, schema, cur, name)?;
+        // SQL Server = 현재 스키마 → dbo 폴백(㉗-i · `SnapResolver::resolve`와 같은 규칙).
+        let id = snap
+            .lookup_resolvable_from(names, schema, cur, name)
+            .or_else(|| {
+                (self.sess.dialect == nsql_core::Dialect::Mssql
+                    && schema.is_none()
+                    && !cur.is_some_and(|c| c.eq_ignore_ascii_case("dbo")))
+                .then(|| snap.lookup_resolvable_from(names, None, Some("dbo"), name))
+                .flatten()
+            })?;
         let o = snap.object(id)?;
         let collector = self.explorer.meta_account(spec);
         schema_visible(

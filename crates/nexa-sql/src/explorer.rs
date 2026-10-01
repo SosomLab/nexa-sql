@@ -4900,6 +4900,15 @@ impl Explorer {
         if self.offline {
             return;
         }
+        // ★ 루트를 아직 읽는 중(접속 직후 탭 단위 맞춤 `SetUnit` → `DbChanged` · 방언도 아직 모를 수 있다 · 10-01 ㉗-i): 표시 값만 두고
+        //   돌아간다 — 종전엔 비-SQL Server 분기로 빠져 `soft.insert(0)`을 남겼고, 첫 `Resp::Databases`가 조용한 갱신으로 오인돼
+        //   현재 DB 펼침을 건너뛰었다(E2E ① 데이터베이스 묶음이 접힌 채).
+        if self.dialect.is_none()
+            || self.nodes.is_empty()
+            || self.nodes[0].state != LoadState::Loaded
+        {
+            return;
+        }
         if self.dialect == Some(Dialect::Mssql) {
             // DB가 바뀜 = 객체 세계가 바뀜 → 메타 비우고 L1부터(D-250). ★ 데이터베이스 목록 버킷(`("", Database)`)은 서버 사실이라 보존
             //   (10-01 ⑰ · 비우면 툴바 작업 단위 메뉴가 "목록 없음"이 되어 두 번째 전환이 안 됐다).

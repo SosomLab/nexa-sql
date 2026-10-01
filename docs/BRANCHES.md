@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| feat/reveal-matrix-e2e | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ★ ㉗-i 탐색기에서 보기 조합 매트릭스 E2E(7조건 MC/DC · 27케이스 · 78 통과 · 0 실패 · 2 건너뜀(PG 함수 없음 · 원격 PRD SNOPDB_19c = 네트워크 미도달 ORA-12170 · 회귀 reveal 17 · output-result 5)) · 🔧 SQL Server 링크 해석 dbo 폴백 · ensure_meta 현재 스키마 이름 · session.bind 기동 명령 |
 | fix/objlink-ensure-meta | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉗-g 복원 칸 메타 비면 루트 읽기(ensure_meta) · 메뉴 판정 로그 · objlink.dump reveal 열 · E2E ⑦ |
 | fix/objlink-menu-keep-ssms-sizes-anydb | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | 🔧 ㉗-e 메뉴 열린 동안 링크 유지(첫 클릭 실패) · 🔧 ㉕-d 현재 DB 아닌 DB 테이블 용량(is_cur 제거 · E2E ⑦) |
 | chore/reveal-fail-stage | 2026-10-01 | 2026-10-01 → main(삭제) | 1 | ㉗-d 찾기 실패 상태줄에 단계 · journal §32 구현 방식 vs 제안 대조 · CI 8dad8d1 기록 |

@@ -317,14 +317,18 @@ impl ExplorerSet {
     }
 
     /// ★ 그 연결의 칸 메타가 비어 있으면 루트 읽기를 시작한다(㉗-g · 링크 분석·완성이 다른 칸 스냅숏에 기대지 않게). 시작했으면 true.
-    pub(crate) fn ensure_meta(&mut self, spec: Option<&ConnectSpec>) -> bool {
+    pub(crate) fn ensure_meta(&mut self, spec: Option<&ConnectSpec>, cur: Option<&str>) -> bool {
         let Some(i) = spec.and_then(|s| self.find(s)) else {
             return false;
         };
-        if self.panes[i].ex.meta_has_schemas() {
-            return false;
+        if !self.panes[i].ex.meta_has_schemas() {
+            return self.panes[i].ex.kick_meta_load();
         }
-        self.panes[i].ex.kick_meta_load()
+        // 스키마 목록은 있어도 **현재 스키마의 이름 버킷**이 비었을 수 있다(복원된 칸 · 유휴 선적재 전 · ㉗-h) — 비었거나 낡은 버킷만 청한다(멱등).
+        if let Some(c) = cur.filter(|c| !c.is_empty()) {
+            self.panes[i].ex.request_objects(c);
+        }
+        false
     }
 
     /// 진단(㉗-g): (자기 칸, 자기 칸 메타 유무, 실제로 쓴 칸).
