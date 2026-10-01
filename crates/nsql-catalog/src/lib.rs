@@ -60,10 +60,29 @@ pub enum ObjectKind {
     LinkedServer,
     /// 스키마(10-01 ⑭ · 완성 `DB.` 뒤 · SSMS 보안 ▸ 스키마 · SQL Server `sys.schemas`) — 다른 방언은 `schemas_opt`.
     Schema,
+    // ── 서버 수준 보안·서버 개체(10-01 ㉖ · SSMS · SQL Server · 101 §6) — 스키마 없음(빈 문자열) · 목록 + 상세(sys 뷰 열 전부) + 삭제.
+    /// 로그인(`sys.server_principals` S/U/G/C/K · `##` 제외) · `extra` = type_desc · `status` = DISABLED.
+    Login,
+    /// 서버 역할(`sys.server_principals` R) · `status` = FIXED.
+    ServerRole,
+    /// 자격 증명(`sys.credentials`) · `extra` = identity.
+    Credential,
+    /// 암호화 공급자(`sys.cryptographic_providers`).
+    CryptoProvider,
+    /// 감사(`sys.server_audits`) · `extra` = 대상 유형 · `status` = DISABLED.
+    ServerAudit,
+    /// 서버 감사 사양(`sys.server_audit_specifications`) · `extra` = 감사 이름.
+    AuditSpec,
+    /// 백업 디바이스(`sys.backup_devices`) · `extra` = 유형 · 물리 이름.
+    BackupDevice,
+    /// 엔드포인트(`sys.endpoints`) · `extra` = 유형 · 프로토콜 · `status` = STOPPED/DISABLED.
+    Endpoint,
+    /// 서버 트리거(`sys.server_triggers` · DDL/LOGON · 소스 = `sys.server_sql_modules`).
+    ServerTrigger,
 }
 
 impl ObjectKind {
-    pub const ALL: [ObjectKind; 29] = [
+    pub const ALL: [ObjectKind; 38] = [
         ObjectKind::Table,
         ObjectKind::View,
         ObjectKind::MaterializedView,
@@ -93,6 +112,15 @@ impl ObjectKind {
         ObjectKind::DbRole,
         ObjectKind::LinkedServer,
         ObjectKind::Schema,
+        ObjectKind::Login,
+        ObjectKind::ServerRole,
+        ObjectKind::Credential,
+        ObjectKind::CryptoProvider,
+        ObjectKind::ServerAudit,
+        ObjectKind::AuditSpec,
+        ObjectKind::BackupDevice,
+        ObjectKind::Endpoint,
+        ObjectKind::ServerTrigger,
     ];
 
     /// CLI 인자 · 설정용 코드.
@@ -128,6 +156,15 @@ impl ObjectKind {
             ObjectKind::DbRole => "db_role",
             ObjectKind::LinkedServer => "linked_server",
             ObjectKind::Schema => "schema",
+            ObjectKind::Login => "login",
+            ObjectKind::ServerRole => "server_role",
+            ObjectKind::Credential => "credential",
+            ObjectKind::CryptoProvider => "crypto_provider",
+            ObjectKind::ServerAudit => "audit",
+            ObjectKind::AuditSpec => "audit_spec",
+            ObjectKind::BackupDevice => "backup_device",
+            ObjectKind::Endpoint => "endpoint",
+            ObjectKind::ServerTrigger => "server_trigger",
         }
     }
 
@@ -164,6 +201,15 @@ impl ObjectKind {
             ObjectKind::DbRole => "Roles",
             ObjectKind::LinkedServer => "Linked Servers",
             ObjectKind::Schema => "Schemas",
+            ObjectKind::Login => "Logins",
+            ObjectKind::ServerRole => "Server Roles",
+            ObjectKind::Credential => "Credentials",
+            ObjectKind::CryptoProvider => "Cryptographic Providers",
+            ObjectKind::ServerAudit => "Audits",
+            ObjectKind::AuditSpec => "Server Audit Specifications",
+            ObjectKind::BackupDevice => "Backup Devices",
+            ObjectKind::Endpoint => "Endpoints",
+            ObjectKind::ServerTrigger => "Triggers",
         }
     }
 
@@ -202,6 +248,17 @@ impl ObjectKind {
             "role" | "roles" | "db_role" | "db_roles" => ObjectKind::DbRole,
             "linked_server" | "linked_servers" | "linked" | "lnk" => ObjectKind::LinkedServer,
             "schema" | "schemas" => ObjectKind::Schema,
+            "login" | "logins" => ObjectKind::Login,
+            "server_role" | "server_roles" => ObjectKind::ServerRole,
+            "credential" | "credentials" => ObjectKind::Credential,
+            "crypto_provider" | "crypto_providers" | "cryptographic_provider" => {
+                ObjectKind::CryptoProvider
+            }
+            "audit" | "audits" | "server_audit" => ObjectKind::ServerAudit,
+            "audit_spec" | "audit_specs" | "server_audit_specification" => ObjectKind::AuditSpec,
+            "backup_device" | "backup_devices" => ObjectKind::BackupDevice,
+            "endpoint" | "endpoints" => ObjectKind::Endpoint,
+            "server_trigger" | "server_triggers" => ObjectKind::ServerTrigger,
             _ => return None,
         })
     }
@@ -222,6 +279,25 @@ impl ObjectKind {
                 | ObjectKind::SchemaTrigger
                 | ObjectKind::EventTrigger
                 | ObjectKind::LinkedServer
+                | ObjectKind::ServerTrigger
+        )
+    }
+
+    /// ★ 서버 수준 종류(10-01 ㉖ · SQL Server · 스키마·DB 없음 · 보안/서버 개체 묶음).
+    #[must_use]
+    pub fn is_server_level(self) -> bool {
+        matches!(
+            self,
+            ObjectKind::LinkedServer
+                | ObjectKind::Login
+                | ObjectKind::ServerRole
+                | ObjectKind::Credential
+                | ObjectKind::CryptoProvider
+                | ObjectKind::ServerAudit
+                | ObjectKind::AuditSpec
+                | ObjectKind::BackupDevice
+                | ObjectKind::Endpoint
+                | ObjectKind::ServerTrigger
         )
     }
 
@@ -1307,6 +1383,57 @@ pub fn object_size_detail(
     None
 }
 
+/// ★ 데이터베이스 용량(사용자 10-01 · SQL Server Databases 층 · 101 §4-1): 서버의 DB마다 (이름, 데이터 파일 바이트, 로그 파일 바이트).
+///   SQL Server = `sys.master_files`(모든 DB · 페이지 8 KB · `VIEW ANY DEFINITION` 필요) → 권한 없으면 `sys.database_files`(현재 DB 하나).
+///   MySQL = 스키마가 DB라 `object_sizes`가 맡는다 · 그 밖 방언 = 빈 목록(트리에 DB 층이 없다). 지연 로딩(우클릭 "용량 확인"에서만).
+pub fn database_sizes(s: &mut dyn Session) -> Result<Vec<(String, u64, u64)>, DbError> {
+    if s.dialect() != Dialect::Mssql {
+        return Ok(Vec::new());
+    }
+    const COLS: &str = "SUM(CASE WHEN type = 1 THEN 0 ELSE CAST(size AS bigint) END) * 8192, SUM(CASE WHEN type = 1 THEN CAST(size AS bigint) ELSE 0 END) * 8192";
+    let parse = |rs: &nsql_core::ResultSet| -> Vec<(String, u64, u64)> {
+        rs.rows
+            .iter()
+            .filter_map(|r| {
+                let name = col(r, 0);
+                let data = r.get(1).and_then(value_u64).unwrap_or(0);
+                let log = r.get(2).and_then(value_u64).unwrap_or(0);
+                (!name.is_empty()).then_some((name, data, log))
+            })
+            .collect()
+    };
+    // ① 한 번에(권한 `VIEW ANY DEFINITION` · 없으면 **0행**이지 오류가 아니다 — 실서버 BISCM_MS 10-01).
+    let all = query(
+        s,
+        &format!("SELECT DB_NAME(database_id), {COLS} FROM sys.master_files GROUP BY database_id"),
+    )?;
+    let list = parse(&all);
+    if !list.is_empty() {
+        return Ok(list);
+    }
+    // ② 접근 가능한 DB마다 `[db].sys.database_files`(그 DB 접근 권한만 필요) — 실패한 DB는 건너뛴다.
+    let names = query(
+        s,
+        "SELECT name FROM sys.databases WHERE HAS_DBACCESS(name) = 1 ORDER BY name",
+    )?;
+    let mut out = Vec::new();
+    for r in &names.rows {
+        let db = col(r, 0);
+        if db.is_empty() {
+            continue;
+        }
+        let sql = format!(
+            "SELECT {}, {COLS} FROM {}.sys.database_files",
+            lit(&db),
+            quote_ident(Dialect::Mssql, &db)
+        );
+        if let Ok(rs) = query(s, &sql) {
+            out.extend(parse(&rs));
+        }
+    }
+    Ok(out)
+}
+
 /// 숫자 값 → u64(정수·실수·문자 숫자 · 음수/NULL = None).
 fn value_u64(v: &Value) -> Option<u64> {
     match v {
@@ -1705,7 +1832,16 @@ fn oracle_type(kind: ObjectKind) -> &'static str {
         | ObjectKind::DbUser
         | ObjectKind::DbRole
         | ObjectKind::LinkedServer
-        | ObjectKind::Schema => "",
+        | ObjectKind::Schema
+        | ObjectKind::Login
+        | ObjectKind::ServerRole
+        | ObjectKind::Credential
+        | ObjectKind::CryptoProvider
+        | ObjectKind::ServerAudit
+        | ObjectKind::AuditSpec
+        | ObjectKind::BackupDevice
+        | ObjectKind::Endpoint
+        | ObjectKind::ServerTrigger => "",
     }
 }
 
@@ -1755,7 +1891,16 @@ pub fn objects(
                 | ObjectKind::DbUser
                 | ObjectKind::DbRole
                 | ObjectKind::LinkedServer
-                | ObjectKind::Schema => return Ok(Vec::new()),
+                | ObjectKind::Schema
+                | ObjectKind::Login
+                | ObjectKind::ServerRole
+                | ObjectKind::Credential
+                | ObjectKind::CryptoProvider
+                | ObjectKind::ServerAudit
+                | ObjectKind::AuditSpec
+                | ObjectKind::BackupDevice
+                | ObjectKind::Endpoint
+                | ObjectKind::ServerTrigger => return Ok(Vec::new()),
                 // ★ 인덱스 = 부가에 **테이블 이름**(탐색기 라벨 `테이블.인덱스` · 사용자 09-30 · PG/MSSQL과 같게) · 유효성은 ALL_OBJECTS.
                 ObjectKind::Index => Some(format!(
                     "SELECT i.index_name, NVL(o.status, ''), TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), i.table_name FROM all_indexes i LEFT JOIN all_objects o ON o.owner = i.owner AND o.object_name = i.index_name AND o.object_type = 'INDEX' WHERE i.owner = {} AND (i.index_name NOT LIKE 'BIN$%') ORDER BY i.index_name",
@@ -1824,6 +1969,16 @@ pub fn objects(
                 ObjectKind::DbUser => "SELECT p.name, '', CONVERT(varchar(19), p.modify_date, 120), p.type_desc, '' FROM sys.database_principals p WHERE p.type IN ('S','U','G','C','K','E','X') AND p.name NOT IN ('sys','INFORMATION_SCHEMA') ORDER BY p.name".to_string(),
                 ObjectKind::DbRole => "SELECT p.name, CASE WHEN p.is_fixed_role = 1 THEN 'FIXED' ELSE '' END, CONVERT(varchar(19), p.modify_date, 120), '', '' FROM sys.database_principals p WHERE p.type = 'R' ORDER BY p.is_fixed_role, p.name".to_string(),
                 ObjectKind::LinkedServer => "SELECT v.name, '', CONVERT(varchar(19), v.modify_date, 120), ISNULL(v.product, '') + CASE WHEN v.data_source IS NOT NULL AND v.data_source <> '' THEN ' · ' + v.data_source ELSE '' END, '' FROM sys.servers v WHERE v.is_linked = 1 ORDER BY v.name".to_string(),
+                // ★ 서버 수준 보안·서버 개체(10-01 ㉖ · 101 §6) — 5열(이름 · 상태 · 수정 · 부가 · '') · 스키마 없음.
+                ObjectKind::Login => "SELECT p.name, CASE WHEN p.is_disabled = 1 THEN 'DISABLED' ELSE '' END, CONVERT(varchar(19), p.modify_date, 120), p.type_desc, '' FROM sys.server_principals p WHERE p.type IN ('S','U','G','C','K') AND p.name NOT LIKE '##%' ORDER BY p.name".to_string(),
+                ObjectKind::ServerRole => "SELECT p.name, CASE WHEN p.is_fixed_role = 1 THEN 'FIXED' ELSE '' END, CONVERT(varchar(19), p.modify_date, 120), '', '' FROM sys.server_principals p WHERE p.type = 'R' ORDER BY p.is_fixed_role DESC, p.name".to_string(),
+                ObjectKind::Credential => "SELECT c.name, '', CONVERT(varchar(19), c.modify_date, 120), ISNULL(c.credential_identity, ''), '' FROM sys.credentials c ORDER BY c.name".to_string(),
+                ObjectKind::CryptoProvider => "SELECT p.name, CASE WHEN p.is_enabled = 1 THEN '' ELSE 'DISABLED' END, '', ISNULL(CONVERT(varchar(40), p.version), ''), '' FROM sys.cryptographic_providers p ORDER BY p.name".to_string(),
+                ObjectKind::ServerAudit => "SELECT a.name, CASE WHEN a.is_state_enabled = 1 THEN '' ELSE 'DISABLED' END, CONVERT(varchar(19), a.modify_date, 120), a.type_desc, '' FROM sys.server_audits a ORDER BY a.name".to_string(),
+                ObjectKind::AuditSpec => "SELECT sp.name, CASE WHEN sp.is_state_enabled = 1 THEN '' ELSE 'DISABLED' END, CONVERT(varchar(19), sp.modify_date, 120), ISNULL(a.name, ''), '' FROM sys.server_audit_specifications sp LEFT JOIN sys.server_audits a ON a.audit_guid = sp.audit_guid ORDER BY sp.name".to_string(),
+                ObjectKind::BackupDevice => "SELECT d.name, '', '', d.type_desc + CASE WHEN d.physical_name IS NOT NULL AND d.physical_name <> '' THEN ' · ' + d.physical_name ELSE '' END, '' FROM sys.backup_devices d ORDER BY d.name".to_string(),
+                ObjectKind::Endpoint => "SELECT e.name, CASE WHEN e.state_desc = 'STARTED' THEN '' ELSE e.state_desc END, '', e.type_desc + ' · ' + e.protocol_desc, '' FROM sys.endpoints e ORDER BY e.name".to_string(),
+                ObjectKind::ServerTrigger => "SELECT t.name, CASE WHEN t.is_disabled = 1 THEN 'DISABLED' ELSE '' END, CONVERT(varchar(19), t.modify_date, 120), t.type_desc, '' FROM sys.server_triggers t ORDER BY t.name".to_string(),
                 // 스키마 목록(⑭ · 완성 `DB.` 뒤 · 보안 ▸ 스키마) — 메타 세션이 그 DB로 `USE`한 뒤 읽는다.
                 ObjectKind::Schema => "SELECT s.name, '', '', '', '' FROM sys.schemas s WHERE s.schema_id < 16384 AND s.name NOT IN ('sys','INFORMATION_SCHEMA','guest') ORDER BY s.name".to_string(),
                 _ => return Ok(Vec::new()),
@@ -2366,6 +2521,26 @@ pub fn drop_sql(dialect: Dialect, o: &ObjectInfo) -> Option<String> {
             Dialect::Sqlite => format!("DROP INDEX {qn}"),
             _ => format!("DROP INDEX {q}"),
         },
+        // ★ 서버 수준 보안·서버 개체(10-01 ㉖ · SQL Server): 서버 삭제 문장(감사는 먼저 STATE = OFF).
+        ObjectKind::Login if dialect == Dialect::Mssql => format!("DROP LOGIN {qn}"),
+        ObjectKind::ServerRole if dialect == Dialect::Mssql => format!("DROP SERVER ROLE {qn}"),
+        ObjectKind::Credential if dialect == Dialect::Mssql => format!("DROP CREDENTIAL {qn}"),
+        ObjectKind::CryptoProvider if dialect == Dialect::Mssql => {
+            format!("DROP CRYPTOGRAPHIC PROVIDER {qn}")
+        }
+        ObjectKind::ServerAudit if dialect == Dialect::Mssql => format!(
+            "ALTER SERVER AUDIT {qn} WITH (STATE = OFF);\nDROP SERVER AUDIT {qn}"
+        ),
+        ObjectKind::AuditSpec if dialect == Dialect::Mssql => format!(
+            "ALTER SERVER AUDIT SPECIFICATION {qn} WITH (STATE = OFF);\nDROP SERVER AUDIT SPECIFICATION {qn}"
+        ),
+        ObjectKind::BackupDevice if dialect == Dialect::Mssql => {
+            format!("EXEC master.dbo.sp_dropdevice @logicalname = N{}", lit(&o.name))
+        }
+        ObjectKind::Endpoint if dialect == Dialect::Mssql => format!("DROP ENDPOINT {qn}"),
+        ObjectKind::ServerTrigger if dialect == Dialect::Mssql => {
+            format!("DROP TRIGGER {qn} ON ALL SERVER")
+        }
         // ★ 연결된 서버(101 §5): 로그인 매핑까지(`droplogins`).
         ObjectKind::LinkedServer if dialect == Dialect::Mssql => format!(
             "EXEC master.dbo.sp_dropserver @server = N{}, @droplogins = 'droplogins'",
@@ -2374,6 +2549,57 @@ pub fn drop_sql(dialect: Dialect, o: &ObjectInfo) -> Option<String> {
         _ => return None,
     };
     Some(sql)
+}
+
+/// ★ 서버 수준 객체 속성(10-01 ㉖ · 101 §6 · SQL Server): 그 종류의 `sys` 뷰 행 **열 전부**를 (열 이름, 값) 쌍으로(NULL·빈 값 제외) +
+///   감사 = 파일 대상(`sys.server_file_audits`) · 감사 사양 = 동작 목록(`sys.server_audit_specification_details`) · 로그인 = 서버 역할 소속.
+pub fn server_object_props(
+    s: &mut dyn Session,
+    kind: ObjectKind,
+    name: &str,
+) -> Result<Vec<(String, String)>, DbError> {
+    let view = match kind {
+        ObjectKind::Login | ObjectKind::ServerRole => "sys.server_principals",
+        ObjectKind::Credential => "sys.credentials",
+        ObjectKind::CryptoProvider => "sys.cryptographic_providers",
+        ObjectKind::ServerAudit => "sys.server_audits",
+        ObjectKind::AuditSpec => "sys.server_audit_specifications",
+        ObjectKind::BackupDevice => "sys.backup_devices",
+        ObjectKind::Endpoint => "sys.endpoints",
+        ObjectKind::ServerTrigger => "sys.server_triggers",
+        _ => return Ok(Vec::new()),
+    };
+    let rs = query(
+        s,
+        &format!("SELECT * FROM {view} WHERE name = {}", lit(name)),
+    )?;
+    let mut out: Vec<(String, String)> = Vec::new();
+    if let Some(r) = rs.rows.first() {
+        for (i, c) in rs.columns.iter().enumerate() {
+            let v = col(r, i);
+            if !v.is_empty() && !matches!(c.name.as_str(), "sid" | "audit_guid" | "guid") {
+                out.push((c.name.clone(), v));
+            }
+        }
+    }
+    let extra: Option<(&str, String)> = match kind {
+        ObjectKind::Login => Some(("server roles", format!("SELECT r.name FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals p ON p.principal_id = m.member_principal_id WHERE p.name = {} ORDER BY r.name", lit(name)))),
+        ObjectKind::ServerRole => Some(("members", format!("SELECT p.name FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals p ON p.principal_id = m.member_principal_id WHERE r.name = {} ORDER BY p.name", lit(name)))),
+        ObjectKind::ServerAudit => Some(("file", format!("SELECT ISNULL(log_file_path, '') + ISNULL(log_file_name, '') FROM sys.server_file_audits WHERE name = {}", lit(name)))),
+        ObjectKind::AuditSpec => Some(("action", format!("SELECT d.audit_action_name FROM sys.server_audit_specification_details d JOIN sys.server_audit_specifications sp ON sp.server_specification_id = d.server_specification_id WHERE sp.name = {} ORDER BY d.audit_action_name", lit(name)))),
+        _ => None,
+    };
+    if let Some((label, sql)) = extra {
+        if let Ok(rs) = query(s, &sql) {
+            for r in &rs.rows {
+                let v = col(r, 0);
+                if !v.is_empty() {
+                    out.push((label.to_string(), v));
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// ★ 연결된 서버 한 벌(101 §5 · T-271): `sys.servers` 행 + 옵션 + 로그인 매핑(`sys.linked_logins`).
@@ -2705,6 +2931,19 @@ pub fn source_with(
             ObjectKind::Table => table_ddl(s, schema, name),
             // ★ 연결된 서버(101 §5 · T-271) = 재생성 스크립트(비밀번호 자리표시 · 그대로 실행하면 "이미 있음").
             ObjectKind::LinkedServer => Ok(linked_server_script(&linked_server(s, name)?)),
+            // ★ 서버 트리거(10-01 ㉖): T-SQL 본문은 `sys.server_sql_modules`(CLR 트리거 = 본문 없음 → 못 찾음).
+            ObjectKind::ServerTrigger => {
+                let sql = format!(
+                    "SELECT m.definition FROM sys.server_sql_modules m JOIN sys.server_triggers t ON t.object_id = m.object_id WHERE t.name = {}",
+                    lit(name)
+                );
+                let rs = query(s, &sql)?;
+                let body = rs.rows.first().map(|r| col(r, 0)).unwrap_or_default();
+                if body.trim().is_empty() {
+                    return Err(not_found(schema, name));
+                }
+                Ok(format!("{}\n", to_create_or_alter(body.trim_end())))
+            }
             _ => {
                 // ★ DDL(데이터베이스) 트리거는 스키마가 없다(`sys.triggers.parent_class = 0` · 101 §2).
                 let oid = if kind == ObjectKind::SchemaTrigger {

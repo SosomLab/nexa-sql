@@ -5,6 +5,7 @@
 #   ② 편집기 `USE <다른 DB>` F5 → 현재 DB 표식 이동 · 그 DB 펼침 · 테이블 폴더 펼침 = `스키마.이름` 객체 · 둘째 DB 테이블은 다른 DB의 것(`db` 전환)
 #   ③ `SHOW CONN` = "현재 DB" 줄 · 서버 헤더 = `(SQL Server 버전 - 로그인)` 은 헤더 덤프가 없어 단위 시험(`server_label`)에 맡긴다
 #   ④ 연결된 서버(T-271): 임시 NSQLT_LNK(권한 없으면 SKIP) → 트리 · CLI 소스/상세 · 삭제 · 권한 없어도 폴더 (0) 읽기
+#   ⑤ 서버 보안·서버 개체(㉖): 루트 묶음 셋 · `/보안` 펼침 · 로그인/서버 역할/엔드포인트 · CLI 상세·목록 · ⑥ DB 용량(㉕ `explorer.dbsizes`)
 #
 # 사용: scripts/win-mssql-explorer-e2e.sh -o <출력폴더> -g target/debug/nexa-sql.exe [-p M4PLAN] [-d BISCM_MS] [-P <실제 설정 폴더>]
 set -u
@@ -96,6 +97,31 @@ if [ -x "$NSQLCLI" ]; then
       chk "④ 서버 개체 ▸ 연결된 서버 폴더 읽힘(없으면 (0))" "$LNK_FOLDER" "$t4"
     else bad "④ 트리 덤프 없음" "$(tail -3 "$OUT/gui4.stderr")"; fi
   fi
+fi
+# ⑤ 서버 수준 보안·서버 개체(10-01 ㉖ · 101 §6): 루트 = [데이터베이스 · 보안 · 서버 개체] · `/보안` = 서버 수준만(DB 아래 "보안"과 구분) ·
+#    로그인 폴더 = 로그인 ≥ 1 · 서버 역할 = 고정 역할(sysadmin …) · 서버 개체 = 백업 디바이스 · 엔드포인트(≥ 1 · TSQL Default TCP) · 연결된 서버 · 트리거.
+# ⑥ DB 용량(㉕): `explorer.dbsizes`(= 우클릭 "용량 확인") 뒤 덤프 끝 열 = DB 노드 용량 · 데이터베이스 묶음 = 합.
+say "--- ⑤ 서버 보안·서버 개체 · ⑥ DB 용량"
+D5="$OUT/tree5.txt"; rm -f "$D5"
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@after:9000:explorer.expand:/보안,@after:10500:explorer.expand:로그인,@after:12000:explorer.expand:서버 역할,@after:13500:explorer.expand:/서버 개체,@after:15000:explorer.expand:엔드포인트,@after:16000:explorer.dbsizes,@after:20000:explorer.dump:$D5" \
+  timeout -s KILL 23 "$EXE" "$PROFILE" > "$OUT/gui5.stdout" 2> "$OUT/gui5.stderr"
+if [ -s "$D5" ]; then
+  t5=$(cat "$D5"); echo "$t5" | grep -E "group:|folder\|(로그인|서버 역할|자격 증명|암호화|감사|백업|엔드포인트|연결된 서버|트리거)|object\|(sa|sysadmin|TSQL)|database\|" | head -40 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+  chk "⑤ 루트 = 서버 보안 묶음(데이터베이스와 같은 층)" "^1\|group:ServerSecurity\|(보안|Security)\|" "$t5"
+  chk "⑤ 루트 = 서버 개체 묶음" "^1\|group:ServerObjects\|(서버 개체|Server Objects)\|" "$t5"
+  chk "⑤ 보안 ▸ 폴더 6(로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양)" "^2\|folder\|(자격 증명|Credentials)" "$t5"
+  chk "⑤ 로그인 폴더 읽힘(≥ 1)" "^2\|folder\|(로그인|Logins) \([1-9][0-9]*\)\|" "$t5"
+  chk "⑤ 서버 역할 = 고정 역할 sysadmin(FIXED)" "^3\|object\|sysadmin\|FIXED" "$t5"
+  chk "⑤ 서버 개체 ▸ 폴더 4(백업 디바이스 · 엔드포인트 · 연결된 서버 · 트리거)" "^2\|folder\|(백업 디바이스|Backup Devices)" "$t5"
+  chk "⑤ 엔드포인트 읽힘(TSQL Default TCP)" "^3\|object\|TSQL Default TCP\|" "$t5"
+  chk "⑥ DB 노드 용량(끝 열 · master)" "^[23]\|database\|master\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t5"
+  chk "⑥ 데이터베이스 묶음 = 합(끝 열)" "^1\|group:Databases\|[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t5"
+else bad "⑤ 트리 덤프 없음" "$(tail -3 "$OUT/gui5.stderr")"; fi
+if [ -x "$NSQLCLI" ]; then
+  o=$("$NSQLCLI" cat -c "$PROFILE" detail sysadmin server_role 2>&1); echo "$o" | head -6 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+  chk "⑤ CLI 상세 = 서버 역할 sysadmin 속성(type_desc SERVER_ROLE · members)" "SERVER_ROLE" "$o"
+  o=$("$NSQLCLI" cat -c "$PROFILE" logins 2>&1); echo "$o" | head -4 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+  chk "⑤ CLI 목록 = 로그인(SQL_LOGIN)" "SQL_LOGIN|WINDOWS_LOGIN" "$o"
 fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

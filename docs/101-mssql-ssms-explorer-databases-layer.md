@@ -72,6 +72,18 @@
 - **삭제** = 28 §9 객체 삭제 모달 그대로(백업 = 위 스크립트 파일 · `sp_dropserver … 'droplogins'` · 운영 = 백업 실패 시 금지).
 - **새로 만들기** = Open script 틀(빈 값)로 — 대화상자 없음(1차).
 
+## 5-1. 서버 수준 보안·서버 개체(㉖ · 10-01) + DB 용량(㉕)
+
+| 묶음(루트 바로 아래 · SSMS 순서) | 폴더 | 원천 | 상세 · 소스 · 삭제 |
+|---|---|---|---|
+| **보안**(`GroupKind::ServerSecurity`) | 로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양 | `sys.server_principals`(S/U/G/C/K · R) · `sys.credentials` · `sys.cryptographic_providers` · `sys.server_audits` · `sys.server_audit_specifications` | 상세 = `server_object_props`(뷰 열 전부 + 역할 소속/멤버/감사 파일/감사 동작) · 삭제 = `DROP LOGIN` … (감사는 `STATE = OFF` 먼저) |
+| **서버 개체**(`ServerObjects`) | 백업 디바이스 · 엔드포인트 · 연결된 서버(§5) · 트리거 | `sys.backup_devices` · `sys.endpoints` · `sys.servers` · `sys.server_triggers` | 트리거 소스 = `sys.server_sql_modules` · 삭제 `DROP TRIGGER x ON ALL SERVER` · `sp_dropdevice` · `DROP ENDPOINT` |
+| **데이터베이스** 용량(㉕) | DB 노드 · 묶음 우클릭 ▸ 용량 확인 | `sys.master_files`(권한 없으면 0행) → 접근 가능한 DB마다 `[db].sys.database_files` | 행 오른쪽 = 데이터 + 로그 · 묶음 = 합 · 툴팁 데이터/로그 · `size>` 필터 |
+
+- 서버 수준 종류 = `ObjectKind::is_server_level()`(연결된 서버 포함 · 스키마·DB 없음) — 완성·별칭 해석 제외 · 아이콘은 종류별(로그인/역할 = 사용자 · 자격/공급자/감사 = 속성 · 트리거 = 트리거).
+- 자체 시험: `explorer.expand:/보안`(= 서버 수준만) · `explorer.dbsizes` · 덤프 끝 열 = 용량. E2E ⑤·⑥.
+- 남음: 로그인 속성 창(대화상자) · 서버 역할 멤버 편집 · 감사 로그 보기 · 엔드포인트 상태 변경 — 모두 Open script 틀(§5 방식)로 뒤에.
+
 ## 6. 결정(권장안으로 진행 · 사용자 확인 대기)
 
 | # | 결정 | 권장 | 비고 |
@@ -91,4 +103,4 @@
 |---|---|---|---|
 | **T-270** | 1차 — Databases 층 + SSMS 골격(§2) · 현재 DB 추적·표시·메타 추종(§3) · 메타 세션 `USE` 전환(§4 단순화) · 서버 헤더 버전·로그인 · i18n · 순수 판정 시험 · 실서버 E2E `win-mssql-explorer-e2e.sh` 14/14 | 대 | ✅ 10-01(상세 패널 DB 절 = T-272) |
 | **T-271** | 연결된 서버(§5) — 목록 · 상세(속성 + 로그인 매핑) · Open source = 재생성 스크립트 · Generate SQL ▸ DDL · 삭제 모달(`sp_dropserver droplogins`) · CLI `cat source/detail linked_server` | 중 | ✅ 10-01([journal §17](journal/2026-09-30.md) · 실서버 권한 없어 E2E는 폴더 읽기만 · 카탈로그 펼침 = T-272) |
-| **T-272** | 2차 — ✅ 3부 접두 완성(`DB.`·`DB.스키마.`·`DB.스키마.테이블.` · 복합 열쇠 버킷 · [journal §21](journal/2026-09-30.md)) · 남음 = 스토리지(파일 그룹·파티션) · 서버 보안(로그인·역할) · 연결된 서버 카탈로그 ▸ 테이블 · 스냅샷 · DB 용량 | 중 | 일부 ✅ |
+| **T-272** | 2차 — ✅ 3부 접두 완성(`DB.`·`DB.스키마.`·`DB.스키마.테이블.` · 복합 열쇠 버킷 · [journal §21](journal/2026-09-30.md)) · ✅ 서버 보안·서버 개체(§5-1 · [journal §27](journal/2026-09-30.md)) · ✅ DB 용량(§5-1) · 남음 = 스토리지(파일 그룹·파티션) · 연결된 서버 카탈로그 ▸ 테이블 · 스냅샷 · 로그인/역할 편집 창 | 중 | 대부분 ✅ |

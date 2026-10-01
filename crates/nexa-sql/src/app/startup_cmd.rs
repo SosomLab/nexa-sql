@@ -426,6 +426,12 @@ impl App {
             let _ = std::fs::write(path, text);
             return;
         }
+        // ★ 자체 시험(10-01 ㉕): DB 용량을 우클릭 없이 청한다(= 메뉴 "용량 확인"과 같은 길).
+        if id == "explorer.dbsizes" {
+            self.explorer.request_db_sizes();
+            self.redraw();
+            return;
+        }
         if let Some(rest) = id.strip_prefix("explorer.menu") {
             let row = rest.trim_start_matches(':').parse().unwrap_or(0);
             let ok = self.explorer.capture_menu(row);

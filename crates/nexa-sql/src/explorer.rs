@@ -63,6 +63,8 @@ enum GroupKind {
     Programmability,
     Security,
     ServerObjects,
+    /// ★ 서버 수준 보안(10-01 ㉖ · 데이터베이스와 같은 층): 로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양.
+    ServerSecurity,
 }
 
 fn group_msg(g: GroupKind) -> Msg {
@@ -71,7 +73,7 @@ fn group_msg(g: GroupKind) -> Msg {
         GroupKind::SystemDbs => Msg::ExpSystemDbs,
         GroupKind::ExternalResources => Msg::ExpExternalResources,
         GroupKind::Programmability => Msg::ExpProgrammability,
-        GroupKind::Security => Msg::ExpSecurity,
+        GroupKind::Security | GroupKind::ServerSecurity => Msg::ExpSecurity,
         GroupKind::ServerObjects => Msg::ExpServerObjects,
     }
 }
@@ -133,7 +135,21 @@ fn ssms_group_children(db: Option<&str>, group: GroupKind, depth: usize) -> Vec<
             folder_node(db, ObjectKind::DbRole, depth),
             folder_node(db, ObjectKind::Schema, depth),
         ],
-        GroupKind::ServerObjects => vec![folder_node(None, ObjectKind::LinkedServer, depth)],
+        // ★ 서버 개체(10-01 ㉖ · SSMS 순서) = 백업 디바이스 · 엔드포인트 · 연결된 서버 · 트리거 / 서버 보안 = 로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양.
+        GroupKind::ServerObjects => vec![
+            folder_node(None, ObjectKind::BackupDevice, depth),
+            folder_node(None, ObjectKind::Endpoint, depth),
+            folder_node(None, ObjectKind::LinkedServer, depth),
+            folder_node(None, ObjectKind::ServerTrigger, depth),
+        ],
+        GroupKind::ServerSecurity => vec![
+            folder_node(None, ObjectKind::Login, depth),
+            folder_node(None, ObjectKind::ServerRole, depth),
+            folder_node(None, ObjectKind::Credential, depth),
+            folder_node(None, ObjectKind::CryptoProvider, depth),
+            folder_node(None, ObjectKind::ServerAudit, depth),
+            folder_node(None, ObjectKind::AuditSpec, depth),
+        ],
         GroupKind::Databases | GroupKind::SystemDbs => Vec::new(),
     }
 }
@@ -292,6 +308,10 @@ enum Req {
         gen: u64,
         schema: String,
         kind: ObjectKind,
+    },
+    /// ★ 데이터베이스 용량(사용자 10-01 ㉕ · SQL Server Databases 층) — 서버의 DB 전부 한 번(데이터·로그 파일 바이트).
+    DbSizes {
+        gen: u64,
     },
     /// ★ 이름 인덱스(84 §2) — 스키마 하나의 (종류, 이름) 전부 · 검색 중일 때만 · 한 번에 하나.
     Index {
@@ -663,6 +683,11 @@ enum Resp {
         kind: ObjectKind,
         r: Result<Vec<(String, u64)>, String>,
     },
+    /// 데이터베이스 용량 전부(이름, 데이터, 로그 · 사용자 10-01 ㉕).
+    DbSizes {
+        gen: u64,
+        r: Result<Vec<(String, u64, u64)>, String>,
+    },
     /// 검색 일치(스레드 판정 · `rev` = 보낸 검색어 세대 · 스키마 하나 분 또는 전부).
     Hits {
         gen: u64,
@@ -1016,6 +1041,8 @@ pub(crate) struct Explorer {
     sizes: HashMap<(String, ObjectKind, String), u64>,
     /// 용량을 **시도한** (스키마, 종류) — 빈 결과·실패도 포함(스키마 합의 `+` 판정 · MV 0개도 읽음).
     sizes_loaded: HashSet<(String, ObjectKind)>,
+    /// ★ 데이터베이스 용량(사용자 10-01 ㉕ · SQL Server Databases 층): DB 이름 → (데이터, 로그) 바이트 · 우클릭 "용량 확인"에서만 읽는다.
+    db_sizes: HashMap<String, (u64, u64)>,
     icon_cache: IconCache,
     /// ★ 객체 상세 캐시(사용자 09-26 "이미 본 대상은 깜빡임 없이 · 상한/미사용 회수 · 새로 고침 범위는 무효화") —
     ///   열쇠 = `DetailTarget::key` · 값 = 섹션 · `dirty` = 새로 고침(수동·DDL·워터마크)이 닿아 다음 클릭에 다시 읽는다(보이는 건 즉시 · 도착하면 교체).
@@ -1200,6 +1227,7 @@ fn req_label(r: &Req) -> String {
         Req::Objects { schema, kind, .. } => format!("objects {schema} {kind:?}"),
         Req::Index { schema, .. } => format!("index {schema}"),
         Req::Sizes { schema, kind, .. } => format!("sizes {schema} {kind:?}"),
+        Req::DbSizes { .. } => "db-sizes".into(),
         Req::Search { .. } => "search".into(),
         Req::SearchStop { .. } => "search-stop".into(),
         Req::NamesUpdate { schema, kind, .. } => format!("names-update {schema} {kind:?}"),
@@ -1244,7 +1272,10 @@ fn req_prio(r: &Req) -> u8 {
         | Req::NamesSeed { .. } => 1,
         Req::Index { .. } => 2,
         Req::ColumnsMeta { urgent: false, .. } => 3,
-        Req::ObjectsMeta { .. } | Req::SchemaComments { .. } | Req::Sizes { .. } => 4,
+        Req::ObjectsMeta { .. }
+        | Req::SchemaComments { .. }
+        | Req::Sizes { .. }
+        | Req::DbSizes { .. } => 4,
         Req::DictMeta { .. } => 5,
         _ => 2,
     }
@@ -1619,6 +1650,15 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                     r,
                 }
             }
+            Req::DbSizes { gen } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::database_sizes(s).map_err(err_s)
+                });
+                Resp::DbSizes { gen, r }
+            }
             Req::Comments { gen, owner } => {
                 if gen != cur_gen {
                     continue;
@@ -1981,6 +2021,15 @@ fn folder_msg(kind: ObjectKind) -> Msg {
         ObjectKind::DbRole => Msg::ExpDbRoles,
         ObjectKind::LinkedServer => Msg::ExpLinkedServers,
         ObjectKind::Schema => Msg::ExpDbSchemas,
+        ObjectKind::Login => Msg::ExpSrvLogins,
+        ObjectKind::ServerRole => Msg::ExpServerRoles,
+        ObjectKind::Credential => Msg::ExpCredentials,
+        ObjectKind::CryptoProvider => Msg::ExpCryptoProviders,
+        ObjectKind::ServerAudit => Msg::ExpAudits,
+        ObjectKind::AuditSpec => Msg::ExpAuditSpecs,
+        ObjectKind::BackupDevice => Msg::ExpBackupDevices,
+        ObjectKind::Endpoint => Msg::ExpEndpoints,
+        ObjectKind::ServerTrigger => Msg::ExpServerTriggers,
     }
 }
 
@@ -1999,7 +2048,16 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
         | ObjectKind::DbUser
         | ObjectKind::DbRole
         | ObjectKind::LinkedServer
-        | ObjectKind::Schema => th.text_dim,
+        | ObjectKind::Schema
+        | ObjectKind::Login
+        | ObjectKind::ServerRole
+        | ObjectKind::Credential
+        | ObjectKind::CryptoProvider
+        | ObjectKind::ServerAudit
+        | ObjectKind::AuditSpec
+        | ObjectKind::BackupDevice
+        | ObjectKind::Endpoint
+        | ObjectKind::ServerTrigger => th.text_dim,
         ObjectKind::Aggregate => th.syn_keyword,
         ObjectKind::Sequence
         | ObjectKind::Index
@@ -2098,6 +2156,7 @@ impl Explorer {
             sizes_on: true,
             sizes: HashMap::new(),
             sizes_loaded: HashSet::new(),
+            db_sizes: HashMap::new(),
             icon_cache: HashMap::new(),
             detail_cache: HashMap::new(),
             detail_invalidated: Vec::new(),
@@ -2186,6 +2245,7 @@ impl Explorer {
         self.comment_inflight = None;
         self.sizes.clear();
         self.sizes_loaded.clear();
+        self.db_sizes.clear();
         self.fresh.clear();
         self.missing_at.clear();
         self.watermarks.clear();
@@ -2217,6 +2277,7 @@ impl Explorer {
         if !on {
             self.sizes.clear();
             self.sizes_loaded.clear();
+            self.db_sizes.clear();
         }
     }
 
@@ -2283,7 +2344,7 @@ impl Explorer {
 
     /// 노드의 용량(바이트 · 모르면 None) — 표시·필터 술어(`size>1G`) 공용.
     fn size_bytes(&self, n: &Node, parent: usize) -> Option<u64> {
-        if !self.sizes_on || self.sizes.is_empty() {
+        if !self.sizes_on || (self.sizes.is_empty() && self.db_sizes.is_empty()) {
             return None;
         }
         let sum_of = |schema: &str, kind: ObjectKind| -> Option<u64> {
@@ -2330,6 +2391,30 @@ impl Explorer {
                     _ => return None,
                 }
             }
+            // ★ SQL Server DB 노드 = 데이터 + 로그 파일(사용자 10-01 ㉕) · 데이터베이스/시스템 DB 묶음 = 읽힌 자식 DB의 합.
+            NodeKind::Database(d) => {
+                let (data, log) = self.db_sizes.get(d)?;
+                data + log
+            }
+            NodeKind::Group {
+                group: GroupKind::Databases | GroupKind::SystemDbs,
+                ..
+            } => {
+                let mut any = false;
+                let sum: u64 = n
+                    .children
+                    .iter()
+                    .filter_map(|&c| match &self.nodes.get(c)?.kind {
+                        NodeKind::Database(d) => self.db_sizes.get(d).map(|(a, b)| a + b),
+                        _ => None,
+                    })
+                    .inspect(|_| any = true)
+                    .sum();
+                if !any {
+                    return None;
+                }
+                sum
+            }
             _ => return None,
         };
         Some(bytes)
@@ -2362,6 +2447,19 @@ impl Explorer {
                 kind,
             });
         }
+    }
+
+    /// ★ 우클릭 "용량 확인"(DB 노드·데이터베이스 묶음 · 사용자 10-01 ㉕): 서버의 DB 용량 전부를 한 번에(데이터·로그 파일).
+    pub(crate) fn request_db_sizes(&mut self) {
+        if !self.sizes_on {
+            return;
+        }
+        let _ = self.tx_bg.send(Req::DbSizes { gen: self.gen });
+    }
+
+    /// DB 노드의 용량 상세(데이터, 로그 · 툴팁·시험용 · 모르면 None).
+    pub(crate) fn db_size_of(&self, db: &str) -> Option<(u64, u64)> {
+        self.db_sizes.get(db).copied()
     }
 
     pub(crate) fn set_icons(&mut self, on: bool) {
@@ -2411,7 +2509,18 @@ impl Explorer {
         let kind = match &n.kind {
             NodeKind::Root => t(Msg::TipExplorerServer).to_string(),
             NodeKind::Schema(s) => format!("{} {s}", t(Msg::TipExplorerSchema)),
-            NodeKind::Database(d) => format!("{} {d}", t(Msg::ExpDatabases)),
+            // DB 노드 툴팁 = 이름 + (읽혔으면) 데이터·로그 파일 용량(10-01 ㉕).
+            NodeKind::Database(d) => match self.db_size_of(d) {
+                Some((data, log)) => format!(
+                    "{} {d} · {}",
+                    t(Msg::ExpDatabases),
+                    tf(
+                        Msg::TipDbSize,
+                        &[&nsql_core::fmt_size(data), &nsql_core::fmt_size(log)]
+                    )
+                ),
+                None => format!("{} {d}", t(Msg::ExpDatabases)),
+            },
             NodeKind::Group { .. } => String::new(),
             NodeKind::Folder { schema, kind } => format!("{kind:?} · {schema}"),
             NodeKind::Object(o) => {
@@ -2488,7 +2597,14 @@ impl Explorer {
                     ObjectKind::Extension => IconKind::Package,
                     ObjectKind::Database | ObjectKind::Schema => IconKind::Schema,
                     ObjectKind::DbUser | ObjectKind::DbRole => IconKind::Schema,
-                    ObjectKind::LinkedServer => IconKind::Link,
+                    ObjectKind::LinkedServer | ObjectKind::Endpoint => IconKind::Link,
+                    ObjectKind::Login | ObjectKind::ServerRole => IconKind::Schema,
+                    ObjectKind::Credential
+                    | ObjectKind::CryptoProvider
+                    | ObjectKind::ServerAudit
+                    | ObjectKind::AuditSpec => IconKind::Property,
+                    ObjectKind::BackupDevice => IconKind::Package,
+                    ObjectKind::ServerTrigger => IconKind::Trigger,
                 };
                 (k, k.color())
             }
@@ -3535,8 +3651,10 @@ impl Explorer {
                             self.meta_load_objects("", ObjectKind::Database, &list);
                             let soft = self.soft.remove(&node);
                             let depth = self.nodes[node].depth + 1;
+                            // 루트 = 데이터베이스 · 보안(서버) · 서버 개체(10-01 ㉖ · SSMS 순서).
                             let root_kids = vec![
                                 group_node(None, GroupKind::Databases, depth),
+                                group_node(None, GroupKind::ServerSecurity, depth),
                                 group_node(None, GroupKind::ServerObjects, depth),
                             ];
                             self.diff_children(node, root_kids);
@@ -3657,6 +3775,17 @@ impl Explorer {
                     }
                     // 시도했으면 읽음(빈 결과·실패 포함) — 세 종류를 다 시도하면 스키마 합의 `+`가 사라진다.
                     self.sizes_loaded.insert((schema, kind));
+                }
+                Resp::DbSizes { gen, r } => {
+                    if gen != self.gen || !self.sizes_on {
+                        continue;
+                    }
+                    // 실패(권한 없음 등) = 조용히(용량 글만 안 보인다 · `Resp::Sizes`와 같게).
+                    if let Ok(list) = r {
+                        for (name, data, log) in list {
+                            self.db_sizes.insert(name, (data, log));
+                        }
+                    }
                 }
                 Resp::SchemaComments {
                     gen,
@@ -6569,6 +6698,21 @@ impl Explorer {
                             }),
                         ));
                     }
+                    // ★ SQL Server DB 노드·데이터베이스 묶음(사용자 10-01 ㉕): 이름 복사 · 용량 확인(서버 DB 전부 한 번).
+                    NodeKind::Database(_)
+                    | NodeKind::Group {
+                        group: GroupKind::Databases | GroupKind::SystemDbs,
+                        ..
+                    } => {
+                        if matches!(self.nodes[i].kind, NodeKind::Database(_)) {
+                            items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
+                        }
+                        if self.sizes_on {
+                            items.push(CtxItem::item("sizes", t(Msg::ExpLoadSizes)));
+                        }
+                        items.push(CtxItem::Separator);
+                        items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                    }
                     _ => items.push(CtxItem::item("refresh", t(Msg::ExpRefresh))),
                 }
                 let text_w = (160.0 * self.scale).round() as i32;
@@ -6868,6 +7012,9 @@ impl Explorer {
     /// 자체 시험용(기동 명령 `explorer.expand:<라벨>` 또는 `<DB>/<라벨>` · 101): 보이는 행 가운데 라벨이 같은 첫 노드를 펼친다 —
     /// `DB/라벨`이면 그 데이터베이스 노드 아래(더 깊은 행)에서만 찾는다.
     pub(crate) fn capture_expand_label(&mut self, path: &str) -> bool {
+        // ★ `/라벨` = 서버 수준(루트 바로 아래)만(10-01 ㉖ · DB 아래 "보안"과 서버 "보안"이 같은 글이라).
+        let server_only = path.starts_with('/');
+        let path = path.trim_start_matches('/');
         let (db, label) = match path.split_once('/') {
             Some((d, l)) => (Some(d.trim()), l.trim()),
             None => (None, path.trim()),
@@ -6875,6 +7022,7 @@ impl Explorer {
         let rows = self.visible_rows();
         let mut start = 0usize;
         let mut min_depth = 0usize;
+        let root_depth = rows.first().map(|&i| self.nodes[i].depth).unwrap_or(0);
         if let Some(d) = db {
             let Some(pos) = rows.iter().position(
                 |&i| matches!(&self.nodes[i].kind, NodeKind::Database(n) if n.eq_ignore_ascii_case(d)),
@@ -6887,6 +7035,9 @@ impl Explorer {
         for (r, &i) in rows.iter().enumerate().skip(start) {
             if db.is_some() && self.nodes[i].depth < min_depth {
                 break;
+            }
+            if server_only && self.nodes[i].depth != root_depth + 1 {
+                continue;
             }
             let (l, _) = self.label(i);
             let base = l.split(" (").next().unwrap_or(&l);
@@ -6916,7 +7067,16 @@ impl Explorer {
                 NodeKind::Group { group, .. } => format!("group:{group:?}"),
             };
             let (label, sub) = self.label(i);
-            out.push_str(&format!("{}|{tag}|{label}|{sub}|{:?}\n", n.depth, n.state));
+            // 끝 열 = 용량 글(없으면 빈 칸 · 10-01 ㉕ — 앞 열 위치는 그대로).
+            let parent = self.parent_of(i).unwrap_or(i);
+            let size = self
+                .size_text(n, parent)
+                .map(|(s, _, _)| s)
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "{}|{tag}|{label}|{sub}|{:?}|{size}\n",
+                n.depth, n.state
+            ));
         }
         out
     }
@@ -6973,7 +7133,12 @@ impl Explorer {
                 self.refresh_selected(false);
             }
             "sizes" => {
-                if let Some(s) = self.schema_of(i) {
+                if matches!(
+                    self.nodes[i].kind,
+                    NodeKind::Database(_) | NodeKind::Group { .. }
+                ) {
+                    self.request_db_sizes();
+                } else if let Some(s) = self.schema_of(i) {
                     self.request_sizes(&s);
                 }
             }
@@ -8183,6 +8348,27 @@ mod detail_cache_tests {
         ));
         let sec = super::ssms_group_children(Some("BISCM_MS"), super::GroupKind::Security, 4);
         assert_eq!(sec.len(), 3);
+        // ★ 서버 수준(10-01 ㉖): 보안 6(로그인 먼저) · 서버 개체 4(백업 디바이스 · 엔드포인트 · 연결된 서버 · 트리거).
+        let ssec = super::ssms_group_children(None, super::GroupKind::ServerSecurity, 2);
+        assert_eq!(ssec.len(), 6);
+        assert!(matches!(
+            ssec[0].kind,
+            super::NodeKind::Folder {
+                kind: nsql_catalog::ObjectKind::Login,
+                ..
+            }
+        ));
+        let sobj = super::ssms_group_children(None, super::GroupKind::ServerObjects, 2);
+        assert_eq!(sobj.len(), 4);
+        assert!(matches!(
+            sobj[2].kind,
+            super::NodeKind::Folder {
+                kind: nsql_catalog::ObjectKind::LinkedServer,
+                ..
+            }
+        ));
+        assert!(nsql_catalog::ObjectKind::Login.is_server_level());
+        assert!(!nsql_catalog::ObjectKind::DbUser.is_server_level());
         let mk = |n: &str, extra: &str| nsql_catalog::ObjectInfo {
             db: String::new(),
             schema: String::new(),

@@ -864,6 +864,14 @@ impl ExplorerSet {
     }
 
     /// 자체 캡처용 — 첫 서버 칸의 `row`번째 줄에서 우클릭한 것과 같은 사건을 준다(전체 영역을 거쳐 = 실제 경로).
+    /// ★ DB 용량 요청(기동 명령 `explorer.dbsizes` · 10-01 ㉕) — 보이는 칸.
+    pub(crate) fn request_db_sizes(&mut self) {
+        let i = self.shown;
+        if let Some(p) = self.panes.get_mut(i) {
+            p.ex.request_db_sizes();
+        }
+    }
+
     pub(crate) fn capture_menu(&mut self, row: usize) -> bool {
         self.panes
             .first_mut()

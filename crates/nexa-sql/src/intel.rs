@@ -566,6 +566,15 @@ impl Intel {
                                             | ObjectKind::DbUser
                                             | ObjectKind::DbRole
                                             | ObjectKind::LinkedServer
+                                            | ObjectKind::Login
+                                            | ObjectKind::ServerRole
+                                            | ObjectKind::Credential
+                                            | ObjectKind::CryptoProvider
+                                            | ObjectKind::ServerAudit
+                                            | ObjectKind::AuditSpec
+                                            | ObjectKind::BackupDevice
+                                            | ObjectKind::Endpoint
+                                            | ObjectKind::ServerTrigger
                                     )
                                 }) =>
                             {
@@ -1959,8 +1968,16 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
                 ObjectKind::Database
                 | ObjectKind::DbUser
                 | ObjectKind::DbRole
-                | ObjectKind::Schema => IconKind::Schema,
-                ObjectKind::LinkedServer => IconKind::Link,
+                | ObjectKind::Schema
+                | ObjectKind::Login
+                | ObjectKind::ServerRole => IconKind::Schema,
+                ObjectKind::LinkedServer | ObjectKind::Endpoint => IconKind::Link,
+                ObjectKind::Credential
+                | ObjectKind::CryptoProvider
+                | ObjectKind::ServerAudit
+                | ObjectKind::AuditSpec => IconKind::Property,
+                ObjectKind::BackupDevice => IconKind::Package,
+                ObjectKind::ServerTrigger => IconKind::Trigger,
             });
         }
     }

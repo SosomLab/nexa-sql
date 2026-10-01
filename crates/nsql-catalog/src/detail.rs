@@ -76,6 +76,21 @@ pub fn object_details(
 ) -> Result<Vec<DetailSection>, DbError> {
     let d = s.dialect();
     let mut out = Vec::new();
+    // ★ 서버 수준 보안·서버 개체(10-01 ㉖ · 101 §6): `sys` 뷰 열 전부 + 종류별 보충(역할 소속 · 감사 파일 · 감사 동작).
+    if o.kind.is_server_level() && o.kind != ObjectKind::LinkedServer {
+        let props: Vec<Vec<String>> = crate::server_object_props(s, o.kind, &o.name)?
+            .into_iter()
+            .map(|(k, v)| vec![k, v])
+            .collect();
+        if !props.is_empty() {
+            out.push(DetailSection::table(
+                SectionId::Properties,
+                vec![HeaderId::Property, HeaderId::Value],
+                props,
+            ));
+        }
+        return Ok(out);
+    }
     // ★ 연결된 서버(101 §5): 속성(제품 · 공급자 · 데이터 원본 · 카탈로그 · 옵션 …) + 로그인 매핑 표.
     if o.kind == ObjectKind::LinkedServer {
         let i = crate::linked_server(s, &o.name)?;
