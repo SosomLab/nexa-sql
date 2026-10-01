@@ -348,6 +348,21 @@ impl MetaStore {
         names: &[(ObjectKind, String)],
         at: u64,
     ) -> usize {
+        let with_extra: Vec<(ObjectKind, String, String)> = names
+            .iter()
+            .map(|(k, n)| (*k, n.clone(), String::new()))
+            .collect();
+        self.load_names_x(schema, kinds, &with_extra, at)
+    }
+
+    /// ★ 부가까지 실어 올리는 L1(10-02 ㉜ · SQL Server 테이블 반환 함수 코드 — 빈 문자열 = 없음).
+    pub fn load_names_x(
+        &mut self,
+        schema: &str,
+        kinds: &[ObjectKind],
+        names: &[(ObjectKind, String, String)],
+        at: u64,
+    ) -> usize {
         let sc = self.names.intern(schema);
         let mut s = self.edit();
         let mut added = 0usize;
@@ -373,8 +388,9 @@ impl MetaStore {
             }
             let mut objs: Vec<ObjId> = Vec::new();
             let mut seen: std::collections::HashSet<ObjId> = std::collections::HashSet::new();
-            for (k, n) in names.iter().filter(|(k, _)| *k == kind) {
+            for (k, n, x) in names.iter().filter(|(k, _, _)| *k == kind) {
                 let name = self.names.intern(n);
+                let extra = (!x.is_empty()).then(|| self.names.intern(x));
                 let lower = self.names.intern_lower(name);
                 let id = match old_by_lower.get(&lower) {
                     Some(&id) => id,
@@ -388,7 +404,7 @@ impl MetaStore {
                             status: ObjStatus::Unknown,
                             modified: None,
                             comment: None,
-                            extra: None,
+                            extra,
                         });
                         s.cols.push(ColState::Unknown);
                         id

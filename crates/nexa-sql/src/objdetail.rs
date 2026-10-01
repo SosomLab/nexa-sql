@@ -302,6 +302,16 @@ impl DetailPanel {
     /// 종류 라벨(폴더 이름 단수형 대신 종류 코드 대문자 · 짧게).
     fn kind_label(&self) -> String {
         match &self.target {
+            // ★ 루틴 세부 타입(10-02 ㉛ · SQL Server `type_desc`)은 머리줄 칩에서도 식별되게: `PROCEDURE · SQL_STORED_PROCEDURE`.
+            Some(DetailTarget::Object(o))
+                if matches!(
+                    o.kind,
+                    nsql_catalog::ObjectKind::Procedure | nsql_catalog::ObjectKind::Function
+                ) && o.extra.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+                    && !o.extra.is_empty() =>
+            {
+                format!("{} · {}", o.kind.code().to_uppercase(), o.extra)
+            }
             Some(DetailTarget::Object(o)) => o.kind.code().to_uppercase(),
             Some(DetailTarget::Column { .. }) => "COLUMN".into(),
             Some(DetailTarget::Item { sub, .. }) => {

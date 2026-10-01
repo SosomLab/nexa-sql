@@ -442,6 +442,8 @@ pub struct NameEntry {
     pub schema: String,
     pub kind: ObjectKind,
     pub name: String,
+    /// 부가(10-02 ㉜ · SQL Server 테이블 반환 함수 `IF`/`TF`/`FT` 코드 — L1 이름 층에서도 FROM 자리 테이블 함수 판정이 되게 · 그 밖 빈 값).
+    pub extra: String,
 }
 
 /// ★ 서버 전체 이름 인덱스(84 §2 · 09-25) — `schemas`(보이는 스키마 · 비면 전부)의 트리 폴더 종류를 **왕복 한 번**으로 읽는다.
@@ -626,7 +628,17 @@ pub fn name_index(
         if !kinds.contains(&kind) {
             continue;
         }
-        out.push(NameEntry { schema, kind, name });
+        let extra = if dialect == Dialect::Mssql && matches!(ty.as_str(), "IF" | "TF" | "FT") {
+            ty.clone()
+        } else {
+            String::new()
+        };
+        out.push(NameEntry {
+            schema,
+            kind,
+            name,
+            extra,
+        });
     }
     Ok((out, truncated))
 }
@@ -1803,7 +1815,15 @@ pub fn table_function(dialect: Dialect, kind: ObjectKind, extra: &str) -> bool {
     }
     match dialect {
         Dialect::Oracle => extra == "PIPELINED",
-        Dialect::Mssql => matches!(extra, "IF" | "TF" | "FT"),
+        // 코드(`IF`/`TF`/`FT` · 이름 인덱스) 또는 `type_desc`(목록 · 10-02 ㉛).
+        Dialect::Mssql => matches!(
+            extra,
+            "IF" | "TF"
+                | "FT"
+                | "SQL_INLINE_TABLE_VALUED_FUNCTION"
+                | "SQL_TABLE_VALUED_FUNCTION"
+                | "CLR_TABLE_VALUED_FUNCTION"
+        ),
         Dialect::Postgres => extra.starts_with("SETOF"),
         _ => false,
     }
@@ -1957,7 +1977,7 @@ pub fn objects(
                         _ => "'SN'",
                     };
                     format!(
-                        "SELECT o.name, '', CONVERT(varchar(19), o.modify_date, 120), o.type, s.name FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE {sch} AND o.type IN ({types}) ORDER BY s.name, o.name"
+                        "SELECT o.name, '', CONVERT(varchar(19), o.modify_date, 120), o.type_desc, s.name FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE {sch} AND o.type IN ({types}) ORDER BY s.name, o.name"
                     )
                 }
                 // 인덱스 = 테이블별이 아니라 스키마 전체(DBeaver Indexes 가상 폴더) · 부가 = 테이블 · 유니크.
@@ -3493,6 +3513,16 @@ mod tests {
         assert!(!table_function(Dialect::Oracle, ObjectKind::Function, ""));
         assert!(table_function(Dialect::Mssql, ObjectKind::Function, "TF"));
         assert!(!table_function(Dialect::Mssql, ObjectKind::Function, "FN"));
+        assert!(table_function(
+            Dialect::Mssql,
+            ObjectKind::Function,
+            "SQL_INLINE_TABLE_VALUED_FUNCTION"
+        ));
+        assert!(!table_function(
+            Dialect::Mssql,
+            ObjectKind::Function,
+            "SQL_SCALAR_FUNCTION"
+        ));
         assert!(table_function(
             Dialect::Postgres,
             ObjectKind::Function,

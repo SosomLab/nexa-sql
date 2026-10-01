@@ -133,5 +133,35 @@ if [ -s "$D7" ]; then
   t7=$(cat "$D7"); echo "$t7" | grep -E "\|object\|dbo\." | head -3 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
   chk "⑦ 현재 DB(master) 아닌 $OTHER 테이블 옆 용량" "\|object\|dbo\.[^|]*\|[^|]*\|[^|]*\|[0-9.]+[KMGTP]?B?$" "$t7"
 else bad "⑦ 트리 덤프 없음" "$(tail -3 "$OUT/gui7.stderr")"; fi
+# ⑧ 루틴 세부 타입(10-02 ㉛): 저장 프로시저 라벨 = `dbo.이름`(종전 `(P)` 없음) · CLI 상세 `type` 행 = `SQL_STORED_PROCEDURE`.
+say "--- ⑧ 루틴 세부 타입"
+D8="$OUT/tree8.txt"; rm -f "$D8"
+NSQL_NO_ACTIVATE=1 PROCDB="${PROCDB:-M4PLAN_MS}"
+NSQL_STARTUP_CMD="@after:7000:explorer.expand:$PROCDB,@after:8500:explorer.expand:$PROCDB/프로그래밍 기능,@after:10000:explorer.expand:$PROCDB/저장 프로시저,@after:14000:explorer.dump:$D8" \
+  timeout -s KILL 17 "$EXE" "$PROFILE" > "$OUT/gui8.stdout" 2> "$OUT/gui8.stderr"
+if [ -s "$D8" ]; then
+  t8=$(cat "$D8"); echo "$t8" | grep -E "\|object\|dbo\.(SP_|PROC)" | head -3 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+  chk "⑧ 프로시저 라벨 = dbo.이름(괄호 타입 없음)" "\|object\|dbo\.[A-Za-z0-9_]+\|[^|]*\|[^|]*\|" "$t8"
+  echo "$t8" | grep -qE "\|object\|dbo\.[A-Za-z0-9_]+\([A-Z]+\)\|" && bad "⑧ 라벨에 (P) 같은 타입이 남아 있음" "$(echo "$t8" | grep -E '\([A-Z]+\)\|' | head -3)" || ok "⑧ 라벨에 타입 괄호 없음"
+  P8=$(echo "$t8" | grep -oE "\|object\|dbo\.[A-Za-z0-9_]+\|" | head -1 | sed 's/|object|dbo\.//; s/|$//')
+  if [ -n "$P8" ] && [ -x "$NSQLCLI" ]; then
+    # CLI는 접속 DB(master)에서만 보므로 다른 DB의 프로시저 상세는 건너뛴다 — 상세 `type` 행은 단위 시험(detail.rs)과 GUI 실기로.
+    o=$("$NSQLCLI" cat -c "$PROFILE" -s dbo detail "$P8" procedure 2>&1)
+    if echo "$o" | grep -qE "SQL_STORED_PROCEDURE|CLR_STORED_PROCEDURE"; then ok "⑧ CLI 상세 type = SQL_STORED_PROCEDURE"; else say "  SKIP  ⑧ CLI 상세(접속 DB가 master라 $PROCDB 프로시저 없음)"; fi
+  else sk() { :; }; say "  SKIP  ⑧ 프로시저 없음 또는 CLI 없음"; fi
+else bad "⑧ 트리 덤프 없음" "$(tail -3 "$OUT/gui8.stderr")"; fi
+# ⑨ 테이블 반환 함수 완성(10-02 ㉜): `USE M4PLAN_MS` 뒤 `SELECT * FROM |`에 `FN_TABLE_CO`(SQL_INLINE_TABLE_VALUED_FUNCTION)가 **테이블 함수**로.
+say "--- ⑨ FROM 자리 테이블 반환 함수 완성"
+TVFDB="${TVFDB:-M4PLAN_MS}"; TVF="${TVF:-FN_TABLE_CO}"
+# 같은 탭에서(새 탭은 ⑯ 탭별 작업 단위로 연결 기본 DB(master)로 되돌아간다) — USE + SELECT 한 파일 · 캐럿 끝 = `FROM ` 뒤.
+F9="$OUT/use9.sql"; printf 'USE %s\nGO\nSELECT * FROM ' "$TVFDB" > "$F9"; D9="$OUT/cands9.txt"; rm -f "$D9"
+fw9=$(cygpath -w "$F9" 2>/dev/null || echo "$F9")
+NSQL_NO_ACTIVATE=1 NSQL_STARTUP_CMD="@connected:open:$fw9,@after:5000:run.all,@after:9000:editor.caret:end,@after:9500:intel.probe,@after:12000:intel.dump:$D9" \
+  timeout -s KILL 15 "$EXE" "$PROFILE" > "$OUT/gui9.stdout" 2> "$OUT/gui9.stderr"
+if [ -s "$D9" ]; then
+  c9=$(cat "$D9"); echo "$c9" | grep -iE "\|$TVF\|" | head -2 | sed 's/^/        > /' | tee -a "$REPORT" >/dev/null
+  chk "⑨ FROM 완성에 $TVF 있음" "\|$TVF\|" "$c9"
+  chk "⑨ $TVF = 테이블 함수로 판정(detail)" "\|$TVF\|table function" "$c9"
+else bad "⑨ 완성 덤프 없음" "$(tail -3 "$OUT/gui9.stderr")"; fi
 say ""; say "== 합계: 통과 $pass · 실패 $fail  ($(date '+%F %T'))"
 exit $fail

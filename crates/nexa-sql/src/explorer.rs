@@ -1478,6 +1478,7 @@ fn meta_thread(rx: mpsc::Receiver<Req>, tx: mpsc::Sender<Resp>, wake: Box<dyn Fn
                         schema: schema.clone(),
                         kind,
                         name,
+                        extra: String::new(),
                     }));
                 }
                 continue;
@@ -2587,6 +2588,13 @@ impl Explorer {
             NodeKind::Folder { schema, kind } => format!("{kind:?} · {schema}"),
             NodeKind::Object(o) => {
                 let mut s = format!("{:?} · {}.{}", o.kind, o.schema, o.name);
+                // 루틴 세부 타입(SQL Server `type_desc` · ㉛)·PG 서명은 툴팁에.
+                if matches!(o.kind, ObjectKind::Procedure | ObjectKind::Function)
+                    && !o.extra.is_empty()
+                {
+                    s.push_str(" · ");
+                    s.push_str(&o.extra);
+                }
                 if !o.status.is_empty() {
                     s.push_str(" · ");
                     s.push_str(&o.status);
@@ -3766,9 +3774,11 @@ impl Explorer {
                             // ★ L1 = MetaStore 한 곳(85 §2): 스키마의 모든 종류를 한 번에(빈 종류 = 부정 캐시) · 완성·검색이 같은 표를 읽는다 ·
                             //   일치는 스레드가 `Resp::Hits`로 따로 준다(UI 스캔 0).
                             if let Some(d) = self.dialect {
-                                let names: Vec<(ObjectKind, String)> =
-                                    list.into_iter().map(|e| (e.kind, e.name)).collect();
-                                self.meta.load_names(
+                                let names: Vec<(ObjectKind, String, String)> = list
+                                    .into_iter()
+                                    .map(|e| (e.kind, e.name, e.extra))
+                                    .collect();
+                                self.meta.load_names_x(
                                     &schema,
                                     nsql_catalog::kinds_for(d),
                                     &names,
@@ -6298,6 +6308,7 @@ impl Explorer {
                     schema: schema.clone(),
                     kind,
                     name,
+                    extra: String::new(),
                 })
                 .collect();
             let _ = self.tx_bg.send(Req::NamesSeed {
@@ -7705,7 +7716,11 @@ impl Explorer {
                 }
             }
             NodeKind::Object(o) => {
-                let extra = if o.kind == ObjectKind::Function || o.kind == ObjectKind::Procedure {
+                // 루틴의 부가 = PG 오버로드 서명(`(a int)` · 이름 구별에 필요) → 라벨에 붙임 · SQL Server 세부 타입(`SQL_STORED_PROCEDURE` ·
+                //   종전 `(P)`·`(IF)`)은 **라벨에서 빼고** 객체 상세·머리줄 칩·툴팁에(사용자 10-02 ㉛).
+                let extra = if (o.kind == ObjectKind::Function || o.kind == ObjectKind::Procedure)
+                    && self.dialect != Some(Dialect::Mssql)
+                {
                     if o.extra.is_empty() {
                         String::new()
                     } else {
@@ -8672,6 +8687,7 @@ mod search_thread_tests {
             schema: s.into(),
             kind: k,
             name: n.into(),
+            extra: String::new(),
         };
         let names: HashMap<String, Vec<nsql_catalog::NameEntry>> = HashMap::from([
             (

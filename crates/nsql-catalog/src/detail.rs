@@ -5,7 +5,7 @@
 use crate::gen::GenOpts;
 use crate::tree::{sub_items, sub_kinds, SubKind};
 use crate::{comments, object_size_detail, table_detail, ColumnInfo, ObjectInfo, ObjectKind};
-use nsql_core::{DbError, Session};
+use nsql_core::{DbError, Dialect, Session};
 
 /// 섹션 종류(라벨은 호스트가 i18n으로).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,6 +175,16 @@ pub fn object_details(
             }
             props.push(vec!["size".into(), v]);
         }
+    }
+    // ★ 루틴의 세부 타입(10-02 ㉛): SQL Server `type_desc`(`SQL_STORED_PROCEDURE` · `SQL_INLINE_TABLE_VALUED_FUNCTION` …) = `type` 행 ·
+    //   PG 오버로드 서명 = `signature` 행(둘 다 `extra`에 실려 온다 · 탐색기 라벨에는 SQL Server 것을 안 붙인다).
+    if is_routine(o.kind) && !o.extra.is_empty() {
+        let key = if d == Dialect::Mssql {
+            "type"
+        } else {
+            "signature"
+        };
+        props.push(vec![key.into(), o.extra.clone()]);
     }
     if !o.kind.is_relation() && !is_routine(o.kind) {
         if !o.status.is_empty() {
