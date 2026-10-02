@@ -173,6 +173,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 | 맥 한글 입력 | 한글 입력 소스일 때만 앱 조합(`input.hangul_compose=auto` · nexa-ctl `TextBox` 전역 스위치) — **새 창을 만들면 `set_ime_allowed(input::system_ime())` + `sync_hangul_mode`의 창 목록에 등록** | [62 §1](62-macos-input-and-present.md) |
 
 - ★ **컨트롤 배선 체크(09-25 §210)**: nexa-ctl 컨트롤(TextBox 등)을 패널이 직접 놓을 때는 `set_bounds`와 함께 **`set_scale(scale)`** 을 꼭 부른다 — 줄 높이·여백이 `s(...)`로 배율을 곱하므로 빠지면 레티나에서 글자가 겹친다(객체 상세 패널 결함).
+- ★ **글꼴 증분 = 논리 px(10-02 mac · [journal 10-02 §2](journal/2026-10-02.md))**: `select_font_sized(슬롯, 굵게, 증분)`의 증분은 슬롯 크기(논리 px)에 더해진 뒤 **그리기 쪽이 배율을 곱한다** — 측정값(`text_height()`·`text_width()` = 물리 px)이나 `scale`을 곱한 값을 그대로 넘기지 않는다(넘겨야 하면 배율로 나눈다). 어기면 배율 1에서는 멀쩡하고 HiDPI(맥 Retina · Windows 150 %)에서만 글자가 작아진다(속도 HUD = 75 %가 50 %로 · 탐색기 용량 글자). 크기가 배율에 비례하는지는 **배율 1·2로 그려 치수를 단언하는 시험**으로 덮는다(nexa-ctl `speed_hud_size_scales_with_dpi`의 `ScaleCtx`).
 
 ## 3. OS별로 다른 것
 

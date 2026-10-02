@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/hud-dpi-scale-mac | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | 109차 mac: 최신화·분석 · 🔧 속도 HUD HiDPI 크기(nexa-ui 102차 `SpeedHud` 배율 나눔) · 탐색기 용량 글자 증분 `* s` 제거 · 61 §1-5 규칙(글꼴 증분 = 논리 px) · journal 10-02 |
 | docs/release-v0.1.3 | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | v0.1.3 릴리스 기록(journal §40 · DEVLOG · STATUS · CLAUDE · MILESTONES · 33 §3) |
 | release/v0.1.3 | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | 🚀 버전 0.1.2 → 0.1.3 · 태그 `v0.1.3` → release.yml ✓ → 공개 → homebrew.yml ✓(brew 0.1.3) · winget·choco 없음 |
 | fix/explorer-db-copy-name | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | ㉞ SQL Server DB 노드 "이름 복사" 무동작(`copy_name_of` 한 자리 + 시험) · journal §39 |

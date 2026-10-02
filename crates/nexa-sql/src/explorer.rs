@@ -8011,7 +8011,8 @@ impl Explorer {
                     // ★ 용량(사용자 09-30 · DBeaver식): 행 오른쪽 끝에 흐리게 · 라벨과 겹치면 생략.
                     if let Some((sz, unit, partial)) = size_txt {
                         // 보조(Status) 글꼴보다 1pt(≈1.33px) 더 작게(사용자 09-30) · 단위별 색(텍스트 색만).
-                        dc.select_font_sized(FontSlot::Status, false, -(4.0 / 3.0) * s);
+                        //   증분 = 논리 px(배율은 그리기 쪽이 곱한다 · 10-02 — 여기서 또 곱하면 2배율에서 두 배로 줄어든다).
+                        dc.select_font_sized(FontSlot::Status, false, -(4.0 / 3.0));
                         let w = dc.text_width(&sz);
                         let sx0 = rr.right() - (10.0 * s).round() as i32 - w;
                         if sx0 > right + (12.0 * s).round() as i32 {
