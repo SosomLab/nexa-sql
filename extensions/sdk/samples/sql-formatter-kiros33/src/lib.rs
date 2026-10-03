@@ -14,7 +14,6 @@
 use nexa_ext_sdk::{Editor, Effect, Extension, FormatRequest, Formatter, Label, Meta, Settings};
 use nsql_format::layout::{blocks, display_width, line_prefix, tabs_to, Part, Role};
 use nsql_format::{AliasAs, Case, Comma, Gap, Indent, Line, ListStyle, LogicalNewline, Options};
-use std::collections::HashMap;
 
 pub struct Kiros33;
 

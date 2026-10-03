@@ -99,6 +99,8 @@
 
 구현(1.1.0 · 09-29) = **Basic 확장 API**(§5-1): `strict_options`(공통 옵션 위 덮어쓰기 · `cond_indent` = `and_same_level`) → `nsql_format::prepare` → 구분행 손질 → `AlignPlan`(블록별 탭 스톱 · `line_prefix`/`display_width`/`tabs_to`) → `nsql_format::render(pad)`. 별칭 자동 부여 · 테이블 설명 · 방언 치환 · 괄호 그룹 시드 · AND/OR 뒤 간격 · 연산자 간격은 전부 Basic 몫(확장 코드 0) — 1.0.0의 `AND\t` 후처리·`same_level_conditions`는 지웠다.
 
+- **1.3.2**(10-03): 코드 변경 없이 Basic 코어 재빌드 — `EXEC` 문 · 명령 줄 · 블록 끝 · `${…}`·접두 문자열 토큰 · 단항 부호·`::`(§3-1 · [journal 10-03](journal/2026-10-03.md)).
+
 ## 5. ABI v1.1(포맷터) · SDK API
 
 - 메타: `"formatter": {"label": {"en","ko"}, "sample": "…"}` — 있으면 호스트가 포맷터로 등록(팔레트 · 기본 지정 · 미리보기 예시).
