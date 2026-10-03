@@ -566,14 +566,24 @@ impl PrefsWin {
                         CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
                     SettingKind::Lang => {
-                        let items: Vec<ComboItem> = Lang::ALL
-                            .iter()
-                            .map(|l| ComboItem::new(l.code(), l.endonym()))
-                            .collect();
+                        // 첫 항목 = 시스템(OS 표시 언어를 따름 · 기본값 · 지금 풀린 언어를 괄호로 · 사용자 10-04).
+                        let sys = format!(
+                            "{} ({})",
+                            t(Msg::ValSystem),
+                            nsql_i18n::system_lang().endonym()
+                        );
+                        let items: Vec<ComboItem> =
+                            std::iter::once(ComboItem::new(nsql_settings::LANG_SYSTEM, &sys))
+                                .chain(
+                                    Lang::ALL
+                                        .iter()
+                                        .map(|l| ComboItem::new(l.code(), l.endonym())),
+                                )
+                                .collect();
                         let idx = Lang::ALL
                             .iter()
                             .position(|l| l.code() == sn.value)
-                            .unwrap_or(0);
+                            .map_or(0, |i| i + 1);
                         CardCtl::Choice(Box::new(Combo::new(items, idx)))
                     }
                     SettingKind::Position => CardCtl::Pos(Box::new(PositionDropdown::new(

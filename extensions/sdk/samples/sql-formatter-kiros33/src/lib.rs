@@ -435,7 +435,7 @@ enum AlignKind {
 impl AlignKind {
     fn matches(self, p: &Part) -> bool {
         match self {
-            AlignKind::As => matches!(p, Part::As),
+            AlignKind::As => matches!(p, Part::As | Part::AsRaw(_)),
             AlignKind::Dir => matches!(p, Part::OrderDir(_)),
             AlignKind::Cmp => matches!(p, Part::CmpOp(_)),
         }

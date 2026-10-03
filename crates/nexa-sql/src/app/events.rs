@@ -1157,7 +1157,13 @@ impl App {
                     let sid = self.sess.id;
                     self.tab_unit.retain(|(_, s), _| *s != sid);
                     self.sess.disc_path = None;
-                    self.sess.status = tf(Msg::StConnected, &[&description, &dialect.to_string()]);
+                    self.sess.status = tf(
+                        Msg::StConnected,
+                        &[
+                            sessions::status_conn_desc(dialect.is_file_based(), &description),
+                            &dialect.to_string(),
+                        ],
+                    );
                     self.startup_connected = true;
                     if self.sess.skip_done == 0 {
                         self.sess.busy = false;

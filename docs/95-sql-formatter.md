@@ -119,6 +119,7 @@
 
 - 공통 옵션은 `Options::from_pairs(req.options)`로 받고 확장은 **필요한 값만 덮어쓴다**(`..base.clone()`) — Basic에 옵션이 늘면 확장은 그대로 따라온다.
 - 호스트 → 확장 부가 정보도 pair로: `table_comments`(줄마다 `이름<TAB>설명` · `table_comments_pair`) — 앱이 Basic과 같은 목록을 넘긴다.
+- ★ **`Part::AsRaw(String)`(10-04 · 추가 변형)**: `format.keyword_case=keep`이고 원문이 `AS`가 아닐 때 별칭 AS가 원문 글자(`as`/`As`)를 든 채 나온다 · 렌더 = `Part::As`와 같은 간격·정렬 규칙 · upper/lower에서는 나오지 않는다(동작 변화 0) · `As(String)`으로 바꾸지 않은 것 = 확장 옛 소스·빌드 호환. **확장이 `Part::As`로 정렬 대상을 고르면 `Part::AsRaw(_)`도 함께 매치할 것**(kiros33 1.3.3 `AlignKind::As` · [journal 10-04 §4](journal/2026-10-04.md)).
 - 정렬된 연산자 뒤 간격 = `operator_gap`(4자 이상 = 공백 1개) — 확장의 채움(`pad`)과 Basic 규칙이 한 벌.
 
 ## 6. 시험 방법

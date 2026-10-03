@@ -29,7 +29,6 @@ expect_grep() { # <이름> <파일/출력> <패턴>
 expect_absent() { if echo "$2" | grep -q -- "$3"; then bad "$1 (있으면 안 됨 '$3')"; echo "$2" | head -6 | sed 's/^/      /'; else ok "$1"; fi; }
 
 # ── SQLite
-"$NSQL" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1 || true
 NSQL_HOME="$H" "$NSQL" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
 cat > "$D/setup.sql" <<'SQL'
 DROP TABLE IF EXISTS ge_emp;

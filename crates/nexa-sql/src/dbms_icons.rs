@@ -1,37 +1,25 @@
-//! DBMS 아이콘(사용자 09-22) — `assets/dbms/*.svg` 내장. 지금은 **generic 틀 + `<text>` 라벨(≤6자)**로 DBMS별 파일을 만들어 두었고,
-//! 나중에 그 파일을 실제 로고(경로만 있는 SVG)로 바꾸면 **같은 로더가 로고를 그린다**(사용자 09-22): `<text>`가 있으면 틀 + 라벨(틀은
-//! 라벨 폭만큼 가로로 늘려 그린다) · 없으면 경로 마스크만(정방형). 아이콘 없는 DBMS = `generic-database` + 힌트에서 만든 두 글자.
-//! 래스터 = `toolicons::svg_glyph_vb`(경로마다 `fill-rule` 존중 · 알파 합성 · 64px 마스크 → 필요한 크기로 축소).
+//! DBMS 아이콘(사용자 10-04) — `assets/dbms/<light|dark>/<64|20>/<id>.png` 내장(빌드 때 `build.rs`가 표를 만든다).
+//! 큰 자리(서버 정보) = 64 px 원본 · 작은 자리(연결 정보) = 20 px 원본(작은 크기 전용 그림)을 **표시 크기로 줄여** 쓴다.
+//! 테마(밝음/어두움)마다 그림이 따로 있다. 고르기 = 제품 힌트 → 방언 → `generic`. PNG는 처음 쓸 때 한 번 푼다(스레드 로컬 캐시).
 
-use crate::toolicons::svg_glyph_vb;
-use nexa_ctl::controls::ctxmenu::MenuIcon;
 use nexa_gfx::IconImage;
 use nsql_core::Dialect;
 
-/// 내장 아이콘(이름 · SVG 원문). 이름 = 파일 이름(확장자 없이).
-const ICONS: &[(&str, &str)] = &[
-    ("oracle", include_str!("../assets/dbms/oracle.svg")),
-    (
-        "microsoftsqlserver",
-        include_str!("../assets/dbms/microsoftsqlserver.svg"),
-    ),
-    ("postgresql", include_str!("../assets/dbms/postgresql.svg")),
-    ("mysql", include_str!("../assets/dbms/mysql.svg")),
-    ("mariadb", include_str!("../assets/dbms/mariadb.svg")),
-    ("sqlite", include_str!("../assets/dbms/sqlite.svg")),
-    ("tibero", include_str!("../assets/dbms/tibero.svg")),
-    ("altibase", include_str!("../assets/dbms/altibase.svg")),
-    ("cubrid", include_str!("../assets/dbms/cubrid.svg")),
-    ("db2", include_str!("../assets/dbms/db2.svg")),
-    ("sybase", include_str!("../assets/dbms/sybase.svg")),
-    ("odbc", include_str!("../assets/dbms/odbc.svg")),
-    (
-        "generic-database",
-        include_str!("../assets/dbms/generic-database.svg"),
-    ),
-];
+include!(concat!(env!("OUT_DIR"), "/dbms_icons_table.rs"));
 
-/// 힌트 글에서 찾을 제품 키워드(소문자) → 아이콘 이름. 앞에 있는 것이 우선(방언보다 먼저 본다 — MySQL 방언의 MariaDB 등).
+/// 아이콘 없는 DBMS의 대체 그림.
+const GENERIC: &str = "generic";
+
+/// 그림 원본 크기 — 자리에 따라 고른다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Src {
+    /// 64 px 원본(서버 정보 · 큰 표시).
+    Large,
+    /// 20 px 원본(연결 정보 · 작은 표시 전용 그림).
+    Small,
+}
+
+/// 힌트 글에서 찾을 제품 키워드(소문자) → 아이콘 id. 앞에 있는 것이 우선(방언보다 먼저 본다 — MySQL 방언의 MariaDB 등).
 const HINTS: &[(&str, &str)] = &[
     ("mariadb", "mariadb"),
     ("maria", "mariadb"),
@@ -42,166 +30,127 @@ const HINTS: &[(&str, &str)] = &[
     ("sybase", "sybase"),
     ("postgres", "postgresql"),
     ("oracle", "oracle"),
-    ("sql server", "microsoftsqlserver"),
-    ("mssql", "microsoftsqlserver"),
+    ("sql server", "sqlserver"),
+    ("mssql", "sqlserver"),
     ("mysql", "mysql"),
     ("sqlite", "sqlite"),
 ];
 
-/// 루트 아이콘 선택 결과.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Pick {
-    /// 아이콘 이름(`ICONS`의 키).
-    pub name: &'static str,
-    /// 틀 위에 그릴 라벨 줄들(SVG `<text>`마다 한 줄 · ≤3자 = 1줄 세로 중앙 · 4~6자 = 3자 + 나머지 2줄 · 사용자 09-22).
-    /// 비어 있으면 로고 파일(경로만) = 라벨 없음.
-    pub lines: Vec<String>,
-    /// 틀(border) 색 = SVG 첫 `<path>`의 `fill="#RRGGBB"`(DBMS 대표색 · 없으면 호출자의 기본색).
-    pub color: Option<(u8, u8, u8)>,
+/// 방언만으로는 제품을 모르는 연결(ODBC · 미접속)에서 힌트의 **낱말**이 아이콘 id와 같으면 그 그림 — 짧은 id(`h2` · `gel` ·
+/// `rds` …)는 프로필 이름과 우연히 겹치기 쉬워 이 길이부터만 본다.
+const WORD_MATCH_MIN: usize = 5;
+
+fn entry(id: &str) -> Option<&'static (&'static str, [&'static [u8]; 4])> {
+    TABLE
+        .binary_search_by(|(n, _)| (*n).cmp(id))
+        .ok()
+        .map(|i| &TABLE[i])
 }
 
-fn svg_of(name: &str) -> (&'static str, &'static str) {
-    ICONS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .or_else(|| ICONS.iter().find(|(n, _)| *n == "generic-database"))
-        .copied()
-        .expect("generic-database 아이콘은 항상 있다")
-}
-
-/// SVG의 `<text …>…</text>` 전부(순서대로 · 태그 안 공백 정리).
-fn texts_of(svg: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = svg;
-    while let Some(i) = rest.find("<text") {
-        let r = &rest[i..];
-        let (Some(open), Some(close)) = (r.find('>'), r.find("</text>")) else {
-            break;
-        };
-        if let Some(body) = r.get(open + 1..close) {
-            let body = body.trim();
-            if !body.is_empty() {
-                out.push(body.to_string());
-            }
-        }
-        rest = &r[close + 7..];
-    }
-    out
-}
-
-/// SVG 첫 `<path … fill="#RRGGBB">`의 색.
-fn frame_color(svg: &str) -> Option<(u8, u8, u8)> {
-    let i = svg.find("<path")?;
-    let tag_end = svg[i..].find('>')? + i;
-    let tag = &svg[i..tag_end];
-    let f = tag.find("fill=\"#")? + 7;
-    let hex = tag.get(f..f + 6)?;
-    let v = u32::from_str_radix(hex, 16).ok()?;
-    Some(((v >> 16) as u8, (v >> 8) as u8, v as u8))
-}
-
-/// 라벨(≤6자)을 줄로 나눈다 — ≤3자 = 한 줄 · 4자 이상 = 앞 3자 + 나머지(사용자 09-22).
-#[cfg(test)]
-pub(crate) fn split_label(label: &str) -> Vec<String> {
-    let cs: Vec<char> = label.chars().collect();
-    if cs.len() <= 3 {
-        vec![label.to_string()]
-    } else {
-        vec![cs[..3].iter().collect(), cs[3..].iter().collect()]
-    }
-}
-
-/// 방언 + 제품 힌트(프로필 이름 · 접속 설명 · 소문자 비교) → 아이콘. 힌트 → 방언 → generic(+힌트 첫 낱말 두 글자 · 없으면 `Db`).
-pub(crate) fn pick(dialect: Option<Dialect>, hint: &str) -> Pick {
+/// 방언 + 제품 힌트(프로필 이름 · 접속 설명 · 소문자 비교) → 아이콘 id. 힌트 → 방언 → (ODBC·미접속이면 낱말 = id) → `generic`.
+pub(crate) fn pick(dialect: Option<Dialect>, hint: &str) -> &'static str {
     let h = hint.to_ascii_lowercase();
-    let by_hint = HINTS.iter().find(|(kw, _)| h.contains(kw)).map(|(_, n)| *n);
-    let name = by_hint.unwrap_or(match dialect {
+    if let Some((_, n)) = HINTS.iter().find(|(kw, _)| h.contains(kw)) {
+        return n;
+    }
+    match dialect {
         Some(Dialect::Oracle) => "oracle",
-        Some(Dialect::Mssql) => "microsoftsqlserver",
+        Some(Dialect::Mssql) => "sqlserver",
         Some(Dialect::Postgres) => "postgresql",
         Some(Dialect::Mysql) => "mysql",
         Some(Dialect::Sqlite) => "sqlite",
-        Some(Dialect::Odbc) => "odbc",
-        None => "generic-database",
-    });
-    let (name, svg) = svg_of(name);
-    let lines = if name == "generic-database" {
-        let w = hint
-            .split(|c: char| !c.is_alphanumeric())
-            .find(|w| !w.is_empty())
-            .unwrap_or("Db");
-        let mut cs = w.chars();
-        let a = cs.next().map(|c| c.to_ascii_uppercase()).unwrap_or('D');
-        let b = cs.next().map(|c| c.to_ascii_lowercase()).unwrap_or('b');
-        vec![format!("{a}{b}")]
-    } else {
-        texts_of(svg)
-    };
-    Pick {
-        name,
-        lines,
-        color: frame_color(svg),
+        Some(Dialect::Odbc) | None => h
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| w.len() >= WORD_MATCH_MIN)
+            .find_map(|w| entry(w).map(|e| e.0))
+            .unwrap_or(match dialect {
+                Some(_) => "odbc",
+                None => GENERIC,
+            }),
     }
 }
 
-/// SVG 원문에서 `<path … d="…" [fill-rule="evenodd"]>`들을 뽑는다(`<text>` 등은 무시).
-fn paths(svg: &'static str) -> Vec<(&'static str, bool)> {
-    let mut out = Vec::new();
-    let mut rest = svg;
-    while let Some(i) = rest.find("<path") {
-        let tag = &rest[i..];
-        let end = tag.find('>').unwrap_or(tag.len());
-        let tag_body = &tag[..end];
-        let evenodd = tag_body.contains("fill-rule=\"evenodd\"");
-        if let Some(di) = tag_body.find(" d=\"") {
-            let d0 = &tag_body[di + 4..];
-            if let Some(dl) = d0.find('"') {
-                out.push((&d0[..dl], evenodd));
-            }
-        }
-        rest = &rest[i + end..];
-    }
-    out
+/// 표의 열(`build.rs` `DBMS_SLOTS` 순서): light/64 · dark/64 · light/20 · dark/20.
+fn slot(dark: bool, src: Src) -> usize {
+    usize::from(dark) + if src == Src::Small { 2 } else { 0 }
 }
 
-/// 이름 → 64px 알파 마스크(경로들의 합 · 스레드 로컬 캐시).
-pub(crate) fn mask(name: &str) -> MenuIcon {
+/// id + 테마 + 원본 크기 → 푼 원본 그림(스레드 로컬 캐시 · 모르는 id = `generic`).
+fn source(id: &str, dark: bool, src: Src) -> std::rc::Rc<IconImage> {
+    type Key = (&'static str, usize);
     thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<&'static str, MenuIcon>> =
+        static CACHE: std::cell::RefCell<std::collections::HashMap<Key, std::rc::Rc<IconImage>>> =
             std::cell::RefCell::new(std::collections::HashMap::new());
     }
-    let (key, svg) = svg_of(name);
+    let e = entry(id)
+        .or_else(|| entry(GENERIC))
+        .expect("generic 아이콘은 항상 있다");
+    let k = slot(dark, src);
     CACHE.with(|c| {
         c.borrow_mut()
-            .entry(key)
+            .entry((e.0, k))
             .or_insert_with(|| {
-                let mut acc: Vec<u8> = Vec::new();
-                let (mut w, mut h) = (0u32, 0u32);
-                for (d, evenodd) in paths(svg) {
-                    let m = svg_glyph_vb(d, [0.0, 0.0, 24.0, 24.0], evenodd);
-                    if acc.is_empty() {
-                        acc = m.alpha.to_vec();
-                        (w, h) = (m.w, m.h);
-                    } else {
-                        for (x, y) in acc.iter_mut().zip(m.alpha.iter()) {
-                            *x = (*x).max(*y);
-                        }
-                    }
-                }
-                if acc.is_empty() {
-                    return svg_glyph_vb("", [0.0, 0.0, 24.0, 24.0], false);
-                }
-                MenuIcon::from_alpha(w, h, &acc)
+                let img = nexa_gfx::image::decode(e.1[k], 256 * 256)
+                    .unwrap_or_else(|_| IconImage::from_rgba(1, 1, vec![0; 4]));
+                std::rc::Rc::new(img)
             })
             .clone()
     })
 }
 
-/// 이름 + 색 + 크기(폭·높이 — 라벨이 있으면 폭을 늘려 그린다) → 탐색기용 그림(호출자가 캐시).
-pub(crate) fn image(name: &str, rgb: (u8, u8, u8), w: u32, h: u32) -> IconImage {
-    let m = mask(name);
-    let base = IconImage::from_alpha_tinted(m.w, m.h, &m.alpha, rgb);
-    base.resized(w.max(1), h.max(1))
+/// 면적 평균 축소(알파 가중) — 64 → 22 px 같은 큰 배율 축소에서 2×2 보간은 선·글자가 깨진다.
+fn shrink(src: &IconImage, w: u32, h: u32) -> IconImage {
+    let (sw, sh) = (src.w as usize, src.h as usize);
+    let (w, h) = (w as usize, h as usize);
+    let mut out = vec![0u8; w * h * 4];
+    // 대상 픽셀이 덮는 원본 구간 [a, b)와 원본 픽셀 i의 겹침 길이(고정 소수 대신 f32 — 아이콘 크기라 충분).
+    let span = |d: usize, dn: usize, sn: usize| {
+        let a = d as f32 * sn as f32 / dn as f32;
+        let b = (d + 1) as f32 * sn as f32 / dn as f32;
+        (a, b)
+    };
+    for y in 0..h {
+        let (y0, y1) = span(y, h, sh);
+        for x in 0..w {
+            let (x0, x1) = span(x, w, sw);
+            let (mut r, mut g, mut b, mut a, mut area) = (0f32, 0f32, 0f32, 0f32, 0f32);
+            for sy in (y0 as usize)..(y1.ceil() as usize).min(sh) {
+                let wy = (y1.min((sy + 1) as f32) - y0.max(sy as f32)).max(0.0);
+                for sx in (x0 as usize)..(x1.ceil() as usize).min(sw) {
+                    let wx = (x1.min((sx + 1) as f32) - x0.max(sx as f32)).max(0.0);
+                    let wgt = wx * wy;
+                    let p = &src.rgba[(sy * sw + sx) * 4..][..4];
+                    let pa = f32::from(p[3]) * wgt;
+                    r += f32::from(p[0]) * pa;
+                    g += f32::from(p[1]) * pa;
+                    b += f32::from(p[2]) * pa;
+                    a += pa;
+                    area += wgt;
+                }
+            }
+            if a > 0.0 && area > 0.0 {
+                let o = &mut out[(y * w + x) * 4..][..4];
+                o[0] = (r / a).round() as u8;
+                o[1] = (g / a).round() as u8;
+                o[2] = (b / a).round() as u8;
+                o[3] = (a / area).round() as u8;
+            }
+        }
+    }
+    IconImage::from_rgba(w as u32, h as u32, out)
+}
+
+/// id + 테마 + 원본 크기 + 표시 크기(정사각 px) → 그 크기의 그림(호출자가 캐시). 줄일 때 = 면적 평균 · 같으면 그대로 · 키울 때 = 2×2 보간.
+pub(crate) fn image(id: &str, dark: bool, src: Src, px: u32) -> IconImage {
+    let base = source(id, dark, src);
+    let px = px.max(1);
+    if px == base.w && px == base.h {
+        (*base).clone()
+    } else if px < base.w {
+        shrink(&base, px, px)
+    } else {
+        base.resized(px, px)
+    }
 }
 
 #[cfg(test)]
@@ -209,45 +158,88 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_bundled_icon_has_paths_and_rasterizes() {
-        for (name, svg) in ICONS {
-            assert!(!paths(svg).is_empty(), "{name}: <path> 없음");
-            assert!(mask(name).alpha.iter().any(|&a| a > 0), "{name}: 빈 마스크");
-            if *name != "generic-database" {
-                let t = texts_of(svg);
-                assert!(!t.is_empty(), "{name}: <text> 라벨이 없다");
-                let total: usize = t.iter().map(|l| l.chars().count()).sum();
-                assert!(total <= 6 && t.len() <= 2, "{name}: 라벨 6자·2줄 초과");
-                assert!(
-                    t.iter().all(|l| l.chars().count() <= 3),
-                    "{name}: 한 줄 3자 초과"
-                );
-                assert!(frame_color(svg).is_some(), "{name}: 틀 색이 없다");
+    fn table_is_sorted_and_every_icon_decodes_at_its_size() {
+        assert!(
+            TABLE.windows(2).all(|w| w[0].0 < w[1].0),
+            "id 정렬(이진 탐색)"
+        );
+        assert!(entry(GENERIC).is_some());
+        for (id, _) in TABLE {
+            for dark in [false, true] {
+                for (src, n) in [(Src::Large, 64), (Src::Small, 20)] {
+                    let img = source(id, dark, src);
+                    assert_eq!((img.w, img.h), (n, n), "{id} dark={dark} {src:?}");
+                    assert!(img.rgba.chunks(4).any(|p| p[3] > 0), "{id}: 빈 그림");
+                }
             }
         }
     }
 
     #[test]
-    fn pick_hint_then_dialect_then_generic_and_split_rule() {
-        let o = pick(Some(Dialect::Oracle), "PROD");
-        assert_eq!(o.lines, vec!["ORA", "CLE"]);
-        assert_eq!(o.color, Some((0xC7, 0x46, 0x34)), "틀 색 = 파일의 fill");
-        assert_eq!(pick(Some(Dialect::Mysql), "maria-dev").name, "mariadb");
-        let t = pick(Some(Dialect::Odbc), "Tibero DEV");
+    fn pick_hint_then_dialect_then_word_then_generic() {
+        assert_eq!(pick(Some(Dialect::Oracle), "PROD"), "oracle");
+        assert_eq!(pick(Some(Dialect::Mssql), "BISCM_MS"), "sqlserver");
+        assert_eq!(pick(Some(Dialect::Mysql), "maria-dev"), "mariadb");
+        assert_eq!(pick(Some(Dialect::Odbc), "Tibero DEV"), "tibero");
+        assert_eq!(pick(Some(Dialect::Odbc), "zeta"), "odbc");
+        // ODBC·미접속 = 낱말이 id와 같으면 그 그림(5자 이상만).
+        assert_eq!(pick(Some(Dialect::Odbc), "snowflake-dw"), "snowflake");
+        assert_eq!(pick(None, "teradata prod"), "teradata");
         assert_eq!(
-            (t.name, t.lines.clone()),
-            ("tibero", vec!["TIB".to_string(), "ERO".to_string()])
+            pick(Some(Dialect::Odbc), "h2 rds"),
+            "odbc",
+            "짧은 id는 안 본다"
         );
-        assert_eq!(pick(Some(Dialect::Odbc), "zeta").lines, vec!["OD", "BC"]);
-        let g = pick(None, "hana-erp");
+        // 방언을 아는 연결은 낱말 일치로 뒤집히지 않는다(프로필 이름 우연 일치).
+        assert_eq!(pick(Some(Dialect::Oracle), "redis cache"), "oracle");
+        assert_eq!(pick(None, ""), GENERIC);
+        // 고른 id는 전부 표에 있다.
+        for (_, id) in HINTS {
+            assert!(entry(id).is_some(), "{id}");
+        }
+        for id in [
+            "oracle",
+            "sqlserver",
+            "postgresql",
+            "mysql",
+            "sqlite",
+            "odbc",
+        ] {
+            assert!(entry(id).is_some(), "{id}");
+        }
+    }
+
+    #[test]
+    fn shrink_keeps_color_and_coverage_and_sizes() {
+        // 불투명 단색 = 줄여도 같은 색 · 완전 불투명.
+        let solid = IconImage::from_rgba(64, 64, [10u8, 200, 30, 255].repeat(64 * 64));
+        let s = shrink(&solid, 22, 22);
+        assert_eq!((s.w, s.h), (22, 22));
+        assert!(s.rgba.chunks(4).all(|p| p == [10, 200, 30, 255]));
+        // 왼쪽 절반만 불투명 = 평균 알파 ≈ 절반 · 투명 픽셀의 색이 섞이지 않는다(알파 가중).
+        let mut half = vec![0u8; 64 * 64 * 4];
+        for y in 0..64 {
+            for x in 0..32 {
+                half[(y * 64 + x) * 4..][..4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let s = shrink(&IconImage::from_rgba(64, 64, half), 1, 1);
+        assert_eq!(&s.rgba[..3], &[255, 0, 0]);
+        assert!((i32::from(s.rgba[3]) - 128).abs() <= 1, "{}", s.rgba[3]);
+        // 표시 크기별 결과 크기(줄임 · 그대로 · 키움).
+        for (src, px) in [
+            (Src::Large, 43),
+            (Src::Large, 64),
+            (Src::Small, 16),
+            (Src::Small, 20),
+            (Src::Small, 32),
+        ] {
+            let i = image("oracle", false, src, px);
+            assert_eq!((i.w, i.h), (px, px));
+        }
         assert_eq!(
-            (g.name, g.lines.clone(), g.color),
-            ("generic-database", vec!["Ha".to_string()], None)
+            image("no-such-dbms", true, Src::Small, 20),
+            image(GENERIC, true, Src::Small, 20)
         );
-        assert_eq!(pick(None, "").lines, vec!["Db"]);
-        assert_eq!(split_label("DB2"), vec!["DB2"]);
-        assert_eq!(split_label("MSSQL"), vec!["MSS", "QL"]);
-        // 로고(경로만)로 바꾼 파일 = 라벨 없음.
-        assert!(texts_of("<svg><path d=\"M0 0h1v1z\"/></svg>").is_empty());
     }
 }

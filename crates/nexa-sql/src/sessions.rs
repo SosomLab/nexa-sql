@@ -508,10 +508,82 @@ pub(crate) fn tab_conn_label(profile: &str, spec: Option<&ConnectSpec>, desc: &s
             (None, None) => {}
         }
         if let Some(db) = sp.database.as_deref().filter(|d| !d.is_empty()) {
-            return db.to_string();
+            // 호스트 없는 접속 = 파일 기반 DB(SQLite 등)의 직접 연결 → 전체 경로 대신 파일 이름만(사용자 10-04 · 전체 경로 = 툴팁).
+            return path_file_name(db).to_string();
         }
     }
     desc.to_string()
+}
+
+/// 경로의 마지막 조각(파일 이름) — `/`·`\` 둘 다 구분자로 본다(다른 OS에서 만든 접속 문자열도). 구분자가 없으면 그대로.
+#[must_use]
+pub(crate) fn path_file_name(path: &str) -> &str {
+    let t = path.trim_end_matches(['/', '\\']);
+    t.rsplit(['/', '\\'])
+        .next()
+        .filter(|n| !n.is_empty())
+        .unwrap_or(path)
+}
+
+/// 폴더 경로를 **대폭 줄인** 표시 글(사용자 10-04 "파일 기반 DB 연결 정보가 전체 경로로 너무 길다"): 홈 아래면 `~`로 시작 ·
+/// 조각이 `keep_tail + 1`개를 넘으면 `첫 조각/…/마지막 keep_tail개`. 전체 경로는 툴팁·접속 창·상세에서 본다.
+#[must_use]
+pub(crate) fn short_dir(dir: &str, home: Option<&str>, keep_tail: usize) -> String {
+    let sep = if dir.contains('\\') && !dir.contains('/') {
+        '\\'
+    } else {
+        '/'
+    };
+    let (head, rest) = match home.filter(|h| !h.is_empty() && dir.starts_with(*h)) {
+        Some(h) if dir.len() == h.len() || dir[h.len()..].starts_with(['/', '\\']) => {
+            ("~".to_string(), &dir[h.len()..])
+        }
+        _ => (String::new(), dir),
+    };
+    let parts: Vec<&str> = rest.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
+    let keep_tail = keep_tail.max(1);
+    let lead = if head.is_empty() && rest.starts_with(['/', '\\']) {
+        sep.to_string()
+    } else {
+        String::new()
+    };
+    let join = |ps: &[&str]| ps.join(&sep.to_string());
+    if head.is_empty() {
+        // 홈 밖: 첫 조각(드라이브·루트 폴더)은 남긴다.
+        if parts.len() <= keep_tail + 1 {
+            return format!("{lead}{}", join(&parts));
+        }
+        let tail = &parts[parts.len() - keep_tail..];
+        format!("{lead}{}{sep}…{sep}{}", parts[0], join(tail))
+    } else {
+        if parts.is_empty() {
+            return head;
+        }
+        if parts.len() <= keep_tail {
+            return format!("{head}{sep}{}", join(&parts));
+        }
+        let tail = &parts[parts.len() - keep_tail..];
+        format!("{head}{sep}…{sep}{}", join(tail))
+    }
+}
+
+/// 사용자 홈 폴더(표시 줄임용 · 없으면 `None`).
+#[must_use]
+pub(crate) fn home_dir_str() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .filter(|h| !h.is_empty())
+}
+
+/// 상태줄 "접속: …"에 넣을 접속 설명 — 파일 기반 방언은 `sqlite:///긴/경로/a.db` 대신 파일 이름만(사용자 10-04).
+#[must_use]
+pub(crate) fn status_conn_desc(file_based: bool, description: &str) -> &str {
+    if file_based {
+        path_file_name(description)
+    } else {
+        description
+    }
 }
 
 pub(crate) fn bare_profile_name(spec: &nsql_script::ConnectSpec) -> Option<&str> {
@@ -1061,7 +1133,7 @@ pub(crate) fn ddl_waits_for_commit(transactional: bool, autocommit: bool, on_com
 
 #[cfg(test)]
 mod tab_conn_label_tests {
-    use super::tab_conn_label;
+    use super::{path_file_name, short_dir, status_conn_desc, tab_conn_label};
 
     fn spec(user: Option<&str>, host: Option<&str>, db: Option<&str>) -> nsql_script::ConnectSpec {
         nsql_script::ConnectSpec {
@@ -1094,6 +1166,39 @@ mod tab_conn_label_tests {
             tab_conn_label("", None, "sqlite://:memory:"),
             "sqlite://:memory:"
         );
+    }
+
+    /// 파일 기반 DB 직접 연결(프로필 없음) = 파일 이름만 · 폴더는 대폭 줄임(사용자 10-04).
+    #[test]
+    fn file_db_labels_are_short() {
+        let long = "/private/tmp/claude-501/x/406c4fd4/scratchpad/cap.sqlite";
+        assert_eq!(
+            tab_conn_label("", Some(&spec(None, None, Some(long))), "x"),
+            "cap.sqlite"
+        );
+        assert_eq!(path_file_name(r"C:\data\app\shop.db"), "shop.db");
+        assert_eq!(path_file_name("mem"), "mem");
+        assert_eq!(path_file_name(":memory:"), ":memory:");
+        assert_eq!(path_file_name("sqlite:///a/b/c.db"), "c.db");
+        assert_eq!(status_conn_desc(true, "sqlite:///a/b/c.db"), "c.db");
+        assert_eq!(status_conn_desc(false, "u@h:1521/svc"), "u@h:1521/svc");
+        // 폴더: 홈 = `~` · 가운데 생략 · 마지막 폴더만.
+        let home = Some("/Users/kim");
+        assert_eq!(short_dir("/Users/kim", home, 1), "~");
+        assert_eq!(short_dir("/Users/kim/data", home, 1), "~/data");
+        assert_eq!(short_dir("/Users/kim/a/b/data", home, 1), "~/…/data");
+        // 홈과 앞 글자만 같은 폴더는 홈이 아니다.
+        assert_eq!(short_dir("/Users/kimchi/data", home, 1), "/Users/…/data");
+        assert_eq!(
+            short_dir("/private/tmp/claude-501/x/406c4fd4/scratchpad", home, 1),
+            "/private/…/scratchpad"
+        );
+        assert_eq!(short_dir("/var/db", None, 1), "/var/db");
+        assert_eq!(
+            short_dir(r"C:\Users\kim\a\b\db", Some(r"C:\Users\kim"), 1),
+            r"~\…\db"
+        );
+        assert_eq!(short_dir(r"D:\data\a\b\db", None, 1), r"D:\…\db");
     }
 }
 

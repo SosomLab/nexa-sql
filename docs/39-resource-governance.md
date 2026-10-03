@@ -155,6 +155,7 @@
 | 다시 그리기 단위 | 창 전체 | (구조 · 더티 영역 = T-90f 후보) | — | — | — | `paint` |
 | 글리프 서브픽셀(1/3 px) | 켬 | `ui.text_subpixel`(신설 · HIDDEN) | 켬 | 켬 | 끔(캐시 1/3) | nexa-gfx `GlyphKey.sub` |
 | 아이콘 사전 스케일 캐시 | 크기별 | (구조) | — | — | — | `IconImage::resized` |
+| DBMS 아이콘 PNG 디코드 + 축소(10-04) | 처음 보일 때 1회(지연 디코드 · 64/20 원본 → 표시 크기) · 그 뒤 캐시 | (구조 · 키 없음 — 아래 3-6) | — | — | — | `dbms_icons::image` · `explorer.rs` `draw_brand` |
 | HiDPI 배율 | OS | (구조) | — | — | — | `set_scale` |
 | 반투명 선택(D-54) | 미정 | `editor.selection_alpha`(D-54) | — | — | 불투명 | D-54 |
 
@@ -173,6 +174,7 @@
 |---|---|---|---|
 | 글리프 비트맵(nexa-gfx) | 8192 | `ui.glyph_cache`(신설 · HIDDEN) | 초과 시 전체 비움 |
 | GDI face(HDC·HFONT·32bpp DIB ≈ em×3 × em×2 px · 스레드 로컬 · nexa-gfx `gdi.rs`) + 전진 폭 캐시 | face × 크기 × 굵게(≤ 수십) · 전진 폭 face×em×문자×굵게 · 글리프 비트맵은 rgb 3바이트/px | `ui.text_gdi`(끄면 0) | 프로세스 종료(44·46차) |
+| DBMS 아이콘(10-04) — 디코드 캐시(스레드 로컬 `HashMap`) + 탐색기 `BrandCache` | 명시 상한 없음 · 자연 상한 = 화면에 나온 DBMS 종류 × 테마 2 × 원본 2 × 표시 크기(보통 수 개 · 1장 ≤ 64×64 RGBA 16 KB) | 없음 — **자연 상한으로 충분**(10-04 개발 세션 판정 · 화면에 나온 DBMS만 · id × 테마 2 × 원본 2 × 표시 크기 · 설정 키 두지 않음) | 프로세스 종료 |
 | OS 아이콘 RGBA(nexa-fs) | 512 | `file.icon_cache`(신설 · HIDDEN) | LRU · 프로세스 종료 |
 | 파일 대화상자 목록·프로브·아이콘 사본 | 폴더 1개 분 | — | 대화상자 닫힘(Drop) |
 | 결과 셋 | **편집기 탭당 그리드 1**(13차 · `grid_stash`) · 각 ≤ `grid.max_rows` | `grid.max_rows` | 다음 실행 · 탭 닫힘(즉시) |

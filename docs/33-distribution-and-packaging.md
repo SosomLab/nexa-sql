@@ -127,3 +127,6 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 - 정적 CRT로 링크한 Oracle 드라이버(ODPI-C · 런타임에 `oci.dll` 적재)의 **Windows 실서버 접속 확인** — SQLite·GUI 자체 점검(`--smoke`)은 ✓(09-28), 실서버는 사용자 PC에서.
 - 서명(DR-20)이 없어 SmartScreen·Gatekeeper 경고는 남는다 — 무료 근본 해결은 Store(MSIX)뿐(dir2·viewer 조사).
+
+> 10-04(맥 111차): DBMS 아이콘 PNG 173종(`include_bytes` · 자산 3.2 MB)을 GUI에 내장 → Release `nexa-sql`(aarch64 · 실제는 Homebrew rustc 빌드) 16,607,800 B · 전 기록 15.0 MB(10-02) 대비 **약 +0.8~0.9 MB 추정**(PNG 이미 압축 · SVG 13 제거분 상쇄 · 정밀 전 값 미측정) · `nsql` 8,008,152 B(변화 없음 · 아이콘은 GUI만) · [journal 10-04 §5](journal/2026-10-04.md).
+> 10-04 후속(T-277): DBMS 아이콘 중 devicon(MIT) 27종의 MIT 고지와 상표 문구(`crates/nexa-sql/assets/dbms/NOTICE.md` §1·§2-1)를 **설치본(3-OS)에도 제3자 고지로 넣어야 한다** — 지금은 저장소의 NOTICE까지. 후보 = 설치본 안 `THIRD-PARTY-NOTICES` 파일 + 앱 도움말 ▸ 정보.

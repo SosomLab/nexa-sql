@@ -106,6 +106,8 @@
 | GUI | 부팅 시 언어·테마·글꼴 크기 적용 · `Ctrl/⌘+⇧T` 테마 순환 · `Ctrl/⌘+⇧L` 언어 전환(즉시 저장 · 즉시 반영) · OS 다크 전환(`ThemeChanged`) 추종 · 명시 모드는 창 제목줄도 동기(`Window::set_theme`) · nexa-ctl 우클릭 메뉴 라벨 주입 |
 | OS 판정 | `nexa-sql/src/theme.rs` — Windows 레지스트리(advapi32 직접) · macOS `defaults read` · Linux `gsettings` · winit `Window::theme()` 우선 |
 
+- ★ **화면 언어 `ui.lang` = `system | en | ko`, 기본 `system`(10-04 · 사용자 "nexa-dir3처럼 언어에도 시스템 · 기본값" · [journal 10-04 §10](journal/2026-10-04.md))**: `nsql_settings::LANG_SYSTEM` · `Settings::lang()` = `system`이면 `nsql_i18n::system_lang()`으로 풂 · 종전 특례(기본값 = OS 언어 코드 · `follows_os_default`) 제거 · 저장 파일의 `ui.lang=ko|en`은 그대로 유효(이주 없음) · 줄이 없으면 `system`(실효 언어는 종전과 같음) · 설정 창 콤보 첫 항목 = `시스템 (한국어)`(지금 풀린 언어) · ⌘⇧L/Ctrl+Shift+L 순환 = 시스템 → English → 한국어.
+
 ### 3-2. 남은 것
 
 - **T-39** 설정 화면(§2 구성) — 메뉴바(`nexa-dir2` menubar 이식) 뒤. 그 전까지는 단축키 + `nsql config`.

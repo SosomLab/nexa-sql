@@ -938,7 +938,7 @@ pub(crate) enum ExplorerAction {
 /// (종류 · 색 · **표시 크기 px**) → 미리 스케일한 아이콘(09-15 사전 스케일 캐시 — 매 프레임 bilinear 샘플링 제거).
 type IconCache = HashMap<(IconKind, (u8, u8, u8), i32), Rc<IconImage>>;
 /// 루트 브랜드 아이콘 캐시(이름 · 색 · 크기).
-type BrandCache = HashMap<(&'static str, (u8, u8, u8), i32, i32), Rc<IconImage>>;
+type BrandCache = HashMap<(&'static str, bool, dbms_icons::Src, i32), Rc<IconImage>>;
 
 /// 아이콘 기본 크기 16×16(논리 px · 기본 글꼴 17px 기준) — 글꼴 크기에 비례해 스케일(사용자 09-15).
 const ICON_BASE_PX: f32 = 16.0;
@@ -2733,10 +2733,8 @@ impl Explorer {
         })
     }
 
-    /// 표시 크기로 미리 스케일한 아이콘(캐시) — 페인트는 스케일 없이 그대로 찍는다.
-    /// 루트(서버) 브랜드 아이콘 — `dbms_icons`(내장 SVG 26 · 방언/제품 힌트 → 이름 · 모르면 generic 틀).
-    /// 서버 브랜드 아이콘(dbms_icons · 라벨 줄 포함) — 루트 행(묶음 아님) · 서버 헤더(묶음 · `ExplorerSet`) 공용. 돌려주는 값 = 그린 폭.
-    #[allow(clippy::too_many_arguments)]
+    /// 서버 브랜드 아이콘(`dbms_icons` · 64 px 원본을 표시 크기로 줄임 · 테마별 그림) — 루트 행(묶음 아님) · 서버 헤더(묶음 ·
+    /// `ExplorerSet`) 공용. 보통 아이콘의 1.35배. 돌려주는 값 = 그린 폭.
     fn draw_brand(
         &mut self,
         dc: &mut dyn DrawCtx,
@@ -2744,64 +2742,12 @@ impl Explorer {
         x: i32,
         vcy: i32,
         sz: i32,
-        rgb: (u8, u8, u8),
         rr: Rect,
     ) -> i32 {
-        let s = self.scale;
-        let hint = format!("{} {}", self.profile_name, self.conn_desc);
-        let pick = dbms_icons::pick(self.dialect, &hint);
-        let rgb = pick.color.unwrap_or(rgb);
         let rs = ((sz as f32) * 1.35).round() as i32;
         let dstr = Rect::new(x, vcy - rs / 2, rs, rs);
-        let img = self.brand_image(pick.name, rgb, rs, rs);
+        let img = self.brand_image(th.is_dark, dbms_icons::Src::Large, rs);
         dc.image_scaled(dstr, &img, rr);
-        if !pick.lines.is_empty() {
-            // 세로 배치(사용자 09-22): 원통 안쪽 빈 띠 = 6.0/24 ~ 20.2/24 · 대문자 높이 ≈ 0.64·줄높이(위 0.18 여백) ·
-            //   2줄 간격 2px · 1줄 상단 여백 = 2줄 하단 여백(글자와 가장 가까운 테두리 픽셀 사이).
-            // 고정폭 굵게(사용자 09-22) — 1줄·2줄 같은 face·size.
-            // ★ 틀 안에 맞춘다(사용자 09-23 "라벨이 DB 모양 테두리를 벗어난다"): 가장 긴 줄이 원통 안쪽 폭(≈ 0.78·rs)을
-            //   넘거나 줄들이 세로 띠를 넘으면 글꼴을 1px씩 줄인다(`select_font_sized` 음수 증분 · 최대 −8).
-            // ★ 09-24(사용자 "줄 사이 1px · 테두리와 글자 사이 1px · 고정폭으로 채움"): 원통 안쪽 = 옆벽 안면
-            //   4.6~19.4/24 · 위 타원 바닥 6.0/24 ~ 아래 띠 안면 20.2/24 에서 1px씩 들여온 상자에, **가장 큰**
-            //   글꼴(위로 +8부터 1px씩 내려 처음 맞는 크기)로 두 줄(줄 사이 1px)을 채우고 가운데 둔다.
-            let m = (1.0 * s).round().max(1.0) as i32;
-            let gap = m;
-            let top = dstr.y + (rs as f32 * 6.0 / 24.0).round() as i32 + m;
-            let bottom = dstr.y + (rs as f32 * 20.2 / 24.0).round() as i32 - m;
-            let n = pick.lines.len() as i32;
-            let inner_w = (rs as f32 * 14.8 / 24.0).round() as i32 - 2 * m;
-            let mut delta = 8.0f32;
-            let (lh2, cap, asc, total) = loop {
-                dc.select_font_sized(FontSlot::Mono, true, delta);
-                let lh2 = dc.text_height();
-                let cap = (lh2 as f32 * 0.64).round() as i32;
-                let asc = (lh2 as f32 * 0.18).round() as i32;
-                let total = cap * n + gap * (n - 1);
-                let wmax = pick
-                    .lines
-                    .iter()
-                    .map(|l| dc.text_width(l))
-                    .max()
-                    .unwrap_or(0);
-                if (wmax <= inner_w && total <= bottom - top) || delta <= -8.0 {
-                    break (lh2, cap, asc, total);
-                }
-                delta -= 1.0;
-            };
-            let _ = lh2;
-            let margin = (bottom - top - total) / 2;
-            let mut vis_top = top + margin;
-            let c = dstr.intersection(&rr);
-            for line in &pick.lines {
-                let tw = dc.text_width(line);
-                let lx = dstr.x + (rs - tw) / 2;
-                if !c.is_empty() {
-                    dc.text(lx, vis_top - asc, c, line, th.text);
-                }
-                vis_top += cap + gap;
-            }
-            dc.select_font(FontSlot::Base, false);
-        }
         rs
     }
 
@@ -2862,10 +2808,7 @@ impl Explorer {
             let sz = (ICON_BASE_PX * self.font_px / ICON_REF_FONT_PX * s)
                 .round()
                 .max(8.0) as i32;
-            let rgb = self
-                .dialect
-                .map_or(IconKind::Dbms.color(), exp_icons::dbms_color);
-            let adv = self.draw_brand(dc, th, x, vcy, sz, rgb, r);
+            let adv = self.draw_brand(dc, th, x, vcy, sz, r);
             x += adv + (6.0 * s).round() as i32;
         }
         dc.select_font(FontSlot::Base, false);
@@ -2877,23 +2820,13 @@ impl Explorer {
         }
     }
 
-    fn brand_image(
-        &mut self,
-        name: &'static str,
-        rgb: (u8, u8, u8),
-        w: i32,
-        h: i32,
-    ) -> Rc<IconImage> {
+    /// 이 연결의 DBMS 그림(제품 힌트 → 방언) — 테마 · 원본 크기 · 표시 크기별 캐시.
+    fn brand_image(&mut self, dark: bool, src: dbms_icons::Src, px: i32) -> Rc<IconImage> {
+        let hint = format!("{} {}", self.profile_name, self.conn_desc);
+        let id = dbms_icons::pick(self.dialect, &hint);
         self.brand_cache
-            .entry((name, rgb, w, h))
-            .or_insert_with(|| {
-                Rc::new(dbms_icons::image(
-                    name,
-                    rgb,
-                    w.max(1) as u32,
-                    h.max(1) as u32,
-                ))
-            })
+            .entry((id, dark, src, px))
+            .or_insert_with(|| Rc::new(dbms_icons::image(id, dark, src, px.max(1) as u32)))
             .clone()
     }
 
@@ -7672,7 +7605,9 @@ impl Explorer {
                         .map(|d| d.to_string_lossy().into_owned())
                         .filter(|d| !d.is_empty())
                     {
-                        dim.push(dir);
+                        // 폴더는 대폭 줄여서(홈 = `~` · 가운데 생략 · 마지막 폴더만 · 사용자 10-04) — 전체 경로는 접속 창·상세에.
+                        let home = crate::sessions::home_dir_str();
+                        dim.push(crate::sessions::short_dir(&dir, home.as_deref(), 1));
                     }
                 } else if sql_server {
                     // 주 글자가 이미 계정 — 흐린 글에는 다시 넣지 않는다.
@@ -7939,10 +7874,12 @@ impl Explorer {
                             let dst = Rect::new(x, vcy - sz / 2, sz, sz);
                             let mut adv = sz;
                             if matches!(n.kind, NodeKind::Root) && !self.grouped {
-                                // ★ 서버 루트 = DBMS 파일 아이콘(dbms_icons · 사용자 09-22): 틀 색 = 파일의 대표색(fill) ·
-                                //   `<text>` 줄들(≤3자 1줄 세로 중앙 · 4~6자 2줄)을 Status 굵게 틀 안에 · 로고 파일(경로만)이면 마스크만.
-                                //   루트만 조금 크게(1.35배) 그려 두 줄이 들어간다.
-                                adv = self.draw_brand(dc, th, x, vcy, sz, rgb, rr);
+                                // ★ 서버 루트 = DBMS 그림(dbms_icons · 64 px 원본 · 사용자 10-04) — 루트만 조금 크게(1.35배).
+                                adv = self.draw_brand(dc, th, x, vcy, sz, rr);
+                            } else if matches!(n.kind, NodeKind::Root) {
+                                // ★ 연결 행(묶음 모드) = 같은 DBMS의 작은 그림(20 px 원본 · 사용자 10-04).
+                                let img = self.brand_image(th.is_dark, dbms_icons::Src::Small, sz);
+                                dc.image_scaled(dst, &img, rr);
                             } else {
                                 // ★ 유효성 배지(83 §2 · DBeaver 관례): INVALID = 아이콘 오른쪽 아래 빨간 점(흰 테).
                                 let invalid =

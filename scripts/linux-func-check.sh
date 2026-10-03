@@ -76,7 +76,6 @@ python3 -c "open('$SKIP/bin.dat','wb').write(bytes([83,69,76,69,67,84,0,1,2,3]))
 # 기본 설정(Windows판과 같게): 결과 탭 바 항상 · 영어 · 데모 안내 끔 · 창 크기 고정(좌표 시나리오 기준).
 BASECONF=$'lang=en\ngrid.result_tabbar_single=on\ndemo.prompted=on\nwindow.main_size=1375,945\n'
 
-"$CLI" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1 || true
 NSQL_HOME="$H" "$CLI" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
 
 # ── 시나리오 실행기 ────────────────────────────────────────────────────────

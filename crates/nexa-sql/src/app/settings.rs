@@ -970,12 +970,28 @@ impl App {
 
     /// Ctrl/⌘+⇧L — 언어 전환 · 저장 · 라벨 다시 만들기.
     pub(crate) fn toggle_lang(&mut self) {
-        let next = current_lang().next();
-        let _ = self.settings.set("ui.lang", next.code());
+        // 순환 = 시스템 → 언어들 → 시스템(설정 값 기준 · 사용자 10-04 "언어에도 시스템").
+        let cur = self
+            .settings
+            .get("ui.lang")
+            .unwrap_or(nsql_settings::LANG_SYSTEM);
+        let next_code = match nsql_i18n::Lang::ALL.iter().position(|l| l.code() == cur) {
+            None => nsql_i18n::Lang::ALL[0].code(),
+            Some(i) => nsql_i18n::Lang::ALL
+                .get(i + 1)
+                .map_or(nsql_settings::LANG_SYSTEM, |l| l.code()),
+        };
+        let _ = self.settings.set("ui.lang", next_code);
         self.persist_settings();
+        let next = self.settings.lang();
         nsql_i18n::set_lang(next);
         self.relabel();
-        self.sess.status = tf(Msg::StLangChanged, &[next.endonym()]);
+        let shown = if next_code == nsql_settings::LANG_SYSTEM {
+            format!("{} ({})", t(Msg::ValSystem), next.endonym())
+        } else {
+            next.endonym().to_string()
+        };
+        self.sess.status = tf(Msg::StLangChanged, &[&shown]);
         self.redraw();
     }
 

@@ -42,6 +42,8 @@ pub enum Part {
     Comma,
     /// 별칭 `AS`(뒤에 [`Part::Alias`]).
     As,
+    /// 원문 글자 그대로의 별칭 `AS`(`keyword_case=keep`에서 원문이 `as`·`As`일 때만) — 그 밖에는 [`Part::As`]와 같다.
+    AsRaw(String),
     Alias(String),
     /// 비교 연산자(`=` `<>` …) — 정렬 대상.
     CmpOp(String),
@@ -187,7 +189,7 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                 s.push_str(t);
             }
             // 정렬 채움(확장): 비어 있지 않으면 채움 + 탭 간격 · 비어 있으면(Basic) 보통 띄어쓰기.
-            Part::As => {
+            Part::As | Part::AsRaw(_) => {
                 // `AS` 앞뒤 = `as_gap`(공백/탭 · 사용자 09-29) · 정렬 채움(확장)이 있으면 앞은 채움.
                 let g = match opts.as_gap {
                     crate::Gap::Tab => '\t',
@@ -200,7 +202,10 @@ pub fn render_parts(parts: &[Part], opts: &Options, pad: Option<Pad<'_>>) -> Str
                 } else if need_space {
                     s.push(g);
                 }
-                s.push_str(&opts.keyword_case.apply("AS"));
+                match p {
+                    Part::AsRaw(raw) => s.push_str(raw),
+                    _ => s.push_str(&opts.keyword_case.apply("AS")),
+                }
                 s.push(g);
             }
             Part::Alias(a) => {
@@ -2270,7 +2275,14 @@ impl<'a> Walker<'a> {
             }
             // 별칭 `AS x`.
             if up == "AS" {
-                self.next();
+                let as_tok = self.next().expect("tok");
+                // `keep`이면 원문 글자를 그대로 싣는다(`as` → `AS`로 바뀌던 흠 · 10-03).
+                let as_part = if self.opts.keyword_case == crate::Case::Keep && as_tok.text != "AS"
+                {
+                    Part::AsRaw(as_tok.text.clone())
+                } else {
+                    Part::As
+                };
                 if let Some(a) = self.peek() {
                     if a.kind == Kind::Word || a.kind == Kind::Quoted {
                         let a = self.next().expect("tok");
@@ -2287,13 +2299,13 @@ impl<'a> Walker<'a> {
                         if remove {
                             self.part(Part::Alias(name));
                         } else {
-                            self.part(Part::As);
+                            self.part(as_part);
                             self.part(Part::Alias(name));
                         }
                         continue;
                     }
                 }
-                let as_kw = self.kw("AS");
+                let as_kw = self.cased(as_tok);
                 self.word(&as_kw);
                 continue;
             }
@@ -2314,7 +2326,7 @@ impl<'a> Walker<'a> {
         let has_as_part = self.cur.as_ref().is_some_and(|l| {
             l.parts
                 .iter()
-                .any(|p| matches!(p, Part::As | Part::Alias(_)))
+                .any(|p| matches!(p, Part::As | Part::AsRaw(_) | Part::Alias(_)))
         });
         if toks.is_empty() {
             return;
@@ -3464,6 +3476,25 @@ mod tests {
             "{out}"
         );
         assert_eq!(format_basic(&out, &o), out, "idempotent");
+    }
+
+    /// `keyword_case=keep`은 별칭 `as`의 원문 글자를 지킨다(덧붙이는 AS만 `AS`) · 멱등.
+    #[test]
+    fn keep_case_keeps_alias_as() {
+        let o = Options {
+            keyword_case: crate::Case::Keep,
+            ..Options::default()
+        };
+        let out = format_basic("select a.x as x, a.y AS y, a.z As z from t as a", &o);
+        assert!(
+            out.contains("a.x as x") && out.contains("a.y AS y") && out.contains("a.z As z"),
+            "{out}"
+        );
+        assert!(out.contains("t as a"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent");
+        // upper(기본)는 그대로 대문자.
+        let out = format_basic("select a.x as x from t as a", &Options::default());
+        assert!(out.contains("a.x AS x") && out.contains("t AS a"), "{out}");
     }
 
     /// AND/OR 뒤 간격 = `logical_gap`(줄 앞 배치 · 탭이면 `AND\t조건` · 시드 AND도 · 멱등).

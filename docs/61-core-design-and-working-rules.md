@@ -143,6 +143,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 ### 2-4. 격리 · 안전 규칙
 
 - **앱을 띄워 시험할 때는 `NSQL_HOME`을 임시 폴더로 돌린다** — 사용자의 실제 설정 · 프로필 · 최근 파일 · 되돌리기 기록에 닿지 않게. 그리고 **정말 적용됐는지 확인한다**: 09-20에 셸 인자 실수로 격리 폴더가 엉뚱한 새 폴더로 잡혔고, 화면에 "Not connected"가 나온 것이 단서였다. 확인 방법 = 격리 폴더의 `settings.conf` 수정 시각 · 실제 설정 파일의 수정 시각이 그대로인지 · 임시 영역에 떠돌이 폴더가 생기지 않았는지.
+- **스크립트의 CLI 쓰기 명령은 전부 `NSQL_HOME` 접두**(또는 스크립트 위에서 `export NSQL_HOME` · 10-04) — `conn add/remove` · `config set/reset` · `license install` · `bookmark add` 등. 격리판 줄을 새로 넣을 때 옛 줄을 지운다(10-04 `mac-grid-edit-e2e.sh` · `linux-func-check.sh`에 `NSQL_HOME` 없는 `conn add … || true`가 남아 사용자 실제 프로필에 `Local`을 썼다). 실제 프로필이 꼭 필요한 스크립트(`bench-boost.ps1`)는 바꾼 설정을 **원래 값으로** 되돌린다. 처음 돌리는 스크립트는 실행 전에 이 점을 훑는다(협업 세션 = [102](102-collab-session-operation.md) §2-1).
 - **단위 테스트는 실제 설정 폴더에 쓰지 않는다.** 파일을 다루는 모듈은 폴더를 인자로 받는다(`undofile::store_in(dir, …)` 패턴) · 테스트는 `std::env::temp_dir()` 아래에서만.
 - **프로세스 전역 상태(스위치 · 환경 변수 · 현재 폴더)를 만지는 시험은 가드로 직렬화한다** — 시험은 병렬로 돈다. 본보기 = nexa-font `tests::GdiOn`(정적 뮤텍스를 쥔 동안 켬 · Drop에서 끔). 09-22(92차): 가드 없던 두 시험이 CI windows-latest에서만 겹쳐 네 번 실패했고, 로그를 못 본 채 "되돌리니 통과"로 엉뚱한 원인(`file_type()`)을 지목했다 → **CI 실패는 로그를 본 뒤에 고친다**(`gh run view <id> --log-failed` · `gh` 없는 PC면 있는 PC 몫으로 넘긴다) · "되돌리니 통과"는 원인의 증거가 아니다(타이밍도 같이 돌아간다).
 - **사용자가 자리에 있을 때 키·마우스 입력을 주입하지 않는다**(`SendKeys` · System Events 키 입력은 사용자의 전경 창으로 간다) · **포커스를 빼앗지 않는다**(`SetForegroundWindow` · `activate` 금지). 앱은 `NSQL_STARTUP_CMD`로 몰고 화면은 창 단위로 찍는다(§3 · §4). 키 입력이 있어야만 볼 수 있는 것(한글 조합 · 드래그)은 **단위 테스트로 덮고, 실기는 사용자 몫으로 보고에 적는다.**
@@ -159,6 +160,15 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
   **확인 창의 출처**: 규칙 문서가 아니라 하네스 권한 설정 `.claude/settings.json`(allow = 명령 **첫 단어** 기준 · `&&`·`;`·`|` 체인은 조각마다 판정 · `ask` = 늘 묻는 것)이다. 09-22 점검: 세션의 명령이 `cd … && …`·변수 대입·`for`/`until`·PowerShell `$x = …; Stop-Process …`처럼 허용 목록에 없는 단어로 시작해 매번 확인/분류기로 갔고, `rm:*`·`Remove-Item:*`이 `ask`라 스크래치·`target/` 정리도 물었다 → allow를 넓히고(`cd`·`sed`·`for`·`until`·`Stop-Process`·`Start-Process`·`$`·스크래치/`target/` 한정 `rm`) `rm`·`Remove-Item`은 `ask`에서 뺀다(외부 삭제 금지는 이 규칙이 지킨다). 이 파일은 하네스 분류기가 **내 편집을 막으므로** 바뀐 내용은 제안 파일(`settings.proposed.json`)로 만들어 사용자가 적용한다. 명령을 쓸 때는 허용된 단어로 시작하고(절대 경로 인자 · 로직은 python 파일), 체인은 짧게.
 - 실행 중인 다른 프로세스는 사용자의 것일 수 있다 — 끝낼 때는 **내가 띄운 PID**만. **예외 = 이 저장소 `target/{debug,release}/nexa-sql.exe` 인스턴스**: 개발(빌드·테스트·재시작) 사이에는 누가 띄웠든 **강제 종료하고 진행**한다(사용자 09-22 92차 "개발 사이에는 기존 프로세스를 강제 종료하고 진행" — 실행 중인 exe가 링크를 막는다) · 종료한 PID·시작 시각은 보고에 한 줄 · 다른 경로의 exe(설치본)·다른 앱은 그대로.
 
+### 2-5. 협업 세션 운영 기준(10-04 · 사용자 · 원문 = [102](102-collab-session-operation.md))
+
+- **목적 = 모델별 역할 분담**: 설계·개발(아키텍처 · 방향 결정 · 소스 수정) = **Fable 개발 세션** · 자료 분석 · 문서 작성 · 빌드/감시 · 재시작 = **Opus 협업 세션**. 찾기 = `ListAgents` · 연락 = `SendMessage`.
+- **파일 소유**: 한 파일은 한 세션만 고친다 — 소스 = 개발 세션 · 문서 = 협업 세션(결함·내용은 고치지 말고 메시지로 보낸다).
+- **커밋은 개발 세션 한 곳에서만**(사용자 요청 시 · 소스+문서 한 트랜잭션) · 협업 세션은 git 조회만.
+- **같은 `target/` 동시 빌드 금지** — 전체 빌드·재시작은 협업 세션이 "빌드 요청"을 받은 뒤에만 · 개발 세션은 `cargo check`·단위 시험만.
+- **[P0] 빌드 + Debug 재시작 = 최우선**: 위임 첫 줄에 등급 꼬리표(P0~P3) · P0가 오면 협업 세션은 하던 일을 멈추고 먼저(102 §5).
+- **상시 갱신**: 상충·아슬·굳힘 사례는 102 §12 원장에 쌓고 규칙을 그때마다 고친다.
+
 ### 1-5. 09-20~21(맥 86~88차)에 굳은 것 — 변수 · 트랜잭션 · 화면 내보내기
 
 | 주제 | 핵심(불변식) | 원문 |
@@ -173,7 +183,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 | 맥 한글 입력 | 한글 입력 소스일 때만 앱 조합(`input.hangul_compose=auto` · nexa-ctl `TextBox` 전역 스위치) — **새 창을 만들면 `set_ime_allowed(input::system_ime())` + `sync_hangul_mode`의 창 목록에 등록** | [62 §1](62-macos-input-and-present.md) |
 
 - ★ **컨트롤 배선 체크(09-25 §210)**: nexa-ctl 컨트롤(TextBox 등)을 패널이 직접 놓을 때는 `set_bounds`와 함께 **`set_scale(scale)`** 을 꼭 부른다 — 줄 높이·여백이 `s(...)`로 배율을 곱하므로 빠지면 레티나에서 글자가 겹친다(객체 상세 패널 결함).
-- ★ **글꼴 증분 = 논리 px(10-02 mac · [journal 10-02 §2](journal/2026-10-02.md))**: `select_font_sized(슬롯, 굵게, 증분)`의 증분은 슬롯 크기(논리 px)에 더해진 뒤 **그리기 쪽이 배율을 곱한다** — 측정값(`text_height()`·`text_width()` = 물리 px)이나 `scale`을 곱한 값을 그대로 넘기지 않는다(넘겨야 하면 배율로 나눈다). 어기면 배율 1에서는 멀쩡하고 HiDPI(맥 Retina · Windows 150 %)에서만 글자가 작아진다(속도 HUD = 75 %가 50 %로 · 탐색기 용량 글자). 크기가 배율에 비례하는지는 **배율 1·2로 그려 치수를 단언하는 시험**으로 덮는다(nexa-ctl `speed_hud_size_scales_with_dpi`의 `ScaleCtx`).
+- ★ **글꼴 증분 = 논리 px(10-02 mac · [journal 10-02 §2](journal/2026-10-02.md))**: `select_font_sized(슬롯, 굵게, 증분)`의 증분은 슬롯 크기(논리 px)에 더해진 뒤 **그리기 쪽이 배율을 곱한다** — 측정값(`text_height()`·`text_width()` = 물리 px)이나 `scale`을 곱한 값을 그대로 넘기지 않는다(넘겨야 하면 배율로 나눈다). 어기면 배율 1에서는 멀쩡하고 HiDPI(맥 Retina · Windows 150 %)에서만 글자가 작아진다(속도 HUD = 75 %가 50 %로 · 탐색기 용량 글자). 크기가 배율에 비례하는지는 **배율 1·2로 그려 치수를 단언하는 시험**으로 덮는다(nexa-ctl `speed_hud_size_scales_with_dpi`의 `ScaleCtx`). · ★ **같은 부류 = 도형 크기의 하한·상한 상수(10-04 mac · [journal 10-04 §8](journal/2026-10-04.md))**: 툴바 ▾가 Retina에서 납작·가늘게(`ˇ` 꼴) 보였다 — nexa-ctl `draw_chevron_down`의 하한(반폭 2 · 굵기 1.5)이 물리 px라 논리 8 px 칸에서 모양이 하한으로 정해지는데 2배 화면에서 하한이 커지지 않았다 → `draw_chevron_down_scaled(ctx, area, color, scale)`(하한 × 배율 · 기존 함수 = scale 1.0 위임). **크기를 정하는 하한·상한 상수도 논리 px로 두고 배율을 곱한다** · 같은 8 px 칸 후보 = nexa-ctl `posdrop.rs:233`(미수정).
 
 ## 3. OS별로 다른 것
 
@@ -187,6 +197,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 | 글자 | GDI ClearType 글리프(D-77) — 전진폭이 정수로 스냅 | CoreText 경로 — 전진폭이 소수. **행 폭 고정폭 지름길은 탐침으로 전진폭을 구하므로 양쪽에서 돈다**(디버그 빌드가 실측과 대조). 맥에서 큰 파일을 한 번 열어 `debug_assert`가 조용한지 본다 | nexa-font 고정 경로 후보(Noto Sans CJK KR · DejaVu) + **가족 탐색 = `/usr/share/fonts` 트리 걷기**(D2Coding · 기호 폴백) — 09-22 걷기 1회 캐시 + `file_type()`로 고침(기동 100~700 ms가 이것이었다 · 92차(win)에 3-OS 공통 한 길로 — Windows도 걷기 12.6 → 1.2 ms · 한 번만) · softbuffer 한 길 · **창 백엔드 기본 = X11(XWayland · `gfx.linux_backend`)** — 모달 = `WM_TRANSIENT_FOR`+`_NET_WM_STATE_MODAL`(x11rb · `winfocus::attach_child` · winit 0.30 Wayland는 부모·올리기 API 없음) |
 | 클립보드 | `OpenClipboard`/`SetClipboardData` 직접(user32) | `pbcopy`/`pbpaste`(OS 기본 탑재) | ★ **X11 `CLIPBOARD` selection 직접**(`clipboard_x11.rs` · `x11rb` · 09-26) — 종전 `wl-copy`/`xclip`/`xsel` 외부 프로그램 의존은 폴백으로만(`clipboard.x11_native` 끔). Wayland 앱으로의 다리는 mutter가 **포커스 있는 창만** 통과시킨다 |
 | IME 한글 + 단축키 | `logical_key` = 라틴(ToUnicodeEx) · 오른쪽 Alt/Ctrl = 한/영·한자 | **⌘+키의 `logical_key` = 입력 소스의 자모**(`charactersIgnoringModifiers`) → 물리 키로(`Chord::from_winit` · `shortcut_letter`) · 앱 조합 중 명령 = `commit_composition` 먼저 | `logical_key` = 라틴(xkb) · ibus Ctrl+Space 트리거 충돌 주의 · 규칙: **⌘/Ctrl+글자는 논리 글자를 비교하지 않는다**(09-27 전수 · journal 09-26 §7) |
+| 툴체인(PATH) | rustup 그대로 | ⚠ **Homebrew `rust`가 깔려 있으면 `/usr/local/bin/cargo`가 `~/.cargo/bin`(rustup)보다 앞선다**(10-04 · [journal 10-04 §4](journal/2026-10-04.md)) — `rust-toolchain.toml`(stable)이 무시되고 Homebrew rustc로 빌드되며, 그 rustc에는 `wasm32-unknown-unknown` std가 없어 `scripts/ext-build.sh`가 `E0463 can't find crate for std`로 실패한다. 확인 = `which -a cargo` · `cargo --version`(`(Homebrew)` 표시) · 대처 = 그 명령만 `PATH="$HOME/.cargo/bin:$PATH"`로(스크립트는 바꾸지 않음 · 개발 세션 판정) | rustup 그대로 |
 | 메모리 회수 | `HeapSetInformation` + `HeapCompact` | `malloc_zone_pressure_relief`(형 검사만 했고 실기 미확인) | glibc `malloc_trim(0)` |
 | IME | 한글 조합 = 캐럿 줄 하나에만 끼움(단위 테스트 통과 · 실기는 사용자) | **T-139 맥 한글 입력**이 열려 있다 — 조합 경로가 84차에 바뀌었으므로(`Rows.over`) 맥에서 먼저 확인 | 미확인 — 기본 백엔드가 X11이라 XIM 경로 · Wayland 네이티브면 winit `Ime`(실기 대기 · T-163) |
 | 설정 폴더 | `%APPDATA%\nexa-sql` | `~/Library/Application Support/nexa-sql`(`NSQL_HOME`이 있으면 그것) | `~/.config/nexa-sql`(`NSQL_HOME`이 있으면 그것) · Oracle Instant Client = `~/oracle/instantclient_23_26`(`scripts/install-instantclient-linux.sh`) |

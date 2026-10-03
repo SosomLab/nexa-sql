@@ -132,7 +132,7 @@ use nexa_ctl::{
 use nexa_dlg::PickerMode;
 use nexa_gfx::{Font, Surface};
 use nsql_core::Dialect;
-use nsql_i18n::{current_lang, t, tf, Msg};
+use nsql_i18n::{t, tf, Msg};
 use nsql_log::{LogEntry, LogKind, LogLayer, LogLevel};
 use nsql_run::txlog::{Purpose as TxPurpose, TxOutcome};
 use nsql_run::RunEvent;

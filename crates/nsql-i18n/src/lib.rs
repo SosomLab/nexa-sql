@@ -3762,8 +3762,8 @@ impl Msg {
             Msg::CatEditor => ["Editor", "편집기"],
             Msg::LblLang => ["Language", "언어"],
             Msg::DescLang => [
-                "Language of the user interface (applies immediately). Default = the OS display language if supported, otherwise English",
-                "화면 언어(즉시 적용). 기본값 = OS 표시 언어(지원하는 언어일 때) · 그 밖은 영어",
+                "Language of the user interface (applies immediately). System (default) = follow the OS display language if supported, otherwise English",
+                "화면 언어(즉시 적용). 시스템(기본값) = OS 표시 언어를 따름(지원하는 언어일 때 · 그 밖은 영어)",
             ],
             Msg::LblTheme => ["Theme", "테마"],
             Msg::DescTheme => [
