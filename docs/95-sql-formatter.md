@@ -61,8 +61,18 @@
 
 ## 3. Basic formatter(레이아웃 규칙)
 
-- 문장 = 최상위 `;`로 분리 · `DECLARE/BEGIN/CREATE … PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE`부터는 끝까지 **원문 통과**(안의 `;`로 쪼개지 않음) ·
+- 문장 = 최상위 `;`로 분리 · `DECLARE/BEGIN/CREATE … PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE`부터는 **블록 끝까지 원문 통과**(안의 `;`로 쪼개지 않음 ·
+  끝 = 단독 `/`·`GO` 줄 앞 · 없으면 `BEGIN`/`CASE`…`END` 짝이 닫힌 뒤 다음 최상위 `;` · `BEGIN;`/`BEGIN TRANSACTION`은 블록 아님 · 10-03 = 종전 "문서 끝까지"에서 바꿈 ·
+  [journal 10-03 §4](journal/2026-10-03.md)) ·
   SELECT/WITH/INSERT/UPDATE/DELETE/MERGE 외(DDL 등)도 원문 통과.
+- ★ **§3-1 스크립트 명령 · `EXEC`**(사용자 10-03 · [journal 10-03 §2](journal/2026-10-03.md) · `layout::exec_statement`): 문장 끝을 **실행기(nsql-script `split`)와 같은 규칙**으로
+  정한다 — 스크립트 명령 줄(`PRINT` · `SET` · `VARIABLE` · `:setvar` · `@파일` · 단독 `/`·`GO` · 목록 = `COMMAND_WORDS` = nsql-script `is_command_start`의 사본)은
+  **그 줄에서 끝**(원문 그대로 · 앞뒤 빈 줄 수도 원문) · 단독 `/`·`GO` 줄은 SQL 문장의 끝.
+  `EXEC`/`EXECUTE`: 홀로 선 `EXEC` = 다음 줄부터 `;` · 빈 줄 · `/` · 다음 명령 줄까지(블록) · 한 줄 `EXEC …` = 그 줄(열린 괄호 · 콤마 · `@a = 1` 인자는 이어짐).
+  ① 본문 `SELECT`/`WITH`(= `SELECT … INTO`) → `EXEC` 한 줄 + 평소 포맷(한 줄 꼴도 블록 꼴로 · `;` 없이 다음 줄이 SQL이면 `;`를 붙인다 · 자동 별칭 없음)
+  ② 본문이 프로시저·패키지 호출 → **한 줄**(줄 바꿈만 없앤다 · 이미 한 줄 = 간격 원문 그대로) ③ 그 밖(대입 `:v := …` · `OPEN … FOR` · 주석 낀 호출) → 원문.
+  치환 변수 `&v`·`&&v`·`&1` · `${이름[:형식]}` · 접두 문자열 `N'…'`·`E'…'`·Oracle `q'[…]'`는 한 토큰(대소문자·띄어쓰기 손대지 않음) ·
+  단항 부호(`-1`)와 PG 캐스트(`a::text`)는 붙여 쓴다(10-03).
 - SELECT/FROM/GROUP BY/ORDER BY = 절 단독 줄 + 항목마다 한 단계 안(콤마 위치 옵션) · JOIN = FROM 열(옵션으로 한 단계 안) · `ON` = 첫 조건을 같은 줄에,
   나머지 AND/OR는 ON 열 · WHERE/HAVING = 절 단독 줄 + 조건 한 단계 안(시드가 있으면 `WHERE 1=1` + 모든 조건 AND/OR 줄) · 괄호 안 AND/OR·BETWEEN … AND는 나누지 않음.
 - 서브쿼리 `( SELECT … )` = `(` 뒤 줄바꿈 · 한 단계 안 · `)`는 여는 줄의 열 + 뒤 별칭 · 함수·IN 목록 괄호 = 인라인.

@@ -170,6 +170,39 @@ pub fn lex(src: &str) -> Vec<Token> {
             push(Kind::Bind, end, j, &mut nl, &mut ci);
             continue;
         }
+        // `${이름[:형식]}` · `${env:이름}` = 한 토큰(10-03 · 종전엔 `$ { who :q }`로 찢겨 치환이 깨졌다) — 같은 줄의 `}`까지.
+        if c == '$' && chars.get(ci + 1).is_some_and(|x| x.1 == '{') {
+            if let Some(off) = chars[ci + 2..]
+                .iter()
+                .position(|x| x.1 == '}' || x.1 == '\n')
+                .filter(|&off| chars[ci + 2 + off].1 == '}')
+            {
+                let j = ci + 2 + off + 1;
+                let end = if j < chars.len() { chars[j].0 } else { n };
+                push(Kind::Bind, end, j, &mut nl, &mut ci);
+                continue;
+            }
+        }
+        // 치환 변수 `&name` · `&&name` · `&1`(SQL*Plus) — 한 토큰(대소문자·띄어쓰기를 손대지 않게 · 10-03).
+        if c == '&' {
+            let s = if chars.get(ci + 1).is_some_and(|x| x.1 == '&') {
+                ci + 2
+            } else {
+                ci + 1
+            };
+            if chars
+                .get(s)
+                .is_some_and(|x| is_word_start(x.1) || x.1.is_ascii_digit())
+            {
+                let mut j = s;
+                while j < chars.len() && is_word_char(chars[j].1) {
+                    j += 1;
+                }
+                let end = if j < chars.len() { chars[j].0 } else { n };
+                push(Kind::Bind, end, j, &mut nl, &mut ci);
+                continue;
+            }
+        }
         if c == '?' {
             push(Kind::Bind, i + 1, ci + 1, &mut nl, &mut ci);
             continue;
@@ -212,6 +245,62 @@ pub fn lex(src: &str) -> Vec<Token> {
             let mut j = ci + 1;
             while j < chars.len() && is_word_char(chars[j].1) {
                 j += 1;
+            }
+            // ★ 접두 문자열(10-03 · 종전 `N 'x'` = SQL Server에서 뜻이 바뀜 · `q'[it's]'`는 토막남): 단어 바로 뒤에 `'`가 붙으면
+            //   `N'…'`·`B'…'`·`X'…'`·`E'…'`(이스케이프 `\'` 포함) = 보통 문자열 · Oracle `q'…'`·`nq'…'` = 구분자 짝(`[]` `{}` `()` `<>` ·
+            //   그 밖 = 같은 글자)까지 — 한 Str 토큰.
+            if j < chars.len() && chars[j].1 == '\'' {
+                let word = &src[i..chars[j].0];
+                let up = word.to_ascii_uppercase();
+                let close = match up.as_str() {
+                    "Q" | "NQ" => chars.get(j + 1).map(|d| match d.1 {
+                        '[' => ']',
+                        '{' => '}',
+                        '(' => ')',
+                        '<' => '>',
+                        other => other,
+                    }),
+                    "N" | "B" | "X" | "E" | "U" | "R" => None,
+                    _ => {
+                        let end = chars[j].0;
+                        push(Kind::Word, end, j, &mut nl, &mut ci);
+                        continue;
+                    }
+                };
+                let mut k = j + 1;
+                match close {
+                    Some(d) => {
+                        k += 1;
+                        while k < chars.len()
+                            && !(chars[k].1 == d && chars.get(k + 1).is_some_and(|x| x.1 == '\''))
+                        {
+                            k += 1;
+                        }
+                        k = (k + 2).min(chars.len());
+                    }
+                    None => {
+                        let escapes = up == "E";
+                        while k < chars.len() {
+                            let ch = chars[k].1;
+                            if escapes && ch == '\\' {
+                                k += 2;
+                                continue;
+                            }
+                            if ch == '\'' {
+                                if chars.get(k + 1).is_some_and(|x| x.1 == '\'') {
+                                    k += 2;
+                                    continue;
+                                }
+                                k += 1;
+                                break;
+                            }
+                            k += 1;
+                        }
+                    }
+                }
+                let end = if k < chars.len() { chars[k].0 } else { n };
+                push(Kind::Str, end, k, &mut nl, &mut ci);
+                continue;
             }
             let end = if j < chars.len() { chars[j].0 } else { n };
             push(Kind::Word, end, j, &mut nl, &mut ci);
@@ -293,6 +382,35 @@ mod tests {
         let t = lex("한글_컬럼 = 1");
         assert_eq!(t[0].text, "한글_컬럼");
         assert_eq!(t[0].kind, Kind::Word);
+    }
+
+    /// 접두 문자열·q-인용·`${…}`·`&v`는 한 토큰(10-03).
+    #[test]
+    fn prefixed_strings_qquotes_braces_and_macros_are_single_tokens() {
+        let t = lex("q'[it's]' nq'{x'y}' N'한글' x'0A' e'it\\'s' ${who:q} ${env:PATH:q} &tab..x &&v &1 Nx'q'");
+        let v: Vec<(Kind, &str)> = t.iter().map(|t| (t.kind, t.text.as_str())).collect();
+        assert_eq!(
+            v,
+            vec![
+                (Kind::Str, "q'[it's]'"),
+                (Kind::Str, "nq'{x'y}'"),
+                (Kind::Str, "N'한글'"),
+                (Kind::Str, "x'0A'"),
+                (Kind::Str, "e'it\\'s'"),
+                (Kind::Bind, "${who:q}"),
+                (Kind::Bind, "${env:PATH:q}"),
+                (Kind::Bind, "&tab"),
+                (Kind::Punct, "."),
+                (Kind::Punct, "."),
+                (Kind::Word, "x"),
+                (Kind::Bind, "&&v"),
+                (Kind::Bind, "&1"),
+                (Kind::Word, "Nx"),
+                (Kind::Str, "'q'"),
+            ]
+        );
+        // 닫히지 않은 `${`는 그대로 쪼개진다(줄을 넘지 않는다).
+        assert_eq!(lex("${a\n}").len(), 4);
     }
 
     #[test]

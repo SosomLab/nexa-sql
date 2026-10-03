@@ -119,6 +119,28 @@ pub(crate) fn into_targets(sql: &str) -> Vec<String> {
         .collect()
 }
 
+/// `${이름[:형식]}` 구간을 같은 길이의 공백으로 가린 글(없으면 원문 그대로 · 바이트 위치 유지) — 형식 접미의 `:q`·`:lower`가
+/// 바인드로 읽혀 입력 창이 `:Q`를 묻던 결함(사용자 10-03). 치환은 실행 때 엔진이 한다([`crate::Engine::substitute`]) ·
+/// 여기는 **바인드를 찾을 때만** 이 구간을 본문에서 뺀다.
+fn mask_brace_refs(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("${") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("${") {
+        let Some(close) = rest[i + 2..].find('}') else {
+            break;
+        };
+        let end = i + 2 + close + 1;
+        out.push_str(&rest[..i]);
+        out.extend(std::iter::repeat_n(' ', end - i));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 /// 글에 `ACC`로 시작하는 줄이 있는가(대소문자 무시) — `ACCEPT`를 위한 값싼 사전 검사(정확한 판정은 명령 해석).
 fn has_accept_word(src: &str) -> bool {
     src.lines().any(|l| {
@@ -238,6 +260,7 @@ pub fn missing_inputs(
                     assigned.insert(norm(n));
                 }
                 Command::Exec { body } => {
+                    let body = &*mask_brace_refs(body);
                     let binds = unique_names(&extract_binds(body));
                     let mut targets: BTreeSet<String> = BTreeSet::new();
                     if let Some((lhs, _)) = body.split_once(":=") {
@@ -270,16 +293,18 @@ pub fn missing_inputs(
                     .get(..6)
                     .is_some_and(|w| w.eq_ignore_ascii_case("CREATE"))
                 {
-                    assigned.extend(unique_names(&extract_binds(&item.text)));
+                    assigned.extend(unique_names(&extract_binds(&mask_brace_refs(&item.text))));
                 }
             }
             ItemKind::Sql(_) => {
-                let binds = unique_names(&extract_binds_with(&item.text, &classes));
+                // `${이름:형식}`의 `:형식`은 바인드가 아니다(같은 길이로 가려 분류 `classes`를 그대로 쓴다).
+                let text = mask_brace_refs(&item.text);
+                let binds = unique_names(&extract_binds_with(&text, &classes));
                 // 받는 쪽(`INTO`)은 드물다 — 글자가 있을 때만 찾는다.
-                let targets: BTreeSet<String> = if binds.is_empty() || !has_word_into(&item.text) {
+                let targets: BTreeSet<String> = if binds.is_empty() || !has_word_into(&text) {
                     BTreeSet::new()
                 } else {
-                    into_targets(&item.text).into_iter().collect()
+                    into_targets(&text).into_iter().collect()
                 };
                 for b in binds {
                     if targets.contains(&b) {
@@ -308,6 +333,23 @@ pub fn missing_inputs(
 
 #[cfg(test)]
 mod tests {
+    /// `${이름:형식}`의 형식 접미(`:q` · `:lower`)는 바인드가 아니다 — 묻지 않는다(사용자 10-03) · 진짜 바인드는 그대로 묻는다.
+    #[test]
+    fn brace_format_suffix_is_not_a_bind() {
+        let vars = VarStore::new();
+        let mut defs = BTreeMap::new();
+        defs.insert("WHO".to_string(), "O'Neil".to_string());
+        defs.insert("OWN".to_string(), "SYS".to_string());
+        let src = "SELECT ${who:q} AS quoted, '${own:lower}' AS low FROM DUAL;\n";
+        assert!(missing_inputs(src, Some(Dialect::Oracle), &vars, &defs, Some('&')).is_empty());
+        let src = "SELECT ${who:q}, ${env:HOME:q}, :real FROM DUAL WHERE x = ${own:id};\nEXEC :v := ${who:q}\n";
+        let needs = missing_inputs(src, Some(Dialect::Oracle), &vars, &defs, Some('&'));
+        let names: Vec<&str> = needs.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["REAL"]);
+        // 닫히지 않은 `${` 뒤는 가리지 않는다.
+        assert_eq!(mask_brace_refs("a ${x:q} b ${y :z"), "a        b ${y :z");
+    }
+
     /// T-153 — 시스템 변수와 `COLUMN … NEW_VALUE`가 채울 변수는 묻지 않는다.
     #[test]
     fn system_and_new_value_macros_are_not_asked() {

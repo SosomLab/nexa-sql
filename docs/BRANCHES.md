@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/formatter-exec-and-brace-inputs | 2026-10-03 | 2026-10-03 → main(삭제) | 1 | 110차 Linux: 최신화·분석 · `EXEC` 문 포맷(SELECT INTO 블록 · 호출 한 줄 · 명령 줄 끝) · `${이름:형식}` 입력 창 결함 · 포맷터 점검 5건(`${…}` 토큰 · 블록 끝 `block_end` · 접두 문자열·q-인용 · 단항 부호 · `::`) · 실행기 `EXEC` 블록 끊김 둘 · linux-func-check L13·L16 · journal 10-03 |
 | fix/hud-dpi-scale-mac | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | 109차 mac: 최신화·분석 · 🔧 속도 HUD HiDPI 크기(nexa-ui 102차 `SpeedHud` 배율 나눔) · 탐색기 용량 글자 증분 `* s` 제거 · 61 §1-5 규칙(글꼴 증분 = 논리 px) · journal 10-02 |
 | docs/release-v0.1.3 | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | v0.1.3 릴리스 기록(journal §40 · DEVLOG · STATUS · CLAUDE · MILESTONES · 33 §3) |
 | release/v0.1.3 | 2026-10-02 | 2026-10-02 → main(삭제) | 1 | 🚀 버전 0.1.2 → 0.1.3 · 태그 `v0.1.3` → release.yml ✓ → 공개 → homebrew.yml ✓(brew 0.1.3) · winget·choco 없음 |

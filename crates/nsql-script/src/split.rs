@@ -236,7 +236,11 @@ fn collect_block_exec(src: &str, classes: &[Class], from: usize) -> (String, usi
             .position(|&c| c == b'\n')
             .map_or(b.len(), |p| ls + p);
         let t = src[ls..le].trim_end_matches('\r').trim();
-        if t.is_empty() || t == "/" || (body_start.is_some() && is_command_start(t)) {
+        // 본문 안의 `CONNECT BY`뿐인 줄(포맷터가 절 키워드를 제 줄에 둔다)은 접속 명령이 아니라 계층 질의의 절이다.
+        if t.is_empty()
+            || t == "/"
+            || (body_start.is_some() && is_command_start(t) && !is_bare_connect_by(t))
+        {
             let end = body_start.map_or(ls, |_| ls);
             let next = if t == "/" { le } else { ls };
             let body = body_start
@@ -258,6 +262,15 @@ fn collect_block_exec(src: &str, classes: &[Class], from: usize) -> (String, usi
         .map(|s| src[s..].trim().to_string())
         .unwrap_or_default();
     (body, b.len(), b.len())
+}
+
+/// `CONNECT BY` 두 단어뿐인 줄인가(`EXEC` 블록 본문의 절 줄).
+fn is_bare_connect_by(line: &str) -> bool {
+    let mut w = line.split_whitespace();
+    matches!(
+        (w.next(), w.next(), w.next()),
+        (Some(a), Some(b), None) if a.eq_ignore_ascii_case("CONNECT") && b.eq_ignore_ascii_case("BY")
+    )
 }
 
 /// SQL 문 하나. 블록이면 단독 `/`·`GO` 줄까지, 아니면 코드 영역 `;`까지(같은 줄 뒤 문장은 다음 항목).
@@ -768,5 +781,24 @@ DEFINE x = 1
             .find(|it| it.text.starts_with("EXEC SELECT"))
             .expect("블록 EXEC");
         assert_eq!(split_script_in(&block.text, Some(Dialect::Mssql)).len(), 2);
+    }
+
+    /// `EXEC` 블록 본문(포맷터가 절·항목을 제 줄에 둔다 · 10-03): 명령 단어로 **시작하는 이름**(`COLUMN_NAME` · `SET_ID`)과
+    /// `CONNECT BY`뿐인 줄은 본문을 끊지 않는다 · 진짜 명령 줄(`PRINT`)은 끊는다.
+    #[test]
+    fn exec_block_body_keeps_identifier_and_connect_by_lines() {
+        let src = "EXEC\nSELECT\n\tCOLUMN_NAME\n,\tSET_ID\nINTO\n\t:A\n,\t:B\nFROM\n\tT\nSTART WITH\n\tA = 1\nCONNECT BY\n\tPRIOR A = B\nPRINT A\n";
+        let items = split_script_in(src, Some(Dialect::Oracle));
+        assert_eq!(items.len(), 2, "{items:#?}");
+        assert!(
+            items[0].text.starts_with("EXEC SELECT"),
+            "{}",
+            items[0].text
+        );
+        assert!(items[0].text.ends_with("PRIOR A = B"), "{}", items[0].text);
+        assert!(matches!(items[0].kind, ItemKind::Command(_)));
+        assert!(crate::command::is_command_start("COLUMN name"));
+        assert!(!crate::command::is_command_start("COLUMN_NAME"));
+        assert!(!crate::command::is_command_start("DESC$X"));
     }
 }

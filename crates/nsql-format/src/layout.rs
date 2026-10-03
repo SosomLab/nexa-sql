@@ -446,19 +446,70 @@ pub fn layout(src: &str, opts: &Options) -> Vec<Line> {
     let mut out: Vec<Line> = Vec::new();
     let mut i = 0usize;
     let mut first_stmt = true;
+    // 앞 문장이 스크립트 명령(`EXEC` · `PRINT` · `SET` …)이었나 — 명령 줄 앞뒤에는 빈 줄을 강제로 넣지 않는다(원문 그대로).
+    let mut prev_cmd = false;
     while i < toks.len() {
         // 문장 앞 독립 주석.
         let stmt_start = i;
         // 문장 끝 = 최상위 `;`(괄호 밖) — 통과 대상(PL/SQL·CREATE 루틴)은 끝까지.
         if starts_block_passthrough(&toks[i..]) {
-            let text = src[toks[i].span.0..].trim_end();
-            push_raw(&mut out, text, blank_of(&toks[i], first_stmt, opts));
-            break;
+            // ★ 블록의 끝까지만(10-03 · 종전 = 문서 끝까지 → 블록 하나 뒤의 문장이 전부 포맷되지 않았다).
+            let j = block_end(&toks, i);
+            let text = src[toks[i].span.0..toks[j - 1].span.1].trim_end();
+            let blank = if first_stmt {
+                0
+            } else if prev_cmd {
+                (toks[i].nl_before.saturating_sub(1) as usize).min(opts.max_blank_lines)
+            } else {
+                blank_of(&toks[i], first_stmt, opts)
+            };
+            push_raw(&mut out, text, blank);
+            first_stmt = false;
+            prev_cmd = false;
+            i = j;
+            continue;
+        }
+        // ★ 스크립트 명령(사용자 10-03): 끝은 `;`가 아니라 실행기의 규칙으로 정한다 — `EXEC` = 줄 또는 블록 · 그 밖의 명령 = 그 줄.
+        //   (종전에는 `;` 없는 명령 줄이 다음 `;`까지 뒤 문장을 삼켜 통째로 원문 통과였다.)
+        let head = (i..toks.len()).find(|&k| !toks[k].is_comment());
+        let is_cmd = head.is_some_and(|h| is_command_head(&toks, h));
+        let blank = if first_stmt {
+            0
+        } else if is_cmd || prev_cmd {
+            (toks[i].nl_before.saturating_sub(1) as usize).min(opts.max_blank_lines)
+        } else {
+            blank_of(&toks[i], first_stmt, opts)
+        };
+        if is_cmd {
+            let h = head.unwrap_or(i);
+            let j = match exec_statement(&mut out, &toks, i, src, opts, blank) {
+                Some(j) => j,
+                None => {
+                    // 한 줄 명령: 그 줄의 `;`까지 또는 줄 끝까지 — 원문 그대로.
+                    let mut j = h + 1;
+                    while j < toks.len() && toks[j].nl_before == 0 {
+                        j += 1;
+                        if toks[j - 1].is_punct(";") {
+                            break;
+                        }
+                    }
+                    format_statement(&mut out, &toks[i..j], src, opts, blank);
+                    j
+                }
+            };
+            first_stmt = false;
+            prev_cmd = true;
+            i = j;
+            continue;
         }
         let mut depth = 0i32;
         let mut j = i;
         while j < toks.len() {
             let t = &toks[j];
+            // 단독 `/` · `GO` 줄 = 문장 끝(실행기 `collect_sql`과 같게 — `;` 없는 T-SQL 배치가 뒤 문장을 삼키지 않는다).
+            if j > i && t.nl_before > 0 && is_terminator_line(&toks, j) {
+                break;
+            }
             if t.is_punct("(") {
                 depth += 1;
             } else if t.is_punct(")") {
@@ -470,9 +521,9 @@ pub fn layout(src: &str, opts: &Options) -> Vec<Line> {
             j += 1;
         }
         let stmt = &toks[stmt_start..j];
-        let blank = blank_of(&stmt[0], first_stmt, opts);
         format_statement(&mut out, stmt, src, opts, blank);
         first_stmt = false;
+        prev_cmd = false;
         i = j;
     }
     out
@@ -500,7 +551,71 @@ fn push_raw(out: &mut Vec<Line>, text: &str, blank: usize) {
     }
 }
 
-/// 문장 첫 토큰이 PL/SQL 블록·루틴 생성이면 그 뒤 전부 통과(안의 `;`로 쪼개면 안 된다).
+/// `BEGIN`이 블록이 아니라 **트랜잭션 문장**인가(`BEGIN;` · `BEGIN TRANSACTION` · `BEGIN WORK` …) — nsql-script `is_begin_transaction`과 같게.
+fn begin_is_transaction(toks: &[Token], at: usize) -> bool {
+    let Some(n) = toks[at + 1..].iter().find(|t| !t.is_comment()) else {
+        return false;
+    };
+    n.is_punct(";")
+        || (n.kind == Kind::Word
+            && matches!(
+                n.up().as_str(),
+                "TRANSACTION"
+                    | "TRAN"
+                    | "WORK"
+                    | "DEFERRED"
+                    | "IMMEDIATE"
+                    | "EXCLUSIVE"
+                    | "ISOLATION"
+                    | "READ"
+                    | "DISTRIBUTED"
+            ))
+}
+
+/// 통과 블록(`toks[start]`부터)의 끝(배타) — 실행기 `collect_sql`과 같은 생각: **단독 `/`·`GO` 줄 앞**에서, 그것이 없으면
+/// `BEGIN`/`CASE` … `END` 짝이 0으로 돌아온 뒤(또는 짝 없는 `END` = 패키지·타입 명세의 끝) **다음 최상위 `;`** 뒤에서.
+/// `END IF`·`END LOOP`·`END WHILE`·`END REPEAT`·`END FOR`는 짝을 닫지 않는다(`IF`·`LOOP`는 열지 않으므로). 둘 다 없으면 끝까지.
+fn block_end(toks: &[Token], start: usize) -> usize {
+    let mut depth = 0i32;
+    let mut paren = 0i32;
+    let mut closed = false;
+    let mut j = start;
+    while j < toks.len() {
+        let t = &toks[j];
+        if j > start && t.nl_before > 0 && is_terminator_line(toks, j) {
+            return j;
+        }
+        if t.is_punct("(") {
+            paren += 1;
+        } else if t.is_punct(")") {
+            paren -= 1;
+        } else if t.kind == Kind::Word {
+            let up = t.up();
+            if (up == "BEGIN" && !begin_is_transaction(toks, j)) || up == "CASE" {
+                depth += 1;
+            } else if up == "END" {
+                let next = toks[j + 1..].iter().find(|n| !n.is_comment());
+                let opener_less = next.is_some_and(|n| {
+                    n.kind == Kind::Word
+                        && matches!(n.up().as_str(), "IF" | "LOOP" | "WHILE" | "REPEAT" | "FOR")
+                });
+                if !opener_less {
+                    depth -= 1;
+                    if depth <= 0 {
+                        depth = 0;
+                        closed = true;
+                    }
+                }
+            }
+        } else if t.is_punct(";") && paren <= 0 && closed {
+            return j + 1;
+        }
+        j += 1;
+    }
+    toks.len()
+}
+
+/// 문장 첫 토큰이 PL/SQL 블록·루틴 생성이면 블록 끝([`block_end`])까지 통과(안의 `;`로 쪼개면 안 된다).
 fn starts_block_passthrough(toks: &[Token]) -> bool {
     let words: Vec<String> = toks
         .iter()
@@ -512,7 +627,11 @@ fn starts_block_passthrough(toks: &[Token]) -> bool {
         return false;
     };
     match first.as_str() {
-        "DECLARE" | "BEGIN" => true,
+        "DECLARE" => true,
+        "BEGIN" => {
+            let at = toks.iter().position(|t| !t.is_comment()).unwrap_or(0);
+            !begin_is_transaction(toks, at)
+        }
         "CREATE" => words.iter().any(|w| {
             matches!(
                 w.as_str(),
@@ -521,6 +640,269 @@ fn starts_block_passthrough(toks: &[Token]) -> bool {
         }),
         _ => false,
     }
+}
+
+/// 스크립트 명령을 시작하는 단어(대문자) — `EXEC` 블록 본문이 여기서 끝난다. nsql-script `is_command_start`와 같은 목록
+/// (이 크레이트는 의존 0이라 사본을 둔다 · 그쪽을 바꾸면 여기도).
+const COMMAND_WORDS: &[&str] = &[
+    "VAR",
+    "VARIABLE",
+    "PRINT",
+    "EXEC",
+    "EXECUTE",
+    "CONN",
+    "CONNECT",
+    "DISC",
+    "DISCONNECT",
+    "SET",
+    "DEF",
+    "DEFINE",
+    "ACC",
+    "ACCEPT",
+    "COL",
+    "COLUMN",
+    "UNDEF",
+    "UNDEFINE",
+    "DESC",
+    "DESCRIBE",
+    "SHO",
+    "SHOW",
+    "CONNTYPE",
+    "SPO",
+    "SPOOL",
+    "PROMPT",
+    "REM",
+    "REMARK",
+    "GO",
+    "WHENEVER",
+];
+
+/// `toks[j]`(줄 첫 토큰)가 단독 `/` 또는 `GO` 줄인가 — 문장 종결 줄.
+fn is_terminator_line(toks: &[Token], j: usize) -> bool {
+    let t = &toks[j];
+    toks.get(j + 1).is_none_or(|n| n.nl_before > 0)
+        && ((t.kind == Kind::Op && t.text == "/") || t.is("GO"))
+}
+
+/// `toks[j]`가 스크립트 명령의 첫 토큰인가(`CONNECT BY`는 질의의 일부 · `@a = 1`은 SQL Server 변수 대입 · 단독 `/` 줄 포함).
+fn is_command_head(toks: &[Token], j: usize) -> bool {
+    let t = &toks[j];
+    match t.kind {
+        Kind::Op => is_terminator_line(toks, j),
+        Kind::Bind => {
+            (t.text.starts_with('@')
+                && !toks
+                    .get(j + 1)
+                    .is_some_and(|n| n.kind == Kind::Op && n.text == "="))
+                || matches!(
+                    t.text.as_str(),
+                    ":setvar" | ":connect" | ":disconnect" | ":r"
+                )
+        }
+        Kind::Word => {
+            let up = t.up();
+            if matches!(up.as_str(), "CONNECT" | "CONN")
+                && toks.get(j + 1).is_some_and(|n| n.is("BY"))
+            {
+                return false;
+            }
+            COMMAND_WORDS.contains(&up.as_str())
+        }
+        _ => false,
+    }
+}
+
+/// 줄 첫 토큰 `toks[j]`가 `EXEC` 블록 본문을 끝내는가 — 단독 `/` · `@`로 시작하는 줄 · 스크립트 명령 줄.
+fn exec_block_boundary(toks: &[Token], j: usize) -> bool {
+    let t = &toks[j];
+    (t.kind == Kind::Bind && t.text.starts_with('@')) || is_command_head(toks, j)
+}
+
+/// `EXEC` 본문이 프로시저·패키지 호출인가 — `이름[.이름…]` 뒤가 끝 · `(` · 인자(연산자가 아님). PL/SQL 문장 머리말(`OPEN` …)과
+/// 대입(`x := …`)은 호출이 아니다.
+fn exec_is_call(core: &[Token]) -> bool {
+    const NOT_CALL: &[&str] = &[
+        "OPEN",
+        "CLOSE",
+        "RAISE",
+        "IMMEDIATE",
+        "LOCK",
+        "SAVEPOINT",
+        "GOTO",
+        "EXIT",
+        "CONTINUE",
+        "FORALL",
+        "NULL",
+    ];
+    let name = |t: &Token| {
+        (t.kind == Kind::Word && !is_keyword(&t.text) && !NOT_CALL.contains(&t.up().as_str()))
+            || t.kind == Kind::Quoted
+    };
+    let mut k = 0;
+    if !core.first().is_some_and(name) {
+        return false;
+    }
+    k += 1;
+    while core.get(k).is_some_and(|t| t.is_punct("."))
+        && core
+            .get(k + 1)
+            .is_some_and(|t| matches!(t.kind, Kind::Word | Kind::Quoted))
+    {
+        k += 2;
+    }
+    core.get(k).is_none_or(|t| t.kind != Kind::Op)
+}
+
+/// 한 줄 `EXEC …`가 다음 줄(`toks[j]`가 그 첫 토큰)로 이어지는가 — 괄호가 열려 있거나 · 콤마로 이어지거나 · `;`뿐이거나 ·
+/// SQL Server 이름 지정 인자(`@a = 1`)일 때. 실행기는 한 줄 `EXEC`를 줄 끝에서 끊으므로 이런 꼴은 한 줄로 합쳐야 실행된다.
+fn exec_line_continues(toks: &[Token], j: usize, depth: i32) -> bool {
+    let t = &toks[j];
+    if t.is_comment() {
+        return depth > 0;
+    }
+    depth > 0
+        || t.is_punct(",")
+        || t.is_punct(";")
+        || toks[j - 1].is_punct(",")
+        || (t.kind == Kind::Bind
+            && t.text.starts_with('@')
+            && toks
+                .get(j + 1)
+                .is_some_and(|n| n.kind == Kind::Op && n.text == "="))
+}
+
+/// ★ `EXEC`/`EXECUTE`로 시작하는 문장(사용자 10-03 "EXEC가 앞에 있으면 포맷 대상이 아니다"). 처리했으면 다음 문장의 토큰 위치.
+///
+/// 문장의 끝은 실행기(nsql-script `split`)와 같게 본다 — **홀로 선 `EXEC`** = 다음 줄부터 `;` · 빈 줄 · 단독 `/` · 다음 명령 줄까지
+/// (블록) · **한 줄 `EXEC …`** = 그 줄(이어지는 줄은 [`exec_line_continues`]).
+/// - 본문이 `SELECT`/`WITH`(= `SELECT … INTO`) → `EXEC` 한 줄 + 본문을 평소대로 포맷(블록 꼴 · 한 줄 꼴이었으면 블록 꼴로 바꾼다 ·
+///   `;` 없이 바로 다음 줄에 SQL이 이어지면 블록이 그 줄을 삼키지 않게 `;`를 붙인다).
+/// - 본문이 프로시저·패키지 호출(이름으로 시작) → **한 줄**(줄 바꿈만 없앤다 · 줄 안의 간격은 원문 그대로).
+/// - 그 밖(대입 `:v := …` · `OPEN … FOR` · 줄 주석이 낀 호출 …) → 원문 그대로.
+fn exec_statement(
+    out: &mut Vec<Line>,
+    toks: &[Token],
+    start: usize,
+    src: &str,
+    opts: &Options,
+    blank: usize,
+) -> Option<usize> {
+    let mut h = start;
+    while h < toks.len() && toks[h].is_comment() {
+        h += 1;
+    }
+    let head = toks.get(h)?;
+    if !(head.is("EXEC") || head.is("EXECUTE")) {
+        return None;
+    }
+    let bare = toks.get(h + 1).is_none_or(|t| t.nl_before > 0);
+    // 문장의 끝.
+    let mut depth = 0i32;
+    let mut j = h + 1;
+    while j < toks.len() {
+        let t = &toks[j];
+        if t.nl_before >= 2 {
+            break;
+        }
+        if t.nl_before == 1 && j > h + 1 {
+            let stop = if bare {
+                exec_block_boundary(toks, j)
+            } else {
+                !exec_line_continues(toks, j, depth)
+            };
+            if stop {
+                break;
+            }
+        }
+        if t.is_punct("(") {
+            depth += 1;
+        } else if t.is_punct(")") {
+            depth -= 1;
+        } else if t.is_punct(";") && depth <= 0 {
+            j += 1;
+            break;
+        }
+        j += 1;
+    }
+    let body = &toks[h + 1..j];
+    let has_semi = body.last().is_some_and(|t| t.is_punct(";"));
+    let core = &body[..body.len() - usize::from(has_semi)];
+    let first = core.iter().find(|t| !t.is_comment());
+    let is_query = first.is_some_and(|t| t.is("SELECT") || t.is("WITH"));
+    let is_call = exec_is_call(core) && depth == 0 && !core.iter().any(Token::is_comment);
+    if !is_query && !is_call {
+        // 원문 그대로(앞머리 주석은 `format_statement`가 제 줄로).
+        format_statement(out, &toks[start..j], src, opts, blank);
+        return Some(j);
+    }
+    // 앞머리 주석은 독립 줄.
+    let mut blank = blank;
+    for t in &toks[start..h] {
+        let mut l = Line::new(0, Role::Comment);
+        l.parts.push(Part::Text(t.text.clone()));
+        l.blank_before = blank;
+        blank = 0;
+        out.push(l);
+    }
+    let exec = opts.keyword_case.apply(&head.text);
+    let mut line = Line::new(0, Role::Raw);
+    line.blank_before = blank;
+    if is_call {
+        // 한 줄: 줄 바꿈만 없앤다. 이미 한 줄이면 간격은 원문 그대로 · 여러 줄이었으면 줄 안의 간격(정렬용 공백·탭)은 한 칸으로,
+        // 줄이 바뀐 자리는 띄어쓰기 규칙으로.
+        let multi = body.iter().any(|t| t.nl_before > 0);
+        let mut text = exec;
+        let mut prev = head;
+        for t in body {
+            let gap = (t.nl_before == 0)
+                .then(|| src.get(prev.span.1..t.span.0))
+                .flatten()
+                .filter(|g| g.chars().all(|c| c == ' ' || c == '\t'));
+            match gap {
+                Some(g) if !multi => text.push_str(g),
+                Some("") => {}
+                Some(_) => text.push(' '),
+                None if std::ptr::eq(prev, head) || need_space(&prev.text, &t.text) => {
+                    text.push(' ');
+                }
+                None => {}
+            }
+            text.push_str(&t.text);
+            prev = t;
+        }
+        line.parts.push(Part::Text(text));
+        out.push(line);
+        return Some(j);
+    }
+    // 블록 꼴: `EXEC` 한 줄 + 평소대로 포맷한 질의.
+    line.parts.push(Part::Text(exec));
+    out.push(line);
+    format_statement(out, body, src, opts, 0);
+    let swallows_next = !bare
+        && !has_semi
+        && toks
+            .get(j)
+            .is_some_and(|n| n.nl_before == 1 && !exec_block_boundary(toks, j));
+    if swallows_next {
+        match out.last_mut() {
+            Some(l)
+                if !opts.semicolon_newline
+                    && l.role != Role::Raw
+                    && !matches!(l.parts.last(), Some(Part::Comment(_))) =>
+            {
+                match l.parts.last_mut() {
+                    Some(Part::Text(t)) => t.push(';'),
+                    _ => l.parts.push(Part::Text(";".to_string())),
+                }
+            }
+            _ => {
+                let mut l = Line::new(0, Role::Other);
+                l.parts.push(Part::Text(";".to_string()));
+                out.push(l);
+            }
+        }
+    }
+    Some(j)
 }
 
 fn format_statement(out: &mut Vec<Line>, stmt: &[Token], src: &str, opts: &Options, blank: usize) {
@@ -559,6 +941,8 @@ fn format_statement(out: &mut Vec<Line>, stmt: &[Token], src: &str, opts: &Optio
         .filter(|t| t.kind == Kind::Word)
         .map(Token::up)
         .collect();
+    // 이 문장의 첫 줄 자리(빈 줄 수를 넣을 줄).
+    let start = out.len();
     let mut w = Walker {
         toks: body,
         i: 0,
@@ -571,39 +955,10 @@ fn format_statement(out: &mut Vec<Line>, stmt: &[Token], src: &str, opts: &Optio
     };
     w.statement(0);
     w.flush();
-    // 첫 줄에 빈 줄 수.
-    if let Some(l) = w.out.iter_mut().rev().find(|_| true) {
-        let _ = l;
-    }
-    // (첫 줄은 statement() 시작에서 push됐다 — 찾아서 blank 적용.)
-    let start = out.len();
-    let _ = start;
-    // blank은 out에서 이 문장의 첫 줄에 넣는다: 문장 시작 전 길이를 기억하지 못했으니 역순으로 찾는다.
-    apply_blank(out, blank, body);
-}
-
-/// 이 문장의 첫 줄(문장 시작 토큰의 글을 담은 줄)에 빈 줄 수를 넣는다.
-fn apply_blank(out: &mut [Line], blank: usize, body: &[Token]) {
-    if blank == 0 {
-        return;
-    }
-    let first_word = body[0].text.clone();
-    // 역순으로 첫 조각이 첫 단어로 시작하는 줄 중 가장 앞 것을 찾는다(문장은 방금 추가됐다).
-    let mut idx = None;
-    for (n, l) in out.iter().enumerate().rev() {
-        if let Some(Part::Text(t)) = l.parts.first() {
-            if t.get(..first_word.len())
-                .is_some_and(|h| h.eq_ignore_ascii_case(&first_word))
-            {
-                idx = Some(n);
-            }
-        }
-        if l.blank_before > 0 && idx.is_some() {
-            break;
-        }
-    }
-    if let Some(n) = idx {
-        out[n].blank_before = blank;
+    // 빈 줄 수는 이 문장이 만든 첫 줄에(종전에는 첫 단어로 시작하는 줄을 거꾸로 찾아, 앞 문장에 빈 줄이 없으면 그 앞 문장의
+    // 줄에 넣었다 · 10-03).
+    if let Some(l) = out.get_mut(start) {
+        l.blank_before = blank;
     }
 }
 
@@ -873,6 +1228,34 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// 지금 자리(열 목록의 시작)의 SELECT가 `INTO :변수`(바인드 대상)를 갖는가 — 같은 깊이에서 FROM·`;`·닫는 괄호 전까지 본다.
+    fn select_into_vars(&self) -> bool {
+        let mut depth = 0i32;
+        let mut j = self.i;
+        while let Some(t) = self.toks.get(j) {
+            j += 1;
+            if t.is_punct("(") {
+                depth += 1;
+            } else if t.is_punct(")") {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            } else if depth == 0 {
+                if t.is_punct(";") || t.is("FROM") {
+                    return false;
+                }
+                if t.is("INTO") {
+                    return self.toks[j..]
+                        .iter()
+                        .find(|n| !n.is_comment())
+                        .is_some_and(|n| n.kind == Kind::Bind);
+                }
+            }
+        }
+        false
+    }
+
     fn with_clause(&mut self, indent: usize) {
         self.open(indent, Role::Clause);
         let t = self.next().expect("WITH");
@@ -986,7 +1369,9 @@ impl<'a> Walker<'a> {
             }
         }
         // 열 목록.
-        let alias_all = self.opts.column_alias_all;
+        // ★ `SELECT … INTO :변수`(= `EXEC` 본문 · 10-03)에는 별칭을 만들어 붙이지 않는다 — 실행기가 방언별로 `@V = 식` ·
+        //   `식 AS "V"`로 다시 쓰므로 붙인 별칭이 문장을 깨뜨린다(이미 있는 별칭은 그대로).
+        let alias_all = self.opts.column_alias_all && !self.select_into_vars();
         let col_as = self.opts.column_as;
         self.list_items(indent + 1, Role::Item, move |w, ind| {
             w.expr_item(ind, ItemKind::Select { alias_all, col_as });
@@ -2581,6 +2966,30 @@ fn bare_column(toks: &[&Token]) -> Option<String> {
     Some(last.text.clone())
 }
 
+/// `prev`가 단항 `-`/`+`로 끝나는가 — 부호 앞이 비었거나(조각 첫머리 = 앞 조각이 비교 연산자) · `(` `,` · 연산자 글자 · 키워드.
+fn unary_sign_at_end(prev: &str) -> bool {
+    let p = prev.trim_end();
+    if !(p.ends_with('-') || p.ends_with('+')) {
+        return false;
+    }
+    let before = p[..p.len() - 1].trim_end();
+    if before.is_empty() {
+        return true;
+    }
+    let last = before.chars().last().unwrap_or(' ');
+    if matches!(
+        last,
+        '(' | ',' | '=' | '<' | '>' | '+' | '-' | '*' | '/' | '|' | '!' | '^' | '~'
+    ) {
+        return true;
+    }
+    let word = before
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .next()
+        .unwrap_or("");
+    !word.is_empty() && is_keyword(word)
+}
+
 fn need_space(prev: &str, next: &str) -> bool {
     if prev.is_empty() {
         return false;
@@ -2591,6 +3000,14 @@ fn need_space(prev: &str, next: &str) -> bool {
         return false;
     }
     if nc == ')' || nc == ',' || nc == '.' || nc == ';' {
+        return false;
+    }
+    // PostgreSQL 캐스트 `a::text`(10-03 · 종전 `a :: text`).
+    if next.starts_with("::") || prev.ends_with("::") {
+        return false;
+    }
+    // 단항 부호(10-03 · 종전 `- 1`): 조각 첫머리 · `(`·`,`·연산자·키워드 뒤의 `-`/`+`는 다음 토큰에 붙인다(`a - 1`은 그대로).
+    if unary_sign_at_end(prev) {
         return false;
     }
     // 함수 호출 `NAME(`: 앞이 단어/닫는 괄호이고 다음이 `(`면 붙인다(키워드 `IN (` · `VALUES (` · `EXISTS (`는 띄운다).
@@ -3313,5 +3730,164 @@ mod tests {
         // 다시 포맷해도 주석이 두 번 붙지 않는다(원문 주석은 인라인 조각으로 유지 · 같은 글).
         let again = format_basic(&out, &o);
         assert_eq!(again.matches("--\t주문").count(), 1, "{again}");
+    }
+
+    /// `EXEC` + `SELECT … INTO`(사용자 10-03): `EXEC` 한 줄 + 평소대로 포맷한 질의(블록 꼴) — 홀로 선 `EXEC`도 한 줄 꼴도.
+    #[test]
+    fn exec_select_into_formats_as_block() {
+        let o = Options::default();
+        let want = "EXEC\nSELECT\n\ta\n, b\nINTO\n\t:v_a\n, :v_b\nFROM\n\tt\nWHERE\n\tx = 1;\n";
+        let block = format_basic("exec\nselect a, b into :v_a, :v_b from t where x = 1;", &o);
+        assert_eq!(block, want, "{block}");
+        let inline = format_basic("EXEC select a, b into :v_a, :v_b from t where x = 1;", &o);
+        assert_eq!(inline, want, "{inline}");
+        assert_eq!(format_basic(want, &o), want, "idempotent");
+        // 블록의 끝 = 빈 줄 · 다음 명령 줄(`;` 없이) — 뒤 문장을 삼키지 않는다.
+        let out = format_basic(
+            "EXEC\nselect count(*) into :n from t\nPRINT n\n\nselect a from t;",
+            &o,
+        );
+        assert_eq!(
+            out,
+            "EXEC\nSELECT\n\tcount(*)\nINTO\n\t:n\nFROM\n\tt\nPRINT n\n\nSELECT\n\ta\nFROM\n\tt;\n",
+            "{out}"
+        );
+        // 한 줄 꼴 + `;` 없음 + 바로 다음 줄이 SQL = 블록이 그 줄을 삼키지 않게 `;`를 붙인다(다음이 명령 줄·빈 줄이면 안 붙인다).
+        let out = format_basic("EXEC select 1 into :n from dual\nselect :n from dual;", &o);
+        assert!(
+            out.starts_with("EXEC\nSELECT\n\t1\nINTO\n\t:n\nFROM\n\tdual;\nSELECT\n"),
+            "{out}"
+        );
+        let out = format_basic("EXEC select 1 into :n from dual\nPRINT n", &o);
+        assert!(out.contains("\tdual\nPRINT n"), "{out}");
+    }
+
+    /// `SELECT … INTO :변수`에는 "모든 열에 별칭" 옵션이 별칭을 만들지 않는다(실행기 재작성이 깨진다) · 보통 SELECT는 그대로.
+    #[test]
+    fn select_into_vars_gets_no_auto_alias() {
+        let o = Options {
+            column_alias_all: true,
+            column_as: crate::AliasAs::Add,
+            ..Options::default()
+        };
+        let out = format_basic("EXEC\nselect a.x, count(*) into :v1, :v2 from t a", &o);
+        assert!(
+            out.starts_with("EXEC\nSELECT\n\ta.x\n, count(*)\nINTO\n"),
+            "{out}"
+        );
+        let out = format_basic("select a.x from t a", &o);
+        assert!(out.contains("a.x AS x"), "{out}");
+    }
+
+    /// 통과 블록은 **블록 끝**까지만(10-03 · 종전 = 문서 끝까지): `END;` · 단독 `/`·`GO` 줄 · 패키지 명세 `END p;` · PG `$$ … $$;` ·
+    /// `END IF`/`END LOOP`는 짝이 아니다 · `BEGIN;`·`BEGIN TRANSACTION`은 블록이 아니다 — 뒤 문장은 포맷된다.
+    #[test]
+    fn block_passthrough_ends_at_block_end() {
+        let o = Options::default();
+        let src = "BEGIN :v := 1; END;\n/\nselect 1 from t;\nDECLARE\n  x NUMBER;\nBEGIN\n  IF x THEN NULL; END IF;\n  FOR r IN (SELECT 1 FROM DUAL) LOOP NULL; END LOOP;\nEND;\nselect 2 from t;\nCREATE OR REPLACE PACKAGE p IS\n  PROCEDURE a(x IN NUMBER);\nEND p;\n/\nselect 3 from t;\nBEGIN;\nselect 4 from t;\nCREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql;\nselect 5 from t;\nCREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE t SET a = CASE WHEN 1 THEN 2 END; END;\nselect 6 from t;";
+        let out = format_basic(src, &o);
+        for n in 1..=6 {
+            assert!(
+                out.contains(&format!("SELECT\n\t{n}\nFROM\n\tt;")),
+                "select {n} 포맷 안 됨:\n{out}"
+            );
+        }
+        assert!(
+            out.contains("  PROCEDURE a(x IN NUMBER);\nEND p;\n/\n"),
+            "{out}"
+        );
+        assert!(out.contains("END $$ LANGUAGE plpgsql;\n"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent: {out}");
+    }
+
+    /// 단항 부호·캐스트·접두 문자열은 붙여 쓴다(10-03 · 종전 `- 1` · `a :: text` · `N 'x'`).
+    #[test]
+    fn unary_sign_cast_and_prefixed_strings_stay_glued() {
+        let o = Options::default();
+        let out = format_basic(
+            "select -1 a, (-2) b, a - -1 c, b::text d, -a e, case when x then -1 else +1 end f, N'x' g, a-1 h from t where a = -1 and b in (-1, -2) and e = f -1",
+            &o,
+        );
+        for want in [
+            "\t-1 a\n",
+            "(-2) b",
+            "a - -1 c",
+            "b::text d",
+            ", -a e\n",
+            "THEN -1 ELSE +1 END f",
+            "N'x' g",
+            "a - 1 h",
+            "a = -1",
+            "IN (-1, -2)",
+            "e = f - 1",
+        ] {
+            assert!(out.contains(want), "{want:?} 없음:\n{out}");
+        }
+    }
+
+    /// `EXEC` + 프로시저·패키지 호출(사용자 10-03) = 한 줄 — 여러 줄 인자 · 홀로 선 `EXEC` · SQL Server 이름 지정 인자.
+    #[test]
+    fn exec_call_is_one_line() {
+        let o = Options::default();
+        let out = format_basic("exec SP_X(:PC_RET,\n    'A',   'B'\n  , 'C'\n);", &o);
+        assert_eq!(out, "EXEC SP_X(:PC_RET, 'A', 'B', 'C');\n", "{out}");
+        let out = format_basic(
+            "EXEC\nPKG_A.PROC_B(\n    P_NAME => 'DUAL',\n    P_RC   => :rc\n)\n;",
+            &o,
+        );
+        assert_eq!(
+            out, "EXEC PKG_A.PROC_B(P_NAME => 'DUAL', P_RC => :rc);\n",
+            "{out}"
+        );
+        let out = format_basic("EXEC dbo.usp_x\n    @a = 1,\n    @b = N'x';", &o);
+        assert_eq!(out, "EXEC dbo.usp_x @a = 1, @b = N'x';\n", "{out}");
+        // 이미 한 줄 = 간격은 원문 그대로(키워드 대소문자만).
+        let one = "EXEC DBMS_STATS.GATHER_TABLE_STATS(USER, 'T', CASCADE=>TRUE,  NO_INVALIDATE=>FALSE);\n";
+        assert_eq!(format_basic(one, &o), one);
+        assert_eq!(
+            format_basic("execute pkg.p(1)\nPRINT rc", &o),
+            "EXECUTE pkg.p(1)\nPRINT rc\n"
+        );
+        // 한 줄 호출 뒤의 다음 줄은 다른 문장.
+        let out = format_basic("EXEC p(1)\nselect a from t;", &o);
+        assert_eq!(out, "EXEC p(1)\nSELECT\n\ta\nFROM\n\tt;\n", "{out}");
+    }
+
+    /// `EXEC` + 그 밖(대입 · `OPEN … FOR` · 줄 주석이 낀 호출) = 원문 그대로.
+    #[test]
+    fn exec_other_stays_raw() {
+        let o = Options::default();
+        for src in [
+            "EXEC\t:V_PRG_NM\t\t\t:=\t'SP_X';\n",
+            "EXEC :rc := PKG.F('V$', 500)\nPRINT rc\n",
+            "EXEC OPEN :rc FOR SELECT a FROM t WHERE ROWNUM <= 3\n",
+            "EXEC p(1, -- 첫째\n  2);\n",
+            "exec\n",
+        ] {
+            assert_eq!(format_basic(src, &o), src, "{src:?}");
+        }
+    }
+
+    /// 스크립트 명령 줄(`PRINT` · `SET` · `:setvar` · `GO` …)은 그 줄에서 끝난다 — 뒤 문장이 포맷되고 · 명령 줄 사이에 빈 줄을
+    /// 넣지 않고 · 치환 변수 `&v`는 한 토큰.
+    #[test]
+    fn script_command_lines_end_at_line() {
+        let o = Options::default();
+        let out = format_basic(
+            "VARIABLE rc REFCURSOR\nEXEC :a := 1\nPRINT a\nselect a from t;\n:setvar Top 3\nselect top &Top name from t\nGO\n\nselect 1;",
+            &o,
+        );
+        assert_eq!(
+            out,
+            "VARIABLE rc REFCURSOR\nEXEC :a := 1\nPRINT a\nSELECT\n\ta\nFROM\n\tt;\n:setvar Top 3\nSELECT TOP\n\t&Top name\nFROM\n\tt\nGO\n\nSELECT\n\t1;\n",
+            "{out}"
+        );
+        // `CONNECT BY`로 시작하는 줄은 명령이 아니다(계층 질의의 절).
+        let out = format_basic(
+            "EXEC\nselect a into :v from t start with a = 1 connect by prior a = b",
+            &o,
+        );
+        assert!(out.contains("\nCONNECT BY\n\tPRIOR a = b"), "{out}");
+        assert_eq!(format_basic(&out, &o), out, "idempotent: {out}");
     }
 }

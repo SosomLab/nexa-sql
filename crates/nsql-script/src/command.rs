@@ -123,6 +123,7 @@ fn on_off(v: &str) -> bool {
 
 /// 줄의 첫 단어가 스크립트 명령인가 — 문장 분리기가 SQL과 구분할 때 쓴다.
 /// `EXEC`·`SET`·`SHOW`·`DESC` 같은 T-SQL 겹침 단어는 **줄 첫머리에서만** 명령으로 본다.
+/// (단어 목록의 사본이 nsql-format `layout::COMMAND_WORDS`에 있다 — 포맷터가 명령 줄의 끝을 같게 본다 · 여기를 바꾸면 그쪽도.)
 pub fn is_command_start(line: &str) -> bool {
     let l = line.trim_start();
     if l.starts_with('@')
@@ -173,7 +174,13 @@ pub fn is_command_start(line: &str) -> bool {
             | "REMARK"
             | "GO"
             | "WHENEVER"
-    ) && (l.len() == word.len() || !l.as_bytes()[word.len()].is_ascii_alphanumeric())
+    ) && (l.len() == word.len() || !is_ident_byte(l.as_bytes()[word.len()]))
+}
+
+/// 식별자를 잇는 글자인가 — 명령 단어 뒤에 이것이 오면 명령이 아니라 이름이다(`COLUMN_NAME` · `SET_ID` · `DESC$` …).
+/// (종전에는 영숫자만 봐서 `EXEC` 블록 본문의 `COLUMN_NAME` 줄이 `COLUMN` 명령으로 읽혀 본문이 끊겼다 · 10-03)
+fn is_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | b'#')
 }
 
 /// Oracle 계층 질의의 `CONNECT BY …` 조각인가(docs/52 §5) — 문장 첫머리에 오면(선택 실행으로 잘린 조각) 접속 명령으로
