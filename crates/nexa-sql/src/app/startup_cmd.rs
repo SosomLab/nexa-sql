@@ -343,6 +343,41 @@ impl App {
             self.license_install(Path::new(path));
             return;
         }
+        // 순서/표시 편집 창(사용자 10-04 · 자체 시험): 열기 · 선택 · 이동 · 표시 전환 · 기본값 · 덤프.
+        if let Some(key) = id.strip_prefix("order.open:") {
+            self.open_order_editor(key);
+            return;
+        }
+        if let Some(arg) = id.strip_prefix("order.cmd:") {
+            let a = if let Some(n) = arg.strip_prefix("select=") {
+                self.order_win.select(n.parse().unwrap_or(0));
+                crate::order_win::OrderWinAction::None
+            } else {
+                match arg {
+                    "up" => self.order_win.move_sel(false),
+                    "down" => self.order_win.move_sel(true),
+                    "toggle" => {
+                        let i = self.order_win.selected();
+                        self.order_win.toggle(i)
+                    }
+                    "reset" => self.order_win.reset_all(),
+                    _ => crate::order_win::OrderWinAction::None,
+                }
+            };
+            if let crate::order_win::OrderWinAction::Changed { key, value } = a {
+                self.order_changed(key, &value);
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("order.dump:") {
+            let out = format!(
+                "{}setting {}\n",
+                self.order_win.dump(),
+                self.settings.get(crate::statusbar::KEY).unwrap_or("")
+            );
+            let _ = std::fs::write(path, out);
+            return;
+        }
         if let Some(path) = id.strip_prefix("mem.dump:") {
             let smp = self.mem_sample();
             let mut out = format!(

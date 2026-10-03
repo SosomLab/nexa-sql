@@ -114,7 +114,7 @@ impl App {
                 };
                 // 오른쪽 세그먼트(Sublime/DBeaver/Golden 참고 · docs/29 §4): 접속 · Ln,Col · rows · time · 구문(클릭 = Set Syntax)
                 let (ln, col) = self.editors.caret_line_col();
-                let mut segs: Vec<(String, bool)> = Vec::new();
+                let mut segs: Vec<(&'static str, (String, bool))> = Vec::new();
                 // 트랜잭션 모드(자동/수동 · 수동에 미커밋 변경이 있으면 ●).
                 // 트랜잭션 세그먼트(DR-30): Auto / Manual / "Manual ● n pending · since hh:mm" · 클릭 = 팝업.
                 let tx = if self.settings.flag("session.autocommit") {
@@ -136,21 +136,22 @@ impl App {
                 } else {
                     t(Msg::StTxManual).to_string()
                 };
-                let tx_idx = segs.len();
-                segs.push((tx, false));
+                segs.push(("tx", (tx, false)));
                 // 메모리 총량 세그먼트(docs/80 · `mem.statusbar` · 클릭 = 메모리 맵 창) — 조회는 5 s에 한 번, 그릴 때만.
-                let mem_idx = mem_txt.map(|txt| {
-                    segs.push((txt, false));
-                    segs.len() - 1
-                });
+                if let Some(txt) = mem_txt {
+                    segs.push(("mem", (txt, false)));
+                }
                 // (접속 이름 세그먼트는 09-28 사용자 요청으로 뺐다 — 접속은 툴바 플러그 배지·탭 표식·세션 창이 보여 준다.)
                 // 큰 파일 모드 · 읽기 전용 표식(docs/59) — 이 탭에서 일부 기능이 꺼져 있음을 늘 보이게.
                 let (large_level, large_forced) = self.editors.active_large();
                 if large_level > 0 && !large_forced {
-                    segs.push((tf(Msg::StLargeSeg, &[&large_level.to_string()]), false));
+                    segs.push((
+                        "large",
+                        (tf(Msg::StLargeSeg, &[&large_level.to_string()]), false),
+                    ));
                 }
                 if self.editors.active_read_only() {
-                    segs.push((t(Msg::StReadOnlySeg).to_string(), false));
+                    segs.push(("readonly", (t(Msg::StReadOnlySeg).to_string(), false)));
                 }
                 // 북마크 `이 문서/전체`(docs/69 §6-2 · `bookmark.statusbar`).
                 if self.bookmarks.enabled && self.settings.flag("bookmark.statusbar") {
@@ -159,8 +160,11 @@ impl App {
                         .counts_for(&self.editors, self.editors.active());
                     if all > 0 {
                         segs.push((
-                            tf(Msg::StBookmarkSeg, &[&here.to_string(), &all.to_string()]),
-                            false,
+                            "bookmark",
+                            (
+                                tf(Msg::StBookmarkSeg, &[&here.to_string(), &all.to_string()]),
+                                false,
+                            ),
                         ));
                     }
                 }
@@ -172,33 +176,45 @@ impl App {
                         .is_some_and(|(r, c, _)| r * c > 1)
                 {
                     let (r, c, _) = self.grid.selection_summary().unwrap_or((0, 0, 0));
-                    segs.push((tf(Msg::StGridSel, &[&r.to_string(), &c.to_string()]), false));
+                    segs.push((
+                        "pos",
+                        (tf(Msg::StGridSel, &[&r.to_string(), &c.to_string()]), false),
+                    ));
                 } else if nsel > 1 {
                     // 열 모드·다중 커서 = 선택 영역 수(Sublime "5 selection regions").
-                    segs.push((tf(Msg::StSelections, &[&nsel.to_string()]), false));
+                    segs.push(("pos", (tf(Msg::StSelections, &[&nsel.to_string()]), false)));
                 } else if let Some((l, c)) = self.editors.selection_summary() {
                     // 일반 선택 = 줄 수·문자 수(Sublime "6 lines, 90 characters selected").
                     segs.push((
-                        tf(Msg::StSelected, &[&l.to_string(), &c.to_string()]),
-                        false,
+                        "pos",
+                        (
+                            tf(Msg::StSelected, &[&l.to_string(), &c.to_string()]),
+                            false,
+                        ),
                     ));
                 } else {
-                    segs.push((tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false));
+                    segs.push((
+                        "pos",
+                        (tf(Msg::StPos, &[&ln.to_string(), &col.to_string()]), false),
+                    ));
                 }
                 // 필터가 있으면 "n / N행"(T-181) · 아니면 마지막 실행 행 수.
                 if let Some((shown, total)) = self.grid.filter_summary() {
                     segs.push((
-                        tf(
-                            Msg::StRowsFiltered,
-                            &[&shown.to_string(), &total.to_string()],
+                        "rows",
+                        (
+                            tf(
+                                Msg::StRowsFiltered,
+                                &[&shown.to_string(), &total.to_string()],
+                            ),
+                            false,
                         ),
-                        false,
                     ));
                 } else if let Some(n) = self.sess.last_rows {
-                    segs.push((tf(Msg::StRowsShort, &[&n.to_string()]), false));
+                    segs.push(("rows", (tf(Msg::StRowsShort, &[&n.to_string()]), false)));
                 }
                 if let Some(secs) = self.sess.last_secs {
-                    segs.push((format!("{secs:.3}s"), false));
+                    segs.push(("time", (format!("{secs:.3}s"), false)));
                 }
                 // 들여쓰기 세그먼트(Sublime "Tab Size: 4"/"Spaces: 4" · 구문 왼쪽 · 클릭 = 팝업 · 사용자 09-15).
                 let (tsz, ispaces) = self.editors.indent();
@@ -231,15 +247,14 @@ impl App {
                 } else {
                     t(Msg::StAutosaveOff).to_string()
                 };
-                let autosave_idx = autosave_seg.then(|| {
+                if autosave_seg {
                     let txt = if autosave_dirty {
                         format!("*{autosave_base}")
                     } else {
-                        autosave_base.clone()
+                        autosave_base
                     };
-                    segs.push((txt, false));
-                    segs.len() - 1
-                });
+                    segs.push(("autosave", (txt, false)));
+                }
                 // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
                 if self.settings.flag("statusbar.git") {
                     let dir = self
@@ -249,17 +264,24 @@ impl App {
                     self.git.set_dir(dir);
                     self.git.refresh(false);
                     if let Some(info) = self.git.info() {
-                        segs.push((format!("{} ({})", info.branch, info.changed), false));
+                        segs.push((
+                            "git",
+                            (format!("{} ({})", info.branch, info.changed), false),
+                        ));
                     }
                 }
                 // 인코딩 세그먼트(클릭 = 저장 인코딩 / 다시 열기 팝업 · 사용자 09-16).
-                segs.push((enc::short(&self.editors.active_encoding()), true));
+                segs.push(("enc", (enc::short(&self.editors.active_encoding()), true)));
                 // 줄끝 세그먼트(VS Code/Sublime식 · 클릭 = LF/CRLF 팝업 · docs/38 · 사용자 09-16).
-                segs.push((self.editors.active_eol().label().to_string(), true));
-                segs.push((indent_seg, true));
-                segs.push((self.editors.syntax_name(), true));
-                let lic_idx = segs.len();
-                segs.push((Self::license_badge_of(&self.licensing), false));
+                segs.push(("eol", (self.editors.active_eol().label().to_string(), true)));
+                segs.push(("indent", (indent_seg, true)));
+                segs.push(("syntax", (self.editors.syntax_name(), true)));
+                segs.push(("license", (Self::license_badge_of(&self.licensing), false)));
+                // ★ 순서·표시 = 설정 `statusbar.layout`(사용자 10-04 · 빈 값 = 위에서 만든 순서 그대로 · 라이선스 배지는 숨김 잠금).
+                let segs = crate::statusbar::arrange(
+                    self.settings.get(crate::statusbar::KEY).unwrap_or(""),
+                    segs,
+                );
                 let gap = px(12.0, s);
                 let mut xr = wi - px(8.0, s);
                 self.status_syntax_rect = Rect::new(0, 0, 0, 0);
@@ -270,12 +292,10 @@ impl App {
                 self.status_mem_rect = Rect::new(0, 0, 0, 0);
                 self.status_lic_rect = Rect::new(0, 0, 0, 0);
                 self.status_autosave_rect = Rect::new(0, 0, 0, 0);
-                // 오른쪽에서 몇 번째 **클릭 가능(구문 계열)** 항목인가(구문 · 들여쓰기 · 줄끝 · 인코딩) — 배지가 뒤에 와도 맞는다.
-                let mut syn_k = 0usize;
                 let star_w = dc.text_width("*");
-                for (idx, (text, is_syntax)) in segs.iter().enumerate().rev() {
+                for (id, (text, is_syntax)) in segs.iter().rev() {
                     // 자동 저장 항목은 `*` 자리를 늘 확보(글이 없으면 그만큼 오른쪽에 붙여 그린다).
-                    let reserve = if Some(idx) == autosave_idx && !autosave_dirty {
+                    let reserve = if *id == "autosave" && !autosave_dirty {
                         star_w
                     } else {
                         0
@@ -283,27 +303,24 @@ impl App {
                     let tw = dc.text_width(text) + reserve;
                     xr -= tw;
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
-                    if idx == tx_idx {
+                    if *id == "tx" {
                         self.status_tx_rect = r;
                     }
-                    if idx == lic_idx {
+                    if *id == "license" {
                         self.status_lic_rect = r;
                     }
-                    if Some(idx) == autosave_idx {
+                    if *id == "autosave" {
                         self.status_autosave_rect = r;
                     }
-                    if Some(idx) == mem_idx {
+                    if *id == "mem" {
                         self.status_mem_rect = r;
                     }
                     // ★ 클릭되는 항목 전부 = 버튼처럼(사용자 09-28): hover = 선택색 · 누름 = 상태 레이어.
-                    let clickable = *is_syntax
-                        || idx == tx_idx
-                        || idx == lic_idx
-                        || Some(idx) == mem_idx
-                        || Some(idx) == autosave_idx;
+                    let clickable =
+                        *is_syntax || matches!(*id, "tx" | "license" | "mem" | "autosave");
                     if clickable {
-                        let pressed = (Some(idx) == mem_idx && self.mem_pressed)
-                            || (Some(idx) == autosave_idx && self.autosave_pressed);
+                        let pressed = (*id == "mem" && self.mem_pressed)
+                            || (*id == "autosave" && self.autosave_pressed);
                         if pressed {
                             dc.state_layer(r, th.text, nexa_ctl::tokens::State::Pressed);
                         } else if self.pointer.is_some_and(|p| r.contains(p)) {
@@ -318,16 +335,13 @@ impl App {
                         text,
                         if *is_syntax { th.text } else { th.text_dim },
                     );
-                    // 오른쪽 끝부터: 구문 · 들여쓰기 · 줄끝 · 인코딩(클릭 가능한 4개 · 그 앞은 표시만).
-                    if *is_syntax {
-                        match syn_k {
-                            0 => self.status_syntax_rect = r,
-                            1 => self.status_tab_rect = r,
-                            2 => self.status_eol_rect = r,
-                            3 => self.status_enc_rect = r,
-                            _ => {}
-                        }
-                        syn_k += 1;
+                    // 클릭 가능한 구문 계열 4개(구문 · 들여쓰기 · 줄끝 · 인코딩) — 순서가 바뀌어도 id로 맞춘다.
+                    match *id {
+                        "syntax" => self.status_syntax_rect = r,
+                        "indent" => self.status_tab_rect = r,
+                        "eol" => self.status_eol_rect = r,
+                        "enc" => self.status_enc_rect = r,
+                        _ => {}
                     }
                     xr -= gap;
                     dc.fill_rect(

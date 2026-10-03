@@ -157,6 +157,7 @@ impl App {
             self.drop_win.window(),
             self.vars_win.window(),
             self.mem_win.window(),
+            self.order_win.window(),
             self.colors_win.window(),
             self.keys_win.window(),
             self.prefs_win.window(),

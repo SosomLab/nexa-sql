@@ -1096,6 +1096,7 @@ impl App {
                     self.open_colors = true;
                 }
                 PrefsAction::OpenKeys => self.open_keys = true,
+                PrefsAction::OpenOrder(key) => self.open_order_editor(&key),
                 // 기본 포맷터 카드의 "설정" 바로가기 = 그 확장의 설정 분류로(사용자 09-30).
                 PrefsAction::OpenExtSettings(id) => self.ext_open_settings(&id),
                 // 분류 전환 = 미리보기 엔진이 바뀔 수 있다(확장 분류 ↔ Format 분류).
@@ -1432,6 +1433,20 @@ impl App {
             }
             return true;
         }
+        if self.order_win.is(id) {
+            match self.order_win.handle(event) {
+                order_win::OrderWinAction::Paint => {
+                    let ui_px = self.settings.font_px("ui.font_size");
+                    self.order_win.paint(&self.ui_font, &self.theme, ui_px);
+                }
+                order_win::OrderWinAction::Changed { key, value } => {
+                    self.order_changed(key, &value)
+                }
+                order_win::OrderWinAction::Close => self.order_win.close(),
+                order_win::OrderWinAction::None => {}
+            }
+            return true;
+        }
         if self.mem_win.is(id) {
             match self.mem_win.handle(event) {
                 mem_win::MemWinAction::Paint => {
@@ -1686,6 +1701,9 @@ impl App {
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
         }
+        if std::mem::take(&mut self.open_order) {
+            self.open_order_window(el);
+        }
         if std::mem::take(&mut self.open_colors) {
             // ★ 설정 창에서 열면 **설정 창을 소유자**로(그 위에 뜬다 · 메인 소유면 설정 창 뒤로 숨어 "안 열린 것처럼" 보이던 결함 · 사용자 09-15).
             let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
@@ -1800,6 +1818,9 @@ impl App {
         }
         if std::mem::take(&mut self.open_mem) {
             self.open_mem_window(el);
+        }
+        if std::mem::take(&mut self.open_order) {
+            self.open_order_window(el);
         }
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);

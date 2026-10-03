@@ -181,6 +181,7 @@ impl App {
         self.license_win.close();
         self.about_win.close();
         self.mem_win.close();
+        self.order_win.close();
         self.vars_win.close();
         self.colors_win.close();
         self.keys_win.close();

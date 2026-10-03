@@ -500,6 +500,16 @@ impl App {
                     self.apply_tool_layout_setting();
                 }
             }
+            // 상태바 항목 순서·표시 = 다음 그리기부터(그릴 때 설정을 읽는다) · 편집 창이 열려 있으면 내용도 맞춘다.
+            "statusbar.layout" => {
+                if self.order_win.is_open() {
+                    if let Some(spec) = Self::order_spec_for(key) {
+                        let v = self.settings.get(key).unwrap_or("").to_string();
+                        self.order_win.set(spec, &v);
+                    }
+                }
+                self.redraw();
+            }
             "statusbar.git" | "statusbar.git_secs" => {
                 self.git
                     .set_interval(self.settings.int("statusbar.git_secs").max(2) as u64);
@@ -993,6 +1003,59 @@ impl App {
         };
         self.sess.status = tf(Msg::StLangChanged, &[&shown]);
         self.redraw();
+    }
+
+    /// 설정 키 → 순서/표시 편집 창 어댑터(지금 = 상태바 항목 하나).
+    pub(crate) fn order_spec_for(key: &str) -> Option<crate::order_win::OrderSpec> {
+        (key == crate::statusbar::KEY).then_some(crate::order_win::OrderSpec {
+            key: crate::statusbar::KEY,
+            title: Msg::WinStatusLayout,
+            items: crate::statusbar::items,
+            to_setting: crate::statusbar::to_setting,
+            label: crate::statusbar::label,
+            locked: crate::statusbar::LOCKED,
+        })
+    }
+
+    /// 순서/표시 편집 창 열기 요청(설정 창 [편집…] · 기동 명령 `order.open:<키>`) — 모르는 키 = 무시. 실제 열기는 이벤트 루프에서.
+    pub(crate) fn open_order_editor(&mut self, key: &str) {
+        let Some(spec) = Self::order_spec_for(key) else {
+            return;
+        };
+        let v = self.settings.get(key).unwrap_or("").to_string();
+        self.order_win.set(spec, &v);
+        self.open_order = true;
+    }
+
+    /// 편집 창 열기 — 설정 창이 열려 있으면 그 위에(소유자 = 설정 창 · 메인 소유면 설정 창 뒤로 숨는다).
+    pub(crate) fn open_order_window(&mut self, el: &winit::event_loop::ActiveEventLoop) {
+        let owner = self.prefs_win.window().or(self.window.as_deref());
+        let near = owner.and_then(|w| {
+            w.outer_position()
+                .ok()
+                .map(|p| (p.x, p.y, w.outer_size().width))
+        });
+        self.order_win.open(
+            el,
+            crate::theme::window_theme(self.settings.theme_mode()),
+            near,
+            owner,
+        );
+    }
+
+    /// 편집 창의 변경 통지 — 저장 → 즉시 반영(빈 값 = 기본 = 줄을 지운다) · 설정 창 카드도 새 값으로.
+    pub(crate) fn order_changed(&mut self, key: &str, value: &str) {
+        let r = if value.is_empty() {
+            self.settings.reset(key).map(|_| ())
+        } else {
+            self.settings.set(key, value).map(|_| ())
+        };
+        if r.is_ok() {
+            self.persist_settings();
+            self.redraw();
+            self.prefs_win.refresh(&self.settings);
+            self.prefs_win.redraw();
+        }
     }
 
     pub(crate) fn persist_settings(&mut self) {

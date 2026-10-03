@@ -41,6 +41,8 @@ pub(crate) enum PrefsAction {
     /// 색 창 열기(어느 색 키를 고르는가).
     OpenColors(String),
     OpenKeys,
+    /// 순서/표시 편집 창 열기(어느 설정 키인가 · 사용자 10-04).
+    OpenOrder(String),
     /// `format.default` 카드의 "설정" 바로가기 — 그 확장(id)의 설정 분류로(사용자 09-30).
     OpenExtSettings(String),
     /// 트리에서 분류를 바꿨다 — 호스트가 미리보기 엔진(확장 분류 = 그 확장)을 다시 정한다(사용자 09-29).
@@ -194,6 +196,11 @@ fn is_default_formatter_key(k: &str) -> bool {
 }
 
 /// 값이 **폴더 경로**인 설정 — 입력란 옆에 "찾아보기…"(폴더 전용 대화상자 · 파일은 보이지 않는다)를 둔다.
+/// 별도 편집 창으로 고치는 순서/표시 값(사용자 10-04 · 상태바 항목) — 카드에 [편집…] 버튼.
+fn is_order_key(k: &str) -> bool {
+    k == crate::statusbar::KEY
+}
+
 fn is_folder_key(k: &str) -> bool {
     matches!(k, "oracle.client_dir" | "oracle.tns_admin")
 }
@@ -603,6 +610,8 @@ impl PrefsWin {
                     Some(Button::new(t(Msg::BtnCapture)))
                 } else if is_folder_key(sn.entry.key) {
                     Some(Button::new(t(Msg::BtnBrowseFolder)))
+                } else if is_order_key(sn.entry.key) {
+                    Some(Button::new(t(Msg::BtnEditOrder)))
                 } else if is_default_formatter_key(sn.entry.key) && sn.value != "basic" {
                     // 기본 포맷터가 확장이면 그 확장의 설정으로 가는 바로가기(사용자 09-30 · "확장 설정").
                     Some(Button::new(t(Msg::BtnExtSettings)))
@@ -1657,6 +1666,8 @@ impl PrefsWin {
                         PrefsAction::OpenColors(key)
                     } else if is_default_formatter_key(&key) {
                         PrefsAction::OpenExtSettings(c.value.clone())
+                    } else if is_order_key(&key) {
+                        PrefsAction::OpenOrder(key)
                     } else if is_folder_key(&key) {
                         // 잠긴 카드(자동 탐지 방식)는 찾아보기도 막는다 — 값이 바뀌어도 쓰이지 않는다.
                         if c.locked {

@@ -3471,6 +3471,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ 상태바 오른쪽 항목의 순서·표시(사용자 10-04 · nexa-ctl `order` 문법 `tx:1|mem:0|…` · 빈 값 = 기본 · 편집 = 설정 창 [편집…] → 조정 창).
+    Entry {
+        key: "statusbar.layout",
+        cat: Msg::CatWindow,
+        label: Msg::LblStatusLayout,
+        desc: Msg::DescStatusLayout,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "statusbar.git_secs",
         cat: Msg::CatWindow,

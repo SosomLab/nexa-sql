@@ -74,6 +74,7 @@ mod memstat;
 mod memtrim;
 mod metacache;
 mod objdetail;
+mod order_win;
 mod outline_panel;
 mod palette;
 mod parwalk;
@@ -90,6 +91,7 @@ mod search_panel;
 mod sessions;
 mod sessions_win;
 mod sqlprev_win;
+mod statusbar;
 mod syntax;
 mod theme;
 mod toast;
@@ -320,6 +322,9 @@ struct App {
     toggle_log: bool,
     /// 색 설정 창 열기 요청(메뉴/팔레트 → 다음 이벤트 루프 턴에 `el`로 연다).
     open_colors: bool,
+    /// 순서/표시 편집 창 열기 요청(설정 창 [편집…] · 기동 명령 `order.open:<키>`).
+    open_order: bool,
+    order_win: order_win::OrderWin,
     colors_win: ColorsWin,
     /// ★ 단축키 표(사용자 09-15 · Sublime 기본 + `key.*` 설정) · 캡처 창.
     keymap: Keymap,
@@ -1607,6 +1612,8 @@ fn main() {
         bm_gutter: None,
         toggle_log: false,
         open_colors: false,
+        open_order: false,
+        order_win: order_win::OrderWin::new(),
         colors_win,
         keymap,
         pending_chord: None,
