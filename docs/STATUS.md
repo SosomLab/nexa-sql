@@ -6,7 +6,7 @@
 
 ## 2026-10-04 (🚀 v0.1.4 · **mac**) — 릴리스([journal 10-04 §20](journal/2026-10-04.md))
 
-- 버전 0.1.3 → 0.1.4(`Cargo.toml` 하나 + lock) · 태그 `v0.1.4` → `release.yml` → 공개 → `homebrew.yml` · winget·choco 없음 · 담긴 것 = 109~111차 전부 · 점검 메모 = 형제 저장소 ref 미고정 · 설치본 THIRD-PARTY-NOTICES에 DBMS 아이콘 고지 없음(T-277).
+- 버전 0.1.3 → 0.1.4(`Cargo.toml` 하나 + lock) · 태그 `v0.1.4` → `release.yml` → 공개 → `homebrew.yml` · winget·choco 없음 · 담긴 것 = 109~111차 전부 · 점검 메모 = 형제 저장소 ref 미고정 · 설치본 THIRD-PARTY-NOTICES에 DBMS 아이콘 고지 없음(T-277) · 결과 1차 = ebb7120 · ci/integration ✓ · release.yml 진행 · 릴리스 전 전수 시험 = 사용자 지시로 중지·생략 → 규칙 = 긴 작업 백그라운드 + 완료 알림 · 대기 루프 금지(102 §5-3).
 
 ## 2026-10-04 (111차 · **mac**) — 최신화·분석 · ★ 협업 세션 운영 기준 · 🔧 상세 패널 스플리터 hover([journal 10-04](journal/2026-10-04.md))
 
