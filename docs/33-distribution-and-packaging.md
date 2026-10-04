@@ -70,7 +70,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | package ✅ | MSI(WiX v4 `nexa-sql.wxs` · UpgradeCode 고정 · PathEnv/SqlAssoc Feature) · pkg(pkgbuild+productbuild · postinstall 링크 = DR-32)+dmg · deb(dpkg-deb)/rpm(spec · 같은 스테이징) | 맥 실기 pkg/dmg · MSI/deb/rpm은 CI |
 | sign 📐 | 자리만 — `MACOS_SIGN_IDENTITY`/`MACOS_INSTALLER_IDENTITY`/`MACOS_NOTARY_PROFILE` · `WINDOWS_SIGN_PFX(_PASSWORD)`/`WINDOWS_SIGN_THUMBPRINT` 없으면 unsigned | DR-20 |
 | verify ✅(CI) | release.yml 스모크 = 실제 설치 → `nsql --version`·`nexa-sql --smoke` → 제거(uninstall.sh / msiexec /x / dpkg -r) → 잔여 0 · rpm은 목록만 | — |
-| publish ✅ 초안(v0.1.0 첫 공개 09-28 · v0.1.2 09-30 · v0.1.3 10-02 — 공개 = `gh release edit <태그> --draft=false --latest`) | `sha256sums.txt` + GitHub Release **초안**(`gh release create --draft`) → 확인 뒤 공개 | [22 §4](22-driver-extensions.md) |
+| publish ✅ 초안(v0.1.0 첫 공개 09-28 · v0.1.2 09-30 · v0.1.3 10-02 · v0.1.4 10-04 — 공개 = `gh release edit <태그> --draft=false --latest`) | `sha256sums.txt` + GitHub Release **초안**(`gh release create --draft`) → 확인 뒤 공개 | [22 §4](22-driver-extensions.md) |
 | homebrew ✅(09-28) | 릴리스 **공개**(published) 때 `homebrew.yml`: dmg 해시로 Cask(`packaging/homebrew/nexa-sql.rb`) 채움 → `kiros33/homebrew-tap` 반영(`TAP_TOKEN`) → macOS 러너에서 `brew install --cask` → `nsql --version`·`--smoke` → 제거 · 사전 릴리스(`-`)는 건너뜀 | 사용자 09-28 "brew만" — **winget·choco 채널은 두지 않는다**(다른 저장소의 오류·조치 기록 = §5) |
 
 ---

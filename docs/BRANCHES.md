@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| release/0.1.4 | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 🚀 버전 0.1.3 → 0.1.4 · 태그 `v0.1.4` → release.yml → 공개 → homebrew.yml · winget·choco 없음 · journal 10-04 §20 |
+| work/2026-10-04-statusbar-menu | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 상태바 우클릭 메뉴(칸 메뉴 · 숨기기 · 공통) + 메뉴 배치(`open_beside` = 상태바 띠 위 · 툴바 띠 아래) · 기동 명령 `statusbar.menu` · `toolbar.pick` · journal 10-04 §19 |
 | work/2026-10-04-toolbar-menu | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 툴바 우클릭 재구성(영역 메뉴 · 구분선 · 공통 메뉴) + 툴바 설정 편집(가상 키 `toolbar.order` · 그룹 잠금 · 버튼 순서 고정) + 흠 3 수정(reset 줄 · 덤프 setting · 라벨 단축키) · 협업 운영 검증 단계 V0~V3 · V3 시점 · journal 10-04 §16~18 |
 | work/2026-10-04-statusbar-groups | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 상태바 편집 = 그룹 단위(문서 상태 · 실행 결과 · 프로젝트 · 파일 형식 · 그룹 통째 이동/숨김 · 자식 = 그룹 안) · 기본 메모리 = 라이선스 왼쪽 · 기동 명령 select=N = 화면 행 · journal 10-04 §15 |
 | work/2026-10-04-statusbar-layout | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 상태바 항목 순서·표시 편집(`statusbar.layout` · 편집 창 `order_win.rs` · `statusbar.rs` · 상태줄 칸 id 식별 · 맥 ⌘ 안내) · nexa-ui 139차 `order` · 기동 명령 3 · journal 10-04 §13~14 |
