@@ -33,6 +33,16 @@ pub(crate) struct OrderSpec {
     pub label: fn(&str, Option<&str>) -> Msg,
     /// 체크를 끌 수 없는 블록.
     pub locked: &'static [&'static str],
+    /// 자식의 순서를 바꿀 수 있는가(툴바 = 그룹 안 버튼 순서는 고정 → `false`).
+    pub child_move: bool,
+}
+
+/// 툴팁 문구를 라벨로 쓸 때 끝의 단축키 괄호(`Run statement (Ctrl+Enter)`)를 뗀다 — 이름만 남긴다(단축키 표기는 OS마다 다르다).
+pub(crate) fn without_shortcut(label: &str) -> &str {
+    match label.rfind(" (") {
+        Some(i) if label.ends_with(')') => &label[..i],
+        _ => label,
+    }
 }
 
 /// 화면 행 — (블록 index, 자식 index · `None` = 그룹/단일 블록 행).
@@ -270,6 +280,7 @@ impl OrderWin {
                 }
                 self.select_block(tb);
             }
+            Some(_) if !self.spec.is_some_and(|sp| sp.child_move) => return false,
             Some(c) => {
                 // 다른 그룹 위 = 자기 그룹의 가까운 끝으로.
                 let n = self.blocks[bi].2.len();
@@ -313,6 +324,7 @@ impl OrderWin {
                 }
                 ok
             }),
+            Some(_) if !self.spec.is_some_and(|sp| sp.child_move) => false,
             Some(c) => step(c).is_some_and(|to| {
                 let ok = move_item(&mut self.blocks[bi].2, c, to);
                 if ok {
@@ -326,6 +338,11 @@ impl OrderWin {
         } else {
             OrderWinAction::None
         }
+    }
+
+    /// 지금 편집 중인 키(없으면 `None`).
+    pub(crate) fn key(&self) -> Option<&'static str> {
+        self.spec.map(|sp| sp.key)
     }
 
     pub(crate) fn selected(&self) -> usize {
@@ -580,7 +597,7 @@ impl OrderWin {
                 let cb = Rect::new(r.x + pad + indent, r.y + (row_h - check) / 2, check, check);
                 nexa_ctl::controls::draw_checkbox_glyph(&mut dc, th, cb, vis, !fixed);
                 let label = match self.spec {
-                    Some(sp) => t((sp.label)(&block.0, item)),
+                    Some(sp) => without_shortcut(t((sp.label)(&block.0, item))),
                     None => item.unwrap_or(block.0.as_str()),
                 };
                 // 그룹 행(자식이 있는 블록) = 굵게.
@@ -632,6 +649,7 @@ mod tests {
             to_setting: crate::statusbar::to_setting,
             label: crate::statusbar::label,
             locked: crate::statusbar::LOCKED,
+            child_move: true,
         }
     }
 
@@ -652,6 +670,20 @@ mod tests {
                     .ends_with(&format!("] {id}"))
             })
             .expect("row")
+    }
+
+    #[test]
+    fn without_shortcut_strips_only_trailing_parens() {
+        assert_eq!(
+            without_shortcut("Run statement (Ctrl+Enter)"),
+            "Run statement"
+        );
+        assert_eq!(without_shortcut("Save as"), "Save as");
+        assert_eq!(
+            without_shortcut("Position / selection"),
+            "Position / selection"
+        );
+        assert_eq!(without_shortcut("a (b) c"), "a (b) c");
     }
 
     #[test]

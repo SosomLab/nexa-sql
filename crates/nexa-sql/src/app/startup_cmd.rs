@@ -343,6 +343,19 @@ impl App {
             self.license_install(Path::new(path));
             return;
         }
+        // 툴바 우클릭 메뉴(사용자 10-04 · 자체 시험): `toolbar.menu:<버튼 id>` = 그 버튼 가운데에서 메뉴 열기 ·
+        //   `toolbar.menudump:<경로>` = 열린 메뉴의 항목 id(구분선 = 빈 줄).
+        if let Some(item) = id.strip_prefix("toolbar.menu:") {
+            if let Some(r) = self.tool_dock.item_rect(item) {
+                self.open_toolbar_menu(r.x + r.w / 2, r.y + r.h / 2);
+                self.redraw();
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("toolbar.menudump:") {
+            let _ = std::fs::write(path, self.status_menu.item_ids().join("\n") + "\n");
+            return;
+        }
         // 순서/표시 편집 창(사용자 10-04 · 자체 시험): 열기 · 선택 · 이동 · 표시 전환 · 기본값 · 덤프.
         if let Some(key) = id.strip_prefix("order.open:") {
             self.open_order_editor(key);
@@ -370,11 +383,13 @@ impl App {
             return;
         }
         if let Some(path) = id.strip_prefix("order.dump:") {
-            let out = format!(
-                "{}setting {}\n",
-                self.order_win.dump(),
-                self.settings.get(crate::statusbar::KEY).unwrap_or("")
-            );
+            // `setting` 줄 = 지금 편집 중인 키의 값(툴바는 가상 키라 지금 상태에서 만든다).
+            let cur = match self.order_win.key() {
+                Some(k) if k == super::toolbar::TOOLBAR_ORDER_KEY => self.toolbar_order_value(),
+                Some(k) => self.settings.get(k).unwrap_or("").to_string(),
+                None => String::new(),
+            };
+            let out = format!("{}setting {cur}\n", self.order_win.dump());
             let _ = std::fs::write(path, out);
             return;
         }

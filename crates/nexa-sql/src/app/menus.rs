@@ -254,6 +254,16 @@ impl App {
             self.reset_toolbar();
             return;
         }
+        // 툴바 우클릭 공통 메뉴 "툴바 설정…" = 보기·순서 편집 창으로 바로(사용자 10-04).
+        if id == "tb.settings" {
+            self.open_order_editor(super::toolbar::TOOLBAR_ORDER_KEY);
+            return;
+        }
+        // 툴바 우클릭의 영역 메뉴 = 일반 명령.
+        if let Some(cmd) = id.strip_prefix("tbcmd:") {
+            self.menu_action(cmd);
+            return;
+        }
         if let Some(tid) = id.strip_prefix("tb:") {
             let mut hidden = self.hidden_toolbar_ids();
             if let Some(i) = hidden.iter().position(|h| h == tid) {

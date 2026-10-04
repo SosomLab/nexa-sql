@@ -5,28 +5,33 @@
 use crate::*;
 
 impl App {
-    /// 툴바 우클릭 = 그룹 띄우기/붙이기 · 버튼 표시 여부 토글(설정 `toolbar.hidden`) · 배치 초기화(사용자 09-16 · 09-17).
-    pub(crate) fn open_toolbar_menu(&mut self, x: i32, y: i32) {
-        use nexa_ctl::controls::ctxmenu::CtxItem;
-        let hidden = self.hidden_toolbar_ids();
-        let mut items: Vec<CtxItem> = self
-            .tool_dock
+    /// 커서 아래의 툴바 그룹(도크에 붙은 것) — 우클릭 메뉴의 "영역".
+    fn toolbar_group_at(&self, p: Point) -> Option<String> {
+        self.tool_dock
             .groups()
             .into_iter()
-            .map(|(id, title, floating)| {
-                let verb = t(if floating {
-                    Msg::MnDockGroup
-                } else {
-                    Msg::MnFloatGroup
-                });
-                CtxItem::item(format!("tbg:{id}"), format!("{title} — {verb}"))
-                    .with_checked(floating)
+            .filter(|(_, _, floating)| !floating)
+            .map(|(id, _, _)| id)
+            .find(|id| {
+                self.tool_dock
+                    .bar(id)
+                    .is_some_and(|b| b.bounds().contains(p))
             })
-            .collect();
-        items.extend(TOOLBAR_ITEMS.iter().map(|(id, m)| {
-            CtxItem::item(format!("tb:{id}"), t(*m)).with_checked(!hidden.contains(&id.to_string()))
-        }));
-        items.push(CtxItem::item("tb.reset", t(Msg::MnResetToolbar)));
+    }
+
+    /// 커서 아래의 툴바 버튼(숨길 수 있는 것만 · `TOOLBAR_ITEMS`).
+    fn toolbar_item_at(&self, p: Point) -> Option<&'static str> {
+        TOOLBAR_ITEMS
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| self.tool_dock.item_rect(id).is_some_and(|r| r.contains(p)))
+    }
+
+    /// ★ 툴바 우클릭(사용자 10-04): **영역(커서 아래 그룹)의 추가 메뉴 → 구분선 → 공통 메뉴**.
+    ///   영역 = 그 그룹과 관련된 명령(버튼에 없는 것) + 누른 버튼 숨기기 + 그룹 띄우기/붙이기 ·
+    ///   공통 = 툴바 설정…(보기·순서 편집 창으로 바로) · 툴바 배치 초기화. 버튼별 표시 목록은 편집 창으로 옮겼다.
+    pub(crate) fn open_toolbar_menu(&mut self, x: i32, y: i32) {
+        let items = self.toolbar_menu_items(Point { x, y });
         let host = self
             .window
             .as_ref()
@@ -38,6 +43,105 @@ impl App {
         self.status_menu.set_scale(self.scale);
         self.status_menu
             .open_at(x, y, items, host, px(220.0, self.scale));
+    }
+
+    /// 우클릭 메뉴 항목(순수에 가깝게 — 위치만 받는다 · 시험·덤프용으로 분리).
+    pub(crate) fn toolbar_menu_items(&self, p: Point) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let mut items: Vec<CtxItem> = Vec::new();
+        if let Some(gid) = self.toolbar_group_at(p) {
+            for (cmd, m) in toolbar_area_commands(&gid) {
+                items.push(CtxItem::item(format!("tbcmd:{cmd}"), t(*m)));
+            }
+            // 누른 버튼의 표시 여부(체크 = 보임 · 끄면 숨김 — 다시 켜기는 툴바 설정에서).
+            if let Some(id) = self.toolbar_item_at(p) {
+                let label = TOOLBAR_ITEMS
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .map_or(id, |(_, m)| crate::order_win::without_shortcut(t(*m)));
+                items.push(CtxItem::item(format!("tb:{id}"), label).with_checked(true));
+            }
+            let floating = self.tool_dock.is_floating(&gid);
+            let title = self.tool_dock.title(&gid).unwrap_or(&gid).to_string();
+            let verb = t(if floating {
+                Msg::MnDockGroup
+            } else {
+                Msg::MnFloatGroup
+            });
+            items.push(CtxItem::item(
+                format!("tbg:{gid}"),
+                format!("{title} — {verb}"),
+            ));
+            items.push(CtxItem::Separator);
+        }
+        items.push(CtxItem::item("tb.settings", t(Msg::MnToolbarSettings)));
+        items.push(CtxItem::item("tb.reset", t(Msg::MnResetToolbar)));
+        items
+    }
+
+    /// 지금 툴바 상태(도크 순서 + 숨긴 버튼) → 편집 창이 읽는 값(`order` 문법).
+    pub(crate) fn toolbar_order_value(&self) -> String {
+        let hidden = self.hidden_toolbar_ids();
+        let order = self.tool_dock.layout().order;
+        let blocks: Vec<nexa_ctl::order::OrderBlock> = order
+            .iter()
+            .filter_map(|gid| {
+                let (_, items) = TOOLBAR_BLOCKS.iter().find(|(b, _)| b == gid)?;
+                Some((
+                    gid.clone(),
+                    true,
+                    items
+                        .iter()
+                        .map(|i| (i.to_string(), !hidden.contains(&i.to_string())))
+                        .collect(),
+                ))
+            })
+            .collect();
+        nexa_ctl::order::serialize(&blocks)
+    }
+
+    /// 편집 창의 값 → 툴바에 적용: 그룹 순서 = 도크 순서(행·플로팅은 그대로) · 자식 체크 = `toolbar.hidden`. 저장까지.
+    pub(crate) fn apply_toolbar_order(&mut self, value: &str) {
+        let blocks = toolbar_order_blocks(value);
+        let hidden: Vec<&str> = blocks
+            .iter()
+            .flat_map(|(_, _, items)| items.iter())
+            .filter(|(_, vis)| !*vis)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        if hidden.is_empty() {
+            let _ = self.settings.reset("toolbar.hidden");
+        } else {
+            let _ = self.settings.set("toolbar.hidden", &hidden.join(","));
+        }
+        // 순서만 바꾼다 — 그룹마다 지금의 행과 플로팅 좌표는 지킨다.
+        let old = self.tool_dock.layout();
+        let row_of = |id: &str| {
+            old.order
+                .iter()
+                .position(|o| o == id)
+                .and_then(|i| old.rows.get(i).copied())
+                .unwrap_or(0)
+        };
+        let order: Vec<String> = blocks.iter().map(|(id, _, _)| id.clone()).collect();
+        let rows = order.iter().map(|id| row_of(id)).collect();
+        self.tool_dock.apply_layout(&DockLayout {
+            order,
+            rows,
+            floating: old.floating,
+        });
+        let _ = self.tool_dock.take_actions();
+        self.apply_toolbar_visibility();
+        // 기본 배치(정의 순 · 한 행 · 플로팅 없음)면 줄을 남기지 않는다(상태바 편집과 같은 규칙 — 기본값 = 빈 값).
+        if self.tool_dock.layout().serialize() == TOOLBAR_GROUP_IDS.join(",") {
+            let _ = self.settings.reset("toolbar.layout");
+            self.tool_layout_dirty = false;
+        } else {
+            self.save_tool_layout();
+        }
+        self.persist_settings();
+        self.layout();
+        self.redraw();
     }
 
     pub(crate) fn hidden_toolbar_ids(&self) -> Vec<String> {
@@ -316,5 +420,145 @@ impl App {
         let mut dock = ToolDock::new(vec![file, run, conn, tabconn, view]);
         dock.set_icon_size(18);
         dock
+    }
+}
+
+/// 툴바 편집 창의 가상 키(설정 키가 아니다 — `toolbar.layout`(그룹 순서) + `toolbar.hidden`(버튼 표시)을 한 값으로 묶어 오간다).
+pub(crate) const TOOLBAR_ORDER_KEY: &str = "toolbar.order";
+
+/// 툴바 그룹과 그 안의 숨길 수 있는 버튼(정의 순 = `build_tool_dock`의 순서 · 글자 항목만 있는 그룹은 자식 없음).
+pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
+    (
+        "file",
+        &["file.new", "file.open", "file.save", "file.save_as"],
+    ),
+    (
+        "run",
+        &[
+            "run.statement",
+            "run.all",
+            "run.stop",
+            "run.commit",
+            "run.rollback",
+            "tx.log",
+        ],
+    ),
+    ("conn", &["conn.toggle", "conn.disconnect", "conn.sessions"]),
+    ("tabconn", &[]),
+    ("view", &["view.log"]),
+];
+
+/// 그룹은 숨기지 않는다(버튼 단위로만) — 편집 창에서 그룹 체크 잠금.
+pub(crate) const TOOLBAR_GROUP_IDS: &[&str] = &["file", "run", "conn", "tabconn", "view"];
+
+pub(crate) fn toolbar_order_blocks(value: &str) -> Vec<nexa_ctl::order::OrderBlock> {
+    nexa_ctl::order::parse(TOOLBAR_BLOCKS, &[], value)
+        .into_iter()
+        .map(|(id, _, items)| (id, true, items))
+        .collect()
+}
+
+pub(crate) fn toolbar_order_setting(blocks: &[nexa_ctl::order::OrderBlock]) -> String {
+    nexa_ctl::order::normalize(TOOLBAR_BLOCKS, &[], &nexa_ctl::order::serialize(blocks))
+}
+
+pub(crate) fn toolbar_order_label(block: &str, item: Option<&str>) -> Msg {
+    match item {
+        Some(i) => TOOLBAR_ITEMS
+            .iter()
+            .find(|(id, _)| *id == i)
+            .map_or(Msg::MnView, |(_, m)| *m),
+        None => match block {
+            "file" => Msg::MnFile,
+            "run" => Msg::MnRun,
+            "conn" => Msg::TbGroupConn,
+            "tabconn" => Msg::TbGroupTabConn,
+            _ => Msg::MnView,
+        },
+    }
+}
+
+/// 영역(그룹)별 추가 메뉴 — 그 영역과 관련 있지만 버튼에는 없는 명령(명령 id · 라벨).
+pub(crate) fn toolbar_area_commands(gid: &str) -> &'static [(&'static str, Msg)] {
+    match gid {
+        "file" => &[
+            ("file.run_file", Msg::MnRunFile),
+            ("file.close_tab", Msg::MnCloseTab),
+        ],
+        "run" => &[
+            ("run.statement_new_tab", Msg::MnRunStatementNewTab),
+            ("run.explain", Msg::MnExplain),
+        ],
+        "conn" | "tabconn" => &[
+            ("session.info", Msg::MnSessInfo),
+            ("view.variables", Msg::MnVariables),
+        ],
+        "view" => &[
+            ("view.txlog", Msg::MnTxLogWindow),
+            ("view.sessions", Msg::MnSessManager),
+            ("view.memory", Msg::MnMemoryWindow),
+        ],
+        _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 편집 창 정의 = 실제 툴바와 같아야 한다: 숨길 수 있는 버튼 전부가 정확히 한 그룹에 · 그룹 id = 잠금 목록.
+    #[test]
+    fn toolbar_blocks_cover_every_hideable_item_once() {
+        let in_blocks: Vec<&str> = TOOLBAR_BLOCKS
+            .iter()
+            .flat_map(|(_, items)| items.iter().copied())
+            .collect();
+        for (id, _) in TOOLBAR_ITEMS {
+            assert_eq!(in_blocks.iter().filter(|i| *i == id).count(), 1, "{id}");
+        }
+        assert_eq!(in_blocks.len(), TOOLBAR_ITEMS.len());
+        let groups: Vec<&str> = TOOLBAR_BLOCKS.iter().map(|(b, _)| *b).collect();
+        assert_eq!(groups, TOOLBAR_GROUP_IDS);
+        // 실제 도크의 그룹 순서·소속과 같다.
+        let dock = App::build_tool_dock();
+        let dock_groups: Vec<String> = dock.groups().into_iter().map(|(id, _, _)| id).collect();
+        assert_eq!(dock_groups, groups);
+        for (b, items) in TOOLBAR_BLOCKS {
+            for i in *items {
+                assert_eq!(dock.group_of(i), Some(*b), "{i}");
+                assert_ne!(
+                    toolbar_order_label(b, Some(i)),
+                    Msg::MnView,
+                    "{i}: 라벨 없음"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn toolbar_order_value_round_trip_and_groups_never_hidden() {
+        assert_eq!(
+            toolbar_order_setting(&toolbar_order_blocks("")),
+            "",
+            "기본 = 빈 값"
+        );
+        // 그룹 순서 바꿈 + 버튼 하나 숨김 + 그룹 숨김 시도(무시).
+        let v = "view:0[view.log:1]|file:1[file.new:1,file.open:0,file.save:1,file.save_as:1]";
+        let b = toolbar_order_blocks(v);
+        assert_eq!(b[0].0, "view");
+        assert!(b.iter().all(|(_, vis, _)| *vis), "그룹은 늘 표시");
+        let hidden: Vec<&str> = b
+            .iter()
+            .flat_map(|(_, _, it)| it.iter())
+            .filter(|(_, v)| !*v)
+            .map(|(i, _)| i.as_str())
+            .collect();
+        assert_eq!(hidden, ["file.open"]);
+        let s = toolbar_order_setting(&b);
+        assert_eq!(toolbar_order_setting(&toolbar_order_blocks(&s)), s);
+        // 영역 메뉴: 아는 그룹마다 하나 이상.
+        for g in TOOLBAR_GROUP_IDS {
+            assert!(!toolbar_area_commands(g).is_empty(), "{g}");
+        }
     }
 }

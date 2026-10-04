@@ -1007,6 +1007,17 @@ impl App {
 
     /// 설정 키 → 순서/표시 편집 창 어댑터(지금 = 상태바 항목 하나).
     pub(crate) fn order_spec_for(key: &str) -> Option<crate::order_win::OrderSpec> {
+        if key == super::toolbar::TOOLBAR_ORDER_KEY {
+            return Some(crate::order_win::OrderSpec {
+                key: super::toolbar::TOOLBAR_ORDER_KEY,
+                title: Msg::WinToolbarOrder,
+                blocks: super::toolbar::toolbar_order_blocks,
+                to_setting: super::toolbar::toolbar_order_setting,
+                label: super::toolbar::toolbar_order_label,
+                locked: super::toolbar::TOOLBAR_GROUP_IDS,
+                child_move: false,
+            });
+        }
         (key == crate::statusbar::KEY).then_some(crate::order_win::OrderSpec {
             key: crate::statusbar::KEY,
             title: Msg::WinStatusLayout,
@@ -1014,15 +1025,26 @@ impl App {
             to_setting: crate::statusbar::to_setting,
             label: crate::statusbar::label,
             locked: crate::statusbar::LOCKED,
+            child_move: true,
         })
     }
 
     /// 순서/표시 편집 창 열기 요청(설정 창 [편집…] · 기동 명령 `order.open:<키>`) — 모르는 키 = 무시. 실제 열기는 이벤트 루프에서.
     pub(crate) fn open_order_editor(&mut self, key: &str) {
+        // 툴바의 표시(`toolbar.hidden`)·배치(`toolbar.layout`) 카드 = 둘을 함께 고치는 툴바 편집으로.
+        let key = if matches!(key, "toolbar.hidden" | "toolbar.layout") {
+            super::toolbar::TOOLBAR_ORDER_KEY
+        } else {
+            key
+        };
         let Some(spec) = Self::order_spec_for(key) else {
             return;
         };
-        let v = self.settings.get(key).unwrap_or("").to_string();
+        let v = if key == super::toolbar::TOOLBAR_ORDER_KEY {
+            self.toolbar_order_value()
+        } else {
+            self.settings.get(key).unwrap_or("").to_string()
+        };
         self.order_win.set(spec, &v);
         self.open_order = true;
     }
@@ -1045,6 +1067,12 @@ impl App {
 
     /// 편집 창의 변경 통지 — 저장 → 즉시 반영(빈 값 = 기본 = 줄을 지운다) · 설정 창 카드도 새 값으로.
     pub(crate) fn order_changed(&mut self, key: &str, value: &str) {
+        if key == super::toolbar::TOOLBAR_ORDER_KEY {
+            self.apply_toolbar_order(value);
+            self.prefs_win.refresh(&self.settings);
+            self.prefs_win.redraw();
+            return;
+        }
         let r = if value.is_empty() {
             self.settings.reset(key).map(|_| ())
         } else {

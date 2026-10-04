@@ -198,7 +198,8 @@ fn is_default_formatter_key(k: &str) -> bool {
 /// 값이 **폴더 경로**인 설정 — 입력란 옆에 "찾아보기…"(폴더 전용 대화상자 · 파일은 보이지 않는다)를 둔다.
 /// 별도 편집 창으로 고치는 순서/표시 값(사용자 10-04 · 상태바 항목) — 카드에 [편집…] 버튼.
 fn is_order_key(k: &str) -> bool {
-    k == crate::statusbar::KEY
+    // 툴바의 두 카드(표시 · 배치)도 같은 편집 창으로(사용자 10-04 "보기와 순서를 바꾸는 설정으로 바로").
+    k == crate::statusbar::KEY || matches!(k, "toolbar.hidden" | "toolbar.layout")
 }
 
 fn is_folder_key(k: &str) -> bool {
