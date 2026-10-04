@@ -2,7 +2,7 @@
 
 > **먼저 읽기:** [docs/00-foundation-report.md](docs/00-foundation-report.md)(보고서) → [docs/STATUS.md](docs/STATUS.md) → [docs/10-decision-record.md](docs/10-decision-record.md).
 > ★ **다른 PC(맥 ↔ 윈도우 ↔ 리눅스)에서 이어 갈 때**: 세션의 로컬 메모리 폴더는 따라오지 않는다 — 규칙은 **이 파일과 [docs/61](docs/61-core-design-and-working-rules.md)** 이 전부다(핵심 설계의 불변식 · 작업 규칙 · OS별 차이 · 맥에서 처음 할 일 · **§3-1 하네스 권한 = 확인 창이 계속 뜨면 OS별 추가분을 제안 파일로 만들어 사용자에게 적용을 부탁**).
-> ★ **협업 세션으로 운영할 때**(Fable 개발 세션 × Opus 협업 세션) = [docs/102](docs/102-collab-session-operation.md) §0 시작 절차부터(요약 = [61 §2-5](docs/61-core-design-and-working-rules.md)).
+> ★ **협업 세션으로 운영할 때**(Fable 개발 세션 × Opus 협업 세션) = [docs/102](docs/102-collab-session-operation.md) §0 시작 절차부터(요약 = [61 §2-5](docs/61-core-design-and-working-rules.md)) · 다른 저장소가 가져갈 때·다시 요청받았을 때 = 102 §0-1(이미 정리돼 있으면 "운영 방침은 정리된 상태"로 답한다).
 
 ## 1. 이 프로젝트는
 
