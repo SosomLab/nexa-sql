@@ -1,96 +1,112 @@
 //! 상태바 오른쪽 항목의 순서·표시(사용자 10-04 "상태바 위치와 사용 여부를 설정 화면에서" · nexa-dir3 순서 편집 창과 같은 방식).
 //! 값 = 설정 `statusbar.layout`(nexa-ctl `order` 문법 · 빈 값 = 기본). 여기는 **정의와 순수 함수**만 — 그리기는 `app/paint.rs`,
 //! 편집 창은 `order_win.rs`.
+//!
+//! ★ 위치 조정 = **그룹 단위**(사용자 10-04 "위치 조정은 그룹으로 묶어줘"): 서로 붙어 다니는 칸은 한 그룹(블록)의 자식이다 —
+//! 그룹을 옮기면 통째로 가고, 자식은 그룹 안에서만 순서를 바꾼다. 그룹을 숨기면 자식 전부가 숨는다(자식 체크는 보존).
 
-use nexa_ctl::order::{self, Hidden, OrderDefs};
+use nexa_ctl::order::{self, Hidden, OrderBlock, OrderDefs};
 use nsql_i18n::Msg;
 
 /// 설정 키.
 pub(crate) const KEY: &str = "statusbar.layout";
 
-/// 항목(정의 순 = 기본 표시 순서 · 왼쪽 → 오른쪽). 항목이 실제로 나오는지는 그때의 상태가 정한다(예: 읽기 전용 탭일 때만 `readonly`).
+/// 그룹(블록)과 그 안의 칸(자식) — 정의 순 = 기본 표시 순서(왼쪽 → 오른쪽). 자식 없는 블록 = 그 자체가 칸 하나.
+/// 칸이 실제로 나오는지는 그때의 상태가 정한다(예: 읽기 전용 탭일 때만 `readonly`).
+/// 기본 순서의 끝 = … 파일 형식 · **메모리 · 라이선스**(사용자 10-04 "라이선스 왼쪽에 메모리").
 pub(crate) const BLOCKS: OrderDefs = &[
     ("tx", &[]),
-    ("mem", &[]),
-    ("large", &[]),
-    ("readonly", &[]),
-    ("bookmark", &[]),
+    ("state", &["large", "readonly", "bookmark"]),
     ("pos", &[]),
-    ("rows", &[]),
-    ("time", &[]),
-    ("autosave", &[]),
-    ("git", &[]),
-    ("enc", &[]),
-    ("eol", &[]),
-    ("indent", &[]),
-    ("syntax", &[]),
+    ("result", &["rows", "time"]),
+    ("project", &["autosave", "git"]),
+    ("format", &["enc", "eol", "indent", "syntax"]),
+    ("mem", &[]),
     ("license", &[]),
 ];
 
-/// 기본 숨김 없음(전부 표시 = 종전 화면).
+/// 기본 숨김 없음(전부 표시).
 pub(crate) const HIDDEN: Hidden = &[];
 
 /// 숨길 수 없는 항목 — 라이선스 배지(무료판 "non-commercial use only"는 상시 표시 · docs/23 §4-4 D-44).
 pub(crate) const LOCKED: &[&str] = &["license"];
 
-/// 항목 라벨(편집 창).
-pub(crate) fn label(id: &str) -> Msg {
-    match id {
+/// 라벨(편집 창) — 그룹 행 = `(블록, None)` · 자식 행 = `(블록, Some(자식))`.
+pub(crate) fn label(block: &str, item: Option<&str>) -> Msg {
+    match item.unwrap_or(block) {
         "tx" => Msg::SbTx,
-        "mem" => Msg::SbMem,
+        "state" => Msg::SbGrpState,
         "large" => Msg::SbLarge,
         "readonly" => Msg::SbReadOnly,
         "bookmark" => Msg::SbBookmark,
         "pos" => Msg::SbPos,
+        "result" => Msg::SbGrpResult,
         "rows" => Msg::SbRows,
         "time" => Msg::SbTime,
+        "project" => Msg::SbGrpProject,
         "autosave" => Msg::SbAutosave,
         "git" => Msg::SbGit,
+        "format" => Msg::SbGrpFormat,
         "enc" => Msg::SbEnc,
         "eol" => Msg::SbEol,
         "indent" => Msg::SbIndent,
         "syntax" => Msg::SbSyntax,
+        "mem" => Msg::SbMem,
         _ => Msg::SbLicense,
     }
 }
 
-/// 설정값 → (항목 id, 표시) 목록(순서대로 · 잠긴 항목은 늘 표시).
-pub(crate) fn items(layout: &str) -> Vec<(String, bool)> {
+/// 설정값 → 블록 목록(순서대로 · 잠긴 블록은 늘 표시).
+pub(crate) fn blocks(layout: &str) -> Vec<OrderBlock> {
     order::parse(BLOCKS, HIDDEN, layout)
         .into_iter()
-        .map(|(id, vis, _)| {
+        .map(|(id, vis, items)| {
             let vis = vis || LOCKED.contains(&id.as_str());
-            (id, vis)
+            (id, vis, items)
         })
         .collect()
 }
 
-/// (항목 id, 표시) 목록 → 저장할 설정값(기본과 같으면 빈 문자열).
-pub(crate) fn to_setting(items: &[(String, bool)]) -> String {
-    let blocks: Vec<order::OrderBlock> = items
+/// 블록 목록 → 저장할 설정값(기본과 같으면 빈 문자열 · 잠긴 블록은 표시로 적는다).
+pub(crate) fn to_setting(blocks: &[OrderBlock]) -> String {
+    let fixed: Vec<OrderBlock> = blocks
         .iter()
-        .map(|(id, vis)| {
+        .map(|(id, vis, items)| {
             (
                 id.clone(),
                 *vis || LOCKED.contains(&id.as_str()),
-                Vec::new(),
+                items.clone(),
             )
         })
         .collect();
-    order::normalize(BLOCKS, HIDDEN, &order::serialize(&blocks))
+    order::normalize(BLOCKS, HIDDEN, &order::serialize(&fixed))
 }
 
-/// 지금 만들어진 칸들(id가 붙은 것)을 설정의 순서로 다시 놓고 숨긴 것은 뺀다. 같은 id가 여럿이면 원래 순서를 지킨다.
-pub(crate) fn arrange<T>(layout: &str, segs: Vec<(&'static str, T)>) -> Vec<(&'static str, T)> {
-    if layout.is_empty() {
-        return segs;
+/// 설정값 → 보일 칸 id를 표시 순서대로(그룹은 자식으로 펼친다 · 숨긴 그룹/자식 제외).
+pub(crate) fn visible_ids(layout: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (id, vis, items) in blocks(layout) {
+        if !vis {
+            continue;
+        }
+        if items.is_empty() {
+            out.push(id);
+        } else {
+            out.extend(items.into_iter().filter(|(_, v)| *v).map(|(k, _)| k));
+        }
     }
-    let order = items(layout);
+    out
+}
+
+/// 지금 만들어진 칸들(id가 붙은 것)을 설정의 순서로 다시 놓고 숨긴 것은 뺀다. 같은 id가 여럿이면 만들어진 순서를 지킨다.
+/// (빈 설정값도 거친다 — 기본 순서가 만든 순서와 다를 수 있다: 메모리는 라이선스 왼쪽.)
+pub(crate) fn arrange<T>(layout: &str, segs: Vec<(&'static str, T)>) -> Vec<(&'static str, T)> {
+    let order = visible_ids(layout);
     let mut keyed: Vec<(usize, (&'static str, T))> = segs
         .into_iter()
         .filter_map(|seg| {
-            let (i, (_, vis)) = order.iter().enumerate().find(|(_, (id, _))| id == seg.0)?;
-            vis.then_some((i, seg))
+            let i = order.iter().position(|id| id == seg.0)?;
+            Some((i, seg))
         })
         .collect();
     // 안정 정렬 = 같은 id끼리는 만들어진 순서.
@@ -106,35 +122,70 @@ mod tests {
         v.iter().map(|(id, _)| *id).collect()
     }
 
-    #[test]
-    fn empty_layout_keeps_everything_as_built() {
-        let segs = vec![("tx", 1), ("pos", 2), ("syntax", 3), ("license", 4)];
-        assert_eq!(ids(&arrange("", segs)), ["tx", "pos", "syntax", "license"]);
-        assert_eq!(items("").len(), BLOCKS.len());
-        assert!(items("").iter().all(|(_, v)| *v));
-        assert_eq!(to_setting(&items("")), "", "기본 = 빈 값");
+    /// 그리기 코드가 만드는 순서(메모리가 앞쪽)로 칸을 준다.
+    fn built() -> Vec<(&'static str, i32)> {
+        [
+            "tx", "mem", "large", "readonly", "bookmark", "pos", "rows", "time", "autosave", "git",
+            "enc", "eol", "indent", "syntax", "license",
+        ]
+        .into_iter()
+        .map(|id| (id, 0))
+        .collect()
     }
 
     #[test]
-    fn layout_reorders_hides_and_never_hides_locked() {
-        // 구문을 맨 앞으로 · 위치 숨김 · 라이선스 숨김 시도(잠금 = 무시).
-        let layout = "syntax:1|tx:1|pos:0|license:0";
-        let segs = vec![("tx", 1), ("pos", 2), ("syntax", 3), ("license", 4)];
-        assert_eq!(ids(&arrange(layout, segs)), ["syntax", "tx", "license"]);
-        let it = items(layout);
-        assert_eq!(it[0], ("syntax".to_string(), true));
-        assert!(it.iter().any(|(id, v)| id == "pos" && !*v));
-        assert!(it.iter().any(|(id, v)| id == "license" && *v));
-        // 저장값은 잠긴 항목을 표시로 적는다 · 왕복 안정.
-        let saved = to_setting(&it);
+    fn default_layout_shows_all_with_memory_left_of_license() {
+        let v = arrange("", built());
+        assert_eq!(
+            ids(&v),
+            [
+                "tx", "large", "readonly", "bookmark", "pos", "rows", "time", "autosave", "git",
+                "enc", "eol", "indent", "syntax", "mem", "license"
+            ]
+        );
+        assert_eq!(to_setting(&blocks("")), "", "기본 = 빈 값");
+        // 정의의 모든 칸이 그리기 코드의 id와 맞는다(빠지거나 남는 칸 없음).
+        assert_eq!(visible_ids("").len(), built().len());
+    }
+
+    #[test]
+    fn groups_move_as_a_unit_children_reorder_inside_and_hide() {
+        // 파일 형식 그룹을 맨 앞으로 · 그 안에서 구문을 첫째로 · 줄끝 숨김 · 실행 결과 그룹 통째 숨김 · 라이선스 숨김 시도(잠금).
+        let layout = "format:1[syntax:1,enc:1,eol:0,indent:1]|tx:1|result:0|license:0";
+        // 값에 빠진 블록(mem · state · pos · project)은 정의상 앞 형제 바로 뒤에 보충된다(mem = format 뒤).
+        let v = arrange(layout, built());
+        assert_eq!(
+            ids(&v),
+            [
+                "syntax", "enc", "indent", "mem", "tx", "large", "readonly", "bookmark", "pos",
+                "autosave", "git", "license"
+            ]
+        );
+        // 그룹을 숨겨도 자식 체크는 보존된다.
+        let b = blocks(layout);
+        let result = b.iter().find(|(id, _, _)| id == "result").expect("result");
+        assert!(!result.1 && result.2.iter().all(|(_, v)| *v));
+        // 저장값: 잠긴 블록은 표시로 · 왕복 안정.
+        let saved = to_setting(&b);
         assert!(
-            saved.contains("license:1") && saved.contains("pos:0"),
+            saved.contains("license:1") && saved.contains("result:0"),
             "{saved}"
         );
-        assert_eq!(to_setting(&items(&saved)), saved);
-        // 모든 정의 항목에 라벨이 있다(다른 항목이 라이선스 라벨로 새지 않는다).
-        for (id, _) in BLOCKS {
-            assert_eq!(label(id) == Msg::SbLicense, *id == "license", "{id}");
+        assert_eq!(to_setting(&blocks(&saved)), saved);
+    }
+
+    #[test]
+    fn old_flat_layout_falls_back_gracefully_and_labels_are_distinct() {
+        // 그룹 도입 전의 평면 값(자식이던 칸이 블록 자리에) = 모르는 블록은 버리고 그룹은 정의 순으로 보충.
+        let v = arrange("syntax:1|tx:1|pos:0|license:1", built());
+        assert!(!ids(&v).contains(&"pos"));
+        assert!(ids(&v).contains(&"syntax") && ids(&v).contains(&"mem"));
+        // 라벨: 라이선스 라벨로 새는 id가 없다.
+        for (b, items) in BLOCKS {
+            assert_eq!(label(b, None) == Msg::SbLicense, *b == "license", "{b}");
+            for i in *items {
+                assert_ne!(label(b, Some(i)), Msg::SbLicense, "{i}");
+            }
         }
     }
 }

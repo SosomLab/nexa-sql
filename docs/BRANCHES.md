@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-04-statusbar-groups | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 상태바 편집 = 그룹 단위(문서 상태 · 실행 결과 · 프로젝트 · 파일 형식 · 그룹 통째 이동/숨김 · 자식 = 그룹 안) · 기본 메모리 = 라이선스 왼쪽 · 기동 명령 select=N = 화면 행 · journal 10-04 §15 |
 | work/2026-10-04-statusbar-layout | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 상태바 항목 순서·표시 편집(`statusbar.layout` · 편집 창 `order_win.rs` · `statusbar.rs` · 상태줄 칸 id 식별 · 맥 ⌘ 안내) · nexa-ui 139차 `order` · 기동 명령 3 · journal 10-04 §13~14 |
 | work/2026-10-04-collab-icons-lang | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 111차 mac(협업 세션 운영 첫날): 최신화·분석 · 협업 운영 기준 102(+61 §2-5 · CLAUDE §3) · 스플리터 `split_d.tick` · 포맷터 keep `as`(`Part::AsRaw` · kiros33 1.3.3) · DBMS 아이콘 PNG 173종 + NOTICE 초안 · 파일 DB 연결 표시 짧게 · 언어 `system` 기본 · 스크립트 격리 누락 2 · Debug 기능 점검 · journal 10-04 |
 | chore/ext-kiros33-1.3.2 | 2026-10-03 | 2026-10-03 → main(삭제) | 1 | SQL Formatter for kiros33 1.3.2 = Basic 코어 재빌드(wasm32 타깃 설치 · 미사용 import 제거 · 격리 홈 확인) · journal 10-03 §5 |

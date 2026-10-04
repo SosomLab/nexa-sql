@@ -15,7 +15,7 @@
 - 협업 규칙 추가 = [P0] 빌드 + Debug 재시작 최우선(102 §5) · 빌드 창 취소 · 기준 상태 명시(102 §7).
 - 🔧 툴바 ▾ 맥 Retina 납작 → 하한 × 배율(nexa-ui 138차 `draw_chevron_down_scaled` · 61 §1-5) · 🔧 파일 기반 DB 연결 표시 = 파일 이름 · `~/…/폴더`(탭 · 상태줄 · 탐색기) · ★ 화면 언어 `ui.lang` = `system | en | ko` · 기본 `system`(24 §3-1).
 - Debug 기능 점검(맥 사본 · 82/82) · `mac-grid-edit-e2e` 46 · `mac-bulk-e2e` 17 · 블록 주석 3 · `nsql plan` 양 방언 ✓ · 🔧 스크립트 격리 누락 2(`NSQL_HOME` 없는 `conn add` 삭제 · 61 §2-4) · ⚠ `bench-boost.ps1` = 실제 설정 `perf.boost`를 `off`로 덮어씀(사용자 판단).
-- ★ **상태바 항목 순서·표시 편집**(설정 ▸ Window ▸ 상태바 항목 [편집…] · `statusbar.layout` · 체크·▲▼·끌기·Reset · 즉시 저장 · license 잠금 · nexa-ctl `order` 부품 · 자체 시험 ✓ · journal 10-04 §13).
+- ★ **상태바 항목 순서·표시 편집**(설정 ▸ Window ▸ 상태바 항목 [편집…] · `statusbar.layout` · 체크·▲▼·끌기·Reset · 즉시 저장 · license 잠금 · nexa-ctl `order` 부품 · 자체 시험 ✓ · journal 10-04 §13) → **그룹 단위**(문서 상태 · 실행 결과 · 프로젝트 · 파일 형식 · 그룹 = 통째 이동/숨김 · 자식 = 그룹 안에서만) · 기본 순서 메모리 = 라이선스 왼쪽(§15 · 옛 평면 값은 초기화될 수 있음).
 
 ## 2026-10-03 (110차 · **Linux**) — 최신화·분석 · 🔧 `EXEC` 문 포맷 · 🔧 `${이름:형식}` 입력 창([journal 10-03](journal/2026-10-03.md))
 

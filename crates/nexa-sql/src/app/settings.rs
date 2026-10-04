@@ -1010,7 +1010,7 @@ impl App {
         (key == crate::statusbar::KEY).then_some(crate::order_win::OrderSpec {
             key: crate::statusbar::KEY,
             title: Msg::WinStatusLayout,
-            items: crate::statusbar::items,
+            blocks: crate::statusbar::blocks,
             to_setting: crate::statusbar::to_setting,
             label: crate::statusbar::label,
             locked: crate::statusbar::LOCKED,

@@ -1,11 +1,13 @@
 //! **순서/표시 편집 창**(사용자 10-04 "상태바 위치와 사용 여부를 설정 화면에서 · nexa-dir3 툴바 조정 화면 참고"): 설정 창의
 //! [편집…]에서 여는 보조 창. 행 = 체크(표시) + 이름 · 선택한 행을 ▲▼ / Ctrl(⌘)+↑↓ / 끌기로 옮긴다 · Space = 표시 전환 ·
+//! ★ **그룹 단위 이동**(사용자 10-04): 그룹(블록) 행 = 통째 이동 · 자식 행 = 그 그룹 안에서만 · 그룹 체크 = 통째 숨김(자식 체크 보존) ·
 //! 잠긴 항목은 체크를 못 끈다 · Esc = 끌기 취소 → 닫기. 바꿀 때마다 [`OrderWinAction::Changed`]로 호스트에 알려 **즉시 적용·저장**
 //! (확인/취소 없음 — nexa-dir3 DLG-073과 같은 규약). 무엇을 고치는지는 [`OrderSpec`] 어댑터가 정한다(지금 = 상태바 하나).
 
 use nexa_ctl::controls::Button;
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
+use nexa_ctl::order::OrderBlock;
 use nexa_ctl::raster::RasterCtx;
 use nexa_ctl::theme::{FontPrefs, Theme};
 use nexa_ctl::{InputEvent, Invalidations, Widget};
@@ -23,13 +25,27 @@ pub(crate) struct OrderSpec {
     /// 설정 키(통지에 같이 돌려준다).
     pub key: &'static str,
     pub title: Msg,
-    /// 설정값 → (항목 id, 표시) 목록.
-    pub items: fn(&str) -> Vec<(String, bool)>,
+    /// 설정값 → 블록(그룹) 목록.
+    pub blocks: fn(&str) -> Vec<OrderBlock>,
     /// 목록 → 저장할 설정값(기본과 같으면 빈 문자열).
-    pub to_setting: fn(&[(String, bool)]) -> String,
-    pub label: fn(&str) -> Msg,
-    /// 체크를 끌 수 없는 항목.
+    pub to_setting: fn(&[OrderBlock]) -> String,
+    /// (블록, 자식) → 라벨 · 자식 `None` = 그룹 행.
+    pub label: fn(&str, Option<&str>) -> Msg,
+    /// 체크를 끌 수 없는 블록.
     pub locked: &'static [&'static str],
+}
+
+/// 화면 행 — (블록 index, 자식 index · `None` = 그룹/단일 블록 행).
+type Row = (usize, Option<usize>);
+
+/// 블록 목록 → 화면 행(블록 행 + 그 자식 행들).
+pub(crate) fn rows_of(blocks: &[OrderBlock]) -> Vec<Row> {
+    let mut out = Vec::new();
+    for (bi, (_, _, items)) in blocks.iter().enumerate() {
+        out.push((bi, None));
+        out.extend((0..items.len()).map(|ci| (bi, Some(ci))));
+    }
+    out
 }
 
 pub(crate) enum OrderWinAction {
@@ -48,13 +64,14 @@ const ROW_H: f32 = 26.0;
 const BTN_H: f32 = 28.0;
 const SIDE_W: f32 = 84.0;
 const CHECK: f32 = 16.0;
+const INDENT: f32 = 22.0;
 const DRAG_THRESHOLD: i32 = 5;
 
 /// 끌기 — 누른 자리에서 [`DRAG_THRESHOLD`]를 넘으면 시작 · 시작할 때의 목록을 들고 있다가 Esc면 되돌린다.
 struct Drag {
     press_y: i32,
     active: bool,
-    before: Vec<(String, bool)>,
+    before: Vec<OrderBlock>,
 }
 
 pub(crate) struct OrderWin {
@@ -64,7 +81,8 @@ pub(crate) struct OrderWin {
     cursor: (i32, i32),
     primary: bool,
     spec: Option<OrderSpec>,
-    items: Vec<(String, bool)>,
+    blocks: Vec<OrderBlock>,
+    /// 선택 행([`rows_of`]의 index).
     sel: usize,
     drag: Option<Drag>,
     /// 마지막 페인트의 목록 영역(히트 테스트).
@@ -93,7 +111,7 @@ impl OrderWin {
             cursor: (-1, -1),
             primary: false,
             spec: None,
-            items: Vec::new(),
+            blocks: Vec::new(),
             sel: 0,
             drag: None,
             list: Rect::default(),
@@ -105,9 +123,9 @@ impl OrderWin {
 
     /// 편집 대상과 지금 값을 넣는다(열기 전 · 열려 있으면 내용만 바뀐다).
     pub(crate) fn set(&mut self, spec: OrderSpec, value: &str) {
-        self.items = (spec.items)(value);
+        self.blocks = (spec.blocks)(value);
         self.spec = Some(spec);
-        self.sel = self.sel.min(self.items.len().saturating_sub(1));
+        self.sel = self.sel.min(self.rows().len().saturating_sub(1));
         self.drag = None;
         self.reset.set_label(t(Msg::OrdReset));
         self.redraw();
@@ -129,7 +147,7 @@ impl OrderWin {
         let Some(spec) = self.spec else {
             return;
         };
-        let rows = self.items.len().max(1) as f64;
+        let rows = self.rows().len().max(1) as f64;
         let h = f64::from(PAD) * 3.0 + 24.0 + rows * f64::from(ROW_H) + 2.0;
         let Some(o) = crate::winhost::open_window(
             el,
@@ -176,14 +194,23 @@ impl OrderWin {
         }
     }
 
-    /// 지금 내용(진단·시험 덤프) — `key` + 행마다 `[x] id` · 선택 행 앞에 `>`.
+    fn rows(&self) -> Vec<Row> {
+        rows_of(&self.blocks)
+    }
+
+    /// 지금 내용(진단·시험 덤프) — `key` + 행마다 `[x] id`(자식은 들여쓰기) · 선택 행 앞에 `>`.
     pub(crate) fn dump(&self) -> String {
         let mut s = format!("key {}\n", self.spec.map_or("-", |sp| sp.key));
-        for (i, (id, vis)) in self.items.iter().enumerate() {
+        for (i, (bi, ci)) in self.rows().into_iter().enumerate() {
+            let (id, vis) = match ci {
+                None => (self.blocks[bi].0.as_str(), self.blocks[bi].1),
+                Some(c) => (self.blocks[bi].2[c].0.as_str(), self.blocks[bi].2[c].1),
+            };
             s.push_str(&format!(
-                "{}[{}] {id}\n",
+                "{}{}[{}] {id}\n",
                 if i == self.sel { ">" } else { " " },
-                if *vis { "x" } else { " " }
+                if ci.is_some() { "  " } else { "" },
+                if vis { "x" } else { " " }
             ));
         }
         s
@@ -194,40 +221,107 @@ impl OrderWin {
         match self.spec {
             Some(sp) => OrderWinAction::Changed {
                 key: sp.key,
-                value: (sp.to_setting)(&self.items),
+                value: (sp.to_setting)(&self.blocks),
             },
             None => OrderWinAction::None,
         }
     }
 
-    fn locked(&self, i: usize) -> bool {
-        match (self.spec, self.items.get(i)) {
-            (Some(sp), Some((id, _))) => sp.locked.contains(&id.as_str()),
+    fn block_locked(&self, bi: usize) -> bool {
+        match (self.spec, self.blocks.get(bi)) {
+            (Some(sp), Some((id, _, _))) => sp.locked.contains(&id.as_str()),
             _ => true,
         }
     }
 
-    /// 표시 전환(잠긴 항목 = 거부).
-    pub(crate) fn toggle(&mut self, i: usize) -> OrderWinAction {
-        if self.locked(i) {
+    /// 표시 전환(행 index) — 그룹 행 = 통째(잠긴 블록 = 거부) · 자식 행 = 그 칸만(그룹이 숨겨져 있으면 거부).
+    pub(crate) fn toggle(&mut self, row: usize) -> OrderWinAction {
+        let Some(&(bi, ci)) = self.rows().get(row) else {
             return OrderWinAction::None;
+        };
+        match ci {
+            None => {
+                if self.block_locked(bi) {
+                    return OrderWinAction::None;
+                }
+                self.blocks[bi].1 = !self.blocks[bi].1;
+            }
+            Some(c) => {
+                if !self.blocks[bi].1 {
+                    return OrderWinAction::None;
+                }
+                let it = &mut self.blocks[bi].2[c];
+                it.1 = !it.1;
+            }
         }
-        self.items[i].1 = !self.items[i].1;
         self.changed()
     }
 
-    /// 선택 행을 위/아래로 한 칸.
-    pub(crate) fn move_sel(&mut self, down: bool) -> OrderWinAction {
-        let to = if down {
-            self.sel + 1
-        } else {
-            match self.sel.checked_sub(1) {
-                Some(v) => v,
-                None => return OrderWinAction::None,
-            }
+    /// 선택 행을 `to` 행의 자리로(끌기) — 그룹 행 = 그 행이 속한 그룹의 자리로 통째 · 자식 행 = **같은 그룹 안**의 자리로만.
+    fn move_sel_to_row(&mut self, to_row: usize) -> bool {
+        let rows = self.rows();
+        let (Some(&(bi, ci)), Some(&(tb, tc))) = (rows.get(self.sel), rows.get(to_row)) else {
+            return false;
         };
-        if move_item(&mut self.items, self.sel, to) {
-            self.sel = to;
+        match ci {
+            None => {
+                if !move_item(&mut self.blocks, bi, tb) {
+                    return false;
+                }
+                self.select_block(tb);
+            }
+            Some(c) => {
+                // 다른 그룹 위 = 자기 그룹의 가까운 끝으로.
+                let n = self.blocks[bi].2.len();
+                let to = match (tb.cmp(&bi), tc) {
+                    (std::cmp::Ordering::Equal, Some(t)) => t,
+                    (std::cmp::Ordering::Equal, None) | (std::cmp::Ordering::Less, _) => 0,
+                    (std::cmp::Ordering::Greater, _) => n.saturating_sub(1),
+                };
+                if !move_item(&mut self.blocks[bi].2, c, to) {
+                    return false;
+                }
+                self.select_child(bi, to);
+            }
+        }
+        true
+    }
+
+    fn select_block(&mut self, bi: usize) {
+        if let Some(r) = self.rows().iter().position(|r| *r == (bi, None)) {
+            self.sel = r;
+        }
+    }
+
+    fn select_child(&mut self, bi: usize, ci: usize) {
+        if let Some(r) = self.rows().iter().position(|r| *r == (bi, Some(ci))) {
+            self.sel = r;
+        }
+    }
+
+    /// 선택 행을 위/아래로 한 칸 — 그룹 행 = 이웃 그룹과 통째 자리 바꿈 · 자식 행 = 그룹 안에서.
+    pub(crate) fn move_sel(&mut self, down: bool) -> OrderWinAction {
+        let Some(&(bi, ci)) = self.rows().get(self.sel) else {
+            return OrderWinAction::None;
+        };
+        let step = |i: usize| if down { Some(i + 1) } else { i.checked_sub(1) };
+        let moved = match ci {
+            None => step(bi).is_some_and(|to| {
+                let ok = move_item(&mut self.blocks, bi, to);
+                if ok {
+                    self.select_block(to);
+                }
+                ok
+            }),
+            Some(c) => step(c).is_some_and(|to| {
+                let ok = move_item(&mut self.blocks[bi].2, c, to);
+                if ok {
+                    self.select_child(bi, to);
+                }
+                ok
+            }),
+        };
+        if moved {
             self.changed()
         } else {
             OrderWinAction::None
@@ -239,7 +333,7 @@ impl OrderWin {
     }
 
     pub(crate) fn select(&mut self, i: usize) {
-        if i < self.items.len() {
+        if i < self.rows().len() {
             self.sel = i;
             self.redraw();
         }
@@ -250,8 +344,8 @@ impl OrderWin {
         let Some(sp) = self.spec else {
             return OrderWinAction::None;
         };
-        self.items = (sp.items)("");
-        self.sel = self.sel.min(self.items.len().saturating_sub(1));
+        self.blocks = (sp.blocks)("");
+        self.sel = self.sel.min(self.rows().len().saturating_sub(1));
         self.changed()
     }
 
@@ -265,7 +359,7 @@ impl OrderWin {
             return None;
         }
         let i = ((y - self.list.y) / self.row_h().max(1)) as usize;
-        (i < self.items.len()).then_some(i)
+        (i < self.rows().len()).then_some(i)
     }
 
     pub(crate) fn handle(&mut self, ev: &WindowEvent) -> OrderWinAction {
@@ -299,10 +393,9 @@ impl OrderWin {
                     }
                     if d.active {
                         let rh = self.row_h().max(1);
-                        let last = self.items.len().saturating_sub(1) as i32;
+                        let last = self.rows().len().saturating_sub(1) as i32;
                         let to = ((y - self.list.y) / rh).clamp(0, last) as usize;
-                        if move_item(&mut self.items, self.sel, to) {
-                            self.sel = to;
+                        if self.move_sel_to_row(to) {
                             return self.changed();
                         }
                         return OrderWinAction::None;
@@ -331,16 +424,21 @@ impl OrderWin {
                 } else if let Some(i) = self.row_at(x, y) {
                     self.sel = i;
                     self.redraw();
-                    // 체크 칸(행 왼쪽) = 표시 전환 · 그 밖 = 선택 + 끌기 준비.
+                    // 체크 칸(행 왼쪽 · 자식은 들여쓴 자리) = 표시 전환 · 그 밖 = 선택 + 끌기 준비.
+                    let indent = if self.rows()[i].1.is_some() {
+                        INDENT
+                    } else {
+                        0.0
+                    };
                     let check_right =
-                        self.list.x + ((PAD + CHECK + 8.0) * self.scale).round() as i32;
+                        self.list.x + ((PAD + indent + CHECK + 8.0) * self.scale).round() as i32;
                     if x < check_right {
                         return self.toggle(i);
                     }
                     self.drag = Some(Drag {
                         press_y: y,
                         active: false,
-                        before: self.items.clone(),
+                        before: self.blocks.clone(),
                     });
                     return OrderWinAction::None;
                 }
@@ -380,8 +478,8 @@ impl OrderWin {
                     Key::Named(NamedKey::Escape) => {
                         // 끌기 중 = 끌기 전으로 되돌림 · 아니면 닫기.
                         if let Some(d) = self.drag.take() {
-                            if d.active && d.before != self.items {
-                                self.items = d.before;
+                            if d.active && d.before != self.blocks {
+                                self.blocks = d.before;
                                 return self.changed();
                             }
                             return OrderWinAction::None;
@@ -454,12 +552,13 @@ impl OrderWin {
                 list.x,
                 list.y,
                 list.w,
-                (row_h * self.items.len() as i32).min(list.h),
+                (row_h * self.rows().len() as i32).min(list.h),
             );
             dc.fill_rect(list, th.field_bg);
             dc.stroke_round_rect(list, 0, th.border, 1.0);
             let check = px(CHECK);
-            for (i, (id, vis)) in self.items.iter().enumerate() {
+            let rows = self.rows();
+            for (i, (bi, ci)) in rows.iter().copied().enumerate() {
                 let r = Rect::new(list.x, list.y + row_h * i as i32, list.w, row_h);
                 if r.bottom() > list.bottom() {
                     break;
@@ -467,21 +566,38 @@ impl OrderWin {
                 if i == self.sel {
                     dc.fill_rect(r, th.sel_bg);
                 }
-                let locked = self.spec.is_some_and(|sp| sp.locked.contains(&id.as_str()));
-                let cb = Rect::new(r.x + pad, r.y + (row_h - check) / 2, check, check);
-                // 잠긴 항목 = 비활성 모양의 체크(끌 수 없음).
-                nexa_ctl::controls::draw_checkbox_glyph(&mut dc, th, cb, *vis, !locked);
-                let label = self.spec.map_or(id.as_str(), |sp| t((sp.label)(id)));
+                let block = &self.blocks[bi];
+                let (item, vis) = match ci {
+                    None => (None, block.1),
+                    Some(c) => (Some(block.2[c].0.as_str()), block.2[c].1),
+                };
+                // 체크를 못 바꾸는 행 = 비활성 모양: 잠긴 블록 · 숨긴 그룹의 자식.
+                let fixed = match ci {
+                    None => self.block_locked(bi),
+                    Some(_) => !block.1,
+                };
+                let indent = if ci.is_some() { px(INDENT) } else { 0 };
+                let cb = Rect::new(r.x + pad + indent, r.y + (row_h - check) / 2, check, check);
+                nexa_ctl::controls::draw_checkbox_glyph(&mut dc, th, cb, vis, !fixed);
+                let label = match self.spec {
+                    Some(sp) => t((sp.label)(&block.0, item)),
+                    None => item.unwrap_or(block.0.as_str()),
+                };
+                // 그룹 행(자식이 있는 블록) = 굵게.
+                dc.select_font(FontSlot::Base, ci.is_none() && !block.2.is_empty());
                 let lx = cb.right() + px(8.0);
                 let ty = dc.text_center_y(r.y, row_h);
+                // 흐리게 = 실제로 안 보이는 칸(자기 체크가 꺼졌거나 그룹이 숨겨짐).
+                let shown = vis && block.1;
                 dc.text(
                     lx,
                     ty,
                     Rect::new(lx, r.y, r.right() - lx - px(4.0), row_h),
                     label,
-                    if *vis { th.text } else { th.text_dim },
+                    if shown { th.text } else { th.text_dim },
                 );
             }
+            dc.select_font(FontSlot::Base, false);
             let _ = th_txt;
             // 버튼 열: ▲ ▼ 위 · 기본값 아래.
             let bx = wi - pad - side_w;
@@ -512,7 +628,7 @@ mod tests {
         OrderSpec {
             key: crate::statusbar::KEY,
             title: Msg::WinStatusLayout,
-            items: crate::statusbar::items,
+            blocks: crate::statusbar::blocks,
             to_setting: crate::statusbar::to_setting,
             label: crate::statusbar::label,
             locked: crate::statusbar::LOCKED,
@@ -526,6 +642,18 @@ mod tests {
         }
     }
 
+    fn row_of(w: &OrderWin, id: &str) -> usize {
+        w.dump()
+            .lines()
+            .skip(1)
+            .position(|l| {
+                l.trim_start_matches('>')
+                    .trim()
+                    .ends_with(&format!("] {id}"))
+            })
+            .expect("row")
+    }
+
     #[test]
     fn move_item_bounds() {
         let mut v = vec![1, 2, 3];
@@ -537,34 +665,57 @@ mod tests {
         assert_eq!(v, [2, 3, 1]);
     }
 
-    /// 창 없이 모델 조작: 이동 · 표시 전환 · 잠금 · 기본값 — 통지 값이 설정 문법으로 나온다.
+    /// 창 없이 모델 조작: 그룹 통째 이동 · 자식은 그룹 안에서만 · 표시 전환 · 잠금 · 기본값.
     #[test]
-    fn edit_model_reports_normalized_values() {
+    fn groups_move_whole_children_stay_inside() {
         let mut w = OrderWin::new();
         w.set(spec(), "");
-        assert!(w.dump().starts_with("key statusbar.layout\n>[x] tx\n"));
-        // 맨 위에서 위로 = 변화 없음.
+        assert!(w
+            .dump()
+            .starts_with("key statusbar.layout\n>[x] tx\n [x] state\n   [x] large\n"));
+        // 맨 위 블록을 위로 = 변화 없음.
         assert!(value(w.move_sel(false)).is_none());
-        // tx를 한 칸 아래로.
-        let v = value(w.move_sel(true)).expect("changed");
-        assert!(v.starts_with("mem:1|tx:1|"), "{v}");
-        assert_eq!(w.sel, 1);
-        // 표시 끄기.
-        let v = value(w.toggle(1)).expect("changed");
-        assert!(v.contains("tx:0"), "{v}");
-        // 잠긴 항목(라이선스)은 못 끈다.
-        let lic = w
-            .items
-            .iter()
-            .position(|(id, _)| id == "license")
-            .expect("license");
-        assert!(value(w.toggle(lic)).is_none());
-        assert!(w.items[lic].1);
-        // 맨 아래에서 아래로 = 변화 없음.
-        w.select(w.items.len() - 1);
-        assert!(value(w.move_sel(true)).is_none());
+        // 그룹 `format`을 위로 한 칸 = `project` 그룹과 통째 자리 바꿈(자식 4개가 같이 간다).
+        w.select(row_of(&w, "format"));
+        let v = value(w.move_sel(false)).expect("changed");
+        assert!(
+            v.contains("format:1[enc:1,eol:1,indent:1,syntax:1]|project:1[autosave:1,git:1]"),
+            "{v}"
+        );
+        assert_eq!(w.selected(), row_of(&w, "format"), "선택이 그룹을 따라간다");
+        // 자식 `syntax`를 위로 두 번 = 그룹 안에서만 · 첫째 자식에서 더 위로는 못 간다(그룹 밖으로 안 나감).
+        w.select(row_of(&w, "syntax"));
+        for _ in 0..3 {
+            let _ = w.move_sel(false);
+        }
+        assert!(
+            value(w.move_sel(false)).is_none(),
+            "그룹의 첫 자리에서 멈춘다"
+        );
+        let v = (spec().to_setting)(&w.blocks);
+        assert!(v.contains("format:1[syntax:1,enc:1,eol:1,indent:1]"), "{v}");
+        // 자식 표시 끄기 → 그룹 숨김 → 숨긴 그룹의 자식은 못 바꾼다(체크는 보존).
+        let v = value(w.toggle(row_of(&w, "eol"))).expect("changed");
+        assert!(v.contains("eol:0"), "{v}");
+        let v = value(w.toggle(row_of(&w, "format"))).expect("changed");
+        assert!(v.contains("format:0[syntax:1,enc:1,eol:0,indent:1]"), "{v}");
+        assert!(value(w.toggle(row_of(&w, "enc"))).is_none());
+        // 잠긴 블록(라이선스)은 못 끈다.
+        assert!(value(w.toggle(row_of(&w, "license"))).is_none());
+        // 끌기 규칙: 자식을 다른 그룹 위로 끌면 자기 그룹의 가까운 끝에서 멈춘다.
+        w.select(row_of(&w, "syntax"));
+        assert!(w.move_sel_to_row(row_of(&w, "license")));
+        let v = (spec().to_setting)(&w.blocks);
+        assert!(v.contains("[enc:1,eol:0,indent:1,syntax:1]"), "{v}");
+        // 끌기: 그룹 행을 다른 그룹의 자식 위에 놓으면 그 그룹 자리로 통째.
+        w.select(row_of(&w, "tx"));
+        assert!(w.move_sel_to_row(row_of(&w, "rows")));
+        let v = (spec().to_setting)(&w.blocks);
+        assert!(
+            v.starts_with("state:1[") && v.contains("|result:1[rows:1,time:1]|tx:1|"),
+            "{v}"
+        );
         // 기본값 = 빈 설정값.
         assert_eq!(value(w.reset_all()).as_deref(), Some(""));
-        assert!(w.items.iter().all(|(_, v)| *v));
     }
 }
