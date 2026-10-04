@@ -11,6 +11,7 @@
 - 드라이버 어댑터의 예외 crate(DR-3)도 여기 그대로 드러난다(원장 docs/10 §3과 대조 가능).
 """
 import json
+import os
 import subprocess
 import sys
 from collections import OrderedDict
@@ -78,6 +79,14 @@ def main() -> int:
     for lic, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         lines.append(f"  {n:4d}  {lic}")
     lines.append("")
+    # DBMS 로고(내장 PNG) 출처·라이선스·상표 고지 — 저장소의 NOTICE.md를 그대로 싣는다(T-277 · devicon MIT 고지 포함).
+    notice = os.path.join(meta["workspace_root"], "crates", "nexa-sql", "assets", "dbms", "NOTICE.md")
+    if os.path.isfile(notice):
+        with open(notice, encoding="utf-8") as f:
+            body = f.read().rstrip("\n")
+        lines += ["== DBMS 로고(crates/nexa-sql/assets/dbms/NOTICE.md) ==", "", body, ""]
+    else:
+        print(f"경고: DBMS 로고 고지 없음 — {notice}", file=sys.stderr)
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines))
     print(f"{out}: 제3자 {len(third)}개 · 자체 {len(own)}개")

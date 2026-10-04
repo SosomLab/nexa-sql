@@ -58,6 +58,8 @@ function Cli-Query($mode, $profile, $sql, $label) {
     }
 }
 
+# 사용자의 실제 설정을 바꾸는 스크립트다 — 끝나면 **원래 값**으로 되돌린다(종전에는 늘 off로 덮어썼다 · 10-04).
+$origBoost = ((& $cli config get perf.boost) | Out-String).Trim()
 foreach ($mode in @("off", "on")) {
     & $cli config set perf.boost $mode | Out-Null
     Gui-Sample $mode
@@ -65,7 +67,11 @@ foreach ($mode in @("off", "on")) {
     Cli-Query $mode "SNOPDB_19c" "SELECT COUNT(*) FROM M4S_I002040;" "oracle_count"
     Cli-Query $mode "M4PLAN" "SELECT TOP 200 * FROM INFORMATION_SCHEMA.COLUMNS;" "mssql_200"
 }
-& $cli config set perf.boost off | Out-Null
+if ($origBoost -in @("on", "off")) {
+    & $cli config set perf.boost $origBoost | Out-Null
+} else {
+    & $cli config reset perf.boost | Out-Null
+}
 $rows | Export-Csv -Path $Out -NoTypeInformation -Encoding UTF8
 $rows | Group-Object mode, metric | ForEach-Object {
     $vals = $_.Group.value | Sort-Object

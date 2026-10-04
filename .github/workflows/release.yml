@@ -93,10 +93,32 @@ jobs:
         with:
           repository: SosomLab/nexa-ui
           path: nexa-ui
+          fetch-depth: 0 # 아래 "형제 저장소 고정"이 과거 커밋으로 옮길 수 있게 전체 이력
       - uses: actions/checkout@v4 # 형제 저장소 ../nexa-license(공개 · 검증 전용 · DR-25) — nsql-license가 path 의존
         with:
           repository: SosomLab/nexa-license
           path: nexa-license
+          fetch-depth: 0
+      # ★ 형제 저장소 고정(10-04): 태그로 돌 때는 형제 저장소를 **그 태그가 만들어진 시각의 main**으로 맞춘다 — 같은 태그를 나중에
+      #   다시 돌려도(재실행 · 수동 실행) 그 사이 형제 저장소에 올라온 커밋이 섞이지 않는다. 태그가 아니거나 시각을 못 읽으면
+      #   종전대로 main 최신(이 단계는 빌드를 막지 않는다). 어떤 커밋으로 빌드했는지는 로그에 남긴다.
+      - name: Pin sibling repositories to the tag time
+        shell: bash
+        run: |
+          set +e
+          when=""
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            when="$(git -C nexa-sql for-each-ref --format='%(creatordate:iso-strict)' "refs/tags/${GITHUB_REF_NAME}" | head -n 1)"
+          fi
+          for r in nexa-ui nexa-license; do
+            if [ -n "$when" ]; then
+              sha="$(git -C "$r" rev-list -1 --before="$when" HEAD 2>/dev/null)"
+              if [ -n "$sha" ]; then git -C "$r" checkout -q --detach "$sha"; fi
+            fi
+            echo "$r = $(git -C "$r" rev-parse HEAD) ($(git -C "$r" log -1 --format=%cI))"
+          done
+          echo "pinned to: ${when:-main HEAD (no tag time)}"
+          exit 0
       # rust-toolchain.toml이 요구하는 구성 요소(rustfmt·clippy)를 여기서 미리 채운다 — 빠지면 첫 cargo 호출 때 rustup이 다시 설치하다
       # 러너에 깔린 rust-src와 충돌한다(`detected conflict: lib/rustlib/src/rust/library/.cargo/config.toml` · v0.1.0 첫 실행 linux·macos · ci.yml과 같게).
       - uses: dtolnay/rust-toolchain@stable

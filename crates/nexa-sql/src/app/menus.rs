@@ -1742,6 +1742,8 @@ impl App {
     /// 접속 창 열기(메인 창 위 가운데) — 이미 열려 있으면 앞으로.
     /// 우클릭 편집 메뉴(nexa-ctl 내장)의 아이콘·단축키 + 그리드 메뉴 단축키 — 부팅·키맵 변경 때(사용자 09-15 "기본 기능에도 이미지").
     pub(crate) fn apply_menu_decor(&mut self) {
+        // 단축키가 바뀌면 툴바 툴팁의 표기도 맞춘다.
+        self.sync_toolbar_tips();
         nexa_ctl::controls::set_edit_menu_decor(nexa_ctl::controls::EditMenuDecor {
             icons: [
                 Some(toolicons::mi_copy()),

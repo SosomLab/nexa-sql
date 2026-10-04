@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-04-followups | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | v0.1.4 뒤 후속 5건(툴팁 단축키 키맵 · THIRD-PARTY-NOTICES 로고 고지 · bench-boost 복원 · release.yml 형제 저장소 태그 시각 고정 · posdrop ▾ = nexa-ui 140차) · 협업 운영 V3 개정 · journal 10-04 §22~23 |
 | work/2026-10-04-release-record | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 🚀 v0.1.4 릴리스 결과(release.yml ✓ · 자산 6 · 공개 05:23 UTC · homebrew.yml ✓ 탭 41ea3ae) + 운영 방침 102 §0-1(다른 저장소로 가져가기·재요청) · 8cbc0a2 ci ✓ |
 | work/2026-10-04-ops-docs | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 문서만: v0.1.4 결과 1차(ebb7120 · ci/integration ✓ · release.yml 진행) · 중지 경위 · 협업 규칙 "긴 작업 = 백그라운드 + 완료 알림 · 대기 루프 금지"(102 §5-3 · CLAUDE §3 · 61 §2-5) · 📌 전수 시험 고정 줄 |
 | release/0.1.4 | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | 🚀 버전 0.1.3 → 0.1.4 · 태그 `v0.1.4` → release.yml → 공개 → homebrew.yml · winget·choco 없음 · journal 10-04 §20 |

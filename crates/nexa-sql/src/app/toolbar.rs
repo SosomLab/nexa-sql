@@ -214,8 +214,25 @@ impl App {
             self.tool_dock
                 .set_item_visible(id, !hidden.contains(&id.to_string()), &mut inv);
         }
+        self.sync_toolbar_tips();
         for f in &self.tool_floats {
             f.redraw();
+        }
+    }
+
+    /// 툴바 버튼 툴팁 = 이름 + **지금 키맵의 단축키**(OS 표기 · 사용자가 바꾼 값 · 10-04) — 문구에 박힌 `(Ctrl+…)`는 떼고
+    /// 다시 붙인다(맥에서 `Ctrl`로 보이던 것 · 단축키를 바꿔도 옛 글이 남던 것). 상태에 따라 바뀌는 툴팁(해제 · 트랜잭션 로그 등)은
+    /// 각자의 동기화가 뒤에 덮어쓴다.
+    pub(crate) fn sync_toolbar_tips(&mut self) {
+        for (id, m) in TOOLBAR_ITEMS {
+            let name = crate::order_win::without_shortcut(t(*m));
+            let sc = self.keymap.display_of(id);
+            let tip = if sc.is_empty() {
+                name.to_string()
+            } else {
+                format!("{name} ({sc})")
+            };
+            self.tool_dock.set_item_tip(id, &tip);
         }
     }
 
