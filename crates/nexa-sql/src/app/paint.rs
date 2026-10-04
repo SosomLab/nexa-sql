@@ -292,6 +292,8 @@ impl App {
                 self.status_mem_rect = Rect::new(0, 0, 0, 0);
                 self.status_lic_rect = Rect::new(0, 0, 0, 0);
                 self.status_autosave_rect = Rect::new(0, 0, 0, 0);
+                self.status_seg_rects.clear();
+                self.status_bar_rect = Rect::new(0, sy, wi, px(24.0, s));
                 let star_w = dc.text_width("*");
                 for (id, (text, is_syntax)) in segs.iter().rev() {
                     // 자동 저장 항목은 `*` 자리를 늘 확보(글이 없으면 그만큼 오른쪽에 붙여 그린다).
@@ -303,6 +305,7 @@ impl App {
                     let tw = dc.text_width(text) + reserve;
                     xr -= tw;
                     let r = Rect::new(xr - gap / 2, sy, tw + gap, px(24.0, s));
+                    self.status_seg_rects.push((*id, r));
                     if *id == "tx" {
                         self.status_tx_rect = r;
                     }

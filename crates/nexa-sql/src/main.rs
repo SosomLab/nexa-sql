@@ -516,6 +516,10 @@ struct App {
     /// 확인 뒤 이어질 동작.
     tx_after: Option<TxAfter>,
     status_tx_rect: Rect,
+    /// 마지막 페인트의 상태바 칸 사각형(id별 · 우클릭 메뉴의 "영역" 판정 · 사용자 10-04).
+    status_seg_rects: Vec<(&'static str, Rect)>,
+    /// 상태바 띠 전체(우클릭 = 상태바 메뉴).
+    status_bar_rect: Rect,
     /// 상태줄 메모리 세그먼트(클릭 = 메모리 맵 창 토글 · docs/80).
     status_mem_rect: Rect,
     /// 상태줄 총량(바이트 · 마지막 조회 시각) — 그릴 때 `mem.status_refresh_ms`보다 오래됐으면 OS 한 번.
@@ -1737,6 +1741,8 @@ fn main() {
         detail_key: None,
         tx_after: None,
         status_tx_rect: Rect::new(0, 0, 0, 0),
+        status_seg_rects: Vec::new(),
+        status_bar_rect: Rect::new(0, 0, 0, 0),
         json_watch: None,
         conn_modal: false,
         json_next: Instant::now(),

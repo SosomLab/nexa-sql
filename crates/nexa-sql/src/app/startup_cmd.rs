@@ -352,6 +352,27 @@ impl App {
             }
             return;
         }
+        // 상태바 우클릭 메뉴(자체 시험): `statusbar.menu:<칸 id>` = 그 칸 가운데에서(없는 id = 띠 왼쪽 빈 자리) · 덤프는 `toolbar.menudump`.
+        if let Some(seg) = id.strip_prefix("statusbar.menu:") {
+            let b = self.status_bar_rect;
+            let (x, y) = self
+                .status_seg_rects
+                .iter()
+                .find(|(i, _)| *i == seg)
+                .map_or((b.x + 4, b.y + b.h / 2), |(_, r)| {
+                    (r.x + r.w / 2, r.y + r.h / 2)
+                });
+            self.open_statusbar_menu(x, y);
+            self.redraw();
+            return;
+        }
+        // 열린 툴바/상태바 메뉴의 항목 확정(사용자 경로와 같은 함수 · 자체 시험) — `toolbar.pick:<항목 id>`.
+        if let Some(item) = id.strip_prefix("toolbar.pick:") {
+            self.status_menu.close();
+            self.indent_pick(item);
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("toolbar.menudump:") {
             let _ = std::fs::write(path, self.status_menu.item_ids().join("\n") + "\n");
             return;

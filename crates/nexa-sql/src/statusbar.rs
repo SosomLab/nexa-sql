@@ -82,6 +82,36 @@ pub(crate) fn to_setting(blocks: &[OrderBlock]) -> String {
     order::normalize(BLOCKS, HIDDEN, &order::serialize(&fixed))
 }
 
+/// 칸 하나를 숨긴 새 설정값(우클릭 "숨기기") — 그룹의 자식이면 그 자식만 · 단독 블록이면 블록 · 잠긴 칸/모르는 id = `None`.
+pub(crate) fn hide(layout: &str, id: &str) -> Option<String> {
+    if LOCKED.contains(&id) {
+        return None;
+    }
+    let mut b = blocks(layout);
+    let mut hit = false;
+    for (bid, vis, items) in &mut b {
+        if items.is_empty() && bid == id {
+            *vis = false;
+            hit = true;
+        }
+        for (_, v) in items.iter_mut().filter(|(k, _)| k == id) {
+            *v = false;
+            hit = true;
+        }
+    }
+    hit.then(|| to_setting(&b))
+}
+
+/// 칸별 추가 메뉴(우클릭) — 그 칸과 관련된 명령(명령 id · 라벨). 클릭으로 열리는 자기 메뉴(구문·들여쓰기 등)는 좌클릭 그대로.
+pub(crate) fn area_commands(id: &str) -> &'static [(&'static str, Msg)] {
+    match id {
+        "tx" => &[("view.txlog", Msg::MnTxLogWindow)],
+        "mem" => &[("view.memory", Msg::MnMemoryWindow)],
+        "rows" | "time" => &[("view.output", Msg::MnOutput)],
+        _ => &[],
+    }
+}
+
 /// 설정값 → 보일 칸 id를 표시 순서대로(그룹은 자식으로 펼친다 · 숨긴 그룹/자식 제외).
 pub(crate) fn visible_ids(layout: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -172,6 +202,21 @@ mod tests {
             "{saved}"
         );
         assert_eq!(to_setting(&blocks(&saved)), saved);
+    }
+
+    #[test]
+    fn hide_one_cell_child_or_single_block_never_locked() {
+        // 그룹의 자식 = 그 자식만.
+        let v = hide("", "eol").expect("hide");
+        assert!(v.contains("format:1[enc:1,eol:0,indent:1,syntax:1]"), "{v}");
+        // 단독 블록.
+        let v2 = hide(&v, "mem").expect("hide");
+        assert!(v2.contains("mem:0") && v2.contains("eol:0"), "{v2}");
+        assert!(!visible_ids(&v2).iter().any(|i| i == "mem" || i == "eol"));
+        // 잠긴 칸 · 모르는 id · 그룹 id(칸이 아님).
+        assert_eq!(hide("", "license"), None);
+        assert_eq!(hide("", "nope"), None);
+        assert_eq!(hide("", "format"), None);
     }
 
     #[test]

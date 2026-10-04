@@ -684,6 +684,12 @@ impl App {
                 self.redraw();
                 return;
             }
+            // ★ 상태바 우클릭 = 항목 메뉴 → 구분선 → 공통 메뉴(상태바 설정… · 기본값) — 툴바와 같은 구조(사용자 10-04).
+            if self.status_bar_rect.contains(Point { x, y }) {
+                self.open_statusbar_menu(x, y);
+                self.redraw();
+                return;
+            }
             // ★ 편집기 거터(북마크/니모닉 영역 + 줄번호) 우클릭 = 북마크 메뉴(사용자 09-23): 그 줄에 캐럿을 두고 상태에 맞춰
             //   "추가"(없을 때) / "제거"·"니모닉 해제"(있을 때) · "니모닉 지정 ▸ 1~9"(늘). 본문 우클릭(편집 메뉴)은 그대로.
             if self.open_bm_gutter_menu(Point { x, y }) {

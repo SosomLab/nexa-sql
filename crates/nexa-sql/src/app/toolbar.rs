@@ -41,8 +41,10 @@ impl App {
             })
             .unwrap_or(Rect::new(x, y, 0, 0));
         self.status_menu.set_scale(self.scale);
+        // 대상을 가리지 않게(61 §2-2-b): 툴바 띠 바로 아래에.
+        let avoid = self.tool_dock.bounds();
         self.status_menu
-            .open_at(x, y, items, host, px(220.0, self.scale));
+            .open_beside(x, y, avoid, items, host, px(220.0, self.scale));
     }
 
     /// 우클릭 메뉴 항목(순수에 가깝게 — 위치만 받는다 · 시험·덤프용으로 분리).
@@ -76,6 +78,56 @@ impl App {
         }
         items.push(CtxItem::item("tb.settings", t(Msg::MnToolbarSettings)));
         items.push(CtxItem::item("tb.reset", t(Msg::MnResetToolbar)));
+        items
+    }
+
+    /// ★ 상태바 우클릭(사용자 10-04 · 툴바와 같은 구조): **항목(커서 아래 칸)의 메뉴 → 구분선 → 공통 메뉴**.
+    ///   항목 = 그 칸과 관련된 명령 + "숨기기"(잠긴 칸 제외 · 다시 켜기는 상태바 설정에서) · 공통 = 상태바 설정… · 항목 기본값.
+    pub(crate) fn open_statusbar_menu(&mut self, x: i32, y: i32) {
+        let items = self.statusbar_menu_items(Point { x, y });
+        let host = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let sz = w.inner_size();
+                Rect::new(0, 0, sz.width as i32, sz.height as i32)
+            })
+            .unwrap_or(Rect::new(x, y, 0, 0));
+        self.status_menu.set_scale(self.scale);
+        // 대상을 가리지 않게(61 §2-2-b): 상태바는 창 맨 아래 — 아래에 자리가 없으니 띠 바로 **위**로 열린다.
+        let avoid = self.status_bar_rect;
+        self.status_menu
+            .open_beside(x, y, avoid, items, host, px(220.0, self.scale));
+    }
+
+    pub(crate) fn statusbar_menu_items(
+        &self,
+        p: Point,
+    ) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        let mut items: Vec<CtxItem> = Vec::new();
+        let seg = self
+            .status_seg_rects
+            .iter()
+            .find(|(_, r)| r.contains(p))
+            .map(|(id, _)| *id);
+        if let Some(id) = seg {
+            for (cmd, m) in crate::statusbar::area_commands(id) {
+                items.push(CtxItem::item(format!("tbcmd:{cmd}"), t(*m)));
+            }
+            if !crate::statusbar::LOCKED.contains(&id) {
+                let name = t(crate::statusbar::label(id, None));
+                items.push(CtxItem::item(
+                    format!("sb.hide:{id}"),
+                    tf(Msg::MnStatusHide, &[name]),
+                ));
+            }
+            if !items.is_empty() {
+                items.push(CtxItem::Separator);
+            }
+        }
+        items.push(CtxItem::item("sb.settings", t(Msg::MnStatusSettings)));
+        items.push(CtxItem::item("sb.reset", t(Msg::MnStatusReset)));
         items
     }
 

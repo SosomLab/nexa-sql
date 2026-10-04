@@ -254,6 +254,26 @@ impl App {
             self.reset_toolbar();
             return;
         }
+        // 상태바 우클릭(사용자 10-04): 설정 창 · 기본값 · 이 항목 숨기기.
+        if id == "sb.settings" {
+            self.open_order_editor(crate::statusbar::KEY);
+            return;
+        }
+        if id == "sb.reset" {
+            self.order_changed(crate::statusbar::KEY, "");
+            return;
+        }
+        if let Some(seg) = id.strip_prefix("sb.hide:") {
+            let cur = self
+                .settings
+                .get(crate::statusbar::KEY)
+                .unwrap_or("")
+                .to_string();
+            if let Some(v) = crate::statusbar::hide(&cur, seg) {
+                self.order_changed(crate::statusbar::KEY, &v);
+            }
+            return;
+        }
         // 툴바 우클릭 공통 메뉴 "툴바 설정…" = 보기·순서 편집 창으로 바로(사용자 10-04).
         if id == "tb.settings" {
             self.open_order_editor(super::toolbar::TOOLBAR_ORDER_KEY);
