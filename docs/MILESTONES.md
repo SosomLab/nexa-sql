@@ -49,6 +49,7 @@
 | ✅ | **10-02**(win 108차 끝): 🚀 **v0.1.3 릴리스**([journal 09-30 §40](journal/2026-09-30.md)) — 108차 전부(시간 설정 ms · 객체 소스 탭 F5 · Output 탭 · 객체 삭제 · 서버 유형 · SQL Server SSMS 탐색기 · 툴바 작업 단위 · Ctrl 링크 ▸ 탐색기에서 보기) · brew 0.1.2 → 0.1.3 · winget·choco 없음 |
 | 🚧 | **09-27~28**(win 102차 후반): 🧹 **코드 건강 점검·전체 리팩터링**([93](93-code-health-and-refactoring.md)) — 원복 태그 `baseline/pre-refactor-2026-09-27`(세 저장소) · 미사용 정리(`allow(dead_code)` 17→0 · `Msg` 62 · 효과 없는 설정 4 → T-249 · `dev.start_demo`) · main.rs 20,722→2,758(`app/` 26 기능 모듈 · 가시성 89 축소) · `window_event`/`route_inner` 분해(책임 연쇄) · 공통 부품 6(30 §2) · 재실행 도구 `scripts/code-health.py` · 시험 622/432 · 기능 점검 78/78 · 남은 = T-246 · T-248 2차 · T-247 표 창 그리기 머리(T-247 5곳 · T-249 · T-250은 09-29 ✅) |
 | 🚧 | **09-23~26**(mac 100차): ★ **그리드 데이터 편집 T-182**([87](87-grid-data-editing.md) · 셀/행 편집 · 행 식별 등급 · **데이터 보호 불변식** 사전 검사·영향 1행·되돌림 · 적용 뒤 행 단위 재조회 · 4-DBMS E2E 84/84) · ★ **LOB 값 창**(Text/Hex/Image · nexa-gfx 자체 디코더 PNG(Adam7)/JPEG(기저)/BMP/GIF · 외부 crate 0) · ★ **대량 적재·추출 T-236**([89](89-bulk-io-review.md) · CLI `nsql import`/`export --fast` · GUI **Import 창** · PG COPY 양방향 · Oracle 배열 DML · MSSQL TDS bulk · E2E 28/28) · ★ 탐색기 검색 인덱스·메타 3층·객체 상세 패널 · 📐 UI/UX 국제 표준 대조([88](88-ui-ux-standards-survey.md)) |
+| 🚧 | **10-05**(win 112차 · push 3 · CI 3/3): ★ T-122 문지기 우회 불가화 · ★ **그리드 필터 완료**(T-181 = 필터 줄 · 서버 재조회 · OR · 값 고르기) · ★ **객체 바로가기 대부분**(T-180 = F4 · 열 머리 ▸ 탐색기 · Ctrl+클릭 동작 · 참조 행 보기 · 후보 메뉴 · `obj.*` 액션 · 남음 = `ObjectRef`) · 객체 정보(T-179 = 머무름 툴팁 · 정보 탭 · 200행 · 남음 = 동작 버튼 hover 카드) · 인텔리센스(T-178 = JOIN FK 조각 · 시그니처 카드) · 그리드 F2/Ctrl+D(T-182) · 결함 3 수정([journal 10-05 §0](journal/2026-10-05.md)) |
 | ✅ | CI `integration`(PostgreSQL) `pg_read_only_transaction_ends_in_manual_mode` 실패 — 78~79차부터 · **해결 09-21 87차(T-146)**: 원인 = 수동 커밋 모드가 PG·SQLite·SQL Server·MySQL에서 실제로는 자동 커밋 → `manual_begin_sql` |
 | 🚧 | 초기 계획 묶음(10-05 정합 · 문서 근거만 · 항목별 완료 판정은 TODO) — 접속 대화상자·프로필 목록 = 위 09-14 행 ✅ · 클립보드·우클릭 메뉴 = 위 행들 ✅ · 치환 변수 입력 창 = 변수 관리(63) ✅ · 탭/도크 = 편집기 탭·툴바 도크 ✅ · `nexa-grid` 크레이트 = nexa-ui에 있음(TODO T-15의 요구 충족 여부 미확인) |
 
@@ -62,7 +63,7 @@
 | 상태 | 항목 |
 |:--:|---|
 | ✅ | 설치본 릴리스 파이프라인 — 3-OS 설치본(v0.1.0 09-28 ~ v0.1.4 10-04 · `release.yml` · sha256) · 🍺 Homebrew Cask(`homebrew.yml`) · 설계 = 설치본만(MSI · pkg/dmg · deb/rpm) · 목적별 exe |
-| 🚧 | **10-05** Linux 패키지 저장소 채널 — pkg.sosomlab.com(`SosomLab/linux-repo` · 서명 APT + RPM · deb·rpm 둘 다 필수 자산) · `linux-repo.yml`(공개 때 신호) · 릴리스 노트 등록 명령 · 실제 발행·`apt`/`dnf` 실기 미검증(T-280 · [33 §5-5](33-distribution-and-packaging.md)) |
+| 🚧 | **10-05** Linux 패키지 저장소 채널 — pkg.sosomlab.com(`SosomLab/linux-repo` · 서명 APT + RPM · deb·rpm 둘 다 필수 자산) · `linux-repo.yml`(공개 때 신호 · push `1ddeaf1`에 포함) · 릴리스 노트 등록 명령 · 남음 = 시크릿 등록 · linux-repo toml 커밋·push 승인 · 실제 발행·`apt`/`dnf` 실기(T-280 · [33 §5-5](33-distribution-and-packaging.md)) |
 | 🚧 | 남은 배포 일 — T-72 잔여 · winget·choco 개시(T-279 · 닫힘) · 포터블 모드(T-106 · D-78) · 코드 서명(DR-20 = 별도 요청 시) · 공유 lib 분리 · macOS Universal 2(완료 여부 미확인 · 10-05 정합) |
 
 ## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)
