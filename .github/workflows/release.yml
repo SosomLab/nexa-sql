@@ -278,6 +278,22 @@ jobs:
           | Linux x86_64 (deb) | \`nexa-sql_${VERSION}_amd64.deb\` | \`sudo dpkg -i\` 또는 \`sudo apt install ./…deb\` |
           | Linux x86_64 (rpm) | \`nexa-sql-$VERSION-1.x86_64.rpm\` | \`sudo dnf install ./…rpm\` |
           | macOS (Homebrew) | — | \`brew install --cask kiros33/tap/nexa-sql\`(공개 뒤 자동 반영 · \`nsql\`도 PATH에) |
+          | Linux (APT 저장소 · Debian/Ubuntu) | — | 저장소 등록 뒤 \`sudo apt install nexa-sql\` · 갱신 = \`apt upgrade\`(아래 · 공개 뒤 자동 반영) |
+          | Linux (RPM 저장소 · Fedora/RHEL 계열) | — | 저장소 등록 뒤 \`sudo dnf install nexa-sql\` · 갱신 = \`dnf upgrade\`(아래 · 공개 뒤 자동 반영) |
+
+          ## Linux 패키지 저장소(pkg.sosomlab.com · 서명됨)
+
+          한 번 등록하면 새 버전을 \`apt upgrade\`/\`dnf upgrade\`로 받습니다(안내 = <https://pkg.sosomlab.com/>).
+
+          \`\`\`sh
+          # APT(Debian · Ubuntu)
+          sudo curl -fsSLo /usr/share/keyrings/sosomlab-archive-keyring.gpg https://pkg.sosomlab.com/sosomlab-archive-keyring.gpg
+          sudo curl -fsSLo /etc/apt/sources.list.d/sosomlab.sources https://pkg.sosomlab.com/apt/sosomlab.sources
+          sudo apt update && sudo apt install nexa-sql
+          # RPM(Fedora · RHEL 계열)
+          sudo curl -fsSLo /etc/yum.repos.d/sosomlab.repo https://pkg.sosomlab.com/rpm/sosomlab.repo
+          sudo dnf install nexa-sql
+          \`\`\`
 
           받은 파일은 \`sha256sums.txt\`로 확인하세요. 제거: Windows 프로그램 추가/제거 · macOS \`sudo "/Applications/Nexa SQL.app/Contents/Resources/uninstall.sh"\` · Linux \`dpkg -r nexa-sql\`/\`dnf remove nexa-sql\`.
           사용자 데이터(설정·연결 프로필)는 OS 사용자 폴더에 있으며 제거해도 보존됩니다.

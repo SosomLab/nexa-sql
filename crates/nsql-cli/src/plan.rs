@@ -9,6 +9,8 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
     let items = nsql_script::split_script_in(src, Some(dialect));
     println!("# dialect={dialect} items={}", items.len());
     let mut errors = 0;
+    // 서버가 채우는 변수(잡을 행 `captures`) — 접속 없는 plan에서는 값이 생기지 않는다(T-162 ⑥).
+    let mut server_filled: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (i, item) in items.iter().enumerate() {
         let label = match &item.kind {
             ItemKind::Command(c) => format!("{c:?}")
@@ -20,6 +22,27 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
             ItemKind::Invalid(_) => "Invalid".into(),
         };
         println!("\n[{}] line {} · {label}", i + 1, item.line);
+        // 서버 식 대입 뒤의 `PRINT` — plan은 서버에 가지 않으니 "변수 없음" 오류가 아니라 안내다.
+        if let ItemKind::Command(nsql_script::Command::Print { names }) = &item.kind {
+            let pending = |n: &String| {
+                !engine.vars.contains(n) && server_filled.contains(&n.to_ascii_uppercase())
+            };
+            if names.iter().any(pending) {
+                for n in names {
+                    match engine.vars.get(n) {
+                        Some(v) => println!("  → PRINT  {n} = {}", v.value.display()),
+                        None if pending(n) => println!(
+                            "  · PRINT  {n} = (서버가 채우는 값 — 접속 없는 plan에서는 알 수 없음)"
+                        ),
+                        None => {
+                            errors += 1;
+                            println!("  ✗ 변수 {n}가 없습니다");
+                        }
+                    }
+                }
+                continue;
+            }
+        }
         let mut guard = 0;
         loop {
             let acts = engine.plan(item);
@@ -55,6 +78,8 @@ pub(crate) fn run_plan(dialect: Dialect, src: &str, script_args: &[String]) -> i
                                 p.value.to_sql_literal(dialect)
                             );
                         }
+                        server_filled
+                            .extend(prepared.captures.iter().map(|n| n.to_ascii_uppercase()));
                         if !prepared.implicit.is_empty() {
                             println!("    ! 암묵 변수: {}", prepared.implicit.join(", "));
                         }

@@ -258,8 +258,7 @@ impl App {
         }
         if shared_dirty {
             self.sess
-                .worker
-                .send(worker::Cmd::SharedVars(self.sess.shared_vars.clone()));
+                .control(worker::Cmd::SharedVars(self.sess.shared_vars.clone()));
         }
         if global_dirty {
             self.global_vars_changed();
@@ -278,7 +277,7 @@ impl App {
         }
         let v = self.global_vars.clone();
         for s in self.all_sess() {
-            s.worker.send(worker::Cmd::GlobalVars(v.clone()));
+            s.control(worker::Cmd::GlobalVars(v.clone()));
         }
     }
 

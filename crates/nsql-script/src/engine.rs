@@ -233,6 +233,12 @@ impl Engine {
             Ok(t) => t,
             Err(e) => return vec![Self::subst_error(e)],
         };
+        // SQLite는 `@x` · `$x`도 이름 매개변수다 → `:x`와 한 변수로(T-162 ① · 같은 길이 치환).
+        let text = if self.dialect == Dialect::Sqlite && matches!(item.kind, ItemKind::Sql(_)) {
+            crate::bind::unify_sqlite_markers(&text).into_owned()
+        } else {
+            text
+        };
         match &item.kind {
             ItemKind::Invalid(msg) => vec![Action::Error(msg.clone())],
             ItemKind::Sql(kind) => {

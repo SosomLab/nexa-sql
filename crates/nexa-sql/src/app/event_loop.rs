@@ -644,7 +644,7 @@ impl ApplicationHandler<Wake> for App {
                 self.flush_on_exit();
                 self.persist_window_sizes(true);
                 for s in self.all_sess() {
-                    s.worker.send(worker::Cmd::Quit);
+                    s.control(worker::Cmd::Quit);
                 }
                 el.exit();
                 return;
@@ -870,6 +870,17 @@ impl ApplicationHandler<Wake> for App {
                                 if !cfg!(target_os = "macos") {
                                     return;
                                 }
+                            }
+                        }
+                        // 결과 그리드 포커스 = 표 편집 키가 전역 키맵보다 먼저(F2 셀 편집 · Ctrl/⌘+D 행 복제 · T-182).
+                        if self.focus == Focus::Grid && !self.palette.is_open() {
+                            if let Some(cmd) = keymap::grid_focus_command(&ch) {
+                                if !kev.repeat {
+                                    self.grid.edit_command(cmd);
+                                    self.after_grid_event();
+                                    self.redraw();
+                                }
+                                return;
                             }
                         }
                         if self.keymap.is_prefix(&ch) {

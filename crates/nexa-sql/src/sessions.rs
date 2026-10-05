@@ -269,7 +269,37 @@ impl Sess {
         self.aux = self.aux.saturating_sub(1);
         self.touch();
     }
+
+    /// ★ 문지기(T-122): 막히지 않았으면 증표를 준다 — DB 작업은 이 증표가 있어야 보낼 수 있다(`submit`).
+    /// 증표를 받은 **뒤에** `busy`·`aux`를 올리고 보낸다(순서가 바뀌면 스스로 막힌다).
+    pub(crate) fn pass(&self) -> Option<GatePass> {
+        (!self.blocked()).then_some(GatePass(()))
+    }
+
+    /// 문지기를 **일부러** 지나지 않는 보냄 — 접속 명령처럼 다른 판정(`login_place` · 기동 직후 · 실행 경로의 재접속)이
+    /// 이미 자리를 확인했거나 줄 세우기가 뜻인 자리만. 쓰는 곳 수는 아래 소스 훑기 시험이 고정한다(늘리려면 시험을 고친다).
+    pub(crate) fn pass_queued(&self, _why: &'static str) -> GatePass {
+        GatePass(())
+    }
+
+    /// DB 작업 명령을 보낸다 — 증표 필수.
+    pub(crate) fn submit(&self, _pass: GatePass, cmd: worker::Cmd) {
+        debug_assert!(!cmd.is_control(), "통제 명령은 control()로");
+        self.worker.dispatch(cmd);
+    }
+
+    /// 통제 명령(해제 · 종료 · 커밋 모드 · 변수 층 전파)을 보낸다 — 문지기 없음(막힌 상태를 푸는 길이어야 한다).
+    pub(crate) fn control(&self, cmd: worker::Cmd) {
+        debug_assert!(cmd.is_control(), "DB 작업은 submit(증표)로");
+        self.worker.dispatch(cmd);
+    }
 }
+
+/// ★ 문지기 증표(T-122 · docs/52 §3) — "이 세션에 새 작업을 보내도 된다"는 판정을 **지났다는 표**. 만들 수 있는 곳은
+/// [`Sess::pass`](막히지 않았을 때만)와 [`Sess::pass_queued`](이유를 적는 예외)뿐이라, 새 DB 진입점이 문지기를 잊으면
+/// 컴파일되지 않는다(`worker.dispatch` 직접 호출은 소스 훑기 시험이 막는다).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GatePass(());
 
 /// 스크립트의 **첫** 접속 명령 — 호스트가 실행 전에 세션 배치를 정할 때 본다(워커로 보내기 전 · 파싱만).
 #[derive(Clone, Debug, PartialEq)]
@@ -617,6 +647,26 @@ pub(crate) fn reap_on_disconnect(
     lost_by_connect: bool,
 ) -> bool {
     is_private && !idle_closed && !user_disconnected && shared_mode && !lost_by_connect
+}
+
+/// 전용 세션 해제(표식 메뉴 · `DISCONNECT`)의 첫 판정(docs/52 §12 ④ · T-122) — 미커밋이 없으면 바로 해제 ·
+/// 있으면 **지금 보고 있는 세션**만 묻고(답할 팝업이 그 세션에 붙는다) 다른 세션은 거부한다(조용히 잃지 않게).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PrivateDisc {
+    /// 바로 해제.
+    Proceed,
+    /// 미커밋 확인 팝업(커밋/롤백/취소).
+    Ask,
+    /// 거부 — 그 탭으로 가서 먼저 커밋/롤백하라고 알린다.
+    Refuse,
+}
+
+pub(crate) fn private_disconnect_step(is_current: bool, has_pending: bool) -> PrivateDisc {
+    match (has_pending, is_current) {
+        (false, _) => PrivateDisc::Proceed,
+        (true, true) => PrivateDisc::Ask,
+        (true, false) => PrivateDisc::Refuse,
+    }
 }
 
 /// D4 끊긴 공유 세션 객체를 거둘 것인가 — 아무도 안 쓰고(묶인 탭 0 · 활성 아님) 되살릴 것도 아닐 때만.
@@ -1631,6 +1681,70 @@ mod tests {
     }
 
     /// MC/DC: 다섯 조건이 모두 맞을 때만 거둔다 — 하나씩 뒤집으면 남긴다.
+    /// 전용 세션 해제의 첫 판정(MC/DC) — 미커밋 유무가 묻기/거부를 켜고 · "지금 세션인가"가 둘을 가른다.
+    #[test]
+    fn private_disconnect_step_mcdc() {
+        use super::{private_disconnect_step as f, PrivateDisc as D};
+        assert_eq!(f(true, false), D::Proceed);
+        assert_eq!(f(false, false), D::Proceed, "미커밋 없음 = 세션 무관");
+        assert_eq!(f(true, true), D::Ask, "has_pending 단독으로 Proceed → Ask");
+        assert_eq!(
+            f(false, true),
+            D::Refuse,
+            "is_current 단독으로 Ask → Refuse"
+        );
+    }
+
+    /// ★ 문지기 우회 방지(T-122): 호스트 소스 어디에도 워커 큐에 직접 넣는 호출이 없어야 한다 — DB 작업은
+    /// `Sess::submit(증표)` · 통제 명령은 `Sess::control`뿐. 문지기를 일부러 지나지 않는 `pass_queued`는 접속 넷으로 고정한다
+    /// (늘려야 하면 이유를 적고 이 수를 고친다 · docs/52 §3).
+    #[test]
+    fn no_host_code_bypasses_the_gate() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).expect("src").flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        walk(&root, &mut files);
+        assert!(files.len() > 20, "소스를 못 찾았다: {}", root.display());
+        // 낱말을 쪼개 적는다 — 이 시험 파일 자신이 걸리지 않게.
+        let direct = [concat!("worker", ".dispatch("), concat!("worker", ".send(")];
+        let queued = concat!(".pass_", "queued(");
+        let mut queued_uses = 0;
+        for f in &files {
+            let text = std::fs::read_to_string(f).expect("read");
+            let name = f.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            let squeezed: String = text.split_whitespace().collect();
+            for d in direct {
+                let n = squeezed.matches(d).count();
+                // `sessions.rs`의 `submit`·`control` 두 곳만 허용.
+                let allowed = if name == "sessions.rs" && d.ends_with("dispatch(") {
+                    2
+                } else {
+                    0
+                };
+                assert_eq!(
+                    n,
+                    allowed,
+                    "{} 에 `{d}` {n}곳 — Sess::submit/control을 쓴다",
+                    f.display()
+                );
+            }
+            queued_uses += squeezed.matches(queued).count();
+        }
+        assert_eq!(
+            queued_uses, 4,
+            "pass_queued 사용처(접속 넷: login_place · connect_quietly · 기동 인자 2)"
+        );
+    }
+
     #[test]
     fn reap_on_disconnect_mcdc() {
         assert!(reap_on_disconnect(true, false, false, true, false));

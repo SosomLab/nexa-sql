@@ -767,4 +767,35 @@ mod tests {
             .iter()
             .all(|(k, _)| k.starts_with("ext.sqlfmt_kiros33.")));
     }
+    /// T-255 2차(journal 10-04 §4의 두 흠 재현 시도) — 가장 긴 항목도 AS 앞은 탭(끝이 탭 경계 2칸 앞이면 탭 하나가
+    /// 두 칸으로 보인다) · `force_as`로 붙인 AS(`a.z`)도 같은 탭 스톱에 선다. strict · 비 strict(keep) 둘 다 고정한다.
+    #[test]
+    fn longest_item_and_forced_as_share_the_tab_stop() {
+        let src = "select a.x as x, b.longer_col As y, a.z from t as a join u b on a.id = b.id;";
+        let out = format(src, &Options::default(), &Cfg::default());
+        assert!(
+            out.starts_with(
+                "SELECT\n\ta.x\t\t\t\tAS\tx\n,\tb.longer_col\tAS\ty\n,\ta.z\t\t\t\tAS\tz\n"
+            ),
+            "{out:?}"
+        );
+        let keep = Options {
+            keyword_case: nsql_format::Case::Keep,
+            ..Options::default()
+        };
+        let cfg = Cfg {
+            strict: false,
+            ..Cfg::default()
+        };
+        let out = format(src, &keep, &cfg);
+        // 원문 `as`·`As`는 그대로 · 붙인 AS는 대문자 · 셋 다 열 16(탭 폭 4)에서 시작한다.
+        assert!(
+            out.starts_with("select\n\ta.x\t\t\tas x\n, b.longer_col\tAs y\n, a.z\t\t\tAS z\n"),
+            "{out:?}"
+        );
+        for line in out.lines().skip(1).take(3) {
+            let at = line.to_ascii_uppercase().find("\tAS ").expect("AS") + 1;
+            assert_eq!(display_width(&line[..at], 4), 16, "{line:?}");
+        }
+    }
 }

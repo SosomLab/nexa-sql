@@ -112,6 +112,21 @@ pub(crate) enum Cmd {
     Quit,
 }
 
+impl Cmd {
+    /// **통제 명령**인가 — 막힌 세션을 풀거나(해제·종료) 상태만 전하는 것(커밋 모드 · 변수 층). 이것들은 문지기 없이 보낸다
+    /// (`Sess::control`). 나머지는 전부 DB 작업 = 문지기 증표가 있어야 한다(`Sess::submit` · T-122 · docs/52 §3).
+    pub(crate) fn is_control(&self) -> bool {
+        matches!(
+            self,
+            Cmd::Disconnect
+                | Cmd::Quit
+                | Cmd::Autocommit(_)
+                | Cmd::SharedVars(_)
+                | Cmd::GlobalVars(_)
+        )
+    }
+}
+
 /// 접속 계열 명령의 결과 — 접속 패널 상태줄의 원천(실행 이벤트와 분리).
 #[derive(Debug)]
 pub(crate) enum ConnOutcome {
@@ -433,7 +448,9 @@ pub(crate) struct Handle {
 }
 
 impl Handle {
-    pub(crate) fn send(&self, c: Cmd) {
+    /// 명령을 워커 큐에 넣는다. ★ 호스트 코드는 이것을 직접 부르지 않는다 — `Sess::submit`(증표) · `Sess::control`만
+    /// (T-122 · `sessions.rs`의 소스 훑기 시험이 지킨다).
+    pub(crate) fn dispatch(&self, c: Cmd) {
         let _ = self.tx.send(c);
     }
 
@@ -1684,7 +1701,7 @@ mod tests {
         let (w, events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
         let spec = ConnectSpec::parse("oracle://u/p@192.0.2.1:1521/db").expect("spec");
         let t = std::time::Instant::now();
-        w.send(Cmd::ConnectSpec {
+        w.dispatch(Cmd::ConnectSpec {
             spec,
             reconnect_same: false,
         });
@@ -1733,7 +1750,7 @@ mod tests {
         };
         let run = |target: String, reply: Option<PwReply>| -> (bool, Option<String>) {
             let (w, _events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
-            w.send(Cmd::ConnectSpec {
+            w.dispatch(Cmd::ConnectSpec {
                 spec: ConnectSpec::parse(&target).expect("spec"),
                 reconnect_same: false,
             });
@@ -1883,11 +1900,11 @@ mod tests {
     fn replacement_worker_answers_while_old_one_is_stuck() {
         let (old, _old_events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
         // 비라우팅 주소(TEST-NET-1) — 드라이버가 없거나 즉시 실패해도 상관없다: 새 워커의 독립성만 본다.
-        old.send(Cmd::Connect("mssql://u:p@192.0.2.1:1433/db".into()));
-        old.send(Cmd::Disconnect);
+        old.dispatch(Cmd::Connect("mssql://u:p@192.0.2.1:1433/db".into()));
+        old.dispatch(Cmd::Disconnect);
         let (new, _events) = spawn(Dialect::Oracle, 10, true, Box::new(|| {}));
         let t = std::time::Instant::now();
-        new.send(Cmd::Disconnect);
+        new.dispatch(Cmd::Disconnect);
         let got = new.conn.recv_timeout(Duration::from_secs(5));
         assert!(matches!(got, Ok(ConnOutcome::Disconnected)), "{got:?}");
         assert!(t.elapsed() < Duration::from_secs(5));

@@ -568,7 +568,8 @@ impl App {
             | "grid.edit_strict"
             | "grid.edit_refresh"
             | "grid.paste_max_rows"
-            | "grid.filter_list_max" => self.apply_grid_edit_cfg(),
+            | "grid.filter_list_max"
+            | "grid.filter_strip" => self.apply_grid_edit_cfg(),
             "editor.dblclick" | "editor.triple_click" | "editor.dblclick_underscore" => {
                 self.apply_click_policy();
             }

@@ -1805,8 +1805,7 @@ fn main() {
         app.explorer.set_history(h.clone());
         // 글로벌 변수 층을 첫 세션에(docs/63 §11).
         app.sess
-            .worker
-            .send(worker::Cmd::GlobalVars(app.global_vars.clone()));
+            .control(worker::Cmd::GlobalVars(app.global_vars.clone()));
         app.bm_panel.set_history(h.clone());
         app.outline_panel.set_history(h.clone());
         app.ext_panel.set_history(h.clone());
@@ -1989,15 +1988,21 @@ fn main() {
                     // 프로필 이름으로 보인다(86차 mac 점검 · T-148).
                     app.sess.profile = target.clone();
                 }
-                app.sess.worker.send(worker::Cmd::ConnectSpec {
-                    spec,
-                    reconnect_same: false,
-                });
+                // 기동 인자 접속 — 방금 만든 세션이라 앞선 작업이 없다(`busy`는 위에서 화면용으로 올렸다).
+                let pass = app.sess.pass_queued("startup-arg");
+                app.sess.submit(
+                    pass,
+                    worker::Cmd::ConnectSpec {
+                        spec,
+                        reconnect_same: false,
+                    },
+                );
             }
             None if !nsql_vault::is_profile_name(&target) => {
                 app.sess.busy = true;
                 app.sess.status = tf(Msg::StConnecting, &[&target]);
-                app.sess.worker.send(worker::Cmd::Connect(target));
+                let pass = app.sess.pass_queued("startup-arg");
+                app.sess.submit(pass, worker::Cmd::Connect(target));
             }
             None => {}
         }

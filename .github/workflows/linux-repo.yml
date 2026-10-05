@@ -1,0 +1,56 @@
+# linux-repo — 공개된 릴리스를 SosomLab Linux 패키지 저장소(pkg.sosomlab.com · APT + RPM)에 반영하라는 신호를 보낸다(docs/33 §3).
+#
+# 저장소 = SosomLab/linux-repo(등록 파일 `apps/nexa-sql.toml` · 패키지 파일은 싣지 않고 이 저장소의 Release 자산으로 302).
+# 실행 시점 = 릴리스 **공개**(published) 때 자동 · 수동(workflow_dispatch)도 가능. 초안 단계에서는 돌지 않는다
+# (linux-repo 생성기는 `releases/latest`만 본다 — 초안은 보이지 않는다 · 그래서 release.yml이 아니라 여기서 보낸다 = homebrew.yml과 같은 시점).
+# `LINUX_REPO_DISPATCH_TOKEN`(fine-grained · SosomLab/linux-repo Contents Read/write)이 없으면 알림만 남기고 끝낸다
+# — 신호가 없어도 linux-repo의 하루 한 번 정기 실행이 최신 릴리스를 잡는다.
+# 보내기 전에 .deb · .rpm 자산이 릴리스에 있는지 본다(.deb가 없으면 linux-repo 발행이 실패한다 · .rpm이 없으면 dnf 쪽만 빠진다).
+# ⚠ 한 번 공개한 Release 자산은 지우거나 다시 올리지 않는다 — 서명된 색인의 해시가 그 파일을 가리킨다.
+name: linux-repo
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "릴리스 태그(예: v0.1.4)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: 자산 확인(.deb · .rpm)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in *-*) echo "::notice::사전 릴리스($TAG)는 Linux 저장소에 올리지 않는다"; echo "SKIP=1" >> "$GITHUB_ENV"; exit 0 ;; esac
+          V="${TAG#v}"
+          names=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$names"
+          # 이름 규칙 = linux-repo `apps/nexa-sql.toml`과 같아야 한다(바꾸면 두 곳을 함께).
+          echo "$names" | grep -qx "nexa-sql_${V}_amd64.deb" || { echo "::error::nexa-sql_${V}_amd64.deb 없음 — linux-repo 발행이 실패한다"; exit 1; }
+          echo "$names" | grep -qx "nexa-sql-${V}-1.x86_64.rpm" || echo "::warning::nexa-sql-${V}-1.x86_64.rpm 없음 — dnf 저장소에는 이 버전이 빠진다"
+
+      - name: pkg.sosomlab.com 갱신 신호
+        if: env.SKIP != '1'
+        env:
+          TOKEN: ${{ secrets.LINUX_REPO_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 스텝 `if:`에서는 secrets를 읽을 수 없다 — 토큰 유무는 셸에서 본다.
+          if [ -z "$TOKEN" ]; then echo "::notice::LINUX_REPO_DISPATCH_TOKEN 없음 — linux-repo 정기 실행(하루 한 번)이 반영한다"; exit 0; fi
+          curl -fsS -X POST https://api.github.com/repos/SosomLab/linux-repo/dispatches \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"event_type\":\"app-released\",\"client_payload\":{\"app\":\"nexa-sql\",\"tag\":\"$TAG\",\"repo\":\"$GITHUB_REPOSITORY\",\"run_url\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}}"
+          echo "신호 보냄 — https://github.com/SosomLab/linux-repo/actions 의 publish 실행을 본다" | tee -a "$GITHUB_STEP_SUMMARY"

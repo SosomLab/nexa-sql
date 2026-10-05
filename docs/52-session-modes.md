@@ -120,8 +120,8 @@ Sess { worker(스레드·Runner·세션) · events · busy · aux · connected �
 ### 3-2. 남은 틈 (정직한 한계)
 
 - **미커밋 확인 팝업이 떠 있는 동안 다른 세션의 실행 완료**는 그대로 진행된다(팝업은 지금 세션에만 답한다 · 의도).
-- `tx.close_action = commit|rollback`(묻지 않음)으로 실행 중인 탭을 닫으면 커밋이 실행 뒤에 줄 선다 — 워커가 순차라 안전하지만 시점이 밀린다. 실행 중 탭 닫기는 **먼저 취소를 보낸다**(`reap_sessions`).
-- 확장(Rainbow 등)·팔레트는 전부 `menu_action` 경유라 같은 문지기를 지난다. **새 진입점은 `gate_open()`을 부르는 것이 규칙**(30 §1-2 체크리스트에 추가 → T-122).
+- `tx.close_action = commit|rollback`(묻지 않음)으로 실행 중인 탭을 닫으면 커밋이 실행 뒤에 줄 선다 — 워커가 순차라 안전하지만 시점이 밀린다. 실행 중 탭 닫기는 **먼저 취소를 보낸다**(`reap_sessions`). → **10-05(T-122) 바뀜**: 그 세션이 실행 중이면 **탭을 닫지 않고 상태줄 안내**(커밋/롤백이 줄 서지 않는다 · §3-4 ③).
+- 확장(Rainbow 등)·팔레트는 전부 `menu_action` 경유라 같은 문지기를 지난다. **새 진입점은 `gate_open()`을 부르는 것이 규칙**(30 §1-2 체크리스트에 추가 → T-122) → **10-05 T-122로 우회 불가화**(§3-4 · 30 §1-2 ⑧).
 - 실행 상태 카드(토스트)는 세션별 — 활성 탭의 것만 보인다. 뒤에서 끝난 실행은 탭의 ▶가 사라지는 것으로만 안다(→ D-104).
 
 ### 3-3. 09-19 재검토 — "공유 세션 · 4탭 · 1탭 실행 중" 시나리오(사용자 요청)
@@ -146,6 +146,17 @@ Sess { worker(스레드·Runner·세션) · events · busy · aux · connected �
 | 탭 표식 메뉴(다른 공유 연결로 · 미연결) | 세션 바꾸기 = `blocked`와 무관(B는 A의 실행에서 벗어난다) | ✅ 의도 |
 
 수정 3건(메뉴바 · 자동커밋 전환 · 실행 탭 닫기)은 09-19 63차 후반. 나머지 원칙: **새 진입점 = `gate_open()`**(T-122).
+
+### 3-4. 문지기 우회 불가화 — 증표 `GatePass`(T-122 · 10-05 · 검증 결과 = journal 10-05 §6)
+
+> 3-2의 "새 진입점은 `gate_open()`을 부르는 것이 규칙"은 사람이 지켜야 하는 규칙이었다. 이제는 **타입과 시험이 강제**한다.
+
+- **전송 통로 = 둘뿐**: `Sess::submit(증표 GatePass, cmd)`(DB로 가는 일) · `Sess::control(cmd)`(막힌 상태를 푸는 제어 — 중지·접속 해제 등 · `Cmd::is_control()`). 워커의 `Handle::send`는 `dispatch`로 바뀌었고 **`sessions.rs`에서만** 부른다.
+- **증표**: `App::gate_pass()`가 문지기를 지난 호출에만 `GatePass`를 준다(`gate_open()` = 그 껍질). 증표 없이는 `submit`을 부를 수 없다.
+- **예외 `pass_queued` 4곳**(접속 — 큐에 줄 세우는 것이 뜻): `login_place` · `connect_quietly` · 기동 인자 2.
+- **시험**: `sessions::tests::no_host_code_bypasses_the_gate`(소스를 훑어 `sessions.rs` 밖의 직접 전송을 막는다) · `private_disconnect_step_mcdc`.
+- **동작이 바뀐 곳**: ① `run_text_in`이 스스로 문지기를 지난다(배치 뒤 · 유휴 재접속 앞) ② 트랜잭션 팝업 "커밋/롤백하고 계속"(`commit_then`/`rollback_then`)은 세션이 바쁘면 보내지 않는다 ③ `tx.close_action = commit|rollback`으로 탭을 닫을 때 그 세션이 실행 중이면 탭을 닫지 않고 상태줄 안내 ④ 전용 세션 해제의 첫 판정 = 순수 함수 `private_disconnect_step`(동작 같음).
+- 11절에 남아 있던 분기 가운데 ②⑤는 이미 `reap_on_disconnect` · `disconnect_plan`으로 순수 함수화돼 있었다.
 
 ## 4. 전용 세션 — `CONNECT` / `DISCONNECT`
 

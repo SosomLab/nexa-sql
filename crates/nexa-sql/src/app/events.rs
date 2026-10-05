@@ -711,11 +711,11 @@ impl App {
                 return;
             }
         }
-        if !self.gate_open() {
+        let Some(pass) = self.gate_pass() else {
             self.import_win
                 .set_result(t(Msg::StRunning).to_string(), true, "blocked".into());
             return;
-        }
+        };
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         spec.cancel = Some(cancel.clone());
         spec.table = table.clone();
@@ -726,11 +726,14 @@ impl App {
         self.log_win
             .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
         self.import_win.set_running();
-        self.sess.worker.send(worker::Cmd::Import {
-            key: self.import_key,
-            path,
-            spec,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Import {
+                key: self.import_key,
+                path,
+                spec,
+            },
+        );
         self.redraw();
     }
 

@@ -168,6 +168,14 @@ pub fn missing_inputs(
     defines: &BTreeMap<String, String>,
     define_char: Option<char>,
 ) -> Vec<InputNeed> {
+    // SQLite는 `@x` · `$x`도 이름 매개변수다 → `:x`로 맞춰 본다(같은 길이라 줄·오프셋이 그대로 · T-162 ①).
+    let unified;
+    let src = if dialect == Some(Dialect::Sqlite) {
+        unified = crate::bind::unify_sqlite_markers(src);
+        &*unified
+    } else {
+        src
+    };
     // ★ 빠른 길(docs/63 §4 계측): 바인드 글자(`:`)도 치환 글자도 없는 스크립트는 나눌 필요조차 없다(덤프·DDL 묶음).
     let has_colon = src.as_bytes().contains(&b':');
     let has_macro = define_char.is_some_and(|c| src.contains(c));

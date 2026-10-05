@@ -218,6 +218,10 @@ impl App {
         if !self.place_run(&mut src) {
             return;
         }
+        // 문지기는 배치(전용 세션으로 옮김) **뒤** · 유휴 재접속(`busy`를 올린다) **앞**에서 — 실행은 그 접속 뒤에 줄 선다.
+        let Some(pass) = self.gate_pass() else {
+            return;
+        };
         self.wake_if_idle();
         self.sess.touch();
         self.sess.run_line_base = line_base;
@@ -292,24 +296,27 @@ impl App {
         // (실행 전 일괄이면 `CONNECT` 뒤 문장의 상태가 **앞** 세션에 붙어 재접속 직후 헛경고가 났다 · 사용자 09-30.)
         let max_rows = self.grid.page_rows();
         self.sess.single_run = !all;
-        self.sess.worker.send(worker::Cmd::Run {
-            src,
-            preflight,
-            max_rows,
-            vars: self.run_vars(),
-            defines: self.run_defines(),
-            intrinsic: Some(self.run_intrinsic()),
-            whole,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Run {
+                src,
+                preflight,
+                max_rows,
+                vars: self.run_vars(),
+                defines: self.run_defines(),
+                intrinsic: Some(self.run_intrinsic()),
+                whole,
+            },
+        );
         self.live_start();
         self.redraw();
     }
 
     /// 실행 계획(사용자 09-15 기본 기능) — 캐럿 문장(또는 선택)을 방언별 EXPLAIN 관용으로 감싸 실행.
     pub(crate) fn run_explain(&mut self) {
-        if !self.gate_open() {
+        let Some(pass) = self.gate_pass() else {
             return;
-        }
+        };
         let text = self
             .ed_mut()
             .copy_selection()
@@ -341,15 +348,18 @@ impl App {
         self.sess.status = t(Msg::StRunning).into();
         self.run_toast_start(&src);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
-        self.sess.worker.send(worker::Cmd::Run {
-            src,
-            preflight: None,
-            max_rows: self.grid.page_rows(),
-            vars: self.run_vars(),
-            defines: self.run_defines(),
-            intrinsic: Some(self.run_intrinsic()),
-            whole: false,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Run {
+                src,
+                preflight: None,
+                max_rows: self.grid.page_rows(),
+                vars: self.run_vars(),
+                defines: self.run_defines(),
+                intrinsic: Some(self.run_intrinsic()),
+                whole: false,
+            },
+        );
         self.live_start();
         self.redraw();
     }

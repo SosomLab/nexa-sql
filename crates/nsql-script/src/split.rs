@@ -82,7 +82,7 @@ pub fn split_script(src: &str) -> Vec<Item> {
 /// SQLite·MySQL·PostgreSQL = `/` 블록이 없다: 본문에 `BEGIN`이 있으면 짝이 맞는 `END` 뒤의 `;`에서 끝나고(`CASE … END` 중첩 계산),
 /// 없으면 첫 `;`에서 끝난다(PG 함수 본문 `$$…$$`은 문자열이라 안의 `;`를 보지 않는다).
 pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
-    let classes = classify(src);
+    let mut classes = classify(src);
     let b = src.as_bytes();
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(
@@ -199,6 +199,12 @@ pub fn split_script_in(src: &str, dialect: Option<Dialect>) -> Vec<Item> {
                 span: start..end_off,
                 line: line_of(start),
             });
+            // 한 줄 명령은 줄 끝에서 끝난다 — 짝 없는 따옴표(`DEFINE v = O'Neil`)가 뒤 문장들을 글자 상수로
+            // 삼키지 않게, 따옴표가 줄을 넘어갔으면 다음 줄부터 다시 분류한다(T-162 ④ · 드문 길이라 비용은 그때만).
+            if end_off < b.len() && matches!(classes[end_off], Class::Str | Class::Ident) {
+                let tail = classify(&src[end_off..]);
+                classes[end_off..].copy_from_slice(&tail);
+            }
             pos = end_off;
             continue;
         }
@@ -800,5 +806,33 @@ DEFINE x = 1
         assert!(crate::command::is_command_start("COLUMN name"));
         assert!(!crate::command::is_command_start("COLUMN_NAME"));
         assert!(!crate::command::is_command_start("DESC$X"));
+    }
+
+    /// T-162 ④ — 한 줄 명령의 짝 없는 따옴표가 뒤 문장을 삼키지 않는다.
+    #[test]
+    fn unpaired_quote_in_a_line_command_stops_at_line_end() {
+        let src = "DEFINE who = O'Neil
+SELECT 1 FROM dual;
+SELECT 'a;b' FROM dual;
+PROMPT it's done
+SELECT 3;
+";
+        for dialect in [None, Some(Dialect::Oracle), Some(Dialect::Sqlite)] {
+            let items = split_script_in(src, dialect);
+            let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
+            assert_eq!(
+                texts,
+                [
+                    "DEFINE who = O'Neil",
+                    "SELECT 1 FROM dual",
+                    "SELECT 'a;b' FROM dual",
+                    "PROMPT it's done",
+                    "SELECT 3"
+                ],
+                "{dialect:?}"
+            );
+            assert!(matches!(items[0].kind, ItemKind::Command(_)), "{dialect:?}");
+            assert!(matches!(items[1].kind, ItemKind::Sql(_)), "{dialect:?}");
+        }
     }
 }

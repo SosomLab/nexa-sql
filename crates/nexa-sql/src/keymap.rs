@@ -467,6 +467,15 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "cmd+f2|cmd+k,cmd+k",
         linux: "ctrl+f2|ctrl+k,ctrl+k",
     },
+    // ★ 객체 동작(`obj.*` · docs/77 §1-3 · T-180) — 캐럿 아래 객체를 객체 탐색기에서 찾는다(F4 = DBeaver "객체 열기" 자리).
+    //   편집기 Ctrl 링크 우클릭 메뉴의 "객체 탐색기에서 보기"와 같은 길 — 마우스 없이 · 팔레트에서도.
+    Command {
+        id: "obj.reveal",
+        label: Msg::MnObjLinkReveal,
+        win: "f4",
+        mac: "f4",
+        linux: "f4",
+    },
     Command {
         id: "bookmark.next",
         label: Msg::MnBmNext,
@@ -989,6 +998,20 @@ pub(crate) struct Chord {
     pub key: String,
 }
 
+/// ★ 결과 그리드에 포커스가 있을 때만 통하는 키(docs/87 §11 · T-182 "포커스별 키맵"): 전역 키맵에서는 F2 = 다음 북마크 ·
+/// Ctrl/⌘+D = 다음 같은 낱말 선택(편집기)인데, 그리드 안에서는 표 편집기의 관례(엑셀 F2 = 셀 편집 · DataGrip/TablePlus
+/// Ctrl/⌘+D = 행 복제)가 이긴다. 돌려주는 값 = 그리드 편집 명령 id(`Grid::edit_command`) · 해당 없으면 `None`.
+pub(crate) fn grid_focus_command(ch: &Chord) -> Option<&'static str> {
+    if ch.alt || ch.ctrl || ch.shift {
+        return None;
+    }
+    match (ch.primary, ch.key.as_str()) {
+        (false, "f2") => Some("grid.edit.begin"),
+        (true, "d") => Some("grid.edit.dup_row"),
+        _ => None,
+    }
+}
+
 /// 물리 키 → 키맵 이름(US 배열 위치 · 글자·숫자·문장부호만). IME 모드에서 논리 키가 비ASCII일 때의 폴백.
 fn physical_name(p: &PhysicalKey) -> Option<&'static str> {
     let PhysicalKey::Code(code) = p else {
@@ -1350,6 +1373,21 @@ pub(crate) fn repeatable(id: &str) -> bool {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// 그리드 포커스 전용 키(T-182): 수식 키가 더 붙으면 전역 키맵으로 돌아간다(Ctrl+F2 = 북마크 토글 · Ctrl+Shift+D 등).
+    #[test]
+    fn grid_focus_keys_are_plain_f2_and_primary_d_only() {
+        let f = |s: &str| grid_focus_command(&Chord::parse(s).expect(s));
+        assert_eq!(f("f2"), Some("grid.edit.begin"));
+        assert_eq!(f("ctrl+d"), Some("grid.edit.dup_row"));
+        assert_eq!(f("d"), None, "글자 d = 셀 입력");
+        assert_eq!(f("ctrl+f2"), None);
+        assert_eq!(f("shift+f2"), None);
+        assert_eq!(f("alt+f2"), None);
+        assert_eq!(f("ctrl+shift+d"), None);
+        assert_eq!(f("ctrl+alt+d"), None);
+        assert_eq!(f("ctrl+e"), None);
+    }
 
     /// 자동 반복 허용 표(사용자 09-17 Ctrl+T 80개): 편집·이동·찾기·탭 이동만 · 새 탭/닫기/실행/커밋/창 열기는 한 번만.
     #[test]

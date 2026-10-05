@@ -43,6 +43,7 @@
 | `objlink.display` | hover | 밑줄 표시 방식 all/hover/none · **`perf::BOOST` = none 강제** · 큰 파일 모드 = none |
 | `objlink.tooltip` | on | 설명 툴팁 표시 |
 | `objlink.tooltip_pos` | top_right | 툴팁 자리(top_right/top_left/bottom_right/bottom_left) |
+| `objlink.click` | copy | **Ctrl+좌클릭 동작**(10-05 · T-180 ②): `copy` = 설명 복사(Shift = `이름 - 설명`) · `reveal` = 객체 탐색기에서 보기. 우클릭 메뉴·Shift+클릭은 그대로. `reveal`인데 실제 객체로 풀리지 않는 링크(미확인 · 내장 표)는 복사로 돌아간다. 77 §1-3의 `intel.ctrl_click` 자리이나 키는 링크 설정 묶음(`objlink.*`)에 둔다 · `columns` 값은 두지 않는다 |
 | `objlink.show_schema` | off | 툴팁·상태줄 이름에 스키마 접두(`BISCM.TB_ORDER`) · 끄면 이름만(컬럼 = `테이블.컬럼`) — 사용자 09-29 |
 | `objlink.line_color` | (빈 = 테마 강조색) | 정상 객체 밑줄 색 `#RRGGBB` |
 | `objlink.line_width` | 1 | 정상 객체 밑줄 두께 px(0~4 · 0 = 밑줄 없음) |
@@ -106,6 +107,12 @@
 | 동시성 | 요청 한 칸(`reveal: Option`) = 최신 우선 교체 · 읽기는 기존 메타 스레드 · UI는 응답마다 한 단계 | 사용자 제안(싱글 큐 · 별도 스레드)과 대조 = [journal §32](journal/2026-09-30.md) |
 | 세트 | `ExplorerSet::reveal`(칸 전환) · `after_reveal`(**어느 칸이든** `reveal_done` 소비 → 선택 행을 보이는 영역 1/3 지점에 · `drain`의 앵커 보정 **뒤**) | 탐색기 숨김이면 `view.explorer` 켬 · 포커스 = 탐색기 · 같은 서버 다른 계정 = 다른 칸(㉗-b) |
 | 시험 | `objlink.reveal:<이름>` · `explorer.selpath:<파일>` · `scripts/win-objlink-reveal-e2e.sh` 4 | 명령은 `primary`(Ctrl)를 잠시 켜 분석 |
+
+- **10-05 F4 · 팔레트 `obj.reveal`**(T-180 ③④ 첫 조각): 마우스 없이 **캐럿 아래** 객체를 같은 판정·같은 길로 찾는다 — `objlink_reveal_at_caret` → `objlink_reveal_target` → `objlink_reveal` · 키맵 명령 `obj.reveal` = F4 · 팔레트 "객체 탐색기에서 보기" · 못 풀면 상태줄 "캐럿 위치에 객체 탐색기에서 찾을 객체가 없습니다". 우클릭 메뉴의 id는 그대로 `objlink.reveal`. `obj.*` = 77 §1-1 액션 레지스트리의 첫 id. 격리 자체 시험(SQLite) = 테이블 → `… / Tables (2) / emp` · 컬럼 → `… / emp / Columns (3) / name` · 키워드 위 = 선택 없음 + 안내(journal 10-05 §11).
+
+- **10-05 결과 그리드 열 머리 ▸ 객체 탐색기에서 보기**(T-180 ⑤): 열 머리 우클릭 메뉴 맨 아래 항목(id `obj.reveal`) — 출처 테이블 + 그 열 → 탐색기에서 `테이블 / Columns / 열` 선택(`reveal_table_member` · 해석은 링크·F4와 같은 길). **활성 조건 = 출처 문장이 단일 테이블 SELECT일 때만**(`Grid::reveal_table()` = 그리드 편집 판정과 같은 `gridedit_sql::analyze`) — 조인·쉼표 조인은 물론 **GROUP BY · DISTINCT · 식 열 결과도 흐림**(단일 테이블이어도 · 의도한 보수적 판정 — 틀린 대상으로 가느니 안 간다). 처음 구현은 SQL 복사용 추정값 `source_table`(`nsql_io::guess_table` = 조인이어도 첫 FROM 테이블)을 그대로 써서 `SELECT d.name FROM emp e JOIN dept d …`의 `name`이 `emp.name`으로 풀렸다 → 자체 시험의 조인 사례가 잡아 같은 날 고침(journal 10-05 §12).
+
+- **10-05 Ctrl+좌클릭 동작 `objlink.click`**(T-180 ②): `objlink_click`의 좌클릭 분기 = 순수 판정 `click_action(설정값, can_reveal)` → `Reveal`/`Copy`(MC/DC 시험) — `reveal`이고 `objlink_reveal_target`이 풀릴 때만 탐색기로 · 아니면 복사. 좌클릭 길은 Ctrl을 누른 상태가 있어야 해서 기동 명령으로는 못 탄다(사용자 실기 U-183 · 기본값 `copy`의 복사는 클립보드를 건드려 자동 시험에 넣지 않는다).
 
 ## 8. 시스템 객체(10-01 ㉙)
 

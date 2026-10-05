@@ -306,6 +306,16 @@ pub(crate) struct Grid {
     null_text: String,
     /// 설정 `grid.filter_list_max` — 정규식 필터 조회 SQL ③단계 값 목록 상한(기본 1,000 · 사용자 09-30).
     filter_list_max: usize,
+    /// 설정 `grid.filter_strip` — 필터가 있을 때 그리드 위에 칩 한 줄(77 §2-2 · T-181).
+    filter_strip: bool,
+    /// 필터 줄 높이(없으면 0) — `bounds`는 이만큼 아래에서 시작한다(줄은 `bounds` 바로 위).
+    strip_h: i32,
+    /// 필터 줄의 칩(술어의 열 · 칩 사각형 · × 사각형) — 그릴 때 채운다 · 맞히기는 이 사각형으로.
+    chips: Vec<(usize, Rect, Rect)>,
+    /// 오른쪽 끝 "모두 지우기" ×.
+    chips_clear: Option<Rect>,
+    /// 커서가 올라간 ×(칩 번호 · `usize::MAX` = 모두 지우기).
+    chip_hover: Option<usize>,
     /// ★ 행 포커스 배경(사용자 09-22 · 설정 `grid.row_focus`): 셀을 골라도 그 행 전체(다중 행 포함)에 셀 선택색보다 연한 배경.
     row_focus: bool,
     /// 위쪽 경계선을 그릴지 — 결과 탭 줄이 바로 위에 있으면 탭 줄의 아래선과 겹쳐 2px가 되므로 호스트가 끈다(사용자 09-22).
@@ -327,6 +337,8 @@ pub(crate) struct Grid {
     menu_cell: Option<(usize, Option<String>)>,
     /// "포함…" 입력 요청(열) — 호스트가 팔레트로 받아 `add_filter`.
     pending_filter_prompt: Option<(usize, FilterOp, String)>,
+    /// 열 머리 메뉴 "객체 탐색기에서 보기"(T-180 ⑤) — 고른 열의 이름(호스트가 출처 테이블과 묶어 찾는다 · 1회성).
+    pending_reveal: Option<String>,
     /// 필터 오류(정규식 컴파일 실패 등 · 1회성).
     pending_error: Option<String>,
     /// ★ 헤더 빗금 표식 위 hover(열, 시작 ms) — 머물면 적용된 술어 툴팁(사용자 09-29 "표식 위에 올렸을 때만").
@@ -506,6 +518,11 @@ impl Default for Grid {
             row_focus_color: (None, None),
             null_text: "NULL".into(),
             filter_list_max: 1000,
+            filter_strip: true,
+            strip_h: 0,
+            chips: Vec::new(),
+            chips_clear: None,
+            chip_hover: None,
             row_pct: 150,
             gutter_w: 0,
             col_order: Vec::new(),
@@ -514,6 +531,7 @@ impl Default for Grid {
             filters: Vec::new(),
             menu_cell: None,
             pending_filter_prompt: None,
+            pending_reveal: None,
             pending_error: None,
             mark_hover: None,
             mark_rects: Vec::new(),
@@ -670,6 +688,7 @@ impl Grid {
             row_focus_color: self.row_focus_color,
             null_text: self.null_text.clone(),
             filter_list_max: self.filter_list_max,
+            filter_strip: self.filter_strip,
             row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
@@ -3386,8 +3405,197 @@ impl Grid {
     }
 
     pub(crate) fn set_bounds(&mut self, b: Rect) {
-        self.bounds = b;
+        // 필터 줄이 있으면 그만큼 아래에서 시작한다(줄은 받은 영역의 맨 위).
+        let h = self.strip_h.min(b.h.max(0));
+        self.bounds = Rect::new(b.x, b.y + h, b.w, b.h - h);
         self.clamp();
+    }
+
+    /// 필터 줄 켜기/끄기(설정 `grid.filter_strip`) — 높이는 다음 그리기에서 맞춘다.
+    pub(crate) fn set_filter_strip(&mut self, on: bool) {
+        self.filter_strip = on;
+    }
+
+    /// 필터 줄 영역(없으면 높이 0).
+    fn strip_rect(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(b.x, b.y - self.strip_h, b.w, self.strip_h)
+    }
+
+    /// 필터 유무·설정에 맞춰 필터 줄 높이를 맞춘다(바뀔 때만 `bounds`를 옮긴다 · 그리기 직전 한 곳).
+    fn sync_strip(&mut self, s: f32) {
+        let want = if self.filter_strip && !self.filters.is_empty() && self.rs.is_some() {
+            (26.0 * s).round() as i32
+        } else {
+            0
+        };
+        if want == self.strip_h {
+            return;
+        }
+        let o = self.strip_rect();
+        let outer = Rect::new(o.x, o.y, o.w, self.bounds.h + self.strip_h);
+        self.strip_h = want;
+        self.set_bounds(outer);
+        if want == 0 {
+            self.chips.clear();
+            self.chips_clear = None;
+            self.chip_hover = None;
+        }
+    }
+
+    /// 필터 줄 그리기 — 술어마다 칩 하나(`열 조건 ×`) · 넘치면 `+N` · 오른쪽 끝 × = 모두 지우기.
+    fn paint_filter_strip(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
+        let strip = self.strip_rect();
+        self.chips.clear();
+        self.chips_clear = None;
+        if strip.h <= 0 {
+            return;
+        }
+        let px = |v: f32| (v * s).round() as i32;
+        dc.fill_rect(strip, th.chrome_bg);
+        dc.fill_rect(
+            Rect::new(strip.x, strip.bottom() - 1, strip.w, 1),
+            th.border,
+        );
+        dc.select_font(FontSlot::Status, false);
+        let (pad, gap, m) = (px(8.0), px(6.0), px(3.0));
+        let ch = strip.h - 1 - m * 2;
+        let cy = strip.y + m;
+        let xw = ch; // × 자리 = 정사각형
+                     // 오른쪽 끝 "모두 지우기".
+        let clear = Rect::new(strip.right() - pad - xw, cy, xw, ch);
+        let right = clear.x - gap;
+        let ty = dc.text_center_y(cy, ch);
+        let draw_x = |dc: &mut dyn DrawCtx, r: Rect, hot: bool| {
+            if hot {
+                dc.fill_round_rect_alpha(r, r.h / 2, th.text, 0.14);
+            }
+            let w = dc.text_width("×");
+            dc.text(
+                r.x + (r.w - w) / 2,
+                ty,
+                r,
+                "×",
+                if hot { th.text } else { th.text_dim },
+            );
+        };
+        let labels: Vec<(usize, String)> = self
+            .filters
+            .iter()
+            .map(|p| (p.col, self.chip_label(p)))
+            .collect();
+        let mut x = strip.x + pad;
+        let mut hidden = 0usize;
+        for (i, (col, label)) in labels.iter().enumerate() {
+            let tw = dc.text_width(label);
+            let w = pad + tw + px(2.0) + xw + px(2.0);
+            if x + w > right && i > 0 || hidden > 0 {
+                hidden += 1;
+                continue;
+            }
+            let w = w.min((right - x).max(xw * 2));
+            let chip = Rect::new(x, cy, w, ch);
+            // 머티리얼 입력 칩 — 옅은 강조색 채움 · 외곽선 없음.
+            dc.fill_round_rect_alpha(chip, ch / 2, th.accent, 0.16);
+            let close = Rect::new(chip.right() - xw - px(2.0), cy, xw, ch);
+            let text_clip = Rect::new(chip.x + pad, cy, (close.x - chip.x - pad).max(0), ch);
+            dc.text(text_clip.x, ty, text_clip, label, th.text);
+            draw_x(dc, close, self.chip_hover == Some(i));
+            self.chips.push((*col, chip, close));
+            x = chip.right() + gap;
+        }
+        if hidden > 0 {
+            let more = format!("+{hidden}");
+            dc.text(
+                x,
+                ty,
+                Rect::new(x, cy, (right - x).max(0), ch),
+                &more,
+                th.text_dim,
+            );
+        }
+        draw_x(dc, clear, self.chip_hover == Some(usize::MAX));
+        self.chips_clear = Some(clear);
+        dc.select_font(FontSlot::Base, false);
+    }
+
+    /// 칩 글 = `열 이름  조건`(값이 길면 줄인다).
+    fn chip_label(&self, p: &Predicate) -> String {
+        let name = self
+            .rs
+            .as_ref()
+            .and_then(|rs| rs.columns().get(p.col).map(|c| c.name.clone()))
+            .unwrap_or_default();
+        let mut cond = pred_text(p);
+        if cond.chars().count() > 40 {
+            cond = cond.chars().take(39).collect::<String>() + "…";
+        }
+        format!("{name} {cond}")
+    }
+
+    /// 필터 줄의 마우스 — 커서 아래 ×만 반응 · 줄 안의 클릭은 셀로 흘리지 않는다. 돌려주는 값 = 먹었는가.
+    fn strip_event(&mut self, ev: &InputEvent) -> bool {
+        if self.strip_h <= 0 {
+            return false;
+        }
+        let strip = self.strip_rect();
+        let hit = |p: Point, chips: &[(usize, Rect, Rect)], clear: Option<Rect>| -> Option<usize> {
+            if clear.is_some_and(|r| r.contains(p)) {
+                return Some(usize::MAX);
+            }
+            chips.iter().position(|(_, _, x)| x.contains(p))
+        };
+        match *ev {
+            InputEvent::MouseMove { x, y } => {
+                let p = Point { x, y };
+                self.chip_hover = if strip.contains(p) {
+                    hit(p, &self.chips, self.chips_clear)
+                } else {
+                    None
+                };
+                strip.contains(p)
+            }
+            InputEvent::MouseDown { x, y, .. } => {
+                let p = Point { x, y };
+                if !strip.contains(p) {
+                    return false;
+                }
+                match hit(p, &self.chips, self.chips_clear) {
+                    Some(usize::MAX) => self.clear_filters(),
+                    Some(i) => {
+                        if let Some(&(col, _, _)) = self.chips.get(i) {
+                            self.remove_filter(col);
+                        }
+                    }
+                    None => {}
+                }
+                self.chip_hover = None;
+                true
+            }
+            InputEvent::MouseUp { x, y, .. } => strip.contains(Point { x, y }),
+            _ => false,
+        }
+    }
+
+    /// 한 열의 필터 지우기(재투영 · 맨 위로).
+    pub(crate) fn remove_filter(&mut self, col: usize) {
+        let n = self.filters.len();
+        self.filters.retain(|p| p.col != col);
+        if self.filters.len() != n {
+            self.apply_sort();
+            self.scroll_y = 0;
+        }
+    }
+
+    /// 자체 시험 덤프 — 필터 줄 칩 글(줄마다 하나) · 줄이 없으면 빈 글.
+    pub(crate) fn dump_chips(&self) -> String {
+        if self.strip_h <= 0 {
+            return String::new();
+        }
+        self.filters
+            .iter()
+            .map(|p| self.chip_label(p) + "\n")
+            .collect()
     }
 
     pub(crate) fn set_result(&mut self, rs: ResultSet) {
@@ -3971,9 +4179,29 @@ impl Grid {
             t(Msg::MnSortClear),
             !self.sort_keys.is_empty(),
         ));
+        // 출처 테이블을 아는 결과(단일 테이블 조회)만 — 조인·식 결과는 흐리게(T-180 ⑤).
+        items.push(CtxItem::Separator);
+        items.push(CtxItem::maybe(
+            "obj.reveal",
+            t(Msg::MnObjLinkReveal),
+            self.reveal_table().is_some(),
+        ));
         let text_w = (self.row_h * 10).max(180);
         self.menu_is_view = false;
         self.menu.open_at(x, y, items, self.menu_host(), text_w);
+    }
+
+    /// 열 머리 → 객체 탐색기의 대상 테이블 — 출처 문장이 **단일 테이블 SELECT**일 때만(편집 판정과 같은 분석
+    /// `gridedit_sql::analyze`). `source_table`(SQL 복사용 추정)은 조인이어도 첫 테이블을 주므로 그대로 쓰면
+    /// `SELECT d.name FROM emp e JOIN dept d …`의 `name`이 emp의 열로 풀린다(10-05 자체 시험에서 드러남).
+    pub(crate) fn reveal_table(&self) -> Option<String> {
+        gridedit_sql::analyze(&self.source_sql).ok()?;
+        self.source_table.clone()
+    }
+
+    /// 열 머리 메뉴 "객체 탐색기에서 보기"가 남긴 열 이름(1회성) — 호스트가 `source_table()`과 묶어 탐색기에서 찾는다.
+    pub(crate) fn take_reveal(&mut self) -> Option<String> {
+        self.pending_reveal.take()
     }
 
     /// 헤더의 정렬/필터 표식 사각형(열 원본 번호 → 마지막 그리기의 화면 좌표 · 표식이 없으면 None).
@@ -3992,23 +4220,7 @@ impl Grid {
             .filters
             .iter()
             .filter(|p| p.col == ci)
-            .map(|p| match p.op {
-                FilterOp::Eq => format!("= {}", p.value),
-                FilterOp::Ne => format!("≠ {}", p.value),
-                FilterOp::Gt => format!("> {}", p.value),
-                FilterOp::Ge => format!("≥ {}", p.value),
-                FilterOp::Lt => format!("< {}", p.value),
-                FilterOp::Le => format!("≤ {}", p.value),
-                FilterOp::Contains => tf(Msg::TipFilterContains, &[&p.value]),
-                FilterOp::StartsWith => tf(Msg::TipFilterStarts, &[&p.value]),
-                FilterOp::Between => tf(Msg::TipFilterBetween, &[&p.value]),
-                FilterOp::Regex => tf(Msg::TipFilterRegex, &[&p.value]),
-                FilterOp::In => tf(Msg::TipFilterIn, &[&p.value]),
-                FilterOp::IsTrue => t(Msg::MnFilterTrue).to_string(),
-                FilterOp::IsFalse => t(Msg::MnFilterFalse).to_string(),
-                FilterOp::IsNull => t(Msg::MnFilterNull).to_string(),
-                FilterOp::NotNull => t(Msg::MnFilterNotNull).to_string(),
-            })
+            .map(pred_text)
             .collect();
         if lines.is_empty() {
             return None;
@@ -4184,6 +4396,14 @@ impl Grid {
         }
         if id.starts_with("grid.edit.") {
             self.edit_command(id);
+            return;
+        }
+        if id == "obj.reveal" {
+            self.pending_reveal = self.menu_cell.as_ref().map(|(ci, _)| *ci).and_then(|ci| {
+                self.rs
+                    .as_ref()
+                    .and_then(|rs| rs.columns().get(ci).map(|c| c.name.clone()))
+            });
             return;
         }
         if let Some(rest) = id.strip_prefix("filter.") {
@@ -4790,6 +5010,10 @@ impl Grid {
                 return;
             }
         }
+        // 필터 줄(칩)이 먼저 — 줄 안의 클릭은 셀·머리로 흘리지 않는다.
+        if self.strip_event(ev) {
+            return;
+        }
         // 결과 도구줄(푸터)이 먼저 — 커서 아래 컨트롤에만(마우스 라우팅 규칙).
         if self.footer_event(ev, scale) {
             return;
@@ -5219,6 +5443,8 @@ impl Grid {
     }
 
     fn paint_inner(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
+        self.sync_strip(s);
+        self.paint_filter_strip(dc, th, s);
         let b = self.bounds;
         dc.fill_rect(b, th.panel_bg);
         if self.top_border {
@@ -6214,6 +6440,27 @@ fn bool_of(v: &Value) -> Option<bool> {
     }
 }
 
+/// 술어 하나를 사람이 읽는 조건 글로(`= 값` · `포함 값` · `NULL만` …) — 머리 표식 툴팁과 필터 줄 칩이 같이 쓴다.
+fn pred_text(p: &Predicate) -> String {
+    match p.op {
+        FilterOp::Eq => format!("= {}", p.value),
+        FilterOp::Ne => format!("≠ {}", p.value),
+        FilterOp::Gt => format!("> {}", p.value),
+        FilterOp::Ge => format!("≥ {}", p.value),
+        FilterOp::Lt => format!("< {}", p.value),
+        FilterOp::Le => format!("≤ {}", p.value),
+        FilterOp::Contains => tf(Msg::TipFilterContains, &[&p.value]),
+        FilterOp::StartsWith => tf(Msg::TipFilterStarts, &[&p.value]),
+        FilterOp::Between => tf(Msg::TipFilterBetween, &[&p.value]),
+        FilterOp::Regex => tf(Msg::TipFilterRegex, &[&p.value]),
+        FilterOp::In => tf(Msg::TipFilterIn, &[&p.value]),
+        FilterOp::IsTrue => t(Msg::MnFilterTrue).to_string(),
+        FilterOp::IsFalse => t(Msg::MnFilterFalse).to_string(),
+        FilterOp::IsNull => t(Msg::MnFilterNull).to_string(),
+        FilterOp::NotNull => t(Msg::MnFilterNotNull).to_string(),
+    }
+}
+
 /// 필터 술어(AND 목록의 한 항 · 원본 열 번호 · 열 종류에 따라 비교). `rx` = 정규식 컴파일 캐시(비교에서는 제외).
 #[derive(Clone, Debug)]
 pub(crate) struct Predicate {
@@ -6611,6 +6858,112 @@ fn cell_text(v: &Value, null: &str) -> String {
 mod tests {
     use super::*;
     use nsql_core::{Column, ResultSet};
+
+    /// T-180 ⑤ — 열 머리 → 탐색기의 대상은 단일 테이블 조회일 때만(조인 = 없음 · 첫 테이블로 잘못 풀지 않는다).
+    #[test]
+    fn reveal_table_only_for_single_table_queries() {
+        let mut g = grid_with(&[100, 100]);
+        g.set_source_sql("SELECT id, name FROM emp");
+        assert_eq!(g.reveal_table().as_deref(), Some("emp"));
+        g.set_source_sql("SELECT d.name FROM emp e JOIN dept d ON e.dept_id = d.id");
+        assert_eq!(
+            g.source_table().as_deref(),
+            Some("emp"),
+            "SQL 복사용 추정은 첫 테이블"
+        );
+        assert_eq!(g.reveal_table(), None);
+        g.set_source_sql("SELECT a.x FROM a, b");
+        assert_eq!(g.reveal_table(), None);
+        g.set_source_sql("CREATE TABLE t (a INT)");
+        assert_eq!(g.reveal_table(), None);
+    }
+
+    /// T-181 필터 줄 — 필터가 생기면 그리기에서 한 줄을 차지하고(`bounds`가 그만큼 내려감) · 칩의 ×는 그 열만 ·
+    /// 끝 ×는 전부 지운다 · 줄이 사라지면 영역이 되돌아온다 · 설정을 끄면 줄이 없다 · 줄 안의 클릭은 먹는다.
+    #[test]
+    fn filter_strip_takes_a_row_and_chips_remove_filters() {
+        struct Dc;
+        impl DrawCtx for Dc {
+            fn fill_rect(&mut self, _r: Rect, _c: nexa_ctl::theme::Color) {}
+            fn text_opaque(
+                &mut self,
+                _x: i32,
+                _y: i32,
+                _c: Rect,
+                _t: &str,
+                _f: nexa_ctl::theme::Color,
+                _b: nexa_ctl::theme::Color,
+            ) {
+            }
+            fn text(&mut self, _x: i32, _y: i32, _c: Rect, _t: &str, _f: nexa_ctl::theme::Color) {}
+            fn text_width(&mut self, text: &str) -> i32 {
+                text.chars().count() as i32 * 7
+            }
+        }
+        let mut g = grid_with(&[100, 100]);
+        let outer = Rect::new(0, 0, 600, 300);
+        g.set_bounds(outer);
+        let th = Theme::dark();
+        let mut dc = Dc;
+        let mut draw = |g: &mut Grid| {
+            g.sync_strip(1.0);
+            g.paint_filter_strip(&mut dc, &th, 1.0);
+        };
+        draw(&mut g);
+        assert_eq!((g.strip_h, g.bounds), (0, outer), "필터 없음 = 줄 없음");
+        g.add_filter(0, FilterOp::NotNull, String::new());
+        g.add_filter(1, FilterOp::NotNull, String::new());
+        draw(&mut g);
+        assert_eq!(g.strip_h, 26);
+        assert_eq!(g.bounds, Rect::new(0, 26, 600, 274));
+        assert_eq!(g.chips.len(), 2);
+        assert_eq!(g.dump_chips().lines().count(), 2);
+        // 호스트가 같은 영역을 다시 줘도 줄은 유지된다.
+        g.set_bounds(outer);
+        assert_eq!(g.bounds, Rect::new(0, 26, 600, 274));
+        // 칩 글 자리 클릭 = 먹기만(필터 그대로) · 첫 칩의 × = 그 열만 지움.
+        let (_, chip, close) = g.chips[0];
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: chip.x + 2,
+                y: chip.y + 2,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert_eq!(g.filters.len(), 2);
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: close.x + close.w / 2,
+                y: close.y + close.h / 2,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert_eq!(g.filters.iter().map(|p| p.col).collect::<Vec<_>>(), [1]);
+        draw(&mut g);
+        let clear = g.chips_clear.expect("clear");
+        g.on_event(
+            &InputEvent::MouseDown {
+                x: clear.x + 1,
+                y: clear.y + 1,
+                shift: false,
+                primary: false,
+            },
+            1.0,
+        );
+        assert!(g.filters.is_empty());
+        draw(&mut g);
+        assert_eq!((g.strip_h, g.bounds), (0, outer), "줄이 사라지면 영역 복귀");
+        // 설정 끔 = 필터가 있어도 줄 없음.
+        g.set_filter_strip(false);
+        g.add_filter(0, FilterOp::NotNull, String::new());
+        draw(&mut g);
+        assert_eq!((g.strip_h, g.bounds), (0, outer));
+        assert!(g.dump_chips().is_empty());
+    }
 
     /// T-181 필터 술어: 대소문자 무시 · NULL 판정 · 조회용 SQL(리터럴·식별자 인용).
     #[test]

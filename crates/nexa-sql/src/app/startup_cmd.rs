@@ -185,6 +185,40 @@ impl App {
             }
             return;
         }
+        // 자체 시험(T-181 필터 줄): `grid.addfilter:<열 번호>;<연산 코드>;<값>` = 키·마우스 없이 술어 추가 ·
+        // `grid.rmfilter:<열 번호>` = 칩의 ×와 같은 길 · `grid.chips:<파일>` = 필터 줄 칩 글 덤프(줄이 없으면 빈 파일).
+        if let Some(rest) = id.strip_prefix("grid.addfilter:") {
+            let mut it = rest.splitn(3, ';');
+            if let (Some(c), Some(op)) = (it.next(), it.next()) {
+                if let (Ok(c), Some(op)) =
+                    (c.trim().parse::<usize>(), grid::FilterOp::parse(op.trim()))
+                {
+                    self.grid
+                        .add_filter(c, op, it.next().unwrap_or_default().to_string());
+                    self.redraw();
+                }
+            }
+            return;
+        }
+        if let Some(c) = id
+            .strip_prefix("grid.rmfilter:")
+            .and_then(|c| c.trim().parse::<usize>().ok())
+        {
+            self.grid.remove_filter(c);
+            self.redraw();
+            return;
+        }
+        // 자체 시험(T-180 ⑤): `grid.reveal:<열 이름>` = 열 머리 메뉴 "객체 탐색기에서 보기"와 같은 길(출처 테이블 + 열).
+        if let Some(col) = id.strip_prefix("grid.reveal:") {
+            if let Some(table) = self.grid.reveal_table() {
+                self.reveal_table_member(&table, Some(col.trim().to_string()));
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("grid.chips:") {
+            let _ = std::fs::write(path, self.grid.dump_chips());
+            return;
+        }
         if let Some(path) = id.strip_prefix("grid.dump:") {
             let _ = std::fs::write(path, self.grid.dump_edit());
             return;

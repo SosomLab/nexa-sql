@@ -380,14 +380,20 @@ impl App {
             txwarn::TxWarnHit::Commit | txwarn::TxWarnHit::Rollback => {
                 let commit = hit == txwarn::TxWarnHit::Commit;
                 self.with_sess(id, |a| {
-                    if a.sess.blocked() || a.sess.tx_pending.is_empty() {
+                    let Some(pass) = a.sess.pass() else {
+                        return;
+                    };
+                    if a.sess.tx_pending.is_empty() {
                         return;
                     }
-                    a.sess.worker.send(if commit {
-                        worker::Cmd::Commit
-                    } else {
-                        worker::Cmd::Rollback
-                    });
+                    a.sess.submit(
+                        pass,
+                        if commit {
+                            worker::Cmd::Commit
+                        } else {
+                            worker::Cmd::Rollback
+                        },
+                    );
                     a.tx_close(if commit {
                         TxOutcome::Committed
                     } else {
@@ -423,11 +429,15 @@ impl App {
             }
             let n = a.sess.tx_pending.len();
             let idle_min = a.sess.last_exec.elapsed().as_secs() / 60;
-            a.sess.worker.send(if commit {
-                worker::Cmd::Commit
-            } else {
-                worker::Cmd::Rollback
-            });
+            let pass = a.sess.pass()?;
+            a.sess.submit(
+                pass,
+                if commit {
+                    worker::Cmd::Commit
+                } else {
+                    worker::Cmd::Rollback
+                },
+            );
             a.tx_close(if commit {
                 TxOutcome::AutoCommitted(idle_min)
             } else {
@@ -702,13 +712,20 @@ impl App {
             // 상태줄 팝업의 Commit/Rollback도 메뉴·툴바와 같은 문지기를 지난다(docs/52 §3).
             "commit" => self.menu_action("run.commit"),
             "rollback" => self.menu_action("run.rollback"),
+            // 팝업의 "커밋/롤백하고 계속"도 문지기를 지난다(T-122 — 종전엔 바쁜 세션에도 줄을 세웠다).
             "commit_then" => {
-                self.sess.worker.send(worker::Cmd::Commit);
+                let Some(pass) = self.gate_pass() else {
+                    return;
+                };
+                self.sess.submit(pass, worker::Cmd::Commit);
                 self.tx_close(TxOutcome::Committed);
                 self.run_tx_after();
             }
             "rollback_then" => {
-                self.sess.worker.send(worker::Cmd::Rollback);
+                let Some(pass) = self.gate_pass() else {
+                    return;
+                };
+                self.sess.submit(pass, worker::Cmd::Rollback);
                 self.tx_close(TxOutcome::RolledBack);
                 self.run_tx_after();
             }
@@ -754,7 +771,7 @@ impl App {
             .set("session.autocommit", if on { "on" } else { "off" });
         self.persist_settings();
         for s in self.all_sess() {
-            s.worker.send(worker::Cmd::Autocommit(on));
+            s.control(worker::Cmd::Autocommit(on));
         }
         self.log_win.push(LogEntry::new(
             LogKind::Info,

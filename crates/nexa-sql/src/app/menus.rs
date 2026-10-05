@@ -874,15 +874,19 @@ impl App {
             "run.all" => self.run_sql(true),
             "run.stop" => self.stop_run(),
             "run.explain" => self.run_explain(),
+            "obj.reveal" => self.objlink_reveal_at_caret(),
             "run.commit" | "run.rollback" => {
-                if self.gate_open() {
+                if let Some(pass) = self.gate_pass() {
                     self.sess.busy = true;
                     self.sess.touch();
-                    self.sess.worker.send(if id == "run.commit" {
-                        worker::Cmd::Commit
-                    } else {
-                        worker::Cmd::Rollback
-                    });
+                    self.sess.submit(
+                        pass,
+                        if id == "run.commit" {
+                            worker::Cmd::Commit
+                        } else {
+                            worker::Cmd::Rollback
+                        },
+                    );
                     self.sync_gate();
                 }
             }
@@ -1559,6 +1563,7 @@ impl App {
             Msg::MnEdit,
             Msg::MnSkipOccurrence,
         ));
+        cmds.push(m("obj.reveal", Msg::MnEdit, Msg::MnObjLinkReveal));
         for (id, msg) in [
             ("bookmark.toggle", Msg::MnBmToggle),
             ("bookmark.next", Msg::MnBmNext),

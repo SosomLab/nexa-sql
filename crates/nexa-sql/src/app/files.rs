@@ -149,19 +149,29 @@ impl App {
         match self.settings.get("tx.close_action").unwrap_or("ask") {
             act @ ("commit" | "rollback") => {
                 let commit = act == "commit";
-                self.with_sess(sid, |a| {
-                    a.sess.worker.send(if commit {
-                        worker::Cmd::Commit
-                    } else {
-                        worker::Cmd::Rollback
-                    });
+                // 그 세션이 실행 중이면 커밋/롤백을 줄 세우지 않는다(T-122) — 탭을 닫지 않고 상태줄에 알린다.
+                let sent = self.with_sess(sid, |a| {
+                    let Some(pass) = a.gate_pass() else {
+                        return false;
+                    };
+                    a.sess.submit(
+                        pass,
+                        if commit {
+                            worker::Cmd::Commit
+                        } else {
+                            worker::Cmd::Rollback
+                        },
+                    );
                     a.tx_close(if commit {
                         TxOutcome::Committed
                     } else {
                         TxOutcome::RolledBack
                     });
+                    true
                 });
-                self.editors.close_tab_confirmed(i);
+                if sent != Some(false) {
+                    self.editors.close_tab_confirmed(i);
+                }
             }
             _ => {
                 // 묻는 팝업은 지금 세션에 답을 보낸다 → 그 탭을 먼저 앞으로.
@@ -182,7 +192,7 @@ impl App {
         self.flush_on_exit();
         self.persist_window_sizes(true);
         for s in self.all_sess() {
-            s.worker.send(worker::Cmd::Quit);
+            s.control(worker::Cmd::Quit);
         }
         el.exit();
     }

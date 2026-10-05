@@ -495,6 +495,11 @@ const OBJLINK_LINE_OPTS: &[(&str, Msg)] = &[
     ("wavy_dashed", Msg::ValLineWavyDashed),
 ];
 /// Ctrl 객체 링크 툴팁 위치(T-256 · 기본 = 대상의 우상단).
+/// Ctrl+클릭 동작(`objlink.click` · T-180 ② — 77의 `intel.ctrl_click` 자리 · 키는 링크 설정 묶음에 둔다).
+const OBJLINK_CLICK_OPTS: &[(&str, Msg)] = &[
+    ("copy", Msg::ValObjLinkClickCopy),
+    ("reveal", Msg::ValObjLinkClickReveal),
+];
 const OBJLINK_POS_OPTS: &[(&str, Msg)] = &[
     ("top_right", Msg::ValPosTopRight),
     ("top_left", Msg::ValPosTopLeft),
@@ -1417,6 +1422,14 @@ pub const REGISTRY: &[Entry] = &[
         default: "top_right",
     },
     Entry {
+        key: "objlink.click",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkClick,
+        desc: Msg::DescObjLinkClick,
+        kind: SettingKind::Choice(OBJLINK_CLICK_OPTS),
+        default: "copy",
+    },
+    Entry {
         key: "objlink.show_schema",
         cat: Msg::CatObjLink,
         label: Msg::LblObjLinkShowSchema,
@@ -1957,6 +1970,15 @@ pub const REGISTRY: &[Entry] = &[
             max: 1_000_000,
         },
         default: "10000",
+    },
+    // 필터 줄(칩 · × · 77 §2-2 · T-181) — 필터가 있을 때만 한 줄을 차지한다.
+    Entry {
+        key: "grid.filter_strip",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFilterStrip,
+        desc: Msg::DescGridFilterStrip,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     // 정규식 필터 조회 SQL ③단계 값 목록 상한(사용자 09-30 · 72 §3 · 고유값 cap+1개에서 모으기 멈춤).
     Entry {
@@ -5235,6 +5257,14 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatIntel,
         label: Msg::LblIntelInsertColumns,
         desc: Msg::DescIntelInsertColumns,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.join_fk",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelJoinFk,
+        desc: Msg::DescIntelJoinFk,
         kind: SettingKind::Bool,
         default: "on",
     },

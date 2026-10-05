@@ -41,6 +41,12 @@ impl App {
         if let Some(kind) = self.grid.take_pending_sql() {
             self.begin_sql_copy(kind);
         }
+        // 열 머리 "객체 탐색기에서 보기"(T-180 ⑤): 출처 테이블 + 그 열 → 탐색기 찾기(편집기 링크·F4와 같은 길).
+        if let Some(col) = self.grid.take_reveal() {
+            if let Some(table) = self.grid.reveal_table() {
+                self.reveal_table_member(&table, Some(col));
+            }
+        }
         // ★ 그리드 필터 "포함…"(T-181): 팔레트 입력 → `grid.filter:<열>` → `Grid::add_filter`.
         if let Some((col, op, initial)) = self.grid.take_filter_prompt() {
             let anchor = Some(self.grid.bounds);
@@ -163,19 +169,25 @@ impl App {
             self.grid.set_keys(info.as_ref());
             return;
         }
-        if self.sess.blocked() || self.sess.edit_wait.is_some() {
-            // 세션이 바쁘면(실행이 막 끝나는 중) 요청을 되돌려 두고 다음 깨어남에 다시(`about_to_wait`).
-            self.grid.requeue_keys(table);
-            return;
-        }
+        let pass = match self.sess.pass() {
+            Some(p) if self.sess.edit_wait.is_none() => p,
+            _ => {
+                // 세션이 바쁘면(실행이 막 끝나는 중) 요청을 되돌려 두고 다음 깨어남에 다시(`about_to_wait`).
+                self.grid.requeue_keys(table);
+                return;
+            }
+        };
         let (schema, tname) = nsql_io::split_table(self.sess.dialect, &table);
         self.sess.edit_wait = Some(self.grid_tab);
         self.sess.aux += 1;
-        self.sess.worker.send(worker::Cmd::Keys {
-            key: table,
-            schema,
-            table: tname,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Keys {
+                key: table,
+                schema,
+                table: tname,
+            },
+        );
     }
 
     /// 변경 적용 → 워커 `Cmd::Apply`(gate · 한 트랜잭션 · 결과는 `ConnOutcome::Applied`).
@@ -186,11 +198,11 @@ impl App {
         preview: &str,
         refetch: Vec<nsql_core::ExecRequest>,
     ) {
-        if !self.gate_open() {
+        let Some(pass) = self.gate_pass() else {
             self.grid
                 .apply_done(0, Some((0, t(Msg::StRunning).to_string())));
             return;
-        }
+        };
         self.log_win.push(LogEntry::new(
             LogKind::Info,
             format!("{} {} · {}", t(Msg::MnGeApply), table, stmts.len()),
@@ -206,11 +218,14 @@ impl App {
         } else {
             Vec::new()
         };
-        self.sess.worker.send(worker::Cmd::Apply {
-            key: self.grid_tab,
-            stmts,
-            refetch,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Apply {
+                key: self.grid_tab,
+                stmts,
+                refetch,
+            },
+        );
         self.redraw();
     }
 
@@ -312,6 +327,8 @@ impl App {
         let list_max = self.settings.int("grid.filter_list_max").max(1) as usize;
         self.all_grids()
             .for_each(|g| g.set_filter_list_max(list_max));
+        let strip = self.settings.flag("grid.filter_strip");
+        self.all_grids().for_each(|g| g.set_filter_strip(strip));
     }
 
     /// 캐럿을 다음/이전 문장(`;` 분리 · [`nsql_script::split_script`]) 시작으로(Alt+↓/↑ · 실행 뒤 자동 이동).
@@ -830,10 +847,10 @@ impl App {
         }
         // ★ 통제(docs/52 §3): 이 탭의 세션이 다른 작업 중이면 추가 페치·전체 조회·건수도 보내지 않는다(요청 상태만 푼다 —
         //   풀린 뒤 스크롤·버튼으로 다시 요청된다). 워커는 순차라 보내도 안전하지만, 언제 끝날지 모르는 대기를 만들지 않는다.
-        if !self.gate_open() {
+        let Some(pass) = self.gate_pass() else {
             self.grid.fetch_failed();
             return;
-        }
+        };
         self.wake_if_idle();
         let key = self.grid_tab;
         // 메모리 예산(D-72 · 09-17 탭별 독립): **이 탭**의 행이 예산을 넘으면 추가 페치만 거부(전체 조회는 교체라 허용).
@@ -861,15 +878,18 @@ impl App {
                         t(Msg::StOffsetWarn).to_string(),
                     ));
                 }
-                self.sess.worker.send(worker::Cmd::FetchPage {
-                    key,
-                    sql,
-                    offset,
-                    limit,
-                    budget_bytes: 0,
-                    strict: self.settings.get("grid.refetch_mode") != Some("offset"),
-                    strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
-                });
+                self.sess.submit(
+                    pass,
+                    worker::Cmd::FetchPage {
+                        key,
+                        sql,
+                        offset,
+                        limit,
+                        budget_bytes: 0,
+                        strict: self.settings.get("grid.refetch_mode") != Some("offset"),
+                        strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
+                    },
+                );
             }
             grid::FetchReq::All => {
                 // 실행 Facade(docs/43 §11): 전체 조회는 길 수 있어 커서 경로여도 카드.
@@ -877,20 +897,23 @@ impl App {
                 // 전체 조회 = **나머지 이어 받기**(09-17 위치 유지): offset = 이미 든 행 수 · 예산 = 이 탭 예산에서 든 만큼을 뺀 나머지
                 // (탭별 독립 · 다른 탭을 빼지 않는다 · 이미 넘었으면 1 = 첫 배치 뒤 예산 정지).
                 let remain = budget.saturating_sub(self.grid.approx_bytes()).max(1);
-                self.sess.worker.send(worker::Cmd::FetchPage {
-                    key,
-                    sql,
-                    offset: self.grid.row_count(),
-                    limit: 0,
-                    budget_bytes: remain,
-                    strict: self.settings.get("grid.refetch_mode") != Some("offset"),
-                    strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
-                });
+                self.sess.submit(
+                    pass,
+                    worker::Cmd::FetchPage {
+                        key,
+                        sql,
+                        offset: self.grid.row_count(),
+                        limit: 0,
+                        budget_bytes: remain,
+                        strict: self.settings.get("grid.refetch_mode") != Some("offset"),
+                        strict_all: self.settings.get("grid.refetch_mode") == Some("strict_all"),
+                    },
+                );
             }
             grid::FetchReq::Count => {
                 // 건수 = 새 SQL(`SELECT COUNT(*) …`) → 카드.
                 self.fetch_card_start(key, Msg::CardCount, &sql);
-                self.sess.worker.send(worker::Cmd::Count { key, sql });
+                self.sess.submit(pass, worker::Cmd::Count { key, sql });
             }
         }
         self.sess.aux += 1;
@@ -914,9 +937,12 @@ impl App {
     /// 새로고침 — 같은 문장을 이 탭의 세그먼트 크기로 다시 실행.
     pub(crate) fn refresh_result(&mut self) {
         let src = self.grid.source_sql().to_string();
-        if src.trim().is_empty() || !self.gate_open() {
+        if src.trim().is_empty() {
             return;
         }
+        let Some(pass) = self.gate_pass() else {
+            return;
+        };
         self.wake_if_idle();
         self.sess.touch();
         self.sess.run_tab = self.grid_tab;
@@ -931,15 +957,18 @@ impl App {
         self.run_toast_start(&src);
         self.sess.last_run_items = split_items(&src, self.sess.dialect);
         let max_rows = self.grid.page_rows();
-        self.sess.worker.send(worker::Cmd::Run {
-            src,
-            preflight: None,
-            max_rows,
-            vars: self.run_vars(),
-            defines: self.run_defines(),
-            intrinsic: Some(self.run_intrinsic()),
-            whole: false,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Run {
+                src,
+                preflight: None,
+                max_rows,
+                vars: self.run_vars(),
+                defines: self.run_defines(),
+                intrinsic: Some(self.run_intrinsic()),
+                whole: false,
+            },
+        );
         self.live_start();
         self.redraw();
     }
@@ -959,17 +988,20 @@ impl App {
             self.finish_view_sql(kind, info.as_ref());
             return;
         }
-        if !self.gate_open() {
+        let Some(pass) = self.gate_pass() else {
             return;
-        }
+        };
         let (schema, table) = nsql_io::split_table(self.sess.dialect, &guess);
         self.sess.view_wait = Some(kind);
         self.sess.aux += 1;
-        self.sess.worker.send(worker::Cmd::Keys {
-            key: guess,
-            schema,
-            table,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Keys {
+                key: guess,
+                schema,
+                table,
+            },
+        );
     }
 
     pub(crate) fn finish_view_sql(
@@ -1012,17 +1044,20 @@ impl App {
             self.finish_sql_copy(kind, info.as_ref());
             return;
         }
-        if !self.gate_open() {
+        let Some(pass) = self.gate_pass() else {
             return;
-        }
+        };
         let (schema, table) = nsql_io::split_table(self.sess.dialect, &guess);
         self.sess.sql_wait = Some(kind);
         self.sess.aux += 1;
-        self.sess.worker.send(worker::Cmd::Keys {
-            key: guess,
-            schema,
-            table,
-        });
+        self.sess.submit(
+            pass,
+            worker::Cmd::Keys {
+                key: guess,
+                schema,
+                table,
+            },
+        );
     }
 
     /// 키 정보로 문장을 만들어 클립보드에 · 대체 키/테이블 미추정은 상태줄 + 로그에 1회 경고.

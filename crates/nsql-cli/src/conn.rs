@@ -207,7 +207,14 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
     if let Some(p) = &o.password {
         spec.password = Some(p.clone());
     }
-    let needs_pw = spec.password.is_none() && spec.dialect != Some(Dialect::Sqlite);
+    let mut needs_pw = spec.password.is_none() && spec.dialect != Some(Dialect::Sqlite);
+    // `--password-stdin` · `NSQL_PASSWORD`가 프롬프트보다 먼저다(접속과 같은 순서 · T-132).
+    if needs_pw {
+        if let Some(p) = term::supplied_password() {
+            spec.password = Some(p);
+            needs_pw = false;
+        }
+    }
     if needs_pw && !o.no_prompt && io::stdin().is_terminal() {
         match term::read_password(&format!("Password for {name} (빈 값 = 저장 안 함): ")) {
             Some(p) if !p.is_empty() => spec.password = Some(p),

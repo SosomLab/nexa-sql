@@ -201,3 +201,11 @@
 고친 것(§183): ① Oracle `DUAL`을 사전 결과에 넣음(정적 표는 사전이 읽히면 숨어 `FROM DUAL`이 완성되지 않았다) ② 방언 키워드 표 4개 + `keywords_for(dialect)`(공통과 중복 없음). 남은 것 = SQLite `temp.` 스키마 · MSSQL 임시 테이블 `#t` · PG 다른 스키마의 함수(현재 스키마만 미리 읽음 · `스키마.`로 읽힘) · Oracle 컬렉션 반환(비파이프라인) 함수 판정.
 
 ## 15. 문서 크기·향상 모드와의 관계(09-24 §187) — 72 "코드 완성과 문서 크기" 표가 원장. 요약 = 1 MB 위는 창 방식(캐럿 앞뒤 256 KB · `window_of`) · L1은 수동만 · L2는 끔 · 예산 연속 초과 = 그 탭 문서 낱말 끔 · 향상 모드는 아이콘·카드·문서 낱말·미리 읽기·함수 계열을 끈다(39 §4-6).
+
+## 16. JOIN 조건 조각 — 외래 키로 만든 `ON` 조건(T-178 · 10-05 · 112차 win)
+
+- **무엇**: `… JOIN 테이블 [별칭] ON |`(ON 뒤 빈 자리)에서 완성을 부르면, 방금 조인한 테이블과 문장에 이미 있는 다른 테이블 사이의 **외래 키**로 만든 조건이 **첫 후보(조각)** 로 나온다 — `e.dept_id = d.id` · 복합 키는 `AND`로 이음 · **양방향**(조인한 쪽이 FK를 가졌든 상대가 가졌든) · 별칭이 없으면 테이블 이름으로(`emp.dept_id = dept.id`). 오른쪽 열 = `FK <제약 이름>`(SQLite는 이름이 `FK_0` 꼴). 조각 아래에는 평소대로 두 테이블의 컬럼 후보가 이어진다.
+- **지연 로딩(61 §1-8)**: 제약(테이블 상세)은 이 자리에서 **처음 필요해질 때** 읽는다 — 이미 있으면 즉시 · 없으면 "불러오는 중" 뒤 탐색기 메타가 도착하면 팝업을 다시 조립한다. 요청은 기존 `explorer.request_detail`(탐색기 메타 세션)을 그대로 쓴다 — 새 스레드·새 접속 없음(39 §3).
+- **구현**: `crates/nexa-sql/src/intel.rs` — `join_on_target`(자리 판정 · 순수 · MC/DC) · `fk_join_conds`(조건 만들기) · `JoinSide` · `need_details` / `app/completion.rs` `take_need_details` → `explorer.request_detail`. 설정 **`intel.join_fk`**(기본 on · 끄면 조각을 내지 않고 상세도 요청하지 않는다).
+- **한계**: 메타에 "FK가 가리키는 컬럼 목록"이 없어 **상대 테이블의 PK 순서에 맞춘다** — PK가 아닌 유일 키를 가리키는 FK나 순서가 다른 복합 키는 틀린 짝이 나올 수 있다(→ T-178 남음 = MetaStore 확장). 자기 참조(같은 테이블 두 번)는 단위 시험이 덮는다.
+- **시험**: 단위 3(`cargo test -p nexa-sql --bin nexa-sql join` — 판정 MC/DC 2 + MetaStore 통합 1) · 격리 자체 시험(SQLite `dept(id PK)` / `emp(dept_id REFERENCES dept(id))` · 기동 명령 `editor.caret:end` → `intel.probe` → `intel.dump`) = `emp e JOIN dept d ON ` → `Snippet|e.dept_id = d.id|FK FK_0` · 역방향 `dept d JOIN emp e ON ` → 같은 조건 · 별칭 없음 → `emp.dept_id = dept.id`(journal 10-05 §7).

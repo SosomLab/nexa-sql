@@ -71,6 +71,8 @@ pub(crate) struct IntelCfg {
     pub alias_letters: bool,
     pub insert_space: bool,
     pub insert_columns: bool,
+    /// `JOIN 테이블 ON` 뒤 외래 키 조인 조건 조각(`intel.join_fk` · T-178).
+    pub join_fk: bool,
     pub signature_help: bool,
     pub budget_ms: u64,
 }
@@ -120,6 +122,7 @@ impl IntelCfg {
             alias_letters: s.get("intel.alias_style").unwrap_or("abbr") == "letters",
             insert_space: s.flag("intel.insert_space"),
             insert_columns: s.flag("intel.insert_columns"),
+            join_fk: s.flag("intel.join_fk"),
             signature_help: s.flag("intel.signature_help"),
             budget_ms: s.int("intel.budget_ms").clamp(5, 500) as u64,
         }
@@ -192,6 +195,8 @@ pub(crate) struct Intel {
     needs: Vec<NeedColumns>,
     /// 마지막 요청이 남긴 객체 목록 채움 요청(스키마 이름 · `DICT_SCHEMA` = 사전 · 09-23).
     need_objects: Vec<String>,
+    /// 마지막 요청이 남긴 **테이블 상세**(제약) 채움 요청 — `JOIN … ON` 조건 조각이 외래 키를 기다린다(T-178).
+    need_details: Vec<nsql_run::meta::ObjId>,
     /// "불러오는 중" 표시 여부(마지막 요청).
     pub(crate) loading: bool,
     /// 객체 목록(테이블 등)을 기다리는 중(표시 문구 선택).
@@ -233,6 +238,7 @@ impl Intel {
             accept: None,
             needs: Vec::new(),
             need_objects: Vec::new(),
+            need_details: Vec::new(),
             loading: false,
             loading_objects: false,
             over_budget: None,
@@ -438,6 +444,7 @@ impl Intel {
         let t0 = Instant::now();
         self.needs.clear();
         self.need_objects.clear();
+        self.need_details.clear();
         self.loading = false;
         self.loading_objects = false;
         // ★ 창 방식(09-24 §187 · 사용자 "파일 용량별 레벨"): 문서가 `intel.max_doc_kb`를 넘으면 캐럿 앞뒤 창만 문맥으로 읽고(전체
@@ -1048,6 +1055,74 @@ impl Intel {
                         }
                     }
                 }
+                if ctx.kind == CtxKind::Expr && self.cfg.join_fk && ctx.prefix.is_empty() {
+                    // ★ `JOIN 테이블 [별칭] ON` 바로 뒤 = 외래 키로 만든 조인 조건을 첫 후보로(T-178 · 지연 로딩: 제약은
+                    //   이때 처음 읽는다 — 이미 있으면 즉시 · 없으면 "불러오는 중" 뒤 다시 그린다).
+                    if let (Some(target), Some(m)) =
+                        (join_on_target(&doc[..ctx.replace.start]), meta)
+                    {
+                        let mut sides: Vec<JoinSide> = Vec::new();
+                        let mut joined: Option<usize> = None;
+                        for a in ctx.aliases.iter().filter(|a| !a.local) {
+                            let Some(id) = m.snap.lookup(m.names, a.schema.as_deref(), &a.table)
+                            else {
+                                continue;
+                            };
+                            match m.snap.detail(id) {
+                                nsql_run::meta::DetailState::Loaded { detail, .. } => {
+                                    if joined.is_none()
+                                        && (a.alias.eq_ignore_ascii_case(&target)
+                                            || a.table.eq_ignore_ascii_case(&target))
+                                    {
+                                        joined = Some(sides.len());
+                                    }
+                                    sides.push(JoinSide {
+                                        alias: a.alias.clone(),
+                                        table: a.table.clone(),
+                                        keys: detail
+                                            .keys
+                                            .iter()
+                                            .filter(|k| matches!(k.kind, 'P' | 'R'))
+                                            .map(|k| JoinKey {
+                                                name: m.names.get(k.name).to_string(),
+                                                kind: k.kind,
+                                                cols: k
+                                                    .cols
+                                                    .iter()
+                                                    .map(|c| m.names.get(*c).to_string())
+                                                    .collect(),
+                                                ref_table: k
+                                                    .ref_table
+                                                    .map(|t| m.names.get(t).to_string()),
+                                            })
+                                            .collect(),
+                                    });
+                                }
+                                nsql_run::meta::DetailState::Loading => self.loading = true,
+                                nsql_run::meta::DetailState::Unknown => {
+                                    self.loading = true;
+                                    self.need_details.push(id);
+                                }
+                            }
+                        }
+                        if let Some(j) = joined {
+                            for (n, (cond, fk)) in fk_join_conds(&sides, j).into_iter().enumerate()
+                            {
+                                cands.push(Cand {
+                                    text: cond,
+                                    kind: CandKind::Snippet,
+                                    detail: format!("FK {fk}"),
+                                    source: 0,
+                                    tag: 0,
+                                    mark: String::new(),
+                                    order: n as u32,
+                                    qualifier: String::new(),
+                                    layer: 0,
+                                });
+                            }
+                        }
+                    }
+                }
                 if ctx.kind == CtxKind::Expr
                     && self.cfg.insert_columns
                     && ctx.paren_into
@@ -1521,6 +1596,11 @@ impl Intel {
     /// 마지막 요청이 남긴 즉시 채움 요청(호스트가 탐색기 메타 큐에 넣는다).
     pub(crate) fn take_needs(&mut self) -> Vec<NeedColumns> {
         std::mem::take(&mut self.needs)
+    }
+
+    /// 마지막 요청이 남긴 테이블 상세 채움 요청(`JOIN … ON` 조건 조각) — 호스트가 탐색기에 넘긴다(T-178).
+    pub(crate) fn take_need_details(&mut self) -> Vec<nsql_run::meta::ObjId> {
+        std::mem::take(&mut self.need_details)
     }
 
     /// 마지막 요청이 남긴 객체 목록 채움 요청(스키마 이름 · 사전) — 호스트가 탐색기에 넘긴다(09-23).
@@ -2035,6 +2115,93 @@ fn key_marks(key: u8, nullable: Option<bool>) -> String {
     m.join(" ")
 }
 
+/// 조인 조건 조각의 한쪽 — 문장에 나온 테이블 하나와 그 키(PK · FK)만(순수 판정용 · 메타 저장소와 떼어 시험한다).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct JoinSide {
+    alias: String,
+    table: String,
+    keys: Vec<JoinKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct JoinKey {
+    name: String,
+    /// `P` = 기본 키 · `R` = 외래 키.
+    kind: char,
+    cols: Vec<String>,
+    ref_table: Option<String>,
+}
+
+/// 캐럿 앞이 `JOIN [스키마.]테이블 [[AS] 별칭] ON`으로 끝나면 그 **조인되는 쪽의 이름**(별칭이 있으면 별칭 · 없으면 테이블).
+/// `ON` 뒤에 무엇이든 이미 쳤으면(`ON a.x = `) 해당 없음 — 조건 조각은 빈 자리에서만 낸다.
+fn join_on_target(before: &str) -> Option<String> {
+    let mut words = before.split_whitespace().rev();
+    if !words.next()?.eq_ignore_ascii_case("ON") {
+        return None;
+    }
+    let name = words.next()?;
+    // `ON` 앞 = 별칭 또는 테이블 · 그 앞으로 `AS` · 테이블 · `JOIN`이 이어져야 한다(`GRANT … ON` · `CREATE INDEX … ON` 제외).
+    let mut prev = words.next()?;
+    if prev.eq_ignore_ascii_case("AS") {
+        prev = words.next()?;
+    }
+    let after_join = |w: &str| w.eq_ignore_ascii_case("JOIN") || w.eq_ignore_ascii_case("APPLY");
+    if !after_join(prev) && !after_join(words.next()?) {
+        return None;
+    }
+    let name = name.rsplit('.').next().unwrap_or(name);
+    let name = name.trim_matches(|c| matches!(c, '"' | '`' | '[' | ']'));
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// 외래 키로 만든 조인 조건들 — `sides[joined]`(방금 `JOIN`한 테이블)와 나머지 사이에서, 한쪽의 FK가 다른 쪽을 가리키고
+/// 그 다른 쪽에 **같은 컬럼 수의 기본 키**가 있을 때만(`자식.fk = 부모.pk` · 복합 키는 `AND`로 · FK가 가리키는 컬럼 목록은
+/// 메타에 없어 PK 순서에 맞춘다). 돌려주는 값 = (조건 글, FK 이름) · 문장에 나온 순서대로.
+fn fk_join_conds(sides: &[JoinSide], joined: usize) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let Some(j) = sides.get(joined) else {
+        return out;
+    };
+    let points_at = |k: &JoinKey, parent: &JoinSide| {
+        k.kind == 'R'
+            && k.ref_table.as_deref().is_some_and(|t| {
+                t.rsplit('.')
+                    .next()
+                    .unwrap_or(t)
+                    .eq_ignore_ascii_case(&parent.table)
+            })
+    };
+    let mut emit = |child: &JoinSide, parent: &JoinSide| {
+        let Some(pk) = parent.keys.iter().find(|k| k.kind == 'P') else {
+            return;
+        };
+        for fk in child.keys.iter().filter(|k| points_at(k, parent)) {
+            if fk.cols.is_empty() || fk.cols.len() != pk.cols.len() {
+                continue;
+            }
+            let cond = fk
+                .cols
+                .iter()
+                .zip(&pk.cols)
+                .map(|(f, p)| format!("{}.{f} = {}.{p}", child.alias, parent.alias))
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            if !out.iter().any(|(c, _)| c == &cond) {
+                out.push((cond, fk.name.clone()));
+            }
+        }
+    };
+    for (i, o) in sides.iter().enumerate() {
+        if i == joined {
+            continue;
+        }
+        // 방금 조인한 쪽이 자식(FK 보유)인 조건을 먼저 · 다음에 반대 방향.
+        emit(j, o);
+        emit(o, j);
+    }
+    out
+}
+
 /// 테이블 이름 → 짧은 alias(`sales_customer` → `sc` · `emp` → `e` · `MyTable` → `mt`) · 문장 안 alias와 겹치면 숫자 붙임 ·
 /// 키워드 모양(`in`·`as`·`or` …)이면 `1`을 붙인다(`intel.insert_alias` · T-178).
 /// ★ 건너편 컬럼 이름(사용자 09-29 "`B.PROJECT_CD = A.` 이면 A에도 PROJECT_CD가 있을 때 1번 추천"): 접두 시작 `at` 앞에서
@@ -2202,6 +2369,7 @@ mod tests {
             alias_letters: false,
             insert_space: true,
             insert_columns: true,
+            join_fk: true,
             signature_help: true,
             budget_ms: 30,
         }
@@ -2251,6 +2419,181 @@ mod tests {
             1,
         );
         m
+    }
+
+    /// T-178 JOIN 조건 조각(통합): 제약을 모르면 상세 요청 + 불러오는 중 → 채워지면 첫 후보 = FK 조건 조각 · 설정 끔 = 없음.
+    #[test]
+    fn join_on_offers_fk_condition_after_details_load() {
+        use nsql_run::meta::NewDetail;
+        let mut m = store();
+        let host = Rect::new(0, 0, 800, 600);
+        let doc = "SELECT * FROM emp e JOIN dept d ON ";
+        let ask = |it: &mut Intel, m: &MetaStore| {
+            let view = MetaView {
+                names: &m.names,
+                snap: m.snapshot(),
+            };
+            it.request(
+                1,
+                1,
+                doc,
+                doc.len(),
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None,
+            )
+        };
+        let mut it = Intel::new(cfg());
+        ask(&mut it, &m);
+        let snap = m.snapshot();
+        let emp = snap.lookup(&m.names, Some("SCOTT"), "EMP").expect("emp");
+        let dept = snap.lookup(&m.names, Some("SCOTT"), "DEPT").expect("dept");
+        let mut want = it.take_need_details();
+        want.sort_by_key(|i| i.0);
+        let mut both = vec![emp, dept];
+        both.sort_by_key(|i| i.0);
+        assert_eq!(want, both, "두 테이블의 제약을 요청");
+        assert!(it.loading);
+        assert!(!it.cands.iter().any(|c| c.kind == CandKind::Snippet));
+        m.set_detail(
+            emp,
+            &NewDetail {
+                keys: vec![
+                    ("PK_EMP".into(), 'P', vec!["EMPNO".into()], None),
+                    (
+                        "FK_DEPT".into(),
+                        'R',
+                        vec!["DEPTNO".into()],
+                        Some("DEPT".into()),
+                    ),
+                ],
+                ..Default::default()
+            },
+            2,
+        );
+        m.set_detail(
+            dept,
+            &NewDetail {
+                keys: vec![("PK_DEPT".into(), 'P', vec!["DEPTNO".into()], None)],
+                ..Default::default()
+            },
+            2,
+        );
+        assert!(ask(&mut it, &m));
+        assert!(it.take_need_details().is_empty());
+        assert_eq!(it.cands[0].kind, CandKind::Snippet, "{}", it.dump_cands());
+        assert_eq!(it.cands[0].text, "e.DEPTNO = d.DEPTNO");
+        assert_eq!(it.cands[0].detail, "FK FK_DEPT");
+        // 끔 = 조각 없음 · 요청도 없음.
+        let mut off = Intel::new(IntelCfg {
+            join_fk: false,
+            ..cfg()
+        });
+        ask(&mut off, &m);
+        assert!(!off.cands.iter().any(|c| c.kind == CandKind::Snippet));
+    }
+
+    /// T-178 JOIN 조건 조각 — `ON` 자리 판정(MC/DC: 끝 낱말 ON · 앞이 JOIN 사슬 · AS 유무 · 스키마/인용).
+    #[test]
+    fn join_on_target_rules() {
+        let f = |s: &str| join_on_target(s);
+        assert_eq!(
+            f("SELECT * FROM emp e JOIN dept d ON ").as_deref(),
+            Some("d")
+        );
+        assert_eq!(
+            f("SELECT * FROM emp e LEFT JOIN hr.dept AS d\n  on").as_deref(),
+            Some("d")
+        );
+        assert_eq!(
+            f("FROM emp JOIN scott.\"DEPT\" ON ").as_deref(),
+            Some("DEPT")
+        );
+        assert_eq!(
+            f("FROM emp e JOIN dept d ON e.x = "),
+            None,
+            "이미 조건을 치는 중"
+        );
+        assert_eq!(f("GRANT SELECT ON "), None, "JOIN 사슬이 아니다");
+        assert_eq!(f("CREATE INDEX ix ON "), None);
+        assert_eq!(f("FROM emp e JOIN dept d "), None, "ON이 없다");
+    }
+
+    /// 외래 키 → 조건 글: 방향 둘(조인한 쪽이 자식/부모) · 복합 키 · PK 없는 부모·컬럼 수 불일치는 내지 않는다.
+    #[test]
+    fn fk_join_conds_rules() {
+        let key = |name: &str, kind: char, cols: &[&str], rt: Option<&str>| JoinKey {
+            name: name.into(),
+            kind,
+            cols: cols.iter().map(|c| c.to_string()).collect(),
+            ref_table: rt.map(str::to_string),
+        };
+        let emp = JoinSide {
+            alias: "e".into(),
+            table: "EMP".into(),
+            keys: vec![
+                key("PK_EMP", 'P', &["EMPNO"], None),
+                key("FK_DEPT", 'R', &["DEPTNO"], Some("scott.dept")),
+                key("FK_MGR", 'R', &["MGR"], Some("EMP")),
+            ],
+        };
+        let dept = JoinSide {
+            alias: "d".into(),
+            table: "DEPT".into(),
+            keys: vec![key("PK_DEPT", 'P', &["DEPTNO"], None)],
+        };
+        // 부모를 조인: `FROM emp e JOIN dept d ON |`
+        assert_eq!(
+            fk_join_conds(&[emp.clone(), dept.clone()], 1),
+            vec![("e.DEPTNO = d.DEPTNO".to_string(), "FK_DEPT".to_string())]
+        );
+        // 자식을 조인: `FROM dept d JOIN emp e ON |`
+        assert_eq!(
+            fk_join_conds(&[dept.clone(), emp.clone()], 1),
+            vec![("e.DEPTNO = d.DEPTNO".to_string(), "FK_DEPT".to_string())]
+        );
+        // 자기 참조: `FROM emp e JOIN emp m ON |` → 양방향 둘.
+        let mgr = JoinSide {
+            alias: "m".into(),
+            ..emp.clone()
+        };
+        assert_eq!(
+            fk_join_conds(&[emp, mgr], 1)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect::<Vec<_>>(),
+            ["m.MGR = e.EMPNO", "e.MGR = m.EMPNO"]
+        );
+        // 복합 키 · PK 없는 부모 · 컬럼 수 불일치.
+        let line = JoinSide {
+            alias: "l".into(),
+            table: "ORD_LINE".into(),
+            keys: vec![
+                key("FK_ORD", 'R', &["PLANT", "ORD_NO"], Some("ORD")),
+                key("FK_BAD", 'R', &["ORD_NO"], Some("ORD")),
+            ],
+        };
+        let ord = JoinSide {
+            alias: "o".into(),
+            table: "ORD".into(),
+            keys: vec![key("PK_ORD", 'P', &["PLANT", "ORD_NO"], None)],
+        };
+        assert_eq!(
+            fk_join_conds(&[ord.clone(), line.clone()], 1),
+            vec![(
+                "l.PLANT = o.PLANT AND l.ORD_NO = o.ORD_NO".to_string(),
+                "FK_ORD".to_string()
+            )]
+        );
+        let no_pk = JoinSide {
+            keys: Vec::new(),
+            ..ord
+        };
+        assert!(fk_join_conds(&[no_pk, line], 1).is_empty());
+        assert!(fk_join_conds(&[dept], 3).is_empty());
     }
 
     /// ★ 건너편 컬럼 1순위(사용자 09-29): `d.ENAME = e.|` → e의 컬럼 중 ENAME이 맨 위(평소는 EMPNO 먼저) · UPDATE SET도 같다.

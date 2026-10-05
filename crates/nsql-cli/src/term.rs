@@ -21,20 +21,25 @@ pub(crate) fn read_password_from_stdin() -> bool {
     }
 }
 
+/// 묻지 않고 받은 비밀번호 — `--password-stdin`(먼저) · 환경변수 `NSQL_PASSWORD`(빈 값은 없음으로).
+/// 접속(`ensure_password`)과 프로필 저장(`conn add`)이 같은 순서를 쓴다(T-132 흠 — `conn add`만 이 둘을 건너뛰었다).
+pub(crate) fn supplied_password() -> Option<String> {
+    if let Some(p) = STDIN_PASSWORD.get() {
+        return Some(p.expose().to_string());
+    }
+    std::env::var("NSQL_PASSWORD")
+        .ok()
+        .filter(|p| !p.is_empty())
+}
+
 pub(crate) fn ensure_password(spec: &mut nsql_script::ConnectSpec, no_prompt: bool, label: &str) {
     // `user:@host` = 빈 비밀번호를 **명시**한 것 → 묻지 않는다(사용자 09-21) · `user@host`(없음)일 때만 채운다.
     if spec.password.is_some() || spec.dialect == Some(nsql_core::Dialect::Sqlite) {
         return;
     }
-    if let Some(p) = STDIN_PASSWORD.get() {
-        spec.password = Some(p.expose().to_string());
+    if let Some(p) = supplied_password() {
+        spec.password = Some(p);
         return;
-    }
-    if let Ok(p) = std::env::var("NSQL_PASSWORD") {
-        if !p.is_empty() {
-            spec.password = Some(p);
-            return;
-        }
     }
     if no_prompt || !io::stdin().is_terminal() {
         return;

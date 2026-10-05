@@ -116,8 +116,7 @@ impl App {
         let id = self.next_sess_id;
         self.next_sess_id += 1;
         let s = Sess::new(id, None, w, ev, DEFAULT_DIALECT);
-        s.worker
-            .send(worker::Cmd::GlobalVars(self.global_vars.clone()));
+        s.control(worker::Cmd::GlobalVars(self.global_vars.clone()));
         self.parked.push(s);
         id
     }
@@ -383,8 +382,7 @@ impl App {
         let id = self.next_sess_id;
         self.next_sess_id += 1;
         let s = Sess::new(id, Some(tab), w, ev, DEFAULT_DIALECT);
-        s.worker
-            .send(worker::Cmd::GlobalVars(self.global_vars.clone()));
+        s.control(worker::Cmd::GlobalVars(self.global_vars.clone()));
         self.parked.push(s);
         Some(id)
     }
@@ -398,10 +396,15 @@ impl App {
         self.sess.status = tf(Msg::StConnecting, &[&spec.redacted()]);
         self.sess.spec = Some(spec.clone());
         self.sess.touch();
-        self.sess.worker.send(worker::Cmd::ConnectSpec {
-            spec,
-            reconnect_same,
-        });
+        // 접속은 줄 세우기가 뜻이다 — 실행 경로의 조용한 재접속(`wake_if_idle`)은 뒤따르는 실행보다 먼저 가야 한다.
+        let pass = self.sess.pass_queued("connect_quietly");
+        self.sess.submit(
+            pass,
+            worker::Cmd::ConnectSpec {
+                spec,
+                reconnect_same,
+            },
+        );
     }
 
     /// 모든 세션의 워커 응답을 처리한다 — 잠든 세션은 잠시 앞으로 꺼내 같은 코드로.
@@ -455,8 +458,8 @@ impl App {
                 if s.blocked() {
                     let _ = s.worker.cancel_run();
                 }
-                s.worker.send(worker::Cmd::Disconnect);
-                s.worker.send(worker::Cmd::Quit);
+                s.control(worker::Cmd::Disconnect);
+                s.control(worker::Cmd::Quit);
                 false
             } else {
                 true
@@ -477,7 +480,7 @@ impl App {
                     n,
                 )
             {
-                s.worker.send(worker::Cmd::Quit);
+                s.control(worker::Cmd::Quit);
                 false
             } else {
                 true
@@ -669,7 +672,10 @@ impl App {
         ) else {
             return;
         };
-        self.sess.worker.send(worker::Cmd::SetUnit(want));
+        let Some(pass) = self.sess.pass() else {
+            return;
+        };
+        self.sess.submit(pass, worker::Cmd::SetUnit(want));
     }
 
     /// ★ 툴바 "작업 단위" 클릭(10-01 ⑫): SQL Server = 데이터베이스 목록 · MySQL = 스키마(DB) 목록 · 현재 ✓ · 고르면 `USE`(편집기 명령과 같은 길).
@@ -766,13 +772,19 @@ impl App {
     }
 
     pub(crate) fn gate_open(&mut self) -> bool {
+        self.gate_pass().is_some()
+    }
+
+    /// ★ 문지기(§3 · T-122): 지금 세션에 새 DB 작업을 보내도 되면 **증표**를 준다 — 막혔으면 상태줄 안내 + `None`.
+    /// DB로 가는 진입점은 이 증표를 받아 `Sess::submit`에 넘긴다(증표 없이는 보낼 길이 없다).
+    pub(crate) fn gate_pass(&mut self) -> Option<sessions::GatePass> {
         self.sync_sess();
-        if self.sess.blocked() {
+        let pass = self.sess.pass();
+        if pass.is_none() {
             self.sess.status = t(Msg::StRunning).into();
             self.redraw();
-            return false;
         }
-        true
+        pass
     }
 
     /// 유휴 세션 점검(§6 · 30초 간격) — 닫아도 안전한 세션만 닫고 스펙은 남긴다(다음 실행 때 조용히 재접속).
@@ -853,14 +865,18 @@ impl App {
         };
         let per_editor = keep;
         // 미커밋이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30) — 답한 뒤 `disconnect_force`가 다시 여기로 온다.
-        if self.sess.id == id && !self.sess.tx_pending.is_empty() {
+        let pending = self
+            .sess_by_id(id)
+            .is_some_and(|s| !s.tx_pending.is_empty());
+        let step = sessions::private_disconnect_step(self.sess.id == id, pending);
+        if step == sessions::PrivateDisc::Ask {
             self.tx_after = Some(TxAfter::Disconnect);
             self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
             self.redraw();
             return;
         }
         self.with_sess(id, |a| {
-            if !a.sess.tx_pending.is_empty() {
+            if step == sessions::PrivateDisc::Refuse {
                 a.sess.status = t(Msg::StSessTxPending).into();
                 a.log_win
                     .push(LogEntry::new(LogKind::Error, a.sess.status.clone()));
@@ -868,7 +884,7 @@ impl App {
             }
             let stuck = a.sess.busy;
             a.log_disconnect(sessions::DiscPath::Badge);
-            a.sess.worker.send(worker::Cmd::Disconnect);
+            a.sess.control(worker::Cmd::Disconnect);
             a.editors.set_running(a.sess.run_editor, false);
             if per_editor {
                 // 갇힌 워커는 버리고 새 워커로(즉시 해제 규약 · 09-16) — 세션 객체는 남는다.
@@ -1276,7 +1292,7 @@ impl App {
         }
         let stuck = self.sess.busy;
         self.log_disconnect(sessions::DiscPath::Toolbar);
-        self.sess.worker.send(worker::Cmd::Disconnect);
+        self.sess.control(worker::Cmd::Disconnect);
         let (w, ev) = self.spawn_worker();
         self.sess.worker = w;
         self.sess.events = ev;
@@ -1407,7 +1423,7 @@ impl App {
     fn abandon_worker(&mut self) {
         let (w, ev) = self.spawn_worker();
         self.log_disconnect(sessions::DiscPath::Stop);
-        self.sess.worker.send(worker::Cmd::Disconnect);
+        self.sess.control(worker::Cmd::Disconnect);
         self.sess.worker = w;
         self.sess.events = ev;
         self.sess.busy = false;

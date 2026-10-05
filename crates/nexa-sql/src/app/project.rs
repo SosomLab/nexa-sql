@@ -286,6 +286,15 @@ impl App {
             self.redraw();
             return;
         }
+        // 자체 시험: 프로젝트 패널을 **정해진 상태로**(`project.panel:on|off`) — `view.project`는 토글이라 앞서 읽은
+        // 프로젝트 파일의 `panel` 상태에 따라 닫히기도 한다(T-177 · 기능 점검 S06·S46).
+        if let Some(want) = id.strip_prefix("project.panel:") {
+            let on = !matches!(want.trim(), "off" | "0" | "false");
+            if self.project_panel.is_visible() != on {
+                self.menu_action("view.project");
+            }
+            return;
+        }
         // 자체 시험: 탐색기 필터에 글 넣기(`project.filter:<글>` · 키 주입 없이 필터 결과를 캡처).
         if let Some(q) = id.strip_prefix("project.filter:") {
             // `project.filter:[cwrp]:<글>` = 옵션(Case·Word·Regex·Path)을 먼저 켠다.

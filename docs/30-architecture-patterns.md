@@ -43,6 +43,7 @@
 5. 실패가 앱 전체로 번지지 않는가 → 프로세스/WASM/스레드 경계 · `catch_unwind` · 오류 비확산([28](28-object-explorer.md)).
 6. 네트워크를 만들면 [26 §8](26-performance-architecture.md) 표에 상한을 등재했는가.
 7. 자원(스레드·소켓·디스크·프레임·캐시)을 쓰면 [39 §3](39-resource-governance.md) 부하원으로 등재하고 설정 키(`Entry.perf`)를 붙였는가 · 39 §2 기준 어느 행에 걸리는가.
+8. **DB로 가는 새 진입점인가** → `App::gate_pass()`로 증표(`GatePass`)를 받아 `Sess::submit(증표, cmd)`로만 보낸다(막힌 상태를 푸는 제어 명령만 `Sess::control`). 워커 `dispatch`를 직접 부르는 코드는 `sessions.rs` 밖에 둘 수 없다 — 시험 `no_host_code_bypasses_the_gate`가 소스를 훑어 막는다([52 §3-4](52-session-modes.md) · T-122 · 10-05).
 
 ## 2. 재사용 부품 원장 — 한 번 만든 기법은 여기 등재하고 다시 쓴다
 

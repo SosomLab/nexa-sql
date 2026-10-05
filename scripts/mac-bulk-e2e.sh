@@ -22,6 +22,8 @@ run_gui() { # <초> <인자> <기동 명령> — GUI Import 창(89 §3-3 · 키 
 }
 # ── SQLite
 NSQL_HOME="$H" "$NSQL" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
+# 기대 문구가 영어다 — 화면 언어 기본값이 system이라 한국어 OS에서는 한국어가 나온다(10-05 Windows 전수 시험).
+NSQL_HOME="$H" "$NSQL" config set ui.lang en >/dev/null 2>&1
 python3 - "$D" <<'PY'
 import sys, os
 d=sys.argv[1]

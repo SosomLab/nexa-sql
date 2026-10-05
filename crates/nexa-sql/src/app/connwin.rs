@@ -119,10 +119,15 @@ impl App {
                         // 접속 창으로 새로 붙는다 = 유형은 프로필(폼)의 값 — 임시 표식 해제.
                         a.sess.env_temp = false;
                         a.sess.touch();
-                        a.sess.worker.send(worker::Cmd::ConnectSpec {
-                            spec,
-                            reconnect_same,
-                        });
+                        // 자리는 `login_place`가 확인했다(바쁜 세션·상한이면 위에서 돌아갔다).
+                        let pass = a.sess.pass_queued("login_place");
+                        a.sess.submit(
+                            pass,
+                            worker::Cmd::ConnectSpec {
+                                spec,
+                                reconnect_same,
+                            },
+                        );
                     });
                 }
             }

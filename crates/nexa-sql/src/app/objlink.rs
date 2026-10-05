@@ -1120,7 +1120,8 @@ impl App {
         ))
     }
 
-    /// 클릭(좌 = 설명 복사 · **Shift+좌** = `이름 - 설명` 복사 · 우 = 메뉴) — 링크 위였으면 true(편집기로 가지 않는다).
+    /// 클릭(좌 = 설정 `objlink.click` — 설명 복사(기본) 또는 객체 탐색기에서 보기 · **Shift+좌** = `이름 - 설명` 복사 ·
+    /// 우 = 메뉴) — 링크 위였으면 true(편집기로 가지 않는다). "보기"인데 실제 객체로 풀리지 않는 링크는 설명 복사로 돌아간다.
     pub(crate) fn objlink_click(&mut self, p: Point, right: bool) -> bool {
         if !self.objlinks.active {
             return false;
@@ -1133,7 +1134,11 @@ impl App {
         } else if self.shift {
             self.objlink_copy_name_desc(k);
         } else {
-            self.objlink_copy_desc(k);
+            let can_reveal = self.objlink_reveal_target(k).is_some();
+            match click_action(self.settings.get("objlink.click"), can_reveal) {
+                ClickAction::Reveal => self.objlink_reveal(k),
+                ClickAction::Copy => self.objlink_copy_desc(k),
+            }
         }
         true
     }
@@ -1204,6 +1209,84 @@ impl App {
             self.explorer_actions();
         }
         self.redraw();
+    }
+
+    /// 테이블 이름(`[스키마.]이름` · 인용 허용)과 멤버(컬럼)로 객체 탐색기에서 찾기 — 결과 그리드 열 머리 메뉴의 길(T-180 ⑤).
+    /// 해석은 편집기 링크와 같다(세션 현재 스키마 · 접근성 · SQL Server dbo 폴백). 못 풀면 상태줄 안내 + `false`.
+    pub(crate) fn reveal_table_member(&mut self, table: &str, member: Option<String>) -> bool {
+        let (schema_q, name) = nsql_io::split_table(self.sess.dialect, table);
+        let cur = self.objlink_cur_schema();
+        let found = {
+            let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
+            self.objlink_resolve(names, &snap, schema_q.as_deref(), cur.as_deref(), &name)
+                .and_then(|id| snap.object(id))
+                .map(|o| {
+                    (
+                        names.get(o.schema).to_string(),
+                        o.kind,
+                        names.get(o.name).to_string(),
+                    )
+                })
+        };
+        let Some((schema, kind, name)) = found else {
+            self.sess.status = t(Msg::StObjRevealNone).into();
+            self.redraw();
+            return false;
+        };
+        let (db, schema) = match (self.sess.dialect, schema.split_once('.')) {
+            (nsql_core::Dialect::Mssql, Some((d, s))) if !s.is_empty() => {
+                (Some(d.to_string()), s.to_string())
+            }
+            _ => (None, schema),
+        };
+        if !self.explorer.is_visible() {
+            self.menu_action("view.explorer");
+        }
+        let spec = self.sess.spec.clone();
+        let target = crate::explorer::RevealTarget {
+            db,
+            schema,
+            kind,
+            name,
+            member,
+        };
+        let ok = self.explorer.reveal(spec.as_ref(), target);
+        if ok {
+            self.set_focus(Focus::Explorer);
+            self.explorer_actions();
+        }
+        self.redraw();
+        ok
+    }
+
+    /// ★ 명령 `obj.reveal`(F4 · 팔레트 · T-180): **캐럿 아래** 객체를 객체 탐색기에서 찾는다 — 우클릭 메뉴와 같은 판정
+    /// (실제 객체로 풀릴 때만) · 링크는 Ctrl을 누르는 동안만 분석되므로 잠시 누른 것으로 치고 분석한 뒤 되돌린다.
+    /// 캐럿이 링크 안이거나 양 끝에 닿아 있으면 그 링크 · 없으면 상태줄 안내.
+    pub(crate) fn objlink_reveal_at_caret(&mut self) {
+        if self.focus != Focus::Editor {
+            return;
+        }
+        let was = self.primary;
+        self.primary = true;
+        self.objlink_sync();
+        let caret = self.editors.cur().caret();
+        let hit = self
+            .objlinks
+            .links
+            .iter()
+            .position(|l| l.range.0 <= caret && caret <= l.range.1)
+            .filter(|&k| self.objlink_reveal_target(k).is_some());
+        match hit {
+            Some(k) => self.objlink_reveal(k),
+            None => {
+                self.sess.status = t(Msg::StObjRevealNone).into();
+                self.redraw();
+            }
+        }
+        self.primary = was;
+        if !was {
+            self.objlink_sync();
+        }
     }
 
     /// 자체 시험(기동 명령 `objlink.reveal:<이름>`): 분석된 링크 가운데 이름이 같은 첫 링크로 찾기.
@@ -1517,6 +1600,22 @@ pub(crate) fn paint_tip(
     nexa_ctl::draw::draw_tooltip_in(dc, th, anchor, (clamp.x, clamp.w), text, scale);
 }
 
+/// Ctrl+좌클릭이 할 일(`objlink.click`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ClickAction {
+    Copy,
+    Reveal,
+}
+
+/// 설정값과 "실제 객체로 풀리는가"로 동작을 정한다 — `reveal`이어도 못 푸는 링크(미확인 · 내장 표)는 복사.
+fn click_action(setting: Option<&str>, can_reveal: bool) -> ClickAction {
+    if setting == Some("reveal") && can_reveal {
+        ClickAction::Reveal
+    } else {
+        ClickAction::Copy
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1733,5 +1832,19 @@ mod tests {
             builtin_class(Some(Dialect::Mssql), Some("sys"), "objects"),
             Some(ObjClass::Relation)
         );
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::{click_action, ClickAction};
+
+    /// MC/DC — 설정이 reveal일 때만 · 풀릴 때만 보기(각 조건이 단독으로 결과를 뒤집는다).
+    #[test]
+    fn click_action_mcdc() {
+        assert_eq!(click_action(Some("reveal"), true), ClickAction::Reveal);
+        assert_eq!(click_action(Some("copy"), true), ClickAction::Copy);
+        assert_eq!(click_action(Some("reveal"), false), ClickAction::Copy);
+        assert_eq!(click_action(None, true), ClickAction::Copy);
     }
 }

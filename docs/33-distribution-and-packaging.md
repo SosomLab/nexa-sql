@@ -57,7 +57,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | 창·메뉴 | 메뉴바는 앱 내 그리기(nexa-ui · 3-OS 동일) · ⌘ 단축키는 키맵 표의 mac 열(09-15 keymap) |
 
 **Windows**: MSI(WiX) 또는 NSIS — 설치본 원칙상 **MSI 권장**(관리자 배포·조용한 설치 `msiexec /qn` · 기업 환경) + winget/choco 매니페스트(nexa-clip `packaging/winget`·`choco` 이식). 파일 연결 `.sql`은 선택 설치 옵션.
-**Linux**: `.deb` + `.rpm` + AppImage 없음(포터블 성격) — 저장소 매니페스트는 후속.
+**Linux**: `.deb` + `.rpm`(**둘 다 배포에 포함** · 사용자 10-05) + AppImage 없음(포터블 성격) — 저장소 = **pkg.sosomlab.com**(`SosomLab/linux-repo` · 서명된 APT + RPM(dnf) · 패키지 파일은 싣지 않고 이 저장소의 Release 자산으로 302 · 최신 정식 릴리스 하나만 · §5-5).
 
 ---
 
@@ -72,6 +72,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | verify ✅(CI) | release.yml 스모크 = 실제 설치 → `nsql --version`·`nexa-sql --smoke` → 제거(uninstall.sh / msiexec /x / dpkg -r) → 잔여 0 · rpm은 목록만 | — |
 | publish ✅ 초안(v0.1.0 첫 공개 09-28 · v0.1.2 09-30 · v0.1.3 10-02 · v0.1.4 10-04 — 공개 = `gh release edit <태그> --draft=false --latest`) | `sha256sums.txt` + GitHub Release **초안**(`gh release create --draft`) → 확인 뒤 공개 | [22 §4](22-driver-extensions.md) |
 | homebrew ✅(09-28) | 릴리스 **공개**(published) 때 `homebrew.yml`: dmg 해시로 Cask(`packaging/homebrew/nexa-sql.rb`) 채움 → `kiros33/homebrew-tap` 반영(`TAP_TOKEN`) → macOS 러너에서 `brew install --cask` → `nsql --version`·`--smoke` → 제거 · 사전 릴리스(`-`)는 건너뜀 | 사용자 09-28 "brew만" — **winget·choco 채널은 두지 않는다**(다른 저장소의 오류·조치 기록 = §5) · v0.1.4 = 37179733964 ✓(탭 41ea3ae · 10-04) |
+| linux-repo 🚧(10-05 · 워크플로 작성 · 실제 발행 미검증) | 릴리스 **공개**(published) 때 `linux-repo.yml`(`homebrew.yml`과 같은 시점 · 초안에서는 안 돎 · 사전 릴리스 건너뜀 · 수동 실행 = tag 입력): 자산 확인(`.deb` 없으면 실패 · `.rpm` 없으면 경고) → `SosomLab/linux-repo`에 `repository_dispatch`(`app-released` · app/tag/repo/run_url) → linux-repo `publish`(색인 생성 · GPG 서명) → Cloudflare Pages(pkg.sosomlab.com) · 시크릿 `LINUX_REPO_DISPATCH_TOKEN`이 없으면 알림만(linux-repo 하루 1회 정기 실행이 반영) | 사용자 10-05 "rpm 배포 포함" · "linux-repo 저장소 기준 배포에 포함" · §5-5 |
 
 ---
 
@@ -133,3 +134,33 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 > 10-04(맥 111차): DBMS 아이콘 PNG 173종(`include_bytes` · 자산 3.2 MB)을 GUI에 내장 → Release `nexa-sql`(aarch64 · 실제는 Homebrew rustc 빌드) 16,607,800 B · 전 기록 15.0 MB(10-02) 대비 **약 +0.8~0.9 MB 추정**(PNG 이미 압축 · SVG 13 제거분 상쇄 · 정밀 전 값 미측정) · `nsql` 8,008,152 B(변화 없음 · 아이콘은 GUI만) · [journal 10-04 §5](journal/2026-10-04.md).
 > 10-04 후속(T-277): DBMS 아이콘 중 devicon(MIT) 27종의 MIT 고지와 상표 문구(`crates/nexa-sql/assets/dbms/NOTICE.md` §1·§2-1)를 **설치본(3-OS)에도 제3자 고지로 넣어야 한다** — 지금은 저장소의 NOTICE까지. 후보 = 설치본 안 `THIRD-PARTY-NOTICES` 파일 + 앱 도움말 ▸ 정보.
 > 10-04 후속([journal 10-04 §22](journal/2026-10-04.md)): ① 설치본 `THIRD-PARTY-NOTICES.txt`에 DBMS 로고 고지(`crates/nexa-sql/assets/dbms/NOTICE.md` 전문 · `scripts/third-party-notices.py`) 포함 = T-277 설치본 항목 해소 ② `release.yml`이 형제 저장소(nexa-ui · nexa-license)를 **태그 생성 시각 이전의 main 커밋으로 고정**(`fetch-depth: 0` + 고정 단계 · 실패해도 빌드는 진행 · 고정 커밋을 로그) — v0.1.4까지는 실행 시점 main 최신이었다 · 실제 검증 = 다음 태그.
+
+### 5-5. Linux 패키지 저장소 채널 — pkg.sosomlab.com(APT + RPM · 사용자 10-05)
+
+> 상태(10-05): 앱 쪽 워크플로 `.github/workflows/linux-repo.yml` · 릴리스 노트의 설치 표/등록 명령(`release.yml`) · 형제 저장소 `../linux-repo/apps/nexa-sql.toml`(미커밋)까지 작성. **미검증 = 실제 dispatch · linux-repo publish · `apt`/`dnf` 실기**(TODO T-280).
+
+**배포 채널 요약**: brew(맥 · 열림) · **APT/RPM 저장소(Linux · 개시 준비)** · winget·choco(닫힘 · §5-3) · 그 밖 = GitHub Release 설치본 직접 내려받기.
+
+**사용자 설치 명령**(linux-repo README와 같다 · 한 번 등록하면 `apt upgrade`/`dnf upgrade`로 갱신):
+
+```sh
+# APT(Debian · Ubuntu)
+sudo curl -fsSLo /usr/share/keyrings/sosomlab-archive-keyring.gpg https://pkg.sosomlab.com/sosomlab-archive-keyring.gpg
+sudo curl -fsSLo /etc/apt/sources.list.d/sosomlab.sources https://pkg.sosomlab.com/apt/sosomlab.sources
+sudo apt update && sudo apt install nexa-sql
+# RPM(Fedora · RHEL 계열)
+sudo curl -fsSLo /etc/yum.repos.d/sosomlab.repo https://pkg.sosomlab.com/rpm/sosomlab.repo
+sudo dnf install nexa-sql
+```
+
+**구조**: 저장소(`SosomLab/linux-repo`)는 패키지 파일을 싣지 않는다 — 서명된 색인의 파일 경로를 이 저장소(nexa-sql)의 GitHub Release 자산으로 302 보낸다 · 최신 정식 릴리스 하나만 싣는다 · 등록 파일 = linux-repo `apps/nexa-sql.toml`(package `nexa-sql` · `[deb] amd64 = nexa-sql_{version}_amd64.deb` · `[rpm] x86_64 = nexa-sql-{version}-1.x86_64.rpm` — v0.1.4 릴리스 자산 이름과 대조함).
+
+**규칙 셋**:
+
+1. **rpm은 배포에 포함한다** — `.deb`와 함께 저장소 채널의 필수 자산이다. 릴리스마다 둘 다 있는지 확인한다(`linux-repo.yml`이 `.deb` 없음 = 실패 · `.rpm` 없음 = 경고로 알린다).
+2. **자산 이름 규칙을 바꾸면 두 곳을 함께** — `linux-repo.yml`의 자산 확인 줄과 linux-repo `apps/nexa-sql.toml`.
+3. **한 번 공개한 Release 자산은 지우거나 다시 올리지 않는다** — 서명된 색인의 해시가 그 파일을 가리킨다. 다시 올려야 하면 버전을 올린다.
+
+**공개 뒤 확인(릴리스마다 · `homebrew.yml` ✓ 옆에)**: `linux-repo.yml` ✓ → linux-repo `publish` ✓ → <https://pkg.sosomlab.com/repo.json>의 nexa-sql 버전이 새 태그와 같은지.
+
+**지금 없는 것**: arm64 자산(deb `arm64` · rpm `aarch64`) · RPM 생성 경로는 linux-repo에서도 아직 실행된 적 없음(linux-repo `docs/SETUP.md` 8단계 진행 중).

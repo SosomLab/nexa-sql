@@ -72,6 +72,36 @@ pub fn extract_binds_with(sql: &str, classes: &[Class]) -> Vec<BindRef> {
     out
 }
 
+/// SQLite의 이름 매개변수 표기 `@이름` · `$이름`을 `:이름`으로 맞춘다(같은 길이 — 오프셋·분류가 그대로다).
+/// SQLite에서는 세 표기가 모두 이름 매개변수라 **한 변수**로 다룬다(docs/63 §3-1 · T-162 ①) — 종전엔 `:이름`만 변수로
+/// 묶여 `@x`·`$x`가 그대로 서버에 가 `Wrong number of parameters`가 났다. 문자열·주석·인용 식별자 안과
+/// 식별자 가운데의 `$`(`a$b`)는 건드리지 않는다. 바꿀 것이 없으면 빌리기만 한다.
+pub fn unify_sqlite_markers(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !sql.as_bytes().iter().any(|c| matches!(c, b'@' | b'$')) {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let classes = classify(sql);
+    let mut b = sql.as_bytes().to_vec();
+    let mut changed = false;
+    for i in 0..b.len() {
+        if matches!(b[i], b'@' | b'$')
+            && classes[i] == Class::Code
+            && (i == 0 || !is_ident_char(b[i - 1]) && b[i - 1] != b'@' && b[i - 1] != b':')
+            && b.get(i + 1)
+                .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+        {
+            b[i] = b':';
+            changed = true;
+        }
+    }
+    if changed {
+        // ASCII 한 글자를 ASCII 한 글자로만 바꿨다 — UTF-8이 그대로다.
+        std::borrow::Cow::Owned(String::from_utf8(b).expect("ascii-for-ascii swap"))
+    } else {
+        std::borrow::Cow::Borrowed(sql)
+    }
+}
+
 /// 첫 등장 순서를 유지한 고유 이름 목록.
 pub fn unique_names(refs: &[BindRef]) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
@@ -86,6 +116,24 @@ pub fn unique_names(refs: &[BindRef]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sqlite_markers_become_one_variable() {
+        let s = "SELECT @a, $b, :c, a$b, '@x $y', \"@q\", x@y -- @z
+ FROM t WHERE k = @a";
+        let u = unify_sqlite_markers(s);
+        assert_eq!(u.len(), s.len());
+        assert_eq!(
+            &*u,
+            "SELECT :a, :b, :c, a$b, '@x $y', \"@q\", x@y -- @z
+ FROM t WHERE k = :a"
+        );
+        assert_eq!(unique_names(&extract_binds(&u)), ["A", "B", "C"]);
+        assert!(matches!(
+            unify_sqlite_markers("SELECT 1, $1, @@x"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
 
     #[test]
     fn finds_named_and_skips_masked() {
