@@ -114,10 +114,10 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 | MSI(ARP) | Manufacturer · ProductVersion(숫자 3단) · ARPURLINFOABOUT · ARPHELPLINK · ARPPRODUCTICON · UpgradeCode 고정 | ✅ `nexa-sql.wxs` · (선택) ARPCONTACT·ARPURLUPDATEINFO |
 | macOS Info.plist | CFBundleVersion · CFBundleShortVersionString(빌드가 @VERSION@ 치환) · CFBundleIdentifier · NSHumanReadableCopyright · LSMinimumSystemVersion 11.0 | ✅ |
 | Cask | version · sha256(워크플로가 실제 dmg로) · desc(영문 한 줄) · homepage · zap | ✅ |
-| (열 때) winget 매니페스트 | **글 필드 전부 영어**(Publisher · PackageName · ShortDescription · Description · Tags · ReleaseNotes · 기본 로캘 en-US · 사용자 10-04) · ManifestVersion 세 파일 동일(1.12.0) + 스키마 헤더 · Publisher · License · ShortDescription · ReleaseNotesUrl · **DisplayVersion은 PackageVersion과 같으면 넣지 않는다**(dir2 반려) · MSI면 InstallerType `wix`·Scope `machine`·UpgradeCode | — |
-| (열 때) choco nuspec | **전부 영어**(title · summary · description · releaseNotes · tags · 스크립트 주석/출력 · VERIFICATION.txt · 사용자 10-04) · 영문 summary·description(이메일 금지 — dir2 반려) · `<copyright>`(beep·coffee 반려) · iconUrl = jsDelivr 태그 고정(raw.githubusercontent 불가) · owners=kiros33 / authors=SosomLab · 다운로드형이면 VERIFICATION.txt 없음 · tags 남용 금지 · ps1 = 영문 + UTF-8 BOM + `${var}:` | — |
+| winget 매니페스트(10-05 v0.1.5 · `packaging/winget/`) | **글 필드 전부 영어**(Publisher · PackageName · ShortDescription · Description · Tags · ReleaseNotes · 기본 로캘 en-US · 사용자 10-04) · ManifestVersion 세 파일 동일(1.12.0) + 스키마 헤더 · Publisher · License · ShortDescription · ReleaseNotesUrl · **DisplayVersion은 PackageVersion과 같으면 넣지 않는다**(dir2 반려) · MSI면 InstallerType `wix`·Scope `machine`·UpgradeCode | ✅ `SosomLab.NexaSQL` · version/locale/installer 3종 · ManifestVersion 1.12.0 · 기본 로캘 en-US · 글 전부 영어 · DisplayVersion 없음 · InstallerType wix · Scope machine · x64 · ProductCode = 렌더 때 MSI에서 읽음 · UpgradeCode 고정 · ASCII 밖 글자 0(렌더 게이트) |
+| choco nuspec(10-05 v0.1.5 · `packaging/choco/`) | **전부 영어**(title · summary · description · releaseNotes · tags · 스크립트 주석/출력 · VERIFICATION.txt · 사용자 10-04) · 영문 summary·description(이메일 금지 — dir2 반려) · `<copyright>`(beep·coffee 반려) · iconUrl = jsDelivr 태그 고정(raw.githubusercontent 불가) · owners=kiros33 / authors=SosomLab · 다운로드형이면 VERIFICATION.txt 없음 · tags 남용 금지 · ps1 = 영문 + UTF-8 BOM + `${var}:` | ✅ `nexa-sql.nuspec` 영어 · `<copyright>` · owners=`kiros33`(Chocolatey 계정) ≠ authors=`SosomLab`(CPMR0068 · dir2 교훈) · iconUrl = jsDelivr 태그 고정(`packaging/branding/nexa-sql-256.png`) · 설명에 이메일 없음 · `tools/chocolateyinstall.ps1`(msi · `/qn /norestart` · 성공 코드 0/3010/1641) · `chocolateyuninstall.ps1`(ProductCode) · ps1 = 영어(ASCII) + UTF-8 BOM(CPMR0010 지침) · 다운로드 전용 = VERIFICATION.txt 없음 |
 
-### 5-3. winget·choco를 열 때(지금은 닫힘)
+### 5-3. winget·choco(10-05 v0.1.5부터 열림)
 
 - ★ **winget · Chocolatey에 제출하는 내용은 전부 영어로 쓴다**(사용자 10-04 "choco, winget에 제출하는 내용은 모두 영어로") — 범위 = 외부 저장소·검수자에게 나가는 모든 글: winget 매니페스트 3종의 글 필드(Publisher · PackageName · ShortDescription · Description · Tags · ReleaseNotes · 기본 로캘 en-US) · winget-pkgs PR 제목·본문·코멘트(CLA 동의 · 검수자 답변 포함) · Chocolatey nuspec(title · summary · description · releaseNotes · tags) · 패키지 안 스크립트 주석/출력 · VERIFICATION.txt · moderator와 주고받는 코멘트·메일 초안. 제출물이 가리키는 문서(ReleaseNotesUrl · 프로젝트/라이선스 URL)가 한국어뿐이면 **영어 판(또는 영어 절)을 먼저** 마련한다 — 지금 GitHub 릴리스 노트는 한국어 형식이라 채널을 열 때 영어 병기/전환이 선행 과제(TODO T-279). 한글·이메일 주소를 제출물에 넣지 않는다(형제 저장소 반려 사례와 같은 줄). 이 규칙은 "모든 답은 한글로"(사용자와의 대화 · 저장소 내부 문서)와 충돌하지 않는다 — 대상이 외부 패키지 저장소일 때만 영어 · 사용자에게 보고할 때는 제출한 영어 원문 + 한글 요약.
 
@@ -125,6 +125,15 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - **choco**: 미승인 버전이 걸려 있으면 새 버전 push = **403** → 같은 버전으로 재제출만 가능 · 승인 판정 = OData `IsApproved=true`(미승인도 목록에 나온다) · 사람 검수 코멘트는 메일·페이지로만(API 없음) — 세션마다 `Reviewed:` 날짜 확인 · 재제출은 빌드 없이 자산 해시만으로(dir2 `resubmit-chocolatey.yml`) · MSI = `fileType='msi'` · `silentArgs='/qn /norestart'` · `validExitCodes=@(0,3010,1641)` · 첫 등록 27~44일.
 - **공통**: 스위치 = 변수(`WINGET_PUBLISH`/`CHOCO_PUSH` 기본 false) × 시크릿 이중 게이트 · 꺼져 있어도 매니페스트·nupkg는 만들어 아티팩트로 · 치환 지점 = `render-manifests.sh` 하나(남은 `@X@` = 실패) · 시크릿은 유무·스코프만 출력.
 - **복사할 원본**: nexa-coffee `publish-windows-packages.yml`(가장 성숙 — channels·force·IsApproved·exit 40·포크 동기화·재시도) + `packaging/winget/*.yaml` · nexa-beep `packaging/`(render · winget/choco 템플릿 · README) · nexa-dir2 `resubmit-chocolatey.yml`·`packaging/av-false-positive.md`(오탐 신고).
+
+**구현(10-05 v0.1.5 · 개발 세션 · 형제 저장소 교훈 점검표 = `target/dist-lessons.md` 기준)**:
+- 파일: `packaging/winget/{version,locale,installer}.yaml` · `packaging/choco/nexa-sql.nuspec` + `tools/chocolateyinstall.ps1` · `tools/chocolateyuninstall.ps1` · `packaging/render-manifests.ps1`(**유일한 치환 지점** · SHA-256 + MSI ProductCode(COM으로 MSI에서 읽음) · 남은 `@X@` **또는 ASCII 밖 글자**가 있으면 실패 · `.ps1`만 UTF-8 BOM으로 씀) · `.github/workflows/publish-windows-packages.yml`(nexa-coffee 이식).
+- 트리거: 릴리스 **공개**(published) · 수동 dispatch(`tag` · `force` · `channels`). 사전 릴리스(`-`)는 건너뜀.
+- guard: 저장소 변수(`WINGET_PUBLISH` · `CHOCO_PUSH` = true) × 시크릿(`WINGET_TOKEN` · `CHOCO_API_KEY`) 이중 게이트 · winget = 같은 패키지의 **열린 PR이 있으면 건너뜀** · choco = 직전 버전이 OData `IsApproved=true`가 아니면 건너뜀(미승인 중 새 버전 push = 403) · 포크 동기화(`merge-upstream`) · `winget validate` exit 40 = 경고 · 제출 재시도 3.
+- 릴리스 노트: `release.yml`이 **영어 절을 먼저**(설치 표 · winget/choco/brew/pkg 명령) 쓰고 한국어를 뒤에 둔다 → 매니페스트 ReleaseNotesUrl이 가리켜도 영어가 먼저 보임.
+- **첫 제출 절차**: winget = 열린 PR이 없으므로 공개 때 자동 · choco = 제출한 적이 없어 "직전 버전 미승인"으로 자동 건너뜀 → 공개 뒤 **`publish-windows-packages`를 수동 1회 `tag=v0.1.5 channels=choco force=true`**(개발 세션). 이후 버전은 직전이 승인되면 자동.
+- 기대치(형제 저장소 실측): 신규 패키지 첫 검수 = winget `Policy-Test-1.2`·바이러스 스캔 Flag 등으로 **수일~44일** · choco 첫 승인 뒤 후속 버전 38시간~6일 · winget 후속 약 40분. 검수 중엔 다음 버전 자동 건너뜀. choco 상태는 패키지 페이지 문구·댓글 전문으로 본다("Waiting for Maintainer" = 우리 차례).
+- 로컬 검증: 0.1.4 MSI(개발 세션) · 0.1.5 MSI(협업 세션 V2) 렌더 → `winget validate` · `choco pack` = journal 10-05 §33.
 
 ### 5-4. 남은 확인
 
@@ -139,7 +148,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 
 > 상태(10-05): 앱 쪽 워크플로 `.github/workflows/linux-repo.yml` · 릴리스 노트의 설치 표/등록 명령(`release.yml`) · 형제 저장소 `../linux-repo/apps/nexa-sql.toml`(미커밋)까지 작성. **미검증 = 실제 dispatch · linux-repo publish · `apt`/`dnf` 실기**(TODO T-280).
 
-**배포 채널 요약**: brew(맥 · 열림) · **APT/RPM 저장소(Linux · 개시 준비)** · winget·choco(닫힘 · §5-3) · 그 밖 = GitHub Release 설치본 직접 내려받기.
+**배포 채널 요약**(10-05 v0.1.5): brew(맥 · 열림) · **APT/RPM 저장소 pkg.sosomlab.com**(Linux · toml 등록 완료 · 신호 시크릿 `LINUX_REPO_DISPATCH_TOKEN`은 사용자 몫 → 그때까지 publish 수동/정기) · **winget · choco(열림 · §5-3)** · 그 밖 = GitHub Release 설치본 직접 내려받기.
 
 **사용자 설치 명령**(linux-repo README와 같다 · 한 번 등록하면 `apt upgrade`/`dnf upgrade`로 갱신):
 

@@ -1,0 +1,216 @@
+# publish-windows-packages — winget · Chocolatey 제출(Windows 채널 · docs/33 §5-3).
+#
+# 이식 원본: nexa-coffee `publish-windows-packages.yml`(가장 성숙 · channels · force · IsApproved 판정 · exit 40 · 포크 동기화 · 재시도)
+#   + nexa-clip(변수+시크릿 이중 게이트 · 검수 대기 자동 판정). 우리 자산은 **MSI 하나**(x64 · per-machine)라 매니페스트는 그에 맞춘다.
+#
+# 실행 시점 = 릴리스 **공개**(published) 때 자동(homebrew.yml · linux-repo.yml과 같은 시점 · 초안에서는 안 돎 — 매니페스트가 공개 자산 URL·해시를 가리킨다)
+#   · 수동(workflow_dispatch · tag · force · channels)도 가능.
+#
+# | 채널 | 스위치 변수 | 시크릿 | 대기 판정 |
+# | winget | vars.WINGET_PUBLISH=true | WINGET_TOKEN(classic PAT · repo+workflow) | microsoft/winget-pkgs에 SosomLab.NexaSQL 열린 PR이 있으면 건너뜀 |
+# | Chocolatey | vars.CHOCO_PUSH=true | CHOCO_API_KEY | 직전 정식 버전이 아직 승인(IsApproved=true)되지 않았으면 건너뜀 |
+#
+# 첫 제출·반려 뒤 재제출(같은 버전 · 기본 브랜치의 packaging/을 쓴다) = 수동 실행 `force=true` · 한 채널만 = `channels`.
+# 제출 파일 안의 글(매니페스트 · nuspec · ps1 · 출력)은 전부 영어(사용자 10-04) — 이 워크플로 파일의 주석은 저장소 내부라 한국어.
+name: publish-windows-packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "릴리스 태그(예: v0.1.5)"
+        required: true
+        type: string
+      force:
+        description: "검수 대기 판정을 무시하고 제출(첫 제출 · 반려 뒤 재제출)"
+        required: false
+        default: false
+        type: boolean
+      channels:
+        description: "제출 채널"
+        required: false
+        default: both
+        type: choice
+        options: [both, choco, winget]
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  FORCE: ${{ inputs.force || false }}
+  CHANNELS: ${{ inputs.channels || 'both' }}
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      winget_go: ${{ steps.winget.outputs.go }}
+      choco_go: ${{ steps.choco.outputs.go }}
+      skip: ${{ steps.pre.outputs.skip }}
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # choco 대기 판정 = 직전 태그
+      - id: pre
+        name: 사전 릴리스는 제출하지 않는다
+        shell: bash
+        run: |
+          case "$TAG" in *-*) echo "::notice::사전 릴리스($TAG) — winget·choco에 올리지 않는다"; echo "skip=true" >> "$GITHUB_OUTPUT" ;; *) echo "skip=false" >> "$GITHUB_OUTPUT" ;; esac
+      - name: 스위치 상태(값 노출 없음)
+        if: steps.pre.outputs.skip != 'true'
+        shell: bash
+        run: |
+          echo "태그: $TAG (force=$FORCE · channels=$CHANNELS)"
+          echo "vars.WINGET_PUBLISH='${{ vars.WINGET_PUBLISH }}' · WINGET_TOKEN 설정됨: ${{ env.WINGET_TOKEN != '' }}"
+          echo "vars.CHOCO_PUSH='${{ vars.CHOCO_PUSH }}' · CHOCO_API_KEY 설정됨: ${{ env.CHOCO_API_KEY != '' }}"
+          # 스코프는 응답 헤더로만(토큰은 찍지 않는다) — 포크 동기화에 workflow 스코프가 필요하다(coffee 09-17).
+          if [ -n "${WINGET_TOKEN:-}" ]; then
+            sc=$(curl -sI -H "Authorization: token $WINGET_TOKEN" https://api.github.com/user | grep -i '^x-oauth-scopes:' | cut -d' ' -f2- | tr -d '[:cntrl:]' || true)
+            echo "WINGET_TOKEN 스코프: ${sc:-(없음 — fine-grained PAT이거나 만료)}"
+            case ",${sc// /}," in
+              *,workflow,*) echo "  ✓ workflow 있음 — 포크 동기화 가능" ;;
+              *)            echo "::warning::WINGET_TOKEN에 workflow 스코프가 없다 — 포크 동기화가 422로 막힐 수 있다." ;;
+            esac
+          fi
+      - id: winget
+        if: steps.pre.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go=false
+          if [ "$CHANNELS" != "both" ] && [ "$CHANNELS" != "winget" ]; then
+            echo "::notice::winget: channels=$CHANNELS — 건너뛴다."
+          elif [ "${{ vars.WINGET_PUBLISH }}" = "true" ] && [ -n "${WINGET_TOKEN:-}" ]; then
+            go=true
+            if [ "$FORCE" != "true" ]; then
+              me=$(GH_TOKEN="$WINGET_TOKEN" gh api user -q .login)
+              open=$(GH_TOKEN="$WINGET_TOKEN" gh pr list -R microsoft/winget-pkgs --state open --author "$me" \
+                       --search "SosomLab.NexaSQL" --json number,title -q '.[] | "#\(.number) \(.title)"' || true)
+              if [ -n "$open" ]; then echo "::warning::winget: 직전 제출이 검수 대기 중 — 건너뛴다(큐 엉킴 방지)."; echo "$open"; go=false; fi
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"; echo "winget 제출: $go"
+      - id: choco
+        if: steps.pre.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go=false
+          if [ "$CHANNELS" != "both" ] && [ "$CHANNELS" != "choco" ]; then
+            echo "::notice::choco: channels=$CHANNELS — 건너뛴다."
+          elif [ "${{ vars.CHOCO_PUSH }}" = "true" ] && [ -n "${CHOCO_API_KEY:-}" ]; then
+            go=true
+            if [ "$FORCE" != "true" ]; then
+              prev=$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -vx "$TAG" | head -1 || true)
+              if [ -n "$prev" ]; then
+                pv="${prev#v}"
+                url="https://community.chocolatey.org/api/v2/Packages()?\$filter=Id%20eq%20'nexa-sql'%20and%20Version%20eq%20'$pv'"
+                # 피드는 미승인 버전도 <entry>로 돌려준다(PackageStatus=Submitted) → 승인 여부(IsApproved=true)로 판정(coffee·clip 10-04).
+                # 직전 버전을 제출한 적이 없으면(첫 제출) 항목이 없어 "미승인"으로 보인다 → 그때는 force로.
+                if ! curl -fsS "$url" | grep -q '<d:IsApproved m:type="Edm.Boolean">true</d:IsApproved>'; then
+                  echo "::warning::choco: nexa-sql $pv 이(가) 승인된 기록이 없다(모더레이션 대기 또는 첫 제출) — 건너뛴다. 첫 제출은 수동 실행 force=true."; go=false
+                fi
+              else
+                echo "직전 정식 태그 없음 — 첫 제출."
+              fi
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"; echo "choco 제출: $go"
+
+  chocolatey:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
+    runs-on: windows-latest
+    env:
+      CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 릴리스 자산 내려받기
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: mkdir -p assets && gh release download "$TAG" --dir assets --pattern 'nexa-sql-*-windows-x64.msi'
+      - name: 매니페스트 생성 + pack
+        shell: pwsh
+        run: |
+          $v = $env:TAG.TrimStart('v')
+          ./packaging/render-manifests.ps1 -Version $v -Assets assets -Out out
+          New-Item -ItemType Directory -Force out/choco/nupkg | Out-Null
+          choco pack out/choco/nexa-sql/nexa-sql.nuspec --version $v --outputdirectory out/choco/nupkg
+          if ($LASTEXITCODE -ne 0) { throw "choco pack failed" }
+          Get-ChildItem out/choco/nupkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chocolatey-${{ env.TAG }}
+          path: out/choco/**
+      - name: choco push(스위치 + 대기 판정 통과 시)
+        if: needs.guard.outputs.choco_go == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          choco push "out/choco/nupkg/nexa-sql.$v.nupkg" --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"
+          echo "제출 완료 — 커뮤니티 저장소는 검수를 거쳐야 노출된다(https://community.chocolatey.org/packages/nexa-sql/$v 의 상태 문구·댓글을 본다)."
+      - if: needs.guard.outputs.choco_go != 'true'
+        shell: bash
+        run: echo "::notice::choco push하지 않았다(스위치 꺼짐·키 없음·직전 제출 미승인). 아티팩트의 nupkg를 직접 push하거나 수동 실행 force=true."
+
+  winget:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
+    runs-on: windows-latest
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 릴리스 자산 내려받기
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: mkdir -p assets && gh release download "$TAG" --dir assets --pattern 'nexa-sql-*-windows-x64.msi'
+      - name: 매니페스트 생성 + 검증
+        shell: pwsh
+        run: |
+          $v = $env:TAG.TrimStart('v')
+          ./packaging/render-manifests.ps1 -Version $v -Assets assets -Out out
+          $d = (Get-ChildItem out/winget -Recurse -Filter '*.installer.yaml' | Select-Object -First 1).DirectoryName
+          Write-Host "== $d · winget $(winget --version)"
+          # `winget validate`는 경고만 있어도 exit 40 — 실패가 아니라 기록만(러너 winget이 스키마보다 오래된 경우 · coffee 09-17).
+          winget validate --manifest $d
+          $rc = $LASTEXITCODE
+          if ($rc -eq 40) { Write-Host "::warning::winget validate 경고(exit 40) — 위 내용 확인" }
+          elseif ($rc -ne 0) { throw "winget validate failed (exit $rc)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winget-${{ env.TAG }}
+          path: out/winget/**
+      # wingetcreate는 포크 master가 upstream과 맞지 않으면 제출을 거부한다 → 제출 직전 fast-forward(건너뛰는 실행에서도).
+      - name: winget-pkgs 포크 동기화
+        if: env.WINGET_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          me=$(GH_TOKEN="$WINGET_TOKEN" gh api user -q .login)
+          if ! GH_TOKEN="$WINGET_TOKEN" gh api -X POST "repos/$me/winget-pkgs/merge-upstream" -f branch=master --jq '.message'; then
+            echo "::warning::포크 동기화 실패 — 포크가 없거나(첫 제출이면 wingetcreate가 만든다) workflow 스코프가 없다."
+          fi
+      - name: winget-pkgs PR(스위치 + 대기 판정 통과 시)
+        if: needs.guard.outputs.winget_go == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl.exe -L -o wingetcreate.exe https://aka.ms/wingetcreate/latest
+          d=$(find out/winget -name '*.installer.yaml' -exec dirname {} \; | head -1)
+          # GitHub API 일시 장애 대비 3회(coffee 09-13). 그래도 실패하면 로컬 `komac submit <폴더> --yes`.
+          for i in 1 2 3; do
+            if ./wingetcreate.exe submit --token "$WINGET_TOKEN" "$d"; then echo "PR 생성 — microsoft/winget-pkgs의 자동 검증·리뷰를 거쳐야 노출된다."; exit 0; fi
+            echo "::warning::wingetcreate submit 실패($i/3) — 60초 뒤 재시도"; sleep 60
+          done
+          exit 1
+      - if: needs.guard.outputs.winget_go != 'true'
+        shell: bash
+        run: echo "::notice::winget PR을 만들지 않았다(스위치 꺼짐·토큰 없음·직전 제출 검수 대기). 아티팩트를 직접 PR하거나 수동 실행 force=true."

@@ -268,6 +268,20 @@ jobs:
           cat > notes.md <<EOF
           # Nexa SQL $VERSION
 
+          Lightweight cross-platform SQL client (IDE) for Oracle, SQL Server, PostgreSQL and SQLite, with the \`nsql\` CLI.
+          Installers only (no portable build). Changes: see [docs/DEVLOG.md](https://github.com/SosomLab/nexa-sql/blob/v$VERSION/docs/DEVLOG.md).
+
+          | OS | File | Install |
+          | --- | --- | --- |
+          | Windows x64 | \`nexa-sql-$VERSION-windows-x64.msi\` | Double-click, or \`msiexec /i … /qn\` (silent; adds nsql to PATH; .sql association optional) · \`winget install SosomLab.NexaSQL\` · \`choco install nexa-sql\` (after moderation) |
+          | macOS (Universal) | \`nexa-sql-$VERSION-macos-universal.pkg\` / \`.dmg\` | Installer → \`/Applications/Nexa SQL.app\` + \`/usr/local/bin/nsql\` · \`brew install --cask kiros33/tap/nexa-sql\` |
+          | Linux x86_64 | \`.deb\` / \`.rpm\` | \`sudo apt install ./…deb\` / \`sudo dnf install ./…rpm\` · or the signed repository at <https://pkg.sosomlab.com/> (\`apt install nexa-sql\` / \`dnf install nexa-sql\`) |
+
+          Verify downloads with \`sha256sums.txt\`. Builds are not code-signed yet (DR-20): macOS Gatekeeper and Windows SmartScreen will warn.
+          License: PolyForm Noncommercial 1.0.0 — free for noncommercial use only.
+
+          ---
+
           크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI \`nsql\` — 설치본만 배포합니다(포터블 없음 · DR-27).
 
           | 운영체제 | 파일 | 설치 |

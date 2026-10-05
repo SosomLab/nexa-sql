@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chocolatey package for the Nexa SQL MSI installer. Version and checksum are rendered by
+     packaging/render-manifests.ps1 from the released assets. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>nexa-sql</id>
+    <version>@VERSION@</version>
+    <title>Nexa SQL</title>
+    <authors>SosomLab</authors>
+    <owners>kiros33</owners>
+    <copyright>Copyright (c) 2026 SosomLab (Sangyong Bae)</copyright>
+    <projectUrl>https://github.com/SosomLab/nexa-sql</projectUrl>
+    <packageSourceUrl>https://github.com/SosomLab/nexa-sql/tree/main/packaging/choco</packageSourceUrl>
+    <docsUrl>https://github.com/SosomLab/nexa-sql/tree/main/docs/wiki</docsUrl>
+    <bugTrackerUrl>https://github.com/SosomLab/nexa-sql/issues</bugTrackerUrl>
+    <projectSourceUrl>https://github.com/SosomLab/nexa-sql</projectSourceUrl>
+    <!-- CDN with a pinned tag; raw.githubusercontent.com is not accepted by moderation. -->
+    <iconUrl>https://cdn.jsdelivr.net/gh/SosomLab/nexa-sql@v@VERSION@/packaging/branding/nexa-sql-256.png</iconUrl>
+    <licenseUrl>https://github.com/SosomLab/nexa-sql/blob/main/LICENSE.md</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>nexa-sql sql sql-client database oracle sql-server postgresql sqlite cli cross-platform</tags>
+    <summary>Lightweight cross-platform SQL client (IDE) with the nsql CLI</summary>
+    <description>
+Nexa SQL is a lightweight SQL client and IDE for Oracle, SQL Server, PostgreSQL and SQLite
+that looks and behaves the same on Windows, macOS and Linux. It is a single executable
+written entirely in Rust and draws its own UI with a built-in CPU rasterizer - no Qt,
+WebView or Electron, and no runtime dependencies.
+
+Highlights:
+
+- Object explorer with metadata search and object details
+- SQL editor with code completion, object hyperlinks and a SQL formatter
+- Result grid with filters, sorting, in-place data editing and SQL/CSV/JSON export
+- Transaction control, session variables in the SQL*Plus style, bulk import/export
+- `nsql` command-line client for scripts and automation
+
+The package installs the MSI for all users (GUI `Nexa SQL` plus the `nsql` CLI).
+Oracle connections need an Oracle Instant Client installed separately.
+
+License: PolyForm Noncommercial 1.0.0 - free for noncommercial use only; commercial use
+is not permitted under this license.
+    </description>
+    <releaseNotes>https://github.com/SosomLab/nexa-sql/releases/tag/v@VERSION@</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
