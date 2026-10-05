@@ -125,7 +125,7 @@ jobs:
 
   chocolatey:
     needs: guard
-    if: needs.guard.outputs.skip != 'true'
+    if: needs.guard.outputs.skip != 'true' && (inputs.channels || 'both') != 'winget'
     runs-on: windows-latest
     env:
       CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
@@ -162,7 +162,7 @@ jobs:
 
   winget:
     needs: guard
-    if: needs.guard.outputs.skip != 'true'
+    if: needs.guard.outputs.skip != 'true' && (inputs.channels || 'both') != 'choco'
     runs-on: windows-latest
     env:
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
@@ -179,11 +179,15 @@ jobs:
           ./packaging/render-manifests.ps1 -Version $v -Assets assets -Out out
           $d = (Get-ChildItem out/winget -Recurse -Filter '*.installer.yaml' | Select-Object -First 1).DirectoryName
           Write-Host "== $d · winget $(winget --version)"
-          # `winget validate`는 경고만 있어도 exit 40 — 실패가 아니라 기록만(러너 winget이 스키마보다 오래된 경우 · coffee 09-17).
-          winget validate --manifest $d
+          # `winget validate`는 경고만 있어도 0이 아닌 코드로 끝난다 — 옛 판 exit 40 · 새 판(1.27+) HRESULT 0x8A150028
+          #   (-1978335192 = APPINSTALLER_CLI_ERROR_MANIFEST_VALIDATION_WARNING · 10-05 v0.1.5 첫 실행에서 실측). 출력의
+          #   "succeeded with warnings"가 결정적 — 경고는 기록만 · 그 밖은 실패.
+          $out = winget validate --manifest $d 2>&1 | Out-String
           $rc = $LASTEXITCODE
-          if ($rc -eq 40) { Write-Host "::warning::winget validate 경고(exit 40) — 위 내용 확인" }
-          elseif ($rc -ne 0) { throw "winget validate failed (exit $rc)" }
+          Write-Host $out
+          if ($rc -eq 0) { }
+          elseif ($rc -eq 40 -or $rc -eq -1978335192 -or $out -match 'succeeded with warnings') { Write-Host "::warning::winget validate 경고(exit $rc) — 위 내용 확인" }
+          else { throw "winget validate failed (exit $rc)" }
       - uses: actions/upload-artifact@v4
         with:
           name: winget-${{ env.TAG }}
