@@ -188,6 +188,10 @@ jobs:
           if ($rc -eq 0) { }
           elseif ($rc -eq 40 -or $rc -eq -1978335192 -or $out -match 'succeeded with warnings') { Write-Host "::warning::winget validate 경고(exit $rc) — 위 내용 확인" }
           else { throw "winget validate failed (exit $rc)" }
+          # pwsh 단계는 마지막 네이티브 명령의 $LASTEXITCODE가 0이 아니면 단계를 실패로 끝낸다 — 경고를 기록만 하고 넘어가도
+          # 코드가 남아 1로 바뀌었다(10-05 v0.1.5 두 번째 실행 실측). 명시적으로 0.
+          $global:LASTEXITCODE = 0
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: winget-${{ env.TAG }}
