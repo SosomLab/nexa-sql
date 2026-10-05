@@ -134,6 +134,8 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - **첫 제출 절차**: winget = 열린 PR이 없으므로 공개 때 자동 · choco = 제출한 적이 없어 "직전 버전 미승인"으로 자동 건너뜀 → 공개 뒤 **`publish-windows-packages`를 수동 1회 `tag=v0.1.5 channels=choco force=true`**(개발 세션). 이후 버전은 직전이 승인되면 자동.
 - 기대치(형제 저장소 실측): 신규 패키지 첫 검수 = winget `Policy-Test-1.2`·바이러스 스캔 Flag 등으로 **수일~44일** · choco 첫 승인 뒤 후속 버전 38시간~6일 · winget 후속 약 40분. 검수 중엔 다음 버전 자동 건너뜀. choco 상태는 패키지 페이지 문구·댓글 전문으로 본다("Waiting for Maintainer" = 우리 차례).
 - 로컬 검증: 0.1.4 MSI(개발 세션) · 0.1.5 MSI(협업 세션 V2) 렌더 → `winget validate` · `choco pack` = journal 10-05 §33.
+- **자동 제출이 안 될 때**(v0.1.5 실측 · journal 10-05 §34): ① guard 로그에 "건너뜀" = 저장소 변수 `WINGET_PUBLISH`·`CHOCO_PUSH`가 **이 저장소에** 있는지(`gh variable list -R SosomLab/nexa-sql` — 다른 저장소 출력과 섞지 않는다) ② winget 잡 실패 + `Manifest validation succeeded with warnings` = HRESULT **-1978335192(0x8A150028)** · 러너 winget이 1.12.0 스키마 헤더를 모르는 경고 → 경고 분기는 `$global:LASTEXITCODE = 0; exit 0`(pwsh 단계는 마지막 `$LASTEXITCODE`가 0이 아니면 실패) ③ choco 첫 제출 = 수동 `channels=choco force=true` · winget 재제출 = `channels=winget force=true`(반대 채널 중복 제출 방지).
+- **v0.1.5 결과**: Homebrew 탭 `780e053` · pkg.sosomlab.com nexa-sql 0.1.5(APT·RPM) · choco 0.1.5 push(Pending) · winget PR #447007(OPEN).
 
 ### 5-4. 남은 확인
 

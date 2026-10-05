@@ -45,6 +45,7 @@
 | 🚧 | **09-26~27**(Linux 101차): ★ **Linux 전수 검사**(기능 78/78 · 4-DBMS DDL·DML·TCL·DCL 62/62 · 성능·회수 · 도구 4종) · ★ **라이선스 체계 코드 완성** — 라이브러리 nexa-license(형식·검증·기기 ID·`fs`·`issuer`) · **발급기 `nexa-license-tool`**(keygen·issue·reissue·verify·ledger · 봉투 `nxk1`) · 앱 층 `nsql-license`(Feature 21 · `check` 순수 · 빌드일) · CLI `nsql license` · GUI 라이선스 창·상태줄 배지(T-34) · **게이트 12곳**(T-36 · 25 §13-3 확정 · Release 늘 켬) · 📐 [92 디지털 자산 보호](92-digital-asset-protection.md) · 위키 License · ✅ 루트 공개키 `root-v1` 등재(103차 mac · nexa-license 1bc033c · 첫 발급 NSL-2026-000001 설치) |
 | ✅ | **09-28**(win 102차 끝): 🚀 **v0.1.0 첫 공개 릴리스** — 3-OS 설치본 + sha256 · 🍺 Homebrew Cask(kiros33/tap · 자동 반영·실설치 검증) · winget·choco 없음 · 정적 CRT·임포트 게이트·CLI 버전 정보(형제 저장소 교훈 33 §5) |
 | 🚧 | **10-04**(mac 111차): ★ **협업 세션 운영**([102](102-collab-session-operation.md) · Fable 개발 × Opus 협업) · ★ DBMS 아이콘 PNG 173종(전부 + 고지 · T-277 = 설치본 고지 ✅ 10-04 · 원천별 개별 확인 남음) · ★ 화면 언어 `system` 기본 · 🔧 툴바 ▾ 배율 · 파일 DB 표시 · 포맷터 keep `as` · 스플리터 hover · Debug 기능 점검 82/82 + SQLite E2E 63 · ★ 상태바 항목 순서·표시 편집 · 툴바 우클릭·툴바 설정 편집 · 협업 검증 단계 V0~V3([journal 10-04](journal/2026-10-04.md)) |
+| ✅ | **10-05**(win 112차 끝): 🚀 **v0.1.5 릴리스** — 112차 전부(T-122 · 객체·데이터 척추 조각 14 · 결함 3) · ★ **네 채널** = Homebrew(탭 780e053) · **pkg.sosomlab.com APT + RPM**(첫 발행) · **Chocolatey**(0.1.5 push · 검수 대기) · **winget**(PR #447007 · 검수 대기) · 공개 14:09 UTC ([journal 10-05 §34](journal/2026-10-05.md)) |
 | ✅ | **10-04**(mac 111차 끝): 🚀 **v0.1.4 릴리스**([journal 10-04 §20](journal/2026-10-04.md)) — 109~111차 전부(HUD HiDPI · `EXEC` 포맷 · DBMS 아이콘 PNG · 언어 `system` · 상태바/툴바 항목 편집 · 툴바/상태바 우클릭) · release.yml 37179044044 ✓ · 공개 05:23 UTC · homebrew.yml 37179733964 ✓(탭 41ea3ae) · brew 0.1.3 → 0.1.4 · winget·choco 없음 |
 | ✅ | **10-02**(win 108차 끝): 🚀 **v0.1.3 릴리스**([journal 09-30 §40](journal/2026-09-30.md)) — 108차 전부(시간 설정 ms · 객체 소스 탭 F5 · Output 탭 · 객체 삭제 · 서버 유형 · SQL Server SSMS 탐색기 · 툴바 작업 단위 · Ctrl 링크 ▸ 탐색기에서 보기) · brew 0.1.2 → 0.1.3 · winget·choco 없음 |
 | 🚧 | **09-27~28**(win 102차 후반): 🧹 **코드 건강 점검·전체 리팩터링**([93](93-code-health-and-refactoring.md)) — 원복 태그 `baseline/pre-refactor-2026-09-27`(세 저장소) · 미사용 정리(`allow(dead_code)` 17→0 · `Msg` 62 · 효과 없는 설정 4 → T-249 · `dev.start_demo`) · main.rs 20,722→2,758(`app/` 26 기능 모듈 · 가시성 89 축소) · `window_event`/`route_inner` 분해(책임 연쇄) · 공통 부품 6(30 §2) · 재실행 도구 `scripts/code-health.py` · 시험 622/432 · 기능 점검 78/78 · 남은 = T-246 · T-248 2차 · T-247 표 창 그리기 머리(T-247 5곳 · T-249 · T-250은 09-29 ✅) |
@@ -64,7 +65,7 @@
 |:--:|---|
 | ✅ | 설치본 릴리스 파이프라인 — 3-OS 설치본(v0.1.0 09-28 ~ v0.1.4 10-04 · `release.yml` · sha256) · 🍺 Homebrew Cask(`homebrew.yml`) · 설계 = 설치본만(MSI · pkg/dmg · deb/rpm) · 목적별 exe |
 | 🚧 | **10-05** Linux 패키지 저장소 채널 — pkg.sosomlab.com(`SosomLab/linux-repo` · 서명 APT + RPM · deb·rpm 둘 다 필수 자산) · `linux-repo.yml`(공개 때 신호 · push `1ddeaf1`에 포함) · 릴리스 노트 등록 명령 · 남음 = 시크릿 등록 · linux-repo toml 커밋·push 승인 · 실제 발행·`apt`/`dnf` 실기(T-280 · [33 §5-5](33-distribution-and-packaging.md)) |
-| 🚧 | 남은 배포 일 — T-72 잔여 · winget·choco 개시(T-279 · 닫힘) · 포터블 모드(T-106 · D-78) · 코드 서명(DR-20 = 별도 요청 시) · 공유 lib 분리 · macOS Universal 2(완료 여부 미확인 · 10-05 정합) |
+| 🚧 | 남은 배포 일 — T-72 잔여 · winget·choco 첫 검수 통과(T-279 · 10-05 제출됨) · 포터블 모드(T-106 · D-78) · 코드 서명(DR-20 = 별도 요청 시) · 공유 lib 분리 · macOS Universal 2(완료 여부 미확인 · 10-05 정합) |
 
 ## 드라이버 확장 · 접속 대화상자 — [22](22-driver-extensions.md) (DR-23·24 · 09-13)
 | 상태 | 항목 |
