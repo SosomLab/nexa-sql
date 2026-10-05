@@ -987,6 +987,8 @@ impl App {
                             g.set_result_origin(s, is_query);
                         }
                     }
+                    // 외래 키 열 표시(T-180 ⑥) — 활성 그리드 기준(다른 탭의 결과면 탭 전환 때 drain이 다시 맞춘다).
+                    self.grid_fk_sync();
                     // ★ Output 탭을 보던 중이라도 결과 셋이 오면 **그 결과 탭으로**(사용자 10-01 ㉘ · `output.activate = always`만 예외 ·
                     //   포커스는 그대로 — 편집 중인 캐럿을 뺏지 않는다). 다른 편집기의 패널이면 그 패널의 활성만 바꾼다.
                     let policy = self
@@ -1463,6 +1465,8 @@ impl App {
             if self.intel.is_loading() {
                 self.intel_request(false);
             }
+            // 테이블 제약이 도착했으면 결과 그리드의 외래 키 열도 맞춘다(T-180 ⑥).
+            self.grid_fk_sync();
         }
         if self.live_drain() {
             changed = true;

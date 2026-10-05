@@ -74,6 +74,8 @@ pub(crate) struct IntelCfg {
     /// `JOIN 테이블 ON` 뒤 외래 키 조인 조건 조각(`intel.join_fk` · T-178).
     pub join_fk: bool,
     pub signature_help: bool,
+    /// 캐럿 위 시그니처 카드(`intel.signature_card` · T-178) — 상태줄 글은 그대로 두고 카드를 더한다.
+    pub signature_card: bool,
     pub budget_ms: u64,
 }
 
@@ -124,6 +126,7 @@ impl IntelCfg {
             insert_columns: s.flag("intel.insert_columns"),
             join_fk: s.flag("intel.join_fk"),
             signature_help: s.flag("intel.signature_help"),
+            signature_card: s.flag("intel.signature_card"),
             budget_ms: s.int("intel.budget_ms").clamp(5, 500) as u64,
         }
     }
@@ -2371,6 +2374,7 @@ mod tests {
             insert_columns: true,
             join_fk: true,
             signature_help: true,
+            signature_card: true,
             budget_ms: 30,
         }
     }

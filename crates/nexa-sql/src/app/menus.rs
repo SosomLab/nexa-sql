@@ -875,6 +875,8 @@ impl App {
             "run.stop" => self.stop_run(),
             "run.explain" => self.run_explain(),
             "obj.reveal" => self.objlink_reveal_at_caret(),
+            "obj.info" => self.open_info_tab(),
+            "obj.rows" => self.open_rows_tab(),
             "run.commit" | "run.rollback" => {
                 if let Some(pass) = self.gate_pass() {
                     self.sess.busy = true;
@@ -1564,6 +1566,8 @@ impl App {
             Msg::MnSkipOccurrence,
         ));
         cmds.push(m("obj.reveal", Msg::MnEdit, Msg::MnObjLinkReveal));
+        cmds.push(m("obj.info", Msg::MnEdit, Msg::MnObjInfoTab));
+        cmds.push(m("obj.rows", Msg::MnEdit, Msg::MnObjRows));
         for (id, msg) in [
             ("bookmark.toggle", Msg::MnBmToggle),
             ("bookmark.next", Msg::MnBmNext),

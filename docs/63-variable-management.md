@@ -83,7 +83,7 @@
 | 쓰임 | Oracle | SQL Server | PostgreSQL | MySQL/MariaDB | SQLite | NoSQL |
 |---|---|---|---|---|---|---|
 | `EXEC :V := '리터럴'` | 로컬 · 왕복 0 | 같음 | 같음 | 같음 | 같음 | 같음(JSON 값) |
-| `EXEC :V := 식` | `BEGIN :V := 식; END;` | `DECLARE @V T = @P1; SET …; SELECT @V`(꼬리 행) | `SELECT (식) AS "V"` → 잡기 | 같음 | 같음 | Neo4j `RETURN 식` |
+| `EXEC :V := 식` | `BEGIN :V := 식; END;` | `DECLARE @V T = @P1; SET …; SELECT @V`(꼬리 행) — **선언 없이 처음 값을 받는 변수는 `sql_variant`로 선언**하고 꼬리 행에 `[V$type]`(`SQL_VARIANT_PROPERTY … 'BaseType'`)을 함께 받아 클라이언트가 Int/Decimal/Float/Bool/날짜로 복원(10-05 · T-162 ⑤ · D-254 · 종전 `NVARCHAR(4000)` = 전부 글자 + 4000자 절단) · 한계 = `(n)varchar(max)`·`xml`·`text` 값은 sql_variant가 못 받아 서버 오류 → `VARIABLE v VARCHAR2(8000)`처럼 선언 | `SELECT (식) AS "V"` → 잡기 | 같음 | 같음 | Neo4j `RETURN 식` |
 | `EXEC SELECT a,b INTO :A,:B` | OUT 바인드 블록 | `SELECT @A=a,@B=b` + **`@@ROWCOUNT` 검사**(T-SQL은 마지막 행을 말없이 쓴다) | **INTO를 떼고 행을 클라이언트가 잡는다**(0행·여러 행 정책) | 같음(서버 `INTO @v`는 0행에 옛 값이 남아 피한다) | 같음 | 같음 |
 | 뒤 문장의 `:V` | 이름 바인드 | `sp_executesql` 인자(배치 머리 DDL은 `DECLARE` 앞붙임/글자) | `$n` + 선언 타입 캐스트 · 유틸리티·`DO` = 인용 글자 | `?` | 엔진이 알려 준 이름(`:x` `@x` `$x` = 한 변수) | 네이티브 매개변수 · 없으면 `format()` 글자 |
 | 커서·다중 결과 | OUT 커서 = 이름 붙은 결과 탭 · 암묵 결과 = "ResultSet #n" | 결과 집합마다 탭(커서 바인드 없음 — `VAR c REFCURSOR`는 안내) | 트랜잭션 안에서 호출 → 커서 **이름**을 읽어 `FETCH ALL IN "n"` → 탭 → `CLOSE`(자동 커밋이면 러너가 감싼다 · T-146 기반) | n번째 결과 = n번째 탭 · OUT = 추가 1행 | `Query` 값(PRINT 때 실행) | 커서/토큰 페이징을 같은 흐름으로 |

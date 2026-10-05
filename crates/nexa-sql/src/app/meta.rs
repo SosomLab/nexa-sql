@@ -155,6 +155,48 @@ impl App {
         }
     }
 
+    /// ★ 명령 `obj.info`(Shift+F4 · 팔레트 · T-179 ②): 객체 상세 패널의 지금 내용을 **읽기 전용 탭**으로 — 비교·복사·검색이
+    /// 패널보다 편하다. 대상이 없으면 상태줄 안내 · 접혀 있으면 펼친 것과 같이 섹션을 청한 뒤가 아니라 **지금 글**을 연다(지연 로딩).
+    pub(crate) fn open_info_tab(&mut self) {
+        let Some((title, text)) = self.objdetail.info_tab_text() else {
+            self.sess.status = t(Msg::StObjInfoNone).into();
+            self.redraw();
+            return;
+        };
+        // 뷰 탭(확장 상세와 같은 부류 · 열쇠 `objinfo:<이름>`) = 같은 객체는 한 탭 · 저장 대상 아님(미저장 점·닫기 물음 없음 · 09-30 규칙) ·
+        // 프로젝트 복원 대상 아님(열쇠가 `ext:`가 아니면 복원하지 않는다 = 일시 정보).
+        let key = format!("objinfo:{}", title.trim_start_matches('ℹ').trim());
+        if !self.editors.open_view_tab(&key, &title) && !self.tab_room() {
+            return;
+        }
+        let i = self.editors.active();
+        if let Some(tb) = self.editors.tab_box_mut(i) {
+            tb.set_read_only(false);
+            tb.set_text(&text);
+            tb.goto_line(1);
+            tb.mark_saved();
+        }
+        self.editors.set_read_only(i, true);
+        self.set_focus(Focus::Editor);
+        self.redraw();
+    }
+
+    /// ★ 명령 `obj.rows`(팔레트 "데이터 200행 보기" · T-179 ① 마지막 조각): 상세 패널의 대상(테이블·뷰 · 컬럼이면 그 주인)을
+    /// `SELECT *` 200행 틀(탐색기 더블클릭과 같은 글 · `select_template`)로 **바로 실행**해 새 결과 탭에 — 편집기 탭을 거치지 않는다.
+    pub(crate) fn open_rows_tab(&mut self) {
+        let sql = match self.objdetail.owner_object() {
+            Some(o) if o.kind.is_relation() => {
+                nsql_catalog::select_template(self.sess.dialect, &o.schema, &o.name)
+            }
+            _ => {
+                self.sess.status = t(Msg::StObjRowsNone).into();
+                self.redraw();
+                return;
+            }
+        };
+        self.run_in_fresh_tab(sql);
+    }
+
     /// 객체 상세 패널의 동작(복사 · 축소/확장).
     pub(crate) fn detail_actions(&mut self) {
         for a in self.objdetail.take_actions() {

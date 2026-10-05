@@ -378,6 +378,7 @@
 | D-251 | 시스템 DB = 하위 폴더로 분리(`explorer.mssql_system_dbs`로 숨김 가능) — 권장안으로 진행 | 🚧 권장안 진행 | 101-mssql-ssms-explorer-databases-layer.md:99 §6 · journal/2026-09-30.md:127 |
 | D-252 | 연결된 서버 수정 = Open script(재생성 스크립트 · 대화상자 없음) — 권장안으로 진행 | 🚧 권장안 진행 | 101-mssql-ssms-explorer-databases-layer.md:100 §6 |
 | D-253 | 서버 헤더 = `호스트:포트 (제품 버전 - 로그인)` · 전 방언 같은 틀 — 권장안으로 진행 | 🚧 권장안 진행 | 101-mssql-ssms-explorer-databases-layer.md:101 §6 · journal/2026-09-30.md:130 |
+| D-254 | SQL Server 선언 없는 변수의 서버 타입 보존 — 처음 값을 받는 `Auto` 변수를 `NVARCHAR(4000)`이 아니라 **`sql_variant`**로 선언 + 꼬리 행 `[이름$type]`으로 타입 복원(T-162 ⑤) · 기본값 변경(한 줄 고지) · 한계 = `(n)varchar(max)`·`xml`·`text` 값은 못 받음(종전 = 4000자 절단 · 지금 = 서버 오류) → `VARIABLE v VARCHAR2(8000)` 선언으로 우회 · 번호 = 16 §2-9 규칙 첫 적용(저장소 전체 grep 뒤 D-254) (10-05) | 🚧 권장안 진행 | journal/2026-10-05.md §17 · 63 §3-1 · TODO T-162 |
 | L-1 | 발급 PC OS와 봉투 방식 = ⓐ(3-OS 동일) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:450 §12-7 · 25-license-tiers-and-server.md:446 · journal/2026-09-27.md:205 |
 | L-2 | tier 프리셋 = §11-3 게이트 표(25·D-41)로 고정 (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:451 §12-7 · journal/2026-09-27.md:205 |
 | L-3 | 라이선스 ID 체계 `NSL-2026-000001` · 대장은 발급 PC 로컬(비공개 저장소에도 안 올림) (09-27) | ✅ 확정 | 25-license-tiers-and-server.md:452 §12-7 · journal/2026-09-27.md:205 |

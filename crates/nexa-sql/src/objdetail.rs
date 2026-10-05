@@ -396,6 +396,36 @@ impl DetailPanel {
         self.tb.text()
     }
 
+    /// 정보 탭(T-179 ②)의 (탭 제목, 본문) — 대상이 없으면 None · 본문 = 머리 줄(종류 - 이름 - 설명) + 지금 보이는 섹션 글
+    /// (접혀 있으면 설명만 있을 수 있다 = 지연 로딩 그대로 · 86 §5-2).
+    /// 지금 대상이 딸린 객체(객체 자신 · 컬럼/하위 항목의 주인) — 데이터 200행 보기(T-179 ①)의 대상.
+    pub(crate) fn owner_object(&self) -> Option<&nsql_catalog::ObjectInfo> {
+        match self.target.as_ref()? {
+            DetailTarget::Object(o) => Some(o),
+            DetailTarget::Column { owner, .. } | DetailTarget::Item { owner, .. } => Some(owner),
+            DetailTarget::Schema(_) => None,
+        }
+    }
+
+    pub(crate) fn info_tab_text(&self) -> Option<(String, String)> {
+        self.target.as_ref()?;
+        let title = format!("ℹ {}", self.name_label());
+        let body = self.tb.text();
+        // 머리 줄 = `종류 - 이름[ - 설명]`(설명이 없으면 끝 대시 없음).
+        let desc = self.description();
+        let head = if desc.trim().is_empty() {
+            format!("{} - {}", self.kind_label(), self.name_label())
+        } else {
+            format!("{} - {} - {}", self.kind_label(), self.name_label(), desc)
+        };
+        let text = if body.trim().is_empty() {
+            format!("{head}\n")
+        } else {
+            format!("{head}\n\n{body}")
+        };
+        Some((title, text))
+    }
+
     fn header_label(h: HeaderId) -> String {
         t(match h {
             HeaderId::Property => Msg::DetHdrProperty,

@@ -434,6 +434,12 @@ pub(crate) struct ObjLinks {
     pub hot: Option<usize>,
     /// 우클릭 메뉴가 가리키는 링크.
     pub menu_link: Option<usize>,
+    /// ★ 머무름 모드(T-179 ③ · `objlink.hover_ms`): Ctrl 없이 포인터가 객체 이름 위에 머물러 분석이 켜진 상태 — 툴팁만
+    /// (밑줄 없음 · 클릭 동작 없음) · 포인터가 링크를 벗어나거나 키를 치면 끝난다.
+    pub hover: bool,
+    /// 머무름 판정 시각·자리(포인터가 멈춘 뒤 `hover_ms`).
+    pub hover_due: Option<std::time::Instant>,
+    pub hover_at: Option<Point>,
 }
 
 /// 부분 분석 때 보이는 구간 밖으로 문장 경계(`;`)를 찾는 최대 글자 수.
@@ -609,6 +615,10 @@ impl App {
         if self.editors.is_large(self.editors.active()) {
             return Display::None;
         }
+        // 머무름 모드(Ctrl 없음) = 툴팁만 — 밑줄은 Ctrl을 눌렀을 때의 것.
+        if !self.primary && self.objlinks.hover {
+            return Display::None;
+        }
         Display::parse(
             self.settings
                 .effective("objlink.display")
@@ -732,7 +742,9 @@ impl App {
 
     /// ★ 수식키·탭·본문·설정이 바뀔 때 — Ctrl을 누르고 있고 쓸 수 있으면 링크 목록을 만들고, 아니면 걷는다.
     pub(crate) fn objlink_sync(&mut self) {
-        let want = self.primary && self.objlink_enabled() && self.objlink_suitable();
+        let want = (self.primary || self.objlinks.hover)
+            && self.objlink_enabled()
+            && self.objlink_suitable();
         let tab = self.editors.active_id();
         // 다른 탭에 남긴 표시부터 걷는다(탭이 바뀌었을 때).
         if self.objlinks.active && self.objlinks.tab != tab {
@@ -890,6 +902,10 @@ impl App {
             links,
             hot,
             menu_link,
+            // 머무름 모드 상태는 재분석을 넘어 유지된다(모드가 끝날 때만 끈다).
+            hover: self.objlinks.hover,
+            hover_due: self.objlinks.hover_due,
+            hover_at: self.objlinks.hover_at,
         };
         if self.objlink_apply_marks() || display != Display::None {
             self.redraw();
@@ -914,6 +930,74 @@ impl App {
             return None;
         }
         Some(k)
+    }
+
+    /// ★ 포인터가 멈춘 자리를 기억한다(머무름 툴팁 · Ctrl 없음) — 머무름 모드 중 링크를 벗어나면 모드를 끝낸다.
+    /// `objlink_hover`보다 먼저 부른다(모드가 끝나면 그쪽이 걷는다).
+    pub(crate) fn objlink_rest(&mut self, p: Point) {
+        if self.primary {
+            self.objlinks.hover_due = None;
+            return;
+        }
+        let ms = self.settings.int("objlink.hover_ms").max(0) as u64;
+        if ms == 0 || !self.settings.flag("objlink.tooltip") {
+            self.objlinks.hover_due = None;
+            return;
+        }
+        if self.objlinks.hover {
+            // 링크 위를 떠났다 → 끝(다음 멈춤에서 다시 잰다).
+            if self.objlink_at(p).is_none() {
+                self.objlink_hover_end();
+            } else {
+                return;
+            }
+        }
+        let inside = self.editors.cur().bounds().contains(p) && self.focus_allows_hover();
+        self.objlinks.hover_due =
+            inside.then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+        self.objlinks.hover_at = inside.then_some(p);
+    }
+
+    /// 머무름 툴팁을 띄워도 되는 상태(팝업·메뉴가 없고 편집기가 보일 때).
+    fn focus_allows_hover(&self) -> bool {
+        self.open_menus() == 0 && !self.intel.is_open() && !self.objlink_menu.is_open()
+    }
+
+    /// 머무름 마감(사건 루프 틱) — 때가 됐으면 분석을 켜고 그 자리의 링크를 강조한다(없으면 즉시 끈다). 돌려주는 값 = 다음 깨울 시각.
+    pub(crate) fn objlink_hover_tick(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        let due = self.objlinks.hover_due?;
+        if now < due {
+            return Some(due);
+        }
+        self.objlinks.hover_due = None;
+        let p = self.objlinks.hover_at?;
+        if self.primary || !self.focus_allows_hover() {
+            return None;
+        }
+        self.objlinks.hover = true;
+        self.objlink_sync();
+        if !self.objlinks.active {
+            self.objlinks.hover = false;
+            return None;
+        }
+        self.objlink_hover(p);
+        if self.objlinks.hot.is_none() {
+            self.objlink_hover_end();
+        }
+        None
+    }
+
+    /// 머무름 모드 끝(키 입력 · 링크 이탈 · 탭 전환) — 분석 결과를 걷고 다시 그린다.
+    pub(crate) fn objlink_hover_end(&mut self) {
+        self.objlinks.hover_due = None;
+        if self.objlinks.hover {
+            self.objlinks.hover = false;
+            self.objlink_sync();
+            self.redraw();
+        }
     }
 
     /// 마우스 이동 — 링크 위면 강조·툴팁(표시 방식에 따라 다시 그리기).
@@ -1122,8 +1206,13 @@ impl App {
 
     /// 클릭(좌 = 설정 `objlink.click` — 설명 복사(기본) 또는 객체 탐색기에서 보기 · **Shift+좌** = `이름 - 설명` 복사 ·
     /// 우 = 메뉴) — 링크 위였으면 true(편집기로 가지 않는다). "보기"인데 실제 객체로 풀리지 않는 링크는 설명 복사로 돌아간다.
+    /// 머무름 모드(Ctrl 없음)의 클릭은 링크 동작이 아니다 — 모드를 끝내고 편집기로 보낸다(캐럿 이동).
     pub(crate) fn objlink_click(&mut self, p: Point, right: bool) -> bool {
         if !self.objlinks.active {
+            return false;
+        }
+        if !self.primary && self.objlinks.hover {
+            self.objlink_hover_end();
             return false;
         }
         let Some(k) = self.objlink_at(p) else {
@@ -1257,6 +1346,136 @@ impl App {
         }
         self.redraw();
         ok
+    }
+
+    /// 테이블 이름(`[스키마.]이름`)을 메타 객체로(세션 현재 스키마 · 접근성 · SQL Server dbo 폴백) → (스키마, 이름, id).
+    fn resolve_table_obj(&self, table: &str) -> Option<(String, String, nsql_run::meta::ObjId)> {
+        let (schema_q, name) = nsql_io::split_table(self.sess.dialect, table);
+        let cur = self.objlink_cur_schema();
+        let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
+        let id = self.objlink_resolve(names, &snap, schema_q.as_deref(), cur.as_deref(), &name)?;
+        let o = snap.object(id)?;
+        Some((
+            names.get(o.schema).to_string(),
+            names.get(o.name).to_string(),
+            id,
+        ))
+    }
+
+    /// 테이블의 제약(기본 키 · 외래 키) — `Loaded` = (종류, 열들, 참조 테이블) 목록 · `Unknown` = 상세 요청을 보내고 None.
+    #[allow(clippy::type_complexity)]
+    fn table_keys(
+        &mut self,
+        id: nsql_run::meta::ObjId,
+    ) -> Option<Vec<(char, Vec<String>, Option<String>)>> {
+        let spec = self.sess.spec.clone();
+        let (names, snap) = self.explorer.meta_view(spec.as_ref());
+        match snap.detail(id) {
+            nsql_run::meta::DetailState::Loaded { detail, .. } => Some(
+                detail
+                    .keys
+                    .iter()
+                    .map(|k| {
+                        (
+                            k.kind,
+                            k.cols.iter().map(|c| names.get(*c).to_string()).collect(),
+                            k.ref_table.map(|t| names.get(t).to_string()),
+                        )
+                    })
+                    .collect(),
+            ),
+            nsql_run::meta::DetailState::Loading => None,
+            nsql_run::meta::DetailState::Unknown => {
+                self.explorer.request_detail(spec.as_ref(), id);
+                None
+            }
+        }
+    }
+
+    /// ★ 결과 그리드의 외래 키 열 목록을 메타에서 맞춘다(T-180 ⑥ · 결과 도착·메타 도착·설정 변경 때) — 단일 테이블 결과만 ·
+    /// 제약을 모르면 한 번 요청(백그라운드 메타 세션 · 테이블마다 캐시) · 끄면 비우고 요청도 않는다.
+    pub(crate) fn grid_fk_sync(&mut self) {
+        if !self.settings.flag("grid.fk_follow") {
+            self.grid.set_fk_cols(Vec::new());
+            return;
+        }
+        let Some((_, _, id)) = self
+            .grid
+            .reveal_table()
+            .and_then(|t| self.resolve_table_obj(&t))
+        else {
+            self.grid.set_fk_cols(Vec::new());
+            return;
+        };
+        let cols = self
+            .table_keys(id)
+            .map(|keys| {
+                keys.into_iter()
+                    .filter(|(k, _, _)| *k == 'R')
+                    .flat_map(|(_, cols, _)| cols)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.grid.set_fk_cols(cols);
+    }
+
+    /// ★ 셀 메뉴 "참조 행 보기"(T-180 ⑥): 원본 행 `row`의 열 `col`이 속한 외래 키 → 부모 테이블을 **기본 키로** 조회해 새 결과 탭에.
+    /// 복합 키 = 그 행의 FK 열 전부를 부모 PK 순서에 맞춘다(JOIN 조건 조각과 같은 규칙) · NULL 키·PK 불일치·제약 미로딩 = 상태줄.
+    pub(crate) fn follow_fk(&mut self, row: usize, col: &str) {
+        let fail = |a: &mut Self, why: Msg| {
+            a.sess.status = tf(Msg::StFkCannot, &[t(why)]);
+            a.redraw();
+        };
+        let Some((_, _, id)) = self
+            .grid
+            .reveal_table()
+            .and_then(|t| self.resolve_table_obj(&t))
+        else {
+            return fail(self, Msg::StObjRevealNone);
+        };
+        let Some(keys) = self.table_keys(id) else {
+            return fail(self, Msg::StFkLoading);
+        };
+        let Some((_, fk_cols, Some(parent))) = keys.into_iter().find(|(k, cols, rt)| {
+            *k == 'R' && rt.is_some() && cols.iter().any(|c| c.eq_ignore_ascii_case(col))
+        }) else {
+            return fail(self, Msg::StFkNoPk);
+        };
+        let Some((pschema, pname, pid)) = self.resolve_table_obj(&parent) else {
+            return fail(self, Msg::StObjRevealNone);
+        };
+        let Some(pkeys) = self.table_keys(pid) else {
+            return fail(self, Msg::StFkLoading);
+        };
+        let Some((_, pk_cols, _)) = pkeys.into_iter().find(|(k, _, _)| *k == 'P') else {
+            return fail(self, Msg::StFkNoPk);
+        };
+        if pk_cols.len() != fk_cols.len() {
+            return fail(self, Msg::StFkNoPk);
+        }
+        let values = self.grid.row_values(row, &fk_cols);
+        if values.len() != fk_cols.len() || values.iter().any(|(_, v)| *v == nsql_core::Value::Null)
+        {
+            return fail(self, Msg::StFkNull);
+        }
+        let d = self.sess.dialect;
+        let conds: Vec<String> = pk_cols
+            .iter()
+            .zip(values.iter())
+            .map(|(pk, (_, v))| {
+                format!(
+                    "{} = {}",
+                    nsql_catalog::quote_ident(d, pk),
+                    v.to_sql_literal(d)
+                )
+            })
+            .collect();
+        let sql = format!(
+            "SELECT * FROM {} WHERE {}",
+            nsql_catalog::qualified(d, &pschema, &pname),
+            conds.join(" AND ")
+        );
+        self.run_in_fresh_tab(sql);
     }
 
     /// ★ 명령 `obj.reveal`(F4 · 팔레트 · T-180): **캐럿 아래** 객체를 객체 탐색기에서 찾는다 — 우클릭 메뉴와 같은 판정
@@ -1590,6 +1809,8 @@ pub(crate) fn paint_tip(
     let w = lines.iter().map(|l| dc.text_width(l)).max().unwrap_or(0) + s(12.0);
     let h = dc.text_height() * lines.len() as i32 + s(8.0);
     let (x, y) = match pos {
+        // 캐럿 위(시그니처 카드) — 왼쪽을 기준 x에 맞춘다.
+        "above" => (link.x, link.y - s(6.0) - h),
         "top_left" => (link.x - w - s(4.0), link.y - s(6.0) - h),
         "bottom_right" => (link.right() + s(4.0), link.bottom() + s(6.0)),
         "bottom_left" => (link.x - w - s(4.0), link.bottom() + s(6.0)),

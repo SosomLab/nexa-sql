@@ -124,6 +124,8 @@
 - GUI(격리 · 데모 SQLite · `explorer.details=on`) = `@after:1500:explorer.expand1,@after:2500:explorer.expand2,@after:3500:explorer.select3,@after:5000:details.dump:<파일>` → `== Properties (4) == … == Columns (3) == … == Constraints (1) ==`(dept) · 기동 명령 `explorer.select<row>` 신설.
 - 실기 U-166 = View ▸ 객체 상세 → 테이블 클릭 = 섹션 · ▾/▴ · 복사 · Shift+복사 · 본문 선택 ⌘C · 스플리터 끌기 · 탐색기 스크롤과 겹치지 않음.
 
+> **10-05(T-179)**: 머리 줄 더블클릭 = 소스/DDL을 편집기 새 탭으로(종전) · **Shift+F4 / 팔레트 `obj.info`** = 패널의 **지금 내용 전체**(머리 줄 + 섹션 글)를 읽기 전용 뷰 탭 `ℹ 스키마.이름`으로(비교·복사·검색용 · 같은 객체 한 탭 · 섹션을 새로 청하지 않음 = 지연 로딩 그대로 · 컬럼은 이 패널의 섹션이 아니므로 정보 탭에도 없다) · 팔레트 `obj.rows` = 패널 대상 테이블·뷰를 `select_template`으로 새 결과 탭에.
+
 ## 8. 남은 것(T-225)
 
 - ~~스키마 객체 수 · 코멘트 = 설명 · 더블클릭 = 편집기 · ▾/▴ 도형~~ ✅ §208 · 남음 = 섹션 접기/탭 · 짧은 LRU · 컬럼 선택 시 주인 테이블 요약 · 속성 표 컬럼 코멘트 열은 코멘트가 있을 때만.

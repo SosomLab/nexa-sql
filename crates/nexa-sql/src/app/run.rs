@@ -214,6 +214,10 @@ impl App {
     }
 
     fn run_text_in(&mut self, mut src: String, line_base: usize, all: bool, whole: bool) {
+        // ★ 결과가 갈 패널은 **활성 편집기 탭**의 것이어야 한다 — 탭 전환(파일 열기) 뒤 첫 그리기 전에 실행이 오면(기동 명령 ·
+        //   기동 직후 탐색기 paint 정지로 밀린 사건) 패널 동기화가 아직이라 결과가 **옛 탭의 패널**에 실려 화면은 "No Records"
+        //   였다(10-05 · 협업 세션 자체 시험 13회 중 정지 ≥ 2.2 s면 전부). 동기화는 그리기마다 하는 것이라 여기서 한 번 더 해도 비용 0.
+        self.sync_grid_tab();
         // ★ 세션 배치(docs/52 §4): `CONNECT`면 이 탭의 전용 세션으로 · 전용 탭의 `DISCONNECT`면 해제하고 끝.
         if !self.place_run(&mut src) {
             return;

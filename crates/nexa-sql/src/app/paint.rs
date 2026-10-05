@@ -34,6 +34,7 @@ impl App {
         let view_mode = self.view_layout;
         // ★ Ctrl 객체 링크 설명 툴팁(T-256) — 표면을 빌리기 전에 본문·자리를 셈해 둔다.
         let objlink_tip = self.objlink_tip();
+        let sig_tip = self.sig_card_tip();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -587,6 +588,15 @@ impl App {
                     Rect::new(0, 0, size.width as i32, size.height as i32),
                 );
                 self.objlink_menu.paint(&mut dc, &th);
+                // ★ 시그니처 카드(T-178): 캐럿 **위**(완성 팝업은 아래라 겹치지 않는다) · 같은 툴팁 부품 · 표면 안으로.
+                app::objlink::paint_tip(
+                    &mut dc,
+                    &th,
+                    sig_tip.as_ref(),
+                    "above",
+                    self.scale,
+                    Rect::new(0, 0, size.width as i32, size.height as i32),
+                );
                 // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76) + 상세 카드(옆 · 같은 높이 · 09-24).
                 self.intel.menu.paint(&mut dc, &th);
                 if self.intel.is_open() && self.intel.cfg().detail_card {

@@ -215,6 +215,46 @@ impl App {
             }
             return;
         }
+        // 자체 시험(T-178 시그니처 카드): `intel.sigcard:<파일>` = 카드 글(없으면 빈 파일) · `intel.sighelp` = 지금 캐럿에서 판정.
+        if id == "intel.sighelp" {
+            self.intel_signature_help();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("intel.sigcard:") {
+            let _ = std::fs::write(
+                path,
+                self.sig_card_tip().map(|(t, _)| t).unwrap_or_default(),
+            );
+            return;
+        }
+        // 자체 시험(T-181): `grid.filteror:on|off` = 필터 결합 AND/OR.
+        if let Some(v) = id.strip_prefix("grid.filteror:") {
+            self.grid
+                .set_filter_or(!matches!(v.trim(), "off" | "0" | "false"));
+            self.redraw();
+            return;
+        }
+        // 자체 시험(T-181): `grid.requery` = 필터 메뉴 "필터로 서버 재조회"와 같은 길.
+        if id == "grid.requery" {
+            if let Some(sql) = self.grid.filter_query() {
+                self.run_in_fresh_tab(sql);
+            }
+            return;
+        }
+        // 자체 시험(T-180 ⑥): `grid.fksync` = 외래 키 열 맞춤 · `grid.follow:<원본 행>;<열>` = 참조 행 보기.
+        if id == "grid.fksync" {
+            self.grid_fk_sync();
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("grid.follow:") {
+            if let Some((r, c)) = rest.split_once(';') {
+                if let Ok(r) = r.trim().parse::<usize>() {
+                    self.grid_fk_sync();
+                    self.follow_fk(r, c.trim());
+                }
+            }
+            return;
+        }
         if let Some(path) = id.strip_prefix("grid.chips:") {
             let _ = std::fs::write(path, self.grid.dump_chips());
             return;

@@ -331,6 +331,8 @@ impl App {
         }
         if let InputEvent::MouseMove { x, y } = ev {
             self.pointer = Some(Point { x, y });
+            // ★ 머무름 툴팁(Ctrl 없음 · T-179 ③): 멈춘 자리를 재고 · 링크를 벗어나면 끝.
+            self.objlink_rest(Point { x, y });
             // ★ Ctrl 객체 링크 hover(T-256 · 켜져 있을 때만 셈).
             self.objlink_hover(Point { x, y });
             // 클릭되는 상태줄 항목 위 = hover 선택색(들어오고 나갈 때만 다시 그림 · 사용자 09-28 "버튼처럼").
@@ -339,6 +341,17 @@ impl App {
                 self.status_hover = over;
                 self.redraw();
             }
+        }
+        // 키 입력·클릭·휠 = 머무름 툴팁 끝(툴팁이 타이핑 위에 남지 않게).
+        if matches!(
+            ev,
+            InputEvent::Key { .. }
+                | InputEvent::Char { .. }
+                | InputEvent::MouseDown { .. }
+                | InputEvent::RightDown { .. }
+                | InputEvent::Wheel { .. }
+        ) {
+            self.objlink_hover_end();
         }
         if matches!(ev, InputEvent::MouseUp { .. }) && (self.mem_pressed || self.autosave_pressed) {
             self.mem_pressed = false;

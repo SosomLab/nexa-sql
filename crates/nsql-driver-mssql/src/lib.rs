@@ -8,6 +8,11 @@
 //! <사용자 배치>                              -- 엔진이 :NAME → @NAME 으로 바꿔 둔 것
 //! SELECT @V_CD AS [V_CD], @V_SEQ AS [V_SEQ];  -- InOut일 때만 트레일러 → 마지막 결과 집합 = OUT 값
 //! ```
+//! ★ 선언 없이 처음 값을 받는 변수(`Auto` · 값 NULL · `EXEC :V := (SELECT COUNT(*) …)`)는 **`sql_variant`**로 선언한다(T-162 ⑤ ·
+//! 10-05 M4PLAN): 종전 `NVARCHAR(4000)`은 서버가 숫자를 글자로 바꿔 돌려줘 변수가 `VARCHAR2(1)`로 남았다(다음 바인드도 글자).
+//! tiberius는 sql_variant 열을 못 읽으므로 트레일러에서 값은 글자로 · 기저 타입은 `SQL_VARIANT_PROPERTY(…, 'BaseType')`을
+//! `[이름$type]` 열로 함께 받아 클라이언트가 `Int`/`Decimal`/`Float`/`Bool`로 되돌린다(`variant_value`). 한계 = sql_variant는
+//! `(n)varchar(max)`·`xml`·`text` 값을 못 받는다(서버 오류 · 그런 열은 `VARIABLE v VARCHAR2(8000)`로 선언하면 종전 길).
 //! 배치 첫 문장 제약(CREATE PROC 등)은 엔진이 `DeclarePrepend`(리터럴)로 이미 처리했으므로 params가 비어 여기서는 그대로 보낸다.
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
@@ -586,7 +591,82 @@ pub fn route(sql: &str, has_params: bool, has_outs: bool) -> Route {
 /// 매개변수의 T-SQL 선언 타입. 숫자 변수는 값이 돌아올 수 있으면(`OUT`/`IN OUT`) 넉넉한 `DECIMAL(38,10)`이지만, **읽기만 하는
 /// 바인드**는 지금 값에 맞춘다 — 정수 = `BIGINT` · 소수 = 그 자릿수의 `DECIMAL(38,s)`. 그러지 않으면 `SELECT :V_LIMIT`이
 /// `3.0000000000`으로 돌아온다(사용자 09-21 캡처 · 결과 셀은 서버가 준 자릿수를 그대로 보여 주는 것이 맞으므로 보내는 쪽을 고친다).
+/// 선언 없이 **처음** 값을 받는 변수인가(`Auto` · 값 없음 · 받는 쪽) → `sql_variant`로 선언해 서버 타입을 보존한다(T-162 ⑤).
+fn is_fresh_auto_out(p: &nsql_core::BindParam) -> bool {
+    p.direction != Direction::In && p.ty == nsql_core::VarType::Auto && p.value == Value::Null
+}
+
+/// 트레일러의 변수 값 글 — sql_variant 변수는 기저 타입별로 글자 표현을 고른다(부동소수 = 17자리 유효숫자 · 시각 = ISO 121).
+fn trailer_expr(decl: &str, variant: bool) -> String {
+    if !variant {
+        return format!("@{decl}");
+    }
+    let base = format!("SQL_VARIANT_PROPERTY(@{decl}, 'BaseType')");
+    format!(
+        "CASE WHEN {base} IN ('float', 'real') THEN CONVERT(NVARCHAR(4000), CONVERT(FLOAT, @{decl}), 3) \
+WHEN {base} IN ('datetime', 'datetime2', 'smalldatetime') THEN CONVERT(NVARCHAR(4000), CONVERT(DATETIME2, @{decl}), 121) \
+WHEN {base} = 'datetimeoffset' THEN CONVERT(NVARCHAR(4000), CONVERT(DATETIMEOFFSET, @{decl}), 121) \
+WHEN {base} = 'date' THEN CONVERT(NVARCHAR(4000), CONVERT(DATE, @{decl}), 23) \
+WHEN {base} = 'time' THEN CONVERT(NVARCHAR(4000), CONVERT(TIME, @{decl}), 121) \
+ELSE CONVERT(NVARCHAR(4000), @{decl}) END"
+    )
+}
+
+/// 트레일러 `[이름$type]`의 기저 타입 이름으로 글자 값을 되돌린다 — 정수 → `Int` · decimal/money → `Decimal`(꼬리 0 정리) ·
+/// float/real → `Float` · bit → `Bool` · 그 밖(문자·시각·GUID…) = 글자 그대로. NULL은 NULL.
+fn variant_value(text: &Value, base: &str) -> Value {
+    let Value::Str(s) = text else {
+        return text.clone();
+    };
+    match base.to_ascii_lowercase().as_str() {
+        "int" | "bigint" | "smallint" | "tinyint" => s
+            .trim()
+            .parse::<i64>()
+            .map_or_else(|_| text.clone(), Value::Int),
+        "decimal" | "numeric" | "money" | "smallmoney" => {
+            tidy_decimal(&Value::Decimal(s.trim().to_string()))
+        }
+        "float" | "real" => s
+            .trim()
+            .parse::<f64>()
+            .map_or_else(|_| text.clone(), Value::Float),
+        "bit" => match s.trim() {
+            "1" => Value::Bool(true),
+            "0" => Value::Bool(false),
+            _ => text.clone(),
+        },
+        // 그 밖(문자 · 시각 · GUID) = 글자 그대로 — 시각의 꼬리 0(`…15.0100000` → `…15.01`)만 뗀다.
+        _ => tidy_decimal(text),
+    }
+}
+
+/// 트레일러 열(이름 → 글자 값)에서 OUT 값 목록을 만든다 — `[이름$type]` 열은 짝의 타입 정보로만 쓰고 값으로 내지 않는다.
+fn outs_from_trailer(cols: &[(String, Value)]) -> Vec<(String, Value)> {
+    cols.iter()
+        .filter(|(n, _)| !n.ends_with("$TYPE"))
+        .map(|(n, v)| {
+            let ty = cols
+                .iter()
+                .find(|(k, _)| {
+                    k.len() == n.len() + 5 && k.starts_with(n.as_str()) && k.ends_with("$TYPE")
+                })
+                .and_then(|(_, t)| match t {
+                    Value::Str(t) => Some(t.as_str()),
+                    _ => None,
+                });
+            let v = match ty {
+                Some(t) => variant_value(v, t),
+                None => tidy_decimal(v),
+            };
+            (n.clone(), v)
+        })
+        .collect()
+}
+
 fn declared_type(p: &nsql_core::BindParam) -> String {
+    if is_fresh_auto_out(p) {
+        return "sql_variant".into();
+    }
     if p.direction == Direction::In && p.ty == nsql_core::VarType::Number {
         match &p.value {
             Value::Int(_) => return "BIGINT".into(),
@@ -647,6 +727,7 @@ pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
     let mut head = String::new();
     let mut params = Vec::new();
     let mut outs = Vec::new();
+    let mut variant: Vec<bool> = Vec::new();
     let mut body = req.sql.trim_end_matches(';').to_string();
     for (i, p) in req.params.iter().enumerate() {
         let decl = safe_var_name(&p.name);
@@ -662,14 +743,21 @@ pub fn render_batch(req: &ExecRequest) -> (String, Vec<Value>, Vec<String>) {
         params.push(p.value.clone());
         if p.direction != Direction::In {
             outs.push(p.name.clone());
+            variant.push(is_fresh_auto_out(p));
         }
     }
     let mut sql = format!("{head}{body}");
     if !outs.is_empty() {
-        let cols: Vec<String> = outs
-            .iter()
-            .map(|n| format!("@{} AS [{n}]", safe_var_name(n)))
-            .collect();
+        let mut cols: Vec<String> = Vec::new();
+        for (n, v) in outs.iter().zip(&variant) {
+            let decl = safe_var_name(n);
+            cols.push(format!("{} AS [{n}]", trailer_expr(&decl, *v)));
+            if *v {
+                cols.push(format!(
+                    "CAST(SQL_VARIANT_PROPERTY(@{decl}, 'BaseType') AS NVARCHAR(30)) AS [{n}$type]"
+                ));
+            }
+        }
         sql.push_str(&format!(";\nSELECT {};", cols.join(", ")));
     }
     (sql, params, outs)
@@ -1057,11 +1145,13 @@ impl MssqlSession {
                 if !outs.is_empty() {
                     if let Some(trailer) = result_sets.pop() {
                         if let Some(row) = trailer.rows.first() {
-                            for (c, v) in trailer.columns.iter().zip(row.iter()) {
-                                result
-                                    .out_params
-                                    .push((c.name.to_ascii_uppercase(), tidy_decimal(v)));
-                            }
+                            let cols: Vec<(String, Value)> = trailer
+                                .columns
+                                .iter()
+                                .zip(row.iter())
+                                .map(|(c, v)| (c.name.to_ascii_uppercase(), v.clone()))
+                                .collect();
+                            result.out_params.extend(outs_from_trailer(&cols));
                         }
                     }
                     if result_sets.is_empty() {
@@ -1133,12 +1223,62 @@ mod tests {
             ],
         };
         let (sql, params, outs) = render_batch(&req);
-        assert_eq!(
-            sql,
-            "DECLARE @V_CD NVARCHAR(4000) = @P1;\nDECLARE @V_SEQ DECIMAL(38,10) = @P2;\nDECLARE @V_IN NVARCHAR(10) = @P3;\nSELECT @V_CD = A.CD, @V_SEQ = A.SEQ FROM T A WHERE X = @V_IN;\nSELECT @V_CD AS [V_CD], @V_SEQ AS [V_SEQ];"
+        // V_CD = 선언 없이 처음 받는 변수 → sql_variant + 기저 타입 열(T-162 ⑤) · V_SEQ = NUMBER 선언 → 종전 그대로.
+        assert!(
+            sql.starts_with(
+                "DECLARE @V_CD sql_variant = @P1;\nDECLARE @V_SEQ DECIMAL(38,10) = @P2;\nDECLARE @V_IN NVARCHAR(10) = @P3;\nSELECT @V_CD = A.CD, @V_SEQ = A.SEQ FROM T A WHERE X = @V_IN;\nSELECT CASE WHEN SQL_VARIANT_PROPERTY(@V_CD, 'BaseType') IN ('float', 'real')"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.ends_with(
+                "ELSE CONVERT(NVARCHAR(4000), @V_CD) END AS [V_CD], CAST(SQL_VARIANT_PROPERTY(@V_CD, 'BaseType') AS NVARCHAR(30)) AS [V_CD$type], @V_SEQ AS [V_SEQ];"
+            ),
+            "{sql}"
         );
         assert_eq!(params.len(), 3);
         assert_eq!(outs, vec!["V_CD", "V_SEQ"]);
+    }
+
+    /// T-162 ⑤ — 트레일러의 기저 타입으로 값을 되돌린다 · `$type` 열은 값으로 내지 않는다 · 타입 열 없는 값은 종전(decimal 정리).
+    #[test]
+    fn variant_trailer_restores_server_types() {
+        let s = |t: &str| Value::Str(t.into());
+        assert_eq!(variant_value(&s("5"), "int"), Value::Int(5));
+        assert_eq!(variant_value(&s("5"), "bigint"), Value::Int(5));
+        assert_eq!(
+            variant_value(&s("5.50"), "decimal"),
+            Value::Decimal("5.5".into())
+        );
+        assert_eq!(variant_value(&s("5.00"), "numeric"), Value::Int(5));
+        assert_eq!(variant_value(&s("1.5"), "float"), Value::Float(1.5));
+        assert_eq!(variant_value(&s("1"), "bit"), Value::Bool(true));
+        assert_eq!(variant_value(&s("abc"), "nvarchar"), s("abc"));
+        assert_eq!(
+            variant_value(&s("2026-10-05 17:22:15.0100000"), "datetime2"),
+            s("2026-10-05 17:22:15.01")
+        );
+        assert_eq!(
+            variant_value(&s("x"), "int"),
+            s("x"),
+            "못 읽으면 글자 그대로"
+        );
+        assert_eq!(variant_value(&Value::Null, "int"), Value::Null);
+        let cols = vec![
+            ("V_CNT".to_string(), s("5")),
+            ("V_CNT$TYPE".to_string(), s("int")),
+            ("V_NAME".to_string(), s("spt_values")),
+            ("V_NAME$TYPE".to_string(), s("nvarchar")),
+            ("V_SEQ".to_string(), Value::Decimal("63.0000000000".into())),
+        ];
+        assert_eq!(
+            outs_from_trailer(&cols),
+            vec![
+                ("V_CNT".to_string(), Value::Int(5)),
+                ("V_NAME".to_string(), s("spt_values")),
+                ("V_SEQ".to_string(), Value::Int(63)),
+            ]
+        );
     }
 
     #[test]

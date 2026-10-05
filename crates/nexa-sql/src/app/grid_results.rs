@@ -41,6 +41,14 @@ impl App {
         if let Some(kind) = self.grid.take_pending_sql() {
             self.begin_sql_copy(kind);
         }
+        // 필터 메뉴 "필터로 서버 재조회"(T-181): 조회용 Query를 새 결과 탭으로(문지기 · 세션 바쁘면 보내지 않음).
+        if let Some(sql) = self.grid.take_requery() {
+            self.run_in_fresh_tab(sql);
+        }
+        // 셀 메뉴 "참조 행 보기"(T-180 ⑥): 외래 키 → 부모 테이블을 기본 키로 조회(새 결과 탭 · 문지기).
+        if let Some((row, col)) = self.grid.take_follow() {
+            self.follow_fk(row, &col);
+        }
         // 열 머리 "객체 탐색기에서 보기"(T-180 ⑤): 출처 테이블 + 그 열 → 탐색기 찾기(편집기 링크·F4와 같은 길).
         if let Some(col) = self.grid.take_reveal() {
             if let Some(table) = self.grid.reveal_table() {
@@ -441,6 +449,16 @@ impl App {
     }
 
     /// 실행용 새 결과 탭(설정 `grid.result_tabs`일 때만) — 만들었으면 그 전 활성 탭 id.
+    /// 조회 하나를 **새 결과 탭**으로 실행(SHOW VARIABLES · 참조 행 보기 · 필터 재조회가 같이 쓴다) — 문지기를 지난다.
+    pub(crate) fn run_in_fresh_tab(&mut self, sql: String) {
+        if self.sess.busy || !self.gate_open() {
+            return;
+        }
+        let prev = self.fresh_result_tab_for_run();
+        self.run_text(sql, 0, true);
+        self.mark_fresh_run_tab(prev);
+    }
+
     pub(crate) fn fresh_result_tab_for_run(&mut self) -> Option<u64> {
         if !self.settings.flag("grid.result_tabs") {
             return None;

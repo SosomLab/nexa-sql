@@ -158,3 +158,5 @@ Reddit/HN 원문 스레드는 직접 확보하지 못함(**확인 필요**). 202
 | ADS | — | — | — | — | — | **은퇴(2026-02-28)** |
 
 **요약 결론**: 2026년 MSSQL 클라이언트 지형은 "Windows·무거움·완전한 관리(SSMS 22)" 대 "크로스플랫폼·개발 중심(VS Code MSSQL, DBeaver/DataGrip)"으로 양분. macOS/Linux에서 **가볍고 스크립트 친화적(SQLCMD 호환 + 세션 변수)** 도구는 go-sqlcmd·usql뿐이고 둘 다 SQL*Plus식 바인드 변수는 없다. Rust 드라이버는 `tiberius-ng`(현 시점 가장 현실적) 또는 향후 `microsoft/mssql-rs`를 주시, 세션 변수는 `sp_executesql` RPC 파라미터 방식을 1차로 채택.
+
+> **nexa-sql 구현 메모(10-05 · T-162 ⑤)**: `EXEC :V := 식`에서 `V`를 선언하지 않았으면 드라이버가 `DECLARE @V sql_variant`로 받고 꼬리 행에 `[V$type]`(BaseType)을 함께 가져와 숫자·날짜·bit를 서버 타입대로 복원한다(종전 `NVARCHAR(4000)` = 전부 글자). `(n)varchar(max)`·`xml`·`text`는 sql_variant가 못 받으니 그런 값은 `VARIABLE v VARCHAR2(8000)`로 선언한다([63 §3-1](63-variable-management.md) · D-254).

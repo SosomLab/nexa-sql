@@ -315,6 +315,8 @@ struct App {
     /// ★ Ctrl 객체 하이퍼링크(T-256 · 사용자 09-29): 링크 목록·hover 상태 + 우클릭 메뉴("설명 복사").
     objlinks: app::objlink::ObjLinks,
     objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu,
+    /// ★ 시그니처 카드(T-178): 캐럿이 아는 함수의 괄호 안에 있는 동안 (시그니처 글, 탭 id) — 팝업 층에 캐럿 위로 그린다.
+    sig_card: Option<(String, u64)>,
     /// 거터(북마크/니모닉 영역) 우클릭 메뉴의 대상 — (탭 index, 논리 줄, 그 줄의 북마크 id) · `status_menu`를 빌려 쓴다(사용자 09-23).
     bm_gutter: Option<(usize, usize, Option<u64>)>,
     /// 창 z-order(맨 뒤 → 맨 앞) — `window.focus = group`일 때 함께 올리는 순서.
@@ -1613,6 +1615,7 @@ fn main() {
         status_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
         objlinks: Default::default(),
         objlink_menu: nexa_ctl::controls::ctxmenu::ContextMenu::new(),
+        sig_card: None,
         bm_gutter: None,
         toggle_log: false,
         open_colors: false,

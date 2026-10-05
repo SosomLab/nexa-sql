@@ -46,6 +46,8 @@
 
 ### 1-3. `ObjectAction` — 어디서나 같은 동작 목록
 
+> **진행(10-05 · T-180)**: ✅ F4·팔레트 `obj.reveal`(캐럿 아래 객체 → 탐색기) · ✅ 결과 열 머리 ▸ 탐색기에서 보기(단일 테이블만) · ✅ Ctrl+좌클릭 동작 `objlink.click` · ✅ **참조 행 보기**(FK 셀 → 부모 행 새 결과 탭 · `grid.fk_follow`) · ✅ 시그니처 카드(T-178) — 구현 요지는 [96 §7](96-object-links.md) · 남음 = 후보 팝업 · 탐색기 우클릭 id의 `obj.*` 이관 · `ObjectRef` 통일 · hover 카드(T-179).
+
 | id | 뜻 | 어디서 |
 |---|---|---|
 | `obj.info` | **객체 정보 탭**(뷰 탭 `ext_view`와 같은 자리 · 열 표(타입·NULL·기본값·키·코멘트) · 인덱스 · 제약 · DDL 미리보기 · "데이터 200행" 버튼) | Ctrl+클릭 · F4 · hover 카드 버튼 · 탐색기 더블클릭 옵션 · 우클릭 · 팔레트 |
@@ -76,7 +78,7 @@
 
 ✅ **09-29 1차(T-181)**: `grid::Predicate{col, op, value}` AND 목록(op = `=` `≠` `contains` `is null` `is not null` · 대소문자 무시) · `apply_sort` 뒤 `row_order.retain`(세트 복사 0 · 페치가 더 오면 재적용) · 우클릭 **필터 ▸**(우클릭한 셀의 값으로 "이 값만/제외" · "포함하는 글…" = 팔레트 입력 · NULL만/아닌 것만 · 열/전체 지우기 · **필터 조회 SQL 복사** = `SELECT * FROM ( <source> ) q WHERE 1=1 AND q."COL" = '…'`) · 헤더 **▽** 배지 · 상태줄 **n / N행**. **2차~4차(09-29)**: 헤더 우클릭 필터·정렬 메뉴 · 헤더 표식 통합(정렬 ▲/▼ · 필터 빗금 ○ · 둘 다 빗금 화살표) · **타입별** 연산(`ColKind` 문자/숫자/날짜/불리언 · 시작·크기·범위·이후/이전·참/거짓) · **정규식**(`regex` 크레이트 · `(?i)` 기본 · 컴파일 캐시 `Predicate.rx` · 오류 = 상태줄) · **값 목록 IN**(`a, b` · "이 값만" 반복 = 목록에 합침) · 정규식 조회 SQL **3단계** = 방언 정규식(Oracle `REGEXP_LIKE` · PG `~*` · MySQL `REGEXP`) → LIKE 번역(`regex_to_like` · `^ $ . .* (a|b)`) → 통과한 distinct 값 `IN (…)`(≤ 1,000 · 주석으로 단계·개수 표시). 남음 = 깔때기 아이콘 + distinct 목록(`FilterBar`) · 필터 줄(칩) · 열 사이 OR · 서버 재조회 연동.
 
-✅ **10-05 필터 줄(T-181 · 112차 win)**: 결과에 필터가 걸려 있는 동안 그리드 **위에 한 줄**(26 px × 배율) — 술어마다 칩 하나(`열이름 조건 ×` · 옅은 강조색 둥근 채움 · 외곽선 없음 = 머티리얼 칩) · 칩의 × = 그 열 필터만 지움 · 오른쪽 끝 × = 모두 지움 · 넘치면 `+N` · 필터가 없어지면 줄이 사라지고 그리드가 원래 높이로. 설정 `grid.filter_strip`(기본 on). 구현 = `grid.rs` `strip_h` · `sync_strip` · `paint_filter_strip` · `strip_event` · `remove_filter` · `pred_text` · `dump_chips` · 기동 명령 `grid.addfilter:<열>;<연산 코드>;<값>` · `grid.rmfilter:<열>` · `grid.chips:<파일>`. 시험 = `grid::tests::filter_strip_takes_a_row_and_chips_remove_filters` + 격리 캡처(journal 10-05 §8). 상태줄 n/N은 그 전부터 있었다(`filter_summary`). **남음 = OR · 서버 재조회(`Requery`) · 열 머리 깔때기 값 목록.**
+✅ **10-05 필터 줄(T-181 · 112차 win)**: 결과에 필터가 걸려 있는 동안 그리드 **위에 한 줄**(26 px × 배율) — 술어마다 칩 하나(`열이름 조건 ×` · 옅은 강조색 둥근 채움 · 외곽선 없음 = 머티리얼 칩) · 칩의 × = 그 열 필터만 지움 · 오른쪽 끝 × = 모두 지움 · 넘치면 `+N` · 필터가 없어지면 줄이 사라지고 그리드가 원래 높이로. 설정 `grid.filter_strip`(기본 on). 구현 = `grid.rs` `strip_h` · `sync_strip` · `paint_filter_strip` · `strip_event` · `remove_filter` · `pred_text` · `dump_chips` · 기동 명령 `grid.addfilter:<열>;<연산 코드>;<값>` · `grid.rmfilter:<열>` · `grid.chips:<파일>`. 시험 = `grid::tests::filter_strip_takes_a_row_and_chips_remove_filters` + 격리 캡처(journal 10-05 §8). 상태줄 n/N은 그 전부터 있었다(`filter_summary`). **10-05 서버 재조회 ✅** = 필터 메뉴 맨 아래 "필터로 서버 재조회"(`filter.requery`) → `filter_query()`를 새 결과 탭으로(`run_in_fresh_tab` 공용 부품 · 문지기) · **10-05 OR 결합 ✅** = 필터 메뉴 체크 "필터 중 하나만 맞아도(OR)"(술어 2개 이상) · 투영 any/all · `filter_query` = `WHERE 1=1 AND ( a OR b )` · 칩 사이 "OR" · **남음 = 열 머리 깔때기 값 목록(FilterBar 재사용 · 별도 설계).**
 
 ### 2-3. `ChangeSet` — 그리드 편집 버퍼(데이터 직접 관리)
 

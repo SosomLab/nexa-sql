@@ -485,6 +485,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.intel.next_wake() {
             next = next.min(t);
         }
+        // 머무름 툴팁 마감(Ctrl 없는 객체 설명 · `objlink.hover_ms`).
+        if let Some(t) = self.objlink_hover_tick(now) {
+            next = next.min(t);
+        }
         // ★ 메모리 맵 창(docs/80): 열려 있을 때만 `mem.refresh_ms`마다 표본 → 창·상태줄 갱신. 닫혀 있으면 깨우지도 않는다.
         if self.mem_win.is_open() {
             if now >= self.mem_next {

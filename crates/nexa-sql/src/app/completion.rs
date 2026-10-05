@@ -44,20 +44,48 @@ impl App {
                 if self.intel.after_char(*c, n) {
                     self.intel_request(false);
                 }
-                // `(` = 시그니처 도움(내장 함수·DBMS_* 멤버 · 상태줄 · T-178).
-                if *c == '(' {
+                // `(` = 시그니처 도움(내장 함수·DBMS_* 멤버 · 상태줄 + 카드 · T-178) · 카드가 떠 있으면 글자마다 다시 판정.
+                if *c == '(' || self.sig_card.is_some() {
                     self.intel_signature_help();
                 }
             }
+            // Esc = 카드 숨김(완성 팝업과 같은 키) · 그 밖의 키·클릭 = 캐럿이 움직였으니 카드가 떠 있으면 다시 판정.
+            InputEvent::Key {
+                key: CtlKey::Escape,
+                ..
+            } if self.sig_card.is_some() => {
+                self.sig_card = None;
+                if self.intel.is_open() {
+                    self.intel.close();
+                }
+                self.redraw();
+            }
             InputEvent::Key { .. }
             | InputEvent::MouseDown { .. }
-            | InputEvent::RightDown { .. }
-                if self.intel.is_open() =>
-            {
-                self.intel.close();
+            | InputEvent::RightDown { .. } => {
+                if self.intel.is_open() {
+                    self.intel.close();
+                }
+                if self.sig_card.is_some() {
+                    self.intel_signature_help();
+                }
             }
             _ => {}
         }
+    }
+
+    /// 시그니처 카드의 글과 캐럿 자리(팝업 층 그리기) — 활성 탭·편집기 포커스·설정이 맞을 때만.
+    pub(crate) fn sig_card_tip(&self) -> Option<(String, Rect)> {
+        let (text, tab) = self.sig_card.as_ref()?;
+        if !self.intel.cfg().signature_card
+            || self.focus != Focus::Editor
+            || self.editors.active_id() != *tab
+        {
+            return None;
+        }
+        let tb = self.editors.cur();
+        let p = tb.caret_point()?;
+        Some((text.clone(), Rect::new(p.x, p.y, 1, tb.line_h())))
     }
 
     /// 코드 기능(아웃라인 · 완성 · Goto Symbol)을 이 탭에 써도 되는가 — 큰 파일 단계가 아니고 · **구문이 SQL**이고 · 본문이
@@ -232,7 +260,7 @@ impl App {
     }
 
     /// 시그니처 도움(`intel.signature_help`): 캐럿을 감싸는 `(`의 주인이 내장 함수면 상태줄에 시그니처 한 줄.
-    fn intel_signature_help(&mut self) {
+    pub(crate) fn intel_signature_help(&mut self) {
         if !self.intel.cfg().signature_help || self.focus != Focus::Editor {
             return;
         }
@@ -248,12 +276,24 @@ impl App {
             .char_indices()
             .nth(caret_c)
             .map_or(text.len(), |(b, _)| b);
-        if let Some(sig) = self
+        let tab = self.editors.active_id();
+        match self
             .intel
             .signature_at(&text, caret_b, Some(self.sess.dialect))
         {
-            self.sess.status = tf(Msg::StIntelSignature, &[&sig]);
-            self.redraw();
+            Some(sig) => {
+                self.sess.status = tf(Msg::StIntelSignature, &[&sig]);
+                if self.intel.cfg().signature_card {
+                    self.sig_card = Some((sig, tab));
+                }
+                self.redraw();
+            }
+            None if self.sig_card.is_some() => {
+                // 괄호 밖으로 나갔다(또는 모르는 함수) = 카드 내림.
+                self.sig_card = None;
+                self.redraw();
+            }
+            None => {}
         }
     }
 

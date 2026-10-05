@@ -77,7 +77,7 @@
 | 아웃라인 UI | `outline_panel.rs`(활동 막대 `view.outline` · 필터 · 클릭/Enter 이동 · 탭·세대 열쇠 동기) + Goto Symbol 팔레트(`sym:<byte>`) | ✅ |
 | 자동 점검 | `scripts/win-func-check.ps1` S66(Ctrl+Space) · S67(Goto Symbol) · S68(아웃라인 패널) · 실기 U-78~U-80 | ✅ |
 | **정적 표(T-178 · 99차 §129)** | `nsql-script/src/builtins.rs` — 방언별 내장 함수(시그니처) · Oracle `DBMS_*` 패키지 12 · 사전 객체(`ALL_*`/`V$*` · `pg_catalog.`/`information_schema.` · `sys.`/`INFORMATION_SCHEMA.` · `sqlite_master` …) · `signature()` · `system_members()` · 시험 3 | ✅ |
-| **괄호 주인(T-178)** | `intel::Context::paren_owner/paren_into` — 시그니처 도움 · `INSERT INTO t (` 컬럼 목록 조각 | ✅ |
+| **괄호 주인(T-178)** | `intel::Context::paren_owner/paren_into` — 시그니처 도움 · `INSERT INTO t (` 컬럼 목록 조각 · **10-05 시그니처 카드** = 캐럿이 아는 함수의 괄호 안에 있는 동안 캐럿 바로 위 작은 카드(`main.rs` `sig_card` · `app/completion.rs` `sig_card_tip`/`intel_after_event` · `app/objlink.rs` `paint_tip` "above" · `app/paint.rs` 팝업 층) · 상태줄 글은 그대로 · 완성 팝업은 캐럿 아래라 안 겹침 · 설정 `intel.signature_card`(on · 끄면 상태줄만) · 첫 줄에서도 표면 안(`place_popup` 안전망) | ✅ |
 | **확정 손질 · 스크롤(T-178)** | 호스트 `pick` = 함수 `NAME()`+캐럿 안 · 키워드 공백 · FROM 뒤 alias(`gen_alias`) · 팝업 `set_max_rows(popup_rows)` · 컬럼 상세 PK/FK/UQ/NOT NULL · 예산 로그 · 설정 7(`intel.functions`·`insert_parens`·`insert_alias`·`insert_space`·`insert_columns`·`signature_help`·`budget_ms`) · S77·S78 · 위키 "3분 사용법" | ✅ |
 
 ## 7. 2차(JetBrains 상위 기능 · 후속 T)

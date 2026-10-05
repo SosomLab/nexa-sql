@@ -339,6 +339,16 @@ pub(crate) struct Grid {
     pending_filter_prompt: Option<(usize, FilterOp, String)>,
     /// 열 머리 메뉴 "객체 탐색기에서 보기"(T-180 ⑤) — 고른 열의 이름(호스트가 출처 테이블과 묶어 찾는다 · 1회성).
     pending_reveal: Option<String>,
+    /// 외래 키 열 이름(대문자 · 호스트가 메타에서 채움 · T-180 ⑥) — 셀 메뉴 "참조 행 보기" 활성 판정.
+    fk_cols: Vec<String>,
+    /// 우클릭한 셀의 **원본** 행 번호(필터·정렬 뒤 투영이 아니라 `row_order`를 거친 값).
+    menu_row: Option<usize>,
+    /// 셀 메뉴 "참조 행 보기"가 남긴 (원본 행, 열 이름) — 호스트가 부모 행을 조회한다(1회성).
+    pending_follow: Option<(usize, String)>,
+    /// 필터 메뉴 "필터로 서버 재조회"가 남긴 조회용 Query(77 §2-2 · T-181) — 호스트가 새 결과 탭으로 실행(1회성).
+    pending_requery: Option<String>,
+    /// ★ 술어 결합(T-181): 거짓 = AND(기본 · 전부 맞아야) · 참 = OR(하나만 맞아도) — 투영·조회용 Query·칩 줄이 같이 본다.
+    filter_or: bool,
     /// 필터 오류(정규식 컴파일 실패 등 · 1회성).
     pending_error: Option<String>,
     /// ★ 헤더 빗금 표식 위 hover(열, 시작 ms) — 머물면 적용된 술어 툴팁(사용자 09-29 "표식 위에 올렸을 때만").
@@ -532,6 +542,11 @@ impl Default for Grid {
             menu_cell: None,
             pending_filter_prompt: None,
             pending_reveal: None,
+            fk_cols: Vec::new(),
+            menu_row: None,
+            pending_follow: None,
+            pending_requery: None,
+            filter_or: false,
             pending_error: None,
             mark_hover: None,
             mark_rects: Vec::new(),
@@ -3503,6 +3518,12 @@ impl Grid {
             draw_x(dc, close, self.chip_hover == Some(i));
             self.chips.push((*col, chip, close));
             x = chip.right() + gap;
+            // OR 결합이면 칩 사이에 작은 "OR"(AND는 표시하지 않는다 = 기본).
+            if self.filter_or && i + 1 < labels.len() {
+                let orw = dc.text_width("OR");
+                dc.text(x, ty, Rect::new(x, cy, orw, ch), "OR", th.text_dim);
+                x += orw + gap;
+            }
         }
         if hidden > 0 {
             let more = format!("+{hidden}");
@@ -4141,6 +4162,15 @@ impl Grid {
         f.push(CtxItem::item("filter.null", t(Msg::MnFilterNull)));
         f.push(CtxItem::item("filter.notnull", t(Msg::MnFilterNotNull)));
         f.push(CtxItem::Separator);
+        // 결합 방식(T-181 · OR): 술어가 둘 이상일 때 뜻이 있다 · 체크 = 지금 OR.
+        f.push(
+            CtxItem::maybe(
+                "filter.or",
+                t(Msg::MnFilterOr),
+                self.filters.len() > 1 || self.filter_or,
+            )
+            .with_checked(self.filter_or),
+        );
         f.push(CtxItem::maybe(
             "filter.clear_col",
             t(Msg::MnFilterClearCol),
@@ -4154,6 +4184,12 @@ impl Grid {
         f.push(CtxItem::maybe(
             "filter.copy_query",
             t(Msg::MnFilterCopyQuery),
+            any && !self.source_sql().trim().is_empty(),
+        ));
+        // ★ 서버 재조회(T-181 · 77 §2-2): 같은 조회용 Query를 복사 대신 **새 결과 탭**으로 실행 — 받은 행까지만 보던 필터를 서버 전체에.
+        f.push(CtxItem::maybe(
+            "filter.requery",
+            t(Msg::MnFilterRequery),
             any && !self.source_sql().trim().is_empty(),
         ));
         f
@@ -4197,6 +4233,48 @@ impl Grid {
     pub(crate) fn reveal_table(&self) -> Option<String> {
         gridedit_sql::analyze(&self.source_sql).ok()?;
         self.source_table.clone()
+    }
+
+    /// 외래 키 열 목록(호스트가 메타에서 · 모르면 빈 목록).
+    pub(crate) fn set_fk_cols(&mut self, cols: Vec<String>) {
+        self.fk_cols = cols.into_iter().map(|c| c.to_ascii_uppercase()).collect();
+    }
+
+    /// 술어 결합을 바꾼다(AND ↔ OR) → 재투영 · 맨 위로.
+    pub(crate) fn set_filter_or(&mut self, or: bool) {
+        if self.filter_or != or {
+            self.filter_or = or;
+            self.apply_sort();
+            self.scroll_y = 0;
+        }
+    }
+
+    /// 필터 메뉴 "필터로 서버 재조회"가 남긴 조회용 Query(1회성).
+    pub(crate) fn take_requery(&mut self) -> Option<String> {
+        self.pending_requery.take()
+    }
+
+    /// 셀 메뉴 "참조 행 보기"가 남긴 (원본 행, 열 이름)(1회성).
+    pub(crate) fn take_follow(&mut self) -> Option<(usize, String)> {
+        self.pending_follow.take()
+    }
+
+    /// 원본 행 `r`의 이름 있는 열 값들(이름 대소문자 무시 · 없는 열은 뺀다) — 외래 키 조회의 입력.
+    pub(crate) fn row_values(&self, r: usize, cols: &[String]) -> Vec<(String, Value)> {
+        let Some(rs) = self.rs.as_ref() else {
+            return Vec::new();
+        };
+        if r >= rs.len() {
+            return Vec::new();
+        }
+        cols.iter()
+            .filter_map(|want| {
+                rs.columns()
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(want))
+                    .map(|ci| (want.clone(), rs.cell(r, ci).clone()))
+            })
+            .collect()
     }
 
     /// 열 머리 메뉴 "객체 탐색기에서 보기"가 남긴 열 이름(1회성) — 호스트가 `source_table()`과 묶어 탐색기에서 찾는다.
@@ -4304,6 +4382,20 @@ impl Grid {
                 *emph = any;
             }
             items.push(fi);
+            // ★ 외래 키 따라가기(T-180 ⑥): 단일 테이블 결과 · 외래 키 열 · 값 있음일 때만 활성.
+            if let Some(table) = self.reveal_table() {
+                let _ = table;
+                let is_fk = self
+                    .rs
+                    .as_ref()
+                    .and_then(|rs| rs.columns().get(ci))
+                    .is_some_and(|c| self.fk_cols.iter().any(|f| f.eq_ignore_ascii_case(&c.name)));
+                items.push(CtxItem::maybe(
+                    "obj.follow_fk",
+                    t(Msg::MnFollowFk),
+                    is_fk && val.is_some(),
+                ));
+            }
         }
         // ★ 편집(docs/87 §6): 편집 가능한 결과에만 · 값 보기는 늘.
         items.push(CtxItem::Separator);
@@ -4398,6 +4490,15 @@ impl Grid {
             self.edit_command(id);
             return;
         }
+        if id == "obj.follow_fk" {
+            let col = self.menu_cell.as_ref().map(|(ci, _)| *ci).and_then(|ci| {
+                self.rs
+                    .as_ref()
+                    .and_then(|rs| rs.columns().get(ci).map(|c| c.name.clone()))
+            });
+            self.pending_follow = self.menu_row.zip(col);
+            return;
+        }
         if id == "obj.reveal" {
             self.pending_reveal = self.menu_cell.as_ref().map(|(ci, _)| *ci).and_then(|ci| {
                 self.rs
@@ -4471,10 +4572,14 @@ impl Grid {
         if !self.filters.is_empty() {
             let ncol = rs.columns().len();
             let filters = self.filters.clone();
+            let any = self.filter_or;
             order.retain(|&r| {
-                filters
-                    .iter()
-                    .all(|p| p.col >= ncol || p.pass_value(rs.cell(r, p.col)))
+                let hit = |p: &Predicate| p.col >= ncol || p.pass_value(rs.cell(r, p.col));
+                if any {
+                    filters.iter().any(hit)
+                } else {
+                    filters.iter().all(hit)
+                }
             });
         }
         self.row_order = order;
@@ -4625,10 +4730,18 @@ impl Grid {
         } else {
             format!("{}\n", notes.join("\n"))
         };
-        Some(format!(
-            "{head}SELECT *\nFROM (\n{src}\n) q\nWHERE 1=1\nAND {}\n",
-            preds.join("\nAND ")
-        ))
+        // OR 결합 = 괄호로 묶어 한 덩어리(`WHERE 1=1 AND (a OR b)` · 뒤에 조건을 덧붙여도 뜻이 안 바뀐다).
+        Some(if self.filter_or && preds.len() > 1 {
+            format!(
+                "{head}SELECT *\nFROM (\n{src}\n) q\nWHERE 1=1\nAND (\n    {}\n)\n",
+                preds.join("\n    OR ")
+            )
+        } else {
+            format!(
+                "{head}SELECT *\nFROM (\n{src}\n) q\nWHERE 1=1\nAND {}\n",
+                preds.join("\nAND ")
+            )
+        })
     }
 
     fn filter_pick(&mut self, what: &str) {
@@ -4639,6 +4752,14 @@ impl Grid {
                 if let Some(sql) = self.filter_query() {
                     self.pending_copy = Some((sql, 1));
                 }
+                return;
+            }
+            "requery" => {
+                self.pending_requery = self.filter_query();
+                return;
+            }
+            "or" => {
+                self.set_filter_or(!self.filter_or);
                 return;
             }
             _ => {}
@@ -5210,6 +5331,7 @@ impl Grid {
                             self.select_only(cell);
                         }
                         self.menu_cell = self.cell_filter_target(cell);
+                        self.menu_row = self.row_order.get(cell.0).copied();
                         self.open_menu(x, y, scale);
                         return;
                     }
@@ -6858,6 +6980,47 @@ fn cell_text(v: &Value, null: &str) -> String {
 mod tests {
     use super::*;
     use nsql_core::{Column, ResultSet};
+
+    /// T-181 OR 결합 — 투영은 any/all · 조회용 Query는 괄호 묶음 · 술어 하나면 AND 꼴 그대로.
+    #[test]
+    fn filter_or_combines_predicates() {
+        let mut g = grid_with(&[100, 100]);
+        let rs = ResultSet {
+            columns: vec![
+                Column {
+                    name: "a".into(),
+                    type_name: String::new(),
+                },
+                Column {
+                    name: "b".into(),
+                    type_name: String::new(),
+                },
+            ],
+            rows: vec![
+                vec![Value::Int(1), Value::Int(10)],
+                vec![Value::Int(2), Value::Int(20)],
+                vec![Value::Int(3), Value::Int(30)],
+            ],
+        };
+        g.set_result(rs);
+        g.set_source_sql("SELECT a, b FROM t");
+        g.add_filter(0, FilterOp::Eq, "1".into());
+        g.add_filter(1, FilterOp::Eq, "20".into());
+        assert_eq!(g.row_order, Vec::<usize>::new(), "AND = 둘 다 맞는 행 없음");
+        g.set_filter_or(true);
+        assert_eq!(g.row_order, vec![0, 1]);
+        let q = g.filter_query().expect("query");
+        assert!(q.contains("AND (\n"), "{q}");
+        assert!(q.contains("\n    OR "), "{q}");
+        g.set_filter_or(false);
+        assert!(!g.filter_query().expect("query").contains(" OR "));
+        g.remove_filter(1);
+        g.set_filter_or(true);
+        assert!(
+            !g.filter_query().expect("query").contains(" OR "),
+            "술어 하나 = 괄호 없음"
+        );
+    }
 
     /// T-180 ⑤ — 열 머리 → 탐색기의 대상은 단일 테이블 조회일 때만(조인 = 없음 · 첫 테이블로 잘못 풀지 않는다).
     #[test]

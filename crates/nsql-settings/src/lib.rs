@@ -1413,6 +1413,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 머무름 툴팁(T-179 ③ 첫 걸음 · 77의 `intel.hover_ms` 자리 · 10초 이하 = ms 규칙 94 §6-5).
+    Entry {
+        key: "objlink.hover_ms",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkHoverMs,
+        desc: Msg::DescObjLinkHoverMs,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "700",
+    },
     Entry {
         key: "objlink.tooltip_pos",
         cat: Msg::CatObjLink,
@@ -1970,6 +1979,15 @@ pub const REGISTRY: &[Entry] = &[
             max: 1_000_000,
         },
         default: "10000",
+    },
+    // 외래 키 따라가기(T-180 ⑥) — 결과가 오면 그 테이블의 제약을 한 번 읽는다(끄면 읽지 않는다 · 39 §3).
+    Entry {
+        key: "grid.fk_follow",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFkFollow,
+        desc: Msg::DescGridFkFollow,
+        kind: SettingKind::Bool,
+        default: "on",
     },
     // 필터 줄(칩 · × · 77 §2-2 · T-181) — 필터가 있을 때만 한 줄을 차지한다.
     Entry {
@@ -5273,6 +5291,14 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatIntel,
         label: Msg::LblIntelSignatureHelp,
         desc: Msg::DescIntelSignatureHelp,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "intel.signature_card",
+        cat: Msg::CatIntel,
+        label: Msg::LblIntelSignatureCard,
+        desc: Msg::DescIntelSignatureCard,
         kind: SettingKind::Bool,
         default: "on",
     },
