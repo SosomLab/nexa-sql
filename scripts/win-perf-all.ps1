@@ -76,7 +76,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $HomeDir "profiles"))) {
 function Kill-App {
     # 앞 시나리오가 큰 결과를 들고 있으면 종료에 수 초가 걸린다 — 끝나기를 기다리지 않고 다음 표본을 띄우면
     # 새 프로세스가 "이미 죽은 프로세스"로 보이는 0 표본이 나온다(09-22에 실제로 겪음).
-    $ps = @(Get-Process nexa-sql -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($root, "OrdinalIgnoreCase") })
+    # ★ 종료 범위 = **이 스크립트가 띄우는 exe와 같은 경로**만(10-05 · 협업 세션 제안): 저장소 아래 전부를 죽이면 사용자 실기용 Debug
+    #   인스턴스(target/debug)까지 끊긴다 — 측정 대상(Release 사본)만 거둔다.
+    $ps = @(Get-Process nexa-sql -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -ieq $Exe) })
     foreach ($q in $ps) { try { $q.Kill() } catch {} }
     foreach ($q in $ps) { try { $null = $q.WaitForExit(8000) } catch {} }
     Start-Sleep -Milliseconds 400

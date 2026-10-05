@@ -124,7 +124,8 @@ if (Test-Path -LiteralPath $Cli) {
     if ($np -gt 0) { Say ("load-source keys (perf ledger) = " + $np + " (nsql config list perf)") }
 }
 if (-not $SkipRun -and (Test-Path -LiteralPath $Exe)) {
-    Get-Process nexa-sql -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$root*" } | Stop-Process -Force
+    # ★ 이 스크립트가 띄우는 exe와 같은 경로만 거둔다(사용자 실기용 Debug 인스턴스는 그대로 · 10-05).
+    Get-Process nexa-sql -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -ieq $Exe) } | Stop-Process -Force
     Start-Sleep -Milliseconds 300
     $env:NSQL_STARTUP_CMD = ""
     $p = Start-Process -FilePath $Exe -ArgumentList "Local" -WorkingDirectory (Split-Path $Exe) -PassThru

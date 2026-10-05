@@ -99,8 +99,9 @@ Say ("== win-mem-reclaim " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  commi
 Say "| # | 대상 | ① 기준 MB | ② 올림 | ③ 놓음 | ④ trim 뒤 | 핸들 ①/④ | 스레드 ①/④ | 허용 | 판정 | 비고"
 Say "|---|---|---:|---:|---:|---:|---|---|---|---|---|"
 
-# 결과 탭 × = 결과 탭 바 첫 탭의 닫기 상자(클라이언트 377/507 · 1375×945 · 배율 1.0 · 활성 탭이 첫 자리일 때).
-$closeRes = "ui.click:377/507"
+# 결과 탭 닫기 = 명령 id(`result.tab.close` = 활성 결과 탭 닫기) — 종전 좌표 클릭(377/507)은 결과 탭 줄에 Output 탭이 생긴 뒤
+#   ×를 빗나가 R2·R4가 거짓 OVER(10-05 112차 성능 전수 · 협업 세션 발견). 좌표 의존 제거.
+$closeRes = "result.tab.close"
 
 # R1 편집기 탭 2 MB: 올림 = open · 놓음 = file.close_tab.
 Run-Item -Id R1 -Title "편집기 탭(2 MB)" -Cmd ("@after:6000:open:" + $sql2m + ",@after:14000:file.close_tab") -TBase 5500 -TRaise 13500 -TRelease 16000 -Allow 2
