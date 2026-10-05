@@ -6,7 +6,7 @@
 
 ## 2026-10-05 (112차 · **win**)([journal 10-05 §0 요약](journal/2026-10-05.md))
 
-- 협업 쌍 첫 운영(개발 nexa-sql-b9 · 협업 nexa-sql-2b) · push **3건** `1ddeaf1` → `0867167` → **`36fc2da`**(CI 3/3 ✓) · nexa-ui `e9a7a65`(이 저장소는 고치지 않음).
+- 협업 쌍 첫 운영(개발 nexa-sql-b9 · 협업 nexa-sql-2b) · push **5건** `1ddeaf1` → `0867167` → `36fc2da` → `f089e49`(마감 문서) → **`7be464c`**(성능 결과 · 하네스 수정)(CI 5/5 ✓) · nexa-ui `e9a7a65`(이 저장소는 고치지 않음).
 - ★ **T-122 문지기 우회 불가화** — 워커 전송 = `Sess::submit(증표 GatePass, cmd)` / `Sess::control(cmd)` 둘뿐 · 소스 훑기 시험([52 §3-4](52-session-modes.md)).
 - ★ **Linux 패키지 저장소 채널** pkg.sosomlab.com(APT + RPM · `linux-repo.yml` · deb·rpm 필수 자산 · [33 §5-5](33-distribution-and-packaging.md) · T-280 · 실제 발행 미검증).
 
@@ -20,7 +20,7 @@
 
 - 🔧 결함: T-162 전부(SQLite `@x`·`$x` · 짝 없는 따옴표 · `nsql plan` PRINT · SQL Server 선언 없는 변수 `sql_variant` D-254) · T-132 `conn add` 비밀번호 · T-177 기능 점검 좌표(auto-ok = 생존 판정뿐이라 빗나간 채 통과하던 것) · ★ **결과 탭 동기화**(탭 전환 직후 실행 결과가 옛 탭 패널로) · 정보 탭 읽기 전용 · 열 머리 ▸ 탐색기 조인 결과.
 - 📚 잔여 업무 분석 + 문서 정합(TODO · MILESTONES · 결정 기록 [10 §3-1](10-decision-record.md) 번호별 현황 · 번호 규칙 D-254부터 [16 §2-9](16-doc-git-conventions.md)).
-- 검증: V3 전수 1회(15:08~15:23 · 앞 묶음) · V2 3회(test **762 → 764 → 766** · clippy · fmt · Release · golden plan) · 조각마다 V1(clippy + 격리 자체 시험 · 부정 사례 포함) · CI 3/3.
+- 검증: V3 전수 1회(15:08~15:23 · 앞 묶음) · V2 3회(test **762 → 764 → 766** · clippy · fmt · Release · golden plan) · 조각마다 V1(clippy + 격리 자체 시험 · 부정 사례 포함) · CI 5/5 · ★ **성능 전수 112차 = 회귀 없음**([26 §7-14](26-performance-architecture.md) · 같은 시각 A/B `74440fc` vs `f089e49` · 기동 창 중앙값 95 = 95 ms · 유휴 CPU 0 · GUI 16.66 MiB(오늘분 +71 KB) · 회수 R1~R6 OK · 조건 = PC 부하 16~25 %) · 하네스 결함 2 고침(성능 스크립트 종료 범위 = 띄운 `$Exe`만 · 회수 시험 결과 탭 닫기 = 명령 id) · 남음 T-168b.
 - 남은 사용자 몫: **실기 T-282(U-178~U-193)** · T-280(시크릿 `LINUX_REPO_DISPATCH_TOKEN` · linux-repo toml 커밋·push 승인 · `dnf` 실기) · 결정 4(winget·choco 개시 · Output 탭 고정 점 · 소스 먼저 push 안 · 맥 컴파일러 고정) + T-281.
 - 다음(개발): T-179 동작 버튼 hover 카드 · T-178 MetaStore 확장 · T-182 남음 · T-180 `ObjectRef`(보류 가능) · T-273(기동 직후 탐색기 paint 정지 · 이 PC Debug 2~6 s).
 
