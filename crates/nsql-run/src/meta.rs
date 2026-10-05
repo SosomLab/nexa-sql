@@ -1103,6 +1103,19 @@ impl Snapshot {
             .and_then(|pub_sym| self.exact.get(&(pub_sym, lkey)).copied())
     }
 
+    /// ★ **후보 조회**(T-180 ⑦): 스키마 없이 쓴 이름이 현재 스키마에서 안 풀릴 때, **접속 스키마 전부**에서 같은 이름을 모은다
+    /// (스키마 순서 · 종류 무관 · 대소문자 무시). 자동 폴백이 아니라 사용자가 고르는 후보 목록용(엄격 판정 유지 · 사용자 09-30).
+    #[must_use]
+    pub fn lookup_any_schema(&self, names: &Interner, name: &str) -> Vec<ObjId> {
+        let Some(lkey) = names.find(&name.to_lowercase()) else {
+            return Vec::new();
+        };
+        self.schemas
+            .iter()
+            .filter_map(|s| self.exact.get(&(*s, lkey)).copied())
+            .collect()
+    }
+
     /// 접두 조회(버킷 · 대소문자 무시 · `limit`) — O(log n + k).
     #[must_use]
     pub fn prefix(
@@ -1270,6 +1283,42 @@ mod tests {
     }
 
     /// ★ 명시 갱신(79 §3 · T-187): `mark_stale`는 Loaded → Stale(목록·접두 조회는 그대로) · `mark_columns_unknown`은 컬럼·상세를 비움 ·
+    /// T-180 ⑦ 후보 조회 — 스키마 없는 이름은 현재 스키마에서만 풀리고(엄격) · 후보는 접속 스키마 전부에서 모은다(종류 무관 · 대소문자 무시).
+    #[test]
+    fn candidates_across_schemas_without_fallback() {
+        let mut m = MetaStore::new(1 << 20);
+        m.set_schemas(&["hr".into(), "fin".into(), "ops".into()], Some("hr"));
+        m.load_bucket("hr", ObjectKind::Table, &[obj("EMP", 1)], 1);
+        m.load_bucket(
+            "fin",
+            ObjectKind::Table,
+            &[obj("ACCT", 1), obj("LEDGER", 1)],
+            1,
+        );
+        m.load_bucket("ops", ObjectKind::View, &[obj("ACCT", 1)], 1);
+        let s = m.snapshot();
+        // 현재 스키마(hr)에 없는 ACCT = 못 푼다(폴백 없음).
+        assert_eq!(
+            s.lookup_resolvable_from(&m.names, None, Some("hr"), "acct"),
+            None
+        );
+        // 후보 = fin.ACCT(테이블) · ops.ACCT(뷰) — 스키마 순서.
+        let c = s.lookup_any_schema(&m.names, "Acct");
+        let got: Vec<(String, ObjectKind)> = c
+            .iter()
+            .filter_map(|id| s.object(*id))
+            .map(|o| (m.names.get(o.schema).to_string(), o.kind))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("fin".to_string(), ObjectKind::Table),
+                ("ops".to_string(), ObjectKind::View)
+            ]
+        );
+        assert!(s.lookup_any_schema(&m.names, "nothing").is_empty());
+    }
+
     /// 스키마를 주면 그 스키마만 · 모르는 스키마 = 0.
     #[test]
     fn mark_stale_and_columns_unknown_keep_lists() {

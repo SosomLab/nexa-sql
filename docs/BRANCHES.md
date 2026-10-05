@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-05-112c | 2026-10-05 | 2026-10-05 → main(삭제) | 1 | 112차 win 3차: 후보 메뉴(T-180 ⑦) · `obj.*` 액션 얇은 판 + Shift+F10(T-180 ④) · 필터 값 고르기(T-181 완료) · V2 통과(test 766 · clippy · fmt · Release · golden plan 2) · journal 10-05 §27~§31 |
 | work/2026-10-05-112b | 2026-10-05 | 2026-10-05 → main(삭제) | 1 | 112차 win 2차: T-162 ⑤ `sql_variant`(D-254) · 시그니처 카드 · 참조 행 보기(FK) · 별건 결함(탭 전환 직후 결과가 옛 패널로) · 필터 서버 재조회 · OR · 머무름 툴팁 · 정보 탭 Shift+F4 · 데이터 200행 · V2 통과(test 764 · clippy · fmt · Release · golden plan 2) · journal 10-05 §17~§24 |
 | work/2026-10-05-112 | 2026-10-05 | 2026-10-05 → main(삭제) | 1 | 112차 win: T-122 문지기 우회 불가화(GatePass) · T-178 JOIN FK 조각 · T-181 필터 줄 · T-182 그리드 F2/Ctrl+D · T-180 F4 `obj.reveal` + 열 머리 ▸ 탐색기 + `objlink.click` · T-162 ①④⑥ · T-132 · T-177 · Linux 저장소 채널(`linux-repo.yml` · 33 §5-5 · T-280) · 문서 정합(TODO · MILESTONES · 결정 기록 §3-1 · 번호 규칙) · V3 전수(앞 묶음) + V2 통과(test 762 · clippy · fmt · Release · SDK 11 · golden plan 2) · journal 10-05 |
 | work/2026-10-04-followups | 2026-10-04 | 2026-10-04 → main(삭제) | 1 | v0.1.4 뒤 후속 5건(툴팁 단축키 키맵 · THIRD-PARTY-NOTICES 로고 고지 · bench-boost 복원 · release.yml 형제 저장소 태그 시각 고정 · posdrop ▾ = nexa-ui 140차) · 협업 운영 V3 개정 · journal 10-04 §22~23 |

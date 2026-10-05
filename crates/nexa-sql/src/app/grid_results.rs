@@ -335,6 +335,9 @@ impl App {
         let list_max = self.settings.int("grid.filter_list_max").max(1) as usize;
         self.all_grids()
             .for_each(|g| g.set_filter_list_max(list_max));
+        let pick_max = self.settings.int("grid.filter_pick_max").clamp(5, 200) as usize;
+        self.all_grids()
+            .for_each(|g| g.set_filter_pick_max(pick_max));
         let strip = self.settings.flag("grid.filter_strip");
         self.all_grids().for_each(|g| g.set_filter_strip(strip));
     }

@@ -308,6 +308,8 @@ pub(crate) struct Grid {
     filter_list_max: usize,
     /// 설정 `grid.filter_strip` — 필터가 있을 때 그리드 위에 칩 한 줄(77 §2-2 · T-181).
     filter_strip: bool,
+    /// 설정 `grid.filter_pick_max` — 필터 ▸ 값 고르기 하위 메뉴의 고유값 수(기본 30).
+    filter_pick_max: usize,
     /// 필터 줄 높이(없으면 0) — `bounds`는 이만큼 아래에서 시작한다(줄은 `bounds` 바로 위).
     strip_h: i32,
     /// 필터 줄의 칩(술어의 열 · 칩 사각형 · × 사각형) — 그릴 때 채운다 · 맞히기는 이 사각형으로.
@@ -529,6 +531,7 @@ impl Default for Grid {
             null_text: "NULL".into(),
             filter_list_max: 1000,
             filter_strip: true,
+            filter_pick_max: 30,
             strip_h: 0,
             chips: Vec::new(),
             chips_clear: None,
@@ -704,6 +707,7 @@ impl Grid {
             null_text: self.null_text.clone(),
             filter_list_max: self.filter_list_max,
             filter_strip: self.filter_strip,
+            filter_pick_max: self.filter_pick_max,
             row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
@@ -3426,6 +3430,29 @@ impl Grid {
         self.clamp();
     }
 
+    /// 값 고르기 메뉴 항목 수(설정 `grid.filter_pick_max`).
+    pub(crate) fn set_filter_pick_max(&mut self, n: usize) {
+        self.filter_pick_max = n.clamp(5, 200);
+    }
+
+    /// 열의 고유값(받은 행 전체 · 처음 나온 순서 · NULL 제외) — 상한+1개까지(넘침 표시용). 메뉴를 열 때와 고를 때 같은 계산이라
+    /// 번호가 맞는다(그 사이 행이 바뀌면 다음 메뉴에서 다시 센다).
+    fn column_values(&self, ci: usize) -> Vec<String> {
+        let Some(rs) = self.rs.as_ref() else {
+            return Vec::new();
+        };
+        if ci >= rs.columns().len() {
+            return Vec::new();
+        }
+        distinct_capped(
+            (0..rs.len())
+                .map(|r| rs.cell(r, ci))
+                .filter(|v| !matches!(v, Value::Null))
+                .map(|v| cell_text(v, "")),
+            self.filter_pick_max,
+        )
+    }
+
     /// 필터 줄 켜기/끄기(설정 `grid.filter_strip`) — 높이는 다음 그리기에서 맞춘다.
     pub(crate) fn set_filter_strip(&mut self, on: bool) {
         self.filter_strip = on;
@@ -4157,6 +4184,39 @@ impl Grid {
         }
         if kind != ColKind::Bool {
             f.push(CtxItem::item("filter.in", t(Msg::MnFilterIn)));
+            // ★ 값 고르기(T-181 · 77 §2-2 "깔때기 → 값 목록"): 열의 고유값을 체크 항목으로 — 고르면 `=`/값 목록(IN) 술어에 넣고 빼기.
+            let values = self.column_values(ci);
+            if !values.is_empty() {
+                let chosen: Vec<String> = self
+                    .filters
+                    .iter()
+                    .find(|p| p.col == ci && matches!(p.op, FilterOp::Eq | FilterOp::In))
+                    .map(|p| {
+                        let mut items = split_list(&p.value);
+                        if p.op == FilterOp::Eq && items.is_empty() {
+                            items.push(p.value.clone());
+                        }
+                        items
+                    })
+                    .unwrap_or_default();
+                let mut kids: Vec<CtxItem> = values
+                    .iter()
+                    .take(self.filter_pick_max)
+                    .enumerate()
+                    .map(|(n, v)| {
+                        CtxItem::item(format!("filter.pick:{n}"), short(v))
+                            .with_checked(chosen.iter().any(|c| c.eq_ignore_ascii_case(v)))
+                    })
+                    .collect();
+                if values.len() > self.filter_pick_max {
+                    kids.push(CtxItem::maybe(
+                        "filter.pick_more",
+                        t(Msg::MnFilterPickMore),
+                        false,
+                    ));
+                }
+                f.push(CtxItem::submenu("filter.pick", t(Msg::MnFilterPick), kids));
+            }
         }
         f.push(CtxItem::item("filter.regex", t(Msg::MnFilterRegex)));
         f.push(CtxItem::item("filter.null", t(Msg::MnFilterNull)));
@@ -4765,6 +4825,46 @@ impl Grid {
             _ => {}
         }
         let Some((ci, val)) = target else { return };
+        // 값 고르기 토글(`pick:<n>`): 이미 골라져 있으면 빼고(마지막이면 술어 제거) · 아니면 `=`로 넣는다(`=` 반복 = 값 목록 합침).
+        if let Some(n) = what
+            .strip_prefix("pick:")
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            let Some(v) = self.column_values(ci).get(n).cloned() else {
+                return;
+            };
+            let pos = self
+                .filters
+                .iter()
+                .position(|p| p.col == ci && matches!(p.op, FilterOp::Eq | FilterOp::In));
+            let present = pos.is_some_and(|i| {
+                let p = &self.filters[i];
+                let mut items = split_list(&p.value);
+                if p.op == FilterOp::Eq && items.is_empty() {
+                    items.push(p.value.clone());
+                }
+                items.iter().any(|c| c.eq_ignore_ascii_case(&v))
+            });
+            if present {
+                let i = pos.unwrap_or_default();
+                let mut items = split_list(&self.filters[i].value);
+                if self.filters[i].op == FilterOp::Eq && items.is_empty() {
+                    items.push(self.filters[i].value.clone());
+                }
+                items.retain(|c| !c.eq_ignore_ascii_case(&v));
+                if items.is_empty() {
+                    self.filters.remove(i);
+                } else {
+                    self.filters[i].op = FilterOp::In;
+                    self.filters[i].value = items.join(", ");
+                }
+                self.apply_sort();
+                self.scroll_y = 0;
+            } else {
+                self.add_filter(ci, FilterOp::Eq, v);
+            }
+            return;
+        }
         if what == "clear_col" {
             self.filters.retain(|p| p.col != ci);
             self.apply_sort();
@@ -6980,6 +7080,51 @@ fn cell_text(v: &Value, null: &str) -> String {
 mod tests {
     use super::*;
     use nsql_core::{Column, ResultSet};
+
+    /// T-181 값 고르기 — 고유값은 받은 행 순서 · NULL 제외 · 상한+1 · 토글 = 넣기(`=` → 목록) / 빼기(마지막 = 술어 제거).
+    #[test]
+    fn filter_pick_toggles_values() {
+        let mut g = grid_with(&[100]);
+        let rs = ResultSet {
+            columns: vec![Column {
+                name: "c".into(),
+                type_name: String::new(),
+            }],
+            rows: vec![
+                vec![Value::Str("b".into())],
+                vec![Value::Null],
+                vec![Value::Str("a".into())],
+                vec![Value::Str("b".into())],
+                vec![Value::Str("c".into())],
+            ],
+        };
+        g.set_result(rs);
+        g.set_filter_pick_max(5);
+        assert_eq!(g.column_values(0), ["b", "a", "c"]);
+        g.menu_cell = Some((0, None));
+        g.filter_pick("pick:0"); // b
+        assert_eq!(g.row_order, vec![0, 3]);
+        g.filter_pick("pick:1"); // + a → 목록
+        assert_eq!(g.filters[0].op, FilterOp::In);
+        assert_eq!(g.row_order, vec![0, 2, 3]);
+        g.filter_pick("pick:0"); // b 빼기
+        assert_eq!(g.row_order, vec![2]);
+        g.filter_pick("pick:1"); // a 빼기 = 술어 제거
+        assert!(g.filters.is_empty());
+        assert_eq!(g.row_order.len(), 5);
+        // 상한+1 = 넘침 표시 자리.
+        g.set_filter_pick_max(5);
+        let mut g2 = grid_with(&[100]);
+        g2.set_result(ResultSet {
+            columns: vec![Column {
+                name: "c".into(),
+                type_name: String::new(),
+            }],
+            rows: (0..10).map(|i| vec![Value::Int(i)]).collect(),
+        });
+        g2.set_filter_pick_max(5);
+        assert_eq!(g2.column_values(0).len(), 6);
+    }
 
     /// T-181 OR 결합 — 투영은 any/all · 조회용 Query는 괄호 묶음 · 술어 하나면 AND 꼴 그대로.
     #[test]

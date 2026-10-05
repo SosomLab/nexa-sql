@@ -476,6 +476,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "f4",
         linux: "f4",
     },
+    // 선택한 탐색기 항목의 우클릭 메뉴를 키보드로(Windows 관례 Shift+F10 · T-180 ④).
+    Command {
+        id: "obj.menu",
+        label: Msg::MnObjMenu,
+        win: "shift+f10",
+        mac: "shift+f10",
+        linux: "shift+f10",
+    },
     // 객체 상세 패널이 보여 주는 것(속성 · 컬럼 · 제약 · 소스/DDL)을 읽기 전용 탭으로(T-179 ② "정보 탭" · 비교·복사·검색용).
     Command {
         id: "obj.info",

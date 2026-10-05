@@ -1493,11 +1493,21 @@ impl App {
             .objlinks
             .links
             .iter()
-            .position(|l| l.range.0 <= caret && caret <= l.range.1)
-            .filter(|&k| self.objlink_reveal_target(k).is_some());
+            .position(|l| l.range.0 <= caret && caret <= l.range.1);
         match hit {
-            Some(k) => self.objlink_reveal(k),
-            None => {
+            Some(k) if self.objlink_reveal_target(k).is_some() => self.objlink_reveal(k),
+            // 못 푼 이름인데 다른 스키마에 후보가 있으면 **후보 메뉴**를 캐럿 아래에(T-180 ⑦) — F4로도 고를 수 있게.
+            Some(k) if !self.objlink_candidates(k).is_empty() => {
+                let tb = self.editors.cur();
+                if let Some(p) = tb.caret_point() {
+                    let at = Point {
+                        x: p.x,
+                        y: p.y + tb.line_h(),
+                    };
+                    self.objlink_open_menu(k, at);
+                }
+            }
+            _ => {
                 self.sess.status = t(Msg::StObjRevealNone).into();
                 self.redraw();
             }
@@ -1587,12 +1597,31 @@ impl App {
         }
         // ★ "객체 탐색기에서 보기"(10-01 ㉗) = 실제 객체로 풀릴 때만 활성(미확인 링크 = 흐림).
         let can = self.objlink_reveal_target(k).is_some();
-        let items = vec![
+        let mut items = vec![
             CtxItem::item("objlink.copy_desc", t(Msg::MnObjLinkCopyDesc)),
             CtxItem::item("objlink.copy_name_desc", t(Msg::MnObjLinkCopyNameDesc)),
             CtxItem::Separator,
             CtxItem::maybe("objlink.reveal", t(Msg::MnObjLinkReveal), can),
         ];
+        // ★ 후보 팝업(T-180 ⑦): 현재 스키마에서 못 푼 이름이 **다른 스키마**에 있으면 고르게 — 자동으로 바꿔 풀지는 않는다(엄격).
+        if !can {
+            let cands = self.objlink_candidates(k);
+            if !cands.is_empty() {
+                let children: Vec<CtxItem> = cands
+                    .iter()
+                    .take(12)
+                    .map(|(label, id)| {
+                        CtxItem::item(format!("objlink.cand:{}", id.0), label.clone())
+                    })
+                    .collect();
+                items.push(CtxItem::Separator);
+                items.push(CtxItem::submenu(
+                    "objlink.cands",
+                    t(Msg::MnObjLinkCandidates),
+                    children,
+                ));
+            }
+        }
         let host = self.window_rect();
         self.objlink_menu.set_scale(self.scale);
         self.objlink_menu
@@ -1682,12 +1711,88 @@ impl App {
             LogKind::Info,
             format!("[objlink] pick id={id} link={k}"),
         ));
+        if let Some(oid) = id
+            .strip_prefix("objlink.cand:")
+            .and_then(|n| n.parse::<u32>().ok())
+        {
+            self.reveal_obj_id(ObjId(oid));
+            return;
+        }
         match id {
             "objlink.copy_desc" => self.objlink_copy_desc(k),
             "objlink.copy_name_desc" => self.objlink_copy_name_desc(k),
             "objlink.reveal" => self.objlink_reveal(k),
             _ => {}
         }
+    }
+
+    /// 다른 스키마의 같은 이름 후보(T-180 ⑦) — 스키마를 쓰지 않은 테이블·루틴 링크가 현재 스키마에서 안 풀릴 때만 ·
+    /// (표시 라벨 `SCHEMA.NAME [종류]`, 객체 id).
+    fn objlink_candidates(&self, k: usize) -> Vec<(String, ObjId)> {
+        let Some(link) = self.objlinks.links.get(k) else {
+            return Vec::new();
+        };
+        if link.schema.is_some() || matches!(link.kind, LinkKind::Column) {
+            return Vec::new();
+        }
+        let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
+        snap.lookup_any_schema(names, &link.name)
+            .into_iter()
+            .filter_map(|id| {
+                let o = snap.object(id)?;
+                Some((
+                    format!(
+                        "{}.{}  [{:?}]",
+                        names.get(o.schema),
+                        names.get(o.name),
+                        o.kind
+                    ),
+                    id,
+                ))
+            })
+            .collect()
+    }
+
+    /// 메타 객체 id로 객체 탐색기에서 찾기(후보 팝업의 선택).
+    fn reveal_obj_id(&mut self, id: ObjId) {
+        let target = {
+            let (names, snap) = self.explorer.meta_view(self.sess.spec.as_ref());
+            snap.object(id).map(|o| {
+                (
+                    names.get(o.schema).to_string(),
+                    o.kind,
+                    names.get(o.name).to_string(),
+                )
+            })
+        };
+        let Some((schema, kind, name)) = target else {
+            return;
+        };
+        let (db, schema) = match (self.sess.dialect, schema.split_once('.')) {
+            (nsql_core::Dialect::Mssql, Some((d, s))) if !s.is_empty() => {
+                (Some(d.to_string()), s.to_string())
+            }
+            _ => (None, schema),
+        };
+        if !self.explorer.is_visible() {
+            self.menu_action("view.explorer");
+        }
+        let spec = self.sess.spec.clone();
+        let ok = self.explorer.reveal(
+            spec.as_ref(),
+            crate::explorer::RevealTarget {
+                db,
+                schema,
+                kind,
+                name,
+                member: None,
+            },
+        );
+        if ok {
+            self.set_focus(Focus::Explorer);
+            self.explorer_actions();
+        }
+        self.redraw();
     }
 
     /// 자체 시험(㉗-k): 이름으로 링크를 찾아 **우클릭한 것처럼** 메뉴를 연다(Ctrl을 잠시 누른 것으로 치고 분석).

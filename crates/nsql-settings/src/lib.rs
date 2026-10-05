@@ -1998,6 +1998,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // 값 고르기 하위 메뉴(T-181 · 77 §2-2 "열 머리 깔때기 → 값 목록") — 메뉴 항목 수(72 §3 상한 원장).
+    Entry {
+        key: "grid.filter_pick_max",
+        cat: Msg::CatGrid,
+        label: Msg::LblGridFilterPickMax,
+        desc: Msg::DescGridFilterPickMax,
+        kind: SettingKind::Int { min: 5, max: 200 },
+        default: "30",
+    },
     // 정규식 필터 조회 SQL ③단계 값 목록 상한(사용자 09-30 · 72 §3 · 고유값 cap+1개에서 모으기 멈춤).
     Entry {
         key: "grid.filter_list_max",

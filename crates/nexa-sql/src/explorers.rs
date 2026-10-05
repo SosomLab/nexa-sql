@@ -1620,6 +1620,20 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         self.panes.iter().any(|p| p.ex.background_pending())
     }
 
+    /// `obj.*` 명령(팔레트·키) → 보이는 칸의 선택 노드에(T-180 ④).
+    pub(crate) fn act_selected(&mut self, id: &str) -> bool {
+        self.panes
+            .get_mut(self.shown)
+            .is_some_and(|p| p.ex.act_selected(id))
+    }
+
+    /// `obj.menu` → 보이는 칸의 선택 노드 메뉴.
+    pub(crate) fn open_menu_selected(&mut self) -> bool {
+        self.panes
+            .get_mut(self.shown)
+            .is_some_and(|p| p.ex.open_menu_selected())
+    }
+
     /// ★ 객체 상세 패널(86): 마지막으로 누른 칸의 선택 대상 · 상세 요청.
     pub(crate) fn selected_target(&self) -> Option<crate::explorer::DetailTarget> {
         self.panes.get(self.shown)?.ex.selected_target()

@@ -197,6 +197,24 @@ impl App {
         self.run_in_fresh_tab(sql);
     }
 
+    /// ★ `obj.*` 명령(T-180 ④): 탐색기가 보이고 선택이 있으면 그 노드에 메뉴 동작을(`None` = 메뉴 자체를 연다) · 아니면 상태줄.
+    /// 동작 뒤 탐색기가 남긴 요청(`ExplorerAction`)을 바로 거둔다(우클릭과 같은 흐름).
+    pub(crate) fn obj_act(&mut self, menu_id: Option<&str>) {
+        if !self.explorer.is_visible() {
+            self.menu_action("view.explorer");
+        }
+        let ok = match menu_id {
+            None => self.explorer.open_menu_selected(),
+            Some(id) => self.explorer.act_selected(id),
+        };
+        if !ok {
+            self.sess.status = t(Msg::StObjNoSelection).into();
+        } else if menu_id.is_some() {
+            self.explorer_actions();
+        }
+        self.redraw();
+    }
+
     /// 객체 상세 패널의 동작(복사 · 축소/확장).
     pub(crate) fn detail_actions(&mut self) {
         for a in self.objdetail.take_actions() {

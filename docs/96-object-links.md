@@ -93,6 +93,8 @@
 권한을 가진 **다른** 스키마는 수집 계정이 달라 미확인으로 남는다(보수적 = 허용처럼 보이지 않음). 연결별 수집 계정 태그(버킷마다 `collected_by`) +
 세션 계정으로 재수집이 다음 단계.
 
+> **10-05 후보 메뉴(T-180 ⑦)**: 위 엄격 판정은 그대로다 — 스키마 없이 쓴 이름이 현재 스키마(세션 기준)에서 안 풀리면 **미확인**이고 다른 스키마로 자동 폴백하지 않는다(사용자 09-30). 대신 그 이름이 **다른 접속 스키마**에 있으면(`Snapshot::lookup_any_schema` · 종류 무관) 우클릭 메뉴에 하위 메뉴 **"다른 스키마의 같은 이름 ▸ `SCHEMA.NAME [Kind]`"**(최대 12)를 붙여 사용자가 고르게 하고, 고르면 객체 탐색기에서 그 객체를 찾아 선택한다(`objlink_candidates` · `reveal_obj_id` · 항목 id `objlink.cand:<id>`). **F4**(`obj.reveal`)도 캐럿 아래 링크가 못 풀리면 같은 메뉴를 캐럿 아래에 연다. 고른 것은 그 자리에서만 쓰이고 판정 규칙·링크 색은 바뀌지 않는다.
+
 ## 7. 우클릭 ▸ 객체 탐색기에서 보기(10-01 ㉗)
 
 | 조각 | 자리 | 요지 |
@@ -118,6 +120,8 @@
 - **10-05 참조 행 보기(FK 따라가기 · T-180 ⑥)**: 단일 테이블 결과(`Grid::reveal_table()`)의 셀 우클릭 메뉴 "참조 행 보기"(id `obj.follow_fk` · 외래 키 열이고 값이 있을 때만 활성) → `follow_fk(row, col)` = 그 행의 FK 열 값으로 부모 테이블을 **기본 키**로 조회(`SELECT * FROM 부모 WHERE pk = 값 [AND …]` · 복합 키 = 부모 PK 순서 · 리터럴은 `to_sql_literal`) → 문지기 → **새 결과 탭**. 제약은 결과 도착·메타 도착 때 `grid_fk_sync`가 1회 요청해 상세 캐시(`table_keys` · `DetailState`). 못 할 때 상태줄 = "외래 키를 따라갈 수 없습니다 — 테이블 제약을 읽는 중 / 키 값이 NULL / 참조 테이블에 맞는 기본 키가 없음". 설정 `grid.fk_follow`(on · 끄면 요청도 않음). 격리 자체 시험(SQLite · journal 10-05 §19) = 긍정 1(새 탭 `결과2` 1행 `10|dev`) · 부정 3(NULL 키 · FK 아닌 열 · 조인 = 새 탭 없음 + 상태줄) · 메뉴 캡처 3.
 
 - **10-05 머무름 툴팁(T-179 ③ 첫 걸음)**: Ctrl 없이 포인터가 이름 위에 `objlink.hover_ms`(700) 머물면 설명 툴팁(Ctrl 툴팁과 같은 글 · 같은 자리 규칙 `objlink.tooltip_pos`) — 밑줄 없음 · 클릭 = 보통 캐럿 이동 · 이탈·키·클릭·휠 = 내림 · 팝업·메뉴·완성 열림 = 안 뜸. 분석은 Ctrl 링크 분석 그대로(`objlinks.hover` 모드 · `objlink_sync` want 조건) · 타이머 = 사건 루프 틱(`objlink_rest` → `objlink_hover_tick` · `hover_due`가 None이면 안 깨움). 격리 자체 시험 = 기동 명령 `ui.move`(앱 안 마우스 사건 · OS 주입 아님)로 `emp` 위 → 1.5 s 뒤 툴팁 "테이블 emp (설명 없음)" · 벗어남 → 사라짐 · 키워드(`SELECT`) 위 → 안 뜸 · 툴팁이 뜬 채 유휴 10 s CPU 0~31 ms(빈 자리와 같음).
+
+- **10-05 `obj.*` 액션(얇은 판 · T-180 ④)**: 77 §1-1 액션 레지스트리를 "id 이관" 대신 **얇게** — 탐색기 우클릭 메뉴의 id 12개(`select` · `source` · `copy` …)는 E2E가 쓰므로 그대로 두고, 호스트 명령 `obj.*`가 **선택 노드에 대해 같은 길(`Explorer::menu_pick`)** 을 부른다(`act_selected` · `open_menu_selected` · `app/meta.rs` `obj_act`). 명령 = `obj.menu`(Shift+F10 · 선택 행 자리에 우클릭 메뉴) · `obj.select_rows` · `obj.source` · `obj.copy_name` · `obj.refresh` · `obj.refresh_meta` · `obj.sizes`(팔레트 "오브젝트 탐색기" 묶음) · 기존 `obj.reveal`(F4) · `obj.info`(Shift+F4) · `obj.rows`. 탐색기가 닫혀 있으면 열고 · 선택 없음 = 상태줄 "객체 탐색기에서 선택한 항목이 없습니다" · 삭제·서버 해제·접속처럼 **묻는 동작은 명령으로 두지 않는다**(메뉴에서만). `ObjectRef` 통일(링크 `Link` · 탐색기 `ObjectInfo` · `RevealTarget`)은 설계 메모로 남김(보류 가능).
 
 ## 8. 시스템 객체(10-01 ㉙)
 

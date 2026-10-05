@@ -2898,6 +2898,27 @@ impl Explorer {
         }
     }
 
+    /// ★ 선택 노드에 메뉴 동작을 **메뉴 없이** 적용(`obj.*` 명령 · 팔레트/키 · T-180 ④) — 우클릭 메뉴와 같은 길(`menu_pick`).
+    /// 선택이 없으면 거짓. 서버 해제·삭제처럼 묻는 동작은 여기로 오지 않는다(호스트가 거른다).
+    pub(crate) fn act_selected(&mut self, id: &str) -> bool {
+        if self.selected.is_none() {
+            return false;
+        }
+        self.menu_pick(id);
+        true
+    }
+
+    /// ★ 선택 노드의 우클릭 메뉴를 **키보드로** 연다(`obj.menu` · Shift+F10) — 그 행의 가운데를 우클릭한 것과 같다(같은 항목 구성).
+    pub(crate) fn open_menu_selected(&mut self) -> bool {
+        let Some((y, h)) = self.selected_span() else {
+            return false;
+        };
+        self.on_event(&InputEvent::RightDown {
+            x: self.bounds.x + self.bounds.w / 3,
+            y: y + h / 2,
+        })
+    }
+
     /// 선택 행의 세로 범위(창 좌표 · y, 높이) — 호스트가 키보드 이동 뒤 공용 스크롤을 맞춘다.
     pub(crate) fn selected_span(&self) -> Option<(i32, i32)> {
         let sel = self.selected?;

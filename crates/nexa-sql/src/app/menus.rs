@@ -877,6 +877,14 @@ impl App {
             "obj.reveal" => self.objlink_reveal_at_caret(),
             "obj.info" => self.open_info_tab(),
             "obj.rows" => self.open_rows_tab(),
+            // ★ `obj.*` = 탐색기 선택 노드의 메뉴 동작을 팔레트·키로(T-180 ④ · 묻는 동작(삭제·서버 해제)은 메뉴에서만).
+            "obj.menu" => self.obj_act(None),
+            "obj.select_rows" => self.obj_act(Some("select")),
+            "obj.source" => self.obj_act(Some("source")),
+            "obj.copy_name" => self.obj_act(Some("copy")),
+            "obj.refresh" => self.obj_act(Some("refresh")),
+            "obj.refresh_meta" => self.obj_act(Some("refresh_meta")),
+            "obj.sizes" => self.obj_act(Some("sizes")),
             "run.commit" | "run.rollback" => {
                 if let Some(pass) = self.gate_pass() {
                     self.sess.busy = true;
@@ -1568,6 +1576,17 @@ impl App {
         cmds.push(m("obj.reveal", Msg::MnEdit, Msg::MnObjLinkReveal));
         cmds.push(m("obj.info", Msg::MnEdit, Msg::MnObjInfoTab));
         cmds.push(m("obj.rows", Msg::MnEdit, Msg::MnObjRows));
+        for (id, msg) in [
+            ("obj.menu", Msg::MnObjMenu),
+            ("obj.select_rows", Msg::ExpSelectRows),
+            ("obj.source", Msg::ExpOpenSource),
+            ("obj.copy_name", Msg::ExpCopyName),
+            ("obj.refresh", Msg::ExpRefresh),
+            ("obj.refresh_meta", Msg::ExpRefreshMeta),
+            ("obj.sizes", Msg::ExpLoadSizes),
+        ] {
+            cmds.push(m(id, Msg::MnExplorer, msg));
+        }
         for (id, msg) in [
             ("bookmark.toggle", Msg::MnBmToggle),
             ("bookmark.next", Msg::MnBmNext),
