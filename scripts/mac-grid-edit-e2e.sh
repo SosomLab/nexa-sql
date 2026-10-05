@@ -153,9 +153,11 @@ else
   echo "SKIP  nexa-ui 시험 벡터 없음($JPGHEX)"
 fi
 # ── 실서버 스위트(방언 공통 4 시나리오 · 임시 표 NSQLT_GE(PK)·NSQLT_GE2(키 없음) 생성 → 시험 → DROP · 61 §2-4 ⑤)
-#   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql> <라벨>
+#   dbms_suite <프로필|접속 문자열> <oracle|postgres|mssql> <라벨> [DB]
+#   DB(선택 · mssql) = 임시 표를 만들 데이터베이스 — 로그인의 기본 DB가 master처럼 CREATE 권한이 없는 곳이면
+#   (10-06 Windows 전수: M4PLAN 로그인 BISCM_MS 기본 DB = master → Msg 262) 모든 문장 앞에 `USE <DB>;`를 둔다.
 dbms_suite() {
-  local T=$1 dl=$2 tag=$3 pk kind
+  local T=$1 dl=$2 tag=$3 db=${4:-} pk kind
   case $dl in
     oracle)
       cat > "$D/${tag}_setup.sql" <<'SQL'
@@ -193,6 +195,12 @@ SQL
   printf 'SELECT ID, NAME, DT, MEMO FROM NSQLT_GE ORDER BY ID;\n' > "$D/${tag}_sel.sql"
   printf 'SELECT A, DT, MEMO FROM NSQLT_GE2 ORDER BY A;\n' > "$D/${tag}_sel2.sql"
   printf 'SELECT NAME, MEMO FROM NSQLT_GE ORDER BY NAME;\n' > "$D/${tag}_selnk.sql"
+  if [ -n "$db" ] && [ "$dl" = mssql ]; then
+    local f
+    for f in setup dup drop sel sel2 selnk; do
+      printf 'USE %s;\n' "$db" | cat - "$D/${tag}_$f.sql" > "$D/${tag}_$f.tmp" && mv "$D/${tag}_$f.tmp" "$D/${tag}_$f.sql"
+    done
+  fi
   cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1; cli "$T" "$D/${tag}_setup.sql" >/dev/null 2>&1
   local v; v=$(cli "$T" "$D/${tag}_sel.sql")
   if ! echo "$v" | grep -q "kim"; then bad "$tag 준비(임시 표 생성·접속)"; echo "$v" | head -4 | sed 's/^/      /'; return; fi
@@ -224,10 +232,14 @@ SQL
   cli "$T" "$D/${tag}_drop.sql" >/dev/null 2>&1
 }
 if [ -n "${NSQL_E2E_ORACLE:-}" ]; then NSQL_HOME="$H" "$NSQL" conn add ORA "$NSQL_E2E_ORACLE" -d oracle --no-prompt >/dev/null 2>&1; dbms_suite ORA oracle Oracle; fi
-# -d "BISCM:oracle,Repository:postgres,M4PLAN:mssql"(또는 NSQL_E2E_DBMS) = 격리 홈으로 복사한 프로필 이름으로 실서버 스위트.
+# -d "BISCM:oracle,Repository:postgres,M4PLAN:mssql[:DB]"(또는 NSQL_E2E_DBMS) = 격리 홈으로 복사한 프로필 이름으로 실서버 스위트.
+#   셋째 조각(선택) = mssql 임시 표를 만들 DB(예 M4PLAN:mssql:M4PLAN_MS).
 if [ -n "$DBMS" ]; then
   IFS=',' read -ra PAIRS <<< "$DBMS"
-  for pr in "${PAIRS[@]}"; do dbms_suite "${pr%%:*}" "${pr##*:}" "${pr%%:*}"; done
+  for pr in "${PAIRS[@]}"; do
+    IFS=':' read -r p_name p_dl p_db <<< "$pr"
+    dbms_suite "$p_name" "$p_dl" "$p_name" "${p_db:-}"
+  done
 fi
 echo "=== 결과: PASS $pass · FAIL $fail (출력 $O)"
 [ "$fail" -eq 0 ]

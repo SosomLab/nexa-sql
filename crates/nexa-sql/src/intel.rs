@@ -1097,6 +1097,11 @@ impl Intel {
                                                 ref_table: k
                                                     .ref_table
                                                     .map(|t| m.names.get(t).to_string()),
+                                                ref_cols: k
+                                                    .ref_cols
+                                                    .iter()
+                                                    .map(|c| m.names.get(*c).to_string())
+                                                    .collect(),
                                             })
                                             .collect(),
                                     });
@@ -2133,6 +2138,8 @@ struct JoinKey {
     kind: char,
     cols: Vec<String>,
     ref_table: Option<String>,
+    /// FK가 가리키는 컬럼들(비면 모름 → 부모 PK 순서).
+    ref_cols: Vec<String>,
 }
 
 /// 캐럿 앞이 `JOIN [스키마.]테이블 [[AS] 별칭] ON`으로 끝나면 그 **조인되는 쪽의 이름**(별칭이 있으면 별칭 · 없으면 테이블).
@@ -2157,9 +2164,10 @@ fn join_on_target(before: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// 외래 키로 만든 조인 조건들 — `sides[joined]`(방금 `JOIN`한 테이블)와 나머지 사이에서, 한쪽의 FK가 다른 쪽을 가리키고
-/// 그 다른 쪽에 **같은 컬럼 수의 기본 키**가 있을 때만(`자식.fk = 부모.pk` · 복합 키는 `AND`로 · FK가 가리키는 컬럼 목록은
-/// 메타에 없어 PK 순서에 맞춘다). 돌려주는 값 = (조건 글, FK 이름) · 문장에 나온 순서대로.
+/// 외래 키로 만든 조인 조건들 — `sides[joined]`(방금 `JOIN`한 테이블)와 나머지 사이에서, 한쪽의 FK가 다른 쪽을 가리킬 때
+/// (`자식.fk = 부모.참조열` · 복합 키는 `AND`로). 부모 쪽 열 = FK의 **참조 컬럼**(`ref_cols` · T-178 10-06 · 유니크 키 참조도
+/// 맞다) · 메타에 없으면 **같은 컬럼 수의 기본 키** 순서(없거나 수가 다르면 내지 않는다). 돌려주는 값 = (조건 글, FK 이름) ·
+/// 문장에 나온 순서대로.
 fn fk_join_conds(sides: &[JoinSide], joined: usize) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let Some(j) = sides.get(joined) else {
@@ -2175,17 +2183,23 @@ fn fk_join_conds(sides: &[JoinSide], joined: usize) -> Vec<(String, String)> {
             })
     };
     let mut emit = |child: &JoinSide, parent: &JoinSide| {
-        let Some(pk) = parent.keys.iter().find(|k| k.kind == 'P') else {
-            return;
-        };
+        let pk = parent.keys.iter().find(|k| k.kind == 'P');
         for fk in child.keys.iter().filter(|k| points_at(k, parent)) {
-            if fk.cols.is_empty() || fk.cols.len() != pk.cols.len() {
+            if fk.cols.is_empty() {
                 continue;
             }
+            let parent_cols: &[String] = if fk.ref_cols.len() == fk.cols.len() {
+                &fk.ref_cols
+            } else {
+                match pk {
+                    Some(pk) if pk.cols.len() == fk.cols.len() => &pk.cols,
+                    _ => continue,
+                }
+            };
             let cond = fk
                 .cols
                 .iter()
-                .zip(&pk.cols)
+                .zip(parent_cols)
                 .map(|(f, p)| format!("{}.{f} = {}.{p}", child.alias, parent.alias))
                 .collect::<Vec<_>>()
                 .join(" AND ");
@@ -2466,12 +2480,13 @@ mod tests {
             emp,
             &NewDetail {
                 keys: vec![
-                    ("PK_EMP".into(), 'P', vec!["EMPNO".into()], None),
+                    ("PK_EMP".into(), 'P', vec!["EMPNO".into()], None, vec![]),
                     (
                         "FK_DEPT".into(),
                         'R',
                         vec!["DEPTNO".into()],
                         Some("DEPT".into()),
+                        vec!["DEPTNO".into()],
                     ),
                 ],
                 ..Default::default()
@@ -2481,7 +2496,7 @@ mod tests {
         m.set_detail(
             dept,
             &NewDetail {
-                keys: vec![("PK_DEPT".into(), 'P', vec!["DEPTNO".into()], None)],
+                keys: vec![("PK_DEPT".into(), 'P', vec!["DEPTNO".into()], None, vec![])],
                 ..Default::default()
             },
             2,
@@ -2534,6 +2549,7 @@ mod tests {
             kind,
             cols: cols.iter().map(|c| c.to_string()).collect(),
             ref_table: rt.map(str::to_string),
+            ref_cols: Vec::new(),
         };
         let emp = JoinSide {
             alias: "e".into(),
@@ -2596,8 +2612,40 @@ mod tests {
             keys: Vec::new(),
             ..ord
         };
-        assert!(fk_join_conds(&[no_pk, line], 1).is_empty());
+        assert!(fk_join_conds(&[no_pk.clone(), line], 1).is_empty());
         assert!(fk_join_conds(&[dept], 3).is_empty());
+        // ★ 참조 컬럼이 있으면 PK와 무관(유니크 키 참조 · 열 이름이 다름) · 참조 컬럼 수가 FK 열 수와 다르면 PK 폴백.
+        let by_uq = JoinSide {
+            alias: "l".into(),
+            table: "ORD_LINE".into(),
+            keys: vec![JoinKey {
+                ref_cols: vec!["ORD_CODE".into()],
+                ..key("FK_ORD_CODE", 'R', &["ORD_NO"], Some("ORD"))
+            }],
+        };
+        assert_eq!(
+            fk_join_conds(&[no_pk, by_uq.clone()], 1),
+            vec![(
+                "l.ORD_NO = o.ORD_CODE".to_string(),
+                "FK_ORD_CODE".to_string()
+            )]
+        );
+        let bad_ref = JoinSide {
+            keys: vec![JoinKey {
+                ref_cols: vec!["A".into(), "B".into()],
+                ..key("FK_ORD_CODE", 'R', &["ORD_NO"], Some("ORD"))
+            }],
+            ..by_uq
+        };
+        let ord1 = JoinSide {
+            alias: "o".into(),
+            table: "ORD".into(),
+            keys: vec![key("PK_ORD", 'P', &["ORD_NO"], None)],
+        };
+        assert_eq!(
+            fk_join_conds(&[ord1, bad_ref], 1),
+            vec![("l.ORD_NO = o.ORD_NO".to_string(), "FK_ORD_CODE".to_string())]
+        );
     }
 
     /// ★ 건너편 컬럼 1순위(사용자 09-29): `d.ENAME = e.|` → e의 컬럼 중 ENAME이 맨 위(평소는 EMPNO 먼저) · UPDATE SET도 같다.

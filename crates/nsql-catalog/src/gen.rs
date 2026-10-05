@@ -1456,7 +1456,15 @@ fn constraint_line(
                     None => (String::new(), target),
                 }
             } else {
-                (String::new(), target)
+                // 다른 방언 = 상세의 참조 컬럼(T-178 10-06 · 비면 종전처럼 테이블만).
+                (
+                    k.ref_cols
+                        .iter()
+                        .map(|c| ident(d, c))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    target,
+                )
             };
             if rcols.is_empty() {
                 format!("FOREIGN KEY ({}) REFERENCES {rt}", cols.join(", "))

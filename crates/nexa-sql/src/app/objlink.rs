@@ -440,6 +440,19 @@ pub(crate) struct ObjLinks {
     /// 머무름 판정 시각·자리(포인터가 멈춘 뒤 `hover_ms`).
     pub hover_due: Option<std::time::Instant>,
     pub hover_at: Option<Point>,
+    /// ★ hover 카드(T-179 ③ · 77 §1-3): 마지막 그리기의 카드 자리와 버튼 — 포인터가 카드 안이면 링크를 떠나도 유지 ·
+    /// 클릭은 버튼으로(편집기로 가지 않는다). 툴팁이 없으면 None.
+    pub card: Option<CardLayout>,
+}
+
+/// hover 카드 배치(그리기가 채우고 사건 처리가 읽는다).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CardLayout {
+    pub rect: Rect,
+    /// (버튼 id, 사각형, 활성).
+    pub buttons: Vec<(&'static str, Rect, bool)>,
+    /// 카드가 가리키는 링크.
+    pub link: usize,
 }
 
 /// 부분 분석 때 보이는 구간 밖으로 문장 경계(`;`)를 찾는 최대 글자 수.
@@ -906,6 +919,7 @@ impl App {
             hover: self.objlinks.hover,
             hover_due: self.objlinks.hover_due,
             hover_at: self.objlinks.hover_at,
+            card: None,
         };
         if self.objlink_apply_marks() || display != Display::None {
             self.redraw();
@@ -945,8 +959,8 @@ impl App {
             return;
         }
         if self.objlinks.hover {
-            // 링크 위를 떠났다 → 끝(다음 멈춤에서 다시 잰다).
-            if self.objlink_at(p).is_none() {
+            // 링크 위를 떠났다 → 끝(다음 멈춤에서 다시 잰다) · 카드 안은 떠난 것이 아니다.
+            if self.objlink_at(p).is_none() && !self.objlink_card_contains(p) {
                 self.objlink_hover_end();
             } else {
                 return;
@@ -1000,9 +1014,81 @@ impl App {
         }
     }
 
+    /// 포인터가 hover 카드 안인가(카드가 떠 있을 때만).
+    pub(crate) fn objlink_card_contains(&self, p: Point) -> bool {
+        self.objlinks
+            .card
+            .as_ref()
+            .is_some_and(|c| c.rect.contains(p))
+    }
+
+    /// hover 카드의 버튼 명세(id · 라벨 · 활성) — 그리기 전에 셈(설정 끔 = 없음 = 글만 있는 툴팁).
+    pub(crate) fn objlink_card_buttons(&self) -> Vec<(&'static str, String, bool)> {
+        if !self.settings.flag("objlink.card_buttons") {
+            return Vec::new();
+        }
+        let Some(k) = self.objlinks.hot else {
+            return Vec::new();
+        };
+        let target = self.objlink_reveal_target(k);
+        let can_rows = target
+            .as_ref()
+            .is_some_and(|t| t.kind.is_relation() && t.member.is_none());
+        vec![
+            (
+                "card.reveal",
+                t(Msg::MnObjLinkReveal).to_string(),
+                target.is_some(),
+            ),
+            ("card.rows", t(Msg::MnObjRows).to_string(), can_rows),
+            ("card.copy", t(Msg::MnObjLinkCopyDesc).to_string(), true),
+        ]
+    }
+
+    /// hover 카드 버튼 클릭 — 카드 안이면 true(편집기로 가지 않는다 · 빈 자리도 삼킨다). 버튼을 눌렀으면 카드를 닫는다
+    /// (동작은 링크 `k`가 살아 있는 동안 = 머무름을 끝내기 **전에**).
+    fn objlink_card_click(&mut self, p: Point) -> bool {
+        let Some(card) = self.objlinks.card.clone() else {
+            return false;
+        };
+        if !card.rect.contains(p) {
+            return false;
+        }
+        let hit = card
+            .buttons
+            .iter()
+            .find(|(_, r, on)| *on && r.contains(p))
+            .map(|(id, _, _)| *id);
+        let k = card.link;
+        match hit {
+            Some("card.reveal") => {
+                self.objlink_reveal(k);
+                self.objlink_hover_end();
+            }
+            Some("card.rows") => {
+                if let Some(t) = self.objlink_reveal_target(k) {
+                    let sql = nsql_catalog::select_template(self.sess.dialect, &t.schema, &t.name);
+                    self.objlink_hover_end();
+                    self.run_in_fresh_tab(sql);
+                }
+            }
+            Some("card.copy") => {
+                self.objlink_copy_desc(k);
+                self.objlink_hover_end();
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// 마우스 이동 — 링크 위면 강조·툴팁(표시 방식에 따라 다시 그리기).
     pub(crate) fn objlink_hover(&mut self, p: Point) {
         if !self.objlinks.active {
+            return;
+        }
+        // 카드 안에서는 링크 판정을 바꾸지 않는다(버튼까지 가는 길에 카드가 사라지지 않게) · 버튼 hover 색만 다시 그린다.
+        if self.objlink_card_contains(p) {
+            self.redraw();
             return;
         }
         // 본문·탭·메타·보이는 구간이 바뀌었으면 다시 분석.
@@ -1211,6 +1297,10 @@ impl App {
         if !self.objlinks.active {
             return false;
         }
+        // hover 카드의 버튼(좌클릭) — Ctrl 유무와 무관.
+        if !right && self.objlink_card_click(p) {
+            return true;
+        }
         if !self.primary && self.objlinks.hover {
             self.objlink_hover_end();
             return false;
@@ -1362,12 +1452,13 @@ impl App {
         ))
     }
 
-    /// 테이블의 제약(기본 키 · 외래 키) — `Loaded` = (종류, 열들, 참조 테이블) 목록 · `Unknown` = 상세 요청을 보내고 None.
+    /// 테이블의 제약(기본 키 · 외래 키) — `Loaded` = (종류, 열들, 참조 테이블, 참조 열들) 목록 · `Unknown` = 상세 요청을
+    /// 보내고 None. 참조 열들은 FK만(비면 모름 → 부모 PK 순서 폴백).
     #[allow(clippy::type_complexity)]
     fn table_keys(
         &mut self,
         id: nsql_run::meta::ObjId,
-    ) -> Option<Vec<(char, Vec<String>, Option<String>)>> {
+    ) -> Option<Vec<(char, Vec<String>, Option<String>, Vec<String>)>> {
         let spec = self.sess.spec.clone();
         let (names, snap) = self.explorer.meta_view(spec.as_ref());
         match snap.detail(id) {
@@ -1380,6 +1471,10 @@ impl App {
                             k.kind,
                             k.cols.iter().map(|c| names.get(*c).to_string()).collect(),
                             k.ref_table.map(|t| names.get(t).to_string()),
+                            k.ref_cols
+                                .iter()
+                                .map(|c| names.get(*c).to_string())
+                                .collect(),
                         )
                     })
                     .collect(),
@@ -1411,16 +1506,17 @@ impl App {
             .table_keys(id)
             .map(|keys| {
                 keys.into_iter()
-                    .filter(|(k, _, _)| *k == 'R')
-                    .flat_map(|(_, cols, _)| cols)
+                    .filter(|(k, _, _, _)| *k == 'R')
+                    .flat_map(|(_, cols, _, _)| cols)
                     .collect()
             })
             .unwrap_or_default();
         self.grid.set_fk_cols(cols);
     }
 
-    /// ★ 셀 메뉴 "참조 행 보기"(T-180 ⑥): 원본 행 `row`의 열 `col`이 속한 외래 키 → 부모 테이블을 **기본 키로** 조회해 새 결과 탭에.
-    /// 복합 키 = 그 행의 FK 열 전부를 부모 PK 순서에 맞춘다(JOIN 조건 조각과 같은 규칙) · NULL 키·PK 불일치·제약 미로딩 = 상태줄.
+    /// ★ 셀 메뉴 "참조 행 보기"(T-180 ⑥): 원본 행 `row`의 열 `col`이 속한 외래 키 → 부모 테이블을 **참조 열로** 조회해 새 결과 탭에.
+    /// 참조 열 = 메타의 FK 참조 컬럼(`ref_cols` · T-178 10-06)이 있으면 그것(유니크 키 참조도 맞다) · 없으면 부모 PK 순서
+    /// (JOIN 조건 조각과 같은 규칙) · NULL 키·열 수 불일치·제약 미로딩 = 상태줄.
     pub(crate) fn follow_fk(&mut self, row: usize, col: &str) {
         let fail = |a: &mut Self, why: Msg| {
             a.sess.status = tf(Msg::StFkCannot, &[t(why)]);
@@ -1436,23 +1532,30 @@ impl App {
         let Some(keys) = self.table_keys(id) else {
             return fail(self, Msg::StFkLoading);
         };
-        let Some((_, fk_cols, Some(parent))) = keys.into_iter().find(|(k, cols, rt)| {
-            *k == 'R' && rt.is_some() && cols.iter().any(|c| c.eq_ignore_ascii_case(col))
-        }) else {
+        let Some((_, fk_cols, Some(parent), ref_cols)) =
+            keys.into_iter().find(|(k, cols, rt, _)| {
+                *k == 'R' && rt.is_some() && cols.iter().any(|c| c.eq_ignore_ascii_case(col))
+            })
+        else {
             return fail(self, Msg::StFkNoPk);
         };
         let Some((pschema, pname, pid)) = self.resolve_table_obj(&parent) else {
             return fail(self, Msg::StObjRevealNone);
         };
-        let Some(pkeys) = self.table_keys(pid) else {
-            return fail(self, Msg::StFkLoading);
+        let pk_cols = if !ref_cols.is_empty() && ref_cols.len() == fk_cols.len() {
+            ref_cols
+        } else {
+            let Some(pkeys) = self.table_keys(pid) else {
+                return fail(self, Msg::StFkLoading);
+            };
+            let Some((_, pk_cols, _, _)) = pkeys.into_iter().find(|(k, _, _, _)| *k == 'P') else {
+                return fail(self, Msg::StFkNoPk);
+            };
+            if pk_cols.len() != fk_cols.len() {
+                return fail(self, Msg::StFkNoPk);
+            }
+            pk_cols
         };
-        let Some((_, pk_cols, _)) = pkeys.into_iter().find(|(k, _, _)| *k == 'P') else {
-            return fail(self, Msg::StFkNoPk);
-        };
-        if pk_cols.len() != fk_cols.len() {
-            return fail(self, Msg::StFkNoPk);
-        }
         let values = self.grid.row_values(row, &fk_cols);
         if values.len() != fk_cols.len() || values.iter().any(|(_, v)| *v == nsql_core::Value::Null)
         {
@@ -1895,6 +1998,87 @@ impl App {
             Rect::new(p0.x, p0.y, (p1.x - p0.x).max(1), tb.line_h()),
         ))
     }
+}
+
+/// ★ 팝업 층: 설명 **카드**(툴팁 글 + 동작 버튼 줄 · T-179 ③) — 버튼이 없으면 `paint_tip`과 같은 모양. 배치는 `paint_tip`의
+/// 규칙(`pos`) 뒤 `nudge_into`로 표면 안에. 돌려주는 값 = 사건 처리용 배치(호스트가 `objlinks.card`에 둔다).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_hover_card(
+    dc: &mut dyn nexa_ctl::draw::DrawCtx,
+    th: &nexa_ctl::Theme,
+    tip: Option<&(String, Rect)>,
+    link: usize,
+    buttons: &[(&'static str, String, bool)],
+    pointer: Option<Point>,
+    pos: &str,
+    scale: f32,
+    clamp: Rect,
+) -> Option<CardLayout> {
+    let (text, anchor) = tip?;
+    if buttons.is_empty() {
+        paint_tip(dc, th, tip, pos, scale, clamp);
+        return None;
+    }
+    let s = |v: f32| (v * scale).round() as i32;
+    dc.select_font(nexa_ctl::FontSlot::Status, false);
+    let lines: Vec<&str> = text.split('\n').collect();
+    let th_line = dc.text_height();
+    let text_w = lines.iter().map(|l| dc.text_width(l)).max().unwrap_or(0);
+    let btn_h = th_line + s(6.0);
+    let widths: Vec<i32> = buttons
+        .iter()
+        .map(|(_, l, _)| dc.text_width(l) + s(12.0))
+        .collect();
+    let btn_row_w: i32 = widths.iter().sum::<i32>() + s(6.0) * (buttons.len() as i32 - 1);
+    let w = text_w.max(btn_row_w) + s(12.0);
+    let h = th_line * lines.len() as i32 + s(8.0) + btn_h + s(8.0);
+    let (x, y) = match pos {
+        "above" => (anchor.x, anchor.y - s(6.0) - h),
+        "top_left" => (anchor.x - w - s(4.0), anchor.y - s(6.0) - h),
+        "bottom_right" => (anchor.right() + s(4.0), anchor.bottom() + s(6.0)),
+        "bottom_left" => (anchor.x - w - s(4.0), anchor.bottom() + s(6.0)),
+        _ => (anchor.right() + s(4.0), anchor.y - s(6.0) - h),
+    };
+    let host = nexa_ctl::geom::popup_host(clamp, dc.surface_size());
+    let r = nexa_ctl::geom::nudge_into(Rect::new(x, y, w, h), host);
+    dc.fill_round_rect_alpha(r, s(4.0), th.text, 0.92);
+    for (i, line) in lines.iter().enumerate() {
+        dc.text(
+            r.x + s(6.0),
+            r.y + s(4.0) + th_line * i as i32,
+            r,
+            line,
+            th.panel_bg,
+        );
+    }
+    // 버튼 줄 — 머티리얼 텍스트 버튼(옅은 채움 · 외곽선 없음 · hover = 조금 진하게 · 비활성 = 흐린 글).
+    let by = r.y + s(4.0) + th_line * lines.len() as i32 + s(6.0);
+    let mut bx = r.x + s(6.0);
+    let mut out = Vec::with_capacity(buttons.len());
+    for ((id, label, on), bw) in buttons.iter().zip(widths) {
+        let br = Rect::new(bx, by, bw, btn_h);
+        let hot = *on && pointer.is_some_and(|p| br.contains(p));
+        if *on {
+            dc.fill_round_rect_alpha(br, s(3.0), th.panel_bg, if hot { 0.38 } else { 0.18 });
+        }
+        let tx = br.x + (br.w - dc.text_width(label)) / 2;
+        let ty = dc.text_center_y(br.y, br.h);
+        dc.text(
+            tx,
+            ty,
+            br,
+            label,
+            if *on { th.panel_bg } else { th.text_dim },
+        );
+        out.push((*id, br, *on));
+        bx = br.right() + s(6.0);
+    }
+    dc.select_font(nexa_ctl::FontSlot::Base, false);
+    Some(CardLayout {
+        rect: r,
+        buttons: out,
+        link,
+    })
 }
 
 /// 팝업 층: 설명 툴팁을 링크 글자 기준 `pos`(top_right 기본 · 61 §2-2 = nexa-ctl `draw_tooltip_in`이 표면 안으로 맞춘다)에.

@@ -122,6 +122,8 @@ pub struct KeyEntry {
     pub kind: char,
     pub cols: Vec<Sym>,
     pub ref_table: Option<Sym>,
+    /// FK가 가리키는 컬럼들(`cols`와 같은 순서 · 비면 모름 → PK 순서 폴백 · T-178 10-06).
+    pub ref_cols: Vec<Sym>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,7 +158,9 @@ pub enum DetailState {
 /// 카탈로그 → 상세 입력.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NewDetail {
-    pub keys: Vec<(String, char, Vec<String>, Option<String>)>,
+    /// (이름, 종류, 컬럼들, 참조 테이블, 참조 컬럼들).
+    #[allow(clippy::type_complexity)]
+    pub keys: Vec<(String, char, Vec<String>, Option<String>, Vec<String>)>,
     pub indexes: Vec<(String, bool, Vec<String>)>,
     pub comment: Option<String>,
     pub col_comments: Vec<(String, String)>,
@@ -750,11 +754,12 @@ impl MetaStore {
         let keys = d
             .keys
             .iter()
-            .map(|(n, k, cols, rf)| KeyEntry {
+            .map(|(n, k, cols, rf, rc)| KeyEntry {
                 name: self.names.intern(n),
                 kind: *k,
                 cols: cols.iter().map(|c| self.names.intern(c)).collect(),
                 ref_table: rf.as_deref().map(|r| self.names.intern(r)),
+                ref_cols: rc.iter().map(|c| self.names.intern(c)).collect(),
             })
             .collect();
         let indexes = d

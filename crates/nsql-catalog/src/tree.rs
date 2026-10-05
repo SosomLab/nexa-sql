@@ -334,6 +334,9 @@ pub fn sub_items(
                     if let Some(r) = &k.ref_table {
                         detail.push_str(" → ");
                         detail.push_str(r);
+                        if !k.ref_cols.is_empty() {
+                            detail.push_str(&format!(" ({})", k.ref_cols.join(", ")));
+                        }
                     }
                     item(k.name, detail, key_icon(k.kind))
                 })

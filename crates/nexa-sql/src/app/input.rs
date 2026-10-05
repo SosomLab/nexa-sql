@@ -343,14 +343,19 @@ impl App {
             }
         }
         // 키 입력·클릭·휠 = 머무름 툴팁 끝(툴팁이 타이핑 위에 남지 않게).
-        if matches!(
-            ev,
-            InputEvent::Key { .. }
-                | InputEvent::Char { .. }
-                | InputEvent::MouseDown { .. }
-                | InputEvent::RightDown { .. }
-                | InputEvent::Wheel { .. }
-        ) {
+        // ★ 단, hover 카드 **안**의 좌클릭은 카드 버튼(T-179 ③)이다 — 여기서 걷으면 `objlinks.active`가 꺼져 아래
+        //   `objlink_click`에 닿지 못하고 편집기로 샜다(협업 V1 hc2 · 10-06). 카드 안 클릭은 `objlink_card_click`이 끝낸다.
+        let card_click = matches!(ev, InputEvent::MouseDown { x, y, .. } if self.objlink_card_contains(Point { x, y }));
+        if !card_click
+            && matches!(
+                ev,
+                InputEvent::Key { .. }
+                    | InputEvent::Char { .. }
+                    | InputEvent::MouseDown { .. }
+                    | InputEvent::RightDown { .. }
+                    | InputEvent::Wheel { .. }
+            )
+        {
             self.objlink_hover_end();
         }
         if matches!(ev, InputEvent::MouseUp { .. }) && (self.mem_pressed || self.autosave_pressed) {

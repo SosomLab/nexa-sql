@@ -1413,6 +1413,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // hover 카드 동작 버튼(T-179 ③ · 77 §1-3 "요약 + 동작 버튼 두어 개").
+    Entry {
+        key: "objlink.card_buttons",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkCardButtons,
+        desc: Msg::DescObjLinkCardButtons,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     // 머무름 툴팁(T-179 ③ 첫 걸음 · 77의 `intel.hover_ms` 자리 · 10초 이하 = ms 규칙 94 §6-5).
     Entry {
         key: "objlink.hover_ms",

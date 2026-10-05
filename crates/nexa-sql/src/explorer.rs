@@ -4240,7 +4240,7 @@ impl Explorer {
                                 keys: d
                                     .keys
                                     .into_iter()
-                                    .map(|k| (k.name, k.kind, k.cols, k.ref_table))
+                                    .map(|k| (k.name, k.kind, k.cols, k.ref_table, k.ref_cols))
                                     .collect(),
                                 indexes: d
                                     .indexes

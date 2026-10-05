@@ -129,12 +129,25 @@ pub(crate) fn build(
                                 match k.kind {
                                     'P' => keys.push(format!("PK  {n}  {at}")),
                                     'U' => keys.push(format!("UQ  {n}  {at}")),
-                                    'R' => cons.push(format!(
-                                        "FK  {n}  {at} → {}",
-                                        k.ref_table
+                                    'R' => {
+                                        let rt = k
+                                            .ref_table
                                             .map(|r| names.get(r).to_string())
-                                            .unwrap_or_default()
-                                    )),
+                                            .unwrap_or_default();
+                                        let rc = if k.ref_cols.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(
+                                                " ({})",
+                                                k.ref_cols
+                                                    .iter()
+                                                    .map(|c| names.get(*c).to_string())
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
+                                            )
+                                        };
+                                        cons.push(format!("FK  {n}  {at} → {rt}{rc}"))
+                                    }
                                     _ => cons.push(format!("CK  {n}")),
                                 }
                             }
@@ -464,8 +477,14 @@ mod tests {
             id,
             &NewDetail {
                 keys: vec![
-                    ("PK_M4S".into(), 'P', vec!["ITEM_CD".into()], None),
-                    ("CK_W".into(), 'C', vec!["TOTAL_WEIGHT".into()], None),
+                    ("PK_M4S".into(), 'P', vec!["ITEM_CD".into()], None, vec![]),
+                    (
+                        "CK_W".into(),
+                        'C',
+                        vec!["TOTAL_WEIGHT".into()],
+                        None,
+                        vec![],
+                    ),
                 ],
                 indexes: vec![
                     ("IX_W".into(), false, vec!["TOTAL_WEIGHT".into()]),

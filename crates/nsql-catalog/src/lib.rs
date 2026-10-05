@@ -1204,6 +1204,8 @@ pub struct KeyDef {
     pub cols: Vec<String>,
     /// 외래 키가 가리키는 테이블(`R`만).
     pub ref_table: Option<String>,
+    /// 외래 키가 가리키는 컬럼들(`R`만 · `cols`와 같은 순서 · T-178 10-06). 비면 모름 — 소비자는 부모 PK 순서로 폴백한다.
+    pub ref_cols: Vec<String>,
 }
 
 /// 인덱스 하나.
@@ -1598,15 +1600,23 @@ pub fn comments(
     (tc, cc)
 }
 
-/// (종류, 이름, 컬럼, 참조) 행을 접는다 — 같은 이름은 한 묶음 · 순서 유지.
+/// (종류, 이름, 컬럼, 참조 테이블[, 참조 컬럼]) 행을 접는다 — 같은 이름은 한 묶음 · 순서 유지. 5열이 있으면 FK 참조 컬럼.
 fn fold_defs(rows: &[Vec<Value>]) -> Vec<KeyDef> {
     let mut out: Vec<KeyDef> = Vec::new();
     for r in rows {
         let (kind, name, column, rf) = (col(r, 0), col(r, 1), col(r, 2), col(r, 3));
+        let rc = if r.len() > 4 {
+            col(r, 4)
+        } else {
+            String::new()
+        };
         let kind = kind.chars().next().unwrap_or('C');
         if let Some(k) = out.iter_mut().find(|k| k.name == name) {
             if !column.is_empty() {
                 k.cols.push(column);
+            }
+            if !rc.is_empty() {
+                k.ref_cols.push(rc);
             }
         } else {
             out.push(KeyDef {
@@ -1618,6 +1628,7 @@ fn fold_defs(rows: &[Vec<Value>]) -> Vec<KeyDef> {
                     vec![column]
                 },
                 ref_table: (!rf.is_empty()).then_some(rf),
+                ref_cols: if rc.is_empty() { Vec::new() } else { vec![rc] },
             });
         }
     }
@@ -1680,15 +1691,19 @@ pub fn table_detail(
                     .map(|(_, ro, rc)| format!("({}, {})", lit(ro), lit(rc)))
                     .collect::<Vec<_>>()
                     .join(",");
+                // 대상 테이블 + 참조 컬럼(위치순 · T-178 10-06) — 제약 이름별 컬럼 수 행 · 보통 1~2행.
                 if let Ok(rs) = query(s, &format!(
-                    "SELECT owner, constraint_name, table_name FROM all_constraints WHERE (owner, constraint_name) IN ({list})"
+                    "SELECT c.owner, c.constraint_name, c.table_name, cc.column_name FROM all_constraints c JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name WHERE (c.owner, c.constraint_name) IN ({list}) ORDER BY c.owner, c.constraint_name, cc.position"
                 )) {
                     for r in &rs.rows {
-                        let (ro, rc, tn) = (col(r, 0), col(r, 1), col(r, 2));
+                        let (ro, rc, tn, cn) = (col(r, 0), col(r, 1), col(r, 2), col(r, 3));
                         for (name, o, c) in &refs {
                             if *o == ro && *c == rc {
                                 if let Some(k) = keys.iter_mut().find(|k| k.name == *name) {
                                     k.ref_table = Some(tn.clone());
+                                    if !cn.is_empty() {
+                                        k.ref_cols.push(cn.clone());
+                                    }
                                 }
                             }
                         }
@@ -1711,7 +1726,7 @@ pub fn table_detail(
             let obj = lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)));
             (
                 format!(
-                    "SELECT x.k, x.n, x.c, x.r FROM (SELECT CASE WHEN kc.type = 'PK' THEN 'P' ELSE 'U' END AS k, kc.name AS n, c.name AS c, '' AS r, ic.key_ordinal AS o FROM sys.key_constraints kc JOIN sys.index_columns ic ON ic.object_id = kc.parent_object_id AND ic.index_id = kc.unique_index_id JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE kc.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT 'R', fk.name, c.name, OBJECT_NAME(fk.referenced_object_id), fkc.constraint_column_id FROM sys.foreign_keys fk JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id JOIN sys.columns c ON c.object_id = fkc.parent_object_id AND c.column_id = fkc.parent_column_id WHERE fk.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT 'C', ck.name, ISNULL(c.name, ''), '', 1 FROM sys.check_constraints ck LEFT JOIN sys.columns c ON c.object_id = ck.parent_object_id AND c.column_id = ck.parent_column_id WHERE ck.parent_object_id = OBJECT_ID({obj})) x ORDER BY CASE x.k WHEN 'P' THEN 0 WHEN 'U' THEN 1 WHEN 'R' THEN 2 ELSE 3 END, x.n, x.o"
+                    "SELECT x.k, x.n, x.c, x.r, x.rc FROM (SELECT CASE WHEN kc.type = 'PK' THEN 'P' ELSE 'U' END AS k, kc.name AS n, c.name AS c, '' AS r, '' AS rc, ic.key_ordinal AS o FROM sys.key_constraints kc JOIN sys.index_columns ic ON ic.object_id = kc.parent_object_id AND ic.index_id = kc.unique_index_id JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE kc.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT 'R', fk.name, c.name, OBJECT_NAME(fk.referenced_object_id), rc.name, fkc.constraint_column_id FROM sys.foreign_keys fk JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id JOIN sys.columns c ON c.object_id = fkc.parent_object_id AND c.column_id = fkc.parent_column_id JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id WHERE fk.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT 'C', ck.name, ISNULL(c.name, ''), '', '', 1 FROM sys.check_constraints ck LEFT JOIN sys.columns c ON c.object_id = ck.parent_object_id AND c.column_id = ck.parent_column_id WHERE ck.parent_object_id = OBJECT_ID({obj})) x ORDER BY CASE x.k WHEN 'P' THEN 0 WHEN 'U' THEN 1 WHEN 'R' THEN 2 ELSE 3 END, x.n, x.o"
                 ),
                 format!(
                     "SELECT i.name, CASE WHEN i.is_unique = 1 THEN 'Y' ELSE 'N' END, c.name FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id WHERE i.object_id = OBJECT_ID({obj}) AND i.name IS NOT NULL ORDER BY i.index_id, ic.key_ordinal"
@@ -1720,7 +1735,7 @@ pub fn table_detail(
         }
         Dialect::Postgres => (
             format!(
-                "SELECT UPPER(con.contype::text), con.conname, a.attname, COALESCE(rt.relname, '') FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('p','u','f','c') ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END, con.conname, k.ord",
+                "SELECT UPPER(con.contype::text), con.conname, a.attname, COALESCE(rt.relname, ''), COALESCE(ra.attname, '') FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum LEFT JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = con.confkey[k.ord] WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('p','u','f','c') ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END, con.conname, k.ord",
                 lit(schema), lit(table)
             ),
             format!(
@@ -1730,7 +1745,7 @@ pub fn table_detail(
         ),
         Dialect::Mysql | Dialect::Odbc => (
             format!(
-                "SELECT CASE tc.constraint_type WHEN 'PRIMARY KEY' THEN 'P' WHEN 'UNIQUE' THEN 'U' WHEN 'FOREIGN KEY' THEN 'R' ELSE 'C' END, tc.constraint_name, kcu.column_name, IFNULL(kcu.referenced_table_name, '') FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} ORDER BY 1, 2, kcu.ordinal_position",
+                "SELECT CASE tc.constraint_type WHEN 'PRIMARY KEY' THEN 'P' WHEN 'UNIQUE' THEN 'U' WHEN 'FOREIGN KEY' THEN 'R' ELSE 'C' END, tc.constraint_name, kcu.column_name, IFNULL(kcu.referenced_table_name, ''), IFNULL(kcu.referenced_column_name, '') FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = {} AND tc.table_name = {} ORDER BY 1, 2, kcu.ordinal_position",
                 lit(schema), lit(table)
             ),
             format!(
@@ -1747,24 +1762,29 @@ pub fn table_detail(
                     kind: 'P',
                     cols: k.pk,
                     ref_table: None,
+                    ref_cols: Vec::new(),
                 });
             }
             let fk = query(
                 s,
                 &format!("PRAGMA foreign_key_list({})", quote_ident(dialect, table)),
             )?;
-            // id, seq, table, from, to, …
+            // id, seq, table, from, to, … — `to`가 비면(부모 PK 암시) 참조 컬럼 모름 = 폴백.
             for r in &fk.rows {
                 let name = format!("FK_{}", cell_i64(&r[0]));
-                let from = col(r, 3);
+                let (from, to) = (col(r, 3), col(r, 4));
                 if let Some(e) = d.keys.iter_mut().find(|e| e.name == name) {
                     e.cols.push(from);
+                    if !to.is_empty() {
+                        e.ref_cols.push(to);
+                    }
                 } else {
                     d.keys.push(KeyDef {
                         name,
                         kind: 'R',
                         cols: vec![from],
                         ref_table: Some(col(r, 2)),
+                        ref_cols: if to.is_empty() { Vec::new() } else { vec![to] },
                     });
                 }
             }
