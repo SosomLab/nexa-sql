@@ -3505,6 +3505,11 @@ impl Grid {
         self.clamp();
     }
 
+    /// 그리드 본문(머리 줄 포함 · 조건 바·칩 줄 제외) — 글꼴 크기 HUD처럼 조건 바를 덮으면 안 되는 겹침 그림의 영역.
+    pub(crate) fn body_bounds(&self) -> Rect {
+        self.bounds
+    }
+
     /// 호스트가 준 **바깥** 영역(필터 줄/조건 바 포함) — 탭을 바꿀 때 다른 그리드에 넘길 사각형은 이것(안쪽 `bounds`를 넘기면
     /// 줄 높이가 한 번 더 깎여 왕복마다 공백이 자랐다 · 사용자 10-06 Output 탭 왕복).
     pub(crate) fn outer_bounds(&self) -> Rect {
@@ -4625,6 +4630,60 @@ impl Grid {
     }
 
     /// 필터 항목(셀 메뉴의 하위 · 헤더 메뉴의 본문 공용): 값이 있으면 "이 값만/제외" · 포함… · NULL · 열/전체 지우기 · 조회 SQL 복사.
+    /// 조건 ▸ 항목(사용자 10-07 · 필터 메뉴와 같은 꼴): 값이 있으면 `= 값` · `<> 값` · (문자열) 시작/포함/끝 · 늘 IS NULL / IS NOT NULL.
+    fn cond_menu_items(&self, ci: usize, val: Option<&str>) -> Vec<CtxItem> {
+        let short = |s: &str| {
+            let mut t: String = s.chars().take(24).collect();
+            if s.chars().count() > 24 {
+                t.push('…');
+            }
+            t
+        };
+        let kind = self.col_kind(ci);
+        let mut f = Vec::new();
+        if let Some(v) = val.filter(|_| kind != ColKind::Bool) {
+            f.push(CtxItem::item("cond.eq", tf(Msg::MnCondEq, &[&short(v)])));
+            f.push(CtxItem::item("cond.ne", tf(Msg::MnCondNe, &[&short(v)])));
+            if kind == ColKind::Text {
+                f.push(CtxItem::item(
+                    "cond.starts",
+                    tf(Msg::MnCondStarts, &[&short(v)]),
+                ));
+                f.push(CtxItem::item(
+                    "cond.contains",
+                    tf(Msg::MnCondContains, &[&short(v)]),
+                ));
+                f.push(CtxItem::item(
+                    "cond.ends",
+                    tf(Msg::MnCondEnds, &[&short(v)]),
+                ));
+            }
+            f.push(CtxItem::Separator);
+        }
+        f.push(CtxItem::item("cond.null", t(Msg::MnCondNull)));
+        f.push(CtxItem::item("cond.notnull", t(Msg::MnCondNotNull)));
+        f
+    }
+
+    /// 조건 ▸ 선택 — 술어 글을 만들어 조건 바 끝에 AND로 붙이고 상자에 포커스(실행은 Enter · 여러 개를 모아 한 번에 보낼 수 있게).
+    fn cond_pick(&mut self, what: &str) {
+        let Some((ci, val)) = self.menu_cell.clone() else {
+            return;
+        };
+        let Some(name) = self
+            .rs
+            .as_ref()
+            .and_then(|rs| rs.columns().get(ci).map(|c| c.name.clone()))
+        else {
+            return;
+        };
+        let kind = self.col_kind(ci);
+        if let Some(sql) = cond_pred_sql(&name, kind, what, val.as_deref()) {
+            self.cond.append_condition(&sql);
+            self.dirty = true;
+        }
+    }
+
     fn filter_menu_items(&self, ci: usize, val: Option<&str>) -> Vec<CtxItem> {
         let short = |s: &str| {
             let mut t: String = s.chars().take(24).collect();
@@ -4933,6 +4992,13 @@ impl Grid {
                 }
                 items.push(fi);
             }
+            // ★ 조건 ▸(사용자 10-07): 셀 값 기준 술어를 **조건 바**(서버 WHERE)에 AND로 덧붙인다 — 조건 바가 켜져 있을 때만.
+            if self.cond_on {
+                let c = self.cond_menu_items(ci, val.as_deref());
+                if !c.is_empty() {
+                    items.push(CtxItem::submenu("cond", t(Msg::MnCond), c));
+                }
+            }
             // ★ 외래 키 따라가기(T-180 ⑥): 단일 테이블 결과 · 외래 키 열 · 값 있음일 때만 활성.
             if let Some(table) = self.reveal_table() {
                 let _ = table;
@@ -5060,6 +5126,10 @@ impl Grid {
         }
         if let Some(rest) = id.strip_prefix("filter.") {
             self.filter_pick(rest);
+            return;
+        }
+        if let Some(rest) = id.strip_prefix("cond.") {
+            self.cond_pick(rest);
             return;
         }
         if let Some(rest) = id.strip_prefix("sort.") {
@@ -7677,6 +7747,35 @@ fn funnel_glyph(dc: &mut dyn DrawCtx, r: Rect, color: nexa_ctl::Color) {
 }
 
 /// 처음 나온 순서를 지키는 distinct — 해시 집합 O(n) · `cap`+1개가 모이면 멈춘다(상한 초과를 알 수 있게 · 사용자 09-30). 순수.
+/// 조건 ▸ 메뉴의 술어 글(순수 · 사용자 10-07): 열은 `"COL"`(`q.` 없이 — 조건 바 검증이 결과 열 이름으로 확인한다) · 값은 숫자 열이고
+/// 숫자로 읽히면 그대로, 아니면 `'…'`(`'` 두 번) · LIKE 세 가지는 글자 그대로(와일드카드 이스케이프는 하지 않는다 = 필터와 같음).
+pub(crate) fn cond_pred_sql(
+    col: &str,
+    kind: ColKind,
+    op: &str,
+    value: Option<&str>,
+) -> Option<String> {
+    let c = format!("\"{}\"", col.replace('"', "\"\""));
+    let esc = |v: &str| v.replace('\'', "''");
+    let lit = |v: &str| -> String {
+        if kind == ColKind::Number && v.trim().replace(',', "").parse::<f64>().is_ok() {
+            v.trim().replace(',', "")
+        } else {
+            format!("'{}'", esc(v))
+        }
+    };
+    Some(match (op, value) {
+        ("eq", Some(v)) => format!("{c} = {}", lit(v)),
+        ("ne", Some(v)) => format!("{c} <> {}", lit(v)),
+        ("starts", Some(v)) => format!("{c} LIKE '{}%'", esc(v)),
+        ("contains", Some(v)) => format!("{c} LIKE '%{}%'", esc(v)),
+        ("ends", Some(v)) => format!("{c} LIKE '%{}'", esc(v)),
+        ("null", _) => format!("{c} IS NULL"),
+        ("notnull", _) => format!("{c} IS NOT NULL"),
+        _ => return None,
+    })
+}
+
 pub(crate) fn distinct_capped(values: impl Iterator<Item = String>, cap: usize) -> Vec<String> {
     let stop = cap.max(1).saturating_add(1);
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -8254,6 +8353,44 @@ mod tests {
     }
 
     /// distinct 상한(사용자 09-30): 처음 나온 순서 · cap+1개에서 멈춤.
+    #[test]
+    fn cond_pred_sql_rules() {
+        let t = |op, v: Option<&str>| cond_pred_sql("ITEM_CD", ColKind::Text, op, v);
+        assert_eq!(
+            t("eq", Some("O'Neil")).as_deref(),
+            Some("\"ITEM_CD\" = 'O''Neil'")
+        );
+        assert_eq!(t("ne", Some("a")).as_deref(), Some("\"ITEM_CD\" <> 'a'"));
+        assert_eq!(
+            t("starts", Some("P")).as_deref(),
+            Some("\"ITEM_CD\" LIKE 'P%'")
+        );
+        assert_eq!(
+            t("contains", Some("P")).as_deref(),
+            Some("\"ITEM_CD\" LIKE '%P%'")
+        );
+        assert_eq!(
+            t("ends", Some("P")).as_deref(),
+            Some("\"ITEM_CD\" LIKE '%P'")
+        );
+        assert_eq!(t("null", None).as_deref(), Some("\"ITEM_CD\" IS NULL"));
+        assert_eq!(
+            t("notnull", Some("x")).as_deref(),
+            Some("\"ITEM_CD\" IS NOT NULL")
+        );
+        assert!(t("eq", None).is_none(), "값 없는 = 는 없음");
+        assert_eq!(
+            cond_pred_sql("QTY", ColKind::Number, "eq", Some("1,200")).as_deref(),
+            Some("\"QTY\" = 1200"),
+            "숫자 열 = 숫자 리터럴"
+        );
+        assert_eq!(
+            cond_pred_sql("a\"b", ColKind::Text, "null", None).as_deref(),
+            Some("\"a\"\"b\" IS NULL"),
+            "식별자 따옴표 두 번"
+        );
+    }
+
     #[test]
     fn distinct_capped_stops_after_cap_plus_one() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();

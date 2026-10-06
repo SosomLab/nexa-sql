@@ -47,6 +47,78 @@ pub(crate) struct Palette {
     anchor: Option<Rect>,
     /// 창 크기(물리 px) — 붙는 상자를 창 안에 두는 데 쓴다.
     win: (i32, i32),
+    /// ★ Goto Anything 원천(사용자 10-07 · VS Code식 접두): 기본 = 파일 · `>` = 명령 · `@` = 현재 파일 심볼(`@:` = 종류별) ·
+    /// `%` = 현재 파일 줄 · `?` = 도움말 · `#` = 프로젝트 심볼(다음 단계 · 안내만). `set_commands`로 연 단순 팔레트는 `goto_mode` = 거짓.
+    goto_mode: bool,
+    src_files: Vec<(String, String)>,
+    src_cmds: Vec<(String, String)>,
+    src_syms: Vec<(String, String)>,
+    doc_lines: Vec<String>,
+    help: Vec<(String, String)>,
+    /// 파일 모드 `이름:줄`의 줄 — Pick id에 `#L<n>` 꼬리로 붙인다.
+    tail_line: Option<usize>,
+    /// 접두 모드의 안내(결과가 없을 때 한 줄 · `#` 등).
+    mode_hint: String,
+}
+
+/// 접두 풀이(순수 · 시험): 어느 원천을 어떤 질의로 볼지.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum GotoMode {
+    Files,
+    Commands,
+    Symbols,
+    SymbolsByKind,
+    WorkspaceSymbols,
+    QuickSearch,
+    Help,
+    /// `:줄`(종전 줄 이동).
+    Line,
+}
+
+/// `q` → (모드 · 남은 질의 · `이름:줄`의 줄).
+pub(crate) fn parse_goto(q: &str) -> (GotoMode, String, Option<usize>) {
+    let t = q.trim_start();
+    if let Some(r) = t.strip_prefix(':') {
+        return (GotoMode::Line, r.trim().to_string(), None);
+    }
+    if let Some(r) = t.strip_prefix('>') {
+        return (GotoMode::Commands, r.trim().to_string(), None);
+    }
+    if let Some(r) = t.strip_prefix("@:") {
+        return (GotoMode::SymbolsByKind, r.trim().to_string(), None);
+    }
+    if let Some(r) = t.strip_prefix('@') {
+        return (GotoMode::Symbols, r.trim().to_string(), None);
+    }
+    if let Some(r) = t.strip_prefix('#') {
+        return (GotoMode::WorkspaceSymbols, r.trim().to_string(), None);
+    }
+    if let Some(r) = t.strip_prefix('%') {
+        return (GotoMode::QuickSearch, r.to_string(), None);
+    }
+    if t.starts_with('?') {
+        return (GotoMode::Help, String::new(), None);
+    }
+    // `이름:줄` — 마지막 `:` 뒤가 숫자면 줄(이름이 비면 `:줄` 모드와 같다 = 위에서 처리됨).
+    if let Some((name, n)) = t.rsplit_once(':') {
+        if let Ok(n) = n.trim().parse::<usize>() {
+            if n > 0 && !name.trim().is_empty() {
+                return (GotoMode::Files, name.trim().to_string(), Some(n));
+            }
+        }
+    }
+    (GotoMode::Files, t.trim().to_string(), None)
+}
+
+/// 파일 모드 순위 가산 — 열린 탭 > 최근 > 프로젝트 파일(퍼지 점수에 더한다).
+fn tier_bonus(id: &str) -> i32 {
+    if id.starts_with("tab:") {
+        3000
+    } else if id.starts_with("file.recent:") {
+        2000
+    } else {
+        0
+    }
 }
 
 const MAX_ROWS: usize = 12;
@@ -70,7 +142,83 @@ impl Palette {
             hint: String::new(),
             anchor: None,
             win: (0, 0),
+            goto_mode: false,
+            src_files: Vec::new(),
+            src_cmds: Vec::new(),
+            src_syms: Vec::new(),
+            doc_lines: Vec::new(),
+            help: Vec::new(),
+            tail_line: None,
+            mode_hint: String::new(),
         }
+    }
+
+    /// ★ Goto Anything로 열기(사용자 10-07) — 원천 전부를 받고 접두 모드를 켠다.
+    pub(crate) fn open_goto(
+        &mut self,
+        files: Vec<(String, String)>,
+        cmds: Vec<(String, String)>,
+        syms: Vec<(String, String)>,
+        doc_lines: Vec<String>,
+        help: Vec<(String, String)>,
+        prefill: &str,
+    ) {
+        self.src_files = files;
+        self.src_cmds = cmds;
+        self.src_syms = syms;
+        self.doc_lines = doc_lines;
+        self.help = help;
+        self.goto_mode = true;
+        self.open_with(prefill, t(Msg::PhGoto));
+    }
+
+    /// 자체 시험 덤프: `mode=goto|cmd query=… rows=N sel=i` + 보이는 행 라벨.
+    pub(crate) fn dump(&self) -> String {
+        let mut out = format!(
+            "mode={} query={} rows={} sel={} top={}",
+            if self.goto_mode { "goto" } else { "cmd" },
+            self.input.text(),
+            self.matches.len(),
+            self.sel,
+            self.top
+        );
+        if let Some(g) = self.goto {
+            out.push_str(&format!(" goto_line={g:?}"));
+        }
+        if let Some(n) = self.tail_line {
+            out.push_str(&format!(" tail_line={n}"));
+        }
+        if !self.mode_hint.is_empty() {
+            out.push_str(&format!(" hint={}", self.mode_hint));
+        }
+        for &i in self.matches.iter().skip(self.top).take(MAX_ROWS) {
+            out.push('\n');
+            out.push_str(&self.cmds[i].0);
+            out.push('\t');
+            out.push_str(&self.cmds[i].1);
+        }
+        out
+    }
+
+    /// 파일 원천 갱신(프로젝트 폴더 열거가 도착할 때) — Goto 모드일 때만.
+    pub(crate) fn set_files(&mut self, files: Vec<(String, String)>) {
+        if self.goto_mode {
+            self.src_files = files;
+            self.refilter(true);
+        }
+    }
+
+    pub(crate) fn goto_mode(&self) -> bool {
+        self.open && self.goto_mode
+    }
+
+    /// 입력란 글을 바꾼다(도움말 항목 선택 = 접두 넣기 · 캐럿 끝).
+    pub(crate) fn set_query(&mut self, q: &str) {
+        let mut inv = Invalidations::default();
+        self.input.set_text(q);
+        let n = q.chars().count();
+        self.input.select_range(n, n, &mut inv);
+        self.refilter(true);
     }
 
     /// 프롬프트 모드로 열기 — `id`는 확정 때 그대로 돌려준다 · `placeholder` 안내 · `initial` 초기 글자(전체 선택).
@@ -106,6 +254,7 @@ impl Palette {
     }
 
     pub(crate) fn set_commands(&mut self, cmds: Vec<(String, String)>) {
+        self.goto_mode = false;
         self.cmds = cmds;
         self.refilter(true);
     }
@@ -126,9 +275,14 @@ impl Palette {
     }
 
     pub(crate) fn open(&mut self, prefill: &str) {
+        self.open_with(prefill, t(Msg::PhPalette));
+    }
+
+    /// 열기(자리 표시 글 지정 · Goto 모드는 접두 안내).
+    fn open_with(&mut self, prefill: &str, placeholder: &str) {
         self.open = true;
         // × 지우기 = 검색 입력란 공통(명령 검색 · 글이 있을 때만 · 사용자 09-23).
-        self.input = TextBox::new(t(Msg::PhPalette))
+        self.input = TextBox::new(placeholder)
             .with_clearable()
             .with_text(prefill);
         self.input.set_scale(self.scale);
@@ -243,11 +397,73 @@ impl Palette {
             return;
         }
         self.goto = None;
+        self.tail_line = None;
+        self.mode_hint.clear();
+        // ★ Goto 모드 = 접두로 원천을 고른다(사용자 10-07 · VS Code식).
+        let mut files_mode = false;
+        let q = if self.goto_mode {
+            let (mode, rest, line) = parse_goto(&q);
+            self.tail_line = line;
+            match mode {
+                GotoMode::Files | GotoMode::Line => {
+                    files_mode = true;
+                    self.cmds = self.src_files.clone();
+                }
+                GotoMode::Commands => self.cmds = self.src_cmds.clone(),
+                GotoMode::Symbols => self.cmds = self.src_syms.clone(),
+                GotoMode::SymbolsByKind => {
+                    // 종류별 = 라벨의 `—  종류` 뒤를 1차 키로(안정 정렬 · 원래 순서 보존).
+                    let mut v = self.src_syms.clone();
+                    v.sort_by_key(|(_, l)| l.split("—").nth(1).unwrap_or("").trim().to_string());
+                    self.cmds = v;
+                }
+                GotoMode::WorkspaceSymbols => {
+                    self.cmds = Vec::new();
+                    self.mode_hint = t(Msg::PalHintWorkspaceSym).to_string();
+                }
+                GotoMode::QuickSearch => {
+                    let needle = rest.trim().to_lowercase();
+                    self.cmds = self
+                        .doc_lines
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, l)| needle.is_empty() || l.to_lowercase().contains(&needle))
+                        .take(300)
+                        .map(|(i, l)| {
+                            (
+                                format!("goto.line:{}", i + 1),
+                                format!("{}: {}", i + 1, l.trim()),
+                            )
+                        })
+                        .collect();
+                    // 내용 검색은 포함 여부가 곧 결과 — 퍼지 점수는 생략(순서 = 줄 순).
+                    self.matches = (0..self.cmds.len()).collect();
+                    self.sel = 0;
+                    self.top = 0;
+                    return;
+                }
+                GotoMode::Help => {
+                    self.cmds = self.help.clone();
+                    self.matches = (0..self.cmds.len()).collect();
+                    self.sel = 0;
+                    self.top = 0;
+                    return;
+                }
+            }
+            rest
+        } else {
+            q
+        };
         let mut scored: Vec<(i32, usize)> = self
             .cmds
             .iter()
             .enumerate()
-            .filter_map(|(i, (_, label))| fuzzy_score(&q, label).map(|s| (s, i)))
+            .filter_map(|(i, (id, label))| {
+                // Goto 모드 = 라벨에 안 맞으면 **id**로도(명령 `file.save` = 영어 낱말 · 협업 V1 bin34 `>save` 0행).
+                fuzzy_score(&q, label)
+                    .or_else(|| self.goto_mode.then(|| fuzzy_score(&q, id)).flatten())
+                    .map(|s| (s + if files_mode { tier_bonus(id) } else { 0 }, i))
+            })
             .collect();
         scored.sort_by(|a, b| {
             b.0.cmp(&a.0)
@@ -303,7 +519,16 @@ impl Palette {
                     };
                 }
                 return match self.matches.get(self.sel) {
-                    Some(&i) => PaletteAction::Pick(self.cmds[i].0.clone()),
+                    Some(&i) => {
+                        let id = self.cmds[i].0.clone();
+                        // `이름:줄` = 파일 항목이면 열고 그 줄로(`#L` 꼬리 · 호스트 `goto_pick`).
+                        match self.tail_line {
+                            Some(n) if id.starts_with("tab:") || id.starts_with("file.") => {
+                                PaletteAction::Pick(format!("{id}#L{n}"))
+                            }
+                            _ => PaletteAction::Pick(id),
+                        }
+                    }
                     None => PaletteAction::Close,
                 };
             }
@@ -489,11 +714,16 @@ impl Palette {
             return;
         }
         if self.matches.is_empty() {
+            let msg = if self.mode_hint.is_empty() {
+                t(Msg::PalNoMatch).to_string()
+            } else {
+                self.mode_hint.clone()
+            };
             dc.text(
                 rr.x + pad,
                 rr.y + (self.row_h - th_px) / 2,
                 rr,
-                t(Msg::PalNoMatch),
+                &msg,
                 th.text_dim,
             );
             return;
@@ -573,7 +803,51 @@ mod tests {
         assert_eq!(p.query(), "로그", "조합 중 글자는 본문이 아니다");
     }
 
-    use super::fuzzy_score;
+    use super::{fuzzy_score, parse_goto, GotoMode};
+
+    /// 접두 풀이(사용자 10-07): `>` 명령 · `:` 줄 · `@`/`@:` 심볼 · `#` 프로젝트 심볼 · `%` 빠른 검색 · `?` 도움 · `이름:줄`.
+    #[test]
+    fn goto_prefixes() {
+        assert_eq!(
+            parse_goto("tabbar"),
+            (GotoMode::Files, "tabbar".into(), None)
+        );
+        assert_eq!(
+            parse_goto("app/out"),
+            (GotoMode::Files, "app/out".into(), None)
+        );
+        assert_eq!(
+            parse_goto("tabbar.rs:1172"),
+            (GotoMode::Files, "tabbar.rs".into(), Some(1172))
+        );
+        assert_eq!(
+            parse_goto(">save"),
+            (GotoMode::Commands, "save".into(), None)
+        );
+        assert_eq!(parse_goto(":1172"), (GotoMode::Line, "1172".into(), None));
+        assert_eq!(
+            parse_goto("@sync"),
+            (GotoMode::Symbols, "sync".into(), None)
+        );
+        assert_eq!(
+            parse_goto("@:"),
+            (GotoMode::SymbolsByKind, String::new(), None)
+        );
+        assert_eq!(
+            parse_goto("#sync_bar"),
+            (GotoMode::WorkspaceSymbols, "sync_bar".into(), None)
+        );
+        assert_eq!(
+            parse_goto("%pinned"),
+            (GotoMode::QuickSearch, "pinned".into(), None)
+        );
+        assert_eq!(parse_goto("?"), (GotoMode::Help, String::new(), None));
+        assert_eq!(
+            parse_goto("a:b"),
+            (GotoMode::Files, "a:b".into(), None),
+            "숫자 아니면 이름의 일부"
+        );
+    }
 
     #[test]
     fn subsequence_and_ranking() {

@@ -61,7 +61,47 @@ impl App {
             self.prefs_win.refresh(&self.settings);
         }
         self.sess.status = tf(Msg::StFontSize, &[area, &next.to_string()]);
+        // ★ HUD(사용자 10-07 "고속 스크롤처럼"): 바뀐 영역 위에 `얼굴 · N px` 캡슐 — 유지 뒤 서서히 사라진다(`zoom.hud*`).
+        if self.settings.flag("zoom.hud") {
+            let face = self.zoom_face(key);
+            // 그리드 = 본문 영역(조건 바 제외 · 협업 V1 bin32 "HUD가 조건 바 버튼을 덮음").
+            self.zoom_hud_area = if key == "editor.font_size" {
+                self.editors.editor_bounds()
+            } else {
+                self.grid.body_bounds()
+            };
+            self.zoom_hud.show(format!("{face} · {next} px"));
+        }
         self.redraw();
         true
+    }
+
+    /// 글꼴 얼굴 이름 — 설정에 적힌 이름이 있으면 그것 · 비면 적재된 사슬의 첫 이름(편집기 = 고정폭 · 그리드 = 그리드 얼굴 또는 UI).
+    fn zoom_face(&self, key: &str) -> String {
+        let (face_key, fallback) = if key == "editor.font_size" {
+            ("editor.font_face", &self.mono_face)
+        } else {
+            ("grid.font_face", &self.ui_face)
+        };
+        match self.settings.get(face_key).map(str::trim) {
+            Some(f) if !f.is_empty() => f.to_string(),
+            _ if key != "editor.font_size" && self.grid_font.is_some() => self.mono_face.clone(),
+            _ => fallback.clone(),
+        }
+    }
+
+    /// HUD 모양 = 설정 `zoom.hud_*`(고속 스크롤 HUD 항목과 같은 구성 · 색이 비면 테마).
+    pub(crate) fn zoom_hud_style(&self) -> nexa_ctl::HudStyle {
+        let (bg, _) = color_alpha_setting(&self.settings, "zoom.hud_bg");
+        let (fg, _) = color_alpha_setting(&self.settings, "zoom.hud_fg");
+        nexa_ctl::HudStyle {
+            pos: nexa_ctl::HudPos::parse(self.settings.get("zoom.hud_pos").unwrap_or("top_right")),
+            hold_ms: self.settings.int("zoom.hud_hold_ms").clamp(0, 5000) as u64,
+            fade_ms: self.settings.int("zoom.hud_fade_ms").clamp(50, 5000) as u64,
+            bg: bg.unwrap_or(self.theme.accent),
+            bg_alpha: self.settings.int("zoom.hud_bg_alpha").clamp(0, 100) as f32 / 100.0,
+            fg: fg.unwrap_or(self.theme.text),
+            fg_alpha: self.settings.int("zoom.hud_fg_alpha").clamp(0, 100) as f32 / 100.0,
+        }
     }
 }

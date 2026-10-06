@@ -95,7 +95,7 @@ impl App {
     /// 적합하지 않은 파일은 아웃라인 무시"). 분석기 자체도 패닉하지 않게 고쳤지만(nsql-script fuzz 시험) 뜻 없는 심볼을 만들지 않는다.
     /// `light` = 가벼운 요청(수동 완성 · 시그니처 도움 — 창 방식이라 큰 파일 1단계에서도 된다) · 아니면(자동 팝업 · 아웃라인 · Goto Symbol)
     /// 1단계부터 끈다 · 2단계는 전부 끈다(09-24 §187 · 72).
-    fn intel_unsuitable(&self, i: usize, light: bool) -> Option<Msg> {
+    pub(crate) fn intel_unsuitable(&self, i: usize, light: bool) -> Option<Msg> {
         if self.editors.is_large(i) {
             let lvl = self.editors.large_level(i);
             if lvl >= 2 || !light {
@@ -307,29 +307,8 @@ impl App {
             self.redraw();
             return;
         }
-        let tab = self.editors.tab_id(i);
-        let (rev, text) = {
-            let ed = self.editors.cur();
-            (ed.rev(), ed.text())
-        };
-        let dialect = Some(self.sess.dialect);
-        let ol = self
-            .intel
-            .outline_for(tab, rev, &|| text.clone(), dialect)
-            .clone();
-        let mut cmds: Vec<(String, String)> = Vec::new();
-        for s in &ol.symbols {
-            let indent = "  ".repeat(s.depth as usize);
-            let detail = if s.detail.is_empty() {
-                s.kind.label().to_string()
-            } else {
-                format!("{} · {}", s.kind.label(), s.detail)
-            };
-            cmds.push((
-                format!("sym:{}", s.byte),
-                format!("{indent}{}  —  {detail}  :{}", s.name, s.line),
-            ));
-        }
+        // 항목 = Goto Anything `@`와 공용(goto.rs).
+        let cmds = self.goto_symbol_items();
         if cmds.is_empty() {
             self.sess.status = t(Msg::OutlineEmpty).into();
             self.redraw();
@@ -381,41 +360,6 @@ impl App {
         let mut inv = Invalidations::default();
         self.ed_mut().select_range(idx, idx, &mut inv);
         self.set_focus(Focus::Editor);
-        self.redraw();
-    }
-
-    /// Goto Anything(T-96 · Sublime Ctrl+P): 열린 탭(제목 · 경로 · `*`) + 최근 파일 · `:숫자` = 줄 이동.
-    pub(crate) fn open_goto_anything(&mut self, prefill: &str) {
-        let mut cmds: Vec<(String, String)> = Vec::new();
-        for (id, title, path, dirty, active) in self.editors.tab_entries() {
-            let mark = if dirty { "*" } else { "" };
-            let where_ = path
-                .as_deref()
-                .map(nexa_fs::path::display)
-                .unwrap_or_else(|| t(Msg::PalUntitled).to_string());
-            let act = if active { "✓ " } else { "" };
-            cmds.push((
-                format!("tab:{id}"),
-                format!("{act}{title}{mark}  —  {where_}"),
-            ));
-        }
-        for (i, p) in self.recent_files().iter().enumerate() {
-            let name = p
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            cmds.push((
-                format!("file.recent:{i}"),
-                format!(
-                    "{}: {name}  {}",
-                    t(Msg::LblFileRecent),
-                    nexa_fs::path::display(p)
-                ),
-            ));
-        }
-        self.palette.set_commands(cmds);
-        self.palette.open(prefill);
-        self.ime_refresh();
         self.redraw();
     }
 

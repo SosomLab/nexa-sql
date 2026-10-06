@@ -303,6 +303,9 @@ impl App {
     }
 
     pub(crate) fn push_recent(&mut self, path: &Path) {
+        // ★ 늘 절대 경로로 저장(기동 명령·CLI가 준 상대 경로가 그대로 남아 Goto Anything 최근 라벨의 폴더가 비던 결함 · 10-07).
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = abs.as_path();
         let mut v = self.recent_files();
         v.retain(|p| p != path);
         v.insert(0, path.to_path_buf());

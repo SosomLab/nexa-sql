@@ -237,6 +237,12 @@ impl ApplicationHandler<Wake> for App {
         self.explorer.prefetch_tick(now);
         let mut redraw = self.ed_mut().tick(now_ms);
         redraw |= self.grid.tick(now_ms);
+        if self.zoom_hud.visible() {
+            let st = self.zoom_hud_style();
+            redraw |= self.zoom_hud.tick(now, &st);
+        }
+        // Goto Anything 프로젝트 파일 열거 수거(10-07).
+        redraw |= self.goto_walk_tick();
         redraw |= self.git.poll();
         // 잠든 결과 탭의 텍스트 변환도 이어서 거둔다(다른 탭에서 완성 · 09-16) — 그리지는 않는다.
         for g in self.sleeping_grids_mut() {
@@ -358,6 +364,8 @@ impl ApplicationHandler<Wake> for App {
             || self.ext_fetch_rx.is_some()
             || !self.file_loads.is_empty()
             || self.editors.tooltip_pending()
+            || self.zoom_hud.visible()
+            || self.goto_walk.is_some()
             || self.toasts.animating();
         // 애니메이션 프레임 간격 = 1000 / `ui.max_fps`(60 = 16ms · 30 = 33ms · 15 = 66ms · 향상 모드 30).
         let frame_ms = (1000 / self.settings.int("ui.max_fps").clamp(5, 240)).max(4) as u64;
@@ -1164,6 +1172,7 @@ impl App {
                     let _ = self.settings.set(&keymap::setting_key(&id), &code);
                     let _ = self.settings.save();
                     self.keymap = Keymap::from_settings(&self.settings);
+                    self.sync_menu_shortcuts();
                     self.apply_menu_decor();
                     self.keys_win.refresh(&self.keymap);
                     self.keys_win.redraw();
@@ -1174,6 +1183,7 @@ impl App {
                     }
                     let _ = self.settings.save();
                     self.keymap = Keymap::from_settings(&self.settings);
+                    self.sync_menu_shortcuts();
                     self.apply_menu_decor();
                     self.keys_win.refresh(&self.keymap);
                     self.keys_win.redraw();

@@ -9,6 +9,7 @@
 - ★ **T-283 1단계 CREATE 문 ↔ 실제 객체 비교**(`app/compare.rs` · 비교 탭 + 거터 diff · 팔레트 `obj.compare` · hover 카드 버튼 · [19 §6](19-compare-git-and-object-history.md)) · 🔧 같은 문장 "1군데 다름"(서버 DDL 머리 주석 정규화) = 고침(bin28 ✓) · 2단계 diff 뷰어 = 남음.
 - ★ 조건 바 개념 변경(늘 여러 줄 · Enter 실행 · Shift+Enter 줄 바꿈 · [×][▾/▴][복사] · 스플리터 제거) · 칩 줄 = 조건 바 아래 · `grid.filter_strip` 기본 off(D-255) · 열 머리 → 조건 바 끌어 놓기(`grid.cond_drop_template`) · 서버 오류 = 빨간 테두리 + 결과 유지 · 클립보드 동작(Ctrl+C/X/V/A · 우클릭 메뉴) · 🔧 이어 놓기가 따옴표 안에 들어가던 결함 = 고침(늘 글 끝 · bin28 ✓).
 - ★ 글꼴 크기 조절 Ctrl+= / Ctrl+- / Ctrl+휠(`app/zoom.rs` · 포커스·커서 아래 영역별 = `editor.font_size` / `grid.font_size` · 팔레트 `view.zoom_reset` · 상태줄 표시) · 조건 바 글꼴 = 그리드 결과와 같은 크기(고정폭) · 조건 바 완성 = 편집기 규칙(`intel.key_passthrough` · `intel.min_chars` · 숫자 접두 없음).
+- ★ **Goto Anything(Ctrl+P) VS Code식**(T-286 1차 · 파일 퍼지 · `이름:줄` · `>` 명령(라벨+id) · `:` · `@` · `@:` · `%` · `?` · 남음 `#`) · ★ 풀다운 메뉴 단축키 표시(T-287) · 셀 우클릭 ▸ 조건 ▸ · 글꼴 크기 HUD · 📐 [103 결과 필터 두 상한](103-filter-values-and-fetch-under-filter.md)(D-256~258 결정 대기) · [위키 Goto-Anything](wiki/Goto-Anything.md).
 - 운영: 시험 정책 개정(풀 테스트 = 하루 1회 + 배포 전 · 빌드마다 = 바뀐 기능·연관 기능만 · [102 §5-7](102-collab-session-operation.md)) · 개발 중 실행 = Debug만.
 
 ## 2026-10-06 (113차 · **win**)([journal 10-06](journal/2026-10-06.md))

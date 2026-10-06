@@ -117,6 +117,16 @@ impl App {
             let _ = std::fs::write(path, self.objdetail.text());
             return;
         }
+        // 자체 시험(Goto Anything 10-07): 팔레트 입력란 글 넣기 · 목록 덤프(`mode query rows sel` + 보이는 행 id\t라벨).
+        if let Some(q) = id.strip_prefix("palette.query:") {
+            self.palette.set_query(q);
+            self.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("palette.dump:") {
+            let _ = std::fs::write(path, self.palette.dump());
+            return;
+        }
         // 자체 시험(T-283): 마지막 비교 결과 `same=… hunks=… name=…`.
         if let Some(path) = id.strip_prefix("compare.dump:") {
             self.compare_dump(path);

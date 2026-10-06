@@ -124,6 +124,8 @@ impl CondBar {
         // 상자는 늘 여러 줄(보이는 줄 수 = 높이) · 줄 바꿈 없음(가로 스크롤) · 지우기 ×는 바가 직접 그린다(오른쪽 위 고정).
         let mut tb = TextBox::new(t(Msg::CondPlaceholder)).with_multiline();
         tb.set_focus_ring(false);
+        // 위 여백 4 = 한 줄 상자(28)에 20px 행이 세로 가운데(사용자 10-07 "글자·캐럿이 컨트롤 가운데에").
+        tb.set_ml_pad_y(4);
         CondBar {
             tb,
             copy: CopyBtn::new(),
@@ -162,11 +164,15 @@ impl CondBar {
         let s = |v: f32| (v * scale).round() as i32;
         // TextBox 멀티라인은 보이는 줄 수를 `(높이 - 12) / 20`으로 센다 — N줄이 다 보이려면 안쪽 20N+12(사용자 10-07 "3줄이 안 보임").
         //   접힘은 한 줄 = 위 여백 8 + 줄 20 = 28(캐럿 줄 하나).
-        if self.expanded {
-            s(20.0) * self.max_lines as i32 + s(12.0) + s(2.0) * 2
-        } else {
-            s(28.0) + s(2.0) * 2
-        }
+        // 상자 안쪽 = 위 여백 4 + 줄 20×N + 아래 4(TextBox 보이는 줄 수 = (높이 − 8) / 20) · 바 위아래 2.
+        s(20.0)
+            * if self.expanded {
+                self.max_lines as i32
+            } else {
+                1
+            }
+            + s(8.0)
+            + s(2.0) * 2
     }
 
     /// 설정 `grid.cond_max_lines` — 펼쳤을 때 보이는 최대 줄 수(2~12).
@@ -327,6 +333,33 @@ impl CondBar {
         self.menu.close();
         self.comp = None;
         let _ = self.tb.take_changed();
+    }
+
+    /// 술어 글을 끝에 덧붙인다(셀 우클릭 ▸ 조건 ▸ · 사용자 10-07): 앞에 식이 있고 연결어로 안 끝나면 ` AND `로 잇는다 · 상자 포커스 ·
+    /// 실행은 하지 않는다(여러 조건을 모아 Enter 한 번).
+    pub(crate) fn append_condition(&mut self, pred: &str) {
+        let mut inv = Invalidations::default();
+        let cur = self.tb.text();
+        let head = cur.trim_end();
+        let mut text = String::new();
+        if !head.is_empty() && !Self::ends_with_connector(head) {
+            if !cur.ends_with(char::is_whitespace) {
+                text.push(' ');
+            }
+            text.push_str("AND ");
+        } else if !cur.is_empty() && !cur.ends_with(|c: char| c.is_whitespace() || c == '(') {
+            text.push(' ');
+        }
+        text.push_str(pred);
+        let n = cur.chars().count();
+        self.tb.set_focused(true);
+        self.tb.select_range(n, n, &mut inv);
+        self.tb.paste(&text, &mut inv);
+        self.err = None;
+        self.menu.close();
+        self.comp = None;
+        let _ = self.tb.take_changed();
+        self.after_text_changed();
     }
 
     /// 앞 글이 연결어로 끝나는가(`AND`·`OR`·`NOT`·`(`) — 그러면 AND를 덧붙이지 않는다.
@@ -1106,7 +1139,7 @@ mod tests {
         assert!(c.take_run().is_none(), "Shift+Enter = 줄 바꿈");
         assert_eq!(c.text().matches('\n').count(), 1, "{}", c.dump());
         assert!(c.is_expanded(), "{}", c.dump());
-        assert_eq!(c.wanted_height(1.0), 20 * 3 + 12 + 4);
+        assert_eq!(c.wanted_height(1.0), 20 * 3 + 8 + 4);
         c.on_event(&enter(false, true), &mut inv);
         assert!(c.take_run().is_some(), "Ctrl+Enter도 실행");
         // 접기 = 한 줄 보기 유지.
@@ -1120,7 +1153,7 @@ mod tests {
         c.toggle_expand();
         assert!(c.is_expanded() && !c.user_collapsed);
         c.set_max_lines(5);
-        assert_eq!(c.wanted_height(1.0), 20 * 5 + 12 + 4);
+        assert_eq!(c.wanted_height(1.0), 20 * 5 + 8 + 4);
         c.clear_text();
         assert!(c.text().is_empty() && !c.is_expanded() && !c.user_collapsed);
     }
@@ -1192,6 +1225,22 @@ mod tests {
         c.tb.select_range(n, n, &mut inv);
         c.insert_column("COL", false);
         assert_eq!(c.text(), "x = COL");
+    }
+
+    /// 조건 ▸ 메뉴(사용자 10-07): 술어를 끝에 AND로 잇고 포커스 · 빈 상자면 그대로 · 연결어 뒤엔 AND 없음 · 실행 요청 없음.
+    #[test]
+    fn append_condition_joins_with_and() {
+        let mut c = CondBar::new();
+        c.set_rect(Rect::new(0, 0, 400, 32), 1.0);
+        c.append_condition("\"A\" = 1");
+        assert_eq!(c.text(), "\"A\" = 1");
+        assert!(c.is_focused());
+        c.append_condition("\"B\" IS NULL");
+        assert_eq!(c.text(), "\"A\" = 1 AND \"B\" IS NULL");
+        c.set_text("x = 1 OR ");
+        c.append_condition("\"C\" LIKE 'P%'");
+        assert_eq!(c.text(), "x = 1 OR \"C\" LIKE 'P%'");
+        assert!(c.take_run().is_none(), "실행은 Enter");
     }
 
     /// 글자를 치면 완성 팝업(글자는 상자로 계속) · Tab = 넣기 · Enter = 검증 뒤 실행 요청 · 틀린 식 = 오류만 · Esc = 포커스 거둠.

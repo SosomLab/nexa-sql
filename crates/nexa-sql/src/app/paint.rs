@@ -39,6 +39,8 @@ impl App {
         let sig_tip = self.sig_card_tip();
         // 카드·툴팁의 위/아래 뒤집기 판정 영역 = 편집기 사각형(툴바·탭 위로 올라가지 않게 · 10-06).
         let ed_rect = self.editors.cur().bounds();
+        // 글꼴 크기 HUD 모양 — 표면 버퍼를 빌리기 전에 셈한다(borrow).
+        let zoom_style = self.zoom_hud_style();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -654,6 +656,11 @@ impl App {
                 self.toasts.paint(&mut dc, &th, tx, ty, s);
                 // 토스트·카드가 바꾼 글꼴 슬롯(Status·굵게)을 되돌린다 — 팝업은 호출자의 글꼴을 쓴다(09-22 메뉴 글자 커짐).
                 dc.select_font(FontSlot::Base, false);
+                // ★ 글꼴 크기 HUD(사용자 10-07) — 바뀐 영역 안 캡슐 · 팝업 아래 층.
+                if self.zoom_hud.visible() {
+                    self.zoom_hud
+                        .paint(&mut dc, self.zoom_hud_area, s, &zoom_style);
+                }
                 if !view_mode {
                     self.grid.paint_overlays(&mut dc, &th);
                     self.panel.paint_popups(&mut dc, &th);

@@ -242,6 +242,19 @@ struct App {
     /// ★ CREATE 문 ↔ 실제 객체 비교(T-283): 서버 DDL을 기다리는 대상 · 마지막 비교(이름 · 서버 DDL · 차이 수 = "서버 DDL 열기"·덤프).
     compare_wait: Option<app::compare::CompareTarget>,
     compare_last: Option<(String, String, usize)>,
+    /// ★ 글꼴 크기 HUD(사용자 10-07): 바뀐 영역 위 캡슐 `얼굴 · N px` · 영역 = 편집기 본문/그리드 · 얼굴 이름 = 적재된 글꼴 사슬의 첫 이름.
+    zoom_hud: nexa_ctl::TextHud,
+    zoom_hud_area: Rect,
+    ui_face: String,
+    mono_face: String,
+    /// ★ Goto Anything(10-07): 프로젝트 폴더 파일 캐시(열거 중 = `goto_walk` · 열쇠 = 폴더 목록 · 시각 = 완료 때).
+    goto_files: Vec<PathBuf>,
+    goto_files_key: Vec<PathBuf>,
+    goto_files_at: Option<Instant>,
+    goto_walk: Option<(
+        std::sync::mpsc::Receiver<parwalk::DirMsg>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    )>,
     open_about: bool,
     status_lic_rect: Rect,
     /// 상태줄 자동 저장 표식(클릭 = 자동 저장 폴더 · `statusbar.autosave` · 09-28).
@@ -1576,6 +1589,14 @@ fn main() {
         drop_backup_wait: None,
         compare_wait: None,
         compare_last: None,
+        zoom_hud: nexa_ctl::TextHud::default(),
+        zoom_hud_area: Rect::default(),
+        goto_files: Vec::new(),
+        goto_files_key: Vec::new(),
+        goto_files_at: None,
+        goto_walk: None,
+        ui_face: ui.chain.first().cloned().unwrap_or_default(),
+        mono_face: mono.chain.first().cloned().unwrap_or_default(),
         open_about: false,
         licensing: nsql_license::Licensing::open_default(),
         open_license: false,
@@ -1862,6 +1883,7 @@ fn main() {
     app.grid.set_null_text(&null_text);
     app.apply_grid_row_focus();
     app.apply_grid_edit_cfg();
+    app.sync_menu_shortcuts();
     app.apply_click_policy();
     app.bookmarks.apply_settings(&app.settings);
     let bm_on = app.bookmarks.enabled;

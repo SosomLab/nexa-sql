@@ -478,6 +478,11 @@ impl App {
                 );
                 self.redraw();
             }
+            // ★ Goto Anything(10-07): `…#L<n>` · `file.path:<i>` · `help:<접두>`.
+            id if id.contains("#L") || id.starts_with("file.path:") || id.starts_with("help:") => {
+                let id = id.to_string();
+                self.goto_pick(&id);
+            }
             id if id.starts_with("tab:") => {
                 if let Ok(tid) = id["tab:".len()..].parse::<u64>() {
                     self.editors.switch_to_id(tid);
@@ -1567,8 +1572,17 @@ impl App {
         true
     }
 
-    /// 명령 팔레트 열기(prefill = 초기 질의 · 예 "Set Syntax: ").
-    pub(crate) fn open_palette(&mut self, prefill: &str) {
+    /// ★ 풀다운 메뉴의 단축키 글(사용자 10-07 "단축키가 있는 메뉴는 표시"): 키맵의 모든 명령에 대해 `MenuBar::set_shortcut`(없으면 지움).
+    /// 메뉴 항목 id = 명령 id이므로 표만 맞추면 된다 · 시작 때 + 키맵이 바뀔 때(프리셋·개별 키) 다시.
+    pub(crate) fn sync_menu_shortcuts(&mut self) {
+        for c in keymap::COMMANDS {
+            let text = self.keymap.display_of(c.id);
+            self.menubar.set_shortcut(c.id, &text);
+        }
+    }
+
+    /// 명령 팔레트의 항목 전부(메뉴: 항목 · 구문 · 확장 …) — 명령 팔레트와 Goto Anything `>`가 같이 쓴다(10-07).
+    pub(crate) fn palette_commands(&self) -> Vec<(String, String)> {
         let mut cmds: Vec<(String, String)> = Vec::new();
         let m =
             |id: &str, menu: Msg, item: Msg| (id.to_string(), format!("{}: {}", t(menu), t(item)));
@@ -1832,6 +1846,12 @@ impl App {
                 format!("{}: {name}", t(Msg::PalSetSyntax)),
             ));
         }
+        cmds
+    }
+
+    /// 명령 팔레트 열기(prefill = 초기 질의 · 예 "Set Syntax: ").
+    pub(crate) fn open_palette(&mut self, prefill: &str) {
+        let cmds = self.palette_commands();
         self.palette.set_commands(cmds);
         self.palette.open(prefill);
         self.ime_refresh();

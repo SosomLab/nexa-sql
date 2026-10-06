@@ -843,6 +843,7 @@ impl App {
                 .set_format(self.settings.get(key).unwrap_or("raw")),
             k if k.starts_with("key.") => {
                 self.keymap = Keymap::from_settings(&self.settings);
+                self.sync_menu_shortcuts();
                 self.apply_menu_decor();
                 self.keys_win.refresh(&self.keymap);
             }
