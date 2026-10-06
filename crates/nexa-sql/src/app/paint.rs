@@ -37,6 +37,8 @@ impl App {
         let objlink_buttons = self.objlink_card_buttons();
         let objlink_hot = self.objlinks.hot.unwrap_or_default();
         let sig_tip = self.sig_card_tip();
+        // 카드·툴팁의 위/아래 뒤집기 판정 영역 = 편집기 사각형(툴바·탭 위로 올라가지 않게 · 10-06).
+        let ed_rect = self.editors.cur().bounds();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -591,6 +593,7 @@ impl App {
                         .unwrap_or("top_right"),
                     self.scale,
                     Rect::new(0, 0, size.width as i32, size.height as i32),
+                    ed_rect,
                 );
                 self.objlink_menu.paint(&mut dc, &th);
                 // ★ 시그니처 카드(T-178): 캐럿 **위**(완성 팝업은 아래라 겹치지 않는다) · 같은 툴팁 부품 · 표면 안으로.
@@ -601,6 +604,7 @@ impl App {
                     "above",
                     self.scale,
                     Rect::new(0, 0, size.width as i32, size.height as i32),
+                    ed_rect,
                 );
                 // 자동 완성 팝업(캐럿 아래 · 팝업 층 · docs/76) + 상세 카드(옆 · 같은 높이 · 09-24).
                 self.intel.menu.paint(&mut dc, &th);

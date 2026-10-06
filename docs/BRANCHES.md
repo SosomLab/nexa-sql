@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| fix/2026-10-06-hover-card-zone | 2026-10-06 | 2026-10-06 → main(삭제) | 1 | 🔧 hover 카드가 마우스 이동 중 사라짐(사용자 실기) = 카드 영역 유지 `card_zone_contains` · 앵커 = 줄 위(`point_at` 바닥 y 보정 · 시그니처 카드 포함) · 배치 정방향→반대쪽(편집기 영역)→밀어 넣기 `flip_vertical` · V1 A/B/C ✓ · V2 통과 · journal 10-06 §3-1 · 96 §7 · 102 §12 |
 | work/2026-10-06-113c | 2026-10-06 | 2026-10-06 → main(삭제) | 1 | 113차 win: T-179 hover 카드 동작 버튼 + 클릭 라우팅 결함 수정 · T-178 FK 참조 컬럼 `ref_cols`(카탈로그 5열 · JOIN 조각·참조 행 보기·FK 라벨·Generate SQL) · T-182 실서버 4방언 E2E(M4PLAN `USE`) · T-168b 종결 · V2 통과(test 전부 · clippy · fmt) · journal 10-06 |
 | release/2026-10-05-v0.1.5 | 2026-10-05 | 2026-10-05 → main(삭제) | 1 | 🚀 v0.1.5 준비: 버전 0.1.5 · winget·choco 채널 개시(packaging/winget · packaging/choco · render-manifests.ps1 · publish-windows-packages.yml) · release.yml 영어 노트 · 33 §5-3 · V2 통과(test 766 · clippy · fmt · Release `nsql 0.1.5` · golden plan 2 · MSI 0.1.5 → 렌더 → winget validate ✓ · choco pack ✓) · journal 10-05 §33 |
 | work/2026-10-05-112c | 2026-10-05 | 2026-10-05 → main(삭제) | 1 | 112차 win 3차: 후보 메뉴(T-180 ⑦) · `obj.*` 액션 얇은 판 + Shift+F10(T-180 ④) · 필터 값 고르기(T-181 완료) · V2 통과(test 766 · clippy · fmt · Release · golden plan 2) · journal 10-05 §27~§31 |

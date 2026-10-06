@@ -85,7 +85,9 @@ impl App {
         }
         let tb = self.editors.cur();
         let p = tb.caret_point()?;
-        Some((text.clone(), Rect::new(p.x, p.y, 1, tb.line_h())))
+        // `point_at`의 y = 줄 바닥 → 캐럿 줄 사각형은 한 줄 위부터(카드가 캐럿 줄을 덮지 않게 · 10-06).
+        let lh = tb.line_h();
+        Some((text.clone(), Rect::new(p.x, p.y - lh, 1, lh)))
     }
 
     /// 코드 기능(아웃라인 · 완성 · Goto Symbol)을 이 탭에 써도 되는가 — 큰 파일 단계가 아니고 · **구문이 SQL**이고 · 본문이

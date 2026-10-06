@@ -453,6 +453,35 @@ pub(crate) struct CardLayout {
     pub buttons: Vec<(&'static str, Rect, bool)>,
     /// 카드가 가리키는 링크.
     pub link: usize,
+    /// 링크 글자 사각형(카드의 기준) — 링크에서 카드로 건너가는 "다리" 영역 판정에.
+    pub anchor: Rect,
+}
+
+/// 포인터가 카드 **영역**(카드 ∪ 링크 글자의 둘레 상자 + 여유 `pad`) 안인가 — 링크에서 카드로 마우스를 옮기는 동안
+/// 둘 사이 빈 틈(4~6 px)과 비스듬한 경로에서 카드가 사라지지 않게(사용자 10-06 "마우스를 움직이면 사라져서 클릭 불가").
+fn card_zone_contains(card: Rect, anchor: Rect, pad: i32, p: Point) -> bool {
+    let u = card.union(&anchor);
+    Rect::new(u.x - pad, u.y - pad, u.w + pad * 2, u.h + pad * 2).contains(p)
+}
+
+/// 카드·툴팁의 세로 자리 — 정방향(`pos`의 위/아래)이 호스트 세로 범위 밖이면 **반대쪽**(링크 아래 ↔ 위)으로 뒤집는다
+/// (61 §2-2 "정방향 → 반대쪽 → 밀어 넣기"). 밀어 넣기만 하면 링크 줄과 그 오른쪽 글자를 덮었다(협업 V1 10-06 관찰 ①②).
+/// `host_y`/`host_bottom` = 호스트 세로 범위 · 반대쪽도 안 들어가면 정방향 값 그대로(호출자가 밀어 넣는다).
+fn flip_vertical(pos: &str, anchor: Rect, h: i32, gap: i32, host_y: i32, host_bottom: i32) -> i32 {
+    let above = anchor.y - gap - h;
+    let below = anchor.bottom() + gap;
+    let wants_above = !matches!(pos, "bottom_right" | "bottom_left");
+    if wants_above {
+        if above >= host_y || below + h > host_bottom {
+            above
+        } else {
+            below
+        }
+    } else if below + h <= host_bottom || above < host_y {
+        below
+    } else {
+        above
+    }
 }
 
 /// 부분 분석 때 보이는 구간 밖으로 문장 경계(`;`)를 찾는 최대 글자 수.
@@ -959,8 +988,8 @@ impl App {
             return;
         }
         if self.objlinks.hover {
-            // 링크 위를 떠났다 → 끝(다음 멈춤에서 다시 잰다) · 카드 안은 떠난 것이 아니다.
-            if self.objlink_at(p).is_none() && !self.objlink_card_contains(p) {
+            // 링크 위를 떠났다 → 끝(다음 멈춤에서 다시 잰다) · 카드 영역(카드 ∪ 링크 + 여유) 안은 떠난 것이 아니다.
+            if self.objlink_at(p).is_none() && !self.objlink_card_zone(p) {
                 self.objlink_hover_end();
             } else {
                 return;
@@ -1020,6 +1049,15 @@ impl App {
             .card
             .as_ref()
             .is_some_and(|c| c.rect.contains(p))
+    }
+
+    /// 포인터가 hover 카드 **영역** 안인가(`card_zone_contains` · 여유 = 8 px × 배율) — 링크 → 카드 이동 중 유지 판정.
+    fn objlink_card_zone(&self, p: Point) -> bool {
+        let pad = (8.0 * self.scale).round() as i32;
+        self.objlinks
+            .card
+            .as_ref()
+            .is_some_and(|c| card_zone_contains(c.rect, c.anchor, pad, p))
     }
 
     /// hover 카드의 버튼 명세(id · 라벨 · 활성) — 그리기 전에 셈(설정 끔 = 없음 = 글만 있는 툴팁).
@@ -1086,8 +1124,9 @@ impl App {
         if !self.objlinks.active {
             return;
         }
-        // 카드 안에서는 링크 판정을 바꾸지 않는다(버튼까지 가는 길에 카드가 사라지지 않게) · 버튼 hover 색만 다시 그린다.
-        if self.objlink_card_contains(p) {
+        // 카드 영역(카드 ∪ 링크 + 여유) 안에서는 링크 판정을 바꾸지 않는다(버튼까지 가는 길에 카드가 사라지지 않게 ·
+        // 링크와 카드 사이 틈도 포함) · 버튼 hover 색만 다시 그린다.
+        if self.objlink_card_zone(p) {
             self.redraw();
             return;
         }
@@ -1993,10 +2032,9 @@ impl App {
         let tb = self.editors.cur();
         let (a, e) = link.range;
         let (p0, p1) = (tb.point_at(a)?, tb.point_at(e)?);
-        Some((
-            text,
-            Rect::new(p0.x, p0.y, (p1.x - p0.x).max(1), tb.line_h()),
-        ))
+        // `point_at`의 y = 줄 **바닥**(아래 팝업용) → 링크 글자 사각형은 한 줄 위부터(협업 V1 10-06 "카드가 글자를 덮음"의 원인).
+        let lh = tb.line_h();
+        Some((text, Rect::new(p0.x, p0.y - lh, (p1.x - p0.x).max(1), lh)))
     }
 }
 
@@ -2013,10 +2051,11 @@ pub(crate) fn paint_hover_card(
     pos: &str,
     scale: f32,
     clamp: Rect,
+    flip_host: Rect,
 ) -> Option<CardLayout> {
     let (text, anchor) = tip?;
     if buttons.is_empty() {
-        paint_tip(dc, th, tip, pos, scale, clamp);
+        paint_tip(dc, th, tip, pos, scale, clamp, flip_host);
         return None;
     }
     let s = |v: f32| (v * scale).round() as i32;
@@ -2032,14 +2071,14 @@ pub(crate) fn paint_hover_card(
     let btn_row_w: i32 = widths.iter().sum::<i32>() + s(6.0) * (buttons.len() as i32 - 1);
     let w = text_w.max(btn_row_w) + s(12.0);
     let h = th_line * lines.len() as i32 + s(8.0) + btn_h + s(8.0);
-    let (x, y) = match pos {
-        "above" => (anchor.x, anchor.y - s(6.0) - h),
-        "top_left" => (anchor.x - w - s(4.0), anchor.y - s(6.0) - h),
-        "bottom_right" => (anchor.right() + s(4.0), anchor.bottom() + s(6.0)),
-        "bottom_left" => (anchor.x - w - s(4.0), anchor.bottom() + s(6.0)),
-        _ => (anchor.right() + s(4.0), anchor.y - s(6.0) - h),
-    };
     let host = nexa_ctl::geom::popup_host(clamp, dc.surface_size());
+    let x = match pos {
+        "above" => anchor.x,
+        "top_left" | "bottom_left" => anchor.x - w - s(4.0),
+        _ => anchor.right() + s(4.0),
+    };
+    // 뒤집기 판정은 **편집기 영역**(위 공간 = 툴바·탭을 덮는 자리가 아니라 편집기 안) · 밀어 넣기는 창 전체.
+    let y = flip_vertical(pos, *anchor, h, s(6.0), flip_host.y, flip_host.bottom());
     let r = nexa_ctl::geom::nudge_into(Rect::new(x, y, w, h), host);
     dc.fill_round_rect_alpha(r, s(4.0), th.text, 0.92);
     for (i, line) in lines.iter().enumerate() {
@@ -2078,10 +2117,12 @@ pub(crate) fn paint_hover_card(
         rect: r,
         buttons: out,
         link,
+        anchor: *anchor,
     })
 }
 
 /// 팝업 층: 설명 툴팁을 링크 글자 기준 `pos`(top_right 기본 · 61 §2-2 = nexa-ctl `draw_tooltip_in`이 표면 안으로 맞춘다)에.
+/// `flip_host` = 위/아래 뒤집기 판정 영역(편집기 사각형) · `clamp` = 밀어 넣기 영역(창).
 pub(crate) fn paint_tip(
     dc: &mut dyn nexa_ctl::draw::DrawCtx,
     th: &nexa_ctl::Theme,
@@ -2089,6 +2130,7 @@ pub(crate) fn paint_tip(
     pos: &str,
     scale: f32,
     clamp: Rect,
+    flip_host: Rect,
 ) {
     let Some((text, link)) = tip else { return };
     let s = |v: f32| (v * scale).round() as i32;
@@ -2097,14 +2139,14 @@ pub(crate) fn paint_tip(
     let lines: Vec<&str> = text.split('\n').collect();
     let w = lines.iter().map(|l| dc.text_width(l)).max().unwrap_or(0) + s(12.0);
     let h = dc.text_height() * lines.len() as i32 + s(8.0);
-    let (x, y) = match pos {
+    let x = match pos {
         // 캐럿 위(시그니처 카드) — 왼쪽을 기준 x에 맞춘다.
-        "above" => (link.x, link.y - s(6.0) - h),
-        "top_left" => (link.x - w - s(4.0), link.y - s(6.0) - h),
-        "bottom_right" => (link.right() + s(4.0), link.bottom() + s(6.0)),
-        "bottom_left" => (link.x - w - s(4.0), link.bottom() + s(6.0)),
-        _ => (link.right() + s(4.0), link.y - s(6.0) - h),
+        "above" => link.x,
+        "top_left" | "bottom_left" => link.x - w - s(4.0),
+        _ => link.right() + s(4.0),
     };
+    // 위 공간이 없으면 링크 아래로(글자를 덮지 않게 · 판정 = 편집기 영역) — 그래도 안 들어가는 것은 draw_tooltip_in이 밀어 넣는다.
+    let y = flip_vertical(pos, *link, h, s(6.0), flip_host.y, flip_host.bottom());
     // draw_tooltip_in = 기준 rect 아래 6px · 가로 중앙 → 원하는 (x, y)에 오도록 0×0 기준을 역산한다.
     let anchor = Rect::new(x + w / 2, y - s(6.0), 0, 0);
     nexa_ctl::draw::draw_tooltip_in(dc, th, anchor, (clamp.x, clamp.w), text, scale);
@@ -2128,6 +2170,42 @@ fn click_action(setting: Option<&str>, can_reveal: bool) -> ClickAction {
 
 #[cfg(test)]
 mod tests {
+    /// 카드 영역 = 카드 ∪ 링크 둘레 상자 + 여유: 틈·비스듬한 경로는 안 · 멀리는 밖.
+    #[test]
+    fn card_zone_bridges_link_and_card() {
+        use super::card_zone_contains;
+        use nexa_ctl::geom::{Point, Rect};
+        let link = Rect::new(100, 200, 40, 16); // 글자
+        let card = Rect::new(144, 150, 300, 44); // top_right: 오른쪽 위
+        let z = |x, y| card_zone_contains(card, link, 8, Point { x, y });
+        assert!(z(120, 208), "링크 위");
+        assert!(z(200, 170), "카드 위");
+        assert!(z(142, 197), "링크와 카드 사이 틈");
+        assert!(z(141, 180), "비스듬히 올라가는 길(둘레 상자 안)");
+        assert!(z(96, 220), "여유 8 px 안");
+        assert!(!z(60, 208), "왼쪽 멀리");
+        assert!(!z(200, 260), "아래 멀리");
+    }
+
+    /// 세로 뒤집기: 위가 모자라면 아래 · 아래가 모자라면 위 · 둘 다 모자라면 정방향(밀어 넣기 몫).
+    #[test]
+    fn flip_vertical_rules() {
+        use super::flip_vertical;
+        use nexa_ctl::geom::Rect;
+        let link = Rect::new(100, 20, 40, 16); // 창 위쪽 1행
+                                               // top_right: 위(20-6-44 < 0) 안 됨 → 아래(36+6).
+        assert_eq!(flip_vertical("top_right", link, 44, 6, 0, 600), 42);
+        // 위 공간이 있으면 정방향.
+        let mid = Rect::new(100, 300, 40, 16);
+        assert_eq!(flip_vertical("top_right", mid, 44, 6, 0, 600), 250);
+        // bottom_right: 아래가 모자라면 위.
+        let low = Rect::new(100, 580, 40, 16);
+        assert_eq!(flip_vertical("bottom_right", low, 44, 6, 0, 600), 530);
+        assert_eq!(flip_vertical("bottom_right", mid, 44, 6, 0, 600), 322);
+        // 둘 다 모자라면 정방향 값(호출자가 밀어 넣는다).
+        assert_eq!(flip_vertical("top_right", link, 44, 6, 0, 60), -30);
+    }
+
     use super::*;
 
     struct Fake;
