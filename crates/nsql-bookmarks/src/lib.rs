@@ -601,6 +601,65 @@ impl Store {
             .find(|b| b.doc.same(doc, ci) && b.is_live() && b.anchor.line as usize == line)
     }
 
+    /// ★ 불변식 정리(10-06 · 사용자 실기 "니모닉 1이 두 줄에"): 지정 때는 `set_mnemonic`이 같은 문서의 같은 번호를 뺏지만, **열쇠가
+    /// 바뀌는 길**(스크래치 → 파일 이전 · 다른 인스턴스가 쓴 프로젝트 파일 적재)은 검사 없이 들어와 한 문서에 같은 번호가 둘 남았다.
+    /// ① 같은 (문서, 줄)의 살아 있는 항목 = 하나로 합친다(먼저 만든 것을 남기고 이름·메모·니모닉은 비어 있으면 가져옴)
+    /// ② 같은 문서의 같은 니모닉 = **최근 방문**(같으면 최근 생성) 하나만 두고 나머지는 번호를 비운다. 돌려주는 값 = 고친 수.
+    pub fn normalize(&mut self, ci: bool) -> usize {
+        let mut fixed = 0usize;
+        // ① 같은 줄 합치기 — 뒤(늦게 만든) 항목을 앞 항목에 흡수.
+        let mut i = 0;
+        while i < self.items.len() {
+            if !self.items[i].is_live() {
+                i += 1;
+                continue;
+            }
+            let (doc, line) = (self.items[i].doc.clone(), self.items[i].anchor.line);
+            let mut j = i + 1;
+            while j < self.items.len() {
+                let dup = self.items[j].is_live()
+                    && self.items[j].doc.same(&doc, ci)
+                    && self.items[j].anchor.line == line;
+                if dup {
+                    let b = self.items.remove(j);
+                    let a = &mut self.items[i];
+                    if a.label.is_none() {
+                        a.label = b.label;
+                    }
+                    if a.note.is_none() {
+                        a.note = b.note;
+                    }
+                    if a.mnemonic.is_none() {
+                        a.mnemonic = b.mnemonic;
+                    }
+                    a.visited = a.visited.max(b.visited);
+                    fixed += 1;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+        // ② 같은 문서 · 같은 번호 = 하나만(최근 방문 · 같으면 최근 생성).
+        let n = self.items.len();
+        for i in 0..n {
+            let Some(m) = self.items[i].mnemonic else {
+                continue;
+            };
+            let doc = self.items[i].doc.clone();
+            let key_i = (self.items[i].visited, self.items[i].created);
+            let keep = (0..n)
+                .filter(|&j| self.items[j].mnemonic == Some(m) && self.items[j].doc.same(&doc, ci))
+                .max_by_key(|&j| (self.items[j].visited, self.items[j].created, j));
+            if keep.is_some_and(|k| k != i) {
+                let _ = key_i;
+                self.items[i].mnemonic = None;
+                fixed += 1;
+            }
+        }
+        fixed
+    }
+
     /// 더하기 — 같은 줄에 이미 있으면 그것(C-1) · 상한(`max_per_doc`/`max_total` · 0 = 없음)을 넘으면 `Err`.
     pub fn add(
         &mut self,
@@ -932,6 +991,8 @@ impl Store {
         if st.next_group <= max_g {
             st.next_group = max_g + 1;
         }
+        // 다른 인스턴스·옛 판이 쓴 파일일 수 있다 — 불변식(같은 줄 하나 · 같은 번호 하나)을 적재 때 바로 세운다.
+        st.normalize(true);
         Ok(st)
     }
 }
@@ -1291,5 +1352,74 @@ mod tests {
         }
         assert_eq!(st.prune(40 * 86_400, 30), 1);
         assert_eq!(st.counts(), (1, 0));
+    }
+    /// 불변식 정리(10-06): 같은 문서의 같은 니모닉 둘 → 최근 방문만 남김 · 같은 줄 둘 → 하나로 합침(이름·번호 가져옴).
+    #[test]
+    fn normalize_dedupes_mnemonics_and_lines() {
+        let mut st = Store::new();
+        let doc = DocKey::file("C:/x/a.sql");
+        let a = st
+            .add(
+                doc.clone(),
+                Anchor {
+                    line: 18,
+                    ..Default::default()
+                },
+                100,
+                true,
+                0,
+                0,
+            )
+            .unwrap();
+        let b = st
+            .add(
+                doc.clone(),
+                Anchor {
+                    line: 16,
+                    ..Default::default()
+                },
+                200,
+                true,
+                0,
+                0,
+            )
+            .unwrap();
+        // 열쇠 이전처럼 검사 없이 같은 번호를 둘 다에 꽂는다.
+        for (id, visited) in [(a, 500u64), (b, 900u64)] {
+            let x = st.get_mut(id).unwrap();
+            x.mnemonic = Some(1);
+            x.visited = visited;
+        }
+        assert_eq!(st.normalize(true), 1);
+        assert_eq!(
+            st.get(a).unwrap().mnemonic,
+            None,
+            "덜 최근 방문 = 번호 비움"
+        );
+        assert_eq!(st.get(b).unwrap().mnemonic, Some(1));
+        // 같은 줄 둘(다른 열쇠 → 같은 열쇠로 바뀐 뒤) = 하나로.
+        let c = st
+            .add(
+                DocKey::Scratch { tab: 7 },
+                Anchor {
+                    line: 16,
+                    ..Default::default()
+                },
+                300,
+                true,
+                0,
+                0,
+            )
+            .unwrap();
+        st.get_mut(c).unwrap().label = Some("이름".into());
+        st.get_mut(c).unwrap().doc = doc.clone();
+        assert_eq!(st.normalize(true), 1);
+        assert!(st.get(c).is_none(), "늦게 만든 쪽이 흡수된다");
+        let kept = st.get(b).unwrap();
+        assert_eq!(
+            (kept.label.as_deref(), kept.mnemonic),
+            (Some("이름"), Some(1))
+        );
+        assert_eq!(st.normalize(true), 0, "두 번째는 할 일 없음");
     }
 }

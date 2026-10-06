@@ -3,6 +3,7 @@
 //! 새 동작은 해당 기능 파일에 둔다. 두 기능에 걸치면 호출하는 쪽(상위 흐름) 파일에.
 
 mod bookmarks;
+pub(crate) mod compare;
 mod completion;
 mod connwin;
 mod demo;
@@ -32,3 +33,4 @@ mod toolbar;
 mod tx;
 mod vars;
 mod windows;
+mod zoom;

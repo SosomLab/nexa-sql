@@ -1356,8 +1356,11 @@ impl App {
                         .set_phase(self.sess.run_card, runtoast::Phase::Error(summary.clone()));
                     // 오류가 나도 결과 영역은 기본 형태(빈 그리드)로 — 본문은 로그 창·상태줄·토스트(사용자 09-17).
                     if let Some(g) = self.run_grid() {
-                        // 조건 바 실행(T-181 후속)의 오류면 결과를 비우지 않는다(토스트·상태줄만 · 사용자 10-06).
-                        if !g.cond_run_failed() {
+                        // 조건 바 실행(T-181 후속)의 오류면 결과를 비우지 않고 조건 상자 테두리를 빨갛게(토스트·카드와 함께 ·
+                        //   사용자 10-06 "오류가 나면 조건 바에 경고 표시").
+                        if g.cond_run_failed() {
+                            g.cond_server_error(&summary);
+                        } else {
                             g.clear_result();
                         }
                     }

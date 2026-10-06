@@ -816,6 +816,8 @@ impl Bookmarks {
             }
         }
         if any {
+            // 파일 열쇠에 이미 같은 줄·같은 니모닉이 있을 수 있다(10-06 사용자 실기 "니모닉 1이 둘") — 옮긴 직후 불변식.
+            self.store.normalize(CASE_INSENSITIVE);
             self.touch();
         }
     }

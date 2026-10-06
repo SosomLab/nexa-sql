@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-10-07 (114차 이어서 · win)** — ★ T-283 1단계 CREATE 문 ↔ 실제 객체 비교(`app/compare.rs` · 비교 탭 · 거터 diff · `obj.compare`/`obj.compare_server` · hover 카드 버튼 · `compare.ignore_ws`) · ★ 조건 바 개념 변경(Enter 실행 · Shift+Enter 줄 바꿈 · ▾/▴ · ×) · 칩 줄 조건 바 아래 · `filter_strip` 기본 off · 열 머리 → 조건 바 끌어 놓기 · 클립보드 동작 · 서버 오류 빨간 테두리 · 시험 정책 개정(풀 테스트 하루 1회 + 배포 전) · [journal 10-07](journal/2026-10-07.md)
 - **2026-10-06 (113차 · win · 7)** — ★ **5차** = 조건 바 멀티라인(▾ · Ctrl+Enter 실행 · 스플리터 2~12줄) · Ctrl+Z/Y 상자 안 · 실행 오류 시 그리드 유지 · 🔧 조건 바 첫 클릭 유실(그리드 bounds 밖 → `outer_bounds`) · 🔧 Output 왕복 공백 · 🔧 포커스 거둠 · 도구 모음 편집 그룹(↶ ↷) · 최근 프로젝트 = 설계(첫 인스턴스만 복원) · 개발 중 = Debug만 재실행 · [journal 10-06 §11-1](journal/2026-10-06.md)
 - **2026-10-06 (113차 · win · 6)** — ★ **4차** = 인라인 조건 입력란(조건 바 · DBeaver · `condbar.rs` · `grid.condition_bar` · Enter = 방언 검증 → `SELECT * FROM (출처) q WHERE 1=1 AND (식)` 같은 탭 재조회 · 완성 팝업 · 복사 버튼 · 틀리면 실행 안 함) · [journal 10-06 §11](journal/2026-10-06.md)
 - **2026-10-06 (113차 · win · 5)** — ★ **3차** = 값 목록 팝업 **엑셀 자동 필터 그대로**((모두 선택) 3상태 · 검색 시 바꿈/추가 · [필터 해제][확인][취소] · 체크 없으면 확인 비활성 · 검색어 저장 안 함) · 🔧 hover 카드 링크 전환(테이블→컬럼→테이블에 컬럼 카드가 남던 결함) · Debug 창 제목 `Nexa SQL (Debug)` · 📐 **T-283** CREATE 문 ↔ 실제 객체 비교 설계 메모([19 §6](19-compare-git-and-object-history.md) · 1단계 권장안 접수) · [journal 10-06 §10](journal/2026-10-06.md)

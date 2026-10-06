@@ -349,8 +349,11 @@ impl App {
                     self.drop_request(owner, server);
                     changed = true;
                 }
-                // DDL 결과가 삭제 백업용이면 미리보기 창 대신 백업 흐름으로(10-01).
+                // DDL 결과가 삭제 백업용이면 미리보기 창 대신 백업 흐름으로(10-01) · 비교용이면 비교 탭으로(T-283).
                 ExplorerAction::Preview { spec, r, .. } if self.drop_take_backup(&spec, &r) => {
+                    changed = true;
+                }
+                ExplorerAction::Preview { spec, r, .. } if self.compare_take(&spec, &r) => {
                     changed = true;
                 }
                 ExplorerAction::Preview { spec, r, server } => {

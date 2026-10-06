@@ -15,7 +15,7 @@ use crate::filterbar::{FilterBar, FilterEvent};
 use nexa_ctl::draw::{DrawCtx, FontSlot};
 use nexa_ctl::geom::{Point, Rect};
 use nexa_ctl::theme::Theme;
-use nexa_ctl::{InputEvent, Invalidations, Key};
+use nexa_ctl::{InputEvent, Invalidations, Key, Widget};
 use nsql_i18n::{t, Msg};
 use std::cell::Cell;
 
@@ -234,6 +234,11 @@ impl ValuePick {
 
     pub(crate) fn take_result(&mut self) -> Option<PickResult> {
         self.result.take()
+    }
+
+    /// 검색 상자 우클릭 편집 메뉴에서 고른 동작(호스트가 클립보드로 잇는다).
+    pub(crate) fn take_edit_ctx(&mut self) -> Option<nexa_ctl::EditCtxAction> {
+        self.bar.tb_mut().take_edit_ctx()
     }
 
     pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
@@ -570,6 +575,20 @@ impl ValuePick {
         if !self.open {
             return false;
         }
+        // 검색 상자의 우클릭 편집 메뉴가 떠 있으면(목록 위에 그려진다) 마우스 사건은 전부 상자로 — 목록 행·버튼이 먼저 먹어
+        //   항목 클릭이 확정되지 않던 결함(협업 V1 A · 10-06 · 조건 바와 같은 규칙).
+        if self.bar.tb_mut().popup_open()
+            && matches!(
+                ev,
+                InputEvent::MouseMove { .. }
+                    | InputEvent::MouseDown { .. }
+                    | InputEvent::MouseUp { .. }
+                    | InputEvent::RightDown { .. }
+            )
+        {
+            self.bar.tb_mut().on_event(ev, inv);
+            return true;
+        }
         match *ev {
             InputEvent::MouseMove { x, y } => {
                 let p = Point { x, y };
@@ -642,7 +661,13 @@ impl ValuePick {
                     self.close();
                     return false;
                 }
-                self.bar.on_event(ev, inv);
+                // 검색 상자 안 우클릭 = 상자 편집 메뉴(복사·잘라내기·붙여넣기·전체 선택 · 필터 틀은 이력 드롭다운이 열려 있을
+                //   때만 상자에 넘기므로 여기서 직접 · 협업 V1 ③ 10-06).
+                if self.bar.tb_mut().bounds().contains(p) {
+                    self.bar.tb_mut().on_event(ev, inv);
+                } else {
+                    self.bar.on_event(ev, inv);
+                }
                 true
             }
             InputEvent::Wheel { delta } => {

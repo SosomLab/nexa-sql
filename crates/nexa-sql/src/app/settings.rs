@@ -616,6 +616,8 @@ impl App {
                     .set_preload(self.settings.flag("intel.preload"));
                 self.explorer
                     .set_routines(self.settings.flag("intel.from_routines"));
+                // 조건 바 완성도 같은 기준을 따른다(`intel.key_passthrough` · `intel.min_chars` · 10-07).
+                self.apply_grid_edit_cfg();
             }
             _ => return false,
         }

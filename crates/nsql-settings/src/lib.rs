@@ -2016,7 +2016,8 @@ pub const REGISTRY: &[Entry] = &[
         label: Msg::LblGridFilterStrip,
         desc: Msg::DescGridFilterStrip,
         kind: SettingKind::Bool,
-        default: "on",
+        // D-255(사용자 10-06): 기본 숨김 — 조건 바가 기본이고 개별 제거는 열 머리 메뉴·값 팝업·깔때기로 대체된다 · 켜면 조건 바 아래 둘째 줄.
+        default: "off",
     },
     // 값 고르기 하위 메뉴(T-181 · 77 §2-2 "열 머리 깔때기 → 값 목록") — 메뉴 항목 수(72 §3 상한 원장).
     Entry {
@@ -2060,6 +2061,33 @@ pub const REGISTRY: &[Entry] = &[
         cat: Msg::CatGridFilter,
         label: Msg::LblGridConditionBar,
         desc: Msg::DescGridConditionBar,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ CREATE 문 ↔ 실제 객체 비교(T-283 · 19 §6-3): 줄 안 공백 차이 무시.
+    Entry {
+        key: "compare.ignore_ws",
+        cat: Msg::CatEditor,
+        label: Msg::LblCompareIgnoreWs,
+        desc: Msg::DescCompareIgnoreWs,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 조건 바 펼침 최대 줄 수(사용자 10-06 "SHIFT+ENTER를 누르면 최대 3줄(설정)까지 확장").
+    Entry {
+        key: "grid.cond_max_lines",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridCondMaxLines,
+        desc: Msg::DescGridCondMaxLines,
+        kind: SettingKind::Int { min: 2, max: 12 },
+        default: "3",
+    },
+    // ★ 열 머리 DnD → 조건 바(사용자 10-06): 연결어 AND + 타입별 기본값(`= ''`/`= 0`)을 붙일지 · 기본 켬.
+    Entry {
+        key: "grid.cond_drop_template",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridCondDropTemplate,
+        desc: Msg::DescGridCondDropTemplate,
         kind: SettingKind::Bool,
         default: "on",
     },

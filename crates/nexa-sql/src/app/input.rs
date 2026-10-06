@@ -457,6 +457,10 @@ impl App {
             }
         }
         if let InputEvent::Wheel { delta } = ev {
+            // ★ Ctrl/⌘+휠 = 커서 아래 영역의 글꼴 크기(편집기 · 결과 그리드 · 사용자 10-07) — 스크롤로 흘리지 않는다.
+            if self.primary && self.zoom_step(if delta > 0 { 1 } else { -1 }, true) {
+                return;
+            }
             let p = Point {
                 x: self.cursor.0,
                 y: self.cursor.1,
@@ -1774,7 +1778,7 @@ impl App {
         if self.editors.editor_bounds().contains(p) {
             return Some(Focus::Editor);
         }
-        if self.grid.area().contains(p) {
+        if self.grid.outer_bounds().contains(p) {
             return Some(Focus::Grid);
         }
         let panels: [(Focus, bool, Rect); 8] = [
@@ -1824,7 +1828,7 @@ impl App {
     fn area_bounds(&self, area: Focus) -> Rect {
         match area {
             Focus::Editor => self.editors.editor_bounds(),
-            Focus::Grid => self.grid.area(),
+            Focus::Grid => self.grid.outer_bounds(),
             Focus::Explorer => self.explorer.hit_bounds(),
             Focus::Project => self.project_panel.bounds(),
             Focus::Bookmarks => self.bm_panel.bounds(),

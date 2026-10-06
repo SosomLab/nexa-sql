@@ -32,6 +32,10 @@ impl App {
         }
         // ★ 인라인 조건 입력란 Enter(사용자 10-06): 감싼 SQL을 **같은 탭**에서 다시 실행(실행 오류는 그대로 토스트) · 게이트가
         //   닫혀 있으면 상태줄만.
+        // 그리드 안 글 상자(조건 바·값 목록 검색)의 우클릭 메뉴 = 복사·잘라내기·붙여넣기(10-06).
+        if let Some(a) = self.grid.take_text_edit_ctx() {
+            self.clip_action(a);
+        }
         if let Some(sql) = self.grid.take_cond_run() {
             if self.gate_open() {
                 self.log_win.push(LogEntry::new(LogKind::Info, sql.clone()));
@@ -380,6 +384,15 @@ impl App {
             .for_each(|g| g.set_filter_values_scope(&scope));
         let cond = self.settings.flag("grid.condition_bar");
         self.all_grids().for_each(|g| g.set_condition_bar(cond));
+        let tpl = self.settings.flag("grid.cond_drop_template");
+        self.all_grids().for_each(|g| g.set_cond_drop_template(tpl));
+        let lines = self.settings.int("grid.cond_max_lines").clamp(2, 12) as usize;
+        self.all_grids().for_each(|g| g.set_cond_max_lines(lines));
+        // 조건 바 완성 = 편집기 인텔리센스와 같은 기준(사용자 10-07).
+        let pass = self.settings.flag("intel.key_passthrough");
+        let min_chars = self.settings.int("intel.min_chars").clamp(1, 10) as usize;
+        self.all_grids()
+            .for_each(|g| g.set_cond_intel(pass, min_chars));
     }
 
     /// 캐럿을 다음/이전 문장(`;` 분리 · [`nsql_script::split_script`]) 시작으로(Alt+↓/↑ · 실행 뒤 자동 이동).

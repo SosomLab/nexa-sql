@@ -312,6 +312,12 @@ pub(crate) struct Grid {
     filter_pick_max: usize,
     /// 필터 줄 높이(없으면 0) — `bounds`는 이만큼 아래에서 시작한다(줄은 `bounds` 바로 위).
     strip_h: i32,
+    /// 그 줄의 구성: 조건 바 높이(위) · 필터 칩 줄 높이(아래 · 설정 `grid.filter_strip`이 켜지고 필터가 있을 때만 · 10-06).
+    cond_h: i32,
+    chip_h: i32,
+    /// 조건 바를 호스트가 **편집기 글꼴 컨텍스트**로 따로 그린다(`paint_cond` · 사용자 10-07 "편집기와 줄 간격·글꼴 일치") —
+    /// 참이면 `paint_filter_strip`은 조건 바를 건너뛴다(시험·헤드리스 = 거짓 → 그리드가 그린다).
+    cond_host_paint: bool,
     /// 필터 줄의 칩(술어의 열 · 칩 사각형 · × 사각형) — 그릴 때 채운다 · 맞히기는 이 사각형으로.
     chips: Vec<(usize, Rect, Rect)>,
     /// 오른쪽 끝 "모두 지우기" ×.
@@ -388,6 +394,8 @@ pub(crate) struct Grid {
     cond_prev_sql: Option<String>,
     /// 호스트가 가져가는 조건 실행 요청(감싼 SQL).
     pending_cond_run: Option<String>,
+    /// 그리드 안 글 상자(조건 바·값 목록 검색)의 우클릭 편집 메뉴 동작(호스트가 `clip_action`으로).
+    pending_edit_ctx: Option<nexa_ctl::EditCtxAction>,
     /// ★ 추가 행의 표시 순서(추가 행 번호 k · 사용자 09-29 "추가 행에서 +도 그 바로 아래") — 같은 기존 행 아래의 추가 행끼리의 순서.
     ins_order: Vec<usize>,
     now_ms: u64,
@@ -564,6 +572,9 @@ impl Default for Grid {
             filter_strip: true,
             filter_pick_max: 30,
             strip_h: 0,
+            cond_h: 0,
+            chip_h: 0,
+            cond_host_paint: false,
             chips: Vec::new(),
             chips_clear: None,
             chip_hover: None,
@@ -600,6 +611,7 @@ impl Default for Grid {
             cond_last_sql: None,
             cond_prev_sql: None,
             pending_cond_run: None,
+            pending_edit_ctx: None,
             ins_order: Vec::new(),
             now_ms: 0,
             hdr_drag: None,
@@ -3473,11 +3485,6 @@ impl Grid {
         self.key_accel.reset();
     }
 
-    /// 그리드 영역(포인터 캡처 판정).
-    pub(crate) fn area(&self) -> Rect {
-        self.bounds
-    }
-
     /// ↑/↓ 한 번의 이동 배수(고속 스크롤이 켜져 있고 같은 방향이 빨리 이어질 때만 > 1) + 속도 HUD.
     fn key_step(&mut self, dir: i32) -> i32 {
         let cfg = self.bars.fast_cfg();
@@ -3572,6 +3579,21 @@ impl Grid {
         self.values_scope_others = scope.trim() != "all";
     }
 
+    /// 설정 `grid.cond_drop_template` — 열 머리 DnD 때 `AND` 연결 + 타입별 기본값.
+    pub(crate) fn set_cond_drop_template(&mut self, on: bool) {
+        self.cond.set_drop_template(on);
+    }
+
+    /// 설정 `grid.cond_max_lines` — 조건 바를 펼쳤을 때 보이는 최대 줄 수.
+    pub(crate) fn set_cond_max_lines(&mut self, n: usize) {
+        self.cond.set_max_lines(n);
+    }
+
+    /// 조건 바 완성 규칙 = 편집기 인텔리센스 설정(`intel.key_passthrough` · `intel.min_chars`).
+    pub(crate) fn set_cond_intel(&mut self, key_passthrough: bool, min_chars: usize) {
+        self.cond.set_intel_cfg(key_passthrough, min_chars);
+    }
+
     /// 인라인 조건 입력란 보이기(설정 `grid.condition_bar`) — 높이는 다음 그리기에서 맞춘다.
     pub(crate) fn set_condition_bar(&mut self, on: bool) {
         self.cond_on = on;
@@ -3632,6 +3654,17 @@ impl Grid {
         self.pending_cond_run.take()
     }
 
+    /// 호스트: 글 상자 우클릭 메뉴 동작(한 번) — `clip_action`으로 잇는다(복사·잘라내기·붙여넣기 · 사용자 10-06).
+    pub(crate) fn take_text_edit_ctx(&mut self) -> Option<nexa_ctl::EditCtxAction> {
+        self.pending_edit_ctx.take()
+    }
+
+    /// 조건 바 실행이 나가 있는가(오류가 오면 결과를 유지할 것 · Output 탭으로 넘어가지 않을 근거 · 사용자 10-06).
+    pub(crate) fn cond_run_pending(&self) -> bool {
+        self.cond_prev_sql.is_some()
+            && self.cond_last_sql.as_deref() == Some(self.source_sql.as_str())
+    }
+
     /// 호스트: 실행 오류가 왔다 — 그것이 **조건 바 실행**이었으면 결과는 그대로 두고 출처 문장만 직전 것으로 되돌린다(true).
     /// 사용자 10-06 "구문 오류 뒤 결과 창이 비는 경우" — 오류는 토스트·상태줄로만.
     pub(crate) fn cond_run_failed(&mut self) -> bool {
@@ -3648,6 +3681,12 @@ impl Grid {
         };
         self.set_source_sql(&prev);
         true
+    }
+
+    /// 조건 바 실행이 서버에서 거부됐다 — 상자 테두리 빨강(토스트·카드와 별개 · 사용자 10-06).
+    pub(crate) fn cond_server_error(&mut self, msg: &str) {
+        self.cond.set_server_error(msg);
+        self.dirty = true;
     }
 
     /// 지금 글 입력이 그리드 안 상자(값 목록 검색 · 조건 바)로 가는 상태인가 — 호스트 라우팅·클립보드·표 편집 키 제외의 근거.
@@ -3693,11 +3732,6 @@ impl Grid {
     /// 값 목록 팝업이 떠 있는가(호스트 라우팅 = 팝업이 열려 있으면 마우스·키를 그리드가 먼저 받는다 · 시험).
     pub(crate) fn value_pick_open(&self) -> bool {
         self.vpick.is_open()
-    }
-
-    /// 열린 값 목록 팝업의 검색 상자(호스트 `focused_textbox` = IME·편집 명령 대상 · 10-06).
-    pub(crate) fn value_pick_textbox(&mut self) -> Option<&mut TextBox> {
-        self.vpick.textbox_mut()
     }
 
     /// 포인터가 그리드를 떠났다(호스트가 그리드 밖 MouseMove에서) — hover 툴팁·칩 hover를 지운다(hover 효과 즉시 취소 규칙 ·
@@ -3848,18 +3882,38 @@ impl Grid {
         Rect::new(b.x, b.y - self.strip_h, b.w, self.strip_h)
     }
 
+    /// 조건 바 자리(줄의 위쪽).
+    fn cond_rect(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(b.x, b.y - self.strip_h, b.w, self.cond_h)
+    }
+
+    /// 필터 칩 줄 자리(조건 바 **아래** · 그리드 바로 위 · 사용자 10-06 "조건 바 밑에 필터 바").
+    fn chips_rect(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(b.x, b.y - self.chip_h, b.w, self.chip_h)
+    }
+
     /// 필터 유무·설정에 맞춰 필터 줄 높이를 맞춘다(바뀔 때만 `bounds`를 옮긴다 · 그리기 직전 한 곳).
     fn sync_strip(&mut self, s: f32) {
-        let want = if self.rs.is_some() && self.cond_on {
+        // 위 = 조건 바(켜져 있을 때) · 아래 = 필터 칩 줄(설정 + 필터 있음) — 둘 다 결과가 있을 때만.
+        let cond_h = if self.rs.is_some() && self.cond_on {
             self.cond.wanted_height(s)
-        } else if self.rs.is_some() && self.filter_strip && !self.filters.is_empty() {
+        } else {
+            0
+        };
+        let chip_h = if self.rs.is_some() && self.filter_strip && !self.filters.is_empty() {
             (26.0 * s).round() as i32
         } else {
             0
         };
-        if want == self.strip_h {
+        let want = cond_h + chip_h;
+        if want == self.strip_h && cond_h == self.cond_h {
+            self.chip_h = chip_h;
             return;
         }
+        self.cond_h = cond_h;
+        self.chip_h = chip_h;
         let o = self.strip_rect();
         let outer = Rect::new(o.x, o.y, o.w, self.bounds.h + self.strip_h);
         self.strip_h = want;
@@ -3873,18 +3927,18 @@ impl Grid {
 
     /// 필터 줄 그리기 — 술어마다 칩 하나(`열 조건 ×`) · 넘치면 `+N` · 오른쪽 끝 × = 모두 지우기.
     fn paint_filter_strip(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
-        let strip = self.strip_rect();
         self.chips.clear();
         self.chips_clear = None;
-        if strip.h <= 0 {
+        if self.strip_h <= 0 {
             return;
         }
-        // ★ 인라인 조건 입력란(사용자 10-06) — 켜져 있으면 칩 대신 조건 바.
-        if self.cond_on {
-            let host = self.menu_host();
-            self.cond.set_host(host);
-            self.cond.set_rect(strip, s);
-            self.cond.paint(dc, th, std::time::Instant::now());
+        // ★ 인라인 조건 입력란(사용자 10-06) = 위 · 필터 칩 줄(설정 `grid.filter_strip` · 필터 있을 때만) = 그 **아래** 두 번째 줄.
+        //   호스트가 편집기 글꼴로 따로 그리면(`cond_host_paint`) 여기서는 건너뛴다.
+        if !self.cond_host_paint {
+            self.paint_cond(dc, th, s);
+        }
+        let strip = self.chips_rect();
+        if strip.h <= 0 {
             return;
         }
         let px = |v: f32| (v * s).round() as i32;
@@ -3961,6 +4015,23 @@ impl Grid {
         dc.select_font(FontSlot::Base, false);
     }
 
+    /// 조건 바 그리기 — 호스트가 **편집기 글꼴 컨텍스트**(고정폭 · `editor.font_size`)로 부른다(사용자 10-07: 편집기 탭과 글자 크기·
+    /// 줄 간격이 같아 보이게 · 줄 높이 20×배율은 TextBox 공통이라 글꼴만 맞추면 된다). 결과가 없거나 꺼져 있으면 아무것도 안 한다.
+    pub(crate) fn paint_cond(&mut self, dc: &mut dyn DrawCtx, th: &Theme, s: f32) {
+        if !(self.cond_on && self.cond_h > 0) {
+            return;
+        }
+        let host = self.menu_host();
+        self.cond.set_host(host);
+        self.cond.set_rect(self.cond_rect(), s);
+        self.cond.paint(dc, th, std::time::Instant::now());
+    }
+
+    /// 호스트가 조건 바를 따로 그린다고 알린다(`paint_cond` · 매 프레임 그리기 전에).
+    pub(crate) fn set_cond_host_paint(&mut self, on: bool) {
+        self.cond_host_paint = on;
+    }
+
     /// 칩 글 = `열 이름  조건`(값이 길면 줄인다).
     fn chip_label(&self, p: &Predicate) -> String {
         let name = self
@@ -3983,13 +4054,22 @@ impl Grid {
         if self.cond_on {
             let mut inv = Invalidations::default();
             let hit = self.cond.on_event(ev, &mut inv);
+            if let Some(a) = self.cond.take_edit_ctx() {
+                self.pending_edit_ctx = Some(a);
+            }
             self.cond_take_requests();
             if self.cond.menu_open() || hit {
                 self.dirty = true;
             }
-            return hit;
+            if hit {
+                return true;
+            }
         }
-        let strip = self.strip_rect();
+        // 필터 칩 줄(조건 바 아래).
+        let strip = self.chips_rect();
+        if strip.h <= 0 {
+            return false;
+        }
         let hit = |p: Point, chips: &[(usize, Rect, Rect)], clear: Option<Rect>| -> Option<usize> {
             if clear.is_some_and(|r| r.contains(p)) {
                 return Some(usize::MAX);
@@ -5571,7 +5651,7 @@ impl Grid {
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
-        self.bars.is_visible()
+        self.bars.is_visible() || (self.cond_on && self.cond.bars_visible())
     }
 
     /// 호버 페이드가 움직이는 중인가(호스트가 ≈30ms 프레임을 예약).
@@ -5601,6 +5681,9 @@ impl Grid {
             self.vpick.set_shift(self.shift);
             let mut inv = Invalidations::default();
             let consumed = self.vpick.on_event(ev, &mut inv);
+            if let Some(a) = self.vpick.take_edit_ctx() {
+                self.pending_edit_ctx = Some(a);
+            }
             if let Some(crate::valuepick::PickResult::Apply { col, values }) =
                 self.vpick.take_result()
             {
@@ -5688,8 +5771,14 @@ impl Grid {
                 return;
             }
         }
-        // 필터 줄(칩)이 먼저 — 줄 안의 클릭은 셀·머리로 흘리지 않는다.
-        if self.strip_event(ev) {
+        // 필터 줄(칩·조건 바)이 먼저 — 줄 안의 클릭은 셀·머리로 흘리지 않는다. 단 **열 머리를 끌는 중**이면 이동·놓임은 끌기
+        //   몫(조건 바 위로 끌어 놓기 · 협업 V1 C 10-06 = 조건 바가 이동을 먹어 고스트가 머리 줄에 머물렀다).
+        let hdr_dragging = self.hdr_drag.is_some()
+            && matches!(
+                ev,
+                InputEvent::MouseMove { .. } | InputEvent::MouseUp { .. }
+            );
+        if !hdr_dragging && self.strip_event(ev) {
             return;
         }
         // 결과 도구줄(푸터)이 먼저 — 커서 아래 컨트롤에만(마우스 라우팅 규칙).
@@ -6068,25 +6157,50 @@ impl Grid {
                     self.hdr_resize = None;
                     return;
                 }
-                InputEvent::MouseMove { x, .. } if self.hdr_drag.is_some() => {
+                InputEvent::MouseMove { x, y } if self.hdr_drag.is_some() => {
                     if let Some(d) = self.hdr_drag.as_mut() {
                         d.cur_x = x;
                         if (x - d.press_x).abs() > 4 {
                             d.active = true;
                         }
                     }
+                    // ★ 열 머리를 조건 바 위로 끌면 = 놓을 자리 강조(열 이름 넣기 · 사용자 10-06 "컬럼을 조건 바에 DnD").
+                    let over_cond = self.cond_on
+                        && self.col_dragging()
+                        && self.cond.rect().contains(Point { x, y });
+                    if self.cond.set_drop_hot(over_cond) {
+                        self.dirty = true;
+                    }
                     self.preview_col_drag();
                     return;
                 }
-                InputEvent::MouseUp { .. } if self.hdr_drag.is_some() => {
+                InputEvent::MouseUp { x, y } if self.hdr_drag.is_some() => {
                     // 미리보기가 곧 결과 — 놓으면 확정 · 안 움직였으면 정렬 클릭.
                     if let Some(d) = self.hdr_drag.take() {
                         if !d.active {
                             if let Some(&col) = self.col_order.get(d.pos) {
                                 self.toggle_sort(col, d.shift);
                             }
+                        } else if self.cond_on && self.cond.rect().contains(Point { x, y }) {
+                            // 조건 바에 놓음 = 끈 열(라이브 미리보기로 자리가 옮겨져 있으니 **지금 순서의 `d.pos`** · 협업 V1 C =
+                            //   `orig[d.pos]`를 읽어 다른 열이 들어갔다)을 읽은 뒤 열 순서는 시작 때로 되돌리고 조건 바에 넣는다.
+                            let ci = self.col_order.get(d.pos).copied();
+                            if d.orig.len() == self.col_order.len() {
+                                self.col_order = d.orig;
+                            }
+                            let name = ci.and_then(|ci| {
+                                self.rs
+                                    .as_ref()
+                                    .and_then(|rs| rs.columns().get(ci).map(|c| c.name.clone()))
+                            });
+                            if let (Some(ci), Some(name)) = (ci, name) {
+                                let numeric = self.col_kind(ci) == ColKind::Number;
+                                self.cond.insert_column(&name, numeric);
+                                self.dirty = true;
+                            }
                         }
                     }
+                    self.cond.set_drop_hot(false);
                     return;
                 }
                 _ => {}
@@ -7956,6 +8070,39 @@ mod tests {
         assert_eq!(g.reveal_table(), None);
         g.set_source_sql("CREATE TABLE t (a INT)");
         assert_eq!(g.reveal_table(), None);
+    }
+
+    /// 조건 바(위) + 필터 칩 줄(아래 · 10-06): 둘 다 켜고 필터가 있으면 줄 높이 = 26 + 26 · 칩 줄은 조건 바 바로 아래 ·
+    /// 설정을 끄면 조건 바만 · 필터가 없어도 조건 바만.
+    #[test]
+    fn condition_bar_above_and_chip_strip_below() {
+        let mut g = grid_with(&[100, 100]);
+        g.set_condition_bar(true);
+        g.set_filter_strip(true);
+        let outer = Rect::new(0, 0, 600, 300);
+        g.set_bounds(outer);
+        g.sync_strip(1.0);
+        assert_eq!(
+            (g.strip_h, g.cond_h, g.chip_h),
+            (32, 32, 0),
+            "필터 없음 = 조건 바만"
+        );
+        g.add_filter(0, FilterOp::NotNull, String::new());
+        g.sync_strip(1.0);
+        assert_eq!((g.strip_h, g.cond_h, g.chip_h), (58, 32, 26));
+        assert_eq!(g.bounds, Rect::new(0, 58, 600, 242));
+        assert_eq!(g.cond_rect(), Rect::new(0, 0, 600, 32));
+        assert_eq!(
+            g.chips_rect(),
+            Rect::new(0, 32, 600, 26),
+            "칩 줄 = 조건 바 아래"
+        );
+        g.set_filter_strip(false);
+        g.sync_strip(1.0);
+        assert_eq!((g.strip_h, g.chip_h), (32, 0), "설정 끔 = 조건 바만");
+        g.set_condition_bar(false);
+        g.sync_strip(1.0);
+        assert_eq!((g.strip_h, g.cond_h, g.chip_h), (0, 0, 0));
     }
 
     /// T-181 필터 줄 — 필터가 생기면 그리기에서 한 줄을 차지하고(`bounds`가 그만큼 내려감) · 칩의 ×는 그 열만 ·

@@ -108,10 +108,12 @@ impl App {
             .get("output.activate")
             .unwrap_or("no_results")
             .to_string();
+        // 조건 바 실행의 오류는 결과가 그대로 남으므로(그리드 유지) Output으로 넘어가지 않는다(사용자 10-06 "결과가 사라진 것처럼").
+        let cond_err = kind == OutKind::Error && self.grid.cond_run_pending();
         let activate = match act.as_str() {
             "always" => true,
             "never" => false,
-            _ => !self.sess.run_had_rs || kind == OutKind::Error,
+            _ => (!self.sess.run_had_rs || kind == OutKind::Error) && !cond_err,
         };
         if ed == self.panel_editor {
             let idx = match self.panel.output_index() {

@@ -484,6 +484,29 @@ pub(crate) const COMMANDS: &[Command] = &[
         mac: "shift+f10",
         linux: "shift+f10",
     },
+    // ★ 글꼴 크기(사용자 10-07): 포커스가 편집기면 `editor.font_size` · 결과 그리드면 `grid.font_size`(Ctrl+휠도 같은 동작 · 커서 아래).
+    //   `=` 키 = 같은 물리 키의 `+`(Shift 없이) · 기본값 복귀는 팔레트(`view.zoom_reset` · Ctrl+0은 북마크 니모닉).
+    Command {
+        id: "view.zoom_in",
+        label: Msg::MnZoomIn,
+        win: "ctrl+=",
+        mac: "cmd+=",
+        linux: "ctrl+=",
+    },
+    Command {
+        id: "view.zoom_out",
+        label: Msg::MnZoomOut,
+        win: "ctrl+-",
+        mac: "cmd+-",
+        linux: "ctrl+-",
+    },
+    Command {
+        id: "view.zoom_reset",
+        label: Msg::MnZoomReset,
+        win: "",
+        mac: "",
+        linux: "",
+    },
     // 객체 상세 패널이 보여 주는 것(속성 · 컬럼 · 제약 · 소스/DDL)을 읽기 전용 탭으로(T-179 ② "정보 탭" · 비교·복사·검색용).
     Command {
         id: "obj.info",

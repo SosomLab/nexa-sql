@@ -239,6 +239,9 @@ struct App {
     drop_req: Option<app::drop::DropReq>,
     open_drop: bool,
     drop_backup_wait: Option<nsql_catalog::ObjectInfo>,
+    /// ★ CREATE 문 ↔ 실제 객체 비교(T-283): 서버 DDL을 기다리는 대상 · 마지막 비교(이름 · 서버 DDL · 차이 수 = "서버 DDL 열기"·덤프).
+    compare_wait: Option<app::compare::CompareTarget>,
+    compare_last: Option<(String, String, usize)>,
     open_about: bool,
     status_lic_rect: Rect,
     /// 상태줄 자동 저장 표식(클릭 = 자동 저장 폴더 · `statusbar.autosave` · 09-28).
@@ -1571,6 +1574,8 @@ fn main() {
         drop_req: None,
         open_drop: false,
         drop_backup_wait: None,
+        compare_wait: None,
+        compare_last: None,
         open_about: false,
         licensing: nsql_license::Licensing::open_default(),
         open_license: false,

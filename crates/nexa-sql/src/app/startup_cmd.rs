@@ -39,6 +39,8 @@ impl App {
                         | "rclick"
                         | "wheel"
                         | "hwheel"
+                        | "down"
+                        | "up"
                 )
             })
         {
@@ -68,6 +70,14 @@ impl App {
                     }
                 }
                 "rclick" => self.route(InputEvent::RightDown { x, y }),
+                // `ui.down:x/y` · `ui.up:x/y` = 누름/놓음 분리(드래그 선택 = down → move ×n → up · 조건 바 캡처 시험 · 10-06).
+                "down" => self.route(InputEvent::MouseDown {
+                    x,
+                    y,
+                    shift: false,
+                    primary: false,
+                }),
+                "up" => self.route(InputEvent::MouseUp { x, y }),
                 _ => {}
             }
             self.redraw();
@@ -105,6 +115,11 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("details.dump:") {
             let _ = std::fs::write(path, self.objdetail.text());
+            return;
+        }
+        // 자체 시험(T-283): 마지막 비교 결과 `same=… hunks=… name=…`.
+        if let Some(path) = id.strip_prefix("compare.dump:") {
+            self.compare_dump(path);
             return;
         }
         if let Some(path) = id.strip_prefix("explorer.stat:") {

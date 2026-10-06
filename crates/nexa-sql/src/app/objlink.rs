@@ -1080,7 +1080,7 @@ impl App {
         let can_rows = target
             .as_ref()
             .is_some_and(|t| t.kind.is_relation() && t.member.is_none());
-        vec![
+        let mut v = vec![
             (
                 "card.reveal",
                 t(Msg::MnObjLinkReveal).to_string(),
@@ -1088,7 +1088,35 @@ impl App {
             ),
             ("card.rows", t(Msg::MnObjRows).to_string(), can_rows),
             ("card.copy", t(Msg::MnObjLinkCopyDesc).to_string(), true),
-        ]
+        ];
+        // ★ CREATE 문의 이름 위 = "실제 객체와 비교…"(T-283 · 서버에 있을 때만 활성 · 19 §6-4).
+        if self.objlink_in_create(k) {
+            v.push((
+                "card.compare",
+                t(Msg::MnObjCompare).to_string(),
+                target.is_some(),
+            ));
+        }
+        v
+    }
+
+    /// 링크 `k`가 `CREATE … <이름>` 문장의 그 이름인가(불변 판정 · 버튼 표시용 · 문장 추출은 `compare_stmt_at_char`와 같은 길).
+    fn objlink_in_create(&self, k: usize) -> bool {
+        let Some(l) = self.objlinks.links.get(k) else {
+            return false;
+        };
+        let full = self.editors.cur().text();
+        let byte_pos = full
+            .char_indices()
+            .nth(l.range.0)
+            .map_or(full.len(), |(b, _)| b);
+        let Some(it) = nsql_script::statement_at_in(&full, byte_pos, Some(self.sess.dialect))
+        else {
+            return false;
+        };
+        let ds = self.meta_default_schema();
+        crate::app::compare::compare_target(&full[it.span], self.sess.dialect, ds.as_deref())
+            .is_some_and(|t| t.owner.name.eq_ignore_ascii_case(&l.name))
     }
 
     /// hover 카드 안 MouseDown — 카드 안이면 true(편집기로 가지 않는다 · 빈 자리도 삼킨다). 버튼 위면 **누름만** 기억하고
@@ -1133,6 +1161,12 @@ impl App {
                     let sql = nsql_catalog::select_template(self.sess.dialect, &t.schema, &t.name);
                     self.objlink_hover_end();
                     self.run_in_fresh_tab(sql);
+                }
+            }
+            Some("card.compare") => {
+                if let Some(stmt) = self.objlink_compare_stmt(k) {
+                    self.objlink_hover_end();
+                    self.obj_compare_stmt(stmt);
                 }
             }
             Some("card.copy") => {

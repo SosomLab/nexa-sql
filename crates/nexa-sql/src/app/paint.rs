@@ -469,7 +469,18 @@ impl App {
                         o.set_focused(focused);
                         o.paint(&mut dc, &th);
                     } else {
+                        self.grid.set_cond_host_paint(true);
                         self.grid.paint(&mut dc, &th, s);
+                        drop(dc);
+                        // ★ 조건 바 = 편집기와 같은 **고정폭 얼굴**이되 크기는 **그리드 결과와 같게**(`grid.font_size` · 사용자 10-07
+                        //   "폰트가 커졌어 · 그리드 결과와 동일한 크기로" = 앞선 "편집기 줄 간격 일치"는 얼굴·줄 높이(20×배율 공통)만 따른다).
+                        let prefs = FontPrefs::with_base(grid_px);
+                        let fonts = FontSet {
+                            mono: Some(&self.mono_font),
+                            ..FontSet::single(&self.mono_font)
+                        };
+                        let mut dc = RasterCtx::with_font_set(&mut gfx, fonts, s).with_fonts(prefs);
+                        self.grid.paint_cond(&mut dc, &th, s);
                     }
                 }
             }

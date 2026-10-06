@@ -91,13 +91,26 @@ pub(crate) struct CondBar {
     /// 마지막 검증 오류(상자 테두리 빨강 · 글이 바뀌면 지움) · 호스트에 한 번 알렸는가(상태줄 1회).
     err: Option<String>,
     err_reported: bool,
-    /// 멀티라인 모드(▾ 버튼 · 사용자 10-06) · 그 높이(px · 0 = 기본 3줄) · 스플리터 드래그(누른 y · 그때 높이).
-    multi: bool,
-    multi_h: i32,
-    drag_h: Option<(i32, i32)>,
-    /// 모드 버튼(▾/▴) 자리 · 완성 팝업이 들어갈 호스트(창).
+    /// 보기 상태(사용자 10-06 개념 변경): 상자는 늘 여러 줄 · `expanded` = 최대 줄 수(`max_lines` · 설정 `grid.cond_max_lines`)까지
+    /// 펼쳐 보임 · 아니면 한 줄만(여러 줄이어도 캐럿 줄 하나 · 키·휠로 이동) · `user_collapsed` = 사용자가 ▴로 접었다(줄 바꿈이
+    /// 있어도 한 줄 보기 유지 · 비우면 해제).
+    expanded: bool,
+    user_collapsed: bool,
+    max_lines: usize,
+    /// 포인터가 바 안에 있다(휠 전달).
+    hover_in: bool,
+    /// 버튼 자리: ▾/▴(펼치기·접기) · ×(전체 지우기 · 글이 있을 때) · 완성 팝업이 들어갈 호스트(창).
     btn_mode: Rect,
+    btn_clear: Rect,
     host: Rect,
+    /// 열 머리를 끌어 조건 바 위에 있는 동안(놓을 자리 강조 · 사용자 10-06 "컬럼 DnD").
+    drop_hot: bool,
+    /// 설정 `grid.cond_drop_template` — DnD 때 `AND` 연결 + 타입별 기본값(`= ''`/`= 0`)을 붙인다(기본 켬).
+    drop_template: bool,
+    /// 완성 = 편집기와 같은 기준(사용자 10-07): `intel.key_passthrough`(고른 항목 없으면 Enter/Tab은 팝업만 닫고 상자로) ·
+    /// `intel.min_chars`(이만큼 치기 전엔 팝업 없음) · 숫자로 시작하는 낱말(`1=1`)엔 팝업 없음.
+    key_passthrough: bool,
+    min_chars: usize,
 }
 
 impl Default for CondBar {
@@ -108,7 +121,8 @@ impl Default for CondBar {
 
 impl CondBar {
     pub(crate) fn new() -> Self {
-        let mut tb = TextBox::new(t(Msg::CondPlaceholder)).with_clearable();
+        // 상자는 늘 여러 줄(보이는 줄 수 = 높이) · 줄 바꿈 없음(가로 스크롤) · 지우기 ×는 바가 직접 그린다(오른쪽 위 고정).
+        let mut tb = TextBox::new(t(Msg::CondPlaceholder)).with_multiline();
         tb.set_focus_ring(false);
         CondBar {
             tb,
@@ -123,11 +137,17 @@ impl CondBar {
             dialect: Dialect::Sqlite,
             err: None,
             err_reported: false,
-            multi: false,
-            multi_h: 0,
-            drag_h: None,
+            expanded: false,
+            user_collapsed: false,
+            max_lines: 3,
+            hover_in: false,
             btn_mode: Rect::default(),
+            btn_clear: Rect::default(),
             host: Rect::default(),
+            drop_hot: false,
+            drop_template: true,
+            key_passthrough: true,
+            min_chars: 2,
         }
     }
 
@@ -136,48 +156,72 @@ impl CondBar {
         self.host = host;
     }
 
-    /// 조건 바가 원하는 높이 — 한 줄 = 26 · 멀티라인 = 기본 3줄(+ 스플리터) 또는 끌어 둔 높이.
+    /// 조건 바가 원하는 높이 — 상자(멀티라인) 안쪽 = 위 여백 8 + 줄 20×N(TextBox `paint_multiline`과 같은 값) + 바 위아래 여백 2.
+    /// 접힘 = 한 줄(32) · 펼침 = `max_lines`줄. (협업 V1 bin26 E = 26이면 한 줄이 위로 잘렸다.)
     pub(crate) fn wanted_height(&self, scale: f32) -> i32 {
         let s = |v: f32| (v * scale).round() as i32;
-        if !self.multi {
-            return s(26.0);
-        }
-        if self.multi_h > 0 {
-            self.multi_h
+        // TextBox 멀티라인은 보이는 줄 수를 `(높이 - 12) / 20`으로 센다 — N줄이 다 보이려면 안쪽 20N+12(사용자 10-07 "3줄이 안 보임").
+        //   접힘은 한 줄 = 위 여백 8 + 줄 20 = 28(캐럿 줄 하나).
+        if self.expanded {
+            s(20.0) * self.max_lines as i32 + s(12.0) + s(2.0) * 2
         } else {
-            s(20.0) * 3 + s(8.0) + s(6.0)
+            s(28.0) + s(2.0) * 2
         }
     }
 
-    /// 한 줄 ↔ 멀티라인(글·포커스 유지 · 상자는 다시 만든다 — 모드는 생성 때만 정해진다).
-    pub(crate) fn toggle_multi(&mut self) {
-        let text = self.tb.text();
-        let focused = self.tb.is_focused();
-        self.multi = !self.multi;
-        let mut tb = TextBox::new(t(Msg::CondPlaceholder));
-        if self.multi {
-            tb = tb.with_multiline();
-        } else {
-            tb = tb.with_clearable();
-        }
-        tb.set_focus_ring(false);
-        tb.set_text(&text);
-        tb.set_focused(focused);
-        self.tb = tb;
-        self.menu.close();
-        self.comp = None;
-        self.drag_h = None;
+    /// 설정 `grid.cond_max_lines` — 펼쳤을 때 보이는 최대 줄 수(2~12).
+    pub(crate) fn set_max_lines(&mut self, n: usize) {
+        self.max_lines = n.clamp(2, 12);
     }
 
     #[cfg(test)]
-    pub(crate) fn is_multi(&self) -> bool {
-        self.multi
+    pub(crate) fn is_expanded(&self) -> bool {
+        self.expanded
     }
 
-    /// 멀티라인 아래 가장자리(스플리터 · 6 px).
-    fn splitter_rect(&self) -> Rect {
-        let h = (6.0 * self.scale).round() as i32;
-        Rect::new(self.rect.x, self.rect.bottom() - h, self.rect.w, h)
+    /// 글의 줄 수(빈 글 = 1).
+    fn line_count(&self) -> usize {
+        self.tb.text().matches('\n').count() + 1
+    }
+
+    fn set_expanded(&mut self, on: bool) {
+        if self.expanded != on {
+            self.expanded = on;
+            self.menu.close();
+            self.comp = None;
+        }
+    }
+
+    /// ▾/▴ 버튼 — 펼침 ↔ 접힘. 사용자가 접으면 줄 바꿈이 있어도 한 줄 보기를 유지한다(`user_collapsed`).
+    fn toggle_expand(&mut self) {
+        if self.expanded {
+            self.set_expanded(false);
+            self.user_collapsed = true;
+        } else {
+            self.set_expanded(true);
+            self.user_collapsed = false;
+        }
+    }
+
+    /// 글이 바뀐 뒤 보기 상태 — 두 줄 이상이 되면(Shift+Enter · 여러 줄 붙여넣기) 사용자가 접어 두지 않은 한 자동으로 펼친다 ·
+    /// 비면 접고 `user_collapsed`도 푼다.
+    fn after_text_changed(&mut self) {
+        if self.tb.text().is_empty() {
+            self.set_expanded(false);
+            self.user_collapsed = false;
+        } else if self.line_count() > 1 && !self.expanded && !self.user_collapsed {
+            self.set_expanded(true);
+        }
+    }
+
+    /// × = 전체 지우기(상자 오른쪽 위 · 글이 있을 때만 보인다).
+    fn clear_text(&mut self) {
+        self.tb.set_text("");
+        let _ = self.tb.take_changed();
+        self.err = None;
+        self.menu.close();
+        self.comp = None;
+        self.after_text_changed();
     }
 
     /// 결과가 바뀌면 열 이름을 새로(완성 후보 · 검증).
@@ -190,29 +234,125 @@ impl CondBar {
         self.dialect = d;
     }
 
-    /// 자리(필터 줄 사각형) — 오른쪽 끝은 복사 버튼.
+    /// 자리(조건 바 사각형) — 오른쪽 위 = [×][▾/▴][복사].
     pub(crate) fn set_rect(&mut self, r: Rect, scale: f32) {
         self.rect = r;
         self.scale = scale;
         let s = |v: f32| (v * scale).round() as i32;
-        let pad = s(4.0);
-        let split = if self.multi { s(6.0) } else { 0 };
+        let (pad_x, pad_y) = (s(4.0), s(2.0));
         let bh = s(18.0);
-        // 오른쪽 = [▾ 모드] [복사] (멀티라인이면 위쪽에 맞춘다).
-        let btn = Rect::new(r.right() - pad - bh, r.y + pad, bh, bh);
+        // 여러 줄이어도 버튼은 첫 줄 높이(28) 안 가운데 = 오른쪽 위(사용자 10-06 "우측 상단 X 유지").
+        let by = r.y + pad_y + (s(28.0) - bh) / 2;
+        let btn = Rect::new(r.right() - pad_x - bh, by, bh, bh);
         self.copy.set_rect(btn);
-        self.btn_mode = Rect::new(btn.x - s(4.0) - bh, r.y + pad, bh, bh);
+        self.btn_mode = Rect::new(btn.x - s(4.0) - bh, by, bh, bh);
         let mut inv = Invalidations::default();
         self.tb.set_scale(scale);
-        self.tb.set_bounds(
-            Rect::new(
-                r.x + pad,
-                r.y + pad,
-                (self.btn_mode.x - s(6.0) - (r.x + pad)).max(s(40.0)),
-                (r.h - pad * 2 - split).max(s(16.0)),
-            ),
-            &mut inv,
+        // 상자는 ▾ 버튼 바로 앞까지 — × 지우기는 상자 **안** 오른쪽 위에 겹쳐 그린다(사용자 10-07 "X를 밖에 빼지 말고 상자 안에").
+        let tb_rect = Rect::new(
+            r.x + pad_x,
+            r.y + pad_y,
+            (self.btn_mode.x - s(6.0) - (r.x + pad_x)).max(s(40.0)),
+            (r.h - pad_y * 2).max(s(28.0)),
         );
+        self.tb.set_bounds(tb_rect, &mut inv);
+        self.btn_clear = Rect::new(tb_rect.right() - s(4.0) - bh, by, bh, bh);
+    }
+
+    /// 조건 바 자리(열 머리 DnD 놓임 판정).
+    pub(crate) fn rect(&self) -> Rect {
+        self.rect
+    }
+
+    /// 끌어 놓을 자리 강조 켬/끔 — 바뀌었으면 true(다시 그리기).
+    pub(crate) fn set_drop_hot(&mut self, on: bool) -> bool {
+        if self.drop_hot == on {
+            return false;
+        }
+        self.drop_hot = on;
+        true
+    }
+
+    /// 열 머리를 끌어 놓음 = 열 이름을 캐럿(선택) 자리에 넣는다(사용자 10-06 "컬럼을 조건 바에 DnD").
+    /// `drop_template`(설정 `grid.cond_drop_template` · 기본 켬)이면 **구문 오류 예방** — 앞에 식이 있고 연결어(AND/OR/NOT/`(`)로
+    /// 끝나지 않으면 ` AND `로 잇고, 열 타입에 맞는 기본 술어를 붙인다(숫자 = `열 = 0` · 그 밖 = `열 = ''`) · 캐럿 = 값 자리
+    /// (숫자는 `0`을 선택해 바로 치면 바뀜 · 문자는 따옴표 사이). 끄면 열 이름만(낱말에 붙으면 공백 하나).
+    pub(crate) fn insert_column(&mut self, name: &str, numeric: bool) {
+        let mut inv = Invalidations::default();
+        let chars: Vec<char> = self.tb.text().chars().collect();
+        // 놓음은 늘 **글 끝에 잇는다**(협업 V1 bin27 C = 앞 놓기의 캐럿이 따옴표 사이라 둘째 열이 `' AND … '` 안에 들어갔다) —
+        //   조건 식은 뒤에 붙는 것이 자연스럽고 캐럿 자리 삽입은 식을 깨뜨린다.
+        let from = chars.len();
+        let head: String = chars.iter().collect();
+        let tail = String::new();
+        let mut text = String::new();
+        let head_t = head.trim_end();
+        if self.drop_template && !head_t.is_empty() && !Self::ends_with_connector(head_t) {
+            if !head.ends_with(char::is_whitespace) {
+                text.push(' ');
+            }
+            text.push_str("AND ");
+        } else if !head.is_empty() && !head.ends_with(|c: char| c.is_whitespace() || c == '(') {
+            text.push(' ');
+        }
+        text.push_str(name);
+        // 삽입 글 안에서 캐럿(선택) 위치.
+        let mut sel: Option<(usize, usize)> = None;
+        if self.drop_template {
+            text.push_str(" = ");
+            if numeric {
+                let a = text.chars().count();
+                text.push('0');
+                sel = Some((a, a + 1));
+            } else {
+                text.push('\'');
+                let a = text.chars().count();
+                text.push('\'');
+                sel = Some((a, a));
+            }
+        }
+        if !tail.is_empty() && !tail.starts_with(char::is_whitespace) {
+            text.push(' ');
+        }
+        // `TextBox::paste`는 포커스일 때만 받는다 — 놓임 = 상자로 포커스가 오는 동작이니 먼저 준다.
+        self.tb.set_focused(true);
+        // `paste`는 캐럿 자리에 넣는다 — 캐럿을 글 끝으로(선택 해제) 옮긴 뒤.
+        self.tb.select_range(from, from, &mut inv);
+        self.tb.paste(&text, &mut inv);
+        if let Some((a, b)) = sel {
+            self.tb.select_range(from + a, from + b, &mut inv);
+        }
+        self.tb.set_focused(true);
+        self.err = None;
+        self.menu.close();
+        self.comp = None;
+        let _ = self.tb.take_changed();
+    }
+
+    /// 앞 글이 연결어로 끝나는가(`AND`·`OR`·`NOT`·`(`) — 그러면 AND를 덧붙이지 않는다.
+    fn ends_with_connector(head: &str) -> bool {
+        if head.ends_with('(') {
+            return true;
+        }
+        let last = head
+            .rsplit(|c: char| c.is_whitespace() || c == '(')
+            .next()
+            .unwrap_or("");
+        matches!(
+            last.to_ascii_uppercase().as_str(),
+            "AND" | "OR" | "NOT" | "WHERE" | "ON"
+        )
+    }
+
+    /// 설정 `grid.cond_drop_template` — DnD 때 연결어·기본값을 붙일지.
+    pub(crate) fn set_drop_template(&mut self, on: bool) {
+        self.drop_template = on;
+    }
+
+    /// 완성 규칙 = 편집기 인텔리센스 설정 그대로(`intel.key_passthrough` · `intel.min_chars`).
+    pub(crate) fn set_intel_cfg(&mut self, key_passthrough: bool, min_chars: usize) {
+        self.key_passthrough = key_passthrough;
+        self.min_chars = min_chars.max(1);
     }
 
     pub(crate) fn is_focused(&self) -> bool {
@@ -266,8 +406,20 @@ impl CondBar {
         }
     }
 
+    /// 서버가 거부한 조건(실행 뒤 DBMS 오류 · 사용자 10-06 "빨간 테두리 없이 토스트만") — 테두리는 켜되 상태줄 알림은 이미
+    /// 실행 카드·토스트가 했으므로 다시 올리지 않는다(글이 바뀌면 지움).
+    pub(crate) fn set_server_error(&mut self, msg: &str) {
+        self.err = Some(msg.to_string());
+        self.err_reported = true;
+    }
+
     pub(crate) fn take_copy_req(&mut self) -> bool {
         std::mem::take(&mut self.copy_req)
+    }
+
+    /// 상자 우클릭 편집 메뉴에서 고른 동작(복사·잘라내기·붙여넣기 · 호스트가 클립보드로 잇는다 · 사용자 10-06).
+    pub(crate) fn take_edit_ctx(&mut self) -> Option<nexa_ctl::EditCtxAction> {
+        self.tb.take_edit_ctx()
     }
 
     /// 새 검증 오류를 **한 번** 알린다(호스트 상태줄) — 오류 자체는 남아 테두리·덤프에 보인다(글이 바뀌면 지움 · 협업 V1 c5/c6).
@@ -277,6 +429,11 @@ impl CondBar {
         }
         self.err_reported = true;
         self.err.clone()
+    }
+
+    /// 상자의 오버레이 스크롤바가 보이는 중(자동 숨김 페이드 → 호스트가 틱을 돌린다).
+    pub(crate) fn bars_visible(&self) -> bool {
+        self.tb.scrollbars_visible()
     }
 
     /// 애니메이션(복사 눌림 · 캐럿) 중인가 — 호스트가 다음 프레임을 예약.
@@ -289,6 +446,8 @@ impl CondBar {
     /// 상자 글이 상자 밖 길(IME 확정·붙여넣기)로 바뀐 뒤 — 완성 후보를 다시.
     pub(crate) fn query_changed(&mut self) {
         let _ = self.tb.take_changed();
+        self.err = None;
+        self.after_text_changed();
         self.refresh_completion();
     }
 
@@ -349,6 +508,14 @@ impl CondBar {
             .skip(start)
             .take(caret - start)
             .collect();
+        // 편집기와 같은 기준(사용자 10-07): `intel.min_chars` 전엔 없음 · 숫자로 시작하는 낱말(`1=1`의 1)은 리터럴 = 없음.
+        if prefix.chars().count() < self.min_chars
+            || prefix.starts_with(|c: char| c.is_ascii_digit())
+        {
+            self.menu.close();
+            self.comp = None;
+            return;
+        }
         let items = self.candidates(&prefix);
         if items.is_empty() || !self.tb.is_focused() {
             self.menu.close();
@@ -389,7 +556,7 @@ impl CondBar {
             host,
             (160.0 * self.scale) as i32,
         );
-        self.menu.select(0);
+        // 선택 없이 연다(편집기와 같음 — 고른 항목이 없으면 Enter/Tab은 통과 · ↓로 고른다).
     }
 
     /// 후보 넣기 — 완성 중 낱말을 바꾼다.
@@ -416,8 +583,25 @@ impl CondBar {
                 self.comp = None;
                 return true;
             }
+            // ★ 키 통과(`intel.key_passthrough` · 편집기와 같은 규칙 · 사용자 10-07): 고른 항목이 없으면 Enter/Tab은 팝업만 닫고
+            //   그 키는 상자로 그대로(Enter = 실행 · Tab = 글자) · 끄면 팝업이 삼킨다(두 번 입력).
+            let accept_key = matches!(ev, InputEvent::Char { c: '\t', .. })
+                || matches!(
+                    ev,
+                    InputEvent::Key {
+                        key: Key::Enter,
+                        ..
+                    }
+                );
+            if accept_key && self.menu.hovered().is_none() {
+                self.menu.close();
+                self.comp = None;
+                if !self.key_passthrough {
+                    return true;
+                }
+            }
             // Tab(글자 '\t'로 온다 · input.rs 번역) = 선택 후보 넣기.
-            if matches!(ev, InputEvent::Char { c: '\t', .. }) {
+            if self.menu.is_open() && matches!(ev, InputEvent::Char { c: '\t', .. }) {
                 let pick = self
                     .menu
                     .hovered()
@@ -427,16 +611,17 @@ impl CondBar {
                 }
                 return true;
             }
-            let nav = matches!(
-                ev,
-                InputEvent::Key {
-                    key: Key::Up | Key::Down | Key::Enter | Key::PageUp | Key::PageDown,
-                    ..
-                } | InputEvent::MouseMove { .. }
-                    | InputEvent::MouseDown { .. }
-                    | InputEvent::MouseUp { .. }
-                    | InputEvent::Wheel { .. }
-            );
+            let nav = self.menu.is_open()
+                && matches!(
+                    ev,
+                    InputEvent::Key {
+                        key: Key::Up | Key::Down | Key::Enter | Key::PageUp | Key::PageDown,
+                        ..
+                    } | InputEvent::MouseMove { .. }
+                        | InputEvent::MouseDown { .. }
+                        | InputEvent::MouseUp { .. }
+                        | InputEvent::Wheel { .. }
+                );
             if self.menu.is_outside_click(ev) {
                 self.menu.close();
                 self.comp = None;
@@ -463,25 +648,19 @@ impl CondBar {
         match *ev {
             InputEvent::MouseMove { x, y } => {
                 let p = Point { x, y };
-                if let Some((y0, h0)) = self.drag_h {
-                    // 스플리터 드래그 = 높이(2줄 ~ 12줄).
-                    let s = |v: f32| (v * self.scale).round() as i32;
-                    let (lo, hi) = (s(20.0) * 2 + s(14.0), s(20.0) * 12 + s(14.0));
-                    self.multi_h = (h0 + (y - y0)).clamp(lo, hi);
-                    return true;
-                }
+                self.hover_in = self.rect.contains(p);
                 self.copy.set_hover(self.copy.hit(p));
-                if self.rect.contains(p) || self.tb.is_dragging() {
+                if self.hover_in || self.tb.is_dragging() {
                     self.tb.on_event(ev, inv);
                 }
-                self.rect.contains(p)
+                self.hover_in
             }
             InputEvent::MouseDown { x, y, .. } => {
                 let p = Point { x, y };
                 if std::env::var_os("NSQL_TRACE_COND").is_some() {
                     eprintln!(
-                        "[cond] down p={},{} rect={:?} mode={:?} copy={:?} multi={}",
-                        x, y, self.rect, self.btn_mode, self.copy.rect, self.multi
+                        "[cond] down p={},{} rect={:?} mode={:?} copy={:?} expanded={}",
+                        x, y, self.rect, self.btn_mode, self.copy.rect, self.expanded
                     );
                 }
                 if self.copy.hit(p) {
@@ -490,11 +669,11 @@ impl CondBar {
                     return true;
                 }
                 if self.btn_mode.contains(p) {
-                    self.toggle_multi();
+                    self.toggle_expand();
                     return true;
                 }
-                if self.multi && self.splitter_rect().contains(p) {
-                    self.drag_h = Some((y, self.wanted_height(self.scale)));
+                if self.btn_clear.contains(p) && !self.tb.text().is_empty() {
+                    self.clear_text();
                     return true;
                 }
                 if self.rect.contains(p) {
@@ -507,9 +686,6 @@ impl CondBar {
                 false
             }
             InputEvent::MouseUp { x, y } => {
-                if self.drag_h.take().is_some() {
-                    return true;
-                }
                 let p = Point { x, y };
                 if self.rect.contains(p) || self.tb.is_dragging() {
                     self.tb.on_event(ev, inv);
@@ -525,6 +701,11 @@ impl CondBar {
                 }
                 false
             }
+            // 휠 = 바 안에 포인터가 있으면 상자가 스크롤(접힘 = 줄 이동 · 펼침 = 세로 · Shift/가로 휠 = 가로) · 그리드로 안 간다.
+            InputEvent::Wheel { .. } | InputEvent::HWheel { .. } if self.hover_in => {
+                self.tb.on_event(ev, inv);
+                true
+            }
             InputEvent::Key { .. }
             | InputEvent::Char { .. }
             | InputEvent::SelectAll
@@ -539,30 +720,36 @@ impl CondBar {
                     self.set_focused(false);
                     return true;
                 }
-                // 멀티라인 = Enter는 줄 바꿈 · **Ctrl/⌘+Enter** = 실행.
-                if self.multi {
-                    if let InputEvent::Key {
-                        key: Key::Enter,
-                        primary: true,
-                        ..
-                    } = ev
-                    {
-                        self.menu.close();
-                        self.comp = None;
-                        self.request_run();
-                        return true;
-                    }
-                }
-                self.tb.on_event(ev, inv);
-                if !self.multi && self.tb.take_committed().is_some() {
-                    // Enter = 검증 → 실행(완성 팝업이 없을 때) · 틀리면 실행하지 않고 오류만.
+                // Enter = 실행(Ctrl+Enter도) · **Shift+Enter** = 줄 바꿈(사용자 10-06 개념 변경 · 두 줄째가 되면 자동 펼침).
+                if let InputEvent::Key {
+                    key: Key::Enter,
+                    shift,
+                    ..
+                } = *ev
+                {
                     self.menu.close();
                     self.comp = None;
-                    self.request_run();
+                    if shift {
+                        self.tb.on_event(
+                            &InputEvent::Key {
+                                key: Key::Enter,
+                                shift: false,
+                                primary: false,
+                            },
+                            inv,
+                        );
+                        let _ = self.tb.take_changed();
+                        self.err = None;
+                        self.after_text_changed();
+                    } else {
+                        self.request_run();
+                    }
                     return true;
                 }
+                self.tb.on_event(ev, inv);
                 if self.tb.take_changed().is_some() {
                     self.err = None;
+                    self.after_text_changed();
                     self.refresh_completion();
                 }
                 true
@@ -585,13 +772,20 @@ impl CondBar {
         if self.err.is_some() {
             dc.stroke_round_rect(self.tb.bounds(), (4.0 * self.scale) as i32, th.danger, 1.5);
         }
+        // 열 머리를 끌어 위에 있는 동안 = 놓을 자리 강조(강조색 테두리 + 옅은 채움).
+        if self.drop_hot {
+            let r = self.tb.bounds();
+            let rad = (4.0 * self.scale) as i32;
+            dc.fill_round_rect_alpha(r, rad, th.accent, 0.10);
+            dc.stroke_round_rect(r, rad, th.accent, 1.5);
+        }
         self.copy.paint(dc, th, 1.0, self.scale, now);
-        // 모드 버튼 = ▾(한 줄 → 멀티라인) / ▴(돌아가기) · 복사 버튼과 같은 상자 꼴.
+        // 보기 버튼 = ▾(펼치기 · 최대 줄까지) / ▴(접기 · 한 줄 보기) · 복사 버튼과 같은 상자 꼴.
         let b = self.btn_mode;
         dc.fill_round_rect_alpha(b, (3.0 * self.scale) as i32, th.text_dim, 0.12);
         let g = (b.w / 2).max(4);
         let (cx, cy) = (b.x + b.w / 2, b.y + b.h / 2);
-        if self.multi {
+        if self.expanded {
             dc.fill_triangle(
                 (cx - g / 2, cy + g / 4),
                 (cx + g / 2, cy + g / 4),
@@ -606,16 +800,13 @@ impl CondBar {
                 th.text,
             );
         }
-        if self.multi {
-            // 스플리터 = 아래 가장자리 가운데 짧은 손잡이.
-            let sp = self.splitter_rect();
-            let w = (40.0 * self.scale) as i32;
-            dc.fill_round_rect_alpha(
-                Rect::new(sp.x + (sp.w - w) / 2, sp.y + sp.h / 2 - 1, w, 2),
-                1,
-                th.text_dim,
-                0.6,
-            );
+        // × 전체 지우기 — 글이 있을 때만(원 배경 없이 두 획 · 상자 오른쪽 위).
+        if !self.tb.text().is_empty() {
+            let r = self.btn_clear;
+            let m = (5.0 * self.scale).round() as i32;
+            let (x0, y0, x1, y1) = (r.x + m, r.y + m, r.right() - m, r.bottom() - m);
+            dc.polyline(&[(x0, y0), (x1, y1)], th.text_dim, 1.5);
+            dc.polyline(&[(x0, y1), (x1, y0)], th.text_dim, 1.5);
         }
     }
 
@@ -639,12 +830,13 @@ impl CondBar {
         let m = self.btn_mode;
         let c = self.copy.rect;
         format!(
-            "text={} focused={} menu=[{}] err={} multi={} h={} mode={},{},{},{} copy={},{},{},{}",
+            "text={} focused={} menu=[{}] err={} expanded={} lines={} h={} mode={},{},{},{} copy={},{},{},{}",
             self.tb.text(),
             self.tb.is_focused(),
             items.join("|"),
             self.err.as_deref().unwrap_or(""),
-            self.multi,
+            self.expanded,
+            self.line_count(),
             self.wanted_height(self.scale),
             m.x,
             m.y,
@@ -891,64 +1083,115 @@ mod tests {
         assert!(!ok("SELECT 1", Dialect::Oracle), "문장");
     }
 
-    /// 멀티라인: ▾ = 3줄 높이(+스플리터) · 글·포커스 유지 · Enter는 줄 바꿈이고 Ctrl+Enter = 실행 · ▴ = 한 줄로.
+    /// 개념 변경(사용자 10-06): Enter = 실행(한 줄·여러 줄 모두) · Shift+Enter = 줄 바꿈 → 두 줄째가 되면 자동 펼침(3줄 높이) ·
+    /// ▴ 접기 = 한 줄 보기 유지(줄 바꿈이 늘어도) · ▾ = 다시 펼침 · 최대 줄 수 설정 · 비우면 접힘·해제.
     #[test]
-    fn multiline_toggle_and_ctrl_enter() {
+    fn enter_runs_and_shift_enter_newline_expands() {
         let mut c = CondBar::new();
         c.set_columns(vec!["ITEM_CD".into()]);
         c.set_rect(Rect::new(0, 0, 400, 26), 1.0);
         c.set_focused(true);
         c.set_text("ITEM_CD = 1");
-        assert_eq!(c.wanted_height(1.0), 26);
-        c.toggle_multi();
-        assert!(c.is_multi() && c.is_focused());
-        assert_eq!(c.text(), "ITEM_CD = 1");
-        assert_eq!(c.wanted_height(1.0), 20 * 3 + 8 + 6);
-        c.set_rect(Rect::new(0, 0, 400, c.wanted_height(1.0)), 1.0);
+        assert_eq!(c.wanted_height(1.0), 32);
         let mut inv = Invalidations::default();
-        let plain = InputEvent::Key {
+        let enter = |shift: bool, primary: bool| InputEvent::Key {
             key: Key::Enter,
-            shift: false,
-            primary: false,
+            shift,
+            primary,
         };
-        c.on_event(&plain, &mut inv);
-        assert!(c.take_run().is_none(), "멀티라인 Enter = 줄 바꿈");
-        let run = InputEvent::Key {
-            key: Key::Enter,
-            shift: false,
-            primary: true,
-        };
-        c.on_event(&run, &mut inv);
-        assert!(c.take_run().is_some(), "Ctrl+Enter = 실행");
-        c.toggle_multi();
-        assert!(!c.is_multi());
-        assert_eq!(c.wanted_height(1.0), 26);
+        c.on_event(&enter(false, false), &mut inv);
+        assert!(c.take_run().is_some(), "Enter = 실행");
+        assert!(!c.is_expanded());
+        c.on_event(&enter(true, false), &mut inv);
+        assert!(c.take_run().is_none(), "Shift+Enter = 줄 바꿈");
+        assert_eq!(c.text().matches('\n').count(), 1, "{}", c.dump());
+        assert!(c.is_expanded(), "{}", c.dump());
+        assert_eq!(c.wanted_height(1.0), 20 * 3 + 12 + 4);
+        c.on_event(&enter(false, true), &mut inv);
+        assert!(c.take_run().is_some(), "Ctrl+Enter도 실행");
+        // 접기 = 한 줄 보기 유지.
+        c.toggle_expand();
+        assert!(!c.is_expanded() && c.user_collapsed);
+        c.on_event(&enter(true, false), &mut inv);
+        assert!(
+            !c.is_expanded(),
+            "사용자가 접었으면 줄 바꿈이 늘어도 한 줄 보기"
+        );
+        c.toggle_expand();
+        assert!(c.is_expanded() && !c.user_collapsed);
+        c.set_max_lines(5);
+        assert_eq!(c.wanted_height(1.0), 20 * 5 + 12 + 4);
+        c.clear_text();
+        assert!(c.text().is_empty() && !c.is_expanded() && !c.user_collapsed);
     }
 
-    /// ▾ 버튼 클릭(MouseDown) = 멀티라인 토글 · 상자 안 클릭 = 포커스 · 버튼 자리는 복사 버튼 왼쪽.
+    /// 버튼 자리 = [×][▾/▴][복사] 오른쪽 위 · ▾ 클릭(MouseDown) = 펼침 · × 클릭 = 전체 지우기(글이 있을 때만).
     #[test]
-    fn mode_button_click_toggles() {
+    fn mode_and_clear_button_click() {
         let mut c = CondBar::new();
         c.set_rect(Rect::new(0, 0, 400, 26), 1.0);
         let m = c.btn_mode;
         assert!(
-            m.w > 0 && m.right() < c.copy.rect.x,
+            m.w > 0 && m.right() < c.copy.rect.x && c.btn_clear.right() < m.x,
             "{m:?} {:?}",
             c.copy.rect
         );
-        let mut inv = Invalidations::default();
-        let hit = c.on_event(
-            &InputEvent::MouseDown {
-                x: m.x + m.w / 2,
-                y: m.y + m.h / 2,
-                shift: false,
-                primary: false,
-            },
-            &mut inv,
+        assert!(
+            c.tb.bounds().contains(Point {
+                x: c.btn_clear.x + 1,
+                y: c.btn_clear.y + 1
+            }),
+            "× = 상자 안 오른쪽 위"
         );
-        assert!(hit && c.is_multi(), "{}", c.dump());
+        let mut inv = Invalidations::default();
+        let down = |r: Rect| InputEvent::MouseDown {
+            x: r.x + r.w / 2,
+            y: r.y + r.h / 2,
+            shift: false,
+            primary: false,
+        };
+        let hit = c.on_event(&down(m), &mut inv);
+        assert!(hit && c.is_expanded(), "{}", c.dump());
+        c.set_text("a = 1");
+        assert!(c.on_event(&down(c.btn_clear), &mut inv));
+        assert!(c.text().is_empty() && !c.is_expanded());
         let d = c.dump();
         assert!(d.contains("mode=") && d.contains("copy="));
+    }
+
+    /// 열 머리 DnD(사용자 10-06): 빈 상자 = `열 = ''`(캐럿 따옴표 사이) · 앞에 식 = ` AND ` 연결 · 숫자 = `= 0` 선택 ·
+    /// 연결어 뒤(`AND `)엔 AND를 덧붙이지 않음 · 설정 끔 = 이름만(낱말에 붙으면 공백).
+    #[test]
+    fn insert_column_template_and_connector() {
+        let mut c = CondBar::new();
+        c.set_rect(Rect::new(0, 0, 400, 26), 1.0);
+        c.insert_column("NAME", false);
+        assert_eq!(c.text(), "NAME = ''");
+        assert_eq!(c.tb.caret(), 8, "캐럿 = 따옴표 사이");
+        assert!(c.is_focused());
+        // 캐럿이 따옴표 사이에 있어도 숫자 열 놓기는 **글 끝**에 AND로 잇고 0을 선택(협업 V1 bin27 C).
+        let mut inv = Invalidations::default();
+        c.insert_column("QTY", true);
+        assert_eq!(c.text(), "NAME = '' AND QTY = 0");
+        assert_eq!(c.tb.selection(), Some((20, 21)), "{}", c.text());
+        // 연결어로 끝나면 AND를 덧붙이지 않는다.
+        c.set_text("a = 1 AND ");
+        let n = c.text().chars().count();
+        c.tb.select_range(n, n, &mut inv);
+        c.insert_column("B", true);
+        assert_eq!(c.text(), "a = 1 AND B = 0");
+        c.set_text("NOT (");
+        let n = c.text().chars().count();
+        c.tb.select_range(n, n, &mut inv);
+        c.insert_column("B", false);
+        assert_eq!(c.text(), "NOT (B = ''");
+        // 설정 끔 = 이름만.
+        c.set_drop_template(false);
+        c.set_text("x =");
+        let n = c.text().chars().count();
+        c.tb.select_range(n, n, &mut inv);
+        c.insert_column("COL", false);
+        assert_eq!(c.text(), "x = COL");
     }
 
     /// 글자를 치면 완성 팝업(글자는 상자로 계속) · Tab = 넣기 · Enter = 검증 뒤 실행 요청 · 틀린 식 = 오류만 · Esc = 포커스 거둠.
@@ -965,6 +1208,13 @@ mod tests {
         }
         assert_eq!(c.text(), "ite");
         assert!(c.menu_open(), "{}", c.dump());
+        // 편집기와 같은 기준: 열릴 때 고른 항목 없음 → ↓로 고르고 Tab.
+        let down = InputEvent::Key {
+            key: Key::Down,
+            shift: false,
+            primary: false,
+        };
+        assert!(c.on_event(&down, &mut inv));
         assert!(c.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }, &mut inv));
         assert_eq!(c.text(), "ITEM_CD");
         assert!(!c.menu_open());
@@ -993,5 +1243,47 @@ mod tests {
             &mut inv,
         );
         assert!(!c.is_focused());
+    }
+
+    /// 편집기와 같은 완성 기준(사용자 10-07): 숫자 접두(`1`)엔 팝업 없음 · `min_chars` 전엔 없음 · 고른 항목 없이 Enter =
+    /// 통과(팝업 닫고 실행 → 틀린 식이면 오류) · `key_passthrough` 끔 = 팝업만 닫힘(실행 없음).
+    #[test]
+    fn completion_follows_editor_rules() {
+        let mut c = CondBar::new();
+        c.set_columns(vec!["ITEM_CD".into(), "ITEM_NM".into()]);
+        c.set_dialect(Dialect::Oracle);
+        c.set_rect(Rect::new(0, 0, 400, 32), 1.0);
+        c.set_focused(true);
+        let mut inv = Invalidations::default();
+        let ch = |ch: char| InputEvent::Char { c: ch, now_ms: 0 };
+        c.on_event(&ch('1'), &mut inv);
+        assert!(!c.menu_open(), "숫자 접두 = 팝업 없음 {}", c.dump());
+        c.set_text("");
+        c.on_event(&ch('i'), &mut inv);
+        assert!(!c.menu_open(), "min_chars 2 전 = 없음");
+        c.on_event(&ch('t'), &mut inv);
+        assert!(c.menu_open(), "{}", c.dump());
+        let enter = InputEvent::Key {
+            key: Key::Enter,
+            shift: false,
+            primary: false,
+        };
+        c.on_event(&enter, &mut inv);
+        assert!(!c.menu_open());
+        assert!(
+            c.take_run().is_none() && c.take_error().is_some(),
+            "통과 = 실행 시도(틀린 식 = 오류)"
+        );
+        // 끄면 팝업만 닫힌다.
+        c.set_intel_cfg(false, 1);
+        c.set_text("");
+        c.on_event(&ch('i'), &mut inv);
+        assert!(c.menu_open(), "min_chars 1");
+        c.on_event(&enter, &mut inv);
+        assert!(!c.menu_open());
+        assert!(
+            c.take_run().is_none() && c.take_error().is_none(),
+            "삼킴 = 실행 없음"
+        );
     }
 }

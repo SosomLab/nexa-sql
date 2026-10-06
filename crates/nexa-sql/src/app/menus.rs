@@ -506,9 +506,10 @@ impl App {
                 if self.focus == Focus::Grid && self.grid.editing_cell() {
                     self.grid.live_select_all();
                     self.redraw();
-                } else if self.focus == Focus::Grid {
+                } else if self.focus == Focus::Grid && !self.grid.text_input_active() {
                     self.grid.select_all();
                 } else {
+                    // 그리드 안 글 상자(조건 바·값 목록 검색)가 포커스면 그 상자의 전체 선택(그리드 전체 선택 아님 · 사용자 10-06 재지적).
                     self.route(InputEvent::SelectAll);
                 }
             }
@@ -879,6 +880,19 @@ impl App {
             "obj.reveal" => self.objlink_reveal_at_caret(),
             "obj.info" => self.open_info_tab(),
             "obj.rows" => self.open_rows_tab(),
+            // ★ 글꼴 크기(사용자 10-07 · 포커스 영역 = 편집기/결과 그리드).
+            "view.zoom_in" => {
+                self.zoom_step(1, false);
+            }
+            "view.zoom_out" => {
+                self.zoom_step(-1, false);
+            }
+            "view.zoom_reset" => {
+                self.zoom_step(0, false);
+            }
+            // ★ CREATE 문 ↔ 실제 객체 비교(T-283 · 19 §6).
+            "obj.compare" => self.obj_compare(),
+            "obj.compare_server" => self.open_compare_server(),
             // ★ `obj.*` = 탐색기 선택 노드의 메뉴 동작을 팔레트·키로(T-180 ④ · 묻는 동작(삭제·서버 해제)은 메뉴에서만).
             "obj.menu" => self.obj_act(None),
             "obj.select_rows" => self.obj_act(Some("select")),
@@ -1390,7 +1404,7 @@ impl App {
                     EditCtxAction::Copy => {
                         if let Some(t) = self
                             .grid
-                            .value_pick_textbox()
+                            .text_input_textbox()
                             .and_then(|tb| tb.copy_selection())
                         {
                             failed = !clipboard::write_text(&t);
@@ -1399,7 +1413,7 @@ impl App {
                     EditCtxAction::Cut => {
                         if let Some(t) = self
                             .grid
-                            .value_pick_textbox()
+                            .text_input_textbox()
                             .and_then(|tb| tb.copy_selection())
                         {
                             if clipboard::write_text(&t) {
@@ -1624,6 +1638,15 @@ impl App {
         cmds.push(m("obj.reveal", Msg::MnEdit, Msg::MnObjLinkReveal));
         cmds.push(m("obj.info", Msg::MnEdit, Msg::MnObjInfoTab));
         cmds.push(m("obj.rows", Msg::MnEdit, Msg::MnObjRows));
+        cmds.push(m("view.zoom_in", Msg::MnView, Msg::MnZoomIn));
+        cmds.push(m("view.zoom_out", Msg::MnView, Msg::MnZoomOut));
+        cmds.push(m("view.zoom_reset", Msg::MnView, Msg::MnZoomReset));
+        cmds.push(m("obj.compare", Msg::MnEdit, Msg::MnObjCompare));
+        cmds.push(m(
+            "obj.compare_server",
+            Msg::MnEdit,
+            Msg::MnObjCompareServer,
+        ));
         for (id, msg) in [
             ("obj.menu", Msg::MnObjMenu),
             ("obj.select_rows", Msg::ExpSelectRows),
