@@ -243,7 +243,21 @@ impl App {
             .get("toolbar.layout")
             .unwrap_or("")
             .to_string();
-        let layout = DockLayout::parse(&text);
+        let mut layout = DockLayout::parse(&text);
+        // 새 그룹 "edit"(10-06)이 저장된 배치에 없으면 "file" 바로 뒤에(도크는 모르는 그룹을 맨 뒤에 붙인다).
+        if !layout.order.iter().any(|g| g == "edit") {
+            let at = layout
+                .order
+                .iter()
+                .position(|g| g == "file")
+                .map_or(0, |i| i + 1);
+            layout.order.insert(at, "edit".to_string());
+            // `rows`는 `order`와 나란하다 — 비어 있지 않으면 같은 자리에 "file"의 행을 넣는다.
+            if !layout.rows.is_empty() {
+                let row = layout.rows.get(at.saturating_sub(1)).copied().unwrap_or(0);
+                layout.rows.insert(at.min(layout.rows.len()), row);
+            }
+        }
         // 열린 플로팅 창은 전부 닫고 배치대로 다시 연다(단순 · 드물다).
         for f in &mut self.tool_floats {
             f.close();
@@ -434,6 +448,15 @@ impl App {
                 ToolItem::new("file.save_as", toolicons::save_as()).tip(t(Msg::TipSaveAs)),
             ],
         );
+        // ★ 편집 그룹(파일 옆 · 사용자 10-06): 실행 취소 · 다시 실행(편집기 명령 그대로).
+        let edit = ToolGroup::new(
+            "edit",
+            t(Msg::MnEdit),
+            vec![
+                ToolItem::new("edit.undo", toolicons::undo()).tip(t(Msg::MnUndo)),
+                ToolItem::new("edit.redo", toolicons::redo()).tip(t(Msg::MnRedo)),
+            ],
+        );
         let run = ToolGroup::new(
             "run",
             t(Msg::MnRun),
@@ -486,7 +509,7 @@ impl App {
             vec![ToolItem::new("view.log", toolicons::log()).tip(t(Msg::TipLog))],
         )
         .align_right();
-        let mut dock = ToolDock::new(vec![file, run, conn, tabconn, view]);
+        let mut dock = ToolDock::new(vec![file, edit, run, conn, tabconn, view]);
         dock.set_icon_size(18);
         dock
     }
@@ -501,6 +524,7 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
         "file",
         &["file.new", "file.open", "file.save", "file.save_as"],
     ),
+    ("edit", &["edit.undo", "edit.redo"]),
     (
         "run",
         &[
@@ -518,7 +542,7 @@ pub(crate) const TOOLBAR_BLOCKS: nexa_ctl::order::OrderDefs = &[
 ];
 
 /// 그룹은 숨기지 않는다(버튼 단위로만) — 편집 창에서 그룹 체크 잠금.
-pub(crate) const TOOLBAR_GROUP_IDS: &[&str] = &["file", "run", "conn", "tabconn", "view"];
+pub(crate) const TOOLBAR_GROUP_IDS: &[&str] = &["file", "edit", "run", "conn", "tabconn", "view"];
 
 pub(crate) fn toolbar_order_blocks(value: &str) -> Vec<nexa_ctl::order::OrderBlock> {
     nexa_ctl::order::parse(TOOLBAR_BLOCKS, &[], value)
@@ -539,6 +563,7 @@ pub(crate) fn toolbar_order_label(block: &str, item: Option<&str>) -> Msg {
             .map_or(Msg::MnView, |(_, m)| *m),
         None => match block {
             "file" => Msg::MnFile,
+            "edit" => Msg::MnEdit,
             "run" => Msg::MnRun,
             "conn" => Msg::TbGroupConn,
             "tabconn" => Msg::TbGroupTabConn,
@@ -553,6 +578,10 @@ pub(crate) fn toolbar_area_commands(gid: &str) -> &'static [(&'static str, Msg)]
         "file" => &[
             ("file.run_file", Msg::MnRunFile),
             ("file.close_tab", Msg::MnCloseTab),
+        ],
+        "edit" => &[
+            ("edit.soft_undo", Msg::MnSoftUndo),
+            ("edit.soft_redo", Msg::MnSoftRedo),
         ],
         "run" => &[
             ("run.statement_new_tab", Msg::MnRunStatementNewTab),

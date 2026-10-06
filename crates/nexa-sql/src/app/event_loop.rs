@@ -19,7 +19,11 @@ impl ApplicationHandler<Wake> for App {
         //   (2x)을 유지해 1x 모니터에서 반 크기로 그려졌다(09-17 ASCII 캡처). 숨긴 창은 보이는 순간 그 모니터 배율을 받는다.
         let attrs = icon::with_icon(
             Window::default_attributes()
-                .with_title("Nexa SQL")
+                .with_title(if cfg!(debug_assertions) {
+                    "Nexa SQL (Debug)"
+                } else {
+                    "Nexa SQL"
+                })
                 .with_visible(false)
                 .with_theme(theme::window_theme(self.settings.theme_mode()))
                 .with_inner_size({
@@ -790,6 +794,8 @@ impl ApplicationHandler<Wake> for App {
                         Focus::Project => self.project_panel.query_changed(),
                         Focus::Bookmarks => self.bm_panel.query_changed(),
                         Focus::Outline => self.outline_panel.query_changed(),
+                        // 값 목록 팝업 검색 상자(조합 중 글자까지 바로 거른다 · 10-06).
+                        Focus::Grid => self.grid.text_input_query_changed(),
                         Focus::Find => self.find_step(true, false),
                         _ => {}
                     }
@@ -877,7 +883,11 @@ impl ApplicationHandler<Wake> for App {
                             }
                         }
                         // 결과 그리드 포커스 = 표 편집 키가 전역 키맵보다 먼저(F2 셀 편집 · Ctrl/⌘+D 행 복제 · T-182).
-                        if self.focus == Focus::Grid && !self.palette.is_open() {
+                        // 값 목록 팝업이 떠 있으면 표 편집 키(F2 · Ctrl+D)는 가로채지 않는다(검색 상자에 쳐야 한다 · 10-06).
+                        if self.focus == Focus::Grid
+                            && !self.palette.is_open()
+                            && !self.grid.text_input_active()
+                        {
                             if let Some(cmd) = keymap::grid_focus_command(&ch) {
                                 if !kev.repeat {
                                     self.grid.edit_command(cmd);

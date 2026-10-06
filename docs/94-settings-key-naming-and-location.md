@@ -117,6 +117,12 @@
 - 적용(6 + 접미 1): `meta.refresh_idle_secs`→`meta.refresh_idle_ms` · `probe.timeout`→`probe.timeout_ms`(하한 100) · `probe.retry_delay`→`probe.retry_delay_ms`(하한 5000 = 26 §8) · `ui.toast_secs`→`ui.toast_ms` · `run.toast_hide_secs`→`run.toast_hide_ms` · `project.autosave_change_secs`→`project.autosave_change_ms` · `explorer.typeahead_timeout`→`explorer.typeahead_timeout_ms`(값 그대로 · RENAMED).
 - 새 시간 키는 처음부터 이 규칙으로 · 단위를 바꾸면 RESCALED 한 줄 + 라벨 `(ms)` + 사용처 `from_millis` + 문서 키 이름 + 시험 `rescaled_keys_migrate_with_unit`(배수 검산).
 
+### 6-6. 분류 "결과 필터" · "고속 스크롤"(10-06 · 사용자 요구)
+
+- **데이터 편집기 ▸ 결과 필터**(새 분류 · 종전 결과 셋 분류에서 분리): `grid.filter_enabled`(사용 여부 · 새 키) · `grid.filter_funnel`(always/hover/none · 종전 on/off → 선택) · `grid.filter_strip` · `grid.filter_pick_max` · `grid.filter_values_max` · `grid.filter_popup_rows`(새 키 · 12) · `grid.filter_values_scope`(others/all · 새 키) · `grid.filter_list_max` · `grid.condition_bar`(인라인 조건 입력란 · 기본 on · 새 키 · 10-06 4차).
+- **사용자 인터페이스 ▸ 고속 스크롤**(새 분류 · 종전 입력 분류에서 분리): `scroll.*` 8키(`scroll.fast` · `fast_speed` · `fast_grid_extra` …).
+- 키 이름은 그대로(접두 = 일 · 분류만 나눔 · `RENAMED` 없음). 검색 `filter` · `scroll`로 두 분류가 바로 나온다(journal 10-06 §9 ②).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

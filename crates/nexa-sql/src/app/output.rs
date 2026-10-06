@@ -30,21 +30,19 @@ impl App {
         })
     }
 
-    /// ★ 탭 제목 배지(10-01 · T-266): Output 탭이 뒤에 있으면 `Output (N)` · 활성이면 `Output`(거둠).
+    /// ★ 탭 제목: Output 탭은 **단일 토글 창**이라 제목은 늘 `Output`(사용자 10-06 "(N) 이름 불필요" — 10-01 T-266의
+    /// 읽지 않은 수 배지는 접는다 · 활성이 되면 읽지 않은 수를 거둔다).
     pub(crate) fn output_sync_badge(&mut self) {
         let Some(i) = self.panel.output_index() else {
             return;
         };
         let active = self.panel.active == i;
-        let base = t(Msg::ResultTabOutput).to_string();
-        let title = match self.panel.output.as_mut() {
-            Some(v) if active => {
+        let title = t(Msg::ResultTabOutput).to_string();
+        if active {
+            if let Some(v) = self.panel.output.as_mut() {
                 v.take_unread();
-                base
             }
-            Some(v) if v.unread() > 0 => format!("{base} ({})", v.unread()),
-            _ => base,
-        };
+        }
         if self.panel.tabs[i].title != title {
             self.panel.tabs[i].title = title;
             self.panel.sync_bar();
@@ -71,6 +69,7 @@ impl App {
             id,
             title: t(Msg::ResultTabOutput).to_string(),
             pinned: true,
+            sys_pinned: true,
             named: true,
             sql: String::new(),
             grid: fresh,
@@ -144,6 +143,7 @@ impl App {
                     id,
                     title: t(Msg::ResultTabOutput).to_string(),
                     pinned: true,
+                    sys_pinned: true,
                     named: true,
                     sql: String::new(),
                     grid: fresh,

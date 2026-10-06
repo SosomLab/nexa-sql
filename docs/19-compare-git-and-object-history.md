@@ -61,3 +61,48 @@
 ## 5. 결정 후보
 - D-12 `similar` 원장 등재(비교·병합 공용).
 - D-13 오브젝트 캐시 기본 위치(앱 데이터 vs 프로젝트 `.nexa/`)와 상한값.
+
+## 6. CREATE 문 ↔ 실제 객체 비교(10-06 · 사용자 요구 · T-283 · 설계 메모)
+
+> 사용자 10-06: "CREATE 문에서도 문장과 실제 생성을 비교할 수 있도록 hover 메뉴". 편집기의 `CREATE TABLE emp (…)` 이름에 머무르면 뜨는 hover 카드(96 §7)에 **"실제 객체와 비교…"** 버튼 → 편집기 문장 vs 서버의 실제 DDL을 비교해 보여 준다. 작성 = 협업 세션 조사(코드 읽기만) · 구현 = 개발 세션.
+
+### 6-1. 지금 있는 것(10-06 조사)
+
+| 부품 | 자리 | 무엇 | 이번에 쓰는 법 |
+|---|---|---|---|
+| 줄 정합(Myers O(ND)) | nexa-ui `nexa-ctl/src/merge3.rs:26` `match_lines`(비공개) | a의 줄 i ↔ b의 줄 j 대응표 · 공통 앞뒤 잘라냄 · 편집 거리 `MAX_D` 1500 넘으면 `None` | **비교의 핵심** — 공개 래퍼로 덩어리(hunk) 출력을 만든다 |
+| 최소 줄 편집 | 같은 파일 `:109` `pub fn line_edits(old, new)` | `(from, to, 넣을 글)` 글자 인덱스 목록 | 덩어리·맞은편 줄 번호는 안 줌 → 직접은 부족 |
+| 3-way 병합 | `:162` `pub fn merge3` | 외부 변경 병합(nexa-sql `extfile.rs:114` · 58) | 이번엔 안 씀 |
+| 거터 diff 표시 | nexa-ctl `controls/textbox.rs:221` `diff_lines`/`diff_lines_hint` · `DiffKind{Added, Modified, DeletedAbove}` · `TextBox::set_baseline`(:1756) · `diff_marks` | 기준선 대비 줄 변경을 거터 띠로(LCS · `LCS_CAP` 1500) | **1단계 그대로 재사용** — 편집기 탭의 기준선 = 생성 DDL |
+| 줄 표식 | `set_line_marks` · `set_minimap_marks` · `set_gutter_labels` | 거터 색 막대 · 미니맵 칠 · 거터 라벨 | 변경 위치 미니맵 표시 |
+| 나란히 칸 | nexa-sql `editors.rs:80` `split`(동시 편집 · `editor.split_max`) | 탭 여러 개를 독립 편집기로 나란히 | 2단계 2-pane의 틀(스크롤 동기화 없음) |
+| 실제 DDL | nsql-catalog `gen.rs:337` `generate(s, &GenSpec{ what: GenWhat::Ddl, opts: GenOpts{ separate_fk, qualified, … } })` | 객체 탐색기 Generate SQL ▸ DDL과 같은 원천(83 · 100 §5 보수적 생성) | 비교의 오른쪽(서버) 글 |
+
+- **없는 것**: 두 글을 색으로 나란히/통합 표시하는 **diff 뷰어 화면**(docs/19 §1 · TODO C-1 · T-135 = 계획만 ☐) · 줄 전체 배경 칠 API(거터·미니맵뿐) · 칸 스크롤 동기화 · 맞은편 빈 줄 채움 · 다음/이전 변경 이동 · 공백·대소문자 무시 · 단어 단위 인라인 diff. `similar` crate는 없음(§5의 D-12 후보는 실제로 자체 Myers로 대체됨).
+- T-230 · docs/87 §12의 "편집기 비교"는 **그리드 데이터 편집기를 다른 도구와 비교한 조사**라 이번 주제와 무관.
+
+### 6-2. 권장안 — 2단계
+
+1. **1단계(작게 · 재사용만)** = **비교 탭**(읽기 전용 뷰 탭 · 결과 영역 없음 · 탭 종류 `Compare`): 본문 = 편집기 문장 그대로 · `TextBox::set_baseline(생성 DDL)` → 거터 띠(추가/변경/위에서 삭제) + 미니맵 표식 · 머리 줄 한 줄 = `일치` 또는 `N군데 다름 · 서버 기준 <시각>` + [서버 DDL 열기](생성 DDL을 새 탭 · 사용자가 동시 편집 칸으로 나란히) · 지연 로딩(61 §1-8) = 버튼을 누를 때만 `generate`(메타 스레드 · `gate_open` 통과 · 실패 = 상태줄 + Output) · 정규화(아래 6-3) 뒤 비교.
+   - 장점 = 새 컨트롤 0 · 오늘 있는 부품만. 한계 = 서버 쪽에만 있고 편집기에 없는 줄의 **내용**은 안 보임("위에서 삭제" 표식뿐).
+2. **2단계(diff 뷰어 부품 · nexa-ui)** = nexa-ctl `DiffView`(새 부품 · 30 §2 등재): 공개 `diff_hunks(a, b) -> Vec<Hunk{a: Range, b: Range, kind}>`(`match_lines` 래퍼) · 2-pane(왼쪽 편집기 문장 · 오른쪽 서버 DDL) · 줄 전체 배경(추가 초록 · 삭제 빨강 · 변경 노랑 = 테마 토큰) · 맞은편 빈 줄 채움 · 스크롤 동기화 · F7/Shift+F7 다음/이전 변경 · 옵션 공백 무시/대소문자 무시. 같은 부품을 docs/19 §1(두 버퍼 비교) · §3(시점 캐시 복원) · T-140 남은 "좌우 비교 뷰"가 함께 쓴다.
+
+### 6-3. 비교 전 정규화(헛 차이 줄이기 · 순수 함수 + 시험)
+
+- 줄 끝 공백 · 빈 줄 연속 · 끝 `;`/`/` 한 개 · 탭↔공백(설정 `compare.ignore_ws` 기본 on).
+- 이름 인용·대소문자: Oracle `"EMP"` = `EMP` = `emp`(따옴표 없는 이름) · 스키마 한정 유무(`GenOpts.qualified`를 편집기 문장에 맞춤: 문장에 스키마가 없으면 끔).
+- FK 위치: `GenOpts.separate_fk` = 편집기 문장에 `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY`가 따로 있으면 켬 · 인라인이면 끔.
+- 서버가 덧붙이는 기본값(Oracle `SEGMENT CREATION` · `TABLESPACE` · PG `WITH (…)`) = `GenOpts.compact`(있으면)로 줄이고, 남는 것은 "서버 전용 절"로 흐리게(1단계 = 머리 줄에 "서버 기본 절 N줄 제외").
+- 포맷 차이(줄 바꿈 위치) = 양쪽을 nsql-format Basic(95)으로 같은 옵션으로 정형화한 뒤 비교(옵션 `compare.format_both` 기본 on).
+
+### 6-4. 진입·대상
+
+- 진입 = CREATE 문 이름 hover 카드 버튼 "실제 객체와 비교…"(카드 버튼 줄 · MouseUp 확정 · 96 §7) + 팔레트 `obj.compare` + 편집기 우클릭(캐럿이 CREATE 문 안).
+- 대상 판정 = 순수 함수: 캐럿 문장이 `CREATE [OR REPLACE] TABLE|VIEW|PROCEDURE|FUNCTION|PACKAGE|TRIGGER|INDEX <이름>` → `ObjectRef` · 서버에 없으면 버튼 비활성 + 툴팁 "서버에 없음(새 객체)" · 종류마다 `GenWhat::Ddl` 또는 소스(100 §5).
+- 실행 통제 = `gate_open`(52) · 메타 세션(탐색기와 같은 서버) · 운영(PRD) 읽기 = 경고 없음(읽기만).
+
+### 6-5. 시험
+
+- 단위 = 대상 판정 MC/DC · 정규화 표(방언 4) · (2단계) `diff_hunks` 난수 대조(단순 LCS 모델 · 61 §2 자료 구조 규칙).
+- E2E(격리 · SQLite + 실서버 읽기) = `CREATE TABLE` 그대로 → "일치" · 컬럼 하나 바꿈 → "1군데 다름" + 거터 Modified · 서버에 없는 이름 → 버튼 비활성.
+- 자체 시험 기동 명령(제안) = `obj.compare:<이름>` · `compare.dump:<파일>`(`same=true|false hunks=N` + 덩어리 목록).

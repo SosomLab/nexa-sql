@@ -658,7 +658,8 @@ impl App {
                 max: max.saturating_mul(2),
                 ..cfg
             });
-        self.grid.set_fast_override(grid);
+        // 모든 결과 탭 그리드에(활성 그리드 하나만 바꾸면 다른 탭·새 탭은 전역 ×16에 머문다 · 사용자 10-06).
+        self.all_grids().for_each(|g| g.set_fast_override(grid));
         self.redraw();
     }
 
@@ -978,7 +979,88 @@ impl App {
         let _ = self.settings.set("ui.theme", next.as_str());
         self.persist_settings();
         self.apply_theme();
+        self.relabel();
         self.sess.status = tf(Msg::StThemeChanged, &[t(next.label())]);
+    }
+
+    /// 보기 ▸ 테마 하위 메뉴 항목(시스템 · 라이트 · 다크 · 현재 값 ✓).
+    pub(crate) fn theme_menu_entries(&self) -> Vec<nexa_ctl::MenuEntry> {
+        let cur = self.settings.theme_mode();
+        nsql_settings::ThemeMode::ALL
+            .iter()
+            .map(|m| {
+                let mark = if *m == cur { "✓ " } else { "   " };
+                nexa_ctl::MenuEntry::Item(nexa_ctl::ComboItem::new(
+                    format!("view.theme:{}", m.as_str()),
+                    format!("{mark}{}", t(m.label())),
+                ))
+            })
+            .collect()
+    }
+
+    /// 보기 ▸ 언어 하위 메뉴 항목(시스템 + 지원 언어 endonym · 현재 설정 값 ✓).
+    pub(crate) fn lang_menu_entries(&self) -> Vec<nexa_ctl::MenuEntry> {
+        let cur = self
+            .settings
+            .get("ui.lang")
+            .unwrap_or(nsql_settings::LANG_SYSTEM)
+            .to_string();
+        let mut v = vec![(
+            nsql_settings::LANG_SYSTEM.to_string(),
+            format!(
+                "{} ({})",
+                t(Msg::ValSystem),
+                nsql_i18n::system_lang().endonym()
+            ),
+        )];
+        v.extend(
+            nsql_i18n::Lang::ALL
+                .iter()
+                .map(|l| (l.code().to_string(), l.endonym().to_string())),
+        );
+        v.into_iter()
+            .map(|(code, label)| {
+                let mark = if code == cur { "✓ " } else { "   " };
+                nexa_ctl::MenuEntry::Item(nexa_ctl::ComboItem::new(
+                    format!("view.lang:{code}"),
+                    format!("{mark}{label}"),
+                ))
+            })
+            .collect()
+    }
+
+    /// 테마를 값으로 지정(메뉴 하위 항목 · `system`/`light`/`dark`) · 저장 · 적용 · 라벨(✓) 다시.
+    pub(crate) fn set_theme_code(&mut self, code: &str) {
+        let Some(mode) = nsql_settings::ThemeMode::parse(code) else {
+            return;
+        };
+        let _ = self.settings.set("ui.theme", mode.as_str());
+        self.persist_settings();
+        self.apply_theme();
+        self.relabel();
+        self.sess.status = tf(Msg::StThemeChanged, &[t(mode.label())]);
+        self.redraw();
+    }
+
+    /// 언어를 코드로 지정(메뉴 하위 항목 · `system`/`en`/`ko`) · 저장 · 전환 · 라벨 다시.
+    pub(crate) fn set_lang_code(&mut self, code: &str) {
+        let valid =
+            code == nsql_settings::LANG_SYSTEM || nsql_i18n::Lang::from_code(code).is_some();
+        if !valid {
+            return;
+        }
+        let _ = self.settings.set("ui.lang", code);
+        self.persist_settings();
+        let next = self.settings.lang();
+        nsql_i18n::set_lang(next);
+        self.relabel();
+        let shown = if code == nsql_settings::LANG_SYSTEM {
+            format!("{} ({})", t(Msg::ValSystem), next.endonym())
+        } else {
+            next.endonym().to_string()
+        };
+        self.sess.status = tf(Msg::StLangChanged, &[&shown]);
+        self.redraw();
     }
 
     /// Ctrl/⌘+⇧L — 언어 전환 · 저장 · 라벨 다시 만들기.
@@ -1104,6 +1186,7 @@ impl App {
             self.demo_ready,
             self.gate_shown.unwrap_or(false),
             self.project_menu_entries(),
+            (self.theme_menu_entries(), self.lang_menu_entries()),
         ));
         let layout = self.tool_dock.layout();
         self.tool_dock = App::build_tool_dock();

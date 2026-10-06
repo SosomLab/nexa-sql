@@ -393,6 +393,17 @@ const GE_CONC_OPTS: &[(&str, Msg)] = &[
     ("key_old", Msg::OptGeConcKeyOld),
     ("all_old", Msg::OptGeConcAllOld),
 ];
+/// 값 목록 범위(`grid.filter_values_scope` · 사용자 10-06).
+const VALUES_SCOPE_OPTS: &[(&str, Msg)] = &[
+    ("others", Msg::OptValuesScopeOthers),
+    ("all", Msg::OptValuesScopeAll),
+];
+/// 열 머리 깔때기 표시 방법(`grid.filter_funnel` · 사용자 10-06).
+const FUNNEL_OPTS: &[(&str, Msg)] = &[
+    ("always", Msg::OptFunnelAlways),
+    ("hover", Msg::OptFunnelHover),
+    ("none", Msg::OptFunnelNone),
+];
 const GE_REFRESH_OPTS: &[(&str, Msg)] = &[
     ("rows", Msg::OptGeRows),
     ("requery", Msg::OptGeRequery),
@@ -2001,7 +2012,7 @@ pub const REGISTRY: &[Entry] = &[
     // 필터 줄(칩 · × · 77 §2-2 · T-181) — 필터가 있을 때만 한 줄을 차지한다.
     Entry {
         key: "grid.filter_strip",
-        cat: Msg::CatGrid,
+        cat: Msg::CatGridFilter,
         label: Msg::LblGridFilterStrip,
         desc: Msg::DescGridFilterStrip,
         kind: SettingKind::Bool,
@@ -2010,16 +2021,70 @@ pub const REGISTRY: &[Entry] = &[
     // 값 고르기 하위 메뉴(T-181 · 77 §2-2 "열 머리 깔때기 → 값 목록") — 메뉴 항목 수(72 §3 상한 원장).
     Entry {
         key: "grid.filter_pick_max",
-        cat: Msg::CatGrid,
+        cat: Msg::CatGridFilter,
         label: Msg::LblGridFilterPickMax,
         desc: Msg::DescGridFilterPickMax,
         kind: SettingKind::Int { min: 5, max: 200 },
         default: "30",
     },
+    // ★ 결과 필터 사용 여부(사용자 10-06) — 끄면 필터 메뉴·깔때기·값 목록이 없고 걸려 있던 필터도 푼다.
+    Entry {
+        key: "grid.filter_enabled",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterEnabled,
+        desc: Msg::DescGridFilterEnabled,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 열 머리 깔때기 표시 방법(T-181 후속 · 10-06 · 77 §2-2): 항상 · 머리 위 마우스 오버 · 없음(우클릭 메뉴로만).
+    Entry {
+        key: "grid.filter_funnel",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterFunnel,
+        desc: Msg::DescGridFilterFunnel,
+        kind: SettingKind::Choice(FUNNEL_OPTS),
+        default: "always",
+    },
+    // 값 목록 팝업의 고유값 상한(72 §3 상한 원장 · 넘치면 "값이 더 있음").
+    Entry {
+        key: "grid.filter_values_max",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterValuesMax,
+        desc: Msg::DescGridFilterValuesMax,
+        kind: SettingKind::Int { min: 20, max: 5000 },
+        default: "500",
+    },
+    // ★ 인라인 조건 입력란(DBeaver 조건 바 · 사용자 10-06): 그리드 위 한 줄 · Enter = 출처를 감싸 같은 탭 재실행 · 기본 보임.
+    Entry {
+        key: "grid.condition_bar",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridConditionBar,
+        desc: Msg::DescGridConditionBar,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 값 목록 범위(사용자 10-06): 다른 열의 필터를 통과한 행의 값만(종속 · 기본) · 받은 행 전체.
+    Entry {
+        key: "grid.filter_values_scope",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterValuesScope,
+        desc: Msg::DescGridFilterValuesScope,
+        kind: SettingKind::Choice(VALUES_SCOPE_OPTS),
+        default: "others",
+    },
+    // ★ 값 목록 팝업의 표시 행 수(사용자 10-06 "표시 데이터 행수를 고정") — 팝업 크기는 이 수로 늘 같다(값이 적어도 · 검색으로 줄어도).
+    Entry {
+        key: "grid.filter_popup_rows",
+        cat: Msg::CatGridFilter,
+        label: Msg::LblGridFilterPopupRows,
+        desc: Msg::DescGridFilterPopupRows,
+        kind: SettingKind::Int { min: 3, max: 40 },
+        default: "12",
+    },
     // 정규식 필터 조회 SQL ③단계 값 목록 상한(사용자 09-30 · 72 §3 · 고유값 cap+1개에서 모으기 멈춤).
     Entry {
         key: "grid.filter_list_max",
-        cat: Msg::CatGrid,
+        cat: Msg::CatGridFilter,
         label: Msg::LblGridFilterListMax,
         desc: Msg::DescGridFilterListMax,
         kind: SettingKind::Int {
@@ -2595,7 +2660,7 @@ pub const REGISTRY: &[Entry] = &[
     //   ↑/↓ 자동 반복·휠 틱이 짧은 간격으로 이어지면 이동량 배수(nexa-ctl `FastScroll` 전역 + `ScrollAccel`/`SpeedHud` · 관성 없음).
     Entry {
         key: "scroll.fast",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFast,
         desc: Msg::DescScrollFast,
         kind: SettingKind::Bool,
@@ -2603,7 +2668,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "scroll.fast_speed",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastSpeed,
         desc: Msg::DescScrollFastSpeed,
         kind: SettingKind::Choice(SCROLL_SPEED_OPTS),
@@ -2611,7 +2676,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "scroll.fast_grid_extra",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastGridExtra,
         desc: Msg::DescScrollFastGridExtra,
         kind: SettingKind::Bool,
@@ -2619,7 +2684,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "scroll.fast_hud",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastHud,
         desc: Msg::DescScrollFastHud,
         kind: SettingKind::Bool,
@@ -2627,7 +2692,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "scroll.fast_hud_pos",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastHudPos,
         desc: Msg::DescScrollFastHudPos,
         kind: SettingKind::Position,
@@ -2635,7 +2700,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "scroll.fast_hud_fade_ms",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastHudFadeMs,
         desc: Msg::DescScrollFastHudFadeMs,
         kind: SettingKind::Int {
@@ -2647,7 +2712,7 @@ pub const REGISTRY: &[Entry] = &[
     // 비노출(HIDDEN · 구현 상수): HUD 유지 시간 · 연속 판정 간격.
     Entry {
         key: "scroll.fast_hud_hold_ms",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastHudHoldMs,
         desc: Msg::DescScrollFastHudHoldMs,
         kind: SettingKind::Int {
@@ -2658,7 +2723,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "scroll.fast_window_ms",
-        cat: Msg::CatGrid,
+        cat: Msg::CatScroll,
         label: Msg::LblScrollFastWindowMs,
         desc: Msg::DescScrollFastWindowMs,
         kind: SettingKind::Int { min: 20, max: 2000 },
@@ -5895,6 +5960,8 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
         &[
             Msg::CatAppearance,
             Msg::CatInput,
+            // 고속 스크롤(8영역 공통 · 결과 셋에서 분리 · 사용자 10-06).
+            Msg::CatScroll,
             Msg::CatKeys,
             Msg::CatWindow,
             Msg::CatExplorer,
@@ -5926,7 +5993,7 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatCli,
         ],
     ),
-    (Msg::GrpDataEditor, &[Msg::CatGrid]),
+    (Msg::GrpDataEditor, &[Msg::CatGrid, Msg::CatGridFilter]),
     // DBMS별 종속 설정(사용자 09-21): 클라이언트 자동 탐지/직접 지정 + 읽기 전용 파생 정보 · 그 DBMS에만 뜻이 있는 키.
     (
         Msg::GrpDbms,

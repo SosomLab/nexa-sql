@@ -55,6 +55,7 @@
 | 결과 자동 페치 행 수 | `grid.max_rows` **200** | 스크롤 끝에서 다음 200 · 전체 조회 = 카드 경로([43 §11](43-fetch-model-and-result-tabs.md)) |
 | 결과 메모리 예산 | `grid.memory_budget_mb` **1,024** | 넘으면 페치를 멈추고 안내(텍스트 캐시는 별도 예산 [43 §6]) |
 | 결과 탭 수 | `grid.result_tabs_max` **8** | 고정 안 한 가장 오래된 탭부터 퇴거 |
+| 결과 필터 값 목록 | `grid.filter_values_max` **500**(값 목록 팝업 · 10-06) · `grid.filter_pick_max` **30**(우클릭 ▸ 값 고르기 ▸) · 팝업 높이 `grid.filter_popup_rows` **12**행(고정 · 넘치면 스크롤) | 받은 행의 distinct 값을 그 수에서 멈추고 "값이 더 있음" 표시(검색 상자로 좁혀 고름) |
 | 실행 카드 수 | `run.toast_max` **30**(향상 모드 8) | 끝난 카드부터 버림 |
 | CLI 행 수 · 열 폭 | `cli.max_rows` **200** · `cli.max_col_width` **60** | 잘라 표시 |
 | 변수 값 크기 | `vars.max_value_kb` **1,024** | 잘라 저장 + 안내 |

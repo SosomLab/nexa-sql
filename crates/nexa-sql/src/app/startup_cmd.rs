@@ -208,6 +208,67 @@ impl App {
             self.redraw();
             return;
         }
+        // 자체 시험(T-181 후속 · 값 목록 팝업): `grid.funnel:<열 번호>` = 깔때기 클릭 · `grid.vpick:<글>` = 검색 상자 글 ·
+        // `grid.vpick.toggle:<n>` = 보이는 n번째 값 토글 · `grid.vpick.apply` = [적용] · `grid.vpick.dump:<파일>` = 팝업 상태 덤프.
+        if let Some(c) = id
+            .strip_prefix("grid.funnel:")
+            .and_then(|c| c.trim().parse::<usize>().ok())
+        {
+            self.set_focus(Focus::Grid);
+            self.grid.open_value_pick(c);
+            self.ime_refresh();
+            self.redraw();
+            return;
+        }
+        if let Some(text) = id.strip_prefix("grid.vpick:") {
+            self.grid.value_pick_mut().set_search(text);
+            self.redraw();
+            return;
+        }
+        if let Some(n) = id
+            .strip_prefix("grid.vpick.toggle:")
+            .and_then(|n| n.trim().parse::<usize>().ok())
+        {
+            self.grid.value_pick_mut().toggle(n);
+            self.redraw();
+            return;
+        }
+        // 자체 시험(인라인 조건 입력란): `grid.cond:<글>` = 상자 글 · `grid.cond.run` = Enter · `grid.cond.dump:<파일>`.
+        if let Some(text) = id.strip_prefix("grid.cond:") {
+            self.grid.cond_set_text(text);
+            self.redraw();
+            return;
+        }
+        if id == "grid.cond.run" {
+            self.grid.cond_run_now();
+            self.after_grid_event();
+            self.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("grid.cond.dump:") {
+            let _ = std::fs::write(path, self.grid.cond_dump());
+            return;
+        }
+        if id == "grid.vpick.all" {
+            self.grid.value_pick_mut().toggle_all_visible();
+            self.redraw();
+            return;
+        }
+        if id == "grid.vpick.add" {
+            self.grid.value_pick_mut().toggle_add_to_filter();
+            self.redraw();
+            return;
+        }
+        if id == "grid.vpick.apply" {
+            self.grid.value_pick_apply();
+            self.after_grid_event();
+            self.redraw();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("grid.vpick.dump:") {
+            let _ = std::fs::write(path, self.grid.value_pick_mut().dump());
+            return;
+        }
         // 자체 시험(T-180 ⑤): `grid.reveal:<열 이름>` = 열 머리 메뉴 "객체 탐색기에서 보기"와 같은 길(출처 테이블 + 열).
         if let Some(col) = id.strip_prefix("grid.reveal:") {
             if let Some(table) = self.grid.reveal_table() {

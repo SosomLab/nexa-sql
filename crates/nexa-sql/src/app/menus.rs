@@ -812,6 +812,8 @@ impl App {
             }
             "view.theme" => self.cycle_theme(),
             "view.lang" => self.toggle_lang(),
+            id if id.starts_with("view.theme:") => self.set_theme_code(&id["view.theme:".len()..]),
+            id if id.starts_with("view.lang:") => self.set_lang_code(&id["view.lang:".len()..]),
             "view.palette" => self.open_palette(""),
             id if id.starts_with("syntax.set:") => {
                 let name = &id["syntax.set:".len()..];
@@ -1068,7 +1070,7 @@ impl App {
     }
 
     pub(crate) fn build_menus() -> Vec<MenuDef> {
-        Self::build_menus_with(&[], &[], false, false, Vec::new())
+        Self::build_menus_with(&[], &[], false, false, Vec::new(), (Vec::new(), Vec::new()))
     }
 
     /// 메뉴 정의 — File 메뉴 아래쪽에 최근 파일(최대 8 · Eclipse/DBeaver 관례).
@@ -1079,7 +1081,9 @@ impl App {
         demo_ready: bool,
         blocked: bool,
         project: Vec<MenuEntry>,
+        view_subs: (Vec<MenuEntry>, Vec<MenuEntry>),
     ) -> Vec<MenuDef> {
+        let (theme_entries, lang_entries) = view_subs;
         let item = |id: &str, m: Msg| MenuEntry::Item(ComboItem::new(id, t(m)));
         let gated = |id: &str, m: Msg| {
             if blocked {
@@ -1263,8 +1267,9 @@ impl App {
                     MenuEntry::Separator,
                     item("view.colors", Msg::MnColors),
                     item("view.keys", Msg::MnKeys),
-                    item("view.theme", Msg::MnTheme),
-                    item("view.lang", Msg::MnLanguage),
+                    // ★ 테마·언어 = 하위 메뉴에서 고르기(현재 값 ✓ · 사용자 10-06) — 순환 명령 `view.theme`/`view.lang`은 키맵·팔레트용으로 남긴다.
+                    MenuEntry::sub(t(Msg::MnThemeMenu), theme_entries),
+                    MenuEntry::sub(t(Msg::MnLanguageMenu), lang_entries),
                 ],
             ),
             MenuDef::new(
@@ -1342,6 +1347,7 @@ impl App {
                 self.demo_ready,
                 self.gate_shown.unwrap_or(false),
                 self.project_menu_entries(),
+                (self.theme_menu_entries(), self.lang_menu_entries()),
             ));
         }
     }
@@ -1375,6 +1381,48 @@ impl App {
         let mut inv = Invalidations::default();
         let mut failed = false;
         match act {
+            // ★ 값 목록 팝업(T-181 후속)의 검색 상자가 떠 있으면 클립보드 동작은 그 상자에(그리드 셀 복사/붙여넣기보다 먼저 ·
+            //   사용자 10-06 "필터 입력란 Ctrl+V 미동작") · 글이 바뀌면 바로 다시 거른다.
+            EditCtxAction::Copy | EditCtxAction::Cut | EditCtxAction::Paste
+                if self.focus == Focus::Grid && self.grid.text_input_active() =>
+            {
+                match act {
+                    EditCtxAction::Copy => {
+                        if let Some(t) = self
+                            .grid
+                            .value_pick_textbox()
+                            .and_then(|tb| tb.copy_selection())
+                        {
+                            failed = !clipboard::write_text(&t);
+                        }
+                    }
+                    EditCtxAction::Cut => {
+                        if let Some(t) = self
+                            .grid
+                            .value_pick_textbox()
+                            .and_then(|tb| tb.copy_selection())
+                        {
+                            if clipboard::write_text(&t) {
+                                if let Some(tb) = self.grid.text_input_textbox() {
+                                    tb.cut_selection(&mut inv);
+                                }
+                            } else {
+                                failed = true;
+                            }
+                        }
+                    }
+                    _ => match clipboard::read_text() {
+                        Some(text) => {
+                            if let Some(tb) = self.grid.text_input_textbox() {
+                                tb.paste(&text, &mut inv);
+                            }
+                        }
+                        None => failed = true,
+                    },
+                }
+                self.grid.text_input_query_changed();
+                self.redraw();
+            }
             // ★ 셀 편집 중 = 클립보드 동작은 편집 상자에 한정(사용자 09-26 ⌘X/⌘A 지적).
             EditCtxAction::Copy if self.focus == Focus::Grid && self.grid.editing_cell() => {
                 if let Some(t) = self.grid.live_copy() {
@@ -1805,6 +1853,7 @@ impl App {
             self.demo_ready,
             self.gate_shown.unwrap_or(false),
             self.project_menu_entries(),
+            (self.theme_menu_entries(), self.lang_menu_entries()),
         ));
     }
 

@@ -87,6 +87,10 @@ impl App {
 
     pub(crate) fn set_focus(&mut self, f: Focus) {
         self.focus = f;
+        // 그리드를 떠나면 그리드 안 글 상자(조건 바)의 포커스도 거둔다(편집기 탭을 눌러도 키가 조건 바로 가던 결함 · 사용자 10-06).
+        if f != Focus::Grid {
+            self.grid.blur_text_input();
+        }
         self.ed_mut().set_focused(f == Focus::Editor);
         self.explorer.set_focused(f == Focus::Explorer);
         self.objdetail.set_focused(f == Focus::Details);
@@ -124,6 +128,8 @@ impl App {
                 || f == Focus::Find
                 || f == Focus::Search
                 || f == Focus::Ext
+                // 그리드 = 값 목록 팝업의 검색 상자가 열려 있을 때만(한글 자모 검색 · 10-06).
+                || (f == Focus::Grid && self.grid.text_input_wants_ime())
                 || (matches!(f, Focus::Project | Focus::Bookmarks | Focus::Outline)
                     && !self.typeahead_target()));
         if self.ime_last == Some(allow) {
@@ -189,7 +195,9 @@ impl App {
             Focus::Bookmarks => self.bm_panel.focused_textbox(),
             Focus::Outline => self.outline_panel.focused_textbox(),
             Focus::Explorer => self.explorer.focused_textbox(),
-            Focus::Grid | Focus::Details => None,
+            // 그리드 = 값 목록 팝업의 검색 상자 · 조건 바(열려/포커스일 때 · IME 조합·확정 · 복사/붙여넣기/전체 선택 · 10-06).
+            Focus::Grid => self.grid.text_input_textbox(),
+            Focus::Details => None,
         }
     }
 
@@ -628,6 +636,8 @@ impl App {
             let hit = match ev {
                 InputEvent::MouseDown { x, y, .. } => self.objlink_click(Point { x, y }, false),
                 InputEvent::RightDown { x, y } => self.objlink_click(Point { x, y }, true),
+                // hover 카드 버튼은 놓을 때 동작(사용자 10-06).
+                InputEvent::MouseUp { x, y } => self.objlink_card_release(Point { x, y }),
                 _ => false,
             };
             if hit {
@@ -836,7 +846,7 @@ impl App {
                 x: self.cursor.0,
                 y: self.cursor.1,
             };
-            let in_area = self.grid.bounds.contains(cur);
+            let in_area = self.grid.outer_bounds().contains(cur);
             let pointer = is_mouse
                 || matches!(
                     ev,
@@ -895,6 +905,41 @@ impl App {
                 return;
             }
         }
+        // ★ 그리드 값 목록 팝업(T-181 후속 · 10-06)이 떠 있으면 마우스·키는 **그리드가 먼저** 받는다 — 팝업은 그리드 영역 밖(편집기 위)에
+        //   닿을 수 있고, 바깥 클릭은 팝업을 닫고 **그대로 통과**해야 한다(팝업 규칙 · 협업 V1 ⑤ = 편집기 클릭이 그리드로 안 와 안 닫혔다).
+        // 조건 바가 포커스일 때는 키·글자만 먼저(마우스는 자리 판정대로 — 바깥 클릭이 다른 컨트롤로 가야 한다).
+        let popup = self.grid.value_pick_open();
+        if (popup
+            && matches!(
+                ev,
+                InputEvent::MouseDown { .. }
+                    | InputEvent::RightDown { .. }
+                    | InputEvent::MouseMove { .. }
+                    | InputEvent::Wheel { .. }
+                    | InputEvent::Key { .. }
+                    | InputEvent::Char { .. }
+            ))
+            || (!popup
+                && self.focus == Focus::Grid
+                && self.grid.text_input_active()
+                && matches!(
+                    ev,
+                    InputEvent::Key { .. }
+                        | InputEvent::Char { .. }
+                        | InputEvent::SelectAll
+                        | InputEvent::Undo
+                        | InputEvent::Redo
+                ))
+        {
+            self.grid.set_shift(self.shift);
+            self.grid.on_event(&ev, self.scale);
+            self.after_grid_event();
+            self.redraw();
+            if self.grid.text_input_active() {
+                return;
+            }
+            self.ime_refresh();
+        }
         if let InputEvent::MouseDown { x, y, .. } | InputEvent::RightDown { x, y } = ev {
             let p = Point { x, y };
             if self.editors.editor_bounds().contains(p) {
@@ -903,7 +948,7 @@ impl App {
                 if self.editors.activate_pane_at(p) {
                     self.sync_gate();
                 }
-            } else if self.grid.bounds.contains(p) {
+            } else if self.grid.outer_bounds().contains(p) {
                 self.set_focus(Focus::Grid);
             }
         }
@@ -913,7 +958,7 @@ impl App {
                 x: self.cursor.0,
                 y: self.cursor.1,
             };
-            if self.grid.bounds.contains(cur) && self.focus != Focus::Grid {
+            if self.grid.outer_bounds().contains(cur) && self.focus != Focus::Grid {
                 self.grid.set_shift(self.shift);
                 self.grid.on_event(&ev, self.scale);
                 // 포커스가 없어도 스크롤바 드래그가 끝에 닿으면 자동 페치 요청이 생긴다(09-16).
@@ -921,6 +966,12 @@ impl App {
                 if self.grid.bars_visible() {
                     inv.push(self.grid.bounds);
                 }
+            } else if self.focus != Focus::Grid
+                && matches!(ev, InputEvent::MouseMove { .. })
+                && self.grid.clear_hover_tips()
+            {
+                // 포인터가 그리드 밖으로 = 표식 툴팁·칩 hover 즉시 취소(그리드가 밖의 이동을 못 받아 남던 잔상 · 10-06).
+                inv.push(self.grid.bounds);
             }
             if self.editors.editor_bounds().contains(cur)
                 && self.focus != Focus::Editor

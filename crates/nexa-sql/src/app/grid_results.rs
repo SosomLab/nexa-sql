@@ -26,6 +26,22 @@ impl App {
 
     /// 그리드가 메뉴로 만든 복사 텍스트를 OS 클립보드로.
     pub(crate) fn after_grid_event(&mut self) {
+        // 사건 없이 그림만 바뀐 것(hover 모드 깔때기 · 10-06) → 다시 그리기.
+        if self.grid.take_dirty() {
+            self.redraw();
+        }
+        // ★ 인라인 조건 입력란 Enter(사용자 10-06): 감싼 SQL을 **같은 탭**에서 다시 실행(실행 오류는 그대로 토스트) · 게이트가
+        //   닫혀 있으면 상태줄만.
+        if let Some(sql) = self.grid.take_cond_run() {
+            if self.gate_open() {
+                self.log_win.push(LogEntry::new(LogKind::Info, sql.clone()));
+                self.grid.set_source_sql(&sql);
+                self.refresh_result();
+            } else {
+                self.sess.status = t(Msg::StGeRequeryBusy).into();
+                self.redraw();
+            }
+        }
         if let Some(e) = self.grid.take_error() {
             self.sess.status = tf(Msg::StFilterError, &[&e]);
             self.log_win
@@ -340,6 +356,30 @@ impl App {
             .for_each(|g| g.set_filter_pick_max(pick_max));
         let strip = self.settings.flag("grid.filter_strip");
         self.all_grids().for_each(|g| g.set_filter_strip(strip));
+        // ★ 결과 필터 사용 여부 · 깔때기 표시 방법 · 값 목록 상한(T-181 후속 · 10-06).
+        let enabled = self.settings.flag("grid.filter_enabled");
+        self.all_grids().for_each(|g| g.set_filter_enabled(enabled));
+        let funnel = self
+            .settings
+            .get("grid.filter_funnel")
+            .unwrap_or("always")
+            .to_string();
+        self.all_grids().for_each(|g| g.set_filter_funnel(&funnel));
+        let values_max = self.settings.int("grid.filter_values_max").clamp(20, 5000) as usize;
+        self.all_grids()
+            .for_each(|g| g.set_filter_values_max(values_max));
+        let popup_rows = self.settings.int("grid.filter_popup_rows").clamp(3, 40) as usize;
+        self.all_grids()
+            .for_each(|g| g.set_filter_popup_rows(popup_rows));
+        let scope = self
+            .settings
+            .get("grid.filter_values_scope")
+            .unwrap_or("others")
+            .to_string();
+        self.all_grids()
+            .for_each(|g| g.set_filter_values_scope(&scope));
+        let cond = self.settings.flag("grid.condition_bar");
+        self.all_grids().for_each(|g| g.set_condition_bar(cond));
     }
 
     /// 캐럿을 다음/이전 문장(`;` 분리 · [`nsql_script::split_script`]) 시작으로(Alt+↓/↑ · 실행 뒤 자동 이동).
@@ -443,7 +483,7 @@ impl App {
         self.panel.active = i;
         std::mem::swap(&mut self.grid, &mut self.panel.tabs[i].grid);
         self.grid_tab = self.panel.tabs[i].id;
-        let b = self.panel.tabs[a].grid.bounds;
+        let b = self.panel.tabs[a].grid.outer_bounds();
         self.grid.set_bounds(b);
         self.panel.sync_bar();
         self.set_focus(Focus::Grid);
@@ -523,6 +563,7 @@ impl App {
             id,
             title: t(Msg::ResultTabDefault).to_string(),
             pinned: false,
+            sys_pinned: false,
             named: false,
             sql: String::new(),
             grid: fresh,
@@ -592,6 +633,7 @@ impl App {
             id,
             title: t(Msg::ResultTabDefault).to_string(),
             pinned: false,
+            sys_pinned: false,
             named: false,
             sql: String::new(),
             grid: fresh,
@@ -760,7 +802,13 @@ impl App {
             }
             ResultAction::TogglePin(i) => {
                 if let Some(t) = self.panel.tabs.get_mut(i) {
-                    t.pinned = !t.pinned;
+                    // 자동 고정(Output) 탭의 첫 토글 = 사용자 고정으로(표식이 생긴다) · 그다음부터 보통 토글.
+                    if t.sys_pinned {
+                        t.sys_pinned = false;
+                        t.pinned = true;
+                    } else {
+                        t.pinned = !t.pinned;
+                    }
                 }
             }
             ResultAction::CopySql(i) => {
@@ -829,7 +877,7 @@ impl App {
         if i == self.panel.active {
             // 실제 그리드를 자리에 돌려놓은 뒤 제거 → 이웃 탭의 그리드를 꺼낸다.
             std::mem::swap(&mut self.grid, &mut self.panel.tabs[i].grid);
-            let bounds = self.grid.bounds;
+            let bounds = self.grid.outer_bounds();
             drop(self.panel.remove(i));
             if self.panel.tabs.is_empty() {
                 let id = self.next_result_id;
@@ -839,6 +887,7 @@ impl App {
                     id,
                     title: t(Msg::ResultTabDefault).to_string(),
                     pinned: false,
+                    sys_pinned: false,
                     named: false,
                     sql: String::new(),
                     grid: fresh,
@@ -1209,7 +1258,7 @@ impl App {
         self.sync_gate();
         let cur = self.editors.active_id();
         if cur != self.panel_editor {
-            let b = self.grid.bounds;
+            let b = self.grid.outer_bounds();
             // 실제 그리드를 활성 자리에 돌려놓고 패널을 잠재운다.
             let a = self
                 .panel
@@ -1233,6 +1282,7 @@ impl App {
                         id,
                         title: t(Msg::ResultTabDefault).to_string(),
                         pinned: false,
+                        sys_pinned: false,
                         named: false,
                         sql: String::new(),
                         grid: fresh,

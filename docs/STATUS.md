@@ -11,7 +11,14 @@
 - ★ **T-178 FK 참조 컬럼 `ref_cols`** = 카탈로그 5열 → 메타 → JOIN 조각 · 참조 행 보기 · FK 라벨 `→ 테이블 (컬럼)` · Generate SQL `REFERENCES t (cols)`.
 - ✅ **T-182 실서버 4방언 그리드 편집 E2E** — M4PLAN 재실행 13/13(임시 표 DB = M4PLAN_MS · 로그인 기본 DB master 문제 = 스크립트 `-d` 셋째 조각) · 전체 59/0.
 - ✅ **T-168b 종결** — L2 60주기 = 누수 아님(−0.025 MB/주기) · nexa-ui 그리기 같은 시각 A/B = 회귀 재현 안 됨(6.43 → 6.02 ms) · [26 §7-14](26-performance-architecture.md) E·F 보강.
-- 다음 = V2 → push · [P0] 재시작 뒤 hover 카드 재시험(⑤ off 툴팁 = 추적) · 실기 U-178~U-194 · winget·choco 검수 감시.
+- 🔧 **hover 카드 2차 결함(사용자 실기 "움직이면 카드가 사라짐") 수정 `20978aa`** — 카드 영역 = 카드 ∪ 링크 + 8 px(`card_zone_contains`) · 앵커 = 링크 줄 위(`point_at` y = 줄 바닥이던 결함 · 시그니처 카드 포함) · 뒤집기 = 편집기 영역 기준(`flip_vertical`) · V1 A/B/C ✓ · [journal 10-06 §3-1](journal/2026-10-06.md) · [96 §7](96-object-links.md).
+- ★ **T-181 후속** = 열 머리 깔때기 + 값 목록 팝업(`valuepick.rs` · `grid.filter_funnel`/`filter_values_max` · 바깥 클릭 통과 · 툴팁 잔상 결함 수정) · 실기 U-195 · [journal 10-06 §8](journal/2026-10-06.md).
+- ★ **T-181 후속 2차(사용자 추가 요구)** = 필터 설정 섹션(데이터 편집기 ▸ 결과 필터 · 고속 스크롤 분류 분리) · 사용 여부 `grid.filter_enabled` · 표시 방법 `grid.filter_funnel` always/hover/none · 값 목록 팝업(크기 고정 `filter_popup_rows` · 범위 `filter_values_scope` others/all · 🔧 쉼표 값 0건) · IME/클립보드 = 검색 상자 · 버튼 MouseUp · 보기 ▸ 테마/언어 하위 메뉴 · 로그 버튼 켜짐 강조 · Output 제목 = `Output` · 결과 탭 압정(nexa-ui `TabBar`) · 🔧 고속 스크롤 ×32 = 전 그리드 · 실기 U-195 · [journal 10-06 §9](journal/2026-10-06.md).
+- ★ **3차** = 값 목록 팝업 **엑셀 자동 필터 그대로**((모두 선택) 3상태 · 검색 시 바꿈/추가 · [필터 해제][확인][취소] · 체크 없으면 확인 비활성 · 검색어 저장 안 함) · 🔧 hover 카드 링크 전환(테이블→컬럼→테이블에 컬럼 카드가 남던 결함) · Debug 창 제목 `Nexa SQL (Debug)` · 📐 **T-283** CREATE 문 ↔ 실제 객체 비교 설계 메모([19 §6](19-compare-git-and-object-history.md) · 1단계 권장안 접수) · [journal 10-06 §10](journal/2026-10-06.md).
+- ★ **4차** = 인라인 조건 입력란(조건 바 · DBeaver · `condbar.rs` · `grid.condition_bar` · Enter = 방언 검증 → `SELECT * FROM (출처) q WHERE 1=1 AND (식)` 같은 탭 재조회 · 완성 팝업 · 복사 버튼 · 틀리면 실행 안 함) · [journal 10-06 §11](journal/2026-10-06.md).
+- ★ **5차** = 조건 바 멀티라인(▾ · Ctrl+Enter 실행 · 스플리터 2~12줄) · Ctrl+Z/Y 상자 안 · 실행 오류 시 그리드 유지 · 🔧 조건 바 첫 클릭 유실(그리드 bounds 밖 → `outer_bounds`) · 🔧 Output 왕복 공백 · 🔧 포커스 거둠 · 도구 모음 편집 그룹(↶ ↷) · 최근 프로젝트 = 설계(첫 인스턴스만 복원) · 개발 중 = Debug만 재실행 · [journal 10-06 §11-1](journal/2026-10-06.md).
+- push = `ba16999`(113차) → `9e65bc8`(docs) → `20978aa`(카드 2차) · CI 전부 ✓(ba16999 · 9e65bc8 · 20978aa).
+- 다음 = V2 → 커밋(사용자 지시 뒤) · 실기 U-178~U-195(U-194 = 카드 버튼 + Ctrl 모드 카드 · U-195 = 값 목록 팝업) · winget·choco 검수 감시.
 
 ## 2026-10-05 (112차 · **win**)([journal 10-05 §0 요약](journal/2026-10-05.md))
 

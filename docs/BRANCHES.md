@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-06-114c | 2026-10-06 | 2026-10-06 → main(삭제) | 1 | 114차 win(사용자 추가 요구 18건): T-181 후속 완성(깔때기 표시 방법 · 엑셀식 값 목록 팝업 `valuepick.rs` · 인라인 조건 입력란 `condbar.rs` 방언 검증·멀티라인) · 설정 분류 결과 필터/고속 스크롤 · 테마/언어 하위 메뉴 · 로그 버튼 켜짐 · Output 제목 · 탭 압정(nexa-ui) · 편집 그룹 Undo/Redo · 🔧 고속 스크롤 ×32 · Output 왕복 공백 · 설정 트리 재라벨 · 📐 T-283 설계 · V2 통과 · journal 10-06 §8~§11 |
 | fix/2026-10-06-hover-card-zone | 2026-10-06 | 2026-10-06 → main(삭제) | 1 | 🔧 hover 카드가 마우스 이동 중 사라짐(사용자 실기) = 카드 영역 유지 `card_zone_contains` · 앵커 = 줄 위(`point_at` 바닥 y 보정 · 시그니처 카드 포함) · 배치 정방향→반대쪽(편집기 영역)→밀어 넣기 `flip_vertical` · V1 A/B/C ✓ · V2 통과 · journal 10-06 §3-1 · 96 §7 · 102 §12 |
 | work/2026-10-06-113c | 2026-10-06 | 2026-10-06 → main(삭제) | 1 | 113차 win: T-179 hover 카드 동작 버튼 + 클릭 라우팅 결함 수정 · T-178 FK 참조 컬럼 `ref_cols`(카탈로그 5열 · JOIN 조각·참조 행 보기·FK 라벨·Generate SQL) · T-182 실서버 4방언 E2E(M4PLAN `USE`) · T-168b 종결 · V2 통과(test 전부 · clippy · fmt) · journal 10-06 |
 | release/2026-10-05-v0.1.5 | 2026-10-05 | 2026-10-05 → main(삭제) | 1 | 🚀 v0.1.5 준비: 버전 0.1.5 · winget·choco 채널 개시(packaging/winget · packaging/choco · render-manifests.ps1 · publish-windows-packages.yml) · release.yml 영어 노트 · 33 §5-3 · V2 통과(test 766 · clippy · fmt · Release `nsql 0.1.5` · golden plan 2 · MSI 0.1.5 → 렌더 → winget validate ✓ · choco pack ✓) · journal 10-05 §33 |

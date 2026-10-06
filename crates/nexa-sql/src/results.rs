@@ -22,6 +22,9 @@ pub(crate) struct ResultTab {
     pub id: u64,
     pub title: String,
     pub pinned: bool,
+    /// 프로그램이 건 고정(Output 자리표시 탭 = 자동 회수 제외) — 표식은 **사용자가 고정한 탭에만**(사용자 10-06 "직접 고정하지
+    /// 않으면 이름만"). 사용자가 고정을 토글하면 이 깃발은 내려가고 `pinned`가 사용자 뜻이 된다.
+    pub sys_pinned: bool,
     /// 사용자가 이름을 붙였으면 실행 결과로 제목을 덮지 않는다.
     pub named: bool,
     /// ★ **이 결과를 만든 실행 쿼리**(사용자 09-21) — 결과가 도착할 때 보관하고 우클릭 ▸ "실행 쿼리 복사"가 클립보드에 담는다.
@@ -71,6 +74,8 @@ pub(crate) struct ResultPanel {
     scale: f32,
     /// 마지막으로 탭 바에 보낸 제목 목록(바뀔 때만 다시 보낸다).
     shown: Vec<String>,
+    /// 마지막으로 탭바에 준 고정 표식(바뀔 때만 다시 준다).
+    shown_pins: Vec<bool>,
     /// 우클릭한 탭(메뉴 항목 선택 때 대상).
     menu_tab: Option<usize>,
     /// 탭 수가 1↔2를 넘어 탭 바 표시가 바뀌었다(호스트 재배치 1회성).
@@ -98,6 +103,7 @@ impl ResultPanel {
             bar_rect: Rect::default(),
             scale: 1.0,
             shown: Vec::new(),
+            shown_pins: Vec::new(),
             menu_tab: None,
             bar_changed: false,
             always_bar,
@@ -217,23 +223,19 @@ impl ResultPanel {
 
     /// 탭 제목·활성·핀을 탭 바에 반영(바뀔 때만).
     pub(crate) fn sync_bar(&mut self) {
-        let titles: Vec<String> = self
+        let titles: Vec<String> = self.tabs.iter().map(|t| t.title.clone()).collect();
+        // 고정 표식(탭바가 제목 뒤에 압정으로 그린다) = 사용자가 고정한 탭만.
+        let pins: Vec<bool> = self
             .tabs
             .iter()
-            .map(|t| {
-                if t.pinned {
-                    format!("📌 {}", t.title)
-                } else {
-                    t.title.clone()
-                }
-            })
+            .map(|t| t.pinned && !t.sys_pinned)
             .collect();
         let mut inv = Invalidations::default();
-        if titles != self.shown || self.bar.active() != self.active {
+        if titles != self.shown || self.bar.active() != self.active || pins != self.shown_pins {
             self.shown = titles.clone();
+            self.shown_pins = pins.clone();
             self.bar.set_tabs(titles, self.active, &mut inv);
-            self.bar
-                .set_pinned(self.tabs.iter().map(|t| t.pinned).collect(), &mut inv);
+            self.bar.set_pinned(pins, &mut inv);
         }
     }
 
@@ -520,6 +522,7 @@ mod tests {
             id,
             title: format!("T{id}"),
             pinned,
+            sys_pinned: false,
             named: false,
             sql: String::new(),
             grid: Grid::default(),

@@ -443,6 +443,8 @@ pub(crate) struct ObjLinks {
     /// ★ hover 카드(T-179 ③ · 77 §1-3): 마지막 그리기의 카드 자리와 버튼 — 포인터가 카드 안이면 링크를 떠나도 유지 ·
     /// 클릭은 버튼으로(편집기로 가지 않는다). 툴팁이 없으면 None.
     pub card: Option<CardLayout>,
+    /// MouseDown으로 누른 카드 버튼 id — 같은 버튼 위에서 놓으면 동작(사용자 10-06 "마우스업에서 동작").
+    pub card_pressed: Option<&'static str>,
 }
 
 /// hover 카드 배치(그리기가 채우고 사건 처리가 읽는다).
@@ -949,6 +951,7 @@ impl App {
             hover_due: self.objlinks.hover_due,
             hover_at: self.objlinks.hover_at,
             card: None,
+            card_pressed: None,
         };
         if self.objlink_apply_marks() || display != Display::None {
             self.redraw();
@@ -989,7 +992,12 @@ impl App {
         }
         if self.objlinks.hover {
             // 링크 위를 떠났다 → 끝(다음 멈춤에서 다시 잰다) · 카드 영역(카드 ∪ 링크 + 여유) 안은 떠난 것이 아니다.
-            if self.objlink_at(p).is_none() && !self.objlink_card_zone(p) {
+            // ★ 다른 링크 위로 갔으면 카드 영역 안이라도 머무름을 끝낸다(카드 영역이 이웃 단어를 덮어 테이블 이름 위에서도 컬럼 카드가
+            //   남던 결함 · 사용자 10-06) — 아래에서 새 자리로 다시 잰다.
+            let over_other = self
+                .objlink_at(p)
+                .is_some_and(|k| Some(k) != self.objlinks.hot);
+            if over_other || (self.objlink_at(p).is_none() && !self.objlink_card_zone(p)) {
                 self.objlink_hover_end();
             } else {
                 return;
@@ -1083,19 +1091,36 @@ impl App {
         ]
     }
 
-    /// hover 카드 버튼 클릭 — 카드 안이면 true(편집기로 가지 않는다 · 빈 자리도 삼킨다). 버튼을 눌렀으면 카드를 닫는다
-    /// (동작은 링크 `k`가 살아 있는 동안 = 머무름을 끝내기 **전에**).
+    /// hover 카드 안 MouseDown — 카드 안이면 true(편집기로 가지 않는다 · 빈 자리도 삼킨다). 버튼 위면 **누름만** 기억하고
+    /// 동작은 `objlink_card_release`(같은 버튼에서 놓을 때 · 사용자 10-06)에서.
     fn objlink_card_click(&mut self, p: Point) -> bool {
-        let Some(card) = self.objlinks.card.clone() else {
+        let Some(card) = self.objlinks.card.as_ref() else {
             return false;
         };
         if !card.rect.contains(p) {
             return false;
         }
-        let hit = card
+        self.objlinks.card_pressed = card
             .buttons
             .iter()
             .find(|(_, r, on)| *on && r.contains(p))
+            .map(|(id, _, _)| *id);
+        true
+    }
+
+    /// hover 카드 버튼 놓음 — 누른 버튼과 같은 버튼 위에서 놓았으면 동작하고 카드를 닫는다(동작은 링크 `k`가 살아 있는 동안 =
+    /// 머무름을 끝내기 **전에**). 돌려주는 값 = 누름이 있었다(편집기로 가지 않는다).
+    pub(crate) fn objlink_card_release(&mut self, p: Point) -> bool {
+        let Some(pressed) = self.objlinks.card_pressed.take() else {
+            return false;
+        };
+        let Some(card) = self.objlinks.card.clone() else {
+            return true;
+        };
+        let hit = card
+            .buttons
+            .iter()
+            .find(|(id, r, on)| *on && r.contains(p) && *id == pressed)
             .map(|(id, _, _)| *id);
         let k = card.link;
         match hit {
@@ -1126,7 +1151,11 @@ impl App {
         }
         // 카드 영역(카드 ∪ 링크 + 여유) 안에서는 링크 판정을 바꾸지 않는다(버튼까지 가는 길에 카드가 사라지지 않게 ·
         // 링크와 카드 사이 틈도 포함) · 버튼 hover 색만 다시 그린다.
-        if self.objlink_card_zone(p) {
+        if self.objlink_card_zone(p)
+            && !self
+                .objlink_at(p)
+                .is_some_and(|k| Some(k) != self.objlinks.hot)
+        {
             self.redraw();
             return;
         }

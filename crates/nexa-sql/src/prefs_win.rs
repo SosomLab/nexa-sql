@@ -138,6 +138,8 @@ pub(crate) struct PrefsWin {
     /// ★ 카드 덧말(키 → 한 줄 · 강조색 · 호스트가 상황값을 넣는다 — 예: 활성 탭의 들여쓰기 · 사용자 09-29). `info`의 `#note`와 합친다.
     notes: std::collections::HashMap<String, String>,
     vtree: Vec<(Msg, Vec<Msg>)>,
+    /// 트리 라벨을 만든 언어 — 바뀌면(View ▸ 언어 · 설정) 다음 그리기에서 트리·카드를 다시 만든다(사용자 10-06).
+    model_lang: nsql_i18n::Lang,
     advanced: Switch,
     json_btn: Button,
     close_btn: Button,
@@ -348,6 +350,7 @@ impl PrefsWin {
             info: std::collections::HashMap::new(),
             notes: std::collections::HashMap::new(),
             vtree,
+            model_lang: nsql_i18n::current_lang(),
             window: None,
             memo: crate::wingeom::Memo::default(),
 
@@ -1766,6 +1769,14 @@ impl PrefsWin {
     /// 그리기 — `ui`/`font_px` = UI 글꼴 · `mono`/`mono_px` = **편집기 고정폭 글꼴·크기**(포맷 미리보기 본문 · 포맷터의 칸 정렬은
     /// 고정폭 전제라 UI 글꼴로 그리면 열이 어긋난다 · 사용자 09-30 "모든 OS에서 동일하게").
     pub(crate) fn paint(&mut self, ui: &Font, th: &Theme, font_px: f32, mono: &Font, mono_px: f32) {
+        // ★ 언어가 바뀌었으면(View ▸ 언어 순환 · `ui.lang`) 트리·카드 라벨을 다시 만든다 — 트리는 열 때의 글이라 왼쪽만 옛 언어로
+        //   남던 것(사용자 10-06).
+        if self.model_lang != nsql_i18n::current_lang() {
+            self.model_lang = nsql_i18n::current_lang();
+            self.tree = TreeView::new(Self::build_model(&self.vtree));
+            self.rebuild_cards();
+            self.layout();
+        }
         // B/K 토글 상태는 표면을 빌리기 전에(불변 빌림 충돌).
         let bk = self.preview_flags();
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {

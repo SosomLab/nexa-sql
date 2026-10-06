@@ -426,6 +426,22 @@ impl App {
 
     /// 문장 실행 버튼 = 단일 커서일 때만(전체 실행은 늘 활성 · 사용자 09-17). 값이 바뀔 때만 툴바에 쓴다.
     pub(crate) fn sync_run_stmt_button(&mut self) {
+        // ★ 로그 창 토글 버튼(맨 우측 `view.log`) = 열려 있으면 강조색(켜짐이 보이게 · 사용자 10-06).
+        let log_on = self.log_win.is_open();
+        if log_on != self.log_btn_on {
+            self.log_btn_on = log_on;
+            let mut inv = Invalidations::default();
+            self.tool_dock.set_item_tone(
+                "view.log",
+                if log_on {
+                    nexa_ctl::ToolTone::Accent
+                } else {
+                    nexa_ctl::ToolTone::Default
+                },
+                &mut inv,
+            );
+            self.redraw();
+        }
         // ■ = 막힌 상태를 푸는 유일한 버튼 — 실행 중이거나 보조 요청(전체 조회 등)이 진행 중일 때 켠다.
         let gate = self.gate();
         let stop = gate.stop;

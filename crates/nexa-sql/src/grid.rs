@@ -357,6 +357,37 @@ pub(crate) struct Grid {
     mark_hover: Option<(usize, u64)>,
     /// 마지막 그리기에서 기록한 표식 사각형(열 원본 번호, 화면 좌표).
     mark_rects: Vec<(usize, Rect)>,
+    /// ★ 열 머리 깔때기 아이콘 사각형(열, rect) — 클릭 = 값 목록 팝업(T-181 후속 · 10-06 · 설정 `grid.filter_funnel`).
+    funnel_rects: Vec<(usize, Rect)>,
+    /// 깔때기 표시 방법(설정 `grid.filter_funnel` = always · hover · none).
+    funnel_mode: FunnelMode,
+    /// 결과 필터 사용 여부(설정 `grid.filter_enabled` · 끄면 메뉴·깔때기·값 목록 없음).
+    filter_enabled: bool,
+    /// 마우스가 올라간 열 머리(원본 index · hover 모드의 깔때기 자리).
+    funnel_hover: Option<usize>,
+    /// 호스트가 가져가는 "다시 그려 달라" 깃발(헤더 hover 변화처럼 사건이 없이 그림만 바뀔 때).
+    dirty: bool,
+    /// 값 목록 팝업의 고유값 상한(설정 `grid.filter_values_max` · 72 §3).
+    filter_values_max: usize,
+    /// 값 목록 팝업의 표시 행 수(설정 `grid.filter_popup_rows` · 고정).
+    filter_popup_rows: usize,
+    /// 값 목록 범위(설정 `grid.filter_values_scope`): true = **다른 열의 필터를 통과한 행**의 값만(종속 목록 · 기본) · false = 받은 행 전체.
+    values_scope_others: bool,
+    /// 결과 그리드만의 고속 스크롤 설정(`scroll.fast_grid_extra` · None = 전역) — 새 결과 탭 그리드(`fresh_like`)에도 물려준다
+    /// (사용자 10-06 "그리드도 ×16에서 제한" = 첫 그리드에만 걸려 있었다).
+    fast_override: Option<nexa_ctl::FastScroll>,
+    /// 값 목록 팝업(검색 상자 + 체크 목록 · 엑셀 자동 필터 꼴).
+    vpick: crate::valuepick::ValuePick,
+    /// ★ 인라인 조건 입력란(DBeaver 조건 바 · 사용자 10-06) — 필터 줄 자리 · 설정 `grid.condition_bar`.
+    cond: crate::condbar::CondBar,
+    cond_on: bool,
+    /// 조건으로 감싸기 전의 **원래 출처 문장**(조건을 바꿔도 다시 이것을 감싼다) · 우리가 낸 감싼 문장(새 실행과 구별).
+    cond_base: Option<String>,
+    cond_last_sql: Option<String>,
+    /// 조건 실행을 보내기 직전의 출처 문장(실패하면 되돌린다 · 결과는 그대로 둔다 · 사용자 10-06).
+    cond_prev_sql: Option<String>,
+    /// 호스트가 가져가는 조건 실행 요청(감싼 SQL).
+    pending_cond_run: Option<String>,
     /// ★ 추가 행의 표시 순서(추가 행 번호 k · 사용자 09-29 "추가 행에서 +도 그 바로 아래") — 같은 기존 행 아래의 추가 행끼리의 순서.
     ins_order: Vec<usize>,
     now_ms: u64,
@@ -553,6 +584,22 @@ impl Default for Grid {
             pending_error: None,
             mark_hover: None,
             mark_rects: Vec::new(),
+            funnel_rects: Vec::new(),
+            funnel_mode: FunnelMode::Always,
+            filter_enabled: true,
+            funnel_hover: None,
+            dirty: false,
+            filter_values_max: 500,
+            filter_popup_rows: 12,
+            values_scope_others: true,
+            fast_override: None,
+            vpick: crate::valuepick::ValuePick::default(),
+            cond: crate::condbar::CondBar::new(),
+            cond_on: true,
+            cond_base: None,
+            cond_last_sql: None,
+            cond_prev_sql: None,
+            pending_cond_run: None,
             ins_order: Vec::new(),
             now_ms: 0,
             hdr_drag: None,
@@ -697,7 +744,7 @@ fn cmp_value(a: &Value, b: &Value) -> std::cmp::Ordering {
 impl Grid {
     /// 결과·선택·스크롤은 비우고 **설정만**(영역 · 행번호 · 스크롤 단위 · 단축키 문구 · 방언) 물려받은 새 그리드 — 새 편집기 탭의 짝(사용자 09-16).
     pub(crate) fn fresh_like(&self) -> Grid {
-        Grid {
+        let mut g = Grid {
             bounds: self.bounds,
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
@@ -708,6 +755,12 @@ impl Grid {
             filter_list_max: self.filter_list_max,
             filter_strip: self.filter_strip,
             filter_pick_max: self.filter_pick_max,
+            funnel_mode: self.funnel_mode,
+            filter_enabled: self.filter_enabled,
+            filter_values_max: self.filter_values_max,
+            filter_popup_rows: self.filter_popup_rows,
+            values_scope_others: self.values_scope_others,
+            cond_on: self.cond_on,
             row_pct: self.row_pct,
             sc_copy: self.sc_copy.clone(),
             sc_all: self.sc_all.clone(),
@@ -721,7 +774,9 @@ impl Grid {
             edit_cfg: self.edit_cfg.clone(),
             prod: self.prod,
             ..Grid::default()
-        }
+        };
+        g.set_fast_override(self.fast_override);
+        g
     }
 
     fn bar(items: Vec<ToolItem>) -> Toolbar {
@@ -900,6 +955,13 @@ impl Grid {
 
     /// 결과가 도착했을 때 호스트가 알려 준다: 이 결과를 만든 문장(`source_sql`이 된다)과 그것이 조회 문장인가.
     pub(crate) fn set_result_origin(&mut self, stmt: &str, is_query: bool) {
+        // 우리가 낸 감싼 문장이 아니면 = 새 실행 → 조건 바와 바탕 문장 초기화.
+        self.cond_prev_sql = None;
+        if self.cond_last_sql.as_deref() != Some(stmt) {
+            self.cond_base = None;
+            self.cond_last_sql = None;
+            self.cond.set_text("");
+        }
         self.set_source_sql(stmt);
         self.countable = is_query;
         self.sync_fetch_tools();
@@ -2860,6 +2922,11 @@ impl Grid {
             }
         }
         self.menu.paint(dc, th);
+        // ★ 값 목록 팝업(깔때기 · 팝업 층 · 메뉴 뒤) · 조건 바 완성 팝업.
+        self.vpick.paint(dc, th);
+        if self.cond_on {
+            self.cond.paint_popup(dc, th);
+        }
         // 셀 편집기의 우클릭 메뉴 = 최상위(편집 테두리·이웃 셀 위 · UX 규칙 09-26).
         if let Some(e) = self.edit.as_ref() {
             e.live.paint_popup(dc, th);
@@ -3401,6 +3468,7 @@ impl Grid {
     /// 스크롤 단위 — `true` = 항목(행) 단위 · `false` = 픽셀(기본).
     /// 결과 그리드만의 고속 스크롤 설정(None = 전역 · `scroll.fast_grid_extra`).
     pub(crate) fn set_fast_override(&mut self, cfg: Option<nexa_ctl::FastScroll>) {
+        self.fast_override = cfg;
         self.bars.set_fast_override(cfg);
         self.key_accel.reset();
     }
@@ -3430,9 +3498,325 @@ impl Grid {
         self.clamp();
     }
 
+    /// 호스트가 준 **바깥** 영역(필터 줄/조건 바 포함) — 탭을 바꿀 때 다른 그리드에 넘길 사각형은 이것(안쪽 `bounds`를 넘기면
+    /// 줄 높이가 한 번 더 깎여 왕복마다 공백이 자랐다 · 사용자 10-06 Output 탭 왕복).
+    pub(crate) fn outer_bounds(&self) -> Rect {
+        let b = self.bounds;
+        Rect::new(b.x, b.y - self.strip_h, b.w, b.h + self.strip_h)
+    }
+
     /// 값 고르기 메뉴 항목 수(설정 `grid.filter_pick_max`).
     pub(crate) fn set_filter_pick_max(&mut self, n: usize) {
         self.filter_pick_max = n.clamp(5, 200);
+    }
+
+    /// 열 머리 깔때기 표시 방법(설정 `grid.filter_funnel` = `always` · `hover` · `none`).
+    pub(crate) fn set_filter_funnel(&mut self, mode: &str) {
+        self.funnel_mode = FunnelMode::parse(mode);
+    }
+
+    /// 결과 필터 사용 여부(설정 `grid.filter_enabled`) — 끄면 걸려 있던 필터도 푼다(값 목록 팝업도 닫는다).
+    pub(crate) fn set_filter_enabled(&mut self, on: bool) {
+        self.filter_enabled = on;
+        if !on {
+            self.clear_filters();
+            self.vpick.close();
+        }
+    }
+
+    /// 호스트가 가져가는 다시 그리기 깃발(한 번).
+    pub(crate) fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    /// 깔때기 글리프 한 변 — 행 높이의 35 %(사용자 10-06 "70 % 수준으로") · 최소 6.
+    fn funnel_g(&self) -> i32 {
+        (self.row_h * 7 / 20).max(6)
+    }
+
+    /// 열 폭에 더하는 깔때기 여유(아이콘 + 간격) — 필터가 켜져 있으면 표시 방법과 무관하게 늘(hover는 잠깐 나타나고 · 필터가
+    /// 걸리면 빗금 깔때기가 그 자리에 서므로 · 이름이 `nan`으로 잘리던 것 · 협업 V1 ③b/d 10-06).
+    fn funnel_allow(&self) -> i32 {
+        if self.filter_enabled {
+            let g = self.funnel_g();
+            g + (g / 3).max(2)
+        } else {
+            0
+        }
+    }
+
+    /// 이 열 머리에 민무늬 깔때기(값 목록 버튼)를 그릴까 — 필터 켜짐 · 표시 방법 · 메뉴 닫힘 · 필터 안 걸림(걸리면 빗금 깔때기).
+    fn want_plain_funnel(&self, ci: usize, filtered: bool) -> bool {
+        self.filter_enabled
+            && !filtered
+            && !self.menu.is_open()
+            && match self.funnel_mode {
+                FunnelMode::Always => true,
+                FunnelMode::Hover => self.funnel_hover == Some(ci),
+                FunnelMode::None => false,
+            }
+    }
+
+    /// 값 목록 팝업 고유값 상한(설정 `grid.filter_values_max`).
+    pub(crate) fn set_filter_values_max(&mut self, n: usize) {
+        self.filter_values_max = n.clamp(20, 5000);
+    }
+
+    /// 값 목록 팝업 표시 행 수(설정 `grid.filter_popup_rows`).
+    pub(crate) fn set_filter_popup_rows(&mut self, n: usize) {
+        self.filter_popup_rows = n.clamp(3, 40);
+    }
+
+    /// 값 목록 범위(설정 `grid.filter_values_scope` · `others` = 다른 필터 통과 행 · `all` = 전체).
+    pub(crate) fn set_filter_values_scope(&mut self, scope: &str) {
+        self.values_scope_others = scope.trim() != "all";
+    }
+
+    /// 인라인 조건 입력란 보이기(설정 `grid.condition_bar`) — 높이는 다음 그리기에서 맞춘다.
+    pub(crate) fn set_condition_bar(&mut self, on: bool) {
+        self.cond_on = on;
+        if !on {
+            self.cond.set_focused(false);
+        }
+    }
+
+    /// 조건 바 글(자체 시험 `grid.cond:`).
+    pub(crate) fn cond_set_text(&mut self, text: &str) {
+        self.cond.set_text(text);
+    }
+
+    /// 조건 바 Enter와 같은 길(자체 시험 `grid.cond.run`).
+    pub(crate) fn cond_run_now(&mut self) {
+        self.cond.request_run();
+        self.cond_take_requests();
+    }
+
+    pub(crate) fn cond_dump(&self) -> String {
+        format!(
+            "{} base={} last={}",
+            self.cond.dump(),
+            self.cond_base.is_some(),
+            self.cond_last_sql.as_deref().unwrap_or("")
+        )
+    }
+
+    /// 조건 바가 남긴 요청을 거둔다 — Enter = 감싼 SQL을 호스트에(같은 탭 재실행) · 복사 = 감싼 SQL 클립보드.
+    fn cond_take_requests(&mut self) {
+        if let Some(e) = self.cond.take_error() {
+            // 검증 실패 = 실행하지 않고 원인만(상자 테두리 빨강 + 상태줄 · 사용자 10-06).
+            self.status(tf(Msg::StCondInvalid, &[&e]));
+        }
+        if let Some(c) = self.cond.take_run() {
+            let base = self
+                .cond_base
+                .clone()
+                .unwrap_or_else(|| self.source_sql.clone());
+            let sql = crate::condbar::wrap_condition(&base, &c);
+            self.cond_base = Some(base);
+            self.cond_prev_sql = Some(self.source_sql.clone());
+            self.cond_last_sql = Some(sql.clone());
+            self.pending_cond_run = Some(sql);
+        }
+        if self.cond.take_copy_req() {
+            let base = self
+                .cond_base
+                .clone()
+                .unwrap_or_else(|| self.source_sql.clone());
+            let sql = crate::condbar::wrap_condition(&base, &self.cond.text());
+            self.pending_copy = Some((sql, 1));
+        }
+    }
+
+    /// 호스트: 조건 실행 요청(감싼 SQL · 한 번).
+    pub(crate) fn take_cond_run(&mut self) -> Option<String> {
+        self.pending_cond_run.take()
+    }
+
+    /// 호스트: 실행 오류가 왔다 — 그것이 **조건 바 실행**이었으면 결과는 그대로 두고 출처 문장만 직전 것으로 되돌린다(true).
+    /// 사용자 10-06 "구문 오류 뒤 결과 창이 비는 경우" — 오류는 토스트·상태줄로만.
+    pub(crate) fn cond_run_failed(&mut self) -> bool {
+        let Some(prev) = self.cond_prev_sql.take() else {
+            return false;
+        };
+        if self.cond_last_sql.as_deref() != Some(self.source_sql.as_str()) {
+            return false;
+        }
+        self.cond_last_sql = if prev == self.cond_base.clone().unwrap_or_default() {
+            None
+        } else {
+            Some(prev.clone())
+        };
+        self.set_source_sql(&prev);
+        true
+    }
+
+    /// 지금 글 입력이 그리드 안 상자(값 목록 검색 · 조건 바)로 가는 상태인가 — 호스트 라우팅·클립보드·표 편집 키 제외의 근거.
+    pub(crate) fn text_input_active(&self) -> bool {
+        self.vpick.is_open() || (self.cond_on && self.cond.is_focused())
+    }
+
+    /// 그 상자가 IME를 바라는가.
+    pub(crate) fn text_input_wants_ime(&self) -> bool {
+        self.vpick.wants_ime() || (self.cond_on && self.cond.is_focused())
+    }
+
+    /// 그 상자(호스트 `focused_textbox`).
+    pub(crate) fn text_input_textbox(&mut self) -> Option<&mut TextBox> {
+        if self.vpick.is_open() {
+            self.vpick.textbox_mut()
+        } else if self.cond_on && self.cond.is_focused() {
+            Some(self.cond.textbox_mut())
+        } else {
+            None
+        }
+    }
+
+    /// 그리드가 포커스를 잃었다 — 조건 바 상자 포커스를 거둔다(값 목록 팝업은 자기 바깥 클릭 규칙으로 닫힌다).
+    pub(crate) fn blur_text_input(&mut self) {
+        if self.cond.is_focused() {
+            self.cond.set_focused(false);
+            self.dirty = true;
+        }
+    }
+
+    /// 상자 글이 상자 밖 길로 바뀐 뒤(IME 확정·붙여넣기) — 다시 거르기/완성.
+    pub(crate) fn text_input_query_changed(&mut self) {
+        if self.vpick.is_open() {
+            self.vpick.query_changed();
+            self.dirty = true;
+        } else if self.cond_on && self.cond.is_focused() {
+            self.cond.query_changed();
+            self.dirty = true;
+        }
+    }
+
+    /// 값 목록 팝업이 떠 있는가(호스트 라우팅 = 팝업이 열려 있으면 마우스·키를 그리드가 먼저 받는다 · 시험).
+    pub(crate) fn value_pick_open(&self) -> bool {
+        self.vpick.is_open()
+    }
+
+    /// 열린 값 목록 팝업의 검색 상자(호스트 `focused_textbox` = IME·편집 명령 대상 · 10-06).
+    pub(crate) fn value_pick_textbox(&mut self) -> Option<&mut TextBox> {
+        self.vpick.textbox_mut()
+    }
+
+    /// 포인터가 그리드를 떠났다(호스트가 그리드 밖 MouseMove에서) — hover 툴팁·칩 hover를 지운다(hover 효과 즉시 취소 규칙 ·
+    /// 포커스가 다른 컨트롤일 때는 그리드가 밖의 MouseMove를 못 받아 빗금 표식 툴팁이 남던 잔상 · 10-06). 돌려주는 값 = 지운 것이 있다.
+    pub(crate) fn clear_hover_tips(&mut self) -> bool {
+        let had =
+            self.mark_hover.is_some() || self.chip_hover.is_some() || self.funnel_hover.is_some();
+        self.mark_hover = None;
+        self.chip_hover = None;
+        self.funnel_hover = None;
+        had
+    }
+
+    pub(crate) fn value_pick_mut(&mut self) -> &mut crate::valuepick::ValuePick {
+        &mut self.vpick
+    }
+
+    /// 팝업 [적용]과 같은 길(기동 명령 · 시험) — 결과를 바로 소비한다.
+    pub(crate) fn value_pick_apply(&mut self) {
+        self.vpick.apply();
+        if let Some(crate::valuepick::PickResult::Apply { col, values }) = self.vpick.take_result()
+        {
+            self.set_pick_values(col, &values);
+        }
+    }
+
+    /// ★ 열 `ci`의 값 목록 팝업 열기(깔때기 클릭 · 빗금 표식 클릭 · 메뉴 "값 목록…" · 기동 명령 `grid.funnel:<열>`) —
+    /// 고유값 = 받은 행 전체 · 처음 나온 순서 · NULL 제외 · 상한+1에서 멈춤(넘침 = "값이 더 있음") · 지금 걸린 `=`/IN 값은 체크.
+    pub(crate) fn open_value_pick(&mut self, ci: usize) {
+        if !self.filter_enabled {
+            return;
+        }
+        let Some(rs) = self.rs.as_ref() else {
+            return;
+        };
+        if ci >= rs.columns().len() || self.row_h <= 0 {
+            return;
+        }
+        let max = self.filter_values_max;
+        // ★ 값 목록 범위(사용자 10-06): 기본 = **다른 열**의 필터(AND)를 통과한 행의 값만 — 1번 열을 고르고 나면 2번 열 목록은
+        //   그 안에서 고를 수 있는 값만 보인다(엑셀 자동 필터와 같다). 자기 열의 필터는 빼야 이미 고른 값도 체크된 채 보인다.
+        //   OR 결합이면 "다른 필터 통과"가 뜻이 없어 전체.
+        let others: Vec<&Predicate> = self
+            .filters
+            .iter()
+            .filter(|p| p.col != ci && p.col < rs.columns().len())
+            .collect();
+        let cascade = self.values_scope_others && !self.filter_or && !others.is_empty();
+        let mut values = distinct_capped(
+            (0..rs.len())
+                .filter(|&r| !cascade || others.iter().all(|p| p.pass_value(rs.cell(r, p.col))))
+                .map(|r| rs.cell(r, ci))
+                .filter(|v| !matches!(v, Value::Null))
+                .map(|v| cell_text(v, "")),
+            max,
+        );
+        let more = values.len() > max;
+        values.truncate(max);
+        let chosen: Vec<String> = self
+            .filters
+            .iter()
+            .find(|p| p.col == ci && matches!(p.op, FilterOp::Eq | FilterOp::In))
+            .map(list_items)
+            .unwrap_or_default();
+        let pos = self.col_order.iter().position(|&c| c == ci).unwrap_or(0);
+        // 열이 화면 밖이면 보이게 가로 스크롤(기동 명령·메뉴 경로 · 협업 V1 ⑥ 10-06).
+        let mut cx = 0;
+        for (p, &c) in self.col_order.iter().enumerate() {
+            let w = self.col_w.get(c).copied().unwrap_or(80);
+            if p == pos {
+                let vis_w = (self.bounds.w - self.gutter_w).max(1);
+                if cx < self.scroll_x {
+                    self.scroll_x = cx;
+                } else if cx + w > self.scroll_x + vis_w {
+                    self.scroll_x = cx + w - vis_w;
+                }
+                break;
+            }
+            cx += w;
+        }
+        self.clamp();
+        let hdr = self.header_rect();
+        let cw = self.col_w.get(ci).copied().unwrap_or(80);
+        let anchor = Rect::new(self.col_x(pos), hdr.y, cw, hdr.h);
+        let host = self.menu_host();
+        self.menu.close();
+        self.mark_hover = None;
+        self.vpick.open(
+            ci,
+            anchor,
+            values,
+            more,
+            &chosen,
+            host,
+            self.live_scale,
+            self.row_h,
+            self.filter_popup_rows,
+        );
+    }
+
+    /// 값 목록 팝업의 결과 — 열 `col`의 값 필터를 `values`로(하나 = `=` · 여럿 = IN · 비면 그 열 필터 제거).
+    pub(crate) fn set_pick_values(&mut self, col: usize, values: &[String]) {
+        self.filters.retain(|p| p.col != col);
+        if values.is_empty() {
+            self.apply_sort();
+            return;
+        }
+        let op = if values.len() == 1 {
+            FilterOp::Eq
+        } else {
+            FilterOp::In
+        };
+        // 값에 쉼표·`|`가 있으면 인용해 묶는다(`"BOX,POWER PULSE"` · 사용자 10-06 "1개 골랐는데 0건").
+        let value = if op == FilterOp::Eq {
+            values[0].clone()
+        } else {
+            join_list(values)
+        };
+        self.add_filter(col, op, value);
     }
 
     /// 열의 고유값(받은 행 전체 · 처음 나온 순서 · NULL 제외) — 상한+1개까지(넘침 표시용). 메뉴를 열 때와 고를 때 같은 계산이라
@@ -3466,7 +3850,9 @@ impl Grid {
 
     /// 필터 유무·설정에 맞춰 필터 줄 높이를 맞춘다(바뀔 때만 `bounds`를 옮긴다 · 그리기 직전 한 곳).
     fn sync_strip(&mut self, s: f32) {
-        let want = if self.filter_strip && !self.filters.is_empty() && self.rs.is_some() {
+        let want = if self.rs.is_some() && self.cond_on {
+            self.cond.wanted_height(s)
+        } else if self.rs.is_some() && self.filter_strip && !self.filters.is_empty() {
             (26.0 * s).round() as i32
         } else {
             0
@@ -3491,6 +3877,14 @@ impl Grid {
         self.chips.clear();
         self.chips_clear = None;
         if strip.h <= 0 {
+            return;
+        }
+        // ★ 인라인 조건 입력란(사용자 10-06) — 켜져 있으면 칩 대신 조건 바.
+        if self.cond_on {
+            let host = self.menu_host();
+            self.cond.set_host(host);
+            self.cond.set_rect(strip, s);
+            self.cond.paint(dc, th, std::time::Instant::now());
             return;
         }
         let px = |v: f32| (v * s).round() as i32;
@@ -3586,6 +3980,15 @@ impl Grid {
         if self.strip_h <= 0 {
             return false;
         }
+        if self.cond_on {
+            let mut inv = Invalidations::default();
+            let hit = self.cond.on_event(ev, &mut inv);
+            self.cond_take_requests();
+            if self.cond.menu_open() || hit {
+                self.dirty = true;
+            }
+            return hit;
+        }
         let strip = self.strip_rect();
         let hit = |p: Point, chips: &[(usize, Rect, Rect)], clear: Option<Rect>| -> Option<usize> {
             if clear.is_some_and(|r| r.contains(p)) {
@@ -3647,6 +4050,9 @@ impl Grid {
     }
 
     pub(crate) fn set_result(&mut self, rs: ResultSet) {
+        self.cond
+            .set_columns(rs.columns.iter().map(|c| c.name.clone()).collect());
+        self.cond.set_dialect(self.dialect);
         let t = std::time::Instant::now();
         // 재조회 = 조회 컬럼 순서·정렬 초기화(이동·정렬 결과 무시 — 사용자 09-14).
         self.col_order = (0..rs.columns.len()).collect();
@@ -4191,13 +4597,7 @@ impl Grid {
                     .filters
                     .iter()
                     .find(|p| p.col == ci && matches!(p.op, FilterOp::Eq | FilterOp::In))
-                    .map(|p| {
-                        let mut items = split_list(&p.value);
-                        if p.op == FilterOp::Eq && items.is_empty() {
-                            items.push(p.value.clone());
-                        }
-                        items
-                    })
+                    .map(list_items)
                     .unwrap_or_default();
                 let mut kids: Vec<CtxItem> = values
                     .iter()
@@ -4218,6 +4618,8 @@ impl Grid {
                 f.push(CtxItem::submenu("filter.pick", t(Msg::MnFilterPick), kids));
             }
         }
+        // ★ 값 목록 팝업(검색 상자 + 체크 목록 · 깔때기 아이콘과 같은 길).
+        f.push(CtxItem::item("filter.values", t(Msg::MnFilterValues)));
         f.push(CtxItem::item("filter.regex", t(Msg::MnFilterRegex)));
         f.push(CtxItem::item("filter.null", t(Msg::MnFilterNull)));
         f.push(CtxItem::item("filter.notnull", t(Msg::MnFilterNotNull)));
@@ -4259,8 +4661,14 @@ impl Grid {
     fn open_header_menu(&mut self, ci: usize, x: i32, y: i32, scale: f32) {
         self.menu.set_scale(scale);
         self.menu_cell = Some((ci, None));
-        let mut items = self.filter_menu_items(ci, None);
-        items.push(CtxItem::Separator);
+        // 필터 기능을 껐으면(`grid.filter_enabled`) 필터 항목 전부 없음(사용자 10-06 · 협업 V1 ③a).
+        let mut items = if self.filter_enabled {
+            let mut f = self.filter_menu_items(ci, None);
+            f.push(CtxItem::Separator);
+            f
+        } else {
+            Vec::new()
+        };
         let sorted = self
             .sort_keys
             .iter()
@@ -4434,14 +4842,17 @@ impl Grid {
         ];
         // ★ 필터 ▸(T-181 · 77 §2-2): 우클릭한 셀의 열·값 기준 · 술어 AND 목록 · 조회용 SQL 복사.
         if let Some((ci, val)) = self.menu_cell.clone() {
-            let any = !self.filters.is_empty();
-            let f = self.filter_menu_items(ci, val.as_deref());
-            items.push(CtxItem::Separator);
-            let mut fi = CtxItem::submenu("filter", t(Msg::MnFilter), f);
-            if let CtxItem::Item { emph, .. } = &mut fi {
-                *emph = any;
+            // 필터 기능을 껐으면(`grid.filter_enabled`) 필터 ▸ 자체가 없다(사용자 10-06).
+            if self.filter_enabled {
+                let any = !self.filters.is_empty();
+                let f = self.filter_menu_items(ci, val.as_deref());
+                items.push(CtxItem::Separator);
+                let mut fi = CtxItem::submenu("filter", t(Msg::MnFilter), f);
+                if let CtxItem::Item { emph, .. } = &mut fi {
+                    *emph = any;
+                }
+                items.push(fi);
             }
-            items.push(fi);
             // ★ 외래 키 따라가기(T-180 ⑥): 단일 테이블 결과 · 외래 키 열 · 값 있음일 때만 활성.
             if let Some(table) = self.reveal_table() {
                 let _ = table;
@@ -4682,15 +5093,12 @@ impl Grid {
                 .iter_mut()
                 .find(|p| p.col == col && matches!(p.op, FilterOp::Eq | FilterOp::In))
             {
-                let mut items = split_list(&p.value);
-                if p.op == FilterOp::Eq && items.is_empty() {
-                    items.push(p.value.clone());
-                }
+                let mut items = list_items(p);
                 if !items.iter().any(|x| x.eq_ignore_ascii_case(&value)) {
                     items.push(value);
                 }
                 p.op = FilterOp::In;
-                p.value = items.join(", ");
+                p.value = join_list(&items);
                 self.apply_sort();
                 self.scroll_y = 0;
                 return Ok(());
@@ -4822,6 +5230,12 @@ impl Grid {
                 self.set_filter_or(!self.filter_or);
                 return;
             }
+            "values" => {
+                if let Some((ci, _)) = target {
+                    self.open_value_pick(ci);
+                }
+                return;
+            }
             _ => {}
         }
         let Some((ci, val)) = target else { return };
@@ -4839,24 +5253,18 @@ impl Grid {
                 .position(|p| p.col == ci && matches!(p.op, FilterOp::Eq | FilterOp::In));
             let present = pos.is_some_and(|i| {
                 let p = &self.filters[i];
-                let mut items = split_list(&p.value);
-                if p.op == FilterOp::Eq && items.is_empty() {
-                    items.push(p.value.clone());
-                }
+                let items = list_items(p);
                 items.iter().any(|c| c.eq_ignore_ascii_case(&v))
             });
             if present {
                 let i = pos.unwrap_or_default();
-                let mut items = split_list(&self.filters[i].value);
-                if self.filters[i].op == FilterOp::Eq && items.is_empty() {
-                    items.push(self.filters[i].value.clone());
-                }
+                let mut items = list_items(&self.filters[i]);
                 items.retain(|c| !c.eq_ignore_ascii_case(&v));
                 if items.is_empty() {
                     self.filters.remove(i);
                 } else {
                     self.filters[i].op = FilterOp::In;
-                    self.filters[i].value = items.join(", ");
+                    self.filters[i].value = join_list(&items);
                 }
                 self.apply_sort();
                 self.scroll_y = 0;
@@ -5157,7 +5565,9 @@ impl Grid {
         let a = self.bars.tick(now_ms) | tip;
         let b = self.hover.tick(now_ms);
         let c = self.poll_text();
-        a || b || c
+        let d = self.vpick.tick(now_ms);
+        let e = self.cond_on && self.cond.tick(now_ms);
+        a || b || c || d || e
     }
 
     pub(crate) fn bars_visible(&self) -> bool {
@@ -5184,10 +5594,57 @@ impl Grid {
     }
 
     pub(crate) fn on_event(&mut self, ev: &InputEvent, scale: f32) {
+        // ★ 값 목록 팝업이 떠 있으면 그것이 먼저(바깥 클릭 = 닫고 통과 · 결과 = 그 열 값 필터).
+        if self.vpick.is_open() {
+            // 팝업이 떠 있는 동안 표식 툴팁은 없다(포인터가 팝업으로 갔는데 툴팁이 남던 잔상 · 협업 V1 10-06).
+            self.mark_hover = None;
+            self.vpick.set_shift(self.shift);
+            let mut inv = Invalidations::default();
+            let consumed = self.vpick.on_event(ev, &mut inv);
+            if let Some(crate::valuepick::PickResult::Apply { col, values }) =
+                self.vpick.take_result()
+            {
+                self.set_pick_values(col, &values);
+            }
+            if consumed {
+                return;
+            }
+        }
+        // ★ 조건 바가 포커스면 키·글자·편집 명령(전체 선택·되돌리기)은 그 상자가 먼저(그리드 전체 선택·셀 편집 키보다 ·
+        //   사용자 10-06 "Ctrl+A가 그리드 전체 선택").
+        if self.cond_on
+            && self.cond.is_focused()
+            && matches!(
+                ev,
+                InputEvent::Key { .. }
+                    | InputEvent::Char { .. }
+                    | InputEvent::SelectAll
+                    | InputEvent::Undo
+                    | InputEvent::Redo
+            )
+            && self.strip_event(ev)
+        {
+            return;
+        }
         // 열린 우클릭 메뉴가 먼저(바깥 클릭 = 닫고 통과).
         // ★ 필터 표식 hover(툴팁 대상) — 빗금 표식 사각형 안에서만.
         if let InputEvent::MouseMove { x, y } = *ev {
             let p = Point { x, y };
+            // hover 모드 깔때기 — 마우스 아래 열 머리(원본 index) · 바뀌면 다시 그린다(사건 없는 그림 변화 = `dirty`).
+            let fh = if self.funnel_mode == FunnelMode::Hover
+                && self.rs.is_some()
+                && self.row_h > 0
+                && self.header_rect().contains(p)
+            {
+                self.header_pos_at(x)
+                    .and_then(|pos| self.col_order.get(pos).copied())
+            } else {
+                None
+            };
+            if fh != self.funnel_hover {
+                self.funnel_hover = fh;
+                self.dirty = true;
+            }
             let hit = self
                 .filters
                 .iter()
@@ -5537,6 +5994,22 @@ impl Grid {
             let hdr = self.header_rect();
             match *ev {
                 InputEvent::MouseDown { x, y, shift, .. } if hdr.contains(Point { x, y }) => {
+                    // ★ 깔때기 아이콘 · 필터 빗금 표식 클릭 = 값 목록 팝업(정렬·드래그보다 먼저).
+                    let p = Point { x, y };
+                    let funnel =
+                        self.funnel_rects
+                            .iter()
+                            .find(|(_, r)| r.contains(p))
+                            .map(|(ci, _)| *ci)
+                            .or_else(|| {
+                                self.filters.iter().map(|f| f.col).find(|&ci| {
+                                    self.mark_rect_of(ci).is_some_and(|r| r.contains(p))
+                                })
+                            });
+                    if let Some(ci) = funnel {
+                        self.open_value_pick(ci);
+                        return;
+                    }
                     if let Some(ci) = self.header_edge_at(x) {
                         // 같은 경계를 400ms 안에 다시 누르면 자동 맞춤(내용 폭 · 한계 안에서).
                         let now = std::time::Instant::now();
@@ -5751,13 +6224,15 @@ impl Grid {
         };
         let null = self.null_text.clone();
         let (lo, hi) = self.col_bounds(dc, s, pad);
+        // 깔때기 아이콘 여유 = 머리 이름 폭에 더한다(값 폭이 더 넓으면 그쪽이 결정 · 10-06).
+        let fun = self.funnel_allow();
         if self.col_w.is_empty() {
             self.col_w = rs
                 .columns()
                 .iter()
                 .enumerate()
                 .map(|(i, c)| {
-                    let mut w = dc.text_width(&c.name);
+                    let mut w = dc.text_width(&c.name) + fun;
                     for row in rs.rows().take(200) {
                         if let Some(v) = row.get(i) {
                             w = w.max(dc.text_width(&cell_text(v, &null)));
@@ -5771,13 +6246,17 @@ impl Grid {
             // 헤더 이름(+ 정렬/필터 표식이 보이면 그 폭 · 사용자 09-29) + 전 행(최대 5,000행) 중 가장 넓은 값 → [최소, 최대].
             let mut w = rs.columns().get(ci).map_or(0, |c| dc.text_width(&c.name));
             let sort_pos = self.sort_keys.iter().position(|(k, _)| *k == ci);
-            let filtered = self.filters.iter().any(|p| p.col == ci);
-            if sort_pos.is_some() || filtered {
-                let g = (self.row_h * 2 / 5).max(6);
-                let gap = (g / 3).max(2);
-                let nw = sort_pos
-                    .filter(|_| self.sort_keys.len() > 1)
-                    .map_or(0, |i| dc.text_width(&(i + 1).to_string()));
+            let filtered = self.filter_enabled && self.filters.iter().any(|p| p.col == ci);
+            let g = self.funnel_g();
+            let gap = (g / 3).max(2);
+            // 깔때기 자리(필터 걸림 = 빗금 깔때기 · 아니면 표시 방법에 따른 여유) + 정렬 표식(+순번).
+            w += if filtered { g + gap } else { fun };
+            if let Some(i) = sort_pos {
+                let nw = if self.sort_keys.len() > 1 {
+                    dc.text_width(&(i + 1).to_string())
+                } else {
+                    0
+                };
                 w += g + gap + nw + if nw > 0 { gap } else { 0 };
             }
             for row in rs.rows().take(5000) {
@@ -6026,8 +6505,11 @@ impl Grid {
         let hcells = Rect::new(gx0, header.y, (b.right() - gx0).max(0), header.h);
         let mut x = gx0 - self.scroll_x;
         self.mark_rects.clear();
+        self.funnel_rects.clear();
         let dragging = self.hdr_drag.as_ref().filter(|d| d.active);
         let mut ghost: Option<(Rect, String)> = None;
+        // ★ 표식(깔때기·정렬 ▲/▼·순번)이 뒤에 생겨 열 이름이 잘리면 열을 **그만큼 넓힌다**(늘리기만 · 상한 안 · 협업 V1 ③d 10-06).
+        let mut grow: Vec<(usize, i32)> = Vec::new();
         for (pos, &ci) in self.col_order.iter().enumerate() {
             let Some(c) = rs.columns().get(ci) else {
                 continue;
@@ -6050,72 +6532,73 @@ impl Grid {
                 // 선택에 걸린 컬럼 헤더 = 행번호 강조와 **같은 색**(사용자 09-22 · n×m 선택이면 걸린 열 전부).
                 dc.fill_rect_alpha(clip, th.sel_bg, Self::sel_alphas(self.focused, 0.0).1);
             }
-            // ★ 헤더 표식(사용자 09-29 "정렬과 필터를 한 표식에"): 정렬 = 채운 ▲/▼(+ 결합 순번) · 필터만 = 빗금 ▽ ·
-            //   정렬 + 필터 = 빗금 채운 화살표 · 필터가 걸린 열은 이름을 강조색으로. 도형으로 그린다(글꼴 글리프 X · 3-OS 동일).
-            let filtered_col = self.filters.iter().any(|p| p.col == ci);
+            // ★ 헤더 표식(사용자 10-06 "필터 표시와 정렬을 분리"): 오른쪽 끝 = **깔때기 자리**(필터 걸림 = 강조색 **빗금 깔때기** ·
+            //   안 걸림 = 표시 방법(always/hover/none)에 따라 흐린 민무늬 깔때기 = 값 목록 버튼) · 그 왼쪽 = **정렬** 채운 ▲/▼(+ 결합 순번 ·
+            //   민무늬) · 필터가 걸린 열은 이름을 강조색으로. 도형으로 그린다(글꼴 글리프 X · 3-OS 동일). 크기 = `funnel_g`(행 높이 35 %).
+            let filtered_col = self.filter_enabled && self.filters.iter().any(|p| p.col == ci);
             let sort_pos = self.sort_keys.iter().position(|(k, _)| *k == ci);
-            let name_clip = if filtered_col || sort_pos.is_some() {
-                let g = (self.row_h * 2 / 5).max(6);
+            let want_funnel = self.want_plain_funnel(ci, filtered_col);
+            let name_clip = if filtered_col || sort_pos.is_some() || want_funnel {
+                let g = self.funnel_g();
                 let gap = (g / 3).max(2);
-                let num = sort_pos
-                    .filter(|_| self.sort_keys.len() > 1)
-                    .map(|i| (i + 1).to_string());
-                let nw = num.as_ref().map_or(0, |n| dc.text_width(n));
                 let right = x + cw - pad;
-                if let Some(n) = &num {
-                    let hy = dc.text_center_y(header.y, header.h);
-                    dc.text(right - nw, hy, clip, n, th.accent);
-                }
-                let gx = right - nw - if nw > 0 { gap } else { 0 } - g;
                 let cy = header.y + header.h / 2;
-                let (top, bottom) = (cy - g / 2, cy + g / 2);
-                // 픽셀 (px, py)가 도형 안이고 (px+py) % 3 == 0 → 바탕색으로 파냄 = 사선 빗금.
-                let hatch = |dc: &mut dyn DrawCtx, inside: &dyn Fn(f32, f32) -> bool| {
-                    for py in top..=bottom {
-                        for px in gx..=gx + g {
-                            if (px + py).rem_euclid(3) == 0
-                                && inside(px as f32 + 0.5, py as f32 + 0.5)
-                            {
-                                dc.fill_rect(Rect::new(px, py, 1, 1), th.panel_bg);
+                let mut used = 0;
+                // ① 깔때기 자리(오른쪽 끝).
+                if filtered_col || want_funnel {
+                    let fr = Rect::new(right - g, cy - g / 2, g, g);
+                    if filtered_col {
+                        funnel_glyph(dc, fr, th.accent);
+                        // 픽셀 (px, py)가 도형 안이고 (px+py) % 3 == 0 → 바탕색으로 파냄 = 사선 빗금.
+                        for py in fr.y..=fr.bottom() {
+                            for px in fr.x..=fr.right() {
+                                if (px + py).rem_euclid(3) == 0
+                                    && funnel_contains(fr, px as f32 + 0.5, py as f32 + 0.5)
+                                {
+                                    dc.fill_rect(Rect::new(px, py, 1, 1), th.panel_bg);
+                                }
                             }
                         }
+                        // 툴팁 대상 = 깔때기 사각형 · 필터가 걸린 열만(사용자 09-29).
+                        self.mark_rects.push((
+                            ci,
+                            Rect::new(fr.x - pad / 2, header.y, g + pad, header.h)
+                                .intersection(&hcells),
+                        ));
+                    } else {
+                        funnel_glyph(dc, fr, th.text_dim);
                     }
-                };
-                match sort_pos {
-                    None => {
-                        // 필터만 = 빗금 동그라미(정렬된 것처럼 보이지 않게 · 사용자 09-29).
-                        dc.fill_ellipse(Rect::new(gx, top, g, g), th.accent);
-                        let (ccx, ccy, r) = (
-                            gx as f32 + g as f32 / 2.0,
-                            top as f32 + g as f32 / 2.0,
-                            g as f32 / 2.0,
-                        );
-                        hatch(dc, &|x, y| nexa_ctl::shape::disc(x, y, ccx, ccy, r));
-                    }
-                    Some(i) => {
-                        let asc = self.sort_keys[i].1;
-                        let (a, b, c) = if asc {
-                            ((gx + g / 2, top), (gx + g, bottom), (gx, bottom))
-                        } else {
-                            ((gx, top), (gx + g, top), (gx + g / 2, bottom))
-                        };
-                        dc.fill_triangle(a, b, c, th.accent);
-                        if filtered_col {
-                            let (af, bf, cf) = (
-                                (a.0 as f32 + 0.5, a.1 as f32 + 0.5),
-                                (b.0 as f32 + 0.5, b.1 as f32 + 0.5),
-                                (c.0 as f32 + 0.5, c.1 as f32 + 0.5),
-                            );
-                            hatch(dc, &|x, y| nexa_ctl::shape::tri(x, y, af, bf, cf));
-                        }
-                    }
+                    // 클릭 = 값 목록(민무늬·빗금 둘 다).
+                    self.funnel_rects.push((
+                        ci,
+                        Rect::new(fr.x - pad / 2, header.y, g + pad, header.h)
+                            .intersection(&hcells),
+                    ));
+                    used = g;
                 }
-                let used = g + nw + if nw > 0 { gap } else { 0 };
-                if filtered_col {
-                    // 툴팁 대상 = 표식(+순번) 사각형 · 필터가 걸린 열만(사용자 09-29).
-                    let mr = Rect::new(right - used, header.y, used + pad, header.h)
-                        .intersection(&hcells);
-                    self.mark_rects.push((ci, mr));
+                // ② 정렬 표식(깔때기 왼쪽 · 민무늬 · 결합 순번은 화살표 오른쪽).
+                if let Some(i) = sort_pos {
+                    let num = (self.sort_keys.len() > 1).then(|| (i + 1).to_string());
+                    let nw = num.as_ref().map_or(0, |n| dc.text_width(n));
+                    let mut sx_right = right - if used > 0 { used + gap } else { 0 };
+                    if let Some(n) = &num {
+                        let hy = dc.text_center_y(header.y, header.h);
+                        dc.text(sx_right - nw, hy, clip, n, th.accent);
+                        sx_right -= nw + gap;
+                    }
+                    let gx = sx_right - g;
+                    let (top, bottom) = (cy - g / 2, cy + g / 2);
+                    let (a, b, c) = if self.sort_keys[i].1 {
+                        ((gx + g / 2, top), (gx + g, bottom), (gx, bottom))
+                    } else {
+                        ((gx, top), (gx + g, top), (gx + g / 2, bottom))
+                    };
+                    dc.fill_triangle(a, b, c, th.accent);
+                    used = right - gx;
+                }
+                let need = dc.text_width(&c.name) + pad * 2 + used + gap;
+                if cw < need && need <= hi {
+                    grow.push((ci, need));
                 }
                 Rect::new(x, header.y, (cw - pad - used - gap).max(0), header.h)
                     .intersection(&hcells)
@@ -6145,6 +6628,12 @@ impl Grid {
             );
             let hy = dc.text_center_y(header.y, header.h);
             dc.text(b.x + pad, hy, header, "#", th.text_dim);
+        }
+        for (ci, w) in grow {
+            if let Some(cw) = self.col_w.get_mut(ci) {
+                *cw = w;
+                self.dirty = true;
+            }
         }
         // 드래그 고스트 헤더(커서 x 추종 · 세로는 헤더 행 고정 · 뷰 안 클램프) — 헤더 층 맨 마지막.
         if let Some((g, name)) = ghost {
@@ -6701,11 +7190,65 @@ impl PartialEq for Predicate {
 
 /// 값 목록 구분(`,` · `|` · 앞뒤 공백 제거 · 빈 항목 제외).
 fn split_list(v: &str) -> Vec<String> {
-    v.split([',', '|'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect()
+    // ★ 큰따옴표로 감싼 항목은 안의 쉼표·`|`를 구분자로 보지 않는다(`""` = 따옴표 하나 · CSV식 · 사용자 10-06 "값에 쉼표").
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut chars = v.chars().peekable();
+    while let Some(c) = chars.next() {
+        if quoted {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    quoted = false;
+                }
+            } else {
+                cur.push(c);
+            }
+        } else if c == '"' && cur.trim().is_empty() {
+            cur.clear();
+            quoted = true;
+        } else if c == ',' || c == '|' {
+            let t = cur.trim();
+            if !t.is_empty() {
+                out.push(t.to_string());
+            }
+            cur.clear();
+        } else {
+            cur.push(c);
+        }
+    }
+    let t = cur.trim();
+    if !t.is_empty() {
+        out.push(t.to_string());
+    }
+    out
+}
+
+/// 값 목록을 한 글로 — 쉼표·`|`·따옴표가 든 항목은 큰따옴표로 감싼다(`split_list`가 되돌린다).
+fn join_list(items: &[String]) -> String {
+    items
+        .iter()
+        .map(|s| {
+            if s.contains([',', '|', '"']) || s != s.trim() {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 술어의 값 목록 — `=`는 값 통째로 하나(쉼표가 들어 있어도 쪼개지 않는다) · IN은 `split_list`.
+fn list_items(p: &Predicate) -> Vec<String> {
+    if p.op == FilterOp::Eq {
+        vec![p.value.clone()]
+    } else {
+        split_list(&p.value)
+    }
 }
 
 /// 정규식 컴파일(사용자 패턴 · `(?`로 시작하지 않으면 `(?i)` 대소문자 무시).
@@ -6872,7 +7415,7 @@ impl Predicate {
                 if items.is_empty() {
                     "1=1".to_string()
                 } else {
-                    format!("{c} IN ({})", items.join(", "))
+                    format!("{c} IN ({})", join_list(&items))
                 }
             }
             // 정규식은 방언·값 목록이 필요해 [`Grid::regex_sql`]이 만든다.
@@ -6947,7 +7490,7 @@ impl Predicate {
         if items.is_empty() {
             (format!("{c} IN (NULL)"), note)
         } else {
-            (format!("{c} IN ({})", items.join(", ")), note)
+            (format!("{c} IN ({})", join_list(&items)), note)
         }
     }
 
@@ -6960,6 +7503,63 @@ impl Predicate {
             )
             && regex_to_like(&self.value).is_none()
     }
+}
+
+/// 열 머리 깔때기 표시 방법(설정 `grid.filter_funnel` · 사용자 10-06).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FunnelMode {
+    Always,
+    Hover,
+    None,
+}
+
+impl FunnelMode {
+    pub(crate) fn parse(s: &str) -> Self {
+        match s.trim() {
+            "hover" => FunnelMode::Hover,
+            "none" | "off" => FunnelMode::None,
+            _ => FunnelMode::Always,
+        }
+    }
+}
+
+/// 깔때기 도형의 안쪽 판정(빗금용 · `funnel_glyph`와 같은 치수) — 컵(사다리꼴) 또는 꼭지.
+fn funnel_contains(r: Rect, px: f32, py: f32) -> bool {
+    let g = r.w.max(6) as f32;
+    let cup_h = ((r.w.max(6) * 55 / 100).max(3)) as f32;
+    let stem_w = ((r.w.max(6) / 3).max(2)) as f32;
+    let (x0, y0) = (r.x as f32, r.y as f32);
+    let (lx, ly) = (px - x0, py - y0);
+    if lx < 0.0 || lx > g || ly < 0.0 || ly > g {
+        return false;
+    }
+    let sl = g / 2.0 - stem_w / 2.0;
+    let sr = sl + stem_w;
+    if ly <= cup_h {
+        // 사다리꼴: 위 폭 g → 아래 폭 stem_w.
+        let t = ly / cup_h;
+        let left = sl * t;
+        let right = g - (g - sr) * t;
+        lx >= left && lx <= right
+    } else {
+        lx >= sl && lx <= sr
+    }
+}
+
+/// 깔때기 — 위가 넓은 **사다리꼴 컵**(위 폭 g · 아래 폭 = 꼭지 폭 · 높이 55 %) + 아래로 내려오는 꼭지. 도형으로(글꼴 글리프 X ·
+/// 3-OS 동일) · `r` = 정사각형 자리. 삼각형 하나로 그리면 작은 크기에서 `T`처럼 보였다(협업 V1 10-06).
+fn funnel_glyph(dc: &mut dyn DrawCtx, r: Rect, color: nexa_ctl::Color) {
+    let g = r.w.max(6);
+    let cup_h = (g * 55 / 100).max(3);
+    let stem_w = (g / 3).max(2);
+    let (l, rgt) = (r.x, r.x + g);
+    let sl = r.x + g / 2 - stem_w / 2;
+    let sr = sl + stem_w;
+    let yb = r.y + cup_h;
+    // 사다리꼴 = 삼각형 둘(왼쪽 위·오른쪽 위·꼭지 오른쪽) + (왼쪽 위·꼭지 오른쪽·꼭지 왼쪽).
+    dc.fill_triangle((l, r.y), (rgt, r.y), (sr, yb), color);
+    dc.fill_triangle((l, r.y), (sr, yb), (sl, yb), color);
+    dc.fill_rect(Rect::new(sl, yb - 1, stem_w, r.y + g - yb + 1), color);
 }
 
 /// 처음 나온 순서를 지키는 distinct — 해시 집합 O(n) · `cap`+1개가 모이면 멈춘다(상한 초과를 알 수 있게 · 사용자 09-30). 순수.
@@ -7081,6 +7681,178 @@ mod tests {
     use super::*;
     use nsql_core::{Column, ResultSet};
 
+    /// 사용자 10-06 — 값에 쉼표가 있어도 값 목록 적용이 그 값에 맞고(인용) 다시 열면 체크돼 있다 · 종속 목록 = 다른 열 필터 통과 행의 값만.
+    #[test]
+    fn value_pick_with_commas_and_cascade() {
+        let mut g = grid_with(&[100, 100]);
+        let rs = ResultSet {
+            columns: vec![
+                Column {
+                    name: "t".into(),
+                    type_name: String::new(),
+                },
+                Column {
+                    name: "n".into(),
+                    type_name: String::new(),
+                },
+            ],
+            rows: vec![
+                vec![
+                    Value::Str("RM".into()),
+                    Value::Str("BOX,POWER PULSE,SMF".into()),
+                ],
+                vec![Value::Str("RM".into()), Value::Str("GSL700".into())],
+                vec![Value::Str("FG".into()), Value::Str("ES100".into())],
+            ],
+        };
+        g.set_result(rs);
+        g.row_h = 20;
+        // 쉼표 값 하나 고르기 → `=` 그대로 → 1행.
+        g.set_pick_values(1, &["BOX,POWER PULSE,SMF".to_string()]);
+        assert_eq!(g.rows(), 1);
+        g.open_value_pick(1);
+        assert!(
+            g.value_pick_mut()
+                .dump()
+                .contains("[x] BOX,POWER PULSE,SMF"),
+            "{}",
+            g.value_pick_mut().dump()
+        );
+        g.value_pick_mut().close();
+        // 쉼표 값 + 다른 값 = IN(인용) → 2행 · 조회 SQL에도 두 항목.
+        g.set_pick_values(
+            1,
+            &["BOX,POWER PULSE,SMF".to_string(), "GSL700".to_string()],
+        );
+        assert_eq!(g.rows(), 2);
+        assert_eq!(
+            split_list(&g.filters[0].value),
+            vec!["BOX,POWER PULSE,SMF", "GSL700"]
+        );
+        // 종속 목록: t = FG를 걸면 n 목록은 ES100만 · 범위 = all이면 셋 다.
+        g.set_pick_values(1, &[]);
+        g.set_pick_values(0, &["FG".to_string()]);
+        g.open_value_pick(1);
+        assert!(
+            g.value_pick_mut().dump().contains("visible=1/1"),
+            "{}",
+            g.value_pick_mut().dump()
+        );
+        g.value_pick_mut().close();
+        g.set_filter_values_scope("all");
+        g.open_value_pick(1);
+        assert!(g.value_pick_mut().dump().contains("visible=3/3"));
+        g.value_pick_mut().close();
+        // 엑셀 검색(사용자 10-06): 검색 결과로 확인 = 그 값으로 바꿈 · "필터에 추가" = 기존 값에 더함 · 검색어는 저장하지 않는다.
+        g.value_pick_mut().close();
+        //   (열 0의 FG 필터는 종속 목록을 줄이므로 먼저 푼다.)
+        g.set_pick_values(0, &[]);
+        g.set_pick_values(1, &["ES100".to_string()]);
+        g.open_value_pick(1);
+        g.value_pick_mut().set_search("GSL");
+        g.value_pick_apply();
+        let col1 = |g: &Grid| {
+            g.filters
+                .iter()
+                .find(|p| p.col == 1)
+                .map(|p| p.value.clone())
+        };
+        assert_eq!(col1(&g).as_deref(), Some("GSL700"), "바꿈");
+        g.open_value_pick(1);
+        assert!(
+            g.value_pick_mut().dump().contains("search= "),
+            "검색어 저장 없음"
+        );
+        g.value_pick_mut().set_search("ES");
+        g.value_pick_mut().toggle_add_to_filter();
+        g.value_pick_apply();
+        assert_eq!(
+            split_list(&col1(&g).unwrap_or_default()),
+            vec!["GSL700", "ES100"],
+            "추가"
+        );
+        g.set_pick_values(1, &[]);
+        g.set_pick_values(0, &["FG".to_string()]);
+        // 자기 열 필터는 목록 범위에서 뺀다(고른 값이 체크된 채 다른 값도 보인다).
+        g.set_filter_values_scope("others");
+        g.open_value_pick(0);
+        let d = g.value_pick_mut().dump();
+        assert!(d.contains("[x] FG") && d.contains("[ ] RM"), "{d}");
+    }
+
+    /// 사용자 10-06 — 필터 사용 여부: 끄면 걸린 필터가 풀리고 값 목록도 열리지 않는다 · 표시 방법 파싱 · 깔때기 안쪽 판정.
+    #[test]
+    fn filter_enabled_off_clears_and_blocks() {
+        let mut g = grid_with(&[100]);
+        let rs = ResultSet {
+            columns: vec![Column {
+                name: "c".into(),
+                type_name: String::new(),
+            }],
+            rows: vec![vec![Value::Str("a".into())], vec![Value::Str("b".into())]],
+        };
+        g.set_result(rs);
+        g.row_h = 20;
+        g.add_filter(0, FilterOp::Eq, "a".into());
+        assert_eq!(g.rows(), 1);
+        g.set_filter_enabled(false);
+        assert!(g.filters.is_empty() && g.rows() == 2);
+        g.open_value_pick(0);
+        assert!(!g.value_pick_open(), "꺼져 있으면 값 목록도 없다");
+        g.set_filter_enabled(true);
+        g.open_value_pick(0);
+        assert!(g.value_pick_open());
+        assert_eq!(FunnelMode::parse("hover"), FunnelMode::Hover);
+        assert_eq!(FunnelMode::parse("none"), FunnelMode::None);
+        assert_eq!(FunnelMode::parse("anything"), FunnelMode::Always);
+        let r = Rect::new(0, 0, 10, 10);
+        assert!(funnel_contains(r, 5.0, 1.0), "컵 가운데 위");
+        assert!(funnel_contains(r, 5.0, 9.0), "꼭지");
+        assert!(!funnel_contains(r, 0.5, 9.0), "꼭지 옆 빈 곳");
+        assert!(!funnel_contains(r, 12.0, 5.0), "밖");
+    }
+
+    /// T-181 후속 — 값 목록 팝업: 열면 고유값(NULL 제외) · 지금 걸린 값 체크 · 적용 = 하나 `=` / 여럿 IN / 비면 제거.
+    #[test]
+    fn value_pick_opens_and_applies() {
+        let mut g = grid_with(&[100]);
+        let rs = ResultSet {
+            columns: vec![Column {
+                name: "c".into(),
+                type_name: String::new(),
+            }],
+            rows: vec![
+                vec![Value::Str("b".into())],
+                vec![Value::Null],
+                vec![Value::Str("a".into())],
+                vec![Value::Str("b".into())],
+            ],
+        };
+        g.set_result(rs);
+        g.row_h = 20;
+        g.add_filter(0, FilterOp::Eq, "a".into());
+        g.open_value_pick(0);
+        assert!(g.value_pick_open());
+        let d = g.value_pick_mut().dump();
+        assert!(d.contains("[ ] b") && d.contains("[x] a"), "{d}");
+        g.value_pick_mut().toggle(0); // + b → 전부 체크 = 필터 없음(엑셀)
+        g.value_pick_apply();
+        assert!(!g.value_pick_open());
+        assert!(g.filters.is_empty(), "전부 체크 = 필터 없음");
+        assert_eq!(g.rows(), 4);
+        // 하나만 끄면 나머지 값 목록(IN).
+        g.open_value_pick(0);
+        g.value_pick_mut().toggle(1); // a 끔 → b만
+        g.value_pick_apply();
+        assert_eq!(g.filters.len(), 1);
+        assert_eq!(g.filters[0].op, FilterOp::Eq);
+        assert_eq!(g.filters[0].value, "b");
+        assert_eq!(g.rows(), 2);
+        g.set_pick_values(0, &[]);
+        assert!(g.filters.is_empty());
+        assert_eq!(g.rows(), 4);
+    }
+
     /// T-181 값 고르기 — 고유값은 받은 행 순서 · NULL 제외 · 상한+1 · 토글 = 넣기(`=` → 목록) / 빼기(마지막 = 술어 제거).
     #[test]
     fn filter_pick_toggles_values() {
@@ -7190,6 +7962,7 @@ mod tests {
     /// 끝 ×는 전부 지운다 · 줄이 사라지면 영역이 되돌아온다 · 설정을 끄면 줄이 없다 · 줄 안의 클릭은 먹는다.
     #[test]
     fn filter_strip_takes_a_row_and_chips_remove_filters() {
+        // 조건 바가 켜져 있으면 그 줄은 조건 바 — 칩 시험은 끈다(사용자 10-06 용도 변경).
         struct Dc;
         impl DrawCtx for Dc {
             fn fill_rect(&mut self, _r: Rect, _c: nexa_ctl::theme::Color) {}
@@ -7209,6 +7982,7 @@ mod tests {
             }
         }
         let mut g = grid_with(&[100, 100]);
+        g.set_condition_bar(false);
         let outer = Rect::new(0, 0, 600, 300);
         g.set_bounds(outer);
         let th = Theme::dark();

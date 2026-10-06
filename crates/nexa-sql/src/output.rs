@@ -93,10 +93,6 @@ impl OutputView {
         std::mem::take(&mut self.unread)
     }
 
-    pub(crate) fn unread(&self) -> usize {
-        self.unread
-    }
-
     /// 두 번 클릭으로 고른 오류 줄(편집기 줄 번호 · 1부터).
     pub(crate) fn take_goto(&mut self) -> Option<usize> {
         self.goto.take()

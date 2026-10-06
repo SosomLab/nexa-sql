@@ -46,6 +46,7 @@ mod ext_panel;
 mod ext_view;
 mod output;
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
+mod condbar;
 mod extensions;
 mod extfile;
 mod file_win;
@@ -100,6 +101,7 @@ mod toolicons;
 mod txlog_win;
 mod txwarn;
 mod undofile;
+mod valuepick;
 mod vars_win;
 mod varsfile;
 mod winfocus;
@@ -293,6 +295,8 @@ struct App {
     run_stmt_enabled: bool,
     /// 툴바 ■(실행 중지) 활성 캐시(= busy · 시작값 true = 첫 동기화에서 비활성으로).
     run_stop_enabled: bool,
+    /// 툴바 로그 버튼(`view.log`)의 켜짐 표시(로그 창 열림 = 강조색 · 사용자 10-06 "토글 버튼") — 바뀔 때만 다시 그린다.
+    log_btn_on: bool,
     /// 파일 싱크 허브(설정 `log.file` · 배경 스레드 · 비면 None).
     log_hub: Option<nsql_log::LogHub>,
     /// 파일 대화상자의 용도(편집기 열기/저장 · 로그 내보내기).
@@ -1601,6 +1605,7 @@ fn main() {
         run_toast_next: None,
         run_stmt_enabled: true,
         run_stop_enabled: true,
+        log_btn_on: false,
         log_hub: None,
         file_purpose: FilePurpose::Editor,
         exit_requested: false,
@@ -1676,6 +1681,7 @@ fn main() {
                 id: 0,
                 title: String::new(),
                 pinned: false,
+                sys_pinned: false,
                 named: false,
                 sql: String::new(),
                 grid: grid::Grid::default(),
@@ -2161,6 +2167,8 @@ const TOOLBAR_ITEMS: &[(&str, Msg)] = &[
     ("file.open", Msg::TipOpen),
     ("file.save", Msg::TipSave),
     ("file.save_as", Msg::TipSaveAs),
+    ("edit.undo", Msg::MnUndo),
+    ("edit.redo", Msg::MnRedo),
     ("run.statement", Msg::TipRunStatement),
     ("run.stop", Msg::TipRunStop),
     ("run.all", Msg::TipRunAll),

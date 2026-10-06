@@ -1356,7 +1356,10 @@ impl App {
                         .set_phase(self.sess.run_card, runtoast::Phase::Error(summary.clone()));
                     // 오류가 나도 결과 영역은 기본 형태(빈 그리드)로 — 본문은 로그 창·상태줄·토스트(사용자 09-17).
                     if let Some(g) = self.run_grid() {
-                        g.clear_result();
+                        // 조건 바 실행(T-181 후속)의 오류면 결과를 비우지 않는다(토스트·상태줄만 · 사용자 10-06).
+                        if !g.cond_run_failed() {
+                            g.clear_result();
+                        }
                     }
                     // ★ 같은 오류를 두 번 보이지 않는다(사용자 09-19 "오류가 왜 2번 출력되나"): 실행 상태 카드(`run.toast`)가
                     //   이미 분류된 오류 요약을 빨간 카드로 보여 주므로, 카드가 켜져 있으면 오류 토스트는 띄우지 않는다
