@@ -229,15 +229,57 @@ impl Sample {
 }
 
 /// 전체 표본(창이 열려 있을 때 · `mem.refresh_ms`마다) — OS 조회 + 부품 보고.
-pub(crate) fn sample(sources: &[&dyn MemSource], extra: impl FnOnce(&mut Acc)) -> Sample {
+/// `heap` = `Some((used, held))`이면 **힙 통계를 다시 재지 않고** 그 값을 쓴다(`os::sys_lite` · 가벼운 OS 요약만) ·
+/// `None`이면 전부 잰다(`os::sys` = 힙 걷기 포함).
+///
+/// ★ T-310 뿌리(10-08 계측 · `NSQL_TRACE_MEMWIN`): 표본 22 ms 중 **OS 요약이 10~21 ms**였고 그 거의 전부가 힙 통계
+/// (Windows `HeapSummary` = 프로세스 힙 걷기 · 결과 10만 행이면 블록 수 비례)였다 — 부품 보고 수십 µs · 전용 WS 2.5 ms.
+/// 힙 통계는 호스트가 `mem.heap_refresh_ms`(5 s)마다만 새로 재고, 그 사이 표본은 지난 값을 쓴다.
+pub(crate) fn sample(
+    sources: &[&dyn MemSource],
+    extra: impl FnOnce(&mut Acc),
+    heap: Option<(u64, u64)>,
+) -> Sample {
+    let tr = trace_on();
+    let t0 = std::time::Instant::now();
     let mut data = Acc::default();
     for s in sources {
         s.mem_report(&mut data);
     }
+    let t1 = std::time::Instant::now();
     extra(&mut data);
-    let mut sys = os::sys();
+    let t2 = std::time::Instant::now();
+    let mut sys = match heap {
+        Some((used, held)) => {
+            let mut s = os::sys_lite();
+            s.heap_used = used;
+            s.heap_held = held;
+            s
+        }
+        None => os::sys(),
+    };
+    let t3 = std::time::Instant::now();
     sys.private_ws = os::private_ws(&sys);
+    if tr {
+        // 진단: 표본 한 번의 비용을 네 단계로 가른다(부품 보고 · 그리드/표면/로그 · OS 요약(힙 포함 여부) · 전용 WS 페이지 걷기).
+        let us = |a: std::time::Instant, b: std::time::Instant| (b - a).as_micros();
+        eprintln!(
+            "[memwin] parts: sources {} us · extra {} us · sys {} us ({}) · private_ws {} us (resident {} pages)",
+            us(t0, t1),
+            us(t1, t2),
+            us(t2, t3),
+            if heap.is_some() { "lite" } else { "full+heap" },
+            t3.elapsed().as_micros(),
+            sys.resident / 4096
+        );
+    }
     Sample { sys, data }
+}
+
+/// 진단 스위치 `NSQL_TRACE_MEMWIN=1`(한 번만 읽는다) — 표본 비용·다시 그리기 여부를 stderr로.
+pub(crate) fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NSQL_TRACE_MEMWIN").is_some())
 }
 
 /// 변화 표시가 남는 표본 수(바뀐 뒤 이만큼의 표본 동안 ▲/▼를 보여 준다 · nexa-dir3와 같음).
@@ -325,7 +367,8 @@ pub(crate) fn fmt_delta(d: i64) -> String {
 
 /// 상태줄용 총량만(창이 닫혀 있을 때의 유일한 조회 · ≈ µs).
 pub(crate) fn sys_total() -> u64 {
-    os::sys().footprint
+    // 가벼운 요약만(힙 걷기 없음 · µs) — 상태줄은 그릴 때 이 값 하나면 된다.
+    os::sys_lite().footprint
 }
 
 /// 바이트 표기 — 1024 단위 · 유효숫자 3(`312 MB` · `1.24 GB` · `640 KB`).
@@ -370,12 +413,12 @@ mod os {
     /// rev1 = `phys_footprint`까지(8바이트 19칸). 칸: 2 resident · 6 internal · 8 external · 15 compressed · 18 phys_footprint.
     const WORDS: usize = 19;
 
-    pub(super) fn sys() -> SysMem {
+    /// 가벼운 요약(`task_info` 한 번) — 힙 통계는 0.
+    pub(super) fn sys_lite() -> SysMem {
         let mut info = [0u64; WORDS];
         let mut count = (WORDS * 2) as u32;
-        // SAFETY: 버퍼 길이를 natural_t 단위로 알리고 커널은 그만큼만 채운다 · 자기 태스크 포트는 늘 유효 · `mstats`는 인자 없음.
+        // SAFETY: 버퍼 길이를 natural_t 단위로 알리고 커널은 그만큼만 채운다 · 자기 태스크 포트는 늘 유효.
         let kr = unsafe { task_info(mach_task_self_, TASK_VM_INFO, info.as_mut_ptr(), &mut count) };
-        let ms = unsafe { mstats() };
         let ok = kr == 0 && (count as usize) >= WORDS * 2;
         SysMem {
             footprint: if ok { info[18] } else { 0 },
@@ -383,10 +426,20 @@ mod os {
             anon: if ok { info[6] } else { 0 },
             file_backed: if ok { info[8] } else { 0 },
             compressed: if ok { info[15] } else { 0 },
-            heap_used: ms.bytes_used as u64,
-            heap_held: ms.bytes_free as u64,
+            heap_used: 0,
+            heap_held: 0,
             private_ws: 0,
         }
+    }
+
+    /// 전체(요약 + `mstats` = 존 걷기) — 호스트가 `mem.heap_refresh_ms`마다만.
+    pub(super) fn sys() -> SysMem {
+        let mut s = sys_lite();
+        // SAFETY: `mstats`는 인자 없음.
+        let ms = unsafe { mstats() };
+        s.heap_used = ms.bytes_used as u64;
+        s.heap_held = ms.bytes_free as u64;
+        s
     }
 
     /// 활성 상태 보기의 "메모리" = 풋프린트 그대로 — 따로 세지 않는다(행 숨김).
@@ -458,18 +511,14 @@ mod os {
         0
     }
 
-    pub(super) fn sys() -> SysMem {
+    /// 가벼운 요약(`GetProcessMemoryInfo` 한 번 · µs) — 힙 통계는 0.
+    pub(super) fn sys_lite() -> SysMem {
         let mut pmc = Pmc {
             cb: std::mem::size_of::<Pmc>() as u32,
             ..Default::default()
         };
-        let mut hs = HeapSummaryT {
-            cb: std::mem::size_of::<HeapSummaryT>() as u32,
-            ..Default::default()
-        };
-        // SAFETY: 구조체 크기를 `cb`로 알린다 · 프로세스 힙 핸들은 늘 유효.
+        // SAFETY: 구조체 크기를 `cb`로 알린다 · 자기 프로세스 핸들은 늘 유효.
         let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, pmc.cb) } != 0;
-        let hok = unsafe { HeapSummary(GetProcessHeap(), 0, &mut hs) } != 0;
         let private = if ok { pmc.private_usage as u64 } else { 0 };
         let ws = if ok { pmc.working_set_size as u64 } else { 0 };
         SysMem {
@@ -478,14 +527,27 @@ mod os {
             anon: private,
             file_backed: ws.saturating_sub(private),
             compressed: 0,
-            heap_used: if hok { hs.cb_allocated as u64 } else { 0 },
-            heap_held: if hok {
-                (hs.cb_committed as u64).saturating_sub(hs.cb_allocated as u64)
-            } else {
-                0
-            },
+            heap_used: 0,
+            heap_held: 0,
             private_ws: 0,
         }
+    }
+
+    /// 전체(요약 + 힙 통계). `HeapSummary`는 **프로세스 힙을 걷는다**(블록 수 비례 · 10만 행 결과 = 10~20 ms · T-310 계측) →
+    /// 호스트가 `mem.heap_refresh_ms`마다만 부른다.
+    pub(super) fn sys() -> SysMem {
+        let mut s = sys_lite();
+        let mut hs = HeapSummaryT {
+            cb: std::mem::size_of::<HeapSummaryT>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: 구조체 크기를 `cb`로 알린다 · 프로세스 힙 핸들은 늘 유효.
+        let hok = unsafe { HeapSummary(GetProcessHeap(), 0, &mut hs) } != 0;
+        if hok {
+            s.heap_used = hs.cb_allocated as u64;
+            s.heap_held = (hs.cb_committed as u64).saturating_sub(hs.cb_allocated as u64);
+        }
+        s
     }
 }
 
@@ -511,7 +573,8 @@ mod os {
         fn mallinfo2() -> MallInfo2;
     }
 
-    pub(super) fn sys() -> SysMem {
+    /// 가벼운 요약(`/proc/self/statm` 한 번) — 힙 통계는 0.
+    pub(super) fn sys_lite() -> SysMem {
         let page = 4096u64;
         let (res, shared) = std::fs::read_to_string("/proc/self/statm")
             .ok()
@@ -521,18 +584,26 @@ mod os {
                 Some((res * page, shared * page))
             })
             .unwrap_or((0, 0));
-        // SAFETY: 인자 없는 glibc 2.33+ 통계 호출.
-        let mi = unsafe { mallinfo2() };
         SysMem {
             footprint: res.saturating_sub(shared),
             resident: res,
             anon: res.saturating_sub(shared),
             file_backed: shared,
             compressed: 0,
-            heap_used: (mi.uordblks + mi.hblkhd) as u64,
-            heap_held: mi.fordblks as u64,
+            heap_used: 0,
+            heap_held: 0,
             private_ws: 0,
         }
+    }
+
+    /// 전체(요약 + `mallinfo2` · 아레나 잠금) — 호스트가 `mem.heap_refresh_ms`마다만.
+    pub(super) fn sys() -> SysMem {
+        let mut s = sys_lite();
+        // SAFETY: 인자 없는 glibc 2.33+ 통계 호출.
+        let mi = unsafe { mallinfo2() };
+        s.heap_used = (mi.uordblks + mi.hblkhd) as u64;
+        s.heap_held = mi.fordblks as u64;
+        s
     }
 
     /// `/proc/self/smaps_rollup`의 Private_Clean + Private_Dirty(kB) — 없으면 0.
@@ -558,6 +629,9 @@ mod os {
 mod os {
     use super::SysMem;
     pub(super) fn sys() -> SysMem {
+        SysMem::default()
+    }
+    pub(super) fn sys_lite() -> SysMem {
         SysMem::default()
     }
     pub(super) fn private_ws(_s: &SysMem) -> u64 {
@@ -589,7 +663,7 @@ mod tests {
     #[test]
     fn sample_sums_sources_and_other_never_underflows() {
         let (a, b) = (Fake(100), Fake(50));
-        let s = sample(&[&a, &b], |acc| acc.add(Cat::Logs, 7));
+        let s = sample(&[&a, &b], |acc| acc.add(Cat::Logs, 7), None);
         assert_eq!(s.data.get(Cat::EditorText), 150);
         assert_eq!(s.data.get(Cat::Logs), 7);
         assert_eq!(s.data.sum(), 157);

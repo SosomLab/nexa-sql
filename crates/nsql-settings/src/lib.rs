@@ -5610,6 +5610,18 @@ pub const REGISTRY: &[Entry] = &[
         },
         default: "5000",
     },
+    // ★ T-310(10-08): 힙 통계(`HeapSummary`/`mallinfo2`/`mstats`)는 힙을 걷는다(10만 행 결과 = 10~20 ms) → 표본마다가 아니라 이 간격으로.
+    Entry {
+        key: "mem.heap_refresh_ms",
+        cat: Msg::CatPerformance,
+        label: Msg::LblMemHeapRefresh,
+        desc: Msg::DescMemHeapRefresh,
+        kind: SettingKind::Int {
+            min: 1000,
+            max: 60_000,
+        },
+        default: "5000",
+    },
     Entry {
         key: "mem.always_on_top",
         cat: Msg::CatPerformance,

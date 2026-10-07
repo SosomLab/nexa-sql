@@ -561,10 +561,23 @@ impl ApplicationHandler<Wake> for App {
             if now >= self.mem_next {
                 let every = self.mem_every();
                 self.mem_next = now + every;
+                let t0 = Instant::now();
                 let s = self.mem_sample();
+                let sample_us = t0.elapsed().as_micros();
+                // ★ T-310 뿌리(협업 재측정 10-08 "그리기 생략 뒤에도 유휴 15~26 ms/초"): 종전엔 표본마다 **메인 창 전체**를 다시 그렸다
+                //   (상태줄 총량 글 때문 · 10만 행 그리드·편집기·탐색기 포함) → 상태줄에 찍히는 글(`fmt` 유효숫자 3)이 바뀔 때만.
+                //   메모리 창 자체는 `set_sample`이 표시 서명으로 판단한다.
+                let shown_before = memstat::fmt(self.mem_status.0);
                 self.mem_status = (s.sys.footprint, Some(now));
                 self.mem_win.set_sample(s, every.as_millis() as u64);
-                self.redraw();
+                let status_changed = memstat::fmt(s.sys.footprint) != shown_before;
+                if status_changed {
+                    self.redraw();
+                }
+                // 진단(`NSQL_TRACE_MEMWIN=1`): 표본 비용 µs + 메인 창 다시 그림 여부 — 표본 수집 대 그리기를 가른다.
+                if memstat::trace_on() {
+                    eprintln!("[memwin] sample {sample_us} us · main redraw {status_changed}");
+                }
             }
             next = next.min(self.mem_next);
         }

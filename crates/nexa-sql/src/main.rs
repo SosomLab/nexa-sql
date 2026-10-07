@@ -583,6 +583,8 @@ struct App {
     ime_last: Option<bool>,
     /// 창이 열려 있을 때 다음 표본 시각.
     mem_next: Instant,
+    /// 마지막으로 **새로 잰** 힙 통계(사용 · 여유)와 그 시각 — `mem.heap_refresh_ms` 안이면 표본이 이 값을 재사용(T-310).
+    mem_heap: Option<((u64, u64), Instant)>,
     /// settings.json 감시(경로 · 마지막 수정 시각 · 다음 확인 시각) — JSON 편집을 연 뒤부터 1초 폴링(사용자 09-15).
     json_watch: Option<(std::path::PathBuf, Option<std::time::SystemTime>)>,
     /// 접속 창이 열려 메인 창을 모달로 막고 있는가(사용자 09-15) — 열림/닫힘 전환 때 OS 활성 상태를 맞춘다.
@@ -1863,6 +1865,7 @@ fn main() {
         ime_last: None,
         view_layout: false,
         mem_next: Instant::now(),
+        mem_heap: None,
         col_right_drag: false,
         ctrl_raw: false,
         ctrl_mac: false,

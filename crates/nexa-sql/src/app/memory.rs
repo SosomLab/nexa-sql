@@ -82,6 +82,7 @@ impl App {
     pub(crate) fn mem_trim_now(&mut self) {
         let before = memstat::sys_total();
         let us = memtrim::trim();
+        self.mem_heap = None; // 정리 전후가 바로 보이게 힙 통계를 이번 표본에서 새로 잰다.
         let s = self.mem_sample();
         self.mem_status = (s.sys.footprint, Some(Instant::now()));
         let every = self.mem_every();
@@ -115,6 +116,7 @@ impl App {
             owner.as_deref(),
         );
         self.mem_next = Instant::now();
+        self.mem_heap = None;
     }
 
     /// 상태줄 세그먼트·메뉴에서 토글(열기는 깃발 → `about_to_wait`가 이벤트 루프로 연다).
@@ -131,9 +133,20 @@ impl App {
         Duration::from_millis(self.settings.int("mem.refresh_ms").clamp(250, 10_000) as u64)
     }
 
+    /// 힙 통계 재측정 간격(`mem.heap_refresh_ms` · 1~60 s · T-310 = 힙 걷기는 표본마다가 아니라 이 간격으로).
+    pub(crate) fn mem_heap_every(&self) -> Duration {
+        Duration::from_millis(self.settings.int("mem.heap_refresh_ms").clamp(1000, 60_000) as u64)
+    }
+
     /// 전체 표본(창이 열려 있을 때만 불린다) — 부품 보고(`MemSource`) + 결과 탭 + 창 표면 + 로그.
+    /// 힙 통계(사용·여유)는 `mem_heap_every`가 지났을 때만 새로 재고 그 사이는 지난 값을 쓴다(T-310 · `memstat::sample`).
     pub(crate) fn mem_sample(&mut self) -> memstat::Sample {
         use memstat::Cat;
+        let now = Instant::now();
+        let reuse = match self.mem_heap {
+            Some((h, at)) if now < at + self.mem_heap_every() => Some(h),
+            _ => None,
+        };
         let grids: Vec<(u64, u64)> = self.all_grids().map(|g| g.mem_parts()).collect();
         let main_surface = self.window.as_ref().map_or(0, |w| {
             let s = w.inner_size();
@@ -141,14 +154,22 @@ impl App {
         });
         let surfaces = main_surface + self.mem_win.surface_bytes();
         let logs = self.log_win.approx_bytes() + self.txlog.len() as u64 * 256;
-        memstat::sample(&[&self.editors, &self.explorer, &self.intel], |acc| {
-            for (d, tx) in grids {
-                acc.add(Cat::ResultData, d);
-                acc.add(Cat::ResultText, tx);
-            }
-            acc.add(Cat::Surfaces, surfaces);
-            acc.add(Cat::Logs, logs);
-        })
+        let s = memstat::sample(
+            &[&self.editors, &self.explorer, &self.intel],
+            |acc| {
+                for (d, tx) in grids {
+                    acc.add(Cat::ResultData, d);
+                    acc.add(Cat::ResultText, tx);
+                }
+                acc.add(Cat::Surfaces, surfaces);
+                acc.add(Cat::Logs, logs);
+            },
+            reuse,
+        );
+        if reuse.is_none() {
+            self.mem_heap = Some(((s.sys.heap_used, s.sys.heap_held), now));
+        }
+        s
     }
 
     /// 상태줄 총량 글(`mem.statusbar` 꺼짐 = None) — 마지막 조회가 `mem.status_refresh_ms`보다 오래됐을 때만 OS 한 번(그릴 때만 · 깨우지 않음).

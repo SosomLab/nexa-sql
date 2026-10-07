@@ -634,9 +634,11 @@ impl MemWin {
             // 처음 열 때 한 번: 내용 끝 + 바닥 줄이 들어가도록 창 높이를 맞춘다(사용자 10-07 "열릴 때 전체 내용이 보이게").
             let btn_h = th_txt + px(12.0);
             //   양방향(사용자 10-08 "창 크기를 이미지에 맞춰" = 내용 끝 바로 아래 바닥 줄 · 남는 여백 없이): 모자라면 늘리고 남으면 줄인다.
-            if self.fit {
+            //   ★ 첫 표본이 있는 그리기에서 맞춘다(사용자 10-08 "내용을 꽉 채우고 바닥 공간 없이 닫기 버튼") — 표본 없는 첫 그리기는
+            //   값이 0인 줄(전용 WS)이 빠져 높이가 틀리고, 내용과 바닥 줄 사이 틈은 두지 않는다(= 표 줄 간격만).
+            if self.fit && sample.is_some() {
                 self.fit = false;
-                let need = y + px(10.0) + btn_h + pad;
+                let need = y + btn_h + pad;
                 if (need - hi).abs() > px(2.0) {
                     let _ = win
                         .request_inner_size(winit::dpi::PhysicalSize::new(size.width, need as u32));
@@ -692,7 +694,7 @@ mod tests {
         assert!(n.contains("3.00 MB") && n.contains("1.5"), "{n}");
         w.set_trim_result(5, 5, 200);
         assert!(w.trim_note().unwrap_or_default().contains("0.2"));
-        let s = crate::memstat::sample(&[], |_| {});
+        let s = crate::memstat::sample(&[], |_| {}, None);
         for i in 0..TRIM_NOTE_HOLD {
             assert_eq!(w.trimming(), i < TRIM_HOLD);
             assert!(w.trim_note().is_some());
