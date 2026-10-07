@@ -796,6 +796,17 @@ impl Editors {
         }
     }
 
+    /// 자체 시험용 탭 상태 = (미저장, 디스크에서 삭제됨, 뷰 탭, 읽기 전용) — 기동 명령 `tabs.dump`.
+    pub(crate) fn tab_flags(&self, i: usize) -> (bool, bool, bool, bool) {
+        let id = self.tab_id(i);
+        (
+            self.is_unsaved(i),
+            self.deleted.contains(&id),
+            self.is_view_tab(i),
+            self.read_only.contains(&id),
+        )
+    }
+
     /// 확장 뷰 탭의 세션 표식 켬/끔(설정 `extensions.tab_badge` · 사용자 10-07).
     pub(crate) fn set_view_tab_badge(&mut self, on: bool) {
         if self.view_tab_badge != on {

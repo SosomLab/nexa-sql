@@ -471,8 +471,14 @@ impl ApplicationHandler<Wake> for App {
                 .map(|(_, c)| c.clone())
                 .collect();
             self.startup_timed.retain(|(at, _)| *at > now);
+            let ran = !due.is_empty();
             for id in due {
                 self.startup_cmd(&id);
+            }
+            // ★ 타이머 명령이 부탁한 창(설정·라이선스·Import·세션 …)은 **지금** 연다 — 종전엔 다음 창 사건까지 깃발만 남아
+            //   헤드리스 자체 시험(기동 명령만 · 사건 0)에서 안 열렸다(협업 10-07 T-305).
+            if ran {
+                self.pump_window_requests(el);
             }
             if let Some(t) = self.startup_timed.iter().map(|(at, _)| *at).min() {
                 next = next.min(t);
@@ -1542,26 +1548,7 @@ impl App {
                         .settings
                         .set("mem.always_on_top", if on { "on" } else { "off" });
                 }
-                mem_win::MemWinAction::Trim => {
-                    // 힙 정리(80 §7): 할당자 빈 조각 → OS · 곧바로 표본을 다시 떠서 전후를 보인다.
-                    let before = memstat::sys_total();
-                    let us = memtrim::trim();
-                    let s = self.mem_sample();
-                    self.mem_status = (s.sys.footprint, Some(Instant::now()));
-                    let every = self.mem_every();
-                    self.mem_win.set_sample(s, every.as_millis() as u64);
-                    // 바닥 줄 "힙 정리 완료 — N 반환(ms)" + 줄별 ▲/▼는 표본이 알아서(사용자 10-07).
-                    self.mem_win.set_trim_result(before, s.sys.footprint, us);
-                    self.sess.status = tf(
-                        Msg::StMemTrimResult,
-                        &[
-                            &memstat::fmt(before),
-                            &memstat::fmt(s.sys.footprint),
-                            &(us / 1000).to_string(),
-                        ],
-                    );
-                    self.redraw();
-                }
+                mem_win::MemWinAction::Trim => self.mem_trim_now(),
                 mem_win::MemWinAction::Close => {
                     self.mem_win.close();
                     self.persist_window_sizes(false);
@@ -1810,31 +1797,7 @@ impl App {
             }
         }
         if std::mem::take(&mut self.open_prefs) {
-            let over = self.window.as_ref().and_then(|w| {
-                let p = w.outer_position().ok()?;
-                let sz = w.outer_size();
-                Some((p.x, p.y, sz.width, sz.height))
-            });
-            let owner = self.window.clone();
-            self.prefs_win.set_info(dbms_info_values());
-            self.prefs_win
-                .set_advanced(self.settings.flag("ui.prefs_advanced"));
-            self.prefs_win.refresh(&self.settings);
-            if let Some(q) = self.prefs_query.take() {
-                self.prefs_win.preset_query(&q);
-            }
-            // 확장 패널 "설정" 버튼 = 그 확장의 분류로(사용자 09-30).
-            if let Some(cat) = self.prefs_category.take() {
-                self.prefs_win.select_category(cat);
-            }
-            self.prefs_win.open(
-                el,
-                theme::window_theme(self.settings.theme_mode()),
-                over,
-                owner.as_deref(),
-            );
-            // ★ Format 분류의 미리보기 글(사용자 09-29) — 열 때 한 번 · 이후는 값이 바뀔 때마다.
-            self.prefs_format_preview_refresh();
+            self.open_prefs_now(el);
         }
         if std::mem::take(&mut self.open_keys) {
             // 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
@@ -1870,6 +1833,35 @@ impl App {
 }
 
 impl App {
+    /// 설정 창 열기 본체(사건 경로 `open_requested_windows`와 펌프 `pump_window_requests`가 같이 쓴다 · T-305).
+    fn open_prefs_now(&mut self, el: &ActiveEventLoop) {
+        let over = self.window.as_ref().and_then(|w| {
+            let p = w.outer_position().ok()?;
+            let sz = w.outer_size();
+            Some((p.x, p.y, sz.width, sz.height))
+        });
+        let owner = self.window.clone();
+        self.prefs_win.set_info(dbms_info_values());
+        self.prefs_win
+            .set_advanced(self.settings.flag("ui.prefs_advanced"));
+        self.prefs_win.refresh(&self.settings);
+        if let Some(q) = self.prefs_query.take() {
+            self.prefs_win.preset_query(&q);
+        }
+        // 확장 패널 "설정" 버튼 = 그 확장의 분류로(사용자 09-30).
+        if let Some(cat) = self.prefs_category.take() {
+            self.prefs_win.select_category(cat);
+        }
+        self.prefs_win.open(
+            el,
+            theme::window_theme(self.settings.theme_mode()),
+            over,
+            owner.as_deref(),
+        );
+        // ★ Format 분류의 미리보기 글(사용자 09-29) — 열 때 한 번 · 이후는 값이 바뀔 때마다.
+        self.prefs_format_preview_refresh();
+    }
+
     /// ★ 이벤트 없이도 열어야 하는 창·대화상자 요청(메뉴·기동 명령·워커의 물음 · 깃발 = `open_*`/`*_pending`) — `about_to_wait`
     ///   의 앞 단계(T-248 · 09-29 분리 · 행동 보존): 보조 창 · 파일 대화상자 · SQL 미리보기/값 보기 · Import · 입력/비밀번호 창 ·
     ///   저장 물음 · 데모 · 툴바 플로팅 · 툴바 배치 저장.
@@ -1911,6 +1903,10 @@ impl App {
         }
         if std::mem::take(&mut self.open_vars) {
             self.open_vars_window(el);
+        }
+        // 설정 창도 사건 없이(기동 명령 `edit.prefs:<검색어>` · T-305).
+        if std::mem::take(&mut self.open_prefs) {
+            self.open_prefs_now(el);
         }
         // 파일·폴더 대화상자도 같다(설정 창의 "찾아보기…" · 기동 명령 — 메인 창에 사건이 없으면 열리지 않았다).
         if let Some(mode) = self.open_file_dlg.take() {

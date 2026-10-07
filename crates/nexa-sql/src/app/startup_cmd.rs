@@ -441,12 +441,14 @@ impl App {
         }
         if let Some(path) = id.strip_prefix("editor.dump:") {
             let i = self.editors.active();
+            // 머리 = 제목|종류|읽기전용|구문(10-07 · 모르는 확장자 = Plain Text 판정용).
             let head = format!(
-                "{}|{:?}|{}
+                "{}|{:?}|{}|{}
 ",
                 self.editors.title_of(i),
                 self.editors.tab_kind(i),
-                self.editors.active_read_only()
+                self.editors.active_read_only(),
+                self.editors.syntax_name()
             );
             let _ = std::fs::write(path, head + &self.editors.cur().text());
             return;
@@ -606,6 +608,59 @@ impl App {
             };
             let out = format!("{}setting {cur}\n", self.order_win.dump());
             let _ = std::fs::write(path, out);
+            return;
+        }
+        // ★ 자체 시험 훅(10-07 · 전체 시험 시나리오 S80~): 외부 변경·삭제 흉내 · 힙 정리 · 탭 상태 덤프 · 확장 뷰 탭 · 외부 변경 띠 버튼.
+        if let Some(rest) = id.strip_prefix("fs.write:") {
+            // `fs.write:<경로>|<글>` — `\n`은 줄 바꿈(기동 명령은 한 줄).
+            if let Some((path, text)) = rest.split_once('|') {
+                let _ = std::fs::write(path, text.replace("\\n", "\n"));
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("fs.delete:") {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        if id == "mem.trim" {
+            self.mem_trim_now();
+            return;
+        }
+        if let Some(path) = id.strip_prefix("tabs.dump:") {
+            // 한 줄 = 제목|종류|미저장|삭제됨|뷰 탭|읽기 전용 · 활성 탭은 머리에 `*`.
+            let mut out = String::new();
+            let active = self.editors.active();
+            for i in 0..self.editors.tab_count() {
+                let (unsaved, deleted, view, ro) = self.editors.tab_flags(i);
+                out.push_str(&format!(
+                    "{}{}|{:?}|unsaved={unsaved}|deleted={deleted}|view={view}|ro={ro}\n",
+                    if i == active { "*" } else { "" },
+                    self.editors.title_of(i),
+                    self.editors.tab_kind(i)
+                ));
+            }
+            let _ = std::fs::write(path, out);
+            return;
+        }
+        if let Some(ext_id) = id.strip_prefix("ext.view:") {
+            if !self.ext_reopen_view(ext_id) {
+                self.sess.status = format!("ext.view: {ext_id} not installed");
+            }
+            self.redraw();
+            return;
+        }
+        if let Some(which) = id.strip_prefix("ext.banner:") {
+            let hit = match which.trim() {
+                "diff" => extfile::BannerHit::Diff,
+                "reload" => extfile::BannerHit::Reload,
+                "keep" => extfile::BannerHit::Keep,
+                "follow" => extfile::BannerHit::Follow,
+                "dismiss" => extfile::BannerHit::Dismiss,
+                "overwrite" => extfile::BannerHit::Overwrite,
+                _ => extfile::BannerHit::None,
+            };
+            self.ext_banner_pick(hit);
+            self.redraw();
             return;
         }
         // 자체 시험(10-07): 프로젝트 탐색기 플래시 상태 + 향상 모드 판정(`perf.boost` 원값) — 협업 bin64 ⓒ 진단.

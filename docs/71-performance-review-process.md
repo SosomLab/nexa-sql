@@ -101,10 +101,15 @@ pwsh -NoProfile -File scripts/win-perf-all.ps1 -HomeDir ... -DataDir ... -Out ..
 | 11 | **SQL Preview 모달**(83 §4) | `explorer.menu:3,explorer.pick:gen:ddl,sqlprev.dump:<f>` | 모달 창 표면 · DDL 생성 왕복 · 닫힌 뒤 회수 |
 | 12 | **L3 회수**(85 §4 · TTL) | `meta.detail_ttl_secs=15`·`cols_ttl_secs=15` → `mem.dump` 18 s / 58 s | `MetaDetail`·`MetaCols` 바이트가 TTL 뒤 줄어드는가(회수 = 유휴 틱) |
 | E+ | 누수 주기 2종(09-26) | `explorer.filter:1171;explorer.filter:` ×8 · `view.object_details;view.object_details` ×10 | 검색 결과·부분 폴더·상세 패널 상자가 주기마다 남는가 |
+| 13 | **메모리 창**(10-07 신설 · 80 §4 · Windows `8.memwin`) | `open:<10만 행>,@after:2000:run.all,@after:6000:view.memory` | 창이 열린 동안 1초 표본(`mem.refresh_ms` · 부품 순회 + `QueryWorkingSet` 전용 WS 집계 + 그리기)의 유휴 CPU·상주 — 2·5번 대비 증분 · 닫힌 뒤 = L5로 |
+| 14 | **프로젝트 패널 + 폴더 감시**(10-07 신설 · T-293 · `9.projwatch`) | `project.load:<파일>,@after:1500:view.project`(`project.watch` 기본 켬) | 6번(09-22 · 감시 전)과 차이 = 감시 스레드 1 + 핸들 · 사건 없을 때 CPU 0인가 |
+| E+ | **L5 메모리 창 열고 닫기**(10-07) | `view.memory;view.memory` ×10 | 표본 이력(60칸)·창 표면이 닫을 때 비워지는가(80 §5 "닫힌 뒤 상주 0") |
 
 맥 실행기 `scripts/mac-perf-all.sh`는 8~12·E+를 **`NSQL_PERF_ORACLE_TARGET`(접속 문자열·프로필)이 있을 때만** 돈다(실서버 읽기 접속 · 61 §2-4 한 줄 고지). 계측 덤프 기동 명령 = `explorer.stat:<파일>` · `mem.dump:<파일>`(메모리 창 표본 = 총량·anon·부품 원장 12칸 · 09-26) · `details.dump:<파일>` · `sqlprev.dump:<파일>`.
 
 각 시나리오에서 Private·WS·피크·핸들·GDI·USER·스레드·유휴 CPU(6초)를 찍는다.
+
+**기능 전수(V3 · 102 §5-7)와 짝**: `scripts/win-func-check.ps1` S01~S94(10-07 S80~S94 신설 = 메모리 창 · 플래시/폴더 감시/향상 모드 · 삭제 탭·디스크 보기 · Plain Text 폴백 · 확장 뷰 탭 표식 · 탭 툴팁 · 색인 재열거 · T-305 기동 명령 창 셋 · T-285 승격) + E2E 넷(`conn-cmd` · `mac-grid-edit` · `mac-bulk` · **`win-vars-e2e.sh`**(10-07 신설 · 변수 Scope/층/CLEAR/자동 타입/글로벌 파일 · SQLite 메모리 DB)). 시나리오 **설계·갱신 = 개발 세션 · 수행·기록 = 협업 세션**(사용자 10-07).
 
 ### C-2. 메모리 **회수** 시험(D7) — 규정 대상(사용자 09-22 "편집기·결과 그리드·대용량·다중 결과 그리드·커서 회수 시험이 없었다")
 

@@ -370,4 +370,101 @@ Run-Scenario -Id S75 -Title "`"O'Neil`" 뒤 ' 짝 정상 + 줄 끝 재동기화(
 Run-Scenario -Id S76 -Title "검색어 이력 드롭다운 = 상자 클릭 → 최근 N개(§127)" -Cmd ("project.load:" + $projFile + ",@after:1200:project.panel:on,@after:1600:project.filter:one,@after:1800:ui.click:100/163,@after:2000:ui.click:180/560,@after:2200:project.filter:two,@after:2400:ui.click:100/163,@after:2600:ui.click:180/560,@after:2800:project.filter:,@after:3000:ui.click:100/163") -Conf "search.history_rows=5`n" -WaitMs 4500 -Expect "필터 상자를 클릭하면 상자 아래 드롭다운(최근순 'two' · 'one' · 5행 상한 · 넘치면 오른쪽 가는 스크롤 표시) · Enter/클릭 = 넣기 · Esc 닫기 · ↓로 마지막 뒤 한 번 더 = 폴더 목록으로 포커스"
 Run-Scenario -Id S79 -Title "Output 탭 = 오류 실행 뒤 자동 표시·전환(108차 · docs/100 §3)" -Cmd ("open:" + $qErr + ",@after:1200:run.all,@after:3500:output.dump:" + (Join-Path $Out "s79_output.txt")) -WaitMs 5000 -Expect "결과 영역에 Output 탭 활성 · ✖ 줄(no_such_table_zz) · s79_output.txt 첫 줄 true|N"
 Run-Scenario -Id S63 -Title "거터 우클릭 = 마지막 줄 아래 빈 영역 = 보기만(§108)" -Cmd ("open:" + $q500 + ",@after:1000:bookmark.clear_doc,@after:1500:ui.rclick:335/400") -WaitMs 3500 -Expect "빈 영역(335/400 · 2줄 파일) 우클릭 = 'Bookmarks' 한 항목뿐(토글·니모닉 없음) · 캐럿은 그대로 1줄"
+# ══ 115차 8차(10-07 · bin49~66 · 사용자 지시 전부 · 설계 = 개발 세션 · 수행 = 협업 세션) ═══════════════════════════════════════
+# 자체 시험 훅: fs.write/fs.delete(외부 변경·삭제 흉내) · mem.trim · tabs.dump · ext.view · ext.banner · flash.dump · editor.dump 4열(구문).
+$s80dump = Join-Path $Out "s80_mem.txt"
+Run-Scenario -Id S80 -Title "메모리 창 = 묶음 소계 · 전용 WS 행 · [힙 정리] 결과 줄 · 변화량 ▲/▼ · [닫기](115-8 · docs/80 §4)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:2500:view.memory,@after:5000:mem.trim,@after:6200:mem.dump:" + $s80dump) -WaitMs 7000 -Shots 2 -ShotGapMs 1200 -Expect "창 2(메인 + Memory · 640×780급 · 표 전체+바닥 줄 다 보임) · 묶음 5(결과·편집기·메타데이터·UI·런타임) 머리글 오른쪽 소계 · 시스템 표 '전용 워킹 셋(작업 관리자 기준)' 행 · 바닥 '힙 정리 완료 - N 반환(ms)' + 오른쪽 [닫기] · 정리 뒤 줄 끝 ▼/▲ 변화량(힙 여유·풋프린트) · 파일 검사 private_ws>0 · group Runtime = other"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S80")) {
+    $t = if (Test-Path -LiteralPath $s80dump) { Get-Content -LiteralPath $s80dump -Raw } else { "" }
+    $pws = if ($t -match 'private_ws=(\d+)') { [int64]$Matches[1] } else { -1 }
+    $oth = if ($t -match 'other=(\d+)') { $Matches[1] } else { "?" }
+    $rt = if ($t -match 'group Runtime=(\d+)') { $Matches[1] } else { "?" }
+    Say ("  file: private_ws_gt0=" + ($pws -gt 0) + " runtime_eq_other=" + ($oth -eq $rt) + " (" + $pws + " / " + $oth + ")")
+}
+# 플래시(프로젝트 탐색기): 필터 글 없이 폴더에 파일 생성 → "폴더 변경 반영: <폴더>" · 테두리 없는 진회색 둥근 상자 · 10pt · 오른쪽 8px·위 3px · 2초 유지 뒤 서서히.
+$s81new = Join-Path $DataDir "s81_new_file.sql"
+if (Test-Path -LiteralPath $s81new) { Remove-Item -LiteralPath $s81new -Force }
+$s81dump = Join-Path $Out "s81_flash.txt"
+Run-Scenario -Id S81 -Title "폴더 변경 감시 → 플래시(필터 없음 · 스낵바 모양 · 페이드)(115-8 · T-293/T-299)" -Cmd ("project.load:" + $projFile + ",@after:1000:project.panel:on,@after:2600:fs.write:" + $s81new + "|SELECT 81;,@after:3600:flash.dump:" + $s81dump) -WaitMs 3900 -Shots 4 -ShotGapMs 700 -Expect "0·1번째 캡처: 패널 이름 줄 오른쪽에 '폴더 변경 반영: <DataDir 이름>' 진회색 둥근 상자 + 흰 글(테두리 없음 · 오른쪽 끝 패널 경계 8px 안쪽 · 필터 틀 위 3px) · 2~3번째: 서서히 옅어짐(반투명) · 트리에 s81_new_file.sql 추가 · 파일 검사 active=true text=폴더 이름"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S81")) {
+    $t = if (Test-Path -LiteralPath $s81dump) { Get-Content -LiteralPath $s81dump -Raw } else { "" }
+    Say ("  file: " + $t.Trim())
+}
+if (Test-Path -LiteralPath $s81new) { Remove-Item -LiteralPath $s81new -Force }
+$s82dump = Join-Path $Out "s82_flash.txt"
+Run-Scenario -Id S82 -Title "향상 모드 = 플래시 즉시 표시·즉시 숨김(페이드 0)(115-8)" -Cmd ("project.load:" + $projFile + ",@after:1000:project.panel:on,@after:2600:fs.write:" + $s81new + "|SELECT 82;,@after:3400:flash.dump:" + $s82dump) -Conf "perf.boost=on`n" -WaitMs 3700 -Shots 4 -ShotGapMs 700 -Expect "0·1번째 캡처: 상자 또렷(세기 1) · 2초 뒤(2~3번째) 반투명 중간 프레임 없이 **없음** · 파일 검사 instant=true boost_on=true"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S82")) {
+    $t = if (Test-Path -LiteralPath $s82dump) { Get-Content -LiteralPath $s82dump -Raw } else { "" }
+    Say ("  file: " + $t.Trim())
+}
+if (Test-Path -LiteralPath $s81new) { Remove-Item -LiteralPath $s81new -Force }
+# 기존 파일 저장 = 플래시 없음 · 트리 깜빡임 없음(구조 변화 없을 때 refresh 안 함) — 저장은 file.save_as 같은 경로로(덮어쓰기).
+$s83dump = Join-Path $Out "s83_flash.txt"
+Run-Scenario -Id S83 -Title "기존 파일 덮어쓰기 = 플래시 없음(실제 변경 때만)(115-8)" -Cmd ("project.load:" + $projFile + ",open:" + $a + ",@after:1000:project.panel:on,@after:2600:fs.write:" + $a + "|-- file a changed\nSELECT 1;,@after:3600:flash.dump:" + $s83dump) -WaitMs 3900 -Shots 2 -ShotGapMs 600 -Expect "플래시 없음(상자 0) · 트리 그대로 · 파일 검사 active=false"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S83")) {
+    $t = if (Test-Path -LiteralPath $s83dump) { Get-Content -LiteralPath $s83dump -Raw } else { "" }
+    Say ("  file: " + $t.Trim())
+}
+Set-Content -LiteralPath $a -Encoding UTF8 -Value "-- file a`nSELECT 1;"
+# 디스크에서 삭제된 파일 탭 = 미저장 판정(●) + 탭 줄·점 진빨강 + 빨간 띠 · 닫기 → 확인 팝업이 **띠 위**(팝업 층).
+$delFile = Join-Path $DataDir "s84_delete_me.sql"
+Set-Content -LiteralPath $delFile -Encoding UTF8 -Value "SELECT 'delete me';"
+$s84tabs = Join-Path $Out "s84_tabs.txt"
+Run-Scenario -Id S84 -Title "삭제된 파일 탭 = 진빨강 ● · 닫기 확인 팝업이 띠 위(115-8)" -Cmd ("open:" + $delFile + ",@after:1200:fs.delete:" + $delFile + ",@after:4200:tabs.dump:" + $s84tabs + ",@after:4400:file.close_tab") -Conf "file.external_poll_ms=500`n" -WaitMs 5200 -Expect "빨간 띠 '파일이 디스크에서 삭제되었습니다 …' · 탭 줄·점 진빨강 · 탭 닫기 → '저장하고 닫기/변경 버리고 닫기/취소' 메뉴가 띠 **위**에 그려짐 · 파일 검사 deleted=true unsaved=true"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S84")) {
+    $t = if (Test-Path -LiteralPath $s84tabs) { Get-Content -LiteralPath $s84tabs -Raw } else { "" }
+    Say ("  file: " + (($t -split "`n" | Where-Object { $_ -match "s84_delete_me" }) -join " "))
+}
+# 외부 변경 → 띠 [디스크 보기] = 읽기 전용 안내 탭(1행 1열 · ● 없음 · [RO]) · 원래 파일 구문.
+$chgFile = Join-Path $DataDir "s85_change_me.sql"
+Set-Content -LiteralPath $chgFile -Encoding UTF8 -Value "SELECT 'before';"
+$s85tabs = Join-Path $Out "s85_tabs.txt"
+$s85ed = Join-Path $Out "s85_editor.txt"
+Run-Scenario -Id S85 -Title "외부 변경 띠 ▸ 디스크 보기 = 읽기 전용 · ● 없음 · 1행 1열(115-8 · 협업 bin61~63)" -Cmd ("open:" + $chgFile + ",@after:1000:ui.click:600/141,@after:1200:fs.write:" + $chgFile + "|SELECT 'after';,@after:4000:ext.banner:diff,@after:4800:tabs.dump:" + $s85tabs + ",@after:4900:editor.dump:" + $s85ed) -Conf "file.external_poll_ms=500`nfile.external_change=ask`n" -WaitMs 5600 -Expect "탭 둘(원본 ● 없음 · 'Disk: s85_change_me.sql [RO]' 활성) · 디스크 탭 캐럿 1행 1열 · 본문 SELECT 'after' · 파일 검사 디스크 탭 unsaved=false ro=true · editor.dump 구문=SQL"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S85")) {
+    $t = if (Test-Path -LiteralPath $s85tabs) { Get-Content -LiteralPath $s85tabs -Raw } else { "" }
+    $e = if (Test-Path -LiteralPath $s85ed) { (Get-Content -LiteralPath $s85ed -TotalCount 1) } else { "" }
+    Say ("  file: tabs=[" + (($t -split "`n" | Where-Object { $_ -match "RO|Disk|디스크" }) -join " ") + "] editor_head=" + $e)
+}
+# 모르는 확장자(.rs) = Plain Text(종전 SQL → `[--x`가 짝 없는 괄호로 그어짐).
+$rsFile = Join-Path $DataDir "s86_main.rs"
+Set-Content -LiteralPath $rsFile -Encoding UTF8 -Value "//! tool keygen --out <env> [--id root-v1] [--pass-env NAME | --pass-stdin]`n//! issue  (--tier trial|pro|org)`nmod ledger;`nfn main() { let x = [1, 2]; }"
+$s86ed = Join-Path $Out "s86_editor.txt"
+Run-Scenario -Id S86 -Title "모르는 확장자 = Plain Text · 괄호 물결 없음(115-8 · 사용자 캡처)" -Cmd ("open:" + $rsFile + ",@after:1200:ui.click:600/141,@after:1800:editor.dump:" + $s86ed) -WaitMs 3500 -Expect "본문 `[--id`·`(--tier`에 빨간 물결 밑줄 없음 · 상태줄 구문 'Plain Text' · 키워드 색 없음 · 파일 검사 editor_head 4열 = Plain Text"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S86")) {
+    $e = if (Test-Path -LiteralPath $s86ed) { (Get-Content -LiteralPath $s86ed -TotalCount 1) } else { "" }
+    Say ("  file: editor_head=" + $e + " plain=" + ($e -match "Plain Text"))
+}
+# 확장 뷰 탭 = 세션 표식 없음(기본 숨김 `extensions.tab_badge=off`) · 켜면 표식.
+$s87tabs = Join-Path $Out "s87_tabs.txt"
+Run-Scenario -Id S87 -Title "확장 뷰 탭 = 세션 표식 숨김(기본)(115-8 · extensions.tab_badge)" -Cmd ("view.extensions,@after:1500:ext.view:rainbow-pairs,@after:2800:tabs.dump:" + $s87tabs) -Conf "extensions.enabled=on`n" -WaitMs 3800 -Expect "탭 'Extension: Rainbow Pairs' 앞에 플러그 표식 없음(제목만 · Script_1 탭은 미연결 사선 그대로) · 뷰 본문 = 확장 상세 · 파일 검사 view=true unsaved=false"
+Run-Scenario -Id S88 -Title "확장 뷰 탭 = 표식 켬(extensions.tab_badge=on)(115-8)" -Cmd "view.extensions,@after:1500:ext.view:rainbow-pairs" -Conf "extensions.enabled=on`nextensions.tab_badge=on`n" -WaitMs 3500 -Expect "탭 'Extension: Rainbow Pairs' 앞에 미연결 표식(사선 플러그) 보임"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S87")) {
+    $t = if (Test-Path -LiteralPath $s87tabs) { Get-Content -LiteralPath $s87tabs -Raw } else { "" }
+    Say ("  file: " + (($t -split "`n" | Where-Object { $_ -match "Extension" }) -join " "))
+}
+# 탭 툴팁 = 마지막 줄 '저장: yyyy-mm-dd hh:mm:ss.mmm' · 미저장 탭 = '저장(프로젝트 파일): …'.
+Run-Scenario -Id S89 -Title "탭 툴팁 저장 일시(ms · 맨 아래 줄)(115-8)" -Cmd ("open:" + $a + ",@after:1200:ui.move:470/80") -Conf "tabs.tooltip=on`n" -WaitMs 3800 -Expect "a.sql 탭 위 툴팁 · 맨 아래 줄 '저장: 2026-… hh:mm:ss.mmm'(파일 mtime · ms 세 자리) · 경로 줄 위"
+# 새 파일 저장 = 색인 즉시 낡음 → 재열거 플래시 '파일 색인 다시 읽는 중 - …' + 트리에 추가.
+$s90saved = Join-Path $DataDir "s90_saved_new.sql"
+if (Test-Path -LiteralPath $s90saved) { Remove-Item -LiteralPath $s90saved -Force }
+$s90dump = Join-Path $Out "s90_flash.txt"
+Run-Scenario -Id S90 -Title "새 파일 저장 = 색인 재열거 플래시 + 트리 추가(115-8 · T-299)" -Cmd ("project.load:" + $projFile + ",@after:1000:project.panel:on,@after:2000:file.new,@after:2600:file.save_as:" + $s90saved + ",@after:3300:flash.dump:" + $s90dump) -WaitMs 3700 -Shots 2 -ShotGapMs 700 -Expect "플래시 '파일 색인 다시 읽는 중 - …' 또는 '폴더 변경 반영: …' · 트리에 s90_saved_new.sql · 탭 제목 s90_saved_new.sql(● 없음) · 파일 검사 active=true"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S90")) {
+    $t = if (Test-Path -LiteralPath $s90dump) { Get-Content -LiteralPath $s90dump -Raw } else { "" }
+    Say ("  file: " + $t.Trim() + " saved_exists=" + (Test-Path -LiteralPath $s90saved))
+}
+# P2(T-305): 기동 명령만으로 열려야 하는 창 — 설정(검색어) · 라이선스 · Import.
+Run-Scenario -Id S91 -Title "기동 명령 @after → 설정 창(검색어 flash) 열림(T-305)" -Cmd "@after:1200:edit.prefs:flash" -WaitMs 4000 -Expect "창 2 = 메인 + 설정 · 검색 상자 'flash' · 결과 = 플래시 메시지 글꼴/크기/모양 3항목(모양 기본 '둥근 모서리')"
+Run-Scenario -Id S92 -Title "기동 명령 @after → 라이선스 창 열림(T-305)" -Cmd "@after:1200:help.license" -WaitMs 4000 -Expect "창 2 = 메인 + License(Free · non-commercial use only)"
+$csvImp = Join-Path $DataDir "s93_import.csv"
+Set-Content -LiteralPath $csvImp -Encoding UTF8 -Value "id,name`n1,a`n2,b"
+Run-Scenario -Id S93 -Title "기동 명령 @after → Import 창 열림(T-305)" -Cmd ("@after:1200:import.open:t_s93;" + $csvImp) -WaitMs 4500 -Expect "창 2 = 메인 + Import Data(표 t_s93 · 파일 s93_import.csv · 미리보기 2행)"
+# T-285 부분 결과 + 필터 = 서버 승격(grid.filter_server=auto · 상한 200 < 500행) → grid.dump 둘째 줄 페치 진단.
+$s94dump = Join-Path $Out "s94_grid.txt"
+Run-Scenario -Id S94 -Title "부분 결과 + 필터 = 서버 승격 · 승격 뒤 필터 해제 = 복귀(T-285)" -Cmd ("open:" + $q500 + ",@after:1200:run.all,@after:3000:grid.addfilter:0;>;400,@after:5500:grid.dump:" + $s94dump) -WaitMs 6200 -Expect "결과 200행 상한에 걸린 부분 결과 → 필터(id > 400) = 서버 재조회로 승격(결과 100행 · 조건 바/칩에 조건) · 파일 검사 둘째 줄 fetch 진단에 promoted/server"
+if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains "S94")) {
+    $t = if (Test-Path -LiteralPath $s94dump) { (Get-Content -LiteralPath $s94dump -TotalCount 3) -join " ¦ " } else { "" }
+    Say ("  file: " + $t)
+}
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))

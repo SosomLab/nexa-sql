@@ -77,6 +77,27 @@ impl App {
         }
     }
 
+    /// [힙 정리] 본체(창 버튼 · 기동 명령 `mem.trim` 공용 · 80 §7): 할당자 빈 조각 → OS · 곧바로 표본을 다시 떠서 전후를 보이고
+    /// 바닥 줄 "힙 정리 완료 - N 반환(ms)" + 줄별 ▲/▼(표본이 알아서 · 사용자 10-07) + 상태줄.
+    pub(crate) fn mem_trim_now(&mut self) {
+        let before = memstat::sys_total();
+        let us = memtrim::trim();
+        let s = self.mem_sample();
+        self.mem_status = (s.sys.footprint, Some(Instant::now()));
+        let every = self.mem_every();
+        self.mem_win.set_sample(s, every.as_millis() as u64);
+        self.mem_win.set_trim_result(before, s.sys.footprint, us);
+        self.sess.status = nsql_i18n::tf(
+            nsql_i18n::Msg::StMemTrimResult,
+            &[
+                &memstat::fmt(before),
+                &memstat::fmt(s.sys.footprint),
+                &(us / 1000).to_string(),
+            ],
+        );
+        self.redraw();
+    }
+
     /// 메모리 맵 창 열기(docs/80 · 모델리스 · 최상위는 설정 `mem.always_on_top`) — 첫 표본은 다음 유휴 틱에.
     pub(crate) fn open_mem_window(&mut self, el: &ActiveEventLoop) {
         let near = self.window.as_ref().and_then(|w| {

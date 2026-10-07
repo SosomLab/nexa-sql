@@ -125,7 +125,11 @@ $scen = @(
     @{ tag = "4.script2m"; cmd = ("open:" + $sql2m); warm = 10; args = "Local" },
     @{ tag = "5.rows100k"; cmd = ("open:" + $rowsSql + ",@after:2000:run.all"); warm = 14; args = "Local" },
     @{ tag = "6.project"; cmd = ("project.load:" + $projFile + ",@after:1500:view.project"); warm = 10; args = "Local" },
-    @{ tag = "7.extpanel"; cmd = "view.extensions"; warm = 8; args = "Local" }
+    @{ tag = "7.extpanel"; cmd = "view.extensions"; warm = 8; args = "Local" },
+    # 115-8(10-07): 메모리 창 = 1초 표본(mem.refresh_ms) + 그리기 — 열려 있는 동안의 유휴 CPU·상주가 예산 안인가(docs/80 §5 · 창 닫힘 = 비용 0은 2번과 비교).
+    @{ tag = "8.memwin"; cmd = ("open:" + $rowsSql + ",@after:2000:run.all,@after:6000:view.memory"); warm = 12; args = "Local" },
+    # 115-8: 프로젝트 패널 + 폴더 감시 켬(기본) — 감시 스레드가 잠드는가(6번과 차이 = 감시 비용 · T-293).
+    @{ tag = "9.projwatch"; cmd = ("project.load:" + $projFile + ",@after:1500:view.project"); warm = 10; args = "Local" }
 )
 
 if ($Only) {
@@ -187,7 +191,9 @@ if ($stageList -contains "leak") {
         @{ tag = "L1.file2m"; first = ""; cmd = ("open:" + $sql2m + ";file.close_tab"); n = 10; period = 4000 },
         @{ tag = "L2.rows100k"; first = ("open:" + $rowsSql); cmd = "run.all"; n = 10; period = 6000 },
         @{ tag = "L3.logwin"; first = ""; cmd = "view.log;view.log"; n = 10; period = 2000 },
-        @{ tag = "L4.project"; first = ("project.load:" + $projFile); cmd = "view.project;view.project"; n = 10; period = 2500 }
+        @{ tag = "L4.project"; first = ("project.load:" + $projFile); cmd = "view.project;view.project"; n = 10; period = 2500 },
+        # 115-8: 메모리 창 열고 닫기 — 표본 이력·표면이 닫을 때 비워지는가(docs/80 §5 "닫힌 뒤 상주 0").
+        @{ tag = "L5.memwin"; first = ""; cmd = "view.memory;view.memory"; n = 10; period = 2500 }
     )
     foreach ($c in $cycles) {
         Say ("  -- " + $c.tag)
