@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-08-115aa | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | `editor.quote_idents` = needed → SELECT 템플릿의 스키마·테이블도 필요할 때만 인용(`identq::qualified/select_template` · nsql-catalog `select_template_q` · 탐색기 칸 `quote_always` · 행 조회·hover 200행·`obj.rows` 세 길 · 시험 +1 · 사용자 10-08) · 메모리 창 기본 758 + `fit` 양방향(이미지 맞춤) · 🔧 CI clippy 1.99 `needless_borrows_for_generic_args`(objlink `&sig` → `sig` · 5연속 빨강 복구) |
 | work/2026-10-08-115z | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | docs(협업 세션 작성): journal 10-07 bin73~75(T-310 재수정 · 새 결함 T-312 · V1 측정 ⚠ 표본 비용) · TODO(T-309 종결 · T-310 ⚠ 비고 · T-311 종결 · T-312 신규) · 26 §7-15 · 63 §11-5 CLI 글로벌 · wiki Variables/Settings |
 | work/2026-10-08-115y | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | 행 조회 DB 전환 보강: SELECT 템플릿 탭도 그 칸의 서버 세션에 먼저 묶고(`OpenSql.server` · `ExplorerSet` 채움 · `bind_tab_to_server`) DB를 심는다 — 활성 세션이 다른 서버(Oracle)일 때 열쇠 어긋남 방지(사용자 캡처 1→3) |
 | work/2026-10-08-115x | 2026-10-08 | 2026-10-08 → main(삭제) | 1 | T-310 보강(협업 재측정 유휴 109 ms/6초 그대로): 다시 그리기 판정 = 원값 → **표시 글 서명**(`Sample::display_sig` · fmt 유효숫자 3 · 비율 · 소계) · 시험 +1 · 🔧 탐색기 ▸ 행 조회/더블클릭 탭 = 표의 DB로 작업 단위 자동 전환(`OpenSql.db` = `db_of` · `tab_unit` + `apply_tab_unit` · 사용자 10-08 "master에 머물러 실행 안 됨") |

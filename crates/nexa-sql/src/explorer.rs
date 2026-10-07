@@ -1043,6 +1043,8 @@ pub(crate) struct Explorer {
     gen_opts: GenOpts,
     /// ★ 소스 열기 머리 줄에 소유 스키마(설정 `explorer.source_schema` · 기본 켬 · 09-30).
     source_qualify: bool,
+    /// ★ SELECT 템플릿의 스키마·테이블 인용 = 늘(`editor.quote_idents` = always) · 아니면 필요할 때만(`identq` · 사용자 10-08).
+    quote_always: bool,
     /// 스키마 목록 옵션(설정 `explorer.show_system_schemas`/`hide_empty_schemas`).
     schema_opts: SchemaOpts,
     /// ★ 카탈로그 공유(docs/54 §10): 이 칸에 붙은 연결들의 계정(루트 행 라벨) — `ExplorerSet`이 준다.
@@ -2219,6 +2221,7 @@ impl Explorer {
             filter_expanded: std::collections::HashSet::new(),
             gen_opts: GenOpts::default(),
             source_qualify: true,
+            quote_always: false,
             schema_opts: SchemaOpts::default(),
             users: Vec::new(),
             rebinding: false,
@@ -5600,7 +5603,8 @@ impl Explorer {
                 let Some(d) = self.dialect else { return };
                 self.actions.push(ExplorerAction::OpenSql {
                     title: format!("{}.sql", o.name),
-                    text: nsql_catalog::select_template(d, &o.schema, &o.name),
+                    // 스키마·테이블 인용 = 조건 바와 같은 정책(`identq` · needed = 필요할 때만 · 사용자 10-08).
+                    text: crate::identq::select_template(d, &o.schema, &o.name, self.quote_always),
                     origin: None,
                     // 표의 DB(다른 DB 표 = 새 탭을 그 DB로 · 사용자 10-08).
                     db: self.db_of(i),
@@ -5652,6 +5656,10 @@ impl Explorer {
 
     pub(crate) fn set_source_qualify(&mut self, on: bool) {
         self.source_qualify = on;
+    }
+
+    pub(crate) fn set_quote_always(&mut self, on: bool) {
+        self.quote_always = on;
     }
 
     pub(crate) fn set_gen_opts(&mut self, opts: GenOpts) {

@@ -202,6 +202,8 @@ pub(crate) struct ExplorerSet {
     gen_opts: nsql_catalog::GenOpts,
     /// 소스 열기 스키마 한정(09-30).
     source_qualify: bool,
+    /// SELECT 템플릿 인용 정책(`editor.quote_idents` = always · 10-08).
+    quote_always: bool,
     schema_opts: nsql_catalog::SchemaOpts,
     /// ★ 검색 인덱스 설정(84 §5 · 새 칸에도 준다).
     index_cfg: crate::explorer::IndexCfg,
@@ -248,6 +250,7 @@ impl ExplorerSet {
             keep_offline: false,
             gen_opts: nsql_catalog::GenOpts::default(),
             source_qualify: true,
+            quote_always: false,
             schema_opts: nsql_catalog::SchemaOpts::default(),
             index_cfg: crate::explorer::IndexCfg::default(),
             share_catalog: false,
@@ -272,6 +275,7 @@ impl ExplorerSet {
         ex.set_highlight_ms(self.highlight_ms);
         ex.set_gen_opts(self.gen_opts);
         ex.set_source_qualify(self.source_qualify);
+        ex.set_quote_always(self.quote_always);
         ex.set_schema_opts(self.schema_opts);
         ex.set_index_cfg(self.index_cfg);
         // ★ 검색어가 있는 채로 서버가 추가되면 새 칸도 바로 검색 모드(사용자 09-25) — 스키마 목록이 오는 즉시 인덱스·부분 노드로 이어진다.
@@ -479,6 +483,13 @@ impl ExplorerSet {
         self.source_qualify = on;
         for p in &mut self.panes {
             p.ex.set_source_qualify(on);
+        }
+    }
+
+    pub(crate) fn set_quote_always(&mut self, on: bool) {
+        self.quote_always = on;
+        for p in &mut self.panes {
+            p.ex.set_quote_always(on);
         }
     }
 

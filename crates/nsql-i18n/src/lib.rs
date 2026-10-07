@@ -4287,8 +4287,8 @@ impl Msg {
             Msg::MnCloseDiscard => ["Close without saving", "저장하지 않고 닫기"],
             Msg::MnCloseCancel => ["Cancel", "취소"],
             Msg::LblCloseUnsaved => ["Closing a tab with unsaved changes", "저장하지 않은 탭 닫기"],
-            Msg::LblQuoteIdents => ["Quote column names in generated conditions", "생성 조건의 열 이름 인용"],
-            Msg::DescQuoteIdents => ["When a column name is inserted into the condition bar (drag a column header, cell menu > Condition), wrap it in the DBMS quote: Oracle/PostgreSQL/SQLite \"name\", SQL Server [name], MySQL `name`. needed = only when required (characters other than letters/digits/_, leading digit, reserved word, or a name that breaks the case-folding rule: Oracle with lowercase letters, PostgreSQL with uppercase letters); always = every name", "열 이름을 조건 바에 넣을 때(열 머리 끌어 놓기 · 셀 메뉴 ▸ 조건) DBMS 인용 문자로 감쌉니다: Oracle/PostgreSQL/SQLite \"이름\" · SQL Server [이름] · MySQL `이름`. needed = 필요할 때만(영숫자·_ 밖의 글자 · 숫자로 시작 · 예약어 · 대소문자 접힘 규칙에 어긋나는 이름 = Oracle에 소문자 · PostgreSQL에 대문자) · always = 모든 이름"],
+            Msg::LblQuoteIdents => ["Quote identifiers in generated SQL", "생성 SQL의 식별자 인용"],
+            Msg::DescQuoteIdents => ["When a column name is inserted into the condition bar (drag a column header, cell menu > Condition) or a SELECT template is generated (explorer row view, hover card > 200 rows: schema and table names too), wrap it in the DBMS quote: Oracle/PostgreSQL/SQLite \"name\", SQL Server [name], MySQL `name`. needed = only when required (characters other than letters/digits/_, leading digit, reserved word, or a name that breaks the case-folding rule: Oracle with lowercase letters, PostgreSQL with uppercase letters); always = every name", "열 이름을 조건 바에 넣을 때(열 머리 끌어 놓기 · 셀 메뉴 ▸ 조건)와 SELECT 템플릿을 만들 때(탐색기 행 조회 · hover 카드 ▸ 200행 — 스키마·테이블 이름도) DBMS 인용 문자로 감쌉니다: Oracle/PostgreSQL/SQLite \"이름\" · SQL Server [이름] · MySQL `이름`. needed = 필요할 때만(영숫자·_ 밖의 글자 · 숫자로 시작 · 예약어 · 대소문자 접힘 규칙에 어긋나는 이름 = Oracle에 소문자 · PostgreSQL에 대문자) · always = 모든 이름"],
             Msg::ValQuoteNeeded => ["only when needed", "필요할 때만"],
             Msg::ValQuoteAlways => ["always", "항상"],
             Msg::DescCloseUnsaved => [

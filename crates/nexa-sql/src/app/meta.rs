@@ -185,9 +185,12 @@ impl App {
     /// `SELECT *` 200행 틀(탐색기 더블클릭과 같은 글 · `select_template`)로 **바로 실행**해 새 결과 탭에 — 편집기 탭을 거치지 않는다.
     pub(crate) fn open_rows_tab(&mut self) {
         let sql = match self.objdetail.owner_object() {
-            Some(o) if o.kind.is_relation() => {
-                nsql_catalog::select_template(self.sess.dialect, &o.schema, &o.name)
-            }
+            Some(o) if o.kind.is_relation() => crate::identq::select_template(
+                self.sess.dialect,
+                &o.schema,
+                &o.name,
+                self.quote_always(),
+            ),
             _ => {
                 self.sess.status = t(Msg::StObjRowsNone).into();
                 self.redraw();

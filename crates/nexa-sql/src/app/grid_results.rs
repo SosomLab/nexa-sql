@@ -336,6 +336,11 @@ impl App {
     }
 
     /// 편집 설정 → 전 그리드(docs/87 §8).
+    /// 설정 `editor.quote_idents` = `always`인가(조건 바 열 이름 · SELECT 템플릿 스키마·테이블 = 한 값 · `identq`).
+    pub(crate) fn quote_always(&self) -> bool {
+        self.settings.get("editor.quote_idents") == Some("always")
+    }
+
     pub(crate) fn apply_grid_edit_cfg(&mut self) {
         let cfg = grid::EditCfg {
             on: self.settings.flag("grid.edit"),
@@ -395,9 +400,10 @@ impl App {
         self.all_grids().for_each(|g| g.set_condition_bar(cond));
         let tpl = self.settings.flag("grid.cond_drop_template");
         self.all_grids().for_each(|g| g.set_cond_drop_template(tpl));
-        // 열 이름 인용 정책(사용자 10-07 · DnD·조건 메뉴 공통).
-        let qa = self.settings.get("editor.quote_idents") == Some("always");
+        // 열 이름 인용 정책(사용자 10-07 · DnD·조건 메뉴 공통) — SELECT 템플릿의 스키마·테이블도 같은 값(탐색기 칸 · 10-08).
+        let qa = self.quote_always();
         self.all_grids().for_each(|g| g.set_cond_quote_always(qa));
+        self.explorer.set_quote_always(qa);
         let lines = self.settings.int("grid.cond_max_lines").clamp(2, 12) as usize;
         self.all_grids().for_each(|g| g.set_cond_max_lines(lines));
         // 조건 바 완성 = 편집기 인텔리센스와 같은 기준(사용자 10-07).

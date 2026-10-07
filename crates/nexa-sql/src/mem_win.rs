@@ -142,8 +142,9 @@ impl MemWin {
                 dy: 40,
                 owner,
                 memo: Some(&self.memo),
-                // 표 전체(묶음 5 + 시스템 8줄)가 들어가는 높이 — 글꼴·배율이 다르면 첫 그리기에서 `fit`이 한 번 더 맞춘다.
-                default_size: (640.0, 780.0),
+                // 표 전체(묶음 5 + 시스템 8줄)가 꼭 들어가는 높이(100 % 배율 실측 758 · 사용자 10-08 이미지) — 글꼴·배율이 다르면
+                // 첫 그리기에서 `fit`이 양방향으로 맞춘다.
+                default_size: (640.0, 758.0),
                 ime: false,
             },
         ) else {
@@ -632,10 +633,11 @@ impl MemWin {
 
             // 처음 열 때 한 번: 내용 끝 + 바닥 줄이 들어가도록 창 높이를 맞춘다(사용자 10-07 "열릴 때 전체 내용이 보이게").
             let btn_h = th_txt + px(12.0);
+            //   양방향(사용자 10-08 "창 크기를 이미지에 맞춰" = 내용 끝 바로 아래 바닥 줄 · 남는 여백 없이): 모자라면 늘리고 남으면 줄인다.
             if self.fit {
                 self.fit = false;
                 let need = y + px(10.0) + btn_h + pad;
-                if need > hi {
+                if (need - hi).abs() > px(2.0) {
                     let _ = win
                         .request_inner_size(winit::dpi::PhysicalSize::new(size.width, need as u32));
                 }

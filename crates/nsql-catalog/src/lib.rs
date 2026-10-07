@@ -3510,10 +3510,15 @@ fn name_from(tok: &str, kind: ObjectKind) -> Option<(ObjectKind, Option<String>,
     }
 }
 
-/// `SELECT *` 템플릿(탐색기 더블클릭 · CLI).
+/// `SELECT *` 템플릿(탐색기 더블클릭 · CLI) — 스키마·이름을 **늘** 인용. GUI는 인용 정책을 거친 한정 글로 [`select_template_q`]를 부른다.
 #[must_use]
 pub fn select_template(dialect: Dialect, schema: &str, name: &str) -> String {
-    let q = qualified(dialect, schema, name);
+    select_template_q(dialect, &qualified(dialect, schema, name))
+}
+
+/// `SELECT *` 템플릿의 본문 — `q` = 이미 한정·인용 정책을 거친 테이블 글(사용자 10-08 "needed면 스키마·테이블도 필요할 때만").
+#[must_use]
+pub fn select_template_q(dialect: Dialect, q: &str) -> String {
     match dialect {
         Dialect::Mssql => format!("SELECT TOP 200 * FROM {q};"),
         Dialect::Oracle => format!("SELECT * FROM {q} WHERE ROWNUM <= 200;"),

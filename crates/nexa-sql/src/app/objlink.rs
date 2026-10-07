@@ -346,7 +346,8 @@ pub(crate) fn scan(
                 if prev_up == "TABLE"
                     && sig(head)
                         .and_then(|p| toks.iter().position(|x| std::ptr::eq(x, p)))
-                        .and_then(&sig)
+                        // `sig`는 `&toks`만 잡는 Copy 클로저 — 값으로 넘겨도 뒤에서 그대로 쓴다(CI clippy 1.99 `needless_borrows_for_generic_args`).
+                        .and_then(sig)
                         .is_some_and(|pp| {
                             matches!(pp.up().as_str(), "CREATE" | "ALTER" | "TEMPORARY")
                         })
@@ -1377,7 +1378,12 @@ impl App {
             }
             Some("card.rows") => {
                 if let Some(t) = self.objlink_reveal_target(k) {
-                    let sql = nsql_catalog::select_template(self.sess.dialect, &t.schema, &t.name);
+                    let sql = crate::identq::select_template(
+                        self.sess.dialect,
+                        &t.schema,
+                        &t.name,
+                        self.quote_always(),
+                    );
                     self.objlink_hover_end();
                     self.run_in_fresh_tab(sql);
                 }

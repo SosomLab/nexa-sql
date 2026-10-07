@@ -1507,6 +1507,7 @@ fn main() {
         e.set_filter_scope(settings.get("explorer.filter_scope").unwrap_or("all"));
         e.set_gen_opts(gen_opts_from(&settings));
         e.set_source_qualify(settings.flag("explorer.source_schema"));
+        e.set_quote_always(settings.get("editor.quote_idents") == Some("always"));
         e.set_schema_opts(schema_opts_from(&settings));
         e.set_mssql_tree(
             settings.get("explorer.mssql_tree") != Some("schema"),
