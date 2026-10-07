@@ -1005,12 +1005,35 @@ impl nsql_core::CancelHandle for MssqlCancel {
     }
 }
 
+/// 표 이름이 3부(`DB.schema.table` · 대괄호/따옴표 허용)면 `[DB].`(카탈로그 뷰 접두) · 아니면 빈 글. 순수 함수(T-309).
+fn db_prefix(table: &str) -> String {
+    let parts: Vec<&str> = table.split('.').collect();
+    let [db, _, _] = parts.as_slice() else {
+        return String::new();
+    };
+    let db = db.trim();
+    let db = if (db.starts_with('[') && db.ends_with(']'))
+        || (db.starts_with('"') && db.ends_with('"'))
+    {
+        &db[1..db.len() - 1]
+    } else {
+        db
+    };
+    if db.is_empty() {
+        return String::new();
+    }
+    format!("[{}].", db.replace(']', "]]"))
+}
+
 impl MssqlSession {
     /// 표의 decimal/numeric/money 열 `(이름, scale)` — `OBJECT_ID(N'<표>')`로 1·2·3부 이름 모두(세션 DB 변경 없음 · T-309 방어층).
     fn numeric_scales(&mut self, table: &str) -> Result<Vec<(String, u8)>, DbError> {
         let lit = format!("N'{}'", table.replace('\'', "''"));
+        // 3부 이름(`DB.schema.table`)이면 **그 DB의** 카탈로그 뷰에서 — 세션 DB(master)의 sys.all_columns에는 그 object_id가 없어 빈 결과 →
+        //   bulk 거절 → multirow로 내려갔다(협업 bin70 · 13.9k행/s → 1.4k행/s).
+        let db = db_prefix(table);
         let sql = format!(
-            "SELECT c.name, c.scale FROM sys.all_columns c JOIN sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({lit}) AND t.name IN ('decimal','numeric','money','smallmoney')"
+            "SELECT c.name, c.scale FROM {db}sys.all_columns c JOIN {db}sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID({lit}) AND t.name IN ('decimal','numeric','money','smallmoney')"
         );
         let client = &mut self.client;
         let rows = self.rt.block_on(async {
@@ -1241,6 +1264,17 @@ impl MssqlSession {
 
 #[cfg(test)]
 mod tests {
+    /// T-309: 3부 이름 = `[DB].` 접두(대괄호/따옴표 벗김 · `]` 이스케이프) · 1·2부 = 빈 글.
+    #[test]
+    fn db_prefix_only_for_three_part_names() {
+        assert_eq!(super::db_prefix("M4PLAN_MS.dbo.NSQLT_BULK"), "[M4PLAN_MS].");
+        assert_eq!(super::db_prefix("[My DB].[dbo].[T]"), "[My DB].");
+        assert_eq!(super::db_prefix("\"a]b\".dbo.T"), "[a]]b].");
+        assert_eq!(super::db_prefix("dbo.T"), "");
+        assert_eq!(super::db_prefix("T"), "");
+        assert_eq!(super::db_prefix("..T"), "");
+    }
+
     use super::*;
     use nsql_core::{BindParam, VarType};
 

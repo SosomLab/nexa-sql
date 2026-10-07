@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| work/2026-10-07-115r | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 T-309 경로(협업 bin70: SQL Server multirow 1.4k행/s): 방어층 `numeric_scales`가 세션 DB의 sys.all_columns를 봐 3부 이름 표를 못 찾고 bulk 거절 → `[DB].sys.all_columns`(`db_prefix` 순수 · 시험) · Runner = `bulk_begin` 거절 사유를 보고 경로 글에(`multirow (driver refused: …)`) |
 | work/2026-10-07-115q | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 T-309 마지막(제품 결함 · 협업 bin69 bulk SQL Server 패닉): TDS bulk Decimal scale 불일치 = tiberius `todo!()` → panic=abort로 CLI·GUI Import 종료 → ① 3부 이름 컬럼 조회 = `sys.all_columns`+`OBJECT_ID` + 카탈로그 `fmt_type`(공개) ② ★ 드라이버 `bulk_begin` 방어층 = 서버 scale 재확인·덮어쓰기 · 못 읽으면 bulk 거절(`numeric_scales`) |
 | work/2026-10-07-115p | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | 🔧 T-309 마지막(제품 결함 · 협업 V3 bulk SQL Server 3 실패): `nsql import -t DB.schema.table` 3부 이름 = `split_table`이 DB 조각을 버려 master에서 컬럼을 찾던 것 → `[DB].INFORMATION_SCHEMA.COLUMNS` 직접 조회(`mssql_cols_sql` 순수 · 시험 +1 · GUI Import 창 공용) |
 | work/2026-10-07-115o | 2026-10-07 | 2026-10-07 → main(삭제) | 1 | T-309 ③④(협업 V3 확인): `mac-bulk-e2e.sh` 파이썬 = 실제 실행 파일 해석(`NSQL_PYTHON` → `pyenv which python` → `py -3` → `python`) + heredoc/`-c` → 임시 .py `pyrun` · `-d 프로필:방언[:DB]` + SQL Server `USE`/`DB.dbo.NSQLT_BULK` |

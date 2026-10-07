@@ -527,8 +527,13 @@ impl Runner {
         let Some(session) = self.session.as_mut() else {
             return SinkEnd::Unsupported;
         };
-        let Ok(mut sink) = session.bulk_begin(&p.table, &p.cols, &p.types, &p.opts) else {
-            return SinkEnd::Unsupported;
+        let mut sink = match session.bulk_begin(&p.table, &p.cols, &p.types, &p.opts) {
+            Ok(s) => s,
+            Err(e) => {
+                // 드라이버가 최속 경로를 거절한 **이유**를 보고 경로 글에 남긴다(종전 = 조용히 multirow → 진단 불가 · 협업 bin70 · T-309).
+                rep.path = format!("multirow (driver refused: {})", e.message);
+                return SinkEnd::Unsupported;
+            }
         };
         rep.path = format!("driver:{:?}", caps.bulk_load).to_ascii_lowercase();
         let t_send = Instant::now();
