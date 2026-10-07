@@ -6,6 +6,10 @@ CSV · TSV · JSON Lines 파일을 표에 **넣고**(import), 조회 결과를 �
 
 ## 1. 화면에서 넣기 (Import 창)
 
+![Import 창](images/import-window.png)
+
+*Import 창 — 대상 표 · 첫 줄 = 열 이름 · 열 매핑 · 배치/커밋 간격 · 파일 미리보기*
+
 1. 탐색기에서 **표**를 우클릭 ▸ **Import Data…**
 2. 파일을 고릅니다(csv · tsv · jsonl · ndjson).
 3. Import 창에서 미리보기와 옵션을 확인하고 **Start**.

@@ -37,5 +37,8 @@ Full-window shots are 1280×831 with the window shadow trimmed; `detail-*` files
 | variables-run.png | Variables | Variables declared with `VAR` used as bind variables |
 | bookmarks.png | Bookmarks | Bookmarks panel and gutter mnemonics |
 | memory-window.png | Large-Files-and-Limits | Memory window: usage by area, group subtotals and change markers |
+| settings-window.png | Settings | Preferences: search any setting, see its key and default |
+| license-window.png | License | License window (machine code and request code are masked in the image) |
+| import-window.png | Bulk-Import-Export | Import Data: target table, header row, column mapping, batch size and file preview |
 
-Not captured yet (the windows cannot be opened from startup commands yet): Settings window · License window · Import window · result column header card.
+Not captured yet: result column header hover card (does not open from startup commands).

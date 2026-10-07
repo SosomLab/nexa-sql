@@ -3,7 +3,11 @@
 #   ① 1,000행 csv 적재 → 건수·값 ② 중복 PK로 500번째 행 실패 → "row 500 (line 501)" 지목 · 그 앞 499행 커밋 ③ tsv + --no-header --cols + --map
 #   -P <실제 설정 폴더> -d 프로필:방언,… = 실서버(임시 표 생성 → 5,000행 적재 → 건수 → DROP · 61 §2-4 ⑤) · rows/s 출력(89 실측).
 # 사용: scripts/mac-bulk-e2e.sh [-n target/debug/nsql] [-H <home>] [-P <실제 설정 폴더>] [-d BISCM:oracle,Repository:postgres,M4PLAN:mssql]
-set -u
+set -u
+# 파이썬 인터프리터(T-309 · 10-07): Windows Git Bash의 `python3`는 pyenv .bat 셸 래퍼라 heredoc을 배치 파일로 읽어 IndentationError →
+#   Windows = `python` 우선 · 그 밖 = `python3` · `NSQL_PYTHON`으로 지정 가능.
+PY="${NSQL_PYTHON:-}"
+if [ -z "$PY" ]; then case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PY=python;; *) PY=python3;; esac; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NSQL="$ROOT/target/debug/nsql"; APP="$ROOT/target/debug/nexa-sql"; H="${TMPDIR:-/tmp}/nsql-bulk-e2e"; PROF=""; DBMS="${NSQL_E2E_DBMS:-}"
 while getopts "n:e:H:P:d:" o; do case $o in n) NSQL=$OPTARG;; e) APP=$OPTARG;; H) H=$OPTARG;; P) PROF=$OPTARG;; d) DBMS=$OPTARG;; esac; done
@@ -24,7 +28,7 @@ run_gui() { # <초> <인자> <기동 명령> — GUI Import 창(89 §3-3 · 키 
 NSQL_HOME="$H" "$NSQL" conn add Local "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1
 # 기대 문구가 영어다 — 화면 언어 기본값이 system이라 한국어 OS에서는 한국어가 나온다(10-05 Windows 전수 시험).
 NSQL_HOME="$H" "$NSQL" config set ui.lang en >/dev/null 2>&1
-python3 - "$D" <<'PY'
+"$PY" - "$D" <<'PY'
 import sys, os
 d=sys.argv[1]
 with open(os.path.join(d,'ok.csv'),'w') as f:
@@ -69,7 +73,7 @@ printf "SELECT name, amt IS NULL AS an FROM bulk_t WHERE id IN (8001, 8002) ORDE
 expect_grep "jsonl 유니코드 이스케이프 j1" "$v" "j1"; expect_grep "jsonl 빠진 키/null = NULL" "$v" " 1$"
 echo "=== SQLite ⑤ GUI Import 창(import.open → start → dump · 성공 · 실패 지목 · 89 §3-3)"
 if [ -x "$APP" ]; then
-  python3 - "$D" <<'PYG'
+  "$PY" - "$D" <<'PYG'
 import sys, os
 d=sys.argv[1]
 with open(os.path.join(d,'gui.csv'),'w') as f:
@@ -101,7 +105,7 @@ bulk_suite() {
   esac
   printf 'DROP TABLE NSQLT_BULK;\n' > "$D/${P}_drop.sql"; printf '%s;\n' "$ddl" > "$D/${P}_ddl.sql"
   printf 'SELECT COUNT(*) AS N, MAX(ID) AS MX FROM NSQLT_BULK;\n' > "$D/${P}_chk.sql"
-  python3 -c "
+  "$PY" -c "
 with open('$D/${P}_5k.csv','w') as f:
     f.write('ID,NAME,AMT,DT\n')
     for i in range(1,5001): f.write(f'{i},name {i},{i*1.25:.2f},2026-09-{(i%28)+1:02d} 12:34:56\n')
